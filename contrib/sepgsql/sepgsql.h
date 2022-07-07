@@ -4,7 +4,7 @@
  *
  * Definitions corresponding to SE-PostgreSQL
  *
- * Copyright (c) 2010-2017, PostgreSQL Global Development Group
+ * Copyright (c) 2010-2018, PostgreSQL Global Development Group
  *
  * -------------------------------------------------------------------------
  */
@@ -235,7 +235,7 @@ extern void sepgsql_audit_log(bool denied,
 extern void sepgsql_compute_avd(const char *scontext,
 					const char *tcontext,
 					uint16 tclass,
-					struct av_decision * avd);
+					struct av_decision *avd);
 
 extern char *sepgsql_compute_create(const char *scontext,
 					   const char *tcontext,
@@ -324,4 +324,4 @@ extern void sepgsql_proc_relabel(Oid functionId, const char *seclabel);
 extern void sepgsql_proc_setattr(Oid functionId);
 extern void sepgsql_proc_execute(Oid functionId);
 
-#endif   /* SEPGSQL_H */
+#endif							/* SEPGSQL_H */

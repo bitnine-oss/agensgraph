@@ -12,7 +12,7 @@
  *	  This information is needed by routines manipulating tuples
  *	  (getattribute, formtuple, etc.).
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -58,7 +58,7 @@
  *		At ExecutorStart()
  *		----------------
  *		- ExecInitSeqScan() calls ExecInitScanTupleSlot() and
- *		  ExecInitResultTupleSlot() to construct TupleTableSlots
+ *		  ExecInitResultTupleSlotTL() to construct TupleTableSlots
  *		  for the tuples returned by the access methods and the
  *		  tuples resulting from performing target list projections.
  *
@@ -104,25 +104,55 @@ static TupleDesc ExecTypeFromTLInternal(List *targetList,
 /* --------------------------------
  *		MakeTupleTableSlot
  *
- *		Basic routine to make an empty TupleTableSlot.
+ *		Basic routine to make an empty TupleTableSlot. If tupleDesc is
+ *		specified the slot's descriptor is fixed for it's lifetime, gaining
+ *		some efficiency. If that's undesirable, pass NULL.
  * --------------------------------
  */
 TupleTableSlot *
-MakeTupleTableSlot(void)
+MakeTupleTableSlot(TupleDesc tupleDesc)
 {
-	TupleTableSlot *slot = makeNode(TupleTableSlot);
+	Size		sz;
+	TupleTableSlot *slot;
 
+	/*
+	 * When a fixed descriptor is specified, we can reduce overhead by
+	 * allocating the entire slot in one go.
+	 */
+	if (tupleDesc)
+		sz = MAXALIGN(sizeof(TupleTableSlot)) +
+			MAXALIGN(tupleDesc->natts * sizeof(Datum)) +
+			MAXALIGN(tupleDesc->natts * sizeof(bool));
+	else
+		sz = sizeof(TupleTableSlot);
+
+	slot = palloc0(sz);
+	slot->type = T_TupleTableSlot;
 	slot->tts_isempty = true;
 	slot->tts_shouldFree = false;
 	slot->tts_shouldFreeMin = false;
 	slot->tts_tuple = NULL;
-	slot->tts_tupleDescriptor = NULL;
+	slot->tts_fixedTupleDescriptor = tupleDesc != NULL;
+	slot->tts_tupleDescriptor = tupleDesc;
 	slot->tts_mcxt = CurrentMemoryContext;
 	slot->tts_buffer = InvalidBuffer;
 	slot->tts_nvalid = 0;
 	slot->tts_values = NULL;
 	slot->tts_isnull = NULL;
 	slot->tts_mintuple = NULL;
+
+	if (tupleDesc != NULL)
+	{
+		slot->tts_values = (Datum *)
+			(((char *) slot)
+			 + MAXALIGN(sizeof(TupleTableSlot)));
+		slot->tts_isnull = (bool *)
+			(((char *) slot)
+			 + MAXALIGN(sizeof(TupleTableSlot))
+			 + MAXALIGN(tupleDesc->natts * sizeof(Datum)));
+
+		PinTupleDesc(tupleDesc);
+	}
 
 	return slot;
 }
@@ -134,9 +164,9 @@ MakeTupleTableSlot(void)
  * --------------------------------
  */
 TupleTableSlot *
-ExecAllocTableSlot(List **tupleTable)
+ExecAllocTableSlot(List **tupleTable, TupleDesc desc)
 {
-	TupleTableSlot *slot = MakeTupleTableSlot();
+	TupleTableSlot *slot = MakeTupleTableSlot(desc);
 
 	*tupleTable = lappend(*tupleTable, slot);
 
@@ -160,7 +190,7 @@ ExecResetTupleTable(List *tupleTable,	/* tuple table */
 
 	foreach(lc, tupleTable)
 	{
-		TupleTableSlot *slot = castNode(TupleTableSlot, lfirst(lc));
+		TupleTableSlot *slot = lfirst_node(TupleTableSlot, lc);
 
 		/* Always release resources and reset the slot to empty */
 		ExecClearTuple(slot);
@@ -173,10 +203,13 @@ ExecResetTupleTable(List *tupleTable,	/* tuple table */
 		/* If shouldFree, release memory occupied by the slot itself */
 		if (shouldFree)
 		{
-			if (slot->tts_values)
-				pfree(slot->tts_values);
-			if (slot->tts_isnull)
-				pfree(slot->tts_isnull);
+			if (!slot->tts_fixedTupleDescriptor)
+			{
+				if (slot->tts_values)
+					pfree(slot->tts_values);
+				if (slot->tts_isnull)
+					pfree(slot->tts_isnull);
+			}
 			pfree(slot);
 		}
 	}
@@ -198,9 +231,7 @@ ExecResetTupleTable(List *tupleTable,	/* tuple table */
 TupleTableSlot *
 MakeSingleTupleTableSlot(TupleDesc tupdesc)
 {
-	TupleTableSlot *slot = MakeTupleTableSlot();
-
-	ExecSetSlotDescriptor(slot, tupdesc);
+	TupleTableSlot *slot = MakeTupleTableSlot(tupdesc);
 
 	return slot;
 }
@@ -220,10 +251,13 @@ ExecDropSingleTupleTableSlot(TupleTableSlot *slot)
 	ExecClearTuple(slot);
 	if (slot->tts_tupleDescriptor)
 		ReleaseTupleDesc(slot->tts_tupleDescriptor);
-	if (slot->tts_values)
-		pfree(slot->tts_values);
-	if (slot->tts_isnull)
-		pfree(slot->tts_isnull);
+	if (!slot->tts_fixedTupleDescriptor)
+	{
+		if (slot->tts_values)
+			pfree(slot->tts_values);
+		if (slot->tts_isnull)
+			pfree(slot->tts_isnull);
+	}
 	pfree(slot);
 }
 
@@ -244,9 +278,11 @@ ExecDropSingleTupleTableSlot(TupleTableSlot *slot)
  * --------------------------------
  */
 void
-ExecSetSlotDescriptor(TupleTableSlot *slot,		/* slot to change */
-					  TupleDesc tupdesc)		/* new tuple descriptor */
+ExecSetSlotDescriptor(TupleTableSlot *slot, /* slot to change */
+					  TupleDesc tupdesc)	/* new tuple descriptor */
 {
+	Assert(!slot->tts_fixedTupleDescriptor);
+
 	/* For safety, make sure slot is empty before changing it */
 	ExecClearTuple(slot);
 
@@ -816,7 +852,7 @@ ExecCopySlot(TupleTableSlot *dstslot, TupleTableSlot *srcslot)
  */
 
 /* --------------------------------
- *		ExecInit{Result,Scan,Extra}TupleSlot
+ *		ExecInit{Result,Scan,Extra}TupleSlot[TL]
  *
  *		These are convenience routines to initialize the specified slot
  *		in nodes inheriting the appropriate state.  ExecInitExtraTupleSlot
@@ -825,13 +861,30 @@ ExecCopySlot(TupleTableSlot *dstslot, TupleTableSlot *srcslot)
  */
 
 /* ----------------
- *		ExecInitResultTupleSlot
+ *		ExecInitResultTupleSlotTL
+ *
+ *		Initialize result tuple slot, using the plan node's targetlist.
  * ----------------
  */
 void
-ExecInitResultTupleSlot(EState *estate, PlanState *planstate)
+ExecInitResultTupleSlotTL(EState *estate, PlanState *planstate)
 {
-	planstate->ps_ResultTupleSlot = ExecAllocTableSlot(&estate->es_tupleTable);
+	bool		hasoid;
+	TupleDesc	tupDesc;
+
+	if (ExecContextForcesOids(planstate, &hasoid))
+	{
+		/* context forces OID choice; hasoid is now set correctly */
+	}
+	else
+	{
+		/* given free choice, don't leave space for OIDs in result tuples */
+		hasoid = false;
+	}
+
+	tupDesc = ExecTypeFromTL(planstate->plan->targetlist, hasoid);
+
+	planstate->ps_ResultTupleSlot = ExecAllocTableSlot(&estate->es_tupleTable, tupDesc);
 }
 
 /* ----------------
@@ -839,19 +892,24 @@ ExecInitResultTupleSlot(EState *estate, PlanState *planstate)
  * ----------------
  */
 void
-ExecInitScanTupleSlot(EState *estate, ScanState *scanstate)
+ExecInitScanTupleSlot(EState *estate, ScanState *scanstate, TupleDesc tupledesc)
 {
-	scanstate->ss_ScanTupleSlot = ExecAllocTableSlot(&estate->es_tupleTable);
+	scanstate->ss_ScanTupleSlot = ExecAllocTableSlot(&estate->es_tupleTable,
+													 tupledesc);
 }
 
 /* ----------------
  *		ExecInitExtraTupleSlot
+ *
+ * Return a newly created slot. If tupledesc is non-NULL the slot will have
+ * that as its fixed tupledesc. Otherwise the caller needs to use
+ * ExecSetSlotDescriptor() to set the descriptor before use.
  * ----------------
  */
 TupleTableSlot *
-ExecInitExtraTupleSlot(EState *estate)
+ExecInitExtraTupleSlot(EState *estate, TupleDesc tupledesc)
 {
-	return ExecAllocTableSlot(&estate->es_tupleTable);
+	return ExecAllocTableSlot(&estate->es_tupleTable, tupledesc);
 }
 
 /* ----------------
@@ -865,9 +923,7 @@ ExecInitExtraTupleSlot(EState *estate)
 TupleTableSlot *
 ExecInitNullTupleSlot(EState *estate, TupleDesc tupType)
 {
-	TupleTableSlot *slot = ExecInitExtraTupleSlot(estate);
-
-	ExecSetSlotDescriptor(slot, tupType);
+	TupleTableSlot *slot = ExecInitExtraTupleSlot(estate, tupType);
 
 	return ExecStoreAllNullTuple(slot);
 }
@@ -997,7 +1053,8 @@ ExecTypeSetColNames(TupleDesc typeInfo, List *namesList)
 		/* Guard against too-long names list */
 		if (colno >= typeInfo->natts)
 			break;
-		attr = typeInfo->attrs[colno++];
+		attr = TupleDescAttr(typeInfo, colno);
+		colno++;
 
 		/* Ignore empty aliases (these must be for dropped columns) */
 		if (cname[0] == '\0')
@@ -1090,13 +1147,15 @@ TupleDescGetAttInMetadata(TupleDesc tupdesc)
 
 	for (i = 0; i < natts; i++)
 	{
+		Form_pg_attribute att = TupleDescAttr(tupdesc, i);
+
 		/* Ignore dropped attributes */
-		if (!tupdesc->attrs[i]->attisdropped)
+		if (!att->attisdropped)
 		{
-			atttypeid = tupdesc->attrs[i]->atttypid;
+			atttypeid = att->atttypid;
 			getTypeInputInfo(atttypeid, &attinfuncid, &attioparams[i]);
 			fmgr_info(attinfuncid, &attinfuncinfo[i]);
-			atttypmods[i] = tupdesc->attrs[i]->atttypmod;
+			atttypmods[i] = att->atttypmod;
 		}
 	}
 	attinmeta->attinfuncs = attinfuncinfo;
@@ -1127,7 +1186,7 @@ BuildTupleFromCStrings(AttInMetadata *attinmeta, char **values)
 	/* Call the "in" function for each non-dropped attribute */
 	for (i = 0; i < natts; i++)
 	{
-		if (!tupdesc->attrs[i]->attisdropped)
+		if (!TupleDescAttr(tupdesc, i)->attisdropped)
 		{
 			/* Non-dropped attributes */
 			dvalues[i] = InputFunctionCall(&attinmeta->attinfuncs[i],
@@ -1213,7 +1272,7 @@ HeapTupleHeaderGetDatum(HeapTupleHeader tuple)
 
 	/* And do the flattening */
 	result = toast_flatten_tuple_to_datum(tuple,
-										HeapTupleHeaderGetDatumLength(tuple),
+										  HeapTupleHeaderGetDatumLength(tuple),
 										  tupDesc);
 
 	ReleaseTupleDesc(tupDesc);
@@ -1238,7 +1297,7 @@ begin_tup_output_tupdesc(DestReceiver *dest, TupleDesc tupdesc)
 	tstate->slot = MakeSingleTupleTableSlot(tupdesc);
 	tstate->dest = dest;
 
-	(*tstate->dest->rStartup) (tstate->dest, (int) CMD_SELECT, tupdesc);
+	tstate->dest->rStartup(tstate->dest, (int) CMD_SELECT, tupdesc);
 
 	return tstate;
 }
@@ -1263,7 +1322,7 @@ do_tup_output(TupOutputState *tstate, Datum *values, bool *isnull)
 	ExecStoreVirtualTuple(slot);
 
 	/* send the tuple to the receiver */
-	(void) (*tstate->dest->receiveSlot) (slot, tstate->dest);
+	(void) tstate->dest->receiveSlot(slot, tstate->dest);
 
 	/* clean up */
 	ExecClearTuple(slot);
@@ -1307,7 +1366,7 @@ do_text_output_multiline(TupOutputState *tstate, const char *txt)
 void
 end_tup_output(TupOutputState *tstate)
 {
-	(*tstate->dest->rShutdown) (tstate->dest);
+	tstate->dest->rShutdown(tstate->dest);
 	/* note that destroying the dest is not ours to do */
 	ExecDropSingleTupleTableSlot(tstate->slot);
 	pfree(tstate);

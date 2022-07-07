@@ -4,7 +4,7 @@
  *
  * See src/backend/access/brin/README for details.
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -26,6 +26,7 @@
 #include "catalog/pg_am.h"
 #include "miscadmin.h"
 #include "pgstat.h"
+#include "postmaster/autovacuum.h"
 #include "storage/bufmgr.h"
 #include "storage/freespace.h"
 #include "utils/builtins.h"
@@ -60,11 +61,13 @@ typedef struct BrinOpaque
 	BrinDesc   *bo_bdesc;
 } BrinOpaque;
 
+#define BRIN_ALL_BLOCKRANGES	InvalidBlockNumber
+
 static BrinBuildState *initialize_brin_buildstate(Relation idxRel,
 						   BrinRevmap *revmap, BlockNumber pagesPerRange);
 static void terminate_brin_buildstate(BrinBuildState *state);
-static void brinsummarize(Relation index, Relation heapRel,
-			  double *numSummarized, double *numExisting);
+static void brinsummarize(Relation index, Relation heapRel, BlockNumber pageRange,
+			  bool include_partial, double *numSummarized, double *numExisting);
 static void form_and_insert_tuple(BrinBuildState *state);
 static void union_tuples(BrinDesc *bdesc, BrinMemTuple *a,
 			 BrinTuple *b);
@@ -93,6 +96,7 @@ brinhandler(PG_FUNCTION_ARGS)
 	amroutine->amstorage = true;
 	amroutine->amclusterable = false;
 	amroutine->ampredlocks = false;
+	amroutine->amcanparallel = false;
 	amroutine->amkeytype = InvalidOid;
 
 	amroutine->ambuild = brinbuild;
@@ -125,22 +129,36 @@ brinhandler(PG_FUNCTION_ARGS)
  * with those of the new tuple.  If the tuple values are not consistent with
  * the summary tuple, we need to update the index tuple.
  *
+ * If autosummarization is enabled, check if we need to summarize the previous
+ * page range.
+ *
  * If the range is not currently summarized (i.e. the revmap returns NULL for
- * it), there's nothing to do.
+ * it), there's nothing to do for this tuple.
  */
 bool
 brininsert(Relation idxRel, Datum *values, bool *nulls,
 		   ItemPointer heaptid, Relation heapRel,
-		   IndexUniqueCheck checkUnique)
+		   IndexUniqueCheck checkUnique,
+		   IndexInfo *indexInfo)
 {
 	BlockNumber pagesPerRange;
-	BrinDesc   *bdesc = NULL;
+	BlockNumber origHeapBlk;
+	BlockNumber heapBlk;
+	BrinDesc   *bdesc = (BrinDesc *) indexInfo->ii_AmCache;
 	BrinRevmap *revmap;
 	Buffer		buf = InvalidBuffer;
 	MemoryContext tupcxt = NULL;
-	MemoryContext oldcxt = NULL;
+	MemoryContext oldcxt = CurrentMemoryContext;
+	bool		autosummarize = BrinGetAutoSummarize(idxRel);
 
 	revmap = brinRevmapInitialize(idxRel, &pagesPerRange, NULL);
+
+	/*
+	 * origHeapBlk is the block number where the insertion occurred.  heapBlk
+	 * is the first block in the corresponding page range.
+	 */
+	origHeapBlk = ItemPointerGetBlockNumber(heaptid);
+	heapBlk = (origHeapBlk / pagesPerRange) * pagesPerRange;
 
 	for (;;)
 	{
@@ -148,32 +166,59 @@ brininsert(Relation idxRel, Datum *values, bool *nulls,
 		OffsetNumber off;
 		BrinTuple  *brtup;
 		BrinMemTuple *dtup;
-		BlockNumber heapBlk;
 		int			keyno;
 
 		CHECK_FOR_INTERRUPTS();
 
-		heapBlk = ItemPointerGetBlockNumber(heaptid);
-		/* normalize the block number to be the first block in the range */
-		heapBlk = (heapBlk / pagesPerRange) * pagesPerRange;
-		brtup = brinGetTupleForHeapBlock(revmap, heapBlk, &buf, &off, NULL,
-										 BUFFER_LOCK_SHARE, NULL);
+		/*
+		 * If auto-summarization is enabled and we just inserted the first
+		 * tuple into the first block of a new non-first page range, request a
+		 * summarization run of the previous range.
+		 */
+		if (autosummarize &&
+			heapBlk > 0 &&
+			heapBlk == origHeapBlk &&
+			ItemPointerGetOffsetNumber(heaptid) == FirstOffsetNumber)
+		{
+			BlockNumber lastPageRange = heapBlk - 1;
+			BrinTuple  *lastPageTuple;
+
+			lastPageTuple =
+				brinGetTupleForHeapBlock(revmap, lastPageRange, &buf, &off,
+										 NULL, BUFFER_LOCK_SHARE, NULL);
+			if (!lastPageTuple)
+				AutoVacuumRequestWork(AVW_BRINSummarizeRange,
+									  RelationGetRelid(idxRel),
+									  lastPageRange);
+			else
+				LockBuffer(buf, BUFFER_LOCK_UNLOCK);
+		}
+
+		brtup = brinGetTupleForHeapBlock(revmap, heapBlk, &buf, &off,
+										 NULL, BUFFER_LOCK_SHARE, NULL);
 
 		/* if range is unsummarized, there's nothing to do */
 		if (!brtup)
 			break;
 
-		/* First time through? */
+		/* First time through in this statement? */
 		if (bdesc == NULL)
 		{
+			MemoryContextSwitchTo(indexInfo->ii_Context);
 			bdesc = brin_build_desc(idxRel);
+			indexInfo->ii_AmCache = (void *) bdesc;
+			MemoryContextSwitchTo(oldcxt);
+		}
+		/* First time through in this brininsert call? */
+		if (tupcxt == NULL)
+		{
 			tupcxt = AllocSetContextCreate(CurrentMemoryContext,
 										   "brininsert cxt",
 										   ALLOCSET_DEFAULT_SIZES);
-			oldcxt = MemoryContextSwitchTo(tupcxt);
+			MemoryContextSwitchTo(tupcxt);
 		}
 
-		dtup = brin_deform_tuple(bdesc, brtup);
+		dtup = brin_deform_tuple(bdesc, brtup, NULL);
 
 		/*
 		 * Compare the key values of the new tuple to the stored index values;
@@ -224,7 +269,7 @@ brininsert(Relation idxRel, Datum *values, bool *nulls,
 			 * re-acquiring the lock.
 			 */
 			origsz = ItemIdGetLength(lp);
-			origtup = brin_copy_tuple(brtup, origsz);
+			origtup = brin_copy_tuple(brtup, origsz, NULL, NULL);
 
 			/*
 			 * Before releasing the lock, check if we can attempt a same-page
@@ -261,12 +306,9 @@ brininsert(Relation idxRel, Datum *values, bool *nulls,
 	brinRevmapTerminate(revmap);
 	if (BufferIsValid(buf))
 		ReleaseBuffer(buf);
-	if (bdesc != NULL)
-	{
-		brin_free_desc(bdesc);
-		MemoryContextSwitchTo(oldcxt);
+	MemoryContextSwitchTo(oldcxt);
+	if (tupcxt != NULL)
 		MemoryContextDelete(tupcxt);
-	}
 
 	return false;
 }
@@ -322,6 +364,9 @@ bringetbitmap(IndexScanDesc scan, TIDBitmap *tbm)
 	FmgrInfo   *consistentFn;
 	MemoryContext oldcxt;
 	MemoryContext perRangeCxt;
+	BrinMemTuple *dtup;
+	BrinTuple  *btup = NULL;
+	Size		btupsz = 0;
 
 	opaque = (BrinOpaque *) scan->opaque;
 	bdesc = opaque->bo_bdesc;
@@ -343,6 +388,9 @@ bringetbitmap(IndexScanDesc scan, TIDBitmap *tbm)
 	 */
 	consistentFn = palloc0(sizeof(FmgrInfo) * bdesc->bd_tupdesc->natts);
 
+	/* allocate an initial in-memory tuple, out of the per-range memcxt */
+	dtup = brin_new_memtuple(bdesc);
+
 	/*
 	 * Setup and use a per-range memory context, which is reset every time we
 	 * loop below.  This avoids having to free the tuples within the loop.
@@ -360,6 +408,7 @@ bringetbitmap(IndexScanDesc scan, TIDBitmap *tbm)
 	for (heapBlk = 0; heapBlk < nblocks; heapBlk += opaque->bo_pagesPerRange)
 	{
 		bool		addrange;
+		bool		gottuple = false;
 		BrinTuple  *tup;
 		OffsetNumber off;
 		Size		size;
@@ -373,7 +422,8 @@ bringetbitmap(IndexScanDesc scan, TIDBitmap *tbm)
 									   scan->xs_snapshot);
 		if (tup)
 		{
-			tup = brin_copy_tuple(tup, size);
+			gottuple = true;
+			btup = brin_copy_tuple(tup, size, btup, &btupsz);
 			LockBuffer(buf, BUFFER_LOCK_UNLOCK);
 		}
 
@@ -381,15 +431,13 @@ bringetbitmap(IndexScanDesc scan, TIDBitmap *tbm)
 		 * For page ranges with no indexed tuple, we must return the whole
 		 * range; otherwise, compare it to the scan keys.
 		 */
-		if (tup == NULL)
+		if (!gottuple)
 		{
 			addrange = true;
 		}
 		else
 		{
-			BrinMemTuple *dtup;
-
-			dtup = brin_deform_tuple(bdesc, tup);
+			dtup = brin_deform_tuple(bdesc, btup, dtup);
 			if (dtup->bt_placeholder)
 			{
 				/*
@@ -425,7 +473,8 @@ bringetbitmap(IndexScanDesc scan, TIDBitmap *tbm)
 					 */
 					Assert((key->sk_flags & SK_ISNULL) ||
 						   (key->sk_collation ==
-					  bdesc->bd_tupdesc->attrs[keyattno - 1]->attcollation));
+							TupleDescAttr(bdesc->bd_tupdesc,
+										  keyattno - 1)->attcollation));
 
 					/* First time this column? look up consistent function */
 					if (consistentFn[keyattno - 1].fn_oid == InvalidOid)
@@ -574,6 +623,7 @@ brinbuildCallback(Relation index,
 	{
 		FmgrInfo   *addValue;
 		BrinValues *col;
+		Form_pg_attribute attr = TupleDescAttr(state->bs_bdesc->bd_tupdesc, i);
 
 		col = &state->bs_dtuple->bt_columns[i];
 		addValue = index_getprocinfo(index, i + 1,
@@ -583,7 +633,7 @@ brinbuildCallback(Relation index,
 		 * Update dtuple state, if and as necessary.
 		 */
 		FunctionCall4Coll(addValue,
-						  state->bs_bdesc->bd_tupdesc->attrs[i]->attcollation,
+						  attr->attcollation,
 						  PointerGetDatum(state->bs_bdesc),
 						  PointerGetDatum(col),
 						  values[i], isnull[i]);
@@ -635,7 +685,7 @@ brinbuild(Relation heap, Relation index, IndexInfo *indexInfo)
 
 		XLogBeginInsert();
 		XLogRegisterData((char *) &xlrec, SizeOfBrinCreateIdx);
-		XLogRegisterBuffer(0, meta, REGBUF_WILL_INIT);
+		XLogRegisterBuffer(0, meta, REGBUF_WILL_INIT | REGBUF_STANDARD);
 
 		recptr = XLogInsert(RM_BRIN_ID, XLOG_BRIN_CREATE_INDEX);
 
@@ -656,7 +706,7 @@ brinbuild(Relation heap, Relation index, IndexInfo *indexInfo)
 	 * heap blocks in physical order.
 	 */
 	reltuples = IndexBuildHeapScan(heap, index, indexInfo, false,
-								   brinbuildCallback, (void *) state);
+								   brinbuildCallback, (void *) state, NULL);
 
 	/* process the final batch */
 	form_and_insert_tuple(state);
@@ -692,7 +742,7 @@ brinbuildempty(Relation index)
 	brin_metapage_init(BufferGetPage(metabuf), BrinGetPagesPerRange(index),
 					   BRIN_CURRENT_VERSION);
 	MarkBufferDirty(metabuf);
-	log_newpage_buffer(metabuf, false);
+	log_newpage_buffer(metabuf, true);
 	END_CRIT_SECTION();
 
 	UnlockReleaseBuffer(metabuf);
@@ -741,7 +791,7 @@ brinvacuumcleanup(IndexVacuumInfo *info, IndexBulkDeleteResult *stats)
 
 	brin_vacuum_scan(info->index, info->strategy);
 
-	brinsummarize(info->index, heapRel,
+	brinsummarize(info->index, heapRel, BRIN_ALL_BLOCKRANGES, false,
 				  &stats->num_index_tuples, &stats->num_index_tuples);
 
 	heap_close(heapRel, AccessShareLock);
@@ -759,7 +809,8 @@ brinoptions(Datum reloptions, bool validate)
 	BrinOptions *rdopts;
 	int			numoptions;
 	static const relopt_parse_elt tab[] = {
-		{"pages_per_range", RELOPT_TYPE_INT, offsetof(BrinOptions, pagesPerRange)}
+		{"pages_per_range", RELOPT_TYPE_INT, offsetof(BrinOptions, pagesPerRange)},
+		{"autosummarize", RELOPT_TYPE_BOOL, offsetof(BrinOptions, autosummarize)}
 	};
 
 	options = parseRelOptions(reloptions, validate, RELOPT_KIND_BRIN,
@@ -786,11 +837,38 @@ brinoptions(Datum reloptions, bool validate)
 Datum
 brin_summarize_new_values(PG_FUNCTION_ARGS)
 {
+	Datum		relation = PG_GETARG_DATUM(0);
+
+	return DirectFunctionCall2(brin_summarize_range,
+							   relation,
+							   Int64GetDatum((int64) BRIN_ALL_BLOCKRANGES));
+}
+
+/*
+ * SQL-callable function to summarize the indicated page range, if not already
+ * summarized.  If the second argument is BRIN_ALL_BLOCKRANGES, all
+ * unsummarized ranges are summarized.
+ */
+Datum
+brin_summarize_range(PG_FUNCTION_ARGS)
+{
 	Oid			indexoid = PG_GETARG_OID(0);
+	int64		heapBlk64 = PG_GETARG_INT64(1);
+	BlockNumber heapBlk;
 	Oid			heapoid;
 	Relation	indexRel;
 	Relation	heapRel;
 	double		numSummarized = 0;
+
+	if (heapBlk64 > BRIN_ALL_BLOCKRANGES || heapBlk64 < 0)
+	{
+		char	   *blk = psprintf(INT64_FORMAT, heapBlk64);
+
+		ereport(ERROR,
+				(errcode(ERRCODE_NUMERIC_VALUE_OUT_OF_RANGE),
+				 errmsg("block number out of range: %s", blk)));
+	}
+	heapBlk = (BlockNumber) heapBlk64;
 
 	/*
 	 * We must lock table before index to avoid deadlocks.  However, if the
@@ -816,7 +894,7 @@ brin_summarize_new_values(PG_FUNCTION_ARGS)
 
 	/* User must own the index (comparable to privileges needed for VACUUM) */
 	if (!pg_class_ownercheck(indexoid, GetUserId()))
-		aclcheck_error(ACLCHECK_NOT_OWNER, ACL_KIND_CLASS,
+		aclcheck_error(ACLCHECK_NOT_OWNER, OBJECT_INDEX,
 					   RelationGetRelationName(indexRel));
 
 	/*
@@ -831,12 +909,87 @@ brin_summarize_new_values(PG_FUNCTION_ARGS)
 						RelationGetRelationName(indexRel))));
 
 	/* OK, do it */
-	brinsummarize(indexRel, heapRel, &numSummarized, NULL);
+	brinsummarize(indexRel, heapRel, heapBlk, true, &numSummarized, NULL);
 
 	relation_close(indexRel, ShareUpdateExclusiveLock);
 	relation_close(heapRel, ShareUpdateExclusiveLock);
 
 	PG_RETURN_INT32((int32) numSummarized);
+}
+
+/*
+ * SQL-callable interface to mark a range as no longer summarized
+ */
+Datum
+brin_desummarize_range(PG_FUNCTION_ARGS)
+{
+	Oid			indexoid = PG_GETARG_OID(0);
+	int64		heapBlk64 = PG_GETARG_INT64(1);
+	BlockNumber heapBlk;
+	Oid			heapoid;
+	Relation	heapRel;
+	Relation	indexRel;
+	bool		done;
+
+	if (heapBlk64 > MaxBlockNumber || heapBlk64 < 0)
+	{
+		char	   *blk = psprintf(INT64_FORMAT, heapBlk64);
+
+		ereport(ERROR,
+				(errcode(ERRCODE_NUMERIC_VALUE_OUT_OF_RANGE),
+				 errmsg("block number out of range: %s", blk)));
+	}
+	heapBlk = (BlockNumber) heapBlk64;
+
+	/*
+	 * We must lock table before index to avoid deadlocks.  However, if the
+	 * passed indexoid isn't an index then IndexGetRelation() will fail.
+	 * Rather than emitting a not-very-helpful error message, postpone
+	 * complaining, expecting that the is-it-an-index test below will fail.
+	 */
+	heapoid = IndexGetRelation(indexoid, true);
+	if (OidIsValid(heapoid))
+		heapRel = heap_open(heapoid, ShareUpdateExclusiveLock);
+	else
+		heapRel = NULL;
+
+	indexRel = index_open(indexoid, ShareUpdateExclusiveLock);
+
+	/* Must be a BRIN index */
+	if (indexRel->rd_rel->relkind != RELKIND_INDEX ||
+		indexRel->rd_rel->relam != BRIN_AM_OID)
+		ereport(ERROR,
+				(errcode(ERRCODE_WRONG_OBJECT_TYPE),
+				 errmsg("\"%s\" is not a BRIN index",
+						RelationGetRelationName(indexRel))));
+
+	/* User must own the index (comparable to privileges needed for VACUUM) */
+	if (!pg_class_ownercheck(indexoid, GetUserId()))
+		aclcheck_error(ACLCHECK_NOT_OWNER, OBJECT_INDEX,
+					   RelationGetRelationName(indexRel));
+
+	/*
+	 * Since we did the IndexGetRelation call above without any lock, it's
+	 * barely possible that a race against an index drop/recreation could have
+	 * netted us the wrong table.  Recheck.
+	 */
+	if (heapRel == NULL || heapoid != IndexGetRelation(indexoid, false))
+		ereport(ERROR,
+				(errcode(ERRCODE_UNDEFINED_TABLE),
+				 errmsg("could not open parent table of index %s",
+						RelationGetRelationName(indexRel))));
+
+	/* the revmap does the hard work */
+	do
+	{
+		done = brinRevmapDesummarizeRange(indexRel, heapBlk);
+	}
+	while (!done);
+
+	relation_close(indexRel, ShareUpdateExclusiveLock);
+	relation_close(heapRel, ShareUpdateExclusiveLock);
+
+	PG_RETURN_VOID();
 }
 
 /*
@@ -868,12 +1021,12 @@ brin_build_desc(Relation rel)
 	for (keyno = 0; keyno < tupdesc->natts; keyno++)
 	{
 		FmgrInfo   *opcInfoFn;
+		Form_pg_attribute attr = TupleDescAttr(tupdesc, keyno);
 
 		opcInfoFn = index_getprocinfo(rel, keyno + 1, BRIN_PROCNUM_OPCINFO);
 
 		opcinfo[keyno] = (BrinOpcInfo *)
-			DatumGetPointer(FunctionCall1(opcInfoFn,
-										  tupdesc->attrs[keyno]->atttypid));
+			DatumGetPointer(FunctionCall1(opcInfoFn, attr->atttypid));
 		totalstored += opcinfo[keyno]->oi_nstored;
 	}
 
@@ -904,6 +1057,27 @@ brin_free_desc(BrinDesc *bdesc)
 	Assert(bdesc->bd_tupdesc->tdrefcount >= 1);
 	/* no need for retail pfree */
 	MemoryContextDelete(bdesc->bd_context);
+}
+
+/*
+ * Fetch index's statistical data into *stats
+ */
+void
+brinGetStats(Relation index, BrinStatsData *stats)
+{
+	Buffer		metabuffer;
+	Page		metapage;
+	BrinMetaPageData *metadata;
+
+	metabuffer = ReadBuffer(index, BRIN_METAPAGE_BLKNO);
+	LockBuffer(metabuffer, BUFFER_LOCK_SHARE);
+	metapage = BufferGetPage(metabuffer);
+	metadata = (BrinMetaPageData *) PageGetContents(metapage);
+
+	stats->pagesPerRange = metadata->pagesPerRange;
+	stats->revmapNumPages = metadata->lastRevmapPage - 1;
+
+	UnlockReleaseBuffer(metabuffer);
 }
 
 /*
@@ -944,7 +1118,7 @@ terminate_brin_buildstate(BrinBuildState *state)
 
 		page = BufferGetPage(state->bs_currentInsertBuf);
 		RecordPageWithFreeSpace(state->bs_irel,
-							BufferGetBlockNumber(state->bs_currentInsertBuf),
+								BufferGetBlockNumber(state->bs_currentInsertBuf),
 								PageGetFreeSpace(page));
 		ReleaseBuffer(state->bs_currentInsertBuf);
 	}
@@ -955,7 +1129,8 @@ terminate_brin_buildstate(BrinBuildState *state)
 }
 
 /*
- * Summarize the given page range of the given index.
+ * On the given BRIN index, summarize the heap page range that corresponds
+ * to the heap block number given.
  *
  * This routine can run in parallel with insertions into the heap.  To avoid
  * missing those values from the summary tuple, we first insert a placeholder
@@ -965,6 +1140,12 @@ terminate_brin_buildstate(BrinBuildState *state)
  * update of the index value happens in a loop, so that if somebody updates
  * the placeholder tuple after we read it, we detect the case and try again.
  * This ensures that the concurrently inserted tuples are not lost.
+ *
+ * A further corner case is this routine being asked to summarize the partial
+ * range at the end of the table.  heapNumBlocks is the (possibly outdated)
+ * table size; if we notice that the requested range lies beyond that size,
+ * we re-compute the table size after inserting the placeholder tuple, to
+ * avoid missing pages that were appended recently.
  */
 static void
 summarize_range(IndexInfo *indexInfo, BrinBuildState *state, Relation heapRel,
@@ -986,6 +1167,33 @@ summarize_range(IndexInfo *indexInfo, BrinBuildState *state, Relation heapRel,
 						   heapBlk, phtup, phsz);
 
 	/*
+	 * Compute range end.  We hold ShareUpdateExclusive lock on table, so it
+	 * cannot shrink concurrently (but it can grow).
+	 */
+	Assert(heapBlk % state->bs_pagesPerRange == 0);
+	if (heapBlk + state->bs_pagesPerRange > heapNumBlks)
+	{
+		/*
+		 * If we're asked to scan what we believe to be the final range on the
+		 * table (i.e. a range that might be partial) we need to recompute our
+		 * idea of what the latest page is after inserting the placeholder
+		 * tuple.  Anyone that grows the table later will update the
+		 * placeholder tuple, so it doesn't matter that we won't scan these
+		 * pages ourselves.  Careful: the table might have been extended
+		 * beyond the current range, so clamp our result.
+		 *
+		 * Fortunately, this should occur infrequently.
+		 */
+		scanNumBlks = Min(RelationGetNumberOfBlocks(heapRel) - heapBlk,
+						  state->bs_pagesPerRange);
+	}
+	else
+	{
+		/* Easy case: range is known to be complete */
+		scanNumBlks = state->bs_pagesPerRange;
+	}
+
+	/*
 	 * Execute the partial heap scan covering the heap blocks in the specified
 	 * page range, summarizing the heap tuples in it.  This scan stops just
 	 * short of brinbuildCallback creating the new index entry.
@@ -995,11 +1203,9 @@ summarize_range(IndexInfo *indexInfo, BrinBuildState *state, Relation heapRel,
 	 * by transactions that are still in progress, among other corner cases.
 	 */
 	state->bs_currRangeStart = heapBlk;
-	scanNumBlks = heapBlk + state->bs_pagesPerRange <= heapNumBlks ?
-		state->bs_pagesPerRange : heapNumBlks - heapBlk;
 	IndexBuildHeapRangeScan(heapRel, state->bs_irel, indexInfo, false, true,
 							heapBlk, scanNumBlks,
-							brinbuildCallback, (void *) state);
+							brinbuildCallback, (void *) state, NULL);
 
 	/*
 	 * Now we update the values obtained by the scan with the placeholder
@@ -1046,7 +1252,7 @@ summarize_range(IndexInfo *indexInfo, BrinBuildState *state, Relation heapRel,
 		/* the placeholder tuple must exist */
 		if (phtup == NULL)
 			elog(ERROR, "missing placeholder tuple");
-		phtup = brin_copy_tuple(phtup, phsz);
+		phtup = brin_copy_tuple(phtup, phsz, NULL, NULL);
 		LockBuffer(phbuf, BUFFER_LOCK_UNLOCK);
 
 		/* merge it into the tuple from the heap scan */
@@ -1057,41 +1263,69 @@ summarize_range(IndexInfo *indexInfo, BrinBuildState *state, Relation heapRel,
 }
 
 /*
- * Scan a complete BRIN index, and summarize each page range that's not already
- * summarized.  The index and heap must have been locked by caller in at
- * least ShareUpdateExclusiveLock mode.
+ * Summarize page ranges that are not already summarized.  If pageRange is
+ * BRIN_ALL_BLOCKRANGES then the whole table is scanned; otherwise, only the
+ * page range containing the given heap page number is scanned.
+ * If include_partial is true, then the partial range at the end of the table
+ * is summarized, otherwise not.
  *
  * For each new index tuple inserted, *numSummarized (if not NULL) is
  * incremented; for each existing tuple, *numExisting (if not NULL) is
  * incremented.
  */
 static void
-brinsummarize(Relation index, Relation heapRel, double *numSummarized,
-			  double *numExisting)
+brinsummarize(Relation index, Relation heapRel, BlockNumber pageRange,
+			  bool include_partial, double *numSummarized, double *numExisting)
 {
 	BrinRevmap *revmap;
 	BrinBuildState *state = NULL;
 	IndexInfo  *indexInfo = NULL;
 	BlockNumber heapNumBlocks;
-	BlockNumber heapBlk;
 	BlockNumber pagesPerRange;
 	Buffer		buf;
+	BlockNumber startBlk;
 
 	revmap = brinRevmapInitialize(index, &pagesPerRange, NULL);
+
+	/* determine range of pages to process */
+	heapNumBlocks = RelationGetNumberOfBlocks(heapRel);
+	if (pageRange == BRIN_ALL_BLOCKRANGES)
+		startBlk = 0;
+	else
+	{
+		startBlk = (pageRange / pagesPerRange) * pagesPerRange;
+		heapNumBlocks = Min(heapNumBlocks, startBlk + pagesPerRange);
+	}
+	if (startBlk > heapNumBlocks)
+	{
+		/* Nothing to do if start point is beyond end of table */
+		brinRevmapTerminate(revmap);
+		return;
+	}
 
 	/*
 	 * Scan the revmap to find unsummarized items.
 	 */
 	buf = InvalidBuffer;
-	heapNumBlocks = RelationGetNumberOfBlocks(heapRel);
-	for (heapBlk = 0; heapBlk < heapNumBlocks; heapBlk += pagesPerRange)
+	for (; startBlk < heapNumBlocks; startBlk += pagesPerRange)
 	{
 		BrinTuple  *tup;
 		OffsetNumber off;
 
+		/*
+		 * Unless requested to summarize even a partial range, go away now if
+		 * we think the next range is partial.  Caller would pass true when it
+		 * is typically run once bulk data loading is done
+		 * (brin_summarize_new_values), and false when it is typically the
+		 * result of arbitrarily-scheduled maintenance command (vacuuming).
+		 */
+		if (!include_partial &&
+			(startBlk + pagesPerRange > heapNumBlocks))
+			break;
+
 		CHECK_FOR_INTERRUPTS();
 
-		tup = brinGetTupleForHeapBlock(revmap, heapBlk, &buf, &off, NULL,
+		tup = brinGetTupleForHeapBlock(revmap, startBlk, &buf, &off, NULL,
 									   BUFFER_LOCK_SHARE, NULL);
 		if (tup == NULL)
 		{
@@ -1104,7 +1338,7 @@ brinsummarize(Relation index, Relation heapRel, double *numSummarized,
 												   pagesPerRange);
 				indexInfo = BuildIndexInfo(index);
 			}
-			summarize_range(indexInfo, state, heapRel, heapBlk, heapNumBlocks);
+			summarize_range(indexInfo, state, heapRel, startBlk, heapNumBlocks);
 
 			/* and re-initialize state for the next range */
 			brin_memtuple_initialize(state->bs_dtuple, state->bs_bdesc);
@@ -1169,7 +1403,7 @@ union_tuples(BrinDesc *bdesc, BrinMemTuple *a, BrinTuple *b)
 								"brin union",
 								ALLOCSET_DEFAULT_SIZES);
 	oldcxt = MemoryContextSwitchTo(cxt);
-	db = brin_deform_tuple(bdesc, b);
+	db = brin_deform_tuple(bdesc, b, NULL);
 	MemoryContextSwitchTo(oldcxt);
 
 	for (keyno = 0; keyno < bdesc->bd_tupdesc->natts; keyno++)

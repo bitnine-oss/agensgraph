@@ -25,7 +25,7 @@
  * AMs support this.
  *
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/catalog/pg_opclass.h
@@ -127,6 +127,8 @@ DATA(insert (	403		interval_ops		PGNSP PGUID 1982 1186 t 0 ));
 DATA(insert (	405		interval_ops		PGNSP PGUID 1983 1186 t 0 ));
 DATA(insert (	403		macaddr_ops			PGNSP PGUID 1984  829 t 0 ));
 DATA(insert (	405		macaddr_ops			PGNSP PGUID 1985  829 t 0 ));
+DATA(insert (	403		macaddr8_ops		PGNSP PGUID 3371  774 t 0 ));
+DATA(insert (	405		macaddr8_ops		PGNSP PGUID 3372  774 t 0 ));
 /*
  * Here's an ugly little hack to save space in the system catalog indexes.
  * btree doesn't ordinarily allow a storage type different from input type;
@@ -203,6 +205,7 @@ DATA(insert (	4000	box_ops				PGNSP PGUID 5000  603  t 0 ));
 DATA(insert (	4000	quad_point_ops		PGNSP PGUID 4015  600 t 0 ));
 DATA(insert (	4000	kd_point_ops		PGNSP PGUID 4016  600 f 0 ));
 DATA(insert (	4000	text_ops			PGNSP PGUID 4017  25 t 0 ));
+DATA(insert (	4000	poly_ops			PGNSP PGUID 5008  604 t 603 ));
 DATA(insert (	403		jsonb_ops			PGNSP PGUID 4033  3802 t 0 ));
 DATA(insert (	405		jsonb_ops			PGNSP PGUID 4034  3802 t 0 ));
 DATA(insert (	2742	jsonb_ops			PGNSP PGUID 4036  3802 t 25 ));
@@ -224,6 +227,7 @@ DATA(insert (	3580	float8_minmax_ops		PGNSP PGUID 4070   701 t 701 ));
 DATA(insert (	3580	abstime_minmax_ops		PGNSP PGUID 4072   702 t 702 ));
 DATA(insert (	3580	reltime_minmax_ops		PGNSP PGUID 4073   703 t 703 ));
 DATA(insert (	3580	macaddr_minmax_ops		PGNSP PGUID 4074   829 t 829 ));
+DATA(insert (	3580	macaddr8_minmax_ops		PGNSP PGUID 4109   774 t 774 ));
 DATA(insert (	3580	inet_minmax_ops			PGNSP PGUID 4075   869 f 869 ));
 DATA(insert (	3580	inet_inclusion_ops		PGNSP PGUID 4102   869 t 869 ));
 DATA(insert (	3580	bpchar_minmax_ops		PGNSP PGUID 4076  1042 t 1042 ));
@@ -251,4 +255,4 @@ DATA(insert ( 3580 graphid_minmax_ops   PGNSP PGUID 7105 7002 t 0 ));
 
 DATA(insert (  403 rowid_ops          	PGNSP PGUID 7167 7062 t 0 ));
 
-#endif   /* PG_OPCLASS_H */
+#endif							/* PG_OPCLASS_H */

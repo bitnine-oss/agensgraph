@@ -4,7 +4,7 @@
  *	  prototypes for utility.c.
  *
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/tcop/utility.h
@@ -25,16 +25,19 @@ typedef enum
 
 /* Hook for plugins to get control in ProcessUtility() */
 typedef void (*ProcessUtility_hook_type) (PlannedStmt *pstmt,
-					  const char *queryString, ProcessUtilityContext context,
-													  ParamListInfo params,
-									DestReceiver *dest, char *completionTag);
+										  const char *queryString, ProcessUtilityContext context,
+										  ParamListInfo params,
+										  QueryEnvironment *queryEnv,
+										  DestReceiver *dest, char *completionTag);
 extern PGDLLIMPORT ProcessUtility_hook_type ProcessUtility_hook;
 
 extern void ProcessUtility(PlannedStmt *pstmt, const char *queryString,
 			   ProcessUtilityContext context, ParamListInfo params,
+			   QueryEnvironment *queryEnv,
 			   DestReceiver *dest, char *completionTag);
 extern void standard_ProcessUtility(PlannedStmt *pstmt, const char *queryString,
 						ProcessUtilityContext context, ParamListInfo params,
+						QueryEnvironment *queryEnv,
 						DestReceiver *dest, char *completionTag);
 
 extern bool UtilityReturnsTuples(Node *parsetree);
@@ -49,4 +52,4 @@ extern LogStmtLevel GetCommandLogLevel(Node *parsetree);
 
 extern bool CommandIsReadOnly(PlannedStmt *pstmt);
 
-#endif   /* UTILITY_H */
+#endif							/* UTILITY_H */

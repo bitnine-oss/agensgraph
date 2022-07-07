@@ -7,7 +7,7 @@
  * It can be used to buffer either ordinary C strings (null-terminated text)
  * or arbitrary binary data.  All storage is allocated with palloc().
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/lib/stringinfo.h
@@ -30,8 +30,6 @@
  *		cursor	is initialized to zero by makeStringInfo or initStringInfo,
  *				but is not otherwise touched by the stringinfo.c routines.
  *				Some routines use it to scan through a StringInfo.
- *		long_ok whether this StringInfo can allocate more than MaxAllocSize
- *				bytes (but still up to 2GB).
  *-------------------------
  */
 typedef struct StringInfoData
@@ -40,7 +38,6 @@ typedef struct StringInfoData
 	int			len;
 	int			maxlen;
 	int			cursor;
-	bool		long_ok;
 } StringInfoData;
 
 typedef StringInfoData *StringInfo;
@@ -49,11 +46,11 @@ typedef StringInfoData *StringInfo;
 /*------------------------
  * There are two ways to create a StringInfo object initially:
  *
- * StringInfo stringptr = makeStringInfo(); // or makeLongStringInfo();
+ * StringInfo stringptr = makeStringInfo();
  *		Both the StringInfoData and the data buffer are palloc'd.
  *
  * StringInfoData string;
- * initStringInfo(&string); // or initLongStringInfo();
+ * initStringInfo(&string);
  *		The data buffer is palloc'd but the StringInfoData is just local.
  *		This is the easiest approach for a StringInfo object that will
  *		only live as long as the current routine.
@@ -70,26 +67,21 @@ typedef StringInfoData *StringInfo;
 
 /*------------------------
  * makeStringInfo
- * makeLongStringInfo
- * Create an empty 'StringInfoData' & return a pointer to it.  The former
- * allows up to 1 GB in size, per palloc(); the latter allows up to 2 GB.
+ * Create an empty 'StringInfoData' & return a pointer to it.
  */
 extern StringInfo makeStringInfo(void);
-extern StringInfo makeLongStringInfo(void);
 
 /*------------------------
  * initStringInfo
- * initLongStringInfo
  * Initialize a StringInfoData struct (with previously undefined contents)
- * to describe an empty string.  Size limits as above.
+ * to describe an empty string.
  */
 extern void initStringInfo(StringInfo str);
-extern void initLongStringInfo(StringInfo str);
 
 /*------------------------
  * resetStringInfo
  * Clears the current content of the StringInfo, if any. The
- * StringInfo remains valid.  The long_ok flag is not reset.
+ * StringInfo remains valid.
  */
 extern void resetStringInfo(StringInfo str);
 
@@ -152,9 +144,17 @@ extern void appendBinaryStringInfo(StringInfo str,
 					   const char *data, int datalen);
 
 /*------------------------
+ * appendBinaryStringInfoNT
+ * Append arbitrary binary data to a StringInfo, allocating more space
+ * if necessary. Does not ensure a trailing null-byte exists.
+ */
+extern void appendBinaryStringInfoNT(StringInfo str,
+						 const char *data, int datalen);
+
+/*------------------------
  * enlargeStringInfo
  * Make sure a StringInfo's buffer can hold at least 'needed' more bytes.
  */
 extern void enlargeStringInfo(StringInfo str, int needed);
 
-#endif   /* STRINGINFO_H */
+#endif							/* STRINGINFO_H */

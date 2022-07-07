@@ -3,7 +3,7 @@
  * numutils.c
  *	  utility functions for I/O of built-in numeric types.
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -48,8 +48,8 @@ pg_atoi(const char *s, int size, int c)
 	if (*s == 0)
 		ereport(ERROR,
 				(errcode(ERRCODE_INVALID_TEXT_REPRESENTATION),
-				 errmsg("invalid input syntax for %s: \"%s\"",
-						"integer", s)));
+				 errmsg("invalid input syntax for integer: \"%s\"",
+						s)));
 
 	errno = 0;
 	l = strtol(s, &badp, 10);
@@ -58,8 +58,8 @@ pg_atoi(const char *s, int size, int c)
 	if (s == badp)
 		ereport(ERROR,
 				(errcode(ERRCODE_INVALID_TEXT_REPRESENTATION),
-				 errmsg("invalid input syntax for %s: \"%s\"",
-						"integer", s)));
+				 errmsg("invalid input syntax for integer: \"%s\"",
+						s)));
 
 	switch (size)
 	{
@@ -86,7 +86,7 @@ pg_atoi(const char *s, int size, int c)
 			if (errno == ERANGE || l < SCHAR_MIN || l > SCHAR_MAX)
 				ereport(ERROR,
 						(errcode(ERRCODE_NUMERIC_VALUE_OUT_OF_RANGE),
-				errmsg("value \"%s\" is out of range for 8-bit integer", s)));
+						 errmsg("value \"%s\" is out of range for 8-bit integer", s)));
 			break;
 		default:
 			elog(ERROR, "unsupported result size: %d", size);
@@ -102,8 +102,8 @@ pg_atoi(const char *s, int size, int c)
 	if (*badp && *badp != c)
 		ereport(ERROR,
 				(errcode(ERRCODE_INVALID_TEXT_REPRESENTATION),
-				 errmsg("invalid input syntax for %s: \"%s\"",
-						"integer", s)));
+				 errmsg("invalid input syntax for integer: \"%s\"",
+						s)));
 
 	return (int32) l;
 }

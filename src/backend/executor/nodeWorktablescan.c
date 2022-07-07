@@ -3,7 +3,7 @@
  * nodeWorktablescan.c
  *	  routines to handle WorkTableScan nodes.
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -77,9 +77,11 @@ WorkTableScanRecheck(WorkTableScanState *node, TupleTableSlot *slot)
  *		access method functions.
  * ----------------------------------------------------------------
  */
-TupleTableSlot *
-ExecWorkTableScan(WorkTableScanState *node)
+static TupleTableSlot *
+ExecWorkTableScan(PlanState *pstate)
 {
+	WorkTableScanState *node = castNode(WorkTableScanState, pstate);
+
 	/*
 	 * On the first call, find the ancestor RecursiveUnion's state via the
 	 * Param slot reserved for it.  (We can't do this during node init because
@@ -144,6 +146,7 @@ ExecInitWorkTableScan(WorkTableScan *node, EState *estate, int eflags)
 	scanstate = makeNode(WorkTableScanState);
 	scanstate->ss.ps.plan = (Plan *) node;
 	scanstate->ss.ps.state = estate;
+	scanstate->ss.ps.ExecProcNode = ExecWorkTableScan;
 	scanstate->rustate = NULL;	/* we'll set this later */
 
 	/*
@@ -154,25 +157,21 @@ ExecInitWorkTableScan(WorkTableScan *node, EState *estate, int eflags)
 	ExecAssignExprContext(estate, &scanstate->ss.ps);
 
 	/*
-	 * initialize child expressions
-	 */
-	scanstate->ss.ps.targetlist = (List *)
-		ExecInitExpr((Expr *) node->scan.plan.targetlist,
-					 (PlanState *) scanstate);
-	scanstate->ss.ps.qual = (List *)
-		ExecInitExpr((Expr *) node->scan.plan.qual,
-					 (PlanState *) scanstate);
-
-	/*
 	 * tuple table initialization
 	 */
-	ExecInitResultTupleSlot(estate, &scanstate->ss.ps);
-	ExecInitScanTupleSlot(estate, &scanstate->ss);
+	ExecInitResultTupleSlotTL(estate, &scanstate->ss.ps);
+	ExecInitScanTupleSlot(estate, &scanstate->ss, NULL);
 
 	/*
-	 * Initialize result tuple type, but not yet projection info.
+	 * initialize child expressions
 	 */
-	ExecAssignResultTypeFromTL(&scanstate->ss.ps);
+	scanstate->ss.ps.qual =
+		ExecInitQual(node->scan.plan.qual, (PlanState *) scanstate);
+
+	/*
+	 * Do not yet initialize projection info, see ExecWorkTableScan() for
+	 * details.
+	 */
 
 	return scanstate;
 }

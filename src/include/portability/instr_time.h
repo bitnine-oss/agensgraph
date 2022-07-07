@@ -43,7 +43,7 @@
  * Beware of multiple evaluations of the macro arguments.
  *
  *
- * Copyright (c) 2001-2017, PostgreSQL Global Development Group
+ * Copyright (c) 2001-2018, PostgreSQL Global Development Group
  *
  * src/include/portability/instr_time.h
  *
@@ -202,7 +202,7 @@ typedef struct timeval instr_time;
 #define INSTR_TIME_GET_MICROSEC(t) \
 	(((uint64) (t).tv_sec * (uint64) 1000000) + (uint64) (t).tv_usec)
 
-#endif   /* HAVE_CLOCK_GETTIME */
+#endif							/* HAVE_CLOCK_GETTIME */
 
 #else							/* WIN32 */
 
@@ -243,6 +243,6 @@ GetTimerFrequency(void)
 	return (double) f.QuadPart;
 }
 
-#endif   /* WIN32 */
+#endif							/* WIN32 */
 
-#endif   /* INSTR_TIME_H */
+#endif							/* INSTR_TIME_H */

@@ -17,7 +17,7 @@ $node_subscriber->init(allows_streaming => 'logical');
 $node_subscriber->start;
 
 # Create some preexisting content on publisher
-my $ddl =  qq(
+my $ddl = qq(
 	CREATE EXTENSION hstore WITH SCHEMA public;
 	CREATE TABLE public.tst_one_array (
 		a INTEGER PRIMARY KEY,
@@ -103,16 +103,20 @@ $node_publisher->safe_psql('postgres',
 
 my $appname = 'tap_sub';
 $node_subscriber->safe_psql('postgres',
-	"CREATE SUBSCRIPTION tap_sub CONNECTION '$publisher_connstr application_name=$appname' PUBLICATION tap_pub WITH (SLOT NAME = tap_sub_slot)");
+"CREATE SUBSCRIPTION tap_sub CONNECTION '$publisher_connstr application_name=$appname' PUBLICATION tap_pub WITH (slot_name = tap_sub_slot)"
+);
 
-# Wait for subscriber to finish initialization
-my $caughtup_query =
-"SELECT pg_current_xlog_location() <= replay_location FROM pg_stat_replication WHERE application_name = '$appname';";
-$node_publisher->poll_query_until('postgres', $caughtup_query)
-  or die "Timed out while waiting for subscriber to catch up";
+$node_publisher->wait_for_catchup($appname);
+
+# Wait for initial sync to finish as well
+my $synced_query =
+"SELECT count(1) = 0 FROM pg_subscription_rel WHERE srsubstate NOT IN ('s', 'r');";
+$node_subscriber->poll_query_until('postgres', $synced_query)
+  or die "Timed out while waiting for subscriber to synchronize data";
 
 # Insert initial test data
-$node_publisher->safe_psql('postgres', qq(
+$node_publisher->safe_psql(
+	'postgres', qq(
 	-- test_tbl_one_array_col
 	INSERT INTO tst_one_array (a, b) VALUES
 		(1, '{1, 2, 3}'),
@@ -238,11 +242,11 @@ $node_publisher->safe_psql('postgres', qq(
 		(4, '"yellow horse"=>"moaned"');
 ));
 
-$node_publisher->poll_query_until('postgres', $caughtup_query)
-  or die "Timed out while waiting for subscriber to catch up";
+$node_publisher->wait_for_catchup($appname);
 
 # Check the data on subscriber
-my $result = $node_subscriber->safe_psql('postgres', qq(
+my $result = $node_subscriber->safe_psql(
+	'postgres', qq(
 	SET timezone = '+2';
 	SELECT a, b FROM tst_one_array ORDER BY a;
 	SELECT a, b, c, d FROM tst_arrays ORDER BY a;
@@ -260,7 +264,7 @@ my $result = $node_subscriber->safe_psql('postgres', qq(
 	SELECT a, b FROM tst_hstore ORDER BY a;
 ));
 
-is($result, '1|{1,2,3}
+is( $result, '1|{1,2,3}
 2|{2,3,1}
 3|{3,2,1}
 4|{4,3,2}
@@ -325,10 +329,11 @@ e|{d,NULL}
 2|"zzz"=>"foo"
 3|"123"=>"321"
 4|"yellow horse"=>"moaned"',
-'check replicated inserts on subscriber');
+	'check replicated inserts on subscriber');
 
 # Run batch of updates
-$node_publisher->safe_psql('postgres', qq(
+$node_publisher->safe_psql(
+	'postgres', qq(
 	UPDATE tst_one_array SET b = '{4, 5, 6}' WHERE a = 1;
 	UPDATE tst_one_array SET b = '{4, 5, 6, 1}' WHERE a > 3;
 	UPDATE tst_arrays SET b = '{"1a", "2b", "3c"}', c = '{1.0, 2.0, 3.0}', d = '{"1 day 1 second", "2 days 2 seconds", "3 days 3 second"}' WHERE a = '{1, 2, 3}';
@@ -358,11 +363,11 @@ $node_publisher->safe_psql('postgres', qq(
 	UPDATE tst_hstore SET b = '"also"=>"updated"' WHERE a = 3;
 ));
 
-$node_publisher->poll_query_until('postgres', $caughtup_query)
-  or die "Timed out while waiting for subscriber to catch up";
+$node_publisher->wait_for_catchup($appname);
 
 # Check the data on subscriber
-$result = $node_subscriber->safe_psql('postgres', qq(
+$result = $node_subscriber->safe_psql(
+	'postgres', qq(
 	SET timezone = '+2';
 	SELECT a, b FROM tst_one_array ORDER BY a;
 	SELECT a, b, c, d FROM tst_arrays ORDER BY a;
@@ -380,7 +385,7 @@ $result = $node_subscriber->safe_psql('postgres', qq(
 	SELECT a, b FROM tst_hstore ORDER BY a;
 ));
 
-is($result, '1|{4,5,6}
+is( $result, '1|{4,5,6}
 2|{2,3,1}
 3|{3,2,1}
 4|{4,5,6,1}
@@ -445,10 +450,11 @@ e|{e,d}
 2|"updated"=>"value"
 3|"also"=>"updated"
 4|"yellow horse"=>"moaned"',
-'check replicated updates on subscriber');
+	'check replicated updates on subscriber');
 
 # Run batch of deletes
-$node_publisher->safe_psql('postgres', qq(
+$node_publisher->safe_psql(
+	'postgres', qq(
 	DELETE FROM tst_one_array WHERE a = 1;
 	DELETE FROM tst_one_array WHERE b = '{2, 3, 1}';
 	DELETE FROM tst_arrays WHERE a = '{1, 2, 3}';
@@ -477,11 +483,11 @@ $node_publisher->safe_psql('postgres', qq(
 	DELETE FROM tst_hstore WHERE a = 1;
 ));
 
-$node_publisher->poll_query_until('postgres', $caughtup_query)
-  or die "Timed out while waiting for subscriber to catch up";
+$node_publisher->wait_for_catchup($appname);
 
 # Check the data on subscriber
-$result = $node_subscriber->safe_psql('postgres', qq(
+$result = $node_subscriber->safe_psql(
+	'postgres', qq(
 	SET timezone = '+2';
 	SELECT a, b FROM tst_one_array ORDER BY a;
 	SELECT a, b, c, d FROM tst_arrays ORDER BY a;
@@ -499,7 +505,7 @@ $result = $node_subscriber->safe_psql('postgres', qq(
 	SELECT a, b FROM tst_hstore ORDER BY a;
 ));
 
-is($result, '3|{3,2,1}
+is( $result, '3|{3,2,1}
 4|{4,5,6,1}
 5|{4,5,6,1}
 {3,1,2}|{c,a,b}|{3.3,1.1,2.2}|{"3 years","1 year","2 years"}
@@ -533,7 +539,7 @@ e|{e,d}
 2|"updated"=>"value"
 3|"also"=>"updated"
 4|"yellow horse"=>"moaned"',
-'check replicated deletes on subscriber');
+	'check replicated deletes on subscriber');
 
 $node_subscriber->stop('fast');
 $node_publisher->stop('fast');

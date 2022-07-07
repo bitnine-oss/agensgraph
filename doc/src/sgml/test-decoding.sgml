@@ -8,13 +8,13 @@
  </indexterm>
 
  <para>
-  <filename>test_decoding</> is an example of a logical decoding
+  <filename>test_decoding</filename> is an example of a logical decoding
   output plugin. It doesn't do anything especially useful, but can serve as
   a starting point for developing your own decoder.
  </para>
 
  <para>
-  <filename>test_decoding</> receives WAL through the logical decoding
+  <filename>test_decoding</filename> receives WAL through the logical decoding
   mechanism and decodes it into text representations of the operations
   performed.
  </para>
@@ -25,7 +25,7 @@
 
 <programlisting>
 postgres=# SELECT * FROM pg_logical_slot_get_changes('test_slot', NULL, NULL, 'include-xids', '0');
- location  | xid |                       data
+   lsn     | xid |                       data
 -----------+-----+--------------------------------------------------
  0/16D30F8 | 691 | BEGIN
  0/16D32A0 | 691 | table public.data: INSERT: id[int4]:2 data[text]:'arg'

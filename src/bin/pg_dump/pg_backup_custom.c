@@ -28,6 +28,7 @@
 #include "compress_io.h"
 #include "parallel.h"
 #include "pg_backup_utils.h"
+#include "common/file_utils.h"
 
 /*--------
  * Routines in the format interface
@@ -475,9 +476,9 @@ _PrintTocData(ArchiveHandle *AH, TocEntry *te)
 		else if (!ctx->hasSeek)
 			exit_horribly(modulename, "could not find block ID %d in archive -- "
 						  "possibly due to out-of-order restore request, "
-				  "which cannot be handled due to non-seekable input file\n",
+						  "which cannot be handled due to non-seekable input file\n",
 						  te->dumpId);
-		else	/* huh, the dataPos led us to EOF? */
+		else					/* huh, the dataPos led us to EOF? */
 			exit_horribly(modulename, "could not find block ID %d in archive -- "
 						  "possibly corrupt archive\n",
 						  te->dumpId);
@@ -580,10 +581,10 @@ _skipData(ArchiveHandle *AH)
 		{
 			if (feof(AH->FH))
 				exit_horribly(modulename,
-							"could not read from input file: end of file\n");
+							  "could not read from input file: end of file\n");
 			else
 				exit_horribly(modulename,
-					"could not read from input file: %s\n", strerror(errno));
+							  "could not read from input file: %s\n", strerror(errno));
 		}
 
 		ctx->filePos += blkLen;
@@ -720,6 +721,10 @@ _CloseArchive(ArchiveHandle *AH)
 
 	if (fclose(AH->FH) != 0)
 		exit_horribly(modulename, "could not close archive file: %s\n", strerror(errno));
+
+	/* Sync the output file if one is defined */
+	if (AH->dosync && AH->mode == archModeWrite && AH->fSpec)
+		(void) fsync_fname(AH->fSpec, false, progname);
 
 	AH->FH = NULL;
 }

@@ -3,7 +3,7 @@
  * restrictinfo.c
  *	  RestrictInfo node manipulation routines.
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -114,7 +114,7 @@ make_restrictinfo_internal(Expr *clause,
 	restrictinfo->is_pushed_down = is_pushed_down;
 	restrictinfo->outerjoin_delayed = outerjoin_delayed;
 	restrictinfo->pseudoconstant = pseudoconstant;
-	restrictinfo->can_join = false;		/* may get set below */
+	restrictinfo->can_join = false; /* may get set below */
 	restrictinfo->security_level = security_level;
 	restrictinfo->outer_relids = outer_relids;
 	restrictinfo->nullable_relids = nullable_relids;
@@ -127,7 +127,7 @@ make_restrictinfo_internal(Expr *clause,
 	if (security_level > 0)
 		restrictinfo->leakproof = !contain_leaked_vars((Node *) clause);
 	else
-		restrictinfo->leakproof = false;		/* really, "don't know" */
+		restrictinfo->leakproof = false;	/* really, "don't know" */
 
 	/*
 	 * If it's a binary opclause, set up left/right relids info. In any case
@@ -199,6 +199,8 @@ make_restrictinfo_internal(Expr *clause,
 
 	restrictinfo->left_bucketsize = -1;
 	restrictinfo->right_bucketsize = -1;
+	restrictinfo->left_mcvfreq = -1;
+	restrictinfo->right_mcvfreq = -1;
 
 	return restrictinfo;
 }
@@ -335,9 +337,7 @@ get_actual_clauses(List *restrictinfo_list)
 
 	foreach(l, restrictinfo_list)
 	{
-		RestrictInfo *rinfo = (RestrictInfo *) lfirst(l);
-
-		Assert(IsA(rinfo, RestrictInfo));
+		RestrictInfo *rinfo = lfirst_node(RestrictInfo, l);
 
 		Assert(!rinfo->pseudoconstant);
 
@@ -361,9 +361,7 @@ extract_actual_clauses(List *restrictinfo_list,
 
 	foreach(l, restrictinfo_list)
 	{
-		RestrictInfo *rinfo = (RestrictInfo *) lfirst(l);
-
-		Assert(IsA(rinfo, RestrictInfo));
+		RestrictInfo *rinfo = lfirst_node(RestrictInfo, l);
 
 		if (rinfo->pseudoconstant == pseudoconstant)
 			result = lappend(result, rinfo->clause);
@@ -393,9 +391,7 @@ extract_actual_join_clauses(List *restrictinfo_list,
 
 	foreach(l, restrictinfo_list)
 	{
-		RestrictInfo *rinfo = (RestrictInfo *) lfirst(l);
-
-		Assert(IsA(rinfo, RestrictInfo));
+		RestrictInfo *rinfo = lfirst_node(RestrictInfo, l);
 
 		if (rinfo->is_pushed_down)
 		{

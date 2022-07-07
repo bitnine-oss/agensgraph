@@ -4,7 +4,7 @@
  *
  *	Parallel support for pg_dump and pg_restore
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -51,21 +51,21 @@
 
 #include "postgres_fe.h"
 
+#ifndef WIN32
+#include <sys/wait.h>
+#include <signal.h>
+#include <unistd.h>
+#include <fcntl.h>
+#endif
 #ifdef HAVE_SYS_SELECT_H
 #include <sys/select.h>
 #endif
 
 #include "parallel.h"
 #include "pg_backup_utils.h"
-#include "fe_utils/string_utils.h"
 
-#ifndef WIN32
-#include <sys/types.h>
-#include <sys/wait.h>
-#include "signal.h"
-#include <unistd.h>
-#include <fcntl.h>
-#endif
+#include "fe_utils/string_utils.h"
+#include "port/pg_bswap.h"
 
 /* Mnemonic macros for indexing the fd array returned by pipe(2) */
 #define PIPE_READ							0
@@ -93,8 +93,8 @@ struct ParallelSlot
 	T_WorkerStatus workerStatus;	/* see enum above */
 
 	/* These fields are valid if workerStatus == WRKR_WORKING: */
-	ParallelCompletionPtr callback;		/* function to call on completion */
-	void	   *callback_data;	/* passthru data for it */
+	ParallelCompletionPtr callback; /* function to call on completion */
+	void	   *callback_data;	/* passthrough data for it */
 
 	ArchiveHandle *AH;			/* Archive data worker is using */
 
@@ -136,7 +136,7 @@ static int	piperead(int s, char *buf, int len);
 #define piperead(a,b,c)		read(a,b,c)
 #define pipewrite(a,b,c)	write(a,b,c)
 
-#endif   /* WIN32 */
+#endif							/* WIN32 */
 
 /*
  * State info for archive_close_connection() shutdown callback.
@@ -195,7 +195,7 @@ static DWORD tls_index;
 /* globally visible variables (needed by exit_nicely) */
 bool		parallel_init_done = false;
 DWORD		mainThreadId;
-#endif   /* WIN32 */
+#endif							/* WIN32 */
 
 static const char *modulename = gettext_noop("parallel archiver");
 
@@ -337,7 +337,7 @@ getThreadLocalPQExpBuffer(void)
 
 	return id_return;
 }
-#endif   /* WIN32 */
+#endif							/* WIN32 */
 
 /*
  * pg_dump and pg_restore call this to register the cleanup handler
@@ -514,7 +514,7 @@ WaitForTerminatingWorkers(ParallelState *pstate)
 				break;
 			}
 		}
-#endif   /* WIN32 */
+#endif							/* WIN32 */
 
 		/* On all platforms, update workerStatus and te[] as well */
 		Assert(j < pstate->numWorkers);
@@ -731,7 +731,7 @@ setup_cancel_handler(void)
 	}
 }
 
-#endif   /* WIN32 */
+#endif							/* WIN32 */
 
 
 /*
@@ -900,7 +900,7 @@ init_spawned_worker_win32(WorkerInfo *wi)
 	_endthreadex(0);
 	return 0;
 }
-#endif   /* WIN32 */
+#endif							/* WIN32 */
 
 /*
  * This function starts a parallel dump or restore by spawning off the worker
@@ -1046,7 +1046,7 @@ ParallelBackupStart(ArchiveHandle *AH)
 		closesocket(pipeMW[PIPE_READ]);
 		/* close write end of Worker -> Master */
 		closesocket(pipeWM[PIPE_WRITE]);
-#endif   /* WIN32 */
+#endif							/* WIN32 */
 	}
 
 	/*
@@ -1344,8 +1344,8 @@ lockTableForWorker(ArchiveHandle *AH, TocEntry *te)
 	if (!res || PQresultStatus(res) != PGRES_COMMAND_OK)
 		exit_horribly(modulename,
 					  "could not obtain lock on relation \"%s\"\n"
-		"This usually means that someone requested an ACCESS EXCLUSIVE lock "
-			  "on the table after the pg_dump parent process had gotten the "
+					  "This usually means that someone requested an ACCESS EXCLUSIVE lock "
+					  "on the table after the pg_dump parent process had gotten the "
 					  "initial ACCESS SHARE lock on the table.\n", qualId);
 
 	PQclear(res);
@@ -1766,8 +1766,8 @@ pgpipe(int handles[2])
 
 	memset((void *) &serv_addr, 0, sizeof(serv_addr));
 	serv_addr.sin_family = AF_INET;
-	serv_addr.sin_port = htons(0);
-	serv_addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+	serv_addr.sin_port = pg_hton16(0);
+	serv_addr.sin_addr.s_addr = pg_hton32(INADDR_LOOPBACK);
 	if (bind(s, (SOCKADDR *) &serv_addr, len) == SOCKET_ERROR)
 	{
 		write_msg(modulename, "pgpipe: could not bind: error code %d\n",
@@ -1842,4 +1842,4 @@ piperead(int s, char *buf, int len)
 	return ret;
 }
 
-#endif   /* WIN32 */
+#endif							/* WIN32 */

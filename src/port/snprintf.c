@@ -364,7 +364,7 @@ nextch1:
 				goto nextch1;
 			case '*':
 				if (afterstar)
-					have_non_dollar = true;		/* multiple stars */
+					have_non_dollar = true; /* multiple stars */
 				afterstar = true;
 				accum = 0;
 				goto nextch1;
@@ -745,6 +745,8 @@ nextch2:
 					strvalue = argvalues[fmtpos].cptr;
 				else
 					strvalue = va_arg(args, char *);
+				/* Whine if someone tries to print a NULL string */
+				Assert(strvalue != NULL);
 				fmtstr(strvalue, leftjust, fieldwidth, precision, pointflag,
 					   target);
 				break;
@@ -790,16 +792,6 @@ bad_format:
 	target->failed = true;
 }
 
-static size_t
-pg_strnlen(const char *str, size_t maxlen)
-{
-	const char *p = str;
-
-	while (maxlen-- > 0 && *p)
-		p++;
-	return p - str;
-}
-
 static void
 fmtstr(char *value, int leftjust, int minlen, int maxwidth,
 	   int pointflag, PrintfTarget *target)
@@ -812,7 +804,7 @@ fmtstr(char *value, int leftjust, int minlen, int maxwidth,
 	 * than that.
 	 */
 	if (pointflag)
-		vallen = pg_strnlen(value, maxwidth);
+		vallen = strnlen(value, maxwidth);
 	else
 		vallen = strlen(value);
 

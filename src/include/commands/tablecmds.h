@@ -4,7 +4,7 @@
  *	  prototypes for tablecmds.c.
  *
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/commands/tablecmds.h
@@ -18,6 +18,7 @@
 #include "catalog/dependency.h"
 #include "catalog/objectaddress.h"
 #include "nodes/parsenodes.h"
+#include "catalog/partition.h"
 #include "storage/lock.h"
 #include "utils/relcache.h"
 
@@ -87,5 +88,7 @@ extern void RangeVarCallbackOwnsTable(const RangeVar *relation,
 
 extern void RangeVarCallbackOwnsRelation(const RangeVar *relation,
 							 Oid relId, Oid oldRelId, void *noCatalogs);
+extern bool PartConstraintImpliedByRelConstraint(Relation scanrel,
+									 List *partConstraint);
 
-#endif   /* TABLECMDS_H */
+#endif							/* TABLECMDS_H */

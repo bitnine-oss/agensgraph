@@ -54,12 +54,15 @@
    &alterOperatorClass;
    &alterOperatorFamily;
    &alterPolicy;
+   &alterProcedure;
    &alterPublication;
    &alterRole;
+   &alterRoutine;
    &alterRule;
    &alterSchema;
    &alterSequence;
    &alterServer;
+   &alterStatistics;
    &alterSubscription;
    &alterSystem;
    &alterTable;
@@ -75,6 +78,7 @@
    &alterView;
    &analyze;
    &begin;
+   &call;
    &checkpoint;
    &close;
    &cluster;
@@ -102,12 +106,14 @@
    &createOperatorClass;
    &createOperatorFamily;
    &createPolicy;
+   &createProcedure;
    &createPublication;
    &createRole;
    &createRule;
    &createSchema;
    &createSequence;
    &createServer;
+   &createStatistics;
    &createSubscription;
    &createTable;
    &createTableAs;
@@ -148,12 +154,15 @@
    &dropOperatorFamily;
    &dropOwned;
    &dropPolicy;
+   &dropProcedure;
    &dropPublication;
    &dropRole;
+   &dropRoutine;
    &dropRule;
    &dropSchema;
    &dropSequence;
    &dropServer;
+   &dropStatistics;
    &dropSubscription;
    &dropTable;
    &dropTableSpace;
@@ -233,10 +242,8 @@
 
    &clusterdb;
    &createdb;
-   &createlang;
    &createuser;
    &dropdb;
-   &droplang;
    &dropuser;
    &ecpgRef;
    &pgBasebackup;
@@ -245,7 +252,7 @@
    &pgDump;
    &pgDumpall;
    &pgIsready;
-   &pgReceivexlog;
+   &pgReceivewal;
    &pgRecvlogical;
    &pgRestore;
    &psqlRef;
@@ -263,7 +270,7 @@
     <productname>PostgreSQL</productname> server applications and
     support utilities.  These commands can only be run usefully on the
     host where the database server resides.  Other utility programs
-    are listed in <xref linkend="reference-client">.
+    are listed in <xref linkend="reference-client"/>.
    </para>
   </partintro>
 
@@ -271,12 +278,12 @@
    &pgarchivecleanup;
    &pgControldata;
    &pgCtl;
-   &pgResetxlog;
+   &pgResetwal;
    &pgRewind;
    &pgtestfsync;
    &pgtesttiming;
    &pgupgrade;
-   &pgxlogdump;
+   &pgwaldump;
    &postgres;
    &postmaster;
 

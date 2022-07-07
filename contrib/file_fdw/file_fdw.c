@@ -3,7 +3,7 @@
  * file_fdw.c
  *		  foreign-data wrapper for server-side flat files (or programs).
  *
- * Copyright (c) 2010-2017, PostgreSQL Global Development Group
+ * Copyright (c) 2010-2018, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
  *		  contrib/file_fdw/file_fdw.c
@@ -250,7 +250,7 @@ file_fdw_validator(PG_FUNCTION_ARGS)
 					 buf.len > 0
 					 ? errhint("Valid options in this context are: %s",
 							   buf.data)
-				  : errhint("There are no valid options in this context.")));
+					 : errhint("There are no valid options in this context.")));
 		}
 
 		/*
@@ -430,7 +430,7 @@ get_file_fdw_attribute_options(Oid relid)
 	/* Retrieve FDW options for all user-defined attributes. */
 	for (attnum = 1; attnum <= natts; attnum++)
 	{
-		Form_pg_attribute attr = tupleDesc->attrs[attnum - 1];
+		Form_pg_attribute attr = TupleDescAttr(tupleDesc, attnum - 1);
 		List	   *options;
 		ListCell   *lc;
 
@@ -544,13 +544,13 @@ fileGetForeignPaths(PlannerInfo *root,
 	 */
 	add_path(baserel, (Path *)
 			 create_foreignscan_path(root, baserel,
-									 NULL,		/* default pathtarget */
+									 NULL,	/* default pathtarget */
 									 baserel->rows,
 									 startup_cost,
 									 total_cost,
-									 NIL,		/* no pathkeys */
-									 NULL,		/* no outer rel either */
-									 NULL,		/* no extra plan */
+									 NIL,	/* no pathkeys */
+									 NULL,	/* no outer rel either */
+									 NULL,	/* no extra plan */
 									 coptions));
 
 	/*
@@ -662,6 +662,7 @@ fileBeginForeignScan(ForeignScanState *node, int eflags)
 						   node->ss.ss_currentRelation,
 						   filename,
 						   is_program,
+						   NULL,
 						   NIL,
 						   options);
 
@@ -737,6 +738,7 @@ fileReScanForeignScan(ForeignScanState *node)
 									node->ss.ss_currentRelation,
 									festate->filename,
 									festate->is_program,
+									NULL,
 									NIL,
 									festate->options);
 }
@@ -822,7 +824,7 @@ fileIsForeignScanParallelSafe(PlannerInfo *root, RelOptInfo *rel,
  *
  * Check to see if it's useful to convert only a subset of the file's columns
  * to binary.  If so, construct a list of the column names to be converted,
- * return that at *columns, and return TRUE.  (Note that it's possible to
+ * return that at *columns, and return true.  (Note that it's possible to
  * determine that no columns need be converted, for instance with a COUNT(*)
  * query.  So we can't use returning a NIL list to indicate failure.)
  */
@@ -896,7 +898,7 @@ check_selective_binary_conversion(RelOptInfo *baserel,
 		/* Get user attributes. */
 		if (attnum > 0)
 		{
-			Form_pg_attribute attr = tupleDesc->attrs[attnum - 1];
+			Form_pg_attribute attr = TupleDescAttr(tupleDesc, attnum - 1);
 			char	   *attname = NameStr(attr->attname);
 
 			/* Skip dropped attributes (probably shouldn't see any here). */
@@ -910,7 +912,7 @@ check_selective_binary_conversion(RelOptInfo *baserel,
 	numattrs = 0;
 	for (i = 0; i < tupleDesc->natts; i++)
 	{
-		Form_pg_attribute attr = tupleDesc->attrs[i];
+		Form_pg_attribute attr = TupleDescAttr(tupleDesc, i);
 
 		if (attr->attisdropped)
 			continue;
@@ -1100,7 +1102,8 @@ file_acquire_sample_rows(Relation onerel, int elevel,
 	/*
 	 * Create CopyState from FDW options.
 	 */
-	cstate = BeginCopyFrom(NULL, onerel, filename, is_program, NIL, options);
+	cstate = BeginCopyFrom(NULL, onerel, filename, is_program, NULL, NIL,
+						   options);
 
 	/*
 	 * Use per-tuple memory context to prevent leak of memory used to read

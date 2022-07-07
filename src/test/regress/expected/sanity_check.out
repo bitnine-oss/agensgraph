@@ -9,7 +9,7 @@ VACUUM;
 \a\t
 SELECT relname, relhasindex
    FROM pg_class c LEFT JOIN pg_namespace n ON n.oid = relnamespace
-   WHERE relkind = 'r' AND (nspname ~ '^pg_temp_') IS NOT TRUE
+   WHERE relkind IN ('r', 'p') AND (nspname ~ '^pg_temp_') IS NOT TRUE
    ORDER BY relname;
 a|f
 a_star|f
@@ -72,6 +72,17 @@ line_tbl|f
 log_table|f
 lseg_tbl|f
 main_table|f
+mlparted|f
+mlparted1|f
+mlparted11|f
+mlparted12|f
+mlparted2|f
+mlparted3|f
+mlparted4|f
+mlparted_def|f
+mlparted_def1|f
+mlparted_def2|f
+mlparted_defd|f
 money_data|f
 num_data|f
 num_exp_add|t
@@ -88,6 +99,9 @@ onek|t
 onek2|t
 path_tbl|f
 person|f
+persons|f
+persons2|t
+persons3|t
 pg_aggregate|t
 pg_am|t
 pg_amop|t
@@ -137,7 +151,9 @@ pg_shdepend|t
 pg_shdescription|t
 pg_shseclabel|t
 pg_statistic|t
+pg_statistic_ext|t
 pg_subscription|t
+pg_subscription_rel|t
 pg_tablespace|t
 pg_transform|t
 pg_trigger|t
@@ -150,7 +166,11 @@ pg_type|t
 pg_user_mapping|t
 point_tbl|t
 polygon_tbl|t
+quad_box_tbl|t
 quad_point_tbl|t
+quad_poly_tbl|t
+quad_poly_tbl_ord_seq1|f
+quad_poly_tbl_ord_seq2|f
 radix_text_tbl|t
 ramp|f
 real_city|f

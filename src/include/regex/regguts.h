@@ -218,7 +218,7 @@ struct colormap
 	color	   *locolormap;		/* simple array indexed by chr code */
 
 	/* mapping data for chrs > MAX_SIMPLE_CHR: */
-	int			classbits[NUM_CCLASSES];		/* see comment above */
+	int			classbits[NUM_CCLASSES];	/* see comment above */
 	int			numcmranges;	/* number of colormapranges */
 	colormaprange *cmranges;	/* ranges of high chrs */
 	color	   *hicolormap;		/* 2-D array of color entries */
@@ -479,4 +479,4 @@ struct guts
 
 /* prototypes for functions that are exported from regcomp.c to regexec.c */
 extern void pg_set_regex_collation(Oid collation);
-extern color pg_reg_getcolor(struct colormap * cm, chr c);
+extern color pg_reg_getcolor(struct colormap *cm, chr c);

@@ -25,8 +25,6 @@
 #endif
 
 
-#define DB_MAX_ERR_STMT 128
-
 /* translator: this is a module name */
 static const char *modulename = gettext_noop("archiver (db)");
 
@@ -78,13 +76,9 @@ _check_database_version(ArchiveHandle *AH)
 /*
  * Reconnect to the server.  If dbname is not NULL, use that database,
  * else the one associated with the archive handle.  If username is
- * not NULL, use that user name, else the one from the handle.  If
- * both the database and the user match the existing connection already,
- * nothing will be done.
- *
- * Returns 1 in any case.
+ * not NULL, use that user name, else the one from the handle.
  */
-int
+void
 ReconnectToServer(ArchiveHandle *AH, const char *dbname, const char *username)
 {
 	PGconn	   *newConn;
@@ -101,11 +95,6 @@ ReconnectToServer(ArchiveHandle *AH, const char *dbname, const char *username)
 	else
 		newusername = username;
 
-	/* Let's see if the request is already satisfied */
-	if (strcmp(newdbname, PQdb(AH->connection)) == 0 &&
-		strcmp(newusername, PQuser(AH->connection)) == 0)
-		return 1;
-
 	newConn = _connectDB(AH, newdbname, newusername);
 
 	/* Update ArchiveHandle's connCancel before closing old connection */
@@ -113,8 +102,6 @@ ReconnectToServer(ArchiveHandle *AH, const char *dbname, const char *username)
 
 	PQfinish(AH->connection);
 	AH->connection = newConn;
-
-	return 1;
 }
 
 /*
@@ -353,12 +340,12 @@ DisconnectDatabase(Archive *AHX)
 	if (AH->connCancel)
 	{
 		/*
-		 * If we have an active query, send a cancel before closing.  This is
-		 * of no use for a normal exit, but might be helpful during
-		 * exit_horribly().
+		 * If we have an active query, send a cancel before closing, ignoring
+		 * any errors.  This is of no use for a normal exit, but might be
+		 * helpful during exit_horribly().
 		 */
 		if (PQtransactionStatus(AH->connection) == PQTRANS_ACTIVE)
-			PQcancel(AH->connCancel, errbuf, sizeof(errbuf));
+			(void) PQcancel(AH->connCancel, errbuf, sizeof(errbuf));
 
 		/*
 		 * Prevent signal handler from sending a cancel after this.
@@ -421,7 +408,7 @@ ExecuteSqlQuery(Archive *AHX, const char *query, ExecStatusType status)
  * Execute an SQL query and verify that we got exactly one row back.
  */
 PGresult *
-ExecuteSqlQueryForSingleRow(Archive *fout, char *query)
+ExecuteSqlQueryForSingleRow(Archive *fout, const char *query)
 {
 	PGresult   *res;
 	int			ntups;
@@ -449,7 +436,6 @@ ExecuteSqlCommand(ArchiveHandle *AH, const char *qry, const char *desc)
 {
 	PGconn	   *conn = AH->connection;
 	PGresult   *res;
-	char		errStmt[DB_MAX_ERR_STMT];
 
 #ifdef NOT_USED
 	fprintf(stderr, "Executing: '%s'\n\n", qry);
@@ -469,16 +455,8 @@ ExecuteSqlCommand(ArchiveHandle *AH, const char *qry, const char *desc)
 			break;
 		default:
 			/* trouble */
-			strncpy(errStmt, qry, DB_MAX_ERR_STMT);		/* strncpy required here */
-			if (errStmt[DB_MAX_ERR_STMT - 1] != '\0')
-			{
-				errStmt[DB_MAX_ERR_STMT - 4] = '.';
-				errStmt[DB_MAX_ERR_STMT - 3] = '.';
-				errStmt[DB_MAX_ERR_STMT - 2] = '.';
-				errStmt[DB_MAX_ERR_STMT - 1] = '\0';
-			}
 			warn_or_exit_horribly(AH, modulename, "%s: %s    Command was: %s\n",
-								  desc, PQerrorMessage(conn), errStmt);
+								  desc, PQerrorMessage(conn), qry);
 			break;
 	}
 
@@ -642,7 +620,7 @@ EndDBCopyMode(Archive *AHX, const char *tocEntryTag)
 		res = PQgetResult(AH->connection);
 		if (PQresultStatus(res) != PGRES_COMMAND_OK)
 			warn_or_exit_horribly(AH, modulename, "COPY failed for table \"%s\": %s",
-								tocEntryTag, PQerrorMessage(AH->connection));
+								  tocEntryTag, PQerrorMessage(AH->connection));
 		PQclear(res);
 
 		/* Do this to ensure we've pumped libpq back to idle state */

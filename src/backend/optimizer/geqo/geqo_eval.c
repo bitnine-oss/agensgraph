@@ -3,7 +3,7 @@
  * geqo_eval.c
  *	  Routines to evaluate query trees
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/backend/optimizer/geqo/geqo_eval.c
@@ -264,6 +264,9 @@ merge_clump(PlannerInfo *root, List *clumps, Clump *new_clump, bool force)
 			/* Keep searching if join order is not valid */
 			if (joinrel)
 			{
+				/* Create paths for partitionwise joins. */
+				generate_partitionwise_join_paths(root, joinrel);
+
 				/* Create GatherPaths for any useful partial paths for rel */
 				generate_gather_paths(root, joinrel);
 

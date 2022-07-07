@@ -40,7 +40,7 @@ inner_int_contains(ArrayType *a, ArrayType *b)
 			break;				/* db[j] is not in da */
 	}
 
-	return (n == nb) ? TRUE : FALSE;
+	return (n == nb) ? true : false;
 }
 
 /* arguments are assumed sorted */
@@ -65,12 +65,12 @@ inner_int_overlap(ArrayType *a, ArrayType *b)
 		if (da[i] < db[j])
 			i++;
 		else if (da[i] == db[j])
-			return TRUE;
+			return true;
 		else
 			j++;
 	}
 
-	return FALSE;
+	return false;
 }
 
 ArrayType *
@@ -282,7 +282,7 @@ internal_size(int *a, int len)
 
 	for (i = 0; i < len; i += 2)
 	{
-		if (!i || a[i] != a[i - 1])		/* do not count repeated range */
+		if (!i || a[i] != a[i - 1]) /* do not count repeated range */
 			size += a[i + 1] - a[i] + 1;
 	}
 

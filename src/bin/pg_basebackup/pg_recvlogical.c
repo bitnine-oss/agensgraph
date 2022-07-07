@@ -3,7 +3,7 @@
  * pg_recvlogical.c - receive data from a logical decoding slot in a streaming
  *					  fashion and write it to a local file.
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
  *		  src/bin/pg_basebackup/pg_recvlogical.c
@@ -37,7 +37,7 @@
 static char *outfile = NULL;
 static int	verbose = 0;
 static int	noloop = 0;
-static int	standby_message_timeout = 10 * 1000;		/* 10 sec = default */
+static int	standby_message_timeout = 10 * 1000;	/* 10 sec = default */
 static int	fsync_interval = 10 * 1000; /* 10 sec = default */
 static XLogRecPtr startpos = InvalidXLogRecPtr;
 static XLogRecPtr endpos = InvalidXLogRecPtr;
@@ -57,14 +57,14 @@ static int	outfd = -1;
 static volatile sig_atomic_t time_to_abort = false;
 static volatile sig_atomic_t output_reopen = false;
 static bool output_isfile;
-static int64 output_last_fsync = -1;
+static TimestampTz output_last_fsync = -1;
 static bool output_needs_fsync = false;
 static XLogRecPtr output_written_lsn = InvalidXLogRecPtr;
 static XLogRecPtr output_fsync_lsn = InvalidXLogRecPtr;
 
 static void usage(void);
 static void StreamLogicalLog(void);
-static void disconnect_and_exit(int code);
+static void disconnect_and_exit(int code) pg_attribute_noreturn();
 static bool flushAndSendFeedback(PGconn *conn, TimestampTz *now);
 static void prepareToTerminate(PGconn *conn, XLogRecPtr endpos,
 				   bool keepalive, XLogRecPtr lsn);
@@ -81,12 +81,12 @@ usage(void)
 	printf(_("      --drop-slot        drop the replication slot (for the slot's name see --slot)\n"));
 	printf(_("      --start            start streaming in a replication slot (for the slot's name see --slot)\n"));
 	printf(_("\nOptions:\n"));
+	printf(_("  -E, --endpos=LSN       exit after receiving the specified LSN\n"));
 	printf(_("  -f, --file=FILE        receive log into this file, - for stdout\n"));
 	printf(_("  -F  --fsync-interval=SECS\n"
 			 "                         time between fsyncs to the output file (default: %d)\n"), (fsync_interval / 1000));
 	printf(_("      --if-not-exists    do not error if slot already exists when creating a slot\n"));
 	printf(_("  -I, --startpos=LSN     where in an existing slot should the streaming start\n"));
-	printf(_("  -E, --endpos=LSN       exit after receiving the specified LSN\n"));
 	printf(_("  -n, --no-loop          do not loop on connection lost\n"));
 	printf(_("  -o, --option=NAME[=VALUE]\n"
 			 "                         pass option NAME with optional value VALUE to the\n"
@@ -112,7 +112,7 @@ usage(void)
  * Send a Standby Status Update message to server.
  */
 static bool
-sendFeedback(PGconn *conn, int64 now, bool force, bool replyRequested)
+sendFeedback(PGconn *conn, TimestampTz now, bool force, bool replyRequested)
 {
 	static XLogRecPtr last_written_lsn = InvalidXLogRecPtr;
 	static XLogRecPtr last_fsync_lsn = InvalidXLogRecPtr;
@@ -132,9 +132,9 @@ sendFeedback(PGconn *conn, int64 now, bool force, bool replyRequested)
 
 	if (verbose)
 		fprintf(stderr,
-		   _("%s: confirming write up to %X/%X, flush to %X/%X (slot %s)\n"),
+				_("%s: confirming write up to %X/%X, flush to %X/%X (slot %s)\n"),
 				progname,
-			(uint32) (output_written_lsn >> 32), (uint32) output_written_lsn,
+				(uint32) (output_written_lsn >> 32), (uint32) output_written_lsn,
 				(uint32) (output_fsync_lsn >> 32), (uint32) output_fsync_lsn,
 				replication_slot);
 
@@ -142,13 +142,13 @@ sendFeedback(PGconn *conn, int64 now, bool force, bool replyRequested)
 	len += 1;
 	fe_sendint64(output_written_lsn, &replybuf[len]);	/* write */
 	len += 8;
-	fe_sendint64(output_fsync_lsn, &replybuf[len]);		/* flush */
+	fe_sendint64(output_fsync_lsn, &replybuf[len]); /* flush */
 	len += 8;
 	fe_sendint64(InvalidXLogRecPtr, &replybuf[len]);	/* apply */
 	len += 8;
 	fe_sendint64(now, &replybuf[len]);	/* sendTime */
 	len += 8;
-	replybuf[len] = replyRequested ? 1 : 0;		/* replyRequested */
+	replybuf[len] = replyRequested ? 1 : 0; /* replyRequested */
 	len += 1;
 
 	startpos = output_written_lsn;
@@ -175,7 +175,7 @@ disconnect_and_exit(int code)
 }
 
 static bool
-OutputFsync(int64 now)
+OutputFsync(TimestampTz now)
 {
 	output_last_fsync = now;
 
@@ -212,7 +212,7 @@ StreamLogicalLog(void)
 {
 	PGresult   *res;
 	char	   *copybuf = NULL;
-	int64		last_status = -1;
+	TimestampTz last_status = -1;
 	int			i;
 	PQExpBuffer query;
 
@@ -241,7 +241,7 @@ StreamLogicalLog(void)
 
 	/* Initiate the replication stream at specified location */
 	appendPQExpBuffer(query, "START_REPLICATION SLOT \"%s\" LOGICAL %X/%X",
-			 replication_slot, (uint32) (startpos >> 32), (uint32) startpos);
+					  replication_slot, (uint32) (startpos >> 32), (uint32) startpos);
 
 	/* print options if there are any */
 	if (noptions)
@@ -285,7 +285,7 @@ StreamLogicalLog(void)
 		int			r;
 		int			bytes_left;
 		int			bytes_written;
-		int64		now;
+		TimestampTz now;
 		int			hdr_len;
 		XLogRecPtr	cur_record_lsn = InvalidXLogRecPtr;
 
@@ -365,8 +365,8 @@ StreamLogicalLog(void)
 			 * response back to the client.
 			 */
 			fd_set		input_mask;
-			int64		message_target = 0;
-			int64		fsync_target = 0;
+			TimestampTz message_target = 0;
+			TimestampTz fsync_target = 0;
 			struct timeval timeout;
 			struct timeval *timeoutptr = NULL;
 
@@ -394,7 +394,7 @@ StreamLogicalLog(void)
 			/* Now compute when to wakeup. */
 			if (message_target > 0 || fsync_target > 0)
 			{
-				int64		targettime;
+				TimestampTz targettime;
 				long		secs;
 				int			usecs;
 
@@ -570,7 +570,7 @@ StreamLogicalLog(void)
 			if (ret < 0)
 			{
 				fprintf(stderr,
-				  _("%s: could not write %u bytes to log file \"%s\": %s\n"),
+						_("%s: could not write %u bytes to log file \"%s\": %s\n"),
 						progname, bytes_left, outfile,
 						strerror(errno));
 				goto error;
@@ -584,7 +584,7 @@ StreamLogicalLog(void)
 		if (write(outfd, "\n", 1) != 1)
 		{
 			fprintf(stderr,
-				  _("%s: could not write %u bytes to log file \"%s\": %s\n"),
+					_("%s: could not write %u bytes to log file \"%s\": %s\n"),
 					progname, 1, outfile,
 					strerror(errno));
 			goto error;
@@ -622,7 +622,7 @@ StreamLogicalLog(void)
 
 	if (outfd != -1 && strcmp(outfile, "-") != 0)
 	{
-		int64		t = feGetCurrentTimestamp();
+		TimestampTz t = feGetCurrentTimestamp();
 
 		/* no need to jump to error on failure here, we're finishing anyway */
 		OutputFsync(t);
@@ -725,7 +725,7 @@ main(int argc, char **argv)
 		}
 	}
 
-	while ((c = getopt_long(argc, argv, "f:F:nvd:h:p:U:wWI:E:o:P:s:S:",
+	while ((c = getopt_long(argc, argv, "E:f:F:nvd:h:p:U:wWI:o:P:s:S:",
 							long_options, &option_index)) != -1)
 	{
 		switch (c)
@@ -979,8 +979,8 @@ main(int argc, char **argv)
 					_("%s: creating replication slot \"%s\"\n"),
 					progname, replication_slot);
 
-		if (!CreateReplicationSlot(conn, replication_slot, plugin,
-								   false, slot_exists_ok))
+		if (!CreateReplicationSlot(conn, replication_slot, plugin, false,
+								   false, false, slot_exists_ok))
 			disconnect_and_exit(1);
 		startpos = InvalidXLogRecPtr;
 	}
@@ -1037,7 +1037,7 @@ flushAndSendFeedback(PGconn *conn, TimestampTz *now)
 }
 
 /*
- * Try to inform the server about of upcoming demise, but don't wait around or
+ * Try to inform the server about our upcoming demise, but don't wait around or
  * retry on failure.
  */
 static void

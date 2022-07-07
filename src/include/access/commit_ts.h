@@ -3,7 +3,7 @@
  *
  * PostgreSQL commit timestamp manager
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/access/commit_ts.h
@@ -74,4 +74,4 @@ extern void commit_ts_redo(XLogReaderState *record);
 extern void commit_ts_desc(StringInfo buf, XLogReaderState *record);
 extern const char *commit_ts_identify(uint8 info);
 
-#endif   /* COMMIT_TS_H */
+#endif							/* COMMIT_TS_H */

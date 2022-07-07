@@ -5,7 +5,7 @@
  * Basically this is stuff that is useful in both pg_dump and pg_dumpall.
  *
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/bin/pg_dump/dumputils.c
@@ -33,7 +33,7 @@ static void AddAcl(PQExpBuffer aclbuf, const char *keyword,
  *	name: the object name, in the form to use in the commands (already quoted)
  *	subname: the sub-object name, if any (already quoted); NULL if none
  *	type: the object type (as seen in GRANT command: must be one of
- *		TABLE, SEQUENCE, FUNCTION, LANGUAGE, SCHEMA, DATABASE, TABLESPACE,
+ *		TABLE, SEQUENCE, FUNCTION, PROCEDURE, LANGUAGE, SCHEMA, DATABASE, TABLESPACE,
  *		FOREIGN DATA WRAPPER, SERVER, or LARGE OBJECT)
  *	acls: the ACL string fetched from the database
  *	racls: the ACL string of any initial-but-now-revoked privileges
@@ -42,7 +42,7 @@ static void AddAcl(PQExpBuffer aclbuf, const char *keyword,
  *	prefix: string to prefix to each generated command; typically empty
  *	remoteVersion: version of database
  *
- * Returns TRUE if okay, FALSE if could not parse the acl string.
+ * Returns true if okay, false if could not parse the acl string.
  * The resulting commands (if any) are appended to the contents of 'sql'.
  *
  * Note: when processing a default ACL, prefix is "ALTER DEFAULT PRIVILEGES "
@@ -177,7 +177,7 @@ buildACLCommands(const char *name, const char *subname,
 					else if (strncmp(grantee->data, "group ",
 									 strlen("group ")) == 0)
 						appendPQExpBuffer(firstsql, "GROUP %s;\n",
-									fmtId(grantee->data + strlen("group ")));
+										  fmtId(grantee->data + strlen("group ")));
 					else
 						appendPQExpBuffer(firstsql, "%s;\n",
 										  fmtId(grantee->data));
@@ -185,14 +185,14 @@ buildACLCommands(const char *name, const char *subname,
 				if (privswgo->len > 0)
 				{
 					appendPQExpBuffer(firstsql,
-							   "%sREVOKE GRANT OPTION FOR %s ON %s %s FROM ",
+									  "%sREVOKE GRANT OPTION FOR %s ON %s %s FROM ",
 									  prefix, privswgo->data, type, name);
 					if (grantee->len == 0)
 						appendPQExpBufferStr(firstsql, "PUBLIC");
 					else if (strncmp(grantee->data, "group ",
 									 strlen("group ")) == 0)
 						appendPQExpBuffer(firstsql, "GROUP %s",
-									fmtId(grantee->data + strlen("group ")));
+										  fmtId(grantee->data + strlen("group ")));
 					else
 						appendPQExpBufferStr(firstsql, fmtId(grantee->data));
 				}
@@ -260,7 +260,7 @@ buildACLCommands(const char *name, const char *subname,
 										  fmtId(grantee->data));
 					if (privswgo->len > 0)
 						appendPQExpBuffer(firstsql,
-							"%sGRANT %s ON %s %s TO %s WITH GRANT OPTION;\n",
+										  "%sGRANT %s ON %s %s TO %s WITH GRANT OPTION;\n",
 										  prefix, privswgo->data, type, name,
 										  fmtId(grantee->data));
 				}
@@ -291,7 +291,7 @@ buildACLCommands(const char *name, const char *subname,
 					else if (strncmp(grantee->data, "group ",
 									 strlen("group ")) == 0)
 						appendPQExpBuffer(secondsql, "GROUP %s;\n",
-									fmtId(grantee->data + strlen("group ")));
+										  fmtId(grantee->data + strlen("group ")));
 					else
 						appendPQExpBuffer(secondsql, "%s;\n", fmtId(grantee->data));
 				}
@@ -304,7 +304,7 @@ buildACLCommands(const char *name, const char *subname,
 					else if (strncmp(grantee->data, "group ",
 									 strlen("group ")) == 0)
 						appendPQExpBuffer(secondsql, "GROUP %s",
-									fmtId(grantee->data + strlen("group ")));
+										  fmtId(grantee->data + strlen("group ")));
 					else
 						appendPQExpBufferStr(secondsql, fmtId(grantee->data));
 					appendPQExpBufferStr(secondsql, " WITH GRANT OPTION;\n");
@@ -359,7 +359,7 @@ buildACLCommands(const char *name, const char *subname,
  *	owner: username of privileges owner (will be passed through fmtId)
  *	remoteVersion: version of database
  *
- * Returns TRUE if okay, FALSE if could not parse the acl string.
+ * Returns true if okay, false if could not parse the acl string.
  * The resulting commands (if any) are appended to the contents of 'sql'.
  */
 bool
@@ -390,13 +390,19 @@ buildDefaultACLCommands(const char *type, const char *nspname,
 		appendPQExpBuffer(sql, "SELECT pg_catalog.binary_upgrade_set_record_init_privs(true);\n");
 		if (!buildACLCommands("", NULL, type, initacls, initracls, owner,
 							  prefix->data, remoteVersion, sql))
+		{
+			destroyPQExpBuffer(prefix);
 			return false;
+		}
 		appendPQExpBuffer(sql, "SELECT pg_catalog.binary_upgrade_set_record_init_privs(false);\n");
 	}
 
 	if (!buildACLCommands("", NULL, type, acls, racls, owner,
 						  prefix->data, remoteVersion, sql))
+	{
+		destroyPQExpBuffer(prefix);
 		return false;
+	}
 
 	destroyPQExpBuffer(prefix);
 
@@ -518,9 +524,13 @@ do { \
 	else if (strcmp(type, "FUNCTION") == 0 ||
 			 strcmp(type, "FUNCTIONS") == 0)
 		CONVERT_PRIV('X', "EXECUTE");
+	else if (strcmp(type, "PROCEDURE") == 0 ||
+			 strcmp(type, "PROCEDURES") == 0)
+		CONVERT_PRIV('X', "EXECUTE");
 	else if (strcmp(type, "LANGUAGE") == 0)
 		CONVERT_PRIV('U', "USAGE");
-	else if (strcmp(type, "SCHEMA") == 0)
+	else if (strcmp(type, "SCHEMA") == 0 ||
+			 strcmp(type, "SCHEMAS") == 0)
 	{
 		CONVERT_PRIV('C', "CREATE");
 		CONVERT_PRIV('U', "USAGE");
@@ -597,7 +607,7 @@ copyAclUserName(PQExpBuffer output, char *input)
 			while (!(*input == '"' && *(input + 1) != '"'))
 			{
 				if (*input == '\0')
-					return input;		/* really a syntax error... */
+					return input;	/* really a syntax error... */
 
 				/*
 				 * Quoting convention is to escape " as "".  Keep this code in
@@ -715,21 +725,36 @@ buildACLQueries(PQExpBuffer acl_subquery, PQExpBuffer racl_subquery,
 	 * We always perform this delta on all ACLs and expect that by the time
 	 * these are run the initial privileges will be in place, even in a binary
 	 * upgrade situation (see below).
+	 *
+	 * Finally, the order in which privileges are in the ACL string (the order
+	 * they been GRANT'd in, which the backend maintains) must be preserved to
+	 * ensure that GRANTs WITH GRANT OPTION and subsequent GRANTs based on
+	 * those are dumped in the correct order.
 	 */
-	printfPQExpBuffer(acl_subquery, "(SELECT pg_catalog.array_agg(acl) FROM "
-					  "(SELECT pg_catalog.unnest(coalesce(%s,pg_catalog.acldefault(%s,%s))) AS acl "
-					  "EXCEPT "
-					  "SELECT pg_catalog.unnest(coalesce(pip.initprivs,pg_catalog.acldefault(%s,%s)))) as foo)",
+	printfPQExpBuffer(acl_subquery,
+					  "(SELECT pg_catalog.array_agg(acl ORDER BY row_n) FROM "
+					  "(SELECT acl, row_n FROM "
+					  "pg_catalog.unnest(coalesce(%s,pg_catalog.acldefault(%s,%s))) "
+					  "WITH ORDINALITY AS perm(acl,row_n) "
+					  "WHERE NOT EXISTS ( "
+					  "SELECT 1 FROM "
+					  "pg_catalog.unnest(coalesce(pip.initprivs,pg_catalog.acldefault(%s,%s))) "
+					  "AS init(init_acl) WHERE acl = init_acl)) as foo)",
 					  acl_column,
 					  obj_kind,
 					  acl_owner,
 					  obj_kind,
 					  acl_owner);
 
-	printfPQExpBuffer(racl_subquery, "(SELECT pg_catalog.array_agg(acl) FROM "
-					  "(SELECT pg_catalog.unnest(coalesce(pip.initprivs,pg_catalog.acldefault(%s,%s))) AS acl "
-					  "EXCEPT "
-					  "SELECT pg_catalog.unnest(coalesce(%s,pg_catalog.acldefault(%s,%s)))) as foo)",
+	printfPQExpBuffer(racl_subquery,
+					  "(SELECT pg_catalog.array_agg(acl ORDER BY row_n) FROM "
+					  "(SELECT acl, row_n FROM "
+					  "pg_catalog.unnest(coalesce(pip.initprivs,pg_catalog.acldefault(%s,%s))) "
+					  "WITH ORDINALITY AS initp(acl,row_n) "
+					  "WHERE NOT EXISTS ( "
+					  "SELECT 1 FROM "
+					  "pg_catalog.unnest(coalesce(%s,pg_catalog.acldefault(%s,%s))) "
+					  "AS permp(orig_acl) WHERE acl = orig_acl)) as foo)",
 					  obj_kind,
 					  acl_owner,
 					  acl_column,
@@ -754,19 +779,25 @@ buildACLQueries(PQExpBuffer acl_subquery, PQExpBuffer racl_subquery,
 	{
 		printfPQExpBuffer(init_acl_subquery,
 						  "CASE WHEN privtype = 'e' THEN "
-						  "(SELECT pg_catalog.array_agg(acl) FROM "
-						  "(SELECT pg_catalog.unnest(pip.initprivs) AS acl "
-						  "EXCEPT "
-		"SELECT pg_catalog.unnest(pg_catalog.acldefault(%s,%s))) as foo) END",
+						  "(SELECT pg_catalog.array_agg(acl ORDER BY row_n) FROM "
+						  "(SELECT acl, row_n FROM pg_catalog.unnest(pip.initprivs) "
+						  "WITH ORDINALITY AS initp(acl,row_n) "
+						  "WHERE NOT EXISTS ( "
+						  "SELECT 1 FROM "
+						  "pg_catalog.unnest(pg_catalog.acldefault(%s,%s)) "
+						  "AS privm(orig_acl) WHERE acl = orig_acl)) as foo) END",
 						  obj_kind,
 						  acl_owner);
 
 		printfPQExpBuffer(init_racl_subquery,
 						  "CASE WHEN privtype = 'e' THEN "
 						  "(SELECT pg_catalog.array_agg(acl) FROM "
-			"(SELECT pg_catalog.unnest(pg_catalog.acldefault(%s,%s)) AS acl "
-						  "EXCEPT "
-					  "SELECT pg_catalog.unnest(pip.initprivs)) as foo) END",
+						  "(SELECT acl, row_n FROM "
+						  "pg_catalog.unnest(pg_catalog.acldefault(%s,%s)) "
+						  "WITH ORDINALITY AS privp(acl,row_n) "
+						  "WHERE NOT EXISTS ( "
+						  "SELECT 1 FROM pg_catalog.unnest(pip.initprivs) "
+						  "AS initp(init_acl) WHERE acl = init_acl)) as foo) END",
 						  obj_kind,
 						  acl_owner);
 	}
@@ -775,4 +806,55 @@ buildACLQueries(PQExpBuffer acl_subquery, PQExpBuffer racl_subquery,
 		printfPQExpBuffer(init_acl_subquery, "NULL");
 		printfPQExpBuffer(init_racl_subquery, "NULL");
 	}
+}
+
+/*
+ * Helper function for dumping "ALTER DATABASE/ROLE SET ..." commands.
+ *
+ * Parse the contents of configitem (a "name=value" string), wrap it in
+ * a complete ALTER command, and append it to buf.
+ *
+ * type is DATABASE or ROLE, and name is the name of the database or role.
+ * If we need an "IN" clause, type2 and name2 similarly define what to put
+ * there; otherwise they should be NULL.
+ * conn is used only to determine string-literal quoting conventions.
+ */
+void
+makeAlterConfigCommand(PGconn *conn, const char *configitem,
+					   const char *type, const char *name,
+					   const char *type2, const char *name2,
+					   PQExpBuffer buf)
+{
+	char	   *mine;
+	char	   *pos;
+
+	/* Parse the configitem.  If we can't find an "=", silently do nothing. */
+	mine = pg_strdup(configitem);
+	pos = strchr(mine, '=');
+	if (pos == NULL)
+	{
+		pg_free(mine);
+		return;
+	}
+	*pos++ = '\0';
+
+	/* Build the command, with suitable quoting for everything. */
+	appendPQExpBuffer(buf, "ALTER %s %s ", type, fmtId(name));
+	if (type2 != NULL && name2 != NULL)
+		appendPQExpBuffer(buf, "IN %s %s ", type2, fmtId(name2));
+	appendPQExpBuffer(buf, "SET %s TO ", fmtId(mine));
+
+	/*
+	 * Some GUC variable names are 'LIST' type and hence must not be quoted.
+	 * XXX this list is incomplete ...
+	 */
+	if (pg_strcasecmp(mine, "DateStyle") == 0
+		|| pg_strcasecmp(mine, "search_path") == 0)
+		appendPQExpBufferStr(buf, pos);
+	else
+		appendStringLiteralConn(buf, pos, conn);
+
+	appendPQExpBufferStr(buf, ";\n");
+
+	pg_free(mine);
 }

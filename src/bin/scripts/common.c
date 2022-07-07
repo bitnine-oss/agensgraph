@@ -4,7 +4,7 @@
  *		Common support routines for bin/scripts/
  *
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/bin/scripts/common.c
@@ -425,4 +425,4 @@ setup_cancel_handler(void)
 	SetConsoleCtrlHandler(consoleHandler, TRUE);
 }
 
-#endif   /* WIN32 */
+#endif							/* WIN32 */

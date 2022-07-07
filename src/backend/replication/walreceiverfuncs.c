@@ -6,7 +6,7 @@
  * with the walreceiver process. Functions implementing walreceiver itself
  * are in walreceiver.c.
  *
- * Portions Copyright (c) 2010-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 2010-2018, PostgreSQL Global Development Group
  *
  *
  * IDENTIFICATION
@@ -16,7 +16,6 @@
  */
 #include "postgres.h"
 
-#include <sys/types.h>
 #include <sys/stat.h>
 #include <sys/time.h>
 #include <time.h>
@@ -227,6 +226,7 @@ RequestXLogStreaming(TimeLineID tli, XLogRecPtr recptr, const char *conninfo,
 	WalRcvData *walrcv = WalRcv;
 	bool		launch = false;
 	pg_time_t	now = (pg_time_t) time(NULL);
+	Latch	   *latch;
 
 	/*
 	 * We always start at the beginning of the segment. That prevents a broken
@@ -234,8 +234,8 @@ RequestXLogStreaming(TimeLineID tli, XLogRecPtr recptr, const char *conninfo,
 	 * being created by XLOG streaming, which might cause trouble later on if
 	 * the segment is e.g archived.
 	 */
-	if (recptr % XLogSegSize != 0)
-		recptr -= recptr % XLogSegSize;
+	if (XLogSegmentOffset(recptr, wal_segment_size) != 0)
+		recptr -= XLogSegmentOffset(recptr, wal_segment_size);
 
 	SpinLockAcquire(&walrcv->mutex);
 
@@ -275,12 +275,14 @@ RequestXLogStreaming(TimeLineID tli, XLogRecPtr recptr, const char *conninfo,
 	walrcv->receiveStart = recptr;
 	walrcv->receiveStartTLI = tli;
 
+	latch = walrcv->latch;
+
 	SpinLockRelease(&walrcv->mutex);
 
 	if (launch)
 		SendPostmasterSignal(PMSIGNAL_START_WALRECEIVER);
-	else if (walrcv->latch)
-		SetLatch(walrcv->latch);
+	else if (latch)
+		SetLatch(latch);
 }
 
 /*
@@ -322,7 +324,7 @@ GetReplicationApplyDelay(void)
 	long		secs;
 	int			usecs;
 
-	TimestampTz chunckReplayStartTime;
+	TimestampTz chunkReplayStartTime;
 
 	SpinLockAcquire(&walrcv->mutex);
 	receivePtr = walrcv->receivedUpto;
@@ -333,12 +335,12 @@ GetReplicationApplyDelay(void)
 	if (receivePtr == replayPtr)
 		return 0;
 
-	chunckReplayStartTime = GetCurrentChunkReplayStartTime();
+	chunkReplayStartTime = GetCurrentChunkReplayStartTime();
 
-	if (chunckReplayStartTime == 0)
+	if (chunkReplayStartTime == 0)
 		return -1;
 
-	TimestampDifference(chunckReplayStartTime,
+	TimestampDifference(chunkReplayStartTime,
 						GetCurrentTimestamp(),
 						&secs, &usecs);
 

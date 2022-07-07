@@ -3,7 +3,7 @@
  * foreigncmds.c
  *	  foreign-data wrapper/server creation/manipulation commands
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
  *
  *
  * IDENTIFICATION
@@ -230,7 +230,7 @@ AlterForeignDataWrapperOwner_internal(Relation rel, HeapTuple tup, Oid newOwnerI
 				(errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
 				 errmsg("permission denied to change owner of foreign-data wrapper \"%s\"",
 						NameStr(form->fdwname)),
-		errhint("The owner of a foreign-data wrapper must be a superuser.")));
+				 errhint("The owner of a foreign-data wrapper must be a superuser.")));
 
 	if (form->fdwowner != newOwnerId)
 	{
@@ -321,7 +321,7 @@ AlterForeignDataWrapperOwner_oid(Oid fwdId, Oid newOwnerId)
 	if (!HeapTupleIsValid(tup))
 		ereport(ERROR,
 				(errcode(ERRCODE_UNDEFINED_OBJECT),
-		  errmsg("foreign-data wrapper with OID %u does not exist", fwdId)));
+				 errmsg("foreign-data wrapper with OID %u does not exist", fwdId)));
 
 	AlterForeignDataWrapperOwner_internal(rel, tup, newOwnerId);
 
@@ -358,7 +358,7 @@ AlterForeignServerOwner_internal(Relation rel, HeapTuple tup, Oid newOwnerId)
 
 			/* Must be owner */
 			if (!pg_foreign_server_ownercheck(srvId, GetUserId()))
-				aclcheck_error(ACLCHECK_NOT_OWNER, ACL_KIND_FOREIGN_SERVER,
+				aclcheck_error(ACLCHECK_NOT_OWNER, OBJECT_FOREIGN_SERVER,
 							   NameStr(form->srvname));
 
 			/* Must be able to become new owner */
@@ -370,7 +370,7 @@ AlterForeignServerOwner_internal(Relation rel, HeapTuple tup, Oid newOwnerId)
 			{
 				ForeignDataWrapper *fdw = GetForeignDataWrapper(form->srvfdw);
 
-				aclcheck_error(aclresult, ACL_KIND_FDW, fdw->fdwname);
+				aclcheck_error(aclresult, OBJECT_FDW, fdw->fdwname);
 			}
 		}
 
@@ -485,7 +485,7 @@ lookup_fdw_handler_func(DefElem *handler)
 		ereport(ERROR,
 				(errcode(ERRCODE_WRONG_OBJECT_TYPE),
 				 errmsg("function %s must return type %s",
-				   NameListToString((List *) handler->arg), "fdw_handler")));
+						NameListToString((List *) handler->arg), "fdw_handler")));
 
 	return handlerOid;
 }
@@ -579,9 +579,9 @@ CreateForeignDataWrapper(CreateFdwStmt *stmt)
 	if (!superuser())
 		ereport(ERROR,
 				(errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
-			errmsg("permission denied to create foreign-data wrapper \"%s\"",
-				   stmt->fdwname),
-			errhint("Must be superuser to create a foreign-data wrapper.")));
+				 errmsg("permission denied to create foreign-data wrapper \"%s\"",
+						stmt->fdwname),
+				 errhint("Must be superuser to create a foreign-data wrapper.")));
 
 	/* For now the owner cannot be specified on create. Use effective user ID. */
 	ownerId = GetUserId();
@@ -693,9 +693,9 @@ AlterForeignDataWrapper(AlterFdwStmt *stmt)
 	if (!superuser())
 		ereport(ERROR,
 				(errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
-			 errmsg("permission denied to alter foreign-data wrapper \"%s\"",
-					stmt->fdwname),
-			 errhint("Must be superuser to alter a foreign-data wrapper.")));
+				 errmsg("permission denied to alter foreign-data wrapper \"%s\"",
+						stmt->fdwname),
+				 errhint("Must be superuser to alter a foreign-data wrapper.")));
 
 	tp = SearchSysCacheCopy1(FOREIGNDATAWRAPPERNAME,
 							 CStringGetDatum(stmt->fdwname));
@@ -703,7 +703,7 @@ AlterForeignDataWrapper(AlterFdwStmt *stmt)
 	if (!HeapTupleIsValid(tp))
 		ereport(ERROR,
 				(errcode(ERRCODE_UNDEFINED_OBJECT),
-		errmsg("foreign-data wrapper \"%s\" does not exist", stmt->fdwname)));
+				 errmsg("foreign-data wrapper \"%s\" does not exist", stmt->fdwname)));
 
 	fdwForm = (Form_pg_foreign_data_wrapper) GETSTRUCT(tp);
 	fdwId = HeapTupleGetOid(tp);
@@ -741,8 +741,8 @@ AlterForeignDataWrapper(AlterFdwStmt *stmt)
 		 */
 		if (OidIsValid(fdwvalidator))
 			ereport(WARNING,
-			 (errmsg("changing the foreign-data wrapper validator can cause "
-					 "the options for dependent objects to become invalid")));
+					(errmsg("changing the foreign-data wrapper validator can cause "
+							"the options for dependent objects to become invalid")));
 	}
 	else
 	{
@@ -878,13 +878,26 @@ CreateForeignServer(CreateForeignServerStmt *stmt)
 	ownerId = GetUserId();
 
 	/*
-	 * Check that there is no other foreign server by this name.
+	 * Check that there is no other foreign server by this name. Do nothing if
+	 * IF NOT EXISTS was enforced.
 	 */
 	if (GetForeignServerByName(stmt->servername, true) != NULL)
-		ereport(ERROR,
-				(errcode(ERRCODE_DUPLICATE_OBJECT),
-				 errmsg("server \"%s\" already exists",
-						stmt->servername)));
+	{
+		if (stmt->if_not_exists)
+		{
+			ereport(NOTICE,
+					(errcode(ERRCODE_DUPLICATE_OBJECT),
+					 errmsg("server \"%s\" already exists, skipping",
+							stmt->servername)));
+			heap_close(rel, RowExclusiveLock);
+			return InvalidObjectAddress;
+		}
+		else
+			ereport(ERROR,
+					(errcode(ERRCODE_DUPLICATE_OBJECT),
+					 errmsg("server \"%s\" already exists",
+							stmt->servername)));
+	}
 
 	/*
 	 * Check that the FDW exists and that we have USAGE on it. Also get the
@@ -894,7 +907,7 @@ CreateForeignServer(CreateForeignServerStmt *stmt)
 
 	aclresult = pg_foreign_data_wrapper_aclcheck(fdw->fdwid, ownerId, ACL_USAGE);
 	if (aclresult != ACLCHECK_OK)
-		aclcheck_error(aclresult, ACL_KIND_FDW, fdw->fdwname);
+		aclcheck_error(aclresult, OBJECT_FDW, fdw->fdwname);
 
 	/*
 	 * Insert tuple into pg_foreign_server.
@@ -997,7 +1010,7 @@ AlterForeignServer(AlterForeignServerStmt *stmt)
 	 * Only owner or a superuser can ALTER a SERVER.
 	 */
 	if (!pg_foreign_server_ownercheck(srvId, GetUserId()))
-		aclcheck_error(ACLCHECK_NOT_OWNER, ACL_KIND_FOREIGN_SERVER,
+		aclcheck_error(ACLCHECK_NOT_OWNER, OBJECT_FOREIGN_SERVER,
 					   stmt->servername);
 
 	memset(repl_val, 0, sizeof(repl_val));
@@ -1106,10 +1119,10 @@ user_mapping_ddl_aclcheck(Oid umuserid, Oid serverid, const char *servername)
 
 			aclresult = pg_foreign_server_aclcheck(serverid, curuserid, ACL_USAGE);
 			if (aclresult != ACLCHECK_OK)
-				aclcheck_error(aclresult, ACL_KIND_FOREIGN_SERVER, servername);
+				aclcheck_error(aclresult, OBJECT_FOREIGN_SERVER, servername);
 		}
 		else
-			aclcheck_error(ACLCHECK_NOT_OWNER, ACL_KIND_FOREIGN_SERVER,
+			aclcheck_error(ACLCHECK_NOT_OWNER, OBJECT_FOREIGN_SERVER,
 						   servername);
 	}
 }
@@ -1152,12 +1165,27 @@ CreateUserMapping(CreateUserMappingStmt *stmt)
 	umId = GetSysCacheOid2(USERMAPPINGUSERSERVER,
 						   ObjectIdGetDatum(useId),
 						   ObjectIdGetDatum(srv->serverid));
+
 	if (OidIsValid(umId))
-		ereport(ERROR,
-				(errcode(ERRCODE_DUPLICATE_OBJECT),
-				 errmsg("user mapping \"%s\" already exists for server %s",
-						MappingUserName(useId),
-						stmt->servername)));
+	{
+		if (stmt->if_not_exists)
+		{
+			ereport(NOTICE,
+					(errcode(ERRCODE_DUPLICATE_OBJECT),
+					 errmsg("user mapping for \"%s\" already exists for server %s, skipping",
+							MappingUserName(useId),
+							stmt->servername)));
+
+			heap_close(rel, RowExclusiveLock);
+			return InvalidObjectAddress;
+		}
+		else
+			ereport(ERROR,
+					(errcode(ERRCODE_DUPLICATE_OBJECT),
+					 errmsg("user mapping for \"%s\" already exists for server %s",
+							MappingUserName(useId),
+							stmt->servername)));
+	}
 
 	fdw = GetForeignDataWrapper(srv->fdwid);
 
@@ -1247,7 +1275,7 @@ AlterUserMapping(AlterUserMappingStmt *stmt)
 	if (!OidIsValid(umId))
 		ereport(ERROR,
 				(errcode(ERRCODE_UNDEFINED_OBJECT),
-				 errmsg("user mapping \"%s\" does not exist for the server",
+				 errmsg("user mapping for \"%s\" does not exist for the server",
 						MappingUserName(useId))));
 
 	user_mapping_ddl_aclcheck(useId, srv->serverid, stmt->servername);
@@ -1362,13 +1390,13 @@ RemoveUserMapping(DropUserMappingStmt *stmt)
 		if (!stmt->missing_ok)
 			ereport(ERROR,
 					(errcode(ERRCODE_UNDEFINED_OBJECT),
-				  errmsg("user mapping \"%s\" does not exist for the server",
-						 MappingUserName(useId))));
+					 errmsg("user mapping for \"%s\" does not exist for the server",
+							MappingUserName(useId))));
 
 		/* IF EXISTS specified, just note it */
 		ereport(NOTICE,
-		(errmsg("user mapping \"%s\" does not exist for the server, skipping",
-				MappingUserName(useId))));
+				(errmsg("user mapping for \"%s\" does not exist for the server, skipping",
+						MappingUserName(useId))));
 		return InvalidOid;
 	}
 
@@ -1449,7 +1477,7 @@ CreateForeignTable(CreateForeignTableStmt *stmt, Oid relid)
 	server = GetForeignServerByName(stmt->servername, false);
 	aclresult = pg_foreign_server_aclcheck(server->serverid, ownerId, ACL_USAGE);
 	if (aclresult != ACLCHECK_OK)
-		aclcheck_error(aclresult, ACL_KIND_FOREIGN_SERVER, server->servername);
+		aclcheck_error(aclresult, OBJECT_FOREIGN_SERVER, server->servername);
 
 	fdw = GetForeignDataWrapper(server->fdwid);
 
@@ -1508,7 +1536,7 @@ ImportForeignSchema(ImportForeignSchemaStmt *stmt)
 	server = GetForeignServerByName(stmt->server_name, false);
 	aclresult = pg_foreign_server_aclcheck(server->serverid, GetUserId(), ACL_USAGE);
 	if (aclresult != ACLCHECK_OK)
-		aclcheck_error(aclresult, ACL_KIND_FOREIGN_SERVER, server->servername);
+		aclcheck_error(aclresult, OBJECT_FOREIGN_SERVER, server->servername);
 
 	/* Check that the schema exists and we have CREATE permissions on it */
 	(void) LookupCreationNamespace(stmt->local_schema);
@@ -1561,7 +1589,7 @@ ImportForeignSchema(ImportForeignSchemaStmt *stmt)
 		 */
 		foreach(lc2, raw_parsetree_list)
 		{
-			RawStmt    *rs = castNode(RawStmt, lfirst(lc2));
+			RawStmt    *rs = lfirst_node(RawStmt, lc2);
 			CreateForeignTableStmt *cstmt = (CreateForeignTableStmt *) rs->stmt;
 			PlannedStmt *pstmt;
 
@@ -1595,7 +1623,7 @@ ImportForeignSchema(ImportForeignSchemaStmt *stmt)
 			/* Execute statement */
 			ProcessUtility(pstmt,
 						   cmd,
-						   PROCESS_UTILITY_SUBCOMMAND, NULL,
+						   PROCESS_UTILITY_SUBCOMMAND, NULL, NULL,
 						   None_Receiver, NULL);
 
 			/* Be sure to advance the command counter between subcommands */

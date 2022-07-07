@@ -3,7 +3,7 @@
  * matview.c
  *	  materialized view support
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -30,6 +30,7 @@
 #include "executor/spi.h"
 #include "miscadmin.h"
 #include "parser/parse_relation.h"
+#include "pgstat.h"
 #include "rewrite/rewriteHandler.h"
 #include "storage/lmgr.h"
 #include "storage/smgr.h"
@@ -59,7 +60,7 @@ static void transientrel_startup(DestReceiver *self, int operation, TupleDesc ty
 static bool transientrel_receive(TupleTableSlot *slot, DestReceiver *self);
 static void transientrel_shutdown(DestReceiver *self);
 static void transientrel_destroy(DestReceiver *self);
-static void refresh_matview_datafill(DestReceiver *dest, Query *query,
+static uint64 refresh_matview_datafill(DestReceiver *dest, Query *query,
 						 const char *queryString);
 
 static char *make_temptable_name_n(char *tempname, int n);
@@ -145,6 +146,7 @@ ExecRefreshMatView(RefreshMatViewStmt *stmt, const char *queryString,
 	Oid			relowner;
 	Oid			OIDNewHeap;
 	DestReceiver *dest;
+	uint64		processed = 0;
 	bool		concurrent;
 	LOCKMODE	lockmode;
 	char		relpersistence;
@@ -252,9 +254,9 @@ ExecRefreshMatView(RefreshMatViewStmt *stmt, const char *queryString,
 		if (!hasUniqueIndex)
 			ereport(ERROR,
 					(errcode(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
-			   errmsg("cannot refresh materialized view \"%s\" concurrently",
-					  quote_qualified_identifier(get_namespace_name(RelationGetNamespace(matviewRel)),
-									   RelationGetRelationName(matviewRel))),
+					 errmsg("cannot refresh materialized view \"%s\" concurrently",
+							quote_qualified_identifier(get_namespace_name(RelationGetNamespace(matviewRel)),
+													   RelationGetRelationName(matviewRel))),
 					 errhint("Create a unique index with no WHERE clause on one or more columns of the materialized view.")));
 	}
 
@@ -262,7 +264,7 @@ ExecRefreshMatView(RefreshMatViewStmt *stmt, const char *queryString,
 	 * The stored query was rewritten at the time of the MV definition, but
 	 * has not been scribbled on by the planner.
 	 */
-	dataQuery = castNode(Query, linitial(actions));
+	dataQuery = linitial_node(Query, actions);
 
 	/*
 	 * Check for active uses of the relation in the current transaction, such
@@ -322,9 +324,7 @@ ExecRefreshMatView(RefreshMatViewStmt *stmt, const char *queryString,
 
 	/* Generate the data, if wanted. */
 	if (!stmt->skipData)
-		refresh_matview_datafill(dest, dataQuery, queryString);
-
-	heap_close(matviewRel, NoLock);
+		processed = refresh_matview_datafill(dest, dataQuery, queryString);
 
 	/* Make the matview match the newly generated data. */
 	if (concurrent)
@@ -345,7 +345,21 @@ ExecRefreshMatView(RefreshMatViewStmt *stmt, const char *queryString,
 		Assert(matview_maintenance_depth == old_depth);
 	}
 	else
+	{
 		refresh_by_heap_swap(matviewOid, OIDNewHeap, relpersistence);
+
+		/*
+		 * Inform stats collector about our activity: basically, we truncated
+		 * the matview and inserted some new data.  (The concurrent code path
+		 * above doesn't need to worry about this because the inserts and
+		 * deletes it issues get counted by lower-level code.)
+		 */
+		pgstat_count_truncate(matviewRel);
+		if (!stmt->skipData)
+			pgstat_count_heap_insert(matviewRel, processed);
+	}
+
+	heap_close(matviewRel, NoLock);
 
 	/* Roll back any GUC changes */
 	AtEOXact_GUC(false, save_nestlevel);
@@ -360,8 +374,13 @@ ExecRefreshMatView(RefreshMatViewStmt *stmt, const char *queryString,
 
 /*
  * refresh_matview_datafill
+ *
+ * Execute the given query, sending result rows to "dest" (which will
+ * insert them into the target matview).
+ *
+ * Returns number of rows inserted.
  */
-static void
+static uint64
 refresh_matview_datafill(DestReceiver *dest, Query *query,
 						 const char *queryString)
 {
@@ -369,6 +388,7 @@ refresh_matview_datafill(DestReceiver *dest, Query *query,
 	PlannedStmt *plan;
 	QueryDesc  *queryDesc;
 	Query	   *copied_query;
+	uint64		processed;
 
 	/* Lock and rewrite, using a copy to preserve the original query. */
 	copied_query = copyObject(query);
@@ -398,13 +418,15 @@ refresh_matview_datafill(DestReceiver *dest, Query *query,
 	/* Create a QueryDesc, redirecting output to our tuple receiver */
 	queryDesc = CreateQueryDesc(plan, queryString,
 								GetActiveSnapshot(), InvalidSnapshot,
-								dest, NULL, 0);
+								dest, NULL, NULL, 0);
 
 	/* call ExecutorStart to prepare the plan for execution */
 	ExecutorStart(queryDesc, EXEC_FLAG_WITHOUT_OIDS);
 
 	/* run the plan */
-	ExecutorRun(queryDesc, ForwardScanDirection, 0L);
+	ExecutorRun(queryDesc, ForwardScanDirection, 0L, true);
+
+	processed = queryDesc->estate->es_processed;
 
 	/* and clean up */
 	ExecutorFinish(queryDesc);
@@ -413,6 +435,8 @@ refresh_matview_datafill(DestReceiver *dest, Query *query,
 	FreeQueryDesc(queryDesc);
 
 	PopActiveSnapshot();
+
+	return processed;
 }
 
 DestReceiver *
@@ -546,7 +570,7 @@ mv_GenerateOper(StringInfo buf, Oid opoid)
 	Assert(operform->oprkind == 'b');
 
 	appendStringInfo(buf, "OPERATOR(%s.%s)",
-				quote_identifier(get_namespace_name(operform->oprnamespace)),
+					 quote_identifier(get_namespace_name(operform->oprnamespace)),
 					 NameStr(operform->oprname));
 
 	ReleaseSysCache(opertup);
@@ -604,7 +628,7 @@ refresh_by_match_merge(Oid matviewOid, Oid tempOid, Oid relowner,
 	initStringInfo(&querybuf);
 	matviewRel = heap_open(matviewOid, NoLock);
 	matviewname = quote_qualified_identifier(get_namespace_name(RelationGetNamespace(matviewRel)),
-										RelationGetRelationName(matviewRel));
+											 RelationGetRelationName(matviewRel));
 	tempRel = heap_open(tempOid, NoLock);
 	tempname = quote_qualified_identifier(get_namespace_name(RelationGetNamespace(tempRel)),
 										  RelationGetRelationName(tempRel));
@@ -654,7 +678,7 @@ refresh_by_match_merge(Oid matviewOid, Oid tempOid, Oid relowner,
 				 errmsg("new data for materialized view \"%s\" contains duplicate rows without any null columns",
 						RelationGetRelationName(matviewRel)),
 				 errdetail("Row: %s",
-			SPI_getvalue(SPI_tuptable->vals[0], SPI_tuptable->tupdesc, 1))));
+						   SPI_getvalue(SPI_tuptable->vals[0], SPI_tuptable->tupdesc, 1))));
 	}
 
 	SetUserIdAndSecContext(relowner,
@@ -703,6 +727,7 @@ refresh_by_match_merge(Oid matviewOid, Oid tempOid, Oid relowner,
 			for (i = 0; i < numatts; i++)
 			{
 				int			attnum = indexStruct->indkey.values[i];
+				Form_pg_attribute attr = TupleDescAttr(tupdesc, attnum - 1);
 				Oid			type;
 				Oid			op;
 				const char *colname;
@@ -721,7 +746,7 @@ refresh_by_match_merge(Oid matviewOid, Oid tempOid, Oid relowner,
 				if (foundUniqueIndex)
 					appendStringInfoString(&querybuf, " AND ");
 
-				colname = quote_identifier(NameStr((tupdesc->attrs[attnum - 1])->attname));
+				colname = quote_identifier(NameStr(attr->attname));
 				appendStringInfo(&querybuf, "newdata.%s ", colname);
 				type = attnumTypeId(matviewRel, attnum);
 				op = lookup_type_cache(type, TYPECACHE_EQ_OPR)->eq_opr;
@@ -775,7 +800,7 @@ refresh_by_match_merge(Oid matviewOid, Oid tempOid, Oid relowner,
 	/* Deletes must come before inserts; do them first. */
 	resetStringInfo(&querybuf);
 	appendStringInfo(&querybuf,
-				   "DELETE FROM %s mv WHERE ctid OPERATOR(pg_catalog.=) ANY "
+					 "DELETE FROM %s mv WHERE ctid OPERATOR(pg_catalog.=) ANY "
 					 "(SELECT diff.tid FROM %s diff "
 					 "WHERE diff.tid IS NOT NULL "
 					 "AND diff.newdata IS NULL)",

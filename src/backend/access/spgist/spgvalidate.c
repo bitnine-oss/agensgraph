@@ -3,7 +3,7 @@
  * spgvalidate.c
  *	  Opclass validator for SP-GiST.
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -22,6 +22,7 @@
 #include "catalog/pg_opfamily.h"
 #include "catalog/pg_type.h"
 #include "utils/builtins.h"
+#include "utils/lsyscache.h"
 #include "utils/regproc.h"
 #include "utils/syscache.h"
 
@@ -52,6 +53,10 @@ spgvalidate(Oid opclassoid)
 	OpFamilyOpFuncGroup *opclassgroup;
 	int			i;
 	ListCell   *lc;
+	spgConfigIn	configIn;
+	spgConfigOut configOut;
+	Oid			configOutLefttype = InvalidOid;
+	Oid			configOutRighttype = InvalidOid;
 
 	/* Fetch opclass information */
 	classtup = SearchSysCache1(CLAOID, ObjectIdGetDatum(opclassoid));
@@ -74,6 +79,7 @@ spgvalidate(Oid opclassoid)
 	/* Fetch all operators and support functions of the opfamily */
 	oprlist = SearchSysCacheList1(AMOPSTRATEGY, ObjectIdGetDatum(opfamilyoid));
 	proclist = SearchSysCacheList1(AMPROCNUM, ObjectIdGetDatum(opfamilyoid));
+	grouplist = identify_opfamily_groups(oprlist, proclist);
 
 	/* Check individual support functions */
 	for (i = 0; i < proclist->n_members; i++)
@@ -90,8 +96,8 @@ spgvalidate(Oid opclassoid)
 		{
 			ereport(INFO,
 					(errcode(ERRCODE_INVALID_OBJECT_DEFINITION),
-					 errmsg("spgist operator family \"%s\" contains support procedure %s with cross-type registration",
-							opfamilyname,
+					 errmsg("operator family \"%s\" of access method %s contains support procedure %s with different left and right input types",
+							opfamilyname, "spgist",
 							format_procedure(procform->amproc))));
 			result = false;
 		}
@@ -100,6 +106,40 @@ spgvalidate(Oid opclassoid)
 		switch (procform->amprocnum)
 		{
 			case SPGIST_CONFIG_PROC:
+				ok = check_amproc_signature(procform->amproc, VOIDOID, true,
+											2, 2, INTERNALOID, INTERNALOID);
+				configIn.attType = procform->amproclefttype;
+				memset(&configOut, 0, sizeof(configOut));
+
+				OidFunctionCall2(procform->amproc,
+								 PointerGetDatum(&configIn),
+								 PointerGetDatum(&configOut));
+
+				configOutLefttype = procform->amproclefttype;
+				configOutRighttype = procform->amprocrighttype;
+
+				/*
+				 * When leaf and attribute types are the same, compress function
+				 * is not required and we set corresponding bit in functionset
+				 * for later group consistency check.
+				 */
+				if (!OidIsValid(configOut.leafType) ||
+					configOut.leafType == configIn.attType)
+				{
+					foreach(lc, grouplist)
+					{
+						OpFamilyOpFuncGroup *group = lfirst(lc);
+
+						if (group->lefttype == procform->amproclefttype &&
+							group->righttype == procform->amprocrighttype)
+						{
+							group->functionset |=
+								((uint64) 1) << SPGIST_COMPRESS_PROC;
+							break;
+						}
+					}
+				}
+				break;
 			case SPGIST_CHOOSE_PROC:
 			case SPGIST_PICKSPLIT_PROC:
 			case SPGIST_INNER_CONSISTENT_PROC:
@@ -110,11 +150,20 @@ spgvalidate(Oid opclassoid)
 				ok = check_amproc_signature(procform->amproc, BOOLOID, true,
 											2, 2, INTERNALOID, INTERNALOID);
 				break;
+			case SPGIST_COMPRESS_PROC:
+				if (configOutLefttype != procform->amproclefttype ||
+					configOutRighttype != procform->amprocrighttype)
+					ok = false;
+				else
+					ok = check_amproc_signature(procform->amproc,
+												configOut.leafType, true,
+												1, 1, procform->amproclefttype);
+				break;
 			default:
 				ereport(INFO,
 						(errcode(ERRCODE_INVALID_OBJECT_DEFINITION),
-						 errmsg("spgist operator family \"%s\" contains function %s with invalid support number %d",
-								opfamilyname,
+						 errmsg("operator family \"%s\" of access method %s contains function %s with invalid support number %d",
+								opfamilyname, "spgist",
 								format_procedure(procform->amproc),
 								procform->amprocnum)));
 				result = false;
@@ -125,8 +174,8 @@ spgvalidate(Oid opclassoid)
 		{
 			ereport(INFO,
 					(errcode(ERRCODE_INVALID_OBJECT_DEFINITION),
-					 errmsg("spgist operator family \"%s\" contains function %s with wrong signature for support number %d",
-							opfamilyname,
+					 errmsg("operator family \"%s\" of access method %s contains function %s with wrong signature for support number %d",
+							opfamilyname, "spgist",
 							format_procedure(procform->amproc),
 							procform->amprocnum)));
 			result = false;
@@ -144,8 +193,8 @@ spgvalidate(Oid opclassoid)
 		{
 			ereport(INFO,
 					(errcode(ERRCODE_INVALID_OBJECT_DEFINITION),
-					 errmsg("spgist operator family \"%s\" contains operator %s with invalid strategy number %d",
-							opfamilyname,
+					 errmsg("operator family \"%s\" of access method %s contains operator %s with invalid strategy number %d",
+							opfamilyname, "spgist",
 							format_operator(oprform->amopopr),
 							oprform->amopstrategy)));
 			result = false;
@@ -157,8 +206,8 @@ spgvalidate(Oid opclassoid)
 		{
 			ereport(INFO,
 					(errcode(ERRCODE_INVALID_OBJECT_DEFINITION),
-					 errmsg("spgist operator family \"%s\" contains invalid ORDER BY specification for operator %s",
-							opfamilyname,
+					 errmsg("operator family \"%s\" of access method %s contains invalid ORDER BY specification for operator %s",
+							opfamilyname, "spgist",
 							format_operator(oprform->amopopr))));
 			result = false;
 		}
@@ -170,15 +219,14 @@ spgvalidate(Oid opclassoid)
 		{
 			ereport(INFO,
 					(errcode(ERRCODE_INVALID_OBJECT_DEFINITION),
-					 errmsg("spgist operator family \"%s\" contains operator %s with wrong signature",
-							opfamilyname,
+					 errmsg("operator family \"%s\" of access method %s contains operator %s with wrong signature",
+							opfamilyname, "spgist",
 							format_operator(oprform->amopopr))));
 			result = false;
 		}
 	}
 
 	/* Now check for inconsistent groups of operators/functions */
-	grouplist = identify_opfamily_groups(oprlist, proclist);
 	opclassgroup = NULL;
 	foreach(lc, grouplist)
 	{
@@ -198,8 +246,8 @@ spgvalidate(Oid opclassoid)
 		{
 			ereport(INFO,
 					(errcode(ERRCODE_INVALID_OBJECT_DEFINITION),
-					 errmsg("spgist operator family \"%s\" is missing operator(s) for types %s and %s",
-							opfamilyname,
+					 errmsg("operator family \"%s\" of access method %s is missing operator(s) for types %s and %s",
+							opfamilyname, "spgist",
 							format_type_be(thisgroup->lefttype),
 							format_type_be(thisgroup->righttype))));
 			result = false;
@@ -218,8 +266,8 @@ spgvalidate(Oid opclassoid)
 				continue;		/* got it */
 			ereport(INFO,
 					(errcode(ERRCODE_INVALID_OBJECT_DEFINITION),
-					 errmsg("spgist operator family \"%s\" is missing support function %d for type %s",
-							opfamilyname, i,
+					 errmsg("operator family \"%s\" of access method %s is missing support function %d for type %s",
+							opfamilyname, "spgist", i,
 							format_type_be(thisgroup->lefttype))));
 			result = false;
 		}
@@ -231,8 +279,8 @@ spgvalidate(Oid opclassoid)
 	{
 		ereport(INFO,
 				(errcode(ERRCODE_INVALID_OBJECT_DEFINITION),
-				 errmsg("spgist operator class \"%s\" is missing operator(s)",
-						opclassname)));
+				 errmsg("operator class \"%s\" of access method %s is missing operator(s)",
+						opclassname, "spgist")));
 		result = false;
 	}
 

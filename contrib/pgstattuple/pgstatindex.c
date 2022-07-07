@@ -64,7 +64,7 @@ PG_FUNCTION_INFO_V1(pg_relpages_v1_5);
 PG_FUNCTION_INFO_V1(pg_relpagesbyid_v1_5);
 PG_FUNCTION_INFO_V1(pgstatginindex_v1_5);
 
-Datum pgstatginindex_internal(Oid relid, FunctionCallInfo fcinfo);
+Datum		pgstatginindex_internal(Oid relid, FunctionCallInfo fcinfo);
 
 #define IS_INDEX(r) ((r)->rd_rel->relkind == RELKIND_INDEX)
 #define IS_BTREE(r) ((r)->rd_rel->relam == BTREE_AM_OID)
@@ -113,22 +113,22 @@ typedef struct GinIndexStat
  */
 typedef struct HashIndexStat
 {
-	int32	version;
-	int32	space_per_page;
+	int32		version;
+	int32		space_per_page;
 
-	BlockNumber	bucket_pages;
+	BlockNumber bucket_pages;
 	BlockNumber overflow_pages;
 	BlockNumber bitmap_pages;
-	BlockNumber zero_pages;
+	BlockNumber unused_pages;
 
-	int64	live_items;
-	int64	dead_items;
-	uint64	free_space;
+	int64		live_items;
+	int64		dead_items;
+	uint64		free_space;
 } HashIndexStat;
 
 static Datum pgstatindex_impl(Relation rel, FunctionCallInfo fcinfo);
 static void GetHashPageStats(Page page, HashIndexStat *stats);
-
+static void check_relation_relkind(Relation rel);
 
 /* ------------------------------------------------------
  * pgstatindex()
@@ -143,7 +143,7 @@ static void GetHashPageStats(Page page, HashIndexStat *stats);
 Datum
 pgstatindex(PG_FUNCTION_ARGS)
 {
-	text	   *relname = PG_GETARG_TEXT_P(0);
+	text	   *relname = PG_GETARG_TEXT_PP(0);
 	Relation	rel;
 	RangeVar   *relrv;
 
@@ -168,7 +168,7 @@ pgstatindex(PG_FUNCTION_ARGS)
 Datum
 pgstatindex_v1_5(PG_FUNCTION_ARGS)
 {
-	text	   *relname = PG_GETARG_TEXT_P(0);
+	text	   *relname = PG_GETARG_TEXT_PP(0);
 	Relation	rel;
 	RangeVar   *relrv;
 
@@ -221,8 +221,10 @@ pgstatindex_impl(Relation rel, FunctionCallInfo fcinfo)
 	BufferAccessStrategy bstrategy = GetAccessStrategy(BAS_BULKREAD);
 
 	if (!IS_INDEX(rel) || !IS_BTREE(rel))
-		elog(ERROR, "relation \"%s\" is not a btree index",
-			 RelationGetRelationName(rel));
+		ereport(ERROR,
+				(errcode(ERRCODE_WRONG_OBJECT_TYPE),
+				 errmsg("relation \"%s\" is not a btree index",
+						RelationGetRelationName(rel))));
 
 	/*
 	 * Reject attempts to read non-local temporary relations; we would be
@@ -331,7 +333,7 @@ pgstatindex_impl(Relation rel, FunctionCallInfo fcinfo)
 		values[j++] = psprintf("%d", indexStat.version);
 		values[j++] = psprintf("%d", indexStat.level);
 		values[j++] = psprintf(INT64_FORMAT,
-							   (1 +		/* include the metapage in index_size */
+							   (1 + /* include the metapage in index_size */
 								indexStat.leaf_pages +
 								indexStat.internal_pages +
 								indexStat.deleted_pages +
@@ -375,7 +377,7 @@ pgstatindex_impl(Relation rel, FunctionCallInfo fcinfo)
 Datum
 pg_relpages(PG_FUNCTION_ARGS)
 {
-	text	   *relname = PG_GETARG_TEXT_P(0);
+	text	   *relname = PG_GETARG_TEXT_PP(0);
 	int64		relpages;
 	Relation	rel;
 	RangeVar   *relrv;
@@ -387,6 +389,9 @@ pg_relpages(PG_FUNCTION_ARGS)
 
 	relrv = makeRangeVarFromNameList(textToQualifiedNameList(relname));
 	rel = relation_openrv(relrv, AccessShareLock);
+
+	/* only some relkinds have storage */
+	check_relation_relkind(rel);
 
 	/* note: this will work OK on non-local temp tables */
 
@@ -401,13 +406,16 @@ pg_relpages(PG_FUNCTION_ARGS)
 Datum
 pg_relpages_v1_5(PG_FUNCTION_ARGS)
 {
-	text	   *relname = PG_GETARG_TEXT_P(0);
+	text	   *relname = PG_GETARG_TEXT_PP(0);
 	int64		relpages;
 	Relation	rel;
 	RangeVar   *relrv;
 
 	relrv = makeRangeVarFromNameList(textToQualifiedNameList(relname));
 	rel = relation_openrv(relrv, AccessShareLock);
+
+	/* only some relkinds have storage */
+	check_relation_relkind(rel);
 
 	/* note: this will work OK on non-local temp tables */
 
@@ -433,6 +441,9 @@ pg_relpagesbyid(PG_FUNCTION_ARGS)
 
 	rel = relation_open(relid, AccessShareLock);
 
+	/* only some relkinds have storage */
+	check_relation_relkind(rel);
+
 	/* note: this will work OK on non-local temp tables */
 
 	relpages = RelationGetNumberOfBlocks(rel);
@@ -451,6 +462,9 @@ pg_relpagesbyid_v1_5(PG_FUNCTION_ARGS)
 	Relation	rel;
 
 	rel = relation_open(relid, AccessShareLock);
+
+	/* only some relkinds have storage */
+	check_relation_relkind(rel);
 
 	/* note: this will work OK on non-local temp tables */
 
@@ -508,8 +522,10 @@ pgstatginindex_internal(Oid relid, FunctionCallInfo fcinfo)
 	rel = relation_open(relid, AccessShareLock);
 
 	if (!IS_INDEX(rel) || !IS_GIN(rel))
-		elog(ERROR, "relation \"%s\" is not a GIN index",
-			 RelationGetRelationName(rel));
+		ereport(ERROR,
+				(errcode(ERRCODE_WRONG_OBJECT_TYPE),
+				 errmsg("relation \"%s\" is not a GIN index",
+						RelationGetRelationName(rel))));
 
 	/*
 	 * Reject attempts to read non-local temporary relations; we would be
@@ -519,7 +535,7 @@ pgstatginindex_internal(Oid relid, FunctionCallInfo fcinfo)
 	if (RELATION_IS_OTHER_TEMP(rel))
 		ereport(ERROR,
 				(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-			   errmsg("cannot access temporary indexes of other sessions")));
+				 errmsg("cannot access temporary indexes of other sessions")));
 
 	/*
 	 * Read metapage
@@ -552,7 +568,7 @@ pgstatginindex_internal(Oid relid, FunctionCallInfo fcinfo)
 	tuple = heap_form_tuple(tupleDesc, values, nulls);
 	result = HeapTupleGetDatum(tuple);
 
-	return (result);
+	return result;
 }
 
 /* ------------------------------------------------------
@@ -565,8 +581,8 @@ Datum
 pgstathashindex(PG_FUNCTION_ARGS)
 {
 	Oid			relid = PG_GETARG_OID(0);
-	BlockNumber	nblocks;
-	BlockNumber	blkno;
+	BlockNumber nblocks;
+	BlockNumber blkno;
 	Relation	rel;
 	HashIndexStat stats;
 	BufferAccessStrategy bstrategy;
@@ -575,15 +591,19 @@ pgstathashindex(PG_FUNCTION_ARGS)
 	Datum		values[8];
 	bool		nulls[8];
 	Buffer		metabuf;
-	HashMetaPage	metap;
+	HashMetaPage metap;
 	float8		free_percent;
 	uint64		total_space;
 
 	rel = index_open(relid, AccessShareLock);
 
+	/* index_open() checks that it's an index */
 	if (!IS_HASH(rel))
-		elog(ERROR, "relation \"%s\" is not a HASH index",
-			 RelationGetRelationName(rel));
+		ereport(ERROR,
+				(errcode(ERRCODE_WRONG_OBJECT_TYPE),
+				 errmsg("relation \"%s\" is not a HASH index",
+						RelationGetRelationName(rel))));
+
 
 	/*
 	 * Reject attempts to read non-local temporary relations; we would be
@@ -593,7 +613,7 @@ pgstathashindex(PG_FUNCTION_ARGS)
 	if (RELATION_IS_OTHER_TEMP(rel))
 		ereport(ERROR,
 				(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-			   errmsg("cannot access temporary indexes of other sessions")));
+				 errmsg("cannot access temporary indexes of other sessions")));
 
 	/* Get the information we need from the metapage. */
 	memset(&stats, 0, sizeof(stats));
@@ -614,7 +634,6 @@ pgstathashindex(PG_FUNCTION_ARGS)
 	{
 		Buffer		buf;
 		Page		page;
-		HashPageOpaque	opaque;
 
 		CHECK_FOR_INTERRUPTS();
 
@@ -624,7 +643,7 @@ pgstathashindex(PG_FUNCTION_ARGS)
 		page = (Page) BufferGetPage(buf);
 
 		if (PageIsNew(page))
-			stats.zero_pages++;
+			stats.unused_pages++;
 		else if (PageGetSpecialSize(page) !=
 				 MAXALIGN(sizeof(HashPageOpaqueData)))
 			ereport(ERROR,
@@ -634,25 +653,32 @@ pgstathashindex(PG_FUNCTION_ARGS)
 							BufferGetBlockNumber(buf))));
 		else
 		{
+			HashPageOpaque opaque;
+			int			pagetype;
+
 			opaque = (HashPageOpaque) PageGetSpecialPointer(page);
-			if (opaque->hasho_flag & LH_BUCKET_PAGE)
+			pagetype = opaque->hasho_flag & LH_PAGE_TYPE;
+
+			if (pagetype == LH_BUCKET_PAGE)
 			{
 				stats.bucket_pages++;
 				GetHashPageStats(page, &stats);
 			}
-			else if (opaque->hasho_flag & LH_OVERFLOW_PAGE)
+			else if (pagetype == LH_OVERFLOW_PAGE)
 			{
 				stats.overflow_pages++;
 				GetHashPageStats(page, &stats);
 			}
-			else if (opaque->hasho_flag & LH_BITMAP_PAGE)
+			else if (pagetype == LH_BITMAP_PAGE)
 				stats.bitmap_pages++;
+			else if (pagetype == LH_UNUSED_PAGE)
+				stats.unused_pages++;
 			else
 				ereport(ERROR,
 						(errcode(ERRCODE_INDEX_CORRUPTED),
-					errmsg("unexpected page type 0x%04X in HASH index \"%s\" block %u",
-							opaque->hasho_flag, RelationGetRelationName(rel),
-							BufferGetBlockNumber(buf))));
+						 errmsg("unexpected page type 0x%04X in HASH index \"%s\" block %u",
+								opaque->hasho_flag, RelationGetRelationName(rel),
+								BufferGetBlockNumber(buf))));
 		}
 		UnlockReleaseBuffer(buf);
 	}
@@ -660,14 +686,15 @@ pgstathashindex(PG_FUNCTION_ARGS)
 	/* Done accessing the index */
 	index_close(rel, AccessShareLock);
 
-	/* Count zero pages as free space. */
-	stats.free_space += stats.zero_pages * stats.space_per_page;
+	/* Count unused pages as free space. */
+	stats.free_space += (uint64) stats.unused_pages * stats.space_per_page;
 
 	/*
 	 * Total space available for tuples excludes the metapage and the bitmap
 	 * pages.
 	 */
-	total_space = (nblocks - (stats.bitmap_pages + 1)) * stats.space_per_page;
+	total_space = (uint64) (nblocks - (stats.bitmap_pages + 1)) *
+		stats.space_per_page;
 
 	if (total_space == 0)
 		free_percent = 0.0;
@@ -690,7 +717,7 @@ pgstathashindex(PG_FUNCTION_ARGS)
 	values[1] = Int64GetDatum((int64) stats.bucket_pages);
 	values[2] = Int64GetDatum((int64) stats.overflow_pages);
 	values[3] = Int64GetDatum((int64) stats.bitmap_pages);
-	values[4] = Int64GetDatum((int64) stats.zero_pages);
+	values[4] = Int64GetDatum((int64) stats.unused_pages);
 	values[5] = Int64GetDatum(stats.live_items);
 	values[6] = Int64GetDatum(stats.dead_items);
 	values[7] = Float8GetDatum(free_percent);
@@ -709,12 +736,12 @@ static void
 GetHashPageStats(Page page, HashIndexStat *stats)
 {
 	OffsetNumber maxoff = PageGetMaxOffsetNumber(page);
-	int off;
+	int			off;
 
 	/* count live and dead tuples, and free space */
 	for (off = FirstOffsetNumber; off <= maxoff; off++)
 	{
-		ItemId      id = PageGetItemId(page, off);
+		ItemId		id = PageGetItemId(page, off);
 
 		if (!ItemIdIsDead(id))
 			stats->live_items++;
@@ -722,4 +749,22 @@ GetHashPageStats(Page page, HashIndexStat *stats)
 			stats->dead_items++;
 	}
 	stats->free_space += PageGetExactFreeSpace(page);
+}
+
+/*
+ * check_relation_relkind - convenience routine to check that relation
+ * is of the relkind supported by the callers
+ */
+static void
+check_relation_relkind(Relation rel)
+{
+	if (rel->rd_rel->relkind != RELKIND_RELATION &&
+		rel->rd_rel->relkind != RELKIND_INDEX &&
+		rel->rd_rel->relkind != RELKIND_MATVIEW &&
+		rel->rd_rel->relkind != RELKIND_SEQUENCE &&
+		rel->rd_rel->relkind != RELKIND_TOASTVALUE)
+		ereport(ERROR,
+				(errcode(ERRCODE_WRONG_OBJECT_TYPE),
+				 errmsg("\"%s\" is not a table, index, materialized view, sequence, or TOAST table",
+						RelationGetRelationName(rel))));
 }

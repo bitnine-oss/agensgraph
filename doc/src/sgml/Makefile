@@ -33,18 +33,11 @@ ifndef DBTOEPUB
 DBTOEPUB = $(missing) dbtoepub
 endif
 
-ifndef JADE
-JADE = $(missing) jade
-endif
-SGMLINCLUDE = -D . -D $(srcdir)
-
-ifndef NSGMLS
-NSGMLS = $(missing) nsgmls
+ifndef FOP
+FOP = $(missing) fop
 endif
 
-ifndef OSX
-OSX = $(missing) osx
-endif
+XMLINCLUDE = --path .
 
 ifndef XMLLINT
 XMLLINT = $(missing) xmllint
@@ -57,25 +50,11 @@ endif
 override XSLTPROCFLAGS += --stringparam pg.version '$(VERSION)'
 
 
-GENERATED_SGML = bookindex.sgml version.sgml \
+GENERATED_SGML = version.sgml \
 	features-supported.sgml features-unsupported.sgml errcodes-table.sgml
 
 ALLSGML := $(wildcard $(srcdir)/*.sgml $(srcdir)/ref/*.sgml) $(GENERATED_SGML)
 
-# Sometimes we don't want this one.
-ALMOSTALLSGML := $(filter-out %bookindex.sgml,$(ALLSGML))
-
-ifdef DOCBOOKSTYLE
-CATALOG = -c $(DOCBOOKSTYLE)/catalog
-endif
-
-# Enable some extra warnings
-# -wfully-tagged needed to throw a warning on missing tags
-# for older tool chains, 2007-08-31
-# Note: try "make SPFLAGS=-wxml" to catch a lot of other dubious constructs,
-# in particular < and & that haven't been made into entities.  It's far too
-# noisy to turn on by default, unfortunately.
-override SPFLAGS += -wall -wno-unused-param -wno-empty -wfully-tagged
 
 ##
 ## Man pages
@@ -83,56 +62,15 @@ override SPFLAGS += -wall -wno-unused-param -wno-empty -wfully-tagged
 
 man distprep-man: man-stamp
 
-man-stamp: stylesheet-man.xsl postgres.xml
-	$(XMLLINT) --noout --valid postgres.xml
-	$(XSLTPROC) $(XSLTPROCFLAGS) $(XSLTPROC_MAN_FLAGS) $^
+man-stamp: stylesheet-man.xsl postgres.sgml $(ALLSGML)
+	$(XMLLINT) $(XMLINCLUDE) --noout --valid $(word 2,$^)
+	$(XSLTPROC) $(XMLINCLUDE) $(XSLTPROCFLAGS) $(XSLTPROC_MAN_FLAGS) $(wordlist 1,2,$^)
 	touch $@
 
 
 ##
-## HTML
+## common files
 ##
-
-.PHONY: draft
-
-JADE.html.call = $(JADE) $(JADEFLAGS) $(SPFLAGS) $(SGMLINCLUDE) $(CATALOG) -d stylesheet.dsl -t sgml -i output-html
-ifeq ($(STYLE),website)
-JADE.html.call += -V website-stylesheet
-endif
-
-# The draft target creates HTML output in draft mode, without index (for faster build).
-draft: postgres.sgml $(ALMOSTALLSGML) stylesheet.dsl
-	$(MKDIR_P) html
-	$(JADE.html.call) -V draft-mode $<
-	cp $(srcdir)/stylesheet.css html/
-
-oldhtml: oldhtml-stamp
-
-oldhtml-stamp: postgres.sgml $(ALLSGML) stylesheet.dsl
-	$(MAKE) check-tabs
-	$(MKDIR_P) html
-	$(JADE.html.call) -i include-index $<
-	cp $(srcdir)/stylesheet.css html/
-	touch $@
-
-# single-page HTML
-postgres.html: postgres.sgml $(ALLSGML) stylesheet.dsl
-	$(JADE.html.call) -V nochunks -V rootchunk -V '(define %root-filename% #f)' -V '(define use-output-dir #f)' -i include-index $<
-
-# single-page text
-postgres.txt: postgres.html
-	$(LYNX) -force_html -dump -nolist $< > $@
-
-HTML.index: postgres.sgml $(ALMOSTALLSGML) stylesheet.dsl
-	@$(MKDIR_P) html
-	$(JADE.html.call) -V html-index $<
-
-bookindex.sgml: HTML.index
-ifdef COLLATEINDEX
-	LC_ALL=C $(PERL) $(COLLATEINDEX) -f -g -i 'bookindex' -o $@ $<
-else
-	@$(missing) collateindex.pl $< $@
-endif
 
 # Technically, this should depend on Makefile.global, but then
 # version.sgml would need to be rebuilt after every configure run,
@@ -154,73 +92,11 @@ features-unsupported.sgml: $(top_srcdir)/src/backend/catalog/sql_feature_package
 errcodes-table.sgml: $(top_srcdir)/src/backend/utils/errcodes.txt generate-errcodes-table.pl
 	$(PERL) $(srcdir)/generate-errcodes-table.pl $< > $@
 
-##
-## Print
-##
-
-
-# RTF to allow minor editing for hardcopy
-%.rtf: %.sgml $(ALLSGML)
-	$(JADE) $(JADEFLAGS) $(SGMLINCLUDE) $(CATALOG) -d stylesheet.dsl -t rtf -V rtf-backend -i output-print  -i include-index postgres.sgml
-
-# TeX
-# Regular TeX and pdfTeX have slightly differing requirements, so we
-# need to distinguish the path we're taking.
-
-JADE.tex.call = $(JADE) $(JADEFLAGS) $(SGMLINCLUDE) $(CATALOG) -d $(srcdir)/stylesheet.dsl -t tex -V tex-backend -i output-print -i include-index
-
-%-A4.tex-ps: %.sgml $(ALLSGML)
-	$(JADE.tex.call) -V texdvi-output -V '%paper-type%'=A4 -o $@ $<
-
-%-US.tex-ps: %.sgml $(ALLSGML)
-	$(JADE.tex.call) -V texdvi-output -V '%paper-type%'=USletter -o $@ $<
-
-%-A4.tex-pdf: %.sgml $(ALLSGML)
-	$(JADE.tex.call) -V texpdf-output -V '%paper-type%'=A4 -o $@ $<
-
-%-US.tex-pdf: %.sgml $(ALLSGML)
-	$(JADE.tex.call) -V texpdf-output -V '%paper-type%'=USletter -o $@ $<
-
-%.dvi: %.tex-ps
-	@rm -f $*.aux $*.log
-# multiple runs are necessary to create proper intra-document links
-	jadetex $<
-	jadetex $<
-	jadetex $<
-
-# PostScript from TeX
-postgres.ps:
-	$(error Invalid target;  use postgres-A4.ps or postgres-US.ps as targets)
-
-%.ps: %.dvi
-	dvips -o $@ $<
-
-postgres.pdf:
-	$(error Invalid target;  use postgres-A4.pdf or postgres-US.pdf as targets)
-
-%.pdf: %.tex-pdf
-	@rm -f $*.aux $*.log $*.out
-# multiple runs are necessary to create proper intra-document links
-	pdfjadetex $<
-	pdfjadetex $<
-	pdfjadetex $<
-
-# Cancel built-in suffix rules, interfering with PS building
-.SUFFIXES:
-
-
-# This generates an XML version of the flow-object tree.  It's useful
-# for debugging DSSSL code, and possibly to interface to some other
-# tools that can make use of this.
-%.fot: %.sgml $(ALLSGML)
-	$(JADE) $(JADEFLAGS) $(SGMLINCLUDE) $(CATALOG) -d stylesheet.dsl -t fot -i output-print -i include-index -o $@ $<
-
 
 ##
-## Semi-automatic generation of some text files.
+## Generation of some text files.
 ##
 
-JADE.text = $(JADE) $(JADEFLAGS) $(SGMLINCLUDE) $(CATALOG) -d stylesheet.dsl -i output-text -t sgml
 ICONV = iconv
 LYNX = lynx
 
@@ -233,26 +109,19 @@ LYNX = lynx
 # locale support and is very picky about locale name spelling.  The
 # below has been finely tuned to run on FreeBSD and Linux/glibc.
 INSTALL: % : %.html
-	$(PERL) -p -e 's/<H(1|2)$$/<H\1 align=center/g' $< | LC_ALL=en_US.ISO8859-1 $(LYNX) -force_html -dump -nolist -stdin | $(ICONV) -f latin1 -t us-ascii//TRANSLIT > $@
+	$(PERL) -p -e 's,<h(1|2) class="title",<h\1 align=center,g' $< | LC_ALL=en_US.ISO8859-1 $(LYNX) -force_html -dump -nolist -stdin | $(ICONV) -f latin1 -t us-ascii//TRANSLIT > $@
 
-INSTALL.html: standalone-install.sgml installation.sgml version.sgml
-	$(JADE.text) -V nochunks standalone-install.sgml installation.sgml > $@
+INSTALL.html: %.html : stylesheet-text.xsl %.xml
+	$(XMLLINT) --noout --valid $*.xml
+	$(XSLTPROC) $(XSLTPROCFLAGS) $(XSLTPROC_HTML_FLAGS) $^ >$@
+
+INSTALL.xml: standalone-profile.xsl standalone-install.xml postgres.sgml $(ALLSGML)
+	$(XSLTPROC) $(XMLINCLUDE) $(XSLTPROCFLAGS) --xinclude $(wordlist 1,2,$^) >$@
 
 
 ##
-## XSLT processing
+## HTML
 ##
-
-# For obscure reasons, GNU make 3.81 complains about circular dependencies
-# if we try to do "make all" in a VPATH build without the explicit
-# $(srcdir) on the postgres.sgml dependency in this rule.  GNU make bug?
-postgres.xml: $(srcdir)/postgres.sgml $(ALMOSTALLSGML)
-	$(OSX) -D. -x lower -i include-xslt-index $< >postgres.xmltmp
-	$(PERL) -p -e 's/\[(aacute|acirc|aelig|agrave|amp|aring|atilde|auml|bull|copy|eacute|egrave|gt|iacute|lt|mdash|nbsp|ntilde|oacute|ocirc|oslash|ouml|pi|quot|scaron|uuml) *\]/\&\1;/gi;' \
-	           -e '$$_ .= qq{<!DOCTYPE book PUBLIC "-//OASIS//DTD DocBook XML V4.2//EN" "http://www.oasis-open.org/docbook/xml/4.2/docbookx.dtd">\n} if $$. == 1;' \
-	  <postgres.xmltmp > $@
-	rm postgres.xmltmp
-# ' hello Emacs
 
 ifeq ($(STYLE),website)
 XSLTPROC_HTML_FLAGS += --param website.stylesheet 1
@@ -260,33 +129,51 @@ endif
 
 html: html-stamp
 
-html-stamp: stylesheet.xsl postgres.xml
-	$(XMLLINT) --noout --valid postgres.xml
-	$(XSLTPROC) $(XSLTPROCFLAGS) $(XSLTPROC_HTML_FLAGS) $^
+html-stamp: stylesheet.xsl postgres.sgml $(ALLSGML)
+	$(XMLLINT) $(XMLINCLUDE) --noout --valid $(word 2,$^)
+	$(XSLTPROC) $(XMLINCLUDE) $(XSLTPROCFLAGS) $(XSLTPROC_HTML_FLAGS) $(wordlist 1,2,$^)
 	cp $(srcdir)/stylesheet.css html/
 	touch $@
 
-htmlhelp: stylesheet-hh.xsl postgres.xml
-	$(XMLLINT) --noout --valid postgres.xml
-	$(XSLTPROC) $(XSLTPROCFLAGS) $^
+htmlhelp: stylesheet-hh.xsl postgres.sgml $(ALLSGML)
+	$(XMLLINT) $(XMLINCLUDE) --noout --valid $(word 2,$^)
+	$(XSLTPROC) $(XMLINCLUDE) $(XSLTPROCFLAGS) $(wordlist 1,2,$^)
 
-%-A4.fo: stylesheet-fo.xsl %.xml
-	$(XMLLINT) --noout --valid $*.xml
-	$(XSLTPROC) $(XSLTPROCFLAGS) --stringparam paper.type A4 -o $@ $^
+# single-page HTML
+postgres.html: stylesheet-html-nochunk.xsl postgres.sgml $(ALLSGML)
+	$(XMLLINT) $(XMLINCLUDE) --noout --valid $(word 2,$^)
+	$(XSLTPROC) $(XMLINCLUDE) $(XSLTPROCFLAGS) $(XSLTPROC_HTML_FLAGS) -o $@ $(wordlist 1,2,$^)
 
-%-US.fo: stylesheet-fo.xsl %.xml
-	$(XMLLINT) --noout --valid $*.xml
-	$(XSLTPROC) $(XSLTPROCFLAGS) --stringparam paper.type USletter -o $@ $^
+# single-page text
+postgres.txt: postgres.html
+	$(LYNX) -force_html -dump -nolist $< > $@
 
-FOP = fop
 
-.SECONDARY: postgres-A4.fo postgres-US.fo
+##
+## Print
+##
 
-%-fop.pdf: %.fo
+postgres.pdf:
+	$(error Invalid target;  use postgres-A4.pdf or postgres-US.pdf as targets)
+
+%-A4.fo: stylesheet-fo.xsl %.sgml $(ALLSGML)
+	$(XMLLINT) $(XMLINCLUDE) --noout --valid $(word 2,$^)
+	$(XSLTPROC) $(XMLINCLUDE) $(XSLTPROCFLAGS) --stringparam paper.type A4 -o $@ $(wordlist 1,2,$^)
+
+%-US.fo: stylesheet-fo.xsl %.sgml $(ALLSGML)
+	$(XMLLINT) $(XMLINCLUDE) --noout --valid $(word 2,$^)
+	$(XSLTPROC) $(XMLINCLUDE) $(XSLTPROCFLAGS) --stringparam paper.type USletter -o $@ $(wordlist 1,2,$^)
+
+%.pdf: %.fo
 	$(FOP) -fo $< -pdf $@
 
+
+##
+## EPUB
+##
+
 epub: postgres.epub
-postgres.epub: postgres.xml
+postgres.epub: postgres.sgml $(ALLSGML)
 	$(XMLLINT) --noout --valid $<
 	$(DBTOEPUB) $<
 
@@ -299,7 +186,8 @@ DB2X_TEXIXML = db2x_texixml
 DB2X_XSLTPROC = db2x_xsltproc
 MAKEINFO = makeinfo
 
-%.texixml: %.xml
+%.texixml: %.sgml $(ALLSGML)
+	$(XMLLINT) --noout --valid $<
 	$(DB2X_XSLTPROC) -s texi -g output-file=$(basename $@) $< -o $@
 
 %.texi: %.texixml
@@ -314,8 +202,8 @@ MAKEINFO = makeinfo
 ##
 
 # Quick syntax check without style processing
-check: postgres.sgml $(ALMOSTALLSGML) check-tabs
-	$(NSGMLS) $(SPFLAGS) $(SGMLINCLUDE) -s $<
+check: postgres.sgml $(ALLSGML) check-tabs
+	$(XMLLINT) $(XMLINCLUDE) --noout --valid $<
 
 
 ##
@@ -377,7 +265,7 @@ endif # sqlmansectnum != 7
 
 # tabs are harmless, but it is best to avoid them in SGML files
 check-tabs:
-	@( ! grep '	' $(wildcard $(srcdir)/*.sgml $(srcdir)/ref/*.sgml $(srcdir)/*.dsl $(srcdir)/*.xsl) ) || (echo "Tabs appear in SGML/XML files" 1>&2;  exit 1)
+	@( ! grep '	' $(wildcard $(srcdir)/*.sgml $(srcdir)/ref/*.sgml $(srcdir)/*.xsl) ) || (echo "Tabs appear in SGML/XML files" 1>&2;  exit 1)
 
 ##
 ## Clean
@@ -385,22 +273,22 @@ check-tabs:
 
 # This allows removing some files from the distribution tarballs while
 # keeping the dependencies satisfied.
-.SECONDARY: postgres.xml $(GENERATED_SGML) HTML.index
-.SECONDARY: INSTALL.html
-.SECONDARY: %-A4.tex-ps %-US.tex-ps %-A4.tex-pdf %-US.tex-pdf
+.SECONDARY: $(GENERATED_SGML)
+.SECONDARY: INSTALL.html INSTALL.xml
+.SECONDARY: postgres-A4.fo postgres-US.fo
 
 clean:
 # text --- these are shipped, but not in this directory
 	rm -f INSTALL
-	rm -f INSTALL.html
+	rm -f INSTALL.html INSTALL.xml
 # single-page output
 	rm -f postgres.html postgres.txt
 # print
-	rm -f *.rtf *.tex-ps *.tex-pdf *.dvi *.aux *.log *.ps *.pdf *.out *.fot
-# index
-	rm -f HTML.index $(GENERATED_SGML)
-# XSLT
-	rm -f postgres.xml postgres.xmltmp htmlhelp.hhp toc.hhc index.hhk *.fo
+	rm -f *.fo *.pdf
+# generated SGML files
+	rm -f $(GENERATED_SGML)
+# HTML Help
+	rm -f htmlhelp.hhp toc.hhc index.hhk
 # EPUB
 	rm -f postgres.epub
 # Texinfo

@@ -26,7 +26,7 @@
  * restart needs to be forced.)
  *
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
  *
  *
  * IDENTIFICATION
@@ -116,7 +116,7 @@ typedef struct
 
 typedef struct
 {
-	pid_t		checkpointer_pid;		/* PID (0 if not started) */
+	pid_t		checkpointer_pid;	/* PID (0 if not started) */
 
 	slock_t		ckpt_lck;		/* protects all the ckpt_* fields */
 
@@ -126,8 +126,8 @@ typedef struct
 
 	int			ckpt_flags;		/* checkpoint flags, as defined in xlog.h */
 
-	uint32		num_backend_writes;		/* counts user backend buffer writes */
-	uint32		num_backend_fsync;		/* counts user backend fsync calls */
+	uint32		num_backend_writes; /* counts user backend buffer writes */
+	uint32		num_backend_fsync;	/* counts user backend fsync calls */
 
 	int			num_requests;	/* current # of requests */
 	int			max_requests;	/* allocated array size */
@@ -205,15 +205,14 @@ CheckpointerMain(void)
 	 * want to wait for the backends to exit, whereupon the postmaster will
 	 * tell us it's okay to shut down (via SIGUSR2).
 	 */
-	pqsignal(SIGHUP, ChkptSigHupHandler);		/* set flag to read config
-												 * file */
-	pqsignal(SIGINT, ReqCheckpointHandler);		/* request checkpoint */
+	pqsignal(SIGHUP, ChkptSigHupHandler);	/* set flag to read config file */
+	pqsignal(SIGINT, ReqCheckpointHandler); /* request checkpoint */
 	pqsignal(SIGTERM, SIG_IGN); /* ignore SIGTERM */
 	pqsignal(SIGQUIT, chkpt_quickdie);	/* hard crash time */
 	pqsignal(SIGALRM, SIG_IGN);
 	pqsignal(SIGPIPE, SIG_IGN);
 	pqsignal(SIGUSR1, chkpt_sigusr1_handler);
-	pqsignal(SIGUSR2, ReqShutdownHandler);		/* request shutdown */
+	pqsignal(SIGUSR2, ReqShutdownHandler);	/* request shutdown */
 
 	/*
 	 * Reset some signals that are accepted by postmaster but not here
@@ -463,7 +462,7 @@ CheckpointerMain(void)
 				elapsed_secs < CheckPointWarning)
 				ereport(LOG,
 						(errmsg_plural("checkpoints are occurring too frequently (%d second apart)",
-				"checkpoints are occurring too frequently (%d seconds apart)",
+									   "checkpoints are occurring too frequently (%d seconds apart)",
 									   elapsed_secs,
 									   elapsed_secs),
 						 errhint("Consider increasing the configuration parameter \"max_wal_size\".")));
@@ -558,7 +557,7 @@ CheckpointerMain(void)
 
 		rc = WaitLatch(MyLatch,
 					   WL_LATCH_SET | WL_TIMEOUT | WL_POSTMASTER_DEATH,
-					   cur_timeout * 1000L /* convert to ms */,
+					   cur_timeout * 1000L /* convert to ms */ ,
 					   WAIT_EVENT_CHECKPOINTER_MAIN);
 
 		/*
@@ -611,7 +610,8 @@ CheckArchiveTimeout(void)
 	{
 		/*
 		 * Switch segment only when "important" WAL has been logged since the
-		 * last segment switch.
+		 * last segment switch (last_switch_lsn points to end of segment
+		 * switch occurred in).
 		 */
 		if (GetLastImportantRecPtr() > last_switch_lsn)
 		{
@@ -624,10 +624,9 @@ CheckArchiveTimeout(void)
 			 * If the returned pointer points exactly to a segment boundary,
 			 * assume nothing happened.
 			 */
-			if ((switchpoint % XLogSegSize) != 0)
-				ereport(DEBUG1,
-						(errmsg("transaction log switch forced (archive_timeout=%d)",
-								XLogArchiveTimeout)));
+			if (XLogSegmentOffset(switchpoint, wal_segment_size) != 0)
+				elog(DEBUG1, "write-ahead log switch forced (archive_timeout=%d)",
+					 XLogArchiveTimeout);
 		}
 
 		/*
@@ -783,7 +782,8 @@ IsCheckpointOnSchedule(double progress)
 		recptr = GetXLogReplayRecPtr(NULL);
 	else
 		recptr = GetInsertRecPtr();
-	elapsed_xlogs = (((double) (recptr - ckpt_start_recptr)) / XLogSegSize) / CheckPointSegments;
+	elapsed_xlogs = (((double) (recptr - ckpt_start_recptr)) /
+					 wal_segment_size) / CheckPointSegments;
 
 	if (progress < elapsed_xlogs)
 	{
@@ -1281,8 +1281,8 @@ CompactCheckpointerRequestQueue(void)
 		CheckpointerShmem->requests[preserve_count++] = CheckpointerShmem->requests[n];
 	}
 	ereport(DEBUG1,
-	   (errmsg("compacted fsync request queue from %d entries to %d entries",
-			   CheckpointerShmem->num_requests, preserve_count)));
+			(errmsg("compacted fsync request queue from %d entries to %d entries",
+					CheckpointerShmem->num_requests, preserve_count)));
 	CheckpointerShmem->num_requests = preserve_count;
 
 	/* Cleanup. */

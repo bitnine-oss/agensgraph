@@ -14,6 +14,9 @@ SELECT generate_series(1, 2), generate_series(1,4);
 -- srf, with SRF argument
 SELECT generate_series(1, generate_series(1, 3));
 
+-- but we've traditionally rejected the same in FROM
+SELECT * FROM generate_series(1, generate_series(1, 3));
+
 -- srf, with two SRF arguments
 SELECT generate_series(generate_series(1,3), generate_series(2, 4));
 
@@ -51,8 +54,18 @@ SELECT dataa, generate_series(1,1), count(*) FROM few GROUP BY 1, 2 HAVING count
 SELECT few.dataa, count(*) FROM few WHERE dataa = 'a' GROUP BY few.dataa ORDER BY 2;
 SELECT few.dataa, count(*) FROM few WHERE dataa = 'a' GROUP BY few.dataa, unnest('{1,1,3}'::int[]) ORDER BY 2;
 
+-- SRFs are not allowed if they'd need to be conditionally executed
+SELECT q1, case when q1 > 0 then generate_series(1,3) else 0 end FROM int8_tbl;
+SELECT q1, coalesce(generate_series(1,3), 0) FROM int8_tbl;
+
 -- SRFs are not allowed in aggregate arguments
 SELECT min(generate_series(1, 3)) FROM few;
+
+-- ... unless they're within a sub-select
+SELECT sum((3 = ANY(SELECT generate_series(1,4)))::int);
+
+SELECT sum((3 = ANY(SELECT lag(x) over(order by x)
+                    FROM generate_series(1,4) x))::int);
 
 -- SRFs are not allowed in window function arguments, either
 SELECT min(generate_series(1, 3)) OVER() FROM few;
@@ -66,12 +79,14 @@ SELECT SUM(count(*)) OVER(PARTITION BY generate_series(1,3) ORDER BY generate_se
 SELECT few.dataa, count(*), min(id), max(id), generate_series(1,3) FROM few GROUP BY few.dataa ORDER BY 5, 1;
 
 -- grouping sets are a bit special, they produce NULLs in columns not actually NULL
+set enable_hashagg = false;
 SELECT dataa, datab b, generate_series(1,2) g, count(*) FROM few GROUP BY CUBE(dataa, datab);
 SELECT dataa, datab b, generate_series(1,2) g, count(*) FROM few GROUP BY CUBE(dataa, datab) ORDER BY dataa;
 SELECT dataa, datab b, generate_series(1,2) g, count(*) FROM few GROUP BY CUBE(dataa, datab) ORDER BY g;
 SELECT dataa, datab b, generate_series(1,2) g, count(*) FROM few GROUP BY CUBE(dataa, datab, g);
 SELECT dataa, datab b, generate_series(1,2) g, count(*) FROM few GROUP BY CUBE(dataa, datab, g) ORDER BY dataa;
 SELECT dataa, datab b, generate_series(1,2) g, count(*) FROM few GROUP BY CUBE(dataa, datab, g) ORDER BY g;
+reset enable_hashagg;
 
 -- data modification
 CREATE TABLE fewmore AS SELECT generate_series(1,3) AS data;
@@ -89,6 +104,7 @@ VALUES(1, generate_series(1,2));
 
 -- We allow tSRFs that are not at top level
 SELECT int4mul(generate_series(1,2), 10);
+SELECT generate_series(1,3) IS DISTINCT FROM 2;
 
 -- but SRFs in function RTEs must be at top level (annoying restriction)
 SELECT * FROM int4mul(generate_series(1,2), 10);

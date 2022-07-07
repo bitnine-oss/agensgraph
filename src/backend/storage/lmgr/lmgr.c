@@ -3,7 +3,7 @@
  * lmgr.c
  *	  POSTGRES lock manager code
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -129,7 +129,7 @@ LockRelationOid(Oid relid, LOCKMODE lockmode)
  *		ConditionalLockRelationOid
  *
  * As above, but only lock if we can get the lock without blocking.
- * Returns TRUE iff the lock was acquired.
+ * Returns true iff the lock was acquired.
  *
  * NOTE: we do not currently need conditional versions of all the
  * LockXXX routines in this file, but they could easily be added if needed.
@@ -344,7 +344,7 @@ LockRelationForExtension(Relation relation, LOCKMODE lockmode)
  *		ConditionalLockRelationForExtension
  *
  * As above, but only lock if we can get the lock without blocking.
- * Returns TRUE iff the lock was acquired.
+ * Returns true iff the lock was acquired.
  */
 bool
 ConditionalLockRelationForExtension(Relation relation, LOCKMODE lockmode)
@@ -413,7 +413,7 @@ LockPage(Relation relation, BlockNumber blkno, LOCKMODE lockmode)
  *		ConditionalLockPage
  *
  * As above, but only lock if we can get the lock without blocking.
- * Returns TRUE iff the lock was acquired.
+ * Returns true iff the lock was acquired.
  */
 bool
 ConditionalLockPage(Relation relation, BlockNumber blkno, LOCKMODE lockmode)
@@ -469,7 +469,7 @@ LockTuple(Relation relation, ItemPointer tid, LOCKMODE lockmode)
  *		ConditionalLockTuple
  *
  * As above, but only lock if we can get the lock without blocking.
- * Returns TRUE iff the lock was acquired.
+ * Returns true iff the lock was acquired.
  */
 bool
 ConditionalLockTuple(Relation relation, ItemPointer tid, LOCKMODE lockmode)
@@ -557,6 +557,7 @@ XactLockTableWait(TransactionId xid, Relation rel, ItemPointer ctid,
 	LOCKTAG		tag;
 	XactLockTableWaitInfo info;
 	ErrorContextCallback callback;
+	bool		first = true;
 
 	/*
 	 * If an operation is specified, set up our verbose error context
@@ -590,7 +591,26 @@ XactLockTableWait(TransactionId xid, Relation rel, ItemPointer ctid,
 
 		if (!TransactionIdIsInProgress(xid))
 			break;
-		xid = SubTransGetParent(xid);
+
+		/*
+		 * If the Xid belonged to a subtransaction, then the lock would have
+		 * gone away as soon as it was finished; for correct tuple visibility,
+		 * the right action is to wait on its parent transaction to go away.
+		 * But instead of going levels up one by one, we can just wait for the
+		 * topmost transaction to finish with the same end result, which also
+		 * incurs less locktable traffic.
+		 *
+		 * Some uses of this function don't involve tuple visibility -- such
+		 * as when building snapshots for logical decoding.  It is possible to
+		 * see a transaction in ProcArray before it registers itself in the
+		 * locktable.  The topmost transaction in that case is the same xid,
+		 * so we try again after a short sleep.  (Don't sleep the first time
+		 * through, to avoid slowing down the normal case.)
+		 */
+		if (!first)
+			pg_usleep(1000L);
+		first = false;
+		xid = SubTransGetTopmostTransaction(xid);
 	}
 
 	if (oper != XLTW_None)
@@ -601,12 +621,13 @@ XactLockTableWait(TransactionId xid, Relation rel, ItemPointer ctid,
  *		ConditionalXactLockTableWait
  *
  * As above, but only lock if we can get the lock without blocking.
- * Returns TRUE if the lock was acquired.
+ * Returns true if the lock was acquired.
  */
 bool
 ConditionalXactLockTableWait(TransactionId xid)
 {
 	LOCKTAG		tag;
+	bool		first = true;
 
 	for (;;)
 	{
@@ -622,7 +643,12 @@ ConditionalXactLockTableWait(TransactionId xid)
 
 		if (!TransactionIdIsInProgress(xid))
 			break;
-		xid = SubTransGetParent(xid);
+
+		/* See XactLockTableWait about this case */
+		if (!first)
+			pg_usleep(1000L);
+		first = false;
+		xid = SubTransGetTopmostTransaction(xid);
 	}
 
 	return true;

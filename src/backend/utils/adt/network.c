@@ -486,6 +486,16 @@ hashinet(PG_FUNCTION_ARGS)
 	return hash_any((unsigned char *) VARDATA_ANY(addr), addrsize + 2);
 }
 
+Datum
+hashinetextended(PG_FUNCTION_ARGS)
+{
+	inet	   *addr = PG_GETARG_INET_PP(0);
+	int			addrsize = ip_addrsize(addr);
+
+	return hash_any_extended((unsigned char *) VARDATA_ANY(addr), addrsize + 2,
+							 PG_GETARG_INT64(1));
+}
+
 /*
  *	Boolean network-inclusion tests.
  */
@@ -934,11 +944,21 @@ convert_network_to_scalar(Datum value, Oid typid)
 				res += (mac->d << 16) | (mac->e << 8) | (mac->f);
 				return res;
 			}
+		case MACADDR8OID:
+			{
+				macaddr8   *mac = DatumGetMacaddr8P(value);
+				double		res;
+
+				res = (mac->a << 24) | (mac->b << 16) | (mac->c << 8) | (mac->d);
+				res *= ((double) 256) * 256 * 256 * 256;
+				res += (mac->e << 24) | (mac->f << 16) | (mac->g << 8) | (mac->h);
+				return res;
+			}
 	}
 
 	/*
-	 * Can't get here unless someone tries to use scalarltsel/scalargtsel on
-	 * an operator with one network and one non-network operand.
+	 * Can't get here unless someone tries to use scalarineqsel() on an
+	 * operator with one network and one non-network operand.
 	 */
 	elog(ERROR, "unsupported type: %u", typid);
 	return 0;
@@ -1085,7 +1105,7 @@ network_scan_first(Datum in)
 
 /*
  * return "last" IP on a given network. It's the broadcast address,
- * however, masklen has to be set to its max btis, since
+ * however, masklen has to be set to its max bits, since
  * 192.168.0.255/24 is considered less than 192.168.0.255/32
  *
  * inet_set_masklen() hacked to max out the masklength to 128 for IPv6

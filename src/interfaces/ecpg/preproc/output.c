@@ -32,7 +32,7 @@ struct when when_error,
 			when_warn;
 
 static void
-print_action(struct when * w)
+print_action(struct when *w)
 {
 	switch (w->code)
 	{
@@ -50,6 +50,9 @@ print_action(struct when * w)
 			break;
 		case W_BREAK:
 			fprintf(base_yyout, "break;");
+			break;
+		case W_CONTINUE:
+			fprintf(base_yyout, "continue;");
 			break;
 		default:
 			fprintf(base_yyout, "{/* %d not implemented yet */}", w->code);
@@ -96,7 +99,7 @@ hashline_number(void)
 		)
 	{
 		/* "* 2" here is for escaping '\' and '"' below */
-		char	   *line = mm_alloc(strlen("\n#line %d \"%s\"\n") + sizeof(int) * CHAR_BIT * 10 / 3 + strlen(input_filename) *2);
+		char	   *line = mm_alloc(strlen("\n#line %d \"%s\"\n") + sizeof(int) * CHAR_BIT * 10 / 3 + strlen(input_filename) * 2);
 		char	   *src,
 				   *dest;
 
@@ -228,8 +231,8 @@ output_escaped_str(char *str, bool quoted)
 				j++;
 			} while (str[j] == ' ' || str[j] == '\t');
 
-			if ((str[j] != '\n') && (str[j] != '\r' || str[j + 1] != '\n'))		/* not followed by a
-																				 * newline */
+			if ((str[j] != '\n') && (str[j] != '\r' || str[j + 1] != '\n')) /* not followed by a
+																			 * newline */
 				fputs("\\\\", base_yyout);
 		}
 		else if (str[i] == '\r' && str[i + 1] == '\n')

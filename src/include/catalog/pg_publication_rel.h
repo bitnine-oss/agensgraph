@@ -3,7 +3,7 @@
  * pg_publication_rel.h
  *	  definition of the publication to relation map (pg_publication_rel)
   *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/catalog/pg_publication_rel.h
@@ -29,8 +29,8 @@
 
 CATALOG(pg_publication_rel,6106)
 {
-	Oid		prpubid;				/* Oid of the publication */
-	Oid		prrelid;				/* Oid of the relation */
+	Oid			prpubid;		/* Oid of the publication */
+	Oid			prrelid;		/* Oid of the relation */
 } FormData_pg_publication_rel;
 
 /* ----------------
@@ -49,4 +49,4 @@ typedef FormData_pg_publication_rel *Form_pg_publication_rel;
 #define Anum_pg_publication_rel_prpubid			1
 #define Anum_pg_publication_rel_prrelid			2
 
-#endif   /* PG_PUBLICATION_REL_H */
+#endif							/* PG_PUBLICATION_REL_H */

@@ -4,7 +4,7 @@
  *	  header file for postgres vacuum cleaner and statistics analyzer
  *
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/commands/vacuum.h
@@ -29,8 +29,8 @@
  * so they live until the end of the ANALYZE operation.
  *
  * The type-specific typanalyze function is passed a pointer to this struct
- * and must return TRUE to continue analysis, FALSE to skip analysis of this
- * column.  In the TRUE case it must set the compute_stats and minrows fields,
+ * and must return true to continue analysis, false to skip analysis of this
+ * column.  In the true case it must set the compute_stats and minrows fields,
  * and can optionally set extra_data to pass additional info to compute_stats.
  * minrows is its request for the minimum number of sample rows to be gathered
  * (but note this request might not be honored, eg if there are fewer rows
@@ -45,7 +45,7 @@
  * The fetchfunc may be called with rownum running from 0 to samplerows-1.
  * It returns a Datum and an isNull flag.
  *
- * compute_stats should set stats_valid TRUE if it is able to compute
+ * compute_stats should set stats_valid true if it is able to compute
  * any useful statistics.  If it does, the remainder of the struct holds
  * the information to be stored in a pg_statistic row for the column.  Be
  * careful to allocate any pointed-to data in anl_context, which will NOT
@@ -59,12 +59,12 @@
 typedef struct VacAttrStats *VacAttrStatsP;
 
 typedef Datum (*AnalyzeAttrFetchFunc) (VacAttrStatsP stats, int rownum,
-												   bool *isNull);
+									   bool *isNull);
 
 typedef void (*AnalyzeAttrComputeStatsFunc) (VacAttrStatsP stats,
-											  AnalyzeAttrFetchFunc fetchfunc,
-														 int samplerows,
-														 double totalrows);
+											 AnalyzeAttrFetchFunc fetchfunc,
+											 int samplerows,
+											 double totalrows);
 
 typedef struct VacAttrStats
 {
@@ -86,7 +86,7 @@ typedef struct VacAttrStats
 
 	/*
 	 * These fields must be filled in by the typanalyze routine, unless it
-	 * returns FALSE.
+	 * returns false.
 	 */
 	AnalyzeAttrComputeStatsFunc compute_stats;	/* function pointer */
 	int			minrows;		/* Minimum # of rows wanted for stats */
@@ -136,20 +136,19 @@ typedef struct VacAttrStats
 typedef struct VacuumParams
 {
 	int			freeze_min_age; /* min freeze age, -1 to use default */
-	int			freeze_table_age;		/* age at which to scan whole table */
-	int			multixact_freeze_min_age;		/* min multixact freeze age,
-												 * -1 to use default */
-	int			multixact_freeze_table_age;		/* multixact age at which to
-												 * scan whole table */
+	int			freeze_table_age;	/* age at which to scan whole table */
+	int			multixact_freeze_min_age;	/* min multixact freeze age, -1 to
+											 * use default */
+	int			multixact_freeze_table_age; /* multixact age at which to scan
+											 * whole table */
 	bool		is_wraparound;	/* force a for-wraparound vacuum */
-	int			log_min_duration;		/* minimum execution threshold in ms
-										 * at which  verbose logs are
-										 * activated, -1 to use default */
+	int			log_min_duration;	/* minimum execution threshold in ms at
+									 * which  verbose logs are activated, -1
+									 * to use default */
 } VacuumParams;
 
 /* GUC parameters */
-extern PGDLLIMPORT int default_statistics_target;		/* PGDLLIMPORT for
-														 * PostGIS */
+extern PGDLLIMPORT int default_statistics_target;	/* PGDLLIMPORT for PostGIS */
 extern int	vacuum_freeze_min_age;
 extern int	vacuum_freeze_table_age;
 extern int	vacuum_multixact_freeze_min_age;
@@ -158,8 +157,7 @@ extern int	vacuum_multixact_freeze_table_age;
 
 /* in commands/vacuum.c */
 extern void ExecVacuum(VacuumStmt *vacstmt, bool isTopLevel);
-extern void vacuum(int options, RangeVar *relation, Oid relid,
-	   VacuumParams *params, List *va_cols,
+extern void vacuum(int options, List *relations, VacuumParams *params,
 	   BufferAccessStrategy bstrategy, bool isTopLevel);
 extern void vac_open_indexes(Relation relation, LOCKMODE lockmode,
 				 int *nindexes, Relation **Irel);
@@ -203,4 +201,4 @@ extern double anl_random_fract(void);
 extern double anl_init_selection_state(int n);
 extern double anl_get_next_S(double t, int n, double *stateptr);
 
-#endif   /* VACUUM_H */
+#endif							/* VACUUM_H */

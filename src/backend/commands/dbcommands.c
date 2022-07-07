@@ -8,7 +8,7 @@
  * stepping on each others' toes.  Formerly we used table-level locks
  * on pg_database, but that's too coarse-grained.
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -20,7 +20,6 @@
 #include "postgres.h"
 
 #include <fcntl.h>
-#include <locale.h>
 #include <unistd.h>
 #include <sys/stat.h>
 
@@ -323,7 +322,7 @@ createdb(ParseState *pstate, const CreatedbStmt *stmt)
 	 * won't change underneath us.
 	 */
 	if (!dbtemplate)
-		dbtemplate = "template1";		/* Default template database name */
+		dbtemplate = "template1";	/* Default template database name */
 
 	if (!get_db_info(dbtemplate, ShareLock,
 					 &src_dboid, &src_owner, &src_encoding,
@@ -423,14 +422,14 @@ createdb(ParseState *pstate, const CreatedbStmt *stmt)
 		aclresult = pg_tablespace_aclcheck(dst_deftablespace, GetUserId(),
 										   ACL_CREATE);
 		if (aclresult != ACLCHECK_OK)
-			aclcheck_error(aclresult, ACL_KIND_TABLESPACE,
+			aclcheck_error(aclresult, OBJECT_TABLESPACE,
 						   tablespacename);
 
 		/* pg_global must never be the default tablespace */
 		if (dst_deftablespace == GLOBALTABLESPACE_OID)
 			ereport(ERROR,
 					(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				  errmsg("pg_global cannot be used as default tablespace")));
+					 errmsg("pg_global cannot be used as default tablespace")));
 
 		/*
 		 * If we are trying to change the default tablespace of the template,
@@ -492,8 +491,8 @@ createdb(ParseState *pstate, const CreatedbStmt *stmt)
 	if (CountOtherDBBackends(src_dboid, &notherbackends, &npreparedxacts))
 		ereport(ERROR,
 				(errcode(ERRCODE_OBJECT_IN_USE),
-			errmsg("source database \"%s\" is being accessed by other users",
-				   dbtemplate),
+				 errmsg("source database \"%s\" is being accessed by other users",
+						dbtemplate),
 				 errdetail_busy_db(notherbackends, npreparedxacts)));
 
 	/*
@@ -737,8 +736,8 @@ check_encoding_locale_matches(int encoding, const char *collate, const char *cty
 				 errmsg("encoding \"%s\" does not match locale \"%s\"",
 						pg_encoding_to_char(encoding),
 						ctype),
-		   errdetail("The chosen LC_CTYPE setting requires encoding \"%s\".",
-					 pg_encoding_to_char(ctype_encoding))));
+				 errdetail("The chosen LC_CTYPE setting requires encoding \"%s\".",
+						   pg_encoding_to_char(ctype_encoding))));
 
 	if (!(collate_encoding == encoding ||
 		  collate_encoding == PG_SQL_ASCII ||
@@ -752,8 +751,8 @@ check_encoding_locale_matches(int encoding, const char *collate, const char *cty
 				 errmsg("encoding \"%s\" does not match locale \"%s\"",
 						pg_encoding_to_char(encoding),
 						collate),
-		 errdetail("The chosen LC_COLLATE setting requires encoding \"%s\".",
-				   pg_encoding_to_char(collate_encoding))));
+				 errdetail("The chosen LC_COLLATE setting requires encoding \"%s\".",
+						   pg_encoding_to_char(collate_encoding))));
 }
 
 /* Error cleanup callback for createdb */
@@ -800,7 +799,7 @@ dropdb(const char *dbname, bool missing_ok)
 	pgdbrel = heap_open(DatabaseRelationId, RowExclusiveLock);
 
 	if (!get_db_info(dbname, AccessExclusiveLock, &db_id, NULL, NULL,
-				   &db_istemplate, NULL, NULL, NULL, NULL, NULL, NULL, NULL))
+					 &db_istemplate, NULL, NULL, NULL, NULL, NULL, NULL, NULL))
 	{
 		if (!missing_ok)
 		{
@@ -823,7 +822,7 @@ dropdb(const char *dbname, bool missing_ok)
 	 * Permission checks
 	 */
 	if (!pg_database_ownercheck(db_id, GetUserId()))
-		aclcheck_error(ACLCHECK_NOT_OWNER, ACL_KIND_DATABASE,
+		aclcheck_error(ACLCHECK_NOT_OWNER, OBJECT_DATABASE,
 					   dbname);
 
 	/* DROP hook for the database being removed */
@@ -846,19 +845,22 @@ dropdb(const char *dbname, bool missing_ok)
 				 errmsg("cannot drop the currently open database")));
 
 	/*
-	 * Check whether there are, possibly unconnected, logical slots that refer
-	 * to the to-be-dropped database. The database lock we are holding
-	 * prevents the creation of new slots using the database.
+	 * Check whether there are active logical slots that refer to the
+	 * to-be-dropped database. The database lock we are holding prevents the
+	 * creation of new slots using the database or existing slots becoming
+	 * active.
 	 */
-	if (ReplicationSlotsCountDBSlots(db_id, &nslots, &nslots_active))
+	(void) ReplicationSlotsCountDBSlots(db_id, &nslots, &nslots_active);
+	if (nslots_active)
+	{
 		ereport(ERROR,
 				(errcode(ERRCODE_OBJECT_IN_USE),
-			  errmsg("database \"%s\" is used by a logical replication slot",
-					 dbname),
-				 errdetail_plural("There is %d slot, %d of them active.",
-								  "There are %d slots, %d of them active.",
-								  nslots,
-								  nslots, nslots_active)));
+				 errmsg("database \"%s\" is used by an active logical replication slot",
+						dbname),
+				 errdetail_plural("There is %d active slot.",
+								  "There are %d active slots.",
+								  nslots_active, nslots_active)));
+	}
 
 	/*
 	 * Check for other backends in the target database.  (Because we hold the
@@ -914,6 +916,11 @@ dropdb(const char *dbname, bool missing_ok)
 	 * Remove shared dependency references for the database.
 	 */
 	dropDatabaseDependencies(db_id);
+
+	/*
+	 * Drop db-specific replication slots.
+	 */
+	ReplicationSlotsDropDBSlots(db_id);
 
 	/*
 	 * Drop pages for this database that are in the shared buffer cache. This
@@ -990,7 +997,7 @@ RenameDatabase(const char *oldname, const char *newname)
 
 	/* must be owner */
 	if (!pg_database_ownercheck(db_id, GetUserId()))
-		aclcheck_error(ACLCHECK_NOT_OWNER, ACL_KIND_DATABASE,
+		aclcheck_error(ACLCHECK_NOT_OWNER, OBJECT_DATABASE,
 					   oldname);
 
 	/* must have createdb rights */
@@ -1087,7 +1094,7 @@ movedb(const char *dbname, const char *tblspcname)
 	pgdbrel = heap_open(DatabaseRelationId, RowExclusiveLock);
 
 	if (!get_db_info(dbname, AccessExclusiveLock, &db_id, NULL, NULL,
-				   NULL, NULL, NULL, NULL, NULL, &src_tblspcoid, NULL, NULL))
+					 NULL, NULL, NULL, NULL, NULL, &src_tblspcoid, NULL, NULL))
 		ereport(ERROR,
 				(errcode(ERRCODE_UNDEFINED_DATABASE),
 				 errmsg("database \"%s\" does not exist", dbname)));
@@ -1105,7 +1112,7 @@ movedb(const char *dbname, const char *tblspcname)
 	 * Permission checks
 	 */
 	if (!pg_database_ownercheck(db_id, GetUserId()))
-		aclcheck_error(ACLCHECK_NOT_OWNER, ACL_KIND_DATABASE,
+		aclcheck_error(ACLCHECK_NOT_OWNER, OBJECT_DATABASE,
 					   dbname);
 
 	/*
@@ -1127,7 +1134,7 @@ movedb(const char *dbname, const char *tblspcname)
 	aclresult = pg_tablespace_aclcheck(dst_tblspcoid, GetUserId(),
 									   ACL_CREATE);
 	if (aclresult != ACLCHECK_OK)
-		aclcheck_error(aclresult, ACL_KIND_TABLESPACE,
+		aclcheck_error(aclresult, OBJECT_TABLESPACE,
 					   tblspcname);
 
 	/*
@@ -1277,7 +1284,7 @@ movedb(const char *dbname, const char *tblspcname)
 		sysscan = systable_beginscan(pgdbrel, DatabaseNameIndexId, true,
 									 NULL, 1, &scankey);
 		oldtuple = systable_getnext(sysscan);
-		if (!HeapTupleIsValid(oldtuple))		/* shouldn't happen... */
+		if (!HeapTupleIsValid(oldtuple))	/* shouldn't happen... */
 			ereport(ERROR,
 					(errcode(ERRCODE_UNDEFINED_DATABASE),
 					 errmsg("database \"%s\" does not exist", dbname)));
@@ -1465,8 +1472,8 @@ AlterDatabase(ParseState *pstate, AlterDatabaseStmt *stmt, bool isTopLevel)
 		if (list_length(stmt->options) != 1)
 			ereport(ERROR,
 					(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-			   errmsg("option \"%s\" cannot be specified with other options",
-					  dtablespace->defname),
+					 errmsg("option \"%s\" cannot be specified with other options",
+							dtablespace->defname),
 					 parser_errposition(pstate, dtablespace->location)));
 		/* this case isn't allowed within a transaction block */
 		PreventTransactionChain(isTopLevel, "ALTER DATABASE SET TABLESPACE");
@@ -1508,7 +1515,7 @@ AlterDatabase(ParseState *pstate, AlterDatabaseStmt *stmt, bool isTopLevel)
 	dboid = HeapTupleGetOid(tuple);
 
 	if (!pg_database_ownercheck(HeapTupleGetOid(tuple), GetUserId()))
-		aclcheck_error(ACLCHECK_NOT_OWNER, ACL_KIND_DATABASE,
+		aclcheck_error(ACLCHECK_NOT_OWNER, OBJECT_DATABASE,
 					   stmt->dbname);
 
 	/*
@@ -1576,7 +1583,7 @@ AlterDatabaseSet(AlterDatabaseSetStmt *stmt)
 	shdepLockAndCheckObject(DatabaseRelationId, datid);
 
 	if (!pg_database_ownercheck(datid, GetUserId()))
-		aclcheck_error(ACLCHECK_NOT_OWNER, ACL_KIND_DATABASE,
+		aclcheck_error(ACLCHECK_NOT_OWNER, OBJECT_DATABASE,
 					   stmt->dbname);
 
 	AlterSetting(datid, InvalidOid, stmt->setstmt);
@@ -1639,7 +1646,7 @@ AlterDatabaseOwner(const char *dbname, Oid newOwnerId)
 
 		/* Otherwise, must be owner of the existing object */
 		if (!pg_database_ownercheck(HeapTupleGetOid(tuple), GetUserId()))
-			aclcheck_error(ACLCHECK_NOT_OWNER, ACL_KIND_DATABASE,
+			aclcheck_error(ACLCHECK_NOT_OWNER, OBJECT_DATABASE,
 						   dbname);
 
 		/* Must be able to become new owner */
@@ -1657,7 +1664,7 @@ AlterDatabaseOwner(const char *dbname, Oid newOwnerId)
 		if (!have_createdb_privilege())
 			ereport(ERROR,
 					(errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
-				   errmsg("permission denied to change owner of database")));
+					 errmsg("permission denied to change owner of database")));
 
 		memset(repl_null, false, sizeof(repl_null));
 		memset(repl_repl, false, sizeof(repl_repl));
@@ -1711,8 +1718,8 @@ AlterDatabaseOwner(const char *dbname, Oid newOwnerId)
 /*
  * Look up info about the database named "name".  If the database exists,
  * obtain the specified lock type on it, fill in any of the remaining
- * parameters that aren't NULL, and return TRUE.  If no such database,
- * return FALSE.
+ * parameters that aren't NULL, and return true.  If no such database,
+ * return false.
  */
 static bool
 get_db_info(const char *name, LOCKMODE lockmode,
@@ -1916,7 +1923,7 @@ remove_dbtablespaces(Oid db_id)
 
 /*
  * Check for existing files that conflict with a proposed new DB OID;
- * return TRUE if there are any
+ * return true if there are any
  *
  * If there were a subdirectory in any tablespace matching the proposed new
  * OID, we'd get a create failure due to the duplicate name ... and then we'd
@@ -1986,7 +1993,7 @@ errdetail_busy_db(int notherbackends, int npreparedxacts)
 						 notherbackends);
 	else
 		errdetail_plural("There is %d prepared transaction using the database.",
-					"There are %d prepared transactions using the database.",
+						 "There are %d prepared transactions using the database.",
 						 npreparedxacts,
 						 npreparedxacts);
 	return 0;					/* just to keep ereport macro happy */
@@ -2125,10 +2132,17 @@ dbase_redo(XLogReaderState *record)
 			 * InitPostgres() cannot fully re-execute concurrently. This
 			 * avoids backends re-connecting automatically to same database,
 			 * which can happen in some cases.
+			 *
+			 * This will lock out walsenders trying to connect to db-specific
+			 * slots for logical decoding too, so it's safe for us to drop
+			 * slots.
 			 */
 			LockSharedObjectForSession(DatabaseRelationId, xlrec->db_id, 0, AccessExclusiveLock);
 			ResolveRecoveryConflictWithDatabase(xlrec->db_id);
 		}
+
+		/* Drop any database-specific replication slots */
+		ReplicationSlotsDropDBSlots(xlrec->db_id);
 
 		/* Drop pages for this database that are in the shared buffer cache */
 		DropDatabaseBuffers(xlrec->db_id);

@@ -4,7 +4,7 @@
  *	  POSTGRES relation descriptor (a/k/a relcache entry) definitions.
  *
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/utils/rel.h
@@ -72,7 +72,7 @@ typedef struct PartitionKeyData
 	bool	   *parttypbyval;
 	char	   *parttypalign;
 	Oid		   *parttypcoll;
-} PartitionKeyData;
+}			PartitionKeyData;
 
 typedef struct PartitionKeyData *PartitionKey;
 
@@ -92,6 +92,7 @@ typedef struct RelationData
 	bool		rd_isvalid;		/* relcache entry is valid */
 	char		rd_indexvalid;	/* state of rd_indexlist: 0 = not valid, 1 =
 								 * valid, 2 = temporarily forced */
+	bool		rd_statvalid;	/* is rd_statlist valid? */
 
 	/*
 	 * rd_createSubid is the ID of the highest subtransaction the rel has
@@ -125,9 +126,9 @@ typedef struct RelationData
 	bool		rd_fkeyvalid;	/* true if list has been computed */
 
 	MemoryContext rd_partkeycxt;	/* private memory cxt for the below */
-	struct PartitionKeyData *rd_partkey;		/* partition key, or NULL */
+	struct PartitionKeyData *rd_partkey;	/* partition key, or NULL */
 	MemoryContext rd_pdcxt;		/* private context for partdesc */
-	struct PartitionDescData *rd_partdesc;		/* partitions, or NULL */
+	struct PartitionDescData *rd_partdesc;	/* partitions, or NULL */
 	List	   *rd_partcheck;	/* partition CHECK quals */
 
 	/* data managed by RelationGetIndexList: */
@@ -136,13 +137,16 @@ typedef struct RelationData
 	Oid			rd_pkindex;		/* OID of primary key, if any */
 	Oid			rd_replidindex; /* OID of replica identity index, if any */
 
+	/* data managed by RelationGetStatExtList: */
+	List	   *rd_statlist;	/* list of OIDs of extended stats */
+
 	/* data managed by RelationGetIndexAttrBitmap: */
 	Bitmapset  *rd_indexattr;	/* identifies columns used in indexes */
 	Bitmapset  *rd_keyattr;		/* cols that can be ref'd by foreign keys */
 	Bitmapset  *rd_pkattr;		/* cols included in primary key */
 	Bitmapset  *rd_idattr;		/* included in replica identity index */
 
-	PublicationActions  *rd_pubactions;	/* publication actions */
+	PublicationActions *rd_pubactions;	/* publication actions */
 
 	/*
 	 * rd_options is set whenever rd_rel is loaded into the relcache entry.
@@ -154,7 +158,7 @@ typedef struct RelationData
 	/* These are non-NULL only for an index relation: */
 	Form_pg_index rd_index;		/* pg_index tuple describing this index */
 	/* use "struct" here to avoid needing to include htup.h: */
-	struct HeapTupleData *rd_indextuple;		/* all of pg_index tuple */
+	struct HeapTupleData *rd_indextuple;	/* all of pg_index tuple */
 
 	/*
 	 * index access support info (used only for an index relation)
@@ -174,7 +178,7 @@ typedef struct RelationData
 	Oid			rd_amhandler;	/* OID of index AM's handler function */
 	MemoryContext rd_indexcxt;	/* private memory cxt for this stuff */
 	/* use "struct" here to avoid needing to include amapi.h: */
-	struct IndexAmRoutine *rd_amroutine;		/* index AM's API struct */
+	struct IndexAmRoutine *rd_amroutine;	/* index AM's API struct */
 	Oid		   *rd_opfamily;	/* OIDs of op families for each index col */
 	Oid		   *rd_opcintype;	/* OIDs of opclass declared input data types */
 	RegProcedure *rd_support;	/* OIDs of support procedures */
@@ -211,7 +215,7 @@ typedef struct RelationData
 	Oid			rd_toastoid;	/* Real TOAST table's OID, or InvalidOid */
 
 	/* use "struct" here to avoid needing to include pgstat.h: */
-	struct PgStat_TableStatus *pgstat_info;		/* statistics collection area */
+	struct PgStat_TableStatus *pgstat_info; /* statistics collection area */
 } RelationData;
 
 
@@ -237,8 +241,8 @@ typedef struct ForeignKeyCacheInfo
 	int			nkeys;			/* number of columns in the foreign key */
 	/* these arrays each have nkeys valid entries: */
 	AttrNumber	conkey[INDEX_MAX_KEYS]; /* cols in referencing table */
-	AttrNumber	confkey[INDEX_MAX_KEYS];		/* cols in referenced table */
-	Oid			conpfeqop[INDEX_MAX_KEYS];		/* PK = FK operator OIDs */
+	AttrNumber	confkey[INDEX_MAX_KEYS];	/* cols in referenced table */
+	Oid			conpfeqop[INDEX_MAX_KEYS];	/* PK = FK operator OIDs */
 } ForeignKeyCacheInfo;
 
 
@@ -273,14 +277,22 @@ typedef struct StdRdOptions
 {
 	int32		vl_len_;		/* varlena header (do not touch directly!) */
 	int			fillfactor;		/* page fill factor in percent (0..100) */
+	int			toast_tuple_target; /* target for tuple toasting */
 	AutoVacOpts autovacuum;		/* autovacuum-related options */
-	bool		user_catalog_table;		/* use as an additional catalog
-										 * relation */
-	int			parallel_workers;		/* max number of parallel workers */
+	bool		user_catalog_table; /* use as an additional catalog relation */
+	int			parallel_workers;	/* max number of parallel workers */
 } StdRdOptions;
 
 #define HEAP_MIN_FILLFACTOR			10
 #define HEAP_DEFAULT_FILLFACTOR		100
+
+/*
+ * RelationGetToastTupleTarget
+ *		Returns the relation's toast_tuple_target.  Note multiple eval of argument!
+ */
+#define RelationGetToastTupleTarget(relation, defaulttarg) \
+	((relation)->rd_options ? \
+	 ((StdRdOptions *) (relation)->rd_options)->toast_tuple_target : (defaulttarg))
 
 /*
  * RelationGetFillFactor
@@ -634,4 +646,4 @@ extern void RelationDecrementReferenceCount(Relation rel);
 extern bool RelationHasUnloggedIndex(Relation rel);
 extern List *RelationGetRepsetList(Relation rel);
 
-#endif   /* REL_H */
+#endif							/* REL_H */

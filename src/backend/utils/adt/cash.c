@@ -21,8 +21,8 @@
 #include <limits.h>
 #include <ctype.h>
 #include <math.h>
-#include <locale.h>
 
+#include "common/int.h"
 #include "libpq/pqformat.h"
 #include "utils/builtins.h"
 #include "utils/cash.h"
@@ -85,7 +85,7 @@ num_word(Cash value)
 	}
 
 	return buf;
-}	/* num_word() */
+}								/* num_word() */
 
 /* cash_in()
  * Convert a string to a cash data type.
@@ -133,7 +133,7 @@ cash_in(PG_FUNCTION_ARGS)
 		dsymbol = '.';
 	if (*lconvert->mon_thousands_sep != '\0')
 		ssymbol = lconvert->mon_thousands_sep;
-	else	/* ssymbol should not equal dsymbol */
+	else						/* ssymbol should not equal dsymbol */
 		ssymbol = (dsymbol != ',') ? "," : ".";
 	csymbol = (*lconvert->currency_symbol != '\0') ? lconvert->currency_symbol : "$";
 	psymbol = (*lconvert->positive_sign != '\0') ? lconvert->positive_sign : "+";
@@ -200,19 +200,20 @@ cash_in(PG_FUNCTION_ARGS)
 
 	for (; *s; s++)
 	{
-		/* we look for digits as long as we have found less */
-		/* than the required number of decimal places */
+		/*
+		 * We look for digits as long as we have found less than the required
+		 * number of decimal places.
+		 */
 		if (isdigit((unsigned char) *s) && (!seen_dot || dec < fpoint))
 		{
-			Cash newvalue = (value * 10) - (*s - '0');
+			int8		digit = *s - '0';
 
-			if (newvalue / 10 != value)
+			if (pg_mul_s64_overflow(value, 10, &value) ||
+				pg_sub_s64_overflow(value, digit, &value))
 				ereport(ERROR,
 						(errcode(ERRCODE_NUMERIC_VALUE_OUT_OF_RANGE),
 						 errmsg("value \"%s\" is out of range for type %s",
 								str, "money")));
-
-			value = newvalue;
 
 			if (seen_dot)
 				dec++;
@@ -231,26 +232,23 @@ cash_in(PG_FUNCTION_ARGS)
 
 	/* round off if there's another digit */
 	if (isdigit((unsigned char) *s) && *s >= '5')
-		value--;  /* remember we build the value in the negative */
-
-	if (value > 0)
-		ereport(ERROR,
-				(errcode(ERRCODE_NUMERIC_VALUE_OUT_OF_RANGE),
-				 errmsg("value \"%s\" is out of range for type %s",
-						str, "money")));
-
-	/* adjust for less than required decimal places */
-	for (; dec < fpoint; dec++)
 	{
-		Cash newvalue = value * 10;
-
-		if (newvalue / 10 != value)
+		/* remember we build the value in the negative */
+		if (pg_sub_s64_overflow(value, 1, &value))
 			ereport(ERROR,
 					(errcode(ERRCODE_NUMERIC_VALUE_OUT_OF_RANGE),
 					 errmsg("value \"%s\" is out of range for type %s",
 							str, "money")));
+	}
 
-		value = newvalue;
+	/* adjust for less than required decimal places */
+	for (; dec < fpoint; dec++)
+	{
+		if (pg_mul_s64_overflow(value, 10, &value))
+			ereport(ERROR,
+					(errcode(ERRCODE_NUMERIC_VALUE_OUT_OF_RANGE),
+					 errmsg("value \"%s\" is out of range for type %s",
+							str, "money")));
 	}
 
 	/*
@@ -280,16 +278,18 @@ cash_in(PG_FUNCTION_ARGS)
 							"money", str)));
 	}
 
-	/* If the value is supposed to be positive, flip the sign, but check for
-	 * the most negative number. */
+	/*
+	 * If the value is supposed to be positive, flip the sign, but check for
+	 * the most negative number.
+	 */
 	if (sgn > 0)
 	{
-		result = -value;
-		if (result < 0)
+		if (value == PG_INT64_MIN)
 			ereport(ERROR,
 					(errcode(ERRCODE_NUMERIC_VALUE_OUT_OF_RANGE),
 					 errmsg("value \"%s\" is out of range for type %s",
 							str, "money")));
+		result = -value;
 	}
 	else
 		result = value;
@@ -346,7 +346,7 @@ cash_out(PG_FUNCTION_ARGS)
 		dsymbol = '.';
 	if (*lconvert->mon_thousands_sep != '\0')
 		ssymbol = lconvert->mon_thousands_sep;
-	else	/* ssymbol should not equal dsymbol */
+	else						/* ssymbol should not equal dsymbol */
 		ssymbol = (dsymbol != ',') ? "," : ".";
 	csymbol = (*lconvert->currency_symbol != '\0') ? lconvert->currency_symbol : "$";
 
@@ -666,7 +666,7 @@ cash_mul_flt8(PG_FUNCTION_ARGS)
 	float8		f = PG_GETARG_FLOAT8(1);
 	Cash		result;
 
-	result = c * f;
+	result = rint(c * f);
 	PG_RETURN_CASH(result);
 }
 
@@ -681,7 +681,7 @@ flt8_mul_cash(PG_FUNCTION_ARGS)
 	Cash		c = PG_GETARG_CASH(1);
 	Cash		result;
 
-	result = f * c;
+	result = rint(f * c);
 	PG_RETURN_CASH(result);
 }
 
@@ -716,7 +716,7 @@ cash_mul_flt4(PG_FUNCTION_ARGS)
 	float4		f = PG_GETARG_FLOAT4(1);
 	Cash		result;
 
-	result = c * f;
+	result = rint(c * (float8) f);
 	PG_RETURN_CASH(result);
 }
 
@@ -731,7 +731,7 @@ flt4_mul_cash(PG_FUNCTION_ARGS)
 	Cash		c = PG_GETARG_CASH(1);
 	Cash		result;
 
-	result = f * c;
+	result = rint((float8) f * c);
 	PG_RETURN_CASH(result);
 }
 
@@ -752,7 +752,7 @@ cash_div_flt4(PG_FUNCTION_ARGS)
 				(errcode(ERRCODE_DIVISION_BY_ZERO),
 				 errmsg("division by zero")));
 
-	result = rint(c / f);
+	result = rint(c / (float8) f);
 	PG_RETURN_CASH(result);
 }
 
@@ -801,7 +801,7 @@ cash_div_int8(PG_FUNCTION_ARGS)
 				(errcode(ERRCODE_DIVISION_BY_ZERO),
 				 errmsg("division by zero")));
 
-	result = rint(c / i);
+	result = c / i;
 
 	PG_RETURN_CASH(result);
 }
@@ -853,7 +853,7 @@ cash_div_int4(PG_FUNCTION_ARGS)
 				(errcode(ERRCODE_DIVISION_BY_ZERO),
 				 errmsg("division by zero")));
 
-	result = rint(c / i);
+	result = c / i;
 
 	PG_RETURN_CASH(result);
 }
@@ -903,7 +903,7 @@ cash_div_int2(PG_FUNCTION_ARGS)
 				(errcode(ERRCODE_DIVISION_BY_ZERO),
 				 errmsg("division by zero")));
 
-	result = rint(c / s);
+	result = c / s;
 	PG_RETURN_CASH(result);
 }
 
@@ -970,10 +970,10 @@ cash_words(PG_FUNCTION_ARGS)
 	val = (uint64) value;
 
 	m0 = val % INT64CONST(100); /* cents */
-	m1 = (val / INT64CONST(100)) % 1000;		/* hundreds */
-	m2 = (val / INT64CONST(100000)) % 1000;		/* thousands */
+	m1 = (val / INT64CONST(100)) % 1000;	/* hundreds */
+	m2 = (val / INT64CONST(100000)) % 1000; /* thousands */
 	m3 = (val / INT64CONST(100000000)) % 1000;	/* millions */
-	m4 = (val / INT64CONST(100000000000)) % 1000;		/* billions */
+	m4 = (val / INT64CONST(100000000000)) % 1000;	/* billions */
 	m5 = (val / INT64CONST(100000000000000)) % 1000;	/* trillions */
 	m6 = (val / INT64CONST(100000000000000000)) % 1000; /* quadrillions */
 

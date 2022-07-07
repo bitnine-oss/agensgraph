@@ -1,6 +1,6 @@
 #! /usr/bin/perl
 #
-# Copyright (c) 2001-2017, PostgreSQL Global Development Group
+# Copyright (c) 2001-2018, PostgreSQL Global Development Group
 #
 # src/backend/utils/mb/Unicode/UCS_to_EUC_TW.pl
 #
@@ -18,7 +18,9 @@
 #		 # and Unicode name (not used in this script)
 
 use strict;
-require convutils;
+use convutils;
+
+my $this_script = 'src/backend/utils/mb/Unicode/UCS_to_EUC_TW.pl';
 
 my $mapping = &read_source("CNS11643.TXT");
 
@@ -26,8 +28,8 @@ my @extras;
 
 foreach my $i (@$mapping)
 {
-	my $ucs = $i->{ucs};
-	my $code = $i->{code};
+	my $ucs      = $i->{ucs};
+	my $code     = $i->{code};
 	my $origcode = $i->{code};
 
 	my $plane = ($code & 0x1f0000) >> 16;
@@ -50,15 +52,16 @@ foreach my $i (@$mapping)
 	# Some codes are mapped twice in the EUC_TW to UTF-8 table.
 	if ($origcode >= 0x12121 && $origcode <= 0x20000)
 	{
-		push @extras, {
-			ucs => $i->{ucs},
-			code => ($i->{code} + 0x8ea10000),
-			rest => $i->{rest},
-			direction => 'to_unicode'
-		};
+		push @extras,
+		  { ucs       => $i->{ucs},
+			code      => ($i->{code} + 0x8ea10000),
+			rest      => $i->{rest},
+			direction => TO_UNICODE,
+			f         => $i->{f},
+			l         => $i->{l} };
 	}
 }
 
 push @$mapping, @extras;
 
-print_tables("EUC_TW", $mapping);
+print_conversion_tables($this_script, "EUC_TW", $mapping);

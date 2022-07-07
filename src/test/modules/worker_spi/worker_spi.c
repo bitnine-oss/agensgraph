@@ -13,7 +13,7 @@
  * "delta" type.  Delta rows will be deleted by this worker and their values
  * aggregated into the total.
  *
- * Copyright (c) 2013-2017, PostgreSQL Global Development Group
+ * Copyright (c) 2013-2018, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
  *		src/test/modules/worker_spi/worker_spi.c
@@ -111,7 +111,7 @@ initialize_worker_spi(worktable *table)
 	StartTransactionCommand();
 	SPI_connect();
 	PushActiveSnapshot(GetTransactionSnapshot());
-	pgstat_report_activity(STATE_RUNNING, "initializing spi_worker schema");
+	pgstat_report_activity(STATE_RUNNING, "initializing worker_spi schema");
 
 	/* XXX could we use CREATE SCHEMA IF NOT EXISTS? */
 	initStringInfo(&buf);
@@ -137,11 +137,11 @@ initialize_worker_spi(worktable *table)
 		appendStringInfo(&buf,
 						 "CREATE SCHEMA \"%s\" "
 						 "CREATE TABLE \"%s\" ("
-			   "		type text CHECK (type IN ('total', 'delta')), "
+						 "		type text CHECK (type IN ('total', 'delta')), "
 						 "		value	integer)"
-				  "CREATE UNIQUE INDEX \"%s_unique_total\" ON \"%s\" (type) "
+						 "CREATE UNIQUE INDEX \"%s_unique_total\" ON \"%s\" (type) "
 						 "WHERE type = 'total'",
-					   table->schema, table->name, table->name, table->name);
+						 table->schema, table->name, table->name, table->name);
 
 		/* set statement start time */
 		SetCurrentStatementStartTimestamp();
@@ -234,6 +234,8 @@ worker_spi_main(Datum main_arg)
 		/* emergency bailout if postmaster has died */
 		if (rc & WL_POSTMASTER_DEATH)
 			proc_exit(1);
+
+		CHECK_FOR_INTERRUPTS();
 
 		/*
 		 * In case of a SIGHUP, just reload the configuration.
@@ -343,11 +345,13 @@ _PG_init(void)
 							NULL);
 
 	/* set up common data for all our workers */
+	memset(&worker, 0, sizeof(worker));
 	worker.bgw_flags = BGWORKER_SHMEM_ACCESS |
 		BGWORKER_BACKEND_DATABASE_CONNECTION;
 	worker.bgw_start_time = BgWorkerStart_RecoveryFinished;
 	worker.bgw_restart_time = BGW_NEVER_RESTART;
-	worker.bgw_main = worker_spi_main;
+	sprintf(worker.bgw_library_name, "worker_spi");
+	sprintf(worker.bgw_function_name, "worker_spi_main");
 	worker.bgw_notify_pid = 0;
 
 	/*
@@ -355,7 +359,8 @@ _PG_init(void)
 	 */
 	for (i = 1; i <= worker_spi_total_workers; i++)
 	{
-		snprintf(worker.bgw_name, BGW_MAXLEN, "worker %d", i);
+		snprintf(worker.bgw_name, BGW_MAXLEN, "worker_spi worker %d", i);
+		snprintf(worker.bgw_type, BGW_MAXLEN, "worker_spi");
 		worker.bgw_main_arg = Int32GetDatum(i);
 
 		RegisterBackgroundWorker(&worker);
@@ -374,14 +379,15 @@ worker_spi_launch(PG_FUNCTION_ARGS)
 	BgwHandleStatus status;
 	pid_t		pid;
 
+	memset(&worker, 0, sizeof(worker));
 	worker.bgw_flags = BGWORKER_SHMEM_ACCESS |
 		BGWORKER_BACKEND_DATABASE_CONNECTION;
 	worker.bgw_start_time = BgWorkerStart_RecoveryFinished;
 	worker.bgw_restart_time = BGW_NEVER_RESTART;
-	worker.bgw_main = NULL;		/* new worker might not have library loaded */
 	sprintf(worker.bgw_library_name, "worker_spi");
 	sprintf(worker.bgw_function_name, "worker_spi_main");
-	snprintf(worker.bgw_name, BGW_MAXLEN, "worker %d", i);
+	snprintf(worker.bgw_name, BGW_MAXLEN, "worker_spi worker %d", i);
+	snprintf(worker.bgw_type, BGW_MAXLEN, "worker_spi");
 	worker.bgw_main_arg = Int32GetDatum(i);
 	/* set bgw_notify_pid so that we can use WaitForBackgroundWorkerStartup */
 	worker.bgw_notify_pid = MyProcPid;
@@ -395,11 +401,11 @@ worker_spi_launch(PG_FUNCTION_ARGS)
 		ereport(ERROR,
 				(errcode(ERRCODE_INSUFFICIENT_RESOURCES),
 				 errmsg("could not start background process"),
-			   errhint("More details may be available in the server log.")));
+				 errhint("More details may be available in the server log.")));
 	if (status == BGWH_POSTMASTER_DIED)
 		ereport(ERROR,
 				(errcode(ERRCODE_INSUFFICIENT_RESOURCES),
-			  errmsg("cannot start background processes without postmaster"),
+				 errmsg("cannot start background processes without postmaster"),
 				 errhint("Kill all remaining database processes and restart the database.")));
 	Assert(status == BGWH_STARTED);
 

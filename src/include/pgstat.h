@@ -3,7 +3,7 @@
  *
  *	Definitions for the PostgreSQL statistics collector daemon.
  *
- *	Copyright (c) 2001-2017, PostgreSQL Global Development Group
+ *	Copyright (c) 2001-2018, PostgreSQL Global Development Group
  *
  *	src/include/pgstat.h
  * ----------
@@ -39,7 +39,7 @@ typedef enum TrackFunctionsLevel
 	TRACK_FUNC_OFF,
 	TRACK_FUNC_PL,
 	TRACK_FUNC_ALL
-}	TrackFunctionsLevel;
+}			TrackFunctionsLevel;
 
 /* ----------
  * The types of backend -> collector messages
@@ -154,7 +154,7 @@ typedef struct PgStat_TableStatus
 {
 	Oid			t_id;			/* table's OID */
 	bool		t_shared;		/* is it a shared catalog? */
-	struct PgStat_TableXactStatus *trans;		/* lowest subxact's counts */
+	struct PgStat_TableXactStatus *trans;	/* lowest subxact's counts */
 	PgStat_TableCounts t_counts;	/* event counts to be sent */
 } PgStat_TableStatus;
 
@@ -164,19 +164,19 @@ typedef struct PgStat_TableStatus
  */
 typedef struct PgStat_TableXactStatus
 {
-	PgStat_Counter tuples_inserted;		/* tuples inserted in (sub)xact */
-	PgStat_Counter tuples_updated;		/* tuples updated in (sub)xact */
-	PgStat_Counter tuples_deleted;		/* tuples deleted in (sub)xact */
+	PgStat_Counter tuples_inserted; /* tuples inserted in (sub)xact */
+	PgStat_Counter tuples_updated;	/* tuples updated in (sub)xact */
+	PgStat_Counter tuples_deleted;	/* tuples deleted in (sub)xact */
 	bool		truncated;		/* relation truncated in this (sub)xact */
 	PgStat_Counter inserted_pre_trunc;	/* tuples inserted prior to truncate */
 	PgStat_Counter updated_pre_trunc;	/* tuples updated prior to truncate */
 	PgStat_Counter deleted_pre_trunc;	/* tuples deleted prior to truncate */
 	int			nest_level;		/* subtransaction nest level */
 	/* links to other structs for same relation: */
-	struct PgStat_TableXactStatus *upper;		/* next higher subxact if any */
+	struct PgStat_TableXactStatus *upper;	/* next higher subxact if any */
 	PgStat_TableStatus *parent; /* per-table status */
 	/* structs of same subxact level are linked here: */
-	struct PgStat_TableXactStatus *next;		/* next of same subxact */
+	struct PgStat_TableXactStatus *next;	/* next of same subxact */
 } PgStat_TableXactStatus;
 
 
@@ -418,7 +418,7 @@ typedef struct PgStat_MsgBgWriter
 	PgStat_Counter m_buf_written_backend;
 	PgStat_Counter m_buf_fsync_backend;
 	PgStat_Counter m_buf_alloc;
-	PgStat_Counter m_checkpoint_write_time;		/* times in milliseconds */
+	PgStat_Counter m_checkpoint_write_time; /* times in milliseconds */
 	PgStat_Counter m_checkpoint_sync_time;
 } PgStat_MsgBgWriter;
 
@@ -633,13 +633,13 @@ typedef struct PgStat_StatTabEntry
 	PgStat_Counter blocks_fetched;
 	PgStat_Counter blocks_hit;
 
-	TimestampTz vacuum_timestamp;		/* user initiated vacuum */
+	TimestampTz vacuum_timestamp;	/* user initiated vacuum */
 	PgStat_Counter vacuum_count;
-	TimestampTz autovac_vacuum_timestamp;		/* autovacuum initiated */
+	TimestampTz autovac_vacuum_timestamp;	/* autovacuum initiated */
 	PgStat_Counter autovac_vacuum_count;
-	TimestampTz analyze_timestamp;		/* user initiated */
+	TimestampTz analyze_timestamp;	/* user initiated */
 	PgStat_Counter analyze_count;
-	TimestampTz autovac_analyze_timestamp;		/* autovacuum initiated */
+	TimestampTz autovac_analyze_timestamp;	/* autovacuum initiated */
 	PgStat_Counter autovac_analyze_count;
 } PgStat_StatTabEntry;
 
@@ -664,13 +664,13 @@ typedef struct PgStat_StatFuncEntry
  */
 typedef struct PgStat_ArchiverStats
 {
-	PgStat_Counter archived_count;		/* archival successes */
+	PgStat_Counter archived_count;	/* archival successes */
 	char		last_archived_wal[MAX_XFN_CHARS + 1];	/* last WAL file
 														 * archived */
-	TimestampTz last_archived_timestamp;		/* last archival success time */
+	TimestampTz last_archived_timestamp;	/* last archival success time */
 	PgStat_Counter failed_count;	/* failed archival attempts */
-	char		last_failed_wal[MAX_XFN_CHARS + 1];		/* WAL file involved in
-														 * last failure */
+	char		last_failed_wal[MAX_XFN_CHARS + 1]; /* WAL file involved in
+													 * last failure */
 	TimestampTz last_failed_timestamp;	/* last archival failure time */
 	TimestampTz stat_reset_timestamp;
 } PgStat_ArchiverStats;
@@ -683,7 +683,7 @@ typedef struct PgStat_GlobalStats
 	TimestampTz stats_timestamp;	/* time of stats file update */
 	PgStat_Counter timed_checkpoints;
 	PgStat_Counter requested_checkpoints;
-	PgStat_Counter checkpoint_write_time;		/* times in milliseconds */
+	PgStat_Counter checkpoint_write_time;	/* times in milliseconds */
 	PgStat_Counter checkpoint_sync_time;
 	PgStat_Counter buf_written_checkpoints;
 	PgStat_Counter buf_written_clean;
@@ -693,6 +693,25 @@ typedef struct PgStat_GlobalStats
 	PgStat_Counter buf_alloc;
 	TimestampTz stat_reset_timestamp;
 } PgStat_GlobalStats;
+
+
+/* ----------
+ * Backend types
+ * ----------
+ */
+typedef enum BackendType
+{
+	B_AUTOVAC_LAUNCHER,
+	B_AUTOVAC_WORKER,
+	B_BACKEND,
+	B_BG_WORKER,
+	B_BG_WRITER,
+	B_CHECKPOINTER,
+	B_STARTUP,
+	B_WAL_RECEIVER,
+	B_WAL_SENDER,
+	B_WAL_WRITER
+} BackendType;
 
 
 /* ----------
@@ -723,6 +742,7 @@ typedef enum BackendState
 #define PG_WAIT_EXTENSION			0x07000000U
 #define PG_WAIT_IPC					0x08000000U
 #define PG_WAIT_TIMEOUT				0x09000000U
+#define PG_WAIT_IO					0x0A000000U
 
 /* ----------
  * Wait Events - Activity
@@ -739,15 +759,15 @@ typedef enum
 	WAIT_EVENT_BGWRITER_HIBERNATE,
 	WAIT_EVENT_BGWRITER_MAIN,
 	WAIT_EVENT_CHECKPOINTER_MAIN,
+	WAIT_EVENT_LOGICAL_LAUNCHER_MAIN,
+	WAIT_EVENT_LOGICAL_APPLY_MAIN,
 	WAIT_EVENT_PGSTAT_MAIN,
 	WAIT_EVENT_RECOVERY_WAL_ALL,
 	WAIT_EVENT_RECOVERY_WAL_STREAM,
 	WAIT_EVENT_SYSLOGGER_MAIN,
 	WAIT_EVENT_WAL_RECEIVER_MAIN,
 	WAIT_EVENT_WAL_SENDER_MAIN,
-	WAIT_EVENT_WAL_WRITER_MAIN,
-	WAIT_EVENT_LOGICAL_LAUNCHER_MAIN,
-	WAIT_EVENT_LOGICAL_APPLY_MAIN
+	WAIT_EVENT_WAL_WRITER_MAIN
 } WaitEventActivity;
 
 /* ----------
@@ -762,9 +782,10 @@ typedef enum
 {
 	WAIT_EVENT_CLIENT_READ = PG_WAIT_CLIENT,
 	WAIT_EVENT_CLIENT_WRITE,
+	WAIT_EVENT_LIBPQWALRECEIVER_CONNECT,
+	WAIT_EVENT_LIBPQWALRECEIVER_RECEIVE,
 	WAIT_EVENT_SSL_OPEN_SERVER,
 	WAIT_EVENT_WAL_RECEIVER_WAIT_START,
-	WAIT_EVENT_LIBPQWALRECEIVER_READ,
 	WAIT_EVENT_WAL_SENDER_WAIT_WAL,
 	WAIT_EVENT_WAL_SENDER_WRITE_DATA
 } WaitEventClient;
@@ -780,12 +801,36 @@ typedef enum
 {
 	WAIT_EVENT_BGWORKER_SHUTDOWN = PG_WAIT_IPC,
 	WAIT_EVENT_BGWORKER_STARTUP,
+	WAIT_EVENT_BTREE_PAGE,
 	WAIT_EVENT_EXECUTE_GATHER,
+	WAIT_EVENT_HASH_BATCH_ALLOCATING,
+	WAIT_EVENT_HASH_BATCH_ELECTING,
+	WAIT_EVENT_HASH_BATCH_LOADING,
+	WAIT_EVENT_HASH_BUILD_ALLOCATING,
+	WAIT_EVENT_HASH_BUILD_ELECTING,
+	WAIT_EVENT_HASH_BUILD_HASHING_INNER,
+	WAIT_EVENT_HASH_BUILD_HASHING_OUTER,
+	WAIT_EVENT_HASH_GROW_BATCHES_ELECTING,
+	WAIT_EVENT_HASH_GROW_BATCHES_FINISHING,
+	WAIT_EVENT_HASH_GROW_BATCHES_REPARTITIONING,
+	WAIT_EVENT_HASH_GROW_BATCHES_ALLOCATING,
+	WAIT_EVENT_HASH_GROW_BATCHES_DECIDING,
+	WAIT_EVENT_HASH_GROW_BUCKETS_ELECTING,
+	WAIT_EVENT_HASH_GROW_BUCKETS_REINSERTING,
+	WAIT_EVENT_HASH_GROW_BUCKETS_ALLOCATING,
+	WAIT_EVENT_LOGICAL_SYNC_DATA,
+	WAIT_EVENT_LOGICAL_SYNC_STATE_CHANGE,
 	WAIT_EVENT_MQ_INTERNAL,
 	WAIT_EVENT_MQ_PUT_MESSAGE,
 	WAIT_EVENT_MQ_RECEIVE,
 	WAIT_EVENT_MQ_SEND,
 	WAIT_EVENT_PARALLEL_FINISH,
+	WAIT_EVENT_PARALLEL_BITMAP_SCAN,
+	WAIT_EVENT_PARALLEL_CREATE_INDEX_SCAN,
+	WAIT_EVENT_PROCARRAY_GROUP_UPDATE,
+	WAIT_EVENT_CLOG_GROUP_UPDATE,
+	WAIT_EVENT_REPLICATION_ORIGIN_DROP,
+	WAIT_EVENT_REPLICATION_SLOT_DROP,
 	WAIT_EVENT_SAFE_SNAPSHOT,
 	WAIT_EVENT_SYNC_REP
 } WaitEventIPC;
@@ -802,6 +847,83 @@ typedef enum
 	WAIT_EVENT_PG_SLEEP,
 	WAIT_EVENT_RECOVERY_APPLY_DELAY
 } WaitEventTimeout;
+
+/* ----------
+ * Wait Events - IO
+ *
+ * Use this category when a process is waiting for a IO.
+ * ----------
+ */
+typedef enum
+{
+	WAIT_EVENT_BUFFILE_READ = PG_WAIT_IO,
+	WAIT_EVENT_BUFFILE_WRITE,
+	WAIT_EVENT_CONTROL_FILE_READ,
+	WAIT_EVENT_CONTROL_FILE_SYNC,
+	WAIT_EVENT_CONTROL_FILE_SYNC_UPDATE,
+	WAIT_EVENT_CONTROL_FILE_WRITE,
+	WAIT_EVENT_CONTROL_FILE_WRITE_UPDATE,
+	WAIT_EVENT_COPY_FILE_READ,
+	WAIT_EVENT_COPY_FILE_WRITE,
+	WAIT_EVENT_DATA_FILE_EXTEND,
+	WAIT_EVENT_DATA_FILE_FLUSH,
+	WAIT_EVENT_DATA_FILE_IMMEDIATE_SYNC,
+	WAIT_EVENT_DATA_FILE_PREFETCH,
+	WAIT_EVENT_DATA_FILE_READ,
+	WAIT_EVENT_DATA_FILE_SYNC,
+	WAIT_EVENT_DATA_FILE_TRUNCATE,
+	WAIT_EVENT_DATA_FILE_WRITE,
+	WAIT_EVENT_DSM_FILL_ZERO_WRITE,
+	WAIT_EVENT_LOCK_FILE_ADDTODATADIR_READ,
+	WAIT_EVENT_LOCK_FILE_ADDTODATADIR_SYNC,
+	WAIT_EVENT_LOCK_FILE_ADDTODATADIR_WRITE,
+	WAIT_EVENT_LOCK_FILE_CREATE_READ,
+	WAIT_EVENT_LOCK_FILE_CREATE_SYNC,
+	WAIT_EVENT_LOCK_FILE_CREATE_WRITE,
+	WAIT_EVENT_LOCK_FILE_RECHECKDATADIR_READ,
+	WAIT_EVENT_LOGICAL_REWRITE_CHECKPOINT_SYNC,
+	WAIT_EVENT_LOGICAL_REWRITE_MAPPING_SYNC,
+	WAIT_EVENT_LOGICAL_REWRITE_MAPPING_WRITE,
+	WAIT_EVENT_LOGICAL_REWRITE_SYNC,
+	WAIT_EVENT_LOGICAL_REWRITE_TRUNCATE,
+	WAIT_EVENT_LOGICAL_REWRITE_WRITE,
+	WAIT_EVENT_RELATION_MAP_READ,
+	WAIT_EVENT_RELATION_MAP_SYNC,
+	WAIT_EVENT_RELATION_MAP_WRITE,
+	WAIT_EVENT_REORDER_BUFFER_READ,
+	WAIT_EVENT_REORDER_BUFFER_WRITE,
+	WAIT_EVENT_REORDER_LOGICAL_MAPPING_READ,
+	WAIT_EVENT_REPLICATION_SLOT_READ,
+	WAIT_EVENT_REPLICATION_SLOT_RESTORE_SYNC,
+	WAIT_EVENT_REPLICATION_SLOT_SYNC,
+	WAIT_EVENT_REPLICATION_SLOT_WRITE,
+	WAIT_EVENT_SLRU_FLUSH_SYNC,
+	WAIT_EVENT_SLRU_READ,
+	WAIT_EVENT_SLRU_SYNC,
+	WAIT_EVENT_SLRU_WRITE,
+	WAIT_EVENT_SNAPBUILD_READ,
+	WAIT_EVENT_SNAPBUILD_SYNC,
+	WAIT_EVENT_SNAPBUILD_WRITE,
+	WAIT_EVENT_TIMELINE_HISTORY_FILE_SYNC,
+	WAIT_EVENT_TIMELINE_HISTORY_FILE_WRITE,
+	WAIT_EVENT_TIMELINE_HISTORY_READ,
+	WAIT_EVENT_TIMELINE_HISTORY_SYNC,
+	WAIT_EVENT_TIMELINE_HISTORY_WRITE,
+	WAIT_EVENT_TWOPHASE_FILE_READ,
+	WAIT_EVENT_TWOPHASE_FILE_SYNC,
+	WAIT_EVENT_TWOPHASE_FILE_WRITE,
+	WAIT_EVENT_WALSENDER_TIMELINE_HISTORY_READ,
+	WAIT_EVENT_WAL_BOOTSTRAP_SYNC,
+	WAIT_EVENT_WAL_BOOTSTRAP_WRITE,
+	WAIT_EVENT_WAL_COPY_READ,
+	WAIT_EVENT_WAL_COPY_SYNC,
+	WAIT_EVENT_WAL_COPY_WRITE,
+	WAIT_EVENT_WAL_INIT_SYNC,
+	WAIT_EVENT_WAL_INIT_WRITE,
+	WAIT_EVENT_WAL_READ,
+	WAIT_EVENT_WAL_SYNC_METHOD_ASSIGN,
+	WAIT_EVENT_WAL_WRITE
+} WaitEventIO;
 
 /* ----------
  * Command type for progress reporting purposes
@@ -832,9 +954,9 @@ typedef struct PgBackendSSLStatus
 	/* Information about SSL connection */
 	int			ssl_bits;
 	bool		ssl_compression;
-	char		ssl_version[NAMEDATALEN];		/* MUST be null-terminated */
-	char		ssl_cipher[NAMEDATALEN];		/* MUST be null-terminated */
-	char		ssl_clientdn[NAMEDATALEN];		/* MUST be null-terminated */
+	char		ssl_version[NAMEDATALEN];	/* MUST be null-terminated */
+	char		ssl_cipher[NAMEDATALEN];	/* MUST be null-terminated */
+	char		ssl_clientdn[NAMEDATALEN];	/* MUST be null-terminated */
 } PgBackendSSLStatus;
 
 
@@ -845,6 +967,9 @@ typedef struct PgBackendSSLStatus
  * showing its current activity.  (The structs are allocated according to
  * BackendId, but that is not critical.)  Note that the collector process
  * has no involvement in, or even access to, these structs.
+ *
+ * Each auxiliary process also maintains a PgBackendStatus struct in shared
+ * memory.
  * ----------
  */
 typedef struct PgBackendStatus
@@ -869,6 +994,9 @@ typedef struct PgBackendStatus
 	/* The entry is valid iff st_procpid > 0, unused if st_procpid == 0 */
 	int			st_procpid;
 
+	/* Type of backends */
+	BackendType st_backendType;
+
 	/* Times when current backend, transaction, and activity started */
 	TimestampTz st_proc_start_timestamp;
 	TimestampTz st_xact_start_timestamp;
@@ -879,7 +1007,7 @@ typedef struct PgBackendStatus
 	Oid			st_databaseid;
 	Oid			st_userid;
 	SockAddr	st_clientaddr;
-	char	   *st_clienthostname;		/* MUST be null-terminated */
+	char	   *st_clienthostname;	/* MUST be null-terminated */
 
 	/* Information about SSL connection */
 	bool		st_ssl;
@@ -891,8 +1019,14 @@ typedef struct PgBackendStatus
 	/* application name; MUST be null-terminated */
 	char	   *st_appname;
 
-	/* current command string; MUST be null-terminated */
-	char	   *st_activity;
+	/*
+	 * Current command string; MUST be null-terminated. Note that this string
+	 * possibly is truncated in the middle of a multi-byte character. As
+	 * activity strings are stored more frequently than read, that allows to
+	 * move the cost of correct truncation to the display side. Use
+	 * pgstat_clip_activity() to truncate correctly.
+	 */
+	char	   *st_activity_raw;
 
 	/*
 	 * Command progress reporting.  Any command which wishes can advertise
@@ -1067,6 +1201,7 @@ extern const char *pgstat_get_wait_event_type(uint32 wait_event_info);
 extern const char *pgstat_get_backend_current_activity(int pid, bool checkUser);
 extern const char *pgstat_get_crashed_backend_activity(int pid, char *buffer,
 									int buflen);
+extern const char *pgstat_get_backend_desc(BackendType backendType);
 
 extern void pgstat_progress_start_command(ProgressCommandType cmdtype,
 							  Oid relid);
@@ -1079,6 +1214,8 @@ extern PgStat_TableStatus *find_tabstat_entry(Oid rel_id);
 extern PgStat_BackendFunctionEntry *find_funcstat_entry(Oid func_id);
 
 extern void pgstat_initstats(Relation rel);
+
+extern char *pgstat_clip_activity(const char *raw_activity);
 
 /* ----------
  * pgstat_report_wait_start() -
@@ -1176,7 +1313,7 @@ pgstat_report_wait_end(void)
 #define pgstat_count_buffer_write_time(n)							\
 	(pgStatBlockWriteTime += (n))
 
-extern void pgstat_count_heap_insert(Relation rel, int n);
+extern void pgstat_count_heap_insert(Relation rel, PgStat_Counter n);
 extern void pgstat_count_heap_update(Relation rel, bool hot);
 extern void pgstat_count_heap_delete(Relation rel);
 extern void pgstat_count_truncate(Relation rel);
@@ -1215,4 +1352,4 @@ extern int	pgstat_fetch_stat_numbackends(void);
 extern PgStat_ArchiverStats *pgstat_fetch_stat_archiver(void);
 extern PgStat_GlobalStats *pgstat_fetch_global(void);
 
-#endif   /* PGSTAT_H */
+#endif							/* PGSTAT_H */

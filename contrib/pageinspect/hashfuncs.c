@@ -2,7 +2,7 @@
  * hashfuncs.c
  *		Functions to investigate the content of HASH indexes
  *
- * Copyright (c) 2017, PostgreSQL Global Development Group
+ * Copyright (c) 2017-2018, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
  *		contrib/pageinspect/hashfuncs.c
@@ -34,10 +34,10 @@ PG_FUNCTION_INFO_V1(hash_metapage_info);
  */
 typedef struct HashPageStat
 {
-	int		live_items;
-	int		dead_items;
-	int		page_size;
-	int		free_size;
+	int			live_items;
+	int			dead_items;
+	int			page_size;
+	int			free_size;
 
 	/* opaque data */
 	BlockNumber hasho_prevblkno;
@@ -45,7 +45,7 @@ typedef struct HashPageStat
 	Bucket		hasho_bucket;
 	uint16		hasho_flag;
 	uint16		hasho_page_id;
-}	HashPageStat;
+} HashPageStat;
 
 
 /*
@@ -56,31 +56,33 @@ static Page
 verify_hash_page(bytea *raw_page, int flags)
 {
 	Page		page = get_page_from_raw(raw_page);
-	int			pagetype;
-	HashPageOpaque pageopaque;
+	int			pagetype = LH_UNUSED_PAGE;
 
-	if (PageIsNew(page))
-		ereport(ERROR,
-				(errcode(ERRCODE_INDEX_CORRUPTED),
-				 errmsg("index table contains zero page")));
+	/* Treat new pages as unused. */
+	if (!PageIsNew(page))
+	{
+		HashPageOpaque pageopaque;
 
-	if (PageGetSpecialSize(page) != MAXALIGN(sizeof(HashPageOpaqueData)))
-		ereport(ERROR,
-				(errcode(ERRCODE_INDEX_CORRUPTED),
-				 errmsg("index table contains corrupted page")));
+		if (PageGetSpecialSize(page) != MAXALIGN(sizeof(HashPageOpaqueData)))
+			ereport(ERROR,
+					(errcode(ERRCODE_INDEX_CORRUPTED),
+					 errmsg("index table contains corrupted page")));
 
-	pageopaque = (HashPageOpaque) PageGetSpecialPointer(page);
-	if (pageopaque->hasho_page_id != HASHO_PAGE_ID)
-		ereport(ERROR,
-				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				 errmsg("page is not a hash page"),
-				 errdetail("Expected %08x, got %08x.",
-						   HASHO_PAGE_ID, pageopaque->hasho_page_id)));
+		pageopaque = (HashPageOpaque) PageGetSpecialPointer(page);
+		if (pageopaque->hasho_page_id != HASHO_PAGE_ID)
+			ereport(ERROR,
+					(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+					 errmsg("page is not a hash page"),
+					 errdetail("Expected %08x, got %08x.",
+							   HASHO_PAGE_ID, pageopaque->hasho_page_id)));
+
+		pagetype = pageopaque->hasho_flag & LH_PAGE_TYPE;
+	}
 
 	/* Check that page type is sane. */
-	pagetype = pageopaque->hasho_flag & LH_PAGE_TYPE;
 	if (pagetype != LH_OVERFLOW_PAGE && pagetype != LH_BUCKET_PAGE &&
-		pagetype != LH_BITMAP_PAGE && pagetype != LH_META_PAGE)
+		pagetype != LH_BITMAP_PAGE && pagetype != LH_META_PAGE &&
+		pagetype != LH_UNUSED_PAGE)
 		ereport(ERROR,
 				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 				 errmsg("invalid hash page type %08x", pagetype)));
@@ -105,7 +107,7 @@ verify_hash_page(bytea *raw_page, int flags)
 			default:
 				elog(ERROR,
 					 "hash page of type %08x not in mask %08x",
-					pagetype, flags);
+					 pagetype, flags);
 		}
 	}
 
@@ -141,7 +143,7 @@ verify_hash_page(bytea *raw_page, int flags)
  * -------------------------------------------------
  */
 static void
-GetHashPageStatistics(Page page, HashPageStat * stat)
+GetHashPageStatistics(Page page, HashPageStat *stat)
 {
 	OffsetNumber maxoff = PageGetMaxOffsetNumber(page);
 	HashPageOpaque opaque = (HashPageOpaque) PageGetSpecialPointer(page);
@@ -182,7 +184,8 @@ hash_page_type(PG_FUNCTION_ARGS)
 	bytea	   *raw_page = PG_GETARG_BYTEA_P(0);
 	Page		page;
 	HashPageOpaque opaque;
-	char	   *type;
+	int			pagetype;
+	const char *type;
 
 	if (!superuser())
 		ereport(ERROR,
@@ -190,19 +193,26 @@ hash_page_type(PG_FUNCTION_ARGS)
 				 (errmsg("must be superuser to use raw page functions"))));
 
 	page = verify_hash_page(raw_page, 0);
-	opaque = (HashPageOpaque) PageGetSpecialPointer(page);
 
-	/* page type (flags) */
-	if (opaque->hasho_flag & LH_META_PAGE)
-		type = "metapage";
-	else if (opaque->hasho_flag & LH_OVERFLOW_PAGE)
-		type = "overflow";
-	else if (opaque->hasho_flag & LH_BUCKET_PAGE)
-		type = "bucket";
-	else if (opaque->hasho_flag & LH_BITMAP_PAGE)
-		type = "bitmap";
-	else
+	if (PageIsNew(page))
 		type = "unused";
+	else
+	{
+		opaque = (HashPageOpaque) PageGetSpecialPointer(page);
+
+		/* page type (flags) */
+		pagetype = opaque->hasho_flag & LH_PAGE_TYPE;
+		if (pagetype == LH_META_PAGE)
+			type = "metapage";
+		else if (pagetype == LH_OVERFLOW_PAGE)
+			type = "overflow";
+		else if (pagetype == LH_BUCKET_PAGE)
+			type = "bucket";
+		else if (pagetype == LH_BITMAP_PAGE)
+			type = "bitmap";
+		else
+			type = "unused";
+	}
 
 	PG_RETURN_TEXT_P(cstring_to_text(type));
 }
@@ -303,9 +313,9 @@ hash_page_items(PG_FUNCTION_ARGS)
 
 		fctx = SRF_FIRSTCALL_INIT();
 
-		page = verify_hash_page(raw_page, LH_BUCKET_PAGE | LH_OVERFLOW_PAGE);
-
 		mctx = MemoryContextSwitchTo(fctx->multi_call_memory_ctx);
+
+		page = verify_hash_page(raw_page, LH_BUCKET_PAGE | LH_OVERFLOW_PAGE);
 
 		uargs = palloc(sizeof(struct user_args));
 
@@ -380,21 +390,22 @@ hash_bitmap_info(PG_FUNCTION_ARGS)
 	Oid			indexRelid = PG_GETARG_OID(0);
 	uint64		ovflblkno = PG_GETARG_INT64(1);
 	HashMetaPage metap;
-	Buffer		buf,
-				metabuf;
+	Buffer		metabuf,
+				mapbuf;
 	BlockNumber bitmapblkno;
-	Page		page;
+	Page		mappage;
 	bool		bit = false;
-	HashPageOpaque	opaque;
 	TupleDesc	tupleDesc;
 	Relation	indexRel;
 	uint32		ovflbitno;
 	int32		bitmappage,
 				bitmapbit;
 	HeapTuple	tuple;
-	int			j;
+	int			i,
+				j;
 	Datum		values[3];
 	bool		nulls[3];
+	uint32	   *freep;
 
 	if (!superuser())
 		ereport(ERROR,
@@ -418,30 +429,30 @@ hash_bitmap_info(PG_FUNCTION_ARGS)
 				 errmsg("block number " UINT64_FORMAT " is out of range for relation \"%s\"",
 						ovflblkno, RelationGetRelationName(indexRel))));
 
-	buf = ReadBufferExtended(indexRel, MAIN_FORKNUM, (BlockNumber) ovflblkno,
-							 RBM_NORMAL, NULL);
-	LockBuffer(buf, BUFFER_LOCK_SHARE);
-	_hash_checkpage(indexRel, buf, LH_PAGE_TYPE);
-	page = BufferGetPage(buf);
-	opaque = (HashPageOpaque) PageGetSpecialPointer(page);
-
-	if (opaque->hasho_flag != LH_OVERFLOW_PAGE)
-		ereport(ERROR,
-				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				 errmsg("page is not an overflow page"),
-				 errdetail("Expected %08x, got %08x.",
-							LH_OVERFLOW_PAGE, opaque->hasho_flag)));
-
-	if (BlockNumberIsValid(opaque->hasho_prevblkno))
-		bit = true;
-
-	UnlockReleaseBuffer(buf);
-
 	/* Read the metapage so we can determine which bitmap page to use */
 	metabuf = _hash_getbuf(indexRel, HASH_METAPAGE, HASH_READ, LH_META_PAGE);
 	metap = HashPageGetMeta(BufferGetPage(metabuf));
 
-	/* Identify overflow bit number */
+	/*
+	 * Reject attempt to read the bit for a metapage or bitmap page; this is
+	 * only meaningful for overflow pages.
+	 */
+	if (ovflblkno == 0)
+		ereport(ERROR,
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("invalid overflow block number %u",
+						(BlockNumber) ovflblkno)));
+	for (i = 0; i < metap->hashm_nmaps; i++)
+		if (metap->hashm_mapp[i] == ovflblkno)
+			ereport(ERROR,
+					(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+					 errmsg("invalid overflow block number %u",
+							(BlockNumber) ovflblkno)));
+
+	/*
+	 * Identify overflow bit number.  This will error out for primary bucket
+	 * pages, and we've already rejected the metapage and bitmap pages above.
+	 */
 	ovflbitno = _hash_ovflblkno_to_bitno(metap, (BlockNumber) ovflblkno);
 
 	bitmappage = ovflbitno >> BMPG_SHIFT(metap);
@@ -450,12 +461,21 @@ hash_bitmap_info(PG_FUNCTION_ARGS)
 	if (bitmappage >= metap->hashm_nmaps)
 		ereport(ERROR,
 				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				 errmsg("invalid overflow bit number %u", ovflbitno)));
+				 errmsg("invalid overflow block number %u",
+						(BlockNumber) ovflblkno)));
 
 	bitmapblkno = metap->hashm_mapp[bitmappage];
 
 	_hash_relbuf(indexRel, metabuf);
 
+	/* Check the status of bitmap bit for overflow page */
+	mapbuf = _hash_getbuf(indexRel, bitmapblkno, HASH_READ, LH_BITMAP_PAGE);
+	mappage = BufferGetPage(mapbuf);
+	freep = HashPageGetBitmap(mappage);
+
+	bit = ISSET(freep, bitmapbit) != 0;
+
+	_hash_relbuf(indexRel, mapbuf);
 	index_close(indexRel, AccessShareLock);
 
 	/* Build a tuple descriptor for our result type */
@@ -495,8 +515,8 @@ hash_metapage_info(PG_FUNCTION_ARGS)
 				j;
 	Datum		values[16];
 	bool		nulls[16];
-	Datum       spares[HASH_MAX_SPLITPOINTS];
-	Datum       mapp[HASH_MAX_BITMAPS];
+	Datum		spares[HASH_MAX_SPLITPOINTS];
+	Datum		mapp[HASH_MAX_BITMAPS];
 
 	if (!superuser())
 		ereport(ERROR,
@@ -531,7 +551,7 @@ hash_metapage_info(PG_FUNCTION_ARGS)
 	values[j++] = ObjectIdGetDatum((Oid) metad->hashm_procid);
 
 	for (i = 0; i < HASH_MAX_SPLITPOINTS; i++)
-		spares[i] = Int64GetDatum((int8) metad->hashm_spares[i]);
+		spares[i] = Int64GetDatum((int64) metad->hashm_spares[i]);
 	values[j++] = PointerGetDatum(construct_array(spares,
 												  HASH_MAX_SPLITPOINTS,
 												  INT8OID,

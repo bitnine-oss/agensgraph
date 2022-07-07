@@ -3,7 +3,7 @@
  * regexp.c
  *	  Postgres' interface to the regular expression package.
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -247,7 +247,7 @@ RE_compile_and_cache(text *text_re, int cflags, Oid collation)
 /*
  * RE_wchar_execute - execute a RE on pg_wchar data
  *
- * Returns TRUE on match, FALSE on no match
+ * Returns true on match, false on no match
  *
  *	re --- the compiled pattern as returned by RE_compile_and_cache
  *	data --- the data to match against (need not be null-terminated)
@@ -291,7 +291,7 @@ RE_wchar_execute(regex_t *re, pg_wchar *data, int data_len,
 /*
  * RE_execute - execute a RE
  *
- * Returns TRUE on match, FALSE on no match
+ * Returns true on match, false on no match
  *
  *	re --- the compiled pattern as returned by RE_compile_and_cache
  *	dat --- the data to match against (need not be null-terminated)
@@ -323,7 +323,7 @@ RE_execute(regex_t *re, char *dat, int dat_len,
 /*
  * RE_compile_and_execute - compile and execute a RE
  *
- * Returns TRUE on match, FALSE on no match
+ * Returns true on match, false on no match
  *
  *	text_re --- the pattern, expressed as a TEXT object
  *	dat --- the data to match against (need not be null-terminated)
@@ -696,7 +696,7 @@ similar_escape(PG_FUNCTION_ARGS)
 				ereport(ERROR,
 						(errcode(ERRCODE_INVALID_ESCAPE_SEQUENCE),
 						 errmsg("invalid escape string"),
-				  errhint("Escape string must be empty or one character.")));
+						 errhint("Escape string must be empty or one character.")));
 		}
 	}
 
@@ -1028,7 +1028,7 @@ setup_regexp_matches(text *orig_str, text *pattern, pg_re_flags *re_flags,
 			{
 				array_len *= 2;
 				matchctx->match_locs = (int *) repalloc(matchctx->match_locs,
-													sizeof(int) * array_len);
+														sizeof(int) * array_len);
 			}
 
 			/* save this match's locations */
@@ -1118,7 +1118,7 @@ build_regexp_match_result(regexp_matches_ctx *matchctx)
 		else
 		{
 			elems[i] = DirectFunctionCall3(text_substr,
-										 PointerGetDatum(matchctx->orig_str),
+										   PointerGetDatum(matchctx->orig_str),
 										   Int32GetDatum(so + 1),
 										   Int32GetDatum(eo - so));
 			nulls[i] = false;
@@ -1216,7 +1216,7 @@ regexp_split_to_array(PG_FUNCTION_ARGS)
 	if (re_flags.glob)
 		ereport(ERROR,
 				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-		errmsg("regexp_split_to_array does not support the global option")));
+				 errmsg("regexp_split_to_array does not support the global option")));
 	/* But we find all the matches anyway */
 	re_flags.glob = true;
 
@@ -1294,7 +1294,7 @@ build_regexp_split_result(regexp_matches_ctx *splitctx)
  * regexp_fixed_prefix - extract fixed prefix, if any, for a regexp
  *
  * The result is NULL if there is no fixed prefix, else a palloc'd string.
- * If it is an exact match, not just a prefix, *exact is returned as TRUE.
+ * If it is an exact match, not just a prefix, *exact is returned as true.
  */
 char *
 regexp_fixed_prefix(text *text_re, bool case_insensitive, Oid collation,

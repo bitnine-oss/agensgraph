@@ -3,7 +3,7 @@
  * pgtz.c
  *	  Timezone Library Integration Functions
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
  *	  src/timezone/pgtz.c
@@ -17,6 +17,7 @@
 #include <sys/stat.h>
 #include <time.h>
 
+#include "datatype/timestamp.h"
 #include "miscadmin.h"
 #include "pgtz.h"
 #include "storage/fd.h"
@@ -79,12 +80,38 @@ pg_open_tzfile(const char *name, char *canonname)
 	int			fullnamelen;
 	int			orignamelen;
 
+	/* Initialize fullname with base name of tzdata directory */
+	strlcpy(fullname, pg_TZDIR(), sizeof(fullname));
+	orignamelen = fullnamelen = strlen(fullname);
+
+	if (fullnamelen + 1 + strlen(name) >= MAXPGPATH)
+		return -1;				/* not gonna fit */
+
+	/*
+	 * If the caller doesn't need the canonical spelling, first just try to
+	 * open the name as-is.  This can be expected to succeed if the given name
+	 * is already case-correct, or if the filesystem is case-insensitive; and
+	 * we don't need to distinguish those situations if we aren't tasked with
+	 * reporting the canonical spelling.
+	 */
+	if (canonname == NULL)
+	{
+		int			result;
+
+		fullname[fullnamelen] = '/';
+		/* test above ensured this will fit: */
+		strcpy(fullname + fullnamelen + 1, name);
+		result = open(fullname, O_RDONLY | PG_BINARY, 0);
+		if (result >= 0)
+			return result;
+		/* If that didn't work, fall through to do it the hard way */
+		fullname[fullnamelen] = '\0';
+	}
+
 	/*
 	 * Loop to split the given name into directory levels; for each level,
 	 * search using scan_directory_ci().
 	 */
-	strlcpy(fullname, pg_TZDIR(), sizeof(fullname));
-	orignamelen = fullnamelen = strlen(fullname);
 	fname = name;
 	for (;;)
 	{
@@ -96,8 +123,6 @@ pg_open_tzfile(const char *name, char *canonname)
 			fnamelen = slashptr - fname;
 		else
 			fnamelen = strlen(fname);
-		if (fullnamelen + 1 + fnamelen >= MAXPGPATH)
-			return -1;			/* not gonna fit */
 		if (!scan_directory_ci(fullname, fname, fnamelen,
 							   fullname + fullnamelen + 1,
 							   MAXPGPATH - fullnamelen - 1))
@@ -131,15 +156,8 @@ scan_directory_ci(const char *dirname, const char *fname, int fnamelen,
 	struct dirent *direntry;
 
 	dirdesc = AllocateDir(dirname);
-	if (!dirdesc)
-	{
-		ereport(LOG,
-				(errcode_for_file_access(),
-				 errmsg("could not open directory \"%s\": %m", dirname)));
-		return false;
-	}
 
-	while ((direntry = ReadDir(dirdesc, dirname)) != NULL)
+	while ((direntry = ReadDirExtended(dirdesc, dirname, LOG)) != NULL)
 	{
 		/*
 		 * Ignore . and .., plus any other "hidden" files.  This is a security
@@ -308,14 +326,14 @@ pg_tzset_offset(long gmtoffset)
 	char		tzname[128];
 
 	snprintf(offsetstr, sizeof(offsetstr),
-			 "%02ld", absoffset / SECSPERHOUR);
-	absoffset %= SECSPERHOUR;
+			 "%02ld", absoffset / SECS_PER_HOUR);
+	absoffset %= SECS_PER_HOUR;
 	if (absoffset != 0)
 	{
 		snprintf(offsetstr + strlen(offsetstr),
 				 sizeof(offsetstr) - strlen(offsetstr),
-				 ":%02ld", absoffset / SECSPERMIN);
-		absoffset %= SECSPERMIN;
+				 ":%02ld", absoffset / SECS_PER_MINUTE);
+		absoffset %= SECS_PER_MINUTE;
 		if (absoffset != 0)
 			snprintf(offsetstr + strlen(offsetstr),
 					 sizeof(offsetstr) - strlen(offsetstr),
@@ -412,7 +430,7 @@ pg_tzenumerate_next(pg_tzenum *dir)
 	while (dir->depth >= 0)
 	{
 		struct dirent *direntry;
-		char		fullname[MAXPGPATH];
+		char		fullname[MAXPGPATH * 2];
 		struct stat statbuf;
 
 		direntry = ReadDir(dir->dirdesc[dir->depth], dir->dirname[dir->depth]);
@@ -429,7 +447,7 @@ pg_tzenumerate_next(pg_tzenum *dir)
 		if (direntry->d_name[0] == '.')
 			continue;
 
-		snprintf(fullname, MAXPGPATH, "%s/%s",
+		snprintf(fullname, sizeof(fullname), "%s/%s",
 				 dir->dirname[dir->depth], direntry->d_name);
 		if (stat(fullname, &statbuf) != 0)
 			ereport(ERROR,
@@ -441,7 +459,7 @@ pg_tzenumerate_next(pg_tzenum *dir)
 			/* Step into the subdirectory */
 			if (dir->depth >= MAX_TZDIR_DEPTH - 1)
 				ereport(ERROR,
-					 (errmsg_internal("timezone directory stack overflow")));
+						(errmsg_internal("timezone directory stack overflow")));
 			dir->depth++;
 			dir->dirname[dir->depth] = pstrdup(fullname);
 			dir->dirdesc[dir->depth] = AllocateDir(fullname);
@@ -457,10 +475,11 @@ pg_tzenumerate_next(pg_tzenum *dir)
 
 		/*
 		 * Load this timezone using tzload() not pg_tzset(), so we don't fill
-		 * the cache
+		 * the cache.  Also, don't ask for the canonical spelling: we already
+		 * know it, and pg_open_tzfile's way of finding it out is pretty
+		 * inefficient.
 		 */
-		if (tzload(fullname + dir->baselen, dir->tz.TZname, &dir->tz.state,
-				   true) != 0)
+		if (tzload(fullname + dir->baselen, NULL, &dir->tz.state, true) != 0)
 		{
 			/* Zone could not be loaded, ignore it */
 			continue;
@@ -471,6 +490,10 @@ pg_tzenumerate_next(pg_tzenum *dir)
 			/* Ignore leap-second zones */
 			continue;
 		}
+
+		/* OK, return the canonical zone name spelling. */
+		strlcpy(dir->tz.TZname, fullname + dir->baselen,
+				sizeof(dir->tz.TZname));
 
 		/* Timezone loaded OK. */
 		return &dir->tz;

@@ -12,9 +12,6 @@
 <!ENTITY query      SYSTEM "query.sgml">
 <!ENTITY start      SYSTEM "start.sgml">
 
-<!-- currently unused, but contains some interesting information -->
-<!ENTITY sql        SYSTEM "sql.sgml">
-
 <!-- user's guide -->
 <!ENTITY array      SYSTEM "array.sgml">
 <!ENTITY datatype   SYSTEM "datatype.sgml">
@@ -86,6 +83,7 @@
 <!ENTITY bki        SYSTEM "bki.sgml">
 <!ENTITY catalogs   SYSTEM "catalogs.sgml">
 <!ENTITY geqo       SYSTEM "geqo.sgml">
+<!ENTITY btree      SYSTEM "btree.sgml">
 <!ENTITY gist       SYSTEM "gist.sgml">
 <!ENTITY spgist     SYSTEM "spgist.sgml">
 <!ENTITY gin        SYSTEM "gin.sgml">
@@ -107,12 +105,12 @@
 <!-- contrib information -->
 <!ENTITY contrib         SYSTEM "contrib.sgml">
 <!ENTITY adminpack       SYSTEM "adminpack.sgml">
+<!ENTITY amcheck         SYSTEM "amcheck.sgml">
 <!ENTITY auth-delay      SYSTEM "auth-delay.sgml">
 <!ENTITY auto-explain    SYSTEM "auto-explain.sgml">
 <!ENTITY bloom           SYSTEM "bloom.sgml">
 <!ENTITY btree-gin       SYSTEM "btree-gin.sgml">
 <!ENTITY btree-gist      SYSTEM "btree-gist.sgml">
-<!ENTITY chkpass         SYSTEM "chkpass.sgml">
 <!ENTITY citext          SYSTEM "citext.sgml">
 <!ENTITY cube            SYSTEM "cube.sgml">
 <!ENTITY dblink          SYSTEM "dblink.sgml">
@@ -151,7 +149,6 @@
 <!ENTITY test-decoding   SYSTEM "test-decoding.sgml">
 <!ENTITY test-parser     SYSTEM "test-parser.sgml">
 <!ENTITY test-shm-mq     SYSTEM "test-shm-mq.sgml">
-<!ENTITY tsearch2        SYSTEM "tsearch2.sgml">
 <!ENTITY tsm-system-rows SYSTEM "tsm-system-rows.sgml">
 <!ENTITY tsm-system-time SYSTEM "tsm-system-time.sgml">
 <!ENTITY unaccent      SYSTEM "unaccent.sgml">
@@ -160,7 +157,6 @@
 <!ENTITY xml2            SYSTEM "xml2.sgml">
 
 <!-- appendixes -->
-<!ENTITY contacts   SYSTEM "contacts.sgml">
 <!ENTITY datetime   SYSTEM "datetime.sgml">
 <!ENTITY docguide   SYSTEM "docguide.sgml">
 <!ENTITY errcodes   SYSTEM "errcodes.sgml">
@@ -169,6 +165,7 @@
 <!ENTITY sourcerepo SYSTEM "sourcerepo.sgml">
 
 <!ENTITY release    SYSTEM "release.sgml">
+<!ENTITY release-10     SYSTEM "release-10.sgml">
 <!ENTITY release-9.6    SYSTEM "release-9.6.sgml">
 <!ENTITY release-9.5    SYSTEM "release-9.5.sgml">
 <!ENTITY release-9.4    SYSTEM "release-9.4.sgml">
@@ -193,24 +190,3 @@
 
 <!-- back matter -->
 <!ENTITY biblio     SYSTEM "biblio.sgml">
-<!ENTITY bookindex  SYSTEM "bookindex.sgml">
-
-<!--
- Some parts of the documentation are also source for some plain-text
- files used during installation.  To selectively ignore or include
- some parts (e.g., external xref's) when generating these files we use
- these parameter entities.  See also standalone-install.sgml.
- -->
-<!ENTITY % standalone-ignore  "INCLUDE">
-<!ENTITY % standalone-include "IGNORE">
-
-<!--
- By default, no index is included.  Use -i include-index on the command line
- to include it.
- -->
-<!ENTITY % include-index "IGNORE">
-
-<!--
- Create empty index element for processing by XSLT stylesheet.
- -->
-<!ENTITY % include-xslt-index "IGNORE">

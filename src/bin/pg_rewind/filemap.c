@@ -3,14 +3,13 @@
  * filemap.c
  *	  A data structure for keeping track of files that have changed.
  *
- * Copyright (c) 2013-2017, PostgreSQL Global Development Group
+ * Copyright (c) 2013-2018, PostgreSQL Global Development Group
  *
  *-------------------------------------------------------------------------
  */
 
 #include "postgres_fe.h"
 
-#include <sys/types.h>
 #include <sys/stat.h>
 #include <unistd.h>
 
@@ -605,7 +604,7 @@ isRelDataFile(const char *path)
 		else
 		{
 			nmatch = sscanf(path, "pg_tblspc/%u/PG_%20s/%u/%u.%u",
-						  &rnode.spcNode, buf, &rnode.dbNode, &rnode.relNode,
+							&rnode.spcNode, buf, &rnode.dbNode, &rnode.relNode,
 							&segNo);
 			if (nmatch == 4 || nmatch == 5)
 				matched = true;

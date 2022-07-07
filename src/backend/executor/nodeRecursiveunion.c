@@ -7,7 +7,7 @@
  * already seen.  The hash key is computed from the grouping columns.
  *
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -32,13 +32,16 @@ static void
 build_hash_table(RecursiveUnionState *rustate)
 {
 	RecursiveUnion *node = (RecursiveUnion *) rustate->ps.plan;
+	TupleDesc	desc = ExecGetResultType(outerPlanState(rustate));
 
 	Assert(node->numCols > 0);
 	Assert(node->numGroups > 0);
 
-	rustate->hashtable = BuildTupleHashTable(node->numCols,
+	rustate->hashtable = BuildTupleHashTable(&rustate->ps,
+											 desc,
+											 node->numCols,
 											 node->dupColIdx,
-											 rustate->eqfunctions,
+											 rustate->eqfuncoids,
 											 rustate->hashfunctions,
 											 node->numGroups,
 											 0,
@@ -66,14 +69,17 @@ build_hash_table(RecursiveUnionState *rustate)
  * 2.6 go back to 2.2
  * ----------------------------------------------------------------
  */
-TupleTableSlot *
-ExecRecursiveUnion(RecursiveUnionState *node)
+static TupleTableSlot *
+ExecRecursiveUnion(PlanState *pstate)
 {
+	RecursiveUnionState *node = castNode(RecursiveUnionState, pstate);
 	PlanState  *outerPlan = outerPlanState(node);
 	PlanState  *innerPlan = innerPlanState(node);
 	RecursiveUnion *plan = (RecursiveUnion *) node->ps.plan;
 	TupleTableSlot *slot;
 	bool		isnew;
+
+	CHECK_FOR_INTERRUPTS();
 
 	/* 1. Evaluate non-recursive term */
 	if (!node->recursing)
@@ -179,8 +185,9 @@ ExecInitRecursiveUnion(RecursiveUnion *node, EState *estate, int eflags)
 	rustate = makeNode(RecursiveUnionState);
 	rustate->ps.plan = (Plan *) node;
 	rustate->ps.state = estate;
+	rustate->ps.ExecProcNode = ExecRecursiveUnion;
 
-	rustate->eqfunctions = NULL;
+	rustate->eqfuncoids = NULL;
 	rustate->hashfunctions = NULL;
 	rustate->hashtable = NULL;
 	rustate->tempContext = NULL;
@@ -233,14 +240,13 @@ ExecInitRecursiveUnion(RecursiveUnion *node, EState *estate, int eflags)
 	 * RecursiveUnion nodes still have Result slots, which hold pointers to
 	 * tuples, so we have to initialize them.
 	 */
-	ExecInitResultTupleSlot(estate, &rustate->ps);
+	ExecInitResultTupleSlotTL(estate, &rustate->ps);
 
 	/*
-	 * Initialize result tuple type and projection info.  (Note: we have to
-	 * set up the result type before initializing child nodes, because
-	 * nodeWorktablescan.c expects it to be valid.)
+	 * Initialize result tuple type.  (Note: we have to set up the result type
+	 * before initializing child nodes, because nodeWorktablescan.c expects it
+	 * to be valid.)
 	 */
-	ExecAssignResultTypeFromTL(&rustate->ps);
 	rustate->ps.ps_ProjInfo = NULL;
 
 	/*
@@ -257,7 +263,7 @@ ExecInitRecursiveUnion(RecursiveUnion *node, EState *estate, int eflags)
 	{
 		execTuplesHashPrepare(node->numCols,
 							  node->dupOperators,
-							  &rustate->eqfunctions,
+							  &rustate->eqfuncoids,
 							  &rustate->hashfunctions);
 		build_hash_table(rustate);
 	}

@@ -4,7 +4,7 @@
  *	  per-process shared memory data structures
  *
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/storage/proc.h
@@ -14,6 +14,7 @@
 #ifndef _PROC_H_
 #define _PROC_H_
 
+#include "access/clog.h"
 #include "access/xlogdefs.h"
 #include "lib/ilist.h"
 #include "storage/latch.h"
@@ -39,13 +40,23 @@ struct XidCache
 	TransactionId xids[PGPROC_MAX_CACHED_SUBXIDS];
 };
 
-/* Flags for PGXACT->vacuumFlags */
+/*
+ * Flags for PGXACT->vacuumFlags
+ *
+ * Note: If you modify these flags, you need to modify PROCARRAY_XXX flags
+ * in src/include/storage/procarray.h.
+ *
+ * PROC_RESERVED may later be assigned for use in vacuumFlags, but its value is
+ * used for PROCARRAY_SLOTS_XMIN in procarray.h, so GetOldestXmin won't be able
+ * to match and ignore processes with this flag set.
+ */
 #define		PROC_IS_AUTOVACUUM	0x01	/* is it an autovac worker? */
 #define		PROC_IN_VACUUM		0x02	/* currently running lazy vacuum */
 #define		PROC_IN_ANALYZE		0x04	/* currently running analyze */
 #define		PROC_VACUUM_FOR_WRAPAROUND	0x08	/* set by autovac only */
 #define		PROC_IN_LOGICAL_DECODING	0x10	/* currently doing logical
 												 * decoding outside xact */
+#define		PROC_RESERVED				0x20	/* reserved for procarray */
 
 /* flags reset at EOXact */
 #define		PROC_VACUUM_STATE_MASK \
@@ -161,12 +172,23 @@ struct PGPROC
 
 	uint32		wait_event_info;	/* proc's wait information */
 
+	/* Support for group transaction status update. */
+	bool		clogGroupMember;	/* true, if member of clog group */
+	pg_atomic_uint32 clogGroupNext; /* next clog group member */
+	TransactionId clogGroupMemberXid;	/* transaction id of clog group member */
+	XidStatus	clogGroupMemberXidStatus;	/* transaction status of clog
+											 * group member */
+	int			clogGroupMemberPage;	/* clog page corresponding to
+										 * transaction id of clog group member */
+	XLogRecPtr	clogGroupMemberLsn; /* WAL location of commit record for clog
+									 * group member */
+
 	/* Per-backend LWLock.  Protects fields below (but not group fields). */
 	LWLock		backendLock;
 
 	/* Lock manager data, recording fast-path locks taken by this backend. */
 	uint64		fpLockBits;		/* lock modes held for each fast-path slot */
-	Oid			fpRelId[FP_LOCK_SLOTS_PER_BACKEND];		/* slots for rel oids */
+	Oid			fpRelId[FP_LOCK_SLOTS_PER_BACKEND]; /* slots for rel oids */
 	bool		fpVXIDLock;		/* are we holding a fast-path VXID lock? */
 	LocalTransactionId fpLocalTransactionId;	/* lxid for fast-path VXID
 												 * lock */
@@ -176,7 +198,7 @@ struct PGPROC
 	 * leader to get the LWLock protecting these fields.
 	 */
 	PGPROC	   *lockGroupLeader;	/* lock group leader, if I'm a member */
-	dlist_head	lockGroupMembers;		/* list of members, if I'm a leader */
+	dlist_head	lockGroupMembers;	/* list of members, if I'm a leader */
 	dlist_node	lockGroupLink;	/* my member link, if I'm a member */
 };
 
@@ -232,6 +254,8 @@ typedef struct PROC_HDR
 	PGPROC	   *bgworkerFreeProcs;
 	/* First pgproc waiting for group XID clear */
 	pg_atomic_uint32 procArrayGroupFirst;
+	/* First pgproc waiting for group transaction status update */
+	pg_atomic_uint32 clogGroupFirst;
 	/* WALWriter process's latch */
 	Latch	   *walwriterLatch;
 	/* Checkpointer process's latch */
@@ -245,7 +269,7 @@ typedef struct PROC_HDR
 	int			startupBufferPinWaitBufId;
 } PROC_HDR;
 
-extern PROC_HDR *ProcGlobal;
+extern PGDLLIMPORT PROC_HDR *ProcGlobal;
 
 extern PGPROC *PreparedXactProcs;
 
@@ -262,9 +286,8 @@ extern PGPROC *PreparedXactProcs;
  */
 #define NUM_AUXILIARY_PROCS		4
 
-
 /* configurable options */
-extern int	DeadlockTimeout;
+extern PGDLLIMPORT int DeadlockTimeout;
 extern int	StatementTimeout;
 extern int	LockTimeout;
 extern int	IdleInTransactionSessionTimeout;
@@ -299,7 +322,9 @@ extern void LockErrorCleanup(void);
 extern void ProcWaitForSignal(uint32 wait_event_info);
 extern void ProcSendSignal(int pid);
 
+extern PGPROC *AuxiliaryPidGetProc(int pid);
+
 extern void BecomeLockGroupLeader(void);
 extern bool BecomeLockGroupMember(PGPROC *leader, int pid);
 
-#endif   /* PROC_H */
+#endif							/* PROC_H */

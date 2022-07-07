@@ -7,7 +7,7 @@
  *	  and join trees.
  *
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/nodes/primnodes.h
@@ -18,6 +18,7 @@
 #define PRIMNODES_H
 
 #include "access/attnum.h"
+#include "nodes/bitmapset.h"
 #include "nodes/pg_list.h"
 
 
@@ -71,6 +72,27 @@ typedef struct RangeVar
 	Alias	   *alias;			/* table alias & optional column aliases */
 	int			location;		/* token location, or -1 if unknown */
 } RangeVar;
+
+/*
+ * TableFunc - node for a table function, such as XMLTABLE.
+ */
+typedef struct TableFunc
+{
+	NodeTag		type;
+	List	   *ns_uris;		/* list of namespace uri */
+	List	   *ns_names;		/* list of namespace names */
+	Node	   *docexpr;		/* input document expression */
+	Node	   *rowexpr;		/* row filter expression */
+	List	   *colnames;		/* column names (list of String) */
+	List	   *coltypes;		/* OID list of column type OIDs */
+	List	   *coltypmods;		/* integer list of column typmods */
+	List	   *colcollations;	/* OID list of column collation OIDs */
+	List	   *colexprs;		/* list of column filter expressions */
+	List	   *coldefexprs;	/* list of column default expressions */
+	Bitmapset  *notnulls;		/* nullability flag for each output column */
+	int			ordinalitycol;	/* counts from 0; -1 if none specified */
+	int			location;		/* token location, or -1 if unknown */
+} TableFunc;
 
 /*
  * IntoClause - target information for SELECT INTO, CREATE TABLE AS, and
@@ -128,9 +150,9 @@ typedef struct Expr
  * are very useful for debugging and interpreting completed plans, so we keep
  * them around.
  */
-#define    INNER_VAR		65000		/* reference to inner subplan */
-#define    OUTER_VAR		65001		/* reference to outer subplan */
-#define    INDEX_VAR		65002		/* reference to index column */
+#define    INNER_VAR		65000	/* reference to inner subplan */
+#define    OUTER_VAR		65001	/* reference to outer subplan */
+#define    INDEX_VAR		65002	/* reference to index column */
 
 #define IS_SPECIAL_VARNO(varno)		((varno) >= INNER_VAR)
 
@@ -144,7 +166,7 @@ typedef struct Var
 	Index		varno;			/* index of this var's relation in the range
 								 * table, or INNER_VAR/OUTER_VAR/INDEX_VAR */
 	AttrNumber	varattno;		/* attribute number of this var, or zero for
-								 * all */
+								 * all attrs ("whole-row Var") */
 	Oid			vartype;		/* pg_type OID for the type of this var */
 	int32		vartypmod;		/* pg_attribute typmod value */
 	Oid			varcollid;		/* OID of collation, or InvalidOid if none */
@@ -280,7 +302,7 @@ typedef struct Aggref
 	List	   *aggorder;		/* ORDER BY (list of SortGroupClause) */
 	List	   *aggdistinct;	/* DISTINCT (list of SortGroupClause) */
 	Expr	   *aggfilter;		/* FILTER expression, if any */
-	bool		aggstar;		/* TRUE if argument list was really '*' */
+	bool		aggstar;		/* true if argument list was really '*' */
 	bool		aggvariadic;	/* true if variadic arguments have been
 								 * combined into an array last argument */
 	char		aggkind;		/* aggregate kind (see pg_aggregate.h) */
@@ -337,7 +359,7 @@ typedef struct WindowFunc
 	List	   *args;			/* arguments to the window function */
 	Expr	   *aggfilter;		/* FILTER expression, if any */
 	Index		winref;			/* index of associated WindowClause */
-	bool		winstar;		/* TRUE if argument list was really '*' */
+	bool		winstar;		/* true if argument list was really '*' */
 	bool		winagg;			/* is function a simple aggregate? */
 	int			location;		/* token location, or -1 if unknown */
 } WindowFunc;
@@ -378,10 +400,11 @@ typedef struct ArrayRef
 	Oid			refelemtype;	/* type of the array elements */
 	int32		reftypmod;		/* typmod of the array (and elements too) */
 	Oid			refcollid;		/* OID of collation, or InvalidOid if none */
-	List	   *refupperindexpr;/* expressions that evaluate to upper array
-								 * indexes */
-	List	   *reflowerindexpr;/* expressions that evaluate to lower array
-								 * indexes, or NIL for single array element */
+	List	   *refupperindexpr;	/* expressions that evaluate to upper
+									 * array indexes */
+	List	   *reflowerindexpr;	/* expressions that evaluate to lower
+									 * array indexes, or NIL for single array
+									 * element */
 	Expr	   *refexpr;		/* the expression that evaluates to an array
 								 * value */
 	Expr	   *refassgnexpr;	/* expression for the source value, or NULL if
@@ -669,14 +692,16 @@ typedef struct SubPlan
 	/* Extra data useful for determining subplan's output type: */
 	Oid			firstColType;	/* Type of first column of subplan result */
 	int32		firstColTypmod; /* Typmod of first column of subplan result */
-	Oid			firstColCollation;		/* Collation of first column of
-										 * subplan result */
+	Oid			firstColCollation;	/* Collation of first column of subplan
+									 * result */
 	/* Information about execution strategy: */
-	bool		useHashTable;	/* TRUE to store subselect output in a hash
+	bool		useHashTable;	/* true to store subselect output in a hash
 								 * table (implies we are doing "IN") */
-	bool		unknownEqFalse; /* TRUE if it's okay to return FALSE when the
+	bool		unknownEqFalse; /* true if it's okay to return FALSE when the
 								 * spec result is UNKNOWN; this allows much
 								 * simpler handling of null values */
+	bool		parallel_safe;	/* is the subplan parallel-safe? */
+	/* Note: parallel_safe does not consider contents of testexpr or args */
 	/* Information for passing params into and out of the subselect: */
 	/* setParam and parParam are lists of integers (param IDs) */
 	List	   *setParam;		/* initplan subqueries have to set these
@@ -729,6 +754,9 @@ typedef struct FieldSelect
  * value, yielding a new tuple value (the input is not touched!).  Like
  * the assign case of ArrayRef, this is used to implement UPDATE of a
  * portion of a column.
+ *
+ * resulttype is always a named composite type (not a domain).  To update
+ * a composite domain value, apply CoerceToDomain to the FieldStore.
  *
  * A single FieldStore can actually represent updates of several different
  * fields.  The parser only generates FieldStores with single-element lists,
@@ -795,11 +823,12 @@ typedef struct CoerceViaIO
  * ArrayCoerceExpr
  *
  * ArrayCoerceExpr represents a type coercion from one array type to another,
- * which is implemented by applying the indicated element-type coercion
- * function to each element of the source array.  If elemfuncid is InvalidOid
- * then the element types are binary-compatible, but the coercion still
- * requires some effort (we have to fix the element type ID stored in the
- * array header).
+ * which is implemented by applying the per-element coercion expression
+ * "elemexpr" to each element of the source array.  Within elemexpr, the
+ * source element is represented by a CaseTestExpr node.  Note that even if
+ * elemexpr is a no-op (that is, just CaseTestExpr + RelabelType), the
+ * coercion still requires some effort: we have to fix the element type OID
+ * stored in the array header.
  * ----------------
  */
 
@@ -807,11 +836,10 @@ typedef struct ArrayCoerceExpr
 {
 	Expr		xpr;
 	Expr	   *arg;			/* input expression (yields an array) */
-	Oid			elemfuncid;		/* OID of element coercion function, or 0 */
+	Expr	   *elemexpr;		/* expression representing per-element work */
 	Oid			resulttype;		/* output type of coercion (an array type) */
 	int32		resulttypmod;	/* output typmod (also element typmod) */
 	Oid			resultcollid;	/* OID of collation, or InvalidOid if none */
-	bool		isExplicit;		/* conversion semantics flag to pass to func */
 	CoercionForm coerceformat;	/* how to display this node */
 	int			location;		/* token location, or -1 if unknown */
 } ArrayCoerceExpr;
@@ -824,7 +852,8 @@ typedef struct ArrayCoerceExpr
  * needed for the destination type plus possibly others; the columns need not
  * be in the same positions, but are matched up by name.  This is primarily
  * used to convert a whole-row value of an inheritance child table into a
- * valid whole-row value of its parent table's rowtype.
+ * valid whole-row value of its parent table's rowtype.  Both resulttype
+ * and the exposed type of "arg" must be named composite types (not domains).
  * ----------------
  */
 
@@ -962,6 +991,9 @@ typedef struct RowExpr
 	Oid			row_typeid;		/* RECORDOID or a composite type's ID */
 
 	/*
+	 * row_typeid cannot be a domain over composite, only plain composite.  To
+	 * create a composite domain value, apply CoerceToDomain to the RowExpr.
+	 *
 	 * Note: we deliberately do NOT store a typmod.  Although a typmod will be
 	 * associated with specific RECORD types at runtime, it will differ for
 	 * different backends, and so cannot safely be stored in stored
@@ -1255,6 +1287,20 @@ typedef struct CurrentOfExpr
 } CurrentOfExpr;
 
 /*
+ * NextValueExpr - get next value from sequence
+ *
+ * This has the same effect as calling the nextval() function, but it does not
+ * check permissions on the sequence.  This is used for identity columns,
+ * where the sequence is an implicit dependency without its own permissions.
+ */
+typedef struct NextValueExpr
+{
+	Expr		xpr;
+	Oid			seqid;
+	Oid			typeId;
+} NextValueExpr;
+
+/*
  * InferenceElem - an element of a unique index inference specification
  *
  * This mostly matches the structure of IndexElems, but having a dedicated
@@ -1329,8 +1375,8 @@ typedef struct TargetEntry
 	Expr	   *expr;			/* expression to evaluate */
 	AttrNumber	resno;			/* attribute number (see notes above) */
 	char	   *resname;		/* name of the column (could be NULL) */
-	Index		ressortgroupref;/* nonzero if referenced by a sort/group
-								 * clause */
+	Index		ressortgroupref;	/* nonzero if referenced by a sort/group
+									 * clause */
 	Oid			resorigtbl;		/* OID of column's source table */
 	AttrNumber	resorigcol;		/* column's number in source table */
 	bool		resjunk;		/* set to true to eliminate the attribute from
@@ -1415,6 +1461,7 @@ typedef struct JoinExpr
 	Node	   *quals;			/* qualifiers on join, if any */
 	Alias	   *alias;			/* user-written alias clause, if any */
 	int			rtindex;		/* RT index assigned for join, or 0 */
+
 	int         minHops;
 	int         maxHops;
 } JoinExpr;
@@ -1530,4 +1577,4 @@ typedef struct CypherIndices
 	Node	   *uidx;			/* Expr or ExprState */
 } CypherIndices;
 
-#endif   /* PRIMNODES_H */
+#endif							/* PRIMNODES_H */

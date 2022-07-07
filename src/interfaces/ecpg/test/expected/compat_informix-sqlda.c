@@ -43,7 +43,7 @@ typedef struct sqlda_struct sqlda_t;
 
 #endif
 
-#endif   /* ECPG_SQLDA_H */
+#endif							/* ECPG_SQLDA_H */
 
 #line 7 "sqlda.pgc"
 
@@ -105,7 +105,7 @@ typedef struct sqlda_struct sqlda_t;
 #define SQLSERIAL8	ECPGt_long
 #endif
 
-#endif   /* ndef ECPG_SQLTYPES_H */
+#endif							/* ndef ECPG_SQLTYPES_H */
 
 #line 8 "sqlda.pgc"
 
@@ -526,5 +526,5 @@ if (sqlca.sqlcode < 0) exit (1);}
 #line 247 "sqlda.pgc"
 
 
-	return (0);
+	return 0;
 }

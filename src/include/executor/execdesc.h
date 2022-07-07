@@ -5,7 +5,7 @@
  *	  and related modules.
  *
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/executor/execdesc.h
@@ -40,12 +40,16 @@ typedef struct QueryDesc
 	Snapshot	crosscheck_snapshot;	/* crosscheck for RI update/delete */
 	DestReceiver *dest;			/* the destination for tuple output */
 	ParamListInfo params;		/* param values being passed in */
-	int			instrument_options;		/* OR of InstrumentOption flags */
+	QueryEnvironment *queryEnv; /* query environment passed in */
+	int			instrument_options; /* OR of InstrumentOption flags */
 
 	/* These fields are set by ExecutorStart */
 	TupleDesc	tupDesc;		/* descriptor for result tuples */
 	EState	   *estate;			/* executor's query-wide state */
 	PlanState  *planstate;		/* tree of per-plan-node state */
+
+	/* This field is set by ExecutorRun */
+	bool		already_executed;	/* true if previously executed */
 
 	/* This is always set NULL by the core system, but plugins can change it */
 	struct Instrumentation *totaltime;	/* total time spent in ExecutorRun */
@@ -58,8 +62,9 @@ extern QueryDesc *CreateQueryDesc(PlannedStmt *plannedstmt,
 				Snapshot crosscheck_snapshot,
 				DestReceiver *dest,
 				ParamListInfo params,
+				QueryEnvironment *queryEnv,
 				int instrument_options);
 
 extern void FreeQueryDesc(QueryDesc *qdesc);
 
-#endif   /* EXECDESC_H  */
+#endif							/* EXECDESC_H  */

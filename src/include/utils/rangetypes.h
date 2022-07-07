@@ -4,7 +4,7 @@
  *	  Declarations for Postgres range types.
  *
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/utils/rangetypes.h
@@ -40,8 +40,8 @@ typedef struct
 #define RANGE_UB_INF		0x10	/* upper bound is +infinity */
 #define RANGE_LB_NULL		0x20	/* lower bound is null (NOT USED) */
 #define RANGE_UB_NULL		0x40	/* upper bound is null (NOT USED) */
-#define RANGE_CONTAIN_EMPTY 0x80/* marks a GiST internal-page entry whose
-								 * subtree contains some empty ranges */
+#define RANGE_CONTAIN_EMPTY 0x80	/* marks a GiST internal-page entry whose
+									 * subtree contains some empty ranges */
 
 #define RANGE_HAS_LBOUND(flags) (!((flags) & (RANGE_EMPTY | \
 											  RANGE_LB_NULL | \
@@ -68,12 +68,12 @@ typedef struct
 /*
  * fmgr macros for range type objects
  */
-#define DatumGetRangeType(X)		((RangeType *) PG_DETOAST_DATUM(X))
-#define DatumGetRangeTypeCopy(X)	((RangeType *) PG_DETOAST_DATUM_COPY(X))
-#define RangeTypeGetDatum(X)		PointerGetDatum(X)
-#define PG_GETARG_RANGE(n)			DatumGetRangeType(PG_GETARG_DATUM(n))
-#define PG_GETARG_RANGE_COPY(n)		DatumGetRangeTypeCopy(PG_GETARG_DATUM(n))
-#define PG_RETURN_RANGE(x)			return RangeTypeGetDatum(x)
+#define DatumGetRangeTypeP(X)		((RangeType *) PG_DETOAST_DATUM(X))
+#define DatumGetRangeTypePCopy(X)	((RangeType *) PG_DETOAST_DATUM_COPY(X))
+#define RangeTypePGetDatum(X)		PointerGetDatum(X)
+#define PG_GETARG_RANGE_P(n)		DatumGetRangeTypeP(PG_GETARG_DATUM(n))
+#define PG_GETARG_RANGE_P_COPY(n)	DatumGetRangeTypePCopy(PG_GETARG_DATUM(n))
+#define PG_RETURN_RANGE_P(x)		return RangeTypePGetDatum(x)
 
 /* Operator strategy numbers used in the GiST and SP-GiST range opclasses */
 /* Numbers are chosen to match up operator names with existing usages */
@@ -136,4 +136,4 @@ extern bool bounds_adjacent(TypeCacheEntry *typcache, RangeBound bound1,
 				RangeBound bound2);
 extern RangeType *make_empty_range(TypeCacheEntry *typcache);
 
-#endif   /* RANGETYPES_H */
+#endif							/* RANGETYPES_H */

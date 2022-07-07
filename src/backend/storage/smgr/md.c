@@ -10,7 +10,7 @@
  * It doesn't matter whether the bits are on spinning rust or some other
  * storage technology.
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -28,6 +28,7 @@
 #include "miscadmin.h"
 #include "access/xlog.h"
 #include "catalog/catalog.h"
+#include "pgstat.h"
 #include "portability/instr_time.h"
 #include "postmaster/bgwriter.h"
 #include "storage/fd.h"
@@ -153,7 +154,7 @@ typedef struct
 
 static HTAB *pendingOpsTable = NULL;
 static List *pendingUnlinks = NIL;
-static MemoryContext pendingOpsCxt;		/* context for the above  */
+static MemoryContext pendingOpsCxt; /* context for the above  */
 
 static CycleCtr mdsync_cycle_ctr = 0;
 static CycleCtr mdckpt_cycle_ctr = 0;
@@ -303,7 +304,7 @@ mdcreate(SMgrRelation reln, ForkNumber forkNum, bool isRedo)
 
 	path = relpath(reln->smgr_rnode, forkNum);
 
-	fd = PathNameOpenFile(path, O_RDWR | O_CREAT | O_EXCL | PG_BINARY, 0600);
+	fd = PathNameOpenFile(path, O_RDWR | O_CREAT | O_EXCL | PG_BINARY);
 
 	if (fd < 0)
 	{
@@ -316,7 +317,7 @@ mdcreate(SMgrRelation reln, ForkNumber forkNum, bool isRedo)
 		 * already, even if isRedo is not set.  (See also mdopen)
 		 */
 		if (isRedo || IsBootstrapProcessingMode())
-			fd = PathNameOpenFile(path, O_RDWR | PG_BINARY, 0600);
+			fd = PathNameOpenFile(path, O_RDWR | PG_BINARY);
 		if (fd < 0)
 		{
 			/* be sure to report the error reported by create, not open */
@@ -429,7 +430,7 @@ mdunlinkfork(RelFileNodeBackend rnode, ForkNumber forkNum, bool isRedo)
 		/* truncate(2) would be easier here, but Windows hasn't got it */
 		int			fd;
 
-		fd = OpenTransientFile(path, O_RDWR | PG_BINARY, 0);
+		fd = OpenTransientFile(path, O_RDWR | PG_BINARY);
 		if (fd >= 0)
 		{
 			int			save_errno;
@@ -471,7 +472,7 @@ mdunlinkfork(RelFileNodeBackend rnode, ForkNumber forkNum, bool isRedo)
 				if (errno != ENOENT)
 					ereport(WARNING,
 							(errcode_for_file_access(),
-					   errmsg("could not remove file \"%s\": %m", segpath)));
+							 errmsg("could not remove file \"%s\": %m", segpath)));
 				break;
 			}
 		}
@@ -517,7 +518,7 @@ mdextend(SMgrRelation reln, ForkNumber forknum, BlockNumber blocknum,
 
 	v = _mdfd_getseg(reln, forknum, blocknum, skipFsync, EXTENSION_CREATE);
 
-	seekpos = (off_t) BLCKSZ *(blocknum % ((BlockNumber) RELSEG_SIZE));
+	seekpos = (off_t) BLCKSZ * (blocknum % ((BlockNumber) RELSEG_SIZE));
 
 	Assert(seekpos < (off_t) BLCKSZ * RELSEG_SIZE);
 
@@ -536,7 +537,7 @@ mdextend(SMgrRelation reln, ForkNumber forknum, BlockNumber blocknum,
 				 errmsg("could not seek to block %u in file \"%s\": %m",
 						blocknum, FilePathName(v->mdfd_vfd))));
 
-	if ((nbytes = FileWrite(v->mdfd_vfd, buffer, BLCKSZ)) != BLCKSZ)
+	if ((nbytes = FileWrite(v->mdfd_vfd, buffer, BLCKSZ, WAIT_EVENT_DATA_FILE_EXTEND)) != BLCKSZ)
 	{
 		if (nbytes < 0)
 			ereport(ERROR,
@@ -582,7 +583,7 @@ mdopen(SMgrRelation reln, ForkNumber forknum, int behavior)
 
 	path = relpath(reln->smgr_rnode, forknum);
 
-	fd = PathNameOpenFile(path, O_RDWR | PG_BINARY, 0600);
+	fd = PathNameOpenFile(path, O_RDWR | PG_BINARY);
 
 	if (fd < 0)
 	{
@@ -593,7 +594,7 @@ mdopen(SMgrRelation reln, ForkNumber forknum, int behavior)
 		 * substitute for mdcreate() in bootstrap mode only. (See mdcreate)
 		 */
 		if (IsBootstrapProcessingMode())
-			fd = PathNameOpenFile(path, O_RDWR | O_CREAT | O_EXCL | PG_BINARY, 0600);
+			fd = PathNameOpenFile(path, O_RDWR | O_CREAT | O_EXCL | PG_BINARY);
 		if (fd < 0)
 		{
 			if ((behavior & EXTENSION_RETURN_NULL) &&
@@ -663,12 +664,12 @@ mdprefetch(SMgrRelation reln, ForkNumber forknum, BlockNumber blocknum)
 
 	v = _mdfd_getseg(reln, forknum, blocknum, false, EXTENSION_FAIL);
 
-	seekpos = (off_t) BLCKSZ *(blocknum % ((BlockNumber) RELSEG_SIZE));
+	seekpos = (off_t) BLCKSZ * (blocknum % ((BlockNumber) RELSEG_SIZE));
 
 	Assert(seekpos < (off_t) BLCKSZ * RELSEG_SIZE);
 
-	(void) FilePrefetch(v->mdfd_vfd, seekpos, BLCKSZ);
-#endif   /* USE_PREFETCH */
+	(void) FilePrefetch(v->mdfd_vfd, seekpos, BLCKSZ, WAIT_EVENT_DATA_FILE_PREFETCH);
+#endif							/* USE_PREFETCH */
 }
 
 /*
@@ -714,9 +715,9 @@ mdwriteback(SMgrRelation reln, ForkNumber forknum,
 		Assert(nflush >= 1);
 		Assert(nflush <= nblocks);
 
-		seekpos = (off_t) BLCKSZ *(blocknum % ((BlockNumber) RELSEG_SIZE));
+		seekpos = (off_t) BLCKSZ * (blocknum % ((BlockNumber) RELSEG_SIZE));
 
-		FileWriteback(v->mdfd_vfd, seekpos, (off_t) BLCKSZ * nflush);
+		FileWriteback(v->mdfd_vfd, seekpos, (off_t) BLCKSZ * nflush, WAIT_EVENT_DATA_FILE_FLUSH);
 
 		nblocks -= nflush;
 		blocknum += nflush;
@@ -743,7 +744,7 @@ mdread(SMgrRelation reln, ForkNumber forknum, BlockNumber blocknum,
 	v = _mdfd_getseg(reln, forknum, blocknum, false,
 					 EXTENSION_FAIL | EXTENSION_CREATE_RECOVERY);
 
-	seekpos = (off_t) BLCKSZ *(blocknum % ((BlockNumber) RELSEG_SIZE));
+	seekpos = (off_t) BLCKSZ * (blocknum % ((BlockNumber) RELSEG_SIZE));
 
 	Assert(seekpos < (off_t) BLCKSZ * RELSEG_SIZE);
 
@@ -753,7 +754,7 @@ mdread(SMgrRelation reln, ForkNumber forknum, BlockNumber blocknum,
 				 errmsg("could not seek to block %u in file \"%s\": %m",
 						blocknum, FilePathName(v->mdfd_vfd))));
 
-	nbytes = FileRead(v->mdfd_vfd, buffer, BLCKSZ);
+	nbytes = FileRead(v->mdfd_vfd, buffer, BLCKSZ, WAIT_EVENT_DATA_FILE_READ);
 
 	TRACE_POSTGRESQL_SMGR_MD_READ_DONE(forknum, blocknum,
 									   reln->smgr_rnode.node.spcNode,
@@ -819,7 +820,7 @@ mdwrite(SMgrRelation reln, ForkNumber forknum, BlockNumber blocknum,
 	v = _mdfd_getseg(reln, forknum, blocknum, skipFsync,
 					 EXTENSION_FAIL | EXTENSION_CREATE_RECOVERY);
 
-	seekpos = (off_t) BLCKSZ *(blocknum % ((BlockNumber) RELSEG_SIZE));
+	seekpos = (off_t) BLCKSZ * (blocknum % ((BlockNumber) RELSEG_SIZE));
 
 	Assert(seekpos < (off_t) BLCKSZ * RELSEG_SIZE);
 
@@ -829,7 +830,7 @@ mdwrite(SMgrRelation reln, ForkNumber forknum, BlockNumber blocknum,
 				 errmsg("could not seek to block %u in file \"%s\": %m",
 						blocknum, FilePathName(v->mdfd_vfd))));
 
-	nbytes = FileWrite(v->mdfd_vfd, buffer, BLCKSZ);
+	nbytes = FileWrite(v->mdfd_vfd, buffer, BLCKSZ, WAIT_EVENT_DATA_FILE_WRITE);
 
 	TRACE_POSTGRESQL_SMGR_MD_WRITE_DONE(forknum, blocknum,
 										reln->smgr_rnode.node.spcNode,
@@ -967,7 +968,7 @@ mdtruncate(SMgrRelation reln, ForkNumber forknum, BlockNumber nblocks)
 			 * This segment is no longer active. We truncate the file, but do
 			 * not delete it, for reasons explained in the header comments.
 			 */
-			if (FileTruncate(v->mdfd_vfd, 0) < 0)
+			if (FileTruncate(v->mdfd_vfd, 0, WAIT_EVENT_DATA_FILE_TRUNCATE) < 0)
 				ereport(ERROR,
 						(errcode_for_file_access(),
 						 errmsg("could not truncate file \"%s\": %m",
@@ -993,12 +994,12 @@ mdtruncate(SMgrRelation reln, ForkNumber forknum, BlockNumber nblocks)
 			 */
 			BlockNumber lastsegblocks = nblocks - priorblocks;
 
-			if (FileTruncate(v->mdfd_vfd, (off_t) lastsegblocks * BLCKSZ) < 0)
+			if (FileTruncate(v->mdfd_vfd, (off_t) lastsegblocks * BLCKSZ, WAIT_EVENT_DATA_FILE_TRUNCATE) < 0)
 				ereport(ERROR,
 						(errcode_for_file_access(),
-					errmsg("could not truncate file \"%s\" to %u blocks: %m",
-						   FilePathName(v->mdfd_vfd),
-						   nblocks)));
+						 errmsg("could not truncate file \"%s\" to %u blocks: %m",
+								FilePathName(v->mdfd_vfd),
+								nblocks)));
 			if (!SmgrIsTemp(reln))
 				register_dirty_segment(reln, forknum, v);
 		}
@@ -1037,7 +1038,7 @@ mdimmedsync(SMgrRelation reln, ForkNumber forknum)
 	{
 		MdfdVec    *v = &reln->md_seg_fds[forknum][segno - 1];
 
-		if (FileSync(v->mdfd_vfd) < 0)
+		if (FileSync(v->mdfd_vfd, WAIT_EVENT_DATA_FILE_IMMEDIATE_SYNC) < 0)
 			ereport(ERROR,
 					(errcode_for_file_access(),
 					 errmsg("could not fsync file \"%s\": %m",
@@ -1224,7 +1225,7 @@ mdsync(void)
 
 					/* Attempt to open and fsync the target segment */
 					seg = _mdfd_getseg(reln, forknum,
-							 (BlockNumber) segno * (BlockNumber) RELSEG_SIZE,
+									   (BlockNumber) segno * (BlockNumber) RELSEG_SIZE,
 									   false,
 									   EXTENSION_RETURN_NULL
 									   | EXTENSION_DONT_CHECK_SIZE);
@@ -1232,7 +1233,7 @@ mdsync(void)
 					INSTR_TIME_SET_CURRENT(sync_start);
 
 					if (seg != NULL &&
-						FileSync(seg->mdfd_vfd) >= 0)
+						FileSync(seg->mdfd_vfd, WAIT_EVENT_DATA_FILE_SYNC) >= 0)
 					{
 						/* Success; update statistics about sync timing */
 						INSTR_TIME_SET_CURRENT(sync_end);
@@ -1278,8 +1279,8 @@ mdsync(void)
 					else
 						ereport(DEBUG1,
 								(errcode_for_file_access(),
-						errmsg("could not fsync file \"%s\" but retrying: %m",
-							   path)));
+								 errmsg("could not fsync file \"%s\" but retrying: %m",
+										path)));
 					pfree(path);
 
 					/*
@@ -1443,7 +1444,7 @@ register_dirty_segment(SMgrRelation reln, ForkNumber forknum, MdfdVec *seg)
 		ereport(DEBUG1,
 				(errmsg("could not forward fsync request because request queue is full")));
 
-		if (FileSync(seg->mdfd_vfd) < 0)
+		if (FileSync(seg->mdfd_vfd, WAIT_EVENT_DATA_FILE_SYNC) < 0)
 			ereport(ERROR,
 					(errcode_for_file_access(),
 					 errmsg("could not fsync file \"%s\": %m",
@@ -1779,7 +1780,7 @@ _mdfd_openseg(SMgrRelation reln, ForkNumber forknum, BlockNumber segno,
 	fullpath = _mdfd_segpath(reln, forknum, segno);
 
 	/* open the file */
-	fd = PathNameOpenFile(fullpath, O_RDWR | PG_BINARY | oflags, 0600);
+	fd = PathNameOpenFile(fullpath, O_RDWR | PG_BINARY | oflags);
 
 	pfree(fullpath);
 
@@ -1924,9 +1925,9 @@ _mdfd_getseg(SMgrRelation reln, ForkNumber forknum, BlockNumber blkno,
 				return NULL;
 			ereport(ERROR,
 					(errcode_for_file_access(),
-				   errmsg("could not open file \"%s\" (target block %u): %m",
-						  _mdfd_segpath(reln, forknum, nextsegno),
-						  blkno)));
+					 errmsg("could not open file \"%s\" (target block %u): %m",
+							_mdfd_segpath(reln, forknum, nextsegno),
+							blkno)));
 		}
 	}
 

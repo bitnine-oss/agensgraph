@@ -23,13 +23,13 @@
 #define PGDLLIMPORT __declspec (dllimport)
 #else
 #define PGDLLIMPORT
-#endif   /* __CYGWIN__ */
-#endif   /* PGDLLIMPORT */
+#endif							/* __CYGWIN__ */
+#endif							/* PGDLLIMPORT */
 
 #define SQLERRMC_LEN	150
 
 #ifdef __cplusplus
-extern		"C"
+extern "C"
 {
 #endif
 
@@ -97,7 +97,7 @@ struct sqlca_t *ECPGget_sqlca(void);
 
 
 /* Check SQLCODE, and produce a "standard error" if it's wrong! */
-static void sql_check(char *fn, char *caller, int ignore)
+static void sql_check(const char *fn, const char *caller, int ignore)
 {
   char errorstring[255];
 

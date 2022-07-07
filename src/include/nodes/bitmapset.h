@@ -11,7 +11,7 @@
  * bms_is_empty() in preference to testing for NULL.)
  *
  *
- * Copyright (c) 2003-2017, PostgreSQL Global Development Group
+ * Copyright (c) 2003-2018, PostgreSQL Global Development Group
  *
  * src/include/nodes/bitmapset.h
  *
@@ -19,6 +19,11 @@
  */
 #ifndef BITMAPSET_H
 #define BITMAPSET_H
+
+/*
+ * Forward decl to save including pg_list.h
+ */
+struct List;
 
 /*
  * Data representation
@@ -60,6 +65,7 @@ typedef enum
 
 extern Bitmapset *bms_copy(const Bitmapset *a);
 extern bool bms_equal(const Bitmapset *a, const Bitmapset *b);
+extern int	bms_compare(const Bitmapset *a, const Bitmapset *b);
 extern Bitmapset *bms_make_singleton(int x);
 extern void bms_free(Bitmapset *a);
 
@@ -70,6 +76,7 @@ extern bool bms_is_subset(const Bitmapset *a, const Bitmapset *b);
 extern BMS_Comparison bms_subset_compare(const Bitmapset *a, const Bitmapset *b);
 extern bool bms_is_member(int x, const Bitmapset *a);
 extern bool bms_overlap(const Bitmapset *a, const Bitmapset *b);
+extern bool bms_overlap_list(const Bitmapset *a, const struct List *b);
 extern bool bms_nonempty_difference(const Bitmapset *a, const Bitmapset *b);
 extern int	bms_singleton_member(const Bitmapset *a);
 extern bool bms_get_singleton_member(const Bitmapset *a, int *member);
@@ -84,6 +91,7 @@ extern bool bms_is_empty(const Bitmapset *a);
 extern Bitmapset *bms_add_member(Bitmapset *a, int x);
 extern Bitmapset *bms_del_member(Bitmapset *a, int x);
 extern Bitmapset *bms_add_members(Bitmapset *a, const Bitmapset *b);
+extern Bitmapset *bms_add_range(Bitmapset *a, int lower, int upper);
 extern Bitmapset *bms_int_members(Bitmapset *a, const Bitmapset *b);
 extern Bitmapset *bms_del_members(Bitmapset *a, const Bitmapset *b);
 extern Bitmapset *bms_join(Bitmapset *a, Bitmapset *b);
@@ -95,4 +103,4 @@ extern int	bms_next_member(const Bitmapset *a, int prevbit);
 /* support for hashtables using Bitmapsets as keys: */
 extern uint32 bms_hash_value(const Bitmapset *a);
 
-#endif   /* BITMAPSET_H */
+#endif							/* BITMAPSET_H */

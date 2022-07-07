@@ -3,7 +3,7 @@
  * pgstatapprox.c
  *		  Bloat estimation functions
  *
- * Copyright (c) 2014-2017, PostgreSQL Global Development Group
+ * Copyright (c) 2014-2018, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
  *		  contrib/pgstattuple/pgstatapprox.c
@@ -31,7 +31,7 @@
 PG_FUNCTION_INFO_V1(pgstattuple_approx);
 PG_FUNCTION_INFO_V1(pgstattuple_approx_v1_5);
 
-Datum pgstattuple_approx_internal(Oid relid, FunctionCallInfo fcinfo);
+Datum		pgstattuple_approx_internal(Oid relid, FunctionCallInfo fcinfo);
 
 typedef struct output_type
 {
@@ -70,7 +70,7 @@ statapprox_heap(Relation rel, output_type *stat)
 	TransactionId OldestXmin;
 	uint64		misc_count = 0;
 
-	OldestXmin = GetOldestXmin(rel, true);
+	OldestXmin = GetOldestXmin(rel, PROCARRAY_FLAGS_VACUUM);
 	bstrategy = GetAccessStrategy(BAS_BULKREAD);
 
 	nblocks = RelationGetNumberOfBlocks(rel);
@@ -182,10 +182,10 @@ statapprox_heap(Relation rel, output_type *stat)
 		UnlockReleaseBuffer(buf);
 	}
 
-	stat->table_len = (uint64) nblocks *BLCKSZ;
+	stat->table_len = (uint64) nblocks * BLCKSZ;
 
 	stat->tuple_count = vac_estimate_reltuples(rel, false, nblocks, scanned,
-											 stat->tuple_count + misc_count);
+											   stat->tuple_count + misc_count);
 
 	/*
 	 * Calculate percentages if the relation has one or more pages.

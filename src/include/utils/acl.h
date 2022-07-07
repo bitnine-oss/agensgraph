@@ -4,7 +4,7 @@
  *	  Definition of (and support for) access control list data structures.
  *
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/utils/acl.h
@@ -12,9 +12,17 @@
  * NOTES
  *	  An ACL array is simply an array of AclItems, representing the union
  *	  of the privileges represented by the individual items.  A zero-length
- *	  array represents "no privileges".  There are no assumptions about the
- *	  ordering of the items, but we do expect that there are no two entries
- *	  in the array with the same grantor and grantee.
+ *	  array represents "no privileges".
+ *
+ *	  The order of items in the array is important as client utilities (in
+ *	  particular, pg_dump, though possibly other clients) expect to be able
+ *	  to issue GRANTs in the ordering of the items in the array.  The reason
+ *	  this matters is that GRANTs WITH GRANT OPTION must be before any GRANTs
+ *	  which depend on it.  This happens naturally in the backend during
+ *	  operations as we update ACLs in-place, new items are appended, and
+ *	  existing entries are only removed if there's no dependency on them (no
+ *	  GRANT can been based on it, or, if there was, those GRANTs are also
+ *	  removed).
  *
  *	  For backward-compatibility purposes we have to allow null ACL entries
  *	  in system catalogs.  A null ACL will be treated as meaning "default
@@ -127,11 +135,11 @@ typedef ArrayType Acl;
  * External representations of the privilege bits --- aclitemin/aclitemout
  * represent each possible privilege bit with a distinct 1-character code
  */
-#define ACL_INSERT_CHR			'a'		/* formerly known as "append" */
-#define ACL_SELECT_CHR			'r'		/* formerly known as "read" */
-#define ACL_UPDATE_CHR			'w'		/* formerly known as "write" */
+#define ACL_INSERT_CHR			'a' /* formerly known as "append" */
+#define ACL_SELECT_CHR			'r' /* formerly known as "read" */
+#define ACL_UPDATE_CHR			'w' /* formerly known as "write" */
 #define ACL_DELETE_CHR			'd'
-#define ACL_TRUNCATE_CHR		'D'		/* super-delete, as it were */
+#define ACL_TRUNCATE_CHR		'D' /* super-delete, as it were */
 #define ACL_REFERENCES_CHR		'x'
 #define ACL_TRIGGER_CHR			't'
 #define ACL_EXECUTE_CHR			'X'
@@ -155,7 +163,7 @@ typedef ArrayType Acl;
 #define ACL_ALL_RIGHTS_FUNCTION		(ACL_EXECUTE)
 #define ACL_ALL_RIGHTS_LANGUAGE		(ACL_USAGE)
 #define ACL_ALL_RIGHTS_LARGEOBJECT	(ACL_SELECT|ACL_UPDATE)
-#define ACL_ALL_RIGHTS_NAMESPACE	(ACL_USAGE|ACL_CREATE)
+#define ACL_ALL_RIGHTS_SCHEMA		(ACL_USAGE|ACL_CREATE)
 #define ACL_ALL_RIGHTS_TABLESPACE	(ACL_CREATE)
 #define ACL_ALL_RIGHTS_TYPE			(ACL_USAGE)
 
@@ -174,44 +182,12 @@ typedef enum
 	ACLCHECK_NOT_OWNER
 } AclResult;
 
-/* this enum covers all object types that can have privilege errors */
-/* currently it's only used to tell aclcheck_error what to say */
-typedef enum AclObjectKind
-{
-	ACL_KIND_COLUMN,			/* pg_attribute */
-	ACL_KIND_CLASS,				/* pg_class */
-	ACL_KIND_SEQUENCE,			/* pg_sequence */
-	ACL_KIND_DATABASE,			/* pg_database */
-	ACL_KIND_PROC,				/* pg_proc */
-	ACL_KIND_OPER,				/* pg_operator */
-	ACL_KIND_TYPE,				/* pg_type */
-	ACL_KIND_LANGUAGE,			/* pg_language */
-	ACL_KIND_LARGEOBJECT,		/* pg_largeobject */
-	ACL_KIND_NAMESPACE,			/* pg_namespace */
-	ACL_KIND_OPCLASS,			/* pg_opclass */
-	ACL_KIND_OPFAMILY,			/* pg_opfamily */
-	ACL_KIND_COLLATION,			/* pg_collation */
-	ACL_KIND_CONVERSION,		/* pg_conversion */
-	ACL_KIND_TABLESPACE,		/* pg_tablespace */
-	ACL_KIND_TSDICTIONARY,		/* pg_ts_dict */
-	ACL_KIND_TSCONFIGURATION,	/* pg_ts_config */
-	ACL_KIND_FDW,				/* pg_foreign_data_wrapper */
-	ACL_KIND_FOREIGN_SERVER,	/* pg_foreign_server */
-	ACL_KIND_EVENT_TRIGGER,		/* pg_event_trigger */
-	ACL_KIND_EXTENSION,			/* pg_extension */
-	ACL_KIND_PUBLICATION,		/* pg_publication */
-	ACL_KIND_SUBSCRIPTION,		/* pg_subscription */
-	ACL_KIND_GRAPH,				/* ag_graph */
-	ACL_KIND_LABEL,				/* ag_label */
-	MAX_ACL_KIND				/* MUST BE LAST */
-} AclObjectKind;
-
 
 /*
  * routines used internally
  */
-extern Acl *acldefault(GrantObjectType objtype, Oid ownerId);
-extern Acl *get_user_default_acl(GrantObjectType objtype, Oid ownerId,
+extern Acl *acldefault(ObjectType objtype, Oid ownerId);
+extern Acl *get_user_default_acl(ObjectType objtype, Oid ownerId,
 					 Oid nsp_oid);
 
 extern Acl *aclupdate(const Acl *old_acl, const AclItem *mod_aip,
@@ -266,7 +242,7 @@ extern AclMode pg_proc_aclmask(Oid proc_oid, Oid roleid,
 extern AclMode pg_language_aclmask(Oid lang_oid, Oid roleid,
 					AclMode mask, AclMaskHow how);
 extern AclMode pg_largeobject_aclmask_snapshot(Oid lobj_oid, Oid roleid,
-							AclMode mask, AclMaskHow how, Snapshot snapshot);
+								AclMode mask, AclMaskHow how, Snapshot snapshot);
 extern AclMode pg_namespace_aclmask(Oid nsp_oid, Oid roleid,
 					 AclMode mask, AclMaskHow how);
 extern AclMode pg_tablespace_aclmask(Oid spc_oid, Oid roleid,
@@ -294,10 +270,10 @@ extern AclResult pg_foreign_data_wrapper_aclcheck(Oid fdw_oid, Oid roleid, AclMo
 extern AclResult pg_foreign_server_aclcheck(Oid srv_oid, Oid roleid, AclMode mode);
 extern AclResult pg_type_aclcheck(Oid type_oid, Oid roleid, AclMode mode);
 
-extern void aclcheck_error(AclResult aclerr, AclObjectKind objectkind,
+extern void aclcheck_error(AclResult aclerr, ObjectType objtype,
 			   const char *objectname);
 
-extern void aclcheck_error_col(AclResult aclerr, AclObjectKind objectkind,
+extern void aclcheck_error_col(AclResult aclerr, ObjectType objtype,
 				   const char *objectname, const char *colname);
 
 extern void aclcheck_error_type(AclResult aclerr, Oid typeOid);
@@ -328,10 +304,11 @@ extern bool pg_event_trigger_ownercheck(Oid et_oid, Oid roleid);
 extern bool pg_extension_ownercheck(Oid ext_oid, Oid roleid);
 extern bool pg_publication_ownercheck(Oid pub_oid, Oid roleid);
 extern bool pg_subscription_ownercheck(Oid sub_oid, Oid roleid);
+extern bool pg_statistics_object_ownercheck(Oid stat_oid, Oid roleid);
 extern bool has_createrole_privilege(Oid roleid);
 extern bool has_bypassrls_privilege(Oid roleid);
 
 extern bool ag_graph_ownercheck(Oid graphid, Oid roleid);
 extern bool ag_label_ownercheck(Oid laboid, Oid roleid);
 
-#endif   /* ACL_H */
+#endif							/* ACL_H */

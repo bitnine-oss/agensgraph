@@ -4,7 +4,7 @@
  *
  *
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/utils/dynamic_loader.h
@@ -17,9 +17,9 @@
 #include "fmgr.h"
 
 
-extern void *pg_dlopen(char *filename);
-extern PGFunction pg_dlsym(void *handle, char *funcname);
+extern void *pg_dlopen(const char *filename);
+extern PGFunction pg_dlsym(void *handle, const char *funcname);
 extern void pg_dlclose(void *handle);
 extern char *pg_dlerror(void);
 
-#endif   /* DYNAMIC_LOADER_H */
+#endif							/* DYNAMIC_LOADER_H */

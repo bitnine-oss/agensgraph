@@ -3,7 +3,7 @@
  * dirmod.c
  *	  directory handling functions
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *	This includes replacement versions of functions that work on
@@ -121,10 +121,10 @@ pgunlink(const char *path)
 /* We undefined these above; now redefine for possible use below */
 #define rename(from, to)		pgrename(from, to)
 #define unlink(path)			pgunlink(path)
-#endif   /* defined(WIN32) || defined(__CYGWIN__) */
+#endif							/* defined(WIN32) || defined(__CYGWIN__) */
 
 
-#if defined(WIN32) && !defined(__CYGWIN__)		/* Cygwin has its own symlinks */
+#if defined(WIN32) && !defined(__CYGWIN__)	/* Cygwin has its own symlinks */
 
 /*
  *	pgsymlink support:
@@ -168,7 +168,7 @@ pgsymlink(const char *oldpath, const char *newpath)
 	CreateDirectory(newpath, 0);
 	dirhandle = CreateFile(newpath, GENERIC_READ | GENERIC_WRITE,
 						   0, 0, OPEN_EXISTING,
-			   FILE_FLAG_OPEN_REPARSE_POINT | FILE_FLAG_BACKUP_SEMANTICS, 0);
+						   FILE_FLAG_OPEN_REPARSE_POINT | FILE_FLAG_BACKUP_SEMANTICS, 0);
 
 	if (dirhandle == INVALID_HANDLE_VALUE)
 		return -1;
@@ -198,9 +198,9 @@ pgsymlink(const char *oldpath, const char *newpath)
 	 * we use our own definition
 	 */
 	if (!DeviceIoControl(dirhandle,
-	 CTL_CODE(FILE_DEVICE_FILE_SYSTEM, 41, METHOD_BUFFERED, FILE_ANY_ACCESS),
+						 CTL_CODE(FILE_DEVICE_FILE_SYSTEM, 41, METHOD_BUFFERED, FILE_ANY_ACCESS),
 						 reparseBuf,
-	reparseBuf->ReparseDataLength + REPARSE_JUNCTION_DATA_BUFFER_HEADER_SIZE,
+						 reparseBuf->ReparseDataLength + REPARSE_JUNCTION_DATA_BUFFER_HEADER_SIZE,
 						 0, 0, &len, 0))
 	{
 		LPSTR		msg;
@@ -352,7 +352,7 @@ pgwin32_is_junction(const char *path)
 	}
 	return ((attr & FILE_ATTRIBUTE_REPARSE_POINT) == FILE_ATTRIBUTE_REPARSE_POINT);
 }
-#endif   /* defined(WIN32) && !defined(__CYGWIN__) */
+#endif							/* defined(WIN32) && !defined(__CYGWIN__) */
 
 
 #if defined(WIN32) && !defined(__CYGWIN__)
@@ -365,7 +365,7 @@ pgwin32_is_junction(const char *path)
  * to update this field.
  */
 int
-pgwin32_safestat(const char *path, struct stat * buf)
+pgwin32_safestat(const char *path, struct stat *buf)
 {
 	int			r;
 	WIN32_FILE_ATTRIBUTE_DATA attr;
@@ -376,11 +376,11 @@ pgwin32_safestat(const char *path, struct stat * buf)
 		if (GetLastError() == ERROR_DELETE_PENDING)
 		{
 			/*
-			 * File has been deleted, but is not gone from the filesystem
-			 * yet. This can happen when some process with FILE_SHARE_DELETE
-			 * has it open and it will be fully removed once that handle
-			 * is closed. Meanwhile, we can't open it, so indicate that
-			 * the file just doesn't exist.
+			 * File has been deleted, but is not gone from the filesystem yet.
+			 * This can happen when some process with FILE_SHARE_DELETE has it
+			 * open and it will be fully removed once that handle is closed.
+			 * Meanwhile, we can't open it, so indicate that the file just
+			 * doesn't exist.
 			 */
 			errno = ENOENT;
 			return -1;

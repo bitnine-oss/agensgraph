@@ -39,7 +39,7 @@
  * empty and be returned to the free page manager, and whole segments can
  * become empty and be returned to the operating system.
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -235,7 +235,7 @@ typedef struct
  */
 static const uint16 dsa_size_classes[] = {
 	sizeof(dsa_area_span), 0,	/* special size classes */
-	8, 16, 24, 32, 40, 48, 56, 64,		/* 8 classes separated by 8 bytes */
+	8, 16, 24, 32, 40, 48, 56, 64,	/* 8 classes separated by 8 bytes */
 	80, 96, 112, 128,			/* 4 classes separated by 16 bytes */
 	160, 192, 224, 256,			/* 4 classes separated by 32 bytes */
 	320, 384, 448, 512,			/* 4 classes separated by 64 bytes */
@@ -498,7 +498,7 @@ dsa_get_handle(dsa_area *area)
 
 /*
  * Attach to an area given a handle generated (possibly in another process) by
- * dsa_get_area_handle.  The area must have been created with dsa_create (not
+ * dsa_get_handle.  The area must have been created with dsa_create (not
  * dsa_create_in_place).
  */
 dsa_area *
@@ -515,7 +515,7 @@ dsa_attach(dsa_handle handle)
 	if (segment == NULL)
 		ereport(ERROR,
 				(errcode(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
-				 errmsg("could not attach to dsa_handle")));
+				 errmsg("could not attach to dynamic shared area")));
 
 	area = attach_internal(dsm_segment_address(segment), segment, handle);
 
@@ -642,17 +642,38 @@ dsa_pin_mapping(dsa_area *area)
 /*
  * Allocate memory in this storage area.  The return value is a dsa_pointer
  * that can be passed to other processes, and converted to a local pointer
- * with dsa_get_address.  If no memory is available, returns
- * InvalidDsaPointer.
+ * with dsa_get_address.  'flags' is a bitmap which should be constructed
+ * from the following values:
+ *
+ * DSA_ALLOC_HUGE allows allocations >= 1GB.  Otherwise, such allocations
+ * will result in an ERROR.
+ *
+ * DSA_ALLOC_NO_OOM causes this function to return InvalidDsaPointer when
+ * no memory is available or a size limit establed by set_dsa_size_limit
+ * would be exceeded.  Otherwise, such allocations will result in an ERROR.
+ *
+ * DSA_ALLOC_ZERO causes the allocated memory to be zeroed.  Otherwise, the
+ * contents of newly-allocated memory are indeterminate.
+ *
+ * These flags correspond to similarly named flags used by
+ * MemoryContextAllocExtended().  See also the macros dsa_allocate and
+ * dsa_allocate0 which expand to a call to this function with commonly used
+ * flags.
  */
 dsa_pointer
-dsa_allocate(dsa_area *area, Size size)
+dsa_allocate_extended(dsa_area *area, Size size, int flags)
 {
 	uint16		size_class;
 	dsa_pointer start_pointer;
 	dsa_segment_map *segment_map;
+	dsa_pointer result;
 
 	Assert(size > 0);
+
+	/* Sanity check on huge individual allocation size. */
+	if (((flags & DSA_ALLOC_HUGE) != 0 && !AllocHugeSizeIsValid(size)) ||
+		((flags & DSA_ALLOC_HUGE) == 0 && !AllocSizeIsValid(size)))
+		elog(ERROR, "invalid DSA memory alloc request size %zu", size);
 
 	/*
 	 * If bigger than the largest size class, just grab a run of pages from
@@ -684,6 +705,14 @@ dsa_allocate(dsa_area *area, Size size)
 			/* Can't make any more segments: game over. */
 			LWLockRelease(DSA_AREA_LOCK(area));
 			dsa_free(area, span_pointer);
+
+			/* Raise error unless asked not to. */
+			if ((flags & DSA_ALLOC_NO_OOM) == 0)
+				ereport(ERROR,
+						(errcode(ERRCODE_OUT_OF_MEMORY),
+						 errmsg("out of memory"),
+						 errdetail("Failed on DSA request of size %zu.",
+								   size)));
 			return InvalidDsaPointer;
 		}
 
@@ -709,6 +738,10 @@ dsa_allocate(dsa_area *area, Size size)
 				  DSA_SCLASS_SPAN_LARGE);
 		segment_map->pagemap[first_page] = span_pointer;
 		LWLockRelease(DSA_SCLASS_LOCK(area, DSA_SCLASS_SPAN_LARGE));
+
+		/* Zero-initialize the memory if requested. */
+		if ((flags & DSA_ALLOC_ZERO) != 0)
+			memset(dsa_get_address(area, start_pointer), 0, size);
 
 		return start_pointer;
 	}
@@ -748,11 +781,28 @@ dsa_allocate(dsa_area *area, Size size)
 	Assert(size <= dsa_size_classes[size_class]);
 	Assert(size_class == 0 || size > dsa_size_classes[size_class - 1]);
 
-	/*
-	 * Attempt to allocate an object from the appropriate pool.  This might
-	 * return InvalidDsaPointer if there's no space available.
-	 */
-	return alloc_object(area, size_class);
+	/* Attempt to allocate an object from the appropriate pool. */
+	result = alloc_object(area, size_class);
+
+	/* Check for failure to allocate. */
+	if (!DsaPointerIsValid(result))
+	{
+		/* Raise error unless asked not to. */
+		if ((flags & DSA_ALLOC_NO_OOM) == 0)
+		{
+			ereport(ERROR,
+					(errcode(ERRCODE_OUT_OF_MEMORY),
+					 errmsg("out of memory"),
+					 errdetail("Failed on DSA request of size %zu.", size)));
+		}
+		return InvalidDsaPointer;
+	}
+
+	/* Zero-initialize the memory if requested. */
+	if ((flags & DSA_ALLOC_ZERO) != 0)
+		memset(dsa_get_address(area, result), 0, size);
+
+	return result;
 }
 
 /*
@@ -1030,7 +1080,7 @@ dsa_dump(dsa_area *area)
 			dsa_segment_index segment_index;
 
 			fprintf(stderr,
-				"    segment bin %zu (at least %d contiguous pages free):\n",
+					"    segment bin %zu (at least %d contiguous pages free):\n",
 					i, 1 << (i - 1));
 			segment_index = area->control->segment_bins[i];
 			while (segment_index != DSA_SEGMENT_INDEX_NONE)
@@ -1070,7 +1120,7 @@ dsa_dump(dsa_area *area)
 				fprintf(stderr, "    pool for large object spans:\n");
 			else
 				fprintf(stderr,
-					"    pool for size class %zu (object size %hu bytes):\n",
+						"    pool for size class %zu (object size %hu bytes):\n",
 						i, dsa_size_classes[i]);
 			for (j = 0; j < DSA_FULLNESS_CLASSES; ++j)
 			{
@@ -1194,6 +1244,7 @@ create_internal(void *place, size_t size,
 	area->mapping_pinned = false;
 	memset(area->segment_maps, 0, sizeof(dsa_segment_map) * DSA_MAX_SEGMENTS);
 	area->high_segment_index = 0;
+	area->freed_segment_counter = 0;
 	LWLockInitialize(&control->lock, control->lwlock_tranche_id);
 	for (i = 0; i < DSA_NUM_SIZE_CLASSES; ++i)
 		LWLockInitialize(DSA_SCLASS_LOCK(area, i),
@@ -1253,7 +1304,7 @@ attach_internal(void *place, dsm_segment *segment, dsa_handle handle)
 
 	/* Set up the segment map for this process's mapping. */
 	segment_map = &area->segment_maps[0];
-	segment_map->segment = segment;		/* NULL for in-place */
+	segment_map->segment = segment; /* NULL for in-place */
 	segment_map->mapped_address = place;
 	segment_map->header = (dsa_segment_header *) segment_map->mapped_address;
 	segment_map->fpm = (FreePageManager *)
@@ -1264,7 +1315,15 @@ attach_internal(void *place, dsm_segment *segment, dsa_handle handle)
 
 	/* Bump the reference count. */
 	LWLockAcquire(DSA_AREA_LOCK(area), LW_EXCLUSIVE);
+	if (control->refcnt == 0)
+	{
+		/* We can't attach to a DSA area that has already been destroyed. */
+		ereport(ERROR,
+				(errcode(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
+				 errmsg("could not attach to dynamic shared area")));
+	}
 	++control->refcnt;
+	area->freed_segment_counter = area->control->freed_segment_counter;
 	LWLockRelease(DSA_AREA_LOCK(area));
 
 	return area;
@@ -1675,7 +1734,7 @@ get_segment_by_index(dsa_area *area, dsa_segment_index index)
 		/* It's an error to try to access an unused slot. */
 		if (handle == DSM_HANDLE_INVALID)
 			elog(ERROR,
-			   "dsa_area could not attach to a segment that has been freed");
+				 "dsa_area could not attach to a segment that has been freed");
 
 		segment = dsm_attach(handle);
 		if (segment == NULL)

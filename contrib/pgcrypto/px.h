@@ -32,7 +32,6 @@
 #ifndef __PX_H
 #define __PX_H
 
-#include <sys/types.h>
 #include <sys/param.h>
 
 /* keep debug messages? */
@@ -155,7 +154,7 @@ struct px_hmac
 struct px_cipher
 {
 	unsigned	(*block_size) (PX_Cipher *c);
-	unsigned	(*key_size) (PX_Cipher *c);		/* max key len */
+	unsigned	(*key_size) (PX_Cipher *c); /* max key len */
 	unsigned	(*iv_size) (PX_Cipher *c);
 
 	int			(*init) (PX_Cipher *c, const uint8 *key, unsigned klen, const uint8 *iv);
@@ -170,11 +169,11 @@ struct px_cipher
 struct px_combo
 {
 	int			(*init) (PX_Combo *cx, const uint8 *key, unsigned klen,
-									 const uint8 *iv, unsigned ivlen);
+						 const uint8 *iv, unsigned ivlen);
 	int			(*encrypt) (PX_Combo *cx, const uint8 *data, unsigned dlen,
-										uint8 *res, unsigned *rlen);
+							uint8 *res, unsigned *rlen);
 	int			(*decrypt) (PX_Combo *cx, const uint8 *data, unsigned dlen,
-										uint8 *res, unsigned *rlen);
+							uint8 *res, unsigned *rlen);
 	unsigned	(*encrypt_len) (PX_Combo *cx, unsigned dlen);
 	unsigned	(*decrypt_len) (PX_Combo *cx, unsigned dlen);
 	void		(*free) (PX_Combo *cx);
@@ -240,4 +239,4 @@ void		px_debug(const char *fmt,...) pg_attribute_printf(1, 2);
 					(c)->decrypt(c, data, dlen, res, rlen)
 #define px_combo_free(c)		(c)->free(c)
 
-#endif   /* __PX_H */
+#endif							/* __PX_H */

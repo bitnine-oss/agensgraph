@@ -3,7 +3,7 @@
  * initsplan.c
  *	  Target list, qualification, joininfo initialization routines
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -15,6 +15,7 @@
 #include "postgres.h"
 
 #include "catalog/pg_type.h"
+#include "catalog/pg_class.h"
 #include "nodes/nodeFuncs.h"
 #include "optimizer/clauses.h"
 #include "optimizer/cost.h"
@@ -110,7 +111,7 @@ add_base_rels_to_query(PlannerInfo *root, Node *jtnode)
 	{
 		int			varno = ((RangeTblRef *) jtnode)->rtindex;
 
-		(void) build_simple_rel(root, varno, RELOPT_BASEREL);
+		(void) build_simple_rel(root, varno, NULL);
 	}
 	else if (IsA(jtnode, FromExpr))
 	{
@@ -296,7 +297,7 @@ find_lateral_references(PlannerInfo *root)
 		if (brel == NULL)
 			continue;
 
-		Assert(brel->relid == rti);		/* sanity check on array */
+		Assert(brel->relid == rti); /* sanity check on array */
 
 		/*
 		 * This bit is less obvious than it might look.  We ignore appendrel
@@ -344,6 +345,8 @@ extract_lateral_references(PlannerInfo *root, RelOptInfo *brel, Index rtindex)
 		vars = pull_vars_of_level((Node *) rte->subquery, 1);
 	else if (rte->rtekind == RTE_FUNCTION)
 		vars = pull_vars_of_level((Node *) rte->functions, 0);
+	else if (rte->rtekind == RTE_TABLEFUNC)
+		vars = pull_vars_of_level((Node *) rte->tablefunc, 0);
 	else if (rte->rtekind == RTE_VALUES)
 		vars = pull_vars_of_level((Node *) rte->values_lists, 0);
 	else
@@ -443,7 +446,7 @@ create_lateral_join_info(PlannerInfo *root)
 		if (brel == NULL)
 			continue;
 
-		Assert(brel->relid == rti);		/* sanity check on array */
+		Assert(brel->relid == rti); /* sanity check on array */
 
 		/* ignore RTEs that are "other rels" */
 		if (brel->reloptkind != RELOPT_BASEREL)
@@ -636,11 +639,31 @@ create_lateral_join_info(PlannerInfo *root)
 	for (rti = 1; rti < root->simple_rel_array_size; rti++)
 	{
 		RelOptInfo *brel = root->simple_rel_array[rti];
+		RangeTblEntry *brte = root->simple_rte_array[rti];
 
-		if (brel == NULL || brel->reloptkind != RELOPT_BASEREL)
+		/*
+		 * Skip empty slots. Also skip non-simple relations i.e. dead
+		 * relations.
+		 */
+		if (brel == NULL || !IS_SIMPLE_REL(brel))
 			continue;
 
-		if (root->simple_rte_array[rti]->inh)
+		/*
+		 * In the case of table inheritance, the parent RTE is directly linked
+		 * to every child table via an AppendRelInfo.  In the case of table
+		 * partitioning, the inheritance hierarchy is expanded one level at a
+		 * time rather than flattened.  Therefore, an other member rel that is
+		 * a partitioned table may have children of its own, and must
+		 * therefore be marked with the appropriate lateral info so that those
+		 * children eventually get marked also.
+		 */
+		Assert(brte);
+		if (brel->reloptkind == RELOPT_OTHER_MEMBER_REL &&
+			(brte->rtekind != RTE_RELATION ||
+			 brte->relkind != RELKIND_PARTITIONED_TABLE))
+			continue;
+
+		if (brte->inh)
 		{
 			foreach(lc, root->append_rel_list)
 			{
@@ -726,7 +749,7 @@ deconstruct_jointree(PlannerInfo *root)
  *
  * Inputs:
  *	jtnode is the jointree node to examine
- *	below_outer_join is TRUE if this node is within the nullable side of a
+ *	below_outer_join is true if this node is within the nullable side of a
  *		higher-level outer join
  * Outputs:
  *	*qualscope gets the set of base Relids syntactically included in this
@@ -954,7 +977,7 @@ deconstruct_recurse(PlannerInfo *root, Node *jtnode, bool below_outer_join,
 				/* JOIN_RIGHT was eliminated during reduce_outer_joins() */
 				elog(ERROR, "unrecognized join type: %d",
 					 (int) j->jointype);
-				nonnullable_rels = NULL;		/* keep compiler quiet */
+				nonnullable_rels = NULL;	/* keep compiler quiet */
 				nullable_rels = NULL;
 				leftjoinlist = rightjoinlist = NIL;
 				break;
@@ -1247,7 +1270,7 @@ make_outerjoininfo(PlannerInfo *root,
 	{
 		sjinfo->min_lefthand = bms_copy(left_rels);
 		sjinfo->min_righthand = bms_copy(right_rels);
-		sjinfo->lhs_strict = false;		/* don't care about this */
+		sjinfo->lhs_strict = false; /* don't care about this */
 		return sjinfo;
 	}
 
@@ -1621,8 +1644,8 @@ compute_semijoin_info(SpecialJoinInfo *sjinfo, List *clause)
  *	  as belonging to a higher join level, just add it to postponed_qual_list.
  *
  * 'clause': the qual clause to be distributed
- * 'is_deduced': TRUE if the qual came from implied-equality deduction
- * 'below_outer_join': TRUE if the qual is from a JOIN/ON that is below the
+ * 'is_deduced': true if the qual came from implied-equality deduction
+ * 'below_outer_join': true if the qual is from a JOIN/ON that is below the
  *		nullable side of a higher-level outer join
  * 'jointype': type of join the qual is from (JOIN_INNER for a WHERE clause)
  * 'security_level': security_level to assign to the qual
@@ -1633,7 +1656,7 @@ compute_semijoin_info(SpecialJoinInfo *sjinfo, List *clause)
  *		baserels appearing on the outer (nonnullable) side of the join
  *		(for FULL JOIN this includes both sides of the join, and must in fact
  *		equal qualscope)
- * 'deduced_nullable_relids': if is_deduced is TRUE, the nullable relids to
+ * 'deduced_nullable_relids': if is_deduced is true, the nullable relids to
  *		impute to the clause; otherwise NULL
  * 'postponed_qual_list': list of PostponedQual structs, which we can add
  *		this qual to if it turns out to belong to a higher join level.
@@ -1643,9 +1666,9 @@ compute_semijoin_info(SpecialJoinInfo *sjinfo, List *clause)
  * 'ojscope' is needed if we decide to force the qual up to the outer-join
  * level, which will be ojscope not necessarily qualscope.
  *
- * In normal use (when is_deduced is FALSE), at the time this is called,
+ * In normal use (when is_deduced is false), at the time this is called,
  * root->join_info_list must contain entries for all and only those special
- * joins that are syntactically below this qual.  But when is_deduced is TRUE,
+ * joins that are syntactically below this qual.  But when is_deduced is true,
  * we are adding new deduced clauses after completion of deconstruct_jointree,
  * so it cannot be assumed that root->join_info_list has anything to do with
  * qual placement.
@@ -1976,10 +1999,11 @@ distribute_qual_to_rels(PlannerInfo *root, Node *clause,
 		if (maybe_equivalence)
 		{
 			if (check_equivalence_delay(root, restrictinfo) &&
-				process_equivalence(root, restrictinfo, below_outer_join))
+				process_equivalence(root, &restrictinfo, below_outer_join))
 				return;
 			/* EC rejected it, so set left_ec/right_ec the hard way ... */
-			initialize_mergeclause_eclasses(root, restrictinfo);
+			if (restrictinfo->mergeopfamilies)	/* EC might have changed this */
+				initialize_mergeclause_eclasses(root, restrictinfo);
 			/* ... and fall through to distribute_restrictinfo_to_rels */
 		}
 		else if (maybe_outer_join && restrictinfo->can_join)
@@ -2034,8 +2058,8 @@ distribute_qual_to_rels(PlannerInfo *root, Node *clause,
  *		may force extra delay of higher-level outer joins.
  *
  * If the qual must be delayed, add relids to *relids_p to reflect the lowest
- * safe level for evaluating the qual, and return TRUE.  Any extra delay for
- * higher-level joins is reflected by setting delay_upper_joins to TRUE in
+ * safe level for evaluating the qual, and return true.  Any extra delay for
+ * higher-level joins is reflected by setting delay_upper_joins to true in
  * SpecialJoinInfo structs.  We also compute nullable_relids, the set of
  * referenced relids that are nullable by lower outer joins (note that this
  * can be nonempty even for a non-delayed qual).
@@ -2067,7 +2091,7 @@ distribute_qual_to_rels(PlannerInfo *root, Node *clause,
  * Lastly, a pushed-down qual that references the nullable side of any current
  * join_info_list member and has to be evaluated above that OJ (because its
  * required relids overlap the LHS too) causes that OJ's delay_upper_joins
- * flag to be set TRUE.  This will prevent any higher-level OJs from
+ * flag to be set true.  This will prevent any higher-level OJs from
  * being interchanged with that OJ, which would result in not having any
  * correct place to evaluate the qual.  (The case we care about here is a
  * sub-select WHERE clause within the RHS of some outer join.  The WHERE
@@ -2080,7 +2104,7 @@ distribute_qual_to_rels(PlannerInfo *root, Node *clause,
 static bool
 check_outerjoin_delay(PlannerInfo *root,
 					  Relids *relids_p, /* in/out parameter */
-					  Relids *nullable_relids_p,		/* output parameter */
+					  Relids *nullable_relids_p,	/* output parameter */
 					  bool is_pushed_down)
 {
 	Relids		relids;
@@ -2151,7 +2175,7 @@ check_outerjoin_delay(PlannerInfo *root,
 /*
  * check_equivalence_delay
  *		Detect whether a potential equivalence clause is rendered unsafe
- *		by outer-join-delay considerations.  Return TRUE if it's safe.
+ *		by outer-join-delay considerations.  Return true if it's safe.
  *
  * The initial tests in distribute_qual_to_rels will consider a mergejoinable
  * clause to be a potential equivalence clause if it is not outerjoin_delayed.
@@ -2256,7 +2280,7 @@ distribute_restrictinfo_to_rels(PlannerInfo *root,
 											restrictinfo);
 			/* Update security level info */
 			rel->baserestrict_min_security = Min(rel->baserestrict_min_security,
-											   restrictinfo->security_level);
+												 restrictinfo->security_level);
 			break;
 		case BMS_MULTIPLE:
 
@@ -2337,10 +2361,10 @@ process_implied_equality(PlannerInfo *root,
 	 * original (this is necessary in case there are subselects in there...)
 	 */
 	clause = make_opclause(opno,
-						   BOOLOID,		/* opresulttype */
-						   false,		/* opretset */
-						   (Expr *) copyObject(item1),
-						   (Expr *) copyObject(item2),
+						   BOOLOID, /* opresulttype */
+						   false,	/* opretset */
+						   copyObject(item1),
+						   copyObject(item2),
 						   InvalidOid,
 						   collation);
 
@@ -2400,10 +2424,10 @@ build_implied_join_equality(Oid opno,
 	 * original (this is necessary in case there are subselects in there...)
 	 */
 	clause = make_opclause(opno,
-						   BOOLOID,		/* opresulttype */
-						   false,		/* opretset */
-						   (Expr *) copyObject(item1),
-						   (Expr *) copyObject(item2),
+						   BOOLOID, /* opresulttype */
+						   false,	/* opretset */
+						   copyObject(item1),
+						   copyObject(item2),
 						   InvalidOid,
 						   collation);
 
@@ -2411,12 +2435,12 @@ build_implied_join_equality(Oid opno,
 	 * Build the RestrictInfo node itself.
 	 */
 	restrictinfo = make_restrictinfo(clause,
-									 true,		/* is_pushed_down */
-									 false,		/* outerjoin_delayed */
-									 false,		/* pseudoconstant */
+									 true,	/* is_pushed_down */
+									 false, /* outerjoin_delayed */
+									 false, /* pseudoconstant */
 									 security_level,	/* security_level */
 									 qualscope, /* required_relids */
-									 NULL,		/* outer_relids */
+									 NULL,	/* outer_relids */
 									 nullable_relids);	/* nullable_relids */
 
 	/* Set mergejoinability/hashjoinability flags */

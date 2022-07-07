@@ -5,7 +5,7 @@
  *		bits of hard-wired knowledge
  *
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -38,6 +38,7 @@
 #include "catalog/pg_shseclabel.h"
 #include "catalog/pg_subscription.h"
 #include "catalog/pg_tablespace.h"
+#include "catalog/pg_type.h"
 #include "catalog/toasting.h"
 #include "miscadmin.h"
 #include "storage/fd.h"
@@ -119,7 +120,7 @@ IsCatalogClass(Oid relid, Form_pg_class reltuple)
 	 * this is noticeably cheaper and doesn't require catalog access.
 	 *
 	 * This test is safe since even an oid wraparound will preserve this
-	 * property (c.f. GetNewObjectId()) and it has the advantage that it works
+	 * property (cf. GetNewObjectId()) and it has the advantage that it works
 	 * correctly even if a user decides to create a relation in the pg_catalog
 	 * namespace.
 	 * ----
@@ -340,6 +341,14 @@ GetNewOidWithIndex(Relation relation, Oid indexId, AttrNumber oidcolumn)
 	ScanKeyData key;
 	bool		collides;
 
+	/*
+	 * We should never be asked to generate a new pg_type OID during
+	 * pg_upgrade; doing so would risk collisions with the OIDs it wants to
+	 * assign.  Hitting this assert means there's some path where we failed to
+	 * ensure that a type OID is determined by commands in the dump script.
+	 */
+	Assert(!IsBinaryUpgrade || RelationGetRelid(relation) != TypeRelationId);
+
 	InitDirtySnapshot(SnapshotDirty);
 
 	/* Generate new OIDs until we find one not in the table */
@@ -391,6 +400,13 @@ GetNewRelFileNode(Oid reltablespace, Relation pg_class, char relpersistence)
 	bool		collides;
 	BackendId	backend;
 
+	/*
+	 * If we ever get here during pg_upgrade, there's something wrong; all
+	 * relfilenode assignments during a binary-upgrade run should be
+	 * determined by commands in the dump script.
+	 */
+	Assert(!IsBinaryUpgrade);
+
 	switch (relpersistence)
 	{
 		case RELPERSISTENCE_TEMP:
@@ -428,7 +444,7 @@ GetNewRelFileNode(Oid reltablespace, Relation pg_class, char relpersistence)
 
 		/* Check for existing file of same name */
 		rpath = relpath(rnode, MAIN_FORKNUM);
-		fd = BasicOpenFile(rpath, O_RDONLY | PG_BINARY, 0);
+		fd = BasicOpenFile(rpath, O_RDONLY | PG_BINARY);
 
 		if (fd >= 0)
 		{

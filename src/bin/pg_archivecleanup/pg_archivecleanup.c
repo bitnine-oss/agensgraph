@@ -28,14 +28,13 @@ const char *progname;
 /* Options and defaults */
 bool		debug = false;		/* are we debugging? */
 bool		dryrun = false;		/* are we performing a dry-run operation? */
-char	   *additional_ext = NULL;		/* Extension to remove from filenames */
+char	   *additional_ext = NULL;	/* Extension to remove from filenames */
 
 char	   *archiveLocation;	/* where to find the archive? */
 char	   *restartWALFileName; /* the file from which we can restart restore */
-char		WALFilePath[MAXPGPATH];		/* the file path including archive */
-char		exclusiveCleanupFileName[MAXFNAMELEN];		/* the oldest file we
-														 * want to remain in
-														 * archive */
+char		WALFilePath[MAXPGPATH * 2]; /* the file path including archive */
+char		exclusiveCleanupFileName[MAXFNAMELEN];	/* the oldest file we want
+													 * to remain in archive */
 
 
 /* =====================================================================
@@ -133,7 +132,7 @@ CleanupPriorWALFiles(void)
 				 * extension that might have been chopped off before testing
 				 * the sequence.
 				 */
-				snprintf(WALFilePath, MAXPGPATH, "%s/%s",
+				snprintf(WALFilePath, sizeof(WALFilePath), "%s/%s",
 						 archiveLocation, xlde->d_name);
 
 				if (dryrun)
@@ -246,7 +245,7 @@ SetWALFileNameForCleanup(void)
 
 	if (!fnameOK)
 	{
-		fprintf(stderr, _("%s: invalid filename input\n"), progname);
+		fprintf(stderr, _("%s: invalid file name argument\n"), progname);
 		fprintf(stderr, _("Try \"%s --help\" for more information.\n"), progname);
 		exit(2);
 	}
@@ -315,8 +314,8 @@ main(int argc, char **argv)
 				dryrun = true;
 				break;
 			case 'x':
-				additional_ext = pg_strdup(optarg);		/* Extension to remove
-														 * from xlogfile names */
+				additional_ext = pg_strdup(optarg); /* Extension to remove
+													 * from xlogfile names */
 				break;
 			default:
 				fprintf(stderr, _("Try \"%s --help\" for more information.\n"), progname);
@@ -351,14 +350,14 @@ main(int argc, char **argv)
 	}
 	else
 	{
-		fprintf(stderr, _("%s: must specify restartfilename\n"), progname);
+		fprintf(stderr, _("%s: must specify oldest kept WAL file\n"), progname);
 		fprintf(stderr, _("Try \"%s --help\" for more information.\n"), progname);
 		exit(2);
 	}
 
 	if (optind < argc)
 	{
-		fprintf(stderr, _("%s: too many parameters\n"), progname);
+		fprintf(stderr, _("%s: too many command-line arguments\n"), progname);
 		fprintf(stderr, _("Try \"%s --help\" for more information.\n"), progname);
 		exit(2);
 	}
@@ -377,7 +376,7 @@ main(int argc, char **argv)
 	{
 		snprintf(WALFilePath, MAXPGPATH, "%s/%s",
 				 archiveLocation, exclusiveCleanupFileName);
-		fprintf(stderr, _("%s: keep WAL file \"%s\" and later\n"),
+		fprintf(stderr, _("%s: keeping WAL file \"%s\" and later\n"),
 				progname, WALFilePath);
 	}
 

@@ -3,7 +3,7 @@
  * execCurrent.c
  *	  executor support for WHERE CURRENT OF cursor
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *	src/backend/executor/execCurrent.c
@@ -32,7 +32,7 @@ static ScanState *search_plan_tree(PlanState *node, Oid table_oid);
  * of the table is currently being scanned by the cursor named by CURRENT OF,
  * and return the row's TID into *current_tid.
  *
- * Returns TRUE if a row was identified.  Returns FALSE if the cursor is valid
+ * Returns true if a row was identified.  Returns false if the cursor is valid
  * for the table but is not currently scanning a row of the table (this is a
  * legal situation in inheritance cases).  Raises error if cursor is not a
  * valid updatable scan of the specified table.
@@ -75,7 +75,7 @@ execCurrentOf(CurrentOfExpr *cexpr,
 				(errcode(ERRCODE_INVALID_CURSOR_STATE),
 				 errmsg("cursor \"%s\" is not a SELECT query",
 						cursor_name)));
-	queryDesc = PortalGetQueryDesc(portal);
+	queryDesc = portal->queryDesc;
 	if (queryDesc == NULL || queryDesc->estate == NULL)
 		ereport(ERROR,
 				(errcode(ERRCODE_INVALID_CURSOR_STATE),
@@ -151,7 +151,7 @@ execCurrentOf(CurrentOfExpr *cexpr,
 	{
 		ScanState  *scanstate;
 		bool		lisnull;
-		Oid tuple_tableoid PG_USED_FOR_ASSERTS_ONLY;
+		Oid			tuple_tableoid PG_USED_FOR_ASSERTS_ONLY;
 		ItemPointer tuple_tid;
 
 		/*
@@ -216,11 +216,14 @@ fetch_cursor_param_value(ExprContext *econtext, int paramId)
 	if (paramInfo &&
 		paramId > 0 && paramId <= paramInfo->numParams)
 	{
-		ParamExternData *prm = &paramInfo->params[paramId - 1];
+		ParamExternData *prm;
+		ParamExternData prmdata;
 
 		/* give hook a chance in case parameter is dynamic */
-		if (!OidIsValid(prm->ptype) && paramInfo->paramFetch != NULL)
-			(*paramInfo->paramFetch) (paramInfo, paramId);
+		if (paramInfo->paramFetch != NULL)
+			prm = paramInfo->paramFetch(paramInfo, paramId, false, &prmdata);
+		else
+			prm = &paramInfo->params[paramId - 1];
 
 		if (OidIsValid(prm->ptype) && !prm->isnull)
 		{

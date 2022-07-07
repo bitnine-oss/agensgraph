@@ -3,7 +3,7 @@
  * gistvalidate.c
  *	  Opclass validator for GiST.
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -90,8 +90,8 @@ gistvalidate(Oid opclassoid)
 		{
 			ereport(INFO,
 					(errcode(ERRCODE_INVALID_OBJECT_DEFINITION),
-					 errmsg("gist operator family \"%s\" contains support procedure %s with cross-type registration",
-							opfamilyname,
+					 errmsg("operator family \"%s\" of access method %s contains support procedure %s with different left and right input types",
+							opfamilyname, "gist",
 							format_procedure(procform->amproc))));
 			result = false;
 		}
@@ -143,8 +143,8 @@ gistvalidate(Oid opclassoid)
 			default:
 				ereport(INFO,
 						(errcode(ERRCODE_INVALID_OBJECT_DEFINITION),
-						 errmsg("gist operator family \"%s\" contains function %s with invalid support number %d",
-								opfamilyname,
+						 errmsg("operator family \"%s\" of access method %s contains function %s with invalid support number %d",
+								opfamilyname, "gist",
 								format_procedure(procform->amproc),
 								procform->amprocnum)));
 				result = false;
@@ -155,8 +155,8 @@ gistvalidate(Oid opclassoid)
 		{
 			ereport(INFO,
 					(errcode(ERRCODE_INVALID_OBJECT_DEFINITION),
-					 errmsg("gist operator family \"%s\" contains function %s with wrong signature for support number %d",
-							opfamilyname,
+					 errmsg("operator family \"%s\" of access method %s contains function %s with wrong signature for support number %d",
+							opfamilyname, "gist",
 							format_procedure(procform->amproc),
 							procform->amprocnum)));
 			result = false;
@@ -175,8 +175,8 @@ gistvalidate(Oid opclassoid)
 		{
 			ereport(INFO,
 					(errcode(ERRCODE_INVALID_OBJECT_DEFINITION),
-					 errmsg("gist operator family \"%s\" contains operator %s with invalid strategy number %d",
-							opfamilyname,
+					 errmsg("operator family \"%s\" of access method %s contains operator %s with invalid strategy number %d",
+							opfamilyname, "gist",
 							format_operator(oprform->amopopr),
 							oprform->amopstrategy)));
 			result = false;
@@ -193,8 +193,8 @@ gistvalidate(Oid opclassoid)
 			{
 				ereport(INFO,
 						(errcode(ERRCODE_INVALID_OBJECT_DEFINITION),
-						 errmsg("gist operator family \"%s\" contains unsupported ORDER BY specification for operator %s",
-								opfamilyname,
+						 errmsg("operator family \"%s\" of access method %s contains unsupported ORDER BY specification for operator %s",
+								opfamilyname, "gist",
 								format_operator(oprform->amopopr))));
 				result = false;
 			}
@@ -204,8 +204,8 @@ gistvalidate(Oid opclassoid)
 			{
 				ereport(INFO,
 						(errcode(ERRCODE_INVALID_OBJECT_DEFINITION),
-						 errmsg("gist operator family \"%s\" contains incorrect ORDER BY opfamily specification for operator %s",
-								opfamilyname,
+						 errmsg("operator family \"%s\" of access method %s contains incorrect ORDER BY opfamily specification for operator %s",
+								opfamilyname, "gist",
 								format_operator(oprform->amopopr))));
 				result = false;
 			}
@@ -223,8 +223,8 @@ gistvalidate(Oid opclassoid)
 		{
 			ereport(INFO,
 					(errcode(ERRCODE_INVALID_OBJECT_DEFINITION),
-					 errmsg("gist operator family \"%s\" contains operator %s with wrong signature",
-							opfamilyname,
+					 errmsg("operator family \"%s\" of access method %s contains operator %s with wrong signature",
+							opfamilyname, "gist",
 							format_operator(oprform->amopopr))));
 			result = false;
 		}
@@ -258,12 +258,13 @@ gistvalidate(Oid opclassoid)
 		if (opclassgroup &&
 			(opclassgroup->functionset & (((uint64) 1) << i)) != 0)
 			continue;			/* got it */
-		if (i == GIST_DISTANCE_PROC || i == GIST_FETCH_PROC)
+		if (i == GIST_DISTANCE_PROC || i == GIST_FETCH_PROC ||
+			i == GIST_COMPRESS_PROC || i == GIST_DECOMPRESS_PROC)
 			continue;			/* optional methods */
 		ereport(INFO,
 				(errcode(ERRCODE_INVALID_OBJECT_DEFINITION),
-		  errmsg("gist operator class \"%s\" is missing support function %d",
-				 opclassname, i)));
+				 errmsg("operator class \"%s\" of access method %s is missing support function %d",
+						opclassname, "gist", i)));
 		result = false;
 	}
 

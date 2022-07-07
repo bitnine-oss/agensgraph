@@ -3,7 +3,7 @@
  * slru.h
  *		Simple LRU buffering for transaction status logfiles
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/access/slru.h
@@ -29,10 +29,6 @@
  * 0xFFFFFFFF/xxxx_XACTS_PER_PAGE/SLRU_PAGES_PER_SEGMENT.  We need
  * take no explicit notice of that fact in slru.c, except when comparing
  * segment and page numbers in SimpleLruTruncate (see PagePrecedes()).
- *
- * Note: slru.c currently assumes that segment file names will be four hex
- * digits.  This sets a lower bound on the segment size (64K transactions
- * for 32-bit TransactionIds).
  */
 #define SLRU_PAGES_PER_SEGMENT	32
 
@@ -41,7 +37,7 @@
 
 /*
  * Page status codes.  Note that these do not include the "dirty" bit.
- * page_dirty can be TRUE only in the VALID or WRITE_IN_PROGRESS states;
+ * page_dirty can be true only in the VALID or WRITE_IN_PROGRESS states;
  * in the latter case it implies that the page has been re-dirtied since
  * the write started.
  */
@@ -76,7 +72,7 @@ typedef struct SlruSharedData
 	/*
 	 * Optional array of WAL flush LSNs associated with entries in the SLRU
 	 * pages.  If not zero/NULL, we must flush WAL before writing pages (true
-	 * for pg_clog, false for multixact, pg_subtrans, pg_notify).  group_lsn[]
+	 * for pg_xact, false for multixact, pg_subtrans, pg_notify).  group_lsn[]
 	 * has lsn_groups_per_page entries per buffer slot, each containing the
 	 * highest LSN known for a contiguous group of SLRU entries on that slot's
 	 * page.
@@ -119,7 +115,7 @@ typedef struct SlruCtlData
 	SlruShared	shared;
 
 	/*
-	 * This flag tells whether to fsync writes (true for pg_clog and multixact
+	 * This flag tells whether to fsync writes (true for pg_xact and multixact
 	 * stuff, false for pg_subtrans and pg_notify).
 	 */
 	bool		do_fsync;
@@ -155,7 +151,7 @@ extern void SimpleLruTruncate(SlruCtl ctl, int cutoffPage);
 extern bool SimpleLruDoesPhysicalPageExist(SlruCtl ctl, int pageno);
 
 typedef bool (*SlruScanCallback) (SlruCtl ctl, char *filename, int segpage,
-											  void *data);
+								  void *data);
 extern bool SlruScanDirectory(SlruCtl ctl, SlruScanCallback callback, void *data);
 extern void SlruDeleteSegment(SlruCtl ctl, int segno);
 
@@ -165,4 +161,4 @@ extern bool SlruScanDirCbReportPresence(SlruCtl ctl, char *filename,
 extern bool SlruScanDirCbDeleteAll(SlruCtl ctl, char *filename, int segpage,
 					   void *data);
 
-#endif   /* SLRU_H */
+#endif							/* SLRU_H */

@@ -4,7 +4,7 @@
  *
  *	Parallel support for pg_dump and pg_restore
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -20,9 +20,9 @@
 
 /* Function to call in master process on completion of a worker task */
 typedef void (*ParallelCompletionPtr) (ArchiveHandle *AH,
-												   TocEntry *te,
-												   int status,
-												   void *callback_data);
+									   TocEntry *te,
+									   int status,
+									   void *callback_data);
 
 /* Wait options for WaitForWorkers */
 typedef enum
@@ -67,4 +67,4 @@ extern void ParallelBackupEnd(ArchiveHandle *AH, ParallelState *pstate);
 
 extern void set_archive_cancel_info(ArchiveHandle *AH, PGconn *conn);
 
-#endif   /* PG_DUMP_PARALLEL_H */
+#endif							/* PG_DUMP_PARALLEL_H */

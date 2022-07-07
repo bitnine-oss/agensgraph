@@ -3,7 +3,7 @@
  * pruneheap.c
  *	  heap page pruning and HOT-chain management code
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -31,8 +31,7 @@
 typedef struct
 {
 	TransactionId new_prune_xid;	/* new prune hint value for page */
-	TransactionId latestRemovedXid;		/* latest xid to be removed by this
-										 * prune */
+	TransactionId latestRemovedXid; /* latest xid to be removed by this prune */
 	int			nredirected;	/* numbers of entries in arrays below */
 	int			ndead;
 	int			nunused;
@@ -40,7 +39,7 @@ typedef struct
 	OffsetNumber redirected[MaxHeapTuplesPerPage * 2];
 	OffsetNumber nowdead[MaxHeapTuplesPerPage];
 	OffsetNumber nowunused[MaxHeapTuplesPerPage];
-	/* marked[i] is TRUE if item i is entered in one of the above arrays */
+	/* marked[i] is true if item i is entered in one of the above arrays */
 	bool		marked[MaxHeapTuplesPerPage + 1];
 } PruneState;
 
@@ -149,8 +148,8 @@ heap_page_prune_opt(Relation relation, Buffer buffer)
 		 */
 		if (PageIsFull(page) || PageGetHeapFreeSpace(page) < minfree)
 		{
-			TransactionId ignore = InvalidTransactionId;		/* return value not
-																 * needed */
+			TransactionId ignore = InvalidTransactionId;	/* return value not
+															 * needed */
 
 			/* OK to prune */
 			(void) heap_page_prune(relation, buffer, OldestXmin, true, &ignore);
@@ -171,7 +170,7 @@ heap_page_prune_opt(Relation relation, Buffer buffer)
  * or RECENTLY_DEAD (see HeapTupleSatisfiesVacuum).
  *
  * If report_stats is true then we send the number of reclaimed heap-only
- * tuples to pgstats.  (This must be FALSE during vacuum, since vacuum will
+ * tuples to pgstats.  (This must be false during vacuum, since vacuum will
  * send its own new total to pgstats, and we don't want this delta applied
  * on top of that.)
  *
@@ -408,7 +407,7 @@ heap_prune_chain(Relation relation, Buffer buffer, OffsetNumber rootoffnum,
 			{
 				heap_prune_record_unused(prstate, rootoffnum);
 				HeapTupleHeaderAdvanceLatestRemovedXid(htup,
-												 &prstate->latestRemovedXid);
+													   &prstate->latestRemovedXid);
 				ndeleted++;
 			}
 
@@ -541,7 +540,7 @@ heap_prune_chain(Relation relation, Buffer buffer, OffsetNumber rootoffnum,
 		{
 			latestdead = offnum;
 			HeapTupleHeaderAdvanceLatestRemovedXid(htup,
-												 &prstate->latestRemovedXid);
+												   &prstate->latestRemovedXid);
 		}
 		else if (!recent_dead)
 			break;

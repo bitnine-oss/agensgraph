@@ -3,7 +3,7 @@
  * pg_shdepend.c
  *	  routines to support manipulation of the pg_shdepend relation
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -39,6 +39,7 @@
 #include "catalog/pg_opfamily.h"
 #include "catalog/pg_proc.h"
 #include "catalog/pg_shdepend.h"
+#include "catalog/pg_statistic_ext.h"
 #include "catalog/pg_subscription.h"
 #include "catalog/pg_tablespace.h"
 #include "catalog/pg_ts_config.h"
@@ -238,7 +239,7 @@ shdepChangeDep(Relation sdepRel,
 		/* Caller screwed up if multiple matches */
 		if (oldtup)
 			elog(ERROR,
-			   "multiple pg_shdepend entries for object %u/%u/%d deptype %c",
+				 "multiple pg_shdepend entries for object %u/%u/%d deptype %c",
 				 classid, objid, objsubid, deptype);
 		oldtup = heap_copytuple(scantup);
 	}
@@ -690,7 +691,7 @@ checkSharedDependencies(Oid classId, Oid objectId,
 	if (numNotReportedDbs > 0)
 		appendStringInfo(&descs, ngettext("\nand objects in %d other database "
 										  "(see server log for list)",
-									   "\nand objects in %d other databases "
+										  "\nand objects in %d other databases "
 										  "(see server log for list)",
 										  numNotReportedDbs),
 						 numNotReportedDbs);
@@ -1196,9 +1197,9 @@ shdepDropOwned(List *roleids, DropBehavior behavior)
 
 			ereport(ERROR,
 					(errcode(ERRCODE_DEPENDENT_OBJECTS_STILL_EXIST),
-				   errmsg("cannot drop objects owned by %s because they are "
-						  "required by the database system",
-						  getObjectDescription(&obj))));
+					 errmsg("cannot drop objects owned by %s because they are "
+							"required by the database system",
+							getObjectDescription(&obj))));
 		}
 
 		ScanKeyInit(&key[0],
@@ -1415,6 +1416,7 @@ shdepReassignOwned(List *roleids, Oid newrole)
 				case OperatorFamilyRelationId:
 				case OperatorClassRelationId:
 				case ExtensionRelationId:
+				case StatisticExtRelationId:
 				case TableSpaceRelationId:
 				case DatabaseRelationId:
 				case TSConfigRelationId:

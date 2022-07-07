@@ -4,7 +4,7 @@
  *	  prototypes for various files in optimizer/plan
  *
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/optimizer/planmain.h
@@ -23,12 +23,13 @@ typedef enum
 	FORCE_PARALLEL_OFF,
 	FORCE_PARALLEL_ON,
 	FORCE_PARALLEL_REGRESS
-}	ForceParallelMode;
+}			ForceParallelMode;
 
 /* GUC parameters */
 #define DEFAULT_CURSOR_TUPLE_FRACTION 0.1
 extern double cursor_tuple_fraction;
 extern int	force_parallel_mode;
+extern bool parallel_leader_participation;
 
 /* query_planner callback to compute query_pathkeys */
 typedef void (*query_pathkeys_callback) (PlannerInfo *root, void *extra);
@@ -111,8 +112,12 @@ extern void match_foreign_keys_to_quals(PlannerInfo *root);
  * prototypes for plan/analyzejoins.c
  */
 extern List *remove_useless_joins(PlannerInfo *root, List *joinlist);
+extern void reduce_unique_semijoins(PlannerInfo *root);
 extern bool query_supports_distinctness(Query *query);
 extern bool query_is_distinct_for(Query *query, List *colnos, List *opids);
+extern bool innerrel_is_unique(PlannerInfo *root,
+				   Relids outerrelids, RelOptInfo *innerrel,
+				   JoinType jointype, List *restrictlist, bool force_cache);
 
 /*
  * prototypes for plan/setrefs.c
@@ -124,4 +129,4 @@ extern void extract_query_dependencies(Node *query,
 						   List **invalItems,
 						   bool *hasRowSecurity);
 
-#endif   /* PLANMAIN_H */
+#endif							/* PLANMAIN_H */

@@ -3,7 +3,7 @@
  * hashinsert.c
  *	  Item insertion in hash tables for Postgres.
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -16,8 +16,15 @@
 #include "postgres.h"
 
 #include "access/hash.h"
+#include "access/hash_xlog.h"
+#include "access/heapam.h"
+#include "miscadmin.h"
 #include "utils/rel.h"
+#include "storage/lwlock.h"
+#include "storage/buf_internals.h"
 
+static void _hash_vacuum_one_page(Relation rel, Buffer metabuf, Buffer buf,
+					  RelFileNode hnode);
 
 /*
  *	_hash_doinsert() -- Handle insertion of a single index tuple.
@@ -26,15 +33,13 @@
  *		and hashinsert.  By here, itup is completely filled in.
  */
 void
-_hash_doinsert(Relation rel, IndexTuple itup)
+_hash_doinsert(Relation rel, IndexTuple itup, Relation heapRel)
 {
 	Buffer		buf = InvalidBuffer;
 	Buffer		bucket_buf;
 	Buffer		metabuf;
 	HashMetaPage metap;
-	BlockNumber blkno;
-	BlockNumber oldblkno;
-	bool		retry;
+	HashMetaPage usedmetap = NULL;
 	Page		metapage;
 	Page		page;
 	HashPageOpaque pageopaque;
@@ -42,9 +47,7 @@ _hash_doinsert(Relation rel, IndexTuple itup)
 	bool		do_expand;
 	uint32		hashkey;
 	Bucket		bucket;
-	uint32		maxbucket;
-	uint32		highmask;
-	uint32		lowmask;
+	OffsetNumber itup_off;
 
 	/*
 	 * Get the hash key for the item (it's stored in the index tuple itself).
@@ -57,10 +60,14 @@ _hash_doinsert(Relation rel, IndexTuple itup)
 								 * need to be consistent */
 
 restart_insert:
-	/* Read the metapage */
-	metabuf = _hash_getbuf(rel, HASH_METAPAGE, HASH_READ, LH_META_PAGE);
+
+	/*
+	 * Read the metapage.  We don't lock it yet; HashMaxItemSize() will
+	 * examine pd_pagesize_version, but that can't change so we can examine it
+	 * without a lock.
+	 */
+	metabuf = _hash_getbuf(rel, HASH_METAPAGE, HASH_NOLOCK, LH_META_PAGE);
 	metapage = BufferGetPage(metabuf);
-	metap = HashPageGetMeta(metapage);
 
 	/*
 	 * Check whether the item can fit on a hash page at all. (Eventually, we
@@ -74,68 +81,19 @@ restart_insert:
 				(errcode(ERRCODE_PROGRAM_LIMIT_EXCEEDED),
 				 errmsg("index row size %zu exceeds hash maximum %zu",
 						itemsz, HashMaxItemSize(metapage)),
-			errhint("Values larger than a buffer page cannot be indexed.")));
+				 errhint("Values larger than a buffer page cannot be indexed.")));
 
-	oldblkno = InvalidBlockNumber;
-	retry = false;
-
-	/*
-	 * Loop until we get a lock on the correct target bucket.
-	 */
-	for (;;)
-	{
-		/*
-		 * Compute the target bucket number, and convert to block number.
-		 */
-		bucket = _hash_hashkey2bucket(hashkey,
-									  metap->hashm_maxbucket,
-									  metap->hashm_highmask,
-									  metap->hashm_lowmask);
-
-		blkno = BUCKET_TO_BLKNO(metap, bucket);
-
-		/*
-		 * Copy bucket mapping info now; refer the comment in
-		 * _hash_expandtable where we copy this information before calling
-		 * _hash_splitbucket to see why this is okay.
-		 */
-		maxbucket = metap->hashm_maxbucket;
-		highmask = metap->hashm_highmask;
-		lowmask = metap->hashm_lowmask;
-
-		/* Release metapage lock, but keep pin. */
-		LockBuffer(metabuf, BUFFER_LOCK_UNLOCK);
-
-		/*
-		 * If the previous iteration of this loop locked the primary page of
-		 * what is still the correct target bucket, we are done.  Otherwise,
-		 * drop any old lock before acquiring the new one.
-		 */
-		if (retry)
-		{
-			if (oldblkno == blkno)
-				break;
-			_hash_relbuf(rel, buf);
-		}
-
-		/* Fetch and lock the primary bucket page for the target bucket */
-		buf = _hash_getbuf(rel, blkno, HASH_WRITE, LH_BUCKET_PAGE);
-
-		/*
-		 * Reacquire metapage lock and check that no bucket split has taken
-		 * place while we were awaiting the bucket lock.
-		 */
-		LockBuffer(metabuf, BUFFER_LOCK_SHARE);
-		oldblkno = blkno;
-		retry = true;
-	}
+	/* Lock the primary bucket page for the target bucket. */
+	buf = _hash_getbucketbuf_from_hashkey(rel, hashkey, HASH_WRITE,
+										  &usedmetap);
+	Assert(usedmetap != NULL);
 
 	/* remember the primary bucket buffer to release the pin on it at end. */
 	bucket_buf = buf;
 
 	page = BufferGetPage(buf);
 	pageopaque = (HashPageOpaque) PageGetSpecialPointer(page);
-	Assert(pageopaque->hasho_bucket == bucket);
+	bucket = pageopaque->hasho_bucket;
 
 	/*
 	 * If this bucket is in the process of being split, try to finish the
@@ -151,8 +109,10 @@ restart_insert:
 		/* release the lock on bucket buffer, before completing the split. */
 		LockBuffer(buf, BUFFER_LOCK_UNLOCK);
 
-		_hash_finish_split(rel, metabuf, buf, pageopaque->hasho_bucket,
-						   maxbucket, highmask, lowmask);
+		_hash_finish_split(rel, metabuf, buf, bucket,
+						   usedmetap->hashm_maxbucket,
+						   usedmetap->hashm_highmask,
+						   usedmetap->hashm_lowmask);
 
 		/* release the pin on old and meta buffer.  retry for insert. */
 		_hash_dropbuf(rel, buf);
@@ -163,10 +123,29 @@ restart_insert:
 	/* Do the insertion */
 	while (PageGetFreeSpace(page) < itemsz)
 	{
+		BlockNumber nextblkno;
+
+		/*
+		 * Check if current page has any DEAD tuples. If yes, delete these
+		 * tuples and see if we can get a space for the new item to be
+		 * inserted before moving to the next page in the bucket chain.
+		 */
+		if (H_HAS_DEAD_TUPLES(pageopaque))
+		{
+
+			if (IsBufferCleanupOK(buf))
+			{
+				_hash_vacuum_one_page(rel, metabuf, buf, heapRel->rd_node);
+
+				if (PageGetFreeSpace(page) >= itemsz)
+					break;		/* OK, now we have enough space */
+			}
+		}
+
 		/*
 		 * no space on this page; check for an overflow page
 		 */
-		BlockNumber nextblkno = pageopaque->hasho_nextblkno;
+		nextblkno = pageopaque->hasho_nextblkno;
 
 		if (BlockNumberIsValid(nextblkno))
 		{
@@ -202,22 +181,9 @@ restart_insert:
 			Assert(PageGetFreeSpace(page) >= itemsz);
 		}
 		pageopaque = (HashPageOpaque) PageGetSpecialPointer(page);
-		Assert(pageopaque->hasho_flag == LH_OVERFLOW_PAGE);
+		Assert((pageopaque->hasho_flag & LH_PAGE_TYPE) == LH_OVERFLOW_PAGE);
 		Assert(pageopaque->hasho_bucket == bucket);
 	}
-
-	/* found page with enough space, so add the item here */
-	(void) _hash_pgaddtup(rel, buf, itemsz, itup);
-
-	/*
-	 * dirty and release the modified page.  if the page we modified was an
-	 * overflow page, we also need to separately drop the pin we retained on
-	 * the primary bucket page.
-	 */
-	MarkBufferDirty(buf);
-	_hash_relbuf(rel, buf);
-	if (buf != bucket_buf)
-		_hash_dropbuf(rel, bucket_buf);
 
 	/*
 	 * Write-lock the metapage so we can increment the tuple count. After
@@ -225,15 +191,57 @@ restart_insert:
 	 */
 	LockBuffer(metabuf, BUFFER_LOCK_EXCLUSIVE);
 
+	/* Do the update.  No ereport(ERROR) until changes are logged */
+	START_CRIT_SECTION();
+
+	/* found page with enough space, so add the item here */
+	itup_off = _hash_pgaddtup(rel, buf, itemsz, itup);
+	MarkBufferDirty(buf);
+
+	/* metapage operations */
+	metap = HashPageGetMeta(metapage);
 	metap->hashm_ntuples += 1;
 
 	/* Make sure this stays in sync with _hash_expandtable() */
 	do_expand = metap->hashm_ntuples >
 		(double) metap->hashm_ffactor * (metap->hashm_maxbucket + 1);
 
-	/* Write out the metapage and drop lock, but keep pin */
 	MarkBufferDirty(metabuf);
+
+	/* XLOG stuff */
+	if (RelationNeedsWAL(rel))
+	{
+		xl_hash_insert xlrec;
+		XLogRecPtr	recptr;
+
+		xlrec.offnum = itup_off;
+
+		XLogBeginInsert();
+		XLogRegisterData((char *) &xlrec, SizeOfHashInsert);
+
+		XLogRegisterBuffer(1, metabuf, REGBUF_STANDARD);
+
+		XLogRegisterBuffer(0, buf, REGBUF_STANDARD);
+		XLogRegisterBufData(0, (char *) itup, IndexTupleDSize(*itup));
+
+		recptr = XLogInsert(RM_HASH_ID, XLOG_HASH_INSERT);
+
+		PageSetLSN(BufferGetPage(buf), recptr);
+		PageSetLSN(BufferGetPage(metabuf), recptr);
+	}
+
+	END_CRIT_SECTION();
+
+	/* drop lock on metapage, but keep pin */
 	LockBuffer(metabuf, BUFFER_LOCK_UNLOCK);
+
+	/*
+	 * Release the modified page and ensure to release the pin on primary
+	 * page.
+	 */
+	_hash_relbuf(rel, buf);
+	if (buf != bucket_buf)
+		_hash_dropbuf(rel, bucket_buf);
 
 	/* Attempt to split if a split is needed */
 	if (do_expand)
@@ -274,4 +282,144 @@ _hash_pgaddtup(Relation rel, Buffer buf, Size itemsize, IndexTuple itup)
 			 RelationGetRelationName(rel));
 
 	return itup_off;
+}
+
+/*
+ *	_hash_pgaddmultitup() -- add a tuple vector to a particular page in the
+ *							 index.
+ *
+ * This routine has same requirements for locking and tuple ordering as
+ * _hash_pgaddtup().
+ *
+ * Returns the offset number array at which the tuples were inserted.
+ */
+void
+_hash_pgaddmultitup(Relation rel, Buffer buf, IndexTuple *itups,
+					OffsetNumber *itup_offsets, uint16 nitups)
+{
+	OffsetNumber itup_off;
+	Page		page;
+	uint32		hashkey;
+	int			i;
+
+	_hash_checkpage(rel, buf, LH_BUCKET_PAGE | LH_OVERFLOW_PAGE);
+	page = BufferGetPage(buf);
+
+	for (i = 0; i < nitups; i++)
+	{
+		Size		itemsize;
+
+		itemsize = IndexTupleDSize(*itups[i]);
+		itemsize = MAXALIGN(itemsize);
+
+		/* Find where to insert the tuple (preserving page's hashkey ordering) */
+		hashkey = _hash_get_indextuple_hashkey(itups[i]);
+		itup_off = _hash_binsearch(page, hashkey);
+
+		itup_offsets[i] = itup_off;
+
+		if (PageAddItem(page, (Item) itups[i], itemsize, itup_off, false, false)
+			== InvalidOffsetNumber)
+			elog(ERROR, "failed to add index item to \"%s\"",
+				 RelationGetRelationName(rel));
+	}
+}
+
+/*
+ * _hash_vacuum_one_page - vacuum just one index page.
+ *
+ * Try to remove LP_DEAD items from the given page. We must acquire cleanup
+ * lock on the page being modified before calling this function.
+ */
+
+static void
+_hash_vacuum_one_page(Relation rel, Buffer metabuf, Buffer buf,
+					  RelFileNode hnode)
+{
+	OffsetNumber deletable[MaxOffsetNumber];
+	int			ndeletable = 0;
+	OffsetNumber offnum,
+				maxoff;
+	Page		page = BufferGetPage(buf);
+	HashPageOpaque pageopaque;
+	HashMetaPage metap;
+
+	/* Scan each tuple in page to see if it is marked as LP_DEAD */
+	maxoff = PageGetMaxOffsetNumber(page);
+	for (offnum = FirstOffsetNumber;
+		 offnum <= maxoff;
+		 offnum = OffsetNumberNext(offnum))
+	{
+		ItemId		itemId = PageGetItemId(page, offnum);
+
+		if (ItemIdIsDead(itemId))
+			deletable[ndeletable++] = offnum;
+	}
+
+	if (ndeletable > 0)
+	{
+		/*
+		 * Write-lock the meta page so that we can decrement tuple count.
+		 */
+		LockBuffer(metabuf, BUFFER_LOCK_EXCLUSIVE);
+
+		/* No ereport(ERROR) until changes are logged */
+		START_CRIT_SECTION();
+
+		PageIndexMultiDelete(page, deletable, ndeletable);
+
+		/*
+		 * Mark the page as not containing any LP_DEAD items. This is not
+		 * certainly true (there might be some that have recently been marked,
+		 * but weren't included in our target-item list), but it will almost
+		 * always be true and it doesn't seem worth an additional page scan to
+		 * check it. Remember that LH_PAGE_HAS_DEAD_TUPLES is only a hint
+		 * anyway.
+		 */
+		pageopaque = (HashPageOpaque) PageGetSpecialPointer(page);
+		pageopaque->hasho_flag &= ~LH_PAGE_HAS_DEAD_TUPLES;
+
+		metap = HashPageGetMeta(BufferGetPage(metabuf));
+		metap->hashm_ntuples -= ndeletable;
+
+		MarkBufferDirty(buf);
+		MarkBufferDirty(metabuf);
+
+		/* XLOG stuff */
+		if (RelationNeedsWAL(rel))
+		{
+			xl_hash_vacuum_one_page xlrec;
+			XLogRecPtr	recptr;
+
+			xlrec.hnode = hnode;
+			xlrec.ntuples = ndeletable;
+
+			XLogBeginInsert();
+			XLogRegisterBuffer(0, buf, REGBUF_STANDARD);
+			XLogRegisterData((char *) &xlrec, SizeOfHashVacuumOnePage);
+
+			/*
+			 * We need the target-offsets array whether or not we store the
+			 * whole buffer, to allow us to find the latestRemovedXid on a
+			 * standby server.
+			 */
+			XLogRegisterData((char *) deletable,
+							 ndeletable * sizeof(OffsetNumber));
+
+			XLogRegisterBuffer(1, metabuf, REGBUF_STANDARD);
+
+			recptr = XLogInsert(RM_HASH_ID, XLOG_HASH_VACUUM_ONE_PAGE);
+
+			PageSetLSN(BufferGetPage(buf), recptr);
+			PageSetLSN(BufferGetPage(metabuf), recptr);
+		}
+
+		END_CRIT_SECTION();
+
+		/*
+		 * Releasing write lock on meta page as we have updated the tuple
+		 * count.
+		 */
+		LockBuffer(metabuf, BUFFER_LOCK_UNLOCK);
+	}
 }

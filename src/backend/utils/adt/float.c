@@ -3,7 +3,7 @@
  * float.c
  *	  Functions for the built-in floating-point types.
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -20,6 +20,7 @@
 #include <limits.h>
 
 #include "catalog/pg_type.h"
+#include "common/int.h"
 #include "libpq/pqformat.h"
 #include "utils/array.h"
 #include "utils/builtins.h"
@@ -65,7 +66,7 @@ do {															\
 
 
 /* Configurable GUC parameter */
-int			extra_float_digits = 0;		/* Added to DBL_DIG or FLT_DIG */
+int			extra_float_digits = 0; /* Added to DBL_DIG or FLT_DIG */
 
 /* Cached constants for degree-based trig functions */
 static bool degree_consts_set = false;
@@ -105,7 +106,7 @@ static void init_degree_constants(void);
  */
 #define cbrt my_cbrt
 static double cbrt(double x);
-#endif   /* HAVE_CBRT */
+#endif							/* HAVE_CBRT */
 
 
 /*
@@ -329,7 +330,7 @@ float4in(PG_FUNCTION_ARGS)
 		if (endptr != num && endptr[-1] == '\0')
 			endptr--;
 	}
-#endif   /* HAVE_BUGGY_SOLARIS_STRTOD */
+#endif							/* HAVE_BUGGY_SOLARIS_STRTOD */
 
 	/* skip trailing whitespace */
 	while (*endptr != '\0' && isspace((unsigned char) *endptr))
@@ -534,8 +535,8 @@ float8in_internal(char *num, char **endptr_p,
 				errnumber[endptr - num] = '\0';
 				ereport(ERROR,
 						(errcode(ERRCODE_NUMERIC_VALUE_OUT_OF_RANGE),
-				   errmsg("\"%s\" is out of range for type double precision",
-						  errnumber)));
+						 errmsg("\"%s\" is out of range for type double precision",
+								errnumber)));
 			}
 		}
 		else
@@ -555,7 +556,7 @@ float8in_internal(char *num, char **endptr_p,
 		if (endptr != num && endptr[-1] == '\0')
 			endptr--;
 	}
-#endif   /* HAVE_BUGGY_SOLARIS_STRTOD */
+#endif							/* HAVE_BUGGY_SOLARIS_STRTOD */
 
 	/* skip trailing whitespace */
 	while (*endptr != '\0' && isspace((unsigned char) *endptr))
@@ -1177,6 +1178,96 @@ btfloat84cmp(PG_FUNCTION_ARGS)
 
 	/* widen float4 to float8 and then compare */
 	PG_RETURN_INT32(float8_cmp_internal(arg1, arg2));
+}
+
+/*
+ * in_range support function for float8.
+ *
+ * Note: we needn't supply a float8_float4 variant, as implicit coercion
+ * of the offset value takes care of that scenario just as well.
+ */
+Datum
+in_range_float8_float8(PG_FUNCTION_ARGS)
+{
+	float8		val = PG_GETARG_FLOAT8(0);
+	float8		base = PG_GETARG_FLOAT8(1);
+	float8		offset = PG_GETARG_FLOAT8(2);
+	bool		sub = PG_GETARG_BOOL(3);
+	bool		less = PG_GETARG_BOOL(4);
+	float8		sum;
+
+	/*
+	 * Reject negative or NaN offset.  Negative is per spec, and NaN is
+	 * because appropriate semantics for that seem non-obvious.
+	 */
+	if (isnan(offset) || offset < 0)
+		ereport(ERROR,
+				(errcode(ERRCODE_INVALID_PRECEDING_FOLLOWING_SIZE),
+				 errmsg("invalid preceding or following size in window function")));
+
+	/*
+	 * Deal with cases where val and/or base is NaN, following the rule that
+	 * NaN sorts after non-NaN (cf float8_cmp_internal).  The offset cannot
+	 * affect the conclusion.
+	 */
+	if (isnan(val))
+	{
+		if (isnan(base))
+			PG_RETURN_BOOL(true);	/* NAN = NAN */
+		else
+			PG_RETURN_BOOL(!less);	/* NAN > non-NAN */
+	}
+	else if (isnan(base))
+	{
+		PG_RETURN_BOOL(less);	/* non-NAN < NAN */
+	}
+
+	/*
+	 * Deal with infinite offset (necessarily +inf, at this point).  We must
+	 * special-case this because if base happens to be -inf, their sum would
+	 * be NaN, which is an overflow-ish condition we should avoid.
+	 */
+	if (isinf(offset))
+	{
+		PG_RETURN_BOOL(sub ? !less : less);
+	}
+
+	/*
+	 * Otherwise it should be safe to compute base +/- offset.  We trust the
+	 * FPU to cope if base is +/-inf or the true sum would overflow, and
+	 * produce a suitably signed infinity, which will compare properly against
+	 * val whether or not that's infinity.
+	 */
+	if (sub)
+		sum = base - offset;
+	else
+		sum = base + offset;
+
+	if (less)
+		PG_RETURN_BOOL(val <= sum);
+	else
+		PG_RETURN_BOOL(val >= sum);
+}
+
+/*
+ * in_range support function for float4.
+ *
+ * We would need a float4_float8 variant in any case, so we supply that and
+ * let implicit coercion take care of the float4_float4 case.
+ */
+Datum
+in_range_float4_float8(PG_FUNCTION_ARGS)
+{
+	/* Doesn't seem worth duplicating code for, so just invoke float8_float8 */
+	float8		val = (float8) PG_GETARG_FLOAT4(0);
+	float8		base = (float8) PG_GETARG_FLOAT4(1);
+
+	return DirectFunctionCall5(in_range_float8_float8,
+							   Float8GetDatumFast(val),
+							   Float8GetDatumFast(base),
+							   PG_GETARG_DATUM(2),
+							   PG_GETARG_DATUM(3),
+							   PG_GETARG_DATUM(4));
 }
 
 
@@ -3534,7 +3625,7 @@ width_bucket_float8(PG_FUNCTION_ARGS)
 	if (isnan(operand) || isnan(bound1) || isnan(bound2))
 		ereport(ERROR,
 				(errcode(ERRCODE_INVALID_ARGUMENT_FOR_WIDTH_BUCKET_FUNCTION),
-			 errmsg("operand, lower bound, and upper bound cannot be NaN")));
+				 errmsg("operand, lower bound, and upper bound cannot be NaN")));
 
 	/* Note that we allow "operand" to be infinite */
 	if (isinf(bound1) || isinf(bound2))
@@ -3548,9 +3639,7 @@ width_bucket_float8(PG_FUNCTION_ARGS)
 			result = 0;
 		else if (operand >= bound2)
 		{
-			result = count + 1;
-			/* check for overflow */
-			if (result < count)
+			if (pg_add_s32_overflow(count, 1, &result))
 				ereport(ERROR,
 						(errcode(ERRCODE_NUMERIC_VALUE_OUT_OF_RANGE),
 						 errmsg("integer out of range")));
@@ -3564,9 +3653,7 @@ width_bucket_float8(PG_FUNCTION_ARGS)
 			result = 0;
 		else if (operand <= bound2)
 		{
-			result = count + 1;
-			/* check for overflow */
-			if (result < count)
+			if (pg_add_s32_overflow(count, 1, &result))
 				ereport(ERROR,
 						(errcode(ERRCODE_NUMERIC_VALUE_OUT_OF_RANGE),
 						 errmsg("integer out of range")));
@@ -3608,4 +3695,4 @@ cbrt(double x)
 	return isneg ? -tmpres : tmpres;
 }
 
-#endif   /* !HAVE_CBRT */
+#endif							/* !HAVE_CBRT */

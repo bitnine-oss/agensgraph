@@ -181,7 +181,7 @@ ALTER FOREIGN TABLE ft1 ALTER COLUMN c1 OPTIONS (column_name 'C 1');
 ALTER FOREIGN TABLE ft2 ALTER COLUMN c1 OPTIONS (column_name 'C 1');
 \det+
                                       List of foreign tables
- Schema |   Table    |  Server   |                   FDW Options                    | Description 
+ Schema |   Table    |  Server   |                   FDW options                    | Description 
 --------+------------+-----------+--------------------------------------------------+-------------
  public | ft1        | loopback  | (schema_name 'S 1', table_name 'T 1')            | 
  public | ft2        | loopback  | (schema_name 'S 1', table_name 'T 1')            | 
@@ -191,6 +191,44 @@ ALTER FOREIGN TABLE ft2 ALTER COLUMN c1 OPTIONS (column_name 'C 1');
  public | ft_pg_type | loopback  | (schema_name 'pg_catalog', table_name 'pg_type') | 
 (6 rows)
 
+-- Test that alteration of server options causes reconnection
+-- Remote's errors might be non-English, so hide them to ensure stable results
+\set VERBOSITY terse
+SELECT c3, c4 FROM ft1 ORDER BY c3, c1 LIMIT 1;  -- should work
+  c3   |              c4              
+-------+------------------------------
+ 00001 | Fri Jan 02 00:00:00 1970 PST
+(1 row)
+
+ALTER SERVER loopback OPTIONS (SET dbname 'no such database');
+SELECT c3, c4 FROM ft1 ORDER BY c3, c1 LIMIT 1;  -- should fail
+ERROR:  could not connect to server "loopback"
+DO $d$
+    BEGIN
+        EXECUTE $$ALTER SERVER loopback
+            OPTIONS (SET dbname '$$||current_database()||$$')$$;
+    END;
+$d$;
+SELECT c3, c4 FROM ft1 ORDER BY c3, c1 LIMIT 1;  -- should work again
+  c3   |              c4              
+-------+------------------------------
+ 00001 | Fri Jan 02 00:00:00 1970 PST
+(1 row)
+
+-- Test that alteration of user mapping options causes reconnection
+ALTER USER MAPPING FOR CURRENT_USER SERVER loopback
+  OPTIONS (ADD user 'no such user');
+SELECT c3, c4 FROM ft1 ORDER BY c3, c1 LIMIT 1;  -- should fail
+ERROR:  could not connect to server "loopback"
+ALTER USER MAPPING FOR CURRENT_USER SERVER loopback
+  OPTIONS (DROP user);
+SELECT c3, c4 FROM ft1 ORDER BY c3, c1 LIMIT 1;  -- should work again
+  c3   |              c4              
+-------+------------------------------
+ 00001 | Fri Jan 02 00:00:00 1970 PST
+(1 row)
+
+\set VERBOSITY default
 -- Now we should be able to run ANALYZE.
 -- To exercise multiple code paths, we use local stats on ft1
 -- and remote-estimate mode on ft2.
@@ -396,13 +434,14 @@ EXPLAIN (VERBOSE, COSTS OFF)
    Output: t1.c1, t2."C 1"
    ->  Merge Join
          Output: t1.c1, t2."C 1"
+         Inner Unique: true
          Merge Cond: (t1.c1 = t2."C 1")
          ->  Foreign Scan on public.ft2 t1
                Output: t1.c1
                Remote SQL: SELECT "C 1" FROM "S 1"."T 1" ORDER BY "C 1" ASC NULLS LAST
          ->  Index Only Scan using t1_pkey on "S 1"."T 1" t2
                Output: t2."C 1"
-(10 rows)
+(11 rows)
 
 SELECT t1.c1, t2."C 1" FROM ft2 t1 JOIN "S 1"."T 1" t2 ON (t1.c1 = t2."C 1") OFFSET 100 LIMIT 10;
  c1  | C 1 
@@ -429,13 +468,14 @@ EXPLAIN (VERBOSE, COSTS OFF)
    Output: t1.c1, t2."C 1"
    ->  Merge Left Join
          Output: t1.c1, t2."C 1"
+         Inner Unique: true
          Merge Cond: (t1.c1 = t2."C 1")
          ->  Foreign Scan on public.ft2 t1
                Output: t1.c1
                Remote SQL: SELECT "C 1" FROM "S 1"."T 1" ORDER BY "C 1" ASC NULLS LAST
          ->  Index Only Scan using t1_pkey on "S 1"."T 1" t2
                Output: t2."C 1"
-(10 rows)
+(11 rows)
 
 SELECT t1.c1, t2."C 1" FROM ft2 t1 LEFT JOIN "S 1"."T 1" t2 ON (t1.c1 = t2."C 1") OFFSET 100 LIMIT 10;
  c1  | C 1 
@@ -462,6 +502,7 @@ EXPLAIN (VERBOSE, COSTS OFF)
    Output: t1."C 1"
    ->  Merge Right Join
          Output: t1."C 1"
+         Inner Unique: true
          Merge Cond: (t3.c1 = t1."C 1")
          ->  Foreign Scan
                Output: t3.c1
@@ -469,7 +510,7 @@ EXPLAIN (VERBOSE, COSTS OFF)
                Remote SQL: SELECT r3."C 1" FROM ("S 1"."T 1" r2 INNER JOIN "S 1"."T 1" r3 ON (((r2."C 1" = r3."C 1")))) ORDER BY r2."C 1" ASC NULLS LAST
          ->  Index Only Scan using t1_pkey on "S 1"."T 1" t1
                Output: t1."C 1"
-(11 rows)
+(12 rows)
 
 SELECT t1."C 1" FROM "S 1"."T 1" t1 left join ft1 t2 join ft2 t3 on (t2.c1 = t3.c1) on (t3.c1 = t1."C 1") OFFSET 100 LIMIT 10;
  C 1 
@@ -497,6 +538,7 @@ EXPLAIN (VERBOSE, COSTS OFF)
    Output: t1."C 1", t2.c1, t3.c1
    ->  Merge Right Join
          Output: t1."C 1", t2.c1, t3.c1
+         Inner Unique: true
          Merge Cond: (t3.c1 = t1."C 1")
          ->  Foreign Scan
                Output: t3.c1, t2.c1
@@ -504,7 +546,7 @@ EXPLAIN (VERBOSE, COSTS OFF)
                Remote SQL: SELECT r3."C 1", r2."C 1" FROM ("S 1"."T 1" r3 LEFT JOIN "S 1"."T 1" r2 ON (((r2."C 1" = r3."C 1")))) ORDER BY r3."C 1" ASC NULLS LAST
          ->  Index Only Scan using t1_pkey on "S 1"."T 1" t1
                Output: t1."C 1"
-(11 rows)
+(12 rows)
 
 SELECT t1."C 1", t2.c1, t3.c1 FROM "S 1"."T 1" t1 left join ft1 t2 full join ft2 t3 on (t2.c1 = t3.c1) on (t3.c1 = t1."C 1") OFFSET 100 LIMIT 10;
  C 1 | c1  | c1  
@@ -530,6 +572,7 @@ EXPLAIN (VERBOSE, COSTS OFF)
    Output: t1."C 1", t2.c1, t3.c1
    ->  Merge Full Join
          Output: t1."C 1", t2.c1, t3.c1
+         Inner Unique: true
          Merge Cond: (t3.c1 = t1."C 1")
          ->  Foreign Scan
                Output: t2.c1, t3.c1
@@ -537,7 +580,7 @@ EXPLAIN (VERBOSE, COSTS OFF)
                Remote SQL: SELECT r2."C 1", r3."C 1" FROM ("S 1"."T 1" r2 FULL JOIN "S 1"."T 1" r3 ON (((r2."C 1" = r3."C 1")))) ORDER BY r3."C 1" ASC NULLS LAST
          ->  Index Only Scan using t1_pkey on "S 1"."T 1" t1
                Output: t1."C 1"
-(11 rows)
+(12 rows)
 
 SELECT t1."C 1", t2.c1, t3.c1 FROM "S 1"."T 1" t1 full join ft1 t2 full join ft2 t3 on (t2.c1 = t3.c1) on (t3.c1 = t1."C 1") OFFSET 100 LIMIT 10;
  C 1 | c1  | c1  
@@ -1217,25 +1260,16 @@ SELECT t1.c1, t2.c1 FROM ft4 t1 FULL JOIN ft5 t2 ON (t1.c1 = t2.c1) ORDER BY t1.
 (10 rows)
 
 -- full outer join with restrictions on the joining relations
+-- a. the joining relations are both base relations
 EXPLAIN (VERBOSE, COSTS OFF)
 SELECT t1.c1, t2.c1 FROM (SELECT c1 FROM ft4 WHERE c1 between 50 and 60) t1 FULL JOIN (SELECT c1 FROM ft5 WHERE c1 between 50 and 60) t2 ON (t1.c1 = t2.c1) ORDER BY t1.c1, t2.c1;
-                                           QUERY PLAN                                           
-------------------------------------------------------------------------------------------------
- Sort
+                                                                                                                                  QUERY PLAN                                                                                                                                   
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Foreign Scan
    Output: ft4.c1, ft5.c1
-   Sort Key: ft4.c1, ft5.c1
-   ->  Hash Full Join
-         Output: ft4.c1, ft5.c1
-         Hash Cond: (ft4.c1 = ft5.c1)
-         ->  Foreign Scan on public.ft4
-               Output: ft4.c1, ft4.c2, ft4.c3
-               Remote SQL: SELECT c1 FROM "S 1"."T 3" WHERE ((c1 >= 50)) AND ((c1 <= 60))
-         ->  Hash
-               Output: ft5.c1
-               ->  Foreign Scan on public.ft5
-                     Output: ft5.c1
-                     Remote SQL: SELECT c1 FROM "S 1"."T 4" WHERE ((c1 >= 50)) AND ((c1 <= 60))
-(14 rows)
+   Relations: (public.ft4) FULL JOIN (public.ft5)
+   Remote SQL: SELECT s4.c1, s5.c1 FROM ((SELECT c1 FROM "S 1"."T 3" WHERE ((c1 >= 50)) AND ((c1 <= 60))) s4(c1) FULL JOIN (SELECT c1 FROM "S 1"."T 4" WHERE ((c1 >= 50)) AND ((c1 <= 60))) s5(c1) ON (((s4.c1 = s5.c1)))) ORDER BY s4.c1 ASC NULLS LAST, s5.c1 ASC NULLS LAST
+(4 rows)
 
 SELECT t1.c1, t2.c1 FROM (SELECT c1 FROM ft4 WHERE c1 between 50 and 60) t1 FULL JOIN (SELECT c1 FROM ft5 WHERE c1 between 50 and 60) t2 ON (t1.c1 = t2.c1) ORDER BY t1.c1, t2.c1;
  c1 | c1 
@@ -1248,6 +1282,128 @@ SELECT t1.c1, t2.c1 FROM (SELECT c1 FROM ft4 WHERE c1 between 50 and 60) t1 FULL
  60 | 60
     | 51
     | 57
+(8 rows)
+
+EXPLAIN (VERBOSE, COSTS OFF)
+SELECT 1 FROM (SELECT c1 FROM ft4 WHERE c1 between 50 and 60) t1 FULL JOIN (SELECT c1 FROM ft5 WHERE c1 between 50 and 60) t2 ON (TRUE) OFFSET 10 LIMIT 10;
+                                                                                               QUERY PLAN                                                                                               
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Limit
+   Output: 1
+   ->  Foreign Scan
+         Output: 1
+         Relations: (public.ft4) FULL JOIN (public.ft5)
+         Remote SQL: SELECT NULL FROM ((SELECT NULL FROM "S 1"."T 3" WHERE ((c1 >= 50)) AND ((c1 <= 60))) s4 FULL JOIN (SELECT NULL FROM "S 1"."T 4" WHERE ((c1 >= 50)) AND ((c1 <= 60))) s5 ON (TRUE))
+(6 rows)
+
+SELECT 1 FROM (SELECT c1 FROM ft4 WHERE c1 between 50 and 60) t1 FULL JOIN (SELECT c1 FROM ft5 WHERE c1 between 50 and 60) t2 ON (TRUE) OFFSET 10 LIMIT 10;
+ ?column? 
+----------
+        1
+        1
+        1
+        1
+        1
+        1
+        1
+        1
+        1
+        1
+(10 rows)
+
+-- b. one of the joining relations is a base relation and the other is a join
+-- relation
+EXPLAIN (VERBOSE, COSTS OFF)
+SELECT t1.c1, ss.a, ss.b FROM (SELECT c1 FROM ft4 WHERE c1 between 50 and 60) t1 FULL JOIN (SELECT t2.c1, t3.c1 FROM ft4 t2 LEFT JOIN ft5 t3 ON (t2.c1 = t3.c1) WHERE (t2.c1 between 50 and 60)) ss(a, b) ON (t1.c1 = ss.a) ORDER BY t1.c1, ss.a, ss.b;
+                                                                                                                                                                                     QUERY PLAN                                                                                                                                                                                      
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Foreign Scan
+   Output: ft4.c1, t2.c1, t3.c1
+   Relations: (public.ft4) FULL JOIN ((public.ft4 t2) LEFT JOIN (public.ft5 t3))
+   Remote SQL: SELECT s4.c1, s8.c1, s8.c2 FROM ((SELECT c1 FROM "S 1"."T 3" WHERE ((c1 >= 50)) AND ((c1 <= 60))) s4(c1) FULL JOIN (SELECT r5.c1, r6.c1 FROM ("S 1"."T 3" r5 LEFT JOIN "S 1"."T 4" r6 ON (((r5.c1 = r6.c1)))) WHERE ((r5.c1 >= 50)) AND ((r5.c1 <= 60))) s8(c1, c2) ON (((s4.c1 = s8.c1)))) ORDER BY s4.c1 ASC NULLS LAST, s8.c1 ASC NULLS LAST, s8.c2 ASC NULLS LAST
+(4 rows)
+
+SELECT t1.c1, ss.a, ss.b FROM (SELECT c1 FROM ft4 WHERE c1 between 50 and 60) t1 FULL JOIN (SELECT t2.c1, t3.c1 FROM ft4 t2 LEFT JOIN ft5 t3 ON (t2.c1 = t3.c1) WHERE (t2.c1 between 50 and 60)) ss(a, b) ON (t1.c1 = ss.a) ORDER BY t1.c1, ss.a, ss.b;
+ c1 | a  | b  
+----+----+----
+ 50 | 50 |   
+ 52 | 52 |   
+ 54 | 54 | 54
+ 56 | 56 |   
+ 58 | 58 |   
+ 60 | 60 | 60
+(6 rows)
+
+-- c. test deparsing the remote query as nested subqueries
+EXPLAIN (VERBOSE, COSTS OFF)
+SELECT t1.c1, ss.a, ss.b FROM (SELECT c1 FROM ft4 WHERE c1 between 50 and 60) t1 FULL JOIN (SELECT t2.c1, t3.c1 FROM (SELECT c1 FROM ft4 WHERE c1 between 50 and 60) t2 FULL JOIN (SELECT c1 FROM ft5 WHERE c1 between 50 and 60) t3 ON (t2.c1 = t3.c1) WHERE t2.c1 IS NULL OR t2.c1 IS NOT NULL) ss(a, b) ON (t1.c1 = ss.a) ORDER BY t1.c1, ss.a, ss.b;
+                                                                                                                                                                                                                                                     QUERY PLAN                                                                                                                                                                                                                                                     
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Foreign Scan
+   Output: ft4.c1, ft4_1.c1, ft5.c1
+   Relations: (public.ft4) FULL JOIN ((public.ft4) FULL JOIN (public.ft5))
+   Remote SQL: SELECT s4.c1, s10.c1, s10.c2 FROM ((SELECT c1 FROM "S 1"."T 3" WHERE ((c1 >= 50)) AND ((c1 <= 60))) s4(c1) FULL JOIN (SELECT s8.c1, s9.c1 FROM ((SELECT c1 FROM "S 1"."T 3" WHERE ((c1 >= 50)) AND ((c1 <= 60))) s8(c1) FULL JOIN (SELECT c1 FROM "S 1"."T 4" WHERE ((c1 >= 50)) AND ((c1 <= 60))) s9(c1) ON (((s8.c1 = s9.c1)))) WHERE (((s8.c1 IS NULL) OR (s8.c1 IS NOT NULL)))) s10(c1, c2) ON (((s4.c1 = s10.c1)))) ORDER BY s4.c1 ASC NULLS LAST, s10.c1 ASC NULLS LAST, s10.c2 ASC NULLS LAST
+(4 rows)
+
+SELECT t1.c1, ss.a, ss.b FROM (SELECT c1 FROM ft4 WHERE c1 between 50 and 60) t1 FULL JOIN (SELECT t2.c1, t3.c1 FROM (SELECT c1 FROM ft4 WHERE c1 between 50 and 60) t2 FULL JOIN (SELECT c1 FROM ft5 WHERE c1 between 50 and 60) t3 ON (t2.c1 = t3.c1) WHERE t2.c1 IS NULL OR t2.c1 IS NOT NULL) ss(a, b) ON (t1.c1 = ss.a) ORDER BY t1.c1, ss.a, ss.b;
+ c1 | a  | b  
+----+----+----
+ 50 | 50 |   
+ 52 | 52 |   
+ 54 | 54 | 54
+ 56 | 56 |   
+ 58 | 58 |   
+ 60 | 60 | 60
+    |    | 51
+    |    | 57
+(8 rows)
+
+-- d. test deparsing rowmarked relations as subqueries
+EXPLAIN (VERBOSE, COSTS OFF)
+SELECT t1.c1, ss.a, ss.b FROM (SELECT c1 FROM "S 1"."T 3" WHERE c1 = 50) t1 INNER JOIN (SELECT t2.c1, t3.c1 FROM (SELECT c1 FROM ft4 WHERE c1 between 50 and 60) t2 FULL JOIN (SELECT c1 FROM ft5 WHERE c1 between 50 and 60) t3 ON (t2.c1 = t3.c1) WHERE t2.c1 IS NULL OR t2.c1 IS NOT NULL) ss(a, b) ON (TRUE) ORDER BY t1.c1, ss.a, ss.b FOR UPDATE OF t1;
+                                                                                                                                                                                             QUERY PLAN                                                                                                                                                                                             
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ LockRows
+   Output: "T 3".c1, ft4.c1, ft5.c1, "T 3".ctid, ft4.*, ft5.*
+   ->  Nested Loop
+         Output: "T 3".c1, ft4.c1, ft5.c1, "T 3".ctid, ft4.*, ft5.*
+         ->  Foreign Scan
+               Output: ft4.c1, ft4.*, ft5.c1, ft5.*
+               Relations: (public.ft4) FULL JOIN (public.ft5)
+               Remote SQL: SELECT s8.c1, s8.c2, s9.c1, s9.c2 FROM ((SELECT c1, ROW(c1, c2, c3) FROM "S 1"."T 3" WHERE ((c1 >= 50)) AND ((c1 <= 60))) s8(c1, c2) FULL JOIN (SELECT c1, ROW(c1, c2, c3) FROM "S 1"."T 4" WHERE ((c1 >= 50)) AND ((c1 <= 60))) s9(c1, c2) ON (((s8.c1 = s9.c1)))) WHERE (((s8.c1 IS NULL) OR (s8.c1 IS NOT NULL))) ORDER BY s8.c1 ASC NULLS LAST, s9.c1 ASC NULLS LAST
+               ->  Sort
+                     Output: ft4.c1, ft4.*, ft5.c1, ft5.*
+                     Sort Key: ft4.c1, ft5.c1
+                     ->  Hash Full Join
+                           Output: ft4.c1, ft4.*, ft5.c1, ft5.*
+                           Hash Cond: (ft4.c1 = ft5.c1)
+                           Filter: ((ft4.c1 IS NULL) OR (ft4.c1 IS NOT NULL))
+                           ->  Foreign Scan on public.ft4
+                                 Output: ft4.c1, ft4.*
+                                 Remote SQL: SELECT c1, c2, c3 FROM "S 1"."T 3" WHERE ((c1 >= 50)) AND ((c1 <= 60))
+                           ->  Hash
+                                 Output: ft5.c1, ft5.*
+                                 ->  Foreign Scan on public.ft5
+                                       Output: ft5.c1, ft5.*
+                                       Remote SQL: SELECT c1, c2, c3 FROM "S 1"."T 4" WHERE ((c1 >= 50)) AND ((c1 <= 60))
+         ->  Materialize
+               Output: "T 3".c1, "T 3".ctid
+               ->  Seq Scan on "S 1"."T 3"
+                     Output: "T 3".c1, "T 3".ctid
+                     Filter: ("T 3".c1 = 50)
+(28 rows)
+
+SELECT t1.c1, ss.a, ss.b FROM (SELECT c1 FROM "S 1"."T 3" WHERE c1 = 50) t1 INNER JOIN (SELECT t2.c1, t3.c1 FROM (SELECT c1 FROM ft4 WHERE c1 between 50 and 60) t2 FULL JOIN (SELECT c1 FROM ft5 WHERE c1 between 50 and 60) t3 ON (t2.c1 = t3.c1) WHERE t2.c1 IS NULL OR t2.c1 IS NOT NULL) ss(a, b) ON (TRUE) ORDER BY t1.c1, ss.a, ss.b FOR UPDATE OF t1;
+ c1 | a  | b  
+----+----+----
+ 50 | 50 |   
+ 50 | 52 |   
+ 50 | 54 | 54
+ 50 | 56 |   
+ 50 | 58 |   
+ 50 | 60 | 60
+ 50 |    | 51
+ 50 |    | 57
 (8 rows)
 
 -- full outer join + inner join
@@ -1505,6 +1661,35 @@ SELECT t1.c1, t2.c1 FROM ft4 t1 FULL JOIN ft5 t2 ON (t1.c1 = t2.c1) WHERE (t1.c1
     | 21
 (10 rows)
 
+-- full outer join + WHERE clause with shippable extensions set
+EXPLAIN (VERBOSE, COSTS OFF)
+SELECT t1.c1, t2.c2, t1.c3 FROM ft1 t1 FULL JOIN ft2 t2 ON (t1.c1 = t2.c1) WHERE postgres_fdw_abs(t1.c1) > 0 OFFSET 10 LIMIT 10;
+                                                                                  QUERY PLAN                                                                                   
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Limit
+   Output: t1.c1, t2.c2, t1.c3
+   ->  Foreign Scan
+         Output: t1.c1, t2.c2, t1.c3
+         Relations: (public.ft1 t1) FULL JOIN (public.ft2 t2)
+         Remote SQL: SELECT r1."C 1", r1.c3, r2.c2 FROM ("S 1"."T 1" r1 FULL JOIN "S 1"."T 1" r2 ON (((r1."C 1" = r2."C 1")))) WHERE ((public.postgres_fdw_abs(r1."C 1") > 0))
+(6 rows)
+
+ALTER SERVER loopback OPTIONS (DROP extensions);
+-- full outer join + WHERE clause with shippable extensions not set
+EXPLAIN (VERBOSE, COSTS OFF)
+SELECT t1.c1, t2.c2, t1.c3 FROM ft1 t1 FULL JOIN ft2 t2 ON (t1.c1 = t2.c1) WHERE postgres_fdw_abs(t1.c1) > 0 OFFSET 10 LIMIT 10;
+                                                          QUERY PLAN                                                           
+-------------------------------------------------------------------------------------------------------------------------------
+ Limit
+   Output: t1.c1, t2.c2, t1.c3
+   ->  Foreign Scan
+         Output: t1.c1, t2.c2, t1.c3
+         Filter: (postgres_fdw_abs(t1.c1) > 0)
+         Relations: (public.ft1 t1) FULL JOIN (public.ft2 t2)
+         Remote SQL: SELECT r1."C 1", r1.c3, r2.c2 FROM ("S 1"."T 1" r1 FULL JOIN "S 1"."T 1" r2 ON (((r1."C 1" = r2."C 1"))))
+(7 rows)
+
+ALTER SERVER loopback OPTIONS (ADD extensions 'postgres_fdw');
 -- join two tables with FOR UPDATE clause
 -- tests whole-row reference for row marks
 EXPLAIN (VERBOSE, COSTS OFF)
@@ -1519,22 +1704,25 @@ SELECT t1.c1, t2.c1 FROM ft1 t1 JOIN ft2 t2 ON (t1.c1 = t2.c1) ORDER BY t1.c3, t
                Output: t1.c1, t2.c1, t1.c3, t1.*, t2.*
                Relations: (public.ft1 t1) INNER JOIN (public.ft2 t2)
                Remote SQL: SELECT r1."C 1", r1.c3, CASE WHEN (r1.*)::text IS NOT NULL THEN ROW(r1."C 1", r1.c2, r1.c3, r1.c4, r1.c5, r1.c6, r1.c7, r1.c8) END, r2."C 1", CASE WHEN (r2.*)::text IS NOT NULL THEN ROW(r2."C 1", r2.c2, r2.c3, r2.c4, r2.c5, r2.c6, r2.c7, r2.c8) END FROM ("S 1"."T 1" r1 INNER JOIN "S 1"."T 1" r2 ON (((r1."C 1" = r2."C 1")))) ORDER BY r1.c3 ASC NULLS LAST, r1."C 1" ASC NULLS LAST FOR UPDATE OF r1
-               ->  Merge Join
+               ->  Sort
                      Output: t1.c1, t1.c3, t1.*, t2.c1, t2.*
-                     Merge Cond: (t1.c1 = t2.c1)
-                     ->  Sort
-                           Output: t1.c1, t1.c3, t1.*
-                           Sort Key: t1.c1
-                           ->  Foreign Scan on public.ft1 t1
+                     Sort Key: t1.c3, t1.c1
+                     ->  Merge Join
+                           Output: t1.c1, t1.c3, t1.*, t2.c1, t2.*
+                           Merge Cond: (t1.c1 = t2.c1)
+                           ->  Sort
                                  Output: t1.c1, t1.c3, t1.*
-                                 Remote SQL: SELECT "C 1", c2, c3, c4, c5, c6, c7, c8 FROM "S 1"."T 1" FOR UPDATE
-                     ->  Sort
-                           Output: t2.c1, t2.*
-                           Sort Key: t2.c1
-                           ->  Foreign Scan on public.ft2 t2
+                                 Sort Key: t1.c1
+                                 ->  Foreign Scan on public.ft1 t1
+                                       Output: t1.c1, t1.c3, t1.*
+                                       Remote SQL: SELECT "C 1", c2, c3, c4, c5, c6, c7, c8 FROM "S 1"."T 1" FOR UPDATE
+                           ->  Sort
                                  Output: t2.c1, t2.*
-                                 Remote SQL: SELECT "C 1", c2, c3, c4, c5, c6, c7, c8 FROM "S 1"."T 1"
-(23 rows)
+                                 Sort Key: t2.c1
+                                 ->  Foreign Scan on public.ft2 t2
+                                       Output: t2.c1, t2.*
+                                       Remote SQL: SELECT "C 1", c2, c3, c4, c5, c6, c7, c8 FROM "S 1"."T 1"
+(26 rows)
 
 SELECT t1.c1, t2.c1 FROM ft1 t1 JOIN ft2 t2 ON (t1.c1 = t2.c1) ORDER BY t1.c3, t1.c1 OFFSET 100 LIMIT 10 FOR UPDATE OF t1;
  c1  | c1  
@@ -1563,22 +1751,25 @@ SELECT t1.c1, t2.c1 FROM ft1 t1 JOIN ft2 t2 ON (t1.c1 = t2.c1) ORDER BY t1.c3, t
                Output: t1.c1, t2.c1, t1.c3, t1.*, t2.*
                Relations: (public.ft1 t1) INNER JOIN (public.ft2 t2)
                Remote SQL: SELECT r1."C 1", r1.c3, CASE WHEN (r1.*)::text IS NOT NULL THEN ROW(r1."C 1", r1.c2, r1.c3, r1.c4, r1.c5, r1.c6, r1.c7, r1.c8) END, r2."C 1", CASE WHEN (r2.*)::text IS NOT NULL THEN ROW(r2."C 1", r2.c2, r2.c3, r2.c4, r2.c5, r2.c6, r2.c7, r2.c8) END FROM ("S 1"."T 1" r1 INNER JOIN "S 1"."T 1" r2 ON (((r1."C 1" = r2."C 1")))) ORDER BY r1.c3 ASC NULLS LAST, r1."C 1" ASC NULLS LAST FOR UPDATE OF r1 FOR UPDATE OF r2
-               ->  Merge Join
+               ->  Sort
                      Output: t1.c1, t1.c3, t1.*, t2.c1, t2.*
-                     Merge Cond: (t1.c1 = t2.c1)
-                     ->  Sort
-                           Output: t1.c1, t1.c3, t1.*
-                           Sort Key: t1.c1
-                           ->  Foreign Scan on public.ft1 t1
+                     Sort Key: t1.c3, t1.c1
+                     ->  Merge Join
+                           Output: t1.c1, t1.c3, t1.*, t2.c1, t2.*
+                           Merge Cond: (t1.c1 = t2.c1)
+                           ->  Sort
                                  Output: t1.c1, t1.c3, t1.*
-                                 Remote SQL: SELECT "C 1", c2, c3, c4, c5, c6, c7, c8 FROM "S 1"."T 1" FOR UPDATE
-                     ->  Sort
-                           Output: t2.c1, t2.*
-                           Sort Key: t2.c1
-                           ->  Foreign Scan on public.ft2 t2
+                                 Sort Key: t1.c1
+                                 ->  Foreign Scan on public.ft1 t1
+                                       Output: t1.c1, t1.c3, t1.*
+                                       Remote SQL: SELECT "C 1", c2, c3, c4, c5, c6, c7, c8 FROM "S 1"."T 1" FOR UPDATE
+                           ->  Sort
                                  Output: t2.c1, t2.*
-                                 Remote SQL: SELECT "C 1", c2, c3, c4, c5, c6, c7, c8 FROM "S 1"."T 1" FOR UPDATE
-(23 rows)
+                                 Sort Key: t2.c1
+                                 ->  Foreign Scan on public.ft2 t2
+                                       Output: t2.c1, t2.*
+                                       Remote SQL: SELECT "C 1", c2, c3, c4, c5, c6, c7, c8 FROM "S 1"."T 1" FOR UPDATE
+(26 rows)
 
 SELECT t1.c1, t2.c1 FROM ft1 t1 JOIN ft2 t2 ON (t1.c1 = t2.c1) ORDER BY t1.c3, t1.c1 OFFSET 100 LIMIT 10 FOR UPDATE;
  c1  | c1  
@@ -1608,22 +1799,25 @@ SELECT t1.c1, t2.c1 FROM ft1 t1 JOIN ft2 t2 ON (t1.c1 = t2.c1) ORDER BY t1.c3, t
                Output: t1.c1, t2.c1, t1.c3, t1.*, t2.*
                Relations: (public.ft1 t1) INNER JOIN (public.ft2 t2)
                Remote SQL: SELECT r1."C 1", r1.c3, CASE WHEN (r1.*)::text IS NOT NULL THEN ROW(r1."C 1", r1.c2, r1.c3, r1.c4, r1.c5, r1.c6, r1.c7, r1.c8) END, r2."C 1", CASE WHEN (r2.*)::text IS NOT NULL THEN ROW(r2."C 1", r2.c2, r2.c3, r2.c4, r2.c5, r2.c6, r2.c7, r2.c8) END FROM ("S 1"."T 1" r1 INNER JOIN "S 1"."T 1" r2 ON (((r1."C 1" = r2."C 1")))) ORDER BY r1.c3 ASC NULLS LAST, r1."C 1" ASC NULLS LAST FOR SHARE OF r1
-               ->  Merge Join
+               ->  Sort
                      Output: t1.c1, t1.c3, t1.*, t2.c1, t2.*
-                     Merge Cond: (t1.c1 = t2.c1)
-                     ->  Sort
-                           Output: t1.c1, t1.c3, t1.*
-                           Sort Key: t1.c1
-                           ->  Foreign Scan on public.ft1 t1
+                     Sort Key: t1.c3, t1.c1
+                     ->  Merge Join
+                           Output: t1.c1, t1.c3, t1.*, t2.c1, t2.*
+                           Merge Cond: (t1.c1 = t2.c1)
+                           ->  Sort
                                  Output: t1.c1, t1.c3, t1.*
-                                 Remote SQL: SELECT "C 1", c2, c3, c4, c5, c6, c7, c8 FROM "S 1"."T 1" FOR SHARE
-                     ->  Sort
-                           Output: t2.c1, t2.*
-                           Sort Key: t2.c1
-                           ->  Foreign Scan on public.ft2 t2
+                                 Sort Key: t1.c1
+                                 ->  Foreign Scan on public.ft1 t1
+                                       Output: t1.c1, t1.c3, t1.*
+                                       Remote SQL: SELECT "C 1", c2, c3, c4, c5, c6, c7, c8 FROM "S 1"."T 1" FOR SHARE
+                           ->  Sort
                                  Output: t2.c1, t2.*
-                                 Remote SQL: SELECT "C 1", c2, c3, c4, c5, c6, c7, c8 FROM "S 1"."T 1"
-(23 rows)
+                                 Sort Key: t2.c1
+                                 ->  Foreign Scan on public.ft2 t2
+                                       Output: t2.c1, t2.*
+                                       Remote SQL: SELECT "C 1", c2, c3, c4, c5, c6, c7, c8 FROM "S 1"."T 1"
+(26 rows)
 
 SELECT t1.c1, t2.c1 FROM ft1 t1 JOIN ft2 t2 ON (t1.c1 = t2.c1) ORDER BY t1.c3, t1.c1 OFFSET 100 LIMIT 10 FOR SHARE OF t1;
  c1  | c1  
@@ -1652,22 +1846,25 @@ SELECT t1.c1, t2.c1 FROM ft1 t1 JOIN ft2 t2 ON (t1.c1 = t2.c1) ORDER BY t1.c3, t
                Output: t1.c1, t2.c1, t1.c3, t1.*, t2.*
                Relations: (public.ft1 t1) INNER JOIN (public.ft2 t2)
                Remote SQL: SELECT r1."C 1", r1.c3, CASE WHEN (r1.*)::text IS NOT NULL THEN ROW(r1."C 1", r1.c2, r1.c3, r1.c4, r1.c5, r1.c6, r1.c7, r1.c8) END, r2."C 1", CASE WHEN (r2.*)::text IS NOT NULL THEN ROW(r2."C 1", r2.c2, r2.c3, r2.c4, r2.c5, r2.c6, r2.c7, r2.c8) END FROM ("S 1"."T 1" r1 INNER JOIN "S 1"."T 1" r2 ON (((r1."C 1" = r2."C 1")))) ORDER BY r1.c3 ASC NULLS LAST, r1."C 1" ASC NULLS LAST FOR SHARE OF r1 FOR SHARE OF r2
-               ->  Merge Join
+               ->  Sort
                      Output: t1.c1, t1.c3, t1.*, t2.c1, t2.*
-                     Merge Cond: (t1.c1 = t2.c1)
-                     ->  Sort
-                           Output: t1.c1, t1.c3, t1.*
-                           Sort Key: t1.c1
-                           ->  Foreign Scan on public.ft1 t1
+                     Sort Key: t1.c3, t1.c1
+                     ->  Merge Join
+                           Output: t1.c1, t1.c3, t1.*, t2.c1, t2.*
+                           Merge Cond: (t1.c1 = t2.c1)
+                           ->  Sort
                                  Output: t1.c1, t1.c3, t1.*
-                                 Remote SQL: SELECT "C 1", c2, c3, c4, c5, c6, c7, c8 FROM "S 1"."T 1" FOR SHARE
-                     ->  Sort
-                           Output: t2.c1, t2.*
-                           Sort Key: t2.c1
-                           ->  Foreign Scan on public.ft2 t2
+                                 Sort Key: t1.c1
+                                 ->  Foreign Scan on public.ft1 t1
+                                       Output: t1.c1, t1.c3, t1.*
+                                       Remote SQL: SELECT "C 1", c2, c3, c4, c5, c6, c7, c8 FROM "S 1"."T 1" FOR SHARE
+                           ->  Sort
                                  Output: t2.c1, t2.*
-                                 Remote SQL: SELECT "C 1", c2, c3, c4, c5, c6, c7, c8 FROM "S 1"."T 1" FOR SHARE
-(23 rows)
+                                 Sort Key: t2.c1
+                                 ->  Foreign Scan on public.ft2 t2
+                                       Output: t2.c1, t2.*
+                                       Remote SQL: SELECT "C 1", c2, c3, c4, c5, c6, c7, c8 FROM "S 1"."T 1" FOR SHARE
+(26 rows)
 
 SELECT t1.c1, t2.c1 FROM ft1 t1 JOIN ft2 t2 ON (t1.c1 = t2.c1) ORDER BY t1.c3, t1.c1 OFFSET 100 LIMIT 10 FOR SHARE;
  c1  | c1  
@@ -1734,8 +1931,8 @@ SELECT t1.ctid, t1, t2, t1.c1 FROM ft1 t1 JOIN ft2 t2 ON (t1.c1 = t2.c1) ORDER B
 -- SEMI JOIN, not pushed down
 EXPLAIN (VERBOSE, COSTS OFF)
 SELECT t1.c1 FROM ft1 t1 WHERE EXISTS (SELECT 1 FROM ft2 t2 WHERE t1.c1 = t2.c1) ORDER BY t1.c1 OFFSET 100 LIMIT 10;
-                                         QUERY PLAN                                          
----------------------------------------------------------------------------------------------
+                                      QUERY PLAN                                       
+---------------------------------------------------------------------------------------
  Limit
    Output: t1.c1
    ->  Merge Semi Join
@@ -1744,12 +1941,10 @@ SELECT t1.c1 FROM ft1 t1 WHERE EXISTS (SELECT 1 FROM ft2 t2 WHERE t1.c1 = t2.c1)
          ->  Foreign Scan on public.ft1 t1
                Output: t1.c1
                Remote SQL: SELECT "C 1" FROM "S 1"."T 1" ORDER BY "C 1" ASC NULLS LAST
-         ->  Materialize
+         ->  Foreign Scan on public.ft2 t2
                Output: t2.c1
-               ->  Foreign Scan on public.ft2 t2
-                     Output: t2.c1
-                     Remote SQL: SELECT "C 1" FROM "S 1"."T 1" ORDER BY "C 1" ASC NULLS LAST
-(13 rows)
+               Remote SQL: SELECT "C 1" FROM "S 1"."T 1" ORDER BY "C 1" ASC NULLS LAST
+(11 rows)
 
 SELECT t1.c1 FROM ft1 t1 WHERE EXISTS (SELECT 1 FROM ft2 t2 WHERE t1.c1 = t2.c1) ORDER BY t1.c1 OFFSET 100 LIMIT 10;
  c1  
@@ -1779,12 +1974,10 @@ SELECT t1.c1 FROM ft1 t1 WHERE NOT EXISTS (SELECT 1 FROM ft2 t2 WHERE t1.c1 = t2
          ->  Foreign Scan on public.ft1 t1
                Output: t1.c1
                Remote SQL: SELECT "C 1" FROM "S 1"."T 1" ORDER BY "C 1" ASC NULLS LAST
-         ->  Materialize
+         ->  Foreign Scan on public.ft2 t2
                Output: t2.c2
-               ->  Foreign Scan on public.ft2 t2
-                     Output: t2.c2
-                     Remote SQL: SELECT c2 FROM "S 1"."T 1" ORDER BY c2 ASC NULLS LAST
-(13 rows)
+               Remote SQL: SELECT c2 FROM "S 1"."T 1" ORDER BY c2 ASC NULLS LAST
+(11 rows)
 
 SELECT t1.c1 FROM ft1 t1 WHERE NOT EXISTS (SELECT 1 FROM ft2 t2 WHERE t1.c1 = t2.c2) ORDER BY t1.c1 OFFSET 100 LIMIT 10;
  c1  
@@ -2136,8 +2329,78 @@ SELECT ft5, ft5.c1, ft5.c2, ft5.c3, ft4.c1, ft4.c2 FROM ft5 left join ft4 on ft5
  (30,31,AAA030) | 30 | 31 | AAA030 | 30 | 31
 (4 rows)
 
+-- multi-way join involving multiple merge joins
+-- (this case used to have EPQ-related planning problems)
+SET enable_nestloop TO false;
+SET enable_hashjoin TO false;
+EXPLAIN (VERBOSE, COSTS OFF)
+SELECT * FROM ft1, ft2, ft4, ft5 WHERE ft1.c1 = ft2.c1 AND ft1.c2 = ft4.c1
+    AND ft1.c2 = ft5.c1 AND ft1.c1 < 100 AND ft2.c1 < 100 FOR UPDATE;
+                                                                                                                                                                                                                                                                                                                                                                                                                             QUERY PLAN                                                                                                                                                                                                                                                                                                                                                                                                                             
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ LockRows
+   Output: ft1.c1, ft1.c2, ft1.c3, ft1.c4, ft1.c5, ft1.c6, ft1.c7, ft1.c8, ft2.c1, ft2.c2, ft2.c3, ft2.c4, ft2.c5, ft2.c6, ft2.c7, ft2.c8, ft4.c1, ft4.c2, ft4.c3, ft5.c1, ft5.c2, ft5.c3, ft1.*, ft2.*, ft4.*, ft5.*
+   ->  Foreign Scan
+         Output: ft1.c1, ft1.c2, ft1.c3, ft1.c4, ft1.c5, ft1.c6, ft1.c7, ft1.c8, ft2.c1, ft2.c2, ft2.c3, ft2.c4, ft2.c5, ft2.c6, ft2.c7, ft2.c8, ft4.c1, ft4.c2, ft4.c3, ft5.c1, ft5.c2, ft5.c3, ft1.*, ft2.*, ft4.*, ft5.*
+         Relations: (((public.ft1) INNER JOIN (public.ft2)) INNER JOIN (public.ft4)) INNER JOIN (public.ft5)
+         Remote SQL: SELECT r1."C 1", r1.c2, r1.c3, r1.c4, r1.c5, r1.c6, r1.c7, r1.c8, CASE WHEN (r1.*)::text IS NOT NULL THEN ROW(r1."C 1", r1.c2, r1.c3, r1.c4, r1.c5, r1.c6, r1.c7, r1.c8) END, r2."C 1", r2.c2, r2.c3, r2.c4, r2.c5, r2.c6, r2.c7, r2.c8, CASE WHEN (r2.*)::text IS NOT NULL THEN ROW(r2."C 1", r2.c2, r2.c3, r2.c4, r2.c5, r2.c6, r2.c7, r2.c8) END, r3.c1, r3.c2, r3.c3, CASE WHEN (r3.*)::text IS NOT NULL THEN ROW(r3.c1, r3.c2, r3.c3) END, r4.c1, r4.c2, r4.c3, CASE WHEN (r4.*)::text IS NOT NULL THEN ROW(r4.c1, r4.c2, r4.c3) END FROM ((("S 1"."T 1" r1 INNER JOIN "S 1"."T 1" r2 ON (((r1."C 1" = r2."C 1")) AND ((r2."C 1" < 100)) AND ((r1."C 1" < 100)))) INNER JOIN "S 1"."T 3" r3 ON (((r1.c2 = r3.c1)))) INNER JOIN "S 1"."T 4" r4 ON (((r1.c2 = r4.c1)))) FOR UPDATE OF r1 FOR UPDATE OF r2 FOR UPDATE OF r3 FOR UPDATE OF r4
+         ->  Merge Join
+               Output: ft1.c1, ft1.c2, ft1.c3, ft1.c4, ft1.c5, ft1.c6, ft1.c7, ft1.c8, ft1.*, ft2.c1, ft2.c2, ft2.c3, ft2.c4, ft2.c5, ft2.c6, ft2.c7, ft2.c8, ft2.*, ft4.c1, ft4.c2, ft4.c3, ft4.*, ft5.c1, ft5.c2, ft5.c3, ft5.*
+               Merge Cond: (ft1.c2 = ft5.c1)
+               ->  Merge Join
+                     Output: ft1.c1, ft1.c2, ft1.c3, ft1.c4, ft1.c5, ft1.c6, ft1.c7, ft1.c8, ft1.*, ft2.c1, ft2.c2, ft2.c3, ft2.c4, ft2.c5, ft2.c6, ft2.c7, ft2.c8, ft2.*, ft4.c1, ft4.c2, ft4.c3, ft4.*
+                     Merge Cond: (ft1.c2 = ft4.c1)
+                     ->  Sort
+                           Output: ft1.c1, ft1.c2, ft1.c3, ft1.c4, ft1.c5, ft1.c6, ft1.c7, ft1.c8, ft1.*, ft2.c1, ft2.c2, ft2.c3, ft2.c4, ft2.c5, ft2.c6, ft2.c7, ft2.c8, ft2.*
+                           Sort Key: ft1.c2
+                           ->  Merge Join
+                                 Output: ft1.c1, ft1.c2, ft1.c3, ft1.c4, ft1.c5, ft1.c6, ft1.c7, ft1.c8, ft1.*, ft2.c1, ft2.c2, ft2.c3, ft2.c4, ft2.c5, ft2.c6, ft2.c7, ft2.c8, ft2.*
+                                 Merge Cond: (ft1.c1 = ft2.c1)
+                                 ->  Sort
+                                       Output: ft1.c1, ft1.c2, ft1.c3, ft1.c4, ft1.c5, ft1.c6, ft1.c7, ft1.c8, ft1.*
+                                       Sort Key: ft1.c1
+                                       ->  Foreign Scan on public.ft1
+                                             Output: ft1.c1, ft1.c2, ft1.c3, ft1.c4, ft1.c5, ft1.c6, ft1.c7, ft1.c8, ft1.*
+                                             Remote SQL: SELECT "C 1", c2, c3, c4, c5, c6, c7, c8 FROM "S 1"."T 1" WHERE (("C 1" < 100)) FOR UPDATE
+                                 ->  Materialize
+                                       Output: ft2.c1, ft2.c2, ft2.c3, ft2.c4, ft2.c5, ft2.c6, ft2.c7, ft2.c8, ft2.*
+                                       ->  Foreign Scan on public.ft2
+                                             Output: ft2.c1, ft2.c2, ft2.c3, ft2.c4, ft2.c5, ft2.c6, ft2.c7, ft2.c8, ft2.*
+                                             Remote SQL: SELECT "C 1", c2, c3, c4, c5, c6, c7, c8 FROM "S 1"."T 1" WHERE (("C 1" < 100)) ORDER BY "C 1" ASC NULLS LAST FOR UPDATE
+                     ->  Sort
+                           Output: ft4.c1, ft4.c2, ft4.c3, ft4.*
+                           Sort Key: ft4.c1
+                           ->  Foreign Scan on public.ft4
+                                 Output: ft4.c1, ft4.c2, ft4.c3, ft4.*
+                                 Remote SQL: SELECT c1, c2, c3 FROM "S 1"."T 3" FOR UPDATE
+               ->  Sort
+                     Output: ft5.c1, ft5.c2, ft5.c3, ft5.*
+                     Sort Key: ft5.c1
+                     ->  Foreign Scan on public.ft5
+                           Output: ft5.c1, ft5.c2, ft5.c3, ft5.*
+                           Remote SQL: SELECT c1, c2, c3 FROM "S 1"."T 4" FOR UPDATE
+(41 rows)
+
+SELECT * FROM ft1, ft2, ft4, ft5 WHERE ft1.c1 = ft2.c1 AND ft1.c2 = ft4.c1
+    AND ft1.c2 = ft5.c1 AND ft1.c1 < 100 AND ft2.c1 < 100 FOR UPDATE;
+ c1 | c2 |  c3   |              c4              |            c5            | c6 |     c7     | c8  | c1 | c2 |  c3   |              c4              |            c5            | c6 |     c7     | c8  | c1 | c2 |   c3   | c1 | c2 |   c3   
+----+----+-------+------------------------------+--------------------------+----+------------+-----+----+----+-------+------------------------------+--------------------------+----+------------+-----+----+----+--------+----+----+--------
+  6 |  6 | 00006 | Wed Jan 07 00:00:00 1970 PST | Wed Jan 07 00:00:00 1970 | 6  | 6          | foo |  6 |  6 | 00006 | Wed Jan 07 00:00:00 1970 PST | Wed Jan 07 00:00:00 1970 | 6  | 6          | foo |  6 |  7 | AAA006 |  6 |  7 | AAA006
+ 16 |  6 | 00016 | Sat Jan 17 00:00:00 1970 PST | Sat Jan 17 00:00:00 1970 | 6  | 6          | foo | 16 |  6 | 00016 | Sat Jan 17 00:00:00 1970 PST | Sat Jan 17 00:00:00 1970 | 6  | 6          | foo |  6 |  7 | AAA006 |  6 |  7 | AAA006
+ 26 |  6 | 00026 | Tue Jan 27 00:00:00 1970 PST | Tue Jan 27 00:00:00 1970 | 6  | 6          | foo | 26 |  6 | 00026 | Tue Jan 27 00:00:00 1970 PST | Tue Jan 27 00:00:00 1970 | 6  | 6          | foo |  6 |  7 | AAA006 |  6 |  7 | AAA006
+ 36 |  6 | 00036 | Fri Feb 06 00:00:00 1970 PST | Fri Feb 06 00:00:00 1970 | 6  | 6          | foo | 36 |  6 | 00036 | Fri Feb 06 00:00:00 1970 PST | Fri Feb 06 00:00:00 1970 | 6  | 6          | foo |  6 |  7 | AAA006 |  6 |  7 | AAA006
+ 46 |  6 | 00046 | Mon Feb 16 00:00:00 1970 PST | Mon Feb 16 00:00:00 1970 | 6  | 6          | foo | 46 |  6 | 00046 | Mon Feb 16 00:00:00 1970 PST | Mon Feb 16 00:00:00 1970 | 6  | 6          | foo |  6 |  7 | AAA006 |  6 |  7 | AAA006
+ 56 |  6 | 00056 | Thu Feb 26 00:00:00 1970 PST | Thu Feb 26 00:00:00 1970 | 6  | 6          | foo | 56 |  6 | 00056 | Thu Feb 26 00:00:00 1970 PST | Thu Feb 26 00:00:00 1970 | 6  | 6          | foo |  6 |  7 | AAA006 |  6 |  7 | AAA006
+ 66 |  6 | 00066 | Sun Mar 08 00:00:00 1970 PST | Sun Mar 08 00:00:00 1970 | 6  | 6          | foo | 66 |  6 | 00066 | Sun Mar 08 00:00:00 1970 PST | Sun Mar 08 00:00:00 1970 | 6  | 6          | foo |  6 |  7 | AAA006 |  6 |  7 | AAA006
+ 76 |  6 | 00076 | Wed Mar 18 00:00:00 1970 PST | Wed Mar 18 00:00:00 1970 | 6  | 6          | foo | 76 |  6 | 00076 | Wed Mar 18 00:00:00 1970 PST | Wed Mar 18 00:00:00 1970 | 6  | 6          | foo |  6 |  7 | AAA006 |  6 |  7 | AAA006
+ 86 |  6 | 00086 | Sat Mar 28 00:00:00 1970 PST | Sat Mar 28 00:00:00 1970 | 6  | 6          | foo | 86 |  6 | 00086 | Sat Mar 28 00:00:00 1970 PST | Sat Mar 28 00:00:00 1970 | 6  | 6          | foo |  6 |  7 | AAA006 |  6 |  7 | AAA006
+ 96 |  6 | 00096 | Tue Apr 07 00:00:00 1970 PST | Tue Apr 07 00:00:00 1970 | 6  | 6          | foo | 96 |  6 | 00096 | Tue Apr 07 00:00:00 1970 PST | Tue Apr 07 00:00:00 1970 | 6  | 6          | foo |  6 |  7 | AAA006 |  6 |  7 | AAA006
+(10 rows)
+
+RESET enable_nestloop;
+RESET enable_hashjoin;
 -- check join pushdown in situations where multiple userids are involved
-CREATE ROLE regress_view_owner;
+CREATE ROLE regress_view_owner SUPERUSER;
 CREATE USER MAPPING FOR regress_view_owner SERVER loopback;
 GRANT SELECT ON ft4 TO regress_view_owner;
 GRANT SELECT ON ft5 TO regress_view_owner;
@@ -2284,8 +2547,8 @@ DROP ROLE regress_view_owner;
 -- Simple aggregates
 explain (verbose, costs off)
 select count(c6), sum(c1), avg(c1), min(c2), max(c1), stddev(c2), sum(c1) * (random() <= 1)::int as sum2 from ft1 where c2 < 5 group by c2 order by 1, 2;
-                                                                      QUERY PLAN                                                                       
--------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                      QUERY PLAN                                                                      
+------------------------------------------------------------------------------------------------------------------------------------------------------
  Result
    Output: (count(c6)), (sum(c1)), (avg(c1)), (min(c2)), (max(c1)), (stddev(c2)), ((sum(c1)) * ((random() <= '1'::double precision))::integer), c2
    ->  Sort
@@ -2294,7 +2557,7 @@ select count(c6), sum(c1), avg(c1), min(c2), max(c1), stddev(c2), sum(c1) * (ran
          ->  Foreign Scan
                Output: (count(c6)), (sum(c1)), (avg(c1)), (min(c2)), (max(c1)), (stddev(c2)), c2
                Relations: Aggregate on (public.ft1)
-               Remote SQL: SELECT count(c6), sum("C 1"), avg("C 1"), min(c2), max("C 1"), stddev(c2), c2 FROM "S 1"."T 1" WHERE ((c2 < 5)) GROUP BY c2
+               Remote SQL: SELECT count(c6), sum("C 1"), avg("C 1"), min(c2), max("C 1"), stddev(c2), c2 FROM "S 1"."T 1" WHERE ((c2 < 5)) GROUP BY 7
 (9 rows)
 
 select count(c6), sum(c1), avg(c1), min(c2), max(c1), stddev(c2), sum(c1) * (random() <= 1)::int as sum2 from ft1 where c2 < 5 group by c2 order by 1, 2;
@@ -2353,15 +2616,15 @@ select sum(t1.c1), count(t2.c1) from ft1 t1 inner join ft2 t2 on (t1.c1 = t2.c1)
 -- GROUP BY clause having expressions
 explain (verbose, costs off)
 select c2/2, sum(c2) * (c2/2) from ft1 group by c2/2 order by c2/2;
-                                           QUERY PLAN                                           
-------------------------------------------------------------------------------------------------
+                                      QUERY PLAN                                       
+---------------------------------------------------------------------------------------
  Sort
    Output: ((c2 / 2)), ((sum(c2) * (c2 / 2)))
    Sort Key: ((ft1.c2 / 2))
    ->  Foreign Scan
          Output: ((c2 / 2)), ((sum(c2) * (c2 / 2)))
          Relations: Aggregate on (public.ft1)
-         Remote SQL: SELECT (c2 / 2), (sum(c2) * (c2 / 2)) FROM "S 1"."T 1" GROUP BY ((c2 / 2))
+         Remote SQL: SELECT (c2 / 2), (sum(c2) * (c2 / 2)) FROM "S 1"."T 1" GROUP BY 1
 (7 rows)
 
 select c2/2, sum(c2) * (c2/2) from ft1 group by c2/2 order by c2/2;
@@ -2377,8 +2640,8 @@ select c2/2, sum(c2) * (c2/2) from ft1 group by c2/2 order by c2/2;
 -- Aggregates in subquery are pushed down.
 explain (verbose, costs off)
 select count(x.a), sum(x.a) from (select c2 a, sum(c1) b from ft1 group by c2, sqrt(c1) order by 1, 2) x;
-                                                QUERY PLAN                                                
-----------------------------------------------------------------------------------------------------------
+                                         QUERY PLAN                                          
+---------------------------------------------------------------------------------------------
  Aggregate
    Output: count(ft1.c2), sum(ft1.c2)
    ->  Sort
@@ -2387,7 +2650,7 @@ select count(x.a), sum(x.a) from (select c2 a, sum(c1) b from ft1 group by c2, s
          ->  Foreign Scan
                Output: ft1.c2, (sum(ft1.c1)), (sqrt((ft1.c1)::double precision))
                Relations: Aggregate on (public.ft1)
-               Remote SQL: SELECT c2, sum("C 1"), sqrt("C 1") FROM "S 1"."T 1" GROUP BY c2, (sqrt("C 1"))
+               Remote SQL: SELECT c2, sum("C 1"), sqrt("C 1") FROM "S 1"."T 1" GROUP BY 1, 3
 (9 rows)
 
 select count(x.a), sum(x.a) from (select c2 a, sum(c1) b from ft1 group by c2, sqrt(c1) order by 1, 2) x;
@@ -2407,7 +2670,7 @@ select c2 * (random() <= 1)::int as sum1, sum(c1) * c2 as sum2 from ft1 group by
    ->  Foreign Scan
          Output: (c2 * ((random() <= '1'::double precision))::integer), ((sum(c1) * c2)), c2
          Relations: Aggregate on (public.ft1)
-         Remote SQL: SELECT (sum("C 1") * c2), c2 FROM "S 1"."T 1" GROUP BY c2
+         Remote SQL: SELECT (sum("C 1") * c2), c2 FROM "S 1"."T 1" GROUP BY 2
 (7 rows)
 
 select c2 * (random() <= 1)::int as sum1, sum(c1) * c2 as sum2 from ft1 group by c2 order by 1, 2;
@@ -2444,15 +2707,15 @@ select c2 * (random() <= 1)::int as c2 from ft2 group by c2 * (random() <= 1)::i
 -- GROUP BY clause in various forms, cardinal, alias and constant expression
 explain (verbose, costs off)
 select count(c2) w, c2 x, 5 y, 7.0 z from ft1 group by 2, y, 9.0::int order by 2;
-                                                QUERY PLAN                                                
-----------------------------------------------------------------------------------------------------------
+                                      QUERY PLAN                                       
+---------------------------------------------------------------------------------------
  Sort
    Output: (count(c2)), c2, 5, 7.0, 9
    Sort Key: ft1.c2
    ->  Foreign Scan
          Output: (count(c2)), c2, 5, 7.0, 9
          Relations: Aggregate on (public.ft1)
-         Remote SQL: SELECT count(c2), c2, 5, 7.0, 9 FROM "S 1"."T 1" GROUP BY c2, 5::integer, 9::integer
+         Remote SQL: SELECT count(c2), c2, 5, 7.0, 9 FROM "S 1"."T 1" GROUP BY 2, 3, 5
 (7 rows)
 
 select count(c2) w, c2 x, 5 y, 7.0 z from ft1 group by 2, y, 9.0::int order by 2;
@@ -2470,18 +2733,41 @@ select count(c2) w, c2 x, 5 y, 7.0 z from ft1 group by 2, y, 9.0::int order by 2
  100 | 9 | 5 | 7.0
 (10 rows)
 
+-- GROUP BY clause referring to same column multiple times
+-- Also, ORDER BY contains an aggregate function
+explain (verbose, costs off)
+select c2, c2 from ft1 where c2 > 6 group by 1, 2 order by sum(c1);
+                                          QUERY PLAN                                           
+-----------------------------------------------------------------------------------------------
+ Sort
+   Output: c2, c2, (sum(c1))
+   Sort Key: (sum(ft1.c1))
+   ->  Foreign Scan
+         Output: c2, c2, (sum(c1))
+         Relations: Aggregate on (public.ft1)
+         Remote SQL: SELECT c2, c2, sum("C 1") FROM "S 1"."T 1" WHERE ((c2 > 6)) GROUP BY 1, 2
+(7 rows)
+
+select c2, c2 from ft1 where c2 > 6 group by 1, 2 order by sum(c1);
+ c2 | c2 
+----+----
+  7 |  7
+  8 |  8
+  9 |  9
+(3 rows)
+
 -- Testing HAVING clause shippability
 explain (verbose, costs off)
 select c2, sum(c1) from ft2 group by c2 having avg(c1) < 500 and sum(c1) < 49800 order by c2;
-                                                               QUERY PLAN                                                               
-----------------------------------------------------------------------------------------------------------------------------------------
+                                                              QUERY PLAN                                                               
+---------------------------------------------------------------------------------------------------------------------------------------
  Sort
    Output: c2, (sum(c1))
    Sort Key: ft2.c2
    ->  Foreign Scan
          Output: c2, (sum(c1))
          Relations: Aggregate on (public.ft2)
-         Remote SQL: SELECT c2, sum("C 1") FROM "S 1"."T 1" GROUP BY c2 HAVING ((avg("C 1") < 500::numeric)) AND ((sum("C 1") < 49800))
+         Remote SQL: SELECT c2, sum("C 1") FROM "S 1"."T 1" GROUP BY 1 HAVING ((avg("C 1") < 500::numeric)) AND ((sum("C 1") < 49800))
 (7 rows)
 
 select c2, sum(c1) from ft2 group by c2 having avg(c1) < 500 and sum(c1) < 49800 order by c2;
@@ -2494,15 +2780,15 @@ select c2, sum(c1) from ft2 group by c2 having avg(c1) < 500 and sum(c1) < 49800
 -- Unshippable HAVING clause will be evaluated locally, and other qual in HAVING clause is pushed down
 explain (verbose, costs off)
 select count(*) from (select c5, count(c1) from ft1 group by c5, sqrt(c2) having (avg(c1) / avg(c1)) * random() <= 1 and avg(c1) < 500) x;
-                                                                   QUERY PLAN                                                                    
--------------------------------------------------------------------------------------------------------------------------------------------------
+                                                              QUERY PLAN                                                               
+---------------------------------------------------------------------------------------------------------------------------------------
  Aggregate
    Output: count(*)
    ->  Foreign Scan
          Output: ft1.c5, NULL::bigint, (sqrt((ft1.c2)::double precision))
          Filter: (((((avg(ft1.c1)) / (avg(ft1.c1))))::double precision * random()) <= '1'::double precision)
          Relations: Aggregate on (public.ft1)
-         Remote SQL: SELECT c5, NULL::bigint, sqrt(c2), avg("C 1") FROM "S 1"."T 1" GROUP BY c5, (sqrt(c2)) HAVING ((avg("C 1") < 500::numeric))
+         Remote SQL: SELECT c5, NULL::bigint, sqrt(c2), avg("C 1") FROM "S 1"."T 1" GROUP BY 1, 3 HAVING ((avg("C 1") < 500::numeric))
 (7 rows)
 
 select count(*) from (select c5, count(c1) from ft1 group by c5, sqrt(c2) having (avg(c1) / avg(c1)) * random() <= 1 and avg(c1) < 500) x;
@@ -2532,15 +2818,15 @@ select sum(c1) from ft1 group by c2 having avg(c1 * (random() <= 1)::int) > 100 
 -- ORDER BY within aggregate, same column used to order
 explain (verbose, costs off)
 select array_agg(c1 order by c1) from ft1 where c1 < 100 group by c2 order by 1;
-                                                            QUERY PLAN                                                            
-----------------------------------------------------------------------------------------------------------------------------------
+                                                           QUERY PLAN                                                            
+---------------------------------------------------------------------------------------------------------------------------------
  Sort
    Output: (array_agg(c1 ORDER BY c1)), c2
    Sort Key: (array_agg(ft1.c1 ORDER BY ft1.c1))
    ->  Foreign Scan
          Output: (array_agg(c1 ORDER BY c1)), c2
          Relations: Aggregate on (public.ft1)
-         Remote SQL: SELECT array_agg("C 1" ORDER BY "C 1" ASC NULLS LAST), c2 FROM "S 1"."T 1" WHERE (("C 1" < 100)) GROUP BY c2
+         Remote SQL: SELECT array_agg("C 1" ORDER BY "C 1" ASC NULLS LAST), c2 FROM "S 1"."T 1" WHERE (("C 1" < 100)) GROUP BY 2
 (7 rows)
 
 select array_agg(c1 order by c1) from ft1 where c1 < 100 group by c2 order by 1;
@@ -2578,15 +2864,15 @@ select array_agg(c5 order by c1 desc) from ft2 where c2 = 6 and c1 < 50;
 -- DISTINCT within aggregate
 explain (verbose, costs off)
 select array_agg(distinct (t1.c1)%5) from ft4 t1 full join ft5 t2 on (t1.c1 = t2.c1) where t1.c1 < 20 or (t1.c1 is null and t2.c1 < 5) group by (t2.c1)%3 order by 1;
-                                                                                                            QUERY PLAN                                                                                                            
-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                                                      QUERY PLAN                                                                                                      
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Sort
    Output: (array_agg(DISTINCT (t1.c1 % 5))), ((t2.c1 % 3))
    Sort Key: (array_agg(DISTINCT (t1.c1 % 5)))
    ->  Foreign Scan
          Output: (array_agg(DISTINCT (t1.c1 % 5))), ((t2.c1 % 3))
          Relations: Aggregate on ((public.ft4 t1) FULL JOIN (public.ft5 t2))
-         Remote SQL: SELECT array_agg(DISTINCT (r1.c1 % 5)), (r2.c1 % 3) FROM ("S 1"."T 3" r1 FULL JOIN "S 1"."T 4" r2 ON (((r1.c1 = r2.c1)))) WHERE (((r1.c1 < 20) OR ((r1.c1 IS NULL) AND (r2.c1 < 5)))) GROUP BY ((r2.c1 % 3))
+         Remote SQL: SELECT array_agg(DISTINCT (r1.c1 % 5)), (r2.c1 % 3) FROM ("S 1"."T 3" r1 FULL JOIN "S 1"."T 4" r2 ON (((r1.c1 = r2.c1)))) WHERE (((r1.c1 < 20) OR ((r1.c1 IS NULL) AND (r2.c1 < 5)))) GROUP BY 2
 (7 rows)
 
 select array_agg(distinct (t1.c1)%5) from ft4 t1 full join ft5 t2 on (t1.c1 = t2.c1) where t1.c1 < 20 or (t1.c1 is null and t2.c1 < 5) group by (t2.c1)%3 order by 1;
@@ -2599,15 +2885,15 @@ select array_agg(distinct (t1.c1)%5) from ft4 t1 full join ft5 t2 on (t1.c1 = t2
 -- DISTINCT combined with ORDER BY within aggregate
 explain (verbose, costs off)
 select array_agg(distinct (t1.c1)%5 order by (t1.c1)%5) from ft4 t1 full join ft5 t2 on (t1.c1 = t2.c1) where t1.c1 < 20 or (t1.c1 is null and t2.c1 < 5) group by (t2.c1)%3 order by 1;
-                                                                                                                               QUERY PLAN                                                                                                                               
-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                                                                         QUERY PLAN                                                                                                                         
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Sort
    Output: (array_agg(DISTINCT (t1.c1 % 5) ORDER BY (t1.c1 % 5))), ((t2.c1 % 3))
    Sort Key: (array_agg(DISTINCT (t1.c1 % 5) ORDER BY (t1.c1 % 5)))
    ->  Foreign Scan
          Output: (array_agg(DISTINCT (t1.c1 % 5) ORDER BY (t1.c1 % 5))), ((t2.c1 % 3))
          Relations: Aggregate on ((public.ft4 t1) FULL JOIN (public.ft5 t2))
-         Remote SQL: SELECT array_agg(DISTINCT (r1.c1 % 5) ORDER BY ((r1.c1 % 5)) ASC NULLS LAST), (r2.c1 % 3) FROM ("S 1"."T 3" r1 FULL JOIN "S 1"."T 4" r2 ON (((r1.c1 = r2.c1)))) WHERE (((r1.c1 < 20) OR ((r1.c1 IS NULL) AND (r2.c1 < 5)))) GROUP BY ((r2.c1 % 3))
+         Remote SQL: SELECT array_agg(DISTINCT (r1.c1 % 5) ORDER BY ((r1.c1 % 5)) ASC NULLS LAST), (r2.c1 % 3) FROM ("S 1"."T 3" r1 FULL JOIN "S 1"."T 4" r2 ON (((r1.c1 = r2.c1)))) WHERE (((r1.c1 < 20) OR ((r1.c1 IS NULL) AND (r2.c1 < 5)))) GROUP BY 2
 (7 rows)
 
 select array_agg(distinct (t1.c1)%5 order by (t1.c1)%5) from ft4 t1 full join ft5 t2 on (t1.c1 = t2.c1) where t1.c1 < 20 or (t1.c1 is null and t2.c1 < 5) group by (t2.c1)%3 order by 1;
@@ -2619,15 +2905,15 @@ select array_agg(distinct (t1.c1)%5 order by (t1.c1)%5) from ft4 t1 full join ft
 
 explain (verbose, costs off)
 select array_agg(distinct (t1.c1)%5 order by (t1.c1)%5 desc nulls last) from ft4 t1 full join ft5 t2 on (t1.c1 = t2.c1) where t1.c1 < 20 or (t1.c1 is null and t2.c1 < 5) group by (t2.c1)%3 order by 1;
-                                                                                                                               QUERY PLAN                                                                                                                                
--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                                                                         QUERY PLAN                                                                                                                          
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Sort
    Output: (array_agg(DISTINCT (t1.c1 % 5) ORDER BY (t1.c1 % 5) DESC NULLS LAST)), ((t2.c1 % 3))
    Sort Key: (array_agg(DISTINCT (t1.c1 % 5) ORDER BY (t1.c1 % 5) DESC NULLS LAST))
    ->  Foreign Scan
          Output: (array_agg(DISTINCT (t1.c1 % 5) ORDER BY (t1.c1 % 5) DESC NULLS LAST)), ((t2.c1 % 3))
          Relations: Aggregate on ((public.ft4 t1) FULL JOIN (public.ft5 t2))
-         Remote SQL: SELECT array_agg(DISTINCT (r1.c1 % 5) ORDER BY ((r1.c1 % 5)) DESC NULLS LAST), (r2.c1 % 3) FROM ("S 1"."T 3" r1 FULL JOIN "S 1"."T 4" r2 ON (((r1.c1 = r2.c1)))) WHERE (((r1.c1 < 20) OR ((r1.c1 IS NULL) AND (r2.c1 < 5)))) GROUP BY ((r2.c1 % 3))
+         Remote SQL: SELECT array_agg(DISTINCT (r1.c1 % 5) ORDER BY ((r1.c1 % 5)) DESC NULLS LAST), (r2.c1 % 3) FROM ("S 1"."T 3" r1 FULL JOIN "S 1"."T 4" r2 ON (((r1.c1 = r2.c1)))) WHERE (((r1.c1 < 20) OR ((r1.c1 IS NULL) AND (r2.c1 < 5)))) GROUP BY 2
 (7 rows)
 
 select array_agg(distinct (t1.c1)%5 order by (t1.c1)%5 desc nulls last) from ft4 t1 full join ft5 t2 on (t1.c1 = t2.c1) where t1.c1 < 20 or (t1.c1 is null and t2.c1 < 5) group by (t2.c1)%3 order by 1;
@@ -2640,15 +2926,15 @@ select array_agg(distinct (t1.c1)%5 order by (t1.c1)%5 desc nulls last) from ft4
 -- FILTER within aggregate
 explain (verbose, costs off)
 select sum(c1) filter (where c1 < 100 and c2 > 5) from ft1 group by c2 order by 1 nulls last;
-                                                     QUERY PLAN                                                     
---------------------------------------------------------------------------------------------------------------------
+                                                    QUERY PLAN                                                     
+-------------------------------------------------------------------------------------------------------------------
  Sort
    Output: (sum(c1) FILTER (WHERE ((c1 < 100) AND (c2 > 5)))), c2
    Sort Key: (sum(ft1.c1) FILTER (WHERE ((ft1.c1 < 100) AND (ft1.c2 > 5))))
    ->  Foreign Scan
          Output: (sum(c1) FILTER (WHERE ((c1 < 100) AND (c2 > 5)))), c2
          Relations: Aggregate on (public.ft1)
-         Remote SQL: SELECT sum("C 1") FILTER (WHERE (("C 1" < 100) AND (c2 > 5))), c2 FROM "S 1"."T 1" GROUP BY c2
+         Remote SQL: SELECT sum("C 1") FILTER (WHERE (("C 1" < 100) AND (c2 > 5))), c2 FROM "S 1"."T 1" GROUP BY 2
 (7 rows)
 
 select sum(c1) filter (where c1 < 100 and c2 > 5) from ft1 group by c2 order by 1 nulls last;
@@ -2669,12 +2955,12 @@ select sum(c1) filter (where c1 < 100 and c2 > 5) from ft1 group by c2 order by 
 -- DISTINCT, ORDER BY and FILTER within aggregate
 explain (verbose, costs off)
 select sum(c1%3), sum(distinct c1%3 order by c1%3) filter (where c1%3 < 2), c2 from ft1 where c2 = 6 group by c2;
-                                                                                        QUERY PLAN                                                                                         
--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                                        QUERY PLAN                                                                                        
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Foreign Scan
    Output: (sum((c1 % 3))), (sum(DISTINCT (c1 % 3) ORDER BY (c1 % 3)) FILTER (WHERE ((c1 % 3) < 2))), c2
    Relations: Aggregate on (public.ft1)
-   Remote SQL: SELECT sum(("C 1" % 3)), sum(DISTINCT ("C 1" % 3) ORDER BY (("C 1" % 3)) ASC NULLS LAST) FILTER (WHERE (("C 1" % 3) < 2)), c2 FROM "S 1"."T 1" WHERE ((c2 = 6)) GROUP BY c2
+   Remote SQL: SELECT sum(("C 1" % 3)), sum(DISTINCT ("C 1" % 3) ORDER BY (("C 1" % 3)) ASC NULLS LAST) FILTER (WHERE (("C 1" % 3) < 2)), c2 FROM "S 1"."T 1" WHERE ((c2 = 6)) GROUP BY 3
 (4 rows)
 
 select sum(c1%3), sum(distinct c1%3 order by c1%3) filter (where c1%3 < 2), c2 from ft1 where c2 = 6 group by c2;
@@ -2770,15 +3056,15 @@ select sum(c2) filter (where c2 in (select c2 from ft1 where c2 < 5)) from ft1;
 -- Ordered-sets within aggregate
 explain (verbose, costs off)
 select c2, rank('10'::varchar) within group (order by c6), percentile_cont(c2/10::numeric) within group (order by c1) from ft1 where c2 < 10 group by c2 having percentile_cont(c2/10::numeric) within group (order by c1) < 500 order by c2;
-                                                                                                                                                                           QUERY PLAN                                                                                                                                                                            
------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                                                                                                                           QUERY PLAN                                                                                                                                                                           
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Sort
    Output: c2, (rank('10'::character varying) WITHIN GROUP (ORDER BY c6)), (percentile_cont((((c2)::numeric / '10'::numeric))::double precision) WITHIN GROUP (ORDER BY ((c1)::double precision)))
    Sort Key: ft1.c2
    ->  Foreign Scan
          Output: c2, (rank('10'::character varying) WITHIN GROUP (ORDER BY c6)), (percentile_cont((((c2)::numeric / '10'::numeric))::double precision) WITHIN GROUP (ORDER BY ((c1)::double precision)))
          Relations: Aggregate on (public.ft1)
-         Remote SQL: SELECT c2, rank('10'::character varying) WITHIN GROUP (ORDER BY c6 ASC NULLS LAST), percentile_cont((c2 / 10::numeric)) WITHIN GROUP (ORDER BY ("C 1") ASC NULLS LAST) FROM "S 1"."T 1" WHERE ((c2 < 10)) GROUP BY c2 HAVING ((percentile_cont((c2 / 10::numeric)) WITHIN GROUP (ORDER BY ("C 1") ASC NULLS LAST) < 500::double precision))
+         Remote SQL: SELECT c2, rank('10'::character varying) WITHIN GROUP (ORDER BY c6 ASC NULLS LAST), percentile_cont((c2 / 10::numeric)) WITHIN GROUP (ORDER BY ("C 1") ASC NULLS LAST) FROM "S 1"."T 1" WHERE ((c2 < 10)) GROUP BY 1 HAVING ((percentile_cont((c2 / 10::numeric)) WITHIN GROUP (ORDER BY ("C 1") ASC NULLS LAST) < 500::double precision))
 (7 rows)
 
 select c2, rank('10'::varchar) within group (order by c6), percentile_cont(c2/10::numeric) within group (order by c1) from ft1 where c2 < 10 group by c2 having percentile_cont(c2/10::numeric) within group (order by c1) < 500 order by c2;
@@ -2794,12 +3080,12 @@ select c2, rank('10'::varchar) within group (order by c6), percentile_cont(c2/10
 -- Using multiple arguments within aggregates
 explain (verbose, costs off)
 select c1, rank(c1, c2) within group (order by c1, c2) from ft1 group by c1, c2 having c1 = 6 order by 1;
-                                                                               QUERY PLAN                                                                                
--------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                             QUERY PLAN                                                                             
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Foreign Scan
    Output: c1, (rank(c1, c2) WITHIN GROUP (ORDER BY c1, c2)), c2
    Relations: Aggregate on (public.ft1)
-   Remote SQL: SELECT "C 1", rank("C 1", c2) WITHIN GROUP (ORDER BY "C 1" ASC NULLS LAST, c2 ASC NULLS LAST), c2 FROM "S 1"."T 1" WHERE (("C 1" = 6)) GROUP BY "C 1", c2
+   Remote SQL: SELECT "C 1", rank("C 1", c2) WITHIN GROUP (ORDER BY "C 1" ASC NULLS LAST, c2 ASC NULLS LAST), c2 FROM "S 1"."T 1" WHERE (("C 1" = 6)) GROUP BY 1, 3
 (4 rows)
 
 select c1, rank(c1, c2) within group (order by c1, c2) from ft1 group by c1, c2 having c1 = 6 order by 1;
@@ -2837,15 +3123,15 @@ alter server loopback options (set extensions 'postgres_fdw');
 -- Now aggregate will be pushed.  Aggregate will display VARIADIC argument.
 explain (verbose, costs off)
 select c2, least_agg(c1) from ft1 where c2 < 100 group by c2 order by c2;
-                                                       QUERY PLAN                                                       
-------------------------------------------------------------------------------------------------------------------------
+                                                      QUERY PLAN                                                       
+-----------------------------------------------------------------------------------------------------------------------
  Sort
    Output: c2, (least_agg(VARIADIC ARRAY[c1]))
    Sort Key: ft1.c2
    ->  Foreign Scan
          Output: c2, (least_agg(VARIADIC ARRAY[c1]))
          Relations: Aggregate on (public.ft1)
-         Remote SQL: SELECT c2, public.least_agg(VARIADIC ARRAY["C 1"]) FROM "S 1"."T 1" WHERE ((c2 < 100)) GROUP BY c2
+         Remote SQL: SELECT c2, public.least_agg(VARIADIC ARRAY["C 1"]) FROM "S 1"."T 1" WHERE ((c2 < 100)) GROUP BY 1
 (7 rows)
 
 select c2, least_agg(c1) from ft1 where c2 < 100 group by c2 order by c2;
@@ -2937,12 +3223,12 @@ alter server loopback options (set extensions 'postgres_fdw');
 -- Now this will be pushed as sort operator is part of the extension.
 explain (verbose, costs off)
 select array_agg(c1 order by c1 using operator(public.<^)) from ft2 where c2 = 6 and c1 < 100 group by c2;
-                                                                           QUERY PLAN                                                                            
------------------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                           QUERY PLAN                                                                           
+----------------------------------------------------------------------------------------------------------------------------------------------------------------
  Foreign Scan
    Output: (array_agg(c1 ORDER BY c1 USING <^ NULLS LAST)), c2
    Relations: Aggregate on (public.ft2)
-   Remote SQL: SELECT array_agg("C 1" ORDER BY "C 1" USING OPERATOR(public.<^) NULLS LAST), c2 FROM "S 1"."T 1" WHERE (("C 1" < 100)) AND ((c2 = 6)) GROUP BY c2
+   Remote SQL: SELECT array_agg("C 1" ORDER BY "C 1" USING OPERATOR(public.<^) NULLS LAST), c2 FROM "S 1"."T 1" WHERE (("C 1" < 100)) AND ((c2 = 6)) GROUP BY 2
 (4 rows)
 
 select array_agg(c1 order by c1 using operator(public.<^)) from ft2 where c2 = 6 and c1 < 100 group by c2;
@@ -2982,27 +3268,29 @@ drop operator public.<^(int, int);
 -- Input relation to aggregate push down hook is not safe to pushdown and thus
 -- the aggregate cannot be pushed down to foreign server.
 explain (verbose, costs off)
-select count(t1.c3) from ft1 t1, ft1 t2 where t1.c1 = postgres_fdw_abs(t1.c2);
-                                                QUERY PLAN                                                
-----------------------------------------------------------------------------------------------------------
+select count(t1.c3) from ft2 t1 left join ft2 t2 on (t1.c1 = random() * t2.c2);
+                                        QUERY PLAN                                         
+-------------------------------------------------------------------------------------------
  Aggregate
    Output: count(t1.c3)
-   ->  Nested Loop
+   ->  Nested Loop Left Join
          Output: t1.c3
-         ->  Foreign Scan on public.ft1 t2
-               Remote SQL: SELECT NULL FROM "S 1"."T 1"
+         Join Filter: ((t1.c1)::double precision = (random() * (t2.c2)::double precision))
+         ->  Foreign Scan on public.ft2 t1
+               Output: t1.c3, t1.c1
+               Remote SQL: SELECT "C 1", c3 FROM "S 1"."T 1"
          ->  Materialize
-               Output: t1.c3
-               ->  Foreign Scan on public.ft1 t1
-                     Output: t1.c3
-                     Remote SQL: SELECT c3 FROM "S 1"."T 1" WHERE (("C 1" = public.postgres_fdw_abs(c2)))
-(11 rows)
+               Output: t2.c2
+               ->  Foreign Scan on public.ft2 t2
+                     Output: t2.c2
+                     Remote SQL: SELECT c2 FROM "S 1"."T 1"
+(13 rows)
 
 -- Subquery in FROM clause having aggregate
 explain (verbose, costs off)
 select count(*), x.b from ft1, (select c2 a, sum(c1) b from ft1 group by c2) x where ft1.c2 = x.a group by x.b order by 1, 2;
-                                           QUERY PLAN                                           
-------------------------------------------------------------------------------------------------
+                                          QUERY PLAN                                           
+-----------------------------------------------------------------------------------------------
  Sort
    Output: (count(*)), x.b
    Sort Key: (count(*)), x.b
@@ -3011,6 +3299,7 @@ select count(*), x.b from ft1, (select c2 a, sum(c1) b from ft1 group by c2) x w
          Group Key: x.b
          ->  Hash Join
                Output: x.b
+               Inner Unique: true
                Hash Cond: (ft1.c2 = x.a)
                ->  Foreign Scan on public.ft1
                      Output: ft1.c2
@@ -3022,8 +3311,8 @@ select count(*), x.b from ft1, (select c2 a, sum(c1) b from ft1 group by c2) x w
                            ->  Foreign Scan
                                  Output: ft1_1.c2, (sum(ft1_1.c1))
                                  Relations: Aggregate on (public.ft1)
-                                 Remote SQL: SELECT c2, sum("C 1") FROM "S 1"."T 1" GROUP BY c2
-(20 rows)
+                                 Remote SQL: SELECT c2, sum("C 1") FROM "S 1"."T 1" GROUP BY 1
+(21 rows)
 
 select count(*), x.b from ft1, (select c2 a, sum(c1) b from ft1 group by c2) x where ft1.c2 = x.a group by x.b order by 1, 2;
  count |   b   
@@ -3043,15 +3332,15 @@ select count(*), x.b from ft1, (select c2 a, sum(c1) b from ft1 group by c2) x w
 -- FULL join with IS NULL check in HAVING
 explain (verbose, costs off)
 select avg(t1.c1), sum(t2.c1) from ft4 t1 full join ft5 t2 on (t1.c1 = t2.c1) group by t2.c1 having (avg(t1.c1) is null and sum(t2.c1) < 10) or sum(t2.c1) is null order by 1 nulls last, 2;
-                                                                                                          QUERY PLAN                                                                                                           
--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                                                        QUERY PLAN                                                                                                         
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Sort
    Output: (avg(t1.c1)), (sum(t2.c1)), t2.c1
    Sort Key: (avg(t1.c1)), (sum(t2.c1))
    ->  Foreign Scan
          Output: (avg(t1.c1)), (sum(t2.c1)), t2.c1
          Relations: Aggregate on ((public.ft4 t1) FULL JOIN (public.ft5 t2))
-         Remote SQL: SELECT avg(r1.c1), sum(r2.c1), r2.c1 FROM ("S 1"."T 3" r1 FULL JOIN "S 1"."T 4" r2 ON (((r1.c1 = r2.c1)))) GROUP BY r2.c1 HAVING ((((avg(r1.c1) IS NULL) AND (sum(r2.c1) < 10)) OR (sum(r2.c1) IS NULL)))
+         Remote SQL: SELECT avg(r1.c1), sum(r2.c1), r2.c1 FROM ("S 1"."T 3" r1 FULL JOIN "S 1"."T 4" r2 ON (((r1.c1 = r2.c1)))) GROUP BY 3 HAVING ((((avg(r1.c1) IS NULL) AND (sum(r2.c1) < 10)) OR (sum(r2.c1) IS NULL)))
 (7 rows)
 
 select avg(t1.c1), sum(t2.c1) from ft4 t1 full join ft5 t2 on (t1.c1 = t2.c1) group by t2.c1 having (avg(t1.c1) is null and sum(t2.c1) < 10) or sum(t2.c1) is null order by 1 nulls last, 2;
@@ -3061,6 +3350,24 @@ select avg(t1.c1), sum(t2.c1) from ft4 t1 full join ft5 t2 on (t1.c1 = t2.c1) gr
                      |   3
                      |   9
 (3 rows)
+
+-- Aggregate over FULL join needing to deparse the joining relations as
+-- subqueries.
+explain (verbose, costs off)
+select count(*), sum(t1.c1), avg(t2.c1) from (select c1 from ft4 where c1 between 50 and 60) t1 full join (select c1 from ft5 where c1 between 50 and 60) t2 on (t1.c1 = t2.c1);
+                                                                                                                  QUERY PLAN                                                                                                                   
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Foreign Scan
+   Output: (count(*)), (sum(ft4.c1)), (avg(ft5.c1))
+   Relations: Aggregate on ((public.ft4) FULL JOIN (public.ft5))
+   Remote SQL: SELECT count(*), sum(s4.c1), avg(s5.c1) FROM ((SELECT c1 FROM "S 1"."T 3" WHERE ((c1 >= 50)) AND ((c1 <= 60))) s4(c1) FULL JOIN (SELECT c1 FROM "S 1"."T 4" WHERE ((c1 >= 50)) AND ((c1 <= 60))) s5(c1) ON (((s4.c1 = s5.c1))))
+(4 rows)
+
+select count(*), sum(t1.c1), avg(t2.c1) from (select c1 from ft4 where c1 between 50 and 60) t1 full join (select c1 from ft5 where c1 between 50 and 60) t2 on (t1.c1 = t2.c1);
+ count | sum |         avg         
+-------+-----+---------------------
+     8 | 330 | 55.5000000000000000
+(1 row)
 
 -- ORDER BY expression is part of the target list but not pushed down to
 -- foreign server.
@@ -3087,8 +3394,8 @@ select sum(c2) * (random() <= 1)::int as sum from ft1 order by 1;
 set enable_hashagg to false;
 explain (verbose, costs off)
 select c2, sum from "S 1"."T 1" t1, lateral (select sum(t2.c1 + t1."C 1") sum from ft2 t2 group by t2.c1) qry where t1.c2 * 2 = qry.sum and t1.c2 < 3 and t1."C 1" < 100 order by 1;
-                                                QUERY PLAN                                                
-----------------------------------------------------------------------------------------------------------
+                                              QUERY PLAN                                              
+------------------------------------------------------------------------------------------------------
  Sort
    Output: t1.c2, qry.sum
    Sort Key: t1.c2
@@ -3104,7 +3411,7 @@ select c2, sum from "S 1"."T 1" t1, lateral (select sum(t2.c1 + t1."C 1") sum fr
                ->  Foreign Scan
                      Output: (sum((t2.c1 + t1."C 1"))), t2.c1
                      Relations: Aggregate on (public.ft2 t2)
-                     Remote SQL: SELECT sum(("C 1" + $1::integer)), "C 1" FROM "S 1"."T 1" GROUP BY "C 1"
+                     Remote SQL: SELECT sum(("C 1" + $1::integer)), "C 1" FROM "S 1"."T 1" GROUP BY 2
 (16 rows)
 
 select c2, sum from "S 1"."T 1" t1, lateral (select sum(t2.c1 + t1."C 1") sum from ft2 t2 group by t2.c1) qry where t1.c2 * 2 = qry.sum and t1.c2 < 3 and t1."C 1" < 100 order by 1;
@@ -3124,6 +3431,7 @@ select sum(q.a), count(q.b) from ft4 left join (select 13, avg(ft1.c1), sum(ft2.
    Output: sum(q.a), count(q.b)
    ->  Nested Loop Left Join
          Output: q.a, q.b
+         Inner Unique: true
          Join Filter: ((ft4.c1)::numeric <= q.b)
          ->  Foreign Scan on public.ft4
                Output: ft4.c1, ft4.c2, ft4.c3
@@ -3136,7 +3444,7 @@ select sum(q.a), count(q.b) from ft4 left join (select 13, avg(ft1.c1), sum(ft2.
                            Output: 13, (avg(ft1.c1)), NULL::bigint
                            Relations: Aggregate on ((public.ft2) LEFT JOIN (public.ft1))
                            Remote SQL: SELECT 13, avg(r1."C 1"), NULL::bigint FROM ("S 1"."T 1" r2 LEFT JOIN "S 1"."T 1" r1 ON (((r1."C 1" = r2."C 1"))))
-(16 rows)
+(17 rows)
 
 select sum(q.a), count(q.b) from ft4 left join (select 13, avg(ft1.c1), sum(ft2.c1) from ft1 right join ft2 on (ft1.c1 = ft2.c1)) q(a, b, c) on (ft4.c1 <= q.b);
  sum | count 
@@ -3148,16 +3456,19 @@ select sum(q.a), count(q.b) from ft4 left join (select 13, avg(ft1.c1), sum(ft2.
 -- Grouping sets
 explain (verbose, costs off)
 select c2, sum(c1) from ft1 where c2 < 3 group by rollup(c2) order by 1 nulls last;
-                                            QUERY PLAN                                             
----------------------------------------------------------------------------------------------------
- GroupAggregate
-   Output: c2, sum(c1)
-   Group Key: ft1.c2
-   Group Key: ()
-   ->  Foreign Scan on public.ft1
-         Output: c2, c1
-         Remote SQL: SELECT "C 1", c2 FROM "S 1"."T 1" WHERE ((c2 < 3)) ORDER BY c2 ASC NULLS LAST
-(7 rows)
+                                  QUERY PLAN                                  
+------------------------------------------------------------------------------
+ Sort
+   Output: c2, (sum(c1))
+   Sort Key: ft1.c2
+   ->  MixedAggregate
+         Output: c2, sum(c1)
+         Hash Key: ft1.c2
+         Group Key: ()
+         ->  Foreign Scan on public.ft1
+               Output: c2, c1
+               Remote SQL: SELECT "C 1", c2 FROM "S 1"."T 1" WHERE ((c2 < 3))
+(10 rows)
 
 select c2, sum(c1) from ft1 where c2 < 3 group by rollup(c2) order by 1 nulls last;
  c2 |  sum   
@@ -3170,16 +3481,19 @@ select c2, sum(c1) from ft1 where c2 < 3 group by rollup(c2) order by 1 nulls la
 
 explain (verbose, costs off)
 select c2, sum(c1) from ft1 where c2 < 3 group by cube(c2) order by 1 nulls last;
-                                            QUERY PLAN                                             
----------------------------------------------------------------------------------------------------
- GroupAggregate
-   Output: c2, sum(c1)
-   Group Key: ft1.c2
-   Group Key: ()
-   ->  Foreign Scan on public.ft1
-         Output: c2, c1
-         Remote SQL: SELECT "C 1", c2 FROM "S 1"."T 1" WHERE ((c2 < 3)) ORDER BY c2 ASC NULLS LAST
-(7 rows)
+                                  QUERY PLAN                                  
+------------------------------------------------------------------------------
+ Sort
+   Output: c2, (sum(c1))
+   Sort Key: ft1.c2
+   ->  MixedAggregate
+         Output: c2, sum(c1)
+         Hash Key: ft1.c2
+         Group Key: ()
+         ->  Foreign Scan on public.ft1
+               Output: c2, c1
+               Remote SQL: SELECT "C 1", c2 FROM "S 1"."T 1" WHERE ((c2 < 3))
+(10 rows)
 
 select c2, sum(c1) from ft1 where c2 < 3 group by cube(c2) order by 1 nulls last;
  c2 |  sum   
@@ -3192,20 +3506,19 @@ select c2, sum(c1) from ft1 where c2 < 3 group by cube(c2) order by 1 nulls last
 
 explain (verbose, costs off)
 select c2, c6, sum(c1) from ft1 where c2 < 3 group by grouping sets(c2, c6) order by 1 nulls last, 2 nulls last;
-                                                 QUERY PLAN                                                  
--------------------------------------------------------------------------------------------------------------
+                                    QUERY PLAN                                    
+----------------------------------------------------------------------------------
  Sort
    Output: c2, c6, (sum(c1))
    Sort Key: ft1.c2, ft1.c6
-   ->  GroupAggregate
+   ->  HashAggregate
          Output: c2, c6, sum(c1)
-         Group Key: ft1.c2
-         Sort Key: ft1.c6
-           Group Key: ft1.c6
+         Hash Key: ft1.c2
+         Hash Key: ft1.c6
          ->  Foreign Scan on public.ft1
                Output: c2, c6, c1
-               Remote SQL: SELECT "C 1", c2, c6 FROM "S 1"."T 1" WHERE ((c2 < 3)) ORDER BY c2 ASC NULLS LAST
-(11 rows)
+               Remote SQL: SELECT "C 1", c2, c6 FROM "S 1"."T 1" WHERE ((c2 < 3))
+(10 rows)
 
 select c2, c6, sum(c1) from ft1 where c2 < 3 group by grouping sets(c2, c6) order by 1 nulls last, 2 nulls last;
  c2 | c6 |  sum  
@@ -3244,8 +3557,8 @@ select c2, sum(c1), grouping(c2) from ft1 where c2 < 3 group by c2 order by 1 nu
 -- DISTINCT itself is not pushed down, whereas underneath aggregate is pushed
 explain (verbose, costs off)
 select distinct sum(c1)/1000 s from ft2 where c2 < 6 group by c2 order by 1;
-                                               QUERY PLAN                                               
---------------------------------------------------------------------------------------------------------
+                                              QUERY PLAN                                               
+-------------------------------------------------------------------------------------------------------
  Unique
    Output: ((sum(c1) / 1000)), c2
    ->  Sort
@@ -3254,7 +3567,7 @@ select distinct sum(c1)/1000 s from ft2 where c2 < 6 group by c2 order by 1;
          ->  Foreign Scan
                Output: ((sum(c1) / 1000)), c2
                Relations: Aggregate on (public.ft2)
-               Remote SQL: SELECT (sum("C 1") / 1000), c2 FROM "S 1"."T 1" WHERE ((c2 < 6)) GROUP BY c2
+               Remote SQL: SELECT (sum("C 1") / 1000), c2 FROM "S 1"."T 1" WHERE ((c2 < 6)) GROUP BY 2
 (9 rows)
 
 select distinct sum(c1)/1000 s from ft2 where c2 < 6 group by c2 order by 1;
@@ -3267,8 +3580,8 @@ select distinct sum(c1)/1000 s from ft2 where c2 < 6 group by c2 order by 1;
 -- WindowAgg
 explain (verbose, costs off)
 select c2, sum(c2), count(c2) over (partition by c2%2) from ft2 where c2 < 10 group by c2 order by 1;
-                                                 QUERY PLAN                                                  
--------------------------------------------------------------------------------------------------------------
+                                                 QUERY PLAN                                                 
+------------------------------------------------------------------------------------------------------------
  Sort
    Output: c2, (sum(c2)), (count(c2) OVER (?)), ((c2 % 2))
    Sort Key: ft2.c2
@@ -3280,7 +3593,7 @@ select c2, sum(c2), count(c2) over (partition by c2%2) from ft2 where c2 < 10 gr
                ->  Foreign Scan
                      Output: c2, ((c2 % 2)), (sum(c2))
                      Relations: Aggregate on (public.ft2)
-                     Remote SQL: SELECT c2, (c2 % 2), sum(c2) FROM "S 1"."T 1" WHERE ((c2 < 10)) GROUP BY c2
+                     Remote SQL: SELECT c2, (c2 % 2), sum(c2) FROM "S 1"."T 1" WHERE ((c2 < 10)) GROUP BY 1
 (12 rows)
 
 select c2, sum(c2), count(c2) over (partition by c2%2) from ft2 where c2 < 10 group by c2 order by 1;
@@ -3300,8 +3613,8 @@ select c2, sum(c2), count(c2) over (partition by c2%2) from ft2 where c2 < 10 gr
 
 explain (verbose, costs off)
 select c2, array_agg(c2) over (partition by c2%2 order by c2 desc) from ft1 where c2 < 10 group by c2 order by 1;
-                                             QUERY PLAN                                             
-----------------------------------------------------------------------------------------------------
+                                            QUERY PLAN                                             
+---------------------------------------------------------------------------------------------------
  Sort
    Output: c2, (array_agg(c2) OVER (?)), ((c2 % 2))
    Sort Key: ft1.c2
@@ -3313,7 +3626,7 @@ select c2, array_agg(c2) over (partition by c2%2 order by c2 desc) from ft1 wher
                ->  Foreign Scan
                      Output: c2, ((c2 % 2))
                      Relations: Aggregate on (public.ft1)
-                     Remote SQL: SELECT c2, (c2 % 2) FROM "S 1"."T 1" WHERE ((c2 < 10)) GROUP BY c2
+                     Remote SQL: SELECT c2, (c2 % 2) FROM "S 1"."T 1" WHERE ((c2 < 10)) GROUP BY 1
 (12 rows)
 
 select c2, array_agg(c2) over (partition by c2%2 order by c2 desc) from ft1 where c2 < 10 group by c2 order by 1;
@@ -3333,8 +3646,8 @@ select c2, array_agg(c2) over (partition by c2%2 order by c2 desc) from ft1 wher
 
 explain (verbose, costs off)
 select c2, array_agg(c2) over (partition by c2%2 order by c2 range between current row and unbounded following) from ft1 where c2 < 10 group by c2 order by 1;
-                                             QUERY PLAN                                             
-----------------------------------------------------------------------------------------------------
+                                            QUERY PLAN                                             
+---------------------------------------------------------------------------------------------------
  Sort
    Output: c2, (array_agg(c2) OVER (?)), ((c2 % 2))
    Sort Key: ft1.c2
@@ -3346,7 +3659,7 @@ select c2, array_agg(c2) over (partition by c2%2 order by c2 range between curre
                ->  Foreign Scan
                      Output: c2, ((c2 % 2))
                      Relations: Aggregate on (public.ft1)
-                     Remote SQL: SELECT c2, (c2 % 2) FROM "S 1"."T 1" WHERE ((c2 < 10)) GROUP BY c2
+                     Remote SQL: SELECT c2, (c2 % 2) FROM "S 1"."T 1" WHERE ((c2 < 10)) GROUP BY 1
 (12 rows)
 
 select c2, array_agg(c2) over (partition by c2%2 order by c2 range between current row and unbounded following) from ft1 where c2 < 10 group by c2 order by 1;
@@ -3746,7 +4059,7 @@ SELECT oid, * FROM ft_pg_type WHERE typname = 'int4';
 (1 row)
 
 -- ===================================================================
--- used in pl/pgsql function
+-- used in PL/pgSQL function
 -- ===================================================================
 CREATE OR REPLACE FUNCTION f_test(p_c1 int) RETURNS int AS $$
 DECLARE
@@ -3915,24 +4228,26 @@ explain (verbose, costs off) select * from ft3 where f2 = 'foo' COLLATE "C";
 
 explain (verbose, costs off) select * from ft3 f, loct3 l
   where f.f3 = l.f3 COLLATE "POSIX" and l.f1 = 'foo';
-                         QUERY PLAN                          
--------------------------------------------------------------
- Hash Join
+                       QUERY PLAN                        
+---------------------------------------------------------
+ Nested Loop
    Output: f.f1, f.f2, f.f3, l.f1, l.f2, l.f3
-   Hash Cond: ((f.f3)::text = (l.f3)::text)
+   Join Filter: ((f.f3)::text = (l.f3)::text)
+   ->  Index Scan using loct3_f1_key on public.loct3 l
+         Output: l.f1, l.f2, l.f3
+         Index Cond: (l.f1 = 'foo'::text)
    ->  Foreign Scan on public.ft3 f
          Output: f.f1, f.f2, f.f3
          Remote SQL: SELECT f1, f2, f3 FROM public.loct3
-   ->  Hash
-         Output: l.f1, l.f2, l.f3
-         ->  Index Scan using loct3_f1_key on public.loct3 l
-               Output: l.f1, l.f2, l.f3
-               Index Cond: (l.f1 = 'foo'::text)
-(11 rows)
+(9 rows)
 
 -- ===================================================================
 -- test writable foreign table stuff
 -- ===================================================================
+-- Autovacuum on the remote side might affect remote estimates,
+-- so use local stats on ft2 as well
+ALTER FOREIGN TABLE ft2 OPTIONS (SET use_remote_estimate 'false');
+ANALYZE ft2;
 EXPLAIN (verbose, costs off)
 INSERT INTO ft2 (c1,c2,c3) SELECT c1+1000,c2+100, c3 || c3 FROM ft2 LIMIT 20;
                                                                                                                     QUERY PLAN                                                                                                                    
@@ -4088,27 +4403,13 @@ UPDATE ft2 SET c2 = c2 + 400, c3 = c3 || '_update7' WHERE c1 % 10 = 7 RETURNING 
 
 EXPLAIN (verbose, costs off)
 UPDATE ft2 SET c2 = ft2.c2 + 500, c3 = ft2.c3 || '_update9', c7 = DEFAULT
-  FROM ft1 WHERE ft1.c1 = ft2.c2 AND ft1.c1 % 10 = 9;                               -- can't be pushed down
-                                                                                                                                                        QUERY PLAN                                                                                                                                                         
----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+  FROM ft1 WHERE ft1.c1 = ft2.c2 AND ft1.c1 % 10 = 9;                               -- can be pushed down
+                                                                                                   QUERY PLAN                                                                                                    
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Update on public.ft2
-   Remote SQL: UPDATE "S 1"."T 1" SET c2 = $2, c3 = $3, c7 = $4 WHERE ctid = $1
-   ->  Foreign Scan
-         Output: ft2.c1, (ft2.c2 + 500), NULL::integer, (ft2.c3 || '_update9'::text), ft2.c4, ft2.c5, ft2.c6, 'ft2       '::character(10), ft2.c8, ft2.ctid, ft1.*
-         Relations: (public.ft2) INNER JOIN (public.ft1)
-         Remote SQL: SELECT r1."C 1", r1.c2, r1.c3, r1.c4, r1.c5, r1.c6, r1.c8, r1.ctid, CASE WHEN (r2.*)::text IS NOT NULL THEN ROW(r2."C 1", r2.c2, r2.c3, r2.c4, r2.c5, r2.c6, r2.c7, r2.c8) END FROM ("S 1"."T 1" r1 INNER JOIN "S 1"."T 1" r2 ON (((r1.c2 = r2."C 1")) AND (((r2."C 1" % 10) = 9)))) FOR UPDATE OF r1
-         ->  Hash Join
-               Output: ft2.c1, ft2.c2, ft2.c3, ft2.c4, ft2.c5, ft2.c6, ft2.c8, ft2.ctid, ft1.*
-               Hash Cond: (ft2.c2 = ft1.c1)
-               ->  Foreign Scan on public.ft2
-                     Output: ft2.c1, ft2.c2, ft2.c3, ft2.c4, ft2.c5, ft2.c6, ft2.c8, ft2.ctid
-                     Remote SQL: SELECT "C 1", c2, c3, c4, c5, c6, c8, ctid FROM "S 1"."T 1" FOR UPDATE
-               ->  Hash
-                     Output: ft1.*, ft1.c1
-                     ->  Foreign Scan on public.ft1
-                           Output: ft1.*, ft1.c1
-                           Remote SQL: SELECT "C 1", c2, c3, c4, c5, c6, c7, c8 FROM "S 1"."T 1" WHERE ((("C 1" % 10) = 9))
-(17 rows)
+   ->  Foreign Update
+         Remote SQL: UPDATE "S 1"."T 1" r1 SET c2 = (r1.c2 + 500), c3 = (r1.c3 || '_update9'::text), c7 = 'ft2       '::character(10) FROM "S 1"."T 1" r2 WHERE ((r1.c2 = r2."C 1")) AND (((r2."C 1" % 10) = 9))
+(3 rows)
 
 UPDATE ft2 SET c2 = ft2.c2 + 500, c3 = ft2.c3 || '_update9', c7 = DEFAULT
   FROM ft1 WHERE ft1.c1 = ft2.c2 AND ft1.c1 % 10 = 9;
@@ -4231,27 +4532,13 @@ DELETE FROM ft2 WHERE c1 % 10 = 5 RETURNING c1, c4;
 (103 rows)
 
 EXPLAIN (verbose, costs off)
-DELETE FROM ft2 USING ft1 WHERE ft1.c1 = ft2.c2 AND ft1.c1 % 10 = 2;                -- can't be pushed down
-                                                                                                                              QUERY PLAN                                                                                                                               
------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+DELETE FROM ft2 USING ft1 WHERE ft1.c1 = ft2.c2 AND ft1.c1 % 10 = 2;                -- can be pushed down
+                                                         QUERY PLAN                                                         
+----------------------------------------------------------------------------------------------------------------------------
  Delete on public.ft2
-   Remote SQL: DELETE FROM "S 1"."T 1" WHERE ctid = $1
-   ->  Foreign Scan
-         Output: ft2.ctid, ft1.*
-         Relations: (public.ft2) INNER JOIN (public.ft1)
-         Remote SQL: SELECT r1.ctid, CASE WHEN (r2.*)::text IS NOT NULL THEN ROW(r2."C 1", r2.c2, r2.c3, r2.c4, r2.c5, r2.c6, r2.c7, r2.c8) END FROM ("S 1"."T 1" r1 INNER JOIN "S 1"."T 1" r2 ON (((r1.c2 = r2."C 1")) AND (((r2."C 1" % 10) = 2)))) FOR UPDATE OF r1
-         ->  Hash Join
-               Output: ft2.ctid, ft1.*
-               Hash Cond: (ft2.c2 = ft1.c1)
-               ->  Foreign Scan on public.ft2
-                     Output: ft2.ctid, ft2.c2
-                     Remote SQL: SELECT c2, ctid FROM "S 1"."T 1" FOR UPDATE
-               ->  Hash
-                     Output: ft1.*, ft1.c1
-                     ->  Foreign Scan on public.ft1
-                           Output: ft1.*, ft1.c1
-                           Remote SQL: SELECT "C 1", c2, c3, c4, c5, c6, c7, c8 FROM "S 1"."T 1" WHERE ((("C 1" % 10) = 2))
-(17 rows)
+   ->  Foreign Delete
+         Remote SQL: DELETE FROM "S 1"."T 1" r1 USING "S 1"."T 1" r2 WHERE ((r1.c2 = r2."C 1")) AND (((r2."C 1" % 10) = 2))
+(3 rows)
 
 DELETE FROM ft2 USING ft1 WHERE ft1.c1 = ft2.c2 AND ft1.c1 % 10 = 2;
 SELECT c1,c2,c3,c4 FROM ft2 ORDER BY c1;
@@ -5127,6 +5414,195 @@ DELETE FROM ft2 WHERE c1 = 9999 RETURNING tableoid::regclass;
  ft2
 (1 row)
 
+-- Test UPDATE/DELETE with RETURNING on a three-table join
+INSERT INTO ft2 (c1,c2,c3)
+  SELECT id, id - 1200, to_char(id, 'FM00000') FROM generate_series(1201, 1300) id;
+EXPLAIN (verbose, costs off)
+UPDATE ft2 SET c3 = 'foo'
+  FROM ft4 INNER JOIN ft5 ON (ft4.c1 = ft5.c1)
+  WHERE ft2.c1 > 1200 AND ft2.c2 = ft4.c1
+  RETURNING ft2, ft2.*, ft4, ft4.*;       -- can be pushed down
+                                                                                                                                                                          QUERY PLAN                                                                                                                                                                           
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Update on public.ft2
+   Output: ft2.*, ft2.c1, ft2.c2, ft2.c3, ft2.c4, ft2.c5, ft2.c6, ft2.c7, ft2.c8, ft4.*, ft4.c1, ft4.c2, ft4.c3
+   ->  Foreign Update
+         Remote SQL: UPDATE "S 1"."T 1" r1 SET c3 = 'foo'::text FROM ("S 1"."T 3" r2 INNER JOIN "S 1"."T 4" r3 ON (TRUE)) WHERE ((r2.c1 = r3.c1)) AND ((r1.c2 = r2.c1)) AND ((r1."C 1" > 1200)) RETURNING r1."C 1", r1.c2, r1.c3, r1.c4, r1.c5, r1.c6, r1.c7, r1.c8, CASE WHEN (r2.*)::text IS NOT NULL THEN ROW(r2.c1, r2.c2, r2.c3) END, r2.c1, r2.c2, r2.c3
+(4 rows)
+
+UPDATE ft2 SET c3 = 'foo'
+  FROM ft4 INNER JOIN ft5 ON (ft4.c1 = ft5.c1)
+  WHERE ft2.c1 > 1200 AND ft2.c2 = ft4.c1
+  RETURNING ft2, ft2.*, ft4, ft4.*;
+              ft2               |  c1  | c2 | c3  | c4 | c5 | c6 |     c7     | c8 |      ft4       | c1 | c2 |   c3   
+--------------------------------+------+----+-----+----+----+----+------------+----+----------------+----+----+--------
+ (1206,6,foo,,,,"ft2       ",)  | 1206 |  6 | foo |    |    |    | ft2        |    | (6,7,AAA006)   |  6 |  7 | AAA006
+ (1212,12,foo,,,,"ft2       ",) | 1212 | 12 | foo |    |    |    | ft2        |    | (12,13,AAA012) | 12 | 13 | AAA012
+ (1218,18,foo,,,,"ft2       ",) | 1218 | 18 | foo |    |    |    | ft2        |    | (18,19,AAA018) | 18 | 19 | AAA018
+ (1224,24,foo,,,,"ft2       ",) | 1224 | 24 | foo |    |    |    | ft2        |    | (24,25,AAA024) | 24 | 25 | AAA024
+ (1230,30,foo,,,,"ft2       ",) | 1230 | 30 | foo |    |    |    | ft2        |    | (30,31,AAA030) | 30 | 31 | AAA030
+ (1236,36,foo,,,,"ft2       ",) | 1236 | 36 | foo |    |    |    | ft2        |    | (36,37,AAA036) | 36 | 37 | AAA036
+ (1242,42,foo,,,,"ft2       ",) | 1242 | 42 | foo |    |    |    | ft2        |    | (42,43,AAA042) | 42 | 43 | AAA042
+ (1248,48,foo,,,,"ft2       ",) | 1248 | 48 | foo |    |    |    | ft2        |    | (48,49,AAA048) | 48 | 49 | AAA048
+ (1254,54,foo,,,,"ft2       ",) | 1254 | 54 | foo |    |    |    | ft2        |    | (54,55,AAA054) | 54 | 55 | AAA054
+ (1260,60,foo,,,,"ft2       ",) | 1260 | 60 | foo |    |    |    | ft2        |    | (60,61,AAA060) | 60 | 61 | AAA060
+ (1266,66,foo,,,,"ft2       ",) | 1266 | 66 | foo |    |    |    | ft2        |    | (66,67,AAA066) | 66 | 67 | AAA066
+ (1272,72,foo,,,,"ft2       ",) | 1272 | 72 | foo |    |    |    | ft2        |    | (72,73,AAA072) | 72 | 73 | AAA072
+ (1278,78,foo,,,,"ft2       ",) | 1278 | 78 | foo |    |    |    | ft2        |    | (78,79,AAA078) | 78 | 79 | AAA078
+ (1284,84,foo,,,,"ft2       ",) | 1284 | 84 | foo |    |    |    | ft2        |    | (84,85,AAA084) | 84 | 85 | AAA084
+ (1290,90,foo,,,,"ft2       ",) | 1290 | 90 | foo |    |    |    | ft2        |    | (90,91,AAA090) | 90 | 91 | AAA090
+ (1296,96,foo,,,,"ft2       ",) | 1296 | 96 | foo |    |    |    | ft2        |    | (96,97,AAA096) | 96 | 97 | AAA096
+(16 rows)
+
+EXPLAIN (verbose, costs off)
+DELETE FROM ft2
+  USING ft4 LEFT JOIN ft5 ON (ft4.c1 = ft5.c1)
+  WHERE ft2.c1 > 1200 AND ft2.c1 % 10 = 0 AND ft2.c2 = ft4.c1
+  RETURNING 100;                          -- can be pushed down
+                                                                                            QUERY PLAN                                                                                             
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Delete on public.ft2
+   Output: 100
+   ->  Foreign Delete
+         Remote SQL: DELETE FROM "S 1"."T 1" r1 USING ("S 1"."T 3" r2 LEFT JOIN "S 1"."T 4" r3 ON (((r2.c1 = r3.c1)))) WHERE ((r1.c2 = r2.c1)) AND ((r1."C 1" > 1200)) AND (((r1."C 1" % 10) = 0))
+(4 rows)
+
+DELETE FROM ft2
+  USING ft4 LEFT JOIN ft5 ON (ft4.c1 = ft5.c1)
+  WHERE ft2.c1 > 1200 AND ft2.c1 % 10 = 0 AND ft2.c2 = ft4.c1
+  RETURNING 100;
+ ?column? 
+----------
+      100
+      100
+      100
+      100
+      100
+      100
+      100
+      100
+      100
+      100
+(10 rows)
+
+DELETE FROM ft2 WHERE ft2.c1 > 1200;
+-- Test UPDATE/DELETE with WHERE or JOIN/ON conditions containing
+-- user-defined operators/functions
+ALTER SERVER loopback OPTIONS (DROP extensions);
+INSERT INTO ft2 (c1,c2,c3)
+  SELECT id, id % 10, to_char(id, 'FM00000') FROM generate_series(2001, 2010) id;
+EXPLAIN (verbose, costs off)
+UPDATE ft2 SET c3 = 'bar' WHERE postgres_fdw_abs(c1) > 2000 RETURNING *;            -- can't be pushed down
+                                                QUERY PLAN                                                
+----------------------------------------------------------------------------------------------------------
+ Update on public.ft2
+   Output: c1, c2, c3, c4, c5, c6, c7, c8
+   Remote SQL: UPDATE "S 1"."T 1" SET c3 = $2 WHERE ctid = $1 RETURNING "C 1", c2, c3, c4, c5, c6, c7, c8
+   ->  Foreign Scan on public.ft2
+         Output: c1, c2, NULL::integer, 'bar'::text, c4, c5, c6, c7, c8, ctid
+         Filter: (postgres_fdw_abs(ft2.c1) > 2000)
+         Remote SQL: SELECT "C 1", c2, c4, c5, c6, c7, c8, ctid FROM "S 1"."T 1" FOR UPDATE
+(7 rows)
+
+UPDATE ft2 SET c3 = 'bar' WHERE postgres_fdw_abs(c1) > 2000 RETURNING *;
+  c1  | c2 | c3  | c4 | c5 | c6 |     c7     | c8 
+------+----+-----+----+----+----+------------+----
+ 2001 |  1 | bar |    |    |    | ft2        | 
+ 2002 |  2 | bar |    |    |    | ft2        | 
+ 2003 |  3 | bar |    |    |    | ft2        | 
+ 2004 |  4 | bar |    |    |    | ft2        | 
+ 2005 |  5 | bar |    |    |    | ft2        | 
+ 2006 |  6 | bar |    |    |    | ft2        | 
+ 2007 |  7 | bar |    |    |    | ft2        | 
+ 2008 |  8 | bar |    |    |    | ft2        | 
+ 2009 |  9 | bar |    |    |    | ft2        | 
+ 2010 |  0 | bar |    |    |    | ft2        | 
+(10 rows)
+
+EXPLAIN (verbose, costs off)
+UPDATE ft2 SET c3 = 'baz'
+  FROM ft4 INNER JOIN ft5 ON (ft4.c1 = ft5.c1)
+  WHERE ft2.c1 > 2000 AND ft2.c2 === ft4.c1
+  RETURNING ft2.*, ft4.*, ft5.*;                                                    -- can't be pushed down
+                                                                                                                                    QUERY PLAN                                                                                                                                     
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Update on public.ft2
+   Output: ft2.c1, ft2.c2, ft2.c3, ft2.c4, ft2.c5, ft2.c6, ft2.c7, ft2.c8, ft4.c1, ft4.c2, ft4.c3, ft5.c1, ft5.c2, ft5.c3
+   Remote SQL: UPDATE "S 1"."T 1" SET c3 = $2 WHERE ctid = $1 RETURNING "C 1", c2, c3, c4, c5, c6, c7, c8
+   ->  Hash Join
+         Output: ft2.c1, ft2.c2, NULL::integer, 'baz'::text, ft2.c4, ft2.c5, ft2.c6, ft2.c7, ft2.c8, ft2.ctid, ft4.*, ft5.*, ft4.c1, ft4.c2, ft4.c3, ft5.c1, ft5.c2, ft5.c3
+         Hash Cond: (ft4.c1 = ft5.c1)
+         ->  Foreign Scan
+               Output: ft2.c1, ft2.c2, ft2.c4, ft2.c5, ft2.c6, ft2.c7, ft2.c8, ft2.ctid, ft4.*, ft4.c1, ft4.c2, ft4.c3
+               Filter: (ft2.c2 === ft4.c1)
+               Relations: (public.ft2) INNER JOIN (public.ft4)
+               Remote SQL: SELECT r1."C 1", r1.c2, r1.c4, r1.c5, r1.c6, r1.c7, r1.c8, r1.ctid, CASE WHEN (r2.*)::text IS NOT NULL THEN ROW(r2.c1, r2.c2, r2.c3) END, r2.c1, r2.c2, r2.c3 FROM ("S 1"."T 1" r1 INNER JOIN "S 1"."T 3" r2 ON (((r1."C 1" > 2000)))) FOR UPDATE OF r1
+               ->  Nested Loop
+                     Output: ft2.c1, ft2.c2, ft2.c4, ft2.c5, ft2.c6, ft2.c7, ft2.c8, ft2.ctid, ft4.*, ft4.c1, ft4.c2, ft4.c3
+                     ->  Foreign Scan on public.ft2
+                           Output: ft2.c1, ft2.c2, ft2.c4, ft2.c5, ft2.c6, ft2.c7, ft2.c8, ft2.ctid
+                           Remote SQL: SELECT "C 1", c2, c4, c5, c6, c7, c8, ctid FROM "S 1"."T 1" WHERE (("C 1" > 2000)) FOR UPDATE
+                     ->  Foreign Scan on public.ft4
+                           Output: ft4.*, ft4.c1, ft4.c2, ft4.c3
+                           Remote SQL: SELECT c1, c2, c3 FROM "S 1"."T 3"
+         ->  Hash
+               Output: ft5.*, ft5.c1, ft5.c2, ft5.c3
+               ->  Foreign Scan on public.ft5
+                     Output: ft5.*, ft5.c1, ft5.c2, ft5.c3
+                     Remote SQL: SELECT c1, c2, c3 FROM "S 1"."T 4"
+(24 rows)
+
+UPDATE ft2 SET c3 = 'baz'
+  FROM ft4 INNER JOIN ft5 ON (ft4.c1 = ft5.c1)
+  WHERE ft2.c1 > 2000 AND ft2.c2 === ft4.c1
+  RETURNING ft2.*, ft4.*, ft5.*;
+  c1  | c2 | c3  | c4 | c5 | c6 |     c7     | c8 | c1 | c2 |   c3   | c1 | c2 |   c3   
+------+----+-----+----+----+----+------------+----+----+----+--------+----+----+--------
+ 2006 |  6 | baz |    |    |    | ft2        |    |  6 |  7 | AAA006 |  6 |  7 | AAA006
+(1 row)
+
+EXPLAIN (verbose, costs off)
+DELETE FROM ft2
+  USING ft4 INNER JOIN ft5 ON (ft4.c1 === ft5.c1)
+  WHERE ft2.c1 > 2000 AND ft2.c2 = ft4.c1
+  RETURNING ft2.c1, ft2.c2, ft2.c3;       -- can't be pushed down
+                                                                                                                                                                     QUERY PLAN                                                                                                                                                                     
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Delete on public.ft2
+   Output: ft2.c1, ft2.c2, ft2.c3
+   Remote SQL: DELETE FROM "S 1"."T 1" WHERE ctid = $1 RETURNING "C 1", c2, c3
+   ->  Foreign Scan
+         Output: ft2.ctid, ft4.*, ft5.*
+         Filter: (ft4.c1 === ft5.c1)
+         Relations: ((public.ft2) INNER JOIN (public.ft4)) INNER JOIN (public.ft5)
+         Remote SQL: SELECT r1.ctid, CASE WHEN (r2.*)::text IS NOT NULL THEN ROW(r2.c1, r2.c2, r2.c3) END, CASE WHEN (r3.*)::text IS NOT NULL THEN ROW(r3.c1, r3.c2, r3.c3) END, r2.c1, r3.c1 FROM (("S 1"."T 1" r1 INNER JOIN "S 1"."T 3" r2 ON (((r1.c2 = r2.c1)) AND ((r1."C 1" > 2000)))) INNER JOIN "S 1"."T 4" r3 ON (TRUE)) FOR UPDATE OF r1
+         ->  Nested Loop
+               Output: ft2.ctid, ft4.*, ft5.*, ft4.c1, ft5.c1
+               ->  Nested Loop
+                     Output: ft2.ctid, ft4.*, ft4.c1
+                     Join Filter: (ft2.c2 = ft4.c1)
+                     ->  Foreign Scan on public.ft2
+                           Output: ft2.ctid, ft2.c2
+                           Remote SQL: SELECT c2, ctid FROM "S 1"."T 1" WHERE (("C 1" > 2000)) FOR UPDATE
+                     ->  Foreign Scan on public.ft4
+                           Output: ft4.*, ft4.c1
+                           Remote SQL: SELECT c1, c2, c3 FROM "S 1"."T 3"
+               ->  Foreign Scan on public.ft5
+                     Output: ft5.*, ft5.c1
+                     Remote SQL: SELECT c1, c2, c3 FROM "S 1"."T 4"
+(22 rows)
+
+DELETE FROM ft2
+  USING ft4 INNER JOIN ft5 ON (ft4.c1 === ft5.c1)
+  WHERE ft2.c1 > 2000 AND ft2.c2 = ft4.c1
+  RETURNING ft2.c1, ft2.c2, ft2.c3;
+  c1  | c2 | c3  
+------+----+-----
+ 2006 |  6 | baz
+(1 row)
+
+DELETE FROM ft2 WHERE ft2.c1 > 2000;
+ALTER SERVER loopback OPTIONS (ADD extensions 'postgres_fdw');
 -- Test that trigger on remote table works as expected
 CREATE OR REPLACE FUNCTION "S 1".F_BRTRIG() RETURNS trigger AS $$
 BEGIN
@@ -5527,6 +6003,9 @@ select c2, count(*) from "S 1"."T 1" where c2 < 500 group by 1 order by 1;
  407 |   100
 (13 rows)
 
+-- Go back to use remote-estimate mode on ft2
+VACUUM ANALYZE "S 1"."T 1";
+ALTER FOREIGN TABLE ft2 OPTIONS (SET use_remote_estimate 'true');
 -- Above DMLs add data with c6 as NULL in ft1, so test ORDER BY NULLS LAST and NULLs
 -- FIRST behavior here.
 -- ORDER BY DESC NULLS LAST options
@@ -5692,6 +6171,66 @@ RESET constraint_exclusion;
 INSERT INTO ft1(c1, c2) VALUES(1111, 2);
 UPDATE ft1 SET c2 = c2 + 1 WHERE c1 = 1;
 ALTER FOREIGN TABLE ft1 DROP CONSTRAINT ft1_c2negative;
+-- ===================================================================
+-- test WITH CHECK OPTION constraints
+-- ===================================================================
+CREATE TABLE base_tbl (a int, b int);
+CREATE FOREIGN TABLE foreign_tbl (a int, b int)
+  SERVER loopback OPTIONS(table_name 'base_tbl');
+CREATE VIEW rw_view AS SELECT * FROM foreign_tbl
+  WHERE a < b WITH CHECK OPTION;
+\d+ rw_view
+                           View "public.rw_view"
+ Column |  Type   | Collation | Nullable | Default | Storage | Description 
+--------+---------+-----------+----------+---------+---------+-------------
+ a      | integer |           |          |         | plain   | 
+ b      | integer |           |          |         | plain   | 
+View definition:
+ SELECT foreign_tbl.a,
+    foreign_tbl.b
+   FROM foreign_tbl
+  WHERE foreign_tbl.a < foreign_tbl.b;
+Options: check_option=cascaded
+
+INSERT INTO rw_view VALUES (0, 10); -- ok
+INSERT INTO rw_view VALUES (10, 0); -- should fail
+ERROR:  new row violates check option for view "rw_view"
+DETAIL:  Failing row contains (10, 0).
+EXPLAIN (VERBOSE, COSTS OFF)
+UPDATE rw_view SET b = 20 WHERE a = 0; -- not pushed down
+                                            QUERY PLAN                                            
+--------------------------------------------------------------------------------------------------
+ Update on public.foreign_tbl
+   Remote SQL: UPDATE public.base_tbl SET b = $2 WHERE ctid = $1
+   ->  Foreign Scan on public.foreign_tbl
+         Output: foreign_tbl.a, 20, foreign_tbl.ctid
+         Remote SQL: SELECT a, ctid FROM public.base_tbl WHERE ((a < b)) AND ((a = 0)) FOR UPDATE
+(5 rows)
+
+UPDATE rw_view SET b = 20 WHERE a = 0; -- ok
+EXPLAIN (VERBOSE, COSTS OFF)
+UPDATE rw_view SET b = -20 WHERE a = 0; -- not pushed down
+                                            QUERY PLAN                                            
+--------------------------------------------------------------------------------------------------
+ Update on public.foreign_tbl
+   Remote SQL: UPDATE public.base_tbl SET b = $2 WHERE ctid = $1
+   ->  Foreign Scan on public.foreign_tbl
+         Output: foreign_tbl.a, '-20'::integer, foreign_tbl.ctid
+         Remote SQL: SELECT a, ctid FROM public.base_tbl WHERE ((a < b)) AND ((a = 0)) FOR UPDATE
+(5 rows)
+
+UPDATE rw_view SET b = -20 WHERE a = 0; -- should fail
+ERROR:  new row violates check option for view "rw_view"
+DETAIL:  Failing row contains (0, -20).
+SELECT * FROM foreign_tbl;
+ a | b  
+---+----
+ 0 | 20
+(1 row)
+
+DROP FOREIGN TABLE foreign_tbl CASCADE;
+NOTICE:  drop cascades to view rw_view
+DROP TABLE base_tbl;
 -- ===================================================================
 -- test serial columns (ie, sequence-based defaults)
 -- ===================================================================
@@ -6408,6 +6947,7 @@ select * from bar where f1 in (select f1 from foo) for update;
    Output: bar.f1, bar.f2, bar.ctid, bar.*, bar.tableoid, foo.ctid, foo.*, foo.tableoid
    ->  Hash Join
          Output: bar.f1, bar.f2, bar.ctid, bar.*, bar.tableoid, foo.ctid, foo.*, foo.tableoid
+         Inner Unique: true
          Hash Cond: (bar.f1 = foo.f1)
          ->  Append
                ->  Seq Scan on public.bar
@@ -6426,7 +6966,7 @@ select * from bar where f1 in (select f1 from foo) for update;
                            ->  Foreign Scan on public.foo2
                                  Output: foo2.ctid, foo2.*, foo2.tableoid, foo2.f1
                                  Remote SQL: SELECT f1, f2, f3, ctid FROM public.loct1
-(22 rows)
+(23 rows)
 
 select * from bar where f1 in (select f1 from foo) for update;
  f1 | f2 
@@ -6445,6 +6985,7 @@ select * from bar where f1 in (select f1 from foo) for share;
    Output: bar.f1, bar.f2, bar.ctid, bar.*, bar.tableoid, foo.ctid, foo.*, foo.tableoid
    ->  Hash Join
          Output: bar.f1, bar.f2, bar.ctid, bar.*, bar.tableoid, foo.ctid, foo.*, foo.tableoid
+         Inner Unique: true
          Hash Cond: (bar.f1 = foo.f1)
          ->  Append
                ->  Seq Scan on public.bar
@@ -6463,7 +7004,7 @@ select * from bar where f1 in (select f1 from foo) for share;
                            ->  Foreign Scan on public.foo2
                                  Output: foo2.ctid, foo2.*, foo2.tableoid, foo2.f1
                                  Remote SQL: SELECT f1, f2, f3, ctid FROM public.loct1
-(22 rows)
+(23 rows)
 
 select * from bar where f1 in (select f1 from foo) for share;
  f1 | f2 
@@ -6485,6 +7026,7 @@ update bar set f2 = f2 + 100 where f1 in (select f1 from foo);
      Remote SQL: UPDATE public.loct2 SET f2 = $2 WHERE ctid = $1
    ->  Hash Join
          Output: bar.f1, (bar.f2 + 100), bar.ctid, foo.ctid, foo.*, foo.tableoid
+         Inner Unique: true
          Hash Cond: (bar.f1 = foo.f1)
          ->  Seq Scan on public.bar
                Output: bar.f1, bar.f2, bar.ctid
@@ -6501,6 +7043,7 @@ update bar set f2 = f2 + 100 where f1 in (select f1 from foo);
                                  Remote SQL: SELECT f1, f2, f3, ctid FROM public.loct1
    ->  Hash Join
          Output: bar2.f1, (bar2.f2 + 100), bar2.f3, bar2.ctid, foo.ctid, foo.*, foo.tableoid
+         Inner Unique: true
          Hash Cond: (bar2.f1 = foo.f1)
          ->  Foreign Scan on public.bar2
                Output: bar2.f1, bar2.f2, bar2.f3, bar2.ctid
@@ -6516,7 +7059,7 @@ update bar set f2 = f2 + 100 where f1 in (select f1 from foo);
                            ->  Foreign Scan on public.foo2
                                  Output: foo2.ctid, foo2.*, foo2.tableoid, foo2.f1
                                  Remote SQL: SELECT f1, f2, f3, ctid FROM public.loct1
-(37 rows)
+(39 rows)
 
 update bar set f2 = f2 + 100 where f1 in (select f1 from foo);
 select tableoid::regclass, * from bar order by 1,2;
@@ -6757,6 +7300,63 @@ update bar set f2 = f2 + 100 returning *;
   7 | 277
 (6 rows)
 
+-- Test that UPDATE/DELETE with inherited target works with row-level triggers
+CREATE TRIGGER trig_row_before
+BEFORE UPDATE OR DELETE ON bar2
+FOR EACH ROW EXECUTE PROCEDURE trigger_data(23,'skidoo');
+CREATE TRIGGER trig_row_after
+AFTER UPDATE OR DELETE ON bar2
+FOR EACH ROW EXECUTE PROCEDURE trigger_data(23,'skidoo');
+explain (verbose, costs off)
+update bar set f2 = f2 + 100;
+                                      QUERY PLAN                                      
+--------------------------------------------------------------------------------------
+ Update on public.bar
+   Update on public.bar
+   Foreign Update on public.bar2
+     Remote SQL: UPDATE public.loct2 SET f2 = $2 WHERE ctid = $1 RETURNING f1, f2, f3
+   ->  Seq Scan on public.bar
+         Output: bar.f1, (bar.f2 + 100), bar.ctid
+   ->  Foreign Scan on public.bar2
+         Output: bar2.f1, (bar2.f2 + 100), bar2.f3, bar2.ctid, bar2.*
+         Remote SQL: SELECT f1, f2, f3, ctid FROM public.loct2 FOR UPDATE
+(9 rows)
+
+update bar set f2 = f2 + 100;
+NOTICE:  trig_row_before(23, skidoo) BEFORE ROW UPDATE ON bar2
+NOTICE:  OLD: (3,333,33),NEW: (3,433,33)
+NOTICE:  trig_row_before(23, skidoo) BEFORE ROW UPDATE ON bar2
+NOTICE:  OLD: (4,344,44),NEW: (4,444,44)
+NOTICE:  trig_row_before(23, skidoo) BEFORE ROW UPDATE ON bar2
+NOTICE:  OLD: (7,277,77),NEW: (7,377,77)
+NOTICE:  trig_row_after(23, skidoo) AFTER ROW UPDATE ON bar2
+NOTICE:  OLD: (3,333,33),NEW: (3,433,33)
+NOTICE:  trig_row_after(23, skidoo) AFTER ROW UPDATE ON bar2
+NOTICE:  OLD: (4,344,44),NEW: (4,444,44)
+NOTICE:  trig_row_after(23, skidoo) AFTER ROW UPDATE ON bar2
+NOTICE:  OLD: (7,277,77),NEW: (7,377,77)
+explain (verbose, costs off)
+delete from bar where f2 < 400;
+                                         QUERY PLAN                                          
+---------------------------------------------------------------------------------------------
+ Delete on public.bar
+   Delete on public.bar
+   Foreign Delete on public.bar2
+     Remote SQL: DELETE FROM public.loct2 WHERE ctid = $1 RETURNING f1, f2, f3
+   ->  Seq Scan on public.bar
+         Output: bar.ctid
+         Filter: (bar.f2 < 400)
+   ->  Foreign Scan on public.bar2
+         Output: bar2.ctid, bar2.*
+         Remote SQL: SELECT f1, f2, f3, ctid FROM public.loct2 WHERE ((f2 < 400)) FOR UPDATE
+(10 rows)
+
+delete from bar where f2 < 400;
+NOTICE:  trig_row_before(23, skidoo) BEFORE ROW DELETE ON bar2
+NOTICE:  OLD: (7,377,77)
+NOTICE:  trig_row_after(23, skidoo) AFTER ROW DELETE ON bar2
+NOTICE:  OLD: (7,377,77)
+-- cleanup
 drop table foo cascade;
 NOTICE:  drop cascades to foreign table foo2
 drop table bar cascade;
@@ -6774,59 +7374,70 @@ CREATE TABLE import_source.t3 (c1 timestamptz default now(), c2 typ1);
 CREATE TABLE import_source."x 4" (c1 float8, "C 2" text, c3 varchar(42));
 CREATE TABLE import_source."x 5" (c1 float8);
 ALTER TABLE import_source."x 5" DROP COLUMN c1;
+CREATE TABLE import_source.t4 (c1 int) PARTITION BY RANGE (c1);
+CREATE TABLE import_source.t4_part PARTITION OF import_source.t4
+  FOR VALUES FROM (1) TO (100);
 CREATE SCHEMA import_dest1;
 IMPORT FOREIGN SCHEMA import_source FROM SERVER loopback INTO import_dest1;
 \det+ import_dest1.*
                                      List of foreign tables
-    Schema    | Table |  Server  |                   FDW Options                   | Description 
+    Schema    | Table |  Server  |                   FDW options                   | Description 
 --------------+-------+----------+-------------------------------------------------+-------------
  import_dest1 | t1    | loopback | (schema_name 'import_source', table_name 't1')  | 
  import_dest1 | t2    | loopback | (schema_name 'import_source', table_name 't2')  | 
  import_dest1 | t3    | loopback | (schema_name 'import_source', table_name 't3')  | 
+ import_dest1 | t4    | loopback | (schema_name 'import_source', table_name 't4')  | 
  import_dest1 | x 4   | loopback | (schema_name 'import_source', table_name 'x 4') | 
  import_dest1 | x 5   | loopback | (schema_name 'import_source', table_name 'x 5') | 
-(5 rows)
+(6 rows)
 
 \d import_dest1.*
                          Foreign table "import_dest1.t1"
- Column |       Type        | Collation | Nullable | Default |    FDW Options     
+ Column |       Type        | Collation | Nullable | Default |    FDW options     
 --------+-------------------+-----------+----------+---------+--------------------
  c1     | integer           |           |          |         | (column_name 'c1')
  c2     | character varying |           | not null |         | (column_name 'c2')
 Server: loopback
-FDW Options: (schema_name 'import_source', table_name 't1')
+FDW options: (schema_name 'import_source', table_name 't1')
 
                          Foreign table "import_dest1.t2"
- Column |       Type        | Collation | Nullable | Default |    FDW Options     
+ Column |       Type        | Collation | Nullable | Default |    FDW options     
 --------+-------------------+-----------+----------+---------+--------------------
  c1     | integer           |           |          |         | (column_name 'c1')
  c2     | character varying |           |          |         | (column_name 'c2')
  c3     | text              | POSIX     |          |         | (column_name 'c3')
 Server: loopback
-FDW Options: (schema_name 'import_source', table_name 't2')
+FDW options: (schema_name 'import_source', table_name 't2')
 
                              Foreign table "import_dest1.t3"
- Column |           Type           | Collation | Nullable | Default |    FDW Options     
+ Column |           Type           | Collation | Nullable | Default |    FDW options     
 --------+--------------------------+-----------+----------+---------+--------------------
  c1     | timestamp with time zone |           |          |         | (column_name 'c1')
  c2     | typ1                     |           |          |         | (column_name 'c2')
 Server: loopback
-FDW Options: (schema_name 'import_source', table_name 't3')
+FDW options: (schema_name 'import_source', table_name 't3')
+
+                    Foreign table "import_dest1.t4"
+ Column |  Type   | Collation | Nullable | Default |    FDW options     
+--------+---------+-----------+----------+---------+--------------------
+ c1     | integer |           |          |         | (column_name 'c1')
+Server: loopback
+FDW options: (schema_name 'import_source', table_name 't4')
 
                            Foreign table "import_dest1.x 4"
- Column |         Type          | Collation | Nullable | Default |     FDW Options     
+ Column |         Type          | Collation | Nullable | Default |     FDW options     
 --------+-----------------------+-----------+----------+---------+---------------------
  c1     | double precision      |           |          |         | (column_name 'c1')
  C 2    | text                  |           |          |         | (column_name 'C 2')
  c3     | character varying(42) |           |          |         | (column_name 'c3')
 Server: loopback
-FDW Options: (schema_name 'import_source', table_name 'x 4')
+FDW options: (schema_name 'import_source', table_name 'x 4')
 
                Foreign table "import_dest1.x 5"
- Column | Type | Collation | Nullable | Default | FDW Options 
+ Column | Type | Collation | Nullable | Default | FDW options 
 --------+------+-----------+----------+---------+-------------
 Server: loopback
-FDW Options: (schema_name 'import_source', table_name 'x 5')
+FDW options: (schema_name 'import_source', table_name 'x 5')
 
 -- Options
 CREATE SCHEMA import_dest2;
@@ -6834,110 +7445,126 @@ IMPORT FOREIGN SCHEMA import_source FROM SERVER loopback INTO import_dest2
   OPTIONS (import_default 'true');
 \det+ import_dest2.*
                                      List of foreign tables
-    Schema    | Table |  Server  |                   FDW Options                   | Description 
+    Schema    | Table |  Server  |                   FDW options                   | Description 
 --------------+-------+----------+-------------------------------------------------+-------------
  import_dest2 | t1    | loopback | (schema_name 'import_source', table_name 't1')  | 
  import_dest2 | t2    | loopback | (schema_name 'import_source', table_name 't2')  | 
  import_dest2 | t3    | loopback | (schema_name 'import_source', table_name 't3')  | 
+ import_dest2 | t4    | loopback | (schema_name 'import_source', table_name 't4')  | 
  import_dest2 | x 4   | loopback | (schema_name 'import_source', table_name 'x 4') | 
  import_dest2 | x 5   | loopback | (schema_name 'import_source', table_name 'x 5') | 
-(5 rows)
+(6 rows)
 
 \d import_dest2.*
                          Foreign table "import_dest2.t1"
- Column |       Type        | Collation | Nullable | Default |    FDW Options     
+ Column |       Type        | Collation | Nullable | Default |    FDW options     
 --------+-------------------+-----------+----------+---------+--------------------
  c1     | integer           |           |          |         | (column_name 'c1')
  c2     | character varying |           | not null |         | (column_name 'c2')
 Server: loopback
-FDW Options: (schema_name 'import_source', table_name 't1')
+FDW options: (schema_name 'import_source', table_name 't1')
 
                          Foreign table "import_dest2.t2"
- Column |       Type        | Collation | Nullable | Default |    FDW Options     
+ Column |       Type        | Collation | Nullable | Default |    FDW options     
 --------+-------------------+-----------+----------+---------+--------------------
  c1     | integer           |           |          | 42      | (column_name 'c1')
  c2     | character varying |           |          |         | (column_name 'c2')
  c3     | text              | POSIX     |          |         | (column_name 'c3')
 Server: loopback
-FDW Options: (schema_name 'import_source', table_name 't2')
+FDW options: (schema_name 'import_source', table_name 't2')
 
                              Foreign table "import_dest2.t3"
- Column |           Type           | Collation | Nullable | Default |    FDW Options     
+ Column |           Type           | Collation | Nullable | Default |    FDW options     
 --------+--------------------------+-----------+----------+---------+--------------------
  c1     | timestamp with time zone |           |          | now()   | (column_name 'c1')
  c2     | typ1                     |           |          |         | (column_name 'c2')
 Server: loopback
-FDW Options: (schema_name 'import_source', table_name 't3')
+FDW options: (schema_name 'import_source', table_name 't3')
+
+                    Foreign table "import_dest2.t4"
+ Column |  Type   | Collation | Nullable | Default |    FDW options     
+--------+---------+-----------+----------+---------+--------------------
+ c1     | integer |           |          |         | (column_name 'c1')
+Server: loopback
+FDW options: (schema_name 'import_source', table_name 't4')
 
                            Foreign table "import_dest2.x 4"
- Column |         Type          | Collation | Nullable | Default |     FDW Options     
+ Column |         Type          | Collation | Nullable | Default |     FDW options     
 --------+-----------------------+-----------+----------+---------+---------------------
  c1     | double precision      |           |          |         | (column_name 'c1')
  C 2    | text                  |           |          |         | (column_name 'C 2')
  c3     | character varying(42) |           |          |         | (column_name 'c3')
 Server: loopback
-FDW Options: (schema_name 'import_source', table_name 'x 4')
+FDW options: (schema_name 'import_source', table_name 'x 4')
 
                Foreign table "import_dest2.x 5"
- Column | Type | Collation | Nullable | Default | FDW Options 
+ Column | Type | Collation | Nullable | Default | FDW options 
 --------+------+-----------+----------+---------+-------------
 Server: loopback
-FDW Options: (schema_name 'import_source', table_name 'x 5')
+FDW options: (schema_name 'import_source', table_name 'x 5')
 
 CREATE SCHEMA import_dest3;
 IMPORT FOREIGN SCHEMA import_source FROM SERVER loopback INTO import_dest3
   OPTIONS (import_collate 'false', import_not_null 'false');
 \det+ import_dest3.*
                                      List of foreign tables
-    Schema    | Table |  Server  |                   FDW Options                   | Description 
+    Schema    | Table |  Server  |                   FDW options                   | Description 
 --------------+-------+----------+-------------------------------------------------+-------------
  import_dest3 | t1    | loopback | (schema_name 'import_source', table_name 't1')  | 
  import_dest3 | t2    | loopback | (schema_name 'import_source', table_name 't2')  | 
  import_dest3 | t3    | loopback | (schema_name 'import_source', table_name 't3')  | 
+ import_dest3 | t4    | loopback | (schema_name 'import_source', table_name 't4')  | 
  import_dest3 | x 4   | loopback | (schema_name 'import_source', table_name 'x 4') | 
  import_dest3 | x 5   | loopback | (schema_name 'import_source', table_name 'x 5') | 
-(5 rows)
+(6 rows)
 
 \d import_dest3.*
                          Foreign table "import_dest3.t1"
- Column |       Type        | Collation | Nullable | Default |    FDW Options     
+ Column |       Type        | Collation | Nullable | Default |    FDW options     
 --------+-------------------+-----------+----------+---------+--------------------
  c1     | integer           |           |          |         | (column_name 'c1')
  c2     | character varying |           |          |         | (column_name 'c2')
 Server: loopback
-FDW Options: (schema_name 'import_source', table_name 't1')
+FDW options: (schema_name 'import_source', table_name 't1')
 
                          Foreign table "import_dest3.t2"
- Column |       Type        | Collation | Nullable | Default |    FDW Options     
+ Column |       Type        | Collation | Nullable | Default |    FDW options     
 --------+-------------------+-----------+----------+---------+--------------------
  c1     | integer           |           |          |         | (column_name 'c1')
  c2     | character varying |           |          |         | (column_name 'c2')
  c3     | text              |           |          |         | (column_name 'c3')
 Server: loopback
-FDW Options: (schema_name 'import_source', table_name 't2')
+FDW options: (schema_name 'import_source', table_name 't2')
 
                              Foreign table "import_dest3.t3"
- Column |           Type           | Collation | Nullable | Default |    FDW Options     
+ Column |           Type           | Collation | Nullable | Default |    FDW options     
 --------+--------------------------+-----------+----------+---------+--------------------
  c1     | timestamp with time zone |           |          |         | (column_name 'c1')
  c2     | typ1                     |           |          |         | (column_name 'c2')
 Server: loopback
-FDW Options: (schema_name 'import_source', table_name 't3')
+FDW options: (schema_name 'import_source', table_name 't3')
+
+                    Foreign table "import_dest3.t4"
+ Column |  Type   | Collation | Nullable | Default |    FDW options     
+--------+---------+-----------+----------+---------+--------------------
+ c1     | integer |           |          |         | (column_name 'c1')
+Server: loopback
+FDW options: (schema_name 'import_source', table_name 't4')
 
                            Foreign table "import_dest3.x 4"
- Column |         Type          | Collation | Nullable | Default |     FDW Options     
+ Column |         Type          | Collation | Nullable | Default |     FDW options     
 --------+-----------------------+-----------+----------+---------+---------------------
  c1     | double precision      |           |          |         | (column_name 'c1')
  C 2    | text                  |           |          |         | (column_name 'C 2')
  c3     | character varying(42) |           |          |         | (column_name 'c3')
 Server: loopback
-FDW Options: (schema_name 'import_source', table_name 'x 4')
+FDW options: (schema_name 'import_source', table_name 'x 4')
 
                Foreign table "import_dest3.x 5"
- Column | Type | Collation | Nullable | Default | FDW Options 
+ Column | Type | Collation | Nullable | Default | FDW options 
 --------+------+-----------+----------+---------+-------------
 Server: loopback
-FDW Options: (schema_name 'import_source', table_name 'x 5')
+FDW options: (schema_name 'import_source', table_name 'x 5')
 
 -- Check LIMIT TO and EXCEPT
 CREATE SCHEMA import_dest4;
@@ -6945,7 +7572,7 @@ IMPORT FOREIGN SCHEMA import_source LIMIT TO (t1, nonesuch)
   FROM SERVER loopback INTO import_dest4;
 \det+ import_dest4.*
                                      List of foreign tables
-    Schema    | Table |  Server  |                  FDW Options                   | Description 
+    Schema    | Table |  Server  |                  FDW options                   | Description 
 --------------+-------+----------+------------------------------------------------+-------------
  import_dest4 | t1    | loopback | (schema_name 'import_source', table_name 't1') | 
 (1 row)
@@ -6954,13 +7581,14 @@ IMPORT FOREIGN SCHEMA import_source EXCEPT (t1, "x 4", nonesuch)
   FROM SERVER loopback INTO import_dest4;
 \det+ import_dest4.*
                                      List of foreign tables
-    Schema    | Table |  Server  |                   FDW Options                   | Description 
+    Schema    | Table |  Server  |                   FDW options                   | Description 
 --------------+-------+----------+-------------------------------------------------+-------------
  import_dest4 | t1    | loopback | (schema_name 'import_source', table_name 't1')  | 
  import_dest4 | t2    | loopback | (schema_name 'import_source', table_name 't2')  | 
  import_dest4 | t3    | loopback | (schema_name 'import_source', table_name 't3')  | 
+ import_dest4 | t4    | loopback | (schema_name 'import_source', table_name 't4')  | 
  import_dest4 | x 5   | loopback | (schema_name 'import_source', table_name 'x 5') | 
-(4 rows)
+(5 rows)
 
 -- Assorted error cases
 IMPORT FOREIGN SCHEMA import_source FROM SERVER loopback INTO import_dest4;
@@ -7053,3 +7681,163 @@ AND ftoptions @> array['fetch_size=60000'];
 (1 row)
 
 ROLLBACK;
+-- ===================================================================
+-- test partitionwise joins
+-- ===================================================================
+SET enable_partitionwise_join=on;
+CREATE TABLE fprt1 (a int, b int, c varchar) PARTITION BY RANGE(a);
+CREATE TABLE fprt1_p1 (LIKE fprt1);
+CREATE TABLE fprt1_p2 (LIKE fprt1);
+INSERT INTO fprt1_p1 SELECT i, i, to_char(i/50, 'FM0000') FROM generate_series(0, 249, 2) i;
+INSERT INTO fprt1_p2 SELECT i, i, to_char(i/50, 'FM0000') FROM generate_series(250, 499, 2) i;
+CREATE FOREIGN TABLE ftprt1_p1 PARTITION OF fprt1 FOR VALUES FROM (0) TO (250)
+	SERVER loopback OPTIONS (table_name 'fprt1_p1', use_remote_estimate 'true');
+CREATE FOREIGN TABLE ftprt1_p2 PARTITION OF fprt1 FOR VALUES FROM (250) TO (500)
+	SERVER loopback OPTIONS (TABLE_NAME 'fprt1_p2');
+ANALYZE fprt1;
+ANALYZE fprt1_p1;
+ANALYZE fprt1_p2;
+CREATE TABLE fprt2 (a int, b int, c varchar) PARTITION BY RANGE(b);
+CREATE TABLE fprt2_p1 (LIKE fprt2);
+CREATE TABLE fprt2_p2 (LIKE fprt2);
+INSERT INTO fprt2_p1 SELECT i, i, to_char(i/50, 'FM0000') FROM generate_series(0, 249, 3) i;
+INSERT INTO fprt2_p2 SELECT i, i, to_char(i/50, 'FM0000') FROM generate_series(250, 499, 3) i;
+CREATE FOREIGN TABLE ftprt2_p1 PARTITION OF fprt2 FOR VALUES FROM (0) TO (250)
+	SERVER loopback OPTIONS (table_name 'fprt2_p1', use_remote_estimate 'true');
+CREATE FOREIGN TABLE ftprt2_p2 PARTITION OF fprt2 FOR VALUES FROM (250) TO (500)
+	SERVER loopback OPTIONS (table_name 'fprt2_p2', use_remote_estimate 'true');
+ANALYZE fprt2;
+ANALYZE fprt2_p1;
+ANALYZE fprt2_p2;
+-- inner join three tables
+EXPLAIN (COSTS OFF)
+SELECT t1.a,t2.b,t3.c FROM fprt1 t1 INNER JOIN fprt2 t2 ON (t1.a = t2.b) INNER JOIN fprt1 t3 ON (t2.b = t3.a) WHERE t1.a % 25 =0 ORDER BY 1,2,3;
+                                                     QUERY PLAN                                                     
+--------------------------------------------------------------------------------------------------------------------
+ Sort
+   Sort Key: t1.a, t3.c
+   ->  Append
+         ->  Foreign Scan
+               Relations: ((public.ftprt1_p1 t1) INNER JOIN (public.ftprt2_p1 t2)) INNER JOIN (public.ftprt1_p1 t3)
+         ->  Foreign Scan
+               Relations: ((public.ftprt1_p2 t1) INNER JOIN (public.ftprt2_p2 t2)) INNER JOIN (public.ftprt1_p2 t3)
+(7 rows)
+
+SELECT t1.a,t2.b,t3.c FROM fprt1 t1 INNER JOIN fprt2 t2 ON (t1.a = t2.b) INNER JOIN fprt1 t3 ON (t2.b = t3.a) WHERE t1.a % 25 =0 ORDER BY 1,2,3;
+  a  |  b  |  c   
+-----+-----+------
+   0 |   0 | 0000
+ 150 | 150 | 0003
+ 250 | 250 | 0005
+ 400 | 400 | 0008
+(4 rows)
+
+-- left outer join + nullable clasue
+EXPLAIN (COSTS OFF)
+SELECT t1.a,t2.b,t2.c FROM fprt1 t1 LEFT JOIN (SELECT * FROM fprt2 WHERE a < 10) t2 ON (t1.a = t2.b and t1.b = t2.a) WHERE t1.a < 10 ORDER BY 1,2,3;
+                                    QUERY PLAN                                     
+-----------------------------------------------------------------------------------
+ Sort
+   Sort Key: t1.a, ftprt2_p1.b, ftprt2_p1.c
+   ->  Append
+         ->  Foreign Scan
+               Relations: (public.ftprt1_p1 t1) LEFT JOIN (public.ftprt2_p1 fprt2)
+(5 rows)
+
+SELECT t1.a,t2.b,t2.c FROM fprt1 t1 LEFT JOIN (SELECT * FROM fprt2 WHERE a < 10) t2 ON (t1.a = t2.b and t1.b = t2.a) WHERE t1.a < 10 ORDER BY 1,2,3;
+ a | b |  c   
+---+---+------
+ 0 | 0 | 0000
+ 2 |   | 
+ 4 |   | 
+ 6 | 6 | 0000
+ 8 |   | 
+(5 rows)
+
+-- with whole-row reference
+EXPLAIN (COSTS OFF)
+SELECT t1,t2 FROM fprt1 t1 JOIN fprt2 t2 ON (t1.a = t2.b and t1.b = t2.a) WHERE t1.a % 25 =0 ORDER BY 1,2;
+                                   QUERY PLAN                                    
+---------------------------------------------------------------------------------
+ Sort
+   Sort Key: ((t1.*)::fprt1), ((t2.*)::fprt2)
+   ->  Append
+         ->  Foreign Scan
+               Relations: (public.ftprt1_p1 t1) INNER JOIN (public.ftprt2_p1 t2)
+         ->  Foreign Scan
+               Relations: (public.ftprt1_p2 t1) INNER JOIN (public.ftprt2_p2 t2)
+(7 rows)
+
+SELECT t1,t2 FROM fprt1 t1 JOIN fprt2 t2 ON (t1.a = t2.b and t1.b = t2.a) WHERE t1.a % 25 =0 ORDER BY 1,2;
+       t1       |       t2       
+----------------+----------------
+ (0,0,0000)     | (0,0,0000)
+ (150,150,0003) | (150,150,0003)
+ (250,250,0005) | (250,250,0005)
+ (400,400,0008) | (400,400,0008)
+(4 rows)
+
+-- join with lateral reference
+EXPLAIN (COSTS OFF)
+SELECT t1.a,t1.b FROM fprt1 t1, LATERAL (SELECT t2.a, t2.b FROM fprt2 t2 WHERE t1.a = t2.b AND t1.b = t2.a) q WHERE t1.a%25 = 0 ORDER BY 1,2;
+                                   QUERY PLAN                                    
+---------------------------------------------------------------------------------
+ Sort
+   Sort Key: t1.a, t1.b
+   ->  Append
+         ->  Foreign Scan
+               Relations: (public.ftprt1_p1 t1) INNER JOIN (public.ftprt2_p1 t2)
+         ->  Foreign Scan
+               Relations: (public.ftprt1_p2 t1) INNER JOIN (public.ftprt2_p2 t2)
+(7 rows)
+
+SELECT t1.a,t1.b FROM fprt1 t1, LATERAL (SELECT t2.a, t2.b FROM fprt2 t2 WHERE t1.a = t2.b AND t1.b = t2.a) q WHERE t1.a%25 = 0 ORDER BY 1,2;
+  a  |  b  
+-----+-----
+   0 |   0
+ 150 | 150
+ 250 | 250
+ 400 | 400
+(4 rows)
+
+-- with PHVs, partition-wise join selected but no join pushdown
+EXPLAIN (COSTS OFF)
+SELECT t1.a, t1.phv, t2.b, t2.phv FROM (SELECT 't1_phv' phv, * FROM fprt1 WHERE a % 25 = 0) t1 FULL JOIN (SELECT 't2_phv' phv, * FROM fprt2 WHERE b % 25 = 0) t2 ON (t1.a = t2.b) ORDER BY t1.a, t2.b;
+                         QUERY PLAN                         
+------------------------------------------------------------
+ Sort
+   Sort Key: ftprt1_p1.a, ftprt2_p1.b
+   ->  Result
+         ->  Append
+               ->  Hash Full Join
+                     Hash Cond: (ftprt1_p1.a = ftprt2_p1.b)
+                     ->  Foreign Scan on ftprt1_p1
+                     ->  Hash
+                           ->  Foreign Scan on ftprt2_p1
+               ->  Hash Full Join
+                     Hash Cond: (ftprt1_p2.a = ftprt2_p2.b)
+                     ->  Foreign Scan on ftprt1_p2
+                     ->  Hash
+                           ->  Foreign Scan on ftprt2_p2
+(14 rows)
+
+SELECT t1.a, t1.phv, t2.b, t2.phv FROM (SELECT 't1_phv' phv, * FROM fprt1 WHERE a % 25 = 0) t1 FULL JOIN (SELECT 't2_phv' phv, * FROM fprt2 WHERE b % 25 = 0) t2 ON (t1.a = t2.b) ORDER BY t1.a, t2.b;
+  a  |  phv   |  b  |  phv   
+-----+--------+-----+--------
+   0 | t1_phv |   0 | t2_phv
+  50 | t1_phv |     | 
+ 100 | t1_phv |     | 
+ 150 | t1_phv | 150 | t2_phv
+ 200 | t1_phv |     | 
+ 250 | t1_phv | 250 | t2_phv
+ 300 | t1_phv |     | 
+ 350 | t1_phv |     | 
+ 400 | t1_phv | 400 | t2_phv
+ 450 | t1_phv |     | 
+     |        |  75 | t2_phv
+     |        | 225 | t2_phv
+     |        | 325 | t2_phv
+     |        | 475 | t2_phv
+(14 rows)
+
+RESET enable_partitionwise_join;

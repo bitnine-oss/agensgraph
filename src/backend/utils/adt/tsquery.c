@@ -3,7 +3,7 @@
  * tsquery.c
  *	  I/O functions for tsquery
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
  *
  *
  * IDENTIFICATION
@@ -113,7 +113,7 @@ get_modifiers(char *buf, int16 *weight, bool *prefix)
  * Parse phrase operator. The operator
  * may take the following forms:
  *
- *		a <X> b (distance is no greater than X)
+ *		a <N> b (distance is exactly N lexemes)
  *		a <-> b (default distance = 1)
  *
  * The buffer should begin with '<' char
@@ -129,10 +129,9 @@ parse_phrase_operator(char *buf, int16 *distance)
 		PHRASE_ERR,
 		PHRASE_FINISH
 	}			state = PHRASE_OPEN;
-
 	char	   *ptr = buf;
 	char	   *endptr;
-	long		l = 1;
+	long		l = 1;			/* default distance */
 
 	while (*ptr)
 	{
@@ -151,16 +150,17 @@ parse_phrase_operator(char *buf, int16 *distance)
 					ptr++;
 					break;
 				}
-				else if (!t_isdigit(ptr))
+				if (!t_isdigit(ptr))
 				{
 					state = PHRASE_ERR;
 					break;
 				}
 
+				errno = 0;
 				l = strtol(ptr, &endptr, 10);
 				if (ptr == endptr)
 					state = PHRASE_ERR;
-				else if (errno == ERANGE || l > MAXENTRYPOS)
+				else if (errno == ERANGE || l < 0 || l > MAXENTRYPOS)
 					ereport(ERROR,
 							(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 							 errmsg("distance in phrase operator should not be greater than %d",
@@ -234,8 +234,8 @@ gettoken_query(TSQueryParserState state,
 			case WAITOPERAND:
 				if (t_iseq(state->buf, '!'))
 				{
-					(state->buf)++;		/* can safely ++, t_iseq guarantee
-										 * that pg_mblen()==1 */
+					(state->buf)++; /* can safely ++, t_iseq guarantee that
+									 * pg_mblen()==1 */
 					*operator = OP_NOT;
 					state->state = WAITOPERAND;
 					return PT_OPR;
@@ -458,7 +458,7 @@ cleanOpStack(TSQueryParserState state,
 	{
 		/* NOT is right associative unlike to others */
 		if ((op != OP_NOT && opPriority > OP_PRIORITY(stack[*lenstack - 1].op)) ||
-		(op == OP_NOT && opPriority >= OP_PRIORITY(stack[*lenstack - 1].op)))
+			(op == OP_NOT && opPriority >= OP_PRIORITY(stack[*lenstack - 1].op)))
 			break;
 
 		(*lenstack)--;
@@ -542,7 +542,7 @@ findoprnd_recurse(QueryItem *ptr, uint32 *pos, int nnodes, bool *needcleanup)
 
 		if (ptr[*pos].qoperator.oper == OP_NOT)
 		{
-			ptr[*pos].qoperator.left = 1;		/* fixed offset */
+			ptr[*pos].qoperator.left = 1;	/* fixed offset */
 			(*pos)++;
 
 			/* process the only argument */
@@ -551,7 +551,7 @@ findoprnd_recurse(QueryItem *ptr, uint32 *pos, int nnodes, bool *needcleanup)
 		else
 		{
 			QueryOperator *curitem = &ptr[*pos].qoperator;
-			int			tmp = *pos;		/* save current position */
+			int			tmp = *pos; /* save current position */
 
 			Assert(curitem->oper == OP_AND ||
 				   curitem->oper == OP_OR ||
@@ -952,23 +952,22 @@ tsquerysend(PG_FUNCTION_ARGS)
 
 	pq_begintypsend(&buf);
 
-	pq_sendint(&buf, query->size, sizeof(uint32));
+	pq_sendint32(&buf, query->size);
 	for (i = 0; i < query->size; i++)
 	{
-		pq_sendint(&buf, item->type, sizeof(item->type));
+		pq_sendint8(&buf, item->type);
 
 		switch (item->type)
 		{
 			case QI_VAL:
-				pq_sendint(&buf, item->qoperand.weight, sizeof(uint8));
-				pq_sendint(&buf, item->qoperand.prefix, sizeof(uint8));
+				pq_sendint8(&buf, item->qoperand.weight);
+				pq_sendint8(&buf, item->qoperand.prefix);
 				pq_sendstring(&buf, GETOPERAND(query) + item->qoperand.distance);
 				break;
 			case QI_OPR:
-				pq_sendint(&buf, item->qoperator.oper, sizeof(item->qoperator.oper));
+				pq_sendint8(&buf, item->qoperator.oper);
 				if (item->qoperator.oper == OP_PHRASE)
-					pq_sendint(&buf, item->qoperator.distance,
-							   sizeof(item->qoperator.distance));
+					pq_sendint16(&buf, item->qoperator.distance);
 				break;
 			default:
 				elog(ERROR, "unrecognized tsquery node type: %d", item->type);
@@ -1015,7 +1014,8 @@ tsqueryrecv(PG_FUNCTION_ARGS)
 
 		if (item->type == QI_VAL)
 		{
-			size_t		val_len;	/* length after recoding to server encoding */
+			size_t		val_len;	/* length after recoding to server
+									 * encoding */
 			uint8		weight;
 			uint8		prefix;
 			const char *val;
@@ -1055,7 +1055,7 @@ tsqueryrecv(PG_FUNCTION_ARGS)
 			 */
 			operands[i] = val;
 
-			datalen += val_len + 1;		/* + 1 for the '\0' terminator */
+			datalen += val_len + 1; /* + 1 for the '\0' terminator */
 		}
 		else if (item->type == QI_OPR)
 		{

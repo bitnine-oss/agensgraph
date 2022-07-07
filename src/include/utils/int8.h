@@ -4,7 +4,7 @@
  *	  Declarations for operations on 64-bit integers.
  *
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/utils/int8.h
@@ -22,4 +22,4 @@
 
 extern bool scanint8(const char *str, bool errorOK, int64 *result);
 
-#endif   /* INT8_H */
+#endif							/* INT8_H */

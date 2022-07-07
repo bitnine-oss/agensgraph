@@ -3,7 +3,7 @@
  * commit_ts.c
  *		PostgreSQL commit timestamp manager
  *
- * This module is a pg_clog-like system that stores the commit timestamp
+ * This module is a pg_xact-like system that stores the commit timestamp
  * for each transaction.
  *
  * XLOG interactions: this module generates an XLOG record whenever a new
@@ -15,7 +15,7 @@
  * re-perform the status update on redo; so we need make no additional XLOG
  * entry here.
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/backend/access/transam/commit_ts.c
@@ -292,7 +292,7 @@ TransactionIdGetCommitTsData(TransactionId xid, TimestampTz *ts,
 	if (!TransactionIdIsValid(xid))
 		ereport(ERROR,
 				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-		errmsg("cannot retrieve commit timestamp for transaction %u", xid)));
+				 errmsg("cannot retrieve commit timestamp for transaction %u", xid)));
 	else if (!TransactionIdIsNormal(xid))
 	{
 		/* frozen and bootstrap xids are always committed far in the past */
@@ -531,7 +531,7 @@ BootStrapCommitTs(void)
 
 /*
  * Initialize (or reinitialize) a page of CommitTs to zeroes.
- * If writeXlog is TRUE, also emit an XLOG record saying we did this.
+ * If writeXlog is true, also emit an XLOG record saying we did this.
  *
  * The page is not actually written, just set up in shared memory.
  * The slot number of the new page is returned.
@@ -621,7 +621,7 @@ CommitTsParameterChange(bool newvalue, bool oldvalue)
  *
  * The reason why this SLRU needs separate activation/deactivation functions is
  * that it can be enabled/disabled during start and the activation/deactivation
- * on master is propagated to slave via replay. Other SLRUs don't have this
+ * on master is propagated to standby via replay. Other SLRUs don't have this
  * property and they can be just initialized during normal startup.
  *
  * This is in charge of creating the currently active segment, if it's not
@@ -746,6 +746,12 @@ ShutdownCommitTs(void)
 {
 	/* Flush dirty CommitTs pages to disk */
 	SimpleLruFlush(CommitTsCtl, false);
+
+	/*
+	 * fsync pg_commit_ts to ensure that any files flushed previously are
+	 * durably on disk.
+	 */
+	fsync_fname("pg_commit_ts", true);
 }
 
 /*
@@ -756,6 +762,12 @@ CheckPointCommitTs(void)
 {
 	/* Flush dirty CommitTs pages to disk */
 	SimpleLruFlush(CommitTsCtl, true);
+
+	/*
+	 * fsync pg_commit_ts to ensure that any files flushed previously are
+	 * durably on disk.
+	 */
+	fsync_fname("pg_commit_ts", true);
 }
 
 /*
@@ -865,7 +877,7 @@ AdvanceOldestCommitTsXid(TransactionId oldestXact)
 {
 	LWLockAcquire(CommitTsLock, LW_EXCLUSIVE);
 	if (ShmemVariableCache->oldestCommitTsXid != InvalidTransactionId &&
-	TransactionIdPrecedes(ShmemVariableCache->oldestCommitTsXid, oldestXact))
+		TransactionIdPrecedes(ShmemVariableCache->oldestCommitTsXid, oldestXact))
 		ShmemVariableCache->oldestCommitTsXid = oldestXact;
 	LWLockRelease(CommitTsLock);
 }

@@ -30,7 +30,7 @@
  * intentional denormalization of the catalogs to buy lookup speed.
  *
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/catalog/pg_amop.h
@@ -373,6 +373,16 @@ DATA(insert (	1984   829 829 4 s 1225 403 0 ));
 DATA(insert (	1984   829 829 5 s 1224 403 0 ));
 
 /*
+ *	btree macaddr8
+ */
+
+DATA(insert (	3371   774 774 1 s 3364 403 0 ));
+DATA(insert (	3371   774 774 2 s 3365 403 0 ));
+DATA(insert (	3371   774 774 3 s 3362 403 0 ));
+DATA(insert (	3371   774 774 4 s 3367 403 0 ));
+DATA(insert (	3371   774 774 5 s 3366 403 0 ));
+
+/*
  *	btree network
  */
 
@@ -553,6 +563,8 @@ DATA(insert (	1977   20 23 1 s	416  405 0 ));
 DATA(insert (	1983   1186 1186 1 s 1330 405 0 ));
 /* macaddr_ops */
 DATA(insert (	1985   829 829 1 s 1220 405 0 ));
+/* macaddr8_ops */
+DATA(insert (	3372   774 774 1 s 3362 405 0 ));
 /* name_ops */
 DATA(insert (	1987   19 19 1 s	93	405 0 ));
 /* oid_ops */
@@ -846,6 +858,22 @@ DATA(insert (	5000	603  603 11 s	2573	4000 0 ));
 DATA(insert (	5000	603  603 12 s	2572	4000 0 ));
 
 /*
+ * SP-GiST poly_ops (supports polygons)
+ */
+DATA(insert (	5008   604	604  1 s	 485	4000 0 ));
+DATA(insert (	5008   604	604  2 s	 486	4000 0 ));
+DATA(insert (	5008   604	604  3 s	 492	4000 0 ));
+DATA(insert (	5008   604	604  4 s	 487	4000 0 ));
+DATA(insert (	5008   604	604  5 s	 488	4000 0 ));
+DATA(insert (	5008   604	604  6 s	 491	4000 0 ));
+DATA(insert (	5008   604	604  7 s	 490	4000 0 ));
+DATA(insert (	5008   604	604  8 s	 489	4000 0 ));
+DATA(insert (	5008   604	604  9 s	2575	4000 0 ));
+DATA(insert (	5008   604	604 10 s	2574	4000 0 ));
+DATA(insert (	5008   604	604 11 s	2577	4000 0 ));
+DATA(insert (	5008   604	604 12 s	2576	4000 0 ));
+
+/*
  * GiST inet_ops
  */
 DATA(insert (	3550	869 869 3 s		3552 783 0 ));
@@ -999,6 +1027,12 @@ DATA(insert (	4074	829  829 2 s	  1223	  3580 0 ));
 DATA(insert (	4074	829  829 3 s	  1220	  3580 0 ));
 DATA(insert (	4074	829  829 4 s	  1225	  3580 0 ));
 DATA(insert (	4074	829  829 5 s	  1224	  3580 0 ));
+/* minmax macaddr8 */
+DATA(insert (	4109	774  774 1 s	  3364	  3580 0 ));
+DATA(insert (	4109	774  774 2 s	  3365	  3580 0 ));
+DATA(insert (	4109	774  774 3 s	  3362	  3580 0 ));
+DATA(insert (	4109	774  774 4 s	  3367	  3580 0 ));
+DATA(insert (	4109	774  774 5 s	  3366	  3580 0 ));
 /* minmax inet */
 DATA(insert (	4075	869  869 1 s	  1203	  3580 0 ));
 DATA(insert (	4075	869  869 2 s	  1204	  3580 0 ));
@@ -1178,4 +1212,4 @@ DATA(insert ( 7167 7062 7062  3 s 7161 403 0 ));
 DATA(insert ( 7167 7062 7062  4 s 7166 403 0 ));
 DATA(insert ( 7167 7062 7062  5 s 7164 403 0 ));
 
-#endif   /* PG_AMOP_H */
+#endif							/* PG_AMOP_H */

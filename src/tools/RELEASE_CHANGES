@@ -31,19 +31,21 @@ For Major Releases
 (in addition to the above)
 
 * Release notes
-	o use git log or src/tools/git_changelog to find the relevant commits
+	o use src/tools/git_changelog
+	o retain the relevant commits
 		o  new features and options
 		o  major performance improvements
 		o  bug fixes for serious or common bugs
 		o  incompatibilities and significant user-visible changes
 		o  major source code changes
-	o check completion of items that have been marked as completed at
-	  http://wiki.postgresql.org/wiki/Todo
-	o remove completed TODO items
+	o update TODO list, http://wiki.postgresql.org/wiki/Todo
+		o  verify items marked as completed are completed
+		o  mark additional items as completed
+		o  remove completed items
 	o group items into categories
-	o select major features
 	o select incompatibilities
-	o add documentation for items
+	o add documentation links for items
+	o select major features
 
 * Documentation
 	o document all new features
@@ -66,12 +68,14 @@ For Major Releases
 Starting a New Development Cycle
 ================================
 
+* Typically, we do pgindent and perltidy runs just before branching
+
 * Create a branch in git for maintenance of the previous release
 	o on master branch, do:
 		git pull           # be sure you have the latest "master"
 		git push origin master:refs/heads/"new-branch-name"
 	  for example,
-		git push origin master:refs/heads/REL9_2_STABLE
+		git push origin master:refs/heads/REL_10_STABLE
 
 * Add new branch's name to list in src/tools/git_changelog
 

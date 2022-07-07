@@ -4,7 +4,7 @@
  *
  * PostgreSQL object comments utility code.
  *
- * Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Copyright (c) 1996-2018, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
  *	  src/backend/commands/comment.c
@@ -48,12 +48,11 @@ CommentObject(CommentStmt *stmt)
 	 * (which is really pg_restore's fault, but for now we will work around
 	 * the problem here).  Consensus is that the best fix is to treat wrong
 	 * database name as a WARNING not an ERROR; hence, the following special
-	 * case.  (If the length of stmt->objname is not 1, get_object_address
-	 * will throw an error below; that's OK.)
+	 * case.
 	 */
-	if (stmt->objtype == OBJECT_DATABASE && list_length(stmt->objname) == 1)
+	if (stmt->objtype == OBJECT_DATABASE)
 	{
-		char	   *database = strVal(linitial(stmt->objname));
+		char	   *database = strVal((Value *) stmt->object);
 
 		if (!OidIsValid(get_database_oid(database, true)))
 		{
@@ -70,12 +69,12 @@ CommentObject(CommentStmt *stmt)
 	 * does not exist, and will also acquire a lock on the target to guard
 	 * against concurrent DROP operations.
 	 */
-	address = get_object_address(stmt->objtype, stmt->objname, stmt->objargs,
+	address = get_object_address(stmt->objtype, stmt->object,
 								 &relation, ShareUpdateExclusiveLock, false);
 
 	/* Require ownership of the target object. */
 	check_object_ownership(GetUserId(), stmt->objtype, address,
-						   stmt->objname, stmt->objargs, relation);
+						   stmt->object, relation);
 
 	/* Perform other integrity checks as needed. */
 	switch (stmt->objtype)
@@ -95,7 +94,8 @@ CommentObject(CommentStmt *stmt)
 				relation->rd_rel->relkind != RELKIND_VIEW &&
 				relation->rd_rel->relkind != RELKIND_MATVIEW &&
 				relation->rd_rel->relkind != RELKIND_COMPOSITE_TYPE &&
-				relation->rd_rel->relkind != RELKIND_FOREIGN_TABLE)
+				relation->rd_rel->relkind != RELKIND_FOREIGN_TABLE &&
+				relation->rd_rel->relkind != RELKIND_PARTITIONED_TABLE)
 				ereport(ERROR,
 						(errcode(ERRCODE_WRONG_OBJECT_TYPE),
 						 errmsg("\"%s\" is not a table, view, materialized view, composite type, or foreign table",
@@ -139,7 +139,7 @@ CommentObject(CommentStmt *stmt)
  * existing comment for the specified key.
  */
 void
-CreateComments(Oid oid, Oid classoid, int32 subid, char *comment)
+CreateComments(Oid oid, Oid classoid, int32 subid, const char *comment)
 {
 	Relation	description;
 	ScanKeyData skey[3];
@@ -234,7 +234,7 @@ CreateComments(Oid oid, Oid classoid, int32 subid, char *comment)
  * existing comment for the specified key.
  */
 void
-CreateSharedComments(Oid oid, Oid classoid, char *comment)
+CreateSharedComments(Oid oid, Oid classoid, const char *comment)
 {
 	Relation	shdescription;
 	ScanKeyData skey[2];

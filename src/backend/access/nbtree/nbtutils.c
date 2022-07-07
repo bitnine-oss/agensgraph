@@ -3,7 +3,7 @@
  * nbtutils.c
  *	  Utility code for Postgres btree implementation.
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -336,7 +336,7 @@ _bt_preprocess_array_keys(IndexScanDesc scan)
 		 * successive primitive indexscans produce data in index order.
 		 */
 		num_elems = _bt_sort_array_elements(scan, cur,
-						(indoption[cur->sk_attno - 1] & INDOPTION_DESC) != 0,
+											(indoption[cur->sk_attno - 1] & INDOPTION_DESC) != 0,
 											elem_values, num_nonnulls);
 
 		/*
@@ -540,8 +540,8 @@ _bt_start_array_keys(IndexScanDesc scan, ScanDirection dir)
 /*
  * _bt_advance_array_keys() -- Advance to next set of array elements
  *
- * Returns TRUE if there is another set of values to consider, FALSE if not.
- * On TRUE result, the scankeys are initialized with the next set of values.
+ * Returns true if there is another set of values to consider, false if not.
+ * On true result, the scankeys are initialized with the next set of values.
  */
 bool
 _bt_advance_array_keys(IndexScanDesc scan, ScanDirection dir)
@@ -589,6 +589,10 @@ _bt_advance_array_keys(IndexScanDesc scan, ScanDirection dir)
 		if (found)
 			break;
 	}
+
+	/* advance parallel scan */
+	if (scan->parallel_scan != NULL)
+		_bt_parallel_advance_array_keys(scan);
 
 	return found;
 }
@@ -720,7 +724,7 @@ _bt_restore_array_keys(IndexScanDesc scan)
  * for a forward scan; or after the last match for a backward scan.)
  *
  * As a byproduct of this work, we can detect contradictory quals such
- * as "x = 1 AND x > 2".  If we see that, we return so->qual_ok = FALSE,
+ * as "x = 1 AND x > 2".  If we see that, we return so->qual_ok = false,
  * indicating the scan need not be run at all since no tuples can match.
  * (In this case we do not bother completing the output key array!)
  * Again, missing cross-type operators might cause us to fail to prove the
@@ -1016,7 +1020,7 @@ _bt_preprocess_keys(IndexScanDesc scan)
  *
  * If the opfamily doesn't supply a complete set of cross-type operators we
  * may not be able to make the comparison.  If we can make the comparison
- * we store the operator result in *result and return TRUE.  We return FALSE
+ * we store the operator result in *result and return true.  We return false
  * if the comparison could not be made.
  *
  * Note: op always points at the same ScanKey as either leftarg or rightarg.
@@ -1159,7 +1163,7 @@ _bt_compare_scankey_args(IndexScanDesc scan, ScanKey op,
 			*result = DatumGetBool(OidFunctionCall2Coll(cmp_proc,
 														op->sk_collation,
 														leftarg->sk_argument,
-													 rightarg->sk_argument));
+														rightarg->sk_argument));
 			return true;
 		}
 	}
@@ -1181,8 +1185,8 @@ _bt_compare_scankey_args(IndexScanDesc scan, ScanKey op,
  *
  * Lastly, for ordinary scankeys (not IS NULL/NOT NULL), we check for a
  * NULL comparison value.  Since all btree operators are assumed strict,
- * a NULL means that the qual cannot be satisfied.  We return TRUE if the
- * comparison value isn't NULL, or FALSE if the scan should be abandoned.
+ * a NULL means that the qual cannot be satisfied.  We return true if the
+ * comparison value isn't NULL, or false if the scan should be abandoned.
  *
  * This function is applied to the *input* scankey structure; therefore
  * on a rescan we will be looking at already-processed scankeys.  Hence
@@ -1768,7 +1772,7 @@ _bt_killitems(IndexScanDesc scan)
 			return;
 
 		page = BufferGetPage(buf);
-		if (PageGetLSN(page) == so->currPos.lsn)
+		if (BufferGetLSNAtomic(buf) == so->currPos.lsn)
 			so->currPos.buf = buf;
 		else
 		{

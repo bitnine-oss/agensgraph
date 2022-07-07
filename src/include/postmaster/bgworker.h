@@ -31,7 +31,7 @@
  * different) code.
  *
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -88,12 +88,12 @@ typedef enum
 typedef struct BackgroundWorker
 {
 	char		bgw_name[BGW_MAXLEN];
+	char		bgw_type[BGW_MAXLEN];
 	int			bgw_flags;
 	BgWorkerStartTime bgw_start_time;
-	int			bgw_restart_time;		/* in seconds, or BGW_NEVER_RESTART */
-	bgworker_main_type bgw_main;
-	char		bgw_library_name[BGW_MAXLEN];	/* only if bgw_main is NULL */
-	char		bgw_function_name[BGW_MAXLEN];	/* only if bgw_main is NULL */
+	int			bgw_restart_time;	/* in seconds, or BGW_NEVER_RESTART */
+	char		bgw_library_name[BGW_MAXLEN];
+	char		bgw_function_name[BGW_MAXLEN];
 	Datum		bgw_main_arg;
 	char		bgw_extra[BGW_EXTRALEN];
 	pid_t		bgw_notify_pid; /* SIGUSR1 this backend on start/stop */
@@ -120,11 +120,10 @@ extern bool RegisterDynamicBackgroundWorker(BackgroundWorker *worker,
 /* Query the status of a bgworker */
 extern BgwHandleStatus GetBackgroundWorkerPid(BackgroundWorkerHandle *handle,
 					   pid_t *pidp);
-extern BgwHandleStatus
-WaitForBackgroundWorkerStartup(BackgroundWorkerHandle *
-							   handle, pid_t *pid);
+extern BgwHandleStatus WaitForBackgroundWorkerStartup(BackgroundWorkerHandle *handle, pid_t *pid);
 extern BgwHandleStatus
 			WaitForBackgroundWorkerShutdown(BackgroundWorkerHandle *);
+extern const char *GetBackgroundWorkerTypeByPid(pid_t pid);
 
 /* Terminate a bgworker */
 extern void TerminateBackgroundWorker(BackgroundWorkerHandle *handle);
@@ -141,7 +140,7 @@ extern PGDLLIMPORT BackgroundWorker *MyBgworkerEntry;
  * If dbname is NULL, connection is made to no specific database;
  * only shared catalogs can be accessed.
  */
-extern void BackgroundWorkerInitializeConnection(char *dbname, char *username);
+extern void BackgroundWorkerInitializeConnection(const char *dbname, const char *username);
 
 /* Just like the above, but specifying database and user by OID. */
 extern void BackgroundWorkerInitializeConnectionByOid(Oid dboid, Oid useroid);
@@ -150,4 +149,4 @@ extern void BackgroundWorkerInitializeConnectionByOid(Oid dboid, Oid useroid);
 extern void BackgroundWorkerBlockSignals(void);
 extern void BackgroundWorkerUnblockSignals(void);
 
-#endif   /* BGWORKER_H */
+#endif							/* BGWORKER_H */

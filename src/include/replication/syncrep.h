@@ -3,7 +3,7 @@
  * syncrep.h
  *	  Exports from replication/syncrep.c.
  *
- * Portions Copyright (c) 2010-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 2010-2018, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
  *		src/include/replication/syncrep.h
@@ -48,7 +48,7 @@ typedef struct SyncRepConfigData
 	int			config_size;	/* total size of this struct, in bytes */
 	int			num_sync;		/* number of sync standbys that we need to
 								 * wait for */
-	uint8		syncrep_method;	/* method to choose sync standbys */
+	uint8		syncrep_method; /* method to choose sync standbys */
 	int			nmembers;		/* number of members in the following list */
 	/* member_names contains nmembers consecutive nul-terminated C strings */
 	char		member_names[FLEXIBLE_ARRAY_MEMBER];
@@ -94,4 +94,4 @@ extern void syncrep_yyerror(const char *str);
 extern void syncrep_scanner_init(const char *query_string);
 extern void syncrep_scanner_finish(void);
 
-#endif   /* _SYNCREP_H */
+#endif							/* _SYNCREP_H */

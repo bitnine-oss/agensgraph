@@ -4,7 +4,7 @@
  *	Routines for type coercion.
  *
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/parser/parse_coerce.h
@@ -48,15 +48,18 @@ extern Node *coerce_type(ParseState *pstate, Node *node,
 			CoercionContext ccontext, CoercionForm cformat, int location);
 extern Node *coerce_to_domain(Node *arg, Oid baseTypeId, int32 baseTypeMod,
 				 Oid typeId,
-				 CoercionForm cformat, int location,
-				 bool hideInputCoercion,
-				 bool lengthCoercionDone);
+				 CoercionContext ccontext, CoercionForm cformat, int location,
+				 bool hideInputCoercion);
 
 extern Node *coerce_to_boolean(ParseState *pstate, Node *node,
 				  const char *constructName);
 extern Node *coerce_to_specific_type(ParseState *pstate, Node *node,
 						Oid targetTypeId,
 						const char *constructName);
+
+extern Node *coerce_to_specific_type_typmod(ParseState *pstate, Node *node,
+							   Oid targetTypeId, int32 targetTypmod,
+							   const char *constructName);
 
 extern int parser_coercion_errposition(ParseState *pstate,
 							int coerce_location,
@@ -87,4 +90,4 @@ extern CoercionPathType find_coercion_pathway(Oid targetTypeId,
 extern CoercionPathType find_typmod_coercion_function(Oid typeId,
 							  Oid *funcid);
 
-#endif   /* PARSE_COERCE_H */
+#endif							/* PARSE_COERCE_H */

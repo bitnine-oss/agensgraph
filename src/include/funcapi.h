@@ -2,12 +2,13 @@
  *
  * funcapi.h
  *	  Definitions for functions which return composite type and/or sets
+ *	  or work on VARIADIC inputs.
  *
  * This file must be included by all Postgres modules that either define
  * or call FUNCAPI-callable functions or macros.
  *
  *
- * Copyright (c) 2002-2017, PostgreSQL Global Development Group
+ * Copyright (c) 2002-2018, PostgreSQL Global Development Group
  *
  * src/include/funcapi.h
  *
@@ -143,6 +144,10 @@ typedef struct FuncCallContext
  *		get_call_result_type.  Note: the cases in which rowtypes cannot be
  *		determined are different from the cases for get_call_result_type.
  *		Do *not* use this if you can use one of the others.
+ *
+ * See also get_expr_result_tupdesc(), which is a convenient wrapper around
+ * get_expr_result_type() for use when the caller only cares about
+ * determinable-rowtype cases.
  *----------
  */
 
@@ -151,6 +156,7 @@ typedef enum TypeFuncClass
 {
 	TYPEFUNC_SCALAR,			/* scalar result type */
 	TYPEFUNC_COMPOSITE,			/* determinable rowtype result */
+	TYPEFUNC_COMPOSITE_DOMAIN,	/* domain over determinable rowtype result */
 	TYPEFUNC_RECORD,			/* indeterminate rowtype result */
 	TYPEFUNC_OTHER				/* bogus type, eg pseudotype */
 } TypeFuncClass;
@@ -164,6 +170,8 @@ extern TypeFuncClass get_expr_result_type(Node *expr,
 extern TypeFuncClass get_func_result_type(Oid functionId,
 					 Oid *resultTypeId,
 					 TupleDesc *resultTupleDesc);
+
+extern TupleDesc get_expr_result_tupdesc(Node *expr, bool noError);
 
 extern bool resolve_polymorphic_argtypes(int numargs, Oid *argtypes,
 							 char *argmodes,
@@ -315,4 +323,26 @@ extern void end_MultiFuncCall(PG_FUNCTION_ARGS, FuncCallContext *funcctx);
 		PG_RETURN_NULL(); \
 	} while (0)
 
-#endif   /* FUNCAPI_H */
+/*----------
+ *	Support to ease writing of functions dealing with VARIADIC inputs
+ *----------
+ *
+ * This function extracts a set of argument values, types and NULL markers
+ * for a given input function. This returns a set of data:
+ * - **values includes the set of Datum values extracted.
+ * - **types the data type OID for each element.
+ * - **nulls tracks if an element is NULL.
+ *
+ * variadic_start indicates the argument number where the VARIADIC argument
+ * starts.
+ * convert_unknown set to true will enforce the conversion of arguments
+ * with unknown data type to text.
+ *
+ * The return result is the number of elements stored, or -1 in the case of
+ * "VARIADIC NULL".
+ */
+extern int extract_variadic_args(FunctionCallInfo fcinfo, int variadic_start,
+					  bool convert_unknown, Datum **values,
+					  Oid **types, bool **nulls);
+
+#endif							/* FUNCAPI_H */

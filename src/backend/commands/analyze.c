@@ -3,7 +3,7 @@
  * analyze.c
  *	  the Postgres statistics generator
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -17,6 +17,7 @@
 #include <math.h>
 
 #include "access/multixact.h"
+#include "access/sysattr.h"
 #include "access/transam.h"
 #include "access/tupconvert.h"
 #include "access/tuptoaster.h"
@@ -28,6 +29,7 @@
 #include "catalog/pg_collation.h"
 #include "catalog/pg_inherits_fn.h"
 #include "catalog/pg_namespace.h"
+#include "catalog/pg_statistic_ext.h"
 #include "commands/dbcommands.h"
 #include "commands/tablecmds.h"
 #include "commands/vacuum.h"
@@ -39,13 +41,17 @@
 #include "parser/parse_relation.h"
 #include "pgstat.h"
 #include "postmaster/autovacuum.h"
+#include "statistics/extended_stats_internal.h"
+#include "statistics/statistics.h"
 #include "storage/bufmgr.h"
 #include "storage/lmgr.h"
 #include "storage/proc.h"
 #include "storage/procarray.h"
 #include "utils/acl.h"
 #include "utils/attoptcache.h"
+#include "utils/builtins.h"
 #include "utils/datum.h"
+#include "utils/fmgroids.h"
 #include "utils/guc.h"
 #include "utils/lsyscache.h"
 #include "utils/memutils.h"
@@ -100,6 +106,10 @@ static Datum ind_fetch_func(VacAttrStatsP stats, int rownum, bool *isNull);
 
 /*
  *	analyze_rel() -- analyze one relation
+ *
+ * relid identifies the relation to analyze.  If relation is supplied, use
+ * the name therein for reporting any failure to open/lock the rel; do not
+ * use it once we've successfully opened the rel, since it might be stale.
  */
 void
 analyze_rel(Oid relid, RangeVar *relation, int options,
@@ -110,6 +120,7 @@ analyze_rel(Oid relid, RangeVar *relation, int options,
 	int			elevel;
 	AcquireSampleRowsFunc acquirefunc = NULL;
 	BlockNumber relpages = 0;
+	bool		rel_lock = true;
 
 	/* Select logging level */
 	if (options & VACOPT_VERBOSE)
@@ -139,14 +150,50 @@ analyze_rel(Oid relid, RangeVar *relation, int options,
 	else
 	{
 		onerel = NULL;
-		if (IsAutoVacuumWorkerProcess() && params->log_min_duration >= 0)
-			ereport(LOG,
-					(errcode(ERRCODE_LOCK_NOT_AVAILABLE),
-				  errmsg("skipping analyze of \"%s\" --- lock not available",
-						 relation->relname)));
+		rel_lock = false;
 	}
+
+	/*
+	 * If we failed to open or lock the relation, emit a log message before
+	 * exiting.
+	 */
 	if (!onerel)
+	{
+		/*
+		 * If the RangeVar is not defined, we do not have enough information
+		 * to provide a meaningful log statement.  Chances are that
+		 * analyze_rel's caller has intentionally not provided this
+		 * information so that this logging is skipped, anyway.
+		 */
+		if (relation == NULL)
+			return;
+
+		/*
+		 * Determine the log level.  For autovacuum logs, we emit a LOG if
+		 * log_autovacuum_min_duration is not disabled.  For manual ANALYZE,
+		 * we emit a WARNING to match the log statements in the permissions
+		 * checks.
+		 */
+		if (!IsAutoVacuumWorkerProcess())
+			elevel = WARNING;
+		else if (params->log_min_duration >= 0)
+			elevel = LOG;
+		else
+			return;
+
+		if (!rel_lock)
+			ereport(elevel,
+					(errcode(ERRCODE_LOCK_NOT_AVAILABLE),
+					 errmsg("skipping analyze of \"%s\" --- lock not available",
+							relation->relname)));
+		else
+			ereport(elevel,
+					(errcode(ERRCODE_UNDEFINED_TABLE),
+					 errmsg("skipping analyze of \"%s\" --- relation no longer exists",
+							relation->relname)));
+
 		return;
+	}
 
 	/*
 	 * Check permissions --- this should match vacuum's check!
@@ -159,8 +206,8 @@ analyze_rel(Oid relid, RangeVar *relation, int options,
 		{
 			if (onerel->rd_rel->relisshared)
 				ereport(WARNING,
-				 (errmsg("skipping \"%s\" --- only superuser can analyze it",
-						 RelationGetRelationName(onerel))));
+						(errmsg("skipping \"%s\" --- only superuser can analyze it",
+								RelationGetRelationName(onerel))));
 			else if (onerel->rd_rel->relnamespace == PG_CATALOG_NAMESPACE)
 				ereport(WARNING,
 						(errmsg("skipping \"%s\" --- only superuser or database owner can analyze it",
@@ -196,13 +243,10 @@ analyze_rel(Oid relid, RangeVar *relation, int options,
 	}
 
 	/*
-	 * Check that it's a plain table, materialized view, or foreign table; we
-	 * used to do this in get_rel_oids() but seems safer to check after we've
-	 * locked the relation.
+	 * Check that it's of an analyzable relkind, and set up appropriately.
 	 */
 	if (onerel->rd_rel->relkind == RELKIND_RELATION ||
-		onerel->rd_rel->relkind == RELKIND_MATVIEW ||
-		onerel->rd_rel->relkind == RELKIND_PARTITIONED_TABLE)
+		onerel->rd_rel->relkind == RELKIND_MATVIEW)
 	{
 		/* Regular table, so we'll use the regular row acquisition function */
 		acquirefunc = acquire_sample_rows;
@@ -228,11 +272,17 @@ analyze_rel(Oid relid, RangeVar *relation, int options,
 		if (!ok)
 		{
 			ereport(WARNING,
-			 (errmsg("skipping \"%s\" --- cannot analyze this foreign table",
-					 RelationGetRelationName(onerel))));
+					(errmsg("skipping \"%s\" --- cannot analyze this foreign table",
+							RelationGetRelationName(onerel))));
 			relation_close(onerel, ShareUpdateExclusiveLock);
 			return;
 		}
+	}
+	else if (onerel->rd_rel->relkind == RELKIND_PARTITIONED_TABLE)
+	{
+		/*
+		 * For partitioned tables, we want to do the recursive ANALYZE below.
+		 */
 	}
 	else
 	{
@@ -253,10 +303,12 @@ analyze_rel(Oid relid, RangeVar *relation, int options,
 	LWLockRelease(ProcArrayLock);
 
 	/*
-	 * Do the normal non-recursive ANALYZE.
+	 * Do the normal non-recursive ANALYZE.  We can skip this for partitioned
+	 * tables, which don't contain any rows.
 	 */
-	do_analyze_rel(onerel, options, params, va_cols, acquirefunc, relpages,
-				   false, in_outer_xact, elevel);
+	if (onerel->rd_rel->relkind != RELKIND_PARTITIONED_TABLE)
+		do_analyze_rel(onerel, options, params, va_cols, acquirefunc,
+					   relpages, false, in_outer_xact, elevel);
 
 	/*
 	 * If there are child tables, do recursive ANALYZE.
@@ -357,10 +409,14 @@ do_analyze_rel(Relation onerel, int options, VacuumParams *params,
 	/*
 	 * Determine which columns to analyze
 	 *
-	 * Note that system attributes are never analyzed.
+	 * Note that system attributes are never analyzed, so we just reject them
+	 * at the lookup stage.  We also reject duplicate column mentions.  (We
+	 * could alternatively ignore duplicates, but analyzing a column twice
+	 * won't work; we'd end up making a conflicting update in pg_statistic.)
 	 */
 	if (va_cols != NIL)
 	{
+		Bitmapset  *unique_cols = NULL;
 		ListCell   *le;
 
 		vacattrstats = (VacAttrStats **) palloc(list_length(va_cols) *
@@ -374,8 +430,15 @@ do_analyze_rel(Relation onerel, int options, VacuumParams *params,
 			if (i == InvalidAttrNumber)
 				ereport(ERROR,
 						(errcode(ERRCODE_UNDEFINED_COLUMN),
-					errmsg("column \"%s\" of relation \"%s\" does not exist",
-						   col, RelationGetRelationName(onerel))));
+						 errmsg("column \"%s\" of relation \"%s\" does not exist",
+								col, RelationGetRelationName(onerel))));
+			if (bms_is_member(i, unique_cols))
+				ereport(ERROR,
+						(errcode(ERRCODE_DUPLICATE_COLUMN),
+						 errmsg("column \"%s\" of relation \"%s\" appears more than once",
+								col, RelationGetRelationName(onerel))));
+			unique_cols = bms_add_member(unique_cols, i);
+
 			vacattrstats[tcnt] = examine_attribute(onerel, i, NULL);
 			if (vacattrstats[tcnt] != NULL)
 				tcnt++;
@@ -439,7 +502,7 @@ do_analyze_rel(Relation onerel, int options, VacuumParams *params,
 						/* Found an index expression */
 						Node	   *indexkey;
 
-						if (indexpr_item == NULL)		/* shouldn't happen */
+						if (indexpr_item == NULL)	/* shouldn't happen */
 							elog(ERROR, "too few entries in indexprs list");
 						indexkey = (Node *) lfirst(indexpr_item);
 						indexpr_item = lnext(indexpr_item);
@@ -513,10 +576,10 @@ do_analyze_rel(Relation onerel, int options, VacuumParams *params,
 
 			stats->rows = rows;
 			stats->tupDesc = onerel->rd_att;
-			(*stats->compute_stats) (stats,
-									 std_fetch_func,
-									 numrows,
-									 totalrows);
+			stats->compute_stats(stats,
+								 std_fetch_func,
+								 numrows,
+								 totalrows);
 
 			/*
 			 * If the appropriate flavor of the n_distinct option is
@@ -559,6 +622,10 @@ do_analyze_rel(Relation onerel, int options, VacuumParams *params,
 			update_attstats(RelationGetRelid(Irel[ind]), false,
 							thisdata->attr_cnt, thisdata->vacattrstats);
 		}
+
+		/* Build extended statistics (if there are any). */
+		BuildRelationExtStatistics(onerel, totalrows, numrows, rows, attr_cnt,
+								   vacattrstats);
 	}
 
 	/*
@@ -696,7 +763,7 @@ compute_index_stats(Relation onerel, double totalrows,
 		TupleTableSlot *slot;
 		EState	   *estate;
 		ExprContext *econtext;
-		List	   *predicate;
+		ExprState  *predicate;
 		Datum	   *exprvals;
 		bool	   *exprnulls;
 		int			numindexrows,
@@ -722,9 +789,7 @@ compute_index_stats(Relation onerel, double totalrows,
 		econtext->ecxt_scantuple = slot;
 
 		/* Set up execution state for predicate. */
-		predicate = castNode(List,
-							 ExecPrepareExpr((Expr *) indexInfo->ii_Predicate,
-											 estate));
+		predicate = ExecPrepareQual(indexInfo->ii_Predicate, estate);
 
 		/* Compute and save index expression values */
 		exprvals = (Datum *) palloc(numrows * attr_cnt * sizeof(Datum));
@@ -747,9 +812,9 @@ compute_index_stats(Relation onerel, double totalrows,
 			ExecStoreTuple(heapTuple, slot, InvalidBuffer, false);
 
 			/* If index is partial, check predicate */
-			if (predicate != NIL)
+			if (predicate != NULL)
 			{
-				if (!ExecQual(predicate, econtext, false))
+				if (!ExecQual(predicate, econtext))
 					continue;
 			}
 			numindexrows++;
@@ -815,10 +880,10 @@ compute_index_stats(Relation onerel, double totalrows,
 				stats->exprvals = exprvals + i;
 				stats->exprnulls = exprnulls + i;
 				stats->rowstride = attr_cnt;
-				(*stats->compute_stats) (stats,
-										 ind_fetch_func,
-										 numindexrows,
-										 totalindexrows);
+				stats->compute_stats(stats,
+									 ind_fetch_func,
+									 numindexrows,
+									 totalindexrows);
 
 				/*
 				 * If the n_distinct option is specified, it overrides the
@@ -856,7 +921,7 @@ compute_index_stats(Relation onerel, double totalrows,
 static VacAttrStats *
 examine_attribute(Relation onerel, int attnum, Node *index_expr)
 {
-	Form_pg_attribute attr = onerel->rd_att->attrs[attnum - 1];
+	Form_pg_attribute attr = TupleDescAttr(onerel->rd_att, attnum - 1);
 	HeapTuple	typtuple;
 	VacAttrStats *stats;
 	int			i;
@@ -993,7 +1058,7 @@ acquire_sample_rows(Relation onerel, int elevel,
 	totalblocks = RelationGetNumberOfBlocks(onerel);
 
 	/* Need a cutoff xmin for HeapTupleSatisfiesVacuum */
-	OldestXmin = GetOldestXmin(onerel, true);
+	OldestXmin = GetOldestXmin(onerel, PROCARRAY_FLAGS_VACUUM);
 
 	/* Prepare for sampling block numbers */
 	BlockSampler_Init(&bs, totalblocks, targrows, random());
@@ -1260,6 +1325,7 @@ acquire_inherited_sample_rows(Relation onerel, int elevel,
 				nrels,
 				i;
 	ListCell   *lc;
+	bool		has_child;
 
 	/*
 	 * Find all members of inheritance set.  We only need AccessShareLock on
@@ -1297,6 +1363,7 @@ acquire_inherited_sample_rows(Relation onerel, int elevel,
 	relblocks = (double *) palloc(list_length(tableOIDs) * sizeof(double));
 	totalblocks = 0;
 	nrels = 0;
+	has_child = false;
 	foreach(lc, tableOIDs)
 	{
 		Oid			childOID = lfirst_oid(lc);
@@ -1318,8 +1385,7 @@ acquire_inherited_sample_rows(Relation onerel, int elevel,
 
 		/* Check table type (MATVIEW can't happen, but might as well allow) */
 		if (childrel->rd_rel->relkind == RELKIND_RELATION ||
-			childrel->rd_rel->relkind == RELKIND_MATVIEW ||
-			childrel->rd_rel->relkind == RELKIND_PARTITIONED_TABLE)
+			childrel->rd_rel->relkind == RELKIND_MATVIEW)
 		{
 			/* Regular table, so use the regular row acquisition function */
 			acquirefunc = acquire_sample_rows;
@@ -1351,13 +1417,20 @@ acquire_inherited_sample_rows(Relation onerel, int elevel,
 		}
 		else
 		{
-			/* ignore, but release the lock on it */
-			Assert(childrel != onerel);
-			heap_close(childrel, AccessShareLock);
+			/*
+			 * ignore, but release the lock on it.  don't try to unlock the
+			 * passed-in relation
+			 */
+			Assert(childrel->rd_rel->relkind == RELKIND_PARTITIONED_TABLE);
+			if (childrel != onerel)
+				heap_close(childrel, AccessShareLock);
+			else
+				heap_close(childrel, NoLock);
 			continue;
 		}
 
 		/* OK, we'll process this child */
+		has_child = true;
 		rels[nrels] = childrel;
 		acquirefuncs[nrels] = acquirefunc;
 		relblocks[nrels] = (double) relpages;
@@ -1366,9 +1439,10 @@ acquire_inherited_sample_rows(Relation onerel, int elevel,
 	}
 
 	/*
-	 * If we don't have at least two tables to consider, fail.
+	 * If we don't have at least one child table to consider, fail.  If the
+	 * relation is a partitioned table, it's not counted as a child table.
 	 */
-	if (nrels < 2)
+	if (!has_child)
 	{
 		ereport(elevel,
 				(errmsg("skipping analyze of \"%s.%s\" inheritance tree --- this inheritance tree contains no analyzable child tables",
@@ -1419,7 +1493,7 @@ acquire_inherited_sample_rows(Relation onerel, int elevel,
 
 					map = convert_tuples_by_name(RelationGetDescr(childrel),
 												 RelationGetDescr(onerel),
-								 gettext_noop("could not convert row type"));
+												 gettext_noop("could not convert row type"));
 					if (map != NULL)
 					{
 						int			j;
@@ -1521,7 +1595,7 @@ update_attstats(Oid relid, bool inh, int natts, VacAttrStats **vacattrstats)
 		i = Anum_pg_statistic_stakind1 - 1;
 		for (k = 0; k < STATISTIC_NUM_SLOTS; k++)
 		{
-			values[i++] = Int16GetDatum(stats->stakind[k]);		/* stakindN */
+			values[i++] = Int16GetDatum(stats->stakind[k]); /* stakindN */
 		}
 		i = Anum_pg_statistic_staop1 - 1;
 		for (k = 0; k < STATISTIC_NUM_SLOTS; k++)
@@ -1665,19 +1739,6 @@ ind_fetch_func(VacAttrStatsP stats, int rownum, bool *isNull)
 /*
  * Extra information used by the default analysis routines
  */
-typedef struct
-{
-	Oid			eqopr;			/* '=' operator for datatype, if any */
-	Oid			eqfunc;			/* and associated function */
-	Oid			ltopr;			/* '<' operator for datatype, if any */
-} StdAnalyzeData;
-
-typedef struct
-{
-	Datum		value;			/* a data value */
-	int			tupno;			/* position index for tuple it came from */
-} ScalarItem;
-
 typedef struct
 {
 	int			count;			/* # of duplicates */
@@ -1849,7 +1910,7 @@ compute_trivial_stats(VacAttrStatsP stats,
 			stats->stawidth = total_width / (double) nonnull_cnt;
 		else
 			stats->stawidth = stats->attrtype->typlen;
-		stats->stadistinct = 0.0;		/* "unknown" */
+		stats->stadistinct = 0.0;	/* "unknown" */
 	}
 	else if (null_cnt > 0)
 	{
@@ -1860,7 +1921,7 @@ compute_trivial_stats(VacAttrStatsP stats,
 			stats->stawidth = 0;	/* "unknown" */
 		else
 			stats->stawidth = stats->attrtype->typlen;
-		stats->stadistinct = 0.0;		/* "unknown" */
+		stats->stadistinct = 0.0;	/* "unknown" */
 	}
 }
 
@@ -2213,7 +2274,7 @@ compute_distinct_stats(VacAttrStatsP stats,
 			stats->stawidth = 0;	/* "unknown" */
 		else
 			stats->stawidth = stats->attrtype->typlen;
-		stats->stadistinct = 0.0;		/* "unknown" */
+		stats->stadistinct = 0.0;	/* "unknown" */
 	}
 
 	/* We don't need to bother cleaning up any of our temporary palloc's */
@@ -2763,7 +2824,7 @@ compute_scalar_stats(VacAttrStatsP stats,
 			stats->stawidth = 0;	/* "unknown" */
 		else
 			stats->stawidth = stats->attrtype->typlen;
-		stats->stadistinct = 0.0;		/* "unknown" */
+		stats->stadistinct = 0.0;	/* "unknown" */
 	}
 
 	/* We don't need to bother cleaning up any of our temporary palloc's */

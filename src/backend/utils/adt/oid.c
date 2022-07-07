@@ -3,7 +3,7 @@
  * oid.c
  *	  Functions for the built-in type Oid ... also oidvector.
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -154,7 +154,7 @@ oidsend(PG_FUNCTION_ARGS)
 	StringInfoData buf;
 
 	pq_begintypsend(&buf);
-	pq_sendint(&buf, arg1, sizeof(Oid));
+	pq_sendint32(&buf, arg1);
 	PG_RETURN_BYTEA_P(pq_endtypsend(&buf));
 }
 
@@ -329,6 +329,20 @@ oidparse(Node *node)
 			elog(ERROR, "unrecognized node type: %d", (int) nodeTag(node));
 	}
 	return InvalidOid;			/* keep compiler quiet */
+}
+
+/* qsort comparison function for Oids */
+int
+oid_cmp(const void *p1, const void *p2)
+{
+	Oid			v1 = *((const Oid *) p1);
+	Oid			v2 = *((const Oid *) p2);
+
+	if (v1 < v2)
+		return -1;
+	if (v1 > v2)
+		return 1;
+	return 0;
 }
 
 

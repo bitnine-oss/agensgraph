@@ -2,7 +2,7 @@
  * brin_xlog.c
  *		XLog replay routines for BRIN indexes
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -13,6 +13,7 @@
 #include "access/brin_page.h"
 #include "access/brin_pageops.h"
 #include "access/brin_xlog.h"
+#include "access/bufmask.h"
 #include "access/xlogutils.h"
 
 
@@ -233,6 +234,17 @@ brin_xlog_revmap_extend(XLogReaderState *record)
 		metadata->lastRevmapPage = xlrec->targetBlk;
 
 		PageSetLSN(metapg, lsn);
+
+		/*
+		 * Set pd_lower just past the end of the metadata.  This is essential,
+		 * because without doing so, metadata will be lost if xlog.c
+		 * compresses the page.  (We must do this here because pre-v11
+		 * versions of PG did not set the metapage's pd_lower correctly, so a
+		 * pg_upgraded index might contain the wrong value.)
+		 */
+		((PageHeader) metapg)->pd_lower =
+			((char *) metadata + sizeof(BrinMetaPageData)) - (char *) metapg;
+
 		MarkBufferDirty(metabuf);
 	}
 
@@ -251,6 +263,46 @@ brin_xlog_revmap_extend(XLogReaderState *record)
 	UnlockReleaseBuffer(buf);
 	if (BufferIsValid(metabuf))
 		UnlockReleaseBuffer(metabuf);
+}
+
+static void
+brin_xlog_desummarize_page(XLogReaderState *record)
+{
+	XLogRecPtr	lsn = record->EndRecPtr;
+	xl_brin_desummarize *xlrec;
+	Buffer		buffer;
+	XLogRedoAction action;
+
+	xlrec = (xl_brin_desummarize *) XLogRecGetData(record);
+
+	/* Update the revmap */
+	action = XLogReadBufferForRedo(record, 0, &buffer);
+	if (action == BLK_NEEDS_REDO)
+	{
+		ItemPointerData iptr;
+
+		ItemPointerSetInvalid(&iptr);
+		brinSetHeapBlockItemptr(buffer, xlrec->pagesPerRange, xlrec->heapBlk, iptr);
+
+		PageSetLSN(BufferGetPage(buffer), lsn);
+		MarkBufferDirty(buffer);
+	}
+	if (BufferIsValid(buffer))
+		UnlockReleaseBuffer(buffer);
+
+	/* remove the leftover entry from the regular page */
+	action = XLogReadBufferForRedo(record, 1, &buffer);
+	if (action == BLK_NEEDS_REDO)
+	{
+		Page		regPg = BufferGetPage(buffer);
+
+		PageIndexTupleDeleteNoCompact(regPg, xlrec->regOffset);
+
+		PageSetLSN(regPg, lsn);
+		MarkBufferDirty(buffer);
+	}
+	if (BufferIsValid(buffer))
+		UnlockReleaseBuffer(buffer);
 }
 
 void
@@ -275,7 +327,35 @@ brin_redo(XLogReaderState *record)
 		case XLOG_BRIN_REVMAP_EXTEND:
 			brin_xlog_revmap_extend(record);
 			break;
+		case XLOG_BRIN_DESUMMARIZE:
+			brin_xlog_desummarize_page(record);
+			break;
 		default:
 			elog(PANIC, "brin_redo: unknown op code %u", info);
+	}
+}
+
+/*
+ * Mask a BRIN page before doing consistency checks.
+ */
+void
+brin_mask(char *pagedata, BlockNumber blkno)
+{
+	Page		page = (Page) pagedata;
+	PageHeader	pagehdr = (PageHeader) page;
+
+	mask_page_lsn_and_checksum(page);
+
+	mask_page_hint_bits(page);
+
+	/*
+	 * Regular brin pages contain unused space which needs to be masked.
+	 * Similarly for meta pages, but mask it only if pd_lower appears to have
+	 * been set correctly.
+	 */
+	if (BRIN_IS_REGULAR_PAGE(page) ||
+		(BRIN_IS_META_PAGE(page) && pagehdr->pd_lower > SizeOfPageHeaderData))
+	{
+		mask_unused_space(page);
 	}
 }

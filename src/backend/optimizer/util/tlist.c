@@ -3,7 +3,7 @@
  * tlist.c
  *	  Target list manipulation routines
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -28,12 +28,12 @@
 /* Workspace for split_pathtarget_walker */
 typedef struct
 {
-	List	   *input_target_exprs;		/* exprs available from input */
+	List	   *input_target_exprs; /* exprs available from input */
 	List	   *level_srfs;		/* list of lists of SRF exprs */
-	List	   *level_input_vars;		/* vars needed by SRFs of each level */
-	List	   *level_input_srfs;		/* SRFs needed by SRFs of each level */
-	List	   *current_input_vars;		/* vars needed in current subexpr */
-	List	   *current_input_srfs;		/* SRFs needed in current subexpr */
+	List	   *level_input_vars;	/* vars needed by SRFs of each level */
+	List	   *level_input_srfs;	/* SRFs needed by SRFs of each level */
+	List	   *current_input_vars; /* vars needed in current subexpr */
+	List	   *current_input_srfs; /* SRFs needed in current subexpr */
 	int			current_depth;	/* max SRF depth in current subexpr */
 } split_pathtarget_context;
 
@@ -51,7 +51,7 @@ static bool split_pathtarget_walker(Node *node,
  *	  equal() to the given expression.  Result is NULL if no such member.
  */
 TargetEntry *
-tlist_member(Node *node, List *targetlist)
+tlist_member(Expr *node, List *targetlist)
 {
 	ListCell   *temp;
 
@@ -72,12 +72,12 @@ tlist_member(Node *node, List *targetlist)
  *	  involving binary-compatible sort operations.
  */
 TargetEntry *
-tlist_member_ignore_relabel(Node *node, List *targetlist)
+tlist_member_ignore_relabel(Expr *node, List *targetlist)
 {
 	ListCell   *temp;
 
 	while (node && IsA(node, RelabelType))
-		node = (Node *) ((RelabelType *) node)->arg;
+		node = ((RelabelType *) node)->arg;
 
 	foreach(temp, targetlist)
 	{
@@ -139,13 +139,13 @@ add_to_flat_tlist(List *tlist, List *exprs)
 
 	foreach(lc, exprs)
 	{
-		Node	   *expr = (Node *) lfirst(lc);
+		Expr	   *expr = (Expr *) lfirst(lc);
 
 		if (!tlist_member(expr, tlist))
 		{
 			TargetEntry *tle;
 
-			tle = makeTargetEntry(copyObject(expr),		/* copy needed?? */
+			tle = makeTargetEntry(copyObject(expr), /* copy needed?? */
 								  next_resno++,
 								  NULL,
 								  false);
@@ -762,7 +762,7 @@ apply_pathtarget_labeling_to_tlist(List *tlist, PathTarget *target)
 			if (expr && IsA(expr, Var))
 				tle = tlist_member_match_var((Var *) expr, tlist);
 			else
-				tle = tlist_member((Node *) expr, tlist);
+				tle = tlist_member(expr, tlist);
 
 			/*
 			 * Complain if noplace for the sortgrouprefs label, or if we'd
@@ -999,7 +999,7 @@ split_pathtarget_at_srfs(PlannerInfo *root,
 
 				foreach(lcx, input_srfs)
 				{
-					Node	   *srf = (Node *) lfirst(lcx);
+					Expr	   *srf = (Expr *) lfirst(lcx);
 
 					if (list_member(prev_level_tlist, srf))
 						add_new_column_to_pathtarget(ntarget, copyObject(srf));

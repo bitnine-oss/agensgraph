@@ -8,7 +8,7 @@
  *	  Structs that need to be client-visible are in pqcomm.h.
  *
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/libpq/libpq-be.h
@@ -18,9 +18,7 @@
 #ifndef LIBPQ_BE_H
 #define LIBPQ_BE_H
 
-#ifdef HAVE_SYS_TIME_H
 #include <sys/time.h>
-#endif
 #ifdef USE_OPENSSL
 #include <openssl/ssl.h>
 #include <openssl/err.h>
@@ -34,20 +32,20 @@
 #include <gssapi.h>
 #else
 #include <gssapi/gssapi.h>
-#endif   /* HAVE_GSSAPI_H */
+#endif							/* HAVE_GSSAPI_H */
 /*
  * GSSAPI brings in headers that set a lot of things in the global namespace on win32,
  * that doesn't match the msvc build. It gives a bunch of compiler warnings that we ignore,
  * but also defines a symbol that simply does not exist. Undefine it again.
  */
-#ifdef WIN32_ONLY_COMPILER
+#ifdef _MSC_VER
 #undef HAVE_GETADDRINFO
 #endif
-#endif   /* ENABLE_GSS */
+#endif							/* ENABLE_GSS */
 
 #ifdef ENABLE_SSPI
 #define SECURITY_WIN32
-#if defined(WIN32) && !defined(WIN32_ONLY_COMPILER)
+#if defined(WIN32) && !defined(_MSC_VER)
 #include <ntsecapi.h>
 #endif
 #include <security.h>
@@ -63,7 +61,7 @@ typedef struct
 	int			length;
 } gss_buffer_desc;
 #endif
-#endif   /* ENABLE_SSPI */
+#endif							/* ENABLE_SSPI */
 
 #include "datatype/timestamp.h"
 #include "libpq/hba.h"
@@ -123,10 +121,10 @@ typedef struct Port
 	SockAddr	laddr;			/* local addr (postmaster) */
 	SockAddr	raddr;			/* remote addr (client) */
 	char	   *remote_host;	/* name (or ip addr) of remote host */
-	char	   *remote_hostname;/* name (not ip addr) of remote host, if
-								 * available */
+	char	   *remote_hostname;	/* name (not ip addr) of remote host, if
+									 * available */
 	int			remote_hostname_resolv; /* see above */
-	int			remote_hostname_errcode;		/* see above */
+	int			remote_hostname_errcode;	/* see above */
 	char	   *remote_port;	/* text rep of remote port */
 	CAC_state	canAcceptConnections;	/* postmaster connection status */
 
@@ -150,7 +148,7 @@ typedef struct Port
 	 * but since it gets used by elog.c in the same way as database_name and
 	 * other members of this struct, we may as well keep it here.
 	 */
-	TimestampTz SessionStartTime;		/* backend start time */
+	TimestampTz SessionStartTime;	/* backend start time */
 
 	/*
 	 * TCP keepalive settings.
@@ -196,21 +194,88 @@ typedef struct Port
 
 #ifdef USE_SSL
 /*
+ *	Hardcoded DH parameters, used in ephemeral DH keying.  (See also
+ *	README.SSL for more details on EDH.)
+ *
+ *	If you want to create your own hardcoded DH parameters
+ *	for fun and profit, review "Assigned Number for SKIP
+ *	Protocols" (http://www.skip-vpn.org/spec/numbers.html)
+ *	for suggestions.
+ */
+#define FILE_DH2048 \
+"-----BEGIN DH PARAMETERS-----\n\
+MIIBCAKCAQEA9kJXtwh/CBdyorrWqULzBej5UxE5T7bxbrlLOCDaAadWoxTpj0BV\n\
+89AHxstDqZSt90xkhkn4DIO9ZekX1KHTUPj1WV/cdlJPPT2N286Z4VeSWc39uK50\n\
+T8X8dryDxUcwYc58yWb/Ffm7/ZFexwGq01uejaClcjrUGvC/RgBYK+X0iP1YTknb\n\
+zSC0neSRBzZrM2w4DUUdD3yIsxx8Wy2O9vPJI8BD8KVbGI2Ou1WMuF040zT9fBdX\n\
+Q6MdGGzeMyEstSr/POGxKUAYEY18hKcKctaGxAMZyAcpesqVDNmWn6vQClCbAkbT\n\
+CD1mpF1Bn5x8vYlLIhkmuquiXsNV6TILOwIBAg==\n\
+-----END DH PARAMETERS-----\n"
+
+/*
  * These functions are implemented by the glue code specific to each
  * SSL implementation (e.g. be-secure-openssl.c)
  */
+
+/*
+ * Initialize global SSL context.
+ *
+ * If isServerStart is true, report any errors as FATAL (so we don't return).
+ * Otherwise, log errors at LOG level and return -1 to indicate trouble,
+ * preserving the old SSL state if any.  Returns 0 if OK.
+ */
 extern int	be_tls_init(bool isServerStart);
+
+/*
+ * Destroy global SSL context, if any.
+ */
 extern void be_tls_destroy(void);
+
+/*
+ * Attempt to negotiate SSL connection.
+ */
 extern int	be_tls_open_server(Port *port);
+
+/*
+ * Close SSL connection.
+ */
 extern void be_tls_close(Port *port);
+
+/*
+ * Read data from a secure connection.
+ */
 extern ssize_t be_tls_read(Port *port, void *ptr, size_t len, int *waitfor);
+
+/*
+ * Write data to a secure connection.
+ */
 extern ssize_t be_tls_write(Port *port, void *ptr, size_t len, int *waitfor);
 
+/*
+ * Return information about the SSL connection.
+ */
 extern int	be_tls_get_cipher_bits(Port *port);
 extern bool be_tls_get_compression(Port *port);
-extern void be_tls_get_version(Port *port, char *ptr, size_t len);
-extern void be_tls_get_cipher(Port *port, char *ptr, size_t len);
+extern const char *be_tls_get_version(Port *port);
+extern const char *be_tls_get_cipher(Port *port);
 extern void be_tls_get_peerdn_name(Port *port, char *ptr, size_t len);
+
+/*
+ * Get the expected TLS Finished message information from the client, useful
+ * for authorization when doing channel binding.
+ *
+ * Result is a palloc'd copy of the TLS Finished message with its size.
+ */
+extern char *be_tls_get_peer_finished(Port *port, size_t *len);
+
+/*
+ * Get the server certificate hash for SCRAM channel binding type
+ * tls-server-end-point.
+ *
+ * The result is a palloc'd hash of the server certificate with its
+ * size, and NULL if there is no certificate available.
+ */
+extern char *be_tls_get_certificate_hash(Port *port, size_t *len);
 #endif
 
 extern ProtocolVersion FrontendProtocol;
@@ -225,4 +290,4 @@ extern int	pq_setkeepalivesidle(int idle, Port *port);
 extern int	pq_setkeepalivesinterval(int interval, Port *port);
 extern int	pq_setkeepalivescount(int count, Port *port);
 
-#endif   /* LIBPQ_BE_H */
+#endif							/* LIBPQ_BE_H */

@@ -3,7 +3,7 @@
  * ts_type.h
  *	  Definitions for the tsvector and tsquery types
  *
- * Copyright (c) 1998-2017, PostgreSQL Global Development Group
+ * Copyright (c) 1998-2018, PostgreSQL Global Development Group
  *
  * src/include/tsearch/ts_type.h
  *
@@ -239,4 +239,4 @@ typedef TSQueryData *TSQuery;
 #define PG_GETARG_TSQUERY_COPY(n)	DatumGetTSQueryCopy(PG_GETARG_DATUM(n))
 #define PG_RETURN_TSQUERY(x)		return TSQueryGetDatum(x)
 
-#endif   /* _PG_TSTYPE_H_ */
+#endif							/* _PG_TSTYPE_H_ */

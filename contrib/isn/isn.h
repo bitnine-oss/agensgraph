@@ -4,7 +4,7 @@
  *	  PostgreSQL type definitions for ISNs (ISBN, ISMN, ISSN, EAN13, UPC)
  *
  * Author:	German Mendez Bravo (Kronuz)
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
  *	  contrib/isn/isn.h
@@ -32,4 +32,4 @@ typedef uint64 ean13;
 
 extern void initialize(void);
 
-#endif   /* ISN_H */
+#endif							/* ISN_H */

@@ -13,11 +13,40 @@ CREATE SEQUENCE sequence_testx CACHE 0;
 
 -- OWNED BY errors
 CREATE SEQUENCE sequence_testx OWNED BY nobody;  -- nonsense word
-CREATE SEQUENCE sequence_testx OWNED BY pg_tables.tablename;  -- not a table
+CREATE SEQUENCE sequence_testx OWNED BY pg_class_oid_index.oid;  -- not a table
 CREATE SEQUENCE sequence_testx OWNED BY pg_class.relname;  -- not same schema
 CREATE TABLE sequence_test_table (a int);
 CREATE SEQUENCE sequence_testx OWNED BY sequence_test_table.b;  -- wrong column
 DROP TABLE sequence_test_table;
+
+-- sequence data types
+CREATE SEQUENCE sequence_test5 AS integer;
+CREATE SEQUENCE sequence_test6 AS smallint;
+CREATE SEQUENCE sequence_test7 AS bigint;
+CREATE SEQUENCE sequence_test8 AS integer MAXVALUE 100000;
+CREATE SEQUENCE sequence_test9 AS integer INCREMENT BY -1;
+CREATE SEQUENCE sequence_test10 AS integer MINVALUE -100000 START 1;
+CREATE SEQUENCE sequence_test11 AS smallint;
+CREATE SEQUENCE sequence_test12 AS smallint INCREMENT -1;
+CREATE SEQUENCE sequence_test13 AS smallint MINVALUE -32768;
+CREATE SEQUENCE sequence_test14 AS smallint MAXVALUE 32767 INCREMENT -1;
+CREATE SEQUENCE sequence_testx AS text;
+CREATE SEQUENCE sequence_testx AS nosuchtype;
+
+CREATE SEQUENCE sequence_testx AS smallint MAXVALUE 100000;
+CREATE SEQUENCE sequence_testx AS smallint MINVALUE -100000;
+
+ALTER SEQUENCE sequence_test5 AS smallint;  -- success, max will be adjusted
+ALTER SEQUENCE sequence_test8 AS smallint;  -- fail, max has to be adjusted
+ALTER SEQUENCE sequence_test8 AS smallint MAXVALUE 20000;  -- ok now
+ALTER SEQUENCE sequence_test9 AS smallint;  -- success, min will be adjusted
+ALTER SEQUENCE sequence_test10 AS smallint;  -- fail, min has to be adjusted
+ALTER SEQUENCE sequence_test10 AS smallint MINVALUE -20000;  -- ok now
+
+ALTER SEQUENCE sequence_test11 AS int;  -- max will be adjusted
+ALTER SEQUENCE sequence_test12 AS int;  -- min will be adjusted
+ALTER SEQUENCE sequence_test13 AS int;  -- min and max will be adjusted
+ALTER SEQUENCE sequence_test14 AS int;  -- min and max will be adjusted
 
 ---
 --- test creation of SERIAL column
@@ -31,6 +60,8 @@ INSERT INTO serialTest1 VALUES ('force', 100);
 INSERT INTO serialTest1 VALUES ('wrong', NULL);
 
 SELECT * FROM serialTest1;
+
+SELECT pg_get_serial_sequence('serialTest1', 'f2');
 
 -- test smallserial / bigserial
 CREATE TABLE serialTest2 (f1 text, f2 serial, f3 smallserial, f4 serial2,
@@ -143,7 +174,7 @@ DROP SEQUENCE myseq2;
 ALTER SEQUENCE IF EXISTS sequence_test2 RESTART WITH 24
   INCREMENT BY 4 MAXVALUE 36 MINVALUE 5 CYCLE;
 
-ALTER SEQUENCE pg_class CYCLE;  -- error, not a sequence
+ALTER SEQUENCE serialTest1 CYCLE;  -- error, not a sequence
 
 CREATE SEQUENCE sequence_test2 START WITH 32;
 CREATE SEQUENCE sequence_test4 INCREMENT BY -1;
@@ -213,6 +244,10 @@ WHERE sequencename ~ ANY(ARRAY['sequence_test', 'serialtest'])
 
 
 SELECT * FROM pg_sequence_parameters('sequence_test4'::regclass);
+
+
+\d sequence_test4
+\d serialtest2_f2_seq
 
 
 -- Test comments

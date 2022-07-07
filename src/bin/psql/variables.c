@@ -1,7 +1,7 @@
 /*
  * psql - the PostgreSQL interactive terminal
  *
- * Copyright (c) 2000-2017, PostgreSQL Global Development Group
+ * Copyright (c) 2000-2018, PostgreSQL Global Development Group
  *
  * src/bin/psql/variables.c
  */
@@ -136,7 +136,7 @@ ParseVariableBool(const char *value, const char *name, bool *result)
 	{
 		/* string is not recognized; don't clobber *result */
 		if (name)
-			psql_error("unrecognized value \"%s\" for \"%s\": boolean expected\n",
+			psql_error("unrecognized value \"%s\" for \"%s\": Boolean expected\n",
 					   value, name);
 		valid = false;
 	}
@@ -246,10 +246,10 @@ SetVariable(VariableSpace space, const char *name, const char *value)
 			bool		confirmed;
 
 			if (current->substitute_hook)
-				new_value = (*current->substitute_hook) (new_value);
+				new_value = current->substitute_hook(new_value);
 
 			if (current->assign_hook)
-				confirmed = (*current->assign_hook) (new_value);
+				confirmed = current->assign_hook(new_value);
 			else
 				confirmed = true;
 
@@ -273,7 +273,7 @@ SetVariable(VariableSpace space, const char *name, const char *value)
 				}
 			}
 			else if (new_value)
-				pg_free(new_value);		/* current->value is left unchanged */
+				pg_free(new_value); /* current->value is left unchanged */
 
 			return confirmed;
 		}

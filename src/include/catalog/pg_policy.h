@@ -2,7 +2,7 @@
  * pg_policy.h
  *	 definition of the system "policy" relation (pg_policy)
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  */
@@ -50,6 +50,6 @@ typedef FormData_pg_policy *Form_pg_policy;
 #define Anum_pg_policy_polpermissive	4
 #define Anum_pg_policy_polroles			5
 #define Anum_pg_policy_polqual			6
-#define Anum_pg_policy_polwithcheck 	7
+#define Anum_pg_policy_polwithcheck		7
 
-#endif   /* PG_POLICY_H */
+#endif							/* PG_POLICY_H */

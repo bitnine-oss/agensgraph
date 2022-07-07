@@ -9,6 +9,7 @@
 #include <limits.h>
 
 #include "access/xact.h"
+#include "catalog/pg_type.h"
 #include "mb/pg_wchar.h"
 #include "utils/memutils.h"
 
@@ -25,7 +26,6 @@
 
 
 static PyObject *PLy_cursor_query(const char *query);
-static PyObject *PLy_cursor_plan(PyObject *ob, PyObject *args);
 static void PLy_cursor_dealloc(PyObject *arg);
 static PyObject *PLy_cursor_iternext(PyObject *self);
 static PyObject *PLy_cursor_fetch(PyObject *self, PyObject *args);
@@ -107,6 +107,7 @@ static PyObject *
 PLy_cursor_query(const char *query)
 {
 	PLyCursorObject *cursor;
+	PLyExecutionContext *exec_ctx = PLy_current_execution_context();
 	volatile MemoryContext oldcontext;
 	volatile ResourceOwner oldowner;
 
@@ -117,7 +118,11 @@ PLy_cursor_query(const char *query)
 	cursor->mcxt = AllocSetContextCreate(TopMemoryContext,
 										 "PL/Python cursor context",
 										 ALLOCSET_DEFAULT_SIZES);
-	PLy_typeinfo_init(&cursor->result, cursor->mcxt);
+
+	/* Initialize for converting result tuples to Python */
+	PLy_input_setup_func(&cursor->result, cursor->mcxt,
+						 RECORDOID, -1,
+						 exec_ctx->curr_proc);
 
 	oldcontext = CurrentMemoryContext;
 	oldowner = CurrentResourceOwner;
@@ -126,7 +131,6 @@ PLy_cursor_query(const char *query)
 
 	PG_TRY();
 	{
-		PLyExecutionContext *exec_ctx = PLy_current_execution_context();
 		SPIPlanPtr	plan;
 		Portal		portal;
 
@@ -147,6 +151,8 @@ PLy_cursor_query(const char *query)
 
 		cursor->portalname = MemoryContextStrdup(cursor->mcxt, portal->name);
 
+		PinPortal(portal);
+
 		PLy_spi_subtransaction_commit(oldcontext, oldowner);
 	}
 	PG_CATCH();
@@ -160,13 +166,14 @@ PLy_cursor_query(const char *query)
 	return (PyObject *) cursor;
 }
 
-static PyObject *
+PyObject *
 PLy_cursor_plan(PyObject *ob, PyObject *args)
 {
 	PLyCursorObject *cursor;
 	volatile int nargs;
 	int			i;
 	PLyPlanObject *plan;
+	PLyExecutionContext *exec_ctx = PLy_current_execution_context();
 	volatile MemoryContext oldcontext;
 	volatile ResourceOwner oldowner;
 
@@ -193,8 +200,8 @@ PLy_cursor_plan(PyObject *ob, PyObject *args)
 			PLy_elog(ERROR, "could not execute plan");
 		sv = PyString_AsString(so);
 		PLy_exception_set_plural(PyExc_TypeError,
-							  "Expected sequence of %d argument, got %d: %s",
-							 "Expected sequence of %d arguments, got %d: %s",
+								 "Expected sequence of %d argument, got %d: %s",
+								 "Expected sequence of %d arguments, got %d: %s",
 								 plan->nargs,
 								 plan->nargs, nargs, sv);
 		Py_DECREF(so);
@@ -209,7 +216,11 @@ PLy_cursor_plan(PyObject *ob, PyObject *args)
 	cursor->mcxt = AllocSetContextCreate(TopMemoryContext,
 										 "PL/Python cursor context",
 										 ALLOCSET_DEFAULT_SIZES);
-	PLy_typeinfo_init(&cursor->result, cursor->mcxt);
+
+	/* Initialize for converting result tuples to Python */
+	PLy_input_setup_func(&cursor->result, cursor->mcxt,
+						 RECORDOID, -1,
+						 exec_ctx->curr_proc);
 
 	oldcontext = CurrentMemoryContext;
 	oldowner = CurrentResourceOwner;
@@ -218,7 +229,6 @@ PLy_cursor_plan(PyObject *ob, PyObject *args)
 
 	PG_TRY();
 	{
-		PLyExecutionContext *exec_ctx = PLy_current_execution_context();
 		Portal		portal;
 		char	   *volatile nulls;
 		volatile int j;
@@ -230,39 +240,24 @@ PLy_cursor_plan(PyObject *ob, PyObject *args)
 
 		for (j = 0; j < nargs; j++)
 		{
+			PLyObToDatum *arg = &plan->args[j];
 			PyObject   *elem;
 
 			elem = PySequence_GetItem(args, j);
-			if (elem != Py_None)
+			PG_TRY();
 			{
-				PG_TRY();
-				{
-					plan->values[j] =
-						plan->args[j].out.d.func(&(plan->args[j].out.d),
-												 -1,
-												 elem,
-												 false);
-				}
-				PG_CATCH();
-				{
-					Py_DECREF(elem);
-					PG_RE_THROW();
-				}
-				PG_END_TRY();
+				bool		isnull;
 
-				Py_DECREF(elem);
-				nulls[j] = ' ';
+				plan->values[j] = PLy_output_convert(arg, elem, &isnull);
+				nulls[j] = isnull ? 'n' : ' ';
 			}
-			else
+			PG_CATCH();
 			{
 				Py_DECREF(elem);
-				plan->values[j] =
-					InputFunctionCall(&(plan->args[j].out.d.typfunc),
-									  NULL,
-									  plan->args[j].out.d.typioparam,
-									  -1);
-				nulls[j] = 'n';
+				PG_RE_THROW();
 			}
+			PG_END_TRY();
+			Py_DECREF(elem);
 		}
 
 		portal = SPI_cursor_open(NULL, plan->plan, plan->values, nulls,
@@ -273,6 +268,8 @@ PLy_cursor_plan(PyObject *ob, PyObject *args)
 
 		cursor->portalname = MemoryContextStrdup(cursor->mcxt, portal->name);
 
+		PinPortal(portal);
+
 		PLy_spi_subtransaction_commit(oldcontext, oldowner);
 	}
 	PG_CATCH();
@@ -282,7 +279,7 @@ PLy_cursor_plan(PyObject *ob, PyObject *args)
 		/* cleanup plan->values array */
 		for (k = 0; k < nargs; k++)
 		{
-			if (!plan->args[k].out.d.typbyval &&
+			if (!plan->args[k].typbyval &&
 				(plan->values[k] != PointerGetDatum(NULL)))
 			{
 				pfree(DatumGetPointer(plan->values[k]));
@@ -299,7 +296,7 @@ PLy_cursor_plan(PyObject *ob, PyObject *args)
 
 	for (i = 0; i < nargs; i++)
 	{
-		if (!plan->args[i].out.d.typbyval &&
+		if (!plan->args[i].typbyval &&
 			(plan->values[i] != PointerGetDatum(NULL)))
 		{
 			pfree(DatumGetPointer(plan->values[i]));
@@ -324,7 +321,10 @@ PLy_cursor_dealloc(PyObject *arg)
 		portal = GetPortalByName(cursor->portalname);
 
 		if (PortalIsValid(portal))
+		{
+			UnpinPortal(portal);
 			SPI_cursor_close(portal);
+		}
 		cursor->closed = true;
 	}
 	if (cursor->mcxt)
@@ -340,6 +340,7 @@ PLy_cursor_iternext(PyObject *self)
 {
 	PLyCursorObject *cursor;
 	PyObject   *ret;
+	PLyExecutionContext *exec_ctx = PLy_current_execution_context();
 	volatile MemoryContext oldcontext;
 	volatile ResourceOwner oldowner;
 	Portal		portal;
@@ -375,11 +376,11 @@ PLy_cursor_iternext(PyObject *self)
 		}
 		else
 		{
-			if (cursor->result.is_rowtype != 1)
-				PLy_input_tuple_funcs(&cursor->result, SPI_tuptable->tupdesc);
+			PLy_input_setup_tuple(&cursor->result, SPI_tuptable->tupdesc,
+								  exec_ctx->curr_proc);
 
-			ret = PLyDict_FromTuple(&cursor->result, SPI_tuptable->vals[0],
-									SPI_tuptable->tupdesc);
+			ret = PLy_input_from_tuple(&cursor->result, SPI_tuptable->vals[0],
+									   SPI_tuptable->tupdesc);
 		}
 
 		SPI_freetuptable(SPI_tuptable);
@@ -402,6 +403,7 @@ PLy_cursor_fetch(PyObject *self, PyObject *args)
 	PLyCursorObject *cursor;
 	int			count;
 	PLyResultObject *ret;
+	PLyExecutionContext *exec_ctx = PLy_current_execution_context();
 	volatile MemoryContext oldcontext;
 	volatile ResourceOwner oldowner;
 	Portal		portal;
@@ -438,16 +440,11 @@ PLy_cursor_fetch(PyObject *self, PyObject *args)
 	{
 		SPI_cursor_fetch(portal, true, count);
 
-		if (cursor->result.is_rowtype != 1)
-			PLy_input_tuple_funcs(&cursor->result, SPI_tuptable->tupdesc);
-
 		Py_DECREF(ret->status);
 		ret->status = PyInt_FromLong(SPI_OK_FETCH);
 
 		Py_DECREF(ret->nrows);
-		ret->nrows = (SPI_processed > (uint64) LONG_MAX) ?
-			PyFloat_FromDouble((double) SPI_processed) :
-			PyInt_FromLong((long) SPI_processed);
+		ret->nrows = PyLong_FromUnsignedLongLong(SPI_processed);
 
 		if (SPI_processed != 0)
 		{
@@ -465,14 +462,24 @@ PLy_cursor_fetch(PyObject *self, PyObject *args)
 
 			Py_DECREF(ret->rows);
 			ret->rows = PyList_New(SPI_processed);
-
-			for (i = 0; i < SPI_processed; i++)
+			if (!ret->rows)
 			{
-				PyObject   *row = PLyDict_FromTuple(&cursor->result,
-													SPI_tuptable->vals[i],
-													SPI_tuptable->tupdesc);
+				Py_DECREF(ret);
+				ret = NULL;
+			}
+			else
+			{
+				PLy_input_setup_tuple(&cursor->result, SPI_tuptable->tupdesc,
+									  exec_ctx->curr_proc);
 
-				PyList_SetItem(ret->rows, i, row);
+				for (i = 0; i < SPI_processed; i++)
+				{
+					PyObject   *row = PLy_input_from_tuple(&cursor->result,
+														   SPI_tuptable->vals[i],
+														   SPI_tuptable->tupdesc);
+
+					PyList_SetItem(ret->rows, i, row);
+				}
 			}
 		}
 
@@ -502,14 +509,14 @@ PLy_cursor_close(PyObject *self, PyObject *unused)
 		if (!PortalIsValid(portal))
 		{
 			PLy_exception_set(PyExc_ValueError,
-							"closing a cursor in an aborted subtransaction");
+							  "closing a cursor in an aborted subtransaction");
 			return NULL;
 		}
 
+		UnpinPortal(portal);
 		SPI_cursor_close(portal);
 		cursor->closed = true;
 	}
 
-	Py_INCREF(Py_None);
-	return Py_None;
+	Py_RETURN_NONE;
 }

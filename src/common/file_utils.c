@@ -5,7 +5,7 @@
  * Assorted utility functions to work on files.
  *
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/common/file_utils.c
@@ -32,15 +32,15 @@
 /*
  * pg_xlog has been renamed to pg_wal in version 10.
  */
-#define MINIMUM_VERSION_FOR_PG_WAL  100000
+#define MINIMUM_VERSION_FOR_PG_WAL	100000
 
 #ifdef PG_FLUSH_DATA_WORKS
 static int pre_sync_fname(const char *fname, bool isdir,
-						   const char *progname);
+			   const char *progname);
 #endif
 static void walkdir(const char *path,
-	int (*action) (const char *fname, bool isdir, const char *progname),
-	bool process_symlinks, const char *progname);
+		int (*action) (const char *fname, bool isdir, const char *progname),
+		bool process_symlinks, const char *progname);
 
 /*
  * Issue fsync recursively on PGDATA and all its contents.
@@ -65,7 +65,7 @@ fsync_pgdata(const char *pg_data,
 
 	/* handle renaming of pg_xlog to pg_wal in post-10 clusters */
 	snprintf(pg_wal, MAXPGPATH, "%s/%s", pg_data,
-		serverVersion < MINIMUM_VERSION_FOR_PG_WAL ? "pg_xlog" : "pg_wal");
+			 serverVersion < MINIMUM_VERSION_FOR_PG_WAL ? "pg_xlog" : "pg_wal");
 	snprintf(pg_tblspc, MAXPGPATH, "%s/pg_tblspc", pg_data);
 
 	/*
@@ -116,6 +116,25 @@ fsync_pgdata(const char *pg_data,
 }
 
 /*
+ * Issue fsync recursively on the given directory and all its contents.
+ *
+ * This is a convenient wrapper on top of walkdir().
+ */
+void
+fsync_dir_recurse(const char *dir, const char *progname)
+{
+	/*
+	 * If possible, hint to the kernel that we're soon going to fsync the data
+	 * directory and its contents.
+	 */
+#ifdef PG_FLUSH_DATA_WORKS
+	walkdir(dir, pre_sync_fname, false, progname);
+#endif
+
+	walkdir(dir, fsync_fname, false, progname);
+}
+
+/*
  * walkdir: recursively walk a directory, applying the action to each
  * regular file and directory (including the named directory itself).
  *
@@ -147,7 +166,7 @@ walkdir(const char *path,
 
 	while (errno = 0, (de = readdir(dir)) != NULL)
 	{
-		char		subpath[MAXPGPATH];
+		char		subpath[MAXPGPATH * 2];
 		struct stat fst;
 		int			sret;
 
@@ -155,7 +174,7 @@ walkdir(const char *path,
 			strcmp(de->d_name, "..") == 0)
 			continue;
 
-		snprintf(subpath, MAXPGPATH, "%s/%s", path, de->d_name);
+		snprintf(subpath, sizeof(subpath), "%s/%s", path, de->d_name);
 
 		if (process_symlinks)
 			sret = stat(subpath, &fst);
@@ -231,7 +250,7 @@ pre_sync_fname(const char *fname, bool isdir, const char *progname)
 	return 0;
 }
 
-#endif   /* PG_FLUSH_DATA_WORKS */
+#endif							/* PG_FLUSH_DATA_WORKS */
 
 /*
  * fsync_fname -- Try to fsync a file or directory
@@ -328,7 +347,7 @@ fsync_parent_path(const char *fname, const char *progname)
 int
 durable_rename(const char *oldfile, const char *newfile, const char *progname)
 {
-	int		fd;
+	int			fd;
 
 	/*
 	 * First fsync the old and target path (if it exists), to ensure that they

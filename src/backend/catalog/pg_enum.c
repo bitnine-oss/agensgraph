@@ -3,7 +3,7 @@
  * pg_enum.c
  *	  routines to support manipulation of the pg_enum relation
  *
- * Copyright (c) 2006-2017, PostgreSQL Global Development Group
+ * Copyright (c) 2006-2018, PostgreSQL Global Development Group
  *
  *
  * IDENTIFICATION
@@ -36,7 +36,6 @@
 Oid			binary_upgrade_next_pg_enum_oid = InvalidOid;
 
 static void RenumberEnumType(Relation pg_enum, HeapTuple *existing, int nelems);
-static int	oid_cmp(const void *p1, const void *p2);
 static int	sort_order_cmp(const void *p1, const void *p2);
 
 
@@ -348,7 +347,7 @@ restart:
 		if (!OidIsValid(binary_upgrade_next_pg_enum_oid))
 			ereport(ERROR,
 					(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-			errmsg("pg_enum OID value not set when in binary upgrade mode")));
+					 errmsg("pg_enum OID value not set when in binary upgrade mode")));
 
 		/*
 		 * Use binary-upgrade override for pg_enum.oid, if supplied. During
@@ -604,20 +603,6 @@ RenumberEnumType(Relation pg_enum, HeapTuple *existing, int nelems)
 	CommandCounterIncrement();
 }
 
-
-/* qsort comparison function for oids */
-static int
-oid_cmp(const void *p1, const void *p2)
-{
-	Oid			v1 = *((const Oid *) p1);
-	Oid			v2 = *((const Oid *) p2);
-
-	if (v1 < v2)
-		return -1;
-	if (v1 > v2)
-		return 1;
-	return 0;
-}
 
 /* qsort comparison function for tuples by sort order */
 static int

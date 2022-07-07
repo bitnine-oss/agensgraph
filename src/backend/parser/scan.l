@@ -21,7 +21,7 @@
  * Postgres 9.2, this check is made automatically by the Makefile.)
  *
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -41,6 +41,9 @@
 }
 
 %{
+
+/* LCOV_EXCL_START */
+
 /* Avoid exit() on fatal scanner errors (a bit ugly -- see yy_fatal_error) */
 #undef fprintf
 #define fprintf(file, fmt, msg)  fprintf_to_ereport(fmt, msg)
@@ -1056,6 +1059,8 @@ other			.
 				}
 
 %%
+
+/* LCOV_EXCL_STOP */
 
 /*
  * Arrange access to yyextra for subroutines of the main yylex() function.

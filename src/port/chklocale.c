@@ -4,7 +4,7 @@
  *		Functions for handling locale-related info
  *
  *
- * Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Copyright (c) 1996-2018, PostgreSQL Global Development Group
  *
  *
  * IDENTIFICATION
@@ -19,11 +19,6 @@
 #include "postgres_fe.h"
 #endif
 
-#if defined(WIN32) && (_MSC_VER >= 1900)
-#include <windows.h>
-#endif
-
-#include <locale.h>
 #ifdef HAVE_LANGINFO_H
 #include <langinfo.h>
 #endif
@@ -295,7 +290,7 @@ pg_codepage_to_encoding(UINT cp)
 	return -1;
 }
 #endif
-#endif   /* WIN32 */
+#endif							/* WIN32 */
 
 #if (defined(HAVE_LANGINFO_H) && defined(CODESET)) || defined(WIN32)
 
@@ -440,4 +435,4 @@ pg_get_encoding_from_locale(const char *ctype, bool write_message)
 	return PG_SQL_ASCII;
 }
 
-#endif   /* (HAVE_LANGINFO_H && CODESET) || WIN32 */
+#endif							/* (HAVE_LANGINFO_H && CODESET) || WIN32 */

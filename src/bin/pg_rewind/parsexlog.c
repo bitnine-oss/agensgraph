@@ -3,7 +3,7 @@
  * parsexlog.c
  *	  Functions for reading Write-Ahead-Log
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *-------------------------------------------------------------------------
@@ -29,7 +29,7 @@
  * RmgrNames is an array of resource manager names, to make error messages
  * a bit nicer.
  */
-#define PG_RMGR(symname,name,redo,desc,identify,startup,cleanup) \
+#define PG_RMGR(symname,name,redo,desc,identify,startup,cleanup,mask) \
   name,
 
 static const char *RmgrNames[RM_MAX_ID + 1] = {
@@ -69,7 +69,8 @@ extractPageMap(const char *datadir, XLogRecPtr startpoint, int tliIndex,
 
 	private.datadir = datadir;
 	private.tliIndex = tliIndex;
-	xlogreader = XLogReaderAllocate(&SimpleXLogPageRead, &private);
+	xlogreader = XLogReaderAllocate(WalSegSz, &SimpleXLogPageRead,
+									&private);
 	if (xlogreader == NULL)
 		pg_fatal("out of memory\n");
 
@@ -122,7 +123,8 @@ readOneRecord(const char *datadir, XLogRecPtr ptr, int tliIndex)
 
 	private.datadir = datadir;
 	private.tliIndex = tliIndex;
-	xlogreader = XLogReaderAllocate(&SimpleXLogPageRead, &private);
+	xlogreader = XLogReaderAllocate(WalSegSz, &SimpleXLogPageRead,
+									&private);
 	if (xlogreader == NULL)
 		pg_fatal("out of memory\n");
 
@@ -149,7 +151,7 @@ readOneRecord(const char *datadir, XLogRecPtr ptr, int tliIndex)
 }
 
 /*
- * Find the previous checkpoint preceding given WAL position.
+ * Find the previous checkpoint preceding given WAL location.
  */
 void
 findLastCheckpoint(const char *datadir, XLogRecPtr forkptr, int tliIndex,
@@ -170,11 +172,17 @@ findLastCheckpoint(const char *datadir, XLogRecPtr forkptr, int tliIndex,
 	 * header in that case to find the next record.
 	 */
 	if (forkptr % XLOG_BLCKSZ == 0)
-		forkptr += (forkptr % XLogSegSize == 0) ? SizeOfXLogLongPHD : SizeOfXLogShortPHD;
+	{
+		if (XLogSegmentOffset(forkptr, WalSegSz) == 0)
+			forkptr += SizeOfXLogLongPHD;
+		else
+			forkptr += SizeOfXLogShortPHD;
+	}
 
 	private.datadir = datadir;
 	private.tliIndex = tliIndex;
-	xlogreader = XLogReaderAllocate(&SimpleXLogPageRead, &private);
+	xlogreader = XLogReaderAllocate(WalSegSz, &SimpleXLogPageRead,
+									&private);
 	if (xlogreader == NULL)
 		pg_fatal("out of memory\n");
 
@@ -239,21 +247,22 @@ SimpleXLogPageRead(XLogReaderState *xlogreader, XLogRecPtr targetPagePtr,
 	XLogRecPtr	targetSegEnd;
 	XLogSegNo	targetSegNo;
 
-	XLByteToSeg(targetPagePtr, targetSegNo);
-	XLogSegNoOffsetToRecPtr(targetSegNo + 1, 0, targetSegEnd);
-	targetPageOff = targetPagePtr % XLogSegSize;
+	XLByteToSeg(targetPagePtr, targetSegNo, WalSegSz);
+	XLogSegNoOffsetToRecPtr(targetSegNo + 1, 0, targetSegEnd, WalSegSz);
+	targetPageOff = XLogSegmentOffset(targetPagePtr, WalSegSz);
 
 	/*
 	 * See if we need to switch to a new segment because the requested record
 	 * is not in the currently open one.
 	 */
-	if (xlogreadfd >= 0 && !XLByteInSeg(targetPagePtr, xlogreadsegno))
+	if (xlogreadfd >= 0 &&
+		!XLByteInSeg(targetPagePtr, xlogreadsegno, WalSegSz))
 	{
 		close(xlogreadfd);
 		xlogreadfd = -1;
 	}
 
-	XLByteToSeg(targetPagePtr, xlogreadsegno);
+	XLByteToSeg(targetPagePtr, xlogreadsegno, WalSegSz);
 
 	if (xlogreadfd < 0)
 	{
@@ -272,7 +281,8 @@ SimpleXLogPageRead(XLogReaderState *xlogreader, XLogRecPtr targetPagePtr,
 			   targetHistory[private->tliIndex].begin >= targetSegEnd)
 			private->tliIndex--;
 
-		XLogFileName(xlogfname, targetHistory[private->tliIndex].tli, xlogreadsegno);
+		XLogFileName(xlogfname, targetHistory[private->tliIndex].tli,
+					 xlogreadsegno, WalSegSz);
 
 		snprintf(xlogfpath, MAXPGPATH, "%s/" XLOGDIR "/%s", private->datadir, xlogfname);
 
@@ -371,7 +381,7 @@ extractPageInfo(XLogReaderState *record)
 		 */
 		pg_fatal("WAL record modifies a relation, but record type is not recognized\n"
 				 "lsn: %X/%X, rmgr: %s, info: %02X\n",
-		  (uint32) (record->ReadRecPtr >> 32), (uint32) (record->ReadRecPtr),
+				 (uint32) (record->ReadRecPtr >> 32), (uint32) (record->ReadRecPtr),
 				 RmgrNames[rmid], info);
 	}
 

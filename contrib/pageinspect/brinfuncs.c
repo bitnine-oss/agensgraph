@@ -2,7 +2,7 @@
  * brinfuncs.c
  *		Functions to investigate BRIN indexes
  *
- * Copyright (c) 2014-2017, PostgreSQL Global Development Group
+ * Copyright (c) 2014-2018, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
  *		contrib/pageinspect/brinfuncs.c
@@ -226,7 +226,8 @@ brin_page_items(PG_FUNCTION_ARGS)
 			if (ItemIdIsUsed(itemId))
 			{
 				dtup = brin_deform_tuple(bdesc,
-									(BrinTuple *) PageGetItem(page, itemId));
+										 (BrinTuple *) PageGetItem(page, itemId),
+										 NULL);
 				attno = 1;
 				unusedItem = false;
 			}

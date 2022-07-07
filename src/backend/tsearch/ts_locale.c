@@ -3,7 +3,7 @@
  * ts_locale.c
  *		locale compatibility layer for tsearch
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
  *
  *
  * IDENTIFICATION
@@ -21,14 +21,12 @@
 static void tsearch_readline_callback(void *arg);
 
 
-#ifdef USE_WIDE_UPPER_LOWER
-
 int
 t_isdigit(const char *ptr)
 {
 	int			clen = pg_mblen(ptr);
 	wchar_t		character[2];
-	Oid			collation = DEFAULT_COLLATION_OID;		/* TODO */
+	Oid			collation = DEFAULT_COLLATION_OID;	/* TODO */
 	pg_locale_t mylocale = 0;	/* TODO */
 
 	if (clen == 1 || lc_ctype_is_c(collation))
@@ -44,7 +42,7 @@ t_isspace(const char *ptr)
 {
 	int			clen = pg_mblen(ptr);
 	wchar_t		character[2];
-	Oid			collation = DEFAULT_COLLATION_OID;		/* TODO */
+	Oid			collation = DEFAULT_COLLATION_OID;	/* TODO */
 	pg_locale_t mylocale = 0;	/* TODO */
 
 	if (clen == 1 || lc_ctype_is_c(collation))
@@ -60,7 +58,7 @@ t_isalpha(const char *ptr)
 {
 	int			clen = pg_mblen(ptr);
 	wchar_t		character[2];
-	Oid			collation = DEFAULT_COLLATION_OID;		/* TODO */
+	Oid			collation = DEFAULT_COLLATION_OID;	/* TODO */
 	pg_locale_t mylocale = 0;	/* TODO */
 
 	if (clen == 1 || lc_ctype_is_c(collation))
@@ -76,7 +74,7 @@ t_isprint(const char *ptr)
 {
 	int			clen = pg_mblen(ptr);
 	wchar_t		character[2];
-	Oid			collation = DEFAULT_COLLATION_OID;		/* TODO */
+	Oid			collation = DEFAULT_COLLATION_OID;	/* TODO */
 	pg_locale_t mylocale = 0;	/* TODO */
 
 	if (clen == 1 || lc_ctype_is_c(collation))
@@ -86,7 +84,6 @@ t_isprint(const char *ptr)
 
 	return iswprint((wint_t) character[0]);
 }
-#endif   /* USE_WIDE_UPPER_LOWER */
 
 
 /*
@@ -244,16 +241,11 @@ char *
 lowerstr_with_len(const char *str, int len)
 {
 	char	   *out;
-
-#ifdef USE_WIDE_UPPER_LOWER
-	Oid			collation = DEFAULT_COLLATION_OID;		/* TODO */
+	Oid			collation = DEFAULT_COLLATION_OID;	/* TODO */
 	pg_locale_t mylocale = 0;	/* TODO */
-#endif
 
 	if (len == 0)
 		return pstrdup("");
-
-#ifdef USE_WIDE_UPPER_LOWER
 
 	/*
 	 * Use wide char code only when max encoding length > 1 and ctype != C.
@@ -296,11 +288,10 @@ lowerstr_with_len(const char *str, int len)
 		if (wlen < 0)
 			ereport(ERROR,
 					(errcode(ERRCODE_CHARACTER_NOT_IN_REPERTOIRE),
-			errmsg("conversion from wchar_t to server encoding failed: %m")));
+					 errmsg("conversion from wchar_t to server encoding failed: %m")));
 		Assert(wlen < len);
 	}
 	else
-#endif   /* USE_WIDE_UPPER_LOWER */
 	{
 		const char *ptr = str;
 		char	   *outptr;

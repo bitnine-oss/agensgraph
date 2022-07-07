@@ -24,7 +24,7 @@
  * should be killed by SIGQUIT and then a recovery cycle started.
  *
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
  *
  *
  * IDENTIFICATION
@@ -122,8 +122,8 @@ BackgroundWriterMain(void)
 	 */
 	pqsignal(SIGHUP, BgSigHupHandler);	/* set flag to read config file */
 	pqsignal(SIGINT, SIG_IGN);
-	pqsignal(SIGTERM, ReqShutdownHandler);		/* shutdown */
-	pqsignal(SIGQUIT, bg_quickdie);		/* hard crash time */
+	pqsignal(SIGTERM, ReqShutdownHandler);	/* shutdown */
+	pqsignal(SIGQUIT, bg_quickdie); /* hard crash time */
 	pqsignal(SIGALRM, SIG_IGN);
 	pqsignal(SIGPIPE, SIG_IGN);
 	pqsignal(SIGUSR1, bgwriter_sigusr1_handler);
@@ -310,8 +310,8 @@ BackgroundWriterMain(void)
 		 * check whether there has been any WAL inserted since the last time
 		 * we've logged a running xacts.
 		 *
-		 * We do this logging in the bgwriter as it is the only process that is
-		 * run regularly and returns to its mainloop all the time. E.g.
+		 * We do this logging in the bgwriter as it is the only process that
+		 * is run regularly and returns to its mainloop all the time. E.g.
 		 * Checkpointer, when active, is barely ever in its mainloop and thus
 		 * makes it hard to log regularly.
 		 */
@@ -325,10 +325,13 @@ BackgroundWriterMain(void)
 
 			/*
 			 * Only log if enough time has passed and interesting records have
-			 * been inserted since the last snapshot.
+			 * been inserted since the last snapshot.  Have to compare with <=
+			 * instead of < because GetLastImportantRecPtr() points at the
+			 * start of a record, whereas last_snapshot_lsn points just past
+			 * the end of the record.
 			 */
 			if (now >= timeout &&
-				last_snapshot_lsn < GetLastImportantRecPtr())
+				last_snapshot_lsn <= GetLastImportantRecPtr())
 			{
 				last_snapshot_lsn = LogStandbySnapshot();
 				last_snapshot_ts = now;
@@ -347,7 +350,7 @@ BackgroundWriterMain(void)
 		 */
 		rc = WaitLatch(MyLatch,
 					   WL_LATCH_SET | WL_TIMEOUT | WL_POSTMASTER_DEATH,
-					   BgWriterDelay /* ms */, WAIT_EVENT_BGWRITER_MAIN);
+					   BgWriterDelay /* ms */ , WAIT_EVENT_BGWRITER_MAIN);
 
 		/*
 		 * If no latch event and BgBufferSync says nothing's happening, extend

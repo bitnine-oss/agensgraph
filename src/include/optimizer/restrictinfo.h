@@ -4,7 +4,7 @@
  *	  prototypes for restrictinfo.c.
  *
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/optimizer/restrictinfo.h
@@ -43,4 +43,4 @@ extern bool join_clause_is_movable_into(RestrictInfo *rinfo,
 							Relids currentrelids,
 							Relids current_and_outer);
 
-#endif   /* RESTRICTINFO_H */
+#endif							/* RESTRICTINFO_H */

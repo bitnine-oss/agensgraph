@@ -5,7 +5,7 @@
  *
  * All the actual insertion logic is in spgdoinsert.c.
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -18,6 +18,7 @@
 
 #include "access/genam.h"
 #include "access/spgist_private.h"
+#include "access/spgxlog.h"
 #include "access/xlog.h"
 #include "access/xloginsert.h"
 #include "catalog/index.h"
@@ -109,7 +110,7 @@ spgbuild(Relation heap, Relation index, IndexInfo *indexInfo)
 		 * Replay will re-initialize the pages, so don't take full pages
 		 * images.  No other data to log.
 		 */
-		XLogRegisterBuffer(0, metabuffer, REGBUF_WILL_INIT);
+		XLogRegisterBuffer(0, metabuffer, REGBUF_WILL_INIT | REGBUF_STANDARD);
 		XLogRegisterBuffer(1, rootbuffer, REGBUF_WILL_INIT | REGBUF_STANDARD);
 		XLogRegisterBuffer(2, nullbuffer, REGBUF_WILL_INIT | REGBUF_STANDARD);
 
@@ -133,11 +134,12 @@ spgbuild(Relation heap, Relation index, IndexInfo *indexInfo)
 	buildstate.spgstate.isBuild = true;
 
 	buildstate.tmpCtx = AllocSetContextCreate(CurrentMemoryContext,
-										   "SP-GiST build temporary context",
+											  "SP-GiST build temporary context",
 											  ALLOCSET_DEFAULT_SIZES);
 
 	reltuples = IndexBuildHeapScan(heap, index, indexInfo, true,
-								   spgistBuildCallback, (void *) &buildstate);
+								   spgistBuildCallback, (void *) &buildstate,
+								   NULL);
 
 	MemoryContextDelete(buildstate.tmpCtx);
 
@@ -163,16 +165,16 @@ spgbuildempty(Relation index)
 
 	/*
 	 * Write the page and log it unconditionally.  This is important
-	 * particularly for indexes created on tablespaces and databases
-	 * whose creation happened after the last redo pointer as recovery
-	 * removes any of their existing content when the corresponding
-	 * create records are replayed.
+	 * particularly for indexes created on tablespaces and databases whose
+	 * creation happened after the last redo pointer as recovery removes any
+	 * of their existing content when the corresponding create records are
+	 * replayed.
 	 */
 	PageSetChecksumInplace(page, SPGIST_METAPAGE_BLKNO);
 	smgrwrite(index->rd_smgr, INIT_FORKNUM, SPGIST_METAPAGE_BLKNO,
 			  (char *) page, true);
 	log_newpage(&index->rd_smgr->smgr_rnode.node, INIT_FORKNUM,
-				SPGIST_METAPAGE_BLKNO, page, false);
+				SPGIST_METAPAGE_BLKNO, page, true);
 
 	/* Likewise for the root page. */
 	SpGistInitPage(page, SPGIST_LEAF);
@@ -206,7 +208,8 @@ spgbuildempty(Relation index)
 bool
 spginsert(Relation index, Datum *values, bool *isnull,
 		  ItemPointer ht_ctid, Relation heapRel,
-		  IndexUniqueCheck checkUnique)
+		  IndexUniqueCheck checkUnique,
+		  IndexInfo *indexInfo)
 {
 	SpGistState spgstate;
 	MemoryContext oldCtx;

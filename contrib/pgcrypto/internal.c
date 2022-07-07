@@ -42,11 +42,11 @@
 /*
  * System reseeds should be separated at least this much.
  */
-#define SYSTEM_RESEED_MIN			(20*60)		/* 20 min */
+#define SYSTEM_RESEED_MIN			(20*60) /* 20 min */
 /*
  * How often to roll dice.
  */
-#define SYSTEM_RESEED_CHECK_TIME	(10*60)		/* 10 min */
+#define SYSTEM_RESEED_CHECK_TIME	(10*60) /* 10 min */
 /*
  * The chance is x/256 that the reseed happens.
  */
@@ -318,7 +318,7 @@ rj_init(PX_Cipher *c, const uint8 *key, unsigned klen, const uint8 *iv)
 }
 
 static int
-rj_real_init(struct int_ctx * cx, int dir)
+rj_real_init(struct int_ctx *cx, int dir)
 {
 	aes_set_key(&cx->ctx.rj, cx->keybuf, cx->keylen * 8, dir);
 	return 0;

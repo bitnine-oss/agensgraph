@@ -3,7 +3,7 @@
  * port.h
  *	  Header for src/port/ compatibility functions.
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/port.h
@@ -16,6 +16,15 @@
 #include <ctype.h>
 #include <netdb.h>
 #include <pwd.h>
+
+/*
+ * Windows has enough specialized port stuff that we push most of it off
+ * into another file.
+ * Note: Some CYGWIN includes might #define WIN32.
+ */
+#if defined(WIN32) && !defined(__CYGWIN__)
+#include "port/win32_port.h"
+#endif
 
 /* socket has a different definition on WIN32 */
 #ifndef WIN32
@@ -98,10 +107,8 @@ extern int	find_my_exec(const char *argv0, char *retpath);
 extern int find_other_exec(const char *argv0, const char *target,
 				const char *versionstr, char *retpath);
 
-/* Windows security token manipulation (in exec.c) */
-#ifdef WIN32
-extern BOOL AddUserToTokenDacl(HANDLE hToken);
-#endif
+/* Doesn't belong here, but this is used with find_other_exec(), so... */
+#define PG_BACKEND_VERSIONSTR "postgres (PostgreSQL) " PG_VERSION "\n"
 
 
 #if defined(WIN32) || defined(__CYGWIN__)
@@ -180,37 +187,11 @@ extern int	pg_printf(const char *fmt,...) pg_attribute_printf(1, 2);
 #define fprintf			pg_fprintf
 #define printf			pg_printf
 #endif
-#endif   /* USE_REPL_SNPRINTF */
-
-#if defined(WIN32)
-/*
- * Versions of libintl >= 0.18? try to replace setlocale() with a macro
- * to their own versions.  Remove the macro, if it exists, because it
- * ends up calling the wrong version when the backend and libintl use
- * different versions of msvcrt.
- */
-#if defined(setlocale)
-#undef setlocale
-#endif
-
-/*
- * Define our own wrapper macro around setlocale() to work around bugs in
- * Windows' native setlocale() function.
- */
-extern char *pgwin32_setlocale(int category, const char *locale);
-
-#define setlocale(a,b) pgwin32_setlocale(a,b)
-#endif   /* WIN32 */
+#endif							/* USE_REPL_SNPRINTF */
 
 /* Portable prompt handling */
 extern void simple_prompt(const char *prompt, char *destination, size_t destlen,
 			  bool echo);
-
-#ifdef WIN32
-#define PG_SIGNAL_COUNT 32
-#define kill(pid,sig)	pgkill(pid,sig)
-extern int	pgkill(int pid, int sig);
-#endif
 
 extern int	pclose_check(FILE *stream);
 
@@ -231,13 +212,13 @@ extern int	pgrename(const char *from, const char *to);
 extern int	pgunlink(const char *path);
 
 /* Include this first so later includes don't see these defines */
-#ifdef WIN32_ONLY_COMPILER
+#ifdef _MSC_VER
 #include <io.h>
 #endif
 
 #define rename(from, to)		pgrename(from, to)
 #define unlink(path)			pgunlink(path)
-#endif   /* defined(WIN32) || defined(__CYGWIN__) */
+#endif							/* defined(WIN32) || defined(__CYGWIN__) */
 
 /*
  *	Win32 also doesn't have symlinks, but we can emulate them with
@@ -258,23 +239,6 @@ extern bool pgwin32_is_junction(const char *path);
 #endif
 
 extern bool rmtree(const char *path, bool rmtopdir);
-
-/*
- * stat() is not guaranteed to set the st_size field on win32, so we
- * redefine it to our own implementation that is.
- *
- * We must pull in sys/stat.h here so the system header definition
- * goes in first, and we redefine that, and not the other way around.
- *
- * Some frontends don't need the size from stat, so if UNSAFE_STAT_OK
- * is defined we don't bother with this.
- */
-#if defined(WIN32) && !defined(__CYGWIN__) && !defined(UNSAFE_STAT_OK)
-#include <sys/stat.h>
-extern int	pgwin32_safestat(const char *path, struct stat * buf);
-
-#define stat(a,b) pgwin32_safestat(a,b)
-#endif
 
 #if defined(WIN32) && !defined(__CYGWIN__)
 
@@ -317,7 +281,7 @@ extern FILE *pgwin32_popen(const char *command, const char *type);
 /* New versions of MingW have gettimeofday, old mingw and msvc don't */
 #ifndef HAVE_GETTIMEOFDAY
 /* Last parameter not used */
-extern int	gettimeofday(struct timeval * tp, struct timezone * tzp);
+extern int	gettimeofday(struct timeval *tp, struct timezone *tzp);
 #endif
 #else							/* !WIN32 */
 
@@ -326,7 +290,7 @@ extern int	gettimeofday(struct timeval * tp, struct timezone * tzp);
  *	close() does them all.
  */
 #define closesocket close
-#endif   /* WIN32 */
+#endif							/* WIN32 */
 
 /*
  * On Windows, setvbuf() does not support _IOLBF mode, and interprets that
@@ -350,7 +314,7 @@ extern int	gettimeofday(struct timeval * tp, struct timezone * tzp);
 extern char *crypt(const char *key, const char *setting);
 #endif
 
-/* WIN32 handled in port/win32.h */
+/* WIN32 handled in port/win32_port.h */
 #ifndef WIN32
 #define pgoff_t off_t
 #ifdef __NetBSD__
@@ -392,7 +356,7 @@ extern double rint(double x);
 #ifndef HAVE_INET_ATON
 #include <netinet/in.h>
 #include <arpa/inet.h>
-extern int	inet_aton(const char *cp, struct in_addr * addr);
+extern int	inet_aton(const char *cp, struct in_addr *addr);
 #endif
 
 #if !HAVE_DECL_STRLCAT
@@ -403,7 +367,11 @@ extern size_t strlcat(char *dst, const char *src, size_t siz);
 extern size_t strlcpy(char *dst, const char *src, size_t siz);
 #endif
 
-#if !defined(HAVE_RANDOM) && !defined(__BORLANDC__)
+#if !HAVE_DECL_STRNLEN
+extern size_t strnlen(const char *str, size_t maxlen);
+#endif
+
+#if !defined(HAVE_RANDOM)
 extern long random(void);
 #endif
 
@@ -423,14 +391,14 @@ extern void srandom(unsigned int seed);
 extern char *pqStrerror(int errnum, char *strerrbuf, size_t buflen);
 
 #ifndef WIN32
-extern int pqGetpwuid(uid_t uid, struct passwd * resultbuf, char *buffer,
-		   size_t buflen, struct passwd ** result);
+extern int pqGetpwuid(uid_t uid, struct passwd *resultbuf, char *buffer,
+		   size_t buflen, struct passwd **result);
 #endif
 
 extern int pqGethostbyname(const char *name,
-				struct hostent * resultbuf,
+				struct hostent *resultbuf,
 				char *buffer, size_t buflen,
-				struct hostent ** result,
+				struct hostent **result,
 				int *herrno);
 
 extern void pg_qsort(void *base, size_t nel, size_t elsize,
@@ -469,6 +437,11 @@ extern int	pg_mkdir_p(char *path, int omode);
 /* port/pqsignal.c */
 typedef void (*pqsigfunc) (int signo);
 extern pqsigfunc pqsignal(int signo, pqsigfunc func);
+#ifndef WIN32
+extern pqsigfunc pqsignal_no_restart(int signo, pqsigfunc func);
+#else
+#define pqsignal_no_restart(signo, func) pqsignal(signo, func)
+#endif
 
 /* port/quotes.c */
 extern char *escape_single_quotes_ascii(const char *src);
@@ -476,4 +449,4 @@ extern char *escape_single_quotes_ascii(const char *src);
 /* port/wait_error.c */
 extern char *wait_result_to_str(int exit_status);
 
-#endif   /* PG_PORT_H */
+#endif							/* PG_PORT_H */

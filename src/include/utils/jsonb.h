@@ -3,7 +3,7 @@
  * jsonb.h
  *	  Declarations for jsonb data type support.
  *
- * Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Copyright (c) 1996-2018, PostgreSQL Global Development Group
  *
  * src/include/utils/jsonb.h
  *
@@ -65,10 +65,10 @@ typedef enum
 #define JGIN_MAXLENGTH	125		/* max length of text part before hashing */
 
 /* Convenience macros */
-#define DatumGetJsonb(d)	((Jsonb *) PG_DETOAST_DATUM(d))
-#define JsonbGetDatum(p)	PointerGetDatum(p)
-#define PG_GETARG_JSONB(x)	DatumGetJsonb(PG_GETARG_DATUM(x))
-#define PG_RETURN_JSONB(x)	PG_RETURN_POINTER(x)
+#define DatumGetJsonbP(d)	((Jsonb *) PG_DETOAST_DATUM(d))
+#define JsonbPGetDatum(p)	PointerGetDatum(p)
+#define PG_GETARG_JSONB_P(x)	DatumGetJsonbP(PG_GETARG_DATUM(x))
+#define PG_RETURN_JSONB_P(x)	PG_RETURN_POINTER(x)
 
 typedef struct JsonbPair JsonbPair;
 typedef struct JsonbValue JsonbValue;
@@ -148,7 +148,7 @@ typedef uint32 JEntry;
 #define JENTRY_ISBOOL_FALSE		0x20000000
 #define JENTRY_ISBOOL_TRUE		0x30000000
 #define JENTRY_ISNULL			0x40000000
-#define JENTRY_ISCONTAINER		0x50000000		/* array or object */
+#define JENTRY_ISCONTAINER		0x50000000	/* array or object */
 
 /* Access macros.  Note possible multiple evaluations */
 #define JBE_OFFLENFLD(je_)		((je_) & JENTRY_OFFLENMASK)
@@ -200,8 +200,8 @@ typedef struct JsonbContainer
 } JsonbContainer;
 
 /* flags for the header-field in JsonbContainer */
-#define JB_CMASK				0x0FFFFFFF		/* mask for count field */
-#define JB_FSCALAR				0x10000000		/* flag bits */
+#define JB_CMASK				0x0FFFFFFF	/* mask for count field */
+#define JB_FSCALAR				0x10000000	/* flag bits */
 #define JB_FOBJECT				0x20000000
 #define JB_FARRAY				0x40000000
 
@@ -263,7 +263,7 @@ struct JsonbValue
 		{
 			int			nElems;
 			JsonbValue *elems;
-			bool		rawScalar;		/* Top-level "raw scalar" array? */
+			bool		rawScalar;	/* Top-level "raw scalar" array? */
 		}			array;		/* Array container type */
 
 		struct
@@ -370,6 +370,8 @@ extern Jsonb *JsonbValueToJsonb(JsonbValue *val);
 extern bool JsonbDeepContains(JsonbIterator **val,
 				  JsonbIterator **mContained);
 extern void JsonbHashScalarValue(const JsonbValue *scalarVal, uint32 *hash);
+extern void JsonbHashScalarValueExtended(const JsonbValue *scalarVal,
+							 uint64 *hash, uint64 seed);
 
 /* jsonb.c support functions */
 extern char *JsonbToCString(StringInfo out, JsonbContainer *in,
@@ -378,4 +380,4 @@ extern char *JsonbToCStringIndent(StringInfo out, JsonbContainer *in,
 					 int estimated_len);
 
 
-#endif   /* __JSONB_H__ */
+#endif							/* __JSONB_H__ */

@@ -3,7 +3,7 @@
  * parse_cte.c
  *	  handle CTEs (common table expressions) in parser
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -129,8 +129,8 @@ transformWithClause(ParseState *pstate, WithClause *withClause)
 			if (strcmp(cte->ctename, cte2->ctename) == 0)
 				ereport(ERROR,
 						(errcode(ERRCODE_DUPLICATE_ALIAS),
-					errmsg("WITH query name \"%s\" specified more than once",
-						   cte2->ctename),
+						 errmsg("WITH query name \"%s\" specified more than once",
+								cte2->ctename),
 						 parser_errposition(pstate, cte2->location)));
 		}
 
@@ -313,7 +313,7 @@ analyzeCTE(ParseState *pstate, CommonTableExpr *cte)
 						 errmsg("recursive query \"%s\" column %d has type %s in non-recursive term but type %s overall",
 								cte->ctename, varattno,
 								format_type_with_typemod(lfirst_oid(lctyp),
-													   lfirst_int(lctypmod)),
+														 lfirst_int(lctypmod)),
 								format_type_with_typemod(exprType(texpr),
 														 exprTypmod(texpr))),
 						 errhint("Cast the output of the non-recursive term to the correct type."),
@@ -331,7 +331,7 @@ analyzeCTE(ParseState *pstate, CommonTableExpr *cte)
 			lctypmod = lnext(lctypmod);
 			lccoll = lnext(lccoll);
 		}
-		if (lctyp != NULL || lctypmod != NULL || lccoll != NULL)		/* shouldn't happen */
+		if (lctyp != NULL || lctypmod != NULL || lccoll != NULL)	/* shouldn't happen */
 			elog(ERROR, "wrong number of output columns in WITH");
 	}
 }
@@ -595,7 +595,7 @@ TopologicalSort(ParseState *pstate, CteItem *items, int numitems)
 		if (j >= numitems)
 			ereport(ERROR,
 					(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-			errmsg("mutual recursion between WITH items is not implemented"),
+					 errmsg("mutual recursion between WITH items is not implemented"),
 					 parser_errposition(pstate, items[i].cte->location)));
 
 		/*
@@ -637,7 +637,7 @@ checkWellFormedRecursion(CteState *cstate)
 		CommonTableExpr *cte = cstate->items[i].cte;
 		SelectStmt *stmt = (SelectStmt *) cte->ctequery;
 
-		Assert(!IsA(stmt, Query));		/* not analyzed yet */
+		Assert(!IsA(stmt, Query));	/* not analyzed yet */
 
 		/* Ignore items that weren't found to be recursive */
 		if (!cte->cterecursive)
@@ -699,9 +699,9 @@ checkWellFormedRecursion(CteState *cstate)
 		if (stmt->sortClause)
 			ereport(ERROR,
 					(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-				  errmsg("ORDER BY in a recursive query is not implemented"),
+					 errmsg("ORDER BY in a recursive query is not implemented"),
 					 parser_errposition(cstate->pstate,
-								  exprLocation((Node *) stmt->sortClause))));
+										exprLocation((Node *) stmt->sortClause))));
 		if (stmt->limitOffset)
 			ereport(ERROR,
 					(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
@@ -719,7 +719,7 @@ checkWellFormedRecursion(CteState *cstate)
 					(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
 					 errmsg("FOR UPDATE/SHARE in a recursive query is not implemented"),
 					 parser_errposition(cstate->pstate,
-							   exprLocation((Node *) stmt->lockingClause))));
+										exprLocation((Node *) stmt->lockingClause))));
 	}
 }
 

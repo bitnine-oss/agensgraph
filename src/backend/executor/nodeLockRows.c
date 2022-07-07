@@ -3,7 +3,7 @@
  * nodeLockRows.c
  *	  Routines to handle FOR UPDATE/FOR SHARE row locking
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -26,6 +26,7 @@
 #include "executor/executor.h"
 #include "executor/nodeLockRows.h"
 #include "foreign/fdwapi.h"
+#include "miscadmin.h"
 #include "storage/bufmgr.h"
 #include "utils/rel.h"
 #include "utils/tqual.h"
@@ -35,14 +36,17 @@
  *		ExecLockRows
  * ----------------------------------------------------------------
  */
-TupleTableSlot *				/* return: a tuple or NULL */
-ExecLockRows(LockRowsState *node)
+static TupleTableSlot *			/* return: a tuple or NULL */
+ExecLockRows(PlanState *pstate)
 {
+	LockRowsState *node = castNode(LockRowsState, pstate);
 	TupleTableSlot *slot;
 	EState	   *estate;
 	PlanState  *outerPlan;
 	bool		epq_needed;
 	ListCell   *lc;
+
+	CHECK_FOR_INTERRUPTS();
 
 	/*
 	 * get information from the node
@@ -172,7 +176,7 @@ lnext:
 				break;
 			default:
 				elog(ERROR, "unsupported rowmark type");
-				lockmode = LockTupleNoKeyExclusive;		/* keep compiler quiet */
+				lockmode = LockTupleNoKeyExclusive; /* keep compiler quiet */
 				break;
 		}
 
@@ -361,17 +365,20 @@ ExecInitLockRows(LockRows *node, EState *estate, int eflags)
 	lrstate = makeNode(LockRowsState);
 	lrstate->ps.plan = (Plan *) node;
 	lrstate->ps.state = estate;
+	lrstate->ps.ExecProcNode = ExecLockRows;
 
 	/*
 	 * Miscellaneous initialization
 	 *
-	 * LockRows nodes never call ExecQual or ExecProject.
+	 * LockRows nodes never call ExecQual or ExecProject, therefore no
+	 * ExprContext is needed.
 	 */
 
 	/*
-	 * Tuple table initialization (XXX not actually used...)
+	 * Tuple table initialization (XXX not actually used, but upper nodes
+	 * access it to get this node's result tupledesc...)
 	 */
-	ExecInitResultTupleSlot(estate, &lrstate->ps);
+	ExecInitResultTupleSlotTL(estate, &lrstate->ps);
 
 	/*
 	 * then initialize outer plan
@@ -382,7 +389,6 @@ ExecInitLockRows(LockRows *node, EState *estate, int eflags)
 	 * LockRows nodes do no projections, so initialize projection info for
 	 * this node appropriately
 	 */
-	ExecAssignResultTypeFromTL(&lrstate->ps);
 	lrstate->ps.ps_ProjInfo = NULL;
 
 	/*
@@ -401,7 +407,7 @@ ExecInitLockRows(LockRows *node, EState *estate, int eflags)
 	epq_arowmarks = NIL;
 	foreach(lc, node->rowMarks)
 	{
-		PlanRowMark *rc = castNode(PlanRowMark, lfirst(lc));
+		PlanRowMark *rc = lfirst_node(PlanRowMark, lc);
 		ExecRowMark *erm;
 		ExecAuxRowMark *aerm;
 

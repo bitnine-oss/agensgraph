@@ -4,7 +4,7 @@
  *	  POSTGRES heap tuple header definitions.
  *
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/access/htup_details.h
@@ -134,6 +134,11 @@ typedef struct DatumTupleFields
 	Oid			datum_typeid;	/* composite type OID, or RECORDOID */
 
 	/*
+	 * datum_typeid cannot be a domain over composite, only plain composite,
+	 * even if the datum is meant as a value of a domain-over-composite type.
+	 * This is in line with the general principle that CoerceToDomain does not
+	 * change the physical representation of the base type value.
+	 *
 	 * Note: field ordering is chosen with thought that Oid might someday
 	 * widen to 64 bits.
 	 */
@@ -165,7 +170,7 @@ struct HeapTupleHeaderData
 	/* MORE DATA FOLLOWS AT END OF STRUCT */
 };
 
-/* typedef appears in tupbasics.h */
+/* typedef appears in htup.h */
 
 #define SizeofHeapTupleHeader offsetof(HeapTupleHeaderData, t_bits)
 
@@ -422,7 +427,7 @@ do { \
 
 #define HeapTupleHeaderIsSpeculative(tup) \
 ( \
-	(tup)->t_ctid.ip_posid == SpecTokenOffsetNumber \
+	(ItemPointerGetOffsetNumberNoCheck(&(tup)->t_ctid) == SpecTokenOffsetNumber) \
 )
 
 #define HeapTupleHeaderGetSpeculativeToken(tup) \
@@ -722,11 +727,11 @@ struct MinimalTupleData
 	(*(isnull) = false),											\
 	HeapTupleNoNulls(tup) ?											\
 	(																\
-		(tupleDesc)->attrs[(attnum)-1]->attcacheoff >= 0 ?			\
+		TupleDescAttr((tupleDesc), (attnum)-1)->attcacheoff >= 0 ?	\
 		(															\
-			fetchatt((tupleDesc)->attrs[(attnum)-1],				\
+			fetchatt(TupleDescAttr((tupleDesc), (attnum)-1),		\
 				(char *) (tup)->t_data + (tup)->t_data->t_hoff +	\
-					(tupleDesc)->attrs[(attnum)-1]->attcacheoff)	\
+				TupleDescAttr((tupleDesc), (attnum)-1)->attcacheoff)\
 		)															\
 		:															\
 			nocachegetattr((tup), (attnum), (tupleDesc))			\
@@ -748,7 +753,7 @@ struct MinimalTupleData
 
 extern Datum fastgetattr(HeapTuple tup, int attnum, TupleDesc tupleDesc,
 			bool *isnull);
-#endif   /* defined(DISABLE_COMPLEX_MACRO) */
+#endif							/* defined(DISABLE_COMPLEX_MACRO) */
 
 
 /* ----------------
@@ -821,4 +826,4 @@ extern MinimalTuple heap_copy_minimal_tuple(MinimalTuple mtup);
 extern HeapTuple heap_tuple_from_minimal_tuple(MinimalTuple mtup);
 extern MinimalTuple minimal_tuple_from_heap_tuple(HeapTuple htup);
 
-#endif   /* HTUP_DETAILS_H */
+#endif							/* HTUP_DETAILS_H */

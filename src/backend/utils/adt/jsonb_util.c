@@ -3,7 +3,7 @@
  * jsonb_util.c
  *	  converting between Jsonb and JsonbValues, and iterating.
  *
- * Copyright (c) 2014-2017, PostgreSQL Global Development Group
+ * Copyright (c) 2014-2018, PostgreSQL Global Development Group
  *
  *
  * IDENTIFICATION
@@ -557,7 +557,7 @@ pushJsonbValueScalar(JsonbParseState **pstate, JsonbIteratorToken seq,
 			(*pstate)->contVal.type = jbvArray;
 			(*pstate)->contVal.val.array.nElems = 0;
 			(*pstate)->contVal.val.array.rawScalar = (scalarVal &&
-											 scalarVal->val.array.rawScalar);
+													  scalarVal->val.array.rawScalar);
 			if (scalarVal && scalarVal->val.array.nElems > 0)
 			{
 				/* Assume that this array is still really a scalar */
@@ -872,7 +872,7 @@ recurse:
 			JBE_ADVANCE_OFFSET((*it)->curDataOffset,
 							   (*it)->children[(*it)->curIndex]);
 			JBE_ADVANCE_OFFSET((*it)->curValueOffset,
-						   (*it)->children[(*it)->curIndex + (*it)->nElems]);
+							   (*it)->children[(*it)->curIndex + (*it)->nElems]);
 			(*it)->curIndex++;
 
 			/*
@@ -1228,7 +1228,7 @@ JsonbHashScalarValue(const JsonbValue *scalarVal, uint32 *hash)
 		case jbvNumeric:
 			/* Must hash equal numerics to equal hash codes */
 			tmp = DatumGetUInt32(DirectFunctionCall1(hash_numeric,
-								   NumericGetDatum(scalarVal->val.numeric)));
+													 NumericGetDatum(scalarVal->val.numeric)));
 			break;
 		case jbvBool:
 			tmp = scalarVal->val.boolean ? 0x02 : 0x04;
@@ -1250,6 +1250,49 @@ JsonbHashScalarValue(const JsonbValue *scalarVal, uint32 *hash)
 }
 
 /*
+ * Hash a value to a 64-bit value, with a seed. Otherwise, similar to
+ * JsonbHashScalarValue.
+ */
+void
+JsonbHashScalarValueExtended(const JsonbValue *scalarVal, uint64 *hash,
+							 uint64 seed)
+{
+	uint64		tmp;
+
+	switch (scalarVal->type)
+	{
+		case jbvNull:
+			tmp = seed + 0x01;
+			break;
+		case jbvString:
+			tmp = DatumGetUInt64(hash_any_extended((const unsigned char *) scalarVal->val.string.val,
+												   scalarVal->val.string.len,
+												   seed));
+			break;
+		case jbvNumeric:
+			tmp = DatumGetUInt64(DirectFunctionCall2(hash_numeric_extended,
+													 NumericGetDatum(scalarVal->val.numeric),
+													 UInt64GetDatum(seed)));
+			break;
+		case jbvBool:
+			if (seed)
+				tmp = DatumGetUInt64(DirectFunctionCall2(hashcharextended,
+														 BoolGetDatum(scalarVal->val.boolean),
+														 UInt64GetDatum(seed)));
+			else
+				tmp = scalarVal->val.boolean ? 0x02 : 0x04;
+
+			break;
+		default:
+			elog(ERROR, "invalid jsonb scalar type");
+			break;
+	}
+
+	*hash = ROTATE_HIGH_AND_LOW_32BITS(*hash);
+	*hash ^= tmp;
+}
+
+/*
  * Are two scalar JsonbValues of the same type a and b equal?
  */
 static bool
@@ -1265,8 +1308,8 @@ equalsJsonbScalarValue(JsonbValue *aScalar, JsonbValue *bScalar)
 				return lengthCompareJsonbStringValue(aScalar, bScalar) == 0;
 			case jbvNumeric:
 				return DatumGetBool(DirectFunctionCall2(numeric_eq,
-									   PointerGetDatum(aScalar->val.numeric),
-									 PointerGetDatum(bScalar->val.numeric)));
+														PointerGetDatum(aScalar->val.numeric),
+														PointerGetDatum(bScalar->val.numeric)));
 			case jbvBool:
 				return aScalar->val.boolean == bScalar->val.boolean;
 
@@ -1301,8 +1344,8 @@ compareJsonbScalarValue(JsonbValue *aScalar, JsonbValue *bScalar)
 								  DEFAULT_COLLATION_OID);
 			case jbvNumeric:
 				return DatumGetInt32(DirectFunctionCall2(numeric_cmp,
-									   PointerGetDatum(aScalar->val.numeric),
-									 PointerGetDatum(bScalar->val.numeric)));
+														 PointerGetDatum(aScalar->val.numeric),
+														 PointerGetDatum(bScalar->val.numeric)));
 			case jbvBool:
 				if (aScalar->val.boolean == bScalar->val.boolean)
 					return 0;

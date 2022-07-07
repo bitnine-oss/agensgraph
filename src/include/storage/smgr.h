@@ -4,7 +4,7 @@
  *	  storage manager switch public interface declarations.
  *
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/storage/smgr.h
@@ -40,7 +40,7 @@
 typedef struct SMgrRelationData
 {
 	/* rnode is the hashtable lookup key, so it must be first! */
-	RelFileNodeBackend smgr_rnode;		/* relation physical identifier */
+	RelFileNodeBackend smgr_rnode;	/* relation physical identifier */
 
 	/* pointer to owning pointer, or NULL if none */
 	struct SMgrRelationData **smgr_owner;
@@ -53,7 +53,7 @@ typedef struct SMgrRelationData
 	 * happens.  In all three cases, InvalidBlockNumber means "unknown".
 	 */
 	BlockNumber smgr_targblock; /* current insertion target block */
-	BlockNumber smgr_fsm_nblocks;		/* last known size of fsm fork */
+	BlockNumber smgr_fsm_nblocks;	/* last known size of fsm fork */
 	BlockNumber smgr_vm_nblocks;	/* last known size of vm fork */
 
 	/* additional public fields may someday exist here */
@@ -144,4 +144,4 @@ extern void RememberFsyncRequest(RelFileNode rnode, ForkNumber forknum,
 extern void ForgetRelationFsyncRequests(RelFileNode rnode, ForkNumber forknum);
 extern void ForgetDatabaseFsyncRequests(Oid dbid);
 
-#endif   /* SMGR_H */
+#endif							/* SMGR_H */

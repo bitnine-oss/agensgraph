@@ -28,6 +28,7 @@
 #include "access/relscan.h"
 #include "access/xact.h"
 #include "catalog/namespace.h"
+#include "catalog/pg_authid.h"
 #include "funcapi.h"
 #include "miscadmin.h"
 #include "storage/bufmgr.h"
@@ -94,15 +95,33 @@ pgrowlocks(PG_FUNCTION_ARGS)
 		attinmeta = TupleDescGetAttInMetadata(tupdesc);
 		funcctx->attinmeta = attinmeta;
 
-		relname = PG_GETARG_TEXT_P(0);
+		relname = PG_GETARG_TEXT_PP(0);
 		relrv = makeRangeVarFromNameList(textToQualifiedNameList(relname));
-		rel = heap_openrv(relrv, AccessShareLock);
+		rel = relation_openrv(relrv, AccessShareLock);
 
-		/* check permissions: must have SELECT on table */
+		if (rel->rd_rel->relkind == RELKIND_PARTITIONED_TABLE)
+			ereport(ERROR,
+					(errcode(ERRCODE_WRONG_OBJECT_TYPE),
+					 errmsg("\"%s\" is a partitioned table",
+							RelationGetRelationName(rel)),
+					 errdetail("Partitioned tables do not contain rows.")));
+		else if (rel->rd_rel->relkind != RELKIND_RELATION)
+			ereport(ERROR,
+					(errcode(ERRCODE_WRONG_OBJECT_TYPE),
+					 errmsg("\"%s\" is not a table",
+							RelationGetRelationName(rel))));
+
+		/*
+		 * check permissions: must have SELECT on table or be in
+		 * pg_stat_scan_tables
+		 */
 		aclresult = pg_class_aclcheck(RelationGetRelid(rel), GetUserId(),
 									  ACL_SELECT);
 		if (aclresult != ACLCHECK_OK)
-			aclcheck_error(aclresult, ACL_KIND_CLASS,
+			aclresult = is_member_of_role(GetUserId(), DEFAULT_ROLE_STAT_SCAN_TABLES) ? ACLCHECK_OK : ACLCHECK_NO_PRIV;
+
+		if (aclresult != ACLCHECK_OK)
+			aclcheck_error(aclresult, get_relkind_objtype(rel->rd_rel->relkind),
 						   RelationGetRelationName(rel));
 
 		scan = heap_beginscan(rel, GetActiveSnapshot(), 0, NULL);
@@ -146,7 +165,7 @@ pgrowlocks(PG_FUNCTION_ARGS)
 			values = (char **) palloc(mydata->ncolumns * sizeof(char *));
 
 			values[Atnum_tid] = (char *) DirectFunctionCall1(tidout,
-											PointerGetDatum(&tuple->t_self));
+															 PointerGetDatum(&tuple->t_self));
 
 			values[Atnum_xmax] = palloc(NCHARS * sizeof(char));
 			snprintf(values[Atnum_xmax], NCHARS, "%d", xmax);

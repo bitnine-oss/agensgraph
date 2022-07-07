@@ -58,11 +58,11 @@ typedef struct
 	int			rscale;			/* result scale */
 	int			dscale;			/* display scale */
 	int			sign;			/* NUMERIC_POS, NUMERIC_NEG, or NUMERIC_NAN */
-	NumericDigit digits[DECSIZE];		/* decimal digits */
+	NumericDigit digits[DECSIZE];	/* decimal digits */
 } decimal;
 
 #ifdef __cplusplus
-extern		"C"
+extern "C"
 {
 #endif
 
@@ -91,7 +91,7 @@ int			PGTYPESnumeric_from_decimal(decimal *, numeric *);
 }
 #endif
 
-#endif   /* PGTYPES_NUMERIC */
+#endif							/* PGTYPES_NUMERIC */
 
 #line 8 "outofscope.pgc"
 
@@ -374,5 +374,5 @@ if (sqlca.sqlcode < 0) exit (1);}
 #line 124 "outofscope.pgc"
 
 
-	return (0);
+	return 0;
 }

@@ -4,7 +4,7 @@
  *	  lexical scanning for PL/pgSQL
  *
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -13,12 +13,14 @@
  *
  *-------------------------------------------------------------------------
  */
-#include "plpgsql.h"
+#include "postgres.h"
 
 #include "mb/pg_wchar.h"
 #include "parser/scanner.h"
 
+#include "plpgsql.h"
 #include "pl_gram.h"			/* must be after parser/scanner.h */
+
 
 #define PG_KEYWORD(a,b,c) {a,b,c},
 
@@ -104,6 +106,7 @@ static const ScanKeyword unreserved_keywords[] = {
 	PG_KEYWORD("collate", K_COLLATE, UNRESERVED_KEYWORD)
 	PG_KEYWORD("column", K_COLUMN, UNRESERVED_KEYWORD)
 	PG_KEYWORD("column_name", K_COLUMN_NAME, UNRESERVED_KEYWORD)
+	PG_KEYWORD("commit", K_COMMIT, UNRESERVED_KEYWORD)
 	PG_KEYWORD("constant", K_CONSTANT, UNRESERVED_KEYWORD)
 	PG_KEYWORD("constraint", K_CONSTRAINT, UNRESERVED_KEYWORD)
 	PG_KEYWORD("constraint_name", K_CONSTRAINT_NAME, UNRESERVED_KEYWORD)
@@ -156,6 +159,7 @@ static const ScanKeyword unreserved_keywords[] = {
 	PG_KEYWORD("return", K_RETURN, UNRESERVED_KEYWORD)
 	PG_KEYWORD("returned_sqlstate", K_RETURNED_SQLSTATE, UNRESERVED_KEYWORD)
 	PG_KEYWORD("reverse", K_REVERSE, UNRESERVED_KEYWORD)
+	PG_KEYWORD("rollback", K_ROLLBACK, UNRESERVED_KEYWORD)
 	PG_KEYWORD("row_count", K_ROW_COUNT, UNRESERVED_KEYWORD)
 	PG_KEYWORD("rowtype", K_ROWTYPE, UNRESERVED_KEYWORD)
 	PG_KEYWORD("schema", K_SCHEMA, UNRESERVED_KEYWORD)

@@ -3,7 +3,7 @@
  * nodeGroup.c
  *	  Routines to handle group nodes (used for queries with GROUP BY clause).
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -24,6 +24,8 @@
 
 #include "executor/executor.h"
 #include "executor/nodeGroup.h"
+#include "miscadmin.h"
+#include "utils/memutils.h"
 
 
 /*
@@ -31,14 +33,15 @@
  *
  *		Return one tuple for each group of matching input tuples.
  */
-TupleTableSlot *
-ExecGroup(GroupState *node)
+static TupleTableSlot *
+ExecGroup(PlanState *pstate)
 {
+	GroupState *node = castNode(GroupState, pstate);
 	ExprContext *econtext;
-	int			numCols;
-	AttrNumber *grpColIdx;
 	TupleTableSlot *firsttupleslot;
 	TupleTableSlot *outerslot;
+
+	CHECK_FOR_INTERRUPTS();
 
 	/*
 	 * get state info from node
@@ -46,8 +49,6 @@ ExecGroup(GroupState *node)
 	if (node->grp_done)
 		return NULL;
 	econtext = node->ss.ps.ps_ExprContext;
-	numCols = ((Group *) node->ss.ps.plan)->numCols;
-	grpColIdx = ((Group *) node->ss.ps.plan)->grpColIdx;
 
 	/*
 	 * The ScanTupleSlot holds the (copied) first tuple of each group.
@@ -55,7 +56,7 @@ ExecGroup(GroupState *node)
 	firsttupleslot = node->ss.ss_ScanTupleSlot;
 
 	/*
-	 * We need not call ResetExprContext here because execTuplesMatch will
+	 * We need not call ResetExprContext here because ExecQualAndReset() will
 	 * reset the per-tuple memory context once per input tuple.
 	 */
 
@@ -69,7 +70,7 @@ ExecGroup(GroupState *node)
 		if (TupIsNull(outerslot))
 		{
 			/* empty input, so return nothing */
-			node->grp_done = TRUE;
+			node->grp_done = true;
 			return NULL;
 		}
 		/* Copy tuple into firsttupleslot */
@@ -85,7 +86,7 @@ ExecGroup(GroupState *node)
 		 * Check the qual (HAVING clause); if the group does not match, ignore
 		 * it and fall into scan loop.
 		 */
-		if (ExecQual(node->ss.ps.qual, econtext, false))
+		if (ExecQual(node->ss.ps.qual, econtext))
 		{
 			/*
 			 * Form and return a projection tuple using the first input tuple.
@@ -112,7 +113,7 @@ ExecGroup(GroupState *node)
 			if (TupIsNull(outerslot))
 			{
 				/* no more groups, so we're done */
-				node->grp_done = TRUE;
+				node->grp_done = true;
 				return NULL;
 			}
 
@@ -120,10 +121,9 @@ ExecGroup(GroupState *node)
 			 * Compare with first tuple and see if this tuple is of the same
 			 * group.  If so, ignore it and keep scanning.
 			 */
-			if (!execTuplesMatch(firsttupleslot, outerslot,
-								 numCols, grpColIdx,
-								 node->eqfunctions,
-								 econtext->ecxt_per_tuple_memory))
+			econtext->ecxt_innertuple = firsttupleslot;
+			econtext->ecxt_outertuple = outerslot;
+			if (!ExecQualAndReset(node->eqfunction, econtext))
 				break;
 		}
 
@@ -139,7 +139,7 @@ ExecGroup(GroupState *node)
 		 * Check the qual (HAVING clause); if the group does not match, ignore
 		 * it and loop back to scan the rest of the group.
 		 */
-		if (ExecQual(node->ss.ps.qual, econtext, false))
+		if (ExecQual(node->ss.ps.qual, econtext))
 		{
 			/*
 			 * Form and return a projection tuple using the first input tuple.
@@ -172,7 +172,8 @@ ExecInitGroup(Group *node, EState *estate, int eflags)
 	grpstate = makeNode(GroupState);
 	grpstate->ss.ps.plan = (Plan *) node;
 	grpstate->ss.ps.state = estate;
-	grpstate->grp_done = FALSE;
+	grpstate->ss.ps.ExecProcNode = ExecGroup;
+	grpstate->grp_done = false;
 
 	/*
 	 * create expression context
@@ -180,43 +181,36 @@ ExecInitGroup(Group *node, EState *estate, int eflags)
 	ExecAssignExprContext(estate, &grpstate->ss.ps);
 
 	/*
-	 * tuple table initialization
-	 */
-	ExecInitScanTupleSlot(estate, &grpstate->ss);
-	ExecInitResultTupleSlot(estate, &grpstate->ss.ps);
-
-	/*
-	 * initialize child expressions
-	 */
-	grpstate->ss.ps.targetlist = (List *)
-		ExecInitExpr((Expr *) node->plan.targetlist,
-					 (PlanState *) grpstate);
-	grpstate->ss.ps.qual = (List *)
-		ExecInitExpr((Expr *) node->plan.qual,
-					 (PlanState *) grpstate);
-
-	/*
 	 * initialize child nodes
 	 */
 	outerPlanState(grpstate) = ExecInitNode(outerPlan(node), estate, eflags);
 
 	/*
-	 * initialize tuple type.
+	 * Initialize scan slot and type.
 	 */
-	ExecAssignScanTypeFromOuterPlan(&grpstate->ss);
+	ExecCreateScanSlotFromOuterPlan(estate, &grpstate->ss);
 
 	/*
-	 * Initialize result tuple type and projection info.
+	 * Initialize result slot, type and projection.
 	 */
-	ExecAssignResultTypeFromTL(&grpstate->ss.ps);
+	ExecInitResultTupleSlotTL(estate, &grpstate->ss.ps);
 	ExecAssignProjectionInfo(&grpstate->ss.ps, NULL);
+
+	/*
+	 * initialize child expressions
+	 */
+	grpstate->ss.ps.qual =
+		ExecInitQual(node->plan.qual, (PlanState *) grpstate);
 
 	/*
 	 * Precompute fmgr lookup data for inner loop
 	 */
-	grpstate->eqfunctions =
-		execTuplesMatchPrepare(node->numCols,
-							   node->grpOperators);
+	grpstate->eqfunction =
+		execTuplesMatchPrepare(ExecGetResultType(outerPlanState(grpstate)),
+							   node->numCols,
+							   node->grpColIdx,
+							   node->grpOperators,
+							   &grpstate->ss.ps);
 
 	return grpstate;
 }
@@ -245,7 +239,7 @@ ExecReScanGroup(GroupState *node)
 {
 	PlanState  *outerPlan = outerPlanState(node);
 
-	node->grp_done = FALSE;
+	node->grp_done = false;
 	/* must clear first tuple */
 	ExecClearTuple(node->ss.ss_ScanTupleSlot);
 

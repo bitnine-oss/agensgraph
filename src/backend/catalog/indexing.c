@@ -4,7 +4,7 @@
  *	  This file contains routines to support indexes defined on system
  *	  catalogs.
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -42,7 +42,7 @@ CatalogOpenIndexes(Relation heapRel)
 	ResultRelInfo *resultRelInfo;
 
 	resultRelInfo = makeNode(ResultRelInfo);
-	resultRelInfo->ri_RangeTableIndex = 1;		/* dummy */
+	resultRelInfo->ri_RangeTableIndex = 1;	/* dummy */
 	resultRelInfo->ri_RelationDesc = heapRel;
 	resultRelInfo->ri_TrigDesc = NULL;	/* we don't fire triggers */
 
@@ -136,10 +136,11 @@ CatalogIndexInsert(CatalogIndexState indstate, HeapTuple heapTuple)
 		index_insert(relationDescs[i],	/* index relation */
 					 values,	/* array of index Datums */
 					 isnull,	/* is-null flags */
-					 &(heapTuple->t_self),		/* tid of heap tuple */
+					 &(heapTuple->t_self),	/* tid of heap tuple */
 					 heapRelation,
 					 relationDescs[i]->rd_index->indisunique ?
-					 UNIQUE_CHECK_YES : UNIQUE_CHECK_NO);
+					 UNIQUE_CHECK_YES : UNIQUE_CHECK_NO,
+					 indexInfo);
 	}
 
 	ExecDropSingleTupleTableSlot(slot);

@@ -25,16 +25,15 @@ struct ECPGtype
 								 * string */
 	union
 	{
-		struct ECPGtype *element;		/* For an array this is the type of
-										 * the element */
-		struct ECPGstruct_member *members;		/* A pointer to a list of
-												 * members. */
+		struct ECPGtype *element;	/* For an array this is the type of the
+									 * element */
+		struct ECPGstruct_member *members;	/* A pointer to a list of members. */
 	}			u;
 	int			counter;
 };
 
 /* Everything is malloced. */
-void		ECPGmake_struct_member(char *, struct ECPGtype *, struct ECPGstruct_member **);
+void		ECPGmake_struct_member(const char *, struct ECPGtype *, struct ECPGstruct_member **);
 struct ECPGtype *ECPGmake_simple_type(enum ECPGttype, char *, int);
 struct ECPGtype *ECPGmake_array_type(struct ECPGtype *, char *);
 struct ECPGtype *ECPGmake_struct_type(struct ECPGstruct_member *, enum ECPGttype, char *, char *);
@@ -195,4 +194,4 @@ struct fetch_desc
 	char	   *name;
 };
 
-#endif   /* _ECPG_PREPROC_TYPE_H */
+#endif							/* _ECPG_PREPROC_TYPE_H */

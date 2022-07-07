@@ -7,7 +7,7 @@
  *	  stuff - checking the qualification and projecting the tuple
  *	  appropriately.
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -23,11 +23,9 @@
 #include "utils/memutils.h"
 
 
-static bool tlist_matches_tupdesc(PlanState *ps, List *tlist, Index varno, TupleDesc tupdesc);
-
 
 /*
- * ExecScanFetch -- fetch next potential tuple
+ * ExecScanFetch -- check interrupts & fetch next potential tuple
  *
  * This routine is concerned with substituting a test tuple if we are
  * inside an EvalPlanQual recheck.  If we aren't, just execute
@@ -39,6 +37,8 @@ ExecScanFetch(ScanState *node,
 			  ExecScanRecheckMtd recheckMtd)
 {
 	EState	   *estate = node->ps.state;
+
+	CHECK_FOR_INTERRUPTS();
 
 	if (estate->es_epqTuple != NULL)
 	{
@@ -123,7 +123,7 @@ ExecScan(ScanState *node,
 		 ExecScanRecheckMtd recheckMtd)
 {
 	ExprContext *econtext;
-	List	   *qual;
+	ExprState  *qual;
 	ProjectionInfo *projInfo;
 
 	/*
@@ -132,6 +132,8 @@ ExecScan(ScanState *node,
 	qual = node->ps.qual;
 	projInfo = node->ps.ps_ProjInfo;
 	econtext = node->ps.ps_ExprContext;
+
+	/* interrupt checks are in ExecScanFetch */
 
 	/*
 	 * If we have neither a qual to check nor a projection to do, just skip
@@ -157,8 +159,6 @@ ExecScan(ScanState *node,
 	{
 		TupleTableSlot *slot;
 
-		CHECK_FOR_INTERRUPTS();
-
 		slot = ExecScanFetch(node, accessMtd, recheckMtd);
 
 		/*
@@ -170,7 +170,7 @@ ExecScan(ScanState *node,
 		if (TupIsNull(slot))
 		{
 			if (projInfo)
-				return ExecClearTuple(projInfo->pi_slot);
+				return ExecClearTuple(projInfo->pi_state.resultslot);
 			else
 				return slot;
 		}
@@ -183,11 +183,11 @@ ExecScan(ScanState *node,
 		/*
 		 * check that the current tuple satisfies the qual-clause
 		 *
-		 * check for non-nil qual here to avoid a function call to ExecQual()
-		 * when the qual is nil ... saves only a few cycles, but they add up
+		 * check for non-null qual here to avoid a function call to ExecQual()
+		 * when the qual is null ... saves only a few cycles, but they add up
 		 * ...
 		 */
-		if (!qual || ExecQual(qual, econtext, false))
+		if (qual == NULL || ExecQual(qual, econtext))
 		{
 			/*
 			 * Found a satisfactory scan tuple.
@@ -229,14 +229,15 @@ ExecScan(ScanState *node,
  * the scan node, because the planner will preferentially generate a matching
  * tlist.
  *
- * ExecAssignScanType must have been called already.
+ * The scan slot's descriptor must have been set already.
  */
 void
 ExecAssignScanProjectionInfo(ScanState *node)
 {
 	Scan	   *scan = (Scan *) node->ps.plan;
+	TupleDesc	tupdesc = node->ss_ScanTupleSlot->tts_tupleDescriptor;
 
-	ExecAssignScanProjectionInfoWithVarno(node, scan->scanrelid);
+	ExecConditionalAssignProjectionInfo(&node->ps, tupdesc, scan->scanrelid);
 }
 
 /*
@@ -246,75 +247,9 @@ ExecAssignScanProjectionInfo(ScanState *node)
 void
 ExecAssignScanProjectionInfoWithVarno(ScanState *node, Index varno)
 {
-	Scan	   *scan = (Scan *) node->ps.plan;
+	TupleDesc	tupdesc = node->ss_ScanTupleSlot->tts_tupleDescriptor;
 
-	if (tlist_matches_tupdesc(&node->ps,
-							  scan->plan.targetlist,
-							  varno,
-							  node->ss_ScanTupleSlot->tts_tupleDescriptor))
-		node->ps.ps_ProjInfo = NULL;
-	else
-		ExecAssignProjectionInfo(&node->ps,
-								 node->ss_ScanTupleSlot->tts_tupleDescriptor);
-}
-
-static bool
-tlist_matches_tupdesc(PlanState *ps, List *tlist, Index varno, TupleDesc tupdesc)
-{
-	int			numattrs = tupdesc->natts;
-	int			attrno;
-	bool		hasoid;
-	ListCell   *tlist_item = list_head(tlist);
-
-	/* Check the tlist attributes */
-	for (attrno = 1; attrno <= numattrs; attrno++)
-	{
-		Form_pg_attribute att_tup = tupdesc->attrs[attrno - 1];
-		Var		   *var;
-
-		if (tlist_item == NULL)
-			return false;		/* tlist too short */
-		var = (Var *) ((TargetEntry *) lfirst(tlist_item))->expr;
-		if (!var || !IsA(var, Var))
-			return false;		/* tlist item not a Var */
-		/* if these Asserts fail, planner messed up */
-		Assert(var->varno == varno);
-		Assert(var->varlevelsup == 0);
-		if (var->varattno != attrno)
-			return false;		/* out of order */
-		if (att_tup->attisdropped)
-			return false;		/* table contains dropped columns */
-
-		/*
-		 * Note: usually the Var's type should match the tupdesc exactly, but
-		 * in situations involving unions of columns that have different
-		 * typmods, the Var may have come from above the union and hence have
-		 * typmod -1.  This is a legitimate situation since the Var still
-		 * describes the column, just not as exactly as the tupdesc does. We
-		 * could change the planner to prevent it, but it'd then insert
-		 * projection steps just to convert from specific typmod to typmod -1,
-		 * which is pretty silly.
-		 */
-		if (var->vartype != att_tup->atttypid ||
-			(var->vartypmod != att_tup->atttypmod &&
-			 var->vartypmod != -1))
-			return false;		/* type mismatch */
-
-		tlist_item = lnext(tlist_item);
-	}
-
-	if (tlist_item)
-		return false;			/* tlist too long */
-
-	/*
-	 * If the plan context requires a particular hasoid setting, then that has
-	 * to match, too.
-	 */
-	if (ExecContextForcesOids(ps, &hasoid) &&
-		hasoid != tupdesc->tdhasoid)
-		return false;
-
-	return true;
+	ExecConditionalAssignProjectionInfo(&node->ps, tupdesc, varno);
 }
 
 /*

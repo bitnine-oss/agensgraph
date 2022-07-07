@@ -35,7 +35,7 @@
  * and munge the system catalogs of the new database.
  *
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -48,7 +48,6 @@
 
 #include <unistd.h>
 #include <dirent.h>
-#include <sys/types.h>
 #include <sys/stat.h>
 
 #include "access/heapam.h"
@@ -160,8 +159,8 @@ TablespaceCreateDbspace(Oid spcNode, Oid dbNode, bool isRedo)
 					if (errno != ENOENT || !isRedo)
 						ereport(ERROR,
 								(errcode_for_file_access(),
-							  errmsg("could not create directory \"%s\": %m",
-									 dir)));
+								 errmsg("could not create directory \"%s\": %m",
+										dir)));
 
 					/*
 					 * Parent directories are missing during WAL replay, so
@@ -177,8 +176,8 @@ TablespaceCreateDbspace(Oid spcNode, Oid dbNode, bool isRedo)
 					if (mkdir(parentdir, S_IRWXU) < 0 && errno != EEXIST)
 						ereport(ERROR,
 								(errcode_for_file_access(),
-							  errmsg("could not create directory \"%s\": %m",
-									 parentdir)));
+								 errmsg("could not create directory \"%s\": %m",
+										parentdir)));
 					pfree(parentdir);
 
 					/* create one parent up if not exist */
@@ -188,16 +187,16 @@ TablespaceCreateDbspace(Oid spcNode, Oid dbNode, bool isRedo)
 					if (mkdir(parentdir, S_IRWXU) < 0 && errno != EEXIST)
 						ereport(ERROR,
 								(errcode_for_file_access(),
-							  errmsg("could not create directory \"%s\": %m",
-									 parentdir)));
+								 errmsg("could not create directory \"%s\": %m",
+										parentdir)));
 					pfree(parentdir);
 
 					/* Create database directory */
 					if (mkdir(dir, S_IRWXU) < 0)
 						ereport(ERROR,
 								(errcode_for_file_access(),
-							  errmsg("could not create directory \"%s\": %m",
-									 dir)));
+								 errmsg("could not create directory \"%s\": %m",
+										dir)));
 				}
 			}
 
@@ -283,7 +282,7 @@ CreateTableSpace(CreateTableSpaceStmt *stmt)
 	 * reference the whole path here, but mkdir() uses the first two parts.
 	 */
 	if (strlen(location) + 1 + strlen(TABLESPACE_VERSION_DIRECTORY) + 1 +
-	  OIDCHARS + 1 + OIDCHARS + 1 + FORKNAMECHARS + 1 + OIDCHARS > MAXPGPATH)
+		OIDCHARS + 1 + OIDCHARS + 1 + FORKNAMECHARS + 1 + OIDCHARS > MAXPGPATH)
 		ereport(ERROR,
 				(errcode(ERRCODE_INVALID_OBJECT_DEFINITION),
 				 errmsg("tablespace location \"%s\" is too long",
@@ -304,7 +303,7 @@ CreateTableSpace(CreateTableSpaceStmt *stmt)
 				(errcode(ERRCODE_RESERVED_NAME),
 				 errmsg("unacceptable tablespace name \"%s\"",
 						stmt->tablespacename),
-		errdetail("The prefix \"pg_\" is reserved for system tablespaces.")));
+				 errdetail("The prefix \"pg_\" is reserved for system tablespaces.")));
 
 	/*
 	 * Check that there is no other tablespace by this name.  (The unique
@@ -389,7 +388,7 @@ CreateTableSpace(CreateTableSpaceStmt *stmt)
 			(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
 			 errmsg("tablespaces are not supported on this platform")));
 	return InvalidOid;			/* keep compiler quiet */
-#endif   /* HAVE_SYMLINK */
+#endif							/* HAVE_SYMLINK */
 }
 
 /*
@@ -445,13 +444,13 @@ DropTableSpace(DropTableSpaceStmt *stmt)
 
 	/* Must be tablespace owner */
 	if (!pg_tablespace_ownercheck(tablespaceoid, GetUserId()))
-		aclcheck_error(ACLCHECK_NOT_OWNER, ACL_KIND_TABLESPACE,
+		aclcheck_error(ACLCHECK_NOT_OWNER, OBJECT_TABLESPACE,
 					   tablespacename);
 
 	/* Disallow drop of the standard tablespaces, even by superuser */
 	if (tablespaceoid == GLOBALTABLESPACE_OID ||
 		tablespaceoid == DEFAULTTABLESPACE_OID)
-		aclcheck_error(ACLCHECK_NO_PRIV, ACL_KIND_TABLESPACE,
+		aclcheck_error(ACLCHECK_NO_PRIV, OBJECT_TABLESPACE,
 					   tablespacename);
 
 	/* DROP hook for the tablespace being removed */
@@ -550,7 +549,7 @@ DropTableSpace(DropTableSpaceStmt *stmt)
 	ereport(ERROR,
 			(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
 			 errmsg("tablespaces are not supported on this platform")));
-#endif   /* HAVE_SYMLINK */
+#endif							/* HAVE_SYMLINK */
 }
 
 
@@ -586,8 +585,8 @@ create_tablespace_directories(const char *location, const Oid tablespaceoid)
 		else
 			ereport(ERROR,
 					(errcode_for_file_access(),
-				  errmsg("could not set permissions on directory \"%s\": %m",
-						 location)));
+					 errmsg("could not set permissions on directory \"%s\": %m",
+							location)));
 	}
 
 	if (InRecovery)
@@ -656,7 +655,7 @@ create_tablespace_directories(const char *location, const Oid tablespaceoid)
  * does not justify throwing an error that would require manual intervention
  * to get the database running again.
  *
- * Returns TRUE if successful, FALSE if some subdirectory is not empty
+ * Returns true if successful, false if some subdirectory is not empty
  */
 static bool
 destroy_tablespace_directories(Oid tablespaceoid, bool redo)
@@ -942,14 +941,14 @@ RenameTableSpace(const char *oldname, const char *newname)
 
 	/* Must be owner */
 	if (!pg_tablespace_ownercheck(HeapTupleGetOid(newtuple), GetUserId()))
-		aclcheck_error(ACLCHECK_NO_PRIV, ACL_KIND_TABLESPACE, oldname);
+		aclcheck_error(ACLCHECK_NO_PRIV, OBJECT_TABLESPACE, oldname);
 
 	/* Validate new name */
 	if (!allowSystemTableMods && IsReservedName(newname))
 		ereport(ERROR,
 				(errcode(ERRCODE_RESERVED_NAME),
 				 errmsg("unacceptable tablespace name \"%s\"", newname),
-		errdetail("The prefix \"pg_\" is reserved for system tablespaces.")));
+				 errdetail("The prefix \"pg_\" is reserved for system tablespaces.")));
 
 	/* Make sure the new name doesn't exist */
 	ScanKeyInit(&entry[0],
@@ -1018,7 +1017,7 @@ AlterTableSpaceOptions(AlterTableSpaceOptionsStmt *stmt)
 
 	/* Must be owner of the existing object */
 	if (!pg_tablespace_ownercheck(HeapTupleGetOid(tup), GetUserId()))
-		aclcheck_error(ACLCHECK_NOT_OWNER, ACL_KIND_TABLESPACE,
+		aclcheck_error(ACLCHECK_NOT_OWNER, OBJECT_TABLESPACE,
 					   stmt->tablespacename);
 
 	/* Generate new proposed spcoptions (text array) */
@@ -1233,7 +1232,7 @@ check_temp_tablespaces(char **newval, void **extra, GucSource source)
 			if (aclresult != ACLCHECK_OK)
 			{
 				if (source >= PGC_S_INTERACTIVE)
-					aclcheck_error(aclresult, ACL_KIND_TABLESPACE, curname);
+					aclcheck_error(aclresult, OBJECT_TABLESPACE, curname);
 				continue;
 			}
 
@@ -1511,8 +1510,8 @@ tblspc_redo(XLogReaderState *record)
 			if (!destroy_tablespace_directories(xlrec->ts_id, true))
 				ereport(LOG,
 						(errcode(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
-				 errmsg("directories for tablespace %u could not be removed",
-						xlrec->ts_id),
+						 errmsg("directories for tablespace %u could not be removed",
+								xlrec->ts_id),
 						 errhint("You can remove the directories manually if necessary.")));
 		}
 	}

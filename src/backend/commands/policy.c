@@ -3,7 +3,7 @@
  * policy.c
  *	  Commands for manipulating policies.
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/backend/commands/policy.c
@@ -78,7 +78,7 @@ RangeVarCallbackForPolicy(const RangeVar *rv, Oid relid, Oid oldrelid,
 
 	/* Must own relation. */
 	if (!pg_class_ownercheck(relid, GetUserId()))
-		aclcheck_error(ACLCHECK_NOT_OWNER, ACL_KIND_CLASS, rv->relname);
+		aclcheck_error(ACLCHECK_NOT_OWNER, get_relkind_objtype(get_rel_relkind(relid)), rv->relname);
 
 	/* No system table modifications unless explicitly allowed. */
 	if (!allowSystemTableMods && IsSystemClass(relid, classform))
@@ -168,7 +168,7 @@ policy_role_list_to_array(List *roles, int *num_roles)
 				ereport(WARNING,
 						(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 						 errmsg("ignoring specified roles other than PUBLIC"),
-					  errhint("All roles are members of the PUBLIC role.")));
+						 errhint("All roles are members of the PUBLIC role.")));
 				*num_roles = 1;
 			}
 			role_oids[0] = ObjectIdGetDatum(ACL_ID_PUBLIC);
@@ -474,7 +474,8 @@ RemoveRoleFromObjectPolicy(Oid roleid, Oid classid, Oid policy_id)
 
 	rel = relation_open(relid, AccessExclusiveLock);
 
-	if (rel->rd_rel->relkind != RELKIND_RELATION)
+	if (rel->rd_rel->relkind != RELKIND_RELATION &&
+		rel->rd_rel->relkind != RELKIND_PARTITIONED_TABLE)
 		ereport(ERROR,
 				(errcode(ERRCODE_WRONG_OBJECT_TYPE),
 				 errmsg("\"%s\" is not a table",
@@ -551,7 +552,7 @@ RemoveRoleFromObjectPolicy(Oid roleid, Oid classid, Oid policy_id)
 
 		/* Get policy qual, to update dependencies */
 		value_datum = heap_getattr(tuple, Anum_pg_policy_polqual,
-							  RelationGetDescr(pg_policy_rel), &attr_isnull);
+								   RelationGetDescr(pg_policy_rel), &attr_isnull);
 		if (!attr_isnull)
 		{
 			ParseState *qual_pstate;
@@ -573,7 +574,7 @@ RemoveRoleFromObjectPolicy(Oid roleid, Oid classid, Oid policy_id)
 
 		/* Get WITH CHECK qual, to update dependencies */
 		value_datum = heap_getattr(tuple, Anum_pg_policy_polwithcheck,
-							  RelationGetDescr(pg_policy_rel), &attr_isnull);
+								   RelationGetDescr(pg_policy_rel), &attr_isnull);
 		if (!attr_isnull)
 		{
 			ParseState *with_check_pstate;
@@ -796,11 +797,11 @@ CreatePolicy(CreatePolicyStmt *stmt)
 		ereport(ERROR,
 				(errcode(ERRCODE_DUPLICATE_OBJECT),
 				 errmsg("policy \"%s\" for table \"%s\" already exists",
-				 stmt->policy_name, RelationGetRelationName(target_table))));
+						stmt->policy_name, RelationGetRelationName(target_table))));
 
 	values[Anum_pg_policy_polrelid - 1] = ObjectIdGetDatum(table_id);
 	values[Anum_pg_policy_polname - 1] = DirectFunctionCall1(namein,
-										 CStringGetDatum(stmt->policy_name));
+															 CStringGetDatum(stmt->policy_name));
 	values[Anum_pg_policy_polcmd - 1] = CharGetDatum(polcmd);
 	values[Anum_pg_policy_polpermissive - 1] = BoolGetDatum(stmt->permissive);
 	values[Anum_pg_policy_polroles - 1] = PointerGetDatum(role_ids);
@@ -1241,7 +1242,7 @@ rename_policy(RenameStmt *stmt)
 		ereport(ERROR,
 				(errcode(ERRCODE_DUPLICATE_OBJECT),
 				 errmsg("policy \"%s\" for table \"%s\" already exists",
-					 stmt->newname, RelationGetRelationName(target_table))));
+						stmt->newname, RelationGetRelationName(target_table))));
 
 	systable_endscan(sscan);
 
@@ -1269,7 +1270,7 @@ rename_policy(RenameStmt *stmt)
 		ereport(ERROR,
 				(errcode(ERRCODE_UNDEFINED_OBJECT),
 				 errmsg("policy \"%s\" for table \"%s\" does not exist",
-					 stmt->subname, RelationGetRelationName(target_table))));
+						stmt->subname, RelationGetRelationName(target_table))));
 
 	opoloid = HeapTupleGetOid(policy_tuple);
 

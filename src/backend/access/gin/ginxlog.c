@@ -4,7 +4,7 @@
  *	  WAL replay logic for inverted index.
  *
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -13,7 +13,9 @@
  */
 #include "postgres.h"
 
+#include "access/bufmask.h"
 #include "access/gin_private.h"
+#include "access/ginxlog.h"
 #include "access/xlogutils.h"
 #include "utils/memutils.h"
 
@@ -512,7 +514,7 @@ ginRedoUpdateMetapage(XLogReaderState *record)
 	Assert(BufferGetBlockNumber(metabuffer) == GIN_METAPAGE_BLKNO);
 	metapage = BufferGetPage(metabuffer);
 
-	GinInitPage(metapage, GIN_META, BufferGetPageSize(metabuffer));
+	GinInitMetabuffer(metabuffer);
 	memcpy(GinPageGetMeta(metapage), &data->metadata, sizeof(GinMetaPageData));
 	PageSetLSN(metapage, lsn);
 	MarkBufferDirty(metabuffer);
@@ -654,7 +656,7 @@ ginRedoDeleteListPages(XLogReaderState *record)
 	Assert(BufferGetBlockNumber(metabuffer) == GIN_METAPAGE_BLKNO);
 	metapage = BufferGetPage(metabuffer);
 
-	GinInitPage(metapage, GIN_META, BufferGetPageSize(metabuffer));
+	GinInitMetabuffer(metabuffer);
 
 	memcpy(GinPageGetMeta(metapage), &data->metadata, sizeof(GinMetaPageData));
 	PageSetLSN(metapage, lsn);
@@ -757,4 +759,30 @@ gin_xlog_cleanup(void)
 {
 	MemoryContextDelete(opCtx);
 	opCtx = NULL;
+}
+
+/*
+ * Mask a GIN page before running consistency checks on it.
+ */
+void
+gin_mask(char *pagedata, BlockNumber blkno)
+{
+	Page		page = (Page) pagedata;
+	PageHeader	pagehdr = (PageHeader) page;
+	GinPageOpaque opaque;
+
+	mask_page_lsn_and_checksum(page);
+	opaque = GinPageGetOpaque(page);
+
+	mask_page_hint_bits(page);
+
+	/*
+	 * For a GIN_DELETED page, the page is initialized to empty.  Hence, mask
+	 * the whole page content.  For other pages, mask the hole if pd_lower
+	 * appears to have been set correctly.
+	 */
+	if (opaque->flags & GIN_DELETED)
+		mask_page_content(page);
+	else if (pagehdr->pd_lower > SizeOfPageHeaderData)
+		mask_unused_space(page);
 }

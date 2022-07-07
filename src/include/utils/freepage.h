@@ -3,7 +3,7 @@
  * freepage.h
  *	  Management of page-organized free memory.
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/utils/freepage.h
@@ -96,4 +96,4 @@ extern void FreePageManagerPut(FreePageManager *fpm, Size first_page,
 				   Size npages);
 extern char *FreePageManagerDump(FreePageManager *fpm);
 
-#endif   /* FREEPAGE_H */
+#endif							/* FREEPAGE_H */

@@ -62,7 +62,7 @@
  * except the root.  For the root node, we are setting the boundaries
  * that we don't yet have as infinity.
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -286,12 +286,28 @@ lower2D(RangeBox *range_box, Range *query)
 		FPlt(range_box->right.low, query->low);
 }
 
+/* Can any range from range_box not extend to the right side of the query? */
+static bool
+overLower2D(RangeBox *range_box, Range *query)
+{
+	return FPle(range_box->left.low, query->high) &&
+		FPle(range_box->right.low, query->high);
+}
+
 /* Can any range from range_box to be higher than this argument? */
 static bool
 higher2D(RangeBox *range_box, Range *query)
 {
 	return FPgt(range_box->left.high, query->high) &&
 		FPgt(range_box->right.high, query->high);
+}
+
+/* Can any range from range_box not extend to the left side of the query? */
+static bool
+overHigher2D(RangeBox *range_box, Range *query)
+{
+	return FPge(range_box->left.high, query->low) &&
+		FPge(range_box->right.high, query->low);
 }
 
 /* Can any rectangle from rect_box be left of this argument? */
@@ -305,7 +321,7 @@ left4D(RectBox *rect_box, RangeBox *query)
 static bool
 overLeft4D(RectBox *rect_box, RangeBox *query)
 {
-	return lower2D(&rect_box->range_box_x, &query->right);
+	return overLower2D(&rect_box->range_box_x, &query->left);
 }
 
 /* Can any rectangle from rect_box be right of this argument? */
@@ -319,7 +335,7 @@ right4D(RectBox *rect_box, RangeBox *query)
 static bool
 overRight4D(RectBox *rect_box, RangeBox *query)
 {
-	return higher2D(&rect_box->range_box_x, &query->right);
+	return overHigher2D(&rect_box->range_box_x, &query->left);
 }
 
 /* Can any rectangle from rect_box be below of this argument? */
@@ -333,7 +349,7 @@ below4D(RectBox *rect_box, RangeBox *query)
 static bool
 overBelow4D(RectBox *rect_box, RangeBox *query)
 {
-	return lower2D(&rect_box->range_box_y, &query->left);
+	return overLower2D(&rect_box->range_box_y, &query->right);
 }
 
 /* Can any rectangle from rect_box be above of this argument? */
@@ -347,7 +363,7 @@ above4D(RectBox *rect_box, RangeBox *query)
 static bool
 overAbove4D(RectBox *rect_box, RangeBox *query)
 {
-	return higher2D(&rect_box->range_box_y, &query->right);
+	return overHigher2D(&rect_box->range_box_y, &query->right);
 }
 
 /*
@@ -375,7 +391,7 @@ spg_box_quad_choose(PG_FUNCTION_ARGS)
 	spgChooseIn *in = (spgChooseIn *) PG_GETARG_POINTER(0);
 	spgChooseOut *out = (spgChooseOut *) PG_GETARG_POINTER(1);
 	BOX		   *centroid = DatumGetBoxP(in->prefixDatum),
-			   *box = DatumGetBoxP(in->datum);
+			   *box = DatumGetBoxP(in->leafDatum);
 
 	out->resultType = spgMatchNode;
 	out->result.matchNode.restDatum = BoxPGetDatum(box);
@@ -458,6 +474,51 @@ spg_box_quad_picksplit(PG_FUNCTION_ARGS)
 }
 
 /*
+ * Check if result of consistent method based on bounding box is exact.
+ */
+static bool
+is_bounding_box_test_exact(StrategyNumber strategy)
+{
+	switch (strategy)
+	{
+		case RTLeftStrategyNumber:
+		case RTOverLeftStrategyNumber:
+		case RTOverRightStrategyNumber:
+		case RTRightStrategyNumber:
+		case RTOverBelowStrategyNumber:
+		case RTBelowStrategyNumber:
+		case RTAboveStrategyNumber:
+		case RTOverAboveStrategyNumber:
+			return true;
+
+		default:
+			return false;
+	}
+}
+
+/*
+ * Get bounding box for ScanKey.
+ */
+static BOX *
+spg_box_quad_get_scankey_bbox(ScanKey sk, bool *recheck)
+{
+	switch (sk->sk_subtype)
+	{
+		case BOXOID:
+			return DatumGetBoxP(sk->sk_argument);
+
+		case POLYGONOID:
+			if (recheck && !is_bounding_box_test_exact(sk->sk_strategy))
+				*recheck = true;
+			return &DatumGetPolygonP(sk->sk_argument)->boundbox;
+
+		default:
+			elog(ERROR, "unrecognized scankey subtype: %d", sk->sk_subtype);
+			return NULL;
+	}
+}
+
+/*
  * SP-GiST inner consistent function
  */
 Datum
@@ -499,7 +560,11 @@ spg_box_quad_inner_consistent(PG_FUNCTION_ARGS)
 	centroid = getRangeBox(DatumGetBoxP(in->prefixDatum));
 	queries = (RangeBox **) palloc(in->nkeys * sizeof(RangeBox *));
 	for (i = 0; i < in->nkeys; i++)
-		queries[i] = getRangeBox(DatumGetBoxP(in->scankeys[i].sk_argument));
+	{
+		BOX		   *box = spg_box_quad_get_scankey_bbox(&in->scankeys[i], NULL);
+
+		queries[i] = getRangeBox(box);
+	}
 
 	/* Allocate enough memory for nodes */
 	out->nNodes = 0;
@@ -621,8 +686,10 @@ spg_box_quad_leaf_consistent(PG_FUNCTION_ARGS)
 	/* Perform the required comparison(s) */
 	for (i = 0; i < in->nkeys; i++)
 	{
-		StrategyNumber strategy = in->scankeys[i].sk_strategy;
-		Datum		query = in->scankeys[i].sk_argument;
+		StrategyNumber	strategy = in->scankeys[i].sk_strategy;
+		BOX			   *box = spg_box_quad_get_scankey_bbox(&in->scankeys[i],
+															&out->recheck);
+		Datum			query = BoxPGetDatum(box);
 
 		switch (strategy)
 		{
@@ -696,4 +763,37 @@ spg_box_quad_leaf_consistent(PG_FUNCTION_ARGS)
 	}
 
 	PG_RETURN_BOOL(flag);
+}
+
+
+/*
+ * SP-GiST config function for 2-D types that are lossy represented by their
+ * bounding boxes
+ */
+Datum
+spg_bbox_quad_config(PG_FUNCTION_ARGS)
+{
+	spgConfigOut *cfg = (spgConfigOut *) PG_GETARG_POINTER(1);
+
+	cfg->prefixType = BOXOID;	/* A type represented by its bounding box */
+	cfg->labelType = VOIDOID;	/* We don't need node labels. */
+	cfg->leafType = BOXOID;
+	cfg->canReturnData = false;
+	cfg->longValuesOK = false;
+
+	PG_RETURN_VOID();
+}
+
+/*
+ * SP-GiST compress function for polygons
+ */
+Datum
+spg_poly_quad_compress(PG_FUNCTION_ARGS)
+{
+	POLYGON	   *polygon = PG_GETARG_POLYGON_P(0);
+	BOX		   *box;
+
+	box = box_copy(&polygon->boundbox);
+
+	PG_RETURN_BOX_P(box);
 }

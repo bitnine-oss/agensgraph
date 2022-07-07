@@ -3,7 +3,7 @@
  * execAmi.c
  *	  miscellaneous executor access method routines
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *	src/backend/executor/execAmi.c
@@ -27,6 +27,7 @@
 #include "executor/nodeForeignscan.h"
 #include "executor/nodeFunctionscan.h"
 #include "executor/nodeGather.h"
+#include "executor/nodeGatherMerge.h"
 #include "executor/nodeGroup.h"
 #include "executor/nodeGroup.h"
 #include "executor/nodeHash.h"
@@ -39,6 +40,7 @@
 #include "executor/nodeMergeAppend.h"
 #include "executor/nodeMergejoin.h"
 #include "executor/nodeModifyTable.h"
+#include "executor/nodeNamedtuplestorescan.h"
 #include "executor/nodeNestloop.h"
 #include "executor/nodeProjectSet.h"
 #include "executor/nodeNestloopVle.h"
@@ -50,6 +52,7 @@
 #include "executor/nodeSort.h"
 #include "executor/nodeSubplan.h"
 #include "executor/nodeSubqueryscan.h"
+#include "executor/nodeTableFuncscan.h"
 #include "executor/nodeTidscan.h"
 #include "executor/nodeUnique.h"
 #include "executor/nodeValuesscan.h"
@@ -172,6 +175,10 @@ ExecReScan(PlanState *node)
 			ExecReScanGather((GatherState *) node);
 			break;
 
+		case T_GatherMergeState:
+			ExecReScanGatherMerge((GatherMergeState *) node);
+			break;
+
 		case T_IndexScanState:
 			ExecReScanIndexScan((IndexScanState *) node);
 			break;
@@ -200,12 +207,20 @@ ExecReScan(PlanState *node)
 			ExecReScanFunctionScan((FunctionScanState *) node);
 			break;
 
+		case T_TableFuncScanState:
+			ExecReScanTableFuncScan((TableFuncScanState *) node);
+			break;
+
 		case T_ValuesScanState:
 			ExecReScanValuesScan((ValuesScanState *) node);
 			break;
 
 		case T_CteScanState:
 			ExecReScanCteScan((CteScanState *) node);
+			break;
+
+		case T_NamedTuplestoreScanState:
+			ExecReScanNamedTuplestoreScan((NamedTuplestoreScanState *) node);
 			break;
 
 		case T_WorkTableScanState:
@@ -465,12 +480,13 @@ ExecSupportsMarkRestore(Path *pathnode)
 			return true;
 
 		case T_CustomScan:
-		{
-			CustomPath *customPath = castNode(CustomPath, pathnode);
-			if (customPath->flags & CUSTOMPATH_SUPPORT_MARK_RESTORE)
-				return true;
-			return false;
-		}
+			{
+				CustomPath *customPath = castNode(CustomPath, pathnode);
+
+				if (customPath->flags & CUSTOMPATH_SUPPORT_MARK_RESTORE)
+					return true;
+				return false;
+			}
 		case T_Result:
 
 			/*
@@ -626,7 +642,9 @@ ExecMaterializesOutput(NodeTag plantype)
 	{
 		case T_Material:
 		case T_FunctionScan:
+		case T_TableFuncScan:
 		case T_CteScan:
+		case T_NamedTuplestoreScan:
 		case T_WorkTableScan:
 		case T_Sort:
 			return true;

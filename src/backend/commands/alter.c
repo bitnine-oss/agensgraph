@@ -3,7 +3,7 @@
  * alter.c
  *	  Drivers for generic alter commands
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -32,6 +32,8 @@
 #include "catalog/pg_opclass.h"
 #include "catalog/pg_opfamily.h"
 #include "catalog/pg_proc.h"
+#include "catalog/pg_subscription.h"
+#include "catalog/pg_statistic_ext.h"
 #include "catalog/pg_ts_config.h"
 #include "catalog/pg_ts_dict.h"
 #include "catalog/pg_ts_parser.h"
@@ -91,6 +93,12 @@ report_name_conflict(Oid classId, const char *name)
 		case LanguageRelationId:
 			msgfmt = gettext_noop("language \"%s\" already exists");
 			break;
+		case PublicationRelationId:
+			msgfmt = gettext_noop("publication \"%s\" already exists");
+			break;
+		case SubscriptionRelationId:
+			msgfmt = gettext_noop("subscription \"%s\" already exists");
+			break;
 		default:
 			elog(ERROR, "unsupported object class %u", classId);
 			break;
@@ -113,6 +121,10 @@ report_namespace_conflict(Oid classId, const char *name, Oid nspOid)
 		case ConversionRelationId:
 			Assert(OidIsValid(nspOid));
 			msgfmt = gettext_noop("conversion \"%s\" already exists in schema \"%s\"");
+			break;
+		case StatisticExtRelationId:
+			Assert(OidIsValid(nspOid));
+			msgfmt = gettext_noop("statistics object \"%s\" already exists in schema \"%s\"");
 			break;
 		case TSParserRelationId:
 			Assert(OidIsValid(nspOid));
@@ -160,7 +172,7 @@ AlterObjectRename_internal(Relation rel, Oid objectId, const char *new_name)
 	AttrNumber	Anum_name = get_object_attnum_name(classId);
 	AttrNumber	Anum_namespace = get_object_attnum_namespace(classId);
 	AttrNumber	Anum_owner = get_object_attnum_owner(classId);
-	AclObjectKind acl_kind = get_object_aclkind(classId);
+	ObjectType	objtype = get_object_type(classId, objectId);
 	HeapTuple	oldtup;
 	HeapTuple	newtup;
 	Datum		datum;
@@ -212,7 +224,7 @@ AlterObjectRename_internal(Relation rel, Oid objectId, const char *new_name)
 		ownerId = DatumGetObjectId(datum);
 
 		if (!has_privs_of_role(GetUserId(), DatumGetObjectId(ownerId)))
-			aclcheck_error(ACLCHECK_NOT_OWNER, acl_kind, old_name);
+			aclcheck_error(ACLCHECK_NOT_OWNER, objtype, old_name);
 
 		/* User must have CREATE privilege on the namespace */
 		if (OidIsValid(namespaceId))
@@ -220,7 +232,7 @@ AlterObjectRename_internal(Relation rel, Oid objectId, const char *new_name)
 			aclresult = pg_namespace_aclcheck(namespaceId, GetUserId(),
 											  ACL_CREATE);
 			if (aclresult != ACLCHECK_OK)
-				aclcheck_error(aclresult, ACL_KIND_NAMESPACE,
+				aclcheck_error(aclresult, OBJECT_SCHEMA,
 							   get_namespace_name(namespaceId));
 		}
 	}
@@ -256,6 +268,12 @@ AlterObjectRename_internal(Relation rel, Oid objectId, const char *new_name)
 
 		IsThereOpFamilyInNamespace(new_name, opf->opfmethod,
 								   opf->opfnamespace);
+	}
+	else if (classId == SubscriptionRelationId)
+	{
+		if (SearchSysCacheExists2(SUBSCRIPTIONNAME, MyDatabaseId,
+								  CStringGetDatum(new_name)))
+			report_name_conflict(classId, new_name);
 	}
 	else if (nameCacheId >= 0)
 	{
@@ -378,17 +396,22 @@ ExecRenameStmt(RenameStmt *stmt)
 		case OBJECT_OPCLASS:
 		case OBJECT_OPFAMILY:
 		case OBJECT_LANGUAGE:
+		case OBJECT_PROCEDURE:
+		case OBJECT_ROUTINE:
+		case OBJECT_STATISTIC_EXT:
 		case OBJECT_TSCONFIGURATION:
 		case OBJECT_TSDICTIONARY:
 		case OBJECT_TSPARSER:
 		case OBJECT_TSTEMPLATE:
+		case OBJECT_PUBLICATION:
+		case OBJECT_SUBSCRIPTION:
 			{
 				ObjectAddress address;
 				Relation	catalog;
 				Relation	relation;
 
 				address = get_object_address(stmt->renameType,
-											 stmt->object, stmt->objarg,
+											 stmt->object,
 											 &relation,
 											 AccessExclusiveLock, false);
 				Assert(relation == NULL);
@@ -411,7 +434,7 @@ ExecRenameStmt(RenameStmt *stmt)
 		default:
 			elog(ERROR, "unrecognized rename stmt type: %d",
 				 (int) stmt->renameType);
-			return InvalidObjectAddress;		/* keep compiler happy */
+			return InvalidObjectAddress;	/* keep compiler happy */
 	}
 }
 
@@ -430,8 +453,8 @@ ExecAlterObjectDependsStmt(AlterObjectDependsStmt *stmt, ObjectAddress *refAddre
 	Relation	rel;
 
 	address =
-		get_object_address_rv(stmt->objectType, stmt->relation, stmt->objname,
-							stmt->objargs, &rel, AccessExclusiveLock, false);
+		get_object_address_rv(stmt->objectType, stmt->relation, (List *) stmt->object,
+							  &rel, AccessExclusiveLock, false);
 
 	/*
 	 * If a relation was involved, it would have been opened and locked. We
@@ -440,8 +463,8 @@ ExecAlterObjectDependsStmt(AlterObjectDependsStmt *stmt, ObjectAddress *refAddre
 	if (rel)
 		heap_close(rel, NoLock);
 
-	refAddr = get_object_address(OBJECT_EXTENSION, list_make1(stmt->extname),
-								 NULL, &rel, AccessExclusiveLock, false);
+	refAddr = get_object_address(OBJECT_EXTENSION, (Node *) stmt->extname,
+								 &rel, AccessExclusiveLock, false);
 	Assert(rel == NULL);
 	if (refAddress)
 		*refAddress = refAddr;
@@ -470,8 +493,8 @@ ExecAlterObjectSchemaStmt(AlterObjectSchemaStmt *stmt,
 	switch (stmt->objectType)
 	{
 		case OBJECT_EXTENSION:
-			address = AlterExtensionNamespace(stmt->object, stmt->newschema,
-										  oldSchemaAddr ? &oldNspOid : NULL);
+			address = AlterExtensionNamespace(strVal((Value *) stmt->object), stmt->newschema,
+											  oldSchemaAddr ? &oldNspOid : NULL);
 			break;
 
 		case OBJECT_FOREIGN_TABLE:
@@ -485,7 +508,7 @@ ExecAlterObjectSchemaStmt(AlterObjectSchemaStmt *stmt,
 
 		case OBJECT_DOMAIN:
 		case OBJECT_TYPE:
-			address = AlterTypeNamespace(stmt->object, stmt->newschema,
+			address = AlterTypeNamespace(castNode(List, stmt->object), stmt->newschema,
 										 stmt->objectType,
 										 oldSchemaAddr ? &oldNspOid : NULL);
 			break;
@@ -498,6 +521,9 @@ ExecAlterObjectSchemaStmt(AlterObjectSchemaStmt *stmt,
 		case OBJECT_OPERATOR:
 		case OBJECT_OPCLASS:
 		case OBJECT_OPFAMILY:
+		case OBJECT_PROCEDURE:
+		case OBJECT_ROUTINE:
+		case OBJECT_STATISTIC_EXT:
 		case OBJECT_TSCONFIGURATION:
 		case OBJECT_TSDICTIONARY:
 		case OBJECT_TSPARSER:
@@ -510,7 +536,6 @@ ExecAlterObjectSchemaStmt(AlterObjectSchemaStmt *stmt,
 
 				address = get_object_address(stmt->objectType,
 											 stmt->object,
-											 stmt->objarg,
 											 &relation,
 											 AccessExclusiveLock,
 											 false);
@@ -528,7 +553,7 @@ ExecAlterObjectSchemaStmt(AlterObjectSchemaStmt *stmt,
 		default:
 			elog(ERROR, "unrecognized AlterObjectSchemaStmt type: %d",
 				 (int) stmt->objectType);
-			return InvalidObjectAddress;		/* keep compiler happy */
+			return InvalidObjectAddress;	/* keep compiler happy */
 	}
 
 	if (oldSchemaAddr)
@@ -546,7 +571,8 @@ ExecAlterObjectSchemaStmt(AlterObjectSchemaStmt *stmt,
  * so it only needs to cover object types that can be members of an
  * extension, and it doesn't have to deal with certain special cases
  * such as not wanting to process array types --- those should never
- * be direct members of an extension anyway.
+ * be direct members of an extension anyway.  Nonetheless, we insist
+ * on listing all OCLASS types in the switch.
  *
  * Returns the OID of the object's previous namespace, or InvalidOid if
  * object doesn't have a schema.
@@ -581,12 +607,13 @@ AlterObjectNamespace_oid(Oid classId, Oid objid, Oid nspOid,
 			oldNspOid = AlterTypeNamespace_oid(objid, nspOid, objsMoved);
 			break;
 
+		case OCLASS_PROC:
 		case OCLASS_COLLATION:
 		case OCLASS_CONVERSION:
 		case OCLASS_OPERATOR:
 		case OCLASS_OPCLASS:
 		case OCLASS_OPFAMILY:
-		case OCLASS_PROC:
+		case OCLASS_STATISTIC_EXT:
 		case OCLASS_TSPARSER:
 		case OCLASS_TSDICT:
 		case OCLASS_TSTEMPLATE:
@@ -603,8 +630,38 @@ AlterObjectNamespace_oid(Oid classId, Oid objid, Oid nspOid,
 			}
 			break;
 
-		default:
+		case OCLASS_CAST:
+		case OCLASS_CONSTRAINT:
+		case OCLASS_DEFAULT:
+		case OCLASS_LANGUAGE:
+		case OCLASS_LARGEOBJECT:
+		case OCLASS_AM:
+		case OCLASS_AMOP:
+		case OCLASS_AMPROC:
+		case OCLASS_REWRITE:
+		case OCLASS_TRIGGER:
+		case OCLASS_SCHEMA:
+		case OCLASS_ROLE:
+		case OCLASS_DATABASE:
+		case OCLASS_TBLSPACE:
+		case OCLASS_FDW:
+		case OCLASS_FOREIGN_SERVER:
+		case OCLASS_USER_MAPPING:
+		case OCLASS_DEFACL:
+		case OCLASS_EXTENSION:
+		case OCLASS_EVENT_TRIGGER:
+		case OCLASS_POLICY:
+		case OCLASS_PUBLICATION:
+		case OCLASS_PUBLICATION_REL:
+		case OCLASS_SUBSCRIPTION:
+		case OCLASS_TRANSFORM:
+			/* ignore object types that don't have schema-qualified names */
 			break;
+
+			/*
+			 * There's intentionally no default: case here; we want the
+			 * compiler to warn if a new OCLASS hasn't been handled above.
+			 */
 	}
 
 	return oldNspOid;
@@ -630,7 +687,7 @@ AlterObjectNamespace_internal(Relation rel, Oid objid, Oid nspOid)
 	AttrNumber	Anum_name = get_object_attnum_name(classId);
 	AttrNumber	Anum_namespace = get_object_attnum_namespace(classId);
 	AttrNumber	Anum_owner = get_object_attnum_owner(classId);
-	AclObjectKind acl_kind = get_object_aclkind(classId);
+	ObjectType	objtype = get_object_type(classId, objid);
 	Oid			oldNspOid;
 	Datum		name,
 				namespace;
@@ -686,13 +743,13 @@ AlterObjectNamespace_internal(Relation rel, Oid objid, Oid nspOid)
 		ownerId = DatumGetObjectId(owner);
 
 		if (!has_privs_of_role(GetUserId(), ownerId))
-			aclcheck_error(ACLCHECK_NOT_OWNER, acl_kind,
+			aclcheck_error(ACLCHECK_NOT_OWNER, objtype,
 						   NameStr(*(DatumGetName(name))));
 
 		/* User must have CREATE privilege on new namespace */
 		aclresult = pg_namespace_aclcheck(nspOid, GetUserId(), ACL_CREATE);
 		if (aclresult != ACLCHECK_OK)
-			aclcheck_error(aclresult, ACL_KIND_NAMESPACE,
+			aclcheck_error(aclresult, OBJECT_SCHEMA,
 						   get_namespace_name(nspOid));
 	}
 
@@ -773,11 +830,11 @@ ExecAlterOwnerStmt(AlterOwnerStmt *stmt)
 	switch (stmt->objectType)
 	{
 		case OBJECT_DATABASE:
-			return AlterDatabaseOwner(strVal(linitial(stmt->object)), newowner);
+			return AlterDatabaseOwner(strVal((Value *) stmt->object), newowner);
 
 		case OBJECT_SCHEMA:
 			{
-				char *name = strVal(linitial(stmt->object));
+				char *name = strVal((Value *) stmt->object);
 
 				if (OidIsValid(get_graphname_oid(name)))
 					ereport(ERROR,
@@ -790,26 +847,27 @@ ExecAlterOwnerStmt(AlterOwnerStmt *stmt)
 
 		case OBJECT_TYPE:
 		case OBJECT_DOMAIN:		/* same as TYPE */
-			return AlterTypeOwner(stmt->object, newowner, stmt->objectType);
+			return AlterTypeOwner(castNode(List, stmt->object), newowner, stmt->objectType);
+			break;
 
 		case OBJECT_FDW:
-			return AlterForeignDataWrapperOwner(strVal(linitial(stmt->object)),
+			return AlterForeignDataWrapperOwner(strVal((Value *) stmt->object),
 												newowner);
 
 		case OBJECT_FOREIGN_SERVER:
-			return AlterForeignServerOwner(strVal(linitial(stmt->object)),
+			return AlterForeignServerOwner(strVal((Value *) stmt->object),
 										   newowner);
 
 		case OBJECT_EVENT_TRIGGER:
-			return AlterEventTriggerOwner(strVal(linitial(stmt->object)),
+			return AlterEventTriggerOwner(strVal((Value *) stmt->object),
 										  newowner);
 
 		case OBJECT_PUBLICATION:
-			return AlterPublicationOwner(strVal(linitial(stmt->object)),
+			return AlterPublicationOwner(strVal((Value *) stmt->object),
 										 newowner);
 
 		case OBJECT_SUBSCRIPTION:
-			return AlterSubscriptionOwner(strVal(linitial(stmt->object)),
+			return AlterSubscriptionOwner(strVal((Value *) stmt->object),
 										  newowner);
 
 			/* Generic cases */
@@ -822,6 +880,9 @@ ExecAlterOwnerStmt(AlterOwnerStmt *stmt)
 		case OBJECT_OPERATOR:
 		case OBJECT_OPCLASS:
 		case OBJECT_OPFAMILY:
+		case OBJECT_PROCEDURE:
+		case OBJECT_ROUTINE:
+		case OBJECT_STATISTIC_EXT:
 		case OBJECT_TABLESPACE:
 		case OBJECT_TSDICTIONARY:
 		case OBJECT_TSCONFIGURATION:
@@ -833,7 +894,6 @@ ExecAlterOwnerStmt(AlterOwnerStmt *stmt)
 
 				address = get_object_address(stmt->objectType,
 											 stmt->object,
-											 stmt->objarg,
 											 &relation,
 											 AccessExclusiveLock,
 											 false);
@@ -859,7 +919,7 @@ ExecAlterOwnerStmt(AlterOwnerStmt *stmt)
 
 		case OBJECT_GRAPH:
 			{
-				char *name = strVal(linitial(stmt->object));
+				char *name = strVal((Value *) stmt->object);
 
 				if (!OidIsValid(get_graphname_oid(name)))
 					ereport(ERROR,
@@ -872,7 +932,7 @@ ExecAlterOwnerStmt(AlterOwnerStmt *stmt)
 		default:
 			elog(ERROR, "unrecognized AlterOwnerStmt type: %d",
 				 (int) stmt->objectType);
-			return InvalidObjectAddress;		/* keep compiler happy */
+			return InvalidObjectAddress;	/* keep compiler happy */
 	}
 }
 
@@ -928,7 +988,7 @@ AlterObjectOwner_internal(Relation rel, Oid objectId, Oid new_ownerId)
 		/* Superusers can bypass permission checks */
 		if (!superuser())
 		{
-			AclObjectKind aclkind = get_object_aclkind(classId);
+			ObjectType objtype = get_object_type(classId, objectId);
 
 			/* must be owner */
 			if (!has_privs_of_role(GetUserId(), old_ownerId))
@@ -949,7 +1009,7 @@ AlterObjectOwner_internal(Relation rel, Oid objectId, Oid new_ownerId)
 							 HeapTupleGetOid(oldtup));
 					objname = namebuf;
 				}
-				aclcheck_error(ACLCHECK_NOT_OWNER, aclkind, objname);
+				aclcheck_error(ACLCHECK_NOT_OWNER, objtype, objname);
 			}
 			/* Must be able to become new owner */
 			check_is_member_of_role(GetUserId(), new_ownerId);
@@ -962,7 +1022,7 @@ AlterObjectOwner_internal(Relation rel, Oid objectId, Oid new_ownerId)
 				aclresult = pg_namespace_aclcheck(namespaceId, new_ownerId,
 												  ACL_CREATE);
 				if (aclresult != ACLCHECK_OK)
-					aclcheck_error(aclresult, ACL_KIND_NAMESPACE,
+					aclcheck_error(aclresult, OBJECT_SCHEMA,
 								   get_namespace_name(namespaceId));
 			}
 		}

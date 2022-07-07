@@ -4,7 +4,7 @@
  *	  Sort the items of a dump into a safe order for dumping
  *
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -19,6 +19,8 @@
 #include "pg_backup_utils.h"
 #include "pg_dump.h"
 
+#include "catalog/pg_class.h"
+
 /* translator: this is a module name */
 static const char *modulename = gettext_noop("sorter");
 
@@ -26,10 +28,17 @@ static const char *modulename = gettext_noop("sorter");
  * Sort priority for database object types.
  * Objects are sorted by type, and within a type by name.
  *
+ * Because materialized views can potentially reference system views,
+ * DO_REFRESH_MATVIEW should always be the last thing on the list.
+ *
  * NOTE: object-type priorities must match the section assignments made in
  * pg_dump.c; that is, PRE_DATA objects must sort before DO_PRE_DATA_BOUNDARY,
  * POST_DATA objects must sort after DO_POST_DATA_BOUNDARY, and DATA objects
  * must sort between them.
+ *
+ * Note: sortDataAndIndexObjectsBySize wants to have all DO_TABLE_DATA and
+ * DO_INDEX objects in contiguous chunks, so do not reuse the values for those
+ * for other object types.
  */
 static const int dbObjectTypePriority[] =
 {
@@ -48,10 +57,12 @@ static const int dbObjectTypePriority[] =
 	18,							/* DO_TABLE */
 	20,							/* DO_ATTRDEF */
 	28,							/* DO_INDEX */
-	29,							/* DO_RULE */
-	30,							/* DO_TRIGGER */
+	29,							/* DO_INDEX_ATTACH */
+	30,							/* DO_STATSEXT */
+	31,							/* DO_RULE */
+	32,							/* DO_TRIGGER */
 	27,							/* DO_CONSTRAINT */
-	31,							/* DO_FK_CONSTRAINT */
+	33,							/* DO_FK_CONSTRAINT */
 	2,							/* DO_PROCLANG */
 	10,							/* DO_CAST */
 	23,							/* DO_TABLE_DATA */
@@ -63,14 +74,14 @@ static const int dbObjectTypePriority[] =
 	15,							/* DO_TSCONFIG */
 	16,							/* DO_FDW */
 	17,							/* DO_FOREIGN_SERVER */
-	32,							/* DO_DEFAULT_ACL */
+	33,							/* DO_DEFAULT_ACL */
 	3,							/* DO_TRANSFORM */
 	21,							/* DO_BLOB */
 	25,							/* DO_BLOB_DATA */
 	22,							/* DO_PRE_DATA_BOUNDARY */
 	26,							/* DO_POST_DATA_BOUNDARY */
-	33,							/* DO_EVENT_TRIGGER */
-	34,							/* DO_REFRESH_MATVIEW */
+	34,							/* DO_EVENT_TRIGGER */
+	39,							/* DO_REFRESH_MATVIEW */
 	35,							/* DO_POLICY */
 	36,							/* DO_PUBLICATION */
 	37,							/* DO_PUBLICATION_REL */
@@ -336,13 +347,13 @@ sortDumpableObjects(DumpableObject **objs, int numObjs,
  * The input is the list of numObjs objects in objs[].  This list is not
  * modified.
  *
- * Returns TRUE if able to build an ordering that satisfies all the
- * constraints, FALSE if not (there are contradictory constraints).
+ * Returns true if able to build an ordering that satisfies all the
+ * constraints, false if not (there are contradictory constraints).
  *
- * On success (TRUE result), ordering[] is filled with a sorted array of
+ * On success (true result), ordering[] is filled with a sorted array of
  * DumpableObject pointers, of length equal to the input list length.
  *
- * On failure (FALSE result), ordering[] is filled with an unsorted array of
+ * On failure (false result), ordering[] is filled with an unsorted array of
  * DumpableObject pointers of length *nOrdering, listing the objects that
  * prevented the sort from being completed.  In general, these objects either
  * participate directly in a dependency cycle, or are depended on by objects
@@ -354,7 +365,7 @@ sortDumpableObjects(DumpableObject **objs, int numObjs,
 static bool
 TopoSort(DumpableObject **objs,
 		 int numObjs,
-		 DumpableObject **ordering,		/* output argument */
+		 DumpableObject **ordering, /* output argument */
 		 int *nOrdering)		/* output argument */
 {
 	DumpId		maxDumpId = getMaxDumpId();
@@ -931,6 +942,13 @@ repairDomainConstraintMultiLoop(DumpableObject *domainobj,
 	addObjectDependency(constraintobj, postDataBoundId);
 }
 
+static void
+repairIndexLoop(DumpableObject *partedindex,
+				DumpableObject *partindex)
+{
+	removeObjectDependency(partedindex, partindex->dumpId);
+}
+
 /*
  * Fix a dependency loop, or die trying ...
  *
@@ -965,8 +983,8 @@ repairDependencyLoop(DumpableObject **loop,
 	if (nLoop == 2 &&
 		loop[0]->objType == DO_TABLE &&
 		loop[1]->objType == DO_RULE &&
-		(((TableInfo *) loop[0])->relkind == 'v' ||		/* RELKIND_VIEW */
-		 ((TableInfo *) loop[0])->relkind == 'm') &&	/* RELKIND_MATVIEW */
+		(((TableInfo *) loop[0])->relkind == RELKIND_VIEW ||
+		 ((TableInfo *) loop[0])->relkind == RELKIND_MATVIEW) &&
 		((RuleInfo *) loop[1])->ev_type == '1' &&
 		((RuleInfo *) loop[1])->is_instead &&
 		((RuleInfo *) loop[1])->ruletable == (TableInfo *) loop[0])
@@ -977,8 +995,8 @@ repairDependencyLoop(DumpableObject **loop,
 	if (nLoop == 2 &&
 		loop[1]->objType == DO_TABLE &&
 		loop[0]->objType == DO_RULE &&
-		(((TableInfo *) loop[1])->relkind == 'v' ||		/* RELKIND_VIEW */
-		 ((TableInfo *) loop[1])->relkind == 'm') &&	/* RELKIND_MATVIEW */
+		(((TableInfo *) loop[1])->relkind == RELKIND_VIEW ||
+		 ((TableInfo *) loop[1])->relkind == RELKIND_MATVIEW) &&
 		((RuleInfo *) loop[0])->ev_type == '1' &&
 		((RuleInfo *) loop[0])->is_instead &&
 		((RuleInfo *) loop[0])->ruletable == (TableInfo *) loop[1])
@@ -993,7 +1011,7 @@ repairDependencyLoop(DumpableObject **loop,
 		for (i = 0; i < nLoop; i++)
 		{
 			if (loop[i]->objType == DO_TABLE &&
-				((TableInfo *) loop[i])->relkind == 'v')		/* RELKIND_VIEW */
+				((TableInfo *) loop[i])->relkind == RELKIND_VIEW)
 			{
 				for (j = 0; j < nLoop; j++)
 				{
@@ -1016,7 +1034,7 @@ repairDependencyLoop(DumpableObject **loop,
 		for (i = 0; i < nLoop; i++)
 		{
 			if (loop[i]->objType == DO_TABLE &&
-				((TableInfo *) loop[i])->relkind == 'm')		/* RELKIND_MATVIEW */
+				((TableInfo *) loop[i])->relkind == RELKIND_MATVIEW)
 			{
 				for (j = 0; j < nLoop; j++)
 				{
@@ -1091,6 +1109,23 @@ repairDependencyLoop(DumpableObject **loop,
 	{
 		repairTableAttrDefLoop(loop[1], loop[0]);
 		return;
+	}
+
+	/* index on partitioned table and corresponding index on partition */
+	if (nLoop == 2 &&
+		loop[0]->objType == DO_INDEX &&
+		loop[1]->objType == DO_INDEX)
+	{
+		if (((IndxInfo *) loop[0])->parentidx == loop[1]->catId.oid)
+		{
+			repairIndexLoop(loop[0], loop[1]);
+			return;
+		}
+		else if (((IndxInfo *) loop[1])->parentidx == loop[0]->catId.oid)
+		{
+			repairIndexLoop(loop[1], loop[0]);
+			return;
+		}
 	}
 
 	/* Indirect loop involving table and attribute default */
@@ -1175,7 +1210,7 @@ repairDependencyLoop(DumpableObject **loop,
 		write_msg(NULL, "Consider using a full dump instead of a --data-only dump to avoid this problem.\n");
 		if (nLoop > 1)
 			removeObjectDependency(loop[0], loop[1]->dumpId);
-		else	/* must be a self-dependency */
+		else					/* must be a self-dependency */
 			removeObjectDependency(loop[0], loop[0]->dumpId);
 		return;
 	}
@@ -1195,7 +1230,7 @@ repairDependencyLoop(DumpableObject **loop,
 
 	if (nLoop > 1)
 		removeObjectDependency(loop[0], loop[1]->dumpId);
-	else	/* must be a self-dependency */
+	else						/* must be a self-dependency */
 		removeObjectDependency(loop[0], loop[0]->dumpId);
 }
 
@@ -1284,6 +1319,16 @@ describeDumpableObject(DumpableObject *obj, char *buf, int bufsize)
 		case DO_INDEX:
 			snprintf(buf, bufsize,
 					 "INDEX %s  (ID %d OID %u)",
+					 obj->name, obj->dumpId, obj->catId.oid);
+			return;
+		case DO_INDEX_ATTACH:
+			snprintf(buf, bufsize,
+					 "INDEX ATTACH %s  (ID %d)",
+					 obj->name, obj->dumpId);
+			return;
+		case DO_STATSEXT:
+			snprintf(buf, bufsize,
+					 "STATISTICS %s  (ID %d OID %u)",
 					 obj->name, obj->dumpId, obj->catId.oid);
 			return;
 		case DO_REFRESH_MATVIEW:

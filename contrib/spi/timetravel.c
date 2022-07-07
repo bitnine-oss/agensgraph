@@ -51,7 +51,7 @@ static EPlan *find_plan(char *ident, EPlan **eplan, int *nplans);
  *			and stop_date eq INFINITY [ and update_user eq current user ]
  *			and all other column values as in new tuple, and insert tuple
  *			with old data and stop_date eq current date
- *			ELSE - skip updation of tuple.
+ *			ELSE - skip updating of tuple.
  *		2.  IF a delete affects tuple with stop_date eq INFINITY
  *			then insert the same tuple with stop_date eq current date
  *			[ and delete_user eq current user ]
@@ -85,7 +85,7 @@ timetravel(PG_FUNCTION_ARGS)
 	Trigger    *trigger;		/* to get trigger name */
 	int			argc;
 	char	  **args;			/* arguments */
-	int			attnum[MaxAttrNum];		/* fnumbers of start/stop columns */
+	int			attnum[MaxAttrNum]; /* fnumbers of start/stop columns */
 	Datum		oldtimeon,
 				oldtimeoff;
 	Datum		newtimeon,
@@ -328,7 +328,7 @@ timetravel(PG_FUNCTION_ARGS)
 		for (i = 1; i <= natts; i++)
 		{
 			ctypes[i - 1] = SPI_gettypeid(tupdesc, i);
-			if (!(tupdesc->attrs[i - 1]->attisdropped)) /* skip dropped columns */
+			if (!(TupleDescAttr(tupdesc, i - 1)->attisdropped)) /* skip dropped columns */
 			{
 				snprintf(sql + strlen(sql), sizeof(sql) - strlen(sql), "%c$%d", separ, i);
 				separ = ',';
@@ -341,7 +341,7 @@ timetravel(PG_FUNCTION_ARGS)
 		/* Prepare plan for query */
 		pplan = SPI_prepare(sql, natts, ctypes);
 		if (pplan == NULL)
-			elog(ERROR, "timetravel (%s): SPI_prepare returned %d", relname, SPI_result);
+			elog(ERROR, "timetravel (%s): SPI_prepare returned %s", relname, SPI_result_code_string(SPI_result));
 
 		/*
 		 * Remember that SPI_prepare places plan in current memory context -
@@ -461,7 +461,7 @@ set_timetravel(PG_FUNCTION_ARGS)
 			s = rname = DatumGetCString(DirectFunctionCall1(nameout, NameGetDatum(relname)));
 			if (s)
 			{
-				pp = malloc(offsetof(TTOffList, name) +strlen(rname) + 1);
+				pp = malloc(offsetof(TTOffList, name) + strlen(rname) + 1);
 				if (pp)
 				{
 					pp->next = NULL;
@@ -517,7 +517,7 @@ findTTStatus(char *name)
 AbsoluteTime
 currabstime()
 {
-	return (GetCurrentAbsoluteTime());
+	return GetCurrentAbsoluteTime();
 }
 */
 
@@ -549,5 +549,5 @@ find_plan(char *ident, EPlan **eplan, int *nplans)
 	newp->splan = NULL;
 	(*nplans)++;
 
-	return (newp);
+	return newp;
 }

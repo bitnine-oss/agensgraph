@@ -3,7 +3,7 @@
  * nodeSort.c
  *	  Routines to handle sorting of relations.
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -15,6 +15,7 @@
 
 #include "postgres.h"
 
+#include "access/parallel.h"
 #include "executor/execdebug.h"
 #include "executor/nodeSort.h"
 #include "miscadmin.h"
@@ -35,13 +36,16 @@
  *		  -- the outer child is prepared to return the first tuple.
  * ----------------------------------------------------------------
  */
-TupleTableSlot *
-ExecSort(SortState *node)
+static TupleTableSlot *
+ExecSort(PlanState *pstate)
 {
+	SortState  *node = castNode(SortState, pstate);
 	EState	   *estate;
 	ScanDirection dir;
 	Tuplesortstate *tuplesortstate;
 	TupleTableSlot *slot;
+
+	CHECK_FOR_INTERRUPTS();
 
 	/*
 	 * get state info from node
@@ -89,7 +93,7 @@ ExecSort(SortState *node)
 											  plannode->collations,
 											  plannode->nullsFirst,
 											  work_mem,
-											  node->randomAccess);
+											  NULL, node->randomAccess);
 		if (node->bounded)
 			tuplesort_set_bound(tuplesortstate, node->bound);
 		node->tuplesortstate = (void *) tuplesortstate;
@@ -124,6 +128,15 @@ ExecSort(SortState *node)
 		node->sort_Done = true;
 		node->bounded_Done = node->bounded;
 		node->bound_Done = node->bound;
+		if (node->shared_info && node->am_worker)
+		{
+			TuplesortInstrumentation *si;
+
+			Assert(IsParallelWorker());
+			Assert(ParallelWorkerNumber <= node->shared_info->num_workers);
+			si = &node->shared_info->sinstrument[ParallelWorkerNumber];
+			tuplesort_get_stats(tuplesortstate, si);
+		}
 		SO1_printf("ExecSort: %s\n", "sorting done");
 	}
 
@@ -132,12 +145,13 @@ ExecSort(SortState *node)
 
 	/*
 	 * Get the first or next tuple from tuplesort. Returns NULL if no more
-	 * tuples.
+	 * tuples.  Note that we only rely on slot tuple remaining valid until the
+	 * next fetch from the tuplesort.
 	 */
 	slot = node->ss.ps.ps_ResultTupleSlot;
 	(void) tuplesort_gettupleslot(tuplesortstate,
 								  ScanDirectionIsForward(dir),
-								  slot, NULL);
+								  false, slot, NULL);
 	return slot;
 }
 
@@ -162,6 +176,7 @@ ExecInitSort(Sort *node, EState *estate, int eflags)
 	sortstate = makeNode(SortState);
 	sortstate->ss.ps.plan = (Plan *) node;
 	sortstate->ss.ps.state = estate;
+	sortstate->ss.ps.ExecProcNode = ExecSort;
 
 	/*
 	 * We must have random access to the sort output to do backward scan or
@@ -184,14 +199,6 @@ ExecInitSort(Sort *node, EState *estate, int eflags)
 	 */
 
 	/*
-	 * tuple table initialization
-	 *
-	 * sort nodes only return scan tuples from their sorted relation.
-	 */
-	ExecInitResultTupleSlot(estate, &sortstate->ss.ps);
-	ExecInitScanTupleSlot(estate, &sortstate->ss);
-
-	/*
 	 * initialize child nodes
 	 *
 	 * We shield the child node from the need to support REWIND, BACKWARD, or
@@ -202,11 +209,15 @@ ExecInitSort(Sort *node, EState *estate, int eflags)
 	outerPlanState(sortstate) = ExecInitNode(outerPlan(node), estate, eflags);
 
 	/*
-	 * initialize tuple type.  no need to initialize projection info because
+	 * Initialize scan slot and type.
+	 */
+	ExecCreateScanSlotFromOuterPlan(estate, &sortstate->ss);
+
+	/*
+	 * Initialize return slot and type. No need to initialize projection info because
 	 * this node doesn't do projections.
 	 */
-	ExecAssignResultTypeFromTL(&sortstate->ss.ps);
-	ExecAssignScanTypeFromOuterPlan(&sortstate->ss);
+	ExecInitResultTupleSlotTL(estate, &sortstate->ss.ps);
 	sortstate->ss.ps.ps_ProjInfo = NULL;
 
 	SO1_printf("ExecInitSort: %s\n",
@@ -328,4 +339,91 @@ ExecReScanSort(SortState *node)
 	}
 	else
 		tuplesort_rescan((Tuplesortstate *) node->tuplesortstate);
+}
+
+/* ----------------------------------------------------------------
+ *						Parallel Query Support
+ * ----------------------------------------------------------------
+ */
+
+/* ----------------------------------------------------------------
+ *		ExecSortEstimate
+ *
+ *		Estimate space required to propagate sort statistics.
+ * ----------------------------------------------------------------
+ */
+void
+ExecSortEstimate(SortState *node, ParallelContext *pcxt)
+{
+	Size		size;
+
+	/* don't need this if not instrumenting or no workers */
+	if (!node->ss.ps.instrument || pcxt->nworkers == 0)
+		return;
+
+	size = mul_size(pcxt->nworkers, sizeof(TuplesortInstrumentation));
+	size = add_size(size, offsetof(SharedSortInfo, sinstrument));
+	shm_toc_estimate_chunk(&pcxt->estimator, size);
+	shm_toc_estimate_keys(&pcxt->estimator, 1);
+}
+
+/* ----------------------------------------------------------------
+ *		ExecSortInitializeDSM
+ *
+ *		Initialize DSM space for sort statistics.
+ * ----------------------------------------------------------------
+ */
+void
+ExecSortInitializeDSM(SortState *node, ParallelContext *pcxt)
+{
+	Size		size;
+
+	/* don't need this if not instrumenting or no workers */
+	if (!node->ss.ps.instrument || pcxt->nworkers == 0)
+		return;
+
+	size = offsetof(SharedSortInfo, sinstrument)
+		+ pcxt->nworkers * sizeof(TuplesortInstrumentation);
+	node->shared_info = shm_toc_allocate(pcxt->toc, size);
+	/* ensure any unfilled slots will contain zeroes */
+	memset(node->shared_info, 0, size);
+	node->shared_info->num_workers = pcxt->nworkers;
+	shm_toc_insert(pcxt->toc, node->ss.ps.plan->plan_node_id,
+				   node->shared_info);
+}
+
+/* ----------------------------------------------------------------
+ *		ExecSortInitializeWorker
+ *
+ *		Attach worker to DSM space for sort statistics.
+ * ----------------------------------------------------------------
+ */
+void
+ExecSortInitializeWorker(SortState *node, ParallelWorkerContext *pwcxt)
+{
+	node->shared_info =
+		shm_toc_lookup(pwcxt->toc, node->ss.ps.plan->plan_node_id, true);
+	node->am_worker = true;
+}
+
+/* ----------------------------------------------------------------
+ *		ExecSortRetrieveInstrumentation
+ *
+ *		Transfer sort statistics from DSM to private memory.
+ * ----------------------------------------------------------------
+ */
+void
+ExecSortRetrieveInstrumentation(SortState *node)
+{
+	Size		size;
+	SharedSortInfo *si;
+
+	if (node->shared_info == NULL)
+		return;
+
+	size = offsetof(SharedSortInfo, sinstrument)
+		+ node->shared_info->num_workers * sizeof(TuplesortInstrumentation);
+	si = palloc(size);
+	memcpy(si, node->shared_info, size);
+	node->shared_info = si;
 }

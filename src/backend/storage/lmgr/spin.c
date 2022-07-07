@@ -11,7 +11,7 @@
  * is too slow to be very useful :-(
  *
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -140,4 +140,4 @@ tas_sema(volatile slock_t *lock)
 	return !PGSemaphoreTryLock(SpinlockSemaArray[lockndx - 1]);
 }
 
-#endif   /* !HAVE_SPINLOCKS */
+#endif							/* !HAVE_SPINLOCKS */

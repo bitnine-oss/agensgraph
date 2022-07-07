@@ -8,7 +8,6 @@
 
 #include "mb/pg_wchar.h"
 #include "utils/memutils.h"
-#include "utils/palloc.h"
 
 #include "plpython.h"
 
@@ -132,4 +131,4 @@ PLyUnicode_FromString(const char *s)
 	return PLyUnicode_FromStringAndSize(s, strlen(s));
 }
 
-#endif   /* PY_MAJOR_VERSION >= 3 */
+#endif							/* PY_MAJOR_VERSION >= 3 */

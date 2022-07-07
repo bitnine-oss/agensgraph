@@ -3,7 +3,7 @@
  * foreign.c
  *		  support for foreign-data wrappers, servers and user mappings.
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
  *		  src/backend/foreign/foreign.c
@@ -428,7 +428,7 @@ GetFdwRoutineForRelation(Relation relation, bool makecopy)
 /*
  * IsImportableForeignTable - filter table names for IMPORT FOREIGN SCHEMA
  *
- * Returns TRUE if given table name should be imported according to the
+ * Returns true if given table name should be imported according to the
  * statement's import filter options.
  */
 bool
@@ -712,19 +712,19 @@ get_foreign_server_oid(const char *servername, bool missing_ok)
  * path list in RelOptInfo is anyway sorted by total cost we are likely to
  * choose the most efficient path, which is all for the best.
  */
-extern Path *
+Path *
 GetExistingLocalJoinPath(RelOptInfo *joinrel)
 {
 	ListCell   *lc;
 
-	Assert(joinrel->reloptkind == RELOPT_JOINREL);
+	Assert(IS_JOIN_REL(joinrel));
 
 	foreach(lc, joinrel->pathlist)
 	{
 		Path	   *path = (Path *) lfirst(lc);
 		JoinPath   *joinpath = NULL;
 
-		/* Skip parameterised paths. */
+		/* Skip parameterized paths. */
 		if (path->param_info != NULL)
 			continue;
 
@@ -782,7 +782,7 @@ GetExistingLocalJoinPath(RelOptInfo *joinrel)
 			ForeignPath *foreign_path;
 
 			foreign_path = (ForeignPath *) joinpath->outerjoinpath;
-			if (foreign_path->path.parent->reloptkind == RELOPT_JOINREL)
+			if (IS_JOIN_REL(foreign_path->path.parent))
 				joinpath->outerjoinpath = foreign_path->fdw_outerpath;
 		}
 
@@ -791,7 +791,7 @@ GetExistingLocalJoinPath(RelOptInfo *joinrel)
 			ForeignPath *foreign_path;
 
 			foreign_path = (ForeignPath *) joinpath->innerjoinpath;
-			if (foreign_path->path.parent->reloptkind == RELOPT_JOINREL)
+			if (IS_JOIN_REL(foreign_path->path.parent))
 				joinpath->innerjoinpath = foreign_path->fdw_outerpath;
 		}
 

@@ -3,7 +3,7 @@
  * pg_operator.c
  *	  routines to support manipulation of the pg_operator relation
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -124,7 +124,7 @@ validOperatorName(const char *name)
  *		finds an operator given an exact specification (name, namespace,
  *		left and right type IDs).
  *
- *		*defined is set TRUE if defined (not a shell)
+ *		*defined is set true if defined (not a shell)
  */
 static Oid
 OperatorGet(const char *operatorName,
@@ -164,7 +164,7 @@ OperatorGet(const char *operatorName,
  *		looks up an operator given a possibly-qualified name and
  *		left and right type IDs.
  *
- *		*defined is set TRUE if defined (not a shell)
+ *		*defined is set true if defined (not a shell)
  */
 static Oid
 OperatorLookup(List *operatorName,
@@ -225,7 +225,7 @@ OperatorShellMake(const char *operatorName,
 	for (i = 0; i < Natts_pg_operator; ++i)
 	{
 		nulls[i] = false;
-		values[i] = (Datum) NULL;		/* redundant, but safe */
+		values[i] = (Datum) NULL;	/* redundant, but safe */
 	}
 
 	/*
@@ -368,7 +368,7 @@ OperatorCreate(const char *operatorName,
 		if (OidIsValid(joinId))
 			ereport(ERROR,
 					(errcode(ERRCODE_INVALID_FUNCTION_DEFINITION),
-				 errmsg("only binary operators can have join selectivity")));
+					 errmsg("only binary operators can have join selectivity")));
 		if (canMerge)
 			ereport(ERROR,
 					(errcode(ERRCODE_INVALID_FUNCTION_DEFINITION),
@@ -395,7 +395,7 @@ OperatorCreate(const char *operatorName,
 		if (OidIsValid(joinId))
 			ereport(ERROR,
 					(errcode(ERRCODE_INVALID_FUNCTION_DEFINITION),
-				errmsg("only boolean operators can have join selectivity")));
+					 errmsg("only boolean operators can have join selectivity")));
 		if (canMerge)
 			ereport(ERROR,
 					(errcode(ERRCODE_INVALID_FUNCTION_DEFINITION),
@@ -425,7 +425,7 @@ OperatorCreate(const char *operatorName,
 	 */
 	if (OidIsValid(operatorObjectId) &&
 		!pg_oper_ownercheck(operatorObjectId, GetUserId()))
-		aclcheck_error(ACLCHECK_NOT_OWNER, ACL_KIND_OPER,
+		aclcheck_error(ACLCHECK_NOT_OWNER, OBJECT_OPERATOR,
 					   operatorName);
 
 	/*
@@ -445,7 +445,7 @@ OperatorCreate(const char *operatorName,
 		/* Permission check: must own other operator */
 		if (OidIsValid(commutatorId) &&
 			!pg_oper_ownercheck(commutatorId, GetUserId()))
-			aclcheck_error(ACLCHECK_NOT_OWNER, ACL_KIND_OPER,
+			aclcheck_error(ACLCHECK_NOT_OWNER, OBJECT_OPERATOR,
 						   NameListToString(commutatorName));
 
 		/*
@@ -470,7 +470,7 @@ OperatorCreate(const char *operatorName,
 		/* Permission check: must own other operator */
 		if (OidIsValid(negatorId) &&
 			!pg_oper_ownercheck(negatorId, GetUserId()))
-			aclcheck_error(ACLCHECK_NOT_OWNER, ACL_KIND_OPER,
+			aclcheck_error(ACLCHECK_NOT_OWNER, OBJECT_OPERATOR,
 						   NameListToString(negatorName));
 	}
 	else
@@ -609,7 +609,7 @@ get_other_operator(List *otherOp, Oid otherLeftTypeId, Oid otherRightTypeId,
 		if (!isCommutator)
 			ereport(ERROR,
 					(errcode(ERRCODE_INVALID_FUNCTION_DEFINITION),
-			 errmsg("operator cannot be its own negator or sort operator")));
+					 errmsg("operator cannot be its own negator or sort operator")));
 		return InvalidOid;
 	}
 
@@ -618,7 +618,7 @@ get_other_operator(List *otherOp, Oid otherLeftTypeId, Oid otherRightTypeId,
 	aclresult = pg_namespace_aclcheck(otherNamespace, GetUserId(),
 									  ACL_CREATE);
 	if (aclresult != ACLCHECK_OK)
-		aclcheck_error(aclresult, ACL_KIND_NAMESPACE,
+		aclcheck_error(aclresult, OBJECT_SCHEMA,
 					   get_namespace_name(otherNamespace));
 
 	other_oid = OperatorShellMake(otherName,

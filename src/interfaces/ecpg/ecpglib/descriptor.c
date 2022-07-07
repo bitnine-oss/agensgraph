@@ -16,14 +16,14 @@
 #include "sqlda.h"
 #include "sql3types.h"
 
-static void descriptor_free(struct descriptor * desc);
+static void descriptor_free(struct descriptor *desc);
 
 /* We manage descriptors separately for each thread. */
 #ifdef ENABLE_THREAD_SAFETY
 static pthread_key_t descriptor_key;
 static pthread_once_t descriptor_once = PTHREAD_ONCE_INIT;
 
-static void descriptor_deallocate_all(struct descriptor * list);
+static void descriptor_deallocate_all(struct descriptor *list);
 
 static void
 descriptor_destructor(void *arg)
@@ -45,7 +45,7 @@ get_descriptors(void)
 }
 
 static void
-set_descriptors(struct descriptor * value)
+set_descriptors(struct descriptor *value)
 {
 	pthread_setspecific(descriptor_key, value);
 }
@@ -141,7 +141,7 @@ get_int_item(int lineno, void *var, enum ECPGttype vartype, int value)
 		case ECPGt_unsigned_long_long:
 			*(unsigned long long int *) var = (unsigned long long int) value;
 			break;
-#endif   /* HAVE_LONG_LONG_INT */
+#endif							/* HAVE_LONG_LONG_INT */
 		case ECPGt_float:
 			*(float *) var = (float) value;
 			break;
@@ -150,10 +150,10 @@ get_int_item(int lineno, void *var, enum ECPGttype vartype, int value)
 			break;
 		default:
 			ecpg_raise(lineno, ECPG_VAR_NOT_NUMERIC, ECPG_SQLSTATE_RESTRICTED_DATA_TYPE_ATTRIBUTE_VIOLATION, NULL);
-			return (false);
+			return false;
 	}
 
-	return (true);
+	return true;
 }
 
 static bool
@@ -186,7 +186,7 @@ set_int_item(int lineno, int *target, const void *var, enum ECPGttype vartype)
 		case ECPGt_unsigned_long_long:
 			*target = *(const unsigned long long int *) var;
 			break;
-#endif   /* HAVE_LONG_LONG_INT */
+#endif							/* HAVE_LONG_LONG_INT */
 		case ECPGt_float:
 			*target = *(const float *) var;
 			break;
@@ -195,7 +195,7 @@ set_int_item(int lineno, int *target, const void *var, enum ECPGttype vartype)
 			break;
 		default:
 			ecpg_raise(lineno, ECPG_VAR_NOT_NUMERIC, ECPG_SQLSTATE_RESTRICTED_DATA_TYPE_ATTRIBUTE_VIOLATION, NULL);
-			return (false);
+			return false;
 	}
 
 	return true;
@@ -228,17 +228,17 @@ get_char_item(int lineno, void *var, enum ECPGttype vartype, char *value, int va
 			break;
 		default:
 			ecpg_raise(lineno, ECPG_VAR_NOT_CHAR, ECPG_SQLSTATE_RESTRICTED_DATA_TYPE_ATTRIBUTE_VIOLATION, NULL);
-			return (false);
+			return false;
 	}
 
-	return (true);
+	return true;
 }
 
 #define RETURN_IF_NO_DATA	if (ntuples < 1) \
 				{ \
 					va_end(args); \
 					ecpg_raise(lineno, ECPG_NOT_FOUND, ECPG_SQLSTATE_NO_DATA, NULL); \
-					return (false); \
+					return false; \
 				}
 
 bool
@@ -265,7 +265,7 @@ ECPGget_desc(int lineno, const char *desc_name, int index,...)
 	if (!ECPGresult)
 	{
 		va_end(args);
-		return (false);
+		return false;
 	}
 
 	ntuples = PQntuples(ECPGresult);
@@ -274,7 +274,7 @@ ECPGget_desc(int lineno, const char *desc_name, int index,...)
 	{
 		ecpg_raise(lineno, ECPG_INVALID_DESCRIPTOR_INDEX, ECPG_SQLSTATE_INVALID_DESCRIPTOR_INDEX, NULL);
 		va_end(args);
-		return (false);
+		return false;
 	}
 
 	ecpg_log("ECPGget_desc: reading items for tuple %d\n", index);
@@ -333,7 +333,7 @@ ECPGget_desc(int lineno, const char *desc_name, int index,...)
 				if (!get_char_item(lineno, var, vartype, PQfname(ECPGresult, index), varcharsize))
 				{
 					va_end(args);
-					return (false);
+					return false;
 				}
 
 				ecpg_log("ECPGget_desc: NAME = %s\n", PQfname(ECPGresult, index));
@@ -343,7 +343,7 @@ ECPGget_desc(int lineno, const char *desc_name, int index,...)
 				if (!get_int_item(lineno, var, vartype, 1))
 				{
 					va_end(args);
-					return (false);
+					return false;
 				}
 
 				break;
@@ -352,7 +352,7 @@ ECPGget_desc(int lineno, const char *desc_name, int index,...)
 				if (!get_int_item(lineno, var, vartype, 0))
 				{
 					va_end(args);
-					return (false);
+					return false;
 				}
 
 				break;
@@ -361,7 +361,7 @@ ECPGget_desc(int lineno, const char *desc_name, int index,...)
 				if (!get_int_item(lineno, var, vartype, (PQfmod(ECPGresult, index) - VARHDRSZ) & 0xffff))
 				{
 					va_end(args);
-					return (false);
+					return false;
 				}
 
 				ecpg_log("ECPGget_desc: SCALE = %d\n", (PQfmod(ECPGresult, index) - VARHDRSZ) & 0xffff);
@@ -371,7 +371,7 @@ ECPGget_desc(int lineno, const char *desc_name, int index,...)
 				if (!get_int_item(lineno, var, vartype, PQfmod(ECPGresult, index) >> 16))
 				{
 					va_end(args);
-					return (false);
+					return false;
 				}
 
 				ecpg_log("ECPGget_desc: PRECISION = %d\n", PQfmod(ECPGresult, index) >> 16);
@@ -381,7 +381,7 @@ ECPGget_desc(int lineno, const char *desc_name, int index,...)
 				if (!get_int_item(lineno, var, vartype, PQfsize(ECPGresult, index)))
 				{
 					va_end(args);
-					return (false);
+					return false;
 				}
 
 				ecpg_log("ECPGget_desc: OCTET_LENGTH = %d\n", PQfsize(ECPGresult, index));
@@ -391,7 +391,7 @@ ECPGget_desc(int lineno, const char *desc_name, int index,...)
 				if (!get_int_item(lineno, var, vartype, PQfmod(ECPGresult, index) - VARHDRSZ))
 				{
 					va_end(args);
-					return (false);
+					return false;
 				}
 
 				ecpg_log("ECPGget_desc: LENGTH = %d\n", PQfmod(ECPGresult, index) - VARHDRSZ);
@@ -401,7 +401,7 @@ ECPGget_desc(int lineno, const char *desc_name, int index,...)
 				if (!get_int_item(lineno, var, vartype, ecpg_dynamic_type(PQftype(ECPGresult, index))))
 				{
 					va_end(args);
-					return (false);
+					return false;
 				}
 
 				ecpg_log("ECPGget_desc: TYPE = %d\n", ecpg_dynamic_type(PQftype(ECPGresult, index)));
@@ -411,7 +411,7 @@ ECPGget_desc(int lineno, const char *desc_name, int index,...)
 				if (!get_int_item(lineno, var, vartype, ecpg_dynamic_type_DDT(PQftype(ECPGresult, index))))
 				{
 					va_end(args);
-					return (false);
+					return false;
 				}
 
 				ecpg_log("ECPGget_desc: TYPE = %d\n", ecpg_dynamic_type_DDT(PQftype(ECPGresult, index)));
@@ -421,7 +421,7 @@ ECPGget_desc(int lineno, const char *desc_name, int index,...)
 				if (!get_int_item(lineno, var, vartype, PQntuples(ECPGresult)))
 				{
 					va_end(args);
-					return (false);
+					return false;
 				}
 
 				ecpg_log("ECPGget_desc: CARDINALITY = %d\n", PQntuples(ECPGresult));
@@ -462,7 +462,7 @@ ECPGget_desc(int lineno, const char *desc_name, int index,...)
 					if (!get_int_item(lineno, var, vartype, PQgetlength(ECPGresult, act_tuple, index)))
 					{
 						va_end(args);
-						return (false);
+						return false;
 					}
 					var = (char *) var + offset;
 					ecpg_log("ECPGget_desc: RETURNED[%d] = %d\n", act_tuple, PQgetlength(ECPGresult, act_tuple, index));
@@ -473,7 +473,7 @@ ECPGget_desc(int lineno, const char *desc_name, int index,...)
 				snprintf(type_str, sizeof(type_str), "%d", type);
 				ecpg_raise(lineno, ECPG_UNKNOWN_DESCRIPTOR_ITEM, ECPG_SQLSTATE_ECPG_INTERNAL_ERROR, type_str);
 				va_end(args);
-				return (false);
+				return false;
 		}
 
 		type = va_arg(args, enum ECPGdtype);
@@ -539,7 +539,7 @@ ECPGget_desc(int lineno, const char *desc_name, int index,...)
 			if (!get_int_item(lineno, data_var.ind_value, data_var.ind_type, -PQgetisnull(ECPGresult, act_tuple, index)))
 			{
 				va_end(args);
-				return (false);
+				return false;
 			}
 			data_var.ind_value = (char *) data_var.ind_value + data_var.ind_offset;
 			ecpg_log("ECPGget_desc: INDICATOR[%d] = %d\n", act_tuple, -PQgetisnull(ECPGresult, act_tuple, index));
@@ -547,7 +547,7 @@ ECPGget_desc(int lineno, const char *desc_name, int index,...)
 	}
 	sqlca->sqlerrd[2] = ntuples;
 	va_end(args);
-	return (true);
+	return true;
 }
 
 #undef RETURN_IF_NO_DATA
@@ -689,7 +689,7 @@ ECPGset_desc(int lineno, const char *desc_name, int index,...)
 
 /* Free the descriptor and items in it. */
 static void
-descriptor_free(struct descriptor * desc)
+descriptor_free(struct descriptor *desc)
 {
 	struct descriptor_item *desc_item;
 
@@ -743,7 +743,7 @@ ECPGdeallocate_desc(int line, const char *name)
 
 /* Deallocate all descriptors in the list */
 static void
-descriptor_deallocate_all(struct descriptor * list)
+descriptor_deallocate_all(struct descriptor *list)
 {
 	while (list)
 	{
@@ -753,7 +753,7 @@ descriptor_deallocate_all(struct descriptor * list)
 		list = next;
 	}
 }
-#endif   /* ENABLE_THREAD_SAFETY */
+#endif							/* ENABLE_THREAD_SAFETY */
 
 bool
 ECPGallocate_desc(int line, const char *name)
@@ -855,7 +855,7 @@ ECPGdescribe(int line, int compat, bool input, const char *connection_name, cons
 
 		/* rest of variable parameters */
 		ptr = va_arg(args, void *);
-		(void) va_arg(args, long);		/* skip args */
+		(void) va_arg(args, long);	/* skip args */
 		(void) va_arg(args, long);
 		(void) va_arg(args, long);
 

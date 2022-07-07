@@ -23,12 +23,12 @@ typedef struct
 } stmtCacheEntry;
 
 static int	nextStmtID = 1;
-static const int stmtCacheNBuckets = 2039;		/* # buckets - a prime # */
-static const int stmtCacheEntPerBucket = 8;		/* # entries/bucket		*/
+static const int stmtCacheNBuckets = 2039;	/* # buckets - a prime # */
+static const int stmtCacheEntPerBucket = 8; /* # entries/bucket		*/
 static stmtCacheEntry stmtCacheEntries[16384] = {{0, {0}, 0, 0, 0}};
 
-static bool deallocate_one(int lineno, enum COMPAT_MODE c, struct connection * con,
-		 struct prepared_statement * prev, struct prepared_statement * this);
+static bool deallocate_one(int lineno, enum COMPAT_MODE c, struct connection *con,
+			   struct prepared_statement *prev, struct prepared_statement *this);
 
 static bool
 isvarchar(unsigned char c)
@@ -42,7 +42,7 @@ isvarchar(unsigned char c)
 	if (c >= 128)
 		return true;
 
-	return (false);
+	return false;
 }
 
 static bool
@@ -100,7 +100,7 @@ replace_variables(char **text, int lineno)
 }
 
 static bool
-prepare_common(int lineno, struct connection * con, const char *name, const char *variable)
+prepare_common(int lineno, struct connection *con, const char *name, const char *variable)
 {
 	struct statement *stmt;
 	struct prepared_statement *this;
@@ -180,7 +180,7 @@ ECPGprepare(int lineno, const char *connection_name, const bool questionmarks, c
 
 struct prepared_statement *
 ecpg_find_prepared_statement(const char *name,
-				 struct connection * con, struct prepared_statement ** prev_)
+							 struct connection *con, struct prepared_statement **prev_)
 {
 	struct prepared_statement *this,
 			   *prev;
@@ -198,7 +198,7 @@ ecpg_find_prepared_statement(const char *name,
 }
 
 static bool
-deallocate_one(int lineno, enum COMPAT_MODE c, struct connection * con, struct prepared_statement * prev, struct prepared_statement * this)
+deallocate_one(int lineno, enum COMPAT_MODE c, struct connection *con, struct prepared_statement *prev, struct prepared_statement *this)
 {
 	bool		r = false;
 
@@ -273,7 +273,7 @@ ECPGdeallocate(int lineno, int c, const char *connection_name, const char *name)
 }
 
 bool
-ecpg_deallocate_all_conn(int lineno, enum COMPAT_MODE c, struct connection * con)
+ecpg_deallocate_all_conn(int lineno, enum COMPAT_MODE c, struct connection *con)
 {
 	/* deallocate all prepared statements */
 	while (con->prep_stmts)
@@ -292,7 +292,7 @@ ECPGdeallocate_all(int lineno, int compat, const char *connection_name)
 }
 
 char *
-ecpg_prepared(const char *name, struct connection * con)
+ecpg_prepared(const char *name, struct connection *con)
 {
 	struct prepared_statement *this;
 
@@ -371,7 +371,7 @@ SearchStmtCache(const char *ecpgQuery)
 	if (entIx >= stmtCacheEntPerBucket)
 		entNo = 0;
 
-	return (entNo);
+	return entNo;
 }
 
 /*
@@ -380,7 +380,7 @@ SearchStmtCache(const char *ecpgQuery)
  *	 OR  negative error code
  */
 static int
-ecpg_freeStmtCacheEntry(int lineno, int compat, int entNo)		/* entry # to free */
+ecpg_freeStmtCacheEntry(int lineno, int compat, int entNo)	/* entry # to free */
 {
 	stmtCacheEntry *entry;
 	struct connection *con;
@@ -389,14 +389,14 @@ ecpg_freeStmtCacheEntry(int lineno, int compat, int entNo)		/* entry # to free *
 
 	entry = &stmtCacheEntries[entNo];
 	if (!entry->stmtID[0])		/* return if the entry isn't in use     */
-		return (0);
+		return 0;
 
 	con = ecpg_get_connection(entry->connection);
 
 	/* free the 'prepared_statement' list entry		  */
 	this = ecpg_find_prepared_statement(entry->stmtID, con, &prev);
 	if (this && !deallocate_one(lineno, compat, con, prev, this))
-		return (-1);
+		return -1;
 
 	entry->stmtID[0] = '\0';
 
@@ -407,7 +407,7 @@ ecpg_freeStmtCacheEntry(int lineno, int compat, int entNo)		/* entry # to free *
 		entry->ecpgQuery = 0;
 	}
 
-	return (entNo);
+	return entNo;
 }
 
 /*
@@ -416,7 +416,7 @@ ecpg_freeStmtCacheEntry(int lineno, int compat, int entNo)		/* entry # to free *
  */
 static int
 AddStmtToCache(int lineno,		/* line # of statement		*/
-			   const char *stmtID,		/* statement ID				*/
+			   const char *stmtID,	/* statement ID				*/
 			   const char *connection,	/* connection				*/
 			   int compat,		/* compatibility level */
 			   const char *ecpgQuery)	/* query					*/
@@ -450,7 +450,7 @@ AddStmtToCache(int lineno,		/* line # of statement		*/
 
 /* 'entNo' is the entry to use - make sure its free										*/
 	if (ecpg_freeStmtCacheEntry(lineno, compat, entNo) < 0)
-		return (-1);
+		return -1;
 
 /* add the query to the entry															*/
 	entry = &stmtCacheEntries[entNo];
@@ -460,7 +460,7 @@ AddStmtToCache(int lineno,		/* line # of statement		*/
 	entry->execs = 0;
 	memcpy(entry->stmtID, stmtID, sizeof(entry->stmtID));
 
-	return (entNo);
+	return entNo;
 }
 
 /* handle cache and preparation of statements in auto-prepare mode */
@@ -487,7 +487,7 @@ ecpg_auto_prepare(int lineno, const char *connection_name, const int compat, cha
 		prep = ecpg_find_prepared_statement(stmtID, con, NULL);
 		/* This prepared name doesn't exist on this connection. */
 		if (!prep && !prepare_common(lineno, con, stmtID, query))
-			return (false);
+			return false;
 
 		*name = ecpg_strdup(stmtID, lineno);
 	}
@@ -501,9 +501,9 @@ ecpg_auto_prepare(int lineno, const char *connection_name, const int compat, cha
 		sprintf(stmtID, "ecpg%d", nextStmtID++);
 
 		if (!ECPGprepare(lineno, connection_name, 0, stmtID, query))
-			return (false);
+			return false;
 		if (AddStmtToCache(lineno, stmtID, connection_name, compat, query) < 0)
-			return (false);
+			return false;
 
 		*name = ecpg_strdup(stmtID, lineno);
 	}
@@ -511,5 +511,5 @@ ecpg_auto_prepare(int lineno, const char *connection_name, const int compat, cha
 	/* increase usage counter */
 	stmtCacheEntries[entNo].execs++;
 
-	return (true);
+	return true;
 }

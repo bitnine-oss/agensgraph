@@ -5,7 +5,7 @@
  *	  to avoid conflicts with any uuid_t type that might be defined by
  *	  the system headers.
  *
- * Copyright (c) 2007-2017, PostgreSQL Global Development Group
+ * Copyright (c) 2007-2018, PostgreSQL Global Development Group
  *
  * src/include/utils/uuid.h
  *
@@ -28,4 +28,4 @@ typedef struct pg_uuid_t
 #define DatumGetUUIDP(X)		((pg_uuid_t *) DatumGetPointer(X))
 #define PG_GETARG_UUID_P(X)		DatumGetUUIDP(PG_GETARG_DATUM(X))
 
-#endif   /* UUID_H */
+#endif							/* UUID_H */

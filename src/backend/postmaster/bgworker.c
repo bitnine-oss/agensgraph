@@ -2,7 +2,7 @@
  * bgworker.c
  *		POSTGRES pluggable background workers implementation
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
  *	  src/backend/postmaster/bgworker.c
@@ -15,12 +15,14 @@
 #include <unistd.h>
 
 #include "libpq/pqsignal.h"
+#include "access/parallel.h"
 #include "miscadmin.h"
 #include "pgstat.h"
 #include "port/atomics.h"
 #include "postmaster/bgworker_internals.h"
 #include "postmaster/postmaster.h"
 #include "replication/logicallauncher.h"
+#include "replication/logicalworker.h"
 #include "storage/dsm.h"
 #include "storage/ipc.h"
 #include "storage/latch.h"
@@ -109,13 +111,30 @@ struct BackgroundWorkerHandle
 static BackgroundWorkerArray *BackgroundWorkerData;
 
 /*
- * List of workers that are allowed to be started outside of
- * shared_preload_libraries.
+ * List of internal background worker entry points.  We need this for
+ * reasons explained in LookupBackgroundWorkerFunction(), below.
  */
-static const bgworker_main_type InternalBGWorkers[] = {
-	ApplyLauncherMain,
-	NULL
+static const struct
+{
+	const char *fn_name;
+	bgworker_main_type fn_addr;
+}			InternalBGWorkers[] =
+
+{
+	{
+		"ParallelWorkerMain", ParallelWorkerMain
+	},
+	{
+		"ApplyLauncherMain", ApplyLauncherMain
+	},
+	{
+		"ApplyWorkerMain", ApplyWorkerMain
+	}
 };
+
+/* Private functions. */
+static bgworker_main_type LookupBackgroundWorkerFunction(const char *libraryname, const char *funcname);
+
 
 /*
  * Calculate shared memory needed.
@@ -325,6 +344,8 @@ BackgroundWorkerStateChange(void)
 		 */
 		ascii_safe_strlcpy(rw->rw_worker.bgw_name,
 						   slot->worker.bgw_name, BGW_MAXLEN);
+		ascii_safe_strlcpy(rw->rw_worker.bgw_type,
+						   slot->worker.bgw_type, BGW_MAXLEN);
 		ascii_safe_strlcpy(rw->rw_worker.bgw_library_name,
 						   slot->worker.bgw_library_name, BGW_MAXLEN);
 		ascii_safe_strlcpy(rw->rw_worker.bgw_function_name,
@@ -341,7 +362,6 @@ BackgroundWorkerStateChange(void)
 		rw->rw_worker.bgw_flags = slot->worker.bgw_flags;
 		rw->rw_worker.bgw_start_time = slot->worker.bgw_start_time;
 		rw->rw_worker.bgw_restart_time = slot->worker.bgw_restart_time;
-		rw->rw_worker.bgw_main = slot->worker.bgw_main;
 		rw->rw_worker.bgw_main_arg = slot->worker.bgw_main_arg;
 		memcpy(rw->rw_worker.bgw_extra, slot->worker.bgw_extra, BGW_EXTRALEN);
 
@@ -430,6 +450,41 @@ ReportBackgroundWorkerPID(RegisteredBgWorker *rw)
 }
 
 /*
+ * Report that the PID of a background worker is now zero because a
+ * previously-running background worker has exited.
+ *
+ * This function should only be called from the postmaster.
+ */
+void
+ReportBackgroundWorkerExit(slist_mutable_iter *cur)
+{
+	RegisteredBgWorker *rw;
+	BackgroundWorkerSlot *slot;
+	int			notify_pid;
+
+	rw = slist_container(RegisteredBgWorker, rw_lnode, cur->cur);
+
+	Assert(rw->rw_shmem_slot < max_worker_processes);
+	slot = &BackgroundWorkerData->slot[rw->rw_shmem_slot];
+	slot->pid = rw->rw_pid;
+	notify_pid = rw->rw_worker.bgw_notify_pid;
+
+	/*
+	 * If this worker is slated for deregistration, do that before notifying
+	 * the process which started it.  Otherwise, if that process tries to
+	 * reuse the slot immediately, it might not be available yet.  In theory
+	 * that could happen anyway if the process checks slot->pid at just the
+	 * wrong moment, but this makes the window narrower.
+	 */
+	if (rw->rw_terminate ||
+		rw->rw_worker.bgw_restart_time == BGW_NEVER_RESTART)
+		ForgetBackgroundWorker(cur);
+
+	if (notify_pid != 0)
+		kill(notify_pid, SIGUSR1);
+}
+
+/*
  * Cancel SIGUSR1 notifications for a PID belonging to an exiting backend.
  *
  * This function should only be called from the postmaster.
@@ -467,13 +522,34 @@ ResetBackgroundWorkerCrashTimes(void)
 
 		rw = slist_container(RegisteredBgWorker, rw_lnode, iter.cur);
 
-		/*
-		 * For workers that should not be restarted, we don't want to lose the
-		 * information that they have crashed; otherwise, they would be
-		 * restarted, which is wrong.
-		 */
-		if (rw->rw_worker.bgw_restart_time != BGW_NEVER_RESTART)
+		if (rw->rw_worker.bgw_restart_time == BGW_NEVER_RESTART)
+		{
+			/*
+			 * Workers marked BGW_NVER_RESTART shouldn't get relaunched after
+			 * the crash, so forget about them.  (If we wait until after the
+			 * crash to forget about them, and they are parallel workers,
+			 * parallel_terminate_count will get incremented after we've
+			 * already zeroed parallel_register_count, which would be bad.)
+			 */
+			ForgetBackgroundWorker(&iter);
+		}
+		else
+		{
+			/*
+			 * The accounting which we do via parallel_register_count and
+			 * parallel_terminate_count would get messed up if a worker marked
+			 * parallel could survive a crash and restart cycle. All such
+			 * workers should be marked BGW_NEVER_RESTART, and thus control
+			 * should never reach this branch.
+			 */
+			Assert((rw->rw_worker.bgw_flags & BGWORKER_CLASS_PARALLEL) == 0);
+
+			/*
+			 * Allow this worker to be restarted immediately after we finish
+			 * resetting.
+			 */
 			rw->rw_crashed_at = 0;
+		}
 	}
 }
 
@@ -541,13 +617,34 @@ SanityCheckBackgroundWorker(BackgroundWorker *worker, int elevel)
 		return false;
 	}
 
+	/*
+	 * Parallel workers may not be configured for restart, because the
+	 * parallel_register_count/parallel_terminate_count accounting can't
+	 * handle parallel workers lasting through a crash-and-restart cycle.
+	 */
+	if (worker->bgw_restart_time != BGW_NEVER_RESTART &&
+		(worker->bgw_flags & BGWORKER_CLASS_PARALLEL) != 0)
+	{
+		ereport(elevel,
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("background worker \"%s\": parallel workers may not be configured for restart",
+						worker->bgw_name)));
+		return false;
+	}
+
+	/*
+	 * If bgw_type is not filled in, use bgw_name.
+	 */
+	if (strcmp(worker->bgw_type, "") == 0)
+		strcpy(worker->bgw_type, worker->bgw_name);
+
 	return true;
 }
 
 static void
 bgworker_quickdie(SIGNAL_ARGS)
 {
-	sigaddset(&BlockSig, SIGQUIT);		/* prevent nested calls */
+	sigaddset(&BlockSig, SIGQUIT);	/* prevent nested calls */
 	PG_SETMASK(&BlockSig);
 
 	/*
@@ -582,7 +679,7 @@ bgworker_die(SIGNAL_ARGS)
 	ereport(FATAL,
 			(errcode(ERRCODE_ADMIN_SHUTDOWN),
 			 errmsg("terminating background worker \"%s\" due to administrator command",
-					MyBgworkerEntry->bgw_name)));
+					MyBgworkerEntry->bgw_type)));
 }
 
 /*
@@ -611,7 +708,6 @@ void
 StartBackgroundWorker(void)
 {
 	sigjmp_buf	local_sigjmp_buf;
-	char		buf[MAXPGPATH];
 	BackgroundWorker *worker = MyBgworkerEntry;
 	bgworker_main_type entrypt;
 
@@ -621,8 +717,7 @@ StartBackgroundWorker(void)
 	IsBackgroundWorker = true;
 
 	/* Identify myself via ps */
-	snprintf(buf, MAXPGPATH, "bgworker: %s", worker->bgw_name);
-	init_ps_display(buf, "", "", "");
+	init_ps_display(worker->bgw_name, "", "", "");
 
 	/*
 	 * If we're not supposed to have shared memory access, then detach from
@@ -728,21 +823,10 @@ StartBackgroundWorker(void)
 	}
 
 	/*
-	 * If bgw_main is set, we use that value as the initial entrypoint.
-	 * However, if the library containing the entrypoint wasn't loaded at
-	 * postmaster startup time, passing it as a direct function pointer is not
-	 * possible.  To work around that, we allow callers for whom a function
-	 * pointer is not available to pass a library name (which will be loaded,
-	 * if necessary) and a function name (which will be looked up in the named
-	 * library).
+	 * Look up the entry point function, loading its library if necessary.
 	 */
-	if (worker->bgw_main != NULL)
-		entrypt = worker->bgw_main;
-	else
-		entrypt = (bgworker_main_type)
-			load_external_function(worker->bgw_library_name,
-								   worker->bgw_function_name,
-								   true, NULL);
+	entrypt = LookupBackgroundWorkerFunction(worker->bgw_library_name,
+											 worker->bgw_function_name);
 
 	/*
 	 * Note that in normal processes, we would call InitPostgres here.  For a
@@ -761,33 +845,24 @@ StartBackgroundWorker(void)
 }
 
 /*
- * Register a new background worker while processing shared_preload_libraries.
+ * Register a new static background worker.
  *
- * This can only be called in the _PG_init function of a module library
- * that's loaded by shared_preload_libraries; otherwise it has no effect.
+ * This can only be called directly from postmaster or in the _PG_init
+ * function of a module library that's loaded by shared_preload_libraries;
+ * otherwise it will have no effect.
  */
 void
 RegisterBackgroundWorker(BackgroundWorker *worker)
 {
 	RegisteredBgWorker *rw;
 	static int	numworkers = 0;
-	bool		internal = false;
-	int			i;
 
 	if (!IsUnderPostmaster)
 		ereport(DEBUG1,
-		 (errmsg("registering background worker \"%s\"", worker->bgw_name)));
+				(errmsg("registering background worker \"%s\"", worker->bgw_name)));
 
-	for (i = 0; InternalBGWorkers[i]; i++)
-	{
-		if (worker->bgw_main == InternalBGWorkers[i])
-		{
-			internal = true;
-			break;
-		}
-	}
-
-	if (!process_shared_preload_libraries_in_progress && !internal)
+	if (!process_shared_preload_libraries_in_progress &&
+		strcmp(worker->bgw_library_name, "postgres") != 0)
 	{
 		if (!IsUnderPostmaster)
 			ereport(LOG,
@@ -900,6 +975,9 @@ RegisterDynamicBackgroundWorker(BackgroundWorker *worker,
 					 BackgroundWorkerData->parallel_terminate_count) >=
 		max_parallel_workers)
 	{
+		Assert(BackgroundWorkerData->parallel_register_count -
+			   BackgroundWorkerData->parallel_terminate_count <=
+			   MAX_PARALLEL_WORKER_LIMIT);
 		LWLockRelease(BackgroundWorkerLock);
 		return false;
 	}
@@ -914,7 +992,7 @@ RegisterDynamicBackgroundWorker(BackgroundWorker *worker,
 		if (!slot->in_use)
 		{
 			memcpy(&slot->worker, worker, sizeof(BackgroundWorker));
-			slot->pid = InvalidPid;		/* indicates not started yet */
+			slot->pid = InvalidPid; /* indicates not started yet */
 			slot->generation++;
 			slot->terminate = false;
 			generation = slot->generation;
@@ -956,14 +1034,18 @@ RegisterDynamicBackgroundWorker(BackgroundWorker *worker,
  * Get the PID of a dynamically-registered background worker.
  *
  * If the worker is determined to be running, the return value will be
- * BGWH_STARTED and *pidp will get the PID of the worker process.
- * Otherwise, the return value will be BGWH_NOT_YET_STARTED if the worker
- * hasn't been started yet, and BGWH_STOPPED if the worker was previously
- * running but is no longer.
+ * BGWH_STARTED and *pidp will get the PID of the worker process.  If the
+ * postmaster has not yet attempted to start the worker, the return value will
+ * be BGWH_NOT_YET_STARTED.  Otherwise, the return value is BGWH_STOPPED.
  *
- * In the latter case, the worker may be stopped temporarily (if it is
- * configured for automatic restart and exited non-zero) or gone for
- * good (if it exited with code 0 or if it is configured not to restart).
+ * BGWH_STOPPED can indicate either that the worker is temporarily stopped
+ * (because it is configured for automatic restart and exited non-zero),
+ * or that the worker is permanently stopped (because it exited with exit
+ * code 0, or was not configured for automatic restart), or even that the
+ * worker was unregistered without ever starting (either because startup
+ * failed and the worker is not configured for automatic restart, or because
+ * TerminateBackgroundWorker was used before the worker was successfully
+ * started).
  */
 BgwHandleStatus
 GetBackgroundWorkerPid(BackgroundWorkerHandle *handle, pid_t *pidp)
@@ -988,8 +1070,11 @@ GetBackgroundWorkerPid(BackgroundWorkerHandle *handle, pid_t *pidp)
 	 * time, but we assume such changes are atomic.  So the value we read
 	 * won't be garbage, but it might be out of date by the time the caller
 	 * examines it (but that's unavoidable anyway).
+	 *
+	 * The in_use flag could be in the process of changing from true to false,
+	 * but if it is already false then it can't change further.
 	 */
-	if (handle->generation != slot->generation)
+	if (handle->generation != slot->generation || !slot->in_use)
 		pid = 0;
 	else
 		pid = slot->pid;
@@ -1072,7 +1157,7 @@ WaitForBackgroundWorkerShutdown(BackgroundWorkerHandle *handle)
 		if (status == BGWH_STOPPED)
 			break;
 
-		rc = WaitLatch(&MyProc->procLatch,
+		rc = WaitLatch(MyLatch,
 					   WL_LATCH_SET | WL_POSTMASTER_DEATH, 0,
 					   WAIT_EVENT_BGWORKER_SHUTDOWN);
 
@@ -1082,7 +1167,7 @@ WaitForBackgroundWorkerShutdown(BackgroundWorkerHandle *handle)
 			break;
 		}
 
-		ResetLatch(&MyProc->procLatch);
+		ResetLatch(MyLatch);
 	}
 
 	return status;
@@ -1116,4 +1201,85 @@ TerminateBackgroundWorker(BackgroundWorkerHandle *handle)
 	/* Make sure the postmaster notices the change to shared memory. */
 	if (signal_postmaster)
 		SendPostmasterSignal(PMSIGNAL_BACKGROUND_WORKER_CHANGE);
+}
+
+/*
+ * Look up (and possibly load) a bgworker entry point function.
+ *
+ * For functions contained in the core code, we use library name "postgres"
+ * and consult the InternalBGWorkers array.  External functions are
+ * looked up, and loaded if necessary, using load_external_function().
+ *
+ * The point of this is to pass function names as strings across process
+ * boundaries.  We can't pass actual function addresses because of the
+ * possibility that the function has been loaded at a different address
+ * in a different process.  This is obviously a hazard for functions in
+ * loadable libraries, but it can happen even for functions in the core code
+ * on platforms using EXEC_BACKEND (e.g., Windows).
+ *
+ * At some point it might be worthwhile to get rid of InternalBGWorkers[]
+ * in favor of applying load_external_function() for core functions too;
+ * but that raises portability issues that are not worth addressing now.
+ */
+static bgworker_main_type
+LookupBackgroundWorkerFunction(const char *libraryname, const char *funcname)
+{
+	/*
+	 * If the function is to be loaded from postgres itself, search the
+	 * InternalBGWorkers array.
+	 */
+	if (strcmp(libraryname, "postgres") == 0)
+	{
+		int			i;
+
+		for (i = 0; i < lengthof(InternalBGWorkers); i++)
+		{
+			if (strcmp(InternalBGWorkers[i].fn_name, funcname) == 0)
+				return InternalBGWorkers[i].fn_addr;
+		}
+
+		/* We can only reach this by programming error. */
+		elog(ERROR, "internal function \"%s\" not found", funcname);
+	}
+
+	/* Otherwise load from external library. */
+	return (bgworker_main_type)
+		load_external_function(libraryname, funcname, true, NULL);
+}
+
+/*
+ * Given a PID, get the bgw_type of the background worker.  Returns NULL if
+ * not a valid background worker.
+ *
+ * The return value is in static memory belonging to this function, so it has
+ * to be used before calling this function again.  This is so that the caller
+ * doesn't have to worry about the background worker locking protocol.
+ */
+const char *
+GetBackgroundWorkerTypeByPid(pid_t pid)
+{
+	int			slotno;
+	bool		found = false;
+	static char result[BGW_MAXLEN];
+
+	LWLockAcquire(BackgroundWorkerLock, LW_SHARED);
+
+	for (slotno = 0; slotno < BackgroundWorkerData->total_slots; slotno++)
+	{
+		BackgroundWorkerSlot *slot = &BackgroundWorkerData->slot[slotno];
+
+		if (slot->pid > 0 && slot->pid == pid)
+		{
+			strcpy(result, slot->worker.bgw_type);
+			found = true;
+			break;
+		}
+	}
+
+	LWLockRelease(BackgroundWorkerLock);
+
+	if (!found)
+		return NULL;
+
+	return result;
 }

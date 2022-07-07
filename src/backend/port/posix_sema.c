@@ -15,7 +15,7 @@
  * forked backends, but they could not be accessed by exec'd backends.
  *
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -125,19 +125,19 @@ PosixSemaphoreCreate(void)
  * Attempt to create a new unnamed semaphore.
  */
 static void
-PosixSemaphoreCreate(sem_t * sem)
+PosixSemaphoreCreate(sem_t *sem)
 {
 	if (sem_init(sem, 1, 1) < 0)
 		elog(FATAL, "sem_init failed: %m");
 }
-#endif   /* USE_NAMED_POSIX_SEMAPHORES */
+#endif							/* USE_NAMED_POSIX_SEMAPHORES */
 
 
 /*
  * PosixSemaphoreKill	- removes a semaphore
  */
 static void
-PosixSemaphoreKill(sem_t * sem)
+PosixSemaphoreKill(sem_t *sem)
 {
 #ifdef USE_NAMED_POSIX_SEMAPHORES
 	/* Got to use sem_close for named semaphores */

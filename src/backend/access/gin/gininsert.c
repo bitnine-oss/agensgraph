@@ -4,7 +4,7 @@
  *	  insert routines for the postgres inverted index access method.
  *
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -15,6 +15,7 @@
 #include "postgres.h"
 
 #include "access/gin_private.h"
+#include "access/ginxlog.h"
 #include "access/xloginsert.h"
 #include "catalog/index.h"
 #include "miscadmin.h"
@@ -184,7 +185,7 @@ ginEntryInsert(GinState *ginstate,
 	IndexTuple	itup;
 	Page		page;
 
-	insertdata.isDelete = FALSE;
+	insertdata.isDelete = false;
 
 	/* During index build, count the to-be-inserted entry */
 	if (buildStats)
@@ -220,7 +221,7 @@ ginEntryInsert(GinState *ginstate,
 		itup = addItemPointersToLeafTuple(ginstate, itup,
 										  items, nitem, buildStats);
 
-		insertdata.isDelete = TRUE;
+		insertdata.isDelete = true;
 	}
 	else
 	{
@@ -291,7 +292,7 @@ ginBuildCallback(Relation index, HeapTuple htup, Datum *values,
 
 		ginBeginBAScan(&buildstate->accum);
 		while ((list = ginGetBAEntry(&buildstate->accum,
-								  &attnum, &key, &category, &nlist)) != NULL)
+									 &attnum, &key, &category, &nlist)) != NULL)
 		{
 			/* there could be many entries, so be willing to abort here */
 			CHECK_FOR_INTERRUPTS();
@@ -347,7 +348,7 @@ ginbuild(Relation heap, Relation index, IndexInfo *indexInfo)
 		Page		page;
 
 		XLogBeginInsert();
-		XLogRegisterBuffer(0, MetaBuffer, REGBUF_WILL_INIT);
+		XLogRegisterBuffer(0, MetaBuffer, REGBUF_WILL_INIT | REGBUF_STANDARD);
 		XLogRegisterBuffer(1, RootBuffer, REGBUF_WILL_INIT);
 
 		recptr = XLogInsert(RM_GIN_ID, XLOG_GIN_CREATE_INDEX);
@@ -379,7 +380,7 @@ ginbuild(Relation heap, Relation index, IndexInfo *indexInfo)
 	 * ginExtractEntries(), and can be reset after each tuple
 	 */
 	buildstate.funcCtx = AllocSetContextCreate(CurrentMemoryContext,
-					 "Gin build temporary context for user-defined function",
+											   "Gin build temporary context for user-defined function",
 											   ALLOCSET_DEFAULT_SIZES);
 
 	buildstate.accum.ginstate = &buildstate.ginstate;
@@ -390,7 +391,7 @@ ginbuild(Relation heap, Relation index, IndexInfo *indexInfo)
 	 * prefers to receive tuples in TID order.
 	 */
 	reltuples = IndexBuildHeapScan(heap, index, indexInfo, false,
-								   ginBuildCallback, (void *) &buildstate);
+								   ginBuildCallback, (void *) &buildstate, NULL);
 
 	/* dump remaining entries to the index */
 	oldCtx = MemoryContextSwitchTo(buildstate.tmpCtx);
@@ -446,7 +447,7 @@ ginbuildempty(Relation index)
 	START_CRIT_SECTION();
 	GinInitMetabuffer(MetaBuffer);
 	MarkBufferDirty(MetaBuffer);
-	log_newpage_buffer(MetaBuffer, false);
+	log_newpage_buffer(MetaBuffer, true);
 	GinInitBuffer(RootBuffer, GIN_LEAF);
 	MarkBufferDirty(RootBuffer);
 	log_newpage_buffer(RootBuffer, false);
@@ -482,12 +483,23 @@ ginHeapTupleInsert(GinState *ginstate, OffsetNumber attnum,
 bool
 gininsert(Relation index, Datum *values, bool *isnull,
 		  ItemPointer ht_ctid, Relation heapRel,
-		  IndexUniqueCheck checkUnique)
+		  IndexUniqueCheck checkUnique,
+		  IndexInfo *indexInfo)
 {
-	GinState	ginstate;
+	GinState   *ginstate = (GinState *) indexInfo->ii_AmCache;
 	MemoryContext oldCtx;
 	MemoryContext insertCtx;
 	int			i;
+
+	/* Initialize GinState cache if first call in this statement */
+	if (ginstate == NULL)
+	{
+		oldCtx = MemoryContextSwitchTo(indexInfo->ii_Context);
+		ginstate = (GinState *) palloc(sizeof(GinState));
+		initGinState(ginstate, index);
+		indexInfo->ii_AmCache = (void *) ginstate;
+		MemoryContextSwitchTo(oldCtx);
+	}
 
 	insertCtx = AllocSetContextCreate(CurrentMemoryContext,
 									  "Gin insert temporary context",
@@ -495,26 +507,24 @@ gininsert(Relation index, Datum *values, bool *isnull,
 
 	oldCtx = MemoryContextSwitchTo(insertCtx);
 
-	initGinState(&ginstate, index);
-
 	if (GinGetUseFastUpdate(index))
 	{
 		GinTupleCollector collector;
 
 		memset(&collector, 0, sizeof(GinTupleCollector));
 
-		for (i = 0; i < ginstate.origTupdesc->natts; i++)
-			ginHeapTupleFastCollect(&ginstate, &collector,
+		for (i = 0; i < ginstate->origTupdesc->natts; i++)
+			ginHeapTupleFastCollect(ginstate, &collector,
 									(OffsetNumber) (i + 1),
 									values[i], isnull[i],
 									ht_ctid);
 
-		ginHeapTupleFastInsert(&ginstate, &collector);
+		ginHeapTupleFastInsert(ginstate, &collector);
 	}
 	else
 	{
-		for (i = 0; i < ginstate.origTupdesc->natts; i++)
-			ginHeapTupleInsert(&ginstate, (OffsetNumber) (i + 1),
+		for (i = 0; i < ginstate->origTupdesc->natts; i++)
+			ginHeapTupleInsert(ginstate, (OffsetNumber) (i + 1),
 							   values[i], isnull[i],
 							   ht_ctid);
 	}

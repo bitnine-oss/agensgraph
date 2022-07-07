@@ -19,7 +19,7 @@
  * routines.
  *
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -33,9 +33,6 @@
 #include <signal.h>
 #include <time.h>
 
-#include <netinet/in.h>
-#include <arpa/inet.h>
-
 #ifdef WIN32
 #include "win32.h"
 #else
@@ -46,9 +43,6 @@
 #ifdef HAVE_POLL_H
 #include <poll.h>
 #endif
-#ifdef HAVE_SYS_POLL_H
-#include <sys/poll.h>
-#endif
 #ifdef HAVE_SYS_SELECT_H
 #include <sys/select.h>
 #endif
@@ -56,6 +50,7 @@
 #include "libpq-fe.h"
 #include "libpq-int.h"
 #include "mb/pg_wchar.h"
+#include "port/pg_bswap.h"
 #include "pg_config_paths.h"
 
 
@@ -281,14 +276,14 @@ pqGetInt(int *result, size_t bytes, PGconn *conn)
 				return EOF;
 			memcpy(&tmp2, conn->inBuffer + conn->inCursor, 2);
 			conn->inCursor += 2;
-			*result = (int) ntohs(tmp2);
+			*result = (int) pg_ntoh16(tmp2);
 			break;
 		case 4:
 			if (conn->inCursor + 4 > conn->inEnd)
 				return EOF;
 			memcpy(&tmp4, conn->inBuffer + conn->inCursor, 4);
 			conn->inCursor += 4;
-			*result = (int) ntohl(tmp4);
+			*result = (int) pg_ntoh32(tmp4);
 			break;
 		default:
 			pqInternalNotice(&conn->noticeHooks,
@@ -317,12 +312,12 @@ pqPutInt(int value, size_t bytes, PGconn *conn)
 	switch (bytes)
 	{
 		case 2:
-			tmp2 = htons((uint16) value);
+			tmp2 = pg_hton16((uint16) value);
 			if (pqPutMsgBytes((const char *) &tmp2, 2, conn))
 				return EOF;
 			break;
 		case 4:
-			tmp4 = htonl((uint32) value);
+			tmp4 = pg_hton32((uint32) value);
 			if (pqPutMsgBytes((const char *) &tmp4, 4, conn))
 				return EOF;
 			break;
@@ -600,7 +595,7 @@ pqPutMsgEnd(PGconn *conn)
 	{
 		uint32		msgLen = conn->outMsgEnd - conn->outMsgStart;
 
-		msgLen = htonl(msgLen);
+		msgLen = pg_hton32(msgLen);
 		memcpy(conn->outBuffer + conn->outMsgStart, &msgLen, 4);
 	}
 
@@ -809,15 +804,15 @@ retry4:
 definitelyEOF:
 	printfPQExpBuffer(&conn->errorMessage,
 					  libpq_gettext(
-								"server closed the connection unexpectedly\n"
-				   "\tThis probably means the server terminated abnormally\n"
-							 "\tbefore or while processing the request.\n"));
+									"server closed the connection unexpectedly\n"
+									"\tThis probably means the server terminated abnormally\n"
+									"\tbefore or while processing the request.\n"));
 
 	/* Come here if lower-level code already set a suitable errorMessage */
 definitelyFailed:
 	/* Do *not* drop any already-read data; caller still wants it */
 	pqDropConnection(conn, false);
-	conn->status = CONNECTION_BAD;		/* No more connection to backend */
+	conn->status = CONNECTION_BAD;	/* No more connection to backend */
 	return -1;
 }
 
@@ -939,7 +934,7 @@ pqSendSome(PGconn *conn, int len)
 				break;
 			}
 
-			if (pqWait(TRUE, TRUE, conn))
+			if (pqWait(true, true, conn))
 			{
 				result = -1;
 				break;
@@ -994,11 +989,9 @@ pqWait(int forRead, int forWrite, PGconn *conn)
 /*
  * pqWaitTimed: wait, but not past finish_time.
  *
- * If finish_time is exceeded then we return failure (EOF).  This is like
- * the response for a kernel exception because we don't want the caller
- * to try to read/write in that case.
- *
  * finish_time = ((time_t) -1) disables the wait limit.
+ *
+ * Returns -1 on failure, 0 if the socket is readable/writable, 1 if it timed out.
  */
 int
 pqWaitTimed(int forRead, int forWrite, PGconn *conn, time_t finish_time)
@@ -1008,13 +1001,13 @@ pqWaitTimed(int forRead, int forWrite, PGconn *conn, time_t finish_time)
 	result = pqSocketCheck(conn, forRead, forWrite, finish_time);
 
 	if (result < 0)
-		return EOF;				/* errorMessage is already set */
+		return -1;				/* errorMessage is already set */
 
 	if (result == 0)
 	{
 		printfPQExpBuffer(&conn->errorMessage,
 						  libpq_gettext("timeout expired\n"));
-		return EOF;
+		return 1;
 	}
 
 	return 0;
@@ -1170,7 +1163,7 @@ pqSocketPoll(int sock, int forRead, int forWrite, time_t end_time)
 
 	return select(sock + 1, &input_mask, &output_mask,
 				  &except_mask, ptr_timeout);
-#endif   /* HAVE_POLL */
+#endif							/* HAVE_POLL */
 }
 
 
@@ -1264,4 +1257,4 @@ libpq_ngettext(const char *msgid, const char *msgid_plural, unsigned long n)
 	return dngettext(PG_TEXTDOMAIN("libpq"), msgid, msgid_plural, n);
 }
 
-#endif   /* ENABLE_NLS */
+#endif							/* ENABLE_NLS */

@@ -4,7 +4,7 @@
  *	  page utilities routines for the postgres inverted index access method.
  *
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -15,6 +15,7 @@
 #include "postgres.h"
 
 #include "access/gin_private.h"
+#include "access/ginxlog.h"
 #include "access/xloginsert.h"
 #include "miscadmin.h"
 #include "utils/memutils.h"
@@ -30,7 +31,7 @@ static void ginFinishSplit(GinBtree btree, GinBtreeStack *stack,
 /*
  * Lock buffer by needed method for search.
  */
-static int
+int
 ginTraverseLock(Buffer buffer, bool searchMode)
 {
 	Page		page;
@@ -40,7 +41,7 @@ ginTraverseLock(Buffer buffer, bool searchMode)
 	page = BufferGetPage(buffer);
 	if (GinPageIsLeaf(page))
 	{
-		if (searchMode == FALSE)
+		if (searchMode == false)
 		{
 			/* we should relock our page */
 			LockBuffer(buffer, GIN_UNLOCK);
@@ -106,7 +107,7 @@ ginFindLeafPage(GinBtree btree, bool searchMode, Snapshot snapshot)
 		 * ok, page is correctly locked, we should check to move right ..,
 		 * root never has a right link, so small optimization
 		 */
-		while (btree->fullScan == FALSE && stack->blkno != btree->rootBlkno &&
+		while (btree->fullScan == false && stack->blkno != btree->rootBlkno &&
 			   btree->isMoveRight(btree, page))
 		{
 			BlockNumber rightlink = GinPageGetOpaque(page)->rightlink;

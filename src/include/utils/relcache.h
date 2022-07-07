@@ -4,7 +4,7 @@
  *	  Relation descriptor cache definitions.
  *
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/utils/relcache.h
@@ -17,6 +17,11 @@
 #include "access/tupdesc.h"
 #include "nodes/bitmapset.h"
 
+
+/*
+ * Name of relcache init file(s), used to speed up backend startup
+ */
+#define RELCACHE_INIT_FILENAME	"pg_internal.init"
 
 typedef struct RelationData *Relation;
 
@@ -39,6 +44,7 @@ extern void RelationClose(Relation relation);
  */
 extern List *RelationGetFKeyList(Relation relation);
 extern List *RelationGetIndexList(Relation relation);
+extern List *RelationGetStatExtList(Relation relation);
 extern Oid	RelationGetOidIndex(Relation relation);
 extern Oid	RelationGetPrimaryKeyIndex(Relation relation);
 extern Oid	RelationGetReplicaIndex(Relation relation);
@@ -134,4 +140,4 @@ extern bool criticalRelcachesBuilt;
 /* should be used only by relcache.c and postinit.c */
 extern bool criticalSharedRelcachesBuilt;
 
-#endif   /* RELCACHE_H */
+#endif							/* RELCACHE_H */

@@ -35,6 +35,7 @@
 #include "optimizer/geqo_recombination.h"
 #include "optimizer/geqo_random.h"
 
+#if defined(ERX)
 
 static int	gimme_edge(PlannerInfo *root, Gene gene1, Gene gene2, Edge *edge_table);
 static void remove_gene(PlannerInfo *root, Gene gene, Edge edge, Edge *edge_table);
@@ -458,7 +459,7 @@ edge_failure(PlannerInfo *root, Gene *gene, int index, Edge *edge_table, int num
 			if (edge_table[i].unused_edges >= 0)
 				return (Gene) i;
 
-		elog(LOG, "no edge found via looking for the last ununsed point");
+		elog(LOG, "no edge found via looking for the last unused point");
 	}
 
 
@@ -466,3 +467,5 @@ edge_failure(PlannerInfo *root, Gene *gene, int index, Edge *edge_table, int num
 	elog(ERROR, "no edge found");
 	return 0;					/* to keep the compiler quiet */
 }
+
+#endif							/* defined(ERX) */

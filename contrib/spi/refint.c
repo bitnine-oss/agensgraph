@@ -175,14 +175,14 @@ check_primary_key(PG_FUNCTION_ARGS)
 		for (i = 0; i < nkeys; i++)
 		{
 			snprintf(sql + strlen(sql), sizeof(sql) - strlen(sql), "%s = $%d %s",
-				  args[i + nkeys + 1], i + 1, (i < nkeys - 1) ? "and " : "");
+					 args[i + nkeys + 1], i + 1, (i < nkeys - 1) ? "and " : "");
 		}
 
 		/* Prepare plan for query */
 		pplan = SPI_prepare(sql, nkeys, argtypes);
 		if (pplan == NULL)
 			/* internal error */
-			elog(ERROR, "check_primary_key: SPI_prepare returned %d", SPI_result);
+			elog(ERROR, "check_primary_key: SPI_prepare returned %s", SPI_result_code_string(SPI_result));
 
 		/*
 		 * Remember that SPI_prepare places plan in current memory context -
@@ -248,7 +248,7 @@ check_foreign_key(PG_FUNCTION_ARGS)
 	Datum	   *kvals;			/* key values */
 	char	   *relname;		/* referencing relation name */
 	Relation	rel;			/* triggered relation */
-	HeapTuple	trigtuple = NULL;		/* tuple to being changed */
+	HeapTuple	trigtuple = NULL;	/* tuple to being changed */
 	HeapTuple	newtuple = NULL;	/* tuple to return */
 	TupleDesc	tupdesc;		/* tuple description */
 	EPlan	   *plan;			/* prepared plan(s) */
@@ -395,7 +395,7 @@ check_foreign_key(PG_FUNCTION_ARGS)
 			/* this shouldn't happen! SPI_ERROR_NOOUTFUNC ? */
 			if (oldval == NULL)
 				/* internal error */
-				elog(ERROR, "check_foreign_key: SPI_getvalue returned %d", SPI_result);
+				elog(ERROR, "check_foreign_key: SPI_getvalue returned %s", SPI_result_code_string(SPI_result));
 			newval = SPI_getvalue(newtuple, tupdesc, fnumber);
 			if (newval == NULL || strcmp(oldval, newval) != 0)
 				isequal = false;
@@ -489,7 +489,6 @@ check_foreign_key(PG_FUNCTION_ARGS)
 								 " %s = %s%s%s %s ",
 								 args2[k], (is_char_type > 0) ? "'" : "",
 								 nv, (is_char_type > 0) ? "'" : "", (k < nkeys) ? ", " : "");
-						is_char_type = 0;
 					}
 					strcat(sql, " where ");
 
@@ -529,7 +528,7 @@ check_foreign_key(PG_FUNCTION_ARGS)
 			pplan = SPI_prepare(sql, nkeys, argtypes);
 			if (pplan == NULL)
 				/* internal error */
-				elog(ERROR, "check_foreign_key: SPI_prepare returned %d", SPI_result);
+				elog(ERROR, "check_foreign_key: SPI_prepare returned %s", SPI_result_code_string(SPI_result));
 
 			/*
 			 * Remember that SPI_prepare places plan in current memory context
@@ -636,5 +635,5 @@ find_plan(char *ident, EPlan **eplan, int *nplans)
 	newp->splan = NULL;
 	(*nplans)++;
 
-	return (newp);
+	return newp;
 }

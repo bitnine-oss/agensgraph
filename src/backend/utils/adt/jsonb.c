@@ -3,7 +3,7 @@
  * jsonb.c
  *		I/O routines for jsonb type
  *
- * Copyright (c) 2014-2017, PostgreSQL Global Development Group
+ * Copyright (c) 2014-2018, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
  *	  src/backend/utils/adt/jsonb.c
@@ -16,6 +16,7 @@
 #include "access/htup_details.h"
 #include "access/transam.h"
 #include "catalog/pg_type.h"
+#include "funcapi.h"
 #include "libpq/pqformat.h"
 #include "parser/parse_coerce.h"
 #include "utils/builtins.h"
@@ -130,7 +131,7 @@ jsonb_recv(PG_FUNCTION_ARGS)
 Datum
 jsonb_out(PG_FUNCTION_ARGS)
 {
-	Jsonb	   *jb = PG_GETARG_JSONB(0);
+	Jsonb	   *jb = PG_GETARG_JSONB_P(0);
 	char	   *out;
 
 	out = JsonbToCString(NULL, &jb->root, VARSIZE(jb));
@@ -146,7 +147,7 @@ jsonb_out(PG_FUNCTION_ARGS)
 Datum
 jsonb_send(PG_FUNCTION_ARGS)
 {
-	Jsonb	   *jb = PG_GETARG_JSONB(0);
+	Jsonb	   *jb = PG_GETARG_JSONB_P(0);
 	StringInfoData buf;
 	StringInfo	jtext = makeStringInfo();
 	int			version = 1;
@@ -154,7 +155,7 @@ jsonb_send(PG_FUNCTION_ARGS)
 	(void) JsonbToCString(jtext, &jb->root, VARSIZE(jb));
 
 	pq_begintypsend(&buf);
-	pq_sendint(&buf, version, 1);
+	pq_sendint8(&buf, version);
 	pq_sendtext(&buf, jtext->data, jtext->len);
 	pfree(jtext->data);
 	pfree(jtext);
@@ -171,7 +172,7 @@ jsonb_send(PG_FUNCTION_ARGS)
 Datum
 jsonb_typeof(PG_FUNCTION_ARGS)
 {
-	Jsonb	   *in = PG_GETARG_JSONB(0);
+	Jsonb	   *in = PG_GETARG_JSONB_P(0);
 	JsonbIterator *it;
 	JsonbValue	v;
 	char	   *result;
@@ -320,8 +321,8 @@ jsonb_put_escaped_value(StringInfo out, JsonbValue *scalarVal)
 			break;
 		case jbvNumeric:
 			appendStringInfoString(out,
-							 DatumGetCString(DirectFunctionCall1(numeric_out,
-								  PointerGetDatum(scalarVal->val.numeric))));
+								   DatumGetCString(DirectFunctionCall1(numeric_out,
+																	   PointerGetDatum(scalarVal->val.numeric))));
 			break;
 		case jbvBool:
 			if (scalarVal->val.boolean)
@@ -644,9 +645,10 @@ jsonb_categorize_type(Oid typoid,
 
 		default:
 			/* Check for arrays and composites */
-			if (OidIsValid(get_element_type(typoid)))
+			if (OidIsValid(get_element_type(typoid)) || typoid == ANYARRAYOID
+				|| typoid == RECORDARRAYOID)
 				*tcategory = JSONBTYPE_ARRAY;
-			else if (type_is_rowtype(typoid))
+			else if (type_is_rowtype(typoid))	/* includes RECORDOID */
 				*tcategory = JSONBTYPE_COMPOSITE;
 			else
 			{
@@ -663,7 +665,7 @@ jsonb_categorize_type(Oid typoid,
 					CoercionPathType ctype;
 
 					ctype = find_coercion_pathway(JSONOID, typoid,
-											   COERCION_EXPLICIT, &castfunc);
+												  COERCION_EXPLICIT, &castfunc);
 					if (ctype == COERCION_PATH_FUNC && OidIsValid(castfunc))
 					{
 						*tcategory = JSONBTYPE_JSONCAST;
@@ -721,7 +723,7 @@ datum_to_jsonb(Datum val, bool is_null, JsonbInState *result,
 	{
 		ereport(ERROR,
 				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-		 errmsg("key value must be scalar, not array, composite, or json")));
+				 errmsg("key value must be scalar, not array, composite, or json")));
 	}
 	else
 	{
@@ -784,71 +786,19 @@ datum_to_jsonb(Datum val, bool is_null, JsonbInState *result,
 				}
 				break;
 			case JSONBTYPE_DATE:
-				{
-					DateADT		date;
-					struct pg_tm tm;
-					char		buf[MAXDATELEN + 1];
-
-					date = DatumGetDateADT(val);
-					/* Same as date_out(), but forcing DateStyle */
-					if (DATE_NOT_FINITE(date))
-						EncodeSpecialDate(date, buf);
-					else
-					{
-						j2date(date + POSTGRES_EPOCH_JDATE,
-							   &(tm.tm_year), &(tm.tm_mon), &(tm.tm_mday));
-						EncodeDateOnly(&tm, USE_XSD_DATES, buf);
-					}
-					jb.type = jbvString;
-					jb.val.string.len = strlen(buf);
-					jb.val.string.val = pstrdup(buf);
-				}
+				jb.type = jbvString;
+				jb.val.string.val = JsonEncodeDateTime(NULL, val, DATEOID);
+				jb.val.string.len = strlen(jb.val.string.val);
 				break;
 			case JSONBTYPE_TIMESTAMP:
-				{
-					Timestamp	timestamp;
-					struct pg_tm tm;
-					fsec_t		fsec;
-					char		buf[MAXDATELEN + 1];
-
-					timestamp = DatumGetTimestamp(val);
-					/* Same as timestamp_out(), but forcing DateStyle */
-					if (TIMESTAMP_NOT_FINITE(timestamp))
-						EncodeSpecialTimestamp(timestamp, buf);
-					else if (timestamp2tm(timestamp, NULL, &tm, &fsec, NULL, NULL) == 0)
-						EncodeDateTime(&tm, fsec, false, 0, NULL, USE_XSD_DATES, buf);
-					else
-						ereport(ERROR,
-								(errcode(ERRCODE_DATETIME_VALUE_OUT_OF_RANGE),
-								 errmsg("timestamp out of range")));
-					jb.type = jbvString;
-					jb.val.string.len = strlen(buf);
-					jb.val.string.val = pstrdup(buf);
-				}
+				jb.type = jbvString;
+				jb.val.string.val = JsonEncodeDateTime(NULL, val, TIMESTAMPOID);
+				jb.val.string.len = strlen(jb.val.string.val);
 				break;
 			case JSONBTYPE_TIMESTAMPTZ:
-				{
-					TimestampTz timestamp;
-					struct pg_tm tm;
-					int			tz;
-					fsec_t		fsec;
-					const char *tzn = NULL;
-					char		buf[MAXDATELEN + 1];
-
-					timestamp = DatumGetTimestampTz(val);
-					/* Same as timestamptz_out(), but forcing DateStyle */
-					if (TIMESTAMP_NOT_FINITE(timestamp))
-						EncodeSpecialTimestamp(timestamp, buf);
-					else if (timestamp2tm(timestamp, &tz, &tm, &fsec, &tzn, NULL) == 0)
-						EncodeDateTime(&tm, fsec, true, tz, tzn, USE_XSD_DATES, buf);
-					else
-						ereport(ERROR,
-								(errcode(ERRCODE_DATETIME_VALUE_OUT_OF_RANGE),
-								 errmsg("timestamp out of range")));
-					jb.type = jbvString;
-					jb.val.string.len = strlen(buf);
-					jb.val.string.val = pstrdup(buf);
-				}
+				jb.type = jbvString;
+				jb.val.string.val = JsonEncodeDateTime(NULL, val, TIMESTAMPTZOID);
+				jb.val.string.len = strlen(jb.val.string.val);
 				break;
 			case JSONBTYPE_JSONCAST:
 			case JSONBTYPE_JSON:
@@ -856,7 +806,7 @@ datum_to_jsonb(Datum val, bool is_null, JsonbInState *result,
 					/* parse the json right into the existing result object */
 					JsonLexContext *lex;
 					JsonSemAction sem;
-					text	   *json = DatumGetTextP(val);
+					text	   *json = DatumGetTextPP(val);
 
 					lex = makeJsonLexContext(json, true);
 
@@ -877,7 +827,7 @@ datum_to_jsonb(Datum val, bool is_null, JsonbInState *result,
 				break;
 			case JSONBTYPE_JSONB:
 				{
-					Jsonb	   *jsonb = DatumGetJsonb(val);
+					Jsonb	   *jsonb = DatumGetJsonbP(val);
 					JsonbIterator *it;
 
 					it = JsonbIteratorInit(&jsonb->root);
@@ -1074,11 +1024,12 @@ composite_to_jsonb(Datum composite, JsonbInState *result)
 		JsonbTypeCategory tcategory;
 		Oid			outfuncoid;
 		JsonbValue	v;
+		Form_pg_attribute att = TupleDescAttr(tupdesc, i);
 
-		if (tupdesc->attrs[i]->attisdropped)
+		if (att->attisdropped)
 			continue;
 
-		attname = NameStr(tupdesc->attrs[i]->attname);
+		attname = NameStr(att->attname);
 
 		v.type = jbvString;
 		/* don't need checkStringLen here - can't exceed maximum name length */
@@ -1095,8 +1046,7 @@ composite_to_jsonb(Datum composite, JsonbInState *result)
 			outfuncoid = InvalidOid;
 		}
 		else
-			jsonb_categorize_type(tupdesc->attrs[i]->atttypid,
-								  &tcategory, &outfuncoid);
+			jsonb_categorize_type(att->atttypid, &tcategory, &outfuncoid);
 
 		datum_to_jsonb(val, isnull, result, tcategory, outfuncoid, false);
 	}
@@ -1170,16 +1120,24 @@ to_jsonb(PG_FUNCTION_ARGS)
 Datum
 jsonb_build_object(PG_FUNCTION_ARGS)
 {
-	int			nargs = PG_NARGS();
+	int			nargs;
 	int			i;
-	Datum		arg;
-	Oid			val_type;
 	JsonbInState result;
+	Datum	   *args;
+	bool	   *nulls;
+	Oid		   *types;
+
+	/* build argument values to build the object */
+	nargs = extract_variadic_args(fcinfo, 0, true, &args, &types, &nulls);
+
+	if (nargs < 0)
+		PG_RETURN_NULL();
 
 	if (nargs % 2 != 0)
 		ereport(ERROR,
 				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				 errmsg("invalid number of arguments: object must be matched key value pairs")));
+				 errmsg("argument list must have even number of elements"),
+				 errhint("The arguments of jsonb_build_object() must consist of alternating keys and values.")));
 
 	memset(&result, 0, sizeof(JsonbInState));
 
@@ -1188,54 +1146,15 @@ jsonb_build_object(PG_FUNCTION_ARGS)
 	for (i = 0; i < nargs; i += 2)
 	{
 		/* process key */
-
-		if (PG_ARGISNULL(i))
+		if (nulls[i])
 			ereport(ERROR,
 					(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 					 errmsg("argument %d: key must not be null", i + 1)));
-		val_type = get_fn_expr_argtype(fcinfo->flinfo, i);
 
-		/*
-		 * turn a constant (more or less literal) value that's of unknown type
-		 * into text. Unknowns come in as a cstring pointer.
-		 */
-		if (val_type == UNKNOWNOID && get_fn_expr_arg_stable(fcinfo->flinfo, i))
-		{
-			val_type = TEXTOID;
-			arg = CStringGetTextDatum(PG_GETARG_POINTER(i));
-		}
-		else
-		{
-			arg = PG_GETARG_DATUM(i);
-		}
-		if (val_type == InvalidOid || val_type == UNKNOWNOID)
-			ereport(ERROR,
-					(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-			   errmsg("argument %d: could not determine data type", i + 1)));
-
-		add_jsonb(arg, false, &result, val_type, true);
+		add_jsonb(args[i], false, &result, types[i], true);
 
 		/* process value */
-
-		val_type = get_fn_expr_argtype(fcinfo->flinfo, i + 1);
-		/* see comments above */
-		if (val_type == UNKNOWNOID && get_fn_expr_arg_stable(fcinfo->flinfo, i + 1))
-		{
-			val_type = TEXTOID;
-			if (PG_ARGISNULL(i + 1))
-				arg = (Datum) 0;
-			else
-				arg = CStringGetTextDatum(PG_GETARG_POINTER(i + 1));
-		}
-		else
-		{
-			arg = PG_GETARG_DATUM(i + 1);
-		}
-		if (val_type == InvalidOid || val_type == UNKNOWNOID)
-			ereport(ERROR,
-					(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-			   errmsg("argument %d: could not determine data type", i + 2)));
-		add_jsonb(arg, PG_ARGISNULL(i + 1), &result, val_type, false);
+		add_jsonb(args[i + 1], nulls[i + 1], &result, types[i + 1], false);
 	}
 
 	result.res = pushJsonbValue(&result.parseState, WJB_END_OBJECT, NULL);
@@ -1265,38 +1184,25 @@ jsonb_build_object_noargs(PG_FUNCTION_ARGS)
 Datum
 jsonb_build_array(PG_FUNCTION_ARGS)
 {
-	int			nargs = PG_NARGS();
+	int			nargs;
 	int			i;
-	Datum		arg;
-	Oid			val_type;
 	JsonbInState result;
+	Datum	   *args;
+	bool	   *nulls;
+	Oid		   *types;
+
+	/* build argument values to build the array */
+	nargs = extract_variadic_args(fcinfo, 0, true, &args, &types, &nulls);
+
+	if (nargs < 0)
+		PG_RETURN_NULL();
 
 	memset(&result, 0, sizeof(JsonbInState));
 
 	result.res = pushJsonbValue(&result.parseState, WJB_BEGIN_ARRAY, NULL);
 
 	for (i = 0; i < nargs; i++)
-	{
-		val_type = get_fn_expr_argtype(fcinfo->flinfo, i);
-		/* see comments in jsonb_build_object above */
-		if (val_type == UNKNOWNOID && get_fn_expr_arg_stable(fcinfo->flinfo, i))
-		{
-			val_type = TEXTOID;
-			if (PG_ARGISNULL(i))
-				arg = (Datum) 0;
-			else
-				arg = CStringGetTextDatum(PG_GETARG_POINTER(i));
-		}
-		else
-		{
-			arg = PG_GETARG_DATUM(i);
-		}
-		if (val_type == InvalidOid || val_type == UNKNOWNOID)
-			ereport(ERROR,
-					(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-			   errmsg("argument %d: could not determine data type", i + 1)));
-		add_jsonb(arg, PG_ARGISNULL(i), &result, val_type, false);
-	}
+		add_jsonb(args[i], nulls[i], &result, types[i], false);
 
 	result.res = pushJsonbValue(&result.parseState, WJB_END_ARRAY, NULL);
 
@@ -1660,8 +1566,8 @@ jsonb_agg_transfn(PG_FUNCTION_ARGS)
 				{
 					/* same for numeric */
 					v.val.numeric =
-					DatumGetNumeric(DirectFunctionCall1(numeric_uplus,
-											NumericGetDatum(v.val.numeric)));
+						DatumGetNumeric(DirectFunctionCall1(numeric_uplus,
+															NumericGetDatum(v.val.numeric)));
 				}
 				result->res = pushJsonbValue(&result->parseState,
 											 type, &v);
@@ -1890,8 +1796,8 @@ jsonb_object_agg_transfn(PG_FUNCTION_ARGS)
 				{
 					/* same for numeric */
 					v.val.numeric =
-					DatumGetNumeric(DirectFunctionCall1(numeric_uplus,
-											NumericGetDatum(v.val.numeric)));
+						DatumGetNumeric(DirectFunctionCall1(numeric_uplus,
+															NumericGetDatum(v.val.numeric)));
 				}
 				result->res = pushJsonbValue(&result->parseState,
 											 single_scalar ? WJB_VALUE : type,

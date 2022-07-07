@@ -5,6 +5,10 @@ SELECT amname, opcname
 FROM pg_opclass opc LEFT JOIN pg_am am ON am.oid = opcmethod
 WHERE opc.oid >= 16384 AND NOT amvalidate(opc.oid);
 
+--backslash is used in tests below, installcheck will fail if
+--standard_conforming_string is off
+set standard_conforming_strings=on;
+
 select show_trgm('');
 select show_trgm('(*&^$@%@');
 select show_trgm('a b c');
@@ -26,6 +30,7 @@ select t,similarity(t,'qwertyu0988') as sml from test_trgm where t % 'qwertyu098
 select t,similarity(t,'gwertyu0988') as sml from test_trgm where t % 'gwertyu0988' order by sml desc, t;
 select t,similarity(t,'gwertyu1988') as sml from test_trgm where t % 'gwertyu1988' order by sml desc, t;
 select t <-> 'q0987wertyu0988', t from test_trgm order by t <-> 'q0987wertyu0988' limit 2;
+select count(*) from test_trgm where t ~ '[qwerty]{2}-?[qwerty]{2}';
 
 create index trgm_idx on test_trgm using gist (t gist_trgm_ops);
 set enable_seqscan=off;
@@ -36,6 +41,7 @@ select t,similarity(t,'gwertyu1988') as sml from test_trgm where t % 'gwertyu198
 explain (costs off)
 select t <-> 'q0987wertyu0988', t from test_trgm order by t <-> 'q0987wertyu0988' limit 2;
 select t <-> 'q0987wertyu0988', t from test_trgm order by t <-> 'q0987wertyu0988' limit 2;
+select count(*) from test_trgm where t ~ '[qwerty]{2}-?[qwerty]{2}';
 
 drop index trgm_idx;
 create index trgm_idx on test_trgm using gin (t gin_trgm_ops);
@@ -44,11 +50,13 @@ set enable_seqscan=off;
 select t,similarity(t,'qwertyu0988') as sml from test_trgm where t % 'qwertyu0988' order by sml desc, t;
 select t,similarity(t,'gwertyu0988') as sml from test_trgm where t % 'gwertyu0988' order by sml desc, t;
 select t,similarity(t,'gwertyu1988') as sml from test_trgm where t % 'gwertyu1988' order by sml desc, t;
+select count(*) from test_trgm where t ~ '[qwerty]{2}-?[qwerty]{2}';
 
 create table test2(t text COLLATE "C");
 insert into test2 values ('abcdef');
 insert into test2 values ('quark');
 insert into test2 values ('  z foo bar');
+insert into test2 values ('/123/-45/');
 create index test2_idx_gin on test2 using gin (t gin_trgm_ops);
 set enable_seqscan=off;
 explain (costs off)
@@ -83,7 +91,10 @@ select * from test2 where t ~ 'z foo bar';
 select * from test2 where t ~ ' z foo bar';
 select * from test2 where t ~ '  z foo bar';
 select * from test2 where t ~ '  z foo';
+select * from test2 where t ~ 'qua(?!foo)';
+select * from test2 where t ~ '/\d+/-\d';
 drop index test2_idx_gin;
+
 create index test2_idx_gist on test2 using gist (t gist_trgm_ops);
 set enable_seqscan=off;
 explain (costs off)
@@ -118,6 +129,8 @@ select * from test2 where t ~ 'z foo bar';
 select * from test2 where t ~ ' z foo bar';
 select * from test2 where t ~ '  z foo bar';
 select * from test2 where t ~ '  z foo';
+select * from test2 where t ~ 'qua(?!foo)';
+select * from test2 where t ~ '/\d+/-\d';
 
 -- Check similarity threshold (bug #14202)
 

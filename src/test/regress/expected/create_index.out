@@ -2324,10 +2324,10 @@ DROP TABLE array_gin_test;
 CREATE INDEX gin_relopts_test ON array_index_op_test USING gin (i)
   WITH (FASTUPDATE=on, GIN_PENDING_LIST_LIMIT=128);
 \d+ gin_relopts_test
-     Index "public.gin_relopts_test"
- Column |  Type   | Definition | Storage 
---------+---------+------------+---------
- i      | integer | i          | plain
+            Index "public.gin_relopts_test"
+ Column |  Type   | Definition | Storage | Stats target 
+--------+---------+------------+---------+--------------
+ i      | integer | i          | plain   | 
 gin, for table "public.array_index_op_test"
 Options: fastupdate=on, gin_pending_list_limit=128
 
@@ -2335,13 +2335,9 @@ Options: fastupdate=on, gin_pending_list_limit=128
 -- HASH
 --
 CREATE INDEX hash_i4_index ON hash_i4_heap USING hash (random int4_ops);
-WARNING:  hash indexes are not WAL-logged and their use is discouraged
 CREATE INDEX hash_name_index ON hash_name_heap USING hash (random name_ops);
-WARNING:  hash indexes are not WAL-logged and their use is discouraged
 CREATE INDEX hash_txt_index ON hash_txt_heap USING hash (random text_ops);
-WARNING:  hash indexes are not WAL-logged and their use is discouraged
-CREATE INDEX hash_f8_index ON hash_f8_heap USING hash (random float8_ops);
-WARNING:  hash indexes are not WAL-logged and their use is discouraged
+CREATE INDEX hash_f8_index ON hash_f8_heap USING hash (random float8_ops) WITH (fillfactor=60);
 CREATE UNLOGGED TABLE unlogged_hash_table (id int4);
 CREATE INDEX unlogged_hash_index ON unlogged_hash_table USING hash (id int4_ops);
 DROP TABLE unlogged_hash_table;
@@ -2350,7 +2346,6 @@ DROP TABLE unlogged_hash_table;
 -- maintenance_work_mem setting and fillfactor:
 SET maintenance_work_mem = '1MB';
 CREATE INDEX hash_tuplesort_idx ON tenk1 USING hash (stringu1 name_ops) WITH (fillfactor = 10);
-WARNING:  hash indexes are not WAL-logged and their use is discouraged
 EXPLAIN (COSTS OFF)
 SELECT count(*) FROM tenk1 WHERE stringu1 = 'TVAAAA';
                       QUERY PLAN                       
@@ -2563,6 +2558,12 @@ primary key, btree, for table "public.cwi_test"
 DROP INDEX cwi_replaced_pkey;	-- Should fail; a constraint depends on it
 ERROR:  cannot drop index cwi_replaced_pkey because constraint cwi_replaced_pkey on table cwi_test requires it
 HINT:  You can drop constraint cwi_replaced_pkey on table cwi_test instead.
+DROP TABLE cwi_test;
+-- ADD CONSTRAINT USING INDEX is forbidden on partitioned tables
+CREATE TABLE cwi_test(a int) PARTITION BY hash (a);
+create unique index on cwi_test (a);
+alter table cwi_test add primary key using index cwi_test_a_idx ;
+ERROR:  ALTER TABLE / ADD CONSTRAINT USING INDEX is not supported on partitioned tables
 DROP TABLE cwi_test;
 --
 -- Check handling of indexes on system columns
@@ -3069,6 +3070,6 @@ ERROR:  must be owner of schema schema_to_reindex
 -- Clean up
 RESET ROLE;
 DROP ROLE regress_reindexuser;
-SET client_min_messages TO 'warning';
+\set VERBOSITY terse \\ -- suppress cascade details
 DROP SCHEMA schema_to_reindex CASCADE;
-RESET client_min_messages;
+NOTICE:  drop cascades to 6 other objects

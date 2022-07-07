@@ -5,7 +5,7 @@
  *	  prototypes for rewrite/rowsecurity.c and the structures for managing
  *	  the row security policies for relations in relcache.
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * -------------------------------------------------------------------------
@@ -35,7 +35,7 @@ typedef struct RowSecurityDesc
 } RowSecurityDesc;
 
 typedef List *(*row_security_policy_hook_type) (CmdType cmdtype,
-														  Relation relation);
+												Relation relation);
 
 extern PGDLLIMPORT row_security_policy_hook_type row_security_policy_hook_permissive;
 
@@ -46,4 +46,4 @@ extern void get_row_security_policies(Query *root,
 						  List **securityQuals, List **withCheckOptions,
 						  bool *hasRowSecurity, bool *hasSubLinks);
 
-#endif   /* ROWSECURITY_H */
+#endif							/* ROWSECURITY_H */

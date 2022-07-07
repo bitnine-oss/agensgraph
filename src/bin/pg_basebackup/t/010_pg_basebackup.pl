@@ -4,7 +4,7 @@ use Cwd;
 use Config;
 use PostgresNode;
 use TestLib;
-use Test::More tests => 72;
+use Test::More tests => 79;
 
 program_help_ok('pg_basebackup');
 program_version_ok('pg_basebackup');
@@ -15,22 +15,19 @@ my $tempdir = TestLib::tempdir;
 my $node = get_new_node('main');
 
 # Initialize node without replication settings
-$node->init(hba_permit_replication => 0);
+$node->init;
 $node->start;
 my $pgdata = $node->data_dir;
 
 $node->command_fails(['pg_basebackup'],
 	'pg_basebackup needs target directory specified');
-$node->command_fails(
-	[ 'pg_basebackup', '-D', "$tempdir/backup" ],
-	'pg_basebackup fails because of hba');
 
 # Some Windows ANSI code pages may reject this filename, in which case we
 # quietly proceed without this bit of test coverage.
-if (open BADCHARS, ">>$tempdir/pgdata/FOO\xe0\xe0\xe0BAR")
+if (open my $badchars, '>>', "$tempdir/pgdata/FOO\xe0\xe0\xe0BAR")
 {
-	print BADCHARS "test backup of file with non-UTF8 name\n";
-	close BADCHARS;
+	print $badchars "test backup of file with non-UTF8 name\n";
+	close $badchars;
 }
 
 $node->set_replication_conf();
@@ -40,28 +37,34 @@ $node->command_fails(
 	[ 'pg_basebackup', '-D', "$tempdir/backup" ],
 	'pg_basebackup fails because of WAL configuration');
 
-ok(! -d "$tempdir/backup", 'backup directory was cleaned up');
+ok(!-d "$tempdir/backup", 'backup directory was cleaned up');
 
-$node->command_fails(
-	[ 'pg_basebackup', '-D', "$tempdir/backup", '-n' ],
+$node->command_fails([ 'pg_basebackup', '-D', "$tempdir/backup", '-n' ],
 	'failing run with no-clean option');
 
 ok(-d "$tempdir/backup", 'backup directory was created and left behind');
 
-open CONF, ">>$pgdata/postgresql.conf";
-print CONF "max_replication_slots = 10\n";
-print CONF "max_wal_senders = 10\n";
-print CONF "wal_level = replica\n";
-close CONF;
+open my $conf, '>>', "$pgdata/postgresql.conf";
+print $conf "max_replication_slots = 10\n";
+print $conf "max_wal_senders = 10\n";
+print $conf "wal_level = replica\n";
+close $conf;
 $node->restart;
 
 # Write some files to test that they are not copied.
-foreach my $filename (qw(backup_label tablespace_map postgresql.auto.conf.tmp))
+foreach my $filename (
+	qw(backup_label tablespace_map postgresql.auto.conf.tmp current_logfiles.tmp)
+  )
 {
-	open FILE, ">>$pgdata/$filename";
-	print FILE "DONOTCOPY";
-	close FILE;
+	open my $file, '>>', "$pgdata/$filename";
+	print $file "DONOTCOPY";
+	close $file;
 }
+
+# Connect to a database to create global/pg_internal.init.  If this is removed
+# the test to ensure global/pg_internal.init is not copied will return a false
+# positive.
+$node->safe_psql('postgres', 'SELECT 1;');
 
 $node->command_ok([ 'pg_basebackup', '-D', "$tempdir/backup", '-X', 'none' ],
 	'pg_basebackup runs');
@@ -74,7 +77,9 @@ is_deeply(
 	'no WAL files copied');
 
 # Contents of these directories should not be copied.
-foreach my $dirname (qw(pg_dynshmem pg_notify pg_replslot pg_serial pg_snapshots pg_stat_tmp pg_subtrans))
+foreach my $dirname (
+	qw(pg_dynshmem pg_notify pg_replslot pg_serial pg_snapshots pg_stat_tmp pg_subtrans)
+  )
 {
 	is_deeply(
 		[ sort(slurp_dir("$tempdir/backup/$dirname/")) ],
@@ -83,17 +88,20 @@ foreach my $dirname (qw(pg_dynshmem pg_notify pg_replslot pg_serial pg_snapshots
 }
 
 # These files should not be copied.
-foreach my $filename (qw(postgresql.auto.conf.tmp postmaster.opts postmaster.pid tablespace_map))
+foreach my $filename (
+	qw(postgresql.auto.conf.tmp postmaster.opts postmaster.pid tablespace_map current_logfiles.tmp
+		global/pg_internal.init)
+  )
 {
-	ok(! -f "$tempdir/backup/$filename", "$filename not copied");
+	ok(!-f "$tempdir/backup/$filename", "$filename not copied");
 }
 
 # Make sure existing backup_label was ignored.
-isnt(slurp_file("$tempdir/backup/backup_label"), 'DONOTCOPY',
-	 'existing backup_label not copied');
+isnt(slurp_file("$tempdir/backup/backup_label"),
+	'DONOTCOPY', 'existing backup_label not copied');
 
 $node->command_ok(
-	[   'pg_basebackup', '-D', "$tempdir/backup2", '--xlogdir',
+	[   'pg_basebackup', '-D', "$tempdir/backup2", '--waldir',
 		"$tempdir/xlog2" ],
 	'separate xlog directory');
 ok(-f "$tempdir/backup2/PG_VERSION", 'backup was created');
@@ -127,8 +135,9 @@ $node->command_fails(
 my $superlongname = "superlongname_" . ("x" x 100);
 my $superlongpath = "$pgdata/$superlongname";
 
-open FILE, ">$superlongpath" or die "unable to create file $superlongpath";
-close FILE;
+open my $file, '>', "$superlongpath"
+  or die "unable to create file $superlongpath";
+close $file;
 $node->command_fails(
 	[ 'pg_basebackup', '-D', "$tempdir/tarbackup_l1", '-Ft' ],
 	'pg_basebackup tar with long name fails');
@@ -144,9 +153,9 @@ SKIP:
 	$node->stop;
 
 	rename("$pgdata/pg_replslot", "$tempdir/pg_replslot")
-		or BAIL_OUT "could not move $pgdata/pg_replslot";
+	  or BAIL_OUT "could not move $pgdata/pg_replslot";
 	symlink("$tempdir/pg_replslot", "$pgdata/pg_replslot")
-		or BAIL_OUT "could not symlink to $pgdata/pg_replslot";
+	  or BAIL_OUT "could not symlink to $pgdata/pg_replslot";
 
 	$node->start;
 
@@ -186,7 +195,8 @@ SKIP:
 		"tablespace symlink was updated");
 	closedir $dh;
 
-	ok(-d "$tempdir/backup1/pg_replslot", 'pg_replslot symlink copied as directory');
+	ok( -d "$tempdir/backup1/pg_replslot",
+		'pg_replslot symlink copied as directory');
 
 	mkdir "$tempdir/tbl=spc2";
 	$node->safe_psql('postgres', "DROP TABLE test1;");
@@ -225,7 +235,8 @@ like(
 	qr/^primary_conninfo = '.*port=$port.*'\n/m,
 	'recovery.conf sets primary_conninfo');
 
-$node->command_ok([ 'pg_basebackup', '-D', "$tempdir/backupxd" ],
+$node->command_ok(
+	[ 'pg_basebackup', '-D', "$tempdir/backupxd" ],
 	'pg_basebackup runs in default xlog mode');
 ok(grep(/^[0-9A-F]{24}$/, slurp_dir("$tempdir/backupxd/pg_wal")),
 	'WAL files copied');
@@ -245,18 +256,40 @@ $node->command_ok(
 	'pg_basebackup -X stream runs in tar mode');
 ok(-f "$tempdir/backupxst/pg_wal.tar", "tar file was created");
 $node->command_ok(
-	[ 'pg_basebackup', '-D', "$tempdir/backupnoslot", '-X', 'stream', '--no-slot' ],
+	[   'pg_basebackup',         '-D',
+		"$tempdir/backupnoslot", '-X',
+		'stream',                '--no-slot' ],
 	'pg_basebackup -X stream runs with --no-slot');
 
-$node->command_fails(
-	[ 'pg_basebackup', '-D', "$tempdir/fail", '-S', 'slot1' ],
-	'pg_basebackup with replication slot fails without -X stream');
 $node->command_fails(
 	[   'pg_basebackup',             '-D',
 		"$tempdir/backupxs_sl_fail", '-X',
 		'stream',                    '-S',
-		'slot1' ],
+		'slot0' ],
 	'pg_basebackup fails with nonexistent replication slot');
+
+$node->command_fails(
+	[   'pg_basebackup', '-D', "$tempdir/backupxs_slot", '-C' ],
+	'pg_basebackup -C fails without slot name');
+
+$node->command_fails(
+	[   'pg_basebackup', '-D', "$tempdir/backupxs_slot", '-C', '-S', 'slot0', '--no-slot' ],
+	'pg_basebackup fails with -C -S --no-slot');
+
+$node->command_ok(
+	[   'pg_basebackup', '-D', "$tempdir/backupxs_slot", '-C', '-S', 'slot0' ],
+	'pg_basebackup -C runs');
+
+is($node->safe_psql('postgres', q{SELECT slot_name FROM pg_replication_slots WHERE slot_name = 'slot0'}),
+   'slot0',
+   'replication slot was created');
+isnt($node->safe_psql('postgres', q{SELECT restart_lsn FROM pg_replication_slots WHERE slot_name = 'slot0'}),
+   '',
+   'restart LSN of new slot is not null');
+
+$node->command_fails(
+	[   'pg_basebackup', '-D', "$tempdir/backupxs_slot1", '-C', '-S', 'slot0' ],
+	'pg_basebackup fails with -C -S and a previously existing slot');
 
 $node->safe_psql('postgres',
 	q{SELECT * FROM pg_create_physical_replication_slot('slot1')});
@@ -264,6 +297,9 @@ my $lsn = $node->safe_psql('postgres',
 	q{SELECT restart_lsn FROM pg_replication_slots WHERE slot_name = 'slot1'}
 );
 is($lsn, '', 'restart LSN of new slot is null');
+$node->command_fails(
+	[ 'pg_basebackup', '-D', "$tempdir/fail", '-S', 'slot1', '-X', 'none' ],
+	'pg_basebackup with replication slot fails without WAL streaming');
 $node->command_ok(
 	[   'pg_basebackup', '-D', "$tempdir/backupxs_sl", '-X',
 		'stream',        '-S', 'slot1' ],

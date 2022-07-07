@@ -3,7 +3,7 @@
  * pg_publication.h
  *	  definition of the relation sets relation (pg_publication)
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/catalog/pg_publication.h
@@ -30,13 +30,13 @@
 
 CATALOG(pg_publication,6104)
 {
-	NameData	pubname;			/* name of the publication */
+	NameData	pubname;		/* name of the publication */
 
-	Oid			pubowner;			/* publication owner */
+	Oid			pubowner;		/* publication owner */
 
 	/*
-	 * indicates that this is special publication which should encompass
-	 * all tables in the database (except for the unlogged and temp ones)
+	 * indicates that this is special publication which should encompass all
+	 * tables in the database (except for the unlogged and temp ones)
 	 */
 	bool		puballtables;
 
@@ -73,16 +73,16 @@ typedef FormData_pg_publication *Form_pg_publication;
 
 typedef struct PublicationActions
 {
-	bool	pubinsert;
-	bool	pubupdate;
-	bool	pubdelete;
+	bool		pubinsert;
+	bool		pubupdate;
+	bool		pubdelete;
 } PublicationActions;
 
 typedef struct Publication
 {
-	Oid		oid;
-	char   *name;
-	bool	alltables;
+	Oid			oid;
+	char	   *name;
+	bool		alltables;
 	PublicationActions pubactions;
 } Publication;
 
@@ -93,12 +93,13 @@ extern List *GetPublicationRelations(Oid pubid);
 extern List *GetAllTablesPublications(void);
 extern List *GetAllTablesPublicationRelations(void);
 
+extern bool is_publishable_relation(Relation rel);
 extern ObjectAddress publication_add_relation(Oid pubid, Relation targetrel,
-							 bool if_not_exists);
+						 bool if_not_exists);
 
-extern Oid get_publication_oid(const char *pubname, bool missing_ok);
+extern Oid	get_publication_oid(const char *pubname, bool missing_ok);
 extern char *get_publication_name(Oid pubid);
 
 extern Datum pg_get_publication_tables(PG_FUNCTION_ARGS);
 
-#endif   /* PG_PUBLICATION_H */
+#endif							/* PG_PUBLICATION_H */

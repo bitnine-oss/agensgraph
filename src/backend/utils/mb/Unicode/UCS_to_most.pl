@@ -1,6 +1,6 @@
 #! /usr/bin/perl
 #
-# Copyright (c) 2001-2017, PostgreSQL Global Development Group
+# Copyright (c) 2001-2018, PostgreSQL Global Development Group
 #
 # src/backend/utils/mb/Unicode/UCS_to_most.pl
 #
@@ -16,7 +16,9 @@
 #		 # and Unicode name (not used in this script)
 
 use strict;
-require convutils;
+use convutils;
+
+my $this_script = 'src/backend/utils/mb/Unicode/UCS_to_most.pl';
 
 my %filename = (
 	'WIN866'     => 'CP866.TXT',
@@ -48,11 +50,11 @@ my %filename = (
 	'GBK'        => 'CP936.TXT');
 
 # make maps for all encodings if not specified
-my @charsets = (scalar(@ARGV) > 0) ? @ARGV : keys(%filename);
+my @charsets = (scalar(@ARGV) > 0) ? @ARGV : sort keys(%filename);
 
 foreach my $charset (@charsets)
 {
 	my $mapping = &read_source($filename{$charset});
 
-	print_tables($charset, $mapping);
+	print_conversion_tables($this_script, $charset, $mapping);
 }

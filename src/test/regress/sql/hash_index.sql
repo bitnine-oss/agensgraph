@@ -156,10 +156,9 @@ SELECT h.seqno AS f20000
 -- Cause some overflow insert and splits.
 --
 CREATE TABLE hash_split_heap (keycol INT);
+INSERT INTO hash_split_heap SELECT 1 FROM generate_series(1, 500) a;
 CREATE INDEX hash_split_index on hash_split_heap USING HASH (keycol);
-INSERT INTO hash_split_heap SELECT 1 FROM generate_series(1, 70000) a;
-
-VACUUM FULL hash_split_heap;
+INSERT INTO hash_split_heap SELECT 1 FROM generate_series(1, 5000) a;
 
 -- Let's do a backward scan.
 BEGIN;
@@ -173,11 +172,14 @@ MOVE BACKWARD ALL FROM c;
 CLOSE c;
 END;
 
--- DELETE, INSERT, REBUILD INDEX.
+-- DELETE, INSERT, VACUUM.
 DELETE FROM hash_split_heap WHERE keycol = 1;
-INSERT INTO hash_split_heap SELECT a/2 FROM generate_series(1, 50000) a;
+INSERT INTO hash_split_heap SELECT a/2 FROM generate_series(1, 25000) a;
 
 VACUUM hash_split_heap;
+
+-- Rebuild the index using a different fillfactor
+ALTER INDEX hash_split_index SET (fillfactor = 10);
 REINDEX INDEX hash_split_index;
 
 -- Clean up.
@@ -194,3 +196,9 @@ CREATE TABLE hash_heap_float4 (x float4, y int);
 INSERT INTO hash_heap_float4 VALUES (1.1,1);
 CREATE INDEX hash_idx ON hash_heap_float4 USING hash (x);
 DROP TABLE hash_heap_float4 CASCADE;
+
+-- Test out-of-range fillfactor values
+CREATE INDEX hash_f8_index2 ON hash_f8_heap USING hash (random float8_ops)
+	WITH (fillfactor=9);
+CREATE INDEX hash_f8_index2 ON hash_f8_heap USING hash (random float8_ops)
+	WITH (fillfactor=101);

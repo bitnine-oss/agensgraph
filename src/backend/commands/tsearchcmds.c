@@ -4,7 +4,7 @@
  *
  *	  Routines for tsearch manipulation commands
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -209,27 +209,27 @@ DefineTSParser(List *names, List *parameters)
 	{
 		DefElem    *defel = (DefElem *) lfirst(pl);
 
-		if (pg_strcasecmp(defel->defname, "start") == 0)
+		if (strcmp(defel->defname, "start") == 0)
 		{
 			values[Anum_pg_ts_parser_prsstart - 1] =
 				get_ts_parser_func(defel, Anum_pg_ts_parser_prsstart);
 		}
-		else if (pg_strcasecmp(defel->defname, "gettoken") == 0)
+		else if (strcmp(defel->defname, "gettoken") == 0)
 		{
 			values[Anum_pg_ts_parser_prstoken - 1] =
 				get_ts_parser_func(defel, Anum_pg_ts_parser_prstoken);
 		}
-		else if (pg_strcasecmp(defel->defname, "end") == 0)
+		else if (strcmp(defel->defname, "end") == 0)
 		{
 			values[Anum_pg_ts_parser_prsend - 1] =
 				get_ts_parser_func(defel, Anum_pg_ts_parser_prsend);
 		}
-		else if (pg_strcasecmp(defel->defname, "headline") == 0)
+		else if (strcmp(defel->defname, "headline") == 0)
 		{
 			values[Anum_pg_ts_parser_prsheadline - 1] =
 				get_ts_parser_func(defel, Anum_pg_ts_parser_prsheadline);
 		}
-		else if (pg_strcasecmp(defel->defname, "lextypes") == 0)
+		else if (strcmp(defel->defname, "lextypes") == 0)
 		{
 			values[Anum_pg_ts_parser_prslextype - 1] =
 				get_ts_parser_func(defel, Anum_pg_ts_parser_prslextype);
@@ -237,8 +237,8 @@ DefineTSParser(List *names, List *parameters)
 		else
 			ereport(ERROR,
 					(errcode(ERRCODE_SYNTAX_ERROR),
-				 errmsg("text search parser parameter \"%s\" not recognized",
-						defel->defname)));
+					 errmsg("text search parser parameter \"%s\" not recognized",
+							defel->defname)));
 	}
 
 	/*
@@ -381,8 +381,8 @@ verify_dictoptions(Oid tmplId, List *dictoptions)
 		if (dictoptions)
 			ereport(ERROR,
 					(errcode(ERRCODE_SYNTAX_ERROR),
-				errmsg("text search template \"%s\" does not accept options",
-					   NameStr(tform->tmplname))));
+					 errmsg("text search template \"%s\" does not accept options",
+							NameStr(tform->tmplname))));
 	}
 	else
 	{
@@ -428,7 +428,7 @@ DefineTSDictionary(List *names, List *parameters)
 	/* Check we have creation rights in target namespace */
 	aclresult = pg_namespace_aclcheck(namespaceoid, GetUserId(), ACL_CREATE);
 	if (aclresult != ACLCHECK_OK)
-		aclcheck_error(aclresult, ACL_KIND_NAMESPACE,
+		aclcheck_error(aclresult, OBJECT_SCHEMA,
 					   get_namespace_name(namespaceoid));
 
 	/*
@@ -438,7 +438,7 @@ DefineTSDictionary(List *names, List *parameters)
 	{
 		DefElem    *defel = (DefElem *) lfirst(pl);
 
-		if (pg_strcasecmp(defel->defname, "template") == 0)
+		if (strcmp(defel->defname, "template") == 0)
 		{
 			templId = get_ts_template_oid(defGetQualifiedName(defel), false);
 		}
@@ -549,7 +549,7 @@ AlterTSDictionary(AlterTSDictionaryStmt *stmt)
 
 	/* must be owner */
 	if (!pg_ts_dict_ownercheck(dictId, GetUserId()))
-		aclcheck_error(ACLCHECK_NOT_OWNER, ACL_KIND_TSDICTIONARY,
+		aclcheck_error(ACLCHECK_NOT_OWNER, OBJECT_TSDICTIONARY,
 					   NameListToString(stmt->dictname));
 
 	/* deserialize the existing set of options */
@@ -580,7 +580,7 @@ AlterTSDictionary(AlterTSDictionaryStmt *stmt)
 			DefElem    *oldel = (DefElem *) lfirst(cell);
 
 			next = lnext(cell);
-			if (pg_strcasecmp(oldel->defname, defel->defname) == 0)
+			if (strcmp(oldel->defname, defel->defname) == 0)
 				dictoptions = list_delete_cell(dictoptions, cell, prev);
 			else
 				prev = cell;
@@ -743,7 +743,7 @@ DefineTSTemplate(List *names, List *parameters)
 	if (!superuser())
 		ereport(ERROR,
 				(errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
-			   errmsg("must be superuser to create text search templates")));
+				 errmsg("must be superuser to create text search templates")));
 
 	/* Convert list of names to a name and namespace */
 	namespaceoid = QualifiedNameGetCreationNamespace(names, &tmplname);
@@ -765,13 +765,13 @@ DefineTSTemplate(List *names, List *parameters)
 	{
 		DefElem    *defel = (DefElem *) lfirst(pl);
 
-		if (pg_strcasecmp(defel->defname, "init") == 0)
+		if (strcmp(defel->defname, "init") == 0)
 		{
 			values[Anum_pg_ts_template_tmplinit - 1] =
 				get_ts_template_func(defel, Anum_pg_ts_template_tmplinit);
 			nulls[Anum_pg_ts_template_tmplinit - 1] = false;
 		}
-		else if (pg_strcasecmp(defel->defname, "lexize") == 0)
+		else if (strcmp(defel->defname, "lexize") == 0)
 		{
 			values[Anum_pg_ts_template_tmpllexize - 1] =
 				get_ts_template_func(defel, Anum_pg_ts_template_tmpllexize);
@@ -780,8 +780,8 @@ DefineTSTemplate(List *names, List *parameters)
 		else
 			ereport(ERROR,
 					(errcode(ERRCODE_SYNTAX_ERROR),
-			   errmsg("text search template parameter \"%s\" not recognized",
-					  defel->defname)));
+					 errmsg("text search template parameter \"%s\" not recognized",
+							defel->defname)));
 	}
 
 	/*
@@ -980,7 +980,7 @@ DefineTSConfiguration(List *names, List *parameters, ObjectAddress *copied)
 	/* Check we have creation rights in target namespace */
 	aclresult = pg_namespace_aclcheck(namespaceoid, GetUserId(), ACL_CREATE);
 	if (aclresult != ACLCHECK_OK)
-		aclcheck_error(aclresult, ACL_KIND_NAMESPACE,
+		aclcheck_error(aclresult, OBJECT_SCHEMA,
 					   get_namespace_name(namespaceoid));
 
 	/*
@@ -990,9 +990,9 @@ DefineTSConfiguration(List *names, List *parameters, ObjectAddress *copied)
 	{
 		DefElem    *defel = (DefElem *) lfirst(pl);
 
-		if (pg_strcasecmp(defel->defname, "parser") == 0)
+		if (strcmp(defel->defname, "parser") == 0)
 			prsOid = get_ts_parser_oid(defGetQualifiedName(defel), false);
-		else if (pg_strcasecmp(defel->defname, "copy") == 0)
+		else if (strcmp(defel->defname, "copy") == 0)
 			sourceOid = get_ts_config_oid(defGetQualifiedName(defel), false);
 		else
 			ereport(ERROR,
@@ -1189,7 +1189,7 @@ AlterTSConfiguration(AlterTSConfigurationStmt *stmt)
 
 	/* must be owner */
 	if (!pg_ts_config_ownercheck(HeapTupleGetOid(tup), GetUserId()))
-		aclcheck_error(ACLCHECK_NOT_OWNER, ACL_KIND_TSCONFIGURATION,
+		aclcheck_error(ACLCHECK_NOT_OWNER, OBJECT_TSCONFIGURATION,
 					   NameListToString(stmt->cfgname));
 
 	relMap = heap_open(TSConfigMapRelationId, RowExclusiveLock);
@@ -1251,7 +1251,6 @@ getTokenTypes(Oid prsId, List *tokennames)
 		j = 0;
 		while (list && list[j].lexid)
 		{
-			/* XXX should we use pg_strcasecmp here? */
 			if (strcmp(strVal(val), list[j].alias) == 0)
 			{
 				res[i] = list[j].lexid;
@@ -1484,8 +1483,8 @@ DropConfigurationMapping(AlterTSConfigurationStmt *stmt,
 			{
 				ereport(ERROR,
 						(errcode(ERRCODE_UNDEFINED_OBJECT),
-					   errmsg("mapping for token type \"%s\" does not exist",
-							  strVal(val))));
+						 errmsg("mapping for token type \"%s\" does not exist",
+								strVal(val))));
 			}
 			else
 			{
@@ -1561,9 +1560,9 @@ serialize_deflist(List *deflist)
 List *
 deserialize_deflist(Datum txt)
 {
-	text	   *in = DatumGetTextP(txt);		/* in case it's toasted */
+	text	   *in = DatumGetTextPP(txt);	/* in case it's toasted */
 	List	   *result = NIL;
-	int			len = VARSIZE(in) - VARHDRSZ;
+	int			len = VARSIZE_ANY_EXHDR(in);
 	char	   *ptr,
 			   *endptr,
 			   *workspace,
@@ -1582,8 +1581,8 @@ deserialize_deflist(Datum txt)
 	} ds_state;
 	ds_state	state = CS_WAITKEY;
 
-	workspace = (char *) palloc(len + 1);		/* certainly enough room */
-	ptr = VARDATA(in);
+	workspace = (char *) palloc(len + 1);	/* certainly enough room */
+	ptr = VARDATA_ANY(in);
 	endptr = ptr + len;
 	for (; ptr < endptr; ptr++)
 	{

@@ -1,7 +1,7 @@
 /*
  * PostgreSQL System Views
  *
- * Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Copyright (c) 1996-2018, PostgreSQL Global Development Group
  *
  * src/backend/catalog/system_views.sql
  *
@@ -136,7 +136,7 @@ CREATE VIEW pg_tables AS
         C.relrowsecurity AS rowsecurity
     FROM pg_class C LEFT JOIN pg_namespace N ON (N.oid = C.relnamespace)
          LEFT JOIN pg_tablespace T ON (T.oid = C.reltablespace)
-    WHERE C.relkind IN ('r', 'P');
+    WHERE C.relkind IN ('r', 'p');
 
 CREATE VIEW pg_matviews AS
     SELECT
@@ -169,13 +169,18 @@ CREATE OR REPLACE VIEW pg_sequences AS
         N.nspname AS schemaname,
         C.relname AS sequencename,
         pg_get_userbyid(C.relowner) AS sequenceowner,
+        S.seqtypid::regtype AS data_type,
         S.seqstart AS start_value,
         S.seqmin AS min_value,
         S.seqmax AS max_value,
         S.seqincrement AS increment_by,
         S.seqcycle AS cycle,
         S.seqcache AS cache_size,
-        pg_sequence_last_value(C.oid) AS last_value
+        CASE
+            WHEN has_sequence_privilege(C.oid, 'SELECT,USAGE'::text)
+                THEN pg_sequence_last_value(C.oid)
+            ELSE NULL
+        END AS last_value
     FROM pg_sequence S JOIN pg_class C ON (C.oid = S.seqrelid)
          LEFT JOIN pg_namespace N ON (N.oid = C.relnamespace)
     WHERE NOT pg_is_other_temp_schema(N.oid)
@@ -289,7 +294,7 @@ CREATE VIEW pg_prepared_statements AS
 CREATE VIEW pg_seclabels AS
 SELECT
 	l.objoid, l.classoid, l.objsubid,
-	CASE WHEN rel.relkind IN ('r', 'P') THEN 'table'::text
+	CASE WHEN rel.relkind IN ('r', 'p') THEN 'table'::text
 		 WHEN rel.relkind = 'v' THEN 'view'::text
 		 WHEN rel.relkind = 'm' THEN 'materialized view'::text
 		 WHEN rel.relkind = 'S' THEN 'sequence'::text
@@ -408,6 +413,28 @@ FROM
 		AND l.objoid = evt.oid
 WHERE
 	l.objsubid = 0
+UNION ALL
+SELECT
+	l.objoid, l.classoid, l.objsubid,
+	'publication'::text AS objtype,
+	NULL::oid AS objnamespace,
+	quote_ident(p.pubname) AS objname,
+	l.provider, l.label
+FROM
+	pg_seclabel l
+	JOIN pg_publication p ON l.classoid = p.tableoid AND l.objoid = p.oid
+WHERE
+	l.objsubid = 0
+UNION ALL
+SELECT
+	l.objoid, l.classoid, 0::int4 AS objsubid,
+	'subscription'::text AS objtype,
+	NULL::oid AS objnamespace,
+	quote_ident(s.subname) AS objname,
+	l.provider, l.label
+FROM
+	pg_shseclabel l
+	JOIN pg_subscription s ON l.classoid = s.tableoid AND l.objoid = s.oid
 UNION ALL
 SELECT
 	l.objoid, l.classoid, 0::int4 AS objsubid,
@@ -679,7 +706,8 @@ CREATE VIEW pg_stat_activity AS
             S.state,
             S.backend_xid,
             s.backend_xmin,
-            S.query
+            S.query,
+            S.backend_type
     FROM pg_stat_get_activity(NULL) AS S
         LEFT JOIN pg_database AS D ON (S.datid = D.oid)
         LEFT JOIN pg_authid AS U ON (S.usesysid = U.oid);
@@ -696,10 +724,13 @@ CREATE VIEW pg_stat_replication AS
             S.backend_start,
             S.backend_xmin,
             W.state,
-            W.sent_location,
-            W.write_location,
-            W.flush_location,
-            W.replay_location,
+            W.sent_lsn,
+            W.write_lsn,
+            W.flush_lsn,
+            W.replay_lsn,
+            W.write_lag,
+            W.flush_lag,
+            W.replay_lag,
             W.sync_priority,
             W.sync_state
     FROM pg_stat_get_activity(NULL) AS S
@@ -728,6 +759,7 @@ CREATE VIEW pg_stat_subscription AS
             su.oid AS subid,
             su.subname,
             st.pid,
+            st.relid,
             st.received_lsn,
             st.last_msg_send_time,
             st.last_msg_receipt_time,
@@ -878,11 +910,13 @@ CREATE VIEW pg_user_mappings AS
         ELSE
             A.rolname
         END AS usename,
-        CASE WHEN pg_has_role(S.srvowner, 'USAGE') OR has_server_privilege(S.oid, 'USAGE') THEN
-            U.umoptions
-        ELSE
-            NULL
-        END AS umoptions
+        CASE WHEN (U.umuser <> 0 AND A.rolname = current_user
+                     AND (pg_has_role(S.srvowner, 'USAGE')
+                          OR has_server_privilege(S.oid, 'USAGE')))
+                    OR (U.umuser = 0 AND pg_has_role(S.srvowner, 'USAGE'))
+                    OR (SELECT rolsuper FROM pg_authid WHERE rolname = current_user)
+                    THEN U.umoptions
+                 ELSE NULL END AS umoptions
     FROM pg_user_mapping U
         JOIN pg_foreign_server S ON (U.umserver = S.oid)
         LEFT JOIN pg_authid A ON (A.oid = U.umuser);
@@ -914,7 +948,11 @@ CREATE VIEW pg_replication_origin_status AS
 
 REVOKE ALL ON pg_replication_origin_status FROM public;
 
+-- All columns of pg_subscription except subconninfo are readable.
 REVOKE ALL ON pg_subscription FROM public;
+GRANT SELECT (subdbid, subname, subowner, subenabled, subslotname, subpublications)
+    ON pg_subscription TO public;
+
 
 --
 -- We have a few function definitions in here, too.
@@ -998,6 +1036,12 @@ CREATE OR REPLACE FUNCTION
   RETURNS pg_lsn STRICT VOLATILE LANGUAGE internal AS 'pg_start_backup'
   PARALLEL RESTRICTED;
 
+CREATE OR REPLACE FUNCTION pg_stop_backup (
+        exclusive boolean, wait_for_archive boolean DEFAULT true,
+        OUT lsn pg_lsn, OUT labelfile text, OUT spcmapfile text)
+  RETURNS SETOF record STRICT VOLATILE LANGUAGE internal as 'pg_stop_backup_v2'
+  PARALLEL RESTRICTED;
+
 -- legacy definition for compatibility with 9.3
 CREATE OR REPLACE FUNCTION
   json_populate_record(base anyelement, from_json json, use_json_as_text boolean DEFAULT false)
@@ -1010,7 +1054,7 @@ CREATE OR REPLACE FUNCTION
 
 CREATE OR REPLACE FUNCTION pg_logical_slot_get_changes(
     IN slot_name name, IN upto_lsn pg_lsn, IN upto_nchanges int, VARIADIC options text[] DEFAULT '{}',
-    OUT location pg_lsn, OUT xid xid, OUT data text)
+    OUT lsn pg_lsn, OUT xid xid, OUT data text)
 RETURNS SETOF RECORD
 LANGUAGE INTERNAL
 VOLATILE ROWS 1000 COST 1000
@@ -1018,7 +1062,7 @@ AS 'pg_logical_slot_get_changes';
 
 CREATE OR REPLACE FUNCTION pg_logical_slot_peek_changes(
     IN slot_name name, IN upto_lsn pg_lsn, IN upto_nchanges int, VARIADIC options text[] DEFAULT '{}',
-    OUT location pg_lsn, OUT xid xid, OUT data text)
+    OUT lsn pg_lsn, OUT xid xid, OUT data text)
 RETURNS SETOF RECORD
 LANGUAGE INTERNAL
 VOLATILE ROWS 1000 COST 1000
@@ -1026,7 +1070,7 @@ AS 'pg_logical_slot_peek_changes';
 
 CREATE OR REPLACE FUNCTION pg_logical_slot_get_binary_changes(
     IN slot_name name, IN upto_lsn pg_lsn, IN upto_nchanges int, VARIADIC options text[] DEFAULT '{}',
-    OUT location pg_lsn, OUT xid xid, OUT data bytea)
+    OUT lsn pg_lsn, OUT xid xid, OUT data bytea)
 RETURNS SETOF RECORD
 LANGUAGE INTERNAL
 VOLATILE ROWS 1000 COST 1000
@@ -1034,7 +1078,7 @@ AS 'pg_logical_slot_get_binary_changes';
 
 CREATE OR REPLACE FUNCTION pg_logical_slot_peek_binary_changes(
     IN slot_name name, IN upto_lsn pg_lsn, IN upto_nchanges int, VARIADIC options text[] DEFAULT '{}',
-    OUT location pg_lsn, OUT xid xid, OUT data bytea)
+    OUT lsn pg_lsn, OUT xid xid, OUT data bytea)
 RETURNS SETOF RECORD
 LANGUAGE INTERNAL
 VOLATILE ROWS 1000 COST 1000
@@ -1043,7 +1087,7 @@ AS 'pg_logical_slot_peek_binary_changes';
 CREATE OR REPLACE FUNCTION pg_create_physical_replication_slot(
     IN slot_name name, IN immediately_reserve boolean DEFAULT false,
     IN temporary boolean DEFAULT false,
-    OUT slot_name name, OUT xlog_position pg_lsn)
+    OUT slot_name name, OUT lsn pg_lsn)
 RETURNS RECORD
 LANGUAGE INTERNAL
 STRICT VOLATILE
@@ -1052,7 +1096,7 @@ AS 'pg_create_physical_replication_slot';
 CREATE OR REPLACE FUNCTION pg_create_logical_replication_slot(
     IN slot_name name, IN plugin name,
     IN temporary boolean DEFAULT false,
-    OUT slot_name text, OUT xlog_position pg_lsn)
+    OUT slot_name text, OUT lsn pg_lsn)
 RETURNS RECORD
 LANGUAGE INTERNAL
 STRICT VOLATILE
@@ -1090,23 +1134,44 @@ LANGUAGE INTERNAL
 STRICT IMMUTABLE PARALLEL SAFE
 AS 'jsonb_insert';
 
+--
 -- The default permissions for functions mean that anyone can execute them.
 -- A number of functions shouldn't be executable by just anyone, but rather
 -- than use explicit 'superuser()' checks in those functions, we use the GRANT
 -- system to REVOKE access to those functions at initdb time.  Administrators
 -- can later change who can access these functions, or leave them as only
 -- available to superuser / cluster owner, if they choose.
+--
 REVOKE EXECUTE ON FUNCTION pg_start_backup(text, boolean, boolean) FROM public;
 REVOKE EXECUTE ON FUNCTION pg_stop_backup() FROM public;
-REVOKE EXECUTE ON FUNCTION pg_stop_backup(boolean) FROM public;
+REVOKE EXECUTE ON FUNCTION pg_stop_backup(boolean, boolean) FROM public;
 REVOKE EXECUTE ON FUNCTION pg_create_restore_point(text) FROM public;
-REVOKE EXECUTE ON FUNCTION pg_switch_xlog() FROM public;
-REVOKE EXECUTE ON FUNCTION pg_xlog_replay_pause() FROM public;
-REVOKE EXECUTE ON FUNCTION pg_xlog_replay_resume() FROM public;
+REVOKE EXECUTE ON FUNCTION pg_switch_wal() FROM public;
+REVOKE EXECUTE ON FUNCTION pg_wal_replay_pause() FROM public;
+REVOKE EXECUTE ON FUNCTION pg_wal_replay_resume() FROM public;
 REVOKE EXECUTE ON FUNCTION pg_rotate_logfile() FROM public;
 REVOKE EXECUTE ON FUNCTION pg_reload_conf() FROM public;
+REVOKE EXECUTE ON FUNCTION pg_current_logfile() FROM public;
+REVOKE EXECUTE ON FUNCTION pg_current_logfile(text) FROM public;
 
 REVOKE EXECUTE ON FUNCTION pg_stat_reset() FROM public;
 REVOKE EXECUTE ON FUNCTION pg_stat_reset_shared(text) FROM public;
 REVOKE EXECUTE ON FUNCTION pg_stat_reset_single_table_counters(oid) FROM public;
 REVOKE EXECUTE ON FUNCTION pg_stat_reset_single_function_counters(oid) FROM public;
+
+REVOKE EXECUTE ON FUNCTION lo_import(text) FROM public;
+REVOKE EXECUTE ON FUNCTION lo_import(text, oid) FROM public;
+REVOKE EXECUTE ON FUNCTION lo_export(oid, text) FROM public;
+
+REVOKE EXECUTE ON FUNCTION pg_ls_logdir() FROM public;
+REVOKE EXECUTE ON FUNCTION pg_ls_waldir() FROM public;
+
+--
+-- We also set up some things as accessible to standard roles.
+--
+GRANT EXECUTE ON FUNCTION pg_ls_logdir() TO pg_monitor;
+GRANT EXECUTE ON FUNCTION pg_ls_waldir() TO pg_monitor;
+
+GRANT pg_read_all_settings TO pg_monitor;
+GRANT pg_read_all_stats TO pg_monitor;
+GRANT pg_stat_scan_tables TO pg_monitor;

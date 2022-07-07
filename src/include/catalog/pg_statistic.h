@@ -5,7 +5,7 @@
  *	  along with the relation's initial contents.
  *
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/catalog/pg_statistic.h
@@ -161,12 +161,10 @@ typedef FormData_pg_statistic *Form_pg_statistic;
 #define Anum_pg_statistic_stavalues5	26
 
 /*
- * Currently, five statistical slot "kinds" are defined by core PostgreSQL,
- * as documented below.  Additional "kinds" will probably appear in
- * future to help cope with non-scalar datatypes.  Also, custom data types
- * can define their own "kind" codes by mutual agreement between a custom
- * typanalyze routine and the selectivity estimation functions of the type's
- * operators.
+ * Several statistical slot "kinds" are defined by core PostgreSQL, as
+ * documented below.  Also, custom data types can define their own "kind"
+ * codes by mutual agreement between a custom typanalyze routine and the
+ * selectivity estimation functions of the type's operators.
  *
  * Code reading the pg_statistic relation should not assume that a particular
  * data "kind" will appear in any particular slot.  Instead, search the
@@ -275,7 +273,7 @@ typedef FormData_pg_statistic *Form_pg_statistic;
  * fraction of empty ranges. stavalues is a histogram of non-empty lengths, in
  * a format similar to STATISTIC_KIND_HISTOGRAM: it contains M (>=2) range
  * values that divide the column data values into M-1 bins of approximately
- * equal population. The lengths are stores as float8s, as measured by the
+ * equal population. The lengths are stored as float8s, as measured by the
  * range type's subdiff function. Only non-null rows are considered.
  */
 #define STATISTIC_KIND_RANGE_LENGTH_HISTOGRAM  6
@@ -291,4 +289,4 @@ typedef FormData_pg_statistic *Form_pg_statistic;
  */
 #define STATISTIC_KIND_BOUNDS_HISTOGRAM  7
 
-#endif   /* PG_STATISTIC_H */
+#endif							/* PG_STATISTIC_H */

@@ -3,7 +3,7 @@
  * event_trigger.c
  *	  PostgreSQL EVENT TRIGGER support code.
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -57,8 +57,8 @@ typedef struct EventTriggerQueryState
 	bool		in_sql_drop;
 
 	/* table_rewrite */
-	Oid			table_rewrite_oid;		/* InvalidOid, or set for
-										 * table_rewrite event */
+	Oid			table_rewrite_oid;	/* InvalidOid, or set for table_rewrite
+									 * event */
 	int			table_rewrite_reason;	/* AT_REWRITE reason */
 
 	/* Support for command collection */
@@ -108,13 +108,16 @@ static event_trigger_support_data event_trigger_support[] = {
 	{"OPERATOR CLASS", true},
 	{"OPERATOR FAMILY", true},
 	{"POLICY", true},
+	{"PROCEDURE", true},
 	{"PUBLICATION", true},
 	{"PROPERTY INDEX", true},
 	{"ROLE", false},
+	{"ROUTINE", true},
 	{"RULE", true},
 	{"SCHEMA", true},
 	{"SEQUENCE", true},
 	{"SERVER", true},
+	{"STATISTICS", true},
 	{"SUBSCRIPTION", true},
 	{"TABLE", true},
 	{"TABLESPACE", false},
@@ -155,13 +158,13 @@ static event_trigger_command_tag_check_result check_table_rewrite_ddl_tag(
 							const char *tag);
 static void error_duplicate_filter_variable(const char *defname);
 static Datum filter_list_to_array(List *filterlist);
-static Oid insert_event_trigger_tuple(char *trigname, char *eventname,
+static Oid insert_event_trigger_tuple(const char *trigname, const char *eventname,
 						   Oid evtOwner, Oid funcoid, List *tags);
 static void validate_ddl_tags(const char *filtervar, List *taglist);
 static void validate_table_rewrite_tags(const char *filtervar, List *taglist);
 static void EventTriggerInvoke(List *fn_oid_list, EventTriggerData *trigdata);
-static const char *stringify_grantobjtype(GrantObjectType objtype);
-static const char *stringify_adefprivs_objtype(GrantObjectType objtype);
+static const char *stringify_grant_objtype(ObjectType objtype);
+static const char *stringify_adefprivs_objtype(ObjectType objtype);
 
 /*
  * Create an event trigger.
@@ -213,7 +216,7 @@ CreateEventTrigger(CreateEventTrigStmt *stmt)
 		else
 			ereport(ERROR,
 					(errcode(ERRCODE_SYNTAX_ERROR),
-			   errmsg("unrecognized filter variable \"%s\"", def->defname)));
+					 errmsg("unrecognized filter variable \"%s\"", def->defname)));
 	}
 
 	/* Validate tag list, if any. */
@@ -377,7 +380,7 @@ error_duplicate_filter_variable(const char *defname)
  * Insert the new pg_event_trigger row and record dependencies.
  */
 static Oid
-insert_event_trigger_tuple(char *trigname, char *eventname, Oid evtOwner,
+insert_event_trigger_tuple(const char *trigname, const char *eventname, Oid evtOwner,
 						   Oid funcoid, List *taglist)
 {
 	Relation	tgrel;
@@ -522,7 +525,7 @@ AlterEventTrigger(AlterEventTrigStmt *stmt)
 	trigoid = HeapTupleGetOid(tup);
 
 	if (!pg_event_trigger_ownercheck(trigoid, GetUserId()))
-		aclcheck_error(ACLCHECK_NOT_OWNER, ACL_KIND_EVENT_TRIGGER,
+		aclcheck_error(ACLCHECK_NOT_OWNER, OBJECT_EVENT_TRIGGER,
 					   stmt->trigname);
 
 	/* tuple is a copy, so we can modify it below */
@@ -590,7 +593,7 @@ AlterEventTriggerOwner_oid(Oid trigOid, Oid newOwnerId)
 	if (!HeapTupleIsValid(tup))
 		ereport(ERROR,
 				(errcode(ERRCODE_UNDEFINED_OBJECT),
-			   errmsg("event trigger with OID %u does not exist", trigOid)));
+				 errmsg("event trigger with OID %u does not exist", trigOid)));
 
 	AlterEventTriggerOwner_internal(rel, tup, newOwnerId);
 
@@ -613,16 +616,16 @@ AlterEventTriggerOwner_internal(Relation rel, HeapTuple tup, Oid newOwnerId)
 		return;
 
 	if (!pg_event_trigger_ownercheck(HeapTupleGetOid(tup), GetUserId()))
-		aclcheck_error(ACLCHECK_NOT_OWNER, ACL_KIND_EVENT_TRIGGER,
+		aclcheck_error(ACLCHECK_NOT_OWNER, OBJECT_EVENT_TRIGGER,
 					   NameStr(form->evtname));
 
 	/* New owner must be a superuser */
 	if (!superuser_arg(newOwnerId))
 		ereport(ERROR,
 				(errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
-		  errmsg("permission denied to change owner of event trigger \"%s\"",
-				 NameStr(form->evtname)),
-			 errhint("The owner of an event trigger must be a superuser.")));
+				 errmsg("permission denied to change owner of event trigger \"%s\"",
+						NameStr(form->evtname)),
+				 errhint("The owner of an event trigger must be a superuser.")));
 
 	form->evtowner = newOwnerId;
 	CatalogTupleUpdate(rel, &tup->t_self, tup);
@@ -1115,12 +1118,15 @@ EventTriggerSupportsObjectType(ObjectType obtype)
 		case OBJECT_OPERATOR:
 		case OBJECT_OPFAMILY:
 		case OBJECT_POLICY:
+		case OBJECT_PROCEDURE:
 		case OBJECT_PUBLICATION:
 		case OBJECT_PUBLICATION_REL:
+		case OBJECT_ROUTINE:
 		case OBJECT_RULE:
 		case OBJECT_SCHEMA:
 		case OBJECT_SEQUENCE:
 		case OBJECT_SUBSCRIPTION:
+		case OBJECT_STATISTIC_EXT:
 		case OBJECT_TABCONSTRAINT:
 		case OBJECT_TABLE:
 		case OBJECT_TRANSFORM:
@@ -1133,8 +1139,15 @@ EventTriggerSupportsObjectType(ObjectType obtype)
 		case OBJECT_USER_MAPPING:
 		case OBJECT_VIEW:
 			return true;
+
+			/*
+			 * There's intentionally no default: case here; we want the
+			 * compiler to warn if a new ObjectType hasn't been handled above.
+			 */
 	}
-	return true;
+
+	/* Shouldn't get here, but if we do, say "no support" */
+	return false;
 }
 
 /*
@@ -1166,12 +1179,13 @@ EventTriggerSupportsObjectClass(ObjectClass objclass)
 		case OCLASS_OPERATOR:
 		case OCLASS_OPCLASS:
 		case OCLASS_OPFAMILY:
+		case OCLASS_AM:
 		case OCLASS_AMOP:
 		case OCLASS_AMPROC:
 		case OCLASS_REWRITE:
 		case OCLASS_TRIGGER:
 		case OCLASS_SCHEMA:
-		case OCLASS_TRANSFORM:
+		case OCLASS_STATISTIC_EXT:
 		case OCLASS_TSPARSER:
 		case OCLASS_TSDICT:
 		case OCLASS_TSTEMPLATE:
@@ -1182,44 +1196,22 @@ EventTriggerSupportsObjectClass(ObjectClass objclass)
 		case OCLASS_DEFACL:
 		case OCLASS_EXTENSION:
 		case OCLASS_POLICY:
-		case OCLASS_AM:
 		case OCLASS_PUBLICATION:
 		case OCLASS_PUBLICATION_REL:
 		case OCLASS_SUBSCRIPTION:
+		case OCLASS_TRANSFORM:
 		case OCLASS_GRAPH:
 		case OCLASS_LABEL:
 			return true;
+
+			/*
+			 * There's intentionally no default: case here; we want the
+			 * compiler to warn if a new OCLASS hasn't been handled above.
+			 */
 	}
 
-	return true;
-}
-
-bool
-EventTriggerSupportsGrantObjectType(GrantObjectType objtype)
-{
-	switch (objtype)
-	{
-		case ACL_OBJECT_DATABASE:
-		case ACL_OBJECT_TABLESPACE:
-			/* no support for global objects */
-			return false;
-
-		case ACL_OBJECT_COLUMN:
-		case ACL_OBJECT_RELATION:
-		case ACL_OBJECT_SEQUENCE:
-		case ACL_OBJECT_DOMAIN:
-		case ACL_OBJECT_FDW:
-		case ACL_OBJECT_FOREIGN_SERVER:
-		case ACL_OBJECT_FUNCTION:
-		case ACL_OBJECT_LANGUAGE:
-		case ACL_OBJECT_LARGEOBJECT:
-		case ACL_OBJECT_NAMESPACE:
-		case ACL_OBJECT_TYPE:
-			return true;
-		default:
-			Assert(false);
-			return true;
-	}
+	/* Shouldn't get here, but if we do, say "no support" */
+	return false;
 }
 
 /*
@@ -1455,8 +1447,8 @@ pg_event_trigger_dropped_objects(PG_FUNCTION_ARGS)
 		!currentEventTriggerState->in_sql_drop)
 		ereport(ERROR,
 				(errcode(ERRCODE_E_R_I_E_EVENT_TRIGGER_PROTOCOL_VIOLATED),
-		 errmsg("%s can only be called in a sql_drop event trigger function",
-				"pg_event_trigger_dropped_objects()")));
+				 errmsg("%s can only be called in a sql_drop event trigger function",
+						"pg_event_trigger_dropped_objects()")));
 
 	/* check to see if caller supports us returning a tuplestore */
 	if (rsinfo == NULL || !IsA(rsinfo, ReturnSetInfo))
@@ -1881,7 +1873,7 @@ EventTriggerCollectAlterOpFam(AlterOpFamilyStmt *stmt, Oid opfamoid,
 					 OperatorFamilyRelationId, opfamoid);
 	command->d.opfam.operators = operators;
 	command->d.opfam.procedures = procedures;
-	command->parsetree = copyObject(stmt);
+	command->parsetree = (Node *) copyObject(stmt);
 
 	currentEventTriggerState->commandList =
 		lappend(currentEventTriggerState->commandList, command);
@@ -1914,7 +1906,7 @@ EventTriggerCollectCreateOpClass(CreateOpClassStmt *stmt, Oid opcoid,
 					 OperatorClassRelationId, opcoid);
 	command->d.createopc.operators = operators;
 	command->d.createopc.procedures = procedures;
-	command->parsetree = copyObject(stmt);
+	command->parsetree = (Node *) copyObject(stmt);
 
 	currentEventTriggerState->commandList =
 		lappend(currentEventTriggerState->commandList, command);
@@ -1949,7 +1941,7 @@ EventTriggerCollectAlterTSConfig(AlterTSConfigurationStmt *stmt, Oid cfgId,
 	command->d.atscfg.dictIds = palloc(sizeof(Oid) * ndicts);
 	memcpy(command->d.atscfg.dictIds, dictIds, sizeof(Oid) * ndicts);
 	command->d.atscfg.ndicts = ndicts;
-	command->parsetree = copyObject(stmt);
+	command->parsetree = (Node *) copyObject(stmt);
 
 	currentEventTriggerState->commandList =
 		lappend(currentEventTriggerState->commandList, command);
@@ -1979,7 +1971,7 @@ EventTriggerCollectAlterDefPrivs(AlterDefaultPrivilegesStmt *stmt)
 	command->type = SCT_AlterDefaultPrivileges;
 	command->d.defprivs.objtype = stmt->action->objtype;
 	command->in_extension = creating_extension;
-	command->parsetree = copyObject(stmt);
+	command->parsetree = (Node *) copyObject(stmt);
 
 	currentEventTriggerState->commandList =
 		lappend(currentEventTriggerState->commandList, command);
@@ -2112,10 +2104,10 @@ pg_event_trigger_ddl_commands(PG_FUNCTION_ARGS)
 									 addr.classId, addr.objectId);
 							schema_oid =
 								heap_getattr(objtup, nspAttnum,
-										 RelationGetDescr(catalog), &isnull);
+											 RelationGetDescr(catalog), &isnull);
 							if (isnull)
 								elog(ERROR,
-								 "invalid null namespace in object %u/%u/%d",
+									 "invalid null namespace in object %u/%u/%d",
 									 addr.classId, addr.objectId, addr.objectSubId);
 							/* XXX not quite get_namespace_name_or_temp */
 							if (isAnyTempNamespace(schema_oid))
@@ -2162,7 +2154,7 @@ pg_event_trigger_ddl_commands(PG_FUNCTION_ARGS)
 				values[i++] = CStringGetTextDatum(CreateCommandTag(cmd->parsetree));
 				/* object_type */
 				values[i++] = CStringGetTextDatum(stringify_adefprivs_objtype(
-												   cmd->d.defprivs.objtype));
+																			  cmd->d.defprivs.objtype));
 				/* schema */
 				nulls[i++] = true;
 				/* identity */
@@ -2184,8 +2176,8 @@ pg_event_trigger_ddl_commands(PG_FUNCTION_ARGS)
 				values[i++] = CStringGetTextDatum(cmd->d.grant.istmt->is_grant ?
 												  "GRANT" : "REVOKE");
 				/* object_type */
-				values[i++] = CStringGetTextDatum(stringify_grantobjtype(
-											   cmd->d.grant.istmt->objtype));
+				values[i++] = CStringGetTextDatum(stringify_grant_objtype(
+																		 cmd->d.grant.istmt->objtype));
 				/* schema */
 				nulls[i++] = true;
 				/* identity */
@@ -2207,69 +2199,164 @@ pg_event_trigger_ddl_commands(PG_FUNCTION_ARGS)
 }
 
 /*
- * Return the GrantObjectType as a string, as it would appear in GRANT and
+ * Return the ObjectType as a string, as it would appear in GRANT and
  * REVOKE commands.
  */
 static const char *
-stringify_grantobjtype(GrantObjectType objtype)
+stringify_grant_objtype(ObjectType objtype)
 {
 	switch (objtype)
 	{
-		case ACL_OBJECT_COLUMN:
+		case OBJECT_COLUMN:
 			return "COLUMN";
-		case ACL_OBJECT_RELATION:
+		case OBJECT_TABLE:
 			return "TABLE";
-		case ACL_OBJECT_SEQUENCE:
+		case OBJECT_SEQUENCE:
 			return "SEQUENCE";
-		case ACL_OBJECT_DATABASE:
+		case OBJECT_DATABASE:
 			return "DATABASE";
-		case ACL_OBJECT_DOMAIN:
+		case OBJECT_DOMAIN:
 			return "DOMAIN";
-		case ACL_OBJECT_FDW:
+		case OBJECT_FDW:
 			return "FOREIGN DATA WRAPPER";
-		case ACL_OBJECT_FOREIGN_SERVER:
+		case OBJECT_FOREIGN_SERVER:
 			return "FOREIGN SERVER";
-		case ACL_OBJECT_FUNCTION:
+		case OBJECT_FUNCTION:
 			return "FUNCTION";
-		case ACL_OBJECT_LANGUAGE:
+		case OBJECT_LANGUAGE:
 			return "LANGUAGE";
-		case ACL_OBJECT_LARGEOBJECT:
+		case OBJECT_LARGEOBJECT:
 			return "LARGE OBJECT";
-		case ACL_OBJECT_NAMESPACE:
+		case OBJECT_SCHEMA:
 			return "SCHEMA";
-		case ACL_OBJECT_TABLESPACE:
+		case OBJECT_PROCEDURE:
+			return "PROCEDURE";
+		case OBJECT_ROUTINE:
+			return "ROUTINE";
+		case OBJECT_TABLESPACE:
 			return "TABLESPACE";
-		case ACL_OBJECT_TYPE:
+		case OBJECT_TYPE:
 			return "TYPE";
-		default:
-			elog(ERROR, "unrecognized type %d", objtype);
-			return "???";		/* keep compiler quiet */
+		/* these currently aren't used */
+		case OBJECT_ACCESS_METHOD:
+		case OBJECT_AGGREGATE:
+		case OBJECT_AMOP:
+		case OBJECT_AMPROC:
+		case OBJECT_ATTRIBUTE:
+		case OBJECT_CAST:
+		case OBJECT_COLLATION:
+		case OBJECT_CONVERSION:
+		case OBJECT_DEFAULT:
+		case OBJECT_DEFACL:
+		case OBJECT_DOMCONSTRAINT:
+		case OBJECT_EVENT_TRIGGER:
+		case OBJECT_EXTENSION:
+		case OBJECT_FOREIGN_TABLE:
+		case OBJECT_INDEX:
+		case OBJECT_MATVIEW:
+		case OBJECT_OPCLASS:
+		case OBJECT_OPERATOR:
+		case OBJECT_OPFAMILY:
+		case OBJECT_POLICY:
+		case OBJECT_PUBLICATION:
+		case OBJECT_PUBLICATION_REL:
+		case OBJECT_ROLE:
+		case OBJECT_RULE:
+		case OBJECT_STATISTIC_EXT:
+		case OBJECT_SUBSCRIPTION:
+		case OBJECT_TABCONSTRAINT:
+		case OBJECT_TRANSFORM:
+		case OBJECT_TRIGGER:
+		case OBJECT_TSCONFIGURATION:
+		case OBJECT_TSDICTIONARY:
+		case OBJECT_TSPARSER:
+		case OBJECT_TSTEMPLATE:
+		case OBJECT_USER_MAPPING:
+		case OBJECT_VIEW:
+			elog(ERROR, "unsupported object type: %d", (int) objtype);
 	}
+
+	return "???";				/* keep compiler quiet */
 }
 
 /*
- * Return the GrantObjectType as a string; as above, but use the spelling
- * in ALTER DEFAULT PRIVILEGES commands instead.
+ * Return the ObjectType as a string; as above, but use the spelling
+ * in ALTER DEFAULT PRIVILEGES commands instead.  Generally this is just
+ * the plural.
  */
 static const char *
-stringify_adefprivs_objtype(GrantObjectType objtype)
+stringify_adefprivs_objtype(ObjectType objtype)
 {
 	switch (objtype)
 	{
-		case ACL_OBJECT_RELATION:
+		case OBJECT_COLUMN:
+			return "COLUMNS";
+		case OBJECT_TABLE:
 			return "TABLES";
-			break;
-		case ACL_OBJECT_FUNCTION:
-			return "FUNCTIONS";
-			break;
-		case ACL_OBJECT_SEQUENCE:
+		case OBJECT_SEQUENCE:
 			return "SEQUENCES";
-			break;
-		case ACL_OBJECT_TYPE:
+		case OBJECT_DATABASE:
+			return "DATABASES";
+		case OBJECT_DOMAIN:
+			return "DOMAINS";
+		case OBJECT_FDW:
+			return "FOREIGN DATA WRAPPERS";
+		case OBJECT_FOREIGN_SERVER:
+			return "FOREIGN SERVERS";
+		case OBJECT_FUNCTION:
+			return "FUNCTIONS";
+		case OBJECT_LANGUAGE:
+			return "LANGUAGES";
+		case OBJECT_LARGEOBJECT:
+			return "LARGE OBJECTS";
+		case OBJECT_SCHEMA:
+			return "SCHEMAS";
+		case OBJECT_PROCEDURE:
+			return "PROCEDURES";
+		case OBJECT_ROUTINE:
+			return "ROUTINES";
+		case OBJECT_TABLESPACE:
+			return "TABLESPACES";
+		case OBJECT_TYPE:
 			return "TYPES";
-			break;
-		default:
-			elog(ERROR, "unrecognized type %d", objtype);
-			return "???";		/* keep compiler quiet */
+		/* these currently aren't used */
+		case OBJECT_ACCESS_METHOD:
+		case OBJECT_AGGREGATE:
+		case OBJECT_AMOP:
+		case OBJECT_AMPROC:
+		case OBJECT_ATTRIBUTE:
+		case OBJECT_CAST:
+		case OBJECT_COLLATION:
+		case OBJECT_CONVERSION:
+		case OBJECT_DEFAULT:
+		case OBJECT_DEFACL:
+		case OBJECT_DOMCONSTRAINT:
+		case OBJECT_EVENT_TRIGGER:
+		case OBJECT_EXTENSION:
+		case OBJECT_FOREIGN_TABLE:
+		case OBJECT_INDEX:
+		case OBJECT_MATVIEW:
+		case OBJECT_OPCLASS:
+		case OBJECT_OPERATOR:
+		case OBJECT_OPFAMILY:
+		case OBJECT_POLICY:
+		case OBJECT_PUBLICATION:
+		case OBJECT_PUBLICATION_REL:
+		case OBJECT_ROLE:
+		case OBJECT_RULE:
+		case OBJECT_STATISTIC_EXT:
+		case OBJECT_SUBSCRIPTION:
+		case OBJECT_TABCONSTRAINT:
+		case OBJECT_TRANSFORM:
+		case OBJECT_TRIGGER:
+		case OBJECT_TSCONFIGURATION:
+		case OBJECT_TSDICTIONARY:
+		case OBJECT_TSPARSER:
+		case OBJECT_TSTEMPLATE:
+		case OBJECT_USER_MAPPING:
+		case OBJECT_VIEW:
+			elog(ERROR, "unsupported object type: %d", (int) objtype);
 	}
+
+	return "???";				/* keep compiler quiet */
 }

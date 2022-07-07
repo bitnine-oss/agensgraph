@@ -2,7 +2,7 @@
  * relation.c
  *	   PostgreSQL logical replication
  *
- * Copyright (c) 2016-2017, PostgreSQL Global Development Group
+ * Copyright (c) 2016-2018, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
  *	  src/backend/replication/logical/relation.c
@@ -19,6 +19,8 @@
 #include "access/heapam.h"
 #include "access/sysattr.h"
 #include "catalog/namespace.h"
+#include "catalog/pg_subscription_rel.h"
+#include "executor/executor.h"
 #include "nodes/makefuncs.h"
 #include "replication/logicalrelation.h"
 #include "replication/worker_internal.h"
@@ -28,13 +30,13 @@
 #include "utils/memutils.h"
 #include "utils/syscache.h"
 
-static MemoryContext	LogicalRepRelMapContext = NULL;
+static MemoryContext LogicalRepRelMapContext = NULL;
 
-static HTAB			   *LogicalRepRelMap = NULL;
-static HTAB			   *LogicalRepTypMap = NULL;
+static HTAB *LogicalRepRelMap = NULL;
+static HTAB *LogicalRepTypMap = NULL;
 
 static void logicalrep_typmap_invalidate_cb(Datum arg, int cacheid,
-											uint32 hashvalue);
+								uint32 hashvalue);
 
 /*
  * Relcache invalidation callback for our relation map cache.
@@ -42,7 +44,7 @@ static void logicalrep_typmap_invalidate_cb(Datum arg, int cacheid,
 static void
 logicalrep_relmap_invalidate_cb(Datum arg, Oid reloid)
 {
-	LogicalRepRelMapEntry  *entry;
+	LogicalRepRelMapEntry *entry;
 
 	/* Just to be sure. */
 	if (LogicalRepRelMap == NULL)
@@ -81,7 +83,7 @@ logicalrep_relmap_invalidate_cb(Datum arg, Oid reloid)
  * Initialize the relation map cache.
  */
 static void
-logicalrep_relmap_init()
+logicalrep_relmap_init(void)
 {
 	HASHCTL		ctl;
 
@@ -108,7 +110,7 @@ logicalrep_relmap_init()
 
 	/* This will usually be small. */
 	LogicalRepTypMap = hash_create("logicalrep type map cache", 2, &ctl,
-								   HASH_ELEM | HASH_BLOBS |HASH_CONTEXT);
+								   HASH_ELEM | HASH_BLOBS | HASH_CONTEXT);
 
 	/* Watch for invalidation events. */
 	CacheRegisterRelcacheCallback(logicalrep_relmap_invalidate_cb,
@@ -132,7 +134,7 @@ logicalrep_relmap_free_entry(LogicalRepRelMapEntry *entry)
 
 	if (remoterel->natts > 0)
 	{
-		int	i;
+		int			i;
 
 		for (i = 0; i < remoterel->natts; i++)
 			pfree(remoterel->attnames[i]);
@@ -140,19 +142,10 @@ logicalrep_relmap_free_entry(LogicalRepRelMapEntry *entry)
 		pfree(remoterel->attnames);
 		pfree(remoterel->atttyps);
 	}
-	remoterel->attnames = NULL;
-	remoterel->atttyps = NULL;
-
 	bms_free(remoterel->attkeys);
-	remoterel->attkeys = NULL;
 
 	if (entry->attrmap)
 		pfree(entry->attrmap);
-
-	entry->attrmap = NULL;
-	remoterel->natts = 0;
-	entry->localreloid = InvalidOid;
-	entry->localrel = NULL;
 }
 
 /*
@@ -164,10 +157,10 @@ logicalrep_relmap_free_entry(LogicalRepRelMapEntry *entry)
 void
 logicalrep_relmap_update(LogicalRepRelation *remoterel)
 {
-	MemoryContext			oldctx;
-	LogicalRepRelMapEntry  *entry;
-	bool					found;
-	int						i;
+	MemoryContext oldctx;
+	LogicalRepRelMapEntry *entry;
+	bool		found;
+	int			i;
 
 	if (LogicalRepRelMap == NULL)
 		logicalrep_relmap_init();
@@ -180,6 +173,8 @@ logicalrep_relmap_update(LogicalRepRelation *remoterel)
 
 	if (found)
 		logicalrep_relmap_free_entry(entry);
+
+	memset(entry, 0, sizeof(LogicalRepRelMapEntry));
 
 	/* Make cached copy of the data */
 	oldctx = MemoryContextSwitchTo(LogicalRepRelMapContext);
@@ -196,8 +191,6 @@ logicalrep_relmap_update(LogicalRepRelation *remoterel)
 	}
 	entry->remoterel.replident = remoterel->replident;
 	entry->remoterel.attkeys = bms_copy(remoterel->attkeys);
-	entry->attrmap = NULL;
-	entry->localreloid = InvalidOid;
 	MemoryContextSwitchTo(oldctx);
 }
 
@@ -209,7 +202,7 @@ logicalrep_relmap_update(LogicalRepRelation *remoterel)
 static int
 logicalrep_rel_att_by_name(LogicalRepRelation *remoterel, const char *attname)
 {
-	int	i;
+	int			i;
 
 	for (i = 0; i < remoterel->natts; i++)
 	{
@@ -229,7 +222,7 @@ logicalrep_rel_att_by_name(LogicalRepRelation *remoterel, const char *attname)
 LogicalRepRelMapEntry *
 logicalrep_rel_open(LogicalRepRelId remoteid, LOCKMODE lockmode)
 {
-	LogicalRepRelMapEntry  *entry;
+	LogicalRepRelMapEntry *entry;
 	bool		found;
 
 	if (LogicalRepRelMap == NULL)
@@ -252,7 +245,8 @@ logicalrep_rel_open(LogicalRepRelId remoteid, LOCKMODE lockmode)
 		Bitmapset  *idkey;
 		TupleDesc	desc;
 		LogicalRepRelation *remoterel;
-		MemoryContext		oldctx;
+		MemoryContext oldctx;
+
 		remoterel = &entry->remoterel;
 
 		/* Try to find and lock the relation by name. */
@@ -266,20 +260,14 @@ logicalrep_rel_open(LogicalRepRelId remoteid, LOCKMODE lockmode)
 							remoterel->nspname, remoterel->relname)));
 		entry->localrel = heap_open(relid, NoLock);
 
-		/*
-		 * We currently only support writing to regular and partitioned
-		 * tables.
-		 */
-		if (entry->localrel->rd_rel->relkind != RELKIND_RELATION)
-			ereport(ERROR,
-					(errcode(ERRCODE_WRONG_OBJECT_TYPE),
-					 errmsg("logical replication target relation \"%s.%s\" is not a table",
-							remoterel->nspname, remoterel->relname)));
+		/* Check for supported relkind. */
+		CheckSubscriptionRelkind(entry->localrel->rd_rel->relkind,
+								 remoterel->nspname, remoterel->relname);
 
 		/*
 		 * Build the mapping of local attribute numbers to remote attribute
-		 * numbers and validate that we don't miss any replicated columns
-		 * as that would result in potentially unwanted data loss.
+		 * numbers and validate that we don't miss any replicated columns as
+		 * that would result in potentially unwanted data loss.
 		 */
 		desc = RelationGetDescr(entry->localrel);
 		oldctx = MemoryContextSwitchTo(LogicalRepRelMapContext);
@@ -289,8 +277,18 @@ logicalrep_rel_open(LogicalRepRelId remoteid, LOCKMODE lockmode)
 		found = 0;
 		for (i = 0; i < desc->natts; i++)
 		{
-			int	attnum = logicalrep_rel_att_by_name(remoterel,
-											NameStr(desc->attrs[i]->attname));
+			int			attnum;
+			Form_pg_attribute attr = TupleDescAttr(desc, i);
+
+			if (attr->attisdropped)
+			{
+				entry->attrmap[i] = -1;
+				continue;
+			}
+
+			attnum = logicalrep_rel_att_by_name(remoterel,
+												NameStr(attr->attname));
+
 			entry->attrmap[i] = attnum;
 			if (attnum >= 0)
 				found++;
@@ -312,8 +310,8 @@ logicalrep_rel_open(LogicalRepRelId remoteid, LOCKMODE lockmode)
 		 * but in the opposite scenario it will.
 		 *
 		 * Don't throw any error here just mark the relation entry as not
-		 * updatable, as replica identity is only for updates and deletes
-		 * but inserts can be replicated even without it.
+		 * updatable, as replica identity is only for updates and deletes but
+		 * inserts can be replicated even without it.
 		 */
 		entry->updatable = true;
 		idkey = RelationGetIndexAttrBitmap(entry->localrel,
@@ -323,6 +321,7 @@ logicalrep_rel_open(LogicalRepRelId remoteid, LOCKMODE lockmode)
 		{
 			idkey = RelationGetIndexAttrBitmap(entry->localrel,
 											   INDEX_ATTR_BITMAP_PRIMARY_KEY);
+
 			/*
 			 * If no replica identity index and no PK, the published table
 			 * must have replica identity FULL.
@@ -334,7 +333,7 @@ logicalrep_rel_open(LogicalRepRelId remoteid, LOCKMODE lockmode)
 		i = -1;
 		while ((i = bms_next_member(idkey, i)) >= 0)
 		{
-			int attnum = i + FirstLowInvalidHeapAttributeNumber;
+			int			attnum = i + FirstLowInvalidHeapAttributeNumber;
 
 			if (!AttrNumberIsForUserDefinedAttr(attnum))
 				ereport(ERROR,
@@ -357,6 +356,12 @@ logicalrep_rel_open(LogicalRepRelId remoteid, LOCKMODE lockmode)
 	else
 		entry->localrel = heap_open(entry->localreloid, lockmode);
 
+	if (entry->state != SUBREL_STATE_READY)
+		entry->state = GetSubscriptionRelState(MySubscription->oid,
+											   entry->localreloid,
+											   &entry->statelsn,
+											   true);
+
 	return entry;
 }
 
@@ -378,7 +383,7 @@ static void
 logicalrep_typmap_invalidate_cb(Datum arg, int cacheid, uint32 hashvalue)
 {
 	HASH_SEQ_STATUS status;
-	LogicalRepTyp  *entry;
+	LogicalRepTyp *entry;
 
 	/* Just to be sure. */
 	if (LogicalRepTypMap == NULL)
@@ -409,9 +414,9 @@ logicalrep_typmap_free_entry(LogicalRepTyp *entry)
 void
 logicalrep_typmap_update(LogicalRepTyp *remotetyp)
 {
-	MemoryContext		oldctx;
-	LogicalRepTyp	   *entry;
-	bool				found;
+	MemoryContext oldctx;
+	LogicalRepTyp *entry;
+	bool		found;
 
 	if (LogicalRepTypMap == NULL)
 		logicalrep_relmap_init();
@@ -440,18 +445,17 @@ logicalrep_typmap_update(LogicalRepTyp *remotetyp)
 Oid
 logicalrep_typmap_getid(Oid remoteid)
 {
-	LogicalRepTyp	   *entry;
-	bool				found;
-	Oid					nspoid;
+	LogicalRepTyp *entry;
+	bool		found;
+	Oid			nspoid;
 
 	/* Internal types are mapped directly. */
 	if (remoteid < FirstNormalObjectId)
 	{
 		if (!get_typisdefined(remoteid))
 			ereport(ERROR,
-					(errmsg("builtin type %u not found", remoteid),
-					 errhint("This can be caused by having publisher with "
-							 "higher major version than subscriber")));
+					(errmsg("built-in type %u not found", remoteid),
+					 errhint("This can be caused by having a publisher with a higher PostgreSQL major version than the subscriber.")));
 		return remoteid;
 	}
 

@@ -5,7 +5,7 @@
  *	  along with the relation's initial contents.
  *
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/catalog/pg_opfamily.h
@@ -87,6 +87,8 @@ DATA(insert OID = 1982 (	403		interval_ops	PGNSP PGUID ));
 DATA(insert OID = 1983 (	405		interval_ops	PGNSP PGUID ));
 DATA(insert OID = 1984 (	403		macaddr_ops		PGNSP PGUID ));
 DATA(insert OID = 1985 (	405		macaddr_ops		PGNSP PGUID ));
+DATA(insert OID = 3371 (	403		macaddr8_ops	PGNSP PGUID ));
+DATA(insert OID = 3372 (	405		macaddr8_ops	PGNSP PGUID ));
 DATA(insert OID = 1986 (	403		name_ops		PGNSP PGUID ));
 #define NAME_BTREE_FAM_OID 1986
 DATA(insert OID = 1987 (	405		name_ops		PGNSP PGUID ));
@@ -171,6 +173,7 @@ DATA(insert OID = 4070 (	3580	float_minmax_ops		PGNSP PGUID ));
 DATA(insert OID = 4072 (	3580	abstime_minmax_ops		PGNSP PGUID ));
 DATA(insert OID = 4073 (	3580	reltime_minmax_ops		PGNSP PGUID ));
 DATA(insert OID = 4074 (	3580	macaddr_minmax_ops		PGNSP PGUID ));
+DATA(insert OID = 4109 (	3580	macaddr8_minmax_ops		PGNSP PGUID ));
 DATA(insert OID = 4075 (	3580	network_minmax_ops		PGNSP PGUID ));
 DATA(insert OID = 4102 (	3580	network_inclusion_ops	PGNSP PGUID ));
 DATA(insert OID = 4076 (	3580	bpchar_minmax_ops		PGNSP PGUID ));
@@ -183,6 +186,7 @@ DATA(insert OID = 4103 (	3580	range_inclusion_ops		PGNSP PGUID ));
 DATA(insert OID = 4082 (	3580	pg_lsn_minmax_ops		PGNSP PGUID ));
 DATA(insert OID = 4104 (	3580	box_inclusion_ops		PGNSP PGUID ));
 DATA(insert OID = 5000 (	4000	box_ops		PGNSP PGUID ));
+DATA(insert OID = 5008 (	4000	poly_ops				PGNSP PGUID ));
 
 DATA(insert OID = 7093 (  403 graphid_ops           PGNSP PGUID ));
 #define GRAPHID_BTREE_FAM_OID 7093
@@ -192,4 +196,4 @@ DATA(insert OID = 7105 ( 3580 graphid_minmax_ops    PGNSP PGUID ));
 
 DATA(insert OID = 7167 (  403 rowid_ops             PGNSP PGUID ));
 
-#endif   /* PG_OPFAMILY_H */
+#endif							/* PG_OPFAMILY_H */

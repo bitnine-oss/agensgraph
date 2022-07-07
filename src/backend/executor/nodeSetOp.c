@@ -32,7 +32,7 @@
  * input group.
  *
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -47,6 +47,7 @@
 #include "access/htup_details.h"
 #include "executor/executor.h"
 #include "executor/nodeSetOp.h"
+#include "miscadmin.h"
 #include "utils/memutils.h"
 
 
@@ -64,7 +65,7 @@ typedef struct SetOpStatePerGroupData
 {
 	long		numLeft;		/* number of left-input dups in group */
 	long		numRight;		/* number of right-input dups in group */
-} SetOpStatePerGroupData;
+}			SetOpStatePerGroupData;
 
 
 static TupleTableSlot *setop_retrieve_direct(SetOpState *setopstate);
@@ -119,18 +120,22 @@ static void
 build_hash_table(SetOpState *setopstate)
 {
 	SetOp	   *node = (SetOp *) setopstate->ps.plan;
+	ExprContext *econtext = setopstate->ps.ps_ExprContext;
+	TupleDesc	desc = ExecGetResultType(outerPlanState(setopstate));
 
 	Assert(node->strategy == SETOP_HASHED);
 	Assert(node->numGroups > 0);
 
-	setopstate->hashtable = BuildTupleHashTable(node->numCols,
+	setopstate->hashtable = BuildTupleHashTable(&setopstate->ps,
+												desc,
+												node->numCols,
 												node->dupColIdx,
-												setopstate->eqfunctions,
+												setopstate->eqfuncoids,
 												setopstate->hashfunctions,
 												node->numGroups,
 												0,
 												setopstate->tableContext,
-												setopstate->tempContext,
+												econtext->ecxt_per_tuple_memory,
 												false);
 }
 
@@ -179,11 +184,14 @@ set_output_count(SetOpState *setopstate, SetOpStatePerGroup pergroup)
  *		ExecSetOp
  * ----------------------------------------------------------------
  */
-TupleTableSlot *				/* return: a tuple or NULL */
-ExecSetOp(SetOpState *node)
+static TupleTableSlot *			/* return: a tuple or NULL */
+ExecSetOp(PlanState *pstate)
 {
+	SetOpState *node = castNode(SetOpState, pstate);
 	SetOp	   *plannode = (SetOp *) node->ps.plan;
 	TupleTableSlot *resultTupleSlot = node->ps.ps_ResultTupleSlot;
+
+	CHECK_FOR_INTERRUPTS();
 
 	/*
 	 * If the previously-returned tuple needs to be returned more than once,
@@ -216,11 +224,11 @@ ExecSetOp(SetOpState *node)
 static TupleTableSlot *
 setop_retrieve_direct(SetOpState *setopstate)
 {
-	SetOp	   *node = (SetOp *) setopstate->ps.plan;
 	PlanState  *outerPlan;
 	SetOpStatePerGroup pergroup;
 	TupleTableSlot *outerslot;
 	TupleTableSlot *resultTupleSlot;
+	ExprContext *econtext = setopstate->ps.ps_ExprContext;
 
 	/*
 	 * get state info from node
@@ -263,7 +271,7 @@ setop_retrieve_direct(SetOpState *setopstate)
 					   resultTupleSlot,
 					   InvalidBuffer,
 					   true);
-		setopstate->grp_firstTuple = NULL;		/* don't keep two pointers */
+		setopstate->grp_firstTuple = NULL;	/* don't keep two pointers */
 
 		/* Initialize working state for a new input tuple group */
 		initialize_counts(pergroup);
@@ -288,11 +296,10 @@ setop_retrieve_direct(SetOpState *setopstate)
 			/*
 			 * Check whether we've crossed a group boundary.
 			 */
-			if (!execTuplesMatch(resultTupleSlot,
-								 outerslot,
-								 node->numCols, node->dupColIdx,
-								 setopstate->eqfunctions,
-								 setopstate->tempContext))
+			econtext->ecxt_outertuple = resultTupleSlot;
+			econtext->ecxt_innertuple = outerslot;
+
+			if (!ExecQualAndReset(setopstate->eqfunction, econtext))
 			{
 				/*
 				 * Save the first input tuple of the next group.
@@ -333,7 +340,8 @@ setop_fill_hash_table(SetOpState *setopstate)
 	SetOp	   *node = (SetOp *) setopstate->ps.plan;
 	PlanState  *outerPlan;
 	int			firstFlag;
-	bool in_first_rel PG_USED_FOR_ASSERTS_ONLY;
+	bool		in_first_rel PG_USED_FOR_ASSERTS_ONLY;
+	ExprContext *econtext = setopstate->ps.ps_ExprContext;
 
 	/*
 	 * get state info from node
@@ -400,8 +408,8 @@ setop_fill_hash_table(SetOpState *setopstate)
 				advance_counts((SetOpStatePerGroup) entry->additional, flag);
 		}
 
-		/* Must reset temp context after each hashtable lookup */
-		MemoryContextReset(setopstate->tempContext);
+		/* Must reset expression context after each hashtable lookup */
+		ResetExprContext(econtext);
 	}
 
 	setopstate->table_filled = true;
@@ -428,6 +436,8 @@ setop_retrieve_hash_table(SetOpState *setopstate)
 	 */
 	while (!setopstate->setop_done)
 	{
+		CHECK_FOR_INTERRUPTS();
+
 		/*
 		 * Find the next entry in the hash table
 		 */
@@ -470,6 +480,7 @@ SetOpState *
 ExecInitSetOp(SetOp *node, EState *estate, int eflags)
 {
 	SetOpState *setopstate;
+	TupleDesc	outerDesc;
 
 	/* check for unsupported flags */
 	Assert(!(eflags & (EXEC_FLAG_BACKWARD | EXEC_FLAG_MARK)));
@@ -480,8 +491,9 @@ ExecInitSetOp(SetOp *node, EState *estate, int eflags)
 	setopstate = makeNode(SetOpState);
 	setopstate->ps.plan = (Plan *) node;
 	setopstate->ps.state = estate;
+	setopstate->ps.ExecProcNode = ExecSetOp;
 
-	setopstate->eqfunctions = NULL;
+	setopstate->eqfuncoids = NULL;
 	setopstate->hashfunctions = NULL;
 	setopstate->setop_done = false;
 	setopstate->numOutput = 0;
@@ -491,16 +503,9 @@ ExecInitSetOp(SetOp *node, EState *estate, int eflags)
 	setopstate->tableContext = NULL;
 
 	/*
-	 * Miscellaneous initialization
-	 *
-	 * SetOp nodes have no ExprContext initialization because they never call
-	 * ExecQual or ExecProject.  But they do need a per-tuple memory context
-	 * anyway for calling execTuplesMatch.
+	 * create expression context
 	 */
-	setopstate->tempContext =
-		AllocSetContextCreate(CurrentMemoryContext,
-							  "SetOp",
-							  ALLOCSET_DEFAULT_SIZES);
+	ExecAssignExprContext(estate, &setopstate->ps);
 
 	/*
 	 * If hashing, we also need a longer-lived context to store the hash
@@ -514,11 +519,6 @@ ExecInitSetOp(SetOp *node, EState *estate, int eflags)
 								  ALLOCSET_DEFAULT_SIZES);
 
 	/*
-	 * Tuple table initialization
-	 */
-	ExecInitResultTupleSlot(estate, &setopstate->ps);
-
-	/*
 	 * initialize child nodes
 	 *
 	 * If we are hashing then the child plan does not need to handle REWIND
@@ -527,12 +527,13 @@ ExecInitSetOp(SetOp *node, EState *estate, int eflags)
 	if (node->strategy == SETOP_HASHED)
 		eflags &= ~EXEC_FLAG_REWIND;
 	outerPlanState(setopstate) = ExecInitNode(outerPlan(node), estate, eflags);
+	outerDesc = ExecGetResultType(outerPlanState(setopstate));
 
 	/*
-	 * setop nodes do no projections, so initialize projection info for this
-	 * node appropriately
+	 * Initialize result slot and type. Setop nodes do no projections, so
+	 * initialize projection info for this node appropriately.
 	 */
-	ExecAssignResultTypeFromTL(&setopstate->ps);
+	ExecInitResultTupleSlotTL(estate, &setopstate->ps);
 	setopstate->ps.ps_ProjInfo = NULL;
 
 	/*
@@ -543,12 +544,15 @@ ExecInitSetOp(SetOp *node, EState *estate, int eflags)
 	if (node->strategy == SETOP_HASHED)
 		execTuplesHashPrepare(node->numCols,
 							  node->dupOperators,
-							  &setopstate->eqfunctions,
+							  &setopstate->eqfuncoids,
 							  &setopstate->hashfunctions);
 	else
-		setopstate->eqfunctions =
-			execTuplesMatchPrepare(node->numCols,
-								   node->dupOperators);
+		setopstate->eqfunction =
+			execTuplesMatchPrepare(outerDesc,
+								   node->numCols,
+								   node->dupColIdx,
+								   node->dupOperators,
+								   &setopstate->ps);
 
 	if (node->strategy == SETOP_HASHED)
 	{
@@ -578,9 +582,9 @@ ExecEndSetOp(SetOpState *node)
 	ExecClearTuple(node->ps.ps_ResultTupleSlot);
 
 	/* free subsidiary stuff including hashtable */
-	MemoryContextDelete(node->tempContext);
 	if (node->tableContext)
 		MemoryContextDelete(node->tableContext);
+	ExecFreeExprContext(&node->ps);
 
 	ExecEndNode(outerPlanState(node));
 }

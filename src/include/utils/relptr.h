@@ -3,7 +3,7 @@
  * relptr.h
  *	  This file contains basic declarations for relative pointers.
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/utils/relptr.h
@@ -74,4 +74,4 @@
 #define relptr_copy(rp1, rp2) \
 	((rp1).relptr_off = (rp2).relptr_off)
 
-#endif   /* RELPTR_H */
+#endif							/* RELPTR_H */

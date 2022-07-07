@@ -7,9 +7,6 @@
 
 #include "postgres_fe.h"
 
-#ifdef WIN32
-#include <windows.h>
-#endif
 #include <sys/time.h>
 #ifdef HAVE_SYS_SELECT_H
 #include <sys/select.h>
@@ -35,6 +32,7 @@ static int	nconns = 0;
 /* In dry run only output permutations to be run by the tester. */
 static int	dry_run = false;
 
+static void exit_nicely(void) pg_attribute_noreturn();
 static void run_testspec(TestSpec *testspec);
 static void run_all_permutations(TestSpec *testspec);
 static void run_all_permutations_recurse(TestSpec *testspec, int nsteps,
@@ -227,12 +225,12 @@ main(int argc, char **argv)
 	 */
 	initPQExpBuffer(&wait_query);
 	appendPQExpBufferStr(&wait_query,
-						 "SELECT pg_catalog.pg_blocking_pids($1) && '{");
+						 "SELECT pg_catalog.pg_isolation_test_session_is_blocked($1, '{");
 	/* The spec syntax requires at least one session; assume that here. */
 	appendPQExpBufferStr(&wait_query, backend_pids[1]);
 	for (i = 2; i < nconns; i++)
 		appendPQExpBuffer(&wait_query, ",%s", backend_pids[i]);
-	appendPQExpBufferStr(&wait_query, "}'::integer[]");
+	appendPQExpBufferStr(&wait_query, "}')");
 
 	res = PQprepare(conns[0], PREP_WAITING, wait_query.data, 0, NULL);
 	if (PQresultStatus(res) != PGRES_COMMAND_OK)
@@ -844,7 +842,7 @@ try_complete_step(Step *step, int flags)
 					const char *sev = PQresultErrorField(res,
 														 PG_DIAG_SEVERITY);
 					const char *msg = PQresultErrorField(res,
-													PG_DIAG_MESSAGE_PRIMARY);
+														 PG_DIAG_MESSAGE_PRIMARY);
 
 					if (sev && msg)
 						step->errormsg = psprintf("%s:  %s", sev, msg);

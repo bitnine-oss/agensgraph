@@ -5,7 +5,7 @@
  *
  *	  Should be moved/renamed...    - vadim 07/28/98
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/utils/tqual.h
@@ -51,7 +51,7 @@ typedef enum
 	HEAPTUPLE_DEAD,				/* tuple is dead and deletable */
 	HEAPTUPLE_LIVE,				/* tuple is live (committed, no deleter) */
 	HEAPTUPLE_RECENTLY_DEAD,	/* tuple is dead, but not deletable yet */
-	HEAPTUPLE_INSERT_IN_PROGRESS,		/* inserting xact is still in progress */
+	HEAPTUPLE_INSERT_IN_PROGRESS,	/* inserting xact is still in progress */
 	HEAPTUPLE_DELETE_IN_PROGRESS	/* deleting xact is still in progress */
 } HTSV_Result;
 
@@ -66,6 +66,8 @@ extern bool HeapTupleSatisfiesToast(HeapTuple htup,
 						Snapshot snapshot, Buffer buffer);
 extern bool HeapTupleSatisfiesDirty(HeapTuple htup,
 						Snapshot snapshot, Buffer buffer);
+extern bool HeapTupleSatisfiesNonVacuumable(HeapTuple htup,
+								Snapshot snapshot, Buffer buffer);
 extern bool HeapTupleSatisfiesHistoricMVCC(HeapTuple htup,
 							   Snapshot snapshot, Buffer buffer);
 
@@ -76,6 +78,7 @@ extern HTSV_Result HeapTupleSatisfiesVacuum(HeapTuple htup,
 						 TransactionId OldestXmin, Buffer buffer);
 extern bool HeapTupleIsSurelyDead(HeapTuple htup,
 					  TransactionId OldestXmin);
+extern bool XidInMVCCSnapshot(TransactionId xid, Snapshot snapshot);
 
 extern void HeapTupleSetHintBits(HeapTupleHeader tuple, Buffer buffer,
 					 uint16 infomask, TransactionId xid);
@@ -101,6 +104,14 @@ extern bool ResolveCminCmaxDuringDecoding(struct HTAB *tuplecid_data,
 	((snapshotdata).satisfies = HeapTupleSatisfiesDirty)
 
 /*
+ * Similarly, some initialization is required for a NonVacuumable snapshot.
+ * The caller must supply the xmin horizon to use (e.g., RecentGlobalXmin).
+ */
+#define InitNonVacuumableSnapshot(snapshotdata, xmin_horizon)  \
+	((snapshotdata).satisfies = HeapTupleSatisfiesNonVacuumable, \
+	 (snapshotdata).xmin = (xmin_horizon))
+
+/*
  * Similarly, some initialization is required for SnapshotToast.  We need
  * to set lsn and whenTaken correctly to support snapshot_too_old.
  */
@@ -109,4 +120,4 @@ extern bool ResolveCminCmaxDuringDecoding(struct HTAB *tuplecid_data,
 	 (snapshotdata).lsn = (l),					\
 	 (snapshotdata).whenTaken = (w))
 
-#endif   /* TQUAL_H */
+#endif							/* TQUAL_H */

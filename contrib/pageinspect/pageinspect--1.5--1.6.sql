@@ -75,3 +75,25 @@ CREATE FUNCTION hash_metapage_info(IN page bytea,
     OUT mapp int8[])
 AS 'MODULE_PATHNAME', 'hash_metapage_info'
 LANGUAGE C STRICT PARALLEL SAFE;
+
+--
+-- page_checksum()
+--
+CREATE FUNCTION page_checksum(IN page bytea, IN blkno int4)
+RETURNS smallint
+AS 'MODULE_PATHNAME', 'page_checksum'
+LANGUAGE C STRICT PARALLEL SAFE;
+
+--
+-- bt_page_items_bytea()
+--
+CREATE FUNCTION bt_page_items(IN page bytea,
+    OUT itemoffset smallint,
+    OUT ctid tid,
+    OUT itemlen smallint,
+    OUT nulls bool,
+    OUT vars bool,
+    OUT data text)
+RETURNS SETOF record
+AS 'MODULE_PATHNAME', 'bt_page_items_bytea'
+LANGUAGE C STRICT PARALLEL SAFE;

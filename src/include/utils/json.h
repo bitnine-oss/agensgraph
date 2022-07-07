@@ -3,7 +3,7 @@
  * json.h
  *	  Declarations for JSON data type support.
  *
- * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/utils/json.h
@@ -84,4 +84,4 @@ extern Datum jsonb_to_recordset(PG_FUNCTION_ARGS);
 extern Datum jsonb_strip_nulls(PG_FUNCTION_ARGS);
 extern Datum jsonb_has_nulls(PG_FUNCTION_ARGS);
 
-#endif   /* JSON_H */
+#endif							/* JSON_H */

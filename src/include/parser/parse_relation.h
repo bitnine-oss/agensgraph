@@ -4,7 +4,7 @@
  *	  prototypes for parse_relation.c.
  *
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/parser/parse_relation.h
@@ -42,6 +42,7 @@ extern RangeTblEntry *refnameRangeTblEntry(ParseState *pstate,
 extern CommonTableExpr *scanNameSpaceForCTE(ParseState *pstate,
 					const char *refname,
 					Index *ctelevelsup);
+extern bool scanNameSpaceForENR(ParseState *pstate, const char *refname);
 extern void checkNameSpaceConflicts(ParseState *pstate, List *namespace1,
 						List *namespace2);
 extern int RTERangeTablePosn(ParseState *pstate,
@@ -53,9 +54,9 @@ extern RangeTblEntry *GetRTEByRangeTablePosn(ParseState *pstate,
 extern CommonTableExpr *GetCTEForRTE(ParseState *pstate, RangeTblEntry *rte,
 			 int rtelevelsup);
 extern Node *scanRTEForColumn(ParseState *pstate, RangeTblEntry *rte,
-				 char *colname, int location,
+				 const char *colname, int location,
 				 int fuzzy_rte_penalty, FuzzyAttrMatchState *fuzzystate);
-extern Node *colNameToVar(ParseState *pstate, char *colname, bool localonly,
+extern Node *colNameToVar(ParseState *pstate, const char *colname, bool localonly,
 			 int location);
 extern void markVarForSelectPriv(ParseState *pstate, Var *var,
 					 RangeTblEntry *rte);
@@ -91,6 +92,11 @@ extern RangeTblEntry *addRangeTableEntryForValues(ParseState *pstate,
 							Alias *alias,
 							bool lateral,
 							bool inFromCl);
+extern RangeTblEntry *addRangeTableEntryForTableFunc(ParseState *pstate,
+							   TableFunc *tf,
+							   Alias *alias,
+							   bool lateral,
+							   bool inFromCl);
 extern RangeTblEntry *addRangeTableEntryForJoin(ParseState *pstate,
 						  List *colnames,
 						  JoinType jointype,
@@ -102,13 +108,16 @@ extern RangeTblEntry *addRangeTableEntryForCTE(ParseState *pstate,
 						 Index levelsup,
 						 RangeVar *rv,
 						 bool inFromCl);
+extern RangeTblEntry *addRangeTableEntryForENR(ParseState *pstate,
+						 RangeVar *rv,
+						 bool inFromCl);
 extern bool isLockedRefname(ParseState *pstate, const char *refname);
 extern void addRTEtoQuery(ParseState *pstate, RangeTblEntry *rte,
 			  bool addToJoinList,
 			  bool addToRelNameSpace, bool addToVarNameSpace);
 extern void errorMissingRTE(ParseState *pstate, RangeVar *relation) pg_attribute_noreturn();
 extern void errorMissingColumn(ParseState *pstate,
-		 char *relname, char *colname, int location) pg_attribute_noreturn();
+				   const char *relname, const char *colname, int location) pg_attribute_noreturn();
 extern void expandRTE(RangeTblEntry *rte, int rtindex, int sublevels_up,
 		  int location, bool include_dropped,
 		  List **colnames, List **colvars);
@@ -123,4 +132,4 @@ extern bool isQueryUsingTempRelation(Query *query);
 extern void check_lateral_ref_ok(ParseState *pstate, ParseNamespaceItem *nsitem,
 								 int location);
 
-#endif   /* PARSE_RELATION_H */
+#endif							/* PARSE_RELATION_H */

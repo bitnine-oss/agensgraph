@@ -4,7 +4,7 @@
  *	  BTree-specific page management code for the Postgres btree access
  *	  method.
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -23,6 +23,7 @@
 #include "postgres.h"
 
 #include "access/nbtree.h"
+#include "access/nbtxlog.h"
 #include "access/transam.h"
 #include "access/xlog.h"
 #include "access/xloginsert.h"
@@ -64,8 +65,9 @@ _bt_initmetapage(Page page, BlockNumber rootbknum, uint32 level)
 	metaopaque->btpo_flags = BTP_META;
 
 	/*
-	 * Set pd_lower just past the end of the metadata.  This is not essential
-	 * but it makes the page look compressible to xlog.c.
+	 * Set pd_lower just past the end of the metadata.  This is essential,
+	 * because without doing so, metadata will be lost if xlog.c compresses
+	 * the page.
 	 */
 	((PageHeader) page)->pd_lower =
 		((char *) metad + sizeof(BTMetaPageData)) - (char *) page;
@@ -161,7 +163,7 @@ _bt_getroot(Relation rel, int access)
 	metad = BTPageGetMeta(metapg);
 
 	/* sanity-check the metapage */
-	if (!(metaopaque->btpo_flags & BTP_META) ||
+	if (!P_ISMETA(metaopaque) ||
 		metad->btm_magic != BTREE_MAGIC)
 		ereport(ERROR,
 				(errcode(ERRCODE_INDEX_CORRUPTED),
@@ -240,7 +242,7 @@ _bt_getroot(Relation rel, int access)
 
 			XLogBeginInsert();
 			XLogRegisterBuffer(0, rootbuf, REGBUF_WILL_INIT);
-			XLogRegisterBuffer(2, metabuf, REGBUF_WILL_INIT);
+			XLogRegisterBuffer(2, metabuf, REGBUF_WILL_INIT | REGBUF_STANDARD);
 
 			md.root = rootblkno;
 			md.level = 0;
@@ -364,7 +366,7 @@ _bt_gettrueroot(Relation rel)
 	metaopaque = (BTPageOpaque) PageGetSpecialPointer(metapg);
 	metad = BTPageGetMeta(metapg);
 
-	if (!(metaopaque->btpo_flags & BTP_META) ||
+	if (!P_ISMETA(metaopaque) ||
 		metad->btm_magic != BTREE_MAGIC)
 		ereport(ERROR,
 				(errcode(ERRCODE_INDEX_CORRUPTED),
@@ -451,7 +453,7 @@ _bt_getrootheight(Relation rel)
 		metad = BTPageGetMeta(metapg);
 
 		/* sanity-check the metapage */
-		if (!(metaopaque->btpo_flags & BTP_META) ||
+		if (!P_ISMETA(metaopaque) ||
 			metad->btm_magic != BTREE_MAGIC)
 			ereport(ERROR,
 					(errcode(ERRCODE_INDEX_CORRUPTED),
@@ -512,9 +514,9 @@ _bt_checkpage(Relation rel, Buffer buf)
 	if (PageIsNew(page))
 		ereport(ERROR,
 				(errcode(ERRCODE_INDEX_CORRUPTED),
-			 errmsg("index \"%s\" contains unexpected zero page at block %u",
-					RelationGetRelationName(rel),
-					BufferGetBlockNumber(buf)),
+				 errmsg("index \"%s\" contains unexpected zero page at block %u",
+						RelationGetRelationName(rel),
+						BufferGetBlockNumber(buf)),
 				 errhint("Please REINDEX it.")));
 
 	/*
@@ -1066,7 +1068,7 @@ _bt_lock_branch_parent(Relation rel, BlockNumber child, BTStack stack,
 			}
 
 			return _bt_lock_branch_parent(rel, parent, stack->bts_parent,
-										topparent, topoff, target, rightsib);
+										  topparent, topoff, target, rightsib);
 		}
 		else
 		{
@@ -1149,8 +1151,8 @@ _bt_pagedel(Relation rel, Buffer buf)
 			if (P_ISHALFDEAD(opaque))
 				ereport(LOG,
 						(errcode(ERRCODE_INDEX_CORRUPTED),
-					errmsg("index \"%s\" contains a half-dead internal page",
-						   RelationGetRelationName(rel)),
+						 errmsg("index \"%s\" contains a half-dead internal page",
+								RelationGetRelationName(rel)),
 						 errhint("This can be caused by an interrupted VACUUM in version 9.3 or older, before upgrade. Please REINDEX it.")));
 			_bt_relbuf(rel, buf);
 			return ndeleted;
@@ -1826,7 +1828,7 @@ _bt_unlink_halfdead_page(Relation rel, Buffer leafbuf, bool *rightsib_empty)
 
 		if (BufferIsValid(metabuf))
 		{
-			XLogRegisterBuffer(4, metabuf, REGBUF_WILL_INIT);
+			XLogRegisterBuffer(4, metabuf, REGBUF_WILL_INIT | REGBUF_STANDARD);
 
 			xlmeta.root = metad->btm_root;
 			xlmeta.level = metad->btm_level;

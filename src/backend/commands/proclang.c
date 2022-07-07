@@ -3,7 +3,7 @@
  * proclang.c
  *	  PostgreSQL PROCEDURAL LANGUAGE support code.
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -97,7 +97,7 @@ CreateProceduralLanguage(CreatePLangStmt *stmt)
 						 errmsg("must be superuser to create procedural language \"%s\"",
 								stmt->plname)));
 			if (!pg_database_ownercheck(MyDatabaseId, GetUserId()))
-				aclcheck_error(ACLCHECK_NOT_OWNER, ACL_KIND_DATABASE,
+				aclcheck_error(ACLCHECK_NOT_OWNER, OBJECT_DATABASE,
 							   get_database_name(MyDatabaseId));
 		}
 
@@ -115,7 +115,7 @@ CreateProceduralLanguage(CreatePLangStmt *stmt)
 				ereport(ERROR,
 						(errcode(ERRCODE_WRONG_OBJECT_TYPE),
 						 errmsg("function %s must return type %s",
-						   NameListToString(funcname), "language_handler")));
+								NameListToString(funcname), "language_handler")));
 		}
 		else
 		{
@@ -161,18 +161,18 @@ CreateProceduralLanguage(CreatePLangStmt *stmt)
 			{
 				tmpAddr = ProcedureCreate(pltemplate->tmplinline,
 										  PG_CATALOG_NAMESPACE,
-										  false,		/* replace */
-										  false,		/* returnsSet */
+										  false,	/* replace */
+										  false,	/* returnsSet */
 										  VOIDOID,
 										  BOOTSTRAP_SUPERUSERID,
 										  ClanguageId,
 										  F_FMGR_C_VALIDATOR,
 										  pltemplate->tmplinline,
 										  pltemplate->tmpllibrary,
-										  false,		/* isAgg */
-										  false,		/* isWindowFunc */
-										  false,		/* security_definer */
-										  false,		/* isLeakProof */
+										  false,	/* isAgg */
+										  false,	/* isWindowFunc */
+										  false,	/* security_definer */
+										  false,	/* isLeakProof */
 										  true, /* isStrict */
 										  PROVOLATILE_VOLATILE,
 										  PROPARALLEL_UNSAFE,
@@ -204,18 +204,18 @@ CreateProceduralLanguage(CreatePLangStmt *stmt)
 			{
 				tmpAddr = ProcedureCreate(pltemplate->tmplvalidator,
 										  PG_CATALOG_NAMESPACE,
-										  false,		/* replace */
-										  false,		/* returnsSet */
+										  false,	/* replace */
+										  false,	/* returnsSet */
 										  VOIDOID,
 										  BOOTSTRAP_SUPERUSERID,
 										  ClanguageId,
 										  F_FMGR_C_VALIDATOR,
 										  pltemplate->tmplvalidator,
 										  pltemplate->tmpllibrary,
-										  false,		/* isAgg */
-										  false,		/* isWindowFunc */
-										  false,		/* security_definer */
-										  false,		/* isLeakProof */
+										  false,	/* isAgg */
+										  false,	/* isWindowFunc */
+										  false,	/* security_definer */
+										  false,	/* isLeakProof */
 										  true, /* isStrict */
 										  PROVOLATILE_VOLATILE,
 										  PROPARALLEL_UNSAFE,
@@ -278,16 +278,16 @@ CreateProceduralLanguage(CreatePLangStmt *stmt)
 			{
 				ereport(WARNING,
 						(errcode(ERRCODE_WRONG_OBJECT_TYPE),
-				  errmsg("changing return type of function %s from %s to %s",
-						 NameListToString(stmt->plhandler),
-						 "opaque", "language_handler")));
+						 errmsg("changing return type of function %s from %s to %s",
+								NameListToString(stmt->plhandler),
+								"opaque", "language_handler")));
 				SetFunctionReturnType(handlerOid, LANGUAGE_HANDLEROID);
 			}
 			else
 				ereport(ERROR,
 						(errcode(ERRCODE_WRONG_OBJECT_TYPE),
 						 errmsg("function %s must return type %s",
-					NameListToString(stmt->plhandler), "language_handler")));
+								NameListToString(stmt->plhandler), "language_handler")));
 		}
 
 		/* validate the inline function */
@@ -366,7 +366,7 @@ create_proc_lang(const char *languageName, bool replace,
 					(errcode(ERRCODE_DUPLICATE_OBJECT),
 					 errmsg("language \"%s\" already exists", languageName)));
 		if (!pg_language_ownercheck(HeapTupleGetOid(oldtup), languageOwner))
-			aclcheck_error(ACLCHECK_NOT_OWNER, ACL_KIND_LANGUAGE,
+			aclcheck_error(ACLCHECK_NOT_OWNER, OBJECT_LANGUAGE,
 						   languageName);
 
 		/*
@@ -513,7 +513,7 @@ find_language_template(const char *languageName)
 
 
 /*
- * This just returns TRUE if we have a valid template for a given language
+ * This just returns true if we have a valid template for a given language
  */
 bool
 PLTemplateExists(const char *languageName)
@@ -533,7 +533,7 @@ DropProceduralLanguageById(Oid langOid)
 	rel = heap_open(LanguageRelationId, RowExclusiveLock);
 
 	langTup = SearchSysCache1(LANGOID, ObjectIdGetDatum(langOid));
-	if (!HeapTupleIsValid(langTup))		/* should not happen */
+	if (!HeapTupleIsValid(langTup)) /* should not happen */
 		elog(ERROR, "cache lookup failed for language %u", langOid);
 
 	CatalogTupleDelete(rel, &langTup->t_self);

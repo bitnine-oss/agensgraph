@@ -53,7 +53,7 @@ WHERE (p1.typtype = 'c' AND p1.typrelid = 0) OR
 -- Look for types that should have an array type according to their typtype,
 -- but don't.  We exclude composites here because we have not bothered to
 -- make array types corresponding to the system catalogs' rowtypes.
--- NOTE: as of v10, this check finds pg_node_tree and smgr.
+-- NOTE: as of v10, this check finds pg_node_tree, pg_ndistinct, smgr.
 
 SELECT p1.oid, p1.typname
 FROM pg_type as p1
@@ -103,6 +103,30 @@ WHERE p1.typinput = p2.oid AND NOT
      (p2.pronargs = 3 AND p2.proargtypes[0] = 'cstring'::regtype AND
       p2.proargtypes[1] = 'oid'::regtype AND
       p2.proargtypes[2] = 'int4'::regtype));
+
+-- Check for type of the variadic array parameter's elements.
+-- provariadic should be ANYOID if the type of the last element is ANYOID,
+-- ANYELEMENTOID if the type of the last element is ANYARRAYOID, and otherwise
+-- the element type corresponding to the array type.
+
+SELECT oid::regprocedure, provariadic::regtype, proargtypes::regtype[]
+FROM pg_proc
+WHERE provariadic != 0
+AND case proargtypes[array_length(proargtypes, 1)-1]
+    WHEN 2276 THEN 2276 -- any -> any
+	WHEN 2277 THEN 2283 -- anyarray -> anyelement
+	ELSE (SELECT t.oid
+		  FROM pg_type t
+		  WHERE t.typarray = proargtypes[array_length(proargtypes, 1)-1])
+	END  != provariadic;
+
+-- Check that all and only those functions with a variadic type have
+-- a variadic argument.
+SELECT oid::regprocedure, proargmodes, provariadic
+FROM pg_proc
+WHERE (proargmodes IS NOT NULL AND 'v' = any(proargmodes))
+    IS DISTINCT FROM
+    (provariadic != 0);
 
 -- As of 8.0, this check finds refcursor, which is borrowing
 -- other types' I/O routines
@@ -339,7 +363,7 @@ ORDER BY 1;
 
 SELECT p1.oid, p1.relname
 FROM pg_class as p1
-WHERE relkind NOT IN ('r', 'i', 's', 'S', 'c', 't', 'v', 'f') OR
+WHERE relkind NOT IN ('r', 'i', 'S', 't', 'v', 'm', 'c', 'f', 'p') OR
     relpersistence NOT IN ('p', 'u', 't') OR
     relreplident NOT IN ('d', 'n', 'f', 'i');
 

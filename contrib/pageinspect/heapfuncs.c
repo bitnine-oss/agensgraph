@@ -15,7 +15,7 @@
  * there's hardly any use case for using these without superuser-rights
  * anyway.
  *
- * Copyright (c) 2007-2017, PostgreSQL Global Development Group
+ * Copyright (c) 2007-2018, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
  *	  contrib/pageinspect/heapfuncs.c
@@ -84,7 +84,7 @@ text_to_bits(char *str, int len)
 		else
 			ereport(ERROR,
 					(errcode(ERRCODE_DATA_CORRUPTED),
-			   errmsg("illegal character '%c' in t_bits string", str[off])));
+					 errmsg("illegal character '%c' in t_bits string", str[off])));
 
 		if (off % 8 == 7)
 			bits[off / 8] = byte;
@@ -132,7 +132,7 @@ heap_page_items(PG_FUNCTION_ARGS)
 		if (raw_page_size < SizeOfPageHeaderData)
 			ereport(ERROR,
 					(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				  errmsg("input page too small (%d bytes)", raw_page_size)));
+					 errmsg("input page too small (%d bytes)", raw_page_size)));
 
 		fctx = SRF_FIRSTCALL_INIT();
 		mctx = MemoryContextSwitchTo(fctx->multi_call_memory_ctx);
@@ -234,9 +234,9 @@ heap_page_items(PG_FUNCTION_ARGS)
 					int			bits_len;
 
 					bits_len =
-						((tuphdr->t_infomask2 & HEAP_NATTS_MASK) / 8 + 1) * 8;
+						BITMAPLEN(HeapTupleHeaderGetNatts(tuphdr)) * BITS_PER_BYTE;
 					values[11] = CStringGetTextDatum(
-									 bits_to_text(tuphdr->t_bits, bits_len));
+													 bits_to_text(tuphdr->t_bits, bits_len));
 				}
 				else
 					nulls[11] = true;
@@ -316,7 +316,7 @@ tuple_data_split_internal(Oid relid, char *tupdata,
 		bool		is_null;
 		bytea	   *attr_data = NULL;
 
-		attr = tupdesc->attrs[i];
+		attr = TupleDescAttr(tupdesc, i);
 		is_null = (t_infomask & HEAP_HASNULL) && att_isnull(i, t_bits);
 
 		/*
@@ -334,7 +334,7 @@ tuple_data_split_internal(Oid relid, char *tupdata,
 
 			if (attr->attlen == -1)
 			{
-				off = att_align_pointer(off, tupdesc->attrs[i]->attalign, -1,
+				off = att_align_pointer(off, attr->attalign, -1,
 										tupdata + off);
 
 				/*
@@ -353,7 +353,7 @@ tuple_data_split_internal(Oid relid, char *tupdata,
 			}
 			else
 			{
-				off = att_align_nominal(off, tupdesc->attrs[i]->attalign);
+				off = att_align_nominal(off, attr->attalign);
 				len = attr->attlen;
 			}
 
@@ -371,7 +371,7 @@ tuple_data_split_internal(Oid relid, char *tupdata,
 				memcpy(VARDATA(attr_data), tupdata + off, len);
 			}
 
-			off = att_addlength_pointer(off, tupdesc->attrs[i]->attlen,
+			off = att_addlength_pointer(off, attr->attlen,
 										tupdata + off);
 		}
 
@@ -384,7 +384,7 @@ tuple_data_split_internal(Oid relid, char *tupdata,
 	if (tupdata_len != off)
 		ereport(ERROR,
 				(errcode(ERRCODE_DATA_CORRUPTED),
-			errmsg("end of tuple reached without looking at all its data")));
+				 errmsg("end of tuple reached without looking at all its data")));
 
 	return makeArrayResult(raw_attrs, CurrentMemoryContext);
 }
@@ -436,24 +436,19 @@ tuple_data_split(PG_FUNCTION_ARGS)
 		int			bits_str_len;
 		int			bits_len;
 
-		bits_len = (t_infomask2 & HEAP_NATTS_MASK) / 8 + 1;
+		bits_len = BITMAPLEN(t_infomask2 & HEAP_NATTS_MASK) * BITS_PER_BYTE;
 		if (!t_bits_str)
 			ereport(ERROR,
 					(errcode(ERRCODE_DATA_CORRUPTED),
 					 errmsg("argument of t_bits is null, but it is expected to be null and %d character long",
-							bits_len * 8)));
+							bits_len)));
 
 		bits_str_len = strlen(t_bits_str);
-		if ((bits_str_len % 8) != 0)
-			ereport(ERROR,
-					(errcode(ERRCODE_DATA_CORRUPTED),
-					 errmsg("length of t_bits is not a multiple of eight")));
-
-		if (bits_len * 8 != bits_str_len)
+		if (bits_len != bits_str_len)
 			ereport(ERROR,
 					(errcode(ERRCODE_DATA_CORRUPTED),
 					 errmsg("unexpected length of t_bits %u, expected %d",
-							bits_str_len, bits_len * 8)));
+							bits_str_len, bits_len)));
 
 		/* do the conversion */
 		t_bits = text_to_bits(t_bits_str, bits_str_len);

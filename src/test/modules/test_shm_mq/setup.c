@@ -5,7 +5,7 @@
  *		number of background workers for shared memory message queue
  *		testing.
  *
- * Copyright (c) 2013-2017, PostgreSQL Global Development Group
+ * Copyright (c) 2013-2018, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
  *		src/test/modules/test_shm_mq/setup.c
@@ -213,13 +213,13 @@ setup_background_workers(int nworkers, dsm_segment *seg)
 				  PointerGetDatum(wstate));
 
 	/* Configure a worker. */
+	memset(&worker, 0, sizeof(worker));
 	worker.bgw_flags = BGWORKER_SHMEM_ACCESS;
 	worker.bgw_start_time = BgWorkerStart_ConsistentState;
 	worker.bgw_restart_time = BGW_NEVER_RESTART;
-	worker.bgw_main = NULL;		/* new worker might not have library loaded */
 	sprintf(worker.bgw_library_name, "test_shm_mq");
 	sprintf(worker.bgw_function_name, "test_shm_mq_main");
-	snprintf(worker.bgw_name, BGW_MAXLEN, "test_shm_mq");
+	snprintf(worker.bgw_type, BGW_MAXLEN, "test_shm_mq");
 	worker.bgw_main_arg = UInt32GetDatum(dsm_segment_handle(seg));
 	/* set bgw_notify_pid, so we can detect if the worker stops */
 	worker.bgw_notify_pid = MyProcPid;
@@ -231,7 +231,7 @@ setup_background_workers(int nworkers, dsm_segment *seg)
 			ereport(ERROR,
 					(errcode(ERRCODE_INSUFFICIENT_RESOURCES),
 					 errmsg("could not register background process"),
-				 errhint("You may need to increase max_worker_processes.")));
+					 errhint("You may need to increase max_worker_processes.")));
 		++wstate->nworkers;
 	}
 

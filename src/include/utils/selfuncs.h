@@ -5,7 +5,7 @@
  *	  infrastructure for selectivity and cost estimation.
  *
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/utils/selfuncs.h
@@ -72,15 +72,16 @@ typedef struct VariableStatData
 	/* NB: if statsTuple!=NULL, it must be freed when caller is done */
 	void		(*freefunc) (HeapTuple tuple);	/* how to free statsTuple */
 	Oid			vartype;		/* exposed type of expression */
-	Oid			atttype;		/* type to pass to get_attstatsslot */
-	int32		atttypmod;		/* typmod to pass to get_attstatsslot */
+	Oid			atttype;		/* actual type (after stripping relabel) */
+	int32		atttypmod;		/* actual typmod (after stripping relabel) */
 	bool		isunique;		/* matches unique index or DISTINCT clause */
+	bool		acl_ok;			/* result of ACL check on table or column */
 } VariableStatData;
 
 #define ReleaseVariableStats(vardata)  \
 	do { \
 		if (HeapTupleIsValid((vardata).statsTuple)) \
-			(* (vardata).freefunc) ((vardata).statsTuple); \
+			(vardata).freefunc((vardata).statsTuple); \
 	} while(0)
 
 
@@ -125,10 +126,10 @@ typedef struct
 typedef struct
 {
 	/* These are the values the cost estimator must return to the planner */
-	Cost		indexStartupCost;		/* index-related startup cost */
+	Cost		indexStartupCost;	/* index-related startup cost */
 	Cost		indexTotalCost; /* total index-related scan cost */
-	Selectivity indexSelectivity;		/* selectivity of index */
-	double		indexCorrelation;		/* order correlation of index */
+	Selectivity indexSelectivity;	/* selectivity of index */
+	double		indexCorrelation;	/* order correlation of index */
 
 	/* Intermediate values we obtain along the way */
 	double		numIndexPages;	/* number of leaf pages visited */
@@ -139,20 +140,21 @@ typedef struct
 
 /* Hooks for plugins to get control when we ask for stats */
 typedef bool (*get_relation_stats_hook_type) (PlannerInfo *root,
-														  RangeTblEntry *rte,
-														  AttrNumber attnum,
-												  VariableStatData *vardata);
+											  RangeTblEntry *rte,
+											  AttrNumber attnum,
+											  VariableStatData *vardata);
 extern PGDLLIMPORT get_relation_stats_hook_type get_relation_stats_hook;
 typedef bool (*get_index_stats_hook_type) (PlannerInfo *root,
-													   Oid indexOid,
-													   AttrNumber indexattnum,
-												  VariableStatData *vardata);
+										   Oid indexOid,
+										   AttrNumber indexattnum,
+										   VariableStatData *vardata);
 extern PGDLLIMPORT get_index_stats_hook_type get_index_stats_hook;
 
 /* Functions in selfuncs.c */
 
 extern void examine_variable(PlannerInfo *root, Node *node, int varRelid,
 				 VariableStatData *vardata);
+extern bool statistic_proc_security_check(VariableStatData *vardata, Oid func_oid);
 extern bool get_restriction_variable(PlannerInfo *root, List *args,
 						 int varRelid,
 						 VariableStatData *vardata, Node **other,
@@ -204,8 +206,10 @@ extern void mergejoinscansel(PlannerInfo *root, Node *clause,
 extern double estimate_num_groups(PlannerInfo *root, List *groupExprs,
 					double input_rows, List **pgset);
 
-extern Selectivity estimate_hash_bucketsize(PlannerInfo *root, Node *hashkey,
-						 double nbuckets);
+extern void estimate_hash_bucket_stats(PlannerInfo *root,
+						   Node *hashkey, double nbuckets,
+						   Selectivity *mcv_freq,
+						   Selectivity *bucketsize_frac);
 
 extern List *deconstruct_indexquals(IndexPath *path);
 extern void genericcostestimate(PlannerInfo *root, IndexPath *path,
@@ -220,4 +224,4 @@ extern Selectivity scalararraysel_containment(PlannerInfo *root,
 						   Oid elemtype, bool isEquality, bool useOr,
 						   int varRelid);
 
-#endif   /* SELFUNCS_H */
+#endif							/* SELFUNCS_H */

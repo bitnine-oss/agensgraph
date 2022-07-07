@@ -4,7 +4,7 @@
  *	  POSTGRES generalized index access method definitions.
  *
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/access/genam.h
@@ -20,6 +20,9 @@
 #include "storage/lockdefs.h"
 #include "utils/relcache.h"
 #include "utils/snapshot.h"
+
+/* We don't want this file to depend on execnodes.h. */
+struct IndexInfo;
 
 /*
  * Struct for statistics returned by ambuild
@@ -45,7 +48,7 @@ typedef struct IndexVacuumInfo
 	bool		estimated_count;	/* num_heap_tuples is an estimate */
 	int			message_level;	/* ereport level for progress messages */
 	double		num_heap_tuples;	/* tuples remaining in heap */
-	BufferAccessStrategy strategy;		/* access strategy for reads */
+	BufferAccessStrategy strategy;	/* access strategy for reads */
 } IndexVacuumInfo;
 
 /*
@@ -70,7 +73,7 @@ typedef struct IndexBulkDeleteResult
 	BlockNumber num_pages;		/* pages remaining in index */
 	BlockNumber pages_removed;	/* # removed during vacuum operation */
 	bool		estimated_count;	/* num_index_tuples is an estimate */
-	double		num_index_tuples;		/* tuples remaining */
+	double		num_index_tuples;	/* tuples remaining */
 	double		tuples_removed; /* # removed during vacuum operation */
 	BlockNumber pages_deleted;	/* # unused pages in index */
 	BlockNumber pages_free;		/* # pages available for reuse */
@@ -131,7 +134,8 @@ extern bool index_insert(Relation indexRelation,
 			 Datum *values, bool *isnull,
 			 ItemPointer heap_t_ctid,
 			 Relation heapRelation,
-			 IndexUniqueCheck checkUnique);
+			 IndexUniqueCheck checkUnique,
+			 struct IndexInfo *indexInfo);
 
 extern IndexScanDesc index_beginscan(Relation heapRelation,
 				Relation indexRelation,
@@ -148,7 +152,7 @@ extern void index_markpos(IndexScanDesc scan);
 extern void index_restrpos(IndexScanDesc scan);
 extern Size index_parallelscan_estimate(Relation indexrel, Snapshot snapshot);
 extern void index_parallelscan_initialize(Relation heaprel, Relation indexrel,
-							Snapshot snapshot, ParallelIndexScanDesc target);
+							  Snapshot snapshot, ParallelIndexScanDesc target);
 extern void index_parallelrescan(IndexScanDesc scan);
 extern IndexScanDesc index_beginscan_parallel(Relation heaprel,
 						 Relation indexrel, int nkeys, int norderbys,
@@ -199,4 +203,4 @@ extern HeapTuple systable_getnext_ordered(SysScanDesc sysscan,
 						 ScanDirection direction);
 extern void systable_endscan_ordered(SysScanDesc sysscan);
 
-#endif   /* GENAM_H */
+#endif							/* GENAM_H */

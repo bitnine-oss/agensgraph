@@ -17,7 +17,7 @@
  *	sync.
  *
  *
- *	Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ *	Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
  *	Portions Copyright (c) 1994, Regents of the University of California
  *	Portions Copyright (c) 2000, Philip Warner
  *
@@ -37,6 +37,7 @@
 #include "compress_io.h"
 #include "parallel.h"
 #include "pg_backup_utils.h"
+#include "common/file_utils.h"
 
 #include <dirent.h>
 #include <sys/stat.h>
@@ -351,7 +352,9 @@ _WriteData(ArchiveHandle *AH, const void *data, size_t dLen)
 	lclContext *ctx = (lclContext *) AH->formatData;
 
 	if (dLen > 0 && cfwrite(data, dLen, ctx->dataFH) != dLen)
-		WRITE_ERROR_EXIT;
+		exit_horribly(modulename, "could not write to output file: %s\n",
+					  get_cfp_error(ctx->dataFH));
+
 
 	return;
 }
@@ -489,7 +492,8 @@ _WriteByte(ArchiveHandle *AH, const int i)
 	lclContext *ctx = (lclContext *) AH->formatData;
 
 	if (cfwrite(&c, 1, ctx->dataFH) != 1)
-		WRITE_ERROR_EXIT;
+		exit_horribly(modulename, "could not write to output file: %s\n",
+					  get_cfp_error(ctx->dataFH));
 
 	return 1;
 }
@@ -518,7 +522,8 @@ _WriteBuf(ArchiveHandle *AH, const void *buf, size_t len)
 	lclContext *ctx = (lclContext *) AH->formatData;
 
 	if (cfwrite(buf, len, ctx->dataFH) != len)
-		WRITE_ERROR_EXIT;
+		exit_horribly(modulename, "could not write to output file: %s\n",
+					  get_cfp_error(ctx->dataFH));
 
 	return;
 }
@@ -593,6 +598,13 @@ _CloseArchive(ArchiveHandle *AH)
 		WriteDataChunks(AH, ctx->pstate);
 
 		ParallelBackupEnd(AH, ctx->pstate);
+
+		/*
+		 * In directory mode, there is no need to sync all the entries
+		 * individually. Just recurse once through all the files generated.
+		 */
+		if (AH->dosync)
+			fsync_dir_recurse(ctx->directory, progname);
 	}
 	AH->FH = NULL;
 }

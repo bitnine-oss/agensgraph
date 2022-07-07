@@ -13,7 +13,7 @@
  *
  * Author: Andreas Pflug <pgadmin@pse-consulting.de>
  *
- * Copyright (c) 2004-2017, PostgreSQL Global Development Group
+ * Copyright (c) 2004-2018, PostgreSQL Global Development Group
  *
  *
  * IDENTIFICATION
@@ -146,6 +146,7 @@ static char *logfile_getname(pg_time_t timestamp, const char *suffix);
 static void set_next_rotation_time(void);
 static void sigHupHandler(SIGNAL_ARGS);
 static void sigUsr1Handler(SIGNAL_ARGS);
+static void update_metainfo_datafile(void);
 
 
 /*
@@ -168,11 +169,11 @@ SysLoggerMain(int argc, char *argv[])
 
 #ifdef EXEC_BACKEND
 	syslogger_parseArgs(argc, argv);
-#endif   /* EXEC_BACKEND */
+#endif							/* EXEC_BACKEND */
 
 	am_syslogger = true;
 
-	init_ps_display("logger process", "", "", "");
+	init_ps_display("logger", "", "", "");
 
 	/*
 	 * If we restarted, our stderr is already redirected into our own input
@@ -267,7 +268,7 @@ SysLoggerMain(int argc, char *argv[])
 	threadHandle = (HANDLE) _beginthreadex(NULL, 0, pipeThread, NULL, 0, NULL);
 	if (threadHandle == 0)
 		elog(FATAL, "could not create syslogger data transfer thread: %m");
-#endif   /* WIN32 */
+#endif							/* WIN32 */
 
 	/*
 	 * Remember active logfile's name.  We recompute this from the reference
@@ -282,6 +283,7 @@ SysLoggerMain(int argc, char *argv[])
 	currentLogRotationAge = Log_RotationAge;
 	/* set next planned rotation time */
 	set_next_rotation_time();
+	update_metainfo_datafile();
 
 	/* main worker loop */
 	for (;;)
@@ -348,6 +350,13 @@ SysLoggerMain(int argc, char *argv[])
 				rotation_disabled = false;
 				rotation_requested = true;
 			}
+
+			/*
+			 * Force rewriting last log filename when reloading configuration.
+			 * Even if rotation_requested is false, log_destination may have
+			 * been changed and we don't want to wait the next file rotation.
+			 */
+			update_metainfo_datafile();
 		}
 
 		if (Log_RotationAge > 0 && !rotation_disabled)
@@ -481,7 +490,7 @@ SysLoggerMain(int argc, char *argv[])
 						 WAIT_EVENT_SYSLOGGER_MAIN);
 
 		EnterCriticalSection(&sysloggerSection);
-#endif   /* WIN32 */
+#endif							/* WIN32 */
 
 		if (pipe_eof_seen)
 		{
@@ -621,8 +630,8 @@ SysLogger_Start(void)
 				 */
 				ereport(LOG,
 						(errmsg("redirecting log output to logging collector process"),
-				errhint("Future log output will appear in directory \"%s\".",
-						Log_directory)));
+						 errhint("Future log output will appear in directory \"%s\".",
+								 Log_directory)));
 
 #ifndef WIN32
 				fflush(stdout);
@@ -707,7 +716,7 @@ syslogger_forkexec(void)
 				 (long) _get_osfhandle(_fileno(syslogFile)));
 	else
 		strcpy(filenobuf, "0");
-#endif   /* WIN32 */
+#endif							/* WIN32 */
 	av[ac++] = filenobuf;
 
 	av[ac] = NULL;
@@ -747,9 +756,9 @@ syslogger_parseArgs(int argc, char *argv[])
 			setvbuf(syslogFile, NULL, PG_IOLBF, 0);
 		}
 	}
-#endif   /* WIN32 */
+#endif							/* WIN32 */
 }
-#endif   /* EXEC_BACKEND */
+#endif							/* EXEC_BACKEND */
 
 
 /* --------------------------------
@@ -788,7 +797,7 @@ process_pipe_input(char *logbuffer, int *bytes_in_logbuffer)
 	int			dest = LOG_DESTINATION_STDERR;
 
 	/* While we have enough for a header, process data... */
-	while (count >= (int) (offsetof(PipeProtoHeader, data) +1))
+	while (count >= (int) (offsetof(PipeProtoHeader, data) + 1))
 	{
 		PipeProtoHeader p;
 		int			chunklen;
@@ -1075,7 +1084,7 @@ pipeThread(void *arg)
 	_endthread();
 	return 0;
 }
-#endif   /* WIN32 */
+#endif							/* WIN32 */
 
 /*
  * Open the csv log file - we do this opportunistically, because
@@ -1094,10 +1103,12 @@ open_csvlogfile(void)
 
 	csvlogFile = logfile_open(filename, "a", false);
 
-	if (last_csv_file_name != NULL)		/* probably shouldn't happen */
+	if (last_csv_file_name != NULL) /* probably shouldn't happen */
 		pfree(last_csv_file_name);
 
 	last_csv_file_name = filename;
+
+	update_metainfo_datafile();
 }
 
 /*
@@ -1268,6 +1279,8 @@ logfile_rotate(bool time_based_rotation, int size_rotation_for)
 	if (csvfilename)
 		pfree(csvfilename);
 
+	update_metainfo_datafile();
+
 	set_next_rotation_time();
 }
 
@@ -1335,6 +1348,72 @@ set_next_rotation_time(void)
 	now += rotinterval;
 	now -= tm->tm_gmtoff;
 	next_rotation_time = now;
+}
+
+/*
+ * Store the name of the file(s) where the log collector, when enabled, writes
+ * log messages.  Useful for finding the name(s) of the current log file(s)
+ * when there is time-based logfile rotation.  Filenames are stored in a
+ * temporary file and which is renamed into the final destination for
+ * atomicity.
+ */
+static void
+update_metainfo_datafile(void)
+{
+	FILE	   *fh;
+
+	if (!(Log_destination & LOG_DESTINATION_STDERR) &&
+		!(Log_destination & LOG_DESTINATION_CSVLOG))
+	{
+		if (unlink(LOG_METAINFO_DATAFILE) < 0 && errno != ENOENT)
+			ereport(LOG,
+					(errcode_for_file_access(),
+					 errmsg("could not remove file \"%s\": %m",
+							LOG_METAINFO_DATAFILE)));
+		return;
+	}
+
+	if ((fh = logfile_open(LOG_METAINFO_DATAFILE_TMP, "w", true)) == NULL)
+	{
+		ereport(LOG,
+				(errcode_for_file_access(),
+				 errmsg("could not open file \"%s\": %m",
+						LOG_METAINFO_DATAFILE_TMP)));
+		return;
+	}
+
+	if (last_file_name && (Log_destination & LOG_DESTINATION_STDERR))
+	{
+		if (fprintf(fh, "stderr %s\n", last_file_name) < 0)
+		{
+			ereport(LOG,
+					(errcode_for_file_access(),
+					 errmsg("could not write file \"%s\": %m",
+							LOG_METAINFO_DATAFILE_TMP)));
+			fclose(fh);
+			return;
+		}
+	}
+
+	if (last_csv_file_name && (Log_destination & LOG_DESTINATION_CSVLOG))
+	{
+		if (fprintf(fh, "csvlog %s\n", last_csv_file_name) < 0)
+		{
+			ereport(LOG,
+					(errcode_for_file_access(),
+					 errmsg("could not write file \"%s\": %m",
+							LOG_METAINFO_DATAFILE_TMP)));
+			fclose(fh);
+			return;
+		}
+	}
+	fclose(fh);
+
+	if (rename(LOG_METAINFO_DATAFILE_TMP, LOG_METAINFO_DATAFILE) != 0)
+		ereport(LOG,
+				(errcode_for_file_access(),
+				 errmsg("could not rename file \"%s\" to \"%s\": %m",
+						LOG_METAINFO_DATAFILE_TMP, LOG_METAINFO_DATAFILE)));
 }
 
 /* --------------------------------

@@ -17,13 +17,13 @@ dnl Read the Autoconf manual for details.
 dnl
 m4_pattern_forbid(^PGAC_)dnl to catch undefined macros
 
-AC_INIT([PostgreSQL], [10devel], [pgsql-bugs@postgresql.org])
+AC_INIT([PostgreSQL], [11devel], [pgsql-bugs@postgresql.org])
 
 m4_if(m4_defn([m4_PACKAGE_VERSION]), [2.69], [], [m4_fatal([Autoconf version 2.69 is required.
 Untested combinations of 'autoconf' and PostgreSQL versions are not
 recommended.  You can remove the check from 'configure.in' but it is then
 your responsibility whether the result works or not.])])
-AC_COPYRIGHT([Copyright (c) 1996-2017, PostgreSQL Global Development Group])
+AC_COPYRIGHT([Copyright (c) 1996-2018, PostgreSQL Global Development Group])
 AC_CONFIG_SRCDIR([src/backend/access/common/heaptuple.c])
 AC_CONFIG_AUX_DIR(config)
 AC_PREFIX_DEFAULT(/usr/local/pgsql)
@@ -125,13 +125,13 @@ PGAC_ARG_REQ(with, libs,      [DIRS], [alternative spelling of --with-libraries]
 
 
 #
-# 64-bit integer date/time storage: enabled by default.
+# 64-bit integer date/time storage is now the only option, but to avoid
+# unnecessary breakage of build scripts, continue to accept an explicit
+# "--enable-integer-datetimes" switch.
 #
-AC_MSG_CHECKING([whether to build with 64-bit integer date/time support])
-PGAC_ARG_BOOL(enable, integer-datetimes, yes, [disable 64-bit integer date/time support],
-              [AC_DEFINE([USE_INTEGER_DATETIMES], 1,
-                         [Define to 1 if you want 64-bit integer timestamp and interval support. (--enable-integer-datetimes)])])
-AC_MSG_RESULT([$enable_integer_datetimes])
+PGAC_ARG_BOOL(enable, integer-datetimes, yes, [obsolete option, no longer supported],
+              [],
+              [AC_MSG_ERROR([--disable-integer-datetimes is no longer supported])])
 
 
 #
@@ -221,15 +221,15 @@ PGAC_ARG_BOOL(enable, profiling, no,
 #
 PGAC_ARG_BOOL(enable, coverage, no,
               [build with coverage testing instrumentation],
-[AC_CHECK_PROGS(GCOV, gcov)
+[PGAC_PATH_PROGS(GCOV, gcov)
 if test -z "$GCOV"; then
   AC_MSG_ERROR([gcov not found])
 fi
-AC_CHECK_PROGS(LCOV, lcov)
+PGAC_PATH_PROGS(LCOV, lcov)
 if test -z "$LCOV"; then
   AC_MSG_ERROR([lcov not found])
 fi
-AC_CHECK_PROGS(GENHTML, genhtml)
+PGAC_PATH_PROGS(GENHTML, genhtml)
 if test -z "$GENHTML"; then
   AC_MSG_ERROR([genhtml not found])
 fi])
@@ -240,7 +240,7 @@ AC_SUBST(enable_coverage)
 #
 PGAC_ARG_BOOL(enable, dtrace, no,
               [build with DTrace support],
-[AC_CHECK_PROGS(DTRACE, dtrace)
+[PGAC_PATH_PROGS(DTRACE, dtrace)
 if test -z "$DTRACE"; then
   AC_MSG_ERROR([dtrace not found])
 fi
@@ -344,33 +344,6 @@ AC_DEFINE_UNQUOTED([XLOG_BLCKSZ], ${XLOG_BLCKSZ}, [
  buffers, else direct I/O may fail.
 
  Changing XLOG_BLCKSZ requires an initdb.
-])
-
-#
-# WAL segment size
-#
-AC_MSG_CHECKING([for WAL segment size])
-PGAC_ARG_REQ(with, wal-segsize, [SEGSIZE], [set WAL segment size in MB [16]],
-             [wal_segsize=$withval],
-             [wal_segsize=16])
-case ${wal_segsize} in
-  1) ;;
-  2) ;;
-  4) ;;
-  8) ;;
- 16) ;;
- 32) ;;
- 64) ;;
-  *) AC_MSG_ERROR([Invalid WAL segment size. Allowed values are 1,2,4,8,16,32,64.])
-esac
-AC_MSG_RESULT([${wal_segsize}MB])
-
-AC_DEFINE_UNQUOTED([XLOG_SEG_SIZE], [(${wal_segsize} * 1024 * 1024)], [
- XLOG_SEG_SIZE is the size of a single WAL file.  This must be a power of 2
- and larger than XLOG_BLCKSZ (preferably, a great deal larger than
- XLOG_BLCKSZ).
-
- Changing XLOG_SEG_SIZE requires an initdb.
 ])
 
 #
@@ -617,6 +590,19 @@ AC_MSG_RESULT([$enable_thread_safety])
 AC_SUBST(enable_thread_safety)
 
 #
+# ICU
+#
+AC_MSG_CHECKING([whether to build with ICU support])
+PGAC_ARG_BOOL(with, icu, no, [build with ICU support],
+              [AC_DEFINE([USE_ICU], 1, [Define to build with ICU support. (--with-icu)])])
+AC_MSG_RESULT([$with_icu])
+AC_SUBST(with_icu)
+
+if test "$with_icu" = yes; then
+  PKG_CHECK_MODULES(ICU, icu-uc icu-i18n)
+fi
+
+#
 # Optionally build Tcl modules (PL/Tcl)
 #
 AC_MSG_CHECKING([whether to build with Tcl])
@@ -802,7 +788,7 @@ PGAC_ARG_BOOL(with, libxml, no, [build with XML support],
               [AC_DEFINE([USE_LIBXML], 1, [Define to 1 to build with XML support. (--with-libxml)])])
 
 if test "$with_libxml" = yes ; then
-  AC_CHECK_PROGS(XML2_CONFIG, xml2-config)
+  PGAC_PATH_PROGS(XML2_CONFIG, xml2-config)
   if test -n "$XML2_CONFIG"; then
     for pgac_option in `$XML2_CONFIG --cflags`; do
       case $pgac_option in
@@ -898,7 +884,7 @@ case $INSTALL in
 esac
 AC_SUBST(install_bin)
 
-AC_PATH_PROG(TAR, tar)
+PGAC_PATH_PROGS(TAR, tar)
 AC_PROG_LN_S
 AC_PROG_AWK
 AC_PROG_MKDIR_P
@@ -924,6 +910,7 @@ You might have to rebuild your Perl installation.  Refer to the
 documentation for details.  Use --without-perl to disable building
 PL/Perl.])
   fi
+  PGAC_CHECK_PERL_EMBED_CCFLAGS
   PGAC_CHECK_PERL_EMBED_LDFLAGS
 fi
 
@@ -933,7 +920,7 @@ if test "$with_python" = yes; then
 fi
 
 if test "$cross_compiling" = yes && test -z "$with_system_tzdata"; then
-  AC_PATH_PROG(ZIC, zic)
+  PGAC_PATH_PROGS(ZIC, zic)
   if test -z "$ZIC"; then
     AC_MSG_ERROR([
 When cross-compiling, either use the option --with-system-tzdata to use
@@ -1077,10 +1064,10 @@ if test "$with_openssl" = yes ; then
      AC_CHECK_LIB(crypto, CRYPTO_new_ex_data, [], [AC_MSG_ERROR([library 'crypto' is required for OpenSSL])])
      AC_CHECK_LIB(ssl,    SSL_new, [], [AC_MSG_ERROR([library 'ssl' is required for OpenSSL])])
   else
-     AC_SEARCH_LIBS(CRYPTO_new_ex_data, eay32 crypto, [], [AC_MSG_ERROR([library 'eay32' or 'crypto' is required for OpenSSL])])
-     AC_SEARCH_LIBS(SSL_new, ssleay32 ssl, [], [AC_MSG_ERROR([library 'ssleay32' or 'ssl' is required for OpenSSL])])
+     AC_SEARCH_LIBS(CRYPTO_new_ex_data, [eay32 crypto], [], [AC_MSG_ERROR([library 'eay32' or 'crypto' is required for OpenSSL])])
+     AC_SEARCH_LIBS(SSL_new, [ssleay32 ssl], [], [AC_MSG_ERROR([library 'ssleay32' or 'ssl' is required for OpenSSL])])
   fi
-  AC_CHECK_FUNCS([SSL_get_current_compression])
+  AC_CHECK_FUNCS([SSL_get_current_compression X509_get_signature_nid])
   # Functions introduced in OpenSSL 1.1.0. We used to check for
   # OPENSSL_VERSION_NUMBER, but that didn't work with 1.1.0, because LibreSSL
   # defines OPENSSL_VERSION_NUMBER to claim version 2.0.0, even though it
@@ -1122,6 +1109,7 @@ if test "$with_ldap" = yes ; then
     else
       LDAP_LIBS_FE="-lldap $EXTRA_LDAP_LIBS"
     fi
+    AC_CHECK_FUNCS([ldap_initialize])
   else
     AC_CHECK_LIB(wldap32, ldap_bind, [], [AC_MSG_ERROR([library 'wldap32' is required for LDAP])])
     LDAP_LIBS_FE="-lwldap32"
@@ -1165,16 +1153,13 @@ AC_SUBST(UUID_LIBS)
 ## Header files
 ##
 
-dnl sys/socket.h is required by AC_FUNC_ACCEPT_ARGTYPES
-AC_CHECK_HEADERS([atomic.h crypt.h dld.h fp_class.h getopt.h ieeefp.h ifaddrs.h langinfo.h mbarrier.h poll.h pwd.h sys/epoll.h sys/ioctl.h sys/ipc.h sys/poll.h sys/pstat.h sys/resource.h sys/select.h sys/sem.h sys/shm.h sys/socket.h sys/sockio.h sys/tas.h sys/time.h sys/un.h termios.h ucred.h utime.h wchar.h wctype.h])
+AC_CHECK_HEADERS([atomic.h crypt.h dld.h fp_class.h getopt.h ieeefp.h ifaddrs.h langinfo.h mbarrier.h poll.h sys/epoll.h sys/ipc.h sys/pstat.h sys/resource.h sys/select.h sys/sem.h sys/shm.h sys/sockio.h sys/tas.h sys/un.h termios.h ucred.h utime.h wchar.h wctype.h])
 
 # On BSD, test for net/if.h will fail unless sys/socket.h
 # is included first.
 AC_CHECK_HEADERS(net/if.h, [], [],
 [AC_INCLUDES_DEFAULT
-#ifdef HAVE_SYS_SOCKET_H
 #include <sys/socket.h>
-#endif
 ])
 
 # On OpenBSD, test for sys/ucred.h will fail unless sys/param.h
@@ -1186,12 +1171,9 @@ AC_CHECK_HEADERS(sys/ucred.h, [], [],
 
 # At least on IRIX, test for netinet/tcp.h will fail unless
 # netinet/in.h is included first.
-AC_CHECK_HEADERS(netinet/in.h)
 AC_CHECK_HEADERS(netinet/tcp.h, [], [],
 [AC_INCLUDES_DEFAULT
-#ifdef HAVE_NETINET_IN_H
 #include <netinet/in.h>
-#endif
 ])
 
 if expr x"$pgac_cv_check_readline" : 'x-lreadline' >/dev/null ; then
@@ -1284,6 +1266,12 @@ fi
 
 if test "$with_bonjour" = yes ; then
   AC_CHECK_HEADER(dns_sd.h, [], [AC_MSG_ERROR([header file <dns_sd.h> is required for Bonjour])])
+dnl At some point we might add something like
+dnl AC_SEARCH_LIBS(DNSServiceRegister, dns_sd)
+dnl but right now, what that would mainly accomplish is to encourage
+dnl people to try to use the avahi implementation, which does not work.
+dnl If you want to use Apple's own Bonjour code on another platform,
+dnl just add -ldns_sd to LIBS manually.
 fi
 
 # for contrib/uuid-ossp
@@ -1326,11 +1314,14 @@ AC_C_FLEXIBLE_ARRAY_MEMBER
 PGAC_C_SIGNED
 PGAC_C_FUNCNAME_SUPPORT
 PGAC_C_STATIC_ASSERT
+PGAC_C_TYPEOF
 PGAC_C_TYPES_COMPATIBLE
+PGAC_C_BUILTIN_BSWAP16
 PGAC_C_BUILTIN_BSWAP32
 PGAC_C_BUILTIN_BSWAP64
 PGAC_C_BUILTIN_CONSTANT_P
 PGAC_C_BUILTIN_UNREACHABLE
+PGAC_C_COMPUTED_GOTO
 PGAC_C_VA_ARGS
 PGAC_STRUCT_TIMEZONE
 PGAC_UNION_SEMUN
@@ -1343,6 +1334,24 @@ AC_TYPE_UINTPTR_T
 AC_TYPE_LONG_LONG_INT
 
 PGAC_TYPE_LOCALE_T
+
+# MSVC doesn't cope well with defining restrict to __restrict, the
+# spelling it understands, because it conflicts with
+# __declspec(restrict). Therefore we define pg_restrict to the
+# appropriate definition, which presumably won't conflict.
+#
+# Allow platforms with buggy compilers to force restrict to not be
+# used by setting $FORCE_DISABLE_RESTRICT=yes in the relevant
+# template.
+AC_C_RESTRICT
+if test "$ac_cv_c_restrict" = "no" -o "x$FORCE_DISABLE_RESTRICT" = "xyes"; then
+  pg_restrict=""
+else
+  pg_restrict="$ac_cv_c_restrict"
+fi
+AC_DEFINE_UNQUOTED([pg_restrict], [$pg_restrict],
+[Define to keyword to use for C99 restrict support, or to nothing if not
+supported])
 
 AC_CHECK_TYPES([struct cmsgcred], [], [],
 [#include <sys/socket.h>
@@ -1419,7 +1428,7 @@ PGAC_FUNC_WCSTOMBS_L
 LIBS_including_readline="$LIBS"
 LIBS=`echo "$LIBS" | sed -e 's/-ledit//g' -e 's/-lreadline//g'`
 
-AC_CHECK_FUNCS([cbrt clock_gettime dlopen fdatasync getifaddrs getpeerucred getrlimit mbstowcs_l memmove poll pstat pthread_is_threaded_np readlink setproctitle setsid shm_open symlink sync_file_range towlower utime utimes wcstombs wcstombs_l])
+AC_CHECK_FUNCS([cbrt clock_gettime dlopen fdatasync getifaddrs getpeerucred getrlimit mbstowcs_l memmove poll posix_fallocate pstat pthread_is_threaded_np readlink setproctitle setsid shm_open symlink sync_file_range utime utimes wcstombs_l])
 
 AC_REPLACE_FUNCS(fseeko)
 case $host_os in
@@ -1441,7 +1450,7 @@ AC_CHECK_DECLS(posix_fadvise, [], [], [#include <fcntl.h>])
 fi
 
 AC_CHECK_DECLS(fdatasync, [], [], [#include <unistd.h>])
-AC_CHECK_DECLS([strlcat, strlcpy])
+AC_CHECK_DECLS([strlcat, strlcpy, strnlen])
 # This is probably only present on macOS, but may as well check always
 AC_CHECK_DECLS(F_FULLFSYNC, [], [], [#include <fcntl.h>])
 
@@ -1533,7 +1542,7 @@ else
   AC_CHECK_FUNCS([fpclass fp_class fp_class_d class], [break])
 fi
 
-AC_REPLACE_FUNCS([crypt fls getopt getrusage inet_aton mkdtemp random rint srandom strerror strlcat strlcpy])
+AC_REPLACE_FUNCS([crypt fls getopt getrusage inet_aton mkdtemp random rint srandom strerror strlcat strlcpy strnlen])
 
 case $host_os in
 
@@ -1643,6 +1652,17 @@ fi
 AC_CHECK_FUNCS([strtoll strtoq], [break])
 AC_CHECK_FUNCS([strtoull strtouq], [break])
 
+if test "$with_icu" = yes; then
+  ac_save_CPPFLAGS=$CPPFLAGS
+  CPPFLAGS="$ICU_CFLAGS $CPPFLAGS"
+
+  # Verify we have ICU's header files
+  AC_CHECK_HEADER(unicode/ucol.h, [],
+        [AC_MSG_ERROR([header file <unicode/ucol.h> is required for ICU])])
+
+  CPPFLAGS=$ac_save_CPPFLAGS
+fi
+
 # Lastly, restore full LIBS list and check for readline/libedit symbols
 LIBS="$LIBS_including_readline"
 
@@ -1713,18 +1733,6 @@ fi
 AC_DEFINE_UNQUOTED(PG_INT64_TYPE, $pg_int64_type,
   [Define to the name of a signed 64-bit integer type.])
 
-dnl If we need to use "long long int", figure out whether nnnLL notation works.
-
-if test x"$HAVE_LONG_LONG_INT_64" = xyes ; then
-  AC_COMPILE_IFELSE([AC_LANG_SOURCE([
-#define INT64CONST(x)  x##LL
-long long int foo = INT64CONST(0x1234567890123456);
-])],
-	[AC_DEFINE(HAVE_LL_CONSTANTS, 1, [Define to 1 if constants of type 'long long int' should have the suffix LL.])],
-	[])
-fi
-
-
 # If we found "long int" is 64 bits, assume snprintf handles it.  If
 # we found we need to use "long long int", better check.  We cope with
 # snprintfs that use %lld, %qd, or %I64d as the format.  If none of these
@@ -1765,6 +1773,10 @@ if test $pgac_need_repl_snprintf = yes; then
   AC_DEFINE(USE_REPL_SNPRINTF, 1, [Use replacement snprintf() functions.])
   AC_LIBOBJ(snprintf)
 fi
+
+# has to be down here, rather than with the other builtins, because
+# the test uses PG_INT64_TYPE.
+PGAC_C_BUILTIN_OP_OVERFLOW
 
 # Check size of void *, size_t (enables tweaks for > 32bit address space)
 AC_CHECK_SIZEOF([void *])
@@ -1816,7 +1828,10 @@ AC_CHECK_ALIGNOF(double)
 
 # Compute maximum alignment of any basic type.
 # We assume long's alignment is at least as strong as char, short, or int;
-# but we must check long long (if it exists) and double.
+# but we must check long long (if it is being used for int64) and double.
+# Note that we intentionally do not consider any types wider than 64 bits,
+# as allowing MAXIMUM_ALIGNOF to exceed 8 would be too much of a penalty
+# for disk and memory space.
 
 MAX_ALIGNOF=$ac_cv_alignof_long
 if test $MAX_ALIGNOF -lt $ac_cv_alignof_double ; then
@@ -1833,7 +1848,7 @@ AC_DEFINE_UNQUOTED(MAXIMUM_ALIGNOF, $MAX_ALIGNOF, [Define as the maximum alignme
 AC_CHECK_TYPES([int8, uint8, int64, uint64], [], [],
 [#include <stdio.h>])
 
-# Check for extensions offering the integer scalar type __int128.
+# Some compilers offer a 128-bit integer scalar type.
 PGAC_TYPE_128BIT_INT
 
 # Check for various atomic operations now that we have checked how to declare
@@ -2084,26 +2099,28 @@ fi
 #
 # Check for DocBook and tools
 #
-PGAC_PROG_NSGMLS
-PGAC_PROG_JADE
+PGAC_PATH_XMLLINT
 PGAC_CHECK_DOCBOOK(4.2)
-PGAC_PATH_DOCBOOK_STYLESHEETS
-PGAC_PATH_COLLATEINDEX
-AC_CHECK_PROGS(DBTOEPUB, dbtoepub)
-AC_CHECK_PROGS(XMLLINT, xmllint)
-AC_CHECK_PROGS(XSLTPROC, xsltproc)
-AC_CHECK_PROGS(OSX, [osx sgml2xml sx])
+PGAC_PATH_PROGS(DBTOEPUB, dbtoepub)
+PGAC_PATH_PROGS(XSLTPROC, xsltproc)
+PGAC_PATH_PROGS(FOP, fop)
 
 #
 # Check for test tools
 #
 if test "$enable_tap_tests" = yes; then
-  AC_CHECK_PROGS(PROVE, prove)
+  # Check for necessary modules, unless user has specified the "prove" to use;
+  # in that case it's her responsibility to have a working configuration.
+  # (prove might be part of a different Perl installation than perl, eg on
+  # MSys, so the result of AX_PROG_PERL_MODULES could be irrelevant anyway.)
+  if test -z "$PROVE"; then
+    AX_PROG_PERL_MODULES(IPC::Run, ,
+      AC_MSG_ERROR([Perl module IPC::Run is required to run TAP tests]))
+  fi
+  # Now make sure we know where prove is
+  PGAC_PATH_PROGS(PROVE, prove)
   if test -z "$PROVE"; then
     AC_MSG_ERROR([prove not found])
-  fi
-  if test -z "$PERL"; then
-    AC_MSG_ERROR([Perl not found])
   fi
 fi
 
@@ -2179,7 +2196,7 @@ AC_DEFINE_UNQUOTED(PG_VERSION_STR,
 # awk -F is a regex on some platforms, and not on others, so make "." a tab
 [PG_VERSION_NUM="`echo "$PACKAGE_VERSION" | sed 's/[A-Za-z].*$//' |
 tr '.' '	' |
-$AWK '{printf "%d%02d%02d", $1, $2, (NF >= 3) ? $3 : 0}'`"]
+$AWK '{printf "%d%04d", $1, $2}'`"]
 AC_DEFINE_UNQUOTED(PG_VERSION_NUM, $PG_VERSION_NUM, [PostgreSQL version as a number])
 AC_SUBST(PG_VERSION_NUM)
 

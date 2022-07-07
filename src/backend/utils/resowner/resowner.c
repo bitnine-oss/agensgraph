@@ -9,7 +9,7 @@
  * See utils/resowner/README for more info.
  *
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -127,8 +127,8 @@ typedef struct ResourceOwnerData
 
 	/* We can remember up to MAX_RESOWNER_LOCKS references to local locks. */
 	int			nlocks;			/* number of owned locks */
-	LOCALLOCK  *locks[MAX_RESOWNER_LOCKS];		/* list of owned locks */
-}	ResourceOwnerData;
+	LOCALLOCK  *locks[MAX_RESOWNER_LOCKS];	/* list of owned locks */
+}			ResourceOwnerData;
 
 
 /*****************************************************************************
@@ -473,21 +473,8 @@ ResourceOwnerRelease(ResourceOwner owner,
 					 bool isCommit,
 					 bool isTopLevel)
 {
-	/* Rather than PG_TRY at every level of recursion, set it up once */
-	ResourceOwner save;
-
-	save = CurrentResourceOwner;
-	PG_TRY();
-	{
-		ResourceOwnerReleaseInternal(owner, phase, isCommit, isTopLevel);
-	}
-	PG_CATCH();
-	{
-		CurrentResourceOwner = save;
-		PG_RE_THROW();
-	}
-	PG_END_TRY();
-	CurrentResourceOwner = save;
+	/* There's not currently any setup needed before recursing */
+	ResourceOwnerReleaseInternal(owner, phase, isCommit, isTopLevel);
 }
 
 static void
@@ -507,8 +494,7 @@ ResourceOwnerReleaseInternal(ResourceOwner owner,
 
 	/*
 	 * Make CurrentResourceOwner point to me, so that ReleaseBuffer etc don't
-	 * get confused.  We needn't PG_TRY here because the outermost level will
-	 * fix it on error abort.
+	 * get confused.
 	 */
 	save = CurrentResourceOwner;
 	CurrentResourceOwner = owner;
@@ -672,7 +658,7 @@ ResourceOwnerReleaseInternal(ResourceOwner owner,
 
 	/* Let add-on modules get a chance too */
 	for (item = ResourceRelease_callbacks; item; item = item->next)
-		(*item->callback) (phase, isCommit, isTopLevel, item->arg);
+		item->callback(phase, isCommit, isTopLevel, item->arg);
 
 	CurrentResourceOwner = save;
 }

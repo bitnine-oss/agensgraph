@@ -1,24 +1,20 @@
 /*
  * psql - the PostgreSQL interactive terminal
  *
- * Copyright (c) 2000-2017, PostgreSQL Global Development Group
+ * Copyright (c) 2000-2018, PostgreSQL Global Development Group
  *
  * src/bin/psql/startup.c
  */
 #include "postgres_fe.h"
-
-#include <sys/types.h>
 
 #ifndef WIN32
 #include <unistd.h>
 #else							/* WIN32 */
 #include <io.h>
 #include <win32.h>
-#endif   /* WIN32 */
+#endif							/* WIN32 */
 
 #include "getopt_long.h"
-
-#include <locale.h>
 
 #include "command.h"
 #include "common.h"
@@ -83,7 +79,7 @@ struct adhoc_opts
 };
 
 static void parse_psql_options(int argc, char *argv[],
-				   struct adhoc_opts * options);
+				   struct adhoc_opts *options);
 static void simple_action_list_append(SimpleActionList *list,
 						  enum _actions action, const char *val);
 static void process_psqlrc(char *argv0);
@@ -105,7 +101,6 @@ main(int argc, char *argv[])
 	int			successResult;
 	bool		have_password = false;
 	char		password[100];
-	char	   *password_prompt = NULL;
 	bool		new_pass;
 
 	set_pglocale_pgservice(argv[0], PG_TEXTDOMAIN("psql"));
@@ -164,7 +159,14 @@ main(int argc, char *argv[])
 
 	EstablishVariableSpace();
 
+	/* Create variables showing psql version number */
 	SetVariable(pset.vars, "VERSION", PG_VERSION_STR);
+	SetVariable(pset.vars, "VERSION_NAME", PG_VERSION);
+	SetVariable(pset.vars, "VERSION_NUM", CppAsString2(PG_VERSION_NUM));
+
+	/* Initialize variables for last error */
+	SetVariable(pset.vars, "LAST_ERROR_MESSAGE", "");
+	SetVariable(pset.vars, "LAST_ERROR_SQLSTATE", "00000");
 
 	/* Default values for variables (that don't match the result of \unset) */
 	SetVariableBool(pset.vars, "AUTOCOMMIT");
@@ -202,15 +204,14 @@ main(int argc, char *argv[])
 		pset.popt.topt.recordSep.separator_zero = false;
 	}
 
-	if (options.username == NULL)
-		password_prompt = pg_strdup(_("Password: "));
-	else
-		password_prompt = psprintf(_("Password for user %s: "),
-								   options.username);
-
 	if (pset.getPassword == TRI_YES)
 	{
-		simple_prompt(password_prompt, password, sizeof(password), false);
+		/*
+		 * We can't be sure yet of the username that will be used, so don't
+		 * offer a potentially wrong one.  Typical uses of this option are
+		 * noninteractive anyway.
+		 */
+		simple_prompt("Password: ", password, sizeof(password), false);
 		have_password = true;
 	}
 
@@ -249,14 +250,27 @@ main(int argc, char *argv[])
 			!have_password &&
 			pset.getPassword != TRI_NO)
 		{
+			/*
+			 * Before closing the old PGconn, extract the user name that was
+			 * actually connected with --- it might've come out of a URI or
+			 * connstring "database name" rather than options.username.
+			 */
+			const char *realusername = PQuser(pset.db);
+			char	   *password_prompt;
+
+			if (realusername && realusername[0])
+				password_prompt = psprintf(_("Password for user %s: "),
+										   realusername);
+			else
+				password_prompt = pg_strdup(_("Password: "));
 			PQfinish(pset.db);
+
 			simple_prompt(password_prompt, password, sizeof(password), false);
+			free(password_prompt);
 			have_password = true;
 			new_pass = true;
 		}
 	} while (new_pass);
-
-	free(password_prompt);
 
 	if (PQstatus(pset.db) == CONNECTION_BAD)
 	{
@@ -335,6 +349,7 @@ main(int argc, char *argv[])
 			else if (cell->action == ACT_SINGLE_SLASH)
 			{
 				PsqlScanState scan_state;
+				ConditionalStack cond_stack;
 
 				if (pset.echo == PSQL_ECHO_ALL)
 					puts(cell->val);
@@ -343,11 +358,17 @@ main(int argc, char *argv[])
 				psql_scan_setup(scan_state,
 								cell->val, strlen(cell->val),
 								pset.encoding, standard_strings());
+				cond_stack = conditional_stack_create();
+				psql_scan_set_passthrough(scan_state, (void *) cond_stack);
 
-				successResult = HandleSlashCmds(scan_state, NULL) != PSQL_CMD_ERROR
+				successResult = HandleSlashCmds(scan_state,
+												cond_stack,
+												NULL,
+												NULL) != PSQL_CMD_ERROR
 					? EXIT_SUCCESS : EXIT_FAILURE;
 
 				psql_scan_destroy(scan_state);
+				conditional_stack_destroy(cond_stack);
 			}
 			else if (cell->action == ACT_FILE)
 			{
@@ -408,7 +429,7 @@ error:
  */
 
 static void
-parse_psql_options(int argc, char *argv[], struct adhoc_opts * options)
+parse_psql_options(int argc, char *argv[], struct adhoc_opts *options)
 {
 	static struct option long_options[] =
 	{

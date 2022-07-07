@@ -7,6 +7,9 @@ WHERE opc.oid >= 16384 AND NOT amvalidate(opc.oid);
 --------+---------
 (0 rows)
 
+--backslash is used in tests below, installcheck will fail if
+--standard_conforming_string is off
+set standard_conforming_strings=on;
 select show_trgm('');
  show_trgm 
 -----------
@@ -1202,6 +1205,12 @@ select t <-> 'q0987wertyu0988', t from test_trgm order by t <-> 'q0987wertyu0988
       0.5 | qwertyu0987
 (2 rows)
 
+select count(*) from test_trgm where t ~ '[qwerty]{2}-?[qwerty]{2}';
+ count 
+-------
+  1000
+(1 row)
+
 create index trgm_idx on test_trgm using gist (t gist_trgm_ops);
 set enable_seqscan=off;
 select t,similarity(t,'qwertyu0988') as sml from test_trgm where t % 'qwertyu0988' order by sml desc, t;
@@ -2346,6 +2355,12 @@ select t <-> 'q0987wertyu0988', t from test_trgm order by t <-> 'q0987wertyu0988
       0.5 | qwertyu0987
 (2 rows)
 
+select count(*) from test_trgm where t ~ '[qwerty]{2}-?[qwerty]{2}';
+ count 
+-------
+  1000
+(1 row)
+
 drop index trgm_idx;
 create index trgm_idx on test_trgm using gin (t gin_trgm_ops);
 set enable_seqscan=off;
@@ -3475,10 +3490,17 @@ select t,similarity(t,'gwertyu1988') as sml from test_trgm where t % 'gwertyu198
  qwertyu0988 | 0.333333
 (1 row)
 
+select count(*) from test_trgm where t ~ '[qwerty]{2}-?[qwerty]{2}';
+ count 
+-------
+  1000
+(1 row)
+
 create table test2(t text COLLATE "C");
 insert into test2 values ('abcdef');
 insert into test2 values ('quark');
 insert into test2 values ('  z foo bar');
+insert into test2 values ('/123/-45/');
 create index test2_idx_gin on test2 using gin (t gin_trgm_ops);
 set enable_seqscan=off;
 explain (costs off)
@@ -3580,7 +3602,8 @@ select * from test2 where t ~ '(abc)*$';
  abcdef
  quark
    z foo bar
-(3 rows)
+ /123/-45/
+(4 rows)
 
 select * from test2 where t ~* 'DEF';
    t    
@@ -3664,6 +3687,18 @@ select * from test2 where t ~ '  z foo';
       t      
 -------------
    z foo bar
+(1 row)
+
+select * from test2 where t ~ 'qua(?!foo)';
+   t   
+-------
+ quark
+(1 row)
+
+select * from test2 where t ~ '/\d+/-\d';
+     t     
+-----------
+ /123/-45/
 (1 row)
 
 drop index test2_idx_gin;
@@ -3760,7 +3795,8 @@ select * from test2 where t ~ '(abc)*$';
  abcdef
  quark
    z foo bar
-(3 rows)
+ /123/-45/
+(4 rows)
 
 select * from test2 where t ~* 'DEF';
    t    
@@ -3844,6 +3880,18 @@ select * from test2 where t ~ '  z foo';
       t      
 -------------
    z foo bar
+(1 row)
+
+select * from test2 where t ~ 'qua(?!foo)';
+   t   
+-------
+ quark
+(1 row)
+
+select * from test2 where t ~ '/\d+/-\d';
+     t     
+-----------
+ /123/-45/
 (1 row)
 
 -- Check similarity threshold (bug #14202)

@@ -3,7 +3,7 @@
  * hashutil.c
  *	  Utility code for Postgres hash implementation.
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -19,6 +19,7 @@
 #include "access/relscan.h"
 #include "utils/lsyscache.h"
 #include "utils/rel.h"
+#include "storage/buf_internals.h"
 
 #define CALC_NEW_BUCKET(old_bucket, lowmask) \
 			old_bucket | (lowmask + 1)
@@ -84,7 +85,7 @@ _hash_datum2hashkey(Relation rel, Datum key)
 	Oid			collation;
 
 	/* XXX assumes index has only one attribute */
-	procinfo = index_getprocinfo(rel, 1, HASHPROC);
+	procinfo = index_getprocinfo(rel, 1, HASHSTANDARD_PROC);
 	collation = rel->rd_indcollation[0];
 
 	return DatumGetUInt32(FunctionCall1Coll(procinfo, collation, key));
@@ -107,10 +108,10 @@ _hash_datum2hashkey_type(Relation rel, Datum key, Oid keytype)
 	hash_proc = get_opfamily_proc(rel->rd_opfamily[0],
 								  keytype,
 								  keytype,
-								  HASHPROC);
+								  HASHSTANDARD_PROC);
 	if (!RegProcedureIsValid(hash_proc))
 		elog(ERROR, "missing support function %d(%u,%u) for index \"%s\"",
-			 HASHPROC, keytype, keytype,
+			 HASHSTANDARD_PROC, keytype, keytype,
 			 RelationGetRelationName(rel));
 	collation = rel->rd_indcollation[0];
 
@@ -149,10 +150,76 @@ _hash_log2(uint32 num)
 }
 
 /*
+ * _hash_spareindex -- returns spare index / global splitpoint phase of the
+ *					   bucket
+ */
+uint32
+_hash_spareindex(uint32 num_bucket)
+{
+	uint32		splitpoint_group;
+	uint32		splitpoint_phases;
+
+	splitpoint_group = _hash_log2(num_bucket);
+
+	if (splitpoint_group < HASH_SPLITPOINT_GROUPS_WITH_ONE_PHASE)
+		return splitpoint_group;
+
+	/* account for single-phase groups */
+	splitpoint_phases = HASH_SPLITPOINT_GROUPS_WITH_ONE_PHASE;
+
+	/* account for multi-phase groups before splitpoint_group */
+	splitpoint_phases +=
+		((splitpoint_group - HASH_SPLITPOINT_GROUPS_WITH_ONE_PHASE) <<
+		 HASH_SPLITPOINT_PHASE_BITS);
+
+	/* account for phases within current group */
+	splitpoint_phases +=
+		(((num_bucket - 1) >>
+		  (splitpoint_group - (HASH_SPLITPOINT_PHASE_BITS + 1))) &
+		 HASH_SPLITPOINT_PHASE_MASK);	/* to 0-based value. */
+
+	return splitpoint_phases;
+}
+
+/*
+ *	_hash_get_totalbuckets -- returns total number of buckets allocated till
+ *							the given splitpoint phase.
+ */
+uint32
+_hash_get_totalbuckets(uint32 splitpoint_phase)
+{
+	uint32		splitpoint_group;
+	uint32		total_buckets;
+	uint32		phases_within_splitpoint_group;
+
+	if (splitpoint_phase < HASH_SPLITPOINT_GROUPS_WITH_ONE_PHASE)
+		return (1 << splitpoint_phase);
+
+	/* get splitpoint's group */
+	splitpoint_group = HASH_SPLITPOINT_GROUPS_WITH_ONE_PHASE;
+	splitpoint_group +=
+		((splitpoint_phase - HASH_SPLITPOINT_GROUPS_WITH_ONE_PHASE) >>
+		 HASH_SPLITPOINT_PHASE_BITS);
+
+	/* account for buckets before splitpoint_group */
+	total_buckets = (1 << (splitpoint_group - 1));
+
+	/* account for buckets within splitpoint_group */
+	phases_within_splitpoint_group =
+		(((splitpoint_phase - HASH_SPLITPOINT_GROUPS_WITH_ONE_PHASE) &
+		  HASH_SPLITPOINT_PHASE_MASK) + 1); /* from 0-based to 1-based */
+	total_buckets +=
+		(((1 << (splitpoint_group - 1)) >> HASH_SPLITPOINT_PHASE_BITS) *
+		 phases_within_splitpoint_group);
+
+	return total_buckets;
+}
+
+/*
  * _hash_checkpage -- sanity checks on the format of all hash pages
  *
- * If flags is not zero, it is a bitwise OR of the acceptable values of
- * hasho_flag.
+ * If flags is not zero, it is a bitwise OR of the acceptable page types
+ * (values of hasho_flag & LH_PAGE_TYPE).
  */
 void
 _hash_checkpage(Relation rel, Buffer buf, int flags)
@@ -168,9 +235,9 @@ _hash_checkpage(Relation rel, Buffer buf, int flags)
 	if (PageIsNew(page))
 		ereport(ERROR,
 				(errcode(ERRCODE_INDEX_CORRUPTED),
-			 errmsg("index \"%s\" contains unexpected zero page at block %u",
-					RelationGetRelationName(rel),
-					BufferGetBlockNumber(buf)),
+				 errmsg("index \"%s\" contains unexpected zero page at block %u",
+						RelationGetRelationName(rel),
+						BufferGetBlockNumber(buf)),
 				 errhint("Please REINDEX it.")));
 
 	/*
@@ -191,9 +258,9 @@ _hash_checkpage(Relation rel, Buffer buf, int flags)
 		if ((opaque->hasho_flag & flags) == 0)
 			ereport(ERROR,
 					(errcode(ERRCODE_INDEX_CORRUPTED),
-				   errmsg("index \"%s\" contains corrupted page at block %u",
-						  RelationGetRelationName(rel),
-						  BufferGetBlockNumber(buf)),
+					 errmsg("index \"%s\" contains corrupted page at block %u",
+							RelationGetRelationName(rel),
+							BufferGetBlockNumber(buf)),
 					 errhint("Please REINDEX it.")));
 	}
 
@@ -445,4 +512,118 @@ _hash_get_newbucket_from_oldbucket(Relation rel, Bucket old_bucket,
 	}
 
 	return new_bucket;
+}
+
+/*
+ * _hash_kill_items - set LP_DEAD state for items an indexscan caller has
+ * told us were killed.
+ *
+ * scan->opaque, referenced locally through so, contains information about the
+ * current page and killed tuples thereon (generally, this should only be
+ * called if so->numKilled > 0).
+ *
+ * The caller does not have a lock on the page and may or may not have the
+ * page pinned in a buffer.  Note that read-lock is sufficient for setting
+ * LP_DEAD status (which is only a hint).
+ *
+ * The caller must have pin on bucket buffer, but may or may not have pin
+ * on overflow buffer, as indicated by HashScanPosIsPinned(so->currPos).
+ *
+ * We match items by heap TID before assuming they are the right ones to
+ * delete.
+ *
+ * There are never any scans active in a bucket at the time VACUUM begins,
+ * because VACUUM takes a cleanup lock on the primary bucket page and scans
+ * hold a pin.  A scan can begin after VACUUM leaves the primary bucket page
+ * but before it finishes the entire bucket, but it can never pass VACUUM,
+ * because VACUUM always locks the next page before releasing the lock on
+ * the previous one.  Therefore, we don't have to worry about accidentally
+ * killing a TID that has been reused for an unrelated tuple.
+ */
+void
+_hash_kill_items(IndexScanDesc scan)
+{
+	HashScanOpaque so = (HashScanOpaque) scan->opaque;
+	Relation	rel = scan->indexRelation;
+	BlockNumber blkno;
+	Buffer		buf;
+	Page		page;
+	HashPageOpaque opaque;
+	OffsetNumber offnum,
+				maxoff;
+	int			numKilled = so->numKilled;
+	int			i;
+	bool		killedsomething = false;
+	bool		havePin = false;
+
+	Assert(so->numKilled > 0);
+	Assert(so->killedItems != NULL);
+	Assert(HashScanPosIsValid(so->currPos));
+
+	/*
+	 * Always reset the scan state, so we don't look for same items on other
+	 * pages.
+	 */
+	so->numKilled = 0;
+
+	blkno = so->currPos.currPage;
+	if (HashScanPosIsPinned(so->currPos))
+	{
+		/*
+		 * We already have pin on this buffer, so, all we need to do is
+		 * acquire lock on it.
+		 */
+		havePin = true;
+		buf = so->currPos.buf;
+		LockBuffer(buf, BUFFER_LOCK_SHARE);
+	}
+	else
+		buf = _hash_getbuf(rel, blkno, HASH_READ, LH_OVERFLOW_PAGE);
+
+	page = BufferGetPage(buf);
+	opaque = (HashPageOpaque) PageGetSpecialPointer(page);
+	maxoff = PageGetMaxOffsetNumber(page);
+
+	for (i = 0; i < numKilled; i++)
+	{
+		int			itemIndex = so->killedItems[i];
+		HashScanPosItem *currItem = &so->currPos.items[itemIndex];
+
+		offnum = currItem->indexOffset;
+
+		Assert(itemIndex >= so->currPos.firstItem &&
+			   itemIndex <= so->currPos.lastItem);
+
+		while (offnum <= maxoff)
+		{
+			ItemId		iid = PageGetItemId(page, offnum);
+			IndexTuple	ituple = (IndexTuple) PageGetItem(page, iid);
+
+			if (ItemPointerEquals(&ituple->t_tid, &currItem->heapTid))
+			{
+				/* found the item */
+				ItemIdMarkDead(iid);
+				killedsomething = true;
+				break;			/* out of inner search loop */
+			}
+			offnum = OffsetNumberNext(offnum);
+		}
+	}
+
+	/*
+	 * Since this can be redone later if needed, mark as dirty hint. Whenever
+	 * we mark anything LP_DEAD, we also set the page's
+	 * LH_PAGE_HAS_DEAD_TUPLES flag, which is likewise just a hint.
+	 */
+	if (killedsomething)
+	{
+		opaque->hasho_flag |= LH_PAGE_HAS_DEAD_TUPLES;
+		MarkBufferDirtyHint(buf, true);
+	}
+
+	if (so->hashso_bucket_buf == so->currPos.buf ||
+		havePin)
+		LockBuffer(so->currPos.buf, BUFFER_LOCK_UNLOCK);
+	else
+		_hash_relbuf(rel, buf);
 }

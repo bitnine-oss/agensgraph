@@ -4,7 +4,7 @@
  *
  *	  Routines for opclass (and opfamily) manipulation commands
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -18,6 +18,7 @@
 #include <limits.h>
 
 #include "access/genam.h"
+#include "access/hash.h"
 #include "access/heapam.h"
 #include "access/nbtree.h"
 #include "access/htup_details.h"
@@ -238,7 +239,7 @@ get_opclass_oid(Oid amID, List *opclassname, bool missing_ok)
  * Caller must have done permissions checks etc. already.
  */
 static ObjectAddress
-CreateOpFamily(char *amname, char *opfname, Oid namespaceoid, Oid amoid)
+CreateOpFamily(const char *amname, const char *opfname, Oid namespaceoid, Oid amoid)
 {
 	Oid			opfamilyoid;
 	Relation	rel;
@@ -352,7 +353,7 @@ DefineOpClass(CreateOpClassStmt *stmt)
 	/* Check we have creation rights in target namespace */
 	aclresult = pg_namespace_aclcheck(namespaceoid, GetUserId(), ACL_CREATE);
 	if (aclresult != ACLCHECK_OK)
-		aclcheck_error(aclresult, ACL_KIND_NAMESPACE,
+		aclcheck_error(aclresult, OBJECT_SCHEMA,
 					   get_namespace_name(namespaceoid));
 
 	/* Get necessary info about access method */
@@ -460,7 +461,7 @@ DefineOpClass(CreateOpClassStmt *stmt)
 	 */
 	foreach(l, stmt->items)
 	{
-		CreateOpClassItem *item = castNode(CreateOpClassItem, lfirst(l));
+		CreateOpClassItem *item = lfirst_node(CreateOpClassItem, l);
 		Oid			operOid;
 		Oid			funcOid;
 		Oid			sortfamilyOid;
@@ -475,19 +476,12 @@ DefineOpClass(CreateOpClassStmt *stmt)
 							 errmsg("invalid operator number %d,"
 									" must be between 1 and %d",
 									item->number, maxOpNumber)));
-				if (item->args != NIL)
-				{
-					TypeName   *typeName1 = (TypeName *) linitial(item->args);
-					TypeName   *typeName2 = (TypeName *) lsecond(item->args);
-
-					operOid = LookupOperNameTypeNames(NULL, item->name,
-													  typeName1, typeName2,
-													  false, -1);
-				}
+				if (item->name->objargs != NIL)
+					operOid = LookupOperWithArgs(item->name, false);
 				else
 				{
 					/* Default to binary op on input datatype */
-					operOid = LookupOperName(NULL, item->name,
+					operOid = LookupOperName(NULL, item->name->objname,
 											 typeoid, typeoid,
 											 false, -1);
 				}
@@ -503,11 +497,11 @@ DefineOpClass(CreateOpClassStmt *stmt)
 				/* XXX this is unnecessary given the superuser check above */
 				/* Caller must own operator and its underlying function */
 				if (!pg_oper_ownercheck(operOid, GetUserId()))
-					aclcheck_error(ACLCHECK_NOT_OWNER, ACL_KIND_OPER,
+					aclcheck_error(ACLCHECK_NOT_OWNER, OBJECT_OPERATOR,
 								   get_opname(operOid));
 				funcOid = get_opcode(operOid);
 				if (!pg_proc_ownercheck(funcOid, GetUserId()))
-					aclcheck_error(ACLCHECK_NOT_OWNER, ACL_KIND_PROC,
+					aclcheck_error(ACLCHECK_NOT_OWNER, OBJECT_FUNCTION,
 								   get_func_name(funcOid));
 #endif
 
@@ -526,13 +520,12 @@ DefineOpClass(CreateOpClassStmt *stmt)
 							 errmsg("invalid procedure number %d,"
 									" must be between 1 and %d",
 									item->number, maxProcNumber)));
-				funcOid = LookupFuncNameTypeNames(item->name, item->args,
-												  false);
+				funcOid = LookupFuncWithArgs(OBJECT_FUNCTION, item->name, false);
 #ifdef NOT_USED
 				/* XXX this is unnecessary given the superuser check above */
 				/* Caller must own function */
 				if (!pg_proc_ownercheck(funcOid, GetUserId()))
-					aclcheck_error(ACLCHECK_NOT_OWNER, ACL_KIND_PROC,
+					aclcheck_error(ACLCHECK_NOT_OWNER, OBJECT_FUNCTION,
 								   get_func_name(funcOid));
 #endif
 
@@ -553,7 +546,7 @@ DefineOpClass(CreateOpClassStmt *stmt)
 				if (OidIsValid(storageoid))
 					ereport(ERROR,
 							(errcode(ERRCODE_INVALID_OBJECT_DEFINITION),
-						   errmsg("storage type specified more than once")));
+							 errmsg("storage type specified more than once")));
 				storageoid = typenameTypeId(NULL, item->storedtype);
 
 #ifdef NOT_USED
@@ -627,8 +620,8 @@ DefineOpClass(CreateOpClassStmt *stmt)
 						 errmsg("could not make operator class \"%s\" be default for type %s",
 								opcname,
 								TypeNameToString(stmt->datatype)),
-				   errdetail("Operator class \"%s\" already is the default.",
-							 NameStr(opclass->opcname))));
+						 errdetail("Operator class \"%s\" already is the default.",
+								   NameStr(opclass->opcname))));
 		}
 
 		systable_endscan(scan);
@@ -737,7 +730,7 @@ DefineOpFamily(CreateOpFamilyStmt *stmt)
 	/* Check we have creation rights in target namespace */
 	aclresult = pg_namespace_aclcheck(namespaceoid, GetUserId(), ACL_CREATE);
 	if (aclresult != ACLCHECK_OK)
-		aclcheck_error(aclresult, ACL_KIND_NAMESPACE,
+		aclcheck_error(aclresult, OBJECT_SCHEMA,
 					   get_namespace_name(namespaceoid));
 
 	/* Get access method OID, throwing an error if it doesn't exist. */
@@ -842,7 +835,7 @@ AlterOpFamilyAdd(AlterOpFamilyStmt *stmt, Oid amoid, Oid opfamilyoid,
 	 */
 	foreach(l, items)
 	{
-		CreateOpClassItem *item = castNode(CreateOpClassItem, lfirst(l));
+		CreateOpClassItem *item = lfirst_node(CreateOpClassItem, l);
 		Oid			operOid;
 		Oid			funcOid;
 		Oid			sortfamilyOid;
@@ -857,21 +850,14 @@ AlterOpFamilyAdd(AlterOpFamilyStmt *stmt, Oid amoid, Oid opfamilyoid,
 							 errmsg("invalid operator number %d,"
 									" must be between 1 and %d",
 									item->number, maxOpNumber)));
-				if (item->args != NIL)
-				{
-					TypeName   *typeName1 = (TypeName *) linitial(item->args);
-					TypeName   *typeName2 = (TypeName *) lsecond(item->args);
-
-					operOid = LookupOperNameTypeNames(NULL, item->name,
-													  typeName1, typeName2,
-													  false, -1);
-				}
+				if (item->name->objargs != NIL)
+					operOid = LookupOperWithArgs(item->name, false);
 				else
 				{
 					ereport(ERROR,
 							(errcode(ERRCODE_SYNTAX_ERROR),
 							 errmsg("operator argument types must be specified in ALTER OPERATOR FAMILY")));
-					operOid = InvalidOid;		/* keep compiler quiet */
+					operOid = InvalidOid;	/* keep compiler quiet */
 				}
 
 				if (item->order_family)
@@ -885,11 +871,11 @@ AlterOpFamilyAdd(AlterOpFamilyStmt *stmt, Oid amoid, Oid opfamilyoid,
 				/* XXX this is unnecessary given the superuser check above */
 				/* Caller must own operator and its underlying function */
 				if (!pg_oper_ownercheck(operOid, GetUserId()))
-					aclcheck_error(ACLCHECK_NOT_OWNER, ACL_KIND_OPER,
+					aclcheck_error(ACLCHECK_NOT_OWNER, OBJECT_OPERATOR,
 								   get_opname(operOid));
 				funcOid = get_opcode(operOid);
 				if (!pg_proc_ownercheck(funcOid, GetUserId()))
-					aclcheck_error(ACLCHECK_NOT_OWNER, ACL_KIND_PROC,
+					aclcheck_error(ACLCHECK_NOT_OWNER, OBJECT_FUNCTION,
 								   get_func_name(funcOid));
 #endif
 
@@ -908,13 +894,12 @@ AlterOpFamilyAdd(AlterOpFamilyStmt *stmt, Oid amoid, Oid opfamilyoid,
 							 errmsg("invalid procedure number %d,"
 									" must be between 1 and %d",
 									item->number, maxProcNumber)));
-				funcOid = LookupFuncNameTypeNames(item->name, item->args,
-												  false);
+				funcOid = LookupFuncWithArgs(OBJECT_FUNCTION, item->name, false);
 #ifdef NOT_USED
 				/* XXX this is unnecessary given the superuser check above */
 				/* Caller must own function */
 				if (!pg_proc_ownercheck(funcOid, GetUserId()))
-					aclcheck_error(ACLCHECK_NOT_OWNER, ACL_KIND_PROC,
+					aclcheck_error(ACLCHECK_NOT_OWNER, OBJECT_FUNCTION,
 								   get_func_name(funcOid));
 #endif
 
@@ -975,7 +960,7 @@ AlterOpFamilyDrop(AlterOpFamilyStmt *stmt, Oid amoid, Oid opfamilyoid,
 	 */
 	foreach(l, items)
 	{
-		CreateOpClassItem *item = castNode(CreateOpClassItem, lfirst(l));
+		CreateOpClassItem *item = lfirst_node(CreateOpClassItem, l);
 		Oid			lefttype,
 					righttype;
 		OpFamilyMember *member;
@@ -989,7 +974,7 @@ AlterOpFamilyDrop(AlterOpFamilyStmt *stmt, Oid amoid, Oid opfamilyoid,
 							 errmsg("invalid operator number %d,"
 									" must be between 1 and %d",
 									item->number, maxOpNumber)));
-				processTypesSpec(item->args, &lefttype, &righttype);
+				processTypesSpec(item->class_args, &lefttype, &righttype);
 				/* Save the info */
 				member = (OpFamilyMember *) palloc0(sizeof(OpFamilyMember));
 				member->number = item->number;
@@ -1004,7 +989,7 @@ AlterOpFamilyDrop(AlterOpFamilyStmt *stmt, Oid amoid, Oid opfamilyoid,
 							 errmsg("invalid procedure number %d,"
 									" must be between 1 and %d",
 									item->number, maxProcNumber)));
-				processTypesSpec(item->args, &lefttype, &righttype);
+				processTypesSpec(item->class_args, &lefttype, &righttype);
 				/* Save the info */
 				member = (OpFamilyMember *) palloc0(sizeof(OpFamilyMember));
 				member->number = item->number;
@@ -1101,8 +1086,8 @@ assignOperTypes(OpFamilyMember *member, Oid amoid, Oid typeoid)
 		if (!amroutine->amcanorderbyop)
 			ereport(ERROR,
 					(errcode(ERRCODE_INVALID_OBJECT_DEFINITION),
-			errmsg("access method \"%s\" does not support ordering operators",
-				   get_am_name(amoid))));
+					 errmsg("access method \"%s\" does not support ordering operators",
+							get_am_name(amoid))));
 	}
 	else
 	{
@@ -1143,9 +1128,11 @@ assignProcTypes(OpFamilyMember *member, Oid amoid, Oid typeoid)
 	procform = (Form_pg_proc) GETSTRUCT(proctup);
 
 	/*
-	 * btree comparison procs must be 2-arg procs returning int4, while btree
-	 * sortsupport procs must take internal and return void.  hash support
-	 * procs must be 1-arg procs returning int4.  Otherwise we don't know.
+	 * btree comparison procs must be 2-arg procs returning int4.  btree
+	 * sortsupport procs must take internal and return void.  btree in_range
+	 * procs must be 5-arg procs returning bool.  hash support proc 1 must be
+	 * a 1-arg proc returning int4, while proc 2 must be a 2-arg proc
+	 * returning int8.  Otherwise we don't know.
 	 */
 	if (amoid == BTREE_AM_OID)
 	{
@@ -1158,7 +1145,7 @@ assignProcTypes(OpFamilyMember *member, Oid amoid, Oid typeoid)
 			if (procform->prorettype != INT4OID)
 				ereport(ERROR,
 						(errcode(ERRCODE_INVALID_OBJECT_DEFINITION),
-				 errmsg("btree comparison procedures must return integer")));
+						 errmsg("btree comparison procedures must return integer")));
 
 			/*
 			 * If lefttype/righttype isn't specified, use the proc's input
@@ -1179,23 +1166,57 @@ assignProcTypes(OpFamilyMember *member, Oid amoid, Oid typeoid)
 			if (procform->prorettype != VOIDOID)
 				ereport(ERROR,
 						(errcode(ERRCODE_INVALID_OBJECT_DEFINITION),
-				  errmsg("btree sort support procedures must return void")));
+						 errmsg("btree sort support procedures must return void")));
 
 			/*
 			 * Can't infer lefttype/righttype from proc, so use default rule
 			 */
 		}
+		else if (member->number == BTINRANGE_PROC)
+		{
+			if (procform->pronargs != 5)
+				ereport(ERROR,
+						(errcode(ERRCODE_INVALID_OBJECT_DEFINITION),
+						 errmsg("btree in_range procedures must have five arguments")));
+			if (procform->prorettype != BOOLOID)
+				ereport(ERROR,
+						(errcode(ERRCODE_INVALID_OBJECT_DEFINITION),
+						 errmsg("btree in_range procedures must return boolean")));
+
+			/*
+			 * If lefttype/righttype isn't specified, use the proc's input
+			 * types (we look at the test-value and offset arguments)
+			 */
+			if (!OidIsValid(member->lefttype))
+				member->lefttype = procform->proargtypes.values[0];
+			if (!OidIsValid(member->righttype))
+				member->righttype = procform->proargtypes.values[2];
+		}
 	}
 	else if (amoid == HASH_AM_OID)
 	{
-		if (procform->pronargs != 1)
-			ereport(ERROR,
-					(errcode(ERRCODE_INVALID_OBJECT_DEFINITION),
-					 errmsg("hash procedures must have one argument")));
-		if (procform->prorettype != INT4OID)
-			ereport(ERROR,
-					(errcode(ERRCODE_INVALID_OBJECT_DEFINITION),
-					 errmsg("hash procedures must return integer")));
+		if (member->number == HASHSTANDARD_PROC)
+		{
+			if (procform->pronargs != 1)
+				ereport(ERROR,
+						(errcode(ERRCODE_INVALID_OBJECT_DEFINITION),
+						 errmsg("hash procedure 1 must have one argument")));
+			if (procform->prorettype != INT4OID)
+				ereport(ERROR,
+						(errcode(ERRCODE_INVALID_OBJECT_DEFINITION),
+						 errmsg("hash procedure 1 must return integer")));
+		}
+		else if (member->number == HASHEXTENDED_PROC)
+		{
+			if (procform->pronargs != 2)
+				ereport(ERROR,
+						(errcode(ERRCODE_INVALID_OBJECT_DEFINITION),
+						 errmsg("hash procedure 2 must have two arguments")));
+			if (procform->prorettype != INT8OID)
+				ereport(ERROR,
+						(errcode(ERRCODE_INVALID_OBJECT_DEFINITION),
+						 errmsg("hash procedure 2 must return bigint")));
+		}
 
 		/*
 		 * If lefttype/righttype isn't specified, use the proc's input type

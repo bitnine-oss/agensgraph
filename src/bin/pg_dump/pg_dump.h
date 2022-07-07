@@ -3,7 +3,7 @@
  * pg_dump.h
  *	  Common header file for the pg_dump utility
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/bin/pg_dump/pg_dump.h
@@ -56,6 +56,8 @@ typedef enum
 	DO_TABLE,
 	DO_ATTRDEF,
 	DO_INDEX,
+	DO_INDEX_ATTACH,
+	DO_STATSEXT,
 	DO_RULE,
 	DO_TRIGGER,
 	DO_CONSTRAINT,
@@ -132,7 +134,7 @@ typedef struct _dumpableObject
 	char	   *name;			/* object name (should never be NULL) */
 	struct _namespaceInfo *namespace;	/* containing namespace, or NULL */
 	DumpComponents dump;		/* bitmask of components to dump */
-	DumpComponents dump_contains;		/* as above, but for contained objects */
+	DumpComponents dump_contains;	/* as above, but for contained objects */
 	bool		ext_member;		/* true if object is member of extension */
 	DumpId	   *dependencies;	/* dumpIds of objects this one depends on */
 	int			nDeps;			/* number of valid dependencies */
@@ -270,7 +272,7 @@ typedef struct _tableInfo
 	char	   *reltablespace;	/* relation tablespace */
 	char	   *reloptions;		/* options specified by WITH (...) */
 	char	   *checkoption;	/* WITH CHECK OPTION, if any */
-	char	   *toast_reloptions;		/* WITH options for the TOAST table */
+	char	   *toast_reloptions;	/* WITH options for the TOAST table */
 	bool		hasindex;		/* does it have any indexes? */
 	bool		hasrules;		/* does it have any rules? */
 	bool		hastriggers;	/* does it have any triggers? */
@@ -287,11 +289,13 @@ typedef struct _tableInfo
 	/* these two are set only if table is a sequence owned by a column: */
 	Oid			owning_tab;		/* OID of table owning sequence */
 	int			owning_col;		/* attr # of column owning sequence */
+	bool		is_identity_sequence;
 	int			relpages;		/* table's size in pages (from pg_class) */
 
 	bool		interesting;	/* true if need to collect more data */
 	bool		dummy_view;		/* view's real definition must be postponed */
 	bool		postponed_def;	/* matview must be postponed into post-data */
+	bool		ispartition;	/* is table a partition? */
 
 	/*
 	 * These fields are computed only if we decide the table is interesting
@@ -305,6 +309,7 @@ typedef struct _tableInfo
 	char	   *attstorage;		/* attribute storage scheme */
 	char	   *typstorage;		/* type storage scheme */
 	bool	   *attisdropped;	/* true if attr is dropped; don't dump it */
+	char	   *attidentity;
 	int		   *attlen;			/* attribute length, used by binary_upgrade */
 	char	   *attalign;		/* attribute align, used by binary_upgrade */
 	bool	   *attislocal;		/* true if attr has local definition */
@@ -313,20 +318,22 @@ typedef struct _tableInfo
 	char	  **attfdwoptions;	/* per-attribute fdw options */
 	bool	   *notnull;		/* NOT NULL constraints on attributes */
 	bool	   *inhNotNull;		/* true if NOT NULL is inherited */
-	struct _attrDefInfo **attrdefs;		/* DEFAULT expressions */
+	struct _attrDefInfo **attrdefs; /* DEFAULT expressions */
 	struct _constraintInfo *checkexprs; /* CHECK constraints */
 	char	   *partkeydef;		/* partition key definition */
+	char	   *partbound;		/* partition bound definition */
+	bool		needs_override; /* has GENERATED ALWAYS AS IDENTITY */
 
 	/*
 	 * Stuff computed only for dumpable tables.
 	 */
 	int			numParents;		/* number of (immediate) parent tables */
 	struct _tableInfo **parents;	/* TableInfos of immediate parents */
-	struct _tableDataInfo *dataObj;		/* TableDataInfo, if dumping its data */
+	int			numIndexes;		/* number of indexes */
+	struct _indxInfo *indexes;	/* indexes */
+	struct _tableDataInfo *dataObj; /* TableDataInfo, if dumping its data */
 	int			numTriggers;	/* number of triggers for table */
-	struct _triggerInfo *triggers;		/* array of TriggerInfo structs */
-	struct _tableInfo *partitionOf;	/* TableInfo for the partition parent */
-	char	   *partitiondef;		/* partition key definition */
+	struct _triggerInfo *triggers;	/* array of TriggerInfo structs */
 } TableInfo;
 
 typedef struct _attrDefInfo
@@ -335,7 +342,7 @@ typedef struct _attrDefInfo
 	TableInfo  *adtable;		/* link to table of attribute */
 	int			adnum;
 	char	   *adef_expr;		/* decompiled DEFAULT expression */
-	bool		separate;		/* TRUE if must dump as separate item */
+	bool		separate;		/* true if must dump as separate item */
 } AttrDefInfo;
 
 typedef struct _tableDataInfo
@@ -357,10 +364,24 @@ typedef struct _indxInfo
 	Oid		   *indkeys;
 	bool		indisclustered;
 	bool		indisreplident;
+	Oid			parentidx;		/* if partitioned, parent index OID */
 	/* if there is an associated constraint object, its dumpId: */
 	DumpId		indexconstraint;
 	int			relpages;		/* relpages of the underlying table */
 } IndxInfo;
+
+typedef struct _indexAttachInfo
+{
+	DumpableObject dobj;
+	IndxInfo   *parentIdx;		/* link to index on partitioned table */
+	IndxInfo   *partitionIdx;	/* link to index on partition */
+} IndexAttachInfo;
+
+typedef struct _statsExtInfo
+{
+	DumpableObject dobj;
+	char	   *rolname;		/* name of owner, or empty string */
+} StatsExtInfo;
 
 typedef struct _ruleInfo
 {
@@ -369,7 +390,7 @@ typedef struct _ruleInfo
 	char		ev_type;
 	bool		is_instead;
 	char		ev_enabled;
-	bool		separate;		/* TRUE if must dump as separate item */
+	bool		separate;		/* true if must dump as separate item */
 	/* separate is always true for non-ON SELECT rules */
 } RuleInfo;
 
@@ -419,10 +440,10 @@ typedef struct _constraintInfo
 	char	   *condef;			/* definition, if CHECK or FOREIGN KEY */
 	Oid			confrelid;		/* referenced table, if FOREIGN KEY */
 	DumpId		conindex;		/* identifies associated index if any */
-	bool		condeferrable;	/* TRUE if constraint is DEFERRABLE */
-	bool		condeferred;	/* TRUE if constraint is INITIALLY DEFERRED */
-	bool		conislocal;		/* TRUE if constraint has local definition */
-	bool		separate;		/* TRUE if must dump as separate item */
+	bool		condeferrable;	/* true if constraint is DEFERRABLE */
+	bool		condeferred;	/* true if constraint is INITIALLY DEFERRED */
+	bool		conislocal;		/* true if constraint has local definition */
+	bool		separate;		/* true if must dump as separate item */
 } ConstraintInfo;
 
 typedef struct _procLangInfo
@@ -464,15 +485,6 @@ typedef struct _inhInfo
 	Oid			inhrelid;		/* OID of a child table */
 	Oid			inhparent;		/* OID of its parent */
 } InhInfo;
-
-/* PartInfo isn't a DumpableObject, just temporary state */
-typedef struct _partInfo
-{
-	Oid			partrelid;		/* OID of a partition */
-	Oid			partparent;		/* OID of its parent */
-	char	   *partdef;		/* partition bound definition */
-} PartInfo;
-
 
 typedef struct _prsInfo
 {
@@ -603,9 +615,9 @@ typedef struct _SubscriptionInfo
 {
 	DumpableObject dobj;
 	char	   *rolname;
-	bool		subenabled;
 	char	   *subconninfo;
 	char	   *subslotname;
+	char	   *subsynccommit;
 	char	   *subpublications;
 } SubscriptionInfo;
 
@@ -680,8 +692,8 @@ extern ConvInfo *getConversions(Archive *fout, int *numConversions);
 extern TableInfo *getTables(Archive *fout, int *numTables);
 extern void getOwnedSeqs(Archive *fout, TableInfo tblinfo[], int numTables);
 extern InhInfo *getInherits(Archive *fout, int *numInherits);
-extern PartInfo *getPartitions(Archive *fout, int *numPartitions);
 extern void getIndexes(Archive *fout, TableInfo tblinfo[], int numTables);
+extern void getExtendedStatistics(Archive *fout);
 extern void getConstraints(Archive *fout, TableInfo tblinfo[], int numTables);
 extern RuleInfo *getRules(Archive *fout, int *numRules);
 extern void getTriggers(Archive *fout, TableInfo tblinfo[], int numTables);
@@ -705,10 +717,9 @@ extern void processExtensionTables(Archive *fout, ExtensionInfo extinfo[],
 					   int numExtensions);
 extern EventTriggerInfo *getEventTriggers(Archive *fout, int *numEventTriggers);
 extern void getPolicies(Archive *fout, TableInfo tblinfo[], int numTables);
-extern void getTablePartitionKeyInfo(Archive *fout, TableInfo *tblinfo, int numTables);
 extern void getPublications(Archive *fout);
 extern void getPublicationTables(Archive *fout, TableInfo tblinfo[],
-								 int numTables);
+					 int numTables);
 extern void getSubscriptions(Archive *fout);
 
-#endif   /* PG_DUMP_H */
+#endif							/* PG_DUMP_H */

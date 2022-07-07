@@ -3,7 +3,7 @@
  * test.c
  *		Test harness code for shared memory message queues.
  *
- * Copyright (c) 2013-2017, PostgreSQL Global Development Group
+ * Copyright (c) 2013-2018, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
  *		src/test/modules/test_shm_mq/test.c
@@ -218,8 +218,8 @@ test_shm_mq_pipelined(PG_FUNCTION_ARGS)
 			if (send_count != receive_count)
 				ereport(ERROR,
 						(errcode(ERRCODE_INTERNAL_ERROR),
-					   errmsg("message sent %d times, but received %d times",
-							  send_count, receive_count)));
+						 errmsg("message sent %d times, but received %d times",
+								send_count, receive_count)));
 			break;
 		}
 

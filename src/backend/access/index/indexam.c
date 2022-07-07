@@ -3,7 +3,7 @@
  * indexam.c
  *	  general index access method routines
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -154,7 +154,8 @@ index_open(Oid relationId, LOCKMODE lockmode)
 
 	r = relation_open(relationId, lockmode);
 
-	if (r->rd_rel->relkind != RELKIND_INDEX)
+	if (r->rd_rel->relkind != RELKIND_INDEX &&
+		r->rd_rel->relkind != RELKIND_PARTITIONED_INDEX)
 		ereport(ERROR,
 				(errcode(ERRCODE_WRONG_OBJECT_TYPE),
 				 errmsg("\"%s\" is not an index",
@@ -196,7 +197,8 @@ index_insert(Relation indexRelation,
 			 bool *isnull,
 			 ItemPointer heap_t_ctid,
 			 Relation heapRelation,
-			 IndexUniqueCheck checkUnique)
+			 IndexUniqueCheck checkUnique,
+			 IndexInfo *indexInfo)
 {
 	RELATION_CHECKS;
 	CHECK_REL_PROCEDURE(aminsert);
@@ -208,7 +210,7 @@ index_insert(Relation indexRelation,
 
 	return indexRelation->rd_amroutine->aminsert(indexRelation, values, isnull,
 												 heap_t_ctid, heapRelation,
-												 checkUnique);
+												 checkUnique, indexInfo);
 }
 
 /*
@@ -325,7 +327,7 @@ index_rescan(IndexScanDesc scan,
 
 	scan->xs_continue_hot = false;
 
-	scan->kill_prior_tuple = false;		/* for safety */
+	scan->kill_prior_tuple = false; /* for safety */
 
 	scan->indexRelation->rd_amroutine->amrescan(scan, keys, nkeys,
 												orderbys, norderbys);
@@ -400,7 +402,7 @@ index_restrpos(IndexScanDesc scan)
 
 	scan->xs_continue_hot = false;
 
-	scan->kill_prior_tuple = false;		/* for safety */
+	scan->kill_prior_tuple = false; /* for safety */
 
 	scan->indexRelation->rd_amroutine->amrestrpos(scan);
 }
@@ -430,7 +432,7 @@ index_parallelscan_estimate(Relation indexRelation, Snapshot snapshot)
 	 */
 	if (indexRelation->rd_amroutine->amestimateparallelscan != NULL)
 		nbytes = add_size(nbytes,
-					  indexRelation->rd_amroutine->amestimateparallelscan());
+						  indexRelation->rd_amroutine->amestimateparallelscan());
 
 	return nbytes;
 }
@@ -534,8 +536,8 @@ index_getnext_tid(IndexScanDesc scan, ScanDirection direction)
 	/*
 	 * The AM's amgettuple proc finds the next index entry matching the scan
 	 * keys, and puts the TID into scan->xs_ctup.t_self.  It should also set
-	 * scan->xs_recheck and possibly scan->xs_itup, though we pay no attention
-	 * to those fields here.
+	 * scan->xs_recheck and possibly scan->xs_itup/scan->xs_hitup, though we
+	 * pay no attention to those fields here.
 	 */
 	found = scan->indexRelation->rd_amroutine->amgettuple(scan, direction);
 
@@ -750,7 +752,7 @@ index_bulk_delete(IndexVacuumInfo *info,
 	CHECK_REL_PROCEDURE(ambulkdelete);
 
 	return indexRelation->rd_amroutine->ambulkdelete(info, stats,
-												   callback, callback_state);
+													 callback, callback_state);
 }
 
 /* ----------------
@@ -783,7 +785,7 @@ index_can_return(Relation indexRelation, int attno)
 {
 	RELATION_CHECKS;
 
-	/* amcanreturn is optional; assume FALSE if not provided by AM */
+	/* amcanreturn is optional; assume false if not provided by AM */
 	if (indexRelation->rd_amroutine->amcanreturn == NULL)
 		return false;
 

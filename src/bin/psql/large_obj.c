@@ -1,7 +1,7 @@
 /*
  * psql - the PostgreSQL interactive terminal
  *
- * Copyright (c) 2000-2017, PostgreSQL Global Development Group
+ * Copyright (c) 2000-2018, PostgreSQL Global Development Group
  *
  * src/bin/psql/large_obj.c
  */
@@ -48,7 +48,7 @@ print_lo_result(const char *fmt,...)
  * Prepare to do a large-object operation.  We *must* be inside a transaction
  * block for all these operations, so start one if needed.
  *
- * Returns TRUE if okay, FALSE if failed.  *own_transaction is set to indicate
+ * Returns true if okay, false if failed.  *own_transaction is set to indicate
  * if we started our own transaction or not.
  */
 static bool
@@ -281,7 +281,7 @@ do_lo_list(void)
 		snprintf(buf, sizeof(buf),
 				 "SELECT oid as \"%s\",\n"
 				 "  pg_catalog.pg_get_userbyid(lomowner) as \"%s\",\n"
-			"  pg_catalog.obj_description(oid, 'pg_largeobject') as \"%s\"\n"
+				 "  pg_catalog.obj_description(oid, 'pg_largeobject') as \"%s\"\n"
 				 "  FROM pg_catalog.pg_largeobject_metadata "
 				 "  ORDER BY oid",
 				 gettext_noop("ID"),
@@ -292,8 +292,8 @@ do_lo_list(void)
 	{
 		snprintf(buf, sizeof(buf),
 				 "SELECT loid as \"%s\",\n"
-		   "  pg_catalog.obj_description(loid, 'pg_largeobject') as \"%s\"\n"
-			 "FROM (SELECT DISTINCT loid FROM pg_catalog.pg_largeobject) x\n"
+				 "  pg_catalog.obj_description(loid, 'pg_largeobject') as \"%s\"\n"
+				 "FROM (SELECT DISTINCT loid FROM pg_catalog.pg_largeobject) x\n"
 				 "ORDER BY 1",
 				 gettext_noop("ID"),
 				 gettext_noop("Description"));

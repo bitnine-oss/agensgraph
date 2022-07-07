@@ -1,0 +1,132 @@
+CALL nonexistent();  -- error
+ERROR:  function nonexistent() does not exist
+LINE 1: CALL nonexistent();
+             ^
+HINT:  No function matches the given name and argument types. You might need to add explicit type casts.
+CALL random();  -- error
+ERROR:  random() is not a procedure
+LINE 1: CALL random();
+             ^
+HINT:  To call a function, use SELECT.
+CREATE FUNCTION testfunc1(a int) RETURNS int LANGUAGE SQL AS $$ SELECT a $$;
+CREATE TABLE cp_test (a int, b text);
+CREATE PROCEDURE ptest1(x text)
+LANGUAGE SQL
+AS $$
+INSERT INTO cp_test VALUES (1, x);
+$$;
+SELECT ptest1('x');  -- error
+ERROR:  ptest1(unknown) is a procedure
+LINE 1: SELECT ptest1('x');
+               ^
+HINT:  To call a procedure, use CALL.
+CALL ptest1('a');  -- ok
+CALL ptest1('xy' || 'zzy');  -- ok, constant-folded arg
+CALL ptest1(substring(random()::text, 1, 1));  -- ok, volatile arg
+\df ptest1
+                        List of functions
+ Schema |  Name  | Result data type | Argument data types | Type 
+--------+--------+------------------+---------------------+------
+ public | ptest1 |                  | x text              | proc
+(1 row)
+
+SELECT pg_get_functiondef('ptest1'::regproc);
+                pg_get_functiondef                 
+---------------------------------------------------
+ CREATE OR REPLACE PROCEDURE public.ptest1(x text)+
+  LANGUAGE sql                                    +
+ AS $procedure$                                   +
+ INSERT INTO cp_test VALUES (1, x);               +
+ $procedure$                                      +
+ 
+(1 row)
+
+SELECT * FROM cp_test ORDER BY b COLLATE "C";
+ a |   b   
+---+-------
+ 1 | 0
+ 1 | a
+ 1 | xyzzy
+(3 rows)
+
+CREATE PROCEDURE ptest2()
+LANGUAGE SQL
+AS $$
+SELECT 5;
+$$;
+CALL ptest2();
+-- nested CALL
+TRUNCATE cp_test;
+CREATE PROCEDURE ptest3(y text)
+LANGUAGE SQL
+AS $$
+CALL ptest1(y);
+CALL ptest1($1);
+$$;
+CALL ptest3('b');
+SELECT * FROM cp_test;
+ a | b 
+---+---
+ 1 | b
+ 1 | b
+(2 rows)
+
+-- various error cases
+CALL version();  -- error: not a procedure
+ERROR:  version() is not a procedure
+LINE 1: CALL version();
+             ^
+HINT:  To call a function, use SELECT.
+CALL sum(1);  -- error: not a procedure
+ERROR:  sum(integer) is not a procedure
+LINE 1: CALL sum(1);
+             ^
+CREATE PROCEDURE ptestx() LANGUAGE SQL WINDOW AS $$ INSERT INTO cp_test VALUES (1, 'a') $$;
+ERROR:  invalid attribute in procedure definition
+LINE 1: CREATE PROCEDURE ptestx() LANGUAGE SQL WINDOW AS $$ INSERT I...
+                                               ^
+CREATE PROCEDURE ptestx() LANGUAGE SQL STRICT AS $$ INSERT INTO cp_test VALUES (1, 'a') $$;
+ERROR:  invalid attribute in procedure definition
+LINE 1: CREATE PROCEDURE ptestx() LANGUAGE SQL STRICT AS $$ INSERT I...
+                                               ^
+CREATE PROCEDURE ptestx(OUT a int) LANGUAGE SQL AS $$ INSERT INTO cp_test VALUES (1, 'a') $$;
+ERROR:  procedures cannot have OUT parameters
+ALTER PROCEDURE ptest1(text) STRICT;
+ERROR:  invalid attribute in procedure definition
+LINE 1: ALTER PROCEDURE ptest1(text) STRICT;
+                                     ^
+ALTER FUNCTION ptest1(text) VOLATILE;  -- error: not a function
+ERROR:  ptest1(text) is not a function
+ALTER PROCEDURE testfunc1(int) VOLATILE;  -- error: not a procedure
+ERROR:  testfunc1(integer) is not a procedure
+ALTER PROCEDURE nonexistent() VOLATILE;
+ERROR:  procedure nonexistent() does not exist
+DROP FUNCTION ptest1(text);  -- error: not a function
+ERROR:  ptest1(text) is not a function
+DROP PROCEDURE testfunc1(int);  -- error: not a procedure
+ERROR:  testfunc1(integer) is not a procedure
+DROP PROCEDURE nonexistent();
+ERROR:  procedure nonexistent() does not exist
+-- privileges
+CREATE USER regress_user1;
+GRANT INSERT ON cp_test TO regress_user1;
+REVOKE EXECUTE ON PROCEDURE ptest1(text) FROM PUBLIC;
+SET ROLE regress_user1;
+CALL ptest1('a');  -- error
+ERROR:  permission denied for procedure ptest1
+RESET ROLE;
+GRANT EXECUTE ON PROCEDURE ptest1(text) TO regress_user1;
+SET ROLE regress_user1;
+CALL ptest1('a');  -- ok
+RESET ROLE;
+-- ROUTINE syntax
+ALTER ROUTINE testfunc1(int) RENAME TO testfunc1a;
+ALTER ROUTINE testfunc1a RENAME TO testfunc1;
+ALTER ROUTINE ptest1(text) RENAME TO ptest1a;
+ALTER ROUTINE ptest1a RENAME TO ptest1;
+DROP ROUTINE testfunc1(int);
+-- cleanup
+DROP PROCEDURE ptest1;
+DROP PROCEDURE ptest2;
+DROP TABLE cp_test;
+DROP USER regress_user1;

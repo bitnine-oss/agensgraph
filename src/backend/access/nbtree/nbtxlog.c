@@ -4,7 +4,7 @@
  *	  WAL replay logic for btrees.
  *
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -14,8 +14,10 @@
  */
 #include "postgres.h"
 
+#include "access/bufmask.h"
 #include "access/heapam_xlog.h"
 #include "access/nbtree.h"
+#include "access/nbtxlog.h"
 #include "access/transam.h"
 #include "access/xlog.h"
 #include "access/xlogutils.h"
@@ -105,8 +107,9 @@ _bt_restore_meta(XLogReaderState *record, uint8 block_id)
 	pageop->btpo_flags = BTP_META;
 
 	/*
-	 * Set pd_lower just past the end of the metadata.  This is not essential
-	 * but it makes the page look compressible to xlog.c.
+	 * Set pd_lower just past the end of the metadata.  This is essential,
+	 * because without doing so, metadata will be lost if xlog.c compresses
+	 * the page.
 	 */
 	((PageHeader) metapg)->pd_lower =
 		((char *) md + sizeof(BTMetaPageData)) - (char *) metapg;
@@ -133,7 +136,7 @@ _bt_clear_incomplete_split(XLogReaderState *record, uint8 block_id)
 		Page		page = (Page) BufferGetPage(buf);
 		BTPageOpaque pageop = (BTPageOpaque) PageGetSpecialPointer(page);
 
-		Assert((pageop->btpo_flags & BTP_INCOMPLETE_SPLIT) != 0);
+		Assert(P_INCOMPLETE_SPLIT(pageop));
 		pageop->btpo_flags &= ~BTP_INCOMPLETE_SPLIT;
 
 		PageSetLSN(page, lsn);
@@ -191,7 +194,7 @@ btree_xlog_insert(bool isleaf, bool ismeta, XLogReaderState *record)
 }
 
 static void
-btree_xlog_split(bool onleft, bool isroot, XLogReaderState *record)
+btree_xlog_split(bool onleft, XLogReaderState *record)
 {
 	XLogRecPtr	lsn = record->EndRecPtr;
 	xl_btree_split *xlrec = (xl_btree_split *) XLogRecGetData(record);
@@ -596,7 +599,7 @@ btree_xlog_delete_get_latestRemovedXid(XLogReaderState *record)
 			UnlockReleaseBuffer(ibuffer);
 			return InvalidTransactionId;
 		}
-		LockBuffer(hbuffer, BUFFER_LOCK_SHARE);
+		LockBuffer(hbuffer, BT_READ);
 		hpage = (Page) BufferGetPage(hbuffer);
 
 		/*
@@ -994,16 +997,10 @@ btree_redo(XLogReaderState *record)
 			btree_xlog_insert(false, true, record);
 			break;
 		case XLOG_BTREE_SPLIT_L:
-			btree_xlog_split(true, false, record);
+			btree_xlog_split(true, record);
 			break;
 		case XLOG_BTREE_SPLIT_R:
-			btree_xlog_split(false, false, record);
-			break;
-		case XLOG_BTREE_SPLIT_L_ROOT:
-			btree_xlog_split(true, true, record);
-			break;
-		case XLOG_BTREE_SPLIT_R_ROOT:
-			btree_xlog_split(false, true, record);
+			btree_xlog_split(false, record);
 			break;
 		case XLOG_BTREE_VACUUM:
 			btree_xlog_vacuum(record);
@@ -1027,4 +1024,53 @@ btree_redo(XLogReaderState *record)
 		default:
 			elog(PANIC, "btree_redo: unknown op code %u", info);
 	}
+}
+
+/*
+ * Mask a btree page before performing consistency checks on it.
+ */
+void
+btree_mask(char *pagedata, BlockNumber blkno)
+{
+	Page		page = (Page) pagedata;
+	BTPageOpaque maskopaq;
+
+	mask_page_lsn_and_checksum(page);
+
+	mask_page_hint_bits(page);
+	mask_unused_space(page);
+
+	maskopaq = (BTPageOpaque) PageGetSpecialPointer(page);
+
+	if (P_ISDELETED(maskopaq))
+	{
+		/*
+		 * Mask page content on a DELETED page since it will be re-initialized
+		 * during replay. See btree_xlog_unlink_page() for details.
+		 */
+		mask_page_content(page);
+	}
+	else if (P_ISLEAF(maskopaq))
+	{
+		/*
+		 * In btree leaf pages, it is possible to modify the LP_FLAGS without
+		 * emitting any WAL record. Hence, mask the line pointer flags. See
+		 * _bt_killitems(), _bt_check_unique() for details.
+		 */
+		mask_lp_flags(page);
+	}
+
+	/*
+	 * BTP_HAS_GARBAGE is just an un-logged hint bit. So, mask it. See
+	 * _bt_killitems(), _bt_check_unique() for details.
+	 */
+	maskopaq->btpo_flags &= ~BTP_HAS_GARBAGE;
+
+	/*
+	 * During replay of a btree page split, we don't set the BTP_SPLIT_END
+	 * flag of the right sibling and initialize the cycle_id to 0 for the same
+	 * page. See btree_xlog_split() for details.
+	 */
+	maskopaq->btpo_flags &= ~BTP_SPLIT_END;
+	maskopaq->btpo_cycleid = 0;
 }

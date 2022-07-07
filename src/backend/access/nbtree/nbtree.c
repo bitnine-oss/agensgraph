@@ -8,7 +8,7 @@
  *	  This file contains only the public interface routines.
  *
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -21,33 +21,18 @@
 #include "access/nbtree.h"
 #include "access/relscan.h"
 #include "access/xlog.h"
-#include "catalog/index.h"
 #include "commands/vacuum.h"
+#include "nodes/execnodes.h"
+#include "pgstat.h"
+#include "storage/condition_variable.h"
 #include "storage/indexfsm.h"
 #include "storage/ipc.h"
 #include "storage/lmgr.h"
 #include "storage/smgr.h"
-#include "tcop/tcopprot.h"		/* pgrminclude ignore */
 #include "utils/builtins.h"
 #include "utils/index_selfuncs.h"
 #include "utils/memutils.h"
 
-
-/* Working state for btbuild and its callback */
-typedef struct
-{
-	bool		isUnique;
-	bool		haveDead;
-	Relation	heapRel;
-	BTSpool    *spool;
-
-	/*
-	 * spool2 is needed only when the index is a unique index. Dead tuples are
-	 * put into spool2 instead of spool in order to avoid uniqueness check.
-	 */
-	BTSpool    *spool2;
-	double		indtuples;
-} BTBuildState;
 
 /* Working state needed by btvacuumpage */
 typedef struct
@@ -57,19 +42,51 @@ typedef struct
 	IndexBulkDeleteCallback callback;
 	void	   *callback_state;
 	BTCycleId	cycleid;
-	BlockNumber lastBlockVacuumed;		/* highest blkno actually vacuumed */
+	BlockNumber lastBlockVacuumed;	/* highest blkno actually vacuumed */
 	BlockNumber lastBlockLocked;	/* highest blkno we've cleanup-locked */
 	BlockNumber totFreePages;	/* true total # of free pages */
 	MemoryContext pagedelcontext;
 } BTVacState;
 
+/*
+ * BTPARALLEL_NOT_INITIALIZED indicates that the scan has not started.
+ *
+ * BTPARALLEL_ADVANCING indicates that some process is advancing the scan to
+ * a new page; others must wait.
+ *
+ * BTPARALLEL_IDLE indicates that no backend is currently advancing the scan
+ * to a new page; some process can start doing that.
+ *
+ * BTPARALLEL_DONE indicates that the scan is complete (including error exit).
+ * We reach this state once for every distinct combination of array keys.
+ */
+typedef enum
+{
+	BTPARALLEL_NOT_INITIALIZED,
+	BTPARALLEL_ADVANCING,
+	BTPARALLEL_IDLE,
+	BTPARALLEL_DONE
+} BTPS_State;
 
-static void btbuildCallback(Relation index,
-				HeapTuple htup,
-				Datum *values,
-				bool *isnull,
-				bool tupleIsAlive,
-				void *state);
+/*
+ * BTParallelScanDescData contains btree specific shared information required
+ * for parallel scan.
+ */
+typedef struct BTParallelScanDescData
+{
+	BlockNumber btps_scanPage;	/* latest or next page to be scanned */
+	BTPS_State	btps_pageStatus;	/* indicates whether next page is
+									 * available for scan. see above for
+									 * possible states of parallel scan. */
+	int			btps_arrayKeyCount; /* count indicating number of array scan
+									 * keys processed by parallel scan */
+	slock_t		btps_mutex;		/* protects above variables */
+	ConditionVariable btps_cv;	/* used to synchronize parallel scan */
+}			BTParallelScanDescData;
+
+typedef struct BTParallelScanDescData *BTParallelScanDesc;
+
+
 static void btvacuumscan(IndexVacuumInfo *info, IndexBulkDeleteResult *stats,
 			 IndexBulkDeleteCallback callback, void *callback_state,
 			 BTCycleId cycleid);
@@ -99,6 +116,7 @@ bthandler(PG_FUNCTION_ARGS)
 	amroutine->amstorage = false;
 	amroutine->amclusterable = true;
 	amroutine->ampredlocks = true;
+	amroutine->amcanparallel = true;
 	amroutine->amkeytype = InvalidOid;
 
 	amroutine->ambuild = btbuild;
@@ -118,120 +136,11 @@ bthandler(PG_FUNCTION_ARGS)
 	amroutine->amendscan = btendscan;
 	amroutine->ammarkpos = btmarkpos;
 	amroutine->amrestrpos = btrestrpos;
-	amroutine->amestimateparallelscan = NULL;
-	amroutine->aminitparallelscan = NULL;
-	amroutine->amparallelrescan = NULL;
+	amroutine->amestimateparallelscan = btestimateparallelscan;
+	amroutine->aminitparallelscan = btinitparallelscan;
+	amroutine->amparallelrescan = btparallelrescan;
 
 	PG_RETURN_POINTER(amroutine);
-}
-
-/*
- *	btbuild() -- build a new btree index.
- */
-IndexBuildResult *
-btbuild(Relation heap, Relation index, IndexInfo *indexInfo)
-{
-	IndexBuildResult *result;
-	double		reltuples;
-	BTBuildState buildstate;
-
-	buildstate.isUnique = indexInfo->ii_Unique;
-	buildstate.haveDead = false;
-	buildstate.heapRel = heap;
-	buildstate.spool = NULL;
-	buildstate.spool2 = NULL;
-	buildstate.indtuples = 0;
-
-#ifdef BTREE_BUILD_STATS
-	if (log_btree_build_stats)
-		ResetUsage();
-#endif   /* BTREE_BUILD_STATS */
-
-	/*
-	 * We expect to be called exactly once for any index relation. If that's
-	 * not the case, big trouble's what we have.
-	 */
-	if (RelationGetNumberOfBlocks(index) != 0)
-		elog(ERROR, "index \"%s\" already contains data",
-			 RelationGetRelationName(index));
-
-	buildstate.spool = _bt_spoolinit(heap, index, indexInfo->ii_Unique, false);
-
-	/*
-	 * If building a unique index, put dead tuples in a second spool to keep
-	 * them out of the uniqueness check.
-	 */
-	if (indexInfo->ii_Unique)
-		buildstate.spool2 = _bt_spoolinit(heap, index, false, true);
-
-	/* do the heap scan */
-	reltuples = IndexBuildHeapScan(heap, index, indexInfo, true,
-								   btbuildCallback, (void *) &buildstate);
-
-	/* okay, all heap tuples are indexed */
-	if (buildstate.spool2 && !buildstate.haveDead)
-	{
-		/* spool2 turns out to be unnecessary */
-		_bt_spooldestroy(buildstate.spool2);
-		buildstate.spool2 = NULL;
-	}
-
-	/*
-	 * Finish the build by (1) completing the sort of the spool file, (2)
-	 * inserting the sorted tuples into btree pages and (3) building the upper
-	 * levels.
-	 */
-	_bt_leafbuild(buildstate.spool, buildstate.spool2);
-	_bt_spooldestroy(buildstate.spool);
-	if (buildstate.spool2)
-		_bt_spooldestroy(buildstate.spool2);
-
-#ifdef BTREE_BUILD_STATS
-	if (log_btree_build_stats)
-	{
-		ShowUsage("BTREE BUILD STATS");
-		ResetUsage();
-	}
-#endif   /* BTREE_BUILD_STATS */
-
-	/*
-	 * Return statistics
-	 */
-	result = (IndexBuildResult *) palloc(sizeof(IndexBuildResult));
-
-	result->heap_tuples = reltuples;
-	result->index_tuples = buildstate.indtuples;
-
-	return result;
-}
-
-/*
- * Per-tuple callback from IndexBuildHeapScan
- */
-static void
-btbuildCallback(Relation index,
-				HeapTuple htup,
-				Datum *values,
-				bool *isnull,
-				bool tupleIsAlive,
-				void *state)
-{
-	BTBuildState *buildstate = (BTBuildState *) state;
-
-	/*
-	 * insert the index tuple into the appropriate spool file for subsequent
-	 * processing
-	 */
-	if (tupleIsAlive || buildstate->spool2 == NULL)
-		_bt_spool(buildstate->spool, &htup->t_self, values, isnull);
-	else
-	{
-		/* dead tuples are put into spool2 */
-		buildstate->haveDead = true;
-		_bt_spool(buildstate->spool2, &htup->t_self, values, isnull);
-	}
-
-	buildstate->indtuples += 1;
 }
 
 /*
@@ -247,17 +156,17 @@ btbuildempty(Relation index)
 	_bt_initmetapage(metapage, P_NONE, 0);
 
 	/*
-	 * Write the page and log it.  It might seem that an immediate sync
-	 * would be sufficient to guarantee that the file exists on disk, but
-	 * recovery itself might remove it while replaying, for example, an
-	 * XLOG_DBASE_CREATE or XLOG_TBLSPC_CREATE record.  Therefore, we
-	 * need this even when wal_level=minimal.
+	 * Write the page and log it.  It might seem that an immediate sync would
+	 * be sufficient to guarantee that the file exists on disk, but recovery
+	 * itself might remove it while replaying, for example, an
+	 * XLOG_DBASE_CREATE or XLOG_TBLSPC_CREATE record.  Therefore, we need
+	 * this even when wal_level=minimal.
 	 */
 	PageSetChecksumInplace(metapage, BTREE_METAPAGE);
 	smgrwrite(index->rd_smgr, INIT_FORKNUM, BTREE_METAPAGE,
 			  (char *) metapage, true);
 	log_newpage(&index->rd_smgr->smgr_rnode.node, INIT_FORKNUM,
-				BTREE_METAPAGE, metapage, false);
+				BTREE_METAPAGE, metapage, true);
 
 	/*
 	 * An immediate sync is required even if we xlog'd the page, because the
@@ -276,7 +185,8 @@ btbuildempty(Relation index)
 bool
 btinsert(Relation rel, Datum *values, bool *isnull,
 		 ItemPointer ht_ctid, Relation heapRel,
-		 IndexUniqueCheck checkUnique)
+		 IndexUniqueCheck checkUnique,
+		 IndexInfo *indexInfo)
 {
 	bool		result;
 	IndexTuple	itup;
@@ -490,6 +400,7 @@ btrescan(IndexScanDesc scan, ScanKey scankey, int nscankeys,
 	}
 
 	so->markItemIndex = -1;
+	so->arrayKeyCount = 0;
 	BTScanPosUnpinIfPinned(so->markPos);
 	BTScanPosInvalidate(so->markPos);
 
@@ -649,6 +560,217 @@ btrestrpos(IndexScanDesc scan)
 		else
 			BTScanPosInvalidate(so->currPos);
 	}
+}
+
+/*
+ * btestimateparallelscan -- estimate storage for BTParallelScanDescData
+ */
+Size
+btestimateparallelscan(void)
+{
+	return sizeof(BTParallelScanDescData);
+}
+
+/*
+ * btinitparallelscan -- initialize BTParallelScanDesc for parallel btree scan
+ */
+void
+btinitparallelscan(void *target)
+{
+	BTParallelScanDesc bt_target = (BTParallelScanDesc) target;
+
+	SpinLockInit(&bt_target->btps_mutex);
+	bt_target->btps_scanPage = InvalidBlockNumber;
+	bt_target->btps_pageStatus = BTPARALLEL_NOT_INITIALIZED;
+	bt_target->btps_arrayKeyCount = 0;
+	ConditionVariableInit(&bt_target->btps_cv);
+}
+
+/*
+ *	btparallelrescan() -- reset parallel scan
+ */
+void
+btparallelrescan(IndexScanDesc scan)
+{
+	BTParallelScanDesc btscan;
+	ParallelIndexScanDesc parallel_scan = scan->parallel_scan;
+
+	Assert(parallel_scan);
+
+	btscan = (BTParallelScanDesc) OffsetToPointer((void *) parallel_scan,
+												  parallel_scan->ps_offset);
+
+	/*
+	 * In theory, we don't need to acquire the spinlock here, because there
+	 * shouldn't be any other workers running at this point, but we do so for
+	 * consistency.
+	 */
+	SpinLockAcquire(&btscan->btps_mutex);
+	btscan->btps_scanPage = InvalidBlockNumber;
+	btscan->btps_pageStatus = BTPARALLEL_NOT_INITIALIZED;
+	btscan->btps_arrayKeyCount = 0;
+	SpinLockRelease(&btscan->btps_mutex);
+}
+
+/*
+ * _bt_parallel_seize() -- Begin the process of advancing the scan to a new
+ *		page.  Other scans must wait until we call bt_parallel_release() or
+ *		bt_parallel_done().
+ *
+ * The return value is true if we successfully seized the scan and false
+ * if we did not.  The latter case occurs if no pages remain for the current
+ * set of scankeys.
+ *
+ * If the return value is true, *pageno returns the next or current page
+ * of the scan (depending on the scan direction).  An invalid block number
+ * means the scan hasn't yet started, and P_NONE means we've reached the end.
+ * The first time a participating process reaches the last page, it will return
+ * true and set *pageno to P_NONE; after that, further attempts to seize the
+ * scan will return false.
+ *
+ * Callers should ignore the value of pageno if the return value is false.
+ */
+bool
+_bt_parallel_seize(IndexScanDesc scan, BlockNumber *pageno)
+{
+	BTScanOpaque so = (BTScanOpaque) scan->opaque;
+	BTPS_State	pageStatus;
+	bool		exit_loop = false;
+	bool		status = true;
+	ParallelIndexScanDesc parallel_scan = scan->parallel_scan;
+	BTParallelScanDesc btscan;
+
+	*pageno = P_NONE;
+
+	btscan = (BTParallelScanDesc) OffsetToPointer((void *) parallel_scan,
+												  parallel_scan->ps_offset);
+
+	while (1)
+	{
+		SpinLockAcquire(&btscan->btps_mutex);
+		pageStatus = btscan->btps_pageStatus;
+
+		if (so->arrayKeyCount < btscan->btps_arrayKeyCount)
+		{
+			/* Parallel scan has already advanced to a new set of scankeys. */
+			status = false;
+		}
+		else if (pageStatus == BTPARALLEL_DONE)
+		{
+			/*
+			 * We're done with this set of scankeys.  This may be the end, or
+			 * there could be more sets to try.
+			 */
+			status = false;
+		}
+		else if (pageStatus != BTPARALLEL_ADVANCING)
+		{
+			/*
+			 * We have successfully seized control of the scan for the purpose
+			 * of advancing it to a new page!
+			 */
+			btscan->btps_pageStatus = BTPARALLEL_ADVANCING;
+			*pageno = btscan->btps_scanPage;
+			exit_loop = true;
+		}
+		SpinLockRelease(&btscan->btps_mutex);
+		if (exit_loop || !status)
+			break;
+		ConditionVariableSleep(&btscan->btps_cv, WAIT_EVENT_BTREE_PAGE);
+	}
+	ConditionVariableCancelSleep();
+
+	return status;
+}
+
+/*
+ * _bt_parallel_release() -- Complete the process of advancing the scan to a
+ *		new page.  We now have the new value btps_scanPage; some other backend
+ *		can now begin advancing the scan.
+ */
+void
+_bt_parallel_release(IndexScanDesc scan, BlockNumber scan_page)
+{
+	ParallelIndexScanDesc parallel_scan = scan->parallel_scan;
+	BTParallelScanDesc btscan;
+
+	btscan = (BTParallelScanDesc) OffsetToPointer((void *) parallel_scan,
+												  parallel_scan->ps_offset);
+
+	SpinLockAcquire(&btscan->btps_mutex);
+	btscan->btps_scanPage = scan_page;
+	btscan->btps_pageStatus = BTPARALLEL_IDLE;
+	SpinLockRelease(&btscan->btps_mutex);
+	ConditionVariableSignal(&btscan->btps_cv);
+}
+
+/*
+ * _bt_parallel_done() -- Mark the parallel scan as complete.
+ *
+ * When there are no pages left to scan, this function should be called to
+ * notify other workers.  Otherwise, they might wait forever for the scan to
+ * advance to the next page.
+ */
+void
+_bt_parallel_done(IndexScanDesc scan)
+{
+	BTScanOpaque so = (BTScanOpaque) scan->opaque;
+	ParallelIndexScanDesc parallel_scan = scan->parallel_scan;
+	BTParallelScanDesc btscan;
+	bool		status_changed = false;
+
+	/* Do nothing, for non-parallel scans */
+	if (parallel_scan == NULL)
+		return;
+
+	btscan = (BTParallelScanDesc) OffsetToPointer((void *) parallel_scan,
+												  parallel_scan->ps_offset);
+
+	/*
+	 * Mark the parallel scan as done for this combination of scan keys,
+	 * unless some other process already did so.  See also
+	 * _bt_advance_array_keys.
+	 */
+	SpinLockAcquire(&btscan->btps_mutex);
+	if (so->arrayKeyCount >= btscan->btps_arrayKeyCount &&
+		btscan->btps_pageStatus != BTPARALLEL_DONE)
+	{
+		btscan->btps_pageStatus = BTPARALLEL_DONE;
+		status_changed = true;
+	}
+	SpinLockRelease(&btscan->btps_mutex);
+
+	/* wake up all the workers associated with this parallel scan */
+	if (status_changed)
+		ConditionVariableBroadcast(&btscan->btps_cv);
+}
+
+/*
+ * _bt_parallel_advance_array_keys() -- Advances the parallel scan for array
+ *			keys.
+ *
+ * Updates the count of array keys processed for both local and parallel
+ * scans.
+ */
+void
+_bt_parallel_advance_array_keys(IndexScanDesc scan)
+{
+	BTScanOpaque so = (BTScanOpaque) scan->opaque;
+	ParallelIndexScanDesc parallel_scan = scan->parallel_scan;
+	BTParallelScanDesc btscan;
+
+	btscan = (BTParallelScanDesc) OffsetToPointer((void *) parallel_scan,
+												  parallel_scan->ps_offset);
+
+	so->arrayKeyCount++;
+	SpinLockAcquire(&btscan->btps_mutex);
+	if (btscan->btps_pageStatus == BTPARALLEL_DONE)
+	{
+		btscan->btps_scanPage = InvalidBlockNumber;
+		btscan->btps_pageStatus = BTPARALLEL_NOT_INITIALIZED;
+		btscan->btps_arrayKeyCount++;
+	}
+	SpinLockRelease(&btscan->btps_mutex);
 }
 
 /*

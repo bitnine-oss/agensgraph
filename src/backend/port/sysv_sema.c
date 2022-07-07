@@ -4,7 +4,7 @@
  *	  Implement PGSemaphores using SysV semaphore facilities
  *
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -64,10 +64,10 @@ typedef int IpcSemaphoreId;		/* semaphore ID returned by semget(2) */
 static PGSemaphore sharedSemas; /* array of PGSemaphoreData in shared memory */
 static int	numSharedSemas;		/* number of PGSemaphoreDatas used so far */
 static int	maxSharedSemas;		/* allocated size of PGSemaphoreData array */
-static IpcSemaphoreId *mySemaSets;		/* IDs of sema sets acquired so far */
+static IpcSemaphoreId *mySemaSets;	/* IDs of sema sets acquired so far */
 static int	numSemaSets;		/* number of sema sets acquired so far */
 static int	maxSemaSets;		/* allocated size of mySemaSets array */
-static IpcSemaphoreKey nextSemaKey;		/* next key to try using */
+static IpcSemaphoreKey nextSemaKey; /* next key to try using */
 static int	nextSemaNumber;		/* next free sem num in last sema set */
 
 
@@ -126,12 +126,12 @@ InternalIpcSemaphoreCreate(IpcSemaphoreKey semKey, int numSems)
 						   IPC_CREAT | IPC_EXCL | IPCProtection),
 				 (saved_errno == ENOSPC) ?
 				 errhint("This error does *not* mean that you have run out of disk space.  "
-		  "It occurs when either the system limit for the maximum number of "
-			 "semaphore sets (SEMMNI), or the system wide maximum number of "
-			"semaphores (SEMMNS), would be exceeded.  You need to raise the "
-		  "respective kernel parameter.  Alternatively, reduce PostgreSQL's "
+						 "It occurs when either the system limit for the maximum number of "
+						 "semaphore sets (SEMMNI), or the system wide maximum number of "
+						 "semaphores (SEMMNS), would be exceeded.  You need to raise the "
+						 "respective kernel parameter.  Alternatively, reduce PostgreSQL's "
 						 "consumption of semaphores by reducing its max_connections parameter.\n"
-			  "The PostgreSQL documentation contains more information about "
+						 "The PostgreSQL documentation contains more information about "
 						 "configuring your system for PostgreSQL.") : 0));
 	}
 
@@ -156,7 +156,7 @@ IpcSemaphoreInitialize(IpcSemaphoreId semId, int semNum, int value)
 								 semId, semNum, value),
 				 (saved_errno == ERANGE) ?
 				 errhint("You possibly need to raise your kernel's SEMVMX value to be at least "
-				  "%d.  Look into the PostgreSQL documentation for details.",
+						 "%d.  Look into the PostgreSQL documentation for details.",
 						 value) : 0));
 	}
 }
@@ -333,7 +333,7 @@ PGReserveSemaphores(int maxSemas, int port)
 		elog(PANIC, "out of memory");
 	numSemaSets = 0;
 	nextSemaKey = port * 1000;
-	nextSemaNumber = SEMAS_PER_SET;		/* force sema set alloc on 1st call */
+	nextSemaNumber = SEMAS_PER_SET; /* force sema set alloc on 1st call */
 
 	on_shmem_exit(ReleaseSemaphores, 0);
 }

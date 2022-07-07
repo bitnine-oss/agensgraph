@@ -3,7 +3,7 @@
  * schemacmds.c
  *	  schema creation/manipulation commands
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -94,7 +94,7 @@ CreateSchemaCommand(CreateSchemaStmt *stmt, const char *queryString,
 	 */
 	aclresult = pg_database_aclcheck(MyDatabaseId, saved_uid, ACL_CREATE);
 	if (aclresult != ACLCHECK_OK)
-		aclcheck_error(aclresult, ACL_KIND_DATABASE,
+		aclcheck_error(aclresult, OBJECT_DATABASE,
 					   get_database_name(MyDatabaseId));
 
 	check_is_member_of_role(saved_uid, owner_uid);
@@ -104,7 +104,7 @@ CreateSchemaCommand(CreateSchemaStmt *stmt, const char *queryString,
 		ereport(ERROR,
 				(errcode(ERRCODE_RESERVED_NAME),
 				 errmsg("unacceptable schema name \"%s\"", schemaName),
-		   errdetail("The prefix \"pg_\" is reserved for system schemas.")));
+				 errdetail("The prefix \"pg_\" is reserved for system schemas.")));
 
 	/*
 	 * If if_not_exists was given and the schema already exists, bail out.
@@ -133,7 +133,7 @@ CreateSchemaCommand(CreateSchemaStmt *stmt, const char *queryString,
 	 */
 	if (saved_uid != owner_uid)
 		SetUserIdAndSecContext(owner_uid,
-							save_sec_context | SECURITY_LOCAL_USERID_CHANGE);
+							   save_sec_context | SECURITY_LOCAL_USERID_CHANGE);
 
 	/* Create the schema's namespace */
 	namespaceId = NamespaceCreate(schemaName, owner_uid, false);
@@ -193,6 +193,7 @@ CreateSchemaCommand(CreateSchemaStmt *stmt, const char *queryString,
 		ProcessUtility(wrapper,
 					   queryString,
 					   PROCESS_UTILITY_SUBCOMMAND,
+					   NULL,
 					   NULL,
 					   None_Receiver,
 					   NULL);
@@ -264,20 +265,20 @@ RenameSchema(const char *oldname, const char *newname)
 
 	/* must be owner */
 	if (!pg_namespace_ownercheck(HeapTupleGetOid(tup), GetUserId()))
-		aclcheck_error(ACLCHECK_NOT_OWNER, ACL_KIND_NAMESPACE,
+		aclcheck_error(ACLCHECK_NOT_OWNER, OBJECT_SCHEMA,
 					   oldname);
 
 	/* must have CREATE privilege on database */
 	aclresult = pg_database_aclcheck(MyDatabaseId, GetUserId(), ACL_CREATE);
 	if (aclresult != ACLCHECK_OK)
-		aclcheck_error(aclresult, ACL_KIND_DATABASE,
+		aclcheck_error(aclresult, OBJECT_DATABASE,
 					   get_database_name(MyDatabaseId));
 
 	if (!allowSystemTableMods && IsReservedName(newname))
 		ereport(ERROR,
 				(errcode(ERRCODE_RESERVED_NAME),
 				 errmsg("unacceptable schema name \"%s\"", newname),
-		   errdetail("The prefix \"pg_\" is reserved for system schemas.")));
+				 errdetail("The prefix \"pg_\" is reserved for system schemas.")));
 
 	/* rename */
 	namestrcpy(&(((Form_pg_namespace) GETSTRUCT(tup))->nspname), newname);
@@ -372,7 +373,7 @@ AlterSchemaOwner_internal(HeapTuple tup, Relation rel, Oid newOwnerId)
 
 		/* Otherwise, must be owner of the existing object */
 		if (!pg_namespace_ownercheck(HeapTupleGetOid(tup), GetUserId()))
-			aclcheck_error(ACLCHECK_NOT_OWNER, ACL_KIND_NAMESPACE,
+			aclcheck_error(ACLCHECK_NOT_OWNER, OBJECT_SCHEMA,
 						   NameStr(nspForm->nspname));
 
 		/* Must be able to become new owner */
@@ -390,7 +391,7 @@ AlterSchemaOwner_internal(HeapTuple tup, Relation rel, Oid newOwnerId)
 		aclresult = pg_database_aclcheck(MyDatabaseId, GetUserId(),
 										 ACL_CREATE);
 		if (aclresult != ACLCHECK_OK)
-			aclcheck_error(aclresult, ACL_KIND_DATABASE,
+			aclcheck_error(aclresult, OBJECT_DATABASE,
 						   get_database_name(MyDatabaseId));
 
 		memset(repl_null, false, sizeof(repl_null));

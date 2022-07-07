@@ -4,7 +4,7 @@
  *	  definitions for run-time statistics collection
  *
  *
- * Copyright (c) 2001-2017, PostgreSQL Global Development Group
+ * Copyright (c) 2001-2018, PostgreSQL Global Development Group
  *
  * src/include/executor/instrument.h
  *
@@ -19,15 +19,15 @@
 typedef struct BufferUsage
 {
 	long		shared_blks_hit;	/* # of shared buffer hits */
-	long		shared_blks_read;		/* # of shared disk blocks read */
+	long		shared_blks_read;	/* # of shared disk blocks read */
 	long		shared_blks_dirtied;	/* # of shared blocks dirtied */
 	long		shared_blks_written;	/* # of shared disk blocks written */
 	long		local_blks_hit; /* # of local buffer hits */
 	long		local_blks_read;	/* # of local disk blocks read */
-	long		local_blks_dirtied;		/* # of shared blocks dirtied */
-	long		local_blks_written;		/* # of local disk blocks written */
+	long		local_blks_dirtied; /* # of shared blocks dirtied */
+	long		local_blks_written; /* # of local disk blocks written */
 	long		temp_blks_read; /* # of temp blocks read */
-	long		temp_blks_written;		/* # of temp blocks written */
+	long		temp_blks_written;	/* # of temp blocks written */
 	instr_time	blk_read_time;	/* time spent reading */
 	instr_time	blk_write_time; /* time spent writing */
 } BufferUsage;
@@ -44,10 +44,10 @@ typedef enum InstrumentOption
 typedef struct Instrumentation
 {
 	/* Parameters set at node creation: */
-	bool		need_timer;		/* TRUE if we need timer data */
-	bool		need_bufusage;	/* TRUE if we need buffer usage data */
+	bool		need_timer;		/* true if we need timer data */
+	bool		need_bufusage;	/* true if we need buffer usage data */
 	/* Info about current plan cycle: */
-	bool		running;		/* TRUE if we've completed first tuple */
+	bool		running;		/* true if we've completed first tuple */
 	instr_time	starttime;		/* Start time of current iteration of node */
 	instr_time	counter;		/* Accumulated runtime for this node */
 	double		firsttuple;		/* Time for first tuple of this cycle */
@@ -81,4 +81,4 @@ extern void InstrStartParallelQuery(void);
 extern void InstrEndParallelQuery(BufferUsage *result);
 extern void InstrAccumParallelQuery(BufferUsage *result);
 
-#endif   /* INSTRUMENT_H */
+#endif							/* INSTRUMENT_H */

@@ -354,9 +354,9 @@ ERROR:  invalid operator number 0, must be between 1 and 5
 ALTER OPERATOR FAMILY alt_opf4 USING btree ADD OPERATOR 1 < ; -- operator without argument types
 ERROR:  operator argument types must be specified in ALTER OPERATOR FAMILY
 ALTER OPERATOR FAMILY alt_opf4 USING btree ADD FUNCTION 0 btint42cmp(int4, int2); -- function number should be between 1 and 5
-ERROR:  invalid procedure number 0, must be between 1 and 2
+ERROR:  invalid procedure number 0, must be between 1 and 3
 ALTER OPERATOR FAMILY alt_opf4 USING btree ADD FUNCTION 6 btint42cmp(int4, int2); -- function number should be between 1 and 5
-ERROR:  invalid procedure number 6, must be between 1 and 2
+ERROR:  invalid procedure number 6, must be between 1 and 3
 ALTER OPERATOR FAMILY alt_opf4 USING btree ADD STORAGE invalid_storage; -- Ensure STORAGE is not a part of ALTER OPERATOR FAMILY
 ERROR:  STORAGE cannot be specified in ALTER OPERATOR FAMILY
 DROP OPERATOR FAMILY alt_opf4 USING btree;
@@ -421,7 +421,7 @@ BEGIN TRANSACTION;
 CREATE OPERATOR FAMILY alt_opf13 USING hash;
 CREATE FUNCTION fn_opf13  (int4) RETURNS BIGINT AS 'SELECT NULL::BIGINT;' LANGUAGE SQL;
 ALTER OPERATOR FAMILY alt_opf13 USING hash ADD FUNCTION 1 fn_opf13(int4);
-ERROR:  hash procedures must return integer
+ERROR:  hash procedure 1 must return integer
 DROP OPERATOR FAMILY alt_opf13 USING hash;
 ERROR:  current transaction is aborted, commands ignored until end of transaction block
 ROLLBACK;
@@ -439,7 +439,7 @@ BEGIN TRANSACTION;
 CREATE OPERATOR FAMILY alt_opf15 USING hash;
 CREATE FUNCTION fn_opf15 (int4, int2) RETURNS BIGINT AS 'SELECT NULL::BIGINT;' LANGUAGE SQL;
 ALTER OPERATOR FAMILY alt_opf15 USING hash ADD FUNCTION 1 fn_opf15(int4, int2);
-ERROR:  hash procedures must have one argument
+ERROR:  hash procedure 1 must have one argument
 DROP OPERATOR FAMILY alt_opf15 USING hash;
 ERROR:  current transaction is aborted, commands ignored until end of transaction block
 ROLLBACK;
@@ -496,6 +496,49 @@ ALTER OPERATOR FAMILY alt_opf18 USING btree ADD
 ALTER OPERATOR FAMILY alt_opf18 USING btree DROP FUNCTION 2 (int4, int4);
 ERROR:  function 2(integer,integer) does not exist in operator family "alt_opf18"
 DROP OPERATOR FAMILY alt_opf18 USING btree;
+--
+-- Statistics
+--
+SET SESSION AUTHORIZATION regress_alter_user1;
+CREATE TABLE alt_regress_1 (a INTEGER, b INTEGER);
+CREATE STATISTICS alt_stat1 ON a, b FROM alt_regress_1;
+CREATE STATISTICS alt_stat2 ON a, b FROM alt_regress_1;
+ALTER STATISTICS alt_stat1 RENAME TO alt_stat2;   -- failed (name conflict)
+ERROR:  statistics object "alt_stat2" already exists in schema "alt_nsp1"
+ALTER STATISTICS alt_stat1 RENAME TO alt_stat3;   -- failed (name conflict)
+ALTER STATISTICS alt_stat2 OWNER TO regress_alter_user2;  -- failed (no role membership)
+ERROR:  must be member of role "regress_alter_user2"
+ALTER STATISTICS alt_stat2 OWNER TO regress_alter_user3;  -- OK
+ALTER STATISTICS alt_stat2 SET SCHEMA alt_nsp2;    -- OK
+SET SESSION AUTHORIZATION regress_alter_user2;
+CREATE TABLE alt_regress_2 (a INTEGER, b INTEGER);
+CREATE STATISTICS alt_stat1 ON a, b FROM alt_regress_2;
+CREATE STATISTICS alt_stat2 ON a, b FROM alt_regress_2;
+ALTER STATISTICS alt_stat3 RENAME TO alt_stat4;    -- failed (not owner)
+ERROR:  must be owner of statistics object alt_stat3
+ALTER STATISTICS alt_stat1 RENAME TO alt_stat4;    -- OK
+ALTER STATISTICS alt_stat3 OWNER TO regress_alter_user2; -- failed (not owner)
+ERROR:  must be owner of statistics object alt_stat3
+ALTER STATISTICS alt_stat2 OWNER TO regress_alter_user3; -- failed (no role membership)
+ERROR:  must be member of role "regress_alter_user3"
+ALTER STATISTICS alt_stat3 SET SCHEMA alt_nsp2;		-- failed (not owner)
+ERROR:  must be owner of statistics object alt_stat3
+ALTER STATISTICS alt_stat2 SET SCHEMA alt_nsp2;		-- failed (name conflict)
+ERROR:  statistics object "alt_stat2" already exists in schema "alt_nsp2"
+RESET SESSION AUTHORIZATION;
+SELECT nspname, stxname, rolname
+  FROM pg_statistic_ext s, pg_namespace n, pg_authid a
+ WHERE s.stxnamespace = n.oid AND s.stxowner = a.oid
+   AND n.nspname in ('alt_nsp1', 'alt_nsp2')
+ ORDER BY nspname, stxname;
+ nspname  |  stxname  |       rolname       
+----------+-----------+---------------------
+ alt_nsp1 | alt_stat2 | regress_alter_user2
+ alt_nsp1 | alt_stat3 | regress_alter_user1
+ alt_nsp1 | alt_stat4 | regress_alter_user2
+ alt_nsp2 | alt_stat2 | regress_alter_user3
+(4 rows)
+
 --
 -- Text Search Dictionary
 --
@@ -590,6 +633,9 @@ ALTER TEXT SEARCH TEMPLATE alt_ts_temp2 SET SCHEMA alt_nsp2;    -- OK
 CREATE TEXT SEARCH TEMPLATE alt_ts_temp2 (lexize=dsimple_lexize);
 ALTER TEXT SEARCH TEMPLATE alt_ts_temp2 SET SCHEMA alt_nsp2;    -- failed (name conflict)
 ERROR:  text search template "alt_ts_temp2" already exists in schema "alt_nsp2"
+-- invalid: non-lowercase quoted identifiers
+CREATE TEXT SEARCH TEMPLATE tstemp_case ("Init" = init_function);
+ERROR:  text search template parameter "Init" not recognized
 SELECT nspname, tmplname
   FROM pg_ts_template t, pg_namespace n
   WHERE t.tmplnamespace = n.oid AND nspname like 'alt_nsp%'
@@ -616,6 +662,9 @@ CREATE TEXT SEARCH PARSER alt_ts_prs2
     (start = prsd_start, gettoken = prsd_nexttoken, end = prsd_end, lextypes = prsd_lextype);
 ALTER TEXT SEARCH PARSER alt_ts_prs2 SET SCHEMA alt_nsp2;   -- failed (name conflict)
 ERROR:  text search parser "alt_ts_prs2" already exists in schema "alt_nsp2"
+-- invalid: non-lowercase quoted identifiers
+CREATE TEXT SEARCH PARSER tspars_case ("Start" = start_function);
+ERROR:  text search parser parameter "Start" not recognized
 SELECT nspname, prsname
   FROM pg_ts_parser t, pg_namespace n
   WHERE t.prsnamespace = n.oid AND nspname like 'alt_nsp%'
@@ -630,53 +679,17 @@ SELECT nspname, prsname
 ---
 --- Cleanup resources
 ---
+\set VERBOSITY terse \\ -- suppress cascade details
 DROP FOREIGN DATA WRAPPER alt_fdw2 CASCADE;
 NOTICE:  drop cascades to server alt_fserv2
 DROP FOREIGN DATA WRAPPER alt_fdw3 CASCADE;
 NOTICE:  drop cascades to server alt_fserv3
 DROP LANGUAGE alt_lang2 CASCADE;
 DROP LANGUAGE alt_lang3 CASCADE;
-DROP LANGUAGE alt_lang4 CASCADE;
-ERROR:  language "alt_lang4" does not exist
 DROP SCHEMA alt_nsp1 CASCADE;
-NOTICE:  drop cascades to 26 other objects
-DETAIL:  drop cascades to function alt_func3(integer)
-drop cascades to function alt_agg3(integer)
-drop cascades to function alt_func4(integer)
-drop cascades to function alt_func2(integer)
-drop cascades to function alt_agg4(integer)
-drop cascades to function alt_agg2(integer)
-drop cascades to conversion alt_conv3
-drop cascades to conversion alt_conv4
-drop cascades to conversion alt_conv2
-drop cascades to operator @+@(integer,integer)
-drop cascades to operator @-@(integer,integer)
-drop cascades to operator family alt_opf3 for access method hash
-drop cascades to operator family alt_opc1 for access method hash
-drop cascades to operator family alt_opc2 for access method hash
-drop cascades to operator family alt_opf4 for access method hash
-drop cascades to operator family alt_opf2 for access method hash
-drop cascades to text search dictionary alt_ts_dict3
-drop cascades to text search dictionary alt_ts_dict4
-drop cascades to text search dictionary alt_ts_dict2
-drop cascades to text search configuration alt_ts_conf3
-drop cascades to text search configuration alt_ts_conf4
-drop cascades to text search configuration alt_ts_conf2
-drop cascades to text search template alt_ts_temp3
-drop cascades to text search template alt_ts_temp2
-drop cascades to text search parser alt_ts_prs3
-drop cascades to text search parser alt_ts_prs2
+NOTICE:  drop cascades to 28 other objects
 DROP SCHEMA alt_nsp2 CASCADE;
 NOTICE:  drop cascades to 9 other objects
-DETAIL:  drop cascades to function alt_nsp2.alt_func2(integer)
-drop cascades to function alt_nsp2.alt_agg2(integer)
-drop cascades to conversion alt_conv2
-drop cascades to operator alt_nsp2.@-@(integer,integer)
-drop cascades to operator family alt_nsp2.alt_opf2 for access method hash
-drop cascades to text search dictionary alt_ts_dict2
-drop cascades to text search configuration alt_ts_conf2
-drop cascades to text search template alt_ts_temp2
-drop cascades to text search parser alt_ts_prs2
 DROP USER regress_alter_user1;
 DROP USER regress_alter_user2;
 DROP USER regress_alter_user3;

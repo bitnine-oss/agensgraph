@@ -3,7 +3,7 @@
  * user.c
  *	  Commands for manipulating roles (formerly called users).
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/backend/commands/user.c
@@ -80,21 +80,19 @@ CreateRole(ParseState *pstate, CreateRoleStmt *stmt)
 	ListCell   *item;
 	ListCell   *option;
 	char	   *password = NULL;	/* user password */
-	int			password_type = Password_encryption;
 	bool		issuper = false;	/* Make the user a superuser? */
 	bool		inherit = true; /* Auto inherit privileges? */
-	bool		createrole = false;		/* Can this user create roles? */
-	bool		createdb = false;		/* Can the user create databases? */
-	bool		canlogin = false;		/* Can this user login? */
+	bool		createrole = false; /* Can this user create roles? */
+	bool		createdb = false;	/* Can the user create databases? */
+	bool		canlogin = false;	/* Can this user login? */
 	bool		isreplication = false;	/* Is this a replication role? */
-	bool		bypassrls = false;		/* Is this a row security enabled
-										 * role? */
+	bool		bypassrls = false;	/* Is this a row security enabled role? */
 	int			connlimit = -1; /* maximum connections allowed */
 	List	   *addroleto = NIL;	/* roles to make this a member of */
-	List	   *rolemembers = NIL;		/* roles to be members of this role */
-	List	   *adminmembers = NIL;		/* roles to be admins of this role */
-	char	   *validUntil = NULL;		/* time the login is valid until */
-	Datum		validUntil_datum;		/* same, as timestamptz Datum */
+	List	   *rolemembers = NIL;	/* roles to be members of this role */
+	List	   *adminmembers = NIL; /* roles to be admins of this role */
+	char	   *validUntil = NULL;	/* time the login is valid until */
+	Datum		validUntil_datum;	/* same, as timestamptz Datum */
 	bool		validUntil_null;
 	DefElem    *dpassword = NULL;
 	DefElem    *dissuper = NULL;
@@ -128,9 +126,7 @@ CreateRole(ParseState *pstate, CreateRoleStmt *stmt)
 	{
 		DefElem    *defel = (DefElem *) lfirst(option);
 
-		if (strcmp(defel->defname, "password") == 0 ||
-			strcmp(defel->defname, "encryptedPassword") == 0 ||
-			strcmp(defel->defname, "unencryptedPassword") == 0)
+		if (strcmp(defel->defname, "password") == 0)
 		{
 			if (dpassword)
 				ereport(ERROR,
@@ -138,10 +134,6 @@ CreateRole(ParseState *pstate, CreateRoleStmt *stmt)
 						 errmsg("conflicting or redundant options"),
 						 parser_errposition(pstate, defel->location)));
 			dpassword = defel;
-			if (strcmp(defel->defname, "encryptedPassword") == 0)
-				password_type = PASSWORD_TYPE_MD5;
-			else if (strcmp(defel->defname, "unencryptedPassword") == 0)
-				password_type = PASSWORD_TYPE_PLAINTEXT;
 		}
 		else if (strcmp(defel->defname, "sysid") == 0)
 		{
@@ -307,14 +299,14 @@ CreateRole(ParseState *pstate, CreateRoleStmt *stmt)
 		if (!superuser())
 			ereport(ERROR,
 					(errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
-				   errmsg("must be superuser to create replication users")));
+					 errmsg("must be superuser to create replication users")));
 	}
 	else if (bypassrls)
 	{
 		if (!superuser())
 			ereport(ERROR,
 					(errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
-				 errmsg("must be superuser to change bypassrls attribute")));
+					 errmsg("must be superuser to change bypassrls attribute")));
 	}
 	else
 	{
@@ -333,7 +325,7 @@ CreateRole(ParseState *pstate, CreateRoleStmt *stmt)
 				(errcode(ERRCODE_RESERVED_NAME),
 				 errmsg("role name \"%s\" is reserved",
 						stmt->role),
-			   errdetail("Role names starting with \"pg_\" are reserved.")));
+				 errdetail("Role names starting with \"pg_\" are reserved.")));
 
 	/*
 	 * Check the pg_authid relation to be certain the role doesn't already
@@ -392,12 +384,36 @@ CreateRole(ParseState *pstate, CreateRoleStmt *stmt)
 
 	if (password)
 	{
-		/* Encrypt the password to the requested format. */
 		char	   *shadow_pass;
+		char	   *logdetail;
 
-		shadow_pass = encrypt_password(password_type, stmt->role, password);
-		new_record[Anum_pg_authid_rolpassword - 1] =
-			CStringGetTextDatum(shadow_pass);
+		/*
+		 * Don't allow an empty password. Libpq treats an empty password the
+		 * same as no password at all, and won't even try to authenticate. But
+		 * other clients might, so allowing it would be confusing. By clearing
+		 * the password when an empty string is specified, the account is
+		 * consistently locked for all clients.
+		 *
+		 * Note that this only covers passwords stored in the database itself.
+		 * There are also checks in the authentication code, to forbid an
+		 * empty password from being used with authentication methods that
+		 * fetch the password from an external system, like LDAP or PAM.
+		 */
+		if (password[0] == '\0' ||
+			plain_crypt_verify(stmt->role, password, "", &logdetail) == STATUS_OK)
+		{
+			ereport(NOTICE,
+					(errmsg("empty string is not a valid password, clearing password")));
+			new_record_nulls[Anum_pg_authid_rolpassword - 1] = true;
+		}
+		else
+		{
+			/* Encrypt the password to the requested format. */
+			shadow_pass = encrypt_password(Password_encryption, stmt->role,
+										   password);
+			new_record[Anum_pg_authid_rolpassword - 1] =
+				CStringGetTextDatum(shadow_pass);
+		}
 	}
 	else
 		new_record_nulls[Anum_pg_authid_rolpassword - 1] = true;
@@ -498,17 +514,16 @@ AlterRole(AlterRoleStmt *stmt)
 	ListCell   *option;
 	char	   *rolename = NULL;
 	char	   *password = NULL;	/* user password */
-	int			password_type = Password_encryption;
 	int			issuper = -1;	/* Make the user a superuser? */
 	int			inherit = -1;	/* Auto inherit privileges? */
 	int			createrole = -1;	/* Can this user create roles? */
 	int			createdb = -1;	/* Can the user create databases? */
 	int			canlogin = -1;	/* Can this user login? */
-	int			isreplication = -1;		/* Is this a replication role? */
+	int			isreplication = -1; /* Is this a replication role? */
 	int			connlimit = -1; /* maximum connections allowed */
-	List	   *rolemembers = NIL;		/* roles to be added/removed */
-	char	   *validUntil = NULL;		/* time the login is valid until */
-	Datum		validUntil_datum;		/* same, as timestamptz Datum */
+	List	   *rolemembers = NIL;	/* roles to be added/removed */
+	char	   *validUntil = NULL;	/* time the login is valid until */
+	Datum		validUntil_datum;	/* same, as timestamptz Datum */
 	bool		validUntil_null;
 	int			bypassrls = -1;
 	DefElem    *dpassword = NULL;
@@ -532,19 +547,13 @@ AlterRole(AlterRoleStmt *stmt)
 	{
 		DefElem    *defel = (DefElem *) lfirst(option);
 
-		if (strcmp(defel->defname, "password") == 0 ||
-			strcmp(defel->defname, "encryptedPassword") == 0 ||
-			strcmp(defel->defname, "unencryptedPassword") == 0)
+		if (strcmp(defel->defname, "password") == 0)
 		{
 			if (dpassword)
 				ereport(ERROR,
 						(errcode(ERRCODE_SYNTAX_ERROR),
 						 errmsg("conflicting or redundant options")));
 			dpassword = defel;
-			if (strcmp(defel->defname, "encryptedPassword") == 0)
-				password_type = PASSWORD_TYPE_MD5;
-			else if (strcmp(defel->defname, "unencryptedPassword") == 0)
-				password_type = PASSWORD_TYPE_PLAINTEXT;
 		}
 		else if (strcmp(defel->defname, "superuser") == 0)
 		{
@@ -695,7 +704,7 @@ AlterRole(AlterRoleStmt *stmt)
 		if (!superuser())
 			ereport(ERROR,
 					(errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
-				 errmsg("must be superuser to change bypassrls attribute")));
+					 errmsg("must be superuser to change bypassrls attribute")));
 	}
 	else if (!have_createrole_privilege())
 	{
@@ -796,12 +805,25 @@ AlterRole(AlterRoleStmt *stmt)
 	/* password */
 	if (password)
 	{
-		/* Encrypt the password to the requested format. */
 		char	   *shadow_pass;
+		char	   *logdetail;
 
-		shadow_pass = encrypt_password(password_type, rolename, password);
-		new_record[Anum_pg_authid_rolpassword - 1] =
-			CStringGetTextDatum(shadow_pass);
+		/* Like in CREATE USER, don't allow an empty password. */
+		if (password[0] == '\0' ||
+			plain_crypt_verify(rolename, password, "", &logdetail) == STATUS_OK)
+		{
+			ereport(NOTICE,
+					(errmsg("empty string is not a valid password, clearing password")));
+			new_record_nulls[Anum_pg_authid_rolpassword - 1] = true;
+		}
+		else
+		{
+			/* Encrypt the password to the requested format. */
+			shadow_pass = encrypt_password(Password_encryption, rolename,
+										   password);
+			new_record[Anum_pg_authid_rolpassword - 1] =
+				CStringGetTextDatum(shadow_pass);
+		}
 		new_record_repl[Anum_pg_authid_rolpassword - 1] = true;
 	}
 
@@ -917,7 +939,7 @@ AlterRoleSet(AlterRoleSetStmt *stmt)
 			 * ALTER DATABASE ... SET, so use the same permission check.
 			 */
 			if (!pg_database_ownercheck(databaseid, GetUserId()))
-				aclcheck_error(ACLCHECK_NOT_OWNER, ACL_KIND_DATABASE,
+				aclcheck_error(ACLCHECK_NOT_OWNER, OBJECT_DATABASE,
 							   stmt->database);
 		}
 	}
@@ -974,7 +996,7 @@ DropRole(DropRoleStmt *stmt)
 		if (rolspec->roletype != ROLESPEC_CSTRING)
 			ereport(ERROR,
 					(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				  errmsg("cannot use special role specifier in DROP ROLE")));
+					 errmsg("cannot use special role specifier in DROP ROLE")));
 		role = rolspec->rolename;
 
 		tuple = SearchSysCache1(AUTHNAME, PointerGetDatum(role));
@@ -1172,14 +1194,14 @@ RenameRole(const char *oldname, const char *newname)
 				(errcode(ERRCODE_RESERVED_NAME),
 				 errmsg("role name \"%s\" is reserved",
 						NameStr(authform->rolname)),
-			   errdetail("Role names starting with \"pg_\" are reserved.")));
+				 errdetail("Role names starting with \"pg_\" are reserved.")));
 
 	if (IsReservedName(newname))
 		ereport(ERROR,
 				(errcode(ERRCODE_RESERVED_NAME),
 				 errmsg("role name \"%s\" is reserved",
 						newname),
-			   errdetail("Role names starting with \"pg_\" are reserved.")));
+				 errdetail("Role names starting with \"pg_\" are reserved.")));
 
 	/* make sure the new name doesn't exist */
 	if (SearchSysCacheExists1(AUTHNAME, CStringGetDatum(newname)))
@@ -1211,7 +1233,7 @@ RenameRole(const char *oldname, const char *newname)
 
 	repl_repl[Anum_pg_authid_rolname - 1] = true;
 	repl_val[Anum_pg_authid_rolname - 1] = DirectFunctionCall1(namein,
-												   CStringGetDatum(newname));
+															   CStringGetDatum(newname));
 	repl_null[Anum_pg_authid_rolname - 1] = false;
 
 	datum = heap_getattr(oldtuple, Anum_pg_authid_rolpassword, dsc, &isnull);
@@ -1283,7 +1305,7 @@ GrantRole(GrantRoleStmt *stmt)
 		if (rolename == NULL || priv->cols != NIL)
 			ereport(ERROR,
 					(errcode(ERRCODE_INVALID_GRANT_OPERATION),
-			errmsg("column names cannot be included in GRANT/REVOKE ROLE")));
+					 errmsg("column names cannot be included in GRANT/REVOKE ROLE")));
 
 		roleid = get_role_oid(rolename, false);
 		if (stmt->is_grant)
@@ -1378,7 +1400,7 @@ roleSpecsToIds(List *memberNames)
 
 	foreach(l, memberNames)
 	{
-		RoleSpec   *rolespec = castNode(RoleSpec, lfirst(l));
+		RoleSpec   *rolespec = lfirst_node(RoleSpec, l);
 		Oid			roleid;
 
 		roleid = get_rolespec_oid(rolespec, false);
@@ -1475,7 +1497,7 @@ AddRoleMems(const char *rolename, Oid roleid,
 			ereport(ERROR,
 					(errcode(ERRCODE_INVALID_GRANT_OPERATION),
 					 (errmsg("role \"%s\" is a member of role \"%s\"",
-						rolename, get_rolespec_name(memberRole)))));
+							 rolename, get_rolespec_name(memberRole)))));
 
 		/*
 		 * Check if entry for this role/member already exists; if so, give
@@ -1490,7 +1512,7 @@ AddRoleMems(const char *rolename, Oid roleid,
 		{
 			ereport(NOTICE,
 					(errmsg("role \"%s\" is already a member of role \"%s\"",
-						 get_rolespec_name(memberRole), rolename)));
+							get_rolespec_name(memberRole), rolename)));
 			ReleaseSysCache(authmem_tuple);
 			continue;
 		}
@@ -1599,7 +1621,7 @@ DelRoleMems(const char *rolename, Oid roleid,
 		{
 			ereport(WARNING,
 					(errmsg("role \"%s\" is not a member of role \"%s\"",
-						 get_rolespec_name(memberRole), rolename)));
+							get_rolespec_name(memberRole), rolename)));
 			continue;
 		}
 

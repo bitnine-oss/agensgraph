@@ -3,7 +3,7 @@
  * varchar.c
  *	  Functions for the built-in types char(n) and varchar(n).
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -467,8 +467,8 @@ varchar_input(const char *s, size_t len, int32 atttypmod)
 			if (s[j] != ' ')
 				ereport(ERROR,
 						(errcode(ERRCODE_STRING_DATA_RIGHT_TRUNCATION),
-					  errmsg("value too long for type character varying(%d)",
-							 (int) maxlen)));
+						 errmsg("value too long for type character varying(%d)",
+								(int) maxlen)));
 		}
 
 		len = mbmaxlen;
@@ -554,11 +554,10 @@ varcharsend(PG_FUNCTION_ARGS)
 Datum
 varchar_transform(PG_FUNCTION_ARGS)
 {
-	FuncExpr   *expr = (FuncExpr *) PG_GETARG_POINTER(0);
+	FuncExpr   *expr = castNode(FuncExpr, PG_GETARG_POINTER(0));
 	Node	   *ret = NULL;
 	Node	   *typmod;
 
-	Assert(IsA(expr, FuncExpr));
 	Assert(list_length(expr->args) >= 2);
 
 	typmod = (Node *) lsecond(expr->args);
@@ -621,8 +620,8 @@ varchar(PG_FUNCTION_ARGS)
 			if (s_data[i] != ' ')
 				ereport(ERROR,
 						(errcode(ERRCODE_STRING_DATA_RIGHT_TRUNCATION),
-					  errmsg("value too long for type character varying(%d)",
-							 maxlen)));
+						 errmsg("value too long for type character varying(%d)",
+								maxlen)));
 	}
 
 	PG_RETURN_VARCHAR_P((VarChar *) cstring_to_text_with_len(s_data,
@@ -948,6 +947,24 @@ hashbpchar(PG_FUNCTION_ARGS)
 	return result;
 }
 
+Datum
+hashbpcharextended(PG_FUNCTION_ARGS)
+{
+	BpChar	   *key = PG_GETARG_BPCHAR_PP(0);
+	char	   *keydata;
+	int			keylen;
+	Datum		result;
+
+	keydata = VARDATA_ANY(key);
+	keylen = bcTruelen(key);
+
+	result = hash_any_extended((unsigned char *) keydata, keylen,
+							   PG_GETARG_INT64(1));
+
+	PG_FREE_IF_COPY(key, 0);
+
+	return result;
+}
 
 /*
  * The following operators support character-by-character comparison

@@ -1,6 +1,6 @@
 #! /usr/bin/perl
 #
-# Copyright (c) 2007-2017, PostgreSQL Global Development Group
+# Copyright (c) 2007-2018, PostgreSQL Global Development Group
 #
 # src/backend/utils/mb/Unicode/UCS_to_EUC_JIS_2004.pl
 #
@@ -8,7 +8,9 @@
 # "euc-jis-2004-std.txt" (http://x0213.org)
 
 use strict;
-require convutils;
+use convutils;
+
+my $this_script = 'src/backend/utils/mb/Unicode/UCS_to_EUC_JIS_2004.pl';
 
 # first generate UTF-8 --> EUC_JIS_2004 table
 
@@ -22,6 +24,7 @@ while (my $line = <$in>)
 {
 	if ($line =~ /^0x(.*)[ \t]*U\+(.*)\+(.*)[ \t]*#(.*)$/)
 	{
+
 		# combined characters
 		my ($c, $u1, $u2) = ($1, $2, $3);
 		my $rest = "U+" . $u1 . "+" . $u2 . $4;
@@ -29,15 +32,18 @@ while (my $line = <$in>)
 		my $ucs1 = hex($u1);
 		my $ucs2 = hex($u2);
 
-		push @all, { direction => 'both',
-					 ucs => $ucs1,
-					 ucs_second => $ucs2,
-					 code => $code,
-					 comment => $rest };
-		next;
+		push @all,
+		  { direction  => BOTH,
+			ucs        => $ucs1,
+			ucs_second => $ucs2,
+			code       => $code,
+			comment    => $rest,
+			f          => $in_file,
+			l          => $. };
 	}
 	elsif ($line =~ /^0x(.*)[ \t]*U\+(.*)[ \t]*#(.*)$/)
 	{
+
 		# non-combined characters
 		my ($c, $u, $rest) = ($1, $2, "U+" . $2 . $3);
 		my $ucs  = hex($u);
@@ -45,9 +51,15 @@ while (my $line = <$in>)
 
 		next if ($code < 0x80 && $ucs < 0x80);
 
-		push @all, { direction => 'both', ucs => $ucs, code => $code, comment => $rest };
+		push @all,
+		  { direction => BOTH,
+			ucs       => $ucs,
+			code      => $code,
+			comment   => $rest,
+			f         => $in_file,
+			l         => $. };
 	}
 }
 close($in);
 
-print_tables("EUC_JIS_2004", \@all, 1);
+print_conversion_tables($this_script, "EUC_JIS_2004", \@all);

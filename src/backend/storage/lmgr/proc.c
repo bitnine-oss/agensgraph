@@ -3,7 +3,7 @@
  * proc.c
  *	  routines to manage per-process shared memory data structure
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -186,6 +186,7 @@ InitProcGlobal(void)
 	ProcGlobal->walwriterLatch = NULL;
 	ProcGlobal->checkpointerLatch = NULL;
 	pg_atomic_init_u32(&ProcGlobal->procArrayGroupFirst, INVALID_PGPROCNO);
+	pg_atomic_init_u32(&ProcGlobal->clogGroupFirst, INVALID_PGPROCNO);
 
 	/*
 	 * Create and initialize all the PGPROC structures we'll need.  There are
@@ -286,7 +287,7 @@ InitProcGlobal(void)
 void
 InitProcess(void)
 {
-	PGPROC	   *volatile * procgloballist;
+	PGPROC	   *volatile *procgloballist;
 
 	/*
 	 * ProcGlobal should be set up already (if we are a backend, we inherit
@@ -407,6 +408,14 @@ InitProcess(void)
 
 	/* Initialize wait event information. */
 	MyProc->wait_event_info = 0;
+
+	/* Initialize fields for group transaction status update. */
+	MyProc->clogGroupMember = false;
+	MyProc->clogGroupMemberXid = InvalidTransactionId;
+	MyProc->clogGroupMemberXidStatus = TRANSACTION_STATUS_IN_PROGRESS;
+	MyProc->clogGroupMemberPage = -1;
+	MyProc->clogGroupMemberLsn = InvalidXLogRecPtr;
+	pg_atomic_init_u32(&MyProc->clogGroupNext, INVALID_PGPROCNO);
 
 	/*
 	 * Acquire ownership of the PGPROC's latch, so that we can use WaitLatch
@@ -781,7 +790,7 @@ static void
 ProcKill(int code, Datum arg)
 {
 	PGPROC	   *proc;
-	PGPROC	   *volatile * procgloballist;
+	PGPROC	   *volatile *procgloballist;
 
 	Assert(MyProc != NULL);
 
@@ -941,6 +950,33 @@ AuxiliaryProcKill(int code, Datum arg)
 	SpinLockRelease(ProcStructLock);
 }
 
+/*
+ * AuxiliaryPidGetProc -- get PGPROC for an auxiliary process
+ * given its PID
+ *
+ * Returns NULL if not found.
+ */
+PGPROC *
+AuxiliaryPidGetProc(int pid)
+{
+	PGPROC	   *result = NULL;
+	int			index;
+
+	if (pid == 0)				/* never match dummy PGPROCs */
+		return NULL;
+
+	for (index = 0; index < NUM_AUXILIARY_PROCS; index++)
+	{
+		PGPROC	   *proc = &AuxiliaryProcs[index];
+
+		if (proc->pid == pid)
+		{
+			result = proc;
+			break;
+		}
+	}
+	return result;
+}
 
 /*
  * ProcQueue package: routines for putting processes to sleep
@@ -1272,8 +1308,8 @@ ProcSleep(LOCALLOCK *locallock, LockMethod lockMethodTable)
 				appendStringInfo(&logbuf,
 								 _("Process %d waits for %s on %s."),
 								 MyProcPid,
-							  GetLockmodeName(lock->tag.locktag_lockmethodid,
-											  lockmode),
+								 GetLockmodeName(lock->tag.locktag_lockmethodid,
+												 lockmode),
 								 locktagbuf.data);
 
 				/* release lock as quickly as possible */
@@ -1281,9 +1317,9 @@ ProcSleep(LOCALLOCK *locallock, LockMethod lockMethodTable)
 
 				/* send the autovacuum worker Back to Old Kent Road */
 				ereport(DEBUG1,
-					  (errmsg("sending cancel to blocking autovacuum PID %d",
-							  pid),
-					   errdetail_log("%s", logbuf.data)));
+						(errmsg("sending cancel to blocking autovacuum PID %d",
+								pid),
+						 errdetail_log("%s", logbuf.data)));
 
 				if (kill(pid, SIGINT) < 0)
 				{
@@ -1299,8 +1335,8 @@ ProcSleep(LOCALLOCK *locallock, LockMethod lockMethodTable)
 					 */
 					if (errno != ESRCH)
 						ereport(WARNING,
-						   (errmsg("could not send signal to process %d: %m",
-								   pid)));
+								(errmsg("could not send signal to process %d: %m",
+										pid)));
 				}
 
 				pfree(logbuf.data);
@@ -1358,7 +1394,7 @@ ProcSleep(LOCALLOCK *locallock, LockMethod lockMethodTable)
 
 			procLocks = &(lock->procLocks);
 			proclock = (PROCLOCK *) SHMQueueNext(procLocks, procLocks,
-											   offsetof(PROCLOCK, lockLink));
+												 offsetof(PROCLOCK, lockLink));
 
 			while (proclock)
 			{
@@ -1394,7 +1430,7 @@ ProcSleep(LOCALLOCK *locallock, LockMethod lockMethodTable)
 				}
 
 				proclock = (PROCLOCK *) SHMQueueNext(procLocks, &proclock->lockLink,
-											   offsetof(PROCLOCK, lockLink));
+													 offsetof(PROCLOCK, lockLink));
 			}
 
 			LWLockRelease(partitionLock);
@@ -1404,7 +1440,7 @@ ProcSleep(LOCALLOCK *locallock, LockMethod lockMethodTable)
 						(errmsg("process %d avoided deadlock for %s on %s by rearranging queue order after %ld.%03d ms",
 								MyProcPid, modename, buf.data, msecs, usecs),
 						 (errdetail_log_plural("Process holding the lock: %s. Wait queue: %s.",
-						   "Processes holding the lock: %s. Wait queue: %s.",
+											   "Processes holding the lock: %s. Wait queue: %s.",
 											   lockHoldersNum, lock_holders_sbuf.data, lock_waiters_sbuf.data))));
 			else if (deadlock_state == DS_HARD_DEADLOCK)
 			{
@@ -1419,7 +1455,7 @@ ProcSleep(LOCALLOCK *locallock, LockMethod lockMethodTable)
 						(errmsg("process %d detected deadlock while waiting for %s on %s after %ld.%03d ms",
 								MyProcPid, modename, buf.data, msecs, usecs),
 						 (errdetail_log_plural("Process holding the lock: %s. Wait queue: %s.",
-						   "Processes holding the lock: %s. Wait queue: %s.",
+											   "Processes holding the lock: %s. Wait queue: %s.",
 											   lockHoldersNum, lock_holders_sbuf.data, lock_waiters_sbuf.data))));
 			}
 
@@ -1428,12 +1464,12 @@ ProcSleep(LOCALLOCK *locallock, LockMethod lockMethodTable)
 						(errmsg("process %d still waiting for %s on %s after %ld.%03d ms",
 								MyProcPid, modename, buf.data, msecs, usecs),
 						 (errdetail_log_plural("Process holding the lock: %s. Wait queue: %s.",
-						   "Processes holding the lock: %s. Wait queue: %s.",
+											   "Processes holding the lock: %s. Wait queue: %s.",
 											   lockHoldersNum, lock_holders_sbuf.data, lock_waiters_sbuf.data))));
 			else if (myWaitStatus == STATUS_OK)
 				ereport(LOG,
-					(errmsg("process %d acquired %s on %s after %ld.%03d ms",
-							MyProcPid, modename, buf.data, msecs, usecs)));
+						(errmsg("process %d acquired %s on %s after %ld.%03d ms",
+								MyProcPid, modename, buf.data, msecs, usecs)));
 			else
 			{
 				Assert(myWaitStatus == STATUS_ERROR);
@@ -1449,9 +1485,9 @@ ProcSleep(LOCALLOCK *locallock, LockMethod lockMethodTable)
 				if (deadlock_state != DS_HARD_DEADLOCK)
 					ereport(LOG,
 							(errmsg("process %d failed to acquire %s on %s after %ld.%03d ms",
-								MyProcPid, modename, buf.data, msecs, usecs),
+									MyProcPid, modename, buf.data, msecs, usecs),
 							 (errdetail_log_plural("Process holding the lock: %s. Wait queue: %s.",
-						   "Processes holding the lock: %s. Wait queue: %s.",
+												   "Processes holding the lock: %s. Wait queue: %s.",
 												   lockHoldersNum, lock_holders_sbuf.data, lock_waiters_sbuf.data))));
 			}
 

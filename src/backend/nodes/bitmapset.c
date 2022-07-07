@@ -11,7 +11,7 @@
  * bms_is_empty() in preference to testing for NULL.)
  *
  *
- * Copyright (c) 2003-2017, PostgreSQL Global Development Group
+ * Copyright (c) 2003-2018, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
  *	  src/backend/nodes/bitmapset.c
@@ -21,6 +21,7 @@
 #include "postgres.h"
 
 #include "access/hash.h"
+#include "nodes/pg_list.h"
 
 
 #define WORDNUM(x)	((x) / BITS_PER_BITMAPWORD)
@@ -169,6 +170,50 @@ bms_equal(const Bitmapset *a, const Bitmapset *b)
 			return false;
 	}
 	return true;
+}
+
+/*
+ * bms_compare - qsort-style comparator for bitmapsets
+ *
+ * This guarantees to report values as equal iff bms_equal would say they are
+ * equal.  Otherwise, the highest-numbered bit that is set in one value but
+ * not the other determines the result.  (This rule means that, for example,
+ * {6} is greater than {5}, which seems plausible.)
+ */
+int
+bms_compare(const Bitmapset *a, const Bitmapset *b)
+{
+	int			shortlen;
+	int			i;
+
+	/* Handle cases where either input is NULL */
+	if (a == NULL)
+		return bms_is_empty(b) ? 0 : -1;
+	else if (b == NULL)
+		return bms_is_empty(a) ? 0 : +1;
+	/* Handle cases where one input is longer than the other */
+	shortlen = Min(a->nwords, b->nwords);
+	for (i = shortlen; i < a->nwords; i++)
+	{
+		if (a->words[i] != 0)
+			return +1;
+	}
+	for (i = shortlen; i < b->nwords; i++)
+	{
+		if (b->words[i] != 0)
+			return -1;
+	}
+	/* Process words in common */
+	i = shortlen;
+	while (--i >= 0)
+	{
+		bitmapword	aw = a->words[i];
+		bitmapword	bw = b->words[i];
+
+		if (aw != bw)
+			return (aw > bw) ? +1 : -1;
+	}
+	return 0;
 }
 
 /*
@@ -458,6 +503,35 @@ bms_overlap(const Bitmapset *a, const Bitmapset *b)
 }
 
 /*
+ * bms_overlap_list - does a set overlap an integer list?
+ */
+bool
+bms_overlap_list(const Bitmapset *a, const List *b)
+{
+	ListCell   *lc;
+	int			wordnum,
+				bitnum;
+
+	if (a == NULL || b == NIL)
+		return false;
+
+	foreach(lc, b)
+	{
+		int			x = lfirst_int(lc);
+
+		if (x < 0)
+			elog(ERROR, "negative bitmapset member not allowed");
+		wordnum = WORDNUM(x);
+		bitnum = BITNUM(x);
+		if (wordnum < a->nwords)
+			if ((a->words[wordnum] & ((bitmapword) 1 << bitnum)) != 0)
+				return true;
+	}
+
+	return false;
+}
+
+/*
  * bms_nonempty_difference - do sets have a nonempty difference?
  */
 bool
@@ -528,8 +602,8 @@ bms_singleton_member(const Bitmapset *a)
  * bms_get_singleton_member
  *
  * Test whether the given set is a singleton.
- * If so, set *member to the value of its sole member, and return TRUE.
- * If not, return FALSE, without changing *member.
+ * If so, set *member to the value of its sole member, and return true.
+ * If not, return false, without changing *member.
  *
  * This is more convenient and faster than calling bms_membership() and then
  * bms_singleton_member(), if we don't care about distinguishing empty sets
@@ -752,6 +826,78 @@ bms_add_members(Bitmapset *a, const Bitmapset *b)
 	if (result != a)
 		pfree(a);
 	return result;
+}
+
+/*
+ * bms_add_range
+ *		Add members in the range of 'lower' to 'upper' to the set.
+ *
+ * Note this could also be done by calling bms_add_member in a loop, however,
+ * using this function will be faster when the range is large as we work at
+ * the bitmapword level rather than at bit level.
+ */
+Bitmapset *
+bms_add_range(Bitmapset *a, int lower, int upper)
+{
+	int			lwordnum,
+				lbitnum,
+				uwordnum,
+				ushiftbits,
+				wordnum;
+
+	if (lower < 0 || upper < 0)
+		elog(ERROR, "negative bitmapset member not allowed");
+	if (lower > upper)
+		elog(ERROR, "lower range must not be above upper range");
+	uwordnum = WORDNUM(upper);
+
+	if (a == NULL)
+	{
+		a = (Bitmapset *) palloc0(BITMAPSET_SIZE(uwordnum + 1));
+		a->nwords = uwordnum + 1;
+	}
+
+	/* ensure we have enough words to store the upper bit */
+	else if (uwordnum >= a->nwords)
+	{
+		int			oldnwords = a->nwords;
+		int			i;
+
+		a = (Bitmapset *) repalloc(a, BITMAPSET_SIZE(uwordnum + 1));
+		a->nwords = uwordnum + 1;
+		/* zero out the enlarged portion */
+		for (i = oldnwords; i < a->nwords; i++)
+			a->words[i] = 0;
+	}
+
+	wordnum = lwordnum = WORDNUM(lower);
+
+	lbitnum = BITNUM(lower);
+	ushiftbits = BITS_PER_BITMAPWORD - (BITNUM(upper) + 1);
+
+	/*
+	 * Special case when lwordnum is the same as uwordnum we must perform the
+	 * upper and lower masking on the word.
+	 */
+	if (lwordnum == uwordnum)
+	{
+		a->words[lwordnum] |= ~(bitmapword) (((bitmapword) 1 << lbitnum) - 1)
+			& (~(bitmapword) 0) >> ushiftbits;
+	}
+	else
+	{
+		/* turn on lbitnum and all bits left of it */
+		a->words[wordnum++] |= ~(bitmapword) (((bitmapword) 1 << lbitnum) - 1);
+
+		/* turn on all bits for any intermediate words */
+		while (wordnum < uwordnum)
+			a->words[wordnum++] = ~(bitmapword) 0;
+
+		/* turn on upper's bit and all bits right of it. */
+		a->words[uwordnum] |= (~(bitmapword) 0) >> ushiftbits;
+	}
+
+	return a;
 }
 
 /*

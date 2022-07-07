@@ -3,7 +3,7 @@
 #################################################################
 # version_stamp.pl -- update version stamps throughout the source tree
 #
-# Copyright (c) 2008-2017, PostgreSQL Global Development Group
+# Copyright (c) 2008-2018, PostgreSQL Global Development Group
 #
 # src/tools/version_stamp.pl
 #################################################################
@@ -24,7 +24,7 @@ use strict;
 
 # Major version is hard-wired into the script.  We update it when we branch
 # a new development version.
-my $majorversion = 10;
+my $majorversion = 11;
 
 # Validate argument and compute derived variables
 my $minor = shift;
@@ -80,8 +80,8 @@ my $padnumericversion = sprintf("%d%04d", $majorversion, $numericminor);
 # (this also ensures we're in the right directory)
 
 my $aconfver = "";
-open(FILE, "configure.in") || die "could not read configure.in: $!\n";
-while (<FILE>)
+open(my $fh, '<', "configure.in") || die "could not read configure.in: $!\n";
+while (<$fh>)
 {
 	if (
 m/^m4_if\(m4_defn\(\[m4_PACKAGE_VERSION\]\), \[(.*)\], \[\], \[m4_fatal/)
@@ -90,7 +90,7 @@ m/^m4_if\(m4_defn\(\[m4_PACKAGE_VERSION\]\), \[(.*)\], \[\], \[m4_fatal/)
 		last;
 	}
 }
-close(FILE);
+close($fh);
 $aconfver ne ""
   || die "could not find autoconf version number in configure.in\n";
 

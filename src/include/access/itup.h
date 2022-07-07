@@ -4,7 +4,7 @@
  *	  POSTGRES index tuple definitions.
  *
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/access/itup.h
@@ -55,9 +55,9 @@ typedef IndexTupleData *IndexTuple;
 typedef struct IndexAttributeBitMapData
 {
 	bits8		bits[(INDEX_MAX_KEYS + 8 - 1) / 8];
-}	IndexAttributeBitMapData;
+}			IndexAttributeBitMapData;
 
-typedef IndexAttributeBitMapData *IndexAttributeBitMap;
+typedef IndexAttributeBitMapData * IndexAttributeBitMap;
 
 /*
  * t_info manipulation macros
@@ -103,11 +103,11 @@ typedef IndexAttributeBitMapData *IndexAttributeBitMap;
 	*(isnull) = false, \
 	!IndexTupleHasNulls(tup) ? \
 	( \
-		(tupleDesc)->attrs[(attnum)-1]->attcacheoff >= 0 ? \
+		TupleDescAttr((tupleDesc), (attnum)-1)->attcacheoff >= 0 ? \
 		( \
-			fetchatt((tupleDesc)->attrs[(attnum)-1], \
+			fetchatt(TupleDescAttr((tupleDesc), (attnum)-1), \
 			(char *) (tup) + IndexInfoFindDataOffset((tup)->t_info) \
-			+ (tupleDesc)->attrs[(attnum)-1]->attcacheoff) \
+			+ TupleDescAttr((tupleDesc), (attnum)-1)->attcacheoff) \
 		) \
 		: \
 			nocache_index_getattr((tup), (attnum), (tupleDesc)) \
@@ -148,4 +148,4 @@ extern void index_deform_tuple(IndexTuple tup, TupleDesc tupleDescriptor,
 				   Datum *values, bool *isnull);
 extern IndexTuple CopyIndexTuple(IndexTuple source);
 
-#endif   /* ITUP_H */
+#endif							/* ITUP_H */

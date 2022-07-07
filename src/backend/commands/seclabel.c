@@ -3,7 +3,7 @@
  * seclabel.c
  *	  routines to support security label feature.
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * -------------------------------------------------------------------------
@@ -89,12 +89,12 @@ ExecSecLabelStmt(SecLabelStmt *stmt)
 	 * object does not exist, and will also acquire a lock on the target to
 	 * guard against concurrent modifications.
 	 */
-	address = get_object_address(stmt->objtype, stmt->objname, stmt->objargs,
+	address = get_object_address(stmt->objtype, stmt->object,
 								 &relation, ShareUpdateExclusiveLock, false);
 
 	/* Require ownership of the target object. */
 	check_object_ownership(GetUserId(), stmt->objtype, address,
-						   stmt->objname, stmt->objargs, relation);
+						   stmt->object, relation);
 
 	/* Perform other integrity checks as needed. */
 	switch (stmt->objtype)
@@ -122,7 +122,7 @@ ExecSecLabelStmt(SecLabelStmt *stmt)
 	}
 
 	/* Provider gets control here, may throw ERROR to veto new label. */
-	(*provider->hook) (&address, stmt->label);
+	provider->hook(&address, stmt->label);
 
 	/* Apply new label. */
 	SetSecurityLabel(&address, provider->provider_name, stmt->label);

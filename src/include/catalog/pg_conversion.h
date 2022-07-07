@@ -5,7 +5,7 @@
  *	  along with the relation's initial contents.
  *
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/catalog/pg_conversion.h
@@ -32,7 +32,7 @@
  *	conforencoding		FOR encoding id
  *	contoencoding		TO encoding id
  *	conproc				OID of the conversion proc
- *	condefault			TRUE if this is a default conversion
+ *	condefault			true if this is a default conversion
  * ----------------------------------------------------------------
  */
 #define ConversionRelationId  2607
@@ -74,4 +74,4 @@ typedef FormData_pg_conversion *Form_pg_conversion;
  * ---------------
  */
 
-#endif   /* PG_CONVERSION_H */
+#endif							/* PG_CONVERSION_H */

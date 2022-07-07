@@ -78,6 +78,7 @@ REGRESS = \
 	plpython_spi \
 	plpython_newline \
 	plpython_void \
+	plpython_call \
 	plpython_params \
 	plpython_setof \
 	plpython_record \
@@ -89,6 +90,7 @@ REGRESS = \
 	plpython_quote \
 	plpython_composite \
 	plpython_subtransaction \
+	plpython_transaction \
 	plpython_drop
 
 REGRESS_PLPYTHON3_MANGLE := $(REGRESS)

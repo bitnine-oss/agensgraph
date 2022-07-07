@@ -4,7 +4,7 @@
  *		Database management commands (create/drop database).
  *
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/commands/dbcommands.h
@@ -31,4 +31,4 @@ extern char *get_database_name(Oid dbid);
 
 extern void check_encoding_locale_matches(int encoding, const char *collate, const char *ctype);
 
-#endif   /* DBCOMMANDS_H */
+#endif							/* DBCOMMANDS_H */

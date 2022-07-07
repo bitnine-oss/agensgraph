@@ -1,6 +1,6 @@
 #! /usr/bin/perl
 #
-# Copyright (c) 2001-2017, PostgreSQL Global Development Group
+# Copyright (c) 2001-2018, PostgreSQL Global Development Group
 #
 # src/backend/utils/mb/Unicode/UCS_to_JOHAB.pl
 #
@@ -16,17 +16,33 @@
 #		 # and Unicode name (not used in this script)
 
 use strict;
-require convutils;
+use convutils;
+
+my $this_script = 'src/backend/utils/mb/Unicode/UCS_to_JOHAB.pl';
 
 # Load the source file.
 
 my $mapping = &read_source("JOHAB.TXT");
 
 # Some extra characters that are not in JOHAB.TXT
-push @$mapping, (
-	{direction => 'both', ucs => 0x20AC, code => 0xd9e6, comment => '# EURO SIGN'},
-	{direction => 'both', ucs => 0x00AE, code => 0xd9e7, comment => '# REGISTERED SIGN'},
-	{direction => 'both', ucs => 0x327E, code => 0xd9e8, comment => '# CIRCLED HANGUL IEUNG U'}
-	);
+push @$mapping,
+  ( {   direction => BOTH,
+		ucs       => 0x20AC,
+		code      => 0xd9e6,
+		comment   => '# EURO SIGN',
+		f         => $this_script,
+		l         => __LINE__ },
+	{   direction => BOTH,
+		ucs       => 0x00AE,
+		code      => 0xd9e7,
+		comment   => '# REGISTERED SIGN',
+		f         => $this_script,
+		l         => __LINE__ },
+	{   direction => BOTH,
+		ucs       => 0x327E,
+		code      => 0xd9e8,
+		comment   => '# CIRCLED HANGUL IEUNG U',
+		f         => $this_script,
+		l         => __LINE__ });
 
-print_tables("JOHAB", $mapping);
+print_conversion_tables($this_script, "JOHAB", $mapping);

@@ -34,7 +34,7 @@
  *		plan normally and pass back the results.
  *
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -47,6 +47,7 @@
 
 #include "executor/executor.h"
 #include "executor/nodeResult.h"
+#include "miscadmin.h"
 #include "utils/memutils.h"
 
 
@@ -63,12 +64,15 @@
  *		'nil' if the constant qualification is not satisfied.
  * ----------------------------------------------------------------
  */
-TupleTableSlot *
-ExecResult(ResultState *node)
+static TupleTableSlot *
+ExecResult(PlanState *pstate)
 {
+	ResultState *node = castNode(ResultState, pstate);
 	TupleTableSlot *outerTupleSlot;
 	PlanState  *outerPlan;
 	ExprContext *econtext;
+
+	CHECK_FOR_INTERRUPTS();
 
 	econtext = node->ps.ps_ExprContext;
 
@@ -77,9 +81,7 @@ ExecResult(ResultState *node)
 	 */
 	if (node->rs_checkqual)
 	{
-		bool		qualResult = ExecQual((List *) node->resconstantqual,
-										  econtext,
-										  false);
+		bool		qualResult = ExecQual(node->resconstantqual, econtext);
 
 		node->rs_checkqual = false;
 		if (!qualResult)
@@ -190,6 +192,7 @@ ExecInitResult(Result *node, EState *estate, int eflags)
 	resstate = makeNode(ResultState);
 	resstate->ps.plan = (Plan *) node;
 	resstate->ps.state = estate;
+	resstate->ps.ExecProcNode = ExecResult;
 
 	resstate->rs_done = false;
 	resstate->rs_checkqual = (node->resconstantqual == NULL) ? false : true;
@@ -202,23 +205,6 @@ ExecInitResult(Result *node, EState *estate, int eflags)
 	ExecAssignExprContext(estate, &resstate->ps);
 
 	/*
-	 * tuple table initialization
-	 */
-	ExecInitResultTupleSlot(estate, &resstate->ps);
-
-	/*
-	 * initialize child expressions
-	 */
-	resstate->ps.targetlist = (List *)
-		ExecInitExpr((Expr *) node->plan.targetlist,
-					 (PlanState *) resstate);
-	resstate->ps.qual = (List *)
-		ExecInitExpr((Expr *) node->plan.qual,
-					 (PlanState *) resstate);
-	resstate->resconstantqual = ExecInitExpr((Expr *) node->resconstantqual,
-											 (PlanState *) resstate);
-
-	/*
 	 * initialize child nodes
 	 */
 	outerPlanState(resstate) = ExecInitNode(outerPlan(node), estate, eflags);
@@ -229,10 +215,18 @@ ExecInitResult(Result *node, EState *estate, int eflags)
 	Assert(innerPlan(node) == NULL);
 
 	/*
-	 * initialize tuple type and projection info
+	 * Initialize result slot, type and projection.
 	 */
-	ExecAssignResultTypeFromTL(&resstate->ps);
+	ExecInitResultTupleSlotTL(estate, &resstate->ps);
 	ExecAssignProjectionInfo(&resstate->ps, NULL);
+
+	/*
+	 * initialize child expressions
+	 */
+	resstate->ps.qual =
+		ExecInitQual(node->plan.qual, (PlanState *) resstate);
+	resstate->resconstantqual =
+		ExecInitQual((List *) node->resconstantqual, (PlanState *) resstate);
 
 	return resstate;
 }

@@ -2,7 +2,7 @@
  * brin_pageops.c
  *		Page-handling routines for BRIN indexes
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -73,10 +73,8 @@ brin_doupdate(Relation idxrel, BlockNumber pagesPerRange,
 	{
 		ereport(ERROR,
 				(errcode(ERRCODE_PROGRAM_LIMIT_EXCEEDED),
-			errmsg("index row size %lu exceeds maximum %lu for index \"%s\"",
-				   (unsigned long) newsz,
-				   (unsigned long) BrinMaxItemSize,
-				   RelationGetRelationName(idxrel))));
+				 errmsg("index row size %zu exceeds maximum %zu for index \"%s\"",
+						newsz, BrinMaxItemSize, RelationGetRelationName(idxrel))));
 		return false;			/* keep compiler quiet */
 	}
 
@@ -115,9 +113,15 @@ brin_doupdate(Relation idxrel, BlockNumber pagesPerRange,
 
 	/*
 	 * Check that the old tuple wasn't updated concurrently: it might have
-	 * moved someplace else entirely ...
+	 * moved someplace else entirely, and for that matter the whole page
+	 * might've become a revmap page.  Note that in the first two cases
+	 * checked here, the "oldlp" we just calculated is garbage; but
+	 * PageGetItemId() is simple enough that it was safe to do that
+	 * calculation anyway.
 	 */
-	if (!ItemIdIsNormal(oldlp))
+	if (!BRIN_IS_REGULAR_PAGE(oldpage) ||
+		oldoff > PageGetMaxOffsetNumber(oldpage) ||
+		!ItemIdIsNormal(oldlp))
 	{
 		LockBuffer(oldbuf, BUFFER_LOCK_UNLOCK);
 
@@ -357,11 +361,9 @@ brin_doinsert(Relation idxrel, BlockNumber pagesPerRange,
 	{
 		ereport(ERROR,
 				(errcode(ERRCODE_PROGRAM_LIMIT_EXCEEDED),
-			errmsg("index row size %lu exceeds maximum %lu for index \"%s\"",
-				   (unsigned long) itemsz,
-				   (unsigned long) BrinMaxItemSize,
-				   RelationGetRelationName(idxrel))));
-		return InvalidOffsetNumber;		/* keep compiler quiet */
+				 errmsg("index row size %zu exceeds maximum %zu for index \"%s\"",
+						itemsz, BrinMaxItemSize, RelationGetRelationName(idxrel))));
+		return InvalidOffsetNumber; /* keep compiler quiet */
 	}
 
 	/* Make sure the revmap is long enough to contain the entry we need */
@@ -474,7 +476,7 @@ brin_page_init(Page page, uint16 type)
 }
 
 /*
- * Initialize a new BRIN index' metapage.
+ * Initialize a new BRIN index's metapage.
  */
 void
 brin_metapage_init(Page page, BlockNumber pagesPerRange, uint16 version)
@@ -495,6 +497,14 @@ brin_metapage_init(Page page, BlockNumber pagesPerRange, uint16 version)
 	 * revmap page to be created when the index is.
 	 */
 	metadata->lastRevmapPage = 0;
+
+	/*
+	 * Set pd_lower just past the end of the metadata.  This is essential,
+	 * because without doing so, metadata will be lost if xlog.c compresses
+	 * the page.
+	 */
+	((PageHeader) page)->pd_lower =
+		((char *) metadata + sizeof(BrinMetaPageData)) - (char *) page;
 }
 
 /*
@@ -548,6 +558,8 @@ brin_evacuate_page(Relation idxRel, BlockNumber pagesPerRange,
 	OffsetNumber off;
 	OffsetNumber maxoff;
 	Page		page;
+	BrinTuple  *btup = NULL;
+	Size		btupsz = 0;
 
 	page = BufferGetPage(buf);
 
@@ -567,7 +579,7 @@ brin_evacuate_page(Relation idxRel, BlockNumber pagesPerRange,
 		{
 			sz = ItemIdGetLength(lp);
 			tup = (BrinTuple *) PageGetItem(page, lp);
-			tup = brin_copy_tuple(tup, sz);
+			tup = brin_copy_tuple(tup, sz, btup, &btupsz);
 
 			LockBuffer(buf, BUFFER_LOCK_UNLOCK);
 
@@ -667,7 +679,7 @@ brin_getinsertbuffer(Relation irel, Buffer oldbuf, Size itemsz,
 	BlockNumber oldblk;
 	BlockNumber newblk;
 	Page		page;
-	int			freespace;
+	Size		freespace;
 
 	/* callers must have checked */
 	Assert(itemsz <= BrinMaxItemSize);
@@ -823,11 +835,9 @@ brin_getinsertbuffer(Relation irel, Buffer oldbuf, Size itemsz,
 
 			ereport(ERROR,
 					(errcode(ERRCODE_PROGRAM_LIMIT_EXCEEDED),
-			errmsg("index row size %lu exceeds maximum %lu for index \"%s\"",
-				   (unsigned long) itemsz,
-				   (unsigned long) freespace,
-				   RelationGetRelationName(irel))));
-			return InvalidBuffer;		/* keep compiler quiet */
+					 errmsg("index row size %zu exceeds maximum %zu for index \"%s\"",
+							itemsz, freespace, RelationGetRelationName(irel))));
+			return InvalidBuffer;	/* keep compiler quiet */
 		}
 
 		if (newblk != oldblk)

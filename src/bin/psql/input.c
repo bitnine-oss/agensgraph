@@ -1,7 +1,7 @@
 /*
  * psql - the PostgreSQL interactive terminal
  *
- * Copyright (c) 2000-2017, PostgreSQL Global Development Group
+ * Copyright (c) 2000-2018, PostgreSQL Global Development Group
  *
  * src/bin/psql/input.c
  */
@@ -333,7 +333,7 @@ decode_history(void)
 	}
 	END_ITERATE_HISTORY();
 }
-#endif   /* USE_READLINE */
+#endif							/* USE_READLINE */
 
 
 /*

@@ -51,7 +51,7 @@
  * arrays holding the elements.
  *
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/utils/array.h
@@ -63,6 +63,10 @@
 
 #include "fmgr.h"
 #include "utils/expandeddatum.h"
+
+/* avoid including execnodes.h here */
+struct ExprState;
+struct ExprContext;
 
 
 /*
@@ -252,7 +256,7 @@ typedef struct ArrayIteratorData *ArrayIterator;
 #define PG_RETURN_EXPANDED_ARRAY(x)  PG_RETURN_DATUM(EOHPGetRWDatum(&(x)->hdr))
 
 /* fmgr macros for AnyArrayType (ie, get either varlena or expanded form) */
-#define PG_GETARG_ANY_ARRAY(n)	DatumGetAnyArray(PG_GETARG_DATUM(n))
+#define PG_GETARG_ANY_ARRAY_P(n)	DatumGetAnyArrayP(PG_GETARG_DATUM(n))
 
 /*
  * Access macros for varlena array header fields.
@@ -360,8 +364,9 @@ extern ArrayType *array_set(ArrayType *array, int nSubscripts, int *indx,
 		  Datum dataValue, bool isNull,
 		  int arraytyplen, int elmlen, bool elmbyval, char elmalign);
 
-extern Datum array_map(FunctionCallInfo fcinfo, Oid retType,
-		  ArrayMapState *amstate);
+extern Datum array_map(Datum arrayd,
+		  struct ExprState *exprstate, struct ExprContext *econtext,
+		  Oid retType, ArrayMapState *amstate);
 
 extern void array_bitmap_copy(bits8 *destbitmap, int destoffset,
 				  const bits8 *srcbitmap, int srcoffset,
@@ -440,16 +445,7 @@ extern Datum expand_array(Datum arraydatum, MemoryContext parentcontext,
 extern ExpandedArrayHeader *DatumGetExpandedArray(Datum d);
 extern ExpandedArrayHeader *DatumGetExpandedArrayX(Datum d,
 					   ArrayMetaState *metacache);
-extern AnyArrayType *DatumGetAnyArray(Datum d);
+extern AnyArrayType *DatumGetAnyArrayP(Datum d);
 extern void deconstruct_expanded_array(ExpandedArrayHeader *eah);
 
-/*
- * prototypes for functions defined in array_userfuncs.c
- */
-extern ArrayType *create_singleton_array(FunctionCallInfo fcinfo,
-					   Oid element_type,
-					   Datum element,
-					   bool isNull,
-					   int ndims);
-
-#endif   /* ARRAY_H */
+#endif							/* ARRAY_H */

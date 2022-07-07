@@ -11,7 +11,7 @@
  * subplans, which are re-evaluated every time their result is required.
  *
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -33,18 +33,13 @@
 #include "executor/executor.h"
 #include "executor/nodeSubplan.h"
 #include "nodes/makefuncs.h"
+#include "miscadmin.h"
 #include "optimizer/clauses.h"
 #include "utils/array.h"
 #include "utils/lsyscache.h"
 #include "utils/memutils.h"
 
 
-static Datum ExecSubPlan(SubPlanState *node,
-			ExprContext *econtext,
-			bool *isNull);
-static Datum ExecAlternativeSubPlan(AlternativeSubPlanState *node,
-					   ExprContext *econtext,
-					   bool *isNull);
 static Datum ExecHashSubPlan(SubPlanState *node,
 				ExprContext *econtext,
 				bool *isNull);
@@ -64,12 +59,14 @@ static bool slotNoNulls(TupleTableSlot *slot);
  * This is the main entry point for execution of a regular SubPlan.
  * ----------------------------------------------------------------
  */
-static Datum
+Datum
 ExecSubPlan(SubPlanState *node,
 			ExprContext *econtext,
 			bool *isNull)
 {
-	SubPlan    *subplan = (SubPlan *) node->xprstate.expr;
+	SubPlan    *subplan = node->subplan;
+
+	CHECK_FOR_INTERRUPTS();
 
 	/* Set non-null as default */
 	*isNull = false;
@@ -95,7 +92,7 @@ ExecHashSubPlan(SubPlanState *node,
 				ExprContext *econtext,
 				bool *isNull)
 {
-	SubPlan    *subplan = (SubPlan *) node->xprstate.expr;
+	SubPlan    *subplan = node->subplan;
 	PlanState  *planstate = node->planstate;
 	TupleTableSlot *slot;
 
@@ -152,7 +149,7 @@ ExecHashSubPlan(SubPlanState *node,
 		if (node->havehashrows &&
 			FindTupleHashEntry(node->hashtable,
 							   slot,
-							   node->cur_eq_funcs,
+							   node->cur_eq_comp,
 							   node->lhs_hash_funcs) != NULL)
 		{
 			ExecClearTuple(slot);
@@ -217,13 +214,13 @@ ExecScanSubPlan(SubPlanState *node,
 				ExprContext *econtext,
 				bool *isNull)
 {
-	SubPlan    *subplan = (SubPlan *) node->xprstate.expr;
+	SubPlan    *subplan = node->subplan;
 	PlanState  *planstate = node->planstate;
 	SubLinkType subLinkType = subplan->subLinkType;
 	MemoryContext oldcontext;
 	TupleTableSlot *slot;
 	Datum		result;
-	bool		found = false;	/* TRUE if got at least one subplan tuple */
+	bool		found = false;	/* true if got at least one subplan tuple */
 	ListCell   *pvar;
 	ListCell   *l;
 	ArrayBuildStateAny *astate = NULL;
@@ -363,7 +360,7 @@ ExecScanSubPlan(SubPlanState *node,
 
 			found = true;
 			/* stash away current value */
-			Assert(subplan->firstColType == tdesc->attrs[0]->atttypid);
+			Assert(subplan->firstColType == TupleDescAttr(tdesc, 0)->atttypid);
 			dvalue = slot_getattr(slot, 1, &disnull);
 			astate = accumArrayResultAny(astate, dvalue, disnull,
 										 subplan->firstColType, oldcontext);
@@ -462,7 +459,7 @@ ExecScanSubPlan(SubPlanState *node,
 static void
 buildSubPlanHash(SubPlanState *node, ExprContext *econtext)
 {
-	SubPlan    *subplan = (SubPlan *) node->xprstate.expr;
+	SubPlan    *subplan = node->subplan;
 	PlanState  *planstate = node->planstate;
 	int			ncols = list_length(subplan->paramIds);
 	ExprContext *innerecontext = node->innerecontext;
@@ -497,9 +494,11 @@ buildSubPlanHash(SubPlanState *node, ExprContext *econtext)
 	if (nbuckets < 1)
 		nbuckets = 1;
 
-	node->hashtable = BuildTupleHashTable(ncols,
+	node->hashtable = BuildTupleHashTable(node->parent,
+										  node->descRight,
+										  ncols,
 										  node->keyColIdx,
-										  node->tab_eq_funcs,
+										  node->tab_eq_funcoids,
 										  node->tab_hash_funcs,
 										  nbuckets,
 										  0,
@@ -517,9 +516,11 @@ buildSubPlanHash(SubPlanState *node, ExprContext *econtext)
 			if (nbuckets < 1)
 				nbuckets = 1;
 		}
-		node->hashnulls = BuildTupleHashTable(ncols,
+		node->hashnulls = BuildTupleHashTable(node->parent,
+											  node->descRight,
+											  ncols,
 											  node->keyColIdx,
-											  node->tab_eq_funcs,
+											  node->tab_eq_funcoids,
 											  node->tab_hash_funcs,
 											  nbuckets,
 											  0,
@@ -596,9 +597,80 @@ buildSubPlanHash(SubPlanState *node, ExprContext *econtext)
 	 * potential for a double free attempt.  (XXX possibly no longer needed,
 	 * but can't hurt.)
 	 */
-	ExecClearTuple(node->projRight->pi_slot);
+	ExecClearTuple(node->projRight->pi_state.resultslot);
 
 	MemoryContextSwitchTo(oldcontext);
+}
+
+/*
+ * execTuplesUnequal
+ *		Return true if two tuples are definitely unequal in the indicated
+ *		fields.
+ *
+ * Nulls are neither equal nor unequal to anything else.  A true result
+ * is obtained only if there are non-null fields that compare not-equal.
+ *
+ * slot1, slot2: the tuples to compare (must have same columns!)
+ * numCols: the number of attributes to be examined
+ * matchColIdx: array of attribute column numbers
+ * eqFunctions: array of fmgr lookup info for the equality functions to use
+ * evalContext: short-term memory context for executing the functions
+ */
+static bool
+execTuplesUnequal(TupleTableSlot *slot1,
+				  TupleTableSlot *slot2,
+				  int numCols,
+				  AttrNumber *matchColIdx,
+				  FmgrInfo *eqfunctions,
+				  MemoryContext evalContext)
+{
+	MemoryContext oldContext;
+	bool		result;
+	int			i;
+
+	/* Reset and switch into the temp context. */
+	MemoryContextReset(evalContext);
+	oldContext = MemoryContextSwitchTo(evalContext);
+
+	/*
+	 * We cannot report a match without checking all the fields, but we can
+	 * report a non-match as soon as we find unequal fields.  So, start
+	 * comparing at the last field (least significant sort key). That's the
+	 * most likely to be different if we are dealing with sorted input.
+	 */
+	result = false;
+
+	for (i = numCols; --i >= 0;)
+	{
+		AttrNumber	att = matchColIdx[i];
+		Datum		attr1,
+					attr2;
+		bool		isNull1,
+					isNull2;
+
+		attr1 = slot_getattr(slot1, att, &isNull1);
+
+		if (isNull1)
+			continue;			/* can't prove anything here */
+
+		attr2 = slot_getattr(slot2, att, &isNull2);
+
+		if (isNull2)
+			continue;			/* can't prove anything here */
+
+		/* Apply the type-specific equality function */
+
+		if (!DatumGetBool(FunctionCall2(&eqfunctions[i],
+										attr1, attr2)))
+		{
+			result = true;		/* they are unequal */
+			break;
+		}
+	}
+
+	MemoryContextSwitchTo(oldContext);
+
+	return result;
 }
 
 /*
@@ -624,6 +696,8 @@ findPartialMatch(TupleHashTable hashtable, TupleTableSlot *slot,
 	InitTupleHashIterator(hashtable, &hashiter);
 	while ((entry = ScanTupleHashTable(hashtable, &hashiter)) != NULL)
 	{
+		CHECK_FOR_INTERRUPTS();
+
 		ExecStoreMinimalTuple(entry->firstTuple, hashtable->tableslot, false);
 		if (!execTuplesUnequal(slot, hashtable->tableslot,
 							   numCols, keyColIdx,
@@ -694,8 +768,7 @@ ExecInitSubPlan(SubPlan *subplan, PlanState *parent)
 	SubPlanState *sstate = makeNode(SubPlanState);
 	EState	   *estate = parent->state;
 
-	sstate->xprstate.evalfunc = (ExprStateEvalFunc) ExecSubPlan;
-	sstate->xprstate.expr = (Expr *) subplan;
+	sstate->subplan = subplan;
 
 	/* Link the SubPlanState to already-initialized subplan */
 	sstate->planstate = (PlanState *) list_nth(estate->es_subplanstates,
@@ -706,7 +779,7 @@ ExecInitSubPlan(SubPlan *subplan, PlanState *parent)
 
 	/* Initialize subexpressions */
 	sstate->testexpr = ExecInitExpr((Expr *) subplan->testexpr, parent);
-	sstate->args = (List *) ExecInitExpr((Expr *) subplan->args, parent);
+	sstate->args = ExecInitExprList(subplan->args, parent);
 
 	/*
 	 * initialize my state
@@ -721,6 +794,7 @@ ExecInitSubPlan(SubPlan *subplan, PlanState *parent)
 	sstate->hashtempcxt = NULL;
 	sstate->innerecontext = NULL;
 	sstate->keyColIdx = NULL;
+	sstate->tab_eq_funcoids = NULL;
 	sstate->tab_hash_funcs = NULL;
 	sstate->tab_eq_funcs = NULL;
 	sstate->lhs_hash_funcs = NULL;
@@ -759,13 +833,12 @@ ExecInitSubPlan(SubPlan *subplan, PlanState *parent)
 	{
 		int			ncols,
 					i;
-		TupleDesc	tupDesc;
+		TupleDesc	tupDescLeft;
+		TupleDesc	tupDescRight;
 		TupleTableSlot *slot;
 		List	   *oplist,
 				   *lefttlist,
-				   *righttlist,
-				   *leftptlist,
-				   *rightptlist;
+				   *righttlist;
 		ListCell   *l;
 
 		/* We need a memory context to hold the hash table(s) */
@@ -792,35 +865,34 @@ ExecInitSubPlan(SubPlan *subplan, PlanState *parent)
 		 * use the sub-select's output tuples directly, but that is not the
 		 * case if we had to insert any run-time coercions of the sub-select's
 		 * output datatypes; anyway this avoids storing any resjunk columns
-		 * that might be in the sub-select's output.) Run through the
+		 * that might be in the sub-select's output.)  Run through the
 		 * combining expressions to build tlists for the lefthand and
-		 * righthand sides.  We need both the ExprState list (for ExecProject)
-		 * and the underlying parse Exprs (for ExecTypeFromTL).
+		 * righthand sides.
 		 *
 		 * We also extract the combining operators themselves to initialize
 		 * the equality and hashing functions for the hash tables.
 		 */
-		if (IsA(sstate->testexpr->expr, OpExpr))
+		if (IsA(subplan->testexpr, OpExpr))
 		{
 			/* single combining operator */
-			oplist = list_make1(sstate->testexpr);
+			oplist = list_make1(subplan->testexpr);
 		}
-		else if (and_clause((Node *) sstate->testexpr->expr))
+		else if (and_clause((Node *) subplan->testexpr))
 		{
 			/* multiple combining operators */
-			oplist = castNode(BoolExprState, sstate->testexpr)->args;
+			oplist = castNode(BoolExpr, subplan->testexpr)->args;
 		}
 		else
 		{
 			/* shouldn't see anything else in a hashable subplan */
 			elog(ERROR, "unrecognized testexpr type: %d",
-				 (int) nodeTag(sstate->testexpr->expr));
+				 (int) nodeTag(subplan->testexpr));
 			oplist = NIL;		/* keep compiler quiet */
 		}
 		Assert(list_length(oplist) == ncols);
 
 		lefttlist = righttlist = NIL;
-		leftptlist = rightptlist = NIL;
+		sstate->tab_eq_funcoids = (Oid *) palloc(ncols * sizeof(Oid));
 		sstate->tab_hash_funcs = (FmgrInfo *) palloc(ncols * sizeof(FmgrInfo));
 		sstate->tab_eq_funcs = (FmgrInfo *) palloc(ncols * sizeof(FmgrInfo));
 		sstate->lhs_hash_funcs = (FmgrInfo *) palloc(ncols * sizeof(FmgrInfo));
@@ -828,47 +900,33 @@ ExecInitSubPlan(SubPlan *subplan, PlanState *parent)
 		i = 1;
 		foreach(l, oplist)
 		{
-			FuncExprState *fstate = castNode(FuncExprState, lfirst(l));
-			OpExpr	   *opexpr = castNode(OpExpr, fstate->xprstate.expr);
-			ExprState  *exstate;
+			OpExpr	   *opexpr = lfirst_node(OpExpr, l);
 			Expr	   *expr;
 			TargetEntry *tle;
-			GenericExprState *tlestate;
 			Oid			rhs_eq_oper;
 			Oid			left_hashfn;
 			Oid			right_hashfn;
 
-			Assert(list_length(fstate->args) == 2);
+			Assert(list_length(opexpr->args) == 2);
 
 			/* Process lefthand argument */
-			exstate = (ExprState *) linitial(fstate->args);
-			expr = exstate->expr;
+			expr = (Expr *) linitial(opexpr->args);
 			tle = makeTargetEntry(expr,
 								  i,
 								  NULL,
 								  false);
-			tlestate = makeNode(GenericExprState);
-			tlestate->xprstate.expr = (Expr *) tle;
-			tlestate->xprstate.evalfunc = NULL;
-			tlestate->arg = exstate;
-			lefttlist = lappend(lefttlist, tlestate);
-			leftptlist = lappend(leftptlist, tle);
+			lefttlist = lappend(lefttlist, tle);
 
 			/* Process righthand argument */
-			exstate = (ExprState *) lsecond(fstate->args);
-			expr = exstate->expr;
+			expr = (Expr *) lsecond(opexpr->args);
 			tle = makeTargetEntry(expr,
 								  i,
 								  NULL,
 								  false);
-			tlestate = makeNode(GenericExprState);
-			tlestate->xprstate.expr = (Expr *) tle;
-			tlestate->xprstate.evalfunc = NULL;
-			tlestate->arg = exstate;
-			righttlist = lappend(righttlist, tlestate);
-			rightptlist = lappend(rightptlist, tle);
+			righttlist = lappend(righttlist, tle);
 
 			/* Lookup the equality function (potentially cross-type) */
+			sstate->tab_eq_funcoids[i - 1] = opexpr->opfuncid;
 			fmgr_info(opexpr->opfuncid, &sstate->cur_eq_funcs[i - 1]);
 			fmgr_info_set_expr((Node *) opexpr, &sstate->cur_eq_funcs[i - 1]);
 
@@ -898,21 +956,32 @@ ExecInitSubPlan(SubPlan *subplan, PlanState *parent)
 		 * (hack alert!).  The righthand expressions will be evaluated in our
 		 * own innerecontext.
 		 */
-		tupDesc = ExecTypeFromTL(leftptlist, false);
-		slot = ExecInitExtraTupleSlot(estate);
-		ExecSetSlotDescriptor(slot, tupDesc);
+		tupDescLeft = ExecTypeFromTL(lefttlist, false);
+		slot = ExecInitExtraTupleSlot(estate, tupDescLeft);
 		sstate->projLeft = ExecBuildProjectionInfo(lefttlist,
 												   NULL,
 												   slot,
+												   parent,
 												   NULL);
 
-		tupDesc = ExecTypeFromTL(rightptlist, false);
-		slot = ExecInitExtraTupleSlot(estate);
-		ExecSetSlotDescriptor(slot, tupDesc);
+		sstate->descRight = tupDescRight = ExecTypeFromTL(righttlist, false);
+		slot = ExecInitExtraTupleSlot(estate, tupDescRight);
 		sstate->projRight = ExecBuildProjectionInfo(righttlist,
 													sstate->innerecontext,
 													slot,
+													sstate->planstate,
 													NULL);
+
+		/*
+		 * Create comparator for lookups of rows in the table (potentially
+		 *  across-type comparison).
+		 */
+		sstate->cur_eq_comp = ExecBuildGroupingEqual(tupDescLeft, tupDescRight,
+													 ncols,
+													 sstate->keyColIdx,
+													 sstate->tab_eq_funcoids,
+													 parent);
+
 	}
 
 	return sstate;
@@ -934,7 +1003,7 @@ ExecInitSubPlan(SubPlan *subplan, PlanState *parent)
 void
 ExecSetParamPlan(SubPlanState *node, ExprContext *econtext)
 {
-	SubPlan    *subplan = (SubPlan *) node->xprstate.expr;
+	SubPlan    *subplan = node->subplan;
 	PlanState  *planstate = node->planstate;
 	SubLinkType subLinkType = subplan->subLinkType;
 	MemoryContext oldcontext;
@@ -1011,7 +1080,7 @@ ExecSetParamPlan(SubPlanState *node, ExprContext *econtext)
 
 			found = true;
 			/* stash away current value */
-			Assert(subplan->firstColType == tdesc->attrs[0]->atttypid);
+			Assert(subplan->firstColType == TupleDescAttr(tdesc, 0)->atttypid);
 			dvalue = slot_getattr(slot, 1, &disnull);
 			astate = accumArrayResultAny(astate, dvalue, disnull,
 										 subplan->firstColType, oldcontext);
@@ -1111,7 +1180,7 @@ void
 ExecReScanSetParamPlan(SubPlanState *node, PlanState *parent)
 {
 	PlanState  *planstate = node->planstate;
-	SubPlan    *subplan = (SubPlan *) node->xprstate.expr;
+	SubPlan    *subplan = node->subplan;
 	EState	   *estate = parent->state;
 	ListCell   *l;
 
@@ -1162,16 +1231,22 @@ ExecInitAlternativeSubPlan(AlternativeSubPlan *asplan, PlanState *parent)
 	SubPlan    *subplan2;
 	Cost		cost1;
 	Cost		cost2;
+	ListCell   *lc;
 
-	asstate->xprstate.evalfunc = (ExprStateEvalFunc) ExecAlternativeSubPlan;
-	asstate->xprstate.expr = (Expr *) asplan;
+	asstate->subplan = asplan;
 
 	/*
 	 * Initialize subplans.  (Can we get away with only initializing the one
 	 * we're going to use?)
 	 */
-	asstate->subplans = (List *) ExecInitExpr((Expr *) asplan->subplans,
-											  parent);
+	foreach(lc, asplan->subplans)
+	{
+		SubPlan    *sp = lfirst_node(SubPlan, lc);
+		SubPlanState *sps = ExecInitSubPlan(sp, parent);
+
+		asstate->subplans = lappend(asstate->subplans, sps);
+		parent->subPlan = lappend(parent->subPlan, sps);
+	}
 
 	/*
 	 * Select the one to be used.  For this, we need an estimate of the number
@@ -1209,14 +1284,14 @@ ExecInitAlternativeSubPlan(AlternativeSubPlan *asplan, PlanState *parent)
  * Note: in future we might consider changing to different subplans on the
  * fly, in case the original rowcount estimate turns out to be way off.
  */
-static Datum
+Datum
 ExecAlternativeSubPlan(AlternativeSubPlanState *node,
 					   ExprContext *econtext,
 					   bool *isNull)
 {
 	/* Just pass control to the active subplan */
-	SubPlanState *activesp = castNode(SubPlanState,
-									  list_nth(node->subplans, node->active));
+	SubPlanState *activesp = list_nth_node(SubPlanState,
+										   node->subplans, node->active);
 
 	return ExecSubPlan(activesp, econtext, isNull);
 }

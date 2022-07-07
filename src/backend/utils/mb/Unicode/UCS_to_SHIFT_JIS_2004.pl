@@ -1,6 +1,6 @@
 #! /usr/bin/perl
 #
-# Copyright (c) 2007-2017, PostgreSQL Global Development Group
+# Copyright (c) 2007-2018, PostgreSQL Global Development Group
 #
 # src/backend/utils/mb/Unicode/UCS_to_SHIFT_JIS_2004.pl
 #
@@ -8,9 +8,11 @@
 # "sjis-0213-2004-std.txt" (http://x0213.org)
 
 use strict;
-require convutils;
+use convutils;
 
 # first generate UTF-8 --> SHIFT_JIS_2004 table
+
+my $this_script = 'src/backend/utils/mb/Unicode/UCS_to_SHIFT_JIS_2004.pl';
 
 my $in_file = "sjis-0213-2004-std.txt";
 
@@ -22,6 +24,7 @@ while (my $line = <$in>)
 {
 	if ($line =~ /^0x(.*)[ \t]*U\+(.*)\+(.*)[ \t]*#(.*)$/)
 	{
+
 		# combined characters
 		my ($c, $u1, $u2) = ($1, $2, $3);
 		my $rest = "U+" . $u1 . "+" . $u2 . $4;
@@ -29,17 +32,18 @@ while (my $line = <$in>)
 		my $ucs1 = hex($u1);
 		my $ucs2 = hex($u2);
 
-		push @mapping, {
-			code => $code,
-			ucs => $ucs1,
+		push @mapping,
+		  { code       => $code,
+			ucs        => $ucs1,
 			ucs_second => $ucs2,
-			comment => $rest,
-			direction => 'both'
-		};
-		next;
+			comment    => $rest,
+			direction  => BOTH,
+			f          => $in_file,
+			l          => $. };
 	}
 	elsif ($line =~ /^0x(.*)[ \t]*U\+(.*)[ \t]*#(.*)$/)
 	{
+
 		# non-combined characters
 		my ($c, $u, $rest) = ($1, $2, "U+" . $2 . $3);
 		my $ucs  = hex($u);
@@ -52,25 +56,26 @@ while (my $line = <$in>)
 		}
 		elsif ($code < 0x80)
 		{
-			$direction = 'from_unicode';
+			$direction = FROM_UNICODE;
 		}
 		elsif ($ucs < 0x80)
 		{
-			$direction = 'to_unicode';
+			$direction = TO_UNICODE;
 		}
 		else
 		{
-			$direction = 'both';
+			$direction = BOTH;
 		}
 
-		push @mapping, {
-			code => $code,
-			ucs => $ucs,
-			comment => $rest,
-			direction => $direction
-		};
+		push @mapping,
+		  { code      => $code,
+			ucs       => $ucs,
+			comment   => $rest,
+			direction => $direction,
+			f         => $in_file,
+			l         => $. };
 	}
 }
 close($in);
 
-print_tables("SHIFT_JIS_2004", \@mapping, 1);
+print_conversion_tables($this_script, "SHIFT_JIS_2004", \@mapping);

@@ -6,12 +6,12 @@ include $(top_builddir)/src/Makefile.global
 
 SUBDIRS = \
 		adminpack	\
+		amcheck		\
 		auth_delay	\
 		auto_explain	\
 		bloom		\
 		btree_gin	\
 		btree_gist	\
-		chkpass		\
 		citext		\
 		cube		\
 		dblink		\
@@ -47,7 +47,6 @@ SUBDIRS = \
 		test_decoding	\
 		tsm_system_rows \
 		tsm_system_time \
-		tsearch2	\
 		unaccent	\
 		vacuumlo
 

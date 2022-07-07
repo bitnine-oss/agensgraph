@@ -6,10 +6,10 @@
 
 # PGAC_PATH_PYTHON
 # ----------------
-# Look for Python and set the output variable 'PYTHON'
-# to 'python' if found, empty otherwise.
+# Look for Python and set the output variable 'PYTHON' if found,
+# fail otherwise.
 AC_DEFUN([PGAC_PATH_PYTHON],
-[AC_PATH_PROG(PYTHON, python)
+[PGAC_PATH_PROGS(PYTHON, python)
 if test x"$PYTHON" = x""; then
   AC_MSG_ERROR([Python not found])
 fi
@@ -18,7 +18,8 @@ fi
 
 # _PGAC_CHECK_PYTHON_DIRS
 # -----------------------
-# Determine the name of various directories of a given Python installation.
+# Determine the name of various directories of a given Python installation,
+# as well as the Python version.
 AC_DEFUN([_PGAC_CHECK_PYTHON_DIRS],
 [AC_REQUIRE([PGAC_PATH_PYTHON])
 AC_MSG_CHECKING([for Python distutils module])
@@ -31,9 +32,15 @@ else
 fi
 AC_MSG_CHECKING([Python configuration directory])
 python_majorversion=`${PYTHON} -c "import sys; print(sys.version[[0]])"`
+python_minorversion=`${PYTHON} -c "import sys; print(sys.version[[2]])"`
 python_version=`${PYTHON} -c "import sys; print(sys.version[[:3]])"`
 python_configdir=`${PYTHON} -c "import distutils.sysconfig; print(' '.join(filter(None,distutils.sysconfig.get_config_vars('LIBPL'))))"`
 AC_MSG_RESULT([$python_configdir])
+
+# Reject unsupported Python versions as soon as practical.
+if test "$python_majorversion" -lt 3 -a "$python_minorversion" -lt 4; then
+  AC_MSG_ERROR([Python version $python_version is too old (version 2.4 or later is required)])
+fi
 
 AC_MSG_CHECKING([Python include directories])
 python_includespec=`${PYTHON} -c "

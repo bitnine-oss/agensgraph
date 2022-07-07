@@ -3,7 +3,7 @@
  * snapmgr.h
  *	  POSTGRES snapshot manager
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/utils/snapmgr.h
@@ -51,15 +51,15 @@ extern PGDLLIMPORT int old_snapshot_threshold;
 
 extern Size SnapMgrShmemSize(void);
 extern void SnapMgrInit(void);
-extern int64 GetSnapshotCurrentTimestamp(void);
-extern int64 GetOldSnapshotThresholdTimestamp(void);
+extern TimestampTz GetSnapshotCurrentTimestamp(void);
+extern TimestampTz GetOldSnapshotThresholdTimestamp(void);
 
 extern bool FirstSnapshotSet;
 
-extern TransactionId TransactionXmin;
-extern TransactionId RecentXmin;
-extern TransactionId RecentGlobalXmin;
-extern TransactionId RecentGlobalDataXmin;
+extern PGDLLIMPORT TransactionId TransactionXmin;
+extern PGDLLIMPORT TransactionId RecentXmin;
+extern PGDLLIMPORT TransactionId RecentGlobalXmin;
+extern PGDLLIMPORT TransactionId RecentGlobalDataXmin;
 
 extern Snapshot GetTransactionSnapshot(void);
 extern Snapshot GetLatestSnapshot(void);
@@ -86,7 +86,7 @@ extern Snapshot RegisterCopiedSnapshot(Snapshot snapshot);
 
 extern void AtSubCommit_Snapshot(int level);
 extern void AtSubAbort_Snapshot(int level);
-extern void AtEOXact_Snapshot(bool isCommit);
+extern void AtEOXact_Snapshot(bool isCommit, bool resetXmin);
 
 extern void ImportSnapshot(const char *idstr);
 extern bool XactHasExportedSnapshots(void);
@@ -94,7 +94,8 @@ extern void DeleteAllExportedSnapshotFiles(void);
 extern bool ThereAreNoPriorRegisteredSnapshots(void);
 extern TransactionId TransactionIdLimitedForOldSnapshots(TransactionId recentXmin,
 									Relation relation);
-extern void MaintainOldSnapshotTimeMapping(int64 whenTaken, TransactionId xmin);
+extern void MaintainOldSnapshotTimeMapping(TimestampTz whenTaken,
+							   TransactionId xmin);
 
 extern char *ExportSnapshot(Snapshot snapshot);
 
@@ -110,4 +111,4 @@ extern void SerializeSnapshot(Snapshot snapshot, char *start_address);
 extern Snapshot RestoreSnapshot(char *start_address);
 extern void RestoreTransactionSnapshot(Snapshot snapshot, void *master_pgproc);
 
-#endif   /* SNAPMGR_H */
+#endif							/* SNAPMGR_H */

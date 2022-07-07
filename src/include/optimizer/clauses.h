@@ -4,7 +4,7 @@
  *	  prototypes for clauses.c.
  *
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/optimizer/clauses.h
@@ -85,4 +85,4 @@ extern Node *estimate_expression_value(PlannerInfo *root, Node *node);
 extern Query *inline_set_returning_function(PlannerInfo *root,
 							  RangeTblEntry *rte);
 
-#endif   /* CLAUSES_H */
+#endif							/* CLAUSES_H */

@@ -3,7 +3,7 @@
  * parse_node.c
  *	  various routines that make nodes for querytrees
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -63,6 +63,8 @@ make_parsestate(ParseState *parentParseState)
 		pstate->p_paramref_hook = parentParseState->p_paramref_hook;
 		pstate->p_coerce_param_hook = parentParseState->p_coerce_param_hook;
 		pstate->p_ref_hook_state = parentParseState->p_ref_hook_state;
+		/* query environment stays in context for the whole parse analysis */
+		pstate->p_queryEnv = parentParseState->p_queryEnv;
 
 		pstate->p_convert_edgeref = parentParseState->p_convert_edgeref;
 	}
@@ -338,10 +340,9 @@ transformArraySubscripts(ParseState *pstate,
 	 */
 	foreach(idx, indirection)
 	{
-		A_Indices  *ai = (A_Indices *) lfirst(idx);
+		A_Indices  *ai = lfirst_node(A_Indices, idx);
 		Node	   *subexpr;
 
-		Assert(IsA(ai, A_Indices));
 		if (isSlice)
 		{
 			if (ai->lidx)
@@ -358,7 +359,7 @@ transformArraySubscripts(ParseState *pstate,
 					ereport(ERROR,
 							(errcode(ERRCODE_DATATYPE_MISMATCH),
 							 errmsg("array subscript must have type integer"),
-						parser_errposition(pstate, exprLocation(ai->lidx))));
+							 parser_errposition(pstate, exprLocation(ai->lidx))));
 			}
 			else if (!ai->is_slice)
 			{
@@ -369,7 +370,7 @@ transformArraySubscripts(ParseState *pstate,
 											 sizeof(int32),
 											 Int32GetDatum(1),
 											 false,
-											 true);		/* pass by value */
+											 true); /* pass by value */
 			}
 			else
 			{
@@ -429,7 +430,7 @@ transformArraySubscripts(ParseState *pstate,
 							" but expression is of type %s",
 							format_type_be(typeneeded),
 							format_type_be(typesource)),
-				 errhint("You will need to rewrite or cast the expression."),
+					 errhint("You will need to rewrite or cast the expression."),
 					 parser_errposition(pstate, exprLocation(assignFrom))));
 		assignFrom = newFrom;
 	}
@@ -513,7 +514,7 @@ make_const(ParseState *pstate, Value *value, int location)
 
 					typeid = INT8OID;
 					typelen = sizeof(int64);
-					typebyval = FLOAT8PASSBYVAL;		/* int8 and float8 alike */
+					typebyval = FLOAT8PASSBYVAL;	/* int8 and float8 alike */
 				}
 			}
 			else

@@ -179,6 +179,7 @@ pgxsdir = $(pkglibdir)/pgxs
 #
 # Records the choice of the various --enable-xxx and --with-xxx options.
 
+with_icu	= @with_icu@
 with_perl	= @with_perl@
 with_python	= @with_python@
 with_tcl	= @with_tcl@
@@ -208,6 +209,9 @@ python_version		= @python_version@
 
 krb_srvtab = @krb_srvtab@
 
+ICU_CFLAGS		= @ICU_CFLAGS@
+ICU_LIBS		= @ICU_LIBS@
+
 TCLSH			= @TCLSH@
 TCL_LIBS		= @TCL_LIBS@
 TCL_LIB_SPEC		= @TCL_LIB_SPEC@
@@ -227,6 +231,8 @@ PTHREAD_LIBS		= @PTHREAD_LIBS@
 
 CPP = @CPP@
 CPPFLAGS = @CPPFLAGS@
+
+override CPPFLAGS := $(ICU_CFLAGS) $(CPPFLAGS)
 
 ifdef PGXS
 override CPPFLAGS := -I$(includedir_server) -I$(includedir_internal) $(CPPFLAGS)
@@ -298,6 +304,7 @@ else
 endif
 perl_archlibexp		= @perl_archlibexp@
 perl_privlibexp		= @perl_privlibexp@
+perl_embed_ccflags	= @perl_embed_ccflags@
 perl_embed_ldflags	= @perl_embed_ldflags@
 
 # Miscellaneous
@@ -335,7 +342,8 @@ PROVE = @PROVE@
 # There are common routines in src/test/perl, and some test suites have
 # extra perl modules in their own directory.
 PG_PROVE_FLAGS = -I $(top_srcdir)/src/test/perl/ -I $(srcdir)
-PROVE_FLAGS = --verbose
+# User-supplied prove flags such as --verbose can be provided in PROVE_FLAGS.
+PROVE_FLAGS =
 
 # prepend to path if already set, else just set it
 define add_to_path
@@ -354,12 +362,14 @@ endef
 ifeq ($(enable_tap_tests),yes)
 
 define prove_installcheck
-rm -rf $(CURDIR)/tmp_check/log
+rm -rf '$(CURDIR)'/tmp_check
+$(MKDIR_P) '$(CURDIR)'/tmp_check
 cd $(srcdir) && TESTDIR='$(CURDIR)' PATH="$(bindir):$$PATH" PGPORT='6$(DEF_PGPORT)' top_builddir='$(CURDIR)/$(top_builddir)' PG_REGRESS='$(CURDIR)/$(top_builddir)/src/test/regress/pg_regress' $(PROVE) $(PG_PROVE_FLAGS) $(PROVE_FLAGS) $(if $(PROVE_TESTS),$(PROVE_TESTS),t/*.pl)
 endef
 
 define prove_check
-rm -rf $(CURDIR)/tmp_check/log
+rm -rf '$(CURDIR)'/tmp_check
+$(MKDIR_P) '$(CURDIR)'/tmp_check
 cd $(srcdir) && TESTDIR='$(CURDIR)' $(with_temp_install) PGPORT='6$(DEF_PGPORT)' PG_REGRESS='$(CURDIR)/$(top_builddir)/src/test/regress/pg_regress' $(PROVE) $(PG_PROVE_FLAGS) $(PROVE_FLAGS) $(if $(PROVE_TESTS),$(PROVE_TESTS),t/*.pl)
 endef
 
@@ -394,13 +404,8 @@ STRIP_SHARED_LIB = @STRIP_SHARED_LIB@
 
 # Documentation
 
-have_docbook	= @have_docbook@
-COLLATEINDEX	= @COLLATEINDEX@
 DBTOEPUB	= @DBTOEPUB@
-DOCBOOKSTYLE	= @DOCBOOKSTYLE@
-JADE			= @JADE@
-NSGMLS			= @NSGMLS@
-OSX				= @OSX@
+FOP				= @FOP@
 XMLLINT			= @XMLLINT@
 XSLTPROC		= @XSLTPROC@
 
@@ -545,14 +550,35 @@ TEMP_CONF += --temp-config=$(TEMP_CONFIG)
 endif
 
 pg_regress_locale_flags = $(if $(ENCODING),--encoding=$(ENCODING)) $(NOLOCALE)
+pg_regress_clean_files = results/ regression.diffs regression.out tmp_check/ tmp_check_iso/ log/ output_iso/
 
-pg_regress_check = $(with_temp_install) $(top_builddir)/src/test/regress/pg_regress --inputdir=$(srcdir) --temp-instance=./tmp_check $(TEMP_CONF) --bindir= $(pg_regress_locale_flags) $(EXTRA_REGRESS_OPTS)
-pg_regress_installcheck = $(top_builddir)/src/test/regress/pg_regress --inputdir=$(srcdir) --bindir='$(bindir)' $(pg_regress_locale_flags) $(EXTRA_REGRESS_OPTS)
+pg_regress_check = \
+    $(with_temp_install) \
+    $(top_builddir)/src/test/regress/pg_regress \
+    --temp-instance=./tmp_check \
+    --inputdir=$(srcdir) \
+    --bindir= \
+    $(TEMP_CONF) \
+    $(pg_regress_locale_flags) $(EXTRA_REGRESS_OPTS)
+pg_regress_installcheck = \
+    $(top_builddir)/src/test/regress/pg_regress \
+    --inputdir=$(srcdir) \
+    --bindir='$(bindir)' \
+    $(pg_regress_locale_flags) $(EXTRA_REGRESS_OPTS)
 
-pg_regress_clean_files = results/ regression.diffs regression.out tmp_check/ log/
-
-pg_isolation_regress_check = $(with_temp_install) $(top_builddir)/src/test/isolation/pg_isolation_regress --inputdir=$(srcdir) --temp-instance=./tmp_check $(TEMP_CONF) --bindir= $(pg_regress_locale_flags) $(EXTRA_REGRESS_OPTS)
-pg_isolation_regress_installcheck = $(top_builddir)/src/test/isolation/pg_isolation_regress --inputdir=$(srcdir) $(pg_regress_locale_flags) $(EXTRA_REGRESS_OPTS)
+pg_isolation_regress_check = \
+    $(with_temp_install) \
+    $(top_builddir)/src/test/isolation/pg_isolation_regress \
+    --temp-instance=./tmp_check_iso \
+    --inputdir=$(srcdir) --outputdir=output_iso \
+    --bindir= \
+    $(TEMP_CONF) \
+    $(pg_regress_locale_flags) $(EXTRA_REGRESS_OPTS)
+pg_isolation_regress_installcheck = \
+    $(top_builddir)/src/test/isolation/pg_isolation_regress \
+    --inputdir=$(srcdir) --outputdir=output_iso \
+    --bindir='$(bindir)' \
+    $(pg_regress_locale_flags) $(EXTRA_REGRESS_OPTS)
 
 ##########################################################################
 #
@@ -582,6 +608,11 @@ ifneq ($(CUSTOM_COPT),)
   COPT= $(CUSTOM_COPT)
 endif
 
+#
+# These variables are meant to be set in the environment of "make"
+# to add flags to whatever configure picked.  Unlike the ones above,
+# they are documented.
+#
 ifdef COPT
    CFLAGS += $(COPT)
    LDFLAGS += $(COPT)
@@ -622,6 +653,7 @@ TAS         = @TAS@
 ifdef FLEX
 	$(FLEX) $(if $(FLEX_NO_BACKUP),-b) $(FLEXFLAGS) -o'$@' $<
 	@$(if $(FLEX_NO_BACKUP),if [ `wc -l <lex.backup` -eq 1 ]; then rm lex.backup; else echo "Scanner requires backup; see lex.backup." 1>&2; exit 1; fi)
+	$(if $(FLEX_FIX_WARNING),$(PERL) $(top_srcdir)/src/tools/fix-old-flex-code.pl '$@')
 else
 	@$(missing) flex $< '$@'
 endif
@@ -835,30 +867,50 @@ endif # enable_nls
 #		gcov from foo.gcda (by "make coverage")
 #   foo.c.gcov.out  stdout captured when foo.c.gcov is created, mildly
 #		interesting
-#   lcov.info	lcov tracefile, built from gcda files in one directory,
+#   lcov_test.info
+#		lcov tracefile, built from gcda files in one directory,
 #		later collected by "make coverage-html"
+#   lcov_base.info
+#		tracefile for zero counters for every file, so that
+#		even files that are not touched by tests are counted
+#		for the overall coverage rate
 
 ifeq ($(enable_coverage), yes)
 
-# There is a strange interaction between lcov and existing .gcov
-# output files.  Hence the rm command and the ordering dependency.
+# make coverage -- text output
 
-gcda_files := $(wildcard *.gcda)
+local_gcda_files = $(wildcard *.gcda)
 
-lcov.info: $(gcda_files)
-	rm -f *.gcov
-	$(if $^,$(LCOV) -d . -c -o $@ $(LCOVFLAGS) --gcov-tool $(GCOV))
+coverage: $(local_gcda_files:.gcda=.c.gcov)
 
-%.c.gcov: %.gcda | lcov.info
+%.c.gcov: %.gcda
 	$(GCOV) -b -f -p -o . $(GCOVFLAGS) $*.c >$*.c.gcov.out
 
-coverage: $(gcda_files:.gcda=.c.gcov) lcov.info
+# make coverage-html -- HTML output via lcov
 
 .PHONY: coverage-html
-coverage-html: coverage
+coverage-html: coverage-html-stamp
+
+GENHTML_FLAGS = -q --legend
+GENHTML_TITLE = PostgreSQL $(VERSION)
+
+coverage-html-stamp: lcov_base.info lcov_test.info
 	rm -rf coverage
-	mkdir coverage
-	$(GENHTML) --show-details --legend --output-directory=coverage --title=PostgreSQL --num-spaces=4 --prefix=$(abs_top_srcdir) `find . -name lcov.info -print`
+	$(GENHTML) $(GENHTML_FLAGS) -o coverage --title='$(GENHTML_TITLE)' --num-spaces=4 $(if $(filter no,$(vpath_build)),--prefix='$(abs_top_srcdir)') $^
+	touch $@
+
+LCOV += --gcov-tool $(GCOV)
+LCOVFLAGS = -q --no-external
+
+all_gcno_files = $(shell find . -name '*.gcno' -print)
+
+lcov_base.info: $(all_gcno_files)
+	$(LCOV) $(LCOVFLAGS) -c -i -d . -d $(srcdir) -o $@
+
+all_gcda_files = $(shell find . -name '*.gcda' -print)
+
+lcov_test.info: $(all_gcda_files)
+	$(LCOV) $(LCOVFLAGS) -c -d . -d $(srcdir) -o $@
 
 
 # hook for clean-up
@@ -866,8 +918,8 @@ clean distclean maintainer-clean: clean-coverage
 
 .PHONY: clean-coverage
 clean-coverage:
-	rm -rf coverage
-	rm -f *.gcda *.gcno lcov.info *.gcov *.gcov.out
+	rm -rf coverage coverage-html-stamp
+	rm -f *.gcda *.gcno lcov*.info *.gcov .*.gcov *.gcov.out
 
 
 # User-callable target to reset counts between test runs

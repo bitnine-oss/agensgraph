@@ -3,7 +3,7 @@
  * hashvalidate.c
  *	  Opclass validator for hash.
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -29,7 +29,7 @@
 #include "utils/syscache.h"
 
 
-static bool check_hash_func_signature(Oid funcid, Oid restype, Oid argtype);
+static bool check_hash_func_signature(Oid funcid, int16 amprocnum, Oid argtype);
 
 
 /*
@@ -96,8 +96,8 @@ hashvalidate(Oid opclassoid)
 		{
 			ereport(INFO,
 					(errcode(ERRCODE_INVALID_OBJECT_DEFINITION),
-					 errmsg("hash operator family \"%s\" contains support procedure %s with cross-type registration",
-							opfamilyname,
+					 errmsg("operator family \"%s\" of access method %s contains support procedure %s with different left and right input types",
+							opfamilyname, "hash",
 							format_procedure(procform->amproc))));
 			result = false;
 		}
@@ -105,14 +105,15 @@ hashvalidate(Oid opclassoid)
 		/* Check procedure numbers and function signatures */
 		switch (procform->amprocnum)
 		{
-			case HASHPROC:
-				if (!check_hash_func_signature(procform->amproc, INT4OID,
+			case HASHSTANDARD_PROC:
+			case HASHEXTENDED_PROC:
+				if (!check_hash_func_signature(procform->amproc, procform->amprocnum,
 											   procform->amproclefttype))
 				{
 					ereport(INFO,
 							(errcode(ERRCODE_INVALID_OBJECT_DEFINITION),
-							 errmsg("hash operator family \"%s\" contains function %s with wrong signature for support number %d",
-									opfamilyname,
+							 errmsg("operator family \"%s\" of access method %s contains function %s with wrong signature for support number %d",
+									opfamilyname, "hash",
 									format_procedure(procform->amproc),
 									procform->amprocnum)));
 					result = false;
@@ -128,8 +129,8 @@ hashvalidate(Oid opclassoid)
 			default:
 				ereport(INFO,
 						(errcode(ERRCODE_INVALID_OBJECT_DEFINITION),
-						 errmsg("hash operator family \"%s\" contains function %s with invalid support number %d",
-								opfamilyname,
+						 errmsg("operator family \"%s\" of access method %s contains function %s with invalid support number %d",
+								opfamilyname, "hash",
 								format_procedure(procform->amproc),
 								procform->amprocnum)));
 				result = false;
@@ -149,8 +150,8 @@ hashvalidate(Oid opclassoid)
 		{
 			ereport(INFO,
 					(errcode(ERRCODE_INVALID_OBJECT_DEFINITION),
-					 errmsg("hash operator family \"%s\" contains operator %s with invalid strategy number %d",
-							opfamilyname,
+					 errmsg("operator family \"%s\" of access method %s contains operator %s with invalid strategy number %d",
+							opfamilyname, "hash",
 							format_operator(oprform->amopopr),
 							oprform->amopstrategy)));
 			result = false;
@@ -162,8 +163,8 @@ hashvalidate(Oid opclassoid)
 		{
 			ereport(INFO,
 					(errcode(ERRCODE_INVALID_OBJECT_DEFINITION),
-					 errmsg("hash operator family \"%s\" contains invalid ORDER BY specification for operator %s",
-							opfamilyname,
+					 errmsg("operator family \"%s\" of access method %s contains invalid ORDER BY specification for operator %s",
+							opfamilyname, "hash",
 							format_operator(oprform->amopopr))));
 			result = false;
 		}
@@ -175,8 +176,8 @@ hashvalidate(Oid opclassoid)
 		{
 			ereport(INFO,
 					(errcode(ERRCODE_INVALID_OBJECT_DEFINITION),
-					 errmsg("hash operator family \"%s\" contains operator %s with wrong signature",
-							opfamilyname,
+					 errmsg("operator family \"%s\" of access method %s contains operator %s with wrong signature",
+							opfamilyname, "hash",
 							format_operator(oprform->amopopr))));
 			result = false;
 		}
@@ -187,8 +188,8 @@ hashvalidate(Oid opclassoid)
 		{
 			ereport(INFO,
 					(errcode(ERRCODE_INVALID_OBJECT_DEFINITION),
-					 errmsg("hash operator family \"%s\" lacks support function for operator %s",
-							opfamilyname,
+					 errmsg("operator family \"%s\" of access method %s lacks support function for operator %s",
+							opfamilyname, "hash",
 							format_operator(oprform->amopopr))));
 			result = false;
 		}
@@ -215,8 +216,8 @@ hashvalidate(Oid opclassoid)
 		{
 			ereport(INFO,
 					(errcode(ERRCODE_INVALID_OBJECT_DEFINITION),
-					 errmsg("hash operator family \"%s\" is missing operator(s) for types %s and %s",
-							opfamilyname,
+					 errmsg("operator family \"%s\" of access method %s is missing operator(s) for types %s and %s",
+							opfamilyname, "hash",
 							format_type_be(thisgroup->lefttype),
 							format_type_be(thisgroup->righttype))));
 			result = false;
@@ -229,8 +230,8 @@ hashvalidate(Oid opclassoid)
 	{
 		ereport(INFO,
 				(errcode(ERRCODE_INVALID_OBJECT_DEFINITION),
-				 errmsg("hash operator class \"%s\" is missing operator(s)",
-						opclassname)));
+				 errmsg("operator class \"%s\" of access method %s is missing operator(s)",
+						opclassname, "hash")));
 		result = false;
 	}
 
@@ -245,8 +246,8 @@ hashvalidate(Oid opclassoid)
 	{
 		ereport(INFO,
 				(errcode(ERRCODE_INVALID_OBJECT_DEFINITION),
-				 errmsg("hash operator family \"%s\" is missing cross-type operator(s)",
-						opfamilyname)));
+				 errmsg("operator family \"%s\" of access method %s is missing cross-type operator(s)",
+						opfamilyname, "hash")));
 		result = false;
 	}
 
@@ -264,11 +265,29 @@ hashvalidate(Oid opclassoid)
  * hacks in the core hash opclass definitions.
  */
 static bool
-check_hash_func_signature(Oid funcid, Oid restype, Oid argtype)
+check_hash_func_signature(Oid funcid, int16 amprocnum, Oid argtype)
 {
 	bool		result = true;
+	Oid			restype;
+	int16		nargs;
 	HeapTuple	tp;
 	Form_pg_proc procform;
+
+	switch (amprocnum)
+	{
+		case HASHSTANDARD_PROC:
+			restype = INT4OID;
+			nargs = 1;
+			break;
+
+		case HASHEXTENDED_PROC:
+			restype = INT8OID;
+			nargs = 2;
+			break;
+
+		default:
+			elog(ERROR, "invalid amprocnum");
+	}
 
 	tp = SearchSysCache1(PROCOID, ObjectIdGetDatum(funcid));
 	if (!HeapTupleIsValid(tp))
@@ -276,7 +295,7 @@ check_hash_func_signature(Oid funcid, Oid restype, Oid argtype)
 	procform = (Form_pg_proc) GETSTRUCT(tp);
 
 	if (procform->prorettype != restype || procform->proretset ||
-		procform->pronargs != 1)
+		procform->pronargs != nargs)
 		result = false;
 
 	if (!IsBinaryCoercible(argtype, procform->proargtypes.values[0]))
@@ -290,23 +309,28 @@ check_hash_func_signature(Oid funcid, Oid restype, Oid argtype)
 		 * identity, not just its input type, because hashvarlena() takes
 		 * INTERNAL and allowing any such function seems too scary.
 		 */
-		if (funcid == F_HASHINT4 &&
+		if ((funcid == F_HASHINT4 || funcid == F_HASHINT4EXTENDED) &&
 			(argtype == DATEOID ||
 			 argtype == ABSTIMEOID || argtype == RELTIMEOID ||
 			 argtype == XIDOID || argtype == CIDOID))
 			 /* okay, allowed use of hashint4() */ ;
-		else if (funcid == F_TIMESTAMP_HASH &&
+		else if ((funcid == F_TIMESTAMP_HASH ||
+				  funcid == F_TIMESTAMP_HASH_EXTENDED) &&
 				 argtype == TIMESTAMPTZOID)
 			 /* okay, allowed use of timestamp_hash() */ ;
-		else if (funcid == F_HASHCHAR &&
+		else if ((funcid == F_HASHCHAR || funcid == F_HASHCHAREXTENDED) &&
 				 argtype == BOOLOID)
 			 /* okay, allowed use of hashchar() */ ;
-		else if (funcid == F_HASHVARLENA &&
+		else if ((funcid == F_HASHVARLENA || funcid == F_HASHVARLENAEXTENDED) &&
 				 argtype == BYTEAOID)
 			 /* okay, allowed use of hashvarlena() */ ;
 		else
 			result = false;
 	}
+
+	/* If function takes a second argument, it must be for a 64-bit salt. */
+	if (nargs == 2 && procform->proargtypes.values[1] != INT8OID)
+		result = false;
 
 	ReleaseSysCache(tp);
 	return result;

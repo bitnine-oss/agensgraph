@@ -22,7 +22,7 @@
  *		Unlock a previously acquired lock.
  *
  *	bool S_LOCK_FREE(slock_t *lock)
- *		Tests if the lock is free. Returns TRUE if free, FALSE if locked.
+ *		Tests if the lock is free. Returns true if free, false if locked.
  *		This does *not* change the state of the lock.
  *
  *	void SPIN_DELAY(void)
@@ -86,7 +86,7 @@
  *	when using the SysV semaphore code.
  *
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *	  src/include/storage/s_lock.h
@@ -543,6 +543,30 @@ tas(volatile slock_t *lock)
 #endif	 /* (__mc68000__ || __m68k__) && __linux__ */
 
 
+/* Motorola 88k */
+#if defined(__m88k__)
+#define HAS_TEST_AND_SET
+
+typedef unsigned int slock_t;
+
+#define TAS(lock) tas(lock)
+
+static __inline__ int
+tas(volatile slock_t *lock)
+{
+	register slock_t _res = 1;
+
+	__asm__ __volatile__(
+		"	xmem	%0, %2, %%r0	\n"
+:		"+r"(_res), "+m"(*lock)
+:		"r"(lock)
+:		"memory");
+	return (int) _res;
+}
+
+#endif	 /* __m88k__ */
+
+
 /*
  * VAXen -- even multiprocessor ones
  * (thanks to Tom Ivar Helbekkmo)
@@ -833,7 +857,7 @@ extern slock_t pg_atomic_cas(volatile slock_t *lock, slock_t with,
 #endif
 
 
-#ifdef WIN32_ONLY_COMPILER
+#ifdef _MSC_VER
 typedef LONG slock_t;
 
 #define HAS_TEST_AND_SET

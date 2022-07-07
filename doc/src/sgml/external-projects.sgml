@@ -40,9 +40,9 @@
    </itemizedlist>
 
    All other language interfaces are external projects and are distributed
-   separately. <xref linkend="language-interface-table"> includes a list of
+   separately. <xref linkend="language-interface-table"/> includes a list of
    some of these projects. Note that some of these packages might not be
-   released under the same license as <productname>PostgreSQL</>. For more
+   released under the same license as <productname>PostgreSQL</productname>. For more
    information on each language interface, including licensing terms, refer to
    its website and documentation.
   </para>
@@ -70,9 +70,9 @@
 
      <row>
       <entry>JDBC</entry>
-      <entry>JDBC</entry>
+      <entry>Java</entry>
       <entry>Type 4 JDBC driver</entry>
-      <entry><ulink url="http://jdbc.postgresql.org/"></ulink></entry>
+      <entry><ulink url="https://jdbc.postgresql.org/"></ulink></entry>
      </row>
 
      <row>
@@ -83,6 +83,13 @@
      </row>
 
      <row>
+      <entry>node-postgres</entry>
+      <entry>JavaScript</entry>
+      <entry>Node.js driver</entry>
+      <entry><ulink url="https://node-postgres.com/"></ulink></entry>
+     </row>
+
+     <row>
       <entry>Npgsql</entry>
       <entry>.NET</entry>
       <entry>.NET data provider</entry>
@@ -90,10 +97,24 @@
      </row>
 
      <row>
+      <entry>pgtcl</entry>
+      <entry>Tcl</entry>
+      <entry></entry>
+      <entry><ulink url="https://github.com/flightaware/Pgtcl"></ulink></entry>
+     </row>
+
+     <row>
       <entry>pgtclng</entry>
       <entry>Tcl</entry>
       <entry></entry>
       <entry><ulink url="http://sourceforge.net/projects/pgtclng/"></ulink></entry>
+     </row>
+
+     <row>
+      <entry>pq</entry>
+      <entry>Go</entry>
+      <entry>Pure Go driver for Go's database/sql</entry>
+      <entry><ulink url="https://github.com/lib/pq"></ulink></entry>
      </row>
 
      <row>
@@ -124,8 +145,8 @@
 
   <para>
    There are several administration tools available for
-   <productname>PostgreSQL</>. The most popular is
-   <application><ulink url="http://www.pgadmin.org/">pgAdmin III</ulink></>,
+   <productname>PostgreSQL</productname>. The most popular is
+   <application><ulink url="http://www.pgadmin.org/">pgAdmin III</ulink></application>,
    and there are several commercially available ones as well.
   </para>
  </sect1>
@@ -149,9 +170,9 @@
   <para>
    In addition, there are a number of procedural languages that are developed
    and maintained outside the core <productname>PostgreSQL</productname>
-   distribution. <xref linkend="pl-language-table"> lists some of these
+   distribution. <xref linkend="pl-language-table"/> lists some of these
    packages. Note that some of these projects might not be released under the same
-   license as <productname>PostgreSQL</>. For more information on each
+   license as <productname>PostgreSQL</productname>. For more information on each
    procedural language, including licensing information, refer to its website
    and documentation.
   </para>
@@ -172,43 +193,31 @@
      <row>
       <entry>PL/Java</entry>
       <entry>Java</entry>
-      <entry><ulink url="https://github.com/tada/pljava"></ulink></entry>
+      <entry><ulink url="https://tada.github.io/pljava/"></ulink></entry>
      </row>
 
      <row>
-      <entry>PL/PHP</entry>
-      <entry>PHP</entry>
-      <entry><ulink url="https://public.commandprompt.com/projects/plphp"></ulink></entry>
-     </row>
-
-     <row>
-      <entry>PL/Py</entry>
-      <entry>Python</entry>
-      <entry><ulink url="http://python.projects.postgresql.org/backend/"></ulink></entry>
+      <entry>PL/Lua</entry>
+      <entry>Lua</entry>
+      <entry><ulink url="https://github.com/pllua/pllua"></ulink></entry>
      </row>
 
      <row>
       <entry>PL/R</entry>
       <entry>R</entry>
-      <entry><ulink url="http://www.joeconway.com/plr/"></ulink></entry>
-     </row>
-
-     <row>
-      <entry>PL/Ruby</entry>
-      <entry>Ruby</entry>
-      <entry><ulink url="http://raa.ruby-lang.org/project/pl-ruby/"></ulink></entry>
-     </row>
-
-     <row>
-      <entry>PL/Scheme</entry>
-      <entry>Scheme</entry>
-      <entry><ulink url="http://plscheme.projects.postgresql.org/"></ulink></entry>
+      <entry><ulink url="http://www.joeconway.com/plr.html"></ulink></entry>
      </row>
 
      <row>
       <entry>PL/sh</entry>
       <entry>Unix shell</entry>
       <entry><ulink url="https://github.com/petere/plsh"></ulink></entry>
+     </row>
+
+     <row>
+      <entry>PL/v8</entry>
+      <entry>JavaScript</entry>
+      <entry><ulink url="https://github.com/plv8/plv8"></ulink></entry>
      </row>
     </tbody>
    </tgroup>
@@ -224,17 +233,17 @@
   </indexterm>
 
   <para>
-   <productname>PostgreSQL</> is designed to be easily extensible. For
+   <productname>PostgreSQL</productname> is designed to be easily extensible. For
    this reason, extensions loaded into the database can function
    just like features that are built in. The
-   <filename>contrib/</> directory shipped with the source code
+   <filename>contrib/</filename> directory shipped with the source code
    contains several extensions, which are described in
-   <xref linkend="contrib">.  Other extensions are developed
+   <xref linkend="contrib"/>.  Other extensions are developed
    independently, like <application><ulink
-   url="http://postgis.net/">PostGIS</ulink></>.  Even
-   <productname>PostgreSQL</> replication solutions can be developed
+   url="http://postgis.net/">PostGIS</ulink></application>.  Even
+   <productname>PostgreSQL</productname> replication solutions can be developed
    externally. For example, <application> <ulink
-   url="http://www.slony.info">Slony-I</ulink></> is a popular
+   url="http://www.slony.info">Slony-I</ulink></application> is a popular
    master/standby replication solution that is developed independently
    from the core project.
   </para>

@@ -3,7 +3,7 @@
  * dsm.h
  *	  manage dynamic shared memory segments
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/storage/dsm.h
@@ -60,4 +60,4 @@ extern void cancel_on_dsm_detach(dsm_segment *seg,
 					 on_dsm_detach_callback function, Datum arg);
 extern void reset_on_dsm_detach(void);
 
-#endif   /* DSM_H */
+#endif							/* DSM_H */
