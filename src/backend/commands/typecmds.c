@@ -41,6 +41,7 @@
 #include "catalog/pg_authid.h"
 #include "catalog/pg_collation.h"
 #include "catalog/pg_constraint.h"
+#include "catalog/pg_constraint_fn.h"
 #include "catalog/pg_depend.h"
 #include "catalog/pg_enum.h"
 #include "catalog/pg_language.h"
@@ -449,8 +450,8 @@ DefineType(List *names, List *parameters)
 		{
 			/* backwards-compatibility hack */
 			ereport(WARNING,
-					(errmsg("changing return type of function %s from \"opaque\" to %s",
-							NameListToString(inputName), typeName)));
+				 (errmsg("changing return type of function %s from %s to %s",
+						 NameListToString(inputName), "opaque", typeName)));
 			SetFunctionReturnType(inputOid, typoid);
 		}
 		else
@@ -466,15 +467,15 @@ DefineType(List *names, List *parameters)
 		{
 			/* backwards-compatibility hack */
 			ereport(WARNING,
-					(errmsg("changing return type of function %s from \"opaque\" to \"cstring\"",
-							NameListToString(outputName))));
+				 (errmsg("changing return type of function %s from %s to %s",
+						 NameListToString(outputName), "opaque", "cstring")));
 			SetFunctionReturnType(outputOid, CSTRINGOID);
 		}
 		else
 			ereport(ERROR,
 					(errcode(ERRCODE_INVALID_OBJECT_DEFINITION),
-			   errmsg("type output function %s must return type \"cstring\"",
-					  NameListToString(outputName))));
+					 errmsg("type output function %s must return type %s",
+							NameListToString(outputName), "cstring")));
 	}
 	if (receiveOid)
 	{
@@ -491,8 +492,8 @@ DefineType(List *names, List *parameters)
 		if (resulttype != BYTEAOID)
 			ereport(ERROR,
 					(errcode(ERRCODE_INVALID_OBJECT_DEFINITION),
-				   errmsg("type send function %s must return type \"bytea\"",
-						  NameListToString(sendName))));
+					 errmsg("type send function %s must return type %s",
+							NameListToString(sendName), "bytea")));
 	}
 
 	/*
@@ -1833,8 +1834,8 @@ findTypeTypmodinFunction(List *procname)
 	if (get_func_rettype(procOid) != INT4OID)
 		ereport(ERROR,
 				(errcode(ERRCODE_INVALID_OBJECT_DEFINITION),
-				 errmsg("typmod_in function %s must return type \"integer\"",
-						NameListToString(procname))));
+				 errmsg("typmod_in function %s must return type %s",
+						NameListToString(procname), "integer")));
 
 	return procOid;
 }
@@ -1860,8 +1861,8 @@ findTypeTypmodoutFunction(List *procname)
 	if (get_func_rettype(procOid) != CSTRINGOID)
 		ereport(ERROR,
 				(errcode(ERRCODE_INVALID_OBJECT_DEFINITION),
-				 errmsg("typmod_out function %s must return type \"cstring\"",
-						NameListToString(procname))));
+				 errmsg("typmod_out function %s must return type %s",
+						NameListToString(procname), "cstring")));
 
 	return procOid;
 }
@@ -1887,8 +1888,8 @@ findTypeAnalyzeFunction(List *procname, Oid typeOid)
 	if (get_func_rettype(procOid) != BOOLOID)
 		ereport(ERROR,
 				(errcode(ERRCODE_INVALID_OBJECT_DEFINITION),
-			  errmsg("type analyze function %s must return type \"boolean\"",
-					 NameListToString(procname))));
+				 errmsg("type analyze function %s must return type %s",
+						NameListToString(procname), "boolean")));
 
 	return procOid;
 }
@@ -2006,8 +2007,9 @@ findRangeSubtypeDiffFunction(List *procname, Oid subtype)
 	if (get_func_rettype(procOid) != FLOAT8OID)
 		ereport(ERROR,
 				(errcode(ERRCODE_INVALID_OBJECT_DEFINITION),
-				 errmsg("range subtype diff function %s must return type double precision",
-						func_signature_string(procname, 2, NIL, argList))));
+				 errmsg("range subtype diff function %s must return type %s",
+						func_signature_string(procname, 2, NIL, argList),
+						"double precision")));
 
 	if (func_volatile(procOid) != PROVOLATILE_IMMUTABLE)
 		ereport(ERROR,
@@ -3311,9 +3313,9 @@ AlterTypeOwner_oid(Oid typeOid, Oid newOwnerId, bool hasDependEntry)
 	typTup = (Form_pg_type) GETSTRUCT(tup);
 
 	/*
-	 * If it's a composite type, invoke ATExecChangeOwner so that we fix up the
-	 * pg_class entry properly.  That will call back to AlterTypeOwnerInternal
-	 * to take care of the pg_type entry(s).
+	 * If it's a composite type, invoke ATExecChangeOwner so that we fix up
+	 * the pg_class entry properly.  That will call back to
+	 * AlterTypeOwnerInternal to take care of the pg_type entry(s).
 	 */
 	if (typTup->typtype == TYPTYPE_COMPOSITE)
 		ATExecChangeOwner(typTup->typrelid, newOwnerId, true, AccessExclusiveLock);

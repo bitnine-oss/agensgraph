@@ -70,8 +70,8 @@ select tcl_sum(key1) from T_pkey1 where key1 = 99;
 select 1 @< 2;
 select 100 @< 4;
 
-select * from T_pkey1 order by key1 using @<, key2;
-select * from T_pkey2 order by key1 using @<, key2;
+select * from T_pkey1 order by key1 using @<, key2 collate "C";
+select * from T_pkey2 order by key1 using @<, key2 collate "C";
 
 -- show dump of trigger data
 insert into trigger_test values(1,'insert');
@@ -82,3 +82,18 @@ delete from trigger_test_view;
 
 update trigger_test set v = 'update' where i = 1;
 delete from trigger_test;
+
+-- Test composite-type arguments
+select tcl_composite_arg_ref1(row('tkey', 42, 'ref2'));
+select tcl_composite_arg_ref2(row('tkey', 42, 'ref2'));
+
+-- Test argisnull primitive
+select tcl_argisnull('foo');
+select tcl_argisnull('');
+select tcl_argisnull(null);
+
+-- Test spi_lastoid primitive
+create temp table t1 (f1 int);
+select tcl_lastoid('t1');
+create temp table t2 (f1 int) with oids;
+select tcl_lastoid('t2') > 0;

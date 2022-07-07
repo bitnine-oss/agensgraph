@@ -14,6 +14,7 @@
 
 #include "access/parallel.h"
 #include "nodes/execnodes.h"
+#include "nodes/extensible.h"
 
 /*
  * General executor code
@@ -31,10 +32,10 @@ extern void ExecCustomRestrPos(CustomScanState *node);
  * Parallel execution support
  */
 extern void ExecCustomScanEstimate(CustomScanState *node,
-								   ParallelContext *pcxt);
+					   ParallelContext *pcxt);
 extern void ExecCustomScanInitializeDSM(CustomScanState *node,
-										ParallelContext *pcxt);
+							ParallelContext *pcxt);
 extern void ExecCustomScanInitializeWorker(CustomScanState *node,
-										   shm_toc *toc);
+							   shm_toc *toc);
 
 #endif   /* NODECUSTOM_H */

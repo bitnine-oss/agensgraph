@@ -8,8 +8,8 @@
 #ifndef COMMAND_H
 #define COMMAND_H
 
-#include "print.h"
-#include "psqlscan.h"
+#include "fe_utils/print.h"
+#include "fe_utils/psqlscan.h"
 
 
 typedef enum _backslashResult

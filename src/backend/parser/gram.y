@@ -51,6 +51,7 @@
 
 #include "catalog/index.h"
 #include "catalog/namespace.h"
+#include "catalog/pg_am.h"
 #include "catalog/pg_trigger.h"
 #include "commands/defrem.h"
 #include "commands/trigger.h"
@@ -234,7 +235,8 @@ static Node *wrapCypherWithSelect(Node *stmt);
 		AlterEventTrigStmt
 		AlterDatabaseStmt AlterDatabaseSetStmt AlterDomainStmt AlterEnumStmt
 		AlterFdwStmt AlterForeignServerStmt AlterGroupStmt
-		AlterObjectSchemaStmt AlterOwnerStmt AlterOperatorStmt AlterSeqStmt AlterSystemStmt AlterTableStmt
+		AlterObjectDependsStmt AlterObjectSchemaStmt AlterOwnerStmt
+		AlterOperatorStmt AlterSeqStmt AlterSystemStmt AlterTableStmt
 		AlterTblSpcStmt AlterExtensionStmt AlterExtensionContentsStmt AlterForeignTableStmt
 		AlterCompositeTypeStmt AlterUserStmt AlterUserMappingStmt AlterUserSetStmt
 		AlterRoleStmt AlterRoleSetStmt AlterPolicyStmt
@@ -247,8 +249,7 @@ static Node *wrapCypherWithSelect(Node *stmt);
 		CreateFdwStmt CreateForeignServerStmt CreateForeignTableStmt
 		CreateAssertStmt CreateTransformStmt CreateTrigStmt CreateEventTrigStmt
 		CreateUserStmt CreateUserMappingStmt CreateRoleStmt CreatePolicyStmt
-		CreatedbStmt
-		DeclareCursorStmt DefineStmt DeleteStmt DiscardStmt DoStmt
+		CreatedbStmt DeclareCursorStmt DefineStmt DeleteStmt DiscardStmt DoStmt
 		DropGroupStmt DropOpClassStmt DropOpFamilyStmt DropPLangStmt DropStmt
 		DropAssertStmt DropTrigStmt DropRuleStmt DropCastStmt DropRoleStmt
 		DropPolicyStmt DropUserStmt DropdbStmt DropTableSpaceStmt DropFdwStmt
@@ -266,7 +267,7 @@ static Node *wrapCypherWithSelect(Node *stmt);
 		DeallocateStmt PrepareStmt ExecuteStmt
 		DropOwnedStmt ReassignOwnedStmt
 		AlterTSConfigurationStmt AlterTSDictionaryStmt
-		CreateMatViewStmt RefreshMatViewStmt
+		CreateMatViewStmt RefreshMatViewStmt CreateAmStmt
 
 %type <node>	select_no_parens select_with_parens select_clause
 				simple_select values_clause
@@ -602,11 +603,11 @@ static Node *wrapCypherWithSelect(Node *stmt);
 	CURRENT_TIME CURRENT_TIMESTAMP CURRENT_USER CURSOR CYCLE
 
 	DATA_P DATABASE DAY_P DEALLOCATE DEC DECIMAL_P DECLARE DEFAULT DEFAULTS
-	DEFERRABLE DEFERRED DEFINER DELETE_P DELIMITER DELIMITERS DESC DETACH
+	DEFERRABLE DEFERRED DEFINER DELETE_P DELIMITER DELIMITERS DEPENDS DESC DETACH
 	DICTIONARY DISABLE_P DISCARD DISTINCT DO DOCUMENT_P DOMAIN_P DOUBLE_P DROP
 
-	EACH ELABEL ELSE ENABLE_P ENCODING ENCRYPTED END_P ENUM_P ESCAPE EVENT
-	EXCEPT EXCLUDE EXCLUDING EXCLUSIVE EXECUTE EXISTS EXPLAIN
+	EACH ELABEL ELSE ENABLE_P ENCODING ENCRYPTED END_P ENUM_P ESCAPE EVENT EXCEPT
+	EXCLUDE EXCLUDING EXCLUSIVE EXECUTE EXISTS EXPLAIN
 	EXTENSION EXTERNAL EXTRACT
 
 	FALSE_P FAMILY FETCH FILTER FIRST_P FLOAT_P FOLLOWING FOR
@@ -629,7 +630,7 @@ static Node *wrapCypherWithSelect(Node *stmt);
 	LEADING LEAKPROOF LEAST LEFT LEVEL LIKE LIMIT LISTEN LOAD LOCAL
 	LOCALTIME LOCALTIMESTAMP LOCATION LOCK_P LOCKED LOGGED
 
-	MAPPING MATCH MATERIALIZED MAXVALUE MINUTE_P MINVALUE MODE MONTH_P MOVE
+	MAPPING MATCH MATERIALIZED MAXVALUE METHOD MINUTE_P MINVALUE MODE MONTH_P MOVE
 
 	NAME_P NAMES NATIONAL NATURAL NCHAR NEXT NO NONE
 	NOT NOTHING NOTIFY NOTNULL NOWAIT NULL_P NULLIF
@@ -646,12 +647,12 @@ static Node *wrapCypherWithSelect(Node *stmt);
 
 	RANGE READ REAL REASSIGN RECHECK RECURSIVE REF REFERENCES REFRESH REINDEX
 	RELATIVE_P RELEASE RENAME REPEATABLE REPLACE REPLICA
-	RESET RESTART RESTRICT RETURN RETURNING RETURNS REVOKE RIGHT ROLE ROLLBACK
-	ROLLUP ROW ROWS RULE
+	RESET RESTART RESTRICT RETURN RETURNING RETURNS REVOKE RIGHT ROLE ROLLBACK ROLLUP
+	ROW ROWS RULE
 
 	SAVEPOINT SCHEMA SCROLL SEARCH SECOND_P SECURITY SELECT SEQUENCE SEQUENCES
-	SERIALIZABLE SERVER SESSION SESSION_USER SET SETS SETOF SHARE SHOW SIMILAR
-	SIMPLE SIZE SKIP SMALLINT SNAPSHOT SOME SQL_P STABLE STANDALONE_P START
+	SERIALIZABLE SERVER SESSION SESSION_USER SET SETS SETOF SHARE SHOW
+	SIMILAR SIMPLE SIZE SKIP SMALLINT SNAPSHOT SOME SQL_P STABLE STANDALONE_P START
 	STATEMENT STATISTICS STDIN STDOUT STORAGE STRICT_P STRIP_P SUBSTRING
 	SYMMETRIC SYSID SYSTEM_P
 
@@ -796,6 +797,7 @@ stmt :
 			| AlterForeignTableStmt
 			| AlterFunctionStmt
 			| AlterGroupStmt
+			| AlterObjectDependsStmt
 			| AlterObjectSchemaStmt
 			| AlterOwnerStmt
 			| AlterOperatorStmt
@@ -819,6 +821,7 @@ stmt :
 			| CommentStmt
 			| ConstraintsSetStmt
 			| CopyStmt
+			| CreateAmStmt
 			| CreateAsStmt
 			| CreateAssertStmt
 			| CreateCastStmt
@@ -1155,9 +1158,9 @@ AlterUserSetStmt:
  *
  * Drop a postgresql DBMS role
  *
- * XXX Ideally this would have CASCADE/RESTRICT options, but since a role
- * might own objects in multiple databases, there is presently no way to
- * implement either cascading or restricting.  Caveat DBA.
+ * XXX Ideally this would have CASCADE/RESTRICT options, but a role
+ * might own objects in multiple databases, and there is presently no way to
+ * implement cascading to other databases.  So we always behave as RESTRICT.
  *****************************************************************************/
 
 DropRoleStmt:
@@ -1181,9 +1184,7 @@ DropRoleStmt:
  *
  * Drop a postgresql DBMS user
  *
- * XXX Ideally this would have CASCADE/RESTRICT options, but since a user
- * might own objects in multiple databases, there is presently no way to
- * implement either cascading or restricting.  Caveat DBA.
+ * XXX As with DROP ROLE, no CASCADE/RESTRICT here.
  *****************************************************************************/
 
 DropUserStmt:
@@ -1249,7 +1250,7 @@ add_drop:	ADD_P									{ $$ = +1; }
  *
  * Drop a postgresql group
  *
- * XXX see above notes about cascading DROP USER; groups have same problem.
+ * XXX As with DROP ROLE, no CASCADE/RESTRICT here.
  *****************************************************************************/
 
 DropGroupStmt:
@@ -2037,7 +2038,7 @@ alter_table_cmd:
 					n->def = (Node *) $5;
 					$$ = (Node *)n;
 				}
-			/* ALTER TABLE <name> ALTER [COLUMN] <colname> SET ( column_parameter = value [, ... ] ) */
+			/* ALTER TABLE <name> ALTER [COLUMN] <colname> RESET ( column_parameter = value [, ... ] ) */
 			| ALTER opt_column ColId RESET reloptions
 				{
 					AlterTableCmd *n = makeNode(AlterTableCmd);
@@ -2827,6 +2828,7 @@ copy_generic_opt_arg_list:
 copy_generic_opt_arg_list_item:
 			opt_boolean_or_string	{ $$ = (Node *) makeString($1); }
 		;
+
 
 /*****************************************************************************
  *
@@ -4602,6 +4604,8 @@ auth_ident: RoleSpec			{ $$ = $1; }
  *		QUERY :
  *				DROP USER MAPPING FOR auth_ident SERVER name
  *
+ * XXX you'd think this should have a CASCADE/RESTRICT option, even if it's
+ * only pro forma; but the SQL standard doesn't show one.
  ****************************************************************************/
 
 DropUserMappingStmt: DROP USER MAPPING FOR auth_ident SERVER name
@@ -4736,6 +4740,23 @@ row_security_cmd:
 		|	INSERT			{ $$ = "insert"; }
 		|	UPDATE			{ $$ = "update"; }
 		|	DELETE_P		{ $$ = "delete"; }
+		;
+
+/*****************************************************************************
+ *
+ *		QUERY:
+ *             CREATE ACCESS METHOD name HANDLER handler_name
+ *
+ *****************************************************************************/
+
+CreateAmStmt: CREATE ACCESS METHOD name TYPE_P INDEX HANDLER handler_name
+				{
+					CreateAmStmt *n = makeNode(CreateAmStmt);
+					n->amname = $4;
+					n->handler_name = $8;
+					n->amtype = AMTYPE_INDEX;
+					$$ = (Node *) n;
+				}
 		;
 
 /*****************************************************************************
@@ -5644,6 +5665,7 @@ drop_type:	TABLE									{ $$ = OBJECT_TABLE; }
 			| MATERIALIZED VIEW						{ $$ = OBJECT_MATVIEW; }
 			| INDEX									{ $$ = OBJECT_INDEX; }
 			| FOREIGN TABLE							{ $$ = OBJECT_FOREIGN_TABLE; }
+			| ACCESS METHOD							{ $$ = OBJECT_ACCESS_METHOD; }
 			| EVENT TRIGGER 						{ $$ = OBJECT_EVENT_TRIGGER; }
 			| COLLATION								{ $$ = OBJECT_COLLATION; }
 			| CONVERSION_P							{ $$ = OBJECT_CONVERSION; }
@@ -5706,7 +5728,8 @@ opt_restart_seqs:
  *	The COMMENT ON statement can take different forms based upon the type of
  *	the object associated with the comment. The form of the statement is:
  *
- *	COMMENT ON [ [ CONVERSION | COLLATION | DATABASE | DOMAIN |
+ *	COMMENT ON [ [ ACCESS METHOD | CONVERSION | COLLATION |
+ *                 DATABASE | DOMAIN |
  *                 EXTENSION | EVENT TRIGGER | FOREIGN DATA WRAPPER |
  *                 FOREIGN TABLE | INDEX | [PROCEDURAL] LANGUAGE |
  *                 MATERIALIZED VIEW | POLICY | ROLE | SCHEMA | SEQUENCE |
@@ -5726,7 +5749,7 @@ opt_restart_seqs:
  *				 OPERATOR FAMILY <name> USING <access-method> |
  *				 RULE <rulename> ON <relname> |
  *				 TRIGGER <triggername> ON <relname> ]
- *			   IS 'text'
+ *			   IS { 'text' | NULL }
  *
  *****************************************************************************/
 
@@ -5901,7 +5924,8 @@ CommentStmt:
 		;
 
 comment_type:
-			COLUMN								{ $$ = OBJECT_COLUMN; }
+			ACCESS METHOD						{ $$ = OBJECT_ACCESS_METHOD; }
+			| COLUMN							{ $$ = OBJECT_COLUMN; }
 			| DATABASE							{ $$ = OBJECT_DATABASE; }
 			| SCHEMA							{ $$ = OBJECT_SCHEMA; }
 			| INDEX								{ $$ = OBJECT_INDEX; }
@@ -6763,7 +6787,6 @@ opt_collate: COLLATE any_name						{ $$ = $2; }
 		;
 
 opt_class:	any_name								{ $$ = $1; }
-			| USING any_name						{ $$ = $2; }
 			| /*EMPTY*/								{ $$ = NIL; }
 		;
 
@@ -8041,6 +8064,55 @@ opt_column: COLUMN									{ $$ = COLUMN; }
 
 opt_set_data: SET DATA_P							{ $$ = 1; }
 			| /*EMPTY*/								{ $$ = 0; }
+		;
+
+/*****************************************************************************
+ *
+ * ALTER THING name DEPENDS ON EXTENSION name
+ *
+ *****************************************************************************/
+
+AlterObjectDependsStmt:
+			ALTER FUNCTION function_with_argtypes DEPENDS ON EXTENSION name
+				{
+					AlterObjectDependsStmt *n = makeNode(AlterObjectDependsStmt);
+					n->objectType = OBJECT_FUNCTION;
+					n->relation = NULL;
+					n->objname = $3->funcname;
+					n->objargs = $3->funcargs;
+					n->extname = makeString($7);
+					$$ = (Node *)n;
+				}
+			| ALTER TRIGGER name ON qualified_name DEPENDS ON EXTENSION name
+				{
+					AlterObjectDependsStmt *n = makeNode(AlterObjectDependsStmt);
+					n->objectType = OBJECT_TRIGGER;
+					n->relation = $5;
+					n->objname = list_make1(makeString($3));
+					n->objargs = NIL;
+					n->extname = makeString($9);
+					$$ = (Node *)n;
+				}
+			| ALTER MATERIALIZED VIEW qualified_name DEPENDS ON EXTENSION name
+				{
+					AlterObjectDependsStmt *n = makeNode(AlterObjectDependsStmt);
+					n->objectType = OBJECT_MATVIEW;
+					n->relation = $4;
+					n->objname = NIL;
+					n->objargs = NIL;
+					n->extname = makeString($8);
+					$$ = (Node *)n;
+				}
+			| ALTER INDEX qualified_name DEPENDS ON EXTENSION name
+				{
+					AlterObjectDependsStmt *n = makeNode(AlterObjectDependsStmt);
+					n->objectType = OBJECT_INDEX;
+					n->relation = $3;
+					n->objname = NIL;
+					n->objargs = NIL;
+					n->extname = makeString($7);
+					$$ = (Node *)n;
+				}
 		;
 
 /*****************************************************************************
@@ -9336,6 +9408,16 @@ vacuum_option_elem:
 			| VERBOSE			{ $$ = VACOPT_VERBOSE; }
 			| FREEZE			{ $$ = VACOPT_FREEZE; }
 			| FULL				{ $$ = VACOPT_FULL; }
+			| IDENT
+				{
+					if (strcmp($1, "disable_page_skipping") == 0)
+						$$ = VACOPT_DISABLE_PAGE_SKIPPING;
+					else
+						ereport(ERROR,
+								(errcode(ERRCODE_SYNTAX_ERROR),
+							 errmsg("unrecognized VACUUM option \"%s\"", $1),
+									 parser_errposition(@1)));
+				}
 		;
 
 AnalyzeStmt:
@@ -11812,9 +11894,7 @@ a_expr:		c_expr									{ $$ = $1; }
 				}
 			| a_expr IS NOT DISTINCT FROM a_expr		%prec IS
 				{
-					$$ = makeNotExpr((Node *) makeSimpleA_Expr(AEXPR_DISTINCT,
-															   "=", $1, $6, @2),
-									 @2);
+					$$ = (Node *) makeSimpleA_Expr(AEXPR_NOT_DISTINCT, "=", $1, $6, @2);
 				}
 			| a_expr IS OF '(' type_list ')'			%prec IS
 				{
@@ -11998,9 +12078,7 @@ b_expr:		c_expr
 				}
 			| b_expr IS NOT DISTINCT FROM b_expr	%prec IS
 				{
-					$$ = makeNotExpr((Node *) makeSimpleA_Expr(AEXPR_DISTINCT,
-															   "=", $1, $6, @2),
-									 @2);
+					$$ = (Node *) makeSimpleA_Expr(AEXPR_NOT_DISTINCT, "=", $1, $6, @2);
 				}
 			| b_expr IS OF '(' type_list ')'		%prec IS
 				{
@@ -13818,6 +13896,7 @@ unreserved_keyword:
 			| DELETE_P
 			| DELIMITER
 			| DELIMITERS
+			| DEPENDS
 			| DETACH
 			| DICTIONARY
 			| DISABLE_P
@@ -13892,6 +13971,7 @@ unreserved_keyword:
 			| MAPPING
 			| MATERIALIZED
 			| MAXVALUE
+			| METHOD
 			| MINUTE_P
 			| MINVALUE
 			| MODE
@@ -15161,10 +15241,16 @@ doNegateFloat(Value *v)
 static Node *
 makeAndExpr(Node *lexpr, Node *rexpr, int location)
 {
+	Node	   *lexp = lexpr;
+
+	/* Look through AEXPR_PAREN nodes so they don't affect flattening */
+	while (IsA(lexp, A_Expr) &&
+		   ((A_Expr *) lexp)->kind == AEXPR_PAREN)
+		lexp = ((A_Expr *) lexp)->lexpr;
 	/* Flatten "a AND b AND c ..." to a single BoolExpr on sight */
-	if (IsA(lexpr, BoolExpr))
+	if (IsA(lexp, BoolExpr))
 	{
-		BoolExpr *blexpr = (BoolExpr *) lexpr;
+		BoolExpr *blexpr = (BoolExpr *) lexp;
 
 		if (blexpr->boolop == AND_EXPR)
 		{
@@ -15178,10 +15264,16 @@ makeAndExpr(Node *lexpr, Node *rexpr, int location)
 static Node *
 makeOrExpr(Node *lexpr, Node *rexpr, int location)
 {
+	Node	   *lexp = lexpr;
+
+	/* Look through AEXPR_PAREN nodes so they don't affect flattening */
+	while (IsA(lexp, A_Expr) &&
+		   ((A_Expr *) lexp)->kind == AEXPR_PAREN)
+		lexp = ((A_Expr *) lexp)->lexpr;
 	/* Flatten "a OR b OR c ..." to a single BoolExpr on sight */
-	if (IsA(lexpr, BoolExpr))
+	if (IsA(lexp, BoolExpr))
 	{
-		BoolExpr *blexpr = (BoolExpr *) lexpr;
+		BoolExpr *blexpr = (BoolExpr *) lexp;
 
 		if (blexpr->boolop == OR_EXPR)
 		{
@@ -15538,13 +15630,3 @@ parser_init(base_yy_extra_type *yyext)
 {
 	yyext->parsetree = NIL;		/* in case grammar forgets to set it */
 }
-
-/*
- * Must undefine this stuff before including scan.c, since it has different
- * definitions for these macros.
- */
-#undef yyerror
-#undef yylval
-#undef yylloc
-
-#include "scan.c"

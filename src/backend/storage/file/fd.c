@@ -61,6 +61,10 @@
 #include <sys/file.h>
 #include <sys/param.h>
 #include <sys/stat.h>
+#ifndef WIN32
+#include <sys/mman.h>
+#endif
+#include <limits.h>
 #include <unistd.h>
 #include <fcntl.h>
 #ifdef HAVE_SYS_RESOURCE_H
@@ -73,6 +77,7 @@
 #include "catalog/catalog.h"
 #include "catalog/pg_tablespace.h"
 #include "pgstat.h"
+#include "portability/mem.h"
 #include "storage/fd.h"
 #include "storage/ipc.h"
 #include "utils/guc.h"
@@ -81,6 +86,8 @@
 
 /* Define PG_FLUSH_DATA_WORKS if we have an implementation for pg_flush_data */
 #if defined(HAVE_SYNC_FILE_RANGE)
+#define PG_FLUSH_DATA_WORKS 1
+#elif !defined(WIN32) && defined(MS_ASYNC)
 #define PG_FLUSH_DATA_WORKS 1
 #elif defined(USE_POSIX_FADVISE) && defined(POSIX_FADV_DONTNEED)
 #define PG_FLUSH_DATA_WORKS 1
@@ -306,7 +313,10 @@ static void walkdir(const char *path,
 #ifdef PG_FLUSH_DATA_WORKS
 static void pre_sync_fname(const char *fname, bool isdir, int elevel);
 #endif
-static void fsync_fname_ext(const char *fname, bool isdir, int elevel);
+static void datadir_fsync_fname(const char *fname, bool isdir, int elevel);
+
+static int	fsync_fname_ext(const char *fname, bool isdir, bool ignore_perm, int elevel);
+static int	fsync_parent_path(const char *fname, int elevel);
 
 
 /*
@@ -380,29 +390,163 @@ pg_fdatasync(int fd)
 }
 
 /*
- * pg_flush_data --- advise OS that the data described won't be needed soon
+ * pg_flush_data --- advise OS that the described dirty data should be flushed
  *
- * Not all platforms have sync_file_range or posix_fadvise; treat as no-op
- * if not available.  Also, treat as no-op if enableFsync is off; this is
- * because the call isn't free, and some platforms such as Linux will actually
- * block the requestor until the write is scheduled.
+ * offset of 0 with nbytes 0 means that the entire file should be flushed;
+ * in this case, this function may have side-effects on the file's
+ * seek position!
  */
-int
-pg_flush_data(int fd, off_t offset, off_t amount)
+void
+pg_flush_data(int fd, off_t offset, off_t nbytes)
 {
-#ifdef PG_FLUSH_DATA_WORKS
-	if (enableFsync)
-	{
+	/*
+	 * Right now file flushing is primarily used to avoid making later
+	 * fsync()/fdatasync() calls have less impact. Thus don't trigger flushes
+	 * if fsyncs are disabled - that's a decision we might want to make
+	 * configurable at some point.
+	 */
+	if (!enableFsync)
+		return;
+
+	/*
+	 * We compile all alternatives that are supported on the current platform,
+	 * to find portability problems more easily.
+	 */
 #if defined(HAVE_SYNC_FILE_RANGE)
-		return sync_file_range(fd, offset, amount, SYNC_FILE_RANGE_WRITE);
-#elif defined(USE_POSIX_FADVISE) && defined(POSIX_FADV_DONTNEED)
-		return posix_fadvise(fd, offset, amount, POSIX_FADV_DONTNEED);
-#else
-#error PG_FLUSH_DATA_WORKS should not have been defined
-#endif
+	{
+		int			rc;
+
+		/*
+		 * sync_file_range(SYNC_FILE_RANGE_WRITE), currently linux specific,
+		 * tells the OS that writeback for the specified blocks should be
+		 * started, but that we don't want to wait for completion.  Note that
+		 * this call might block if too much dirty data exists in the range.
+		 * This is the preferable method on OSs supporting it, as it works
+		 * reliably when available (contrast to msync()) and doesn't flush out
+		 * clean data (like FADV_DONTNEED).
+		 */
+		rc = sync_file_range(fd, offset, nbytes,
+							 SYNC_FILE_RANGE_WRITE);
+
+		/* don't error out, this is just a performance optimization */
+		if (rc != 0)
+		{
+			ereport(WARNING,
+					(errcode_for_file_access(),
+					 errmsg("could not flush dirty data: %m")));
+		}
+
+		return;
 	}
 #endif
-	return 0;
+#if !defined(WIN32) && defined(MS_ASYNC)
+	{
+		void	   *p;
+		static int	pagesize = 0;
+
+		/*
+		 * On several OSs msync(MS_ASYNC) on a mmap'ed file triggers
+		 * writeback. On linux it only does so if MS_SYNC is specified, but
+		 * then it does the writeback synchronously. Luckily all common linux
+		 * systems have sync_file_range().  This is preferable over
+		 * FADV_DONTNEED because it doesn't flush out clean data.
+		 *
+		 * We map the file (mmap()), tell the kernel to sync back the contents
+		 * (msync()), and then remove the mapping again (munmap()).
+		 */
+
+		/* mmap() needs actual length if we want to map whole file */
+		if (offset == 0 && nbytes == 0)
+		{
+			nbytes = lseek(fd, 0, SEEK_END);
+			if (nbytes < 0)
+			{
+				ereport(WARNING,
+						(errcode_for_file_access(),
+						 errmsg("could not determine dirty data size: %m")));
+				return;
+			}
+		}
+
+		/*
+		 * Some platforms reject partial-page mmap() attempts.  To deal with
+		 * that, just truncate the request to a page boundary.  If any extra
+		 * bytes don't get flushed, well, it's only a hint anyway.
+		 */
+
+		/* fetch pagesize only once */
+		if (pagesize == 0)
+			pagesize = sysconf(_SC_PAGESIZE);
+
+		/* align length to pagesize, dropping any fractional page */
+		if (pagesize > 0)
+			nbytes = (nbytes / pagesize) * pagesize;
+
+		/* fractional-page request is a no-op */
+		if (nbytes <= 0)
+			return;
+
+		/*
+		 * mmap could well fail, particularly on 32-bit platforms where there
+		 * may simply not be enough address space.  If so, silently fall
+		 * through to the next implementation.
+		 */
+		if (nbytes <= (off_t) SSIZE_MAX)
+			p = mmap(NULL, nbytes, PROT_READ, MAP_SHARED, fd, offset);
+		else
+			p = MAP_FAILED;
+
+		if (p != MAP_FAILED)
+		{
+			int			rc;
+
+			rc = msync(p, (size_t) nbytes, MS_ASYNC);
+			if (rc != 0)
+			{
+				ereport(WARNING,
+						(errcode_for_file_access(),
+						 errmsg("could not flush dirty data: %m")));
+				/* NB: need to fall through to munmap()! */
+			}
+
+			rc = munmap(p, (size_t) nbytes);
+			if (rc != 0)
+			{
+				/* FATAL error because mapping would remain */
+				ereport(FATAL,
+						(errcode_for_file_access(),
+					  errmsg("could not munmap() while flushing data: %m")));
+			}
+
+			return;
+		}
+	}
+#endif
+#if defined(USE_POSIX_FADVISE) && defined(POSIX_FADV_DONTNEED)
+	{
+		int			rc;
+
+		/*
+		 * Signal the kernel that the passed in range should not be cached
+		 * anymore. This has the, desired, side effect of writing out dirty
+		 * data, and the, undesired, side effect of likely discarding useful
+		 * clean cached blocks.  For the latter reason this is the least
+		 * preferable method.
+		 */
+
+		rc = posix_fadvise(fd, offset, nbytes, POSIX_FADV_DONTNEED);
+
+		if (rc != 0)
+		{
+			/* don't error out, this is just a performance optimization */
+			ereport(WARNING,
+					(errcode_for_file_access(),
+					 errmsg("could not flush dirty data: %m")));
+		}
+
+		return;
+	}
+#endif
 }
 
 
@@ -413,54 +557,158 @@ pg_flush_data(int fd, off_t offset, off_t amount)
  * indicate the OS just doesn't allow/require fsyncing directories.
  */
 void
-fsync_fname(char *fname, bool isdir)
+fsync_fname(const char *fname, bool isdir)
 {
-	int			fd;
-	int			returncode;
-
-	/*
-	 * Some OSs require directories to be opened read-only whereas other
-	 * systems don't allow us to fsync files opened read-only; so we need both
-	 * cases here
-	 */
-	if (!isdir)
-		fd = OpenTransientFile(fname,
-							   O_RDWR | PG_BINARY,
-							   S_IRUSR | S_IWUSR);
-	else
-		fd = OpenTransientFile(fname,
-							   O_RDONLY | PG_BINARY,
-							   S_IRUSR | S_IWUSR);
-
-	/*
-	 * Some OSs don't allow us to open directories at all (Windows returns
-	 * EACCES)
-	 */
-	if (fd < 0 && isdir && (errno == EISDIR || errno == EACCES))
-		return;
-
-	else if (fd < 0)
-		ereport(ERROR,
-				(errcode_for_file_access(),
-				 errmsg("could not open file \"%s\": %m", fname)));
-
-	returncode = pg_fsync(fd);
-
-	/* Some OSs don't allow us to fsync directories at all */
-	if (returncode != 0 && isdir && errno == EBADF)
-	{
-		CloseTransientFile(fd);
-		return;
-	}
-
-	if (returncode != 0)
-		ereport(ERROR,
-				(errcode_for_file_access(),
-				 errmsg("could not fsync file \"%s\": %m", fname)));
-
-	CloseTransientFile(fd);
+	fsync_fname_ext(fname, isdir, false, ERROR);
 }
 
+/*
+ * durable_rename -- rename(2) wrapper, issuing fsyncs required for durability
+ *
+ * This routine ensures that, after returning, the effect of renaming file
+ * persists in case of a crash. A crash while this routine is running will
+ * leave you with either the pre-existing or the moved file in place of the
+ * new file; no mixed state or truncated files are possible.
+ *
+ * It does so by using fsync on the old filename and the possibly existing
+ * target filename before the rename, and the target file and directory after.
+ *
+ * Note that rename() cannot be used across arbitrary directories, as they
+ * might not be on the same filesystem. Therefore this routine does not
+ * support renaming across directories.
+ *
+ * Log errors with the caller specified severity.
+ *
+ * Returns 0 if the operation succeeded, -1 otherwise. Note that errno is not
+ * valid upon return.
+ */
+int
+durable_rename(const char *oldfile, const char *newfile, int elevel)
+{
+	int			fd;
+
+	/*
+	 * First fsync the old and target path (if it exists), to ensure that they
+	 * are properly persistent on disk. Syncing the target file is not
+	 * strictly necessary, but it makes it easier to reason about crashes;
+	 * because it's then guaranteed that either source or target file exists
+	 * after a crash.
+	 */
+	if (fsync_fname_ext(oldfile, false, false, elevel) != 0)
+		return -1;
+
+	fd = OpenTransientFile((char *) newfile, PG_BINARY | O_RDWR, 0);
+	if (fd < 0)
+	{
+		if (errno != ENOENT)
+		{
+			ereport(elevel,
+					(errcode_for_file_access(),
+					 errmsg("could not open file \"%s\": %m", newfile)));
+			return -1;
+		}
+	}
+	else
+	{
+		if (pg_fsync(fd) != 0)
+		{
+			int			save_errno;
+
+			/* close file upon error, might not be in transaction context */
+			save_errno = errno;
+			CloseTransientFile(fd);
+			errno = save_errno;
+
+			ereport(elevel,
+					(errcode_for_file_access(),
+					 errmsg("could not fsync file \"%s\": %m", newfile)));
+			return -1;
+		}
+		CloseTransientFile(fd);
+	}
+
+	/* Time to do the real deal... */
+	if (rename(oldfile, newfile) < 0)
+	{
+		ereport(elevel,
+				(errcode_for_file_access(),
+				 errmsg("could not rename file \"%s\" to \"%s\": %m",
+						oldfile, newfile)));
+		return -1;
+	}
+
+	/*
+	 * To guarantee renaming the file is persistent, fsync the file with its
+	 * new name, and its containing directory.
+	 */
+	if (fsync_fname_ext(newfile, false, false, elevel) != 0)
+		return -1;
+
+	if (fsync_parent_path(newfile, elevel) != 0)
+		return -1;
+
+	return 0;
+}
+
+/*
+ * durable_link_or_rename -- rename a file in a durable manner.
+ *
+ * Similar to durable_rename(), except that this routine tries (but does not
+ * guarantee) not to overwrite the target file.
+ *
+ * Note that a crash in an unfortunate moment can leave you with two links to
+ * the target file.
+ *
+ * Log errors with the caller specified severity.
+ *
+ * Returns 0 if the operation succeeded, -1 otherwise. Note that errno is not
+ * valid upon return.
+ */
+int
+durable_link_or_rename(const char *oldfile, const char *newfile, int elevel)
+{
+	/*
+	 * Ensure that, if we crash directly after the rename/link, a file with
+	 * valid contents is moved into place.
+	 */
+	if (fsync_fname_ext(oldfile, false, false, elevel) != 0)
+		return -1;
+
+#if HAVE_WORKING_LINK
+	if (link(oldfile, newfile) < 0)
+	{
+		ereport(elevel,
+				(errcode_for_file_access(),
+				 errmsg("could not link file \"%s\" to \"%s\": %m",
+						oldfile, newfile)));
+		return -1;
+	}
+	unlink(oldfile);
+#else
+	/* XXX: Add racy file existence check? */
+	if (rename(oldfile, newfile) < 0)
+	{
+		ereport(elevel,
+				(errcode_for_file_access(),
+				 errmsg("could not rename file \"%s\" to \"%s\": %m",
+						oldfile, newfile)));
+		return -1;
+	}
+#endif
+
+	/*
+	 * Make change persistent in case of an OS crash, both the new entry and
+	 * its parent directory need to be flushed.
+	 */
+	if (fsync_fname_ext(newfile, false, false, elevel) != 0)
+		return -1;
+
+	/* Same for parent directory */
+	if (fsync_parent_path(newfile, elevel) != 0)
+		return -1;
+
+	return 0;
+}
 
 /*
  * InitFileAccess --- initialize this module during backend startup
@@ -1289,6 +1537,31 @@ FilePrefetch(File file, off_t offset, int amount)
 #endif
 }
 
+void
+FileWriteback(File file, off_t offset, off_t nbytes)
+{
+	int			returnCode;
+
+	Assert(FileIsValid(file));
+
+	DO_DB(elog(LOG, "FileWriteback: %d (%s) " INT64_FORMAT " " INT64_FORMAT,
+			   file, VfdCache[file].fileName,
+			   (int64) offset, (int64) nbytes));
+
+	/*
+	 * Caution: do not call pg_flush_data with nbytes = 0, it could trash the
+	 * file's seek position.  We prefer to define that as a no-op here.
+	 */
+	if (nbytes <= 0)
+		return;
+
+	returnCode = FileAccess(file);
+	if (returnCode < 0)
+		return;
+
+	pg_flush_data(VfdCache[file].fd, offset, nbytes);
+}
+
 int
 FileRead(File file, char *buffer, int amount)
 {
@@ -1577,6 +1850,40 @@ FilePathName(File file)
 	return VfdCache[file].fileName;
 }
 
+/*
+ * Return the raw file descriptor of an opened file.
+ *
+ * The returned file descriptor will be valid until the file is closed, but
+ * there are a lot of things that can make that happen.  So the caller should
+ * be careful not to do much of anything else before it finishes using the
+ * returned file descriptor.
+ */
+int
+FileGetRawDesc(File file)
+{
+	Assert(FileIsValid(file));
+	return VfdCache[file].fd;
+}
+
+/*
+ * FileGetRawFlags - returns the file flags on open(2)
+ */
+int
+FileGetRawFlags(File file)
+{
+	Assert(FileIsValid(file));
+	return VfdCache[file].fileFlags;
+}
+
+/*
+ * FileGetRawMode - returns the mode bitmask passed to open(2)
+ */
+int
+FileGetRawMode(File file)
+{
+	Assert(FileIsValid(file));
+	return VfdCache[file].fileMode;
+}
 
 /*
  * Make room for another allocatedDescs[] array entry if needed and possible.
@@ -2547,10 +2854,10 @@ SyncDataDirectory(void)
 	 * in pg_tblspc, they'll get fsync'd twice.  That's not an expected case
 	 * so we don't worry about optimizing it.
 	 */
-	walkdir(".", fsync_fname_ext, false, LOG);
+	walkdir(".", datadir_fsync_fname, false, LOG);
 	if (xlog_is_symlink)
-		walkdir("pg_xlog", fsync_fname_ext, false, LOG);
-	walkdir("pg_tblspc", fsync_fname_ext, true, LOG);
+		walkdir("pg_xlog", datadir_fsync_fname, false, LOG);
+	walkdir("pg_tblspc", datadir_fsync_fname, true, LOG);
 }
 
 /*
@@ -2642,11 +2949,15 @@ pre_sync_fname(const char *fname, bool isdir, int elevel)
 {
 	int			fd;
 
+	/* Don't try to flush directories, it'll likely just fail */
+	if (isdir)
+		return;
+
 	fd = OpenTransientFile((char *) fname, O_RDONLY | PG_BINARY, 0);
 
 	if (fd < 0)
 	{
-		if (errno == EACCES || (isdir && errno == EISDIR))
+		if (errno == EACCES)
 			return;
 		ereport(elevel,
 				(errcode_for_file_access(),
@@ -2655,24 +2966,36 @@ pre_sync_fname(const char *fname, bool isdir, int elevel)
 	}
 
 	/*
-	 * We ignore errors from pg_flush_data() because this is only a hint.
+	 * pg_flush_data() ignores errors, which is ok because this is only a
+	 * hint.
 	 */
-	(void) pg_flush_data(fd, 0, 0);
+	pg_flush_data(fd, 0, 0);
 
 	(void) CloseTransientFile(fd);
 }
 
 #endif   /* PG_FLUSH_DATA_WORKS */
 
+static void
+datadir_fsync_fname(const char *fname, bool isdir, int elevel)
+{
+	/*
+	 * We want to silently ignoring errors about unreadable files.  Pass that
+	 * desire on to fsync_fname_ext().
+	 */
+	fsync_fname_ext(fname, isdir, true, elevel);
+}
+
 /*
  * fsync_fname_ext -- Try to fsync a file or directory
  *
- * Ignores errors trying to open unreadable files, or trying to fsync
- * directories on systems where that isn't allowed/required, and logs other
- * errors at a caller-specified level.
+ * If ignore_perm is true, ignore errors upon trying to open unreadable
+ * files. Logs other errors at a caller-specified level.
+ *
+ * Returns 0 if the operation succeeded, -1 otherwise.
  */
-static void
-fsync_fname_ext(const char *fname, bool isdir, int elevel)
+static int
+fsync_fname_ext(const char *fname, bool isdir, bool ignore_perm, int elevel)
 {
 	int			fd;
 	int			flags;
@@ -2690,20 +3013,23 @@ fsync_fname_ext(const char *fname, bool isdir, int elevel)
 	else
 		flags |= O_RDONLY;
 
-	/*
-	 * Open the file, silently ignoring errors about unreadable files (or
-	 * unsupported operations, e.g. opening a directory under Windows), and
-	 * logging others.
-	 */
 	fd = OpenTransientFile((char *) fname, flags, 0);
-	if (fd < 0)
+
+	/*
+	 * Some OSs don't allow us to open directories at all (Windows returns
+	 * EACCES), just ignore the error in that case.  If desired also silently
+	 * ignoring errors about unreadable files. Log others.
+	 */
+	if (fd < 0 && isdir && (errno == EISDIR || errno == EACCES))
+		return 0;
+	else if (fd < 0 && ignore_perm && errno == EACCES)
+		return 0;
+	else if (fd < 0)
 	{
-		if (errno == EACCES || (isdir && errno == EISDIR))
-			return;
 		ereport(elevel,
 				(errcode_for_file_access(),
 				 errmsg("could not open file \"%s\": %m", fname)));
-		return;
+		return -1;
 	}
 
 	returncode = pg_fsync(fd);
@@ -2713,9 +3039,49 @@ fsync_fname_ext(const char *fname, bool isdir, int elevel)
 	 * those errors. Anything else needs to be logged.
 	 */
 	if (returncode != 0 && !(isdir && errno == EBADF))
+	{
+		int			save_errno;
+
+		/* close file upon error, might not be in transaction context */
+		save_errno = errno;
+		(void) CloseTransientFile(fd);
+		errno = save_errno;
+
 		ereport(elevel,
 				(errcode_for_file_access(),
 				 errmsg("could not fsync file \"%s\": %m", fname)));
+		return -1;
+	}
 
 	(void) CloseTransientFile(fd);
+
+	return 0;
+}
+
+/*
+ * fsync_parent_path -- fsync the parent path of a file or directory
+ *
+ * This is aimed at making file operations persistent on disk in case of
+ * an OS crash or power failure.
+ */
+static int
+fsync_parent_path(const char *fname, int elevel)
+{
+	char		parentpath[MAXPGPATH];
+
+	strlcpy(parentpath, fname, MAXPGPATH);
+	get_parent_directory(parentpath);
+
+	/*
+	 * get_parent_directory() returns an empty string if the input argument is
+	 * just a file name (see comments in path.c), so handle that as being the
+	 * current directory.
+	 */
+	if (strlen(parentpath) == 0)
+		strlcpy(parentpath, ".", MAXPGPATH);
+
+	if (fsync_fname_ext(parentpath, true, false, elevel) != 0)
+		return -1;
+
+	return 0;
 }

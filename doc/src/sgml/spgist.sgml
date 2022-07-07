@@ -113,6 +113,24 @@
       </entry>
      </row>
      <row>
+      <entry><literal>box_ops</></entry>
+      <entry>box</entry>
+      <entry>
+       <literal>&lt;&lt;</>
+       <literal>&amp;&lt;</>
+       <literal>&amp;&amp;</>
+       <literal>&amp;&gt;</>
+       <literal>&gt;&gt;</>
+       <literal>~=</>
+       <literal>@&gt;</>
+       <literal>&lt;@</>
+       <literal>&amp;&lt;|</>
+       <literal>&lt;&lt;|</>
+       <literal>|&gt;&gt;</literal>
+       <literal>|&amp;&gt;</>
+      </entry>
+     </row>
+     <row>
       <entry><literal>text_ops</></entry>
       <entry><type>text</></entry>
       <entry>
@@ -542,6 +560,8 @@ typedef struct spgInnerConsistentIn
     int         nkeys;          /* length of array */
 
     Datum       reconstructedValue;     /* value reconstructed at parent */
+    void       *traversalValue; /* opclass-specific traverse value */
+    MemoryContext traversalMemoryContext;
     int         level;          /* current level (counting from zero) */
     bool        returnData;     /* original data must be returned? */
 
@@ -559,6 +579,8 @@ typedef struct spgInnerConsistentOut
     int        *nodeNumbers;    /* their indexes in the node array */
     int        *levelAdds;      /* increment level by this much for each */
     Datum      *reconstructedValues;    /* associated reconstructed values */
+    void      **traversalValues;        /* opclass-specific traverse values */
+
 } spgInnerConsistentOut;
 </programlisting>
 
@@ -593,6 +615,9 @@ typedef struct spgInnerConsistentOut
        inner tuple, and
        <structfield>nodeLabels</> is an array of their label values, or
        NULL if the nodes do not have labels.
+       <structfield>traversalValue</> is a pointer to data that
+       <function>inner_consistent</> gets when called on child nodes from an
+       outer call of <function>inner_consistent</> on parent nodes.
       </para>
 
       <para>
@@ -612,6 +637,13 @@ typedef struct spgInnerConsistentOut
        responsible for palloc'ing the
        <structfield>nodeNumbers</>, <structfield>levelAdds</> and
        <structfield>reconstructedValues</> arrays.
+       Sometimes accumulating some information is needed, while
+       descending from parent to child node was happened. In this case
+       <structfield>traversalValues</> array keeps pointers to
+       specific data you need to accumulate for every child node.
+       Memory for <structfield>traversalValues</> should be allocated in
+       the default context, but each element of it should be allocated in
+       <structfield>traversalMemoryContext</>.
       </para>
      </listitem>
     </varlistentry>
@@ -638,6 +670,7 @@ typedef struct spgLeafConsistentIn
     ScanKey     scankeys;       /* array of operators and comparison values */
     int         nkeys;          /* length of array */
 
+    void       *traversalValue; /* opclass-specific traverse value */
     Datum       reconstructedValue;     /* value reconstructed at parent */
     int         level;          /* current level (counting from zero) */
     bool        returnData;     /* original data must be returned? */
@@ -722,7 +755,7 @@ typedef struct spgLeafConsistentOut
 
   <para>
    Individual leaf tuples and inner tuples must fit on a single index page
-   (8KB by default).  Therefore, when indexing values of variable-length
+   (8kB by default).  Therefore, when indexing values of variable-length
    data types, long values can only be supported by methods such as radix
    trees, in which each level of the tree includes a prefix that is short
    enough to fit on a page, and the final leaf level includes a suffix also

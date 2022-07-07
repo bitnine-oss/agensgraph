@@ -29,6 +29,8 @@ typedef enum TimeoutId
 	STATEMENT_TIMEOUT,
 	STANDBY_DEADLOCK_TIMEOUT,
 	STANDBY_TIMEOUT,
+	STANDBY_LOCK_TIMEOUT,
+	IDLE_IN_TRANSACTION_SESSION_TIMEOUT,
 	/* First user-definable timeout reason */
 	USER_TIMEOUT,
 	/* Maximum number of timeout reasons */
@@ -80,5 +82,6 @@ extern void disable_all_timeouts(bool keep_indicators);
 /* accessors */
 extern bool get_timeout_indicator(TimeoutId id, bool reset_indicator);
 extern TimestampTz get_timeout_start_time(TimeoutId id);
+extern TimestampTz get_timeout_finish_time(TimeoutId id);
 
 #endif   /* TIMEOUT_H */

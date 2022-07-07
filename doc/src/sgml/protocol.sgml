@@ -1468,7 +1468,7 @@ The commands accepted in walsender mode are:
        <term><literal>RESERVE_WAL</></term>
        <listitem>
         <para>
-         Specify that this physical replication reserves <acronym>WAL</>
+         Specify that this physical replication slot reserves <acronym>WAL</>
          immediately.  Otherwise, <acronym>WAL</> is only reserved upon
          connection from a streaming replication client.
         </para>
@@ -2850,7 +2850,7 @@ CancelRequest (F)
 <para>
                 The cancel request code.  The value is chosen to contain
                 <literal>1234</> in the most significant 16 bits, and <literal>5678</> in the
-                least 16 significant bits.  (To avoid confusion, this code
+                least significant 16 bits.  (To avoid confusion, this code
                 must not be the same as any protocol version number.)
 </para>
 </listitem>
@@ -4656,7 +4656,7 @@ SSLRequest (F)
 <para>
                 The <acronym>SSL</acronym> request code.  The value is chosen to contain
                 <literal>1234</> in the most significant 16 bits, and <literal>5679</> in the
-                least 16 significant bits.  (To avoid confusion, this code
+                least significant 16 bits.  (To avoid confusion, this code
                 must not be the same as any protocol version number.)
 </para>
 </listitem>

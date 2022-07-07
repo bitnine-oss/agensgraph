@@ -28,13 +28,13 @@ static void PLy_add_exceptions(PyObject *plpy);
 static void PLy_generate_spi_exceptions(PyObject *mod, PyObject *base);
 
 /* module functions */
-static PyObject *PLy_debug(PyObject *self, PyObject *args);
-static PyObject *PLy_log(PyObject *self, PyObject *args);
-static PyObject *PLy_info(PyObject *self, PyObject *args);
-static PyObject *PLy_notice(PyObject *self, PyObject *args);
-static PyObject *PLy_warning(PyObject *self, PyObject *args);
-static PyObject *PLy_error(PyObject *self, PyObject *args);
-static PyObject *PLy_fatal(PyObject *self, PyObject *args);
+static PyObject *PLy_debug(PyObject *self, PyObject *args, PyObject *kw);
+static PyObject *PLy_log(PyObject *self, PyObject *args, PyObject *kw);
+static PyObject *PLy_info(PyObject *self, PyObject *args, PyObject *kw);
+static PyObject *PLy_notice(PyObject *self, PyObject *args, PyObject *kw);
+static PyObject *PLy_warning(PyObject *self, PyObject *args, PyObject *kw);
+static PyObject *PLy_error(PyObject *self, PyObject *args, PyObject *kw);
+static PyObject *PLy_fatal(PyObject *self, PyObject *args, PyObject *kw);
 static PyObject *PLy_quote_literal(PyObject *self, PyObject *args);
 static PyObject *PLy_quote_nullable(PyObject *self, PyObject *args);
 static PyObject *PLy_quote_ident(PyObject *self, PyObject *args);
@@ -57,13 +57,13 @@ static PyMethodDef PLy_methods[] = {
 	/*
 	 * logging methods
 	 */
-	{"debug", PLy_debug, METH_VARARGS, NULL},
-	{"log", PLy_log, METH_VARARGS, NULL},
-	{"info", PLy_info, METH_VARARGS, NULL},
-	{"notice", PLy_notice, METH_VARARGS, NULL},
-	{"warning", PLy_warning, METH_VARARGS, NULL},
-	{"error", PLy_error, METH_VARARGS, NULL},
-	{"fatal", PLy_fatal, METH_VARARGS, NULL},
+	{"debug", (PyCFunction) PLy_debug, METH_VARARGS | METH_KEYWORDS, NULL},
+	{"log", (PyCFunction) PLy_log, METH_VARARGS | METH_KEYWORDS, NULL},
+	{"info", (PyCFunction) PLy_info, METH_VARARGS | METH_KEYWORDS, NULL},
+	{"notice", (PyCFunction) PLy_notice, METH_VARARGS | METH_KEYWORDS, NULL},
+	{"warning", (PyCFunction) PLy_warning, METH_VARARGS | METH_KEYWORDS, NULL},
+	{"error", (PyCFunction) PLy_error, METH_VARARGS | METH_KEYWORDS, NULL},
+	{"fatal", (PyCFunction) PLy_fatal, METH_VARARGS | METH_KEYWORDS, NULL},
 
 	/*
 	 * create a stored plan
@@ -271,48 +271,49 @@ PLy_generate_spi_exceptions(PyObject *mod, PyObject *base)
  * the python interface to the elog function
  * don't confuse these with PLy_elog
  */
-static PyObject *PLy_output(volatile int, PyObject *, PyObject *);
+static PyObject *PLy_output(volatile int level, PyObject *self,
+		   PyObject *args, PyObject *kw);
 
 static PyObject *
-PLy_debug(PyObject *self, PyObject *args)
+PLy_debug(PyObject *self, PyObject *args, PyObject *kw)
 {
-	return PLy_output(DEBUG2, self, args);
+	return PLy_output(DEBUG2, self, args, kw);
 }
 
 static PyObject *
-PLy_log(PyObject *self, PyObject *args)
+PLy_log(PyObject *self, PyObject *args, PyObject *kw)
 {
-	return PLy_output(LOG, self, args);
+	return PLy_output(LOG, self, args, kw);
 }
 
 static PyObject *
-PLy_info(PyObject *self, PyObject *args)
+PLy_info(PyObject *self, PyObject *args, PyObject *kw)
 {
-	return PLy_output(INFO, self, args);
+	return PLy_output(INFO, self, args, kw);
 }
 
 static PyObject *
-PLy_notice(PyObject *self, PyObject *args)
+PLy_notice(PyObject *self, PyObject *args, PyObject *kw)
 {
-	return PLy_output(NOTICE, self, args);
+	return PLy_output(NOTICE, self, args, kw);
 }
 
 static PyObject *
-PLy_warning(PyObject *self, PyObject *args)
+PLy_warning(PyObject *self, PyObject *args, PyObject *kw)
 {
-	return PLy_output(WARNING, self, args);
+	return PLy_output(WARNING, self, args, kw);
 }
 
 static PyObject *
-PLy_error(PyObject *self, PyObject *args)
+PLy_error(PyObject *self, PyObject *args, PyObject *kw)
 {
-	return PLy_output(ERROR, self, args);
+	return PLy_output(ERROR, self, args, kw);
 }
 
 static PyObject *
-PLy_fatal(PyObject *self, PyObject *args)
+PLy_fatal(PyObject *self, PyObject *args, PyObject *kw)
 {
-	return PLy_output(FATAL, self, args);
+	return PLy_output(FATAL, self, args, kw);
 }
 
 static PyObject *
@@ -368,12 +369,46 @@ PLy_quote_ident(PyObject *self, PyObject *args)
 	return ret;
 }
 
-static PyObject *
-PLy_output(volatile int level, PyObject *self, PyObject *args)
+/* enforce cast of object to string */
+static char *
+object_to_string(PyObject *obj)
 {
-	PyObject   *volatile so;
-	char	   *volatile sv;
+	if (obj)
+	{
+		PyObject   *so = PyObject_Str(obj);
+
+		if (so != NULL)
+		{
+			char	   *str;
+
+			str = pstrdup(PyString_AsString(so));
+			Py_DECREF(so);
+
+			return str;
+		}
+	}
+
+	return NULL;
+}
+
+static PyObject *
+PLy_output(volatile int level, PyObject *self, PyObject *args, PyObject *kw)
+{
+	int			sqlstate = 0;
+	char	   *volatile sqlstatestr = NULL;
+	char	   *volatile message = NULL;
+	char	   *volatile detail = NULL;
+	char	   *volatile hint = NULL;
+	char	   *volatile column_name = NULL;
+	char	   *volatile constraint_name = NULL;
+	char	   *volatile datatype_name = NULL;
+	char	   *volatile table_name = NULL;
+	char	   *volatile schema_name = NULL;
 	volatile MemoryContext oldcontext;
+	PyObject   *key,
+			   *value;
+	PyObject   *volatile so;
+	Py_ssize_t	pos = 0;
 
 	if (PyTuple_Size(args) == 1)
 	{
@@ -389,17 +424,117 @@ PLy_output(volatile int level, PyObject *self, PyObject *args)
 	}
 	else
 		so = PyObject_Str(args);
-	if (so == NULL || ((sv = PyString_AsString(so)) == NULL))
+
+	if (so == NULL || ((message = PyString_AsString(so)) == NULL))
 	{
 		level = ERROR;
-		sv = dgettext(TEXTDOMAIN, "could not parse error message in plpy.elog");
+		message = dgettext(TEXTDOMAIN, "could not parse error message in plpy.elog");
+	}
+	message = pstrdup(message);
+
+	Py_XDECREF(so);
+
+	if (kw != NULL)
+	{
+		while (PyDict_Next(kw, &pos, &key, &value))
+		{
+			char	   *keyword = PyString_AsString(key);
+
+			if (strcmp(keyword, "message") == 0)
+			{
+				/* the message should not be overwriten */
+				if (PyTuple_Size(args) != 0)
+				{
+					PLy_exception_set(PyExc_TypeError, "Argument 'message' given by name and position");
+					return NULL;
+				}
+
+				if (message)
+					pfree(message);
+				message = object_to_string(value);
+			}
+			else if (strcmp(keyword, "detail") == 0)
+				detail = object_to_string(value);
+			else if (strcmp(keyword, "hint") == 0)
+				hint = object_to_string(value);
+			else if (strcmp(keyword, "sqlstate") == 0)
+				sqlstatestr = object_to_string(value);
+			else if (strcmp(keyword, "schema_name") == 0)
+				schema_name = object_to_string(value);
+			else if (strcmp(keyword, "table_name") == 0)
+				table_name = object_to_string(value);
+			else if (strcmp(keyword, "column_name") == 0)
+				column_name = object_to_string(value);
+			else if (strcmp(keyword, "datatype_name") == 0)
+				datatype_name = object_to_string(value);
+			else if (strcmp(keyword, "constraint_name") == 0)
+				constraint_name = object_to_string(value);
+			else
+			{
+				PLy_exception_set(PyExc_TypeError,
+					 "'%s' is an invalid keyword argument for this function",
+								  keyword);
+				return NULL;
+			}
+		}
+	}
+
+	if (sqlstatestr != NULL)
+	{
+		if (strlen(sqlstatestr) != 5)
+		{
+			PLy_exception_set(PyExc_ValueError, "invalid SQLSTATE code");
+			return NULL;
+		}
+
+		if (strspn(sqlstatestr, "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ") != 5)
+		{
+			PLy_exception_set(PyExc_ValueError, "invalid SQLSTATE code");
+			return NULL;
+		}
+
+		sqlstate = MAKE_SQLSTATE(sqlstatestr[0],
+								 sqlstatestr[1],
+								 sqlstatestr[2],
+								 sqlstatestr[3],
+								 sqlstatestr[4]);
 	}
 
 	oldcontext = CurrentMemoryContext;
 	PG_TRY();
 	{
-		pg_verifymbstr(sv, strlen(sv), false);
-		elog(level, "%s", sv);
+		if (message != NULL)
+			pg_verifymbstr(message, strlen(message), false);
+		if (detail != NULL)
+			pg_verifymbstr(detail, strlen(detail), false);
+		if (hint != NULL)
+			pg_verifymbstr(hint, strlen(hint), false);
+		if (schema_name != NULL)
+			pg_verifymbstr(schema_name, strlen(schema_name), false);
+		if (table_name != NULL)
+			pg_verifymbstr(table_name, strlen(table_name), false);
+		if (column_name != NULL)
+			pg_verifymbstr(column_name, strlen(column_name), false);
+		if (datatype_name != NULL)
+			pg_verifymbstr(datatype_name, strlen(datatype_name), false);
+		if (constraint_name != NULL)
+			pg_verifymbstr(constraint_name, strlen(constraint_name), false);
+
+		ereport(level,
+				((sqlstate != 0) ? errcode(sqlstate) : 0,
+				 (message != NULL) ? errmsg_internal("%s", message) : 0,
+				 (detail != NULL) ? errdetail_internal("%s", detail) : 0,
+				 (hint != NULL) ? errhint("%s", hint) : 0,
+				 (column_name != NULL) ?
+				 err_generic_string(PG_DIAG_COLUMN_NAME, column_name) : 0,
+				 (constraint_name != NULL) ?
+			err_generic_string(PG_DIAG_CONSTRAINT_NAME, constraint_name) : 0,
+				 (datatype_name != NULL) ?
+				 err_generic_string(PG_DIAG_DATATYPE_NAME, datatype_name) : 0,
+				 (table_name != NULL) ?
+				 err_generic_string(PG_DIAG_TABLE_NAME, table_name) : 0,
+				 (schema_name != NULL) ?
+				 err_generic_string(PG_DIAG_SCHEMA_NAME, schema_name) : 0));
 	}
 	PG_CATCH();
 	{
@@ -409,19 +544,12 @@ PLy_output(volatile int level, PyObject *self, PyObject *args)
 		edata = CopyErrorData();
 		FlushErrorState();
 
-		/*
-		 * Note: If sv came from PyString_AsString(), it points into storage
-		 * owned by so.  So free so after using sv.
-		 */
-		Py_XDECREF(so);
+		PLy_exception_set_with_details(PLy_exc_error, edata);
+		FreeErrorData(edata);
 
-		/* Make Python raise the exception */
-		PLy_exception_set(PLy_exc_error, "%s", edata->message);
 		return NULL;
 	}
 	PG_END_TRY();
-
-	Py_XDECREF(so);
 
 	/*
 	 * return a legal object so the interpreter will continue on its merry way

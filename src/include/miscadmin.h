@@ -80,6 +80,7 @@
 extern PGDLLIMPORT volatile bool InterruptPending;
 extern PGDLLIMPORT volatile bool QueryCancelPending;
 extern PGDLLIMPORT volatile bool ProcDiePending;
+extern PGDLLIMPORT volatile bool IdleInTransactionSessionTimeoutPending;
 
 extern volatile bool ClientConnectionLost;
 
@@ -142,7 +143,7 @@ do { \
 /*
  * from utils/init/globals.c
  */
-extern pid_t PostmasterPid;
+extern PGDLLIMPORT pid_t PostmasterPid;
 extern bool IsPostmasterEnvironment;
 extern PGDLLIMPORT bool IsUnderPostmaster;
 extern bool IsBackgroundWorker;
@@ -238,6 +239,7 @@ extern bool enableFsync;
 extern bool allowSystemTableMods;
 extern PGDLLIMPORT int work_mem;
 extern PGDLLIMPORT int maintenance_work_mem;
+extern PGDLLIMPORT int replacement_sort_tuples;
 
 extern int	VacuumCostPageHit;
 extern int	VacuumCostPageMiss;

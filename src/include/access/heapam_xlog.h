@@ -243,15 +243,19 @@ typedef struct xl_heap_cleanup_info
 #define XLHL_XMAX_KEYSHR_LOCK	0x08
 #define XLHL_KEYS_UPDATED		0x10
 
+/* flag bits for xl_heap_lock / xl_heap_lock_updated's flag field */
+#define XLH_LOCK_ALL_FROZEN_CLEARED		0x01
+
 /* This is what we need to know about lock */
 typedef struct xl_heap_lock
 {
 	TransactionId locking_xid;	/* might be a MultiXactId not xid */
 	OffsetNumber offnum;		/* locked tuple's offset on page */
 	int8		infobits_set;	/* infomask and infomask2 bits to set */
+	uint8		flags;			/* XLH_LOCK_* flag bits */
 } xl_heap_lock;
 
-#define SizeOfHeapLock	(offsetof(xl_heap_lock, infobits_set) + sizeof(int8))
+#define SizeOfHeapLock	(offsetof(xl_heap_lock, flags) + sizeof(int8))
 
 /* This is what we need to know about locking an updated version of a row */
 typedef struct xl_heap_lock_updated
@@ -259,9 +263,10 @@ typedef struct xl_heap_lock_updated
 	TransactionId xmax;
 	OffsetNumber offnum;
 	uint8		infobits_set;
+	uint8		flags;
 } xl_heap_lock_updated;
 
-#define SizeOfHeapLockUpdated	(offsetof(xl_heap_lock_updated, infobits_set) + sizeof(uint8))
+#define SizeOfHeapLockUpdated	(offsetof(xl_heap_lock_updated, flags) + sizeof(uint8))
 
 /* This is what we need to know about confirmation of speculative insertion */
 typedef struct xl_heap_confirm
@@ -320,9 +325,10 @@ typedef struct xl_heap_freeze_page
 typedef struct xl_heap_visible
 {
 	TransactionId cutoff_xid;
+	uint8		flags;
 } xl_heap_visible;
 
-#define SizeOfHeapVisible (offsetof(xl_heap_visible, cutoff_xid) + sizeof(TransactionId))
+#define SizeOfHeapVisible (offsetof(xl_heap_visible, flags) + sizeof(uint8))
 
 typedef struct xl_heap_new_cid
 {
@@ -385,10 +391,11 @@ extern XLogRecPtr log_heap_freeze(Relation reln, Buffer buffer,
 extern bool heap_prepare_freeze_tuple(HeapTupleHeader tuple,
 						  TransactionId cutoff_xid,
 						  TransactionId cutoff_multi,
-						  xl_heap_freeze_tuple *frz);
+						  xl_heap_freeze_tuple *frz,
+						  bool *totally_frozen);
 extern void heap_execute_freeze_tuple(HeapTupleHeader tuple,
 						  xl_heap_freeze_tuple *xlrec_tp);
 extern XLogRecPtr log_heap_visible(RelFileNode rnode, Buffer heap_buffer,
-				 Buffer vm_buffer, TransactionId cutoff_xid);
+				 Buffer vm_buffer, TransactionId cutoff_xid, uint8 flags);
 
 #endif   /* HEAPAM_XLOG_H */

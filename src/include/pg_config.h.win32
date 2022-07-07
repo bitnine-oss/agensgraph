@@ -554,10 +554,10 @@
 #define PACKAGE_NAME "PostgreSQL"
 
 /* Define to the full name and version of this package. */
-#define PACKAGE_STRING "PostgreSQL 9.6devel"
+#define PACKAGE_STRING "PostgreSQL 9.6beta4"
 
 /* Define to the version of this package. */
-#define PACKAGE_VERSION "9.6devel"
+#define PACKAGE_VERSION "9.6beta4"
 
 /* Define to the name of a signed 128-bit integer type. */
 #undef PG_INT128_TYPE
@@ -566,7 +566,7 @@
 #define PG_INT64_TYPE long long int
 
 /* PostgreSQL version as a string */
-#define PG_VERSION "9.6devel"
+#define PG_VERSION "9.6beta4"
 
 /* PostgreSQL version as a number */
 #define PG_VERSION_NUM 90600
@@ -613,6 +613,9 @@
 /* Define to 1 to build with Bonjour support. (--with-bonjour) */
 /* #undef USE_BONJOUR */
 
+/* Define to 1 to build with BSD Authentication support. (--with-bsd-auth) */
+/* #undef USE_BSD_AUTH */
+
 /* Define to 1 if you want 64-bit integer timestamp and interval support.
    (--enable-integer-datetimes) */
 /* #undef USE_INTEGER_DATETIMES */
@@ -656,6 +659,9 @@
 
 /* Define to select Win32-style semaphores. */
 #define USE_WIN32_SEMAPHORES 1
+
+/* Define to 1 if `wcstombs_l' requires <xlocale.h>. */
+/* #undef WCSTOMBS_L_IN_XLOCALE */
 
 /* Number of bits in a file offset, on hosts where this is settable. */
 /* #undef _FILE_OFFSET_BITS */

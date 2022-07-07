@@ -103,7 +103,7 @@ struct shm_mq
  * locally by copying the chunks into a backend-local buffer.  mqh_buffer is
  * the buffer, and mqh_buflen is the number of bytes allocated for it.
  *
- * mqh_partial_message_bytes, mqh_expected_bytes, and mqh_length_word_complete
+ * mqh_partial_bytes, mqh_expected_bytes, and mqh_length_word_complete
  * are used to track the state of non-blocking operations.  When the caller
  * attempts a non-blocking operation that returns SHM_MQ_WOULD_BLOCK, they
  * are expected to retry the call at a later time with the same argument;
@@ -366,9 +366,15 @@ shm_mq_sendv(shm_mq_handle *mqh, shm_mq_iovec *iov, int iovcnt, bool nowait)
 		res = shm_mq_send_bytes(mqh, sizeof(Size) - mqh->mqh_partial_bytes,
 								((char *) &nbytes) +mqh->mqh_partial_bytes,
 								nowait, &bytes_written);
-		mqh->mqh_partial_bytes += bytes_written;
-		if (res != SHM_MQ_SUCCESS)
+
+		if (res == SHM_MQ_DETACHED)
+		{
+			/* Reset state in case caller tries to send another message. */
+			mqh->mqh_partial_bytes = 0;
+			mqh->mqh_length_word_complete = false;
 			return res;
+		}
+		mqh->mqh_partial_bytes += bytes_written;
 
 		if (mqh->mqh_partial_bytes >= sizeof(Size))
 		{
@@ -377,6 +383,9 @@ shm_mq_sendv(shm_mq_handle *mqh, shm_mq_iovec *iov, int iovcnt, bool nowait)
 			mqh->mqh_partial_bytes = 0;
 			mqh->mqh_length_word_complete = true;
 		}
+
+		if (res != SHM_MQ_SUCCESS)
+			return res;
 
 		/* Length word can't be split unless bigger than required alignment. */
 		Assert(mqh->mqh_length_word_complete || sizeof(Size) > MAXIMUM_ALIGNOF);
@@ -432,7 +441,17 @@ shm_mq_sendv(shm_mq_handle *mqh, shm_mq_iovec *iov, int iovcnt, bool nowait)
 						break;
 				}
 			}
+
 			res = shm_mq_send_bytes(mqh, j, tmpbuf, nowait, &bytes_written);
+
+			if (res == SHM_MQ_DETACHED)
+			{
+				/* Reset state in case caller tries to send another message. */
+				mqh->mqh_partial_bytes = 0;
+				mqh->mqh_length_word_complete = false;
+				return res;
+			}
+
 			mqh->mqh_partial_bytes += bytes_written;
 			if (res != SHM_MQ_SUCCESS)
 				return res;
@@ -449,6 +468,15 @@ shm_mq_sendv(shm_mq_handle *mqh, shm_mq_iovec *iov, int iovcnt, bool nowait)
 			chunksize = MAXALIGN_DOWN(chunksize);
 		res = shm_mq_send_bytes(mqh, chunksize, &iov[which_iov].data[offset],
 								nowait, &bytes_written);
+
+		if (res == SHM_MQ_DETACHED)
+		{
+			/* Reset state in case caller tries to send another message. */
+			mqh->mqh_length_word_complete = false;
+			mqh->mqh_partial_bytes = 0;
+			return res;
+		}
+
 		mqh->mqh_partial_bytes += bytes_written;
 		offset += bytes_written;
 		if (res != SHM_MQ_SUCCESS)
@@ -868,11 +896,11 @@ shm_mq_send_bytes(shm_mq_handle *mqh, Size nbytes, const void *data,
 			 */
 			WaitLatch(MyLatch, WL_LATCH_SET, 0);
 
-			/* An interrupt may have occurred while we were waiting. */
-			CHECK_FOR_INTERRUPTS();
-
 			/* Reset the latch so we don't spin. */
 			ResetLatch(MyLatch);
+
+			/* An interrupt may have occurred while we were waiting. */
+			CHECK_FOR_INTERRUPTS();
 		}
 		else
 		{
@@ -965,11 +993,11 @@ shm_mq_receive_bytes(shm_mq *mq, Size bytes_needed, bool nowait,
 		 */
 		WaitLatch(MyLatch, WL_LATCH_SET, 0);
 
-		/* An interrupt may have occurred while we were waiting. */
-		CHECK_FOR_INTERRUPTS();
-
 		/* Reset the latch so we don't spin. */
 		ResetLatch(MyLatch);
+
+		/* An interrupt may have occurred while we were waiting. */
+		CHECK_FOR_INTERRUPTS();
 	}
 }
 
@@ -979,8 +1007,8 @@ shm_mq_receive_bytes(shm_mq *mq, Size bytes_needed, bool nowait,
 static bool
 shm_mq_counterparty_gone(volatile shm_mq *mq, BackgroundWorkerHandle *handle)
 {
-	bool	detached;
-	pid_t	pid;
+	bool		detached;
+	pid_t		pid;
 
 	/* Acquire the lock just long enough to check the pointer. */
 	SpinLockAcquire(&mq->mq_mutex);
@@ -1064,11 +1092,11 @@ shm_mq_wait_internal(volatile shm_mq *mq, PGPROC *volatile * ptr,
 		/* Wait to be signalled. */
 		WaitLatch(MyLatch, WL_LATCH_SET, 0);
 
-		/* An interrupt may have occurred while we were waiting. */
-		CHECK_FOR_INTERRUPTS();
-
 		/* Reset the latch so we don't spin. */
 		ResetLatch(MyLatch);
+
+		/* An interrupt may have occurred while we were waiting. */
+		CHECK_FOR_INTERRUPTS();
 	}
 
 	return result;
@@ -1104,7 +1132,7 @@ shm_mq_inc_bytes_read(volatile shm_mq *mq, Size n)
 	sender = mq->mq_sender;
 	SpinLockRelease(&mq->mq_mutex);
 
-	/* We shoudn't have any bytes to read without a sender. */
+	/* We shouldn't have any bytes to read without a sender. */
 	Assert(sender != NULL);
 	SetLatch(&sender->procLatch);
 }

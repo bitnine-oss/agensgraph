@@ -10,8 +10,7 @@
 AFT     16200    # Afghanistan Time
                  #     (Asia/Kabul)
 ALMST   25200 D  # Alma-Ata Summer Time (obsolete)
-ALMT    21600    # Alma-Ata Time
-                 #     (Asia/Almaty)
+ALMT    21600    # Alma-Ata Time (obsolete)
 # CONFLICT! AMST is not unique
 # Other timezones:
 #  - AMST: Amazon Summer Time (America)
@@ -26,8 +25,7 @@ ANAST   Asia/Anadyr  # Anadyr Summer Time (obsolete)
 ANAT    Asia/Anadyr  # Anadyr Time
                  #     (Asia/Anadyr)
 AQTST   Asia/Aqtau  # Aqtau Summer Time (obsolete)
-AQTT    Asia/Aqtau  # Aqtau Time
-                 #     (Asia/Aqtau)
+AQTT    Asia/Aqtau  # Aqtau Time (obsolete)
 # CONFLICT! AST is not unique
 # Other timezones:
 #  - AST: Atlantic Standard Time (America)
@@ -43,8 +41,7 @@ AST     10800    # Arabia Standard Time
                  #     (Asia/Kuwait)
                  #     (Asia/Qatar)
                  #     (Asia/Riyadh)
-AZST    Asia/Baku  # Azerbaijan Summer Time
-                 #     (Asia/Baku)
+AZST    Asia/Baku  # Azerbaijan Summer Time (obsolete)
 AZT     Asia/Baku  # Azerbaijan Time
                  #     (Asia/Baku)
 BDT     21600    # Bangladesh Time
@@ -182,15 +179,13 @@ MYT     28800    # Malaysia Time
                  #     (Asia/Kuala_Lumpur)
                  #     (Asia/Kuching)
 NOVST   Asia/Novosibirsk  # Novosibirsk Summer Time (obsolete)
-NOVT    Asia/Novosibirsk  # Novosibirsk Time
-                 #     (Asia/Novosibirsk)
+NOVT    Asia/Novosibirsk  # Novosibirsk Time (obsolete)
 NPT     20700    # Nepal Time
                  #     (Asia/Katmandu)
 OMSST   Asia/Omsk  # Omsk Summer Time (obsolete)
 OMST    Asia/Omsk  # Omsk Time
                  #     (Asia/Omsk)
-ORAT    Asia/Oral  # Oral Time
-                 #     (Asia/Oral)
+ORAT    Asia/Oral  # Oral Time (obsolete)
 PETST   Asia/Kamchatka  # Petropavlovsk-Kamchatski Summer Time (obsolete)
 PETT    Asia/Kamchatka  # Petropavlovsk-Kamchatski Time
                  #     (Asia/Kamchatka)
@@ -200,8 +195,7 @@ PKT     18000    # Pakistan Time
                  #     (Asia/Karachi)
 PKST    21600 D  # Pakistan Summer Time
                  #     (Asia/Karachi)
-QYZT    21600    # Kizilorda Time
-                 #     (Asia/Qyzylorda)
+QYZT    21600    # Kizilorda Time (obsolete)
 SAKST   Asia/Sakhalin  # Sakhalin Summer Time (obsolete)
 SAKT    Asia/Sakhalin  # Sakhalin Time
                  #     (Asia/Sakhalin)

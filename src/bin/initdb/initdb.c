@@ -90,6 +90,9 @@ static const char *const auth_methods_host[] = {
 #ifdef USE_PAM
 	"pam", "pam ",
 #endif
+#ifdef USE_BSD_AUTH
+	"bsd",
+#endif
 #ifdef USE_LDAP
 	"ldap",
 #endif
@@ -102,6 +105,9 @@ static const char *const auth_methods_local[] = {
 	"trust", "reject", "md5", "password", "peer", "radius",
 #ifdef USE_PAM
 	"pam", "pam ",
+#endif
+#ifdef USE_BSD_AUTH
+	"bsd",
 #endif
 #ifdef USE_LDAP
 	"ldap",
@@ -1658,6 +1664,8 @@ setup_depend(FILE *cmdfd)
 		"INSERT INTO pg_depend SELECT 0,0,0, tableoid,oid,0, 'p' "
 		" FROM pg_opfamily;\n\n",
 		"INSERT INTO pg_depend SELECT 0,0,0, tableoid,oid,0, 'p' "
+		" FROM pg_am;\n\n",
+		"INSERT INTO pg_depend SELECT 0,0,0, tableoid,oid,0, 'p' "
 		" FROM pg_amop;\n\n",
 		"INSERT INTO pg_depend SELECT 0,0,0, tableoid,oid,0, 'p' "
 		" FROM pg_amproc;\n\n",
@@ -1989,6 +1997,14 @@ setup_dictionary(FILE *cmdfd)
  * Some objects may require different permissions by default, so we
  * make sure we don't overwrite privilege sets that have already been
  * set (NOT NULL).
+ *
+ * Also populate pg_init_privs to save what the privileges are at init
+ * time.  This is used by pg_dump to allow users to change privileges
+ * on catalog objects and to have those privilege changes preserved
+ * across dump/reload and pg_upgrade.
+ *
+ * Note that pg_init_privs is only for per-database objects and therefore
+ * we don't include databases or tablespaces.
  */
 static void
 setup_privileges(FILE *cmdfd)
@@ -1997,11 +2013,129 @@ setup_privileges(FILE *cmdfd)
 	char	  **priv_lines;
 	static char *privileges_setup[] = {
 		"UPDATE pg_class "
-		"  SET relacl = E'{\"=r/\\\\\"$POSTGRES_SUPERUSERNAME\\\\\"\"}' "
+		"  SET relacl = (SELECT array_agg(a.acl) FROM "
+		" (SELECT E'=r/\"$POSTGRES_SUPERUSERNAME\"' as acl "
+		"  UNION SELECT unnest(pg_catalog.acldefault("
+		"    CASE WHEN relkind = 'S' THEN 's' ELSE 'r' END::\"char\",10::oid))"
+		" ) as a) "
 		"  WHERE relkind IN ('r', 'v', 'm', 'S') AND relacl IS NULL;\n\n",
 		"GRANT USAGE ON SCHEMA pg_catalog TO PUBLIC;\n\n",
 		"GRANT CREATE, USAGE ON SCHEMA public TO PUBLIC;\n\n",
 		"REVOKE ALL ON pg_largeobject FROM PUBLIC;\n\n",
+		"INSERT INTO pg_init_privs "
+		"  (objoid, classoid, objsubid, initprivs, privtype)"
+		"    SELECT"
+		"        oid,"
+		"        (SELECT oid FROM pg_class WHERE relname = 'pg_class'),"
+		"        0,"
+		"        relacl,"
+		"        'i'"
+		"    FROM"
+		"        pg_class"
+		"    WHERE"
+		"        relacl IS NOT NULL"
+		"        AND relkind IN ('r', 'v', 'm', 'S');",
+		"INSERT INTO pg_init_privs "
+		"  (objoid, classoid, objsubid, initprivs, privtype)"
+		"    SELECT"
+		"        pg_class.oid,"
+		"        (SELECT oid FROM pg_class WHERE relname = 'pg_class'),"
+		"        pg_attribute.attnum,"
+		"        pg_attribute.attacl,"
+		"        'i'"
+		"    FROM"
+		"        pg_class"
+		"        JOIN pg_attribute ON (pg_class.oid = pg_attribute.attrelid)"
+		"    WHERE"
+		"        pg_attribute.attacl IS NOT NULL"
+		"        AND pg_class.relkind IN ('r', 'v', 'm', 'S');",
+		"INSERT INTO pg_init_privs "
+		"  (objoid, classoid, objsubid, initprivs, privtype)"
+		"    SELECT"
+		"        oid,"
+		"        (SELECT oid FROM pg_class WHERE relname = 'pg_proc'),"
+		"        0,"
+		"        proacl,"
+		"        'i'"
+		"    FROM"
+		"        pg_proc"
+		"    WHERE"
+		"        proacl IS NOT NULL;",
+		"INSERT INTO pg_init_privs "
+		"  (objoid, classoid, objsubid, initprivs, privtype)"
+		"    SELECT"
+		"        oid,"
+		"        (SELECT oid FROM pg_class WHERE relname = 'pg_type'),"
+		"        0,"
+		"        typacl,"
+		"        'i'"
+		"    FROM"
+		"        pg_type"
+		"    WHERE"
+		"        typacl IS NOT NULL;",
+		"INSERT INTO pg_init_privs "
+		"  (objoid, classoid, objsubid, initprivs, privtype)"
+		"    SELECT"
+		"        oid,"
+		"        (SELECT oid FROM pg_class WHERE relname = 'pg_language'),"
+		"        0,"
+		"        lanacl,"
+		"        'i'"
+		"    FROM"
+		"        pg_language"
+		"    WHERE"
+		"        lanacl IS NOT NULL;",
+		"INSERT INTO pg_init_privs "
+		"  (objoid, classoid, objsubid, initprivs, privtype)"
+		"    SELECT"
+		"        oid,"
+		"        (SELECT oid FROM pg_class WHERE "
+		"		  relname = 'pg_largeobject_metadata'),"
+		"        0,"
+		"        lomacl,"
+		"        'i'"
+		"    FROM"
+		"        pg_largeobject_metadata"
+		"    WHERE"
+		"        lomacl IS NOT NULL;",
+		"INSERT INTO pg_init_privs "
+		"  (objoid, classoid, objsubid, initprivs, privtype)"
+		"    SELECT"
+		"        oid,"
+		"        (SELECT oid FROM pg_class WHERE relname = 'pg_namespace'),"
+		"        0,"
+		"        nspacl,"
+		"        'i'"
+		"    FROM"
+		"        pg_namespace"
+		"    WHERE"
+		"        nspacl IS NOT NULL;",
+		"INSERT INTO pg_init_privs "
+		"  (objoid, classoid, objsubid, initprivs, privtype)"
+		"    SELECT"
+		"        oid,"
+		"        (SELECT oid FROM pg_class WHERE "
+		"		  relname = 'pg_foreign_data_wrapper'),"
+		"        0,"
+		"        fdwacl,"
+		"        'i'"
+		"    FROM"
+		"        pg_foreign_data_wrapper"
+		"    WHERE"
+		"        fdwacl IS NOT NULL;",
+		"INSERT INTO pg_init_privs "
+		"  (objoid, classoid, objsubid, initprivs, privtype)"
+		"    SELECT"
+		"        oid,"
+		"        (SELECT oid FROM pg_class "
+		"		  WHERE relname = 'pg_foreign_server'),"
+		"        0,"
+		"        srvacl,"
+		"        'i'"
+		"    FROM"
+		"        pg_foreign_server"
+		"    WHERE"
+		"        srvacl IS NOT NULL;",
 		NULL
 	};
 
@@ -3408,6 +3542,12 @@ main(int argc, char *argv[])
 	effective_user = get_id();
 	if (strlen(username) == 0)
 		username = effective_user;
+
+	if (strncmp(username, "pg_", 3) == 0)
+	{
+		fprintf(stderr, _("%s: superuser name \"%s\" is disallowed; role names cannot begin with \"pg_\"\n"), progname, username);
+		exit(1);
+	}
 
 	printf(_("The files belonging to this database system will be owned "
 			 "by user \"%s\".\n"

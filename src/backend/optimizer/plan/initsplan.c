@@ -146,7 +146,8 @@ void
 build_base_rel_tlists(PlannerInfo *root, List *final_tlist)
 {
 	List	   *tlist_vars = pull_var_clause((Node *) final_tlist,
-											 PVC_RECURSE_AGGREGATES,
+											 PVC_RECURSE_AGGREGATES |
+											 PVC_RECURSE_WINDOWFUNCS |
 											 PVC_INCLUDE_PLACEHOLDERS);
 
 	if (tlist_vars != NIL)
@@ -156,12 +157,13 @@ build_base_rel_tlists(PlannerInfo *root, List *final_tlist)
 	}
 
 	/*
-	 * If there's a HAVING clause, we'll need the Vars it uses, too.
+	 * If there's a HAVING clause, we'll need the Vars it uses, too.  Note
+	 * that HAVING can contain Aggrefs but not WindowFuncs.
 	 */
 	if (root->parse->havingQual)
 	{
 		List	   *having_vars = pull_var_clause(root->parse->havingQual,
-												  PVC_RECURSE_AGGREGATES,
+												  PVC_RECURSE_AGGREGATES |
 												  PVC_INCLUDE_PLACEHOLDERS);
 
 		if (having_vars != NIL)
@@ -211,10 +213,11 @@ add_vars_to_targetlist(PlannerInfo *root, List *vars,
 			attno -= rel->min_attr;
 			if (rel->attr_needed[attno] == NULL)
 			{
-				/* Variable not yet requested, so add to reltargetlist */
+				/* Variable not yet requested, so add to rel's targetlist */
 				/* XXX is copyObject necessary here? */
-				rel->reltargetlist = lappend(rel->reltargetlist,
-											 copyObject(var));
+				rel->reltarget->exprs = lappend(rel->reltarget->exprs,
+												copyObject(var));
+				/* reltarget cost and width will be computed later */
 			}
 			rel->attr_needed[attno] = bms_add_members(rel->attr_needed[attno],
 													  where_needed);
@@ -1173,9 +1176,32 @@ make_outerjoininfo(PlannerInfo *root,
 	{
 		SpecialJoinInfo *otherinfo = (SpecialJoinInfo *) lfirst(l);
 
-		/* ignore full joins --- other mechanisms preserve their ordering */
+		/*
+		 * A full join is an optimization barrier: we can't associate into or
+		 * out of it.  Hence, if it overlaps either LHS or RHS of the current
+		 * rel, expand that side's min relset to cover the whole full join.
+		 */
 		if (otherinfo->jointype == JOIN_FULL)
+		{
+			if (bms_overlap(left_rels, otherinfo->syn_lefthand) ||
+				bms_overlap(left_rels, otherinfo->syn_righthand))
+			{
+				min_lefthand = bms_add_members(min_lefthand,
+											   otherinfo->syn_lefthand);
+				min_lefthand = bms_add_members(min_lefthand,
+											   otherinfo->syn_righthand);
+			}
+			if (bms_overlap(right_rels, otherinfo->syn_lefthand) ||
+				bms_overlap(right_rels, otherinfo->syn_righthand))
+			{
+				min_righthand = bms_add_members(min_righthand,
+												otherinfo->syn_lefthand);
+				min_righthand = bms_add_members(min_righthand,
+												otherinfo->syn_righthand);
+			}
+			/* Needn't do anything else with the full join */
 			continue;
+		}
 
 		/*
 		 * For a lower OJ in our LHS, if our join condition uses the lower
@@ -1786,7 +1812,8 @@ distribute_qual_to_rels(PlannerInfo *root, Node *clause,
 	if (bms_membership(relids) == BMS_MULTIPLE)
 	{
 		List	   *vars = pull_var_clause(clause,
-										   PVC_RECURSE_AGGREGATES,
+										   PVC_RECURSE_AGGREGATES |
+										   PVC_RECURSE_WINDOWFUNCS |
 										   PVC_INCLUDE_PLACEHOLDERS);
 
 		add_vars_to_targetlist(root, vars, relids, false);
@@ -2276,6 +2303,174 @@ build_implied_join_equality(Oid opno,
 	check_hashjoinable(restrictinfo);
 
 	return restrictinfo;
+}
+
+
+/*
+ * match_foreign_keys_to_quals
+ *		Match foreign-key constraints to equivalence classes and join quals
+ *
+ * The idea here is to see which query join conditions match equality
+ * constraints of a foreign-key relationship.  For such join conditions,
+ * we can use the FK semantics to make selectivity estimates that are more
+ * reliable than estimating from statistics, especially for multiple-column
+ * FKs, where the normal assumption of independent conditions tends to fail.
+ *
+ * In this function we annotate the ForeignKeyOptInfos in root->fkey_list
+ * with info about which eclasses and join qual clauses they match, and
+ * discard any ForeignKeyOptInfos that are irrelevant for the query.
+ */
+void
+match_foreign_keys_to_quals(PlannerInfo *root)
+{
+	List	   *newlist = NIL;
+	ListCell   *lc;
+
+	foreach(lc, root->fkey_list)
+	{
+		ForeignKeyOptInfo *fkinfo = (ForeignKeyOptInfo *) lfirst(lc);
+		RelOptInfo *con_rel;
+		RelOptInfo *ref_rel;
+		int			colno;
+
+		/*
+		 * Either relid might identify a rel that is in the query's rtable but
+		 * isn't referenced by the jointree so won't have a RelOptInfo.  Hence
+		 * don't use find_base_rel() here.  We can ignore such FKs.
+		 */
+		if (fkinfo->con_relid >= root->simple_rel_array_size ||
+			fkinfo->ref_relid >= root->simple_rel_array_size)
+			continue;			/* just paranoia */
+		con_rel = root->simple_rel_array[fkinfo->con_relid];
+		if (con_rel == NULL)
+			continue;
+		ref_rel = root->simple_rel_array[fkinfo->ref_relid];
+		if (ref_rel == NULL)
+			continue;
+
+		/*
+		 * Ignore FK unless both rels are baserels.  This gets rid of FKs that
+		 * link to inheritance child rels (otherrels) and those that link to
+		 * rels removed by join removal (dead rels).
+		 */
+		if (con_rel->reloptkind != RELOPT_BASEREL ||
+			ref_rel->reloptkind != RELOPT_BASEREL)
+			continue;
+
+		/*
+		 * Scan the columns and try to match them to eclasses and quals.
+		 *
+		 * Note: for simple inner joins, any match should be in an eclass.
+		 * "Loose" quals that syntactically match an FK equality must have
+		 * been rejected for EC status because they are outer-join quals or
+		 * similar.  We can still consider them to match the FK if they are
+		 * not outerjoin_delayed.
+		 */
+		for (colno = 0; colno < fkinfo->nkeys; colno++)
+		{
+			AttrNumber	con_attno,
+						ref_attno;
+			Oid			fpeqop;
+			ListCell   *lc2;
+
+			fkinfo->eclass[colno] = match_eclasses_to_foreign_key_col(root,
+																	  fkinfo,
+																	  colno);
+			/* Don't bother looking for loose quals if we got an EC match */
+			if (fkinfo->eclass[colno] != NULL)
+			{
+				fkinfo->nmatched_ec++;
+				continue;
+			}
+
+			/*
+			 * Scan joininfo list for relevant clauses.  Either rel's joininfo
+			 * list would do equally well; we use con_rel's.
+			 */
+			con_attno = fkinfo->conkey[colno];
+			ref_attno = fkinfo->confkey[colno];
+			fpeqop = InvalidOid;	/* we'll look this up only if needed */
+
+			foreach(lc2, con_rel->joininfo)
+			{
+				RestrictInfo *rinfo = (RestrictInfo *) lfirst(lc2);
+				OpExpr	   *clause = (OpExpr *) rinfo->clause;
+				Var		   *leftvar;
+				Var		   *rightvar;
+
+				/* Ignore outerjoin-delayed clauses */
+				if (rinfo->outerjoin_delayed)
+					continue;
+
+				/* Only binary OpExprs are useful for consideration */
+				if (!IsA(clause, OpExpr) ||
+					list_length(clause->args) != 2)
+					continue;
+				leftvar = (Var *) get_leftop((Expr *) clause);
+				rightvar = (Var *) get_rightop((Expr *) clause);
+
+				/* Operands must be Vars, possibly with RelabelType */
+				while (leftvar && IsA(leftvar, RelabelType))
+					leftvar = (Var *) ((RelabelType *) leftvar)->arg;
+				if (!(leftvar && IsA(leftvar, Var)))
+					continue;
+				while (rightvar && IsA(rightvar, RelabelType))
+					rightvar = (Var *) ((RelabelType *) rightvar)->arg;
+				if (!(rightvar && IsA(rightvar, Var)))
+					continue;
+
+				/* Now try to match the vars to the current foreign key cols */
+				if (fkinfo->ref_relid == leftvar->varno &&
+					ref_attno == leftvar->varattno &&
+					fkinfo->con_relid == rightvar->varno &&
+					con_attno == rightvar->varattno)
+				{
+					/* Vars match, but is it the right operator? */
+					if (clause->opno == fkinfo->conpfeqop[colno])
+					{
+						fkinfo->rinfos[colno] = lappend(fkinfo->rinfos[colno],
+														rinfo);
+						fkinfo->nmatched_ri++;
+					}
+				}
+				else if (fkinfo->ref_relid == rightvar->varno &&
+						 ref_attno == rightvar->varattno &&
+						 fkinfo->con_relid == leftvar->varno &&
+						 con_attno == leftvar->varattno)
+				{
+					/*
+					 * Reverse match, must check commutator operator.  Look it
+					 * up if we didn't already.  (In the worst case we might
+					 * do multiple lookups here, but that would require an FK
+					 * equality operator without commutator, which is
+					 * unlikely.)
+					 */
+					if (!OidIsValid(fpeqop))
+						fpeqop = get_commutator(fkinfo->conpfeqop[colno]);
+					if (clause->opno == fpeqop)
+					{
+						fkinfo->rinfos[colno] = lappend(fkinfo->rinfos[colno],
+														rinfo);
+						fkinfo->nmatched_ri++;
+					}
+				}
+			}
+			/* If we found any matching loose quals, count col as matched */
+			if (fkinfo->rinfos[colno])
+				fkinfo->nmatched_rcols++;
+		}
+
+		/*
+		 * Currently, we drop multicolumn FKs that aren't fully matched to the
+		 * query.  Later we might figure out how to derive some sort of
+		 * estimate from them, in which case this test should be weakened to
+		 * "if ((fkinfo->nmatched_ec + fkinfo->nmatched_rcols) > 0)".
+		 */
+		if ((fkinfo->nmatched_ec + fkinfo->nmatched_rcols) == fkinfo->nkeys)
+			newlist = lappend(newlist, fkinfo);
+	}
+	/* Replace fkey_list, thereby discarding any useless entries */
+	root->fkey_list = newlist;
 }
 
 

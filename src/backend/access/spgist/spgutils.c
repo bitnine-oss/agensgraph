@@ -36,7 +36,7 @@ spghandler(PG_FUNCTION_ARGS)
 	IndexAmRoutine *amroutine = makeNode(IndexAmRoutine);
 
 	amroutine->amstrategies = 0;
-	amroutine->amsupport = 5;
+	amroutine->amsupport = SPGISTNProc;
 	amroutine->amcanorder = false;
 	amroutine->amcanorderbyop = false;
 	amroutine->amcanbackward = false;
@@ -58,6 +58,7 @@ spghandler(PG_FUNCTION_ARGS)
 	amroutine->amcanreturn = spgcanreturn;
 	amroutine->amcostestimate = spgcostestimate;
 	amroutine->amoptions = spgoptions;
+	amroutine->amproperty = NULL;
 	amroutine->amvalidate = spgvalidate;
 	amroutine->ambeginscan = spgbeginscan;
 	amroutine->amrescan = spgrescan;

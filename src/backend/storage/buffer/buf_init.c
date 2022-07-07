@@ -23,6 +23,8 @@ char	   *BufferBlocks;
 LWLockMinimallyPadded *BufferIOLWLockArray = NULL;
 LWLockTranche BufferIOLWLockTranche;
 LWLockTranche BufferContentLWLockTranche;
+WritebackContext BackendWritebackContext;
+CkptSortItem *CkptBufferIds;
 
 
 /*
@@ -69,15 +71,14 @@ InitBufferPool(void)
 {
 	bool		foundBufs,
 				foundDescs,
-				foundIOLocks;
+				foundIOLocks,
+				foundBufCkpt;
 
 	/* Align descriptors to a cacheline boundary. */
 	BufferDescriptors = (BufferDescPadded *)
-		CACHELINEALIGN(
-					   ShmemInitStruct("Buffer Descriptors",
-									   NBuffers * sizeof(BufferDescPadded)
-									   + PG_CACHE_LINE_SIZE,
-									   &foundDescs));
+		ShmemInitStruct("Buffer Descriptors",
+						NBuffers * sizeof(BufferDescPadded),
+						&foundDescs);
 
 	BufferBlocks = (char *)
 		ShmemInitStruct("Buffer Blocks",
@@ -85,28 +86,38 @@ InitBufferPool(void)
 
 	/* Align lwlocks to cacheline boundary */
 	BufferIOLWLockArray = (LWLockMinimallyPadded *)
-		CACHELINEALIGN(ShmemInitStruct("Buffer IO Locks",
-							  NBuffers * (Size) sizeof(LWLockMinimallyPadded)
-									   + PG_CACHE_LINE_SIZE,
-									   &foundIOLocks));
+		ShmemInitStruct("Buffer IO Locks",
+						NBuffers * (Size) sizeof(LWLockMinimallyPadded),
+						&foundIOLocks);
 
-	BufferIOLWLockTranche.name = "Buffer IO Locks";
+	BufferIOLWLockTranche.name = "buffer_io";
 	BufferIOLWLockTranche.array_base = BufferIOLWLockArray;
 	BufferIOLWLockTranche.array_stride = sizeof(LWLockMinimallyPadded);
 	LWLockRegisterTranche(LWTRANCHE_BUFFER_IO_IN_PROGRESS,
 						  &BufferIOLWLockTranche);
 
-	BufferContentLWLockTranche.name = "Buffer Content Locks";
+	BufferContentLWLockTranche.name = "buffer_content";
 	BufferContentLWLockTranche.array_base =
 		((char *) BufferDescriptors) + offsetof(BufferDesc, content_lock);
 	BufferContentLWLockTranche.array_stride = sizeof(BufferDescPadded);
 	LWLockRegisterTranche(LWTRANCHE_BUFFER_CONTENT,
 						  &BufferContentLWLockTranche);
 
-	if (foundDescs || foundBufs || foundIOLocks)
+	/*
+	 * The array used to sort to-be-checkpointed buffer ids is located in
+	 * shared memory, to avoid having to allocate significant amounts of
+	 * memory at runtime. As that'd be in the middle of a checkpoint, or when
+	 * the checkpointer is restarted, memory allocation failures would be
+	 * painful.
+	 */
+	CkptBufferIds = (CkptSortItem *)
+		ShmemInitStruct("Checkpoint BufferIds",
+						NBuffers * sizeof(CkptSortItem), &foundBufCkpt);
+
+	if (foundDescs || foundBufs || foundIOLocks || foundBufCkpt)
 	{
 		/* should find all of these, or none of them */
-		Assert(foundDescs && foundBufs && foundIOLocks);
+		Assert(foundDescs && foundBufs && foundIOLocks && foundBufCkpt);
 		/* note: this path is only taken in EXEC_BACKEND case */
 	}
 	else
@@ -121,12 +132,9 @@ InitBufferPool(void)
 			BufferDesc *buf = GetBufferDescriptor(i);
 
 			CLEAR_BUFFERTAG(buf->tag);
-			buf->flags = 0;
-			buf->usage_count = 0;
-			buf->refcount = 0;
-			buf->wait_backend_pid = 0;
 
-			SpinLockInit(&buf->buf_hdr_lock);
+			pg_atomic_init_u32(&buf->state, 0);
+			buf->wait_backend_pid = 0;
 
 			buf->buf_id = i;
 
@@ -149,6 +157,10 @@ InitBufferPool(void)
 
 	/* Init other shared buffer-management stuff */
 	StrategyInitialize(!foundDescs);
+
+	/* Initialize per-backend file flush context */
+	WritebackContextInit(&BackendWritebackContext,
+						 &backend_flush_after);
 }
 
 /*
@@ -175,15 +187,19 @@ BufferShmemSize(void)
 
 	/*
 	 * It would be nice to include the I/O locks in the BufferDesc, but that
-	 * would increase the size of a BufferDesc to more than one cache line, and
-	 * benchmarking has shown that keeping every BufferDesc aligned on a cache
-	 * line boundary is important for performance.  So, instead, the array of
-	 * I/O locks is allocated in a separate tranche.  Because those locks are
-	 * not highly contentended, we lay out the array with minimal padding.
+	 * would increase the size of a BufferDesc to more than one cache line,
+	 * and benchmarking has shown that keeping every BufferDesc aligned on a
+	 * cache line boundary is important for performance.  So, instead, the
+	 * array of I/O locks is allocated in a separate tranche.  Because those
+	 * locks are not highly contentended, we lay out the array with minimal
+	 * padding.
 	 */
 	size = add_size(size, mul_size(NBuffers, sizeof(LWLockMinimallyPadded)));
 	/* to allow aligning the above */
 	size = add_size(size, PG_CACHE_LINE_SIZE);
+
+	/* size of checkpoint sort array in bufmgr.c */
+	size = add_size(size, mul_size(NBuffers, sizeof(CkptSortItem)));
 
 	return size;
 }

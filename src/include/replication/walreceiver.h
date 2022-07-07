@@ -100,7 +100,8 @@ typedef struct
 	TimestampTz latestWalEndTime;
 
 	/*
-	 * connection string; is used for walreceiver to connect with the primary.
+	 * connection string; initially set to connect to the primary, and later
+	 * clobbered to hide security-sensitive fields.
 	 */
 	char		conninfo[MAXCONNINFO];
 
@@ -113,9 +114,19 @@ typedef struct
 	slock_t		mutex;			/* locks shared variables shown above */
 
 	/*
+	 * force walreceiver reply?  This doesn't need to be locked; memory
+	 * barriers for ordering are sufficient.
+	 */
+	bool		force_reply;
+
+	/* set true once conninfo is ready to display (obfuscated pwds etc) */
+	bool		ready_to_display;
+
+	/*
 	 * Latch used by startup process to wake up walreceiver after telling it
 	 * where to start streaming (after setting receiveStart and
-	 * receiveStartTLI).
+	 * receiveStartTLI), and also to tell it to send apply feedback to the
+	 * primary whenever specially marked commit records are applied.
 	 */
 	Latch		latch;
 } WalRcvData;
@@ -125,6 +136,9 @@ extern WalRcvData *WalRcv;
 /* libpqwalreceiver hooks */
 typedef void (*walrcv_connect_type) (char *conninfo);
 extern PGDLLIMPORT walrcv_connect_type walrcv_connect;
+
+typedef char *(*walrcv_get_conninfo_type) (void);
+extern PGDLLIMPORT walrcv_get_conninfo_type walrcv_get_conninfo;
 
 typedef void (*walrcv_identify_system_type) (TimeLineID *primary_tli);
 extern PGDLLIMPORT walrcv_identify_system_type walrcv_identify_system;
@@ -138,7 +152,7 @@ extern PGDLLIMPORT walrcv_startstreaming_type walrcv_startstreaming;
 typedef void (*walrcv_endstreaming_type) (TimeLineID *next_tli);
 extern PGDLLIMPORT walrcv_endstreaming_type walrcv_endstreaming;
 
-typedef int (*walrcv_receive_type) (int timeout, char **buffer);
+typedef int (*walrcv_receive_type) (char **buffer, pgsocket *wait_fd);
 extern PGDLLIMPORT walrcv_receive_type walrcv_receive;
 
 typedef void (*walrcv_send_type) (const char *buffer, int nbytes);
@@ -162,5 +176,6 @@ extern void RequestXLogStreaming(TimeLineID tli, XLogRecPtr recptr,
 extern XLogRecPtr GetWalRcvWriteRecPtr(XLogRecPtr *latestChunkStart, TimeLineID *receiveTLI);
 extern int	GetReplicationApplyDelay(void);
 extern int	GetReplicationTransferLatency(void);
+extern void WalRcvForceReply(void);
 
 #endif   /* _WALRECEIVER_H */

@@ -213,7 +213,8 @@ add_paths_to_joinrel(PlannerInfo *root,
 
 	/*
 	 * 5. If inner and outer relations are foreign tables (or joins) belonging
-	 * to the same server, give the FDW a chance to push down joins.
+	 * to the same server and assigned to the same user to check access
+	 * permissions as, give the FDW a chance to push down joins.
 	 */
 	if (joinrel->fdwroutine &&
 		joinrel->fdwroutine->GetForeignJoinPaths)
@@ -222,12 +223,7 @@ add_paths_to_joinrel(PlannerInfo *root,
 												 jointype, &extra);
 
 	/*
-	 * 6. Consider gathering partial paths.
-	 */
-	generate_gather_paths(root, joinrel);
-
-	/*
-	 * 7. Finally, give extensions a chance to manipulate the path list.
+	 * 6. Finally, give extensions a chance to manipulate the path list.
 	 */
 	if (set_join_pathlist_hook)
 		set_join_pathlist_hook(root, joinrel, outerrel, innerrel,
@@ -347,12 +343,12 @@ try_nestloop_path(PlannerInfo *root,
  */
 static void
 try_partial_nestloop_path(PlannerInfo *root,
-				  RelOptInfo *joinrel,
-				  Path *outer_path,
-				  Path *inner_path,
-				  List *pathkeys,
-				  JoinType jointype,
-				  JoinPathExtraData *extra)
+						  RelOptInfo *joinrel,
+						  Path *outer_path,
+						  Path *inner_path,
+						  List *pathkeys,
+						  JoinType jointype,
+						  JoinPathExtraData *extra)
 {
 	JoinCostWorkspace workspace;
 
@@ -372,8 +368,8 @@ try_partial_nestloop_path(PlannerInfo *root,
 	}
 
 	/*
-	 * Before creating a path, get a quick lower bound on what it is likely
-	 * to cost.  Bail out right away if it looks terrible.
+	 * Before creating a path, get a quick lower bound on what it is likely to
+	 * cost.  Bail out right away if it looks terrible.
 	 */
 	initial_cost_nestloop(root, &workspace, jointype,
 						  outer_path, inner_path,
@@ -383,17 +379,17 @@ try_partial_nestloop_path(PlannerInfo *root,
 
 	/* Might be good enough to be worth trying, so let's try it. */
 	add_partial_path(joinrel, (Path *)
-			 create_nestloop_path(root,
-								  joinrel,
-								  jointype,
-								  &workspace,
-								  extra->sjinfo,
-								  &extra->semifactors,
-								  outer_path,
-								  inner_path,
-								  extra->restrictlist,
-								  pathkeys,
-								  NULL));
+					 create_nestloop_path(root,
+										  joinrel,
+										  jointype,
+										  &workspace,
+										  extra->sjinfo,
+										  &extra->semifactors,
+										  outer_path,
+										  inner_path,
+										  extra->restrictlist,
+										  pathkeys,
+										  NULL));
 }
 
 /*
@@ -570,8 +566,8 @@ try_partial_hashjoin_path(PlannerInfo *root,
 	}
 
 	/*
-	 * Before creating a path, get a quick lower bound on what it is likely
-	 * to cost.  Bail out right away if it looks terrible.
+	 * Before creating a path, get a quick lower bound on what it is likely to
+	 * cost.  Bail out right away if it looks terrible.
 	 */
 	initial_cost_hashjoin(root, &workspace, jointype, hashclauses,
 						  outer_path, inner_path,
@@ -581,17 +577,17 @@ try_partial_hashjoin_path(PlannerInfo *root,
 
 	/* Might be good enough to be worth trying, so let's try it. */
 	add_partial_path(joinrel, (Path *)
-			 create_hashjoin_path(root,
-								  joinrel,
-								  jointype,
-								  &workspace,
-								  extra->sjinfo,
-								  &extra->semifactors,
-								  outer_path,
-								  inner_path,
-								  extra->restrictlist,
-								  NULL,
-								  hashclauses));
+					 create_hashjoin_path(root,
+										  joinrel,
+										  jointype,
+										  &workspace,
+										  extra->sjinfo,
+										  &extra->semifactors,
+										  outer_path,
+										  inner_path,
+										  extra->restrictlist,
+										  NULL,
+										  hashclauses));
 }
 
 /*
@@ -1188,11 +1184,11 @@ match_unsorted_outer(PlannerInfo *root,
 	}
 
 	/*
-	 * If the joinrel is parallel-safe and the join type supports nested loops,
-	 * we may be able to consider a partial nestloop plan.  However, we can't
-	 * handle JOIN_UNIQUE_OUTER, because the outer path will be partial, and
-	 * therefore we won't be able to properly guarantee uniqueness.  Nor can
-	 * we handle extra_lateral_rels, since partial paths must not be
+	 * If the joinrel is parallel-safe and the join type supports nested
+	 * loops, we may be able to consider a partial nestloop plan.  However, we
+	 * can't handle JOIN_UNIQUE_OUTER, because the outer path will be partial,
+	 * and therefore we won't be able to properly guarantee uniqueness.  Nor
+	 * can we handle extra_lateral_rels, since partial paths must not be
 	 * parameterized.
 	 */
 	if (joinrel->consider_parallel && nestjoinOK &&
@@ -1234,10 +1230,10 @@ consider_parallel_nestloop(PlannerInfo *root,
 									   outerpath->pathkeys);
 
 		/*
-		 * Try the cheapest parameterized paths; only those which will
-		 * produce an unparameterized path when joined to this outerrel
-		 * will survive try_partial_nestloop_path.  The cheapest
-		 * unparameterized path is also in this list.
+		 * Try the cheapest parameterized paths; only those which will produce
+		 * an unparameterized path when joined to this outerrel will survive
+		 * try_partial_nestloop_path.  The cheapest unparameterized path is
+		 * also in this list.
 		 */
 		foreach(lc2, innerrel->cheapest_parameterized_paths)
 		{
@@ -1249,16 +1245,17 @@ consider_parallel_nestloop(PlannerInfo *root,
 
 			/*
 			 * Like match_unsorted_outer, we only consider a single nestloop
-			 * path when the jointype is JOIN_UNIQUE_INNER.  But we have to scan
-			 * cheapest_parameterized_paths to find the one we want to consider,
-			 * because cheapest_total_path might not be parallel-safe.
+			 * path when the jointype is JOIN_UNIQUE_INNER.  But we have to
+			 * scan cheapest_parameterized_paths to find the one we want to
+			 * consider, because cheapest_total_path might not be
+			 * parallel-safe.
 			 */
 			if (jointype == JOIN_UNIQUE_INNER)
 			{
 				if (!bms_is_empty(PATH_REQ_OUTER(innerpath)))
 					continue;
 				innerpath = (Path *) create_unique_path(root, innerrel,
-											   innerpath, extra->sjinfo);
+												   innerpath, extra->sjinfo);
 				Assert(innerpath);
 			}
 
@@ -1448,15 +1445,19 @@ hash_inner_and_outer(PlannerInfo *root,
 		 * If the joinrel is parallel-safe, we may be able to consider a
 		 * partial hash join.  However, we can't handle JOIN_UNIQUE_OUTER,
 		 * because the outer path will be partial, and therefore we won't be
-		 * able to properly guarantee uniqueness.  Also, the resulting path
-		 * must not be parameterized.
+		 * able to properly guarantee uniqueness.  Similarly, we can't handle
+		 * JOIN_FULL and JOIN_RIGHT, because they can produce false null
+		 * extended rows.  Also, the resulting path must not be parameterized.
 		 */
-		if (joinrel->consider_parallel && jointype != JOIN_UNIQUE_OUTER &&
+		if (joinrel->consider_parallel &&
+			jointype != JOIN_UNIQUE_OUTER &&
+			jointype != JOIN_FULL &&
+			jointype != JOIN_RIGHT &&
 			outerrel->partial_pathlist != NIL &&
 			bms_is_empty(joinrel->lateral_relids))
 		{
-			Path   *cheapest_partial_outer;
-			Path   *cheapest_safe_inner = NULL;
+			Path	   *cheapest_partial_outer;
+			Path	   *cheapest_safe_inner = NULL;
 
 			cheapest_partial_outer =
 				(Path *) linitial(outerrel->partial_pathlist);

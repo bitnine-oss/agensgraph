@@ -1,8 +1,8 @@
 /*-------------------------------------------------------------------------
  *
  * Utility routines for SQL dumping
- *	Basically this is stuff that is useful in both pg_dump and pg_dumpall.
- *	Lately it's also being used by psql and bin/scripts/ ...
+ *
+ * Basically this is stuff that is useful in both pg_dump and pg_dumpall.
  *
  *
  * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
@@ -14,16 +14,9 @@
  */
 #include "postgres_fe.h"
 
-#include <ctype.h>
-
 #include "dumputils.h"
+#include "fe_utils/string_utils.h"
 
-#include "parser/keywords.h"
-
-
-/* Globals from keywords.c */
-extern const ScanKeyword FEScanKeywords[];
-extern const int NumFEScanKeywords;
 
 #define supports_grant_options(version) ((version) >= 70400)
 
@@ -34,441 +27,6 @@ static bool parseAclItem(const char *item, const char *type,
 static char *copyAclUserName(PQExpBuffer output, char *input);
 static void AddAcl(PQExpBuffer aclbuf, const char *keyword,
 	   const char *subname);
-static PQExpBuffer defaultGetLocalPQExpBuffer(void);
-
-/* Globals exported by this file */
-int			quote_all_identifiers = 0;
-PQExpBuffer (*getLocalPQExpBuffer) (void) = defaultGetLocalPQExpBuffer;
-
-/*
- * Returns a temporary PQExpBuffer, valid until the next call to the function.
- * This is used by fmtId and fmtQualifiedId.
- *
- * Non-reentrant and non-thread-safe but reduces memory leakage. You can
- * replace this with a custom version by setting the getLocalPQExpBuffer
- * function pointer.
- */
-static PQExpBuffer
-defaultGetLocalPQExpBuffer(void)
-{
-	static PQExpBuffer id_return = NULL;
-
-	if (id_return)				/* first time through? */
-	{
-		/* same buffer, just wipe contents */
-		resetPQExpBuffer(id_return);
-	}
-	else
-	{
-		/* new buffer */
-		id_return = createPQExpBuffer();
-	}
-
-	return id_return;
-}
-
-/*
- *	Quotes input string if it's not a legitimate SQL identifier as-is.
- *
- *	Note that the returned string must be used before calling fmtId again,
- *	since we re-use the same return buffer each time.
- */
-const char *
-fmtId(const char *rawid)
-{
-	PQExpBuffer id_return = getLocalPQExpBuffer();
-
-	const char *cp;
-	bool		need_quotes = false;
-
-	/*
-	 * These checks need to match the identifier production in scan.l. Don't
-	 * use islower() etc.
-	 */
-	if (quote_all_identifiers)
-		need_quotes = true;
-	/* slightly different rules for first character */
-	else if (!((rawid[0] >= 'a' && rawid[0] <= 'z') || rawid[0] == '_'))
-		need_quotes = true;
-	else
-	{
-		/* otherwise check the entire string */
-		for (cp = rawid; *cp; cp++)
-		{
-			if (!((*cp >= 'a' && *cp <= 'z')
-				  || (*cp >= '0' && *cp <= '9')
-				  || (*cp == '_')))
-			{
-				need_quotes = true;
-				break;
-			}
-		}
-	}
-
-	if (!need_quotes)
-	{
-		/*
-		 * Check for keyword.  We quote keywords except for unreserved ones.
-		 * (In some cases we could avoid quoting a col_name or type_func_name
-		 * keyword, but it seems much harder than it's worth to tell that.)
-		 *
-		 * Note: ScanKeywordLookup() does case-insensitive comparison, but
-		 * that's fine, since we already know we have all-lower-case.
-		 */
-		const ScanKeyword *keyword = ScanKeywordLookup(rawid,
-													   FEScanKeywords,
-													   NumFEScanKeywords);
-
-		if (keyword != NULL && keyword->category != UNRESERVED_KEYWORD)
-			need_quotes = true;
-	}
-
-	if (!need_quotes)
-	{
-		/* no quoting needed */
-		appendPQExpBufferStr(id_return, rawid);
-	}
-	else
-	{
-		appendPQExpBufferChar(id_return, '"');
-		for (cp = rawid; *cp; cp++)
-		{
-			/*
-			 * Did we find a double-quote in the string? Then make this a
-			 * double double-quote per SQL99. Before, we put in a
-			 * backslash/double-quote pair. - thomas 2000-08-05
-			 */
-			if (*cp == '"')
-				appendPQExpBufferChar(id_return, '"');
-			appendPQExpBufferChar(id_return, *cp);
-		}
-		appendPQExpBufferChar(id_return, '"');
-	}
-
-	return id_return->data;
-}
-
-/*
- * fmtQualifiedId - convert a qualified name to the proper format for
- * the source database.
- *
- * Like fmtId, use the result before calling again.
- *
- * Since we call fmtId and it also uses getThreadLocalPQExpBuffer() we cannot
- * use it until we're finished with calling fmtId().
- */
-const char *
-fmtQualifiedId(int remoteVersion, const char *schema, const char *id)
-{
-	PQExpBuffer id_return;
-	PQExpBuffer lcl_pqexp = createPQExpBuffer();
-
-	/* Suppress schema name if fetching from pre-7.3 DB */
-	if (remoteVersion >= 70300 && schema && *schema)
-	{
-		appendPQExpBuffer(lcl_pqexp, "%s.", fmtId(schema));
-	}
-	appendPQExpBufferStr(lcl_pqexp, fmtId(id));
-
-	id_return = getLocalPQExpBuffer();
-
-	appendPQExpBufferStr(id_return, lcl_pqexp->data);
-	destroyPQExpBuffer(lcl_pqexp);
-
-	return id_return->data;
-}
-
-/*
- * Convert a string value to an SQL string literal and append it to
- * the given buffer.  We assume the specified client_encoding and
- * standard_conforming_strings settings.
- *
- * This is essentially equivalent to libpq's PQescapeStringInternal,
- * except for the output buffer structure.  We need it in situations
- * where we do not have a PGconn available.  Where we do,
- * appendStringLiteralConn is a better choice.
- */
-void
-appendStringLiteral(PQExpBuffer buf, const char *str,
-					int encoding, bool std_strings)
-{
-	size_t		length = strlen(str);
-	const char *source = str;
-	char	   *target;
-
-	if (!enlargePQExpBuffer(buf, 2 * length + 2))
-		return;
-
-	target = buf->data + buf->len;
-	*target++ = '\'';
-
-	while (*source != '\0')
-	{
-		char		c = *source;
-		int			len;
-		int			i;
-
-		/* Fast path for plain ASCII */
-		if (!IS_HIGHBIT_SET(c))
-		{
-			/* Apply quoting if needed */
-			if (SQL_STR_DOUBLE(c, !std_strings))
-				*target++ = c;
-			/* Copy the character */
-			*target++ = c;
-			source++;
-			continue;
-		}
-
-		/* Slow path for possible multibyte characters */
-		len = PQmblen(source, encoding);
-
-		/* Copy the character */
-		for (i = 0; i < len; i++)
-		{
-			if (*source == '\0')
-				break;
-			*target++ = *source++;
-		}
-
-		/*
-		 * If we hit premature end of string (ie, incomplete multibyte
-		 * character), try to pad out to the correct length with spaces. We
-		 * may not be able to pad completely, but we will always be able to
-		 * insert at least one pad space (since we'd not have quoted a
-		 * multibyte character).  This should be enough to make a string that
-		 * the server will error out on.
-		 */
-		if (i < len)
-		{
-			char	   *stop = buf->data + buf->maxlen - 2;
-
-			for (; i < len; i++)
-			{
-				if (target >= stop)
-					break;
-				*target++ = ' ';
-			}
-			break;
-		}
-	}
-
-	/* Write the terminating quote and NUL character. */
-	*target++ = '\'';
-	*target = '\0';
-
-	buf->len = target - buf->data;
-}
-
-
-/*
- * Convert a string value to an SQL string literal and append it to
- * the given buffer.  Encoding and string syntax rules are as indicated
- * by current settings of the PGconn.
- */
-void
-appendStringLiteralConn(PQExpBuffer buf, const char *str, PGconn *conn)
-{
-	size_t		length = strlen(str);
-
-	/*
-	 * XXX This is a kluge to silence escape_string_warning in our utility
-	 * programs.  It should go away someday.
-	 */
-	if (strchr(str, '\\') != NULL && PQserverVersion(conn) >= 80100)
-	{
-		/* ensure we are not adjacent to an identifier */
-		if (buf->len > 0 && buf->data[buf->len - 1] != ' ')
-			appendPQExpBufferChar(buf, ' ');
-		appendPQExpBufferChar(buf, ESCAPE_STRING_SYNTAX);
-		appendStringLiteral(buf, str, PQclientEncoding(conn), false);
-		return;
-	}
-	/* XXX end kluge */
-
-	if (!enlargePQExpBuffer(buf, 2 * length + 2))
-		return;
-	appendPQExpBufferChar(buf, '\'');
-	buf->len += PQescapeStringConn(conn, buf->data + buf->len,
-								   str, length, NULL);
-	appendPQExpBufferChar(buf, '\'');
-}
-
-
-/*
- * Convert a string value to a dollar quoted literal and append it to
- * the given buffer. If the dqprefix parameter is not NULL then the
- * dollar quote delimiter will begin with that (after the opening $).
- *
- * No escaping is done at all on str, in compliance with the rules
- * for parsing dollar quoted strings.  Also, we need not worry about
- * encoding issues.
- */
-void
-appendStringLiteralDQ(PQExpBuffer buf, const char *str, const char *dqprefix)
-{
-	static const char suffixes[] = "_XXXXXXX";
-	int			nextchar = 0;
-	PQExpBuffer delimBuf = createPQExpBuffer();
-
-	/* start with $ + dqprefix if not NULL */
-	appendPQExpBufferChar(delimBuf, '$');
-	if (dqprefix)
-		appendPQExpBufferStr(delimBuf, dqprefix);
-
-	/*
-	 * Make sure we choose a delimiter which (without the trailing $) is not
-	 * present in the string being quoted. We don't check with the trailing $
-	 * because a string ending in $foo must not be quoted with $foo$.
-	 */
-	while (strstr(str, delimBuf->data) != NULL)
-	{
-		appendPQExpBufferChar(delimBuf, suffixes[nextchar++]);
-		nextchar %= sizeof(suffixes) - 1;
-	}
-
-	/* add trailing $ */
-	appendPQExpBufferChar(delimBuf, '$');
-
-	/* quote it and we are all done */
-	appendPQExpBufferStr(buf, delimBuf->data);
-	appendPQExpBufferStr(buf, str);
-	appendPQExpBufferStr(buf, delimBuf->data);
-
-	destroyPQExpBuffer(delimBuf);
-}
-
-
-/*
- * Convert a bytea value (presented as raw bytes) to an SQL string literal
- * and append it to the given buffer.  We assume the specified
- * standard_conforming_strings setting.
- *
- * This is needed in situations where we do not have a PGconn available.
- * Where we do, PQescapeByteaConn is a better choice.
- */
-void
-appendByteaLiteral(PQExpBuffer buf, const unsigned char *str, size_t length,
-				   bool std_strings)
-{
-	const unsigned char *source = str;
-	char	   *target;
-
-	static const char hextbl[] = "0123456789abcdef";
-
-	/*
-	 * This implementation is hard-wired to produce hex-format output. We do
-	 * not know the server version the output will be loaded into, so making
-	 * an intelligent format choice is impossible.  It might be better to
-	 * always use the old escaped format.
-	 */
-	if (!enlargePQExpBuffer(buf, 2 * length + 5))
-		return;
-
-	target = buf->data + buf->len;
-	*target++ = '\'';
-	if (!std_strings)
-		*target++ = '\\';
-	*target++ = '\\';
-	*target++ = 'x';
-
-	while (length-- > 0)
-	{
-		unsigned char c = *source++;
-
-		*target++ = hextbl[(c >> 4) & 0xF];
-		*target++ = hextbl[c & 0xF];
-	}
-
-	/* Write the terminating quote and NUL character. */
-	*target++ = '\'';
-	*target = '\0';
-
-	buf->len = target - buf->data;
-}
-
-
-/*
- * Deconstruct the text representation of a 1-dimensional Postgres array
- * into individual items.
- *
- * On success, returns true and sets *itemarray and *nitems to describe
- * an array of individual strings.  On parse failure, returns false;
- * *itemarray may exist or be NULL.
- *
- * NOTE: free'ing itemarray is sufficient to deallocate the working storage.
- */
-bool
-parsePGArray(const char *atext, char ***itemarray, int *nitems)
-{
-	int			inputlen;
-	char	  **items;
-	char	   *strings;
-	int			curitem;
-
-	/*
-	 * We expect input in the form of "{item,item,item}" where any item is
-	 * either raw data, or surrounded by double quotes (in which case embedded
-	 * characters including backslashes and quotes are backslashed).
-	 *
-	 * We build the result as an array of pointers followed by the actual
-	 * string data, all in one malloc block for convenience of deallocation.
-	 * The worst-case storage need is not more than one pointer and one
-	 * character for each input character (consider "{,,,,,,,,,,}").
-	 */
-	*itemarray = NULL;
-	*nitems = 0;
-	inputlen = strlen(atext);
-	if (inputlen < 2 || atext[0] != '{' || atext[inputlen - 1] != '}')
-		return false;			/* bad input */
-	items = (char **) malloc(inputlen * (sizeof(char *) + sizeof(char)));
-	if (items == NULL)
-		return false;			/* out of memory */
-	*itemarray = items;
-	strings = (char *) (items + inputlen);
-
-	atext++;					/* advance over initial '{' */
-	curitem = 0;
-	while (*atext != '}')
-	{
-		if (*atext == '\0')
-			return false;		/* premature end of string */
-		items[curitem] = strings;
-		while (*atext != '}' && *atext != ',')
-		{
-			if (*atext == '\0')
-				return false;	/* premature end of string */
-			if (*atext != '"')
-				*strings++ = *atext++;	/* copy unquoted data */
-			else
-			{
-				/* process quoted substring */
-				atext++;
-				while (*atext != '"')
-				{
-					if (*atext == '\0')
-						return false;	/* premature end of string */
-					if (*atext == '\\')
-					{
-						atext++;
-						if (*atext == '\0')
-							return false;		/* premature end of string */
-					}
-					*strings++ = *atext++;		/* copy quoted data */
-				}
-				atext++;
-			}
-		}
-		*strings++ = '\0';
-		if (*atext == ',')
-			atext++;
-		curitem++;
-	}
-	if (atext[1] != '\0')
-		return false;			/* bogus syntax (embedded '}') */
-	*nitems = curitem;
-	return true;
-}
 
 
 /*
@@ -480,6 +38,7 @@ parsePGArray(const char *atext, char ***itemarray, int *nitems)
  *		TABLE, SEQUENCE, FUNCTION, LANGUAGE, SCHEMA, DATABASE, TABLESPACE,
  *		FOREIGN DATA WRAPPER, SERVER, or LARGE OBJECT)
  *	acls: the ACL string fetched from the database
+ *	racls: the ACL string of any initial-but-now-revoked privileges
  *	owner: username of object owner (will be passed through fmtId); can be
  *		NULL or empty string to indicate "no owner known"
  *	prefix: string to prefix to each generated command; typically empty
@@ -496,13 +55,15 @@ parsePGArray(const char *atext, char ***itemarray, int *nitems)
  */
 bool
 buildACLCommands(const char *name, const char *subname,
-				 const char *type, const char *acls, const char *owner,
-				 const char *prefix, int remoteVersion,
+				 const char *type, const char *acls, const char *racls,
+				 const char *owner, const char *prefix, int remoteVersion,
 				 PQExpBuffer sql)
 {
 	bool		ok = true;
-	char	  **aclitems;
-	int			naclitems;
+	char	  **aclitems = NULL;
+	char	  **raclitems = NULL;
+	int			naclitems = 0;
+	int			nraclitems = 0;
 	int			i;
 	PQExpBuffer grantee,
 				grantor,
@@ -512,18 +73,31 @@ buildACLCommands(const char *name, const char *subname,
 				secondsql;
 	bool		found_owner_privs = false;
 
-	if (strlen(acls) == 0)
+	if (strlen(acls) == 0 && strlen(racls) == 0)
 		return true;			/* object has default permissions */
 
 	/* treat empty-string owner same as NULL */
 	if (owner && *owner == '\0')
 		owner = NULL;
 
-	if (!parsePGArray(acls, &aclitems, &naclitems))
+	if (strlen(acls) != 0)
 	{
-		if (aclitems)
-			free(aclitems);
-		return false;
+		if (!parsePGArray(acls, &aclitems, &naclitems))
+		{
+			if (aclitems)
+				free(aclitems);
+			return false;
+		}
+	}
+
+	if (strlen(racls) != 0)
+	{
+		if (!parsePGArray(racls, &raclitems, &nraclitems))
+		{
+			if (raclitems)
+				free(raclitems);
+			return false;
+		}
 	}
 
 	grantee = createPQExpBuffer();
@@ -532,24 +106,101 @@ buildACLCommands(const char *name, const char *subname,
 	privswgo = createPQExpBuffer();
 
 	/*
-	 * At the end, these two will be pasted together to form the result. But
-	 * the owner privileges need to go before the other ones to keep the
-	 * dependencies valid.  In recent versions this is normally the case, but
-	 * in old versions they come after the PUBLIC privileges and that results
-	 * in problems if we need to run REVOKE on the owner privileges.
+	 * At the end, these two will be pasted together to form the result.
+	 *
+	 * For older systems we use these to ensure that the owner privileges go
+	 * before the other ones, as a GRANT could create the default entry for
+	 * the object, which generally includes all rights for the owner. In more
+	 * recent versions we normally handle this because the owner rights come
+	 * first in the ACLs, but older versions might have them after the PUBLIC
+	 * privileges.
+	 *
+	 * For 9.6 and later systems, much of this changes.  With 9.6, we check
+	 * the default privileges for the objects at dump time and create two sets
+	 * of ACLs- "racls" which are the ACLs to REVOKE from the object (as the
+	 * object may have initial privileges on it, along with any default ACLs
+	 * which are not part of the current set of privileges), and regular
+	 * "acls", which are the ACLs to GRANT to the object.  We handle the
+	 * REVOKEs first, followed by the GRANTs.
 	 */
 	firstsql = createPQExpBuffer();
 	secondsql = createPQExpBuffer();
 
 	/*
-	 * Always start with REVOKE ALL FROM PUBLIC, so that we don't have to
-	 * wire-in knowledge about the default public privileges for different
-	 * kinds of objects.
+	 * For pre-9.6 systems, we always start with REVOKE ALL FROM PUBLIC, as we
+	 * don't wish to make any assumptions about what the default ACLs are, and
+	 * we do not collect them during the dump phase (and racls will always be
+	 * the empty set, see above).
+	 *
+	 * For 9.6 and later, if any revoke ACLs have been provided, then include
+	 * them in 'firstsql'.
+	 *
+	 * Revoke ACLs happen when an object starts out life with a set of
+	 * privileges (eg: GRANT SELECT ON pg_class TO PUBLIC;) and the user has
+	 * decided to revoke those rights.  Since those objects come into being
+	 * with those default privileges, we have to revoke them to match what the
+	 * current state of affairs is.  Note that we only started explicitly
+	 * tracking such initial rights in 9.6, and prior to that all initial
+	 * rights are actually handled by the simple 'REVOKE ALL .. FROM PUBLIC'
+	 * case, for initdb-created objects.  Prior to 9.6, we didn't handle
+	 * extensions correctly, but we do now by tracking their initial
+	 * privileges, in the same way we track initdb initial privileges, see
+	 * pg_init_privs.
 	 */
-	appendPQExpBuffer(firstsql, "%sREVOKE ALL", prefix);
-	if (subname)
-		appendPQExpBuffer(firstsql, "(%s)", subname);
-	appendPQExpBuffer(firstsql, " ON %s %s FROM PUBLIC;\n", type, name);
+	if (remoteVersion < 90600)
+	{
+		Assert(nraclitems == 0);
+
+		appendPQExpBuffer(firstsql, "%sREVOKE ALL", prefix);
+		if (subname)
+			appendPQExpBuffer(firstsql, "(%s)", subname);
+		appendPQExpBuffer(firstsql, " ON %s %s FROM PUBLIC;\n", type, name);
+	}
+	else
+	{
+		/* Scan individual REVOKE ACL items */
+		for (i = 0; i < nraclitems; i++)
+		{
+			if (!parseAclItem(raclitems[i], type, name, subname, remoteVersion,
+							  grantee, grantor, privs, privswgo))
+			{
+				ok = false;
+				break;
+			}
+
+			if (privs->len > 0 || privswgo->len > 0)
+			{
+				if (privs->len > 0)
+				{
+					appendPQExpBuffer(firstsql, "%sREVOKE %s ON %s %s FROM ",
+									  prefix, privs->data, type, name);
+					if (grantee->len == 0)
+						appendPQExpBufferStr(firstsql, "PUBLIC;\n");
+					else if (strncmp(grantee->data, "group ",
+									 strlen("group ")) == 0)
+						appendPQExpBuffer(firstsql, "GROUP %s;\n",
+									fmtId(grantee->data + strlen("group ")));
+					else
+						appendPQExpBuffer(firstsql, "%s;\n",
+										  fmtId(grantee->data));
+				}
+				if (privswgo->len > 0)
+				{
+					appendPQExpBuffer(firstsql,
+							   "%sREVOKE GRANT OPTION FOR %s ON %s %s FROM ",
+									  prefix, privswgo->data, type, name);
+					if (grantee->len == 0)
+						appendPQExpBufferStr(firstsql, "PUBLIC");
+					else if (strncmp(grantee->data, "group ",
+									 strlen("group ")) == 0)
+						appendPQExpBuffer(firstsql, "GROUP %s",
+									fmtId(grantee->data + strlen("group ")));
+					else
+						appendPQExpBufferStr(firstsql, fmtId(grantee->data));
+				}
+			}
+		}
+	}
 
 	/*
 	 * We still need some hacking though to cover the case where new default
@@ -580,7 +231,14 @@ buildACLCommands(const char *name, const char *subname,
 
 		if (privs->len > 0 || privswgo->len > 0)
 		{
-			if (owner
+			/*
+			 * Prior to 9.6, we had to handle owner privileges in a special
+			 * manner by first REVOKE'ing the rights and then GRANT'ing them
+			 * after.  With 9.6 and above, what we need to REVOKE and what we
+			 * need to GRANT is figured out when we dump and stashed into
+			 * "racls" and "acls", respectively.  See above.
+			 */
+			if (remoteVersion < 90600 && owner
 				&& strcmp(grantee->data, owner) == 0
 				&& strcmp(grantor->data, owner) == 0)
 			{
@@ -614,7 +272,14 @@ buildACLCommands(const char *name, const char *subname,
 			else
 			{
 				/*
-				 * Otherwise can assume we are starting from no privs.
+				 * For systems prior to 9.6, we can assume we are starting
+				 * from no privs at this point.
+				 *
+				 * For 9.6 and above, at this point we have issued REVOKE
+				 * statements for all initial and default privileges which are
+				 * no longer present on the object (as they were passed in as
+				 * 'racls') and we can simply GRANT the rights which are in
+				 * 'acls'.
 				 */
 				if (grantor->len > 0
 					&& (!owner || strcmp(owner, grantor->data) != 0))
@@ -657,9 +322,12 @@ buildACLCommands(const char *name, const char *subname,
 	}
 
 	/*
-	 * If we didn't find any owner privs, the owner must have revoked 'em all
+	 * For systems prior to 9.6, if we didn't find any owner privs, the owner
+	 * must have revoked 'em all.
+	 *
+	 * For 9.6 and above, we handle this through the 'racls'.  See above.
 	 */
-	if (!found_owner_privs && owner)
+	if (remoteVersion < 90600 && !found_owner_privs && owner)
 	{
 		appendPQExpBuffer(firstsql, "%sREVOKE ALL", prefix);
 		if (subname)
@@ -677,7 +345,11 @@ buildACLCommands(const char *name, const char *subname,
 	destroyPQExpBuffer(firstsql);
 	destroyPQExpBuffer(secondsql);
 
-	free(aclitems);
+	if (aclitems)
+		free(aclitems);
+
+	if (raclitems)
+		free(raclitems);
 
 	return ok;
 }
@@ -717,7 +389,7 @@ buildDefaultACLCommands(const char *type, const char *nspname,
 		appendPQExpBuffer(prefix, "IN SCHEMA %s ", fmtId(nspname));
 
 	result = buildACLCommands("", NULL,
-							  type, acls, owner,
+							  type, acls, "", owner,
 							  prefix->data, remoteVersion,
 							  sql);
 
@@ -955,218 +627,6 @@ AddAcl(PQExpBuffer aclbuf, const char *keyword, const char *subname)
 
 
 /*
- * processSQLNamePattern
- *
- * Scan a wildcard-pattern string and generate appropriate WHERE clauses
- * to limit the set of objects returned.  The WHERE clauses are appended
- * to the already-partially-constructed query in buf.  Returns whether
- * any clause was added.
- *
- * conn: connection query will be sent to (consulted for escaping rules).
- * buf: output parameter.
- * pattern: user-specified pattern option, or NULL if none ("*" is implied).
- * have_where: true if caller already emitted "WHERE" (clauses will be ANDed
- * onto the existing WHERE clause).
- * force_escape: always quote regexp special characters, even outside
- * double quotes (else they are quoted only between double quotes).
- * schemavar: name of query variable to match against a schema-name pattern.
- * Can be NULL if no schema.
- * namevar: name of query variable to match against an object-name pattern.
- * altnamevar: NULL, or name of an alternative variable to match against name.
- * visibilityrule: clause to use if we want to restrict to visible objects
- * (for example, "pg_catalog.pg_table_is_visible(p.oid)").  Can be NULL.
- *
- * Formatting note: the text already present in buf should end with a newline.
- * The appended text, if any, will end with one too.
- */
-bool
-processSQLNamePattern(PGconn *conn, PQExpBuffer buf, const char *pattern,
-					  bool have_where, bool force_escape,
-					  const char *schemavar, const char *namevar,
-					  const char *altnamevar, const char *visibilityrule)
-{
-	PQExpBufferData schemabuf;
-	PQExpBufferData namebuf;
-	int			encoding = PQclientEncoding(conn);
-	bool		inquotes;
-	const char *cp;
-	int			i;
-	bool		added_clause = false;
-
-#define WHEREAND() \
-	(appendPQExpBufferStr(buf, have_where ? "  AND " : "WHERE "), \
-	 have_where = true, added_clause = true)
-
-	if (pattern == NULL)
-	{
-		/* Default: select all visible objects */
-		if (visibilityrule)
-		{
-			WHEREAND();
-			appendPQExpBuffer(buf, "%s\n", visibilityrule);
-		}
-		return added_clause;
-	}
-
-	initPQExpBuffer(&schemabuf);
-	initPQExpBuffer(&namebuf);
-
-	/*
-	 * Parse the pattern, converting quotes and lower-casing unquoted letters.
-	 * Also, adjust shell-style wildcard characters into regexp notation.
-	 *
-	 * We surround the pattern with "^(...)$" to force it to match the whole
-	 * string, as per SQL practice.  We have to have parens in case the string
-	 * contains "|", else the "^" and "$" will be bound into the first and
-	 * last alternatives which is not what we want.
-	 *
-	 * Note: the result of this pass is the actual regexp pattern(s) we want
-	 * to execute.  Quoting/escaping into SQL literal format will be done
-	 * below using appendStringLiteralConn().
-	 */
-	appendPQExpBufferStr(&namebuf, "^(");
-
-	inquotes = false;
-	cp = pattern;
-
-	while (*cp)
-	{
-		char		ch = *cp;
-
-		if (ch == '"')
-		{
-			if (inquotes && cp[1] == '"')
-			{
-				/* emit one quote, stay in inquotes mode */
-				appendPQExpBufferChar(&namebuf, '"');
-				cp++;
-			}
-			else
-				inquotes = !inquotes;
-			cp++;
-		}
-		else if (!inquotes && isupper((unsigned char) ch))
-		{
-			appendPQExpBufferChar(&namebuf,
-								  pg_tolower((unsigned char) ch));
-			cp++;
-		}
-		else if (!inquotes && ch == '*')
-		{
-			appendPQExpBufferStr(&namebuf, ".*");
-			cp++;
-		}
-		else if (!inquotes && ch == '?')
-		{
-			appendPQExpBufferChar(&namebuf, '.');
-			cp++;
-		}
-		else if (!inquotes && ch == '.')
-		{
-			/* Found schema/name separator, move current pattern to schema */
-			resetPQExpBuffer(&schemabuf);
-			appendPQExpBufferStr(&schemabuf, namebuf.data);
-			resetPQExpBuffer(&namebuf);
-			appendPQExpBufferStr(&namebuf, "^(");
-			cp++;
-		}
-		else if (ch == '$')
-		{
-			/*
-			 * Dollar is always quoted, whether inside quotes or not. The
-			 * reason is that it's allowed in SQL identifiers, so there's a
-			 * significant use-case for treating it literally, while because
-			 * we anchor the pattern automatically there is no use-case for
-			 * having it possess its regexp meaning.
-			 */
-			appendPQExpBufferStr(&namebuf, "\\$");
-			cp++;
-		}
-		else
-		{
-			/*
-			 * Ordinary data character, transfer to pattern
-			 *
-			 * Inside double quotes, or at all times if force_escape is true,
-			 * quote regexp special characters with a backslash to avoid
-			 * regexp errors.  Outside quotes, however, let them pass through
-			 * as-is; this lets knowledgeable users build regexp expressions
-			 * that are more powerful than shell-style patterns.
-			 */
-			if ((inquotes || force_escape) &&
-				strchr("|*+?()[]{}.^$\\", ch))
-				appendPQExpBufferChar(&namebuf, '\\');
-			i = PQmblen(cp, encoding);
-			while (i-- && *cp)
-			{
-				appendPQExpBufferChar(&namebuf, *cp);
-				cp++;
-			}
-		}
-	}
-
-	/*
-	 * Now decide what we need to emit.  Note there will be a leading "^(" in
-	 * the patterns in any case.
-	 */
-	if (namebuf.len > 2)
-	{
-		/* We have a name pattern, so constrain the namevar(s) */
-
-		appendPQExpBufferStr(&namebuf, ")$");
-		/* Optimize away a "*" pattern */
-		if (strcmp(namebuf.data, "^(.*)$") != 0)
-		{
-			WHEREAND();
-			if (altnamevar)
-			{
-				appendPQExpBuffer(buf, "(%s ~ ", namevar);
-				appendStringLiteralConn(buf, namebuf.data, conn);
-				appendPQExpBuffer(buf, "\n        OR %s ~ ", altnamevar);
-				appendStringLiteralConn(buf, namebuf.data, conn);
-				appendPQExpBufferStr(buf, ")\n");
-			}
-			else
-			{
-				appendPQExpBuffer(buf, "%s ~ ", namevar);
-				appendStringLiteralConn(buf, namebuf.data, conn);
-				appendPQExpBufferChar(buf, '\n');
-			}
-		}
-	}
-
-	if (schemabuf.len > 2)
-	{
-		/* We have a schema pattern, so constrain the schemavar */
-
-		appendPQExpBufferStr(&schemabuf, ")$");
-		/* Optimize away a "*" pattern */
-		if (strcmp(schemabuf.data, "^(.*)$") != 0 && schemavar)
-		{
-			WHEREAND();
-			appendPQExpBuffer(buf, "%s ~ ", schemavar);
-			appendStringLiteralConn(buf, schemabuf.data, conn);
-			appendPQExpBufferChar(buf, '\n');
-		}
-	}
-	else
-	{
-		/* No schema pattern given, so select only visible objects */
-		if (visibilityrule)
-		{
-			WHEREAND();
-			appendPQExpBuffer(buf, "%s\n", visibilityrule);
-		}
-	}
-
-	termPQExpBuffer(&schemabuf);
-	termPQExpBuffer(&namebuf);
-
-	return added_clause;
-#undef WHEREAND
-}
-
-/*
  * buildShSecLabelQuery
  *
  * Build a query to retrieve security labels for a shared object.
@@ -1210,51 +670,108 @@ emitShSecLabels(PGconn *conn, PGresult *res, PQExpBuffer buffer,
 	}
 }
 
-
+/*
+ * buildACLQueries
+ *
+ * Build the subqueries to extract out the correct set of ACLs to be
+ * GRANT'd and REVOKE'd for the specific kind of object, accounting for any
+ * initial privileges (from pg_init_privs) and based on if we are in binary
+ * upgrade mode or not.
+ *
+ * Also builds subqueries to extract out the set of ACLs to go from the object
+ * default privileges to the privileges in pg_init_privs, if we are in binary
+ * upgrade mode, so that those privileges can be set up and recorded in the new
+ * cluster before the regular privileges are added on top of those.
+ */
 void
-simple_string_list_append(SimpleStringList *list, const char *val)
+buildACLQueries(PQExpBuffer acl_subquery, PQExpBuffer racl_subquery,
+				PQExpBuffer init_acl_subquery, PQExpBuffer init_racl_subquery,
+				const char *acl_column, const char *acl_owner,
+				const char *obj_kind, bool binary_upgrade)
 {
-	SimpleStringListCell *cell;
+	/*
+	 * To get the delta from what the permissions were at creation time
+	 * (either initdb or CREATE EXTENSION) vs. what they are now, we have to
+	 * look at two things:
+	 *
+	 * What privileges have been added, which we calculate by extracting all
+	 * the current privileges (using the set of default privileges for the
+	 * object type if current privileges are NULL) and then removing those
+	 * which existed at creation time (again, using the set of default
+	 * privileges for the object type if there were no creation time
+	 * privileges).
+	 *
+	 * What privileges have been removed, which we calculate by extracting the
+	 * privileges as they were at creation time (or the default privileges, as
+	 * above), and then removing the current privileges (or the default
+	 * privileges, if current privileges are NULL).
+	 *
+	 * As a good cross-check, both directions of these checks should result in
+	 * the empty set if both the current ACL and the initial privs are NULL
+	 * (meaning, in practice, that the default ACLs were there at init time
+	 * and is what the current privileges are).
+	 *
+	 * We always perform this delta on all ACLs and expect that by the time
+	 * these are run the initial privileges will be in place, even in a binary
+	 * upgrade situation (see below).
+	 */
+	printfPQExpBuffer(acl_subquery, "(SELECT pg_catalog.array_agg(acl) FROM "
+					  "(SELECT pg_catalog.unnest(coalesce(%s,pg_catalog.acldefault(%s,%s))) AS acl "
+					  "EXCEPT "
+					  "SELECT pg_catalog.unnest(coalesce(pip.initprivs,pg_catalog.acldefault(%s,%s)))) as foo)",
+					  acl_column,
+					  obj_kind,
+					  acl_owner,
+					  obj_kind,
+					  acl_owner);
 
-	cell = (SimpleStringListCell *)
-		pg_malloc(offsetof(SimpleStringListCell, val) +strlen(val) + 1);
+	printfPQExpBuffer(racl_subquery, "(SELECT pg_catalog.array_agg(acl) FROM "
+					  "(SELECT pg_catalog.unnest(coalesce(pip.initprivs,pg_catalog.acldefault(%s,%s))) AS acl "
+					  "EXCEPT "
+					  "SELECT pg_catalog.unnest(coalesce(%s,pg_catalog.acldefault(%s,%s)))) as foo)",
+					  obj_kind,
+					  acl_owner,
+					  acl_column,
+					  obj_kind,
+					  acl_owner);
 
-	cell->next = NULL;
-	cell->touched = false;
-	strcpy(cell->val, val);
+	/*
+	 * In binary upgrade mode we don't run the extension script but instead
+	 * dump out the objects independently and then recreate them.  To preserve
+	 * the initial privileges which were set on extension objects, we need to
+	 * grab the set of GRANT and REVOKE commands necessary to get from the
+	 * default privileges of an object to the initial privileges as recorded
+	 * in pg_init_privs.
+	 *
+	 * These will then be run ahead of the regular ACL commands, which were
+	 * calculated using the queries above, inside of a block which sets a flag
+	 * to indicate that the backend should record the results of these GRANT
+	 * and REVOKE statements into pg_init_privs.  This is how we preserve the
+	 * contents of that catalog across binary upgrades.
+	 */
+	if (binary_upgrade)
+	{
+		printfPQExpBuffer(init_acl_subquery,
+						  "CASE WHEN privtype = 'e' THEN "
+						  "(SELECT pg_catalog.array_agg(acl) FROM "
+						  "(SELECT pg_catalog.unnest(pip.initprivs) AS acl "
+						  "EXCEPT "
+		"SELECT pg_catalog.unnest(pg_catalog.acldefault(%s,%s))) as foo) END",
+						  obj_kind,
+						  acl_owner);
 
-	if (list->tail)
-		list->tail->next = cell;
+		printfPQExpBuffer(init_racl_subquery,
+						  "CASE WHEN privtype = 'e' THEN "
+						  "(SELECT pg_catalog.array_agg(acl) FROM "
+			"(SELECT pg_catalog.unnest(pg_catalog.acldefault(%s,%s)) AS acl "
+						  "EXCEPT "
+					  "SELECT pg_catalog.unnest(pip.initprivs)) as foo) END",
+						  obj_kind,
+						  acl_owner);
+	}
 	else
-		list->head = cell;
-	list->tail = cell;
-}
-
-bool
-simple_string_list_member(SimpleStringList *list, const char *val)
-{
-	SimpleStringListCell *cell;
-
-	for (cell = list->head; cell; cell = cell->next)
 	{
-		if (strcmp(cell->val, val) == 0)
-		{
-			cell->touched = true;
-			return true;
-		}
+		printfPQExpBuffer(init_acl_subquery, "NULL");
+		printfPQExpBuffer(init_racl_subquery, "NULL");
 	}
-	return false;
-}
-
-const char *
-simple_string_list_not_touched(SimpleStringList *list)
-{
-	SimpleStringListCell *cell;
-
-	for (cell = list->head; cell; cell = cell->next)
-	{
-		if (!cell->touched)
-			return cell->val;
-	}
-	return NULL;
 }

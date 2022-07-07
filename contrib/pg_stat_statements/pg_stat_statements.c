@@ -289,7 +289,7 @@ static void pgss_post_parse_analyze(ParseState *pstate, Query *query);
 static void pgss_ExecutorStart(QueryDesc *queryDesc, int eflags);
 static void pgss_ExecutorRun(QueryDesc *queryDesc,
 				 ScanDirection direction,
-				 long count);
+				 uint64 count);
 static void pgss_ExecutorFinish(QueryDesc *queryDesc);
 static void pgss_ExecutorEnd(QueryDesc *queryDesc);
 static void pgss_ProcessUtility(Node *parsetree, const char *queryString,
@@ -741,11 +741,7 @@ pgss_shmem_shutdown(int code, Datum arg)
 	/*
 	 * Rename file into place, so we atomically replace any old one.
 	 */
-	if (rename(PGSS_DUMP_FILE ".tmp", PGSS_DUMP_FILE) != 0)
-		ereport(LOG,
-				(errcode_for_file_access(),
-				 errmsg("could not rename pg_stat_statement file \"%s\": %m",
-						PGSS_DUMP_FILE ".tmp")));
+	(void) durable_rename(PGSS_DUMP_FILE ".tmp", PGSS_DUMP_FILE, LOG);
 
 	/* Unlink query-texts file; it's not needed while shutdown */
 	unlink(PGSS_TEXT_FILE);
@@ -870,7 +866,7 @@ pgss_ExecutorStart(QueryDesc *queryDesc, int eflags)
  * ExecutorRun hook: all we need do is track nesting depth
  */
 static void
-pgss_ExecutorRun(QueryDesc *queryDesc, ScanDirection direction, long count)
+pgss_ExecutorRun(QueryDesc *queryDesc, ScanDirection direction, uint64 count)
 {
 	nested_level++;
 	PG_TRY();
@@ -1005,13 +1001,7 @@ pgss_ProcessUtility(Node *parsetree, const char *queryString,
 		/* parse command tag to retrieve the number of affected rows. */
 		if (completionTag &&
 			strncmp(completionTag, "COPY ", 5) == 0)
-		{
-#ifdef HAVE_STRTOULL
-			rows = strtoull(completionTag + 5, NULL, 10);
-#else
-			rows = strtoul(completionTag + 5, NULL, 10);
-#endif
-		}
+			rows = pg_strtouint64(completionTag + 5, NULL, 10);
 		else
 			rows = 0;
 

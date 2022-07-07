@@ -255,39 +255,39 @@ DATA(insert OID = 103 (  scalarltsel	   PGNSP PGUID 12 1 0 0 0 f f f f t f s s 4
 DESCR("restriction selectivity of < and related operators on scalar datatypes");
 DATA(insert OID = 104 (  scalargtsel	   PGNSP PGUID 12 1 0 0 0 f f f f t f s s 4 0 701 "2281 26 2281 23" _null_ _null_ _null_ _null_ _null_	scalargtsel _null_ _null_ _null_ ));
 DESCR("restriction selectivity of > and related operators on scalar datatypes");
-DATA(insert OID = 105 (  eqjoinsel		   PGNSP PGUID 12 1 0 0 0 f f f f t f s s 5 0 701 "2281 26 2281 21 2281" _null_ _null_ _null_ _null_ _null_	eqjoinsel _null_ _null_ _null_ ));
+DATA(insert OID = 105 (  eqjoinsel		   PGNSP PGUID 12 1 0 0 0 f f f f t f s s 5 0 701 "2281 26 2281 21 2281" _null_ _null_ _null_ _null_ _null_ eqjoinsel _null_ _null_ _null_ ));
 DESCR("join selectivity of = and related operators");
-DATA(insert OID = 106 (  neqjoinsel		   PGNSP PGUID 12 1 0 0 0 f f f f t f s s 5 0 701 "2281 26 2281 21 2281" _null_ _null_ _null_ _null_ _null_	neqjoinsel _null_ _null_ _null_ ));
+DATA(insert OID = 106 (  neqjoinsel		   PGNSP PGUID 12 1 0 0 0 f f f f t f s s 5 0 701 "2281 26 2281 21 2281" _null_ _null_ _null_ _null_ _null_ neqjoinsel _null_ _null_ _null_ ));
 DESCR("join selectivity of <> and related operators");
-DATA(insert OID = 107 (  scalarltjoinsel   PGNSP PGUID 12 1 0 0 0 f f f f t f s s 5 0 701 "2281 26 2281 21 2281" _null_ _null_ _null_ _null_ _null_	scalarltjoinsel _null_ _null_ _null_ ));
+DATA(insert OID = 107 (  scalarltjoinsel   PGNSP PGUID 12 1 0 0 0 f f f f t f s s 5 0 701 "2281 26 2281 21 2281" _null_ _null_ _null_ _null_ _null_ scalarltjoinsel _null_ _null_ _null_ ));
 DESCR("join selectivity of < and related operators on scalar datatypes");
-DATA(insert OID = 108 (  scalargtjoinsel   PGNSP PGUID 12 1 0 0 0 f f f f t f s s 5 0 701 "2281 26 2281 21 2281" _null_ _null_ _null_ _null_ _null_	scalargtjoinsel _null_ _null_ _null_ ));
+DATA(insert OID = 108 (  scalargtjoinsel   PGNSP PGUID 12 1 0 0 0 f f f f t f s s 5 0 701 "2281 26 2281 21 2281" _null_ _null_ _null_ _null_ _null_ scalargtjoinsel _null_ _null_ _null_ ));
 DESCR("join selectivity of > and related operators on scalar datatypes");
 
 DATA(insert OID =  109 (  unknownin		   PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 705 "2275" _null_ _null_ _null_ _null_ _null_ unknownin _null_ _null_ _null_ ));
 DESCR("I/O");
-DATA(insert OID =  110 (  unknownout	   PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 2275 "705" _null_ _null_ _null_ _null_ _null_	unknownout _null_ _null_ _null_ ));
+DATA(insert OID =  110 (  unknownout	   PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 2275 "705" _null_ _null_ _null_ _null_ _null_ unknownout _null_ _null_ _null_ ));
 DESCR("I/O");
 DATA(insert OID = 111 (  numeric_fac	   PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 1700 "20" _null_ _null_ _null_ _null_ _null_	numeric_fac _null_ _null_ _null_ ));
 
 DATA(insert OID = 115 (  box_above_eq	   PGNSP PGUID 12 1 0 0 0 f f f f t f i s 2 0 16 "603 603" _null_ _null_ _null_ _null_ _null_ box_above_eq _null_ _null_ _null_ ));
 DATA(insert OID = 116 (  box_below_eq	   PGNSP PGUID 12 1 0 0 0 f f f f t f i s 2 0 16 "603 603" _null_ _null_ _null_ _null_ _null_ box_below_eq _null_ _null_ _null_ ));
 
-DATA(insert OID = 117 (  point_in		   PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 600 "2275" _null_ _null_ _null_ _null_ _null_	point_in _null_ _null_ _null_ ));
+DATA(insert OID = 117 (  point_in		   PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 600 "2275" _null_ _null_ _null_ _null_ _null_ point_in _null_ _null_ _null_ ));
 DESCR("I/O");
-DATA(insert OID = 118 (  point_out		   PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 2275 "600" _null_ _null_ _null_ _null_ _null_	point_out _null_ _null_ _null_ ));
+DATA(insert OID = 118 (  point_out		   PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 2275 "600" _null_ _null_ _null_ _null_ _null_ point_out _null_ _null_ _null_ ));
 DESCR("I/O");
-DATA(insert OID = 119 (  lseg_in		   PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 601 "2275" _null_ _null_ _null_ _null_ _null_	lseg_in _null_ _null_ _null_ ));
+DATA(insert OID = 119 (  lseg_in		   PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 601 "2275" _null_ _null_ _null_ _null_ _null_ lseg_in _null_ _null_ _null_ ));
 DESCR("I/O");
-DATA(insert OID = 120 (  lseg_out		   PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 2275 "601" _null_ _null_ _null_ _null_ _null_	lseg_out _null_ _null_ _null_ ));
+DATA(insert OID = 120 (  lseg_out		   PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 2275 "601" _null_ _null_ _null_ _null_ _null_ lseg_out _null_ _null_ _null_ ));
 DESCR("I/O");
-DATA(insert OID = 121 (  path_in		   PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 602 "2275" _null_ _null_ _null_ _null_ _null_	path_in _null_ _null_ _null_ ));
+DATA(insert OID = 121 (  path_in		   PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 602 "2275" _null_ _null_ _null_ _null_ _null_ path_in _null_ _null_ _null_ ));
 DESCR("I/O");
-DATA(insert OID = 122 (  path_out		   PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 2275 "602" _null_ _null_ _null_ _null_ _null_	path_out _null_ _null_ _null_ ));
+DATA(insert OID = 122 (  path_out		   PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 2275 "602" _null_ _null_ _null_ _null_ _null_ path_out _null_ _null_ _null_ ));
 DESCR("I/O");
-DATA(insert OID = 123 (  box_in			   PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 603 "2275" _null_ _null_ _null_ _null_ _null_	box_in _null_ _null_ _null_ ));
+DATA(insert OID = 123 (  box_in			   PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 603 "2275" _null_ _null_ _null_ _null_ _null_ box_in _null_ _null_ _null_ ));
 DESCR("I/O");
-DATA(insert OID = 124 (  box_out		   PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 2275 "603" _null_ _null_ _null_ _null_ _null_	box_out _null_ _null_ _null_ ));
+DATA(insert OID = 124 (  box_out		   PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 2275 "603" _null_ _null_ _null_ _null_ _null_ box_out _null_ _null_ _null_ ));
 DESCR("I/O");
 DATA(insert OID = 125 (  box_overlap	   PGNSP PGUID 12 1 0 0 0 f f f f t f i s 2 0 16 "603 603" _null_ _null_ _null_ _null_ _null_ box_overlap _null_ _null_ _null_ ));
 DATA(insert OID = 126 (  box_ge			   PGNSP PGUID 12 1 0 0 0 f f f f t f i s 2 0 16 "603 603" _null_ _null_ _null_ _null_ _null_ box_ge _null_ _null_ _null_ ));
@@ -305,7 +305,7 @@ DATA(insert OID = 137 (  on_ppath		   PGNSP PGUID 12 1 0 0 0 f f f f t f i s 2 0
 DATA(insert OID = 138 (  box_center		   PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 600 "603" _null_ _null_ _null_ _null_ _null_	box_center _null_ _null_ _null_ ));
 DATA(insert OID = 139 (  areasel		   PGNSP PGUID 12 1 0 0 0 f f f f t f s s 4 0 701 "2281 26 2281 23" _null_ _null_ _null_ _null_ _null_	areasel _null_ _null_ _null_ ));
 DESCR("restriction selectivity for area-comparison operators");
-DATA(insert OID = 140 (  areajoinsel	   PGNSP PGUID 12 1 0 0 0 f f f f t f s s 5 0 701 "2281 26 2281 21 2281" _null_ _null_ _null_ _null_ _null_	areajoinsel _null_ _null_ _null_ ));
+DATA(insert OID = 140 (  areajoinsel	   PGNSP PGUID 12 1 0 0 0 f f f f t f s s 5 0 701 "2281 26 2281 21 2281" _null_ _null_ _null_ _null_ _null_ areajoinsel _null_ _null_ _null_ ));
 DESCR("join selectivity for area-comparison operators");
 DATA(insert OID = 141 (  int4mul		   PGNSP PGUID 12 1 0 0 0 f f f f t f i s 2 0 23 "23 23" _null_ _null_ _null_ _null_ _null_ int4mul _null_ _null_ _null_ ));
 DATA(insert OID = 144 (  int4ne			   PGNSP PGUID 12 1 0 0 0 f f f t t f i s 2 0 16 "23 23" _null_ _null_ _null_ _null_ _null_ int4ne _null_ _null_ _null_ ));
@@ -368,9 +368,9 @@ DESCR("I/O");
 
 /* OIDS 200 - 299 */
 
-DATA(insert OID = 200 (  float4in		   PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 700 "2275" _null_ _null_ _null_ _null_ _null_	float4in _null_ _null_ _null_ ));
+DATA(insert OID = 200 (  float4in		   PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 700 "2275" _null_ _null_ _null_ _null_ _null_ float4in _null_ _null_ _null_ ));
 DESCR("I/O");
-DATA(insert OID = 201 (  float4out		   PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 2275 "700" _null_ _null_ _null_ _null_ _null_	float4out _null_ _null_ _null_ ));
+DATA(insert OID = 201 (  float4out		   PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 2275 "700" _null_ _null_ _null_ _null_ _null_ float4out _null_ _null_ _null_ ));
 DESCR("I/O");
 DATA(insert OID = 202 (  float4mul		   PGNSP PGUID 12 1 0 0 0 f f f f t f i s 2 0 700 "700 700" _null_ _null_ _null_ _null_ _null_	float4mul _null_ _null_ _null_ ));
 DATA(insert OID = 203 (  float4div		   PGNSP PGUID 12 1 0 0 0 f f f f t f i s 2 0 700 "700 700" _null_ _null_ _null_ _null_ _null_	float4div _null_ _null_ _null_ ));
@@ -388,9 +388,9 @@ DESCR("smaller of two");
 DATA(insert OID = 212 (  int4um			   PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 23 "23" _null_ _null_ _null_ _null_ _null_ int4um _null_ _null_ _null_ ));
 DATA(insert OID = 213 (  int2um			   PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 21 "21" _null_ _null_ _null_ _null_ _null_ int2um _null_ _null_ _null_ ));
 
-DATA(insert OID = 214 (  float8in		   PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 701 "2275" _null_ _null_ _null_ _null_ _null_	float8in _null_ _null_ _null_ ));
+DATA(insert OID = 214 (  float8in		   PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 701 "2275" _null_ _null_ _null_ _null_ _null_ float8in _null_ _null_ _null_ ));
 DESCR("I/O");
-DATA(insert OID = 215 (  float8out		   PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 2275 "701" _null_ _null_ _null_ _null_ _null_	float8out _null_ _null_ _null_ ));
+DATA(insert OID = 215 (  float8out		   PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 2275 "701" _null_ _null_ _null_ _null_ _null_ float8out _null_ _null_ _null_ ));
 DESCR("I/O");
 DATA(insert OID = 216 (  float8mul		   PGNSP PGUID 12 1 0 0 0 f f f f t f i s 2 0 701 "701 701" _null_ _null_ _null_ _null_ _null_	float8mul _null_ _null_ _null_ ));
 DATA(insert OID = 217 (  float8div		   PGNSP PGUID 12 1 0 0 0 f f f f t f i s 2 0 701 "701 701" _null_ _null_ _null_ _null_ _null_	float8div _null_ _null_ _null_ ));
@@ -400,6 +400,8 @@ DATA(insert OID = 220 (  float8um		   PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0
 DATA(insert OID = 221 (  float8abs		   PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 701 "701" _null_ _null_ _null_ _null_ _null_	float8abs _null_ _null_ _null_ ));
 DATA(insert OID = 222 (  float8_accum	   PGNSP PGUID 12 1 0 0 0 f f f f t f i s 2 0 1022 "1022 701" _null_ _null_ _null_ _null_ _null_ float8_accum _null_ _null_ _null_ ));
 DESCR("aggregate transition function");
+DATA(insert OID = 276 (  float8_combine		   PGNSP PGUID 12 1 0 0 0 f f f f t f i s 2 0 1022 "1022 1022" _null_ _null_ _null_ _null_ _null_ float8_combine _null_ _null_ _null_ ));
+DESCR("aggregate combine function");
 DATA(insert OID = 223 (  float8larger	   PGNSP PGUID 12 1 0 0 0 f f f f t f i s 2 0 701 "701 701" _null_ _null_ _null_ _null_ _null_	float8larger _null_ _null_ _null_ ));
 DESCR("larger of two");
 DATA(insert OID = 224 (  float8smaller	   PGNSP PGUID 12 1 0 0 0 f f f f t f i s 2 0 701 "701 701" _null_ _null_ _null_ _null_ _null_	float8smaller _null_ _null_ _null_ ));
@@ -414,11 +416,11 @@ DESCR("round to nearest integer");
 DATA(insert OID = 229 (  dtrunc			   PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 701 "701" _null_ _null_ _null_ _null_ _null_	dtrunc _null_ _null_ _null_ ));
 DESCR("truncate to integer");
 DATA(insert OID = 2308 ( ceil			   PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 701 "701" _null_ _null_ _null_ _null_ _null_	dceil _null_ _null_ _null_ ));
-DESCR("smallest integer >= value");
+DESCR("nearest integer >= value");
 DATA(insert OID = 2320 ( ceiling		   PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 701 "701" _null_ _null_ _null_ _null_ _null_	dceil _null_ _null_ _null_ ));
-DESCR("smallest integer >= value");
+DESCR("nearest integer >= value");
 DATA(insert OID = 2309 ( floor			   PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 701 "701" _null_ _null_ _null_ _null_ _null_	dfloor _null_ _null_ _null_ ));
-DESCR("largest integer <= value");
+DESCR("nearest integer <= value");
 DATA(insert OID = 2310 ( sign			   PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 701 "701" _null_ _null_ _null_ _null_ _null_	dsign _null_ _null_ _null_ ));
 DESCR("sign of value");
 DATA(insert OID = 230 (  dsqrt			   PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 701 "701" _null_ _null_ _null_ _null_ _null_	dsqrt _null_ _null_ _null_ ));
@@ -438,24 +440,24 @@ DATA(insert OID = 238 (  int2			   PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 21
 DESCR("convert float4 to int2");
 DATA(insert OID = 239 (  line_distance	   PGNSP PGUID 12 1 0 0 0 f f f f t f i s 2 0 701 "628 628" _null_ _null_ _null_ _null_ _null_	line_distance _null_ _null_ _null_ ));
 
-DATA(insert OID = 240 (  abstimein		   PGNSP PGUID 12 1 0 0 0 f f f f t f s s 1 0 702 "2275" _null_ _null_ _null_ _null_ _null_	abstimein _null_ _null_ _null_ ));
+DATA(insert OID = 240 (  abstimein		   PGNSP PGUID 12 1 0 0 0 f f f f t f s s 1 0 702 "2275" _null_ _null_ _null_ _null_ _null_ abstimein _null_ _null_ _null_ ));
 DESCR("I/O");
-DATA(insert OID = 241 (  abstimeout		   PGNSP PGUID 12 1 0 0 0 f f f f t f s s 1 0 2275 "702" _null_ _null_ _null_ _null_ _null_	abstimeout _null_ _null_ _null_ ));
+DATA(insert OID = 241 (  abstimeout		   PGNSP PGUID 12 1 0 0 0 f f f f t f s s 1 0 2275 "702" _null_ _null_ _null_ _null_ _null_ abstimeout _null_ _null_ _null_ ));
 DESCR("I/O");
-DATA(insert OID = 242 (  reltimein		   PGNSP PGUID 12 1 0 0 0 f f f f t f s s 1 0 703 "2275" _null_ _null_ _null_ _null_ _null_	reltimein _null_ _null_ _null_ ));
+DATA(insert OID = 242 (  reltimein		   PGNSP PGUID 12 1 0 0 0 f f f f t f s s 1 0 703 "2275" _null_ _null_ _null_ _null_ _null_ reltimein _null_ _null_ _null_ ));
 DESCR("I/O");
-DATA(insert OID = 243 (  reltimeout		   PGNSP PGUID 12 1 0 0 0 f f f f t f s s 1 0 2275 "703" _null_ _null_ _null_ _null_ _null_	reltimeout _null_ _null_ _null_ ));
+DATA(insert OID = 243 (  reltimeout		   PGNSP PGUID 12 1 0 0 0 f f f f t f s s 1 0 2275 "703" _null_ _null_ _null_ _null_ _null_ reltimeout _null_ _null_ _null_ ));
 DESCR("I/O");
 DATA(insert OID = 244 (  timepl			   PGNSP PGUID 12 1 0 0 0 f f f f t f i s 2 0 702 "702 703" _null_ _null_ _null_ _null_ _null_	timepl _null_ _null_ _null_ ));
 DATA(insert OID = 245 (  timemi			   PGNSP PGUID 12 1 0 0 0 f f f f t f i s 2 0 702 "702 703" _null_ _null_ _null_ _null_ _null_	timemi _null_ _null_ _null_ ));
-DATA(insert OID = 246 (  tintervalin	   PGNSP PGUID 12 1 0 0 0 f f f f t f s s 1 0 704 "2275" _null_ _null_ _null_ _null_ _null_	tintervalin _null_ _null_ _null_ ));
+DATA(insert OID = 246 (  tintervalin	   PGNSP PGUID 12 1 0 0 0 f f f f t f s s 1 0 704 "2275" _null_ _null_ _null_ _null_ _null_ tintervalin _null_ _null_ _null_ ));
 DESCR("I/O");
-DATA(insert OID = 247 (  tintervalout	   PGNSP PGUID 12 1 0 0 0 f f f f t f s s 1 0 2275 "704" _null_ _null_ _null_ _null_ _null_	tintervalout _null_ _null_ _null_ ));
+DATA(insert OID = 247 (  tintervalout	   PGNSP PGUID 12 1 0 0 0 f f f f t f s s 1 0 2275 "704" _null_ _null_ _null_ _null_ _null_ tintervalout _null_ _null_ _null_ ));
 DESCR("I/O");
 DATA(insert OID = 248 (  intinterval	   PGNSP PGUID 12 1 0 0 0 f f f f t f i s 2 0 16 "702 704" _null_ _null_ _null_ _null_ _null_ intinterval _null_ _null_ _null_ ));
 DATA(insert OID = 249 (  tintervalrel	   PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 703 "704" _null_ _null_ _null_ _null_ _null_	tintervalrel _null_ _null_ _null_ ));
 DESCR("tinterval to reltime");
-DATA(insert OID = 250 (  timenow		   PGNSP PGUID 12 1 0 0 0 f f f f t f s s 0 0 702 "" _null_ _null_ _null_ _null_ _null_	timenow _null_ _null_ _null_ ));
+DATA(insert OID = 250 (  timenow		   PGNSP PGUID 12 1 0 0 0 f f f f t f s s 0 0 702 "" _null_ _null_ _null_ _null_ _null_ timenow _null_ _null_ _null_ ));
 DESCR("current date and time (abstime)");
 DATA(insert OID = 251 (  abstimeeq		   PGNSP PGUID 12 1 0 0 0 f f f t t f i s 2 0 16 "702 702" _null_ _null_ _null_ _null_ _null_ abstimeeq _null_ _null_ _null_ ));
 DATA(insert OID = 252 (  abstimene		   PGNSP PGUID 12 1 0 0 0 f f f t t f i s 2 0 16 "702 702" _null_ _null_ _null_ _null_ _null_ abstimene _null_ _null_ _null_ ));
@@ -561,11 +563,18 @@ DATA(insert OID = 334 (  spghandler		PGNSP PGUID 12 1 0 0 0 f f f f t f v s 1 0 
 DESCR("spgist index access method handler");
 DATA(insert OID = 335 (  brinhandler	PGNSP PGUID 12 1 0 0 0 f f f f t f v s 1 0 325 "2281" _null_ _null_ _null_ _null_ _null_	brinhandler _null_ _null_ _null_ ));
 DESCR("brin index access method handler");
+DATA(insert OID = 3952 (  brin_summarize_new_values PGNSP PGUID 12 1 0 0 0 f f f f t f v s 1 0 23 "2205" _null_ _null_ _null_ _null_ _null_ brin_summarize_new_values _null_ _null_ _null_ ));
+DESCR("brin: standalone scan new table pages");
 
 DATA(insert OID = 338 (  amvalidate		PGNSP PGUID 12 1 0 0 0 f f f f t f v s 1 0 16 "26" _null_ _null_ _null_ _null_ _null_	amvalidate _null_ _null_ _null_ ));
 DESCR("validate an operator class");
-DATA(insert OID = 3952 (  brin_summarize_new_values PGNSP PGUID 12 1 0 0 0 f f f f t f v s 1 0 23 "2205" _null_ _null_ _null_ _null_ _null_ brin_summarize_new_values _null_ _null_ _null_ ));
-DESCR("brin: standalone scan new table pages");
+
+DATA(insert OID = 636 (  pg_indexam_has_property		PGNSP PGUID 12 1 0 0 0 f f f f t f s s 2 0 16 "26 25" _null_ _null_ _null_ _null_ _null_	pg_indexam_has_property _null_ _null_ _null_ ));
+DESCR("test property of an index access method");
+DATA(insert OID = 637 (  pg_index_has_property			PGNSP PGUID 12 1 0 0 0 f f f f t f s s 2 0 16 "2205 25" _null_ _null_ _null_ _null_ _null_	pg_index_has_property _null_ _null_ _null_ ));
+DESCR("test property of an index");
+DATA(insert OID = 638 (  pg_index_column_has_property	PGNSP PGUID 12 1 0 0 0 f f f f t f s s 3 0 16 "2205 23 25" _null_ _null_ _null_ _null_ _null_ pg_index_column_has_property _null_ _null_ _null_ ));
+DESCR("test property of an index column");
 
 DATA(insert OID = 339 (  poly_same		   PGNSP PGUID 12 1 0 0 0 f f f f t f i s 2 0 16 "604 604" _null_ _null_ _null_ _null_ _null_ poly_same _null_ _null_ _null_ ));
 DATA(insert OID = 340 (  poly_contain	   PGNSP PGUID 12 1 0 0 0 f f f f t f i s 2 0 16 "604 604" _null_ _null_ _null_ _null_ _null_ poly_contain _null_ _null_ _null_ ));
@@ -575,9 +584,9 @@ DATA(insert OID = 343 (  poly_overright    PGNSP PGUID 12 1 0 0 0 f f f f t f i 
 DATA(insert OID = 344 (  poly_right		   PGNSP PGUID 12 1 0 0 0 f f f f t f i s 2 0 16 "604 604" _null_ _null_ _null_ _null_ _null_ poly_right _null_ _null_ _null_ ));
 DATA(insert OID = 345 (  poly_contained    PGNSP PGUID 12 1 0 0 0 f f f f t f i s 2 0 16 "604 604" _null_ _null_ _null_ _null_ _null_ poly_contained _null_ _null_ _null_ ));
 DATA(insert OID = 346 (  poly_overlap	   PGNSP PGUID 12 1 0 0 0 f f f f t f i s 2 0 16 "604 604" _null_ _null_ _null_ _null_ _null_ poly_overlap _null_ _null_ _null_ ));
-DATA(insert OID = 347 (  poly_in		   PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 604 "2275" _null_ _null_ _null_ _null_ _null_	poly_in _null_ _null_ _null_ ));
+DATA(insert OID = 347 (  poly_in		   PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 604 "2275" _null_ _null_ _null_ _null_ _null_ poly_in _null_ _null_ _null_ ));
 DESCR("I/O");
-DATA(insert OID = 348 (  poly_out		   PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 2275 "604" _null_ _null_ _null_ _null_ _null_	poly_out _null_ _null_ _null_ ));
+DATA(insert OID = 348 (  poly_out		   PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 2275 "604" _null_ _null_ _null_ _null_ _null_ poly_out _null_ _null_ _null_ ));
 DESCR("I/O");
 
 DATA(insert OID = 350 (  btint2cmp		   PGNSP PGUID 12 1 0 0 0 f f f f t f i s 2 0 23 "21 21" _null_ _null_ _null_ _null_ _null_ btint2cmp _null_ _null_ _null_ ));
@@ -888,9 +897,9 @@ DESCR("restriction selectivity for array-containment operators");
 DATA(insert OID = 3818 (  arraycontjoinsel PGNSP PGUID 12 1 0 0 0 f f f f t f s s 5 0 701 "2281 26 2281 21 2281" _null_ _null_ _null_ _null_ _null_ arraycontjoinsel _null_ _null_ _null_ ));
 DESCR("join selectivity for array-containment operators");
 
-DATA(insert OID = 760 (  smgrin			   PGNSP PGUID 12 1 0 0 0 f f f f t f s s 1 0 210 "2275" _null_ _null_ _null_ _null_ _null_	smgrin _null_ _null_ _null_ ));
+DATA(insert OID = 760 (  smgrin			   PGNSP PGUID 12 1 0 0 0 f f f f t f s s 1 0 210 "2275" _null_ _null_ _null_ _null_ _null_ smgrin _null_ _null_ _null_ ));
 DESCR("I/O");
-DATA(insert OID = 761 (  smgrout		   PGNSP PGUID 12 1 0 0 0 f f f f t f s s 1 0 2275 "210" _null_ _null_ _null_ _null_ _null_	smgrout _null_ _null_ _null_ ));
+DATA(insert OID = 761 (  smgrout		   PGNSP PGUID 12 1 0 0 0 f f f f t f s s 1 0 2275 "210" _null_ _null_ _null_ _null_ _null_ smgrout _null_ _null_ _null_ ));
 DESCR("I/O");
 DATA(insert OID = 762 (  smgreq			   PGNSP PGUID 12 1 0 0 0 f f f f t f i s 2 0 16 "210 210" _null_ _null_ _null_ _null_ _null_ smgreq _null_ _null_ _null_ ));
 DESCR("storage manager");
@@ -899,7 +908,7 @@ DESCR("storage manager");
 
 DATA(insert OID = 764 (  lo_import		   PGNSP PGUID 12 1 0 0 0 f f f f t f v u 1 0 26 "25" _null_ _null_ _null_ _null_ _null_ lo_import _null_ _null_ _null_ ));
 DESCR("large object import");
-DATA(insert OID = 767 (  lo_import		   PGNSP PGUID 12 1 0 0 0 f f f f t f v u 2 0 26 "25 26" _null_ _null_ _null_ _null_ _null_	lo_import_with_oid _null_ _null_ _null_ ));
+DATA(insert OID = 767 (  lo_import		   PGNSP PGUID 12 1 0 0 0 f f f f t f v u 2 0 26 "25 26" _null_ _null_ _null_ _null_ _null_ lo_import_with_oid _null_ _null_ _null_ ));
 DESCR("large object import");
 DATA(insert OID = 765 (  lo_export		   PGNSP PGUID 12 1 0 0 0 f f f f t f v u 2 0 23 "26 25" _null_ _null_ _null_ _null_ _null_ lo_export _null_ _null_ _null_ ));
 DESCR("large object export");
@@ -948,7 +957,7 @@ DESCR("convert char to char(n)");
 
 DATA(insert OID = 861 ( current_database	   PGNSP PGUID 12 1 0 0 0 f f f f t f s s 0 0 19 "" _null_ _null_ _null_ _null_ _null_ current_database _null_ _null_ _null_ ));
 DESCR("name of the current database");
-DATA(insert OID = 817 (  current_query		  PGNSP PGUID 12 1 0 0 0 f f f f f f v r 0 0 25 "" _null_ _null_ _null_ _null_  _null_ current_query _null_ _null_ _null_ ));
+DATA(insert OID = 817 (  current_query		  PGNSP PGUID 12 1 0 0 0 f f f f f f v r 0 0 25 "" _null_ _null_ _null_ _null_	_null_ current_query _null_ _null_ _null_ ));
 DESCR("get the currently executing query");
 
 DATA(insert OID =  862 (  int4_mul_cash		   PGNSP PGUID 12 1 0 0 0 f f f f t f i s 2 0 790 "23 790" _null_ _null_ _null_ _null_ _null_ int4_mul_cash _null_ _null_ _null_ ));
@@ -958,9 +967,9 @@ DATA(insert OID =  865 (  cash_div_int4		   PGNSP PGUID 12 1 0 0 0 f f f f t f i
 DATA(insert OID =  866 (  cash_mul_int2		   PGNSP PGUID 12 1 0 0 0 f f f f t f i s 2 0 790 "790 21" _null_ _null_ _null_ _null_ _null_ cash_mul_int2 _null_ _null_ _null_ ));
 DATA(insert OID =  867 (  cash_div_int2		   PGNSP PGUID 12 1 0 0 0 f f f f t f i s 2 0 790 "790 21" _null_ _null_ _null_ _null_ _null_ cash_div_int2 _null_ _null_ _null_ ));
 
-DATA(insert OID =  886 (  cash_in		   PGNSP PGUID 12 1 0 0 0 f f f f t f s s 1 0 790 "2275" _null_ _null_ _null_ _null_ _null_	cash_in _null_ _null_ _null_ ));
+DATA(insert OID =  886 (  cash_in		   PGNSP PGUID 12 1 0 0 0 f f f f t f s s 1 0 790 "2275" _null_ _null_ _null_ _null_ _null_ cash_in _null_ _null_ _null_ ));
 DESCR("I/O");
-DATA(insert OID =  887 (  cash_out		   PGNSP PGUID 12 1 0 0 0 f f f f t f s s 1 0 2275 "790" _null_ _null_ _null_ _null_ _null_	cash_out _null_ _null_ _null_ ));
+DATA(insert OID =  887 (  cash_out		   PGNSP PGUID 12 1 0 0 0 f f f f t f s s 1 0 2275 "790" _null_ _null_ _null_ _null_ _null_ cash_out _null_ _null_ _null_ ));
 DESCR("I/O");
 DATA(insert OID =  888 (  cash_eq		   PGNSP PGUID 12 1 0 0 0 f f f t t f i s 2 0 16 "790 790" _null_ _null_ _null_ _null_ _null_ cash_eq _null_ _null_ _null_ ));
 DATA(insert OID =  889 (  cash_ne		   PGNSP PGUID 12 1 0 0 0 f f f t t f i s 2 0 16 "790 790" _null_ _null_ _null_ _null_ _null_ cash_ne _null_ _null_ _null_ ));
@@ -980,9 +989,9 @@ DATA(insert OID =  919 (  flt8_mul_cash    PGNSP PGUID 12 1 0 0 0 f f f f t f i 
 DATA(insert OID =  935 (  cash_words	   PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 25 "790" _null_ _null_ _null_ _null_ _null_ cash_words _null_ _null_ _null_ ));
 DESCR("output money amount as words");
 DATA(insert OID = 3822 (  cash_div_cash    PGNSP PGUID 12 1 0 0 0 f f f f t f i s 2 0 701 "790 790" _null_ _null_ _null_ _null_ _null_	cash_div_cash _null_ _null_ _null_ ));
-DATA(insert OID = 3823 (  numeric		   PGNSP PGUID 12 1 0 0 0 f f f f t f s s 1 0 1700 "790" _null_ _null_ _null_ _null_ _null_	cash_numeric _null_ _null_ _null_ ));
+DATA(insert OID = 3823 (  numeric		   PGNSP PGUID 12 1 0 0 0 f f f f t f s s 1 0 1700 "790" _null_ _null_ _null_ _null_ _null_ cash_numeric _null_ _null_ _null_ ));
 DESCR("convert money to numeric");
-DATA(insert OID = 3824 (  money			   PGNSP PGUID 12 1 0 0 0 f f f f t f s s 1 0 790 "1700" _null_ _null_ _null_ _null_ _null_	numeric_cash _null_ _null_ _null_ ));
+DATA(insert OID = 3824 (  money			   PGNSP PGUID 12 1 0 0 0 f f f f t f s s 1 0 790 "1700" _null_ _null_ _null_ _null_ _null_ numeric_cash _null_ _null_ _null_ ));
 DESCR("convert numeric to money");
 DATA(insert OID = 3811 (  money			   PGNSP PGUID 12 1 0 0 0 f f f f t f s s 1 0 790 "23" _null_ _null_ _null_ _null_ _null_ int4_cash _null_ _null_ _null_ ));
 DESCR("convert int4 to money");
@@ -1177,9 +1186,9 @@ DATA(insert OID = 1143 (  time_in		   PGNSP PGUID 12 1 0 0 0 f f f f t f s s 3 0
 DESCR("I/O");
 DATA(insert OID = 1144 (  time_out		   PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 2275 "1083" _null_ _null_ _null_ _null_ _null_ time_out _null_ _null_ _null_ ));
 DESCR("I/O");
-DATA(insert OID = 2909 (  timetypmodin		PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 23 "1263" _null_ _null_ _null_ _null_ _null_	timetypmodin _null_ _null_ _null_ ));
+DATA(insert OID = 2909 (  timetypmodin		PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 23 "1263" _null_ _null_ _null_ _null_ _null_ timetypmodin _null_ _null_ _null_ ));
 DESCR("I/O typmod");
-DATA(insert OID = 2910 (  timetypmodout		PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 2275 "23" _null_ _null_ _null_ _null_ _null_	timetypmodout _null_ _null_ _null_ ));
+DATA(insert OID = 2910 (  timetypmodout		PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 2275 "23" _null_ _null_ _null_ _null_ _null_ timetypmodout _null_ _null_ _null_ ));
 DESCR("I/O typmod");
 DATA(insert OID = 1145 (  time_eq		   PGNSP PGUID 12 1 0 0 0 f f f t t f i s 2 0 16 "1083 1083" _null_ _null_ _null_ _null_ _null_ time_eq _null_ _null_ _null_ ));
 
@@ -1192,9 +1201,9 @@ DATA(insert OID = 1150 (  timestamptz_in   PGNSP PGUID 12 1 0 0 0 f f f f t f s 
 DESCR("I/O");
 DATA(insert OID = 1151 (  timestamptz_out  PGNSP PGUID 12 1 0 0 0 f f f f t f s s 1 0 2275 "1184" _null_ _null_ _null_ _null_ _null_ timestamptz_out _null_ _null_ _null_ ));
 DESCR("I/O");
-DATA(insert OID = 2907 (  timestamptztypmodin		PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 23 "1263" _null_ _null_ _null_ _null_ _null_	timestamptztypmodin _null_ _null_ _null_ ));
+DATA(insert OID = 2907 (  timestamptztypmodin		PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 23 "1263" _null_ _null_ _null_ _null_ _null_ timestamptztypmodin _null_ _null_ _null_ ));
 DESCR("I/O typmod");
-DATA(insert OID = 2908 (  timestamptztypmodout		PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 2275 "23" _null_ _null_ _null_ _null_ _null_	timestamptztypmodout _null_ _null_ _null_ ));
+DATA(insert OID = 2908 (  timestamptztypmodout		PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 2275 "23" _null_ _null_ _null_ _null_ _null_ timestamptztypmodout _null_ _null_ _null_ ));
 DESCR("I/O typmod");
 DATA(insert OID = 1152 (  timestamptz_eq   PGNSP PGUID 12 1 0 0 0 f f f t t f i s 2 0 16 "1184 1184" _null_ _null_ _null_ _null_ _null_ timestamp_eq _null_ _null_ _null_ ));
 DATA(insert OID = 1153 (  timestamptz_ne   PGNSP PGUID 12 1 0 0 0 f f f t t f i s 2 0 16 "1184 1184" _null_ _null_ _null_ _null_ _null_ timestamp_ne _null_ _null_ _null_ ));
@@ -1202,7 +1211,7 @@ DATA(insert OID = 1154 (  timestamptz_lt   PGNSP PGUID 12 1 0 0 0 f f f t t f i 
 DATA(insert OID = 1155 (  timestamptz_le   PGNSP PGUID 12 1 0 0 0 f f f t t f i s 2 0 16 "1184 1184" _null_ _null_ _null_ _null_ _null_ timestamp_le _null_ _null_ _null_ ));
 DATA(insert OID = 1156 (  timestamptz_ge   PGNSP PGUID 12 1 0 0 0 f f f t t f i s 2 0 16 "1184 1184" _null_ _null_ _null_ _null_ _null_ timestamp_ge _null_ _null_ _null_ ));
 DATA(insert OID = 1157 (  timestamptz_gt   PGNSP PGUID 12 1 0 0 0 f f f t t f i s 2 0 16 "1184 1184" _null_ _null_ _null_ _null_ _null_ timestamp_gt _null_ _null_ _null_ ));
-DATA(insert OID = 1158 (  to_timestamp	   PGNSP PGUID 14 1 0 0 0 f f f f t f i s 1 0 1184 "701" _null_ _null_ _null_ _null_ _null_ "select (''epoch''::pg_catalog.timestamptz + $1 * ''1 second''::pg_catalog.interval)" _null_ _null_ _null_ ));
+DATA(insert OID = 1158 (  to_timestamp	   PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 1184 "701" _null_ _null_ _null_ _null_ _null_ float8_timestamptz _null_ _null_ _null_ ));
 DESCR("convert UNIX epoch to timestamptz");
 DATA(insert OID = 3995 (  timestamp_zone_transform PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 2281 "2281" _null_ _null_ _null_ _null_ _null_ timestamp_zone_transform _null_ _null_ _null_ ));
 DESCR("transform a time zone adjustment");
@@ -1213,9 +1222,9 @@ DATA(insert OID = 1160 (  interval_in	   PGNSP PGUID 12 1 0 0 0 f f f f t f s s 
 DESCR("I/O");
 DATA(insert OID = 1161 (  interval_out	   PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 2275 "1186" _null_ _null_ _null_ _null_ _null_ interval_out _null_ _null_ _null_ ));
 DESCR("I/O");
-DATA(insert OID = 2903 (  intervaltypmodin		PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 23 "1263" _null_ _null_ _null_ _null_ _null_	intervaltypmodin _null_ _null_ _null_ ));
+DATA(insert OID = 2903 (  intervaltypmodin		PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 23 "1263" _null_ _null_ _null_ _null_ _null_ intervaltypmodin _null_ _null_ _null_ ));
 DESCR("I/O typmod");
-DATA(insert OID = 2904 (  intervaltypmodout		PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 2275 "23" _null_ _null_ _null_ _null_ _null_	intervaltypmodout _null_ _null_ _null_ ));
+DATA(insert OID = 2904 (  intervaltypmodout		PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 2275 "23" _null_ _null_ _null_ _null_ _null_ intervaltypmodout _null_ _null_ _null_ ));
 DESCR("I/O typmod");
 DATA(insert OID = 1162 (  interval_eq	   PGNSP PGUID 12 1 0 0 0 f f f t t f i s 2 0 16 "1186 1186" _null_ _null_ _null_ _null_ _null_ interval_eq _null_ _null_ _null_ ));
 DATA(insert OID = 1163 (  interval_ne	   PGNSP PGUID 12 1 0 0 0 f f f t t f i s 2 0 16 "1186 1186" _null_ _null_ _null_ _null_ _null_ interval_ne _null_ _null_ _null_ ));
@@ -1248,7 +1257,7 @@ DATA(insert OID = 1178 (  date			   PGNSP PGUID 12 1 0 0 0 f f f f t f s s 1 0 1
 DESCR("convert timestamp with time zone to date");
 DATA(insert OID = 1179 (  date			   PGNSP PGUID 12 1 0 0 0 f f f f t f s s 1 0 1082 "702" _null_ _null_ _null_ _null_ _null_ abstime_date _null_ _null_ _null_ ));
 DESCR("convert abstime to date");
-DATA(insert OID = 1180 (  abstime		   PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 702 "1184" _null_ _null_ _null_ _null_ _null_	timestamptz_abstime _null_ _null_ _null_ ));
+DATA(insert OID = 1180 (  abstime		   PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 702 "1184" _null_ _null_ _null_ _null_ _null_ timestamptz_abstime _null_ _null_ _null_ ));
 DESCR("convert timestamp with time zone to abstime");
 DATA(insert OID = 1181 (  age			   PGNSP PGUID 12 1 0 0 0 f f f f t f s r 1 0 23 "28" _null_ _null_ _null_ _null_ _null_ xid_age _null_ _null_ _null_ ));
 DESCR("age of a transaction ID, in transactions before current transaction");
@@ -1345,9 +1354,9 @@ DATA(insert OID = 1291 (  suppress_redundant_updates_trigger	PGNSP PGUID 12 1 0 
 DESCR("trigger to suppress updates when new and old records match");
 
 DATA(insert OID = 1292 ( tideq			   PGNSP PGUID 12 1 0 0 0 f f f t t f i s 2 0 16 "27 27" _null_ _null_ _null_ _null_ _null_ tideq _null_ _null_ _null_ ));
-DATA(insert OID = 1293 ( currtid		   PGNSP PGUID 12 1 0 0 0 f f f f t f v s 2 0 27 "26 27" _null_ _null_ _null_ _null_ _null_ currtid_byreloid _null_ _null_ _null_ ));
+DATA(insert OID = 1293 ( currtid		   PGNSP PGUID 12 1 0 0 0 f f f f t f v u 2 0 27 "26 27" _null_ _null_ _null_ _null_ _null_ currtid_byreloid _null_ _null_ _null_ ));
 DESCR("latest tid of a tuple");
-DATA(insert OID = 1294 ( currtid2		   PGNSP PGUID 12 1 0 0 0 f f f f t f v s 2 0 27 "25 27" _null_ _null_ _null_ _null_ _null_ currtid_byrelname _null_ _null_ _null_ ));
+DATA(insert OID = 1294 ( currtid2		   PGNSP PGUID 12 1 0 0 0 f f f f t f v u 2 0 27 "25 27" _null_ _null_ _null_ _null_ _null_ currtid_byrelname _null_ _null_ _null_ ));
 DESCR("latest tid of a tuple");
 DATA(insert OID = 1265 ( tidne			   PGNSP PGUID 12 1 0 0 0 f f f t t f i s 2 0 16 "27 27" _null_ _null_ _null_ _null_ _null_ tidne _null_ _null_ _null_ ));
 DATA(insert OID = 2790 ( tidgt			   PGNSP PGUID 12 1 0 0 0 f f f t t f i s 2 0 16 "27 27" _null_ _null_ _null_ _null_ _null_ tidgt _null_ _null_ _null_ ));
@@ -1377,11 +1386,11 @@ DESCR("current clock time");
 
 DATA(insert OID = 1300 (  positionsel		   PGNSP PGUID 12 1 0 0 0 f f f f t f s s 4 0 701 "2281 26 2281 23" _null_ _null_ _null_ _null_ _null_	positionsel _null_ _null_ _null_ ));
 DESCR("restriction selectivity for position-comparison operators");
-DATA(insert OID = 1301 (  positionjoinsel	   PGNSP PGUID 12 1 0 0 0 f f f f t f s s 5 0 701 "2281 26 2281 21 2281" _null_ _null_ _null_ _null_ _null_	positionjoinsel _null_ _null_ _null_ ));
+DATA(insert OID = 1301 (  positionjoinsel	   PGNSP PGUID 12 1 0 0 0 f f f f t f s s 5 0 701 "2281 26 2281 21 2281" _null_ _null_ _null_ _null_ _null_ positionjoinsel _null_ _null_ _null_ ));
 DESCR("join selectivity for position-comparison operators");
 DATA(insert OID = 1302 (  contsel		   PGNSP PGUID 12 1 0 0 0 f f f f t f s s 4 0 701 "2281 26 2281 23" _null_ _null_ _null_ _null_ _null_	contsel _null_ _null_ _null_ ));
 DESCR("restriction selectivity for containment comparison operators");
-DATA(insert OID = 1303 (  contjoinsel	   PGNSP PGUID 12 1 0 0 0 f f f f t f s s 5 0 701 "2281 26 2281 21 2281" _null_ _null_ _null_ _null_ _null_	contjoinsel _null_ _null_ _null_ ));
+DATA(insert OID = 1303 (  contjoinsel	   PGNSP PGUID 12 1 0 0 0 f f f f t f s s 5 0 701 "2281 26 2281 21 2281" _null_ _null_ _null_ _null_ _null_ contjoinsel _null_ _null_ _null_ ));
 DESCR("join selectivity for containment comparison operators");
 
 DATA(insert OID = 1304 ( overlaps			 PGNSP PGUID 12 1 0 0 0 f f f f f f i s 4 0 16 "1184 1184 1184 1184" _null_ _null_ _null_ _null_ _null_ overlaps_timestamp _null_ _null_ _null_ ));
@@ -1406,9 +1415,9 @@ DATA(insert OID = 1312 (  timestamp_in		 PGNSP PGUID 12 1 0 0 0 f f f f t f s s 
 DESCR("I/O");
 DATA(insert OID = 1313 (  timestamp_out		 PGNSP PGUID 12 1 0 0 0 f f f f t f s s 1 0 2275 "1114" _null_ _null_ _null_ _null_ _null_ timestamp_out _null_ _null_ _null_ ));
 DESCR("I/O");
-DATA(insert OID = 2905 (  timestamptypmodin		PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 23 "1263" _null_ _null_ _null_ _null_ _null_	timestamptypmodin _null_ _null_ _null_ ));
+DATA(insert OID = 2905 (  timestamptypmodin		PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 23 "1263" _null_ _null_ _null_ _null_ _null_ timestamptypmodin _null_ _null_ _null_ ));
 DESCR("I/O typmod");
-DATA(insert OID = 2906 (  timestamptypmodout	PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 2275 "23" _null_ _null_ _null_ _null_ _null_	timestamptypmodout _null_ _null_ _null_ ));
+DATA(insert OID = 2906 (  timestamptypmodout	PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 2275 "23" _null_ _null_ _null_ _null_ _null_ timestamptypmodout _null_ _null_ _null_ ));
 DESCR("I/O typmod");
 DATA(insert OID = 1314 (  timestamptz_cmp	 PGNSP PGUID 12 1 0 0 0 f f f f t f i s 2 0 23 "1184 1184" _null_ _null_ _null_ _null_ _null_ timestamp_cmp _null_ _null_ _null_ ));
 DESCR("less-equal-greater");
@@ -1462,9 +1471,9 @@ DATA(insert OID = 1350 (  timetz_in		   PGNSP PGUID 12 1 0 0 0 f f f f t f s s 3
 DESCR("I/O");
 DATA(insert OID = 1351 (  timetz_out	   PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 2275 "1266" _null_ _null_ _null_ _null_ _null_ timetz_out _null_ _null_ _null_ ));
 DESCR("I/O");
-DATA(insert OID = 2911 (  timetztypmodin	PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 23 "1263" _null_ _null_ _null_ _null_ _null_	timetztypmodin _null_ _null_ _null_ ));
+DATA(insert OID = 2911 (  timetztypmodin	PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 23 "1263" _null_ _null_ _null_ _null_ _null_ timetztypmodin _null_ _null_ _null_ ));
 DESCR("I/O typmod");
-DATA(insert OID = 2912 (  timetztypmodout	PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 2275 "23" _null_ _null_ _null_ _null_ _null_	timetztypmodout _null_ _null_ _null_ ));
+DATA(insert OID = 2912 (  timetztypmodout	PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 2275 "23" _null_ _null_ _null_ _null_ _null_ timetztypmodout _null_ _null_ _null_ ));
 DESCR("I/O typmod");
 DATA(insert OID = 1352 (  timetz_eq		   PGNSP PGUID 12 1 0 0 0 f f f t t f i s 2 0 16 "1266 1266" _null_ _null_ _null_ _null_ _null_ timetz_eq _null_ _null_ _null_ ));
 DATA(insert OID = 1353 (  timetz_ne		   PGNSP PGUID 12 1 0 0 0 f f f t t f i s 2 0 16 "1266 1266" _null_ _null_ _null_ _null_ _null_ timetz_ne _null_ _null_ _null_ ));
@@ -1480,7 +1489,7 @@ DESCR("convert date and time with time zone to timestamp with time zone");
 DATA(insert OID = 1364 (  time			   PGNSP PGUID 14 1 0 0 0 f f f f t f s s 1 0 1083 "702" _null_ _null_ _null_ _null_ _null_ "select cast(cast($1 as timestamp without time zone) as pg_catalog.time)" _null_ _null_ _null_ ));
 DESCR("convert abstime to time");
 
-DATA(insert OID = 1367 (  character_length	PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 23 "1042" _null_ _null_ _null_ _null_ _null_	bpcharlen _null_ _null_ _null_ ));
+DATA(insert OID = 1367 (  character_length	PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 23 "1042" _null_ _null_ _null_ _null_ _null_ bpcharlen _null_ _null_ _null_ ));
 DESCR("character length");
 DATA(insert OID = 1369 (  character_length	PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 23 "25" _null_ _null_ _null_ _null_ _null_ textlen _null_ _null_ _null_ ));
 DESCR("character length");
@@ -1550,12 +1559,12 @@ DESCR("convert name to varchar");
 
 DATA(insert OID = 1402 (  current_schema	PGNSP PGUID 12 1 0 0 0 f f f f t f s s 0 0 19 "" _null_ _null_ _null_ _null_ _null_ current_schema _null_ _null_ _null_ ));
 DESCR("current schema name");
-DATA(insert OID = 1403 (  current_schemas	PGNSP PGUID 12 1 0 0 0 f f f f t f s s 1 0 1003 "16" _null_ _null_ _null_ _null_ _null_	current_schemas _null_ _null_ _null_ ));
+DATA(insert OID = 1403 (  current_schemas	PGNSP PGUID 12 1 0 0 0 f f f f t f s s 1 0 1003 "16" _null_ _null_ _null_ _null_ _null_ current_schemas _null_ _null_ _null_ ));
 DESCR("current schema search list");
 
 DATA(insert OID = 1404 (  overlay			PGNSP PGUID 12 1 0 0 0 f f f f t f i s 4 0 25 "25 25 23 23" _null_ _null_ _null_ _null_ _null_	textoverlay _null_ _null_ _null_ ));
 DESCR("substitute portion of string");
-DATA(insert OID = 1405 (  overlay			PGNSP PGUID 12 1 0 0 0 f f f f t f i s 3 0 25 "25 25 23" _null_ _null_ _null_ _null_ _null_	textoverlay_no_len _null_ _null_ _null_ ));
+DATA(insert OID = 1405 (  overlay			PGNSP PGUID 12 1 0 0 0 f f f f t f i s 3 0 25 "25 25 23" _null_ _null_ _null_ _null_ _null_ textoverlay_no_len _null_ _null_ _null_ ));
 DESCR("substitute portion of string");
 
 DATA(insert OID = 1406 (  isvertical		PGNSP PGUID 12 1 0 0 0 f f f f t f i s 2 0 16 "600 600" _null_ _null_ _null_ _null_  _null_ point_vert _null_ _null_ _null_ ));
@@ -1733,9 +1742,9 @@ DATA(insert OID = 1564 (  bit_in			PGNSP PGUID 12 1 0 0 0 f f f f t f i s 3 0 15
 DESCR("I/O");
 DATA(insert OID = 1565 (  bit_out			PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 2275 "1560" _null_ _null_ _null_ _null_ _null_ bit_out _null_ _null_ _null_ ));
 DESCR("I/O");
-DATA(insert OID = 2919 (  bittypmodin		PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 23 "1263" _null_ _null_ _null_ _null_ _null_	bittypmodin _null_ _null_ _null_ ));
+DATA(insert OID = 2919 (  bittypmodin		PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 23 "1263" _null_ _null_ _null_ _null_ _null_ bittypmodin _null_ _null_ _null_ ));
 DESCR("I/O typmod");
-DATA(insert OID = 2920 (  bittypmodout		PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 2275 "23" _null_ _null_ _null_ _null_ _null_	bittypmodout _null_ _null_ _null_ ));
+DATA(insert OID = 2920 (  bittypmodout		PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 2275 "23" _null_ _null_ _null_ _null_ _null_ bittypmodout _null_ _null_ _null_ ));
 DESCR("I/O typmod");
 
 DATA(insert OID = 1569 (  like				PGNSP PGUID 12 1 0 0 0 f f f f t f i s 2 0 16 "25 25" _null_ _null_ _null_ _null_ _null_ textlike _null_ _null_ _null_ ));
@@ -1749,9 +1758,9 @@ DESCR("does not match LIKE expression");
 
 
 /* SEQUENCE functions */
-DATA(insert OID = 1574 (  nextval			PGNSP PGUID 12 1 0 0 0 f f f f t f v u 1 0 20 "2205" _null_ _null_ _null_ _null_ _null_	nextval_oid _null_ _null_ _null_ ));
+DATA(insert OID = 1574 (  nextval			PGNSP PGUID 12 1 0 0 0 f f f f t f v u 1 0 20 "2205" _null_ _null_ _null_ _null_ _null_ nextval_oid _null_ _null_ _null_ ));
 DESCR("sequence next value");
-DATA(insert OID = 1575 (  currval			PGNSP PGUID 12 1 0 0 0 f f f f t f v u 1 0 20 "2205" _null_ _null_ _null_ _null_ _null_	currval_oid _null_ _null_ _null_ ));
+DATA(insert OID = 1575 (  currval			PGNSP PGUID 12 1 0 0 0 f f f f t f v u 1 0 20 "2205" _null_ _null_ _null_ _null_ _null_ currval_oid _null_ _null_ _null_ ));
 DESCR("sequence current value");
 DATA(insert OID = 1576 (  setval			PGNSP PGUID 12 1 0 0 0 f f f f t f v u 2 0 20 "2205 20" _null_ _null_ _null_ _null_  _null_ setval_oid _null_ _null_ _null_ ));
 DESCR("set sequence value");
@@ -1764,9 +1773,9 @@ DATA(insert OID = 1579 (  varbit_in			PGNSP PGUID 12 1 0 0 0 f f f f t f i s 3 0
 DESCR("I/O");
 DATA(insert OID = 1580 (  varbit_out		PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 2275 "1562" _null_ _null_ _null_ _null_ _null_ varbit_out _null_ _null_ _null_ ));
 DESCR("I/O");
-DATA(insert OID = 2902 (  varbittypmodin	PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 23 "1263" _null_ _null_ _null_ _null_ _null_	varbittypmodin _null_ _null_ _null_ ));
+DATA(insert OID = 2902 (  varbittypmodin	PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 23 "1263" _null_ _null_ _null_ _null_ _null_ varbittypmodin _null_ _null_ _null_ ));
 DESCR("I/O typmod");
-DATA(insert OID = 2921 (  varbittypmodout	PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 2275 "23" _null_ _null_ _null_ _null_ _null_	varbittypmodout _null_ _null_ _null_ ));
+DATA(insert OID = 2921 (  varbittypmodout	PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 2275 "23" _null_ _null_ _null_ _null_ _null_ varbittypmodout _null_ _null_ _null_ ));
 DESCR("I/O typmod");
 
 DATA(insert OID = 1581 (  biteq				PGNSP PGUID 12 1 0 0 0 f f f t t f i s 2 0 16 "1560 1560" _null_ _null_ _null_ _null_ _null_ biteq _null_ _null_ _null_ ));
@@ -1909,7 +1918,7 @@ DATA(insert OID =  2764 ( regexp_matches   PGNSP PGUID 12 1 10 0 0 f f f f t t i
 DESCR("find all match groups for regexp");
 DATA(insert OID =  2088 ( split_part   PGNSP PGUID 12 1 0 0 0 f f f f t f i s 3 0 25 "25 25 23" _null_ _null_ _null_ _null_ _null_	split_text _null_ _null_ _null_ ));
 DESCR("split string by field_sep and return field_num");
-DATA(insert OID =  2765 ( regexp_split_to_table PGNSP PGUID 12 1 1000 0 0 f f f f t t i s 2 0 25 "25 25" _null_ _null_ _null_ _null_ _null_	regexp_split_to_table_no_flags _null_ _null_ _null_ ));
+DATA(insert OID =  2765 ( regexp_split_to_table PGNSP PGUID 12 1 1000 0 0 f f f f t t i s 2 0 25 "25 25" _null_ _null_ _null_ _null_ _null_ regexp_split_to_table_no_flags _null_ _null_ _null_ ));
 DESCR("split string by pattern");
 DATA(insert OID =  2766 ( regexp_split_to_table PGNSP PGUID 12 1 1000 0 0 f f f f t t i s 3 0 25 "25 25 25" _null_ _null_ _null_ _null_ _null_	regexp_split_to_table _null_ _null_ _null_ ));
 DESCR("split string by pattern");
@@ -1992,9 +2001,9 @@ DESCR("list of SQL keywords");
 DATA(insert OID = 2289 (  pg_options_to_table		PGNSP PGUID 12 1 3 0 0 f f f f t t s s 1 0 2249 "1009" "{1009,25,25}" "{i,o,o}" "{options_array,option_name,option_value}" _null_ _null_ pg_options_to_table _null_ _null_ _null_ ));
 DESCR("convert generic options array to name/value table");
 
-DATA(insert OID = 1619 (  pg_typeof				PGNSP PGUID 12 1 0 0 0 f f f f f f s s 1 0 2206 "2276" _null_ _null_ _null_ _null_  _null_ pg_typeof _null_ _null_ _null_ ));
+DATA(insert OID = 1619 (  pg_typeof				PGNSP PGUID 12 1 0 0 0 f f f f f f s s 1 0 2206 "2276" _null_ _null_ _null_ _null_	_null_ pg_typeof _null_ _null_ _null_ ));
 DESCR("type of the argument");
-DATA(insert OID = 3162 (  pg_collation_for		PGNSP PGUID 12 1 0 0 0 f f f f f f s s 1 0   25 "2276" _null_ _null_ _null_ _null_  _null_ pg_collation_for _null_ _null_ _null_ ));
+DATA(insert OID = 3162 (  pg_collation_for		PGNSP PGUID 12 1 0 0 0 f f f f f f s s 1 0	 25 "2276" _null_ _null_ _null_ _null_	_null_ pg_collation_for _null_ _null_ _null_ ));
 DESCR("collation of the argument; implementation of the COLLATION FOR expression");
 
 DATA(insert OID = 3842 (  pg_relation_is_updatable	PGNSP PGUID 12 10 0 0 0 f f f f t f s s 2 0 23 "2205 16" _null_ _null_ _null_ _null_ _null_ pg_relation_is_updatable _null_ _null_ _null_ ));
@@ -2071,7 +2080,7 @@ DESCR("position of sub-bitstring");
 DATA(insert OID = 1699 (  substring		   PGNSP PGUID 12 1 0 0 0 f f f f t f i s 2 0 1560 "1560 23" _null_ _null_ _null_ _null_ _null_ bitsubstr_no_len _null_ _null_ _null_ ));
 DESCR("extract portion of bitstring");
 
-DATA(insert OID = 3030 (  overlay		   PGNSP PGUID 12 1 0 0 0 f f f f t f i s 4 0 1560 "1560 1560 23 23" _null_ _null_ _null_ _null_ _null_	bitoverlay _null_ _null_ _null_ ));
+DATA(insert OID = 3030 (  overlay		   PGNSP PGUID 12 1 0 0 0 f f f f t f i s 4 0 1560 "1560 1560 23 23" _null_ _null_ _null_ _null_ _null_ bitoverlay _null_ _null_ _null_ ));
 DESCR("substitute portion of bitstring");
 DATA(insert OID = 3031 (  overlay		   PGNSP PGUID 12 1 0 0 0 f f f f t f i s 3 0 1560 "1560 1560 23" _null_ _null_ _null_ _null_ _null_ bitoverlay_no_len _null_ _null_ _null_ ));
 DESCR("substitute portion of bitstring");
@@ -2097,9 +2106,9 @@ DATA(insert OID = 834 (  macaddr_ge			PGNSP PGUID 12 1 0 0 0 f f f t t f i s 2 0
 DATA(insert OID = 835 (  macaddr_ne			PGNSP PGUID 12 1 0 0 0 f f f t t f i s 2 0 16 "829 829" _null_ _null_ _null_ _null_ _null_	macaddr_ne _null_ _null_ _null_ ));
 DATA(insert OID = 836 (  macaddr_cmp		PGNSP PGUID 12 1 0 0 0 f f f f t f i s 2 0 23 "829 829" _null_ _null_ _null_ _null_ _null_	macaddr_cmp _null_ _null_ _null_ ));
 DESCR("less-equal-greater");
-DATA(insert OID = 3144 (  macaddr_not		PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 829 "829" _null_ _null_ _null_ _null_ _null_	macaddr_not _null_ _null_ _null_ ));
-DATA(insert OID = 3145 (  macaddr_and		PGNSP PGUID 12 1 0 0 0 f f f f t f i s 2 0 829 "829 829" _null_ _null_ _null_ _null_ _null_	macaddr_and _null_ _null_ _null_ ));
-DATA(insert OID = 3146 (  macaddr_or		PGNSP PGUID 12 1 0 0 0 f f f f t f i s 2 0 829 "829 829" _null_ _null_ _null_ _null_ _null_	macaddr_or _null_ _null_ _null_ ));
+DATA(insert OID = 3144 (  macaddr_not		PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 829 "829" _null_ _null_ _null_ _null_ _null_ macaddr_not _null_ _null_ _null_ ));
+DATA(insert OID = 3145 (  macaddr_and		PGNSP PGUID 12 1 0 0 0 f f f f t f i s 2 0 829 "829 829" _null_ _null_ _null_ _null_ _null_ macaddr_and _null_ _null_ _null_ ));
+DATA(insert OID = 3146 (  macaddr_or		PGNSP PGUID 12 1 0 0 0 f f f f t f i s 2 0 829 "829 829" _null_ _null_ _null_ _null_ _null_ macaddr_or _null_ _null_ _null_ ));
 
 /* for inet type support */
 DATA(insert OID = 910 (  inet_in			PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 869 "2275" _null_ _null_ _null_ _null_ _null_ inet_in _null_ _null_ _null_ ));
@@ -2120,9 +2129,9 @@ DATA(insert OID = 922 (  network_le			PGNSP PGUID 12 1 0 0 0 f f f t t f i s 2 0
 DATA(insert OID = 923 (  network_gt			PGNSP PGUID 12 1 0 0 0 f f f t t f i s 2 0 16 "869 869" _null_ _null_ _null_ _null_ _null_	network_gt _null_ _null_ _null_ ));
 DATA(insert OID = 924 (  network_ge			PGNSP PGUID 12 1 0 0 0 f f f t t f i s 2 0 16 "869 869" _null_ _null_ _null_ _null_ _null_	network_ge _null_ _null_ _null_ ));
 DATA(insert OID = 925 (  network_ne			PGNSP PGUID 12 1 0 0 0 f f f t t f i s 2 0 16 "869 869" _null_ _null_ _null_ _null_ _null_	network_ne _null_ _null_ _null_ ));
-DATA(insert OID = 3562 (  network_larger	PGNSP PGUID 12 1 0 0 0 f f f f t f i s 2 0 869 "869 869" _null_ _null_ _null_ _null_ _null_	network_larger _null_ _null_ _null_ ));
+DATA(insert OID = 3562 (  network_larger	PGNSP PGUID 12 1 0 0 0 f f f f t f i s 2 0 869 "869 869" _null_ _null_ _null_ _null_ _null_ network_larger _null_ _null_ _null_ ));
 DESCR("larger of two");
-DATA(insert OID = 3563 (  network_smaller	PGNSP PGUID 12 1 0 0 0 f f f f t f i s 2 0 869 "869 869" _null_ _null_ _null_ _null_ _null_	network_smaller _null_ _null_ _null_ ));
+DATA(insert OID = 3563 (  network_smaller	PGNSP PGUID 12 1 0 0 0 f f f f t f i s 2 0 869 "869 869" _null_ _null_ _null_ _null_ _null_ network_smaller _null_ _null_ _null_ ));
 DESCR("smaller of two");
 DATA(insert OID = 926 (  network_cmp		PGNSP PGUID 12 1 0 0 0 f f f f t f i s 2 0 23 "869 869" _null_ _null_ _null_ _null_ _null_	network_cmp _null_ _null_ _null_ ));
 DESCR("less-equal-greater");
@@ -2157,21 +2166,21 @@ DATA(insert OID = 730 (  text				PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 25 "
 DESCR("show all parts of inet/cidr value");
 DATA(insert OID = 1362 (  hostmask			PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 869 "869" _null_ _null_ _null_ _null_ _null_ network_hostmask _null_ _null_ _null_ ));
 DESCR("hostmask of address");
-DATA(insert OID = 1715 (  cidr				PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 650 "869" _null_ _null_ _null_ _null_ _null_	inet_to_cidr _null_ _null_ _null_ ));
+DATA(insert OID = 1715 (  cidr				PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 650 "869" _null_ _null_ _null_ _null_ _null_ inet_to_cidr _null_ _null_ _null_ ));
 DESCR("convert inet to cidr");
 
 DATA(insert OID = 2196 (  inet_client_addr		PGNSP PGUID 12 1 0 0 0 f f f f f f s r 0 0 869 "" _null_ _null_ _null_ _null_ _null_ inet_client_addr _null_ _null_ _null_ ));
 DESCR("inet address of the client");
-DATA(insert OID = 2197 (  inet_client_port		PGNSP PGUID 12 1 0 0 0 f f f f f f s r 0 0 23 "" _null_ _null_ _null_ _null_ _null_	inet_client_port _null_ _null_ _null_ ));
+DATA(insert OID = 2197 (  inet_client_port		PGNSP PGUID 12 1 0 0 0 f f f f f f s r 0 0 23 "" _null_ _null_ _null_ _null_ _null_ inet_client_port _null_ _null_ _null_ ));
 DESCR("client's port number for this connection");
 DATA(insert OID = 2198 (  inet_server_addr		PGNSP PGUID 12 1 0 0 0 f f f f f f s s 0 0 869 "" _null_ _null_ _null_ _null_ _null_ inet_server_addr _null_ _null_ _null_ ));
 DESCR("inet address of the server");
-DATA(insert OID = 2199 (  inet_server_port		PGNSP PGUID 12 1 0 0 0 f f f f f f s s 0 0 23 "" _null_ _null_ _null_ _null_ _null_	inet_server_port _null_ _null_ _null_ ));
+DATA(insert OID = 2199 (  inet_server_port		PGNSP PGUID 12 1 0 0 0 f f f f f f s s 0 0 23 "" _null_ _null_ _null_ _null_ _null_ inet_server_port _null_ _null_ _null_ ));
 DESCR("server's port number for this connection");
 
-DATA(insert OID = 2627 (  inetnot			PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 869 "869" _null_ _null_ _null_ _null_ _null_	inetnot _null_ _null_ _null_ ));
-DATA(insert OID = 2628 (  inetand			PGNSP PGUID 12 1 0 0 0 f f f f t f i s 2 0 869 "869 869" _null_ _null_ _null_ _null_ _null_	inetand _null_ _null_ _null_ ));
-DATA(insert OID = 2629 (  inetor			PGNSP PGUID 12 1 0 0 0 f f f f t f i s 2 0 869 "869 869" _null_ _null_ _null_ _null_ _null_	inetor _null_ _null_ _null_ ));
+DATA(insert OID = 2627 (  inetnot			PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 869 "869" _null_ _null_ _null_ _null_ _null_ inetnot _null_ _null_ _null_ ));
+DATA(insert OID = 2628 (  inetand			PGNSP PGUID 12 1 0 0 0 f f f f t f i s 2 0 869 "869 869" _null_ _null_ _null_ _null_ _null_ inetand _null_ _null_ _null_ ));
+DATA(insert OID = 2629 (  inetor			PGNSP PGUID 12 1 0 0 0 f f f f t f i s 2 0 869 "869 869" _null_ _null_ _null_ _null_ _null_ inetor _null_ _null_ _null_ ));
 DATA(insert OID = 2630 (  inetpl			PGNSP PGUID 12 1 0 0 0 f f f f t f i s 2 0 869 "869 20" _null_ _null_ _null_ _null_ _null_	inetpl _null_ _null_ _null_ ));
 DATA(insert OID = 2631 (  int8pl_inet		PGNSP PGUID 14 1 0 0 0 f f f f t f i s 2 0 869 "20 869" _null_ _null_ _null_ _null_ _null_ "select $2 + $1" _null_ _null_ _null_ ));
 DATA(insert OID = 2632 (  inetmi_int8		PGNSP PGUID 12 1 0 0 0 f f f f t f i s 2 0 869 "869 20" _null_ _null_ _null_ _null_ _null_	inetmi_int8 _null_ _null_ _null_ ));
@@ -2202,7 +2211,7 @@ DESCR("GiST support");
 /* Selectivity estimation for inet and cidr */
 DATA(insert OID = 3560 (  networksel		   PGNSP PGUID 12 1 0 0 0 f f f f t f s s 4 0 701 "2281 26 2281 23" _null_ _null_ _null_ _null_ _null_	networksel _null_ _null_ _null_ ));
 DESCR("restriction selectivity for network operators");
-DATA(insert OID = 3561 (  networkjoinsel	   PGNSP PGUID 12 1 0 0 0 f f f f t f s s 5 0 701 "2281 26 2281 21 2281" _null_ _null_ _null_ _null_ _null_	networkjoinsel _null_ _null_ _null_ ));
+DATA(insert OID = 3561 (  networkjoinsel	   PGNSP PGUID 12 1 0 0 0 f f f f t f s s 5 0 701 "2281 26 2281 21 2281" _null_ _null_ _null_ _null_ _null_ networkjoinsel _null_ _null_ _null_ ));
 DESCR("join selectivity for network operators");
 
 DATA(insert OID = 1690 ( time_mi_time		PGNSP PGUID 12 1 0 0 0 f f f f t f i s 2 0 1186 "1083 1083" _null_ _null_ _null_ _null_ _null_	time_mi_time _null_ _null_ _null_ ));
@@ -2221,13 +2230,13 @@ DESCR("hash");
 
 
 /* OID's 1700 - 1799 NUMERIC data type */
-DATA(insert OID = 1701 ( numeric_in				PGNSP PGUID 12 1 0 0 0 f f f f t f i s 3 0 1700 "2275 26 23" _null_ _null_ _null_ _null_ _null_	numeric_in _null_ _null_ _null_ ));
+DATA(insert OID = 1701 ( numeric_in				PGNSP PGUID 12 1 0 0 0 f f f f t f i s 3 0 1700 "2275 26 23" _null_ _null_ _null_ _null_ _null_ numeric_in _null_ _null_ _null_ ));
 DESCR("I/O");
 DATA(insert OID = 1702 ( numeric_out			PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 2275 "1700" _null_ _null_ _null_ _null_ _null_ numeric_out _null_ _null_ _null_ ));
 DESCR("I/O");
-DATA(insert OID = 2917 (  numerictypmodin		PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 23 "1263" _null_ _null_ _null_ _null_ _null_	numerictypmodin _null_ _null_ _null_ ));
+DATA(insert OID = 2917 (  numerictypmodin		PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 23 "1263" _null_ _null_ _null_ _null_ _null_ numerictypmodin _null_ _null_ _null_ ));
 DESCR("I/O typmod");
-DATA(insert OID = 2918 (  numerictypmodout		PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 2275 "23" _null_ _null_ _null_ _null_ _null_	numerictypmodout _null_ _null_ _null_ ));
+DATA(insert OID = 2918 (  numerictypmodout		PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 2275 "23" _null_ _null_ _null_ _null_ _null_ numerictypmodout _null_ _null_ _null_ ));
 DESCR("I/O typmod");
 DATA(insert OID = 3157 ( numeric_transform		PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 2281 "2281" _null_ _null_ _null_ _null_ _null_ numeric_transform _null_ _null_ _null_ ));
 DESCR("transform a numeric length coercion");
@@ -2247,11 +2256,11 @@ DESCR("value truncated to 'scale'");
 DATA(insert OID = 1710 ( trunc					PGNSP PGUID 14 1 0 0 0 f f f f t f i s 1 0 1700 "1700" _null_ _null_ _null_ _null_ _null_ "select pg_catalog.trunc($1,0)" _null_ _null_ _null_ ));
 DESCR("value truncated to 'scale' of zero");
 DATA(insert OID = 1711 ( ceil					PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 1700 "1700" _null_ _null_ _null_ _null_ _null_ numeric_ceil _null_ _null_ _null_ ));
-DESCR("smallest integer >= value");
+DESCR("nearest integer >= value");
 DATA(insert OID = 2167 ( ceiling				PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 1700 "1700" _null_ _null_ _null_ _null_ _null_ numeric_ceil _null_ _null_ _null_ ));
-DESCR("smallest integer >= value");
+DESCR("nearest integer >= value");
 DATA(insert OID = 1712 ( floor					PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 1700 "1700" _null_ _null_ _null_ _null_ _null_ numeric_floor _null_ _null_ _null_ ));
-DESCR("largest integer <= value");
+DESCR("nearest integer <= value");
 DATA(insert OID = 1718 ( numeric_eq				PGNSP PGUID 12 1 0 0 0 f f f f t f i s 2 0 16 "1700 1700" _null_ _null_ _null_ _null_ _null_ numeric_eq _null_ _null_ _null_ ));
 DATA(insert OID = 1719 ( numeric_ne				PGNSP PGUID 12 1 0 0 0 f f f f t f i s 2 0 16 "1700 1700" _null_ _null_ _null_ _null_ _null_ numeric_ne _null_ _null_ _null_ ));
 DATA(insert OID = 1720 ( numeric_gt				PGNSP PGUID 12 1 0 0 0 f f f f t f i s 2 0 16 "1700 1700" _null_ _null_ _null_ _null_ _null_ numeric_gt _null_ _null_ _null_ ));
@@ -2372,19 +2381,19 @@ DESCR("I/O");
 DATA(insert OID = 1799 (  oidout		   PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 2275 "26" _null_ _null_ _null_ _null_ _null_ oidout _null_ _null_ _null_ ));
 DESCR("I/O");
 
-DATA(insert OID = 3058 ( concat		PGNSP PGUID 12 1 0 2276 0 f f f f f f s s 1 0 25 "2276" "{2276}" "{v}" _null_ _null_ _null_	text_concat _null_ _null_ _null_ ));
+DATA(insert OID = 3058 ( concat		PGNSP PGUID 12 1 0 2276 0 f f f f f f s s 1 0 25 "2276" "{2276}" "{v}" _null_ _null_ _null_ text_concat _null_ _null_ _null_ ));
 DESCR("concatenate values");
-DATA(insert OID = 3059 ( concat_ws	PGNSP PGUID 12 1 0 2276 0 f f f f f f s s 2 0 25 "25 2276" "{25,2276}" "{i,v}" _null_ _null_ _null_	text_concat_ws _null_ _null_ _null_ ));
+DATA(insert OID = 3059 ( concat_ws	PGNSP PGUID 12 1 0 2276 0 f f f f f f s s 2 0 25 "25 2276" "{25,2276}" "{i,v}" _null_ _null_ _null_ text_concat_ws _null_ _null_ _null_ ));
 DESCR("concatenate values with separators");
 DATA(insert OID = 3060 ( left		PGNSP PGUID 12 1 0 0 0 f f f f t f i s 2 0 25 "25 23" _null_ _null_ _null_ _null_  _null_ text_left _null_ _null_ _null_ ));
 DESCR("extract the first n characters");
 DATA(insert OID = 3061 ( right		PGNSP PGUID 12 1 0 0 0 f f f f t f i s 2 0 25 "25 23" _null_ _null_ _null_ _null_  _null_ text_right _null_ _null_ _null_ ));
 DESCR("extract the last n characters");
-DATA(insert OID = 3062 ( reverse	PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 25 "25" _null_ _null_ _null_ _null_ _null_  text_reverse	_null_ _null_ _null_ ));
+DATA(insert OID = 3062 ( reverse	PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 25 "25" _null_ _null_ _null_ _null_ _null_  text_reverse _null_ _null_ _null_ ));
 DESCR("reverse text");
-DATA(insert OID = 3539 ( format		PGNSP PGUID 12 1 0 2276 0 f f f f f f s s 2 0 25 "25 2276" "{25,2276}" "{i,v}" _null_ _null_ _null_	text_format _null_ _null_ _null_ ));
+DATA(insert OID = 3539 ( format		PGNSP PGUID 12 1 0 2276 0 f f f f f f s s 2 0 25 "25 2276" "{25,2276}" "{i,v}" _null_ _null_ _null_ text_format _null_ _null_ _null_ ));
 DESCR("format text message");
-DATA(insert OID = 3540 ( format		PGNSP PGUID 12 1 0 0 0 f f f f f f s s 1 0 25 "25" _null_ _null_ _null_ _null_  _null_ text_format_nv _null_ _null_ _null_ ));
+DATA(insert OID = 3540 ( format		PGNSP PGUID 12 1 0 0 0 f f f f f f s s 1 0 25 "25" _null_ _null_ _null_ _null_	_null_ text_format_nv _null_ _null_ _null_ ));
 DESCR("format text message");
 
 DATA(insert OID = 1810 (  bit_length	   PGNSP PGUID 14 1 0 0 0 f f f f t f i s 1 0 23 "17" _null_ _null_ _null_ _null_ _null_ "select pg_catalog.octet_length($1) * 8" _null_ _null_ _null_ ));
@@ -2395,25 +2404,25 @@ DATA(insert OID = 1812 (  bit_length	   PGNSP PGUID 14 1 0 0 0 f f f f t f i s 1
 DESCR("length in bits");
 
 /* Selectivity estimators for LIKE and related operators */
-DATA(insert OID = 1814 ( iclikesel			PGNSP PGUID 12 1 0 0 0 f f f f t f s s 4 0 701 "2281 26 2281 23" _null_ _null_ _null_ _null_ _null_	iclikesel _null_ _null_ _null_ ));
+DATA(insert OID = 1814 ( iclikesel			PGNSP PGUID 12 1 0 0 0 f f f f t f s s 4 0 701 "2281 26 2281 23" _null_ _null_ _null_ _null_ _null_ iclikesel _null_ _null_ _null_ ));
 DESCR("restriction selectivity of ILIKE");
-DATA(insert OID = 1815 ( icnlikesel			PGNSP PGUID 12 1 0 0 0 f f f f t f s s 4 0 701 "2281 26 2281 23" _null_ _null_ _null_ _null_ _null_	icnlikesel _null_ _null_ _null_ ));
+DATA(insert OID = 1815 ( icnlikesel			PGNSP PGUID 12 1 0 0 0 f f f f t f s s 4 0 701 "2281 26 2281 23" _null_ _null_ _null_ _null_ _null_ icnlikesel _null_ _null_ _null_ ));
 DESCR("restriction selectivity of NOT ILIKE");
 DATA(insert OID = 1816 ( iclikejoinsel		PGNSP PGUID 12 1 0 0 0 f f f f t f s s 5 0 701 "2281 26 2281 21 2281" _null_ _null_ _null_ _null_  _null_ iclikejoinsel _null_ _null_ _null_ ));
 DESCR("join selectivity of ILIKE");
 DATA(insert OID = 1817 ( icnlikejoinsel		PGNSP PGUID 12 1 0 0 0 f f f f t f s s 5 0 701 "2281 26 2281 21 2281" _null_ _null_ _null_ _null_  _null_ icnlikejoinsel _null_ _null_ _null_ ));
 DESCR("join selectivity of NOT ILIKE");
-DATA(insert OID = 1818 ( regexeqsel			PGNSP PGUID 12 1 0 0 0 f f f f t f s s 4 0 701 "2281 26 2281 23" _null_ _null_ _null_ _null_ _null_	regexeqsel _null_ _null_ _null_ ));
+DATA(insert OID = 1818 ( regexeqsel			PGNSP PGUID 12 1 0 0 0 f f f f t f s s 4 0 701 "2281 26 2281 23" _null_ _null_ _null_ _null_ _null_ regexeqsel _null_ _null_ _null_ ));
 DESCR("restriction selectivity of regex match");
-DATA(insert OID = 1819 ( likesel			PGNSP PGUID 12 1 0 0 0 f f f f t f s s 4 0 701 "2281 26 2281 23" _null_ _null_ _null_ _null_ _null_	likesel _null_ _null_ _null_ ));
+DATA(insert OID = 1819 ( likesel			PGNSP PGUID 12 1 0 0 0 f f f f t f s s 4 0 701 "2281 26 2281 23" _null_ _null_ _null_ _null_ _null_ likesel _null_ _null_ _null_ ));
 DESCR("restriction selectivity of LIKE");
-DATA(insert OID = 1820 ( icregexeqsel		PGNSP PGUID 12 1 0 0 0 f f f f t f s s 4 0 701 "2281 26 2281 23" _null_ _null_ _null_ _null_ _null_	icregexeqsel _null_ _null_ _null_ ));
+DATA(insert OID = 1820 ( icregexeqsel		PGNSP PGUID 12 1 0 0 0 f f f f t f s s 4 0 701 "2281 26 2281 23" _null_ _null_ _null_ _null_ _null_ icregexeqsel _null_ _null_ _null_ ));
 DESCR("restriction selectivity of case-insensitive regex match");
-DATA(insert OID = 1821 ( regexnesel			PGNSP PGUID 12 1 0 0 0 f f f f t f s s 4 0 701 "2281 26 2281 23" _null_ _null_ _null_ _null_ _null_	regexnesel _null_ _null_ _null_ ));
+DATA(insert OID = 1821 ( regexnesel			PGNSP PGUID 12 1 0 0 0 f f f f t f s s 4 0 701 "2281 26 2281 23" _null_ _null_ _null_ _null_ _null_ regexnesel _null_ _null_ _null_ ));
 DESCR("restriction selectivity of regex non-match");
-DATA(insert OID = 1822 ( nlikesel			PGNSP PGUID 12 1 0 0 0 f f f f t f s s 4 0 701 "2281 26 2281 23" _null_ _null_ _null_ _null_ _null_	nlikesel _null_ _null_ _null_ ));
+DATA(insert OID = 1822 ( nlikesel			PGNSP PGUID 12 1 0 0 0 f f f f t f s s 4 0 701 "2281 26 2281 23" _null_ _null_ _null_ _null_ _null_ nlikesel _null_ _null_ _null_ ));
 DESCR("restriction selectivity of NOT LIKE");
-DATA(insert OID = 1823 ( icregexnesel		PGNSP PGUID 12 1 0 0 0 f f f f t f s s 4 0 701 "2281 26 2281 23" _null_ _null_ _null_ _null_ _null_	icregexnesel _null_ _null_ _null_ ));
+DATA(insert OID = 1823 ( icregexnesel		PGNSP PGUID 12 1 0 0 0 f f f f t f s s 4 0 701 "2281 26 2281 23" _null_ _null_ _null_ _null_ _null_ icregexnesel _null_ _null_ _null_ ));
 DESCR("restriction selectivity of case-insensitive regex non-match");
 DATA(insert OID = 1824 ( regexeqjoinsel		PGNSP PGUID 12 1 0 0 0 f f f f t f s s 5 0 701 "2281 26 2281 21 2281" _null_ _null_ _null_ _null_  _null_ regexeqjoinsel _null_ _null_ _null_ ));
 DESCR("join selectivity of regex match");
@@ -2441,8 +2450,20 @@ DATA(insert OID = 1832 (  float8_stddev_samp	PGNSP PGUID 12 1 0 0 0 f f f f t f 
 DESCR("aggregate final function");
 DATA(insert OID = 1833 (  numeric_accum    PGNSP PGUID 12 1 0 0 0 f f f f f f i s 2 0 2281 "2281 1700" _null_ _null_ _null_ _null_ _null_ numeric_accum _null_ _null_ _null_ ));
 DESCR("aggregate transition function");
+DATA(insert OID = 3341 (  numeric_combine	 PGNSP PGUID 12 1 0 0 0 f f f f f f i s 2 0 2281 "2281 2281" _null_ _null_ _null_ _null_ _null_ numeric_combine _null_ _null_ _null_ ));
+DESCR("aggregate combine function");
 DATA(insert OID = 2858 (  numeric_avg_accum    PGNSP PGUID 12 1 0 0 0 f f f f f f i s 2 0 2281 "2281 1700" _null_ _null_ _null_ _null_ _null_ numeric_avg_accum _null_ _null_ _null_ ));
 DESCR("aggregate transition function");
+DATA(insert OID = 3337 (  numeric_avg_combine	 PGNSP PGUID 12 1 0 0 0 f f f f f f i s 2 0 2281 "2281 2281" _null_ _null_ _null_ _null_ _null_ numeric_avg_combine _null_ _null_ _null_ ));
+DESCR("aggregate combine function");
+DATA(insert OID = 2740 (  numeric_avg_serialize    PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 17 "2281" _null_ _null_ _null_ _null_ _null_ numeric_avg_serialize _null_ _null_ _null_ ));
+DESCR("aggregate serial function");
+DATA(insert OID = 2741 (  numeric_avg_deserialize	 PGNSP PGUID 12 1 0 0 0 f f f f t f i s 2 0 2281 "17 2281" _null_ _null_ _null_ _null_ _null_ numeric_avg_deserialize _null_ _null_ _null_ ));
+DESCR("aggregate deserial function");
+DATA(insert OID = 3335 (  numeric_serialize    PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 17 "2281" _null_ _null_ _null_ _null_ _null_ numeric_serialize _null_ _null_ _null_ ));
+DESCR("aggregate serial function");
+DATA(insert OID = 3336 (  numeric_deserialize	 PGNSP PGUID 12 1 0 0 0 f f f f t f i s 2 0 2281 "17 2281" _null_ _null_ _null_ _null_ _null_ numeric_deserialize _null_ _null_ _null_ ));
+DESCR("aggregate deserial function");
 DATA(insert OID = 3548 (  numeric_accum_inv    PGNSP PGUID 12 1 0 0 0 f f f f f f i s 2 0 2281 "2281 1700" _null_ _null_ _null_ _null_ _null_ numeric_accum_inv _null_ _null_ _null_ ));
 DESCR("aggregate transition function");
 DATA(insert OID = 1834 (  int2_accum	   PGNSP PGUID 12 1 0 0 0 f f f f f f i s 2 0 2281 "2281 21" _null_ _null_ _null_ _null_ _null_ int2_accum _null_ _null_ _null_ ));
@@ -2451,6 +2472,12 @@ DATA(insert OID = 1835 (  int4_accum	   PGNSP PGUID 12 1 0 0 0 f f f f f f i s 2
 DESCR("aggregate transition function");
 DATA(insert OID = 1836 (  int8_accum	   PGNSP PGUID 12 1 0 0 0 f f f f f f i s 2 0 2281 "2281 20" _null_ _null_ _null_ _null_ _null_ int8_accum _null_ _null_ _null_ ));
 DESCR("aggregate transition function");
+DATA(insert OID = 3338 (  numeric_poly_combine	  PGNSP PGUID 12 1 0 0 0 f f f f f f i s 2 0 2281 "2281 2281" _null_ _null_ _null_ _null_ _null_ numeric_poly_combine _null_ _null_ _null_ ));
+DESCR("aggregate combine function");
+DATA(insert OID = 3339 (  numeric_poly_serialize	PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 17 "2281" _null_ _null_ _null_ _null_ _null_ numeric_poly_serialize _null_ _null_ _null_ ));
+DESCR("aggregate serial function");
+DATA(insert OID = 3340 (  numeric_poly_deserialize	  PGNSP PGUID 12 1 0 0 0 f f f f t f i s 2 0 2281 "17 2281" _null_ _null_ _null_ _null_ _null_ numeric_poly_deserialize _null_ _null_ _null_ ));
+DESCR("aggregate deserial function");
 DATA(insert OID = 2746 (  int8_avg_accum	   PGNSP PGUID 12 1 0 0 0 f f f f f f i s 2 0 2281 "2281 20" _null_ _null_ _null_ _null_ _null_ int8_avg_accum _null_ _null_ _null_ ));
 DESCR("aggregate transition function");
 DATA(insert OID = 3567 (  int2_accum_inv   PGNSP PGUID 12 1 0 0 0 f f f f f f i s 2 0 2281 "2281 21" _null_ _null_ _null_ _null_ _null_ int2_accum_inv _null_ _null_ _null_ ));
@@ -2461,6 +2488,14 @@ DATA(insert OID = 3569 (  int8_accum_inv   PGNSP PGUID 12 1 0 0 0 f f f f f f i 
 DESCR("aggregate transition function");
 DATA(insert OID = 3387 (  int8_avg_accum_inv   PGNSP PGUID 12 1 0 0 0 f f f f f f i s 2 0 2281 "2281 20" _null_ _null_ _null_ _null_ _null_ int8_avg_accum_inv _null_ _null_ _null_ ));
 DESCR("aggregate transition function");
+DATA(insert OID = 2785 (  int8_avg_combine	  PGNSP PGUID 12 1 0 0 0 f f f f f f i s 2 0 2281 "2281 2281" _null_ _null_ _null_ _null_ _null_ int8_avg_combine _null_ _null_ _null_ ));
+DESCR("aggregate combine function");
+DATA(insert OID = 2786 (  int8_avg_serialize	PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 17 "2281" _null_ _null_ _null_ _null_ _null_ int8_avg_serialize _null_ _null_ _null_ ));
+DESCR("aggregate serial function");
+DATA(insert OID = 2787 (  int8_avg_deserialize	  PGNSP PGUID 12 1 0 0 0 f f f f t f i s 2 0 2281 "17 2281" _null_ _null_ _null_ _null_ _null_ int8_avg_deserialize _null_ _null_ _null_ ));
+DESCR("aggregate deserial function");
+DATA(insert OID = 3324 (  int4_avg_combine	  PGNSP PGUID 12 1 0 0 0 f f f f t f i s 2 0 1016 "1016 1016" _null_ _null_ _null_ _null_ _null_ int4_avg_combine _null_ _null_ _null_ ));
+DESCR("aggregate combine function");
 DATA(insert OID = 3178 (  numeric_sum	   PGNSP PGUID 12 1 0 0 0 f f f f f f i s 1 0 1700 "2281" _null_ _null_ _null_ _null_ _null_ numeric_sum _null_ _null_ _null_ ));
 DESCR("aggregate final function");
 DATA(insert OID = 1837 (  numeric_avg	   PGNSP PGUID 12 1 0 0 0 f f f f f f i s 1 0 1700 "2281" _null_ _null_ _null_ _null_ _null_ numeric_avg _null_ _null_ _null_ ));
@@ -2494,6 +2529,8 @@ DESCR("aggregate final function");
 
 DATA(insert OID = 1843 (  interval_accum   PGNSP PGUID 12 1 0 0 0 f f f f t f i s 2 0 1187 "1187 1186" _null_ _null_ _null_ _null_ _null_ interval_accum _null_ _null_ _null_ ));
 DESCR("aggregate transition function");
+DATA(insert OID = 3325 (  interval_combine	 PGNSP PGUID 12 1 0 0 0 f f f f t f i s 2 0 1187 "1187 1187" _null_ _null_ _null_ _null_ _null_ interval_combine _null_ _null_ _null_ ));
+DESCR("aggregate combine function");
 DATA(insert OID = 3549 (  interval_accum_inv   PGNSP PGUID 12 1 0 0 0 f f f f t f i s 2 0 1187 "1187 1186" _null_ _null_ _null_ _null_ _null_ interval_accum_inv _null_ _null_ _null_ ));
 DESCR("aggregate transition function");
 DATA(insert OID = 1844 (  interval_avg	   PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 1186 "1187" _null_ _null_ _null_ _null_ _null_ interval_avg _null_ _null_ _null_ ));
@@ -2514,6 +2551,8 @@ DATA(insert OID = 2805 (  int8inc_float8_float8		PGNSP PGUID 12 1 0 0 0 f f f f 
 DESCR("aggregate transition function");
 DATA(insert OID = 2806 (  float8_regr_accum			PGNSP PGUID 12 1 0 0 0 f f f f t f i s 3 0 1022 "1022 701 701" _null_ _null_ _null_ _null_ _null_ float8_regr_accum _null_ _null_ _null_ ));
 DESCR("aggregate transition function");
+DATA(insert OID = 3342 (  float8_regr_combine		PGNSP PGUID 12 1 0 0 0 f f f f t f i s 2 0 1022 "1022 1022" _null_ _null_ _null_ _null_ _null_ float8_regr_combine _null_ _null_ _null_ ));
+DESCR("aggregate combine function");
 DATA(insert OID = 2807 (  float8_regr_sxx			PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 701 "1022" _null_ _null_ _null_ _null_ _null_ float8_regr_sxx _null_ _null_ _null_ ));
 DESCR("aggregate final function");
 DATA(insert OID = 2808 (  float8_regr_syy			PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 701 "1022" _null_ _null_ _null_ _null_ _null_ float8_regr_syy _null_ _null_ _null_ ));
@@ -2653,13 +2692,13 @@ DESCR("current user privilege on column by rel oid, col name");
 DATA(insert OID = 3023 (  has_column_privilege		   PGNSP PGUID 12 1 0 0 0 f f f f t f s s 3 0 16 "26 21 25" _null_ _null_ _null_ _null_ _null_ has_column_privilege_id_attnum _null_ _null_ _null_ ));
 DESCR("current user privilege on column by rel oid, col attnum");
 
-DATA(insert OID = 3024 (  has_any_column_privilege	   PGNSP PGUID 12 10 0 0 0 f f f f t f s s 3 0 16 "19 25 25" _null_ _null_ _null_ _null_ _null_	has_any_column_privilege_name_name _null_ _null_ _null_ ));
+DATA(insert OID = 3024 (  has_any_column_privilege	   PGNSP PGUID 12 10 0 0 0 f f f f t f s s 3 0 16 "19 25 25" _null_ _null_ _null_ _null_ _null_ has_any_column_privilege_name_name _null_ _null_ _null_ ));
 DESCR("user privilege on any column by username, rel name");
-DATA(insert OID = 3025 (  has_any_column_privilege	   PGNSP PGUID 12 10 0 0 0 f f f f t f s s 3 0 16 "19 26 25" _null_ _null_ _null_ _null_ _null_	has_any_column_privilege_name_id _null_ _null_ _null_ ));
+DATA(insert OID = 3025 (  has_any_column_privilege	   PGNSP PGUID 12 10 0 0 0 f f f f t f s s 3 0 16 "19 26 25" _null_ _null_ _null_ _null_ _null_ has_any_column_privilege_name_id _null_ _null_ _null_ ));
 DESCR("user privilege on any column by username, rel oid");
-DATA(insert OID = 3026 (  has_any_column_privilege	   PGNSP PGUID 12 10 0 0 0 f f f f t f s s 3 0 16 "26 25 25" _null_ _null_ _null_ _null_ _null_	has_any_column_privilege_id_name _null_ _null_ _null_ ));
+DATA(insert OID = 3026 (  has_any_column_privilege	   PGNSP PGUID 12 10 0 0 0 f f f f t f s s 3 0 16 "26 25 25" _null_ _null_ _null_ _null_ _null_ has_any_column_privilege_id_name _null_ _null_ _null_ ));
 DESCR("user privilege on any column by user oid, rel name");
-DATA(insert OID = 3027 (  has_any_column_privilege	   PGNSP PGUID 12 10 0 0 0 f f f f t f s s 3 0 16 "26 26 25" _null_ _null_ _null_ _null_ _null_	has_any_column_privilege_id_id _null_ _null_ _null_ ));
+DATA(insert OID = 3027 (  has_any_column_privilege	   PGNSP PGUID 12 10 0 0 0 f f f f t f s s 3 0 16 "26 26 25" _null_ _null_ _null_ _null_ _null_ has_any_column_privilege_id_id _null_ _null_ _null_ ));
 DESCR("user privilege on any column by user oid, rel oid");
 DATA(insert OID = 3028 (  has_any_column_privilege	   PGNSP PGUID 12 10 0 0 0 f f f f t f s s 2 0 16 "25 25" _null_ _null_ _null_ _null_ _null_ has_any_column_privilege_name _null_ _null_ _null_ ));
 DESCR("current user privilege on any column by rel name");
@@ -2694,9 +2733,9 @@ DATA(insert OID = 2781 (  pg_stat_get_last_vacuum_time PGNSP PGUID 12 1 0 0 0 f 
 DESCR("statistics: last manual vacuum time for a table");
 DATA(insert OID = 2782 (  pg_stat_get_last_autovacuum_time PGNSP PGUID 12 1 0 0 0 f f f f t f s r 1 0 1184 "26" _null_ _null_ _null_ _null_ _null_	pg_stat_get_last_autovacuum_time _null_ _null_ _null_ ));
 DESCR("statistics: last auto vacuum time for a table");
-DATA(insert OID = 2783 (  pg_stat_get_last_analyze_time PGNSP PGUID 12 1 0 0 0 f f f f t f s r 1 0 1184 "26" _null_ _null_ _null_ _null_ _null_	pg_stat_get_last_analyze_time _null_ _null_ _null_ ));
+DATA(insert OID = 2783 (  pg_stat_get_last_analyze_time PGNSP PGUID 12 1 0 0 0 f f f f t f s r 1 0 1184 "26" _null_ _null_ _null_ _null_ _null_ pg_stat_get_last_analyze_time _null_ _null_ _null_ ));
 DESCR("statistics: last manual analyze time for a table");
-DATA(insert OID = 2784 (  pg_stat_get_last_autoanalyze_time PGNSP PGUID 12 1 0 0 0 f f f f t f s r 1 0 1184 "26" _null_ _null_ _null_ _null_ _null_	pg_stat_get_last_autoanalyze_time _null_ _null_ _null_ ));
+DATA(insert OID = 2784 (  pg_stat_get_last_autoanalyze_time PGNSP PGUID 12 1 0 0 0 f f f f t f s r 1 0 1184 "26" _null_ _null_ _null_ _null_ _null_ pg_stat_get_last_autoanalyze_time _null_ _null_ _null_ ));
 DESCR("statistics: last auto analyze time for a table");
 DATA(insert OID = 3054 ( pg_stat_get_vacuum_count PGNSP PGUID 12 1 0 0 0 f f f f t f s r 1 0 20 "26" _null_ _null_ _null_ _null_ _null_ pg_stat_get_vacuum_count _null_ _null_ _null_ ));
 DESCR("statistics: number of manual vacuums for a table");
@@ -2708,11 +2747,13 @@ DATA(insert OID = 3057 ( pg_stat_get_autoanalyze_count PGNSP PGUID 12 1 0 0 0 f 
 DESCR("statistics: number of auto analyzes for a table");
 DATA(insert OID = 1936 (  pg_stat_get_backend_idset		PGNSP PGUID 12 1 100 0 0 f f f f t t s r 0 0 23 "" _null_ _null_ _null_ _null_ _null_ pg_stat_get_backend_idset _null_ _null_ _null_ ));
 DESCR("statistics: currently active backend IDs");
-DATA(insert OID = 2022 (  pg_stat_get_activity			PGNSP PGUID 12 1 100 0 0 f f f f f t s r 1 0 2249 "23" "{23,26,23,26,25,25,25,16,1184,1184,1184,1184,869,25,23,28,28,16,25,25,23,16,25}" "{i,o,o,o,o,o,o,o,o,o,o,o,o,o,o,o,o,o,o,o,o,o,o}" "{pid,datid,pid,usesysid,application_name,state,query,waiting,xact_start,query_start,backend_start,state_change,client_addr,client_hostname,client_port,backend_xid,backend_xmin,ssl,sslversion,sslcipher,sslbits,sslcompression,sslclientdn}" _null_ _null_ pg_stat_get_activity _null_ _null_ _null_ ));
+DATA(insert OID = 2022 (  pg_stat_get_activity			PGNSP PGUID 12 1 100 0 0 f f f f f t s r 1 0 2249 "23" "{23,26,23,26,25,25,25,25,25,1184,1184,1184,1184,869,25,23,28,28,16,25,25,23,16,25}" "{i,o,o,o,o,o,o,o,o,o,o,o,o,o,o,o,o,o,o,o,o,o,o,o}" "{pid,datid,pid,usesysid,application_name,state,query,wait_event_type,wait_event,xact_start,query_start,backend_start,state_change,client_addr,client_hostname,client_port,backend_xid,backend_xmin,ssl,sslversion,sslcipher,sslbits,sslcompression,sslclientdn}" _null_ _null_ pg_stat_get_activity _null_ _null_ _null_ ));
 DESCR("statistics: information about currently active backends");
+DATA(insert OID = 3318 (  pg_stat_get_progress_info			  PGNSP PGUID 12 1 100 0 0 f f f f t t s r 1 0 2249 "25" "{25,23,26,26,20,20,20,20,20,20,20,20,20,20}" "{i,o,o,o,o,o,o,o,o,o,o,o,o,o}" "{cmdtype,pid,datid,relid,param1,param2,param3,param4,param5,param6,param7,param8,param9,param10}" _null_ _null_ pg_stat_get_progress_info _null_ _null_ _null_ ));
+DESCR("statistics: information about progress of backends running maintenance command");
 DATA(insert OID = 3099 (  pg_stat_get_wal_senders	PGNSP PGUID 12 1 10 0 0 f f f f f t s r 0 0 2249 "" "{23,25,3220,3220,3220,3220,23,25}" "{o,o,o,o,o,o,o,o}" "{pid,state,sent_location,write_location,flush_location,replay_location,sync_priority,sync_state}" _null_ _null_ pg_stat_get_wal_senders _null_ _null_ _null_ ));
 DESCR("statistics: information about currently active replication");
-DATA(insert OID = 3317 (  pg_stat_get_wal_receiver	PGNSP PGUID 12 1 0 0 0 f f f f f f s r 0 0 2249 "" "{23,25,3220,23,3220,23,1184,1184,3220,1184,25}" "{o,o,o,o,o,o,o,o,o,o,o}" "{pid,status,receive_start_lsn,receive_start_tli,received_lsn,received_tli,last_msg_send_time,last_msg_receipt_time,latest_end_lsn,latest_end_time,slot_name}" _null_ _null_ pg_stat_get_wal_receiver _null_ _null_ _null_ ));
+DATA(insert OID = 3317 (  pg_stat_get_wal_receiver	PGNSP PGUID 12 1 0 0 0 f f f f f f s r 0 0 2249 "" "{23,25,3220,23,3220,23,1184,1184,3220,1184,25,25}" "{o,o,o,o,o,o,o,o,o,o,o,o}" "{pid,status,receive_start_lsn,receive_start_tli,received_lsn,received_tli,last_msg_send_time,last_msg_receipt_time,latest_end_lsn,latest_end_time,slot_name,conninfo}" _null_ _null_ pg_stat_get_wal_receiver _null_ _null_ _null_ ));
 DESCR("statistics: information about WAL receiver");
 DATA(insert OID = 2026 (  pg_backend_pid				PGNSP PGUID 12 1 0 0 0 f f f f t f s r 0 0 23 "" _null_ _null_ _null_ _null_ _null_ pg_backend_pid _null_ _null_ _null_ ));
 DESCR("statistics: current backend PID");
@@ -2724,8 +2765,10 @@ DATA(insert OID = 1939 (  pg_stat_get_backend_userid	PGNSP PGUID 12 1 0 0 0 f f 
 DESCR("statistics: user ID of backend");
 DATA(insert OID = 1940 (  pg_stat_get_backend_activity	PGNSP PGUID 12 1 0 0 0 f f f f t f s r 1 0 25 "23" _null_ _null_ _null_ _null_ _null_ pg_stat_get_backend_activity _null_ _null_ _null_ ));
 DESCR("statistics: current query of backend");
-DATA(insert OID = 2853 (  pg_stat_get_backend_waiting	PGNSP PGUID 12 1 0 0 0 f f f f t f s r 1 0 16 "23" _null_ _null_ _null_ _null_ _null_ pg_stat_get_backend_waiting _null_ _null_ _null_ ));
-DESCR("statistics: is backend currently waiting for a lock");
+DATA(insert OID = 2788 (  pg_stat_get_backend_wait_event_type	PGNSP PGUID 12 1 0 0 0 f f f f t f s r 1 0 25 "23" _null_ _null_ _null_ _null_ _null_ pg_stat_get_backend_wait_event_type _null_ _null_ _null_ ));
+DESCR("statistics: wait event type on which backend is currently waiting");
+DATA(insert OID = 2853 (  pg_stat_get_backend_wait_event	PGNSP PGUID 12 1 0 0 0 f f f f t f s r 1 0 25 "23" _null_ _null_ _null_ _null_ _null_ pg_stat_get_backend_wait_event _null_ _null_ _null_ ));
+DESCR("statistics: wait event on which backend is currently waiting");
 DATA(insert OID = 2094 (  pg_stat_get_backend_activity_start PGNSP PGUID 12 1 0 0 0 f f f f t f s r 1 0 1184 "23" _null_ _null_ _null_ _null_ _null_ pg_stat_get_backend_activity_start _null_ _null_ _null_ ));
 DESCR("statistics: start time for current query of backend");
 DATA(insert OID = 2857 (  pg_stat_get_backend_xact_start PGNSP PGUID 12 1 0 0 0 f f f f t f s r 1 0 1184 "23" _null_ _null_ _null_ _null_ _null_ pg_stat_get_backend_xact_start _null_ _null_ _null_ ));
@@ -2792,7 +2835,7 @@ DATA(insert OID = 2772 ( pg_stat_get_bgwriter_buf_written_clean PGNSP PGUID 12 1
 DESCR("statistics: number of buffers written by the bgwriter for cleaning dirty buffers");
 DATA(insert OID = 2773 ( pg_stat_get_bgwriter_maxwritten_clean PGNSP PGUID 12 1 0 0 0 f f f f t f s r 0 0 20 "" _null_ _null_ _null_ _null_ _null_ pg_stat_get_bgwriter_maxwritten_clean _null_ _null_ _null_ ));
 DESCR("statistics: number of times the bgwriter stopped processing when it had written too many buffers while cleaning");
-DATA(insert OID = 3075 ( pg_stat_get_bgwriter_stat_reset_time PGNSP PGUID 12 1 0 0 0 f f f f t f s r 0 0 1184 "" _null_ _null_ _null_ _null_ _null_	pg_stat_get_bgwriter_stat_reset_time _null_ _null_ _null_ ));
+DATA(insert OID = 3075 ( pg_stat_get_bgwriter_stat_reset_time PGNSP PGUID 12 1 0 0 0 f f f f t f s r 0 0 1184 "" _null_ _null_ _null_ _null_ _null_ pg_stat_get_bgwriter_stat_reset_time _null_ _null_ _null_ ));
 DESCR("statistics: last reset for the bgwriter");
 DATA(insert OID = 3160 ( pg_stat_get_checkpoint_write_time PGNSP PGUID 12 1 0 0 0 f f f f t f s r 0 0 701 "" _null_ _null_ _null_ _null_ _null_ pg_stat_get_checkpoint_write_time _null_ _null_ _null_ ));
 DESCR("statistics: checkpoint time spent writing buffers to disk, in msec");
@@ -2843,11 +2886,11 @@ DATA(insert OID = 2230 (  pg_stat_clear_snapshot		PGNSP PGUID 12 1 0 0 0 f f f f
 DESCR("statistics: discard current transaction's statistics snapshot");
 DATA(insert OID = 2274 (  pg_stat_reset					PGNSP PGUID 12 1 0 0 0 f f f f f f v s 0 0 2278 "" _null_ _null_ _null_ _null_ _null_ pg_stat_reset _null_ _null_ _null_ ));
 DESCR("statistics: reset collected statistics for current database");
-DATA(insert OID = 3775 (  pg_stat_reset_shared			PGNSP PGUID 12 1 0 0 0 f f f f t f v s 1 0 2278 "25" _null_ _null_ _null_ _null_ _null_	pg_stat_reset_shared _null_ _null_ _null_ ));
+DATA(insert OID = 3775 (  pg_stat_reset_shared			PGNSP PGUID 12 1 0 0 0 f f f f t f v s 1 0 2278 "25" _null_ _null_ _null_ _null_ _null_ pg_stat_reset_shared _null_ _null_ _null_ ));
 DESCR("statistics: reset collected statistics shared across the cluster");
-DATA(insert OID = 3776 (  pg_stat_reset_single_table_counters	PGNSP PGUID 12 1 0 0 0 f f f f t f v s 1 0 2278 "26" _null_ _null_ _null_ _null_ _null_	pg_stat_reset_single_table_counters _null_ _null_ _null_ ));
+DATA(insert OID = 3776 (  pg_stat_reset_single_table_counters	PGNSP PGUID 12 1 0 0 0 f f f f t f v s 1 0 2278 "26" _null_ _null_ _null_ _null_ _null_ pg_stat_reset_single_table_counters _null_ _null_ _null_ ));
 DESCR("statistics: reset collected statistics for a single table or index in the current database");
-DATA(insert OID = 3777 (  pg_stat_reset_single_function_counters	PGNSP PGUID 12 1 0 0 0 f f f f t f v s 1 0 2278 "26" _null_ _null_ _null_ _null_ _null_	pg_stat_reset_single_function_counters _null_ _null_ _null_ ));
+DATA(insert OID = 3777 (  pg_stat_reset_single_function_counters	PGNSP PGUID 12 1 0 0 0 f f f f t f v s 1 0 2278 "26" _null_ _null_ _null_ _null_ _null_ pg_stat_reset_single_function_counters _null_ _null_ _null_ ));
 DESCR("statistics: reset collected statistics for a single function in the current database");
 
 DATA(insert OID = 3163 (  pg_trigger_depth				PGNSP PGUID 12 1 0 0 0 f f f f t f s s 0 0 23 "" _null_ _null_ _null_ _null_ _null_ pg_trigger_depth _null_ _null_ _null_ ));
@@ -2923,7 +2966,7 @@ DATA(insert OID = 2019 (  time				PGNSP PGUID 12 1 0 0 0 f f f f t f s s 1 0 108
 DESCR("convert timestamp with time zone to time");
 DATA(insert OID = 2020 (  date_trunc		PGNSP PGUID 12 1 0 0 0 f f f f t f i s 2 0 1114 "25 1114" _null_ _null_ _null_ _null_ _null_ timestamp_trunc _null_ _null_ _null_ ));
 DESCR("truncate timestamp to specified units");
-DATA(insert OID = 2021 (  date_part			PGNSP PGUID 12 1 0 0 0 f f f f t f i s 2 0 701 "25 1114" _null_ _null_ _null_ _null_ _null_	timestamp_part _null_ _null_ _null_ ));
+DATA(insert OID = 2021 (  date_part			PGNSP PGUID 12 1 0 0 0 f f f f t f i s 2 0 701 "25 1114" _null_ _null_ _null_ _null_ _null_ timestamp_part _null_ _null_ _null_ ));
 DESCR("extract field from timestamp");
 DATA(insert OID = 2023 (  timestamp			PGNSP PGUID 12 1 0 0 0 f f f f t f s s 1 0 1114 "702" _null_ _null_ _null_ _null_ _null_ abstime_timestamp _null_ _null_ _null_ ));
 DESCR("convert abstime to timestamp");
@@ -2954,11 +2997,11 @@ DATA(insert OID = 2039 (  timestamp_hash	PGNSP PGUID 12 1 0 0 0 f f f f t f i s 
 DESCR("hash");
 DATA(insert OID = 2041 ( overlaps			PGNSP PGUID 12 1 0 0 0 f f f f f f i s 4 0 16 "1114 1114 1114 1114" _null_ _null_ _null_ _null_ _null_	overlaps_timestamp _null_ _null_ _null_ ));
 DESCR("intervals overlap?");
-DATA(insert OID = 2042 ( overlaps			PGNSP PGUID 14 1 0 0 0 f f f f f f i s 4 0 16 "1114 1186 1114 1186" _null_ _null_ _null_ _null_	_null_ "select ($1, ($1 + $2)) overlaps ($3, ($3 + $4))" _null_ _null_ _null_ ));
+DATA(insert OID = 2042 ( overlaps			PGNSP PGUID 14 1 0 0 0 f f f f f f i s 4 0 16 "1114 1186 1114 1186" _null_ _null_ _null_ _null_ _null_ "select ($1, ($1 + $2)) overlaps ($3, ($3 + $4))" _null_ _null_ _null_ ));
 DESCR("intervals overlap?");
-DATA(insert OID = 2043 ( overlaps			PGNSP PGUID 14 1 0 0 0 f f f f f f i s 4 0 16 "1114 1114 1114 1186" _null_ _null_ _null_ _null_	_null_ "select ($1, $2) overlaps ($3, ($3 + $4))" _null_ _null_ _null_ ));
+DATA(insert OID = 2043 ( overlaps			PGNSP PGUID 14 1 0 0 0 f f f f f f i s 4 0 16 "1114 1114 1114 1186" _null_ _null_ _null_ _null_ _null_ "select ($1, $2) overlaps ($3, ($3 + $4))" _null_ _null_ _null_ ));
 DESCR("intervals overlap?");
-DATA(insert OID = 2044 ( overlaps			PGNSP PGUID 14 1 0 0 0 f f f f f f i s 4 0 16 "1114 1186 1114 1114" _null_ _null_ _null_ _null_	_null_ "select ($1, ($1 + $2)) overlaps ($3, $4)" _null_ _null_ _null_ ));
+DATA(insert OID = 2044 ( overlaps			PGNSP PGUID 14 1 0 0 0 f f f f f f i s 4 0 16 "1114 1186 1114 1114" _null_ _null_ _null_ _null_ _null_ "select ($1, ($1 + $2)) overlaps ($3, $4)" _null_ _null_ _null_ ));
 DESCR("intervals overlap?");
 DATA(insert OID = 2045 (  timestamp_cmp		PGNSP PGUID 12 1 0 0 0 f f f f t f i s 2 0 23 "1114 1114" _null_ _null_ _null_ _null_ _null_ timestamp_cmp _null_ _null_ _null_ ));
 DESCR("less-equal-greater");
@@ -3012,6 +3055,8 @@ DATA(insert OID = 3329 (  pg_show_all_file_settings PGNSP PGUID 12 1 1000 0 0 f 
 DESCR("show config file settings");
 DATA(insert OID = 1371 (  pg_lock_status   PGNSP PGUID 12 1 1000 0 0 f f f f t t v s 0 0 2249 "" "{25,26,26,23,21,25,28,26,26,21,25,23,25,16,16}" "{o,o,o,o,o,o,o,o,o,o,o,o,o,o,o}" "{locktype,database,relation,page,tuple,virtualxid,transactionid,classid,objid,objsubid,virtualtransaction,pid,mode,granted,fastpath}" _null_ _null_ pg_lock_status _null_ _null_ _null_ ));
 DESCR("view system lock information");
+DATA(insert OID = 2561 (  pg_blocking_pids PGNSP PGUID 12 1 0 0 0 f f f f t f v s 1 0 1007 "23" _null_ _null_ _null_ _null_ _null_ pg_blocking_pids _null_ _null_ _null_ ));
+DESCR("get array of PIDs of sessions blocking specified backend PID");
 DATA(insert OID = 1065 (  pg_prepared_xact PGNSP PGUID 12 1 1000 0 0 f f f f t t v s 0 0 2249 "" "{28,25,1184,26,26}" "{o,o,o,o,o}" "{transaction,gid,prepared,ownerid,dbid}" _null_ _null_ pg_prepared_xact _null_ _null_ _null_ ));
 DESCR("view two-phase transactions");
 DATA(insert OID = 3819 (  pg_get_multixact_members PGNSP PGUID 12 1 1000 0 0 f f f f t t v s 1 0 2249 "28" "{28,28,25}" "{i,o,o}" "{multixid,xid,mode}" _null_ _null_ pg_get_multixact_members _null_ _null_ _null_ ));
@@ -3069,9 +3114,11 @@ DATA(insert OID = 2171 ( pg_cancel_backend		PGNSP PGUID 12 1 0 0 0 f f f f t f v
 DESCR("cancel a server process' current query");
 DATA(insert OID = 2096 ( pg_terminate_backend		PGNSP PGUID 12 1 0 0 0 f f f f t f v s 1 0 16 "23" _null_ _null_ _null_ _null_ _null_ pg_terminate_backend _null_ _null_ _null_ ));
 DESCR("terminate a server process");
-DATA(insert OID = 2172 ( pg_start_backup		PGNSP PGUID 12 1 0 0 0 f f f f t f v s 2 0 3220 "25 16" _null_ _null_ _null_ _null_ _null_ pg_start_backup _null_ _null_ _null_ ));
+DATA(insert OID = 2172 ( pg_start_backup		PGNSP PGUID 12 1 0 0 0 f f f f t f v r 3 0 3220 "25 16 16" _null_ _null_ _null_ _null_ _null_ pg_start_backup _null_ _null_ _null_ ));
 DESCR("prepare for taking an online backup");
 DATA(insert OID = 2173 ( pg_stop_backup			PGNSP PGUID 12 1 0 0 0 f f f f t f v s 0 0 3220 "" _null_ _null_ _null_ _null_ _null_ pg_stop_backup _null_ _null_ _null_ ));
+DESCR("finish taking an online backup");
+DATA(insert OID = 2739 ( pg_stop_backup			PGNSP PGUID 12 1 1 0 0 f f f f t t v s 1 0 2249 "16" "{16,3220,25,25}" "{i,o,o,o}" "{exclusive,lsn,labelfile,spcmapfile}" _null_ _null_ pg_stop_backup_v2 _null_ _null_ _null_ ));
 DESCR("finish taking an online backup");
 DATA(insert OID = 3813 ( pg_is_in_backup		PGNSP PGUID 12 1 0 0 0 f f f f t f v s 0 0 16 "" _null_ _null_ _null_ _null_ _null_ pg_is_in_backup _null_ _null_ _null_ ));
 DESCR("true if server is in online backup");
@@ -3085,7 +3132,7 @@ DATA(insert OID = 2849 ( pg_current_xlog_location	PGNSP PGUID 12 1 0 0 0 f f f f
 DESCR("current xlog write location");
 DATA(insert OID = 2852 ( pg_current_xlog_insert_location	PGNSP PGUID 12 1 0 0 0 f f f f t f v s 0 0 3220 "" _null_ _null_ _null_ _null_ _null_ pg_current_xlog_insert_location _null_ _null_ _null_ ));
 DESCR("current xlog insert location");
-DATA(insert OID = 3330 ( pg_current_xlog_flush_location	PGNSP PGUID 12 1 0 0 0 f f f f t f v s 0 0 3220 "" _null_ _null_ _null_ _null_ _null_ pg_current_xlog_flush_location _null_ _null_ _null_ ));
+DATA(insert OID = 3330 ( pg_current_xlog_flush_location PGNSP PGUID 12 1 0 0 0 f f f f t f v s 0 0 3220 "" _null_ _null_ _null_ _null_ _null_ pg_current_xlog_flush_location _null_ _null_ _null_ ));
 DESCR("current xlog flush location");
 DATA(insert OID = 2850 ( pg_xlogfile_name_offset	PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 2249 "3220" "{3220,25,23}" "{i,o,o}" "{wal_location,file_name,file_offset}" _null_ _null_ pg_xlogfile_name_offset _null_ _null_ _null_ ));
 DESCR("xlog filename and byte offset, given an xlog location");
@@ -3095,7 +3142,7 @@ DESCR("xlog filename, given an xlog location");
 DATA(insert OID = 3165 ( pg_xlog_location_diff		PGNSP PGUID 12 1 0 0 0 f f f f t f i s 2 0 1700 "3220 3220" _null_ _null_ _null_ _null_ _null_ pg_xlog_location_diff _null_ _null_ _null_ ));
 DESCR("difference in bytes, given two xlog locations");
 
-DATA(insert OID = 3809 ( pg_export_snapshot		PGNSP PGUID 12 1 0 0 0 f f f f t f v r 0 0 25 "" _null_ _null_ _null_ _null_ _null_ pg_export_snapshot _null_ _null_ _null_ ));
+DATA(insert OID = 3809 ( pg_export_snapshot		PGNSP PGUID 12 1 0 0 0 f f f f t f v u 0 0 25 "" _null_ _null_ _null_ _null_ _null_ pg_export_snapshot _null_ _null_ _null_ ));
 DESCR("export a snapshot");
 
 DATA(insert OID = 3810 (  pg_is_in_recovery		PGNSP PGUID 12 1 0 0 0 f f f f t f v s 0 0 16 "" _null_ _null_ _null_ _null_ _null_ pg_is_in_recovery _null_ _null_ _null_ ));
@@ -3152,32 +3199,32 @@ DESCR("convert boolean to text");
 
 /* Aggregates (moved here from pg_aggregate for 7.3) */
 
-DATA(insert OID = 2100 (  avg				PGNSP PGUID 12 1 0 0 0 t f f f f f i s 1 0 1700 "20" _null_ _null_ _null_ _null_ _null_	aggregate_dummy _null_ _null_ _null_ ));
+DATA(insert OID = 2100 (  avg				PGNSP PGUID 12 1 0 0 0 t f f f f f i s 1 0 1700 "20" _null_ _null_ _null_ _null_ _null_ aggregate_dummy _null_ _null_ _null_ ));
 DESCR("the average (arithmetic mean) as numeric of all bigint values");
-DATA(insert OID = 2101 (  avg				PGNSP PGUID 12 1 0 0 0 t f f f f f i s 1 0 1700 "23" _null_ _null_ _null_ _null_ _null_	aggregate_dummy _null_ _null_ _null_ ));
+DATA(insert OID = 2101 (  avg				PGNSP PGUID 12 1 0 0 0 t f f f f f i s 1 0 1700 "23" _null_ _null_ _null_ _null_ _null_ aggregate_dummy _null_ _null_ _null_ ));
 DESCR("the average (arithmetic mean) as numeric of all integer values");
-DATA(insert OID = 2102 (  avg				PGNSP PGUID 12 1 0 0 0 t f f f f f i s 1 0 1700 "21" _null_ _null_ _null_ _null_ _null_	aggregate_dummy _null_ _null_ _null_ ));
+DATA(insert OID = 2102 (  avg				PGNSP PGUID 12 1 0 0 0 t f f f f f i s 1 0 1700 "21" _null_ _null_ _null_ _null_ _null_ aggregate_dummy _null_ _null_ _null_ ));
 DESCR("the average (arithmetic mean) as numeric of all smallint values");
 DATA(insert OID = 2103 (  avg				PGNSP PGUID 12 1 0 0 0 t f f f f f i s 1 0 1700 "1700" _null_ _null_ _null_ _null_ _null_ aggregate_dummy _null_ _null_ _null_ ));
 DESCR("the average (arithmetic mean) as numeric of all numeric values");
-DATA(insert OID = 2104 (  avg				PGNSP PGUID 12 1 0 0 0 t f f f f f i s 1 0 701 "700" _null_ _null_ _null_ _null_ _null_	aggregate_dummy _null_ _null_ _null_ ));
+DATA(insert OID = 2104 (  avg				PGNSP PGUID 12 1 0 0 0 t f f f f f i s 1 0 701 "700" _null_ _null_ _null_ _null_ _null_ aggregate_dummy _null_ _null_ _null_ ));
 DESCR("the average (arithmetic mean) as float8 of all float4 values");
-DATA(insert OID = 2105 (  avg				PGNSP PGUID 12 1 0 0 0 t f f f f f i s 1 0 701 "701" _null_ _null_ _null_ _null_ _null_	aggregate_dummy _null_ _null_ _null_ ));
+DATA(insert OID = 2105 (  avg				PGNSP PGUID 12 1 0 0 0 t f f f f f i s 1 0 701 "701" _null_ _null_ _null_ _null_ _null_ aggregate_dummy _null_ _null_ _null_ ));
 DESCR("the average (arithmetic mean) as float8 of all float8 values");
 DATA(insert OID = 2106 (  avg				PGNSP PGUID 12 1 0 0 0 t f f f f f i s 1 0 1186 "1186" _null_ _null_ _null_ _null_ _null_ aggregate_dummy _null_ _null_ _null_ ));
 DESCR("the average (arithmetic mean) as interval of all interval values");
 
-DATA(insert OID = 2107 (  sum				PGNSP PGUID 12 1 0 0 0 t f f f f f i s 1 0 1700 "20" _null_ _null_ _null_ _null_ _null_	aggregate_dummy _null_ _null_ _null_ ));
+DATA(insert OID = 2107 (  sum				PGNSP PGUID 12 1 0 0 0 t f f f f f i s 1 0 1700 "20" _null_ _null_ _null_ _null_ _null_ aggregate_dummy _null_ _null_ _null_ ));
 DESCR("sum as numeric across all bigint input values");
 DATA(insert OID = 2108 (  sum				PGNSP PGUID 12 1 0 0 0 t f f f f f i s 1 0 20 "23" _null_ _null_ _null_ _null_ _null_ aggregate_dummy _null_ _null_ _null_ ));
 DESCR("sum as bigint across all integer input values");
 DATA(insert OID = 2109 (  sum				PGNSP PGUID 12 1 0 0 0 t f f f f f i s 1 0 20 "21" _null_ _null_ _null_ _null_ _null_ aggregate_dummy _null_ _null_ _null_ ));
 DESCR("sum as bigint across all smallint input values");
-DATA(insert OID = 2110 (  sum				PGNSP PGUID 12 1 0 0 0 t f f f f f i s 1 0 700 "700" _null_ _null_ _null_ _null_ _null_	aggregate_dummy _null_ _null_ _null_ ));
+DATA(insert OID = 2110 (  sum				PGNSP PGUID 12 1 0 0 0 t f f f f f i s 1 0 700 "700" _null_ _null_ _null_ _null_ _null_ aggregate_dummy _null_ _null_ _null_ ));
 DESCR("sum as float4 across all float4 input values");
-DATA(insert OID = 2111 (  sum				PGNSP PGUID 12 1 0 0 0 t f f f f f i s 1 0 701 "701" _null_ _null_ _null_ _null_ _null_	aggregate_dummy _null_ _null_ _null_ ));
+DATA(insert OID = 2111 (  sum				PGNSP PGUID 12 1 0 0 0 t f f f f f i s 1 0 701 "701" _null_ _null_ _null_ _null_ _null_ aggregate_dummy _null_ _null_ _null_ ));
 DESCR("sum as float8 across all float8 input values");
-DATA(insert OID = 2112 (  sum				PGNSP PGUID 12 1 0 0 0 t f f f f f i s 1 0 790 "790" _null_ _null_ _null_ _null_ _null_	aggregate_dummy _null_ _null_ _null_ ));
+DATA(insert OID = 2112 (  sum				PGNSP PGUID 12 1 0 0 0 t f f f f f i s 1 0 790 "790" _null_ _null_ _null_ _null_ _null_ aggregate_dummy _null_ _null_ _null_ ));
 DESCR("sum as money across all money input values");
 DATA(insert OID = 2113 (  sum				PGNSP PGUID 12 1 0 0 0 t f f f f f i s 1 0 1186 "1186" _null_ _null_ _null_ _null_ _null_ aggregate_dummy _null_ _null_ _null_ ));
 DESCR("sum as interval across all interval input values");
@@ -3192,11 +3239,11 @@ DATA(insert OID = 2117 (  max				PGNSP PGUID 12 1 0 0 0 t f f f f f i s 1 0 21 "
 DESCR("maximum value of all smallint input values");
 DATA(insert OID = 2118 (  max				PGNSP PGUID 12 1 0 0 0 t f f f f f i s 1 0 26 "26" _null_ _null_ _null_ _null_ _null_ aggregate_dummy _null_ _null_ _null_ ));
 DESCR("maximum value of all oid input values");
-DATA(insert OID = 2119 (  max				PGNSP PGUID 12 1 0 0 0 t f f f f f i s 1 0 700 "700" _null_ _null_ _null_ _null_ _null_	aggregate_dummy _null_ _null_ _null_ ));
+DATA(insert OID = 2119 (  max				PGNSP PGUID 12 1 0 0 0 t f f f f f i s 1 0 700 "700" _null_ _null_ _null_ _null_ _null_ aggregate_dummy _null_ _null_ _null_ ));
 DESCR("maximum value of all float4 input values");
-DATA(insert OID = 2120 (  max				PGNSP PGUID 12 1 0 0 0 t f f f f f i s 1 0 701 "701" _null_ _null_ _null_ _null_ _null_	aggregate_dummy _null_ _null_ _null_ ));
+DATA(insert OID = 2120 (  max				PGNSP PGUID 12 1 0 0 0 t f f f f f i s 1 0 701 "701" _null_ _null_ _null_ _null_ _null_ aggregate_dummy _null_ _null_ _null_ ));
 DESCR("maximum value of all float8 input values");
-DATA(insert OID = 2121 (  max				PGNSP PGUID 12 1 0 0 0 t f f f f f i s 1 0 702 "702" _null_ _null_ _null_ _null_ _null_	aggregate_dummy _null_ _null_ _null_ ));
+DATA(insert OID = 2121 (  max				PGNSP PGUID 12 1 0 0 0 t f f f f f i s 1 0 702 "702" _null_ _null_ _null_ _null_ _null_ aggregate_dummy _null_ _null_ _null_ ));
 DESCR("maximum value of all abstime input values");
 DATA(insert OID = 2122 (  max				PGNSP PGUID 12 1 0 0 0 t f f f f f i s 1 0 1082 "1082" _null_ _null_ _null_ _null_ _null_ aggregate_dummy _null_ _null_ _null_ ));
 DESCR("maximum value of all date input values");
@@ -3204,7 +3251,7 @@ DATA(insert OID = 2123 (  max				PGNSP PGUID 12 1 0 0 0 t f f f f f i s 1 0 1083
 DESCR("maximum value of all time input values");
 DATA(insert OID = 2124 (  max				PGNSP PGUID 12 1 0 0 0 t f f f f f i s 1 0 1266 "1266" _null_ _null_ _null_ _null_ _null_ aggregate_dummy _null_ _null_ _null_ ));
 DESCR("maximum value of all time with time zone input values");
-DATA(insert OID = 2125 (  max				PGNSP PGUID 12 1 0 0 0 t f f f f f i s 1 0 790 "790" _null_ _null_ _null_ _null_ _null_	aggregate_dummy _null_ _null_ _null_ ));
+DATA(insert OID = 2125 (  max				PGNSP PGUID 12 1 0 0 0 t f f f f f i s 1 0 790 "790" _null_ _null_ _null_ _null_ _null_ aggregate_dummy _null_ _null_ _null_ ));
 DESCR("maximum value of all money input values");
 DATA(insert OID = 2126 (  max				PGNSP PGUID 12 1 0 0 0 t f f f f f i s 1 0 1114 "1114" _null_ _null_ _null_ _null_ _null_ aggregate_dummy _null_ _null_ _null_ ));
 DESCR("maximum value of all timestamp input values");
@@ -3233,11 +3280,11 @@ DATA(insert OID = 2133 (  min				PGNSP PGUID 12 1 0 0 0 t f f f f f i s 1 0 21 "
 DESCR("minimum value of all smallint input values");
 DATA(insert OID = 2134 (  min				PGNSP PGUID 12 1 0 0 0 t f f f f f i s 1 0 26 "26" _null_ _null_ _null_ _null_ _null_ aggregate_dummy _null_ _null_ _null_ ));
 DESCR("minimum value of all oid input values");
-DATA(insert OID = 2135 (  min				PGNSP PGUID 12 1 0 0 0 t f f f f f i s 1 0 700 "700" _null_ _null_ _null_ _null_ _null_	aggregate_dummy _null_ _null_ _null_ ));
+DATA(insert OID = 2135 (  min				PGNSP PGUID 12 1 0 0 0 t f f f f f i s 1 0 700 "700" _null_ _null_ _null_ _null_ _null_ aggregate_dummy _null_ _null_ _null_ ));
 DESCR("minimum value of all float4 input values");
-DATA(insert OID = 2136 (  min				PGNSP PGUID 12 1 0 0 0 t f f f f f i s 1 0 701 "701" _null_ _null_ _null_ _null_ _null_	aggregate_dummy _null_ _null_ _null_ ));
+DATA(insert OID = 2136 (  min				PGNSP PGUID 12 1 0 0 0 t f f f f f i s 1 0 701 "701" _null_ _null_ _null_ _null_ _null_ aggregate_dummy _null_ _null_ _null_ ));
 DESCR("minimum value of all float8 input values");
-DATA(insert OID = 2137 (  min				PGNSP PGUID 12 1 0 0 0 t f f f f f i s 1 0 702 "702" _null_ _null_ _null_ _null_ _null_	aggregate_dummy _null_ _null_ _null_ ));
+DATA(insert OID = 2137 (  min				PGNSP PGUID 12 1 0 0 0 t f f f f f i s 1 0 702 "702" _null_ _null_ _null_ _null_ _null_ aggregate_dummy _null_ _null_ _null_ ));
 DESCR("minimum value of all abstime input values");
 DATA(insert OID = 2138 (  min				PGNSP PGUID 12 1 0 0 0 t f f f f f i s 1 0 1082 "1082" _null_ _null_ _null_ _null_ _null_ aggregate_dummy _null_ _null_ _null_ ));
 DESCR("minimum value of all date input values");
@@ -3245,7 +3292,7 @@ DATA(insert OID = 2139 (  min				PGNSP PGUID 12 1 0 0 0 t f f f f f i s 1 0 1083
 DESCR("minimum value of all time input values");
 DATA(insert OID = 2140 (  min				PGNSP PGUID 12 1 0 0 0 t f f f f f i s 1 0 1266 "1266" _null_ _null_ _null_ _null_ _null_ aggregate_dummy _null_ _null_ _null_ ));
 DESCR("minimum value of all time with time zone input values");
-DATA(insert OID = 2141 (  min				PGNSP PGUID 12 1 0 0 0 t f f f f f i s 1 0 790 "790" _null_ _null_ _null_ _null_ _null_	aggregate_dummy _null_ _null_ _null_ ));
+DATA(insert OID = 2141 (  min				PGNSP PGUID 12 1 0 0 0 t f f f f f i s 1 0 790 "790" _null_ _null_ _null_ _null_ _null_ aggregate_dummy _null_ _null_ _null_ ));
 DESCR("minimum value of all money input values");
 DATA(insert OID = 2142 (  min				PGNSP PGUID 12 1 0 0 0 t f f f f f i s 1 0 1114 "1114" _null_ _null_ _null_ _null_ _null_ aggregate_dummy _null_ _null_ _null_ ));
 DESCR("minimum value of all timestamp input values");
@@ -3267,114 +3314,114 @@ DATA(insert OID = 3565 (  min				PGNSP PGUID 12 1 0 0 0 t f f f f f i s 1 0 869 
 DESCR("minimum value of all inet input values");
 
 /* count has two forms: count(any) and count(*) */
-DATA(insert OID = 2147 (  count				PGNSP PGUID 12 1 0 0 0 t f f f f f i s 1 0 20 "2276" _null_ _null_ _null_ _null_ _null_	aggregate_dummy _null_ _null_ _null_ ));
+DATA(insert OID = 2147 (  count				PGNSP PGUID 12 1 0 0 0 t f f f f f i s 1 0 20 "2276" _null_ _null_ _null_ _null_ _null_ aggregate_dummy _null_ _null_ _null_ ));
 DESCR("number of input rows for which the input expression is not null");
-DATA(insert OID = 2803 (  count				PGNSP PGUID 12 1 0 0 0 t f f f f f i s 0 0 20 "" _null_ _null_ _null_ _null_ _null_	aggregate_dummy _null_ _null_ _null_ ));
+DATA(insert OID = 2803 (  count				PGNSP PGUID 12 1 0 0 0 t f f f f f i s 0 0 20 "" _null_ _null_ _null_ _null_ _null_ aggregate_dummy _null_ _null_ _null_ ));
 DESCR("number of input rows");
 
-DATA(insert OID = 2718 (  var_pop			PGNSP PGUID 12 1 0 0 0 t f f f f f i s 1 0 1700 "20" _null_ _null_ _null_ _null_ _null_	aggregate_dummy _null_ _null_ _null_ ));
+DATA(insert OID = 2718 (  var_pop			PGNSP PGUID 12 1 0 0 0 t f f f f f i s 1 0 1700 "20" _null_ _null_ _null_ _null_ _null_ aggregate_dummy _null_ _null_ _null_ ));
 DESCR("population variance of bigint input values (square of the population standard deviation)");
-DATA(insert OID = 2719 (  var_pop			PGNSP PGUID 12 1 0 0 0 t f f f f f i s 1 0 1700 "23" _null_ _null_ _null_ _null_ _null_	aggregate_dummy _null_ _null_ _null_ ));
+DATA(insert OID = 2719 (  var_pop			PGNSP PGUID 12 1 0 0 0 t f f f f f i s 1 0 1700 "23" _null_ _null_ _null_ _null_ _null_ aggregate_dummy _null_ _null_ _null_ ));
 DESCR("population variance of integer input values (square of the population standard deviation)");
-DATA(insert OID = 2720 (  var_pop			PGNSP PGUID 12 1 0 0 0 t f f f f f i s 1 0 1700 "21" _null_ _null_ _null_ _null_ _null_	aggregate_dummy _null_ _null_ _null_ ));
+DATA(insert OID = 2720 (  var_pop			PGNSP PGUID 12 1 0 0 0 t f f f f f i s 1 0 1700 "21" _null_ _null_ _null_ _null_ _null_ aggregate_dummy _null_ _null_ _null_ ));
 DESCR("population variance of smallint input values (square of the population standard deviation)");
-DATA(insert OID = 2721 (  var_pop			PGNSP PGUID 12 1 0 0 0 t f f f f f i s 1 0 701 "700" _null_ _null_ _null_ _null_ _null_	aggregate_dummy _null_ _null_ _null_ ));
+DATA(insert OID = 2721 (  var_pop			PGNSP PGUID 12 1 0 0 0 t f f f f f i s 1 0 701 "700" _null_ _null_ _null_ _null_ _null_ aggregate_dummy _null_ _null_ _null_ ));
 DESCR("population variance of float4 input values (square of the population standard deviation)");
-DATA(insert OID = 2722 (  var_pop			PGNSP PGUID 12 1 0 0 0 t f f f f f i s 1 0 701 "701" _null_ _null_ _null_ _null_ _null_	aggregate_dummy _null_ _null_ _null_ ));
+DATA(insert OID = 2722 (  var_pop			PGNSP PGUID 12 1 0 0 0 t f f f f f i s 1 0 701 "701" _null_ _null_ _null_ _null_ _null_ aggregate_dummy _null_ _null_ _null_ ));
 DESCR("population variance of float8 input values (square of the population standard deviation)");
 DATA(insert OID = 2723 (  var_pop			PGNSP PGUID 12 1 0 0 0 t f f f f f i s 1 0 1700 "1700" _null_ _null_ _null_ _null_ _null_ aggregate_dummy _null_ _null_ _null_ ));
 DESCR("population variance of numeric input values (square of the population standard deviation)");
 
-DATA(insert OID = 2641 (  var_samp			PGNSP PGUID 12 1 0 0 0 t f f f f f i s 1 0 1700 "20" _null_ _null_ _null_ _null_ _null_	aggregate_dummy _null_ _null_ _null_ ));
+DATA(insert OID = 2641 (  var_samp			PGNSP PGUID 12 1 0 0 0 t f f f f f i s 1 0 1700 "20" _null_ _null_ _null_ _null_ _null_ aggregate_dummy _null_ _null_ _null_ ));
 DESCR("sample variance of bigint input values (square of the sample standard deviation)");
-DATA(insert OID = 2642 (  var_samp			PGNSP PGUID 12 1 0 0 0 t f f f f f i s 1 0 1700 "23" _null_ _null_ _null_ _null_ _null_	aggregate_dummy _null_ _null_ _null_ ));
+DATA(insert OID = 2642 (  var_samp			PGNSP PGUID 12 1 0 0 0 t f f f f f i s 1 0 1700 "23" _null_ _null_ _null_ _null_ _null_ aggregate_dummy _null_ _null_ _null_ ));
 DESCR("sample variance of integer input values (square of the sample standard deviation)");
-DATA(insert OID = 2643 (  var_samp			PGNSP PGUID 12 1 0 0 0 t f f f f f i s 1 0 1700 "21" _null_ _null_ _null_ _null_ _null_	aggregate_dummy _null_ _null_ _null_ ));
+DATA(insert OID = 2643 (  var_samp			PGNSP PGUID 12 1 0 0 0 t f f f f f i s 1 0 1700 "21" _null_ _null_ _null_ _null_ _null_ aggregate_dummy _null_ _null_ _null_ ));
 DESCR("sample variance of smallint input values (square of the sample standard deviation)");
-DATA(insert OID = 2644 (  var_samp			PGNSP PGUID 12 1 0 0 0 t f f f f f i s 1 0 701 "700" _null_ _null_ _null_ _null_ _null_	aggregate_dummy _null_ _null_ _null_ ));
+DATA(insert OID = 2644 (  var_samp			PGNSP PGUID 12 1 0 0 0 t f f f f f i s 1 0 701 "700" _null_ _null_ _null_ _null_ _null_ aggregate_dummy _null_ _null_ _null_ ));
 DESCR("sample variance of float4 input values (square of the sample standard deviation)");
 
-DATA(insert OID = 2645 (  var_samp			PGNSP PGUID 12 1 0 0 0 t f f f f f i s 1 0 701 "701" _null_ _null_ _null_ _null_ _null_	aggregate_dummy _null_ _null_ _null_ ));
+DATA(insert OID = 2645 (  var_samp			PGNSP PGUID 12 1 0 0 0 t f f f f f i s 1 0 701 "701" _null_ _null_ _null_ _null_ _null_ aggregate_dummy _null_ _null_ _null_ ));
 DESCR("sample variance of float8 input values (square of the sample standard deviation)");
 DATA(insert OID = 2646 (  var_samp			PGNSP PGUID 12 1 0 0 0 t f f f f f i s 1 0 1700 "1700" _null_ _null_ _null_ _null_ _null_ aggregate_dummy _null_ _null_ _null_ ));
 DESCR("sample variance of numeric input values (square of the sample standard deviation)");
 
-DATA(insert OID = 2148 (  variance			PGNSP PGUID 12 1 0 0 0 t f f f f f i s 1 0 1700 "20" _null_ _null_ _null_ _null_ _null_	aggregate_dummy _null_ _null_ _null_ ));
+DATA(insert OID = 2148 (  variance			PGNSP PGUID 12 1 0 0 0 t f f f f f i s 1 0 1700 "20" _null_ _null_ _null_ _null_ _null_ aggregate_dummy _null_ _null_ _null_ ));
 DESCR("historical alias for var_samp");
-DATA(insert OID = 2149 (  variance			PGNSP PGUID 12 1 0 0 0 t f f f f f i s 1 0 1700 "23" _null_ _null_ _null_ _null_ _null_	aggregate_dummy _null_ _null_ _null_ ));
+DATA(insert OID = 2149 (  variance			PGNSP PGUID 12 1 0 0 0 t f f f f f i s 1 0 1700 "23" _null_ _null_ _null_ _null_ _null_ aggregate_dummy _null_ _null_ _null_ ));
 DESCR("historical alias for var_samp");
-DATA(insert OID = 2150 (  variance			PGNSP PGUID 12 1 0 0 0 t f f f f f i s 1 0 1700 "21" _null_ _null_ _null_ _null_ _null_	aggregate_dummy _null_ _null_ _null_ ));
+DATA(insert OID = 2150 (  variance			PGNSP PGUID 12 1 0 0 0 t f f f f f i s 1 0 1700 "21" _null_ _null_ _null_ _null_ _null_ aggregate_dummy _null_ _null_ _null_ ));
 DESCR("historical alias for var_samp");
-DATA(insert OID = 2151 (  variance			PGNSP PGUID 12 1 0 0 0 t f f f f f i s 1 0 701 "700" _null_ _null_ _null_ _null_ _null_	aggregate_dummy _null_ _null_ _null_ ));
+DATA(insert OID = 2151 (  variance			PGNSP PGUID 12 1 0 0 0 t f f f f f i s 1 0 701 "700" _null_ _null_ _null_ _null_ _null_ aggregate_dummy _null_ _null_ _null_ ));
 DESCR("historical alias for var_samp");
-DATA(insert OID = 2152 (  variance			PGNSP PGUID 12 1 0 0 0 t f f f f f i s 1 0 701 "701" _null_ _null_ _null_ _null_ _null_	aggregate_dummy _null_ _null_ _null_ ));
+DATA(insert OID = 2152 (  variance			PGNSP PGUID 12 1 0 0 0 t f f f f f i s 1 0 701 "701" _null_ _null_ _null_ _null_ _null_ aggregate_dummy _null_ _null_ _null_ ));
 DESCR("historical alias for var_samp");
 DATA(insert OID = 2153 (  variance			PGNSP PGUID 12 1 0 0 0 t f f f f f i s 1 0 1700 "1700" _null_ _null_ _null_ _null_ _null_ aggregate_dummy _null_ _null_ _null_ ));
 DESCR("historical alias for var_samp");
 
-DATA(insert OID = 2724 (  stddev_pop		PGNSP PGUID 12 1 0 0 0 t f f f f f i s 1 0 1700 "20" _null_ _null_ _null_ _null_ _null_	aggregate_dummy _null_ _null_ _null_ ));
+DATA(insert OID = 2724 (  stddev_pop		PGNSP PGUID 12 1 0 0 0 t f f f f f i s 1 0 1700 "20" _null_ _null_ _null_ _null_ _null_ aggregate_dummy _null_ _null_ _null_ ));
 DESCR("population standard deviation of bigint input values");
-DATA(insert OID = 2725 (  stddev_pop		PGNSP PGUID 12 1 0 0 0 t f f f f f i s 1 0 1700 "23" _null_ _null_ _null_ _null_ _null_	aggregate_dummy _null_ _null_ _null_ ));
+DATA(insert OID = 2725 (  stddev_pop		PGNSP PGUID 12 1 0 0 0 t f f f f f i s 1 0 1700 "23" _null_ _null_ _null_ _null_ _null_ aggregate_dummy _null_ _null_ _null_ ));
 DESCR("population standard deviation of integer input values");
-DATA(insert OID = 2726 (  stddev_pop		PGNSP PGUID 12 1 0 0 0 t f f f f f i s 1 0 1700 "21" _null_ _null_ _null_ _null_ _null_	aggregate_dummy _null_ _null_ _null_ ));
+DATA(insert OID = 2726 (  stddev_pop		PGNSP PGUID 12 1 0 0 0 t f f f f f i s 1 0 1700 "21" _null_ _null_ _null_ _null_ _null_ aggregate_dummy _null_ _null_ _null_ ));
 DESCR("population standard deviation of smallint input values");
-DATA(insert OID = 2727 (  stddev_pop		PGNSP PGUID 12 1 0 0 0 t f f f f f i s 1 0 701 "700" _null_ _null_ _null_ _null_ _null_	aggregate_dummy _null_ _null_ _null_ ));
+DATA(insert OID = 2727 (  stddev_pop		PGNSP PGUID 12 1 0 0 0 t f f f f f i s 1 0 701 "700" _null_ _null_ _null_ _null_ _null_ aggregate_dummy _null_ _null_ _null_ ));
 DESCR("population standard deviation of float4 input values");
-DATA(insert OID = 2728 (  stddev_pop		PGNSP PGUID 12 1 0 0 0 t f f f f f i s 1 0 701 "701" _null_ _null_ _null_ _null_ _null_	aggregate_dummy _null_ _null_ _null_ ));
+DATA(insert OID = 2728 (  stddev_pop		PGNSP PGUID 12 1 0 0 0 t f f f f f i s 1 0 701 "701" _null_ _null_ _null_ _null_ _null_ aggregate_dummy _null_ _null_ _null_ ));
 DESCR("population standard deviation of float8 input values");
 DATA(insert OID = 2729 (  stddev_pop		PGNSP PGUID 12 1 0 0 0 t f f f f f i s 1 0 1700 "1700" _null_ _null_ _null_ _null_ _null_ aggregate_dummy _null_ _null_ _null_ ));
 DESCR("population standard deviation of numeric input values");
 
-DATA(insert OID = 2712 (  stddev_samp		PGNSP PGUID 12 1 0 0 0 t f f f f f i s 1 0 1700 "20" _null_ _null_ _null_ _null_ _null_	aggregate_dummy _null_ _null_ _null_ ));
+DATA(insert OID = 2712 (  stddev_samp		PGNSP PGUID 12 1 0 0 0 t f f f f f i s 1 0 1700 "20" _null_ _null_ _null_ _null_ _null_ aggregate_dummy _null_ _null_ _null_ ));
 DESCR("sample standard deviation of bigint input values");
-DATA(insert OID = 2713 (  stddev_samp		PGNSP PGUID 12 1 0 0 0 t f f f f f i s 1 0 1700 "23" _null_ _null_ _null_ _null_ _null_	aggregate_dummy _null_ _null_ _null_ ));
+DATA(insert OID = 2713 (  stddev_samp		PGNSP PGUID 12 1 0 0 0 t f f f f f i s 1 0 1700 "23" _null_ _null_ _null_ _null_ _null_ aggregate_dummy _null_ _null_ _null_ ));
 DESCR("sample standard deviation of integer input values");
-DATA(insert OID = 2714 (  stddev_samp		PGNSP PGUID 12 1 0 0 0 t f f f f f i s 1 0 1700 "21" _null_ _null_ _null_ _null_ _null_	aggregate_dummy _null_ _null_ _null_ ));
+DATA(insert OID = 2714 (  stddev_samp		PGNSP PGUID 12 1 0 0 0 t f f f f f i s 1 0 1700 "21" _null_ _null_ _null_ _null_ _null_ aggregate_dummy _null_ _null_ _null_ ));
 DESCR("sample standard deviation of smallint input values");
-DATA(insert OID = 2715 (  stddev_samp		PGNSP PGUID 12 1 0 0 0 t f f f f f i s 1 0 701 "700" _null_ _null_ _null_ _null_ _null_	aggregate_dummy _null_ _null_ _null_ ));
+DATA(insert OID = 2715 (  stddev_samp		PGNSP PGUID 12 1 0 0 0 t f f f f f i s 1 0 701 "700" _null_ _null_ _null_ _null_ _null_ aggregate_dummy _null_ _null_ _null_ ));
 DESCR("sample standard deviation of float4 input values");
-DATA(insert OID = 2716 (  stddev_samp		PGNSP PGUID 12 1 0 0 0 t f f f f f i s 1 0 701 "701" _null_ _null_ _null_ _null_ _null_	aggregate_dummy _null_ _null_ _null_ ));
+DATA(insert OID = 2716 (  stddev_samp		PGNSP PGUID 12 1 0 0 0 t f f f f f i s 1 0 701 "701" _null_ _null_ _null_ _null_ _null_ aggregate_dummy _null_ _null_ _null_ ));
 DESCR("sample standard deviation of float8 input values");
 DATA(insert OID = 2717 (  stddev_samp		PGNSP PGUID 12 1 0 0 0 t f f f f f i s 1 0 1700 "1700" _null_ _null_ _null_ _null_ _null_ aggregate_dummy _null_ _null_ _null_ ));
 DESCR("sample standard deviation of numeric input values");
 
-DATA(insert OID = 2154 (  stddev			PGNSP PGUID 12 1 0 0 0 t f f f f f i s 1 0 1700 "20" _null_ _null_ _null_ _null_ _null_	aggregate_dummy _null_ _null_ _null_ ));
+DATA(insert OID = 2154 (  stddev			PGNSP PGUID 12 1 0 0 0 t f f f f f i s 1 0 1700 "20" _null_ _null_ _null_ _null_ _null_ aggregate_dummy _null_ _null_ _null_ ));
 DESCR("historical alias for stddev_samp");
-DATA(insert OID = 2155 (  stddev			PGNSP PGUID 12 1 0 0 0 t f f f f f i s 1 0 1700 "23" _null_ _null_ _null_ _null_ _null_	aggregate_dummy _null_ _null_ _null_ ));
+DATA(insert OID = 2155 (  stddev			PGNSP PGUID 12 1 0 0 0 t f f f f f i s 1 0 1700 "23" _null_ _null_ _null_ _null_ _null_ aggregate_dummy _null_ _null_ _null_ ));
 DESCR("historical alias for stddev_samp");
-DATA(insert OID = 2156 (  stddev			PGNSP PGUID 12 1 0 0 0 t f f f f f i s 1 0 1700 "21" _null_ _null_ _null_ _null_ _null_	aggregate_dummy _null_ _null_ _null_ ));
+DATA(insert OID = 2156 (  stddev			PGNSP PGUID 12 1 0 0 0 t f f f f f i s 1 0 1700 "21" _null_ _null_ _null_ _null_ _null_ aggregate_dummy _null_ _null_ _null_ ));
 DESCR("historical alias for stddev_samp");
-DATA(insert OID = 2157 (  stddev			PGNSP PGUID 12 1 0 0 0 t f f f f f i s 1 0 701 "700" _null_ _null_ _null_ _null_ _null_	aggregate_dummy _null_ _null_ _null_ ));
+DATA(insert OID = 2157 (  stddev			PGNSP PGUID 12 1 0 0 0 t f f f f f i s 1 0 701 "700" _null_ _null_ _null_ _null_ _null_ aggregate_dummy _null_ _null_ _null_ ));
 DESCR("historical alias for stddev_samp");
-DATA(insert OID = 2158 (  stddev			PGNSP PGUID 12 1 0 0 0 t f f f f f i s 1 0 701 "701" _null_ _null_ _null_ _null_ _null_	aggregate_dummy _null_ _null_ _null_ ));
+DATA(insert OID = 2158 (  stddev			PGNSP PGUID 12 1 0 0 0 t f f f f f i s 1 0 701 "701" _null_ _null_ _null_ _null_ _null_ aggregate_dummy _null_ _null_ _null_ ));
 DESCR("historical alias for stddev_samp");
 DATA(insert OID = 2159 (  stddev			PGNSP PGUID 12 1 0 0 0 t f f f f f i s 1 0 1700 "1700" _null_ _null_ _null_ _null_ _null_ aggregate_dummy _null_ _null_ _null_ ));
 DESCR("historical alias for stddev_samp");
 
 DATA(insert OID = 2818 (  regr_count		PGNSP PGUID 12 1 0 0 0 t f f f f f i s 2 0 20 "701 701" _null_ _null_ _null_ _null_  _null_ aggregate_dummy _null_ _null_ _null_ ));
 DESCR("number of input rows in which both expressions are not null");
-DATA(insert OID = 2819 (  regr_sxx			PGNSP PGUID 12 1 0 0 0 t f f f f f i s 2 0 701 "701 701" _null_ _null_ _null_ _null_ _null_	aggregate_dummy _null_ _null_ _null_ ));
+DATA(insert OID = 2819 (  regr_sxx			PGNSP PGUID 12 1 0 0 0 t f f f f f i s 2 0 701 "701 701" _null_ _null_ _null_ _null_ _null_ aggregate_dummy _null_ _null_ _null_ ));
 DESCR("sum of squares of the independent variable (sum(X^2) - sum(X)^2/N)");
-DATA(insert OID = 2820 (  regr_syy			PGNSP PGUID 12 1 0 0 0 t f f f f f i s 2 0 701 "701 701" _null_ _null_ _null_ _null_ _null_	aggregate_dummy _null_ _null_ _null_ ));
+DATA(insert OID = 2820 (  regr_syy			PGNSP PGUID 12 1 0 0 0 t f f f f f i s 2 0 701 "701 701" _null_ _null_ _null_ _null_ _null_ aggregate_dummy _null_ _null_ _null_ ));
 DESCR("sum of squares of the dependent variable (sum(Y^2) - sum(Y)^2/N)");
-DATA(insert OID = 2821 (  regr_sxy			PGNSP PGUID 12 1 0 0 0 t f f f f f i s 2 0 701 "701 701" _null_ _null_ _null_ _null_ _null_	aggregate_dummy _null_ _null_ _null_ ));
+DATA(insert OID = 2821 (  regr_sxy			PGNSP PGUID 12 1 0 0 0 t f f f f f i s 2 0 701 "701 701" _null_ _null_ _null_ _null_ _null_ aggregate_dummy _null_ _null_ _null_ ));
 DESCR("sum of products of independent times dependent variable (sum(X*Y) - sum(X) * sum(Y)/N)");
-DATA(insert OID = 2822 (  regr_avgx			PGNSP PGUID 12 1 0 0 0 t f f f f f i s 2 0 701 "701 701" _null_ _null_ _null_ _null_ _null_	aggregate_dummy _null_ _null_ _null_ ));
+DATA(insert OID = 2822 (  regr_avgx			PGNSP PGUID 12 1 0 0 0 t f f f f f i s 2 0 701 "701 701" _null_ _null_ _null_ _null_ _null_ aggregate_dummy _null_ _null_ _null_ ));
 DESCR("average of the independent variable (sum(X)/N)");
-DATA(insert OID = 2823 (  regr_avgy			PGNSP PGUID 12 1 0 0 0 t f f f f f i s 2 0 701 "701 701" _null_ _null_ _null_ _null_ _null_	aggregate_dummy _null_ _null_ _null_ ));
+DATA(insert OID = 2823 (  regr_avgy			PGNSP PGUID 12 1 0 0 0 t f f f f f i s 2 0 701 "701 701" _null_ _null_ _null_ _null_ _null_ aggregate_dummy _null_ _null_ _null_ ));
 DESCR("average of the dependent variable (sum(Y)/N)");
-DATA(insert OID = 2824 (  regr_r2			PGNSP PGUID 12 1 0 0 0 t f f f f f i s 2 0 701 "701 701" _null_ _null_ _null_ _null_ _null_	aggregate_dummy _null_ _null_ _null_ ));
+DATA(insert OID = 2824 (  regr_r2			PGNSP PGUID 12 1 0 0 0 t f f f f f i s 2 0 701 "701 701" _null_ _null_ _null_ _null_ _null_ aggregate_dummy _null_ _null_ _null_ ));
 DESCR("square of the correlation coefficient");
-DATA(insert OID = 2825 (  regr_slope		PGNSP PGUID 12 1 0 0 0 t f f f f f i s 2 0 701 "701 701" _null_ _null_ _null_ _null_ _null_	aggregate_dummy _null_ _null_ _null_ ));
+DATA(insert OID = 2825 (  regr_slope		PGNSP PGUID 12 1 0 0 0 t f f f f f i s 2 0 701 "701 701" _null_ _null_ _null_ _null_ _null_ aggregate_dummy _null_ _null_ _null_ ));
 DESCR("slope of the least-squares-fit linear equation determined by the (X, Y) pairs");
-DATA(insert OID = 2826 (  regr_intercept	PGNSP PGUID 12 1 0 0 0 t f f f f f i s 2 0 701 "701 701" _null_ _null_ _null_ _null_ _null_	aggregate_dummy _null_ _null_ _null_ ));
+DATA(insert OID = 2826 (  regr_intercept	PGNSP PGUID 12 1 0 0 0 t f f f f f i s 2 0 701 "701 701" _null_ _null_ _null_ _null_ _null_ aggregate_dummy _null_ _null_ _null_ ));
 DESCR("y-intercept of the least-squares-fit linear equation determined by the (X, Y) pairs");
 
-DATA(insert OID = 2827 (  covar_pop			PGNSP PGUID 12 1 0 0 0 t f f f f f i s 2 0 701 "701 701" _null_ _null_ _null_ _null_ _null_	aggregate_dummy _null_ _null_ _null_ ));
+DATA(insert OID = 2827 (  covar_pop			PGNSP PGUID 12 1 0 0 0 t f f f f f i s 2 0 701 "701 701" _null_ _null_ _null_ _null_ _null_ aggregate_dummy _null_ _null_ _null_ ));
 DESCR("population covariance");
-DATA(insert OID = 2828 (  covar_samp		PGNSP PGUID 12 1 0 0 0 t f f f f f i s 2 0 701 "701 701" _null_ _null_ _null_ _null_ _null_	aggregate_dummy _null_ _null_ _null_ ));
+DATA(insert OID = 2828 (  covar_samp		PGNSP PGUID 12 1 0 0 0 t f f f f f i s 2 0 701 "701 701" _null_ _null_ _null_ _null_ _null_ aggregate_dummy _null_ _null_ _null_ ));
 DESCR("sample covariance");
-DATA(insert OID = 2829 (  corr				PGNSP PGUID 12 1 0 0 0 t f f f f f i s 2 0 701 "701 701" _null_ _null_ _null_ _null_ _null_	aggregate_dummy _null_ _null_ _null_ ));
+DATA(insert OID = 2829 (  corr				PGNSP PGUID 12 1 0 0 0 t f f f f f i s 2 0 701 "701 701" _null_ _null_ _null_ _null_ _null_ aggregate_dummy _null_ _null_ _null_ ));
 DESCR("correlation coefficient");
 
 DATA(insert OID = 2160 ( text_pattern_lt	 PGNSP PGUID 12 1 0 0 0 f f f f t f i s 2 0 16 "25 25" _null_ _null_ _null_ _null_ _null_ text_pattern_lt _null_ _null_ _null_ ));
@@ -3440,7 +3487,7 @@ DATA(insert OID = 2221 (  regtypeout		PGNSP PGUID 12 1 0 0 0 f f f f t f s s 1 0
 DESCR("I/O");
 DATA(insert OID = 3493 (  to_regtype		PGNSP PGUID 12 1 0 0 0 f f f f t f s s 1 0 2206 "25" _null_ _null_ _null_ _null_ _null_ to_regtype _null_ _null_ _null_ ));
 DESCR("convert type name to regtype");
-DATA(insert OID = 1079 (  regclass			PGNSP PGUID 12 1 0 0 0 f f f f t f s s 1 0 2205 "25" _null_ _null_ _null_ _null_ _null_	text_regclass _null_ _null_ _null_ ));
+DATA(insert OID = 1079 (  regclass			PGNSP PGUID 12 1 0 0 0 f f f f t f s s 1 0 2205 "25" _null_ _null_ _null_ _null_ _null_ text_regclass _null_ _null_ _null_ ));
 DESCR("convert text to regclass");
 
 DATA(insert OID = 4098 (  regrolein			PGNSP PGUID 12 1 0 0 0 f f f f t f s s 1 0 4096 "2275" _null_ _null_ _null_ _null_ _null_ regrolein _null_ _null_ _null_ ));
@@ -3456,6 +3503,9 @@ DATA(insert OID = 4085 (  regnamespaceout	PGNSP PGUID 12 1 0 0 0 f f f f t f s s
 DESCR("I/O");
 DATA(insert OID = 4086 (  to_regnamespace	PGNSP PGUID 12 1 0 0 0 f f f f t f s s 1 0 4089 "25" _null_ _null_ _null_ _null_ _null_ to_regnamespace _null_ _null_ _null_ ));
 DESCR("convert namespace name to regnamespace");
+
+DATA(insert OID = 1268 (  parse_ident		PGNSP PGUID 12 1 0 0 0 f f f f t f i s 2 0 1009 "25 16" _null_ _null_ "{str,strict}" _null_ _null_ parse_ident _null_ _null_ _null_ ));
+DESCR("parse qualified identifier to array of identifiers");
 
 DATA(insert OID = 2246 ( fmgr_internal_validator PGNSP PGUID 12 1 0 0 0 f f f f t f s s 1 0 2278 "26" _null_ _null_ _null_ _null_ _null_ fmgr_internal_validator _null_ _null_ _null_ ));
 DESCR("(internal)");
@@ -3568,20 +3618,20 @@ DESCR("current user privilege on type by type name");
 DATA(insert OID = 3143 (  has_type_privilege		   PGNSP PGUID 12 1 0 0 0 f f f f t f s s 2 0 16 "26 25" _null_ _null_ _null_ _null_ _null_ has_type_privilege_id _null_ _null_ _null_ ));
 DESCR("current user privilege on type by type oid");
 
-DATA(insert OID = 2705 (  pg_has_role		PGNSP PGUID 12 1 0 0 0 f f f f t f s s 3 0 16 "19 19 25" _null_ _null_ _null_ _null_ _null_	pg_has_role_name_name _null_ _null_ _null_ ));
+DATA(insert OID = 2705 (  pg_has_role		PGNSP PGUID 12 1 0 0 0 f f f f t f s s 3 0 16 "19 19 25" _null_ _null_ _null_ _null_ _null_ pg_has_role_name_name _null_ _null_ _null_ ));
 DESCR("user privilege on role by username, role name");
-DATA(insert OID = 2706 (  pg_has_role		PGNSP PGUID 12 1 0 0 0 f f f f t f s s 3 0 16 "19 26 25" _null_ _null_ _null_ _null_ _null_	pg_has_role_name_id _null_ _null_ _null_ ));
+DATA(insert OID = 2706 (  pg_has_role		PGNSP PGUID 12 1 0 0 0 f f f f t f s s 3 0 16 "19 26 25" _null_ _null_ _null_ _null_ _null_ pg_has_role_name_id _null_ _null_ _null_ ));
 DESCR("user privilege on role by username, role oid");
-DATA(insert OID = 2707 (  pg_has_role		PGNSP PGUID 12 1 0 0 0 f f f f t f s s 3 0 16 "26 19 25" _null_ _null_ _null_ _null_ _null_	pg_has_role_id_name _null_ _null_ _null_ ));
+DATA(insert OID = 2707 (  pg_has_role		PGNSP PGUID 12 1 0 0 0 f f f f t f s s 3 0 16 "26 19 25" _null_ _null_ _null_ _null_ _null_ pg_has_role_id_name _null_ _null_ _null_ ));
 DESCR("user privilege on role by user oid, role name");
-DATA(insert OID = 2708 (  pg_has_role		PGNSP PGUID 12 1 0 0 0 f f f f t f s s 3 0 16 "26 26 25" _null_ _null_ _null_ _null_ _null_	pg_has_role_id_id _null_ _null_ _null_ ));
+DATA(insert OID = 2708 (  pg_has_role		PGNSP PGUID 12 1 0 0 0 f f f f t f s s 3 0 16 "26 26 25" _null_ _null_ _null_ _null_ _null_ pg_has_role_id_id _null_ _null_ _null_ ));
 DESCR("user privilege on role by user oid, role oid");
 DATA(insert OID = 2709 (  pg_has_role		PGNSP PGUID 12 1 0 0 0 f f f f t f s s 2 0 16 "19 25" _null_ _null_ _null_ _null_ _null_ pg_has_role_name _null_ _null_ _null_ ));
 DESCR("current user privilege on role by role name");
 DATA(insert OID = 2710 (  pg_has_role		PGNSP PGUID 12 1 0 0 0 f f f f t f s s 2 0 16 "26 25" _null_ _null_ _null_ _null_ _null_ pg_has_role_id _null_ _null_ _null_ ));
 DESCR("current user privilege on role by role oid");
 
-DATA(insert OID = 1269 (  pg_column_size		PGNSP PGUID 12 1 0 0 0 f f f f t f s s 1 0 23 "2276" _null_ _null_ _null_ _null_ _null_	pg_column_size _null_ _null_ _null_ ));
+DATA(insert OID = 1269 (  pg_column_size		PGNSP PGUID 12 1 0 0 0 f f f f t f s s 1 0 23 "2276" _null_ _null_ _null_ _null_ _null_ pg_column_size _null_ _null_ _null_ ));
 DESCR("bytes required to store the value, perhaps with compression");
 DATA(insert OID = 2322 ( pg_tablespace_size		PGNSP PGUID 12 1 0 0 0 f f f f t f v s 1 0 20 "26" _null_ _null_ _null_ _null_ _null_ pg_tablespace_size_oid _null_ _null_ _null_ ));
 DESCR("total disk space usage for the specified tablespace");
@@ -3601,6 +3651,8 @@ DATA(insert OID = 2288 ( pg_size_pretty			PGNSP PGUID 12 1 0 0 0 f f f f t f i s
 DESCR("convert a long int to a human readable text using size units");
 DATA(insert OID = 3166 ( pg_size_pretty			PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 25 "1700" _null_ _null_ _null_ _null_ _null_ pg_size_pretty_numeric _null_ _null_ _null_ ));
 DESCR("convert a numeric to a human readable text using size units");
+DATA(insert OID = 3334 ( pg_size_bytes			PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 20 "25" _null_ _null_ _null_ _null_ _null_ pg_size_bytes _null_ _null_ _null_ ));
+DESCR("convert a size in human-readable format with size units into bytes");
 DATA(insert OID = 2997 ( pg_table_size			PGNSP PGUID 12 1 0 0 0 f f f f t f v s 1 0 20 "2205" _null_ _null_ _null_ _null_ _null_ pg_table_size _null_ _null_ _null_ ));
 DESCR("disk space usage for the specified table, including TOAST, free space and visibility map");
 DATA(insert OID = 2998 ( pg_indexes_size		PGNSP PGUID 12 1 0 0 0 f f f f t f v s 1 0 20 "2205" _null_ _null_ _null_ _null_ _null_ pg_indexes_size _null_ _null_ _null_ ));
@@ -3615,7 +3667,7 @@ DESCR("file path of relation");
 DATA(insert OID = 2316 ( postgresql_fdw_validator PGNSP PGUID 12 1 0 0 0 f f f f t f i s 2 0 16 "1009 26" _null_ _null_ _null_ _null_ _null_ postgresql_fdw_validator _null_ _null_ _null_));
 DESCR("(internal)");
 
-DATA(insert OID = 2290 (  record_in			PGNSP PGUID 12 1 0 0 0 f f f f t f s s 3 0 2249 "2275 26 23" _null_ _null_ _null_ _null_ _null_	record_in _null_ _null_ _null_ ));
+DATA(insert OID = 2290 (  record_in			PGNSP PGUID 12 1 0 0 0 f f f f t f s s 3 0 2249 "2275 26 23" _null_ _null_ _null_ _null_ _null_ record_in _null_ _null_ _null_ ));
 DESCR("I/O");
 DATA(insert OID = 2291 (  record_out		PGNSP PGUID 12 1 0 0 0 f f f f t f s s 1 0 2275 "2249" _null_ _null_ _null_ _null_ _null_ record_out _null_ _null_ _null_ ));
 DESCR("I/O");
@@ -3786,7 +3838,7 @@ DATA(insert OID = 2414 (  textrecv			   PGNSP PGUID 12 1 0 0 0 f f f f t f s s 1
 DESCR("I/O");
 DATA(insert OID = 2415 (  textsend			   PGNSP PGUID 12 1 0 0 0 f f f f t f s s 1 0 17 "25" _null_ _null_ _null_ _null_ _null_ textsend _null_ _null_ _null_ ));
 DESCR("I/O");
-DATA(insert OID = 2416 (  unknownrecv		   PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 705 "2281" _null_ _null_ _null_ _null_ _null_	unknownrecv _null_ _null_ _null_ ));
+DATA(insert OID = 2416 (  unknownrecv		   PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 705 "2281" _null_ _null_ _null_ _null_ _null_ unknownrecv _null_ _null_ _null_ ));
 DESCR("I/O");
 DATA(insert OID = 2417 (  unknownsend		   PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 17 "705" _null_ _null_ _null_ _null_ _null_ unknownsend _null_ _null_ _null_ ));
 DESCR("I/O");
@@ -3802,15 +3854,15 @@ DATA(insert OID = 2422 (  namerecv			   PGNSP PGUID 12 1 0 0 0 f f f f t f s s 1
 DESCR("I/O");
 DATA(insert OID = 2423 (  namesend			   PGNSP PGUID 12 1 0 0 0 f f f f t f s s 1 0 17 "19" _null_ _null_ _null_ _null_ _null_ namesend _null_ _null_ _null_ ));
 DESCR("I/O");
-DATA(insert OID = 2424 (  float4recv		   PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 700 "2281" _null_ _null_ _null_ _null_ _null_	float4recv _null_ _null_ _null_ ));
+DATA(insert OID = 2424 (  float4recv		   PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 700 "2281" _null_ _null_ _null_ _null_ _null_ float4recv _null_ _null_ _null_ ));
 DESCR("I/O");
 DATA(insert OID = 2425 (  float4send		   PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 17 "700" _null_ _null_ _null_ _null_ _null_ float4send _null_ _null_ _null_ ));
 DESCR("I/O");
-DATA(insert OID = 2426 (  float8recv		   PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 701 "2281" _null_ _null_ _null_ _null_ _null_	float8recv _null_ _null_ _null_ ));
+DATA(insert OID = 2426 (  float8recv		   PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 701 "2281" _null_ _null_ _null_ _null_ _null_ float8recv _null_ _null_ _null_ ));
 DESCR("I/O");
 DATA(insert OID = 2427 (  float8send		   PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 17 "701" _null_ _null_ _null_ _null_ _null_ float8send _null_ _null_ _null_ ));
 DESCR("I/O");
-DATA(insert OID = 2428 (  point_recv		   PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 600 "2281" _null_ _null_ _null_ _null_ _null_	point_recv _null_ _null_ _null_ ));
+DATA(insert OID = 2428 (  point_recv		   PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 600 "2281" _null_ _null_ _null_ _null_ _null_ point_recv _null_ _null_ _null_ ));
 DESCR("I/O");
 DATA(insert OID = 2429 (  point_send		   PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 17 "600" _null_ _null_ _null_ _null_ _null_ point_send _null_ _null_ _null_ ));
 DESCR("I/O");
@@ -3887,15 +3939,15 @@ DATA(insert OID = 2460 (  numeric_recv		   PGNSP PGUID 12 1 0 0 0 f f f f t f i 
 DESCR("I/O");
 DATA(insert OID = 2461 (  numeric_send		   PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 17 "1700" _null_ _null_ _null_ _null_ _null_	numeric_send _null_ _null_ _null_ ));
 DESCR("I/O");
-DATA(insert OID = 2462 (  abstimerecv		   PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 702 "2281" _null_ _null_ _null_ _null_ _null_	abstimerecv _null_ _null_ _null_ ));
+DATA(insert OID = 2462 (  abstimerecv		   PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 702 "2281" _null_ _null_ _null_ _null_ _null_ abstimerecv _null_ _null_ _null_ ));
 DESCR("I/O");
 DATA(insert OID = 2463 (  abstimesend		   PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 17 "702" _null_ _null_ _null_ _null_ _null_ abstimesend _null_ _null_ _null_ ));
 DESCR("I/O");
-DATA(insert OID = 2464 (  reltimerecv		   PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 703 "2281" _null_ _null_ _null_ _null_ _null_	reltimerecv _null_ _null_ _null_ ));
+DATA(insert OID = 2464 (  reltimerecv		   PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 703 "2281" _null_ _null_ _null_ _null_ _null_ reltimerecv _null_ _null_ _null_ ));
 DESCR("I/O");
 DATA(insert OID = 2465 (  reltimesend		   PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 17 "703" _null_ _null_ _null_ _null_ _null_ reltimesend _null_ _null_ _null_ ));
 DESCR("I/O");
-DATA(insert OID = 2466 (  tintervalrecv		   PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 704 "2281" _null_ _null_ _null_ _null_ _null_	tintervalrecv _null_ _null_ _null_ ));
+DATA(insert OID = 2466 (  tintervalrecv		   PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 704 "2281" _null_ _null_ _null_ _null_ _null_ tintervalrecv _null_ _null_ _null_ ));
 DESCR("I/O");
 DATA(insert OID = 2467 (  tintervalsend		   PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 17 "704" _null_ _null_ _null_ _null_ _null_ tintervalsend _null_ _null_ _null_ ));
 DESCR("I/O");
@@ -3923,43 +3975,43 @@ DATA(insert OID = 2478 (  interval_recv		   PGNSP PGUID 12 1 0 0 0 f f f f t f i
 DESCR("I/O");
 DATA(insert OID = 2479 (  interval_send		   PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 17 "1186" _null_ _null_ _null_ _null_ _null_	interval_send _null_ _null_ _null_ ));
 DESCR("I/O");
-DATA(insert OID = 2480 (  lseg_recv			   PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 601 "2281" _null_ _null_ _null_ _null_ _null_	lseg_recv _null_ _null_ _null_ ));
+DATA(insert OID = 2480 (  lseg_recv			   PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 601 "2281" _null_ _null_ _null_ _null_ _null_ lseg_recv _null_ _null_ _null_ ));
 DESCR("I/O");
 DATA(insert OID = 2481 (  lseg_send			   PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 17 "601" _null_ _null_ _null_ _null_ _null_ lseg_send _null_ _null_ _null_ ));
 DESCR("I/O");
-DATA(insert OID = 2482 (  path_recv			   PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 602 "2281" _null_ _null_ _null_ _null_ _null_	path_recv _null_ _null_ _null_ ));
+DATA(insert OID = 2482 (  path_recv			   PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 602 "2281" _null_ _null_ _null_ _null_ _null_ path_recv _null_ _null_ _null_ ));
 DESCR("I/O");
 DATA(insert OID = 2483 (  path_send			   PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 17 "602" _null_ _null_ _null_ _null_ _null_ path_send _null_ _null_ _null_ ));
 DESCR("I/O");
-DATA(insert OID = 2484 (  box_recv			   PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 603 "2281" _null_ _null_ _null_ _null_ _null_	box_recv _null_ _null_ _null_ ));
+DATA(insert OID = 2484 (  box_recv			   PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 603 "2281" _null_ _null_ _null_ _null_ _null_ box_recv _null_ _null_ _null_ ));
 DESCR("I/O");
 DATA(insert OID = 2485 (  box_send			   PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 17 "603" _null_ _null_ _null_ _null_ _null_ box_send _null_ _null_ _null_ ));
 DESCR("I/O");
-DATA(insert OID = 2486 (  poly_recv			   PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 604 "2281" _null_ _null_ _null_ _null_ _null_	poly_recv _null_ _null_ _null_ ));
+DATA(insert OID = 2486 (  poly_recv			   PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 604 "2281" _null_ _null_ _null_ _null_ _null_ poly_recv _null_ _null_ _null_ ));
 DESCR("I/O");
 DATA(insert OID = 2487 (  poly_send			   PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 17 "604" _null_ _null_ _null_ _null_ _null_ poly_send _null_ _null_ _null_ ));
 DESCR("I/O");
-DATA(insert OID = 2488 (  line_recv			   PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 628 "2281" _null_ _null_ _null_ _null_ _null_	line_recv _null_ _null_ _null_ ));
+DATA(insert OID = 2488 (  line_recv			   PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 628 "2281" _null_ _null_ _null_ _null_ _null_ line_recv _null_ _null_ _null_ ));
 DESCR("I/O");
 DATA(insert OID = 2489 (  line_send			   PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 17 "628" _null_ _null_ _null_ _null_ _null_ line_send _null_ _null_ _null_ ));
 DESCR("I/O");
-DATA(insert OID = 2490 (  circle_recv		   PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 718 "2281" _null_ _null_ _null_ _null_ _null_	circle_recv _null_ _null_ _null_ ));
+DATA(insert OID = 2490 (  circle_recv		   PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 718 "2281" _null_ _null_ _null_ _null_ _null_ circle_recv _null_ _null_ _null_ ));
 DESCR("I/O");
 DATA(insert OID = 2491 (  circle_send		   PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 17 "718" _null_ _null_ _null_ _null_ _null_ circle_send _null_ _null_ _null_ ));
 DESCR("I/O");
-DATA(insert OID = 2492 (  cash_recv			   PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 790 "2281" _null_ _null_ _null_ _null_ _null_	cash_recv _null_ _null_ _null_ ));
+DATA(insert OID = 2492 (  cash_recv			   PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 790 "2281" _null_ _null_ _null_ _null_ _null_ cash_recv _null_ _null_ _null_ ));
 DESCR("I/O");
 DATA(insert OID = 2493 (  cash_send			   PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 17 "790" _null_ _null_ _null_ _null_ _null_ cash_send _null_ _null_ _null_ ));
 DESCR("I/O");
-DATA(insert OID = 2494 (  macaddr_recv		   PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 829 "2281" _null_ _null_ _null_ _null_ _null_	macaddr_recv _null_ _null_ _null_ ));
+DATA(insert OID = 2494 (  macaddr_recv		   PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 829 "2281" _null_ _null_ _null_ _null_ _null_ macaddr_recv _null_ _null_ _null_ ));
 DESCR("I/O");
 DATA(insert OID = 2495 (  macaddr_send		   PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 17 "829" _null_ _null_ _null_ _null_ _null_ macaddr_send _null_ _null_ _null_ ));
 DESCR("I/O");
-DATA(insert OID = 2496 (  inet_recv			   PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 869 "2281" _null_ _null_ _null_ _null_ _null_	inet_recv _null_ _null_ _null_ ));
+DATA(insert OID = 2496 (  inet_recv			   PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 869 "2281" _null_ _null_ _null_ _null_ _null_ inet_recv _null_ _null_ _null_ ));
 DESCR("I/O");
 DATA(insert OID = 2497 (  inet_send			   PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 17 "869" _null_ _null_ _null_ _null_ _null_ inet_send _null_ _null_ _null_ ));
 DESCR("I/O");
-DATA(insert OID = 2498 (  cidr_recv			   PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 650 "2281" _null_ _null_ _null_ _null_ _null_	cidr_recv _null_ _null_ _null_ ));
+DATA(insert OID = 2498 (  cidr_recv			   PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 650 "2281" _null_ _null_ _null_ _null_ _null_ cidr_recv _null_ _null_ _null_ ));
 DESCR("I/O");
 DATA(insert OID = 2499 (  cidr_send			   PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 17 "650" _null_ _null_ _null_ _null_ _null_ cidr_send _null_ _null_ _null_ ));
 DESCR("I/O");
@@ -3977,17 +4029,17 @@ DATA(insert OID = 3121 (  void_send			   PGNSP PGUID 12 1 0 0 0 f f f f t f i s 
 DESCR("I/O");
 
 /* System-view support functions with pretty-print option */
-DATA(insert OID = 2504 (  pg_get_ruledef	   PGNSP PGUID 12 1 0 0 0 f f f f t f s s 2 0 25 "26 16" _null_ _null_ _null_ _null_ _null_	pg_get_ruledef_ext _null_ _null_ _null_ ));
+DATA(insert OID = 2504 (  pg_get_ruledef	   PGNSP PGUID 12 1 0 0 0 f f f f t f s s 2 0 25 "26 16" _null_ _null_ _null_ _null_ _null_ pg_get_ruledef_ext _null_ _null_ _null_ ));
 DESCR("source text of a rule with pretty-print option");
-DATA(insert OID = 2505 (  pg_get_viewdef	   PGNSP PGUID 12 1 0 0 0 f f f f t f s r 2 0 25 "25 16" _null_ _null_ _null_ _null_ _null_	pg_get_viewdef_name_ext _null_ _null_ _null_ ));
+DATA(insert OID = 2505 (  pg_get_viewdef	   PGNSP PGUID 12 1 0 0 0 f f f f t f s r 2 0 25 "25 16" _null_ _null_ _null_ _null_ _null_ pg_get_viewdef_name_ext _null_ _null_ _null_ ));
 DESCR("select statement of a view with pretty-print option");
-DATA(insert OID = 2506 (  pg_get_viewdef	   PGNSP PGUID 12 1 0 0 0 f f f f t f s r 2 0 25 "26 16" _null_ _null_ _null_ _null_ _null_	pg_get_viewdef_ext _null_ _null_ _null_ ));
+DATA(insert OID = 2506 (  pg_get_viewdef	   PGNSP PGUID 12 1 0 0 0 f f f f t f s r 2 0 25 "26 16" _null_ _null_ _null_ _null_ _null_ pg_get_viewdef_ext _null_ _null_ _null_ ));
 DESCR("select statement of a view with pretty-print option");
-DATA(insert OID = 3159 (  pg_get_viewdef	   PGNSP PGUID 12 1 0 0 0 f f f f t f s r 2 0 25 "26 23" _null_ _null_ _null_ _null_ _null_	pg_get_viewdef_wrap _null_ _null_ _null_ ));
+DATA(insert OID = 3159 (  pg_get_viewdef	   PGNSP PGUID 12 1 0 0 0 f f f f t f s r 2 0 25 "26 23" _null_ _null_ _null_ _null_ _null_ pg_get_viewdef_wrap _null_ _null_ _null_ ));
 DESCR("select statement of a view with pretty-printing and specified line wrapping");
 DATA(insert OID = 2507 (  pg_get_indexdef	   PGNSP PGUID 12 1 0 0 0 f f f f t f s s 3 0 25 "26 23 16" _null_ _null_ _null_ _null_ _null_	pg_get_indexdef_ext _null_ _null_ _null_ ));
 DESCR("index description (full create statement or single expression) with pretty-print option");
-DATA(insert OID = 2508 (  pg_get_constraintdef PGNSP PGUID 12 1 0 0 0 f f f f t f s s 2 0 25 "26 16" _null_ _null_ _null_ _null_ _null_	pg_get_constraintdef_ext _null_ _null_ _null_ ));
+DATA(insert OID = 2508 (  pg_get_constraintdef PGNSP PGUID 12 1 0 0 0 f f f f t f s s 2 0 25 "26 16" _null_ _null_ _null_ _null_ _null_ pg_get_constraintdef_ext _null_ _null_ _null_ ));
 DESCR("constraint description with pretty-print option");
 DATA(insert OID = 2509 (  pg_get_expr		   PGNSP PGUID 12 1 0 0 0 f f f f t f s s 3 0 25 "194 26 16" _null_ _null_ _null_ _null_ _null_ pg_get_expr_ext _null_ _null_ _null_ ));
 DESCR("deparse an encoded expression with pretty-print option");
@@ -4068,10 +4120,10 @@ DATA(insert OID = 2243 ( bit_or						   PGNSP PGUID 12 1 0 0 0 t f f f f f i s 1
 DESCR("bitwise-or bit aggregate");
 
 /* formerly-missing interval + datetime operators */
-DATA(insert OID = 2546 ( interval_pl_date			PGNSP PGUID 14 1 0 0 0 f f f f t f i s 2 0 1114 "1186 1082" _null_ _null_ _null_ _null_	_null_ "select $2 + $1" _null_ _null_ _null_ ));
-DATA(insert OID = 2547 ( interval_pl_timetz			PGNSP PGUID 14 1 0 0 0 f f f f t f i s 2 0 1266 "1186 1266" _null_ _null_ _null_ _null_	_null_ "select $2 + $1" _null_ _null_ _null_ ));
-DATA(insert OID = 2548 ( interval_pl_timestamp		PGNSP PGUID 14 1 0 0 0 f f f f t f i s 2 0 1114 "1186 1114" _null_ _null_ _null_ _null_	_null_ "select $2 + $1" _null_ _null_ _null_ ));
-DATA(insert OID = 2549 ( interval_pl_timestamptz	PGNSP PGUID 14 1 0 0 0 f f f f t f s s 2 0 1184 "1186 1184" _null_ _null_ _null_ _null_	_null_ "select $2 + $1" _null_ _null_ _null_ ));
+DATA(insert OID = 2546 ( interval_pl_date			PGNSP PGUID 14 1 0 0 0 f f f f t f i s 2 0 1114 "1186 1082" _null_ _null_ _null_ _null_ _null_ "select $2 + $1" _null_ _null_ _null_ ));
+DATA(insert OID = 2547 ( interval_pl_timetz			PGNSP PGUID 14 1 0 0 0 f f f f t f i s 2 0 1266 "1186 1266" _null_ _null_ _null_ _null_ _null_ "select $2 + $1" _null_ _null_ _null_ ));
+DATA(insert OID = 2548 ( interval_pl_timestamp		PGNSP PGUID 14 1 0 0 0 f f f f t f i s 2 0 1114 "1186 1114" _null_ _null_ _null_ _null_ _null_ "select $2 + $1" _null_ _null_ _null_ ));
+DATA(insert OID = 2549 ( interval_pl_timestamptz	PGNSP PGUID 14 1 0 0 0 f f f f t f s s 2 0 1184 "1186 1184" _null_ _null_ _null_ _null_ _null_ "select $2 + $1" _null_ _null_ _null_ ));
 DATA(insert OID = 2550 ( integer_pl_date			PGNSP PGUID 14 1 0 0 0 f f f f t f i s 2 0 1082 "23 1082" _null_ _null_ _null_ _null_ _null_ "select $2 + $1" _null_ _null_ _null_ ));
 
 DATA(insert OID = 2556 ( pg_tablespace_databases	PGNSP PGUID 12 1 1000 0 0 f f f f t t s s 1 0 26 "26" _null_ _null_ _null_ _null_ _null_ pg_tablespace_databases _null_ _null_ _null_ ));
@@ -4112,7 +4164,7 @@ DATA(insert OID = 2580 (  gist_box_decompress	PGNSP PGUID 12 1 0 0 0 f f f f t f
 DESCR("GiST support");
 DATA(insert OID = 3281 (  gist_box_fetch	PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 2281 "2281" _null_ _null_ _null_ _null_ _null_ gist_box_fetch _null_ _null_ _null_ ));
 DESCR("GiST support");
-DATA(insert OID = 2581 (  gist_box_penalty		PGNSP PGUID 12 1 0 0 0 f f f f t f i s 3 0 2281 "2281 2281 2281" _null_ _null_ _null_ _null_ _null_	gist_box_penalty _null_ _null_ _null_ ));
+DATA(insert OID = 2581 (  gist_box_penalty		PGNSP PGUID 12 1 0 0 0 f f f f t f i s 3 0 2281 "2281 2281 2281" _null_ _null_ _null_ _null_ _null_ gist_box_penalty _null_ _null_ _null_ ));
 DESCR("GiST support");
 DATA(insert OID = 2582 (  gist_box_picksplit	PGNSP PGUID 12 1 0 0 0 f f f f t f i s 2 0 2281 "2281 2281" _null_ _null_ _null_ _null_ _null_	gist_box_picksplit _null_ _null_ _null_ ));
 DESCR("GiST support");
@@ -4124,7 +4176,7 @@ DATA(insert OID = 2585 (  gist_poly_consistent	PGNSP PGUID 12 1 0 0 0 f f f f t 
 DESCR("GiST support");
 DATA(insert OID = 2586 (  gist_poly_compress	PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 2281 "2281" _null_ _null_ _null_ _null_ _null_ gist_poly_compress _null_ _null_ _null_ ));
 DESCR("GiST support");
-DATA(insert OID = 2591 (  gist_circle_consistent PGNSP PGUID 12 1 0 0 0 f f f f t f i s 5 0 16 "2281 718 21 26 2281" _null_ _null_ _null_ _null_ _null_	gist_circle_consistent _null_ _null_ _null_ ));
+DATA(insert OID = 2591 (  gist_circle_consistent PGNSP PGUID 12 1 0 0 0 f f f f t f i s 5 0 16 "2281 718 21 26 2281" _null_ _null_ _null_ _null_ _null_ gist_circle_consistent _null_ _null_ _null_ ));
 DESCR("GiST support");
 DATA(insert OID = 2592 (  gist_circle_compress	PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 2281 "2281" _null_ _null_ _null_ _null_ _null_ gist_circle_compress _null_ _null_ _null_ ));
 DESCR("GiST support");
@@ -4134,11 +4186,11 @@ DATA(insert OID = 3282 (  gist_point_fetch	PGNSP PGUID 12 1 0 0 0 f f f f t f i 
 DESCR("GiST support");
 DATA(insert OID = 2179 (  gist_point_consistent PGNSP PGUID 12 1 0 0 0 f f f f t f i s 5 0 16 "2281 600 21 26 2281" _null_ _null_ _null_ _null_ _null_	gist_point_consistent _null_ _null_ _null_ ));
 DESCR("GiST support");
-DATA(insert OID = 3064 (  gist_point_distance	PGNSP PGUID 12 1 0 0 0 f f f f t f i s 5 0 701 "2281 600 21 26 2281" _null_ _null_ _null_ _null_ _null_	gist_point_distance _null_ _null_ _null_ ));
+DATA(insert OID = 3064 (  gist_point_distance	PGNSP PGUID 12 1 0 0 0 f f f f t f i s 5 0 701 "2281 600 21 26 2281" _null_ _null_ _null_ _null_ _null_ gist_point_distance _null_ _null_ _null_ ));
 DESCR("GiST support");
-DATA(insert OID = 3280 (  gist_circle_distance	PGNSP PGUID 12 1 0 0 0 f f f f t f i s 5 0 701 "2281 718 21 26 2281" _null_ _null_ _null_ _null_ _null_	gist_circle_distance _null_ _null_ _null_ ));
+DATA(insert OID = 3280 (  gist_circle_distance	PGNSP PGUID 12 1 0 0 0 f f f f t f i s 5 0 701 "2281 718 21 26 2281" _null_ _null_ _null_ _null_ _null_ gist_circle_distance _null_ _null_ _null_ ));
 DESCR("GiST support");
-DATA(insert OID = 3288 (  gist_poly_distance	PGNSP PGUID 12 1 0 0 0 f f f f t f i s 5 0 701 "2281 604 21 26 2281" _null_ _null_ _null_ _null_ _null_	gist_poly_distance _null_ _null_ _null_ ));
+DATA(insert OID = 3288 (  gist_poly_distance	PGNSP PGUID 12 1 0 0 0 f f f f t f i s 5 0 701 "2281 604 21 26 2281" _null_ _null_ _null_ _null_ _null_ gist_poly_distance _null_ _null_ _null_ ));
 DESCR("GiST support");
 
 /* GIN array support */
@@ -4150,7 +4202,7 @@ DATA(insert OID = 2744 (  ginarrayconsistent	PGNSP PGUID 12 1 0 0 0 f f f f t f 
 DESCR("GIN array support");
 DATA(insert OID = 3920 (  ginarraytriconsistent PGNSP PGUID 12 1 0 0 0 f f f f t f i s 7 0 18 "2281 21 2277 23 2281 2281 2281" _null_ _null_ _null_ _null_ _null_ ginarraytriconsistent _null_ _null_ _null_ ));
 DESCR("GIN array support");
-DATA(insert OID = 3076 (  ginarrayextract	 PGNSP PGUID 12 1 0 0 0 f f f f t f i s 2 0 2281 "2277 2281" _null_ _null_ _null_ _null_ _null_	ginarrayextract_2args _null_ _null_ _null_ ));
+DATA(insert OID = 3076 (  ginarrayextract	 PGNSP PGUID 12 1 0 0 0 f f f f t f i s 2 0 2281 "2277 2281" _null_ _null_ _null_ _null_ _null_ ginarrayextract_2args _null_ _null_ _null_ ));
 DESCR("GIN array support (obsolete)");
 
 /* overlap/contains/contained */
@@ -4233,7 +4285,7 @@ DATA(insert OID = 2896 (  xml			   PGNSP PGUID 12 1 0 0 0 f f f f t f s s 1 0 14
 DESCR("perform a non-validating parse of a character string to produce an XML value");
 DATA(insert OID = 2897 (  xmlvalidate	   PGNSP PGUID 12 1 0 0 0 f f f f t f i s 2 0 16 "142 25" _null_ _null_ _null_ _null_ _null_ xmlvalidate _null_ _null_ _null_ ));
 DESCR("validate an XML value");
-DATA(insert OID = 2898 (  xml_recv		   PGNSP PGUID 12 1 0 0 0 f f f f t f s s 1 0 142 "2281" _null_ _null_ _null_ _null_ _null_	xml_recv _null_ _null_ _null_ ));
+DATA(insert OID = 2898 (  xml_recv		   PGNSP PGUID 12 1 0 0 0 f f f f t f s s 1 0 142 "2281" _null_ _null_ _null_ _null_ _null_ xml_recv _null_ _null_ _null_ ));
 DESCR("I/O");
 DATA(insert OID = 2899 (  xml_send		   PGNSP PGUID 12 1 0 0 0 f f f f t f s s 1 0 17 "142" _null_ _null_ _null_ _null_ _null_ xml_send _null_ _null_ _null_ ));
 DESCR("I/O");
@@ -4299,7 +4351,7 @@ DATA(insert OID = 321 (  json_in		   PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 
 DESCR("I/O");
 DATA(insert OID = 322 (  json_out		   PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 2275 "114" _null_ _null_ _null_ _null_ _null_ json_out _null_ _null_ _null_ ));
 DESCR("I/O");
-DATA(insert OID = 323 (  json_recv		   PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 114 "2281" _null_ _null_ _null_ _null_ _null_	json_recv _null_ _null_ _null_ ));
+DATA(insert OID = 323 (  json_recv		   PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 114 "2281" _null_ _null_ _null_ _null_ _null_ json_recv _null_ _null_ _null_ ));
 DESCR("I/O");
 DATA(insert OID = 324 (  json_send		   PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 17 "114" _null_ _null_ _null_ _null_ _null_ json_send _null_ _null_ _null_ ));
 DESCR("I/O");
@@ -4461,7 +4513,7 @@ DATA(insert OID =  3639 (  tsvectorrecv			PGNSP PGUID 12 1 0 0 0 f f f f t f i s
 DESCR("I/O");
 DATA(insert OID =  3611 (  tsvectorout			PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 2275 "3614" _null_ _null_ _null_ _null_ _null_ tsvectorout _null_ _null_ _null_ ));
 DESCR("I/O");
-DATA(insert OID =  3638 (  tsvectorsend			PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 17 "3614" _null_ _null_ _null_ _null_ _null_	tsvectorsend _null_ _null_ _null_ ));
+DATA(insert OID =  3638 (  tsvectorsend			PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 17 "3614" _null_ _null_ _null_ _null_ _null_ tsvectorsend _null_ _null_ _null_ ));
 DESCR("I/O");
 DATA(insert OID =  3612 (  tsqueryin			PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 3615 "2275" _null_ _null_ _null_ _null_ _null_ tsqueryin _null_ _null_ _null_ ));
 DESCR("I/O");
@@ -4469,7 +4521,7 @@ DATA(insert OID =  3641 (  tsqueryrecv			PGNSP PGUID 12 1 0 0 0 f f f f t f i s 
 DESCR("I/O");
 DATA(insert OID =  3613 (  tsqueryout			PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 2275 "3615" _null_ _null_ _null_ _null_ _null_ tsqueryout _null_ _null_ _null_ ));
 DESCR("I/O");
-DATA(insert OID =  3640 (  tsquerysend			PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 17 "3615" _null_ _null_ _null_ _null_ _null_	tsquerysend _null_ _null_ _null_ ));
+DATA(insert OID =  3640 (  tsquerysend			PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 17 "3615" _null_ _null_ _null_ _null_ _null_ tsquerysend _null_ _null_ _null_ ));
 DESCR("I/O");
 DATA(insert OID =  3646 (  gtsvectorin			PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 3642 "2275" _null_ _null_ _null_ _null_ _null_ gtsvectorin _null_ _null_ _null_ ));
 DESCR("I/O");
@@ -4490,8 +4542,22 @@ DESCR("number of lexemes");
 DATA(insert OID = 3623 (  strip					PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 3614 "3614" _null_ _null_ _null_ _null_ _null_ tsvector_strip _null_ _null_ _null_ ));
 DESCR("strip position information");
 DATA(insert OID = 3624 (  setweight				PGNSP PGUID 12 1 0 0 0 f f f f t f i s 2 0 3614 "3614 18" _null_ _null_ _null_ _null_ _null_ tsvector_setweight _null_ _null_ _null_ ));
-DESCR("set weight of lexeme's entries");
-DATA(insert OID = 3625 (  tsvector_concat		PGNSP PGUID 12 1 0 0 0 f f f f t f i s 2 0 3614 "3614 3614" _null_ _null_ _null_ _null_ _null_ tsvector_concat _null_ _null_ _null_ ));
+DESCR("set given weight for whole tsvector");
+DATA(insert OID = 3320 (  setweight				PGNSP PGUID 12 1 0	0 0 f f f f t f i s 3 0 3614 "3614 18 1009" _null_ _null_ _null_ _null_ _null_ tsvector_setweight_by_filter _null_ _null_ _null_ ));
+DESCR("set given weight for given lexemes");
+DATA(insert OID = 3625 (  tsvector_concat		PGNSP PGUID 12 1 0	0 0 f f f f t f i s 2 0 3614 "3614 3614" _null_ _null_ _null_ _null_ _null_ tsvector_concat _null_ _null_ _null_ ));
+DATA(insert OID = 3321 (  ts_delete				PGNSP PGUID 12 1 0	0 0 f f f f t f i s 2 0 3614 "3614 25" _null_ _null_ _null_ _null_ _null_ tsvector_delete_str _null_ _null_ _null_ ));
+DESCR("delete lexeme");
+DATA(insert OID = 3323 (  ts_delete				PGNSP PGUID 12 1 0	0 0 f f f f t f i s 2 0 3614 "3614 1009" _null_ _null_ _null_ _null_ _null_ tsvector_delete_arr _null_ _null_ _null_ ));
+DESCR("delete given lexemes");
+DATA(insert OID = 3322 (  unnest				PGNSP PGUID 12 1 10 0 0 f f f f t t i s 1 0 2249 "3614" "{3614,25,1005,1009}" "{i,o,o,o}" "{tsvector,lexeme,positions,weights}"  _null_ _null_ tsvector_unnest _null_ _null_ _null_ ));
+DESCR("expand tsvector to set of rows");
+DATA(insert OID = 3326 (  tsvector_to_array		PGNSP PGUID 12 1 0	0 0 f f f f t f i s 1 0 1009 "3614" _null_ _null_ _null_ _null_ _null_ tsvector_to_array _null_ _null_ _null_ ));
+DESCR("convert tsvector to array of lexemes");
+DATA(insert OID = 3327 (  array_to_tsvector		PGNSP PGUID 12 1 0	0 0 f f f f t f i s 1 0 3614 "1009" _null_ _null_ _null_ _null_ _null_ array_to_tsvector _null_ _null_ _null_ ));
+DESCR("build tsvector from array of lexemes");
+DATA(insert OID = 3319 (  ts_filter				PGNSP PGUID 12 1 0	0 0 f f f f t f i s 2 0 3614 "3614 1002" _null_ _null_ _null_ _null_ _null_ tsvector_filter _null_ _null_ _null_ ));
+DESCR("delete lexemes that do not have one of the given weights");
 
 DATA(insert OID = 3634 (  ts_match_vq			PGNSP PGUID 12 1 0 0 0 f f f f t f i s 2 0 16 "3614 3615" _null_ _null_ _null_ _null_ _null_ ts_match_vq _null_ _null_ _null_ ));
 DATA(insert OID = 3635 (  ts_match_qv			PGNSP PGUID 12 1 0 0 0 f f f f t f i s 2 0 16 "3615 3614" _null_ _null_ _null_ _null_ _null_ ts_match_qv _null_ _null_ _null_ ));
@@ -4512,12 +4578,14 @@ DATA(insert OID = 3653 (  gtsvector_penalty		PGNSP PGUID 12 1 0 0 0 f f f f t f 
 DESCR("GiST tsvector support");
 DATA(insert OID = 3654 (  gtsvector_consistent	PGNSP PGUID 12 1 0 0 0 f f f f t f i s 5 0 16 "2281 3614 21 26 2281" _null_ _null_ _null_ _null_ _null_ gtsvector_consistent _null_ _null_ _null_ ));
 DESCR("GiST tsvector support");
+DATA(insert OID = 3790 (  gtsvector_consistent	PGNSP PGUID 12 1 0 0 0 f f f f t f i s 5 0 16 "2281 3642 23 26 2281" _null_ _null_ _null_ _null_ _null_ gtsvector_consistent_oldsig _null_ _null_ _null_ ));
+DESCR("GiST tsvector support (obsolete)");
 
-DATA(insert OID = 3656 (  gin_extract_tsvector	PGNSP PGUID 12 1 0 0 0 f f f f t f i s 3 0 2281 "3614 2281 2281" _null_ _null_ _null_ _null_ _null_	gin_extract_tsvector _null_ _null_ _null_ ));
+DATA(insert OID = 3656 (  gin_extract_tsvector	PGNSP PGUID 12 1 0 0 0 f f f f t f i s 3 0 2281 "3614 2281 2281" _null_ _null_ _null_ _null_ _null_ gin_extract_tsvector _null_ _null_ _null_ ));
 DESCR("GIN tsvector support");
 DATA(insert OID = 3657 (  gin_extract_tsquery	PGNSP PGUID 12 1 0 0 0 f f f f t f i s 7 0 2281 "3614 2281 21 2281 2281 2281 2281" _null_ _null_ _null_ _null_ _null_ gin_extract_tsquery _null_ _null_ _null_ ));
 DESCR("GIN tsvector support");
-DATA(insert OID = 3658 (  gin_tsquery_consistent PGNSP PGUID 12 1 0 0 0 f f f f t f i s 8 0 16 "2281 21 3614 23 2281 2281 2281 2281" _null_ _null_ _null_ _null_ _null_	gin_tsquery_consistent _null_ _null_ _null_ ));
+DATA(insert OID = 3658 (  gin_tsquery_consistent PGNSP PGUID 12 1 0 0 0 f f f f t f i s 8 0 16 "2281 21 3614 23 2281 2281 2281 2281" _null_ _null_ _null_ _null_ _null_ gin_tsquery_consistent _null_ _null_ _null_ ));
 DESCR("GIN tsvector support");
 DATA(insert OID = 3921 (  gin_tsquery_triconsistent PGNSP PGUID 12 1 0 0 0 f f f f t f i s 7 0 18 "2281 21 3614 23 2281 2281 2281" _null_ _null_ _null_ _null_ _null_ gin_tsquery_triconsistent _null_ _null_ _null_ ));
 DESCR("GIN tsvector support");
@@ -4531,6 +4599,11 @@ DATA(insert OID = 3087 (  gin_extract_tsquery	PGNSP PGUID 12 1 0 0 0 f f f f t f
 DESCR("GIN tsvector support (obsolete)");
 DATA(insert OID = 3088 (  gin_tsquery_consistent PGNSP PGUID 12 1 0 0 0 f f f f t f i s 6 0 16 "2281 21 3615 23 2281 2281" _null_ _null_ _null_ _null_ _null_ gin_tsquery_consistent_6args _null_ _null_ _null_ ));
 DESCR("GIN tsvector support (obsolete)");
+DATA(insert OID = 3791 (  gin_extract_tsquery	PGNSP PGUID 12 1 0 0 0 f f f f t f i s 7 0 2281 "3615 2281 21 2281 2281 2281 2281" _null_ _null_ _null_ _null_ _null_ gin_extract_tsquery_oldsig _null_ _null_ _null_ ));
+DESCR("GIN tsvector support (obsolete)");
+DATA(insert OID = 3792 (  gin_tsquery_consistent PGNSP PGUID 12 1 0 0 0 f f f f t f i s 8 0 16 "2281 21 3615 23 2281 2281 2281 2281" _null_ _null_ _null_ _null_ _null_ gin_tsquery_consistent_oldsig _null_ _null_ _null_ ));
+DESCR("GIN tsvector support (obsolete)");
+
 DATA(insert OID = 3789 (  gin_clean_pending_list PGNSP PGUID 12 1 0 0 0 f f f f t f v s 1 0 20 "2205" _null_ _null_ _null_ _null_ _null_ gin_clean_pending_list _null_ _null_ _null_ ));
 DESCR("clean up GIN pending list");
 
@@ -4545,6 +4618,9 @@ DESCR("less-equal-greater");
 
 DATA(insert OID = 3669 (  tsquery_and		PGNSP PGUID 12 1 0 0 0 f f f f t f i s 2 0 3615 "3615 3615" _null_ _null_ _null_ _null_ _null_ tsquery_and _null_ _null_ _null_ ));
 DATA(insert OID = 3670 (  tsquery_or		PGNSP PGUID 12 1 0 0 0 f f f f t f i s 2 0 3615 "3615 3615" _null_ _null_ _null_ _null_ _null_ tsquery_or _null_ _null_ _null_ ));
+DATA(insert OID = 5003 (  tsquery_phrase	PGNSP PGUID 12 1 0 0 0 f f f f t f i s 2 0 3615 "3615 3615" _null_ _null_ _null_ _null_ _null_ tsquery_phrase _null_ _null_ _null_ ));
+DATA(insert OID = 5004 (  tsquery_phrase	PGNSP PGUID 12 1 0 0 0 f f f f t f i s 3 0 3615 "3615 3615 23" _null_ _null_ _null_ _null_ _null_ tsquery_phrase_distance _null_ _null_ _null_ ));
+DESCR("phrase-concatenate with distance");
 DATA(insert OID = 3671 (  tsquery_not		PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 3615 "3615" _null_ _null_ _null_ _null_ _null_ tsquery_not _null_ _null_ _null_ ));
 
 DATA(insert OID = 3691 (  tsq_mcontains		PGNSP PGUID 12 1 0 0 0 f f f f t f i s 2 0 16 "3615 3615" _null_ _null_ _null_ _null_ _null_ tsq_mcontains _null_ _null_ _null_ ));
@@ -4574,6 +4650,8 @@ DATA(insert OID = 3700 (  gtsquery_penalty				PGNSP PGUID 12 1 0 0 0 f f f f t f
 DESCR("GiST tsquery support");
 DATA(insert OID = 3701 (  gtsquery_consistent			PGNSP PGUID 12 1 0 0 0 f f f f t f i s 5 0 16 "2281 3615 21 26 2281" _null_ _null_ _null_ _null_ _null_ gtsquery_consistent _null_ _null_ _null_ ));
 DESCR("GiST tsquery support");
+DATA(insert OID = 3793 (  gtsquery_consistent			PGNSP PGUID 12 1 0 0 0 f f f f t f i s 5 0 16 "2281 2281 23 26 2281" _null_ _null_ _null_ _null_ _null_ gtsquery_consistent_oldsig _null_ _null_ _null_ ));
+DESCR("GiST tsquery support (obsolete)");
 
 DATA(insert OID = 3686 (  tsmatchsel		PGNSP PGUID 12 1 0 0 0 f f f f t f s s 4 0 701 "2281 26 2281 23" _null_ _null_ _null_ _null_ _null_ tsmatchsel _null_ _null_ _null_ ));
 DESCR("restriction selectivity of tsvector @@ tsquery");
@@ -4662,11 +4740,15 @@ DATA(insert OID = 3746 (  to_tsquery		PGNSP PGUID 12 100 0 0 0 f f f f t f i s 2
 DESCR("make tsquery");
 DATA(insert OID = 3747 (  plainto_tsquery	PGNSP PGUID 12 100 0 0 0 f f f f t f i s 2 0 3615 "3734 25" _null_ _null_ _null_ _null_ _null_ plainto_tsquery_byid _null_ _null_ _null_ ));
 DESCR("transform to tsquery");
+DATA(insert OID = 5006 (  phraseto_tsquery	PGNSP PGUID 12 100 0 0 0 f f f f t f i s 2 0 3615 "3734 25" _null_ _null_ _null_ _null_ _null_ phraseto_tsquery_byid _null_ _null_ _null_ ));
+DESCR("transform to tsquery");
 DATA(insert OID = 3749 (  to_tsvector		PGNSP PGUID 12 100 0 0 0 f f f f t f s s 1 0 3614 "25" _null_ _null_ _null_ _null_ _null_ to_tsvector _null_ _null_ _null_ ));
 DESCR("transform to tsvector");
 DATA(insert OID = 3750 (  to_tsquery		PGNSP PGUID 12 100 0 0 0 f f f f t f s s 1 0 3615 "25" _null_ _null_ _null_ _null_ _null_ to_tsquery _null_ _null_ _null_ ));
 DESCR("make tsquery");
 DATA(insert OID = 3751 (  plainto_tsquery	PGNSP PGUID 12 100 0 0 0 f f f f t f s s 1 0 3615 "25" _null_ _null_ _null_ _null_ _null_ plainto_tsquery _null_ _null_ _null_ ));
+DESCR("transform to tsquery");
+DATA(insert OID = 5001 (  phraseto_tsquery	PGNSP PGUID 12 100 0 0 0 f f f f t f s s 1 0 3615 "25" _null_ _null_ _null_ _null_ _null_ phraseto_tsquery _null_ _null_ _null_ ));
 DESCR("transform to tsquery");
 
 DATA(insert OID = 3752 (  tsvector_update_trigger			PGNSP PGUID 12 1 0 0 0 f f f f f f v s 0 0 2279 "" _null_ _null_ _null_ _null_ _null_ tsvector_update_trigger_byid _null_ _null_ _null_ ));
@@ -4702,7 +4784,7 @@ DATA(insert OID =  3805 (  jsonb_recv		PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 
 DESCR("I/O");
 DATA(insert OID =  3804 (  jsonb_out		PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 2275 "3802" _null_ _null_ _null_ _null_ _null_ jsonb_out _null_ _null_ _null_ ));
 DESCR("I/O");
-DATA(insert OID =  3803 (  jsonb_send		PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 17 "3802" _null_ _null_ _null_ _null_ _null_	jsonb_send _null_ _null_ _null_ ));
+DATA(insert OID =  3803 (  jsonb_send		PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 17 "3802" _null_ _null_ _null_ _null_ _null_ jsonb_send _null_ _null_ _null_ ));
 DESCR("I/O");
 
 DATA(insert OID = 3263 (  jsonb_object	 PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 3802 "1009" _null_ _null_ _null_ _null_ _null_ jsonb_object _null_ _null_ _null_ ));
@@ -4725,7 +4807,7 @@ DATA(insert OID = 3270 (  jsonb_object_agg		   PGNSP PGUID 12 1 0 0 0 t f f f f 
 DESCR("aggregate inputs into jsonb object");
 DATA(insert OID = 3271 (  jsonb_build_array    PGNSP PGUID 12 1 0 2276 0 f f f f f f s s 1 0 3802 "2276" "{2276}" "{v}" _null_ _null_ _null_ jsonb_build_array _null_ _null_ _null_ ));
 DESCR("build a jsonb array from any inputs");
-DATA(insert OID = 3272 (  jsonb_build_array    PGNSP PGUID 12 1 0 0 0 f f f f f f s s 0 0 3802  "" _null_ _null_ _null_ _null_ _null_ jsonb_build_array_noargs _null_ _null_ _null_ ));
+DATA(insert OID = 3272 (  jsonb_build_array    PGNSP PGUID 12 1 0 0 0 f f f f f f s s 0 0 3802	"" _null_ _null_ _null_ _null_ _null_ jsonb_build_array_noargs _null_ _null_ _null_ ));
 DESCR("build an empty jsonb array");
 DATA(insert OID = 3273 (  jsonb_build_object	PGNSP PGUID 12 1 0 2276 0 f f f f f f s s 1 0 3802 "2276" "{2276}" "{v}" _null_ _null_ _null_ jsonb_build_object _null_ _null_ _null_ ));
 DESCR("build a jsonb object from pairwise key/value inputs");
@@ -4805,6 +4887,8 @@ DATA(insert OID = 3305 (  jsonb_set    PGNSP PGUID 12 1 0 0 0 f f f f t f i s 4 
 DESCR("Set part of a jsonb");
 DATA(insert OID = 3306 (  jsonb_pretty	   PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 25 "3802" _null_ _null_ _null_ _null_ _null_ jsonb_pretty _null_ _null_ _null_ ));
 DESCR("Indented text from jsonb");
+DATA(insert OID = 3579 (  jsonb_insert	  PGNSP PGUID 12 1 0 0 0 f f f f t f i s 4 0 3802 "3802 1009 3802 16" _null_ _null_ _null_ _null_ _null_ jsonb_insert _null_ _null_ _null_ ));
+DESCR("Insert value into a jsonb");
 /* txid */
 DATA(insert OID = 2939 (  txid_snapshot_in			PGNSP PGUID 12 1  0 0 0 f f f f t f i s 1 0 2970 "2275" _null_ _null_ _null_ _null_ _null_ txid_snapshot_in _null_ _null_ _null_ ));
 DESCR("I/O");
@@ -5063,6 +5147,17 @@ DESCR("SP-GiST support for quad tree over range");
 DATA(insert OID = 3473 (  spg_range_quad_leaf_consistent	PGNSP PGUID 12 1 0 0 0 f f f f t f i s 2 0 16 "2281 2281" _null_ _null_ _null_ _null_  _null_ spg_range_quad_leaf_consistent _null_ _null_ _null_ ));
 DESCR("SP-GiST support for quad tree over range");
 
+DATA(insert OID = 5012 (  spg_box_quad_config PGNSP PGUID 12 1 0 0 0 f f f f t f i s 2 0 2278 "2281 2281" _null_ _null_ _null_ _null_  _null_ spg_box_quad_config _null_ _null_ _null_ ));
+DESCR("SP-GiST support for quad tree over box");
+DATA(insert OID = 5013 (  spg_box_quad_choose PGNSP PGUID 12 1 0 0 0 f f f f t f i s 2 0 2278 "2281 2281" _null_ _null_ _null_ _null_  _null_ spg_box_quad_choose _null_ _null_ _null_ ));
+DESCR("SP-GiST support for quad tree over box");
+DATA(insert OID = 5014 (  spg_box_quad_picksplit	PGNSP PGUID 12 1 0 0 0 f f f f t f i s 2 0 2278 "2281 2281" _null_ _null_ _null_ _null_  _null_ spg_box_quad_picksplit _null_ _null_ _null_ ));
+DESCR("SP-GiST support for quad tree over box");
+DATA(insert OID = 5015 (  spg_box_quad_inner_consistent PGNSP PGUID 12 1 0 0 0 f f f f t f i s 2 0 2278 "2281 2281" _null_ _null_ _null_ _null_  _null_ spg_box_quad_inner_consistent _null_ _null_ _null_ ));
+DESCR("SP-GiST support for quad tree over box");
+DATA(insert OID = 5016 (  spg_box_quad_leaf_consistent	PGNSP PGUID 12 1 0 0 0 f f f f t f i s 2 0 16 "2281 2281" _null_ _null_ _null_ _null_  _null_ spg_box_quad_leaf_consistent _null_ _null_ _null_ ));
+DESCR("SP-GiST support for quad tree over box");
+
 /* replication slots */
 DATA(insert OID = 3779 (  pg_create_physical_replication_slot PGNSP PGUID 12 1 0 0 0 f f f f t f v u 2 0 2249 "19 16" "{19,16,19,3220}" "{i,i,o,o}" "{slot_name,immediately_reserve,slot_name,xlog_position}" _null_ _null_ pg_create_physical_replication_slot _null_ _null_ _null_ ));
 DESCR("create a physical replication slot");
@@ -5080,6 +5175,10 @@ DATA(insert OID = 3784 (  pg_logical_slot_peek_changes PGNSP PGUID 12 1000 1000 
 DESCR("peek at changes from replication slot");
 DATA(insert OID = 3785 (  pg_logical_slot_peek_binary_changes PGNSP PGUID 12 1000 1000 25 0 f f f f f t v u 4 0 2249 "19 3220 23 1009" "{19,3220,23,1009,3220,28,17}" "{i,i,i,v,o,o,o}" "{slot_name,upto_lsn,upto_nchanges,options,location,xid,data}" _null_ _null_ pg_logical_slot_peek_binary_changes _null_ _null_ _null_ ));
 DESCR("peek at binary changes from replication slot");
+DATA(insert OID = 3577 (  pg_logical_emit_message PGNSP PGUID 12 1 0 0 0 f f f f t f v u 3 0 3220 "16 25 25" _null_ _null_ _null_ _null_ _null_ pg_logical_emit_message_text _null_ _null_ _null_ ));
+DESCR("emit a textual logical decoding message");
+DATA(insert OID = 3578 (  pg_logical_emit_message PGNSP PGUID 12 1 0 0 0 f f f f t f v u 3 0 3220 "16 25 17" _null_ _null_ _null_ _null_ _null_ pg_logical_emit_message_bytea _null_ _null_ _null_ ));
+DESCR("emit a binary logical decoding message");
 
 /* event triggers */
 DATA(insert OID = 3566 (  pg_event_trigger_dropped_objects		PGNSP PGUID 12 10 100 0 0 f f f f t t s s 0 0 2249 "" "{26,26,23,16,16,16,25,25,25,25,1009,1009}" "{o,o,o,o,o,o,o,o,o,o,o,o}" "{classid, objid, objsubid, original, normal, is_temporary, object_type, schema_name, object_name, object_identity, address_names, address_args}" _null_ _null_ pg_event_trigger_dropped_objects _null_ _null_ _null_ ));
@@ -5128,9 +5227,9 @@ DATA(insert OID = 3985 ( mode_final				PGNSP PGUID 12 1 0 0 0 f f f f f f i s 2 
 DESCR("aggregate final function");
 
 /* hypothetical-set aggregates (and their support functions) */
-DATA(insert OID = 3986 ( rank				PGNSP PGUID 12 1 0 2276 0 t f f f f f i s 1 0 20 "2276" "{2276}" "{v}" _null_ _null_ _null_	aggregate_dummy _null_ _null_ _null_ ));
+DATA(insert OID = 3986 ( rank				PGNSP PGUID 12 1 0 2276 0 t f f f f f i s 1 0 20 "2276" "{2276}" "{v}" _null_ _null_ _null_ aggregate_dummy _null_ _null_ _null_ ));
 DESCR("rank of hypothetical row");
-DATA(insert OID = 3987 ( rank_final			PGNSP PGUID 12 1 0 2276 0 f f f f f f i s 2 0 20 "2281 2276" "{2281,2276}" "{i,v}" _null_ _null_ _null_	hypothetical_rank_final _null_ _null_ _null_ ));
+DATA(insert OID = 3987 ( rank_final			PGNSP PGUID 12 1 0 2276 0 f f f f f f i s 2 0 20 "2281 2276" "{2281,2276}" "{i,v}" _null_ _null_ _null_ hypothetical_rank_final _null_ _null_ _null_ ));
 DESCR("aggregate final function");
 DATA(insert OID = 3988 ( percent_rank		PGNSP PGUID 12 1 0 2276 0 t f f f f f i s 1 0 701 "2276" "{2276}" "{v}" _null_ _null_ _null_ aggregate_dummy _null_ _null_ _null_ ));
 DESCR("fractional rank of hypothetical row");
@@ -5140,9 +5239,9 @@ DATA(insert OID = 3990 ( cume_dist			PGNSP PGUID 12 1 0 2276 0 t f f f f f i s 1
 DESCR("cumulative distribution of hypothetical row");
 DATA(insert OID = 3991 ( cume_dist_final	PGNSP PGUID 12 1 0 2276 0 f f f f f f i s 2 0 701 "2281 2276" "{2281,2276}" "{i,v}" _null_ _null_ _null_ hypothetical_cume_dist_final _null_ _null_ _null_ ));
 DESCR("aggregate final function");
-DATA(insert OID = 3992 ( dense_rank			PGNSP PGUID 12 1 0 2276 0 t f f f f f i s 1 0 20 "2276" "{2276}" "{v}" _null_ _null_ _null_	aggregate_dummy _null_ _null_ _null_ ));
+DATA(insert OID = 3992 ( dense_rank			PGNSP PGUID 12 1 0 2276 0 t f f f f f i s 1 0 20 "2276" "{2276}" "{v}" _null_ _null_ _null_ aggregate_dummy _null_ _null_ _null_ ));
 DESCR("rank of hypothetical row without gaps");
-DATA(insert OID = 3993 ( dense_rank_final	PGNSP PGUID 12 1 0 2276 0 f f f f f f i s 2 0 20 "2281 2276" "{2281,2276}" "{i,v}" _null_ _null_ _null_	hypothetical_dense_rank_final _null_ _null_ _null_ ));
+DATA(insert OID = 3993 ( dense_rank_final	PGNSP PGUID 12 1 0 2276 0 f f f f f f i s 2 0 20 "2281 2276" "{2281,2276}" "{i,v}" _null_ _null_ _null_ hypothetical_dense_rank_final _null_ _null_ _null_ ));
 DESCR("aggregate final function");
 
 /* pg_upgrade support */
@@ -5163,6 +5262,8 @@ DESCR("for use by pg_upgrade");
 DATA(insert OID = 3590 ( binary_upgrade_set_next_pg_authid_oid PGNSP PGUID	12 1 0 0 0 f f f f t f v r 1 0 2278 "26" _null_ _null_ _null_ _null_ _null_ binary_upgrade_set_next_pg_authid_oid _null_ _null_ _null_ ));
 DESCR("for use by pg_upgrade");
 DATA(insert OID = 3591 ( binary_upgrade_create_empty_extension PGNSP PGUID	12 1 0 0 0 f f f f f f v r 7 0 2278 "25 25 16 25 1028 1009 1009" _null_ _null_ _null_ _null_ _null_ binary_upgrade_create_empty_extension _null_ _null_ _null_ ));
+DESCR("for use by pg_upgrade");
+DATA(insert OID = 4083 ( binary_upgrade_set_record_init_privs PGNSP PGUID	12 1 0 0 0 f f f f t f v r 1 0 2278 "16" _null_ _null_ _null_ _null_ _null_ binary_upgrade_set_record_init_privs _null_ _null_ _null_ ));
 DESCR("for use by pg_upgrade");
 
 /* replication/origin.h */
@@ -5190,7 +5291,7 @@ DESCR("get the replication progress of the current session");
 DATA(insert OID = 6010 ( pg_replication_origin_xact_setup PGNSP PGUID 12 1 0 0 0 f f f f t f v r 2 0 2278 "3220 1184" _null_ _null_ _null_ _null_ _null_ pg_replication_origin_xact_setup _null_ _null_ _null_ ));
 DESCR("setup the transaction's origin lsn and timestamp");
 
-DATA(insert OID = 6011 ( pg_replication_origin_xact_reset PGNSP PGUID 12 1 0 0 0 f f f f t f v r 2 0 2278 "3220 1184" _null_ _null_ _null_ _null_ _null_ pg_replication_origin_xact_reset _null_ _null_ _null_ ));
+DATA(insert OID = 6011 ( pg_replication_origin_xact_reset PGNSP PGUID 12 1 0 0 0 f f f f t f v r 0 0 2278 "" _null_ _null_ _null_ _null_ _null_ pg_replication_origin_xact_reset _null_ _null_ _null_ ));
 DESCR("reset the transaction's origin lsn and timestamp");
 
 DATA(insert OID = 6012 ( pg_replication_origin_advance PGNSP PGUID 12 1 0 0 0 f f f f t f v u 2 0 2278 "25 3220" _null_ _null_ _null_ _null_ _null_ pg_replication_origin_advance _null_ _null_ _null_ ));
@@ -5201,6 +5302,29 @@ DESCR("get an individual replication origin's replication progress");
 
 DATA(insert OID = 6014 ( pg_show_replication_origin_status PGNSP PGUID 12 1 100 0 0 f f f f f t v r 0 0 2249 "" "{26,25,3220,3220}" "{o,o,o,o}" "{local_id, external_id, remote_lsn, local_lsn}" _null_ _null_ pg_show_replication_origin_status _null_ _null_ _null_ ));
 DESCR("get progress for all replication origins");
+
+/* rls */
+DATA(insert OID = 3298 (  row_security_active	   PGNSP PGUID 12 1 0 0 0 f f f f t f s s 1 0 16 "26" _null_ _null_ _null_ _null_ _null_	row_security_active _null_ _null_ _null_ ));
+DESCR("row security for current context active on table by table oid");
+DATA(insert OID = 3299 (  row_security_active	   PGNSP PGUID 12 1 0 0 0 f f f f t f s s 1 0 16 "25" _null_ _null_ _null_ _null_ _null_	row_security_active_name _null_ _null_ _null_ ));
+DESCR("row security for current context active on table by table name");
+
+/* pg_config */
+DATA(insert OID = 3400 ( pg_config PGNSP PGUID 12 1 23 0 0 f f f f t t i r 0 0 2249 "" "{25,25}" "{o,o}" "{name,setting}" _null_ _null_ pg_config _null_ _null_ _null_ ));
+DESCR("pg_config binary as a function");
+
+/* pg_controldata related functions */
+DATA(insert OID = 3441 ( pg_control_system PGNSP PGUID 12 1 0 0 0 f f f f t f v s 0 0 2249 "" "{23,23,20,1184}" "{o,o,o,o}" "{pg_control_version,catalog_version_no,system_identifier,pg_control_last_modified}" _null_ _null_ pg_control_system _null_ _null_ _null_ ));
+DESCR("pg_controldata general state information as a function");
+
+DATA(insert OID = 3442 ( pg_control_checkpoint PGNSP PGUID 12 1 0 0 0 f f f f t f v s 0 0 2249 "" "{3220,3220,3220,25,23,23,16,25,26,28,28,28,26,28,28,26,28,28,1184}" "{o,o,o,o,o,o,o,o,o,o,o,o,o,o,o,o,o,o,o}" "{checkpoint_location,prior_location,redo_location,redo_wal_file,timeline_id,prev_timeline_id,full_page_writes,next_xid,next_oid,next_multixact_id,next_multi_offset,oldest_xid,oldest_xid_dbid,oldest_active_xid,oldest_multi_xid,oldest_multi_dbid,oldest_commit_ts_xid,newest_commit_ts_xid,checkpoint_time}" _null_ _null_ pg_control_checkpoint _null_ _null_ _null_ ));
+DESCR("pg_controldata checkpoint state information as a function");
+
+DATA(insert OID = 3443 ( pg_control_recovery PGNSP PGUID 12 1 0 0 0 f f f f t f v s 0 0 2249 "" "{3220,23,3220,3220,16}" "{o,o,o,o,o}" "{min_recovery_end_location,min_recovery_end_timeline,backup_start_location,backup_end_location,end_of_backup_record_required}" _null_ _null_ pg_control_recovery _null_ _null_ _null_ ));
+DESCR("pg_controldata recovery state information as a function");
+
+DATA(insert OID = 3444 ( pg_control_init PGNSP PGUID 12 1 0 0 0 f f f f t f v s 0 0 2249 "" "{23,23,23,23,23,23,23,23,23,16,16,16,23}" "{o,o,o,o,o,o,o,o,o,o,o,o,o}" "{max_data_alignment,database_block_size,blocks_per_segment,wal_block_size,bytes_per_wal_segment,max_identifier_length,max_index_columns,max_toast_chunk_size,large_object_chunk_size,bigint_timestamps,float4_pass_by_value,float8_pass_by_value,data_page_checksum_version}" _null_ _null_ pg_control_init _null_ _null_ _null_ ));
+DESCR("pg_controldata init state information as a function");
 
 /* for agensgraph */
 DATA(insert OID = 7000 ( graphid		PGNSP PGUID 12 1 0 0 0 f f f f t f i 2 0 7002 "26 20" _null_ _null_ _null_ _null_ _null_ graphid _null_ _null_ _null_ ));
@@ -5283,12 +5407,6 @@ DESCR("GIN graphid support");
 #define PROVOLATILE_STABLE		's'		/* does not change within a scan */
 #define PROVOLATILE_VOLATILE	'v'		/* can change even within a scan */
 
-/* rls */
-DATA(insert OID = 3298 (  row_security_active	   PGNSP PGUID 12 1 0 0 0 f f f f t f s s 1 0 16 "26" _null_ _null_ _null_ _null_ _null_	row_security_active _null_ _null_ _null_ ));
-DESCR("row security for current context active on table by table oid");
-DATA(insert OID = 3299 (  row_security_active	   PGNSP PGUID 12 1 0 0 0 f f f f t f s s 1 0 16 "25" _null_ _null_ _null_ _null_ _null_	row_security_active_name _null_ _null_ _null_ ));
-DESCR("row security for current context active on table by table name");
-
 /*
  * Symbolic values for proparallel column: these indicate whether a function
  * can be safely be run in a parallel backend, during parallelism but
@@ -5296,7 +5414,7 @@ DESCR("row security for current context active on table by table name");
  */
 #define PROPARALLEL_SAFE		's'		/* can run in worker or master */
 #define PROPARALLEL_RESTRICTED	'r'		/* can run in parallel master only */
-#define PROPARALLEL_UNSAFE 		'u'		/* banned while in parallel mode */
+#define PROPARALLEL_UNSAFE		'u'		/* banned while in parallel mode */
 
 /*
  * Symbolic values for proargmodes column.  Note that these must agree with

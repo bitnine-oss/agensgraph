@@ -1144,3 +1144,16 @@ DROP RULE hat_upsert ON hats;
 
 drop table hats;
 drop table hat_data;
+
+-- tests for pg_get_*def with invalid objects
+SELECT pg_get_constraintdef(0);
+SELECT pg_get_functiondef(0);
+SELECT pg_get_indexdef(0);
+SELECT pg_get_ruledef(0);
+SELECT pg_get_triggerdef(0);
+SELECT pg_get_viewdef(0);
+SELECT pg_get_function_arguments(0);
+SELECT pg_get_function_identity_arguments(0);
+SELECT pg_get_function_result(0);
+SELECT pg_get_function_arg_default(0, 0);
+SELECT pg_get_function_arg_default('pg_class'::regclass, 0);

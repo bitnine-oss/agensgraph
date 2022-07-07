@@ -111,6 +111,7 @@ BackgroundWriterMain(void)
 	sigjmp_buf	local_sigjmp_buf;
 	MemoryContext bgwriter_context;
 	bool		prev_hibernate;
+	WritebackContext wb_context;
 
 	/*
 	 * Properly accept or ignore signals the postmaster might send us.
@@ -164,6 +165,8 @@ BackgroundWriterMain(void)
 											 ALLOCSET_DEFAULT_MAXSIZE);
 	MemoryContextSwitchTo(bgwriter_context);
 
+	WritebackContextInit(&wb_context, &bgwriter_flush_after);
+
 	/*
 	 * If an exception is encountered, processing resumes here.
 	 *
@@ -208,6 +211,9 @@ BackgroundWriterMain(void)
 		/* Flush any leaked data in the top-level context */
 		MemoryContextResetAndDeleteChildren(bgwriter_context);
 
+		/* re-initilialize to avoid repeated errors causing problems */
+		WritebackContextInit(&wb_context, &bgwriter_flush_after);
+
 		/* Now we can allow interrupts again */
 		RESUME_INTERRUPTS();
 
@@ -224,6 +230,9 @@ BackgroundWriterMain(void)
 		 * It's not clear we need it elsewhere, but shouldn't hurt.
 		 */
 		smgrcloseall();
+
+		/* Report wait end here, when there is no further possibility of wait */
+		pgstat_report_wait_end();
 	}
 
 	/* We can now handle ereport(ERROR) */
@@ -269,7 +278,7 @@ BackgroundWriterMain(void)
 		/*
 		 * Do one cycle of dirty-buffer writing.
 		 */
-		can_hibernate = BgBufferSync();
+		can_hibernate = BgBufferSync(&wb_context);
 
 		/*
 		 * Send off activity statistics to the stats collector

@@ -827,10 +827,14 @@ PostmasterMain(int argc, char *argv[])
 	if (output_config_variable != NULL)
 	{
 		/*
-		 * permission is handled because the user is reading inside the data
-		 * dir
+		 * "-C guc" was specified, so print GUC's value and exit.  No extra
+		 * permission check is needed because the user is reading inside the
+		 * data dir.
 		 */
-		puts(GetConfigOption(output_config_variable, false, false));
+		const char *config_val = GetConfigOption(output_config_variable,
+												 false, false);
+
+		puts(config_val ? config_val : "");
 		ExitPostmaster(0);
 	}
 
@@ -858,7 +862,7 @@ PostmasterMain(int argc, char *argv[])
 				(errmsg("WAL archival cannot be enabled when wal_level is \"minimal\"")));
 	if (max_wal_senders > 0 && wal_level == WAL_LEVEL_MINIMAL)
 		ereport(ERROR,
-				(errmsg("WAL streaming (max_wal_senders > 0) requires wal_level \"archive\", \"hot_standby\", or \"logical\"")));
+				(errmsg("WAL streaming (max_wal_senders > 0) requires wal_level \"replica\" or \"logical\"")));
 
 	/*
 	 * Other one-time internal sanity checks can go here, if they are fast.
@@ -1182,23 +1186,22 @@ PostmasterMain(int argc, char *argv[])
 	RemovePgTempFiles();
 
 	/*
-	 * Forcibly remove the files signaling a standby promotion
-	 * request. Otherwise, the existence of those files triggers
-	 * a promotion too early, whether a user wants that or not.
+	 * Forcibly remove the files signaling a standby promotion request.
+	 * Otherwise, the existence of those files triggers a promotion too early,
+	 * whether a user wants that or not.
 	 *
-	 * This removal of files is usually unnecessary because they
-	 * can exist only during a few moments during a standby
-	 * promotion. However there is a race condition: if pg_ctl promote
-	 * is executed and creates the files during a promotion,
-	 * the files can stay around even after the server is brought up
-	 * to new master. Then, if new standby starts by using the backup
-	 * taken from that master, the files can exist at the server
+	 * This removal of files is usually unnecessary because they can exist
+	 * only during a few moments during a standby promotion. However there is
+	 * a race condition: if pg_ctl promote is executed and creates the files
+	 * during a promotion, the files can stay around even after the server is
+	 * brought up to new master. Then, if new standby starts by using the
+	 * backup taken from that master, the files can exist at the server
 	 * startup and should be removed in order to avoid an unexpected
 	 * promotion.
 	 *
-	 * Note that promotion signal files need to be removed before
-	 * the startup process is invoked. Because, after that, they can
-	 * be used by postmaster's SIGUSR1 signal handler.
+	 * Note that promotion signal files need to be removed before the startup
+	 * process is invoked. Because, after that, they can be used by
+	 * postmaster's SIGUSR1 signal handler.
 	 */
 	RemovePromoteSignalFiles();
 
@@ -2053,9 +2056,9 @@ retry1:
 				else if (!parse_bool(valptr, &am_walsender))
 					ereport(FATAL,
 							(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-							 errmsg("invalid value for parameter \"%s\": \"%s\"",
-									"replication",
-									valptr),
+						 errmsg("invalid value for parameter \"%s\": \"%s\"",
+								"replication",
+								valptr),
 							 errhint("Valid values are: \"false\", 0, \"true\", 1, \"database\".")));
 			}
 			else
@@ -2607,6 +2610,7 @@ pmdie(SIGNAL_ARGS)
 			if (pmState == PM_RECOVERY)
 			{
 				SignalSomeChildren(SIGTERM, BACKEND_TYPE_BGWORKER);
+
 				/*
 				 * Only startup, bgwriter, walreceiver, possibly bgworkers,
 				 * and/or checkpointer should be active in this state; we just
@@ -3074,9 +3078,9 @@ CleanupBackgroundWorker(int pid,
 
 		/*
 		 * It's possible that this background worker started some OTHER
-		 * background worker and asked to be notified when that worker
-		 * started or stopped.  If so, cancel any notifications destined
-		 * for the now-dead backend.
+		 * background worker and asked to be notified when that worker started
+		 * or stopped.  If so, cancel any notifications destined for the
+		 * now-dead backend.
 		 */
 		if (rw->rw_backend->bgworker_notify)
 			BackgroundWorkerStopNotifications(rw->rw_pid);
@@ -4802,8 +4806,6 @@ SubPostmasterMain(int argc, char *argv[])
 		/* do this as early as possible; in particular, before InitProcess() */
 		IsBackgroundWorker = true;
 
-		InitPostmasterChild();
-
 		/* Close the postmaster's sockets */
 		ClosePostmasterPorts(false);
 
@@ -4816,8 +4818,10 @@ SubPostmasterMain(int argc, char *argv[])
 		/* Attach process to shared data structures */
 		CreateSharedMemoryAndSemaphores(false, 0);
 
+		/* Fetch MyBgworkerEntry from shared memory */
 		shmem_slot = atoi(argv[1] + 15);
 		MyBgworkerEntry = BackgroundWorkerEntry(shmem_slot);
+
 		StartBackgroundWorker();
 	}
 	if (strcmp(argv[1], "--forkarch") == 0)
@@ -5177,7 +5181,7 @@ CountChildren(int target)
 /*
  * StartChildProcess -- start an auxiliary process for the postmaster
  *
- * xlop determines what kind of child will be started.  All child types
+ * "type" determines what kind of child will be started.  All child types
  * initially go to AuxiliaryProcessMain, which will handle common setup.
  *
  * Return value of StartChildProcess is subprocess' PID, or 0 if failed
@@ -5525,9 +5529,19 @@ do_start_bgworker(RegisteredBgWorker *rw)
 			/* Close the postmaster's sockets */
 			ClosePostmasterPorts(false);
 
-			/* Do NOT release postmaster's working memory context */
+			/*
+			 * Before blowing away PostmasterContext, save this bgworker's
+			 * data where it can find it.
+			 */
+			MyBgworkerEntry = (BackgroundWorker *)
+				MemoryContextAlloc(TopMemoryContext, sizeof(BackgroundWorker));
+			memcpy(MyBgworkerEntry, &rw->rw_worker, sizeof(BackgroundWorker));
 
-			MyBgworkerEntry = &rw->rw_worker;
+			/* Release postmaster's working memory context */
+			MemoryContextSwitchTo(TopMemoryContext);
+			MemoryContextDelete(PostmasterContext);
+			PostmasterContext = NULL;
+
 			StartBackgroundWorker();
 			break;
 #endif
@@ -5535,6 +5549,7 @@ do_start_bgworker(RegisteredBgWorker *rw)
 			rw->rw_pid = worker_pid;
 			rw->rw_backend->pid = rw->rw_pid;
 			ReportBackgroundWorkerPID(rw);
+			break;
 	}
 }
 
@@ -5696,9 +5711,8 @@ maybe_start_bgworker(void)
 			rw->rw_crashed_at = 0;
 
 			/*
-			 * Allocate and assign the Backend element.  Note we
-			 * must do this before forking, so that we can handle out of
-			 * memory properly.
+			 * Allocate and assign the Backend element.  Note we must do this
+			 * before forking, so that we can handle out of memory properly.
 			 */
 			if (!assign_backendlist_entry(rw))
 				return;

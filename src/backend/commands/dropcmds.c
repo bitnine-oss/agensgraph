@@ -267,6 +267,10 @@ does_not_exist_skipping(ObjectType objtype, List *objname, List *objargs)
 
 	switch (objtype)
 	{
+		case OBJECT_ACCESS_METHOD:
+			msg = gettext_noop("access method \"%s\" does not exist, skipping");
+			name = NameListToString(objname);
+			break;
 		case OBJECT_TYPE:
 		case OBJECT_DOMAIN:
 			{
@@ -443,7 +447,7 @@ does_not_exist_skipping(ObjectType objtype, List *objname, List *objargs)
 			}
 			break;
 		default:
-			elog(ERROR, "unexpected object type (%d)", (int) objtype);
+			elog(ERROR, "unrecognized object type: %d", (int) objtype);
 			break;
 	}
 

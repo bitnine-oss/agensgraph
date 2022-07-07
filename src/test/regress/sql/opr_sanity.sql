@@ -228,7 +228,8 @@ ORDER BY 1, 2;
 -- Look for functions that return type "internal" and do not have any
 -- "internal" argument.  Such a function would be a security hole since
 -- it might be used to call an internal function from an SQL command.
--- As of 7.3 this query should find only internal_in.
+-- As of 7.3 this query should find only internal_in, which is safe because
+-- it always throws an error when called.
 
 SELECT p1.oid, p1.proname
 FROM pg_proc as p1
@@ -934,6 +935,72 @@ WHERE a.aggfnoid = p.oid AND
     a.aggmtransfn = ptr.oid AND
     a.aggminvtransfn = iptr.oid AND
     ptr.proisstrict != iptr.proisstrict;
+
+-- Check that all combine functions have signature
+-- combine(transtype, transtype) returns transtype
+-- NOTE: use physically_coercible here, not binary_coercible, because
+-- max and min on abstime are implemented using int4larger/int4smaller.
+
+SELECT a.aggfnoid, p.proname
+FROM pg_aggregate as a, pg_proc as p
+WHERE a.aggcombinefn = p.oid AND
+    (p.pronargs != 2 OR
+     p.prorettype != p.proargtypes[0] OR
+     p.prorettype != p.proargtypes[1] OR
+     NOT physically_coercible(a.aggtranstype, p.proargtypes[0]));
+
+-- Check that no combine function for an INTERNAL transtype is strict.
+
+SELECT a.aggfnoid, p.proname
+FROM pg_aggregate as a, pg_proc as p
+WHERE a.aggcombinefn = p.oid AND
+    a.aggtranstype = 'internal'::regtype AND p.proisstrict;
+
+-- serialize/deserialize functions should be specified only for aggregates
+-- with transtype internal and a combine function, and we should have both
+-- or neither of them.
+
+SELECT aggfnoid, aggtranstype, aggserialfn, aggdeserialfn
+FROM pg_aggregate
+WHERE (aggserialfn != 0 OR aggdeserialfn != 0)
+  AND (aggtranstype != 'internal'::regtype OR aggcombinefn = 0 OR
+       aggserialfn = 0 OR aggdeserialfn = 0);
+
+-- Check that all serialization functions have signature
+-- serialize(internal) returns bytea
+-- Also insist that they be strict; it's wasteful to run them on NULLs.
+
+SELECT a.aggfnoid, p.proname
+FROM pg_aggregate as a, pg_proc as p
+WHERE a.aggserialfn = p.oid AND
+    (p.prorettype != 'bytea'::regtype OR p.pronargs != 1 OR
+     p.proargtypes[0] != 'internal'::regtype OR
+     NOT p.proisstrict);
+
+-- Check that all deserialization functions have signature
+-- deserialize(bytea, internal) returns internal
+-- Also insist that they be strict; it's wasteful to run them on NULLs.
+
+SELECT a.aggfnoid, p.proname
+FROM pg_aggregate as a, pg_proc as p
+WHERE a.aggdeserialfn = p.oid AND
+    (p.prorettype != 'internal'::regtype OR p.pronargs != 2 OR
+     p.proargtypes[0] != 'bytea'::regtype OR
+     p.proargtypes[1] != 'internal'::regtype OR
+     NOT p.proisstrict);
+
+-- Check that aggregates which have the same transition function also have
+-- the same combine, serialization, and deserialization functions.
+-- While that isn't strictly necessary, it's fishy if they don't.
+
+SELECT a.aggfnoid, a.aggcombinefn, a.aggserialfn, a.aggdeserialfn,
+       b.aggfnoid, b.aggcombinefn, b.aggserialfn, b.aggdeserialfn
+FROM
+    pg_aggregate a, pg_aggregate b
+WHERE
+    a.aggfnoid < b.aggfnoid AND a.aggtransfn = b.aggtransfn AND
+    (a.aggcombinefn != b.aggcombinefn OR a.aggserialfn != b.aggserialfn
+     OR a.aggdeserialfn != b.aggdeserialfn);
 
 -- Cross-check aggsortop (if present) against pg_operator.
 -- We expect to find entries for bool_and, bool_or, every, max, and min.

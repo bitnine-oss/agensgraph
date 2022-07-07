@@ -22,12 +22,13 @@
 #include "catalog/catalog.h"
 #include "catalog/heap.h"
 #include "catalog/pg_am.h"
-#include "catalog/pg_constraint.h"
+#include "catalog/pg_constraint_fn.h"
 #include "catalog/pg_type.h"
 #include "commands/defrem.h"
 #include "nodes/makefuncs.h"
 #include "nodes/nodeFuncs.h"
 #include "optimizer/tlist.h"
+#include "optimizer/var.h"
 #include "parser/analyze.h"
 #include "parser/parsetree.h"
 #include "parser/parser.h"
@@ -757,8 +758,8 @@ transformRangeTableSample(ParseState *pstate, RangeTableSample *rts)
 	if (get_func_rettype(handlerOid) != TSM_HANDLEROID)
 		ereport(ERROR,
 				(errcode(ERRCODE_WRONG_OBJECT_TYPE),
-				 errmsg("function %s must return type \"tsm_handler\"",
-						NameListToString(rts->method)),
+				 errmsg("function %s must return type %s",
+						NameListToString(rts->method), "tsm_handler"),
 				 parser_errposition(pstate, rts->location)));
 
 	/* OK, run the handler to get TsmRoutine, for argument type info */
@@ -1886,7 +1887,7 @@ flatten_grouping_sets(Node *expr, bool toplevel, bool *hasGroupingSets)
 					Node	   *n2 = flatten_grouping_sets(n1, false, NULL);
 
 					if (IsA(n1, GroupingSet) &&
-						((GroupingSet *)n1)->kind == GROUPING_SET_SETS)
+						((GroupingSet *) n1)->kind == GROUPING_SET_SETS)
 					{
 						result_set = list_concat(result_set, (List *) n2);
 					}
@@ -2868,7 +2869,7 @@ transformOnConflictArbiter(ParseState *pstate,
 	if (IsCatalogRelation(pstate->p_target_relation))
 		ereport(ERROR,
 				(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-			  errmsg("ON CONFLICT is not supported with system catalog tables"),
+		   errmsg("ON CONFLICT is not supported with system catalog tables"),
 				 parser_errposition(pstate,
 								  exprLocation((Node *) onConflictClause))));
 

@@ -423,8 +423,8 @@ plpgsql_exec_function(PLpgSQL_function *func, FunctionCallInfo fcinfo,
 	/*
 	 * Let the instrumentation plugin peek at this function
 	 */
-	if (*plugin_ptr && (*plugin_ptr)->func_beg)
-		((*plugin_ptr)->func_beg) (&estate, func);
+	if (*plpgsql_plugin_ptr && (*plpgsql_plugin_ptr)->func_beg)
+		((*plpgsql_plugin_ptr)->func_beg) (&estate, func);
 
 	/*
 	 * Now call the toplevel block of statements
@@ -556,8 +556,8 @@ plpgsql_exec_function(PLpgSQL_function *func, FunctionCallInfo fcinfo,
 	/*
 	 * Let the instrumentation plugin peek at this function
 	 */
-	if (*plugin_ptr && (*plugin_ptr)->func_end)
-		((*plugin_ptr)->func_end) (&estate, func);
+	if (*plpgsql_plugin_ptr && (*plpgsql_plugin_ptr)->func_end)
+		((*plpgsql_plugin_ptr)->func_end) (&estate, func);
 
 	/* Clean up any leftover temporary memory */
 	plpgsql_destroy_econtext(&estate);
@@ -767,8 +767,8 @@ plpgsql_exec_trigger(PLpgSQL_function *func,
 	/*
 	 * Let the instrumentation plugin peek at this function
 	 */
-	if (*plugin_ptr && (*plugin_ptr)->func_beg)
-		((*plugin_ptr)->func_beg) (&estate, func);
+	if (*plpgsql_plugin_ptr && (*plpgsql_plugin_ptr)->func_beg)
+		((*plpgsql_plugin_ptr)->func_beg) (&estate, func);
 
 	/*
 	 * Now call the toplevel block of statements
@@ -826,8 +826,8 @@ plpgsql_exec_trigger(PLpgSQL_function *func,
 	/*
 	 * Let the instrumentation plugin peek at this function
 	 */
-	if (*plugin_ptr && (*plugin_ptr)->func_end)
-		((*plugin_ptr)->func_end) (&estate, func);
+	if (*plpgsql_plugin_ptr && (*plpgsql_plugin_ptr)->func_end)
+		((*plpgsql_plugin_ptr)->func_end) (&estate, func);
 
 	/* Clean up any leftover temporary memory */
 	plpgsql_destroy_econtext(&estate);
@@ -885,8 +885,8 @@ plpgsql_exec_event_trigger(PLpgSQL_function *func, EventTriggerData *trigdata)
 	/*
 	 * Let the instrumentation plugin peek at this function
 	 */
-	if (*plugin_ptr && (*plugin_ptr)->func_beg)
-		((*plugin_ptr)->func_beg) (&estate, func);
+	if (*plpgsql_plugin_ptr && (*plpgsql_plugin_ptr)->func_beg)
+		((*plpgsql_plugin_ptr)->func_beg) (&estate, func);
 
 	/*
 	 * Now call the toplevel block of statements
@@ -909,8 +909,8 @@ plpgsql_exec_event_trigger(PLpgSQL_function *func, EventTriggerData *trigdata)
 	/*
 	 * Let the instrumentation plugin peek at this function
 	 */
-	if (*plugin_ptr && (*plugin_ptr)->func_end)
-		((*plugin_ptr)->func_end) (&estate, func);
+	if (*plpgsql_plugin_ptr && (*plpgsql_plugin_ptr)->func_end)
+		((*plpgsql_plugin_ptr)->func_end) (&estate, func);
 
 	/* Clean up any leftover temporary memory */
 	plpgsql_destroy_econtext(&estate);
@@ -1420,8 +1420,8 @@ exec_stmt(PLpgSQL_execstate *estate, PLpgSQL_stmt *stmt)
 	estate->err_stmt = stmt;
 
 	/* Let the plugin know that we are about to execute this statement */
-	if (*plugin_ptr && (*plugin_ptr)->stmt_beg)
-		((*plugin_ptr)->stmt_beg) (estate, stmt);
+	if (*plpgsql_plugin_ptr && (*plpgsql_plugin_ptr)->stmt_beg)
+		((*plpgsql_plugin_ptr)->stmt_beg) (estate, stmt);
 
 	CHECK_FOR_INTERRUPTS();
 
@@ -1529,8 +1529,8 @@ exec_stmt(PLpgSQL_execstate *estate, PLpgSQL_stmt *stmt)
 	}
 
 	/* Let the plugin know that we have finished executing this statement */
-	if (*plugin_ptr && (*plugin_ptr)->stmt_end)
-		((*plugin_ptr)->stmt_end) (estate, stmt);
+	if (*plpgsql_plugin_ptr && (*plpgsql_plugin_ptr)->stmt_end)
+		((*plpgsql_plugin_ptr)->stmt_end) (estate, stmt);
 
 	estate->err_stmt = save_estmt;
 
@@ -1601,8 +1601,8 @@ exec_stmt_getdiag(PLpgSQL_execstate *estate, PLpgSQL_stmt_getdiag *stmt)
 		{
 			case PLPGSQL_GETDIAG_ROW_COUNT:
 				exec_assign_value(estate, var,
-								  UInt32GetDatum(estate->eval_processed),
-								  false, INT4OID, -1);
+								  UInt64GetDatum(estate->eval_processed),
+								  false, INT8OID, -1);
 				break;
 
 			case PLPGSQL_GETDIAG_RESULT_OID:
@@ -2315,7 +2315,7 @@ exec_stmt_foreach_a(PLpgSQL_execstate *estate, PLpgSQL_stmt_foreach_a *stmt)
 		loop_var_elem_type = InvalidOid;
 	}
 	else
-		loop_var_elem_type = get_element_type(exec_get_datum_type(estate,
+		loop_var_elem_type = get_element_type(plpgsql_exec_get_datum_type(estate,
 																  loop_var));
 
 	/*
@@ -2856,7 +2856,7 @@ exec_stmt_return_query(PLpgSQL_execstate *estate,
 					   PLpgSQL_stmt_return_query *stmt)
 {
 	Portal		portal;
-	uint32		processed = 0;
+	uint64		processed = 0;
 	TupleConversionMap *tupmap;
 
 	if (!estate->retisset)
@@ -2887,7 +2887,7 @@ exec_stmt_return_query(PLpgSQL_execstate *estate,
 
 	while (true)
 	{
-		int			i;
+		uint64		i;
 
 		SPI_cursor_fetch(portal, true, 50);
 		if (SPI_processed == 0)
@@ -3350,13 +3350,13 @@ plpgsql_estate_setup(PLpgSQL_execstate *estate,
 	 * pointers so it can call back into PL/pgSQL for doing things like
 	 * variable assignments and stack traces
 	 */
-	if (*plugin_ptr)
+	if (*plpgsql_plugin_ptr)
 	{
-		(*plugin_ptr)->error_callback = plpgsql_exec_error_callback;
-		(*plugin_ptr)->assign_expr = exec_assign_expr;
+		(*plpgsql_plugin_ptr)->error_callback = plpgsql_exec_error_callback;
+		(*plpgsql_plugin_ptr)->assign_expr = exec_assign_expr;
 
-		if ((*plugin_ptr)->func_setup)
-			((*plugin_ptr)->func_setup) (estate, func);
+		if ((*plpgsql_plugin_ptr)->func_setup)
+			((*plpgsql_plugin_ptr)->func_setup) (estate, func);
 	}
 }
 
@@ -3579,7 +3579,7 @@ exec_stmt_execsql(PLpgSQL_execstate *estate,
 	if (stmt->into)
 	{
 		SPITupleTable *tuptab = SPI_tuptable;
-		uint32		n = SPI_processed;
+		uint64		n = SPI_processed;
 		PLpgSQL_rec *rec = NULL;
 		PLpgSQL_row *row = NULL;
 
@@ -3769,7 +3769,7 @@ exec_stmt_dynexecute(PLpgSQL_execstate *estate,
 	if (stmt->into)
 	{
 		SPITupleTable *tuptab = SPI_tuptable;
-		uint32		n = SPI_processed;
+		uint64		n = SPI_processed;
 		PLpgSQL_rec *rec = NULL;
 		PLpgSQL_row *row = NULL;
 
@@ -4043,7 +4043,7 @@ exec_stmt_fetch(PLpgSQL_execstate *estate, PLpgSQL_stmt_fetch *stmt)
 	SPITupleTable *tuptab;
 	Portal		portal;
 	char	   *curname;
-	uint32		n;
+	uint64		n;
 
 	/* ----------
 	 * Get the portal of the cursor by name
@@ -4758,7 +4758,7 @@ exec_eval_datum(PLpgSQL_execstate *estate,
 }
 
 /*
- * exec_get_datum_type				Get datatype of a PLpgSQL_datum
+ * plpgsql_exec_get_datum_type				Get datatype of a PLpgSQL_datum
  *
  * This is the same logic as in exec_eval_datum, except that it can handle
  * some cases where exec_eval_datum has to fail; specifically, we may have
@@ -4766,8 +4766,8 @@ exec_eval_datum(PLpgSQL_execstate *estate,
  * happen only for a trigger's NEW/OLD records.)
  */
 Oid
-exec_get_datum_type(PLpgSQL_execstate *estate,
-					PLpgSQL_datum *datum)
+plpgsql_exec_get_datum_type(PLpgSQL_execstate *estate,
+							PLpgSQL_datum *datum)
 {
 	Oid			typeid;
 
@@ -4842,15 +4842,15 @@ exec_get_datum_type(PLpgSQL_execstate *estate,
 }
 
 /*
- * exec_get_datum_type_info			Get datatype etc of a PLpgSQL_datum
+ * plpgsql_exec_get_datum_type_info			Get datatype etc of a PLpgSQL_datum
  *
- * An extended version of exec_get_datum_type, which also retrieves the
+ * An extended version of plpgsql_exec_get_datum_type, which also retrieves the
  * typmod and collation of the datum.
  */
 void
-exec_get_datum_type_info(PLpgSQL_execstate *estate,
-						 PLpgSQL_datum *datum,
-						 Oid *typeid, int32 *typmod, Oid *collation)
+plpgsql_exec_get_datum_type_info(PLpgSQL_execstate *estate,
+								 PLpgSQL_datum *datum,
+								 Oid *typeid, int32 *typmod, Oid *collation)
 {
 	switch (datum->dtype)
 	{
@@ -5089,7 +5089,7 @@ exec_run_select(PLpgSQL_execstate *estate,
 	 */
 	if (expr->plan == NULL)
 		exec_prepare_plan(estate, expr, parallelOK ?
-			CURSOR_OPT_PARALLEL_OK : 0);
+						  CURSOR_OPT_PARALLEL_OK : 0);
 
 	/*
 	 * If a portal was requested, put the query into the portal
@@ -5151,7 +5151,7 @@ exec_for_query(PLpgSQL_execstate *estate, PLpgSQL_stmt_forq *stmt,
 	SPITupleTable *tuptab;
 	bool		found = false;
 	int			rc = PLPGSQL_RC_OK;
-	int			n;
+	uint64		n;
 
 	/*
 	 * Determine if we assign to a record or a row
@@ -5182,7 +5182,7 @@ exec_for_query(PLpgSQL_execstate *estate, PLpgSQL_stmt_forq *stmt,
 	 * If the query didn't return any rows, set the target to NULL and fall
 	 * through with found = false.
 	 */
-	if (n <= 0)
+	if (n == 0)
 	{
 		exec_move_row(estate, rec, row, NULL, tuptab->tupdesc);
 		exec_eval_cleanup(estate);
@@ -5195,7 +5195,7 @@ exec_for_query(PLpgSQL_execstate *estate, PLpgSQL_stmt_forq *stmt,
 	 */
 	while (n > 0)
 	{
-		int			i;
+		uint64		i;
 
 		for (i = 0; i < n; i++)
 		{

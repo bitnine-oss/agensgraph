@@ -166,6 +166,8 @@ typedef enum LockTagType
 
 #define LOCKTAG_LAST_TYPE	LOCKTAG_ADVISORY
 
+extern const char *const LockTagTypeNames[];
+
 /*
  * The LOCKTAG struct is defined with malice aforethought to fit into 16
  * bytes with no padding.  Note that this would need adjustment if we were
@@ -346,7 +348,7 @@ typedef struct PROCLOCK
 	PROCLOCKTAG tag;			/* unique identifier of proclock object */
 
 	/* data */
-	PGPROC	   *groupLeader;	/* group leader, or NULL if no lock group */
+	PGPROC	   *groupLeader;	/* proc's lock group leader, or proc itself */
 	LOCKMASK	holdMask;		/* bitmask for lock types currently held */
 	LOCKMASK	releaseMask;	/* bitmask for lock types to be released */
 	SHM_QUEUE	lockLink;		/* list link in LOCK's list of proclocks */
@@ -423,20 +425,47 @@ typedef struct LOCALLOCK
 
 typedef struct LockInstanceData
 {
-	LOCKTAG		locktag;		/* locked object */
+	LOCKTAG		locktag;		/* tag for locked object */
 	LOCKMASK	holdMask;		/* locks held by this PGPROC */
 	LOCKMODE	waitLockMode;	/* lock awaited by this PGPROC, if any */
 	BackendId	backend;		/* backend ID of this PGPROC */
 	LocalTransactionId lxid;	/* local transaction ID of this PGPROC */
 	int			pid;			/* pid of this PGPROC */
+	int			leaderPid;		/* pid of group leader; = pid if no group */
 	bool		fastpath;		/* taken via fastpath? */
 } LockInstanceData;
 
 typedef struct LockData
 {
 	int			nelements;		/* The length of the array */
-	LockInstanceData *locks;
+	LockInstanceData *locks;	/* Array of per-PROCLOCK information */
 } LockData;
+
+typedef struct BlockedProcData
+{
+	int			pid;			/* pid of a blocked PGPROC */
+	/* Per-PROCLOCK information about PROCLOCKs of the lock the pid awaits */
+	/* (these fields refer to indexes in BlockedProcsData.locks[]) */
+	int			first_lock;		/* index of first relevant LockInstanceData */
+	int			num_locks;		/* number of relevant LockInstanceDatas */
+	/* PIDs of PGPROCs that are ahead of "pid" in the lock's wait queue */
+	/* (these fields refer to indexes in BlockedProcsData.waiter_pids[]) */
+	int			first_waiter;	/* index of first preceding waiter */
+	int			num_waiters;	/* number of preceding waiters */
+} BlockedProcData;
+
+typedef struct BlockedProcsData
+{
+	BlockedProcData *procs;		/* Array of per-blocked-proc information */
+	LockInstanceData *locks;	/* Array of per-PROCLOCK information */
+	int		   *waiter_pids;	/* Array of PIDs of other blocked PGPROCs */
+	int			nprocs;			/* # of valid entries in procs[] array */
+	int			maxprocs;		/* Allocated length of procs[] array */
+	int			nlocks;			/* # of valid entries in locks[] array */
+	int			maxlocks;		/* Allocated length of locks[] array */
+	int			npids;			/* # of valid entries in waiter_pids[] array */
+	int			maxpids;		/* Allocated length of waiter_pids[] array */
+} BlockedProcsData;
 
 
 /* Result codes for LockAcquire() */
@@ -478,16 +507,18 @@ typedef enum
  * by one of the lock hash partition locks.  Since the deadlock detector
  * acquires all such locks anyway, this makes it safe for it to access these
  * fields without doing anything extra.  To avoid contention as much as
- * possible, we map different PGPROCs to different partition locks.
+ * possible, we map different PGPROCs to different partition locks.  The lock
+ * used for a given lock group is determined by the group leader's pgprocno.
  */
-#define LockHashPartitionLockByProc(p) \
-	LockHashPartitionLock((p)->pgprocno)
+#define LockHashPartitionLockByProc(leader_pgproc) \
+	LockHashPartitionLock((leader_pgproc)->pgprocno)
 
 /*
  * function prototypes
  */
 extern void InitLocks(void);
 extern LockMethod GetLocksMethodTable(const LOCK *lock);
+extern LockMethod GetLockTagsMethodTable(const LOCKTAG *locktag);
 extern uint32 LockTagHashCode(const LOCKTAG *locktag);
 extern bool DoLockModesConflict(LOCKMODE mode1, LOCKMODE mode2);
 extern LockAcquireResult LockAcquire(const LOCKTAG *locktag,
@@ -520,6 +551,7 @@ extern void GrantAwaitedLock(void);
 extern void RemoveFromWaitQueue(PGPROC *proc, uint32 hashcode);
 extern Size LockShmemSize(void);
 extern LockData *GetLockStatusData(void);
+extern BlockedProcsData *GetBlockerStatusData(int blocked_pid);
 
 extern xl_standby_lock *GetRunningTransactionLocks(int *nlocks);
 extern const char *GetLockmodeName(LOCKMETHODID lockmethodid, LOCKMODE mode);
@@ -541,6 +573,8 @@ extern void RememberSimpleDeadLock(PGPROC *proc1,
 					   LOCK *lock,
 					   PGPROC *proc2);
 extern void InitDeadLockChecking(void);
+
+extern int	LockWaiterCount(const LOCKTAG *locktag);
 
 #ifdef LOCK_DEBUG
 extern void DumpLocks(PGPROC *proc);

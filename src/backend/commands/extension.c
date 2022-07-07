@@ -1419,7 +1419,7 @@ CreateExtensionInternal(CreateExtensionStmt *stmt, List *parents)
 				CreateExtensionStmt *ces;
 				ListCell   *lc;
 				ObjectAddress addr;
-				List *cascade_parents;
+				List	   *cascade_parents;
 
 				/* Check extension name validity before trying to cascade */
 				check_valid_extension_name(curreq);
@@ -1467,7 +1467,7 @@ CreateExtensionInternal(CreateExtensionStmt *stmt, List *parents)
 						(errcode(ERRCODE_UNDEFINED_OBJECT),
 						 errmsg("required extension \"%s\" is not installed",
 								curreq),
-						 errhint("Use CREATE EXTENSION CASCADE to install required extensions too.")));
+						 errhint("Use CREATE EXTENSION ... CASCADE to install required extensions too.")));
 		}
 
 		reqschema = get_extension_schema(reqext);

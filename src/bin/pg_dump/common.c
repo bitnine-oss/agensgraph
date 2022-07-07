@@ -22,6 +22,7 @@
 #include <ctype.h>
 
 #include "catalog/pg_class.h"
+#include "fe_utils/string_utils.h"
 
 
 /*
@@ -98,6 +99,7 @@ getSchemaData(Archive *fout, int *numTablesPtr)
 	int			numProcLangs;
 	int			numCasts;
 	int			numTransforms;
+	int			numAccessMethods;
 	int			numOpclasses;
 	int			numOpfamilies;
 	int			numConversions;
@@ -167,6 +169,10 @@ getSchemaData(Archive *fout, int *numTablesPtr)
 		write_msg(NULL, "reading user-defined operators\n");
 	oprinfo = getOperators(fout, &numOperators);
 	oprinfoindex = buildIndexArray(oprinfo, numOperators, sizeof(OprInfo));
+
+	if (g_verbose)
+		write_msg(NULL, "reading user-defined access methods\n");
+	getAccessMethods(fout, &numAccessMethods);
 
 	if (g_verbose)
 		write_msg(NULL, "reading user-defined operator classes\n");
@@ -437,7 +443,7 @@ AssignDumpId(DumpableObject *dobj)
 	dobj->dumpId = ++lastDumpId;
 	dobj->name = NULL;			/* must be set later */
 	dobj->namespace = NULL;		/* may be set later */
-	dobj->dump = true;			/* default assumption */
+	dobj->dump = DUMP_COMPONENT_ALL;	/* default assumption */
 	dobj->ext_member = false;	/* default assumption */
 	dobj->dependencies = NULL;
 	dobj->nDeps = 0;
@@ -986,38 +992,4 @@ strInArray(const char *pattern, char **arr, int arr_size)
 			return i;
 	}
 	return -1;
-}
-
-
-/*
- * Support for simple list operations
- */
-
-void
-simple_oid_list_append(SimpleOidList *list, Oid val)
-{
-	SimpleOidListCell *cell;
-
-	cell = (SimpleOidListCell *) pg_malloc(sizeof(SimpleOidListCell));
-	cell->next = NULL;
-	cell->val = val;
-
-	if (list->tail)
-		list->tail->next = cell;
-	else
-		list->head = cell;
-	list->tail = cell;
-}
-
-bool
-simple_oid_list_member(SimpleOidList *list, Oid val)
-{
-	SimpleOidListCell *cell;
-
-	for (cell = list->head; cell; cell = cell->next)
-	{
-		if (cell->val == val)
-			return true;
-	}
-	return false;
 }

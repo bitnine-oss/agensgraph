@@ -28,8 +28,8 @@ typedef struct
 
 
 /* Compare two WordEntryPos values for qsort */
-static int
-comparePos(const void *a, const void *b)
+int
+compareWordEntryPos(const void *a, const void *b)
 {
 	int			apos = WEP_GETPOS(*(const WordEntryPos *) a);
 	int			bpos = WEP_GETPOS(*(const WordEntryPos *) b);
@@ -54,7 +54,7 @@ uniquePos(WordEntryPos *a, int l)
 	if (l <= 1)
 		return l;
 
-	qsort((void *) a, l, sizeof(WordEntryPos), comparePos);
+	qsort((void *) a, l, sizeof(WordEntryPos), compareWordEntryPos);
 
 	res = a;
 	ptr = a + 1;

@@ -12,6 +12,9 @@
 /* \da */
 extern bool describeAggregates(const char *pattern, bool verbose, bool showSystem);
 
+/* \dA */
+extern bool describeAccessMethods(const char *pattern, bool verbose);
+
 /* \db */
 extern bool describeTablespaces(const char *pattern, bool verbose);
 
@@ -25,7 +28,7 @@ extern bool describeTypes(const char *pattern, bool verbose, bool showSystem);
 extern bool describeOperators(const char *pattern, bool verbose, bool showSystem);
 
 /* \du, \dg */
-extern bool describeRoles(const char *pattern, bool verbose);
+extern bool describeRoles(const char *pattern, bool verbose, bool showSystem);
 
 /* \drds */
 extern bool listDbRoleSettings(const char *pattern1, const char *pattern2);

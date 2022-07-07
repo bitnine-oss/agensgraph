@@ -21,7 +21,7 @@
  *
  *	Interface:
  *
- *	InitLocks(), GetLocksMethodTable(),
+ *	InitLocks(), GetLocksMethodTable(), GetLockTagsMethodTable(),
  *	LockAcquire(), LockRelease(), LockReleaseAll(),
  *	LockCheckConflicts(), GrantLock()
  *
@@ -41,6 +41,7 @@
 #include "pg_trace.h"
 #include "pgstat.h"
 #include "storage/proc.h"
+#include "storage/procarray.h"
 #include "storage/sinvaladt.h"
 #include "storage/spin.h"
 #include "storage/standby.h"
@@ -356,6 +357,8 @@ static void CleanUpLock(LOCK *lock, PROCLOCK *proclock,
 static void LockRefindAndRelease(LockMethod lockMethodTable, PGPROC *proc,
 					 LOCKTAG *locktag, LOCKMODE lockmode,
 					 bool decrement_strong_lock_count);
+static void GetSingleProcBlockerStatusData(PGPROC *blocked_proc,
+							   BlockedProcsData *data);
 
 
 /*
@@ -457,6 +460,18 @@ LockMethod
 GetLocksMethodTable(const LOCK *lock)
 {
 	LOCKMETHODID lockmethodid = LOCK_LOCKMETHOD(*lock);
+
+	Assert(0 < lockmethodid && lockmethodid < lengthof(LockMethods));
+	return LockMethods[lockmethodid];
+}
+
+/*
+ * Fetch the lock method table associated with a given locktag
+ */
+LockMethod
+GetLockTagsMethodTable(const LOCKTAG *locktag)
+{
+	LOCKMETHODID lockmethodid = (LOCKMETHODID) locktag->locktag_lockmethodid;
 
 	Assert(0 < lockmethodid && lockmethodid < lengthof(LockMethods));
 	return LockMethods[lockmethodid];
@@ -1138,13 +1153,13 @@ SetupLockInTable(LockMethod lockMethodTable, PGPROC *proc,
 		uint32		partition = LockHashPartition(hashcode);
 
 		/*
-		 * It might seem unsafe to access proclock->groupLeader without a lock,
-		 * but it's not really.  Either we are initializing a proclock on our
-		 * own behalf, in which case our group leader isn't changing because
-		 * the group leader for a process can only ever be changed by the
-		 * process itself; or else we are transferring a fast-path lock to the
-		 * main lock table, in which case that process can't change it's lock
-		 * group leader without first releasing all of its locks (and in
+		 * It might seem unsafe to access proclock->groupLeader without a
+		 * lock, but it's not really.  Either we are initializing a proclock
+		 * on our own behalf, in which case our group leader isn't changing
+		 * because the group leader for a process can only ever be changed by
+		 * the process itself; or else we are transferring a fast-path lock to
+		 * the main lock table, in which case that process can't change it's
+		 * lock group leader without first releasing all of its locks (and in
 		 * particular the one we are currently transferring).
 		 */
 		proclock->groupLeader = proc->lockGroupLeader != NULL ?
@@ -1304,10 +1319,9 @@ LockCheckConflicts(LockMethod lockMethodTable,
 	}
 
 	/*
-	 * Rats.  Something conflicts.  But it could still be my own lock, or
-	 * a lock held by another member of my locking group.  First, figure out
-	 * how many conflicts remain after subtracting out any locks I hold
-	 * myself.
+	 * Rats.  Something conflicts.  But it could still be my own lock, or a
+	 * lock held by another member of my locking group.  First, figure out how
+	 * many conflicts remain after subtracting out any locks I hold myself.
 	 */
 	myLocks = proclock->holdMask;
 	for (i = 1; i <= numLockModes; i++)
@@ -1342,9 +1356,10 @@ LockCheckConflicts(LockMethod lockMethodTable,
 	/*
 	 * Locks held in conflicting modes by members of our own lock group are
 	 * not real conflicts; we can subtract those out and see if we still have
-	 * a conflict.  This is O(N) in the number of processes holding or awaiting
-	 * locks on this object.  We could improve that by making the shared memory
-	 * state more complex (and larger) but it doesn't seem worth it.
+	 * a conflict.  This is O(N) in the number of processes holding or
+	 * awaiting locks on this object.  We could improve that by making the
+	 * shared memory state more complex (and larger) but it doesn't seem worth
+	 * it.
 	 */
 	procLocks = &(lock->procLocks);
 	otherproclock = (PROCLOCK *)
@@ -1355,7 +1370,7 @@ LockCheckConflicts(LockMethod lockMethodTable,
 			proclock->groupLeader == otherproclock->groupLeader &&
 			(otherproclock->holdMask & conflictMask) != 0)
 		{
-			int	intersectMask = otherproclock->holdMask & conflictMask;
+			int			intersectMask = otherproclock->holdMask & conflictMask;
 
 			for (i = 1; i <= numLockModes; i++)
 			{
@@ -1661,7 +1676,7 @@ WaitOnLock(LOCALLOCK *locallock, ResourceOwner owner)
 		set_ps_display(new_status, false);
 		new_status[len] = '\0'; /* truncate off " waiting" */
 	}
-	pgstat_report_waiting(true);
+	pgstat_report_wait_start(WAIT_LOCK, locallock->tag.lock.locktag_type);
 
 	awaitedLock = locallock;
 	awaitedOwner = owner;
@@ -1709,7 +1724,7 @@ WaitOnLock(LOCALLOCK *locallock, ResourceOwner owner)
 		/* In this path, awaitedLock remains set until LockErrorCleanup */
 
 		/* Report change to non-waiting status */
-		pgstat_report_waiting(false);
+		pgstat_report_wait_end();
 		if (update_process_title)
 		{
 			set_ps_display(new_status, false);
@@ -1724,7 +1739,7 @@ WaitOnLock(LOCALLOCK *locallock, ResourceOwner owner)
 	awaitedLock = NULL;
 
 	/* Report change to non-waiting status */
-	pgstat_report_waiting(false);
+	pgstat_report_wait_end();
 	if (update_process_title)
 	{
 		set_ps_display(new_status, false);
@@ -2568,8 +2583,8 @@ FastPathTransferRelationLocks(LockMethod lockMethodTable, const LOCKTAG *locktag
 		 *
 		 * proc->databaseId is set at backend startup time and never changes
 		 * thereafter, so it might be safe to perform this test before
-		 * acquiring &proc->backendLock.  In particular, it's certainly safe to
-		 * assume that if the target backend holds any fast-path locks, it
+		 * acquiring &proc->backendLock.  In particular, it's certainly safe
+		 * to assume that if the target backend holds any fast-path locks, it
 		 * must have performed a memory-fencing operation (in particular, an
 		 * LWLock acquisition) since setting proc->databaseId.  However, it's
 		 * less clear that our backend is certain to have performed a memory
@@ -3371,10 +3386,11 @@ LockShmemSize(void)
  * GetLockStatusData - Return a summary of the lock manager's internal
  * status, for use in a user-level reporting function.
  *
- * The return data consists of an array of PROCLOCK objects, with the
- * associated PGPROC and LOCK objects for each.  Note that multiple
- * copies of the same PGPROC and/or LOCK objects are likely to appear.
- * It is the caller's responsibility to match up duplicates if wanted.
+ * The return data consists of an array of LockInstanceData objects,
+ * which are a lightly abstracted version of the PROCLOCK data structures,
+ * i.e. there is one entry for each unique lock and interested PGPROC.
+ * It is the caller's responsibility to match up related items (such as
+ * references to the same lockable object or PGPROC) if wanted.
  *
  * The design goal is to hold the LWLocks for as short a time as possible;
  * thus, this function simply makes a copy of the necessary data and releases
@@ -3405,7 +3421,10 @@ GetLockStatusData(void)
 	 * impractical (in particular, note MAX_SIMUL_LWLOCKS).  It shouldn't
 	 * matter too much, because none of these locks can be involved in lock
 	 * conflicts anyway - anything that might must be present in the main lock
-	 * table.
+	 * table.  (For the same reason, we don't sweat about making leaderPid
+	 * completely valid.  We cannot safely dereference another backend's
+	 * lockGroupLeader field without holding all lock partition locks, and
+	 * it's not worth that.)
 	 */
 	for (i = 0; i < ProcGlobal->allProcCount; ++i)
 	{
@@ -3438,6 +3457,7 @@ GetLockStatusData(void)
 			instance->backend = proc->backendId;
 			instance->lxid = proc->lxid;
 			instance->pid = proc->pid;
+			instance->leaderPid = proc->pid;
 			instance->fastpath = true;
 
 			el++;
@@ -3465,6 +3485,7 @@ GetLockStatusData(void)
 			instance->backend = proc->backendId;
 			instance->lxid = proc->lxid;
 			instance->pid = proc->pid;
+			instance->leaderPid = proc->pid;
 			instance->fastpath = true;
 
 			el++;
@@ -3516,6 +3537,7 @@ GetLockStatusData(void)
 		instance->backend = proc->backendId;
 		instance->lxid = proc->lxid;
 		instance->pid = proc->pid;
+		instance->leaderPid = proclock->groupLeader->pid;
 		instance->fastpath = false;
 
 		el++;
@@ -3534,6 +3556,197 @@ GetLockStatusData(void)
 	Assert(el == data->nelements);
 
 	return data;
+}
+
+/*
+ * GetBlockerStatusData - Return a summary of the lock manager's state
+ * concerning locks that are blocking the specified PID or any member of
+ * the PID's lock group, for use in a user-level reporting function.
+ *
+ * For each PID within the lock group that is awaiting some heavyweight lock,
+ * the return data includes an array of LockInstanceData objects, which are
+ * the same data structure used by GetLockStatusData; but unlike that function,
+ * this one reports only the PROCLOCKs associated with the lock that that PID
+ * is blocked on.  (Hence, all the locktags should be the same for any one
+ * blocked PID.)  In addition, we return an array of the PIDs of those backends
+ * that are ahead of the blocked PID in the lock's wait queue.  These can be
+ * compared with the PIDs in the LockInstanceData objects to determine which
+ * waiters are ahead of or behind the blocked PID in the queue.
+ *
+ * If blocked_pid isn't a valid backend PID or nothing in its lock group is
+ * waiting on any heavyweight lock, return empty arrays.
+ *
+ * The design goal is to hold the LWLocks for as short a time as possible;
+ * thus, this function simply makes a copy of the necessary data and releases
+ * the locks, allowing the caller to contemplate and format the data for as
+ * long as it pleases.
+ */
+BlockedProcsData *
+GetBlockerStatusData(int blocked_pid)
+{
+	BlockedProcsData *data;
+	PGPROC	   *proc;
+	int			i;
+
+	data = (BlockedProcsData *) palloc(sizeof(BlockedProcsData));
+
+	/*
+	 * Guess how much space we'll need, and preallocate.  Most of the time
+	 * this will avoid needing to do repalloc while holding the LWLocks.  (We
+	 * assume, but check with an Assert, that MaxBackends is enough entries
+	 * for the procs[] array; the other two could need enlargement, though.)
+	 */
+	data->nprocs = data->nlocks = data->npids = 0;
+	data->maxprocs = data->maxlocks = data->maxpids = MaxBackends;
+	data->procs = (BlockedProcData *) palloc(sizeof(BlockedProcData) * data->maxprocs);
+	data->locks = (LockInstanceData *) palloc(sizeof(LockInstanceData) * data->maxlocks);
+	data->waiter_pids = (int *) palloc(sizeof(int) * data->maxpids);
+
+	/*
+	 * In order to search the ProcArray for blocked_pid and assume that that
+	 * entry won't immediately disappear under us, we must hold ProcArrayLock.
+	 * In addition, to examine the lock grouping fields of any other backend,
+	 * we must hold all the hash partition locks.  (Only one of those locks is
+	 * actually relevant for any one lock group, but we can't know which one
+	 * ahead of time.)	It's fairly annoying to hold all those locks
+	 * throughout this, but it's no worse than GetLockStatusData(), and it
+	 * does have the advantage that we're guaranteed to return a
+	 * self-consistent instantaneous state.
+	 */
+	LWLockAcquire(ProcArrayLock, LW_SHARED);
+
+	proc = BackendPidGetProcWithLock(blocked_pid);
+
+	/* Nothing to do if it's gone */
+	if (proc != NULL)
+	{
+		/*
+		 * Acquire lock on the entire shared lock data structure.  See notes
+		 * in GetLockStatusData().
+		 */
+		for (i = 0; i < NUM_LOCK_PARTITIONS; i++)
+			LWLockAcquire(LockHashPartitionLockByIndex(i), LW_SHARED);
+
+		if (proc->lockGroupLeader == NULL)
+		{
+			/* Easy case, proc is not a lock group member */
+			GetSingleProcBlockerStatusData(proc, data);
+		}
+		else
+		{
+			/* Examine all procs in proc's lock group */
+			dlist_iter	iter;
+
+			dlist_foreach(iter, &proc->lockGroupLeader->lockGroupMembers)
+			{
+				PGPROC	   *memberProc;
+
+				memberProc = dlist_container(PGPROC, lockGroupLink, iter.cur);
+				GetSingleProcBlockerStatusData(memberProc, data);
+			}
+		}
+
+		/*
+		 * And release locks.  See notes in GetLockStatusData().
+		 */
+		for (i = NUM_LOCK_PARTITIONS; --i >= 0;)
+			LWLockRelease(LockHashPartitionLockByIndex(i));
+
+		Assert(data->nprocs <= data->maxprocs);
+	}
+
+	LWLockRelease(ProcArrayLock);
+
+	return data;
+}
+
+/* Accumulate data about one possibly-blocked proc for GetBlockerStatusData */
+static void
+GetSingleProcBlockerStatusData(PGPROC *blocked_proc, BlockedProcsData *data)
+{
+	LOCK	   *theLock = blocked_proc->waitLock;
+	BlockedProcData *bproc;
+	SHM_QUEUE  *procLocks;
+	PROCLOCK   *proclock;
+	PROC_QUEUE *waitQueue;
+	PGPROC	   *proc;
+	int			queue_size;
+	int			i;
+
+	/* Nothing to do if this proc is not blocked */
+	if (theLock == NULL)
+		return;
+
+	/* Set up a procs[] element */
+	bproc = &data->procs[data->nprocs++];
+	bproc->pid = blocked_proc->pid;
+	bproc->first_lock = data->nlocks;
+	bproc->first_waiter = data->npids;
+
+	/*
+	 * We may ignore the proc's fast-path arrays, since nothing in those could
+	 * be related to a contended lock.
+	 */
+
+	/* Collect all PROCLOCKs associated with theLock */
+	procLocks = &(theLock->procLocks);
+	proclock = (PROCLOCK *) SHMQueueNext(procLocks, procLocks,
+										 offsetof(PROCLOCK, lockLink));
+	while (proclock)
+	{
+		PGPROC	   *proc = proclock->tag.myProc;
+		LOCK	   *lock = proclock->tag.myLock;
+		LockInstanceData *instance;
+
+		if (data->nlocks >= data->maxlocks)
+		{
+			data->maxlocks += MaxBackends;
+			data->locks = (LockInstanceData *)
+				repalloc(data->locks, sizeof(LockInstanceData) * data->maxlocks);
+		}
+
+		instance = &data->locks[data->nlocks];
+		memcpy(&instance->locktag, &lock->tag, sizeof(LOCKTAG));
+		instance->holdMask = proclock->holdMask;
+		if (proc->waitLock == lock)
+			instance->waitLockMode = proc->waitLockMode;
+		else
+			instance->waitLockMode = NoLock;
+		instance->backend = proc->backendId;
+		instance->lxid = proc->lxid;
+		instance->pid = proc->pid;
+		instance->leaderPid = proclock->groupLeader->pid;
+		instance->fastpath = false;
+		data->nlocks++;
+
+		proclock = (PROCLOCK *) SHMQueueNext(procLocks, &proclock->lockLink,
+											 offsetof(PROCLOCK, lockLink));
+	}
+
+	/* Enlarge waiter_pids[] if it's too small to hold all wait queue PIDs */
+	waitQueue = &(theLock->waitProcs);
+	queue_size = waitQueue->size;
+
+	if (queue_size > data->maxpids - data->npids)
+	{
+		data->maxpids = Max(data->maxpids + MaxBackends,
+							data->npids + queue_size);
+		data->waiter_pids = (int *) repalloc(data->waiter_pids,
+											 sizeof(int) * data->maxpids);
+	}
+
+	/* Collect PIDs from the lock's wait queue, stopping at blocked_proc */
+	proc = (PGPROC *) waitQueue->links.next;
+	for (i = 0; i < queue_size; i++)
+	{
+		if (proc == blocked_proc)
+			break;
+		data->waiter_pids[data->npids++] = proc->pid;
+		proc = (PGPROC *) proc->links.next;
+	}
+
+	bproc->num_locks = data->nlocks - bproc->first_lock;
+	bproc->num_waiters = data->npids - bproc->first_waiter;
 }
 
 /*
@@ -4166,4 +4379,41 @@ VirtualXactLock(VirtualTransactionId vxid, bool wait)
 
 	LockRelease(&tag, ShareLock, false);
 	return true;
+}
+
+/*
+ * LockWaiterCount
+ *
+ * Find the number of lock requester on this locktag
+ */
+int
+LockWaiterCount(const LOCKTAG *locktag)
+{
+	LOCKMETHODID lockmethodid = locktag->locktag_lockmethodid;
+	LOCK	   *lock;
+	bool		found;
+	uint32		hashcode;
+	LWLock	   *partitionLock;
+	int			waiters = 0;
+
+	if (lockmethodid <= 0 || lockmethodid >= lengthof(LockMethods))
+		elog(ERROR, "unrecognized lock method: %d", lockmethodid);
+
+	hashcode = LockTagHashCode(locktag);
+	partitionLock = LockHashPartitionLock(hashcode);
+	LWLockAcquire(partitionLock, LW_EXCLUSIVE);
+
+	lock = (LOCK *) hash_search_with_hash_value(LockMethodLockHash,
+												(const void *) locktag,
+												hashcode,
+												HASH_FIND,
+												&found);
+	if (found)
+	{
+		Assert(lock != NULL);
+		waiters = lock->nRequested;
+	}
+	LWLockRelease(partitionLock);
+
+	return waiters;
 }

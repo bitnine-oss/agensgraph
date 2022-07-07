@@ -59,6 +59,11 @@ typedef void (*GetForeignJoinPaths_function) (PlannerInfo *root,
 														  JoinType jointype,
 												   JoinPathExtraData *extra);
 
+typedef void (*GetForeignUpperPaths_function) (PlannerInfo *root,
+													 UpperRelationKind stage,
+													   RelOptInfo *input_rel,
+													 RelOptInfo *output_rel);
+
 typedef void (*AddForeignUpdateTargets_function) (Query *parsetree,
 												   RangeTblEntry *target_rte,
 												   Relation target_relation);
@@ -94,6 +99,18 @@ typedef void (*EndForeignModify_function) (EState *estate,
 
 typedef int (*IsForeignRelUpdatable_function) (Relation rel);
 
+typedef bool (*PlanDirectModify_function) (PlannerInfo *root,
+													   ModifyTable *plan,
+													   Index resultRelation,
+													   int subplan_index);
+
+typedef void (*BeginDirectModify_function) (ForeignScanState *node,
+														int eflags);
+
+typedef TupleTableSlot *(*IterateDirectModify_function) (ForeignScanState *node);
+
+typedef void (*EndDirectModify_function) (ForeignScanState *node);
+
 typedef RowMarkType (*GetForeignRowMarkType_function) (RangeTblEntry *rte,
 												LockClauseStrength strength);
 
@@ -111,6 +128,9 @@ typedef void (*ExplainForeignModify_function) (ModifyTableState *mtstate,
 														   int subplan_index,
 													struct ExplainState *es);
 
+typedef void (*ExplainDirectModify_function) (ForeignScanState *node,
+													struct ExplainState *es);
+
 typedef int (*AcquireSampleRowsFunc) (Relation relation, int elevel,
 											   HeapTuple *rows, int targrows,
 												  double *totalrows,
@@ -124,13 +144,17 @@ typedef List *(*ImportForeignSchema_function) (ImportForeignSchemaStmt *stmt,
 														   Oid serverOid);
 
 typedef Size (*EstimateDSMForeignScan_function) (ForeignScanState *node,
-												ParallelContext *pcxt);
+													  ParallelContext *pcxt);
 typedef void (*InitializeDSMForeignScan_function) (ForeignScanState *node,
-												   ParallelContext *pcxt,
-												   void *coordinate);
+													   ParallelContext *pcxt,
+														   void *coordinate);
 typedef void (*InitializeWorkerForeignScan_function) (ForeignScanState *node,
-													  shm_toc *toc,
-													  void *coordinate);
+																shm_toc *toc,
+														   void *coordinate);
+typedef bool (*IsForeignScanParallelSafe_function) (PlannerInfo *root,
+															 RelOptInfo *rel,
+														 RangeTblEntry *rte);
+
 /*
  * FdwRoutine is the struct returned by a foreign-data wrapper's handler
  * function.  It provides pointers to the callback functions needed by the
@@ -162,6 +186,9 @@ typedef struct FdwRoutine
 	/* Functions for remote-join planning */
 	GetForeignJoinPaths_function GetForeignJoinPaths;
 
+	/* Functions for remote upper-relation (post scan/join) planning */
+	GetForeignUpperPaths_function GetForeignUpperPaths;
+
 	/* Functions for updating foreign tables */
 	AddForeignUpdateTargets_function AddForeignUpdateTargets;
 	PlanForeignModify_function PlanForeignModify;
@@ -171,6 +198,10 @@ typedef struct FdwRoutine
 	ExecForeignDelete_function ExecForeignDelete;
 	EndForeignModify_function EndForeignModify;
 	IsForeignRelUpdatable_function IsForeignRelUpdatable;
+	PlanDirectModify_function PlanDirectModify;
+	BeginDirectModify_function BeginDirectModify;
+	IterateDirectModify_function IterateDirectModify;
+	EndDirectModify_function EndDirectModify;
 
 	/* Functions for SELECT FOR UPDATE/SHARE row locking */
 	GetForeignRowMarkType_function GetForeignRowMarkType;
@@ -180,6 +211,7 @@ typedef struct FdwRoutine
 	/* Support functions for EXPLAIN */
 	ExplainForeignScan_function ExplainForeignScan;
 	ExplainForeignModify_function ExplainForeignModify;
+	ExplainDirectModify_function ExplainDirectModify;
 
 	/* Support functions for ANALYZE */
 	AnalyzeForeignTable_function AnalyzeForeignTable;
@@ -188,6 +220,7 @@ typedef struct FdwRoutine
 	ImportForeignSchema_function ImportForeignSchema;
 
 	/* Support functions for parallelism under Gather node */
+	IsForeignScanParallelSafe_function IsForeignScanParallelSafe;
 	EstimateDSMForeignScan_function EstimateDSMForeignScan;
 	InitializeDSMForeignScan_function InitializeDSMForeignScan;
 	InitializeWorkerForeignScan_function InitializeWorkerForeignScan;

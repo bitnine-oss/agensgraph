@@ -14,11 +14,14 @@
 #ifndef BUFMGR_H
 #define BUFMGR_H
 
+#include "catalog/catalog.h"
 #include "storage/block.h"
 #include "storage/buf.h"
 #include "storage/bufpage.h"
 #include "storage/relfilenode.h"
 #include "utils/relcache.h"
+#include "utils/snapmgr.h"
+#include "utils/tqual.h"
 
 typedef void *Block;
 
@@ -45,15 +48,33 @@ typedef enum
 								 * replay; otherwise same as RBM_NORMAL */
 } ReadBufferMode;
 
+/* forward declared, to avoid having to expose buf_internals.h here */
+struct WritebackContext;
+
 /* in globals.c ... this duplicates miscadmin.h */
 extern PGDLLIMPORT int NBuffers;
 
 /* in bufmgr.c */
+#define WRITEBACK_MAX_PENDING_FLUSHES 256
+
+/* FIXME: Also default to on for mmap && msync(MS_ASYNC)? */
+#ifdef HAVE_SYNC_FILE_RANGE
+#define DEFAULT_CHECKPOINT_FLUSH_AFTER 32
+#define DEFAULT_BGWRITER_FLUSH_AFTER 64
+#else
+#define DEFAULT_CHECKPOINT_FLUSH_AFTER 0
+#define DEFAULT_BGWRITER_FLUSH_AFTER 0
+#endif   /* HAVE_SYNC_FILE_RANGE */
+
 extern bool zero_damaged_pages;
 extern int	bgwriter_lru_maxpages;
 extern double bgwriter_lru_multiplier;
 extern bool track_io_timing;
 extern int	target_prefetch_pages;
+
+extern int	checkpoint_flush_after;
+extern int	backend_flush_after;
+extern int	bgwriter_flush_after;
 
 /* in buf_init.c */
 extern PGDLLIMPORT char *BufferBlocks;
@@ -144,6 +165,9 @@ extern PGDLLIMPORT int32 *LocalRefCount;
 /*
  * BufferGetPage
  *		Returns the page associated with a buffer.
+ *
+ * When this is called as part of a scan, there may be a need for a nearby
+ * call to TestForOldSnapshot().  See the definition of that for details.
  */
 #define BufferGetPage(buffer) ((Page)BufferGetBlock(buffer))
 
@@ -209,12 +233,59 @@ extern bool HoldingBufferPinThatDelaysRecovery(void);
 extern void AbortBufferIO(void);
 
 extern void BufmgrCommit(void);
-extern bool BgBufferSync(void);
+extern bool BgBufferSync(struct WritebackContext *wb_context);
 
 extern void AtProcExit_LocalBuffers(void);
+
+extern void TestForOldSnapshot_impl(Snapshot snapshot, Relation relation);
 
 /* in freelist.c */
 extern BufferAccessStrategy GetAccessStrategy(BufferAccessStrategyType btype);
 extern void FreeAccessStrategy(BufferAccessStrategy strategy);
 
-#endif
+
+/* inline functions */
+
+/*
+ * Although this header file is nominally backend-only, certain frontend
+ * programs like pg_xlogdump include it.  For compilers that emit static
+ * inline functions even when they're unused, that leads to unsatisfied
+ * external references; hence hide these with #ifndef FRONTEND.
+ */
+
+#ifndef FRONTEND
+
+/*
+ * Check whether the given snapshot is too old to have safely read the given
+ * page from the given table.  If so, throw a "snapshot too old" error.
+ *
+ * This test generally needs to be performed after every BufferGetPage() call
+ * that is executed as part of a scan.  It is not needed for calls made for
+ * modifying the page (for example, to position to the right place to insert a
+ * new index tuple or for vacuuming).  It may also be omitted where calls to
+ * lower-level functions will have already performed the test.
+ *
+ * Note that a NULL snapshot argument is allowed and causes a fast return
+ * without error; this is to support call sites which can be called from
+ * either scans or index modification areas.
+ *
+ * For best performance, keep the tests that are fastest and/or most likely to
+ * exclude a page from old snapshot testing near the front.
+ */
+static inline void
+TestForOldSnapshot(Snapshot snapshot, Relation relation, Page page)
+{
+	Assert(relation != NULL);
+
+	if (old_snapshot_threshold >= 0
+		&& (snapshot) != NULL
+		&& ((snapshot)->satisfies == HeapTupleSatisfiesMVCC
+			|| (snapshot)->satisfies == HeapTupleSatisfiesToast)
+		&& !XLogRecPtrIsInvalid((snapshot)->lsn)
+		&& PageGetLSN(page) > (snapshot)->lsn)
+		TestForOldSnapshot_impl(snapshot, relation);
+}
+
+#endif   /* FRONTEND */
+
+#endif   /* BUFMGR_H */

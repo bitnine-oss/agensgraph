@@ -465,13 +465,12 @@ extern const char *gist_identify(uint8 info);
 extern void gist_xlog_startup(void);
 extern void gist_xlog_cleanup(void);
 
-extern XLogRecPtr gistXLogUpdate(RelFileNode node, Buffer buffer,
+extern XLogRecPtr gistXLogUpdate(Buffer buffer,
 			   OffsetNumber *todelete, int ntodelete,
 			   IndexTuple *itup, int ntup,
 			   Buffer leftchild);
 
-extern XLogRecPtr gistXLogSplit(RelFileNode node,
-			  BlockNumber blkno, bool page_is_leaf,
+extern XLogRecPtr gistXLogSplit(bool page_is_leaf,
 			  SplitedPageLayout *dist,
 			  BlockNumber origrlink, GistNSN oldnsn,
 			  Buffer leftchild, bool markfollowright);
@@ -493,6 +492,9 @@ extern bool gistvalidate(Oid opclassoid);
 #define GIST_DEFAULT_FILLFACTOR		90
 
 extern bytea *gistoptions(Datum reloptions, bool validate);
+extern bool gistproperty(Oid index_oid, int attno,
+			 IndexAMProperty prop, const char *propname,
+			 bool *res, bool *isnull);
 extern bool gistfitpage(IndexTuple *itvec, int len);
 extern bool gistnospace(Page page, IndexTuple *itvec, int len, OffsetNumber todelete, Size freespace);
 extern void gistcheckpage(Relation rel, Buffer buf);

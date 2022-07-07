@@ -454,6 +454,7 @@ typedef struct xl_btree_newroot
 
 #define BTORDER_PROC		1
 #define BTSORTSUPPORT_PROC	2
+#define BTNProcs			2
 
 /*
  *	We need to be able to tell the difference between read and write
@@ -521,7 +522,7 @@ typedef struct BTScanPosData
 	Buffer		buf;			/* if valid, the buffer is pinned */
 
 	XLogRecPtr	lsn;			/* pos in the WAL stream when page was read */
-	BlockNumber currPage;		/* page we've referencd by items array */
+	BlockNumber currPage;		/* page referenced by items array */
 	BlockNumber nextPage;		/* page's right link when we scanned it */
 
 	/*
@@ -646,7 +647,6 @@ typedef BTScanOpaqueData *BTScanOpaque;
  */
 #define SK_BT_REQFWD	0x00010000		/* required to continue forward scan */
 #define SK_BT_REQBKWD	0x00020000		/* required to continue backward scan */
-#define SK_BT_MATCHED	0x00040000		/* required to skip further key match */
 #define SK_BT_INDOPTION_SHIFT  24		/* must clear the above bits */
 #define SK_BT_DESC			(INDOPTION_DESC << SK_BT_INDOPTION_SHIFT)
 #define SK_BT_NULLS_FIRST	(INDOPTION_NULLS_FIRST << SK_BT_INDOPTION_SHIFT)
@@ -711,17 +711,18 @@ extern int	_bt_pagedel(Relation rel, Buffer buf);
  */
 extern BTStack _bt_search(Relation rel,
 		   int keysz, ScanKey scankey, bool nextkey,
-		   Buffer *bufP, int access);
+		   Buffer *bufP, int access, Snapshot snapshot);
 extern Buffer _bt_moveright(Relation rel, Buffer buf, int keysz,
 			  ScanKey scankey, bool nextkey, bool forupdate, BTStack stack,
-			  int access);
+			  int access, Snapshot snapshot);
 extern OffsetNumber _bt_binsrch(Relation rel, Buffer buf, int keysz,
 			ScanKey scankey, bool nextkey);
 extern int32 _bt_compare(Relation rel, int keysz, ScanKey scankey,
 			Page page, OffsetNumber offnum);
 extern bool _bt_first(IndexScanDesc scan, ScanDirection dir);
 extern bool _bt_next(IndexScanDesc scan, ScanDirection dir);
-extern Buffer _bt_get_endpoint(Relation rel, uint32 level, bool rightmost);
+extern Buffer _bt_get_endpoint(Relation rel, uint32 level, bool rightmost,
+				 Snapshot snapshot);
 
 /*
  * prototypes for functions in nbtutils.c
@@ -747,6 +748,9 @@ extern void _bt_end_vacuum_callback(int code, Datum arg);
 extern Size BTreeShmemSize(void);
 extern void BTreeShmemInit(void);
 extern bytea *btoptions(Datum reloptions, bool validate);
+extern bool btproperty(Oid index_oid, int attno,
+		   IndexAMProperty prop, const char *propname,
+		   bool *res, bool *isnull);
 
 /*
  * prototypes for functions in nbtvalidate.c

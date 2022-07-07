@@ -360,6 +360,14 @@ StreamLogicalLog(void)
 			struct timeval timeout;
 			struct timeval *timeoutptr = NULL;
 
+			if (PQsocket(conn) < 0)
+			{
+				fprintf(stderr,
+						_("%s: invalid socket: %s"),
+						progname, PQerrorMessage(conn));
+				goto error;
+			}
+
 			FD_ZERO(&input_mask);
 			FD_SET(PQsocket(conn), &input_mask);
 
@@ -853,8 +861,8 @@ main(int argc, char **argv)
 
 	/*
 	 * Obtain a connection to server. This is not really necessary but it
-	 * helps to get more precise error messages about authentication,
-	 * required GUC parameters and such.
+	 * helps to get more precise error messages about authentication, required
+	 * GUC parameters and such.
 	 */
 	conn = GetConnection();
 	if (!conn)

@@ -2229,45 +2229,16 @@ ExecMakeTableFunctionResult(ExprState *funcexpr,
 				break;
 
 			/*
-			 * Can't do anything very useful with NULL rowtype values. For a
-			 * function returning set, we consider this a protocol violation
-			 * (but another alternative would be to just ignore the result and
-			 * "continue" to get another row).  For a function not returning
-			 * set, we fall out of the loop; we'll cons up an all-nulls result
-			 * row below.
-			 */
-			if (returnsTuple && fcinfo.isnull)
-			{
-				if (!returnsSet)
-					break;
-				ereport(ERROR,
-						(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
-						 errmsg("function returning set of rows cannot return null value")));
-			}
-
-			/*
-			 * If first time through, build tupdesc and tuplestore for result
+			 * If first time through, build tuplestore for result.  For a
+			 * scalar function result type, also make a suitable tupdesc.
 			 */
 			if (first_time)
 			{
 				oldcontext = MemoryContextSwitchTo(econtext->ecxt_per_query_memory);
-				if (returnsTuple)
+				tupstore = tuplestore_begin_heap(randomAccess, false, work_mem);
+				rsinfo.setResult = tupstore;
+				if (!returnsTuple)
 				{
-					/*
-					 * Use the type info embedded in the rowtype Datum to look
-					 * up the needed tupdesc.  Make a copy for the query.
-					 */
-					HeapTupleHeader td;
-
-					td = DatumGetHeapTupleHeader(result);
-					tupdesc = lookup_rowtype_tupdesc_copy(HeapTupleHeaderGetTypeId(td),
-											   HeapTupleHeaderGetTypMod(td));
-				}
-				else
-				{
-					/*
-					 * Scalar type, so make a single-column descriptor
-					 */
 					tupdesc = CreateTemplateTupleDesc(1, false);
 					TupleDescInitEntry(tupdesc,
 									   (AttrNumber) 1,
@@ -2275,11 +2246,9 @@ ExecMakeTableFunctionResult(ExprState *funcexpr,
 									   funcrettype,
 									   -1,
 									   0);
+					rsinfo.setDesc = tupdesc;
 				}
-				tupstore = tuplestore_begin_heap(randomAccess, false, work_mem);
 				MemoryContextSwitchTo(oldcontext);
-				rsinfo.setResult = tupstore;
-				rsinfo.setDesc = tupdesc;
 			}
 
 			/*
@@ -2287,31 +2256,69 @@ ExecMakeTableFunctionResult(ExprState *funcexpr,
 			 */
 			if (returnsTuple)
 			{
-				HeapTupleHeader td;
+				if (!fcinfo.isnull)
+				{
+					HeapTupleHeader td = DatumGetHeapTupleHeader(result);
 
-				td = DatumGetHeapTupleHeader(result);
+					if (tupdesc == NULL)
+					{
+						/*
+						 * This is the first non-NULL result from the
+						 * function.  Use the type info embedded in the
+						 * rowtype Datum to look up the needed tupdesc.  Make
+						 * a copy for the query.
+						 */
+						oldcontext = MemoryContextSwitchTo(econtext->ecxt_per_query_memory);
+						tupdesc = lookup_rowtype_tupdesc_copy(HeapTupleHeaderGetTypeId(td),
+											   HeapTupleHeaderGetTypMod(td));
+						rsinfo.setDesc = tupdesc;
+						MemoryContextSwitchTo(oldcontext);
+					}
+					else
+					{
+						/*
+						 * Verify all later returned rows have same subtype;
+						 * necessary in case the type is RECORD.
+						 */
+						if (HeapTupleHeaderGetTypeId(td) != tupdesc->tdtypeid ||
+							HeapTupleHeaderGetTypMod(td) != tupdesc->tdtypmod)
+							ereport(ERROR,
+									(errcode(ERRCODE_DATATYPE_MISMATCH),
+									 errmsg("rows returned by function are not all of the same row type")));
+					}
 
-				/*
-				 * Verify all returned rows have same subtype; necessary in
-				 * case the type is RECORD.
-				 */
-				if (HeapTupleHeaderGetTypeId(td) != tupdesc->tdtypeid ||
-					HeapTupleHeaderGetTypMod(td) != tupdesc->tdtypmod)
-					ereport(ERROR,
-							(errcode(ERRCODE_DATATYPE_MISMATCH),
-							 errmsg("rows returned by function are not all of the same row type")));
+					/*
+					 * tuplestore_puttuple needs a HeapTuple not a bare
+					 * HeapTupleHeader, but it doesn't need all the fields.
+					 */
+					tmptup.t_len = HeapTupleHeaderGetDatumLength(td);
+					tmptup.t_data = td;
 
-				/*
-				 * tuplestore_puttuple needs a HeapTuple not a bare
-				 * HeapTupleHeader, but it doesn't need all the fields.
-				 */
-				tmptup.t_len = HeapTupleHeaderGetDatumLength(td);
-				tmptup.t_data = td;
+					tuplestore_puttuple(tupstore, &tmptup);
+				}
+				else
+				{
+					/*
+					 * NULL result from a tuple-returning function; expand it
+					 * to a row of all nulls.  We rely on the expectedDesc to
+					 * form such rows.  (Note: this would be problematic if
+					 * tuplestore_putvalues saved the tdtypeid/tdtypmod from
+					 * the provided descriptor, since that might not match
+					 * what we get from the function itself.  But it doesn't.)
+					 */
+					int			natts = expectedDesc->natts;
+					bool	   *nullflags;
 
-				tuplestore_puttuple(tupstore, &tmptup);
+					nullflags = (bool *) palloc(natts * sizeof(bool));
+					memset(nullflags, true, natts * sizeof(bool));
+					tuplestore_putvalues(tupstore, expectedDesc, NULL, nullflags);
+				}
 			}
 			else
+			{
+				/* Scalar-type case: just store the function result */
 				tuplestore_putvalues(tupstore, tupdesc, &result, &fcinfo.isnull);
+			}
 
 			/*
 			 * Are we done?
@@ -2343,7 +2350,8 @@ no_function_result:
 	/*
 	 * If we got nothing from the function (ie, an empty-set or NULL result),
 	 * we have to create the tuplestore to return, and if it's a
-	 * non-set-returning function then insert a single all-nulls row.
+	 * non-set-returning function then insert a single all-nulls row.  As
+	 * above, we depend on the expectedDesc to manufacture the dummy row.
 	 */
 	if (rsinfo.setResult == NULL)
 	{
@@ -2353,15 +2361,12 @@ no_function_result:
 		if (!returnsSet)
 		{
 			int			natts = expectedDesc->natts;
-			Datum	   *nulldatums;
 			bool	   *nullflags;
 
 			MemoryContextSwitchTo(econtext->ecxt_per_tuple_memory);
-			nulldatums = (Datum *) palloc0(natts * sizeof(Datum));
 			nullflags = (bool *) palloc(natts * sizeof(bool));
 			memset(nullflags, true, natts * sizeof(bool));
-			MemoryContextSwitchTo(econtext->ecxt_per_query_memory);
-			tuplestore_putvalues(tupstore, expectedDesc, nulldatums, nullflags);
+			tuplestore_putvalues(tupstore, expectedDesc, NULL, nullflags);
 		}
 	}
 
@@ -2965,19 +2970,30 @@ ExecEvalCase(CaseExprState *caseExpr, ExprContext *econtext,
 
 	/*
 	 * If there's a test expression, we have to evaluate it and save the value
-	 * where the CaseTestExpr placeholders can find it. We must save and
+	 * where the CaseTestExpr placeholders can find it.  We must save and
 	 * restore prior setting of econtext's caseValue fields, in case this node
-	 * is itself within a larger CASE.
+	 * is itself within a larger CASE.  Furthermore, don't assign to the
+	 * econtext fields until after returning from evaluation of the test
+	 * expression.  We used to pass &econtext->caseValue_isNull to the
+	 * recursive call, but that leads to aliasing that variable within said
+	 * call, which can (and did) produce bugs when the test expression itself
+	 * contains a CASE.
+	 *
+	 * If there's no test expression, we don't actually need to save and
+	 * restore these fields; but it's less code to just do so unconditionally.
 	 */
 	save_datum = econtext->caseValue_datum;
 	save_isNull = econtext->caseValue_isNull;
 
 	if (caseExpr->arg)
 	{
+		bool		arg_isNull;
+
 		econtext->caseValue_datum = ExecEvalExpr(caseExpr->arg,
 												 econtext,
-												 &econtext->caseValue_isNull,
+												 &arg_isNull,
 												 NULL);
+		econtext->caseValue_isNull = arg_isNull;
 	}
 
 	/*
@@ -2989,10 +3005,11 @@ ExecEvalCase(CaseExprState *caseExpr, ExprContext *econtext,
 	{
 		CaseWhenState *wclause = lfirst(clause);
 		Datum		clause_value;
+		bool		clause_isNull;
 
 		clause_value = ExecEvalExpr(wclause->expr,
 									econtext,
-									isNull,
+									&clause_isNull,
 									NULL);
 
 		/*
@@ -3000,7 +3017,7 @@ ExecEvalCase(CaseExprState *caseExpr, ExprContext *econtext,
 		 * statement is satisfied.  A NULL result from the test is not
 		 * considered true.
 		 */
-		if (DatumGetBool(clause_value) && !*isNull)
+		if (DatumGetBool(clause_value) && !clause_isNull)
 		{
 			econtext->caseValue_datum = save_datum;
 			econtext->caseValue_isNull = save_isNull;
@@ -3815,6 +3832,21 @@ ExecEvalNullTest(NullTestState *nstate,
 
 	if (ntest->argisrow && !(*isNull))
 	{
+		/*
+		 * The SQL standard defines IS [NOT] NULL for a non-null rowtype
+		 * argument as:
+		 *
+		 * "R IS NULL" is true if every field is the null value.
+		 *
+		 * "R IS NOT NULL" is true if no field is the null value.
+		 *
+		 * This definition is (apparently intentionally) not recursive; so our
+		 * tests on the fields are primitive attisnull tests, not recursive
+		 * checks to see if they are all-nulls or no-nulls rowtypes.
+		 *
+		 * The standard does not consider the possibility of zero-field rows,
+		 * but here we consider them to vacuously satisfy both predicates.
+		 */
 		HeapTupleHeader tuple;
 		Oid			tupType;
 		int32		tupTypmod;
@@ -5335,15 +5367,24 @@ ExecCleanTargetListLength(List *targetlist)
  * of *isDone = ExprMultipleResult signifies a set element, and a return
  * of *isDone = ExprEndResult signifies end of the set of tuple.
  * We assume that *isDone has been initialized to ExprSingleResult by caller.
+ *
+ * Since fields of the result tuple might be multiply referenced in higher
+ * plan nodes, we have to force any read/write expanded values to read-only
+ * status.  It's a bit annoying to have to do that for every projected
+ * expression; in the future, consider teaching the planner to detect
+ * actually-multiply-referenced Vars and insert an expression node that
+ * would do that only where really required.
  */
 static bool
 ExecTargetList(List *targetlist,
+			   TupleDesc tupdesc,
 			   ExprContext *econtext,
 			   Datum *values,
 			   bool *isnull,
 			   ExprDoneCond *itemIsDone,
 			   ExprDoneCond *isDone)
 {
+	Form_pg_attribute *att = tupdesc->attrs;
 	MemoryContext oldContext;
 	ListCell   *tl;
 	bool		haveDoneSets;
@@ -5368,6 +5409,10 @@ ExecTargetList(List *targetlist,
 									  econtext,
 									  &isnull[resind],
 									  &itemIsDone[resind]);
+
+		values[resind] = MakeExpandedObjectReadOnly(values[resind],
+													isnull[resind],
+													att[resind]->attlen);
 
 		if (itemIsDone[resind] != ExprSingleResult)
 		{
@@ -5422,6 +5467,10 @@ ExecTargetList(List *targetlist,
 												  &isnull[resind],
 												  &itemIsDone[resind]);
 
+					values[resind] = MakeExpandedObjectReadOnly(values[resind],
+															  isnull[resind],
+														att[resind]->attlen);
+
 					if (itemIsDone[resind] == ExprEndResult)
 					{
 						/*
@@ -5455,6 +5504,7 @@ ExecTargetList(List *targetlist,
 													  econtext,
 													  &isnull[resind],
 													  &itemIsDone[resind]);
+						/* no need for MakeExpandedObjectReadOnly */
 					}
 				}
 
@@ -5580,6 +5630,7 @@ ExecProject(ProjectionInfo *projInfo, ExprDoneCond *isDone)
 	if (projInfo->pi_targetlist)
 	{
 		if (!ExecTargetList(projInfo->pi_targetlist,
+							slot->tts_tupleDescriptor,
 							econtext,
 							slot->tts_values,
 							slot->tts_isnull,

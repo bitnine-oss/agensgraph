@@ -23,10 +23,10 @@ CREATE AGGREGATE newsum (
 -- zero-argument aggregate
 CREATE AGGREGATE newcnt (*) (
    sfunc = int8inc, stype = int8,
-   initcond = '0'
+   initcond = '0', parallel = safe
 );
 
--- old-style spelling of same
+-- old-style spelling of same (except without parallel-safe; that's too new)
 CREATE AGGREGATE oldcnt (
    sfunc = int8inc, basetype = 'ANY', stype = int8,
    initcond = '0'
@@ -115,22 +115,69 @@ CREATE AGGREGATE sumdouble (float8)
     minvfunc = float8mi
 );
 
--- Test aggregate combine function
+-- aggregate combine and serialization functions
+
+-- can't specify just one of serialfunc and deserialfunc
+CREATE AGGREGATE myavg (numeric)
+(
+	stype = internal,
+	sfunc = numeric_avg_accum,
+	serialfunc = numeric_avg_serialize
+);
+
+-- serialfunc must have correct parameters
+CREATE AGGREGATE myavg (numeric)
+(
+	stype = internal,
+	sfunc = numeric_avg_accum,
+	serialfunc = numeric_avg_deserialize,
+	deserialfunc = numeric_avg_deserialize
+);
+
+-- deserialfunc must have correct parameters
+CREATE AGGREGATE myavg (numeric)
+(
+	stype = internal,
+	sfunc = numeric_avg_accum,
+	serialfunc = numeric_avg_serialize,
+	deserialfunc = numeric_avg_serialize
+);
+
+-- ensure combine function parameters are checked
+CREATE AGGREGATE myavg (numeric)
+(
+	stype = internal,
+	sfunc = numeric_avg_accum,
+	serialfunc = numeric_avg_serialize,
+	deserialfunc = numeric_avg_deserialize,
+	combinefunc = int4larger
+);
 
 -- ensure create aggregate works.
+CREATE AGGREGATE myavg (numeric)
+(
+	stype = internal,
+	sfunc = numeric_avg_accum,
+	finalfunc = numeric_avg,
+	serialfunc = numeric_avg_serialize,
+	deserialfunc = numeric_avg_deserialize,
+	combinefunc = numeric_avg_combine
+);
+
+-- Ensure all these functions made it into the catalog
+SELECT aggfnoid,aggtransfn,aggcombinefn,aggtranstype,aggserialfn,aggdeserialfn
+FROM pg_aggregate
+WHERE aggfnoid = 'myavg'::REGPROC;
+
+DROP AGGREGATE myavg (numeric);
+
+-- invalid: bad parallel-safety marking
 CREATE AGGREGATE mysum (int)
 (
 	stype = int,
 	sfunc = int4pl,
-	combinefunc = int4pl
+	parallel = pear
 );
-
--- Ensure all these functions made it into the catalog
-SELECT aggfnoid,aggtransfn,aggcombinefn,aggtranstype
-FROM pg_aggregate
-WHERE aggfnoid = 'mysum'::REGPROC;
-
-DROP AGGREGATE mysum (int);
 
 -- invalid: nonstrict inverse with strict forward function
 

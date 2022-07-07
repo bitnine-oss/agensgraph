@@ -11,7 +11,8 @@
 
 #include "postgres_fe.h"
 #include "common.h"
-#include "dumputils.h"
+#include "fe_utils/simple_list.h"
+#include "fe_utils/string_utils.h"
 
 
 static void cluster_one_database(const char *dbname, bool verbose, const char *table,
@@ -209,10 +210,10 @@ cluster_one_database(const char *dbname, bool verbose, const char *table,
 	{
 		if (table)
 			fprintf(stderr, _("%s: clustering of table \"%s\" in database \"%s\" failed: %s"),
-					progname, table, dbname, PQerrorMessage(conn));
+					progname, table, PQdb(conn), PQerrorMessage(conn));
 		else
 			fprintf(stderr, _("%s: clustering of database \"%s\" failed: %s"),
-					progname, dbname, PQerrorMessage(conn));
+					progname, PQdb(conn), PQerrorMessage(conn));
 		PQfinish(conn);
 		exit(1);
 	}
@@ -229,6 +230,7 @@ cluster_all_databases(bool verbose, const char *maintenance_db,
 {
 	PGconn	   *conn;
 	PGresult   *result;
+	PQExpBufferData connstr;
 	int			i;
 
 	conn = connectMaintenanceDatabase(maintenance_db, host, port, username,
@@ -236,6 +238,7 @@ cluster_all_databases(bool verbose, const char *maintenance_db,
 	result = executeQuery(conn, "SELECT datname FROM pg_database WHERE datallowconn ORDER BY 1;", progname, echo);
 	PQfinish(conn);
 
+	initPQExpBuffer(&connstr);
 	for (i = 0; i < PQntuples(result); i++)
 	{
 		char	   *dbname = PQgetvalue(result, i, 0);
@@ -246,10 +249,15 @@ cluster_all_databases(bool verbose, const char *maintenance_db,
 			fflush(stdout);
 		}
 
-		cluster_one_database(dbname, verbose, NULL,
+		resetPQExpBuffer(&connstr);
+		appendPQExpBuffer(&connstr, "dbname=");
+		appendConnStrVal(&connstr, dbname);
+
+		cluster_one_database(connstr.data, verbose, NULL,
 							 host, port, username, prompt_password,
 							 progname, echo);
 	}
+	termPQExpBuffer(&connstr);
 
 	PQclear(result);
 }

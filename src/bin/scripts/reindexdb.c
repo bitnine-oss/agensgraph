@@ -11,7 +11,8 @@
 
 #include "postgres_fe.h"
 #include "common.h"
-#include "dumputils.h"
+#include "fe_utils/simple_list.h"
+#include "fe_utils/string_utils.h"
 
 
 static void reindex_one_database(const char *name, const char *dbname,
@@ -263,7 +264,7 @@ main(int argc, char *argv[])
 		 * specified
 		 */
 		if (indexes.head == NULL && tables.head == NULL && schemas.head == NULL)
-			reindex_one_database(dbname, dbname, "DATABASE", host, port,
+			reindex_one_database(NULL, dbname, "DATABASE", host, port,
 						 username, prompt_password, progname, echo, verbose);
 	}
 
@@ -280,6 +281,9 @@ reindex_one_database(const char *name, const char *dbname, const char *type,
 
 	PGconn	   *conn;
 
+	conn = connectDatabase(dbname, host, port, username, prompt_password,
+						   progname, false, false);
+
 	initPQExpBuffer(&sql);
 
 	appendPQExpBufferStr(&sql, "REINDEX");
@@ -294,26 +298,23 @@ reindex_one_database(const char *name, const char *dbname, const char *type,
 	else if (strcmp(type, "SCHEMA") == 0)
 		appendPQExpBuffer(&sql, " SCHEMA %s", name);
 	else if (strcmp(type, "DATABASE") == 0)
-		appendPQExpBuffer(&sql, " DATABASE %s", fmtId(name));
+		appendPQExpBuffer(&sql, " DATABASE %s", fmtId(PQdb(conn)));
 	appendPQExpBufferChar(&sql, ';');
-
-	conn = connectDatabase(dbname, host, port, username, prompt_password,
-						   progname, false, false);
 
 	if (!executeMaintenanceCommand(conn, sql.data, echo))
 	{
 		if (strcmp(type, "TABLE") == 0)
 			fprintf(stderr, _("%s: reindexing of table \"%s\" in database \"%s\" failed: %s"),
-					progname, name, dbname, PQerrorMessage(conn));
+					progname, name, PQdb(conn), PQerrorMessage(conn));
 		if (strcmp(type, "INDEX") == 0)
 			fprintf(stderr, _("%s: reindexing of index \"%s\" in database \"%s\" failed: %s"),
-					progname, name, dbname, PQerrorMessage(conn));
+					progname, name, PQdb(conn), PQerrorMessage(conn));
 		if (strcmp(type, "SCHEMA") == 0)
 			fprintf(stderr, _("%s: reindexing of schema \"%s\" in database \"%s\" failed: %s"),
-					progname, name, dbname, PQerrorMessage(conn));
+					progname, name, PQdb(conn), PQerrorMessage(conn));
 		else
 			fprintf(stderr, _("%s: reindexing of database \"%s\" failed: %s"),
-					progname, dbname, PQerrorMessage(conn));
+					progname, PQdb(conn), PQerrorMessage(conn));
 		PQfinish(conn);
 		exit(1);
 	}
@@ -330,6 +331,7 @@ reindex_all_databases(const char *maintenance_db,
 {
 	PGconn	   *conn;
 	PGresult   *result;
+	PQExpBufferData connstr;
 	int			i;
 
 	conn = connectMaintenanceDatabase(maintenance_db, host, port, username,
@@ -337,6 +339,7 @@ reindex_all_databases(const char *maintenance_db,
 	result = executeQuery(conn, "SELECT datname FROM pg_database WHERE datallowconn ORDER BY 1;", progname, echo);
 	PQfinish(conn);
 
+	initPQExpBuffer(&connstr);
 	for (i = 0; i < PQntuples(result); i++)
 	{
 		char	   *dbname = PQgetvalue(result, i, 0);
@@ -347,9 +350,15 @@ reindex_all_databases(const char *maintenance_db,
 			fflush(stdout);
 		}
 
-		reindex_one_database(dbname, dbname, "DATABASE", host, port, username,
-							 prompt_password, progname, echo, verbose);
+		resetPQExpBuffer(&connstr);
+		appendPQExpBuffer(&connstr, "dbname=");
+		appendConnStrVal(&connstr, dbname);
+
+		reindex_one_database(NULL, connstr.data, "DATABASE", host,
+							 port, username, prompt_password,
+							 progname, echo, verbose);
 	}
+	termPQExpBuffer(&connstr);
 
 	PQclear(result);
 }
@@ -359,9 +368,11 @@ reindex_system_catalogs(const char *dbname, const char *host, const char *port,
 						const char *username, enum trivalue prompt_password,
 						const char *progname, bool echo, bool verbose)
 {
+	PGconn	   *conn;
 	PQExpBufferData sql;
 
-	PGconn	   *conn;
+	conn = connectDatabase(dbname, host, port, username, prompt_password,
+						   progname, false, false);
 
 	initPQExpBuffer(&sql);
 
@@ -370,10 +381,8 @@ reindex_system_catalogs(const char *dbname, const char *host, const char *port,
 	if (verbose)
 		appendPQExpBuffer(&sql, " (VERBOSE)");
 
-	appendPQExpBuffer(&sql, " SYSTEM %s;", dbname);
+	appendPQExpBuffer(&sql, " SYSTEM %s;", fmtId(PQdb(conn)));
 
-	conn = connectDatabase(dbname, host, port, username, prompt_password,
-						   progname, false, false);
 	if (!executeMaintenanceCommand(conn, sql.data, echo))
 	{
 		fprintf(stderr, _("%s: reindexing of system catalogs failed: %s"),

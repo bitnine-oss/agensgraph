@@ -16,7 +16,7 @@ CPU=i386
 !MESSAGE Building the Win32 static library...
 !MESSAGE
 !ELSEIF ("$(CPU)" == "IA64")||("$(CPU)" == "AMD64")
-ADD_DEFINES=/D "WIN64" /Wp64 /GS
+ADD_DEFINES=/Wp64 /GS
 ADD_SECLIB=bufferoverflowU.lib
 !MESSAGE Building the Win64 static library...
 !MESSAGE
@@ -167,8 +167,9 @@ LIB32_OBJS= \
 	"$(INTDIR)\win32error.obj" \
 	"$(INTDIR)\win32setlocale.obj" \
 	"$(INTDIR)\pthread-win32.obj"
+
 !IFDEF USE_OPENSSL
-	LIB32_OBJS=$(LIB32_OBJS) "$(INTDIR)\fe-secure-openssl.obj"
+LIB32_OBJS=$(LIB32_OBJS) "$(INTDIR)\fe-secure-openssl.obj"
 !ENDIF
 
 

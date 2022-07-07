@@ -306,13 +306,13 @@ WHERE pg_class.oid=indexrelid
 (0 rows)
 
 -- Verify that clustering all tables does in fact cluster the right ones
-CREATE USER clstr_user;
+CREATE USER regress_clstr_user;
 CREATE TABLE clstr_1 (a INT PRIMARY KEY);
 CREATE TABLE clstr_2 (a INT PRIMARY KEY);
 CREATE TABLE clstr_3 (a INT PRIMARY KEY);
-ALTER TABLE clstr_1 OWNER TO clstr_user;
-ALTER TABLE clstr_3 OWNER TO clstr_user;
-GRANT SELECT ON clstr_2 TO clstr_user;
+ALTER TABLE clstr_1 OWNER TO regress_clstr_user;
+ALTER TABLE clstr_3 OWNER TO regress_clstr_user;
+GRANT SELECT ON clstr_2 TO regress_clstr_user;
 INSERT INTO clstr_1 VALUES (2);
 INSERT INTO clstr_1 VALUES (1);
 INSERT INTO clstr_2 VALUES (2);
@@ -349,7 +349,7 @@ INSERT INTO clstr_3 VALUES (2);
 INSERT INTO clstr_3 VALUES (1);
 -- this user can only cluster clstr_1 and clstr_3, but the latter
 -- has not been clustered
-SET SESSION AUTHORIZATION clstr_user;
+SET SESSION AUTHORIZATION regress_clstr_user;
 CLUSTER;
 SELECT * FROM clstr_1 UNION ALL
   SELECT * FROM clstr_2 UNION ALL
@@ -438,10 +438,45 @@ select * from clstr_temp;
 (2 rows)
 
 drop table clstr_temp;
+RESET SESSION AUTHORIZATION;
+-- Test CLUSTER with external tuplesorting
+create table clstr_4 as select * from tenk1;
+create index cluster_sort on clstr_4 (hundred, thousand, tenthous);
+-- ensure we don't use the index in CLUSTER nor the checking SELECTs
+set enable_indexscan = off;
+-- Use external sort that only ever uses quicksort to sort runs:
+set maintenance_work_mem = '1MB';
+set replacement_sort_tuples = 0;
+cluster clstr_4 using cluster_sort;
+select * from
+(select hundred, lag(hundred) over () as lhundred,
+        thousand, lag(thousand) over () as lthousand,
+        tenthous, lag(tenthous) over () as ltenthous from clstr_4) ss
+where row(hundred, thousand, tenthous) <= row(lhundred, lthousand, ltenthous);
+ hundred | lhundred | thousand | lthousand | tenthous | ltenthous 
+---------+----------+----------+-----------+----------+-----------
+(0 rows)
+
+-- Replacement selection will now be forced.  It should only produce a single
+-- run, due to the fact that input is found to be presorted:
+set replacement_sort_tuples = 150000;
+cluster clstr_4 using cluster_sort;
+select * from
+(select hundred, lag(hundred) over () as lhundred,
+        thousand, lag(thousand) over () as lthousand,
+        tenthous, lag(tenthous) over () as ltenthous from clstr_4) ss
+where row(hundred, thousand, tenthous) <= row(lhundred, lthousand, ltenthous);
+ hundred | lhundred | thousand | lthousand | tenthous | ltenthous 
+---------+----------+----------+-----------+----------+-----------
+(0 rows)
+
+reset enable_indexscan;
+reset maintenance_work_mem;
+reset replacement_sort_tuples;
 -- clean up
-\c -
 DROP TABLE clustertest;
 DROP TABLE clstr_1;
 DROP TABLE clstr_2;
 DROP TABLE clstr_3;
-DROP USER clstr_user;
+DROP TABLE clstr_4;
+DROP USER regress_clstr_user;

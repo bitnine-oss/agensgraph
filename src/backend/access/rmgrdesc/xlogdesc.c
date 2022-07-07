@@ -25,8 +25,9 @@
  */
 const struct config_enum_entry wal_level_options[] = {
 	{"minimal", WAL_LEVEL_MINIMAL, false},
-	{"archive", WAL_LEVEL_ARCHIVE, false},
-	{"hot_standby", WAL_LEVEL_HOT_STANDBY, false},
+	{"replica", WAL_LEVEL_REPLICA, false},
+	{"archive", WAL_LEVEL_REPLICA, true},		/* deprecated */
+	{"hot_standby", WAL_LEVEL_REPLICA, true},	/* deprecated */
 	{"logical", WAL_LEVEL_LOGICAL, false},
 	{NULL, 0, false}
 };
@@ -43,7 +44,7 @@ xlog_desc(StringInfo buf, XLogReaderState *record)
 		CheckPoint *checkpoint = (CheckPoint *) rec;
 
 		appendStringInfo(buf, "redo %X/%X; "
-						 "tli %u; prev tli %u; fpw %s; xid %u/%u; oid %u; multi %u; offset %u; "
+						 "tli %u; prev tli %u; fpw %s; xid %u:%u; oid %u; multi %u; offset %u; "
 						 "oldest xid %u in DB %u; oldest multi %u in DB %u; "
 						 "oldest/newest commit timestamp xid: %u/%u; "
 						 "oldest running xid %u; %s",

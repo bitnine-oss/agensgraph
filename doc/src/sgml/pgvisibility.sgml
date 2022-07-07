@@ -1,0 +1,154 @@
+<!-- doc/src/sgml/pgvisibility.sgml -->
+
+<sect1 id="pgvisibility" xreflabel="pg_visibility">
+ <title>pg_visibility</title>
+
+ <indexterm zone="pgvisibility">
+  <primary>pg_visibility</primary>
+ </indexterm>
+
+ <para>
+  The <filename>pg_visibility</> module provides a means for examining the
+  visibility map (VM) and page-level visibility information.  It also
+  provides functions to check the integrity of the visibility map and to
+  force it to be rebuilt.
+ </para>
+
+ <para>
+  Three different bits are used to store information about page-level
+  visibility.  The all-visible bit in the visibility map indicates that every
+  tuple on a given page of a relation is visible to every current transaction.
+  The all-frozen bit in the visibility map indicates that every tuple on the
+  page is frozen; that is, no future vacuum will need to modify the page
+  until such time as a tuple is inserted, updated, deleted, or locked on
+  that page.  The page-level <literal>PD_ALL_VISIBLE</literal> bit has the
+  same meaning as the all-visible bit in the visibility map, but is stored
+  within the data page itself rather than a separate data structure.  These
+  will normally agree, but the page-level bit can sometimes be set while the
+  visibility map bit is clear after a crash recovery; or they can disagree
+  because of a change which occurs after <literal>pg_visibility</> examines
+  the visibility map and before it examines the data page.  Any event which
+  causes data corruption can also cause these bits to disagree.
+ </para>
+
+ <para>
+  Functions which display information about <literal>PD_ALL_VISIBLE</>
+  are much more costly than those which only consult the visibility map,
+  because they must read the relation's data blocks rather than only the
+  (much smaller) visibility map.  Functions that check the relation's
+  data blocks are similarly expensive.
+ </para>
+
+ <sect2>
+  <title>Functions</title>
+
+  <variablelist>
+   <varlistentry>
+    <term><function>pg_visibility_map(regclass, blkno bigint, all_visible OUT boolean, all_frozen OUT boolean) returns record</function></term>
+    <listitem>
+     <para>
+      Returns the all-visible and all-frozen bits in the visibility map for
+      the given block of the given relation.
+     </para>
+    </listitem>
+   </varlistentry>
+
+   <varlistentry>
+    <term><function>pg_visibility(regclass, blkno bigint, all_visible OUT boolean, all_frozen OUT boolean, pd_all_visible OUT boolean) returns record</function></term>
+    <listitem>
+     <para>
+      Returns the all-visible and all-frozen bits in the visibility map for
+      the given block of the given relation, plus the
+      <literal>PD_ALL_VISIBLE</> bit for that block.
+     </para>
+    </listitem>
+   </varlistentry>
+
+   <varlistentry>
+    <term><function>pg_visibility_map(regclass, blkno OUT bigint, all_visible OUT boolean, all_frozen OUT boolean) returns setof record</function></term>
+    <listitem>
+     <para>
+      Returns the all-visible and all-frozen bits in the visibility map for
+      each block the given relation.
+     </para>
+    </listitem>
+   </varlistentry>
+
+   <varlistentry>
+    <term><function>pg_visibility(regclass, blkno OUT bigint, all_visible OUT boolean, all_frozen OUT boolean, pd_all_visible OUT boolean) returns setof record</function></term>
+
+    <listitem>
+     <para>
+      Returns the all-visible and all-frozen bits in the visibility map for
+      each block the given relation, plus the <literal>PD_ALL_VISIBLE</>
+      bit for each block.
+     </para>
+    </listitem>
+   </varlistentry>
+
+   <varlistentry>
+    <term><function>pg_visibility_map_summary(regclass, all_visible OUT bigint, all_frozen OUT bigint) returns record</function></term>
+
+    <listitem>
+     <para>
+      Returns the number of all-visible pages and the number of all-frozen
+      pages in the relation according to the visibility map.
+     </para>
+    </listitem>
+   </varlistentry>
+  
+   <varlistentry>
+    <term><function>pg_check_frozen(regclass, t_ctid OUT tid) returns setof tid</function></term>
+
+    <listitem>
+     <para>
+      Returns the TIDs of non-frozen tuples present in pages marked all-frozen
+      in the visibility map.  If this function returns a non-empty set of
+      TIDs, the database is corrupt.
+     </para>
+    </listitem>
+   </varlistentry>
+     
+    <varlistentry>
+    <term><function>pg_check_visible(regclass, t_ctid OUT tid) returns setof tid</function></term>
+
+    <listitem>
+     <para>
+      Returns the TIDs of tuples which are not all-visible despite the fact
+      that the pages which contain them are marked as all-visible in the
+      visibility map.  If this function returns a non-empty set of TIDs, the
+      database is corrupt.
+     </para>
+    </listitem>
+   </varlistentry>
+
+   <varlistentry>
+    <term><function>pg_truncate_visibility_map(regclass) returns void</function></term>
+
+    <listitem>
+     <para>
+      Truncates the visibility map for the given relation.  This function
+      is only expected to be useful if you suspect that the visibility map
+      for the indicated relation is corrupt and wish to rebuild it.  The first
+      <command>VACUUM</> executed on the given relation after this function
+      is executed will scan every page in the relation and rebuild the
+      visibility map.
+     </para>
+    </listitem>
+   </varlistentry>
+  </variablelist>
+
+  <para>
+   By default, these functions are not publicly executable.
+  </para>
+ </sect2>
+
+ <sect2>
+  <title>Author</title>
+
+  <para>
+   Robert Haas <email>rhaas@postgresql.org</email>
+  </para>
+ </sect2>
+
+</sect1>

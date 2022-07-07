@@ -8,15 +8,16 @@ top_builddir = ../../..
 include $(top_builddir)/src/Makefile.global
 
 OBJS = check.o controldata.o dump.o exec.o file.o function.o info.o \
-       option.o page.o parallel.o pg_upgrade.o relfilenode.o server.o \
+       option.o parallel.o pg_upgrade.o relfilenode.o server.o \
        tablespace.o util.o version.o $(WIN32RES)
 
 override CPPFLAGS := -DDLSUFFIX=\"$(DLSUFFIX)\" -I$(srcdir) -I$(libpq_srcdir) $(CPPFLAGS)
+LDFLAGS += -L$(top_builddir)/src/fe_utils -lpgfeutils -lpq
 
 
 all: pg_upgrade
 
-pg_upgrade: $(OBJS) | submake-libpq submake-libpgport
+pg_upgrade: $(OBJS) | submake-libpq submake-libpgport submake-libpgfeutils
 	$(CC) $(CFLAGS) $^ $(libpq_pgport) $(LDFLAGS) $(LDFLAGS_EX) $(LIBS) -o $@$(X)
 
 install: all installdirs

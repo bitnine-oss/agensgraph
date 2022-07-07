@@ -26,6 +26,7 @@
 #include "commands/tablespace.h"
 #include "commands/view.h"
 #include "nodes/makefuncs.h"
+#include "postmaster/postmaster.h"
 #include "utils/array.h"
 #include "utils/attoptcache.h"
 #include "utils/builtins.h"
@@ -100,7 +101,8 @@ static relopt_int intRelOpts[] =
 			"fillfactor",
 			"Packs table pages only to this percentage",
 			RELOPT_KIND_HEAP,
-			AccessExclusiveLock
+			ShareUpdateExclusiveLock	/* since it applies only to later
+										 * inserts */
 		},
 		HEAP_DEFAULT_FILLFACTOR, HEAP_MIN_FILLFACTOR, 100
 	},
@@ -109,7 +111,8 @@ static relopt_int intRelOpts[] =
 			"fillfactor",
 			"Packs btree index pages only to this percentage",
 			RELOPT_KIND_BTREE,
-			AccessExclusiveLock
+			ShareUpdateExclusiveLock	/* since it applies only to later
+										 * inserts */
 		},
 		BTREE_DEFAULT_FILLFACTOR, BTREE_MIN_FILLFACTOR, 100
 	},
@@ -118,7 +121,8 @@ static relopt_int intRelOpts[] =
 			"fillfactor",
 			"Packs hash index pages only to this percentage",
 			RELOPT_KIND_HASH,
-			AccessExclusiveLock
+			ShareUpdateExclusiveLock	/* since it applies only to later
+										 * inserts */
 		},
 		HASH_DEFAULT_FILLFACTOR, HASH_MIN_FILLFACTOR, 100
 	},
@@ -127,7 +131,8 @@ static relopt_int intRelOpts[] =
 			"fillfactor",
 			"Packs gist index pages only to this percentage",
 			RELOPT_KIND_GIST,
-			AccessExclusiveLock
+			ShareUpdateExclusiveLock	/* since it applies only to later
+										 * inserts */
 		},
 		GIST_DEFAULT_FILLFACTOR, GIST_MIN_FILLFACTOR, 100
 	},
@@ -136,7 +141,8 @@ static relopt_int intRelOpts[] =
 			"fillfactor",
 			"Packs spgist index pages only to this percentage",
 			RELOPT_KIND_SPGIST,
-			AccessExclusiveLock
+			ShareUpdateExclusiveLock	/* since it applies only to later
+										 * inserts */
 		},
 		SPGIST_DEFAULT_FILLFACTOR, SPGIST_MIN_FILLFACTOR, 100
 	},
@@ -266,6 +272,15 @@ static relopt_int intRelOpts[] =
 #else
 		0, 0, 0
 #endif
+	},
+	{
+		{
+			"parallel_workers",
+			"Number of parallel processes that can be used per executor node for this relation.",
+			RELOPT_KIND_HEAP,
+			AccessExclusiveLock
+		},
+		-1, 0, 1024
 	},
 
 	/* list terminator */
@@ -1251,8 +1266,7 @@ fillRelOptions(void *rdopts, Size basesize,
 
 
 /*
- * Option parser for anything that uses StdRdOptions (i.e. fillfactor and
- * autovacuum)
+ * Option parser for anything that uses StdRdOptions.
  */
 bytea *
 default_reloptions(Datum reloptions, bool validate, relopt_kind kind)
@@ -1291,7 +1305,9 @@ default_reloptions(Datum reloptions, bool validate, relopt_kind kind)
 		{"autovacuum_analyze_scale_factor", RELOPT_TYPE_REAL,
 		offsetof(StdRdOptions, autovacuum) +offsetof(AutoVacOpts, analyze_scale_factor)},
 		{"user_catalog_table", RELOPT_TYPE_BOOL,
-		offsetof(StdRdOptions, user_catalog_table)}
+		offsetof(StdRdOptions, user_catalog_table)},
+		{"parallel_workers", RELOPT_TYPE_INT,
+		offsetof(StdRdOptions, parallel_workers)}
 	};
 
 	options = parseRelOptions(reloptions, validate, kind, &numoptions);
@@ -1464,8 +1480,8 @@ tablespace_reloptions(Datum reloptions, bool validate)
 LOCKMODE
 AlterTableGetRelOptionsLockLevel(List *defList)
 {
-	LOCKMODE    lockmode = NoLock;
-	ListCell    *cell;
+	LOCKMODE	lockmode = NoLock;
+	ListCell   *cell;
 
 	if (defList == NIL)
 		return AccessExclusiveLock;
@@ -1475,8 +1491,8 @@ AlterTableGetRelOptionsLockLevel(List *defList)
 
 	foreach(cell, defList)
 	{
-		DefElem *def = (DefElem *) lfirst(cell);
-		int		i;
+		DefElem    *def = (DefElem *) lfirst(cell);
+		int			i;
 
 		for (i = 0; relOpts[i]; i++)
 		{

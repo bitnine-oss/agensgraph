@@ -19,12 +19,11 @@
 
 #include <unistd.h>
 
-#include "miscadmin.h"
-
 #include "access/xlog.h"
 #include "access/xlog_internal.h"
 #include "access/xlogutils.h"
 #include "catalog/catalog.h"
+#include "miscadmin.h"
 #include "storage/smgr.h"
 #include "utils/guc.h"
 #include "utils/hsearch.h"
@@ -427,9 +426,10 @@ XLogReadBufferForRedoExtended(XLogReaderState *record,
  * to imply that the page should be dropped or truncated later.
  *
  * NB: A redo function should normally not call this directly. To get a page
- * to modify, use XLogReplayBuffer instead. It is important that all pages
- * modified by a WAL record are registered in the WAL records, or they will be
- * invisible to tools that that need to know which pages are modified.
+ * to modify, use XLogReadBufferForRedoExtended instead. It is important that
+ * all pages modified by a WAL record are registered in the WAL records, or
+ * they will be invisible to tools that that need to know which pages are
+ * modified.
  */
 Buffer
 XLogReadBufferExtended(RelFileNode rnode, ForkNumber forknum,
@@ -638,8 +638,17 @@ XLogTruncateRelation(RelFileNode rnode, ForkNumber forkNum,
 }
 
 /*
- * TODO: This is duplicate code with pg_xlogdump, similar to walsender.c, but
- * we currently don't have the infrastructure (elog!) to share it.
+ * Read 'count' bytes from WAL into 'buf', starting at location 'startptr'
+ * in timeline 'tli'.
+ *
+ * Will open, and keep open, one WAL segment stored in the static file
+ * descriptor 'sendFile'. This means if XLogRead is used once, there will
+ * always be one descriptor left open until the process ends, but never
+ * more than one.
+ *
+ * XXX This is very similar to pg_xlogdump's XLogDumpXLogRead and to XLogRead
+ * in walsender.c but for small differences (such as lack of elog() in
+ * frontend).  Probably these should be merged at some point.
  */
 static void
 XLogRead(char *buf, TimeLineID tli, XLogRecPtr startptr, Size count)
@@ -648,6 +657,7 @@ XLogRead(char *buf, TimeLineID tli, XLogRecPtr startptr, Size count)
 	XLogRecPtr	recptr;
 	Size		nbytes;
 
+	/* state maintained across calls */
 	static int	sendFile = -1;
 	static XLogSegNo sendSegNo = 0;
 	static uint32 sendOff = 0;
@@ -664,11 +674,11 @@ XLogRead(char *buf, TimeLineID tli, XLogRecPtr startptr, Size count)
 
 		startoff = recptr % XLogSegSize;
 
+		/* Do we need to switch to a different xlog segment? */
 		if (sendFile < 0 || !XLByteInSeg(recptr, sendSegNo))
 		{
 			char		path[MAXPGPATH];
 
-			/* Switch to another logfile segment */
 			if (sendFile >= 0)
 				close(sendFile);
 
@@ -745,16 +755,17 @@ XLogRead(char *buf, TimeLineID tli, XLogRecPtr startptr, Size count)
  * Public because it would likely be very helpful for someone writing another
  * output method outside walsender, e.g. in a bgworker.
  *
- * TODO: The walsender has it's own version of this, but it relies on the
+ * TODO: The walsender has its own version of this, but it relies on the
  * walsender's latch being set whenever WAL is flushed. No such infrastructure
  * exists for normal backends, so we have to do a check/sleep/repeat style of
  * loop for now.
  */
 int
 read_local_xlog_page(XLogReaderState *state, XLogRecPtr targetPagePtr,
-	int reqLen, XLogRecPtr targetRecPtr, char *cur_page, TimeLineID *pageTLI)
+					 int reqLen, XLogRecPtr targetRecPtr, char *cur_page,
+					 TimeLineID *pageTLI)
 {
-	XLogRecPtr	flushptr,
+	XLogRecPtr	read_upto,
 				loc;
 	int			count;
 
@@ -771,29 +782,44 @@ read_local_xlog_page(XLogReaderState *state, XLogRecPtr targetPagePtr,
 		if (!RecoveryInProgress())
 		{
 			*pageTLI = ThisTimeLineID;
-			flushptr = GetFlushRecPtr();
+			read_upto = GetFlushRecPtr();
 		}
 		else
-			flushptr = GetXLogReplayRecPtr(pageTLI);
+			read_upto = GetXLogReplayRecPtr(pageTLI);
 
-		if (loc <= flushptr)
+		if (loc <= read_upto)
 			break;
 
 		CHECK_FOR_INTERRUPTS();
 		pg_usleep(1000L);
 	}
 
-	/* more than one block available */
-	if (targetPagePtr + XLOG_BLCKSZ <= flushptr)
+	if (targetPagePtr + XLOG_BLCKSZ <= read_upto)
+	{
+		/*
+		 * more than one block available; read only that block, have caller
+		 * come back if they need more.
+		 */
 		count = XLOG_BLCKSZ;
-	/* not enough data there */
-	else if (targetPagePtr + reqLen > flushptr)
+	}
+	else if (targetPagePtr + reqLen > read_upto)
+	{
+		/* not enough data there */
 		return -1;
-	/* part of the page available */
+	}
 	else
-		count = flushptr - targetPagePtr;
+	{
+		/* enough bytes available to satisfy the request */
+		count = read_upto - targetPagePtr;
+	}
 
+	/*
+	 * Even though we just determined how much of the page can be validly read
+	 * as 'count', read the whole page anyway. It's guaranteed to be
+	 * zero-padded up to the page boundary if it's incomplete.
+	 */
 	XLogRead(cur_page, *pageTLI, targetPagePtr, XLOG_BLCKSZ);
 
+	/* number of valid bytes in the buffer */
 	return count;
 }

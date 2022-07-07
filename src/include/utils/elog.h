@@ -25,9 +25,11 @@
 #define DEBUG1		14			/* used by GUC debug_* variables */
 #define LOG			15			/* Server operational messages; sent only to
 								 * server log by default. */
-#define COMMERROR	16			/* Client communication problems; same as LOG
-								 * for server reporting, but never sent to
-								 * client. */
+#define LOG_SERVER_ONLY 16		/* Same as LOG for server reporting, but never
+								 * sent to client. */
+#define COMMERROR	LOG_SERVER_ONLY		/* Client communication problems; same
+										 * as LOG for server reporting, but
+										 * never sent to client. */
 #define INFO		17			/* Messages specifically requested by user (eg
 								 * VACUUM VERBOSE output); always sent to
 								 * client regardless of client_min_messages,
@@ -67,18 +69,6 @@
 
 /* SQLSTATE codes for errors are defined in a separate file */
 #include "utils/errcodes.h"
-
-
-/* Which __func__ symbol do we have, if any? */
-#ifdef HAVE_FUNCNAME__FUNC
-#define PG_FUNCNAME_MACRO	__func__
-#else
-#ifdef HAVE_FUNCNAME__FUNCTION
-#define PG_FUNCNAME_MACRO	__FUNCTION__
-#else
-#define PG_FUNCNAME_MACRO	NULL
-#endif
-#endif
 
 
 /*----------
@@ -266,7 +256,7 @@ extern PGDLLIMPORT ErrorContextCallback *error_context_stack;
  *		PG_END_TRY();
  *
  * (The braces are not actually necessary, but are recommended so that
- * pgindent will indent the construct nicely.)  The error recovery code
+ * pgindent will indent the construct nicely.)	The error recovery code
  * can optionally do PG_RE_THROW() to propagate the same error outwards.
  *
  * Note: while the system will correctly propagate any new ereport(ERROR)
@@ -349,11 +339,12 @@ typedef struct ErrorData
 	const char *domain;			/* message domain */
 	const char *context_domain; /* message domain for context message */
 	int			sqlerrcode;		/* encoded ERRSTATE */
-	char	   *message;		/* primary error message */
+	char	   *message;		/* primary error message (translated) */
 	char	   *detail;			/* detail error message */
 	char	   *detail_log;		/* detail error message for server log only */
 	char	   *hint;			/* hint message */
 	char	   *context;		/* context message */
+	const char *message_id;		/* primary message's id (original string) */
 	char	   *schema_name;	/* name of schema */
 	char	   *table_name;		/* name of table */
 	char	   *column_name;	/* name of column */
@@ -396,6 +387,8 @@ extern int	Log_error_verbosity;
 extern char *Log_line_prefix;
 extern int	Log_destination;
 extern char *Log_destination_string;
+extern bool syslog_sequence_numbers;
+extern bool syslog_split_messages;
 
 /* Log destination bitmap */
 #define LOG_DESTINATION_STDERR	 1

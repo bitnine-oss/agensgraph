@@ -372,10 +372,20 @@ typedef struct
 static int
 LogStreamerMain(logstreamer_param *param)
 {
-	if (!ReceiveXlogStream(param->bgconn, param->startptr, param->timeline,
-						   param->sysidentifier, param->xlogdir,
-						   reached_end_position, standby_message_timeout,
-						   NULL, false, true))
+	StreamCtl	stream;
+
+	MemSet(&stream, 0, sizeof(stream));
+	stream.startpos = param->startptr;
+	stream.timeline = param->timeline;
+	stream.sysidentifier = param->sysidentifier;
+	stream.stream_stop = reached_end_position;
+	stream.standby_message_timeout = standby_message_timeout;
+	stream.synchronous = false;
+	stream.mark_done = true;
+	stream.basedir = param->xlogdir;
+	stream.partial_suffix = NULL;
+
+	if (!ReceiveXlogStream(param->bgconn, &stream))
 
 		/*
 		 * Any errors will already have been reported in the function process,
@@ -1820,6 +1830,12 @@ BaseBackup(void)
 		int			r;
 #else
 		DWORD		status;
+
+		/*
+		 * get a pointer sized version of bgchild to avoid warnings about
+		 * casting to a different size on WIN64.
+		 */
+		intptr_t	bgchild_handle = bgchild;
 		uint32		hi,
 					lo;
 #endif
@@ -1882,7 +1898,7 @@ BaseBackup(void)
 		InterlockedIncrement(&has_xlogendptr);
 
 		/* First wait for the thread to exit */
-		if (WaitForSingleObjectEx((HANDLE) bgchild, INFINITE, FALSE) !=
+		if (WaitForSingleObjectEx((HANDLE) bgchild_handle, INFINITE, FALSE) !=
 			WAIT_OBJECT_0)
 		{
 			_dosmaperr(GetLastError());
@@ -1890,7 +1906,7 @@ BaseBackup(void)
 					progname, strerror(errno));
 			disconnect_and_exit(1);
 		}
-		if (GetExitCodeThread((HANDLE) bgchild, &status) == 0)
+		if (GetExitCodeThread((HANDLE) bgchild_handle, &status) == 0)
 		{
 			_dosmaperr(GetLastError());
 			fprintf(stderr, _("%s: could not get child thread exit status: %s\n"),
@@ -2057,7 +2073,7 @@ main(int argc, char **argv)
 				break;
 			case 'Z':
 				compresslevel = atoi(optarg);
-				if (compresslevel <= 0 || compresslevel > 9)
+				if (compresslevel < 0 || compresslevel > 9)
 				{
 					fprintf(stderr, _("%s: invalid compression level \"%s\"\n"),
 							progname, optarg);

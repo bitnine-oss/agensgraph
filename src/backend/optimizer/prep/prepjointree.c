@@ -31,6 +31,7 @@
 #include "optimizer/prep.h"
 #include "optimizer/subselect.h"
 #include "optimizer/tlist.h"
+#include "optimizer/var.h"
 #include "parser/parse_relation.h"
 #include "parser/parsetree.h"
 #include "rewrite/rewriteManip.h"
@@ -907,9 +908,15 @@ pull_up_simple_subquery(PlannerInfo *root, Node *jtnode, RangeTblEntry *rte,
 	subroot->eq_classes = NIL;
 	subroot->append_rel_list = NIL;
 	subroot->rowMarks = NIL;
+	memset(subroot->upper_rels, 0, sizeof(subroot->upper_rels));
+	memset(subroot->upper_targets, 0, sizeof(subroot->upper_targets));
+	subroot->processed_tlist = NIL;
+	subroot->grouping_map = NULL;
+	subroot->minmax_aggs = NIL;
+	subroot->hasInheritedTarget = false;
 	subroot->hasRecursion = false;
 	subroot->wt_param_id = -1;
-	subroot->non_recursive_plan = NULL;
+	subroot->non_recursive_path = NULL;
 
 	/* No CTEs to worry about */
 	Assert(subquery->cteList == NIL);
@@ -1032,8 +1039,19 @@ pull_up_simple_subquery(PlannerInfo *root, Node *jtnode, RangeTblEntry *rte,
 	parse->returningList = (List *)
 		pullup_replace_vars((Node *) parse->returningList, &rvcontext);
 	if (parse->onConflict)
+	{
 		parse->onConflict->onConflictSet = (List *)
-			pullup_replace_vars((Node *) parse->onConflict->onConflictSet, &rvcontext);
+			pullup_replace_vars((Node *) parse->onConflict->onConflictSet,
+								&rvcontext);
+		parse->onConflict->onConflictWhere =
+			pullup_replace_vars(parse->onConflict->onConflictWhere,
+								&rvcontext);
+
+		/*
+		 * We assume ON CONFLICT's arbiterElems, arbiterWhere, exclRelTlist
+		 * can't contain any references to a subquery
+		 */
+	}
 	replace_vars_in_jointree((Node *) parse->jointree, &rvcontext,
 							 lowest_nulling_outer_join);
 	Assert(parse->setOperations == NULL);
@@ -1630,8 +1648,19 @@ pull_up_simple_values(PlannerInfo *root, Node *jtnode, RangeTblEntry *rte)
 	parse->returningList = (List *)
 		pullup_replace_vars((Node *) parse->returningList, &rvcontext);
 	if (parse->onConflict)
+	{
 		parse->onConflict->onConflictSet = (List *)
-			pullup_replace_vars((Node *) parse->onConflict->onConflictSet, &rvcontext);
+			pullup_replace_vars((Node *) parse->onConflict->onConflictSet,
+								&rvcontext);
+		parse->onConflict->onConflictWhere =
+			pullup_replace_vars(parse->onConflict->onConflictWhere,
+								&rvcontext);
+
+		/*
+		 * We assume ON CONFLICT's arbiterElems, arbiterWhere, exclRelTlist
+		 * can't contain any references to a subquery
+		 */
+	}
 	replace_vars_in_jointree((Node *) parse->jointree, &rvcontext, NULL);
 	Assert(parse->setOperations == NULL);
 	parse->havingQual = pullup_replace_vars(parse->havingQual, &rvcontext);

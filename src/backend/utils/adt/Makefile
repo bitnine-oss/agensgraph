@@ -9,13 +9,13 @@ top_builddir = ../../../..
 include $(top_builddir)/src/Makefile.global
 
 # keep this list arranged alphabetically or it gets to be a mess
-OBJS = acl.o arrayfuncs.o array_expanded.o array_selfuncs.o \
+OBJS = acl.o amutils.o arrayfuncs.o array_expanded.o array_selfuncs.o \
 	array_typanalyze.o array_userfuncs.o arrayutils.o ascii.o \
 	bool.o cash.o char.o date.o datetime.o datum.o dbsize.o domains.o \
 	encode.o enum.o expandeddatum.o \
 	float.o format_type.o formatting.o genfile.o \
-	geo_ops.o geo_selfuncs.o graph.o inet_cidr_ntop.o inet_net_pton.o int.o \
-	int8.o json.o jsonb.o jsonb_gin.o jsonb_op.o jsonb_util.o \
+	geo_ops.o geo_selfuncs.o geo_spgist.o inet_cidr_ntop.o inet_net_pton.o \
+	int.o int8.o json.o jsonb.o jsonb_gin.o jsonb_op.o jsonb_util.o \
 	jsonfuncs.o like.o lockfuncs.o mac.o misc.o nabstime.o name.o \
 	network.o network_gist.o network_selfuncs.o \
 	numeric.o numutils.o oid.o oracle_compat.o \
@@ -29,7 +29,8 @@ OBJS = acl.o arrayfuncs.o array_expanded.o array_selfuncs.o \
 	tsquery_op.o tsquery_rewrite.o tsquery_util.o tsrank.o \
 	tsvector.o tsvector_op.o tsvector_parser.o \
 	txid.o uuid.o varbit.o varchar.o varlena.o version.o \
-	windowfuncs.o xid.o xml.o
+	windowfuncs.o xid.o xml.o \
+	graph.o
 
 like.o: like.c like_match.c
 

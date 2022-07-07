@@ -22,12 +22,12 @@
 #include "access/relscan.h"
 #include "access/xlog.h"
 #include "catalog/index.h"
-#include "catalog/pg_namespace.h"
 #include "commands/vacuum.h"
 #include "storage/indexfsm.h"
 #include "storage/ipc.h"
 #include "storage/lmgr.h"
 #include "storage/smgr.h"
+#include "tcop/tcopprot.h"		/* pgrminclude ignore */
 #include "utils/index_selfuncs.h"
 #include "utils/memutils.h"
 
@@ -85,8 +85,8 @@ bthandler(PG_FUNCTION_ARGS)
 {
 	IndexAmRoutine *amroutine = makeNode(IndexAmRoutine);
 
-	amroutine->amstrategies = 5;
-	amroutine->amsupport = 2;
+	amroutine->amstrategies = BTMaxStrategyNumber;
+	amroutine->amsupport = BTNProcs;
 	amroutine->amcanorder = true;
 	amroutine->amcanorderbyop = false;
 	amroutine->amcanbackward = true;
@@ -108,6 +108,7 @@ bthandler(PG_FUNCTION_ARGS)
 	amroutine->amcanreturn = btcanreturn;
 	amroutine->amcostestimate = btcostestimate;
 	amroutine->amoptions = btoptions;
+	amroutine->amproperty = btproperty;
 	amroutine->amvalidate = btvalidate;
 	amroutine->ambeginscan = btbeginscan;
 	amroutine->amrescan = btrescan;
@@ -608,25 +609,6 @@ btrestrpos(IndexScanDesc scan)
 		 */
 		so->currPos.itemIndex = so->markItemIndex;
 	}
-	else if (so->currPos.currPage == so->markPos.currPage)
-	{
-		/*
-		 * so->markItemIndex < 0 but mark and current positions are on the
-		 * same page.  This would be an unusual case, where the scan moved to
-		 * a new index page after the mark, restored, and later restored again
-		 * without moving off the marked page.  It is not clear that this code
-		 * can currently be reached, but it seems better to make this function
-		 * robust for this case than to Assert() or elog() that it can't
-		 * happen.
-		 *
-		 * We neither want to set so->markItemIndex >= 0 (because that could
-		 * cause a later move to a new page to redo the memcpy() executions)
-		 * nor re-execute the memcpy() functions for a restore within the same
-		 * page.  The previous restore to this page already set everything
-		 * except markPos as it should be.
-		 */
-		so->currPos.itemIndex = so->markPos.itemIndex;
-	}
 	else
 	{
 		/*
@@ -832,9 +814,8 @@ btvacuumscan(IndexVacuumInfo *info, IndexBulkDeleteResult *stats,
 
 	/*
 	 * Check to see if we need to issue one final WAL record for this index,
-	 * which may be needed for correctness on a hot standby node when
-	 * non-MVCC index scans could take place. This now only occurs when we
-	 * perform a TOAST scan, so only occurs for TOAST indexes.
+	 * which may be needed for correctness on a hot standby node when non-MVCC
+	 * index scans could take place.
 	 *
 	 * If the WAL is replayed in hot standby, the replay process needs to get
 	 * cleanup locks on all index leaf pages, just as we've been doing here.
@@ -846,7 +827,6 @@ btvacuumscan(IndexVacuumInfo *info, IndexBulkDeleteResult *stats,
 	 * against the last leaf page in the index, if that one wasn't vacuumed.
 	 */
 	if (XLogStandbyInfoActive() &&
-		rel->rd_rel->relnamespace == PG_TOAST_NAMESPACE &&
 		vstate.lastBlockVacuumed < vstate.lastBlockLocked)
 	{
 		Buffer		buf;
@@ -1045,25 +1025,14 @@ restart:
 		 */
 		if (ndeletable > 0)
 		{
-			BlockNumber	lastBlockVacuumed = InvalidBlockNumber;
-
 			/*
-			 * We may need to record the lastBlockVacuumed for use when
-			 * non-MVCC scans might be performed on the index on a
-			 * hot standby. See explanation in btree_xlog_vacuum().
-			 *
-			 * On a hot standby, a non-MVCC scan can only take place
-			 * when we access a Toast Index, so we need only record
-			 * the lastBlockVacuumed if we are vacuuming a Toast Index.
-			 */
-			if (rel->rd_rel->relnamespace == PG_TOAST_NAMESPACE)
-				lastBlockVacuumed = vstate->lastBlockVacuumed;
-
-			/*
-			 * Notice that the issued XLOG_BTREE_VACUUM WAL record includes an
-			 * instruction to the replay code to get cleanup lock on all pages
-			 * between the previous lastBlockVacuumed and this page.  This
-			 * ensures that WAL replay locks all leaf pages at some point.
+			 * Notice that the issued XLOG_BTREE_VACUUM WAL record includes
+			 * all information to the replay code to allow it to get a cleanup
+			 * lock on all pages between the previous lastBlockVacuumed and
+			 * this page. This ensures that WAL replay locks all leaf pages at
+			 * some point, which is important should non-MVCC scans be
+			 * requested. This is currently unused on standby, but we record
+			 * it anyway, so that the WAL contains the required information.
 			 *
 			 * Since we can visit leaf pages out-of-order when recursing,
 			 * replay might end up locking such pages an extra time, but it
@@ -1071,7 +1040,7 @@ restart:
 			 * that.
 			 */
 			_bt_delitems_vacuum(rel, buf, deletable, ndeletable,
-								lastBlockVacuumed);
+								vstate->lastBlockVacuumed);
 
 			/*
 			 * Remember highest leaf page number we've issued a

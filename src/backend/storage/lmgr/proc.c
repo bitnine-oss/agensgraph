@@ -42,6 +42,7 @@
 #include "postmaster/autovacuum.h"
 #include "replication/slot.h"
 #include "replication/syncrep.h"
+#include "storage/standby.h"
 #include "storage/ipc.h"
 #include "storage/lmgr.h"
 #include "storage/pmsignal.h"
@@ -57,6 +58,7 @@
 int			DeadlockTimeout = 1000;
 int			StatementTimeout = 0;
 int			LockTimeout = 0;
+int			IdleInTransactionSessionTimeout = 0;
 bool		log_lock_waits = false;
 
 /* Pointer to this process's PGPROC and PGXACT structs, if any */
@@ -181,7 +183,7 @@ InitProcGlobal(void)
 	ProcGlobal->startupBufferPinWaitBufId = -1;
 	ProcGlobal->walwriterLatch = NULL;
 	ProcGlobal->checkpointerLatch = NULL;
-	pg_atomic_init_u32(&ProcGlobal->firstClearXidElem, INVALID_PGPROCNO);
+	pg_atomic_init_u32(&ProcGlobal->procArrayGroupFirst, INVALID_PGPROCNO);
 
 	/*
 	 * Create and initialize all the PGPROC structures we'll need.  There are
@@ -286,7 +288,7 @@ InitProcGlobal(void)
 void
 InitProcess(void)
 {
-	PGPROC * volatile * procgloballist;
+	PGPROC	   *volatile * procgloballist;
 
 	/*
 	 * ProcGlobal should be set up already (if we are a backend, we inherit
@@ -340,8 +342,8 @@ InitProcess(void)
 	MyPgXact = &ProcGlobal->allPgXact[MyProc->pgprocno];
 
 	/*
-	 * Cross-check that the PGPROC is of the type we expect; if this were
-	 * not the case, it would get returned to the wrong list.
+	 * Cross-check that the PGPROC is of the type we expect; if this were not
+	 * the case, it would get returned to the wrong list.
 	 */
 	Assert(MyProc->procgloballist == procgloballist);
 
@@ -396,14 +398,16 @@ InitProcess(void)
 	SHMQueueElemInit(&(MyProc->syncRepLinks));
 
 	/* Initialize fields for group XID clearing. */
-	MyProc->clearXid = false;
-	MyProc->backendLatestXid = InvalidTransactionId;
-	pg_atomic_init_u32(&MyProc->nextClearXidElem, INVALID_PGPROCNO);
+	MyProc->procArrayGroupMember = false;
+	MyProc->procArrayGroupMemberXid = InvalidTransactionId;
+	pg_atomic_init_u32(&MyProc->procArrayGroupNext, INVALID_PGPROCNO);
 
 	/* Check that group locking fields are in a proper initial state. */
-	Assert(MyProc->lockGroupLeaderIdentifier == 0);
 	Assert(MyProc->lockGroupLeader == NULL);
 	Assert(dlist_is_empty(&MyProc->lockGroupMembers));
+
+	/* Initialize wait event information. */
+	MyProc->wait_event_info = 0;
 
 	/*
 	 * Acquire ownership of the PGPROC's latch, so that we can use WaitLatch
@@ -565,7 +569,6 @@ InitAuxiliaryProcess(void)
 	SwitchToSharedLatch();
 
 	/* Check that group locking fields are in a proper initial state. */
-	Assert(MyProc->lockGroupLeaderIdentifier == 0);
 	Assert(MyProc->lockGroupLeader == NULL);
 	Assert(dlist_is_empty(&MyProc->lockGroupMembers));
 
@@ -778,7 +781,7 @@ static void
 ProcKill(int code, Datum arg)
 {
 	PGPROC	   *proc;
-	PGPROC * volatile * procgloballist;
+	PGPROC	   *volatile * procgloballist;
 
 	Assert(MyProc != NULL);
 
@@ -822,7 +825,6 @@ ProcKill(int code, Datum arg)
 		dlist_delete(&MyProc->lockGroupLink);
 		if (dlist_is_empty(&leader->lockGroupMembers))
 		{
-			leader->lockGroupLeaderIdentifier = 0;
 			leader->lockGroupLeader = NULL;
 			if (leader != MyProc)
 			{
@@ -1004,7 +1006,7 @@ ProcSleep(LOCALLOCK *locallock, LockMethod lockMethodTable)
 	int			i;
 
 	/*
-	 * If group locking is in use, locks held my members of my locking group
+	 * If group locking is in use, locks held by members of my locking group
 	 * need to be included in myHeldLocks.
 	 */
 	if (leader != NULL)
@@ -1050,7 +1052,8 @@ ProcSleep(LOCALLOCK *locallock, LockMethod lockMethodTable)
 		{
 			/*
 			 * If we're part of the same locking group as this waiter, its
-			 * locks neither conflict with ours nor contribute to aheadRequsts.
+			 * locks neither conflict with ours nor contribute to
+			 * aheadRequests.
 			 */
 			if (leader != NULL && leader == proc->lockGroupLeader)
 			{
@@ -1168,21 +1171,27 @@ ProcSleep(LOCALLOCK *locallock, LockMethod lockMethodTable)
 	 *
 	 * If LockTimeout is set, also enable the timeout for that.  We can save a
 	 * few cycles by enabling both timeout sources in one call.
+	 *
+	 * If InHotStandby we set lock waits slightly later for clarity with other
+	 * code.
 	 */
-	if (LockTimeout > 0)
+	if (!InHotStandby)
 	{
-		EnableTimeoutParams timeouts[2];
+		if (LockTimeout > 0)
+		{
+			EnableTimeoutParams timeouts[2];
 
-		timeouts[0].id = DEADLOCK_TIMEOUT;
-		timeouts[0].type = TMPARAM_AFTER;
-		timeouts[0].delay_ms = DeadlockTimeout;
-		timeouts[1].id = LOCK_TIMEOUT;
-		timeouts[1].type = TMPARAM_AFTER;
-		timeouts[1].delay_ms = LockTimeout;
-		enable_timeouts(timeouts, 2);
+			timeouts[0].id = DEADLOCK_TIMEOUT;
+			timeouts[0].type = TMPARAM_AFTER;
+			timeouts[0].delay_ms = DeadlockTimeout;
+			timeouts[1].id = LOCK_TIMEOUT;
+			timeouts[1].type = TMPARAM_AFTER;
+			timeouts[1].delay_ms = LockTimeout;
+			enable_timeouts(timeouts, 2);
+		}
+		else
+			enable_timeout_after(DEADLOCK_TIMEOUT, DeadlockTimeout);
 	}
-	else
-		enable_timeout_after(DEADLOCK_TIMEOUT, DeadlockTimeout);
 
 	/*
 	 * If somebody wakes us between LWLockRelease and WaitLatch, the latch
@@ -1200,15 +1209,23 @@ ProcSleep(LOCALLOCK *locallock, LockMethod lockMethodTable)
 	 */
 	do
 	{
-		WaitLatch(MyLatch, WL_LATCH_SET, 0);
-		ResetLatch(MyLatch);
-		/* check for deadlocks first, as that's probably log-worthy */
-		if (got_deadlock_timeout)
+		if (InHotStandby)
 		{
-			CheckDeadLock();
-			got_deadlock_timeout = false;
+			/* Set a timer and wait for that or for the Lock to be granted */
+			ResolveRecoveryConflictWithLock(locallock->tag.lock);
 		}
-		CHECK_FOR_INTERRUPTS();
+		else
+		{
+			WaitLatch(MyLatch, WL_LATCH_SET, 0);
+			ResetLatch(MyLatch);
+			/* check for deadlocks first, as that's probably log-worthy */
+			if (got_deadlock_timeout)
+			{
+				CheckDeadLock();
+				got_deadlock_timeout = false;
+			}
+			CHECK_FOR_INTERRUPTS();
+		}
 
 		/*
 		 * waitStatus could change from STATUS_WAITING to something else
@@ -1446,18 +1463,21 @@ ProcSleep(LOCALLOCK *locallock, LockMethod lockMethodTable)
 	 * already caused QueryCancelPending to become set, we want the cancel to
 	 * be reported as a lock timeout, not a user cancel.
 	 */
-	if (LockTimeout > 0)
+	if (!InHotStandby)
 	{
-		DisableTimeoutParams timeouts[2];
+		if (LockTimeout > 0)
+		{
+			DisableTimeoutParams timeouts[2];
 
-		timeouts[0].id = DEADLOCK_TIMEOUT;
-		timeouts[0].keep_indicator = false;
-		timeouts[1].id = LOCK_TIMEOUT;
-		timeouts[1].keep_indicator = true;
-		disable_timeouts(timeouts, 2);
+			timeouts[0].id = DEADLOCK_TIMEOUT;
+			timeouts[0].keep_indicator = false;
+			timeouts[1].id = LOCK_TIMEOUT;
+			timeouts[1].keep_indicator = true;
+			disable_timeouts(timeouts, 2);
+		}
+		else
+			disable_timeout(DEADLOCK_TIMEOUT, false);
 	}
-	else
-		disable_timeout(DEADLOCK_TIMEOUT, false);
 
 	/*
 	 * Re-acquire the lock table's partition lock.  We have to do this to hold
@@ -1770,7 +1790,6 @@ BecomeLockGroupLeader(void)
 	leader_lwlock = LockHashPartitionLockByProc(MyProc);
 	LWLockAcquire(leader_lwlock, LW_EXCLUSIVE);
 	MyProc->lockGroupLeader = MyProc;
-	MyProc->lockGroupLeaderIdentifier = MyProcPid;
 	dlist_push_head(&MyProc->lockGroupMembers, &MyProc->lockGroupLink);
 	LWLockRelease(leader_lwlock);
 }
@@ -1794,14 +1813,26 @@ BecomeLockGroupMember(PGPROC *leader, int pid)
 	/* Group leader can't become member of group */
 	Assert(MyProc != leader);
 
+	/* Can't already be a member of a group */
+	Assert(MyProc->lockGroupLeader == NULL);
+
 	/* PID must be valid. */
 	Assert(pid != 0);
 
-	/* Try to join the group. */
-	leader_lwlock = LockHashPartitionLockByProc(MyProc);
+	/*
+	 * Get lock protecting the group fields.  Note LockHashPartitionLockByProc
+	 * accesses leader->pgprocno in a PGPROC that might be free.  This is safe
+	 * because all PGPROCs' pgprocno fields are set during shared memory
+	 * initialization and never change thereafter; so we will acquire the
+	 * correct lock even if the leader PGPROC is in process of being recycled.
+	 */
+	leader_lwlock = LockHashPartitionLockByProc(leader);
 	LWLockAcquire(leader_lwlock, LW_EXCLUSIVE);
-	if (leader->lockGroupLeaderIdentifier == pid)
+
+	/* Is this the leader we're looking for? */
+	if (leader->pid == pid && leader->lockGroupLeader == leader)
 	{
+		/* OK, join the group */
 		ok = true;
 		MyProc->lockGroupLeader = leader;
 		dlist_push_tail(&leader->lockGroupMembers, &MyProc->lockGroupLink);

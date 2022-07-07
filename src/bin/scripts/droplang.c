@@ -12,7 +12,7 @@
 #include "postgres_fe.h"
 
 #include "common.h"
-#include "print.h"
+#include "fe_utils/print.h"
 
 #define atooid(x)  ((Oid) strtoul((x), NULL, 10))
 
@@ -199,10 +199,10 @@ main(int argc, char *argv[])
 	result = executeQuery(conn, sql.data, progname, echo);
 	if (PQntuples(result) == 0)
 	{
-		PQfinish(conn);
 		fprintf(stderr, _("%s: language \"%s\" is not installed in "
 						  "database \"%s\"\n"),
-				progname, langname, dbname);
+				progname, langname, PQdb(conn));
+		PQfinish(conn);
 		exit(1);
 	}
 	PQclear(result);

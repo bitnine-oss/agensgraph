@@ -52,6 +52,8 @@ int			constraint_exclusion = CONSTRAINT_EXCLUSION_PARTITION;
 get_relation_info_hook_type get_relation_info_hook = NULL;
 
 
+static void get_relation_foreign_keys(PlannerInfo *root, RelOptInfo *rel,
+						  Relation relation);
 static bool infer_collation_opclass_match(InferenceElem *elem, Relation idxRel,
 							  List *idxExprs);
 static int32 get_rel_data_width(Relation rel, int32 *attr_widths);
@@ -76,6 +78,8 @@ static List *build_index_tlist(PlannerInfo *root, IndexOptInfo *index,
  *	fdwroutine	if it's a foreign table, the FDW function pointers
  *	pages		number of pages
  *	tuples		number of tuples
+ *
+ * Also, add information about the relation's foreign keys to root->fkey_list.
  *
  * Also, initialize the attr_needed[] and attr_widths[] arrays.  In most
  * cases these are left as zeroes, but sometimes we need to compute attr
@@ -127,6 +131,9 @@ get_relation_info(PlannerInfo *root, Oid relationObjectId, bool inhparent,
 	if (!inhparent)
 		estimate_rel_size(relation, rel->attr_widths - rel->min_attr,
 						  &rel->pages, &rel->tuples, &rel->allvisfrac);
+
+	/* Retrieve the parallel_workers reloption, or -1 if not set. */
+	rel->rel_parallel_workers = RelationGetParallelWorkers(relation, -1);
 
 	/*
 	 * Make list of indexes.  Ignore indexes on system catalogs if told to.
@@ -339,7 +346,8 @@ get_relation_info(PlannerInfo *root, Oid relationObjectId, bool inhparent,
 			/* Build targetlist using the completed indexprs data */
 			info->indextlist = build_index_tlist(root, info, relation);
 
-			info->predOK = false;		/* set later in indxpath.c */
+			info->indrestrictinfo = NIL;		/* set later, in indxpath.c */
+			info->predOK = false;		/* set later, in indxpath.c */
 			info->unique = index->indisunique;
 			info->immediate = index->indimmediate;
 			info->hypothetical = false;
@@ -399,6 +407,9 @@ get_relation_info(PlannerInfo *root, Oid relationObjectId, bool inhparent,
 		rel->fdwroutine = NULL;
 	}
 
+	/* Collect info about relation's foreign keys, if relevant */
+	get_relation_foreign_keys(root, rel, relation);
+
 	heap_close(relation, NoLock);
 
 	/*
@@ -408,6 +419,97 @@ get_relation_info(PlannerInfo *root, Oid relationObjectId, bool inhparent,
 	 */
 	if (get_relation_info_hook)
 		(*get_relation_info_hook) (root, relationObjectId, inhparent, rel);
+}
+
+/*
+ * get_relation_foreign_keys -
+ *	  Retrieves foreign key information for a given relation.
+ *
+ * ForeignKeyOptInfos for relevant foreign keys are created and added to
+ * root->fkey_list.  We do this now while we have the relcache entry open.
+ * We could sometimes avoid making useless ForeignKeyOptInfos if we waited
+ * until all RelOptInfos have been built, but the cost of re-opening the
+ * relcache entries would probably exceed any savings.
+ */
+static void
+get_relation_foreign_keys(PlannerInfo *root, RelOptInfo *rel,
+						  Relation relation)
+{
+	List	   *rtable = root->parse->rtable;
+	List	   *cachedfkeys;
+	ListCell   *lc;
+
+	/*
+	 * If it's not a baserel, we don't care about its FKs.  Also, if the query
+	 * references only a single relation, we can skip the lookup since no FKs
+	 * could satisfy the requirements below.
+	 */
+	if (rel->reloptkind != RELOPT_BASEREL ||
+		list_length(rtable) < 2)
+		return;
+
+	/*
+	 * Extract data about relation's FKs from the relcache.  Note that this
+	 * list belongs to the relcache and might disappear in a cache flush, so
+	 * we must not do any further catalog access within this function.
+	 */
+	cachedfkeys = RelationGetFKeyList(relation);
+
+	/*
+	 * Figure out which FKs are of interest for this query, and create
+	 * ForeignKeyOptInfos for them.  We want only FKs that reference some
+	 * other RTE of the current query.  In queries containing self-joins,
+	 * there might be more than one other RTE for a referenced table, and we
+	 * should make a ForeignKeyOptInfo for each occurrence.
+	 *
+	 * Ideally, we would ignore RTEs that correspond to non-baserels, but it's
+	 * too hard to identify those here, so we might end up making some useless
+	 * ForeignKeyOptInfos.  If so, match_foreign_keys_to_quals() will remove
+	 * them again.
+	 */
+	foreach(lc, cachedfkeys)
+	{
+		ForeignKeyCacheInfo *cachedfk = (ForeignKeyCacheInfo *) lfirst(lc);
+		Index		rti;
+		ListCell   *lc2;
+
+		/* conrelid should always be that of the table we're considering */
+		Assert(cachedfk->conrelid == RelationGetRelid(relation));
+
+		/* Scan to find other RTEs matching confrelid */
+		rti = 0;
+		foreach(lc2, rtable)
+		{
+			RangeTblEntry *rte = (RangeTblEntry *) lfirst(lc2);
+			ForeignKeyOptInfo *info;
+
+			rti++;
+			/* Ignore if not the correct table */
+			if (rte->rtekind != RTE_RELATION ||
+				rte->relid != cachedfk->confrelid)
+				continue;
+			/* Ignore self-referential FKs; we only care about joins */
+			if (rti == rel->relid)
+				continue;
+
+			/* OK, let's make an entry */
+			info = makeNode(ForeignKeyOptInfo);
+			info->con_relid = rel->relid;
+			info->ref_relid = rti;
+			info->nkeys = cachedfk->nkeys;
+			memcpy(info->conkey, cachedfk->conkey, sizeof(info->conkey));
+			memcpy(info->confkey, cachedfk->confkey, sizeof(info->confkey));
+			memcpy(info->conpfeqop, cachedfk->conpfeqop, sizeof(info->conpfeqop));
+			/* zero out fields to be filled by match_foreign_keys_to_quals */
+			info->nmatched_ec = 0;
+			info->nmatched_rcols = 0;
+			info->nmatched_ri = 0;
+			memset(info->eclass, 0, sizeof(info->eclass));
+			memset(info->rinfos, 0, sizeof(info->rinfos));
+
+			root->fkey_list = lappend(root->fkey_list, info);
+		}
+	}
 }
 
 /*
@@ -471,26 +573,18 @@ infer_arbiter_indexes(PlannerInfo *root)
 
 	/*
 	 * Build normalized/BMS representation of plain indexed attributes, as
-	 * well as direct list of inference elements.  This is required for
-	 * matching the cataloged definition of indexes.
+	 * well as a separate list of expression items.  This simplifies matching
+	 * the cataloged definition of indexes.
 	 */
 	foreach(l, onconflict->arbiterElems)
 	{
-		InferenceElem *elem;
+		InferenceElem *elem = (InferenceElem *) lfirst(l);
 		Var		   *var;
 		int			attno;
 
-		elem = (InferenceElem *) lfirst(l);
-
-		/*
-		 * Parse analysis of inference elements performs full parse analysis
-		 * of Vars, even for non-expression indexes (in contrast with utility
-		 * command related use of IndexElem).  However, indexes are cataloged
-		 * with simple attribute numbers for non-expression indexes.  Those
-		 * are handled later.
-		 */
 		if (!IsA(elem->expr, Var))
 		{
+			/* If not a plain Var, just shove it in inferElems for now */
 			inferElems = lappend(inferElems, elem->expr);
 			continue;
 		}
@@ -498,14 +592,13 @@ infer_arbiter_indexes(PlannerInfo *root)
 		var = (Var *) elem->expr;
 		attno = var->varattno;
 
-		if (attno < 0)
+		if (attno == 0)
 			ereport(ERROR,
-					(errcode(ERRCODE_INVALID_COLUMN_REFERENCE),
-					 errmsg("system columns cannot be used in an ON CONFLICT clause")));
-		else if (attno == 0)
-			elog(ERROR, "whole row unique index inference specifications are not valid");
+					(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+					 errmsg("whole row unique index inference specifications are not supported")));
 
-		inferAttrs = bms_add_member(inferAttrs, attno);
+		inferAttrs = bms_add_member(inferAttrs,
+								 attno - FirstLowInvalidHeapAttributeNumber);
 	}
 
 	/*
@@ -522,21 +615,20 @@ infer_arbiter_indexes(PlannerInfo *root)
 					 errmsg("constraint in ON CONFLICT clause has no associated index")));
 	}
 
-	indexList = RelationGetIndexList(relation);
-
 	/*
 	 * Using that representation, iterate through the list of indexes on the
 	 * target relation to try and find a match
 	 */
+	indexList = RelationGetIndexList(relation);
+
 	foreach(l, indexList)
 	{
 		Oid			indexoid = lfirst_oid(l);
 		Relation	idxRel;
 		Form_pg_index idxForm;
-		Bitmapset  *indexedAttrs = NULL;
+		Bitmapset  *indexedAttrs;
 		List	   *idxExprs;
 		List	   *predExprs;
-		List	   *whereExplicit;
 		AttrNumber	natt;
 		ListCell   *el;
 
@@ -593,16 +685,15 @@ infer_arbiter_indexes(PlannerInfo *root)
 		if (!idxForm->indisunique)
 			goto next;
 
-		/* Build BMS representation of cataloged index attributes */
+		/* Build BMS representation of plain (non expression) index attrs */
+		indexedAttrs = NULL;
 		for (natt = 0; natt < idxForm->indnatts; natt++)
 		{
 			int			attno = idxRel->rd_index->indkey.values[natt];
 
-			if (attno < 0)
-				elog(ERROR, "system column in index");
-
 			if (attno != 0)
-				indexedAttrs = bms_add_member(indexedAttrs, attno);
+				indexedAttrs = bms_add_member(indexedAttrs,
+								 attno - FirstLowInvalidHeapAttributeNumber);
 		}
 
 		/* Non-expression attributes (if any) must match */
@@ -658,13 +749,12 @@ infer_arbiter_indexes(PlannerInfo *root)
 			goto next;
 
 		/*
-		 * Any user-supplied ON CONFLICT unique index inference WHERE clause
-		 * need only be implied by the cataloged index definitions predicate.
+		 * If it's a partial index, its predicate must be implied by the ON
+		 * CONFLICT's WHERE clause.
 		 */
 		predExprs = RelationGetIndexPredicate(idxRel);
-		whereExplicit = make_ands_implicit((Expr *) onconflict->arbiterWhere);
 
-		if (!predicate_implied_by(predExprs, whereExplicit))
+		if (!predicate_implied_by(predExprs, (List *) onconflict->arbiterWhere))
 			goto next;
 
 		results = lappend_oid(results, idxForm->indexrelid);
@@ -717,7 +807,7 @@ infer_collation_opclass_match(InferenceElem *elem, Relation idxRel,
 	AttrNumber	natt;
 	Oid			inferopfamily = InvalidOid;		/* OID of opclass opfamily */
 	Oid			inferopcinputtype = InvalidOid; /* OID of opclass input type */
-	int			nplain = 0;						/* # plain attrs observed */
+	int			nplain = 0;		/* # plain attrs observed */
 
 	/*
 	 * If inference specification element lacks collation/opclass, then no
@@ -1108,7 +1198,13 @@ get_relation_constraints(PlannerInfo *root,
 												  att->attcollation,
 												  0);
 					ntest->nulltesttype = IS_NOT_NULL;
-					ntest->argisrow = type_is_rowtype(att->atttypid);
+
+					/*
+					 * argisrow=false is correct even for a composite column,
+					 * because attnotnull does not represent a SQL-spec IS NOT
+					 * NULL test in such a case, just IS DISTINCT FROM NULL.
+					 */
+					ntest->argisrow = false;
 					ntest->location = -1;
 					result = lappend(result, ntest);
 				}
@@ -1142,7 +1238,27 @@ relation_excluded_by_constraints(PlannerInfo *root,
 	List	   *safe_constraints;
 	ListCell   *lc;
 
-	/* Skip the test if constraint exclusion is disabled for the rel */
+	/*
+	 * Regardless of the setting of constraint_exclusion, detect
+	 * constant-FALSE-or-NULL restriction clauses.  Because const-folding will
+	 * reduce "anything AND FALSE" to just "FALSE", any such case should
+	 * result in exactly one baserestrictinfo entry.  This doesn't fire very
+	 * often, but it seems cheap enough to be worth doing anyway.  (Without
+	 * this, we'd miss some optimizations that 9.5 and earlier found via much
+	 * more roundabout methods.)
+	 */
+	if (list_length(rel->baserestrictinfo) == 1)
+	{
+		RestrictInfo *rinfo = (RestrictInfo *) linitial(rel->baserestrictinfo);
+		Expr	   *clause = rinfo->clause;
+
+		if (clause && IsA(clause, Const) &&
+			(((Const *) clause)->constisnull ||
+			 !DatumGetBool(((Const *) clause)->constvalue)))
+			return true;
+	}
+
+	/* Skip further tests if constraint exclusion is disabled for the rel */
 	if (constraint_exclusion == CONSTRAINT_EXCLUSION_OFF ||
 		(constraint_exclusion == CONSTRAINT_EXCLUSION_PARTITION &&
 		 !(rel->reloptkind == RELOPT_OTHER_MEMBER_REL ||
@@ -1519,4 +1635,51 @@ has_unique_index(RelOptInfo *rel, AttrNumber attno)
 			return true;
 	}
 	return false;
+}
+
+
+/*
+ * has_row_triggers
+ *
+ * Detect whether the specified relation has any row-level triggers for event.
+ */
+bool
+has_row_triggers(PlannerInfo *root, Index rti, CmdType event)
+{
+	RangeTblEntry *rte = planner_rt_fetch(rti, root);
+	Relation	relation;
+	TriggerDesc *trigDesc;
+	bool		result = false;
+
+	/* Assume we already have adequate lock */
+	relation = heap_open(rte->relid, NoLock);
+
+	trigDesc = relation->trigdesc;
+	switch (event)
+	{
+		case CMD_INSERT:
+			if (trigDesc &&
+				(trigDesc->trig_insert_after_row ||
+				 trigDesc->trig_insert_before_row))
+				result = true;
+			break;
+		case CMD_UPDATE:
+			if (trigDesc &&
+				(trigDesc->trig_update_after_row ||
+				 trigDesc->trig_update_before_row))
+				result = true;
+			break;
+		case CMD_DELETE:
+			if (trigDesc &&
+				(trigDesc->trig_delete_after_row ||
+				 trigDesc->trig_delete_before_row))
+				result = true;
+			break;
+		default:
+			elog(ERROR, "unrecognized CmdType: %d", (int) event);
+			break;
+	}
+
+	heap_close(relation, NoLock);
+	return result;
 }

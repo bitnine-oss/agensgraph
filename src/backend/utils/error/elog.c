@@ -106,6 +106,8 @@ int			Log_error_verbosity = PGERROR_VERBOSE;
 char	   *Log_line_prefix = NULL;		/* format for extra log line info */
 int			Log_destination = LOG_DESTINATION_STDERR;
 char	   *Log_destination_string = NULL;
+bool		syslog_sequence_numbers = true;
+bool		syslog_split_messages = true;
 
 #ifdef HAVE_SYSLOG
 
@@ -148,8 +150,8 @@ static int	recursion_depth = 0;	/* to detect actual recursion */
  * both log_line_prefix and csv logs.
  */
 
-static struct timeval	saved_timeval;
-static bool				saved_timeval_set = false;
+static struct timeval saved_timeval;
+static bool saved_timeval_set = false;
 
 #define FORMATTED_TS_LEN 128
 static char formatted_start_time[FORMATTED_TS_LEN];
@@ -291,7 +293,7 @@ errstart(int elevel, const char *filename, int lineno,
 	output_to_server = is_log_level_output(elevel, log_min_messages);
 
 	/* Determine whether message is enabled for client output */
-	if (whereToSendOutput == DestRemote && elevel != COMMERROR)
+	if (whereToSendOutput == DestRemote && elevel != LOG_SERVER_ONLY)
 	{
 		/*
 		 * client_min_messages is honored only after we complete the
@@ -801,6 +803,7 @@ errmsg(const char *fmt,...)
 	CHECK_STACK_DEPTH();
 	oldcontext = MemoryContextSwitchTo(edata->assoc_context);
 
+	edata->message_id = fmt;
 	EVALUATE_MESSAGE(edata->domain, message, false, true);
 
 	MemoryContextSwitchTo(oldcontext);
@@ -830,6 +833,7 @@ errmsg_internal(const char *fmt,...)
 	CHECK_STACK_DEPTH();
 	oldcontext = MemoryContextSwitchTo(edata->assoc_context);
 
+	edata->message_id = fmt;
 	EVALUATE_MESSAGE(edata->domain, message, false, false);
 
 	MemoryContextSwitchTo(oldcontext);
@@ -853,6 +857,7 @@ errmsg_plural(const char *fmt_singular, const char *fmt_plural,
 	CHECK_STACK_DEPTH();
 	oldcontext = MemoryContextSwitchTo(edata->assoc_context);
 
+	edata->message_id = fmt_singular;
 	EVALUATE_MESSAGE_PLURAL(edata->domain, message, false);
 
 	MemoryContextSwitchTo(oldcontext);
@@ -1076,7 +1081,7 @@ errhidestmt(bool hide_stmt)
  * errhidecontext --- optionally suppress CONTEXT: field of log entry
  *
  * This should only be used for verbose debugging messages where the repeated
- * inclusion of CONTEXT: bloats the log volume too much.
+ * inclusion of context would bloat the log volume too much.
  */
 int
 errhidecontext(bool hide_ctx)
@@ -1361,6 +1366,7 @@ elog_finish(int elevel, const char *fmt,...)
 	recursion_depth++;
 	oldcontext = MemoryContextSwitchTo(edata->assoc_context);
 
+	edata->message_id = fmt;
 	EVALUATE_MESSAGE(edata->domain, message, false, false);
 
 	MemoryContextSwitchTo(oldcontext);
@@ -1420,6 +1426,7 @@ format_elog_string(const char *fmt,...)
 
 	oldcontext = MemoryContextSwitchTo(ErrorContext);
 
+	edata->message_id = fmt;
 	EVALUATE_MESSAGE(edata->domain, message, false, true);
 
 	MemoryContextSwitchTo(oldcontext);
@@ -1458,6 +1465,11 @@ EmitErrorReport(void)
 	 * where it would have much less information available.  emit_log_hook is
 	 * intended for custom log filtering and custom log message transmission
 	 * mechanisms.
+	 *
+	 * The log hook has access to both the translated and original English
+	 * error message text, which is passed through to allow it to be used as a
+	 * message identifier. Note that the original text is not available for
+	 * detail, detail_log, hint and context text elements.
 	 */
 	if (edata->output_to_server && emit_log_hook)
 		(*emit_log_hook) (edata);
@@ -1955,7 +1967,7 @@ write_syslog(int level, const char *line)
 	 */
 	len = strlen(line);
 	nlpos = strchr(line, '\n');
-	if (len > PG_SYSLOG_LIMIT || nlpos != NULL)
+	if (syslog_split_messages && (len > PG_SYSLOG_LIMIT || nlpos != NULL))
 	{
 		int			chunk_nr = 0;
 
@@ -2008,7 +2020,11 @@ write_syslog(int level, const char *line)
 
 			chunk_nr++;
 
-			syslog(level, "[%lu-%d] %s", seq, chunk_nr, buf);
+			if (syslog_sequence_numbers)
+				syslog(level, "[%lu-%d] %s", seq, chunk_nr, buf);
+			else
+				syslog(level, "[%d] %s", chunk_nr, buf);
+
 			line += buflen;
 			len -= buflen;
 		}
@@ -2016,7 +2032,10 @@ write_syslog(int level, const char *line)
 	else
 	{
 		/* message short enough */
-		syslog(level, "[%lu] %s", seq, line);
+		if (syslog_sequence_numbers)
+			syslog(level, "[%lu] %s", seq, line);
+		else
+			syslog(level, "%s", line);
 	}
 }
 #endif   /* HAVE_SYSLOG */
@@ -2067,7 +2086,7 @@ write_eventlog(int level, const char *line, int len)
 		case DEBUG2:
 		case DEBUG1:
 		case LOG:
-		case COMMERROR:
+		case LOG_SERVER_ONLY:
 		case INFO:
 		case NOTICE:
 			eventlevel = EVENTLOG_INFORMATION_TYPE;
@@ -2448,7 +2467,7 @@ log_line_prefix(StringInfo buf, ErrorData *edata)
 				break;
 			case 'n':
 				{
-					char	strfbuf[128];
+					char		strfbuf[128];
 
 					if (!saved_timeval_set)
 					{
@@ -2457,7 +2476,7 @@ log_line_prefix(StringInfo buf, ErrorData *edata)
 					}
 
 					sprintf(strfbuf, "%ld.%03d", saved_timeval.tv_sec,
-							(int)(saved_timeval.tv_usec / 1000));
+							(int) (saved_timeval.tv_usec / 1000));
 
 					if (padding != 0)
 						appendStringInfo(buf, "%*s", padding, strfbuf);
@@ -2946,7 +2965,7 @@ send_message_to_server_log(ErrorData *edata)
 				syslog_level = LOG_DEBUG;
 				break;
 			case LOG:
-			case COMMERROR:
+			case LOG_SERVER_ONLY:
 			case INFO:
 				syslog_level = LOG_INFO;
 				break;
@@ -3576,7 +3595,7 @@ error_severity(int elevel)
 			prefix = _("DEBUG");
 			break;
 		case LOG:
-		case COMMERROR:
+		case LOG_SERVER_ONLY:
 			prefix = _("LOG");
 			break;
 		case INFO:
@@ -3680,7 +3699,7 @@ write_stderr(const char *fmt,...)
 static bool
 is_log_level_output(int elevel, int log_min_level)
 {
-	if (elevel == LOG || elevel == COMMERROR)
+	if (elevel == LOG || elevel == LOG_SERVER_ONLY)
 	{
 		if (log_min_level == LOG || log_min_level <= ERROR)
 			return true;

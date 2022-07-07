@@ -136,7 +136,7 @@ pg_ltoa(int32 value, char *a)
 	 * Avoid problems with the most negative integer not being representable
 	 * as a positive integer.
 	 */
-	if (value == (-2147483647 - 1))
+	if (value == PG_INT32_MIN)
 	{
 		memcpy(a, "-2147483648", 12);
 		return;
@@ -387,4 +387,26 @@ pg_ltostr(char *str, int32 value)
 	}
 
 	return end;
+}
+
+/*
+ * pg_strtouint64
+ *		Converts 'str' into an unsigned 64-bit integer.
+ *
+ * This has the identical API to strtoul(3), except that it will handle
+ * 64-bit ints even where "long" is narrower than that.
+ *
+ * For the moment it seems sufficient to assume that the platform has
+ * such a function somewhere; let's not roll our own.
+ */
+uint64
+pg_strtouint64(const char *str, char **endptr, int base)
+{
+#ifdef _MSC_VER					/* MSVC only */
+	return _strtoui64(str, endptr, base);
+#elif defined(HAVE_STRTOULL) && SIZEOF_LONG < 8
+	return strtoull(str, endptr, base);
+#else
+	return strtoul(str, endptr, base);
+#endif
 }

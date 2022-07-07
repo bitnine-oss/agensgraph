@@ -1121,6 +1121,9 @@ static const TParserStateActionItem actionTPS_InUnsignedInt[] = {
 	{p_iseqC, '.', A_PUSH, TPS_InUDecimalFirst, 0, NULL},
 	{p_iseqC, 'e', A_PUSH, TPS_InMantissaFirst, 0, NULL},
 	{p_iseqC, 'E', A_PUSH, TPS_InMantissaFirst, 0, NULL},
+	{p_iseqC, '-', A_PUSH, TPS_InHostFirstAN, 0, NULL},
+	{p_iseqC, '_', A_PUSH, TPS_InHostFirstAN, 0, NULL},
+	{p_iseqC, '@', A_PUSH, TPS_InEmail, 0, NULL},
 	{p_isasclet, 0, A_PUSH, TPS_InHost, 0, NULL},
 	{p_isalpha, 0, A_NEXT, TPS_InNumWord, 0, NULL},
 	{p_isspecial, 0, A_NEXT, TPS_InNumWord, 0, NULL},
@@ -2027,15 +2030,36 @@ typedef struct
 } hlCheck;
 
 static bool
-checkcondition_HL(void *checkval, QueryOperand *val)
+checkcondition_HL(void *opaque, QueryOperand *val, ExecPhraseData *data)
 {
 	int			i;
+	hlCheck    *checkval = (hlCheck *) opaque;
 
-	for (i = 0; i < ((hlCheck *) checkval)->len; i++)
+	for (i = 0; i < checkval->len; i++)
 	{
-		if (((hlCheck *) checkval)->words[i].item == val)
-			return true;
+		if (checkval->words[i].item == val)
+		{
+			/* don't need to find all positions */
+			if (!data)
+				return true;
+
+			if (!data->pos)
+			{
+				data->pos = palloc(sizeof(WordEntryPos) * checkval->len);
+				data->allocated = true;
+				data->npos = 1;
+				data->pos[0] = checkval->words[i].pos;
+			}
+			else if (data->pos[data->npos - 1] < checkval->words[i].pos)
+			{
+				data->pos[data->npos++] = checkval->words[i].pos;
+			}
+		}
 	}
+
+	if (data && data->npos > 0)
+		return true;
+
 	return false;
 }
 
@@ -2397,7 +2421,7 @@ mark_hl_words(HeadlineParsedText *prs, TSQuery query, int highlight,
 
 			if (poslen < bestlen && !(NOENDTOKEN(prs->words[beste].type) || prs->words[beste].len <= shortword))
 			{
-				/* best already finded, so try one more cover */
+				/* best already found, so try one more cover */
 				p++;
 				continue;
 			}
@@ -2441,6 +2465,8 @@ mark_hl_words(HeadlineParsedText *prs, TSQuery query, int highlight,
 			}
 			else
 			{					/* shorter cover :((( */
+				if (i > q)
+					i = q;
 				for (; curlen > min_words; i--)
 				{
 					if (!NONWORDTOKEN(prs->words[i].type))

@@ -62,6 +62,9 @@ static void commit_cb_wrapper(ReorderBuffer *cache, ReorderBufferTXN *txn,
 				  XLogRecPtr commit_lsn);
 static void change_cb_wrapper(ReorderBuffer *cache, ReorderBufferTXN *txn,
 				  Relation relation, ReorderBufferChange *change);
+static void message_cb_wrapper(ReorderBuffer *cache, ReorderBufferTXN *txn,
+				   XLogRecPtr message_lsn, bool transactional,
+				 const char *prefix, Size message_size, const char *message);
 
 static void LoadOutputPlugin(OutputPluginCallbacks *callbacks, char *plugin);
 
@@ -178,6 +181,7 @@ StartupDecodingContext(List *output_plugin_options,
 	ctx->reorder->begin = begin_cb_wrapper;
 	ctx->reorder->apply_change = change_cb_wrapper;
 	ctx->reorder->commit = commit_cb_wrapper;
+	ctx->reorder->message = message_cb_wrapper;
 
 	ctx->out = makeStringInfo();
 	ctx->prepare_write = prepare_write;
@@ -277,7 +281,7 @@ CreateInitDecodingContext(char *plugin,
 	LWLockRelease(ProcArrayLock);
 
 	/*
-	 * tell the snapshot builder to only assemble snapshot once reaching the a
+	 * tell the snapshot builder to only assemble snapshot once reaching the
 	 * running_xact's record with the respective xmin.
 	 */
 	xmin_horizon = slot->data.catalog_xmin;
@@ -301,10 +305,18 @@ CreateInitDecodingContext(char *plugin,
  * Create a new decoding context, for a logical slot that has previously been
  * used already.
  *
- * start_lsn contains the LSN of the last received data or InvalidXLogRecPtr
- * output_plugin_options contains options passed to the output plugin
- * read_page, prepare_write, do_write are callbacks that have to be filled to
- *		perform the use-case dependent, actual, work.
+ * start_lsn
+ *		The LSN at which to start decoding.  If InvalidXLogRecPtr, restart
+ *		from the slot's confirmed_flush; otherwise, start from the specified
+ *		location (but move it forwards to confirmed_flush if it's older than
+ *		that, see below).
+ *
+ * output_plugin_options
+ *		contains options passed to the output plugin.
+ *
+ * read_page, prepare_write, do_write
+ *		callbacks that have to be filled to perform the use-case dependent,
+ *		actual work.
  *
  * Needs to be called while in a memory context that's at least as long lived
  * as the decoding context because further memory contexts will be created
@@ -702,12 +714,46 @@ filter_by_origin_cb_wrapper(LogicalDecodingContext *ctx, RepOriginId origin_id)
 	return ret;
 }
 
+static void
+message_cb_wrapper(ReorderBuffer *cache, ReorderBufferTXN *txn,
+				   XLogRecPtr message_lsn, bool transactional,
+				   const char *prefix, Size message_size, const char *message)
+{
+	LogicalDecodingContext *ctx = cache->private_data;
+	LogicalErrorCallbackState state;
+	ErrorContextCallback errcallback;
+
+	if (ctx->callbacks.message_cb == NULL)
+		return;
+
+	/* Push callback + info on the error context stack */
+	state.ctx = ctx;
+	state.callback_name = "message";
+	state.report_location = message_lsn;
+	errcallback.callback = output_plugin_error_callback;
+	errcallback.arg = (void *) &state;
+	errcallback.previous = error_context_stack;
+	error_context_stack = &errcallback;
+
+	/* set output state */
+	ctx->accept_writes = true;
+	ctx->write_xid = txn != NULL ? txn->xid : InvalidTransactionId;
+	ctx->write_location = message_lsn;
+
+	/* do the actual work: call callback */
+	ctx->callbacks.message_cb(ctx, txn, message_lsn, transactional, prefix,
+							  message_size, message);
+
+	/* Pop the error context stack */
+	error_context_stack = errcallback.previous;
+}
+
 /*
  * Set the required catalog xmin horizon for historic snapshots in the current
  * replication slot.
  *
  * Note that in the most cases, we won't be able to immediately use the xmin
- * to increase the xmin horizon, we need to wait till the client has confirmed
+ * to increase the xmin horizon: we need to wait till the client has confirmed
  * receiving current_lsn with LogicalConfirmReceivedLocation().
  */
 void
@@ -834,7 +880,7 @@ LogicalIncreaseRestartDecodingForSlot(XLogRecPtr current_lsn, XLogRecPtr restart
 }
 
 /*
- * Handle a consumer's conformation having received all changes up to lsn.
+ * Handle a consumer's confirmation having received all changes up to lsn.
  */
 void
 LogicalConfirmReceivedLocation(XLogRecPtr lsn)
@@ -852,7 +898,7 @@ LogicalConfirmReceivedLocation(XLogRecPtr lsn)
 
 		MyReplicationSlot->data.confirmed_flush = lsn;
 
-		/* if were past the location required for bumping xmin, do so */
+		/* if we're past the location required for bumping xmin, do so */
 		if (MyReplicationSlot->candidate_xmin_lsn != InvalidXLogRecPtr &&
 			MyReplicationSlot->candidate_xmin_lsn <= lsn)
 		{
@@ -888,7 +934,7 @@ LogicalConfirmReceivedLocation(XLogRecPtr lsn)
 
 		SpinLockRelease(&MyReplicationSlot->mutex);
 
-		/* first write new xmin to disk, so we know whats up after a crash */
+		/* first write new xmin to disk, so we know what's up after a crash */
 		if (updated_xmin || updated_restart)
 		{
 			ReplicationSlotMarkDirty();

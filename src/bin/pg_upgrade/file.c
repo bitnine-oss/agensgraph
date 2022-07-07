@@ -9,103 +9,46 @@
 
 #include "postgres_fe.h"
 
+#include "access/visibilitymap.h"
 #include "pg_upgrade.h"
+#include "storage/bufpage.h"
+#include "storage/checksum.h"
+#include "storage/checksum_impl.h"
 
+#include <sys/stat.h>
 #include <fcntl.h>
 
+#define BITS_PER_HEAPBLOCK_OLD 1
 
 
 #ifndef WIN32
-static int	copy_file(const char *fromfile, const char *tofile, bool force);
+static int	copy_file(const char *fromfile, const char *tofile);
 #else
 static int	win32_pghardlink(const char *src, const char *dst);
 #endif
 
 
 /*
- * copyAndUpdateFile()
+ * copyFile()
  *
- *	Copies a relation file from src to dst.  If pageConverter is non-NULL, this function
- *	uses that pageConverter to do a page-by-page conversion.
+ *	Copies a relation file from src to dst.
  */
 const char *
-copyAndUpdateFile(pageCnvCtx *pageConverter,
-				  const char *src, const char *dst, bool force)
+copyFile(const char *src, const char *dst)
 {
-	if (pageConverter == NULL)
-	{
 #ifndef WIN32
-		if (copy_file(src, dst, force) == -1)
+	if (copy_file(src, dst) == -1)
 #else
-		if (CopyFile(src, dst, !force) == 0)
+	if (CopyFile(src, dst, true) == 0)
 #endif
-			return getErrorText();
-		else
-			return NULL;
-	}
+		return getErrorText();
 	else
-	{
-		/*
-		 * We have a pageConverter object - that implies that the
-		 * PageLayoutVersion differs between the two clusters so we have to
-		 * perform a page-by-page conversion.
-		 *
-		 * If the pageConverter can convert the entire file at once, invoke
-		 * that plugin function, otherwise, read each page in the relation
-		 * file and call the convertPage plugin function.
-		 */
-
-#ifdef PAGE_CONVERSION
-		if (pageConverter->convertFile)
-			return pageConverter->convertFile(pageConverter->pluginData,
-											  dst, src);
-		else
-#endif
-		{
-			int			src_fd;
-			int			dstfd;
-			char		buf[BLCKSZ];
-			ssize_t		bytesRead;
-			const char *msg = NULL;
-
-			if ((src_fd = open(src, O_RDONLY, 0)) < 0)
-				return "could not open source file";
-
-			if ((dstfd = open(dst, O_RDWR | O_CREAT | O_EXCL, S_IRUSR | S_IWUSR)) < 0)
-			{
-				close(src_fd);
-				return "could not create destination file";
-			}
-
-			while ((bytesRead = read(src_fd, buf, BLCKSZ)) == BLCKSZ)
-			{
-#ifdef PAGE_CONVERSION
-				if ((msg = pageConverter->convertPage(pageConverter->pluginData, buf, buf)) != NULL)
-					break;
-#endif
-				if (write(dstfd, buf, BLCKSZ) != BLCKSZ)
-				{
-					msg = "could not write new page to destination";
-					break;
-				}
-			}
-
-			close(src_fd);
-			close(dstfd);
-
-			if (msg)
-				return msg;
-			else if (bytesRead != 0)
-				return "found partial page in source file";
-			else
-				return NULL;
-		}
-	}
+		return NULL;
 }
 
 
 /*
- * linkAndUpdateFile()
+ * linkFile()
  *
  * Creates a hard link between the given relation files. We use
  * this function to perform a true in-place update. If the on-disk
@@ -114,12 +57,8 @@ copyAndUpdateFile(pageCnvCtx *pageConverter,
  * instead of copying the data from the old cluster to the new cluster.
  */
 const char *
-linkAndUpdateFile(pageCnvCtx *pageConverter,
-				  const char *src, const char *dst)
+linkFile(const char *src, const char *dst)
 {
-	if (pageConverter != NULL)
-		return "Cannot in-place update this cluster, page-by-page conversion is required";
-
 	if (pg_link_file(src, dst) == -1)
 		return getErrorText();
 	else
@@ -129,7 +68,7 @@ linkAndUpdateFile(pageCnvCtx *pageConverter,
 
 #ifndef WIN32
 static int
-copy_file(const char *srcfile, const char *dstfile, bool force)
+copy_file(const char *srcfile, const char *dstfile)
 {
 #define COPY_BUF_SIZE (50 * BLCKSZ)
 
@@ -148,7 +87,7 @@ copy_file(const char *srcfile, const char *dstfile, bool force)
 	if ((src_fd = open(srcfile, O_RDONLY, 0)) < 0)
 		return -1;
 
-	if ((dest_fd = open(dstfile, O_RDWR | O_CREAT | (force ? 0 : O_EXCL), S_IRUSR | S_IWUSR)) < 0)
+	if ((dest_fd = open(dstfile, O_RDWR | O_CREAT | O_EXCL, S_IRUSR | S_IWUSR)) < 0)
 	{
 		save_errno = errno;
 
@@ -204,6 +143,165 @@ copy_file(const char *srcfile, const char *dstfile, bool force)
 }
 #endif
 
+
+/*
+ * rewriteVisibilityMap()
+ *
+ * In versions of PostgreSQL prior to catversion 201603011, PostgreSQL's
+ * visibility map included one bit per heap page; it now includes two.
+ * When upgrading a cluster from before that time to a current PostgreSQL
+ * version, we could refuse to copy visibility maps from the old cluster
+ * to the new cluster; the next VACUUM would recreate them, but at the
+ * price of scanning the entire table.  So, instead, we rewrite the old
+ * visibility maps in the new format.  That way, the all-visible bit
+ * remains set for the pages for which it was set previously.  The
+ * all-frozen bit is never set by this conversion; we leave that to
+ * VACUUM.
+ */
+const char *
+rewriteVisibilityMap(const char *fromfile, const char *tofile)
+{
+	int			src_fd = 0;
+	int			dst_fd = 0;
+	char		buffer[BLCKSZ];
+	ssize_t		bytesRead;
+	ssize_t		totalBytesRead = 0;
+	ssize_t		src_filesize;
+	int			rewriteVmBytesPerPage;
+	BlockNumber new_blkno = 0;
+	struct stat statbuf;
+
+	/* Compute we need how many old page bytes to rewrite a new page */
+	rewriteVmBytesPerPage = (BLCKSZ - SizeOfPageHeaderData) / 2;
+
+	if ((fromfile == NULL) || (tofile == NULL))
+		return "Invalid old file or new file";
+
+	if ((src_fd = open(fromfile, O_RDONLY, 0)) < 0)
+		return getErrorText();
+
+	if (fstat(src_fd, &statbuf) != 0)
+	{
+		close(src_fd);
+		return getErrorText();
+	}
+
+	if ((dst_fd = open(tofile, O_RDWR | O_CREAT | O_EXCL, S_IRUSR | S_IWUSR)) < 0)
+	{
+		close(src_fd);
+		return getErrorText();
+	}
+
+	/* Save old file size */
+	src_filesize = statbuf.st_size;
+
+	/*
+	 * Turn each visibility map page into 2 pages one by one. Each new page
+	 * has the same page header as the old one.  If the last section of last
+	 * page is empty, we skip it, mostly to avoid turning one-page visibility
+	 * maps for small relations into two pages needlessly.
+	 */
+	while (totalBytesRead < src_filesize)
+	{
+		char	   *old_cur;
+		char	   *old_break;
+		char	   *old_blkend;
+		PageHeaderData pageheader;
+		bool		old_lastblk;
+
+		if ((bytesRead = read(src_fd, buffer, BLCKSZ)) != BLCKSZ)
+		{
+			close(dst_fd);
+			close(src_fd);
+			return getErrorText();
+		}
+
+		totalBytesRead += BLCKSZ;
+		old_lastblk = (totalBytesRead == src_filesize);
+
+		/* Save the page header data */
+		memcpy(&pageheader, buffer, SizeOfPageHeaderData);
+
+		/*
+		 * These old_* variables point to old visibility map page. old_cur
+		 * points to current position on old page. old_blkend points to end of
+		 * old block. old_break points to old page break position for
+		 * rewriting a new page. After wrote a new page, old_break proceeds
+		 * rewriteVmBytesPerPage bytes.
+		 */
+		old_cur = buffer + SizeOfPageHeaderData;
+		old_blkend = buffer + bytesRead;
+		old_break = old_cur + rewriteVmBytesPerPage;
+
+		while (old_blkend >= old_break)
+		{
+			char		new_vmbuf[BLCKSZ];
+			char	   *new_cur = new_vmbuf;
+			bool		empty = true;
+			bool		old_lastpart;
+
+			/* Copy page header in advance */
+			memcpy(new_vmbuf, &pageheader, SizeOfPageHeaderData);
+
+			/* Rewrite the last part of the old page? */
+			old_lastpart = old_lastblk && (old_blkend == old_break);
+
+			new_cur += SizeOfPageHeaderData;
+
+			/* Process old page bytes one by one, and turn it into new page. */
+			while (old_break > old_cur)
+			{
+				uint16		new_vmbits = 0;
+				int			i;
+
+				/* Generate new format bits while keeping old information */
+				for (i = 0; i < BITS_PER_BYTE; i++)
+				{
+					uint8		byte = *(uint8 *) old_cur;
+
+					if (byte & (1 << (BITS_PER_HEAPBLOCK_OLD * i)))
+					{
+						empty = false;
+						new_vmbits |= 1 << (BITS_PER_HEAPBLOCK * i);
+					}
+				}
+
+				/* Copy new visibility map bit to new format page */
+				memcpy(new_cur, &new_vmbits, BITS_PER_HEAPBLOCK);
+
+				old_cur += BITS_PER_HEAPBLOCK_OLD;
+				new_cur += BITS_PER_HEAPBLOCK;
+			}
+
+			/* If the last part of the old page is empty, skip writing it */
+			if (old_lastpart && empty)
+				break;
+
+			/* Set new checksum for a visibility map page (if enabled) */
+			if (old_cluster.controldata.data_checksum_version != 0 &&
+				new_cluster.controldata.data_checksum_version != 0)
+				((PageHeader) new_vmbuf)->pd_checksum =
+					pg_checksum_page(new_vmbuf, new_blkno);
+
+			if (write(dst_fd, new_vmbuf, BLCKSZ) != BLCKSZ)
+			{
+				close(dst_fd);
+				close(src_fd);
+				return getErrorText();
+			}
+
+			old_break += rewriteVmBytesPerPage;
+			new_blkno++;
+		}
+	}
+
+	/* Close files */
+	close(dst_fd);
+	close(src_fd);
+
+	return NULL;
+
+}
 
 void
 check_hard_link(void)

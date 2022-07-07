@@ -167,7 +167,7 @@ static Datum postquel_get_single_result(TupleTableSlot *slot,
 static void sql_exec_error_callback(void *arg);
 static void ShutdownSQLFunction(Datum arg);
 static void sqlfunction_startup(DestReceiver *self, int operation, TupleDesc typeinfo);
-static void sqlfunction_receive(TupleTableSlot *slot, DestReceiver *self);
+static bool sqlfunction_receive(TupleTableSlot *slot, DestReceiver *self);
 static void sqlfunction_shutdown(DestReceiver *self);
 static void sqlfunction_destroy(DestReceiver *self);
 
@@ -497,8 +497,8 @@ init_execution_state(List *queryTree_list,
 				stmt = queryTree->utilityStmt;
 			else
 				stmt = (Node *) pg_plan_query(queryTree,
-					fcache->readonly_func ? CURSOR_OPT_PARALLEL_OK : 0,
-					NULL);
+						  fcache->readonly_func ? CURSOR_OPT_PARALLEL_OK : 0,
+											  NULL);
 
 			/* Precheck all commands for validity in a function */
 			if (IsA(stmt, TransactionStmt))
@@ -853,7 +853,7 @@ postquel_getnext(execution_state *es, SQLFunctionCachePtr fcache)
 	else
 	{
 		/* Run regular commands to completion unless lazyEval */
-		long		count = (es->lazyEval) ? 1L : 0L;
+		uint64		count = (es->lazyEval) ? 1 : 0;
 
 		ExecutorRun(es->qd, ForwardScanDirection, count);
 
@@ -861,7 +861,7 @@ postquel_getnext(execution_state *es, SQLFunctionCachePtr fcache)
 		 * If we requested run to completion OR there was no tuple returned,
 		 * command must be complete.
 		 */
-		result = (count == 0L || es->qd->estate->es_processed == 0);
+		result = (count == 0 || es->qd->estate->es_processed == 0);
 	}
 
 	return result;
@@ -1904,7 +1904,7 @@ sqlfunction_startup(DestReceiver *self, int operation, TupleDesc typeinfo)
 /*
  * sqlfunction_receive --- receive one tuple
  */
-static void
+static bool
 sqlfunction_receive(TupleTableSlot *slot, DestReceiver *self)
 {
 	DR_sqlfunction *myState = (DR_sqlfunction *) self;
@@ -1914,6 +1914,8 @@ sqlfunction_receive(TupleTableSlot *slot, DestReceiver *self)
 
 	/* Store the filtered tuple into the tuplestore */
 	tuplestore_puttupleslot(myState->tstore, slot);
+
+	return true;
 }
 
 /*

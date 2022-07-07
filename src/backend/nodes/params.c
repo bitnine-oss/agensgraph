@@ -61,8 +61,8 @@ copyParamList(ParamListInfo from)
 		bool		typByVal;
 
 		/* Ignore parameters we don't need, to save cycles and space. */
-		if (retval->paramMask != NULL &&
-			!bms_is_member(i, retval->paramMask))
+		if (from->paramMask != NULL &&
+			!bms_is_member(i, from->paramMask))
 		{
 			nprm->value = (Datum) 0;
 			nprm->isnull = true;
@@ -94,8 +94,8 @@ copyParamList(ParamListInfo from)
 Size
 EstimateParamListSpace(ParamListInfo paramLI)
 {
-	int		i;
-	Size	sz = sizeof(int);
+	int			i;
+	Size		sz = sizeof(int);
 
 	if (paramLI == NULL || paramLI->numParams <= 0)
 		return sz;
@@ -119,7 +119,7 @@ EstimateParamListSpace(ParamListInfo paramLI)
 			typeOid = prm->ptype;
 		}
 
-		sz = add_size(sz, sizeof(Oid));			/* space for type OID */
+		sz = add_size(sz, sizeof(Oid)); /* space for type OID */
 		sz = add_size(sz, sizeof(uint16));		/* space for pflags */
 
 		/* space for datum/isnull */
@@ -132,7 +132,7 @@ EstimateParamListSpace(ParamListInfo paramLI)
 			typByVal = true;
 		}
 		sz = add_size(sz,
-			datumEstimateSpace(prm->value, prm->isnull, typByVal, typLen));
+			  datumEstimateSpace(prm->value, prm->isnull, typByVal, typLen));
 	}
 
 	return sz;

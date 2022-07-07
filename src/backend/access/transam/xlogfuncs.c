@@ -28,12 +28,35 @@
 #include "replication/walreceiver.h"
 #include "storage/smgr.h"
 #include "utils/builtins.h"
+#include "utils/memutils.h"
 #include "utils/numeric.h"
 #include "utils/guc.h"
 #include "utils/pg_lsn.h"
 #include "utils/timestamp.h"
+#include "utils/tuplestore.h"
 #include "storage/fd.h"
+#include "storage/ipc.h"
 
+
+/*
+ * Store label file and tablespace map during non-exclusive backups.
+ */
+static StringInfo label_file;
+static StringInfo tblspc_map_file;
+static bool exclusive_backup_running = false;
+static bool nonexclusive_backup_running = false;
+
+/*
+ * Called when the backend exits with a running non-exclusive base backup,
+ * to clean up state.
+ */
+static void
+nonexclusive_base_backup_cleanup(int code, Datum arg)
+{
+	do_pg_abort_backup();
+	ereport(WARNING,
+			(errmsg("aborting backup due to backend exiting before pg_stop_backup was called")));
+}
 
 /*
  * pg_start_backup: set up for taking an on-line backup dump
@@ -43,22 +66,26 @@
  * contains the user-supplied label string (typically this would be used
  * to tell where the backup dump will be stored) and the starting time and
  * starting WAL location for the dump.
+ *
+ * Permission checking for this function is managed through the normal
+ * GRANT system.
  */
 Datum
 pg_start_backup(PG_FUNCTION_ARGS)
 {
 	text	   *backupid = PG_GETARG_TEXT_P(0);
 	bool		fast = PG_GETARG_BOOL(1);
+	bool		exclusive = PG_GETARG_BOOL(2);
 	char	   *backupidstr;
 	XLogRecPtr	startpoint;
 	DIR		   *dir;
 
 	backupidstr = text_to_cstring(backupid);
 
-	if (!superuser() && !has_rolreplication(GetUserId()))
+	if (exclusive_backup_running || nonexclusive_backup_running)
 		ereport(ERROR,
-				(errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
-		   errmsg("must be superuser or replication role to run a backup")));
+				(errcode(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
+				 errmsg("a backup is already in progress in this session")));
 
 	/* Make sure we can open the directory with tablespaces in it */
 	dir = AllocateDir("pg_tblspc");
@@ -66,8 +93,31 @@ pg_start_backup(PG_FUNCTION_ARGS)
 		ereport(ERROR,
 				(errmsg("could not open directory \"%s\": %m", "pg_tblspc")));
 
-	startpoint = do_pg_start_backup(backupidstr, fast, NULL, NULL,
-									dir, NULL, NULL, false, true);
+	if (exclusive)
+	{
+		startpoint = do_pg_start_backup(backupidstr, fast, NULL, NULL,
+										dir, NULL, NULL, false, true);
+		exclusive_backup_running = true;
+	}
+	else
+	{
+		MemoryContext oldcontext;
+
+		/*
+		 * Label file and tablespace map file need to be long-lived, since
+		 * they are read in pg_stop_backup.
+		 */
+		oldcontext = MemoryContextSwitchTo(TopMemoryContext);
+		label_file = makeStringInfo();
+		tblspc_map_file = makeStringInfo();
+		MemoryContextSwitchTo(oldcontext);
+
+		startpoint = do_pg_start_backup(backupidstr, fast, NULL, label_file,
+									dir, NULL, tblspc_map_file, false, true);
+		nonexclusive_backup_running = true;
+
+		before_shmem_exit(nonexclusive_base_backup_cleanup, (Datum) 0);
+	}
 
 	FreeDir(dir);
 
@@ -86,34 +136,156 @@ pg_start_backup(PG_FUNCTION_ARGS)
  * record for that and the file is for informational and debug purposes only.
  *
  * Note: different from CancelBackup which just cancels online backup mode.
+ *
+ * Note: this version is only called to stop an exclusive backup. The function
+ *		 pg_stop_backup_v2 (overloaded as pg_stop_backup in SQL) is called to
+ *		 stop non-exclusive backups.
+ *
+ * Permission checking for this function is managed through the normal
+ * GRANT system.
  */
 Datum
 pg_stop_backup(PG_FUNCTION_ARGS)
 {
 	XLogRecPtr	stoppoint;
 
-	if (!superuser() && !has_rolreplication(GetUserId()))
+	if (nonexclusive_backup_running)
 		ereport(ERROR,
-				(errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
-		 (errmsg("must be superuser or replication role to run a backup"))));
+				(errcode(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
+				 errmsg("non-exclusive backup in progress"),
+				 errhint("Did you mean to use pg_stop_backup('f')?")));
 
+	/*
+	 * Exclusive backups were typically started in a different connection, so
+	 * don't try to verify that exclusive_backup_running is set in this one.
+	 * Actual verification that an exclusive backup is in fact running is
+	 * handled inside do_pg_stop_backup.
+	 */
 	stoppoint = do_pg_stop_backup(NULL, true, NULL);
+
+	exclusive_backup_running = false;
 
 	PG_RETURN_LSN(stoppoint);
 }
 
+
+/*
+ * pg_stop_backup_v2: finish taking exclusive or nonexclusive on-line backup.
+ *
+ * Works the same as pg_stop_backup, except for non-exclusive backups it returns
+ * the backup label and tablespace map files as text fields in as part of the
+ * resultset.
+ *
+ * Permission checking for this function is managed through the normal
+ * GRANT system.
+ */
+Datum
+pg_stop_backup_v2(PG_FUNCTION_ARGS)
+{
+	ReturnSetInfo *rsinfo = (ReturnSetInfo *) fcinfo->resultinfo;
+	TupleDesc	tupdesc;
+	Tuplestorestate *tupstore;
+	MemoryContext per_query_ctx;
+	MemoryContext oldcontext;
+	Datum		values[3];
+	bool		nulls[3];
+
+	bool		exclusive = PG_GETARG_BOOL(0);
+	XLogRecPtr	stoppoint;
+
+	/* check to see if caller supports us returning a tuplestore */
+	if (rsinfo == NULL || !IsA(rsinfo, ReturnSetInfo))
+		ereport(ERROR,
+				(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+				 errmsg("set-valued function called in context that cannot accept a set")));
+	if (!(rsinfo->allowedModes & SFRM_Materialize))
+		ereport(ERROR,
+				(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+				 errmsg("materialize mode required, but it is not " \
+						"allowed in this context")));
+
+	/* Build a tuple descriptor for our result type */
+	if (get_call_result_type(fcinfo, NULL, &tupdesc) != TYPEFUNC_COMPOSITE)
+		elog(ERROR, "return type must be a row type");
+
+	per_query_ctx = rsinfo->econtext->ecxt_per_query_memory;
+	oldcontext = MemoryContextSwitchTo(per_query_ctx);
+
+	tupstore = tuplestore_begin_heap(true, false, work_mem);
+	rsinfo->returnMode = SFRM_Materialize;
+	rsinfo->setResult = tupstore;
+	rsinfo->setDesc = tupdesc;
+
+	MemoryContextSwitchTo(oldcontext);
+
+	MemSet(values, 0, sizeof(values));
+	MemSet(nulls, 0, sizeof(nulls));
+
+	if (exclusive)
+	{
+		if (nonexclusive_backup_running)
+			ereport(ERROR,
+					(errcode(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
+					 errmsg("non-exclusive backup in progress"),
+					 errhint("Did you mean to use pg_stop_backup('f')?")));
+
+		/*
+		 * Stop the exclusive backup, and since we're in an exclusive backup
+		 * return NULL for both backup_label and tablespace_map.
+		 */
+		stoppoint = do_pg_stop_backup(NULL, true, NULL);
+		exclusive_backup_running = false;
+
+		nulls[1] = true;
+		nulls[2] = true;
+	}
+	else
+	{
+		if (!nonexclusive_backup_running)
+			ereport(ERROR,
+					(errcode(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
+					 errmsg("non-exclusive backup is not in progress"),
+					 errhint("Did you mean to use pg_stop_backup('t')?")));
+
+		/*
+		 * Stop the non-exclusive backup. Return a copy of the backup label
+		 * and tablespace map so they can be written to disk by the caller.
+		 */
+		stoppoint = do_pg_stop_backup(label_file->data, true, NULL);
+		nonexclusive_backup_running = false;
+		cancel_before_shmem_exit(nonexclusive_base_backup_cleanup, (Datum) 0);
+
+		values[1] = CStringGetTextDatum(label_file->data);
+		values[2] = CStringGetTextDatum(tblspc_map_file->data);
+
+		/* Free structures allocated in TopMemoryContext */
+		pfree(label_file->data);
+		pfree(label_file);
+		label_file = NULL;
+		pfree(tblspc_map_file->data);
+		pfree(tblspc_map_file);
+		tblspc_map_file = NULL;
+	}
+
+	/* Stoppoint is included on both exclusive and nonexclusive backups */
+	values[0] = LSNGetDatum(stoppoint);
+
+	tuplestore_putvalues(tupstore, tupdesc, values, nulls);
+	tuplestore_donestoring(typstore);
+
+	return (Datum) 0;
+}
+
 /*
  * pg_switch_xlog: switch to next xlog file
+ *
+ * Permission checking for this function is managed through the normal
+ * GRANT system.
  */
 Datum
 pg_switch_xlog(PG_FUNCTION_ARGS)
 {
 	XLogRecPtr	switchpoint;
-
-	if (!superuser())
-		ereport(ERROR,
-				(errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
-			 (errmsg("must be superuser to switch transaction log files"))));
 
 	if (RecoveryInProgress())
 		ereport(ERROR,
@@ -131,6 +303,9 @@ pg_switch_xlog(PG_FUNCTION_ARGS)
 
 /*
  * pg_create_restore_point: a named point for restore
+ *
+ * Permission checking for this function is managed through the normal
+ * GRANT system.
  */
 Datum
 pg_create_restore_point(PG_FUNCTION_ARGS)
@@ -138,11 +313,6 @@ pg_create_restore_point(PG_FUNCTION_ARGS)
 	text	   *restore_name = PG_GETARG_TEXT_P(0);
 	char	   *restore_name_str;
 	XLogRecPtr	restorepoint;
-
-	if (!superuser())
-		ereport(ERROR,
-				(errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
-				 (errmsg("must be superuser to create a restore point"))));
 
 	if (RecoveryInProgress())
 		ereport(ERROR,
@@ -154,7 +324,7 @@ pg_create_restore_point(PG_FUNCTION_ARGS)
 		ereport(ERROR,
 				(errcode(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
 			 errmsg("WAL level not sufficient for creating a restore point"),
-				 errhint("wal_level must be set to \"archive\", \"hot_standby\", or \"logical\" at server start.")));
+				 errhint("wal_level must be set to \"replica\" or \"logical\" at server start.")));
 
 	restore_name_str = text_to_cstring(restore_name);
 
@@ -365,15 +535,13 @@ pg_xlogfile_name(PG_FUNCTION_ARGS)
 
 /*
  * pg_xlog_replay_pause - pause recovery now
+ *
+ * Permission checking for this function is managed through the normal
+ * GRANT system.
  */
 Datum
 pg_xlog_replay_pause(PG_FUNCTION_ARGS)
 {
-	if (!superuser())
-		ereport(ERROR,
-				(errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
-				 (errmsg("must be superuser to control recovery"))));
-
 	if (!RecoveryInProgress())
 		ereport(ERROR,
 				(errcode(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
@@ -387,15 +555,13 @@ pg_xlog_replay_pause(PG_FUNCTION_ARGS)
 
 /*
  * pg_xlog_replay_resume - resume recovery now
+ *
+ * Permission checking for this function is managed through the normal
+ * GRANT system.
  */
 Datum
 pg_xlog_replay_resume(PG_FUNCTION_ARGS)
 {
-	if (!superuser())
-		ereport(ERROR,
-				(errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
-				 (errmsg("must be superuser to control recovery"))));
-
 	if (!RecoveryInProgress())
 		ereport(ERROR,
 				(errcode(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),

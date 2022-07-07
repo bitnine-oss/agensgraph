@@ -31,7 +31,7 @@
 /*
  * Each page of XLOG file has a header like this:
  */
-#define XLOG_PAGE_MAGIC 0xD088	/* can be used as WAL version indicator */
+#define XLOG_PAGE_MAGIC 0xD093	/* can be used as WAL version indicator */
 
 typedef struct XLogPageHeaderData
 {
@@ -138,7 +138,7 @@ typedef XLogLongPageHeaderData *XLogLongPageHeader;
 #define MAXFNAMELEN		64
 
 /* Length of XLog file name */
-#define XLOG_FNAME_LEN     24
+#define XLOG_FNAME_LEN	   24
 
 #define XLogFileName(fname, tli, logSegNo)	\
 	snprintf(fname, MAXFNAMELEN, "%08X%08X%08X", tli,		\
@@ -252,7 +252,7 @@ typedef enum
 {
 	RECOVERY_TARGET_ACTION_PAUSE,
 	RECOVERY_TARGET_ACTION_PROMOTE,
-	RECOVERY_TARGET_ACTION_SHUTDOWN,
+	RECOVERY_TARGET_ACTION_SHUTDOWN
 } RecoveryTargetAction;
 
 /*

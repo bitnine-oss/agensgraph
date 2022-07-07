@@ -36,7 +36,7 @@
  * WaitLatch includes a provision for timeouts (which should be avoided
  * when possible, as they incur extra overhead) and a provision for
  * postmaster child processes to wake up immediately on postmaster death.
- * See unix_latch.c for detailed specifications for the exported functions.
+ * See latch.c for detailed specifications for the exported functions.
  *
  * The correct pattern to wait for event(s) is:
  *
@@ -52,6 +52,22 @@
  * do. Otherwise, if someone sets the latch between the check and the
  * ResetLatch call, you will miss it and Wait will incorrectly block.
  *
+ * Another valid coding pattern looks like:
+ *
+ * for (;;)
+ * {
+ *	   if (work to do)
+ *		   Do Stuff(); // in particular, exit loop if some condition satisfied
+ *	   WaitLatch();
+ *	   ResetLatch();
+ * }
+ *
+ * This is useful to reduce latch traffic if it's expected that the loop's
+ * termination condition will often be satisfied in the first iteration;
+ * the cost is an extra loop iteration before blocking when it is not.
+ * What must be avoided is placing any checks for asynchronous events after
+ * WaitLatch and before ResetLatch, as that creates a race condition.
+ *
  * To wake up the waiter, you must first set a global flag or something
  * else that the wait loop tests in the "if (work to do)" part, and call
  * SetLatch *after* that. SetLatch is designed to return quickly if the
@@ -66,6 +82,12 @@
  * because generic signal handlers will call SetLatch on the process latch
  * only, so using any latch other than the process latch effectively precludes
  * use of any generic handler.
+ *
+ *
+ * WaitEventSets allow to wait for latches being set and additional events -
+ * postmaster dying and socket readiness of several sockets currently - at the
+ * same time.  On many platforms using a long lived event set is more
+ * efficient than using WaitLatch or WaitLatchOrSocket.
  *
  *
  * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
@@ -95,12 +117,26 @@ typedef struct Latch
 #endif
 } Latch;
 
-/* Bitmasks for events that may wake-up WaitLatch() clients */
+/*
+ * Bitmasks for events that may wake-up WaitLatch(), WaitLatchOrSocket(), or
+ * WaitEventSetWait().
+ */
 #define WL_LATCH_SET		 (1 << 0)
 #define WL_SOCKET_READABLE	 (1 << 1)
 #define WL_SOCKET_WRITEABLE  (1 << 2)
-#define WL_TIMEOUT			 (1 << 3)
+#define WL_TIMEOUT			 (1 << 3)	/* not for WaitEventSetWait() */
 #define WL_POSTMASTER_DEATH  (1 << 4)
+
+typedef struct WaitEvent
+{
+	int			pos;			/* position in the event data structure */
+	uint32		events;			/* triggered events */
+	pgsocket	fd;				/* socket fd associated with event */
+	void	   *user_data;		/* pointer provided in AddWaitEventToSet */
+} WaitEvent;
+
+/* forward declaration to avoid exposing latch.c implementation details */
+typedef struct WaitEventSet WaitEventSet;
 
 /*
  * prototypes for functions in latch.c
@@ -110,14 +146,19 @@ extern void InitLatch(volatile Latch *latch);
 extern void InitSharedLatch(volatile Latch *latch);
 extern void OwnLatch(volatile Latch *latch);
 extern void DisownLatch(volatile Latch *latch);
-extern int	WaitLatch(volatile Latch *latch, int wakeEvents, long timeout);
-extern int WaitLatchOrSocket(volatile Latch *latch, int wakeEvents,
-				  pgsocket sock, long timeout);
 extern void SetLatch(volatile Latch *latch);
 extern void ResetLatch(volatile Latch *latch);
 
-/* beware of memory ordering issues if you use this macro! */
-#define TestLatch(latch) (((volatile Latch *) (latch))->is_set)
+extern WaitEventSet *CreateWaitEventSet(MemoryContext context, int nevents);
+extern void FreeWaitEventSet(WaitEventSet *set);
+extern int AddWaitEventToSet(WaitEventSet *set, uint32 events, pgsocket fd,
+				  Latch *latch, void *user_data);
+extern void ModifyWaitEvent(WaitEventSet *set, int pos, uint32 events, Latch *latch);
+
+extern int	WaitEventSetWait(WaitEventSet *set, long timeout, WaitEvent *occurred_events, int nevents);
+extern int	WaitLatch(volatile Latch *latch, int wakeEvents, long timeout);
+extern int WaitLatchOrSocket(volatile Latch *latch, int wakeEvents,
+				  pgsocket sock, long timeout);
 
 /*
  * Unix implementation uses SIGUSR1 for inter-process signaling.

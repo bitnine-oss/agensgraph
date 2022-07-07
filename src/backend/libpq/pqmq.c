@@ -143,9 +143,9 @@ mq_putmessage(char msgtype, const char *s, size_t len)
 
 	/*
 	 * If the message queue is already gone, just ignore the message. This
-	 * doesn't necessarily indicate a problem; for example, DEBUG messages
-	 * can be generated late in the shutdown sequence, after all DSMs have
-	 * already been detached.
+	 * doesn't necessarily indicate a problem; for example, DEBUG messages can
+	 * be generated late in the shutdown sequence, after all DSMs have already
+	 * been detached.
 	 */
 	if (pq_mq == NULL)
 		return 0;
@@ -172,8 +172,8 @@ mq_putmessage(char msgtype, const char *s, size_t len)
 			break;
 
 		WaitLatch(&MyProc->procLatch, WL_LATCH_SET, 0);
-		CHECK_FOR_INTERRUPTS();
 		ResetLatch(&MyProc->procLatch);
+		CHECK_FOR_INTERRUPTS();
 	}
 
 	pq_mq_busy = false;
@@ -232,7 +232,7 @@ pq_parse_errornotice(StringInfo msg, ErrorData *edata)
 			pq_getmsgend(msg);
 			break;
 		}
-		value = pq_getmsgstring(msg);
+		value = pq_getmsgrawstring(msg);
 
 		switch (code)
 		{

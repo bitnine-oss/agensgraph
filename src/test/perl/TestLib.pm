@@ -1,7 +1,7 @@
 # TestLib, low-level routines and actions regression tests.
 #
 # This module contains a set of routines dedicated to environment setup for
-# a PostgreSQL regression test tun, and includes some low-level routines
+# a PostgreSQL regression test run and includes some low-level routines
 # aimed at controlling command execution, logging and test functions. This
 # module should never depend on any other PostgreSQL regression test modules.
 
@@ -107,14 +107,33 @@ INIT
 	autoflush TESTLOG 1;
 }
 
+END
+{
+
+	# Preserve temporary directory for this test on failure
+	$File::Temp::KEEP_ALL = 1 unless all_tests_passing();
+}
+
+sub all_tests_passing
+{
+	my $fail_count = 0;
+	foreach my $status (Test::More->builder->summary)
+	{
+		return 0 unless $status;
+	}
+	return 1;
+}
+
 #
 # Helper functions
 #
 sub tempdir
 {
+	my ($prefix) = @_;
+	$prefix = "tmp_test" unless defined $prefix;
 	return File::Temp::tempdir(
-		'tmp_testXXXX',
-		DIR => $tmp_check,
+		$prefix . '_XXXX',
+		DIR     => $tmp_check,
 		CLEANUP => 1);
 }
 

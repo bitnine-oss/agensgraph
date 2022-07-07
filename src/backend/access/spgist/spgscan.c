@@ -30,6 +30,7 @@ typedef void (*storeRes_func) (SpGistScanOpaque so, ItemPointer heapPtr,
 typedef struct ScanStackEntry
 {
 	Datum		reconstructedValue;		/* value reconstructed from parent */
+	void	   *traversalValue; /* opclass-specific traverse value */
 	int			level;			/* level of items on this page */
 	ItemPointerData ptr;		/* block and offset to scan from */
 } ScanStackEntry;
@@ -42,6 +43,9 @@ freeScanStackEntry(SpGistScanOpaque so, ScanStackEntry *stackEntry)
 	if (!so->state.attType.attbyval &&
 		DatumGetPointer(stackEntry->reconstructedValue) != NULL)
 		pfree(DatumGetPointer(stackEntry->reconstructedValue));
+	if (stackEntry->traversalValue)
+		pfree(stackEntry->traversalValue);
+
 	pfree(stackEntry);
 }
 
@@ -239,6 +243,7 @@ static bool
 spgLeafTest(Relation index, SpGistScanOpaque so,
 			SpGistLeafTuple leafTuple, bool isnull,
 			int level, Datum reconstructedValue,
+			void *traversalValue,
 			Datum *leafValue, bool *recheck)
 {
 	bool		result;
@@ -265,6 +270,7 @@ spgLeafTest(Relation index, SpGistScanOpaque so,
 	in.scankeys = so->keyData;
 	in.nkeys = so->numberOfKeys;
 	in.reconstructedValue = reconstructedValue;
+	in.traversalValue = traversalValue;
 	in.level = level;
 	in.returnData = so->want_itup;
 	in.leafDatum = leafDatum;
@@ -295,7 +301,7 @@ spgLeafTest(Relation index, SpGistScanOpaque so,
  */
 static void
 spgWalk(Relation index, SpGistScanOpaque so, bool scanWholeIndex,
-		storeRes_func storeRes)
+		storeRes_func storeRes, Snapshot snapshot)
 {
 	Buffer		buffer = InvalidBuffer;
 	bool		reportedSome = false;
@@ -336,6 +342,7 @@ redirect:
 		/* else new pointer points to the same page, no work needed */
 
 		page = BufferGetPage(buffer);
+		TestForOldSnapshot(snapshot, index, page);
 
 		isnull = SpGistPageStoresNulls(page) ? true : false;
 
@@ -365,6 +372,7 @@ redirect:
 									leafTuple, isnull,
 									stackEntry->level,
 									stackEntry->reconstructedValue,
+									stackEntry->traversalValue,
 									&leafValue,
 									&recheck))
 					{
@@ -411,6 +419,7 @@ redirect:
 									leafTuple, isnull,
 									stackEntry->level,
 									stackEntry->reconstructedValue,
+									stackEntry->traversalValue,
 									&leafValue,
 									&recheck))
 					{
@@ -456,6 +465,8 @@ redirect:
 			in.scankeys = so->keyData;
 			in.nkeys = so->numberOfKeys;
 			in.reconstructedValue = stackEntry->reconstructedValue;
+			in.traversalMemoryContext = oldCtx;
+			in.traversalValue = stackEntry->traversalValue;
 			in.level = stackEntry->level;
 			in.returnData = so->want_itup;
 			in.allTheSame = innerTuple->allTheSame;
@@ -523,6 +534,14 @@ redirect:
 					else
 						newEntry->reconstructedValue = (Datum) 0;
 
+					/*
+					 * Elements of out.traversalValues should be allocated in
+					 * in.traversalMemoryContext, which is actually a long
+					 * lived context of index scan.
+					 */
+					newEntry->traversalValue = (out.traversalValues) ?
+						out.traversalValues[i] : NULL;
+
 					so->scanStack = lcons(newEntry, so->scanStack);
 				}
 			}
@@ -558,7 +577,7 @@ spggetbitmap(IndexScanDesc scan, TIDBitmap *tbm)
 	so->tbm = tbm;
 	so->ntids = 0;
 
-	spgWalk(scan->indexRelation, so, true, storeBitmap);
+	spgWalk(scan->indexRelation, so, true, storeBitmap, scan->xs_snapshot);
 
 	return so->ntids;
 }
@@ -617,7 +636,8 @@ spggettuple(IndexScanDesc scan, ScanDirection dir)
 		}
 		so->iPtr = so->nPtrs = 0;
 
-		spgWalk(scan->indexRelation, so, false, storeGettuple);
+		spgWalk(scan->indexRelation, so, false, storeGettuple,
+				scan->xs_snapshot);
 
 		if (so->nPtrs == 0)
 			break;				/* must have completed scan */

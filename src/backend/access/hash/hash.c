@@ -22,6 +22,7 @@
 #include "access/relscan.h"
 #include "catalog/index.h"
 #include "commands/vacuum.h"
+#include "miscadmin.h"
 #include "optimizer/plancat.h"
 #include "utils/index_selfuncs.h"
 #include "utils/rel.h"
@@ -51,8 +52,8 @@ hashhandler(PG_FUNCTION_ARGS)
 {
 	IndexAmRoutine *amroutine = makeNode(IndexAmRoutine);
 
-	amroutine->amstrategies = 1;
-	amroutine->amsupport = 1;
+	amroutine->amstrategies = HTMaxStrategyNumber;
+	amroutine->amsupport = HASHNProcs;
 	amroutine->amcanorder = false;
 	amroutine->amcanorderbyop = false;
 	amroutine->amcanbackward = true;
@@ -74,6 +75,7 @@ hashhandler(PG_FUNCTION_ARGS)
 	amroutine->amcanreturn = NULL;
 	amroutine->amcostestimate = hashcostestimate;
 	amroutine->amoptions = hashoptions;
+	amroutine->amproperty = NULL;
 	amroutine->amvalidate = hashvalidate;
 	amroutine->ambeginscan = hashbeginscan;
 	amroutine->amrescan = hashrescan;
@@ -97,6 +99,7 @@ hashbuild(Relation heap, Relation index, IndexInfo *indexInfo)
 	double		reltuples;
 	double		allvisfrac;
 	uint32		num_buckets;
+	long		sort_threshold;
 	HashBuildState buildstate;
 
 	/*
@@ -120,12 +123,24 @@ hashbuild(Relation heap, Relation index, IndexInfo *indexInfo)
 	 * then we'll thrash horribly.  To prevent that scenario, we can sort the
 	 * tuples by (expected) bucket number.  However, such a sort is useless
 	 * overhead when the index does fit in RAM.  We choose to sort if the
-	 * initial index size exceeds NBuffers.
+	 * initial index size exceeds maintenance_work_mem, or the number of
+	 * buffers usable for the index, whichever is less.  (Limiting by the
+	 * number of buffers should reduce thrashing between PG buffers and kernel
+	 * buffers, which seems useful even if no physical I/O results.  Limiting
+	 * by maintenance_work_mem is useful to allow easy testing of the sort
+	 * code path, and may be useful to DBAs as an additional control knob.)
 	 *
 	 * NOTE: this test will need adjustment if a bucket is ever different from
-	 * one page.
+	 * one page.  Also, "initial index size" accounting does not include the
+	 * metapage, nor the first bitmap page.
 	 */
-	if (num_buckets >= (uint32) NBuffers)
+	sort_threshold = (maintenance_work_mem * 1024L) / BLCKSZ;
+	if (index->rd_rel->relpersistence != RELPERSISTENCE_TEMP)
+		sort_threshold = Min(sort_threshold, NBuffers);
+	else
+		sort_threshold = Min(sort_threshold, NLocBuffer);
+
+	if (num_buckets >= (uint32) sort_threshold)
 		buildstate.spool = _h_spoolinit(heap, index, num_buckets);
 	else
 		buildstate.spool = NULL;
@@ -176,19 +191,25 @@ hashbuildCallback(Relation index,
 				  void *state)
 {
 	HashBuildState *buildstate = (HashBuildState *) state;
+	Datum		index_values[1];
+	bool		index_isnull[1];
 	IndexTuple	itup;
 
-	/* Hash indexes don't index nulls, see notes in hashinsert */
-	if (isnull[0])
+	/* convert data to a hash key; on failure, do not insert anything */
+	if (!_hash_convert_tuple(index,
+							 values, isnull,
+							 index_values, index_isnull))
 		return;
 
 	/* Either spool the tuple for sorting, or just put it into the index */
 	if (buildstate->spool)
-		_h_spool(buildstate->spool, &htup->t_self, values, isnull);
+		_h_spool(buildstate->spool, &htup->t_self,
+				 index_values, index_isnull);
 	else
 	{
 		/* form an index tuple and point it at the heap tuple */
-		itup = _hash_form_tuple(index, values, isnull);
+		itup = index_form_tuple(RelationGetDescr(index),
+								index_values, index_isnull);
 		itup->t_tid = htup->t_self;
 		_hash_doinsert(index, itup);
 		pfree(itup);
@@ -208,22 +229,18 @@ hashinsert(Relation rel, Datum *values, bool *isnull,
 		   ItemPointer ht_ctid, Relation heapRel,
 		   IndexUniqueCheck checkUnique)
 {
+	Datum		index_values[1];
+	bool		index_isnull[1];
 	IndexTuple	itup;
 
-	/*
-	 * If the single index key is null, we don't insert it into the index.
-	 * Hash tables support scans on '='. Relational algebra says that A = B
-	 * returns null if either A or B is null.  This means that no
-	 * qualification used in an index scan could ever return true on a null
-	 * attribute.  It also means that indices can't be used by ISNULL or
-	 * NOTNULL scans, but that's an artifact of the strategy map architecture
-	 * chosen in 1986, not of the way nulls are handled here.
-	 */
-	if (isnull[0])
+	/* convert data to a hash key; on failure, do not insert anything */
+	if (!_hash_convert_tuple(rel,
+							 values, isnull,
+							 index_values, index_isnull))
 		return false;
 
-	/* generate an index tuple */
-	itup = _hash_form_tuple(rel, values, isnull);
+	/* form an index tuple and point it at the heap tuple */
+	itup = index_form_tuple(RelationGetDescr(rel), index_values, index_isnull);
 	itup->t_tid = *ht_ctid;
 
 	_hash_doinsert(rel, itup);

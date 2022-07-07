@@ -391,6 +391,23 @@ from
   tenk1 t5
 where t4.thousand = t5.unique1 and ss.x1 = t4.tenthous and ss.x2 = t5.stringu1;
 
+--
+-- regression test: check a case where we formerly missed including an EC
+-- enforcement clause because it was expected to be handled at scan level
+--
+explain (costs off)
+select a.f1, b.f1, t.thousand, t.tenthous from
+  tenk1 t,
+  (select sum(f1)+1 as f1 from int4_tbl i4a) a,
+  (select sum(f1) as f1 from int4_tbl i4b) b
+where b.f1 = t.thousand and a.f1 = b.f1 and (a.f1+b.f1+999) = t.tenthous;
+
+select a.f1, b.f1, t.thousand, t.tenthous from
+  tenk1 t,
+  (select sum(f1)+1 as f1 from int4_tbl i4a) a,
+  (select sum(f1) as f1 from int4_tbl i4b) b
+where b.f1 = t.thousand and a.f1 = b.f1 and (a.f1+b.f1+999) = t.tenthous;
+
 
 --
 -- Clean up
@@ -1210,6 +1227,23 @@ select ss2.* from
 where ss1.c2 = 0;
 
 --
+-- test successful handling of full join underneath left join (bug #14105)
+--
+
+explain (costs off)
+select * from
+  (select 1 as id) as xx
+  left join
+    (tenk1 as a1 full join (select 1 as id) as yy on (a1.unique1 = yy.id))
+  on (xx.id = coalesce(yy.id));
+
+select * from
+  (select 1 as id) as xx
+  left join
+    (tenk1 as a1 full join (select 1 as id) as yy on (a1.unique1 = yy.id))
+  on (xx.id = coalesce(yy.id));
+
+--
 -- test ability to push constants through outer join clauses
 --
 
@@ -1279,7 +1313,9 @@ select d.* from d left join (select distinct * from b) s
   on d.a = s.id and d.b = s.c_id;
 
 -- join removal is not possible when the GROUP BY contains a column that is
--- not in the join condition
+-- not in the join condition.  (Note: as of 9.6, we notice that b.id is a
+-- primary key and so drop b.c_id from the GROUP BY of the resulting plan;
+-- but this happens too late for join removal in the outer plan level.)
 explain (costs off)
 select d.* from d left join (select * from b group by b.id, b.c_id) s
   on d.a = s.id;

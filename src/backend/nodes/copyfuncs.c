@@ -23,10 +23,12 @@
 #include "postgres.h"
 
 #include "miscadmin.h"
+#include "nodes/extensible.h"
 #include "nodes/graphnodes.h"
 #include "nodes/plannodes.h"
 #include "nodes/relation.h"
 #include "utils/datum.h"
+#include "utils/rel.h"
 
 
 /*
@@ -84,6 +86,8 @@ _copyPlannedStmt(const PlannedStmt *from)
 	COPY_SCALAR_FIELD(hasModifyingCTE);
 	COPY_SCALAR_FIELD(canSetTag);
 	COPY_SCALAR_FIELD(transientPlan);
+	COPY_SCALAR_FIELD(dependsOnRole);
+	COPY_SCALAR_FIELD(parallelModeNeeded);
 	COPY_NODE_FIELD(planTree);
 	COPY_NODE_FIELD(rtable);
 	COPY_NODE_FIELD(resultRelations);
@@ -94,9 +98,6 @@ _copyPlannedStmt(const PlannedStmt *from)
 	COPY_NODE_FIELD(relationOids);
 	COPY_NODE_FIELD(invalItems);
 	COPY_SCALAR_FIELD(nParamExec);
-	COPY_SCALAR_FIELD(hasRowSecurity);
-	COPY_SCALAR_FIELD(parallelModeNeeded);
-	COPY_SCALAR_FIELD(hasForeignJoin);
 
 	return newnode;
 }
@@ -188,6 +189,7 @@ _copyModifyTable(const ModifyTable *from)
 	COPY_NODE_FIELD(withCheckOptionLists);
 	COPY_NODE_FIELD(returningLists);
 	COPY_NODE_FIELD(fdwPrivLists);
+	COPY_BITMAPSET_FIELD(fdwDirectModifyPlans);
 	COPY_NODE_FIELD(rowMarks);
 	COPY_SCALAR_FIELD(epqParam);
 	COPY_SCALAR_FIELD(onConflictAction);
@@ -648,6 +650,7 @@ _copyForeignScan(const ForeignScan *from)
 	/*
 	 * copy remainder of node
 	 */
+	COPY_SCALAR_FIELD(operation);
 	COPY_SCALAR_FIELD(fs_server);
 	COPY_NODE_FIELD(fdw_exprs);
 	COPY_NODE_FIELD(fdw_private);
@@ -867,9 +870,8 @@ _copyAgg(const Agg *from)
 	CopyPlanFields((const Plan *) from, (Plan *) newnode);
 
 	COPY_SCALAR_FIELD(aggstrategy);
+	COPY_SCALAR_FIELD(aggsplit);
 	COPY_SCALAR_FIELD(numCols);
-	COPY_SCALAR_FIELD(combineStates);
-	COPY_SCALAR_FIELD(finalizeAggs);
 	if (from->numCols > 0)
 	{
 		COPY_POINTER_FIELD(grpColIdx, from->numCols * sizeof(AttrNumber));
@@ -1251,6 +1253,8 @@ _copyAggref(const Aggref *from)
 	COPY_SCALAR_FIELD(aggtype);
 	COPY_SCALAR_FIELD(aggcollid);
 	COPY_SCALAR_FIELD(inputcollid);
+	COPY_SCALAR_FIELD(aggtranstype);
+	COPY_NODE_FIELD(aggargtypes);
 	COPY_NODE_FIELD(aggdirectargs);
 	COPY_NODE_FIELD(args);
 	COPY_NODE_FIELD(aggorder);
@@ -1260,6 +1264,7 @@ _copyAggref(const Aggref *from)
 	COPY_SCALAR_FIELD(aggvariadic);
 	COPY_SCALAR_FIELD(aggkind);
 	COPY_SCALAR_FIELD(agglevelsup);
+	COPY_SCALAR_FIELD(aggsplit);
 	COPY_LOCATION_FIELD(location);
 
 	return newnode;
@@ -3224,6 +3229,20 @@ _copyRenameStmt(const RenameStmt *from)
 	return newnode;
 }
 
+static AlterObjectDependsStmt *
+_copyAlterObjectDependsStmt(const AlterObjectDependsStmt *from)
+{
+	AlterObjectDependsStmt *newnode = makeNode(AlterObjectDependsStmt);
+
+	COPY_SCALAR_FIELD(objectType);
+	COPY_NODE_FIELD(relation);
+	COPY_NODE_FIELD(objname);
+	COPY_NODE_FIELD(objargs);
+	COPY_NODE_FIELD(extname);
+
+	return newnode;
+}
+
 static AlterObjectSchemaStmt *
 _copyAlterObjectSchemaStmt(const AlterObjectSchemaStmt *from)
 {
@@ -3852,6 +3871,18 @@ _copyCreateTransformStmt(const CreateTransformStmt *from)
 	return newnode;
 }
 
+static CreateAmStmt *
+_copyCreateAmStmt(const CreateAmStmt *from)
+{
+	CreateAmStmt *newnode = makeNode(CreateAmStmt);
+
+	COPY_STRING_FIELD(amname);
+	COPY_NODE_FIELD(handler_name);
+	COPY_SCALAR_FIELD(amtype);
+
+	return newnode;
+}
+
 static CreateTrigStmt *
 _copyCreateTrigStmt(const CreateTrigStmt *from)
 {
@@ -4416,6 +4447,27 @@ _copyList(const List *from)
 }
 
 /* ****************************************************************
+ *					extensible.h copy functions
+ * ****************************************************************
+ */
+static ExtensibleNode *
+_copyExtensibleNode(const ExtensibleNode *from)
+{
+	ExtensibleNode *newnode;
+	const ExtensibleNodeMethods *methods;
+
+	methods = GetExtensibleNodeMethods(from->extnodename, false);
+	newnode = (ExtensibleNode *) newNode(methods->node_size,
+										 T_ExtensibleNode);
+	COPY_STRING_FIELD(extnodename);
+
+	/* copy the private fields */
+	methods->nodeCopy(newnode, from);
+
+	return newnode;
+}
+
+/* ****************************************************************
  *					value.h copy functions
  * ****************************************************************
  */
@@ -4447,6 +4499,24 @@ _copyValue(const Value *from)
 	}
 	return newnode;
 }
+
+
+static ForeignKeyCacheInfo *
+_copyForeignKeyCacheInfo(const ForeignKeyCacheInfo *from)
+{
+	ForeignKeyCacheInfo *newnode = makeNode(ForeignKeyCacheInfo);
+
+	COPY_SCALAR_FIELD(conrelid);
+	COPY_SCALAR_FIELD(confrelid);
+	COPY_SCALAR_FIELD(nkeys);
+	/* COPY_SCALAR_FIELD might work for these, but let's not assume that */
+	memcpy(newnode->conkey, from->conkey, sizeof(newnode->conkey));
+	memcpy(newnode->confkey, from->confkey, sizeof(newnode->confkey));
+	memcpy(newnode->conpfeqop, from->conpfeqop, sizeof(newnode->conpfeqop));
+
+	return newnode;
+}
+
 
 /*
  * copyObject
@@ -4798,6 +4868,13 @@ copyObject(const void *from)
 			break;
 
 			/*
+			 * EXTENSIBLE NODES
+			 */
+		case T_ExtensibleNode:
+			retval = _copyExtensibleNode(from);
+			break;
+
+			/*
 			 * PARSE NODES
 			 */
 		case T_Query:
@@ -4889,6 +4966,9 @@ copyObject(const void *from)
 			break;
 		case T_RenameStmt:
 			retval = _copyRenameStmt(from);
+			break;
+		case T_AlterObjectDependsStmt:
+			retval = _copyAlterObjectDependsStmt(from);
 			break;
 		case T_AlterObjectSchemaStmt:
 			retval = _copyAlterObjectSchemaStmt(from);
@@ -5042,6 +5122,9 @@ copyObject(const void *from)
 			break;
 		case T_CreateTransformStmt:
 			retval = _copyCreateTransformStmt(from);
+			break;
+		case T_CreateAmStmt:
+			retval = _copyCreateAmStmt(from);
 			break;
 		case T_CreateTrigStmt:
 			retval = _copyCreateTrigStmt(from);
@@ -5246,6 +5329,13 @@ copyObject(const void *from)
 			break;
 		case T_RoleSpec:
 			retval = _copyRoleSpec(from);
+			break;
+
+			/*
+			 * MISCELLANEOUS NODES
+			 */
+		case T_ForeignKeyCacheInfo:
+			retval = _copyForeignKeyCacheInfo(from);
 			break;
 		case T_JsonObject:
 			retval = _copyJsonObject(from);

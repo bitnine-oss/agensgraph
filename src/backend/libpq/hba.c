@@ -1190,6 +1190,12 @@ parse_hba_line(List *line, int line_num, char *raw_line)
 #else
 		unsupauth = "pam";
 #endif
+	else if (strcmp(token->string, "bsd") == 0)
+#ifdef USE_BSD_AUTH
+		parsedline->auth_method = uaBSD;
+#else
+		unsupauth = "bsd";
+#endif
 	else if (strcmp(token->string, "ldap") == 0)
 #ifdef USE_LDAP
 		parsedline->auth_method = uaLDAP;
@@ -1286,6 +1292,17 @@ parse_hba_line(List *line, int line_num, char *raw_line)
 	if (parsedline->auth_method == uaGSS ||
 		parsedline->auth_method == uaSSPI)
 		parsedline->include_realm = true;
+
+	/*
+	 * For SSPI, include_realm defaults to the SAM-compatible domain (aka
+	 * NetBIOS name) and user names instead of the Kerberos principal name for
+	 * compatibility.
+	 */
+	if (parsedline->auth_method == uaSSPI)
+	{
+		parsedline->compat_realm = true;
+		parsedline->upn_username = false;
+	}
 
 	/* Parse remaining arguments */
 	while ((field = lnext(field)) != NULL)
@@ -1447,6 +1464,15 @@ parse_hba_auth_opt(char *name, char *val, HbaLine *hbaline, int line_num)
 		REQUIRE_AUTH_OPTION(uaPAM, "pamservice", "pam");
 		hbaline->pamservice = pstrdup(val);
 	}
+	else if (strcmp(name, "pam_use_hostname") == 0)
+	{
+		REQUIRE_AUTH_OPTION(uaPAM, "pam_use_hostname", "pam");
+		if (strcmp(val, "1") == 0)
+			hbaline->pam_use_hostname = true;
+		else
+			hbaline->pam_use_hostname = false;
+
+	}
 	else if (strcmp(name, "ldapurl") == 0)
 	{
 #ifdef LDAP_API_FEATURE_X_OPENLDAP
@@ -1569,6 +1595,24 @@ parse_hba_auth_opt(char *name, char *val, HbaLine *hbaline, int line_num)
 			hbaline->include_realm = true;
 		else
 			hbaline->include_realm = false;
+	}
+	else if (strcmp(name, "compat_realm") == 0)
+	{
+		if (hbaline->auth_method != uaSSPI)
+			INVALID_AUTH_OPTION("compat_realm", gettext_noop("sspi"));
+		if (strcmp(val, "1") == 0)
+			hbaline->compat_realm = true;
+		else
+			hbaline->compat_realm = false;
+	}
+	else if (strcmp(name, "upn_username") == 0)
+	{
+		if (hbaline->auth_method != uaSSPI)
+			INVALID_AUTH_OPTION("upn_username", gettext_noop("sspi"));
+		if (strcmp(val, "1") == 0)
+			hbaline->upn_username = true;
+		else
+			hbaline->upn_username = false;
 	}
 	else if (strcmp(name, "radiusserver") == 0)
 	{

@@ -53,6 +53,9 @@ extern void UnlockRelationIdForSession(LockRelId *relid, LOCKMODE lockmode);
 /* Lock a relation for extension */
 extern void LockRelationForExtension(Relation relation, LOCKMODE lockmode);
 extern void UnlockRelationForExtension(Relation relation, LOCKMODE lockmode);
+extern bool ConditionalLockRelationForExtension(Relation relation,
+									LOCKMODE lockmode);
+extern int	RelationExtensionLockWaiterCount(Relation relation);
 
 /* Lock a page (currently only used within indexes) */
 extern void LockPage(Relation relation, BlockNumber blkno, LOCKMODE lockmode);
@@ -100,5 +103,7 @@ extern void UnlockSharedObjectForSession(Oid classid, Oid objid, uint16 objsubid
 
 /* Describe a locktag for error messages */
 extern void DescribeLockTag(StringInfo buf, const LOCKTAG *tag);
+
+extern const char *GetLockNameFromTagType(uint16 locktag_type);
 
 #endif   /* LMGR_H */

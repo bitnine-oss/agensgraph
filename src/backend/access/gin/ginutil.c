@@ -35,7 +35,7 @@ ginhandler(PG_FUNCTION_ARGS)
 	IndexAmRoutine *amroutine = makeNode(IndexAmRoutine);
 
 	amroutine->amstrategies = 0;
-	amroutine->amsupport = 6;
+	amroutine->amsupport = GINNProcs;
 	amroutine->amcanorder = false;
 	amroutine->amcanorderbyop = false;
 	amroutine->amcanbackward = false;
@@ -57,6 +57,7 @@ ginhandler(PG_FUNCTION_ARGS)
 	amroutine->amcanreturn = NULL;
 	amroutine->amcostestimate = gincostestimate;
 	amroutine->amoptions = ginoptions;
+	amroutine->amproperty = NULL;
 	amroutine->amvalidate = ginvalidate;
 	amroutine->ambeginscan = ginbeginscan;
 	amroutine->amrescan = ginrescan;

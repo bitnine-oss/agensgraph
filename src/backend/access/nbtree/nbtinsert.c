@@ -119,7 +119,7 @@ _bt_doinsert(Relation rel, IndexTuple itup,
 
 top:
 	/* find the first page containing this key */
-	stack = _bt_search(rel, natts, itup_scankey, false, &buf, BT_WRITE);
+	stack = _bt_search(rel, natts, itup_scankey, false, &buf, BT_WRITE, NULL);
 
 	offset = InvalidOffsetNumber;
 
@@ -135,7 +135,7 @@ top:
 	 * precise description.
 	 */
 	buf = _bt_moveright(rel, buf, natts, itup_scankey, false,
-						true, stack, BT_WRITE);
+						true, stack, BT_WRITE, NULL);
 
 	/*
 	 * If we're not allowing duplicates, make sure the key isn't already in
@@ -390,6 +390,15 @@ _bt_check_unique(Relation rel, IndexTuple itup, Relation heapRel,
 						 */
 						break;
 					}
+
+					/*
+					 * Check for a conflict-in as we would if we were going to
+					 * write to this page.  We aren't actually going to write,
+					 * but we want a chance to report SSI conflicts that would
+					 * otherwise be masked by this unique constraint
+					 * violation.
+					 */
+					CheckForSerializableConflictIn(rel, NULL, buf);
 
 					/*
 					 * This is a definite conflict.  Break the tuple down into
@@ -1671,7 +1680,8 @@ _bt_insert_parent(Relation rel,
 			elog(DEBUG2, "concurrent ROOT page split");
 			lpageop = (BTPageOpaque) PageGetSpecialPointer(page);
 			/* Find the leftmost page at the next level up */
-			pbuf = _bt_get_endpoint(rel, lpageop->btpo.level + 1, false);
+			pbuf = _bt_get_endpoint(rel, lpageop->btpo.level + 1, false,
+									NULL);
 			/* Set up a phony stack entry pointing there */
 			stack = &fakestack;
 			stack->bts_blkno = BufferGetBlockNumber(pbuf);

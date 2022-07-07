@@ -10,7 +10,7 @@
 
 
 #include "variables.h"
-#include "print.h"
+#include "fe_utils/print.h"
 
 #define DEFAULT_FIELD_SEP "|"
 #define DEFAULT_RECORD_SEP "\n"
@@ -86,10 +86,15 @@ typedef struct _psqlSettings
 
 	FILE	   *copyStream;		/* Stream to read/write for \copy command */
 
+	PGresult   *last_error_result;		/* most recent error result, if any */
+
 	printQueryOpt popt;
 
 	char	   *gfname;			/* one-shot file output argument for \g */
 	char	   *gset_prefix;	/* one-shot prefix argument for \gset */
+	bool		gexec_flag;		/* one-shot flag to execute query's results */
+	bool		crosstab_flag;	/* one-shot request to crosstab results */
+	char	   *ctv_args[4];	/* \crosstabview arguments */
 
 	bool		notty;			/* stdin or stdout is not a tty (as determined
 								 * on startup) */

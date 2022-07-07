@@ -192,7 +192,7 @@ ginEntryInsert(GinState *ginstate,
 
 	ginPrepareEntryScan(&btree, attnum, key, category, ginstate);
 
-	stack = ginFindLeafPage(&btree, false);
+	stack = ginFindLeafPage(&btree, false, NULL);
 	page = BufferGetPage(stack->buffer);
 
 	if (btree.findItem(&btree, stack))
@@ -281,7 +281,7 @@ ginBuildCallback(Relation index, HeapTuple htup, Datum *values,
 							   &htup->t_self);
 
 	/* If we've maxed out our available memory, dump everything to the index */
-	if (buildstate->accum.allocatedMemory >= (Size)maintenance_work_mem * 1024L)
+	if (buildstate->accum.allocatedMemory >= (Size) maintenance_work_mem * 1024L)
 	{
 		ItemPointerData *list;
 		Datum		key;

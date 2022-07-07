@@ -95,7 +95,7 @@ CDT    -18000 D  # Central Daylight Time
                  #     (America/Rainy_River)
                  #     (America/Rankin_Inlet)
                  #     (America/Winnipeg)
-CLST   -10800 D  # Chile Summer Time (obsolete)
+CLST   -10800 D  # Chile Summer Time
                  #     (America/Santiago)
                  #     (Antarctica/Palmer)
 CLT    America/Santiago  # Chile Time
@@ -247,8 +247,7 @@ MAWT    Antarctica/Mawson  # Mawson Time (Antarctica)
 
 AFT     16200    # Afghanistan Time
                  #     (Asia/Kabul)
-ALMT    21600    # Alma-Ata Time
-                 #     (Asia/Almaty)
+ALMT    21600    # Alma-Ata Time (obsolete)
 ALMST   25200 D  # Alma-Ata Summer Time (obsolete)
 # CONFLICT! AMST is not unique
 # Other timezones:
@@ -263,8 +262,7 @@ AMT     Asia/Yerevan  # Armenia Time
 ANAST   Asia/Anadyr  # Anadyr Summer Time (obsolete)
 ANAT    Asia/Anadyr  # Anadyr Time
                  #     (Asia/Anadyr)
-AZST    Asia/Baku  # Azerbaijan Summer Time
-                 #     (Asia/Baku)
+AZST    Asia/Baku  # Azerbaijan Summer Time (obsolete)
 AZT     Asia/Baku  # Azerbaijan Time
                  #     (Asia/Baku)
 BDT     21600    # Bangladesh Time
@@ -318,8 +316,7 @@ MYT     28800    # Malaysia Time
                  #     (Asia/Kuala_Lumpur)
                  #     (Asia/Kuching)
 NOVST   Asia/Novosibirsk  # Novosibirsk Summer Time (obsolete)
-NOVT    Asia/Novosibirsk  # Novosibirsk Time
-                 #     (Asia/Novosibirsk)
+NOVT    Asia/Novosibirsk  # Novosibirsk Time (obsolete)
 NPT     20700    # Nepal Time
                  #     (Asia/Katmandu)
 OMSST   Asia/Omsk  # Omsk Summer Time (obsolete)
@@ -685,7 +682,7 @@ CHUT    36000    # Chuuk Time
                  #     (Pacific/Chuuk)
 CKT     Pacific/Rarotonga  # Cook Islands Time
                  #     (Pacific/Rarotonga)
-EASST   Pacific/Easter  # Easter Island Summer Time (obsolete)
+EASST   Pacific/Easter  # Easter Island Summer Time
                  #     (Pacific/Easter)
 EAST    Pacific/Easter  # Easter Island Time (Chile)
                  #     (Pacific/Easter)

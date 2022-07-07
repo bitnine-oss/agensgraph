@@ -121,7 +121,7 @@ typedef struct Query
 	bool		hasRecursive;	/* WITH RECURSIVE was specified */
 	bool		hasModifyingCTE;	/* has INSERT/UPDATE/DELETE in WITH */
 	bool		hasForUpdate;	/* FOR [KEY] UPDATE/SHARE was specified */
-	bool		hasRowSecurity; /* row security applied? */
+	bool		hasRowSecurity; /* rewriter has applied some RLS policy */
 
 	List	   *cteList;		/* WITH list (of CommonTableExpr's) */
 
@@ -246,6 +246,7 @@ typedef enum A_Expr_Kind
 	AEXPR_OP_ANY,				/* scalar op ANY (array) */
 	AEXPR_OP_ALL,				/* scalar op ALL (array) */
 	AEXPR_DISTINCT,				/* IS DISTINCT FROM - name must be "=" */
+	AEXPR_NOT_DISTINCT,			/* IS NOT DISTINCT FROM - name must be "=" */
 	AEXPR_NULLIF,				/* NULLIF - name must be "=" */
 	AEXPR_OF,					/* IS [NOT] OF - name must be "=" or "<>" */
 	AEXPR_IN,					/* [NOT] IN - name must be "=" or "<>" */
@@ -1388,6 +1389,7 @@ typedef struct SetOperationStmt
 
 typedef enum ObjectType
 {
+	OBJECT_ACCESS_METHOD,
 	OBJECT_AGGREGATE,
 	OBJECT_AMOP,
 	OBJECT_AMPROC,
@@ -2083,6 +2085,18 @@ typedef struct AlterPolicyStmt
 	Node	   *with_check;		/* the policy's WITH CHECK condition. */
 } AlterPolicyStmt;
 
+/*----------------------
+ *		Create ACCESS METHOD Statement
+ *----------------------
+ */
+typedef struct CreateAmStmt
+{
+	NodeTag		type;
+	char	   *amname;			/* access method name */
+	List	   *handler_name;	/* handler function name */
+	char		amtype;			/* type of access method */
+} CreateAmStmt;
+
 /* ----------------------
  *		Create TRIGGER Statement
  * ----------------------
@@ -2536,6 +2550,20 @@ typedef struct RenameStmt
 } RenameStmt;
 
 /* ----------------------
+ * ALTER object DEPENDS ON EXTENSION extname
+ * ----------------------
+ */
+typedef struct AlterObjectDependsStmt
+{
+	NodeTag		type;
+	ObjectType	objectType;		/* OBJECT_FUNCTION, OBJECT_TRIGGER, etc */
+	RangeVar   *relation;		/* in case a table is involved */
+	List	   *objname;		/* name of the object */
+	List	   *objargs;		/* argument types, if applicable */
+	Value	   *extname;		/* extension name */
+} AlterObjectDependsStmt;
+
+/* ----------------------
  *		ALTER object SET SCHEMA Statement
  * ----------------------
  */
@@ -2808,7 +2836,8 @@ typedef enum VacuumOption
 	VACOPT_FREEZE = 1 << 3,		/* FREEZE option */
 	VACOPT_FULL = 1 << 4,		/* FULL (non-concurrent) vacuum */
 	VACOPT_NOWAIT = 1 << 5,		/* don't wait to get lock (autovacuum only) */
-	VACOPT_SKIPTOAST = 1 << 6	/* don't process the TOAST table, if any */
+	VACOPT_SKIPTOAST = 1 << 6,	/* don't process the TOAST table, if any */
+	VACOPT_DISABLE_PAGE_SKIPPING = 1 << 7		/* don't skip any pages */
 } VacuumOption;
 
 typedef struct VacuumStmt

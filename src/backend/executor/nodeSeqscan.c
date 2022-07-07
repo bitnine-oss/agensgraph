@@ -73,8 +73,8 @@ SeqNext(SeqScanState *node)
 	if (scandesc == NULL)
 	{
 		/*
-		 * We reach here if the scan is not parallel, or if we're executing
-		 * a scan that was intended to be parallel serially.
+		 * We reach here if the scan is not parallel, or if we're executing a
+		 * scan that was intended to be parallel serially.
 		 */
 		scandesc = heap_beginscan(node->ss.ss_currentRelation,
 								  estate->es_snapshot,
@@ -159,7 +159,7 @@ InitScanRelation(SeqScanState *node, EState *estate, int eflags)
 	 * open that relation and acquire appropriate lock on it.
 	 */
 	currentRelation = ExecOpenScanRelation(estate,
-									  ((SeqScan *) node->ss.ps.plan)->scanrelid,
+								   ((SeqScan *) node->ss.ps.plan)->scanrelid,
 										   eflags);
 
 	node->ss.ss_currentRelation = currentRelation;
@@ -392,8 +392,8 @@ ExecReScanSeqScan(SeqScanState *node)
 	scan = node->ss.ss_currentScanDesc;
 
 	if (scan != NULL)
-		heap_rescan(scan,			/* scan desc */
-					NULL);			/* new scan keys */
+		heap_rescan(scan,		/* scan desc */
+					NULL);		/* new scan keys */
 
 	ExecScanReScan((ScanState *) node);
 }
@@ -431,7 +431,7 @@ ExecSeqScanInitializeDSM(SeqScanState *node,
 						 ParallelContext *pcxt)
 {
 	EState	   *estate = node->ss.ps.state;
-	ParallelHeapScanDesc	pscan;
+	ParallelHeapScanDesc pscan;
 
 	pscan = shm_toc_allocate(pcxt->toc, node->pscan_len);
 	heap_parallelscan_initialize(pscan,
@@ -451,7 +451,7 @@ ExecSeqScanInitializeDSM(SeqScanState *node,
 void
 ExecSeqScanInitializeWorker(SeqScanState *node, shm_toc *toc)
 {
-	ParallelHeapScanDesc	pscan;
+	ParallelHeapScanDesc pscan;
 
 	pscan = shm_toc_lookup(toc, node->ss.ps.plan->plan_node_id);
 	node->ss.ss_currentScanDesc =

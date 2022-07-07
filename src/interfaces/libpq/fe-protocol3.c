@@ -163,7 +163,7 @@ pqParseInput3(PGconn *conn)
 
 			/*
 			 * Unexpected message in IDLE state; need to recover somehow.
-			 * ERROR messages are displayed using the notice processor;
+			 * ERROR messages are handled using the notice processor;
 			 * ParameterStatus is handled normally; anything else is just
 			 * dropped on the floor after displaying a suitable warning
 			 * notice.  (An ERROR is very possibly the backend telling us why
@@ -467,7 +467,7 @@ handleSyncLoss(PGconn *conn, char id, int msgLength)
  * command for a prepared statement) containing the attribute data.
  * Returns: 0 if processed message successfully, EOF to suspend parsing
  * (the latter case is not actually used currently).
- * In either case, conn->inStart has been advanced past the message.
+ * In the former case, conn->inStart has been advanced past the message.
  */
 static int
 getRowDescriptions(PGconn *conn, int msgLength)
@@ -641,6 +641,7 @@ advance_and_error:
  * parseInput subroutine to read a 't' (ParameterDescription) message.
  * We'll build a new PGresult structure containing the parameter data.
  * Returns: 0 if completed message, EOF if not enough data yet.
+ * In the former case, conn->inStart has been advanced past the message.
  *
  * Note that if we run out of data, we have to release the partially
  * constructed PGresult, and rebuild it again next time.  Fortunately,
@@ -650,9 +651,9 @@ static int
 getParamDescriptions(PGconn *conn, int msgLength)
 {
 	PGresult   *result;
+	const char *errmsg = NULL;	/* means "out of memory", see below */
 	int			nparams;
 	int			i;
-	const char *errmsg = NULL;
 
 	result = PQmakeEmptyPGresult(conn, PGRES_COMMAND_OK);
 	if (!result)
@@ -682,6 +683,13 @@ getParamDescriptions(PGconn *conn, int msgLength)
 		if (pqGetInt(&typid, 4, conn))
 			goto not_enough_data;
 		result->paramDescs[i].typid = typid;
+	}
+
+	/* Sanity check that we absorbed all the data */
+	if (conn->inCursor != conn->inStart + 5 + msgLength)
+	{
+		errmsg = libpq_gettext("extraneous data in \"t\" message");
+		goto advance_and_error;
 	}
 
 	/* Success! */
@@ -721,6 +729,11 @@ advance_and_error:
 	printfPQExpBuffer(&conn->errorMessage, "%s\n", errmsg);
 	pqSaveErrorResult(conn);
 
+	/*
+	 * Return zero to allow input parsing to continue.  Essentially, we've
+	 * replaced the COMMAND_OK result with an error result, but since this
+	 * doesn't affect the protocol state, it's fine.
+	 */
 	return 0;
 }
 
@@ -729,7 +742,7 @@ advance_and_error:
  * We fill rowbuf with column pointers and then call the row processor.
  * Returns: 0 if processed message successfully, EOF to suspend parsing
  * (the latter case is not actually used currently).
- * In either case, conn->inStart has been advanced past the message.
+ * In the former case, conn->inStart has been advanced past the message.
  */
 static int
 getAnotherTuple(PGconn *conn, int msgLength)
@@ -863,11 +876,9 @@ int
 pqGetErrorNotice3(PGconn *conn, bool isError)
 {
 	PGresult   *res = NULL;
+	bool		have_position = false;
 	PQExpBufferData workBuf;
 	char		id;
-	const char *val;
-	const char *querytext = NULL;
-	int			querypos = 0;
 
 	/*
 	 * Since the fields might be pretty long, we create a temporary
@@ -892,6 +903,9 @@ pqGetErrorNotice3(PGconn *conn, bool isError)
 
 	/*
 	 * Read the fields and save into res.
+	 *
+	 * While at it, save the SQLSTATE in conn->last_sqlstate, and note whether
+	 * we saw a PG_DIAG_STATEMENT_POSITION field.
 	 */
 	for (;;)
 	{
@@ -902,131 +916,26 @@ pqGetErrorNotice3(PGconn *conn, bool isError)
 		if (pqGets(&workBuf, conn))
 			goto fail;
 		pqSaveMessageField(res, id, workBuf.data);
+		if (id == PG_DIAG_SQLSTATE)
+			strlcpy(conn->last_sqlstate, workBuf.data,
+					sizeof(conn->last_sqlstate));
+		else if (id == PG_DIAG_STATEMENT_POSITION)
+			have_position = true;
 	}
 
 	/*
+	 * Save the active query text, if any, into res as well; but only if we
+	 * might need it for an error cursor display, which is only true if there
+	 * is a PG_DIAG_STATEMENT_POSITION field.
+	 */
+	if (have_position && conn->last_query && res)
+		res->errQuery = pqResultStrdup(res, conn->last_query);
+
+	/*
 	 * Now build the "overall" error message for PQresultErrorMessage.
-	 *
-	 * Also, save the SQLSTATE in conn->last_sqlstate.
 	 */
 	resetPQExpBuffer(&workBuf);
-	val = PQresultErrorField(res, PG_DIAG_SEVERITY);
-	if (val)
-		appendPQExpBuffer(&workBuf, "%s:  ", val);
-	val = PQresultErrorField(res, PG_DIAG_SQLSTATE);
-	if (val)
-	{
-		if (strlen(val) < sizeof(conn->last_sqlstate))
-			strcpy(conn->last_sqlstate, val);
-		if (conn->verbosity == PQERRORS_VERBOSE)
-			appendPQExpBuffer(&workBuf, "%s: ", val);
-	}
-	val = PQresultErrorField(res, PG_DIAG_MESSAGE_PRIMARY);
-	if (val)
-		appendPQExpBufferStr(&workBuf, val);
-	val = PQresultErrorField(res, PG_DIAG_STATEMENT_POSITION);
-	if (val)
-	{
-		if (conn->verbosity != PQERRORS_TERSE && conn->last_query != NULL)
-		{
-			/* emit position as a syntax cursor display */
-			querytext = conn->last_query;
-			querypos = atoi(val);
-		}
-		else
-		{
-			/* emit position as text addition to primary message */
-			/* translator: %s represents a digit string */
-			appendPQExpBuffer(&workBuf, libpq_gettext(" at character %s"),
-							  val);
-		}
-	}
-	else
-	{
-		val = PQresultErrorField(res, PG_DIAG_INTERNAL_POSITION);
-		if (val)
-		{
-			querytext = PQresultErrorField(res, PG_DIAG_INTERNAL_QUERY);
-			if (conn->verbosity != PQERRORS_TERSE && querytext != NULL)
-			{
-				/* emit position as a syntax cursor display */
-				querypos = atoi(val);
-			}
-			else
-			{
-				/* emit position as text addition to primary message */
-				/* translator: %s represents a digit string */
-				appendPQExpBuffer(&workBuf, libpq_gettext(" at character %s"),
-								  val);
-			}
-		}
-	}
-	appendPQExpBufferChar(&workBuf, '\n');
-	if (conn->verbosity != PQERRORS_TERSE)
-	{
-		if (querytext && querypos > 0)
-			reportErrorPosition(&workBuf, querytext, querypos,
-								conn->client_encoding);
-		val = PQresultErrorField(res, PG_DIAG_MESSAGE_DETAIL);
-		if (val)
-			appendPQExpBuffer(&workBuf, libpq_gettext("DETAIL:  %s\n"), val);
-		val = PQresultErrorField(res, PG_DIAG_MESSAGE_HINT);
-		if (val)
-			appendPQExpBuffer(&workBuf, libpq_gettext("HINT:  %s\n"), val);
-		val = PQresultErrorField(res, PG_DIAG_INTERNAL_QUERY);
-		if (val)
-			appendPQExpBuffer(&workBuf, libpq_gettext("QUERY:  %s\n"), val);
-		if (conn->show_context == PQSHOW_CONTEXT_ALWAYS ||
-			(conn->show_context == PQSHOW_CONTEXT_ERRORS && isError))
-		{
-			val = PQresultErrorField(res, PG_DIAG_CONTEXT);
-			if (val)
-				appendPQExpBuffer(&workBuf, libpq_gettext("CONTEXT:  %s\n"),
-								  val);
-		}
-	}
-	if (conn->verbosity == PQERRORS_VERBOSE)
-	{
-		val = PQresultErrorField(res, PG_DIAG_SCHEMA_NAME);
-		if (val)
-			appendPQExpBuffer(&workBuf,
-							  libpq_gettext("SCHEMA NAME:  %s\n"), val);
-		val = PQresultErrorField(res, PG_DIAG_TABLE_NAME);
-		if (val)
-			appendPQExpBuffer(&workBuf,
-							  libpq_gettext("TABLE NAME:  %s\n"), val);
-		val = PQresultErrorField(res, PG_DIAG_COLUMN_NAME);
-		if (val)
-			appendPQExpBuffer(&workBuf,
-							  libpq_gettext("COLUMN NAME:  %s\n"), val);
-		val = PQresultErrorField(res, PG_DIAG_DATATYPE_NAME);
-		if (val)
-			appendPQExpBuffer(&workBuf,
-							  libpq_gettext("DATATYPE NAME:  %s\n"), val);
-		val = PQresultErrorField(res, PG_DIAG_CONSTRAINT_NAME);
-		if (val)
-			appendPQExpBuffer(&workBuf,
-							  libpq_gettext("CONSTRAINT NAME:  %s\n"), val);
-	}
-	if (conn->verbosity == PQERRORS_VERBOSE)
-	{
-		const char *valf;
-		const char *vall;
-
-		valf = PQresultErrorField(res, PG_DIAG_SOURCE_FILE);
-		vall = PQresultErrorField(res, PG_DIAG_SOURCE_LINE);
-		val = PQresultErrorField(res, PG_DIAG_SOURCE_FUNCTION);
-		if (val || valf || vall)
-		{
-			appendPQExpBufferStr(&workBuf, libpq_gettext("LOCATION:  "));
-			if (val)
-				appendPQExpBuffer(&workBuf, libpq_gettext("%s, "), val);
-			if (valf && vall)	/* unlikely we'd have just one */
-				appendPQExpBuffer(&workBuf, libpq_gettext("%s:%s"),
-								  valf, vall);
-			appendPQExpBufferChar(&workBuf, '\n');
-		}
-	}
+	pqBuildErrorMessage3(&workBuf, res, conn->verbosity, conn->show_context);
 
 	/*
 	 * Either save error as current async result, or just emit the notice.
@@ -1063,6 +972,157 @@ fail:
 	PQclear(res);
 	termPQExpBuffer(&workBuf);
 	return EOF;
+}
+
+/*
+ * Construct an error message from the fields in the given PGresult,
+ * appending it to the contents of "msg".
+ */
+void
+pqBuildErrorMessage3(PQExpBuffer msg, const PGresult *res,
+					 PGVerbosity verbosity, PGContextVisibility show_context)
+{
+	const char *val;
+	const char *querytext = NULL;
+	int			querypos = 0;
+
+	/* If we couldn't allocate a PGresult, just say "out of memory" */
+	if (res == NULL)
+	{
+		appendPQExpBuffer(msg, libpq_gettext("out of memory\n"));
+		return;
+	}
+
+	/*
+	 * If we don't have any broken-down fields, just return the base message.
+	 * This mainly applies if we're given a libpq-generated error result.
+	 */
+	if (res->errFields == NULL)
+	{
+		if (res->errMsg && res->errMsg[0])
+			appendPQExpBufferStr(msg, res->errMsg);
+		else
+			appendPQExpBuffer(msg, libpq_gettext("no error message available\n"));
+		return;
+	}
+
+	/* Else build error message from relevant fields */
+	val = PQresultErrorField(res, PG_DIAG_SEVERITY);
+	if (val)
+		appendPQExpBuffer(msg, "%s:  ", val);
+	if (verbosity == PQERRORS_VERBOSE)
+	{
+		val = PQresultErrorField(res, PG_DIAG_SQLSTATE);
+		if (val)
+			appendPQExpBuffer(msg, "%s: ", val);
+	}
+	val = PQresultErrorField(res, PG_DIAG_MESSAGE_PRIMARY);
+	if (val)
+		appendPQExpBufferStr(msg, val);
+	val = PQresultErrorField(res, PG_DIAG_STATEMENT_POSITION);
+	if (val)
+	{
+		if (verbosity != PQERRORS_TERSE && res->errQuery != NULL)
+		{
+			/* emit position as a syntax cursor display */
+			querytext = res->errQuery;
+			querypos = atoi(val);
+		}
+		else
+		{
+			/* emit position as text addition to primary message */
+			/* translator: %s represents a digit string */
+			appendPQExpBuffer(msg, libpq_gettext(" at character %s"),
+							  val);
+		}
+	}
+	else
+	{
+		val = PQresultErrorField(res, PG_DIAG_INTERNAL_POSITION);
+		if (val)
+		{
+			querytext = PQresultErrorField(res, PG_DIAG_INTERNAL_QUERY);
+			if (verbosity != PQERRORS_TERSE && querytext != NULL)
+			{
+				/* emit position as a syntax cursor display */
+				querypos = atoi(val);
+			}
+			else
+			{
+				/* emit position as text addition to primary message */
+				/* translator: %s represents a digit string */
+				appendPQExpBuffer(msg, libpq_gettext(" at character %s"),
+								  val);
+			}
+		}
+	}
+	appendPQExpBufferChar(msg, '\n');
+	if (verbosity != PQERRORS_TERSE)
+	{
+		if (querytext && querypos > 0)
+			reportErrorPosition(msg, querytext, querypos,
+								res->client_encoding);
+		val = PQresultErrorField(res, PG_DIAG_MESSAGE_DETAIL);
+		if (val)
+			appendPQExpBuffer(msg, libpq_gettext("DETAIL:  %s\n"), val);
+		val = PQresultErrorField(res, PG_DIAG_MESSAGE_HINT);
+		if (val)
+			appendPQExpBuffer(msg, libpq_gettext("HINT:  %s\n"), val);
+		val = PQresultErrorField(res, PG_DIAG_INTERNAL_QUERY);
+		if (val)
+			appendPQExpBuffer(msg, libpq_gettext("QUERY:  %s\n"), val);
+		if (show_context == PQSHOW_CONTEXT_ALWAYS ||
+			(show_context == PQSHOW_CONTEXT_ERRORS &&
+			 res->resultStatus == PGRES_FATAL_ERROR))
+		{
+			val = PQresultErrorField(res, PG_DIAG_CONTEXT);
+			if (val)
+				appendPQExpBuffer(msg, libpq_gettext("CONTEXT:  %s\n"),
+								  val);
+		}
+	}
+	if (verbosity == PQERRORS_VERBOSE)
+	{
+		val = PQresultErrorField(res, PG_DIAG_SCHEMA_NAME);
+		if (val)
+			appendPQExpBuffer(msg,
+							  libpq_gettext("SCHEMA NAME:  %s\n"), val);
+		val = PQresultErrorField(res, PG_DIAG_TABLE_NAME);
+		if (val)
+			appendPQExpBuffer(msg,
+							  libpq_gettext("TABLE NAME:  %s\n"), val);
+		val = PQresultErrorField(res, PG_DIAG_COLUMN_NAME);
+		if (val)
+			appendPQExpBuffer(msg,
+							  libpq_gettext("COLUMN NAME:  %s\n"), val);
+		val = PQresultErrorField(res, PG_DIAG_DATATYPE_NAME);
+		if (val)
+			appendPQExpBuffer(msg,
+							  libpq_gettext("DATATYPE NAME:  %s\n"), val);
+		val = PQresultErrorField(res, PG_DIAG_CONSTRAINT_NAME);
+		if (val)
+			appendPQExpBuffer(msg,
+							  libpq_gettext("CONSTRAINT NAME:  %s\n"), val);
+	}
+	if (verbosity == PQERRORS_VERBOSE)
+	{
+		const char *valf;
+		const char *vall;
+
+		valf = PQresultErrorField(res, PG_DIAG_SOURCE_FILE);
+		vall = PQresultErrorField(res, PG_DIAG_SOURCE_LINE);
+		val = PQresultErrorField(res, PG_DIAG_SOURCE_FUNCTION);
+		if (val || valf || vall)
+		{
+			appendPQExpBufferStr(msg, libpq_gettext("LOCATION:  "));
+			if (val)
+				appendPQExpBuffer(msg, libpq_gettext("%s, "), val);
+			if (valf && vall)	/* unlikely we'd have just one */
+				appendPQExpBuffer(msg, libpq_gettext("%s:%s"),
+								  valf, vall);
+			appendPQExpBufferChar(msg, '\n');
+		}
+	}
 }
 
 /*

@@ -1381,7 +1381,7 @@ exec_parse_message(const char *query_string,	/* string to execute */
 					   numParams,
 					   NULL,
 					   NULL,
-					   0,		/* default cursor options */
+					   CURSOR_OPT_PARALLEL_OK,	/* allow parallel mode */
 					   true);	/* fixed result */
 
 	/* If we got a cancel signal during analysis, quit */
@@ -2909,6 +2909,9 @@ ProcessInterrupts(void)
 
 	if (QueryCancelPending)
 	{
+		bool		lock_timeout_occurred;
+		bool		stmt_timeout_occurred;
+
 		/*
 		 * Don't allow query cancel interrupts while reading input from the
 		 * client, because we might lose sync in the FE/BE protocol.  (Die
@@ -2929,17 +2932,29 @@ ProcessInterrupts(void)
 
 		/*
 		 * If LOCK_TIMEOUT and STATEMENT_TIMEOUT indicators are both set, we
-		 * prefer to report the former; but be sure to clear both.
+		 * need to clear both, so always fetch both.
 		 */
-		if (get_timeout_indicator(LOCK_TIMEOUT, true))
+		lock_timeout_occurred = get_timeout_indicator(LOCK_TIMEOUT, true);
+		stmt_timeout_occurred = get_timeout_indicator(STATEMENT_TIMEOUT, true);
+
+		/*
+		 * If both were set, we want to report whichever timeout completed
+		 * earlier; this ensures consistent behavior if the machine is slow
+		 * enough that the second timeout triggers before we get here.  A tie
+		 * is arbitrarily broken in favor of reporting a lock timeout.
+		 */
+		if (lock_timeout_occurred && stmt_timeout_occurred &&
+			get_timeout_finish_time(STATEMENT_TIMEOUT) < get_timeout_finish_time(LOCK_TIMEOUT))
+			lock_timeout_occurred = false;		/* report stmt timeout */
+
+		if (lock_timeout_occurred)
 		{
-			(void) get_timeout_indicator(STATEMENT_TIMEOUT, true);
 			LockErrorCleanup();
 			ereport(ERROR,
 					(errcode(ERRCODE_LOCK_NOT_AVAILABLE),
 					 errmsg("canceling statement due to lock timeout")));
 		}
-		if (get_timeout_indicator(STATEMENT_TIMEOUT, true))
+		if (stmt_timeout_occurred)
 		{
 			LockErrorCleanup();
 			ereport(ERROR,
@@ -2976,6 +2991,18 @@ ProcessInterrupts(void)
 					(errcode(ERRCODE_QUERY_CANCELED),
 					 errmsg("canceling statement due to user request")));
 		}
+	}
+
+	if (IdleInTransactionSessionTimeoutPending)
+	{
+		/* Has the timeout setting changed since last we looked? */
+		if (IdleInTransactionSessionTimeout > 0)
+			ereport(FATAL,
+					(errcode(ERRCODE_IDLE_IN_TRANSACTION_SESSION_TIMEOUT),
+					 errmsg("terminating connection due to idle-in-transaction timeout")));
+		else
+			IdleInTransactionSessionTimeoutPending = false;
+
 	}
 
 	if (ParallelMessagePending)
@@ -3553,6 +3580,7 @@ PostgresMain(int argc, char *argv[],
 	StringInfoData input_message;
 	sigjmp_buf	local_sigjmp_buf;
 	volatile bool send_ready_for_query = true;
+	bool		disable_idle_in_transaction_timeout = false;
 
 	/* Initialize startup process environment if necessary. */
 	if (!IsUnderPostmaster)
@@ -3942,11 +3970,27 @@ PostgresMain(int argc, char *argv[],
 			{
 				set_ps_display("idle in transaction (aborted)", false);
 				pgstat_report_activity(STATE_IDLEINTRANSACTION_ABORTED, NULL);
+
+				/* Start the idle-in-transaction timer */
+				if (IdleInTransactionSessionTimeout > 0)
+				{
+					disable_idle_in_transaction_timeout = true;
+					enable_timeout_after(IDLE_IN_TRANSACTION_SESSION_TIMEOUT,
+										 IdleInTransactionSessionTimeout);
+				}
 			}
 			else if (IsTransactionOrTransactionBlock())
 			{
 				set_ps_display("idle in transaction", false);
 				pgstat_report_activity(STATE_IDLEINTRANSACTION, NULL);
+
+				/* Start the idle-in-transaction timer */
+				if (IdleInTransactionSessionTimeout > 0)
+				{
+					disable_idle_in_transaction_timeout = true;
+					enable_timeout_after(IDLE_IN_TRANSACTION_SESSION_TIMEOUT,
+										 IdleInTransactionSessionTimeout);
+				}
 			}
 			else
 			{
@@ -3987,7 +4031,16 @@ PostgresMain(int argc, char *argv[],
 		DoingCommandRead = false;
 
 		/*
-		 * (5) check for any other interesting events that happened while we
+		 * (5) turn off the idle-in-transaction timeout
+		 */
+		if (disable_idle_in_transaction_timeout)
+		{
+			disable_timeout(IDLE_IN_TRANSACTION_SESSION_TIMEOUT, false);
+			disable_idle_in_transaction_timeout = false;
+		}
+
+		/*
+		 * (6) check for any other interesting events that happened while we
 		 * slept.
 		 */
 		if (got_SIGHUP)
@@ -3997,7 +4050,7 @@ PostgresMain(int argc, char *argv[],
 		}
 
 		/*
-		 * (6) process the command.  But ignore it if we're skipping till
+		 * (7) process the command.  But ignore it if we're skipping till
 		 * Sync.
 		 */
 		if (ignore_till_sync && firstchar != EOF)

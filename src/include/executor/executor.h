@@ -80,7 +80,7 @@ extern PGDLLIMPORT ExecutorStart_hook_type ExecutorStart_hook;
 /* Hook for plugins to get control in ExecutorRun() */
 typedef void (*ExecutorRun_hook_type) (QueryDesc *queryDesc,
 												   ScanDirection direction,
-												   long count);
+												   uint64 count);
 extern PGDLLIMPORT ExecutorRun_hook_type ExecutorRun_hook;
 
 /* Hook for plugins to get control in ExecutorFinish() */
@@ -175,9 +175,9 @@ extern TupleTableSlot *ExecFilterJunk(JunkFilter *junkfilter,
 extern void ExecutorStart(QueryDesc *queryDesc, int eflags);
 extern void standard_ExecutorStart(QueryDesc *queryDesc, int eflags);
 extern void ExecutorRun(QueryDesc *queryDesc,
-			ScanDirection direction, long count);
+			ScanDirection direction, uint64 count);
 extern void standard_ExecutorRun(QueryDesc *queryDesc,
-					 ScanDirection direction, long count);
+					 ScanDirection direction, uint64 count);
 extern void ExecutorFinish(QueryDesc *queryDesc);
 extern void standard_ExecutorFinish(QueryDesc *queryDesc);
 extern void ExecutorEnd(QueryDesc *queryDesc);
@@ -284,7 +284,7 @@ typedef struct TupOutputState
 extern TupOutputState *begin_tup_output_tupdesc(DestReceiver *dest,
 						 TupleDesc tupdesc);
 extern void do_tup_output(TupOutputState *tstate, Datum *values, bool *isnull);
-extern void do_text_output_multiline(TupOutputState *tstate, char *text);
+extern void do_text_output_multiline(TupOutputState *tstate, const char *txt);
 extern void end_tup_output(TupOutputState *tstate);
 
 /*

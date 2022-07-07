@@ -285,13 +285,17 @@ CreateOpFamily(char *amname, char *opfname, Oid namespaceoid, Oid amoid)
 	heap_freetuple(tup);
 
 	/*
-	 * Create dependencies for the opfamily proper.  Note: we do not create a
-	 * dependency link to the AM, because we don't currently support DROP
-	 * ACCESS METHOD.
+	 * Create dependencies for the opfamily proper.
 	 */
 	myself.classId = OperatorFamilyRelationId;
 	myself.objectId = opfamilyoid;
 	myself.objectSubId = 0;
+
+	/* dependency on access method */
+	referenced.classId = AccessMethodRelationId;
+	referenced.objectId = amoid;
+	referenced.objectSubId = 0;
+	recordDependencyOn(&myself, &referenced, DEPENDENCY_AUTO);
 
 	/* dependency on namespace */
 	referenced.classId = NamespaceRelationId;
@@ -362,7 +366,7 @@ DefineOpClass(CreateOpClassStmt *stmt)
 						stmt->amname)));
 
 	amoid = HeapTupleGetOid(tup);
-	amroutine = GetIndexAmRoutineByAmId(amoid);
+	amroutine = GetIndexAmRoutineByAmId(amoid, false);
 	ReleaseSysCache(tup);
 
 	maxOpNumber = amroutine->amstrategies;
@@ -670,9 +674,8 @@ DefineOpClass(CreateOpClassStmt *stmt)
 	EventTriggerCollectCreateOpClass(stmt, opclassoid, operators, procedures);
 
 	/*
-	 * Create dependencies for the opclass proper.  Note: we do not create a
-	 * dependency link to the AM, because we don't currently support DROP
-	 * ACCESS METHOD.
+	 * Create dependencies for the opclass proper.  Note: we do not need a
+	 * dependency link to the AM, because that exists through the opfamily.
 	 */
 	myself.classId = OperatorClassRelationId;
 	myself.objectId = opclassoid;
@@ -743,7 +746,7 @@ DefineOpFamily(CreateOpFamilyStmt *stmt)
 					   get_namespace_name(namespaceoid));
 
 	/* Get access method OID, throwing an error if it doesn't exist. */
-	amoid = get_am_oid(stmt->amname, false);
+	amoid = get_index_am_oid(stmt->amname, false);
 
 	/* XXX Should we make any privilege check against the AM? */
 
@@ -788,7 +791,7 @@ AlterOpFamily(AlterOpFamilyStmt *stmt)
 						stmt->amname)));
 
 	amoid = HeapTupleGetOid(tup);
-	amroutine = GetIndexAmRoutineByAmId(amoid);
+	amroutine = GetIndexAmRoutineByAmId(amoid, false);
 	ReleaseSysCache(tup);
 
 	maxOpNumber = amroutine->amstrategies;
@@ -1100,7 +1103,7 @@ assignOperTypes(OpFamilyMember *member, Oid amoid, Oid typeoid)
 		 * the family has been created but not yet populated with the required
 		 * operators.)
 		 */
-		IndexAmRoutine *amroutine = GetIndexAmRoutineByAmId(amoid);
+		IndexAmRoutine *amroutine = GetIndexAmRoutineByAmId(amoid, false);
 
 		if (!amroutine->amcanorderbyop)
 			ereport(ERROR,
@@ -1663,21 +1666,6 @@ RemoveAmProcEntryById(Oid entryOid)
 	heap_close(rel, RowExclusiveLock);
 }
 
-char *
-get_am_name(Oid amOid)
-{
-	HeapTuple	tup;
-	char	   *result = NULL;
-
-	tup = SearchSysCache1(AMOID, ObjectIdGetDatum(amOid));
-	if (HeapTupleIsValid(tup))
-	{
-		result = pstrdup(NameStr(((Form_pg_am) GETSTRUCT(tup))->amname));
-		ReleaseSysCache(tup);
-	}
-	return result;
-}
-
 /*
  * Subroutine for ALTER OPERATOR CLASS SET SCHEMA/RENAME
  *
@@ -1722,23 +1710,4 @@ IsThereOpFamilyInNamespace(const char *opfname, Oid opfmethod,
 						opfname,
 						get_am_name(opfmethod),
 						get_namespace_name(opfnamespace))));
-}
-
-/*
- * get_am_oid - given an access method name, look up the OID
- *
- * If missing_ok is false, throw an error if access method not found.  If
- * true, just return InvalidOid.
- */
-Oid
-get_am_oid(const char *amname, bool missing_ok)
-{
-	Oid			oid;
-
-	oid = GetSysCacheOid1(AMNAME, CStringGetDatum(amname));
-	if (!OidIsValid(oid) && !missing_ok)
-		ereport(ERROR,
-				(errcode(ERRCODE_UNDEFINED_OBJECT),
-				 errmsg("access method \"%s\" does not exist", amname)));
-	return oid;
 }

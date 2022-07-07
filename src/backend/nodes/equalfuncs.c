@@ -29,6 +29,7 @@
 
 #include "postgres.h"
 
+#include "nodes/extensible.h"
 #include "nodes/graphnodes.h"
 #include "nodes/relation.h"
 #include "utils/datum.h"
@@ -194,6 +195,8 @@ _equalAggref(const Aggref *a, const Aggref *b)
 	COMPARE_SCALAR_FIELD(aggtype);
 	COMPARE_SCALAR_FIELD(aggcollid);
 	COMPARE_SCALAR_FIELD(inputcollid);
+	/* ignore aggtranstype since it might not be set yet */
+	COMPARE_NODE_FIELD(aggargtypes);
 	COMPARE_NODE_FIELD(aggdirectargs);
 	COMPARE_NODE_FIELD(args);
 	COMPARE_NODE_FIELD(aggorder);
@@ -203,6 +206,7 @@ _equalAggref(const Aggref *a, const Aggref *b)
 	COMPARE_SCALAR_FIELD(aggvariadic);
 	COMPARE_SCALAR_FIELD(aggkind);
 	COMPARE_SCALAR_FIELD(agglevelsup);
+	COMPARE_SCALAR_FIELD(aggsplit);
 	COMPARE_LOCATION_FIELD(location);
 
 	return true;
@@ -872,6 +876,25 @@ _equalPlaceHolderInfo(const PlaceHolderInfo *a, const PlaceHolderInfo *b)
 	return true;
 }
 
+/*
+ * Stuff from extensible.h
+ */
+static bool
+_equalExtensibleNode(const ExtensibleNode *a, const ExtensibleNode *b)
+{
+	const ExtensibleNodeMethods *methods;
+
+	COMPARE_STRING_FIELD(extnodename);
+
+	/* At this point, we know extnodename is the same for both nodes. */
+	methods = GetExtensibleNodeMethods(a->extnodename, false);
+
+	/* compare the private fields */
+	if (!methods->nodeEqual(a, b))
+		return false;
+
+	return true;
+}
 
 /*
  * Stuff from parsenodes.h
@@ -1307,6 +1330,18 @@ _equalRenameStmt(const RenameStmt *a, const RenameStmt *b)
 	COMPARE_STRING_FIELD(newname);
 	COMPARE_SCALAR_FIELD(behavior);
 	COMPARE_SCALAR_FIELD(missing_ok);
+
+	return true;
+}
+
+static bool
+_equalAlterObjectDependsStmt(const AlterObjectDependsStmt *a, const AlterObjectDependsStmt *b)
+{
+	COMPARE_SCALAR_FIELD(objectType);
+	COMPARE_NODE_FIELD(relation);
+	COMPARE_NODE_FIELD(objname);
+	COMPARE_NODE_FIELD(objargs);
+	COMPARE_NODE_FIELD(extname);
 
 	return true;
 }
@@ -1837,6 +1872,16 @@ _equalCreateTransformStmt(const CreateTransformStmt *a, const CreateTransformStm
 	COMPARE_STRING_FIELD(lang);
 	COMPARE_NODE_FIELD(fromsql);
 	COMPARE_NODE_FIELD(tosql);
+
+	return true;
+}
+
+static bool
+_equalCreateAmStmt(const CreateAmStmt *a, const CreateAmStmt *b)
+{
+	COMPARE_STRING_FIELD(amname);
+	COMPARE_NODE_FIELD(handler_name);
+	COMPARE_SCALAR_FIELD(amtype);
 
 	return true;
 }
@@ -3069,6 +3114,13 @@ equal(const void *a, const void *b)
 			break;
 
 			/*
+			 * EXTENSIBLE NODES
+			 */
+		case T_ExtensibleNode:
+			retval = _equalExtensibleNode(a, b);
+			break;
+
+			/*
 			 * PARSE NODES
 			 */
 		case T_Query:
@@ -3160,6 +3212,9 @@ equal(const void *a, const void *b)
 			break;
 		case T_RenameStmt:
 			retval = _equalRenameStmt(a, b);
+			break;
+		case T_AlterObjectDependsStmt:
+			retval = _equalAlterObjectDependsStmt(a, b);
 			break;
 		case T_AlterObjectSchemaStmt:
 			retval = _equalAlterObjectSchemaStmt(a, b);
@@ -3313,6 +3368,9 @@ equal(const void *a, const void *b)
 			break;
 		case T_CreateTransformStmt:
 			retval = _equalCreateTransformStmt(a, b);
+			break;
+		case T_CreateAmStmt:
+			retval = _equalCreateAmStmt(a, b);
 			break;
 		case T_CreateTrigStmt:
 			retval = _equalCreateTrigStmt(a, b);

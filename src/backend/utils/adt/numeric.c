@@ -436,6 +436,7 @@ static int32 numericvar_to_int32(NumericVar *var);
 static bool numericvar_to_int64(NumericVar *var, int64 *result);
 static void int64_to_numericvar(int64 val, NumericVar *var);
 #ifdef HAVE_INT128
+static bool numericvar_to_int128(NumericVar *var, int128 *result);
 static void int128_to_numericvar(int128 val, NumericVar *var);
 #endif
 static double numeric_to_double_no_overflow(Numeric num);
@@ -752,10 +753,6 @@ numeric_recv(PG_FUNCTION_ARGS)
 	init_var(&value);
 
 	len = (uint16) pq_getmsgint(buf, sizeof(uint16));
-	if (len < 0 || len > NUMERIC_MAX_PRECISION + NUMERIC_MAX_RESULT_SCALE)
-		ereport(ERROR,
-				(errcode(ERRCODE_INVALID_BINARY_REPRESENTATION),
-				 errmsg("invalid length in external \"numeric\" value")));
 
 	alloc_var(&value, len);
 
@@ -3176,6 +3173,22 @@ makeNumericAggState(FunctionCallInfo fcinfo, bool calcSumX2)
 }
 
 /*
+ * Like makeNumericAggState(), but allocate the state in the current memory
+ * context.
+ */
+static NumericAggState *
+makeNumericAggStateCurrentContext(bool calcSumX2)
+{
+	NumericAggState *state;
+
+	state = (NumericAggState *) palloc0(sizeof(NumericAggState));
+	state->calcSumX2 = calcSumX2;
+	state->agg_context = CurrentMemoryContext;
+
+	return state;
+}
+
+/*
  * Accumulate a new input value for numeric aggregate functions.
  */
 static void
@@ -3349,6 +3362,77 @@ numeric_accum(PG_FUNCTION_ARGS)
 }
 
 /*
+ * Generic combine function for numeric aggregates which require sumX2
+ */
+Datum
+numeric_combine(PG_FUNCTION_ARGS)
+{
+	NumericAggState *state1;
+	NumericAggState *state2;
+	MemoryContext agg_context;
+	MemoryContext old_context;
+
+	if (!AggCheckCallContext(fcinfo, &agg_context))
+		elog(ERROR, "aggregate function called in non-aggregate context");
+
+	state1 = PG_ARGISNULL(0) ? NULL : (NumericAggState *) PG_GETARG_POINTER(0);
+	state2 = PG_ARGISNULL(1) ? NULL : (NumericAggState *) PG_GETARG_POINTER(1);
+
+	if (state2 == NULL)
+		PG_RETURN_POINTER(state1);
+
+	/* manually copy all fields from state2 to state1 */
+	if (state1 == NULL)
+	{
+		old_context = MemoryContextSwitchTo(agg_context);
+
+		state1 = makeNumericAggStateCurrentContext(true);
+		state1->N = state2->N;
+		state1->NaNcount = state2->NaNcount;
+		state1->maxScale = state2->maxScale;
+		state1->maxScaleCount = state2->maxScaleCount;
+
+		init_var(&state1->sumX);
+		set_var_from_var(&state2->sumX, &state1->sumX);
+
+		init_var(&state1->sumX2);
+		set_var_from_var(&state2->sumX2, &state1->sumX2);
+
+		MemoryContextSwitchTo(old_context);
+
+		PG_RETURN_POINTER(state1);
+	}
+
+	if (state2->N > 0)
+	{
+		state1->N += state2->N;
+		state1->NaNcount += state2->NaNcount;
+
+		/*
+		 * These are currently only needed for moving aggregates, but let's do
+		 * the right thing anyway...
+		 */
+		if (state2->maxScale > state1->maxScale)
+		{
+			state1->maxScale = state2->maxScale;
+			state1->maxScaleCount = state2->maxScaleCount;
+		}
+		else if (state2->maxScale == state1->maxScale)
+			state1->maxScaleCount += state2->maxScaleCount;
+
+		/* The rest of this needs to work in the aggregate context */
+		old_context = MemoryContextSwitchTo(agg_context);
+
+		/* Accumulate sums */
+		add_var(&(state1->sumX), &(state2->sumX), &(state1->sumX));
+		add_var(&(state1->sumX2), &(state2->sumX2), &(state1->sumX2));
+
+		MemoryContextSwitchTo(old_context);
+	}
+	PG_RETURN_POINTER(state1);
+}
+
+/*
  * Generic transition function for numeric aggregates that don't require sumX2.
  */
 Datum
@@ -3366,6 +3450,296 @@ numeric_avg_accum(PG_FUNCTION_ARGS)
 		do_numeric_accum(state, PG_GETARG_NUMERIC(1));
 
 	PG_RETURN_POINTER(state);
+}
+
+/*
+ * Combine function for numeric aggregates which don't require sumX2
+ */
+Datum
+numeric_avg_combine(PG_FUNCTION_ARGS)
+{
+	NumericAggState *state1;
+	NumericAggState *state2;
+	MemoryContext agg_context;
+	MemoryContext old_context;
+
+	if (!AggCheckCallContext(fcinfo, &agg_context))
+		elog(ERROR, "aggregate function called in non-aggregate context");
+
+	state1 = PG_ARGISNULL(0) ? NULL : (NumericAggState *) PG_GETARG_POINTER(0);
+	state2 = PG_ARGISNULL(1) ? NULL : (NumericAggState *) PG_GETARG_POINTER(1);
+
+	if (state2 == NULL)
+		PG_RETURN_POINTER(state1);
+
+	/* manually copy all fields from state2 to state1 */
+	if (state1 == NULL)
+	{
+		old_context = MemoryContextSwitchTo(agg_context);
+
+		state1 = makeNumericAggStateCurrentContext(false);
+		state1->N = state2->N;
+		state1->NaNcount = state2->NaNcount;
+		state1->maxScale = state2->maxScale;
+		state1->maxScaleCount = state2->maxScaleCount;
+
+		init_var(&state1->sumX);
+		set_var_from_var(&state2->sumX, &state1->sumX);
+
+		MemoryContextSwitchTo(old_context);
+
+		PG_RETURN_POINTER(state1);
+	}
+
+	if (state2->N > 0)
+	{
+		state1->N += state2->N;
+		state1->NaNcount += state2->NaNcount;
+
+		/*
+		 * These are currently only needed for moving aggregates, but let's do
+		 * the right thing anyway...
+		 */
+		if (state2->maxScale > state1->maxScale)
+		{
+			state1->maxScale = state2->maxScale;
+			state1->maxScaleCount = state2->maxScaleCount;
+		}
+		else if (state2->maxScale == state1->maxScale)
+			state1->maxScaleCount += state2->maxScaleCount;
+
+		/* The rest of this needs to work in the aggregate context */
+		old_context = MemoryContextSwitchTo(agg_context);
+
+		/* Accumulate sums */
+		add_var(&(state1->sumX), &(state2->sumX), &(state1->sumX));
+
+		MemoryContextSwitchTo(old_context);
+	}
+	PG_RETURN_POINTER(state1);
+}
+
+/*
+ * numeric_avg_serialize
+ *		Serialize NumericAggState for numeric aggregates that don't require
+ *		sumX2.
+ */
+Datum
+numeric_avg_serialize(PG_FUNCTION_ARGS)
+{
+	NumericAggState *state;
+	StringInfoData buf;
+	Datum		temp;
+	bytea	   *sumX;
+	bytea	   *result;
+
+	/* Ensure we disallow calling when not in aggregate context */
+	if (!AggCheckCallContext(fcinfo, NULL))
+		elog(ERROR, "aggregate function called in non-aggregate context");
+
+	state = (NumericAggState *) PG_GETARG_POINTER(0);
+
+	/*
+	 * This is a little wasteful since make_result converts the NumericVar
+	 * into a Numeric and numeric_send converts it back again. Is it worth
+	 * splitting the tasks in numeric_send into separate functions to stop
+	 * this? Doing so would also remove the fmgr call overhead.
+	 */
+	temp = DirectFunctionCall1(numeric_send,
+							   NumericGetDatum(make_result(&state->sumX)));
+	sumX = DatumGetByteaP(temp);
+
+	pq_begintypsend(&buf);
+
+	/* N */
+	pq_sendint64(&buf, state->N);
+
+	/* sumX */
+	pq_sendbytes(&buf, VARDATA(sumX), VARSIZE(sumX) - VARHDRSZ);
+
+	/* maxScale */
+	pq_sendint(&buf, state->maxScale, 4);
+
+	/* maxScaleCount */
+	pq_sendint64(&buf, state->maxScaleCount);
+
+	/* NaNcount */
+	pq_sendint64(&buf, state->NaNcount);
+
+	result = pq_endtypsend(&buf);
+
+	PG_RETURN_BYTEA_P(result);
+}
+
+/*
+ * numeric_avg_deserialize
+ *		Deserialize bytea into NumericAggState for numeric aggregates that
+ *		don't require sumX2.
+ */
+Datum
+numeric_avg_deserialize(PG_FUNCTION_ARGS)
+{
+	bytea	   *sstate;
+	NumericAggState *result;
+	Datum		temp;
+	StringInfoData buf;
+
+	if (!AggCheckCallContext(fcinfo, NULL))
+		elog(ERROR, "aggregate function called in non-aggregate context");
+
+	sstate = PG_GETARG_BYTEA_P(0);
+
+	/*
+	 * Copy the bytea into a StringInfo so that we can "receive" it using the
+	 * standard recv-function infrastructure.
+	 */
+	initStringInfo(&buf);
+	appendBinaryStringInfo(&buf, VARDATA(sstate), VARSIZE(sstate) - VARHDRSZ);
+
+	result = makeNumericAggStateCurrentContext(false);
+
+	/* N */
+	result->N = pq_getmsgint64(&buf);
+
+	/* sumX */
+	temp = DirectFunctionCall3(numeric_recv,
+							   PointerGetDatum(&buf),
+							   InvalidOid,
+							   -1);
+	set_var_from_num(DatumGetNumeric(temp), &result->sumX);
+
+	/* maxScale */
+	result->maxScale = pq_getmsgint(&buf, 4);
+
+	/* maxScaleCount */
+	result->maxScaleCount = pq_getmsgint64(&buf);
+
+	/* NaNcount */
+	result->NaNcount = pq_getmsgint64(&buf);
+
+	pq_getmsgend(&buf);
+	pfree(buf.data);
+
+	PG_RETURN_POINTER(result);
+}
+
+/*
+ * numeric_serialize
+ *		Serialization function for NumericAggState for numeric aggregates that
+ *		require sumX2.
+ */
+Datum
+numeric_serialize(PG_FUNCTION_ARGS)
+{
+	NumericAggState *state;
+	StringInfoData buf;
+	Datum		temp;
+	bytea	   *sumX;
+	bytea	   *sumX2;
+	bytea	   *result;
+
+	/* Ensure we disallow calling when not in aggregate context */
+	if (!AggCheckCallContext(fcinfo, NULL))
+		elog(ERROR, "aggregate function called in non-aggregate context");
+
+	state = (NumericAggState *) PG_GETARG_POINTER(0);
+
+	/*
+	 * This is a little wasteful since make_result converts the NumericVar
+	 * into a Numeric and numeric_send converts it back again. Is it worth
+	 * splitting the tasks in numeric_send into separate functions to stop
+	 * this? Doing so would also remove the fmgr call overhead.
+	 */
+	temp = DirectFunctionCall1(numeric_send,
+							   NumericGetDatum(make_result(&state->sumX)));
+	sumX = DatumGetByteaP(temp);
+
+	temp = DirectFunctionCall1(numeric_send,
+							   NumericGetDatum(make_result(&state->sumX2)));
+	sumX2 = DatumGetByteaP(temp);
+
+	pq_begintypsend(&buf);
+
+	/* N */
+	pq_sendint64(&buf, state->N);
+
+	/* sumX */
+	pq_sendbytes(&buf, VARDATA(sumX), VARSIZE(sumX) - VARHDRSZ);
+
+	/* sumX2 */
+	pq_sendbytes(&buf, VARDATA(sumX2), VARSIZE(sumX2) - VARHDRSZ);
+
+	/* maxScale */
+	pq_sendint(&buf, state->maxScale, 4);
+
+	/* maxScaleCount */
+	pq_sendint64(&buf, state->maxScaleCount);
+
+	/* NaNcount */
+	pq_sendint64(&buf, state->NaNcount);
+
+	result = pq_endtypsend(&buf);
+
+	PG_RETURN_BYTEA_P(result);
+}
+
+/*
+ * numeric_deserialize
+ *		Deserialization function for NumericAggState for numeric aggregates that
+ *		require sumX2.
+ */
+Datum
+numeric_deserialize(PG_FUNCTION_ARGS)
+{
+	bytea	   *sstate;
+	NumericAggState *result;
+	Datum		temp;
+	StringInfoData buf;
+
+	if (!AggCheckCallContext(fcinfo, NULL))
+		elog(ERROR, "aggregate function called in non-aggregate context");
+
+	sstate = PG_GETARG_BYTEA_P(0);
+
+	/*
+	 * Copy the bytea into a StringInfo so that we can "receive" it using the
+	 * standard recv-function infrastructure.
+	 */
+	initStringInfo(&buf);
+	appendBinaryStringInfo(&buf, VARDATA(sstate), VARSIZE(sstate) - VARHDRSZ);
+
+	result = makeNumericAggStateCurrentContext(false);
+
+	/* N */
+	result->N = pq_getmsgint64(&buf);
+
+	/* sumX */
+	temp = DirectFunctionCall3(numeric_recv,
+							   PointerGetDatum(&buf),
+							   InvalidOid,
+							   -1);
+	set_var_from_num(DatumGetNumeric(temp), &result->sumX);
+
+	/* sumX2 */
+	temp = DirectFunctionCall3(numeric_recv,
+							   PointerGetDatum(&buf),
+							   InvalidOid,
+							   -1);
+	set_var_from_num(DatumGetNumeric(temp), &result->sumX2);
+
+	/* maxScale */
+	result->maxScale = pq_getmsgint(&buf, 4);
+
+	/* maxScaleCount */
+	result->maxScaleCount = pq_getmsgint64(&buf);
+
+	/* NaNcount */
+	result->NaNcount = pq_getmsgint64(&buf);
+
+	pq_getmsgend(&buf);
+	pfree(buf.data);
+
+	PG_RETURN_POINTER(result);
 }
 
 /*
@@ -3442,6 +3816,21 @@ makeInt128AggState(FunctionCallInfo fcinfo, bool calcSumX2)
 }
 
 /*
+ * Like makeInt128AggState(), but allocate the state in the current memory
+ * context.
+ */
+static Int128AggState *
+makeInt128AggStateCurrentContext(bool calcSumX2)
+{
+	Int128AggState *state;
+
+	state = (Int128AggState *) palloc0(sizeof(Int128AggState));
+	state->calcSumX2 = calcSumX2;
+
+	return state;
+}
+
+/*
  * Accumulate a new input value for 128-bit aggregate functions.
  */
 static void
@@ -3469,9 +3858,11 @@ do_int128_discard(Int128AggState *state, int128 newval)
 
 typedef Int128AggState PolyNumAggState;
 #define makePolyNumAggState makeInt128AggState
+#define makePolyNumAggStateCurrentContext makeInt128AggStateCurrentContext
 #else
 typedef NumericAggState PolyNumAggState;
 #define makePolyNumAggState makeNumericAggState
+#define makePolyNumAggStateCurrentContext makeNumericAggStateCurrentContext
 #endif
 
 Datum
@@ -3552,6 +3943,211 @@ int8_accum(PG_FUNCTION_ARGS)
 }
 
 /*
+ * Combine function for numeric aggregates which require sumX2
+ */
+Datum
+numeric_poly_combine(PG_FUNCTION_ARGS)
+{
+	PolyNumAggState *state1;
+	PolyNumAggState *state2;
+	MemoryContext agg_context;
+	MemoryContext old_context;
+
+	if (!AggCheckCallContext(fcinfo, &agg_context))
+		elog(ERROR, "aggregate function called in non-aggregate context");
+
+	state1 = PG_ARGISNULL(0) ? NULL : (PolyNumAggState *) PG_GETARG_POINTER(0);
+	state2 = PG_ARGISNULL(1) ? NULL : (PolyNumAggState *) PG_GETARG_POINTER(1);
+
+	if (state2 == NULL)
+		PG_RETURN_POINTER(state1);
+
+	/* manually copy all fields from state2 to state1 */
+	if (state1 == NULL)
+	{
+		old_context = MemoryContextSwitchTo(agg_context);
+
+		state1 = makePolyNumAggState(fcinfo, true);
+		state1->N = state2->N;
+
+#ifdef HAVE_INT128
+		state1->sumX = state2->sumX;
+		state1->sumX2 = state2->sumX2;
+#else
+		init_var(&(state1->sumX));
+		set_var_from_var(&(state2->sumX), &(state1->sumX));
+
+		init_var(&state1->sumX2);
+		set_var_from_var(&(state2->sumX2), &(state1->sumX2));
+#endif
+
+		MemoryContextSwitchTo(old_context);
+
+		PG_RETURN_POINTER(state1);
+	}
+
+	if (state2->N > 0)
+	{
+		state1->N += state2->N;
+
+#ifdef HAVE_INT128
+		state1->sumX += state2->sumX;
+		state1->sumX2 += state2->sumX2;
+#else
+		/* The rest of this needs to work in the aggregate context */
+		old_context = MemoryContextSwitchTo(agg_context);
+
+		/* Accumulate sums */
+		add_var(&(state1->sumX), &(state2->sumX), &(state1->sumX));
+		add_var(&(state1->sumX2), &(state2->sumX2), &(state1->sumX2));
+
+		MemoryContextSwitchTo(old_context);
+#endif
+
+	}
+	PG_RETURN_POINTER(state1);
+}
+
+/*
+ * numeric_poly_serialize
+ *		Serialize PolyNumAggState into bytea for aggregate functions which
+ *		require sumX2.
+ */
+Datum
+numeric_poly_serialize(PG_FUNCTION_ARGS)
+{
+	PolyNumAggState *state;
+	StringInfoData buf;
+	bytea	   *sumX;
+	bytea	   *sumX2;
+	bytea	   *result;
+
+	/* Ensure we disallow calling when not in aggregate context */
+	if (!AggCheckCallContext(fcinfo, NULL))
+		elog(ERROR, "aggregate function called in non-aggregate context");
+
+	state = (PolyNumAggState *) PG_GETARG_POINTER(0);
+
+	/*
+	 * If the platform supports int128 then sumX and sumX2 will be a 128 bit
+	 * integer type. Here we'll convert that into a numeric type so that the
+	 * combine state is in the same format for both int128 enabled machines
+	 * and machines which don't support that type. The logic here is that one
+	 * day we might like to send these over to another server for further
+	 * processing and we want a standard format to work with.
+	 */
+	{
+		Datum		temp;
+
+#ifdef HAVE_INT128
+		NumericVar	num;
+
+		init_var(&num);
+		int128_to_numericvar(state->sumX, &num);
+		temp = DirectFunctionCall1(numeric_send,
+								   NumericGetDatum(make_result(&num)));
+		sumX = DatumGetByteaP(temp);
+
+		int128_to_numericvar(state->sumX2, &num);
+		temp = DirectFunctionCall1(numeric_send,
+								   NumericGetDatum(make_result(&num)));
+		sumX2 = DatumGetByteaP(temp);
+		free_var(&num);
+#else
+		temp = DirectFunctionCall1(numeric_send,
+								 NumericGetDatum(make_result(&state->sumX)));
+		sumX = DatumGetByteaP(temp);
+
+		temp = DirectFunctionCall1(numeric_send,
+								NumericGetDatum(make_result(&state->sumX2)));
+		sumX2 = DatumGetByteaP(temp);
+#endif
+	}
+
+	pq_begintypsend(&buf);
+
+	/* N */
+	pq_sendint64(&buf, state->N);
+
+	/* sumX */
+	pq_sendbytes(&buf, VARDATA(sumX), VARSIZE(sumX) - VARHDRSZ);
+
+	/* sumX2 */
+	pq_sendbytes(&buf, VARDATA(sumX2), VARSIZE(sumX2) - VARHDRSZ);
+
+	result = pq_endtypsend(&buf);
+
+	PG_RETURN_BYTEA_P(result);
+}
+
+/*
+ * numeric_poly_deserialize
+ *		Deserialize PolyNumAggState from bytea for aggregate functions which
+ *		require sumX2.
+ */
+Datum
+numeric_poly_deserialize(PG_FUNCTION_ARGS)
+{
+	bytea	   *sstate;
+	PolyNumAggState *result;
+	Datum		sumX;
+	Datum		sumX2;
+	StringInfoData buf;
+
+	if (!AggCheckCallContext(fcinfo, NULL))
+		elog(ERROR, "aggregate function called in non-aggregate context");
+
+	sstate = PG_GETARG_BYTEA_P(0);
+
+	/*
+	 * Copy the bytea into a StringInfo so that we can "receive" it using the
+	 * standard recv-function infrastructure.
+	 */
+	initStringInfo(&buf);
+	appendBinaryStringInfo(&buf, VARDATA(sstate), VARSIZE(sstate) - VARHDRSZ);
+
+	result = makePolyNumAggStateCurrentContext(false);
+
+	/* N */
+	result->N = pq_getmsgint64(&buf);
+
+	/* sumX */
+	sumX = DirectFunctionCall3(numeric_recv,
+							   PointerGetDatum(&buf),
+							   InvalidOid,
+							   -1);
+
+	/* sumX2 */
+	sumX2 = DirectFunctionCall3(numeric_recv,
+								PointerGetDatum(&buf),
+								InvalidOid,
+								-1);
+
+#ifdef HAVE_INT128
+	{
+		NumericVar	num;
+
+		init_var(&num);
+		set_var_from_num(DatumGetNumeric(sumX), &num);
+		numericvar_to_int128(&num, &result->sumX);
+
+		set_var_from_num(DatumGetNumeric(sumX2), &num);
+		numericvar_to_int128(&num, &result->sumX2);
+
+		free_var(&num);
+	}
+#else
+	set_var_from_num(DatumGetNumeric(sumX), &result->sumX);
+	set_var_from_num(DatumGetNumeric(sumX2), &result->sumX2);
+#endif
+
+	pq_getmsgend(&buf);
+	pfree(buf.data);
+
+	PG_RETURN_POINTER(result);
+}
+
+/*
  * Transition function for int8 input when we don't need sumX2.
  */
 Datum
@@ -3581,6 +4177,177 @@ int8_avg_accum(PG_FUNCTION_ARGS)
 	PG_RETURN_POINTER(state);
 }
 
+/*
+ * Combine function for PolyNumAggState for aggregates which don't require
+ * sumX2
+ */
+Datum
+int8_avg_combine(PG_FUNCTION_ARGS)
+{
+	PolyNumAggState *state1;
+	PolyNumAggState *state2;
+	MemoryContext agg_context;
+	MemoryContext old_context;
+
+	if (!AggCheckCallContext(fcinfo, &agg_context))
+		elog(ERROR, "aggregate function called in non-aggregate context");
+
+	state1 = PG_ARGISNULL(0) ? NULL : (PolyNumAggState *) PG_GETARG_POINTER(0);
+	state2 = PG_ARGISNULL(1) ? NULL : (PolyNumAggState *) PG_GETARG_POINTER(1);
+
+	if (state2 == NULL)
+		PG_RETURN_POINTER(state1);
+
+	/* manually copy all fields from state2 to state1 */
+	if (state1 == NULL)
+	{
+		old_context = MemoryContextSwitchTo(agg_context);
+
+		state1 = makePolyNumAggState(fcinfo, false);
+		state1->N = state2->N;
+
+#ifdef HAVE_INT128
+		state1->sumX = state2->sumX;
+#else
+		init_var(&state1->sumX);
+		set_var_from_var(&state2->sumX, &state1->sumX);
+#endif
+		MemoryContextSwitchTo(old_context);
+
+		PG_RETURN_POINTER(state1);
+	}
+
+	if (state2->N > 0)
+	{
+		state1->N += state2->N;
+
+#ifdef HAVE_INT128
+		state1->sumX += state2->sumX;
+#else
+		/* The rest of this needs to work in the aggregate context */
+		old_context = MemoryContextSwitchTo(agg_context);
+
+		/* Accumulate sums */
+		add_var(&(state1->sumX), &(state2->sumX), &(state1->sumX));
+
+		MemoryContextSwitchTo(old_context);
+#endif
+
+	}
+	PG_RETURN_POINTER(state1);
+}
+
+/*
+ * int8_avg_serialize
+ *		Serialize PolyNumAggState into bytea using the standard
+ *		recv-function infrastructure.
+ */
+Datum
+int8_avg_serialize(PG_FUNCTION_ARGS)
+{
+	PolyNumAggState *state;
+	StringInfoData buf;
+	bytea	   *sumX;
+	bytea	   *result;
+
+	/* Ensure we disallow calling when not in aggregate context */
+	if (!AggCheckCallContext(fcinfo, NULL))
+		elog(ERROR, "aggregate function called in non-aggregate context");
+
+	state = (PolyNumAggState *) PG_GETARG_POINTER(0);
+
+	/*
+	 * If the platform supports int128 then sumX will be a 128 integer type.
+	 * Here we'll convert that into a numeric type so that the combine state
+	 * is in the same format for both int128 enabled machines and machines
+	 * which don't support that type. The logic here is that one day we might
+	 * like to send these over to another server for further processing and we
+	 * want a standard format to work with.
+	 */
+	{
+		Datum		temp;
+#ifdef HAVE_INT128
+		NumericVar	num;
+
+		init_var(&num);
+		int128_to_numericvar(state->sumX, &num);
+		temp = DirectFunctionCall1(numeric_send,
+								   NumericGetDatum(make_result(&num)));
+		free_var(&num);
+		sumX = DatumGetByteaP(temp);
+#else
+		temp = DirectFunctionCall1(numeric_send,
+								 NumericGetDatum(make_result(&state->sumX)));
+		sumX = DatumGetByteaP(temp);
+#endif
+	}
+
+	pq_begintypsend(&buf);
+
+	/* N */
+	pq_sendint64(&buf, state->N);
+
+	/* sumX */
+	pq_sendbytes(&buf, VARDATA(sumX), VARSIZE(sumX) - VARHDRSZ);
+
+	result = pq_endtypsend(&buf);
+
+	PG_RETURN_BYTEA_P(result);
+}
+
+/*
+ * int8_avg_deserialize
+ *		Deserialize bytea back into PolyNumAggState.
+ */
+Datum
+int8_avg_deserialize(PG_FUNCTION_ARGS)
+{
+	bytea	   *sstate;
+	PolyNumAggState *result;
+	StringInfoData buf;
+	Datum		temp;
+
+	if (!AggCheckCallContext(fcinfo, NULL))
+		elog(ERROR, "aggregate function called in non-aggregate context");
+
+	sstate = PG_GETARG_BYTEA_P(0);
+
+	/*
+	 * Copy the bytea into a StringInfo so that we can "receive" it using the
+	 * standard recv-function infrastructure.
+	 */
+	initStringInfo(&buf);
+	appendBinaryStringInfo(&buf, VARDATA(sstate), VARSIZE(sstate) - VARHDRSZ);
+
+	result = makePolyNumAggStateCurrentContext(false);
+
+	/* N */
+	result->N = pq_getmsgint64(&buf);
+
+	/* sumX */
+	temp = DirectFunctionCall3(numeric_recv,
+							   PointerGetDatum(&buf),
+							   InvalidOid,
+							   -1);
+
+#ifdef HAVE_INT128
+	{
+		NumericVar	num;
+
+		init_var(&num);
+		set_var_from_num(DatumGetNumeric(temp), &num);
+		numericvar_to_int128(&num, &result->sumX);
+		free_var(&num);
+	}
+#else
+	set_var_from_num(DatumGetNumeric(temp), &result->sumX);
+#endif
+
+	pq_getmsgend(&buf);
+	pfree(buf.data);
+
+	PG_RETURN_POINTER(result);
+}
 
 /*
  * Inverse transition functions to go with the above.
@@ -4310,6 +5077,37 @@ int4_avg_accum(PG_FUNCTION_ARGS)
 }
 
 Datum
+int4_avg_combine(PG_FUNCTION_ARGS)
+{
+	ArrayType  *transarray1;
+	ArrayType  *transarray2;
+	Int8TransTypeData *state1;
+	Int8TransTypeData *state2;
+
+	if (!AggCheckCallContext(fcinfo, NULL))
+		elog(ERROR, "aggregate function called in non-aggregate context");
+
+	transarray1 = PG_GETARG_ARRAYTYPE_P(0);
+	transarray2 = PG_GETARG_ARRAYTYPE_P(1);
+
+	if (ARR_HASNULL(transarray1) ||
+		ARR_SIZE(transarray1) != ARR_OVERHEAD_NONULLS(1) + sizeof(Int8TransTypeData))
+		elog(ERROR, "expected 2-element int8 array");
+
+	if (ARR_HASNULL(transarray2) ||
+		ARR_SIZE(transarray2) != ARR_OVERHEAD_NONULLS(1) + sizeof(Int8TransTypeData))
+		elog(ERROR, "expected 2-element int8 array");
+
+	state1 = (Int8TransTypeData *) ARR_DATA_PTR(transarray1);
+	state2 = (Int8TransTypeData *) ARR_DATA_PTR(transarray2);
+
+	state1->count += state2->count;
+	state1->sum += state2->sum;
+
+	PG_RETURN_ARRAYTYPE_P(transarray1);
+}
+
+Datum
 int2_avg_accum_inv(PG_FUNCTION_ARGS)
 {
 	ArrayType  *transarray;
@@ -4654,12 +5452,19 @@ set_var_from_str(const char *str, const char *cp, NumericVar *dest)
 					 errmsg("invalid input syntax for type numeric: \"%s\"",
 							str)));
 		cp = endptr;
-		if (exponent > NUMERIC_MAX_PRECISION ||
-			exponent < -NUMERIC_MAX_PRECISION)
+
+		/*
+		 * At this point, dweight and dscale can't be more than about
+		 * INT_MAX/2 due to the MaxAllocSize limit on string length, so
+		 * constraining the exponent similarly should be enough to prevent
+		 * integer overflow in this function.  If the value is too large to
+		 * fit in storage format, make_result() will complain about it later;
+		 * for consistency use the same ereport errcode/text as make_result().
+		 */
+		if (exponent >= INT_MAX / 2 || exponent <= -(INT_MAX / 2))
 			ereport(ERROR,
-					(errcode(ERRCODE_INVALID_TEXT_REPRESENTATION),
-					 errmsg("invalid input syntax for type numeric: \"%s\"",
-							str)));
+					(errcode(ERRCODE_NUMERIC_VALUE_OUT_OF_RANGE),
+					 errmsg("value overflows numeric format")));
 		dweight += (int) exponent;
 		dscale -= (int) exponent;
 		if (dscale < 0)
@@ -5307,6 +6112,79 @@ int64_to_numericvar(int64 val, NumericVar *var)
 }
 
 #ifdef HAVE_INT128
+/*
+ * Convert numeric to int128, rounding if needed.
+ *
+ * If overflow, return FALSE (no error is raised).  Return TRUE if okay.
+ */
+static bool
+numericvar_to_int128(NumericVar *var, int128 *result)
+{
+	NumericDigit *digits;
+	int			ndigits;
+	int			weight;
+	int			i;
+	int128		val,
+				oldval;
+	bool		neg;
+	NumericVar	rounded;
+
+	/* Round to nearest integer */
+	init_var(&rounded);
+	set_var_from_var(var, &rounded);
+	round_var(&rounded, 0);
+
+	/* Check for zero input */
+	strip_var(&rounded);
+	ndigits = rounded.ndigits;
+	if (ndigits == 0)
+	{
+		*result = 0;
+		free_var(&rounded);
+		return true;
+	}
+
+	/*
+	 * For input like 10000000000, we must treat stripped digits as real. So
+	 * the loop assumes there are weight+1 digits before the decimal point.
+	 */
+	weight = rounded.weight;
+	Assert(weight >= 0 && ndigits <= weight + 1);
+
+	/* Construct the result */
+	digits = rounded.digits;
+	neg = (rounded.sign == NUMERIC_NEG);
+	val = digits[0];
+	for (i = 1; i <= weight; i++)
+	{
+		oldval = val;
+		val *= NBASE;
+		if (i < ndigits)
+			val += digits[i];
+
+		/*
+		 * The overflow check is a bit tricky because we want to accept
+		 * INT128_MIN, which will overflow the positive accumulator.  We can
+		 * detect this case easily though because INT128_MIN is the only
+		 * nonzero value for which -val == val (on a two's complement machine,
+		 * anyway).
+		 */
+		if ((val / NBASE) != oldval)	/* possible overflow? */
+		{
+			if (!neg || (-val) != val || val == 0 || oldval < 0)
+			{
+				free_var(&rounded);
+				return false;
+			}
+		}
+	}
+
+	free_var(&rounded);
+
+	*result = neg ? -val : val;
+	return true;
+}
+
 /*
  * Convert 128 bit integer to numeric.
  */
@@ -6414,7 +7292,7 @@ div_var_fast(NumericVar *var1, NumericVar *var2, NumericVar *result,
 		 * But having said that: div[qi] can be more than INT_MAX/NBASE, as
 		 * noted above, which means that the product div[qi] * NBASE *can*
 		 * overflow.  When that happens, adding it to div[qi + 1] will always
-		 * cause a cancelling overflow so that the end result is correct.  We
+		 * cause a canceling overflow so that the end result is correct.  We
 		 * could avoid the intermediate overflow by doing the multiplication
 		 * and addition in int64 arithmetic, but so far there appears no need.
 		 */
@@ -6731,6 +7609,7 @@ exp_var(NumericVar *arg, NumericVar *result, int rscale)
 	val = numericvar_to_double_no_overflow(&x);
 
 	/* Guard against overflow */
+	/* If you change this limit, see also power_var()'s limit */
 	if (Abs(val) >= NUMERIC_MAX_RESULT_SCALE * 3)
 		ereport(ERROR,
 				(errcode(ERRCODE_NUMERIC_VALUE_OUT_OF_RANGE),
@@ -7132,6 +8011,15 @@ power_var(NumericVar *base, NumericVar *exp, NumericVar *result)
 	 *
 	 * We want result = e ^ (exp * ln(base))
 	 * so result dweight = log10(result) = exp * ln(base) * log10(e)
+	 *
+	 * We also perform a crude overflow test here so that we can exit early if
+	 * the full-precision result is sure to overflow, and to guard against
+	 * integer overflow when determining the scale for the real calculation.
+	 * exp_var() supports inputs up to NUMERIC_MAX_RESULT_SCALE * 3, so the
+	 * result will overflow if exp * ln(base) >= NUMERIC_MAX_RESULT_SCALE * 3.
+	 * Since the values here are only approximations, we apply a small fuzz
+	 * factor to this overflow test and let exp_var() determine the exact
+	 * overflow threshold so that it is consistent for all inputs.
 	 *----------
 	 */
 	ln_dweight = estimate_ln_dweight(base);
@@ -7146,11 +8034,13 @@ power_var(NumericVar *base, NumericVar *exp, NumericVar *result)
 
 	val = numericvar_to_double_no_overflow(&ln_num);
 
-	val *= 0.434294481903252;	/* approximate decimal result weight */
+	/* initial overflow test with fuzz factor */
+	if (Abs(val) > NUMERIC_MAX_RESULT_SCALE * 3.01)
+		ereport(ERROR,
+				(errcode(ERRCODE_NUMERIC_VALUE_OUT_OF_RANGE),
+				 errmsg("value overflows numeric format")));
 
-	/* limit to something that won't cause integer overflow */
-	val = Max(val, -NUMERIC_MAX_RESULT_SCALE);
-	val = Min(val, NUMERIC_MAX_RESULT_SCALE);
+	val *= 0.434294481903252;	/* approximate decimal result weight */
 
 	/* choose the result scale */
 	rscale = NUMERIC_MIN_SIG_DIGITS - (int) val;

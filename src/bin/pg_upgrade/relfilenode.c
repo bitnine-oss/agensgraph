@@ -11,14 +11,13 @@
 
 #include "pg_upgrade.h"
 
+#include <sys/stat.h>
 #include "catalog/pg_class.h"
 #include "access/transam.h"
 
 
-static void transfer_single_new_db(pageCnvCtx *pageConverter,
-					   FileNameMap *maps, int size, char *old_tablespace);
-static void transfer_relfile(pageCnvCtx *pageConverter, FileNameMap *map,
-				 const char *suffix);
+static void transfer_single_new_db(FileNameMap *maps, int size, char *old_tablespace);
+static void transfer_relfile(FileNameMap *map, const char *suffix, bool vm_must_add_frozenbit);
 
 
 /*
@@ -92,7 +91,6 @@ transfer_all_new_dbs(DbInfoArr *old_db_arr, DbInfoArr *new_db_arr,
 				   *new_db = NULL;
 		FileNameMap *mappings;
 		int			n_maps;
-		pageCnvCtx *pageConverter = NULL;
 
 		/*
 		 * Advance past any databases that exist in the new cluster but not in
@@ -116,11 +114,7 @@ transfer_all_new_dbs(DbInfoArr *old_db_arr, DbInfoArr *new_db_arr,
 		{
 			print_maps(mappings, n_maps, new_db->db_name);
 
-#ifdef PAGE_CONVERSION
-			pageConverter = setupPageConverter();
-#endif
-			transfer_single_new_db(pageConverter, mappings, n_maps,
-								   old_tablespace);
+			transfer_single_new_db(mappings, n_maps, old_tablespace);
 		}
 		/* We allocate something even for n_maps == 0 */
 		pg_free(mappings);
@@ -129,48 +123,17 @@ transfer_all_new_dbs(DbInfoArr *old_db_arr, DbInfoArr *new_db_arr,
 	return;
 }
 
-
-/*
- * get_pg_database_relfilenode()
- *
- *	Retrieves the relfilenode for a few system-catalog tables.  We need these
- *	relfilenodes later in the upgrade process.
- */
-void
-get_pg_database_relfilenode(ClusterInfo *cluster)
-{
-	PGconn	   *conn = connectToServer(cluster, "template1");
-	PGresult   *res;
-	int			i_relfile;
-
-	res = executeQueryOrDie(conn,
-							"SELECT c.relname, c.relfilenode "
-							"FROM	pg_catalog.pg_class c, "
-							"		pg_catalog.pg_namespace n "
-							"WHERE	c.relnamespace = n.oid AND "
-							"		n.nspname = 'pg_catalog' AND "
-							"		c.relname = 'pg_database' "
-							"ORDER BY c.relname");
-
-	i_relfile = PQfnumber(res, "relfilenode");
-	cluster->pg_database_oid = atooid(PQgetvalue(res, 0, i_relfile));
-
-	PQclear(res);
-	PQfinish(conn);
-}
-
-
 /*
  * transfer_single_new_db()
  *
  * create links for mappings stored in "maps" array.
  */
 static void
-transfer_single_new_db(pageCnvCtx *pageConverter,
-					   FileNameMap *maps, int size, char *old_tablespace)
+transfer_single_new_db(FileNameMap *maps, int size, char *old_tablespace)
 {
 	int			mapnum;
 	bool		vm_crashsafe_match = true;
+	bool		vm_must_add_frozenbit = false;
 
 	/*
 	 * Do the old and new cluster disagree on the crash-safetiness of the vm
@@ -180,13 +143,20 @@ transfer_single_new_db(pageCnvCtx *pageConverter,
 		new_cluster.controldata.cat_ver >= VISIBILITY_MAP_CRASHSAFE_CAT_VER)
 		vm_crashsafe_match = false;
 
+	/*
+	 * Do we need to rewrite visibilitymap?
+	 */
+	if (old_cluster.controldata.cat_ver < VISIBILITY_MAP_FROZEN_BIT_CAT_VER &&
+		new_cluster.controldata.cat_ver >= VISIBILITY_MAP_FROZEN_BIT_CAT_VER)
+		vm_must_add_frozenbit = true;
+
 	for (mapnum = 0; mapnum < size; mapnum++)
 	{
 		if (old_tablespace == NULL ||
 			strcmp(maps[mapnum].old_tablespace, old_tablespace) == 0)
 		{
 			/* transfer primary file */
-			transfer_relfile(pageConverter, &maps[mapnum], "");
+			transfer_relfile(&maps[mapnum], "", vm_must_add_frozenbit);
 
 			/* fsm/vm files added in PG 8.4 */
 			if (GET_MAJOR_VERSION(old_cluster.major_version) >= 804)
@@ -194,9 +164,9 @@ transfer_single_new_db(pageCnvCtx *pageConverter,
 				/*
 				 * Copy/link any fsm and vm files, if they exist
 				 */
-				transfer_relfile(pageConverter, &maps[mapnum], "_fsm");
+				transfer_relfile(&maps[mapnum], "_fsm", vm_must_add_frozenbit);
 				if (vm_crashsafe_match)
-					transfer_relfile(pageConverter, &maps[mapnum], "_vm");
+					transfer_relfile(&maps[mapnum], "_vm", vm_must_add_frozenbit);
 			}
 		}
 	}
@@ -206,18 +176,19 @@ transfer_single_new_db(pageCnvCtx *pageConverter,
 /*
  * transfer_relfile()
  *
- * Copy or link file from old cluster to new one.
+ * Copy or link file from old cluster to new one.  If vm_must_add_frozenbit
+ * is true, visibility map forks are converted and rewritten, even in link
+ * mode.
  */
 static void
-transfer_relfile(pageCnvCtx *pageConverter, FileNameMap *map,
-				 const char *type_suffix)
+transfer_relfile(FileNameMap *map, const char *type_suffix, bool vm_must_add_frozenbit)
 {
 	const char *msg;
 	char		old_file[MAXPGPATH];
 	char		new_file[MAXPGPATH];
-	int			fd;
 	int			segno;
 	char		extent_suffix[65];
+	struct stat statbuf;
 
 	/*
 	 * Now copy/link any related segments as well. Remember, PG breaks large
@@ -250,7 +221,7 @@ transfer_relfile(pageCnvCtx *pageConverter, FileNameMap *map,
 		if (type_suffix[0] != '\0' || segno != 0)
 		{
 			/* Did file open fail? */
-			if ((fd = open(old_file, O_RDONLY, 0)) == -1)
+			if (stat(old_file, &statbuf) != 0)
 			{
 				/* File does not exist?  That's OK, just return */
 				if (errno == ENOENT)
@@ -260,7 +231,10 @@ transfer_relfile(pageCnvCtx *pageConverter, FileNameMap *map,
 							 map->nspname, map->relname, old_file, new_file,
 							 getErrorText());
 			}
-			close(fd);
+
+			/* If file is empty, just return */
+			if (statbuf.st_size == 0)
+				return;
 		}
 
 		unlink(new_file);
@@ -268,15 +242,17 @@ transfer_relfile(pageCnvCtx *pageConverter, FileNameMap *map,
 		/* Copying files might take some time, so give feedback. */
 		pg_log(PG_STATUS, "%s", old_file);
 
-		if ((user_opts.transfer_mode == TRANSFER_MODE_LINK) && (pageConverter != NULL))
-			pg_fatal("This upgrade requires page-by-page conversion, "
-					 "you must use copy mode instead of link mode.\n");
-
 		if (user_opts.transfer_mode == TRANSFER_MODE_COPY)
 		{
 			pg_log(PG_VERBOSE, "copying \"%s\" to \"%s\"\n", old_file, new_file);
 
-			if ((msg = copyAndUpdateFile(pageConverter, old_file, new_file, true)) != NULL)
+			/* Rewrite visibility map if needed */
+			if (vm_must_add_frozenbit && (strcmp(type_suffix, "_vm") == 0))
+				msg = rewriteVisibilityMap(old_file, new_file);
+			else
+				msg = copyFile(old_file, new_file);
+
+			if (msg)
 				pg_fatal("error while copying relation \"%s.%s\" (\"%s\" to \"%s\"): %s\n",
 						 map->nspname, map->relname, old_file, new_file, msg);
 		}
@@ -284,7 +260,13 @@ transfer_relfile(pageCnvCtx *pageConverter, FileNameMap *map,
 		{
 			pg_log(PG_VERBOSE, "linking \"%s\" to \"%s\"\n", old_file, new_file);
 
-			if ((msg = linkAndUpdateFile(pageConverter, old_file, new_file)) != NULL)
+			/* Rewrite visibility map if needed */
+			if (vm_must_add_frozenbit && (strcmp(type_suffix, "_vm") == 0))
+				msg = rewriteVisibilityMap(old_file, new_file);
+			else
+				msg = linkFile(old_file, new_file);
+
+			if (msg)
 				pg_fatal("error while creating link for relation \"%s.%s\" (\"%s\" to \"%s\"): %s\n",
 						 map->nspname, map->relname, old_file, new_file, msg);
 		}

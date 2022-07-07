@@ -297,7 +297,7 @@ RangeVarGetRelidExtended(const RangeVar *relation, LOCKMODE lockmode,
 					namespaceId = LookupExplicitNamespace(relation->schemaname, missing_ok);
 
 					/*
-					 * For missing_ok, allow a non-existant schema name to
+					 * For missing_ok, allow a non-existent schema name to
 					 * return InvalidOid.
 					 */
 					if (namespaceId != myTempNamespace)
@@ -3070,6 +3070,51 @@ GetTempToastNamespace(void)
 {
 	Assert(OidIsValid(myTempToastNamespace));
 	return myTempToastNamespace;
+}
+
+
+/*
+ * GetTempNamespaceState - fetch status of session's temporary namespace
+ *
+ * This is used for conveying state to a parallel worker, and is not meant
+ * for general-purpose access.
+ */
+void
+GetTempNamespaceState(Oid *tempNamespaceId, Oid *tempToastNamespaceId)
+{
+	/* Return namespace OIDs, or 0 if session has not created temp namespace */
+	*tempNamespaceId = myTempNamespace;
+	*tempToastNamespaceId = myTempToastNamespace;
+}
+
+/*
+ * SetTempNamespaceState - set status of session's temporary namespace
+ *
+ * This is used for conveying state to a parallel worker, and is not meant for
+ * general-purpose access.  By transferring these namespace OIDs to workers,
+ * we ensure they will have the same notion of the search path as their leader
+ * does.
+ */
+void
+SetTempNamespaceState(Oid tempNamespaceId, Oid tempToastNamespaceId)
+{
+	/* Worker should not have created its own namespaces ... */
+	Assert(myTempNamespace == InvalidOid);
+	Assert(myTempToastNamespace == InvalidOid);
+	Assert(myTempNamespaceSubID == InvalidSubTransactionId);
+
+	/* Assign same namespace OIDs that leader has */
+	myTempNamespace = tempNamespaceId;
+	myTempToastNamespace = tempToastNamespaceId;
+
+	/*
+	 * It's fine to leave myTempNamespaceSubID == InvalidSubTransactionId.
+	 * Even if the namespace is new so far as the leader is concerned, it's
+	 * not new to the worker, and we certainly wouldn't want the worker trying
+	 * to destroy it.
+	 */
+
+	baseSearchPathValid = false;	/* may need to rebuild list */
 }
 
 

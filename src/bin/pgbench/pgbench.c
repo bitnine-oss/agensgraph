@@ -38,6 +38,8 @@
 #include "portability/instr_time.h"
 
 #include <ctype.h>
+#include <float.h>
+#include <limits.h>
 #include <math.h>
 #include <signal.h>
 #include <sys/time.h>
@@ -94,6 +96,7 @@ static int	pthread_join(pthread_t th, void **thread_return);
 
 int			nxacts = 0;			/* number of transactions per client */
 int			duration = 0;		/* duration in seconds */
+int64		end_time = 0;		/* when to stop in micro seconds, under -T */
 
 /*
  * scaling factor. for example, scale = 10 will make 1000000 tuples in
@@ -179,13 +182,24 @@ char	   *login = NULL;
 char	   *dbName;
 const char *progname;
 
+#define WSEP '@'				/* weight separator */
+
 volatile bool timer_exceeded = false;	/* flag from signal handler */
 
-/* variable definitions */
+/*
+ * Variable definitions.  If a variable has a string value, "value" is that
+ * value, is_numeric is false, and num_value is undefined.  If the value is
+ * known to be numeric, is_numeric is true and num_value contains the value
+ * (in any permitted numeric variant).  In this case "value" contains the
+ * string equivalent of the number, if we've had occasion to compute that,
+ * or NULL if we haven't.
+ */
 typedef struct
 {
-	char	   *name;			/* variable name */
-	char	   *value;			/* its value */
+	char	   *name;			/* variable's name */
+	char	   *value;			/* its value in string form, if known */
+	bool		is_numeric;		/* is numeric value known? */
+	PgBenchValue num_value;		/* variable's value in numeric form */
 } Variable;
 
 #define MAX_SCRIPTS		128		/* max number of SQL scripts allowed */
@@ -229,11 +243,12 @@ typedef struct
 	int			id;				/* client No. */
 	int			state;			/* state No. */
 	bool		listen;			/* whether an async query has been sent */
-	bool		is_throttled;	/* whether transaction throttling is done */
 	bool		sleeping;		/* whether the client is napping */
 	bool		throttling;		/* whether nap is for throttling */
+	bool		is_throttled;	/* whether transaction throttling is done */
 	Variable   *variables;		/* array of variable definitions */
-	int			nvariables;
+	int			nvariables;		/* number of variables */
+	bool		vars_sorted;	/* are variables sorted by name? */
 	int64		txn_scheduled;	/* scheduled start time of transaction (usec) */
 	instr_time	txn_begin;		/* used for measuring schedule lag times */
 	instr_time	stmt_begin;		/* used for measuring statement latencies */
@@ -256,6 +271,7 @@ typedef struct
 	int			nstate;			/* length of state[] */
 	unsigned short random_state[3];		/* separate randomness for each thread */
 	int64		throttle_trigger;		/* previous/next throttling (us) */
+	FILE	   *logfile;		/* where to log, or NULL */
 
 	/* per thread collected stats */
 	instr_time	start_time;		/* thread start time */
@@ -286,47 +302,47 @@ static const char *QUERYMODE[] = {"simple", "extended", "prepared"};
 
 typedef struct
 {
-	char	   *line;			/* full text of command line */
+	char	   *line;			/* text of command line */
 	int			command_num;	/* unique index of this Command struct */
 	int			type;			/* command type (SQL_COMMAND or META_COMMAND) */
 	int			argc;			/* number of command words */
 	char	   *argv[MAX_ARGS]; /* command word list */
-	int			cols[MAX_ARGS]; /* corresponding column starting from 1 */
-	PgBenchExpr *expr;			/* parsed expression */
+	PgBenchExpr *expr;			/* parsed expression, if needed */
 	SimpleStats stats;			/* time spent in this command */
 } Command;
 
-static struct
+typedef struct ParsedScript
 {
-	const char *name;
-	Command   **commands;
-	StatsData stats;
-}	sql_script[MAX_SCRIPTS];	/* SQL script files */
+	const char *desc;			/* script descriptor (eg, file name) */
+	int			weight;			/* selection weight */
+	Command   **commands;		/* NULL-terminated array of Commands */
+	StatsData	stats;			/* total time spent in script */
+} ParsedScript;
+
+static ParsedScript sql_script[MAX_SCRIPTS];	/* SQL script files */
 static int	num_scripts;		/* number of scripts in sql_script[] */
 static int	num_commands = 0;	/* total number of Command structs */
+static int64 total_weight = 0;
+
 static int	debug = 0;			/* debug flag */
 
-/* Define builtin test scripts */
-#define N_BUILTIN 3
-static struct
+/* Builtin test scripts */
+typedef struct BuiltinScript
 {
-	char	   *name;			/* very short name for -b ... */
-	char	   *desc;			/* short description */
-	char	   *commands;		/* actual pgbench script */
-}
+	const char *name;			/* very short name for -b ... */
+	const char *desc;			/* short description */
+	const char *script;			/* actual pgbench script */
+} BuiltinScript;
 
-			builtin_script[] =
+static const BuiltinScript builtin_script[] =
 {
 	{
 		"tpcb-like",
 		"<builtin: TPC-B (sort of)>",
-		"\\set nbranches " CppAsString2(nbranches) " * :scale\n"
-		"\\set ntellers " CppAsString2(ntellers) " * :scale\n"
-		"\\set naccounts " CppAsString2(naccounts) " * :scale\n"
-		"\\setrandom aid 1 :naccounts\n"
-		"\\setrandom bid 1 :nbranches\n"
-		"\\setrandom tid 1 :ntellers\n"
-		"\\setrandom delta -5000 5000\n"
+		"\\set aid random(1, " CppAsString2(naccounts) " * :scale)\n"
+		"\\set bid random(1, " CppAsString2(nbranches) " * :scale)\n"
+		"\\set tid random(1, " CppAsString2(ntellers) " * :scale)\n"
+		"\\set delta random(-5000, 5000)\n"
 		"BEGIN;\n"
 		"UPDATE pgbench_accounts SET abalance = abalance + :delta WHERE aid = :aid;\n"
 		"SELECT abalance FROM pgbench_accounts WHERE aid = :aid;\n"
@@ -338,13 +354,10 @@ static struct
 	{
 		"simple-update",
 		"<builtin: simple update>",
-		"\\set nbranches " CppAsString2(nbranches) " * :scale\n"
-		"\\set ntellers " CppAsString2(ntellers) " * :scale\n"
-		"\\set naccounts " CppAsString2(naccounts) " * :scale\n"
-		"\\setrandom aid 1 :naccounts\n"
-		"\\setrandom bid 1 :nbranches\n"
-		"\\setrandom tid 1 :ntellers\n"
-		"\\setrandom delta -5000 5000\n"
+		"\\set aid random(1, " CppAsString2(naccounts) " * :scale)\n"
+		"\\set bid random(1, " CppAsString2(nbranches) " * :scale)\n"
+		"\\set tid random(1, " CppAsString2(ntellers) " * :scale)\n"
+		"\\set delta random(-5000, 5000)\n"
 		"BEGIN;\n"
 		"UPDATE pgbench_accounts SET abalance = abalance + :delta WHERE aid = :aid;\n"
 		"SELECT abalance FROM pgbench_accounts WHERE aid = :aid;\n"
@@ -354,21 +367,31 @@ static struct
 	{
 		"select-only",
 		"<builtin: select only>",
-		"\\set naccounts " CppAsString2(naccounts) " * :scale\n"
-		"\\setrandom aid 1 :naccounts\n"
+		"\\set aid random(1, " CppAsString2(naccounts) " * :scale)\n"
 		"SELECT abalance FROM pgbench_accounts WHERE aid = :aid;\n"
 	}
 };
 
 
 /* Function prototypes */
-static void setalarm(int seconds);
-static void *threadRun(void *arg);
-
-static void processXactStats(TState *thread, CState *st, instr_time *now,
-				 bool skipped, FILE *logfile, StatsData *agg);
-static void doLog(TState *thread, CState *st, FILE *logfile, instr_time *now,
+static void setIntValue(PgBenchValue *pv, int64 ival);
+static void setDoubleValue(PgBenchValue *pv, double dval);
+static bool evaluateExpr(TState *, CState *, PgBenchExpr *, PgBenchValue *);
+static void doLog(TState *thread, CState *st, instr_time *now,
 	  StatsData *agg, bool skipped, double latency, double lag);
+static void processXactStats(TState *thread, CState *st, instr_time *now,
+				 bool skipped, StatsData *agg);
+static void pgbench_error(const char *fmt,...) pg_attribute_printf(1, 2);
+static void addScript(ParsedScript script);
+static void *threadRun(void *arg);
+static void setalarm(int seconds);
+
+
+/* callback functions for our flex lexer */
+static const PsqlScanCallbacks pgbench_callbacks = {
+	NULL,						/* don't need get_variable functionality */
+	pgbench_error
+};
 
 
 static void
@@ -389,9 +412,9 @@ usage(void)
 	 "  --tablespace=TABLESPACE  create tables in the specified tablespace\n"
 		   "  --unlogged-tables        create tables as unlogged tables\n"
 		   "\nOptions to select what to run:\n"
-		   "  -b, --builtin=NAME       add buitin script (use \"-b list\" to display\n"
-		   "                           available scripts)\n"
-		   "  -f, --file=FILENAME      add transaction script from FILENAME\n"
+		   "  -b, --builtin=NAME[@W]   add builtin script NAME weighted at W (default: 1)\n"
+	"                           (use \"-b list\" to list available scripts)\n"
+		   "  -f, --file=FILENAME[@W]  add script FILENAME weighted at W (default: 1)\n"
 		   "  -N, --skip-some-updates  skip updates of pgbench_tellers and pgbench_branches\n"
 		   "                           (same as \"-b simple-update\")\n"
 		   "  -S, --select-only        perform SELECT-only transactions\n"
@@ -415,8 +438,8 @@ usage(void)
 		 "  -T, --time=NUM           duration of benchmark test in seconds\n"
 		   "  -v, --vacuum-all         vacuum all four standard tables before tests\n"
 		   "  --aggregate-interval=NUM aggregate data over NUM seconds\n"
-		   "  --sampling-rate=NUM      fraction of transactions to log (e.g. 0.01 for 1%%)\n"
 		"  --progress-timestamp     use Unix epoch timestamps for progress\n"
+		   "  --sampling-rate=NUM      fraction of transactions to log (e.g., 0.01 for 1%%)\n"
 		   "\nCommon options:\n"
 		   "  -d, --debug              print debugging output\n"
 	  "  -h, --host=HOSTNAME      database server host or socket directory\n"
@@ -428,6 +451,33 @@ usage(void)
 		   "Report bugs to <pgsql-bugs@postgresql.org>.\n",
 		   progname, progname);
 }
+
+/* return whether str matches "^\s*[-+]?[0-9]+$" */
+static bool
+is_an_int(const char *str)
+{
+	const char *ptr = str;
+
+	/* skip leading spaces; cast is consistent with strtoint64 */
+	while (*ptr && isspace((unsigned char) *ptr))
+		ptr++;
+
+	/* skip sign */
+	if (*ptr == '+' || *ptr == '-')
+		ptr++;
+
+	/* at least one digit */
+	if (*ptr && !isdigit((unsigned char) *ptr))
+		return false;
+
+	/* eat all digits */
+	while (*ptr && isdigit((unsigned char) *ptr))
+		ptr++;
+
+	/* must have reached end of string */
+	return *ptr == '\0';
+}
+
 
 /*
  * strtoint64 -- convert a string to 64-bit integer
@@ -525,13 +575,14 @@ getExponentialRand(TState *thread, int64 min, int64 max, double parameter)
 				uniform,
 				rand;
 
+	/* abort if wrong parameter, but must really be checked beforehand */
 	Assert(parameter > 0.0);
 	cut = exp(-parameter);
 	/* erand in [0, 1), uniform in (0, 1] */
 	uniform = 1.0 - pg_erand48(thread->random_state);
 
 	/*
-	 * inner expresion in (cut, 1] (if parameter > 0), rand in [0, 1)
+	 * inner expression in (cut, 1] (if parameter > 0), rand in [0, 1)
 	 */
 	Assert((1.0 - cut) != 0.0);
 	rand = -log(cut + (1.0 - cut) * uniform) / parameter;
@@ -545,6 +596,9 @@ getGaussianRand(TState *thread, int64 min, int64 max, double parameter)
 {
 	double		stdev;
 	double		rand;
+
+	/* abort if parameter is too low, but must really be checked beforehand */
+	Assert(parameter >= MIN_GAUSSIAN_PARAM);
 
 	/*
 	 * Get user specified random number from this loop, with -parameter <
@@ -795,33 +849,98 @@ discard_response(CState *state)
 	} while (res);
 }
 
+/* qsort comparator for Variable array */
 static int
-compareVariables(const void *v1, const void *v2)
+compareVariableNames(const void *v1, const void *v2)
 {
 	return strcmp(((const Variable *) v1)->name,
 				  ((const Variable *) v2)->name);
 }
 
-static char *
-getVariable(CState *st, char *name)
+/* Locate a variable by name; returns NULL if unknown */
+static Variable *
+lookupVariable(CState *st, char *name)
 {
-	Variable	key,
-			   *var;
+	Variable	key;
 
 	/* On some versions of Solaris, bsearch of zero items dumps core */
 	if (st->nvariables <= 0)
 		return NULL;
 
+	/* Sort if we have to */
+	if (!st->vars_sorted)
+	{
+		qsort((void *) st->variables, st->nvariables, sizeof(Variable),
+			  compareVariableNames);
+		st->vars_sorted = true;
+	}
+
+	/* Now we can search */
 	key.name = name;
-	var = (Variable *) bsearch((void *) &key,
-							   (void *) st->variables,
-							   st->nvariables,
-							   sizeof(Variable),
-							   compareVariables);
-	if (var != NULL)
-		return var->value;
+	return (Variable *) bsearch((void *) &key,
+								(void *) st->variables,
+								st->nvariables,
+								sizeof(Variable),
+								compareVariableNames);
+}
+
+/* Get the value of a variable, in string form; returns NULL if unknown */
+static char *
+getVariable(CState *st, char *name)
+{
+	Variable   *var;
+	char		stringform[64];
+
+	var = lookupVariable(st, name);
+	if (var == NULL)
+		return NULL;			/* not found */
+
+	if (var->value)
+		return var->value;		/* we have it in string form */
+
+	/* We need to produce a string equivalent of the numeric value */
+	Assert(var->is_numeric);
+	if (var->num_value.type == PGBT_INT)
+		snprintf(stringform, sizeof(stringform),
+				 INT64_FORMAT, var->num_value.u.ival);
 	else
-		return NULL;
+	{
+		Assert(var->num_value.type == PGBT_DOUBLE);
+		snprintf(stringform, sizeof(stringform),
+				 "%.*g", DBL_DIG, var->num_value.u.dval);
+	}
+	var->value = pg_strdup(stringform);
+	return var->value;
+}
+
+/* Try to convert variable to numeric form; return false on failure */
+static bool
+makeVariableNumeric(Variable *var)
+{
+	if (var->is_numeric)
+		return true;			/* no work */
+
+	if (is_an_int(var->value))
+	{
+		setIntValue(&var->num_value, strtoint64(var->value));
+		var->is_numeric = true;
+	}
+	else	/* type should be double */
+	{
+		double		dv;
+		char		xs;
+
+		if (sscanf(var->value, "%lf%c", &dv, &xs) != 1)
+		{
+			fprintf(stderr,
+					"malformed variable \"%s\" value: \"%s\"\n",
+					var->name, var->value);
+			return false;
+		}
+		setDoubleValue(&var->num_value, dv);
+		var->is_numeric = true;
+	}
+	return true;
 }
 
 /* check whether the name consists of alphabets, numerals and underscores. */
@@ -836,26 +955,20 @@ isLegalVariableName(const char *name)
 			return false;
 	}
 
-	return true;
+	return (i > 0);				/* must be non-empty */
 }
 
-static int
-putVariable(CState *st, const char *context, char *name, char *value)
+/*
+ * Lookup a variable by name, creating it if need be.
+ * Caller is expected to assign a value to the variable.
+ * Returns NULL on failure (bad name).
+ */
+static Variable *
+lookupCreateVariable(CState *st, const char *context, char *name)
 {
-	Variable	key,
-			   *var;
+	Variable   *var;
 
-	key.name = name;
-	/* On some versions of Solaris, bsearch of zero items dumps core */
-	if (st->nvariables > 0)
-		var = (Variable *) bsearch((void *) &key,
-								   (void *) st->variables,
-								   st->nvariables,
-								   sizeof(Variable),
-								   compareVariables);
-	else
-		var = NULL;
-
+	var = lookupVariable(st, name);
 	if (var == NULL)
 	{
 		Variable   *newvars;
@@ -868,9 +981,10 @@ putVariable(CState *st, const char *context, char *name, char *value)
 		{
 			fprintf(stderr, "%s: invalid variable name: \"%s\"\n",
 					context, name);
-			return false;
+			return NULL;
 		}
 
+		/* Create variable at the end of the array */
 		if (st->variables)
 			newvars = (Variable *) pg_realloc(st->variables,
 									(st->nvariables + 1) * sizeof(Variable));
@@ -882,25 +996,70 @@ putVariable(CState *st, const char *context, char *name, char *value)
 		var = &newvars[st->nvariables];
 
 		var->name = pg_strdup(name);
-		var->value = pg_strdup(value);
+		var->value = NULL;
+		/* caller is expected to initialize remaining fields */
 
 		st->nvariables++;
-
-		qsort((void *) st->variables, st->nvariables, sizeof(Variable),
-			  compareVariables);
+		/* we don't re-sort the array till we have to */
+		st->vars_sorted = false;
 	}
-	else
-	{
-		char	   *val;
 
-		/* dup then free, in case value is pointing at this variable */
-		val = pg_strdup(value);
+	return var;
+}
 
+/* Assign a string value to a variable, creating it if need be */
+/* Returns false on failure (bad name) */
+static bool
+putVariable(CState *st, const char *context, char *name, const char *value)
+{
+	Variable   *var;
+	char	   *val;
+
+	var = lookupCreateVariable(st, context, name);
+	if (!var)
+		return false;
+
+	/* dup then free, in case value is pointing at this variable */
+	val = pg_strdup(value);
+
+	if (var->value)
 		free(var->value);
-		var->value = val;
-	}
+	var->value = val;
+	var->is_numeric = false;
 
 	return true;
+}
+
+/* Assign a numeric value to a variable, creating it if need be */
+/* Returns false on failure (bad name) */
+static bool
+putVariableNumber(CState *st, const char *context, char *name,
+				  const PgBenchValue *value)
+{
+	Variable   *var;
+
+	var = lookupCreateVariable(st, context, name);
+	if (!var)
+		return false;
+
+	if (var->value)
+		free(var->value);
+	var->value = NULL;
+	var->is_numeric = true;
+	var->num_value = *value;
+
+	return true;
+}
+
+/* Assign an integer value to a variable, creating it if need be */
+/* Returns false on failure (bad name) */
+static bool
+putVariableInt(CState *st, const char *context, char *name, int64 value)
+{
+	PgBenchValue val;
+
+	setIntValue(&val, value);
+	return putVariableNumber(st, context, name, &val);
 }
 
 static char *
@@ -989,6 +1148,424 @@ getQueryParams(CState *st, const Command *command, const char **params)
 		params[i] = getVariable(st, command->argv[i + 1]);
 }
 
+/* get a value as an int, tell if there is a problem */
+static bool
+coerceToInt(PgBenchValue *pval, int64 *ival)
+{
+	if (pval->type == PGBT_INT)
+	{
+		*ival = pval->u.ival;
+		return true;
+	}
+	else
+	{
+		double		dval = pval->u.dval;
+
+		Assert(pval->type == PGBT_DOUBLE);
+		if (dval < PG_INT64_MIN || PG_INT64_MAX < dval)
+		{
+			fprintf(stderr, "double to int overflow for %f\n", dval);
+			return false;
+		}
+		*ival = (int64) dval;
+		return true;
+	}
+}
+
+/* get a value as a double, or tell if there is a problem */
+static bool
+coerceToDouble(PgBenchValue *pval, double *dval)
+{
+	if (pval->type == PGBT_DOUBLE)
+	{
+		*dval = pval->u.dval;
+		return true;
+	}
+	else
+	{
+		Assert(pval->type == PGBT_INT);
+		*dval = (double) pval->u.ival;
+		return true;
+	}
+}
+
+/* assign an integer value */
+static void
+setIntValue(PgBenchValue *pv, int64 ival)
+{
+	pv->type = PGBT_INT;
+	pv->u.ival = ival;
+}
+
+/* assign a double value */
+static void
+setDoubleValue(PgBenchValue *pv, double dval)
+{
+	pv->type = PGBT_DOUBLE;
+	pv->u.dval = dval;
+}
+
+/* maximum number of function arguments */
+#define MAX_FARGS 16
+
+/*
+ * Recursive evaluation of functions
+ */
+static bool
+evalFunc(TState *thread, CState *st,
+		 PgBenchFunction func, PgBenchExprLink *args, PgBenchValue *retval)
+{
+	/* evaluate all function arguments */
+	int			nargs = 0;
+	PgBenchValue vargs[MAX_FARGS];
+	PgBenchExprLink *l = args;
+
+	for (nargs = 0; nargs < MAX_FARGS && l != NULL; nargs++, l = l->next)
+		if (!evaluateExpr(thread, st, l->expr, &vargs[nargs]))
+			return false;
+
+	if (l != NULL)
+	{
+		fprintf(stderr,
+				"too many function arguments, maximum is %d\n", MAX_FARGS);
+		return false;
+	}
+
+	/* then evaluate function */
+	switch (func)
+	{
+			/* overloaded operators */
+		case PGBENCH_ADD:
+		case PGBENCH_SUB:
+		case PGBENCH_MUL:
+		case PGBENCH_DIV:
+		case PGBENCH_MOD:
+			{
+				PgBenchValue *lval = &vargs[0],
+						   *rval = &vargs[1];
+
+				Assert(nargs == 2);
+
+				/* overloaded type management, double if some double */
+				if ((lval->type == PGBT_DOUBLE ||
+					 rval->type == PGBT_DOUBLE) && func != PGBENCH_MOD)
+				{
+					double		ld,
+								rd;
+
+					if (!coerceToDouble(lval, &ld) ||
+						!coerceToDouble(rval, &rd))
+						return false;
+
+					switch (func)
+					{
+						case PGBENCH_ADD:
+							setDoubleValue(retval, ld + rd);
+							return true;
+
+						case PGBENCH_SUB:
+							setDoubleValue(retval, ld - rd);
+							return true;
+
+						case PGBENCH_MUL:
+							setDoubleValue(retval, ld * rd);
+							return true;
+
+						case PGBENCH_DIV:
+							setDoubleValue(retval, ld / rd);
+							return true;
+
+						default:
+							/* cannot get here */
+							Assert(0);
+					}
+				}
+				else	/* we have integer operands, or % */
+				{
+					int64		li,
+								ri;
+
+					if (!coerceToInt(lval, &li) ||
+						!coerceToInt(rval, &ri))
+						return false;
+
+					switch (func)
+					{
+						case PGBENCH_ADD:
+							setIntValue(retval, li + ri);
+							return true;
+
+						case PGBENCH_SUB:
+							setIntValue(retval, li - ri);
+							return true;
+
+						case PGBENCH_MUL:
+							setIntValue(retval, li * ri);
+							return true;
+
+						case PGBENCH_DIV:
+						case PGBENCH_MOD:
+							if (ri == 0)
+							{
+								fprintf(stderr, "division by zero\n");
+								return false;
+							}
+							/* special handling of -1 divisor */
+							if (ri == -1)
+							{
+								if (func == PGBENCH_DIV)
+								{
+									/* overflow check (needed for INT64_MIN) */
+									if (li == PG_INT64_MIN)
+									{
+										fprintf(stderr, "bigint out of range\n");
+										return false;
+									}
+									else
+										setIntValue(retval, -li);
+								}
+								else
+									setIntValue(retval, 0);
+								return true;
+							}
+							/* else divisor is not -1 */
+							if (func == PGBENCH_DIV)
+								setIntValue(retval, li / ri);
+							else	/* func == PGBENCH_MOD */
+								setIntValue(retval, li % ri);
+
+							return true;
+
+						default:
+							/* cannot get here */
+							Assert(0);
+					}
+				}
+			}
+
+			/* no arguments */
+		case PGBENCH_PI:
+			setDoubleValue(retval, M_PI);
+			return true;
+
+			/* 1 overloaded argument */
+		case PGBENCH_ABS:
+			{
+				PgBenchValue *varg = &vargs[0];
+
+				Assert(nargs == 1);
+
+				if (varg->type == PGBT_INT)
+				{
+					int64		i = varg->u.ival;
+
+					setIntValue(retval, i < 0 ? -i : i);
+				}
+				else
+				{
+					double		d = varg->u.dval;
+
+					Assert(varg->type == PGBT_DOUBLE);
+					setDoubleValue(retval, d < 0.0 ? -d : d);
+				}
+
+				return true;
+			}
+
+		case PGBENCH_DEBUG:
+			{
+				PgBenchValue *varg = &vargs[0];
+
+				Assert(nargs == 1);
+
+				fprintf(stderr, "debug(script=%d,command=%d): ",
+						st->use_file, st->state + 1);
+
+				if (varg->type == PGBT_INT)
+					fprintf(stderr, "int " INT64_FORMAT "\n", varg->u.ival);
+				else
+				{
+					Assert(varg->type == PGBT_DOUBLE);
+					fprintf(stderr, "double %.*g\n", DBL_DIG, varg->u.dval);
+				}
+
+				*retval = *varg;
+
+				return true;
+			}
+
+			/* 1 double argument */
+		case PGBENCH_DOUBLE:
+		case PGBENCH_SQRT:
+			{
+				double		dval;
+
+				Assert(nargs == 1);
+
+				if (!coerceToDouble(&vargs[0], &dval))
+					return false;
+
+				if (func == PGBENCH_SQRT)
+					dval = sqrt(dval);
+
+				setDoubleValue(retval, dval);
+				return true;
+			}
+
+			/* 1 int argument */
+		case PGBENCH_INT:
+			{
+				int64		ival;
+
+				Assert(nargs == 1);
+
+				if (!coerceToInt(&vargs[0], &ival))
+					return false;
+
+				setIntValue(retval, ival);
+				return true;
+			}
+
+			/* variable number of arguments */
+		case PGBENCH_LEAST:
+		case PGBENCH_GREATEST:
+			{
+				bool		havedouble;
+				int			i;
+
+				Assert(nargs >= 1);
+
+				/* need double result if any input is double */
+				havedouble = false;
+				for (i = 0; i < nargs; i++)
+				{
+					if (vargs[i].type == PGBT_DOUBLE)
+					{
+						havedouble = true;
+						break;
+					}
+				}
+				if (havedouble)
+				{
+					double		extremum;
+
+					if (!coerceToDouble(&vargs[0], &extremum))
+						return false;
+					for (i = 1; i < nargs; i++)
+					{
+						double		dval;
+
+						if (!coerceToDouble(&vargs[i], &dval))
+							return false;
+						if (func == PGBENCH_LEAST)
+							extremum = Min(extremum, dval);
+						else
+							extremum = Max(extremum, dval);
+					}
+					setDoubleValue(retval, extremum);
+				}
+				else
+				{
+					int64		extremum;
+
+					if (!coerceToInt(&vargs[0], &extremum))
+						return false;
+					for (i = 1; i < nargs; i++)
+					{
+						int64		ival;
+
+						if (!coerceToInt(&vargs[i], &ival))
+							return false;
+						if (func == PGBENCH_LEAST)
+							extremum = Min(extremum, ival);
+						else
+							extremum = Max(extremum, ival);
+					}
+					setIntValue(retval, extremum);
+				}
+				return true;
+			}
+
+			/* random functions */
+		case PGBENCH_RANDOM:
+		case PGBENCH_RANDOM_EXPONENTIAL:
+		case PGBENCH_RANDOM_GAUSSIAN:
+			{
+				int64		imin,
+							imax;
+
+				Assert(nargs >= 2);
+
+				if (!coerceToInt(&vargs[0], &imin) ||
+					!coerceToInt(&vargs[1], &imax))
+					return false;
+
+				/* check random range */
+				if (imin > imax)
+				{
+					fprintf(stderr, "empty range given to random\n");
+					return false;
+				}
+				else if (imax - imin < 0 || (imax - imin) + 1 < 0)
+				{
+					/* prevent int overflows in random functions */
+					fprintf(stderr, "random range is too large\n");
+					return false;
+				}
+
+				if (func == PGBENCH_RANDOM)
+				{
+					Assert(nargs == 2);
+					setIntValue(retval, getrand(thread, imin, imax));
+				}
+				else	/* gaussian & exponential */
+				{
+					double		param;
+
+					Assert(nargs == 3);
+
+					if (!coerceToDouble(&vargs[2], &param))
+						return false;
+
+					if (func == PGBENCH_RANDOM_GAUSSIAN)
+					{
+						if (param < MIN_GAUSSIAN_PARAM)
+						{
+							fprintf(stderr,
+									"gaussian parameter must be at least %f "
+									"(not %f)\n", MIN_GAUSSIAN_PARAM, param);
+							return false;
+						}
+
+						setIntValue(retval,
+								 getGaussianRand(thread, imin, imax, param));
+					}
+					else	/* exponential */
+					{
+						if (param <= 0.0)
+						{
+							fprintf(stderr,
+							"exponential parameter must be greater than zero"
+									" (got %f)\n", param);
+							return false;
+						}
+
+						setIntValue(retval,
+							  getExponentialRand(thread, imin, imax, param));
+					}
+				}
+
+				return true;
+			}
+
+		default:
+			/* cannot get here */
+			Assert(0);
+			/* dead code to avoid a compiler warning */
+			return false;
+	}
+}
+
 /*
  * Recursive evaluation of an expression in a pgbench script
  * using the current state of variables.
@@ -996,114 +1573,46 @@ getQueryParams(CState *st, const Command *command, const char **params)
  * the value itself is returned through the retval pointer.
  */
 static bool
-evaluateExpr(CState *st, PgBenchExpr *expr, int64 *retval)
+evaluateExpr(TState *thread, CState *st, PgBenchExpr *expr, PgBenchValue *retval)
 {
 	switch (expr->etype)
 	{
-		case ENODE_INTEGER_CONSTANT:
+		case ENODE_CONSTANT:
 			{
-				*retval = expr->u.integer_constant.ival;
+				*retval = expr->u.constant;
 				return true;
 			}
 
 		case ENODE_VARIABLE:
 			{
-				char	   *var;
+				Variable   *var;
 
-				if ((var = getVariable(st, expr->u.variable.varname)) == NULL)
+				if ((var = lookupVariable(st, expr->u.variable.varname)) == NULL)
 				{
 					fprintf(stderr, "undefined variable \"%s\"\n",
 							expr->u.variable.varname);
 					return false;
 				}
-				*retval = strtoint64(var);
+
+				if (!makeVariableNumeric(var))
+					return false;
+
+				*retval = var->num_value;
 				return true;
 			}
 
-		case ENODE_OPERATOR:
-			{
-				int64		lval;
-				int64		rval;
-
-				if (!evaluateExpr(st, expr->u.operator.lexpr, &lval))
-					return false;
-				if (!evaluateExpr(st, expr->u.operator.rexpr, &rval))
-					return false;
-				switch (expr->u.operator.operator)
-				{
-					case '+':
-						*retval = lval + rval;
-						return true;
-
-					case '-':
-						*retval = lval - rval;
-						return true;
-
-					case '*':
-						*retval = lval * rval;
-						return true;
-
-					case '/':
-						if (rval == 0)
-						{
-							fprintf(stderr, "division by zero\n");
-							return false;
-						}
-
-						/*
-						 * INT64_MIN / -1 is problematic, since the result
-						 * can't be represented on a two's-complement machine.
-						 * Some machines produce INT64_MIN, some produce zero,
-						 * some throw an exception. We can dodge the problem
-						 * by recognizing that division by -1 is the same as
-						 * negation.
-						 */
-						if (rval == -1)
-						{
-							*retval = -lval;
-
-							/* overflow check (needed for INT64_MIN) */
-							if (lval == PG_INT64_MIN)
-							{
-								fprintf(stderr, "bigint out of range\n");
-								return false;
-							}
-						}
-						else
-							*retval = lval / rval;
-
-						return true;
-
-					case '%':
-						if (rval == 0)
-						{
-							fprintf(stderr, "division by zero\n");
-							return false;
-						}
-
-						/*
-						 * Some machines throw a floating-point exception for
-						 * INT64_MIN % -1.  Dodge that problem by noting that
-						 * any value modulo -1 is 0.
-						 */
-						if (rval == -1)
-							*retval = 0;
-						else
-							*retval = lval % rval;
-
-						return true;
-				}
-
-				fprintf(stderr, "bad operator\n");
-				return false;
-			}
+		case ENODE_FUNCTION:
+			return evalFunc(thread, st,
+							expr->u.function.function,
+							expr->u.function.args,
+							retval);
 
 		default:
-			break;
+			/* internal error which should never occur */
+			fprintf(stderr, "unexpected enode type in evaluation: %d\n",
+					expr->etype);
+			exit(1);
 	}
-
-	fprintf(stderr, "bad expression\n");
-	return false;
 }
 
 /*
@@ -1205,8 +1714,7 @@ runShellCommand(CState *st, char *variable, char **argv, int argc)
 				argv[0], res);
 		return false;
 	}
-	snprintf(res, sizeof(res), "%d", retval);
-	if (!putVariable(st, "setshell", variable, res))
+	if (!putVariableInt(st, "setshell", variable, retval))
 		return false;
 
 #ifdef DEBUG
@@ -1223,10 +1731,8 @@ preparedStatementName(char *buffer, int file, int state)
 }
 
 static bool
-clientDone(CState *st, bool ok)
+clientDone(CState *st)
 {
-	(void) ok;					/* unused */
-
 	if (st->con != NULL)
 	{
 		PQfinish(st->con);
@@ -1235,18 +1741,28 @@ clientDone(CState *st, bool ok)
 	return false;				/* always false */
 }
 
+/* return a script number with a weighted choice. */
 static int
 chooseScript(TState *thread)
 {
+	int			i = 0;
+	int64		w;
+
 	if (num_scripts == 1)
 		return 0;
 
-	return getrand(thread, 0, num_scripts - 1);
+	w = getrand(thread, 0, total_weight - 1);
+	do
+	{
+		w -= sql_script[i++].weight;
+	} while (w >= 0);
+
+	return i - 1;
 }
 
 /* return false iff client should be disconnected */
 static bool
-doCustom(TState *thread, CState *st, FILE *logfile, StatsData *agg)
+doCustom(TState *thread, CState *st, StatsData *agg)
 {
 	PGresult   *res;
 	Command   **commands;
@@ -1285,6 +1801,10 @@ top:
 		thread->throttle_trigger += wait;
 		st->txn_scheduled = thread->throttle_trigger;
 
+		/* stop client if next transaction is beyond pgbench end of execution */
+		if (duration > 0 && st->txn_scheduled > end_time)
+			return clientDone(st);
+
 		/*
 		 * If this --latency-limit is used, and this slot is already late so
 		 * that the transaction will miss the latency limit even if it
@@ -1300,7 +1820,7 @@ top:
 			now_us = INSTR_TIME_GET_MICROSEC(now);
 			while (thread->throttle_trigger < now_us - latency_limit)
 			{
-				processXactStats(thread, st, &now, true, logfile, agg);
+				processXactStats(thread, st, &now, true, agg);
 				/* next rendez-vous */
 				wait = getPoissonRand(thread, throttle_delay);
 				thread->throttle_trigger += wait;
@@ -1336,7 +1856,7 @@ top:
 			if (!PQconsumeInput(st->con))
 			{					/* there's something wrong */
 				fprintf(stderr, "client %d aborted in state %d; perhaps the backend died while processing\n", st->id, st->state);
-				return clientDone(st, false);
+				return clientDone(st);
 			}
 			if (PQisBusy(st->con))
 				return true;	/* don't have the whole result yet */
@@ -1361,8 +1881,8 @@ top:
 		if (commands[st->state + 1] == NULL)
 		{
 			if (progress || throttle_delay || latency_limit ||
-				per_script_stats || logfile)
-				processXactStats(thread, st, &now, false, logfile, agg);
+				per_script_stats || use_log)
+				processXactStats(thread, st, &now, false, agg);
 			else
 				thread->stats.cnt++;
 		}
@@ -1383,7 +1903,7 @@ top:
 					fprintf(stderr, "client %d aborted in state %d: %s",
 							st->id, st->state, PQerrorMessage(st->con));
 					PQclear(res);
-					return clientDone(st, false);
+					return clientDone(st);
 			}
 			PQclear(res);
 			discard_response(st);
@@ -1399,7 +1919,7 @@ top:
 
 			++st->cnt;
 			if ((st->cnt >= nxacts && duration <= 0) || timer_exceeded)
-				return clientDone(st, true);	/* exit success */
+				return clientDone(st);	/* exit success */
 		}
 
 		/* increment state counter */
@@ -1411,7 +1931,7 @@ top:
 			commands = sql_script[st->use_file].commands;
 			if (debug)
 				fprintf(stderr, "client %d executing script \"%s\"\n", st->id,
-						sql_script[st->use_file].name);
+						sql_script[st->use_file].desc);
 			st->is_throttled = false;
 
 			/*
@@ -1436,10 +1956,17 @@ top:
 		{
 			fprintf(stderr, "client %d aborted while establishing connection\n",
 					st->id);
-			return clientDone(st, false);
+			return clientDone(st);
 		}
 		INSTR_TIME_SET_CURRENT(end);
 		INSTR_TIME_ACCUM_DIFF(thread->conn_time, end, start);
+
+		/* Reset session-local state */
+		st->listen = false;
+		st->sleeping = false;
+		st->throttling = false;
+		st->is_throttled = false;
+		memset(st->prepared, 0, sizeof(st->prepared));
 	}
 
 	/*
@@ -1454,7 +1981,8 @@ top:
 	}
 
 	/* Record transaction start time under logging, progress or throttling */
-	if ((logfile || progress || throttle_delay || latency_limit || per_script_stats) && st->state == 0)
+	if ((use_log || progress || throttle_delay || latency_limit ||
+		 per_script_stats) && st->state == 0)
 	{
 		INSTR_TIME_SET_CURRENT(st->txn_begin);
 
@@ -1560,157 +2088,18 @@ top:
 			fprintf(stderr, "\n");
 		}
 
-		if (pg_strcasecmp(argv[0], "setrandom") == 0)
+		if (pg_strcasecmp(argv[0], "set") == 0)
 		{
-			char	   *var;
-			int64		min,
-						max;
-			double		parameter = 0;
-			char		res[64];
-
-			if (*argv[2] == ':')
-			{
-				if ((var = getVariable(st, argv[2] + 1)) == NULL)
-				{
-					fprintf(stderr, "%s: undefined variable \"%s\"\n",
-							argv[0], argv[2]);
-					st->ecnt++;
-					return true;
-				}
-				min = strtoint64(var);
-			}
-			else
-				min = strtoint64(argv[2]);
-
-			if (*argv[3] == ':')
-			{
-				if ((var = getVariable(st, argv[3] + 1)) == NULL)
-				{
-					fprintf(stderr, "%s: undefined variable \"%s\"\n",
-							argv[0], argv[3]);
-					st->ecnt++;
-					return true;
-				}
-				max = strtoint64(var);
-			}
-			else
-				max = strtoint64(argv[3]);
-
-			if (max < min)
-			{
-				fprintf(stderr, "%s: \\setrandom maximum is less than minimum\n",
-						argv[0]);
-				st->ecnt++;
-				return true;
-			}
-
-			/*
-			 * Generate random number functions need to be able to subtract
-			 * max from min and add one to the result without overflowing.
-			 * Since we know max > min, we can detect overflow just by
-			 * checking for a negative result. But we must check both that the
-			 * subtraction doesn't overflow, and that adding one to the result
-			 * doesn't overflow either.
-			 */
-			if (max - min < 0 || (max - min) + 1 < 0)
-			{
-				fprintf(stderr, "%s: \\setrandom range is too large\n",
-						argv[0]);
-				st->ecnt++;
-				return true;
-			}
-
-			if (argc == 4 ||	/* uniform without or with "uniform" keyword */
-				(argc == 5 && pg_strcasecmp(argv[4], "uniform") == 0))
-			{
-#ifdef DEBUG
-				printf("min: " INT64_FORMAT " max: " INT64_FORMAT " random: " INT64_FORMAT "\n", min, max, getrand(thread, min, max));
-#endif
-				snprintf(res, sizeof(res), INT64_FORMAT, getrand(thread, min, max));
-			}
-			else if (argc == 6 &&
-					 ((pg_strcasecmp(argv[4], "gaussian") == 0) ||
-					  (pg_strcasecmp(argv[4], "exponential") == 0)))
-			{
-				if (*argv[5] == ':')
-				{
-					if ((var = getVariable(st, argv[5] + 1)) == NULL)
-					{
-						fprintf(stderr, "%s: invalid parameter: \"%s\"\n",
-								argv[0], argv[5]);
-						st->ecnt++;
-						return true;
-					}
-					parameter = strtod(var, NULL);
-				}
-				else
-					parameter = strtod(argv[5], NULL);
-
-				if (pg_strcasecmp(argv[4], "gaussian") == 0)
-				{
-					if (parameter < MIN_GAUSSIAN_PARAM)
-					{
-						fprintf(stderr, "gaussian parameter must be at least %f (not \"%s\")\n", MIN_GAUSSIAN_PARAM, argv[5]);
-						st->ecnt++;
-						return true;
-					}
-#ifdef DEBUG
-					printf("min: " INT64_FORMAT " max: " INT64_FORMAT " random: " INT64_FORMAT "\n",
-						   min, max,
-						   getGaussianRand(thread, min, max, parameter));
-#endif
-					snprintf(res, sizeof(res), INT64_FORMAT,
-							 getGaussianRand(thread, min, max, parameter));
-				}
-				else if (pg_strcasecmp(argv[4], "exponential") == 0)
-				{
-					if (parameter <= 0.0)
-					{
-						fprintf(stderr,
-								"exponential parameter must be greater than zero (not \"%s\")\n",
-								argv[5]);
-						st->ecnt++;
-						return true;
-					}
-#ifdef DEBUG
-					printf("min: " INT64_FORMAT " max: " INT64_FORMAT " random: " INT64_FORMAT "\n",
-						   min, max,
-						   getExponentialRand(thread, min, max, parameter));
-#endif
-					snprintf(res, sizeof(res), INT64_FORMAT,
-							 getExponentialRand(thread, min, max, parameter));
-				}
-			}
-			else	/* this means an error somewhere in the parsing phase... */
-			{
-				fprintf(stderr, "%s: invalid arguments for \\setrandom\n",
-						argv[0]);
-				st->ecnt++;
-				return true;
-			}
-
-			if (!putVariable(st, argv[0], argv[1], res))
-			{
-				st->ecnt++;
-				return true;
-			}
-
-			st->listen = true;
-		}
-		else if (pg_strcasecmp(argv[0], "set") == 0)
-		{
-			char		res[64];
 			PgBenchExpr *expr = commands[st->state]->expr;
-			int64		result;
+			PgBenchValue result;
 
-			if (!evaluateExpr(st, expr, &result))
+			if (!evaluateExpr(thread, st, expr, &result))
 			{
 				st->ecnt++;
 				return true;
 			}
-			sprintf(res, INT64_FORMAT, result);
 
-			if (!putVariable(st, argv[0], argv[1], res))
+			if (!putVariableNumber(st, argv[0], argv[1], &result))
 			{
 				st->ecnt++;
 				return true;
@@ -1759,7 +2148,7 @@ top:
 			bool		ret = runShellCommand(st, argv[1], argv + 2, argc - 2);
 
 			if (timer_exceeded) /* timeout */
-				return clientDone(st, true);
+				return clientDone(st);
 			else if (!ret)		/* on error */
 			{
 				st->ecnt++;
@@ -1773,7 +2162,7 @@ top:
 			bool		ret = runShellCommand(st, NULL, argv + 1, argc - 1);
 
 			if (timer_exceeded) /* timeout */
-				return clientDone(st, true);
+				return clientDone(st);
 			else if (!ret)		/* on error */
 			{
 				st->ecnt++;
@@ -1794,9 +2183,13 @@ top:
  * print log entry after completing one transaction.
  */
 static void
-doLog(TState *thread, CState *st, FILE *logfile, instr_time *now,
+doLog(TState *thread, CState *st, instr_time *now,
 	  StatsData *agg, bool skipped, double latency, double lag)
 {
+	FILE	   *logfile = thread->logfile;
+
+	Assert(use_log);
+
 	/*
 	 * Skip the log entry if sampling is enabled and this row doesn't belong
 	 * to the random sample.
@@ -1879,7 +2272,7 @@ doLog(TState *thread, CState *st, FILE *logfile, instr_time *now,
  */
 static void
 processXactStats(TState *thread, CState *st, instr_time *now,
-				 bool skipped, FILE *logfile, StatsData *agg)
+				 bool skipped, StatsData *agg)
 {
 	double		latency = 0.0,
 				lag = 0.0;
@@ -1906,7 +2299,7 @@ processXactStats(TState *thread, CState *st, instr_time *now,
 		thread->stats.cnt++;
 
 	if (use_log)
-		doLog(thread, st, logfile, now, agg, skipped, latency, lag);
+		doLog(thread, st, now, agg, skipped, latency, lag);
 
 	/* XXX could use a mutex here, but we choose not to */
 	if (per_script_stats)
@@ -2254,26 +2647,53 @@ parseQuery(Command *cmd, const char *raw_sql)
 	return true;
 }
 
+/*
+ * Simple error-printing function, might be needed by lexer
+ */
+static void
+pgbench_error(const char *fmt,...)
+{
+	va_list		ap;
+
+	fflush(stdout);
+	va_start(ap, fmt);
+	vfprintf(stderr, _(fmt), ap);
+	va_end(ap);
+}
+
+/*
+ * syntax error while parsing a script (in practice, while parsing a
+ * backslash command, because we don't detect syntax errors in SQL)
+ *
+ * source: source of script (filename or builtin-script ID)
+ * lineno: line number within script (count from 1)
+ * line: whole line of backslash command, if available
+ * command: backslash command name, if available
+ * msg: the actual error message
+ * more: optional extra message
+ * column: zero-based column number, or -1 if unknown
+ */
 void
-pg_attribute_noreturn()
-syntax_error(const char *source, const int lineno,
+syntax_error(const char *source, int lineno,
 			 const char *line, const char *command,
-			 const char *msg, const char *more, const int column)
+			 const char *msg, const char *more, int column)
 {
 	fprintf(stderr, "%s:%d: %s", source, lineno, msg);
 	if (more != NULL)
 		fprintf(stderr, " (%s)", more);
-	if (column != -1)
-		fprintf(stderr, " at column %d", column);
-	fprintf(stderr, " in command \"%s\"\n", command);
+	if (column >= 0 && line == NULL)
+		fprintf(stderr, " at column %d", column + 1);
+	if (command != NULL)
+		fprintf(stderr, " in command \"%s\"", command);
+	fprintf(stderr, "\n");
 	if (line != NULL)
 	{
 		fprintf(stderr, "%s\n", line);
-		if (column != -1)
+		if (column >= 0)
 		{
 			int			i;
 
-			for (i = 0; i < column - 1; i++)
+			for (i = 0; i < column; i++)
 				fprintf(stderr, " ");
 			fprintf(stderr, "^ error found here\n");
 		}
@@ -2281,414 +2701,522 @@ syntax_error(const char *source, const int lineno,
 	exit(1);
 }
 
-/* Parse a command; return a Command struct, or NULL if it's a comment */
+/*
+ * Parse a SQL command; return a Command struct, or NULL if it's a comment
+ *
+ * On entry, psqlscan.l has collected the command into "buf", so we don't
+ * really need to do much here except check for comment and set up a
+ * Command struct.
+ */
 static Command *
-process_commands(char *buf, const char *source, const int lineno)
+process_sql_command(PQExpBuffer buf, const char *source)
 {
-	const char	delim[] = " \f\n\r\t\v";
-	Command    *my_commands;
-	int			j;
-	char	   *p,
-			   *tok;
+	Command    *my_command;
+	char	   *p;
+	char	   *nlpos;
 
-	/* Make the string buf end at the next newline */
-	if ((p = strchr(buf, '\n')) != NULL)
-		*p = '\0';
+	/* Skip any leading whitespace, as well as "--" style comments */
+	p = buf->data;
+	for (;;)
+	{
+		if (isspace((unsigned char) *p))
+			p++;
+		else if (strncmp(p, "--", 2) == 0)
+		{
+			p = strchr(p, '\n');
+			if (p == NULL)
+				return NULL;
+			p++;
+		}
+		else
+			break;
+	}
 
-	/* Skip leading whitespace */
-	p = buf;
-	while (isspace((unsigned char) *p))
-		p++;
-
-	/* If the line is empty or actually a comment, we're done */
-	if (*p == '\0' || strncmp(p, "--", 2) == 0)
+	/* If there's nothing but whitespace and comments, we're done */
+	if (*p == '\0')
 		return NULL;
 
 	/* Allocate and initialize Command structure */
-	my_commands = (Command *) pg_malloc(sizeof(Command));
-	my_commands->line = pg_strdup(buf);
-	my_commands->command_num = num_commands++;
-	my_commands->type = 0;		/* until set */
-	my_commands->argc = 0;
-	initSimpleStats(&my_commands->stats);
+	my_command = (Command *) pg_malloc0(sizeof(Command));
+	my_command->command_num = num_commands++;
+	my_command->type = SQL_COMMAND;
+	my_command->argc = 0;
+	initSimpleStats(&my_command->stats);
 
-	if (*p == '\\')
+	/*
+	 * If SQL command is multi-line, we only want to save the first line as
+	 * the "line" label.
+	 */
+	nlpos = strchr(p, '\n');
+	if (nlpos)
 	{
-		int			max_args = -1;
-
-		my_commands->type = META_COMMAND;
-
-		j = 0;
-		tok = strtok(++p, delim);
-
-		if (tok != NULL && pg_strcasecmp(tok, "set") == 0)
-			max_args = 2;
-
-		while (tok != NULL)
-		{
-			my_commands->cols[j] = tok - buf + 1;
-			my_commands->argv[j++] = pg_strdup(tok);
-			my_commands->argc++;
-			if (max_args >= 0 && my_commands->argc >= max_args)
-				tok = strtok(NULL, "");
-			else
-				tok = strtok(NULL, delim);
-		}
-
-		if (pg_strcasecmp(my_commands->argv[0], "setrandom") == 0)
-		{
-			/*--------
-			 * parsing:
-			 *	 \setrandom variable min max [uniform]
-			 *	 \setrandom variable min max (gaussian|exponential) parameter
-			 */
-
-			if (my_commands->argc < 4)
-			{
-				syntax_error(source, lineno, my_commands->line, my_commands->argv[0],
-							 "missing arguments", NULL, -1);
-			}
-
-			/* argc >= 4 */
-
-			if (my_commands->argc == 4 ||		/* uniform without/with
-												 * "uniform" keyword */
-				(my_commands->argc == 5 &&
-				 pg_strcasecmp(my_commands->argv[4], "uniform") == 0))
-			{
-				/* nothing to do */
-			}
-			else if (			/* argc >= 5 */
-					 (pg_strcasecmp(my_commands->argv[4], "gaussian") == 0) ||
-				   (pg_strcasecmp(my_commands->argv[4], "exponential") == 0))
-			{
-				if (my_commands->argc < 6)
-				{
-					syntax_error(source, lineno, my_commands->line, my_commands->argv[0],
-							  "missing parameter", my_commands->argv[4], -1);
-				}
-				else if (my_commands->argc > 6)
-				{
-					syntax_error(source, lineno, my_commands->line, my_commands->argv[0],
-								 "too many arguments", my_commands->argv[4],
-								 my_commands->cols[6]);
-				}
-			}
-			else	/* cannot parse, unexpected arguments */
-			{
-				syntax_error(source, lineno, my_commands->line, my_commands->argv[0],
-							 "unexpected argument", my_commands->argv[4],
-							 my_commands->cols[4]);
-			}
-		}
-		else if (pg_strcasecmp(my_commands->argv[0], "set") == 0)
-		{
-			if (my_commands->argc < 3)
-			{
-				syntax_error(source, lineno, my_commands->line, my_commands->argv[0],
-							 "missing argument", NULL, -1);
-			}
-
-			expr_scanner_init(my_commands->argv[2], source, lineno,
-							  my_commands->line, my_commands->argv[0],
-							  my_commands->cols[2] - 1);
-
-			if (expr_yyparse() != 0)
-			{
-				/* dead code: exit done from syntax_error called by yyerror */
-				exit(1);
-			}
-
-			my_commands->expr = expr_parse_result;
-
-			expr_scanner_finish();
-		}
-		else if (pg_strcasecmp(my_commands->argv[0], "sleep") == 0)
-		{
-			if (my_commands->argc < 2)
-			{
-				syntax_error(source, lineno, my_commands->line, my_commands->argv[0],
-							 "missing argument", NULL, -1);
-			}
-
-			/*
-			 * Split argument into number and unit to allow "sleep 1ms" etc.
-			 * We don't have to terminate the number argument with null
-			 * because it will be parsed with atoi, which ignores trailing
-			 * non-digit characters.
-			 */
-			if (my_commands->argv[1][0] != ':')
-			{
-				char	   *c = my_commands->argv[1];
-
-				while (isdigit((unsigned char) *c))
-					c++;
-				if (*c)
-				{
-					my_commands->argv[2] = c;
-					if (my_commands->argc < 3)
-						my_commands->argc = 3;
-				}
-			}
-
-			if (my_commands->argc >= 3)
-			{
-				if (pg_strcasecmp(my_commands->argv[2], "us") != 0 &&
-					pg_strcasecmp(my_commands->argv[2], "ms") != 0 &&
-					pg_strcasecmp(my_commands->argv[2], "s") != 0)
-				{
-					syntax_error(source, lineno, my_commands->line, my_commands->argv[0],
-								 "unknown time unit, must be us, ms or s",
-								 my_commands->argv[2], my_commands->cols[2]);
-				}
-			}
-
-			/* this should be an error?! */
-			for (j = 3; j < my_commands->argc; j++)
-				fprintf(stderr, "%s: extra argument \"%s\" ignored\n",
-						my_commands->argv[0], my_commands->argv[j]);
-		}
-		else if (pg_strcasecmp(my_commands->argv[0], "setshell") == 0)
-		{
-			if (my_commands->argc < 3)
-			{
-				syntax_error(source, lineno, my_commands->line, my_commands->argv[0],
-							 "missing argument", NULL, -1);
-			}
-		}
-		else if (pg_strcasecmp(my_commands->argv[0], "shell") == 0)
-		{
-			if (my_commands->argc < 1)
-			{
-				syntax_error(source, lineno, my_commands->line, my_commands->argv[0],
-							 "missing command", NULL, -1);
-			}
-		}
-		else
-		{
-			syntax_error(source, lineno, my_commands->line, my_commands->argv[0],
-						 "invalid command", NULL, -1);
-		}
+		my_command->line = pg_malloc(nlpos - p + 1);
+		memcpy(my_command->line, p, nlpos - p);
+		my_command->line[nlpos - p] = '\0';
 	}
 	else
-	{
-		my_commands->type = SQL_COMMAND;
+		my_command->line = pg_strdup(p);
 
-		switch (querymode)
-		{
-			case QUERY_SIMPLE:
-				my_commands->argv[0] = pg_strdup(p);
-				my_commands->argc++;
-				break;
-			case QUERY_EXTENDED:
-			case QUERY_PREPARED:
-				if (!parseQuery(my_commands, p))
-					exit(1);
-				break;
-			default:
+	switch (querymode)
+	{
+		case QUERY_SIMPLE:
+			my_command->argv[0] = pg_strdup(p);
+			my_command->argc++;
+			break;
+		case QUERY_EXTENDED:
+		case QUERY_PREPARED:
+			if (!parseQuery(my_command, p))
 				exit(1);
-		}
+			break;
+		default:
+			exit(1);
 	}
 
-	return my_commands;
+	return my_command;
 }
 
 /*
- * Read a line from fd, and return it in a malloc'd buffer.
- * Return NULL at EOF.
+ * Parse a backslash command; return a Command struct, or NULL if comment
+ *
+ * At call, we have scanned only the initial backslash.
+ */
+static Command *
+process_backslash_command(PsqlScanState sstate, const char *source)
+{
+	Command    *my_command;
+	PQExpBufferData word_buf;
+	int			word_offset;
+	int			offsets[MAX_ARGS];		/* offsets of argument words */
+	int			start_offset,
+				end_offset;
+	int			lineno;
+	int			j;
+
+	initPQExpBuffer(&word_buf);
+
+	/* Remember location of the backslash */
+	start_offset = expr_scanner_offset(sstate) - 1;
+	lineno = expr_scanner_get_lineno(sstate, start_offset);
+
+	/* Collect first word of command */
+	if (!expr_lex_one_word(sstate, &word_buf, &word_offset))
+	{
+		termPQExpBuffer(&word_buf);
+		return NULL;
+	}
+
+	/* Allocate and initialize Command structure */
+	my_command = (Command *) pg_malloc0(sizeof(Command));
+	my_command->command_num = num_commands++;
+	my_command->type = META_COMMAND;
+	my_command->argc = 0;
+	initSimpleStats(&my_command->stats);
+
+	/* Save first word (command name) */
+	j = 0;
+	offsets[j] = word_offset;
+	my_command->argv[j++] = pg_strdup(word_buf.data);
+	my_command->argc++;
+
+	if (pg_strcasecmp(my_command->argv[0], "set") == 0)
+	{
+		/* For \set, collect var name, then lex the expression. */
+		yyscan_t	yyscanner;
+
+		if (!expr_lex_one_word(sstate, &word_buf, &word_offset))
+			syntax_error(source, lineno, my_command->line, my_command->argv[0],
+						 "missing argument", NULL, -1);
+
+		offsets[j] = word_offset;
+		my_command->argv[j++] = pg_strdup(word_buf.data);
+		my_command->argc++;
+
+		yyscanner = expr_scanner_init(sstate, source, lineno, start_offset,
+									  my_command->argv[0]);
+
+		if (expr_yyparse(yyscanner) != 0)
+		{
+			/* dead code: exit done from syntax_error called by yyerror */
+			exit(1);
+		}
+
+		my_command->expr = expr_parse_result;
+
+		/* Get location of the ending newline */
+		end_offset = expr_scanner_offset(sstate) - 1;
+
+		/* Save line */
+		my_command->line = expr_scanner_get_substring(sstate,
+													  start_offset,
+													  end_offset);
+
+		expr_scanner_finish(yyscanner);
+
+		termPQExpBuffer(&word_buf);
+
+		return my_command;
+	}
+
+	/* For all other commands, collect remaining words. */
+	while (expr_lex_one_word(sstate, &word_buf, &word_offset))
+	{
+		if (j >= MAX_ARGS)
+			syntax_error(source, lineno, my_command->line, my_command->argv[0],
+						 "too many arguments", NULL, -1);
+
+		offsets[j] = word_offset;
+		my_command->argv[j++] = pg_strdup(word_buf.data);
+		my_command->argc++;
+	}
+
+	/* Get location of the ending newline */
+	end_offset = expr_scanner_offset(sstate) - 1;
+
+	/* Save line */
+	my_command->line = expr_scanner_get_substring(sstate,
+												  start_offset,
+												  end_offset);
+
+	if (pg_strcasecmp(my_command->argv[0], "sleep") == 0)
+	{
+		if (my_command->argc < 2)
+			syntax_error(source, lineno, my_command->line, my_command->argv[0],
+						 "missing argument", NULL, -1);
+
+		if (my_command->argc > 3)
+			syntax_error(source, lineno, my_command->line, my_command->argv[0],
+						 "too many arguments", NULL,
+						 offsets[3] - start_offset);
+
+		/*
+		 * Split argument into number and unit to allow "sleep 1ms" etc. We
+		 * don't have to terminate the number argument with null because it
+		 * will be parsed with atoi, which ignores trailing non-digit
+		 * characters.
+		 */
+		if (my_command->argc == 2 && my_command->argv[1][0] != ':')
+		{
+			char	   *c = my_command->argv[1];
+
+			while (isdigit((unsigned char) *c))
+				c++;
+			if (*c)
+			{
+				my_command->argv[2] = c;
+				offsets[2] = offsets[1] + (c - my_command->argv[1]);
+				my_command->argc = 3;
+			}
+		}
+
+		if (my_command->argc == 3)
+		{
+			if (pg_strcasecmp(my_command->argv[2], "us") != 0 &&
+				pg_strcasecmp(my_command->argv[2], "ms") != 0 &&
+				pg_strcasecmp(my_command->argv[2], "s") != 0)
+				syntax_error(source, lineno, my_command->line, my_command->argv[0],
+							 "unrecognized time unit, must be us, ms or s",
+							 my_command->argv[2], offsets[2] - start_offset);
+		}
+	}
+	else if (pg_strcasecmp(my_command->argv[0], "setshell") == 0)
+	{
+		if (my_command->argc < 3)
+			syntax_error(source, lineno, my_command->line, my_command->argv[0],
+						 "missing argument", NULL, -1);
+	}
+	else if (pg_strcasecmp(my_command->argv[0], "shell") == 0)
+	{
+		if (my_command->argc < 2)
+			syntax_error(source, lineno, my_command->line, my_command->argv[0],
+						 "missing command", NULL, -1);
+	}
+	else
+	{
+		syntax_error(source, lineno, my_command->line, my_command->argv[0],
+					 "invalid command", NULL, -1);
+	}
+
+	termPQExpBuffer(&word_buf);
+
+	return my_command;
+}
+
+/*
+ * Parse a script (either the contents of a file, or a built-in script)
+ * and add it to the list of scripts.
+ */
+static void
+ParseScript(const char *script, const char *desc, int weight)
+{
+	ParsedScript ps;
+	PsqlScanState sstate;
+	PQExpBufferData line_buf;
+	int			alloc_num;
+	int			index;
+
+#define COMMANDS_ALLOC_NUM 128
+	alloc_num = COMMANDS_ALLOC_NUM;
+
+	/* Initialize all fields of ps */
+	ps.desc = desc;
+	ps.weight = weight;
+	ps.commands = (Command **) pg_malloc(sizeof(Command *) * alloc_num);
+	initStats(&ps.stats, 0.0);
+
+	/* Prepare to parse script */
+	sstate = psql_scan_create(&pgbench_callbacks);
+
+	/*
+	 * Ideally, we'd scan scripts using the encoding and stdstrings settings
+	 * we get from a DB connection.  However, without major rearrangement of
+	 * pgbench's argument parsing, we can't have a DB connection at the time
+	 * we parse scripts.  Using SQL_ASCII (encoding 0) should work well enough
+	 * with any backend-safe encoding, though conceivably we could be fooled
+	 * if a script file uses a client-only encoding.  We also assume that
+	 * stdstrings should be true, which is a bit riskier.
+	 */
+	psql_scan_setup(sstate, script, strlen(script), 0, true);
+
+	initPQExpBuffer(&line_buf);
+
+	index = 0;
+
+	for (;;)
+	{
+		PsqlScanResult sr;
+		promptStatus_t prompt;
+		Command    *command;
+
+		resetPQExpBuffer(&line_buf);
+
+		sr = psql_scan(sstate, &line_buf, &prompt);
+
+		/* If we collected a SQL command, process that */
+		command = process_sql_command(&line_buf, desc);
+		if (command)
+		{
+			ps.commands[index] = command;
+			index++;
+
+			if (index >= alloc_num)
+			{
+				alloc_num += COMMANDS_ALLOC_NUM;
+				ps.commands = (Command **)
+					pg_realloc(ps.commands, sizeof(Command *) * alloc_num);
+			}
+		}
+
+		/* If we reached a backslash, process that */
+		if (sr == PSCAN_BACKSLASH)
+		{
+			command = process_backslash_command(sstate, desc);
+			if (command)
+			{
+				ps.commands[index] = command;
+				index++;
+
+				if (index >= alloc_num)
+				{
+					alloc_num += COMMANDS_ALLOC_NUM;
+					ps.commands = (Command **)
+						pg_realloc(ps.commands, sizeof(Command *) * alloc_num);
+				}
+			}
+		}
+
+		/* Done if we reached EOF */
+		if (sr == PSCAN_INCOMPLETE || sr == PSCAN_EOL)
+			break;
+	}
+
+	ps.commands[index] = NULL;
+
+	addScript(ps);
+
+	termPQExpBuffer(&line_buf);
+	psql_scan_finish(sstate);
+	psql_scan_destroy(sstate);
+}
+
+/*
+ * Read the entire contents of file fd, and return it in a malloc'd buffer.
  *
  * The buffer will typically be larger than necessary, but we don't care
- * in this program, because we'll free it as soon as we've parsed the line.
+ * in this program, because we'll free it as soon as we've parsed the script.
  */
 static char *
-read_line_from_file(FILE *fd)
+read_file_contents(FILE *fd)
 {
-	char		tmpbuf[BUFSIZ];
 	char	   *buf;
 	size_t		buflen = BUFSIZ;
 	size_t		used = 0;
 
-	buf = (char *) palloc(buflen);
-	buf[0] = '\0';
+	buf = (char *) pg_malloc(buflen);
 
-	while (fgets(tmpbuf, BUFSIZ, fd) != NULL)
+	for (;;)
 	{
-		size_t		thislen = strlen(tmpbuf);
+		size_t		nread;
 
-		/* Append tmpbuf to whatever we had already */
-		memcpy(buf + used, tmpbuf, thislen + 1);
-		used += thislen;
-
-		/* Done if we collected a newline */
-		if (thislen > 0 && tmpbuf[thislen - 1] == '\n')
+		nread = fread(buf + used, 1, BUFSIZ, fd);
+		used += nread;
+		/* If fread() read less than requested, must be EOF or error */
+		if (nread < BUFSIZ)
 			break;
-
-		/* Else, enlarge buf to ensure we can append next bufferload */
+		/* Enlarge buf so we can read some more */
 		buflen += BUFSIZ;
 		buf = (char *) pg_realloc(buf, buflen);
 	}
+	/* There is surely room for a terminator */
+	buf[used] = '\0';
 
-	if (used > 0)
-		return buf;
-
-	/* Reached EOF */
-	free(buf);
-	return NULL;
+	return buf;
 }
 
 /*
- * Given a file name, read it and return the array of Commands contained
- * therein.  "-" means to read stdin.
+ * Given a file name, read it and add its script to the list.
+ * "-" means to read stdin.
+ * NB: filename must be storage that won't disappear.
  */
-static Command **
-process_file(char *filename)
+static void
+process_file(const char *filename, int weight)
 {
-#define COMMANDS_ALLOC_NUM 128
-
-	Command   **my_commands;
 	FILE	   *fd;
-	int			lineno,
-				index;
 	char	   *buf;
-	int			alloc_num;
 
-	alloc_num = COMMANDS_ALLOC_NUM;
-	my_commands = (Command **) pg_malloc(sizeof(Command *) * alloc_num);
-
+	/* Slurp the file contents into "buf" */
 	if (strcmp(filename, "-") == 0)
 		fd = stdin;
 	else if ((fd = fopen(filename, "r")) == NULL)
 	{
 		fprintf(stderr, "could not open file \"%s\": %s\n",
 				filename, strerror(errno));
-		pg_free(my_commands);
-		return NULL;
+		exit(1);
 	}
 
-	lineno = 0;
-	index = 0;
+	buf = read_file_contents(fd);
 
-	while ((buf = read_line_from_file(fd)) != NULL)
+	if (ferror(fd))
 	{
-		Command    *command;
-
-		lineno += 1;
-
-		command = process_commands(buf, filename, lineno);
-
-		free(buf);
-
-		if (command == NULL)
-			continue;
-
-		my_commands[index] = command;
-		index++;
-
-		if (index >= alloc_num)
-		{
-			alloc_num += COMMANDS_ALLOC_NUM;
-			my_commands = pg_realloc(my_commands, sizeof(Command *) * alloc_num);
-		}
+		fprintf(stderr, "could not read file \"%s\": %s\n",
+				filename, strerror(errno));
+		exit(1);
 	}
-	fclose(fd);
 
-	my_commands[index] = NULL;
+	if (fd != stdin)
+		fclose(fd);
 
-	return my_commands;
+	ParseScript(buf, filename, weight);
+
+	free(buf);
 }
 
-static Command **
-process_builtin(const char *tb, const char *source)
+/* Parse the given builtin script and add it to the list. */
+static void
+process_builtin(const BuiltinScript *bi, int weight)
 {
-#define COMMANDS_ALLOC_NUM 128
-
-	Command   **my_commands;
-	int			lineno,
-				index;
-	char		buf[BUFSIZ];
-	int			alloc_num;
-
-	alloc_num = COMMANDS_ALLOC_NUM;
-	my_commands = (Command **) pg_malloc(sizeof(Command *) * alloc_num);
-
-	lineno = 0;
-	index = 0;
-
-	for (;;)
-	{
-		char	   *p;
-		Command    *command;
-
-		p = buf;
-		while (*tb && *tb != '\n')
-			*p++ = *tb++;
-
-		if (*tb == '\0')
-			break;
-
-		if (*tb == '\n')
-			tb++;
-
-		*p = '\0';
-
-		lineno += 1;
-
-		command = process_commands(buf, source, lineno);
-		if (command == NULL)
-			continue;
-
-		my_commands[index] = command;
-		index++;
-
-		if (index >= alloc_num)
-		{
-			alloc_num += COMMANDS_ALLOC_NUM;
-			my_commands = pg_realloc(my_commands, sizeof(Command *) * alloc_num);
-		}
-	}
-
-	my_commands[index] = NULL;
-
-	return my_commands;
+	ParseScript(bi->script, bi->desc, weight);
 }
 
+/* show available builtin scripts */
 static void
 listAvailableScripts(void)
 {
 	int			i;
 
 	fprintf(stderr, "Available builtin scripts:\n");
-	for (i = 0; i < N_BUILTIN; i++)
+	for (i = 0; i < lengthof(builtin_script); i++)
 		fprintf(stderr, "\t%s\n", builtin_script[i].name);
 	fprintf(stderr, "\n");
 }
 
-static char *
-findBuiltin(const char *name, char **desc)
+/* return builtin script "name" if unambiguous, fails if not found */
+static const BuiltinScript *
+findBuiltin(const char *name)
 {
-	int			i;
+	int			i,
+				found = 0,
+				len = strlen(name);
+	const BuiltinScript *result = NULL;
 
-	for (i = 0; i < N_BUILTIN; i++)
+	for (i = 0; i < lengthof(builtin_script); i++)
 	{
-		if (strncmp(builtin_script[i].name, name,
-					strlen(builtin_script[i].name)) == 0)
+		if (strncmp(builtin_script[i].name, name, len) == 0)
 		{
-			*desc = builtin_script[i].desc;
-			return builtin_script[i].commands;
+			result = &builtin_script[i];
+			found++;
 		}
 	}
 
-	fprintf(stderr, "no builtin script found for name \"%s\"\n", name);
+	/* ok, unambiguous result */
+	if (found == 1)
+		return result;
+
+	/* error cases */
+	if (found == 0)
+		fprintf(stderr, "no builtin script found for name \"%s\"\n", name);
+	else	/* found > 1 */
+		fprintf(stderr,
+				"ambiguous builtin name: %d builtin scripts found for prefix \"%s\"\n", found, name);
+
 	listAvailableScripts();
 	exit(1);
 }
 
-static void
-addScript(const char *name, Command **commands)
+/*
+ * Determine the weight specification from a script option (-b, -f), if any,
+ * and return it as an integer (1 is returned if there's no weight).  The
+ * script name is returned in *script as a malloc'd string.
+ */
+static int
+parseScriptWeight(const char *option, char **script)
 {
-	if (commands == NULL)
+	char	   *sep;
+	int			weight;
+
+	if ((sep = strrchr(option, WSEP)))
 	{
-		fprintf(stderr, "empty command list for script \"%s\"\n", name);
+		int			namelen = sep - option;
+		long		wtmp;
+		char	   *badp;
+
+		/* generate the script name */
+		*script = pg_malloc(namelen + 1);
+		strncpy(*script, option, namelen);
+		(*script)[namelen] = '\0';
+
+		/* process digits of the weight spec */
+		errno = 0;
+		wtmp = strtol(sep + 1, &badp, 10);
+		if (errno != 0 || badp == sep + 1 || *badp != '\0')
+		{
+			fprintf(stderr, "invalid weight specification: %s\n", sep);
+			exit(1);
+		}
+		if (wtmp > INT_MAX || wtmp < 0)
+		{
+			fprintf(stderr,
+			"weight specification out of range (0 .. %u): " INT64_FORMAT "\n",
+					INT_MAX, (int64) wtmp);
+			exit(1);
+		}
+		weight = wtmp;
+	}
+	else
+	{
+		*script = pg_strdup(option);
+		weight = 1;
+	}
+
+	return weight;
+}
+
+/* append a script to the list of scripts to process */
+static void
+addScript(ParsedScript script)
+{
+	if (script.commands == NULL || script.commands[0] == NULL)
+	{
+		fprintf(stderr, "empty command list for script \"%s\"\n", script.desc);
 		exit(1);
 	}
 
@@ -2698,9 +3226,7 @@ addScript(const char *name, Command **commands)
 		exit(1);
 	}
 
-	sql_script[num_scripts].name = name;
-	sql_script[num_scripts].commands = commands;
-	initStats(&sql_script[num_scripts].stats, 0.0);
+	sql_script[num_scripts] = script;
 	num_scripts++;
 }
 
@@ -2730,7 +3256,7 @@ printResults(TState *threads, StatsData *total, instr_time total_time,
 						(INSTR_TIME_GET_DOUBLE(conn_total_time) / nclients));
 
 	printf("transaction type: %s\n",
-		   num_scripts == 1 ? sql_script[0].name : "multiple scripts");
+		   num_scripts == 1 ? sql_script[0].desc : "multiple scripts");
 	printf("scaling factor: %d\n", scale);
 	printf("query mode: %s\n", QUERYMODE[querymode]);
 	printf("number of clients: %d\n", nclients);
@@ -2784,19 +3310,25 @@ printResults(TState *threads, StatsData *total, instr_time total_time,
 	printf("tps = %f (including connections establishing)\n", tps_include);
 	printf("tps = %f (excluding connections establishing)\n", tps_exclude);
 
-	/* Report per-command statistics */
-	if (per_script_stats)
+	/* Report per-script/command statistics */
+	if (per_script_stats || latency_limit || is_latencies)
 	{
 		int			i;
 
 		for (i = 0; i < num_scripts; i++)
 		{
-			printf("SQL script %d: %s\n"
-			" - " INT64_FORMAT " transactions (%.1f%% of total, tps = %f)\n",
-				   i + 1, sql_script[i].name,
-				   sql_script[i].stats.cnt,
-				   100.0 * sql_script[i].stats.cnt / total->cnt,
-				   sql_script[i].stats.cnt / time_include);
+			if (num_scripts > 1)
+				printf("SQL script %d: %s\n"
+					   " - weight = %d (targets %.1f%% of total)\n"
+					   " - " INT64_FORMAT " transactions (%.1f%% of total, tps = %f)\n",
+					   i + 1, sql_script[i].desc,
+					   sql_script[i].weight,
+					   100.0 * sql_script[i].weight / total_weight,
+					   sql_script[i].stats.cnt,
+					   100.0 * sql_script[i].stats.cnt / total->cnt,
+					   sql_script[i].stats.cnt / time_include);
+			else
+				printf("script statistics:\n");
 
 			if (latency_limit)
 				printf(" - number of transactions skipped: " INT64_FORMAT " (%.3f%%)\n",
@@ -2804,7 +3336,8 @@ printResults(TState *threads, StatsData *total, instr_time total_time,
 					   100.0 * sql_script[i].stats.skipped /
 					(sql_script[i].stats.skipped + sql_script[i].stats.cnt));
 
-			printSimpleStats(" - latency", &sql_script[i].stats.latency);
+			if (num_scripts > 1)
+				printSimpleStats(" - latency", &sql_script[i].stats.latency);
 
 			/* Report per-command latencies */
 			if (is_latencies)
@@ -2887,7 +3420,7 @@ main(int argc, char **argv)
 	instr_time	conn_total_time;
 	int64		latency_late = 0;
 	StatsData	stats;
-	char	   *desc;
+	int			weight;
 
 	int			i;
 	int			nclients_dealt;
@@ -2899,8 +3432,6 @@ main(int argc, char **argv)
 	PGconn	   *con;
 	PGresult   *res;
 	char	   *env;
-
-	char		val[64];
 
 	progname = get_progname(argv[0]);
 
@@ -2935,6 +3466,8 @@ main(int argc, char **argv)
 
 	while ((c = getopt_long(argc, argv, "ih:nvp:dqb:SNc:j:Crs:t:T:U:lf:D:F:M:P:R:L:", long_options, &optindex)) != -1)
 	{
+		char	   *script;
+
 		switch (c)
 		{
 			case 'i':
@@ -3066,27 +3599,25 @@ main(int argc, char **argv)
 					exit(0);
 				}
 
-				addScript(desc,
-						  process_builtin(findBuiltin(optarg, &desc), desc));
+				weight = parseScriptWeight(optarg, &script);
+				process_builtin(findBuiltin(script), weight);
 				benchmarking_option_set = true;
 				internal_script_used = true;
 				break;
+
 			case 'S':
-				addScript(desc,
-						  process_builtin(findBuiltin("select-only", &desc),
-										  desc));
+				process_builtin(findBuiltin("select-only"), 1);
 				benchmarking_option_set = true;
 				internal_script_used = true;
 				break;
 			case 'N':
-				addScript(desc,
-						  process_builtin(findBuiltin("simple-update", &desc),
-										  desc));
+				process_builtin(findBuiltin("simple-update"), 1);
 				benchmarking_option_set = true;
 				internal_script_used = true;
 				break;
 			case 'f':
-				addScript(optarg, process_file(optarg));
+				weight = parseScriptWeight(optarg, &script);
+				process_file(script, weight);
 				benchmarking_option_set = true;
 				break;
 			case 'D':
@@ -3224,10 +3755,20 @@ main(int argc, char **argv)
 	/* set default script if none */
 	if (num_scripts == 0 && !is_init_mode)
 	{
-		addScript(desc,
-				  process_builtin(findBuiltin("tpcb-like", &desc), desc));
+		process_builtin(findBuiltin("tpcb-like"), 1);
 		benchmarking_option_set = true;
 		internal_script_used = true;
+	}
+
+	/* compute total_weight */
+	for (i = 0; i < num_scripts; i++)
+		/* cannot overflow: weight is 32b, total_weight 64b */
+		total_weight += sql_script[i].weight;
+
+	if (total_weight == 0 && !is_init_mode)
+	{
+		fprintf(stderr, "total script weight must not be zero\n");
+		exit(1);
 	}
 
 	/* show per script stats if several scripts are used */
@@ -3288,7 +3829,7 @@ main(int argc, char **argv)
 		exit(1);
 	}
 
-	/* --sampling-rate may must not be used with --aggregate-interval */
+	/* --sampling-rate may not be used with --aggregate-interval */
 	if (sample_rate > 0.0 && agg_interval > 0)
 	{
 		fprintf(stderr, "log sampling (--sampling-rate) and aggregation (--aggregate-interval) cannot be used at the same time\n");
@@ -3332,8 +3873,20 @@ main(int argc, char **argv)
 			state[i].id = i;
 			for (j = 0; j < state[0].nvariables; j++)
 			{
-				if (!putVariable(&state[i], "startup", state[0].variables[j].name, state[0].variables[j].value))
-					exit(1);
+				Variable   *var = &state[0].variables[j];
+
+				if (var->is_numeric)
+				{
+					if (!putVariableNumber(&state[i], "startup",
+										   var->name, &var->num_value))
+						exit(1);
+				}
+				else
+				{
+					if (!putVariable(&state[i], "startup",
+									 var->name, var->value))
+						exit(1);
+				}
 			}
 		}
 	}
@@ -3399,12 +3952,11 @@ main(int argc, char **argv)
 	 * :scale variables normally get -s or database scale, but don't override
 	 * an explicit -D switch
 	 */
-	if (getVariable(&state[0], "scale") == NULL)
+	if (lookupVariable(&state[0], "scale") == NULL)
 	{
-		snprintf(val, sizeof(val), "%d", scale);
 		for (i = 0; i < nclients; i++)
 		{
-			if (!putVariable(&state[i], "startup", "scale", val))
+			if (!putVariableInt(&state[i], "startup", "scale", scale))
 				exit(1);
 		}
 	}
@@ -3413,12 +3965,11 @@ main(int argc, char **argv)
 	 * Define a :client_id variable that is unique per connection. But don't
 	 * override an explicit -D switch.
 	 */
-	if (getVariable(&state[0], "client_id") == NULL)
+	if (lookupVariable(&state[0], "client_id") == NULL)
 	{
 		for (i = 0; i < nclients; i++)
 		{
-			snprintf(val, sizeof(val), "%d", i);
-			if (!putVariable(&state[i], "startup", "client_id", val))
+			if (!putVariableInt(&state[i], "startup", "client_id", i))
 				exit(1);
 		}
 	}
@@ -3459,6 +4010,7 @@ main(int argc, char **argv)
 		thread->random_state[0] = random();
 		thread->random_state[1] = random();
 		thread->random_state[2] = random();
+		thread->logfile = NULL; /* filled in later */
 		thread->latency_late = 0;
 		initStats(&thread->stats, 0.0);
 
@@ -3483,6 +4035,11 @@ main(int argc, char **argv)
 
 		INSTR_TIME_SET_CURRENT(thread->start_time);
 
+		/* compute when to stop */
+		if (duration > 0)
+			end_time = INSTR_TIME_GET_MICROSEC(thread->start_time) +
+				(int64) 1000000 *duration;
+
 		/* the first thread (i = 0) is executed by main thread */
 		if (i > 0)
 		{
@@ -3501,6 +4058,10 @@ main(int argc, char **argv)
 	}
 #else
 	INSTR_TIME_SET_CURRENT(threads[0].start_time);
+	/* compute when to stop */
+	if (duration > 0)
+		end_time = INSTR_TIME_GET_MICROSEC(threads[0].start_time) +
+			(int64) 1000000 *duration;
 	threads[0].thread = INVALID_THREAD;
 #endif   /* ENABLE_THREAD_SAFETY */
 
@@ -3554,7 +4115,6 @@ threadRun(void *arg)
 {
 	TState	   *thread = (TState *) arg;
 	CState	   *state = thread->state;
-	FILE	   *logfile = NULL; /* per-thread log file */
 	instr_time	start,
 				end;
 	int			nstate = thread->nstate;
@@ -3588,9 +4148,9 @@ threadRun(void *arg)
 			snprintf(logpath, sizeof(logpath), "pgbench_log.%d", main_pid);
 		else
 			snprintf(logpath, sizeof(logpath), "pgbench_log.%d.%d", main_pid, thread->tid);
-		logfile = fopen(logpath, "w");
+		thread->logfile = fopen(logpath, "w");
 
-		if (logfile == NULL)
+		if (thread->logfile == NULL)
 		{
 			fprintf(stderr, "could not open logfile \"%s\": %s\n",
 					logpath, strerror(errno));
@@ -3626,8 +4186,8 @@ threadRun(void *arg)
 		commands = sql_script[st->use_file].commands;
 		if (debug)
 			fprintf(stderr, "client %d executing script \"%s\"\n", st->id,
-					sql_script[st->use_file].name);
-		if (!doCustom(thread, st, logfile, &aggs))
+					sql_script[st->use_file].desc);
+		if (!doCustom(thread, st, &aggs))
 			remains--;			/* I've aborted */
 
 		if (st->ecnt > prev_ecnt && commands[st->state]->type == META_COMMAND)
@@ -3699,7 +4259,7 @@ threadRun(void *arg)
 			sock = PQsocket(st->con);
 			if (sock < 0)
 			{
-				fprintf(stderr, "bad socket: %s\n", strerror(errno));
+				fprintf(stderr, "invalid socket: %s", PQerrorMessage(st->con));
 				goto done;
 			}
 
@@ -3763,11 +4323,22 @@ threadRun(void *arg)
 			Command   **commands = sql_script[st->use_file].commands;
 			int			prev_ecnt = st->ecnt;
 
-			if (st->con && (FD_ISSET(PQsocket(st->con), &input_mask)
-							|| commands[st->state]->type == META_COMMAND))
+			if (st->con)
 			{
-				if (!doCustom(thread, st, logfile, &aggs))
-					remains--;	/* I've aborted */
+				int			sock = PQsocket(st->con);
+
+				if (sock < 0)
+				{
+					fprintf(stderr, "invalid socket: %s",
+							PQerrorMessage(st->con));
+					goto done;
+				}
+				if (FD_ISSET(sock, &input_mask) ||
+					commands[st->state]->type == META_COMMAND)
+				{
+					if (!doCustom(thread, st, &aggs))
+						remains--;		/* I've aborted */
+				}
 			}
 
 			if (st->ecnt > prev_ecnt && commands[st->state]->type == META_COMMAND)
@@ -3870,14 +4441,14 @@ done:
 	disconnect_all(state, nstate);
 	INSTR_TIME_SET_CURRENT(end);
 	INSTR_TIME_ACCUM_DIFF(thread->conn_time, end, start);
-	if (logfile)
+	if (thread->logfile)
 	{
 		if (agg_interval)
 		{
 			/* log aggregated but not yet reported transactions */
-			doLog(thread, state, logfile, &end, &aggs, false, 0, 0);
+			doLog(thread, state, &end, &aggs, false, 0, 0);
 		}
-		fclose(logfile);
+		fclose(thread->logfile);
 	}
 	return NULL;
 }

@@ -40,7 +40,7 @@
 int			bytea_output = BYTEA_OUTPUT_HEX;
 
 typedef struct varlena unknown;
-typedef struct varlena string;
+typedef struct varlena VarString;
 
 typedef struct
 {
@@ -75,7 +75,7 @@ typedef struct
 #ifdef HAVE_LOCALE_T
 	pg_locale_t locale;
 #endif
-} StringSortSupport;
+} VarStringSortSupport;
 
 /*
  * This should be large enough that most strings will fit, but small enough
@@ -89,11 +89,11 @@ typedef struct
 #define PG_GETARG_UNKNOWN_P_COPY(n) DatumGetUnknownPCopy(PG_GETARG_DATUM(n))
 #define PG_RETURN_UNKNOWN_P(x)		PG_RETURN_POINTER(x)
 
-#define DatumGetStringP(X)			((string *) PG_DETOAST_DATUM(X))
-#define DatumGetStringPP(X)			((string *) PG_DETOAST_DATUM_PACKED(X))
+#define DatumGetVarStringP(X)		((VarString *) PG_DETOAST_DATUM(X))
+#define DatumGetVarStringPP(X)		((VarString *) PG_DETOAST_DATUM_PACKED(X))
 
 static int	varstrfastcmp_c(Datum x, Datum y, SortSupport ssup);
-static int bpcharfastcmp_c(Datum x, Datum y, SortSupport ssup);
+static int	bpcharfastcmp_c(Datum x, Datum y, SortSupport ssup);
 static int	varstrfastcmp_locale(Datum x, Datum y, SortSupport ssup);
 static int	varstrcmp_abbrev(Datum x, Datum y, SortSupport ssup);
 static Datum varstr_abbrev_convert(Datum original, SortSupport ssup);
@@ -1766,7 +1766,7 @@ varstr_sortsupport(SortSupport ssup, Oid collid, bool bpchar)
 {
 	bool		abbreviate = ssup->abbreviate;
 	bool		collate_c = false;
-	StringSortSupport *sss;
+	VarStringSortSupport *sss;
 
 #ifdef HAVE_LOCALE_T
 	pg_locale_t locale = 0;
@@ -1780,8 +1780,8 @@ varstr_sortsupport(SortSupport ssup, Oid collid, bool bpchar)
 	 *
 	 * Most typically, we'll set the comparator to varstrfastcmp_locale, which
 	 * uses strcoll() to perform comparisons and knows about the special
-	 * requirements of BpChar callers.  However, if LC_COLLATE = C, we can make
-	 * things quite a bit faster with varstrfastcmp_c or bpcharfastcmp_c,
+	 * requirements of BpChar callers.  However, if LC_COLLATE = C, we can
+	 * make things quite a bit faster with varstrfastcmp_c or bpcharfastcmp_c,
 	 * both of which use memcmp() rather than strcoll().
 	 *
 	 * There is a further exception on Windows.  When the database encoding is
@@ -1832,17 +1832,30 @@ varstr_sortsupport(SortSupport ssup, Oid collid, bool bpchar)
 	}
 
 	/*
-	 * It's possible that there are platforms where the use of abbreviated
-	 * keys should be disabled at compile time.  Having only 4 byte datums
-	 * could make worst-case performance drastically more likely, for example.
-	 * Moreover, Darwin's strxfrm() implementations is known to not
-	 * effectively concentrate a significant amount of entropy from the
-	 * original string in earlier transformed blobs.  It's possible that other
-	 * supported platforms are similarly encumbered.  However, even in those
-	 * cases, the abbreviated keys optimization may win, and if it doesn't,
-	 * the "abort abbreviation" code may rescue us.  So, for now, we don't
-	 * disable this anywhere on the basis of performance.
+	 * Unfortunately, it seems that abbreviation for non-C collations is
+	 * broken on many common platforms; testing of multiple versions of glibc
+	 * reveals that, for many locales, strcoll() and strxfrm() do not return
+	 * consistent results, which is fatal to this optimization.  While no
+	 * other libc other than Cygwin has so far been shown to have a problem,
+	 * we take the conservative course of action for right now and disable
+	 * this categorically.  (Users who are certain this isn't a problem on
+	 * their system can define TRUST_STRXFRM.)
+	 *
+	 * Even apart from the risk of broken locales, it's possible that there
+	 * are platforms where the use of abbreviated keys should be disabled at
+	 * compile time.  Having only 4 byte datums could make worst-case
+	 * performance drastically more likely, for example.  Moreover, Darwin's
+	 * strxfrm() implementations is known to not effectively concentrate a
+	 * significant amount of entropy from the original string in earlier
+	 * transformed blobs.  It's possible that other supported platforms are
+	 * similarly encumbered.  So, if we ever get past disabling this
+	 * categorically, we may still want or need to disable it for particular
+	 * platforms.
 	 */
+#ifndef TRUST_STRXFRM
+	if (!collate_c)
+		abbreviate = false;
+#endif
 
 	/*
 	 * If we're using abbreviated keys, or if we're using a locale-aware
@@ -1853,7 +1866,7 @@ varstr_sortsupport(SortSupport ssup, Oid collid, bool bpchar)
 	 */
 	if (abbreviate || !collate_c)
 	{
-		sss = palloc(sizeof(StringSortSupport));
+		sss = palloc(sizeof(VarStringSortSupport));
 		sss->buf1 = palloc(TEXTBUFLEN);
 		sss->buflen1 = TEXTBUFLEN;
 		sss->buf2 = palloc(TEXTBUFLEN);
@@ -1866,6 +1879,7 @@ varstr_sortsupport(SortSupport ssup, Oid collid, bool bpchar)
 #ifdef HAVE_LOCALE_T
 		sss->locale = locale;
 #endif
+
 		/*
 		 * To avoid somehow confusing a strxfrm() blob and an original string,
 		 * constantly keep track of the variety of data that buf1 and buf2
@@ -1909,8 +1923,8 @@ varstr_sortsupport(SortSupport ssup, Oid collid, bool bpchar)
 static int
 varstrfastcmp_c(Datum x, Datum y, SortSupport ssup)
 {
-	string	   *arg1 = DatumGetStringPP(x);
-	string	   *arg2 = DatumGetStringPP(y);
+	VarString  *arg1 = DatumGetVarStringPP(x);
+	VarString  *arg2 = DatumGetVarStringPP(y);
 	char	   *a1p,
 			   *a2p;
 	int			len1,
@@ -1979,10 +1993,10 @@ bpcharfastcmp_c(Datum x, Datum y, SortSupport ssup)
 static int
 varstrfastcmp_locale(Datum x, Datum y, SortSupport ssup)
 {
-	string	   *arg1 = DatumGetStringPP(x);
-	string	   *arg2 = DatumGetStringPP(y);
+	VarString  *arg1 = DatumGetVarStringPP(x);
+	VarString  *arg2 = DatumGetVarStringPP(y);
 	bool		arg1_match;
-	StringSortSupport *sss = (StringSortSupport *) ssup->ssup_extra;
+	VarStringSortSupport *sss = (VarStringSortSupport *) ssup->ssup_extra;
 
 	/* working state */
 	char	   *a1p,
@@ -2002,16 +2016,16 @@ varstrfastcmp_locale(Datum x, Datum y, SortSupport ssup)
 	{
 		/*
 		 * No change in buf1 or buf2 contents, so avoid changing last_len1 or
-		 * last_len2.  Existing contents of buffers might still be used by next
-		 * call.
+		 * last_len2.  Existing contents of buffers might still be used by
+		 * next call.
 		 *
-		 * It's fine to allow the comparison of BpChar padding bytes here, even
-		 * though that implies that the memcmp() will usually be performed for
-		 * BpChar callers (though multibyte characters could still prevent that
-		 * from occurring).  The memcmp() is still very cheap, and BpChar's
-		 * funny semantics have us remove trailing spaces (not limited to
-		 * padding), so we need make no distinction between padding space
-		 * characters and "real" space characters.
+		 * It's fine to allow the comparison of BpChar padding bytes here,
+		 * even though that implies that the memcmp() will usually be
+		 * performed for BpChar callers (though multibyte characters could
+		 * still prevent that from occurring).  The memcmp() is still very
+		 * cheap, and BpChar's funny semantics have us remove trailing spaces
+		 * (not limited to padding), so we need make no distinction between
+		 * padding space characters and "real" space characters.
 		 */
 		result = 0;
 		goto done;
@@ -2041,8 +2055,8 @@ varstrfastcmp_locale(Datum x, Datum y, SortSupport ssup)
 	 * We're likely to be asked to compare the same strings repeatedly, and
 	 * memcmp() is so much cheaper than strcoll() that it pays to try to cache
 	 * comparisons, even though in general there is no reason to think that
-	 * that will work out (every string datum may be unique).  Caching does not
-	 * slow things down measurably when it doesn't work out, and can speed
+	 * that will work out (every string datum may be unique).  Caching does
+	 * not slow things down measurably when it doesn't work out, and can speed
 	 * things up by rather a lot when it does.  In part, this is because the
 	 * memcmp() compares data from cachelines that are needed in L1 cache even
 	 * when the last comparison's result cannot be reused.
@@ -2134,8 +2148,8 @@ varstrcmp_abbrev(Datum x, Datum y, SortSupport ssup)
 static Datum
 varstr_abbrev_convert(Datum original, SortSupport ssup)
 {
-	StringSortSupport *sss = (StringSortSupport *) ssup->ssup_extra;
-	string	   *authoritative = DatumGetStringPP(original);
+	VarStringSortSupport *sss = (VarStringSortSupport *) ssup->ssup_extra;
+	VarString  *authoritative = DatumGetVarStringPP(original);
 	char	   *authoritative_data = VARDATA_ANY(authoritative);
 
 	/* working state */
@@ -2158,8 +2172,8 @@ varstr_abbrev_convert(Datum original, SortSupport ssup)
 	 * abbreviate keys.  The full comparator for the C locale is always
 	 * memcmp().  It would be incorrect to allow bytea callers (callers that
 	 * always force the C collation -- bytea isn't a collatable type, but this
-	 * approach is convenient) to use strxfrm().  This is because bytea strings
-	 * may contain NUL bytes.  Besides, this should be faster, too.
+	 * approach is convenient) to use strxfrm().  This is because bytea
+	 * strings may contain NUL bytes.  Besides, this should be faster, too.
 	 *
 	 * More generally, it's okay that bytea callers can have NUL bytes in
 	 * strings because varstrcmp_abbrev() need not make a distinction between
@@ -2172,13 +2186,13 @@ varstr_abbrev_convert(Datum original, SortSupport ssup)
 	 * usually be what is effectively a "length-wise" resolution there and
 	 * then.
 	 *
-	 * If that doesn't work out -- if all bytes in the longer string positioned
-	 * at or past the offset of the smaller string's (first) terminating NUL
-	 * are actually representative of NUL bytes in the authoritative binary
-	 * string (perhaps with some *terminating* NUL bytes towards the end of the
-	 * longer string iff it happens to still be small) -- then an authoritative
-	 * tie-breaker will happen, and do the right thing: explicitly consider
-	 * string length.
+	 * If that doesn't work out -- if all bytes in the longer string
+	 * positioned at or past the offset of the smaller string's (first)
+	 * terminating NUL are actually representative of NUL bytes in the
+	 * authoritative binary string (perhaps with some *terminating* NUL bytes
+	 * towards the end of the longer string iff it happens to still be small)
+	 * -- then an authoritative tie-breaker will happen, and do the right
+	 * thing: explicitly consider string length.
 	 */
 	if (sss->collate_c)
 		memcpy(pres, authoritative_data, Min(len, sizeof(Datum)));
@@ -2286,6 +2300,7 @@ varstr_abbrev_convert(Datum original, SortSupport ssup)
 	/* Cache result, perhaps saving an expensive strxfrm() call next time */
 	sss->cache_blob = true;
 done:
+
 	/*
 	 * Byteswap on little-endian machines.
 	 *
@@ -2311,7 +2326,7 @@ done:
 static bool
 varstr_abbrev_abort(int memtupcount, SortSupport ssup)
 {
-	StringSortSupport *sss = (StringSortSupport *) ssup->ssup_extra;
+	VarStringSortSupport *sss = (VarStringSortSupport *) ssup->ssup_extra;
 	double		abbrev_distinct,
 				key_distinct;
 
@@ -4786,7 +4801,8 @@ text_reverse(PG_FUNCTION_ARGS)
 		if (++(ptr) >= (end_ptr)) \
 			ereport(ERROR, \
 					(errcode(ERRCODE_INVALID_PARAMETER_VALUE), \
-					 errmsg("unterminated format specifier"))); \
+					 errmsg("unterminated format() type specifier"), \
+					 errhint("For a single \"%%\" use \"%%%%\"."))); \
 	} while (0)
 
 /*
@@ -4918,8 +4934,9 @@ text_format(PG_FUNCTION_ARGS)
 		if (strchr("sIL", *cp) == NULL)
 			ereport(ERROR,
 					(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-					 errmsg("unrecognized conversion type specifier \"%c\"",
-							*cp)));
+					 errmsg("unrecognized format() type specifier \"%c\"",
+							*cp),
+					 errhint("For a single \"%%\" use \"%%%%\".")));
 
 		/* If indirect width was specified, get its value */
 		if (widthpos >= 0)
@@ -4930,7 +4947,7 @@ text_format(PG_FUNCTION_ARGS)
 			if (arg >= nargs)
 				ereport(ERROR,
 						(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-						 errmsg("too few arguments for format")));
+						 errmsg("too few arguments for format()")));
 
 			/* Get the value and type of the selected argument */
 			if (!funcvariadic)
@@ -4987,7 +5004,7 @@ text_format(PG_FUNCTION_ARGS)
 		if (arg >= nargs)
 			ereport(ERROR,
 					(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-					 errmsg("too few arguments for format")));
+					 errmsg("too few arguments for format()")));
 
 		/* Get the value and type of the selected argument */
 		if (!funcvariadic)
@@ -5038,8 +5055,9 @@ text_format(PG_FUNCTION_ARGS)
 				/* should not get here, because of previous check */
 				ereport(ERROR,
 						(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-					  errmsg("unrecognized conversion type specifier \"%c\"",
-							 *cp)));
+						 errmsg("unrecognized format() type specifier \"%c\"",
+								*cp),
+						 errhint("For a single \"%%\" use \"%%%%\".")));
 				break;
 		}
 	}

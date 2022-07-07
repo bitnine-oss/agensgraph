@@ -34,7 +34,7 @@ if (-e "src/tools/msvc/buildenv.pl")
 
 my $what = shift || "";
 if ($what =~
-/^(check|installcheck|plcheck|contribcheck|modulescheck|ecpgcheck|isolationcheck|upgradecheck|bincheck)$/i
+/^(check|installcheck|plcheck|contribcheck|modulescheck|ecpgcheck|isolationcheck|upgradecheck|bincheck|recoverycheck)$/i
   )
 {
 	$what = uc $what;
@@ -89,6 +89,7 @@ my %command = (
 	MODULESCHECK   => \&modulescheck,
 	ISOLATIONCHECK => \&isolationcheck,
 	BINCHECK       => \&bincheck,
+	RECOVERYCHECK  => \&recoverycheck,
 	UPGRADECHECK   => \&upgradecheck,);
 
 my $proc = $command{$what};
@@ -147,8 +148,8 @@ sub ecpgcheck
 	my @args = (
 		"../../../../$Config/pg_regress_ecpg/pg_regress_ecpg",
 		"--bindir=",
-		"--dbname=regress1,connectdb",
-		"--create-role=connectuser,connectdb",
+		"--dbname=ecpg1_regression,ecpg2_regression",
+		"--create-role=regress_ecpg_user1,regress_ecpg_user2",
 		"--schedule=${schedule}_schedule",
 		"--encoding=SQL_ASCII",
 		"--no-locale",
@@ -183,11 +184,11 @@ sub tap_check
 	my $dir = shift;
 	chdir $dir;
 
-	my @args = ( "prove", "--verbose", "t/*.pl");
+	my @args = ("prove", "--verbose", "t/*.pl");
 
 	# adjust the environment for just this test
 	local %ENV = %ENV;
-	$ENV{PERL5LIB} = "$topdir/src/test/perl;$ENV{PERL5LIB}";
+	$ENV{PERL5LIB}   = "$topdir/src/test/perl;$ENV{PERL5LIB}";
 	$ENV{PG_REGRESS} = "$topdir/$Config/pg_regress/pg_regress";
 
 	$ENV{TESTDIR} = "$dir";
@@ -331,6 +332,7 @@ sub contribcheck
 	my $mstat = 0;
 	foreach my $module (glob("*"))
 	{
+
 		# these configuration-based exclusions must match Install.pm
 		next if ($module eq "uuid-ossp"     && !defined($config->{uuid}));
 		next if ($module eq "sslinfo"       && !defined($config->{openssl}));
@@ -360,6 +362,16 @@ sub modulescheck
 	exit $mstat if $mstat;
 }
 
+sub recoverycheck
+{
+	InstallTemp();
+
+	my $mstat  = 0;
+	my $dir    = "$topdir/src/test/recovery";
+	my $status = tap_check($dir);
+	exit $status if $status;
+}
+
 # Run "initdb", then reconfigure authentication.
 sub standard_initdb
 {
@@ -367,6 +379,41 @@ sub standard_initdb
 		system('initdb', '-N') == 0 and system(
 			"$topdir/$Config/pg_regress/pg_regress", '--config-auth',
 			$ENV{PGDATA}) == 0);
+}
+
+# This is similar to appendShellString().  Perl system(@args) bypasses
+# cmd.exe, so omit the caret escape layer.
+sub quote_system_arg
+{
+	my $arg = shift;
+
+	# Change N >= 0 backslashes before a double quote to 2N+1 backslashes.
+	$arg =~ s/(\\*)"/${\($1 . $1)}\\"/gs;
+
+	# Change N >= 1 backslashes at end of argument to 2N backslashes.
+	$arg =~ s/(\\+)$/${\($1 . $1)}/gs;
+
+	# Wrap the whole thing in unescaped double quotes.
+	return "\"$arg\"";
+}
+
+# Generate a database with a name made of a range of ASCII characters, useful
+# for testing pg_upgrade.
+sub generate_db
+{
+	my ($prefix, $from_char, $to_char, $suffix) = @_;
+
+	my $dbname = $prefix;
+	for my $i ($from_char .. $to_char)
+	{
+		next if $i == 7 || $i == 10 || $i == 13;    # skip BEL, LF, and CR
+		$dbname = $dbname . sprintf('%c', $i);
+	}
+	$dbname .= $suffix;
+
+	system('createdb', quote_system_arg($dbname));
+	my $status = $? >> 8;
+	exit $status if $status;
 }
 
 sub upgradecheck
@@ -400,35 +447,48 @@ sub upgradecheck
 	print "\nRunning initdb on old cluster\n\n";
 	standard_initdb() or exit 1;
 	print "\nStarting old cluster\n\n";
-	system("pg_ctl start -l $logdir/postmaster1.log -w") == 0 or exit 1;
+	my @args = ('pg_ctl', 'start', '-l', "$logdir/postmaster1.log", '-w');
+	system(@args) == 0 or exit 1;
+
+	print "\nCreating databases with names covering most ASCII bytes\n\n";
+	generate_db("\\\"\\", 1,  45,  "\\\\\"\\\\\\");
+	generate_db('',       46, 90,  '');
+	generate_db('',       91, 127, '');
+
 	print "\nSetting up data for upgrading\n\n";
 	installcheck();
 
 	# now we can chdir into the source dir
 	chdir "$topdir/src/bin/pg_upgrade";
 	print "\nDumping old cluster\n\n";
-	system("pg_dumpall -f $tmp_root/dump1.sql") == 0 or exit 1;
+	@args = ('pg_dumpall', '-f', "$tmp_root/dump1.sql");
+	system(@args) == 0 or exit 1;
 	print "\nStopping old cluster\n\n";
 	system("pg_ctl -m fast stop") == 0 or exit 1;
 	$ENV{PGDATA} = "$data";
 	print "\nSetting up new cluster\n\n";
 	standard_initdb() or exit 1;
 	print "\nRunning pg_upgrade\n\n";
-	system("pg_upgrade -d $data.old -D $data -b $bindir -B $bindir") == 0
-	  or exit 1;
+	@args = (
+		'pg_upgrade', '-d', "$data.old", '-D', $data, '-b',
+		$bindir,      '-B', $bindir);
+	system(@args) == 0 or exit 1;
 	print "\nStarting new cluster\n\n";
-	system("pg_ctl -l $logdir/postmaster2.log -w start") == 0 or exit 1;
+	@args = ('pg_ctl', '-l', "$logdir/postmaster2.log", '-w', 'start');
+	system(@args) == 0 or exit 1;
 	print "\nSetting up stats on new cluster\n\n";
 	system(".\\analyze_new_cluster.bat") == 0 or exit 1;
 	print "\nDumping new cluster\n\n";
-	system("pg_dumpall -f $tmp_root/dump2.sql") == 0 or exit 1;
+	@args = ('pg_dumpall', '-f', "$tmp_root/dump2.sql");
+	system(@args) == 0 or exit 1;
 	print "\nStopping new cluster\n\n";
 	system("pg_ctl -m fast stop") == 0 or exit 1;
 	print "\nDeleting old cluster\n\n";
 	system(".\\delete_old_cluster.bat") == 0 or exit 1;
 	print "\nComparing old and new cluster dumps\n\n";
 
-	system("diff -q $tmp_root/dump1.sql $tmp_root/dump2.sql");
+	@args = ('diff', '-q', "$tmp_root/dump1.sql", "$tmp_root/dump2.sql");
+	system(@args);
 	$status = $?;
 	if (!$status)
 	{
@@ -536,7 +596,20 @@ sub InstallTemp
 sub usage
 {
 	print STDERR
-	  "Usage: vcregress.pl ",
-"<check|installcheck|plcheck|contribcheck|isolationcheck|ecpgcheck|upgradecheck> [schedule]\n";
+	  "Usage: vcregress.pl <mode> [ <schedule> ]\n\n",
+	  "Options for <mode>:\n",
+	  "  bincheck       run tests of utilities in src/bin/\n",
+	  "  check          deploy instance and run regression tests on it\n",
+	  "  contribcheck   run tests of modules in contrib/\n",
+	  "  ecpgcheck      run regression tests of ECPG\n",
+	  "  installcheck   run regression tests on existing instance\n",
+	  "  isolationcheck run isolation tests\n",
+	  "  modulescheck   run tests of modules in src/test/modules/\n",
+	  "  plcheck        run tests of PL languages\n",
+	  "  recoverycheck  run recovery test suite\n",
+	  "  upgradecheck   run tests of pg_upgrade\n",
+	  "\nOptions for <schedule>:\n",
+	  "  serial         serial mode\n",
+	  "  parallel       parallel mode\n";
 	exit(1);
 }

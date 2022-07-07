@@ -304,7 +304,7 @@
      <term><literal>fetch_size</literal></term>
      <listitem>
       <para>
-       This option specifies the number of rows <filename>postgres_fdw</> 
+       This option specifies the number of rows <filename>postgres_fdw</>
        should get in each fetch operation. It can be specified for a foreign
        table or a foreign server. The option specified on a table overrides
        an option specified for the server.
@@ -484,6 +484,25 @@
    extension that's listed in the foreign server's <literal>extensions</>
    option.  Operators and functions in such clauses must
    be <literal>IMMUTABLE</> as well.
+   For an <command>UPDATE</> or <command>DELETE</> query,
+   <filename>postgres_fdw</> attempts to optimize the query execution by
+   sending the whole query to the remote server if there are no query
+   <literal>WHERE</> clauses that cannot be sent to the remote server,
+   no local joins for the query, and no row-level local <literal>BEFORE</> or
+   <literal>AFTER</> triggers on the target table.  In <command>UPDATE</>,
+   expressions to assign to target columns must use only built-in data types,
+   <literal>IMMUTABLE</> operators, or <literal>IMMUTABLE</> functions,
+   to reduce the risk of misexecution of the query.
+  </para>
+
+  <para>
+   When <filename>postgres_fdw</> encounters a join between foreign tables on
+   the same foreign server, it sends the entire join to the foreign server,
+   unless for some reason it believes that it will be more efficient to fetch
+   rows from each table individually, or unless the table references involved
+   are subject to different user mappings.  While sending the <literal>JOIN</>
+   clauses, it takes the same precautions as mentioned above for the
+   <literal>WHERE</> clauses.
   </para>
 
   <para>

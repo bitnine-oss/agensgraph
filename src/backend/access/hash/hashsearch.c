@@ -188,7 +188,8 @@ _hash_first(IndexScanDesc scan, ScanDirection dir)
 
 	/* Read the metapage */
 	metabuf = _hash_getbuf(rel, HASH_METAPAGE, HASH_READ, LH_META_PAGE);
-	metap = HashPageGetMeta(BufferGetPage(metabuf));
+	page = BufferGetPage(metabuf);
+	metap = HashPageGetMeta(page);
 
 	/*
 	 * Loop until we get a lock on the correct target bucket.

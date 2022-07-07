@@ -27,6 +27,7 @@ typedef enum UserAuth
 	uaGSS,
 	uaSSPI,
 	uaPAM,
+	uaBSD,
 	uaLDAP,
 	uaCert,
 	uaRADIUS,
@@ -64,6 +65,7 @@ typedef struct HbaLine
 
 	char	   *usermap;
 	char	   *pamservice;
+	bool		pam_use_hostname;
 	bool		ldaptls;
 	char	   *ldapserver;
 	int			ldapport;
@@ -77,6 +79,8 @@ typedef struct HbaLine
 	bool		clientcert;
 	char	   *krb_realm;
 	bool		include_realm;
+	bool		compat_realm;
+	bool		upn_username;
 	char	   *radiusserver;
 	char	   *radiussecret;
 	char	   *radiusidentifier;

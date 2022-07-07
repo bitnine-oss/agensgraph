@@ -234,9 +234,17 @@ select max(unique1) from tenk1 where unique1 < 42;
 explain (costs off)
   select max(unique1) from tenk1 where unique1 > 42;
 select max(unique1) from tenk1 where unique1 > 42;
+
+-- the planner may choose a generic aggregate here if parallel query is
+-- enabled, since that plan will be parallel safe and the "optimized"
+-- plan, which has almost identical cost, will not be.  we want to test
+-- the optimized plan, so temporarily disable parallel query.
+begin;
+set local max_parallel_workers_per_gather = 0;
 explain (costs off)
   select max(unique1) from tenk1 where unique1 > 42000;
 select max(unique1) from tenk1 where unique1 > 42000;
+rollback;
 
 -- multi-column index (uses tenk1_thous_tenthous)
 explain (costs off)
@@ -270,6 +278,11 @@ explain (costs off)
   select max(unique2), generate_series(1,3) as g from tenk1 order by g desc;
 select max(unique2), generate_series(1,3) as g from tenk1 order by g desc;
 
+-- interesting corner case: constant gets optimized into a seqscan
+explain (costs off)
+  select max(100) from tenk1;
+select max(100) from tenk1;
+
 -- try it on an inheritance tree
 create table minmaxtest(f1 int);
 create table minmaxtest1() inherits (minmaxtest);
@@ -299,6 +312,37 @@ drop table minmaxtest cascade;
 -- check for correct detection of nested-aggregate errors
 select max(min(unique1)) from tenk1;
 select (select max(min(unique1)) from int8_tbl) from tenk1;
+
+--
+-- Test removal of redundant GROUP BY columns
+--
+
+create temp table t1 (a int, b int, c int, d int, primary key (a, b));
+create temp table t2 (x int, y int, z int, primary key (x, y));
+create temp table t3 (a int, b int, c int, primary key(a, b) deferrable);
+
+-- Non-primary-key columns can be removed from GROUP BY
+explain (costs off) select * from t1 group by a,b,c,d;
+
+-- No removal can happen if the complete PK is not present in GROUP BY
+explain (costs off) select a,c from t1 group by a,c,d;
+
+-- Test removal across multiple relations
+explain (costs off) select *
+from t1 inner join t2 on t1.a = t2.x and t1.b = t2.y
+group by t1.a,t1.b,t1.c,t1.d,t2.x,t2.y,t2.z;
+
+-- Test case where t1 can be optimized but not t2
+explain (costs off) select t1.*,t2.x,t2.z
+from t1 inner join t2 on t1.a = t2.x and t1.b = t2.y
+group by t1.a,t1.b,t1.c,t1.d,t2.x,t2.z;
+
+-- Cannot optimize when PK is deferrable
+explain (costs off) select * from t3 group by a,b,c;
+
+drop table t1;
+drop table t2;
+drop table t3;
 
 --
 -- Test combinations of DISTINCT and/or ORDER BY

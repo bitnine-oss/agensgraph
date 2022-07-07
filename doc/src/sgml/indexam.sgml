@@ -58,6 +58,12 @@
   </para>
 
   <para>
+   Index access methods can be defined and dropped using
+   <xref linkend="sql-create-access-method"> and
+    <xref linkend="sql-drop-access-method"> SQL commands respectively.
+  </para>
+
+  <para>
    An index access method handler function must be declared to accept a
    single argument of type <type>internal</> and to return the
    pseudo-type <type>index_am_handler</>.  The argument is a dummy value that
@@ -123,6 +129,7 @@ typedef struct IndexAmRoutine
     amcanreturn_function amcanreturn;   /* can be NULL */
     amcostestimate_function amcostestimate;
     amoptions_function amoptions;
+    amproperty_function amproperty;     /* can be NULL */
     amvalidate_function amvalidate;
     ambeginscan_function ambeginscan;
     amrescan_function amrescan;
@@ -348,10 +355,11 @@ amvacuumcleanup (IndexVacuumInfo *info,
 bool
 amcanreturn (Relation indexRelation, int attno);
 </programlisting>
-   Check whether the index can support <firstterm>index-only scans</> on the
-   given column, by returning the indexed column values for an index entry in
-   the form of an <structname>IndexTuple</structname>.  The attribute number
-   is 1-based, i.e. the first columns attno is 1. Returns TRUE if supported,
+   Check whether the index can support <link
+   linkend="indexes-index-only-scans"><firstterm>index-only scans</></link> on
+   the given column, by returning the indexed column values for an index entry
+   in the form of an <structname>IndexTuple</structname>.  The attribute number
+   is 1-based, i.e. the first column's attno is 1. Returns TRUE if supported,
    else FALSE.  If the access method does not support index-only scans at all,
    the <structfield>amcanreturn</> field in its <structname>IndexAmRoutine</>
    struct can be set to NULL.
@@ -395,6 +403,55 @@ amoptions (ArrayType *reloptions,
    be found if the access method has changed its rules for options, and in
    that case ignoring obsolete entries is appropriate.)
    It is OK to return NULL if default behavior is wanted.
+  </para>
+
+  <para>
+<programlisting>
+bool
+amproperty (Oid index_oid, int attno,
+            IndexAMProperty prop, const char *propname,
+            bool *res, bool *isnull);
+</programlisting>
+   The <function>amproperty</> method allows index access methods to override
+   the default behavior of <function>pg_index_column_has_property</function>
+   and related functions.
+   If the access method does not have any special behavior for index property
+   inquiries, the <structfield>amproperty</> field in
+   its <structname>IndexAmRoutine</> struct can be set to NULL.
+   Otherwise, the <function>amproperty</> method will be called with
+   <parameter>index_oid</> and <parameter>attno</> both zero for
+   <function>pg_indexam_has_property</function> calls,
+   or with <parameter>index_oid</> valid and <parameter>attno</> zero for
+   <function>pg_index_has_property</function> calls,
+   or with <parameter>index_oid</> valid and <parameter>attno</> greater than
+   zero for <function>pg_index_column_has_property</function> calls.
+   <parameter>prop</> is an enum value identifying the property being tested,
+   while <parameter>propname</> is the original property name string.
+   If the core code does not recognize the property name
+   then <parameter>prop</> is <literal>AMPROP_UNKNOWN</>.
+   Access methods can define custom property names by
+   checking <parameter>propname</> for a match (use <function>pg_strcasecmp</>
+   to match, for consistency with the core code); for names known to the core
+   code, it's better to inspect <parameter>prop</>.
+   If the <structfield>amproperty</> method returns <literal>true</> then
+   it has determined the property test result: it must set <literal>*res</>
+   to the boolean value to return, or set <literal>*isnull</>
+   to <literal>true</> to return a NULL.  (Both of the referenced variables
+   are initialized to <literal>false</> before the call.)
+   If the <structfield>amproperty</> method returns <literal>false</> then
+   the core code will proceed with its normal logic for determining the
+   property test result.
+  </para>
+
+  <para>
+   Access methods that support ordering operators should
+   implement <literal>AMPROP_DISTANCE_ORDERABLE</> property testing, as the
+   core code does not know how to do that and will return NULL.  It may
+   also be advantageous to implement <literal>AMPROP_RETURNABLE</> testing,
+   if that can be done more cheaply than by opening the index and calling
+   <structfield>amcanreturn</>, which is the core code's default behavior.
+   The default behavior should be satisfactory for all other standard
+   properties.
   </para>
 
   <para>
@@ -483,8 +540,8 @@ amgettuple (IndexScanDesc scan,
   </para>
 
   <para>
-   If the index supports index-only scans (i.e.,
-   <function>amcanreturn</function> returns TRUE for it),
+   If the index supports <link linkend="indexes-index-only-scans">index-only
+   scans</link> (i.e., <function>amcanreturn</function> returns TRUE for it),
    then on success the AM must also check
    <literal>scan-&gt;xs_want_itup</>, and if that is true it must return
    the original indexed data for the index entry, in the form of an
@@ -694,9 +751,10 @@ amrestrpos (IndexScanDesc scan);
 
   <para>
    If the index stores the original indexed data values (and not some lossy
-   representation of them), it is useful to support index-only scans, in
+   representation of them), it is useful to
+   support <link linkend="indexes-index-only-scans">index-only scans</link>, in
    which the index returns the actual data not just the TID of the heap tuple.
-   This will only work if the visibility map shows that the TID is on an
+   This will only avoid I/O if the visibility map shows that the TID is on an
    all-visible page; else the heap tuple must be visited anyway to check
    MVCC visibility.  But that is no concern of the access method's.
   </para>

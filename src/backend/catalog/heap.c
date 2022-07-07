@@ -44,6 +44,7 @@
 #include "catalog/pg_attrdef.h"
 #include "catalog/pg_collation.h"
 #include "catalog/pg_constraint.h"
+#include "catalog/pg_constraint_fn.h"
 #include "catalog/pg_foreign_table.h"
 #include "catalog/pg_inherits.h"
 #include "catalog/pg_namespace.h"
@@ -2005,9 +2006,7 @@ StoreRelCheck(Relation rel, char *ccname, Node *expr,
 	 * in check constraints; it would fail to examine the contents of
 	 * subselects.
 	 */
-	varList = pull_var_clause(expr,
-							  PVC_REJECT_AGGREGATES,
-							  PVC_REJECT_PLACEHOLDERS);
+	varList = pull_var_clause(expr, 0);
 	keycount = list_length(varList);
 
 	if (keycount > 0)
@@ -2322,9 +2321,7 @@ AddRelationNewConstraints(Relation rel,
 			List	   *vars;
 			char	   *colname;
 
-			vars = pull_var_clause(expr,
-								   PVC_REJECT_AGGREGATES,
-								   PVC_REJECT_PLACEHOLDERS);
+			vars = pull_var_clause(expr, 0);
 
 			/* eliminate duplicates */
 			vars = list_union(NIL, vars);

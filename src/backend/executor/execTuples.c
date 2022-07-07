@@ -88,7 +88,6 @@
 #include "nodes/nodeFuncs.h"
 #include "storage/bufmgr.h"
 #include "utils/builtins.h"
-#include "utils/expandeddatum.h"
 #include "utils/lsyscache.h"
 #include "utils/typcache.h"
 
@@ -813,52 +812,6 @@ ExecCopySlot(TupleTableSlot *dstslot, TupleTableSlot *srcslot)
 	return ExecStoreTuple(newTuple, dstslot, InvalidBuffer, true);
 }
 
-/* --------------------------------
- *		ExecMakeSlotContentsReadOnly
- *			Mark any R/W expanded datums in the slot as read-only.
- *
- * This is needed when a slot that might contain R/W datum references is to be
- * used as input for general expression evaluation.  Since the expression(s)
- * might contain more than one Var referencing the same R/W datum, we could
- * get wrong answers if functions acting on those Vars thought they could
- * modify the expanded value in-place.
- *
- * For notational reasons, we return the same slot passed in.
- * --------------------------------
- */
-TupleTableSlot *
-ExecMakeSlotContentsReadOnly(TupleTableSlot *slot)
-{
-	/*
-	 * sanity checks
-	 */
-	Assert(slot != NULL);
-	Assert(slot->tts_tupleDescriptor != NULL);
-	Assert(!slot->tts_isempty);
-
-	/*
-	 * If the slot contains a physical tuple, it can't contain any expanded
-	 * datums, because we flatten those when making a physical tuple.  This
-	 * might change later; but for now, we need do nothing unless the slot is
-	 * virtual.
-	 */
-	if (slot->tts_tuple == NULL)
-	{
-		Form_pg_attribute *att = slot->tts_tupleDescriptor->attrs;
-		int			attnum;
-
-		for (attnum = 0; attnum < slot->tts_nvalid; attnum++)
-		{
-			slot->tts_values[attnum] =
-				MakeExpandedObjectReadOnly(slot->tts_values[attnum],
-										   slot->tts_isnull[attnum],
-										   att[attnum]->attlen);
-		}
-	}
-
-	return slot;
-}
-
 
 /* ----------------------------------------------------------------
  *				convenience initialization routines
@@ -1313,7 +1266,7 @@ do_tup_output(TupOutputState *tstate, Datum *values, bool *isnull)
 	ExecStoreVirtualTuple(slot);
 
 	/* send the tuple to the receiver */
-	(*tstate->dest->receiveSlot) (slot, tstate->dest);
+	(void) (*tstate->dest->receiveSlot) (slot, tstate->dest);
 
 	/* clean up */
 	ExecClearTuple(slot);
@@ -1325,33 +1278,32 @@ do_tup_output(TupOutputState *tstate, Datum *values, bool *isnull)
  * Should only be used with a single-TEXT-attribute tupdesc.
  */
 void
-do_text_output_multiline(TupOutputState *tstate, char *text)
+do_text_output_multiline(TupOutputState *tstate, const char *txt)
 {
 	Datum		values[1];
 	bool		isnull[1] = {false};
 
-	while (*text)
+	while (*txt)
 	{
-		char	   *eol;
+		const char *eol;
 		int			len;
 
-		eol = strchr(text, '\n');
+		eol = strchr(txt, '\n');
 		if (eol)
 		{
-			len = eol - text;
-
+			len = eol - txt;
 			eol++;
 		}
 		else
 		{
-			len = strlen(text);
-			eol += len;
+			len = strlen(txt);
+			eol = txt + len;
 		}
 
-		values[0] = PointerGetDatum(cstring_to_text_with_len(text, len));
+		values[0] = PointerGetDatum(cstring_to_text_with_len(txt, len));
 		do_tup_output(tstate, values, isnull);
 		pfree(DatumGetPointer(values[0]));
-		text = eol;
+		txt = eol;
 	}
 }
 

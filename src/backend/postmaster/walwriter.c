@@ -47,6 +47,7 @@
 #include "access/xlog.h"
 #include "libpq/pqsignal.h"
 #include "miscadmin.h"
+#include "pgstat.h"
 #include "postmaster/walwriter.h"
 #include "storage/bufmgr.h"
 #include "storage/fd.h"
@@ -64,6 +65,7 @@
  * GUC parameters
  */
 int			WalWriterDelay = 200;
+int			WalWriterFlushAfter = 128;
 
 /*
  * Number of do-nothing loops before lengthening the delay time, and the
@@ -167,6 +169,7 @@ WalWriterMain(void)
 		 * about in walwriter, but we do have LWLocks, and perhaps buffers?
 		 */
 		LWLockReleaseAll();
+		pgstat_report_wait_end();
 		AbortBufferIO();
 		UnlockBuffers();
 		/* buffer pins are released here: */

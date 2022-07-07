@@ -255,6 +255,23 @@ typedef struct Param
  * DISTINCT is not supported in this case, so aggdistinct will be NIL.
  * The direct arguments appear in aggdirectargs (as a list of plain
  * expressions, not TargetEntry nodes).
+ *
+ * aggtranstype is the data type of the state transition values for this
+ * aggregate (resolved to an actual type, if agg's transtype is polymorphic).
+ * This is determined during planning and is InvalidOid before that.
+ *
+ * aggargtypes is an OID list of the data types of the direct and regular
+ * arguments.  Normally it's redundant with the aggdirectargs and args lists,
+ * but in a combining aggregate, it's not because the args list has been
+ * replaced with a single argument representing the partial-aggregate
+ * transition values.
+ *
+ * aggsplit indicates the expected partial-aggregation mode for the Aggref's
+ * parent plan node.  It's always set to AGGSPLIT_SIMPLE in the parser, but
+ * the planner might change it to something else.  We use this mainly as
+ * a crosscheck that the Aggrefs match the plan; but note that when aggsplit
+ * indicates a non-final mode, aggtype reflects the transition data type
+ * not the SQL-level output type of the aggregate.
  */
 typedef struct Aggref
 {
@@ -263,6 +280,8 @@ typedef struct Aggref
 	Oid			aggtype;		/* type Oid of result of the aggregate */
 	Oid			aggcollid;		/* OID of collation of result */
 	Oid			inputcollid;	/* OID of collation that function should use */
+	Oid			aggtranstype;	/* type Oid of aggregate's transition value */
+	List	   *aggargtypes;	/* type Oids of direct and aggregated args */
 	List	   *aggdirectargs;	/* direct arguments, if an ordered-set agg */
 	List	   *args;			/* aggregated arguments and sort expressions */
 	List	   *aggorder;		/* ORDER BY (list of SortGroupClause) */
@@ -273,6 +292,7 @@ typedef struct Aggref
 								 * combined into an array last argument */
 	char		aggkind;		/* aggregate kind (see pg_aggregate.h) */
 	Index		agglevelsup;	/* > 0 if agg belongs to outer query */
+	AggSplit	aggsplit;		/* expected agg-splitting mode of parent Agg */
 	int			location;		/* token location, or -1 if unknown */
 } Aggref;
 
@@ -1079,8 +1099,16 @@ typedef struct XmlExpr
  * NullTest represents the operation of testing a value for NULLness.
  * The appropriate test is performed and returned as a boolean Datum.
  *
- * NOTE: the semantics of this for rowtype inputs are noticeably different
- * from the scalar case.  We provide an "argisrow" flag to reflect that.
+ * When argisrow is false, this simply represents a test for the null value.
+ *
+ * When argisrow is true, the input expression must yield a rowtype, and
+ * the node implements "row IS [NOT] NULL" per the SQL standard.  This
+ * includes checking individual fields for NULLness when the row datum
+ * itself isn't NULL.
+ *
+ * NOTE: the combination of a rowtype input and argisrow==false does NOT
+ * correspond to the SQL notation "row IS [NOT] NULL"; instead, this case
+ * represents the SQL notation "row IS [NOT] DISTINCT FROM NULL".
  * ----------------
  */
 
@@ -1094,7 +1122,7 @@ typedef struct NullTest
 	Expr		xpr;
 	Expr	   *arg;			/* input expression */
 	NullTestType nulltesttype;	/* IS NULL, IS NOT NULL */
-	bool		argisrow;		/* T if input is of a composite type */
+	bool		argisrow;		/* T to perform field-by-field null checks */
 	int			location;		/* token location, or -1 if unknown */
 } NullTest;
 

@@ -110,18 +110,12 @@ endif
 endif # aix
 
 # Update the commonly used headers before building the subdirectories
-$(SUBDIRS:%=%-recursive): $(top_builddir)/src/include/parser/gram.h $(top_builddir)/src/include/catalog/schemapg.h $(top_builddir)/src/include/storage/lwlocknames.h $(top_builddir)/src/include/utils/fmgroids.h $(top_builddir)/src/include/utils/errcodes.h $(top_builddir)/src/include/utils/probes.h
+$(SUBDIRS:%=%-recursive): | generated-headers
 
-# run this unconditionally to avoid needing to know its dependencies here:
-submake-schemapg:
-	$(MAKE) -C catalog schemapg.h
-
-# src/port needs a convenient way to force errcodes.h to get built
+# src/port needs a convenient way to force just errcodes.h to get built
 submake-errcodes: $(top_builddir)/src/include/utils/errcodes.h
 
-.PHONY: submake-schemapg submake-errcodes
-
-catalog/schemapg.h: | submake-schemapg
+.PHONY: submake-errcodes
 
 $(top_builddir)/src/port/libpgport_srv.a: | submake-libpgport
 
@@ -142,14 +136,22 @@ parser/gram.h: parser/gram.y
 storage/lmgr/lwlocknames.h: storage/lmgr/generate-lwlocknames.pl storage/lmgr/lwlocknames.txt
 	$(MAKE) -C storage/lmgr lwlocknames.h
 
-utils/fmgroids.h: utils/Gen_fmgrtab.pl catalog/Catalog.pm $(top_srcdir)/src/include/catalog/pg_proc.h
-	$(MAKE) -C utils fmgroids.h
-
 utils/errcodes.h: utils/generate-errcodes.pl utils/errcodes.txt
 	$(MAKE) -C utils errcodes.h
 
+utils/fmgroids.h: utils/Gen_fmgrtab.pl catalog/Catalog.pm $(top_srcdir)/src/include/catalog/pg_proc.h
+	$(MAKE) -C utils fmgroids.h
+
 utils/probes.h: utils/probes.d
 	$(MAKE) -C utils probes.h
+
+# run this unconditionally to avoid needing to know its dependencies here:
+catalog/schemapg.h: | submake-schemapg
+
+submake-schemapg:
+	$(MAKE) -C catalog schemapg.h
+
+.PHONY: submake-schemapg
 
 # Make symlinks for these headers in the include directory. That way
 # we can cut down on the -I options. Also, a symlink is automatically
@@ -161,6 +163,10 @@ utils/probes.h: utils/probes.d
 # src/backend will be in the source tree, while the symlink in src/include
 # will be in the build tree, so a simple ../.. reference won't work.
 # For headers generated during regular builds, we prefer a relative symlink.
+
+.PHONY: generated-headers
+
+generated-headers: $(top_builddir)/src/include/parser/gram.h $(top_builddir)/src/include/catalog/schemapg.h $(top_builddir)/src/include/storage/lwlocknames.h $(top_builddir)/src/include/utils/errcodes.h $(top_builddir)/src/include/utils/fmgroids.h $(top_builddir)/src/include/utils/probes.h
 
 $(top_builddir)/src/include/parser/gram.h: parser/gram.h
 	prereqdir=`cd '$(dir $<)' >/dev/null && pwd` && \
@@ -203,7 +209,7 @@ distprep:
 	$(MAKE) -C parser	gram.c gram.h scan.c
 	$(MAKE) -C bootstrap	bootparse.c bootscanner.c
 	$(MAKE) -C catalog	schemapg.h postgres.bki postgres.description postgres.shdescription
-	$(MAKE) -C replication	repl_gram.c repl_scanner.c
+	$(MAKE) -C replication	repl_gram.c repl_scanner.c syncrep_gram.c syncrep_scanner.c
 	$(MAKE) -C storage/lmgr	lwlocknames.h
 	$(MAKE) -C utils	fmgrtab.c fmgroids.h errcodes.h
 	$(MAKE) -C utils/misc	guc-file.c
@@ -306,8 +312,7 @@ ifeq ($(PORTNAME), win32)
 endif
 
 distclean: clean
-	rm -f port/tas.s port/dynloader.c port/pg_sema.c port/pg_shmem.c \
-	      port/pg_latch.c
+	rm -f port/tas.s port/dynloader.c port/pg_sema.c port/pg_shmem.c
 
 maintainer-clean: distclean
 	rm -f bootstrap/bootparse.c \
@@ -321,6 +326,8 @@ maintainer-clean: distclean
 	      catalog/postgres.shdescription \
 	      replication/repl_gram.c \
 	      replication/repl_scanner.c \
+	      replication/syncrep_gram.c \
+	      replication/syncrep_scanner.c \
 	      storage/lmgr/lwlocknames.c \
 	      storage/lmgr/lwlocknames.h \
 	      utils/fmgroids.h \

@@ -68,15 +68,19 @@ static void revmap_physical_extend(BrinRevmap *revmap);
  * brinRevmapTerminate when caller is done with it.
  */
 BrinRevmap *
-brinRevmapInitialize(Relation idxrel, BlockNumber *pagesPerRange)
+brinRevmapInitialize(Relation idxrel, BlockNumber *pagesPerRange,
+					 Snapshot snapshot)
 {
 	BrinRevmap *revmap;
 	Buffer		meta;
 	BrinMetaPageData *metadata;
+	Page		page;
 
 	meta = ReadBuffer(idxrel, BRIN_METAPAGE_BLKNO);
 	LockBuffer(meta, BUFFER_LOCK_SHARE);
-	metadata = (BrinMetaPageData *) PageGetContents(BufferGetPage(meta));
+	page = BufferGetPage(meta);
+	TestForOldSnapshot(snapshot, idxrel, page);
+	metadata = (BrinMetaPageData *) PageGetContents(page);
 
 	revmap = palloc(sizeof(BrinRevmap));
 	revmap->rm_irel = idxrel;
@@ -185,7 +189,8 @@ brinSetHeapBlockItemptr(Buffer buf, BlockNumber pagesPerRange,
  */
 BrinTuple *
 brinGetTupleForHeapBlock(BrinRevmap *revmap, BlockNumber heapBlk,
-						 Buffer *buf, OffsetNumber *off, Size *size, int mode)
+						 Buffer *buf, OffsetNumber *off, Size *size, int mode,
+						 Snapshot snapshot)
 {
 	Relation	idxRel = revmap->rm_irel;
 	BlockNumber mapBlk;
@@ -262,10 +267,15 @@ brinGetTupleForHeapBlock(BrinRevmap *revmap, BlockNumber heapBlk,
 		}
 		LockBuffer(*buf, mode);
 		page = BufferGetPage(*buf);
+		TestForOldSnapshot(snapshot, idxRel, page);
 
 		/* If we land on a revmap page, start over */
 		if (BRIN_IS_REGULAR_PAGE(page))
 		{
+			if (*off > PageGetMaxOffsetNumber(page))
+				ereport(ERROR,
+						(errcode(ERRCODE_INDEX_CORRUPTED),
+						 errmsg_internal("corrupted BRIN index: inconsistent range map")));
 			lp = PageGetItemId(page, *off);
 			if (ItemIdIsUsed(lp))
 			{
