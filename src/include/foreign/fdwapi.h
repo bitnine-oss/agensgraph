@@ -62,7 +62,8 @@ typedef void (*GetForeignJoinPaths_function) (PlannerInfo *root,
 typedef void (*GetForeignUpperPaths_function) (PlannerInfo *root,
 											   UpperRelationKind stage,
 											   RelOptInfo *input_rel,
-											   RelOptInfo *output_rel);
+											   RelOptInfo *output_rel,
+											   void *extra);
 
 typedef void (*AddForeignUpdateTargets_function) (Query *parsetree,
 												  RangeTblEntry *target_rte,
@@ -95,6 +96,12 @@ typedef TupleTableSlot *(*ExecForeignDelete_function) (EState *estate,
 													   TupleTableSlot *planSlot);
 
 typedef void (*EndForeignModify_function) (EState *estate,
+										   ResultRelInfo *rinfo);
+
+typedef void (*BeginForeignInsert_function) (ModifyTableState *mtstate,
+											 ResultRelInfo *rinfo);
+
+typedef void (*EndForeignInsert_function) (EState *estate,
 										   ResultRelInfo *rinfo);
 
 typedef int (*IsForeignRelUpdatable_function) (Relation rel);
@@ -204,6 +211,8 @@ typedef struct FdwRoutine
 	ExecForeignUpdate_function ExecForeignUpdate;
 	ExecForeignDelete_function ExecForeignDelete;
 	EndForeignModify_function EndForeignModify;
+	BeginForeignInsert_function BeginForeignInsert;
+	EndForeignInsert_function EndForeignInsert;
 	IsForeignRelUpdatable_function IsForeignRelUpdatable;
 	PlanDirectModify_function PlanDirectModify;
 	BeginDirectModify_function BeginDirectModify;

@@ -65,6 +65,7 @@ test: create_misc
 test: create_operator
 test: create_procedure
 test: create_index
+test: index_including
 test: create_view
 test: create_aggregate
 test: create_function_3
@@ -101,6 +102,7 @@ test: portals
 test: arrays
 test: btree_index
 test: hash_index
+test: func_index
 test: update
 test: delete
 test: namespace
@@ -185,7 +187,9 @@ test: partition_prune
 test: reloptions
 test: hash_part
 test: indexing
+test: partition_aggregate
 test: event_trigger
+test: fast_default
 test: stats
 test: graphid
 test: graphmeta

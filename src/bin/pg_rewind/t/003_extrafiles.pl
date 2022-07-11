@@ -66,7 +66,8 @@ sub run_test
 	@paths = sort @paths;
 	is_deeply(
 		\@paths,
-		[   "$test_master_datadir/tst_both_dir",
+		[
+			"$test_master_datadir/tst_both_dir",
 			"$test_master_datadir/tst_both_dir/both_file1",
 			"$test_master_datadir/tst_both_dir/both_file2",
 			"$test_master_datadir/tst_both_dir/both_subdir",
@@ -75,10 +76,12 @@ sub run_test
 			"$test_master_datadir/tst_standby_dir/standby_file1",
 			"$test_master_datadir/tst_standby_dir/standby_file2",
 			"$test_master_datadir/tst_standby_dir/standby_subdir",
-"$test_master_datadir/tst_standby_dir/standby_subdir/standby_file3" ],
+			"$test_master_datadir/tst_standby_dir/standby_subdir/standby_file3"
+		],
 		"file lists match");
 
 	RewindTest::clean_rewind_test();
+	return;
 }
 
 # Run the test in both modes.

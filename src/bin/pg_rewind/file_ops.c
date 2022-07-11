@@ -18,6 +18,7 @@
 #include <fcntl.h>
 #include <unistd.h>
 
+#include "common/file_perm.h"
 #include "file_ops.h"
 #include "filemap.h"
 #include "logging.h"
@@ -29,7 +30,6 @@
 static int	dstfd = -1;
 static char dstpath[MAXPGPATH] = "";
 
-static void remove_target_file(const char *path);
 static void create_target_dir(const char *path);
 static void remove_target_dir(const char *path);
 static void create_target_symlink(const char *path, const char *link);
@@ -58,7 +58,7 @@ open_target_file(const char *path, bool trunc)
 	mode = O_WRONLY | O_CREAT | PG_BINARY;
 	if (trunc)
 		mode |= O_TRUNC;
-	dstfd = open(dstpath, mode, 0600);
+	dstfd = open(dstpath, mode, pg_file_create_mode);
 	if (dstfd < 0)
 		pg_fatal("could not open target file \"%s\": %s\n",
 				 dstpath, strerror(errno));
@@ -134,7 +134,7 @@ remove_target(file_entry_t *entry)
 			break;
 
 		case FILE_TYPE_REGULAR:
-			remove_target_file(entry->path);
+			remove_target_file(entry->path, false);
 			break;
 
 		case FILE_TYPE_SYMLINK:
@@ -165,8 +165,12 @@ create_target(file_entry_t *entry)
 	}
 }
 
-static void
-remove_target_file(const char *path)
+/*
+ * Remove a file from target data directory.  If missing_ok is true, it
+ * is fine for the target file to not exist.
+ */
+void
+remove_target_file(const char *path, bool missing_ok)
 {
 	char		dstpath[MAXPGPATH];
 
@@ -175,8 +179,13 @@ remove_target_file(const char *path)
 
 	snprintf(dstpath, sizeof(dstpath), "%s/%s", datadir_target, path);
 	if (unlink(dstpath) != 0)
+	{
+		if (errno == ENOENT && missing_ok)
+			return;
+
 		pg_fatal("could not remove file \"%s\": %s\n",
 				 dstpath, strerror(errno));
+	}
 }
 
 void
@@ -190,7 +199,7 @@ truncate_target_file(const char *path, off_t newsize)
 
 	snprintf(dstpath, sizeof(dstpath), "%s/%s", datadir_target, path);
 
-	fd = open(dstpath, O_WRONLY, 0);
+	fd = open(dstpath, O_WRONLY, pg_file_create_mode);
 	if (fd < 0)
 		pg_fatal("could not open file \"%s\" for truncation: %s\n",
 				 dstpath, strerror(errno));
@@ -211,7 +220,7 @@ create_target_dir(const char *path)
 		return;
 
 	snprintf(dstpath, sizeof(dstpath), "%s/%s", datadir_target, path);
-	if (mkdir(dstpath, S_IRWXU) != 0)
+	if (mkdir(dstpath, pg_dir_create_mode) != 0)
 		pg_fatal("could not create directory \"%s\": %s\n",
 				 dstpath, strerror(errno));
 }

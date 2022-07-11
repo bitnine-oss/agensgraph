@@ -86,9 +86,11 @@ use Carp;
 use Config;
 use Cwd;
 use Exporter 'import';
+use Fcntl qw(:mode);
 use File::Basename;
 use File::Path qw(rmtree);
 use File::Spec;
+use File::stat qw(stat);
 use File::Temp ();
 use IPC::Run;
 use RecursiveCopy;
@@ -153,7 +155,8 @@ sub new
 		_host    => $pghost,
 		_basedir => "$TestLib::tmp_check/t_${testname}_${name}_data",
 		_name    => $name,
-		_logfile => "$TestLib::log_path/${testname}_${name}.log" };
+		_logfile => "$TestLib::log_path/${testname}_${name}.log"
+	};
 
 	bless $self, $class;
 	mkdir $self->{_basedir}
@@ -269,6 +272,26 @@ sub connstr
 
 =pod
 
+=item $node->group_access()
+
+Does the data dir allow group access?
+
+=cut
+
+sub group_access
+{
+	my ($self) = @_;
+
+	my $dir_stat = stat($self->data_dir);
+
+	defined($dir_stat)
+	  or die('unable to stat ' . $self->data_dir);
+
+	return (S_IMODE($dir_stat->mode) == 0750);
+}
+
+=pod
+
 =item $node->data_dir()
 
 Returns the path to the data directory. postgresql.conf and pg_hba.conf are
@@ -349,6 +372,7 @@ sub dump_info
 {
 	my ($self) = @_;
 	print $self->info;
+	return;
 }
 
 
@@ -367,9 +391,10 @@ sub set_replication_conf
 	if ($TestLib::windows_os)
 	{
 		print $hba
-"host replication all $test_localhost/32 sspi include_realm=1 map=regress\n";
+		  "host replication all $test_localhost/32 sspi include_realm=1 map=regress\n";
 	}
 	close $hba;
+	return;
 }
 
 =pod
@@ -420,7 +445,6 @@ sub init
 	print $conf "restart_after_crash = off\n";
 	print $conf "log_line_prefix = '%m [%p] %q%a '\n";
 	print $conf "log_statement = all\n";
-	print $conf "log_min_messages = debug1\n";
 	print $conf "log_replication_commands = on\n";
 	print $conf "wal_retrieve_retry_interval = '500ms'\n";
 	print $conf "port = $port\n";
@@ -460,8 +484,12 @@ sub init
 	}
 	close $conf;
 
+	chmod($self->group_access ? 0640 : 0600, "$pgdata/postgresql.conf")
+	  or die("unable to set permissions for $pgdata/postgresql.conf");
+
 	$self->set_replication_conf if $params{allows_streaming};
 	$self->enable_archiving     if $params{has_archiving};
+	return;
 }
 
 =pod
@@ -484,6 +512,11 @@ sub append_conf
 	my $conffile = $self->data_dir . '/' . $filename;
 
 	TestLib::append_to_file($conffile, $str . "\n");
+
+	chmod($self->group_access() ? 0640 : 0600, $conffile)
+	  or die("unable to set permissions for $conffile");
+
+	return;
 }
 
 =pod
@@ -510,6 +543,7 @@ sub backup
 	TestLib::system_or_bail('pg_basebackup', '-D', $backup_path, '-p', $port,
 		'--no-sync');
 	print "# Backup finished\n";
+	return;
 }
 
 =item $node->backup_fs_hot(backup_name)
@@ -528,6 +562,7 @@ sub backup_fs_hot
 {
 	my ($self, $backup_name) = @_;
 	$self->_backup_fs($backup_name, 1);
+	return;
 }
 
 =item $node->backup_fs_cold(backup_name)
@@ -544,6 +579,7 @@ sub backup_fs_cold
 {
 	my ($self, $backup_name) = @_;
 	$self->_backup_fs($backup_name, 0);
+	return;
 }
 
 
@@ -584,6 +620,7 @@ sub _backup_fs
 	}
 
 	print "# Backup finished\n";
+	return;
 }
 
 
@@ -624,7 +661,7 @@ sub init_from_backup
 	$params{has_restoring} = 0 unless defined $params{has_restoring};
 
 	print
-"# Initializing node \"$node_name\" from backup \"$backup_name\" of node \"$root_name\"\n";
+	  "# Initializing node \"$node_name\" from backup \"$backup_name\" of node \"$root_name\"\n";
 	croak "Backup \"$backup_name\" does not exist at $backup_path"
 	  unless -d $backup_path;
 
@@ -644,6 +681,7 @@ port = $port
 ));
 	$self->enable_streaming($root_node) if $params{has_streaming};
 	$self->enable_restoring($root_node) if $params{has_restoring};
+	return;
 }
 
 =pod
@@ -675,6 +713,7 @@ sub start
 	}
 
 	$self->_update_pid(1);
+	return;
 }
 
 =pod
@@ -700,6 +739,7 @@ sub stop
 	print "### Stopping node \"$name\" using mode $mode\n";
 	TestLib::system_or_bail('pg_ctl', '-D', $pgdata, '-m', $mode, 'stop');
 	$self->_update_pid(0);
+	return;
 }
 
 =pod
@@ -718,6 +758,7 @@ sub reload
 	my $name   = $self->name;
 	print "### Reloading node \"$name\"\n";
 	TestLib::system_or_bail('pg_ctl', '-D', $pgdata, 'reload');
+	return;
 }
 
 =pod
@@ -739,6 +780,7 @@ sub restart
 	TestLib::system_or_bail('pg_ctl', '-D', $pgdata, '-l', $logfile,
 		'restart');
 	$self->_update_pid(1);
+	return;
 }
 
 =pod
@@ -759,6 +801,7 @@ sub promote
 	print "### Promoting node \"$name\"\n";
 	TestLib::system_or_bail('pg_ctl', '-D', $pgdata, '-l', $logfile,
 		'promote');
+	return;
 }
 
 # Internal routine to enable streaming replication on a standby node.
@@ -774,6 +817,7 @@ sub enable_streaming
 primary_conninfo='$root_connstr application_name=$name'
 standby_mode=on
 ));
+	return;
 }
 
 # Internal routine to enable archive recovery command on a standby node
@@ -802,6 +846,7 @@ sub enable_restoring
 restore_command = '$copy_command'
 standby_mode = on
 ));
+	return;
 }
 
 # Internal routine to enable archiving
@@ -831,6 +876,7 @@ sub enable_archiving
 archive_mode = on
 archive_command = '$copy_command'
 ));
+	return;
 }
 
 # Internal method
@@ -857,6 +903,7 @@ sub _update_pid
 
 	# Complain if we expected to find a pidfile.
 	BAIL_OUT("postmaster.pid unexpectedly not present") if $is_running;
+	return;
 }
 
 =pod
@@ -986,7 +1033,7 @@ sub teardown_node
 	my $self = shift;
 
 	$self->stop('immediate');
-
+	return;
 }
 
 =pod
@@ -1002,6 +1049,7 @@ sub clean_node
 	my $self = shift;
 
 	rmtree $self->{_basedir} unless defined $self->{_pid};
+	return;
 }
 
 =pod
@@ -1169,12 +1217,12 @@ sub psql
 
 	my $ret;
 
-   # Run psql and capture any possible exceptions.  If the exception is
-   # because of a timeout and the caller requested to handle that, just return
-   # and set the flag.  Otherwise, and for any other exception, rethrow.
-   #
-   # For background, see
-   # http://search.cpan.org/~ether/Try-Tiny-0.24/lib/Try/Tiny.pm
+	# Run psql and capture any possible exceptions.  If the exception is
+	# because of a timeout and the caller requested to handle that, just return
+	# and set the flag.  Otherwise, and for any other exception, rethrow.
+	#
+	# For background, see
+	# https://metacpan.org/pod/release/ETHER/Try-Tiny-0.24/lib/Try/Tiny.pm
 	do
 	{
 		local $@;
@@ -1244,7 +1292,7 @@ sub psql
 		die "connection error: '$$stderr'\nwhile running '@psql_params'"
 		  if $ret == 2;
 		die
-"error running SQL: '$$stderr'\nwhile running '@psql_params' with sql '$sql'"
+		  "error running SQL: '$$stderr'\nwhile running '@psql_params' with sql '$sql'"
 		  if $ret == 3;
 		die "psql returns $ret: '$$stderr'\nwhile running '@psql_params'";
 	}
@@ -1323,6 +1371,7 @@ sub command_ok
 	local $ENV{PGPORT} = $self->port;
 
 	TestLib::command_ok(@_);
+	return;
 }
 
 =pod
@@ -1340,6 +1389,7 @@ sub command_fails
 	local $ENV{PGPORT} = $self->port;
 
 	TestLib::command_fails(@_);
+	return;
 }
 
 =pod
@@ -1357,6 +1407,7 @@ sub command_like
 	local $ENV{PGPORT} = $self->port;
 
 	TestLib::command_like(@_);
+	return;
 }
 
 =pod
@@ -1374,6 +1425,7 @@ sub command_checks_all
 	local $ENV{PGPORT} = $self->port;
 
 	TestLib::command_checks_all(@_);
+	return;
 }
 
 =pod
@@ -1399,6 +1451,7 @@ sub issues_sql_like
 	ok($result, "@$cmd exit code 0");
 	my $log = TestLib::slurp_file($self->logfile);
 	like($log, $expected_sql, "$test_name: SQL found in server log");
+	return;
 }
 
 =pod
@@ -1417,6 +1470,7 @@ sub run_log
 	local $ENV{PGPORT} = $self->port;
 
 	TestLib::run_log(@_);
+	return;
 }
 
 =pod
@@ -1507,19 +1561,20 @@ sub wait_for_catchup
 	}
 	else
 	{
-		$lsn_expr = 'pg_current_wal_lsn()'
+		$lsn_expr = 'pg_current_wal_lsn()';
 	}
 	print "Waiting for replication conn "
 	  . $standby_name . "'s "
 	  . $mode
 	  . "_lsn to pass "
-	  . $target_lsn . " on "
+	  . $lsn_expr . " on "
 	  . $self->name . "\n";
 	my $query =
-qq[SELECT $lsn_expr <= ${mode}_lsn FROM pg_catalog.pg_stat_replication WHERE application_name = '$standby_name';];
+	  qq[SELECT $lsn_expr <= ${mode}_lsn FROM pg_catalog.pg_stat_replication WHERE application_name = '$standby_name';];
 	$self->poll_query_until('postgres', $query)
 	  or croak "timed out waiting for catchup";
 	print "done\n";
+	return;
 }
 
 =pod
@@ -1558,10 +1613,11 @@ sub wait_for_slot_catchup
 	  . $target_lsn . " on "
 	  . $self->name . "\n";
 	my $query =
-qq[SELECT '$target_lsn' <= ${mode}_lsn FROM pg_catalog.pg_replication_slots WHERE slot_name = '$slot_name';];
+	  qq[SELECT '$target_lsn' <= ${mode}_lsn FROM pg_catalog.pg_replication_slots WHERE slot_name = '$slot_name';];
 	$self->poll_query_until('postgres', $query)
 	  or croak "timed out waiting for catchup";
 	print "done\n";
+	return;
 }
 
 =pod
@@ -1633,7 +1689,7 @@ sub slot
 		'restart_lsn');
 	return $self->query_hash(
 		'postgres',
-"SELECT __COLUMNS__ FROM pg_catalog.pg_replication_slots WHERE slot_name = '$slot_name'",
+		"SELECT __COLUMNS__ FROM pg_catalog.pg_replication_slots WHERE slot_name = '$slot_name'",
 		@columns);
 }
 
@@ -1658,8 +1714,8 @@ to check for timeout. retval is undef on timeout.
 
 sub pg_recvlogical_upto
 {
-	my ($self, $dbname, $slot_name, $endpos, $timeout_secs, %plugin_options) =
-	  @_;
+	my ($self, $dbname, $slot_name, $endpos, $timeout_secs, %plugin_options)
+	  = @_;
 	my ($stdout, $stderr);
 
 	my $timeout_exception = 'pg_recvlogical timed out';
@@ -1708,7 +1764,7 @@ sub pg_recvlogical_upto
 			  unless $timeout->is_expired;
 
 			die
-"$exc_save waiting for endpos $endpos with stdout '$stdout', stderr '$stderr'"
+			  "$exc_save waiting for endpos $endpos with stdout '$stdout', stderr '$stderr'"
 			  unless wantarray;
 		}
 	};
@@ -1723,7 +1779,7 @@ sub pg_recvlogical_upto
 	else
 	{
 		die
-"pg_recvlogical exited with code '$ret', stdout '$stdout' and stderr '$stderr'"
+		  "pg_recvlogical exited with code '$ret', stdout '$stdout' and stderr '$stderr'"
 		  if $ret;
 		return $stdout;
 	}

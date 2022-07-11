@@ -22,6 +22,7 @@
 #endif
 
 #include "pgtar.h"
+#include "common/file_perm.h"
 #include "common/file_utils.h"
 
 #include "receivelog.h"
@@ -89,7 +90,7 @@ dir_open_for_write(const char *pathname, const char *temp_suffix, size_t pad_to_
 	 * does not do any system calls to fsync() to make changes permanent on
 	 * disk.
 	 */
-	fd = open(tmppath, O_WRONLY | O_CREAT | PG_BINARY, S_IRUSR | S_IWUSR);
+	fd = open(tmppath, O_WRONLY | O_CREAT | PG_BINARY, pg_file_create_mode);
 	if (fd < 0)
 		return NULL;
 
@@ -127,7 +128,11 @@ dir_open_for_write(const char *pathname, const char *temp_suffix, size_t pad_to_
 
 				pg_free(zerobuf);
 				close(fd);
-				errno = save_errno;
+
+				/*
+				 * If write didn't set errno, assume problem is no disk space.
+				 */
+				errno = save_errno ? save_errno : ENOSPC;
 				return NULL;
 			}
 		}
@@ -441,7 +446,14 @@ tar_write_compressed_data(void *buf, size_t count, bool flush)
 			size_t		len = ZLIB_OUT_SIZE - tar_data->zp->avail_out;
 
 			if (write(tar_data->fd, tar_data->zlibOut, len) != len)
+			{
+				/*
+				 * If write didn't set errno, assume problem is no disk space.
+				 */
+				if (errno == 0)
+					errno = ENOSPC;
 				return false;
+			}
 
 			tar_data->zp->next_out = tar_data->zlibOut;
 			tar_data->zp->avail_out = ZLIB_OUT_SIZE;
@@ -534,7 +546,8 @@ tar_open_for_write(const char *pathname, const char *temp_suffix, size_t pad_to_
 		 * We open the tar file only when we first try to write to it.
 		 */
 		tar_data->fd = open(tar_data->tarfilename,
-							O_WRONLY | O_CREAT | PG_BINARY, S_IRUSR | S_IWUSR);
+							O_WRONLY | O_CREAT | PG_BINARY,
+							pg_file_create_mode);
 		if (tar_data->fd < 0)
 			return NULL;
 
@@ -621,7 +634,8 @@ tar_open_for_write(const char *pathname, const char *temp_suffix, size_t pad_to_
 			save_errno = errno;
 			pg_free(tar_data->currentfile);
 			tar_data->currentfile = NULL;
-			errno = save_errno;
+			/* if write didn't set errno, assume problem is no disk space */
+			errno = save_errno ? save_errno : ENOSPC;
 			return NULL;
 		}
 	}
@@ -816,7 +830,12 @@ tar_close(Walfile f, WalCloseMethod method)
 	if (!tar_data->compression)
 	{
 		if (write(tar_data->fd, tf->header, 512) != 512)
+		{
+			/* if write didn't set errno, assume problem is no disk space */
+			if (errno == 0)
+				errno = ENOSPC;
 			return -1;
+		}
 	}
 #ifdef HAVE_LIBZ
 	else
@@ -846,7 +865,8 @@ tar_close(Walfile f, WalCloseMethod method)
 		return -1;
 
 	/* Always fsync on close, so the padding gets fsynced */
-	tar_sync(f);
+	if (tar_sync(f) < 0)
+		return -1;
 
 	/* Clean up and done */
 	pg_free(tf->pathname);
@@ -877,12 +897,17 @@ tar_finish(void)
 			return false;
 	}
 
-	/* A tarfile always ends with two empty  blocks */
+	/* A tarfile always ends with two empty blocks */
 	MemSet(zerobuf, 0, sizeof(zerobuf));
 	if (!tar_data->compression)
 	{
 		if (write(tar_data->fd, zerobuf, sizeof(zerobuf)) != sizeof(zerobuf))
+		{
+			/* if write didn't set errno, assume problem is no disk space */
+			if (errno == 0)
+				errno = ENOSPC;
 			return false;
+		}
 	}
 #ifdef HAVE_LIBZ
 	else
@@ -909,7 +934,15 @@ tar_finish(void)
 				size_t		len = ZLIB_OUT_SIZE - tar_data->zp->avail_out;
 
 				if (write(tar_data->fd, tar_data->zlibOut, len) != len)
+				{
+					/*
+					 * If write didn't set errno, assume problem is no disk
+					 * space.
+					 */
+					if (errno == 0)
+						errno = ENOSPC;
 					return false;
+				}
 			}
 			if (r == Z_STREAM_END)
 				break;
@@ -925,7 +958,10 @@ tar_finish(void)
 
 	/* sync the empty blocks as well, since they're after the last file */
 	if (tar_data->sync)
-		fsync(tar_data->fd);
+	{
+		if (fsync(tar_data->fd) != 0)
+			return false;
+	}
 
 	if (close(tar_data->fd) != 0)
 		return false;

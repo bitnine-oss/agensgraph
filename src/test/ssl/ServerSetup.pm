@@ -41,10 +41,13 @@ sub test_connect_ok
 	my ($common_connstr, $connstr, $test_name) = @_;
 
 	my $cmd = [
-		'psql', '-X', '-A', '-t', '-c', "SELECT \$\$connected with $connstr\$\$",
-		'-d', "$common_connstr $connstr" ];
+		'psql', '-X', '-A', '-t', '-c',
+		"SELECT \$\$connected with $connstr\$\$",
+		'-d', "$common_connstr $connstr"
+	];
 
 	command_ok($cmd, $test_name);
+	return;
 }
 
 sub test_connect_fails
@@ -52,10 +55,13 @@ sub test_connect_fails
 	my ($common_connstr, $connstr, $expected_stderr, $test_name) = @_;
 
 	my $cmd = [
-		'psql', '-X', '-A', '-t', '-c', "SELECT \$\$connected with $connstr\$\$",
-		'-d', "$common_connstr $connstr" ];
+		'psql', '-X', '-A', '-t', '-c',
+		"SELECT \$\$connected with $connstr\$\$",
+		'-d', "$common_connstr $connstr"
+	];
 
 	command_fails_like($cmd, $expected_stderr, $test_name);
+	return;
 }
 
 # Copy a set of files, taking into account wildcards
@@ -71,6 +77,7 @@ sub copy_files
 		copy($orig_file, "$dest/$base_file")
 		  or die "Could not copy $orig_file to $dest";
 	}
+	return;
 }
 
 sub configure_test_server_for_ssl
@@ -89,9 +96,11 @@ sub configure_test_server_for_ssl
 	if (defined($password))
 	{
 		$node->psql('postgres',
-"SET password_encryption='$password_enc'; ALTER USER ssltestuser PASSWORD '$password';");
+			"SET password_encryption='$password_enc'; ALTER USER ssltestuser PASSWORD '$password';"
+		);
 		$node->psql('postgres',
-"SET password_encryption='$password_enc'; ALTER USER anotheruser PASSWORD '$password';");
+			"SET password_encryption='$password_enc'; ALTER USER anotheruser PASSWORD '$password';"
+		);
 	}
 
 	# enable logging etc.
@@ -111,7 +120,7 @@ sub configure_test_server_for_ssl
 	open my $sslconf, '>', "$pgdata/sslconfig.conf";
 	close $sslconf;
 
-# Copy all server certificates and keys, and client root cert, to the data dir
+	# Copy all server certificates and keys, and client root cert, to the data dir
 	copy_files("ssl/server-*.crt", $pgdata);
 	copy_files("ssl/server-*.key", $pgdata);
 	chmod(0600, glob "$pgdata/server-*.key") or die $!;
@@ -124,6 +133,8 @@ sub configure_test_server_for_ssl
 
 	# Change pg_hba after restart because hostssl requires ssl=on
 	configure_hba_for_ssl($node, $serverhost, $authmethod);
+
+	return;
 }
 
 # Change the configuration to use given server cert file, and reload
@@ -143,28 +154,32 @@ sub switch_server_cert
 	print $sslconf "ssl_crl_file='root+client.crl'\n";
 	close $sslconf;
 
-	$node->reload;
+	$node->restart;
+	return;
 }
 
 sub configure_hba_for_ssl
 {
 	my ($node, $serverhost, $authmethod) = @_;
-	my $pgdata     = $node->data_dir;
+	my $pgdata = $node->data_dir;
 
-  # Only accept SSL connections from localhost. Our tests don't depend on this
-  # but seems best to keep it as narrow as possible for security reasons.
-  #
-  # When connecting to certdb, also check the client certificate.
+	# Only accept SSL connections from localhost. Our tests don't depend on this
+	# but seems best to keep it as narrow as possible for security reasons.
+	#
+	# When connecting to certdb, also check the client certificate.
 	open my $hba, '>', "$pgdata/pg_hba.conf";
 	print $hba
-"# TYPE  DATABASE        USER            ADDRESS                 METHOD\n";
+	  "# TYPE  DATABASE        USER            ADDRESS                 METHOD\n";
 	print $hba
-"hostssl trustdb         all             $serverhost/32            $authmethod\n";
+	  "hostssl trustdb         all             $serverhost/32            $authmethod\n";
 	print $hba
-"hostssl trustdb         all             ::1/128                 $authmethod\n";
+	  "hostssl trustdb         all             ::1/128                 $authmethod\n";
 	print $hba
-"hostssl certdb          all             $serverhost/32            cert\n";
+	  "hostssl certdb          all             $serverhost/32            cert\n";
 	print $hba
-"hostssl certdb          all             ::1/128                 cert\n";
+	  "hostssl certdb          all             ::1/128                 cert\n";
 	close $hba;
+	return;
 }
+
+1;

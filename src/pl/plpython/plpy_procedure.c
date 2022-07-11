@@ -10,7 +10,6 @@
 #include "access/transam.h"
 #include "funcapi.h"
 #include "catalog/pg_proc.h"
-#include "catalog/pg_proc_fn.h"
 #include "catalog/pg_type.h"
 #include "utils/builtins.h"
 #include "utils/hsearch.h"
@@ -164,10 +163,9 @@ PLy_procedure_create(HeapTuple procTup, Oid fn_oid, bool is_trigger)
 	}
 
 	/* Create long-lived context that all procedure info will live in */
-	cxt = AllocSetContextCreateExtended(TopMemoryContext,
-										procName,
-										MEMCONTEXT_COPY_NAME,
-										ALLOCSET_DEFAULT_SIZES);
+	cxt = AllocSetContextCreate(TopMemoryContext,
+								"PL/Python function",
+								ALLOCSET_DEFAULT_SIZES);
 
 	oldcxt = MemoryContextSwitchTo(cxt);
 
@@ -183,12 +181,13 @@ PLy_procedure_create(HeapTuple procTup, Oid fn_oid, bool is_trigger)
 		int			i;
 
 		proc->proname = pstrdup(NameStr(procStruct->proname));
+		MemoryContextSetIdentifier(cxt, proc->proname);
 		proc->pyname = pstrdup(procName);
 		proc->fn_xmin = HeapTupleHeaderGetRawXmin(procTup->t_data);
 		proc->fn_tid = procTup->t_self;
 		proc->fn_readonly = (procStruct->provolatile != PROVOLATILE_VOLATILE);
 		proc->is_setof = procStruct->proretset;
-		proc->is_procedure = (procStruct->prorettype == InvalidOid);
+		proc->is_procedure = (procStruct->prokind == PROKIND_PROCEDURE);
 		proc->src = NULL;
 		proc->argnames = NULL;
 		proc->args = NULL;
@@ -206,9 +205,9 @@ PLy_procedure_create(HeapTuple procTup, Oid fn_oid, bool is_trigger)
 
 		/*
 		 * get information required for output conversion of the return value,
-		 * but only if this isn't a trigger or procedure.
+		 * but only if this isn't a trigger.
 		 */
-		if (!is_trigger && procStruct->prorettype)
+		if (!is_trigger)
 		{
 			Oid			rettype = procStruct->prorettype;
 			HeapTuple	rvTypeTup;

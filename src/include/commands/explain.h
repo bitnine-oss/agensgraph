@@ -81,6 +81,8 @@ extern void ExplainOnePlan(PlannedStmt *plannedstmt, IntoClause *into,
 extern void ExplainPrintPlan(ExplainState *es, QueryDesc *queryDesc);
 extern void ExplainPrintTriggers(ExplainState *es, QueryDesc *queryDesc);
 
+extern void ExplainPrintJIT(ExplainState *es, QueryDesc *queryDesc);
+
 extern void ExplainQueryText(ExplainState *es, QueryDesc *queryDesc);
 
 extern void ExplainBeginOutput(ExplainState *es);
@@ -93,12 +95,10 @@ extern void ExplainPropertyListNested(const char *qlabel, List *data,
 						  ExplainState *es);
 extern void ExplainPropertyText(const char *qlabel, const char *value,
 					ExplainState *es);
-extern void ExplainPropertyInteger(const char *qlabel, int value,
-					   ExplainState *es);
-extern void ExplainPropertyLong(const char *qlabel, long value,
-					ExplainState *es);
-extern void ExplainPropertyFloat(const char *qlabel, double value, int ndigits,
-					 ExplainState *es);
+extern void ExplainPropertyInteger(const char *qlabel, const char *unit,
+					   int64 value, ExplainState *es);
+extern void ExplainPropertyFloat(const char *qlabel, const char *unit,
+					 double value, int ndigits, ExplainState *es);
 extern void ExplainPropertyBool(const char *qlabel, bool value,
 					ExplainState *es);
 

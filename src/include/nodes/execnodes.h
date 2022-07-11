@@ -69,12 +69,15 @@ typedef struct ExprState
 	 * Storage for result value of a scalar expression, or for individual
 	 * column results within expressions built by ExecBuildProjectionInfo().
 	 */
+#define FIELDNO_EXPRSTATE_RESNULL 2
 	bool		resnull;
+#define FIELDNO_EXPRSTATE_RESVALUE 3
 	Datum		resvalue;
 
 	/*
 	 * If projecting a tuple result, this slot holds the result; else NULL.
 	 */
+#define FIELDNO_EXPRSTATE_RESULTSLOT 4
 	TupleTableSlot *resultslot;
 
 	/*
@@ -123,9 +126,11 @@ typedef struct ExprState
  *		entries for a particular index.  Used for both index_build and
  *		retail creation of index entries.
  *
- *		NumIndexAttrs		number of columns in this index
+ *		NumIndexAttrs		total number of columns in this index
+ *		NumIndexKeyAttrs	number of key columns in index
  *		KeyAttrNumbers		underlying-rel attribute numbers used as keys
- *							(zeroes indicate expressions)
+ *							(zeroes indicate expressions). It also contains
+ * 							info about included columns.
  *		Expressions			expr trees for expression entries, or NIL if none
  *		ExpressionsState	exec state for expressions, or NIL if none
  *		Predicate			partial-index predicate, or NIL if none
@@ -151,8 +156,9 @@ typedef struct ExprState
 typedef struct IndexInfo
 {
 	NodeTag		type;
-	int			ii_NumIndexAttrs;
-	AttrNumber	ii_KeyAttrNumbers[INDEX_MAX_KEYS];
+	int			ii_NumIndexAttrs;	/* total number of columns in index */
+	int			ii_NumIndexKeyAttrs;	/* number of key columns in index */
+	AttrNumber	ii_IndexAttrNumbers[INDEX_MAX_KEYS];
 	List	   *ii_Expressions; /* list of Expr */
 	List	   *ii_ExpressionsState;	/* list of ExprState */
 	List	   *ii_Predicate;	/* list of Expr */
@@ -216,8 +222,11 @@ typedef struct ExprContext
 	NodeTag		type;
 
 	/* Tuples that Var nodes in expression may refer to */
+#define FIELDNO_EXPRCONTEXT_SCANTUPLE 1
 	TupleTableSlot *ecxt_scantuple;
+#define FIELDNO_EXPRCONTEXT_INNERTUPLE 2
 	TupleTableSlot *ecxt_innertuple;
+#define FIELDNO_EXPRCONTEXT_OUTERTUPLE 3
 	TupleTableSlot *ecxt_outertuple;
 
 	/* Memory contexts for expression evaluation --- see notes above */
@@ -232,15 +241,21 @@ typedef struct ExprContext
 	 * Values to substitute for Aggref nodes in the expressions of an Agg
 	 * node, or for WindowFunc nodes within a WindowAgg node.
 	 */
+#define FIELDNO_EXPRCONTEXT_AGGVALUES 8
 	Datum	   *ecxt_aggvalues; /* precomputed values for aggs/windowfuncs */
+#define FIELDNO_EXPRCONTEXT_AGGNULLS 9
 	bool	   *ecxt_aggnulls;	/* null flags for aggs/windowfuncs */
 
 	/* Value to substitute for CaseTestExpr nodes in expression */
+#define FIELDNO_EXPRCONTEXT_CASEDATUM 10
 	Datum		caseValue_datum;
+#define FIELDNO_EXPRCONTEXT_CASENULL 11
 	bool		caseValue_isNull;
 
 	/* Value to substitute for CoerceToDomainValue nodes in expression */
+#define FIELDNO_EXPRCONTEXT_DOMAINDATUM 12
 	Datum		domainValue_datum;
+#define FIELDNO_EXPRCONTEXT_DOMAINNULL 13
 	bool		domainValue_isNull;
 
 	/* Link to containing EState (NULL if a standalone ExprContext) */
@@ -359,6 +374,20 @@ typedef struct JunkFilter
 } JunkFilter;
 
 /*
+ * OnConflictSetState
+ *
+ * Executor state of an ON CONFLICT DO UPDATE operation.
+ */
+typedef struct OnConflictSetState
+{
+	NodeTag		type;
+
+	ProjectionInfo *oc_ProjInfo;	/* for ON CONFLICT DO UPDATE SET */
+	TupleDesc	oc_ProjTupdesc; /* TupleDesc for the above projection */
+	ExprState  *oc_WhereClause; /* state for the WHERE clause */
+} OnConflictSetState;
+
+/*
  * ResultRelInfo
  *
  * Whenever we update an existing relation, we have to update indexes on the
@@ -417,14 +446,17 @@ typedef struct ResultRelInfo
 	/* for removing junk attributes from tuples */
 	JunkFilter *ri_junkFilter;
 
+	/* list of RETURNING expressions */
+	List	   *ri_returningList;
+
 	/* for computing a RETURNING list */
 	ProjectionInfo *ri_projectReturning;
 
-	/* for computing ON CONFLICT DO UPDATE SET */
-	ProjectionInfo *ri_onConflictSetProj;
+	/* list of arbiter indexes to use to check conflicts */
+	List	   *ri_onConflictArbiterIndexes;
 
-	/* list of ON CONFLICT DO UPDATE exprs (qual) */
-	ExprState  *ri_onConflictSetWhere;
+	/* ON CONFLICT evaluation state */
+	OnConflictSetState *ri_onConflict;
 
 	/* partition check expression */
 	List	   *ri_PartitionCheck;
@@ -434,6 +466,9 @@ typedef struct ResultRelInfo
 
 	/* relation descriptor for root partitioned table */
 	Relation	ri_PartitionRoot;
+
+	/* true if ready for tuple routing */
+	bool		ri_PartitionReadyForRouting;
 } ResultRelInfo;
 
 typedef struct GraphWriteStats
@@ -484,8 +519,8 @@ typedef struct EState
 	int			es_num_root_result_relations;	/* length of the array */
 
 	/*
-	 * The following list contains ResultRelInfos created by the tuple
-	 * routing code for partitions that don't already have one.
+	 * The following list contains ResultRelInfos created by the tuple routing
+	 * code for partitions that don't already have one.
 	 */
 	List	   *es_tuple_routing_result_relations;
 
@@ -545,6 +580,14 @@ typedef struct EState
 
 	/* The per-query shared memory area to use for parallel execution. */
 	struct dsa_area *es_query_dsa;
+
+	/*
+	 * JIT information. es_jit_flags indicates whether JIT should be performed
+	 * and with which options.  es_jit is created on-demand when JITing is
+	 * performed.
+	 */
+	int			es_jit_flags;
+	struct JitContext *es_jit;
 } EState;
 
 
@@ -810,7 +853,8 @@ typedef struct SubPlanState
 	MemoryContext hashtempcxt;	/* temp memory context for hash tables */
 	ExprContext *innerecontext; /* econtext for computing inner tuples */
 	AttrNumber *keyColIdx;		/* control data for hash tables */
-	Oid		   *tab_eq_funcoids;/* equality func oids for table datatype(s) */
+	Oid		   *tab_eq_funcoids;	/* equality func oids for table
+									 * datatype(s) */
 	FmgrInfo   *tab_hash_funcs; /* hash functions for table datatype(s) */
 	FmgrInfo   *tab_eq_funcs;	/* equality functions for table datatype(s) */
 	FmgrInfo   *lhs_hash_funcs; /* hash functions for lefthand datatype(s) */
@@ -902,6 +946,7 @@ typedef struct PlanState
 	ExprState  *qual;			/* boolean qual condition */
 	struct PlanState *lefttree; /* input plan tree(s) */
 	struct PlanState *righttree;
+
 	List	   *initPlan;		/* Init SubPlanState nodes (un-correlated expr
 								 * subselects) */
 	List	   *subPlan;		/* SubPlanState nodes in my expressions */
@@ -917,6 +962,13 @@ typedef struct PlanState
 	TupleTableSlot *ps_ResultTupleSlot; /* slot for my result tuples */
 	ExprContext *ps_ExprContext;	/* node's expression-evaluation context */
 	ProjectionInfo *ps_ProjInfo;	/* info for doing tuple projection */
+
+	/*
+	 * Scanslot's descriptor if known. This is a bit of a hack, but otherwise
+	 * it's hard for expression compilation to optimize based on the
+	 * descriptor, without encoding knowledge about all executor nodes.
+	 */
+	TupleDesc	scandesc;
 } PlanState;
 
 /* ----------------
@@ -930,6 +982,11 @@ typedef struct PlanState
 #define outerPlanState(node)		(((PlanState *)(node))->lefttree)
 
 /* Macros for inline access to certain instrumentation counters */
+#define InstrCountTuples2(node, delta) \
+	do { \
+		if (((PlanState *)(node))->instrument) \
+			((PlanState *)(node))->instrument->ntuples2 += (delta); \
+	} while (0)
 #define InstrCountFiltered1(node, delta) \
 	do { \
 		if (((PlanState *)(node))->instrument) \
@@ -1005,27 +1062,33 @@ typedef struct ModifyTableState
 	List	  **mt_arowmarks;	/* per-subplan ExecAuxRowMark lists */
 	EPQState	mt_epqstate;	/* for evaluating EvalPlanQual rechecks */
 	bool		fireBSTriggers; /* do we need to fire stmt triggers? */
-	OnConflictAction mt_onconflict; /* ON CONFLICT type */
-	List	   *mt_arbiterindexes;	/* unique index OIDs to arbitrate taking
-									 * alt path */
 	TupleTableSlot *mt_existing;	/* slot to store existing target tuple in */
 	List	   *mt_excludedtlist;	/* the excluded pseudo relation's tlist  */
 	TupleTableSlot *mt_conflproj;	/* CONFLICT ... SET ... projection target */
-	struct PartitionTupleRouting *mt_partition_tuple_routing;
+
 	/* Tuple-routing support info */
-	struct TransitionCaptureState *mt_transition_capture;
+	struct PartitionTupleRouting *mt_partition_tuple_routing;
+
 	/* controls transition table population for specified operation */
-	struct TransitionCaptureState *mt_oc_transition_capture;
+	struct TransitionCaptureState *mt_transition_capture;
+
 	/* controls transition table population for INSERT...ON CONFLICT UPDATE */
-	TupleConversionMap **mt_per_subplan_tupconv_maps;
+	struct TransitionCaptureState *mt_oc_transition_capture;
+
 	/* Per plan map for tuple conversion from child to root */
+	TupleConversionMap **mt_per_subplan_tupconv_maps;
 } ModifyTableState;
 
 /* ----------------
  *	 AppendState information
  *
- *		nplans			how many plans are in the array
- *		whichplan		which plan is being executed (0 .. n-1)
+ *		nplans				how many plans are in the array
+ *		whichplan			which plan is being executed (0 .. n-1), or a
+ *							special negative value. See nodeAppend.c.
+ *		pruningstate		details required to allow partitions to be
+ *							eliminated from the scan, or NULL if not possible.
+ *		valid_subplans		for runtime pruning, valid appendplans indexes to
+ *							scan.
  * ----------------
  */
 
@@ -1033,6 +1096,7 @@ struct AppendState;
 typedef struct AppendState AppendState;
 struct ParallelAppendState;
 typedef struct ParallelAppendState ParallelAppendState;
+struct PartitionPruneState;
 
 struct AppendState
 {
@@ -1040,8 +1104,12 @@ struct AppendState
 	PlanState **appendplans;	/* array of PlanStates for my inputs */
 	int			as_nplans;
 	int			as_whichplan;
+	int			as_first_partial_plan;	/* Index of 'appendplans' containing
+										 * the first partial plan */
 	ParallelAppendState *as_pstate; /* parallel coordination info */
 	Size		pstate_len;		/* size of parallel coordination info */
+	struct PartitionPruneState *as_prune_state;
+	Bitmapset  *as_valid_subplans;
 	bool		(*choose_next_subplan) (AppendState *);
 
 	dlist_head  ctxs_head;		/* list of AppendContext */
@@ -1287,7 +1355,6 @@ typedef struct IndexScanContext
  *		RelationDesc	   index relation descriptor
  *		ScanDesc		   index scan descriptor
  *		VMBuffer		   buffer in use for visibility map testing, if any
- *		HeapFetches		   number of tuples we were forced to fetch from heap
  *		ioss_PscanLen	   Size of parallel index-only scan descriptor
  * ----------------
  */
@@ -1306,7 +1373,6 @@ typedef struct IndexOnlyScanState
 	Relation	ioss_RelationDesc;
 	IndexScanDesc ioss_ScanDesc;
 	Buffer		ioss_VMBuffer;
-	long		ioss_HeapFetches;
 	Size		ioss_PscanLen;
 
 	dlist_head	ctxs_head;		/* list of IndexScanContext */
@@ -1921,12 +1987,15 @@ typedef struct AggState
 	ExprContext *hashcontext;	/* econtexts for long-lived data (hashtable) */
 	ExprContext **aggcontexts;	/* econtexts for long-lived data (per GS) */
 	ExprContext *tmpcontext;	/* econtext for input expressions */
+#define FIELDNO_AGGSTATE_CURAGGCONTEXT 14
 	ExprContext *curaggcontext; /* currently active aggcontext */
 	AggStatePerAgg curperagg;	/* currently active aggregate, if any */
+#define FIELDNO_AGGSTATE_CURPERTRANS 16
 	AggStatePerTrans curpertrans;	/* currently active trans state, if any */
 	bool		input_done;		/* indicates end of input */
 	bool		agg_done;		/* indicates completion of Agg scan */
 	int			projected_set;	/* The last projected grouping set */
+#define FIELDNO_AGGSTATE_CURRENT_SET 20
 	int			current_set;	/* The current grouping set being evaluated */
 	Bitmapset  *grouped_cols;	/* grouped cols in current projection */
 	List	   *all_grouped_cols;	/* list of all grouped cols in DESC order */
@@ -1948,6 +2017,7 @@ typedef struct AggState
 										 * per-group pointers */
 
 	/* support for evaluation of agg input expressions: */
+#define FIELDNO_AGGSTATE_ALL_PERGROUPS 34
 	AggStatePerGroup *all_pergroups;	/* array of first ->pergroups, than
 										 * ->hash_pergroup */
 	ProjectionInfo *combinedproj;	/* projection machinery */
@@ -1972,8 +2042,8 @@ typedef struct WindowAggState
 
 	WindowStatePerFunc perfunc; /* per-window-function information */
 	WindowStatePerAgg peragg;	/* per-plain-aggregate information */
-	ExprState  *partEqfunction;	/* equality funcs for partition columns */
-	ExprState  *ordEqfunction; /* equality funcs for ordering columns */
+	ExprState  *partEqfunction; /* equality funcs for partition columns */
+	ExprState  *ordEqfunction;	/* equality funcs for ordering columns */
 	Tuplestorestate *buffer;	/* stores rows of current partition */
 	int			current_ptr;	/* read pointer # for current row */
 	int			framehead_ptr;	/* read pointer # for frame head, if used */
@@ -2051,7 +2121,7 @@ typedef struct WindowAggState
 typedef struct UniqueState
 {
 	PlanState	ps;				/* its first field is NodeTag */
-	ExprState   *eqfunction;		/* tuple equality qual */
+	ExprState  *eqfunction;		/* tuple equality qual */
 } UniqueState;
 
 /* ----------------

@@ -38,8 +38,10 @@ typedef struct
 	QueryEnvironment *queryEnv; /* query environment setup for SPI level */
 
 	/* transaction management support */
-	bool		atomic;			/* atomic execution context, does not allow transactions */
-	bool		internal_xact;	/* SPI-managed transaction boundary, skip cleanup */
+	bool		atomic;			/* atomic execution context, does not allow
+								 * transactions */
+	bool		internal_xact;	/* SPI-managed transaction boundary, skip
+								 * cleanup */
 } _SPI_connection;
 
 /*
@@ -86,6 +88,7 @@ typedef struct _SPI_plan
 	int			magic;			/* should equal _SPI_PLAN_MAGIC */
 	bool		saved;			/* saved or unsaved plan? */
 	bool		oneshot;		/* one-shot plan? */
+	bool		no_snapshots;	/* let the caller handle the snapshots */
 	List	   *plancache_list; /* one CachedPlanSource per parsetree */
 	MemoryContext plancxt;		/* Context containing _SPI_plan and data */
 	int			cursor_options; /* Cursor options used for planning */

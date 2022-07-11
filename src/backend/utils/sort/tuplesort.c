@@ -900,7 +900,7 @@ tuplesort_begin_cluster(TupleDesc tupDesc,
 			 workMem, randomAccess ? 't' : 'f');
 #endif
 
-	state->nKeys = RelationGetNumberOfAttributes(indexRel);
+	state->nKeys = IndexRelationGetNumberOfKeyAttributes(indexRel);
 
 	TRACE_POSTGRESQL_SORT_START(CLUSTER_SORT,
 								false,	/* no unique check */
@@ -995,7 +995,7 @@ tuplesort_begin_index_btree(Relation heapRel,
 			 workMem, randomAccess ? 't' : 'f');
 #endif
 
-	state->nKeys = RelationGetNumberOfAttributes(indexRel);
+	state->nKeys = IndexRelationGetNumberOfKeyAttributes(indexRel);
 
 	TRACE_POSTGRESQL_SORT_START(INDEX_SORT,
 								enforceUnique,
@@ -1015,7 +1015,6 @@ tuplesort_begin_index_btree(Relation heapRel,
 	state->enforceUnique = enforceUnique;
 
 	indexScanKey = _bt_mkscankey_nodata(indexRel);
-	state->nKeys = RelationGetNumberOfAttributes(indexRel);
 
 	/* Prepare SortSupport data for each column */
 	state->sortKeys = (SortSupport) palloc0(state->nKeys *
@@ -2147,12 +2146,13 @@ tuplesort_gettuple_common(Tuplesortstate *state, bool forward,
  * NULL value in leading attribute will set abbreviated value to zeroed
  * representation, which caller may rely on in abbreviated inequality check.
  *
- * If copy is true, the slot receives a copied tuple that will stay valid
- * regardless of future manipulations of the tuplesort's state.  Memory is
- * owned by the caller.  If copy is false, the slot will just receive a
- * pointer to a tuple held within the tuplesort, which is more efficient, but
- * only safe for callers that are prepared to have any subsequent manipulation
- * of the tuplesort's state invalidate slot contents.
+ * If copy is true, the slot receives a tuple that's been copied into the
+ * caller's memory context, so that it will stay valid regardless of future
+ * manipulations of the tuplesort's state (up to and including deleting the
+ * tuplesort).  If copy is false, the slot will just receive a pointer to a
+ * tuple held within the tuplesort, which is more efficient, but only safe for
+ * callers that are prepared to have any subsequent manipulation of the
+ * tuplesort's state invalidate slot contents.
  */
 bool
 tuplesort_gettupleslot(Tuplesortstate *state, bool forward, bool copy,
@@ -2230,8 +2230,8 @@ tuplesort_getindextuple(Tuplesortstate *state, bool forward)
  * Returns false if no more datums.
  *
  * If the Datum is pass-by-ref type, the returned value is freshly palloc'd
- * and is now owned by the caller (this differs from similar routines for
- * other types of tuplesorts).
+ * in caller's context, and is now owned by the caller (this differs from
+ * similar routines for other types of tuplesorts).
  *
  * Caller may optionally be passed back abbreviated value (on true return
  * value) when abbreviation was used, which can be used to cheaply avoid
@@ -2253,6 +2253,9 @@ tuplesort_getdatum(Tuplesortstate *state, bool forward,
 		return false;
 	}
 
+	/* Ensure we copy into caller's memory context */
+	MemoryContextSwitchTo(oldcontext);
+
 	/* Record abbreviated key for caller */
 	if (state->sortKeys->abbrev_converter && abbrev)
 		*abbrev = stup.datum1;
@@ -2268,8 +2271,6 @@ tuplesort_getdatum(Tuplesortstate *state, bool forward,
 		*val = datumCopy(PointerGetDatum(stup.tuple), false, state->datumTypeLen);
 		*isNull = false;
 	}
-
-	MemoryContextSwitchTo(oldcontext);
 
 	return true;
 }
@@ -3717,7 +3718,7 @@ comparetup_cluster(const SortTuple *a, const SortTuple *b,
 				datum2;
 	bool		isnull1,
 				isnull2;
-	AttrNumber	leading = state->indexInfo->ii_KeyAttrNumbers[0];
+	AttrNumber	leading = state->indexInfo->ii_IndexAttrNumbers[0];
 
 	/* Be prepared to compare additional sort keys */
 	ltup = (HeapTuple) a->tuple;
@@ -3760,7 +3761,7 @@ comparetup_cluster(const SortTuple *a, const SortTuple *b,
 
 		for (; nkey < state->nKeys; nkey++, sortKey++)
 		{
-			AttrNumber	attno = state->indexInfo->ii_KeyAttrNumbers[nkey];
+			AttrNumber	attno = state->indexInfo->ii_IndexAttrNumbers[nkey];
 
 			datum1 = heap_getattr(ltup, attno, tupDesc, &isnull1);
 			datum2 = heap_getattr(rtup, attno, tupDesc, &isnull2);
@@ -3832,11 +3833,11 @@ copytup_cluster(Tuplesortstate *state, SortTuple *stup, void *tup)
 	 * set up first-column key value, and potentially abbreviate, if it's a
 	 * simple column
 	 */
-	if (state->indexInfo->ii_KeyAttrNumbers[0] == 0)
+	if (state->indexInfo->ii_IndexAttrNumbers[0] == 0)
 		return;
 
 	original = heap_getattr(tuple,
-							state->indexInfo->ii_KeyAttrNumbers[0],
+							state->indexInfo->ii_IndexAttrNumbers[0],
 							state->tupDesc,
 							&stup->isnull1);
 
@@ -3880,7 +3881,7 @@ copytup_cluster(Tuplesortstate *state, SortTuple *stup, void *tup)
 
 			tuple = (HeapTuple) mtup->tuple;
 			mtup->datum1 = heap_getattr(tuple,
-										state->indexInfo->ii_KeyAttrNumbers[0],
+										state->indexInfo->ii_IndexAttrNumbers[0],
 										state->tupDesc,
 										&mtup->isnull1);
 		}
@@ -3934,9 +3935,9 @@ readtup_cluster(Tuplesortstate *state, SortTuple *stup,
 							 &tuplen, sizeof(tuplen));
 	stup->tuple = (void *) tuple;
 	/* set up first-column key value, if it's a simple column */
-	if (state->indexInfo->ii_KeyAttrNumbers[0] != 0)
+	if (state->indexInfo->ii_IndexAttrNumbers[0] != 0)
 		stup->datum1 = heap_getattr(tuple,
-									state->indexInfo->ii_KeyAttrNumbers[0],
+									state->indexInfo->ii_IndexAttrNumbers[0],
 									state->tupDesc,
 									&stup->isnull1);
 }
@@ -4394,7 +4395,6 @@ tuplesort_initialize_shared(Sharedsort *shared, int nWorkers, dsm_segment *seg)
 	for (i = 0; i < nWorkers; i++)
 	{
 		shared->tapes[i].firstblocknumber = 0L;
-		shared->tapes[i].buffilesize = 0;
 	}
 }
 

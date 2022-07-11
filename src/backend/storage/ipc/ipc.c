@@ -137,6 +137,10 @@ proc_exit(int code)
 		else
 			snprintf(gprofDirName, 32, "gprof/%d", (int) getpid());
 
+		/*
+		 * Use mkdir() instead of MakePGDirectory() since we aren't making a
+		 * PG directory here.
+		 */
 		mkdir("gprof", S_IRWXU | S_IRWXG | S_IRWXO);
 		mkdir(gprofDirName, S_IRWXU | S_IRWXG | S_IRWXO);
 		chdir(gprofDirName);
@@ -374,7 +378,7 @@ on_shmem_exit(pg_on_exit_callback function, Datum arg)
 /* ----------------------------------------------------------------
  *		cancel_before_shmem_exit
  *
- *		this function removes a previously-registed before_shmem_exit
+ *		this function removes a previously-registered before_shmem_exit
  *		callback.  For simplicity, only the latest entry can be
  *		removed.  (We could work harder but there is no need for
  *		current uses.)

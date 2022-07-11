@@ -59,7 +59,8 @@ enum ReorderBufferChangeType
 	REORDER_BUFFER_CHANGE_INTERNAL_COMMAND_ID,
 	REORDER_BUFFER_CHANGE_INTERNAL_TUPLECID,
 	REORDER_BUFFER_CHANGE_INTERNAL_SPEC_INSERT,
-	REORDER_BUFFER_CHANGE_INTERNAL_SPEC_CONFIRM
+	REORDER_BUFFER_CHANGE_INTERNAL_SPEC_CONFIRM,
+	REORDER_BUFFER_CHANGE_TRUNCATE
 };
 
 /*
@@ -98,6 +99,18 @@ typedef struct ReorderBufferChange
 			/* valid for INSERT || UPDATE */
 			ReorderBufferTupleBuf *newtuple;
 		}			tp;
+
+		/*
+		 * Truncate data for REORDER_BUFFER_CHANGE_TRUNCATE representing one
+		 * set of relations to be truncated.
+		 */
+		struct
+		{
+			Size		nrelids;
+			bool		cascade;
+			bool		restart_seqs;
+			Oid		   *relids;
+		}			truncate;
 
 		/* Message with arbitrary data. */
 		struct
@@ -147,10 +160,9 @@ typedef struct ReorderBufferTXN
 	/* did the TX have catalog changes */
 	bool		has_catalog_changes;
 
-	/*
-	 * Do we know this is a subxact?
-	 */
+	/* Do we know this is a subxact?  Xid of top-level txn if so */
 	bool		is_known_as_subxact;
+	TransactionId toplevel_xid;
 
 	/*
 	 * LSN of the first data carrying, WAL record with knowledge about this
@@ -196,10 +208,13 @@ typedef struct ReorderBufferTXN
 	TimestampTz commit_time;
 
 	/*
-	 * Base snapshot or NULL.
+	 * The base snapshot is used to decode all changes until either this
+	 * transaction modifies the catalog, or another catalog-modifying
+	 * transaction commits.
 	 */
 	Snapshot	base_snapshot;
 	XLogRecPtr	base_snapshot_lsn;
+	dlist_node	base_snapshot_node; /* link in txns_by_base_snapshot_lsn */
 
 	/*
 	 * How many ReorderBufferChange's do we have in this txn.
@@ -266,7 +281,7 @@ typedef struct ReorderBufferTXN
 	 * Position in one of three lists:
 	 * * list of subtransactions if we are *known* to be subxact
 	 * * list of toplevel xacts (can be an as-yet unknown subxact)
-	 * * list of preallocated ReorderBufferTXNs
+	 * * list of preallocated ReorderBufferTXNs (if unused)
 	 * ---
 	 */
 	dlist_node	node;
@@ -282,6 +297,14 @@ typedef void (*ReorderBufferApplyChangeCB) (
 											ReorderBufferTXN *txn,
 											Relation relation,
 											ReorderBufferChange *change);
+
+/* truncate callback signature */
+typedef void (*ReorderBufferApplyTruncateCB) (
+											  ReorderBuffer *rb,
+											  ReorderBufferTXN *txn,
+											  int nrelations,
+											  Relation relations[],
+											  ReorderBufferChange *change);
 
 /* begin callback signature */
 typedef void (*ReorderBufferBeginCB) (
@@ -317,6 +340,15 @@ struct ReorderBuffer
 	dlist_head	toplevel_by_lsn;
 
 	/*
+	 * Transactions and subtransactions that have a base snapshot, ordered by
+	 * LSN of the record which caused us to first obtain the base snapshot.
+	 * This is not the same as toplevel_by_lsn, because we only set the base
+	 * snapshot on the first logical-decoding-relevant record (eg. heap
+	 * writes), whereas the initial LSN could be set by other operations.
+	 */
+	dlist_head	txns_by_base_snapshot_lsn;
+
+	/*
 	 * one-entry sized cache for by_txn. Very frequently the same txn gets
 	 * looked up over and over again.
 	 */
@@ -328,6 +360,7 @@ struct ReorderBuffer
 	 */
 	ReorderBufferBeginCB begin;
 	ReorderBufferApplyChangeCB apply_change;
+	ReorderBufferApplyTruncateCB apply_truncate;
 	ReorderBufferCommitCB commit;
 	ReorderBufferMessageCB message;
 
@@ -335,6 +368,11 @@ struct ReorderBuffer
 	 * Pointer that will be passed untouched to the callbacks.
 	 */
 	void	   *private_data;
+
+	/*
+	 * Saved output plugin option
+	 */
+	bool		output_rewrites;
 
 	/*
 	 * Private memory context.
@@ -395,6 +433,7 @@ bool		ReorderBufferXidHasCatalogChanges(ReorderBuffer *, TransactionId xid);
 bool		ReorderBufferXidHasBaseSnapshot(ReorderBuffer *, TransactionId xid);
 
 ReorderBufferTXN *ReorderBufferGetOldestTXN(ReorderBuffer *);
+TransactionId ReorderBufferGetOldestXmin(ReorderBuffer *rb);
 
 void		ReorderBufferSetRestartPoint(ReorderBuffer *, XLogRecPtr ptr);
 

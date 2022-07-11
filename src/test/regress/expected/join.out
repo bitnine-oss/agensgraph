@@ -2674,6 +2674,36 @@ select * from a left join b on i = x and i = y and x = i;
 
 rollback;
 --
+-- test handling of merge clauses using record_ops
+--
+begin;
+create type mycomptype as (id int, v bigint);
+create temp table tidv (idv mycomptype);
+create index on tidv (idv);
+explain (costs off)
+select a.idv, b.idv from tidv a, tidv b where a.idv = b.idv;
+                        QUERY PLAN                        
+----------------------------------------------------------
+ Merge Join
+   Merge Cond: (a.idv = b.idv)
+   ->  Index Only Scan using tidv_idv_idx on tidv a
+   ->  Materialize
+         ->  Index Only Scan using tidv_idv_idx on tidv b
+(5 rows)
+
+set enable_mergejoin = 0;
+explain (costs off)
+select a.idv, b.idv from tidv a, tidv b where a.idv = b.idv;
+                     QUERY PLAN                     
+----------------------------------------------------
+ Nested Loop
+   ->  Seq Scan on tidv a
+   ->  Index Only Scan using tidv_idv_idx on tidv b
+         Index Cond: (idv = a.idv)
+(4 rows)
+
+rollback;
+--
 -- test NULL behavior of whole-row Vars, per bug #5025
 --
 select t1.q2, count(t2.*)
@@ -3370,6 +3400,33 @@ order by fault;
 ---------+-----+-------
          | 123 |   122
 (1 row)
+
+explain (costs off)
+select * from
+(values (1, array[10,20]), (2, array[20,30])) as v1(v1x,v1ys)
+left join (values (1, 10), (2, 20)) as v2(v2x,v2y) on v2x = v1x
+left join unnest(v1ys) as u1(u1y) on u1y = v2y;
+                         QUERY PLAN                          
+-------------------------------------------------------------
+ Nested Loop Left Join
+   ->  Values Scan on "*VALUES*"
+   ->  Hash Right Join
+         Hash Cond: (u1.u1y = "*VALUES*_1".column2)
+         Filter: ("*VALUES*_1".column1 = "*VALUES*".column1)
+         ->  Function Scan on unnest u1
+         ->  Hash
+               ->  Values Scan on "*VALUES*_1"
+(8 rows)
+
+select * from
+(values (1, array[10,20]), (2, array[20,30])) as v1(v1x,v1ys)
+left join (values (1, 10), (2, 20)) as v2(v2x,v2y) on v2x = v1x
+left join unnest(v1ys) as u1(u1y) on u1y = v2y;
+ v1x |  v1ys   | v2x | v2y | u1y 
+-----+---------+-----+-----+-----
+   1 | {10,20} |   1 |  10 |  10
+   2 | {20,30} |   2 |  20 |  20
+(2 rows)
 
 --
 -- test handling of potential equivalence clauses above outer joins
@@ -5464,46 +5521,46 @@ HINT:  There is an entry for table "xx1", but it cannot be referenced from this 
 -- test LATERAL reference propagation down a multi-level inheritance hierarchy
 -- produced for a multi-level partitioned table hierarchy.
 --
-create table pt1 (a int, b int, c varchar) partition by range(a);
-create table pt1p1 partition of pt1 for values from (0) to (100) partition by range(b);
-create table pt1p2 partition of pt1 for values from (100) to (200);
-create table pt1p1p1 partition of pt1p1 for values from (0) to (100);
-insert into pt1 values (1, 1, 'x'), (101, 101, 'y');
-create table ut1 (a int, b int, c varchar);
-insert into ut1 values (101, 101, 'y'), (2, 2, 'z');
+create table join_pt1 (a int, b int, c varchar) partition by range(a);
+create table join_pt1p1 partition of join_pt1 for values from (0) to (100) partition by range(b);
+create table join_pt1p2 partition of join_pt1 for values from (100) to (200);
+create table join_pt1p1p1 partition of join_pt1p1 for values from (0) to (100);
+insert into join_pt1 values (1, 1, 'x'), (101, 101, 'y');
+create table join_ut1 (a int, b int, c varchar);
+insert into join_ut1 values (101, 101, 'y'), (2, 2, 'z');
 explain (verbose, costs off)
-select t1.b, ss.phv from ut1 t1 left join lateral
+select t1.b, ss.phv from join_ut1 t1 left join lateral
               (select t2.a as t2a, t3.a t3a, least(t1.a, t2.a, t3.a) phv
-					  from pt1 t2 join ut1 t3 on t2.a = t3.b) ss
+					  from join_pt1 t2 join join_ut1 t3 on t2.a = t3.b) ss
               on t1.a = ss.t2a order by t1.a;
-                         QUERY PLAN                          
--------------------------------------------------------------
+                            QUERY PLAN                            
+------------------------------------------------------------------
  Sort
    Output: t1.b, (LEAST(t1.a, t2.a, t3.a)), t1.a
    Sort Key: t1.a
    ->  Nested Loop Left Join
          Output: t1.b, (LEAST(t1.a, t2.a, t3.a)), t1.a
-         ->  Seq Scan on public.ut1 t1
+         ->  Seq Scan on public.join_ut1 t1
                Output: t1.a, t1.b, t1.c
          ->  Hash Join
                Output: t2.a, LEAST(t1.a, t2.a, t3.a)
                Hash Cond: (t3.b = t2.a)
-               ->  Seq Scan on public.ut1 t3
+               ->  Seq Scan on public.join_ut1 t3
                      Output: t3.a, t3.b, t3.c
                ->  Hash
                      Output: t2.a
                      ->  Append
-                           ->  Seq Scan on public.pt1p1p1 t2
+                           ->  Seq Scan on public.join_pt1p1p1 t2
                                  Output: t2.a
                                  Filter: (t1.a = t2.a)
-                           ->  Seq Scan on public.pt1p2 t2_1
+                           ->  Seq Scan on public.join_pt1p2 t2_1
                                  Output: t2_1.a
                                  Filter: (t1.a = t2_1.a)
 (21 rows)
 
-select t1.b, ss.phv from ut1 t1 left join lateral
+select t1.b, ss.phv from join_ut1 t1 left join lateral
               (select t2.a as t2a, t3.a t3a, least(t1.a, t2.a, t3.a) phv
-					  from pt1 t2 join ut1 t3 on t2.a = t3.b) ss
+					  from join_pt1 t2 join join_ut1 t3 on t2.a = t3.b) ss
               on t1.a = ss.t2a order by t1.a;
   b  | phv 
 -----+-----
@@ -5511,8 +5568,8 @@ select t1.b, ss.phv from ut1 t1 left join lateral
  101 | 101
 (2 rows)
 
-drop table pt1;
-drop table ut1;
+drop table join_pt1;
+drop table join_ut1;
 --
 -- test that foreign key join estimation performs sanely for outer joins
 --
@@ -6443,10 +6500,10 @@ $$);
 rollback to settings;
 -- Exercise rescans.  We'll turn off parallel_leader_participation so
 -- that we can check that instrumentation comes back correctly.
-create table foo as select generate_series(1, 3) as id, 'xxxxx'::text as t;
-alter table foo set (parallel_workers = 0);
-create table bar as select generate_series(1, 10000) as id, 'xxxxx'::text as t;
-alter table bar set (parallel_workers = 2);
+create table join_foo as select generate_series(1, 3) as id, 'xxxxx'::text as t;
+alter table join_foo set (parallel_workers = 0);
+create table join_bar as select generate_series(1, 10000) as id, 'xxxxx'::text as t;
+alter table join_bar set (parallel_workers = 2);
 -- multi-batch with rescan, parallel-oblivious
 savepoint settings;
 set enable_parallel_hash = off;
@@ -6459,27 +6516,27 @@ set enable_material = off;
 set enable_mergejoin = off;
 set work_mem = '64kB';
 explain (costs off)
-  select count(*) from foo
-    left join (select b1.id, b1.t from bar b1 join bar b2 using (id)) ss
-    on foo.id < ss.id + 1 and foo.id > ss.id - 1;
-                                QUERY PLAN                                
---------------------------------------------------------------------------
+  select count(*) from join_foo
+    left join (select b1.id, b1.t from join_bar b1 join join_bar b2 using (id)) ss
+    on join_foo.id < ss.id + 1 and join_foo.id > ss.id - 1;
+                                     QUERY PLAN                                     
+------------------------------------------------------------------------------------
  Aggregate
    ->  Nested Loop Left Join
-         Join Filter: ((foo.id < (b1.id + 1)) AND (foo.id > (b1.id - 1)))
-         ->  Seq Scan on foo
+         Join Filter: ((join_foo.id < (b1.id + 1)) AND (join_foo.id > (b1.id - 1)))
+         ->  Seq Scan on join_foo
          ->  Gather
                Workers Planned: 2
                ->  Hash Join
                      Hash Cond: (b1.id = b2.id)
-                     ->  Parallel Seq Scan on bar b1
+                     ->  Parallel Seq Scan on join_bar b1
                      ->  Hash
-                           ->  Seq Scan on bar b2
+                           ->  Seq Scan on join_bar b2
 (11 rows)
 
-select count(*) from foo
-  left join (select b1.id, b1.t from bar b1 join bar b2 using (id)) ss
-  on foo.id < ss.id + 1 and foo.id > ss.id - 1;
+select count(*) from join_foo
+  left join (select b1.id, b1.t from join_bar b1 join join_bar b2 using (id)) ss
+  on join_foo.id < ss.id + 1 and join_foo.id > ss.id - 1;
  count 
 -------
      3
@@ -6488,9 +6545,9 @@ select count(*) from foo
 select final > 1 as multibatch
   from hash_join_batches(
 $$
-  select count(*) from foo
-    left join (select b1.id, b1.t from bar b1 join bar b2 using (id)) ss
-    on foo.id < ss.id + 1 and foo.id > ss.id - 1;
+  select count(*) from join_foo
+    left join (select b1.id, b1.t from join_bar b1 join join_bar b2 using (id)) ss
+    on join_foo.id < ss.id + 1 and join_foo.id > ss.id - 1;
 $$);
  multibatch 
 ------------
@@ -6510,27 +6567,27 @@ set enable_material = off;
 set enable_mergejoin = off;
 set work_mem = '4MB';
 explain (costs off)
-  select count(*) from foo
-    left join (select b1.id, b1.t from bar b1 join bar b2 using (id)) ss
-    on foo.id < ss.id + 1 and foo.id > ss.id - 1;
-                                QUERY PLAN                                
---------------------------------------------------------------------------
+  select count(*) from join_foo
+    left join (select b1.id, b1.t from join_bar b1 join join_bar b2 using (id)) ss
+    on join_foo.id < ss.id + 1 and join_foo.id > ss.id - 1;
+                                     QUERY PLAN                                     
+------------------------------------------------------------------------------------
  Aggregate
    ->  Nested Loop Left Join
-         Join Filter: ((foo.id < (b1.id + 1)) AND (foo.id > (b1.id - 1)))
-         ->  Seq Scan on foo
+         Join Filter: ((join_foo.id < (b1.id + 1)) AND (join_foo.id > (b1.id - 1)))
+         ->  Seq Scan on join_foo
          ->  Gather
                Workers Planned: 2
                ->  Hash Join
                      Hash Cond: (b1.id = b2.id)
-                     ->  Parallel Seq Scan on bar b1
+                     ->  Parallel Seq Scan on join_bar b1
                      ->  Hash
-                           ->  Seq Scan on bar b2
+                           ->  Seq Scan on join_bar b2
 (11 rows)
 
-select count(*) from foo
-  left join (select b1.id, b1.t from bar b1 join bar b2 using (id)) ss
-  on foo.id < ss.id + 1 and foo.id > ss.id - 1;
+select count(*) from join_foo
+  left join (select b1.id, b1.t from join_bar b1 join join_bar b2 using (id)) ss
+  on join_foo.id < ss.id + 1 and join_foo.id > ss.id - 1;
  count 
 -------
      3
@@ -6539,9 +6596,9 @@ select count(*) from foo
 select final > 1 as multibatch
   from hash_join_batches(
 $$
-  select count(*) from foo
-    left join (select b1.id, b1.t from bar b1 join bar b2 using (id)) ss
-    on foo.id < ss.id + 1 and foo.id > ss.id - 1;
+  select count(*) from join_foo
+    left join (select b1.id, b1.t from join_bar b1 join join_bar b2 using (id)) ss
+    on join_foo.id < ss.id + 1 and join_foo.id > ss.id - 1;
 $$);
  multibatch 
 ------------
@@ -6561,27 +6618,27 @@ set enable_material = off;
 set enable_mergejoin = off;
 set work_mem = '64kB';
 explain (costs off)
-  select count(*) from foo
-    left join (select b1.id, b1.t from bar b1 join bar b2 using (id)) ss
-    on foo.id < ss.id + 1 and foo.id > ss.id - 1;
-                                QUERY PLAN                                
---------------------------------------------------------------------------
+  select count(*) from join_foo
+    left join (select b1.id, b1.t from join_bar b1 join join_bar b2 using (id)) ss
+    on join_foo.id < ss.id + 1 and join_foo.id > ss.id - 1;
+                                     QUERY PLAN                                     
+------------------------------------------------------------------------------------
  Aggregate
    ->  Nested Loop Left Join
-         Join Filter: ((foo.id < (b1.id + 1)) AND (foo.id > (b1.id - 1)))
-         ->  Seq Scan on foo
+         Join Filter: ((join_foo.id < (b1.id + 1)) AND (join_foo.id > (b1.id - 1)))
+         ->  Seq Scan on join_foo
          ->  Gather
                Workers Planned: 2
                ->  Parallel Hash Join
                      Hash Cond: (b1.id = b2.id)
-                     ->  Parallel Seq Scan on bar b1
+                     ->  Parallel Seq Scan on join_bar b1
                      ->  Parallel Hash
-                           ->  Parallel Seq Scan on bar b2
+                           ->  Parallel Seq Scan on join_bar b2
 (11 rows)
 
-select count(*) from foo
-  left join (select b1.id, b1.t from bar b1 join bar b2 using (id)) ss
-  on foo.id < ss.id + 1 and foo.id > ss.id - 1;
+select count(*) from join_foo
+  left join (select b1.id, b1.t from join_bar b1 join join_bar b2 using (id)) ss
+  on join_foo.id < ss.id + 1 and join_foo.id > ss.id - 1;
  count 
 -------
      3
@@ -6590,9 +6647,9 @@ select count(*) from foo
 select final > 1 as multibatch
   from hash_join_batches(
 $$
-  select count(*) from foo
-    left join (select b1.id, b1.t from bar b1 join bar b2 using (id)) ss
-    on foo.id < ss.id + 1 and foo.id > ss.id - 1;
+  select count(*) from join_foo
+    left join (select b1.id, b1.t from join_bar b1 join join_bar b2 using (id)) ss
+    on join_foo.id < ss.id + 1 and join_foo.id > ss.id - 1;
 $$);
  multibatch 
 ------------
@@ -6612,27 +6669,27 @@ set enable_material = off;
 set enable_mergejoin = off;
 set work_mem = '4MB';
 explain (costs off)
-  select count(*) from foo
-    left join (select b1.id, b1.t from bar b1 join bar b2 using (id)) ss
-    on foo.id < ss.id + 1 and foo.id > ss.id - 1;
-                                QUERY PLAN                                
---------------------------------------------------------------------------
+  select count(*) from join_foo
+    left join (select b1.id, b1.t from join_bar b1 join join_bar b2 using (id)) ss
+    on join_foo.id < ss.id + 1 and join_foo.id > ss.id - 1;
+                                     QUERY PLAN                                     
+------------------------------------------------------------------------------------
  Aggregate
    ->  Nested Loop Left Join
-         Join Filter: ((foo.id < (b1.id + 1)) AND (foo.id > (b1.id - 1)))
-         ->  Seq Scan on foo
+         Join Filter: ((join_foo.id < (b1.id + 1)) AND (join_foo.id > (b1.id - 1)))
+         ->  Seq Scan on join_foo
          ->  Gather
                Workers Planned: 2
                ->  Parallel Hash Join
                      Hash Cond: (b1.id = b2.id)
-                     ->  Parallel Seq Scan on bar b1
+                     ->  Parallel Seq Scan on join_bar b1
                      ->  Parallel Hash
-                           ->  Parallel Seq Scan on bar b2
+                           ->  Parallel Seq Scan on join_bar b2
 (11 rows)
 
-select count(*) from foo
-  left join (select b1.id, b1.t from bar b1 join bar b2 using (id)) ss
-  on foo.id < ss.id + 1 and foo.id > ss.id - 1;
+select count(*) from join_foo
+  left join (select b1.id, b1.t from join_bar b1 join join_bar b2 using (id)) ss
+  on join_foo.id < ss.id + 1 and join_foo.id > ss.id - 1;
  count 
 -------
      3
@@ -6641,9 +6698,9 @@ select count(*) from foo
 select final > 1 as multibatch
   from hash_join_batches(
 $$
-  select count(*) from foo
-    left join (select b1.id, b1.t from bar b1 join bar b2 using (id)) ss
-    on foo.id < ss.id + 1 and foo.id > ss.id - 1;
+  select count(*) from join_foo
+    left join (select b1.id, b1.t from join_bar b1 join join_bar b2 using (id)) ss
+    on join_foo.id < ss.id + 1 and join_foo.id > ss.id - 1;
 $$);
  multibatch 
 ------------

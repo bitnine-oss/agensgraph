@@ -21,7 +21,6 @@
 #include "access/xact.h"
 #include "catalog/pg_language.h"
 #include "catalog/pg_proc.h"
-#include "catalog/pg_proc_fn.h"
 #include "catalog/pg_type.h"
 #include "commands/event_trigger.h"
 #include "commands/trigger.h"
@@ -1403,11 +1402,13 @@ plperl_sv_to_datum(SV *sv, Oid typid, int32 typmod,
 			return ret;
 		}
 
-		/* Reference, but not reference to hash or array ... */
-		ereport(ERROR,
-				(errcode(ERRCODE_DATATYPE_MISMATCH),
-				 errmsg("PL/Perl function must return reference to hash or array")));
-		return (Datum) 0;		/* shut up compiler */
+		/*
+		 * If it's a reference to something else, such as a scalar, just
+		 * recursively look through the reference.
+		 */
+		return plperl_sv_to_datum(SvRV(sv), typid, typmod,
+								  fcinfo, finfo, typioparam,
+								  isnull);
 	}
 	else
 	{
@@ -2782,10 +2783,9 @@ compile_plperl_function(Oid fn_oid, bool is_trigger, bool is_event_trigger)
 		/************************************************************
 		 * Allocate a context that will hold all PG data for the procedure.
 		 ************************************************************/
-		proc_cxt = AllocSetContextCreateExtended(TopMemoryContext,
-												 NameStr(procStruct->proname),
-												 MEMCONTEXT_COPY_NAME,
-												 ALLOCSET_SMALL_SIZES);
+		proc_cxt = AllocSetContextCreate(TopMemoryContext,
+										 "PL/Perl function",
+										 ALLOCSET_SMALL_SIZES);
 
 		/************************************************************
 		 * Allocate and fill a new procedure description block.
@@ -2794,6 +2794,7 @@ compile_plperl_function(Oid fn_oid, bool is_trigger, bool is_event_trigger)
 		oldcontext = MemoryContextSwitchTo(proc_cxt);
 		prodesc = (plperl_proc_desc *) palloc0(sizeof(plperl_proc_desc));
 		prodesc->proname = pstrdup(NameStr(procStruct->proname));
+		MemoryContextSetIdentifier(proc_cxt, prodesc->proname);
 		prodesc->fn_cxt = proc_cxt;
 		prodesc->fn_refcount = 0;
 		prodesc->fn_xmin = HeapTupleHeaderGetRawXmin(procTup->t_data);
@@ -2832,7 +2833,7 @@ compile_plperl_function(Oid fn_oid, bool is_trigger, bool is_event_trigger)
 		 * Get the required information for input conversion of the
 		 * return value.
 		 ************************************************************/
-		if (!is_trigger && !is_event_trigger && procStruct->prorettype)
+		if (!is_trigger && !is_event_trigger)
 		{
 			Oid			rettype = procStruct->prorettype;
 
@@ -3965,10 +3966,7 @@ plperl_spi_commit(void)
 
 	PG_TRY();
 	{
-		if (ThereArePinnedPortals())
-			ereport(ERROR,
-					(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-					 errmsg("cannot commit transaction while a cursor is open")));
+		HoldPinnedPortals();
 
 		SPI_commit();
 		SPI_start_transaction();
@@ -3995,10 +3993,7 @@ plperl_spi_rollback(void)
 
 	PG_TRY();
 	{
-		if (ThereArePinnedPortals())
-			ereport(ERROR,
-					(errcode(ERRCODE_INVALID_TRANSACTION_TERMINATION),
-					 errmsg("cannot abort transaction while a cursor is open")));
+		HoldPinnedPortals();
 
 		SPI_rollback();
 		SPI_start_transaction();

@@ -16,6 +16,7 @@
 #include "postgres.h"
 
 #include "catalog/namespace.h"
+#include "catalog/pg_proc.h"
 #include "catalog/pg_type.h"
 #include "parser/parser.h"
 #include "parser/parse_type.h"
@@ -196,9 +197,9 @@ static	void			check_raise_parameters(PLpgSQL_stmt_raise *stmt);
 %type <stmt>	proc_stmt pl_block
 %type <stmt>	stmt_assign stmt_if stmt_loop stmt_while stmt_exit
 %type <stmt>	stmt_return stmt_raise stmt_assert stmt_execsql
-%type <stmt>	stmt_dynexecute stmt_for stmt_perform stmt_getdiag
+%type <stmt>	stmt_dynexecute stmt_for stmt_perform stmt_call stmt_getdiag
 %type <stmt>	stmt_open stmt_fetch stmt_move stmt_close stmt_null
-%type <stmt>	stmt_commit stmt_rollback
+%type <stmt>	stmt_commit stmt_rollback stmt_set
 %type <stmt>	stmt_case stmt_foreach_a
 
 %type <list>	proc_exceptions
@@ -256,6 +257,7 @@ static	void			check_raise_parameters(PLpgSQL_stmt_raise *stmt);
 %token <keyword>	K_BACKWARD
 %token <keyword>	K_BEGIN
 %token <keyword>	K_BY
+%token <keyword>	K_CALL
 %token <keyword>	K_CASE
 %token <keyword>	K_CLOSE
 %token <keyword>	K_COLLATE
@@ -274,6 +276,7 @@ static	void			check_raise_parameters(PLpgSQL_stmt_raise *stmt);
 %token <keyword>	K_DEFAULT
 %token <keyword>	K_DETAIL
 %token <keyword>	K_DIAGNOSTICS
+%token <keyword>	K_DO
 %token <keyword>	K_DUMP
 %token <keyword>	K_ELSE
 %token <keyword>	K_ELSIF
@@ -323,6 +326,7 @@ static	void			check_raise_parameters(PLpgSQL_stmt_raise *stmt);
 %token <keyword>	K_QUERY
 %token <keyword>	K_RAISE
 %token <keyword>	K_RELATIVE
+%token <keyword>	K_RESET
 %token <keyword>	K_RESULT_OID
 %token <keyword>	K_RETURN
 %token <keyword>	K_RETURNED_SQLSTATE
@@ -333,6 +337,7 @@ static	void			check_raise_parameters(PLpgSQL_stmt_raise *stmt);
 %token <keyword>	K_SCHEMA
 %token <keyword>	K_SCHEMA_NAME
 %token <keyword>	K_SCROLL
+%token <keyword>	K_SET
 %token <keyword>	K_SLICE
 %token <keyword>	K_SQLSTATE
 %token <keyword>	K_STACKED
@@ -871,6 +876,8 @@ proc_stmt		: pl_block ';'
 						{ $$ = $1; }
 				| stmt_perform
 						{ $$ = $1; }
+				| stmt_call
+						{ $$ = $1; }
 				| stmt_getdiag
 						{ $$ = $1; }
 				| stmt_open
@@ -887,6 +894,8 @@ proc_stmt		: pl_block ';'
 						{ $$ = $1; }
 				| stmt_rollback
 						{ $$ = $1; }
+				| stmt_set
+						{ $$ = $1; }
 				;
 
 stmt_perform	: K_PERFORM expr_until_semi
@@ -899,6 +908,35 @@ stmt_perform	: K_PERFORM expr_until_semi
 						new->expr  = $2;
 
 						$$ = (PLpgSQL_stmt *)new;
+					}
+				;
+
+stmt_call		: K_CALL
+					{
+						PLpgSQL_stmt_call *new;
+
+						new = palloc0(sizeof(PLpgSQL_stmt_call));
+						new->cmd_type = PLPGSQL_STMT_CALL;
+						new->lineno = plpgsql_location_to_lineno(@1);
+						new->expr = read_sql_stmt("CALL ");
+						new->is_call = true;
+
+						$$ = (PLpgSQL_stmt *)new;
+
+					}
+				| K_DO
+					{
+						/* use the same structures as for CALL, for simplicity */
+						PLpgSQL_stmt_call *new;
+
+						new = palloc0(sizeof(PLpgSQL_stmt_call));
+						new->cmd_type = PLPGSQL_STMT_CALL;
+						new->lineno = plpgsql_location_to_lineno(@1);
+						new->expr = read_sql_stmt("DO ");
+						new->is_call = false;
+
+						$$ = (PLpgSQL_stmt *)new;
+
 					}
 				;
 
@@ -2167,6 +2205,30 @@ stmt_rollback	: K_ROLLBACK ';'
 					}
 				;
 
+stmt_set	: K_SET
+					{
+						PLpgSQL_stmt_set *new;
+
+						new = palloc0(sizeof(PLpgSQL_stmt_set));
+						new->cmd_type = PLPGSQL_STMT_SET;
+						new->lineno = plpgsql_location_to_lineno(@1);
+						new->expr = read_sql_stmt("SET ");
+
+						$$ = (PLpgSQL_stmt *)new;
+					}
+			| K_RESET
+					{
+						PLpgSQL_stmt_set *new;
+
+						new = palloc0(sizeof(PLpgSQL_stmt_set));
+						new->cmd_type = PLPGSQL_STMT_SET;
+						new->lineno = plpgsql_location_to_lineno(@1);
+						new->expr = read_sql_stmt("RESET ");
+
+						$$ = (PLpgSQL_stmt *)new;
+					}
+			;
+
 
 cursor_variable	: T_DATUM
 					{
@@ -2400,6 +2462,7 @@ unreserved_keyword	:
 				| K_ARRAY
 				| K_ASSERT
 				| K_BACKWARD
+				| K_CALL
 				| K_CLOSE
 				| K_COLLATE
 				| K_COLUMN
@@ -2416,6 +2479,7 @@ unreserved_keyword	:
 				| K_DEFAULT
 				| K_DETAIL
 				| K_DIAGNOSTICS
+				| K_DO
 				| K_DUMP
 				| K_ELSIF
 				| K_ERRCODE
@@ -2452,6 +2516,7 @@ unreserved_keyword	:
 				| K_QUERY
 				| K_RAISE
 				| K_RELATIVE
+				| K_RESET
 				| K_RESULT_OID
 				| K_RETURN
 				| K_RETURNED_SQLSTATE
@@ -2462,6 +2527,7 @@ unreserved_keyword	:
 				| K_SCHEMA
 				| K_SCHEMA_NAME
 				| K_SCROLL
+				| K_SET
 				| K_SLICE
 				| K_SQLSTATE
 				| K_STACKED
@@ -3128,6 +3194,22 @@ make_return_stmt(int location)
 					 errhint("Use RETURN NEXT or RETURN QUERY."),
 					 parser_errposition(yylloc)));
 	}
+	else if (plpgsql_curr_compile->fn_rettype == VOIDOID)
+	{
+		if (yylex() != ';')
+		{
+			if (plpgsql_curr_compile->fn_prokind == PROKIND_PROCEDURE)
+				ereport(ERROR,
+						(errcode(ERRCODE_SYNTAX_ERROR),
+						 errmsg("RETURN cannot have a parameter in a procedure"),
+						 parser_errposition(yylloc)));
+			else
+				ereport(ERROR,
+						(errcode(ERRCODE_DATATYPE_MISMATCH),
+						 errmsg("RETURN cannot have a parameter in function returning void"),
+						 parser_errposition(yylloc)));
+		}
+	}
 	else if (plpgsql_curr_compile->out_param_varno >= 0)
 	{
 		if (yylex() != ';')
@@ -3136,14 +3218,6 @@ make_return_stmt(int location)
 					 errmsg("RETURN cannot have a parameter in function with OUT parameters"),
 					 parser_errposition(yylloc)));
 		new->retvarno = plpgsql_curr_compile->out_param_varno;
-	}
-	else if (plpgsql_curr_compile->fn_rettype == VOIDOID)
-	{
-		if (yylex() != ';')
-			ereport(ERROR,
-					(errcode(ERRCODE_DATATYPE_MISMATCH),
-					 errmsg("RETURN cannot have a parameter in function returning void"),
-					 parser_errposition(yylloc)));
 	}
 	else
 	{

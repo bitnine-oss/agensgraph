@@ -68,8 +68,9 @@ hashhandler(PG_FUNCTION_ARGS)
 	amroutine->amsearchnulls = false;
 	amroutine->amstorage = false;
 	amroutine->amclusterable = false;
-	amroutine->ampredlocks = false;
+	amroutine->ampredlocks = true;
 	amroutine->amcanparallel = false;
+	amroutine->amcaninclude = false;
 	amroutine->amkeytype = INT4OID;
 
 	amroutine->ambuild = hashbuild;

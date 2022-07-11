@@ -17,7 +17,6 @@
 #include <limits.h>
 
 #include "miscadmin.h"
-#include "catalog/partition.h"
 #include "optimizer/clauses.h"
 #include "optimizer/cost.h"
 #include "optimizer/pathnode.h"
@@ -27,6 +26,7 @@
 #include "optimizer/prep.h"
 #include "optimizer/restrictinfo.h"
 #include "optimizer/tlist.h"
+#include "partitioning/partbounds.h"
 #include "utils/hsearch.h"
 
 
@@ -85,6 +85,43 @@ setup_simple_rel_arrays(PlannerInfo *root)
 		RangeTblEntry *rte = (RangeTblEntry *) lfirst(lc);
 
 		root->simple_rte_array[rti++] = rte;
+	}
+}
+
+/*
+ * setup_append_rel_array
+ *		Populate the append_rel_array to allow direct lookups of
+ *		AppendRelInfos by child relid.
+ *
+ * The array remains unallocated if there are no AppendRelInfos.
+ */
+void
+setup_append_rel_array(PlannerInfo *root)
+{
+	ListCell   *lc;
+	int			size = list_length(root->parse->rtable) + 1;
+
+	if (root->append_rel_list == NIL)
+	{
+		root->append_rel_array = NULL;
+		return;
+	}
+
+	root->append_rel_array = (AppendRelInfo **)
+		palloc0(size * sizeof(AppendRelInfo *));
+
+	foreach(lc, root->append_rel_list)
+	{
+		AppendRelInfo *appinfo = lfirst_node(AppendRelInfo, lc);
+		int			child_relid = appinfo->child_relid;
+
+		/* Sanity check */
+		Assert(child_relid < size);
+
+		if (root->append_rel_array[child_relid])
+			elog(ERROR, "child relation already exists");
+
+		root->append_rel_array[child_relid] = appinfo;
 	}
 }
 
@@ -154,9 +191,11 @@ build_simple_rel(PlannerInfo *root, int relid, RelOptInfo *parent)
 	rel->part_scheme = NULL;
 	rel->nparts = 0;
 	rel->boundinfo = NULL;
+	rel->partition_qual = NIL;
 	rel->part_rels = NULL;
 	rel->partexprs = NULL;
 	rel->nullable_partexprs = NULL;
+	rel->partitioned_child_rels = NIL;
 
 	/*
 	 * Pass top parent's relids down the inheritance hierarchy. If the parent
@@ -567,9 +606,11 @@ build_join_rel(PlannerInfo *root,
 	joinrel->part_scheme = NULL;
 	joinrel->nparts = 0;
 	joinrel->boundinfo = NULL;
+	joinrel->partition_qual = NIL;
 	joinrel->part_rels = NULL;
 	joinrel->partexprs = NULL;
 	joinrel->nullable_partexprs = NULL;
+	joinrel->partitioned_child_rels = NIL;
 
 	/* Compute information relevant to the foreign relations. */
 	set_foreign_rel_properties(joinrel, outer_rel, inner_rel);
@@ -734,9 +775,13 @@ build_child_join_rel(PlannerInfo *root, RelOptInfo *outer_rel,
 	joinrel->has_eclass_joins = false;
 	joinrel->top_parent_relids = NULL;
 	joinrel->part_scheme = NULL;
+	joinrel->nparts = 0;
+	joinrel->boundinfo = NULL;
+	joinrel->partition_qual = NIL;
 	joinrel->part_rels = NULL;
 	joinrel->partexprs = NULL;
 	joinrel->nullable_partexprs = NULL;
+	joinrel->partitioned_child_rels = NIL;
 
 	joinrel->top_parent_relids = bms_union(outer_rel->top_parent_relids,
 										   inner_rel->top_parent_relids);
@@ -1177,36 +1222,6 @@ fetch_upper_rel(PlannerInfo *root, UpperRelationKind kind, Relids relids)
 
 
 /*
- * find_childrel_appendrelinfo
- *		Get the AppendRelInfo associated with an appendrel child rel.
- *
- * This search could be eliminated by storing a link in child RelOptInfos,
- * but for now it doesn't seem performance-critical.  (Also, it might be
- * difficult to maintain such a link during mutation of the append_rel_list.)
- */
-AppendRelInfo *
-find_childrel_appendrelinfo(PlannerInfo *root, RelOptInfo *rel)
-{
-	Index		relid = rel->relid;
-	ListCell   *lc;
-
-	/* Should only be called on child rels */
-	Assert(rel->reloptkind == RELOPT_OTHER_MEMBER_REL);
-
-	foreach(lc, root->append_rel_list)
-	{
-		AppendRelInfo *appinfo = (AppendRelInfo *) lfirst(lc);
-
-		if (appinfo->child_relid == relid)
-			return appinfo;
-	}
-	/* should have found the entry ... */
-	elog(ERROR, "child rel %d not found in append_rel_list", relid);
-	return NULL;				/* not reached */
-}
-
-
-/*
  * find_childrel_parents
  *		Compute the set of parent relids of an appendrel child rel.
  *
@@ -1220,10 +1235,11 @@ find_childrel_parents(PlannerInfo *root, RelOptInfo *rel)
 	Relids		result = NULL;
 
 	Assert(rel->reloptkind == RELOPT_OTHER_MEMBER_REL);
+	Assert(rel->relid > 0 && rel->relid < root->simple_rel_array_size);
 
 	do
 	{
-		AppendRelInfo *appinfo = find_childrel_appendrelinfo(root, rel);
+		AppendRelInfo *appinfo = root->append_rel_array[rel->relid];
 		Index		prelid = appinfo->parent_relid;
 
 		result = bms_add_member(result, prelid);
@@ -1621,7 +1637,8 @@ build_joinrel_partition_info(RelOptInfo *joinrel, RelOptInfo *outer_rel,
 	 */
 	if (!IS_PARTITIONED_REL(outer_rel) || !IS_PARTITIONED_REL(inner_rel) ||
 		outer_rel->part_scheme != inner_rel->part_scheme ||
-		!have_partkey_equi_join(outer_rel, inner_rel, jointype, restrictlist))
+		!have_partkey_equi_join(joinrel, outer_rel, inner_rel,
+								jointype, restrictlist))
 	{
 		Assert(!IS_PARTITIONED_REL(joinrel));
 		return;

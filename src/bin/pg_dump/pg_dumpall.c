@@ -23,6 +23,7 @@
 #include "dumputils.h"
 #include "pg_backup.h"
 #include "common/file_utils.h"
+#include "fe_utils/connect.h"
 #include "fe_utils/string_utils.h"
 
 /* version string we expect back from pg_dump */
@@ -42,9 +43,10 @@ static void dumpUserConfig(PGconn *conn, const char *username);
 static void dumpDatabases(PGconn *conn);
 static void dumpTimestamp(const char *msg);
 static int	runPgDump(const char *dbname, const char *create_opts);
-static void buildShSecLabels(PGconn *conn, const char *catalog_name,
-				 uint32 objectId, PQExpBuffer buffer,
-				 const char *target, const char *objname);
+static void buildShSecLabels(PGconn *conn,
+				 const char *catalog_name, Oid objectId,
+				 const char *objtype, const char *objname,
+				 PQExpBuffer buffer);
 static PGconn *connectDatabase(const char *dbname, const char *connstr, const char *pghost, const char *pgport,
 				const char *pguser, trivalue prompt_password, bool fail_on_error);
 static char *constructConnStr(const char **keywords, const char **values);
@@ -610,6 +612,7 @@ help(void)
 	printf(_("  --disable-triggers           disable triggers during data-only restore\n"));
 	printf(_("  --if-exists                  use IF EXISTS when dropping objects\n"));
 	printf(_("  --inserts                    dump data as INSERT commands, rather than COPY\n"));
+	printf(_("  --load-via-partition-root    load partitions via the root table\n"));
 	printf(_("  --no-comments                do not dump comments\n"));
 	printf(_("  --no-publications            do not dump publications\n"));
 	printf(_("  --no-role-passwords          do not dump passwords for roles\n"));
@@ -619,7 +622,6 @@ help(void)
 	printf(_("  --no-tablespaces             do not dump tablespace assignments\n"));
 	printf(_("  --no-unlogged-table-data     do not dump unlogged table data\n"));
 	printf(_("  --quote-all-identifiers      quote all identifiers, even if not key words\n"));
-	printf(_("  --load-via-partition-root    load partitions via the root table\n"));
 	printf(_("  --use-set-session-authorization\n"
 			 "                               use SET SESSION AUTHORIZATION commands instead of\n"
 			 "                               ALTER OWNER commands to set ownership\n"));
@@ -928,7 +930,8 @@ dumpRoles(PGconn *conn)
 
 		if (!no_security_labels && server_version >= 90200)
 			buildShSecLabels(conn, "pg_authid", auth_oid,
-							 buf, "ROLE", rolename);
+							 "ROLE", rolename,
+							 buf);
 
 		fprintf(OPF, "%s", buf->data);
 	}
@@ -1191,7 +1194,7 @@ dumpTablespaces(PGconn *conn)
 	for (i = 0; i < PQntuples(res); i++)
 	{
 		PQExpBuffer buf = createPQExpBuffer();
-		uint32		spcoid = atooid(PQgetvalue(res, i, 0));
+		Oid			spcoid = atooid(PQgetvalue(res, i, 0));
 		char	   *spcname = PQgetvalue(res, i, 1);
 		char	   *spcowner = PQgetvalue(res, i, 2);
 		char	   *spclocation = PQgetvalue(res, i, 3);
@@ -1216,11 +1219,12 @@ dumpTablespaces(PGconn *conn)
 							  fspcname, spcoptions);
 
 		if (!skip_acls &&
-			!buildACLCommands(fspcname, NULL, "TABLESPACE", spcacl, rspcacl,
+			!buildACLCommands(fspcname, NULL, NULL, "TABLESPACE",
+							  spcacl, rspcacl,
 							  spcowner, "", server_version, buf))
 		{
 			fprintf(stderr, _("%s: could not parse ACL list (%s) for tablespace \"%s\"\n"),
-					progname, spcacl, fspcname);
+					progname, spcacl, spcname);
 			PQfinish(conn);
 			exit_nicely(1);
 		}
@@ -1234,7 +1238,8 @@ dumpTablespaces(PGconn *conn)
 
 		if (!no_security_labels && server_version >= 90200)
 			buildShSecLabels(conn, "pg_tablespace", spcoid,
-							 buf, "TABLESPACE", fspcname);
+							 "TABLESPACE", spcname,
+							 buf);
 
 		fprintf(OPF, "%s", buf->data);
 
@@ -1481,19 +1486,23 @@ runPgDump(const char *dbname, const char *create_opts)
  *
  * Build SECURITY LABEL command(s) for a shared object
  *
- * The caller has to provide object type and identifier to select security
- * labels from pg_seclabels system view.
+ * The caller has to provide object type and identity in two separate formats:
+ * catalog_name (e.g., "pg_database") and object OID, as well as
+ * type name (e.g., "DATABASE") and object name (not pre-quoted).
+ *
+ * The command(s) are appended to "buffer".
  */
 static void
-buildShSecLabels(PGconn *conn, const char *catalog_name, uint32 objectId,
-				 PQExpBuffer buffer, const char *target, const char *objname)
+buildShSecLabels(PGconn *conn, const char *catalog_name, Oid objectId,
+				 const char *objtype, const char *objname,
+				 PQExpBuffer buffer)
 {
 	PQExpBuffer sql = createPQExpBuffer();
 	PGresult   *res;
 
 	buildShSecLabelQuery(conn, catalog_name, objectId, sql);
 	res = executeQuery(conn, sql->data);
-	emitShSecLabels(conn, res, buffer, target, objname);
+	emitShSecLabels(conn, res, buffer, objtype, objname);
 
 	PQclear(res);
 	destroyPQExpBuffer(sql);
@@ -1652,7 +1661,7 @@ connectDatabase(const char *dbname, const char *connection_string,
 		if (fail_on_error)
 		{
 			fprintf(stderr,
-					_("%s: could not connect to database \"%s\": %s\n"),
+					_("%s: could not connect to database \"%s\": %s"),
 					progname, dbname, PQerrorMessage(conn));
 			exit_nicely(1);
 		}
@@ -1709,10 +1718,7 @@ connectDatabase(const char *dbname, const char *connection_string,
 		exit_nicely(1);
 	}
 
-	/*
-	 * Make sure we are not fooled by non-system schemas in the search path.
-	 */
-	executeCommand(conn, "SET search_path = pg_catalog");
+	PQclear(executeQuery(conn, ALWAYS_SECURE_SEARCH_PATH_SQL));
 
 	return conn;
 }

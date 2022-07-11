@@ -147,14 +147,14 @@ _bt_search(Relation rel, int keysz, ScanKey scankey, bool nextkey,
 		offnum = _bt_binsrch(rel, *bufP, keysz, scankey, nextkey);
 		itemid = PageGetItemId(page, offnum);
 		itup = (IndexTuple) PageGetItem(page, itemid);
-		blkno = ItemPointerGetBlockNumber(&(itup->t_tid));
+		blkno = BTreeInnerTupleGetDownLink(itup);
 		par_blkno = BufferGetBlockNumber(*bufP);
 
 		/*
 		 * We need to save the location of the index entry we chose in the
 		 * parent page on a stack. In case we split the tree, we'll use the
 		 * stack to work back up to the parent page.  We also save the actual
-		 * downlink (TID) to uniquely identify the index entry, in case it
+		 * downlink (block) to uniquely identify the index entry, in case it
 		 * moves right while we're working lower in the tree.  See the paper
 		 * by Lehman and Yao for how this is detected and handled. (We use the
 		 * child link to disambiguate duplicate keys in the index -- Lehman
@@ -163,7 +163,7 @@ _bt_search(Relation rel, int keysz, ScanKey scankey, bool nextkey,
 		new_stack = (BTStack) palloc(sizeof(BTStackData));
 		new_stack->bts_blkno = par_blkno;
 		new_stack->bts_offset = offnum;
-		memcpy(&new_stack->bts_btentry, itup, sizeof(IndexTupleData));
+		new_stack->bts_btentry = blkno;
 		new_stack->bts_parent = stack_in;
 
 		/* drop the read lock on the parent page, acquire one on the child */
@@ -435,6 +435,8 @@ _bt_compare(Relation rel,
 	BTPageOpaque opaque = (BTPageOpaque) PageGetSpecialPointer(page);
 	IndexTuple	itup;
 	int			i;
+
+	Assert(_bt_check_natts(rel, page, offnum));
 
 	/*
 	 * Force result ">" if target item is first data item on an internal page
@@ -1833,7 +1835,7 @@ _bt_get_endpoint(Relation rel, uint32 level, bool rightmost,
 			offnum = P_FIRSTDATAKEY(opaque);
 
 		itup = (IndexTuple) PageGetItem(page, PageGetItemId(page, offnum));
-		blkno = ItemPointerGetBlockNumber(&(itup->t_tid));
+		blkno = BTreeInnerTupleGetDownLink(itup);
 
 		buf = _bt_relandgetbuf(rel, buf, blkno, BT_READ);
 		page = BufferGetPage(buf);

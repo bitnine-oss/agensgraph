@@ -3,7 +3,7 @@
 #
 # Gen_fmgrtab.pl
 #    Perl script that generates fmgroids.h, fmgrprotos.h, and fmgrtab.c
-#    from pg_proc.h
+#    from pg_proc.dat
 #
 # Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
 # Portions Copyright (c) 1994, Regents of the University of California
@@ -20,16 +20,16 @@ use strict;
 use warnings;
 
 # Collect arguments
-my $infile;    # pg_proc.h
+my @input_files;
 my $output_path = '';
-my @include_path;
+my $include_path;
 
 while (@ARGV)
 {
 	my $arg = shift @ARGV;
 	if ($arg !~ /^-/)
 	{
-		$infile = $arg;
+		push @input_files, $arg;
 	}
 	elsif ($arg =~ /^-o/)
 	{
@@ -37,7 +37,7 @@ while (@ARGV)
 	}
 	elsif ($arg =~ /^-I/)
 	{
-		push @include_path, length($arg) > 2 ? substr($arg, 2) : shift @ARGV;
+		$include_path = length($arg) > 2 ? substr($arg, 2) : shift @ARGV;
 	}
 	else
 	{
@@ -52,42 +52,58 @@ if ($output_path ne '' && substr($output_path, -1) ne '/')
 }
 
 # Sanity check arguments.
-die "No input files.\n"                                     if !$infile;
-die "No include path; you must specify -I at least once.\n" if !@include_path;
+die "No input files.\n"                       if !@input_files;
+die "No include path; you must specify -I.\n" if !$include_path;
 
-my $FirstBootstrapObjectId =
-	Catalog::FindDefinedSymbol('access/transam.h', \@include_path, 'FirstBootstrapObjectId');
-my $INTERNALlanguageId =
-	Catalog::FindDefinedSymbol('catalog/pg_language.h', \@include_path, 'INTERNALlanguageId');
-
-# Read all the data from the include/catalog files.
-my $catalogs = Catalog::Catalogs($infile);
-
-# Collect the raw data from pg_proc.h.
-my @fmgr = ();
-my @attnames;
-foreach my $column (@{ $catalogs->{pg_proc}->{columns} })
+# Read all the input files into internal data structures.
+# Note: We pass data file names as arguments and then look for matching
+# headers to parse the schema from. This is backwards from genbki.pl,
+# but the Makefile dependencies look more sensible this way.
+my %catalogs;
+my %catalog_data;
+foreach my $datfile (@input_files)
 {
-	push @attnames, $column->{name};
+	$datfile =~ /(.+)\.dat$/
+	  or die "Input files need to be data (.dat) files.\n";
+
+	my $header = "$1.h";
+	die "There in no header file corresponding to $datfile"
+	  if !-e $header;
+
+	my $catalog = Catalog::ParseHeader($header);
+	my $catname = $catalog->{catname};
+	my $schema  = $catalog->{columns};
+
+	$catalogs{$catname} = $catalog;
+	$catalog_data{$catname} = Catalog::ParseData($datfile, $schema, 0);
 }
 
-my $data = $catalogs->{pg_proc}->{data};
-foreach my $row (@$data)
-{
+# Fetch some values for later.
+my $FirstBootstrapObjectId =
+  Catalog::FindDefinedSymbol('access/transam.h', $include_path,
+	'FirstBootstrapObjectId');
+my $INTERNALlanguageId =
+  Catalog::FindDefinedSymbolFromData($catalog_data{pg_language},
+	'INTERNALlanguageId');
 
-	# Split line into tokens without interpreting their meaning.
-	my %bki_values;
-	@bki_values{@attnames} = Catalog::SplitDataLine($row->{bki_values});
+# Collect certain fields from pg_proc.dat.
+my @fmgr = ();
+
+foreach my $row (@{ $catalog_data{pg_proc} })
+{
+	my %bki_values = %$row;
 
 	# Select out just the rows for internal-language procedures.
 	next if $bki_values{prolang} ne $INTERNALlanguageId;
 
 	push @fmgr,
-	  { oid    => $row->{oid},
+	  {
+		oid    => $bki_values{oid},
 		strict => $bki_values{proisstrict},
 		retset => $bki_values{proretset},
 		nargs  => $bki_values{pronargs},
-		prosrc => $bki_values{prosrc}, };
+		prosrc => $bki_values{prosrc},
+	  };
 }
 
 # Emit headers for both files
@@ -103,8 +119,8 @@ open my $pfh, '>', $protosfile . $tmpext
 open my $tfh, '>', $tabfile . $tmpext
   or die "Could not open $tabfile$tmpext: $!";
 
-print $ofh
-qq|/*-------------------------------------------------------------------------
+print $ofh <<OFH;
+/*-------------------------------------------------------------------------
  *
  * fmgroids.h
  *    Macros that define the OIDs of built-in functions.
@@ -138,10 +154,10 @@ qq|/*-------------------------------------------------------------------------
  *	its equivalent macro will be defined with the lowest OID among those
  *	entries.
  */
-|;
+OFH
 
-print $pfh
-qq|/*-------------------------------------------------------------------------
+print $pfh <<PFH;
+/*-------------------------------------------------------------------------
  *
  * fmgrprotos.h
  *    Prototypes for built-in functions.
@@ -164,10 +180,10 @@ qq|/*-------------------------------------------------------------------------
 
 #include "fmgr.h"
 
-|;
+PFH
 
-print $tfh
-qq|/*-------------------------------------------------------------------------
+print $tfh <<TFH;
+/*-------------------------------------------------------------------------
  *
  * fmgrtab.c
  *    The function manager's table of internal functions.
@@ -192,7 +208,7 @@ qq|/*-------------------------------------------------------------------------
 #include "utils/fmgrtab.h"
 #include "utils/fmgrprotos.h"
 
-|;
+TFH
 
 # Emit #define's and extern's -- only one per prosrc value
 my %seenit;
@@ -214,9 +230,9 @@ my $fmgr_count = 0;
 foreach my $s (sort { $a->{oid} <=> $b->{oid} } @fmgr)
 {
 	print $tfh
-"  { $s->{oid}, \"$s->{prosrc}\", $s->{nargs}, $bmap{$s->{strict}}, $bmap{$s->{retset}}, $s->{prosrc} }";
+	  "  { $s->{oid}, \"$s->{prosrc}\", $s->{nargs}, $bmap{$s->{strict}}, $bmap{$s->{retset}}, $s->{prosrc} }";
 
-	$fmgr_builtin_oid_index[$s->{oid}] = $fmgr_count++;
+	$fmgr_builtin_oid_index[ $s->{oid} ] = $fmgr_count++;
 
 	if ($fmgr_count <= $#fmgr)
 	{
@@ -266,8 +282,8 @@ print $tfh "};\n";
 
 
 # And add the file footers.
-print $ofh "\n#endif /* FMGROIDS_H */\n";
-print $pfh "\n#endif /* FMGRPROTOS_H */\n";
+print $ofh "\n#endif\t\t\t\t\t\t\t/* FMGROIDS_H */\n";
+print $pfh "\n#endif\t\t\t\t\t\t\t/* FMGRPROTOS_H */\n";
 
 close($ofh);
 close($pfh);
@@ -281,10 +297,10 @@ Catalog::RenameTempFile($tabfile,    $tmpext);
 sub usage
 {
 	die <<EOM;
-Usage: perl -I [directory of Catalog.pm] Gen_fmgrtab.pl [path to pg_proc.h]
+Usage: perl -I [directory of Catalog.pm] Gen_fmgrtab.pl -I [include path] [path to pg_proc.dat]
 
 Gen_fmgrtab.pl generates fmgroids.h, fmgrprotos.h, and fmgrtab.c from
-pg_proc.h
+pg_proc.dat
 
 Report bugs to <pgsql-bugs\@postgresql.org>.
 EOM

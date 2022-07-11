@@ -772,6 +772,12 @@ add_partial_path(RelOptInfo *parent_rel, Path *new_path)
 	/* Check for query cancel. */
 	CHECK_FOR_INTERRUPTS();
 
+	/* Path to be added must be parallel safe. */
+	Assert(new_path->parallel_safe);
+
+	/* Relation should be OK for parallelism, too. */
+	Assert(parent_rel->consider_parallel);
+
 	/*
 	 * As in add_path, throw out any paths which are dominated by the new
 	 * path, but throw out the new path if some existing path dominates it.
@@ -1212,7 +1218,8 @@ create_tidscan_path(PlannerInfo *root, RelOptInfo *rel, List *tidquals,
  * Note that we must handle subpaths = NIL, representing a dummy access path.
  */
 AppendPath *
-create_append_path(RelOptInfo *rel,
+create_append_path(PlannerInfo *root,
+				   RelOptInfo *rel,
 				   List *subpaths, List *partial_subpaths,
 				   Relids required_outer,
 				   int parallel_workers, bool parallel_aware,
@@ -1226,8 +1233,25 @@ create_append_path(RelOptInfo *rel,
 	pathnode->path.pathtype = T_Append;
 	pathnode->path.parent = rel;
 	pathnode->path.pathtarget = rel->reltarget;
-	pathnode->path.param_info = get_appendrel_parampathinfo(rel,
-															required_outer);
+
+	/*
+	 * When generating an Append path for a partitioned table, there may be
+	 * parameters that are useful so we can eliminate certain partitions
+	 * during execution.  Here we'll go all the way and fully populate the
+	 * parameter info data as we do for normal base relations.  However, we
+	 * need only bother doing this for RELOPT_BASEREL rels, as
+	 * RELOPT_OTHER_MEMBER_REL's Append paths are merged into the base rel's
+	 * Append subpaths.  It would do no harm to do this, we just avoid it to
+	 * save wasting effort.
+	 */
+	if (partitioned_rels != NIL && root && rel->reloptkind == RELOPT_BASEREL)
+		pathnode->path.param_info = get_baserel_parampathinfo(root,
+															  rel,
+															  required_outer);
+	else
+		pathnode->path.param_info = get_appendrel_parampathinfo(rel,
+																required_outer);
+
 	pathnode->path.parallel_aware = parallel_aware;
 	pathnode->path.parallel_safe = rel->consider_parallel;
 	pathnode->path.parallel_workers = parallel_workers;
@@ -1252,7 +1276,7 @@ create_append_path(RelOptInfo *rel,
 	pathnode->first_partial_path = list_length(subpaths);
 	pathnode->subpaths = list_concat(subpaths, partial_subpaths);
 
-	foreach(l, subpaths)
+	foreach(l, pathnode->subpaths)
 	{
 		Path	   *subpath = (Path *) lfirst(l);
 
@@ -2656,12 +2680,12 @@ GroupPath *
 create_group_path(PlannerInfo *root,
 				  RelOptInfo *rel,
 				  Path *subpath,
-				  PathTarget *target,
 				  List *groupClause,
 				  List *qual,
 				  double numGroups)
 {
 	GroupPath  *pathnode = makeNode(GroupPath);
+	PathTarget *target = rel->reltarget;
 
 	pathnode->path.pathtype = T_Group;
 	pathnode->path.parent = rel;
@@ -2833,7 +2857,6 @@ GroupingSetsPath *
 create_groupingsets_path(PlannerInfo *root,
 						 RelOptInfo *rel,
 						 Path *subpath,
-						 PathTarget *target,
 						 List *having_qual,
 						 AggStrategy aggstrategy,
 						 List *rollups,
@@ -2841,6 +2864,7 @@ create_groupingsets_path(PlannerInfo *root,
 						 double numGroups)
 {
 	GroupingSetsPath *pathnode = makeNode(GroupingSetsPath);
+	PathTarget *target = rel->reltarget;
 	ListCell   *lc;
 	bool		is_first = true;
 	bool		is_first_sort = true;
@@ -3609,7 +3633,7 @@ reparameterize_path(PlannerInfo *root, Path *path,
 					i++;
 				}
 				return (Path *)
-					create_append_path(rel, childpaths, partialpaths,
+					create_append_path(root, rel, childpaths, partialpaths,
 									   required_outer,
 									   apath->path.parallel_workers,
 									   apath->path.parallel_aware,

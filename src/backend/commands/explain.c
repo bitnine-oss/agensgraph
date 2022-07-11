@@ -21,6 +21,7 @@
 #include "commands/prepare.h"
 #include "executor/nodeHash.h"
 #include "foreign/fdwapi.h"
+#include "jit/jit.h"
 #include "nodes/extensible.h"
 #include "nodes/nodeFuncs.h"
 #include "optimizer/clauses.h"
@@ -118,14 +119,14 @@ static void ExplainModifyTarget(ModifyTable *plan, ExplainState *es);
 static void ExplainTargetRel(Plan *plan, Index rti, ExplainState *es);
 static void show_modifytable_info(ModifyTableState *mtstate, List *ancestors,
 					  ExplainState *es);
-static void ExplainMemberNodes(List *plans, PlanState **planstates,
-				   List *ancestors, ExplainState *es);
+static void ExplainMemberNodes(PlanState **planstates, int nsubnodes,
+				   int nplans, List *ancestors, ExplainState *es);
 static void ExplainSubPlans(List *plans, List *ancestors,
 				const char *relationship, ExplainState *es);
 static void ExplainCustomChildren(CustomScanState *css,
 					  List *ancestors, ExplainState *es);
-static void ExplainProperty(const char *qlabel, const char *value,
-				bool numeric, ExplainState *es);
+static void ExplainProperty(const char *qlabel, const char *unit,
+				const char *value, bool numeric, ExplainState *es);
 static void ExplainDummyGroup(const char *objtype, const char *labelname,
 				  ExplainState *es);
 static void ExplainXMLTag(const char *tagname, int flags, ExplainState *es);
@@ -550,16 +551,22 @@ ExplainOnePlan(PlannedStmt *plannedstmt, IntoClause *into, ExplainState *es,
 	{
 		double		plantime = INSTR_TIME_GET_DOUBLE(*planduration);
 
-		if (es->format == EXPLAIN_FORMAT_TEXT)
-			appendStringInfo(es->str, "Planning time: %.3f ms\n",
-							 1000.0 * plantime);
-		else
-			ExplainPropertyFloat("Planning Time", 1000.0 * plantime, 3, es);
+		ExplainPropertyFloat("Planning Time", "ms", 1000.0 * plantime, 3, es);
 	}
 
 	/* Print info about runtime of triggers */
 	if (es->analyze)
 		ExplainPrintTriggers(es, queryDesc);
+
+	/*
+	 * Print info about JITing. Tied to es->costs because we don't want to
+	 * display this in regression tests, as it'd cause output differences
+	 * depending on build options.  Might want to separate that out from COSTS
+	 * at a later stage.
+	 */
+	if (queryDesc->estate->es_jit && es->costs &&
+		queryDesc->estate->es_jit->created_functions > 0)
+		ExplainPrintJIT(es, queryDesc);
 
 	/*
 	 * Close down the query and free resources.  Include time for this in the
@@ -586,14 +593,8 @@ ExplainOnePlan(PlannedStmt *plannedstmt, IntoClause *into, ExplainState *es,
 	 * the output).  By default, ANALYZE sets SUMMARY to true.
 	 */
 	if (es->summary && es->analyze)
-	{
-		if (es->format == EXPLAIN_FORMAT_TEXT)
-			appendStringInfo(es->str, "Execution time: %.3f ms\n",
-							 1000.0 * totaltime);
-		else
-			ExplainPropertyFloat("Execution Time", 1000.0 * totaltime,
-								 3, es);
-	}
+		ExplainPropertyFloat("Execution Time", "ms", 1000.0 * totaltime, 3,
+							 es);
 
 	ExplainCloseGroup("Query", NULL, true, es);
 }
@@ -689,6 +690,54 @@ ExplainPrintTriggers(ExplainState *es, QueryDesc *queryDesc)
 }
 
 /*
+ * ExplainPrintJIT -
+ *	  Append information about JITing to es->str.
+ */
+void
+ExplainPrintJIT(ExplainState *es, QueryDesc *queryDesc)
+{
+	JitContext *jc = queryDesc->estate->es_jit;
+
+	ExplainOpenGroup("JIT", "JIT", true, es);
+
+	if (es->format == EXPLAIN_FORMAT_TEXT)
+	{
+		es->indent += 1;
+		appendStringInfo(es->str, "JIT:\n");
+	}
+
+	ExplainPropertyInteger("Functions", NULL, jc->created_functions, es);
+	if (es->analyze && es->timing)
+		ExplainPropertyFloat("Generation Time", "ms",
+							 1000.0 * INSTR_TIME_GET_DOUBLE(jc->generation_counter),
+							 3, es);
+
+	ExplainPropertyBool("Inlining", jc->flags & PGJIT_INLINE, es);
+
+	if (es->analyze && es->timing)
+		ExplainPropertyFloat("Inlining Time", "ms",
+							 1000.0 * INSTR_TIME_GET_DOUBLE(jc->inlining_counter),
+							 3, es);
+
+	ExplainPropertyBool("Optimization", jc->flags & PGJIT_OPT3, es);
+	if (es->analyze && es->timing)
+		ExplainPropertyFloat("Optimization Time", "ms",
+							 1000.0 * INSTR_TIME_GET_DOUBLE(jc->optimization_counter),
+							 3, es);
+
+	if (es->analyze && es->timing)
+		ExplainPropertyFloat("Emission Time", "ms",
+							 1000.0 * INSTR_TIME_GET_DOUBLE(jc->emission_counter),
+							 3, es);
+
+	ExplainCloseGroup("JIT", "JIT", true, es);
+	if (es->format == EXPLAIN_FORMAT_TEXT)
+	{
+		es->indent -= 1;
+	}
+}
+
+/*
  * ExplainQueryText -
  *	  add a "Query Text" node that contains the actual text of the query
  *
@@ -765,8 +814,9 @@ report_triggers(ResultRelInfo *rInfo, bool show_relname, ExplainState *es)
 				ExplainPropertyText("Constraint Name", conname, es);
 			ExplainPropertyText("Relation", relname, es);
 			if (es->timing)
-				ExplainPropertyFloat("Time", 1000.0 * instr->total, 3, es);
-			ExplainPropertyFloat("Calls", instr->ntuples, 0, es);
+				ExplainPropertyFloat("Time", "ms", 1000.0 * instr->total, 3,
+									 es);
+			ExplainPropertyFloat("Calls", NULL, instr->ntuples, 0, es);
 		}
 
 		if (conname)
@@ -1368,10 +1418,14 @@ ExplainNode(PlanState *planstate, List *ancestors,
 		}
 		else
 		{
-			ExplainPropertyFloat("Startup Cost", plan->startup_cost, 2, es);
-			ExplainPropertyFloat("Total Cost", plan->total_cost, 2, es);
-			ExplainPropertyFloat("Plan Rows", plan->plan_rows, 0, es);
-			ExplainPropertyInteger("Plan Width", plan->plan_width, es);
+			ExplainPropertyFloat("Startup Cost", NULL, plan->startup_cost,
+								 2, es);
+			ExplainPropertyFloat("Total Cost", NULL, plan->total_cost,
+								 2, es);
+			ExplainPropertyFloat("Plan Rows", NULL, plan->plan_rows,
+								 0, es);
+			ExplainPropertyInteger("Plan Width", NULL, plan->plan_width,
+								   es);
 		}
 	}
 
@@ -1392,8 +1446,8 @@ ExplainNode(PlanState *planstate, List *ancestors,
 		planstate->instrument && planstate->instrument->nloops > 0)
 	{
 		double		nloops = planstate->instrument->nloops;
-		double		startup_sec = 1000.0 * planstate->instrument->startup / nloops;
-		double		total_sec = 1000.0 * planstate->instrument->total / nloops;
+		double		startup_ms = 1000.0 * planstate->instrument->startup / nloops;
+		double		total_ms = 1000.0 * planstate->instrument->total / nloops;
 		double		rows = planstate->instrument->ntuples / nloops;
 
 		if (es->format == EXPLAIN_FORMAT_TEXT)
@@ -1401,7 +1455,7 @@ ExplainNode(PlanState *planstate, List *ancestors,
 			if (es->timing)
 				appendStringInfo(es->str,
 								 " (actual time=%.3f..%.3f rows=%.0f loops=%.0f)",
-								 startup_sec, total_sec, rows, nloops);
+								 startup_ms, total_ms, rows, nloops);
 			else
 				appendStringInfo(es->str,
 								 " (actual rows=%.0f loops=%.0f)",
@@ -1411,11 +1465,13 @@ ExplainNode(PlanState *planstate, List *ancestors,
 		{
 			if (es->timing)
 			{
-				ExplainPropertyFloat("Actual Startup Time", startup_sec, 3, es);
-				ExplainPropertyFloat("Actual Total Time", total_sec, 3, es);
+				ExplainPropertyFloat("Actual Startup Time", "s", startup_ms,
+									 3, es);
+				ExplainPropertyFloat("Actual Total Time", "s", total_ms,
+									 3, es);
 			}
-			ExplainPropertyFloat("Actual Rows", rows, 0, es);
-			ExplainPropertyFloat("Actual Loops", nloops, 0, es);
+			ExplainPropertyFloat("Actual Rows", NULL, rows, 0, es);
+			ExplainPropertyFloat("Actual Loops", NULL, nloops, 0, es);
 		}
 	}
 	else if (es->analyze)
@@ -1426,11 +1482,11 @@ ExplainNode(PlanState *planstate, List *ancestors,
 		{
 			if (es->timing)
 			{
-				ExplainPropertyFloat("Actual Startup Time", 0.0, 3, es);
-				ExplainPropertyFloat("Actual Total Time", 0.0, 3, es);
+				ExplainPropertyFloat("Actual Startup Time", "ms", 0.0, 3, es);
+				ExplainPropertyFloat("Actual Total Time", "ms", 0.0, 3, es);
 			}
-			ExplainPropertyFloat("Actual Rows", 0.0, 0, es);
-			ExplainPropertyFloat("Actual Loops", 0.0, 0, es);
+			ExplainPropertyFloat("Actual Rows", NULL, 0.0, 0, es);
+			ExplainPropertyFloat("Actual Loops", NULL, 0.0, 0, es);
 		}
 	}
 
@@ -1488,8 +1544,8 @@ ExplainNode(PlanState *planstate, List *ancestors,
 				show_instrumentation_count("Rows Removed by Filter", 1,
 										   planstate, es);
 			if (es->analyze)
-				ExplainPropertyLong("Heap Fetches",
-									((IndexOnlyScanState *) planstate)->ioss_HeapFetches, es);
+				ExplainPropertyFloat("Heap Fetches", NULL,
+									 planstate->instrument->ntuples2, 0, es);
 			break;
 		case T_BitmapIndexScan:
 			show_scan_qual(((BitmapIndexScan *) plan)->indexqualorig,
@@ -1511,7 +1567,8 @@ ExplainNode(PlanState *planstate, List *ancestors,
 		case T_SampleScan:
 			show_tablesample(((SampleScan *) plan)->tablesample,
 							 planstate, ancestors, es);
-			/* FALL THRU to print additional fields the same as SeqScan */
+			/* fall through to print additional fields the same as SeqScan */
+			/* FALLTHROUGH */
 		case T_SeqScan:
 		case T_ValuesScan:
 		case T_CteScan:
@@ -1531,7 +1588,7 @@ ExplainNode(PlanState *planstate, List *ancestors,
 				if (plan->qual)
 					show_instrumentation_count("Rows Removed by Filter", 1,
 											   planstate, es);
-				ExplainPropertyInteger("Workers Planned",
+				ExplainPropertyInteger("Workers Planned", NULL,
 									   gather->num_workers, es);
 
 				/* Show params evaluated at gather node */
@@ -1543,7 +1600,7 @@ ExplainNode(PlanState *planstate, List *ancestors,
 					int			nworkers;
 
 					nworkers = ((GatherState *) planstate)->nworkers_launched;
-					ExplainPropertyInteger("Workers Launched",
+					ExplainPropertyInteger("Workers Launched", NULL,
 										   nworkers, es);
 				}
 				if (gather->single_copy || es->format != EXPLAIN_FORMAT_TEXT)
@@ -1558,7 +1615,7 @@ ExplainNode(PlanState *planstate, List *ancestors,
 				if (plan->qual)
 					show_instrumentation_count("Rows Removed by Filter", 1,
 											   planstate, es);
-				ExplainPropertyInteger("Workers Planned",
+				ExplainPropertyInteger("Workers Planned", NULL,
 									   gm->num_workers, es);
 
 				/* Show params evaluated at gather-merge node */
@@ -1570,7 +1627,7 @@ ExplainNode(PlanState *planstate, List *ancestors,
 					int			nworkers;
 
 					nworkers = ((GatherMergeState *) planstate)->nworkers_launched;
-					ExplainPropertyInteger("Workers Launched",
+					ExplainPropertyInteger("Workers Launched", NULL,
 										   nworkers, es);
 				}
 			}
@@ -1767,14 +1824,14 @@ ExplainNode(PlanState *planstate, List *ancestors,
 		{
 			Instrumentation *instrument = &w->instrument[n];
 			double		nloops = instrument->nloops;
-			double		startup_sec;
-			double		total_sec;
+			double		startup_ms;
+			double		total_ms;
 			double		rows;
 
 			if (nloops <= 0)
 				continue;
-			startup_sec = 1000.0 * instrument->startup / nloops;
-			total_sec = 1000.0 * instrument->total / nloops;
+			startup_ms = 1000.0 * instrument->startup / nloops;
+			total_ms = 1000.0 * instrument->total / nloops;
 			rows = instrument->ntuples / nloops;
 
 			if (es->format == EXPLAIN_FORMAT_TEXT)
@@ -1784,7 +1841,7 @@ ExplainNode(PlanState *planstate, List *ancestors,
 				if (es->timing)
 					appendStringInfo(es->str,
 									 "actual time=%.3f..%.3f rows=%.0f loops=%.0f\n",
-									 startup_sec, total_sec, rows, nloops);
+									 startup_ms, total_ms, rows, nloops);
 				else
 					appendStringInfo(es->str,
 									 "actual rows=%.0f loops=%.0f\n",
@@ -1802,15 +1859,17 @@ ExplainNode(PlanState *planstate, List *ancestors,
 					opened_group = true;
 				}
 				ExplainOpenGroup("Worker", NULL, true, es);
-				ExplainPropertyInteger("Worker Number", n, es);
+				ExplainPropertyInteger("Worker Number", NULL, n, es);
 
 				if (es->timing)
 				{
-					ExplainPropertyFloat("Actual Startup Time", startup_sec, 3, es);
-					ExplainPropertyFloat("Actual Total Time", total_sec, 3, es);
+					ExplainPropertyFloat("Actual Startup Time", "ms",
+										 startup_ms, 3, es);
+					ExplainPropertyFloat("Actual Total Time", "ms",
+										 total_ms, 3, es);
 				}
-				ExplainPropertyFloat("Actual Rows", rows, 0, es);
-				ExplainPropertyFloat("Actual Loops", nloops, 0, es);
+				ExplainPropertyFloat("Actual Rows", NULL, rows, 0, es);
+				ExplainPropertyFloat("Actual Loops", NULL, nloops, 0, es);
 
 				if (es->buffers)
 					show_buffer_usage(es, &instrument->bufusage);
@@ -1862,28 +1921,33 @@ ExplainNode(PlanState *planstate, List *ancestors,
 	switch (nodeTag(plan))
 	{
 		case T_ModifyTable:
-			ExplainMemberNodes(((ModifyTable *) plan)->plans,
-							   ((ModifyTableState *) planstate)->mt_plans,
+			ExplainMemberNodes(((ModifyTableState *) planstate)->mt_plans,
+							   ((ModifyTableState *) planstate)->mt_nplans,
+							   list_length(((ModifyTable *) plan)->plans),
 							   ancestors, es);
 			break;
 		case T_Append:
-			ExplainMemberNodes(((Append *) plan)->appendplans,
-							   ((AppendState *) planstate)->appendplans,
+			ExplainMemberNodes(((AppendState *) planstate)->appendplans,
+							   ((AppendState *) planstate)->as_nplans,
+							   list_length(((Append *) plan)->appendplans),
 							   ancestors, es);
 			break;
 		case T_MergeAppend:
-			ExplainMemberNodes(((MergeAppend *) plan)->mergeplans,
-							   ((MergeAppendState *) planstate)->mergeplans,
+			ExplainMemberNodes(((MergeAppendState *) planstate)->mergeplans,
+							   ((MergeAppendState *) planstate)->ms_nplans,
+							   list_length(((MergeAppend *) plan)->mergeplans),
 							   ancestors, es);
 			break;
 		case T_BitmapAnd:
-			ExplainMemberNodes(((BitmapAnd *) plan)->bitmapplans,
-							   ((BitmapAndState *) planstate)->bitmapplans,
+			ExplainMemberNodes(((BitmapAndState *) planstate)->bitmapplans,
+							   ((BitmapAndState *) planstate)->nplans,
+							   list_length(((BitmapAnd *) plan)->bitmapplans),
 							   ancestors, es);
 			break;
 		case T_BitmapOr:
-			ExplainMemberNodes(((BitmapOr *) plan)->bitmapplans,
-							   ((BitmapOrState *) planstate)->bitmapplans,
+			ExplainMemberNodes(((BitmapOrState *) planstate)->bitmapplans,
+							   ((BitmapOrState *) planstate)->nplans,
+							   list_length(((BitmapOr *) plan)->bitmapplans),
 							   ancestors, es);
 			break;
 		case T_SubqueryScan:
@@ -2445,7 +2509,7 @@ show_sort_info(SortState *sortstate, ExplainState *es)
 		else
 		{
 			ExplainPropertyText("Sort Method", sortMethod, es);
-			ExplainPropertyLong("Sort Space Used", spaceUsed, es);
+			ExplainPropertyInteger("Sort Space Used", "kB", spaceUsed, es);
 			ExplainPropertyText("Sort Space Type", spaceType, es);
 		}
 	}
@@ -2484,9 +2548,9 @@ show_sort_info(SortState *sortstate, ExplainState *es)
 					opened_group = true;
 				}
 				ExplainOpenGroup("Worker", NULL, true, es);
-				ExplainPropertyInteger("Worker Number", n, es);
+				ExplainPropertyInteger("Worker Number", NULL, n, es);
 				ExplainPropertyText("Sort Method", sortMethod, es);
-				ExplainPropertyLong("Sort Space Used", spaceUsed, es);
+				ExplainPropertyInteger("Sort Space Used", "kB", spaceUsed, es);
 				ExplainPropertyText("Sort Space Type", spaceType, es);
 				ExplainCloseGroup("Worker", NULL, true, es);
 			}
@@ -2565,13 +2629,16 @@ show_hash_info(HashState *hashstate, ExplainState *es)
 
 		if (es->format != EXPLAIN_FORMAT_TEXT)
 		{
-			ExplainPropertyLong("Hash Buckets", hinstrument.nbuckets, es);
-			ExplainPropertyLong("Original Hash Buckets",
-								hinstrument.nbuckets_original, es);
-			ExplainPropertyLong("Hash Batches", hinstrument.nbatch, es);
-			ExplainPropertyLong("Original Hash Batches",
-								hinstrument.nbatch_original, es);
-			ExplainPropertyLong("Peak Memory Usage", spacePeakKb, es);
+			ExplainPropertyInteger("Hash Buckets", NULL,
+								   hinstrument.nbuckets, es);
+			ExplainPropertyInteger("Original Hash Buckets", NULL,
+								   hinstrument.nbuckets_original, es);
+			ExplainPropertyInteger("Hash Batches", NULL,
+								   hinstrument.nbatch, es);
+			ExplainPropertyInteger("Original Hash Batches", NULL,
+								   hinstrument.nbatch_original, es);
+			ExplainPropertyInteger("Peak Memory Usage", "kB",
+								   spacePeakKb, es);
 		}
 		else if (hinstrument.nbatch_original != hinstrument.nbatch ||
 				 hinstrument.nbuckets_original != hinstrument.nbuckets)
@@ -2620,15 +2687,15 @@ show_hash2side_info(Hash2SideState *hashstate, ExplainState *es)
 
 		if (es->format != EXPLAIN_FORMAT_TEXT)
 		{
-			ExplainPropertyInteger("Hash Buckets",
+			ExplainPropertyInteger("Hash Buckets", NULL,
 								   hinstrument.nbuckets, es);
-			ExplainPropertyInteger("Original Hash Buckets",
+			ExplainPropertyInteger("Original Hash Buckets", NULL,
 								   hinstrument.nbuckets_original, es);
-			ExplainPropertyInteger("Hash Batches",
+			ExplainPropertyInteger("Hash Batches", NULL,
 								   hinstrument.nbatch, es);
-			ExplainPropertyInteger("Original Hash Batches",
+			ExplainPropertyInteger("Original Hash Batches", NULL,
 								   hinstrument.nbatch_original, es);
-			ExplainPropertyInteger("Peak Memory Usage",
+			ExplainPropertyInteger("Peak Memory Usage", "kB",
 								   spacePeakKb, es);
 		}
 		else if (hinstrument.nbatch_original != hinstrument.nbatch ||
@@ -2662,8 +2729,10 @@ show_tidbitmap_info(BitmapHeapScanState *planstate, ExplainState *es)
 {
 	if (es->format != EXPLAIN_FORMAT_TEXT)
 	{
-		ExplainPropertyLong("Exact Heap Blocks", planstate->exact_pages, es);
-		ExplainPropertyLong("Lossy Heap Blocks", planstate->lossy_pages, es);
+		ExplainPropertyInteger("Exact Heap Blocks", NULL,
+							   planstate->exact_pages, es);
+		ExplainPropertyInteger("Lossy Heap Blocks", NULL,
+							   planstate->lossy_pages, es);
 	}
 	else
 	{
@@ -2705,9 +2774,9 @@ show_instrumentation_count(const char *qlabel, int which,
 	if (nfiltered > 0 || es->format != EXPLAIN_FORMAT_TEXT)
 	{
 		if (nloops > 0)
-			ExplainPropertyFloat(qlabel, nfiltered / nloops, 0, es);
+			ExplainPropertyFloat(qlabel, NULL, nfiltered / nloops, 0, es);
 		else
-			ExplainPropertyFloat(qlabel, 0.0, 0, es);
+			ExplainPropertyFloat(qlabel, NULL, 0.0, 0, es);
 	}
 }
 
@@ -2873,20 +2942,34 @@ show_buffer_usage(ExplainState *es, const BufferUsage *usage)
 	}
 	else
 	{
-		ExplainPropertyLong("Shared Hit Blocks", usage->shared_blks_hit, es);
-		ExplainPropertyLong("Shared Read Blocks", usage->shared_blks_read, es);
-		ExplainPropertyLong("Shared Dirtied Blocks", usage->shared_blks_dirtied, es);
-		ExplainPropertyLong("Shared Written Blocks", usage->shared_blks_written, es);
-		ExplainPropertyLong("Local Hit Blocks", usage->local_blks_hit, es);
-		ExplainPropertyLong("Local Read Blocks", usage->local_blks_read, es);
-		ExplainPropertyLong("Local Dirtied Blocks", usage->local_blks_dirtied, es);
-		ExplainPropertyLong("Local Written Blocks", usage->local_blks_written, es);
-		ExplainPropertyLong("Temp Read Blocks", usage->temp_blks_read, es);
-		ExplainPropertyLong("Temp Written Blocks", usage->temp_blks_written, es);
+		ExplainPropertyInteger("Shared Hit Blocks", NULL,
+							   usage->shared_blks_hit, es);
+		ExplainPropertyInteger("Shared Read Blocks", NULL,
+							   usage->shared_blks_read, es);
+		ExplainPropertyInteger("Shared Dirtied Blocks", NULL,
+							   usage->shared_blks_dirtied, es);
+		ExplainPropertyInteger("Shared Written Blocks", NULL,
+							   usage->shared_blks_written, es);
+		ExplainPropertyInteger("Local Hit Blocks", NULL,
+							   usage->local_blks_hit, es);
+		ExplainPropertyInteger("Local Read Blocks", NULL,
+							   usage->local_blks_read, es);
+		ExplainPropertyInteger("Local Dirtied Blocks", NULL,
+							   usage->local_blks_dirtied, es);
+		ExplainPropertyInteger("Local Written Blocks", NULL,
+							   usage->local_blks_written, es);
+		ExplainPropertyInteger("Temp Read Blocks", NULL,
+							   usage->temp_blks_read, es);
+		ExplainPropertyInteger("Temp Written Blocks", NULL,
+							   usage->temp_blks_written, es);
 		if (track_io_timing)
 		{
-			ExplainPropertyFloat("I/O Read Time", INSTR_TIME_GET_MILLISEC(usage->blk_read_time), 3, es);
-			ExplainPropertyFloat("I/O Write Time", INSTR_TIME_GET_MILLISEC(usage->blk_write_time), 3, es);
+			ExplainPropertyFloat("I/O Read Time", "ms",
+								 INSTR_TIME_GET_MILLISEC(usage->blk_read_time),
+								 3, es);
+			ExplainPropertyFloat("I/O Write Time", "ms",
+								 INSTR_TIME_GET_MILLISEC(usage->blk_write_time),
+								 3, es);
 		}
 	}
 }
@@ -3186,10 +3269,10 @@ show_modifytable_info(ModifyTableState *mtstate, List *ancestors,
 
 	if (node->onConflictAction != ONCONFLICT_NONE)
 	{
-		ExplainProperty("Conflict Resolution",
-						node->onConflictAction == ONCONFLICT_NOTHING ?
-						"NOTHING" : "UPDATE",
-						false, es);
+		ExplainPropertyText("Conflict Resolution",
+							node->onConflictAction == ONCONFLICT_NOTHING ?
+							"NOTHING" : "UPDATE",
+							es);
 
 		/*
 		 * Don't display arbiter indexes at all when DO NOTHING variant
@@ -3217,11 +3300,13 @@ show_modifytable_info(ModifyTableState *mtstate, List *ancestors,
 
 			/* count the number of source rows */
 			total = mtstate->mt_plans[0]->instrument->ntuples;
-			other_path = mtstate->ps.instrument->nfiltered2;
+			other_path = mtstate->ps.instrument->ntuples2;
 			insert_path = total - other_path;
 
-			ExplainPropertyFloat("Tuples Inserted", insert_path, 0, es);
-			ExplainPropertyFloat("Conflicting Tuples", other_path, 0, es);
+			ExplainPropertyFloat("Tuples Inserted", NULL,
+								 insert_path, 0, es);
+			ExplainPropertyFloat("Conflicting Tuples", NULL,
+								 other_path, 0, es);
 		}
 	}
 
@@ -3235,18 +3320,28 @@ show_modifytable_info(ModifyTableState *mtstate, List *ancestors,
  *
  * The ancestors list should already contain the immediate parent of these
  * plans.
- *
- * Note: we don't actually need to examine the Plan list members, but
- * we need the list in order to determine the length of the PlanState array.
+*
+* nsubnodes indicates the number of items in the planstates array.
+* nplans indicates the original number of subnodes in the Plan, some of these
+* may have been pruned by the run-time pruning code.
  */
 static void
-ExplainMemberNodes(List *plans, PlanState **planstates,
+ExplainMemberNodes(PlanState **planstates, int nsubnodes, int nplans,
 				   List *ancestors, ExplainState *es)
 {
-	int			nplans = list_length(plans);
 	int			j;
 
-	for (j = 0; j < nplans; j++)
+	/*
+	 * The number of subnodes being lower than the number of subplans that was
+	 * specified in the plan means that some subnodes have been ignored per
+	 * instruction for the partition pruning code during the executor
+	 * initialization.  To make this a bit less mysterious, we'll indicate
+	 * here that this has happened.
+	 */
+	if (nsubnodes < nplans)
+		ExplainPropertyInteger("Subplans Removed", NULL, nplans - nsubnodes, es);
+
+	for (j = 0; j < nsubnodes; j++)
 		ExplainNode(planstates[j], ancestors,
 					"Member", NULL, es);
 }
@@ -3424,18 +3519,23 @@ ExplainPropertyListNested(const char *qlabel, List *data, ExplainState *es)
  * If "numeric" is true, the value is a number (or other value that
  * doesn't need quoting in JSON).
  *
+ * If unit is is non-NULL the text format will display it after the value.
+ *
  * This usually should not be invoked directly, but via one of the datatype
  * specific routines ExplainPropertyText, ExplainPropertyInteger, etc.
  */
 static void
-ExplainProperty(const char *qlabel, const char *value, bool numeric,
-				ExplainState *es)
+ExplainProperty(const char *qlabel, const char *unit, const char *value,
+				bool numeric, ExplainState *es)
 {
 	switch (es->format)
 	{
 		case EXPLAIN_FORMAT_TEXT:
 			appendStringInfoSpaces(es->str, es->indent * 2);
-			appendStringInfo(es->str, "%s: %s\n", qlabel, value);
+			if (unit)
+				appendStringInfo(es->str, "%s: %s %s\n", qlabel, value, unit);
+			else
+				appendStringInfo(es->str, "%s: %s\n", qlabel, value);
 			break;
 
 		case EXPLAIN_FORMAT_XML:
@@ -3480,31 +3580,20 @@ ExplainProperty(const char *qlabel, const char *value, bool numeric,
 void
 ExplainPropertyText(const char *qlabel, const char *value, ExplainState *es)
 {
-	ExplainProperty(qlabel, value, false, es);
+	ExplainProperty(qlabel, NULL, value, false, es);
 }
 
 /*
  * Explain an integer-valued property.
  */
 void
-ExplainPropertyInteger(const char *qlabel, int value, ExplainState *es)
+ExplainPropertyInteger(const char *qlabel, const char *unit, int64 value,
+					   ExplainState *es)
 {
 	char		buf[32];
 
-	snprintf(buf, sizeof(buf), "%d", value);
-	ExplainProperty(qlabel, buf, true, es);
-}
-
-/*
- * Explain a long-integer-valued property.
- */
-void
-ExplainPropertyLong(const char *qlabel, long value, ExplainState *es)
-{
-	char		buf[32];
-
-	snprintf(buf, sizeof(buf), "%ld", value);
-	ExplainProperty(qlabel, buf, true, es);
+	snprintf(buf, sizeof(buf), INT64_FORMAT, value);
+	ExplainProperty(qlabel, unit, buf, true, es);
 }
 
 /*
@@ -3512,13 +3601,14 @@ ExplainPropertyLong(const char *qlabel, long value, ExplainState *es)
  * fractional digits.
  */
 void
-ExplainPropertyFloat(const char *qlabel, double value, int ndigits,
-					 ExplainState *es)
+ExplainPropertyFloat(const char *qlabel, const char *unit, double value,
+					 int ndigits, ExplainState *es)
 {
-	char		buf[256];
+	char	   *buf;
 
-	snprintf(buf, sizeof(buf), "%.*f", ndigits, value);
-	ExplainProperty(qlabel, buf, true, es);
+	buf = psprintf("%.*f", ndigits, value);
+	ExplainProperty(qlabel, unit, buf, true, es);
+	pfree(buf);
 }
 
 /*
@@ -3527,7 +3617,7 @@ ExplainPropertyFloat(const char *qlabel, double value, int ndigits,
 void
 ExplainPropertyBool(const char *qlabel, bool value, ExplainState *es)
 {
-	ExplainProperty(qlabel, value ? "true" : "false", true, es);
+	ExplainProperty(qlabel, NULL, value ? "true" : "false", true, es);
 }
 
 /*

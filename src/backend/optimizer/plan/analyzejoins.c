@@ -42,6 +42,7 @@ static bool rel_is_distinct_for(PlannerInfo *root, RelOptInfo *rel,
 					List *clause_list);
 static Oid	distinct_col_search(int colno, List *colnos, List *opids);
 static bool is_innerrel_unique_for(PlannerInfo *root,
+					   Relids joinrelids,
 					   Relids outerrelids,
 					   RelOptInfo *innerrel,
 					   JoinType jointype,
@@ -253,8 +254,7 @@ join_is_removable(PlannerInfo *root, SpecialJoinInfo *sjinfo)
 		 * above the outer join, even if it references no other rels (it might
 		 * be from WHERE, for example).
 		 */
-		if (restrictinfo->is_pushed_down ||
-			!bms_equal(restrictinfo->required_relids, joinrelids))
+		if (RINFO_IS_PUSHED_DOWN(restrictinfo, joinrelids))
 		{
 			/*
 			 * If such a clause actually references the inner rel then join
@@ -422,8 +422,7 @@ remove_rel_from_query(PlannerInfo *root, int relid, Relids joinrelids)
 
 		remove_join_clause_from_rels(root, rinfo, rinfo->required_relids);
 
-		if (rinfo->is_pushed_down ||
-			!bms_equal(rinfo->required_relids, joinrelids))
+		if (RINFO_IS_PUSHED_DOWN(rinfo, joinrelids))
 		{
 			/* Recheck that qual doesn't actually reference the target rel */
 			Assert(!bms_is_member(relid, rinfo->clause_relids));
@@ -567,7 +566,8 @@ reduce_unique_semijoins(PlannerInfo *root)
 						innerrel->joininfo);
 
 		/* Test whether the innerrel is unique for those clauses. */
-		if (!innerrel_is_unique(root, sjinfo->min_lefthand, innerrel,
+		if (!innerrel_is_unique(root,
+								joinrelids, sjinfo->min_lefthand, innerrel,
 								JOIN_SEMI, restrictlist, true))
 			continue;
 
@@ -949,7 +949,8 @@ distinct_col_search(int colno, List *colnos, List *opids)
  *
  * We need an actual RelOptInfo for the innerrel, but it's sufficient to
  * identify the outerrel by its Relids.  This asymmetry supports use of this
- * function before joinrels have been built.
+ * function before joinrels have been built.  (The caller is expected to
+ * also supply the joinrelids, just to save recalculating that.)
  *
  * The proof must be made based only on clauses that will be "joinquals"
  * rather than "otherquals" at execution.  For an inner join there's no
@@ -968,6 +969,7 @@ distinct_col_search(int colno, List *colnos, List *opids)
  */
 bool
 innerrel_is_unique(PlannerInfo *root,
+				   Relids joinrelids,
 				   Relids outerrelids,
 				   RelOptInfo *innerrel,
 				   JoinType jointype,
@@ -1016,7 +1018,7 @@ innerrel_is_unique(PlannerInfo *root,
 	}
 
 	/* No cached information, so try to make the proof. */
-	if (is_innerrel_unique_for(root, outerrelids, innerrel,
+	if (is_innerrel_unique_for(root, joinrelids, outerrelids, innerrel,
 							   jointype, restrictlist))
 	{
 		/*
@@ -1075,6 +1077,7 @@ innerrel_is_unique(PlannerInfo *root,
  */
 static bool
 is_innerrel_unique_for(PlannerInfo *root,
+					   Relids joinrelids,
 					   Relids outerrelids,
 					   RelOptInfo *innerrel,
 					   JoinType jointype,
@@ -1098,7 +1101,8 @@ is_innerrel_unique_for(PlannerInfo *root,
 		 * As noted above, if it's a pushed-down clause and we're at an outer
 		 * join, we can't use it.
 		 */
-		if (restrictinfo->is_pushed_down && IS_OUTER_JOIN(jointype))
+		if (IS_OUTER_JOIN(jointype) &&
+			RINFO_IS_PUSHED_DOWN(restrictinfo, joinrelids))
 			continue;
 
 		/* Ignore if it's not a mergejoinable clause */

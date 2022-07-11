@@ -72,6 +72,15 @@
 # define gettimeofday(a,b) gettimeofday(a)
 #endif
 
+/* Define to 1 if you have the `ASN1_STRING_get0_data' function. */
+/* #undef HAVE_ASN1_STRING_GET0_DATA */
+
+/* Define to 1 if you have the `BIO_get_data' function. */
+/* #undef HAVE_BIO_GET_DATA */
+
+/* Define to 1 if you have the `BIO_meth_new' function. */
+/* #undef HAVE_BIO_METH_NEW */
+
 /* Define to 1 if you have the `cbrt' function. */
 //#define HAVE_CBRT 1
 
@@ -98,6 +107,22 @@
    don't. */
 #define HAVE_DECL_F_FULLFSYNC 0
 
+/* Define to 1 if you have the declaration of `LLVMGetHostCPUName', and to 0
+   if you don't. */
+#define HAVE_DECL_LLVMGETHOSTCPUNAME 0
+
+/* Define to 1 if you have the declaration of `LLVMOrcGetSymbolAddressIn', and
+   to 0 if you don't. */
+#define HAVE_DECL_LLVMORCGETSYMBOLADDRESSIN 0
+
+/* Define to 1 if you have the declaration of `LLVMOrcRegisterGDB', and to 0
+   if you don't. */
+#define HAVE_DECL_LLVMORCREGISTERGDB 0
+
+/* Define to 1 if you have the declaration of `LLVMOrcRegisterPerf', and to 0
+   if you don't. */
+#define HAVE_DECL_LLVMORCREGISTERPERF 0
+
 /* Define to 1 if you have the declaration of `snprintf', and to 0 if you
    don't. */
 #define HAVE_DECL_SNPRINTF 1
@@ -105,6 +130,14 @@
 /* Define to 1 if you have the declaration of `strnlen', and to 0 if you
    don't. */
 #define HAVE_DECL_STRNLEN 1
+
+/* Define to 1 if you have the declaration of `strtoll', and to 0 if you
+   don't. */
+#define HAVE_DECL_STRTOLL 1
+
+/* Define to 1 if you have the declaration of `strtoull', and to 0 if you
+   don't. */
+#define HAVE_DECL_STRTOULL 1
 
 /* Define to 1 if you have the declaration of `vsnprintf', and to 0 if you
    don't. */
@@ -209,6 +242,9 @@
 /* Define to 1 if you have the <ldap.h> header file. */
 /* #undef HAVE_LDAP_H */
 
+/* Define to 1 if you have the `ldap_initialize' function. */
+/* #undef HAVE_LDAP_INITIALIZE */
+
 /* Define to 1 if you have the `crypto' library (-lcrypto). */
 /* #undef HAVE_LIBCRYPTO */
 
@@ -236,6 +272,11 @@
 /* Define to 1 if `long int' works and is 64 bits. */
 /* #undef HAVE_LONG_INT_64 */
 
+/* Define to 1 if the system has the type `long long int'. */
+#if (_MSC_VER > 1200)
+#define HAVE_LONG_LONG_INT 1
+#endif
+
 /* Define to 1 if `long long int' works and is 64 bits. */
 #if (_MSC_VER > 1200)
 #define HAVE_LONG_LONG_INT_64 1
@@ -258,6 +299,9 @@
 
 /* Define to 1 if you have the <netinet/tcp.h> header file. */
 /* #undef HAVE_NETINET_TCP_H */
+
+/* Define to 1 if you have the `OPENSSL_init_ssl' function. */
+/* #undef HAVE_OPENSSL_INIT_SSL */
 
 /* Define to 1 if you have the <pam/pam_appl.h> header file. */
 /* #undef HAVE_PAM_PAM_APPL_H */
@@ -332,8 +376,16 @@
 /* Define to 1 if you have the `srandom' function. */
 /* #undef HAVE_SRANDOM */
 
+/* Define to 1 if you have the `SSL_clear_options' function. */
+#define HAVE_SSL_CLEAR_OPTIONS 1
+
 /* Define to 1 if you have the `SSL_get_current_compression' function. */
 #define HAVE_SSL_GET_CURRENT_COMPRESSION 1
+
+/* Define to 1 if stdbool.h conforms to C99. */
+#if (_MSC_VER >= 1800)
+#define HAVE_STDBOOL_H 1
+#endif
 
 /* Define to 1 if you have the <stdint.h> header file. */
 /* #undef HAVE_STDINT_H */
@@ -359,16 +411,22 @@
 #define HAVE_STRONG_RANDOM 1
 
 /* Define to 1 if you have the `strtoll' function. */
-//#define HAVE_STRTOLL 1
-
-/* Define to 1 if you have the `strtoq' function. */
-/* #undef HAVE_STRTOQ */
+#ifdef HAVE_LONG_LONG_INT_64
+#define HAVE_STRTOLL 1
+/* Before VS2013, use Microsoft's nonstandard equivalent function */
+#if (_MSC_VER < 1800)
+#define strtoll _strtoi64
+#endif
+#endif
 
 /* Define to 1 if you have the `strtoull' function. */
-//#define HAVE_STRTOULL 1
-
-/* Define to 1 if you have the `strtouq' function. */
-/* #undef HAVE_STRTOUQ */
+#ifdef HAVE_LONG_LONG_INT_64
+#define HAVE_STRTOULL 1
+/* Before VS2013, use Microsoft's nonstandard equivalent function */
+#if (_MSC_VER < 1800)
+#define strtoull _strtoui64
+#endif
+#endif
 
 /* Define to 1 if the system has the type `struct addrinfo'. */
 #if (_MSC_VER > 1200)
@@ -503,6 +561,12 @@
 /* Define to 1 if you have the <winldap.h> header file. */
 /* #undef HAVE_WINLDAP_H */
 
+/* Define to 1 if you have the `X509_get_signature_nid' function. */
+#define HAVE_X509_GET_SIGNATURE_NID 1
+
+/* Define to 1 if the system has the type `_Bool'. */
+/* #undef HAVE__BOOL */
+
 /* Define to 1 if your compiler understands __builtin_bswap16. */
 /* #undef HAVE__BUILTIN_BSWAP16 */
 
@@ -536,7 +600,7 @@
 /* Define to 1 if your compiler understands __VA_ARGS__ in macros. */
 #define HAVE__VA_ARGS 1
 
-/* Define to the appropriate snprintf length modifier for 64-bit ints. */
+/* Define to the appropriate printf length modifier for 64-bit ints. */
 #define INT64_MODIFIER "ll"
 
 /* Define to 1 if `locale_t' requires <xlocale.h>. */
@@ -558,10 +622,10 @@
 #define PACKAGE_NAME "PostgreSQL"
 
 /* Define to the full name and version of this package. */
-#define PACKAGE_STRING "PostgreSQL 11devel"
+#define PACKAGE_STRING "PostgreSQL 11beta2"
 
 /* Define to the version of this package. */
-#define PACKAGE_VERSION "11devel"
+#define PACKAGE_VERSION "11beta2"
 
 /* Define to the name of a signed 128-bit integer type. */
 #undef PG_INT128_TYPE
@@ -570,7 +634,7 @@
 #define PG_INT64_TYPE long long int
 
 /* PostgreSQL version as a string */
-#define PG_VERSION "11devel"
+#define PG_VERSION "11beta2"
 
 /* PostgreSQL version as a number */
 #define PG_VERSION_NUM 110000
@@ -584,6 +648,9 @@
 
 /* A string containing the version number, platform, and C compiler */
 #define PG_VERSION_STR "Uninitialized version string (win32)"
+
+/* The size of `bool', as computed by sizeof. */
+#define SIZEOF_BOOL 1
 
 /* AgensGraph version as a string */
 #define AG_VERSION "2.1.3"
@@ -630,6 +697,9 @@
 /* Define to 1 to build with LDAP support. (--with-ldap) */
 /* #undef USE_LDAP */
 
+/* Define to 1 to build with LLVM based JIT support. (--with-llvm) */
+/* #undef USE_LLVM */
+
 /* Define to select named POSIX semaphores. */
 /* #undef USE_NAMED_POSIX_SEMAPHORES */
 
@@ -645,7 +715,7 @@
 /* Use replacement snprintf() functions. */
 #define USE_REPL_SNPRINTF 1
 
-/* Define to 1 to use Intel SSE 4.2 CRC instructions with a runtime check. */
+/* Define to 1 to use software CRC-32C implementation (slicing-by-8). */
 #if (_MSC_VER < 1500)
 #define USE_SLICING_BY_8_CRC32C 1
 #endif
@@ -653,7 +723,7 @@
 /* Define to 1 use Intel SSE 4.2 CRC instructions. */
 /* #undef USE_SSE42_CRC32C */
 
-/* Define to 1 to use Intel SSSE 4.2 CRC instructions with a runtime check. */
+/* Define to 1 to use Intel SSE 4.2 CRC instructions with a runtime check. */
 #if (_MSC_VER >= 1500)
 #define USE_SSE42_CRC32C_WITH_RUNTIME_CHECK
 #endif

@@ -24,7 +24,6 @@
 #include "access/htup_details.h"
 #include "catalog/indexing.h"
 #include "catalog/pg_inherits.h"
-#include "catalog/pg_inherits_fn.h"
 #include "parser/parse_type.h"
 #include "storage/lmgr.h"
 #include "utils/builtins.h"
@@ -451,7 +450,7 @@ StoreSingleInheritance(Oid relationId, Oid parentOid, int32 seqNumber)
 bool
 DeleteInheritsTuple(Oid inhrelid, Oid inhparent)
 {
-	bool	found = false;
+	bool		found = false;
 	Relation	catalogRelation;
 	ScanKeyData key;
 	SysScanDesc scan;

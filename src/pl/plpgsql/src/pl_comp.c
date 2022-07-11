@@ -20,7 +20,6 @@
 #include "access/htup_details.h"
 #include "catalog/namespace.h"
 #include "catalog/pg_proc.h"
-#include "catalog/pg_proc_fn.h"
 #include "catalog/pg_type.h"
 #include "funcapi.h"
 #include "nodes/makefuncs.h"
@@ -275,6 +274,7 @@ do_compile(FunctionCallInfo fcinfo,
 	bool		isnull;
 	char	   *proc_source;
 	HeapTuple	typeTup;
+	Form_pg_type typeStruct;
 	PLpgSQL_variable *var;
 	PLpgSQL_rec *rec;
 	int			i;
@@ -341,11 +341,12 @@ do_compile(FunctionCallInfo fcinfo,
 	 * per-function memory context, so it can be reclaimed easily.
 	 */
 	func_cxt = AllocSetContextCreate(TopMemoryContext,
-									 "PL/pgSQL function context",
+									 "PL/pgSQL function",
 									 ALLOCSET_DEFAULT_SIZES);
 	plpgsql_compile_tmp_cxt = MemoryContextSwitchTo(func_cxt);
 
 	function->fn_signature = format_procedure(fcinfo->flinfo->fn_oid);
+	MemoryContextSetIdentifier(func_cxt, function->fn_signature);
 	function->fn_oid = fcinfo->flinfo->fn_oid;
 	function->fn_xmin = HeapTupleHeaderGetRawXmin(procTup->t_data);
 	function->fn_tid = procTup->t_self;
@@ -364,6 +365,8 @@ do_compile(FunctionCallInfo fcinfo,
 		function->fn_is_trigger = PLPGSQL_EVENT_TRIGGER;
 	else
 		function->fn_is_trigger = PLPGSQL_NOT_TRIGGER;
+
+	function->fn_prokind = procStruct->prokind;
 
 	/*
 	 * Initialize the compiler, particularly the namespace stack.  The
@@ -472,11 +475,11 @@ do_compile(FunctionCallInfo fcinfo,
 			/*
 			 * If there's just one OUT parameter, out_param_varno points
 			 * directly to it.  If there's more than one, build a row that
-			 * holds all of them.
+			 * holds all of them.  Procedures return a row even for one OUT
+			 * parameter.
 			 */
-			if (num_out_args == 1)
-				function->out_param_varno = out_arg_variables[0]->dno;
-			else if (num_out_args > 1)
+			if (num_out_args > 1 ||
+				(num_out_args == 1 && function->fn_prokind == PROKIND_PROCEDURE))
 			{
 				PLpgSQL_row *row = build_row_from_vars(out_arg_variables,
 													   num_out_args);
@@ -484,6 +487,8 @@ do_compile(FunctionCallInfo fcinfo,
 				plpgsql_adddatum((PLpgSQL_datum *) row);
 				function->out_param_varno = row->dno;
 			}
+			else if (num_out_args == 1)
+				function->out_param_varno = out_arg_variables[0]->dno;
 
 			/*
 			 * Check for a polymorphic returntype. If found, use the actual
@@ -529,55 +534,50 @@ do_compile(FunctionCallInfo fcinfo,
 			/*
 			 * Lookup the function's return type
 			 */
-			if (rettypeid)
+			typeTup = SearchSysCache1(TYPEOID, ObjectIdGetDatum(rettypeid));
+			if (!HeapTupleIsValid(typeTup))
+				elog(ERROR, "cache lookup failed for type %u", rettypeid);
+			typeStruct = (Form_pg_type) GETSTRUCT(typeTup);
+
+			/* Disallow pseudotype result, except VOID or RECORD */
+			/* (note we already replaced polymorphic types) */
+			if (typeStruct->typtype == TYPTYPE_PSEUDO)
 			{
-				Form_pg_type typeStruct;
-
-				typeTup = SearchSysCache1(TYPEOID, ObjectIdGetDatum(rettypeid));
-				if (!HeapTupleIsValid(typeTup))
-					elog(ERROR, "cache lookup failed for type %u", rettypeid);
-				typeStruct = (Form_pg_type) GETSTRUCT(typeTup);
-
-				/* Disallow pseudotype result, except VOID or RECORD */
-				/* (note we already replaced polymorphic types) */
-				if (typeStruct->typtype == TYPTYPE_PSEUDO)
-				{
-					if (rettypeid == VOIDOID ||
-						rettypeid == RECORDOID)
-						 /* okay */ ;
-					else if (rettypeid == TRIGGEROID || rettypeid == EVTTRIGGEROID)
-						ereport(ERROR,
-								(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-								 errmsg("trigger functions can only be called as triggers")));
-					else
-						ereport(ERROR,
-								(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-								 errmsg("PL/pgSQL functions cannot return type %s",
-										format_type_be(rettypeid))));
-				}
-
-				function->fn_retistuple = type_is_rowtype(rettypeid);
-				function->fn_retisdomain = (typeStruct->typtype == TYPTYPE_DOMAIN);
-				function->fn_retbyval = typeStruct->typbyval;
-				function->fn_rettyplen = typeStruct->typlen;
-
-				/*
-				 * install $0 reference, but only for polymorphic return
-				 * types, and not when the return is specified through an
-				 * output parameter.
-				 */
-				if (IsPolymorphicType(procStruct->prorettype) &&
-					num_out_args == 0)
-				{
-					(void) plpgsql_build_variable("$0", 0,
-												  build_datatype(typeTup,
-																 -1,
-																 function->fn_input_collation),
-												  true);
-				}
-
-				ReleaseSysCache(typeTup);
+				if (rettypeid == VOIDOID ||
+					rettypeid == RECORDOID)
+					 /* okay */ ;
+				else if (rettypeid == TRIGGEROID || rettypeid == EVTTRIGGEROID)
+					ereport(ERROR,
+							(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+							 errmsg("trigger functions can only be called as triggers")));
+				else
+					ereport(ERROR,
+							(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+							 errmsg("PL/pgSQL functions cannot return type %s",
+									format_type_be(rettypeid))));
 			}
+
+			function->fn_retistuple = type_is_rowtype(rettypeid);
+			function->fn_retisdomain = (typeStruct->typtype == TYPTYPE_DOMAIN);
+			function->fn_retbyval = typeStruct->typbyval;
+			function->fn_rettyplen = typeStruct->typlen;
+
+			/*
+			 * install $0 reference, but only for polymorphic return types,
+			 * and not when the return is specified through an output
+			 * parameter.
+			 */
+			if (IsPolymorphicType(procStruct->prorettype) &&
+				num_out_args == 0)
+			{
+				(void) plpgsql_build_variable("$0", 0,
+											  build_datatype(typeTup,
+															 -1,
+															 function->fn_input_collation),
+											  true);
+			}
+
+			ReleaseSysCache(typeTup);
 			break;
 
 		case PLPGSQL_DML_TRIGGER:
@@ -890,6 +890,7 @@ plpgsql_compile_inline(char *proc_source)
 	function->fn_retset = false;
 	function->fn_retistuple = false;
 	function->fn_retisdomain = false;
+	function->fn_prokind = PROKIND_FUNCTION;
 	/* a bit of hardwired knowledge about type VOID here */
 	function->fn_retbyval = true;
 	function->fn_rettyplen = sizeof(int32);
@@ -2452,7 +2453,7 @@ plpgsql_HashTableInit(void)
 	memset(&ctl, 0, sizeof(ctl));
 	ctl.keysize = sizeof(PLpgSQL_func_hashkey);
 	ctl.entrysize = sizeof(plpgsql_HashEnt);
-	plpgsql_HashTable = hash_create("PLpgSQL function cache",
+	plpgsql_HashTable = hash_create("PLpgSQL function hash",
 									FUNCS_PER_USER,
 									&ctl,
 									HASH_ELEM | HASH_BLOBS);

@@ -60,10 +60,10 @@
 #endif
 
 #include "access/xlog_internal.h"
-#include "catalog/catalog.h"
-#include "catalog/pg_authid.h"
-#include "catalog/pg_class.h"
-#include "catalog/pg_collation.h"
+#include "catalog/pg_authid_d.h"
+#include "catalog/pg_class_d.h" /* pgrminclude ignore */
+#include "catalog/pg_collation_d.h"
+#include "common/file_perm.h"
 #include "common/file_utils.h"
 #include "common/restricted_token.h"
 #include "common/username.h"
@@ -265,6 +265,7 @@ static void make_postgres(FILE *cmdfd);
 static void trapsig(int signum);
 static void check_ok(void);
 static char *escape_quotes(const char *src);
+static char *escape_quotes_bki(const char *src);
 static int	locale_date_order(const char *locale);
 static void check_locale_name(int category, const char *locale,
 				  char **canonname);
@@ -324,6 +325,10 @@ do { \
 		output_failed = true, output_errno = errno; \
 } while (0)
 
+/*
+ * Escape single quotes and backslashes, suitably for insertions into
+ * configuration files or SQL E'' strings.
+ */
 static char *
 escape_quotes(const char *src)
 {
@@ -334,6 +339,52 @@ escape_quotes(const char *src)
 		fprintf(stderr, _("%s: out of memory\n"), progname);
 		exit(1);
 	}
+	return result;
+}
+
+/*
+ * Escape a field value to be inserted into the BKI data.
+ * Here, we first run the value through escape_quotes (which
+ * will be inverted by the backend's scanstr() function) and
+ * then overlay special processing of double quotes, which
+ * bootscanner.l will only accept as data if converted to octal
+ * representation ("\042").  We always wrap the value in double
+ * quotes, even if that isn't strictly necessary.
+ */
+static char *
+escape_quotes_bki(const char *src)
+{
+	char	   *result;
+	char	   *data = escape_quotes(src);
+	char	   *resultp;
+	char	   *datap;
+	int			nquotes = 0;
+
+	/* count double quotes in data */
+	datap = data;
+	while ((datap = strchr(datap, '"')) != NULL)
+	{
+		nquotes++;
+		datap++;
+	}
+
+	result = (char *) pg_malloc(strlen(data) + 3 + nquotes * 3);
+	resultp = result;
+	*resultp++ = '"';
+	for (datap = data; *datap; datap++)
+	{
+		if (*datap == '"')
+		{
+			strcpy(resultp, "\\042");
+			resultp += 4;
+		}
+		else
+			*resultp++ = *datap;
+	}
+	*resultp++ = '"';
+	*resultp = '\0';
+
+	free(data);
 	return result;
 }
 
@@ -938,7 +989,7 @@ test_config_settings(void)
 #define MIN_BUFS_FOR_CONNS(nconns)	((nconns) * 10)
 
 	static const int trial_conns[] = {
-		100, 50, 40, 30, 20, 10
+		100, 50, 40, 30, 20
 	};
 	static const int trial_bufs[] = {
 		16384, 8192, 4096, 3584, 3072, 2560, 2048, 1536,
@@ -1032,12 +1083,12 @@ static char *
 pretty_wal_size(int segment_count)
 {
 	int			sz = wal_segment_size_mb * segment_count;
-	char	   *result = pg_malloc(11);
+	char	   *result = pg_malloc(14);
 
 	if ((sz % 1024) == 0)
-		snprintf(result, 11, "%dGB", sz / 1024);
+		snprintf(result, 14, "%dGB", sz / 1024);
 	else
-		snprintf(result, 11, "%dMB", sz);
+		snprintf(result, 14, "%dMB", sz);
 
 	return result;
 }
@@ -1190,10 +1241,23 @@ setup_config(void)
 								  "password_encryption = scram-sha-256");
 	}
 
+	/*
+	 * If group access has been enabled for the cluster then it makes sense to
+	 * ensure that the log files also allow group access.  Otherwise a backup
+	 * from a user in the group would fail if the log files were not
+	 * relocated.
+	 */
+	if (pg_dir_create_mode == PG_DIR_MODE_GROUP)
+	{
+		conflines = replace_token(conflines,
+								  "#log_file_mode = 0600",
+								  "log_file_mode = 0640");
+	}
+
 	snprintf(path, sizeof(path), "%s/postgresql.conf", pg_data);
 
 	writefile(path, conflines);
-	if (chmod(path, S_IRUSR | S_IWUSR) != 0)
+	if (chmod(path, pg_file_create_mode) != 0)
 	{
 		fprintf(stderr, _("%s: could not change permissions of \"%s\": %s\n"),
 				progname, path, strerror(errno));
@@ -1213,7 +1277,7 @@ setup_config(void)
 	sprintf(path, "%s/postgresql.auto.conf", pg_data);
 
 	writefile(path, autoconflines);
-	if (chmod(path, S_IRUSR | S_IWUSR) != 0)
+	if (chmod(path, pg_file_create_mode) != 0)
 	{
 		fprintf(stderr, _("%s: could not change permissions of \"%s\": %s\n"),
 				progname, path, strerror(errno));
@@ -1300,7 +1364,7 @@ setup_config(void)
 	snprintf(path, sizeof(path), "%s/pg_hba.conf", pg_data);
 
 	writefile(path, conflines);
-	if (chmod(path, S_IRUSR | S_IWUSR) != 0)
+	if (chmod(path, pg_file_create_mode) != 0)
 	{
 		fprintf(stderr, _("%s: could not change permissions of \"%s\": %s\n"),
 				progname, path, strerror(errno));
@@ -1316,7 +1380,7 @@ setup_config(void)
 	snprintf(path, sizeof(path), "%s/pg_ident.conf", pg_data);
 
 	writefile(path, conflines);
-	if (chmod(path, S_IRUSR | S_IWUSR) != 0)
+	if (chmod(path, pg_file_create_mode) != 0)
 	{
 		fprintf(stderr, _("%s: could not change permissions of \"%s\": %s\n"),
 				progname, path, strerror(errno));
@@ -1378,13 +1442,17 @@ bootstrap_template1(void)
 	bki_lines = replace_token(bki_lines, "FLOAT8PASSBYVAL",
 							  FLOAT8PASSBYVAL ? "true" : "false");
 
-	bki_lines = replace_token(bki_lines, "POSTGRES", escape_quotes(username));
+	bki_lines = replace_token(bki_lines, "POSTGRES",
+							  escape_quotes_bki(username));
 
-	bki_lines = replace_token(bki_lines, "ENCODING", encodingid_to_string(encodingid));
+	bki_lines = replace_token(bki_lines, "ENCODING",
+							  encodingid_to_string(encodingid));
 
-	bki_lines = replace_token(bki_lines, "LC_COLLATE", escape_quotes(lc_collate));
+	bki_lines = replace_token(bki_lines, "LC_COLLATE",
+							  escape_quotes_bki(lc_collate));
 
-	bki_lines = replace_token(bki_lines, "LC_CTYPE", escape_quotes(lc_ctype));
+	bki_lines = replace_token(bki_lines, "LC_CTYPE",
+							  escape_quotes_bki(lc_ctype));
 
 	/*
 	 * Pass correct LC_xxx environment to bootstrap.
@@ -1624,6 +1692,8 @@ setup_sysviews(FILE *cmdfd)
 		free(*line);
 	}
 
+	PG_CMD_PUTS("\n\n");
+
 	free(sysviews_setup);
 }
 
@@ -1662,16 +1732,17 @@ setup_description(FILE *cmdfd)
 
 	/* Create default descriptions for operator implementation functions */
 	PG_CMD_PUTS("WITH funcdescs AS ( "
-				"SELECT p.oid as p_oid, oprname, "
-				"coalesce(obj_description(o.oid, 'pg_operator'),'') as opdesc "
+				"SELECT p.oid as p_oid, o.oid as o_oid, oprname "
 				"FROM pg_proc p JOIN pg_operator o ON oprcode = p.oid ) "
 				"INSERT INTO pg_description "
 				"  SELECT p_oid, 'pg_proc'::regclass, 0, "
 				"    'implementation of ' || oprname || ' operator' "
 				"  FROM funcdescs "
-				"  WHERE opdesc NOT LIKE 'deprecated%' AND "
-				"  NOT EXISTS (SELECT 1 FROM pg_description "
-				"    WHERE objoid = p_oid AND classoid = 'pg_proc'::regclass);\n\n");
+				"  WHERE NOT EXISTS (SELECT 1 FROM pg_description "
+				"   WHERE objoid = p_oid AND classoid = 'pg_proc'::regclass) "
+				"  AND NOT EXISTS (SELECT 1 FROM pg_description "
+				"   WHERE objoid = o_oid AND classoid = 'pg_operator'::regclass"
+				"         AND description LIKE 'deprecated%');\n\n");
 
 	/*
 	 * Even though the tables are temp, drop them explicitly so they don't get
@@ -1735,6 +1806,8 @@ setup_dictionary(FILE *cmdfd)
 		free(*line);
 	}
 
+	PG_CMD_PUTS("\n\n");
+
 	free(conv_lines);
 }
 
@@ -1791,7 +1864,7 @@ setup_privileges(FILE *cmdfd)
 		"        relacl IS NOT NULL"
 		"        AND relkind IN (" CppAsString2(RELKIND_RELATION) ", "
 		CppAsString2(RELKIND_VIEW) ", " CppAsString2(RELKIND_MATVIEW) ", "
-		CppAsString2(RELKIND_SEQUENCE) ");",
+		CppAsString2(RELKIND_SEQUENCE) ");\n\n",
 		"INSERT INTO pg_init_privs "
 		"  (objoid, classoid, objsubid, initprivs, privtype)"
 		"    SELECT"
@@ -1807,7 +1880,7 @@ setup_privileges(FILE *cmdfd)
 		"        pg_attribute.attacl IS NOT NULL"
 		"        AND pg_class.relkind IN (" CppAsString2(RELKIND_RELATION) ", "
 		CppAsString2(RELKIND_VIEW) ", " CppAsString2(RELKIND_MATVIEW) ", "
-		CppAsString2(RELKIND_SEQUENCE) ");",
+		CppAsString2(RELKIND_SEQUENCE) ");\n\n",
 		"INSERT INTO pg_init_privs "
 		"  (objoid, classoid, objsubid, initprivs, privtype)"
 		"    SELECT"
@@ -1819,7 +1892,7 @@ setup_privileges(FILE *cmdfd)
 		"    FROM"
 		"        pg_proc"
 		"    WHERE"
-		"        proacl IS NOT NULL;",
+		"        proacl IS NOT NULL;\n\n",
 		"INSERT INTO pg_init_privs "
 		"  (objoid, classoid, objsubid, initprivs, privtype)"
 		"    SELECT"
@@ -1831,7 +1904,7 @@ setup_privileges(FILE *cmdfd)
 		"    FROM"
 		"        pg_type"
 		"    WHERE"
-		"        typacl IS NOT NULL;",
+		"        typacl IS NOT NULL;\n\n",
 		"INSERT INTO pg_init_privs "
 		"  (objoid, classoid, objsubid, initprivs, privtype)"
 		"    SELECT"
@@ -1843,7 +1916,7 @@ setup_privileges(FILE *cmdfd)
 		"    FROM"
 		"        pg_language"
 		"    WHERE"
-		"        lanacl IS NOT NULL;",
+		"        lanacl IS NOT NULL;\n\n",
 		"INSERT INTO pg_init_privs "
 		"  (objoid, classoid, objsubid, initprivs, privtype)"
 		"    SELECT"
@@ -1856,7 +1929,7 @@ setup_privileges(FILE *cmdfd)
 		"    FROM"
 		"        pg_largeobject_metadata"
 		"    WHERE"
-		"        lomacl IS NOT NULL;",
+		"        lomacl IS NOT NULL;\n\n",
 		"INSERT INTO pg_init_privs "
 		"  (objoid, classoid, objsubid, initprivs, privtype)"
 		"    SELECT"
@@ -1868,7 +1941,7 @@ setup_privileges(FILE *cmdfd)
 		"    FROM"
 		"        pg_namespace"
 		"    WHERE"
-		"        nspacl IS NOT NULL;",
+		"        nspacl IS NOT NULL;\n\n",
 		"INSERT INTO pg_init_privs "
 		"  (objoid, classoid, objsubid, initprivs, privtype)"
 		"    SELECT"
@@ -1881,7 +1954,7 @@ setup_privileges(FILE *cmdfd)
 		"    FROM"
 		"        pg_foreign_data_wrapper"
 		"    WHERE"
-		"        fdwacl IS NOT NULL;",
+		"        fdwacl IS NOT NULL;\n\n",
 		"INSERT INTO pg_init_privs "
 		"  (objoid, classoid, objsubid, initprivs, privtype)"
 		"    SELECT"
@@ -1894,7 +1967,7 @@ setup_privileges(FILE *cmdfd)
 		"    FROM"
 		"        pg_foreign_server"
 		"    WHERE"
-		"        srvacl IS NOT NULL;",
+		"        srvacl IS NOT NULL;\n\n",
 		NULL
 	};
 
@@ -1948,6 +2021,8 @@ setup_schema(FILE *cmdfd)
 		PG_CMD_PUTS(*line);
 		free(*line);
 	}
+
+	PG_CMD_PUTS("\n\n");
 
 	free(lines);
 
@@ -2334,6 +2409,7 @@ usage(const char *progname)
 	printf(_("      --auth-local=METHOD   default authentication method for local-socket connections\n"));
 	printf(_(" [-D, --pgdata=]DATADIR     location for this database cluster\n"));
 	printf(_("  -E, --encoding=ENCODING   set default encoding for new databases\n"));
+	printf(_("  -g, --allow-group-access  allow group read/execute on data directory\n"));
 	printf(_("      --locale=LOCALE       set default locale for new databases\n"));
 	printf(_("      --lc-collate=, --lc-ctype=, --lc-messages=LOCALE\n"
 			 "      --lc-monetary=, --lc-numeric=, --lc-time=LOCALE\n"
@@ -2346,7 +2422,7 @@ usage(const char *progname)
 	printf(_("  -U, --username=NAME       database superuser name\n"));
 	printf(_("  -W, --pwprompt            prompt for a password for the new superuser\n"));
 	printf(_("  -X, --waldir=WALDIR       location for the write-ahead log directory\n"));
-	printf(_("      --wal-segsize=SIZE    size of wal segment size\n"));
+	printf(_("      --wal-segsize=SIZE    size of WAL segments, in megabytes\n"));
 	printf(_("\nLess commonly used options:\n"));
 	printf(_("  -d, --debug               generate lots of debugging output\n"));
 	printf(_("  -k, --data-checksums      use data page checksums\n"));
@@ -2719,7 +2795,7 @@ create_data_directory(void)
 				   pg_data);
 			fflush(stdout);
 
-			if (pg_mkdir_p(pg_data, S_IRWXU) != 0)
+			if (pg_mkdir_p(pg_data, pg_dir_create_mode) != 0)
 			{
 				fprintf(stderr, _("%s: could not create directory \"%s\": %s\n"),
 						progname, pg_data, strerror(errno));
@@ -2737,7 +2813,7 @@ create_data_directory(void)
 				   pg_data);
 			fflush(stdout);
 
-			if (chmod(pg_data, S_IRWXU) != 0)
+			if (chmod(pg_data, pg_dir_create_mode) != 0)
 			{
 				fprintf(stderr, _("%s: could not change permissions of directory \"%s\": %s\n"),
 						progname, pg_data, strerror(errno));
@@ -2805,7 +2881,7 @@ create_xlog_or_symlink(void)
 					   xlog_dir);
 				fflush(stdout);
 
-				if (pg_mkdir_p(xlog_dir, S_IRWXU) != 0)
+				if (pg_mkdir_p(xlog_dir, pg_dir_create_mode) != 0)
 				{
 					fprintf(stderr, _("%s: could not create directory \"%s\": %s\n"),
 							progname, xlog_dir, strerror(errno));
@@ -2823,7 +2899,7 @@ create_xlog_or_symlink(void)
 					   xlog_dir);
 				fflush(stdout);
 
-				if (chmod(xlog_dir, S_IRWXU) != 0)
+				if (chmod(xlog_dir, pg_dir_create_mode) != 0)
 				{
 					fprintf(stderr, _("%s: could not change permissions of directory \"%s\": %s\n"),
 							progname, xlog_dir, strerror(errno));
@@ -2873,7 +2949,7 @@ create_xlog_or_symlink(void)
 	else
 	{
 		/* Without -X option, just make the subdirectory normally */
-		if (mkdir(subdirloc, S_IRWXU) < 0)
+		if (mkdir(subdirloc, pg_dir_create_mode) < 0)
 		{
 			fprintf(stderr, _("%s: could not create directory \"%s\": %s\n"),
 					progname, subdirloc, strerror(errno));
@@ -2909,7 +2985,13 @@ initialize_data_directory(void)
 
 	setup_signals();
 
-	umask(S_IRWXG | S_IRWXO);
+	/*
+	 * Set mask based on requested PGDATA permissions.  pg_mode_mask, and
+	 * friends like pg_dir_create_mode, are set to owner-only by default and
+	 * then updated if -g is passed in by calling SetDataDirectoryCreatePerm()
+	 * when parsing our options (see above).
+	 */
+	umask(pg_mode_mask);
 
 	create_data_directory();
 
@@ -2929,7 +3011,7 @@ initialize_data_directory(void)
 		 * The parent directory already exists, so we only need mkdir() not
 		 * pg_mkdir_p() here, which avoids some failure modes; cf bug #13853.
 		 */
-		if (mkdir(path, S_IRWXU) < 0)
+		if (mkdir(path, pg_dir_create_mode) < 0)
 		{
 			fprintf(stderr, _("%s: could not create directory \"%s\": %s\n"),
 					progname, path, strerror(errno));
@@ -3043,6 +3125,7 @@ main(int argc, char *argv[])
 		{"waldir", required_argument, NULL, 'X'},
 		{"wal-segsize", required_argument, NULL, 12},
 		{"data-checksums", no_argument, NULL, 'k'},
+		{"allow-group-access", no_argument, NULL, 'g'},
 		{NULL, 0, NULL, 0}
 	};
 
@@ -3084,7 +3167,7 @@ main(int argc, char *argv[])
 
 	/* process command-line options */
 
-	while ((c = getopt_long(argc, argv, "dD:E:kL:nNU:WA:sST:X:", long_options, &option_index)) != -1)
+	while ((c = getopt_long(argc, argv, "dD:E:kL:nNU:WA:sST:X:g", long_options, &option_index)) != -1)
 	{
 		switch (c)
 		{
@@ -3178,6 +3261,9 @@ main(int argc, char *argv[])
 			case 12:
 				str_wal_segment_size_mb = pg_strdup(optarg);
 				break;
+			case 'g':
+				SetDataDirectoryCreatePerm(PG_DIR_MODE_GROUP);
+				break;
 			default:
 				/* getopt_long already emitted a complaint */
 				fprintf(stderr, _("Try \"%s --help\" for more information.\n"),
@@ -3251,11 +3337,17 @@ main(int argc, char *argv[])
 		wal_segment_size_mb = strtol(str_wal_segment_size_mb, &endptr, 10);
 
 		/* verify that wal segment size is valid */
-		if (*endptr != '\0' ||
-			!IsValidWalSegSize(wal_segment_size_mb * 1024 * 1024))
+		if (endptr == str_wal_segment_size_mb || *endptr != '\0')
 		{
 			fprintf(stderr,
-					_("%s: --wal-segsize must be a power of two between 1 and 1024\n"),
+					_("%s: argument of --wal-segsize must be a number\n"),
+					progname);
+			exit(1);
+		}
+		if (!IsValidWalSegSize(wal_segment_size_mb * 1024 * 1024))
+		{
+			fprintf(stderr,
+					_("%s: argument of --wal-segsize must be a power of 2 between 1 and 1024\n"),
 					progname);
 			exit(1);
 		}

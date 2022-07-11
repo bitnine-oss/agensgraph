@@ -558,7 +558,7 @@ EOF
       <listitem>
       <para>
       Set the field separator for unaligned output to a zero byte.  This is
-      equvalent to <command>\pset fieldsep_zero</command>.
+      equivalent to <command>\pset fieldsep_zero</command>.
       </para>
       </listitem>
     </varlistentry>
@@ -733,6 +733,18 @@ testdb=&gt;
     terminate a command.  Thus commands can be spread over several lines for
     clarity. If the command was sent and executed without error, the results
     of the command are displayed on the screen.
+    </para>
+
+    <para>
+    If untrusted users have access to a database that has not adopted a
+    <link linkend="ddl-schemas-patterns">secure schema usage pattern</link>,
+    begin your session by removing publicly-writable schemas
+    from <varname>search_path</varname>.  One can
+    add <literal>options=-csearch_path=</literal> to the connection string or
+    issue <literal>SELECT pg_catalog.set_config('search_path', '',
+    false)</literal> before other SQL commands.  This consideration is not
+    specific to <application>psql</application>; it applies to every interface
+    for executing arbitrary SQL commands.
     </para>
 
     <para>
@@ -2157,7 +2169,7 @@ hello 10
       </varlistentry>
 
 
-      <varlistentry>
+      <varlistentry id="psql-metacommand-if">
         <term><literal>\if</literal> <replaceable class="parameter">expression</replaceable></term>
         <term><literal>\elif</literal> <replaceable class="parameter">expression</replaceable></term>
         <term><literal>\else</literal></term>

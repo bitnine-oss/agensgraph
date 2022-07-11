@@ -42,7 +42,7 @@ typedef dshash_hash (*dshash_hash_function) (const void *v, size_t size,
  * Compare and hash functions must be supplied even when attaching, because we
  * can't safely share function pointers between backends in general.  Either
  * the arg variants or the non-arg variants should be supplied; the other
- * function pointers should be NULL.  If the arg varants are supplied then the
+ * function pointers should be NULL.  If the arg variants are supplied then the
  * user data pointer supplied to the create and attach functions will be
  * passed to the hash and compare functions.
  */
@@ -55,7 +55,7 @@ typedef struct dshash_parameters
 	int			tranche_id;		/* The tranche ID to use for locks */
 } dshash_parameters;
 
-/* Forward declaration of private types for use only by dht.c. */
+/* Forward declaration of private types for use only by dshash.c. */
 struct dshash_table_item;
 typedef struct dshash_table_item dshash_table_item;
 

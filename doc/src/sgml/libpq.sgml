@@ -67,6 +67,22 @@
 
    <warning>
     <para>
+     If untrusted users have access to a database that has not adopted a
+     <link linkend="ddl-schemas-patterns">secure schema usage pattern</link>,
+     begin each session by removing publicly-writable schemas from
+     <varname>search_path</varname>.  One can set parameter key
+     word <literal>options</literal> to
+     value <literal>-csearch_path=</literal>.  Alternately, one can
+     issue <literal>PQexec(<replaceable>conn</replaceable>, "SELECT
+     pg_catalog.set_config('search_path', '', false)")</literal> after
+     connecting.  This consideration is not specific
+     to <application>libpq</application>; it applies to every interface for
+     executing arbitrary SQL commands.
+    </para>
+   </warning>
+
+   <warning>
+    <para>
      On Unix, forking a process with open libpq connections can lead to
      unpredictable results because the parent and child processes share
      the same sockets and operating system resources.  For this reason,
@@ -907,12 +923,12 @@ postgresql://%2Fvar%2Flib%2Fpostgresql/dbname
      <para>
        In the connection URI format, you can list multiple <literal>host:port</literal> pairs
        separated by commas, in the <literal>host</literal> component of the URI. In either
-       format, a single hostname can also translate to multiple network addresses. A
+       format, a single host name can also translate to multiple network addresses. A
        common example of this is a host that has both an IPv4 and an IPv6 address.
      </para>
 
      <para>
-       When multiple hosts are specified, or when a single hostname is
+       When multiple hosts are specified, or when a single host name is
        translated to multiple addresses,  all the hosts and addresses will be
        tried in order, until one succeeds. If none of the hosts can be reached,
        the connection fails. If a connection is established successfully, but
@@ -1226,14 +1242,18 @@ postgresql://%2Fvar%2Flib%2Fpostgresql/dbname
       <term><literal>scram_channel_binding</literal></term>
       <listitem>
        <para>
-        Specifies the channel binding type to use with SCRAM authentication.
-        The list of channel binding types supported by server are listed in
-        <xref linkend="sasl-authentication"/>.  An empty value specifies that
-        the client will not use channel binding.  The default value is
-        <literal>tls-unique</literal>.
+        Specifies the channel binding type to use with SCRAM
+        authentication.  While <acronym>SCRAM</acronym> alone prevents
+        the replay of transmitted hashed passwords, channel binding also
+        prevents man-in-the-middle attacks.
        </para>
 
        <para>
+        The list of channel binding types supported by the server are
+        listed in <xref linkend="sasl-authentication"/>.  An empty value
+        specifies that the client will not use channel binding.  If this
+        parameter is not specified, <literal>tls-unique</literal> is used,
+        if supported by both server and client.
         Channel binding is only supported on SSL connections.  If the
         connection is not using SSL, then this setting is ignored.
        </para>
@@ -1243,6 +1263,64 @@ postgresql://%2Fvar%2Flib%2Fpostgresql/dbname
         use, there should not be a need to choose a channel binding type other
         than the default one.
        </para>
+      </listitem>
+     </varlistentry>
+
+     <varlistentry id="libpq-connect-replication" xreflabel="replication">
+      <term><literal>replication</literal></term>
+      <listitem>
+      <para>
+       This option determines whether the connection should use the
+       replication protocol instead of the normal protocol.  This is what
+       PostgreSQL replication connections as well as tools such as
+       <application>pg_basebackup</application> use internally, but it can
+       also be used by third-party applications.  For a description of the
+       replication protocol, consult <xref linkend="protocol-replication"/>.
+      </para>
+
+      <para>
+       The following values, which are case-insensitive, are supported:
+       <variablelist>
+        <varlistentry>
+         <term>
+          <literal>true</literal>, <literal>on</literal>,
+          <literal>yes</literal>, <literal>1</literal>
+         </term>
+         <listitem>
+          <para>
+           The connection goes into physical replication mode.
+          </para>
+         </listitem>
+        </varlistentry>
+
+        <varlistentry>
+         <term><literal>database</literal></term>
+         <listitem>
+          <para>
+           The connection goes into logical replication mode, connecting to
+           the database specified in the <literal>dbname</literal> parameter.
+          </para>
+         </listitem>
+        </varlistentry>
+
+        <varlistentry>
+         <term>
+          <literal>false</literal>, <literal>off</literal>,
+          <literal>no</literal>, <literal>0</literal>
+         </term>
+         <listitem>
+          <para>
+           The connection is a regular one, which is the default behavior.
+          </para>
+         </listitem>
+        </varlistentry>
+       </variablelist>
+      </para>
+
+      <para>
+       In physical or logical replication mode, only the simple query protocol
+       can be used.
+      </para>
       </listitem>
      </varlistentry>
 
@@ -1364,19 +1442,28 @@ postgresql://%2Fvar%2Flib%2Fpostgresql/dbname
       <term><literal>sslcompression</literal></term>
       <listitem>
        <para>
-        If set to 1 (default), data sent over SSL connections will be
-        compressed.
-        If set to 0, compression will be disabled (this requires
-        <productname>OpenSSL</productname> 1.0.0 or later).
-        This parameter is ignored if a connection without SSL is made,
-        or if the version of <productname>OpenSSL</productname> used does not support
-        it.
+        If set to 1, data sent over SSL connections will be compressed.  If
+        set to 0, compression will be disabled.  The default is 0.  This
+        parameter is ignored if a connection without SSL is made.
        </para>
+
        <para>
-        Compression uses CPU time, but can improve throughput if
-        the network is the bottleneck.
-        Disabling compression can improve response time and throughput
-        if CPU performance is the limiting factor.
+        SSL compression is nowadays considered insecure and its use is no
+        longer recommended.  <productname>OpenSSL</productname> 1.1.0 disables
+        compression by default, and many operating system distributions
+        disable it in prior versions as well, so setting this parameter to on
+        will not have any effect if the server does not accept compression.
+        On the other hand, <productname>OpenSSL</productname> before 1.0.0
+        does not support disabling compression, so this parameter is ignored
+        with those versions, and whether compression is used depends on the
+        server.
+       </para>
+
+       <para>
+        If security is not a primary concern, compression can improve
+        throughput if the network is the bottleneck.  Disabling compression
+        can improve response time and throughput if CPU performance is the
+        limiting factor.
        </para>
       </listitem>
      </varlistentry>
@@ -1609,7 +1696,7 @@ char *PQpass(const PGconn *conn);
 
      <listitem>
       <para>
-       Returns the server host name of the connection.
+       Returns the server host name of the active connection.
        This can be a host name, an IP address, or a directory path if the
        connection is via Unix socket.  (The path case can be distinguished
        because it will always be an absolute path, beginning
@@ -1617,6 +1704,30 @@ char *PQpass(const PGconn *conn);
 <synopsis>
 char *PQhost(const PGconn *conn);
 </synopsis>
+      </para>
+
+      <para>
+       If the connection parameters specified both <literal>host</literal> and
+       <literal>hostaddr</literal>, then <function>PQhost</function> will
+       return the <literal>host</literal> information.  If only
+       <literal>hostaddr</literal> was specified, then that is returned.
+       If multiple hosts were specified in the connection parameters,
+       <function>PQhost</function> returns the host actually connected to.
+      </para>
+
+      <para>
+       <function>PQhost</function> returns <symbol>NULL</symbol> if the
+       <parameter>conn</parameter> argument is <symbol>NULL</symbol>.
+       Otherwise, if there is an error producing the host information (perhaps
+       if the connection has not been fully established or there was an
+       error), it returns an empty string.
+      </para>
+
+      <para>
+       If multiple hosts were specified in the connection parameters, it is
+       not possible to rely on the result of <function>PQhost</function> until
+       the connection is established.  The status of the connection can be
+       checked using the function <function>PQstatus</function>.
       </para>
      </listitem>
     </varlistentry>
@@ -1631,11 +1742,31 @@ char *PQhost(const PGconn *conn);
 
      <listitem>
       <para>
-       Returns the port of the connection.
+       Returns the port of the active connection.
 
 <synopsis>
 char *PQport(const PGconn *conn);
 </synopsis>
+      </para>
+
+      <para>
+       If multiple ports were specified in the connection parameters,
+       <function>PQport</function> returns the port actually connected to.
+      </para>
+
+      <para>
+       <function>PQport</function> returns <symbol>NULL</symbol> if the
+       <parameter>conn</parameter> argument is <symbol>NULL</symbol>.
+       Otherwise, if there is an error producing the port information (perhaps
+       if the connection has not been fully established or there was an
+       error), it returns an empty string.
+      </para>
+
+      <para>
+       If multiple ports were specified in the connection parameters, it is
+       not possible to rely on the result of <function>PQport</function> until
+       the connection is established.  The status of the connection can be
+       checked using the function <function>PQstatus</function>.
       </para>
      </listitem>
     </varlistentry>
@@ -3439,7 +3570,7 @@ Oid PQftype(const PGresult *res,
        You can query the system table <literal>pg_type</literal> to
        obtain the names and properties of the various data types. The
        <acronym>OID</acronym>s of the built-in data types are defined
-       in the file <filename>src/include/catalog/pg_type.h</filename>
+       in the file <filename>src/include/catalog/pg_type_d.h</filename>
        in the source tree.
       </para>
      </listitem>
@@ -6878,7 +7009,8 @@ main(void)
 {
     mydata *data;
     PGresult *res;
-    PGconn *conn = PQconnectdb("dbname = postgres");
+    PGconn *conn =
+        PQconnectdb("dbname=postgres options=-csearch_path=");
 
     if (PQstatus(conn) != CONNECTION_OK)
     {
@@ -8305,6 +8437,22 @@ main(int argc, char **argv)
         exit_nicely(conn);
     }
 
+    /* Set always-secure search path, so malicous users can't take control. */
+    res = PQexec(conn,
+                 "SELECT pg_catalog.set_config('search_path', '', false)");
+    if (PQresultStatus(res) != PGRES_COMMAND_OK)
+    {
+        fprintf(stderr, "SET failed: %s", PQerrorMessage(conn));
+        PQclear(res);
+        exit_nicely(conn);
+    }
+
+    /*
+     * Should PQclear PGresult whenever it is no longer needed to avoid memory
+     * leaks
+     */
+    PQclear(res);
+
     /*
      * Our test case here involves using a cursor, for which we must be inside
      * a transaction block.  We could do the whole thing with a single
@@ -8320,11 +8468,6 @@ main(int argc, char **argv)
         PQclear(res);
         exit_nicely(conn);
     }
-
-    /*
-     * Should PQclear PGresult whenever it is no longer needed to avoid memory
-     * leaks
-     */
     PQclear(res);
 
     /*
@@ -8400,16 +8543,16 @@ main(int argc, char **argv)
  * populate a database with the following commands
  * (provided in src/test/examples/testlibpq2.sql):
  *
+ *   CREATE SCHEMA TESTLIBPQ2;
+ *   SET search_path = TESTLIBPQ2;
  *   CREATE TABLE TBL1 (i int4);
- *
  *   CREATE TABLE TBL2 (i int4);
- *
  *   CREATE RULE r1 AS ON INSERT TO TBL1 DO
  *     (INSERT INTO TBL2 VALUES (new.i); NOTIFY TBL2);
  *
- * and do this four times:
+ * Start this program, then from psql do this four times:
  *
- *   INSERT INTO TBL1 VALUES (10);
+ *   INSERT INTO TESTLIBPQ2.TBL1 VALUES (10);
  */
 
 #ifdef WIN32
@@ -8464,6 +8607,22 @@ main(int argc, char **argv)
         exit_nicely(conn);
     }
 
+    /* Set always-secure search path, so malicous users can't take control. */
+    res = PQexec(conn,
+                 "SELECT pg_catalog.set_config('search_path', '', false)");
+    if (PQresultStatus(res) != PGRES_COMMAND_OK)
+    {
+        fprintf(stderr, "SET failed: %s", PQerrorMessage(conn));
+        PQclear(res);
+        exit_nicely(conn);
+    }
+
+    /*
+     * Should PQclear PGresult whenever it is no longer needed to avoid memory
+     * leaks
+     */
+    PQclear(res);
+
     /*
      * Issue LISTEN command to enable notifications from the rule's NOTIFY.
      */
@@ -8474,11 +8633,6 @@ main(int argc, char **argv)
         PQclear(res);
         exit_nicely(conn);
     }
-
-    /*
-     * should PQclear PGresult whenever it is no longer needed to avoid memory
-     * leaks
-     */
     PQclear(res);
 
     /* Quit after four notifies are received. */
@@ -8545,8 +8699,9 @@ main(int argc, char **argv)
  * Before running this, populate a database with the following commands
  * (provided in src/test/examples/testlibpq3.sql):
  *
+ * CREATE SCHEMA testlibpq3;
+ * SET search_path = testlibpq3;
  * CREATE TABLE test1 (i int4, t text, b bytea);
- *
  * INSERT INTO test1 values (1, 'joe''s place', '\\000\\001\\002\\003\\004');
  * INSERT INTO test1 values (2, 'ho there', '\\004\\003\\002\\001\\000');
  *
@@ -8677,6 +8832,16 @@ main(int argc, char **argv)
                 PQerrorMessage(conn));
         exit_nicely(conn);
     }
+
+    /* Set always-secure search path, so malicous users can't take control. */
+    res = PQexec(conn, "SET search_path = testlibpq3");
+    if (PQresultStatus(res) != PGRES_COMMAND_OK)
+    {
+        fprintf(stderr, "SET failed: %s", PQerrorMessage(conn));
+        PQclear(res);
+        exit_nicely(conn);
+    }
+    PQclear(res);
 
     /*
      * The point of this program is to illustrate use of PQexecParams() with

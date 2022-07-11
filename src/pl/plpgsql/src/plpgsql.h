@@ -125,8 +125,10 @@ typedef enum PLpgSQL_stmt_type
 	PLPGSQL_STMT_FETCH,
 	PLPGSQL_STMT_CLOSE,
 	PLPGSQL_STMT_PERFORM,
+	PLPGSQL_STMT_CALL,
 	PLPGSQL_STMT_COMMIT,
-	PLPGSQL_STMT_ROLLBACK
+	PLPGSQL_STMT_ROLLBACK,
+	PLPGSQL_STMT_SET
 } PLpgSQL_stmt_type;
 
 /*
@@ -509,6 +511,18 @@ typedef struct PLpgSQL_stmt_perform
 } PLpgSQL_stmt_perform;
 
 /*
+ * CALL statement
+ */
+typedef struct PLpgSQL_stmt_call
+{
+	PLpgSQL_stmt_type cmd_type;
+	int			lineno;
+	PLpgSQL_expr *expr;
+	bool		is_call;
+	PLpgSQL_variable *target;
+} PLpgSQL_stmt_call;
+
+/*
  * COMMIT statement
  */
 typedef struct PLpgSQL_stmt_commit
@@ -525,6 +539,16 @@ typedef struct PLpgSQL_stmt_rollback
 	PLpgSQL_stmt_type cmd_type;
 	int			lineno;
 } PLpgSQL_stmt_rollback;
+
+/*
+ * SET statement
+ */
+typedef struct PLpgSQL_stmt_set
+{
+	PLpgSQL_stmt_type cmd_type;
+	int			lineno;
+	PLpgSQL_expr *expr;
+} PLpgSQL_stmt_set;
 
 /*
  * GET DIAGNOSTICS item
@@ -918,6 +942,7 @@ typedef struct PLpgSQL_function
 	bool		fn_retisdomain;
 	bool		fn_retset;
 	bool		fn_readonly;
+	char		fn_prokind;
 
 	int			fn_nargs;
 	int			fn_argvarnos[FUNC_MAX_ARGS];
@@ -966,6 +991,7 @@ typedef struct PLpgSQL_execstate
 	bool		retisset;
 
 	bool		readonly_func;
+	bool		atomic;
 
 	char	   *exitlabel;		/* the "target" label of the current EXIT or
 								 * CONTINUE stmt, if any */
@@ -1181,7 +1207,8 @@ extern void _PG_init(void);
  */
 extern Datum plpgsql_exec_function(PLpgSQL_function *func,
 					  FunctionCallInfo fcinfo,
-					  EState *simple_eval_estate);
+					  EState *simple_eval_estate,
+					  bool atomic);
 extern HeapTuple plpgsql_exec_trigger(PLpgSQL_function *func,
 					 TriggerData *trigdata);
 extern void plpgsql_exec_event_trigger(PLpgSQL_function *func,

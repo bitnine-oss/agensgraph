@@ -784,7 +784,7 @@ createVertex(ModifyGraphState *mgstate, GraphVertex *gvertex, Graphid *vid,
 	 * Check the constraints of the tuple
 	 */
 	if (resultRelInfo->ri_RelationDesc->rd_att->constr != NULL)
-		ExecConstraints(resultRelInfo, elemTupleSlot, estate, false);
+		ExecConstraints(resultRelInfo, elemTupleSlot, estate);
 
 	/*
 	 * insert the tuple normally
@@ -857,7 +857,7 @@ createEdge(ModifyGraphState *mgstate, GraphEdge *gedge, Graphid start,
 	tuple->t_tableOid = RelationGetRelid(resultRelInfo->ri_RelationDesc);
 
 	if (resultRelInfo->ri_RelationDesc->rd_att->constr != NULL)
-		ExecConstraints(resultRelInfo, elemTupleSlot, estate, false);
+		ExecConstraints(resultRelInfo, elemTupleSlot, estate);
 
 	heap_insert(resultRelInfo->ri_RelationDesc, tuple,
 				mgstate->modify_cid + MODIFY_CID_OUTPUT,
@@ -1011,7 +1011,7 @@ deleteElem(ModifyGraphState *mgstate, Datum gid, ItemPointer tid, Oid type)
 	/* see ExecDelete() */
 	result = heap_delete(resultRelationDesc, tid,
 						 mgstate->modify_cid + MODIFY_CID_OUTPUT,
-						 estate->es_crosscheck_snapshot, true, &hufd);
+						 estate->es_crosscheck_snapshot, true, &hufd, false);
 	switch (result)
 	{
 		case HeapTupleSelfUpdated:
@@ -1290,7 +1290,7 @@ updateElemProp(ModifyGraphState *mgstate, Oid elemtype, Datum gid,
 	tuple->t_tableOid = RelationGetRelid(resultRelationDesc);
 
 	if (resultRelationDesc->rd_att->constr)
-		ExecConstraints(resultRelInfo, elemTupleSlot, estate, false);
+		ExecConstraints(resultRelInfo, elemTupleSlot, estate);
 
 	result = heap_update(resultRelationDesc, ctid, tuple,
 						 mgstate->modify_cid + MODIFY_CID_SET,
@@ -1534,7 +1534,7 @@ createMergeVertex(ModifyGraphState *mgstate, GraphVertex *gvertex,
 	tuple->t_tableOid = RelationGetRelid(resultRelInfo->ri_RelationDesc);
 
 	if (resultRelInfo->ri_RelationDesc->rd_att->constr != NULL)
-		ExecConstraints(resultRelInfo, insertSlot, estate, false);
+		ExecConstraints(resultRelInfo, insertSlot, estate);
 
 	heap_insert(resultRelInfo->ri_RelationDesc, tuple,
 				mgstate->modify_cid + MODIFY_CID_OUTPUT,
@@ -1605,7 +1605,7 @@ createMergeEdge(ModifyGraphState *mgstate, GraphEdge *gedge, Graphid start,
 	tuple->t_tableOid = RelationGetRelid(resultRelInfo->ri_RelationDesc);
 
 	if (resultRelInfo->ri_RelationDesc->rd_att->constr != NULL)
-		ExecConstraints(resultRelInfo, insertSlot, estate, false);
+		ExecConstraints(resultRelInfo, insertSlot, estate);
 
 	heap_insert(resultRelInfo->ri_RelationDesc, tuple,
 				mgstate->modify_cid + MODIFY_CID_OUTPUT,

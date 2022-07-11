@@ -102,9 +102,9 @@ my %rel_tags;
 		{
 			my $commit = $1;
 			my $tag    = $2;
-			if ($tag =~ /^REL_\d+_\d+$/
-			    || $tag =~ /^REL\d+_\d+$/
-			    || $tag =~ /^REL\d+_\d+_\d+$/)
+			if (   $tag =~ /^REL_\d+_\d+$/
+				|| $tag =~ /^REL\d+_\d+$/
+				|| $tag =~ /^REL\d+_\d+_\d+$/)
 			{
 				$rel_tags{$commit} = $tag;
 			}
@@ -317,7 +317,8 @@ sub push_commit
 			'message'   => $c->{'message'},
 			'commit'    => $c->{'commit'},
 			'commits'   => [],
-			'timestamp' => $ts };
+			'timestamp' => $ts
+		};
 		push @{ $all_commits{$ht} }, $cc;
 	}
 
@@ -326,11 +327,13 @@ sub push_commit
 		'branch'   => $c->{'branch'},
 		'commit'   => $c->{'commit'},
 		'date'     => $c->{'date'},
-		'last_tag' => $c->{'last_tag'} };
+		'last_tag' => $c->{'last_tag'}
+	};
 	push @{ $cc->{'commits'} }, $smallc;
 	push @{ $all_commits_by_branch{ $c->{'branch'} } }, $cc;
 	$cc->{'branch_position'}{ $c->{'branch'} } =
 	  -1 + @{ $all_commits_by_branch{ $c->{'branch'} } };
+	return;
 }
 
 sub hash_commit
@@ -343,7 +346,7 @@ sub parse_datetime
 {
 	my ($dt) = @_;
 	$dt =~
-/^(\d\d\d\d)-(\d\d)-(\d\d)\s+(\d\d):(\d\d):(\d\d)\s+([-+])(\d\d)(\d\d)$/;
+	  /^(\d\d\d\d)-(\d\d)-(\d\d)\s+(\d\d):(\d\d):(\d\d)\s+([-+])(\d\d)(\d\d)$/;
 	my $gm = Time::Local::timegm($6, $5, $4, $3, $2 - 1, $1);
 	my $tzoffset = ($8 * 60 + $9) * 60;
 	$tzoffset = -$tzoffset if $7 eq '-';
@@ -353,6 +356,7 @@ sub parse_datetime
 sub output_str
 {
 	($oldest_first) ? ($output_line .= sprintf(shift, @_)) : printf(@_);
+	return;
 }
 
 sub output_details
@@ -393,6 +397,7 @@ sub output_details
 		}
 	}
 	output_str("\n");
+	return;
 }
 
 sub usage

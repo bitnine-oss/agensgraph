@@ -24,10 +24,11 @@ $node_master->safe_psql('postgres',
 	qq[CREATE TABLE decoding_test(x integer, y text);]);
 
 $node_master->safe_psql('postgres',
-qq[SELECT pg_create_logical_replication_slot('test_slot', 'test_decoding');]);
+	qq[SELECT pg_create_logical_replication_slot('test_slot', 'test_decoding');]
+);
 
 $node_master->safe_psql('postgres',
-qq[INSERT INTO decoding_test(x,y) SELECT s, s::text FROM generate_series(1,10) s;]
+	qq[INSERT INTO decoding_test(x,y) SELECT s, s::text FROM generate_series(1,10) s;]
 );
 
 # Basic decoding works
@@ -50,7 +51,7 @@ is($result, '', 'Decoding after fast restart repeats no rows');
 # Insert some rows and verify that we get the same results from pg_recvlogical
 # and the SQL interface.
 $node_master->safe_psql('postgres',
-qq[INSERT INTO decoding_test(x,y) SELECT s, s::text FROM generate_series(1,4) s;]
+	qq[INSERT INTO decoding_test(x,y) SELECT s, s::text FROM generate_series(1,4) s;]
 );
 
 my $expected = q{BEGIN
@@ -61,12 +62,12 @@ table public.decoding_test: INSERT: x[integer]:4 y[text]:'4'
 COMMIT};
 
 my $stdout_sql = $node_master->safe_psql('postgres',
-qq[SELECT data FROM pg_logical_slot_peek_changes('test_slot', NULL, NULL, 'include-xids', '0', 'skip-empty-xacts', '1');]
+	qq[SELECT data FROM pg_logical_slot_peek_changes('test_slot', NULL, NULL, 'include-xids', '0', 'skip-empty-xacts', '1');]
 );
 is($stdout_sql, $expected, 'got expected output from SQL decoding session');
 
 my $endpos = $node_master->safe_psql('postgres',
-"SELECT lsn FROM pg_logical_slot_peek_changes('test_slot', NULL, NULL) ORDER BY lsn DESC LIMIT 1;"
+	"SELECT lsn FROM pg_logical_slot_peek_changes('test_slot', NULL, NULL) ORDER BY lsn DESC LIMIT 1;"
 );
 print "waiting to replay $endpos\n";
 
@@ -79,9 +80,8 @@ is($stdout_recv, $expected,
 	'got same expected output from pg_recvlogical decoding session');
 
 $node_master->poll_query_until('postgres',
-"SELECT EXISTS (SELECT 1 FROM pg_replication_slots WHERE slot_name = 'test_slot' AND active_pid IS NULL)"
-)
-  or die "slot never became inactive";
+	"SELECT EXISTS (SELECT 1 FROM pg_replication_slots WHERE slot_name = 'test_slot' AND active_pid IS NULL)"
+) or die "slot never became inactive";
 
 $stdout_recv = $node_master->pg_recvlogical_upto(
 	'postgres', 'test_slot', $endpos, 10,
@@ -95,27 +95,29 @@ $node_master->safe_psql('postgres', 'CREATE DATABASE otherdb');
 
 is( $node_master->psql(
 		'otherdb',
-"SELECT lsn FROM pg_logical_slot_peek_changes('test_slot', NULL, NULL) ORDER BY lsn DESC LIMIT 1;"
+		"SELECT lsn FROM pg_logical_slot_peek_changes('test_slot', NULL, NULL) ORDER BY lsn DESC LIMIT 1;"
 	),
 	3,
 	'replaying logical slot from another database fails');
 
 $node_master->safe_psql('otherdb',
-qq[SELECT pg_create_logical_replication_slot('otherdb_slot', 'test_decoding');]
+	qq[SELECT pg_create_logical_replication_slot('otherdb_slot', 'test_decoding');]
 );
 
 # make sure you can't drop a slot while active
 SKIP:
 {
 
-   # some Windows Perls at least don't like IPC::Run's start/kill_kill regime.
+	# some Windows Perls at least don't like IPC::Run's start/kill_kill regime.
 	skip "Test fails on Windows perl", 2 if $Config{osname} eq 'MSWin32';
 
 	my $pg_recvlogical = IPC::Run::start(
-		[   'pg_recvlogical', '-d', $node_master->connstr('otherdb'),
-			'-S', 'otherdb_slot', '-f', '-', '--start' ]);
+		[
+			'pg_recvlogical', '-d', $node_master->connstr('otherdb'),
+			'-S', 'otherdb_slot', '-f', '-', '--start'
+		]);
 	$node_master->poll_query_until('otherdb',
-"SELECT EXISTS (SELECT 1 FROM pg_replication_slots WHERE slot_name = 'otherdb_slot' AND active_pid IS NOT NULL)"
+		"SELECT EXISTS (SELECT 1 FROM pg_replication_slots WHERE slot_name = 'otherdb_slot' AND active_pid IS NOT NULL)"
 	) or die "slot never became active";
 	is($node_master->psql('postgres', 'DROP DATABASE otherdb'),
 		3, 'dropping a DB with active logical slots fails');
@@ -125,7 +127,7 @@ SKIP:
 }
 
 $node_master->poll_query_until('otherdb',
-"SELECT EXISTS (SELECT 1 FROM pg_replication_slots WHERE slot_name = 'otherdb_slot' AND active_pid IS NULL)"
+	"SELECT EXISTS (SELECT 1 FROM pg_replication_slots WHERE slot_name = 'otherdb_slot' AND active_pid IS NULL)"
 ) or die "slot never became inactive";
 
 is($node_master->psql('postgres', 'DROP DATABASE otherdb'),

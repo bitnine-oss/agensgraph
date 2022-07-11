@@ -2090,7 +2090,7 @@ SELECT ia FROM jsonb_populate_record(NULL::jsbrec, '{"ia": null}') q;
 (1 row)
 
 SELECT ia FROM jsonb_populate_record(NULL::jsbrec, '{"ia": 123}') q;
-ERROR:  expected json array
+ERROR:  expected JSON array
 HINT:  See the value of key "ia".
 SELECT ia FROM jsonb_populate_record(NULL::jsbrec, '{"ia": [1, "2", null, 4]}') q;
       ia      
@@ -2105,10 +2105,10 @@ SELECT ia FROM jsonb_populate_record(NULL::jsbrec, '{"ia": [[1, 2], [3, 4]]}') q
 (1 row)
 
 SELECT ia FROM jsonb_populate_record(NULL::jsbrec, '{"ia": [[1], 2]}') q;
-ERROR:  expected json array
+ERROR:  expected JSON array
 HINT:  See the array element [1] of key "ia".
 SELECT ia FROM jsonb_populate_record(NULL::jsbrec, '{"ia": [[1], [2, 3]]}') q;
-ERROR:  malformed json array
+ERROR:  malformed JSON array
 DETAIL:  Multidimensional arrays must have sub-arrays with matching dimensions.
 SELECT ia FROM jsonb_populate_record(NULL::jsbrec, '{"ia": "{1,2,3}"}') q;
    ia    
@@ -2123,7 +2123,7 @@ SELECT ia1 FROM jsonb_populate_record(NULL::jsbrec, '{"ia1": null}') q;
 (1 row)
 
 SELECT ia1 FROM jsonb_populate_record(NULL::jsbrec, '{"ia1": 123}') q;
-ERROR:  expected json array
+ERROR:  expected JSON array
 HINT:  See the value of key "ia1".
 SELECT ia1 FROM jsonb_populate_record(NULL::jsbrec, '{"ia1": [1, "2", null, 4]}') q;
      ia1      
@@ -2144,7 +2144,7 @@ SELECT ia1d FROM jsonb_populate_record(NULL::jsbrec, '{"ia1d": null}') q;
 (1 row)
 
 SELECT ia1d FROM jsonb_populate_record(NULL::jsbrec, '{"ia1d": 123}') q;
-ERROR:  expected json array
+ERROR:  expected JSON array
 HINT:  See the value of key "ia1d".
 SELECT ia1d FROM jsonb_populate_record(NULL::jsbrec, '{"ia1d": [1, "2", null, 4]}') q;
 ERROR:  value for domain jsb_int_array_1d violates check constraint "jsb_int_array_1d_check"
@@ -2173,10 +2173,10 @@ SELECT ia2 FROM jsonb_populate_record(NULL::jsbrec, '{"ia2": [[], []]}') q;
 (1 row)
 
 SELECT ia2 FROM jsonb_populate_record(NULL::jsbrec, '{"ia2": [[1, 2], [3]]}') q;
-ERROR:  malformed json array
+ERROR:  malformed JSON array
 DETAIL:  Multidimensional arrays must have sub-arrays with matching dimensions.
 SELECT ia2 FROM jsonb_populate_record(NULL::jsbrec, '{"ia2": [[1, 2], 3, 4]}') q;
-ERROR:  expected json array
+ERROR:  expected JSON array
 HINT:  See the array element [1] of key "ia2".
 SELECT ia2d FROM jsonb_populate_record(NULL::jsbrec, '{"ia2d": [[1, "2"], [null, 4]]}') q;
 ERROR:  value for domain jsb_int_array_2d violates check constraint "jsb_int_array_2d_check"
@@ -2217,7 +2217,7 @@ SELECT ia3 FROM jsonb_populate_record(NULL::jsbrec, '{"ia3": [ [[1, 2], [3, 4]],
 (1 row)
 
 SELECT ia3 FROM jsonb_populate_record(NULL::jsbrec, '{"ia3": [ [[1, 2], [3, 4]], [[5, 6], [7, 8], [9, 10]] ]}') q;
-ERROR:  malformed json array
+ERROR:  malformed JSON array
 DETAIL:  Multidimensional arrays must have sub-arrays with matching dimensions.
 SELECT ta FROM jsonb_populate_record(NULL::jsbrec, '{"ta": null}') q;
  ta 
@@ -2226,7 +2226,7 @@ SELECT ta FROM jsonb_populate_record(NULL::jsbrec, '{"ta": null}') q;
 (1 row)
 
 SELECT ta FROM jsonb_populate_record(NULL::jsbrec, '{"ta": 123}') q;
-ERROR:  expected json array
+ERROR:  expected JSON array
 HINT:  See the value of key "ta".
 SELECT ta FROM jsonb_populate_record(NULL::jsbrec, '{"ta": [1, "2", null, 4]}') q;
       ta      
@@ -2235,7 +2235,7 @@ SELECT ta FROM jsonb_populate_record(NULL::jsbrec, '{"ta": [1, "2", null, 4]}') 
 (1 row)
 
 SELECT ta FROM jsonb_populate_record(NULL::jsbrec, '{"ta": [[1, 2, 3], {"k": "v"}]}') q;
-ERROR:  expected json array
+ERROR:  expected JSON array
 HINT:  See the array element [1] of key "ta".
 SELECT c FROM jsonb_populate_record(NULL::jsbrec, '{"c": null}') q;
  c 
@@ -2264,7 +2264,7 @@ SELECT ca FROM jsonb_populate_record(NULL::jsbrec, '{"ca": null}') q;
 (1 row)
 
 SELECT ca FROM jsonb_populate_record(NULL::jsbrec, '{"ca": 123}') q;
-ERROR:  expected json array
+ERROR:  expected JSON array
 HINT:  See the value of key "ca".
 SELECT ca FROM jsonb_populate_record(NULL::jsbrec, '{"ca": [1, "2", null, 4]}') q;
                       ca                       
@@ -2275,7 +2275,7 @@ SELECT ca FROM jsonb_populate_record(NULL::jsbrec, '{"ca": [1, "2", null, 4]}') 
 SELECT ca FROM jsonb_populate_record(NULL::jsbrec, '{"ca": ["aaaaaaaaaaaaaaaa"]}') q;
 ERROR:  value too long for type character(10)
 SELECT ca FROM jsonb_populate_record(NULL::jsbrec, '{"ca": [[1, 2, 3], {"k": "v"}]}') q;
-ERROR:  expected json array
+ERROR:  expected JSON array
 HINT:  See the array element [1] of key "ca".
 SELECT js FROM jsonb_populate_record(NULL::jsbrec, '{"js": null}') q;
  js 
@@ -2368,7 +2368,7 @@ SELECT jsa FROM jsonb_populate_record(NULL::jsbrec, '{"jsa": null}') q;
 (1 row)
 
 SELECT jsa FROM jsonb_populate_record(NULL::jsbrec, '{"jsa": 123}') q;
-ERROR:  expected json array
+ERROR:  expected JSON array
 HINT:  See the value of key "jsa".
 SELECT jsa FROM jsonb_populate_record(NULL::jsbrec, '{"jsa": [1, "2", null, 4]}') q;
         jsa         
@@ -2399,7 +2399,7 @@ SELECT rec FROM jsonb_populate_record(NULL::jsbrec, '{"rec": "(abc,42,01.02.2003
 (1 row)
 
 SELECT reca FROM jsonb_populate_record(NULL::jsbrec, '{"reca": 123}') q;
-ERROR:  expected json array
+ERROR:  expected JSON array
 HINT:  See the value of key "reca".
 SELECT reca FROM jsonb_populate_record(NULL::jsbrec, '{"reca": [1, 2]}') q;
 ERROR:  cannot call populate_composite on a scalar
@@ -2591,7 +2591,7 @@ select * from jsonb_to_record('{"ia": null}') as x(ia _int4);
 (1 row)
 
 select * from jsonb_to_record('{"ia": 123}') as x(ia _int4);
-ERROR:  expected json array
+ERROR:  expected JSON array
 HINT:  See the value of key "ia".
 select * from jsonb_to_record('{"ia": [1, "2", null, 4]}') as x(ia _int4);
       ia      
@@ -2606,10 +2606,10 @@ select * from jsonb_to_record('{"ia": [[1, 2], [3, 4]]}') as x(ia _int4);
 (1 row)
 
 select * from jsonb_to_record('{"ia": [[1], 2]}') as x(ia _int4);
-ERROR:  expected json array
+ERROR:  expected JSON array
 HINT:  See the array element [1] of key "ia".
 select * from jsonb_to_record('{"ia": [[1], [2, 3]]}') as x(ia _int4);
-ERROR:  malformed json array
+ERROR:  malformed JSON array
 DETAIL:  Multidimensional arrays must have sub-arrays with matching dimensions.
 select * from jsonb_to_record('{"ia2": [1, 2, 3]}') as x(ia2 int[][]);
    ia2   
@@ -4122,6 +4122,86 @@ select to_tsvector('english', '{"a": "aaa in bbb ddd ccc", "b": ["the eee fff gg
  'aaa':1 'bbb':3 'ccc':5 'ddd':4 'eee':8 'fff':9 'ggg':10 'hhh':12 'iii':13
 (1 row)
 
+-- jsonb to tsvector with numeric values
+select to_tsvector('english', '{"a": "aaa in bbb ddd ccc", "b": 123, "c": 456}'::jsonb);
+           to_tsvector           
+---------------------------------
+ 'aaa':1 'bbb':3 'ccc':5 'ddd':4
+(1 row)
+
+-- jsonb_to_tsvector
+select jsonb_to_tsvector('english', '{"a": "aaa in bbb", "b": 123, "c": 456, "d": true, "f": false, "g": null}'::jsonb, '"all"');
+                                   jsonb_to_tsvector                                    
+----------------------------------------------------------------------------------------
+ '123':8 '456':12 'aaa':2 'b':6 'bbb':4 'c':10 'd':14 'f':18 'fals':20 'g':22 'true':16
+(1 row)
+
+select jsonb_to_tsvector('english', '{"a": "aaa in bbb", "b": 123, "c": 456, "d": true, "f": false, "g": null}'::jsonb, '"key"');
+       jsonb_to_tsvector        
+--------------------------------
+ 'b':2 'c':4 'd':6 'f':8 'g':10
+(1 row)
+
+select jsonb_to_tsvector('english', '{"a": "aaa in bbb", "b": 123, "c": 456, "d": true, "f": false, "g": null}'::jsonb, '"string"');
+ jsonb_to_tsvector 
+-------------------
+ 'aaa':1 'bbb':3
+(1 row)
+
+select jsonb_to_tsvector('english', '{"a": "aaa in bbb", "b": 123, "c": 456, "d": true, "f": false, "g": null}'::jsonb, '"numeric"');
+ jsonb_to_tsvector 
+-------------------
+ '123':1 '456':3
+(1 row)
+
+select jsonb_to_tsvector('english', '{"a": "aaa in bbb", "b": 123, "c": 456, "d": true, "f": false, "g": null}'::jsonb, '"boolean"');
+ jsonb_to_tsvector 
+-------------------
+ 'fals':3 'true':1
+(1 row)
+
+select jsonb_to_tsvector('english', '{"a": "aaa in bbb", "b": 123, "c": 456, "d": true, "f": false, "g": null}'::jsonb, '["string", "numeric"]');
+        jsonb_to_tsvector        
+---------------------------------
+ '123':5 '456':7 'aaa':1 'bbb':3
+(1 row)
+
+select jsonb_to_tsvector('english', '{"a": "aaa in bbb", "b": 123, "c": 456, "d": true, "f": false, "g": null}'::jsonb, '"all"');
+                                   jsonb_to_tsvector                                    
+----------------------------------------------------------------------------------------
+ '123':8 '456':12 'aaa':2 'b':6 'bbb':4 'c':10 'd':14 'f':18 'fals':20 'g':22 'true':16
+(1 row)
+
+select jsonb_to_tsvector('english', '{"a": "aaa in bbb", "b": 123, "c": 456, "d": true, "f": false, "g": null}'::jsonb, '"key"');
+       jsonb_to_tsvector        
+--------------------------------
+ 'b':2 'c':4 'd':6 'f':8 'g':10
+(1 row)
+
+select jsonb_to_tsvector('english', '{"a": "aaa in bbb", "b": 123, "c": 456, "d": true, "f": false, "g": null}'::jsonb, '"string"');
+ jsonb_to_tsvector 
+-------------------
+ 'aaa':1 'bbb':3
+(1 row)
+
+select jsonb_to_tsvector('english', '{"a": "aaa in bbb", "b": 123, "c": 456, "d": true, "f": false, "g": null}'::jsonb, '"numeric"');
+ jsonb_to_tsvector 
+-------------------
+ '123':1 '456':3
+(1 row)
+
+select jsonb_to_tsvector('english', '{"a": "aaa in bbb", "b": 123, "c": 456, "d": true, "f": false, "g": null}'::jsonb, '"boolean"');
+ jsonb_to_tsvector 
+-------------------
+ 'fals':3 'true':1
+(1 row)
+
+select jsonb_to_tsvector('english', '{"a": "aaa in bbb", "b": 123, "c": 456, "d": true, "f": false, "g": null}'::jsonb, '["string", "numeric"]');
+        jsonb_to_tsvector        
+---------------------------------
+ '123':5 '456':7 'aaa':1 'bbb':3
+(1 row)
+
 -- ts_vector corner cases
 select to_tsvector('""'::jsonb);
  to_tsvector 
@@ -4147,6 +4227,48 @@ select to_tsvector('null'::jsonb);
  
 (1 row)
 
+-- jsonb_to_tsvector corner cases
+select jsonb_to_tsvector('""'::jsonb, '"all"');
+ jsonb_to_tsvector 
+-------------------
+ 
+(1 row)
+
+select jsonb_to_tsvector('{}'::jsonb, '"all"');
+ jsonb_to_tsvector 
+-------------------
+ 
+(1 row)
+
+select jsonb_to_tsvector('[]'::jsonb, '"all"');
+ jsonb_to_tsvector 
+-------------------
+ 
+(1 row)
+
+select jsonb_to_tsvector('null'::jsonb, '"all"');
+ jsonb_to_tsvector 
+-------------------
+ 
+(1 row)
+
+select jsonb_to_tsvector('english', '{"a": "aaa in bbb", "b": 123, "c": 456, "d": true, "f": false, "g": null}'::jsonb, '""');
+ERROR:  wrong flag in flag array: ""
+HINT:  Possible values are: "string", "numeric", "boolean", "key", and "all"
+select jsonb_to_tsvector('english', '{"a": "aaa in bbb", "b": 123, "c": 456, "d": true, "f": false, "g": null}'::jsonb, '{}');
+ERROR:  wrong flag type, only arrays and scalars are allowed
+select jsonb_to_tsvector('english', '{"a": "aaa in bbb", "b": 123, "c": 456, "d": true, "f": false, "g": null}'::jsonb, '[]');
+ jsonb_to_tsvector 
+-------------------
+ 
+(1 row)
+
+select jsonb_to_tsvector('english', '{"a": "aaa in bbb", "b": 123, "c": 456, "d": true, "f": false, "g": null}'::jsonb, 'null');
+ERROR:  flag array element is not a string
+HINT:  Possible values are: "string", "numeric", "boolean", "key", and "all"
+select jsonb_to_tsvector('english', '{"a": "aaa in bbb", "b": 123, "c": 456, "d": true, "f": false, "g": null}'::jsonb, '["all", null]');
+ERROR:  flag array element is not a string
+HINT:  Possible values are: "string", "numeric", "boolean", "key", and "all"
 -- ts_headline for jsonb
 select ts_headline('{"a": "aaa bbb", "b": {"c": "ccc ddd fff", "c1": "ccc1 ddd1"}, "d": ["ggg hhh", "iii jjj"]}'::jsonb, tsquery('bbb & ddd & hhh'));
                                                    ts_headline                                                    
@@ -4189,5 +4311,110 @@ select ts_headline('[]'::jsonb, tsquery('aaa & bbb'));
  ts_headline 
 -------------
  []
+(1 row)
+
+-- casts
+select 'true'::jsonb::bool;
+ bool 
+------
+ t
+(1 row)
+
+select '[]'::jsonb::bool;
+ERROR:  cannot cast jsonb array to type boolean
+select '1.0'::jsonb::float;
+ float8 
+--------
+      1
+(1 row)
+
+select '[1.0]'::jsonb::float;
+ERROR:  cannot cast jsonb array to type double precision
+select '12345'::jsonb::int4;
+ int4  
+-------
+ 12345
+(1 row)
+
+select '"hello"'::jsonb::int4;
+ERROR:  cannot cast jsonb string to type integer
+select '12345'::jsonb::numeric;
+ numeric 
+---------
+   12345
+(1 row)
+
+select '{}'::jsonb::numeric;
+ERROR:  cannot cast jsonb object to type numeric
+select '12345.05'::jsonb::numeric;
+ numeric  
+----------
+ 12345.05
+(1 row)
+
+select '12345.05'::jsonb::float4;
+ float4 
+--------
+  12345
+(1 row)
+
+select '12345.05'::jsonb::float8;
+  float8  
+----------
+ 12345.05
+(1 row)
+
+select '12345.05'::jsonb::int2;
+ int2  
+-------
+ 12345
+(1 row)
+
+select '12345.05'::jsonb::int4;
+ int4  
+-------
+ 12345
+(1 row)
+
+select '12345.05'::jsonb::int8;
+ int8  
+-------
+ 12345
+(1 row)
+
+select '12345.0000000000000000000000000000000000000000000005'::jsonb::numeric;
+                       numeric                        
+------------------------------------------------------
+ 12345.0000000000000000000000000000000000000000000005
+(1 row)
+
+select '12345.0000000000000000000000000000000000000000000005'::jsonb::float4;
+ float4 
+--------
+  12345
+(1 row)
+
+select '12345.0000000000000000000000000000000000000000000005'::jsonb::float8;
+ float8 
+--------
+  12345
+(1 row)
+
+select '12345.0000000000000000000000000000000000000000000005'::jsonb::int2;
+ int2  
+-------
+ 12345
+(1 row)
+
+select '12345.0000000000000000000000000000000000000000000005'::jsonb::int4;
+ int4  
+-------
+ 12345
+(1 row)
+
+select '12345.0000000000000000000000000000000000000000000005'::jsonb::int8;
+ int8  
+-------
+ 12345
 (1 row)
 

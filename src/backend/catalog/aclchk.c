@@ -448,6 +448,7 @@ ExecuteGrantStmt(GrantStmt *stmt)
 	switch (stmt->objtype)
 	{
 		case OBJECT_TABLE:
+
 			/*
 			 * Because this might be a sequence, we test both relation and
 			 * sequence bits, and later do a more limited test when we know
@@ -832,21 +833,17 @@ objectsInSchemaToOids(ObjectType objtype, List *nspnames)
 								BTEqualStrategyNumber, F_OIDEQ,
 								ObjectIdGetDatum(namespaceId));
 
-					/*
-					 * When looking for functions, check for return type <>0.
-					 * When looking for procedures, check for return type ==0.
-					 * When looking for routines, don't check the return type.
-					 */
 					if (objtype == OBJECT_FUNCTION)
+						/* includes aggregates and window functions */
 						ScanKeyInit(&key[keycount++],
-									Anum_pg_proc_prorettype,
-									BTEqualStrategyNumber, F_OIDNE,
-									InvalidOid);
+									Anum_pg_proc_prokind,
+									BTEqualStrategyNumber, F_CHARNE,
+									CharGetDatum(PROKIND_PROCEDURE));
 					else if (objtype == OBJECT_PROCEDURE)
 						ScanKeyInit(&key[keycount++],
-									Anum_pg_proc_prorettype,
-									BTEqualStrategyNumber, F_OIDEQ,
-									InvalidOid);
+									Anum_pg_proc_prokind,
+									BTEqualStrategyNumber, F_CHAREQ,
+									CharGetDatum(PROKIND_PROCEDURE));
 
 					rel = heap_open(ProcedureRelationId, AccessShareLock);
 					scan = heap_beginscan_catalog(rel, keycount, key);
@@ -3476,7 +3473,7 @@ aclcheck_error(AclResult aclerr, ObjectType objtype,
 					case OBJECT_PROPERTY_INDEX:
 						msg = gettext_noop("permission denied for object property index %s");
 						break;
-					/* these currently aren't used */
+						/* these currently aren't used */
 					case OBJECT_ACCESS_METHOD:
 					case OBJECT_AMOP:
 					case OBJECT_AMPROC:
@@ -3601,11 +3598,13 @@ aclcheck_error(AclResult aclerr, ObjectType objtype,
 					case OBJECT_TSDICTIONARY:
 						msg = gettext_noop("must be owner of text search dictionary %s");
 						break;
-					/*
-					 * Special cases: For these, the error message talks about
-					 * "relation", because that's where the ownership is
-					 * attached.  See also check_object_ownership().
-					 */
+
+						/*
+						 * Special cases: For these, the error message talks
+						 * about "relation", because that's where the
+						 * ownership is attached.  See also
+						 * check_object_ownership().
+						 */
 					case OBJECT_COLUMN:
 					case OBJECT_POLICY:
 					case OBJECT_RULE:
@@ -3625,7 +3624,7 @@ aclcheck_error(AclResult aclerr, ObjectType objtype,
 					case OBJECT_PROPERTY_INDEX:
 						msg = gettext_noop("must be owner of object property index %s");
 						break;
-					/* these currently aren't used */
+						/* these currently aren't used */
 					case OBJECT_ACCESS_METHOD:
 					case OBJECT_AMOP:
 					case OBJECT_AMPROC:
@@ -4618,7 +4617,7 @@ pg_attribute_aclcheck_all(Oid table_oid, Oid roleid, AclMode mode,
 		 * grants no privileges, so that we can fall out quickly in the very
 		 * common case where attacl is null.
 		 */
-		if (heap_attisnull(attTuple, Anum_pg_attribute_attacl))
+		if (heap_attisnull(attTuple, Anum_pg_attribute_attacl, NULL))
 			attmask = 0;
 		else
 			attmask = pg_attribute_aclmask(table_oid, curr_att, roleid,
@@ -5310,7 +5309,7 @@ pg_extension_ownercheck(Oid ext_oid, Oid roleid)
 }
 
 /*
- * Ownership check for an publication (specified by OID).
+ * Ownership check for a publication (specified by OID).
  */
 bool
 pg_publication_ownercheck(Oid pub_oid, Oid roleid)
@@ -5999,8 +5998,8 @@ recordExtensionInitPrivWorker(Oid objoid, Oid classoid, int objsubid, Acl *new_a
 			MemSet(nulls, false, sizeof(nulls));
 			MemSet(replace, false, sizeof(replace));
 
-			values[Anum_pg_init_privs_privs - 1] = PointerGetDatum(new_acl);
-			replace[Anum_pg_init_privs_privs - 1] = true;
+			values[Anum_pg_init_privs_initprivs - 1] = PointerGetDatum(new_acl);
+			replace[Anum_pg_init_privs_initprivs - 1] = true;
 
 			oldtuple = heap_modify_tuple(oldtuple, RelationGetDescr(relation),
 										 values, nulls, replace);
@@ -6037,7 +6036,7 @@ recordExtensionInitPrivWorker(Oid objoid, Oid classoid, int objsubid, Acl *new_a
 			values[Anum_pg_init_privs_privtype - 1] =
 				CharGetDatum(INITPRIVS_EXTENSION);
 
-			values[Anum_pg_init_privs_privs - 1] = PointerGetDatum(new_acl);
+			values[Anum_pg_init_privs_initprivs - 1] = PointerGetDatum(new_acl);
 
 			tuple = heap_form_tuple(RelationGetDescr(relation), values, nulls);
 

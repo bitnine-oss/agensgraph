@@ -55,10 +55,9 @@ typedef struct LogicalRepRelation
 /* Type mapping info */
 typedef struct LogicalRepTyp
 {
-	Oid			remoteid;		/* unique id of the type */
-	char	   *nspname;		/* schema name */
-	char	   *typname;		/* name of the type */
-	Oid			typoid;			/* local type Oid */
+	Oid			remoteid;		/* unique id of the remote type */
+	char	   *nspname;		/* schema name of remote type */
+	char	   *typname;		/* name of the remote type */
 } LogicalRepTyp;
 
 /* Transaction info */
@@ -98,6 +97,10 @@ extern void logicalrep_write_delete(StringInfo out, Relation rel,
 						HeapTuple oldtuple);
 extern LogicalRepRelId logicalrep_read_delete(StringInfo in,
 					   LogicalRepTupleData *oldtup);
+extern void logicalrep_write_truncate(StringInfo out, int nrelids, Oid relids[],
+						  bool cascade, bool restart_seqs);
+extern List *logicalrep_read_truncate(StringInfo in,
+						 bool *cascade, bool *restart_seqs);
 extern void logicalrep_write_rel(StringInfo out, Relation rel);
 extern LogicalRepRelation *logicalrep_read_rel(StringInfo in);
 extern void logicalrep_write_typ(StringInfo out, Oid typoid);

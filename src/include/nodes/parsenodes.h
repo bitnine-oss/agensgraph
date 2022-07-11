@@ -26,6 +26,8 @@
 #include "nodes/lockoptions.h"
 #include "nodes/primnodes.h"
 #include "nodes/value.h"
+#include "partitioning/partdefs.h"
+
 
 typedef enum OverridingKind
 {
@@ -685,8 +687,8 @@ typedef struct ColumnDef
 	Node	   *raw_default;	/* default value (untransformed parse tree) */
 	Node	   *cooked_default; /* default value (transformed expr tree) */
 	char		identity;		/* attidentity setting */
-	RangeVar   *identitySequence; /* to store identity sequence name for ALTER
-								   * TABLE ... ADD COLUMN */
+	RangeVar   *identitySequence;	/* to store identity sequence name for
+									 * ALTER TABLE ... ADD COLUMN */
 	CollateClause *collClause;	/* untransformed COLLATE spec, if any */
 	Oid			collOid;		/* collation OID (InvalidOid if not set) */
 	List	   *constraints;	/* other constraints on column */
@@ -706,12 +708,13 @@ typedef struct TableLikeClause
 
 typedef enum TableLikeOption
 {
-	CREATE_TABLE_LIKE_DEFAULTS = 1 << 0,
+	CREATE_TABLE_LIKE_COMMENTS = 1 << 0,
 	CREATE_TABLE_LIKE_CONSTRAINTS = 1 << 1,
-	CREATE_TABLE_LIKE_IDENTITY = 1 << 2,
-	CREATE_TABLE_LIKE_INDEXES = 1 << 3,
-	CREATE_TABLE_LIKE_STORAGE = 1 << 4,
-	CREATE_TABLE_LIKE_COMMENTS = 1 << 5,
+	CREATE_TABLE_LIKE_DEFAULTS = 1 << 2,
+	CREATE_TABLE_LIKE_IDENTITY = 1 << 3,
+	CREATE_TABLE_LIKE_INDEXES = 1 << 4,
+	CREATE_TABLE_LIKE_STATISTICS = 1 << 5,
+	CREATE_TABLE_LIKE_STORAGE = 1 << 6,
 	CREATE_TABLE_LIKE_ALL = PG_INT32_MAX
 } TableLikeOption;
 
@@ -834,7 +837,7 @@ typedef struct PartitionSpec
  * This represents the portion of the partition key space assigned to a
  * particular partition.  These are stored on disk in pg_class.relpartbound.
  */
-typedef struct PartitionBoundSpec
+struct PartitionBoundSpec
 {
 	NodeTag		type;
 
@@ -853,7 +856,7 @@ typedef struct PartitionBoundSpec
 	List	   *upperdatums;	/* List of PartitionRangeDatums */
 
 	int			location;		/* token location, or -1 if unknown */
-} PartitionBoundSpec;
+};
 
 /*
  * PartitionRangeDatum - one of the values in a range partition bound
@@ -2146,7 +2149,10 @@ typedef struct Constraint
 	char		generated_when;
 
 	/* Fields used for unique constraints (UNIQUE and PRIMARY KEY): */
-	List	   *keys;			/* String nodes naming referenced column(s) */
+	List	   *keys;			/* String nodes naming referenced key
+								 * column(s) */
+	List	   *including;		/* String nodes naming referenced nonkey
+								 * column(s) */
 
 	/* Fields used for EXCLUSION constraints: */
 	List	   *exclusions;		/* list of (IndexElem, operator name) pairs */
@@ -2759,6 +2765,8 @@ typedef struct IndexStmt
 	char	   *accessMethod;	/* name of access method (eg. btree) */
 	char	   *tableSpace;		/* tablespace, or NULL for default */
 	List	   *indexParams;	/* columns to index: a list of IndexElem */
+	List	   *indexIncludingParams;	/* additional columns to index: a list
+										 * of IndexElem */
 	List	   *options;		/* WITH clause options: a list of DefElem */
 	Node	   *whereClause;	/* qualification (partial-index predicate) */
 	List	   *excludeOpNames; /* exclusion operator names, or NIL if none */
@@ -2786,6 +2794,7 @@ typedef struct CreateStatsStmt
 	List	   *stat_types;		/* stat types (list of Value strings) */
 	List	   *exprs;			/* expressions to build statistics on */
 	List	   *relations;		/* rels to build stats on (list of RangeVar) */
+	char	   *stxcomment;		/* comment to apply to stats, or NULL */
 	bool		if_not_exists;	/* do nothing if stats name already exists */
 } CreateStatsStmt;
 
@@ -3009,7 +3018,8 @@ typedef struct TransactionStmt
 {
 	NodeTag		type;
 	TransactionStmtKind kind;	/* see above */
-	List	   *options;		/* for BEGIN/START and savepoint commands */
+	List	   *options;		/* for BEGIN/START commands */
+	char	   *savepoint_name; /* for savepoint commands */
 	char	   *gid;			/* for two-phase-commit related commands */
 } TransactionStmt;
 

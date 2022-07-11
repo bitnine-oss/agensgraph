@@ -2,11 +2,14 @@ use strict;
 use warnings;
 use TestLib;
 use PostgresNode;
-use Test::More tests => 18;
+use Test::More tests => 19;
 
 program_help_ok('pg_receivewal');
 program_version_ok('pg_receivewal');
 program_options_handling_ok('pg_receivewal');
+
+# Set umask so test directories and files are created with default permissions
+umask(0077);
 
 my $primary = get_new_node('primary');
 $primary->init(allows_streaming => 1);
@@ -38,7 +41,8 @@ is($slot->{'slot_type'}, 'physical', 'physical replication slot was created');
 is($slot->{'restart_lsn'}, '', 'restart LSN of new slot is null');
 $primary->command_ok([ 'pg_receivewal', '--slot', $slot_name, '--drop-slot' ],
 	'dropping a replication slot');
-is($primary->slot($slot_name)->{'slot_type'}, '', 'replication slot was removed');
+is($primary->slot($slot_name)->{'slot_type'},
+	'', 'replication slot was removed');
 
 # Generate some WAL.  Use --synchronous at the same time to add more
 # code coverage.  Switch to the next segment first so that subsequent
@@ -53,6 +57,18 @@ $primary->psql('postgres',
 
 # Stream up to the given position.
 $primary->command_ok(
-	[   'pg_receivewal', '-D',     $stream_dir,     '--verbose',
-		'--endpos',      $nextlsn, '--synchronous', '--no-loop' ],
+	[
+		'pg_receivewal', '-D',     $stream_dir,     '--verbose',
+		'--endpos',      $nextlsn, '--synchronous', '--no-loop'
+	],
 	'streaming some WAL with --synchronous');
+
+# Permissions on WAL files should be default
+SKIP:
+{
+	skip "unix-style permissions not supported on Windows", 1
+	  if ($windows_os);
+
+	ok(check_mode_recursive($stream_dir, 0700, 0600),
+		"check stream dir permissions");
+}

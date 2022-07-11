@@ -27,6 +27,7 @@
 #endif
 
 #include "access/xlog_internal.h"
+#include "common/file_perm.h"
 #include "common/file_utils.h"
 #include "common/string.h"
 #include "fe_utils/string_utils.h"
@@ -39,6 +40,7 @@
 #include "replication/basebackup.h"
 #include "streamutil.h"
 
+#define ERRCODE_DATA_CORRUPTED	"XX001"
 
 typedef struct TablespaceListCell
 {
@@ -81,6 +83,7 @@ static char *xlog_dir = NULL;
 static char format = 'p';		/* p(lain)/t(ar) */
 static char *label = "pg_basebackup base backup";
 static bool noclean = false;
+static bool checksum_failure = false;
 static bool showprogress = false;
 static int	verbose = 0;
 static int	compresslevel = 0;
@@ -95,6 +98,7 @@ static char *replication_slot = NULL;
 static bool temp_replication_slot = true;
 static bool create_slot = false;
 static bool no_slot = false;
+static bool verify_checksums = true;
 
 static bool success = false;
 static bool made_new_pgdata = false;
@@ -155,7 +159,7 @@ cleanup_directories_atexit(void)
 	if (success || in_log_streamer)
 		return;
 
-	if (!noclean)
+	if (!noclean && !checksum_failure)
 	{
 		if (made_new_pgdata)
 		{
@@ -195,7 +199,7 @@ cleanup_directories_atexit(void)
 	}
 	else
 	{
-		if (made_new_pgdata || found_existing_pgdata)
+		if ((made_new_pgdata || found_existing_pgdata) && !checksum_failure)
 			fprintf(stderr,
 					_("%s: data directory \"%s\" not removed at user's request\n"),
 					progname, basedir);
@@ -206,7 +210,7 @@ cleanup_directories_atexit(void)
 					progname, xlog_dir);
 	}
 
-	if (made_tablespace_dirs || found_tablespace_dirs)
+	if ((made_tablespace_dirs || found_tablespace_dirs) && !checksum_failure)
 		fprintf(stderr,
 				_("%s: changes to tablespace directories will not be undone\n"),
 				progname);
@@ -359,9 +363,11 @@ usage(void)
 	printf(_("  -N, --no-sync          do not wait for changes to be written safely to disk\n"));
 	printf(_("  -P, --progress         show progress information\n"));
 	printf(_("  -S, --slot=SLOTNAME    replication slot to use\n"));
-	printf(_("      --no-slot          prevent creation of temporary replication slot\n"));
 	printf(_("  -v, --verbose          output verbose messages\n"));
 	printf(_("  -V, --version          output version information, then exit\n"));
+	printf(_("      --no-slot          prevent creation of temporary replication slot\n"));
+	printf(_("      --no-verify-checksums\n"
+			 "                         do not verify checksums\n"));
 	printf(_("  -?, --help             show this help, then exit\n"));
 	printf(_("\nConnection options:\n"));
 	printf(_("  -d, --dbname=CONNSTR   connection string\n"));
@@ -624,7 +630,7 @@ StartLogStreamer(char *startpos, uint32 timeline, char *sysidentifier)
 				 PQserverVersion(conn) < MINIMUM_VERSION_FOR_PG_WAL ?
 				 "pg_xlog" : "pg_wal");
 
-		if (pg_mkdir_p(statusdir, S_IRWXU) != 0 && errno != EEXIST)
+		if (pg_mkdir_p(statusdir, pg_dir_create_mode) != 0 && errno != EEXIST)
 		{
 			fprintf(stderr,
 					_("%s: could not create directory \"%s\": %s\n"),
@@ -680,7 +686,7 @@ verify_dir_is_empty_or_create(char *dirname, bool *created, bool *found)
 			/*
 			 * Does not exist, so create
 			 */
-			if (pg_mkdir_p(dirname, S_IRWXU) == -1)
+			if (pg_mkdir_p(dirname, pg_dir_create_mode) == -1)
 			{
 				fprintf(stderr,
 						_("%s: could not create directory \"%s\": %s\n"),
@@ -1124,7 +1130,7 @@ ReceiveTarFile(PGconn *conn, PGresult *res, int rownum)
 
 				tarCreateHeader(header, "recovery.conf", NULL,
 								recoveryconfcontents->len,
-								0600, 04000, 02000,
+								pg_file_create_mode, 04000, 02000,
 								time(NULL));
 
 				padding = ((recoveryconfcontents->len + 511) & ~511) - recoveryconfcontents->len;
@@ -1436,7 +1442,7 @@ ReceiveAndUnpackTarFile(PGconn *conn, PGresult *res, int rownum)
 					 * Directory
 					 */
 					filename[strlen(filename) - 1] = '\0';	/* Remove trailing slash */
-					if (mkdir(filename, S_IRWXU) != 0)
+					if (mkdir(filename, pg_dir_create_mode) != 0)
 					{
 						/*
 						 * When streaming WAL, pg_wal (or pg_xlog for pre-9.6
@@ -1808,14 +1814,15 @@ BaseBackup(void)
 	}
 
 	basebkp =
-		psprintf("BASE_BACKUP LABEL '%s' %s %s %s %s %s %s",
+		psprintf("BASE_BACKUP LABEL '%s' %s %s %s %s %s %s %s",
 				 escaped_label,
 				 showprogress ? "PROGRESS" : "",
 				 includewal == FETCH_WAL ? "WAL" : "",
 				 fastcheckpoint ? "FAST" : "",
 				 includewal == NO_WAL ? "" : "NOWAIT",
 				 maxrate_clause ? maxrate_clause : "",
-				 format == 't' ? "TABLESPACE_MAP" : "");
+				 format == 't' ? "TABLESPACE_MAP" : "",
+				 verify_checksums ? "" : "NOVERIFY_CHECKSUMS");
 
 	if (PQsendQuery(conn, basebkp) == 0)
 	{
@@ -1970,8 +1977,20 @@ BaseBackup(void)
 	res = PQgetResult(conn);
 	if (PQresultStatus(res) != PGRES_COMMAND_OK)
 	{
-		fprintf(stderr, _("%s: final receive failed: %s"),
-				progname, PQerrorMessage(conn));
+		const char *sqlstate = PQresultErrorField(res, PG_DIAG_SQLSTATE);
+
+		if (sqlstate &&
+			strcmp(sqlstate, ERRCODE_DATA_CORRUPTED) == 0)
+		{
+			fprintf(stderr, _("%s: checksum error occured\n"),
+					progname);
+			checksum_failure = true;
+		}
+		else
+		{
+			fprintf(stderr, _("%s: final receive failed: %s"),
+					progname, PQerrorMessage(conn));
+		}
 		disconnect_and_exit(1);
 	}
 
@@ -2140,6 +2159,7 @@ main(int argc, char **argv)
 		{"progress", no_argument, NULL, 'P'},
 		{"waldir", required_argument, NULL, 1},
 		{"no-slot", no_argument, NULL, 2},
+		{"no-verify-checksums", no_argument, NULL, 3},
 		{NULL, 0, NULL, 0}
 	};
 	int			c;
@@ -2166,7 +2186,7 @@ main(int argc, char **argv)
 
 	atexit(cleanup_directories_atexit);
 
-	while ((c = getopt_long(argc, argv, "CD:F:r:RS:T:X:l:nNzZ:d:c:h:p:U:s:wWvP",
+	while ((c = getopt_long(argc, argv, "CD:F:r:RS:T:X:l:nNzZ:d:c:h:p:U:s:wWkvP",
 							long_options, &option_index)) != -1)
 	{
 		switch (c)
@@ -2308,6 +2328,9 @@ main(int argc, char **argv)
 			case 'P':
 				showprogress = true;
 				break;
+			case 3:
+				verify_checksums = false;
+				break;
 			default:
 
 				/*
@@ -2395,8 +2418,8 @@ main(int argc, char **argv)
 		if (!replication_slot)
 		{
 			fprintf(stderr,
-					_("%s: --create-slot needs a slot to be specified using --slot\n"),
-					progname);
+					_("%s: %s needs a slot to be specified using --slot\n"),
+					progname, "--create-slot");
 			fprintf(stderr, _("Try \"%s --help\" for more information.\n"),
 					progname);
 			exit(1);
@@ -2447,14 +2470,6 @@ main(int argc, char **argv)
 	}
 #endif
 
-	/*
-	 * Verify that the target directory exists, or create it. For plaintext
-	 * backups, always require the directory. For tar backups, require it
-	 * unless we are writing to stdout.
-	 */
-	if (format == 'p' || strcmp(basedir, "-") != 0)
-		verify_dir_is_empty_or_create(basedir, &made_new_pgdata, &found_existing_pgdata);
-
 	/* connection in replication mode to server */
 	conn = GetConnection();
 	if (!conn)
@@ -2462,6 +2477,24 @@ main(int argc, char **argv)
 		/* Error message already written in GetConnection() */
 		exit(1);
 	}
+
+	/*
+	 * Set umask so that directories/files are created with the same
+	 * permissions as directories/files in the source data directory.
+	 *
+	 * pg_mode_mask is set to owner-only by default and then updated in
+	 * GetConnection() where we get the mode from the server-side with
+	 * RetrieveDataDirCreatePerm() and then call SetDataDirectoryCreatePerm().
+	 */
+	umask(pg_mode_mask);
+
+	/*
+	 * Verify that the target directory exists, or create it. For plaintext
+	 * backups, always require the directory. For tar backups, require it
+	 * unless we are writing to stdout.
+	 */
+	if (format == 'p' || strcmp(basedir, "-") != 0)
+		verify_dir_is_empty_or_create(basedir, &made_new_pgdata, &found_existing_pgdata);
 
 	/* determine remote server's xlog segment size */
 	if (!RetrieveWalSegSize(conn))

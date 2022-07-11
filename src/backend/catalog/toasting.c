@@ -279,6 +279,7 @@ create_toast_table(Relation rel, Oid toastOid, Oid toastIndexOid,
 										   false,
 										   true,
 										   true,
+										   InvalidOid,
 										   NULL);
 	Assert(toast_relid != InvalidOid);
 
@@ -302,8 +303,9 @@ create_toast_table(Relation rel, Oid toastOid, Oid toastIndexOid,
 
 	indexInfo = makeNode(IndexInfo);
 	indexInfo->ii_NumIndexAttrs = 2;
-	indexInfo->ii_KeyAttrNumbers[0] = 1;
-	indexInfo->ii_KeyAttrNumbers[1] = 2;
+	indexInfo->ii_NumIndexKeyAttrs = 2;
+	indexInfo->ii_IndexAttrNumbers[0] = 1;
+	indexInfo->ii_IndexAttrNumbers[1] = 2;
 	indexInfo->ii_Expressions = NIL;
 	indexInfo->ii_ExpressionsState = NIL;
 	indexInfo->ii_Predicate = NIL;
@@ -396,6 +398,7 @@ create_toast_table(Relation rel, Oid toastOid, Oid toastIndexOid,
  * (1) there are any toastable attributes, and (2) the maximum length
  * of a tuple could exceed TOAST_TUPLE_THRESHOLD.  (We don't want to
  * create a toast table for something like "f1 varchar(20)".)
+ * No need to create a TOAST table for partitioned tables.
  */
 static bool
 needs_toast_table(Relation rel)
@@ -406,6 +409,9 @@ needs_toast_table(Relation rel)
 	TupleDesc	tupdesc;
 	int32		tuple_length;
 	int			i;
+
+	if (rel->rd_rel->relkind == RELKIND_PARTITIONED_TABLE)
+		return false;
 
 	tupdesc = rel->rd_att;
 

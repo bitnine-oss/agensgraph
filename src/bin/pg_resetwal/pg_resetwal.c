@@ -52,9 +52,11 @@
 #include "catalog/catversion.h"
 #include "catalog/pg_control.h"
 #include "common/fe_memutils.h"
+#include "common/file_perm.h"
 #include "common/restricted_token.h"
 #include "storage/large_object.h"
 #include "pg_getopt.h"
+#include "getopt_long.h"
 
 
 static ControlFileData ControlFile; /* pg_control values */
@@ -71,6 +73,7 @@ static MultiXactOffset set_mxoff = (MultiXactOffset) -1;
 static uint32 minXlogTli = 0;
 static XLogSegNo minXlogSegNo = 0;
 static int	WalSegSz;
+static int	set_wal_segsize;
 
 static void CheckDataVersion(void);
 static bool ReadControlFile(void);
@@ -88,6 +91,21 @@ static void usage(void);
 int
 main(int argc, char *argv[])
 {
+	static struct option long_options[] = {
+		{"commit-timestamp-ids", required_argument, NULL, 'c'},
+		{"pgdata", required_argument, NULL, 'D'},
+		{"epoch", required_argument, NULL, 'e'},
+		{"force", no_argument, NULL, 'f'},
+		{"next-wal-file", required_argument, NULL, 'l'},
+		{"multixact-ids", required_argument, NULL, 'm'},
+		{"dry-run", no_argument, NULL, 'n'},
+		{"next-oid", required_argument, NULL, 'o'},
+		{"multixact-offset", required_argument, NULL, 'O'},
+		{"next-transaction-id", required_argument, NULL, 'x'},
+		{"wal-segsize", required_argument, NULL, 1},
+		{NULL, 0, NULL, 0}
+	};
+
 	int			c;
 	bool		force = false;
 	bool		noupdate = false;
@@ -117,7 +135,7 @@ main(int argc, char *argv[])
 	}
 
 
-	while ((c = getopt(argc, argv, "c:D:e:fl:m:no:O:x:")) != -1)
+	while ((c = getopt_long(argc, argv, "c:D:e:fl:m:no:O:x:", long_options, NULL)) != -1)
 	{
 		switch (c)
 		{
@@ -275,6 +293,24 @@ main(int argc, char *argv[])
 				log_fname = pg_strdup(optarg);
 				break;
 
+			case 1:
+				set_wal_segsize = strtol(optarg, &endptr, 10) * 1024 * 1024;
+				if (endptr == optarg || *endptr != '\0')
+				{
+					fprintf(stderr,
+							_("%s: argument of --wal-segsize must be a number\n"),
+							progname);
+					exit(1);
+				}
+				if (!IsValidWalSegSize(set_wal_segsize))
+				{
+					fprintf(stderr,
+							_("%s: argument of --wal-segsize must be a power of 2 between 1 and 1024\n"),
+							progname);
+					exit(1);
+				}
+				break;
+
 			default:
 				fprintf(stderr, _("Try \"%s --help\" for more information.\n"), progname);
 				exit(1);
@@ -320,6 +356,16 @@ main(int argc, char *argv[])
 
 	get_restricted_token(progname);
 
+	/* Set mask based on PGDATA permissions */
+	if (!GetDataDirectoryCreatePerm(DataDir))
+	{
+		fprintf(stderr, _("%s: could not read permissions of directory \"%s\": %s\n"),
+				progname, DataDir, strerror(errno));
+		exit(1);
+	}
+
+	umask(pg_mode_mask);
+
 	if (chdir(DataDir) < 0)
 	{
 		fprintf(stderr, _("%s: could not change directory to \"%s\": %s\n"),
@@ -356,6 +402,14 @@ main(int argc, char *argv[])
 	 */
 	if (!ReadControlFile())
 		GuessControlValues();
+
+	/*
+	 * If no new WAL segment size was specified, use the control file value.
+	 */
+	if (set_wal_segsize != 0)
+		WalSegSz = set_wal_segsize;
+	else
+		WalSegSz = ControlFile.xlog_seg_size;
 
 	if (log_fname != NULL)
 		XLogFromFileName(log_fname, &minXlogTli, &minXlogSegNo, WalSegSz);
@@ -422,6 +476,9 @@ main(int argc, char *argv[])
 		ControlFile.checkPointCopy.ThisTimeLineID = minXlogTli;
 		ControlFile.checkPointCopy.PrevTimeLineID = minXlogTli;
 	}
+
+	if (set_wal_segsize != 0)
+		ControlFile.xlog_seg_size = WalSegSz;
 
 	if (minXlogSegNo > newXlogSegNo)
 		newXlogSegNo = minXlogSegNo;
@@ -593,15 +650,16 @@ ReadControlFile(void)
 		}
 
 		memcpy(&ControlFile, buffer, sizeof(ControlFile));
-		WalSegSz = ControlFile.xlog_seg_size;
 
-		/* return false if WalSegSz is not valid */
-		if (!IsValidWalSegSize(WalSegSz))
+		/* return false if WAL segment size is not valid */
+		if (!IsValidWalSegSize(ControlFile.xlog_seg_size))
 		{
 			fprintf(stderr,
-					_("%s: pg_control specifies invalid WAL segment size (%d bytes); proceed with caution \n"),
-					progname, WalSegSz);
-			guessed = true;
+					ngettext("%s: pg_control specifies invalid WAL segment size (%d byte); proceed with caution\n",
+							 "%s: pg_control specifies invalid WAL segment size (%d bytes); proceed with caution\n",
+							 ControlFile.xlog_seg_size),
+					progname, ControlFile.xlog_seg_size);
+			return false;
 		}
 
 		return true;
@@ -844,6 +902,12 @@ PrintNewControlValues(void)
 		printf(_("newestCommitTsXid:                    %u\n"),
 			   ControlFile.checkPointCopy.newestCommitTsXid);
 	}
+
+	if (set_wal_segsize != 0)
+	{
+		printf(_("Bytes per WAL segment:                %u\n"),
+			   ControlFile.xlog_seg_size);
+	}
 }
 
 
@@ -895,9 +959,6 @@ RewriteControlFile(void)
 	ControlFile.max_prepared_xacts = 0;
 	ControlFile.max_locks_per_xact = 64;
 
-	/* Now we can force the recorded xlog seg size to the right thing. */
-	ControlFile.xlog_seg_size = WalSegSz;
-
 	/* Contents are protected with a CRC */
 	INIT_CRC32C(ControlFile.crc);
 	COMP_CRC32C(ControlFile.crc,
@@ -919,7 +980,7 @@ RewriteControlFile(void)
 
 	fd = open(XLOG_CONTROL_FILE,
 			  O_RDWR | O_CREAT | O_EXCL | PG_BINARY,
-			  S_IRUSR | S_IWUSR);
+			  pg_file_create_mode);
 	if (fd < 0)
 	{
 		fprintf(stderr, _("%s: could not create pg_control file: %s\n"),
@@ -1033,7 +1094,7 @@ FindEndOfXLOG(void)
 	 * are in virgin territory.
 	 */
 	xlogbytepos = newXlogSegNo * ControlFile.xlog_seg_size;
-	newXlogSegNo = (xlogbytepos + WalSegSz - 1) / WalSegSz;
+	newXlogSegNo = (xlogbytepos + ControlFile.xlog_seg_size - 1) / WalSegSz;
 	newXlogSegNo++;
 }
 
@@ -1201,7 +1262,7 @@ WriteEmptyXLOG(void)
 	unlink(path);
 
 	fd = open(path, O_RDWR | O_CREAT | O_EXCL | PG_BINARY,
-			  S_IRUSR | S_IWUSR);
+			  pg_file_create_mode);
 	if (fd < 0)
 	{
 		fprintf(stderr, _("%s: could not open file \"%s\": %s\n"),
@@ -1251,18 +1312,20 @@ usage(void)
 	printf(_("%s resets the PostgreSQL write-ahead log.\n\n"), progname);
 	printf(_("Usage:\n  %s [OPTION]... DATADIR\n\n"), progname);
 	printf(_("Options:\n"));
-	printf(_("  -c XID,XID       set oldest and newest transactions bearing commit timestamp\n"));
-	printf(_("                   (zero in either value means no change)\n"));
-	printf(_(" [-D] DATADIR      data directory\n"));
-	printf(_("  -e XIDEPOCH      set next transaction ID epoch\n"));
-	printf(_("  -f               force update to be done\n"));
-	printf(_("  -l WALFILE       force minimum WAL starting location for new write-ahead log\n"));
-	printf(_("  -m MXID,MXID     set next and oldest multitransaction ID\n"));
-	printf(_("  -n               no update, just show what would be done (for testing)\n"));
-	printf(_("  -o OID           set next OID\n"));
-	printf(_("  -O OFFSET        set next multitransaction offset\n"));
-	printf(_("  -V, --version    output version information, then exit\n"));
-	printf(_("  -x XID           set next transaction ID\n"));
-	printf(_("  -?, --help       show this help, then exit\n"));
+	printf(_("  -c, --commit-timestamp-ids=XID,XID\n"
+			 "                                 set oldest and newest transactions bearing\n"
+			 "                                 commit timestamp (zero means no change)\n"));
+	printf(_(" [-D, --pgdata=]DATADIR          data directory\n"));
+	printf(_("  -e, --epoch=XIDEPOCH           set next transaction ID epoch\n"));
+	printf(_("  -f, --force                    force update to be done\n"));
+	printf(_("  -l, --next-wal-file=WALFILE    set minimum starting location for new WAL\n"));
+	printf(_("  -m, --multixact-ids=MXID,MXID  set next and oldest multitransaction ID\n"));
+	printf(_("  -n, --dry-run                  no update, just show what would be done\n"));
+	printf(_("  -o, --next-oid=OID             set next OID\n"));
+	printf(_("  -O, --multixact-offset=OFFSET  set next multitransaction offset\n"));
+	printf(_("  -V, --version                  output version information, then exit\n"));
+	printf(_("  -x, --next-transaction-id=XID  set next transaction ID\n"));
+	printf(_("      --wal-segsize=SIZE         size of WAL segments, in megabytes\n"));
+	printf(_("  -?, --help                     show this help, then exit\n"));
 	printf(_("\nReport bugs to <pgsql-bugs@postgresql.org>.\n"));
 }

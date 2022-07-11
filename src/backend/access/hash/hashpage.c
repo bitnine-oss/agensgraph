@@ -33,6 +33,7 @@
 #include "miscadmin.h"
 #include "storage/lmgr.h"
 #include "storage/smgr.h"
+#include "storage/predicate.h"
 
 
 static bool _hash_alloc_buckets(Relation rel, BlockNumber firstblock,
@@ -1107,6 +1108,11 @@ _hash_splitbucket(Relation rel,
 	npage = BufferGetPage(nbuf);
 	nopaque = (HashPageOpaque) PageGetSpecialPointer(npage);
 
+	/* Copy the predicate locks from old bucket to new bucket. */
+	PredicateLockPageSplit(rel,
+						   BufferGetBlockNumber(bucket_obuf),
+						   BufferGetBlockNumber(bucket_nbuf));
+
 	/*
 	 * Partition the tuples in the old bucket between the old bucket and the
 	 * new bucket, advancing along the old bucket's overflow bucket chain and
@@ -1173,7 +1179,7 @@ _hash_splitbucket(Relation rel,
 				 * the current page in the new bucket, we must allocate a new
 				 * overflow page and place the tuple on that page instead.
 				 */
-				itemsz = IndexTupleDSize(*new_itup);
+				itemsz = IndexTupleSize(new_itup);
 				itemsz = MAXALIGN(itemsz);
 
 				if (PageGetFreeSpaceForMultipleTuples(npage, nitups + 1) < (all_tups_size + itemsz))

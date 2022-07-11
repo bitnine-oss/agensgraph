@@ -45,7 +45,9 @@
 #   EXTRA_CLEAN -- extra files to remove in 'make clean'
 #   PG_CPPFLAGS -- will be added to CPPFLAGS
 #   PG_LIBS -- will be added to PROGRAM link line
+#   PG_LIBS_INTERNAL -- same, for references to libraries within build tree
 #   SHLIB_LINK -- will be added to MODULE_big link line
+#   SHLIB_LINK_INTERNAL -- same, for references to libraries within build tree
 #   PG_CONFIG -- path to pg_config program for the PostgreSQL installation
 #     to build against (typically just "pg_config" to use the first one in
 #     your PATH)
@@ -60,6 +62,12 @@ endif
 
 
 ifdef PGXS
+
+# External extensions must assume generated headers are available
+NO_GENERATED_HEADERS=yes
+# The temp-install rule won't work, either
+NO_TEMP_INSTALL=yes
+
 # We assume that we are in src/makefiles/, so top is ...
 top_builddir := $(dir $(PGXS))../..
 include $(top_builddir)/src/Makefile.global
@@ -73,7 +81,8 @@ endif
 ifeq ($(FLEX),)
 FLEX = flex
 endif
-endif
+
+endif # PGXS
 
 
 override CPPFLAGS := -I. -I$(srcdir) $(CPPFLAGS)
@@ -101,6 +110,10 @@ endif
 
 all: $(PROGRAM) $(DATA_built) $(SCRIPTS_built) $(addsuffix $(DLSUFFIX), $(MODULES)) $(addsuffix .control, $(EXTENSION))
 
+ifeq ($(with_llvm), yes)
+all: $(addsuffix .bc, $(MODULES)) $(patsubst %.o,%.bc, $(OBJS))
+endif
+
 ifdef MODULE_big
 # shared library parameters
 NAME = $(MODULE_big)
@@ -123,6 +136,9 @@ ifneq (,$(DATA_TSEARCH))
 endif # DATA_TSEARCH
 ifdef MODULES
 	$(INSTALL_SHLIB) $(addsuffix $(DLSUFFIX), $(MODULES)) '$(DESTDIR)$(pkglibdir)/'
+ifeq ($(with_llvm), yes)
+	$(foreach mod, $(MODULES), $(call install_llvm_module,$(mod),$(mod).bc))
+endif # with_llvm
 endif # MODULES
 ifdef DOCS
 ifdef docdir
@@ -138,8 +154,11 @@ endif # SCRIPTS
 ifdef SCRIPTS_built
 	$(INSTALL_SCRIPT) $(SCRIPTS_built) '$(DESTDIR)$(bindir)/'
 endif # SCRIPTS_built
-
 ifdef MODULE_big
+ifeq ($(with_llvm), yes)
+	$(call install_llvm_module,$(MODULE_big),$(OBJS))
+endif # with_llvm
+
 install: install-lib
 endif # MODULE_big
 
@@ -183,7 +202,10 @@ ifneq (,$(DATA_TSEARCH))
 endif
 ifdef MODULES
 	rm -f $(addprefix '$(DESTDIR)$(pkglibdir)'/, $(addsuffix $(DLSUFFIX), $(MODULES)))
-endif
+ifeq ($(with_llvm), yes)
+	$(foreach mod, $(MODULES), $(call uninstall_llvm_module,$(mod)))
+endif # with_llvm
+endif # MODULES
 ifdef DOCS
 	rm -f $(addprefix '$(DESTDIR)$(docdir)/$(docmoduledir)'/, $(DOCS))
 endif
@@ -198,13 +220,18 @@ ifdef SCRIPTS_built
 endif
 
 ifdef MODULE_big
+ifeq ($(with_llvm), yes)
+	$(call uninstall_llvm_module,$(MODULE_big))
+endif # with_llvm
+
 uninstall: uninstall-lib
 endif # MODULE_big
 
 
 clean:
 ifdef MODULES
-	rm -f $(addsuffix $(DLSUFFIX), $(MODULES)) $(addsuffix .o, $(MODULES)) $(if $(PGFILEDESC),$(WIN32RES))
+	rm -f $(addsuffix $(DLSUFFIX), $(MODULES)) $(addsuffix .o, $(MODULES)) $(if $(PGFILEDESC),$(WIN32RES)) \
+	    $(addsuffix .bc, $(MODULES))
 endif
 ifdef DATA_built
 	rm -f $(DATA_built)
@@ -216,7 +243,7 @@ ifdef PROGRAM
 	rm -f $(PROGRAM)$(X)
 endif
 ifdef OBJS
-	rm -f $(OBJS)
+	rm -f $(OBJS) $(patsubst %.o,%.bc, $(OBJS))
 endif
 ifdef EXTRA_CLEAN
 	rm -rf $(EXTRA_CLEAN)
@@ -297,5 +324,5 @@ endif
 
 ifdef PROGRAM
 $(PROGRAM): $(OBJS)
-	$(CC) $(CFLAGS) $(OBJS) $(PG_LIBS) $(LDFLAGS) $(LDFLAGS_EX) $(LIBS) -o $@$(X)
+	$(CC) $(CFLAGS) $(OBJS) $(PG_LIBS_INTERNAL) $(LDFLAGS) $(LDFLAGS_EX) $(PG_LIBS) $(LIBS) -o $@$(X)
 endif

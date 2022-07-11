@@ -12,7 +12,6 @@
 
 #include "utils/builtins.h"
 #include "utils/cypher_ops.h"
-#include "utils/datum.h"
 #include "utils/graph.h"
 #include "utils/jsonb.h"
 #include "utils/memutils.h"
@@ -22,7 +21,6 @@ static Jsonb *jnumber_op(PGFunction f, Jsonb *l, Jsonb *r);
 static Jsonb *numeric_to_jnumber(Numeric n);
 static void ereport_op(PGFunction f, Jsonb *l, Jsonb *r);
 static void ereport_op_str(const char *op, Jsonb *l, Jsonb *r);
-static Datum jsonb_num(Jsonb *j, PGFunction f);
 
 Datum
 jsonb_add(PG_FUNCTION_ARGS)
@@ -294,93 +292,6 @@ ereport_op_str(const char *op, Jsonb *l, Jsonb *r)
 	ereport(ERROR,
 			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 			 errmsg(msgfmt, lstr, op, rstr)));
-}
-
-Datum
-bool_jsonb(PG_FUNCTION_ARGS)
-{
-	bool		b = PG_GETARG_BOOL(0);
-	JsonbValue	jv;
-
-	jv.type = jbvBool;
-	jv.val.boolean = b;
-
-	PG_RETURN_JSONB_P(JsonbValueToJsonb(&jv));
-}
-
-Datum
-jsonb_int8(PG_FUNCTION_ARGS)
-{
-	PG_RETURN_DATUM(jsonb_num(PG_GETARG_JSONB_P(0), numeric_int8));
-}
-
-Datum
-jsonb_int4(PG_FUNCTION_ARGS)
-{
-	PG_RETURN_DATUM(jsonb_num(PG_GETARG_JSONB_P(0), numeric_int4));
-}
-
-Datum
-jsonb_numeric(PG_FUNCTION_ARGS)
-{
-	Jsonb	   *j = PG_GETARG_JSONB_P(0);
-
-	if (JB_ROOT_IS_SCALAR(j))
-	{
-		JsonbValue *jv;
-
-		jv = getIthJsonbValueFromContainer(&j->root, 0);
-		if (jv->type == jbvNumeric)
-			PG_RETURN_DATUM(datumCopy(NumericGetDatum(jv->val.numeric), false,
-													  -1));
-	}
-
-	ereport(ERROR,
-			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-			 errmsg("%s cannot be converted to numeric",
-					JsonbToCString(NULL, &j->root, VARSIZE(j)))));
-	PG_RETURN_NULL();
-}
-
-Datum
-jsonb_float8(PG_FUNCTION_ARGS)
-{
-	PG_RETURN_DATUM(jsonb_num(PG_GETARG_JSONB_P(0), numeric_float8));
-}
-
-static Datum
-jsonb_num(Jsonb *j, PGFunction f)
-{
-	const char *type;
-
-	if (f == numeric_int8)
-		type = "int8";
-	else if (f == numeric_int4)
-		type = "int4";
-	else if (f == numeric_float8)
-		type = "float8";
-	else
-		elog(ERROR, "unexpected type");
-
-	if (JB_ROOT_IS_SCALAR(j))
-	{
-		JsonbValue *jv;
-
-		jv = getIthJsonbValueFromContainer(&j->root, 0);
-		if (jv->type == jbvNumeric)
-		{
-			Datum		n;
-
-			n = DirectFunctionCall1(f, NumericGetDatum(jv->val.numeric));
-
-			return n;
-		}
-	}
-
-	ereport(ERROR,
-			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-			 errmsg("%s cannot be converted to %s",
-					JsonbToCString(NULL, &j->root, VARSIZE(j)), type)));
 }
 
 Datum

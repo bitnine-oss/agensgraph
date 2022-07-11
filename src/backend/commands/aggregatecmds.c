@@ -26,7 +26,6 @@
 #include "catalog/dependency.h"
 #include "catalog/indexing.h"
 #include "catalog/pg_aggregate.h"
-#include "catalog/pg_aggregate_fn.h"
 #include "catalog/pg_proc.h"
 #include "catalog/pg_type.h"
 #include "commands/alter.h"
@@ -478,13 +477,13 @@ extractModify(DefElem *defel)
 
 	if (strcmp(val, "read_only") == 0)
 		return AGGMODIFY_READ_ONLY;
-	if (strcmp(val, "sharable") == 0)
-		return AGGMODIFY_SHARABLE;
+	if (strcmp(val, "shareable") == 0)
+		return AGGMODIFY_SHAREABLE;
 	if (strcmp(val, "read_write") == 0)
 		return AGGMODIFY_READ_WRITE;
 	ereport(ERROR,
 			(errcode(ERRCODE_SYNTAX_ERROR),
-			 errmsg("parameter \"%s\" must be READ_ONLY, SHARABLE, or READ_WRITE",
+			 errmsg("parameter \"%s\" must be READ_ONLY, SHAREABLE, or READ_WRITE",
 					defel->defname)));
 	return 0;					/* keep compiler quiet */
 }

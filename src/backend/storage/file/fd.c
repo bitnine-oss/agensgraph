@@ -82,8 +82,8 @@
 #include "miscadmin.h"
 #include "access/xact.h"
 #include "access/xlog.h"
-#include "catalog/catalog.h"
 #include "catalog/pg_tablespace.h"
+#include "common/file_perm.h"
 #include "pgstat.h"
 #include "portability/mem.h"
 #include "storage/fd.h"
@@ -123,12 +123,6 @@
  * ones, choke.
  */
 #define FD_MINFREE				10
-
-/*
- * Default mode for created files, unless something else is specified using
- * the *Perm() function variants.
- */
-#define PG_FILE_MODE_DEFAULT	(S_IRUSR | S_IWUSR)
 
 /*
  * A number of platforms allow individual processes to open many more files
@@ -320,12 +314,11 @@ static bool reserveAllocatedDesc(void);
 static int	FreeDesc(AllocateDesc *desc);
 
 static void AtProcExit_Files(int code, Datum arg);
-static void CleanupTempFiles(bool isProcExit);
+static void CleanupTempFiles(bool isCommit, bool isProcExit);
 static void RemovePgTempFilesInDir(const char *tmpdirname, bool missing_ok,
 					   bool unlink_all);
 static void RemovePgTempRelationFiles(const char *tsdirname);
 static void RemovePgTempRelationFilesInDbspace(const char *dbspacedirname);
-static bool looks_like_temp_rel_name(const char *name);
 
 static void walkdir(const char *path,
 		void (*action) (const char *fname, bool isdir, int elevel),
@@ -938,7 +931,7 @@ set_max_safe_fds(void)
 int
 BasicOpenFile(const char *fileName, int fileFlags)
 {
-	return BasicOpenFilePerm(fileName, fileFlags, PG_FILE_MODE_DEFAULT);
+	return BasicOpenFilePerm(fileName, fileFlags, pg_file_create_mode);
 }
 
 /*
@@ -1357,7 +1350,7 @@ FileInvalidate(File file)
 File
 PathNameOpenFile(const char *fileName, int fileFlags)
 {
-	return PathNameOpenFilePerm(fileName, fileFlags, PG_FILE_MODE_DEFAULT);
+	return PathNameOpenFilePerm(fileName, fileFlags, pg_file_create_mode);
 }
 
 /*
@@ -1435,7 +1428,7 @@ PathNameOpenFilePerm(const char *fileName, int fileFlags, mode_t fileMode)
 void
 PathNameCreateTemporaryDir(const char *basedir, const char *directory)
 {
-	if (mkdir(directory, S_IRWXU) < 0)
+	if (MakePGDirectory(directory) < 0)
 	{
 		if (errno == EEXIST)
 			return;
@@ -1445,14 +1438,14 @@ PathNameCreateTemporaryDir(const char *basedir, const char *directory)
 		 * EEXIST to close a race against another process following the same
 		 * algorithm.
 		 */
-		if (mkdir(basedir, S_IRWXU) < 0 && errno != EEXIST)
+		if (MakePGDirectory(basedir) < 0 && errno != EEXIST)
 			ereport(ERROR,
 					(errcode_for_file_access(),
 					 errmsg("cannot create temporary directory \"%s\": %m",
 							basedir)));
 
 		/* Try again. */
-		if (mkdir(directory, S_IRWXU) < 0 && errno != EEXIST)
+		if (MakePGDirectory(directory) < 0 && errno != EEXIST)
 			ereport(ERROR,
 					(errcode_for_file_access(),
 					 errmsg("cannot create temporary subdirectory \"%s\": %m",
@@ -1602,11 +1595,11 @@ OpenTemporaryFileInTablespace(Oid tblspcOid, bool rejectError)
 		 * We might need to create the tablespace's tempfile directory, if no
 		 * one has yet done so.
 		 *
-		 * Don't check for error from mkdir; it could fail if someone else
-		 * just did the same thing.  If it doesn't work then we'll bomb out on
-		 * the second create attempt, instead.
+		 * Don't check for an error from MakePGDirectory; it could fail if
+		 * someone else just did the same thing.  If it doesn't work then
+		 * we'll bomb out on the second create attempt, instead.
 		 */
-		mkdir(tempdirpath, S_IRWXU);
+		(void) MakePGDirectory(tempdirpath);
 
 		file = PathNameOpenFile(tempfilepath,
 								O_RDWR | O_CREAT | O_TRUNC | PG_BINARY);
@@ -2263,16 +2256,6 @@ FileGetRawMode(File file)
 }
 
 /*
- * FileGetSize - returns the size of file
- */
-off_t
-FileGetSize(File file)
-{
-	Assert(FileIsValid(file));
-	return VfdCache[file].fileSize;
-}
-
-/*
  * Make room for another allocatedDescs[] array entry if needed and possible.
  * Returns true if an array element is available.
  */
@@ -2402,7 +2385,7 @@ TryAgain:
 int
 OpenTransientFile(const char *fileName, int fileFlags)
 {
-	return OpenTransientFilePerm(fileName, fileFlags, PG_FILE_MODE_DEFAULT);
+	return OpenTransientFilePerm(fileName, fileFlags, pg_file_create_mode);
 }
 
 /*
@@ -2909,17 +2892,19 @@ AtEOSubXact_Files(bool isCommit, SubTransactionId mySubid,
 /*
  * AtEOXact_Files
  *
- * This routine is called during transaction commit or abort (it doesn't
- * particularly care which).  All still-open per-transaction temporary file
- * VFDs are closed, which also causes the underlying files to be deleted
- * (although they should've been closed already by the ResourceOwner
- * cleanup). Furthermore, all "allocated" stdio files are closed. We also
- * forget any transaction-local temp tablespace list.
+ * This routine is called during transaction commit or abort.  All still-open
+ * per-transaction temporary file VFDs are closed, which also causes the
+ * underlying files to be deleted (although they should've been closed already
+ * by the ResourceOwner cleanup). Furthermore, all "allocated" stdio files are
+ * closed. We also forget any transaction-local temp tablespace list.
+ *
+ * The isCommit flag is used only to decide whether to emit warnings about
+ * unclosed files.
  */
 void
-AtEOXact_Files(void)
+AtEOXact_Files(bool isCommit)
 {
-	CleanupTempFiles(false);
+	CleanupTempFiles(isCommit, false);
 	tempTableSpaces = NULL;
 	numTempTableSpaces = -1;
 }
@@ -2933,11 +2918,14 @@ AtEOXact_Files(void)
 static void
 AtProcExit_Files(int code, Datum arg)
 {
-	CleanupTempFiles(true);
+	CleanupTempFiles(false, true);
 }
 
 /*
  * Close temporary files and delete their underlying files.
+ *
+ * isCommit: if true, this is normal transaction commit, and we don't
+ * expect any remaining files; warn if there are some.
  *
  * isProcExit: if true, this is being called as the backend process is
  * exiting. If that's the case, we should remove all temporary files; if
@@ -2946,7 +2934,7 @@ AtProcExit_Files(int code, Datum arg)
  * also clean up "allocated" stdio files, dirs and fds.
  */
 static void
-CleanupTempFiles(bool isProcExit)
+CleanupTempFiles(bool isCommit, bool isProcExit)
 {
 	Index		i;
 
@@ -2985,6 +2973,11 @@ CleanupTempFiles(bool isProcExit)
 
 		have_xact_temporary_files = false;
 	}
+
+	/* Complain if any allocated files remain open at commit. */
+	if (isCommit && numAllocatedDescs > 0)
+		elog(WARNING, "%d temporary files and directories not closed at end-of-transaction",
+			 numAllocatedDescs);
 
 	/* Clean up "allocated" stdio files, dirs and fds. */
 	while (numAllocatedDescs > 0)
@@ -3192,7 +3185,7 @@ RemovePgTempRelationFilesInDbspace(const char *dbspacedirname)
 }
 
 /* t<digits>_<digits>, or t<digits>_<digits>_<forkname> */
-static bool
+bool
 looks_like_temp_rel_name(const char *name)
 {
 	int			pos;
@@ -3554,4 +3547,28 @@ fsync_parent_path(const char *fname, int elevel)
 		return -1;
 
 	return 0;
+}
+
+/*
+ * Create a PostgreSQL data sub-directory
+ *
+ * The data directory itself, and most of its sub-directories, are created at
+ * initdb time, but we do have some occasions when we create directories in
+ * the backend (CREATE TABLESPACE, for example).  In those cases, we want to
+ * make sure that those directories are created consistently.  Today, that means
+ * making sure that the created directory has the correct permissions, which is
+ * what pg_dir_create_mode tracks for us.
+ *
+ * Note that we also set the umask() based on what we understand the correct
+ * permissions to be (see file_perm.c).
+ *
+ * For permissions other than the default, mkdir() can be used directly, but
+ * be sure to consider carefully such cases -- a sub-directory with incorrect
+ * permissions in a PostgreSQL data directory could cause backups and other
+ * processes to fail.
+ */
+int
+MakePGDirectory(const char *directoryName)
+{
+	return mkdir(directoryName, pg_dir_create_mode);
 }

@@ -1,8 +1,11 @@
 /*-------------------------------------------------------------------------
  *
  * pg_attribute.h
- *	  definition of the system "attribute" relation (pg_attribute)
- *	  along with the relation's initial contents.
+ *	  definition of the "attribute" system catalog (pg_attribute)
+ *
+ * The initial contents of pg_attribute are generated at compile time by
+ * genbki.pl, so there is no pg_attribute.dat file.  Only "bootstrapped"
+ * relations need be included.
  *
  *
  * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
@@ -11,8 +14,8 @@
  * src/include/catalog/pg_attribute.h
  *
  * NOTES
- *	  the genbki.pl script reads this file and generates .bki
- *	  information from the DATA() statements.
+ *	  The Catalog.pm module reads this file and derives schema
+ *	  information.
  *
  *-------------------------------------------------------------------------
  */
@@ -20,6 +23,7 @@
 #define PG_ATTRIBUTE_H
 
 #include "catalog/genbki.h"
+#include "catalog/pg_attribute_d.h"
 
 /* ----------------
  *		pg_attribute definition.  cpp turns this into
@@ -30,10 +34,7 @@
  *		You may need to change catalog/genbki.pl as well.
  * ----------------
  */
-#define AttributeRelationId  1249
-#define AttributeRelation_Rowtype_Id  75
-
-CATALOG(pg_attribute,1249) BKI_BOOTSTRAP BKI_WITHOUT_OIDS BKI_ROWTYPE_OID(75) BKI_SCHEMA_MACRO
+CATALOG(pg_attribute,1249,AttributeRelationId) BKI_BOOTSTRAP BKI_WITHOUT_OIDS BKI_ROWTYPE_OID(75,AttributeRelation_Rowtype_Id) BKI_SCHEMA_MACRO
 {
 	Oid			attrelid;		/* OID of relation containing this attribute */
 	NameData	attname;		/* name of attribute */
@@ -133,8 +134,11 @@ CATALOG(pg_attribute,1249) BKI_BOOTSTRAP BKI_WITHOUT_OIDS BKI_ROWTYPE_OID(75) BK
 	/* Has DEFAULT value or not */
 	bool		atthasdef BKI_DEFAULT(f);
 
+	/* Has a missing value or not */
+	bool		atthasmissing BKI_DEFAULT(f);
+
 	/* One of the ATTRIBUTE_IDENTITY_* constants below, or '\0' */
-	char		attidentity BKI_DEFAULT("");
+	char		attidentity BKI_DEFAULT('\0');
 
 	/* Is dropped (ie, logically invisible) or not */
 	bool		attisdropped BKI_DEFAULT(f);
@@ -167,6 +171,12 @@ CATALOG(pg_attribute,1249) BKI_BOOTSTRAP BKI_WITHOUT_OIDS BKI_ROWTYPE_OID(75) BK
 
 	/* Column-level FDW options */
 	text		attfdwoptions[1] BKI_DEFAULT(_null_);
+
+	/*
+	 * Missing value for added columns. This is a one element array which lets
+	 * us store a value of the attribute type here.
+	 */
+	anyarray	attmissingval BKI_DEFAULT(_null_);
 #endif
 } FormData_pg_attribute;
 
@@ -186,62 +196,11 @@ CATALOG(pg_attribute,1249) BKI_BOOTSTRAP BKI_WITHOUT_OIDS BKI_ROWTYPE_OID(75) BK
  */
 typedef FormData_pg_attribute *Form_pg_attribute;
 
-/* ----------------
- *		compiler constants for pg_attribute
- * ----------------
- */
-
-#define Natts_pg_attribute				22
-#define Anum_pg_attribute_attrelid		1
-#define Anum_pg_attribute_attname		2
-#define Anum_pg_attribute_atttypid		3
-#define Anum_pg_attribute_attstattarget 4
-#define Anum_pg_attribute_attlen		5
-#define Anum_pg_attribute_attnum		6
-#define Anum_pg_attribute_attndims		7
-#define Anum_pg_attribute_attcacheoff	8
-#define Anum_pg_attribute_atttypmod		9
-#define Anum_pg_attribute_attbyval		10
-#define Anum_pg_attribute_attstorage	11
-#define Anum_pg_attribute_attalign		12
-#define Anum_pg_attribute_attnotnull	13
-#define Anum_pg_attribute_atthasdef		14
-#define Anum_pg_attribute_attidentity	15
-#define Anum_pg_attribute_attisdropped	16
-#define Anum_pg_attribute_attislocal	17
-#define Anum_pg_attribute_attinhcount	18
-#define Anum_pg_attribute_attcollation	19
-#define Anum_pg_attribute_attacl		20
-#define Anum_pg_attribute_attoptions	21
-#define Anum_pg_attribute_attfdwoptions 22
-
-
-/* ----------------
- *		initial contents of pg_attribute
- *
- * The initial contents of pg_attribute are generated at compile time by
- * genbki.pl.  Only "bootstrapped" relations need be included.
- * ----------------
- */
-
-/*
- * composite types
- */
-
-/* graph */
-DATA(insert ( 7010 id 7002 -1 8 1 0 -1 -1 FLOAT8PASSBYVAL p d f f "\0" f t 0 0 _null_ _null_ _null_ ));
-DATA(insert ( 7010 properties 3802 -1 -1 2 0 -1 -1 f x i f f "\0" f t 0 0 _null_ _null_ _null_ ));
-DATA(insert ( 7010 tid 27 -1 6 3 0 -1 -1 f p s f f "\0" f t 0 0 _null_ _null_ _null_ ));
-DATA(insert ( 7020 id 7002 -1 8 1 0 -1 -1 FLOAT8PASSBYVAL p d f f "\0" f t 0 0 _null_ _null_ _null_ ));
-DATA(insert ( 7020 start 7002 -1 8 2 0 -1 -1 FLOAT8PASSBYVAL p d f f "\0" f t 0 0 _null_ _null_ _null_ ));
-DATA(insert ( 7020 end 7002 -1 8 3 0 -1 -1 FLOAT8PASSBYVAL p d f f "\0" f t 0 0 _null_ _null_ _null_ ));
-DATA(insert ( 7020 properties 3802 -1 -1 4 0 -1 -1 f x i f f "\0" f t 0 0 _null_ _null_ _null_ ));
-DATA(insert ( 7020 tid 27 -1 6 5 0 -1 -1 f p s f f "\0" f t 0 0 _null_ _null_ _null_ ));
-DATA(insert ( 7030 vertices 7011 -1 -1 1 1 -1 -1 f x i f f "\0" f t 0 0 _null_ _null_ _null_ ));
-DATA(insert ( 7030 edges 7021 -1 -1 2 1 -1 -1 f x i f f "\0" f t 0 0 _null_ _null_ _null_ ));
-
+#ifdef EXPOSE_TO_CLIENT_CODE
 
 #define		  ATTRIBUTE_IDENTITY_ALWAYS		'a'
 #define		  ATTRIBUTE_IDENTITY_BY_DEFAULT 'd'
+
+#endif							/* EXPOSE_TO_CLIENT_CODE */
 
 #endif							/* PG_ATTRIBUTE_H */

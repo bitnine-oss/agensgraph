@@ -64,7 +64,7 @@ extern BitmapOrPath *create_bitmap_or_path(PlannerInfo *root,
 					  List *bitmapquals);
 extern TidPath *create_tidscan_path(PlannerInfo *root, RelOptInfo *rel,
 					List *tidquals, Relids required_outer);
-extern AppendPath *create_append_path(RelOptInfo *rel,
+extern AppendPath *create_append_path(PlannerInfo *root, RelOptInfo *rel,
 				   List *subpaths, List *partial_subpaths,
 				   Relids required_outer,
 				   int parallel_workers, bool parallel_aware,
@@ -178,7 +178,6 @@ extern SortPath *create_sort_path(PlannerInfo *root,
 extern GroupPath *create_group_path(PlannerInfo *root,
 				  RelOptInfo *rel,
 				  Path *subpath,
-				  PathTarget *target,
 				  List *groupClause,
 				  List *qual,
 				  double numGroups);
@@ -200,7 +199,6 @@ extern AggPath *create_agg_path(PlannerInfo *root,
 extern GroupingSetsPath *create_groupingsets_path(PlannerInfo *root,
 						 RelOptInfo *rel,
 						 Path *subpath,
-						 PathTarget *target,
 						 List *having_qual,
 						 AggStrategy aggstrategy,
 						 List *rollups,
@@ -289,6 +287,7 @@ extern DijkstraPath *create_dijkstra_path(PlannerInfo *root, RelOptInfo *rel,
  * prototypes for relnode.c
  */
 extern void setup_simple_rel_arrays(PlannerInfo *root);
+extern void setup_append_rel_array(PlannerInfo *root);
 extern RelOptInfo *build_simple_rel(PlannerInfo *root, int relid,
 				 RelOptInfo *parent);
 extern RelOptInfo *find_base_rel(PlannerInfo *root, int relid);
@@ -306,8 +305,6 @@ extern Relids min_join_parameterization(PlannerInfo *root,
 extern RelOptInfo *build_empty_join_rel(PlannerInfo *root);
 extern RelOptInfo *fetch_upper_rel(PlannerInfo *root, UpperRelationKind kind,
 				Relids relids);
-extern AppendRelInfo *find_childrel_appendrelinfo(PlannerInfo *root,
-							RelOptInfo *rel);
 extern Relids find_childrel_parents(PlannerInfo *root, RelOptInfo *rel);
 extern ParamPathInfo *get_baserel_parampathinfo(PlannerInfo *root,
 						  RelOptInfo *baserel,

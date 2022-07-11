@@ -71,7 +71,7 @@
     <term><acronym>CPAN</acronym></term>
     <listitem>
      <para>
-      <ulink url="http://www.cpan.org/">Comprehensive Perl Archive Network</ulink>
+      <ulink url="https://www.cpan.org/">Comprehensive Perl Archive Network</ulink>
      </para>
     </listitem>
    </varlistentry>
@@ -365,6 +365,16 @@
       <ulink
       url="http://en.wikipedia.org/wiki/Java_Database_Connectivity">Java
       Database Connectivity</ulink>
+     </para>
+    </listitem>
+   </varlistentry>
+
+   <varlistentry>
+    <term><acronym>JIT</acronym></term>
+    <listitem>
+     <para>
+      <ulink url="https://en.wikipedia.org/wiki/Just-in-time_compilation">Just-in-Time
+      compilation</ulink>
      </para>
     </listitem>
    </varlistentry>

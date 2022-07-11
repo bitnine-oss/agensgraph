@@ -22,7 +22,6 @@
 #include "catalog/pg_language.h"
 #include "catalog/pg_namespace.h"
 #include "catalog/pg_proc.h"
-#include "catalog/pg_proc_fn.h"
 #include "catalog/pg_transform.h"
 #include "catalog/pg_type.h"
 #include "commands/defrem.h"
@@ -60,7 +59,7 @@ static bool match_prosrc_to_literal(const char *prosrc, const char *literal,
  *
  * Note: allParameterTypes, parameterModes, parameterNames, trftypes, and proconfig
  * are either arrays of the proper types or NULL.  We declare them Datum,
- * not "ArrayType *", to avoid importing array.h into pg_proc_fn.h.
+ * not "ArrayType *", to avoid importing array.h into pg_proc.h.
  * ----------------------------------------------------------------
  */
 ObjectAddress
@@ -74,8 +73,7 @@ ProcedureCreate(const char *procedureName,
 				Oid languageValidator,
 				const char *prosrc,
 				const char *probin,
-				bool isAgg,
-				bool isWindowFunc,
+				char prokind,
 				bool security_definer,
 				bool isLeakProof,
 				bool isStrict,
@@ -110,7 +108,6 @@ ProcedureCreate(const char *procedureName,
 	bool		nulls[Natts_pg_proc];
 	Datum		values[Natts_pg_proc];
 	bool		replaces[Natts_pg_proc];
-	Oid			relid;
 	NameData	procname;
 	TupleDesc	tupDesc;
 	bool		is_update;
@@ -256,20 +253,6 @@ ProcedureCreate(const char *procedureName,
 				 errmsg("unsafe use of pseudo-type \"internal\""),
 				 errdetail("A function returning \"internal\" must have at least one \"internal\" argument.")));
 
-	/*
-	 * don't allow functions of complex types that have the same name as
-	 * existing attributes of the type
-	 */
-	if (parameterCount == 1 &&
-		OidIsValid(parameterTypes->values[0]) &&
-		(relid = typeOrDomainTypeRelid(parameterTypes->values[0])) != InvalidOid &&
-		get_attnum(relid, procedureName) != InvalidAttrNumber)
-		ereport(ERROR,
-				(errcode(ERRCODE_DUPLICATE_COLUMN),
-				 errmsg("\"%s\" is already an attribute of type %s",
-						procedureName,
-						format_type_be(parameterTypes->values[0]))));
-
 	if (paramModes != NULL)
 	{
 		/*
@@ -335,8 +318,7 @@ ProcedureCreate(const char *procedureName,
 	values[Anum_pg_proc_prorows - 1] = Float4GetDatum(prorows);
 	values[Anum_pg_proc_provariadic - 1] = ObjectIdGetDatum(variadicType);
 	values[Anum_pg_proc_protransform - 1] = ObjectIdGetDatum(InvalidOid);
-	values[Anum_pg_proc_proisagg - 1] = BoolGetDatum(isAgg);
-	values[Anum_pg_proc_proiswindow - 1] = BoolGetDatum(isWindowFunc);
+	values[Anum_pg_proc_prokind - 1] = CharGetDatum(prokind);
 	values[Anum_pg_proc_prosecdef - 1] = BoolGetDatum(security_definer);
 	values[Anum_pg_proc_proleakproof - 1] = BoolGetDatum(isLeakProof);
 	values[Anum_pg_proc_proisstrict - 1] = BoolGetDatum(isStrict);
@@ -403,6 +385,21 @@ ProcedureCreate(const char *procedureName,
 			aclcheck_error(ACLCHECK_NOT_OWNER, OBJECT_FUNCTION,
 						   procedureName);
 
+		/* Not okay to change routine kind */
+		if (oldproc->prokind != prokind)
+			ereport(ERROR,
+					(errcode(ERRCODE_WRONG_OBJECT_TYPE),
+					 errmsg("cannot change routine kind"),
+					 (oldproc->prokind == PROKIND_AGGREGATE ?
+					  errdetail("\"%s\" is an aggregate function.", procedureName) :
+					  oldproc->prokind == PROKIND_FUNCTION ?
+					  errdetail("\"%s\" is a function.", procedureName) :
+					  oldproc->prokind == PROKIND_PROCEDURE ?
+					  errdetail("\"%s\" is a procedure.", procedureName) :
+					  oldproc->prokind == PROKIND_WINDOW ?
+					  errdetail("\"%s\" is a window function.", procedureName) :
+					  0)));
+
 		/*
 		 * Not okay to change the return type of the existing proc, since
 		 * existing rules, views, etc may depend on the return type.
@@ -425,7 +422,8 @@ ProcedureCreate(const char *procedureName,
 			TupleDesc	newdesc;
 
 			olddesc = build_function_result_tupdesc_t(oldtup);
-			newdesc = build_function_result_tupdesc_d(allParameterTypes,
+			newdesc = build_function_result_tupdesc_d(prokind,
+													  allParameterTypes,
 													  parameterModes,
 													  parameterNames);
 			if (olddesc == NULL && newdesc == NULL)
@@ -533,34 +531,6 @@ ProcedureCreate(const char *procedureName,
 									 format_procedure(HeapTupleGetOid(oldtup)))));
 				newlc = lnext(newlc);
 			}
-		}
-
-		/* Can't change aggregate or window-function status, either */
-		if (oldproc->proisagg != isAgg)
-		{
-			if (oldproc->proisagg)
-				ereport(ERROR,
-						(errcode(ERRCODE_WRONG_OBJECT_TYPE),
-						 errmsg("function \"%s\" is an aggregate function",
-								procedureName)));
-			else
-				ereport(ERROR,
-						(errcode(ERRCODE_WRONG_OBJECT_TYPE),
-						 errmsg("function \"%s\" is not an aggregate function",
-								procedureName)));
-		}
-		if (oldproc->proiswindow != isWindowFunc)
-		{
-			if (oldproc->proiswindow)
-				ereport(ERROR,
-						(errcode(ERRCODE_WRONG_OBJECT_TYPE),
-						 errmsg("function \"%s\" is a window function",
-								procedureName)));
-			else
-				ereport(ERROR,
-						(errcode(ERRCODE_WRONG_OBJECT_TYPE),
-						 errmsg("function \"%s\" is not a window function",
-								procedureName)));
 		}
 
 		/*
@@ -857,8 +827,7 @@ fmgr_sql_validator(PG_FUNCTION_ARGS)
 
 	/* Disallow pseudotype result */
 	/* except for RECORD, VOID, or polymorphic */
-	if (proc->prorettype &&
-		get_typtype(proc->prorettype) == TYPTYPE_PSEUDO &&
+	if (get_typtype(proc->prorettype) == TYPTYPE_PSEUDO &&
 		proc->prorettype != RECORDOID &&
 		proc->prorettype != VOIDOID &&
 		!IsPolymorphicType(proc->prorettype))
@@ -941,6 +910,7 @@ fmgr_sql_validator(PG_FUNCTION_ARGS)
 											 querytree_sublist);
 			}
 
+			check_sql_fn_statements(querytree_list);
 			(void) check_sql_fn_retval(funcoid, proc->prorettype,
 									   querytree_list,
 									   NULL, NULL);

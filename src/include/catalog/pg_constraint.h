@@ -1,8 +1,7 @@
 /*-------------------------------------------------------------------------
  *
  * pg_constraint.h
- *	  definition of the system "constraint" relation (pg_constraint)
- *	  along with the relation's initial contents.
+ *	  definition of the "constraint" system catalog (pg_constraint)
  *
  *
  * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
@@ -11,8 +10,8 @@
  * src/include/catalog/pg_constraint.h
  *
  * NOTES
- *	  the genbki.pl script reads this file and generates .bki
- *	  information from the DATA() statements.
+ *	  The Catalog.pm module reads this file and derives schema
+ *	  information.
  *
  *-------------------------------------------------------------------------
  */
@@ -20,15 +19,17 @@
 #define PG_CONSTRAINT_H
 
 #include "catalog/genbki.h"
+#include "catalog/pg_constraint_d.h"
+
+#include "catalog/dependency.h"
+#include "nodes/pg_list.h"
 
 /* ----------------
  *		pg_constraint definition.  cpp turns this into
  *		typedef struct FormData_pg_constraint
  * ----------------
  */
-#define ConstraintRelationId  2606
-
-CATALOG(pg_constraint,2606)
+CATALOG(pg_constraint,2606,ConstraintRelationId)
 {
 	/*
 	 * conname + connamespace is deliberately not unique; we allow, for
@@ -73,6 +74,12 @@ CATALOG(pg_constraint,2606)
 	Oid			conindid;		/* index supporting this constraint */
 
 	/*
+	 * If this constraint is on a partition inherited from a partitioned
+	 * table, this is the OID of the corresponding constraint in the parent.
+	 */
+	Oid			conparentid;
+
+	/*
 	 * These fields, plus confkey, are only meaningful for a foreign-key
 	 * constraint.  Otherwise confrelid is 0 and the char fields are spaces.
 	 */
@@ -97,6 +104,12 @@ CATALOG(pg_constraint,2606)
 	 * NULL for trigger constraints)
 	 */
 	int16		conkey[1];
+
+	/*
+	 * Columns of conrelid that the constraint does not apply to, but are
+	 * included into the same index as the key columns
+	 */
+	int16		conincluding[1];
 
 	/*
 	 * If a foreign key, the referenced columns of confrelid
@@ -146,43 +159,7 @@ CATALOG(pg_constraint,2606)
  */
 typedef FormData_pg_constraint *Form_pg_constraint;
 
-/* ----------------
- *		compiler constants for pg_constraint
- * ----------------
- */
-#define Natts_pg_constraint					24
-#define Anum_pg_constraint_conname			1
-#define Anum_pg_constraint_connamespace		2
-#define Anum_pg_constraint_contype			3
-#define Anum_pg_constraint_condeferrable	4
-#define Anum_pg_constraint_condeferred		5
-#define Anum_pg_constraint_convalidated		6
-#define Anum_pg_constraint_conrelid			7
-#define Anum_pg_constraint_contypid			8
-#define Anum_pg_constraint_conindid			9
-#define Anum_pg_constraint_confrelid		10
-#define Anum_pg_constraint_confupdtype		11
-#define Anum_pg_constraint_confdeltype		12
-#define Anum_pg_constraint_confmatchtype	13
-#define Anum_pg_constraint_conislocal		14
-#define Anum_pg_constraint_coninhcount		15
-#define Anum_pg_constraint_connoinherit		16
-#define Anum_pg_constraint_conkey			17
-#define Anum_pg_constraint_confkey			18
-#define Anum_pg_constraint_conpfeqop		19
-#define Anum_pg_constraint_conppeqop		20
-#define Anum_pg_constraint_conffeqop		21
-#define Anum_pg_constraint_conexclop		22
-#define Anum_pg_constraint_conbin			23
-#define Anum_pg_constraint_consrc			24
-
-/* ----------------
- *		initial contents of pg_constraint
- * ----------------
- */
-
-/* nothing, at present */
-
+#ifdef EXPOSE_TO_CLIENT_CODE
 
 /* Valid values for contype */
 #define CONSTRAINT_CHECK			'c'
@@ -197,5 +174,92 @@ typedef FormData_pg_constraint *Form_pg_constraint;
  * constants defined in parsenodes.h.  Valid values for confmatchtype are
  * the FKCONSTR_MATCH_xxx constants defined in parsenodes.h.
  */
+
+#endif							/* EXPOSE_TO_CLIENT_CODE */
+
+/*
+ * Identify constraint type for lookup purposes
+ */
+typedef enum ConstraintCategory
+{
+	CONSTRAINT_RELATION,
+	CONSTRAINT_DOMAIN,
+	CONSTRAINT_ASSERTION		/* for future expansion */
+} ConstraintCategory;
+
+/*
+ * Used when cloning a foreign key constraint to a partition, so that the
+ * caller can optionally set up a verification pass for it.
+ */
+typedef struct ClonedConstraint
+{
+	Oid			relid;
+	Oid			refrelid;
+	Oid			conindid;
+	Oid			conid;
+	Constraint *constraint;
+} ClonedConstraint;
+
+
+extern Oid CreateConstraintEntry(const char *constraintName,
+					  Oid constraintNamespace,
+					  char constraintType,
+					  bool isDeferrable,
+					  bool isDeferred,
+					  bool isValidated,
+					  Oid parentConstrId,
+					  Oid relId,
+					  const int16 *constraintKey,
+					  int constraintNKeys,
+					  int constraintNTotalKeys,
+					  Oid domainId,
+					  Oid indexRelId,
+					  Oid foreignRelId,
+					  const int16 *foreignKey,
+					  const Oid *pfEqOp,
+					  const Oid *ppEqOp,
+					  const Oid *ffEqOp,
+					  int foreignNKeys,
+					  char foreignUpdateType,
+					  char foreignDeleteType,
+					  char foreignMatchType,
+					  const Oid *exclOp,
+					  Node *conExpr,
+					  const char *conBin,
+					  const char *conSrc,
+					  bool conIsLocal,
+					  int conInhCount,
+					  bool conNoInherit,
+					  bool is_internal);
+
+extern void CloneForeignKeyConstraints(Oid parentId, Oid relationId,
+						   List **cloned);
+
+extern void RemoveConstraintById(Oid conId);
+extern void RenameConstraintById(Oid conId, const char *newname);
+
+extern bool ConstraintNameIsUsed(ConstraintCategory conCat, Oid objId,
+					 Oid objNamespace, const char *conname);
+extern char *ChooseConstraintName(const char *name1, const char *name2,
+					 const char *label, Oid namespaceid,
+					 List *others);
+
+extern void AlterConstraintNamespaces(Oid ownerId, Oid oldNspId,
+						  Oid newNspId, bool isType, ObjectAddresses *objsMoved);
+extern void ConstraintSetParentConstraint(Oid childConstrId,
+							  Oid parentConstrId);
+extern Oid	get_relation_constraint_oid(Oid relid, const char *conname, bool missing_ok);
+extern Bitmapset *get_relation_constraint_attnos(Oid relid, const char *conname,
+							   bool missing_ok, Oid *constraintOid);
+extern Oid	get_domain_constraint_oid(Oid typid, const char *conname, bool missing_ok);
+extern Oid	get_relation_idx_constraint_oid(Oid relationId, Oid indexId);
+
+extern Bitmapset *get_primary_key_attnos(Oid relid, bool deferrableOk,
+					   Oid *constraintOid);
+
+extern bool check_functional_grouping(Oid relid,
+						  Index varno, Index varlevelsup,
+						  List *grouping_columns,
+						  List **constraintDeps);
 
 #endif							/* PG_CONSTRAINT_H */

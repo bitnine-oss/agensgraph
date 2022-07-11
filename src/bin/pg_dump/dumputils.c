@@ -32,6 +32,7 @@ static void AddAcl(PQExpBuffer aclbuf, const char *keyword,
  *
  *	name: the object name, in the form to use in the commands (already quoted)
  *	subname: the sub-object name, if any (already quoted); NULL if none
+ *	nspname: the namespace the object is in (NULL if none); not pre-quoted
  *	type: the object type (as seen in GRANT command: must be one of
  *		TABLE, SEQUENCE, FUNCTION, PROCEDURE, LANGUAGE, SCHEMA, DATABASE, TABLESPACE,
  *		FOREIGN DATA WRAPPER, SERVER, or LARGE OBJECT)
@@ -52,7 +53,7 @@ static void AddAcl(PQExpBuffer aclbuf, const char *keyword,
  * since this routine uses fmtId() internally.
  */
 bool
-buildACLCommands(const char *name, const char *subname,
+buildACLCommands(const char *name, const char *subname, const char *nspname,
 				 const char *type, const char *acls, const char *racls,
 				 const char *owner, const char *prefix, int remoteVersion,
 				 PQExpBuffer sql)
@@ -152,7 +153,10 @@ buildACLCommands(const char *name, const char *subname,
 		appendPQExpBuffer(firstsql, "%sREVOKE ALL", prefix);
 		if (subname)
 			appendPQExpBuffer(firstsql, "(%s)", subname);
-		appendPQExpBuffer(firstsql, " ON %s %s FROM PUBLIC;\n", type, name);
+		appendPQExpBuffer(firstsql, " ON %s ", type);
+		if (nspname && *nspname)
+			appendPQExpBuffer(firstsql, "%s.", fmtId(nspname));
+		appendPQExpBuffer(firstsql, "%s FROM PUBLIC;\n", name);
 	}
 	else
 	{
@@ -170,8 +174,11 @@ buildACLCommands(const char *name, const char *subname,
 			{
 				if (privs->len > 0)
 				{
-					appendPQExpBuffer(firstsql, "%sREVOKE %s ON %s %s FROM ",
-									  prefix, privs->data, type, name);
+					appendPQExpBuffer(firstsql, "%sREVOKE %s ON %s ",
+									  prefix, privs->data, type);
+					if (nspname && *nspname)
+						appendPQExpBuffer(firstsql, "%s.", fmtId(nspname));
+					appendPQExpBuffer(firstsql, "%s FROM ", name);
 					if (grantee->len == 0)
 						appendPQExpBufferStr(firstsql, "PUBLIC;\n");
 					else if (strncmp(grantee->data, "group ",
@@ -185,8 +192,11 @@ buildACLCommands(const char *name, const char *subname,
 				if (privswgo->len > 0)
 				{
 					appendPQExpBuffer(firstsql,
-									  "%sREVOKE GRANT OPTION FOR %s ON %s %s FROM ",
-									  prefix, privswgo->data, type, name);
+									  "%sREVOKE GRANT OPTION FOR %s ON %s ",
+									  prefix, privswgo->data, type);
+					if (nspname && *nspname)
+						appendPQExpBuffer(firstsql, "%s.", fmtId(nspname));
+					appendPQExpBuffer(firstsql, "%s FROM ", name);
 					if (grantee->len == 0)
 						appendPQExpBufferStr(firstsql, "PUBLIC");
 					else if (strncmp(grantee->data, "group ",
@@ -251,18 +261,33 @@ buildACLCommands(const char *name, const char *subname,
 					appendPQExpBuffer(firstsql, "%sREVOKE ALL", prefix);
 					if (subname)
 						appendPQExpBuffer(firstsql, "(%s)", subname);
-					appendPQExpBuffer(firstsql, " ON %s %s FROM %s;\n",
-									  type, name, fmtId(grantee->data));
+					appendPQExpBuffer(firstsql, " ON %s ", type);
+					if (nspname && *nspname)
+						appendPQExpBuffer(firstsql, "%s.", fmtId(nspname));
+					appendPQExpBuffer(firstsql, "%s FROM %s;\n",
+									  name, fmtId(grantee->data));
 					if (privs->len > 0)
+					{
 						appendPQExpBuffer(firstsql,
-										  "%sGRANT %s ON %s %s TO %s;\n",
-										  prefix, privs->data, type, name,
-										  fmtId(grantee->data));
+										  "%sGRANT %s ON %s ",
+										  prefix, privs->data, type);
+						if (nspname && *nspname)
+							appendPQExpBuffer(firstsql, "%s.", fmtId(nspname));
+						appendPQExpBuffer(firstsql,
+										  "%s TO %s;\n",
+										  name, fmtId(grantee->data));
+					}
 					if (privswgo->len > 0)
+					{
 						appendPQExpBuffer(firstsql,
-										  "%sGRANT %s ON %s %s TO %s WITH GRANT OPTION;\n",
-										  prefix, privswgo->data, type, name,
-										  fmtId(grantee->data));
+										  "%sGRANT %s ON %s ",
+										  prefix, privswgo->data, type);
+						if (nspname && *nspname)
+							appendPQExpBuffer(firstsql, "%s.", fmtId(nspname));
+						appendPQExpBuffer(firstsql,
+										  "%s TO %s WITH GRANT OPTION;\n",
+										  name, fmtId(grantee->data));
+					}
 				}
 			}
 			else
@@ -284,8 +309,11 @@ buildACLCommands(const char *name, const char *subname,
 
 				if (privs->len > 0)
 				{
-					appendPQExpBuffer(secondsql, "%sGRANT %s ON %s %s TO ",
-									  prefix, privs->data, type, name);
+					appendPQExpBuffer(secondsql, "%sGRANT %s ON %s ",
+									  prefix, privs->data, type);
+					if (nspname && *nspname)
+						appendPQExpBuffer(secondsql, "%s.", fmtId(nspname));
+					appendPQExpBuffer(secondsql, "%s TO ", name);
 					if (grantee->len == 0)
 						appendPQExpBufferStr(secondsql, "PUBLIC;\n");
 					else if (strncmp(grantee->data, "group ",
@@ -297,8 +325,11 @@ buildACLCommands(const char *name, const char *subname,
 				}
 				if (privswgo->len > 0)
 				{
-					appendPQExpBuffer(secondsql, "%sGRANT %s ON %s %s TO ",
-									  prefix, privswgo->data, type, name);
+					appendPQExpBuffer(secondsql, "%sGRANT %s ON %s ",
+									  prefix, privswgo->data, type);
+					if (nspname && *nspname)
+						appendPQExpBuffer(secondsql, "%s.", fmtId(nspname));
+					appendPQExpBuffer(secondsql, "%s TO ", name);
 					if (grantee->len == 0)
 						appendPQExpBufferStr(secondsql, "PUBLIC");
 					else if (strncmp(grantee->data, "group ",
@@ -328,8 +359,11 @@ buildACLCommands(const char *name, const char *subname,
 		appendPQExpBuffer(firstsql, "%sREVOKE ALL", prefix);
 		if (subname)
 			appendPQExpBuffer(firstsql, "(%s)", subname);
-		appendPQExpBuffer(firstsql, " ON %s %s FROM %s;\n",
-						  type, name, fmtId(owner));
+		appendPQExpBuffer(firstsql, " ON %s ", type);
+		if (nspname && *nspname)
+			appendPQExpBuffer(firstsql, "%s.", fmtId(nspname));
+		appendPQExpBuffer(firstsql, "%s FROM %s;\n",
+						  name, fmtId(owner));
 	}
 
 	destroyPQExpBuffer(grantee);
@@ -388,7 +422,8 @@ buildDefaultACLCommands(const char *type, const char *nspname,
 	if (strlen(initacls) != 0 || strlen(initracls) != 0)
 	{
 		appendPQExpBuffer(sql, "SELECT pg_catalog.binary_upgrade_set_record_init_privs(true);\n");
-		if (!buildACLCommands("", NULL, type, initacls, initracls, owner,
+		if (!buildACLCommands("", NULL, NULL, type,
+							  initacls, initracls, owner,
 							  prefix->data, remoteVersion, sql))
 		{
 			destroyPQExpBuffer(prefix);
@@ -397,7 +432,8 @@ buildDefaultACLCommands(const char *type, const char *nspname,
 		appendPQExpBuffer(sql, "SELECT pg_catalog.binary_upgrade_set_record_init_privs(false);\n");
 	}
 
-	if (!buildACLCommands("", NULL, type, acls, racls, owner,
+	if (!buildACLCommands("", NULL, NULL, type,
+						  acls, racls, owner,
 						  prefix->data, remoteVersion, sql))
 	{
 		destroyPQExpBuffer(prefix);
@@ -641,26 +677,32 @@ AddAcl(PQExpBuffer aclbuf, const char *keyword, const char *subname)
  * buildShSecLabelQuery
  *
  * Build a query to retrieve security labels for a shared object.
+ * The object is identified by its OID plus the name of the catalog
+ * it can be found in (e.g., "pg_database" for database names).
+ * The query is appended to "sql".  (We don't execute it here so as to
+ * keep this file free of assumptions about how to deal with SQL errors.)
  */
 void
-buildShSecLabelQuery(PGconn *conn, const char *catalog_name, uint32 objectId,
+buildShSecLabelQuery(PGconn *conn, const char *catalog_name, Oid objectId,
 					 PQExpBuffer sql)
 {
 	appendPQExpBuffer(sql,
 					  "SELECT provider, label FROM pg_catalog.pg_shseclabel "
-					  "WHERE classoid = '%s'::pg_catalog.regclass AND "
-					  "objoid = %u", catalog_name, objectId);
+					  "WHERE classoid = 'pg_catalog.%s'::pg_catalog.regclass "
+					  "AND objoid = '%u'", catalog_name, objectId);
 }
 
 /*
  * emitShSecLabels
  *
- * Format security label data retrieved by the query generated in
- * buildShSecLabelQuery.
+ * Construct SECURITY LABEL commands using the data retrieved by the query
+ * generated by buildShSecLabelQuery, and append them to "buffer".
+ * Here, the target object is identified by its type name (e.g. "DATABASE")
+ * and its name (not pre-quoted).
  */
 void
 emitShSecLabels(PGconn *conn, PGresult *res, PQExpBuffer buffer,
-				const char *target, const char *objname)
+				const char *objtype, const char *objname)
 {
 	int			i;
 
@@ -672,7 +714,7 @@ emitShSecLabels(PGconn *conn, PGresult *res, PQExpBuffer buffer,
 		/* must use fmtId result before calling it again */
 		appendPQExpBuffer(buffer,
 						  "SECURITY LABEL FOR %s ON %s",
-						  fmtId(provider), target);
+						  fmtId(provider), objtype);
 		appendPQExpBuffer(buffer,
 						  " %s IS ",
 						  fmtId(objname));
@@ -809,6 +851,29 @@ buildACLQueries(PQExpBuffer acl_subquery, PQExpBuffer racl_subquery,
 }
 
 /*
+ * Detect whether the given GUC variable is of GUC_LIST_QUOTE type.
+ *
+ * It'd be better if we could inquire this directly from the backend; but even
+ * if there were a function for that, it could only tell us about variables
+ * currently known to guc.c, so that it'd be unsafe for extensions to declare
+ * GUC_LIST_QUOTE variables anyway.  Lacking a solution for that, it doesn't
+ * seem worth the work to do more than have this list, which must be kept in
+ * sync with the variables actually marked GUC_LIST_QUOTE in guc.c.
+ */
+bool
+variable_is_guc_list_quote(const char *name)
+{
+	if (pg_strcasecmp(name, "temp_tablespaces") == 0 ||
+		pg_strcasecmp(name, "session_preload_libraries") == 0 ||
+		pg_strcasecmp(name, "shared_preload_libraries") == 0 ||
+		pg_strcasecmp(name, "local_preload_libraries") == 0 ||
+		pg_strcasecmp(name, "search_path") == 0)
+		return true;
+	else
+		return false;
+}
+
+/*
  * Helper function for dumping "ALTER DATABASE/ROLE SET ..." commands.
  *
  * Parse the contents of configitem (a "name=value" string), wrap it in
@@ -845,11 +910,15 @@ makeAlterConfigCommand(PGconn *conn, const char *configitem,
 	appendPQExpBuffer(buf, "SET %s TO ", fmtId(mine));
 
 	/*
-	 * Some GUC variable names are 'LIST' type and hence must not be quoted.
-	 * XXX this list is incomplete ...
+	 * Variables that are marked GUC_LIST_QUOTE were already fully quoted by
+	 * flatten_set_variable_args() before they were put into the setconfig
+	 * array; we mustn't re-quote them or we'll make a mess.  Variables that
+	 * are not so marked should just be emitted as simple string literals.  If
+	 * the variable is not known to variable_is_guc_list_quote(), we'll do the
+	 * latter; this makes it unsafe to use GUC_LIST_QUOTE for extension
+	 * variables.
 	 */
-	if (pg_strcasecmp(mine, "DateStyle") == 0
-		|| pg_strcasecmp(mine, "search_path") == 0)
+	if (variable_is_guc_list_quote(mine))
 		appendPQExpBufferStr(buf, pos);
 	else
 		appendStringLiteralConn(buf, pos, conn);

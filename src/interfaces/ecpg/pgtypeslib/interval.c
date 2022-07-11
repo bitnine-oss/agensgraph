@@ -9,24 +9,12 @@
 #error -ffast-math is known to break this code
 #endif
 
+#include "common/string.h"
+
 #include "extern.h"
 #include "dt.h"
 #include "pgtypes_error.h"
 #include "pgtypes_interval.h"
-
-/* copy&pasted from .../src/backend/utils/adt/datetime.c */
-static int
-strtoint(const char *nptr, char **endptr, int base)
-{
-	long		val;
-
-	val = strtol(nptr, endptr, base);
-#ifdef HAVE_LONG_INT_64
-	if (val != (long) ((int32) val))
-		errno = ERANGE;
-#endif
-	return (int) val;
-}
 
 /* copy&pasted from .../src/backend/utils/adt/datetime.c
  * and changesd struct pg_tm to struct tm
@@ -196,6 +184,7 @@ DecodeISO8601Interval(char *str,
 						continue;
 					}
 					/* Else fall through to extended alternative format */
+					/* FALLTHROUGH */
 				case '-':		/* ISO 8601 4.4.3.3 Alternative Format,
 								 * Extended */
 					if (havefield)
@@ -274,6 +263,7 @@ DecodeISO8601Interval(char *str,
 						return 0;
 					}
 					/* Else fall through to extended alternative format */
+					/* FALLTHROUGH */
 				case ':':		/* ISO 8601 4.4.3.3 Alternative Format,
 								 * Extended */
 					if (havefield)
@@ -328,7 +318,7 @@ DecodeISO8601Interval(char *str,
  *	  places where DecodeTime is called; and added
  *		 int range = INTERVAL_FULL_RANGE;
  *
- *	* ECPG semes not to have a global IntervalStyle
+ *	* ECPG seems not to have a global IntervalStyle
  *	  so added
  *		int IntervalStyle = INTSTYLE_POSTGRES;
  */

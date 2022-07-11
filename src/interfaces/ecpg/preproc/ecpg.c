@@ -41,7 +41,7 @@ help(const char *progname)
 	printf(_("  -c             automatically generate C code from embedded SQL code;\n"
 			 "                 this affects EXEC SQL TYPE\n"));
 	printf(_("  -C MODE        set compatibility mode; MODE can be one of\n"
-			 "                 \"INFORMIX\", \"INFORMIX_SE\"\n"));
+			 "                 \"INFORMIX\", \"INFORMIX_SE\", \"ORACLE\"\n"));
 #ifdef YYDEBUG
 	printf(_("  -d             generate parser debug output\n"));
 #endif
@@ -189,8 +189,8 @@ main(int argc, char *const argv[])
 				break;
 			case 'h':
 				header_mode = true;
-				/* this must include "-c" to make sense */
-				/* so do not place a "break;" here */
+				/* this must include "-c" to make sense, so fall through */
+				/* FALLTHROUGH */
 			case 'c':
 				auto_create_c = true;
 				break;
@@ -207,6 +207,10 @@ main(int argc, char *const argv[])
 					get_pkginclude_path(my_exec_path, pkginclude_path);
 					snprintf(informix_path, MAXPGPATH, "%s/informix/esql", pkginclude_path);
 					add_include_path(informix_path);
+				}
+				else if (strncmp(optarg, "ORACLE", strlen("ORACLE")) == 0)
+				{
+					compat = ECPG_COMPAT_ORACLE;
 				}
 				else
 				{
@@ -327,6 +331,7 @@ main(int argc, char *const argv[])
 						fprintf(stderr, _("%s: could not open file \"%s\": %s\n"),
 								progname, output_filename, strerror(errno));
 						free(output_filename);
+						output_filename = NULL;
 						free(input_filename);
 						continue;
 					}
@@ -475,7 +480,10 @@ main(int argc, char *const argv[])
 			}
 
 			if (output_filename && out_option == 0)
+			{
 				free(output_filename);
+				output_filename = NULL;
+			}
 
 			free(input_filename);
 		}

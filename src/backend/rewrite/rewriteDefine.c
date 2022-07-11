@@ -618,7 +618,6 @@ DefineQueryRewrite(const char *rulename,
 		classForm->relhasindex = false;
 		classForm->relkind = RELKIND_VIEW;
 		classForm->relhasoids = false;
-		classForm->relhaspkey = false;
 		classForm->relfrozenxid = InvalidTransactionId;
 		classForm->relminmxid = InvalidMultiXactId;
 		classForm->relreplident = REPLICA_IDENTITY_NOTHING;
@@ -952,7 +951,7 @@ RenameRewriteRule(RangeVar *relation, const char *oldName,
 	 * release until end of transaction).
 	 */
 	relid = RangeVarGetRelidExtended(relation, AccessExclusiveLock,
-									 false, false,
+									 0,
 									 RangeVarCallbackForRenameRule,
 									 NULL);
 

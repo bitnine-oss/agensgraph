@@ -15,12 +15,11 @@
 #include "postgres.h"
 
 #include "miscadmin.h"
-#include "catalog/partition.h"
-#include "optimizer/clauses.h"
 #include "optimizer/joininfo.h"
 #include "optimizer/pathnode.h"
 #include "optimizer/paths.h"
 #include "optimizer/prep.h"
+#include "partitioning/partbounds.h"
 #include "utils/lsyscache.h"
 #include "utils/memutils.h"
 
@@ -35,14 +34,15 @@ static bool has_join_restriction(PlannerInfo *root, RelOptInfo *rel);
 static bool has_legal_joinclause(PlannerInfo *root, RelOptInfo *rel);
 static bool is_dummy_rel(RelOptInfo *rel);
 static bool restriction_is_constant_false(List *restrictlist,
+							  RelOptInfo *joinrel,
 							  bool only_pushed_down);
 static void populate_joinrel_with_paths(PlannerInfo *root, RelOptInfo *rel1,
 							RelOptInfo *rel2, RelOptInfo *joinrel,
 							SpecialJoinInfo *sjinfo, List *restrictlist);
 static void try_partitionwise_join(PlannerInfo *root, RelOptInfo *rel1,
-						RelOptInfo *rel2, RelOptInfo *joinrel,
-						SpecialJoinInfo *parent_sjinfo,
-						List *parent_restrictlist);
+					   RelOptInfo *rel2, RelOptInfo *joinrel,
+					   SpecialJoinInfo *parent_sjinfo,
+					   List *parent_restrictlist);
 static int match_expr_to_partition_keys(Expr *expr, RelOptInfo *rel,
 							 bool strict_op);
 
@@ -809,7 +809,7 @@ populate_joinrel_with_paths(PlannerInfo *root, RelOptInfo *rel1,
 	{
 		case JOIN_INNER:
 			if (is_dummy_rel(rel1) || is_dummy_rel(rel2) ||
-				restriction_is_constant_false(restrictlist, false))
+				restriction_is_constant_false(restrictlist, joinrel, false))
 			{
 				mark_dummy_rel(joinrel);
 				break;
@@ -823,12 +823,12 @@ populate_joinrel_with_paths(PlannerInfo *root, RelOptInfo *rel1,
 			break;
 		case JOIN_LEFT:
 			if (is_dummy_rel(rel1) ||
-				restriction_is_constant_false(restrictlist, true))
+				restriction_is_constant_false(restrictlist, joinrel, true))
 			{
 				mark_dummy_rel(joinrel);
 				break;
 			}
-			if (restriction_is_constant_false(restrictlist, false) &&
+			if (restriction_is_constant_false(restrictlist, joinrel, false) &&
 				bms_is_subset(rel2->relids, sjinfo->syn_righthand))
 				mark_dummy_rel(rel2);
 			add_paths_to_joinrel(root, joinrel, rel1, rel2,
@@ -840,7 +840,7 @@ populate_joinrel_with_paths(PlannerInfo *root, RelOptInfo *rel1,
 			break;
 		case JOIN_FULL:
 			if ((is_dummy_rel(rel1) && is_dummy_rel(rel2)) ||
-				restriction_is_constant_false(restrictlist, true))
+				restriction_is_constant_false(restrictlist, joinrel, true))
 			{
 				mark_dummy_rel(joinrel);
 				break;
@@ -876,7 +876,7 @@ populate_joinrel_with_paths(PlannerInfo *root, RelOptInfo *rel1,
 				bms_is_subset(sjinfo->min_righthand, rel2->relids))
 			{
 				if (is_dummy_rel(rel1) || is_dummy_rel(rel2) ||
-					restriction_is_constant_false(restrictlist, false))
+					restriction_is_constant_false(restrictlist, joinrel, false))
 				{
 					mark_dummy_rel(joinrel);
 					break;
@@ -899,7 +899,7 @@ populate_joinrel_with_paths(PlannerInfo *root, RelOptInfo *rel1,
 								   sjinfo) != NULL)
 			{
 				if (is_dummy_rel(rel1) || is_dummy_rel(rel2) ||
-					restriction_is_constant_false(restrictlist, false))
+					restriction_is_constant_false(restrictlist, joinrel, false))
 				{
 					mark_dummy_rel(joinrel);
 					break;
@@ -914,12 +914,12 @@ populate_joinrel_with_paths(PlannerInfo *root, RelOptInfo *rel1,
 			break;
 		case JOIN_ANTI:
 			if (is_dummy_rel(rel1) ||
-				restriction_is_constant_false(restrictlist, true))
+				restriction_is_constant_false(restrictlist, joinrel, true))
 			{
 				mark_dummy_rel(joinrel);
 				break;
 			}
-			if (restriction_is_constant_false(restrictlist, false) &&
+			if (restriction_is_constant_false(restrictlist, joinrel, false) &&
 				bms_is_subset(rel2->relids, sjinfo->syn_righthand))
 				mark_dummy_rel(rel2);
 			add_paths_to_joinrel(root, joinrel, rel1, rel2,
@@ -928,12 +928,12 @@ populate_joinrel_with_paths(PlannerInfo *root, RelOptInfo *rel1,
 			break;
 		case JOIN_CYPHER_MERGE:
 			if (is_dummy_rel(rel1) ||
-				restriction_is_constant_false(restrictlist, true))
+				restriction_is_constant_false(restrictlist, joinrel, true))
 			{
 				mark_dummy_rel(joinrel);
 				break;
 			}
-			if (restriction_is_constant_false(restrictlist, false) &&
+			if (restriction_is_constant_false(restrictlist, joinrel, false) &&
 				bms_is_subset(rel2->relids, sjinfo->syn_righthand))
 				mark_dummy_rel(rel2);
 			add_paths_for_cmerge(root, joinrel, rel1, rel2,
@@ -941,7 +941,7 @@ populate_joinrel_with_paths(PlannerInfo *root, RelOptInfo *rel1,
 			break;
 		case JOIN_VLE:
 			if (is_dummy_rel(rel1) || is_dummy_rel(rel2) ||
-				restriction_is_constant_false(restrictlist, false))
+				restriction_is_constant_false(restrictlist, joinrel, false))
 			{
 				mark_dummy_rel(joinrel);
 				break;
@@ -951,12 +951,12 @@ populate_joinrel_with_paths(PlannerInfo *root, RelOptInfo *rel1,
 			break;
 		case JOIN_CYPHER_DELETE:
 			if (is_dummy_rel(rel1) ||
-				restriction_is_constant_false(restrictlist, true))
+				restriction_is_constant_false(restrictlist, joinrel, true))
 			{
 				mark_dummy_rel(joinrel);
 				break;
 			}
-			if (restriction_is_constant_false(restrictlist, false) &&
+			if (restriction_is_constant_false(restrictlist, joinrel, false) &&
 				bms_is_subset(rel2->relids, sjinfo->syn_righthand))
 				mark_dummy_rel(rel2);
 			add_paths_for_cdelete(root, joinrel, rel1, rel2, sjinfo->jointype,
@@ -1295,7 +1295,7 @@ mark_dummy_rel(RelOptInfo *rel)
 	rel->partial_pathlist = NIL;
 
 	/* Set up the dummy path */
-	add_path(rel, (Path *) create_append_path(rel, NIL, NIL, NULL,
+	add_path(rel, (Path *) create_append_path(NULL, rel, NIL, NIL, NULL,
 											  0, false, NIL, -1));
 
 	/* Set or update cheapest_total_path and related fields */
@@ -1314,10 +1314,13 @@ mark_dummy_rel(RelOptInfo *rel)
  * decide there's no match for an outer row, which is pretty stupid.  So,
  * we need to detect the case.
  *
- * If only_pushed_down is true, then consider only pushed-down quals.
+ * If only_pushed_down is true, then consider only quals that are pushed-down
+ * from the point of view of the joinrel.
  */
 static bool
-restriction_is_constant_false(List *restrictlist, bool only_pushed_down)
+restriction_is_constant_false(List *restrictlist,
+							  RelOptInfo *joinrel,
+							  bool only_pushed_down)
 {
 	ListCell   *lc;
 
@@ -1331,7 +1334,7 @@ restriction_is_constant_false(List *restrictlist, bool only_pushed_down)
 	{
 		RestrictInfo *rinfo = lfirst_node(RestrictInfo, lc);
 
-		if (only_pushed_down && !rinfo->is_pushed_down)
+		if (only_pushed_down && !RINFO_IS_PUSHED_DOWN(rinfo, joinrel->relids))
 			continue;
 
 		if (rinfo->clause && IsA(rinfo->clause, Const))
@@ -1370,8 +1373,8 @@ restriction_is_constant_false(List *restrictlist, bool only_pushed_down)
  */
 static void
 try_partitionwise_join(PlannerInfo *root, RelOptInfo *rel1, RelOptInfo *rel2,
-						RelOptInfo *joinrel, SpecialJoinInfo *parent_sjinfo,
-						List *parent_restrictlist)
+					   RelOptInfo *joinrel, SpecialJoinInfo *parent_sjinfo,
+					   List *parent_restrictlist)
 {
 	int			nparts;
 	int			cnt_parts;
@@ -1399,8 +1402,8 @@ try_partitionwise_join(PlannerInfo *root, RelOptInfo *rel1, RelOptInfo *rel2,
 		   joinrel->part_scheme == rel2->part_scheme);
 
 	/*
-	 * Since we allow partitionwise join only when the partition bounds of
-	 * the joining relations exactly match, the partition bounds of the join
+	 * Since we allow partitionwise join only when the partition bounds of the
+	 * joining relations exactly match, the partition bounds of the join
 	 * should match those of the joining relations.
 	 */
 	Assert(partition_bounds_equal(joinrel->part_scheme->partnatts,
@@ -1476,8 +1479,9 @@ try_partitionwise_join(PlannerInfo *root, RelOptInfo *rel1, RelOptInfo *rel2,
  * partition keys from given relations being joined.
  */
 bool
-have_partkey_equi_join(RelOptInfo *rel1, RelOptInfo *rel2, JoinType jointype,
-					   List *restrictlist)
+have_partkey_equi_join(RelOptInfo *joinrel,
+					   RelOptInfo *rel1, RelOptInfo *rel2,
+					   JoinType jointype, List *restrictlist)
 {
 	PartitionScheme part_scheme = rel1->part_scheme;
 	ListCell   *lc;
@@ -1503,7 +1507,8 @@ have_partkey_equi_join(RelOptInfo *rel1, RelOptInfo *rel2, JoinType jointype,
 		int			ipk2;
 
 		/* If processing an outer join, only use its own join clauses. */
-		if (IS_OUTER_JOIN(jointype) && rinfo->is_pushed_down)
+		if (IS_OUTER_JOIN(jointype) &&
+			RINFO_IS_PUSHED_DOWN(rinfo, joinrel->relids))
 			continue;
 
 		/* Skip clauses which can not be used for a join. */

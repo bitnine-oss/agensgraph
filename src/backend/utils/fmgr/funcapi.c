@@ -1091,8 +1091,8 @@ get_func_result_name(Oid functionId)
 		elog(ERROR, "cache lookup failed for function %u", functionId);
 
 	/* If there are no named OUT parameters, return NULL */
-	if (heap_attisnull(procTuple, Anum_pg_proc_proargmodes) ||
-		heap_attisnull(procTuple, Anum_pg_proc_proargnames))
+	if (heap_attisnull(procTuple, Anum_pg_proc_proargmodes, NULL) ||
+		heap_attisnull(procTuple, Anum_pg_proc_proargnames, NULL))
 		result = NULL;
 	else
 	{
@@ -1186,8 +1186,8 @@ build_function_result_tupdesc_t(HeapTuple procTuple)
 		return NULL;
 
 	/* If there are no OUT parameters, return NULL */
-	if (heap_attisnull(procTuple, Anum_pg_proc_proallargtypes) ||
-		heap_attisnull(procTuple, Anum_pg_proc_proargmodes))
+	if (heap_attisnull(procTuple, Anum_pg_proc_proallargtypes, NULL) ||
+		heap_attisnull(procTuple, Anum_pg_proc_proargmodes, NULL))
 		return NULL;
 
 	/* Get the data out of the tuple */
@@ -1205,7 +1205,8 @@ build_function_result_tupdesc_t(HeapTuple procTuple)
 	if (isnull)
 		proargnames = PointerGetDatum(NULL);	/* just to be sure */
 
-	return build_function_result_tupdesc_d(proallargtypes,
+	return build_function_result_tupdesc_d(procform->prokind,
+										   proallargtypes,
 										   proargmodes,
 										   proargnames);
 }
@@ -1218,10 +1219,12 @@ build_function_result_tupdesc_t(HeapTuple procTuple)
  * convenience of ProcedureCreate, which needs to be able to compute the
  * tupledesc before actually creating the function.
  *
- * Returns NULL if there are not at least two OUT or INOUT arguments.
+ * For functions (but not for procedures), returns NULL if there are not at
+ * least two OUT or INOUT arguments.
  */
 TupleDesc
-build_function_result_tupdesc_d(Datum proallargtypes,
+build_function_result_tupdesc_d(char prokind,
+								Datum proallargtypes,
 								Datum proargmodes,
 								Datum proargnames)
 {
@@ -1311,7 +1314,7 @@ build_function_result_tupdesc_d(Datum proallargtypes,
 	 * If there is no output argument, or only one, the function does not
 	 * return tuples.
 	 */
-	if (numoutargs < 2)
+	if (numoutargs < 2 && prokind != PROKIND_PROCEDURE)
 		return NULL;
 
 	desc = CreateTemplateTupleDesc(numoutargs, false);

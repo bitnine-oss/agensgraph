@@ -224,6 +224,8 @@ SELECT count(*) FROM radix_text_tbl WHERE t >    'Worth                         
 
 SELECT count(*) FROM radix_text_tbl WHERE t ~>~  'Worth                         St  ';
 
+SELECT count(*) FROM radix_text_tbl WHERE t ^@  'Worth';
+
 SELECT * FROM gpolygon_tbl ORDER BY f1 <-> '(0,0)'::point LIMIT 10;
 
 SELECT circle_center(f1), round(radius(f1)) as radius FROM gcircle_tbl ORDER BY f1 <-> '(200,300)'::point LIMIT 10;
@@ -442,6 +444,10 @@ SELECT count(*) FROM radix_text_tbl WHERE t ~>~  'Worth                         
 SELECT count(*) FROM radix_text_tbl WHERE t ~>~  'Worth                         St  ';
 
 EXPLAIN (COSTS OFF)
+SELECT count(*) FROM radix_text_tbl WHERE t ^@	 'Worth';
+SELECT count(*) FROM radix_text_tbl WHERE t ^@	 'Worth';
+
+EXPLAIN (COSTS OFF)
 SELECT * FROM gpolygon_tbl ORDER BY f1 <-> '(0,0)'::point LIMIT 10;
 SELECT * FROM gpolygon_tbl ORDER BY f1 <-> '(0,0)'::point LIMIT 10;
 
@@ -577,6 +583,10 @@ SELECT count(*) FROM radix_text_tbl WHERE t >    'Worth                         
 EXPLAIN (COSTS OFF)
 SELECT count(*) FROM radix_text_tbl WHERE t ~>~  'Worth                         St  ';
 SELECT count(*) FROM radix_text_tbl WHERE t ~>~  'Worth                         St  ';
+
+EXPLAIN (COSTS OFF)
+SELECT count(*) FROM radix_text_tbl WHERE t ^@	 'Worth';
+SELECT count(*) FROM radix_text_tbl WHERE t ^@	 'Worth';
 
 RESET enable_seqscan;
 RESET enable_indexscan;
@@ -730,6 +740,26 @@ INSERT INTO func_index_heap VALUES('QWE','RTY');
 INSERT INTO func_index_heap VALUES('ABCD', 'EF');
 -- but this shouldn't:
 INSERT INTO func_index_heap VALUES('QWERTY');
+
+--
+-- Test unique index with included columns
+--
+CREATE TABLE covering_index_heap (f1 int, f2 int, f3 text);
+CREATE UNIQUE INDEX covering_index_index on covering_index_heap (f1,f2) INCLUDE(f3);
+
+INSERT INTO covering_index_heap VALUES(1,1,'AAA');
+INSERT INTO covering_index_heap VALUES(1,2,'AAA');
+-- this should fail because of unique index on f1,f2:
+INSERT INTO covering_index_heap VALUES(1,2,'BBB');
+-- and this shouldn't:
+INSERT INTO covering_index_heap VALUES(1,4,'AAA');
+-- Try to build index on table that already contains data
+CREATE UNIQUE INDEX covering_pkey on covering_index_heap (f1,f2) INCLUDE(f3);
+-- Try to use existing covering index as primary key
+ALTER TABLE covering_index_heap ADD CONSTRAINT covering_pkey PRIMARY KEY USING INDEX
+covering_pkey;
+DROP TABLE covering_index_heap;
+
 
 --
 -- Also try building functional, expressional, and partial indexes on
@@ -1030,6 +1060,17 @@ explain (costs off)
   select * from boolindex where b = true order by i desc limit 10;
 explain (costs off)
   select * from boolindex where not b order by i limit 10;
+
+--
+-- Test for multilevel page deletion
+--
+CREATE TABLE delete_test_table (a bigint, b bigint, c bigint, d bigint);
+INSERT INTO delete_test_table SELECT i, 1, 2, 3 FROM generate_series(1,80000) i;
+ALTER TABLE delete_test_table ADD PRIMARY KEY (a,b,c,d);
+DELETE FROM delete_test_table WHERE a > 40000;
+VACUUM delete_test_table;
+DELETE FROM delete_test_table WHERE a > 10;
+VACUUM delete_test_table;
 
 --
 -- REINDEX (VERBOSE)

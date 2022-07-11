@@ -22,6 +22,7 @@
 #include "postmaster/autovacuum.h"
 #include "storage/indexfsm.h"
 #include "storage/lmgr.h"
+#include "storage/predicate.h"
 #include "utils/memutils.h"
 
 struct GinVacuumState
@@ -153,12 +154,18 @@ ginDeletePage(GinVacuumState *gvs, BlockNumber deleteBlkno, BlockNumber leftBlkn
 
 	LockBuffer(lBuffer, GIN_EXCLUSIVE);
 
-	START_CRIT_SECTION();
-
-	/* Unlink the page by changing left sibling's rightlink */
 	page = BufferGetPage(dBuffer);
 	rightlink = GinPageGetOpaque(page)->rightlink;
 
+	/*
+	 * Any insert which would have gone on the leaf block will now go to its
+	 * right sibling.
+	 */
+	PredicateLockPageCombine(gvs->index, deleteBlkno, rightlink);
+
+	START_CRIT_SECTION();
+
+	/* Unlink the page by changing left sibling's rightlink */
 	page = BufferGetPage(lBuffer);
 	GinPageGetOpaque(page)->rightlink = rightlink;
 
@@ -381,7 +388,7 @@ ginVacuumPostingTreeLeaves(GinVacuumState *gvs, BlockNumber blkno, bool isRoot)
 
 		/*
 		 * All subtree is empty - just return true to indicate that parent
-		 * must do a cleanup. Unless we are ROOT an there is way to go upper.
+		 * must do a cleanup, unless we are ROOT and there is way to go upper.
 		 */
 
 		if (hasEmptyChild && !hasNonEmptyChild && !isRoot)

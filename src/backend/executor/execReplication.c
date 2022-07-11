@@ -63,7 +63,7 @@ build_replindex_scan_key(ScanKey skey, Relation rel, Relation idxrel,
 	opclass = (oidvector *) DatumGetPointer(indclassDatum);
 
 	/* Build scankey for every attribute in the index. */
-	for (attoff = 0; attoff < RelationGetNumberOfAttributes(idxrel); attoff++)
+	for (attoff = 0; attoff < IndexRelationGetNumberOfKeyAttributes(idxrel); attoff++)
 	{
 		Oid			operator;
 		Oid			opfamily;
@@ -131,7 +131,7 @@ RelationFindReplTupleByIndex(Relation rel, Oid idxoid,
 	/* Start an index scan. */
 	InitDirtySnapshot(snap);
 	scan = index_beginscan(rel, idxrel, &snap,
-						   RelationGetNumberOfAttributes(idxrel),
+						   IndexRelationGetNumberOfKeyAttributes(idxrel),
 						   0);
 
 	/* Build scan key. */
@@ -140,7 +140,7 @@ RelationFindReplTupleByIndex(Relation rel, Oid idxoid,
 retry:
 	found = false;
 
-	index_rescan(scan, skey, RelationGetNumberOfAttributes(idxrel), NULL, 0);
+	index_rescan(scan, skey, IndexRelationGetNumberOfKeyAttributes(idxrel), NULL, 0);
 
 	/* Try to find the tuple */
 	if ((scantuple = index_getnext(scan, ForwardScanDirection)) != NULL)
@@ -191,12 +191,18 @@ retry:
 				break;
 			case HeapTupleUpdated:
 				/* XXX: Improve handling here */
-				ereport(LOG,
-						(errcode(ERRCODE_T_R_SERIALIZATION_FAILURE),
-						 errmsg("concurrent update, retrying")));
+				if (ItemPointerIndicatesMovedPartitions(&hufd.ctid))
+					ereport(LOG,
+							(errcode(ERRCODE_T_R_SERIALIZATION_FAILURE),
+							 errmsg("tuple to be locked was already moved to another partition due to concurrent update, retrying")));
+				else
+					ereport(LOG,
+							(errcode(ERRCODE_T_R_SERIALIZATION_FAILURE),
+							 errmsg("concurrent update, retrying")));
 				goto retry;
 			case HeapTupleInvisible:
 				elog(ERROR, "attempted to lock invisible tuple");
+				break;
 			default:
 				elog(ERROR, "unexpected heap_lock_tuple status: %u", res);
 				break;
@@ -349,12 +355,18 @@ retry:
 				break;
 			case HeapTupleUpdated:
 				/* XXX: Improve handling here */
-				ereport(LOG,
-						(errcode(ERRCODE_T_R_SERIALIZATION_FAILURE),
-						 errmsg("concurrent update, retrying")));
+				if (ItemPointerIndicatesMovedPartitions(&hufd.ctid))
+					ereport(LOG,
+							(errcode(ERRCODE_T_R_SERIALIZATION_FAILURE),
+							 errmsg("tuple to be locked was already moved to another partition due to concurrent update, retrying")));
+				else
+					ereport(LOG,
+							(errcode(ERRCODE_T_R_SERIALIZATION_FAILURE),
+							 errmsg("concurrent update, retrying")));
 				goto retry;
 			case HeapTupleInvisible:
 				elog(ERROR, "attempted to lock invisible tuple");
+				break;
 			default:
 				elog(ERROR, "unexpected heap_lock_tuple status: %u", res);
 				break;
@@ -401,9 +413,11 @@ ExecSimpleRelationInsert(EState *estate, TupleTableSlot *slot)
 
 		/* Check the constraints of the tuple */
 		if (rel->rd_att->constr)
-			ExecConstraints(resultRelInfo, slot, estate, true);
+			ExecConstraints(resultRelInfo, slot, estate);
+		if (resultRelInfo->ri_PartitionCheck)
+			ExecPartitionCheck(resultRelInfo, slot, estate, true);
 
-		/* Store the slot into tuple that we can inspect. */
+		/* Materialize slot into a tuple that we can scribble upon. */
 		tuple = ExecMaterializeSlot(slot);
 
 		/* OK, store the tuple and create index entries for it */
@@ -466,9 +480,11 @@ ExecSimpleRelationUpdate(EState *estate, EPQState *epqstate,
 
 		/* Check the constraints of the tuple */
 		if (rel->rd_att->constr)
-			ExecConstraints(resultRelInfo, slot, estate, true);
+			ExecConstraints(resultRelInfo, slot, estate);
+		if (resultRelInfo->ri_PartitionCheck)
+			ExecPartitionCheck(resultRelInfo, slot, estate, true);
 
-		/* Store the slot into tuple that we can write. */
+		/* Materialize slot into a tuple that we can scribble upon. */
 		tuple = ExecMaterializeSlot(slot);
 
 		/* OK, update the tuple and index entries for it */

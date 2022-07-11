@@ -284,10 +284,14 @@ plpgsql_stmt_typename(PLpgSQL_stmt *stmt)
 			return "CLOSE";
 		case PLPGSQL_STMT_PERFORM:
 			return "PERFORM";
+		case PLPGSQL_STMT_CALL:
+			return ((PLpgSQL_stmt_call *) stmt)->is_call ? "CALL" : "DO";
 		case PLPGSQL_STMT_COMMIT:
 			return "COMMIT";
 		case PLPGSQL_STMT_ROLLBACK:
 			return "ROLLBACK";
+		case PLPGSQL_STMT_SET:
+			return "SET";
 	}
 
 	return "unknown";
@@ -367,8 +371,10 @@ static void free_open(PLpgSQL_stmt_open *stmt);
 static void free_fetch(PLpgSQL_stmt_fetch *stmt);
 static void free_close(PLpgSQL_stmt_close *stmt);
 static void free_perform(PLpgSQL_stmt_perform *stmt);
+static void free_call(PLpgSQL_stmt_call *stmt);
 static void free_commit(PLpgSQL_stmt_commit *stmt);
 static void free_rollback(PLpgSQL_stmt_rollback *stmt);
+static void free_set(PLpgSQL_stmt_set *stmt);
 static void free_expr(PLpgSQL_expr *expr);
 
 
@@ -449,11 +455,17 @@ free_stmt(PLpgSQL_stmt *stmt)
 		case PLPGSQL_STMT_PERFORM:
 			free_perform((PLpgSQL_stmt_perform *) stmt);
 			break;
+		case PLPGSQL_STMT_CALL:
+			free_call((PLpgSQL_stmt_call *) stmt);
+			break;
 		case PLPGSQL_STMT_COMMIT:
 			free_commit((PLpgSQL_stmt_commit *) stmt);
 			break;
 		case PLPGSQL_STMT_ROLLBACK:
 			free_rollback((PLpgSQL_stmt_rollback *) stmt);
+			break;
+		case PLPGSQL_STMT_SET:
+			free_set((PLpgSQL_stmt_set *) stmt);
 			break;
 		default:
 			elog(ERROR, "unrecognized cmd_type: %d", stmt->cmd_type);
@@ -603,6 +615,12 @@ free_perform(PLpgSQL_stmt_perform *stmt)
 }
 
 static void
+free_call(PLpgSQL_stmt_call *stmt)
+{
+	free_expr(stmt->expr);
+}
+
+static void
 free_commit(PLpgSQL_stmt_commit *stmt)
 {
 }
@@ -610,6 +628,12 @@ free_commit(PLpgSQL_stmt_commit *stmt)
 static void
 free_rollback(PLpgSQL_stmt_rollback *stmt)
 {
+}
+
+static void
+free_set(PLpgSQL_stmt_set *stmt)
+{
+	free_expr(stmt->expr);
 }
 
 static void
@@ -805,8 +829,10 @@ static void dump_fetch(PLpgSQL_stmt_fetch *stmt);
 static void dump_cursor_direction(PLpgSQL_stmt_fetch *stmt);
 static void dump_close(PLpgSQL_stmt_close *stmt);
 static void dump_perform(PLpgSQL_stmt_perform *stmt);
+static void dump_call(PLpgSQL_stmt_call *stmt);
 static void dump_commit(PLpgSQL_stmt_commit *stmt);
 static void dump_rollback(PLpgSQL_stmt_rollback *stmt);
+static void dump_set(PLpgSQL_stmt_set *stmt);
 static void dump_expr(PLpgSQL_expr *expr);
 
 
@@ -897,11 +923,17 @@ dump_stmt(PLpgSQL_stmt *stmt)
 		case PLPGSQL_STMT_PERFORM:
 			dump_perform((PLpgSQL_stmt_perform *) stmt);
 			break;
+		case PLPGSQL_STMT_CALL:
+			dump_call((PLpgSQL_stmt_call *) stmt);
+			break;
 		case PLPGSQL_STMT_COMMIT:
 			dump_commit((PLpgSQL_stmt_commit *) stmt);
 			break;
 		case PLPGSQL_STMT_ROLLBACK:
 			dump_rollback((PLpgSQL_stmt_rollback *) stmt);
+			break;
+		case PLPGSQL_STMT_SET:
+			dump_set((PLpgSQL_stmt_set *) stmt);
 			break;
 		default:
 			elog(ERROR, "unrecognized cmd_type: %d", stmt->cmd_type);
@@ -1276,6 +1308,15 @@ dump_perform(PLpgSQL_stmt_perform *stmt)
 }
 
 static void
+dump_call(PLpgSQL_stmt_call *stmt)
+{
+	dump_ind();
+	printf("%s expr = ", stmt->is_call ? "CALL" : "DO");
+	dump_expr(stmt->expr);
+	printf("\n");
+}
+
+static void
 dump_commit(PLpgSQL_stmt_commit *stmt)
 {
 	dump_ind();
@@ -1287,6 +1328,13 @@ dump_rollback(PLpgSQL_stmt_rollback *stmt)
 {
 	dump_ind();
 	printf("ROLLBACK\n");
+}
+
+static void
+dump_set(PLpgSQL_stmt_set *stmt)
+{
+	dump_ind();
+	printf("%s\n", stmt->expr->query);
 }
 
 static void

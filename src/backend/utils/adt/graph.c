@@ -18,7 +18,6 @@
 #include "catalog/ag_label.h"
 #include "catalog/namespace.h"
 #include "catalog/pg_type.h"
-#include "catalog/pg_inherits_fn.h"
 #include "executor/spi.h"
 #include "funcapi.h"
 #include "libpq/libpq.h"
@@ -33,6 +32,7 @@
 #include "utils/regproc.h"
 #include "utils/syscache.h"
 #include "utils/typcache.h"
+#include "catalog/pg_inherits.h"
 
 #define GRAPHID_FMTSTR			"%hu." UINT64_FORMAT
 #define GRAPHID_BUFLEN			32	/* "65535.281474976710655" */

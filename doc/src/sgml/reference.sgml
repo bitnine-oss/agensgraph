@@ -283,6 +283,7 @@
    &pgtestfsync;
    &pgtesttiming;
    &pgupgrade;
+   &pgVerifyChecksums;
    &pgwaldump;
    &postgres;
    &postmaster;

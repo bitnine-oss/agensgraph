@@ -14,8 +14,6 @@
  */
 #include "postgres.h"
 
-#include <math.h>
-
 #include "executor/executor.h"
 #include "foreign/fdwapi.h"
 #include "optimizer/cost.h"
@@ -181,6 +179,7 @@ add_paths_to_joinrel(PlannerInfo *root,
 			break;
 		case JOIN_UNIQUE_OUTER:
 			extra.inner_unique = innerrel_is_unique(root,
+													joinrel->relids,
 													outerrel->relids,
 													innerrel,
 													JOIN_INNER,
@@ -189,6 +188,7 @@ add_paths_to_joinrel(PlannerInfo *root,
 			break;
 		default:
 			extra.inner_unique = innerrel_is_unique(root,
+													joinrel->relids,
 													outerrel->relids,
 													innerrel,
 													jointype,
@@ -217,7 +217,7 @@ add_paths_to_joinrel(PlannerInfo *root,
 	 * for cost estimation.  These will be the same for all paths.
 	 */
 	if (jointype == JOIN_SEMI || jointype == JOIN_ANTI || extra.inner_unique)
-		compute_semi_anti_join_factors(root, outerrel, innerrel,
+		compute_semi_anti_join_factors(root, joinrel, outerrel, innerrel,
 									   jointype, sjinfo, restrictlist,
 									   &extra.semifactors);
 
@@ -347,7 +347,8 @@ add_paths_for_cmerge(PlannerInfo *root, RelOptInfo *joinrel,
 	extra.mergeclause_list = NIL;
 	extra.sjinfo = sjinfo;
 	extra.param_source_rels = NULL;
-	extra.inner_unique = innerrel_is_unique(root, outerrel->relids, innerrel,
+	extra.inner_unique = innerrel_is_unique(root, joinrel->relids,
+											outerrel->relids, innerrel,
 											JOIN_CYPHER_MERGE, restrictlist,
 											false);
 
@@ -387,7 +388,8 @@ add_paths_for_cdelete(PlannerInfo *root, RelOptInfo *joinrel,
 	extra.mergeclause_list = NIL;
 	extra.sjinfo = sjinfo;
 	extra.param_source_rels = NULL;
-	extra.inner_unique = innerrel_is_unique(root, outerrel->relids, innerrel,
+	extra.inner_unique = innerrel_is_unique(root, joinrel->relids,
+											outerrel->relids, innerrel,
 											JOIN_CYPHER_DELETE, restrictlist,
 											false);
 
@@ -622,7 +624,7 @@ try_partial_nestloop_path(PlannerInfo *root,
 		/*
 		 * The inner and outer paths are parameterized, if at all, by the top
 		 * level parents, not the child relations, so we must use those relids
-		 * for our paramaterization tests.
+		 * for our parameterization tests.
 		 */
 		if (outerrel->top_parent_relids)
 			outerrelids = outerrel->top_parent_relids;
@@ -940,7 +942,7 @@ try_partial_hashjoin_path(PlannerInfo *root,
 	 * cost.  Bail out right away if it looks terrible.
 	 */
 	initial_cost_hashjoin(root, &workspace, jointype, hashclauses,
-						  outer_path, inner_path, extra, true);
+						  outer_path, inner_path, extra, parallel_hash);
 	if (!add_partial_path_precheck(joinrel, workspace.total_cost, NIL))
 		return;
 
@@ -1543,13 +1545,6 @@ match_unsorted_outer(PlannerInfo *root,
 	{
 		Path	   *outerpath = (Path *) lfirst(lc1);
 		List	   *merge_pathkeys;
-		List	   *mergeclauses;
-		List	   *innersortkeys;
-		List	   *trialsortkeys;
-		Path	   *cheapest_startup_inner;
-		Path	   *cheapest_total_inner;
-		int			num_sortkeys;
-		int			sortkeycnt;
 
 		/*
 		 * We cannot use an outer path that is parameterized by the inner rel.
@@ -1885,7 +1880,7 @@ hash_inner_and_outer(PlannerInfo *root,
 		 * If processing an outer join, only use its own join clauses for
 		 * hashing.  For inner joins we need not be so picky.
 		 */
-		if (isouterjoin && restrictinfo->is_pushed_down)
+		if (isouterjoin && RINFO_IS_PUSHED_DOWN(restrictinfo, joinrel->relids))
 			continue;
 
 		if (!restrictinfo->can_join ||
@@ -2132,7 +2127,7 @@ select_mergejoin_clauses(PlannerInfo *root,
 		 * we don't set have_nonmergeable_joinclause here because pushed-down
 		 * clauses will become otherquals not joinquals.)
 		 */
-		if (isouterjoin && restrictinfo->is_pushed_down)
+		if (isouterjoin && RINFO_IS_PUSHED_DOWN(restrictinfo, joinrel->relids))
 			continue;
 
 		/* Check that clause is a mergeable operator clause */

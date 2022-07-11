@@ -80,9 +80,12 @@ typedef struct FunctionCallInfoData
 	fmNodePtr	context;		/* pass info about context of call */
 	fmNodePtr	resultinfo;		/* pass or return extra info about result */
 	Oid			fncollation;	/* collation for function to use */
+#define FIELDNO_FUNCTIONCALLINFODATA_ISNULL 4
 	bool		isnull;			/* function must set true if result is NULL */
 	short		nargs;			/* # arguments actually passed */
+#define FIELDNO_FUNCTIONCALLINFODATA_ARG 6
 	Datum		arg[FUNC_MAX_ARGS]; /* Arguments passed to function */
+#define FIELDNO_FUNCTIONCALLINFODATA_ARGNULL 7
 	bool		argnull[FUNC_MAX_ARGS]; /* T if arg[i] is actually NULL */
 } FunctionCallInfoData;
 
@@ -109,6 +112,8 @@ extern void fmgr_info_cxt(Oid functionId, FmgrInfo *finfo,
  */
 extern void fmgr_info_copy(FmgrInfo *dstinfo, FmgrInfo *srcinfo,
 			   MemoryContext destcxt);
+
+extern void fmgr_symbol(Oid functionId, char **mod, char **fn);
 
 /*
  * This macro initializes all the fields of a FunctionCallInfoData except

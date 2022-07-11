@@ -44,10 +44,6 @@ static const uint32 nan[2] = {0xffffffff, 0x7fffffff};
 #define NAN (*(const double *) nan)
 #endif
 
-/* not sure what the following should be, but better to make it over-sufficient */
-#define MAXFLOATWIDTH	64
-#define MAXDOUBLEWIDTH	128
-
 /*
  * check to see if a float4/8 val has underflowed or overflowed
  */
@@ -360,18 +356,18 @@ Datum
 float4out(PG_FUNCTION_ARGS)
 {
 	float4		num = PG_GETARG_FLOAT4(0);
-	char	   *ascii = (char *) palloc(MAXFLOATWIDTH + 1);
+	char	   *ascii;
 
 	if (isnan(num))
-		PG_RETURN_CSTRING(strcpy(ascii, "NaN"));
+		PG_RETURN_CSTRING(pstrdup("NaN"));
 
 	switch (is_infinite(num))
 	{
 		case 1:
-			strcpy(ascii, "Infinity");
+			ascii = pstrdup("Infinity");
 			break;
 		case -1:
-			strcpy(ascii, "-Infinity");
+			ascii = pstrdup("-Infinity");
 			break;
 		default:
 			{
@@ -380,7 +376,7 @@ float4out(PG_FUNCTION_ARGS)
 				if (ndig < 1)
 					ndig = 1;
 
-				snprintf(ascii, MAXFLOATWIDTH + 1, "%.*g", ndig, num);
+				ascii = psprintf("%.*g", ndig, num);
 			}
 	}
 
@@ -596,18 +592,18 @@ float8out(PG_FUNCTION_ARGS)
 char *
 float8out_internal(double num)
 {
-	char	   *ascii = (char *) palloc(MAXDOUBLEWIDTH + 1);
+	char	   *ascii;
 
 	if (isnan(num))
-		return strcpy(ascii, "NaN");
+		return pstrdup("NaN");
 
 	switch (is_infinite(num))
 	{
 		case 1:
-			strcpy(ascii, "Infinity");
+			ascii = pstrdup("Infinity");
 			break;
 		case -1:
-			strcpy(ascii, "-Infinity");
+			ascii = pstrdup("-Infinity");
 			break;
 		default:
 			{
@@ -616,7 +612,7 @@ float8out_internal(double num)
 				if (ndig < 1)
 					ndig = 1;
 
-				snprintf(ascii, MAXDOUBLEWIDTH + 1, "%.*g", ndig, num);
+				ascii = psprintf("%.*g", ndig, num);
 			}
 	}
 
@@ -1202,7 +1198,7 @@ in_range_float8_float8(PG_FUNCTION_ARGS)
 	 */
 	if (isnan(offset) || offset < 0)
 		ereport(ERROR,
-				(errcode(ERRCODE_INVALID_PRECEDING_FOLLOWING_SIZE),
+				(errcode(ERRCODE_INVALID_PRECEDING_OR_FOLLOWING_SIZE),
 				 errmsg("invalid preceding or following size in window function")));
 
 	/*
@@ -1258,16 +1254,64 @@ in_range_float8_float8(PG_FUNCTION_ARGS)
 Datum
 in_range_float4_float8(PG_FUNCTION_ARGS)
 {
-	/* Doesn't seem worth duplicating code for, so just invoke float8_float8 */
-	float8		val = (float8) PG_GETARG_FLOAT4(0);
-	float8		base = (float8) PG_GETARG_FLOAT4(1);
+	float4		val = PG_GETARG_FLOAT4(0);
+	float4		base = PG_GETARG_FLOAT4(1);
+	float8		offset = PG_GETARG_FLOAT8(2);
+	bool		sub = PG_GETARG_BOOL(3);
+	bool		less = PG_GETARG_BOOL(4);
+	float8		sum;
 
-	return DirectFunctionCall5(in_range_float8_float8,
-							   Float8GetDatumFast(val),
-							   Float8GetDatumFast(base),
-							   PG_GETARG_DATUM(2),
-							   PG_GETARG_DATUM(3),
-							   PG_GETARG_DATUM(4));
+	/*
+	 * Reject negative or NaN offset.  Negative is per spec, and NaN is
+	 * because appropriate semantics for that seem non-obvious.
+	 */
+	if (isnan(offset) || offset < 0)
+		ereport(ERROR,
+				(errcode(ERRCODE_INVALID_PRECEDING_OR_FOLLOWING_SIZE),
+				 errmsg("invalid preceding or following size in window function")));
+
+	/*
+	 * Deal with cases where val and/or base is NaN, following the rule that
+	 * NaN sorts after non-NaN (cf float8_cmp_internal).  The offset cannot
+	 * affect the conclusion.
+	 */
+	if (isnan(val))
+	{
+		if (isnan(base))
+			PG_RETURN_BOOL(true);	/* NAN = NAN */
+		else
+			PG_RETURN_BOOL(!less);	/* NAN > non-NAN */
+	}
+	else if (isnan(base))
+	{
+		PG_RETURN_BOOL(less);	/* non-NAN < NAN */
+	}
+
+	/*
+	 * Deal with infinite offset (necessarily +inf, at this point).  We must
+	 * special-case this because if base happens to be -inf, their sum would
+	 * be NaN, which is an overflow-ish condition we should avoid.
+	 */
+	if (isinf(offset))
+	{
+		PG_RETURN_BOOL(sub ? !less : less);
+	}
+
+	/*
+	 * Otherwise it should be safe to compute base +/- offset.  We trust the
+	 * FPU to cope if base is +/-inf or the true sum would overflow, and
+	 * produce a suitably signed infinity, which will compare properly against
+	 * val whether or not that's infinity.
+	 */
+	if (sub)
+		sum = base - offset;
+	else
+		sum = base + offset;
+
+	if (less)
+		PG_RETURN_BOOL(val <= sum);
+	else
+		PG_RETURN_BOOL(val >= sum);
 }
 
 
@@ -1553,6 +1597,25 @@ dpow(PG_FUNCTION_ARGS)
 	float8		result;
 
 	/*
+	 * The POSIX spec says that NaN ^ 0 = 1, and 1 ^ NaN = 1, while all other
+	 * cases with NaN inputs yield NaN (with no error).  Many older platforms
+	 * get one or more of these cases wrong, so deal with them via explicit
+	 * logic rather than trusting pow(3).
+	 */
+	if (isnan(arg1))
+	{
+		if (isnan(arg2) || arg2 != 0.0)
+			PG_RETURN_FLOAT8(get_float8_nan());
+		PG_RETURN_FLOAT8(1.0);
+	}
+	if (isnan(arg2))
+	{
+		if (arg1 != 1.0)
+			PG_RETURN_FLOAT8(get_float8_nan());
+		PG_RETURN_FLOAT8(1.0);
+	}
+
+	/*
 	 * The SQL spec requires that we emit a particular SQLSTATE error code for
 	 * certain error conditions.  Specifically, we don't return a
 	 * divide-by-zero error code for 0 ^ -1.
@@ -1570,7 +1633,7 @@ dpow(PG_FUNCTION_ARGS)
 	 * pow() sets errno only on some platforms, depending on whether it
 	 * follows _IEEE_, _POSIX_, _XOPEN_, or _SVID_, so we try to avoid using
 	 * errno.  However, some platform/CPU combinations return errno == EDOM
-	 * and result == Nan for negative arg1 and very large arg2 (they must be
+	 * and result == NaN for negative arg1 and very large arg2 (they must be
 	 * using something different from our floor() test to decide it's
 	 * invalid).  Other platforms (HPPA) return errno == ERANGE and a large
 	 * (HUGE_VAL) but finite result to signal overflow.

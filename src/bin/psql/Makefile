@@ -19,9 +19,9 @@ include $(top_builddir)/src/Makefile.global
 REFDOCDIR= $(top_srcdir)/doc/src/sgml/ref
 
 override CPPFLAGS := -I. -I$(srcdir) -I$(libpq_srcdir) $(CPPFLAGS)
-override LDFLAGS := -L$(top_builddir)/src/fe_utils -lpgfeutils $(libpq_pgport) $(LDFLAGS)
+LDFLAGS_INTERNAL += -L$(top_builddir)/src/fe_utils -lpgfeutils $(libpq_pgport)
 
-OBJS=	command.o common.o conditional.o copy.o crosstabview.o \
+OBJS=	command.o common.o copy.o crosstabview.o \
 	describe.o help.o input.o large_obj.o mainloop.o \
 	prompt.o psqlscanslash.o sql_help.o startup.o stringutils.o \
 	tab-complete.o variables.o \
@@ -35,7 +35,10 @@ psql: $(OBJS) | submake-libpq submake-libpgport submake-libpgfeutils
 
 help.o: sql_help.h
 
-sql_help.c: sql_help.h ;
+# See notes in src/backend/parser/Makefile about the following two rules
+sql_help.c: sql_help.h
+	touch $@
+
 sql_help.h: create_help.pl $(wildcard $(REFDOCDIR)/*.sgml)
 	$(PERL) $< $(REFDOCDIR) $*
 
@@ -43,7 +46,7 @@ psqlscanslash.c: FLEXFLAGS = -Cfe -p -p
 psqlscanslash.c: FLEX_NO_BACKUP=yes
 psqlscanslash.c: FLEX_FIX_WARNING=yes
 
-distprep: sql_help.h psqlscanslash.c
+distprep: sql_help.h sql_help.c psqlscanslash.c
 
 install: all installdirs
 	$(INSTALL_PROGRAM) psql$(X) '$(DESTDIR)$(bindir)/psql$(X)'

@@ -104,7 +104,7 @@ typedef struct AggStatePerTransData
 	/*
 	 * Comparators for input columns --- only set/used when aggregate has
 	 * DISTINCT flag. equalfnOne version is used for single-column
-	 * commparisons, equalfnMulti for the case of multiple columns.
+	 * comparisons, equalfnMulti for the case of multiple columns.
 	 */
 	FmgrInfo	equalfnOne;
 	ExprState  *equalfnMulti;
@@ -216,10 +216,10 @@ typedef struct AggStatePerAggData
 	bool		resulttypeByVal;
 
 	/*
-	 * "sharable" is false if this agg cannot share state values with other
+	 * "shareable" is false if this agg cannot share state values with other
 	 * aggregates because the final function is read-write.
 	 */
-	bool		sharable;
+	bool		shareable;
 }			AggStatePerAggData;
 
 /*
@@ -240,9 +240,12 @@ typedef struct AggStatePerAggData
  */
 typedef struct AggStatePerGroupData
 {
+#define FIELDNO_AGGSTATEPERGROUPDATA_TRANSVALUE 0
 	Datum		transValue;		/* current transition value */
+#define FIELDNO_AGGSTATEPERGROUPDATA_TRANSVALUEISNULL 1
 	bool		transValueIsNull;
 
+#define FIELDNO_AGGSTATEPERGROUPDATA_NOTRANSVALUE 2
 	bool		noTransValue;	/* true if transValue not set yet */
 
 	/*

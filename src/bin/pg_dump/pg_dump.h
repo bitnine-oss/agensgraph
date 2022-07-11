@@ -316,6 +316,7 @@ typedef struct _tableInfo
 	char	  **attoptions;		/* per-attribute options */
 	Oid		   *attcollation;	/* per-attribute collation selection */
 	char	  **attfdwoptions;	/* per-attribute fdw options */
+	char	  **attmissingval;	/* per attribute missing value */
 	bool	   *notnull;		/* NOT NULL constraints on attributes */
 	bool	   *inhNotNull;		/* true if NOT NULL is inherited */
 	struct _attrDefInfo **attrdefs; /* DEFAULT expressions */
@@ -360,8 +361,10 @@ typedef struct _indxInfo
 	char	   *indexdef;
 	char	   *tablespace;		/* tablespace in which index is stored */
 	char	   *indreloptions;	/* options specified by WITH (...) */
-	int			indnkeys;
-	Oid		   *indkeys;
+	int			indnkeyattrs;	/* number of index key attributes */
+	int			indnattrs;		/* total number of index attributes */
+	Oid		   *indkeys;		/* In spite of the name 'indkeys' this field
+								 * contains both key and nonkey attributes */
 	bool		indisclustered;
 	bool		indisreplident;
 	Oid			parentidx;		/* if partitioned, parent index OID */
@@ -595,6 +598,7 @@ typedef struct _PublicationInfo
 	bool		pubinsert;
 	bool		pubupdate;
 	bool		pubdelete;
+	bool		pubtruncate;
 } PublicationInfo;
 
 /*

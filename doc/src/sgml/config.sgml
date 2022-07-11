@@ -696,8 +696,9 @@ include_dir 'conf.d'
 
        <para>
         The default value is three connections. The value must be less
-        than the value of <varname>max_connections</varname>. This
-        parameter can only be set at server start.
+        than <varname>max_connections</varname> minus
+        <xref linkend="guc-max-wal-senders"/>.
+        This parameter can only be set at server start.
        </para>
       </listitem>
      </varlistentry>
@@ -1306,6 +1307,66 @@ include_dir 'conf.d'
         <command>openssl dhparam -out dhparams.pem 2048</command>.
        </para>
 
+       <para>
+        This parameter can only be set in the <filename>postgresql.conf</filename>
+        file or on the server command line.
+       </para>
+      </listitem>
+     </varlistentry>
+
+     <varlistentry id="guc-ssl-passphrase-command" xreflabel="ssl_passphrase_command">
+      <term><varname>ssl_passphrase_command</varname> (<type>string</type>)
+      <indexterm>
+       <primary><varname>ssl_passphrase_command</varname> configuration parameter</primary>
+      </indexterm>
+      </term>
+      <listitem>
+       <para>
+        Sets an external command to be invoked when a passphrase for
+        decrypting an SSL file such as a private key needs to be obtained.  By
+        default, this parameter is empty, which means the built-in prompting
+        mechanism is used.
+       </para>
+       <para>
+        The command must print the passphrase to the standard output and exit
+        with code 0.  In the parameter value, <literal>%p</literal> is
+        replaced by a prompt string.  (Write <literal>%%</literal> for a
+        literal <literal>%</literal>.)  Note that the prompt string will
+        probably contain whitespace, so be sure to quote adequately.  A single
+        newline is stripped from the end of the output if present.
+       </para>
+       <para>
+        The command does not actually have to prompt the user for a
+        passphrase.  It can read it from a file, obtain it from a keychain
+        facility, or similar.  It is up to the user to make sure the chosen
+        mechanism is adequately secure.
+       </para>
+       <para>
+        This parameter can only be set in the <filename>postgresql.conf</filename>
+        file or on the server command line.
+       </para>
+      </listitem>
+     </varlistentry>
+
+     <varlistentry id="guc-ssl-passphrase-command-supports-reload" xreflabel="ssl_passphrase_command_supports_reload">
+      <term><varname>ssl_passphrase_command_supports_reload</varname> (<type>boolean</type>)
+      <indexterm>
+       <primary><varname>ssl_passphrase_command_supports_reload</varname> configuration parameter</primary>
+      </indexterm>
+      </term>
+      <listitem>
+       <para>
+        This parameter determines whether the passphrase command set by
+        <varname>ssl_passphrase_command</varname> will also be called during a
+        configuration reload if a key file needs a passphrase.  If this
+        parameter is false (the default), then
+        <varname>ssl_passphrase_command</varname> will be ignored during a
+        reload and the SSL configuration will not be reloaded if a passphrase
+        is needed.  That setting is appropriate for a command that requires a
+        TTY for prompting, which might not be available when the server is
+        running.  Setting this parameter to true might be appropriate if the
+        passphrase is obtained from a file, for example.
+       </para>
        <para>
         This parameter can only be set in the <filename>postgresql.conf</filename>
         file or on the server command line.
@@ -2087,7 +2148,7 @@ include_dir 'conf.d'
          pool of processes established by <xref
          linkend="guc-max-worker-processes"/>, limited by <xref
          linkend="guc-max-parallel-workers"/>.  Note that the requested
-         number of workers may not actually be available at runtime.
+         number of workers may not actually be available at run time.
          If this occurs, the utility operation will run with fewer
          workers than expected.  The default value is 2.  Setting this
          value to 0 disables the use of parallel workers by utility
@@ -2778,7 +2839,7 @@ include_dir 'conf.d'
       <listitem>
        <para>
         Write a message to the server log if checkpoints caused by
-        the filling of checkpoint segment files happen closer together
+        the filling of WAL segment files happen closer together
         than this many seconds (which suggests that
         <varname>max_wal_size</varname> ought to be raised).  The default is
         30 seconds (<literal>30s</literal>).  Zero disables the warning.
@@ -2947,17 +3008,17 @@ include_dir 'conf.d'
      These settings control the behavior of the built-in
      <firstterm>streaming replication</firstterm> feature (see
      <xref linkend="streaming-replication"/>).  Servers will be either a
-     Master or a Standby server.  Masters can send data, while Standby(s)
+     master or a standby server.  Masters can send data, while standbys
      are always receivers of replicated data.  When cascading replication
-     (see <xref linkend="cascading-replication"/>) is used, Standby server(s)
+     (see <xref linkend="cascading-replication"/>) is used, standby servers
      can also be senders, as well as receivers.
-     Parameters are mainly for Sending and Standby servers, though some
-     parameters have meaning only on the Master server.  Settings may vary
+     Parameters are mainly for sending and standby servers, though some
+     parameters have meaning only on the master server.  Settings may vary
      across the cluster without problems if that is required.
     </para>
 
     <sect2 id="runtime-config-replication-sender">
-     <title>Sending Server(s)</title>
+     <title>Sending Servers</title>
 
      <para>
       These parameters can be set on any server that is
@@ -2982,13 +3043,16 @@ include_dir 'conf.d'
         maximum number of simultaneously running WAL sender
         processes). The default is 10. The value 0 means replication is
         disabled. WAL sender processes count towards the total number
-        of connections, so the parameter cannot be set higher than
-        <xref linkend="guc-max-connections"/>.  Abrupt streaming client
-        disconnection might cause an orphaned connection slot until
+        of connections, so this parameter's value must be less than
+        <xref linkend="guc-max-connections"/> minus
+        <xref linkend="guc-superuser-reserved-connections"/>.
+        Abrupt streaming client disconnection might leave an orphaned
+        connection slot behind until
         a timeout is reached, so this parameter should be set slightly
         higher than the maximum number of expected clients so disconnected
         clients can immediately reconnect.  This parameter can only
-        be set at server start. <varname>wal_level</varname> must be set to
+        be set at server start.
+        Also, <varname>wal_level</varname> must be set to
         <literal>replica</literal> or higher to allow connections from standby
         servers.
        </para>
@@ -3007,10 +3071,11 @@ include_dir 'conf.d'
          (see <xref linkend="streaming-replication-slots"/>) that the server
          can support. The default is 10.  This parameter can only be set at
          server start.
-         <varname>wal_level</varname> must be set
-         to <literal>replica</literal> or higher to allow replication slots to
-         be used. Setting it to a lower value than the number of currently
+         Setting it to a lower value than the number of currently
          existing replication slots will prevent the server from starting.
+         Also, <varname>wal_level</varname> must be set
+         to <literal>replica</literal> or higher to allow replication slots to
+         be used.
         </para>
        </listitem>
       </varlistentry>
@@ -3122,9 +3187,9 @@ include_dir 'conf.d'
         The synchronous standbys will be those whose names appear
         in this list, and
         that are both currently connected and streaming data in real-time
-        (as shown by a state of <literal>streaming</literal> in the
-        <link linkend="monitoring-stats-views-table">
-        <literal>pg_stat_replication</literal></link> view).
+        (as shown by a state of <literal>streaming</literal> in the <link
+        linkend="pg-stat-replication-view"><literal>pg_stat_replication</literal></link>
+        view).
         Specifying more than one synchronous standby can allow for very high
         availability and protection against data loss.
        </para>
@@ -3371,8 +3436,9 @@ ANY <replaceable class="parameter">num_sync</replaceable> ( <replaceable class="
        Specifies the minimum frequency for the WAL receiver
        process on the standby to send information about replication progress
        to the primary or upstream standby, where it can be seen using the
-       <link linkend="monitoring-stats-views-table">
-       <literal>pg_stat_replication</literal></link> view.  The standby will report
+       <link
+       linkend="pg-stat-replication-view"><literal>pg_stat_replication</literal></link>
+       view.  The standby will report
        the last write-ahead log location it has written, the last position it
        has flushed to disk, and the last position it has applied.
        This parameter's
@@ -3736,6 +3802,24 @@ ANY <replaceable class="parameter">num_sync</replaceable> ( <replaceable class="
       </listitem>
      </varlistentry>
 
+     <varlistentry id="guc-enable-partition-pruning" xreflabel="enable_partition_pruning">
+      <term><varname>enable_partition_pruning</varname> (<type>boolean</type>)
+       <indexterm>
+        <primary><varname>enable_partition_pruning</varname> configuration parameter</primary>
+       </indexterm>
+      </term>
+      <listitem>
+       <para>
+        Enables or disables the query planner's ability to eliminate a
+        partitioned table's partitions from query plans.  This also controls
+        the planner's ability to generate query plans which allow the query
+        executor to remove (ignore) partitions during query execution.  The
+        default is <literal>on</literal>.
+        See <xref linkend="ddl-partition-pruning"/> for details.
+       </para>
+      </listitem>
+     </varlistentry>
+
      <varlistentry id="guc-enable-partitionwise-join" xreflabel="enable_partitionwise_join">
       <term><varname>enable_partitionwise_join</varname> (<type>boolean</type>)
       <indexterm>
@@ -3752,6 +3836,26 @@ ANY <replaceable class="parameter">num_sync</replaceable> ( <replaceable class="
         partitions.  Because partitionwise join planning can use significantly
         more CPU time and memory during planning, the default is
         <literal>off</literal>.
+       </para>
+      </listitem>
+     </varlistentry>
+
+     <varlistentry id="guc-enable-partitionwise-aggregate" xreflabel="enable_partitionwise_aggregate">
+      <term><varname>enable_partitionwise_aggregate</varname> (<type>boolean</type>)
+      <indexterm>
+       <primary><varname>enable_partitionwise_aggregate</varname> configuration parameter</primary>
+      </indexterm>
+      </term>
+      <listitem>
+       <para>
+        Enables or disables the query planner's use of partitionwise grouping
+        or aggregation, which allows grouping or aggregation on a partitioned
+        tables performed separately for each partition.  If the <literal>GROUP
+        BY</literal> clause does not include the partition keys, only partial
+        aggregation can be performed on a per-partition basis, and
+        finalization must be performed later.  Because partitionwise grouping
+        or aggregation can use significantly more CPU time and memory during
+        planning, the default is <literal>off</literal>.
        </para>
       </listitem>
      </varlistentry>
@@ -4051,6 +4155,62 @@ ANY <replaceable class="parameter">num_sync</replaceable> ( <replaceable class="
       </listitem>
      </varlistentry>
 
+
+     <varlistentry id="guc-jit-above-cost" xreflabel="jit_above_cost">
+      <term><varname>jit_above_cost</varname> (<type>floating point</type>)
+      <indexterm>
+       <primary><varname>jit_above_cost</varname> configuration parameter</primary>
+      </indexterm>
+      </term>
+      <listitem>
+       <para>
+        Sets the planner's cutoff above which JIT compilation is used as part
+        of query execution (see <xref linkend="jit"/>). Performing
+        <acronym>JIT</acronym> costs time but can accelerate query execution.
+
+        The default is <literal>100000</literal>.
+       </para>
+      </listitem>
+     </varlistentry>
+
+     <varlistentry id="guc-jit-optimize-above-cost" xreflabel="jit_optimize_above_cost">
+      <term><varname>jit_optimize_above_cost</varname> (<type>floating point</type>)
+      <indexterm>
+       <primary><varname>jit_optimize_above_cost</varname> configuration parameter</primary>
+      </indexterm>
+      </term>
+      <listitem>
+       <para>
+        Sets the planner's cutoff above which JIT compiled programs (see <xref
+        linkend="guc-jit-above-cost"/>) are optimized. Optimization initially
+        takes time, but can improve execution speed.  It is not meaningful to
+        set this to a lower value than <xref linkend="guc-jit-above-cost"/>.
+
+        The default is <literal>500000</literal>.
+       </para>
+      </listitem>
+     </varlistentry>
+
+     <varlistentry id="guc-jit-inline-above-cost" xreflabel="jit_inline_above_cost">
+      <term><varname>jit_inline_above_cost</varname> (<type>floating point</type>)
+      <indexterm>
+       <primary><varname>jit_inline_above_cost</varname> configuration parameter</primary>
+      </indexterm>
+      </term>
+      <listitem>
+       <para>
+        Sets the planner's cutoff above which JIT compiled programs (see <xref
+        linkend="guc-jit-above-cost"/>) attempt to inline functions and
+        operators. Inlining initially takes time, but can improve execution
+        speed.  It is unlikely to be beneficial to set
+        <varname>jit_inline_above_cost</varname> below
+        <varname>jit_optimize_above_cost</varname>.
+
+        The default is <literal>500000</literal>.
+       </para>
+      </listitem>
+     </varlistentry>
+
      </variablelist>
 
     </sect2>
@@ -4251,8 +4411,7 @@ ANY <replaceable class="parameter">num_sync</replaceable> ( <replaceable class="
         <literal>partition</literal> (examine constraints only for inheritance child
         tables and <literal>UNION ALL</literal> subqueries).
         <literal>partition</literal> is the default setting.
-        It is often used with inheritance and partitioned tables to
-        improve performance.
+        It is often used with inheritance tables to improve performance.
       </para>
 
        <para>
@@ -4275,11 +4434,11 @@ SELECT * FROM parent WHERE key = 2400;
 
        <para>
         Currently, constraint exclusion is enabled by default
-        only for cases that are often used to implement table partitioning.
-        Turning it on for all tables imposes extra planning overhead that is
-        quite noticeable on simple queries, and most often will yield no
-        benefit for simple queries.  If you have no partitioned tables
-        you might prefer to turn it off entirely.
+        only for cases that are often used to implement table partitioning via
+        inheritance tables.  Turning it on for all tables imposes extra
+        planning overhead that is quite noticeable on simple queries, and most
+        often will yield no benefit for simple queries.  If you have no
+        inheritance partitioned tables you might prefer to turn it off entirely.
        </para>
 
        <para>
@@ -4329,6 +4488,23 @@ SELECT * FROM parent WHERE key = 2400;
         Setting this value to <xref linkend="guc-geqo-threshold"/> or more
         may trigger use of the GEQO planner, resulting in non-optimal
         plans.  See <xref linkend="runtime-config-query-geqo"/>.
+       </para>
+      </listitem>
+     </varlistentry>
+
+     <varlistentry id="guc-jit" xreflabel="jit">
+      <term><varname>jit</varname> (<type>boolean</type>)
+      <indexterm>
+       <primary><varname>jit</varname> configuration parameter</primary>
+      </indexterm>
+      </term>
+      <listitem>
+       <para>
+        Determines whether <acronym>JIT</acronym> may be used by
+        <productname>PostgreSQL</productname>, if available (see <xref
+        linkend="jit"/>).
+
+        The default is <literal>on</literal>.
        </para>
       </listitem>
      </varlistentry>
@@ -6330,6 +6506,13 @@ COPY postgres_log FROM '/full/path/to/logfile.csv' WITH csv;
        </para>
 
        <para>
+        For more information on schema handling, see
+        <xref linkend="ddl-schemas"/>.  In particular, the default
+        configuration is suitable only when the database has a single user or
+        a few mutually-trusting users.
+       </para>
+
+       <para>
         The current effective value of the search path can be examined
         via the <acronym>SQL</acronym> function
         <function>current_schemas</function>
@@ -6340,9 +6523,6 @@ COPY postgres_log FROM '/full/path/to/logfile.csv' WITH csv;
         appearing in <varname>search_path</varname> were resolved.
        </para>
 
-       <para>
-        For more information on schema handling, see <xref linkend="ddl-schemas"/>.
-       </para>
       </listitem>
      </varlistentry>
 
@@ -6776,6 +6956,46 @@ COPY postgres_log FROM '/full/path/to/logfile.csv' WITH csv;
         autovacuums.
         For more information see <xref linkend="vacuum-for-multixact-wraparound"/>.
        </para>
+      </listitem>
+     </varlistentry>
+
+     <varlistentry id="guc-vacuum-cleanup-index-scale-factor" xreflabel="vacuum_cleanup_index_scale_factor">
+      <term><varname>vacuum_cleanup_index_scale_factor</varname> (<type>floating point</type>)
+      <indexterm>
+       <primary><varname>vacuum_cleanup_index_scale_factor</varname> configuration parameter</primary>
+      </indexterm>
+      </term>
+      <listitem>
+       <para>
+        Specifies the fraction of the total number of heap tuples counted in
+        the previous statistics collection that can be inserted without
+        incurring an index scan at the <command>VACUUM</command> cleanup stage.
+        This setting currently applies to B-tree indexes only.
+       </para>
+
+       <para>
+        If no tuples were deleted from the heap, B-tree indexes are still
+        scanned at the <command>VACUUM</command> cleanup stage when at least one
+        of the following conditions is met: the index statistics are stale, or
+        the index contains deleted pages that can be recycled during cleanup.
+        Index statistics are considered to be stale if the number of newly
+        inserted tuples exceeds the <varname>vacuum_cleanup_index_scale_factor</varname>
+        fraction of the total number of heap tuples detected by the previous
+        statistics collection. The total number of heap tuples is stored in
+        the index meta-page. Note that the meta-page does not include this data
+        until <command>VACUUM</command> finds no dead tuples, so B-tree index
+        scan at the cleanup stage can only be skipped if the second and
+        subsequent <command>VACUUM</command> cycles detect no dead tuples.
+       </para>
+
+       <para>
+        The value can range from <literal>0</literal> to
+        <literal>10000000000</literal>.
+        When <varname>vacuum_cleanup_index_scale_factor</varname> is set to
+        <literal>0</literal>, index scans are never skipped during
+        <command>VACUUM</command> cleanup. The default value is <literal>0.1</literal>.
+       </para>
+
       </listitem>
      </varlistentry>
 
@@ -7323,6 +7543,29 @@ SET XML OPTION { DOCUMENT | CONTENT };
       </note>
       </listitem>
      </varlistentry>
+
+     <varlistentry id="guc-jit-provider" xreflabel="jit_provider">
+      <term><varname>jit_provider</varname> (<type>string</type>)
+       <indexterm>
+        <primary><varname>jit_provider</varname> configuration parameter</primary>
+       </indexterm>
+      </term>
+      <listitem>
+       <para>
+        Determines which JIT provider (see <xref linkend="jit-extensibility"/>) is
+        used. The built-in default is <literal>llvmjit</literal>.
+       </para>
+       <para>
+        If set to a non-existent library <acronym>JIT</acronym> will not be
+        available, but no error will be raised. This allows JIT support to be
+        installed separately from the main
+        <productname>PostgreSQL</productname> package.
+
+        This parameter can only be set at server start.
+       </para>
+      </listitem>
+     </varlistentry>
+
     </variablelist>
    </sect2>
 
@@ -7930,6 +8173,23 @@ dynamic_library_path = 'C:\tools\postgresql;H:\my_project\lib;$libdir'
        <para>
         Reports whether data checksums are enabled for this cluster.
         See <xref linkend="app-initdb-data-checksums"/> for more information.
+       </para>
+      </listitem>
+     </varlistentry>
+
+     <varlistentry id="guc-data-directory-mode" xreflabel="data_directory_mode">
+      <term><varname>data_directory_mode</varname> (<type>integer</type>)
+      <indexterm>
+       <primary><varname>data_directory_mode</varname> configuration parameter</primary>
+      </indexterm>
+      </term>
+      <listitem>
+       <para>
+        On Unix systems this parameter reports the permissions of the data
+        directory defined by (<xref linkend="guc-data-directory"/>) at startup.
+        (On Microsoft Windows this parameter will always display
+        <literal>0700</literal>). See
+        <xref linkend="app-initdb-allow-group-access"/> for more information.
        </para>
       </listitem>
      </varlistentry>
@@ -8569,7 +8829,92 @@ LOG:  CleanUpLock: deleting: lock(0xb7acd844) id(24688,24696,0,0,0,1)
        </para>
       </listitem>
      </varlistentry>
-   </variablelist>
+
+     <varlistentry id="guc-jit-debugging-support" xreflabel="jit_debugging_support">
+      <term><varname>jit_debugging_support</varname> (<type>boolean</type>)
+      <indexterm>
+       <primary><varname>jit_debugging_support</varname> configuration parameter</primary>
+      </indexterm>
+      </term>
+      <listitem>
+       <para>
+        If LLVM has the required functionality, register generated functions
+        with <productname>GDB</productname>.  This makes debugging easier.
+
+        The default setting is <literal>off</literal>, and can only be set at
+        server start.
+       </para>
+      </listitem>
+     </varlistentry>
+
+     <varlistentry id="guc-jit-dump-bitcode" xreflabel="jit_dump_bitcode">
+      <term><varname>jit_dump_bitcode</varname> (<type>boolean</type>)
+      <indexterm>
+       <primary><varname>jit_dump_bitcode</varname> configuration parameter</primary>
+      </indexterm>
+      </term>
+      <listitem>
+       <para>
+        Writes the generated <productname>LLVM</productname> IR out to the
+        file system, inside <xref linkend="guc-data-directory"/>. This is only
+        useful for working on the internals of the JIT implementation.
+
+        The default setting is <literal>off</literal>, and it can only be
+        changed by a superuser.
+       </para>
+      </listitem>
+     </varlistentry>
+
+     <varlistentry id="guc-jit-expressions" xreflabel="jit_expressions">
+      <term><varname>jit_expressions</varname> (<type>boolean</type>)
+      <indexterm>
+       <primary><varname>jit_expressions</varname> configuration parameter</primary>
+      </indexterm>
+      </term>
+      <listitem>
+       <para>
+        Determines whether expressions are JIT compiled, subject to costing
+        decisions (see <xref linkend="jit-decision"/>).  The default is
+        <literal>on</literal>.
+       </para>
+      </listitem>
+     </varlistentry>
+
+     <varlistentry id="guc-jit-profiling-support" xreflabel="jit_profiling_support">
+      <term><varname>jit_profiling_support</varname> (<type>boolean</type>)
+      <indexterm>
+       <primary><varname>jit_profiling_support</varname> configuration parameter</primary>
+      </indexterm>
+      </term>
+      <listitem>
+       <para>
+        If LLVM has the required functionality, emit required data to allow
+        <productname>perf</productname> to profile functions generated by JIT.
+        This writes out files to <filename>$HOME/.debug/jit/</filename>; the
+        user is responsible for performing cleanup when desired.
+
+        The default setting is <literal>off</literal>, and can only be set at
+        server start.
+       </para>
+      </listitem>
+     </varlistentry>
+
+     <varlistentry id="guc-jit-tuple-deforming" xreflabel="jit_tuple_deforming">
+      <term><varname>jit_tuple_deforming</varname> (<type>boolean</type>)
+      <indexterm>
+       <primary><varname>jit_tuple_deforming</varname> configuration parameter</primary>
+      </indexterm>
+      </term>
+      <listitem>
+       <para>
+        Determines whether tuple deforming is JIT compiled, subject to costing
+        decisions (see <xref linkend="jit-decision"/>). The default is
+        <literal>on</literal>.
+       </para>
+      </listitem>
+     </varlistentry>
+
+    </variablelist>
   </sect1>
   <sect1 id="runtime-config-short">
    <title>Short Options</title>

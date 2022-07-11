@@ -29,6 +29,12 @@ sub pgbench
 			$filename =~ s/\@\d+$//;
 
 			#push @filenames, $filename;
+			# filenames are expected to be unique on a test
+			if (-e $filename)
+			{
+				ok(0, "$filename must not already exists");
+				unlink $filename or die "cannot unlink $filename: $!";
+			}
 			append_to_file($filename, $$files{$fn});
 		}
 	}
@@ -36,6 +42,8 @@ sub pgbench
 
 	# cleanup?
 	#unlink @filenames or die "cannot unlink files (@filenames): $!";
+
+	return;
 }
 
 # Test concurrent insertion into table with UNIQUE oid column.  DDL expects
@@ -53,8 +61,10 @@ pgbench(
 	[qr{processed: 125/125}],
 	[qr{^$}],
 	'concurrency OID generation',
-	{   '001_pgbench_concurrent_oid_generation' =>
-		  'INSERT INTO oid_tbl SELECT FROM generate_series(1,1000);' });
+	{
+		'001_pgbench_concurrent_oid_generation' =>
+		  'INSERT INTO oid_tbl SELECT FROM generate_series(1,1000);'
+	});
 
 # cleanup
 $node->safe_psql('postgres', 'DROP TABLE oid_tbl;');
@@ -64,8 +74,10 @@ pgbench(
 	'no-such-database',
 	1,
 	[qr{^$}],
-	[   qr{connection to database "no-such-database" failed},
-		qr{FATAL:  database "no-such-database" does not exist} ],
+	[
+		qr{connection to database "no-such-database" failed},
+		qr{FATAL:  database "no-such-database" does not exist}
+	],
 	'no such database');
 
 pgbench(
@@ -75,33 +87,42 @@ pgbench(
 
 # Initialize pgbench tables scale 1
 pgbench(
-	'-i', 0, [qr{^$}],
-	[ qr{creating tables}, qr{vacuuming}, qr{creating primary keys}, qr{done\.} ],
+	'-i', 0,
+	[qr{^$}],
+	[
+		qr{creating tables},       qr{vacuuming},
+		qr{creating primary keys}, qr{done\.}
+	],
 	'pgbench scale 1 initialization',);
 
 # Again, with all possible options
 pgbench(
-'--initialize --init-steps=dtpvg --scale=1 --unlogged-tables --fillfactor=98 --foreign-keys --quiet --tablespace=pg_default --index-tablespace=pg_default',
+	'--initialize --init-steps=dtpvg --scale=1 --unlogged-tables --fillfactor=98 --foreign-keys --quiet --tablespace=pg_default --index-tablespace=pg_default',
 	0,
 	[qr{^$}i],
-	[   qr{dropping old tables},
+	[
+		qr{dropping old tables},
 		qr{creating tables},
 		qr{vacuuming},
 		qr{creating primary keys},
 		qr{creating foreign keys},
-		qr{done\.} ],
+		qr{done\.}
+	],
 	'pgbench scale 1 initialization');
 
 # Test interaction of --init-steps with legacy step-selection options
 pgbench(
 	'--initialize --init-steps=dtpvgvv --no-vacuum --foreign-keys --unlogged-tables',
-	0, [qr{^$}],
-	[   qr{dropping old tables},
+	0,
+	[qr{^$}],
+	[
+		qr{dropping old tables},
 		qr{creating tables},
 		qr{creating primary keys},
 		qr{.* of .* tuples \(.*\) done},
 		qr{creating foreign keys},
-		qr{done\.} ],
+		qr{done\.}
+	],
 	'pgbench --init-steps');
 
 # Run all builtin scripts, for a few transactions each
@@ -109,34 +130,42 @@ pgbench(
 	'--transactions=5 -Dfoo=bla --client=2 --protocol=simple --builtin=t'
 	  . ' --connect -n -v -n',
 	0,
-	[   qr{builtin: TPC-B},
+	[
+		qr{builtin: TPC-B},
 		qr{clients: 2\b},
 		qr{processed: 10/10},
-		qr{mode: simple} ],
+		qr{mode: simple}
+	],
 	[qr{^$}],
 	'pgbench tpcb-like');
 
 pgbench(
-'--transactions=20 --client=5 -M extended --builtin=si -C --no-vacuum -s 1',
+	'--transactions=20 --client=5 -M extended --builtin=si -C --no-vacuum -s 1',
 	0,
-	[   qr{builtin: simple update},
+	[
+		qr{builtin: simple update},
 		qr{clients: 5\b},
 		qr{threads: 1\b},
 		qr{processed: 100/100},
-		qr{mode: extended} ],
+		qr{mode: extended}
+	],
 	[qr{scale option ignored}],
 	'pgbench simple update');
 
 pgbench(
 	'-t 100 -c 7 -M prepared -b se --debug',
 	0,
-	[   qr{builtin: select only},
+	[
+		qr{builtin: select only},
 		qr{clients: 7\b},
 		qr{threads: 1\b},
 		qr{processed: 700/700},
-		qr{mode: prepared} ],
-	[   qr{vacuum},    qr{client 0}, qr{client 1}, qr{sending},
-		qr{receiving}, qr{executing} ],
+		qr{mode: prepared}
+	],
+	[
+		qr{vacuum},    qr{client 0}, qr{client 1}, qr{sending},
+		qr{receiving}, qr{executing}
+	],
 	'pgbench select only');
 
 # check if threads are supported
@@ -152,16 +181,19 @@ my $nthreads = 2;
 pgbench(
 	"-t 100 -c 1 -j $nthreads -M prepared -n",
 	0,
-	[   qr{type: multiple scripts},
+	[
+		qr{type: multiple scripts},
 		qr{mode: prepared},
 		qr{script 1: .*/001_pgbench_custom_script_1},
 		qr{weight: 2},
 		qr{script 2: .*/001_pgbench_custom_script_2},
 		qr{weight: 1},
-		qr{processed: 100/100} ],
+		qr{processed: 100/100}
+	],
 	[qr{^$}],
 	'pgbench custom scripts',
-	{   '001_pgbench_custom_script_1@1' => q{-- select only
+	{
+		'001_pgbench_custom_script_1@1' => q{-- select only
 \set aid random(1, :scale * 100000)
 SELECT abalance::INTEGER AS balance
   FROM pgbench_accounts
@@ -173,51 +205,66 @@ BEGIN;
 -- cast are needed for typing under -M prepared
 SELECT :foo::INT + :scale::INT * :client_id::INT AS bla;
 COMMIT;
-} });
+}
+	});
 
 pgbench(
 	'-n -t 10 -c 1 -M simple',
 	0,
-	[   qr{type: .*/001_pgbench_custom_script_3},
+	[
+		qr{type: .*/001_pgbench_custom_script_3},
 		qr{processed: 10/10},
-		qr{mode: simple} ],
+		qr{mode: simple}
+	],
 	[qr{^$}],
 	'pgbench custom script',
-	{   '001_pgbench_custom_script_3' => q{-- select only variant
+	{
+		'001_pgbench_custom_script_3' => q{-- select only variant
 \set aid random(1, :scale * 100000)
 BEGIN;
 SELECT abalance::INTEGER AS balance
   FROM pgbench_accounts
   WHERE aid=:aid;
 COMMIT;
-} });
+}
+	});
 
 pgbench(
 	'-n -t 10 -c 2 -M extended',
 	0,
-	[   qr{type: .*/001_pgbench_custom_script_4},
+	[
+		qr{type: .*/001_pgbench_custom_script_4},
 		qr{processed: 20/20},
-		qr{mode: extended} ],
+		qr{mode: extended}
+	],
 	[qr{^$}],
 	'pgbench custom script',
-	{   '001_pgbench_custom_script_4' => q{-- select only variant
+	{
+		'001_pgbench_custom_script_4' => q{-- select only variant
 \set aid random(1, :scale * 100000)
 BEGIN;
 SELECT abalance::INTEGER AS balance
   FROM pgbench_accounts
   WHERE aid=:aid;
 COMMIT;
-} });
+}
+	});
 
 # test expressions
+# command 1..3 and 23 depend on random seed which is used to call srandom.
 pgbench(
-	'-t 1 -Dfoo=-10.1 -Dbla=false -Di=+3 -Dminint=-9223372036854775808 -Dn=null -Dt=t -Df=of -Dd=1.0',
+	'--random-seed=5432 -t 1 -Dfoo=-10.1 -Dbla=false -Di=+3 -Dminint=-9223372036854775808 -Dn=null -Dt=t -Df=of -Dd=1.0',
 	0,
 	[ qr{type: .*/001_pgbench_expressions}, qr{processed: 1/1} ],
-	[   qr{command=1.: int 1\d\b},
-	    qr{command=2.: int 1\d\d\b},
-	    qr{command=3.: int 1\d\d\d\b},
-	    qr{command=4.: int 4\b},
+	[
+		qr{setting random seed to 5432\b},
+
+		# After explicit seeding, the four * random checks (1-3,20) should be
+		# deterministic, but not necessarily portable.
+		qr{command=1.: int 1\d\b},        # uniform random: 12 on linux
+		qr{command=2.: int 1\d\d\b},      # exponential random: 106 on linux
+		qr{command=3.: int 1\d\d\d\b},    # gaussian random: 1462 on linux
+		qr{command=4.: int 4\b},
 		qr{command=5.: int 5\b},
 		qr{command=6.: int 6\b},
 		qr{command=7.: int 7\b},
@@ -230,7 +277,7 @@ pgbench(
 		qr{command=16.: double 16\b},
 		qr{command=17.: double 17\b},
 		qr{command=18.: int 9223372036854775807\b},
-		qr{command=20.: int [1-9]\b},
+		qr{command=20.: int \d\b},    # zipfian random: 1 on linux
 		qr{command=21.: double -27\b},
 		qr{command=22.: double 1024\b},
 		qr{command=23.: double 1\b},
@@ -259,9 +306,24 @@ pgbench(
 		qr{command=46.: int 46\b},
 		qr{command=47.: boolean true\b},
 		qr{command=48.: boolean true\b},
+		qr{command=49.: int -5817877081768721676\b},
+		qr{command=50.: boolean true\b},
+		qr{command=51.: int -7793829335365542153\b},
+		qr{command=52.: int -?\d+\b},
+		qr{command=53.: boolean true\b},
+		qr{command=65.: int 65\b},
+		qr{command=74.: int 74\b},
+		qr{command=83.: int 83\b},
+		qr{command=86.: int 86\b},
+		qr{command=93.: int 93\b},
+		qr{command=95.: int 0\b},
+		qr{command=96.: int 1\b},       # :scale
+		qr{command=97.: int 0\b},       # :client_id
+		qr{command=98.: int 5432\b},    # :random_seed
 	],
 	'pgbench expressions',
-	{   '001_pgbench_expressions' => q{-- integer functions
+	{
+		'001_pgbench_expressions' => q{-- integer functions
 \set i1 debug(random(10, 19))
 \set i2 debug(random_exponential(100, 199, 10.0))
 \set i3 debug(random_gaussian(1000, 1999, 10.0))
@@ -327,6 +389,12 @@ pgbench(
 \set n6 debug(:n IS NULL AND NOT :f AND :t)
 -- conditional truth
 \set cs debug(CASE WHEN 1 THEN TRUE END AND CASE WHEN 1.0 THEN TRUE END AND CASE WHEN :n THEN NULL ELSE TRUE END)
+-- hash functions
+\set h0 debug(hash(10, 5432))
+\set h1 debug(:h0 = hash_murmur2(10, 5432))
+\set h3 debug(hash_fnv1a(10, 5432))
+\set h4 debug(hash(10))
+\set h5 debug(hash(10) = hash(10, :default_seed))
 -- lazy evaluation
 \set zy 0
 \set yz debug(case when :zy = 0 then -1 else (1 / :zy) end)
@@ -338,17 +406,108 @@ pgbench(
 \set v2 5432
 \set v3 -54.21E-2
 SELECT :v0, :v1, :v2, :v3;
-} });
+-- if tests
+\set nope 0
+\if 1 > 0
+\set id debug(65)
+\elif 0
+\set nope 1
+\else
+\set nope 1
+\endif
+\if 1 < 0
+\set nope 1
+\elif 1 > 0
+\set ie debug(74)
+\else
+\set nope 1
+\endif
+\if 1 < 0
+\set nope 1
+\elif 1 < 0
+\set nope 1
+\else
+\set if debug(83)
+\endif
+\if 1 = 1
+\set ig debug(86)
+\elif 0
+\set nope 1
+\endif
+\if 1 = 0
+\set nope 1
+\elif 1 <> 0
+\set ih debug(93)
+\endif
+-- must be zero if false branches where skipped
+\set nope debug(:nope)
+-- check automatic variables
+\set sc debug(:scale)
+\set ci debug(:client_id)
+\set rs debug(:random_seed)
+}
+	});
+
+# random determinism when seeded
+$node->safe_psql('postgres',
+	'CREATE UNLOGGED TABLE seeded_random(seed INT8 NOT NULL, rand TEXT NOT NULL, val INTEGER NOT NULL);'
+);
+
+# same value to check for determinism
+my $seed = int(rand(1000000000));
+for my $i (1, 2)
+{
+	pgbench(
+		"--random-seed=$seed -t 1",
+		0,
+		[qr{processed: 1/1}],
+		[qr{setting random seed to $seed\b}],
+		"random seeded with $seed",
+		{
+			"001_pgbench_random_seed_$i" => q{-- test random functions
+\set ur random(1000, 1999)
+\set er random_exponential(2000, 2999, 2.0)
+\set gr random_gaussian(3000, 3999, 3.0)
+\set zr random_zipfian(4000, 4999, 2.5)
+INSERT INTO seeded_random(seed, rand, val) VALUES
+  (:random_seed, 'uniform', :ur),
+  (:random_seed, 'exponential', :er),
+  (:random_seed, 'gaussian', :gr),
+  (:random_seed, 'zipfian', :zr);
+}
+		});
+}
+
+# check that all runs generated the same 4 values
+my ($ret, $out, $err) = $node->psql('postgres',
+	'SELECT seed, rand, val, COUNT(*) FROM seeded_random GROUP BY seed, rand, val'
+);
+
+ok($ret == 0,  "psql seeded_random count ok");
+ok($err eq '', "psql seeded_random count stderr is empty");
+ok($out =~ /\b$seed\|uniform\|1\d\d\d\|2/,
+	"psql seeded_random count uniform");
+ok( $out =~ /\b$seed\|exponential\|2\d\d\d\|2/,
+	"psql seeded_random count exponential");
+ok( $out =~ /\b$seed\|gaussian\|3\d\d\d\|2/,
+	"psql seeded_random count gaussian");
+ok($out =~ /\b$seed\|zipfian\|4\d\d\d\|2/,
+	"psql seeded_random count zipfian");
+
+$node->safe_psql('postgres', 'DROP TABLE seeded_random;');
 
 # backslash commands
 pgbench(
 	'-t 1', 0,
-	[   qr{type: .*/001_pgbench_backslash_commands},
+	[
+		qr{type: .*/001_pgbench_backslash_commands},
 		qr{processed: 1/1},
-		qr{shell-echo-output} ],
+		qr{shell-echo-output}
+	],
 	[qr{command=8.: int 2\b}],
 	'pgbench backslash commands',
-	{   '001_pgbench_backslash_commands' => q{-- run set
+	{
+		'001_pgbench_backslash_commands' => q{-- run set
 \set zero 0
 \set one 1.0
 -- sleep
@@ -363,36 +522,48 @@ pgbench(
 \set n debug(:two)
 -- shell
 \shell echo shell-echo-output
-} });
+}
+	});
 
 # trigger many expression errors
 my @errors = (
 
 	# [ test name, script number, status, stderr match ]
 	# SQL
-	[   'sql syntax error',
+	[
+		'sql syntax error',
 		0,
-		[   qr{ERROR:  syntax error}, qr{prepared statement .* does not exist}
+		[
+			qr{ERROR:  syntax error},
+			qr{prepared statement .* does not exist}
 		],
 		q{-- SQL syntax error
     SELECT 1 + ;
-} ],
-	[   'sql too many args', 1, [qr{statement has too many arguments.*\b9\b}],
+}
+	],
+	[
+		'sql too many args', 1, [qr{statement has too many arguments.*\b9\b}],
 		q{-- MAX_ARGS=10 for prepared
 \set i 0
 SELECT LEAST(:i, :i, :i, :i, :i, :i, :i, :i, :i, :i, :i);
-} ],
+}
+	],
 
 	# SHELL
-	[   'shell bad command',               0,
-		[qr{meta-command 'shell' failed}], q{\shell no-such-command} ],
-	[   'shell undefined variable', 0,
+	[
+		'shell bad command',                    0,
+		[qr{\(shell\) .* meta-command failed}], q{\shell no-such-command}
+	],
+	[
+		'shell undefined variable', 0,
 		[qr{undefined variable ":nosuchvariable"}],
 		q{-- undefined variable in shell
 \shell echo ::foo :nosuchvariable
-} ],
+}
+	],
 	[ 'shell missing command', 1, [qr{missing command }], q{\shell} ],
-	[   'shell too many args', 1, [qr{too many arguments in command "shell"}],
+	[
+		'shell too many args', 1, [qr{too many arguments in command "shell"}],
 		q{-- 257 arguments to \shell
 \shell echo \
  0 1 2 3 4 5 6 7 8 9 A B C D E F \
@@ -411,113 +582,154 @@ SELECT LEAST(:i, :i, :i, :i, :i, :i, :i, :i, :i, :i, :i);
  0 1 2 3 4 5 6 7 8 9 A B C D E F \
  0 1 2 3 4 5 6 7 8 9 A B C D E F \
  0 1 2 3 4 5 6 7 8 9 A B C D E F
-} ],
+}
+	],
 
 	# SET
-	[   'set syntax error',                  1,
-		[qr{syntax error in command "set"}], q{\set i 1 +} ],
-	[   'set no such function',         1,
-		[qr{unexpected function name}], q{\set i noSuchFunction()} ],
-	[   'set invalid variable name', 0,
-		[qr{invalid variable name}], q{\set . 1} ],
-	[   'set int overflow',                   0,
-		[qr{double to int overflow for 100}], q{\set i int(1E32)} ],
+	[
+		'set syntax error',                  1,
+		[qr{syntax error in command "set"}], q{\set i 1 +}
+	],
+	[
+		'set no such function',         1,
+		[qr{unexpected function name}], q{\set i noSuchFunction()}
+	],
+	[
+		'set invalid variable name', 0,
+		[qr{invalid variable name}], q{\set . 1}
+	],
+	[
+		'set int overflow',                   0,
+		[qr{double to int overflow for 100}], q{\set i int(1E32)}
+	],
 	[ 'set division by zero', 0, [qr{division by zero}], q{\set i 1/0} ],
-	[   'set bigint out of range', 0,
-		[qr{bigint out of range}], q{\set i 9223372036854775808 / -1} ],
-	[   'set undefined variable',
+	[
+		'set bigint out of range', 0,
+		[qr{bigint out of range}], q{\set i 9223372036854775808 / -1}
+	],
+	[
+		'set undefined variable',
 		0,
 		[qr{undefined variable "nosuchvariable"}],
-		q{\set i :nosuchvariable} ],
+		q{\set i :nosuchvariable}
+	],
 	[ 'set unexpected char', 1, [qr{unexpected character .;.}], q{\set i ;} ],
-	[   'set too many args',
+	[
+		'set too many args',
 		0,
 		[qr{too many function arguments}],
-		q{\set i least(0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16)} ],
-	[   'set empty random range',          0,
-		[qr{empty range given to random}], q{\set i random(5,3)} ],
-	[   'set random range too large',
+		q{\set i least(0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16)}
+	],
+	[
+		'set empty random range',          0,
+		[qr{empty range given to random}], q{\set i random(5,3)}
+	],
+	[
+		'set random range too large',
 		0,
 		[qr{random range is too large}],
-		q{\set i random(-9223372036854775808, 9223372036854775807)} ],
-	[   'set gaussian param too small',
+		q{\set i random(-9223372036854775808, 9223372036854775807)}
+	],
+	[
+		'set gaussian param too small',
 		0,
 		[qr{gaussian param.* at least 2}],
-		q{\set i random_gaussian(0, 10, 1.0)} ],
-	[   'set exponential param greater 0',
+		q{\set i random_gaussian(0, 10, 1.0)}
+	],
+	[
+		'set exponential param greater 0',
 		0,
 		[qr{exponential parameter must be greater }],
-		q{\set i random_exponential(0, 10, 0.0)} ],
-	[	'set zipfian param to 1',
+		q{\set i random_exponential(0, 10, 0.0)}
+	],
+	[
+		'set zipfian param to 1',
 		0,
 		[qr{zipfian parameter must be in range \(0, 1\) U \(1, \d+\]}],
-		q{\set i random_zipfian(0, 10, 1)} ],
-	[	'set zipfian param too large',
+		q{\set i random_zipfian(0, 10, 1)}
+	],
+	[
+		'set zipfian param too large',
 		0,
 		[qr{zipfian parameter must be in range \(0, 1\) U \(1, \d+\]}],
-		q{\set i random_zipfian(0, 10, 1000000)} ],
-	[   'set non numeric value',                     0,
-		[qr{malformed variable "foo" value: "bla"}], q{\set i :foo + 1} ],
-	[ 'set no expression',
+		q{\set i random_zipfian(0, 10, 1000000)}
+	],
+	[
+		'set non numeric value',                     0,
+		[qr{malformed variable "foo" value: "bla"}], q{\set i :foo + 1}
+	],
+	[ 'set no expression',    1, [qr{syntax error}],      q{\set i} ],
+	[ 'set missing argument', 1, [qr{missing argument}i], q{\set} ],
+	[
+		'set not a bool',                      0,
+		[qr{cannot coerce double to boolean}], q{\set b NOT 0.0}
+	],
+	[
+		'set not an int',                   0,
+		[qr{cannot coerce boolean to int}], q{\set i TRUE + 2}
+	],
+	[
+		'set not a double',                    0,
+		[qr{cannot coerce boolean to double}], q{\set d ln(TRUE)}
+	],
+	[
+		'set case error',
 		1,
-		[qr{syntax error}],
-		q{\set i} ],
-	[ 'set missing argument',
-		1,
-		[qr{missing argument}i],
-		q{\set} ],
-	[ 'set not a bool',
-		0,
-		[ qr{cannot coerce double to boolean} ],
-		q{\set b NOT 0.0} ],
-	[ 'set not an int',
-		0,
-		[ qr{cannot coerce boolean to int} ],
-		q{\set i TRUE + 2} ],
-	[ 'set not an double',
-		0,
-		[ qr{cannot coerce boolean to double} ],
-		q{\set d ln(TRUE)} ],
-	[ 'set case error',
-		1,
-		[ qr{syntax error in command "set"} ],
-		q{\set i CASE TRUE THEN 1 ELSE 0 END} ],
-	[ 'set random error',
-		0,
-		[ qr{cannot coerce boolean to int} ],
-		q{\set b random(FALSE, TRUE)} ],
-	[ 'set number of args mismatch',
-		1,
-		[ qr{unexpected number of arguments} ],
-		q{\set d ln(1.0, 2.0))} ],
-	[ 'set at least one arg',
-		1,
-		[ qr{at least one argument expected} ],
-		q{\set i greatest())} ],
+		[qr{syntax error in command "set"}],
+		q{\set i CASE TRUE THEN 1 ELSE 0 END}
+	],
+	[
+		'set random error',                 0,
+		[qr{cannot coerce boolean to int}], q{\set b random(FALSE, TRUE)}
+	],
+	[
+		'set number of args mismatch',        1,
+		[qr{unexpected number of arguments}], q{\set d ln(1.0, 2.0))}
+	],
+	[
+		'set at least one arg',               1,
+		[qr{at least one argument expected}], q{\set i greatest())}
+	],
 
 	# SETSHELL
-	[   'setshell not an int',                0,
-		[qr{command must return an integer}], q{\setshell i echo -n one} ],
+	[
+		'setshell not an int',                0,
+		[qr{command must return an integer}], q{\setshell i echo -n one}
+	],
 	[ 'setshell missing arg', 1, [qr{missing argument }], q{\setshell var} ],
-	[   'setshell no such command',   0,
-		[qr{could not read result }], q{\setshell var no-such-command} ],
+	[
+		'setshell no such command',   0,
+		[qr{could not read result }], q{\setshell var no-such-command}
+	],
 
 	# SLEEP
-	[   'sleep undefined variable',      0,
-		[qr{sleep: undefined variable}], q{\sleep :nosuchvariable} ],
-	[   'sleep too many args',    1,
-		[qr{too many arguments}], q{\sleep too many args} ],
-	[   'sleep missing arg', 1,
-		[ qr{missing argument}, qr{\\sleep} ], q{\sleep} ],
-	[   'sleep unknown unit',         1,
-		[qr{unrecognized time unit}], q{\sleep 1 week} ],
+	[
+		'sleep undefined variable',      0,
+		[qr{sleep: undefined variable}], q{\sleep :nosuchvariable}
+	],
+	[
+		'sleep too many args',    1,
+		[qr{too many arguments}], q{\sleep too many args}
+	],
+	[
+		'sleep missing arg', 1,
+		[ qr{missing argument}, qr{\\sleep} ], q{\sleep}
+	],
+	[
+		'sleep unknown unit',         1,
+		[qr{unrecognized time unit}], q{\sleep 1 week}
+	],
 
 	# MISC
-	[   'misc invalid backslash command',         1,
-		[qr{invalid command .* "nosuchcommand"}], q{\nosuchcommand} ],
+	[
+		'misc invalid backslash command',         1,
+		[qr{invalid command .* "nosuchcommand"}], q{\nosuchcommand}
+	],
 	[ 'misc empty script', 1, [qr{empty command list for script}], q{} ],
-	[ 'bad boolean', 0, [qr{malformed variable.*trueXXX}], q{\set b :badtrue or true} ],
-    );
+	[
+		'bad boolean',                     0,
+		[qr{malformed variable.*trueXXX}], q{\set b :badtrue or true}
+	],);
 
 
 for my $e (@errors)
@@ -538,9 +750,10 @@ for my $e (@errors)
 pgbench(
 	'-t 1', 0,
 	[ qr{processed: 1/1}, qr{zipfian cache array overflowed 1 time\(s\)} ],
-	[ qr{^} ],
+	[qr{^}],
 	'pgbench zipfian array overflow on random_zipfian',
-	{   '001_pgbench_random_zipfian' => q{
+	{
+		'001_pgbench_random_zipfian' => q{
 \set i random_zipfian(1, 100, 0.5)
 \set i random_zipfian(2, 100, 0.5)
 \set i random_zipfian(3, 100, 0.5)
@@ -557,7 +770,8 @@ pgbench(
 \set i random_zipfian(14, 100, 0.5)
 \set i random_zipfian(15, 100, 0.5)
 \set i random_zipfian(16, 100, 0.5)
-} });
+}
+	});
 
 # throttling
 pgbench(
@@ -569,12 +783,14 @@ pgbench(
 
 pgbench(
 
-   # given the expected rate and the 2 ms tx duration, at most one is executed
+	# given the expected rate and the 2 ms tx duration, at most one is executed
 	'-t 10 --rate=100000 --latency-limit=1 -n -r',
 	0,
-	[   qr{processed: [01]/10},
+	[
+		qr{processed: [01]/10},
 		qr{type: .*/001_pgbench_sleep},
-		qr{above the 1.0 ms latency limit: [01]/} ],
+		qr{above the 1.0 ms latency limit: [01]/}
+	],
 	[qr{^$}i],
 	'pgbench late throttling',
 	{ '001_pgbench_sleep' => q{\sleep 2ms} });
@@ -603,26 +819,29 @@ sub check_pgbench_logs
 		};
 	}
 	ok(unlink(@logs), "remove log files");
+	return;
 }
+
+my $bdir = $node->basedir;
 
 # with sampling rate
 pgbench(
-'-n -S -t 50 -c 2 --log --log-prefix=001_pgbench_log_2 --sampling-rate=0.5',
+	"-n -S -t 50 -c 2 --log --log-prefix=$bdir/001_pgbench_log_2 --sampling-rate=0.5",
 	0,
 	[ qr{select only}, qr{processed: 100/100} ],
 	[qr{^$}],
 	'pgbench logs');
 
-check_pgbench_logs('001_pgbench_log_2', 1, 8, 92,
+check_pgbench_logs("$bdir/001_pgbench_log_2", 1, 8, 92,
 	qr{^0 \d{1,2} \d+ \d \d+ \d+$});
 
 # check log file in some detail
 pgbench(
-	'-n -b se -t 10 -l --log-prefix=001_pgbench_log_3',
+	"-n -b se -t 10 -l --log-prefix=$bdir/001_pgbench_log_3",
 	0, [ qr{select only}, qr{processed: 10/10} ],
 	[qr{^$}], 'pgbench logs contents');
 
-check_pgbench_logs('001_pgbench_log_3', 1, 10, 10,
+check_pgbench_logs("$bdir/001_pgbench_log_3", 1, 10, 10,
 	qr{^\d \d{1,2} \d+ \d \d+ \d+$});
 
 # done

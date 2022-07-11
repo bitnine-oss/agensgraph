@@ -1870,6 +1870,22 @@ SELECT * FROM get_available_flightid(CURRENT_DATE);
      then <symbol>NULL</symbol> must be returned.  Returning any other value
      will result in an error.
     </para>
+
+    <para>
+     If a procedure has output parameters, then the output values can be
+     assigned to the parameters as if they were variables.  For example:
+<programlisting>
+CREATE PROCEDURE triple(INOUT x int)
+LANGUAGE plpgsql
+AS $$
+BEGIN
+    x := x * 3;
+END;
+$$;
+
+CALL triple(5);
+</programlisting>
+    </para>
    </sect2>
 
    <sect2 id="plpgsql-conditionals">
@@ -3447,9 +3463,9 @@ END LOOP <optional> <replaceable>label</replaceable> </optional>;
    <title>Transaction Management</title>
 
    <para>
-    In procedures invoked by the <command>CALL</command> command from the top
-    level as well as in anonymous code blocks (<command>DO</command> command)
-    called from the top level, it is possible to end transactions using the
+    In procedures invoked by the <command>CALL</command> command
+    as well as in anonymous code blocks (<command>DO</command> command),
+    it is possible to end transactions using the
     commands <command>COMMIT</command> and <command>ROLLBACK</command>.  A new
     transaction is started automatically after a transaction is ended using
     these commands, so there is no separate <command>START
@@ -3480,8 +3496,55 @@ CALL transaction_test1();
    </para>
 
    <para>
-    A transaction cannot be ended inside a loop over a query result, nor
-    inside a block with exception handlers.
+    Transaction control is only possible in <command>CALL</command> or
+    <command>DO</command> invocations from the top level or nested
+    <command>CALL</command> or <command>DO</command> invocations without any
+    other intervening command.  For example, if the call stack is
+    <command>CALL proc1()</command> &rarr; <command>CALL proc2()</command>
+    &rarr; <command>CALL proc3()</command>, then the second and third
+    procedures can perform transaction control actions.  But if the call stack
+    is <command>CALL proc1()</command> &rarr; <command>SELECT
+    func2()</command> &rarr; <command>CALL proc3()</command>, then the last
+    procedure cannot do transaction control, because of the
+    <command>SELECT</command> in between.
+   </para>
+
+   <para>
+    Special considerations apply to cursor loops.  Consider this example:
+<programlisting>
+CREATE PROCEDURE transaction_test2()
+LANGUAGE plpgsql
+AS $$
+DECLARE
+    r RECORD;
+BEGIN
+    FOR r IN SELECT * FROM test2 ORDER BY x LOOP
+        INSERT INTO test1 (a) VALUES (r.x);
+        COMMIT;
+    END LOOP;
+END;
+$$;
+
+CALL transaction_test2();
+</programlisting>
+    Normally, cursors are automatically closed at transaction commit.
+    However, a cursor created as part of a loop like this is automatically
+    converted to a holdable cursor by the first <command>COMMIT</command> or
+    <command>ROLLBACK</command>.  That means that the cursor is fully
+    evaluated at the first <command>COMMIT</command> or
+    <command>ROLLBACK</command> rather than row by row.  The cursor is still
+    removed automatically after the loop, so this is mostly invisible to the
+    user.
+   </para>
+
+   <para>
+    Transaction commands are not allowed in cursor loops driven by commands
+    that are not read-only (for example <command>UPDATE
+    ... RETURNING</command>).
+   </para>
+
+   <para>
+    A transaction cannot be ended inside a block with exception handlers.
    </para>
   </sect1>
 
@@ -3763,7 +3826,7 @@ ASSERT <replaceable class="parameter">condition</replaceable> <optional> , <repl
    command, declaring it as a function with no arguments and a return type of
    <type>trigger</type> (for data change triggers) or
    <type>event_trigger</type> (for database event triggers).
-   Special local variables named <varname>PG_<replaceable>something</replaceable></varname> are
+   Special local variables named <varname>TG_<replaceable>something</replaceable></varname> are
    automatically defined to describe the condition that triggered the call.
   </para>
 

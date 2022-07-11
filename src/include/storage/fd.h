@@ -78,7 +78,6 @@ extern char *FilePathName(File file);
 extern int	FileGetRawDesc(File file);
 extern int	FileGetRawFlags(File file);
 extern mode_t FileGetRawMode(File file);
-extern off_t FileGetSize(File file);
 
 /* Operations used for sharing named temporary files */
 extern File PathNameCreateTemporaryFile(const char *name, bool error_on_failure);
@@ -112,6 +111,9 @@ extern int	CloseTransientFile(int fd);
 extern int	BasicOpenFile(const char *fileName, int fileFlags);
 extern int	BasicOpenFilePerm(const char *fileName, int fileFlags, mode_t fileMode);
 
+ /* Make a directory with default permissions */
+extern int	MakePGDirectory(const char *directoryName);
+
 /* Miscellaneous support routines */
 extern void InitFileAccess(void);
 extern void set_max_safe_fds(void);
@@ -120,10 +122,11 @@ extern void SetTempTablespaces(Oid *tableSpaces, int numSpaces);
 extern bool TempTablespacesAreSet(void);
 extern int	GetTempTablespaces(Oid *tableSpaces, int numSpaces);
 extern Oid	GetNextTempTableSpace(void);
-extern void AtEOXact_Files(void);
+extern void AtEOXact_Files(bool isCommit);
 extern void AtEOSubXact_Files(bool isCommit, SubTransactionId mySubid,
 				  SubTransactionId parentSubid);
 extern void RemovePgTempFiles(void);
+extern bool looks_like_temp_rel_name(const char *name);
 
 extern int	pg_fsync(int fd);
 extern int	pg_fsync_no_writethrough(int fd);

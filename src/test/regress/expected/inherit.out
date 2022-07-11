@@ -1209,6 +1209,31 @@ Inherits: test_foreign_constraints
 DROP TABLE test_foreign_constraints_inh;
 DROP TABLE test_foreign_constraints;
 DROP TABLE test_primary_constraints;
+-- Test foreign key behavior
+create table inh_fk_1 (a int primary key);
+insert into inh_fk_1 values (1), (2), (3);
+create table inh_fk_2 (x int primary key, y int references inh_fk_1 on delete cascade);
+insert into inh_fk_2 values (11, 1), (22, 2), (33, 3);
+create table inh_fk_2_child () inherits (inh_fk_2);
+insert into inh_fk_2_child values (111, 1), (222, 2);
+delete from inh_fk_1 where a = 1;
+select * from inh_fk_1 order by 1;
+ a 
+---
+ 2
+ 3
+(2 rows)
+
+select * from inh_fk_2 order by 1, 2;
+  x  | y 
+-----+---
+  22 | 2
+  33 | 3
+ 111 | 1
+ 222 | 2
+(4 rows)
+
+drop table inh_fk_1, inh_fk_2, inh_fk_2_child;
 -- Test that parent and child CHECK constraints can be created in either order
 create table p1(f1 int);
 create table p1_c1() inherits(p1);
@@ -1661,6 +1686,30 @@ reset enable_seqscan;
 reset enable_indexscan;
 reset enable_bitmapscan;
 --
+-- Check handling of a constant-null CHECK constraint
+--
+create table cnullparent (f1 int);
+create table cnullchild (check (f1 = 1 or f1 = null)) inherits(cnullparent);
+insert into cnullchild values(1);
+insert into cnullchild values(2);
+insert into cnullchild values(null);
+select * from cnullparent;
+ f1 
+----
+  1
+  2
+   
+(3 rows)
+
+select * from cnullparent where f1 = 2;
+ f1 
+----
+  2
+(1 row)
+
+drop table cnullparent cascade;
+NOTICE:  drop cascades to table cnullchild
+--
 -- Check that constraint exclusion works correctly with partitions using
 -- implicit constraints generated from the partition bound information.
 --
@@ -1715,11 +1764,7 @@ explain (costs off) select * from list_parted where a = 'ab' or a in (null, 'cd'
  Append
    ->  Seq Scan on part_ab_cd
          Filter: (((a)::text = 'ab'::text) OR ((a)::text = ANY ('{NULL,cd}'::text[])))
-   ->  Seq Scan on part_ef_gh
-         Filter: (((a)::text = 'ab'::text) OR ((a)::text = ANY ('{NULL,cd}'::text[])))
-   ->  Seq Scan on part_null_xy
-         Filter: (((a)::text = 'ab'::text) OR ((a)::text = ANY ('{NULL,cd}'::text[])))
-(7 rows)
+(3 rows)
 
 explain (costs off) select * from list_parted where a = 'ab';
                 QUERY PLAN                
@@ -1906,11 +1951,13 @@ explain (costs off) select * from mcrparted where abs(b) = 5;	-- scans all parti
          Filter: (abs(b) = 5)
    ->  Seq Scan on mcrparted3
          Filter: (abs(b) = 5)
+   ->  Seq Scan on mcrparted4
+         Filter: (abs(b) = 5)
    ->  Seq Scan on mcrparted5
          Filter: (abs(b) = 5)
    ->  Seq Scan on mcrparted_def
          Filter: (abs(b) = 5)
-(13 rows)
+(15 rows)
 
 explain (costs off) select * from mcrparted where a > -1;	-- scans all partitions
              QUERY PLAN              

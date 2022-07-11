@@ -19,6 +19,7 @@
 #include "access/xloginsert.h"
 #include "lib/ilist.h"
 #include "miscadmin.h"
+#include "storage/predicate.h"
 #include "utils/rel.h"
 
 /*
@@ -1759,7 +1760,7 @@ leafRepackItems(disassembledLeaf *leaf, ItemPointer remaining)
  */
 BlockNumber
 createPostingTree(Relation index, ItemPointerData *items, uint32 nitems,
-				  GinStatsData *buildStats)
+				  GinStatsData *buildStats, Buffer entrybuffer)
 {
 	BlockNumber blkno;
 	Buffer		buffer;
@@ -1810,6 +1811,12 @@ createPostingTree(Relation index, ItemPointerData *items, uint32 nitems,
 	page = BufferGetPage(buffer);
 	blkno = BufferGetBlockNumber(buffer);
 
+	/*
+	 * Copy any predicate locks from the entry tree leaf (containing posting
+	 * list) to the posting tree.
+	 */
+	PredicateLockPageSplit(index, BufferGetBlockNumber(entrybuffer), blkno);
+
 	START_CRIT_SECTION();
 
 	PageRestoreTempPage(tmppage, page);
@@ -1857,7 +1864,7 @@ createPostingTree(Relation index, ItemPointerData *items, uint32 nitems,
 	return blkno;
 }
 
-void
+static void
 ginPrepareDataScan(GinBtree btree, Relation index, BlockNumber rootBlkno)
 {
 	memset(btree, 0, sizeof(GinBtreeData));

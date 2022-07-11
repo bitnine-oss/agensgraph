@@ -18,7 +18,6 @@
 #include "pageinspect.h"
 
 #include "access/htup_details.h"
-#include "catalog/catalog.h"
 #include "catalog/namespace.h"
 #include "catalog/pg_type.h"
 #include "funcapi.h"
@@ -128,6 +127,11 @@ get_raw_page_internal(text *relname, ForkNumber forknum, BlockNumber blkno)
 		ereport(ERROR,
 				(errcode(ERRCODE_WRONG_OBJECT_TYPE),
 				 errmsg("cannot get raw page from partitioned table \"%s\"",
+						RelationGetRelationName(rel))));
+	if (rel->rd_rel->relkind == RELKIND_PARTITIONED_INDEX)
+		ereport(ERROR,
+				(errcode(ERRCODE_WRONG_OBJECT_TYPE),
+				 errmsg("cannot get raw page from partitioned index \"%s\"",
 						RelationGetRelationName(rel))));
 
 	/*

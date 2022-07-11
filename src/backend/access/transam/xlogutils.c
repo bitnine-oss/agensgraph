@@ -23,7 +23,6 @@
 #include "access/xlog.h"
 #include "access/xlog_internal.h"
 #include "access/xlogutils.h"
-#include "catalog/catalog.h"
 #include "miscadmin.h"
 #include "pgstat.h"
 #include "storage/smgr.h"
@@ -719,9 +718,10 @@ XLogRead(char *buf, int segsize, TimeLineID tli, XLogRecPtr startptr,
 			if (lseek(sendFile, (off_t) startoff, SEEK_SET) < 0)
 			{
 				char		path[MAXPGPATH];
+				int			save_errno = errno;
 
 				XLogFilePath(path, tli, sendSegNo, segsize);
-
+				errno = save_errno;
 				ereport(ERROR,
 						(errcode_for_file_access(),
 						 errmsg("could not seek in log segment %s to offset %u: %m",
@@ -742,9 +742,10 @@ XLogRead(char *buf, int segsize, TimeLineID tli, XLogRecPtr startptr,
 		if (readbytes <= 0)
 		{
 			char		path[MAXPGPATH];
+			int			save_errno = errno;
 
 			XLogFilePath(path, tli, sendSegNo, segsize);
-
+			errno = save_errno;
 			ereport(ERROR,
 					(errcode_for_file_access(),
 					 errmsg("could not read from log segment %s, offset %u, length %lu: %m",

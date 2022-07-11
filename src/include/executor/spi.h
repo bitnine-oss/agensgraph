@@ -164,6 +164,7 @@ extern void SPI_start_transaction(void);
 extern void SPI_commit(void);
 extern void SPI_rollback(void);
 
+extern void SPICleanup(void);
 extern void AtEOXact_SPI(bool isCommit);
 extern void AtEOSubXact_SPI(bool isCommit, SubTransactionId mySubid);
 

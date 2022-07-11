@@ -20,11 +20,15 @@
 #
 # NAME                  Name of library to build (no suffix nor "lib" prefix)
 # OBJS                  List of object files to include in library
-# SHLIB_LINK            If shared library relies on other libraries,
-#                       additional stuff to put in its link command
+# SHLIB_LINK            Stuff to append to library's link command
+#                       (typically, -L and -l switches for external libraries)
+# SHLIB_LINK_INTERNAL   -L and -l switches for Postgres-supplied libraries
 # SHLIB_PREREQS         Order-only prerequisites for library build target
 # SHLIB_EXPORTS         (optional) Name of file containing list of symbols to
 #                       export, in the format "function_name  number"
+#
+# Don't use SHLIB_LINK for references to files in the build tree, or the
+# wrong things will happen --- use SHLIB_LINK_INTERNAL for those!
 #
 # When building a shared library, the following version information
 # must also be set.  It should be omitted when building a dynamically
@@ -70,6 +74,8 @@
 COMPILER = $(CC) $(CFLAGS)
 LINK.static = $(AR) $(AROPT)
 
+LDFLAGS_INTERNAL += $(SHLIB_LINK_INTERNAL)
+
 
 
 ifdef SO_MAJOR_VERSION
@@ -100,6 +106,7 @@ endif
 # Try to keep the sections in some kind of order, folks...
 
 override CFLAGS += $(CFLAGS_SL)
+override CXXFLAGS += $(CFLAGS_SL)
 ifdef SO_MAJOR_VERSION
 # libraries ought to use this to refer to versioned gettext domain names
 override CPPFLAGS += -DSO_MAJOR_VERSION=$(SO_MAJOR_VERSION)
@@ -314,13 +321,9 @@ else # PORTNAME == aix
 
 # AIX case
 
-# There is no correct way to write a rule that generates two files.
-# Rules with two targets don't have that meaning, they are merely
-# shorthand for two otherwise separate rules.  To be safe for parallel
-# make, we must chain the dependencies like this.  The semicolon is
-# important, otherwise make will choose some built-in rule.
-
-$(stlib): $(shlib) ;
+# See notes in src/backend/parser/Makefile about the following two rules
+$(stlib): $(shlib)
+	touch $@
 
 $(shlib): $(OBJS) | $(SHLIB_PREREQS)
 	rm -f $(stlib)
@@ -351,13 +354,9 @@ else
 
 # Win32 case
 
-# There is no correct way to write a rule that generates two files.
-# Rules with two targets don't have that meaning, they are merely
-# shorthand for two otherwise separate rules.  To be safe for parallel
-# make, we must chain the dependencies like this.  The semicolon is
-# important, otherwise make will choose some built-in rule.
-
-$(stlib): $(shlib) ;
+# See notes in src/backend/parser/Makefile about the following two rules
+$(stlib): $(shlib)
+	touch $@
 
 # XXX A backend that loads a module linked with libgcc_s_dw2-1.dll will exit
 # uncleanly, hence -static-libgcc.  (Last verified with MinGW-w64 compilers

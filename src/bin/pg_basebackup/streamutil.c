@@ -1,7 +1,7 @@
 /*-------------------------------------------------------------------------
  *
  * streamutil.c - utility functions for pg_basebackup, pg_receivewal and
- * 					pg_recvlogical
+ *					pg_recvlogical
  *
  * Author: Magnus Hagander <magnus@hagander.net>
  *
@@ -23,7 +23,9 @@
 
 #include "access/xlog_internal.h"
 #include "common/fe_memutils.h"
+#include "common/file_perm.h"
 #include "datatype/timestamp.h"
+#include "fe_utils/connect.h"
 #include "port/pg_bswap.h"
 #include "pqexpbuffer.h"
 
@@ -31,8 +33,15 @@
 
 uint32		WalSegSz;
 
+static bool RetrieveDataDirCreatePerm(PGconn *conn);
+
 /* SHOW command for replication connection was introduced in version 10 */
 #define MINIMUM_VERSION_FOR_SHOW_CMD 100000
+
+/*
+ * Group access is supported from version 11.
+ */
+#define MINIMUM_VERSION_FOR_GROUP_ACCESS 110000
 
 const char *progname;
 char	   *connection_string = NULL;
@@ -209,6 +218,28 @@ GetConnection(void)
 		PQconninfoFree(conn_opts);
 
 	/*
+	 * Set always-secure search path, so malicious users can't get control.
+	 * The capacity to run normal SQL queries was added in PostgreSQL 10, so
+	 * the search path cannot be changed (by us or attackers) on earlier
+	 * versions.
+	 */
+	if (dbname != NULL && PQserverVersion(tmpconn) >= 100000)
+	{
+		PGresult   *res;
+
+		res = PQexec(tmpconn, ALWAYS_SECURE_SEARCH_PATH_SQL);
+		if (PQresultStatus(res) != PGRES_TUPLES_OK)
+		{
+			fprintf(stderr, _("%s: could not clear search_path: %s"),
+					progname, PQerrorMessage(tmpconn));
+			PQclear(res);
+			PQfinish(tmpconn);
+			exit(1);
+		}
+		PQclear(res);
+	}
+
+	/*
 	 * Ensure we have the same value of integer_datetimes (now always "on") as
 	 * the server we are connecting to.
 	 */
@@ -227,6 +258,16 @@ GetConnection(void)
 		fprintf(stderr,
 				_("%s: integer_datetimes compile flag does not match server\n"),
 				progname);
+		PQfinish(tmpconn);
+		exit(1);
+	}
+
+	/*
+	 * Retrieve the source data directory mode and use it to construct a umask
+	 * for creating directories and files.
+	 */
+	if (!RetrieveDataDirCreatePerm(tmpconn))
+	{
 		PQfinish(tmpconn);
 		exit(1);
 	}
@@ -259,7 +300,7 @@ RetrieveWalSegSize(PGconn *conn)
 	res = PQexec(conn, "SHOW wal_segment_size");
 	if (PQresultStatus(res) != PGRES_TUPLES_OK)
 	{
-		fprintf(stderr, _("%s: could not send replication command \"%s\": %s\n"),
+		fprintf(stderr, _("%s: could not send replication command \"%s\": %s"),
 				progname, "SHOW wal_segment_size", PQerrorMessage(conn));
 
 		PQclear(res);
@@ -295,10 +336,70 @@ RetrieveWalSegSize(PGconn *conn)
 	if (!IsValidWalSegSize(WalSegSz))
 	{
 		fprintf(stderr,
-				_("%s: WAL segment size must be a power of two between 1MB and 1GB, but the remote server reported a value of %d bytes\n"),
+				ngettext("%s: WAL segment size must be a power of two between 1 MB and 1 GB, but the remote server reported a value of %d byte\n",
+						 "%s: WAL segment size must be a power of two between 1 MB and 1 GB, but the remote server reported a value of %d bytes\n",
+						 WalSegSz),
 				progname, WalSegSz);
 		return false;
 	}
+
+	PQclear(res);
+	return true;
+}
+
+/*
+ * RetrieveDataDirCreatePerm
+ *
+ * This function is used to determine the privileges on the server's PG data
+ * directory and, based on that, set what the permissions will be for
+ * directories and files we create.
+ *
+ * PG11 added support for (optionally) group read/execute rights to be set on
+ * the data directory.  Prior to PG11, only the owner was allowed to have rights
+ * on the data directory.
+ */
+static bool
+RetrieveDataDirCreatePerm(PGconn *conn)
+{
+	PGresult   *res;
+	int			data_directory_mode;
+
+	/* check connection existence */
+	Assert(conn != NULL);
+
+	/* for previous versions leave the default group access */
+	if (PQserverVersion(conn) < MINIMUM_VERSION_FOR_GROUP_ACCESS)
+		return true;
+
+	res = PQexec(conn, "SHOW data_directory_mode");
+	if (PQresultStatus(res) != PGRES_TUPLES_OK)
+	{
+		fprintf(stderr, _("%s: could not send replication command \"%s\": %s"),
+				progname, "SHOW data_directory_mode", PQerrorMessage(conn));
+
+		PQclear(res);
+		return false;
+	}
+	if (PQntuples(res) != 1 || PQnfields(res) < 1)
+	{
+		fprintf(stderr,
+				_("%s: could not fetch group access flag: got %d rows and %d fields, expected %d rows and %d or more fields\n"),
+				progname, PQntuples(res), PQnfields(res), 1, 1);
+
+		PQclear(res);
+		return false;
+	}
+
+	if (sscanf(PQgetvalue(res, 0, 0), "%o", &data_directory_mode) != 1)
+	{
+		fprintf(stderr, _("%s: group access flag could not be parsed: %s\n"),
+				progname, PQgetvalue(res, 0, 0));
+
+		PQclear(res);
+		return false;
+	}
+
+	SetDataDirectoryCreatePerm(data_directory_mode);
 
 	PQclear(res);
 	return true;

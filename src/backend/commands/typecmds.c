@@ -41,16 +41,13 @@
 #include "catalog/pg_authid.h"
 #include "catalog/pg_collation.h"
 #include "catalog/pg_constraint.h"
-#include "catalog/pg_constraint_fn.h"
 #include "catalog/pg_depend.h"
 #include "catalog/pg_enum.h"
 #include "catalog/pg_language.h"
 #include "catalog/pg_namespace.h"
 #include "catalog/pg_proc.h"
-#include "catalog/pg_proc_fn.h"
 #include "catalog/pg_range.h"
 #include "catalog/pg_type.h"
-#include "catalog/pg_type_fn.h"
 #include "commands/defrem.h"
 #include "commands/tablecmds.h"
 #include "commands/typecmds.h"
@@ -1321,7 +1318,7 @@ AlterEnum(AlterEnumStmt *stmt, bool isTopLevel)
 			!(tup->t_data->t_infomask & HEAP_UPDATED))
 			 /* safe to do inside transaction block */ ;
 		else
-			PreventTransactionChain(isTopLevel, "ALTER TYPE ... ADD");
+			PreventInTransactionBlock(isTopLevel, "ALTER TYPE ... ADD");
 
 		AddEnumLabel(enum_type_oid, stmt->newVal,
 					 stmt->newValNeighbor, stmt->newValIsAfter,
@@ -1672,8 +1669,7 @@ makeRangeConstructors(const char *name, Oid namespace,
 								 F_FMGR_INTERNAL_VALIDATOR, /* language validator */
 								 prosrc[i], /* prosrc */
 								 NULL,	/* probin */
-								 false, /* isAgg */
-								 false, /* isWindowFunc */
+								 PROKIND_FUNCTION,
 								 false, /* security_definer */
 								 false, /* leakproof */
 								 false, /* isStrict */
@@ -1994,7 +1990,7 @@ findRangeSubOpclass(List *opcname, Oid subtype)
 		opcid = GetDefaultOpClass(subtype, BTREE_AM_OID);
 		if (!OidIsValid(opcid))
 		{
-			/* We spell the error message identically to GetIndexOpClass */
+			/* We spell the error message identically to ResolveOpClass */
 			ereport(ERROR,
 					(errcode(ERRCODE_UNDEFINED_OBJECT),
 					 errmsg("data type %s has no default operator class for access method \"%s\"",
@@ -2398,7 +2394,7 @@ AlterDomainNotNull(List *names, bool notNull)
 					int			attnum = rtc->atts[i];
 					Form_pg_attribute attr = TupleDescAttr(tupdesc, attnum - 1);
 
-					if (heap_attisnull(tuple, attnum))
+					if (heap_attisnull(tuple, attnum, tupdesc))
 					{
 						/*
 						 * In principle the auxiliary information for this
@@ -3154,8 +3150,10 @@ domainAddConstraint(Oid domainOid, Oid domainNamespace, Oid baseTypeOid,
 							  false,	/* Is Deferrable */
 							  false,	/* Is Deferred */
 							  !constr->skip_validation, /* Is Validated */
+							  InvalidOid,	/* no parent constraint */
 							  InvalidOid,	/* not a relation constraint */
 							  NULL,
+							  0,
 							  0,
 							  domainOid,	/* domain constraint */
 							  InvalidOid,	/* no associated index */

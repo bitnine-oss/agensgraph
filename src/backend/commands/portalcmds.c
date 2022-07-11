@@ -63,7 +63,7 @@ PerformCursorOpen(DeclareCursorStmt *cstmt, ParamListInfo params,
 	 * user-visible effect).
 	 */
 	if (!(cstmt->options & CURSOR_OPT_HOLD))
-		RequireTransactionChain(isTopLevel, "DECLARE CURSOR");
+		RequireTransactionBlock(isTopLevel, "DECLARE CURSOR");
 
 	/*
 	 * Parse analysis was done already, but we still have to run the rule
@@ -450,9 +450,9 @@ PersistHoldablePortal(Portal portal)
 	PopActiveSnapshot();
 
 	/*
-	 * We can now release any subsidiary memory of the portal's context;
-	 * we'll never use it again.  The executor already dropped its context,
-	 * but this will clean up anything that glommed onto the portal's context via
+	 * We can now release any subsidiary memory of the portal's context; we'll
+	 * never use it again.  The executor already dropped its context, but this
+	 * will clean up anything that glommed onto the portal's context via
 	 * PortalContext.
 	 */
 	MemoryContextDeleteChildren(portal->portalContext);

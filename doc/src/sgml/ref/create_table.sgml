@@ -82,17 +82,18 @@ CREATE [ [ GLOBAL | LOCAL ] { TEMPORARY | TEMP } | UNLOGGED ] TABLE [ IF NOT EXI
 
 <phrase>and <replaceable class="parameter">like_option</replaceable> is:</phrase>
 
-{ INCLUDING | EXCLUDING } { DEFAULTS | CONSTRAINTS | IDENTITY | INDEXES | STORAGE | COMMENTS | ALL }
+{ INCLUDING | EXCLUDING } { COMMENTS | CONSTRAINTS | DEFAULTS | IDENTITY | INDEXES | STATISTICS | STORAGE | ALL }
 
 <phrase>and <replaceable class="parameter">partition_bound_spec</replaceable> is:</phrase>
 
-IN ( { <replaceable class="parameter">numeric_literal</replaceable> | <replaceable class="parameter">string_literal</replaceable> | NULL } [, ...] ) |
-FROM ( { <replaceable class="parameter">numeric_literal</replaceable> | <replaceable class="parameter">string_literal</replaceable> | MINVALUE | MAXVALUE } [, ...] )
-  TO ( { <replaceable class="parameter">numeric_literal</replaceable> | <replaceable class="parameter">string_literal</replaceable> | MINVALUE | MAXVALUE } [, ...] ) |
+IN ( { <replaceable class="parameter">numeric_literal</replaceable> | <replaceable class="parameter">string_literal</replaceable> | TRUE | FALSE | NULL } [, ...] ) |
+FROM ( { <replaceable class="parameter">numeric_literal</replaceable> | <replaceable class="parameter">string_literal</replaceable> | TRUE | FALSE | MINVALUE | MAXVALUE } [, ...] )
+  TO ( { <replaceable class="parameter">numeric_literal</replaceable> | <replaceable class="parameter">string_literal</replaceable> | TRUE | FALSE | MINVALUE | MAXVALUE } [, ...] ) |
 WITH ( MODULUS <replaceable class="parameter">numeric_literal</replaceable>, REMAINDER <replaceable class="parameter">numeric_literal</replaceable> )
 
 <phrase><replaceable class="parameter">index_parameters</replaceable> in <literal>UNIQUE</literal>, <literal>PRIMARY KEY</literal>, and <literal>EXCLUDE</literal> constraints are:</phrase>
 
+[ INCLUDE ( <replaceable class="parameter">column_name</replaceable> [, ... ] ) ]
 [ WITH ( <replaceable class="parameter">storage_parameter</replaceable> [= <replaceable class="parameter">value</replaceable>] [, ... ] ) ]
 [ USING INDEX TABLESPACE <replaceable class="parameter">tablespace_name</replaceable> ]
 
@@ -407,9 +408,7 @@ WITH ( MODULUS <replaceable class="parameter">numeric_literal</replaceable>, REM
      <para>
       Rows inserted into a partitioned table will be automatically routed to
       the correct partition.  If no suitable partition exists, an error will
-      occur.  Also, if updating a row in a given partition would require it
-      to move to another partition due to new partition key values, an error
-      will occur.
+      occur.
      </para>
 
      <para>
@@ -546,9 +545,11 @@ WITH ( MODULUS <replaceable class="parameter">numeric_literal</replaceable>, REM
      </para>
 
      <para>
-      Partitioned tables do not support <literal>EXCLUDE</literal> or
-      <literal>FOREIGN KEY</literal> constraints; however, you can define
-      these constraints on individual partitions.
+      Partitioned tables do not support <literal>EXCLUDE</literal> constraints;
+      however, you can define these constraints on individual partitions.
+      Also, while it's possible to define <literal>PRIMARY KEY</literal>
+      constraints on partitioned tables, creating foreign keys that
+      reference a partitioned table is not yet supported.
      </para>
 
     </listitem>
@@ -592,6 +593,10 @@ WITH ( MODULUS <replaceable class="parameter">numeric_literal</replaceable>, REM
       constraints.
      </para>
      <para>
+      Extended statistics are copied to the new table if
+      <literal>INCLUDING STATISTICS</literal> is specified.
+     </para>
+     <para>
       Indexes, <literal>PRIMARY KEY</literal>, <literal>UNIQUE</literal>,
       and <literal>EXCLUDE</literal> constraints on the original table will be
       created on the new table only if <literal>INCLUDING INDEXES</literal>
@@ -616,7 +621,7 @@ WITH ( MODULUS <replaceable class="parameter">numeric_literal</replaceable>, REM
      </para>
      <para>
       <literal>INCLUDING ALL</literal> is an abbreviated form of
-      <literal>INCLUDING DEFAULTS INCLUDING IDENTITY INCLUDING CONSTRAINTS INCLUDING INDEXES INCLUDING STORAGE INCLUDING COMMENTS</literal>.
+      <literal>INCLUDING COMMENTS INCLUDING CONSTRAINTS INCLUDING DEFAULTS INCLUDING IDENTITY INCLUDING INDEXES INCLUDING STATISTICS INCLUDING STORAGE</literal>.
      </para>
      <para>
       Note that unlike <literal>INHERITS</literal>, columns and
@@ -763,7 +768,8 @@ WITH ( MODULUS <replaceable class="parameter">numeric_literal</replaceable>, REM
 
    <varlistentry>
     <term><literal>UNIQUE</literal> (column constraint)</term>
-    <term><literal>UNIQUE ( <replaceable class="parameter">column_name</replaceable> [, ... ] )</literal> (table constraint)</term>
+    <term><literal>UNIQUE ( <replaceable class="parameter">column_name</replaceable> [, ... ] )</literal>
+    <optional> INCLUDE ( <replaceable class="parameter">column_name</replaceable> [, ...]) </optional> (table constraint)</term>
 
     <listitem>
      <para>
@@ -787,18 +793,30 @@ WITH ( MODULUS <replaceable class="parameter">numeric_literal</replaceable>, REM
      </para>
 
      <para>
-      When used on partitioned tables, unique constraints must include all the
-      columns of the partition key.
-      If any partitions are in turn partitioned, all columns of each partition
-      key are considered at each level below the <literal>UNIQUE</literal>
-      constraint.
+      When establishing a unique constraint for a multi-level partition
+      hierarchy, all the columns in the partition key of the target
+      partitioned table, as well as those of all its descendant partitioned
+      tables, must be included in the constraint definition.
+     </para>
+
+     <para>
+      Adding a unique constraint will automatically create a unique btree
+      index on the column or group of columns used in the constraint.
+      The optional clause <literal>INCLUDE</literal> adds to that index
+      one or more columns on which the uniqueness is not enforced.
+      Note that although the constraint is not enforced on the included columns,
+      it still depends on them.  Consequently, some operations on these columns
+      (e.g. <literal>DROP COLUMN</literal>) can cause cascade constraint and
+      index deletion.  See paragraph about <literal>INCLUDE</literal> in
+      <xref linkend="sql-createindex"/> for more information.
      </para>
     </listitem>
    </varlistentry>
 
    <varlistentry>
     <term><literal>PRIMARY KEY</literal> (column constraint)</term>
-    <term><literal>PRIMARY KEY ( <replaceable class="parameter">column_name</replaceable> [, ... ] )</literal> (table constraint)</term>
+    <term><literal>PRIMARY KEY ( <replaceable class="parameter">column_name</replaceable> [, ... ] )</literal>
+    <optional> INCLUDE ( <replaceable class="parameter">column_name</replaceable> [, ...]) </optional> (table constraint)</term>
     <listitem>
      <para>
       The <literal>PRIMARY KEY</literal> constraint specifies that a column or
@@ -828,6 +846,17 @@ WITH ( MODULUS <replaceable class="parameter">numeric_literal</replaceable>, REM
       tables.
      </para>
 
+     <para>
+      Adding a <literal>PRIMARY KEY</literal> constraint will automatically
+      create a unique btree index on the column or group of columns used in the
+      constraint.  The optional <literal>INCLUDE</literal> clause allows a list
+      of columns to be specified which will be included in the non-key portion
+      of the index.  Although uniqueness is not enforced on the included columns,
+      the constraint still depends on them. Consequently, some operations on the
+      included columns (e.g. <literal>DROP COLUMN</literal>) can cause cascade
+      constraint and index deletion. See paragraph about <literal>INCLUDE</literal>
+      in <xref linkend="sql-createindex"/> for more information.
+     </para>
     </listitem>
    </varlistentry>
 
@@ -904,7 +933,9 @@ WITH ( MODULUS <replaceable class="parameter">numeric_literal</replaceable>, REM
       must have <literal>REFERENCES</literal> permission on the referenced table
       (either the whole table, or the specific referenced columns).
       Note that foreign key constraints cannot be defined between temporary
-      tables and permanent tables.
+      tables and permanent tables.  Also note that while it is possible to
+      define a foreign key on a partitioned table, it is not possible to
+      declare a foreign key that references a partitioned table.
      </para>
 
      <para>

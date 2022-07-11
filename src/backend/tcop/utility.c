@@ -16,7 +16,6 @@
  */
 #include "postgres.h"
 
-#include "ag_const.h"
 #include "access/htup_details.h"
 #include "access/reloptions.h"
 #include "access/twophase.h"
@@ -25,7 +24,7 @@
 #include "catalog/ag_graph_fn.h"
 #include "catalog/catalog.h"
 #include "catalog/namespace.h"
-#include "catalog/pg_inherits_fn.h"
+#include "catalog/pg_inherits.h"
 #include "catalog/toasting.h"
 #include "commands/alter.h"
 #include "commands/async.h"
@@ -64,13 +63,12 @@
 #include "parser/parse_utilcmd.h"
 #include "postmaster/bgwriter.h"
 #include "rewrite/rewriteDefine.h"
-#include "rewrite/rewriteRemove.h"
 #include "storage/fd.h"
-#include "tcop/pquery.h"
 #include "tcop/utility.h"
 #include "utils/acl.h"
 #include "utils/guc.h"
-#include "utils/syscache.h"
+#include "utils/lsyscache.h"
+#include "utils/rel.h"
 
 
 /* Hook for plugins to get control in ProcessUtility() */
@@ -391,6 +389,7 @@ standard_ProcessUtility(PlannedStmt *pstmt,
 {
 	Node	   *parsetree = pstmt->utilityStmt;
 	bool		isTopLevel = (context == PROCESS_UTILITY_TOPLEVEL);
+	bool		isAtomicContext = (!(context == PROCESS_UTILITY_TOPLEVEL || context == PROCESS_UTILITY_QUERY_NONATOMIC) || IsTransactionBlock());
 	ParseState *pstate;
 
 	check_xact_readonly(parsetree);
@@ -462,13 +461,13 @@ standard_ProcessUtility(PlannedStmt *pstmt,
 						break;
 
 					case TRANS_STMT_COMMIT_PREPARED:
-						PreventTransactionChain(isTopLevel, "COMMIT PREPARED");
+						PreventInTransactionBlock(isTopLevel, "COMMIT PREPARED");
 						PreventCommandDuringRecovery("COMMIT PREPARED");
 						FinishPreparedTransaction(stmt->gid, true);
 						break;
 
 					case TRANS_STMT_ROLLBACK_PREPARED:
-						PreventTransactionChain(isTopLevel, "ROLLBACK PREPARED");
+						PreventInTransactionBlock(isTopLevel, "ROLLBACK PREPARED");
 						PreventCommandDuringRecovery("ROLLBACK PREPARED");
 						FinishPreparedTransaction(stmt->gid, false);
 						break;
@@ -478,34 +477,18 @@ standard_ProcessUtility(PlannedStmt *pstmt,
 						break;
 
 					case TRANS_STMT_SAVEPOINT:
-						{
-							ListCell   *cell;
-							char	   *name = NULL;
-
-							RequireTransactionChain(isTopLevel, "SAVEPOINT");
-
-							foreach(cell, stmt->options)
-							{
-								DefElem    *elem = lfirst(cell);
-
-								if (strcmp(elem->defname, "savepoint_name") == 0)
-									name = strVal(elem->arg);
-							}
-
-							Assert(PointerIsValid(name));
-
-							DefineSavepoint(name);
-						}
+						RequireTransactionBlock(isTopLevel, "SAVEPOINT");
+						DefineSavepoint(stmt->savepoint_name);
 						break;
 
 					case TRANS_STMT_RELEASE:
-						RequireTransactionChain(isTopLevel, "RELEASE SAVEPOINT");
-						ReleaseSavepoint(stmt->options);
+						RequireTransactionBlock(isTopLevel, "RELEASE SAVEPOINT");
+						ReleaseSavepoint(stmt->savepoint_name);
 						break;
 
 					case TRANS_STMT_ROLLBACK_TO:
-						RequireTransactionChain(isTopLevel, "ROLLBACK TO SAVEPOINT");
-						RollbackToSavepoint(stmt->options);
+						RequireTransactionBlock(isTopLevel, "ROLLBACK TO SAVEPOINT");
+						RollbackToSavepoint(stmt->savepoint_name);
 
 						/*
 						 * CommitTransactionCommand is in charge of
@@ -539,19 +522,18 @@ standard_ProcessUtility(PlannedStmt *pstmt,
 			break;
 
 		case T_DoStmt:
-			ExecuteDoStmt((DoStmt *) parsetree,
-						  (context != PROCESS_UTILITY_TOPLEVEL || IsTransactionBlock()));
+			ExecuteDoStmt((DoStmt *) parsetree, isAtomicContext);
 			break;
 
 		case T_CreateTableSpaceStmt:
 			/* no event triggers for global objects */
-			PreventTransactionChain(isTopLevel, "CREATE TABLESPACE");
+			PreventInTransactionBlock(isTopLevel, "CREATE TABLESPACE");
 			CreateTableSpace((CreateTableSpaceStmt *) parsetree);
 			break;
 
 		case T_DropTableSpaceStmt:
 			/* no event triggers for global objects */
-			PreventTransactionChain(isTopLevel, "DROP TABLESPACE");
+			PreventInTransactionBlock(isTopLevel, "DROP TABLESPACE");
 			DropTableSpace((DropTableSpaceStmt *) parsetree);
 			break;
 
@@ -601,7 +583,7 @@ standard_ProcessUtility(PlannedStmt *pstmt,
 
 		case T_CreatedbStmt:
 			/* no event triggers for global objects */
-			PreventTransactionChain(isTopLevel, "CREATE DATABASE");
+			PreventInTransactionBlock(isTopLevel, "CREATE DATABASE");
 			createdb(pstate, (CreatedbStmt *) parsetree);
 			break;
 
@@ -620,7 +602,7 @@ standard_ProcessUtility(PlannedStmt *pstmt,
 				DropdbStmt *stmt = (DropdbStmt *) parsetree;
 
 				/* no event triggers for global objects */
-				PreventTransactionChain(isTopLevel, "DROP DATABASE");
+				PreventInTransactionBlock(isTopLevel, "DROP DATABASE");
 				dropdb(stmt->dbname, stmt->missing_ok);
 			}
 			break;
@@ -669,8 +651,7 @@ standard_ProcessUtility(PlannedStmt *pstmt,
 			break;
 
 		case T_CallStmt:
-			ExecuteCallStmt(castNode(CallStmt, parsetree), params,
-							(context != PROCESS_UTILITY_TOPLEVEL || IsTransactionBlock()));
+			ExecuteCallStmt(castNode(CallStmt, parsetree), params, isAtomicContext, dest);
 			break;
 
 		case T_ClusterStmt:
@@ -698,7 +679,7 @@ standard_ProcessUtility(PlannedStmt *pstmt,
 			break;
 
 		case T_AlterSystemStmt:
-			PreventTransactionChain(isTopLevel, "ALTER SYSTEM");
+			PreventInTransactionBlock(isTopLevel, "ALTER SYSTEM");
 			AlterSystemSetConfigFile((AlterSystemStmt *) parsetree);
 			break;
 
@@ -764,13 +745,13 @@ standard_ProcessUtility(PlannedStmt *pstmt,
 			 * Since the lock would just get dropped immediately, LOCK TABLE
 			 * outside a transaction block is presumed to be user error.
 			 */
-			RequireTransactionChain(isTopLevel, "LOCK TABLE");
+			RequireTransactionBlock(isTopLevel, "LOCK TABLE");
 			/* forbidden in parallel mode due to CommandIsReadOnly */
 			LockTableCommand((LockStmt *) parsetree);
 			break;
 
 		case T_ConstraintsSetStmt:
-			WarnNoTransactionChain(isTopLevel, "SET CONSTRAINTS");
+			WarnNoTransactionBlock(isTopLevel, "SET CONSTRAINTS");
 			AfterTriggerSetState((ConstraintsSetStmt *) parsetree);
 			break;
 
@@ -816,10 +797,10 @@ standard_ProcessUtility(PlannedStmt *pstmt,
 						 * start-transaction-command calls would not have the
 						 * intended effect!
 						 */
-						PreventTransactionChain(isTopLevel,
-												(stmt->kind == REINDEX_OBJECT_SCHEMA) ? "REINDEX SCHEMA" :
-												(stmt->kind == REINDEX_OBJECT_SYSTEM) ? "REINDEX SYSTEM" :
-												"REINDEX DATABASE");
+						PreventInTransactionBlock(isTopLevel,
+												  (stmt->kind == REINDEX_OBJECT_SCHEMA) ? "REINDEX SCHEMA" :
+												  (stmt->kind == REINDEX_OBJECT_SYSTEM) ? "REINDEX SYSTEM" :
+												  "REINDEX DATABASE");
 						ReindexMultipleTables(stmt->name, stmt->kind, stmt->options);
 						break;
 					case REINDEX_OBJECT_VLABEL:
@@ -1336,11 +1317,10 @@ ProcessUtilitySlow(ParseState *pstate,
 					IndexStmt  *stmt = (IndexStmt *) parsetree;
 					Oid			relid;
 					LOCKMODE	lockmode;
-					List	   *inheritors = NIL;
 
 					if (stmt->concurrent)
-						PreventTransactionChain(isTopLevel,
-												"CREATE INDEX CONCURRENTLY");
+						PreventInTransactionBlock(isTopLevel,
+												  "CREATE INDEX CONCURRENTLY");
 
 					/*
 					 * Look up the relation OID just once, right here at the
@@ -1355,7 +1335,7 @@ ProcessUtilitySlow(ParseState *pstate,
 						: ShareLock;
 					relid =
 						RangeVarGetRelidExtended(stmt->relation, lockmode,
-												 false, false,
+												 0,
 												 RangeVarCallbackOwnsRelation,
 												 NULL);
 
@@ -1363,17 +1343,33 @@ ProcessUtilitySlow(ParseState *pstate,
 					 * CREATE INDEX on partitioned tables (but not regular
 					 * inherited tables) recurses to partitions, so we must
 					 * acquire locks early to avoid deadlocks.
+					 *
+					 * We also take the opportunity to verify that all
+					 * partitions are something we can put an index on, to
+					 * avoid building some indexes only to fail later.
 					 */
-					if (stmt->relation->inh)
+					if (stmt->relation->inh &&
+						get_rel_relkind(relid) == RELKIND_PARTITIONED_TABLE)
 					{
-						Relation	rel;
+						ListCell   *lc;
+						List	   *inheritors = NIL;
 
-						/* already locked by RangeVarGetRelidExtended */
-						rel = heap_open(relid, NoLock);
-						if (rel->rd_rel->relkind == RELKIND_PARTITIONED_TABLE)
-							inheritors = find_all_inheritors(relid, lockmode,
-															 NULL);
-						heap_close(rel, NoLock);
+						inheritors = find_all_inheritors(relid, lockmode, NULL);
+						foreach(lc, inheritors)
+						{
+							char		relkind = get_rel_relkind(lfirst_oid(lc));
+
+							if (relkind != RELKIND_RELATION &&
+								relkind != RELKIND_MATVIEW &&
+								relkind != RELKIND_PARTITIONED_TABLE)
+								ereport(ERROR,
+										(errcode(ERRCODE_INVALID_OBJECT_DEFINITION),
+										 errmsg("cannot create index on partitioned table \"%s\"",
+												stmt->relation->relname),
+										 errdetail("Table \"%s\" contains partitions that are foreign tables.",
+												   stmt->relation->relname)));
+						}
+						list_free(inheritors);
 					}
 
 					/* Run parse analysis ... */
@@ -1402,8 +1398,6 @@ ProcessUtilitySlow(ParseState *pstate,
 													 parsetree);
 					commandCollected = true;
 					EventTriggerAlterTableEnd();
-
-					list_free(inheritors);
 				}
 				break;
 
@@ -1540,7 +1534,8 @@ ProcessUtilitySlow(ParseState *pstate,
 			case T_CreateTrigStmt:
 				address = CreateTrigger((CreateTrigStmt *) parsetree,
 										queryString, InvalidOid, InvalidOid,
-										InvalidOid, InvalidOid, false);
+										InvalidOid, InvalidOid, InvalidOid,
+										InvalidOid, NULL, false, false);
 				break;
 
 			case T_CreatePLangStmt:
@@ -1706,8 +1701,8 @@ ProcessUtilitySlow(ParseState *pstate,
 
 					stmt = (CreatePropertyIndexStmt *) parsetree;
 					if (stmt->concurrent)
-						PreventTransactionChain(isTopLevel,
-										"CREATE PROPERTY INDEX CONCURRENTLY");
+						PreventInTransactionBlock(isTopLevel,
+												  "CREATE PROPERTY INDEX CONCURRENTLY");
 
 					/* Parser prevent to input graph name for label. */
 					Assert(stmt->relation->schemaname == NULL);
@@ -1732,7 +1727,7 @@ ProcessUtilitySlow(ParseState *pstate,
 												: ShareLock;
 					relid =
 						RangeVarGetRelidExtended(stmt->relation, lockmode,
-												 false, false,
+												 0,
 												 RangeVarCallbackOwnsRelation,
 												 NULL);
 
@@ -1867,8 +1862,8 @@ ExecDropStmt(DropStmt *stmt, bool isTopLevel)
 
 		case OBJECT_INDEX:
 			if (stmt->concurrent)
-				PreventTransactionChain(isTopLevel,
-										"DROP INDEX CONCURRENTLY");
+				PreventInTransactionBlock(isTopLevel,
+										  "DROP INDEX CONCURRENTLY");
 			/* fall through */
 
 		case OBJECT_TABLE:

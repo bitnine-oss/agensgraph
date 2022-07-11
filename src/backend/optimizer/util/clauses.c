@@ -130,8 +130,6 @@ static Expr *simplify_function(Oid funcid,
 				  Oid result_collid, Oid input_collid, List **args_p,
 				  bool funcvariadic, bool process_args, bool allow_non_const,
 				  eval_const_expressions_context *context);
-static List *expand_function_arguments(List *args, Oid result_type,
-						  HeapTuple func_tuple);
 static List *reorder_function_arguments(List *args, HeapTuple func_tuple);
 static List *add_function_defaults(List *args, HeapTuple func_tuple);
 static List *fetch_function_defaults(HeapTuple func_tuple);
@@ -4269,7 +4267,7 @@ simplify_function(Oid funcid, Oid result_type, int32 result_typmod,
  * cases it handles should never occur there.  This should be OK since it
  * will fall through very quickly if there's nothing to do.
  */
-static List *
+List *
 expand_function_arguments(List *args, Oid result_type, HeapTuple func_tuple)
 {
 	Form_pg_proc funcform = (Form_pg_proc) GETSTRUCT(func_tuple);
@@ -4641,14 +4639,14 @@ inline_function(Oid funcid, Oid result_type, Oid result_collid,
 
 	/*
 	 * Forget it if the function is not SQL-language or has other showstopper
-	 * properties.  (The nargs check is just paranoia.)
+	 * properties.  (The prokind and nargs checks are just paranoia.)
 	 */
 	if (funcform->prolang != SQLlanguageId ||
+		funcform->prokind != PROKIND_FUNCTION ||
 		funcform->prosecdef ||
 		funcform->proretset ||
-		funcform->prorettype == InvalidOid ||
 		funcform->prorettype == RECORDOID ||
-		!heap_attisnull(func_tuple, Anum_pg_proc_proconfig) ||
+		!heap_attisnull(func_tuple, Anum_pg_proc_proconfig, NULL) ||
 		funcform->pronargs != list_length(args))
 		return NULL;
 
@@ -4780,9 +4778,18 @@ inline_function(Oid funcid, Oid result_type, Oid result_collid,
 	/* Now we can grab the tlist expression */
 	newexpr = (Node *) ((TargetEntry *) linitial(querytree->targetList))->expr;
 
-	/* Assert that check_sql_fn_retval did the right thing */
-	Assert(exprType(newexpr) == result_type);
-	/* It couldn't have made any dangerous tlist changes, either */
+	/*
+	 * If the SQL function returns VOID, we can only inline it if it is a
+	 * SELECT of an expression returning VOID (ie, it's just a redirection to
+	 * another VOID-returning function).  In all non-VOID-returning cases,
+	 * check_sql_fn_retval should ensure that newexpr returns the function's
+	 * declared result type, so this test shouldn't fail otherwise; but we may
+	 * as well cope gracefully if it does.
+	 */
+	if (exprType(newexpr) != result_type)
+		goto fail;
+
+	/* check_sql_fn_retval couldn't have made any dangerous tlist changes */
 	Assert(!modifyTargetList);
 
 	/*
@@ -5167,15 +5174,19 @@ inline_set_returning_function(PlannerInfo *root, RangeTblEntry *rte)
 	 * properties.  In particular it mustn't be declared STRICT, since we
 	 * couldn't enforce that.  It also mustn't be VOLATILE, because that is
 	 * supposed to cause it to be executed with its own snapshot, rather than
-	 * sharing the snapshot of the calling query.  (Rechecking proretset is
-	 * just paranoia.)
+	 * sharing the snapshot of the calling query.  We also disallow returning
+	 * SETOF VOID, because inlining would result in exposing the actual result
+	 * of the function's last SELECT, which should not happen in that case.
+	 * (Rechecking prokind and proretset is just paranoia.)
 	 */
 	if (funcform->prolang != SQLlanguageId ||
+		funcform->prokind != PROKIND_FUNCTION ||
 		funcform->proisstrict ||
 		funcform->provolatile == PROVOLATILE_VOLATILE ||
+		funcform->prorettype == VOIDOID ||
 		funcform->prosecdef ||
 		!funcform->proretset ||
-		!heap_attisnull(func_tuple, Anum_pg_proc_proconfig))
+		!heap_attisnull(func_tuple, Anum_pg_proc_proconfig, NULL))
 	{
 		ReleaseSysCache(func_tuple);
 		return NULL;

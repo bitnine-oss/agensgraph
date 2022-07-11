@@ -160,6 +160,9 @@ CreateExecutorState(void)
 
 	estate->es_use_parallel_mode = false;
 
+	estate->es_jit_flags = 0;
+	estate->es_jit = NULL;
+
 	/*
 	 * Return the executor state structure
 	 */
@@ -510,6 +513,8 @@ tlist_matches_tupdesc(PlanState *ps, List *tlist, Index varno, TupleDesc tupdesc
 			return false;		/* out of order */
 		if (att_tup->attisdropped)
 			return false;		/* table contains dropped columns */
+		if (att_tup->atthasmissing)
+			return false;		/* table contains cols with missing values */
 
 		/*
 		 * Note: usually the Var's type should match the tupdesc exactly, but

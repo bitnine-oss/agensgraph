@@ -42,12 +42,12 @@
 #include "access/transam.h"
 #include "access/xact.h"
 #include "catalog/namespace.h"
-#include "catalog/partition.h"
 #include "catalog/pg_publication.h"
 #include "commands/matview.h"
 #include "commands/trigger.h"
 #include "executor/execdebug.h"
 #include "foreign/fdwapi.h"
+#include "jit/jit.h"
 #include "mb/pg_wchar.h"
 #include "miscadmin.h"
 #include "optimizer/clauses.h"
@@ -59,6 +59,7 @@
 #include "utils/acl.h"
 #include "utils/lsyscache.h"
 #include "utils/memutils.h"
+#include "utils/partcache.h"
 #include "utils/rls.h"
 #include "utils/ruleutils.h"
 #include "utils/snapmgr.h"
@@ -266,6 +267,7 @@ standard_ExecutorStart(QueryDesc *queryDesc, int eflags)
 	estate->es_crosscheck_snapshot = RegisterSnapshot(queryDesc->crosscheck_snapshot);
 	estate->es_top_eflags = eflags;
 	estate->es_instrument = queryDesc->instrument_options;
+	estate->es_jit_flags = queryDesc->plannedstmt->jitFlags;
 
 	/*
 	 * Set up an AFTER-trigger statement context, unless told not to, or
@@ -513,6 +515,10 @@ standard_ExecutorEnd(QueryDesc *queryDesc)
 	/* do away with our snapshots */
 	UnregisterSnapshot(estate->es_snapshot);
 	UnregisterSnapshot(estate->es_crosscheck_snapshot);
+
+	/* release JIT context, if allocated */
+	if (estate->es_jit)
+		jit_release_context(estate->es_jit);
 
 	/*
 	 * Must switch out of context before destroying it
@@ -881,7 +887,7 @@ InitPlan(QueryDesc *queryDesc, int eflags)
 		/*
 		 * In the partitioned result relation case, lock the non-leaf result
 		 * relations too.  A subset of these are the roots of respective
-		 * partitioned tables, for which we also allocate ResulRelInfos.
+		 * partitioned tables, for which we also allocate ResultRelInfos.
 		 */
 		estate->es_root_result_relations = NULL;
 		estate->es_num_root_result_relations = 0;
@@ -1190,13 +1196,6 @@ CheckValidResultRel(ResultRelInfo *resultRelInfo, CmdType operation)
 			switch (operation)
 			{
 				case CMD_INSERT:
-
-					/*
-					 * If foreign partition to do tuple-routing for, skip the
-					 * check; it's disallowed elsewhere.
-					 */
-					if (resultRelInfo->ri_PartitionRoot)
-						break;
 					if (fdwroutine->ExecForeignInsert == NULL)
 						ereport(ERROR,
 								(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
@@ -1359,11 +1358,15 @@ InitResultRelInfo(ResultRelInfo *resultRelInfo,
 		resultRelInfo->ri_FdwRoutine = GetFdwRoutineForRelation(resultRelationDesc, true);
 	else
 		resultRelInfo->ri_FdwRoutine = NULL;
+
+	/* The following fields are set later if needed */
 	resultRelInfo->ri_FdwState = NULL;
 	resultRelInfo->ri_usesFdwDirectModify = false;
 	resultRelInfo->ri_ConstraintExprs = NULL;
 	resultRelInfo->ri_junkFilter = NULL;
 	resultRelInfo->ri_projectReturning = NULL;
+	resultRelInfo->ri_onConflictArbiterIndexes = NIL;
+	resultRelInfo->ri_onConflict = NULL;
 
 	/*
 	 * Partition constraint, which also includes the partition constraint of
@@ -1382,6 +1385,7 @@ InitResultRelInfo(ResultRelInfo *resultRelInfo,
 
 	resultRelInfo->ri_PartitionCheck = partition_check;
 	resultRelInfo->ri_PartitionRoot = partition_root;
+	resultRelInfo->ri_PartitionReadyForRouting = false;
 }
 
 /*
@@ -1431,6 +1435,7 @@ ExecGetTriggerResultRel(EState *estate, Oid relid)
 		rInfo++;
 		nr--;
 	}
+
 	/*
 	 * Third, search through the result relations that were created during
 	 * tuple routing, if any.
@@ -1869,14 +1874,16 @@ ExecRelCheck(ResultRelInfo *resultRelInfo,
 /*
  * ExecPartitionCheck --- check that tuple meets the partition constraint.
  *
- * Exported in executor.h for outside use.
- * Returns true if it meets the partition constraint, else returns false.
+ * Returns true if it meets the partition constraint.  If the constraint
+ * fails and we're asked to emit to error, do so and don't return; otherwise
+ * return false.
  */
 bool
 ExecPartitionCheck(ResultRelInfo *resultRelInfo, TupleTableSlot *slot,
-				   EState *estate)
+				   EState *estate, bool emitError)
 {
 	ExprContext *econtext;
+	bool		success;
 
 	/*
 	 * If first time through, build expression state tree for the partition
@@ -1903,7 +1910,13 @@ ExecPartitionCheck(ResultRelInfo *resultRelInfo, TupleTableSlot *slot,
 	 * As in case of the catalogued constraints, we treat a NULL result as
 	 * success here, not a failure.
 	 */
-	return ExecCheck(resultRelInfo->ri_PartitionCheckExpr, econtext);
+	success = ExecCheck(resultRelInfo->ri_PartitionCheckExpr, econtext);
+
+	/* if asked to emit error, don't actually return on failure */
+	if (!success && emitError)
+		ExecPartitionCheckEmitError(resultRelInfo, slot, estate);
+
+	return success;
 }
 
 /*
@@ -1964,17 +1977,17 @@ ExecPartitionCheckEmitError(ResultRelInfo *resultRelInfo,
 /*
  * ExecConstraints - check constraints of the tuple in 'slot'
  *
- * This checks the traditional NOT NULL and check constraints, and if
- * requested, checks the partition constraint.
+ * This checks the traditional NOT NULL and check constraints.
+ *
+ * The partition constraint is *NOT* checked.
  *
  * Note: 'slot' contains the tuple to check the constraints of, which may
  * have been converted from the original input tuple after tuple routing.
- * 'resultRelInfo' is the original result relation, before tuple routing.
+ * 'resultRelInfo' is the final result relation, after tuple routing.
  */
 void
 ExecConstraints(ResultRelInfo *resultRelInfo,
-				TupleTableSlot *slot, EState *estate,
-				bool check_partition_constraint)
+				TupleTableSlot *slot, EState *estate)
 {
 	Relation	rel = resultRelInfo->ri_RelationDesc;
 	TupleDesc	tupdesc = RelationGetDescr(rel);
@@ -2089,12 +2102,7 @@ ExecConstraints(ResultRelInfo *resultRelInfo,
 					 errtableconstraint(orig_rel, failed)));
 		}
 	}
-
-	if (check_partition_constraint && resultRelInfo->ri_PartitionCheck &&
-		!ExecPartitionCheck(resultRelInfo, slot, estate))
-		ExecPartitionCheckEmitError(resultRelInfo, slot, estate);
 }
-
 
 /*
  * ExecWithCheckOptions -- check that tuple satisfies any WITH CHECK OPTIONs
@@ -2730,6 +2738,10 @@ EvalPlanQualFetch(EState *estate, Relation relation, int lockmode,
 						ereport(ERROR,
 								(errcode(ERRCODE_T_R_SERIALIZATION_FAILURE),
 								 errmsg("could not serialize access due to concurrent update")));
+					if (ItemPointerIndicatesMovedPartitions(&hufd.ctid))
+						ereport(ERROR,
+								(errcode(ERRCODE_T_R_SERIALIZATION_FAILURE),
+								 errmsg("tuple to be locked was already moved to another partition due to concurrent update")));
 
 					/* Should not encounter speculative tuple on recheck */
 					Assert(!HeapTupleHeaderIsSpeculative(tuple.t_data));
@@ -2750,6 +2762,7 @@ EvalPlanQualFetch(EState *estate, Relation relation, int lockmode,
 
 				case HeapTupleInvisible:
 					elog(ERROR, "attempted to lock invisible tuple");
+					break;
 
 				default:
 					ReleaseBuffer(buffer);
@@ -2798,6 +2811,14 @@ EvalPlanQualFetch(EState *estate, Relation relation, int lockmode,
 		 * As above, it should be safe to examine xmax and t_ctid without the
 		 * buffer content lock, because they can't be changing.
 		 */
+
+		/* check whether next version would be in a different partition */
+		if (HeapTupleHeaderIndicatesMovedPartitions(tuple.t_data))
+			ereport(ERROR,
+					(errcode(ERRCODE_T_R_SERIALIZATION_FAILURE),
+					 errmsg("tuple to be locked was already moved to another partition due to concurrent update")));
+
+		/* check whether tuple has been deleted */
 		if (ItemPointerEquals(&tuple.t_self, &tuple.t_data->t_ctid))
 		{
 			/* deleted, so forget about it */
@@ -2988,8 +3009,17 @@ EvalPlanQualFetchRowMarks(EPQState *epqstate)
 								false, NULL))
 					elog(ERROR, "failed to fetch tuple for EvalPlanQual recheck");
 
-				/* successful, copy tuple */
-				copyTuple = heap_copytuple(&tuple);
+				if (HeapTupleHeaderGetNatts(tuple.t_data) <
+					RelationGetDescr(erm->relation)->natts)
+				{
+					copyTuple = heap_expand_tuple(&tuple,
+												  RelationGetDescr(erm->relation));
+				}
+				else
+				{
+					/* successful, copy tuple */
+					copyTuple = heap_copytuple(&tuple);
+				}
 				ReleaseBuffer(buffer);
 			}
 

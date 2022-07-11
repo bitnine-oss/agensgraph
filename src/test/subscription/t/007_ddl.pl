@@ -23,12 +23,13 @@ my $appname           = 'replication_test';
 $node_publisher->safe_psql('postgres',
 	"CREATE PUBLICATION mypub FOR ALL TABLES;");
 $node_subscriber->safe_psql('postgres',
-"CREATE SUBSCRIPTION mysub CONNECTION '$publisher_connstr application_name=$appname' PUBLICATION mypub;"
+	"CREATE SUBSCRIPTION mysub CONNECTION '$publisher_connstr application_name=$appname' PUBLICATION mypub;"
 );
 
 $node_publisher->wait_for_catchup($appname);
 
-$node_subscriber->safe_psql('postgres', q{
+$node_subscriber->safe_psql(
+	'postgres', q{
 BEGIN;
 ALTER SUBSCRIPTION mysub DISABLE;
 ALTER SUBSCRIPTION mysub SET (slot_name = NONE);

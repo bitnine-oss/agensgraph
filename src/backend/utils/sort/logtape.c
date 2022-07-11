@@ -47,8 +47,7 @@
  *
  * To further make the I/Os more sequential, we can use a larger buffer
  * when reading, and read multiple blocks from the same tape in one go,
- * whenever the buffer becomes empty.  LogicalTapeAssignReadBufferSize()
- * can be used to set the size of the read buffer.
+ * whenever the buffer becomes empty.
  *
  * To support the above policy of writing to the lowest free block,
  * ltsGetFreeBlock sorts the list of free block numbers into decreasing
@@ -427,11 +426,17 @@ ltsConcatWorkerTapes(LogicalTapeSet *lts, TapeShare *shared,
 	{
 		char		filename[MAXPGPATH];
 		BufFile    *file;
+		off_t		filesize;
 
 		lt = &lts->tapes[i];
 
 		pg_itoa(i, filename);
 		file = BufFileOpenShared(fileset, filename);
+		filesize = BufFileSize(file);
+		if (filesize < 0)
+			ereport(ERROR,
+					(errcode_for_file_access(),
+					 errmsg("could not determine size of temporary file \"%s\"", filename)));
 
 		/*
 		 * Stash first BufFile, and concatenate subsequent BufFiles to that.
@@ -448,8 +453,8 @@ ltsConcatWorkerTapes(LogicalTapeSet *lts, TapeShare *shared,
 			lt->offsetBlockNumber = BufFileAppend(lts->pfile, file);
 		}
 		/* Don't allocate more for read buffer than could possibly help */
-		lt->max_size = Min(MaxAllocSize, shared[i].buffilesize);
-		tapeblocks = shared[i].buffilesize / BLCKSZ;
+		lt->max_size = Min(MaxAllocSize, filesize);
+		tapeblocks = filesize / BLCKSZ;
 		nphysicalblocks += tapeblocks;
 	}
 
@@ -466,7 +471,7 @@ ltsConcatWorkerTapes(LogicalTapeSet *lts, TapeShare *shared,
 	 * Compute number of hole blocks so that we can later work backwards, and
 	 * instrument number of physical blocks.  We don't simply use physical
 	 * blocks directly for instrumentation because this would break if we ever
-	 * subsequently wrote to worker tape.
+	 * subsequently wrote to the leader tape.
 	 *
 	 * Working backwards like this keeps our options open.  If shared BufFiles
 	 * ever support being written to post-export, logtape.c can automatically
@@ -939,7 +944,6 @@ LogicalTapeFreeze(LogicalTapeSet *lts, int tapenum, TapeShare *share)
 	{
 		BufFileExportShared(lts->pfile);
 		share->firstblocknumber = lt->firstBlockNumber;
-		share->buffilesize = BufFileSize(lts->pfile);
 	}
 }
 

@@ -41,7 +41,7 @@
   *worker, BackgroundWorkerHandle **handle</type>)</function>.  Unlike
   <function>RegisterBackgroundWorker</function>, which can only be called from within
   the postmaster, <function>RegisterDynamicBackgroundWorker</function> must be
-  called from a regular backend, possibly another background worker.
+  called from a regular backend or another background worker.
  </para>
 
  <para>
@@ -189,15 +189,17 @@ typedef struct BackgroundWorker
   </para>
 
   <para>Once running, the process can connect to a database by calling
-   <function>BackgroundWorkerInitializeConnection(<parameter>char *dbname</parameter>, <parameter>char *username</parameter>)</function> or
-   <function>BackgroundWorkerInitializeConnectionByOid(<parameter>Oid dboid</parameter>, <parameter>Oid useroid</parameter>)</function>.
+   <function>BackgroundWorkerInitializeConnection(<parameter>char *dbname</parameter>, <parameter>char *username</parameter>, <parameter>uint32 flags</parameter>)</function> or
+   <function>BackgroundWorkerInitializeConnectionByOid(<parameter>Oid dboid</parameter>, <parameter>Oid useroid</parameter>, <parameter>uint32 flags</parameter>)</function>.
    This allows the process to run transactions and queries using the
    <literal>SPI</literal> interface.  If <varname>dbname</varname> is NULL or
    <varname>dboid</varname> is <literal>InvalidOid</literal>, the session is not connected
    to any particular database, but shared catalogs can be accessed.
    If <varname>username</varname> is NULL or <varname>useroid</varname> is
    <literal>InvalidOid</literal>, the process will run as the superuser created
-   during <command>initdb</command>.
+   during <command>initdb</command>. If <literal>BGWORKER_BYPASS_ALLOWCONN</literal>
+   is specified as <varname>flags</varname> it is possible to bypass the restriction
+   to connect to databases not allowing user connections.
    A background worker can only call one of these two functions, and only
    once.  It is not possible to switch databases.
   </para>
@@ -259,10 +261,21 @@ typedef struct BackgroundWorker
    <function>WaitForBackgroundWorkerStartup(<parameter>BackgroundWorkerHandle
    *handle</parameter>, <parameter>pid_t *</parameter>)</function> function.
    This function will block until the postmaster has attempted to start the
-   background worker, or until the postmaster dies.  If the background runner
-   is running, the return value will <literal>BGWH_STARTED</literal>, and
+   background worker, or until the postmaster dies.  If the background worker
+   is running, the return value will be <literal>BGWH_STARTED</literal>, and
    the PID will be written to the provided address.  Otherwise, the return
    value will be <literal>BGWH_STOPPED</literal> or
+   <literal>BGWH_POSTMASTER_DIED</literal>.
+  </para>
+
+  <para>
+   A process can also wait for a background worker to shut down, by using the
+   <function>WaitForBackgroundWorkerShutdown(<parameter>BackgroundWorkerHandle
+   *handle</parameter>)</function> function and passing the
+   <type>BackgroundWorkerHandle *</type> obtained at registration. This
+   function will block until the background worker exits, or postmaster dies.
+   When the background worker exits, the return value is
+   <literal>BGWH_STOPPED</literal>, if postmaster dies it will return
    <literal>BGWH_POSTMASTER_DIED</literal>.
   </para>
 

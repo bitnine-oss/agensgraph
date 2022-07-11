@@ -2172,6 +2172,20 @@ CREATE TABLE public.products ( ... );
     in other schemas in the database.
    </para>
 
+  <para>
+    The ability to create like-named objects in different schemas complicates
+    writing a query that references precisely the same objects every time.  It
+    also opens up the potential for users to change the behavior of other
+    users' queries, maliciously or accidentally.  Due to the prevalence of
+    unqualified names in queries and their use
+    in <productname>PostgreSQL</productname> internals, adding a schema
+    to <varname>search_path</varname> effectively trusts all users having
+    <literal>CREATE</literal> privilege on that schema.  When you run an
+    ordinary query, a malicious user able to create objects in a schema of
+    your search path can take control and execute arbitrary SQL functions as
+    though you executed them.
+   </para>
+
    <indexterm>
     <primary>schema</primary>
     <secondary>current</secondary>
@@ -2288,8 +2302,9 @@ SELECT 3 OPERATOR(pg_catalog.+) 4;
     the schema
     <literal>public</literal>.  This allows all users that are able to
     connect to a given database to create objects in its
-    <literal>public</literal> schema.  If you do
-    not want to allow that, you can revoke that privilege:
+    <literal>public</literal> schema.
+    Some <link linkend="ddl-schemas-patterns">usage patterns</link> call for
+    revoking that privilege:
 <programlisting>
 REVOKE CREATE ON SCHEMA public FROM PUBLIC;
 </programlisting>
@@ -2339,49 +2354,74 @@ REVOKE CREATE ON SCHEMA public FROM PUBLIC;
    <title>Usage Patterns</title>
 
    <para>
-    Schemas can be used to organize your data in many ways.  There are
-    a few usage patterns that are recommended and are easily supported by
-    the default configuration:
+    Schemas can be used to organize your data in many ways.  There are a few
+    usage patterns easily supported by the default configuration, only one of
+    which suffices when database users mistrust other database users:
     <itemizedlist>
      <listitem>
+      <!-- "DROP SCHEMA public" is inferior to this REVOKE, because pg_dump
+           doesn't preserve that DROP. -->
       <para>
-       If you do not create any schemas then all users access the
-       public schema implicitly.  This simulates the situation where
-       schemas are not available at all.  This setup is mainly
-       recommended when there is only a single user or a few cooperating
-       users in a database.  This setup also allows smooth transition
-       from the non-schema-aware world.
-      </para>
-     </listitem>
-
-     <listitem>
-      <para>
-       You can create a schema for each user with the same name as
-       that user.  Recall that the default search path starts with
-       <literal>$user</literal>, which resolves to the user name.
-       Therefore, if each user has a separate schema, they access their
+       Constrain ordinary users to user-private schemas.  To implement this,
+       issue <literal>REVOKE CREATE ON SCHEMA public FROM PUBLIC</literal>,
+       and create a schema for each user with the same name as that user.  If
+       affected users had logged in before this, consider auditing the public
+       schema for objects named like objects in
+       schema <literal>pg_catalog</literal>.  Recall that the default search
+       path starts with <literal>$user</literal>, which resolves to the user
+       name.  Therefore, if each user has a separate schema, they access their
        own schemas by default.
       </para>
+     </listitem>
 
+     <listitem>
       <para>
-       If you use this setup then you might also want to revoke access
-       to the public schema (or drop it altogether), so users are
-       truly constrained to their own schemas.
+       Remove the public schema from each user's default search path
+       using <literal>ALTER ROLE <replaceable>user</replaceable> SET
+       search_path = "$user"</literal>.  Everyone retains the ability to
+       create objects in the public schema, but only qualified names will
+       choose those objects.  A user holding the <literal>CREATEROLE</literal>
+       privilege can undo this setting and issue arbitrary queries under the
+       identity of users relying on the setting.  If you
+       grant <literal>CREATEROLE</literal> to users not warranting this
+       almost-superuser ability, use the first pattern instead.
       </para>
      </listitem>
 
      <listitem>
       <para>
-       To install shared applications (tables to be used by everyone,
-       additional functions provided by third parties, etc.), put them
-       into separate schemas.  Remember to grant appropriate
-       privileges to allow the other users to access them.  Users can
-       then refer to these additional objects by qualifying the names
-       with a schema name, or they can put the additional schemas into
-       their search path, as they choose.
+       Remove the public schema from <varname>search_path</varname> in
+       <link linkend="config-setting-configuration-file"><filename>postgresql.conf</filename></link>.
+       The ensuing user experience matches the previous pattern.  In addition
+       to that pattern's implications for <literal>CREATEROLE</literal>, this
+       trusts database owners the same way.  If you assign
+       the <literal>CREATEROLE</literal>
+       privilege, <literal>CREATEDB</literal> privilege or individual database
+       ownership to users not warranting almost-superuser access, use the
+       first pattern instead.
+      </para>
+     </listitem>
+
+     <listitem>
+      <para>
+       Keep the default.  All users access the public schema implicitly.  This
+       simulates the situation where schemas are not available at all, giving
+       a smooth transition from the non-schema-aware world.  However, any user
+       can issue arbitrary queries under the identity of any user not electing
+       to protect itself individually.  This pattern is acceptable only when
+       the database has a single user or a few mutually-trusting users.
       </para>
      </listitem>
     </itemizedlist>
+   </para>
+
+   <para>
+    For any pattern, to install shared applications (tables to be used by
+    everyone, additional functions provided by third parties, etc.), put them
+    into separate schemas.  Remember to grant appropriate privileges to allow
+    the other users to access them.  Users can then refer to these additional
+    objects by qualifying the names with a schema name, or they can put the
+    additional schemas into their search path, as they choose.
    </para>
   </sect2>
 
@@ -2405,7 +2445,7 @@ REVOKE CREATE ON SCHEMA public FROM PUBLIC;
    <para>
     Also, there is no concept of a <literal>public</literal> schema in the
     SQL standard.  For maximum conformance to the standard, you should
-    not use (perhaps even remove) the <literal>public</literal> schema.
+    not use the <literal>public</literal> schema.
    </para>
 
    <para>
@@ -2906,7 +2946,7 @@ VALUES ('Albany', NULL, NULL, 'NY');
     divide a table into pieces called partitions.  The table that is divided
     is referred to as a <firstterm>partitioned table</firstterm>.  The
     specification consists of the <firstterm>partitioning method</firstterm>
-    and a list of columns or expressions to be used as the 
+    and a list of columns or expressions to be used as the
     <firstterm>partition key</firstterm>.
    </para>
 
@@ -2922,9 +2962,8 @@ VALUES ('Albany', NULL, NULL, 'NY');
     Partitions may themselves be defined as partitioned tables, using what is
     called <firstterm>sub-partitioning</firstterm>.  Partitions may have their
     own indexes, constraints and default values, distinct from those of other
-    partitions.  Indexes must be created separately for each partition.  See
-    <xref linkend="sql-createtable"/> for more details on creating partitioned
-    tables and partitions.
+    partitions.  See <xref linkend="sql-createtable"/> for more details on
+    creating partitioned tables and partitions.
    </para>
 
    <para>
@@ -2940,15 +2979,16 @@ VALUES ('Albany', NULL, NULL, 'NY');
    <para>
     Individual partitions are linked to the partitioned table with inheritance
     behind-the-scenes; however, it is not possible to use some of the
-    inheritance features discussed in the previous section with partitioned
-    tables and partitions.  For example, a partition cannot have any parents
-    other than the partitioned table it is a partition of, nor can a regular
-    table inherit from a partitioned table making the latter its parent.
-    That means partitioned tables and partitions do not participate in
-    inheritance with regular tables.  Since a partition hierarchy consisting
-    of the partitioned table and its partitions is still an inheritance
-    hierarchy, all the normal rules of inheritance apply as described in
-    <xref linkend="ddl-inherit"/> with some exceptions, most notably:
+    generic features of inheritance (discussed below) with declaratively
+    partitioned tables or their partitions.  For example, a partition
+    cannot have any parents other than the partitioned table it is a
+    partition of, nor can a regular table inherit from a partitioned table
+    making the latter its parent.  That means partitioned tables and their
+    partitions do not participate in inheritance with regular tables.
+    Since a partition hierarchy consisting of the partitioned table and its
+    partitions is still an inheritance hierarchy, all the normal rules of
+    inheritance apply as described in <xref linkend="ddl-inherit"/> with
+    some exceptions, most notably:
 
     <itemizedlist>
      <listitem>
@@ -2964,23 +3004,28 @@ VALUES ('Albany', NULL, NULL, 'NY');
      <listitem>
       <para>
        Using <literal>ONLY</literal> to add or drop a constraint on only the
-       partitioned table is supported when there are no partitions.  Once
+       partitioned table is supported as long as there are no partitions.  Once
        partitions exist, using <literal>ONLY</literal> will result in an error
        as adding or dropping constraints on only the partitioned table, when
-       partitions exist, is not supported.  Instead, constraints can be added
-       or dropped, when they are not present in the parent table, directly on
-       the partitions.  As a partitioned table does not have any data
-       directly, attempts to use <command>TRUNCATE</command>
-       <literal>ONLY</literal> on a partitioned table will always return an
-       error.
+       partitions exist, is not supported.  Instead, constraints on the
+       partitions themselves can be added and (if they are not present in the
+       parent table) dropped.
+      </para>
+     </listitem>
+
+     <listitem>
+      <para>
+       As a partitioned table does not have any data directly, attempts to use
+       <command>TRUNCATE</command> <literal>ONLY</literal> on a partitioned
+       table will always return an error.
       </para>
      </listitem>
 
      <listitem>
       <para>
        Partitions cannot have columns that are not present in the parent.  It
-       is neither possible to specify columns when creating partitions with
-       <command>CREATE TABLE</command> nor is it possible to add columns to
+       is not possible to specify columns when creating partitions with
+       <command>CREATE TABLE</command>, nor is it possible to add columns to
        partitions after-the-fact using <command>ALTER TABLE</command>.  Tables may be
        added as a partition with <command>ALTER TABLE ... ATTACH PARTITION</command>
        only if their columns exactly match the parent, including any
@@ -2998,16 +3043,14 @@ VALUES ('Albany', NULL, NULL, 'NY');
    </para>
 
    <para>
-    Partitions can also be foreign tables
-    (see <xref linkend="sql-createforeigntable"/>),
-    although these have some limitations that normal tables do not.  For
-    example, data inserted into the partitioned table is not routed to
-    foreign table partitions.
+    Partitions can also be foreign tables, although they have some limitations
+    that normal tables do not; see <xref linkend="sql-createforeigntable"/> for
+    more information.
    </para>
 
    <para>
     Updating the partition key of a row might cause it to be moved into a
-    different partition where this row satisfies its partition constraint.
+    different partition where this row satisfies the partition bounds.
    </para>
 
    <sect3 id="ddl-partitioning-declarative-example">
@@ -3159,7 +3202,7 @@ CREATE INDEX ON measurement (logdate);
 
       <listitem>
        <para>
-        Ensure that the <xref linkend="guc-constraint-exclusion"/>
+        Ensure that the <xref linkend="guc-enable-partition-pruning"/>
         configuration parameter is not disabled in <filename>postgresql.conf</filename>.
         If it is, queries will not be optimized as desired.
        </para>
@@ -3269,7 +3312,7 @@ ALTER TABLE measurement ATTACH PARTITION measurement_y2008m02
     <itemizedlist>
      <listitem>
       <para>
-       There is no way to create a
+       There is no way to create an
        exclusion constraint spanning all partitions; it is only possible
        to constrain each leaf partition individually.
       </para>
@@ -3278,23 +3321,8 @@ ALTER TABLE measurement ATTACH PARTITION measurement_y2008m02
      <listitem>
       <para>
        While primary keys are supported on partitioned tables, foreign
-       keys referencing partitioned tables are not supported, nor are foreign
-       key references from a partitioned table to some other table.
-      </para>
-     </listitem>
-
-     <listitem>
-      <para>
-       Using the <literal>ON CONFLICT</literal> clause with partitioned tables
-       will cause an error if the conflict target is specified (see
-       <xref linkend="sql-on-conflict" /> for more details on how the clause
-       works).  Therefore, it is not possible to specify
-       <literal>DO UPDATE</literal> as the alternative action, because
-       specifying the conflict target is mandatory in that case.  On the other
-       hand, specifying <literal>DO NOTHING</literal> as the alternative action
-       works fine provided the conflict target is not specified.  In that case,
-       unique constraints (or exclusion constraints) of the individual leaf
-       partitions are considered.
+       keys referencing partitioned tables are not supported.  (Foreign key
+       references from a partitioned table to some other table are supported.)
       </para>
      </listitem>
 
@@ -3321,8 +3349,18 @@ ALTER TABLE measurement ATTACH PARTITION measurement_y2008m02
 
      <listitem>
       <para>
-       Row triggers, if necessary, must be defined on individual partitions,
-       not the partitioned table.
+       <literal>BEFORE ROW</literal> triggers, if necessary, must be defined
+       on individual partitions, not the partitioned table.
+      </para>
+     </listitem>
+
+     <listitem>
+      <para>
+       Mixing temporary and permanent relations in the same partition tree is
+       not allowed.  Hence, if the partitioned table is permanent, so must be
+       its partitions and likewise if the partitioned table is temporary.  When
+       using temporary relations, all members of the partition tree have to be
+       from the same session.
       </para>
      </listitem>
     </itemizedlist>
@@ -3336,15 +3374,15 @@ ALTER TABLE measurement ATTACH PARTITION measurement_y2008m02
      While the built-in declarative partitioning is suitable for most
      common use cases, there are some circumstances where a more flexible
      approach may be useful.  Partitioning can be implemented using table
-     inheritance, which allows for several features which are not supported
+     inheritance, which allows for several features not supported
      by declarative partitioning, such as:
 
      <itemizedlist>
       <listitem>
        <para>
-        Partitioning enforces a rule that all partitions must have exactly
-        the same set of columns as the parent, but table inheritance allows
-        children to have extra columns not present in the parent.
+        For declarative partitioning, partitions must have exactly the same set
+        of columns as the partitioned table, whereas with table inheritance,
+        child tables may have extra columns not present in the parent.
        </para>
       </listitem>
 
@@ -3737,6 +3775,156 @@ ANALYZE measurement;
    </sect3>
   </sect2>
 
+  <sect2 id="ddl-partition-pruning">
+   <title>Partition Pruning</title>
+
+   <indexterm>
+    <primary>partition pruning</primary>
+   </indexterm>
+
+   <para>
+    <firstterm>Partition pruning</firstterm> is a query optimization technique
+    that improves performance for declaratively partitioned tables.
+    As an example:
+
+<programlisting>
+SET enable_partition_pruning = on;                 -- the default
+SELECT count(*) FROM measurement WHERE logdate &gt;= DATE '2008-01-01';
+</programlisting>
+
+    Without partition pruning, the above query would scan each of the
+    partitions of the <structname>measurement</structname> table. With
+    partition pruning enabled, the planner will examine the definition
+    of each partition and prove that the partition need not
+    be scanned because it could not contain any rows meeting the query's
+    <literal>WHERE</literal> clause.  When the planner can prove this, it
+    excludes (<firstterm>prunes</firstterm>) the partition from the query
+    plan.
+   </para>
+
+   <para>
+    By using the EXPLAIN command and the <xref
+    linkend="guc-enable-partition-pruning"/> configuration parameter, it's
+    possible to show the difference between a plan for which partitions have
+    been pruned and one for which they have not.  A typical unoptimized
+    plan for this type of table setup is:
+<programlisting>
+SET enable_partition_pruning = off;
+EXPLAIN SELECT count(*) FROM measurement WHERE logdate &gt;= DATE '2008-01-01';
+                                    QUERY PLAN
+-----------------------------------------------------------------------------------
+ Aggregate  (cost=188.76..188.77 rows=1 width=8)
+   -&gt;  Append  (cost=0.00..181.05 rows=3085 width=0)
+         -&gt;  Seq Scan on measurement_y2006m02  (cost=0.00..33.12 rows=617 width=0)
+               Filter: (logdate &gt;= '2008-01-01'::date)
+         -&gt;  Seq Scan on measurement_y2006m03  (cost=0.00..33.12 rows=617 width=0)
+               Filter: (logdate &gt;= '2008-01-01'::date)
+...
+         -&gt;  Seq Scan on measurement_y2007m11  (cost=0.00..33.12 rows=617 width=0)
+               Filter: (logdate &gt;= '2008-01-01'::date)
+         -&gt;  Seq Scan on measurement_y2007m12  (cost=0.00..33.12 rows=617 width=0)
+               Filter: (logdate &gt;= '2008-01-01'::date)
+         -&gt;  Seq Scan on measurement_y2008m01  (cost=0.00..33.12 rows=617 width=0)
+               Filter: (logdate &gt;= '2008-01-01'::date)
+</programlisting>
+
+    Some or all of the partitions might use index scans instead of
+    full-table sequential scans, but the point here is that there
+    is no need to scan the older partitions at all to answer this query.
+    When we enable partition pruning, we get a significantly
+    cheaper plan that will deliver the same answer:
+<programlisting>
+SET enable_partition_pruning = on;
+EXPLAIN SELECT count(*) FROM measurement WHERE logdate &gt;= DATE '2008-01-01';
+                                    QUERY PLAN
+-----------------------------------------------------------------------------------
+ Aggregate  (cost=37.75..37.76 rows=1 width=8)
+   -&gt;  Append  (cost=0.00..36.21 rows=617 width=0)
+         -&gt;  Seq Scan on measurement_y2008m01  (cost=0.00..33.12 rows=617 width=0)
+               Filter: (logdate &gt;= '2008-01-01'::date)
+</programlisting>
+   </para>
+
+   <para>
+    Note that partition pruning is driven only by the constraints defined
+    implicitly by the partition keys, not by the presence of indexes.
+    Therefore it isn't necessary to define indexes on the key columns.
+    Whether an index needs to be created for a given partition depends on
+    whether you expect that queries that scan the partition will
+    generally scan a large part of the partition or just a small part.
+    An index will be helpful in the latter case but not the former.
+   </para>
+
+   <para>
+    Partition pruning can be performed not only during the planning of a
+    given query, but also during its execution.  This is useful as it can
+    allow more partitions to be pruned when clauses contain expressions
+    whose values are not known at query planning time; for example,
+    parameters defined in a <command>PREPARE</command> statement, using a
+    value obtained from a subquery or using a parameterized value on the
+    inner side of a nested loop join.  Partition pruning during execution
+    can be performed at any of the following times:
+
+    <itemizedlist>
+     <listitem>
+      <para>
+       During initialization of the query plan.  Partition pruning can be
+       performed here for parameter values which are known during the
+       initialization phase of execution.  Partitions which are pruned
+       during this stage will not show up in the query's
+       <command>EXPLAIN</command> or <command>EXPLAIN ANALYZE</command>.
+       It is possible to determine the number of partitions which were
+       removed during this phase by observing the
+       <quote>Subplans Removed</quote> property in the
+       <command>EXPLAIN</command> output.
+      </para>
+     </listitem>
+
+     <listitem>
+      <para>
+       During actual execution of the query plan.  Partition pruning may
+       also be performed here to remove partitions using values which are
+       only known during actual query execution.  This includes values
+       from subqueries and values from execution-time parameters such as
+       those from parameterized nested loop joins.  Since the value of
+       these parameters may change many times during the execution of the
+       query, partition pruning is performed whenever one of the
+       execution parameters being used by partition pruning changes.
+       Determining if partitions were pruned during this phase requires
+       careful inspection of the <literal>nloops</literal> property in
+       the <command>EXPLAIN ANALYZE</command> output.
+      </para>
+     </listitem>
+    </itemizedlist>
+   </para>
+
+   <para>
+    Partition pruning can be disabled using the
+    <xref linkend="guc-enable-partition-pruning"/> setting.
+   </para>
+
+   <note>
+    <para>
+     Currently, pruning of partitions during the planning of an
+     <command>UPDATE</command> or <command>DELETE</command> command is
+     implemented using the constraint exclusion method (however, it is
+     controlled by the <literal>enable_partition_pruning</literal> rather than
+     <literal>constraint_exclusion</literal>) &mdash; see the following section
+     for details and caveats that apply.
+    </para>
+
+    <para>
+     Also, execution-time partition pruning currently only occurs for the
+     <literal>Append</literal> node type, not <literal>MergeAppend</literal>.
+    </para>
+
+    <para>
+     Both of these behaviors are likely to be changed in a future release
+     of <productname>PostgreSQL</productname>.
+    </para>
+   </note>
+  </sect2>
+
   <sect2 id="ddl-partitioning-constraint-exclusion">
    <title>Partitioning and Constraint Exclusion</title>
 
@@ -3745,104 +3933,60 @@ ANALYZE measurement;
    </indexterm>
 
    <para>
-    <firstterm>Constraint exclusion</firstterm> is a query optimization technique
-    that improves performance for partitioned tables defined in the
-    fashion described above (both declaratively partitioned tables and those
-    implemented using inheritance).  As an example:
-
-<programlisting>
-SET constraint_exclusion = on;
-SELECT count(*) FROM measurement WHERE logdate &gt;= DATE '2008-01-01';
-</programlisting>
-
-    Without constraint exclusion, the above query would scan each of
-    the partitions of the <structname>measurement</structname> table. With constraint
-    exclusion enabled, the planner will examine the constraints of each
-    partition and try to prove that the partition need not
-    be scanned because it could not contain any rows meeting the query's
-    <literal>WHERE</literal> clause.  When the planner can prove this, it
-    excludes the partition from the query plan.
+    <firstterm>Constraint exclusion</firstterm> is a query optimization
+    technique similar to partition pruning.  While it is primarily used
+    for partitioned tables using the legacy inheritance method, it can be
+    used for other purposes, including with declarative partitioning.
    </para>
 
    <para>
-    You can use the <command>EXPLAIN</command> command to show the difference
-    between a plan with <varname>constraint_exclusion</varname> on and a plan
-    with it off.  A typical unoptimized plan for this type of table setup is:
-
-<programlisting>
-SET constraint_exclusion = off;
-EXPLAIN SELECT count(*) FROM measurement WHERE logdate &gt;= DATE '2008-01-01';
-
-                                          QUERY PLAN
------------------------------------------------------------------------------------------------
- Aggregate  (cost=158.66..158.68 rows=1 width=0)
-   -&gt;  Append  (cost=0.00..151.88 rows=2715 width=0)
-         -&gt;  Seq Scan on measurement  (cost=0.00..30.38 rows=543 width=0)
-               Filter: (logdate &gt;= '2008-01-01'::date)
-         -&gt;  Seq Scan on measurement_y2006m02 measurement  (cost=0.00..30.38 rows=543 width=0)
-               Filter: (logdate &gt;= '2008-01-01'::date)
-         -&gt;  Seq Scan on measurement_y2006m03 measurement  (cost=0.00..30.38 rows=543 width=0)
-               Filter: (logdate &gt;= '2008-01-01'::date)
-...
-         -&gt;  Seq Scan on measurement_y2007m12 measurement  (cost=0.00..30.38 rows=543 width=0)
-               Filter: (logdate &gt;= '2008-01-01'::date)
-         -&gt;  Seq Scan on measurement_y2008m01 measurement  (cost=0.00..30.38 rows=543 width=0)
-               Filter: (logdate &gt;= '2008-01-01'::date)
-</programlisting>
-
-    Some or all of the partitions might use index scans instead of
-    full-table sequential scans, but the point here is that there
-    is no need to scan the older partitions at all to answer this query.
-    When we enable constraint exclusion, we get a significantly
-    cheaper plan that will deliver the same answer:
-
-<programlisting>
-SET constraint_exclusion = on;
-EXPLAIN SELECT count(*) FROM measurement WHERE logdate &gt;= DATE '2008-01-01';
-                                          QUERY PLAN
------------------------------------------------------------------------------------------------
- Aggregate  (cost=63.47..63.48 rows=1 width=0)
-   -&gt;  Append  (cost=0.00..60.75 rows=1086 width=0)
-         -&gt;  Seq Scan on measurement  (cost=0.00..30.38 rows=543 width=0)
-               Filter: (logdate &gt;= '2008-01-01'::date)
-         -&gt;  Seq Scan on measurement_y2008m01 measurement  (cost=0.00..30.38 rows=543 width=0)
-               Filter: (logdate &gt;= '2008-01-01'::date)
-</programlisting>
+    Constraint exclusion works in a very similar way to partition
+    pruning, except that it uses each table's <literal>CHECK</literal>
+    constraints &mdash; which gives it its name &mdash; whereas partition
+    pruning uses the table's partition bounds, which exists only in the
+    case of declarative partitioning.  Another difference is that
+    constraint exclusion is only applied at plan time; there is no attempt
+    to remove partitions at execution time.
    </para>
 
    <para>
-    Note that constraint exclusion is driven only by <literal>CHECK</literal>
-    constraints, not by the presence of indexes.  Therefore it isn't
-    necessary to define indexes on the key columns.  Whether an index
-    needs to be created for a given partition depends on whether you
-    expect that queries that scan the partition will generally scan
-    a large part of the partition or just a small part.  An index will
-    be helpful in the latter case but not the former.
+    The fact that constraint exclusion uses <literal>CHECK</literal>
+    constraints, which makes it slow compared to partition pruning, can
+    sometimes be used as an advantage: because constraints can be defined
+    even on declaratively-partitioned tables, in addition to the internal
+    partitioning constraints, and only constraint exclusion would be able
+    to elide certain partitions from the query plan using those.
    </para>
 
    <para>
     The default (and recommended) setting of
-    <xref linkend="guc-constraint-exclusion"/> is actually neither
+    <xref linkend="guc-constraint-exclusion"/> is neither
     <literal>on</literal> nor <literal>off</literal>, but an intermediate setting
     called <literal>partition</literal>, which causes the technique to be
-    applied only to queries that are likely to be working on partitioned
+    applied only to queries that are likely to be working on inheritance partitioned
     tables.  The <literal>on</literal> setting causes the planner to examine
     <literal>CHECK</literal> constraints in all queries, even simple ones that
     are unlikely to benefit.
    </para>
 
    <para>
-    The following caveats apply to constraint exclusion, which is used by
-    both inheritance and partitioned tables:
+    The following caveats apply to constraint exclusion:
 
    <itemizedlist>
+    <listitem>
+     <para>
+      Constraint exclusion is only applied during query planning; unlike
+      partition pruning, it cannot be applied during query execution.
+     </para>
+    </listitem>
+
     <listitem>
      <para>
       Constraint exclusion only works when the query's <literal>WHERE</literal>
       clause contains constants (or externally supplied parameters).
       For example, a comparison against a non-immutable function such as
       <function>CURRENT_TIMESTAMP</function> cannot be optimized, since the
-      planner cannot know which partition the function value might fall
+      planner cannot know which partition the function's value might fall
       into at run time.
      </para>
     </listitem>
@@ -3855,11 +3999,8 @@ EXPLAIN SELECT count(*) FROM measurement WHERE logdate &gt;= DATE '2008-01-01';
       range tests for range partitioning, as illustrated in the preceding
       examples.  A good rule of thumb is that partitioning constraints should
       contain only comparisons of the partitioning column(s) to constants
-      using B-tree-indexable operators, which applies even to partitioned
-      tables, because only B-tree-indexable column(s) are allowed in the
-      partition key.  (This is not a problem when using declarative
-      partitioning, since the automatically generated constraints are simple
-      enough to be understood by the planner.)
+      using B-tree-indexable operators, because only B-tree-indexable
+      column(s) are allowed in the partition key.
      </para>
     </listitem>
 
@@ -3867,9 +4008,9 @@ EXPLAIN SELECT count(*) FROM measurement WHERE logdate &gt;= DATE '2008-01-01';
      <para>
       All constraints on all partitions of the master table are examined
       during constraint exclusion, so large numbers of partitions are likely
-      to increase query planning time considerably.  Partitioning using
-      these techniques will work well with up to perhaps a hundred partitions;
-      don't try to use many thousands of partitions.
+      to increase query planning time considerably.  So the legacy
+      inheritance based partitioning will work well with up to perhaps a
+      hundred partitions; don't try to use many thousands of partitions.
      </para>
     </listitem>
 

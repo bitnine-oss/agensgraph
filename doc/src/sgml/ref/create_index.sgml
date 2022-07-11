@@ -23,6 +23,7 @@ PostgreSQL documentation
 <synopsis>
 CREATE [ UNIQUE ] INDEX [ CONCURRENTLY ] [ [ IF NOT EXISTS ] <replaceable class="parameter">name</replaceable> ] ON [ ONLY ] <replaceable class="parameter">table_name</replaceable> [ USING <replaceable class="parameter">method</replaceable> ]
     ( { <replaceable class="parameter">column_name</replaceable> | ( <replaceable class="parameter">expression</replaceable> ) } [ COLLATE <replaceable class="parameter">collation</replaceable> ] [ <replaceable class="parameter">opclass</replaceable> ] [ ASC | DESC ] [ NULLS { FIRST | LAST } ] [, ...] )
+    [ INCLUDE ( <replaceable class="parameter">column_name</replaceable> [, ...] ) ]
     [ WITH ( <replaceable class="parameter">storage_parameter</replaceable> = <replaceable class="parameter">value</replaceable> [, ... ] ) ]
     [ TABLESPACE <replaceable class="parameter">tablespace_name</replaceable> ]
     [ WHERE <replaceable class="parameter">predicate</replaceable> ]
@@ -139,6 +140,56 @@ CREATE [ UNIQUE ] INDEX [ CONCURRENTLY ] [ [ IF NOT EXISTS ] <replaceable class=
         A notice is issued in this case. Note that there is no guarantee that
         the existing index is anything like the one that would have been created.
         Index name is required when <literal>IF NOT EXISTS</literal> is specified.
+       </para>
+      </listitem>
+     </varlistentry>
+
+     <varlistentry>
+      <term><literal>INCLUDE</literal></term>
+      <listitem>
+       <para>
+        The optional <literal>INCLUDE</literal> clause specifies a
+        list of columns which will be included as a non-key part in the index.
+        Columns listed in this clause cannot also be present as index key columns.
+        The <literal>INCLUDE</literal> columns exist solely to
+        allow more queries to benefit from <firstterm>index-only scans</firstterm>
+        by including the values of the specified columns in the index.  These values
+        would otherwise have to be obtained by reading the table's heap.
+       </para>
+
+       <para>
+        In <literal>UNIQUE</literal> indexes, uniqueness is only enforced
+        for key columns.  Columns listed in the <literal>INCLUDE</literal>
+        clause have no effect on uniqueness enforcement.  Other constraints
+        (<literal>PRIMARY KEY</literal> and <literal>EXCLUDE</literal>) work
+        the same way.
+       </para>
+
+       <para>
+        Columns listed in the <literal>INCLUDE</literal> clause don't need
+        appropriate operator classes; the clause can contain non-key index
+        columns whose data types don't have operator classes defined for
+        a given access method.
+       </para>
+
+       <para>
+        Expressions are not supported as included columns since they cannot be
+        used in index-only scans.
+       </para>
+
+       <para>
+        Currently, only the B-tree index access method supports this feature.
+        In B-tree indexes, the values of columns listed in the
+        <literal>INCLUDE</literal> clause are included in leaf tuples which
+        are linked to the heap tuples, but are not included into pivot tuples
+        used for tree navigation.  Therefore, moving columns from the list of
+        key columns to the <literal>INCLUDE</literal> clause can slightly
+        reduce index size and improve the tree branching factor.
+       </para>
+
+       <para>
+        Indexes with columns listed in the <literal>INCLUDE</literal> clause
+        are also called <quote>covering indexes</quote>.
        </para>
       </listitem>
      </varlistentry>
@@ -309,8 +360,41 @@ CREATE [ UNIQUE ] INDEX [ CONCURRENTLY ] [ [ IF NOT EXISTS ] <replaceable class=
    <para>
     The optional <literal>WITH</literal> clause specifies <firstterm>storage
     parameters</firstterm> for the index.  Each index method has its own set of allowed
-    storage parameters.  The B-tree, hash, GiST and SP-GiST index methods all
-    accept this parameter:
+    storage parameters.  All indexes accept the following parameter:
+   </para>
+
+   <variablelist>
+   <varlistentry>
+    <term><literal>recheck_on_update</literal></term>
+    <listitem>
+     <para>
+       Specifies whether to recheck a functional index value to see whether
+       we can use a HOT update or not. The default value is on for functional
+       indexes with an total expression cost less than 1000, otherwise off.
+       You might decide to turn this off if you knew that a function used in
+       an index is unlikely to return the same value when one of the input
+       columns is updated and so the recheck is not worth the additional cost
+       of executing the function.
+     </para>
+       
+     <para>
+       Functional indexes are used frequently for the case where the function
+       returns a subset of the argument. Examples of this would be accessing
+       part of a string with <literal>SUBSTR()</literal> or accessing a single
+       field in a JSON document using an expression such as
+       <literal>(bookinfo-&gt;&gt;'isbn')</literal>. In this example, the JSON
+       document might be updated frequently, yet it is uncommon for the ISBN
+       field for a book to change so we would keep the parameter set to on
+       for that index. A more frequently changing field might have an index
+       with this parameter turned off, while very frequently changing fields
+       might be better to avoid indexing at all under high load.
+     </para>
+    </listitem>
+   </varlistentry>
+   </variablelist>
+
+   <para>
+     The B-tree, hash, GiST and SP-GiST index methods all accept this parameter:
    </para>
 
    <variablelist>
@@ -332,6 +416,21 @@ CREATE [ UNIQUE ] INDEX [ CONCURRENTLY ] [ [ IF NOT EXISTS ] <replaceable class=
       other index methods use fillfactor in different but roughly analogous
       ways; the default fillfactor varies between methods.
      </para>
+    </listitem>
+   </varlistentry>
+   </variablelist>
+
+   <para>
+    B-tree indexes additionally accept this parameter:
+   </para>
+
+   <variablelist>
+   <varlistentry>
+    <term><literal>vacuum_cleanup_index_scale_factor</literal></term>
+    <listitem>
+    <para>
+      Per-index value for <xref linkend="guc-vacuum-cleanup-index-scale-factor"/>.
+    </para>
     </listitem>
    </varlistentry>
    </variablelist>
@@ -681,10 +780,19 @@ Indexes:
   <title>Examples</title>
 
   <para>
-   To create a B-tree index on the column <literal>title</literal> in
+   To create a unique B-tree index on the column <literal>title</literal> in
    the table <literal>films</literal>:
 <programlisting>
 CREATE UNIQUE INDEX title_idx ON films (title);
+</programlisting>
+  </para>
+
+  <para>
+   To create a unique B-tree index on the column <literal>title</literal>
+   and included columns <literal>director</literal> and <literal>rating</literal>
+   in the table <literal>films</literal>:
+<programlisting>
+CREATE UNIQUE INDEX title_idx ON films (title) INCLUDE (director, rating);
 </programlisting>
   </para>
 

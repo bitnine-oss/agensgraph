@@ -44,6 +44,7 @@
 #include "commands/trigger.h"
 #include "executor/nodeModifyGraph.h"
 #include "funcapi.h"
+#include "jit/jit.h"
 #include "libpq/auth.h"
 #include "libpq/libpq.h"
 #include "libpq/pqformat.h"
@@ -195,6 +196,7 @@ static void assign_application_name(const char *newval, void *extra);
 static bool check_cluster_name(char **newval, void **extra, GucSource source);
 static const char *show_unix_socket_permissions(void);
 static const char *show_log_file_mode(void);
+static const char *show_data_directory_mode(void);
 
 /* Private functions in guc-file.l that need to be called from guc.c */
 static ConfigVariable *ProcessConfigFileInternal(GucContext context,
@@ -708,7 +710,7 @@ typedef struct
 	char		unit[MAX_UNIT_LEN + 1]; /* unit, as a string, like "kB" or
 										 * "min" */
 	int			base_unit;		/* GUC_UNIT_XXX */
-	int			multiplier;		/* If positive, multiply the value with this
+	int64		multiplier;		/* If positive, multiply the value with this
 								 * for unit -> base_unit conversion.  If
 								 * negative, divide (with the absolute value) */
 } unit_conversion;
@@ -721,10 +723,16 @@ typedef struct
 #error XLOG_BLCKSZ must be between 1KB and 1MB
 #endif
 
-static const char *memory_units_hint = gettext_noop("Valid units for this parameter are \"kB\", \"MB\", \"GB\", and \"TB\".");
+static const char *memory_units_hint = gettext_noop("Valid units for this parameter are \"B\", \"kB\", \"MB\", \"GB\", and \"TB\".");
 
 static const unit_conversion memory_unit_conversion_table[] =
 {
+	/*
+	 * TB -> bytes conversion always overflows 32-bit integer, so this always
+	 * produces an error.  Include it nevertheless for completeness, and so
+	 * that you get an "out of range" error, rather than "invalid unit".
+	 */
+	{"TB", GUC_UNIT_BYTE, INT64CONST(1024) * 1024 * 1024 * 1024},
 	{"GB", GUC_UNIT_BYTE, 1024 * 1024 * 1024},
 	{"MB", GUC_UNIT_BYTE, 1024 * 1024},
 	{"kB", GUC_UNIT_BYTE, 1024},
@@ -734,21 +742,25 @@ static const unit_conversion memory_unit_conversion_table[] =
 	{"GB", GUC_UNIT_KB, 1024 * 1024},
 	{"MB", GUC_UNIT_KB, 1024},
 	{"kB", GUC_UNIT_KB, 1},
+	{"B", GUC_UNIT_KB, -1024},
 
 	{"TB", GUC_UNIT_MB, 1024 * 1024},
 	{"GB", GUC_UNIT_MB, 1024},
 	{"MB", GUC_UNIT_MB, 1},
 	{"kB", GUC_UNIT_MB, -1024},
+	{"B", GUC_UNIT_MB, -(1024 * 1024)},
 
 	{"TB", GUC_UNIT_BLOCKS, (1024 * 1024 * 1024) / (BLCKSZ / 1024)},
 	{"GB", GUC_UNIT_BLOCKS, (1024 * 1024) / (BLCKSZ / 1024)},
 	{"MB", GUC_UNIT_BLOCKS, 1024 / (BLCKSZ / 1024)},
 	{"kB", GUC_UNIT_BLOCKS, -(BLCKSZ / 1024)},
+	{"B", GUC_UNIT_BLOCKS, -BLCKSZ},
 
 	{"TB", GUC_UNIT_XBLOCKS, (1024 * 1024 * 1024) / (XLOG_BLCKSZ / 1024)},
 	{"GB", GUC_UNIT_XBLOCKS, (1024 * 1024) / (XLOG_BLCKSZ / 1024)},
 	{"MB", GUC_UNIT_XBLOCKS, 1024 / (XLOG_BLCKSZ / 1024)},
 	{"kB", GUC_UNIT_XBLOCKS, -(XLOG_BLCKSZ / 1024)},
+	{"B", GUC_UNIT_XBLOCKS, -XLOG_BLCKSZ},
 
 	{""}						/* end of table marker */
 };
@@ -801,8 +813,8 @@ static const unit_conversion time_unit_conversion_table[] =
  *
  * 6. Don't forget to document the option (at least in config.sgml).
  *
- * 7. If it's a new GUC_LIST option you must edit pg_dumpall.c to ensure
- *	  it is not single quoted at dump time.
+ * 7. If it's a new GUC_LIST_QUOTE option, you must add it to
+ *	  variable_is_guc_list_quote() in src/bin/pg_dump/dumputils.c.
  */
 
 
@@ -928,6 +940,15 @@ static struct config_bool ConfigureNamesBool[] =
 		NULL, NULL, NULL
 	},
 	{
+		{"enable_partitionwise_aggregate", PGC_USERSET, QUERY_TUNING_METHOD,
+			gettext_noop("Enables partitionwise aggregation and grouping."),
+			NULL
+		},
+		&enable_partitionwise_aggregate,
+		false,
+		NULL, NULL, NULL
+	},
+	{
 		{"enable_parallel_append", PGC_USERSET, QUERY_TUNING_METHOD,
 			gettext_noop("Enables the planner's use of parallel append plans."),
 			NULL
@@ -942,6 +963,17 @@ static struct config_bool ConfigureNamesBool[] =
 			NULL
 		},
 		&enable_parallel_hash,
+		true,
+		NULL, NULL, NULL
+	},
+	{
+		{"enable_partition_pruning", PGC_USERSET, QUERY_TUNING_METHOD,
+			gettext_noop("Enable plan-time and run-time partition pruning."),
+			gettext_noop("Allows the query planner and executor to compare partition "
+						 "bounds to conditions in the query to determine which "
+						 "partitions must be scanned.")
+		},
+		&enable_partition_pruning,
 		true,
 		NULL, NULL, NULL
 	},
@@ -1019,6 +1051,15 @@ static struct config_bool ConfigureNamesBool[] =
 		&EnableSSL,
 		false,
 		check_ssl, NULL, NULL
+	},
+	{
+		{"ssl_passphrase_command_supports_reload", PGC_SIGHUP, CONN_AUTH_SSL,
+			gettext_noop("Also use ssl_passphrase_command during server reload."),
+			NULL
+		},
+		&ssl_passphrase_command_supports_reload,
+		false,
+		NULL, NULL, NULL
 	},
 	{
 		{"ssl_prefer_server_ciphers", PGC_SIGHUP, CONN_AUTH_SSL,
@@ -1747,6 +1788,83 @@ static struct config_bool ConfigureNamesBool[] =
 		NULL, NULL, NULL
 	},
 
+	{
+		{"jit", PGC_USERSET, QUERY_TUNING_OTHER,
+			gettext_noop("Allow JIT compilation."),
+			NULL
+		},
+		&jit_enabled,
+		true,
+		NULL, NULL, NULL
+	},
+
+	{
+		{"jit_debugging_support", PGC_SU_BACKEND, DEVELOPER_OPTIONS,
+			gettext_noop("Register JIT compiled function with debugger."),
+			NULL,
+			GUC_NOT_IN_SAMPLE
+		},
+		&jit_debugging_support,
+		false,
+
+		/*
+		 * This is not guaranteed to be available, but given it's a developer
+		 * oriented option, it doesn't seem worth adding code checking
+		 * availability.
+		 */
+		NULL, NULL, NULL
+	},
+
+	{
+		{"jit_dump_bitcode", PGC_SUSET, DEVELOPER_OPTIONS,
+			gettext_noop("Write out LLVM bitcode to facilitate JIT debugging."),
+			NULL,
+			GUC_NOT_IN_SAMPLE
+		},
+		&jit_dump_bitcode,
+		false,
+		NULL, NULL, NULL
+	},
+
+	{
+		{"jit_expressions", PGC_USERSET, DEVELOPER_OPTIONS,
+			gettext_noop("Allow JIT compilation of expressions."),
+			NULL,
+			GUC_NOT_IN_SAMPLE
+		},
+		&jit_expressions,
+		true,
+		NULL, NULL, NULL
+	},
+
+	{
+		{"jit_profiling_support", PGC_SU_BACKEND, DEVELOPER_OPTIONS,
+			gettext_noop("Register JIT compiled function with perf profiler."),
+			NULL,
+			GUC_NOT_IN_SAMPLE
+		},
+		&jit_profiling_support,
+		false,
+
+		/*
+		 * This is not guaranteed to be available, but given it's a developer
+		 * oriented option, it doesn't seem worth adding code checking
+		 * availability.
+		 */
+		NULL, NULL, NULL
+	},
+
+	{
+		{"jit_tuple_deforming", PGC_USERSET, DEVELOPER_OPTIONS,
+			gettext_noop("Allow JIT compilation of tuple deforming."),
+			NULL,
+			GUC_NOT_IN_SAMPLE
+		},
+		&jit_tuple_deforming,
+		true,
+		NULL, NULL, NULL
+	},
+
 	/* End-of-list marker */
 	{
 		{NULL, 0, 0, NULL, NULL}, NULL, false, NULL, NULL, NULL
@@ -1915,6 +2033,7 @@ static struct config_int ConfigureNamesInt[] =
 	},
 
 	{
+		/* see max_connections and max_wal_senders */
 		{"superuser_reserved_connections", PGC_POSTMASTER, CONN_AUTH_SETTINGS,
 			gettext_noop("Sets the number of connection slots reserved for superusers."),
 			NULL
@@ -1987,6 +2106,21 @@ static struct config_int ConfigureNamesInt[] =
 		&Log_file_mode,
 		0600, 0000, 0777,
 		NULL, NULL, show_log_file_mode
+	},
+
+
+	{
+		{"data_directory_mode", PGC_INTERNAL, PRESET_OPTIONS,
+			gettext_noop("Mode of the data directory."),
+			gettext_noop("The parameter value is a numeric mode specification "
+						 "in the form accepted by the chmod and umask system "
+						 "calls. (To use the customary octal format the number "
+						 "must start with a 0 (zero).)"),
+			GUC_NOT_IN_SAMPLE | GUC_DISALLOW_IN_FILE
+		},
+		&data_directory_mode,
+		0700, 0000, 0777,
+		NULL, NULL, show_data_directory_mode
 	},
 
 	{
@@ -2428,7 +2562,7 @@ static struct config_int ConfigureNamesInt[] =
 	},
 
 	{
-		/* see max_connections */
+		/* see max_connections and superuser_reserved_connections */
 		{"max_wal_senders", PGC_POSTMASTER, REPLICATION_SENDING,
 			gettext_noop("Sets the maximum number of simultaneously running WAL sender processes."),
 			NULL
@@ -2439,7 +2573,7 @@ static struct config_int ConfigureNamesInt[] =
 	},
 
 	{
-		/* see max_connections */
+		/* see max_wal_senders */
 		{"max_replication_slots", PGC_POSTMASTER, REPLICATION_SENDING,
 			gettext_noop("Sets the maximum number of simultaneously defined replication slots."),
 			NULL
@@ -2809,7 +2943,7 @@ static struct config_int ConfigureNamesInt[] =
 
 	{
 		{"max_parallel_workers", PGC_USERSET, RESOURCES_ASYNCHRONOUS,
-			gettext_noop("Sets the maximum number of parallel workers than can be active at one time."),
+			gettext_noop("Sets the maximum number of parallel workers that can be active at one time."),
 			NULL
 		},
 		&max_parallel_workers,
@@ -3056,6 +3190,36 @@ static struct config_real ConfigureNamesReal[] =
 	},
 
 	{
+		{"jit_above_cost", PGC_USERSET, QUERY_TUNING_COST,
+			gettext_noop("Perform JIT compilation if query is more expensive."),
+			gettext_noop("-1 disables JIT compilation.")
+		},
+		&jit_above_cost,
+		100000, -1, DBL_MAX,
+		NULL, NULL, NULL
+	},
+
+	{
+		{"jit_optimize_above_cost", PGC_USERSET, QUERY_TUNING_COST,
+			gettext_noop("Optimize JITed functions if query is more expensive."),
+			gettext_noop("-1 disables optimization.")
+		},
+		&jit_optimize_above_cost,
+		500000, -1, DBL_MAX,
+		NULL, NULL, NULL
+	},
+
+	{
+		{"jit_inline_above_cost", PGC_USERSET, QUERY_TUNING_COST,
+			gettext_noop("Perform JIT inlining if query is more expensive."),
+			gettext_noop("-1 disables inlining.")
+		},
+		&jit_inline_above_cost,
+		500000, -1, DBL_MAX,
+		NULL, NULL, NULL
+	},
+
+	{
 		{"cursor_tuple_fraction", PGC_USERSET, QUERY_TUNING_OTHER,
 			gettext_noop("Sets the planner's estimate of the fraction of "
 						 "a cursor's rows that will be retrieved."),
@@ -3133,6 +3297,16 @@ static struct config_real ConfigureNamesReal[] =
 		},
 		&CheckPointCompletionTarget,
 		0.5, 0.0, 1.0,
+		NULL, NULL, NULL
+	},
+
+	{
+		{"vacuum_cleanup_index_scale_factor", PGC_USERSET, CLIENT_CONN_STATEMENT,
+			gettext_noop("Number of tuple inserts prior to index cleanup as a fraction of reltuples."),
+			NULL
+		},
+		&vacuum_cleanup_index_scale_factor,
+		0.1, 0.0, 1e10,
 		NULL, NULL, NULL
 	},
 
@@ -3720,6 +3894,16 @@ static struct config_string ConfigureNamesString[] =
 	},
 
 	{
+		{"ssl_passphrase_command", PGC_SIGHUP, CONN_AUTH_SSL,
+			gettext_noop("Command to obtain passphrases for SSL."),
+			NULL
+		},
+		&ssl_passphrase_command,
+		"",
+		NULL, NULL, NULL
+	},
+
+	{
 		{"application_name", PGC_USERSET, LOGGING_WHAT,
 			gettext_noop("Sets the application name to be reported in statistics and logs."),
 			NULL,
@@ -3750,6 +3934,17 @@ static struct config_string ConfigureNamesString[] =
 		&wal_consistency_checking_string,
 		"",
 		check_wal_consistency_checking, assign_wal_consistency_checking, NULL
+	},
+
+	{
+		{"jit_provider", PGC_POSTMASTER, FILE_LOCATIONS,
+			gettext_noop("JIT provider to use."),
+			NULL,
+			GUC_SUPERUSER_ONLY
+		},
+		&jit_provider,
+		"llvmjit",
+		NULL, NULL, NULL
 	},
 
 	{
@@ -5282,6 +5477,7 @@ AtEOXact_GUC(bool isCommit, int nestLevel)
 				{
 					case GUC_SAVE:
 						Assert(false);	/* can't get here */
+						break;
 
 					case GUC_SET:
 						/* next level always becomes SET */
@@ -6148,7 +6344,8 @@ set_config_option(const char *name, const char *value,
 								name)));
 				return 0;
 			}
-			/* FALL THRU to process the same as PGC_BACKEND */
+			/* fall through to process the same as PGC_BACKEND */
+			/* FALLTHROUGH */
 		case PGC_BACKEND:
 			if (context == PGC_SIGHUP)
 			{
@@ -6809,15 +7006,15 @@ SetConfigOption(const char *name, const char *value,
  * this cannot be distinguished from a string variable with a NULL value!),
  * otherwise throw an ereport and don't return.
  *
- * If restrict_superuser is true, we also enforce that only superusers can
- * see GUC_SUPERUSER_ONLY variables.  This should only be passed as true
- * in user-driven calls.
+ * If restrict_privileged is true, we also enforce that only superusers and
+ * members of the pg_read_all_settings role can see GUC_SUPERUSER_ONLY
+ * variables.  This should only be passed as true in user-driven calls.
  *
  * The string is *not* allocated for modification and is really only
  * valid until the next call to configuration related functions.
  */
 const char *
-GetConfigOption(const char *name, bool missing_ok, bool restrict_superuser)
+GetConfigOption(const char *name, bool missing_ok, bool restrict_privileged)
 {
 	struct config_generic *record;
 	static char buffer[256];
@@ -6832,7 +7029,7 @@ GetConfigOption(const char *name, bool missing_ok, bool restrict_superuser)
 				 errmsg("unrecognized configuration parameter \"%s\"",
 						name)));
 	}
-	if (restrict_superuser &&
+	if (restrict_privileged &&
 		(record->flags & GUC_SUPERUSER_ONLY) &&
 		!is_member_of_role(GetUserId(), DEFAULT_ROLE_READ_ALL_SETTINGS))
 		ereport(ERROR,
@@ -6915,6 +7112,30 @@ GetConfigOptionResetString(const char *name)
 	return NULL;
 }
 
+/*
+ * Get the GUC flags associated with the given option.
+ *
+ * If the option doesn't exist, return 0 if missing_ok is true,
+ * otherwise throw an ereport and don't return.
+ */
+int
+GetConfigOptionFlags(const char *name, bool missing_ok)
+{
+	struct config_generic *record;
+
+	record = find_option(name, false, WARNING);
+	if (record == NULL)
+	{
+		if (missing_ok)
+			return 0;
+		ereport(ERROR,
+				(errcode(ERRCODE_UNDEFINED_OBJECT),
+				 errmsg("unrecognized configuration parameter \"%s\"",
+						name)));
+	}
+	return record->flags;
+}
+
 
 /*
  * flatten_set_variable_args
@@ -6988,7 +7209,7 @@ flatten_set_variable_args(const char *name, List *args)
 		switch (nodeTag(&con->val))
 		{
 			case T_Integer:
-				appendStringInfo(&buf, "%ld", intVal(&con->val));
+				appendStringInfo(&buf, "%d", intVal(&con->val));
 				break;
 			case T_Float:
 				/* represented as a string, so just copy it */
@@ -7423,7 +7644,7 @@ ExecSetVariableStmt(VariableSetStmt *stmt, bool isTopLevel)
 		case VAR_SET_VALUE:
 		case VAR_SET_CURRENT:
 			if (stmt->is_local)
-				WarnNoTransactionChain(isTopLevel, "SET LOCAL");
+				WarnNoTransactionBlock(isTopLevel, "SET LOCAL");
 			(void) set_config_option(stmt->name,
 									 ExtractSetVariableArgs(stmt),
 									 (superuser() ? PGC_SUSET : PGC_USERSET),
@@ -7443,7 +7664,7 @@ ExecSetVariableStmt(VariableSetStmt *stmt, bool isTopLevel)
 			{
 				ListCell   *head;
 
-				WarnNoTransactionChain(isTopLevel, "SET TRANSACTION");
+				WarnNoTransactionBlock(isTopLevel, "SET TRANSACTION");
 
 				foreach(head, stmt->args)
 				{
@@ -7494,7 +7715,7 @@ ExecSetVariableStmt(VariableSetStmt *stmt, bool isTopLevel)
 							(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
 							 errmsg("SET LOCAL TRANSACTION SNAPSHOT is not implemented")));
 
-				WarnNoTransactionChain(isTopLevel, "SET TRANSACTION");
+				WarnNoTransactionBlock(isTopLevel, "SET TRANSACTION");
 				Assert(nodeTag(&con->val) == T_String);
 				ImportSnapshot(strVal(&con->val));
 			}
@@ -7504,11 +7725,11 @@ ExecSetVariableStmt(VariableSetStmt *stmt, bool isTopLevel)
 			break;
 		case VAR_SET_DEFAULT:
 			if (stmt->is_local)
-				WarnNoTransactionChain(isTopLevel, "SET LOCAL");
+				WarnNoTransactionBlock(isTopLevel, "SET LOCAL");
 			/* fall through */
 		case VAR_RESET:
 			if (strcmp(stmt->name, "transaction_isolation") == 0)
-				WarnNoTransactionChain(isTopLevel, "RESET TRANSACTION");
+				WarnNoTransactionBlock(isTopLevel, "RESET TRANSACTION");
 
 			(void) set_config_option(stmt->name,
 									 NULL,
@@ -7637,6 +7858,15 @@ init_custom_variable(const char *name,
 	if (context == PGC_POSTMASTER &&
 		!process_shared_preload_libraries_in_progress)
 		elog(FATAL, "cannot create PGC_POSTMASTER variables after startup");
+
+	/*
+	 * We can't support custom GUC_LIST_QUOTE variables, because the wrong
+	 * things would happen if such a variable were set or pg_dump'd when the
+	 * defining extension isn't loaded.  Again, treat this as fatal because
+	 * the loadable module may be partly initialized already.
+	 */
+	if (flags & GUC_LIST_QUOTE)
+		elog(FATAL, "extensions cannot define GUC_LIST_QUOTE variables");
 
 	/*
 	 * Before pljava commit 398f3b876ed402bdaec8bc804f29e2be95c75139
@@ -8088,7 +8318,6 @@ ShowGUCConfigOption(const char *name, DestReceiver *dest)
 static void
 ShowAllGUCConfig(DestReceiver *dest)
 {
-	bool		am_superuser = superuser();
 	int			i;
 	TupOutputState *tstate;
 	TupleDesc	tupdesc;
@@ -8113,7 +8342,8 @@ ShowAllGUCConfig(DestReceiver *dest)
 		char	   *setting;
 
 		if ((conf->flags & GUC_NO_SHOW_ALL) ||
-			((conf->flags & GUC_SUPERUSER_ONLY) && !am_superuser))
+			((conf->flags & GUC_SUPERUSER_ONLY) &&
+			 !is_member_of_role(GetUserId(), DEFAULT_ROLE_READ_ALL_SETTINGS)))
 			continue;
 
 		/* assign to the values array */
@@ -8439,9 +8669,10 @@ GetConfigOptionByNum(int varnum, const char **values, bool *noshow)
 	/*
 	 * If the setting came from a config file, set the source location. For
 	 * security reasons, we don't show source file/line number for
-	 * non-superusers.
+	 * insufficiently-privileged users.
 	 */
-	if (conf->source == PGC_S_FILE && superuser())
+	if (conf->source == PGC_S_FILE &&
+		is_member_of_role(GetUserId(), DEFAULT_ROLE_READ_ALL_SETTINGS))
 	{
 		values[14] = conf->sourcefile;
 		snprintf(buffer, sizeof(buffer), "%d", conf->sourceline);
@@ -9466,6 +9697,8 @@ RestoreGUCState(void *gucstate)
 		if (varsourcefile[0])
 			read_gucstate_binary(&srcptr, srcend,
 								 &varsourceline, sizeof(varsourceline));
+		else
+			varsourceline = 0;
 		read_gucstate_binary(&srcptr, srcend,
 							 &varsource, sizeof(varsource));
 		read_gucstate_binary(&srcptr, srcend,
@@ -10603,7 +10836,7 @@ check_cluster_name(char **newval, void **extra, GucSource source)
 static const char *
 show_unix_socket_permissions(void)
 {
-	static char buf[8];
+	static char buf[12];
 
 	snprintf(buf, sizeof(buf), "%04o", Unix_socket_permissions);
 	return buf;
@@ -10612,9 +10845,18 @@ show_unix_socket_permissions(void)
 static const char *
 show_log_file_mode(void)
 {
-	static char buf[8];
+	static char buf[12];
 
 	snprintf(buf, sizeof(buf), "%04o", Log_file_mode);
+	return buf;
+}
+
+static const char *
+show_data_directory_mode(void)
+{
+	static char buf[12];
+
+	snprintf(buf, sizeof(buf), "%04o", data_directory_mode);
 	return buf;
 }
 

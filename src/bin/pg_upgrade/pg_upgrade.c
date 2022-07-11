@@ -37,7 +37,8 @@
 #include "postgres_fe.h"
 
 #include "pg_upgrade.h"
-#include "catalog/pg_class.h"
+#include "catalog/pg_class_d.h"
+#include "common/file_perm.h"
 #include "common/restricted_token.h"
 #include "fe_utils/string_utils.h"
 
@@ -78,8 +79,8 @@ main(int argc, char **argv)
 
 	set_pglocale_pgservice(argv[0], PG_TEXTDOMAIN("pg_upgrade"));
 
-	/* Ensure that all files created by pg_upgrade are non-world-readable */
-	umask(S_IRWXG | S_IRWXO);
+	/* Set default restrictive mask until new cluster permissions are read */
+	umask(PG_MODE_MASK_OWNER);
 
 	parseCommandLine(argc, argv);
 
@@ -98,6 +99,16 @@ main(int argc, char **argv)
 	get_sock_dir(&new_cluster, false);
 
 	check_cluster_compatibility(live_check);
+
+	/* Set mask based on PGDATA permissions */
+	if (!GetDataDirectoryCreatePerm(new_cluster.pgdata))
+	{
+		pg_log(PG_FATAL, "could not read permissions of directory \"%s\": %s\n",
+			   new_cluster.pgdata, strerror(errno));
+		exit(1);
+	}
+
+	umask(pg_mode_mask);
 
 	check_and_dump_old_cluster(live_check);
 

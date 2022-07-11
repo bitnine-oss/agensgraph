@@ -21,6 +21,8 @@
 #include <ctype.h>
 #include <limits.h>
 
+#include "common/string.h"
+
 #include "extern.h"
 #include "preproc.h"
 }
@@ -727,17 +729,12 @@ cppline			{space}*#([^i][A-Za-z]*|{if}|{ifdef}|{ifndef}|{import})((\/\*[^*/]*\*+
 						return PARAM;
 					}
 <C,SQL>{integer}	{
-						long val;
+						int val;
 						char* endptr;
 
 						errno = 0;
-						val = strtol((char *)yytext, &endptr,10);
-						if (*endptr != '\0' || errno == ERANGE
-#ifdef HAVE_LONG_INT_64
-							/* if long > 32 bits, check for overflow of int4 */
-							|| val != (long) ((int32) val)
-#endif
-							)
+						val = strtoint(yytext, &endptr, 10);
+						if (*endptr != '\0' || errno == ERANGE)
 						{
 							errno = 0;
 							base_yylval.str = mm_strdup(yytext);

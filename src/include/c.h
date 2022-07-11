@@ -255,11 +255,21 @@
  * bool
  *		Boolean value, either true or false.
  *
- * XXX for C++ compilers, we assume the compiler has a compatible
- * built-in definition of bool.
+ * Use stdbool.h if available and its bool has size 1.  That's useful for
+ * better compiler and debugger output and for compatibility with third-party
+ * libraries.  But PostgreSQL currently cannot deal with bool of other sizes;
+ * there are static assertions around the code to prevent that.
+ *
+ * For C++ compilers, we assume the compiler has a compatible built-in
+ * definition of bool.
  */
 
 #ifndef __cplusplus
+
+#if defined(HAVE_STDBOOL_H) && SIZEOF_BOOL == 1
+#include <stdbool.h>
+#define USE_STDBOOL 1
+#else
 
 #ifndef bool
 typedef char bool;
@@ -273,6 +283,7 @@ typedef char bool;
 #define false	((bool) 0)
 #endif
 
+#endif
 #endif							/* not C++ */
 
 
@@ -1085,6 +1096,41 @@ extern int	snprintf(char *str, size_t count, const char *fmt,...) pg_attribute_p
 extern int	vsnprintf(char *str, size_t count, const char *fmt, va_list args);
 #endif
 
+#if defined(HAVE_FDATASYNC) && !HAVE_DECL_FDATASYNC
+extern int	fdatasync(int fildes);
+#endif
+
+#ifdef HAVE_LONG_LONG_INT
+/* Older platforms may provide strto[u]ll functionality under other names */
+#if !defined(HAVE_STRTOLL) && defined(HAVE___STRTOLL)
+#define strtoll __strtoll
+#define HAVE_STRTOLL 1
+#endif
+
+#if !defined(HAVE_STRTOLL) && defined(HAVE_STRTOQ)
+#define strtoll strtoq
+#define HAVE_STRTOLL 1
+#endif
+
+#if !defined(HAVE_STRTOULL) && defined(HAVE___STRTOULL)
+#define strtoull __strtoull
+#define HAVE_STRTOULL 1
+#endif
+
+#if !defined(HAVE_STRTOULL) && defined(HAVE_STRTOUQ)
+#define strtoull strtouq
+#define HAVE_STRTOULL 1
+#endif
+
+#if defined(HAVE_STRTOLL) && !HAVE_DECL_STRTOLL
+extern long long strtoll(const char *str, char **endptr, int base);
+#endif
+
+#if defined(HAVE_STRTOULL) && !HAVE_DECL_STRTOULL
+extern unsigned long long strtoull(const char *str, char **endptr, int base);
+#endif
+#endif							/* HAVE_LONG_LONG_INT */
+
 #if !defined(HAVE_MEMMOVE) && !defined(memmove)
 #define memmove(d, s, c)		bcopy(s, d, c)
 #endif
@@ -1119,22 +1165,6 @@ extern int	vsnprintf(char *str, size_t count, const char *fmt, va_list args);
 #define sigjmp_buf jmp_buf
 #define sigsetjmp(x,y) setjmp(x)
 #define siglongjmp longjmp
-#endif
-
-#if defined(HAVE_FDATASYNC) && !HAVE_DECL_FDATASYNC
-extern int	fdatasync(int fildes);
-#endif
-
-/* If strtoq() exists, rename it to the more standard strtoll() */
-#if defined(HAVE_LONG_LONG_INT_64) && !defined(HAVE_STRTOLL) && defined(HAVE_STRTOQ)
-#define strtoll strtoq
-#define HAVE_STRTOLL 1
-#endif
-
-/* If strtouq() exists, rename it to the more standard strtoull() */
-#if defined(HAVE_LONG_LONG_INT_64) && !defined(HAVE_STRTOULL) && defined(HAVE_STRTOUQ)
-#define strtoull strtouq
-#define HAVE_STRTOULL 1
 #endif
 
 /* EXEC_BACKEND defines */

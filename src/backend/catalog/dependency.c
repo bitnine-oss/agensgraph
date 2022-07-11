@@ -30,11 +30,8 @@
 #include "catalog/pg_authid.h"
 #include "catalog/pg_cast.h"
 #include "catalog/pg_collation.h"
-#include "catalog/pg_collation_fn.h"
 #include "catalog/pg_constraint.h"
-#include "catalog/pg_constraint_fn.h"
 #include "catalog/pg_conversion.h"
-#include "catalog/pg_conversion_fn.h"
 #include "catalog/pg_database.h"
 #include "catalog/pg_default_acl.h"
 #include "catalog/pg_depend.h"
@@ -640,9 +637,9 @@ findDependentObjects(const ObjectAddress *object,
 				 * transform this deletion request into a delete of this
 				 * owning object.
 				 *
-				 * For INTERNAL_AUTO dependencies, we don't enforce this;
-				 * in other words, we don't follow the links back to the
-				 * owning object.
+				 * For INTERNAL_AUTO dependencies, we don't enforce this; in
+				 * other words, we don't follow the links back to the owning
+				 * object.
 				 */
 				if (foundDep->deptype == DEPENDENCY_INTERNAL_AUTO)
 					break;

@@ -9,6 +9,7 @@
 
 #include "postgres_fe.h"
 
+#include "fe_utils/connect.h"
 #include "fe_utils/string_utils.h"
 #include "pg_upgrade.h"
 
@@ -39,6 +40,8 @@ connectToServer(ClusterInfo *cluster, const char *db_name)
 		printf(_("Failure, exiting\n"));
 		exit(1);
 	}
+
+	PQclear(executeQueryOrDie(conn, ALWAYS_SECURE_SEARCH_PATH_SQL));
 
 	return conn;
 }
@@ -306,8 +309,8 @@ start_postmaster(ClusterInfo *cluster, bool report_and_exit_on_error)
 
 	/*
 	 * If pg_ctl failed, and the connection didn't fail, and
-	 * report_and_exit_on_error is enabled, fail now.  This
-	 * could happen if the server was already running.
+	 * report_and_exit_on_error is enabled, fail now.  This could happen if
+	 * the server was already running.
 	 */
 	if (!pg_ctl_return)
 	{

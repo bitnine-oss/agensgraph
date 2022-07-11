@@ -32,7 +32,7 @@
 #include "access/xact.h"
 #include "catalog/namespace.h"
 #include "catalog/pg_database.h"
-#include "catalog/pg_inherits_fn.h"
+#include "catalog/pg_inherits.h"
 #include "catalog/pg_namespace.h"
 #include "commands/cluster.h"
 #include "commands/vacuum.h"
@@ -186,11 +186,11 @@ vacuum(int options, List *relations, VacuumParams *params,
 	 */
 	if (options & VACOPT_VACUUM)
 	{
-		PreventTransactionChain(isTopLevel, stmttype);
+		PreventInTransactionBlock(isTopLevel, stmttype);
 		in_outer_xact = false;
 	}
 	else
-		in_outer_xact = IsInTransactionChain(isTopLevel);
+		in_outer_xact = IsInTransactionBlock(isTopLevel);
 
 	/*
 	 * Due to static variables vac_context, anl_context and vac_strategy,
@@ -766,16 +766,17 @@ vacuum_set_xid_limits(Relation rel,
  * vac_estimate_reltuples() -- estimate the new value for pg_class.reltuples
  *
  *		If we scanned the whole relation then we should just use the count of
- *		live tuples seen; but if we did not, we should not trust the count
- *		unreservedly, especially not in VACUUM, which may have scanned a quite
- *		nonrandom subset of the table.  When we have only partial information,
- *		we take the old value of pg_class.reltuples as a measurement of the
+ *		live tuples seen; but if we did not, we should not blindly extrapolate
+ *		from that number, since VACUUM may have scanned a quite nonrandom
+ *		subset of the table.  When we have only partial information, we take
+ *		the old value of pg_class.reltuples as a measurement of the
  *		tuple density in the unscanned pages.
  *
- *		This routine is shared by VACUUM and ANALYZE.
+ *		Note: scanned_tuples should count only *live* tuples, since
+ *		pg_class.reltuples is defined that way.
  */
 double
-vac_estimate_reltuples(Relation relation, bool is_analyze,
+vac_estimate_reltuples(Relation relation,
 					   BlockNumber total_pages,
 					   BlockNumber scanned_pages,
 					   double scanned_tuples)
@@ -783,9 +784,8 @@ vac_estimate_reltuples(Relation relation, bool is_analyze,
 	BlockNumber old_rel_pages = relation->rd_rel->relpages;
 	double		old_rel_tuples = relation->rd_rel->reltuples;
 	double		old_density;
-	double		new_density;
-	double		multiplier;
-	double		updated_density;
+	double		unscanned_pages;
+	double		total_tuples;
 
 	/* If we did scan the whole table, just use the count as-is */
 	if (scanned_pages >= total_pages)
@@ -809,31 +809,14 @@ vac_estimate_reltuples(Relation relation, bool is_analyze,
 
 	/*
 	 * Okay, we've covered the corner cases.  The normal calculation is to
-	 * convert the old measurement to a density (tuples per page), then update
-	 * the density using an exponential-moving-average approach, and finally
-	 * compute reltuples as updated_density * total_pages.
-	 *
-	 * For ANALYZE, the moving average multiplier is just the fraction of the
-	 * table's pages we scanned.  This is equivalent to assuming that the
-	 * tuple density in the unscanned pages didn't change.  Of course, it
-	 * probably did, if the new density measurement is different. But over
-	 * repeated cycles, the value of reltuples will converge towards the
-	 * correct value, if repeated measurements show the same new density.
-	 *
-	 * For VACUUM, the situation is a bit different: we have looked at a
-	 * nonrandom sample of pages, but we know for certain that the pages we
-	 * didn't look at are precisely the ones that haven't changed lately.
-	 * Thus, there is a reasonable argument for doing exactly the same thing
-	 * as for the ANALYZE case, that is use the old density measurement as the
-	 * value for the unscanned pages.
-	 *
-	 * This logic could probably use further refinement.
+	 * convert the old measurement to a density (tuples per page), then
+	 * estimate the number of tuples in the unscanned pages using that figure,
+	 * and finally add on the number of tuples in the scanned pages.
 	 */
 	old_density = old_rel_tuples / old_rel_pages;
-	new_density = scanned_tuples / scanned_pages;
-	multiplier = (double) scanned_pages / (double) total_pages;
-	updated_density = old_density + (new_density - old_density) * multiplier;
-	return floor(updated_density * total_pages + 0.5);
+	unscanned_pages = (double) total_pages - (double) scanned_pages;
+	total_tuples = old_density * unscanned_pages + scanned_tuples;
+	return floor(total_tuples + 0.5);
 }
 
 
@@ -871,6 +854,9 @@ vac_estimate_reltuples(Relation relation, bool is_analyze,
  *		So we refrain from updating the DDL flags if we're inside an outer
  *		transaction.  This is OK since postponing the flag maintenance is
  *		always allowable.
+ *
+ *		Note: num_tuples should count only *live* tuples, since
+ *		pg_class.reltuples is defined that way.
  *
  *		This routine is shared by VACUUM and ANALYZE.
  */
@@ -926,16 +912,6 @@ vac_update_relstats(Relation relation,
 		if (pgcform->relhasindex && !hasindex)
 		{
 			pgcform->relhasindex = false;
-			dirty = true;
-		}
-
-		/*
-		 * If we have discovered that there are no indexes, then there's no
-		 * primary key either.  This could be done more thoroughly...
-		 */
-		if (pgcform->relhaspkey && !hasindex)
-		{
-			pgcform->relhaspkey = false;
 			dirty = true;
 		}
 

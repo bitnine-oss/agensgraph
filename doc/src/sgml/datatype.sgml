@@ -60,7 +60,7 @@
 
       <row>
        <entry><type>bit varying [ (<replaceable>n</replaceable>) ]</type></entry>
-       <entry><type>varbit</type></entry>
+       <entry><type>varbit [ (<replaceable>n</replaceable>) ]</type></entry>
        <entry>variable-length bit string</entry>
       </row>
 
@@ -515,14 +515,13 @@
 
     <para>
      We use the following terms below:  The
-     <firstterm>scale</firstterm> of a <type>numeric</type> is the
-     count of decimal digits in the fractional part, to the right of
-     the decimal point.  The <firstterm>precision</firstterm> of a
-     <type>numeric</type> is the total count of significant digits in
-     the whole number, that is, the number of digits to both sides of
-     the decimal point.  So the number 23.5141 has a precision of 6
-     and a scale of 4.  Integers can be considered to have a scale of
-     zero.
+     <firstterm>precision</firstterm> of a <type>numeric</type>
+     is the total count of significant digits in the whole number,
+     that is, the number of digits to both sides of the decimal point.
+     The <firstterm>scale</firstterm> of a <type>numeric</type> is the
+     count of decimal digits in the fractional part, to the right of the
+     decimal point.  So the number 23.5141 has a precision of 6 and a
+     scale of 4.  Integers can be considered to have a scale of zero.
     </para>
 
     <para>
@@ -2671,19 +2670,6 @@ P <optional> <replaceable>years</replaceable>-<replaceable>months</replaceable>-
     </para>
 
     <para>
-     Internally <type>interval</type> values are stored as months, days,
-     and seconds. This is done because the number of days in a month
-     varies, and a day can have 23 or 25 hours if a daylight savings
-     time adjustment is involved.  The months and days fields are integers
-     while the seconds field can store fractions.  Because intervals are
-     usually created from constant strings or <type>timestamp</type> subtraction,
-     this storage method works well in most cases. Functions
-     <function>justify_days</function> and <function>justify_hours</function> are
-     available for adjusting days and hours that overflow their normal
-     ranges.
-    </para>
-
-    <para>
      In the verbose input format, and in some fields of the more compact
      input formats, field values can have fractional parts; for example
      <literal>'1.5 week'</literal> or <literal>'01:02:03.45'</literal>.  Such input is
@@ -2733,6 +2719,33 @@ P <optional> <replaceable>years</replaceable>-<replaceable>months</replaceable>-
        </tbody>
       </tgroup>
      </table>
+
+    <para>
+     Internally <type>interval</type> values are stored as months, days,
+     and seconds. This is done because the number of days in a month
+     varies, and a day can have 23 or 25 hours if a daylight savings
+     time adjustment is involved.  The months and days fields are integers
+     while the seconds field can store fractions.  Because intervals are
+     usually created from constant strings or <type>timestamp</type> subtraction,
+     this storage method works well in most cases, but can cause unexpected
+     results:
+
+<programlisting>
+SELECT EXTRACT(hours from '80 minutes'::interval);
+ date_part
+-----------
+         1
+
+SELECT EXTRACT(days from '80 hours'::interval);
+ date_part
+-----------
+         0
+</programlisting>
+
+     Functions <function>justify_days</function> and
+     <function>justify_hours</function> are available for adjusting days
+     and hours that overflow their normal ranges.
+    </para>
 
    </sect2>
 
@@ -3060,16 +3073,24 @@ SELECT person.name, holidays.num_weeks FROM person, holidays
     <title>Implementation Details</title>
 
     <para>
+     Enum labels are case sensitive, so
+     <type>'happy'</type> is not the same as <type>'HAPPY'</type>.
+     White space in the labels is significant too.
+    </para>
+
+    <para>
+     Although enum types are primarily intended for static sets of values,
+     there is support for adding new values to an existing enum type, and for
+     renaming values (see <xref linkend="sql-altertype"/>).  Existing values
+     cannot be removed from an enum type, nor can the sort ordering of such
+     values be changed, short of dropping and re-creating the enum type.
+    </para>
+
+    <para>
      An enum value occupies four bytes on disk.  The length of an enum
      value's textual label is limited by the <symbol>NAMEDATALEN</symbol>
      setting compiled into <productname>PostgreSQL</productname>; in standard
      builds this means at most 63 bytes.
-    </para>
-
-    <para>
-     Enum labels are case sensitive, so
-     <type>'happy'</type> is not the same as <type>'HAPPY'</type>.
-     White space in the labels is significant too.
     </para>
 
     <para>

@@ -21,9 +21,9 @@
  * allpaths.c
  */
 extern PGDLLIMPORT bool enable_geqo;
-extern PGDLLIMPORT int	geqo_threshold;
-extern PGDLLIMPORT int	min_parallel_table_scan_size;
-extern PGDLLIMPORT int	min_parallel_index_scan_size;
+extern PGDLLIMPORT int geqo_threshold;
+extern PGDLLIMPORT int min_parallel_table_scan_size;
+extern PGDLLIMPORT int min_parallel_index_scan_size;
 
 /* Hook for plugins to get control in set_rel_pathlist() */
 typedef void (*set_rel_pathlist_hook_type) (PlannerInfo *root,
@@ -53,13 +53,14 @@ extern void set_dummy_rel_pathlist(RelOptInfo *rel);
 extern RelOptInfo *standard_join_search(PlannerInfo *root, int levels_needed,
 					 List *initial_rels);
 
-extern void generate_gather_paths(PlannerInfo *root, RelOptInfo *rel);
+extern void generate_gather_paths(PlannerInfo *root, RelOptInfo *rel,
+					  bool override_rows);
 extern int compute_parallel_worker(RelOptInfo *rel, double heap_pages,
 						double index_pages, int max_workers);
 extern void create_partial_bitmap_paths(PlannerInfo *root, RelOptInfo *rel,
 							Path *bitmapqual);
 extern void generate_partitionwise_join_paths(PlannerInfo *root,
-								   RelOptInfo *rel);
+								  RelOptInfo *rel);
 
 #ifdef OPTIMIZER_DEBUG
 extern void debug_print_rel(PlannerInfo *root, RelOptInfo *rel);
@@ -131,7 +132,8 @@ extern bool have_join_order_restriction(PlannerInfo *root,
 extern bool have_dangerous_phv(PlannerInfo *root,
 				   Relids outer_relids, Relids inner_params);
 extern void mark_dummy_rel(RelOptInfo *rel);
-extern bool have_partkey_equi_join(RelOptInfo *rel1, RelOptInfo *rel2,
+extern bool have_partkey_equi_join(RelOptInfo *joinrel,
+					   RelOptInfo *rel1, RelOptInfo *rel2,
 					   JoinType jointype, List *restrictlist);
 
 /*
@@ -252,5 +254,7 @@ extern bool has_useful_pathkeys(PlannerInfo *root, RelOptInfo *rel);
 extern PathKey *make_canonical_pathkey(PlannerInfo *root,
 					   EquivalenceClass *eclass, Oid opfamily,
 					   int strategy, bool nulls_first);
+extern void add_paths_to_append_rel(PlannerInfo *root, RelOptInfo *rel,
+						List *live_childrels);
 
 #endif							/* PATHS_H */

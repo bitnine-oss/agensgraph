@@ -31,6 +31,9 @@
  *
  *		This shouldn't leak any memory; otherwise, callers such as
  *		tuplesort_putindextuplevalues() will be very unhappy.
+ *
+ *		This shouldn't perform external table access provided caller
+ *		does not pass values that are stored EXTERNAL.
  * ----------------
  */
 IndexTuple
@@ -444,4 +447,52 @@ CopyIndexTuple(IndexTuple source)
 	result = (IndexTuple) palloc(size);
 	memcpy(result, source, size);
 	return result;
+}
+
+/*
+ * Create a palloc'd copy of an index tuple, leaving only the first
+ * leavenatts attributes remaining.
+ *
+ * Truncation is guaranteed to result in an index tuple that is no
+ * larger than the original.  It is safe to use the IndexTuple with
+ * the original tuple descriptor, but caller must avoid actually
+ * accessing truncated attributes from returned tuple!  In practice
+ * this means that index_getattr() must be called with special care,
+ * and that the truncated tuple should only ever be accessed by code
+ * under caller's direct control.
+ *
+ * It's safe to call this function with a buffer lock held, since it
+ * never performs external table access.  If it ever became possible
+ * for index tuples to contain EXTERNAL TOAST values, then this would
+ * have to be revisited.
+ */
+IndexTuple
+index_truncate_tuple(TupleDesc sourceDescriptor, IndexTuple source,
+					 int leavenatts)
+{
+	TupleDesc	truncdesc;
+	Datum		values[INDEX_MAX_KEYS];
+	bool		isnull[INDEX_MAX_KEYS];
+	IndexTuple	truncated;
+
+	Assert(leavenatts < sourceDescriptor->natts);
+
+	/* Create temporary descriptor to scribble on */
+	truncdesc = palloc(TupleDescSize(sourceDescriptor));
+	TupleDescCopy(truncdesc, sourceDescriptor);
+	truncdesc->natts = leavenatts;
+
+	/* Deform, form copy of tuple with fewer attributes */
+	index_deform_tuple(source, truncdesc, values, isnull);
+	truncated = index_form_tuple(truncdesc, values, isnull);
+	truncated->t_tid = source->t_tid;
+	Assert(IndexTupleSize(truncated) <= IndexTupleSize(source));
+
+	/*
+	 * Cannot leak memory here, TupleDescCopy() doesn't allocate any inner
+	 * structure, so, plain pfree() should clean all allocated memory
+	 */
+	pfree(truncdesc);
+
+	return truncated;
 }

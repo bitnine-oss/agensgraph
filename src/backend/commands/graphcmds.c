@@ -25,7 +25,6 @@
 #include "catalog/objectaccess.h"
 #include "catalog/objectaddress.h"
 #include "catalog/pg_class.h"
-#include "catalog/pg_inherits_fn.h"
 #include "catalog/pg_namespace.h"
 #include "catalog/toasting.h"
 #include "commands/event_trigger.h"
@@ -42,6 +41,7 @@
 #include "utils/lsyscache.h"
 #include "utils/rel.h"
 #include "utils/syscache.h"
+#include "catalog/pg_inherits.h"
 
 static ObjectAddress DefineLabel(CreateStmt *stmt, char labkind,
 								 const char *queryString);
@@ -65,7 +65,6 @@ CreateGraphCommand(CreateGraphStmt *stmt, const char *queryString,
 	CommandCounterIncrement();
 
 	parsetree_list = transformCreateGraphStmt(stmt);
-
 	foreach(parsetree_item, parsetree_list)
 	{
 		Node	   *stmt = lfirst(parsetree_item);
@@ -564,7 +563,7 @@ DisableIndexCommand(DisableIndexStmt *disableStmt)
 	Oid			relid;
 	RangeVar   *relation = disableStmt->relation;
 
-	relid = RangeVarGetRelidExtended(relation, ShareLock, false, false,
+	relid = RangeVarGetRelidExtended(relation, ShareLock, 0,
 									 RangeVarCallbackOwnsTable, NULL);
 
 	if (!RangeVarIsLabel(relation))

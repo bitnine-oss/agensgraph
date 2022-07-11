@@ -14,9 +14,9 @@
 
 #include <ctype.h>
 
-#include "catalog/pg_attribute.h"
-#include "catalog/pg_class.h"
-#include "catalog/pg_default_acl.h"
+#include "catalog/pg_attribute_d.h"
+#include "catalog/pg_class_d.h"
+#include "catalog/pg_default_acl_d.h"
 #include "fe_utils/string_utils.h"
 
 #include "common.h"
@@ -102,12 +102,20 @@ describeAggregates(const char *pattern, bool verbose, bool showSystem)
 						  "  pg_catalog.format_type(p.proargtypes[0], NULL) AS \"%s\",\n",
 						  gettext_noop("Argument data types"));
 
-	appendPQExpBuffer(&buf,
-					  "  pg_catalog.obj_description(p.oid, 'pg_proc') as \"%s\"\n"
-					  "FROM pg_catalog.pg_proc p\n"
-					  "     LEFT JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace\n"
-					  "WHERE p.proisagg\n",
-					  gettext_noop("Description"));
+	if (pset.sversion >= 110000)
+		appendPQExpBuffer(&buf,
+						  "  pg_catalog.obj_description(p.oid, 'pg_proc') as \"%s\"\n"
+						  "FROM pg_catalog.pg_proc p\n"
+						  "     LEFT JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace\n"
+						  "WHERE p.prokind = 'a'\n",
+						  gettext_noop("Description"));
+	else
+		appendPQExpBuffer(&buf,
+						  "  pg_catalog.obj_description(p.oid, 'pg_proc') as \"%s\"\n"
+						  "FROM pg_catalog.pg_proc p\n"
+						  "     LEFT JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace\n"
+						  "WHERE p.proisagg\n",
+						  gettext_noop("Description"));
 
 	if (!showSystem && !pattern)
 		appendPQExpBufferStr(&buf, "      AND n.nspname <> 'pg_catalog'\n"
@@ -348,15 +356,14 @@ describeFunctions(const char *functypes, const char *pattern, bool verbose, bool
 					  gettext_noop("Schema"),
 					  gettext_noop("Name"));
 
-	if (pset.sversion >= 80400)
+	if (pset.sversion >= 110000)
 		appendPQExpBuffer(&buf,
 						  "  pg_catalog.pg_get_function_result(p.oid) as \"%s\",\n"
 						  "  pg_catalog.pg_get_function_arguments(p.oid) as \"%s\",\n"
-						  " CASE\n"
-						  "  WHEN p.proisagg THEN '%s'\n"
-						  "  WHEN p.proiswindow THEN '%s'\n"
-						  "  WHEN p.prorettype = 0 THEN '%s'\n"
-						  "  WHEN p.prorettype = 'pg_catalog.trigger'::pg_catalog.regtype THEN '%s'\n"
+						  " CASE p.prokind\n"
+						  "  WHEN 'a' THEN '%s'\n"
+						  "  WHEN 'w' THEN '%s'\n"
+						  "  WHEN 'p' THEN '%s'\n"
 						  "  ELSE '%s'\n"
 						  " END as \"%s\"",
 						  gettext_noop("Result data type"),
@@ -365,6 +372,23 @@ describeFunctions(const char *functypes, const char *pattern, bool verbose, bool
 						  gettext_noop("agg"),
 						  gettext_noop("window"),
 						  gettext_noop("proc"),
+						  gettext_noop("func"),
+						  gettext_noop("Type"));
+	else if (pset.sversion >= 80400)
+		appendPQExpBuffer(&buf,
+						  "  pg_catalog.pg_get_function_result(p.oid) as \"%s\",\n"
+						  "  pg_catalog.pg_get_function_arguments(p.oid) as \"%s\",\n"
+						  " CASE\n"
+						  "  WHEN p.proisagg THEN '%s'\n"
+						  "  WHEN p.proiswindow THEN '%s'\n"
+						  "  WHEN p.prorettype = 'pg_catalog.trigger'::pg_catalog.regtype THEN '%s'\n"
+						  "  ELSE '%s'\n"
+						  " END as \"%s\"",
+						  gettext_noop("Result data type"),
+						  gettext_noop("Argument data types"),
+		/* translator: "agg" is short for "aggregate" */
+						  gettext_noop("agg"),
+						  gettext_noop("window"),
 						  gettext_noop("trigger"),
 						  gettext_noop("func"),
 						  gettext_noop("Type"));
@@ -496,7 +520,10 @@ describeFunctions(const char *functypes, const char *pattern, bool verbose, bool
 				appendPQExpBufferStr(&buf, "WHERE ");
 				have_where = true;
 			}
-			appendPQExpBufferStr(&buf, "NOT p.proisagg\n");
+			if (pset.sversion >= 110000)
+				appendPQExpBufferStr(&buf, "p.prokind <> 'a'\n");
+			else
+				appendPQExpBufferStr(&buf, "NOT p.proisagg\n");
 		}
 		if (!showTrigger)
 		{
@@ -518,7 +545,10 @@ describeFunctions(const char *functypes, const char *pattern, bool verbose, bool
 				appendPQExpBufferStr(&buf, "WHERE ");
 				have_where = true;
 			}
-			appendPQExpBufferStr(&buf, "NOT p.proiswindow\n");
+			if (pset.sversion >= 110000)
+				appendPQExpBufferStr(&buf, "p.prokind <> 'w'\n");
+			else
+				appendPQExpBufferStr(&buf, "NOT p.proiswindow\n");
 		}
 	}
 	else
@@ -530,7 +560,10 @@ describeFunctions(const char *functypes, const char *pattern, bool verbose, bool
 		/* Note: at least one of these must be true ... */
 		if (showAggregate)
 		{
-			appendPQExpBufferStr(&buf, "p.proisagg\n");
+			if (pset.sversion >= 110000)
+				appendPQExpBufferStr(&buf, "p.prokind = 'a'\n");
+			else
+				appendPQExpBufferStr(&buf, "p.proisagg\n");
 			needs_or = true;
 		}
 		if (showTrigger)
@@ -545,7 +578,10 @@ describeFunctions(const char *functypes, const char *pattern, bool verbose, bool
 		{
 			if (needs_or)
 				appendPQExpBufferStr(&buf, "       OR ");
-			appendPQExpBufferStr(&buf, "p.proiswindow\n");
+			if (pset.sversion >= 110000)
+				appendPQExpBufferStr(&buf, "p.prokind = 'w'\n");
+			else
+				appendPQExpBufferStr(&buf, "p.proiswindow\n");
 			needs_or = true;
 		}
 		appendPQExpBufferStr(&buf, "      )\n");
@@ -2277,8 +2313,13 @@ describeOneTableDetails(const char *schemaname,
 			PQclear(result);
 		}
 
-		/* print foreign-key constraints (there are none if no triggers) */
-		if (tableinfo.hastriggers)
+		/*
+		 * Print foreign-key constraints (there are none if no triggers,
+		 * except if the table is partitioned, in which case the triggers
+		 * appear in the partitions)
+		 */
+		if (tableinfo.hastriggers ||
+			tableinfo.relkind == RELKIND_PARTITIONED_TABLE)
 		{
 			printfPQExpBuffer(&buf,
 							  "SELECT conname,\n"
@@ -2674,7 +2715,11 @@ describeOneTableDetails(const char *schemaname,
 						   pset.sversion >= 80300 ?
 						   "t.tgconstraint <> 0 AS tgisinternal" :
 						   "false AS tgisinternal"), oid);
-		if (pset.sversion >= 90000)
+		if (pset.sversion >= 110000)
+			appendPQExpBuffer(&buf, "(NOT t.tgisinternal OR (t.tgisinternal AND t.tgenabled = 'D') \n"
+							  "    OR EXISTS (SELECT 1 FROM pg_catalog.pg_depend WHERE objid = t.oid \n"
+							  "        AND refclassid = 'pg_catalog.pg_trigger'::regclass))");
+		else if (pset.sversion >= 90000)
 			/* display/warn about disabled internal triggers */
 			appendPQExpBuffer(&buf, "(NOT t.tgisinternal OR (t.tgisinternal AND t.tgenabled = 'D'))");
 		else if (pset.sversion >= 80300)
@@ -5153,7 +5198,7 @@ listPublications(const char *pattern)
 	PQExpBufferData buf;
 	PGresult   *res;
 	printQueryOpt myopt = pset.popt;
-	static const bool translate_columns[] = {false, false, false, false, false, false};
+	static const bool translate_columns[] = {false, false, false, false, false, false, false};
 
 	if (pset.sversion < 100000)
 	{
@@ -5173,13 +5218,17 @@ listPublications(const char *pattern)
 					  "  puballtables AS \"%s\",\n"
 					  "  pubinsert AS \"%s\",\n"
 					  "  pubupdate AS \"%s\",\n"
-					  "  pubdelete AS \"%s\"\n",
+					  "  pubdelete AS \"%s\"",
 					  gettext_noop("Name"),
 					  gettext_noop("Owner"),
 					  gettext_noop("All tables"),
 					  gettext_noop("Inserts"),
 					  gettext_noop("Updates"),
 					  gettext_noop("Deletes"));
+	if (pset.sversion >= 110000)
+		appendPQExpBuffer(&buf,
+						  ",\n  pubtruncate AS \"%s\"",
+						  gettext_noop("Truncates"));
 
 	appendPQExpBufferStr(&buf,
 						 "\nFROM pg_catalog.pg_publication\n");
@@ -5220,6 +5269,7 @@ describePublications(const char *pattern)
 	PQExpBufferData buf;
 	int			i;
 	PGresult   *res;
+	bool		has_pubtruncate;
 
 	if (pset.sversion < 100000)
 	{
@@ -5231,13 +5281,19 @@ describePublications(const char *pattern)
 		return true;
 	}
 
+	has_pubtruncate = (pset.sversion >= 110000);
+
 	initPQExpBuffer(&buf);
 
 	printfPQExpBuffer(&buf,
 					  "SELECT oid, pubname,\n"
 					  "  pg_catalog.pg_get_userbyid(pubowner) AS owner,\n"
-					  "  puballtables, pubinsert, pubupdate, pubdelete\n"
-					  "FROM pg_catalog.pg_publication\n");
+					  "  puballtables, pubinsert, pubupdate, pubdelete");
+	if (has_pubtruncate)
+		appendPQExpBuffer(&buf,
+						  ", pubtruncate");
+	appendPQExpBuffer(&buf,
+					  "\nFROM pg_catalog.pg_publication\n");
 
 	processSQLNamePattern(pset.db, &buf, pattern, false, false,
 						  NULL, "pubname", NULL,
@@ -5283,6 +5339,9 @@ describePublications(const char *pattern)
 		printTableOpt myopt = pset.popt.topt;
 		printTableContent cont;
 
+		if (has_pubtruncate)
+			ncols++;
+
 		initPQExpBuffer(&title);
 		printfPQExpBuffer(&title, _("Publication %s"), pubname);
 		printTableInit(&cont, &myopt, title.data, ncols, nrows);
@@ -5292,12 +5351,16 @@ describePublications(const char *pattern)
 		printTableAddHeader(&cont, gettext_noop("Inserts"), true, align);
 		printTableAddHeader(&cont, gettext_noop("Updates"), true, align);
 		printTableAddHeader(&cont, gettext_noop("Deletes"), true, align);
+		if (has_pubtruncate)
+			printTableAddHeader(&cont, gettext_noop("Truncates"), true, align);
 
 		printTableAddCell(&cont, PQgetvalue(res, i, 2), false, false);
 		printTableAddCell(&cont, PQgetvalue(res, i, 3), false, false);
 		printTableAddCell(&cont, PQgetvalue(res, i, 4), false, false);
 		printTableAddCell(&cont, PQgetvalue(res, i, 5), false, false);
 		printTableAddCell(&cont, PQgetvalue(res, i, 6), false, false);
+		if (has_pubtruncate)
+			printTableAddCell(&cont, PQgetvalue(res, i, 7), false, false);
 
 		if (!puballtables)
 		{

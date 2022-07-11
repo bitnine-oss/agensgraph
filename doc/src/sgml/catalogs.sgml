@@ -1150,6 +1150,19 @@
      </row>
 
      <row>
+      <entry><structfield>atthasmissing</structfield></entry>
+      <entry><type>bool</type></entry>
+      <entry></entry>
+      <entry>
+       This column has a value which is used where the column is entirely
+       missing from the row, as happens when a column is added with a
+       non-volatile <literal>DEFAULT</literal> value after the row is created.
+       The actual value used is stored in the
+       <structfield>attmissingval</structfield> column.
+      </entry>
+     </row>
+
+     <row>
       <entry><structfield>attidentity</structfield></entry>
       <entry><type>char</type></entry>
       <entry></entry>
@@ -1226,6 +1239,20 @@
       <entry></entry>
       <entry>
        Attribute-level foreign data wrapper options, as <quote>keyword=value</quote> strings
+      </entry>
+     </row>
+
+     <row>
+      <entry><structfield>attmissingval</structfield></entry>
+      <entry><type>anyarray</type></entry>
+      <entry></entry>
+      <entry>
+       This column has a one element array containing the value used when the
+       column is entirely missing from the row, as happens when the column is
+       added with a non-volatile <literal>DEFAULT</literal> value after the
+       row is created.  The value is only used when
+       <structfield>atthasmissing</structfield> is true.  If there is no value
+       the column is null.
       </entry>
      </row>
 
@@ -1739,8 +1766,8 @@ SCRAM-SHA-256$<replaceable>&lt;iteration count&gt;</replaceable>:<replaceable>&l
       <entry><type>float4</type></entry>
       <entry></entry>
       <entry>
-       Number of rows in the table.  This is only an estimate used by the
-       planner.  It is updated by <command>VACUUM</command>,
+       Number of live rows in the table.  This is only an estimate used by
+       the planner.  It is updated by <command>VACUUM</command>,
        <command>ANALYZE</command>, and a few DDL commands such as
        <command>CREATE INDEX</command>.
       </entry>
@@ -1813,7 +1840,8 @@ SCRAM-SHA-256$<replaceable>&lt;iteration count&gt;</replaceable>:<replaceable>&l
        <literal>m</literal> = materialized view,
        <literal>c</literal> = composite type,
        <literal>f</literal> = foreign table,
-       <literal>p</literal> = partitioned table
+       <literal>p</literal> = partitioned table,
+       <literal>I</literal> = partitioned index
       </entry>
      </row>
 
@@ -1845,15 +1873,6 @@ SCRAM-SHA-256$<replaceable>&lt;iteration count&gt;</replaceable>:<replaceable>&l
       <entry></entry>
       <entry>
        True if we generate an OID for each row of the relation
-      </entry>
-     </row>
-
-     <row>
-      <entry><structfield>relhaspkey</structfield></entry>
-      <entry><type>bool</type></entry>
-      <entry></entry>
-      <entry>
-       True if the table has (or once had) a primary key
       </entry>
      </row>
 
@@ -1930,6 +1949,18 @@ SCRAM-SHA-256$<replaceable>&lt;iteration count&gt;</replaceable>:<replaceable>&l
       <entry><type>bool</type></entry>
       <entry></entry>
       <entry>True if table is a partition</entry>
+     </row>
+
+     <row>
+      <entry><structfield>relrewrite</structfield></entry>
+      <entry><type>oid</type></entry>
+      <entry><literal><link linkend="catalog-pg-class"><structname>pg_class</structname></link>.oid</literal></entry>
+      <entry>
+       For new relations being written during a DDL operation that requires a
+       table rewrite, this contains the OID of the original relation;
+       otherwise 0.  That state is only visible internally; this field should
+       never contain anything other than 0 for a user-visible relation.
+      </entry>
      </row>
 
      <row>
@@ -2252,6 +2283,14 @@ SCRAM-SHA-256$<replaceable>&lt;iteration count&gt;</replaceable>:<replaceable>&l
      </row>
 
      <row>
+      <entry><structfield>conparentid</structfield></entry>
+      <entry><type>oid</type></entry>
+      <entry><literal><link linkend="catalog-pg-constraint"><structname>pg_constraint</structname></link>.oid</literal></entry>
+      <entry>The corresponding constraint in the parent partitioned table,
+       if this is a constraint in a partition; else 0</entry>
+     </row>
+
+     <row>
       <entry><structfield>confrelid</structfield></entry>
       <entry><type>oid</type></entry>
       <entry><literal><link linkend="catalog-pg-class"><structname>pg_class</structname></link>.oid</literal></entry>
@@ -2332,6 +2371,14 @@ SCRAM-SHA-256$<replaceable>&lt;iteration count&gt;</replaceable>:<replaceable>&l
       <entry><literal><link linkend="catalog-pg-attribute"><structname>pg_attribute</structname></link>.attnum</literal></entry>
       <entry>If a table constraint (including foreign keys, but not constraint
        triggers), list of the constrained columns</entry>
+     </row>
+
+     <row>
+      <entry><structfield>conincluding</structfield></entry>
+      <entry><type>int2[]</type></entry>
+      <entry><literal><link linkend="catalog-pg-attribute"><structname>pg_attribute</structname></link>.attnum</literal></entry>
+      <entry>List of the non-constrained columns which are included into
+        the same index as the constrained columns</entry>
      </row>
 
      <row>
@@ -3705,8 +3752,16 @@ SCRAM-SHA-256$<replaceable>&lt;iteration count&gt;</replaceable>:<replaceable>&l
       <entry><structfield>indnatts</structfield></entry>
       <entry><type>int2</type></entry>
       <entry></entry>
-      <entry>The number of columns in the index (duplicates
-      <literal>pg_class.relnatts</literal>)</entry>
+      <entry>The total number of columns in the index (duplicates
+      <literal>pg_class.relnatts</literal>). This number includes both key and included attributes.</entry>
+     </row>
+
+      <row>
+      <entry><structfield>indnkeyatts</structfield></entry>
+      <entry><type>int2</type></entry>
+      <entry></entry>
+      <entry>The number of key columns in the index. "Key columns" are ordinary
+      index columns (as opposed to "included" columns).</entry>
      </row>
 
      <row>
@@ -4769,8 +4824,8 @@ SCRAM-SHA-256$<replaceable>&lt;iteration count&gt;</replaceable>:<replaceable>&l
       <entry><type>char</type></entry>
       <entry></entry>
       <entry>
-       Partitioning strategy; <literal>l</literal> = list partitioned table,
-       <literal>r</literal> = range partitioned table
+       Partitioning strategy; <literal>h</literal> = hash partitioned table,
+       <literal>l</literal> = list partitioned table, <literal>r</literal> = range partitioned table
       </entry>
      </row>
 
@@ -5062,15 +5117,17 @@ SCRAM-SHA-256$<replaceable>&lt;iteration count&gt;</replaceable>:<replaceable>&l
   </indexterm>
 
   <para>
-   The catalog <structname>pg_proc</structname> stores information about functions (or procedures).
-   See <xref linkend="sql-createfunction"/>
-   and <xref linkend="xfunc"/> for more information.
+   The catalog <structname>pg_proc</structname> stores information about
+   functions, procedures, aggregate functions, and window functions
+   (collectively also known as routines).  See <xref
+   linkend="sql-createfunction"/>, <xref linkend="sql-createprocedure"/>, and
+   <xref linkend="xfunc"/> for more information.
   </para>
 
   <para>
-   The table contains data for aggregate functions as well as plain functions.
-   If <structfield>proisagg</structfield> is true, there should be a matching
-   row in <structfield>pg_aggregate</structfield>.
+   If <structfield>prokind</structfield> indicates that the entry is for an
+   aggregate function, there should be a matching row in
+   <structfield>pg_aggregate</structfield>.
   </para>
 
   <table>
@@ -5157,17 +5214,12 @@ SCRAM-SHA-256$<replaceable>&lt;iteration count&gt;</replaceable>:<replaceable>&l
      </row>
 
      <row>
-      <entry><structfield>proisagg</structfield></entry>
-      <entry><type>bool</type></entry>
+      <entry><structfield>prokind</structfield></entry>
+      <entry><type>char</type></entry>
       <entry></entry>
-      <entry>Function is an aggregate function</entry>
-     </row>
-
-     <row>
-      <entry><structfield>proiswindow</structfield></entry>
-      <entry><type>bool</type></entry>
-      <entry></entry>
-      <entry>Function is a window function</entry>
+      <entry><literal>f</literal> for a normal function, <literal>p</literal>
+      for a procedure, <literal>a</literal> for an aggregate function, or
+      <literal>w</literal> for a window function</entry>
      </row>
 
      <row>
@@ -5264,7 +5316,7 @@ SCRAM-SHA-256$<replaceable>&lt;iteration count&gt;</replaceable>:<replaceable>&l
       <entry><structfield>prorettype</structfield></entry>
       <entry><type>oid</type></entry>
       <entry><literal><link linkend="catalog-pg-type"><structname>pg_type</structname></link>.oid</literal></entry>
-      <entry>Data type of the return value, or null for a procedure</entry>
+      <entry>Data type of the return value</entry>
      </row>
 
      <row>
@@ -5483,6 +5535,14 @@ SCRAM-SHA-256$<replaceable>&lt;iteration count&gt;</replaceable>:<replaceable>&l
       <entry>If true, <command>DELETE</command> operations are replicated for
        tables in the publication.</entry>
      </row>
+
+     <row>
+      <entry><structfield>pubtruncate</structfield></entry>
+      <entry><type>bool</type></entry>
+      <entry></entry>
+      <entry>If true, <command>TRUNCATE</command> operations are replicated for
+       tables in the publication.</entry>
+     </row>
     </tbody>
    </tgroup>
   </table>
@@ -5629,6 +5689,13 @@ SCRAM-SHA-256$<replaceable>&lt;iteration count&gt;</replaceable>:<replaceable>&l
    The <structname>pg_replication_origin</structname> catalog contains
    all replication origins created.  For more on replication origins
    see <xref linkend="replication-origins"/>.
+  </para>
+
+  <para>
+   Unlike most system catalogs, <structname>pg_replication_origin</structname>
+   is shared across all databases of a cluster: there is only one copy
+   of <structname>pg_replication_origin</structname> per cluster, not one per
+   database.
   </para>
 
   <table>
@@ -6549,7 +6616,7 @@ SCRAM-SHA-256$<replaceable>&lt;iteration count&gt;</replaceable>:<replaceable>&l
 
   <para>
    Unlike most system catalogs, <structname>pg_subscription</structname> is
-   shared across all databases of a cluster: There is only one copy
+   shared across all databases of a cluster: there is only one copy
    of <structname>pg_subscription</structname> per cluster, not one per
    database.
   </para>

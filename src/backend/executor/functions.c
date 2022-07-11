@@ -574,8 +574,7 @@ init_execution_state(List *queryTree_list,
 	 *
 	 * Note: don't set setsResult if the function returns VOID, as evidenced
 	 * by not having made a junkfilter.  This ensures we'll throw away any
-	 * output from a utility statement that check_sql_fn_retval deemed to not
-	 * have output.
+	 * output from the last statement in such a function.
 	 */
 	if (lasttages && fcache->junkFilter)
 	{
@@ -614,7 +613,7 @@ init_sql_fcache(FmgrInfo *finfo, Oid collation, bool lazyEvalOK)
 	 * must be a child of whatever context holds the FmgrInfo.
 	 */
 	fcontext = AllocSetContextCreate(finfo->fn_mcxt,
-									 "SQL function data",
+									 "SQL function",
 									 ALLOCSET_DEFAULT_SIZES);
 
 	oldcontext = MemoryContextSwitchTo(fcontext);
@@ -637,9 +636,11 @@ init_sql_fcache(FmgrInfo *finfo, Oid collation, bool lazyEvalOK)
 	procedureStruct = (Form_pg_proc) GETSTRUCT(procedureTuple);
 
 	/*
-	 * copy function name immediately for use by error reporting callback
+	 * copy function name immediately for use by error reporting callback, and
+	 * for use as memory context identifier
 	 */
 	fcache->fname = pstrdup(NameStr(procedureStruct->proname));
+	MemoryContextSetIdentifier(fcontext, fcache->fname);
 
 	/*
 	 * get the result type from the procedure tuple, and check for polymorphic
@@ -660,8 +661,7 @@ init_sql_fcache(FmgrInfo *finfo, Oid collation, bool lazyEvalOK)
 	fcache->rettype = rettype;
 
 	/* Fetch the typlen and byval info for the result type */
-	if (rettype)
-		get_typlenbyval(rettype, &fcache->typlen, &fcache->typbyval);
+	get_typlenbyval(rettype, &fcache->typlen, &fcache->typbyval);
 
 	/* Remember whether we're returning setof something */
 	fcache->returnsSet = procedureStruct->proretset;
@@ -723,6 +723,8 @@ init_sql_fcache(FmgrInfo *finfo, Oid collation, bool lazyEvalOK)
 		flat_query_list = list_concat(flat_query_list,
 									  list_copy(queryTree_sublist));
 	}
+
+	check_sql_fn_statements(flat_query_list);
 
 	/*
 	 * Check that the function returns the type it claims to.  Although in
@@ -1325,8 +1327,8 @@ fmgr_sql(PG_FUNCTION_ARGS)
 		}
 		else
 		{
-			/* Should only get here for procedures and VOID functions */
-			Assert(fcache->rettype == InvalidOid || fcache->rettype == VOIDOID);
+			/* Should only get here for VOID functions and procedures */
+			Assert(fcache->rettype == VOIDOID);
 			fcinfo->isnull = true;
 			result = (Datum) 0;
 		}
@@ -1489,6 +1491,55 @@ ShutdownSQLFunction(Datum arg)
 	fcache->shutdown_reg = false;
 }
 
+/*
+ * check_sql_fn_statements
+ *
+ * Check statements in an SQL function.  Error out if there is anything that
+ * is not acceptable.
+ */
+void
+check_sql_fn_statements(List *queryTreeList)
+{
+	ListCell   *lc;
+
+	foreach(lc, queryTreeList)
+	{
+		Query	   *query = lfirst_node(Query, lc);
+
+		/*
+		 * Disallow procedures with output arguments.  The current
+		 * implementation would just throw the output values away, unless the
+		 * statement is the last one.  Per SQL standard, we should assign the
+		 * output values by name.  By disallowing this here, we preserve an
+		 * opportunity for future improvement.
+		 */
+		if (query->commandType == CMD_UTILITY &&
+			IsA(query->utilityStmt, CallStmt))
+		{
+			CallStmt   *stmt = castNode(CallStmt, query->utilityStmt);
+			HeapTuple	tuple;
+			int			numargs;
+			Oid		   *argtypes;
+			char	  **argnames;
+			char	   *argmodes;
+			int			i;
+
+			tuple = SearchSysCache1(PROCOID, ObjectIdGetDatum(stmt->funcexpr->funcid));
+			if (!HeapTupleIsValid(tuple))
+				elog(ERROR, "cache lookup failed for function %u", stmt->funcexpr->funcid);
+			numargs = get_func_arg_info(tuple, &argtypes, &argnames, &argmodes);
+			ReleaseSysCache(tuple);
+
+			for (i = 0; i < numargs; i++)
+			{
+				if (argmodes && (argmodes[i] == PROARGMODE_INOUT || argmodes[i] == PROARGMODE_OUT))
+					ereport(ERROR,
+							(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+							 errmsg("calling procedures with output arguments is not supported in SQL functions")));
+			}
+		}
+	}
+}
 
 /*
  * check_sql_fn_retval() -- check return value of a list of sql parse trees.
@@ -1550,9 +1601,13 @@ check_sql_fn_retval(Oid func_id, Oid rettype, List *queryTreeList,
 	if (modifyTargetList)
 		*modifyTargetList = false;	/* initialize for no change */
 	if (junkFilter)
-		*junkFilter = NULL;		/* initialize in case of procedure/VOID result */
+		*junkFilter = NULL;		/* initialize in case of VOID result */
 
-	if (!rettype)
+	/*
+	 * If it's declared to return VOID, we don't care what's in the function.
+	 * (This takes care of the procedure case, as well.)
+	 */
+	if (rettype == VOIDOID)
 		return false;
 
 	/*
@@ -1598,21 +1653,17 @@ check_sql_fn_retval(Oid func_id, Oid rettype, List *queryTreeList,
 	else
 	{
 		/* Empty function body, or last statement is a utility command */
-		if (rettype && rettype != VOIDOID)
-			ereport(ERROR,
-					(errcode(ERRCODE_INVALID_FUNCTION_DEFINITION),
-					 errmsg("return type mismatch in function declared to return %s",
-							format_type_be(rettype)),
-					 errdetail("Function's final statement must be SELECT or INSERT/UPDATE/DELETE RETURNING.")));
-		return false;
+		ereport(ERROR,
+				(errcode(ERRCODE_INVALID_FUNCTION_DEFINITION),
+				 errmsg("return type mismatch in function declared to return %s",
+						format_type_be(rettype)),
+				 errdetail("Function's final statement must be SELECT or INSERT/UPDATE/DELETE RETURNING.")));
+		return false;			/* keep compiler quiet */
 	}
 
 	/*
 	 * OK, check that the targetlist returns something matching the declared
-	 * type.  (We used to insist that the declared type not be VOID in this
-	 * case, but that makes it hard to write a void function that exits after
-	 * calling another void function.  Instead, we insist that the tlist
-	 * return void ... so void is treated as if it were a scalar type below.)
+	 * type.
 	 */
 
 	/*
@@ -1625,8 +1676,7 @@ check_sql_fn_retval(Oid func_id, Oid rettype, List *queryTreeList,
 	if (fn_typtype == TYPTYPE_BASE ||
 		fn_typtype == TYPTYPE_DOMAIN ||
 		fn_typtype == TYPTYPE_ENUM ||
-		fn_typtype == TYPTYPE_RANGE ||
-		rettype == VOIDOID)
+		fn_typtype == TYPTYPE_RANGE)
 	{
 		/*
 		 * For scalar-type returns, the target list must have exactly one

@@ -30,7 +30,6 @@
 #include "access/xlog.h"
 #include "access/xloginsert.h"
 #include "access/xlogutils.h"
-#include "catalog/catalog.h"
 #include "catalog/namespace.h"
 #include "catalog/storage.h"
 #include "commands/async.h"
@@ -310,7 +309,7 @@ static void CallSubXactCallbacks(SubXactEvent event,
 					 SubTransactionId mySubid,
 					 SubTransactionId parentSubid);
 static void CleanupTransaction(void);
-static void CheckTransactionChain(bool isTopLevel, bool throwError,
+static void CheckTransactionBlock(bool isTopLevel, bool throwError,
 					  const char *stmtType);
 static void CommitTransaction(void);
 static TransactionId RecordTransactionAbort(bool isSubXact);
@@ -999,7 +998,6 @@ AtStart_Memory(void)
 		TransactionAbortContext =
 			AllocSetContextCreateExtended(TopMemoryContext,
 										  "TransactionAbortContext",
-										  0,
 										  32 * 1024,
 										  32 * 1024,
 										  32 * 1024);
@@ -1227,7 +1225,7 @@ RecordTransactionCommit(void)
 							nmsgs, invalMessages,
 							RelcacheInitFileInval, forceSyncCommit,
 							MyXactFlags,
-							InvalidTransactionId /* plain commit */ );
+							InvalidTransactionId, NULL /* plain commit */ );
 
 		if (replorigin)
 			/* Move LSNs forward for this replication origin */
@@ -1579,7 +1577,8 @@ RecordTransactionAbort(bool isSubXact)
 	XactLogAbortRecord(xact_time,
 					   nchildren, children,
 					   nrels, rels,
-					   MyXactFlags, InvalidTransactionId);
+					   MyXactFlags, InvalidTransactionId,
+					   NULL);
 
 	/*
 	 * Report the latest async abort LSN, so that the WAL writer knows to
@@ -2130,7 +2129,7 @@ CommitTransaction(void)
 	AtEOXact_on_commit_actions(true);
 	AtEOXact_Namespace(true, is_parallel_worker);
 	AtEOXact_SMgr();
-	AtEOXact_Files();
+	AtEOXact_Files(true);
 	AtEOXact_ComboCid();
 	AtEOXact_HashTables(true);
 	AtEOXact_PgStat(true);
@@ -2408,7 +2407,7 @@ PrepareTransaction(void)
 	AtEOXact_on_commit_actions(true);
 	AtEOXact_Namespace(true, false);
 	AtEOXact_SMgr();
-	AtEOXact_Files();
+	AtEOXact_Files(true);
 	AtEOXact_ComboCid();
 	AtEOXact_HashTables(true);
 	/* don't call AtEOXact_PgStat here; we fixed pgstat state above */
@@ -2610,7 +2609,7 @@ AbortTransaction(void)
 		AtEOXact_on_commit_actions(false);
 		AtEOXact_Namespace(false, is_parallel_worker);
 		AtEOXact_SMgr();
-		AtEOXact_Files();
+		AtEOXact_Files(false);
 		AtEOXact_ComboCid();
 		AtEOXact_HashTables(false);
 		if (auto_gather_graphmeta)
@@ -3142,7 +3141,7 @@ AbortCurrentTransaction(void)
 }
 
 /*
- *	PreventTransactionChain
+ *	PreventInTransactionBlock
  *
  *	This routine is to be called by statements that must not run inside
  *	a transaction block, typically because they have non-rollback-able
@@ -3159,7 +3158,7 @@ AbortCurrentTransaction(void)
  *	stmtType: statement type name, for error messages.
  */
 void
-PreventTransactionChain(bool isTopLevel, const char *stmtType)
+PreventInTransactionBlock(bool isTopLevel, const char *stmtType)
 {
 	/*
 	 * xact block already started?
@@ -3198,44 +3197,43 @@ PreventTransactionChain(bool isTopLevel, const char *stmtType)
 }
 
 /*
- *	These two functions allow for warnings or errors if a command is
- *	executed outside of a transaction block.
+ *	WarnNoTranactionBlock
+ *	RequireTransactionBlock
  *
- *	While top-level transaction control commands (BEGIN/COMMIT/ABORT) and
- *	SET that have no effect issue warnings, all other no-effect commands
- *	generate errors.
- */
-void
-WarnNoTransactionChain(bool isTopLevel, const char *stmtType)
-{
-	CheckTransactionChain(isTopLevel, false, stmtType);
-}
-
-void
-RequireTransactionChain(bool isTopLevel, const char *stmtType)
-{
-	CheckTransactionChain(isTopLevel, true, stmtType);
-}
-
-/*
- *	RequireTransactionChain
- *
- *	This routine is to be called by statements that must run inside
- *	a transaction block, because they have no effects that persist past
- *	transaction end (and so calling them outside a transaction block
- *	is presumably an error).  DECLARE CURSOR is an example.
+ *	These two functions allow for warnings or errors if a command is executed
+ *	outside of a transaction block.  This is useful for commands that have no
+ *	effects that persist past transaction end (and so calling them outside a
+ *	transaction block is presumably an error).  DECLARE CURSOR is an example.
+ *	While top-level transaction control commands (BEGIN/COMMIT/ABORT) and SET
+ *	that have no effect issue warnings, all other no-effect commands generate
+ *	errors.
  *
  *	If we appear to be running inside a user-defined function, we do not
  *	issue anything, since the function could issue more commands that make
  *	use of the current statement's results.  Likewise subtransactions.
- *	Thus this is an inverse for PreventTransactionChain.
+ *	Thus these are inverses for PreventInTransactionBlock.
  *
  *	isTopLevel: passed down from ProcessUtility to determine whether we are
  *	inside a function.
  *	stmtType: statement type name, for warning or error messages.
  */
+void
+WarnNoTransactionBlock(bool isTopLevel, const char *stmtType)
+{
+	CheckTransactionBlock(isTopLevel, false, stmtType);
+}
+
+void
+RequireTransactionBlock(bool isTopLevel, const char *stmtType)
+{
+	CheckTransactionBlock(isTopLevel, true, stmtType);
+}
+
+/*
+ * This is the implementation of the above two.
+ */
 static void
-CheckTransactionChain(bool isTopLevel, bool throwError, const char *stmtType)
+CheckTransactionBlock(bool isTopLevel, bool throwError, const char *stmtType)
 {
 	/*
 	 * xact block already started?
@@ -3264,7 +3262,7 @@ CheckTransactionChain(bool isTopLevel, bool throwError, const char *stmtType)
 }
 
 /*
- *	IsInTransactionChain
+ *	IsInTransactionBlock
  *
  *	This routine is for statements that need to behave differently inside
  *	a transaction block than when running as single commands.  ANALYZE is
@@ -3274,11 +3272,11 @@ CheckTransactionChain(bool isTopLevel, bool throwError, const char *stmtType)
  *	inside a function.
  */
 bool
-IsInTransactionChain(bool isTopLevel)
+IsInTransactionBlock(bool isTopLevel)
 {
 	/*
-	 * Return true on same conditions that would make PreventTransactionChain
-	 * error out
+	 * Return true on same conditions that would make
+	 * PreventInTransactionBlock error out
 	 */
 	if (IsTransactionBlock())
 		return true;
@@ -3917,13 +3915,11 @@ DefineSavepoint(const char *name)
  * As above, we don't actually do anything here except change blockState.
  */
 void
-ReleaseSavepoint(List *options)
+ReleaseSavepoint(const char *name)
 {
 	TransactionState s = CurrentTransactionState;
 	TransactionState target,
 				xact;
-	ListCell   *cell;
-	char	   *name = NULL;
 
 	/*
 	 * Workers synchronize transaction state at the beginning of each parallel
@@ -3945,7 +3941,7 @@ ReleaseSavepoint(List *options)
 		case TBLOCK_INPROGRESS:
 			ereport(ERROR,
 					(errcode(ERRCODE_S_E_INVALID_SPECIFICATION),
-					 errmsg("no such savepoint")));
+					 errmsg("savepoint \"%s\" does not exist", name)));
 			break;
 
 		case TBLOCK_IMPLICIT_INPROGRESS:
@@ -3987,16 +3983,6 @@ ReleaseSavepoint(List *options)
 			break;
 	}
 
-	foreach(cell, options)
-	{
-		DefElem    *elem = lfirst(cell);
-
-		if (strcmp(elem->defname, "savepoint_name") == 0)
-			name = strVal(elem->arg);
-	}
-
-	Assert(PointerIsValid(name));
-
 	for (target = s; PointerIsValid(target); target = target->parent)
 	{
 		if (PointerIsValid(target->name) && strcmp(target->name, name) == 0)
@@ -4006,13 +3992,13 @@ ReleaseSavepoint(List *options)
 	if (!PointerIsValid(target))
 		ereport(ERROR,
 				(errcode(ERRCODE_S_E_INVALID_SPECIFICATION),
-				 errmsg("no such savepoint")));
+				 errmsg("savepoint \"%s\" does not exist", name)));
 
 	/* disallow crossing savepoint level boundaries */
 	if (target->savepointLevel != s->savepointLevel)
 		ereport(ERROR,
 				(errcode(ERRCODE_S_E_INVALID_SPECIFICATION),
-				 errmsg("no such savepoint")));
+				 errmsg("savepoint \"%s\" does not exist within current savepoint level", name)));
 
 	/*
 	 * Mark "commit pending" all subtransactions up to the target
@@ -4038,13 +4024,11 @@ ReleaseSavepoint(List *options)
  * As above, we don't actually do anything here except change blockState.
  */
 void
-RollbackToSavepoint(List *options)
+RollbackToSavepoint(const char *name)
 {
 	TransactionState s = CurrentTransactionState;
 	TransactionState target,
 				xact;
-	ListCell   *cell;
-	char	   *name = NULL;
 
 	/*
 	 * Workers synchronize transaction state at the beginning of each parallel
@@ -4068,7 +4052,7 @@ RollbackToSavepoint(List *options)
 		case TBLOCK_ABORT:
 			ereport(ERROR,
 					(errcode(ERRCODE_S_E_INVALID_SPECIFICATION),
-					 errmsg("no such savepoint")));
+					 errmsg("savepoint \"%s\" does not exist", name)));
 			break;
 
 		case TBLOCK_IMPLICIT_INPROGRESS:
@@ -4108,16 +4092,6 @@ RollbackToSavepoint(List *options)
 			break;
 	}
 
-	foreach(cell, options)
-	{
-		DefElem    *elem = lfirst(cell);
-
-		if (strcmp(elem->defname, "savepoint_name") == 0)
-			name = strVal(elem->arg);
-	}
-
-	Assert(PointerIsValid(name));
-
 	for (target = s; PointerIsValid(target); target = target->parent)
 	{
 		if (PointerIsValid(target->name) && strcmp(target->name, name) == 0)
@@ -4127,13 +4101,13 @@ RollbackToSavepoint(List *options)
 	if (!PointerIsValid(target))
 		ereport(ERROR,
 				(errcode(ERRCODE_S_E_INVALID_SPECIFICATION),
-				 errmsg("no such savepoint")));
+				 errmsg("savepoint \"%s\" does not exist", name)));
 
 	/* disallow crossing savepoint level boundaries */
 	if (target->savepointLevel != s->savepointLevel)
 		ereport(ERROR,
 				(errcode(ERRCODE_S_E_INVALID_SPECIFICATION),
-				 errmsg("no such savepoint")));
+				 errmsg("savepoint \"%s\" does not exist within current savepoint level", name)));
 
 	/*
 	 * Mark "abort pending" all subtransactions up to the target
@@ -5179,29 +5153,29 @@ BlockStateAsString(TBlockState blockState)
 		case TBLOCK_ABORT:
 			return "ABORT";
 		case TBLOCK_ABORT_END:
-			return "ABORT END";
+			return "ABORT_END";
 		case TBLOCK_ABORT_PENDING:
-			return "ABORT PEND";
+			return "ABORT_PENDING";
 		case TBLOCK_PREPARE:
 			return "PREPARE";
 		case TBLOCK_SUBBEGIN:
-			return "SUB BEGIN";
+			return "SUBBEGIN";
 		case TBLOCK_SUBINPROGRESS:
-			return "SUB INPROGRS";
+			return "SUBINPROGRESS";
 		case TBLOCK_SUBRELEASE:
-			return "SUB RELEASE";
+			return "SUBRELEASE";
 		case TBLOCK_SUBCOMMIT:
-			return "SUB COMMIT";
+			return "SUBCOMMIT";
 		case TBLOCK_SUBABORT:
-			return "SUB ABORT";
+			return "SUBABORT";
 		case TBLOCK_SUBABORT_END:
-			return "SUB ABORT END";
+			return "SUBABORT_END";
 		case TBLOCK_SUBABORT_PENDING:
-			return "SUB ABRT PEND";
+			return "SUBABORT_PENDING";
 		case TBLOCK_SUBRESTART:
-			return "SUB RESTART";
+			return "SUBRESTART";
 		case TBLOCK_SUBABORT_RESTART:
-			return "SUB AB RESTRT";
+			return "SUBABORT_RESTART";
 	}
 	return "UNRECOGNIZED";
 }
@@ -5220,7 +5194,7 @@ TransStateAsString(TransState state)
 		case TRANS_START:
 			return "START";
 		case TRANS_INPROGRESS:
-			return "INPROGR";
+			return "INPROGRESS";
 		case TRANS_COMMIT:
 			return "COMMIT";
 		case TRANS_ABORT:
@@ -5270,7 +5244,8 @@ XactLogCommitRecord(TimestampTz commit_time,
 					int nrels, RelFileNode *rels,
 					int nmsgs, SharedInvalidationMessage *msgs,
 					bool relcacheInval, bool forceSync,
-					int xactflags, TransactionId twophase_xid)
+					int xactflags, TransactionId twophase_xid,
+					const char *twophase_gid)
 {
 	xl_xact_commit xlrec;
 	xl_xact_xinfo xl_xinfo;
@@ -5280,7 +5255,6 @@ XactLogCommitRecord(TimestampTz commit_time,
 	xl_xact_invals xl_invals;
 	xl_xact_twophase xl_twophase;
 	xl_xact_origin xl_origin;
-
 	uint8		info;
 
 	Assert(CritSectionCount > 0);
@@ -5344,6 +5318,10 @@ XactLogCommitRecord(TimestampTz commit_time,
 	{
 		xl_xinfo.xinfo |= XACT_XINFO_HAS_TWOPHASE;
 		xl_twophase.xid = twophase_xid;
+		Assert(twophase_gid != NULL);
+
+		if (XLogLogicalInfoActive())
+			xl_xinfo.xinfo |= XACT_XINFO_HAS_GID;
 	}
 
 	/* dump transaction origin information */
@@ -5394,7 +5372,11 @@ XactLogCommitRecord(TimestampTz commit_time,
 	}
 
 	if (xl_xinfo.xinfo & XACT_XINFO_HAS_TWOPHASE)
+	{
 		XLogRegisterData((char *) (&xl_twophase), sizeof(xl_xact_twophase));
+		if (xl_xinfo.xinfo & XACT_XINFO_HAS_GID)
+			XLogRegisterData((char *) twophase_gid, strlen(twophase_gid) + 1);
+	}
 
 	if (xl_xinfo.xinfo & XACT_XINFO_HAS_ORIGIN)
 		XLogRegisterData((char *) (&xl_origin), sizeof(xl_xact_origin));
@@ -5415,13 +5397,16 @@ XLogRecPtr
 XactLogAbortRecord(TimestampTz abort_time,
 				   int nsubxacts, TransactionId *subxacts,
 				   int nrels, RelFileNode *rels,
-				   int xactflags, TransactionId twophase_xid)
+				   int xactflags, TransactionId twophase_xid,
+				   const char *twophase_gid)
 {
 	xl_xact_abort xlrec;
 	xl_xact_xinfo xl_xinfo;
 	xl_xact_subxacts xl_subxacts;
 	xl_xact_relfilenodes xl_relfilenodes;
 	xl_xact_twophase xl_twophase;
+	xl_xact_dbinfo xl_dbinfo;
+	xl_xact_origin xl_origin;
 
 	uint8		info;
 
@@ -5459,6 +5444,28 @@ XactLogAbortRecord(TimestampTz abort_time,
 	{
 		xl_xinfo.xinfo |= XACT_XINFO_HAS_TWOPHASE;
 		xl_twophase.xid = twophase_xid;
+		Assert(twophase_gid != NULL);
+
+		if (XLogLogicalInfoActive())
+			xl_xinfo.xinfo |= XACT_XINFO_HAS_GID;
+	}
+
+	if (TransactionIdIsValid(twophase_xid) && XLogLogicalInfoActive())
+	{
+		xl_xinfo.xinfo |= XACT_XINFO_HAS_DBINFO;
+		xl_dbinfo.dbId = MyDatabaseId;
+		xl_dbinfo.tsId = MyDatabaseTableSpace;
+	}
+
+	/* dump transaction origin information only for abort prepared */
+	if ((replorigin_session_origin != InvalidRepOriginId) &&
+		TransactionIdIsValid(twophase_xid) &&
+		XLogLogicalInfoActive())
+	{
+		xl_xinfo.xinfo |= XACT_XINFO_HAS_ORIGIN;
+
+		xl_origin.origin_lsn = replorigin_session_origin_lsn;
+		xl_origin.origin_timestamp = replorigin_session_origin_timestamp;
 	}
 
 	if (xl_xinfo.xinfo != 0)
@@ -5472,6 +5479,9 @@ XactLogAbortRecord(TimestampTz abort_time,
 
 	if (xl_xinfo.xinfo != 0)
 		XLogRegisterData((char *) (&xl_xinfo), sizeof(xl_xinfo));
+
+	if (xl_xinfo.xinfo & XACT_XINFO_HAS_DBINFO)
+		XLogRegisterData((char *) (&xl_dbinfo), sizeof(xl_dbinfo));
 
 	if (xl_xinfo.xinfo & XACT_XINFO_HAS_SUBXACTS)
 	{
@@ -5490,7 +5500,17 @@ XactLogAbortRecord(TimestampTz abort_time,
 	}
 
 	if (xl_xinfo.xinfo & XACT_XINFO_HAS_TWOPHASE)
+	{
 		XLogRegisterData((char *) (&xl_twophase), sizeof(xl_xact_twophase));
+		if (xl_xinfo.xinfo & XACT_XINFO_HAS_GID)
+			XLogRegisterData((char *) twophase_gid, strlen(twophase_gid) + 1);
+	}
+
+	if (xl_xinfo.xinfo & XACT_XINFO_HAS_ORIGIN)
+		XLogRegisterData((char *) (&xl_origin), sizeof(xl_xact_origin));
+
+	if (TransactionIdIsValid(twophase_xid))
+		XLogSetRecordFlags(XLOG_INCLUDE_ORIGIN);
 
 	return XLogInsert(RM_XACT_ID, info);
 }
@@ -5592,12 +5612,10 @@ xact_redo_commit(xl_xact_parsed_commit *parsed,
 		/*
 		 * Release locks, if any. We do this for both two phase and normal one
 		 * phase transactions. In effect we are ignoring the prepare phase and
-		 * just going straight to lock release. At commit we release all locks
-		 * via their top-level xid only, so no need to provide subxact list,
-		 * which will save time when replaying commits.
+		 * just going straight to lock release.
 		 */
 		if (parsed->xinfo & XACT_XINFO_HAS_AE_LOCKS)
-			StandbyReleaseLockTree(xid, 0, NULL);
+			StandbyReleaseLockTree(xid, parsed->nsubxacts, parsed->subxacts);
 	}
 
 	if (parsed->xinfo & XACT_XINFO_HAS_ORIGIN)
@@ -5813,7 +5831,8 @@ xact_redo(XLogReaderState *record)
 		LWLockAcquire(TwoPhaseStateLock, LW_EXCLUSIVE);
 		PrepareRedoAdd(XLogRecGetData(record),
 					   record->ReadRecPtr,
-					   record->EndRecPtr);
+					   record->EndRecPtr,
+					   XLogRecGetOrigin(record));
 		LWLockRelease(TwoPhaseStateLock);
 	}
 	else if (info == XLOG_XACT_ASSIGNMENT)

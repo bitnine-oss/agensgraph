@@ -146,7 +146,6 @@ typedef struct pltcl_proc_desc
 	Oid			result_typid;	/* OID of fn's result type */
 	FmgrInfo	result_in_func; /* input function for fn's result type */
 	Oid			result_typioparam;	/* param to pass to same */
-	bool		fn_is_procedure;	/* true if this is a procedure */
 	bool		fn_retisset;	/* true if function returns a set */
 	bool		fn_retistuple;	/* true if function returns composite */
 	bool		fn_retisdomain; /* true if function returns domain */
@@ -313,9 +312,9 @@ static int pltcl_SPI_lastoid(ClientData cdata, Tcl_Interp *interp,
 static int pltcl_subtransaction(ClientData cdata, Tcl_Interp *interp,
 					 int objc, Tcl_Obj *const objv[]);
 static int pltcl_commit(ClientData cdata, Tcl_Interp *interp,
-					 int objc, Tcl_Obj *const objv[]);
+			 int objc, Tcl_Obj *const objv[]);
 static int pltcl_rollback(ClientData cdata, Tcl_Interp *interp,
-					 int objc, Tcl_Obj *const objv[]);
+			   int objc, Tcl_Obj *const objv[]);
 
 static void pltcl_subtrans_begin(MemoryContext oldcontext,
 					 ResourceOwner oldowner);
@@ -982,7 +981,7 @@ pltcl_func_handler(PG_FUNCTION_ARGS, pltcl_call_state *call_state,
 		retval = (Datum) 0;
 		fcinfo->isnull = true;
 	}
-	else if (fcinfo->isnull && !prodesc->fn_is_procedure)
+	else if (fcinfo->isnull)
 	{
 		retval = InputFunctionCall(&prodesc->result_in_func,
 								   NULL,
@@ -1040,13 +1039,11 @@ pltcl_func_handler(PG_FUNCTION_ARGS, pltcl_call_state *call_state,
 									   call_state);
 		retval = HeapTupleGetDatum(tup);
 	}
-	else if (!prodesc->fn_is_procedure)
+	else
 		retval = InputFunctionCall(&prodesc->result_in_func,
 								   utf_u2e(Tcl_GetStringResult(interp)),
 								   prodesc->result_typioparam,
 								   -1);
-	else
-		retval = 0;
 
 	return retval;
 }
@@ -1459,7 +1456,7 @@ compile_pltcl_function(Oid fn_oid, Oid tgreloid,
 		Datum		prosrcdatum;
 		bool		isnull;
 		char	   *proc_source;
-		char		buf[32];
+		char		buf[48];
 		Tcl_Interp *interp;
 		int			i;
 		int			tcl_rc;
@@ -1482,12 +1479,10 @@ compile_pltcl_function(Oid fn_oid, Oid tgreloid,
 
 		/************************************************************
 		 * Allocate a context that will hold all PG data for the procedure.
-		 * We use the internal proc name as the context name.
 		 ************************************************************/
-		proc_cxt = AllocSetContextCreateExtended(TopMemoryContext,
-												 internal_proname,
-												 MEMCONTEXT_COPY_NAME,
-												 ALLOCSET_SMALL_SIZES);
+		proc_cxt = AllocSetContextCreate(TopMemoryContext,
+										 "PL/Tcl function",
+										 ALLOCSET_SMALL_SIZES);
 
 		/************************************************************
 		 * Allocate and fill a new procedure description block.
@@ -1496,6 +1491,7 @@ compile_pltcl_function(Oid fn_oid, Oid tgreloid,
 		oldcontext = MemoryContextSwitchTo(proc_cxt);
 		prodesc = (pltcl_proc_desc *) palloc0(sizeof(pltcl_proc_desc));
 		prodesc->user_proname = pstrdup(NameStr(procStruct->proname));
+		MemoryContextSetIdentifier(proc_cxt, prodesc->user_proname);
 		prodesc->internal_proname = pstrdup(internal_proname);
 		prodesc->fn_cxt = proc_cxt;
 		prodesc->fn_refcount = 0;
@@ -1523,9 +1519,7 @@ compile_pltcl_function(Oid fn_oid, Oid tgreloid,
 		 * Get the required information for input conversion of the
 		 * return value.
 		 ************************************************************/
-		prodesc->fn_is_procedure = (procStruct->prorettype == InvalidOid);
-
-		if (!is_trigger && !is_event_trigger && procStruct->prorettype)
+		if (!is_trigger && !is_event_trigger)
 		{
 			Oid			rettype = procStruct->prorettype;
 
@@ -2218,7 +2212,7 @@ pltcl_returnnext(ClientData cdata, Tcl_Interp *interp,
 				tuplestore_puttuple(call_state->tuple_store, tuple);
 			}
 		}
-		else if (!prodesc->fn_is_procedure)
+		else
 		{
 			Datum		retval;
 			bool		isNull = false;
@@ -2457,7 +2451,8 @@ pltcl_process_SPI_result(Tcl_Interp *interp,
 				Tcl_SetObjResult(interp, Tcl_NewIntObj(0));
 				break;
 			}
-			/* FALL THRU for utility returning tuples */
+			/* fall through for utility returning tuples */
+			/* FALLTHROUGH */
 
 		case SPI_OK_SELECT:
 		case SPI_OK_INSERT_RETURNING:

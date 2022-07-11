@@ -684,11 +684,8 @@ ProcArrayApplyRecoveryInfo(RunningTransactions running)
 
 	/*
 	 * Remove stale locks, if any.
-	 *
-	 * Locks are always assigned to the toplevel xid so we don't need to care
-	 * about subxcnt/subxids (and by extension not about ->suboverflowed).
 	 */
-	StandbyReleaseOldLocks(running->xcnt, running->xids);
+	StandbyReleaseOldLocks(running->oldestRunningXid);
 
 	/*
 	 * If our snapshot is already valid, nothing else to do...
@@ -1926,9 +1923,7 @@ ProcArrayInstallRestoredXmin(TransactionId xmin, PGPROC *proc)
  * that bookkeeping.
  *
  * Note that if any transaction has overflowed its cached subtransactions
- * then there is no real need include any subtransactions. That isn't a
- * common enough case to worry about optimising the size of the WAL record,
- * and we may wish to see that data for diagnostic purposes anyway.
+ * then there is no real need include any subtransactions.
  */
 RunningTransactions
 GetRunningTransactionData(void)
@@ -2005,13 +2000,26 @@ GetRunningTransactionData(void)
 		if (!TransactionIdIsValid(xid))
 			continue;
 
-		xids[count++] = xid;
-
+		/*
+		 * Be careful not to exclude any xids before calculating the values of
+		 * oldestRunningXid and suboverflowed, since these are used to clean
+		 * up transaction information held on standbys.
+		 */
 		if (TransactionIdPrecedes(xid, oldestRunningXid))
 			oldestRunningXid = xid;
 
 		if (pgxact->overflowed)
 			suboverflowed = true;
+
+		/*
+		 * If we wished to exclude xids this would be the right place for it.
+		 * Procs with the PROC_IN_VACUUM flag set don't usually assign xids,
+		 * but they do during truncation at the end when they get the lock and
+		 * truncate, so it is not much of a problem to include them if they
+		 * are seen and it is cleaner to include them.
+		 */
+
+		xids[count++] = xid;
 	}
 
 	/*

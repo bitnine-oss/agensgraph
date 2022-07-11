@@ -44,16 +44,15 @@
 #include "catalog/pg_language.h"
 #include "catalog/pg_namespace.h"
 #include "catalog/pg_proc.h"
-#include "catalog/pg_proc_fn.h"
 #include "catalog/pg_transform.h"
 #include "catalog/pg_type.h"
-#include "catalog/pg_type_fn.h"
 #include "commands/alter.h"
 #include "commands/defrem.h"
 #include "commands/proclang.h"
 #include "executor/execdesc.h"
 #include "executor/executor.h"
 #include "miscadmin.h"
+#include "optimizer/clauses.h"
 #include "optimizer/var.h"
 #include "parser/parse_coerce.h"
 #include "parser/parse_collate.h"
@@ -68,6 +67,7 @@
 #include "utils/memutils.h"
 #include "utils/rel.h"
 #include "utils/syscache.h"
+#include "utils/typcache.h"
 #include "utils/tqual.h"
 
 /*
@@ -281,10 +281,11 @@ interpret_function_parameter_list(ParseState *pstate,
 
 		if (objtype == OBJECT_PROCEDURE)
 		{
-			if (fp->mode == FUNC_PARAM_OUT || fp->mode == FUNC_PARAM_INOUT)
+			if (fp->mode == FUNC_PARAM_OUT)
 				ereport(ERROR,
 						(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-						 (errmsg("procedures cannot have OUT parameters"))));
+						 (errmsg("procedures cannot have OUT arguments"),
+						  errhint("INOUT arguments are permitted."))));
 		}
 
 		/* handle input parameters */
@@ -302,7 +303,9 @@ interpret_function_parameter_list(ParseState *pstate,
 		/* handle output parameters */
 		if (fp->mode != FUNC_PARAM_IN && fp->mode != FUNC_PARAM_VARIADIC)
 		{
-			if (outCount == 0)	/* save first output param's type */
+			if (objtype == OBJECT_PROCEDURE)
+				*requiredResultType = RECORDOID;
+			else if (outCount == 0) /* save first output param's type */
 				*requiredResultType = toid;
 			outCount++;
 		}
@@ -931,7 +934,7 @@ CreateFunction(ParseState *pstate, CreateFunctionStmt *stmt)
 				(errcode(ERRCODE_UNDEFINED_OBJECT),
 				 errmsg("language \"%s\" does not exist", language),
 				 (PLTemplateExists(language) ?
-				  errhint("Use CREATE LANGUAGE to load the language into the database.") : 0)));
+				  errhint("Use CREATE EXTENSION to load the language into the database.") : 0)));
 
 	languageOid = HeapTupleGetOid(languageTuple);
 	languageStruct = (Form_pg_language) GETSTRUCT(languageTuple);
@@ -1004,8 +1007,7 @@ CreateFunction(ParseState *pstate, CreateFunctionStmt *stmt)
 	if (stmt->is_procedure)
 	{
 		Assert(!stmt->returnType);
-
-		prorettype = InvalidOid;
+		prorettype = requiredResultType ? requiredResultType : VOIDOID;
 		returnsSet = false;
 	}
 	else if (stmt->returnType)
@@ -1097,8 +1099,7 @@ CreateFunction(ParseState *pstate, CreateFunctionStmt *stmt)
 						   languageValidator,
 						   prosrc_str,	/* converted to text later */
 						   probin_str,	/* converted to text later */
-						   false,	/* not an aggregate */
-						   isWindowFunc,
+						   stmt->is_procedure ? PROKIND_PROCEDURE : (isWindowFunc ? PROKIND_WINDOW : PROKIND_FUNCTION),
 						   security,
 						   isLeakProof,
 						   isStrict,
@@ -1126,7 +1127,7 @@ RemoveFunctionById(Oid funcOid)
 {
 	Relation	relation;
 	HeapTuple	tup;
-	bool		isagg;
+	char		prokind;
 
 	/*
 	 * Delete the pg_proc tuple.
@@ -1137,7 +1138,7 @@ RemoveFunctionById(Oid funcOid)
 	if (!HeapTupleIsValid(tup)) /* should not happen */
 		elog(ERROR, "cache lookup failed for function %u", funcOid);
 
-	isagg = ((Form_pg_proc) GETSTRUCT(tup))->proisagg;
+	prokind = ((Form_pg_proc) GETSTRUCT(tup))->prokind;
 
 	CatalogTupleDelete(relation, &tup->t_self);
 
@@ -1148,7 +1149,7 @@ RemoveFunctionById(Oid funcOid)
 	/*
 	 * If there's a pg_aggregate tuple, delete that too.
 	 */
-	if (isagg)
+	if (prokind == PROKIND_AGGREGATE)
 	{
 		relation = heap_open(AggregateRelationId, RowExclusiveLock);
 
@@ -1203,13 +1204,13 @@ AlterFunction(ParseState *pstate, AlterFunctionStmt *stmt)
 		aclcheck_error(ACLCHECK_NOT_OWNER, stmt->objtype,
 					   NameListToString(stmt->func->objname));
 
-	if (procForm->proisagg)
+	if (procForm->prokind == PROKIND_AGGREGATE)
 		ereport(ERROR,
 				(errcode(ERRCODE_WRONG_OBJECT_TYPE),
 				 errmsg("\"%s\" is an aggregate function",
 						NameListToString(stmt->func->objname))));
 
-	is_procedure = (procForm->prorettype == InvalidOid);
+	is_procedure = (procForm->prokind == PROKIND_PROCEDURE);
 
 	/* Examine requested actions. */
 	foreach(l, stmt->actions)
@@ -1525,14 +1526,10 @@ CreateCast(CreateCastStmt *stmt)
 					(errcode(ERRCODE_INVALID_OBJECT_DEFINITION),
 					 errmsg("cast function must not be volatile")));
 #endif
-		if (procstruct->proisagg)
+		if (procstruct->prokind != PROKIND_FUNCTION)
 			ereport(ERROR,
 					(errcode(ERRCODE_INVALID_OBJECT_DEFINITION),
-					 errmsg("cast function must not be an aggregate function")));
-		if (procstruct->proiswindow)
-			ereport(ERROR,
-					(errcode(ERRCODE_INVALID_OBJECT_DEFINITION),
-					 errmsg("cast function must not be a window function")));
+					 errmsg("cast function must be a normal function")));
 		if (procstruct->proretset)
 			ereport(ERROR,
 					(errcode(ERRCODE_INVALID_OBJECT_DEFINITION),
@@ -1777,14 +1774,10 @@ check_transform_function(Form_pg_proc procstruct)
 		ereport(ERROR,
 				(errcode(ERRCODE_INVALID_OBJECT_DEFINITION),
 				 errmsg("transform function must not be volatile")));
-	if (procstruct->proisagg)
+	if (procstruct->prokind != PROKIND_FUNCTION)
 		ereport(ERROR,
 				(errcode(ERRCODE_INVALID_OBJECT_DEFINITION),
-				 errmsg("transform function must not be an aggregate function")));
-	if (procstruct->proiswindow)
-		ereport(ERROR,
-				(errcode(ERRCODE_INVALID_OBJECT_DEFINITION),
-				 errmsg("transform function must not be a window function")));
+				 errmsg("transform function must be a normal function")));
 	if (procstruct->proretset)
 		ereport(ERROR,
 				(errcode(ERRCODE_INVALID_OBJECT_DEFINITION),
@@ -2143,7 +2136,7 @@ ExecuteDoStmt(DoStmt *stmt, bool atomic)
 				(errcode(ERRCODE_UNDEFINED_OBJECT),
 				 errmsg("language \"%s\" does not exist", language),
 				 (PLTemplateExists(language) ?
-				  errhint("Use CREATE LANGUAGE to load the language into the database.") : 0)));
+				  errhint("Use CREATE EXTENSION to load the language into the database.") : 0)));
 
 	codeblock->langOid = HeapTupleGetOid(languageTuple);
 	languageStruct = (Form_pg_language) GETSTRUCT(languageTuple);
@@ -2212,7 +2205,7 @@ ExecuteDoStmt(DoStmt *stmt, bool atomic)
  * commits that might occur inside the procedure.
  */
 void
-ExecuteCallStmt(CallStmt *stmt, ParamListInfo params, bool atomic)
+ExecuteCallStmt(CallStmt *stmt, ParamListInfo params, bool atomic, DestReceiver *dest)
 {
 	ListCell   *lc;
 	FuncExpr   *fexpr;
@@ -2225,6 +2218,7 @@ ExecuteCallStmt(CallStmt *stmt, ParamListInfo params, bool atomic)
 	EState	   *estate;
 	ExprContext *econtext;
 	HeapTuple	tp;
+	Datum		retval;
 
 	fexpr = stmt->funcexpr;
 	Assert(fexpr);
@@ -2233,7 +2227,30 @@ ExecuteCallStmt(CallStmt *stmt, ParamListInfo params, bool atomic)
 	if (aclresult != ACLCHECK_OK)
 		aclcheck_error(aclresult, OBJECT_PROCEDURE, get_func_name(fexpr->funcid));
 
+	/* Prep the context object we'll pass to the procedure */
+	callcontext = makeNode(CallContext);
+	callcontext->atomic = atomic;
+
+	tp = SearchSysCache1(PROCOID, ObjectIdGetDatum(fexpr->funcid));
+	if (!HeapTupleIsValid(tp))
+		elog(ERROR, "cache lookup failed for function %u", fexpr->funcid);
+
+	/*
+	 * If proconfig is set we can't allow transaction commands because of the
+	 * way the GUC stacking works: The transaction boundary would have to pop
+	 * the proconfig setting off the stack.  That restriction could be lifted
+	 * by redesigning the GUC nesting mechanism a bit.
+	 */
+	if (!heap_attisnull(tp, Anum_pg_proc_proconfig, NULL))
+		callcontext->atomic = true;
+
+	/*
+	 * Expand named arguments, defaults, etc.
+	 */
+	fexpr->args = expand_function_arguments(fexpr->args, fexpr->funcresulttype, tp);
 	nargs = list_length(fexpr->args);
+
+	ReleaseSysCache(tp);
 
 	/* safety check; see ExecInitFunc() */
 	if (nargs > FUNC_MAX_ARGS)
@@ -2243,23 +2260,6 @@ ExecuteCallStmt(CallStmt *stmt, ParamListInfo params, bool atomic)
 							   "cannot pass more than %d arguments to a procedure",
 							   FUNC_MAX_ARGS,
 							   FUNC_MAX_ARGS)));
-
-	/* Prep the context object we'll pass to the procedure */
-	callcontext = makeNode(CallContext);
-	callcontext->atomic = atomic;
-
-	/*
-	 * If proconfig is set we can't allow transaction commands because of the
-	 * way the GUC stacking works: The transaction boundary would have to pop
-	 * the proconfig setting off the stack.  That restriction could be lifted
-	 * by redesigning the GUC nesting mechanism a bit.
-	 */
-	tp = SearchSysCache1(PROCOID, ObjectIdGetDatum(fexpr->funcid));
-	if (!HeapTupleIsValid(tp))
-		elog(ERROR, "cache lookup failed for function %u", fexpr->funcid);
-	if (!heap_attisnull(tp, Anum_pg_proc_proconfig))
-		callcontext->atomic = true;
-	ReleaseSysCache(tp);
 
 	/* Initialize function call structure */
 	InvokeFunctionExecuteHook(fexpr->funcid);
@@ -2291,7 +2291,51 @@ ExecuteCallStmt(CallStmt *stmt, ParamListInfo params, bool atomic)
 		i++;
 	}
 
-	FunctionCallInvoke(&fcinfo);
+	retval = FunctionCallInvoke(&fcinfo);
+
+	if (fexpr->funcresulttype == VOIDOID)
+	{
+		/* do nothing */
+	}
+	else if (fexpr->funcresulttype == RECORDOID)
+	{
+		/*
+		 * send tuple to client
+		 */
+
+		HeapTupleHeader td;
+		Oid			tupType;
+		int32		tupTypmod;
+		TupleDesc	retdesc;
+		HeapTupleData rettupdata;
+		TupOutputState *tstate;
+		TupleTableSlot *slot;
+
+		if (fcinfo.isnull)
+			elog(ERROR, "procedure returned null record");
+
+		td = DatumGetHeapTupleHeader(retval);
+		tupType = HeapTupleHeaderGetTypeId(td);
+		tupTypmod = HeapTupleHeaderGetTypMod(td);
+		retdesc = lookup_rowtype_tupdesc(tupType, tupTypmod);
+
+		tstate = begin_tup_output_tupdesc(dest, retdesc);
+
+		rettupdata.t_len = HeapTupleHeaderGetDatumLength(td);
+		ItemPointerSetInvalid(&(rettupdata.t_self));
+		rettupdata.t_tableOid = InvalidOid;
+		rettupdata.t_data = td;
+
+		slot = ExecStoreTuple(&rettupdata, tstate->slot, InvalidBuffer, false);
+		tstate->dest->receiveSlot(slot, tstate->dest);
+
+		end_tup_output(tstate);
+
+		ReleaseTupleDesc(retdesc);
+	}
+	else
+		elog(ERROR, "unexpected result type for procedure: %u",
+			 fexpr->funcresulttype);
 
 	FreeExecutorState(estate);
 }

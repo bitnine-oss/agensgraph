@@ -651,6 +651,17 @@ $$ LANGUAGE plpythonu;
 SELECT * FROM multiout_simple();
 </programlisting>
    </para>
+
+   <para>
+    Output parameters of procedures are passed back the same way.  For example:
+<programlisting>
+CREATE PROCEDURE python_triple(INOUT a integer, INOUT b integer) AS $$
+return (a * 3, b * 3)
+$$ LANGUAGE plpythonu;
+
+CALL python_triple(5, 10);
+</programlisting>
+   </para>
   </sect2>
 
   <sect2>
@@ -1405,9 +1416,7 @@ CALL transaction_test1();
   </para>
 
   <para>
-   Transactions cannot be ended when a cursor created by
-   <literal>plpy.cursor</literal> is open or when an explicit subtransaction
-   is active.
+   Transactions cannot be ended when an explicit subtransaction is active.
   </para>
  </sect1>
 

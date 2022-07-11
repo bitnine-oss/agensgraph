@@ -80,6 +80,8 @@ extern char *ssl_key_file;
 extern char *ssl_ca_file;
 extern char *ssl_crl_file;
 extern char *ssl_dh_params_file;
+extern char *ssl_passphrase_command;
+extern bool ssl_passphrase_command_supports_reload;
 
 extern int	secure_initialize(bool isServerStart);
 extern bool secure_loaded_verify_locations(void);
@@ -90,7 +92,6 @@ extern ssize_t secure_read(Port *port, void *ptr, size_t len);
 extern ssize_t secure_write(Port *port, void *ptr, size_t len);
 extern ssize_t secure_raw_read(Port *port, void *ptr, size_t len);
 extern ssize_t secure_raw_write(Port *port, const void *ptr, size_t len);
-extern bool check_ssl_key_file_permissions(const char *ssl_key_file, bool isServerStart);
 
 extern bool ssl_loaded_verify_locations;
 
@@ -100,5 +101,13 @@ extern WaitEventSet *FeBeWaitSet;
 extern char *SSLCipherSuites;
 extern char *SSLECDHCurve;
 extern bool SSLPreferServerCiphers;
+
+/*
+ * prototypes for functions in be-secure-common.c
+ */
+extern int run_ssl_passphrase_command(const char *prompt, bool is_server_start,
+						   char *buf, int size);
+extern bool check_ssl_key_file_permissions(const char *ssl_key_file,
+							   bool isServerStart);
 
 #endif							/* LIBPQ_H */

@@ -38,6 +38,7 @@
 #include "optimizer/plancat.h"
 #include "optimizer/predtest.h"
 #include "optimizer/prep.h"
+#include "partitioning/partbounds.h"
 #include "parser/parse_relation.h"
 #include "parser/parsetree.h"
 #include "rewrite/rewriteManip.h"
@@ -45,8 +46,9 @@
 #include "storage/bufmgr.h"
 #include "utils/builtins.h"
 #include "utils/lsyscache.h"
-#include "utils/syscache.h"
+#include "utils/partcache.h"
 #include "utils/rel.h"
+#include "utils/syscache.h"
 #include "utils/snapmgr.h"
 
 
@@ -185,7 +187,8 @@ get_relation_info(PlannerInfo *root, Oid relationObjectId, bool inhparent,
 			Form_pg_index index;
 			IndexAmRoutine *amroutine;
 			IndexOptInfo *info;
-			int			ncolumns;
+			int			ncolumns,
+						nkeycolumns;
 			int			i;
 
 			/*
@@ -238,19 +241,25 @@ get_relation_info(PlannerInfo *root, Oid relationObjectId, bool inhparent,
 				RelationGetForm(indexRelation)->reltablespace;
 			info->rel = rel;
 			info->ncolumns = ncolumns = index->indnatts;
+			info->nkeycolumns = nkeycolumns = index->indnkeyatts;
+
 			info->indexkeys = (int *) palloc(sizeof(int) * ncolumns);
-			info->indexcollations = (Oid *) palloc(sizeof(Oid) * ncolumns);
-			info->opfamily = (Oid *) palloc(sizeof(Oid) * ncolumns);
-			info->opcintype = (Oid *) palloc(sizeof(Oid) * ncolumns);
+			info->indexcollations = (Oid *) palloc(sizeof(Oid) * nkeycolumns);
+			info->opfamily = (Oid *) palloc(sizeof(Oid) * nkeycolumns);
+			info->opcintype = (Oid *) palloc(sizeof(Oid) * nkeycolumns);
 			info->canreturn = (bool *) palloc(sizeof(bool) * ncolumns);
 
 			for (i = 0; i < ncolumns; i++)
 			{
 				info->indexkeys[i] = index->indkey.values[i];
-				info->indexcollations[i] = indexRelation->rd_indcollation[i];
+				info->canreturn[i] = index_can_return(indexRelation, i + 1);
+			}
+
+			for (i = 0; i < nkeycolumns; i++)
+			{
 				info->opfamily[i] = indexRelation->rd_opfamily[i];
 				info->opcintype[i] = indexRelation->rd_opcintype[i];
-				info->canreturn[i] = index_can_return(indexRelation, i + 1);
+				info->indexcollations[i] = indexRelation->rd_indcollation[i];
 			}
 
 			info->relam = indexRelation->rd_rel->relam;
@@ -279,10 +288,10 @@ get_relation_info(PlannerInfo *root, Oid relationObjectId, bool inhparent,
 				Assert(amroutine->amcanorder);
 
 				info->sortopfamily = info->opfamily;
-				info->reverse_sort = (bool *) palloc(sizeof(bool) * ncolumns);
-				info->nulls_first = (bool *) palloc(sizeof(bool) * ncolumns);
+				info->reverse_sort = (bool *) palloc(sizeof(bool) * nkeycolumns);
+				info->nulls_first = (bool *) palloc(sizeof(bool) * nkeycolumns);
 
-				for (i = 0; i < ncolumns; i++)
+				for (i = 0; i < nkeycolumns; i++)
 				{
 					int16		opt = indexRelation->rd_indoption[i];
 
@@ -306,11 +315,11 @@ get_relation_info(PlannerInfo *root, Oid relationObjectId, bool inhparent,
 				 * of current or foreseeable amcanorder index types, it's not
 				 * worth expending more effort on now.
 				 */
-				info->sortopfamily = (Oid *) palloc(sizeof(Oid) * ncolumns);
-				info->reverse_sort = (bool *) palloc(sizeof(bool) * ncolumns);
-				info->nulls_first = (bool *) palloc(sizeof(bool) * ncolumns);
+				info->sortopfamily = (Oid *) palloc(sizeof(Oid) * nkeycolumns);
+				info->reverse_sort = (bool *) palloc(sizeof(bool) * nkeycolumns);
+				info->nulls_first = (bool *) palloc(sizeof(bool) * nkeycolumns);
 
-				for (i = 0; i < ncolumns; i++)
+				for (i = 0; i < nkeycolumns; i++)
 				{
 					int16		opt = indexRelation->rd_indoption[i];
 					Oid			ltopr;
@@ -731,7 +740,7 @@ infer_arbiter_indexes(PlannerInfo *root)
 
 		/* Build BMS representation of plain (non expression) index attrs */
 		indexedAttrs = NULL;
-		for (natt = 0; natt < idxForm->indnatts; natt++)
+		for (natt = 0; natt < idxForm->indnkeyatts; natt++)
 		{
 			int			attno = idxRel->rd_index->indkey.values[natt];
 
@@ -1171,7 +1180,6 @@ get_relation_constraints(PlannerInfo *root,
 	Index		varno = rel->relid;
 	Relation	relation;
 	TupleConstr *constr;
-	List	   *pcqual;
 
 	/*
 	 * We assume the relation has already been safely locked.
@@ -1209,7 +1217,7 @@ get_relation_constraints(PlannerInfo *root,
 			 */
 			cexpr = eval_const_expressions(root, cexpr);
 
-			cexpr = (Node *) canonicalize_qual((Expr *) cexpr);
+			cexpr = (Node *) canonicalize_qual((Expr *) cexpr, true);
 
 			/* Fix Vars to have the desired varno */
 			if (varno != 1)
@@ -1257,22 +1265,34 @@ get_relation_constraints(PlannerInfo *root,
 		}
 	}
 
-	/* Append partition predicates, if any */
-	pcqual = RelationGetPartitionQual(relation);
-	if (pcqual)
+	/*
+	 * Append partition predicates, if any.
+	 *
+	 * For selects, partition pruning uses the parent table's partition bound
+	 * descriptor, instead of constraint exclusion which is driven by the
+	 * individual partition's partition constraint.
+	 */
+	if (enable_partition_pruning && root->parse->commandType != CMD_SELECT)
 	{
-		/*
-		 * Run each expression through const-simplification and
-		 * canonicalization similar to check constraints.
-		 */
-		pcqual = (List *) eval_const_expressions(root, (Node *) pcqual);
-		pcqual = (List *) canonicalize_qual((Expr *) pcqual);
+		List	   *pcqual = RelationGetPartitionQual(relation);
 
-		/* Fix Vars to have the desired varno */
-		if (varno != 1)
-			ChangeVarNodes((Node *) pcqual, 1, varno, 0);
+		if (pcqual)
+		{
+			/*
+			 * Run the partition quals through const-simplification similar to
+			 * check constraints.  We skip canonicalize_qual, though, because
+			 * partition quals should be in canonical form already; also,
+			 * since the qual is in implicit-AND format, we'd have to
+			 * explicitly convert it to explicit-AND format and back again.
+			 */
+			pcqual = (List *) eval_const_expressions(root, (Node *) pcqual);
 
-		result = list_concat(result, pcqual);
+			/* Fix Vars to have the desired varno */
+			if (varno != 1)
+				ChangeVarNodes((Node *) pcqual, 1, varno, 0);
+
+			result = list_concat(result, pcqual);
+		}
 	}
 
 	heap_close(relation, NoLock);
@@ -1395,14 +1415,43 @@ relation_excluded_by_constraints(PlannerInfo *root,
 			return true;
 	}
 
-	/* Skip further tests if constraint exclusion is disabled for the rel */
-	if (constraint_exclusion == CONSTRAINT_EXCLUSION_OFF ||
-		(constraint_exclusion == CONSTRAINT_EXCLUSION_PARTITION &&
-		 !(rel->reloptkind == RELOPT_OTHER_MEMBER_REL ||
-		   (root->hasInheritedTarget &&
-			rel->reloptkind == RELOPT_BASEREL &&
-			rel->relid == root->parse->resultRelation))))
-		return false;
+	/*
+	 * Skip further tests, depending on constraint_exclusion.
+	 */
+	switch (constraint_exclusion)
+	{
+		case CONSTRAINT_EXCLUSION_OFF:
+
+			/*
+			 * Don't prune if feature turned off -- except if the relation is
+			 * a partition.  While partprune.c-style partition pruning is not
+			 * yet in use for all cases (update/delete is not handled), it
+			 * would be a UI horror to use different user-visible controls
+			 * depending on such a volatile implementation detail.  Therefore,
+			 * for partitioned tables we use enable_partition_pruning to
+			 * control this behavior.
+			 */
+			if (root->inhTargetKind == INHKIND_PARTITIONED)
+				break;
+			return false;
+
+		case CONSTRAINT_EXCLUSION_PARTITION:
+
+			/*
+			 * When constraint_exclusion is set to 'partition' we only handle
+			 * OTHER_MEMBER_RELs, or BASERELs in cases where the result target
+			 * is an inheritance parent or a partitioned table.
+			 */
+			if ((rel->reloptkind != RELOPT_OTHER_MEMBER_REL) &&
+				!(rel->reloptkind == RELOPT_BASEREL &&
+				  root->inhTargetKind != INHKIND_NONE &&
+				  rel->relid == root->parse->resultRelation))
+				return false;
+			break;
+
+		case CONSTRAINT_EXCLUSION_ON:
+			break;				/* always try to exclude */
+	}
 
 	/*
 	 * Check for self-contradictory restriction clauses.  We dare not make
@@ -1421,7 +1470,11 @@ relation_excluded_by_constraints(PlannerInfo *root,
 			safe_restrictions = lappend(safe_restrictions, rinfo->clause);
 	}
 
-	if (predicate_refuted_by(safe_restrictions, safe_restrictions, false))
+	/*
+	 * We can use weak refutation here, since we're comparing restriction
+	 * clauses with restriction clauses.
+	 */
+	if (predicate_refuted_by(safe_restrictions, safe_restrictions, true))
 		return true;
 
 	/*
@@ -1469,6 +1522,9 @@ relation_excluded_by_constraints(PlannerInfo *root,
 	 * an obvious optimization.  Some of the clauses might be OR clauses that
 	 * have volatile and nonvolatile subclauses, and it's OK to make
 	 * deductions with the nonvolatile parts.
+	 *
+	 * We need strong refutation because we have to prove that the constraints
+	 * would yield false, not just NULL.
 	 */
 	if (predicate_refuted_by(safe_constraints, rel->baserestrictinfo, false))
 		return true;
@@ -1484,8 +1540,8 @@ relation_excluded_by_constraints(PlannerInfo *root,
  * in order.  The executor can special-case such tlists to avoid a projection
  * step at runtime, so we use such tlists preferentially for scan nodes.
  *
- * Exception: if there are any dropped columns, we punt and return NIL.
- * Ideally we would like to handle the dropped-column case too.  However this
+ * Exception: if there are any dropped or missing columns, we punt and return
+ * NIL.  Ideally we would like to handle these cases too.  However this
  * creates problems for ExecTypeFromTL, which may be asked to build a tupdesc
  * for a tlist that includes vars of no-longer-existent types.  In theory we
  * could dig out the required info from the pg_attribute entries of the
@@ -1524,9 +1580,9 @@ build_physical_tlist(PlannerInfo *root, RelOptInfo *rel)
 				Form_pg_attribute att_tup = TupleDescAttr(relation->rd_att,
 														  attrno - 1);
 
-				if (att_tup->attisdropped)
+				if (att_tup->attisdropped || att_tup->atthasmissing)
 				{
-					/* found a dropped col, so punt */
+					/* found a dropped or missing col, so punt */
 					tlist = NIL;
 					break;
 				}
@@ -1780,7 +1836,7 @@ has_unique_index(RelOptInfo *rel, AttrNumber attno)
 		 * just the specified attr is unique.
 		 */
 		if (index->unique &&
-			index->ncolumns == 1 &&
+			index->nkeycolumns == 1 &&
 			index->indexkeys[0] == attno &&
 			(index->indpred == NIL || index->predOK))
 			return true;
@@ -1856,6 +1912,7 @@ set_relation_partition_info(PlannerInfo *root, RelOptInfo *rel,
 	rel->boundinfo = partition_bounds_copy(partdesc->boundinfo, partkey);
 	rel->nparts = partdesc->nparts;
 	set_baserel_partition_key_exprs(relation, rel);
+	rel->partition_qual = RelationGetPartitionQual(relation);
 }
 
 /*
@@ -1868,7 +1925,8 @@ find_partition_scheme(PlannerInfo *root, Relation relation)
 {
 	PartitionKey partkey = RelationGetPartitionKey(relation);
 	ListCell   *lc;
-	int			partnatts;
+	int			partnatts,
+				i;
 	PartitionScheme part_scheme;
 
 	/* A partitioned table should have a partition key. */
@@ -1886,12 +1944,12 @@ find_partition_scheme(PlannerInfo *root, Relation relation)
 			partnatts != part_scheme->partnatts)
 			continue;
 
-		/* Match the partition key types. */
+		/* Match partition key type properties. */
 		if (memcmp(partkey->partopfamily, part_scheme->partopfamily,
 				   sizeof(Oid) * partnatts) != 0 ||
 			memcmp(partkey->partopcintype, part_scheme->partopcintype,
 				   sizeof(Oid) * partnatts) != 0 ||
-			memcmp(partkey->parttypcoll, part_scheme->parttypcoll,
+			memcmp(partkey->partcollation, part_scheme->partcollation,
 				   sizeof(Oid) * partnatts) != 0)
 			continue;
 
@@ -1903,6 +1961,19 @@ find_partition_scheme(PlannerInfo *root, Relation relation)
 					  sizeof(int16) * partnatts) == 0);
 		Assert(memcmp(partkey->parttypbyval, part_scheme->parttypbyval,
 					  sizeof(bool) * partnatts) == 0);
+
+		/*
+		 * If partopfamily and partopcintype matched, must have the same
+		 * partition comparison functions.  Note that we cannot reliably
+		 * Assert the equality of function structs themselves for they might
+		 * be different across PartitionKey's, so just Assert for the function
+		 * OIDs.
+		 */
+#ifdef USE_ASSERT_CHECKING
+		for (i = 0; i < partkey->partnatts; i++)
+			Assert(partkey->partsupfunc[i].fn_oid ==
+				   part_scheme->partsupfunc[i].fn_oid);
+#endif
 
 		/* Found matching partition scheme. */
 		return part_scheme;
@@ -1926,8 +1997,8 @@ find_partition_scheme(PlannerInfo *root, Relation relation)
 	memcpy(part_scheme->partopcintype, partkey->partopcintype,
 		   sizeof(Oid) * partnatts);
 
-	part_scheme->parttypcoll = (Oid *) palloc(sizeof(Oid) * partnatts);
-	memcpy(part_scheme->parttypcoll, partkey->parttypcoll,
+	part_scheme->partcollation = (Oid *) palloc(sizeof(Oid) * partnatts);
+	memcpy(part_scheme->partcollation, partkey->partcollation,
 		   sizeof(Oid) * partnatts);
 
 	part_scheme->parttyplen = (int16 *) palloc(sizeof(int16) * partnatts);
@@ -1937,6 +2008,12 @@ find_partition_scheme(PlannerInfo *root, Relation relation)
 	part_scheme->parttypbyval = (bool *) palloc(sizeof(bool) * partnatts);
 	memcpy(part_scheme->parttypbyval, partkey->parttypbyval,
 		   sizeof(bool) * partnatts);
+
+	part_scheme->partsupfunc = (FmgrInfo *)
+		palloc(sizeof(FmgrInfo) * partnatts);
+	for (i = 0; i < partnatts; i++)
+		fmgr_info_copy(&part_scheme->partsupfunc[i], &partkey->partsupfunc[i],
+					   CurrentMemoryContext);
 
 	/* Add the partitioning scheme to PlannerInfo. */
 	root->part_schemes = lappend(root->part_schemes, part_scheme);

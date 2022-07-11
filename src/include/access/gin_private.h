@@ -217,7 +217,7 @@ extern ItemPointer GinDataLeafPageGetItems(Page page, int *nitems, ItemPointerDa
 extern int	GinDataLeafPageGetItemsToTbm(Page page, TIDBitmap *tbm);
 extern BlockNumber createPostingTree(Relation index,
 				  ItemPointerData *items, uint32 nitems,
-				  GinStatsData *buildStats);
+				  GinStatsData *buildStats, Buffer entrybuffer);
 extern void GinDataPageAddPostingItem(Page page, PostingItem *data, OffsetNumber offset);
 extern void GinPageDeletePostingItem(Page page, OffsetNumber offset);
 extern void ginInsertItemPointers(Relation index, BlockNumber rootBlkno,
@@ -225,7 +225,6 @@ extern void ginInsertItemPointers(Relation index, BlockNumber rootBlkno,
 					  GinStatsData *buildStats);
 extern GinBtreeStack *ginScanBeginPostingTree(GinBtree btree, Relation index, BlockNumber rootBlkno, Snapshot snapshot);
 extern void ginDataFillRoot(GinBtree btree, Page root, BlockNumber lblkno, Page lpage, BlockNumber rblkno, Page rpage);
-extern void ginPrepareDataScan(GinBtree btree, Relation index, BlockNumber rootBlkno);
 
 /*
  * This is declared in ginvacuum.c, but is passed between ginVacuumItemPointers

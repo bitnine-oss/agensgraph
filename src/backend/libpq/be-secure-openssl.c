@@ -52,7 +52,8 @@ static int	my_SSL_set_fd(Port *port, int fd);
 
 static DH  *load_dh_file(char *filename, bool isServerStart);
 static DH  *load_dh_buffer(const char *, size_t);
-static int	ssl_passwd_cb(char *buf, int size, int rwflag, void *userdata);
+static int	ssl_external_passwd_cb(char *buf, int size, int rwflag, void *userdata);
+static int	dummy_ssl_passwd_cb(char *buf, int size, int rwflag, void *userdata);
 static int	verify_cb(int, X509_STORE_CTX *);
 static void info_cb(const SSL *ssl, int type, int args);
 static bool initialize_dh(SSL_CTX *context, bool isServerStart);
@@ -63,7 +64,8 @@ static char *X509_NAME_to_cstring(X509_NAME *name);
 
 static SSL_CTX *SSL_context = NULL;
 static bool SSL_initialized = false;
-static bool ssl_passwd_cb_called = false;
+static bool dummy_ssl_passwd_cb_called = false;
+static bool ssl_is_server_start;
 
 
 /* ------------------------------------------------------------ */
@@ -111,14 +113,29 @@ be_tls_init(bool isServerStart)
 	SSL_CTX_set_mode(context, SSL_MODE_ACCEPT_MOVING_WRITE_BUFFER);
 
 	/*
-	 * If reloading, override OpenSSL's default handling of
-	 * passphrase-protected files, because we don't want to prompt for a
-	 * passphrase in an already-running server.  (Not that the default
-	 * handling is very desirable during server start either, but some people
-	 * insist we need to keep it.)
+	 * Set password callback
 	 */
-	if (!isServerStart)
-		SSL_CTX_set_default_passwd_cb(context, ssl_passwd_cb);
+	if (isServerStart)
+	{
+		if (ssl_passphrase_command[0])
+			SSL_CTX_set_default_passwd_cb(context, ssl_external_passwd_cb);
+	}
+	else
+	{
+		if (ssl_passphrase_command[0] && ssl_passphrase_command_supports_reload)
+			SSL_CTX_set_default_passwd_cb(context, ssl_external_passwd_cb);
+		else
+
+			/*
+			 * If reloading and no external command is configured, override
+			 * OpenSSL's default handling of passphrase-protected files,
+			 * because we don't want to prompt for a passphrase in an
+			 * already-running server.
+			 */
+			SSL_CTX_set_default_passwd_cb(context, dummy_ssl_passwd_cb);
+	}
+	/* used by the callback */
+	ssl_is_server_start = isServerStart;
 
 	/*
 	 * Load and verify server's certificate and private key
@@ -138,13 +155,13 @@ be_tls_init(bool isServerStart)
 	/*
 	 * OK, try to load the private key file.
 	 */
-	ssl_passwd_cb_called = false;
+	dummy_ssl_passwd_cb_called = false;
 
 	if (SSL_CTX_use_PrivateKey_file(context,
 									ssl_key_file,
 									SSL_FILETYPE_PEM) != 1)
 	{
-		if (ssl_passwd_cb_called)
+		if (dummy_ssl_passwd_cb_called)
 			ereport(isServerStart ? FATAL : LOG,
 					(errcode(ERRCODE_CONFIG_FILE_ERROR),
 					 errmsg("private key file \"%s\" cannot be reloaded because it requires a passphrase",
@@ -170,7 +187,7 @@ be_tls_init(bool isServerStart)
 	SSL_CTX_set_options(context, SSL_OP_NO_SSLv2 | SSL_OP_NO_SSLv3);
 
 	/* disallow SSL session tickets */
-#ifdef SSL_OP_NO_TICKET			/* added in openssl 0.9.8f */
+#ifdef SSL_OP_NO_TICKET			/* added in OpenSSL 0.9.8f */
 	SSL_CTX_set_options(context, SSL_OP_NO_TICKET);
 #endif
 
@@ -594,7 +611,7 @@ be_tls_write(Port *port, void *ptr, size_t len, int *waitfor)
 		case SSL_ERROR_ZERO_RETURN:
 
 			/*
-			 * the SSL connnection was closed, leave it to the caller to
+			 * the SSL connection was closed, leave it to the caller to
 			 * ereport it
 			 */
 			errno = ECONNRESET;
@@ -621,7 +638,7 @@ be_tls_write(Port *port, void *ptr, size_t len, int *waitfor)
  * Private substitute BIO: this does the sending and receiving using send() and
  * recv() instead. This is so that we can enable and disable interrupts
  * just while calling recv(). We cannot have interrupts occurring while
- * the bulk of openssl runs, because it uses malloc() and possibly other
+ * the bulk of OpenSSL runs, because it uses malloc() and possibly other
  * non-reentrant libc facilities. We also need to call send() and recv()
  * directly so it gets passed through the socket/signals layer on Win32.
  *
@@ -719,7 +736,7 @@ my_BIO_s_socket(void)
 	return my_bio_methods;
 }
 
-/* This should exactly match openssl's SSL_set_fd except for using my BIO */
+/* This should exactly match OpenSSL's SSL_set_fd except for using my BIO */
 static int
 my_SSL_set_fd(Port *port, int fd)
 {
@@ -839,7 +856,21 @@ load_dh_buffer(const char *buffer, size_t len)
 }
 
 /*
- *	Passphrase collection callback
+ *	Passphrase collection callback using ssl_passphrase_command
+ */
+static int
+ssl_external_passwd_cb(char *buf, int size, int rwflag, void *userdata)
+{
+	/* same prompt as OpenSSL uses internally */
+	const char *prompt = "Enter PEM pass phrase:";
+
+	Assert(rwflag == 0);
+
+	return run_ssl_passphrase_command(prompt, ssl_is_server_start, buf, size);
+}
+
+/*
+ * Dummy passphrase callback
  *
  * If OpenSSL is told to use a passphrase-protected server key, by default
  * it will issue a prompt on /dev/tty and try to read a key from there.
@@ -848,10 +879,10 @@ load_dh_buffer(const char *buffer, size_t len)
  * function that just returns an empty passphrase, guaranteeing failure.
  */
 static int
-ssl_passwd_cb(char *buf, int size, int rwflag, void *userdata)
+dummy_ssl_passwd_cb(char *buf, int size, int rwflag, void *userdata)
 {
 	/* Set flag to change the error message we'll report */
-	ssl_passwd_cb_called = true;
+	dummy_ssl_passwd_cb_called = true;
 	/* And return empty string */
 	Assert(size > 0);
 	buf[0] = '\0';
@@ -1013,7 +1044,7 @@ static const char *
 SSLerrmessage(unsigned long ecode)
 {
 	const char *errreason;
-	static char errbuf[32];
+	static char errbuf[36];
 
 	if (ecode == 0)
 		return _("no SSL error reported");
@@ -1109,8 +1140,8 @@ be_tls_get_certificate_hash(Port *port, size_t *len)
 		return NULL;
 
 	/*
-	 * Get the signature algorithm of the certificate to determine the
-	 * hash algorithm to use for the result.
+	 * Get the signature algorithm of the certificate to determine the hash
+	 * algorithm to use for the result.
 	 */
 	if (!OBJ_find_sigid_algs(X509_get_signature_nid(server_cert),
 							 &algo_nid, NULL))

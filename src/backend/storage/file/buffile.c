@@ -99,6 +99,7 @@ struct BufFile
 	char		buffer[BLCKSZ];
 };
 
+static BufFile *makeBufFileCommon(int nfiles);
 static BufFile *makeBufFile(File firstfile);
 static void extendBufFile(BufFile *file);
 static void BufFileLoadBuffer(BufFile *file);
@@ -106,6 +107,26 @@ static void BufFileDumpBuffer(BufFile *file);
 static int	BufFileFlush(BufFile *file);
 static File MakeNewSharedSegment(BufFile *file, int segment);
 
+/*
+ * Create BufFile and perform the common initialization.
+ */
+static BufFile *
+makeBufFileCommon(int nfiles)
+{
+	BufFile    *file = (BufFile *) palloc(sizeof(BufFile));
+
+	file->numFiles = nfiles;
+	file->offsets = (off_t *) palloc0(sizeof(off_t) * nfiles);
+	file->isInterXact = false;
+	file->dirty = false;
+	file->resowner = CurrentResourceOwner;
+	file->curFile = 0;
+	file->curOffset = 0L;
+	file->pos = 0;
+	file->nbytes = 0;
+
+	return file;
+}
 
 /*
  * Create a BufFile given the first underlying physical file.
@@ -114,20 +135,10 @@ static File MakeNewSharedSegment(BufFile *file, int segment);
 static BufFile *
 makeBufFile(File firstfile)
 {
-	BufFile    *file = (BufFile *) palloc(sizeof(BufFile));
+	BufFile    *file = makeBufFileCommon(1);
 
-	file->numFiles = 1;
 	file->files = (File *) palloc(sizeof(File));
 	file->files[0] = firstfile;
-	file->offsets = (off_t *) palloc(sizeof(off_t));
-	file->offsets[0] = 0L;
-	file->isInterXact = false;
-	file->dirty = false;
-	file->resowner = CurrentResourceOwner;
-	file->curFile = 0;
-	file->curOffset = 0L;
-	file->pos = 0;
-	file->nbytes = 0;
 	file->readOnly = false;
 	file->fileset = NULL;
 	file->name = NULL;
@@ -213,9 +224,9 @@ MakeNewSharedSegment(BufFile *buffile, int segment)
 
 	/*
 	 * It is possible that there are files left over from before a crash
-	 * restart with the same name.  In order for BufFileOpenShared()
-	 * not to get confused about how many segments there are, we'll unlink
-	 * the next segment number if it already exists.
+	 * restart with the same name.  In order for BufFileOpenShared() not to
+	 * get confused about how many segments there are, we'll unlink the next
+	 * segment number if it already exists.
 	 */
 	SharedSegmentName(name, buffile->name, segment + 1);
 	SharedFileSetDelete(buffile->fileset, name, true);
@@ -246,23 +257,12 @@ BufFileCreateShared(SharedFileSet *fileset, const char *name)
 {
 	BufFile    *file;
 
-	file = (BufFile *) palloc(sizeof(BufFile));
+	file = makeBufFileCommon(1);
 	file->fileset = fileset;
 	file->name = pstrdup(name);
-	file->numFiles = 1;
 	file->files = (File *) palloc(sizeof(File));
 	file->files[0] = MakeNewSharedSegment(file, 0);
-	file->offsets = (off_t *) palloc(sizeof(off_t));
-	file->offsets[0] = 0L;
-	file->isInterXact = false;
-	file->dirty = false;
-	file->resowner = CurrentResourceOwner;
-	file->curFile = 0;
-	file->curOffset = 0L;
-	file->pos = 0;
-	file->nbytes = 0;
 	file->readOnly = false;
-	file->name = pstrdup(name);
 
 	return file;
 }
@@ -277,13 +277,12 @@ BufFileCreateShared(SharedFileSet *fileset, const char *name)
 BufFile *
 BufFileOpenShared(SharedFileSet *fileset, const char *name)
 {
-	BufFile    *file = (BufFile *) palloc(sizeof(BufFile));
+	BufFile    *file;
 	char		segment_name[MAXPGPATH];
 	Size		capacity = 16;
-	File	   *files = palloc(sizeof(File) * capacity);
+	File	   *files;
 	int			nfiles = 0;
 
-	file = (BufFile *) palloc(sizeof(BufFile));
 	files = palloc(sizeof(File) * capacity);
 
 	/*
@@ -317,16 +316,8 @@ BufFileOpenShared(SharedFileSet *fileset, const char *name)
 				(errcode_for_file_access(),
 				 errmsg("could not open BufFile \"%s\"", name)));
 
-	file->numFiles = nfiles;
+	file = makeBufFileCommon(nfiles);
 	file->files = files;
-	file->offsets = (off_t *) palloc0(sizeof(off_t) * nfiles);
-	file->isInterXact = false;
-	file->dirty = false;
-	file->resowner = CurrentResourceOwner;	/* Unused, can't extend */
-	file->curFile = 0;
-	file->curOffset = 0L;
-	file->pos = 0;
-	file->nbytes = 0;
 	file->readOnly = true;		/* Can't write to files opened this way */
 	file->fileset = fileset;
 	file->name = pstrdup(name);
@@ -802,14 +793,24 @@ BufFileTellBlock(BufFile *file)
 #endif
 
 /*
- * Return the current file size.  Counts any holes left behind by
- * BufFileViewAppend as part of the size.
+ * Return the current file size.
+ *
+ * Counts any holes left behind by BufFileAppend as part of the size.
+ * Returns -1 on error.
  */
 off_t
 BufFileSize(BufFile *file)
 {
+	off_t		lastFileSize;
+
+	/* Get the size of the last physical file by seeking to end. */
+	lastFileSize = FileSeek(file->files[file->numFiles - 1], 0, SEEK_END);
+	if (lastFileSize < 0)
+		return -1;
+	file->offsets[file->numFiles - 1] = lastFileSize;
+
 	return ((file->numFiles - 1) * (off_t) MAX_PHYSICAL_FILESIZE) +
-		FileGetSize(file->files[file->numFiles - 1]);
+		lastFileSize;
 }
 
 /*
@@ -853,7 +854,7 @@ BufFileAppend(BufFile *target, BufFile *source)
 	for (i = target->numFiles; i < newNumFiles; i++)
 	{
 		target->files[i] = source->files[i - target->numFiles];
-		target->offsets[i] = 0L;
+		target->offsets[i] = source->offsets[i - target->numFiles];
 	}
 	target->numFiles = newNumFiles;
 

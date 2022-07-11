@@ -22,8 +22,6 @@ BEGIN
 END;
 $$;
 
-CALL test_proc2();
-
 
 CREATE TABLE test1 (a int);
 
@@ -56,9 +54,193 @@ CALL test_proc4(66);
 
 SELECT * FROM test1;
 
+CALL test_proc4(66);
+
+SELECT * FROM test1;
+
+
+-- output arguments
+
+CREATE PROCEDURE test_proc5(INOUT a text)
+LANGUAGE plpgsql
+AS $$
+BEGIN
+    a := a || '+' || a;
+END;
+$$;
+
+CALL test_proc5('abc');
+
+
+CREATE PROCEDURE test_proc6(a int, INOUT b int, INOUT c int)
+LANGUAGE plpgsql
+AS $$
+BEGIN
+    b := b * a;
+    c := c * a;
+END;
+$$;
+
+CALL test_proc6(2, 3, 4);
+
+
+DO
+LANGUAGE plpgsql
+$$
+DECLARE
+    x int := 3;
+    y int := 4;
+BEGIN
+    CALL test_proc6(2, x, y);
+    RAISE INFO 'x = %, y = %', x, y;
+END;
+$$;
+
+
+DO
+LANGUAGE plpgsql
+$$
+DECLARE
+    x int := 3;
+    y int := 4;
+BEGIN
+    CALL test_proc6(2, x + 1, y);  -- error
+    RAISE INFO 'x = %, y = %', x, y;
+END;
+$$;
+
+
+DO
+LANGUAGE plpgsql
+$$
+DECLARE
+    x int := 3;
+    y int := 4;
+BEGIN
+    FOR i IN 1..5 LOOP
+        CALL test_proc6(i, x, y);
+        RAISE INFO 'x = %, y = %', x, y;
+    END LOOP;
+END;
+$$;
+
+
+-- recursive with output arguments
+
+CREATE PROCEDURE test_proc7(x int, INOUT a int, INOUT b numeric)
+LANGUAGE plpgsql
+AS $$
+BEGIN
+IF x > 1 THEN
+    a := x / 10;
+    b := x / 2;
+    CALL test_proc7(b::int, a, b);
+END IF;
+END;
+$$;
+
+CALL test_proc7(100, -1, -1);
+
+
+-- named parameters and defaults
+
+CREATE PROCEDURE test_proc8a(INOUT a int, INOUT b int)
+LANGUAGE plpgsql
+AS $$
+BEGIN
+  RAISE NOTICE 'a: %, b: %', a, b;
+  a := a * 10;
+  b := b + 10;
+END;
+$$;
+
+CALL test_proc8a(10, 20);
+CALL test_proc8a(b => 20, a => 10);
+
+DO $$
+DECLARE _a int; _b int;
+BEGIN
+  _a := 10; _b := 30;
+  CALL test_proc8a(_a, _b);
+  RAISE NOTICE '_a: %, _b: %', _a, _b;
+  CALL test_proc8a(b => _b, a => _a);
+  RAISE NOTICE '_a: %, _b: %', _a, _b;
+END
+$$;
+
+
+CREATE PROCEDURE test_proc8b(INOUT a int, INOUT b int, INOUT c int)
+LANGUAGE plpgsql
+AS $$
+BEGIN
+  RAISE NOTICE 'a: %, b: %, c: %', a, b, c;
+  a := a * 10;
+  b := b + 10;
+  c := c * -10;
+END;
+$$;
+
+DO $$
+DECLARE _a int; _b int; _c int;
+BEGIN
+  _a := 10; _b := 30; _c := 50;
+  CALL test_proc8b(_a, _b, _c);
+  RAISE NOTICE '_a: %, _b: %, _c: %', _a, _b, _c;
+  CALL test_proc8b(_a, c => _c, b => _b);
+  RAISE NOTICE '_a: %, _b: %, _c: %', _a, _b, _c;
+END
+$$;
+
+
+CREATE PROCEDURE test_proc8c(INOUT a int, INOUT b int, INOUT c int DEFAULT 11)
+LANGUAGE plpgsql
+AS $$
+BEGIN
+  RAISE NOTICE 'a: %, b: %, c: %', a, b, c;
+  a := a * 10;
+  b := b + 10;
+  c := c * -10;
+END;
+$$;
+
+DO $$
+DECLARE _a int; _b int; _c int;
+BEGIN
+  _a := 10; _b := 30; _c := 50;
+  CALL test_proc8c(_a, _b);
+  RAISE NOTICE '_a: %, _b: %, _c: %', _a, _b, _c;
+  _a := 10; _b := 30; _c := 50;
+  CALL test_proc8c(_a, b => _b);
+  RAISE NOTICE '_a: %, _b: %, _c: %', _a, _b, _c;
+END
+$$;
+
+
+-- transition variable assignment
+
+TRUNCATE test1;
+
+CREATE FUNCTION triggerfunc1() RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+DECLARE
+    z int := 0;
+BEGIN
+    CALL test_proc6(2, NEW.a, NEW.a);
+    RETURN NEW;
+END;
+$$;
+
+CREATE TRIGGER t1 BEFORE INSERT ON test1 EXECUTE PROCEDURE triggerfunc1();
+
+INSERT INTO test1 VALUES (1), (2), (3);
+
+UPDATE test1 SET a = 22 WHERE a = 2;
+
+SELECT * FROM test1 ORDER BY a;
+
 
 DROP PROCEDURE test_proc1;
-DROP PROCEDURE test_proc2;
 DROP PROCEDURE test_proc3;
 DROP PROCEDURE test_proc4;
 

@@ -511,7 +511,7 @@ pgbench <optional> <replaceable>options</replaceable> </optional> <replaceable>d
       <listitem>
        <para>
         Show progress report every <replaceable>sec</replaceable> seconds.  The report
-        includes the time since the beginning of the run, the tps since the
+        includes the time since the beginning of the run, the TPS since the
         last report, and the transaction latency average and standard
         deviation since the last report.  Under throttling (<option>-R</option>),
         the latency is computed with respect to the transaction scheduled
@@ -680,6 +680,43 @@ pgbench <optional> <replaceable>options</replaceable> </optional> <replaceable>d
      </varlistentry>
 
      <varlistentry>
+      <term><option>--random-seed=</option><replaceable>SEED</replaceable></term>
+      <listitem>
+       <para>
+        Set random generator seed.  Seeds the system random number generator,
+        which then produces a sequence of initial generator states, one for
+        each thread.
+        Values for <replaceable>SEED</replaceable> may be:
+        <literal>time</literal> (the default, the seed is based on the current time),
+        <literal>rand</literal> (use a strong random source, failing if none
+        is available), or an unsigned decimal integer value.
+        The random generator is invoked explicitly from a pgbench script
+        (<literal>random...</literal> functions) or implicitly (for instance option
+        <option>--rate</option> uses it to schedule transactions).
+        When explicitly set, the value used for seeding is shown on the terminal.
+        Any value allowed for <replaceable>SEED</replaceable> may also be
+        provided through the environment variable
+        <literal>PGBENCH_RANDOM_SEED</literal>.
+        To ensure that the provided seed impacts all possible uses, put this option
+        first or use the environment variable.
+      </para>
+      <para>
+        Setting the seed explicitly allows to reproduce a <command>pgbench</command>
+        run exactly, as far as random numbers are concerned.
+        As the random state is managed per thread, this means the exact same
+        <command>pgbench</command> run for an identical invocation if there is one
+        client per thread and there are no external or data dependencies.
+        From a statistical viewpoint reproducing runs exactly is a bad idea because
+        it can hide the performance variability or improve performance unduly,
+        e.g. by hitting the same pages as a previous run.
+        However, it may also be of great help for debugging, for instance
+        re-running a tricky case which leads to an error.
+        Use wisely.
+       </para>
+      </listitem>
+     </varlistentry>
+
+     <varlistentry>
       <term><option>--sampling-rate=<replaceable>rate</replaceable></option></term>
       <listitem>
        <para>
@@ -690,9 +727,9 @@ pgbench <optional> <replaceable>options</replaceable> </optional> <replaceable>d
        </para>
        <para>
         Remember to take the sampling rate into account when processing the
-        log file. For example, when computing tps values, you need to multiply
+        log file. For example, when computing TPS values, you need to multiply
         the numbers accordingly (e.g. with 0.01 sample rate, you'll only get
-        1/100 of the actual tps).
+        1/100 of the actual TPS).
        </para>
       </listitem>
      </varlistentry>
@@ -874,13 +911,23 @@ pgbench <optional> <replaceable>options</replaceable> </optional> <replaceable>d
 
      <tbody>
       <row>
-       <entry> <literal>scale</literal> </entry>
-       <entry>current scale factor</entry>
+       <entry> <literal>client_id</literal> </entry>
+       <entry>unique number identifying the client session (starts from zero)</entry>
       </row>
 
       <row>
-       <entry> <literal>client_id</literal> </entry>
-       <entry>unique number identifying the client session (starts from zero)</entry>
+       <entry> <literal>default_seed</literal> </entry>
+       <entry>seed used in hash functions by default</entry>
+      </row>
+
+      <row>
+       <entry> <literal>random_seed</literal> </entry>
+       <entry>random generator seed (unless overwritten with <option>-D</option>)</entry>
+      </row>
+
+      <row>
+       <entry> <literal>scale</literal> </entry>
+       <entry>current scale factor</entry>
       </row>
      </tbody>
     </tgroup>
@@ -895,6 +942,21 @@ pgbench <optional> <replaceable>options</replaceable> </optional> <replaceable>d
   </para>
 
   <variablelist>
+   <varlistentry>
+    <term><literal>\if</literal> <replaceable class="parameter">expression</replaceable></term>
+    <term><literal>\elif</literal> <replaceable class="parameter">expression</replaceable></term>
+    <term><literal>\else</literal></term>
+    <term><literal>\endif</literal></term>
+    <listitem>
+     <para>
+      This group of commands implements nestable conditional blocks,
+      similarly to <literal>psql</literal>'s <xref linkend="psql-metacommand-if"/>.
+      Conditional expressions are identical to those with <literal>\set</literal>,
+      with non-zero values interpreted as true.
+     </para>
+    </listitem>
+   </varlistentry>
+
    <varlistentry id='pgbench-metacommand-set'>
     <term>
      <literal>\set <replaceable>varname</replaceable> <replaceable>expression</replaceable></literal>
@@ -905,7 +967,7 @@ pgbench <optional> <replaceable>options</replaceable> </optional> <replaceable>d
       Sets variable <replaceable>varname</replaceable> to a value calculated
       from <replaceable>expression</replaceable>.
       The expression may contain the <literal>NULL</literal> constant,
-      boolean constants <literal>TRUE</literal> and <literal>FALSE</literal>,
+      Boolean constants <literal>TRUE</literal> and <literal>FALSE</literal>,
       integer constants such as <literal>5432</literal>,
       double constants such as <literal>3.14159</literal>,
       references to variables <literal>:</literal><replaceable>variablename</replaceable>,
@@ -1153,7 +1215,7 @@ pgbench <optional> <replaceable>options</replaceable> </optional> <replaceable>d
      </row>
      <row>
       <entry><literal>-</literal></entry>
-      <entry>substraction</entry>
+      <entry>subtraction</entry>
       <entry><literal>3 - 2.0</literal></entry>
       <entry><literal>1.0</literal></entry>
      </row>
@@ -1246,6 +1308,27 @@ pgbench <optional> <replaceable>options</replaceable> </optional> <replaceable>d
        <entry><literal>5</literal></entry>
       </row>
       <row>
+       <entry><literal><function>hash(<replaceable>a</replaceable> [, <replaceable>seed</replaceable> ] )</function></literal></entry>
+       <entry>integer</entry>
+       <entry>alias for <literal>hash_murmur2()</literal></entry>
+       <entry><literal>hash(10, 5432)</literal></entry>
+       <entry><literal>-5817877081768721676</literal></entry>
+      </row>
+      <row>
+       <entry><literal><function>hash_fnv1a(<replaceable>a</replaceable> [, <replaceable>seed</replaceable> ] )</function></literal></entry>
+       <entry>integer</entry>
+       <entry><ulink url="https://en.wikipedia.org/wiki/Fowler%E2%80%93Noll%E2%80%93Vo_hash_function">FNV-1a hash</ulink></entry>
+       <entry><literal>hash_fnv1a(10, 5432)</literal></entry>
+       <entry><literal>-7793829335365542153</literal></entry>
+      </row>
+      <row>
+       <entry><literal><function>hash_murmur2(<replaceable>a</replaceable> [, <replaceable>seed</replaceable> ] )</function></literal></entry>
+       <entry>integer</entry>
+       <entry><ulink url="https://en.wikipedia.org/wiki/MurmurHash">MurmurHash2 hash</ulink></entry>
+       <entry><literal>hash_murmur2(10, 5432)</literal></entry>
+       <entry><literal>-5817877081768721676</literal></entry>
+      </row>
+      <row>
        <entry><literal><function>int(<replaceable>x</replaceable>)</function></literal></entry>
        <entry>integer</entry>
        <entry>cast to int</entry>
@@ -1267,7 +1350,7 @@ pgbench <optional> <replaceable>options</replaceable> </optional> <replaceable>d
        <entry><literal>1.0</literal></entry>
       </row>
       <row>
-       <entry><literal><function>mod(<replaceable>i</replaceable>, <replaceable>bj</replaceable>)</function></literal></entry>
+       <entry><literal><function>mod(<replaceable>i</replaceable>, <replaceable>j</replaceable>)</function></literal></entry>
        <entry>integer</entry>
        <entry>modulo</entry>
        <entry><literal>mod(54, 32)</literal></entry>
@@ -1332,9 +1415,10 @@ pgbench <optional> <replaceable>options</replaceable> </optional> <replaceable>d
    <para>
     The <literal>random</literal> function generates values using a uniform
     distribution, that is all the values are drawn within the specified
-    range with equal probability. The <literal>random_exponential</literal> and
-    <literal>random_gaussian</literal> functions require an additional double
-    parameter which determines the precise shape of the distribution.
+    range with equal probability. The <literal>random_exponential</literal>,
+    <literal>random_gaussian</literal> and <literal>random_zipfian</literal>
+    functions require an additional double parameter which determines the precise
+    shape of the distribution.
    </para>
 
    <itemizedlist>
@@ -1401,7 +1485,7 @@ f(x) = PHI(2.0 * parameter * (x - mu) / (max - min + 1)) /
     </listitem>
     <listitem>
      <para>
-      <literal>random_zipfian</literal> generates an approximated bounded zipfian
+      <literal>random_zipfian</literal> generates an approximated bounded Zipfian
       distribution. For <replaceable>parameter</replaceable> in (0, 1), an
       approximated algorithm is taken from
       "Quickly Generating Billion-Record Synthetic Databases",
@@ -1421,6 +1505,31 @@ f(x) = PHI(2.0 * parameter * (x - mu) / (max - min + 1)) /
      </para>
     </listitem>
    </itemizedlist>
+
+  <para>
+    Hash functions <literal>hash</literal>, <literal>hash_murmur2</literal> and
+    <literal>hash_fnv1a</literal> accept an input value and an optional seed parameter.
+    In case the seed isn't provided the value of <literal>:default_seed</literal>
+    is used, which is initialized randomly unless set by the command-line
+    <literal>-D</literal> option. Hash functions can be used to scatter the
+    distribution of random functions such as <literal>random_zipfian</literal> or
+    <literal>random_exponential</literal>. For instance, the following pgbench
+    script simulates possible real world workload typical for social media and
+    blogging platforms where few accounts generate excessive load:
+
+<programlisting>
+\set r random_zipfian(0, 100000000, 1.07)
+\set k abs(hash(:r)) % 1000000
+</programlisting>
+
+    In some cases several distinct distributions are needed which don't correlate
+    with each other and this is when implicit seed parameter comes in handy:
+
+<programlisting>
+\set k1 abs(hash(:r, :default_seed + 123)) % 1000000
+\set k2 abs(hash(:r, :default_seed + 321)) % 1000000
+</programlisting>
+  </para>
 
   <para>
    As an example, the full definition of the built-in TPC-B-like
@@ -1686,6 +1795,17 @@ statement latencies in milliseconds:
    essential.  It might even be useful to run several <application>pgbench</application>
    instances concurrently, on several client machines, against the same
    database server.
+  </para>
+ </refsect2>
+ <refsect2>
+  <title>Security</title>
+
+  <para>
+    If untrusted users have access to a database that has not adopted a
+    <link linkend="ddl-schemas-patterns">secure schema usage pattern</link>,
+    do not run <application>pgbench</application> in that
+    database.  <application>pgbench</application> uses unqualified names and
+    does not manipulate the search path.
   </para>
  </refsect2>
  </refsect1>

@@ -275,6 +275,7 @@ typedef struct ExprEvalStep
 		{
 			/* attribute number up to which to fetch (inclusive) */
 			int			last_var;
+			TupleDesc	known_desc;
 		}			fetch;
 
 		/* for EEOP_INNER/OUTER/SCAN_[SYS]VAR[_FIRST] */
@@ -773,6 +774,10 @@ extern void CheckExprStillValid(ExprState *state, ExprContext *econtext);
  * execExprInterp.c, because that allows them to be used by other methods of
  * expression evaluation, reducing code duplication.
  */
+extern void ExecEvalFuncExprFusage(ExprState *state, ExprEvalStep *op,
+					   ExprContext *econtext);
+extern void ExecEvalFuncExprStrictFusage(ExprState *state, ExprEvalStep *op,
+							 ExprContext *econtext);
 extern void ExecEvalParamExec(ExprState *state, ExprEvalStep *op,
 				  ExprContext *econtext);
 extern void ExecEvalParamExecParams(Bitmapset *params, EState *estate);

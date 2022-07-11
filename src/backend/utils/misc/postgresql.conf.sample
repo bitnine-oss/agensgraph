@@ -104,6 +104,8 @@
 #ssl_prefer_server_ciphers = on
 #ssl_ecdh_curve = 'prime256v1'
 #ssl_dh_params_file = ''
+#ssl_passphrase_command = ''
+#ssl_passphrase_command_supports_reload = off
 
 
 #------------------------------------------------------------------------------
@@ -140,7 +142,7 @@
 #temp_file_limit = -1			# limits per-process temp file space
 					# in kB, or -1 for no limit
 
-# - Kernel Resource -
+# - Kernel Resources -
 
 #max_files_per_process = 1000		# min 25
 					# (change requires restart)
@@ -305,7 +307,9 @@
 #enable_sort = on
 #enable_tidscan = on
 #enable_partitionwise_join = off
+#enable_partitionwise_aggregate = off
 #enable_parallel_hash = on
+#enable_partition_pruning = on
 #enable_eager = off
 
 # - Planner Cost Constants -
@@ -317,6 +321,15 @@
 #cpu_operator_cost = 0.0025		# same scale as above
 #parallel_tuple_cost = 0.1		# same scale as above
 #parallel_setup_cost = 1000.0	# same scale as above
+
+#jit_above_cost = 100000		# perform JIT compilation if available
+					# and query more expensive, -1 disables
+#jit_optimize_above_cost = 500000	# optimize JITed functions if query is
+					# more expensive, -1 disables
+#jit_inline_above_cost = 500000		# attempt to inline operators and
+					# functions if query is more expensive,
+					# -1 disables
+
 #min_parallel_table_scan_size = 8MB
 #min_parallel_index_scan_size = 512kB
 #effective_cache_size = 4GB
@@ -564,6 +577,9 @@
 #vacuum_freeze_table_age = 150000000
 #vacuum_multixact_freeze_min_age = 5000000
 #vacuum_multixact_freeze_table_age = 150000000
+#vacuum_cleanup_index_scale_factor = 0.1	# fraction of total number of tuples
+						# before index cleanup, 0 always performs
+						# index cleanup
 #bytea_output = 'hex'			# hex, escape
 #xmlbinary = 'base64'
 #xmloption = 'content'
@@ -606,6 +622,8 @@
 
 #dynamic_library_path = '$libdir'
 
+#jit = on				# allow JIT compilation
+#jit_provider = 'llvmjit'		# JIT implementation to use
 
 #------------------------------------------------------------------------------
 # LOCK MANAGEMENT

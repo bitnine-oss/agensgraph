@@ -71,6 +71,7 @@ sub master_psql
 
 	system_or_bail 'psql', '-q', '--no-psqlrc', '-d',
 	  $node_master->connstr('postgres'), '-c', "$cmd";
+	return;
 }
 
 sub standby_psql
@@ -79,6 +80,7 @@ sub standby_psql
 
 	system_or_bail 'psql', '-q', '--no-psqlrc', '-d',
 	  $node_standby->connstr('postgres'), '-c', "$cmd";
+	return;
 }
 
 # Run a query against the master, and check that the output matches what's
@@ -92,7 +94,8 @@ sub check_query
 	my $result = run [
 		'psql', '-q', '-A', '-t', '--no-psqlrc', '-d',
 		$node_master->connstr('postgres'),
-		'-c', $query ],
+		'-c', $query
+	  ],
 	  '>', \$stdout, '2>', \$stderr;
 
 	# We don't use ok() for the exit code and stderr, because we want this
@@ -111,20 +114,26 @@ sub check_query
 		$stdout =~ s/\r//g if $Config{osname} eq 'msys';
 		is($stdout, $expected_stdout, "$test_name: query result matches");
 	}
+	return;
 }
 
 sub setup_cluster
 {
-	my $extra_name = shift;
+	my $extra_name = shift;    # Used to differentiate clusters
+	my $extra      = shift;    # Extra params for initdb
 
 	# Initialize master, data checksums are mandatory
-	$node_master = get_new_node('master' . ($extra_name ? "_${extra_name}" : ''));
-	$node_master->init(allows_streaming => 1);
+	$node_master =
+	  get_new_node('master' . ($extra_name ? "_${extra_name}" : ''));
+	$node_master->init(allows_streaming => 1, extra => $extra);
+
 	# Set wal_keep_segments to prevent WAL segment recycling after enforced
 	# checkpoints in the tests.
-	$node_master->append_conf('postgresql.conf', qq(
+	$node_master->append_conf(
+		'postgresql.conf', qq(
 wal_keep_segments = 20
 ));
+	return;
 }
 
 sub start_master
@@ -133,13 +142,16 @@ sub start_master
 
 	#### Now run the test-specific parts to initialize the master before setting
 	# up standby
+
+	return;
 }
 
 sub create_standby
 {
 	my $extra_name = shift;
 
-	$node_standby = get_new_node('standby' . ($extra_name ? "_${extra_name}" : ''));
+	$node_standby =
+	  get_new_node('standby' . ($extra_name ? "_${extra_name}" : ''));
 	$node_master->backup('my_backup');
 	$node_standby->init_from_backup($node_master, 'my_backup');
 	my $connstr_master = $node_master->connstr();
@@ -156,6 +168,8 @@ recovery_target_timeline='latest'
 
 	# The standby may have WAL to apply before it matches the primary.  That
 	# is fine, because no test examines the standby before promotion.
+
+	return;
 }
 
 sub promote_standby
@@ -177,6 +191,8 @@ sub promote_standby
 	# after promotion so quickly that when pg_rewind runs, the standby has not
 	# performed a checkpoint after promotion yet.
 	standby_psql("checkpoint");
+
+	return;
 }
 
 sub run_pg_rewind
@@ -209,10 +225,12 @@ sub run_pg_rewind
 		# Stop the master and be ready to perform the rewind
 		$node_standby->stop;
 		command_ok(
-			[   'pg_rewind',
+			[
+				'pg_rewind',
 				"--debug",
 				"--source-pgdata=$standby_pgdata",
-				"--target-pgdata=$master_pgdata" ],
+				"--target-pgdata=$master_pgdata"
+			],
 			'pg_rewind local');
 	}
 	elsif ($test_mode eq "remote")
@@ -220,9 +238,11 @@ sub run_pg_rewind
 
 		# Do rewind using a remote connection as source
 		command_ok(
-			[   'pg_rewind',       "--debug",
+			[
+				'pg_rewind',       "--debug",
 				"--source-server", $standby_connstr,
-				"--target-pgdata=$master_pgdata" ],
+				"--target-pgdata=$master_pgdata"
+			],
 			'pg_rewind remote');
 	}
 	else
@@ -237,6 +257,12 @@ sub run_pg_rewind
 		"$tmp_folder/master-postgresql.conf.tmp",
 		"$master_pgdata/postgresql.conf");
 
+	chmod(
+		$node_master->group_access() ? 0640 : 0600,
+		"$master_pgdata/postgresql.conf")
+	  or BAIL_OUT(
+		"unable to set permissions for $master_pgdata/postgresql.conf");
+
 	# Plug-in rewound node to the now-promoted standby node
 	my $port_standby = $node_standby->port;
 	$node_master->append_conf(
@@ -250,6 +276,8 @@ recovery_target_timeline='latest'
 	$node_master->start;
 
 	#### Now run the test-specific parts to check the result
+
+	return;
 }
 
 # Clean up after the test. Stop both servers, if they're still running.
@@ -257,6 +285,7 @@ sub clean_rewind_test
 {
 	$node_master->teardown_node  if defined $node_master;
 	$node_standby->teardown_node if defined $node_standby;
+	return;
 }
 
 1;

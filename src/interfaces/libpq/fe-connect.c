@@ -266,7 +266,7 @@ static const internalPQconninfoOption PQconninfoOptions[] = {
 
 	{"scram_channel_binding", NULL, DefaultSCRAMChannelBinding, NULL,
 		"SCRAM-Channel-Binding", "D",
-		21,	/* sizeof("tls-server-end-point") == 21 */
+		21,						/* sizeof("tls-server-end-point") == 21 */
 	offsetof(struct pg_conn, scram_channel_binding)},
 
 	/*
@@ -279,7 +279,7 @@ static const internalPQconninfoOption PQconninfoOptions[] = {
 		"SSL-Mode", "", 12,		/* sizeof("verify-full") == 12 */
 	offsetof(struct pg_conn, sslmode)},
 
-	{"sslcompression", "PGSSLCOMPRESSION", "1", NULL,
+	{"sslcompression", "PGSSLCOMPRESSION", "0", NULL,
 		"SSL-Compression", "", 1,
 	offsetof(struct pg_conn, sslcompression)},
 
@@ -6017,19 +6017,18 @@ PQhost(const PGconn *conn)
 {
 	if (!conn)
 		return NULL;
-	if (conn->connhost != NULL &&
-		conn->connhost[conn->whichhost].type != CHT_HOST_ADDRESS)
-		return conn->connhost[conn->whichhost].host;
-	else if (conn->pghost != NULL && conn->pghost[0] != '\0')
-		return conn->pghost;
-	else
+
+	if (conn->connhost != NULL)
 	{
-#ifdef HAVE_UNIX_SOCKETS
-		return DEFAULT_PGSOCKET_DIR;
-#else
-		return DefaultHost;
-#endif
+		if (conn->connhost[conn->whichhost].host != NULL &&
+			conn->connhost[conn->whichhost].host[0] != '\0')
+			return conn->connhost[conn->whichhost].host;
+		else if (conn->connhost[conn->whichhost].hostaddr != NULL &&
+				 conn->connhost[conn->whichhost].hostaddr[0] != '\0')
+			return conn->connhost[conn->whichhost].hostaddr;
 	}
+
+	return "";
 }
 
 char *
@@ -6037,9 +6036,11 @@ PQport(const PGconn *conn)
 {
 	if (!conn)
 		return NULL;
+
 	if (conn->connhost != NULL)
 		return conn->connhost[conn->whichhost].port;
-	return conn->pgport;
+
+	return "";
 }
 
 char *

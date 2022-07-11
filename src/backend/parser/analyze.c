@@ -82,7 +82,7 @@ static Query *transformExplainStmt(ParseState *pstate,
 static Query *transformCreateTableAsStmt(ParseState *pstate,
 						   CreateTableAsStmt *stmt);
 static Query *transformCallStmt(ParseState *pstate,
-					 CallStmt *stmt);
+				  CallStmt *stmt);
 static void transformLockingClause(ParseState *pstate, Query *qry,
 					   LockingClause *lc, bool pushedDown);
 #ifdef RAW_EXPRESSION_COVERAGE_TEST
@@ -344,6 +344,7 @@ transformStmt(ParseState *pstate, Node *parseTree)
 		case T_CallStmt:
 			result = transformCallStmt(pstate,
 									   (CallStmt *) parseTree);
+			break;
 
 		default:
 
@@ -1054,13 +1055,6 @@ transformOnConflictClause(ParseState *pstate,
 		TargetEntry *te;
 		int			attno;
 
-		if (targetrel->rd_partdesc)
-			ereport(ERROR,
-					(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-					 errmsg("%s cannot be applied to partitioned table \"%s\"",
-							"ON CONFLICT DO UPDATE",
-							RelationGetRelationName(targetrel))));
-
 		/*
 		 * All INSERT expressions have been parsed, get ready for potentially
 		 * existing SET statements that need to be processed like an UPDATE.
@@ -1084,7 +1078,7 @@ transformOnConflictClause(ParseState *pstate,
 		 * relation.  Have to be careful to use resnos that correspond to
 		 * attnos of the underlying relation.
 		 */
-		for (attno = 0; attno < targetrel->rd_rel->relnatts; attno++)
+		for (attno = 0; attno < RelationGetNumberOfAttributes(targetrel); attno++)
 		{
 			Form_pg_attribute attr = TupleDescAttr(targetrel->rd_att, attno);
 			char	   *name;
@@ -2316,8 +2310,8 @@ transformUpdateTargetList(ParseState *pstate, List *origTlist)
 								EXPR_KIND_UPDATE_SOURCE);
 
 	/* Prepare to assign non-conflicting resnos to resjunk attributes */
-	if (pstate->p_next_resno <= pstate->p_target_relation->rd_rel->relnatts)
-		pstate->p_next_resno = pstate->p_target_relation->rd_rel->relnatts + 1;
+	if (pstate->p_next_resno <= RelationGetNumberOfAttributes(pstate->p_target_relation))
+		pstate->p_next_resno = RelationGetNumberOfAttributes(pstate->p_target_relation) + 1;
 
 	/* Prepare non-junk columns for assignment to target table */
 	target_rte = pstate->p_target_rangetblentry;

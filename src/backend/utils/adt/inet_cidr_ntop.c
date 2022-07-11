@@ -14,7 +14,7 @@
  * ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT
  * OF OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  *
- *	  src/backend/utils/adt/inet_net_ntop.c
+ *	  src/backend/utils/adt/inet_cidr_ntop.c
  */
 
 #if defined(LIBC_SCCS) && !defined(lint)
@@ -202,7 +202,7 @@ inet_cidr_ntop_ipv6(const u_char *src, int bits, char *dst, size_t size)
 		b = bits % 8;
 		if (b != 0)
 		{
-			m = ~0 << (8 - b);
+			m = ((u_int) ~0) << (8 - b);
 			inbuf[p - 1] &= m;
 		}
 

@@ -1303,7 +1303,7 @@ NIImportOOAffixes(IspellDict *Conf, const char *filename)
 			{
 				Conf->useFlagAliases = true;
 				naffix = atoi(sflag);
-				if (naffix == 0)
+				if (naffix <= 0)
 					ereport(ERROR,
 							(errcode(ERRCODE_CONFIG_FILE_ERROR),
 							 errmsg("invalid number of flag vector aliases")));
@@ -1318,7 +1318,7 @@ NIImportOOAffixes(IspellDict *Conf, const char *filename)
 				Conf->AffixData[curaffix] = VoidString;
 				curaffix++;
 			}
-			/* Other lines is aliases */
+			/* Other lines are aliases */
 			else
 			{
 				if (curaffix < naffix)
@@ -1326,6 +1326,11 @@ NIImportOOAffixes(IspellDict *Conf, const char *filename)
 					Conf->AffixData[curaffix] = cpstrdup(Conf, sflag);
 					curaffix++;
 				}
+				else
+					ereport(ERROR,
+							(errcode(ERRCODE_CONFIG_FILE_ERROR),
+							 errmsg("number of aliases exceeds specified number %d",
+									naffix - 1)));
 			}
 			goto nextline;
 		}
@@ -1963,8 +1968,10 @@ NISortAffixes(IspellDict *Conf)
 		if ((Affix->flagflags & FF_COMPOUNDFLAG) && Affix->replen > 0 &&
 			isAffixInUse(Conf, Affix->flag))
 		{
+			bool		issuffix = (Affix->type == FF_SUFFIX);
+
 			if (ptr == Conf->CompoundAffix ||
-				ptr->issuffix != (ptr - 1)->issuffix ||
+				issuffix != (ptr - 1)->issuffix ||
 				strbncmp((const unsigned char *) (ptr - 1)->affix,
 						 (const unsigned char *) Affix->repl,
 						 (ptr - 1)->len))
@@ -1972,7 +1979,7 @@ NISortAffixes(IspellDict *Conf)
 				/* leave only unique and minimals suffixes */
 				ptr->affix = Affix->repl;
 				ptr->len = Affix->replen;
-				ptr->issuffix = (Affix->type == FF_SUFFIX);
+				ptr->issuffix = issuffix;
 				ptr++;
 			}
 		}

@@ -902,9 +902,12 @@ inet_merge(PG_FUNCTION_ARGS)
  * Convert a value of a network datatype to an approximate scalar value.
  * This is used for estimating selectivities of inequality operators
  * involving network types.
+ *
+ * On failure (e.g., unsupported typid), set *failure to true;
+ * otherwise, that variable is not changed.
  */
 double
-convert_network_to_scalar(Datum value, Oid typid)
+convert_network_to_scalar(Datum value, Oid typid, bool *failure)
 {
 	switch (typid)
 	{
@@ -931,8 +934,6 @@ convert_network_to_scalar(Datum value, Oid typid)
 					res += ip_addr(ip)[i];
 				}
 				return res;
-
-				break;
 			}
 		case MACADDROID:
 			{
@@ -956,11 +957,7 @@ convert_network_to_scalar(Datum value, Oid typid)
 			}
 	}
 
-	/*
-	 * Can't get here unless someone tries to use scalarineqsel() on an
-	 * operator with one network and one non-network operand.
-	 */
-	elog(ERROR, "unsupported type: %u", typid);
+	*failure = true;
 	return 0;
 }
 
@@ -1489,7 +1486,7 @@ inetmi(PG_FUNCTION_ARGS)
 		 * have to do proper sign extension.
 		 */
 		if (carry == 0 && byte < sizeof(int64))
-			res |= ((int64) -1) << (byte * 8);
+			res |= ((uint64) (int64) -1) << (byte * 8);
 	}
 
 	PG_RETURN_INT64(res);

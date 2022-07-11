@@ -14,15 +14,6 @@
  * its parent level.  When we have only one page on a level, it must be
  * the root -- it can be attached to the btree metapage and we are done.
  *
- * This code is moderately slow (~10% slower) compared to the regular
- * btree (insertion) build code on sorted or well-clustered data.  On
- * random data, however, the insertion build code is unusable -- the
- * difference on a 60MB heap is a factor of 15 because the random
- * probes into the btree thrash the buffer pool.  (NOTE: the above
- * "10%" estimate is probably obsolete, since it refers to an old and
- * not very good external sort implementation that used to exist in
- * this module.  tuplesort.c is almost certainly faster.)
- *
  * It is not wise to pack the pages entirely full, since then *any*
  * insertion would cause a split (and not only of the leaf page; the need
  * for a split would cascade right up the tree).  The steady-state load
@@ -86,6 +77,7 @@
 #define PARALLEL_KEY_BTREE_SHARED		UINT64CONST(0xA000000000000001)
 #define PARALLEL_KEY_TUPLESORT			UINT64CONST(0xA000000000000002)
 #define PARALLEL_KEY_TUPLESORT_SPOOL2	UINT64CONST(0xA000000000000003)
+#define PARALLEL_KEY_QUERY_TEXT			UINT64CONST(0xA000000000000004)
 
 /*
  * DISABLE_LEADER_PARTICIPATION disables the leader's participation in
@@ -751,6 +743,7 @@ _bt_sortaddtup(Page page,
 	{
 		trunctuple = *itup;
 		trunctuple.t_info = sizeof(IndexTupleData);
+		BTreeTupleSetNAtts(&trunctuple, 0);
 		itup = &trunctuple;
 		itemsize = sizeof(IndexTupleData);
 	}
@@ -788,7 +781,9 @@ _bt_sortaddtup(Page page,
  * placeholder for the pointer to the "high key" item; when we have
  * filled up the page, we will set linp0 to point to itemN and clear
  * linpN.  On the other hand, if we find this is the last (rightmost)
- * page, we leave the items alone and slide the linp array over.
+ * page, we leave the items alone and slide the linp array over.  If
+ * the high key is to be truncated, offset 1 is deleted, and we insert
+ * the truncated high key at offset 1.
  *
  * 'last' pointer indicates the last offset added to the page.
  *----------
@@ -801,6 +796,8 @@ _bt_buildadd(BTWriteState *wstate, BTPageState *state, IndexTuple itup)
 	OffsetNumber last_off;
 	Size		pgspc;
 	Size		itupsz;
+	int			indnatts = IndexRelationGetNumberOfAttributes(wstate->index);
+	int			indnkeyatts = IndexRelationGetNumberOfKeyAttributes(wstate->index);
 
 	/*
 	 * This is a handy place to check for cancel interrupts during the btree
@@ -813,7 +810,7 @@ _bt_buildadd(BTWriteState *wstate, BTPageState *state, IndexTuple itup)
 	last_off = state->btps_lastoff;
 
 	pgspc = PageGetFreeSpace(npage);
-	itupsz = IndexTupleDSize(*itup);
+	itupsz = IndexTupleSize(itup);
 	itupsz = MAXALIGN(itupsz);
 
 	/*
@@ -855,6 +852,7 @@ _bt_buildadd(BTWriteState *wstate, BTPageState *state, IndexTuple itup)
 		ItemId		ii;
 		ItemId		hii;
 		IndexTuple	oitup;
+		BTPageOpaque opageop = (BTPageOpaque) PageGetSpecialPointer(opage);
 
 		/* Create new page of same level */
 		npage = _bt_blnewpage(state->btps_level);
@@ -882,6 +880,42 @@ _bt_buildadd(BTWriteState *wstate, BTPageState *state, IndexTuple itup)
 		ItemIdSetUnused(ii);	/* redundant */
 		((PageHeader) opage)->pd_lower -= sizeof(ItemIdData);
 
+		if (indnkeyatts != indnatts && P_ISLEAF(opageop))
+		{
+			IndexTuple	truncated;
+			Size		truncsz;
+
+			/*
+			 * Truncate any non-key attributes from high key on leaf level
+			 * (i.e. truncate on leaf level if we're building an INCLUDE
+			 * index).  This is only done at the leaf level because downlinks
+			 * in internal pages are either negative infinity items, or get
+			 * their contents from copying from one level down.  See also:
+			 * _bt_split().
+			 *
+			 * Since the truncated tuple is probably smaller than the
+			 * original, it cannot just be copied in place (besides, we want
+			 * to actually save space on the leaf page).  We delete the
+			 * original high key, and add our own truncated high key at the
+			 * same offset.
+			 *
+			 * Note that the page layout won't be changed very much.  oitup is
+			 * already located at the physical beginning of tuple space, so we
+			 * only shift the line pointer array back and forth, and overwrite
+			 * the latter portion of the space occupied by the original tuple.
+			 * This is fairly cheap.
+			 */
+			truncated = _bt_nonkey_truncate(wstate->index, oitup);
+			truncsz = IndexTupleSize(truncated);
+			PageIndexTupleDelete(opage, P_HIKEY);
+			_bt_sortaddtup(opage, truncsz, truncated, P_HIKEY);
+			pfree(truncated);
+
+			/* oitup should continue to point to the page's high key */
+			hii = PageGetItemId(opage, P_HIKEY);
+			oitup = (IndexTuple) PageGetItem(opage, hii);
+		}
+
 		/*
 		 * Link the old page into its parent, using its minimum key. If we
 		 * don't have a parent, we have to create one; this adds a new btree
@@ -890,8 +924,12 @@ _bt_buildadd(BTWriteState *wstate, BTPageState *state, IndexTuple itup)
 		if (state->btps_next == NULL)
 			state->btps_next = _bt_pagestate(wstate, state->btps_level + 1);
 
-		Assert(state->btps_minkey != NULL);
-		ItemPointerSet(&(state->btps_minkey->t_tid), oblkno, P_HIKEY);
+		Assert(BTreeTupleGetNAtts(state->btps_minkey, wstate->index) ==
+			   IndexRelationGetNumberOfKeyAttributes(wstate->index) ||
+			   P_LEFTMOST(opageop));
+		Assert(BTreeTupleGetNAtts(state->btps_minkey, wstate->index) == 0 ||
+			   !P_LEFTMOST(opageop));
+		BTreeInnerTupleSetDownLink(state->btps_minkey, oblkno);
 		_bt_buildadd(wstate, state->btps_next, state->btps_minkey);
 		pfree(state->btps_minkey);
 
@@ -930,12 +968,16 @@ _bt_buildadd(BTWriteState *wstate, BTPageState *state, IndexTuple itup)
 	 * If the new item is the first for its page, stash a copy for later. Note
 	 * this will only happen for the first item on a level; on later pages,
 	 * the first item for a page is copied from the prior page in the code
-	 * above.
+	 * above.  Since the minimum key for an entire level is only used as a
+	 * minus infinity downlink, and never as a high key, there is no need to
+	 * truncate away non-key attributes at this point.
 	 */
 	if (last_off == P_HIKEY)
 	{
 		Assert(state->btps_minkey == NULL);
 		state->btps_minkey = CopyIndexTuple(itup);
+		/* _bt_sortaddtup() will perform full truncation later */
+		BTreeTupleSetNAtts(state->btps_minkey, 0);
 	}
 
 	/*
@@ -987,8 +1029,12 @@ _bt_uppershutdown(BTWriteState *wstate, BTPageState *state)
 		}
 		else
 		{
-			Assert(s->btps_minkey != NULL);
-			ItemPointerSet(&(s->btps_minkey->t_tid), blkno, P_HIKEY);
+			Assert(BTreeTupleGetNAtts(s->btps_minkey, wstate->index) ==
+				   IndexRelationGetNumberOfKeyAttributes(wstate->index) ||
+				   P_LEFTMOST(opaque));
+			Assert(BTreeTupleGetNAtts(s->btps_minkey, wstate->index) == 0 ||
+				   !P_LEFTMOST(opaque));
+			BTreeInnerTupleSetDownLink(s->btps_minkey, blkno);
 			_bt_buildadd(wstate, s->btps_next, s->btps_minkey);
 			pfree(s->btps_minkey);
 			s->btps_minkey = NULL;
@@ -1028,7 +1074,7 @@ _bt_load(BTWriteState *wstate, BTSpool *btspool, BTSpool *btspool2)
 	bool		load1;
 	TupleDesc	tupdes = RelationGetDescr(wstate->index);
 	int			i,
-				keysz = RelationGetNumberOfAttributes(wstate->index);
+				keysz = IndexRelationGetNumberOfKeyAttributes(wstate->index);
 	ScanKey		indexScanKey = NULL;
 	SortSupport sortKeys;
 
@@ -1195,6 +1241,8 @@ _bt_begin_parallel(BTBuildState *buildstate, bool isconcurrent, int request)
 	BTSpool    *btspool = buildstate->spool;
 	BTLeader   *btleader = (BTLeader *) palloc0(sizeof(BTLeader));
 	bool		leaderparticipates = true;
+	char	   *sharedquery;
+	int			querylen;
 
 #ifdef DISABLE_LEADER_PARTICIPATION
 	leaderparticipates = false;
@@ -1223,9 +1271,8 @@ _bt_begin_parallel(BTBuildState *buildstate, bool isconcurrent, int request)
 		snapshot = RegisterSnapshot(GetTransactionSnapshot());
 
 	/*
-	 * Estimate size for at least two keys -- our own
-	 * PARALLEL_KEY_BTREE_SHARED workspace, and PARALLEL_KEY_TUPLESORT
-	 * tuplesort workspace
+	 * Estimate size for our own PARALLEL_KEY_BTREE_SHARED workspace, and
+	 * PARALLEL_KEY_TUPLESORT tuplesort workspace
 	 */
 	estbtshared = _bt_parallel_estimate_shared(snapshot);
 	shm_toc_estimate_chunk(&pcxt->estimator, estbtshared);
@@ -1234,7 +1281,7 @@ _bt_begin_parallel(BTBuildState *buildstate, bool isconcurrent, int request)
 
 	/*
 	 * Unique case requires a second spool, and so we may have to account for
-	 * a third shared workspace -- PARALLEL_KEY_TUPLESORT_SPOOL2
+	 * another shared workspace for that -- PARALLEL_KEY_TUPLESORT_SPOOL2
 	 */
 	if (!btspool->isunique)
 		shm_toc_estimate_keys(&pcxt->estimator, 2);
@@ -1243,6 +1290,11 @@ _bt_begin_parallel(BTBuildState *buildstate, bool isconcurrent, int request)
 		shm_toc_estimate_chunk(&pcxt->estimator, estsort);
 		shm_toc_estimate_keys(&pcxt->estimator, 3);
 	}
+
+	/* Finally, estimate PARALLEL_KEY_QUERY_TEXT space */
+	querylen = strlen(debug_query_string);
+	shm_toc_estimate_chunk(&pcxt->estimator, querylen + 1);
+	shm_toc_estimate_keys(&pcxt->estimator, 1);
 
 	/* Everyone's had a chance to ask for space, so now create the DSM */
 	InitializeParallelDSM(pcxt);
@@ -1292,6 +1344,11 @@ _bt_begin_parallel(BTBuildState *buildstate, bool isconcurrent, int request)
 
 		shm_toc_insert(pcxt->toc, PARALLEL_KEY_TUPLESORT_SPOOL2, sharedsort2);
 	}
+
+	/* Store query string for workers */
+	sharedquery = (char *) shm_toc_allocate(pcxt->toc, querylen + 1);
+	memcpy(sharedquery, debug_query_string, querylen + 1);
+	shm_toc_insert(pcxt->toc, PARALLEL_KEY_QUERY_TEXT, sharedquery);
 
 	/* Launch workers, saving status for leader/caller */
 	LaunchParallelWorkers(pcxt);
@@ -1459,6 +1516,7 @@ _bt_leader_participate_as_worker(BTBuildState *buildstate)
 void
 _bt_parallel_build_main(dsm_segment *seg, shm_toc *toc)
 {
+	char	   *sharedquery;
 	BTSpool    *btspool;
 	BTSpool    *btspool2;
 	BTShared   *btshared;
@@ -1475,7 +1533,14 @@ _bt_parallel_build_main(dsm_segment *seg, shm_toc *toc)
 		ResetUsage();
 #endif							/* BTREE_BUILD_STATS */
 
-	/* Look up shared state */
+	/* Set debug_query_string for individual workers first */
+	sharedquery = shm_toc_lookup(toc, PARALLEL_KEY_QUERY_TEXT, false);
+	debug_query_string = sharedquery;
+
+	/* Report the query string from leader */
+	pgstat_report_activity(STATE_RUNNING, debug_query_string);
+
+	/* Look up nbtree shared state */
 	btshared = shm_toc_lookup(toc, PARALLEL_KEY_BTREE_SHARED, false);
 
 	/* Open relations using lock modes known to be obtained by index.c */

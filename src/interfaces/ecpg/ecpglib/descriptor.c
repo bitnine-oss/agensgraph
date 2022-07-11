@@ -5,7 +5,8 @@
 
 #define POSTGRES_ECPG_INTERNAL
 #include "postgres_fe.h"
-#include "pg_type.h"
+
+#include "catalog/pg_type_d.h"
 
 #include "ecpg-pthread-win32.h"
 #include "ecpgtype.h"
@@ -217,7 +218,7 @@ get_char_item(int lineno, void *var, enum ECPGttype vartype, char *value, int va
 				(struct ECPGgeneric_varchar *) var;
 
 				if (varcharsize == 0)
-					strncpy(variable->arr, value, strlen(value));
+					memcpy(variable->arr, value, strlen(value));
 				else
 					strncpy(variable->arr, value, varcharsize);
 

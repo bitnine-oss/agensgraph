@@ -4,75 +4,75 @@
 
 -- Clean up in case a prior regression run failed
 SET client_min_messages TO 'warning';
-DROP ROLE IF EXISTS regress_alter_user1;
+DROP ROLE IF EXISTS regress_alter_table_user1;
 RESET client_min_messages;
 
-CREATE USER regress_alter_user1;
+CREATE USER regress_alter_table_user1;
 
 --
 -- add attribute
 --
 
-CREATE TABLE tmp (initial int4);
+CREATE TABLE attmp (initial int4);
 
-COMMENT ON TABLE tmp_wrong IS 'table comment';
-COMMENT ON TABLE tmp IS 'table comment';
-COMMENT ON TABLE tmp IS NULL;
+COMMENT ON TABLE attmp_wrong IS 'table comment';
+COMMENT ON TABLE attmp IS 'table comment';
+COMMENT ON TABLE attmp IS NULL;
 
-ALTER TABLE tmp ADD COLUMN xmin integer; -- fails
+ALTER TABLE attmp ADD COLUMN xmin integer; -- fails
 
-ALTER TABLE tmp ADD COLUMN a int4 default 3;
+ALTER TABLE attmp ADD COLUMN a int4 default 3;
 
-ALTER TABLE tmp ADD COLUMN b name;
+ALTER TABLE attmp ADD COLUMN b name;
 
-ALTER TABLE tmp ADD COLUMN c text;
+ALTER TABLE attmp ADD COLUMN c text;
 
-ALTER TABLE tmp ADD COLUMN d float8;
+ALTER TABLE attmp ADD COLUMN d float8;
 
-ALTER TABLE tmp ADD COLUMN e float4;
+ALTER TABLE attmp ADD COLUMN e float4;
 
-ALTER TABLE tmp ADD COLUMN f int2;
+ALTER TABLE attmp ADD COLUMN f int2;
 
-ALTER TABLE tmp ADD COLUMN g polygon;
+ALTER TABLE attmp ADD COLUMN g polygon;
 
-ALTER TABLE tmp ADD COLUMN h abstime;
+ALTER TABLE attmp ADD COLUMN h abstime;
 
-ALTER TABLE tmp ADD COLUMN i char;
+ALTER TABLE attmp ADD COLUMN i char;
 
-ALTER TABLE tmp ADD COLUMN j abstime[];
+ALTER TABLE attmp ADD COLUMN j abstime[];
 
-ALTER TABLE tmp ADD COLUMN k int4;
+ALTER TABLE attmp ADD COLUMN k int4;
 
-ALTER TABLE tmp ADD COLUMN l tid;
+ALTER TABLE attmp ADD COLUMN l tid;
 
-ALTER TABLE tmp ADD COLUMN m xid;
+ALTER TABLE attmp ADD COLUMN m xid;
 
-ALTER TABLE tmp ADD COLUMN n oidvector;
+ALTER TABLE attmp ADD COLUMN n oidvector;
 
---ALTER TABLE tmp ADD COLUMN o lock;
-ALTER TABLE tmp ADD COLUMN p smgr;
+--ALTER TABLE attmp ADD COLUMN o lock;
+ALTER TABLE attmp ADD COLUMN p smgr;
 
-ALTER TABLE tmp ADD COLUMN q point;
+ALTER TABLE attmp ADD COLUMN q point;
 
-ALTER TABLE tmp ADD COLUMN r lseg;
+ALTER TABLE attmp ADD COLUMN r lseg;
 
-ALTER TABLE tmp ADD COLUMN s path;
+ALTER TABLE attmp ADD COLUMN s path;
 
-ALTER TABLE tmp ADD COLUMN t box;
+ALTER TABLE attmp ADD COLUMN t box;
 
-ALTER TABLE tmp ADD COLUMN u tinterval;
+ALTER TABLE attmp ADD COLUMN u tinterval;
 
-ALTER TABLE tmp ADD COLUMN v timestamp;
+ALTER TABLE attmp ADD COLUMN v timestamp;
 
-ALTER TABLE tmp ADD COLUMN w interval;
+ALTER TABLE attmp ADD COLUMN w interval;
 
-ALTER TABLE tmp ADD COLUMN x float8[];
+ALTER TABLE attmp ADD COLUMN x float8[];
 
-ALTER TABLE tmp ADD COLUMN y float4[];
+ALTER TABLE attmp ADD COLUMN y float4[];
 
-ALTER TABLE tmp ADD COLUMN z int2[];
+ALTER TABLE attmp ADD COLUMN z int2[];
 
-INSERT INTO tmp (a, b, c, d, e, f, g, h, i, j, k, l, m, n, p, q, r, s, t, u,
+INSERT INTO attmp (a, b, c, d, e, f, g, h, i, j, k, l, m, n, p, q, r, s, t, u,
 	v, w, x, y, z)
    VALUES (4, 'name', 'text', 4.1, 4.1, 2, '(4.1,4.1,3.1,3.1)',
         'Mon May  1 00:30:30 1995', 'c', '{Mon May  1 00:30:30 1995, Monday Aug 24 14:43:07 1992, epoch}',
@@ -81,67 +81,67 @@ INSERT INTO tmp (a, b, c, d, e, f, g, h, i, j, k, l, m, n, p, q, r, s, t, u,
 	'(0,2,4.1,4.1,3.1,3.1)', '(4.1,4.1,3.1,3.1)', '["epoch" "infinity"]',
 	'epoch', '01:00:10', '{1.0,2.0,3.0,4.0}', '{1.0,2.0,3.0,4.0}', '{1,2,3,4}');
 
-SELECT * FROM tmp;
+SELECT * FROM attmp;
 
-DROP TABLE tmp;
+DROP TABLE attmp;
 
 -- the wolf bug - schema mods caused inconsistent row descriptors
-CREATE TABLE tmp (
+CREATE TABLE attmp (
 	initial 	int4
 );
 
-ALTER TABLE tmp ADD COLUMN a int4;
+ALTER TABLE attmp ADD COLUMN a int4;
 
-ALTER TABLE tmp ADD COLUMN b name;
+ALTER TABLE attmp ADD COLUMN b name;
 
-ALTER TABLE tmp ADD COLUMN c text;
+ALTER TABLE attmp ADD COLUMN c text;
 
-ALTER TABLE tmp ADD COLUMN d float8;
+ALTER TABLE attmp ADD COLUMN d float8;
 
-ALTER TABLE tmp ADD COLUMN e float4;
+ALTER TABLE attmp ADD COLUMN e float4;
 
-ALTER TABLE tmp ADD COLUMN f int2;
+ALTER TABLE attmp ADD COLUMN f int2;
 
-ALTER TABLE tmp ADD COLUMN g polygon;
+ALTER TABLE attmp ADD COLUMN g polygon;
 
-ALTER TABLE tmp ADD COLUMN h abstime;
+ALTER TABLE attmp ADD COLUMN h abstime;
 
-ALTER TABLE tmp ADD COLUMN i char;
+ALTER TABLE attmp ADD COLUMN i char;
 
-ALTER TABLE tmp ADD COLUMN j abstime[];
+ALTER TABLE attmp ADD COLUMN j abstime[];
 
-ALTER TABLE tmp ADD COLUMN k int4;
+ALTER TABLE attmp ADD COLUMN k int4;
 
-ALTER TABLE tmp ADD COLUMN l tid;
+ALTER TABLE attmp ADD COLUMN l tid;
 
-ALTER TABLE tmp ADD COLUMN m xid;
+ALTER TABLE attmp ADD COLUMN m xid;
 
-ALTER TABLE tmp ADD COLUMN n oidvector;
+ALTER TABLE attmp ADD COLUMN n oidvector;
 
---ALTER TABLE tmp ADD COLUMN o lock;
-ALTER TABLE tmp ADD COLUMN p smgr;
+--ALTER TABLE attmp ADD COLUMN o lock;
+ALTER TABLE attmp ADD COLUMN p smgr;
 
-ALTER TABLE tmp ADD COLUMN q point;
+ALTER TABLE attmp ADD COLUMN q point;
 
-ALTER TABLE tmp ADD COLUMN r lseg;
+ALTER TABLE attmp ADD COLUMN r lseg;
 
-ALTER TABLE tmp ADD COLUMN s path;
+ALTER TABLE attmp ADD COLUMN s path;
 
-ALTER TABLE tmp ADD COLUMN t box;
+ALTER TABLE attmp ADD COLUMN t box;
 
-ALTER TABLE tmp ADD COLUMN u tinterval;
+ALTER TABLE attmp ADD COLUMN u tinterval;
 
-ALTER TABLE tmp ADD COLUMN v timestamp;
+ALTER TABLE attmp ADD COLUMN v timestamp;
 
-ALTER TABLE tmp ADD COLUMN w interval;
+ALTER TABLE attmp ADD COLUMN w interval;
 
-ALTER TABLE tmp ADD COLUMN x float8[];
+ALTER TABLE attmp ADD COLUMN x float8[];
 
-ALTER TABLE tmp ADD COLUMN y float4[];
+ALTER TABLE attmp ADD COLUMN y float4[];
 
-ALTER TABLE tmp ADD COLUMN z int2[];
+ALTER TABLE attmp ADD COLUMN z int2[];
 
-INSERT INTO tmp (a, b, c, d, e, f, g, h, i, j, k, l, m, n, p, q, r, s, t, u,
+INSERT INTO attmp (a, b, c, d, e, f, g, h, i, j, k, l, m, n, p, q, r, s, t, u,
 	v, w, x, y, z)
    VALUES (4, 'name', 'text', 4.1, 4.1, 2, '(4.1,4.1,3.1,3.1)',
         'Mon May  1 00:30:30 1995', 'c', '{Mon May  1 00:30:30 1995, Monday Aug 24 14:43:07 1992, epoch}',
@@ -150,86 +150,101 @@ INSERT INTO tmp (a, b, c, d, e, f, g, h, i, j, k, l, m, n, p, q, r, s, t, u,
 	'(0,2,4.1,4.1,3.1,3.1)', '(4.1,4.1,3.1,3.1)', '["epoch" "infinity"]',
 	'epoch', '01:00:10', '{1.0,2.0,3.0,4.0}', '{1.0,2.0,3.0,4.0}', '{1,2,3,4}');
 
-SELECT * FROM tmp;
+SELECT * FROM attmp;
 
-CREATE INDEX tmp_idx ON tmp (a, (d + e), b);
+CREATE INDEX attmp_idx ON attmp (a, (d + e), b);
 
-ALTER INDEX tmp_idx ALTER COLUMN 0 SET STATISTICS 1000;
+ALTER INDEX attmp_idx ALTER COLUMN 0 SET STATISTICS 1000;
 
-ALTER INDEX tmp_idx ALTER COLUMN 1 SET STATISTICS 1000;
+ALTER INDEX attmp_idx ALTER COLUMN 1 SET STATISTICS 1000;
 
-ALTER INDEX tmp_idx ALTER COLUMN 2 SET STATISTICS 1000;
+ALTER INDEX attmp_idx ALTER COLUMN 2 SET STATISTICS 1000;
 
-\d+ tmp_idx
+\d+ attmp_idx
 
-ALTER INDEX tmp_idx ALTER COLUMN 3 SET STATISTICS 1000;
+ALTER INDEX attmp_idx ALTER COLUMN 3 SET STATISTICS 1000;
 
-ALTER INDEX tmp_idx ALTER COLUMN 4 SET STATISTICS 1000;
+ALTER INDEX attmp_idx ALTER COLUMN 4 SET STATISTICS 1000;
 
-ALTER INDEX tmp_idx ALTER COLUMN 2 SET STATISTICS -1;
+ALTER INDEX attmp_idx ALTER COLUMN 2 SET STATISTICS -1;
 
-DROP TABLE tmp;
+DROP TABLE attmp;
 
 
 --
 -- rename - check on both non-temp and temp tables
 --
-CREATE TABLE tmp (regtable int);
-CREATE TEMP TABLE tmp (tmptable int);
+CREATE TABLE attmp (regtable int);
+CREATE TEMP TABLE attmp (attmptable int);
 
-ALTER TABLE tmp RENAME TO tmp_new;
+ALTER TABLE attmp RENAME TO attmp_new;
 
-SELECT * FROM tmp;
-SELECT * FROM tmp_new;
+SELECT * FROM attmp;
+SELECT * FROM attmp_new;
 
-ALTER TABLE tmp RENAME TO tmp_new2;
+ALTER TABLE attmp RENAME TO attmp_new2;
 
-SELECT * FROM tmp;		-- should fail
-SELECT * FROM tmp_new;
-SELECT * FROM tmp_new2;
+SELECT * FROM attmp;		-- should fail
+SELECT * FROM attmp_new;
+SELECT * FROM attmp_new2;
 
-DROP TABLE tmp_new;
-DROP TABLE tmp_new2;
+DROP TABLE attmp_new;
+DROP TABLE attmp_new2;
+
+-- check rename of partitioned tables and indexes also
+CREATE TABLE part_attmp (a int primary key) partition by range (a);
+CREATE TABLE part_attmp1 PARTITION OF part_attmp FOR VALUES FROM (0) TO (100);
+ALTER INDEX part_attmp_pkey RENAME TO part_attmp_index;
+ALTER INDEX part_attmp1_pkey RENAME TO part_attmp1_index;
+ALTER TABLE part_attmp RENAME TO part_at2tmp;
+ALTER TABLE part_attmp1 RENAME TO part_at2tmp1;
+SET ROLE regress_alter_table_user1;
+ALTER INDEX part_attmp_index RENAME TO fail;
+ALTER INDEX part_attmp1_index RENAME TO fail;
+ALTER TABLE part_at2tmp RENAME TO fail;
+ALTER TABLE part_at2tmp1 RENAME TO fail;
+RESET ROLE;
+DROP TABLE part_at2tmp;
 
 --
 -- check renaming to a table's array type's autogenerated name
 -- (the array type's name should get out of the way)
 --
-CREATE TABLE tmp_array (id int);
-CREATE TABLE tmp_array2 (id int);
-SELECT typname FROM pg_type WHERE oid = 'tmp_array[]'::regtype;
-SELECT typname FROM pg_type WHERE oid = 'tmp_array2[]'::regtype;
-ALTER TABLE tmp_array2 RENAME TO _tmp_array;
-SELECT typname FROM pg_type WHERE oid = 'tmp_array[]'::regtype;
-SELECT typname FROM pg_type WHERE oid = '_tmp_array[]'::regtype;
-DROP TABLE _tmp_array;
-DROP TABLE tmp_array;
+CREATE TABLE attmp_array (id int);
+CREATE TABLE attmp_array2 (id int);
+SELECT typname FROM pg_type WHERE oid = 'attmp_array[]'::regtype;
+SELECT typname FROM pg_type WHERE oid = 'attmp_array2[]'::regtype;
+ALTER TABLE attmp_array2 RENAME TO _attmp_array;
+SELECT typname FROM pg_type WHERE oid = 'attmp_array[]'::regtype;
+SELECT typname FROM pg_type WHERE oid = '_attmp_array[]'::regtype;
+DROP TABLE _attmp_array;
+DROP TABLE attmp_array;
 
 -- renaming to table's own array type's name is an interesting corner case
-CREATE TABLE tmp_array (id int);
-SELECT typname FROM pg_type WHERE oid = 'tmp_array[]'::regtype;
-ALTER TABLE tmp_array RENAME TO _tmp_array;
-SELECT typname FROM pg_type WHERE oid = '_tmp_array[]'::regtype;
-DROP TABLE _tmp_array;
+CREATE TABLE attmp_array (id int);
+SELECT typname FROM pg_type WHERE oid = 'attmp_array[]'::regtype;
+ALTER TABLE attmp_array RENAME TO _attmp_array;
+SELECT typname FROM pg_type WHERE oid = '_attmp_array[]'::regtype;
+DROP TABLE _attmp_array;
 
 -- ALTER TABLE ... RENAME on non-table relations
 -- renaming indexes (FIXME: this should probably test the index's functionality)
-ALTER INDEX IF EXISTS __onek_unique1 RENAME TO tmp_onek_unique1;
-ALTER INDEX IF EXISTS __tmp_onek_unique1 RENAME TO onek_unique1;
+ALTER INDEX IF EXISTS __onek_unique1 RENAME TO attmp_onek_unique1;
+ALTER INDEX IF EXISTS __attmp_onek_unique1 RENAME TO onek_unique1;
 
-ALTER INDEX onek_unique1 RENAME TO tmp_onek_unique1;
-ALTER INDEX tmp_onek_unique1 RENAME TO onek_unique1;
+ALTER INDEX onek_unique1 RENAME TO attmp_onek_unique1;
+ALTER INDEX attmp_onek_unique1 RENAME TO onek_unique1;
 
-SET ROLE regress_alter_user1;
+SET ROLE regress_alter_table_user1;
 ALTER INDEX onek_unique1 RENAME TO fail;  -- permission denied
 RESET ROLE;
 
 -- renaming views
-CREATE VIEW tmp_view (unique1) AS SELECT unique1 FROM tenk1;
-ALTER TABLE tmp_view RENAME TO tmp_view_new;
+CREATE VIEW attmp_view (unique1) AS SELECT unique1 FROM tenk1;
+ALTER TABLE attmp_view RENAME TO attmp_view_new;
 
-SET ROLE regress_alter_user1;
-ALTER VIEW tmp_view_new RENAME TO fail;  -- permission denied
+SET ROLE regress_alter_table_user1;
+ALTER VIEW attmp_view_new RENAME TO fail;  -- permission denied
 RESET ROLE;
 
 -- hack to ensure we get an indexscan here
@@ -240,7 +255,7 @@ SELECT unique1 FROM tenk1 WHERE unique1 < 5;
 reset enable_seqscan;
 reset enable_bitmapscan;
 
-DROP VIEW tmp_view_new;
+DROP VIEW attmp_view_new;
 -- toast-like relation name
 alter table stud_emp rename to pg_toast_stud_emp;
 alter table pg_toast_stud_emp rename to stud_emp;
@@ -288,79 +303,79 @@ ALTER TABLE IF EXISTS constraint_rename_test ADD CONSTRAINT con4 UNIQUE (a);
 
 -- FOREIGN KEY CONSTRAINT adding TEST
 
-CREATE TABLE tmp2 (a int primary key);
+CREATE TABLE attmp2 (a int primary key);
 
-CREATE TABLE tmp3 (a int, b int);
+CREATE TABLE attmp3 (a int, b int);
 
-CREATE TABLE tmp4 (a int, b int, unique(a,b));
+CREATE TABLE attmp4 (a int, b int, unique(a,b));
 
-CREATE TABLE tmp5 (a int, b int);
+CREATE TABLE attmp5 (a int, b int);
 
--- Insert rows into tmp2 (pktable)
-INSERT INTO tmp2 values (1);
-INSERT INTO tmp2 values (2);
-INSERT INTO tmp2 values (3);
-INSERT INTO tmp2 values (4);
+-- Insert rows into attmp2 (pktable)
+INSERT INTO attmp2 values (1);
+INSERT INTO attmp2 values (2);
+INSERT INTO attmp2 values (3);
+INSERT INTO attmp2 values (4);
 
--- Insert rows into tmp3
-INSERT INTO tmp3 values (1,10);
-INSERT INTO tmp3 values (1,20);
-INSERT INTO tmp3 values (5,50);
+-- Insert rows into attmp3
+INSERT INTO attmp3 values (1,10);
+INSERT INTO attmp3 values (1,20);
+INSERT INTO attmp3 values (5,50);
 
 -- Try (and fail) to add constraint due to invalid source columns
-ALTER TABLE tmp3 add constraint tmpconstr foreign key(c) references tmp2 match full;
+ALTER TABLE attmp3 add constraint attmpconstr foreign key(c) references attmp2 match full;
 
 -- Try (and fail) to add constraint due to invalid destination columns explicitly given
-ALTER TABLE tmp3 add constraint tmpconstr foreign key(a) references tmp2(b) match full;
+ALTER TABLE attmp3 add constraint attmpconstr foreign key(a) references attmp2(b) match full;
 
 -- Try (and fail) to add constraint due to invalid data
-ALTER TABLE tmp3 add constraint tmpconstr foreign key (a) references tmp2 match full;
+ALTER TABLE attmp3 add constraint attmpconstr foreign key (a) references attmp2 match full;
 
 -- Delete failing row
-DELETE FROM tmp3 where a=5;
+DELETE FROM attmp3 where a=5;
 
 -- Try (and succeed)
-ALTER TABLE tmp3 add constraint tmpconstr foreign key (a) references tmp2 match full;
-ALTER TABLE tmp3 drop constraint tmpconstr;
+ALTER TABLE attmp3 add constraint attmpconstr foreign key (a) references attmp2 match full;
+ALTER TABLE attmp3 drop constraint attmpconstr;
 
-INSERT INTO tmp3 values (5,50);
+INSERT INTO attmp3 values (5,50);
 
 -- Try NOT VALID and then VALIDATE CONSTRAINT, but fails. Delete failure then re-validate
-ALTER TABLE tmp3 add constraint tmpconstr foreign key (a) references tmp2 match full NOT VALID;
-ALTER TABLE tmp3 validate constraint tmpconstr;
+ALTER TABLE attmp3 add constraint attmpconstr foreign key (a) references attmp2 match full NOT VALID;
+ALTER TABLE attmp3 validate constraint attmpconstr;
 
 -- Delete failing row
-DELETE FROM tmp3 where a=5;
+DELETE FROM attmp3 where a=5;
 
 -- Try (and succeed) and repeat to show it works on already valid constraint
-ALTER TABLE tmp3 validate constraint tmpconstr;
-ALTER TABLE tmp3 validate constraint tmpconstr;
+ALTER TABLE attmp3 validate constraint attmpconstr;
+ALTER TABLE attmp3 validate constraint attmpconstr;
 
 -- Try a non-verified CHECK constraint
-ALTER TABLE tmp3 ADD CONSTRAINT b_greater_than_ten CHECK (b > 10); -- fail
-ALTER TABLE tmp3 ADD CONSTRAINT b_greater_than_ten CHECK (b > 10) NOT VALID; -- succeeds
-ALTER TABLE tmp3 VALIDATE CONSTRAINT b_greater_than_ten; -- fails
-DELETE FROM tmp3 WHERE NOT b > 10;
-ALTER TABLE tmp3 VALIDATE CONSTRAINT b_greater_than_ten; -- succeeds
-ALTER TABLE tmp3 VALIDATE CONSTRAINT b_greater_than_ten; -- succeeds
+ALTER TABLE attmp3 ADD CONSTRAINT b_greater_than_ten CHECK (b > 10); -- fail
+ALTER TABLE attmp3 ADD CONSTRAINT b_greater_than_ten CHECK (b > 10) NOT VALID; -- succeeds
+ALTER TABLE attmp3 VALIDATE CONSTRAINT b_greater_than_ten; -- fails
+DELETE FROM attmp3 WHERE NOT b > 10;
+ALTER TABLE attmp3 VALIDATE CONSTRAINT b_greater_than_ten; -- succeeds
+ALTER TABLE attmp3 VALIDATE CONSTRAINT b_greater_than_ten; -- succeeds
 
 -- Test inherited NOT VALID CHECK constraints
-select * from tmp3;
-CREATE TABLE tmp6 () INHERITS (tmp3);
-CREATE TABLE tmp7 () INHERITS (tmp3);
+select * from attmp3;
+CREATE TABLE attmp6 () INHERITS (attmp3);
+CREATE TABLE attmp7 () INHERITS (attmp3);
 
-INSERT INTO tmp6 VALUES (6, 30), (7, 16);
-ALTER TABLE tmp3 ADD CONSTRAINT b_le_20 CHECK (b <= 20) NOT VALID;
-ALTER TABLE tmp3 VALIDATE CONSTRAINT b_le_20;	-- fails
-DELETE FROM tmp6 WHERE b > 20;
-ALTER TABLE tmp3 VALIDATE CONSTRAINT b_le_20;	-- succeeds
+INSERT INTO attmp6 VALUES (6, 30), (7, 16);
+ALTER TABLE attmp3 ADD CONSTRAINT b_le_20 CHECK (b <= 20) NOT VALID;
+ALTER TABLE attmp3 VALIDATE CONSTRAINT b_le_20;	-- fails
+DELETE FROM attmp6 WHERE b > 20;
+ALTER TABLE attmp3 VALIDATE CONSTRAINT b_le_20;	-- succeeds
 
 -- An already validated constraint must not be revalidated
 CREATE FUNCTION boo(int) RETURNS int IMMUTABLE STRICT LANGUAGE plpgsql AS $$ BEGIN RAISE NOTICE 'boo: %', $1; RETURN $1; END; $$;
-INSERT INTO tmp7 VALUES (8, 18);
-ALTER TABLE tmp7 ADD CONSTRAINT identity CHECK (b = boo(b));
-ALTER TABLE tmp3 ADD CONSTRAINT IDENTITY check (b = boo(b)) NOT VALID;
-ALTER TABLE tmp3 VALIDATE CONSTRAINT identity;
+INSERT INTO attmp7 VALUES (8, 18);
+ALTER TABLE attmp7 ADD CONSTRAINT identity CHECK (b = boo(b));
+ALTER TABLE attmp3 ADD CONSTRAINT IDENTITY check (b = boo(b)) NOT VALID;
+ALTER TABLE attmp3 VALIDATE CONSTRAINT identity;
 
 -- A NO INHERIT constraint should not be looked for in children during VALIDATE CONSTRAINT
 create table parent_noinh_convalid (a int);
@@ -377,22 +392,22 @@ select convalidated from pg_constraint where conrelid = 'parent_noinh_convalid':
 -- cleanup
 drop table parent_noinh_convalid, child_noinh_convalid;
 
--- Try (and fail) to create constraint from tmp5(a) to tmp4(a) - unique constraint on
--- tmp4 is a,b
+-- Try (and fail) to create constraint from attmp5(a) to attmp4(a) - unique constraint on
+-- attmp4 is a,b
 
-ALTER TABLE tmp5 add constraint tmpconstr foreign key(a) references tmp4(a) match full;
+ALTER TABLE attmp5 add constraint attmpconstr foreign key(a) references attmp4(a) match full;
 
-DROP TABLE tmp7;
+DROP TABLE attmp7;
 
-DROP TABLE tmp6;
+DROP TABLE attmp6;
 
-DROP TABLE tmp5;
+DROP TABLE attmp5;
 
-DROP TABLE tmp4;
+DROP TABLE attmp4;
 
-DROP TABLE tmp3;
+DROP TABLE attmp3;
 
-DROP TABLE tmp2;
+DROP TABLE attmp2;
 
 -- NOT VALID with plan invalidation -- ensure we don't use a constraint for
 -- exclusion until validated
@@ -966,12 +981,12 @@ create index "testing_idx" on atacc1("........pg.dropped.1........");
 
 -- test create as and select into
 insert into atacc1 values (21, 22, 23);
-create table test1 as select * from atacc1;
-select * from test1;
-drop table test1;
-select * into test2 from atacc1;
-select * from test2;
-drop table test2;
+create table attest1 as select * from atacc1;
+select * from attest1;
+drop table attest1;
+select * into attest2 from atacc1;
+select * from attest2;
+drop table attest2;
 
 -- try dropping all columns
 alter table atacc1 drop c;
@@ -1007,27 +1022,27 @@ drop table child;
 drop table parent;
 
 -- test copy in/out
-create table test (a int4, b int4, c int4);
-insert into test values (1,2,3);
-alter table test drop a;
-copy test to stdout;
-copy test(a) to stdout;
-copy test("........pg.dropped.1........") to stdout;
-copy test from stdin;
+create table attest (a int4, b int4, c int4);
+insert into attest values (1,2,3);
+alter table attest drop a;
+copy attest to stdout;
+copy attest(a) to stdout;
+copy attest("........pg.dropped.1........") to stdout;
+copy attest from stdin;
 10	11	12
 \.
-select * from test;
-copy test from stdin;
+select * from attest;
+copy attest from stdin;
 21	22
 \.
-select * from test;
-copy test(a) from stdin;
-copy test("........pg.dropped.1........") from stdin;
-copy test(b,c) from stdin;
+select * from attest;
+copy attest(a) from stdin;
+copy attest("........pg.dropped.1........") from stdin;
+copy attest(b,c) from stdin;
 31	32
 \.
-select * from test;
-drop table test;
+select * from attest;
+drop table attest;
 
 -- test inheritance
 
@@ -1981,7 +1996,6 @@ CREATE TABLE partitioned (
 	a int,
 	b int
 ) PARTITION BY RANGE (a, (a+b+1));
-ALTER TABLE partitioned ADD FOREIGN KEY (a) REFERENCES blah;
 ALTER TABLE partitioned ADD EXCLUDE USING gist (a WITH &&);
 
 -- cannot drop column that is part of the partition key
@@ -2294,7 +2308,7 @@ ALTER TABLE part_5 ATTACH PARTITION list_parted2 FOR VALUES IN ('b');
 ALTER TABLE list_parted2 ATTACH PARTITION list_parted2 FOR VALUES IN (0);
 
 -- If a partitioned table being created or an existing table being attached
--- as a paritition does not have a constraint that would allow validation scan
+-- as a partition does not have a constraint that would allow validation scan
 -- to be skipped, but an individual partition does, then the partition's
 -- validation scan is skipped.
 CREATE TABLE quuux (a int, b text) PARTITION BY LIST (a);
@@ -2314,21 +2328,14 @@ DROP TABLE quuux;
 
 -- check validation when attaching hash partitions
 
--- The default hash functions as they exist today aren't portable; they can
--- return different results on different machines.  Depending upon how the
--- values are hashed, the row may map to different partitions, which result in
--- regression failure.  To avoid this, let's create a non-default hash function
--- that just returns the input value unchanged.
-CREATE OR REPLACE FUNCTION dummy_hashint4(a int4, seed int8) RETURNS int8 AS
-$$ BEGIN RETURN (a + 1 + seed); END; $$ LANGUAGE 'plpgsql' IMMUTABLE;
-CREATE OPERATOR CLASS custom_opclass FOR TYPE int4 USING HASH AS
-OPERATOR 1 = , FUNCTION 2 dummy_hashint4(int4, int8);
+-- Use hand-rolled hash functions and operator class to get predictable result
+-- on different matchines. part_test_int4_ops is defined in insert.sql.
 
 -- check that the new partition won't overlap with an existing partition
 CREATE TABLE hash_parted (
 	a int,
 	b int
-) PARTITION BY HASH (a custom_opclass);
+) PARTITION BY HASH (a part_test_int4_ops);
 CREATE TABLE hpart_1 PARTITION OF hash_parted FOR VALUES WITH (MODULUS 4, REMAINDER 0);
 CREATE TABLE fail_part (LIKE hpart_1);
 ALTER TABLE hash_parted ATTACH PARTITION fail_part FOR VALUES WITH (MODULUS 8, REMAINDER 4);
@@ -2466,8 +2473,6 @@ SELECT * FROM list_parted;
 DROP TABLE list_parted, list_parted2, range_parted;
 DROP TABLE fail_def_part;
 DROP TABLE hash_parted;
-DROP OPERATOR CLASS custom_opclass USING HASH;
-DROP FUNCTION dummy_hashint4(a int4, seed int8);
 
 -- more tests for certain multi-level partitioning scenarios
 create table p (a int, b int) partition by range (a, b);
@@ -2503,11 +2508,41 @@ alter table parted_validate_test add constraint parted_validate_test_chka check 
 alter table parted_validate_test validate constraint parted_validate_test_chka;
 drop table parted_validate_test;
 -- test alter column options
-CREATE TABLE tmp(i integer);
-INSERT INTO tmp VALUES (1);
-ALTER TABLE tmp ALTER COLUMN i SET (n_distinct = 1, n_distinct_inherited = 2);
-ALTER TABLE tmp ALTER COLUMN i RESET (n_distinct_inherited);
-ANALYZE tmp;
-DROP TABLE tmp;
+CREATE TABLE attmp(i integer);
+INSERT INTO attmp VALUES (1);
+ALTER TABLE attmp ALTER COLUMN i SET (n_distinct = 1, n_distinct_inherited = 2);
+ALTER TABLE attmp ALTER COLUMN i RESET (n_distinct_inherited);
+ANALYZE attmp;
+DROP TABLE attmp;
 
-DROP USER regress_alter_user1;
+DROP USER regress_alter_table_user1;
+
+-- check that violating rows are correctly reported when attaching as the
+-- default partition
+create table defpart_attach_test (a int) partition by list (a);
+create table defpart_attach_test1 partition of defpart_attach_test for values in (1);
+create table defpart_attach_test_d (like defpart_attach_test);
+insert into defpart_attach_test_d values (1), (2);
+
+-- error because its constraint as the default partition would be violated
+-- by the row containing 1
+alter table defpart_attach_test attach partition defpart_attach_test_d default;
+delete from defpart_attach_test_d where a = 1;
+alter table defpart_attach_test_d add check (a > 1);
+
+-- should be attached successfully and without needing to be scanned
+alter table defpart_attach_test attach partition defpart_attach_test_d default;
+
+drop table defpart_attach_test;
+
+-- check combinations of temporary and permanent relations when attaching
+-- partitions.
+create table perm_part_parent (a int) partition by list (a);
+create temp table temp_part_parent (a int) partition by list (a);
+create table perm_part_child (a int);
+create temp table temp_part_child (a int);
+alter table temp_part_parent attach partition perm_part_child default; -- error
+alter table perm_part_parent attach partition temp_part_child default; -- error
+alter table temp_part_parent attach partition temp_part_child default; -- ok
+drop table perm_part_parent cascade;
+drop table temp_part_parent cascade;

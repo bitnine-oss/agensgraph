@@ -2277,6 +2277,21 @@
       <row>
        <entry>
         <indexterm>
+         <primary>starts_with</primary>
+        </indexterm>
+        <literal><function>starts_with(<parameter>string</parameter>, <parameter>prefix</parameter>)</function></literal>
+       </entry>
+       <entry><type>bool</type></entry>
+       <entry>
+        Returns true if <parameter>string</parameter> starts with <parameter>prefix</parameter>.
+       </entry>
+       <entry><literal>starts_with('alphabet', 'alph')</literal></entry>
+       <entry><literal>t</literal></entry>
+      </row>
+
+      <row>
+       <entry>
+        <indexterm>
          <primary>to_ascii</primary>
         </indexterm>
         <literal><function>to_ascii(<parameter>string</parameter> <type>text</type>
@@ -4032,6 +4047,12 @@ cast(-44 as bit(12))           <lineannotation>111111010100</lineannotation>
     represent <function>NOT LIKE</function> and <function>NOT
     ILIKE</function>, respectively.  All of these operators are
     <productname>PostgreSQL</productname>-specific.
+   </para>
+
+   <para>
+    There is also the prefix operator <literal>^@</literal> and corresponding
+    <function>starts_with</function> function which covers cases when only
+    searching by beginning of the string is needed.
    </para>
   </sect2>
 
@@ -9612,6 +9633,18 @@ CREATE TYPE rainbow AS ENUM ('red', 'orange', 'yellow', 'green', 'blue', 'purple
        <row>
         <entry>
          <indexterm>
+          <primary>websearch_to_tsquery</primary>
+         </indexterm>
+          <literal><function>websearch_to_tsquery(<optional> <replaceable class="parameter">config</replaceable> <type>regconfig</type> , </optional> <replaceable class="parameter">query</replaceable> <type>text</type>)</function></literal>
+         </entry>
+        <entry><type>tsquery</type></entry>
+        <entry>produce <type>tsquery</type> from a web search style query</entry>
+        <entry><literal>websearch_to_tsquery('english', '"fat rat" or rat')</literal></entry>
+        <entry><literal>'fat' &lt;-&gt; 'rat' | 'rat'</literal></entry>
+       </row>
+       <row>
+        <entry>
+         <indexterm>
           <primary>querytree</primary>
          </indexterm>
          <literal><function>querytree(<replaceable class="parameter">query</replaceable> <type>tsquery</type>)</function></literal>
@@ -9693,6 +9726,26 @@ CREATE TYPE rainbow AS ENUM ('red', 'orange', 'yellow', 'green', 'blue', 'purple
         </entry>
         <entry><literal>to_tsvector('english', '{"a": "The Fat Rats"}'::json)</literal></entry>
         <entry><literal>'fat':2 'rat':3</literal></entry>
+       </row>
+       <row>
+        <entry>
+         <literal><function>json(b)_to_tsvector(<optional> <replaceable class="parameter">config</replaceable> <type>regconfig</type>,
+         </optional> <replaceable class="parameter">document</replaceable> <type>json(b)</type>,
+         <replaceable class="parameter">filter</replaceable> <type>json(b)</type>)</function></literal>
+        </entry>
+        <entry><type>tsvector</type></entry>
+        <entry>
+          reduce each value in the document, specified by <replaceable class="parameter">filter</replaceable> to a <type>tsvector</type>,
+          and then concatenate those in document order to produce a single <type>tsvector</type>.
+          <replaceable class="parameter">filter</replaceable> is a <type>jsonb</type> array, that enumerates what kind of elements need to be included
+          into the resulting <type>tsvector</type>. Possible values for <replaceable class="parameter">filter</replaceable> are
+          <literal>"string"</literal> (to include all string values), <literal>"numeric"</literal> (to include all numeric values in the string format),
+          <literal>"boolean"</literal> (to include all Boolean values in the string format <literal>"true"</literal>/<literal>"false"</literal>),
+          <literal>"key"</literal> (to include all keys) or <literal>"all"</literal> (to include all above). These values
+          can be combined together to include, e.g. all string and numeric values.
+        </entry>
+        <entry><literal>json_to_tsvector('english', '{"a": "The Fat Rats", "b": 123}'::json, '["string", "numeric"]')</literal></entry>
+        <entry><literal>'123':5 'fat':2 'rat':3</literal></entry>
        </row>
        <row>
         <entry>
@@ -10399,6 +10452,24 @@ SELECT xmlagg(x) FROM (SELECT * FROM test ORDER BY y DESC) AS tab;
     </para>
    </sect3>
 
+   <sect3>
+    <title><literal>IS NOT DOCUMENT</literal></title>
+
+    <indexterm>
+     <primary>IS NOT DOCUMENT</primary>
+    </indexterm>
+
+<synopsis>
+<replaceable>xml</replaceable> IS NOT DOCUMENT
+</synopsis>
+
+    <para>
+     The expression <literal>IS NOT DOCUMENT</literal> returns false if the
+     argument XML value is a proper XML document, true if it is not (that is,
+     it is a content fragment), or null if the argument is null.
+    </para>
+   </sect3>
+
    <sect3 id="xml-exists">
     <title><literal>XMLEXISTS</literal></title>
 
@@ -10832,7 +10903,7 @@ SELECT xmltable.*
     <para>
      The following example illustrates how
      the <literal>XMLNAMESPACES</literal> clause can be used to specify
-     the default namespace, and a list of additional namespaces
+     a list of namespaces
      used in the XML document as well as in the XPath expressions:
 
   <screen><![CDATA[
@@ -11926,13 +11997,27 @@ table2-mapping
 
   <note>
     <para>
-      In <function>json_populate_record</function>, <function>json_populate_recordset</function>,
-      <function>json_to_record</function> and <function>json_to_recordset</function>,
-      type coercion from the JSON is <quote>best effort</quote> and may not result
-      in desired values for some types.  JSON keys are matched to
-      identical column names in the target row type.  JSON fields that do not
-      appear in the target row type will be omitted from the output, and
-      target columns that do not match any JSON field will simply be NULL.
+      While the examples for the functions
+      <function>json_populate_record</function>,
+      <function>json_populate_recordset</function>,
+      <function>json_to_record</function> and
+      <function>json_to_recordset</function> use constants, the typical use
+      would be to reference a table in the <literal>FROM</literal> clause
+      and use one of its <type>json</type> or <type>jsonb</type> columns
+      as an argument to the function.  Extracted key values can then be
+      referenced in other parts of the query, like <literal>WHERE</literal>
+      clauses and target lists.  Extracting multiple values in this
+      way can improve performance over extracting them separately with
+      per-key operators.
+    </para>
+
+    <para>
+      JSON keys are matched to identical column names in the target
+      row type.  JSON type coercion for these functions is <quote>best
+      effort</quote> and may not result in desired values for some types.
+      JSON fields that do not appear in the target row type will be
+      omitted from the output, and target columns that do not match any
+      JSON field will simply be NULL.
     </para>
   </note>
 
@@ -12761,7 +12846,7 @@ SELECT NULLIF(value, '(none)') ...
        <row>
         <entry>
          <literal>
-          <function>array_fill</function>(<type>anyelement</type>, <type>int[]</type>,
+          <function>array_fill</function>(<type>anyelement</type>, <type>int[]</type>
           <optional>, <type>int[]</type></optional>)
          </literal>
         </entry>
@@ -15943,6 +16028,14 @@ SELECT * FROM pg_ls_dir('.') WITH ORDINALITY AS t(ls,n);
       </row>
 
       <row>
+       <entry><literal><function>pg_jit_available()</function></literal></entry>
+       <entry><type>boolean</type></entry>
+       <entry>is <acronym>JIT</acronym> compilation available in this session
+       (see <xref linkend="jit"/>)? Returns <literal>false</literal> if <xref
+       linkend="guc-jit"/> is set to false.</entry>
+      </row>
+
+      <row>
        <entry><literal><function>pg_listening_channels()</function></literal></entry>
        <entry><type>setof text</type></entry>
        <entry>channel names that the session is currently listening on</entry>
@@ -17440,7 +17533,9 @@ SELECT currval(pg_get_serial_sequence('sometable', 'id'));
      </row>
      <row>
       <entry><literal>backward_scan</literal></entry>
-      <entry>Can the index be scanned backwards?
+      <entry>Can the scan direction be changed in mid-scan (to
+             support <literal>FETCH BACKWARD</literal> on a cursor without
+             needing materialization)?
       </entry>
      </row>
     </tbody>
@@ -17474,6 +17569,12 @@ SELECT currval(pg_get_serial_sequence('sometable', 'id'));
      <row>
       <entry><literal>can_exclude</literal></entry>
       <entry>Does the access method support exclusion constraints?
+      </entry>
+     </row>
+     <row>
+      <entry><literal>can_include</literal></entry>
+      <entry>Does the access method support the <literal>INCLUDE</literal>
+        clause of <literal>CREATE INDEX</literal>?
       </entry>
      </row>
     </tbody>
@@ -19995,10 +20096,21 @@ postgres=# SELECT * FROM pg_walfile_name_offset(pg_stop_backup());
     linkend="functions-admin-genfile-table"/> provide native access to
     files on the machine hosting the server. Only files within the
     database cluster directory and the <varname>log_directory</varname> can be
-    accessed.  Use a relative path for files in the cluster directory,
-    and a path matching the <varname>log_directory</varname> configuration setting
-    for log files.  Use of these functions is restricted to superusers
-    except where stated otherwise.
+    accessed unless the user is granted the role
+    <literal>pg_read_server_files</literal>.  Use a relative path for files in
+    the cluster directory, and a path matching the <varname>log_directory</varname>
+    configuration setting for log files.
+   </para>
+
+   <para>
+    Note that granting users the EXECUTE privilege on the
+    <function>pg_read_file()</function>, or related, functions allows them the
+    ability to read any file on the server which the database can read and
+    that those reads bypass all in-database privilege checks.  This means that,
+    among other things, a user with this access is able to read the contents of the
+    <literal>pg_authid</literal> table where authentication information is contained,
+    as well as read any file in the database.  Therefore, granting access to these
+    functions should be carefully considered.
    </para>
 
    <table id="functions-admin-genfile-table">
@@ -20016,7 +20128,7 @@ postgres=# SELECT * FROM pg_walfile_name_offset(pg_stop_backup());
        </entry>
        <entry><type>setof text</type></entry>
        <entry>
-        List the contents of a directory.
+        List the contents of a directory.  Restricted to superusers by default, but other users can be granted EXECUTE to run the function.
        </entry>
       </row>
       <row>
@@ -20047,7 +20159,7 @@ postgres=# SELECT * FROM pg_walfile_name_offset(pg_stop_backup());
        </entry>
        <entry><type>text</type></entry>
        <entry>
-        Return the contents of a text file.
+        Return the contents of a text file.  Restricted to superusers by default, but other users can be granted EXECUTE to run the function.
        </entry>
       </row>
       <row>
@@ -20056,7 +20168,7 @@ postgres=# SELECT * FROM pg_walfile_name_offset(pg_stop_backup());
        </entry>
        <entry><type>bytea</type></entry>
        <entry>
-        Return the contents of a file.
+        Return the contents of a file.  Restricted to superusers by default, but other users can be granted EXECUTE to run the function.
        </entry>
       </row>
       <row>
@@ -20065,7 +20177,7 @@ postgres=# SELECT * FROM pg_walfile_name_offset(pg_stop_backup());
        </entry>
        <entry><type>record</type></entry>
        <entry>
-        Return information about a file.
+        Return information about a file.  Restricted to superusers by default, but other users can be granted EXECUTE to run the function.
        </entry>
       </row>
      </tbody>

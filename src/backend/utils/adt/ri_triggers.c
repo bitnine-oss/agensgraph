@@ -203,9 +203,8 @@ static void ri_GenerateQual(StringInfo buf,
 				const char *leftop, Oid leftoptype,
 				Oid opoid,
 				const char *rightop, Oid rightoptype);
-static void ri_add_cast_to(StringInfo buf, Oid typid);
 static void ri_GenerateQualCollation(StringInfo buf, Oid collation);
-static int ri_NullCheck(HeapTuple tup,
+static int ri_NullCheck(TupleDesc tupdesc, HeapTuple tup,
 			 const RI_ConstraintInfo *riinfo, bool rel_is_pk);
 static void ri_BuildQueryKey(RI_QueryKey *key,
 				 const RI_ConstraintInfo *riinfo,
@@ -308,7 +307,7 @@ RI_FKey_check(TriggerData *trigdata)
 				(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
 				 errmsg("MATCH PARTIAL not yet implemented")));
 
-	switch (ri_NullCheck(new_row, riinfo, false))
+	switch (ri_NullCheck(RelationGetDescr(fk_rel), new_row, riinfo, false))
 	{
 		case RI_KEYS_ALL_NULL:
 
@@ -515,7 +514,7 @@ ri_Check_Pk_Match(Relation pk_rel, Relation fk_rel,
 	bool		result;
 
 	/* Only called for non-null rows */
-	Assert(ri_NullCheck(old_row, riinfo, true) == RI_KEYS_NONE_NULL);
+	Assert(ri_NullCheck(RelationGetDescr(pk_rel), old_row, riinfo, true) == RI_KEYS_NONE_NULL);
 
 	if (SPI_connect() != SPI_OK_CONNECT)
 		elog(ERROR, "SPI_connect failed");
@@ -725,7 +724,7 @@ ri_restrict(TriggerData *trigdata, bool is_no_action)
 			 */
 		case FKCONSTR_MATCH_SIMPLE:
 		case FKCONSTR_MATCH_FULL:
-			switch (ri_NullCheck(old_row, riinfo, true))
+			switch (ri_NullCheck(RelationGetDescr(pk_rel), old_row, riinfo, true))
 			{
 				case RI_KEYS_ALL_NULL:
 				case RI_KEYS_SOME_NULL:
@@ -789,20 +788,23 @@ ri_restrict(TriggerData *trigdata, bool is_no_action)
 				char		paramname[16];
 				const char *querysep;
 				Oid			queryoids[RI_MAX_NUMKEYS];
+				const char *fk_only;
 				int			i;
 
 				/* ----------
 				 * The query string built is
-				 *	SELECT 1 FROM ONLY <fktable> x WHERE $1 = fkatt1 [AND ...]
+				 *	SELECT 1 FROM [ONLY] <fktable> x WHERE $1 = fkatt1 [AND ...]
 				 *		   FOR KEY SHARE OF x
 				 * The type id's for the $ parameters are those of the
 				 * corresponding PK attributes.
 				 * ----------
 				 */
 				initStringInfo(&querybuf);
+				fk_only = fk_rel->rd_rel->relkind == RELKIND_PARTITIONED_TABLE ?
+					"" : "ONLY ";
 				quoteRelationName(fkrelname, fk_rel);
-				appendStringInfo(&querybuf, "SELECT 1 FROM ONLY %s x",
-								 fkrelname);
+				appendStringInfo(&querybuf, "SELECT 1 FROM %s%s x",
+								 fk_only, fkrelname);
 				querysep = "WHERE";
 				for (i = 0; i < riinfo->nkeys; i++)
 				{
@@ -912,7 +914,7 @@ RI_FKey_cascade_del(PG_FUNCTION_ARGS)
 			 */
 		case FKCONSTR_MATCH_SIMPLE:
 		case FKCONSTR_MATCH_FULL:
-			switch (ri_NullCheck(old_row, riinfo, true))
+			switch (ri_NullCheck(RelationGetDescr(pk_rel), old_row, riinfo, true))
 			{
 				case RI_KEYS_ALL_NULL:
 				case RI_KEYS_SOME_NULL:
@@ -948,17 +950,21 @@ RI_FKey_cascade_del(PG_FUNCTION_ARGS)
 				char		paramname[16];
 				const char *querysep;
 				Oid			queryoids[RI_MAX_NUMKEYS];
+				const char *fk_only;
 
 				/* ----------
 				 * The query string built is
-				 *	DELETE FROM ONLY <fktable> WHERE $1 = fkatt1 [AND ...]
+				 *	DELETE FROM [ONLY] <fktable> WHERE $1 = fkatt1 [AND ...]
 				 * The type id's for the $ parameters are those of the
 				 * corresponding PK attributes.
 				 * ----------
 				 */
 				initStringInfo(&querybuf);
+				fk_only = fk_rel->rd_rel->relkind == RELKIND_PARTITIONED_TABLE ?
+					"" : "ONLY ";
 				quoteRelationName(fkrelname, fk_rel);
-				appendStringInfo(&querybuf, "DELETE FROM ONLY %s", fkrelname);
+				appendStringInfo(&querybuf, "DELETE FROM %s%s",
+								 fk_only, fkrelname);
 				querysep = "WHERE";
 				for (i = 0; i < riinfo->nkeys; i++)
 				{
@@ -1072,7 +1078,7 @@ RI_FKey_cascade_upd(PG_FUNCTION_ARGS)
 			 */
 		case FKCONSTR_MATCH_SIMPLE:
 		case FKCONSTR_MATCH_FULL:
-			switch (ri_NullCheck(old_row, riinfo, true))
+			switch (ri_NullCheck(RelationGetDescr(pk_rel), old_row, riinfo, true))
 			{
 				case RI_KEYS_ALL_NULL:
 				case RI_KEYS_SOME_NULL:
@@ -1119,10 +1125,11 @@ RI_FKey_cascade_upd(PG_FUNCTION_ARGS)
 				const char *querysep;
 				const char *qualsep;
 				Oid			queryoids[RI_MAX_NUMKEYS * 2];
+				const char *fk_only;
 
 				/* ----------
 				 * The query string built is
-				 *	UPDATE ONLY <fktable> SET fkatt1 = $1 [, ...]
+				 *	UPDATE [ONLY] <fktable> SET fkatt1 = $1 [, ...]
 				 *			WHERE $n = fkatt1 [AND ...]
 				 * The type id's for the $ parameters are those of the
 				 * corresponding PK attributes.  Note that we are assuming
@@ -1132,8 +1139,11 @@ RI_FKey_cascade_upd(PG_FUNCTION_ARGS)
 				 */
 				initStringInfo(&querybuf);
 				initStringInfo(&qualbuf);
+				fk_only = fk_rel->rd_rel->relkind == RELKIND_PARTITIONED_TABLE ?
+					"" : "ONLY ";
 				quoteRelationName(fkrelname, fk_rel);
-				appendStringInfo(&querybuf, "UPDATE ONLY %s SET", fkrelname);
+				appendStringInfo(&querybuf, "UPDATE %s%s SET",
+								 fk_only, fkrelname);
 				querysep = "";
 				qualsep = "WHERE";
 				for (i = 0, j = riinfo->nkeys; i < riinfo->nkeys; i++, j++)
@@ -1286,7 +1296,7 @@ ri_setnull(TriggerData *trigdata)
 			 */
 		case FKCONSTR_MATCH_SIMPLE:
 		case FKCONSTR_MATCH_FULL:
-			switch (ri_NullCheck(old_row, riinfo, true))
+			switch (ri_NullCheck(RelationGetDescr(pk_rel), old_row, riinfo, true))
 			{
 				case RI_KEYS_ALL_NULL:
 				case RI_KEYS_SOME_NULL:
@@ -1338,11 +1348,12 @@ ri_setnull(TriggerData *trigdata)
 				char		paramname[16];
 				const char *querysep;
 				const char *qualsep;
+				const char *fk_only;
 				Oid			queryoids[RI_MAX_NUMKEYS];
 
 				/* ----------
 				 * The query string built is
-				 *	UPDATE ONLY <fktable> SET fkatt1 = NULL [, ...]
+				 *	UPDATE [ONLY] <fktable> SET fkatt1 = NULL [, ...]
 				 *			WHERE $1 = fkatt1 [AND ...]
 				 * The type id's for the $ parameters are those of the
 				 * corresponding PK attributes.
@@ -1350,8 +1361,11 @@ ri_setnull(TriggerData *trigdata)
 				 */
 				initStringInfo(&querybuf);
 				initStringInfo(&qualbuf);
+				fk_only = fk_rel->rd_rel->relkind == RELKIND_PARTITIONED_TABLE ?
+					"" : "ONLY ";
 				quoteRelationName(fkrelname, fk_rel);
-				appendStringInfo(&querybuf, "UPDATE ONLY %s SET", fkrelname);
+				appendStringInfo(&querybuf, "UPDATE %s%s SET",
+								 fk_only, fkrelname);
 				querysep = "";
 				qualsep = "WHERE";
 				for (i = 0; i < riinfo->nkeys; i++)
@@ -1502,7 +1516,7 @@ ri_setdefault(TriggerData *trigdata)
 			 */
 		case FKCONSTR_MATCH_SIMPLE:
 		case FKCONSTR_MATCH_FULL:
-			switch (ri_NullCheck(old_row, riinfo, true))
+			switch (ri_NullCheck(RelationGetDescr(pk_rel), old_row, riinfo, true))
 			{
 				case RI_KEYS_ALL_NULL:
 				case RI_KEYS_SOME_NULL:
@@ -1555,11 +1569,12 @@ ri_setdefault(TriggerData *trigdata)
 				const char *querysep;
 				const char *qualsep;
 				Oid			queryoids[RI_MAX_NUMKEYS];
+				const char *fk_only;
 				int			i;
 
 				/* ----------
 				 * The query string built is
-				 *	UPDATE ONLY <fktable> SET fkatt1 = DEFAULT [, ...]
+				 *	UPDATE [ONLY] <fktable> SET fkatt1 = DEFAULT [, ...]
 				 *			WHERE $1 = fkatt1 [AND ...]
 				 * The type id's for the $ parameters are those of the
 				 * corresponding PK attributes.
@@ -1568,7 +1583,10 @@ ri_setdefault(TriggerData *trigdata)
 				initStringInfo(&querybuf);
 				initStringInfo(&qualbuf);
 				quoteRelationName(fkrelname, fk_rel);
-				appendStringInfo(&querybuf, "UPDATE ONLY %s SET", fkrelname);
+				fk_only = fk_rel->rd_rel->relkind == RELKIND_PARTITIONED_TABLE ?
+					"" : "ONLY ";
+				appendStringInfo(&querybuf, "UPDATE %s%s SET",
+								 fk_only, fkrelname);
 				querysep = "";
 				qualsep = "WHERE";
 				for (i = 0; i < riinfo->nkeys; i++)
@@ -1677,7 +1695,7 @@ RI_FKey_pk_upd_check_required(Trigger *trigger, Relation pk_rel,
 			 * If any old key value is NULL, the row could not have been
 			 * referenced by an FK row, so no check is needed.
 			 */
-			if (ri_NullCheck(old_row, riinfo, true) != RI_KEYS_NONE_NULL)
+			if (ri_NullCheck(RelationGetDescr(pk_rel), old_row, riinfo, true) != RI_KEYS_NONE_NULL)
 				return false;
 
 			/* If all old and new key values are equal, no check is needed */
@@ -1733,7 +1751,7 @@ RI_FKey_fk_upd_check_required(Trigger *trigger, Relation fk_rel,
 			 * If any new key value is NULL, the row must satisfy the
 			 * constraint, so no check is needed.
 			 */
-			if (ri_NullCheck(new_row, riinfo, false) != RI_KEYS_NONE_NULL)
+			if (ri_NullCheck(RelationGetDescr(fk_rel), new_row, riinfo, false) != RI_KEYS_NONE_NULL)
 				return false;
 
 			/*
@@ -1764,7 +1782,7 @@ RI_FKey_fk_upd_check_required(Trigger *trigger, Relation fk_rel,
 			 * invalidated before the constraint is to be checked, but we
 			 * should queue the event to apply the check later.
 			 */
-			switch (ri_NullCheck(new_row, riinfo, false))
+			switch (ri_NullCheck(RelationGetDescr(fk_rel), new_row, riinfo, false))
 			{
 				case RI_KEYS_ALL_NULL:
 					return false;
@@ -1839,6 +1857,7 @@ RI_Initial_Check(Trigger *trigger, Relation fk_rel, Relation pk_rel)
 	RangeTblEntry *pkrte;
 	RangeTblEntry *fkrte;
 	const char *sep;
+	const char *fk_only;
 	int			i;
 	int			save_nestlevel;
 	char		workmembuf[32];
@@ -1895,7 +1914,7 @@ RI_Initial_Check(Trigger *trigger, Relation fk_rel, Relation pk_rel)
 
 	/*----------
 	 * The query string built is:
-	 *	SELECT fk.keycols FROM ONLY relname fk
+	 *	SELECT fk.keycols FROM [ONLY] relname fk
 	 *	 LEFT OUTER JOIN ONLY pkrelname pk
 	 *	 ON (pk.pkkeycol1=fk.keycol1 [AND ...])
 	 *	 WHERE pk.pkkeycol1 IS NULL AND
@@ -1921,9 +1940,11 @@ RI_Initial_Check(Trigger *trigger, Relation fk_rel, Relation pk_rel)
 
 	quoteRelationName(pkrelname, pk_rel);
 	quoteRelationName(fkrelname, fk_rel);
+	fk_only = fk_rel->rd_rel->relkind == RELKIND_PARTITIONED_TABLE ?
+		"" : "ONLY ";
 	appendStringInfo(&querybuf,
-					 " FROM ONLY %s fk LEFT OUTER JOIN ONLY %s pk ON",
-					 fkrelname, pkrelname);
+					 " FROM %s%s fk LEFT OUTER JOIN ONLY %s pk ON",
+					 fk_only, fkrelname, pkrelname);
 
 	strcpy(pkattname, "pk.");
 	strcpy(fkattname, "fk.");
@@ -2058,7 +2079,7 @@ RI_Initial_Check(Trigger *trigger, Relation fk_rel, Relation pk_rel)
 		 * disallows partially-null FK rows.
 		 */
 		if (fake_riinfo.confmatchtype == FKCONSTR_MATCH_FULL &&
-			ri_NullCheck(tuple, &fake_riinfo, false) != RI_KEYS_NONE_NULL)
+			ri_NullCheck(tupdesc, tuple, &fake_riinfo, false) != RI_KEYS_NONE_NULL)
 			ereport(ERROR,
 					(errcode(ERRCODE_FOREIGN_KEY_VIOLATION),
 					 errmsg("insert or update on table \"%s\" violates foreign key constraint \"%s\"",
@@ -2134,13 +2155,10 @@ quoteRelationName(char *buffer, Relation rel)
 /*
  * ri_GenerateQual --- generate a WHERE clause equating two variables
  *
- * The idea is to append " sep leftop op rightop" to buf.  The complexity
- * comes from needing to be sure that the parser will select the desired
- * operator.  We always name the operator using OPERATOR(schema.op) syntax
- * (readability isn't a big priority here), so as to avoid search-path
- * uncertainties.  We have to emit casts too, if either input isn't already
- * the input type of the operator; else we are at the mercy of the parser's
- * heuristics for ambiguous-operator resolution.
+ * This basically appends " sep leftop op rightop" to buf, adding casts
+ * and schema qualification as needed to ensure that the parser will select
+ * the operator we specify.  leftop and rightop should be parenthesized
+ * if they aren't variables or parameters.
  */
 static void
 ri_GenerateQual(StringInfo buf,
@@ -2149,60 +2167,9 @@ ri_GenerateQual(StringInfo buf,
 				Oid opoid,
 				const char *rightop, Oid rightoptype)
 {
-	HeapTuple	opertup;
-	Form_pg_operator operform;
-	char	   *oprname;
-	char	   *nspname;
-
-	opertup = SearchSysCache1(OPEROID, ObjectIdGetDatum(opoid));
-	if (!HeapTupleIsValid(opertup))
-		elog(ERROR, "cache lookup failed for operator %u", opoid);
-	operform = (Form_pg_operator) GETSTRUCT(opertup);
-	Assert(operform->oprkind == 'b');
-	oprname = NameStr(operform->oprname);
-
-	nspname = get_namespace_name(operform->oprnamespace);
-
-	appendStringInfo(buf, " %s %s", sep, leftop);
-	if (leftoptype != operform->oprleft)
-		ri_add_cast_to(buf, operform->oprleft);
-	appendStringInfo(buf, " OPERATOR(%s.", quote_identifier(nspname));
-	appendStringInfoString(buf, oprname);
-	appendStringInfo(buf, ") %s", rightop);
-	if (rightoptype != operform->oprright)
-		ri_add_cast_to(buf, operform->oprright);
-
-	ReleaseSysCache(opertup);
-}
-
-/*
- * Add a cast specification to buf.  We spell out the type name the hard way,
- * intentionally not using format_type_be().  This is to avoid corner cases
- * for CHARACTER, BIT, and perhaps other types, where specifying the type
- * using SQL-standard syntax results in undesirable data truncation.  By
- * doing it this way we can be certain that the cast will have default (-1)
- * target typmod.
- */
-static void
-ri_add_cast_to(StringInfo buf, Oid typid)
-{
-	HeapTuple	typetup;
-	Form_pg_type typform;
-	char	   *typname;
-	char	   *nspname;
-
-	typetup = SearchSysCache1(TYPEOID, ObjectIdGetDatum(typid));
-	if (!HeapTupleIsValid(typetup))
-		elog(ERROR, "cache lookup failed for type %u", typid);
-	typform = (Form_pg_type) GETSTRUCT(typetup);
-
-	typname = NameStr(typform->typname);
-	nspname = get_namespace_name(typform->typnamespace);
-
-	appendStringInfo(buf, "::%s.%s",
-					 quote_identifier(nspname), quote_identifier(typname));
-
-	ReleaseSysCache(typetup);
+	appendStringInfo(buf, " %s ", sep);
+	generate_operator_clause(buf, leftop, leftoptype, opoid,
+							 rightop, rightoptype);
 }
 
 /*
@@ -2350,13 +2317,6 @@ ri_FetchConstraintInfo(Trigger *trigger, Relation trig_rel, bool rel_is_pk)
 	{
 		if (riinfo->fk_relid != trigger->tgconstrrelid ||
 			riinfo->pk_relid != RelationGetRelid(trig_rel))
-			elog(ERROR, "wrong pg_constraint entry for trigger \"%s\" on table \"%s\"",
-				 trigger->tgname, RelationGetRelationName(trig_rel));
-	}
-	else
-	{
-		if (riinfo->fk_relid != RelationGetRelid(trig_rel) ||
-			riinfo->pk_relid != trigger->tgconstrrelid)
 			elog(ERROR, "wrong pg_constraint entry for trigger \"%s\" on table \"%s\"",
 				 trigger->tgname, RelationGetRelationName(trig_rel));
 	}
@@ -2915,7 +2875,8 @@ ri_ReportViolation(const RI_ConstraintInfo *riinfo,
  * ----------
  */
 static int
-ri_NullCheck(HeapTuple tup,
+ri_NullCheck(TupleDesc tupDesc,
+			 HeapTuple tup,
 			 const RI_ConstraintInfo *riinfo, bool rel_is_pk)
 {
 	const int16 *attnums;
@@ -2930,7 +2891,7 @@ ri_NullCheck(HeapTuple tup,
 
 	for (i = 0; i < riinfo->nkeys; i++)
 	{
-		if (heap_attisnull(tup, attnums[i]))
+		if (heap_attisnull(tup, attnums[i], tupDesc))
 			nonenull = false;
 		else
 			allnull = false;

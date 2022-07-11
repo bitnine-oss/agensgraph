@@ -82,7 +82,7 @@ typedef enum
 
 #define BGW_DEFAULT_RESTART_INTERVAL	60
 #define BGW_NEVER_RESTART				-1
-#define BGW_MAXLEN						64
+#define BGW_MAXLEN						96
 #define BGW_EXTRALEN					128
 
 typedef struct BackgroundWorker
@@ -140,10 +140,19 @@ extern PGDLLIMPORT BackgroundWorker *MyBgworkerEntry;
  * If dbname is NULL, connection is made to no specific database;
  * only shared catalogs can be accessed.
  */
-extern void BackgroundWorkerInitializeConnection(const char *dbname, const char *username);
+extern void BackgroundWorkerInitializeConnection(const char *dbname, const char *username, uint32 flags);
 
 /* Just like the above, but specifying database and user by OID. */
-extern void BackgroundWorkerInitializeConnectionByOid(Oid dboid, Oid useroid);
+extern void BackgroundWorkerInitializeConnectionByOid(Oid dboid, Oid useroid, uint32 flags);
+
+/*
+ * Flags to BackgroundWorkerInitializeConnection et al
+ *
+ *
+ * Allow bypassing datallowconn restrictions when connecting to database
+ */
+#define BGWORKER_BYPASS_ALLOWCONN 1
+
 
 /* Block/unblock signals in a background worker process */
 extern void BackgroundWorkerBlockSignals(void);

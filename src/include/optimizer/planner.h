@@ -28,7 +28,8 @@ extern PGDLLIMPORT planner_hook_type planner_hook;
 typedef void (*create_upper_paths_hook_type) (PlannerInfo *root,
 											  UpperRelationKind stage,
 											  RelOptInfo *input_rel,
-											  RelOptInfo *output_rel);
+											  RelOptInfo *output_rel,
+											  void *extra);
 extern PGDLLIMPORT create_upper_paths_hook_type create_upper_paths_hook;
 
 
@@ -57,10 +58,5 @@ extern Expr *preprocess_phv_expression(PlannerInfo *root, Expr *expr);
 
 extern bool plan_cluster_use_sort(Oid tableOid, Oid indexOid);
 extern int	plan_create_index_workers(Oid tableOid, Oid indexOid);
-
-extern List *get_partitioned_child_rels(PlannerInfo *root, Index rti,
-						   bool *part_cols_updated);
-extern List *get_partitioned_child_rels_for_join(PlannerInfo *root,
-									Relids join_relids);
 
 #endif							/* PLANNER_H */

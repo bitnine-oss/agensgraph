@@ -43,11 +43,10 @@ extern void CatalogTupleDelete(Relation heapRel, ItemPointer tid);
 
 /*
  * These macros are just to keep the C compiler from spitting up on the
- * upcoming commands for genbki.pl.
+ * upcoming commands for Catalog.pm.
  */
 #define DECLARE_INDEX(name,oid,decl) extern int no_such_variable
 #define DECLARE_UNIQUE_INDEX(name,oid,decl) extern int no_such_variable
-#define BUILD_INDICES
 
 
 /*
@@ -128,6 +127,8 @@ DECLARE_INDEX(pg_constraint_contypid_index, 2666, on pg_constraint using btree(c
 #define ConstraintTypidIndexId	2666
 DECLARE_UNIQUE_INDEX(pg_constraint_oid_index, 2667, on pg_constraint using btree(oid oid_ops));
 #define ConstraintOidIndexId  2667
+DECLARE_INDEX(pg_constraint_conparentid_index, 2579, on pg_constraint using btree(conparentid oid_ops));
+#define ConstraintParentIndexId	2579
 
 DECLARE_UNIQUE_INDEX(pg_conversion_default_index, 2668, on pg_conversion using btree(connamespace oid_ops, conforencoding int4_ops, contoencoding int4_ops, oid oid_ops));
 #define ConversionDefaultIndexId  2668
@@ -359,6 +360,7 @@ DECLARE_UNIQUE_INDEX(pg_subscription_subname_index, 6115, on pg_subscription usi
 DECLARE_UNIQUE_INDEX(pg_subscription_rel_srrelid_srsubid_index, 6117, on pg_subscription_rel using btree(srrelid oid_ops, srsubid oid_ops));
 #define SubscriptionRelSrrelidSrsubidIndexId 6117
 
+/* for AgensGraph */
 DECLARE_UNIQUE_INDEX(ag_graph_oid_index, 7041, on ag_graph using btree(oid oid_ops));
 #define GraphOidIndexId 7041
 DECLARE_UNIQUE_INDEX(ag_graph_graphname_index, 7042, on ag_graph using btree(graphname name_ops));
@@ -379,8 +381,5 @@ DECLARE_INDEX(ag_graphmeta_start_index, 7057, on ag_graphmeta using btree(graph 
 #define GraphMetaStartIndexId 7057
 DECLARE_INDEX(ag_graphmeta_end_index, 7058, on ag_graphmeta using btree(graph oid_ops, "end" int2_ops));
 #define GraphMetaEndIndexId 7058
-
-/* last step of initialization script: build the indexes declared above */
-BUILD_INDICES
 
 #endif							/* INDEXING_H */

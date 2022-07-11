@@ -999,6 +999,7 @@ ReplicationSlotReserveWal(void)
 	while (true)
 	{
 		XLogSegNo	segno;
+		XLogRecPtr	restart_lsn;
 
 		/*
 		 * For logical slots log a standby snapshot and start logical decoding
@@ -1016,7 +1017,10 @@ ReplicationSlotReserveWal(void)
 			XLogRecPtr	flushptr;
 
 			/* start at current insert position */
-			slot->data.restart_lsn = GetXLogInsertRecPtr();
+			restart_lsn = GetXLogInsertRecPtr();
+			SpinLockAcquire(&slot->mutex);
+			slot->data.restart_lsn = restart_lsn;
+			SpinLockRelease(&slot->mutex);
 
 			/* make sure we have enough information to start */
 			flushptr = LogStandbySnapshot();
@@ -1026,7 +1030,10 @@ ReplicationSlotReserveWal(void)
 		}
 		else
 		{
-			slot->data.restart_lsn = GetRedoRecPtr();
+			restart_lsn = GetRedoRecPtr();
+			SpinLockAcquire(&slot->mutex);
+			slot->data.restart_lsn = restart_lsn;
+			SpinLockRelease(&slot->mutex);
 		}
 
 		/* prevent WAL removal as fast as possible */
@@ -1166,13 +1173,14 @@ CreateSlotOnDisk(ReplicationSlot *slot)
 	 * It's just barely possible that some previous effort to create or drop a
 	 * slot with this name left a temp directory lying around. If that seems
 	 * to be the case, try to remove it.  If the rmtree() fails, we'll error
-	 * out at the mkdir() below, so we don't bother checking success.
+	 * out at the MakePGDirectory() below, so we don't bother checking
+	 * success.
 	 */
 	if (stat(tmppath, &st) == 0 && S_ISDIR(st.st_mode))
 		rmtree(tmppath, true);
 
 	/* Create and fsync the temporary slot directory. */
-	if (mkdir(tmppath, S_IRWXU) < 0)
+	if (MakePGDirectory(tmppath) < 0)
 		ereport(ERROR,
 				(errcode_for_file_access(),
 				 errmsg("could not create directory \"%s\": %m",
@@ -1266,7 +1274,9 @@ SaveSlotToPath(ReplicationSlot *slot, const char *dir, int elevel)
 
 		pgstat_report_wait_end();
 		CloseTransientFile(fd);
-		errno = save_errno;
+
+		/* if write didn't set errno, assume problem is no disk space */
+		errno = save_errno ? save_errno : ENOSPC;
 		ereport(elevel,
 				(errcode_for_file_access(),
 				 errmsg("could not write to file \"%s\": %m",
@@ -1370,7 +1380,10 @@ RestoreSlotFromDisk(const char *name)
 	pgstat_report_wait_start(WAIT_EVENT_REPLICATION_SLOT_RESTORE_SYNC);
 	if (pg_fsync(fd) != 0)
 	{
+		int			save_errno = errno;
+
 		CloseTransientFile(fd);
+		errno = save_errno;
 		ereport(PANIC,
 				(errcode_for_file_access(),
 				 errmsg("could not fsync file \"%s\": %m",

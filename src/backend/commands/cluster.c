@@ -115,7 +115,7 @@ cluster(ClusterStmt *stmt, bool isTopLevel)
 		/* Find, lock, and check permissions on the table */
 		tableOid = RangeVarGetRelidExtended(stmt->relation,
 											AccessExclusiveLock,
-											false, false,
+											0,
 											RangeVarCallbackOwnsTable, NULL);
 		rel = heap_open(tableOid, NoLock);
 
@@ -202,7 +202,7 @@ cluster(ClusterStmt *stmt, bool isTopLevel)
 		 * We cannot run this form of CLUSTER inside a user transaction block;
 		 * we'd be holding locks way too long.
 		 */
-		PreventTransactionChain(isTopLevel, "CLUSTER");
+		PreventInTransactionBlock(isTopLevel, "CLUSTER");
 
 		/*
 		 * Create special memory context for cross-transaction storage.
@@ -453,7 +453,7 @@ check_index_is_clusterable(Relation OldHeap, Oid indexOid, bool recheck, LOCKMOD
 	 * seqscan pass over the table to copy the missing rows, but that seems
 	 * expensive and tedious.
 	 */
-	if (!heap_attisnull(OldIndex->rd_indextuple, Anum_pg_index_indpred))
+	if (!heap_attisnull(OldIndex->rd_indextuple, Anum_pg_index_indpred, NULL))
 		ereport(ERROR,
 				(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
 				 errmsg("cannot cluster on partial index \"%s\"",
@@ -692,6 +692,7 @@ make_new_heap(Oid OIDOldHeap, Oid NewTableSpace, char relpersistence,
 										  false,
 										  true,
 										  true,
+										  OIDOldHeap,
 										  NULL);
 	Assert(OIDNewHeap != InvalidOid);
 
@@ -1538,8 +1539,8 @@ finish_heap_swap(Oid OIDOldHeap, Oid OIDNewHeap,
 						frozenXid, cutoffMulti, mapped_tables);
 
 	/*
-	 * If it's a system catalog, queue an sinval message to flush all
-	 * catcaches on the catalog when we reach CommandCounterIncrement.
+	 * If it's a system catalog, queue a sinval message to flush all catcaches
+	 * on the catalog when we reach CommandCounterIncrement.
 	 */
 	if (is_system_catalog)
 		CacheInvalidateCatalog(OIDOldHeap);
@@ -1666,6 +1667,16 @@ finish_heap_swap(Oid OIDOldHeap, Oid OIDNewHeap,
 			RenameRelationInternal(toastidx,
 								   NewToastName, true);
 		}
+		relation_close(newrel, NoLock);
+	}
+
+	/* if it's not a catalog table, clear any missing attribute settings */
+	if (!is_system_catalog)
+	{
+		Relation	newrel;
+
+		newrel = heap_open(OIDOldHeap, NoLock);
+		RelationClearMissing(newrel);
 		relation_close(newrel, NoLock);
 	}
 }

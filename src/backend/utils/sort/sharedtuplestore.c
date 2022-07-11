@@ -47,7 +47,7 @@ typedef struct SharedTuplestoreChunk
 	int			ntuples;		/* Number of tuples in this chunk. */
 	int			overflow;		/* If overflow, how many including this one? */
 	char		data[FLEXIBLE_ARRAY_MEMBER];
-}			SharedTuplestoreChunk;
+} SharedTuplestoreChunk;
 
 /* Per-participant shared state. */
 typedef struct SharedTuplestoreParticipant
@@ -56,7 +56,7 @@ typedef struct SharedTuplestoreParticipant
 	BlockNumber read_page;		/* Page number for next read. */
 	BlockNumber npages;			/* Number of pages written. */
 	bool		writing;		/* Used only for assertions. */
-}			SharedTuplestoreParticipant;
+} SharedTuplestoreParticipant;
 
 /* The control object that lives in shared memory. */
 struct SharedTuplestore
@@ -386,7 +386,7 @@ sts_puttuple(SharedTuplestoreAccessor *accessor, void *meta_data,
 				sts_flush_chunk(accessor);
 
 				/*
-				 * How many oveflow chunks to go?  This will allow readers to
+				 * How many overflow chunks to go?  This will allow readers to
 				 * skip all of them at once instead of reading each one.
 				 */
 				accessor->write_chunk->overflow = (size + STS_CHUNK_DATA_SIZE - 1) /
