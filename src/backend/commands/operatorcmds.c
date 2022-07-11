@@ -48,8 +48,6 @@
 #include "parser/parse_func.h"
 #include "parser/parse_oper.h"
 #include "parser/parse_type.h"
-#include "parser/parser.h"
-#include "parser/scansup.h"
 #include "utils/builtins.h"
 #include "utils/lsyscache.h"
 #include "utils/rel.h"
@@ -416,26 +414,18 @@ AlterOperator(AlterOperatorStmt *stmt)
 	{
 		DefElem    *defel = (DefElem *) lfirst(pl);
 		List	   *param;
-		char	   *defname;
-
-		defname = defel->defname;
-		if (case_sensitive_ident)
-		{
-			defname = downcase_identifier(defname, strlen(defname), false,
-										  false);
-		}
 
 		if (defel->arg == NULL)
 			param = NIL;		/* NONE, removes the function */
 		else
 			param = defGetQualifiedName(defel);
 
-		if (strcmp(defname, "restrict") == 0)
+		if (strcmp(defel->defname, "restrict") == 0)
 		{
 			restrictionName = param;
 			updateRestriction = true;
 		}
-		else if (strcmp(defname, "join") == 0)
+		else if (strcmp(defel->defname, "join") == 0)
 		{
 			joinName = param;
 			updateJoin = true;
@@ -445,24 +435,24 @@ AlterOperator(AlterOperatorStmt *stmt)
 		 * The rest of the options that CREATE accepts cannot be changed.
 		 * Check for them so that we can give a meaningful error message.
 		 */
-		else if (strcmp(defname, "leftarg") == 0 ||
-				 strcmp(defname, "rightarg") == 0 ||
-				 strcmp(defname, "procedure") == 0 ||
-				 strcmp(defname, "commutator") == 0 ||
-				 strcmp(defname, "negator") == 0 ||
-				 strcmp(defname, "hashes") == 0 ||
-				 strcmp(defname, "merges") == 0)
+		else if (strcmp(defel->defname, "leftarg") == 0 ||
+				 strcmp(defel->defname, "rightarg") == 0 ||
+				 strcmp(defel->defname, "procedure") == 0 ||
+				 strcmp(defel->defname, "commutator") == 0 ||
+				 strcmp(defel->defname, "negator") == 0 ||
+				 strcmp(defel->defname, "hashes") == 0 ||
+				 strcmp(defel->defname, "merges") == 0)
 		{
 			ereport(ERROR,
 					(errcode(ERRCODE_SYNTAX_ERROR),
 					 errmsg("operator attribute \"%s\" cannot be changed",
-							defname)));
+							defel->defname)));
 		}
 		else
 			ereport(ERROR,
 					(errcode(ERRCODE_SYNTAX_ERROR),
 					 errmsg("operator attribute \"%s\" not recognized",
-							defname)));
+							defel->defname)));
 	}
 
 	/* Check permissions. Must be owner. */

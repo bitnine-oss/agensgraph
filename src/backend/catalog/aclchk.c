@@ -3464,6 +3464,18 @@ aclcheck_error(AclResult aclerr, ObjectType objtype,
 					case OBJECT_VIEW:
 						msg = gettext_noop("permission denied for view %s");
 						break;
+					case OBJECT_ELABEL:
+						msg = gettext_noop("permission denied for elabel %s");
+						break;
+					case OBJECT_VLABEL:
+						msg = gettext_noop("permission denied for vlabel %s");
+						break;
+					case OBJECT_GRAPH:
+						msg = gettext_noop("permission denied for graph %s");
+						break;
+					case OBJECT_PROPERTY_INDEX:
+						msg = gettext_noop("permission denied for object property index %s");
+						break;
 					/* these currently aren't used */
 					case OBJECT_ACCESS_METHOD:
 					case OBJECT_AMOP:
@@ -3600,6 +3612,18 @@ aclcheck_error(AclResult aclerr, ObjectType objtype,
 					case OBJECT_TABCONSTRAINT:
 					case OBJECT_TRIGGER:
 						msg = gettext_noop("must be owner of relation %s");
+						break;
+					case OBJECT_ELABEL:
+						msg = gettext_noop("must be owner of elabel %s");
+						break;
+					case OBJECT_VLABEL:
+						msg = gettext_noop("must be owner of vlabel %s");
+						break;
+					case OBJECT_GRAPH:
+						msg = gettext_noop("must be owner of graph %s");
+						break;
+					case OBJECT_PROPERTY_INDEX:
+						msg = gettext_noop("must be owner of object property index %s");
 						break;
 					/* these currently aren't used */
 					case OBJECT_ACCESS_METHOD:

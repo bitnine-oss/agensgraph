@@ -2237,6 +2237,14 @@ stringify_grant_objtype(ObjectType objtype)
 			return "TABLESPACE";
 		case OBJECT_TYPE:
 			return "TYPE";
+		case OBJECT_GRAPH:
+			return "GRAPH";
+		case OBJECT_PROPERTY_INDEX:
+			return "GRAPH PROPERTY INDEX";
+		case OBJECT_VLABEL:
+			return "VERTEX LABEL";
+		case OBJECT_ELABEL:
+			return "EDGE LABEL";
 		/* these currently aren't used */
 		case OBJECT_ACCESS_METHOD:
 		case OBJECT_AGGREGATE:
@@ -2319,6 +2327,14 @@ stringify_adefprivs_objtype(ObjectType objtype)
 			return "TABLESPACES";
 		case OBJECT_TYPE:
 			return "TYPES";
+		case OBJECT_GRAPH:
+		    return "GRAPH";
+		case OBJECT_PROPERTY_INDEX:
+		    return "GRAPH PROPERTY INDEX";
+		case OBJECT_VLABEL:
+		    return "VERTEX LABEL";
+		case OBJECT_ELABEL:
+		    return "EDGE LABEL";
 		/* these currently aren't used */
 		case OBJECT_ACCESS_METHOD:
 		case OBJECT_AGGREGATE:

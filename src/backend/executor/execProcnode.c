@@ -119,6 +119,7 @@
 #include "executor/nodeWorktablescan.h"
 #include "nodes/nodeFuncs.h"
 #include "miscadmin.h"
+#include "executor/nodeDijkstra.h"
 
 
 static TupleTableSlot *ExecProcNodeFirst(PlanState *node);
