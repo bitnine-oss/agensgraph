@@ -55,10 +55,6 @@
 #include "catalog/pg_type_d.h"
 #include "libpq/libpq-fs.h"
 
-#include "catalog/pg_namespace.h"
-#include "catalog/ag_label.h"
-#include "catalog/ag_graph.h"
-
 #include "dumputils.h"
 #include "parallel.h"
 #include "pg_backup_db.h"
@@ -66,6 +62,9 @@
 #include "pg_dump.h"
 #include "fe_utils/connect.h"
 #include "fe_utils/string_utils.h"
+#include "catalog/pg_namespace.h"
+#include "catalog/ag_graph.h"
+#include "catalog/ag_label.h"
 
 
 typedef struct
@@ -293,6 +292,12 @@ static char *get_synchronized_snapshot(Archive *fout);
 static void setupDumpWorker(Archive *AHX);
 static TableInfo *getRootTableInfo(TableInfo *tbinfo);
 
+static void insertGraphCatalog(Archive *fout);
+static void setGraphPath(PQExpBuffer q, char *gname);
+static void dumpDatabaseGraphPath(Archive *fout);
+static void makeAlterGraphPathConfigCommand(Archive *fout,PGconn *conn,
+											const char *arrayitem,
+											const char *name);
 
 int
 main(int argc, char **argv)
@@ -871,6 +876,10 @@ main(int argc, char **argv)
 	/* Now the rearrangeable objects. */
 	for (i = 0; i < numObjs; i++)
 		dumpDumpableObject(fout, dobjs[i]);
+
+	/* Add the Graph_Path. */
+	dumpDatabaseGraphPath(fout);
+
 
 	/*
 	 * Set up options info to ensure we dump what we want.
@@ -8111,6 +8120,8 @@ getTableAttrs(Archive *fout, TableInfo *tblinfo, int numTables)
 	PGresult   *res;
 	int			ntups;
 	bool		hasdefaults;
+	bool		islab;
+	char	   *getdef;
 
 	for (i = 0; i < numTables; i++)
 	{
@@ -8124,6 +8135,26 @@ getTableAttrs(Archive *fout, TableInfo *tblinfo, int numTables)
 		if (!tbinfo->interesting)
 			continue;
 
+		/* Check if it's label or table */
+		resetPQExpBuffer(q);
+		appendPQExpBuffer(q,
+						  "SELECT 1 FROM pg_catalog.ag_label l WHERE l.relid = '%u'",
+						  tbinfo->dobj.catId.oid);
+
+		res = ExecuteSqlQuery(fout, q->data, PGRES_TUPLES_OK);
+		if (PQntuples(res) == 1)
+		{
+			islab = true;
+			getdef = "ag_get_graphconstraintdef";
+		}
+		else
+		{
+			islab = false;
+			getdef = "pg_get_constraintdef";
+		}
+
+		PQclear(res);
+		
 		/* find all the user attributes and their types */
 
 		/*
@@ -8468,12 +8499,13 @@ getTableAttrs(Archive *fout, TableInfo *tblinfo, int numTables)
 				 * but it wasn't ever false for check constraints until 9.2).
 				 */
 				appendPQExpBuffer(q, "SELECT tableoid, oid, conname, "
-								  "pg_catalog.pg_get_constraintdef(oid) AS consrc, "
+								  "pg_catalog.%s(oid) AS consrc, "
 								  "conislocal, convalidated "
 								  "FROM pg_catalog.pg_constraint "
 								  "WHERE conrelid = '%u'::pg_catalog.oid "
 								  "   AND contype = 'c' "
 								  "ORDER BY conname",
+								  getdef,
 								  tbinfo->dobj.catId.oid);
 			}
 			else if (fout->remoteVersion >= 80400)
@@ -8541,7 +8573,10 @@ getTableAttrs(Archive *fout, TableInfo *tblinfo, int numTables)
 				 * that potentially-violating existing data is loaded before
 				 * the constraint.
 				 */
-				constrs[j].separate = !validated;
+				if (islab)
+					constrs[j].separate = true;
+				else
+					constrs[j].separate = !validated;
 
 				constrs[j].dobj.dump = tbinfo->dobj.dump;
 
@@ -9840,6 +9875,9 @@ dumpDumpableObject(Archive *fout, DumpableObject *dobj)
 			dumpSubscription(fout, (SubscriptionInfo *) dobj);
 			break;
 		case DO_PRE_DATA_BOUNDARY:
+			/* Restore ag_label after all labels are restored */
+			insertGraphCatalog(fout);
+			break;
 		case DO_POST_DATA_BOUNDARY:
 			/* never dumped, nothing to do */
 			break;
@@ -16203,12 +16241,48 @@ dumpIndex(Archive *fout, IndxInfo *indxinfo)
 	 */
 	if (!is_constraint)
 	{
+		PQExpBuffer  isprop = createPQExpBuffer();
+		PGresult	*res;
+
 		if (dopt->binary_upgrade)
 			binary_upgrade_set_pg_class_oids(fout, q,
 											 indxinfo->dobj.catId.oid, true);
 
-		/* Plain secondary index */
-		appendPQExpBuffer(q, "%s;\n", indxinfo->indexdef);
+		appendPQExpBuffer(isprop,
+						  "SELECT graphname, indexname FROM ag_property_indexes "
+						  "WHERE graphname = '%s' and indexname = '%s'",
+						  indxinfo->dobj.namespace->dobj.name,
+						  indxinfo->dobj.name);
+		res = ExecuteSqlQuery(fout, isprop->data, PGRES_TUPLES_OK);
+
+		if (PQntuples(res) == 1)
+		{
+			PQExpBuffer  getdef = createPQExpBuffer();
+			PGresult	*defres;
+
+			appendPQExpBuffer(getdef,
+							  "SELECT ag_get_propindexdef(%u)",
+							  indxinfo->dobj.catId.oid);
+			defres = ExecuteSqlQuery(fout, getdef->data, PGRES_TUPLES_OK);
+
+			setGraphPath(q, tbinfo->dobj.namespace->dobj.name);
+
+			if (PQntuples(defres) == 1)
+				appendPQExpBuffer(q, "%s;\n", PQgetvalue(defres, 0, 0));
+			else
+				exit_horribly(NULL, "Failed to ag_get_propindexdef()\n");
+
+			PQclear(defres);
+			destroyPQExpBuffer(getdef);
+		}
+		else
+		{
+			/* Plain secondary index */
+			appendPQExpBuffer(q, "%s;\n", indxinfo->indexdef);
+		}
+
+		PQclear(res);
+		destroyPQExpBuffer(isprop);
 
 		/* If the index is clustered, we need to record that. */
 		if (indxinfo->indisclustered)
@@ -16369,6 +16443,8 @@ dumpConstraint(Archive *fout, ConstraintInfo *coninfo)
 	PQExpBuffer q;
 	PQExpBuffer delq;
 	char	   *tag = NULL;
+	PGresult   *res;
+	bool		islab;
 
 	/* Skip if not to be dumped */
 	if (!coninfo->dobj.dump || dopt->dataOnly)
@@ -16376,6 +16452,25 @@ dumpConstraint(Archive *fout, ConstraintInfo *coninfo)
 
 	q = createPQExpBuffer();
 	delq = createPQExpBuffer();
+
+	/* Check if it's label or table */
+	if (tbinfo == NULL)
+		islab = false;
+	else
+	{
+		appendPQExpBuffer(q,
+						  "SELECT 1 FROM pg_catalog.ag_label l WHERE l.relid = '%u'",
+						  tbinfo->dobj.catId.oid);
+
+		res = ExecuteSqlQuery(fout, q->data, PGRES_TUPLES_OK);
+		if (PQntuples(res) == 1)
+			islab = true;
+		else
+			islab = false;
+		PQclear(res);
+
+		resetPQExpBuffer(q);
+	}
 
 	if (coninfo->contype == 'p' ||
 		coninfo->contype == 'u' ||
@@ -16395,68 +16490,98 @@ dumpConstraint(Archive *fout, ConstraintInfo *coninfo)
 			binary_upgrade_set_pg_class_oids(fout, q,
 											 indxinfo->dobj.catId.oid, true);
 
-		appendPQExpBuffer(q, "ALTER TABLE ONLY %s\n",
-						  fmtQualifiedDumpable(tbinfo));
-		appendPQExpBuffer(q, "    ADD CONSTRAINT %s ",
-						  fmtId(coninfo->dobj.name));
-
-		if (coninfo->condef)
+		/* Dump UNIQUE constraint in graph label */
+		if (islab && coninfo->contype == 'x')
 		{
-			/* pg_get_constraintdef should have provided everything */
-			appendPQExpBuffer(q, "%s;\n", coninfo->condef);
+			PQExpBuffer getdef = createPQExpBuffer();
+			PGresult   *defres;
+
+			appendPQExpBuffer(getdef,
+							  "SELECT ag_get_graphconstraintdef(%u)",
+							  coninfo->dobj.catId.oid);
+			defres = ExecuteSqlQuery(fout, getdef->data, PGRES_TUPLES_OK);
+
+			if (PQntuples(defres) == 1)
+			{
+				setGraphPath(q, tbinfo->dobj.namespace->dobj.name);
+
+				appendPQExpBuffer(q, "CREATE CONSTRAINT ON %s %s;\n",
+								  tbinfo->dobj.name,
+								  PQgetvalue(defres, 0, 0));
+			}
+			else
+			{
+				exit_horribly(NULL, "Failed to ag_get_graphconstraintdef()\n");
+			}
+			PQclear(defres);
+			destroyPQExpBuffer(getdef);
 		}
+		/* Dump other constraint in relational table */
 		else
 		{
-			appendPQExpBuffer(q, "%s (",
-							  coninfo->contype == 'p' ? "PRIMARY KEY" : "UNIQUE");
-			for (k = 0; k < indxinfo->indnkeyattrs; k++)
+			appendPQExpBuffer(q, "ALTER TABLE ONLY %s\n",
+							  fmtQualifiedDumpable(tbinfo));
+			appendPQExpBuffer(q, "    ADD CONSTRAINT %s ",
+							  fmtId(coninfo->dobj.name));
+
+			if (coninfo->condef)
 			{
-				int			indkey = (int) indxinfo->indkeys[k];
-				const char *attname;
-
-				if (indkey == InvalidAttrNumber)
-					break;
-				attname = getAttrName(indkey, tbinfo);
-
-				appendPQExpBuffer(q, "%s%s",
-								  (k == 0) ? "" : ", ",
-								  fmtId(attname));
+				/* pg_get_constraintdef should have provided everything */
+				appendPQExpBuffer(q, "%s;\n", coninfo->condef);
 			}
-
-			if (indxinfo->indnkeyattrs < indxinfo->indnattrs)
-				appendPQExpBuffer(q, ") INCLUDE (");
-
-			for (k = indxinfo->indnkeyattrs; k < indxinfo->indnattrs; k++)
+			else
 			{
-				int			indkey = (int) indxinfo->indkeys[k];
-				const char *attname;
+				appendPQExpBuffer(q, "%s (",
+								  coninfo->contype == 'p' ? "PRIMARY KEY" : "UNIQUE");
+				for (k = 0; k < indxinfo->indnkeyattrs; k++)
+				{
+					int			indkey = (int) indxinfo->indkeys[k];
+					const char *attname;
 
-				if (indkey == InvalidAttrNumber)
-					break;
-				attname = getAttrName(indkey, tbinfo);
+					if (indkey == InvalidAttrNumber)
+						break;
+					attname = getAttrName(indkey, tbinfo);
 
-				appendPQExpBuffer(q, "%s%s",
-								  (k == indxinfo->indnkeyattrs) ? "" : ", ",
-								  fmtId(attname));
-			}
+					appendPQExpBuffer(q, "%s%s",
+									  (k == 0) ? "" : ", ",
+									  fmtId(attname));
+				}
 
-			appendPQExpBufferChar(q, ')');
+				if (indxinfo->indnkeyattrs < indxinfo->indnattrs)
+					appendPQExpBuffer(q, ") INCLUDE (");
 
-			if (nonemptyReloptions(indxinfo->indreloptions))
-			{
-				appendPQExpBufferStr(q, " WITH (");
-				appendReloptionsArrayAH(q, indxinfo->indreloptions, "", fout);
+				for (k = indxinfo->indnkeyattrs; k < indxinfo->indnattrs; k++)
+				{
+					int			indkey = (int) indxinfo->indkeys[k];
+					const char *attname;
+
+					if (indkey == InvalidAttrNumber)
+						break;
+					attname = getAttrName(indkey, tbinfo);
+
+					appendPQExpBuffer(q, "%s%s",
+									  (k == indxinfo->indnkeyattrs) ? "" : ", ",
+									  fmtId(attname));
+				}
+
 				appendPQExpBufferChar(q, ')');
-			}
 
-			if (coninfo->condeferrable)
-			{
-				appendPQExpBufferStr(q, " DEFERRABLE");
-				if (coninfo->condeferred)
-					appendPQExpBufferStr(q, " INITIALLY DEFERRED");
-			}
+				if (nonemptyReloptions(indxinfo->indreloptions))
+				{
+					appendPQExpBufferStr(q, " WITH (");
+					appendReloptionsArrayAH(q, indxinfo->indreloptions, "", fout);
+					appendPQExpBufferChar(q, ')');
+				}
 
-			appendPQExpBufferStr(q, ";\n");
+				if (coninfo->condeferrable)
+				{
+					appendPQExpBufferStr(q, " DEFERRABLE");
+					if (coninfo->condeferred)
+						appendPQExpBufferStr(q, " INITIALLY DEFERRED");
+				}
+
+				appendPQExpBufferStr(q, ";\n");
+			}
 		}
 
 		/* If the index is clustered, we need to record that. */
@@ -16529,10 +16654,33 @@ dumpConstraint(Archive *fout, ConstraintInfo *coninfo)
 	}
 	else if (coninfo->contype == 'c' && tbinfo)
 	{
+		/* CHECK constraint on a graph label */
+		if (islab)
+		{
+			setGraphPath(q, tbinfo->dobj.namespace->dobj.name);
+
+			appendPQExpBuffer(q, "CREATE CONSTRAINT ON %s %s;\n",
+							  tbinfo->dobj.name,
+							  coninfo->condef);
+
+			tag = psprintf("%s %s", tbinfo->dobj.name, coninfo->dobj.name);
+
+			if (coninfo->dobj.dump & DUMP_COMPONENT_DEFINITION)
+				ArchiveEntry(fout, coninfo->dobj.catId, coninfo->dobj.dumpId,
+							 tag,
+							 tbinfo->dobj.namespace->dobj.name,
+							 NULL,
+							 tbinfo->rolname, false,
+							 "CHECK CONSTRAINT", SECTION_POST_DATA,
+							 q->data, "", NULL,
+							 NULL, 0,
+							 NULL, NULL);
+		}
+
 		/* CHECK constraint on a table */
 
 		/* Ignore if not to be dumped separately, or if it was inherited */
-		if (coninfo->separate && coninfo->conislocal)
+		else if (coninfo->separate && coninfo->conislocal)
 		{
 			/* not ONLY since we want it to propagate to children */
 			appendPQExpBuffer(q, "ALTER TABLE %s\n",
@@ -18160,6 +18308,81 @@ appendReloptionsArrayAH(PQExpBuffer buffer, const char *reloptions,
 }
 
 /*
+ * Creates the ALTER DATABASE command that will setup the GRAPH_PATH
+ * configuration option. See makeAlterConfigCommand
+ */
+static void
+makeAlterGraphPathConfigCommand(Archive *fout, PGconn *conn,
+								const char *graph_path,
+								const char *name)
+{
+	char *graph_name;
+	PQExpBuffer buf;
+
+	graph_name = extractConfigValue(graph_path);
+	buf = createPQExpBuffer();
+
+	appendPQExpBuffer(buf, "ALTER DATABASE %s SET GRAPH_PATH TO ", fmtId(name));
+	appendStringLiteralConn(buf, graph_name, conn);
+	appendPQExpBufferStr(buf, ";\n");
+
+	ArchiveEntry(fout, nilCatalogId, createDumpId(), "Graph Path", NULL,
+				 NULL, "", false, "GRAPH", SECTION_DATA, buf->data, "", NULL,
+				 NULL, 0, NULL, NULL);
+
+	destroyPQExpBuffer(buf);
+	free(graph_name);
+}
+
+/*
+ * Dump database-specific graph_path configuration
+ *
+ * This must be done here, because when database-specific configurations are
+ * exported, ag_catalog has not been setup and the GRAPH_PATH configuration
+ * option requires ag_graph to have data inserted in it.
+ */
+static void
+dumpDatabaseGraphPath(Archive *fout)
+{
+	PGconn *conn = GetConnection(fout);
+	PQExpBuffer buf = createPQExpBuffer();
+	int count = 1;
+
+	for (;;)
+	{
+		PGresult *res;
+
+		printfPQExpBuffer(buf, "SELECT setconfig[%d], current_database() as datname FROM pg_db_role_setting "
+							   "WHERE setrole = 0 AND setdatabase = (SELECT oid FROM pg_database WHERE datname = current_database());",
+						  count);
+
+		res = ExecuteSqlQuery(fout, buf->data, PGRES_TUPLES_OK);
+		if (PQntuples(res) == 1 && !PQgetisnull(res, 0, 0))
+		{
+			char *configuration = PQgetvalue(res, 0, 0);
+			char *datname = PQgetvalue(res, 0, 1);
+
+			if (!isGraphPathConfig(configuration))
+			{
+				count++;
+				continue;
+			}
+
+			makeAlterGraphPathConfigCommand(fout, conn, configuration, datname);
+			PQclear(res);
+			count++;
+		}
+		else
+		{
+			PQclear(res);
+			break;
+		}
+	}
+
+	destroyPQExpBuffer(buf);
+}
+
+/*
  * insertGraphCatalog
  *		insert into ag_graph & ag_label
  *		to make graph object from RDB object
@@ -18181,41 +18404,41 @@ insertGraphCatalog(Archive *fout)
 	for (tuple = 0; tuple < ntuples; tuple++)
 	{
 		appendPQExpBuffer(q,
-				"INSERT INTO pg_catalog.ag_graph\n"
-				"(SELECT nspname, oid FROM pg_catalog.pg_namespace\n"
-				"WHERE nspname = '%s');\n",
-				PQgetvalue(res, tuple, 0));
+						  "INSERT INTO pg_catalog.ag_graph\n"
+						  "(SELECT nspname, oid FROM pg_catalog.pg_namespace\n"
+						  "WHERE nspname = '%s');\n",
+						  PQgetvalue(res, tuple, 0));
 	}
 	PQclear(res);
 
 	/* restore dependency between pg_namespace and ag_graph */
 	appendPQExpBuffer(q,
-			"\nINSERT INTO pg_catalog.pg_depend\n"
-			"(SELECT %d, nspid, 0, %d, oid, 0, 'i'\n"
-			"FROM pg_catalog.ag_graph);\n",
-			NamespaceRelationId,
-			GraphRelationId);
+					  "\nINSERT INTO pg_catalog.pg_depend\n"
+					  "(SELECT %d, nspid, 0, %d, oid, 0, 'i'\n"
+					  "FROM pg_catalog.ag_graph);\n",
+					  NamespaceRelationId,
+					  GraphRelationId);
 
 	/* restore ag_label */
 	res = ExecuteSqlQuery(fout,
-			"SELECT l.labname, l.labid, l.labkind, g.graphname "
-			"FROM pg_catalog.ag_graph g, pg_catalog.ag_label l "
-			"WHERE g.oid = l.graphid",
-			PGRES_TUPLES_OK);
+						  "SELECT l.labname, l.labid, l.labkind, g.graphname "
+						  "FROM pg_catalog.ag_graph g, pg_catalog.ag_label l "
+						  "WHERE g.oid = l.graphid",
+						  PGRES_TUPLES_OK);
 	ntuples = PQntuples(res);
 	for (tuple = 0; tuple < ntuples; tuple++)
 	{
 		appendPQExpBuffer(q,
-				"INSERT INTO pg_catalog.ag_label\n"
-				"(SELECT c.relname, g.oid, %d, c.oid, '%s'\n"
-				"FROM pg_catalog.ag_graph g\n"
-				"JOIN pg_catalog.pg_namespace n ON n.oid = g.nspid\n"
-				"JOIN pg_catalog.pg_class c ON c.relnamespace = n.oid\n"
-				"WHERE g.graphname = '%s' AND c.relname = '%s');\n",
-				atoi(PQgetvalue(res, tuple, 1)),
-				PQgetvalue(res, tuple, 2),
-				PQgetvalue(res, tuple, 3),
-				PQgetvalue(res, tuple, 0));
+						  "INSERT INTO pg_catalog.ag_label\n"
+						  "(SELECT c.relname, g.oid, %d, c.oid, '%s'\n"
+						  "FROM pg_catalog.ag_graph g\n"
+						  "JOIN pg_catalog.pg_namespace n ON n.oid = g.nspid\n"
+						  "JOIN pg_catalog.pg_class c ON c.relnamespace = n.oid\n"
+						  "WHERE g.graphname = '%s' AND c.relname = '%s');\n",
+						  atoi(PQgetvalue(res, tuple, 1)),
+						  PQgetvalue(res, tuple, 2),
+						  PQgetvalue(res, tuple, 3),
+						  PQgetvalue(res, tuple, 0));
 	}
 	PQclear(res);
 
@@ -18223,33 +18446,33 @@ insertGraphCatalog(Archive *fout)
 	if (fout->agVersion >= 20000)
 	{
 		res = ExecuteSqlQuery(fout,
-				"SELECT g.graphname, m.edge, m.start, m.end, m.edgecount\n"
-				"FROM pg_catalog.ag_graph g, pg_catalog.ag_graphmeta m\n"
-				"WHERE g.oid = m.graph;\n",
-				PGRES_TUPLES_OK);
+							  "SELECT g.graphname, m.edge, m.start, m.end, m.edgecount\n"
+							  "FROM pg_catalog.ag_graph g, pg_catalog.ag_graphmeta m\n"
+							  "WHERE g.oid = m.graph;\n",
+							  PGRES_TUPLES_OK);
 		ntuples = PQntuples(res);
 		for (tuple = 0; tuple < ntuples; tuple++)
 		{
 			appendPQExpBuffer(q,
-					"INSERT INTO pg_catalog.ag_graphmeta\n"
-					"(SELECT oid, %d, %d, %d, %d\n"
-					"FROM pg_catalog.ag_graph WHERE graphname = '%s');\n",
-					atoi(PQgetvalue(res, tuple, 1)),
-					atoi(PQgetvalue(res, tuple, 2)),
-					atoi(PQgetvalue(res, tuple, 3)),
-					atoi(PQgetvalue(res, tuple, 4)),
-					PQgetvalue(res, tuple, 0));
+							  "INSERT INTO pg_catalog.ag_graphmeta\n"
+							  "(SELECT oid, %d, %d, %d, %d\n"
+							  "FROM pg_catalog.ag_graph WHERE graphname = '%s');\n",
+							  atoi(PQgetvalue(res, tuple, 1)),
+							  atoi(PQgetvalue(res, tuple, 2)),
+							  atoi(PQgetvalue(res, tuple, 3)),
+							  atoi(PQgetvalue(res, tuple, 4)),
+							  PQgetvalue(res, tuple, 0));
 		}
 		PQclear(res);
 	}
 
 	/* restore dependency between pg_class and ag_label */
 	appendPQExpBuffer(q,
-			"\nINSERT INTO pg_catalog.pg_depend\n"
-			"(SELECT %d, relid, 0, %d, oid, 0, 'i'\n"
-			"FROM pg_catalog.ag_label);\n",
-			RelationRelationId,
-			LabelRelationId);
+					  "\nINSERT INTO pg_catalog.pg_depend\n"
+					  "(SELECT %d, relid, 0, %d, oid, 0, 'i'\n"
+					  "FROM pg_catalog.ag_label);\n",
+					  RelationRelationId,
+					  LabelRelationId);
 
 	ArchiveEntry(fout, nilCatalogId, createDumpId(), "Graph Catalog", NULL,
 				 NULL, "", false, "GRAPH", SECTION_DATA, q->data, "", NULL,

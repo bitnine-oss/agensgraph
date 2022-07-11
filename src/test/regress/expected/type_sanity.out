@@ -553,11 +553,9 @@ WHERE p1.atttypid = p2.oid AND
      p1.attalign != p2.typalign OR
      p1.attbyval != p2.typbyval OR
      (p1.attstorage != p2.typstorage AND p1.attstorage != 'p'));
- attrelid | attname  | oid  | typname 
-----------+----------+------+---------
-     7030 | vertices | 7011 | _vertex
-     7030 | edges    | 7021 | _edge
-(2 rows)
+ attrelid | attname | oid | typname 
+----------+---------+-----+---------
+(0 rows)
 
 -- **************** pg_range ****************
 -- Look for illegal values in pg_range fields.

@@ -412,7 +412,10 @@ DROP TABLE attmp2;
 -- NOT VALID with plan invalidation -- ensure we don't use a constraint for
 -- exclusion until validated
 set constraint_exclusion TO 'partition';
-create table nv_parent (d date);
+create table nv_parent (d date, check (false) no inherit not valid);
+-- not valid constraint added at creation time should automatically become valid
+\d nv_parent
+
 create table nv_child_2010 () inherits (nv_parent);
 create table nv_child_2011 () inherits (nv_parent);
 alter table nv_child_2010 add check (d between '2010-01-01'::date and '2010-12-31'::date) not valid;
@@ -1021,6 +1024,17 @@ select * from child;
 drop table child;
 drop table parent;
 
+-- check error cases for inheritance column merging
+create table parent (a float8, b numeric(10,4), c text collate "C");
+
+create table child (a float4) inherits (parent); -- fail
+create table child (b decimal(10,7)) inherits (parent); -- fail
+create table child (c text collate "POSIX") inherits (parent); -- fail
+create table child (a double precision, b decimal(10,4)) inherits (parent);
+
+drop table child;
+drop table parent;
+
 -- test copy in/out
 create table attest (a int4, b int4, c int4);
 insert into attest values (1,2,3);
@@ -1540,6 +1554,11 @@ begin; alter table alterlock alter column f2 set (n_distinct = 1);
 select * from my_locks order by 1;
 rollback;
 
+-- test that mixing options with different lock levels works as expected
+begin; alter table alterlock set (autovacuum_enabled = off, fillfactor = 80);
+select * from my_locks order by 1;
+commit;
+
 begin; alter table alterlock alter column f2 set storage extended;
 select * from my_locks order by 1;
 rollback;
@@ -1571,6 +1590,39 @@ commit;
 begin;
 alter table alterlock2 validate constraint alterlock2nv;
 select * from my_locks order by 1;
+rollback;
+
+create or replace view my_locks as
+select case when c.relname like 'pg_toast%' then 'pg_toast' else c.relname end, max(mode::lockmodes) as max_lockmode
+from pg_locks l join pg_class c on l.relation = c.oid
+where virtualtransaction = (
+        select virtualtransaction
+        from pg_locks
+        where transactionid = txid_current()::integer)
+and locktype = 'relation'
+and relnamespace != (select oid from pg_namespace where nspname = 'pg_catalog')
+and c.relname = 'my_locks'
+group by c.relname;
+
+-- raise exception
+alter table my_locks set (autovacuum_enabled = false);
+alter view my_locks set (autovacuum_enabled = false);
+alter table my_locks reset (autovacuum_enabled);
+alter view my_locks reset (autovacuum_enabled);
+
+begin;
+alter view my_locks set (security_barrier=off);
+select * from my_locks order by 1;
+alter view my_locks reset (security_barrier);
+rollback;
+
+-- this test intentionally applies the ALTER TABLE command against a view, but
+-- uses a view option so we expect this to succeed. This form of SQL is
+-- accepted for historical reasons, as shown in the docs for ALTER VIEW
+begin;
+alter table my_locks set (security_barrier=off);
+select * from my_locks order by 1;
+alter table my_locks reset (security_barrier);
 rollback;
 
 -- cleanup
@@ -1631,6 +1683,7 @@ create text search dictionary alter1.dict(template = alter1.tmpl);
 insert into alter1.t1(f2) values(11);
 insert into alter1.t1(f2) values(12);
 
+alter table alter1.t1 set schema alter1; -- no-op, same schema
 alter table alter1.t1 set schema alter2;
 alter table alter1.v1 set schema alter2;
 alter function alter1.plus1(int) set schema alter2;
@@ -1639,6 +1692,7 @@ alter operator class alter1.ctype_hash_ops using hash set schema alter2;
 alter operator family alter1.ctype_hash_ops using hash set schema alter2;
 alter operator alter1.=(alter1.ctype, alter1.ctype) set schema alter2;
 alter function alter1.same(alter1.ctype, alter1.ctype) set schema alter2;
+alter type alter1.ctype set schema alter1; -- no-op, same schema
 alter type alter1.ctype set schema alter2;
 alter conversion alter1.ascii_to_utf8 set schema alter2;
 alter text search parser alter1.prs set schema alter2;
@@ -1896,7 +1950,7 @@ ALTER TABLE new_system_table SET SCHEMA pg_catalog;
 
 -- XXX: it's currently impossible to move relations out of pg_catalog
 ALTER TABLE new_system_table SET SCHEMA public;
--- move back, will currently error out, already there
+-- move back, will be ignored -- already there
 ALTER TABLE new_system_table SET SCHEMA pg_catalog;
 ALTER TABLE new_system_table RENAME TO old_system_table;
 CREATE INDEX old_system_table__othercol ON old_system_table (othercol);

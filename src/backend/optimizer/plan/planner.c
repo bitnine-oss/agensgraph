@@ -2389,7 +2389,8 @@ grouping_planner(PlannerInfo *root, bool inheritance_update,
 	if (final_rel->consider_parallel && root->query_level > 1 &&
 		!limit_needed(parse))
 	{
-		Assert(!parse->rowMarks && parse->commandType == CMD_SELECT);
+		Assert(!parse->rowMarks && (parse->commandType == CMD_SELECT ||
+									parse->commandType == CMD_GRAPHWRITE));
 		foreach(lc, current_rel->partial_pathlist)
 		{
 			Path	   *partial_path = (Path *) lfirst(lc);

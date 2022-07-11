@@ -2533,6 +2533,8 @@ amopopr => '>(graphid,graphid)', amopmethod => 'brin' },
 amoprighttype => 'vertex', amopstrategy => '1',
 amopopr => '=(vertex,vertex)', amopmethod => 'hash' },
 
+# todo: to AgensGraph team, need to be implement vertex(btree) ops, edge(btree) ops.
+
 # rowid_ops
 # BTree
 { amopfamily => 'btree/rowid_ops', amoplefttype => 'rowid',

@@ -2078,7 +2078,7 @@ ERROR:  vertices with edges can not be removed
 MATCH p=()-[:lib]->() DETACH DELETE (vertices(p))[1];
 ERROR:  only direct variable reference is supported
 LINE 1: MATCH p=()-[:lib]->() DETACH DELETE (vertices(p))[1];
-                                                      ^
+                                             ^
 MATCH (a:repo) RETURN a.name AS a;
          a          
 --------------------
@@ -3195,24 +3195,24 @@ CREATE (:v3 {no:3});
 ALTER DATABASE regression SET GRAPH_PATH TO ag161;
 SET PARALLEL_SETUP_COST = 0;
 EXPLAIN (VERBOSE, COSTS OFF) MATCH (a) RETURN count(a);
-                                  QUERY PLAN                                  
-------------------------------------------------------------------------------
+                                     QUERY PLAN                                     
+------------------------------------------------------------------------------------
  Finalize Aggregate
-   Output: to_jsonb(count(ROW(a.id, a.properties, a.ctid)::vertex))
+   Output: to_jsonb(count(ROW(a_1.id, a_1.properties, a_1.ctid)::vertex))
    ->  Gather
-         Output: (PARTIAL count(ROW(a.id, a.properties, a.ctid)::vertex))
-         Workers Planned: 1
+         Output: (PARTIAL count(ROW(a_1.id, a_1.properties, a_1.ctid)::vertex))
+         Workers Planned: 2
          ->  Partial Aggregate
-               Output: PARTIAL count(ROW(a.id, a.properties, a.ctid)::vertex)
-               ->  Append
-                     ->  Parallel Seq Scan on ag161.ag_vertex a
-                           Output: a.id, a.properties, a.ctid
+               Output: PARTIAL count(ROW(a_1.id, a_1.properties, a_1.ctid)::vertex)
+               ->  Parallel Append
                      ->  Parallel Seq Scan on ag161.v1 a_1
                            Output: a_1.id, a_1.properties, a_1.ctid
                      ->  Parallel Seq Scan on ag161.v2 a_2
                            Output: a_2.id, a_2.properties, a_2.ctid
                      ->  Parallel Seq Scan on ag161.v3 a_3
                            Output: a_3.id, a_3.properties, a_3.ctid
+                     ->  Parallel Seq Scan on ag161.ag_vertex a
+                           Output: a.id, a.properties, a.ctid
 (16 rows)
 
 MATCH (a) RETURN count(a);

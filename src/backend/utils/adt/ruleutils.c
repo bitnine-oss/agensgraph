@@ -7889,7 +7889,7 @@ get_rule_expr(Node *node, deparse_context *context,
 															exprType(arg1),
 															get_base_element_type(exprType(arg2))),
 									 expr->useOr ? "ANY" : "ALL");
-					}
+				}
 				get_rule_expr_paren(arg2, context, true, node);
 
 				/*
@@ -8256,7 +8256,7 @@ get_rule_expr(Node *node, deparse_context *context,
 				ArrayExpr  *arrayexpr = (ArrayExpr *) node;
 
 				if (context->cypherexpr)
-					appendStringInfoString(buf, "[");
+					appendStringInfoChar(buf, '[');
 				else
 					appendStringInfoString(buf, "ARRAY[");
 				get_rule_expr((Node *) arrayexpr->elements, context, true);
@@ -9221,36 +9221,43 @@ get_oper_expr(OpExpr *expr, deparse_context *context)
 		/* binary operator */
 		Node	   *arg1 = (Node *) linitial(args);
 		Node	   *arg2 = (Node *) lsecond(args);
-		char	   *oprname;
-
-		oprname = generate_operator_name(opno, exprType(arg1), exprType(arg2));
-		if (context->cypherexpr &&
-			(strcmp(oprname, "`+`") == 0 ||
-			 strcmp(oprname, "`-`") == 0 ||
-			 strcmp(oprname, "`*`") == 0 ||
-			 strcmp(oprname, "`/`") == 0 ||
-			 strcmp(oprname, "`%`") == 0 ||
-			 strcmp(oprname, "`^`") == 0))
+		if(context->cypherexpr)
 		{
-			oprname[2] = '\0';
-			oprname = oprname + 1;
-		}
+			char	   *oprname;
 
-		/* Switch '@>' to 'IN' and reverse order for Cypher expression */
-		if (context->cypherexpr && !strcmp(oprname, "@>"))
-		{
-			get_rule_expr_paren(arg2, context, true, (Node *) expr);
+			oprname = generate_operator_name(opno, exprType(arg1), exprType(arg2));
+			if ((strcmp(oprname, "`+`") == 0 ||
+				 strcmp(oprname, "`-`") == 0 ||
+				 strcmp(oprname, "`*`") == 0 ||
+				 strcmp(oprname, "`/`") == 0 ||
+				 strcmp(oprname, "`%`") == 0 ||
+				 strcmp(oprname, "`^`") == 0))
+			{
+				oprname[2] = '\0';
+				oprname = oprname + 1;
+			}
 
-			appendStringInfo(buf, " IN ");
-
-			get_rule_expr_paren(arg1, context, true, (Node *) expr);
+			/* Switch '@>' to 'IN' and reverse order for Cypher expression */
+			if (!strcmp(oprname, "@>"))
+			{
+				get_rule_expr_paren(arg2, context, true, (Node *) expr);
+				appendStringInfo(buf, " IN ");
+				get_rule_expr_paren(arg1, context, true, (Node *) expr);
+			}
+			else
+			{
+				get_rule_expr_paren(arg1, context, true, (Node *) expr);
+				appendStringInfo(buf, " %s ", oprname);
+				get_rule_expr_paren(arg2, context, true, (Node *) expr);
+			}
 		}
 		else
 		{
 			get_rule_expr_paren(arg1, context, true, (Node *) expr);
-
-			appendStringInfo(buf, " %s ", oprname);
-
+			appendStringInfo(buf, " %s ",
+							 generate_operator_name(opno,
+													exprType(arg1),
+													exprType(arg2)));
 			get_rule_expr_paren(arg2, context, true, (Node *) expr);
 		}
 	}
@@ -11730,7 +11737,7 @@ ag_get_propindexdef_worker(Oid indexrelid, const Oid *excludeOps,
 		appendStringInfo(&buf, "CREATE %sPROPERTY INDEX %s ON %s USING %s (",
 						 idxrec->indisunique ? "UNIQUE " : "",
 						 quote_identifier(NameStr(idxrelrec->relname)),
-						 generate_relation_name(indrelid, NIL),
+						 quote_identifier(get_relation_name(indrelid)),
 						 quote_identifier(NameStr(amrec->amname)));
 
 	/*
@@ -11758,7 +11765,10 @@ ag_get_propindexdef_worker(Oid indexrelid, const Oid *excludeOps,
 		indexpr_item = lnext(indexpr_item);
 		/* Deparse */
 		str = deparse_prop_expression_pretty(indexkey, context, prettyFlags);
-		appendStringInfo(&buf, "%s", str);
+		if (IsA(indexkey, CypherAccessExpr))
+			appendStringInfo(&buf, "%s", str);
+		else
+			appendStringInfo(&buf, "(%s)", str);
 		keycoltype = exprType(indexkey);
 		keycolcollation = exprCollation(indexkey);
 

@@ -209,6 +209,8 @@ ExecInitSeqScan(SeqScan *node, EState *estate, int eflags)
 	scanstate->ss.ps.qual =
 		ExecInitQual(node->plan.qual, (PlanState *) scanstate);
 
+    dlist_init(&scanstate->ctxs_head);
+    scanstate->prev_ctx_node = &scanstate->ctxs_head.head;
 	return scanstate;
 }
 

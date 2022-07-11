@@ -345,6 +345,7 @@ struct _archiveHandle
 	/* these vars track state to avoid sending redundant SET commands */
 	char	   *currUser;		/* current username, or NULL if unknown */
 	char	   *currSchema;		/* current schema, or NULL */
+	char	   *currGraph;		/* current graph, or NULL */
 	char	   *currTablespace; /* current tablespace, or NULL */
 	bool		currWithOids;	/* current default_with_oids setting */
 

@@ -4426,8 +4426,8 @@ transformLabelIdDefinition(CreateStmtContext *cxt, ColumnDef *col)
 	/* ALTER SEQUENCE OWNED BY after CREATE TABLE */
 
 #ifdef HAVE_LONG_INT_64
-	maxval = makeDefElem("maxvalue", (Node *) makeInteger(GRAPHID_LOCID_MAX),
-						 -1);
+	maxval = makeDefElem("maxvalue", (Node *) makeFloat(psprintf(INT64_FORMAT,
+																 GRAPHID_LOCID_MAX)), -1);
 #else
 	{
 		char buf[32];
@@ -4709,7 +4709,7 @@ prop_ref_mutator(Node *node)
 		return (Node *) cref;
 	}
 
-	return expression_tree_mutator(node, prop_ref_mutator, NULL);
+	return raw_expression_tree_mutator(node, prop_ref_mutator, NULL);
 }
 
 static ObjectType

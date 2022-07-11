@@ -103,6 +103,8 @@ static pg_wchar surrogate_pair_to_codepoint(pg_wchar first, pg_wchar second);
 static void addunicode(pg_wchar c, yyscan_t yyscanner);
 static bool check_uescapechar(unsigned char escape);
 
+static int	process_integer_literal_for_cypher(const char *token, YYSTYPE *lval, int base);
+
 #define yyerror(msg)  scanner_yyerror(msg, yyscanner)
 
 #define lexer_errposition()  scanner_errposition(*(yylloc), yyscanner)
@@ -953,12 +955,12 @@ other			.
 
 {hex}			{
 					SET_YYLLOC();
-					return process_integer_literal(yytext, yylval);
+					return process_integer_literal_for_cypher(yytext, yylval, 16);
 				}
 {hexfail}		{
 					yyless(yyleng - 1);
 					SET_YYLLOC();
-					return process_integer_literal(yytext, yylval);
+					return process_integer_literal_for_cypher(yytext, yylval, 16);
 				}
 {integer}		{
 					SET_YYLLOC();
@@ -1233,13 +1235,31 @@ litbufdup(core_yyscan_t yyscanner)
 }
 
 static int
+process_integer_literal_for_cypher(const char *token, YYSTYPE *lval, int base)
+{
+	int			val;
+	char	   *endptr;
+
+	errno = 0;
+	val = strtoint(token, &endptr, base);
+	if (*endptr != '\0' || errno == ERANGE)
+	{
+		/* integer too large, treat it as a float */
+		lval->str = pstrdup(token);
+		return FCONST;
+	}
+	lval->ival = val;
+	return ICONST;
+}
+
+static int
 process_integer_literal(const char *token, YYSTYPE *lval)
 {
 	int			val;
 	char	   *endptr;
 
 	errno = 0;
-	val = strtoint(token, &endptr, 10);
+	val = strtoint(token, &endptr, 0);
 	if (*endptr != '\0' || errno == ERANGE)
 	{
 		/* integer too large, treat it as a float */

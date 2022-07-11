@@ -42,6 +42,7 @@
 #include "psqlscanslash.h"
 #include "settings.h"
 #include "variables.h"
+#include "cypher_describe.h"
 
 /*
  * Editable database object types.
@@ -896,6 +897,9 @@ exec_command_d(PsqlScanState scan_state, bool active_branch, const char *cmd)
 						break;
 					case 'e':
 						success = listLabels(pattern, show_verbose, 'e');
+						break;
+					case 'i':
+						success = listGraphIndexes(pattern, show_verbose);
 						break;
 					default:
 						status = PSQL_CMD_UNKNOWN;

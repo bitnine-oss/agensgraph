@@ -77,4 +77,8 @@ struct PlanState;
 extern bool planstate_tree_walker(struct PlanState *planstate, bool (*walker) (),
 								  void *context);
 
+/* used on agensgraph. */
+extern Node *raw_expression_tree_mutator(Node *node, Node *(*mutator) (),
+										 void *context);
+
 #endif							/* NODEFUNCS_H */

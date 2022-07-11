@@ -22,6 +22,7 @@
 #include "partitioning/partbounds.h"
 #include "utils/lsyscache.h"
 #include "utils/memutils.h"
+#include "optimizer/clauses.h"
 
 
 static void make_rels_by_clause_joins(PlannerInfo *root,
