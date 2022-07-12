@@ -1420,10 +1420,21 @@ select * from another;
 
 drop table another;
 
--- table's row type
-create table tab1 (a int, b text);
-create table tab2 (x int, y tab1);
-alter table tab1 alter column b type varchar; -- fails
+-- We disallow changing table's row type if it's used for storage
+create table at_tab1 (a int, b text);
+create table at_tab2 (x int, y at_tab1);
+alter table at_tab1 alter column b type varchar; -- fails
+drop table at_tab2;
+-- Use of row type in an expression is defended differently
+create table at_tab2 (x int, y text, check((x,y)::at_tab1 = (1,'42')::at_tab1));
+alter table at_tab1 alter column b type varchar; -- allowed, but ...
+insert into at_tab2 values(1,'42'); -- ... this will fail
+drop table at_tab1, at_tab2;
+-- Check it for a partitioned table, too
+create table at_tab1 (a int, b text) partition by list(a);
+create table at_tab2 (x int, y at_tab1);
+alter table at_tab1 alter column b type varchar; -- fails
+drop table at_tab1, at_tab2;
 
 -- Alter column type that's part of a partitioned index
 create table at_partitioned (a int, b text) partition by range (a);
@@ -2581,6 +2592,11 @@ ALTER TABLE hash_parted ATTACH PARTITION fail_part FOR VALUES WITH (MODULUS 8, R
 ALTER TABLE hash_parted ATTACH PARTITION fail_part FOR VALUES WITH (MODULUS 3, REMAINDER 2);
 DROP TABLE fail_part;
 
+-- fails with incorrect object type
+CREATE VIEW at_v1 AS SELECT 1 as a;
+ALTER TABLE at_v1 ATTACH PARTITION dummy default;
+DROP VIEW at_v1;
+
 --
 -- DETACH PARTITION
 --
@@ -2855,3 +2871,22 @@ select indexrelid::regclass, indisclustered from pg_index
   where indrelid = 'alttype_cluster'::regclass
   order by indexrelid::regclass::text;
 drop table alttype_cluster;
+
+--
+-- Check that attaching or detaching a partitioned partition correctly leads
+-- to its partitions' constraint being updated to reflect the parent's
+-- newly added/removed constraint
+create table target_parted (a int, b int) partition by list (a);
+create table attach_parted (a int, b int) partition by list (b);
+create table attach_parted_part1 partition of attach_parted for values in (1);
+-- insert a row directly into the leaf partition so that its partition
+-- constraint is built and stored in the relcache
+insert into attach_parted_part1 values (1, 1);
+-- the following better invalidate the partition constraint of the leaf
+-- partition too...
+alter table target_parted attach partition attach_parted for values in (1);
+-- ...such that the following insert fails
+insert into attach_parted_part1 values (2, 1);
+-- ...and doesn't when the partition is detached along with its own partition
+alter table target_parted detach partition attach_parted;
+insert into attach_parted_part1 values (2, 1);

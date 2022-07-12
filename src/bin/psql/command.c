@@ -11,6 +11,7 @@
 #include <ctype.h>
 #include <time.h>
 #include <pwd.h>
+#include <utime.h>
 #ifndef WIN32
 #include <sys/stat.h>			/* for stat() */
 #include <fcntl.h>				/* open() flags */
@@ -1813,12 +1814,29 @@ exec_command_password(PsqlScanState scan_state, bool active_branch)
 
 	if (active_branch)
 	{
-		char	   *opt0 = psql_scan_slash_option(scan_state,
+		char	   *user = psql_scan_slash_option(scan_state,
 												  OT_SQLID, NULL, true);
 		char		pw1[100];
 		char		pw2[100];
+		PQExpBufferData buf;
 
-		simple_prompt("Enter new password: ", pw1, sizeof(pw1), false);
+		if (user == NULL)
+		{
+			/* By default, the command applies to CURRENT_USER */
+			PGresult   *res;
+
+			res = PSQLexec("SELECT CURRENT_USER");
+			if (!res)
+				return PSQL_CMD_ERROR;
+
+			user = pg_strdup(PQgetvalue(res, 0, 0));
+			PQclear(res);
+		}
+
+		initPQExpBuffer(&buf);
+		printfPQExpBuffer(&buf, _("Enter new password for user \"%s\": "), user);
+
+		simple_prompt(buf.data, pw1, sizeof(pw1), false);
 		simple_prompt("Enter it again: ", pw2, sizeof(pw2), false);
 
 		if (strcmp(pw1, pw2) != 0)
@@ -1828,13 +1846,7 @@ exec_command_password(PsqlScanState scan_state, bool active_branch)
 		}
 		else
 		{
-			char	   *user;
 			char	   *encrypted_password;
-
-			if (opt0)
-				user = opt0;
-			else
-				user = PQuser(pset.db);
 
 			encrypted_password = PQencryptPasswordConn(pset.db, pw1, user, NULL);
 
@@ -1845,15 +1857,12 @@ exec_command_password(PsqlScanState scan_state, bool active_branch)
 			}
 			else
 			{
-				PQExpBufferData buf;
 				PGresult   *res;
 
-				initPQExpBuffer(&buf);
 				printfPQExpBuffer(&buf, "ALTER USER %s PASSWORD ",
 								  fmtId(user));
 				appendStringLiteralConn(&buf, encrypted_password, pset.db);
 				res = PSQLexec(buf.data);
-				termPQExpBuffer(&buf);
 				if (!res)
 					success = false;
 				else
@@ -1862,8 +1871,8 @@ exec_command_password(PsqlScanState scan_state, bool active_branch)
 			}
 		}
 
-		if (opt0)
-			free(opt0);
+		free(user);
+		termPQExpBuffer(&buf);
 	}
 	else
 		ignore_slash_options(scan_state);
@@ -2993,6 +3002,25 @@ do_connect(enum trivalue reuse_previous_specification,
 						if (strcmp(replci->keyword, "password") == 0)
 							have_password = true;
 					}
+					else if (!reuse_previous)
+					{
+						/*
+						 * When we have a connstring and are not re-using
+						 * parameters, swap *all* entries, even those not set
+						 * by the connstring.  This avoids absorbing
+						 * environment-dependent defaults from the result of
+						 * PQconndefaults().  We don't want to do that because
+						 * they'd override service-file entries if the
+						 * connstring specifies a service parameter, whereas
+						 * the priority should be the other way around.  libpq
+						 * can certainly recompute any defaults we don't pass
+						 * here.  (In this situation, it's a bit wasteful to
+						 * have called PQconndefaults() at all, but not doing
+						 * so would require yet another major code path here.)
+						 */
+						replci->val = ci->val;
+						ci->val = NULL;
+					}
 				}
 				Assert(ci->keyword == NULL && replci->keyword == NULL);
 
@@ -3524,7 +3552,6 @@ do_edit(const char *filename_arg, PQExpBuffer query_buf,
 	const char *fname;
 	bool		error = false;
 	int			fd;
-
 	struct stat before,
 				after;
 
@@ -3549,13 +3576,13 @@ do_edit(const char *filename_arg, PQExpBuffer query_buf,
 					   !ret ? strerror(errno) : "");
 			return false;
 		}
+#endif
 
 		/*
 		 * No canonicalize_path() here. EDIT.EXE run from CMD.EXE prepends the
 		 * current directory to the supplied path unless we use only
 		 * backslashes, so we do that.
 		 */
-#endif
 #ifndef WIN32
 		snprintf(fnametmp, sizeof(fnametmp), "%s%spsql.edit.%d.sql", tmpdir,
 				 "/", (int) getpid());
@@ -3604,6 +3631,24 @@ do_edit(const char *filename_arg, PQExpBuffer query_buf,
 					psql_error("%s: %s\n", fname, strerror(errno));
 				error = true;
 			}
+			else
+			{
+				struct utimbuf ut;
+
+				/*
+				 * Try to set the file modification time of the temporary file
+				 * a few seconds in the past.  Otherwise, the low granularity
+				 * (one second, or even worse on some filesystems) that we can
+				 * portably measure with stat(2) could lead us to not
+				 * recognize a modification, if the user typed very quickly.
+				 *
+				 * This is a rather unlikely race condition, so don't error
+				 * out if the utime(2) call fails --- that would make the cure
+				 * worse than the disease.
+				 */
+				ut.modtime = ut.actime = time(NULL) - 2;
+				(void) utime(fname, &ut);
+			}
 		}
 	}
 
@@ -3623,7 +3668,10 @@ do_edit(const char *filename_arg, PQExpBuffer query_buf,
 		error = true;
 	}
 
-	if (!error && before.st_mtime != after.st_mtime)
+	/* file was edited if the size or modification time has changed */
+	if (!error &&
+		(before.st_size != after.st_size ||
+		 before.st_mtime != after.st_mtime))
 	{
 		stream = fopen(fname, PG_BINARY_R);
 		if (!stream)

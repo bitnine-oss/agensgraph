@@ -772,6 +772,11 @@ CREATE TABLE orders (
    </para>
 
    <para>
+    You can assign your own name for a foreign key constraint,
+    in the usual way.
+   </para>
+
+   <para>
     A foreign key can also constrain and reference a group of columns.
     As usual, it then needs to be written in table constraint form.
     Here is a contrived syntax example:
@@ -787,9 +792,28 @@ CREATE TABLE t1 (
     match the number and type of the referenced columns.
    </para>
 
+   <indexterm>
+    <primary>foreign key</primary>
+    <secondary>self-referential</secondary>
+   </indexterm>
+
    <para>
-    You can assign your own name for a foreign key constraint,
-    in the usual way.
+    Sometimes it is useful for the <quote>other table</quote> of a
+    foreign key constraint to be the same table; this is called
+    a <firstterm>self-referential</firstterm> foreign key.  For
+    example, if you want rows of a table to represent nodes of a tree
+    structure, you could write
+<programlisting>
+CREATE TABLE tree (
+    node_id integer PRIMARY KEY,
+    parent_id integer REFERENCES tree,
+    name text,
+    ...
+);
+</programlisting>
+    A top-level node would have NULL <structfield>parent_id</structfield>,
+    but non-NULL <structfield>parent_id</structfield> entries would be
+    constrained to reference valid rows of the table.
    </para>
 
    <para>
@@ -2031,7 +2055,8 @@ SELECT * FROM information WHERE group_id = 2 FOR UPDATE;
    definer function.)  Also, heavy concurrent use of row share locks on the
    referenced table could pose a performance problem, especially if updates
    of it are frequent.  Another solution, practical if updates of the
-   referenced table are infrequent, is to take an exclusive lock on the
+   referenced table are infrequent, is to take an
+   <literal>ACCESS EXCLUSIVE</literal> lock on the
    referenced table when updating it, so that no concurrent transactions
    could be examining old row values.  Or one could just wait for all
    concurrent transactions to end after committing an update of the
@@ -3098,9 +3123,12 @@ VALUES ('Albany', NULL, NULL, 'NY');
    </para>
 
    <para>
-    Partitions can also be foreign tables, although they have some limitations
-    that normal tables do not; see <xref linkend="sql-createforeigntable"/> for
-    more information.
+    Partitions can also be <link linkend="ddl-foreign-data">foreign
+    tables</link>, although considerable care is needed because it is then
+    the user's responsibility that the contents of the foreign table
+    satisfy the partitioning rule.  There are some other restrictions as
+    well.  See <xref linkend="sql-createforeigntable"/> for more
+    information.
    </para>
 
    <sect3 id="ddl-partitioning-declarative-example">
@@ -3467,7 +3495,8 @@ ALTER INDEX measurement_city_id_logdate_key
 
     <para>
      Since a partition hierarchy consisting of the partitioned table and its
-     partitions is still an inheritance hierarchy, all the normal rules of
+     partitions is still an inheritance hierarchy,
+     <structfield>tableoid</structfield> and all the normal rules of
      inheritance apply as described in <xref linkend="ddl-inherit"/>, with
      a few exceptions:
 

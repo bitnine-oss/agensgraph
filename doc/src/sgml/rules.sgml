@@ -546,7 +546,7 @@ SELECT shoelace.sl_name, shoelace.sl_avail,
 <para>
     Now we want to write a query that finds out for which shoes currently in the store
     we have the matching shoelaces (color and length) and where the
-    total number of exactly matching pairs is greater or equal to two.
+    total number of exactly matching pairs is greater than or equal to two.
 
 <programlisting>
 SELECT * FROM shoe_ready WHERE total_avail &gt;= 2;
@@ -957,9 +957,6 @@ CREATE MATERIALIZED VIEW sales_summary AS
     WHERE invoice_date &lt; CURRENT_DATE
     GROUP BY
       seller_no,
-      invoice_date
-    ORDER BY
-      seller_no,
       invoice_date;
 
 CREATE UNIQUE INDEX sales_summary_seller
@@ -1265,7 +1262,7 @@ CREATE [ OR REPLACE ] RULE <replaceable class="parameter">name</replaceable> AS 
 <para>
     The query trees generated from rule actions are thrown into the
     rewrite system again, and maybe more rules get applied resulting
-    in more or less query trees.
+    in additional or fewer query trees.
     So a rule's actions must have either a different
     command type or a different result relation than the rule itself is
     on, otherwise this recursive process will end up in an infinite loop.

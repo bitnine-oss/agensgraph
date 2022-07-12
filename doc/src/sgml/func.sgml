@@ -6169,7 +6169,8 @@ SELECT regexp_match('abc01234xyz', '(?:(.*?)(\d+)(.*)){1,1}');
        </row>
        <row>
         <entry><literal>J</literal></entry>
-        <entry>Julian Day (integer days since November 24, 4714 BC at midnight UTC)</entry>
+        <entry>Julian Date (integer days since November 24, 4714 BC at local
+        midnight; see <xref linkend="datetime-julian-dates"/>)</entry>
        </row>
        <row>
         <entry><literal>Q</literal></entry>
@@ -7846,6 +7847,25 @@ SELECT EXTRACT(ISOYEAR FROM DATE '2006-01-02');
        <para>
         This field is not available in PostgreSQL releases prior to 8.3.
        </para>
+      </listitem>
+     </varlistentry>
+
+     <varlistentry>
+      <term><literal>julian</literal></term>
+      <listitem>
+       <para>
+        The <firstterm>Julian Date</firstterm> corresponding to the
+        date or timestamp (not applicable to intervals).  Timestamps
+        that are not local midnight result in a fractional value.  See
+        <xref linkend="datetime-julian-dates"/> for more information.
+       </para>
+
+<screen>
+SELECT EXTRACT(JULIAN FROM DATE '2006-01-01');
+<lineannotation>Result: </lineannotation><computeroutput>2453737</computeroutput>
+SELECT EXTRACT(JULIAN FROM TIMESTAMP '2006-01-01 12:00');
+<lineannotation>Result: </lineannotation><computeroutput>2453737.5</computeroutput>
+</screen>
       </listitem>
      </varlistentry>
 
@@ -12377,24 +12397,6 @@ nextval('foo'::text)      <lineannotation><literal>foo</literal> is looked up at
         see its command reference page for more information.
        </para>
 
-       <important>
-        <para>
-         To avoid blocking concurrent transactions that obtain numbers from
-         the same sequence, a <function>nextval</function> operation is never
-         rolled back; that is, once a value has been fetched it is considered
-         used and will not be returned again.  This is true even if the
-         surrounding transaction later aborts, or if the calling query ends
-         up not using the value.  For example an <command>INSERT</command> with
-         an <literal>ON CONFLICT</literal> clause will compute the to-be-inserted
-         tuple, including doing any required <function>nextval</function>
-         calls, before detecting any conflict that would cause it to follow
-         the <literal>ON CONFLICT</literal> rule instead.  Such cases will leave
-         unused <quote>holes</quote> in the sequence of assigned values.
-         Thus, <productname>PostgreSQL</productname> sequence objects <emphasis>cannot
-         be used to obtain <quote>gapless</quote> sequences</emphasis>.
-        </para>
-       </important>
-
        <para>
         This function requires <literal>USAGE</literal>
         or <literal>UPDATE</literal> privilege on the sequence.
@@ -12471,13 +12473,6 @@ SELECT setval('foo', 42, false);    <lineannotation>Next <function>nextval</func
         The result returned by <function>setval</function> is just the value of its
         second argument.
        </para>
-       <important>
-        <para>
-         Because sequences are non-transactional, changes made by
-         <function>setval</function> are not undone if the transaction rolls
-         back.
-        </para>
-       </important>
 
        <para>
         This function requires <literal>UPDATE</literal> privilege on the
@@ -12488,6 +12483,42 @@ SELECT setval('foo', 42, false);    <lineannotation>Next <function>nextval</func
     </variablelist>
   </para>
 
+  <caution>
+   <para>
+    To avoid blocking concurrent transactions that obtain numbers from
+    the same sequence, the value obtained by <function>nextval</function>
+    is not reclaimed for re-use if the calling transaction later aborts.
+    This means that transaction aborts or database crashes can result in
+    gaps in the sequence of assigned values.  That can happen without a
+    transaction abort, too.  For example an <command>INSERT</command> with
+    an <literal>ON CONFLICT</literal> clause will compute the to-be-inserted
+    tuple, including doing any required <function>nextval</function>
+    calls, before detecting any conflict that would cause it to follow
+    the <literal>ON CONFLICT</literal> rule instead.
+    Thus, <productname>PostgreSQL</productname> sequence
+    objects <emphasis>cannot be used to obtain <quote>gapless</quote>
+    sequences</emphasis>.
+   </para>
+
+   <para>
+    Likewise, sequence state changes made by <function>setval</function>
+    are immediately visible to other transactions, and are not undone if
+    the calling transaction rolls back.
+   </para>
+
+   <para>
+    If the database cluster crashes before committing a transaction
+    containing a <function>nextval</function>
+    or <function>setval</function> call, the sequence state change might
+    not have made its way to persistent storage, so that it is uncertain
+    whether the sequence will have its original or updated state after the
+    cluster restarts.  This is harmless for usage of the sequence within
+    the database, since other effects of uncommitted transactions will not
+    be visible either.  However, if you wish to use a sequence value for
+    persistent outside-the-database purposes, make sure that the
+    <function>nextval</function> call has been committed before doing so.
+   </para>
+  </caution>
  </sect1>
 
 
@@ -19588,8 +19619,9 @@ postgres=# SELECT * FROM pg_walfile_name_offset(pg_stop_backup());
         <type>oid</type>
        </entry>
        <entry>
-        Lookup a replication origin by name and return the internal id. If no
-        corresponding replication origin is found an error is thrown.
+        Lookup a replication origin by name and return the internal ID. If
+        no such replication origin is found, <literal>NULL</literal> is
+        returned.
        </entry>
       </row>
 
@@ -20191,6 +20223,7 @@ postgres=# SELECT * FROM pg_walfile_name_offset(pg_stop_backup());
     be <literal>pg_catalog</literal>, but that is not a requirement;
     the collations could be installed into some other schema as well.
     The function returns the number of new collation objects it created.
+    Use of this function is restricted to superusers.
    </para>
 
   </sect2>

@@ -296,8 +296,9 @@ TransactionIdSetPageStatus(TransactionId xid, int nsubxids,
 	if (all_xact_same_page && xid == MyPgXact->xid &&
 		nsubxids <= THRESHOLD_SUBTRANS_CLOG_OPT &&
 		nsubxids == MyPgXact->nxids &&
-		memcmp(subxids, MyProc->subxids.xids,
-			   nsubxids * sizeof(TransactionId)) == 0)
+		(nsubxids == 0 ||
+		 memcmp(subxids, MyProc->subxids.xids,
+				nsubxids * sizeof(TransactionId)) == 0))
 	{
 		/*
 		 * If we can immediately acquire CLogControlLock, we update the status
@@ -450,7 +451,12 @@ TransactionGroupUpdateXidStatus(TransactionId xid, XidStatus status,
 		if (nextidx != INVALID_PGPROCNO &&
 			ProcGlobal->allProcs[nextidx].clogGroupMemberPage != proc->clogGroupMemberPage)
 		{
+			/*
+			 * Ensure that this proc is not a member of any clog group that
+			 * needs an XID status update.
+			 */
 			proc->clogGroupMember = false;
+			pg_atomic_write_u32(&proc->clogGroupNext, INVALID_PGPROCNO);
 			return false;
 		}
 

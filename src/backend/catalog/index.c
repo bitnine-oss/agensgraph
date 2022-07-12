@@ -1439,6 +1439,7 @@ index_constraint_create(Relation heapRelation,
 		HeapTuple	indexTuple;
 		Form_pg_index indexForm;
 		bool		dirty = false;
+		bool		marked_as_primary = false;
 
 		pg_index = heap_open(IndexRelationId, RowExclusiveLock);
 
@@ -1452,6 +1453,7 @@ index_constraint_create(Relation heapRelation,
 		{
 			indexForm->indisprimary = true;
 			dirty = true;
+			marked_as_primary = true;
 		}
 
 		if (deferrable && indexForm->indimmediate)
@@ -1463,6 +1465,15 @@ index_constraint_create(Relation heapRelation,
 		if (dirty)
 		{
 			CatalogTupleUpdate(pg_index, &indexTuple->t_self, indexTuple);
+
+			/*
+			 * When we mark an existing index as primary, force a relcache
+			 * flush on its parent table, so that all sessions will become
+			 * aware that the table now has a primary key.  This is important
+			 * because it affects some replication behaviors.
+			 */
+			if (marked_as_primary)
+				CacheInvalidateRelcache(heapRelation);
 
 			InvokeObjectPostAlterHookArg(IndexRelationId, indexRelationId, 0,
 										 InvalidOid, is_internal);
@@ -3263,7 +3274,17 @@ validate_index(Oid heapId, Oid indexId, Snapshot snapshot)
 
 	/* Open and lock the parent heap relation */
 	heapRelation = heap_open(heapId, ShareUpdateExclusiveLock);
-	/* And the target index relation */
+
+	/*
+	 * Switch to the table owner's userid, so that any index functions are run
+	 * as that user.  Also lock down security-restricted operations and
+	 * arrange to make GUC variable changes local to this command.
+	 */
+	GetUserIdAndSecContext(&save_userid, &save_sec_context);
+	SetUserIdAndSecContext(heapRelation->rd_rel->relowner,
+						   save_sec_context | SECURITY_RESTRICTED_OPERATION);
+	save_nestlevel = NewGUCNestLevel();
+
 	indexRelation = index_open(indexId, RowExclusiveLock);
 
 	/*
@@ -3275,16 +3296,6 @@ validate_index(Oid heapId, Oid indexId, Snapshot snapshot)
 
 	/* mark build is concurrent just for consistency */
 	indexInfo->ii_Concurrent = true;
-
-	/*
-	 * Switch to the table owner's userid, so that any index functions are run
-	 * as that user.  Also lock down security-restricted operations and
-	 * arrange to make GUC variable changes local to this command.
-	 */
-	GetUserIdAndSecContext(&save_userid, &save_sec_context);
-	SetUserIdAndSecContext(heapRelation->rd_rel->relowner,
-						   save_sec_context | SECURITY_RESTRICTED_OPERATION);
-	save_nestlevel = NewGUCNestLevel();
 
 	/*
 	 * Scan the index and gather up all the TIDs into a tuplesort object.
@@ -3635,18 +3646,10 @@ validate_index_heapscan(Relation heapRelation,
  * index_set_state_flags - adjust pg_index state flags
  *
  * This is used during CREATE/DROP INDEX CONCURRENTLY to adjust the pg_index
- * flags that denote the index's state.  Because the update is not
- * transactional and will not roll back on error, this must only be used as
- * the last step in a transaction that has not made any transactional catalog
- * updates!
+ * flags that denote the index's state.
  *
- * Note that heap_inplace_update does send a cache inval message for the
+ * Note that CatalogTupleUpdate() sends a cache invalidation message for the
  * tuple, so other sessions will hear about the update as soon as we commit.
- *
- * NB: In releases prior to PostgreSQL 9.4, the use of a non-transactional
- * update here would have been unsafe; now that MVCC rules apply even for
- * system catalog scans, we could potentially use a transactional update here
- * instead.
  */
 void
 index_set_state_flags(Oid indexId, IndexStateFlagsAction action)
@@ -3654,9 +3657,6 @@ index_set_state_flags(Oid indexId, IndexStateFlagsAction action)
 	Relation	pg_index;
 	HeapTuple	indexTuple;
 	Form_pg_index indexForm;
-
-	/* Assert that current xact hasn't done any transactional updates */
-	Assert(GetTopTransactionIdIfAny() == InvalidTransactionId);
 
 	/* Open pg_index and fetch a writable copy of the index's tuple */
 	pg_index = heap_open(IndexRelationId, RowExclusiveLock);
@@ -3716,8 +3716,8 @@ index_set_state_flags(Oid indexId, IndexStateFlagsAction action)
 			break;
 	}
 
-	/* ... and write it back in-place */
-	heap_inplace_update(pg_index, indexTuple);
+	/* ... and update it */
+	CatalogTupleUpdate(pg_index, &indexTuple->t_self, indexTuple);
 
 	heap_close(pg_index, RowExclusiveLock);
 }
@@ -3759,6 +3759,9 @@ reindex_index(Oid indexId, bool skip_constraint_checks, char persistence,
 	Relation	iRel,
 				heapRelation;
 	Oid			heapId;
+	Oid			save_userid;
+	int			save_sec_context;
+	int			save_nestlevel;
 	IndexInfo  *indexInfo;
 	volatile bool skipped_constraint = false;
 	PGRUsage	ru0;
@@ -3771,6 +3774,16 @@ reindex_index(Oid indexId, bool skip_constraint_checks, char persistence,
 	 */
 	heapId = IndexGetRelation(indexId, false);
 	heapRelation = heap_open(heapId, ShareLock);
+
+	/*
+	 * Switch to the table owner's userid, so that any index functions are run
+	 * as that user.  Also lock down security-restricted operations and
+	 * arrange to make GUC variable changes local to this command.
+	 */
+	GetUserIdAndSecContext(&save_userid, &save_sec_context);
+	SetUserIdAndSecContext(heapRelation->rd_rel->relowner,
+						   save_sec_context | SECURITY_RESTRICTED_OPERATION);
+	save_nestlevel = NewGUCNestLevel();
 
 	/*
 	 * Open the target index relation and get an exclusive lock on it, to
@@ -3920,6 +3933,12 @@ reindex_index(Oid indexId, bool skip_constraint_checks, char persistence,
 						get_rel_name(indexId)),
 				 errdetail_internal("%s",
 									pg_rusage_show(&ru0))));
+
+	/* Roll back any GUC changes executed by index functions */
+	AtEOXact_GUC(false, save_nestlevel);
+
+	/* Restore userid and security context */
+	SetUserIdAndSecContext(save_userid, save_sec_context);
 
 	/* Close rels, but keep locks */
 	index_close(iRel, NoLock);

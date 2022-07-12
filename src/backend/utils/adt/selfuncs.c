@@ -3926,9 +3926,21 @@ estimate_multivariate_ndistinct(PlannerInfo *root, RelOptInfo *rel,
 	Oid			statOid = InvalidOid;
 	MVNDistinct *stats;
 	Bitmapset  *matched = NULL;
+	RangeTblEntry		*rte;
 
 	/* bail out immediately if the table has no extended statistics */
 	if (!rel->statlist)
+		return false;
+
+	/*
+	 * When dealing with regular inheritance trees, ignore extended stats
+	 * (which were built without data from child rels, and thus do not
+	 * represent them). For partitioned tables data there's no data in the
+	 * non-leaf relations, so we build stats only for the inheritance tree.
+	 * So for partitioned tables we do consider extended stats.
+	 */
+	rte = planner_rt_fetch(rel->relid, root);
+	if (rte->inh && rte->relkind != RELKIND_PARTITIONED_TABLE)
 		return false;
 
 	/* Determine the attnums we're looking for */
@@ -4028,11 +4040,11 @@ estimate_multivariate_ndistinct(PlannerInfo *root, RelOptInfo *rel,
 
 			attnum = ((Var *) varinfo->var)->varattno;
 
-			if (!AttrNumberIsForUserDefinedAttr(attnum))
+			if (AttrNumberIsForUserDefinedAttr(attnum) &&
+				bms_is_member(attnum, matched))
 				continue;
 
-			if (!bms_is_member(attnum, matched))
-				newlist = lappend(newlist, varinfo);
+			newlist = lappend(newlist, varinfo);
 		}
 
 		*varinfos = newlist;
@@ -5230,7 +5242,8 @@ examine_simple_variable(PlannerInfo *root, Var *var,
 		 * of learning something even with it.
 		 */
 		if (subquery->setOperations ||
-			subquery->groupClause)
+			subquery->groupClause ||
+			subquery->groupingSets)
 			return;
 
 		/*
@@ -5563,46 +5576,72 @@ get_variable_range(PlannerInfo *root, VariableStatData *vardata, Oid sortop,
 	/*
 	 * If we have most-common-values info, look for extreme MCVs.  This is
 	 * needed even if we also have a histogram, since the histogram excludes
-	 * the MCVs.  However, usually the MCVs will not be the extreme values, so
-	 * avoid unnecessary data copying.
+	 * the MCVs.  However, if we *only* have MCVs and no histogram, we should
+	 * be pretty wary of deciding that that is a full representation of the
+	 * data.  Proceed only if the MCVs represent the whole table (to within
+	 * roundoff error).
 	 */
 	if (get_attstatsslot(&sslot, vardata->statsTuple,
 						 STATISTIC_KIND_MCV, InvalidOid,
-						 ATTSTATSSLOT_VALUES))
+						 have_data ? ATTSTATSSLOT_VALUES :
+						 (ATTSTATSSLOT_VALUES | ATTSTATSSLOT_NUMBERS)))
 	{
-		bool		tmin_is_mcv = false;
-		bool		tmax_is_mcv = false;
-		FmgrInfo	opproc;
+		bool		use_mcvs = have_data;
 
-		fmgr_info(opfuncoid, &opproc);
-
-		for (i = 0; i < sslot.nvalues; i++)
+		if (!have_data)
 		{
-			if (!have_data)
-			{
-				tmin = tmax = sslot.values[i];
-				tmin_is_mcv = tmax_is_mcv = have_data = true;
-				continue;
-			}
-			if (DatumGetBool(FunctionCall2Coll(&opproc,
-											   DEFAULT_COLLATION_OID,
-											   sslot.values[i], tmin)))
-			{
-				tmin = sslot.values[i];
-				tmin_is_mcv = true;
-			}
-			if (DatumGetBool(FunctionCall2Coll(&opproc,
-											   DEFAULT_COLLATION_OID,
-											   tmax, sslot.values[i])))
-			{
-				tmax = sslot.values[i];
-				tmax_is_mcv = true;
-			}
+			double		sumcommon = 0.0;
+			double		nullfrac;
+			int			i;
+
+			for (i = 0; i < sslot.nnumbers; i++)
+				sumcommon += sslot.numbers[i];
+			nullfrac = ((Form_pg_statistic) GETSTRUCT(vardata->statsTuple))->stanullfrac;
+			if (sumcommon + nullfrac > 0.99999)
+				use_mcvs = true;
 		}
-		if (tmin_is_mcv)
-			tmin = datumCopy(tmin, typByVal, typLen);
-		if (tmax_is_mcv)
-			tmax = datumCopy(tmax, typByVal, typLen);
+
+		if (use_mcvs)
+		{
+			/*
+			 * Usually the MCVs will not be the extreme values, so avoid
+			 * unnecessary data copying.
+			 */
+			bool		tmin_is_mcv = false;
+			bool		tmax_is_mcv = false;
+			FmgrInfo	opproc;
+
+			fmgr_info(opfuncoid, &opproc);
+
+			for (i = 0; i < sslot.nvalues; i++)
+			{
+				if (!have_data)
+				{
+					tmin = tmax = sslot.values[i];
+					tmin_is_mcv = tmax_is_mcv = have_data = true;
+					continue;
+				}
+				if (DatumGetBool(FunctionCall2Coll(&opproc,
+												   DEFAULT_COLLATION_OID,
+												   sslot.values[i], tmin)))
+				{
+					tmin = sslot.values[i];
+					tmin_is_mcv = true;
+				}
+				if (DatumGetBool(FunctionCall2Coll(&opproc,
+												   DEFAULT_COLLATION_OID,
+												   tmax, sslot.values[i])))
+				{
+					tmax = sslot.values[i];
+					tmax_is_mcv = true;
+				}
+			}
+			if (tmin_is_mcv)
+				tmin = datumCopy(tmin, typByVal, typLen);
+			if (tmax_is_mcv)
+				tmax = datumCopy(tmax, typByVal, typLen);
+		}
+
 		free_attstatsslot(&sslot);
 	}
 
@@ -6485,9 +6524,18 @@ regex_selectivity(const char *patt, int pattlen, bool case_insensitive,
 		sel *= FULL_WILDCARD_SEL;
 	}
 
-	/* If there's a fixed prefix, discount its selectivity */
+	/*
+	 * If there's a fixed prefix, discount its selectivity.  We have to be
+	 * careful here since a very long prefix could result in pow's result
+	 * underflowing to zero (in which case "sel" probably has as well).
+	 */
 	if (fixed_prefix_len > 0)
-		sel /= pow(FIXED_CHAR_SEL, fixed_prefix_len);
+	{
+		double		prefixsel = pow(FIXED_CHAR_SEL, fixed_prefix_len);
+
+		if (prefixsel > 0.0)
+			sel /= prefixsel;
+	}
 
 	/* Make sure result stays in range */
 	CLAMP_PROBABILITY(sel);

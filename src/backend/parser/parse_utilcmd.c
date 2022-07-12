@@ -749,7 +749,17 @@ transformColumnDefinition(CreateStmtContext *cxt, ColumnDef *column)
 
 					column->identity = constraint->generated_when;
 					saw_identity = true;
+
+					/* An identity column is implicitly NOT NULL */
+					if (saw_nullable && !column->is_not_null)
+						ereport(ERROR,
+								(errcode(ERRCODE_SYNTAX_ERROR),
+								 errmsg("conflicting NULL/NOT NULL declarations for column \"%s\" of table \"%s\"",
+										column->colname, cxt->relation->relname),
+								 parser_errposition(cxt->pstate,
+													constraint->location)));
 					column->is_not_null = true;
+					saw_nullable = true;
 					break;
 				}
 
@@ -3188,7 +3198,7 @@ transformAlterTableStmt(Oid relid, AlterTableStmt *stmt,
 					 * if attribute not found, something will error about it
 					 * later
 					 */
-					if (attnum != InvalidAttrNumber && get_attidentity(relid, attnum))
+					if (attnum > 0 && get_attidentity(relid, attnum))
 					{
 						Oid			seq_relid = getOwnedSequence(relid, attnum);
 						Oid			typeOid = typenameTypeId(pstate, def->typeName);
@@ -3762,7 +3772,7 @@ transformPartitionBound(ParseState *pstate, Relation parent,
 		if (spec->modulus <= 0)
 			ereport(ERROR,
 					(errcode(ERRCODE_INVALID_TABLE_DEFINITION),
-					 errmsg("modulus for hash partition must be a positive integer")));
+					 errmsg("modulus for hash partition must be an integer value greater than zero")));
 
 		Assert(spec->remainder >= 0);
 

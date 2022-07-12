@@ -101,9 +101,11 @@ static XLogRecPtr log_heap_update(Relation reln, Buffer oldbuf,
 				Buffer newbuf, HeapTuple oldtup,
 				HeapTuple newtup, HeapTuple old_key_tup,
 				bool all_visible_cleared, bool new_all_visible_cleared);
-static Bitmapset *HeapDetermineModifiedColumns(Relation relation,
-							 Bitmapset *interesting_cols,
-							 HeapTuple oldtup, HeapTuple newtup);
+static Bitmapset *HeapDetermineColumnsInfo(Relation relation,
+						  Bitmapset *interesting_cols,
+						  Bitmapset *external_cols,
+						  HeapTuple oldtup, HeapTuple newtup,
+						  bool *has_external);
 static bool heap_acquire_tuplock(Relation relation, ItemPointer tid,
 					 LockTupleMode mode, LockWaitPolicy wait_policy,
 					 bool *have_tuple_lock);
@@ -127,7 +129,7 @@ static void MultiXactIdWait(MultiXactId multi, MultiXactStatus status, uint16 in
 static bool ConditionalMultiXactIdWait(MultiXactId multi, MultiXactStatus status,
 						   uint16 infomask, Relation rel, int *remaining);
 static XLogRecPtr log_heap_new_cid(Relation relation, HeapTuple tup);
-static HeapTuple ExtractReplicaIdentity(Relation rel, HeapTuple tup, bool key_modified,
+static HeapTuple ExtractReplicaIdentity(Relation rel, HeapTuple tup, bool key_required,
 					   bool *copy);
 static bool ProjIndexIsUnchanged(Relation relation, HeapTuple oldtup, HeapTuple newtup);
 
@@ -309,7 +311,7 @@ initscan(HeapScanDesc scan, ScanKey key, bool keep_startblock)
 	/*
 	 * copy the scan key, if appropriate
 	 */
-	if (key != NULL)
+	if (key != NULL && scan->rs_nkeys > 0)
 		memcpy(scan->rs_key, key, scan->rs_nkeys * sizeof(ScanKeyData));
 
 	/*
@@ -2459,6 +2461,10 @@ heap_insert(Relation relation, HeapTuple tup, CommandId cid,
 	Buffer		vmbuffer = InvalidBuffer;
 	bool		all_visible_cleared = false;
 
+	/* Cheap, simplistic check that the tuple matches the rel's rowtype. */
+	Assert(HeapTupleHeaderGetNatts(tup->t_data) <=
+		   RelationGetNumberOfAttributes(relation));
+
 	/*
 	 * Fill in tuple header fields, assign an OID, and toast the tuple if
 	 * necessary.
@@ -3564,6 +3570,7 @@ heap_update(Relation relation, ItemPointer otid, HeapTuple newtup,
 	bool		all_visible_cleared_new = false;
 	bool		checked_lockers;
 	bool		locker_remains;
+	bool		id_has_external = false;
 	TransactionId xmax_new_tuple,
 				xmax_old_tuple;
 	uint16		infomask_old_tuple,
@@ -3572,6 +3579,10 @@ heap_update(Relation relation, ItemPointer otid, HeapTuple newtup,
 				infomask2_new_tuple;
 
 	Assert(ItemPointerIsValid(otid));
+
+	/* Cheap, simplistic check that the tuple matches the rel's rowtype. */
+	Assert(HeapTupleHeaderGetNatts(newtup->t_data) <=
+		   RelationGetNumberOfAttributes(relation));
 
 	/*
 	 * Forbid this during a parallel operation, lest it allocate a combocid.
@@ -3644,7 +3655,7 @@ heap_update(Relation relation, ItemPointer otid, HeapTuple newtup,
 	Assert(ItemIdIsNormal(lp));
 
 	/*
-	 * Fill in enough data in oldtup for HeapDetermineModifiedColumns to work
+	 * Fill in enough data in oldtup for HeapDetermineColumnsInfo to work
 	 * properly.
 	 */
 	oldtup.t_tableOid = RelationGetRelid(relation);
@@ -3670,9 +3681,17 @@ heap_update(Relation relation, ItemPointer otid, HeapTuple newtup,
 		Assert(!(newtup->t_data->t_infomask & HEAP_HASOID));
 	}
 
-	/* Determine columns modified by the update. */
-	modified_attrs = HeapDetermineModifiedColumns(relation, interesting_attrs,
-												  &oldtup, newtup);
+	/*
+	 * Determine columns modified by the update.  Additionally, identify
+	 * whether any of the unmodified replica identity key attributes in the
+	 * old tuple is externally stored or not.  This is required because for
+	 * such attributes the flattened value won't be WAL logged as part of the
+	 * new tuple so we must include it as part of the old_key_tuple.  See
+	 * ExtractReplicaIdentity.
+	 */
+	modified_attrs = HeapDetermineColumnsInfo(relation, interesting_attrs,
+											  id_attrs, &oldtup,
+											  newtup, &id_has_external);
 
 	/*
 	 * If we're not updating any "key" column, we can grab a weaker lock type.
@@ -4258,10 +4277,12 @@ l2:
 	 * Compute replica identity tuple before entering the critical section so
 	 * we don't PANIC upon a memory allocation failure.
 	 * ExtractReplicaIdentity() will return NULL if nothing needs to be
-	 * logged.
+	 * logged.  Pass old key required as true only if the replica identity key
+	 * columns are modified or it has external data.
 	 */
 	old_key_tuple = ExtractReplicaIdentity(relation, &oldtup,
-										   bms_overlap(modified_attrs, id_attrs),
+										   bms_overlap(modified_attrs, id_attrs) ||
+										   id_has_external,
 										   &old_key_copied);
 
 	/* NO EREPORT(ERROR) from here till changes are logged */
@@ -4418,47 +4439,14 @@ l2:
 }
 
 /*
- * Check if the specified attribute's value is same in both given tuples.
- * Subroutine for HeapDetermineModifiedColumns.
+ * Check if the specified attribute's values are the same.  Subroutine for
+ * HeapDetermineColumnsInfo.
  */
 static bool
-heap_tuple_attr_equals(TupleDesc tupdesc, int attrnum,
-					   HeapTuple tup1, HeapTuple tup2)
+heap_attr_equals(TupleDesc tupdesc, int attrnum, Datum value1, Datum value2,
+				bool isnull1, bool isnull2)
 {
-	Datum		value1,
-				value2;
-	bool		isnull1,
-				isnull2;
 	Form_pg_attribute att;
-
-	/*
-	 * If it's a whole-tuple reference, say "not equal".  It's not really
-	 * worth supporting this case, since it could only succeed after a no-op
-	 * update, which is hardly a case worth optimizing for.
-	 */
-	if (attrnum == 0)
-		return false;
-
-	/*
-	 * Likewise, automatically say "not equal" for any system attribute other
-	 * than OID and tableOID; we cannot expect these to be consistent in a HOT
-	 * chain, or even to be set correctly yet in the new tuple.
-	 */
-	if (attrnum < 0)
-	{
-		if (attrnum != ObjectIdAttributeNumber &&
-			attrnum != TableOidAttributeNumber)
-			return false;
-	}
-
-	/*
-	 * Extract the corresponding values.  XXX this is pretty inefficient if
-	 * there are many indexed columns.  Should HeapDetermineModifiedColumns do
-	 * a single heap_deform_tuple call on each tuple, instead?	But that
-	 * doesn't work for system columns ...
-	 */
-	value1 = heap_getattr(tup1, attrnum, tupdesc, &isnull1);
-	value2 = heap_getattr(tup2, attrnum, tupdesc, &isnull2);
 
 	/*
 	 * If one value is NULL and other is not, then they are certainly not
@@ -4581,24 +4569,97 @@ ProjIndexIsUnchanged(Relation relation, HeapTuple oldtup, HeapTuple newtup)
  * Given an updated tuple, determine (and return into the output bitmapset),
  * from those listed as interesting, the set of columns that changed.
  *
- * The input bitmapset is destructively modified; that is OK since this is
- * invoked at most once in heap_update.
+ * has_external indicates if any of the unmodified attributes (from those
+ * listed as interesting) of the old tuple is a member of external_cols and is
+ * stored externally.
+ *
+ * The input interesting_cols bitmapset is destructively modified; that is OK
+ * since this is invoked at most once in heap_update.
  */
 static Bitmapset *
-HeapDetermineModifiedColumns(Relation relation, Bitmapset *interesting_cols,
-							 HeapTuple oldtup, HeapTuple newtup)
+HeapDetermineColumnsInfo(Relation relation,
+						 Bitmapset *interesting_cols,
+						 Bitmapset *external_cols,
+						 HeapTuple oldtup, HeapTuple newtup,
+						 bool *has_external)
 {
-	int			attnum;
+	int			attrnum;
 	Bitmapset  *modified = NULL;
+	TupleDesc	tupdesc = RelationGetDescr(relation);
 
-	while ((attnum = bms_first_member(interesting_cols)) >= 0)
+	while ((attrnum = bms_first_member(interesting_cols)) >= 0)
 	{
-		attnum += FirstLowInvalidHeapAttributeNumber;
+		Datum		value1,
+					value2;
+		bool		isnull1,
+					isnull2;
 
-		if (!heap_tuple_attr_equals(RelationGetDescr(relation),
-									attnum, oldtup, newtup))
+		attrnum += FirstLowInvalidHeapAttributeNumber;
+
+		/*
+		 * If it's a whole-tuple reference, say "not equal".  It's not really
+		 * worth supporting this case, since it could only succeed after a
+		 * no-op update, which is hardly a case worth optimizing for.
+		 */
+		if (attrnum == 0)
+		{
 			modified = bms_add_member(modified,
-									  attnum - FirstLowInvalidHeapAttributeNumber);
+									  attrnum -
+									  FirstLowInvalidHeapAttributeNumber);
+			continue;
+		}
+
+		/*
+		 * Likewise, automatically say "not equal" for any system attribute
+		 * other than OID and tableOID; we cannot expect these to be consistent
+		 * in a HOT chain, or even to be set correctly yet in the new tuple.
+		 */
+		if (attrnum < 0)
+		{
+			if (attrnum != ObjectIdAttributeNumber &&
+				attrnum != TableOidAttributeNumber)
+			{
+				modified = bms_add_member(modified,
+										  attrnum -
+										  FirstLowInvalidHeapAttributeNumber);
+				continue;
+			}
+		}
+
+		/*
+		 * Extract the corresponding values.  XXX this is pretty inefficient
+		 * if there are many indexed columns.  Should we do a single
+		 * heap_deform_tuple call on each tuple, instead?	But that doesn't
+		 * work for system columns ...
+		 */
+		value1 = heap_getattr(oldtup, attrnum, tupdesc, &isnull1);
+		value2 = heap_getattr(newtup, attrnum, tupdesc, &isnull2);
+
+		if (!heap_attr_equals(tupdesc, attrnum, value1,
+							  value2, isnull1, isnull2))
+		{
+			modified = bms_add_member(modified,
+									  attrnum -
+									  FirstLowInvalidHeapAttributeNumber);
+			continue;
+		}
+
+		/*
+		 * No need to check attributes that can't be stored externally. Note
+		 * that system attributes can't be stored externally.
+		 */
+		if (attrnum < 0 || isnull1 ||
+			TupleDescAttr(tupdesc, attrnum - 1)->attlen != -1)
+			continue;
+
+		/*
+		 * Check if the old tuple's attribute is stored externally and is a
+		 * member of external_cols.
+		 */
+		if (VARATT_IS_EXTERNAL((struct varlena *) DatumGetPointer(value1)) &&
+			bms_is_member(attrnum - FirstLowInvalidHeapAttributeNumber,
+						  external_cols))
+			*has_external = true;
 	}
 
 	return modified;
@@ -5225,7 +5286,16 @@ failed:
 	{
 		Assert(result == HeapTupleSelfUpdated || result == HeapTupleUpdated ||
 			   result == HeapTupleWouldBlock);
-		Assert(!(tuple->t_data->t_infomask & HEAP_XMAX_INVALID));
+
+		/*
+		 * When locking a tuple under LockWaitSkip semantics and we fail with
+		 * HeapTupleWouldBlock above, it's possible for concurrent transactions
+		 * to release the lock and set HEAP_XMAX_INVALID in the meantime.  So
+		 * this assert is slightly different from the equivalent one in
+		 * heap_delete and heap_update.
+		 */
+		Assert((result == HeapTupleWouldBlock) ||
+			   !(tuple->t_data->t_infomask & HEAP_XMAX_INVALID));
 		hufd->ctid = tuple->t_data->t_ctid;
 		hufd->xmax = HeapTupleHeaderGetUpdateXid(tuple->t_data);
 		if (result == HeapTupleSelfUpdated)
@@ -8099,9 +8169,12 @@ log_heap_new_cid(Relation relation, HeapTuple tup)
  *
  * Returns NULL if there's no need to log an identity or if there's no suitable
  * key in the Relation relation.
+ *
+ * Pass key_required true if any replica identity columns changed value, or if
+ * any of them have any external data.  Delete must always pass true.
  */
 static HeapTuple
-ExtractReplicaIdentity(Relation relation, HeapTuple tp, bool key_changed, bool *copy)
+ExtractReplicaIdentity(Relation relation, HeapTuple tp, bool key_required, bool *copy)
 {
 	TupleDesc	desc = RelationGetDescr(relation);
 	Oid			replidindex;
@@ -8134,8 +8207,8 @@ ExtractReplicaIdentity(Relation relation, HeapTuple tp, bool key_changed, bool *
 		return tp;
 	}
 
-	/* if the key hasn't changed and we're only logging the key, we're done */
-	if (!key_changed)
+	/* if the key isn't required and we're only logging the key, we're done */
+	if (!key_required)
 		return NULL;
 
 	/* find the replica identity index */

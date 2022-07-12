@@ -77,6 +77,13 @@ struct XidCache
 #define INVALID_PGPROCNO		PG_INT32_MAX
 
 /*
+ * Flags used only for type of internal functions
+ * GetVirtualXIDsDelayingChkptGuts and HaveVirtualXIDsDelayingChkptGuts.
+ */
+#define DELAY_CHKPT_START		(1<<0)
+#define DELAY_CHKPT_COMPLETE	(1<<1)
+
+/*
  * Each backend has a PGPROC struct in shared memory.  There is also a list of
  * currently-unused PGPROC structs that will be reallocated to new backends.
  *
@@ -150,6 +157,12 @@ struct PGPROC
 	 */
 	XLogRecPtr	waitLSN;		/* waiting for this LSN or higher */
 	int			syncRepState;	/* wait state for sync rep */
+	bool		delayChkptEnd;	/* true if this proc delays checkpoint end;
+								 * this doesn't have anything to do with
+								 * sync rep but we don't want to change
+								 * the size of PGPROC in released branches
+								 * and thus must fit this new field into
+								 * existing padding space  */
 	SHM_QUEUE	syncRepLinks;	/* list link if process is in syncrep queue */
 
 	/*
@@ -232,8 +245,7 @@ typedef struct PGXACT
 
 	uint8		vacuumFlags;	/* vacuum-related flags, see above */
 	bool		overflowed;
-	bool		delayChkpt;		/* true if this proc delays checkpoint start;
-								 * previously called InCommit */
+	bool		delayChkpt;		/* true if this proc delays checkpoint start */
 
 	uint8		nxids;
 } PGXACT;

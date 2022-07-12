@@ -198,7 +198,7 @@ search_directory(const char *directory, const char *fname)
 			if (IsXLogFileName(xlde->d_name))
 			{
 				fd = open_file_in_directory(directory, xlde->d_name);
-				fname = xlde->d_name;
+				fname = pg_strdup(xlde->d_name);
 				break;
 			}
 		}
@@ -210,8 +210,10 @@ search_directory(const char *directory, const char *fname)
 	if (fd >= 0)
 	{
 		PGAlignedXLogBlock buf;
+		int			r;
 
-		if (read(fd, buf.data, XLOG_BLCKSZ) == XLOG_BLCKSZ)
+		r = read(fd, buf.data, XLOG_BLCKSZ);
+		if (r == XLOG_BLCKSZ)
 		{
 			XLogLongPageHeader longhdr = (XLogLongPageHeader) buf.data;
 
@@ -223,14 +225,12 @@ search_directory(const char *directory, const char *fname)
 									 WalSegSz),
 							fname, WalSegSz);
 		}
+		else if (r < 0)
+			fatal_error("could not read file \"%s\": %s",
+						fname, strerror(errno));
 		else
-		{
-			if (errno != 0)
-				fatal_error("could not read file \"%s\": %s",
-							fname, strerror(errno));
-			else
-				fatal_error("not enough data in file \"%s\"", fname);
-		}
+			fatal_error("not enough data in file \"%s\"", fname);
+
 		close(fd);
 		return true;
 	}
@@ -517,6 +517,15 @@ XLogDumpCountRecord(XLogDumpConfig *config, XLogDumpStats *stats,
 	 */
 
 	recid = XLogRecGetInfo(record) >> 4;
+
+	/*
+	 * XACT records need to be handled differently. Those records use the
+	 * first bit of those four bits for an optional flag variable and the
+	 * following three bits for the opcode. We filter opcode out of xl_info
+	 * and use it as the identifier of the record.
+	 */
+	if (rmid == RM_XACT_ID)
+		recid &= 0x07;
 
 	stats->record_stats[rmid][recid].count++;
 	stats->record_stats[rmid][recid].rec_len += rec_len;

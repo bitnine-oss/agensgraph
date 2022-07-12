@@ -100,21 +100,45 @@ UPDATE update_test t
 SELECT a, b, char_length(c) FROM update_test;
 
 -- Test ON CONFLICT DO UPDATE
-INSERT INTO upsert_test VALUES(1, 'Boo');
+
+INSERT INTO upsert_test VALUES(1, 'Boo'), (3, 'Zoo');
 -- uncorrelated  sub-select:
 WITH aaa AS (SELECT 1 AS a, 'Foo' AS b) INSERT INTO upsert_test
   VALUES (1, 'Bar') ON CONFLICT(a)
   DO UPDATE SET (b, a) = (SELECT b, a FROM aaa) RETURNING *;
 -- correlated sub-select:
-INSERT INTO upsert_test VALUES (1, 'Baz') ON CONFLICT(a)
+INSERT INTO upsert_test VALUES (1, 'Baz'), (3, 'Zaz') ON CONFLICT(a)
   DO UPDATE SET (b, a) = (SELECT b || ', Correlated', a from upsert_test i WHERE i.a = upsert_test.a)
   RETURNING *;
 -- correlated sub-select (EXCLUDED.* alias):
-INSERT INTO upsert_test VALUES (1, 'Bat') ON CONFLICT(a)
+INSERT INTO upsert_test VALUES (1, 'Bat'), (3, 'Zot') ON CONFLICT(a)
   DO UPDATE SET (b, a) = (SELECT b || ', Excluded', a from upsert_test i WHERE i.a = excluded.a)
   RETURNING *;
 
 DROP TABLE update_test;
+DROP TABLE upsert_test;
+
+-- Test ON CONFLICT DO UPDATE with partitioned table and non-identical children
+
+CREATE TABLE upsert_test (
+    a   INT PRIMARY KEY,
+    b   TEXT
+) PARTITION BY LIST (a);
+
+CREATE TABLE upsert_test_1 PARTITION OF upsert_test FOR VALUES IN (1);
+CREATE TABLE upsert_test_2 (b TEXT, a INT PRIMARY KEY);
+ALTER TABLE upsert_test ATTACH PARTITION upsert_test_2 FOR VALUES IN (2);
+
+INSERT INTO upsert_test VALUES(1, 'Boo'), (2, 'Zoo');
+-- uncorrelated sub-select:
+WITH aaa AS (SELECT 1 AS a, 'Foo' AS b) INSERT INTO upsert_test
+  VALUES (1, 'Bar') ON CONFLICT(a)
+  DO UPDATE SET (b, a) = (SELECT b, a FROM aaa) RETURNING *;
+-- correlated sub-select:
+WITH aaa AS (SELECT 1 AS ctea, ' Foo' AS cteb) INSERT INTO upsert_test
+  VALUES (1, 'Bar'), (2, 'Baz') ON CONFLICT(a)
+  DO UPDATE SET (b, a) = (SELECT upsert_test.b||cteb, upsert_test.a FROM aaa) RETURNING *;
+
 DROP TABLE upsert_test;
 
 
@@ -223,6 +247,31 @@ DROP VIEW upview;
 UPDATE range_parted set c = 95 WHERE a = 'b' and b > 10 and c > 100 returning (range_parted), *;
 :show_data;
 
+-- The following tests computing RETURNING when the source and the destination
+-- partitions of a UPDATE row movement operation have different tuple
+-- descriptors, which has been shown to be problematic in the cases where the
+-- RETURNING targetlist contains non-target relation attributes that are
+-- computed by referring to the source partition plan's output tuple.  Also,
+-- a trigger on the destination relation may change the tuple, which must be
+-- reflected in the RETURNING output, so we test that too.
+CREATE TABLE part_c_1_c_20 (LIKE range_parted);
+ALTER TABLE part_c_1_c_20 DROP a, DROP b, ADD a text, ADD b bigint;
+ALTER TABLE range_parted ATTACH PARTITION part_c_1_c_20 FOR VALUES FROM ('c', 1) TO ('c', 20);
+CREATE FUNCTION trigfunc () RETURNS TRIGGER LANGUAGE plpgsql as $$ BEGIN NEW.e := 'in trigfunc()'; RETURN NEW; END; $$;
+CREATE TRIGGER trig BEFORE INSERT ON part_c_1_c_20 FOR EACH ROW EXECUTE FUNCTION trigfunc();
+UPDATE range_parted r set a = 'c' FROM (VALUES ('a', 1), ('a', 10), ('b', 12)) s(x, y) WHERE s.x = r.a AND s.y = r.b RETURNING tableoid::regclass, *;
+
+DROP TRIGGER trig ON part_c_1_c_20;
+DROP FUNCTION trigfunc;
+
+:init_range_parted;
+CREATE FUNCTION trigfunc () RETURNS TRIGGER LANGUAGE plpgsql as $$ BEGIN RETURN NULL; END; $$;
+CREATE TRIGGER trig BEFORE INSERT ON part_c_1_c_20 FOR EACH ROW EXECUTE FUNCTION trigfunc();
+UPDATE range_parted r set a = 'c' FROM (VALUES ('a', 1), ('a', 10), ('b', 12)) s(x, y) WHERE s.x = r.a AND s.y = r.b RETURNING tableoid::regclass, *;
+:show_data;
+
+DROP TABLE part_c_1_c_20;
+DROP FUNCTION trigfunc;
 
 -- Transition tables with update row movement
 :init_range_parted;

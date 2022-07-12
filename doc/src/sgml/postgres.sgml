@@ -258,6 +258,7 @@
   &spgist;
   &gin;
   &brin;
+  &hash;
   &storage;
   &bki;
   &planstats;
@@ -277,6 +278,7 @@
   &sourcerepo;
   &docguide;
   &acronyms;
+  &obsolete;
 
  </part>
 

@@ -2720,6 +2720,19 @@ keep_going:						/* We will come back to here until there is
 				pollres = pqsecure_open_client(conn);
 				if (pollres == PGRES_POLLING_OK)
 				{
+					/*
+					 * At this point we should have no data already buffered.
+					 * If we do, it was received before we performed the SSL
+					 * handshake, so it wasn't encrypted and indeed may have
+					 * been injected by a man-in-the-middle.
+					 */
+					if (conn->inCursor != conn->inEnd)
+					{
+						appendPQExpBufferStr(&conn->errorMessage,
+											 libpq_gettext("received unencrypted data after SSL response\n"));
+						goto error_return;
+					}
+
 					/* SSL handshake done, ready to send startup packet */
 					conn->status = CONNECTION_MADE;
 					return PGRES_POLLING_WRITING;
@@ -3889,7 +3902,6 @@ internal_cancel(SockAddr *raddr, int be_pid, int be_key,
 {
 	int			save_errno = SOCK_ERRNO;
 	pgsocket	tmpsock = PGINVALID_SOCKET;
-	char		sebuf[256];
 	int			maxlen;
 	struct
 	{
@@ -3968,8 +3980,25 @@ cancel_errReturn:
 	maxlen = errbufsize - strlen(errbuf) - 2;
 	if (maxlen >= 0)
 	{
-		strncat(errbuf, SOCK_STRERROR(SOCK_ERRNO, sebuf, sizeof(sebuf)),
-				maxlen);
+		/*
+		 * We can't invoke strerror here, since it's not signal-safe.  Settle
+		 * for printing the decimal value of errno.  Even that has to be done
+		 * the hard way.
+		 */
+		int			val = SOCK_ERRNO;
+		char		buf[32];
+		char	   *bufp;
+
+		bufp = buf + sizeof(buf) - 1;
+		*bufp = '\0';
+		do
+		{
+			*(--bufp) = (val % 10) + '0';
+			val /= 10;
+		} while (val > 0);
+		bufp -= 6;
+		memcpy(bufp, "error ", 6);
+		strncat(errbuf, bufp, maxlen);
 		strcat(errbuf, "\n");
 	}
 	if (tmpsock != PGINVALID_SOCKET)

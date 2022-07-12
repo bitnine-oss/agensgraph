@@ -1359,7 +1359,7 @@ typedef struct IndexScanContext
 /* ----------------
  *	 IndexOnlyScanState information
  *
- *		indexqual		   execution state for indexqual expressions
+ *		recheckqual		   execution state for recheckqual expressions
  *		ScanKeys		   Skey structures for index quals
  *		NumScanKeys		   number of ScanKeys
  *		OrderByKeys		   Skey structures for index ordering operators
@@ -1377,7 +1377,7 @@ typedef struct IndexScanContext
 typedef struct IndexOnlyScanState
 {
 	ScanState	ss;				/* its first field is NodeTag */
-	ExprState  *indexqual;
+	ExprState  *recheckqual;
 	ScanKey		ioss_ScanKeys;
 	int			ioss_NumScanKeys;
 	ScanKey		ioss_OrderByKeys;

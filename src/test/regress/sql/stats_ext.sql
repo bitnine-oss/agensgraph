@@ -1,5 +1,26 @@
 -- Generic extended statistics support
 
+-- check the number of estimated/actual rows in the top node
+create function check_estimated_rows(text) returns table (estimated int, actual int)
+language plpgsql as
+$$
+declare
+    ln text;
+    tmp text[];
+    first_row bool := true;
+begin
+    for ln in
+        execute format('explain analyze %s', $1)
+    loop
+        if first_row then
+            first_row := false;
+            tmp := regexp_match(ln, 'rows=(\d*) .* rows=(\d*)');
+            return query select tmp[1]::int, tmp[2]::int;
+        end if;
+    end loop;
+end;
+$$;
+
 -- We will be checking execution plans without/with statistics, so
 -- let's make sure we get simple non-parallel plans. Also set the
 -- work_mem low so that we can use small amounts of data.
@@ -23,6 +44,15 @@ DROP TABLE ext_stats_test;
 -- Ensure stats are dropped sanely, and test IF NOT EXISTS while at it
 CREATE TABLE ab1 (a INTEGER, b INTEGER, c INTEGER);
 CREATE STATISTICS IF NOT EXISTS ab1_a_b_stats ON a, b FROM ab1;
+COMMENT ON STATISTICS ab1_a_b_stats IS 'new comment';
+CREATE ROLE regress_stats_ext;
+SET SESSION AUTHORIZATION regress_stats_ext;
+COMMENT ON STATISTICS ab1_a_b_stats IS 'changed comment';
+DROP STATISTICS ab1_a_b_stats;
+ALTER STATISTICS ab1_a_b_stats RENAME TO ab1_a_b_stats_new;
+RESET SESSION AUTHORIZATION;
+DROP ROLE regress_stats_ext;
+
 CREATE STATISTICS IF NOT EXISTS ab1_a_b_stats ON a, b FROM ab1;
 DROP STATISTICS ab1_a_b_stats;
 
@@ -64,6 +94,38 @@ INSERT INTO ab1 VALUES (1,1);
 CREATE STATISTICS ab1_a_b_stats ON a, b FROM ab1;
 ANALYZE ab1;
 DROP TABLE ab1 CASCADE;
+
+-- Tests for stats with inheritance
+CREATE TABLE stxdinh(a int, b int);
+CREATE TABLE stxdinh1() INHERITS(stxdinh);
+CREATE TABLE stxdinh2() INHERITS(stxdinh);
+INSERT INTO stxdinh SELECT mod(a,50), mod(a,100) FROM generate_series(0, 1999) a;
+INSERT INTO stxdinh1 SELECT mod(a,100), mod(a,100) FROM generate_series(0, 999) a;
+INSERT INTO stxdinh2 SELECT mod(a,100), mod(a,100) FROM generate_series(0, 999) a;
+VACUUM ANALYZE stxdinh, stxdinh1, stxdinh2;
+-- Ensure non-inherited stats are not applied to inherited query
+-- Without stats object, it looks like this
+SELECT * FROM check_estimated_rows('SELECT a, b FROM stxdinh* GROUP BY 1, 2');
+SELECT * FROM check_estimated_rows('SELECT a, b FROM stxdinh* WHERE a = 0 AND b = 0');
+CREATE STATISTICS stxdinh ON a, b FROM stxdinh;
+VACUUM ANALYZE stxdinh, stxdinh1, stxdinh2;
+-- Since the stats object does not include inherited stats, it should not
+-- affect the estimates
+SELECT * FROM check_estimated_rows('SELECT a, b FROM stxdinh* GROUP BY 1, 2');
+-- Dependencies are applied at individual relations (within append), so
+-- this estimate changes a bit because we improve estimates for the parent
+SELECT * FROM check_estimated_rows('SELECT a, b FROM stxdinh* WHERE a = 0 AND b = 0');
+DROP TABLE stxdinh, stxdinh1, stxdinh2;
+
+-- Ensure inherited stats ARE applied to inherited query in partitioned table
+CREATE TABLE stxdinp(i int, a int, b int) PARTITION BY RANGE (i);
+CREATE TABLE stxdinp1 PARTITION OF stxdinp FOR VALUES FROM (1) TO (100);
+INSERT INTO stxdinp SELECT 1, a/100, a/100 FROM generate_series(1, 999) a;
+CREATE STATISTICS stxdinp ON a, b FROM stxdinp;
+VACUUM ANALYZE stxdinp; -- partitions are processed recursively
+SELECT 1 FROM pg_statistic_ext WHERE stxrelid = 'stxdinp'::regclass;
+SELECT * FROM check_estimated_rows('SELECT a, b FROM stxdinp GROUP BY 1, 2');
+DROP TABLE stxdinp;
 
 -- Verify supported object types for extended statistics
 CREATE schema tststats;

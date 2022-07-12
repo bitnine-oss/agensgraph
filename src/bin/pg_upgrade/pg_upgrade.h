@@ -215,6 +215,7 @@ typedef struct
 	uint32		chkpnt_nxtmulti;
 	uint32		chkpnt_nxtmxoff;
 	uint32		chkpnt_oldstMulti;
+	uint32		chkpnt_oldstxid;
 	uint32		align;
 	uint32		blocksz;
 	uint32		largesz;
@@ -441,12 +442,19 @@ void		pg_putenv(const char *var, const char *val);
 
 /* version.c */
 
+bool		check_for_data_types_usage(ClusterInfo *cluster,
+									   const char *base_query,
+									   const char *output_path);
+bool		check_for_data_type_usage(ClusterInfo *cluster,
+									  const char *type_name,
+									  const char *output_path);
 void new_9_0_populate_pg_largeobject_metadata(ClusterInfo *cluster,
 										 bool check_mode);
 void		old_9_3_check_for_line_data_type_usage(ClusterInfo *cluster);
 void		old_9_6_check_for_unknown_data_type_usage(ClusterInfo *cluster);
 void old_9_6_invalidate_hash_indexes(ClusterInfo *cluster,
 								bool check_mode);
+void		report_extension_updates(ClusterInfo *cluster);
 
 /* parallel.c */
 void parallel_exec_prog(const char *log_file, const char *opt_log_file,

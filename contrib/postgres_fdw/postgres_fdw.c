@@ -17,6 +17,7 @@
 #include "access/htup_details.h"
 #include "access/sysattr.h"
 #include "catalog/pg_class.h"
+#include "catalog/pg_opfamily.h"
 #include "commands/defrem.h"
 #include "commands/explain.h"
 #include "commands/vacuum.h"
@@ -253,16 +254,9 @@ typedef struct PgFdwAnalyzeState
  */
 typedef struct ConversionLocation
 {
-	Relation	rel;			/* foreign table's relcache entry. */
 	AttrNumber	cur_attno;		/* attribute number being processed, or 0 */
-
-	/*
-	 * In case of foreign join push down, fdw_scan_tlist is used to identify
-	 * the Var node corresponding to the error location and
-	 * fsstate->ss.ps.state gives access to the RTEs of corresponding relation
-	 * to get the relation name and attribute name.
-	 */
-	ForeignScanState *fsstate;
+	Relation	rel;			/* foreign table being processed, or NULL */
+	ForeignScanState *fsstate;	/* plan node being processed, or NULL */
 } ConversionLocation;
 
 /* Callback argument for ec_member_matches_foreign */
@@ -546,8 +540,9 @@ postgresGetForeignRelSize(PlannerInfo *root,
 	fpinfo->server = GetForeignServer(fpinfo->table->serverid);
 
 	/*
-	 * Extract user-settable option values.  Note that per-table setting of
-	 * use_remote_estimate overrides per-server setting.
+	 * Extract user-settable option values.  Note that per-table settings of
+	 * use_remote_estimate and fetch_size override per-server settings of
+	 * them, respectively.
 	 */
 	fpinfo->use_remote_estimate = false;
 	fpinfo->fdw_startup_cost = DEFAULT_FDW_STARTUP_COST;
@@ -831,8 +826,6 @@ get_useful_pathkeys_for_relation(PlannerInfo *root, RelOptInfo *rel)
 		foreach(lc, root->query_pathkeys)
 		{
 			PathKey    *pathkey = (PathKey *) lfirst(lc);
-			EquivalenceClass *pathkey_ec = pathkey->pk_eclass;
-			Expr	   *em_expr;
 
 			/*
 			 * The planner and executor don't have any clever strategy for
@@ -840,13 +833,8 @@ get_useful_pathkeys_for_relation(PlannerInfo *root, RelOptInfo *rel)
 			 * getting it to be sorted by all of those pathkeys. We'll just
 			 * end up resorting the entire data set.  So, unless we can push
 			 * down all of the query pathkeys, forget it.
-			 *
-			 * is_foreign_expr would detect volatile expressions as well, but
-			 * checking ec_has_volatile here saves some cycles.
 			 */
-			if (pathkey_ec->ec_has_volatile ||
-				!(em_expr = find_em_expr_for_rel(pathkey_ec, rel)) ||
-				!is_foreign_expr(root, rel, em_expr))
+			if (!is_foreign_pathkey(root, rel, pathkey))
 			{
 				query_pathkeys_ok = false;
 				break;
@@ -890,16 +878,19 @@ get_useful_pathkeys_for_relation(PlannerInfo *root, RelOptInfo *rel)
 	foreach(lc, useful_eclass_list)
 	{
 		EquivalenceClass *cur_ec = lfirst(lc);
-		Expr	   *em_expr;
 		PathKey    *pathkey;
 
 		/* If redundant with what we did above, skip it. */
 		if (cur_ec == query_ec)
 			continue;
 
+		/* Can't push down the sort if the EC's opfamily is not shippable. */
+		if (!is_shippable(linitial_oid(cur_ec->ec_opfamilies),
+						  OperatorFamilyRelationId, fpinfo))
+			continue;
+
 		/* If no pushable expression for this rel, skip it. */
-		em_expr = find_em_expr_for_rel(cur_ec, rel);
-		if (em_expr == NULL || !is_foreign_expr(root, rel, em_expr))
+		if (find_em_for_rel(root, cur_ec, rel) == NULL)
 			continue;
 
 		/* Looks like we can generate a pathkey, so let's do it. */
@@ -5646,7 +5637,12 @@ add_foreign_grouping_paths(PlannerInfo *root, RelOptInfo *input_rel,
  * rel is the local representation of the foreign table, attinmeta is
  * conversion data for the rel's tupdesc, and retrieved_attrs is an
  * integer list of the table column numbers present in the PGresult.
+ * fsstate is the ForeignScan plan node's execution state.
  * temp_context is a working context that can be reset after each tuple.
+ *
+ * Note: either rel or fsstate, but not both, can be NULL.  rel is NULL
+ * if we're processing a remote join, while fsstate is NULL in a non-query
+ * context such as ANALYZE, or if we're processing a non-scan query node.
  */
 static HeapTuple
 make_tuple_from_result_row(PGresult *res,
@@ -5678,6 +5674,10 @@ make_tuple_from_result_row(PGresult *res,
 	 */
 	oldcontext = MemoryContextSwitchTo(temp_context);
 
+	/*
+	 * Get the tuple descriptor for the row.  Use the rel's tupdesc if rel is
+	 * provided, otherwise look to the scan node's ScanTupleSlot.
+	 */
 	if (rel)
 		tupdesc = RelationGetDescr(rel);
 	else
@@ -5694,8 +5694,8 @@ make_tuple_from_result_row(PGresult *res,
 	/*
 	 * Set up and install callback to report where conversion error occurs.
 	 */
-	errpos.rel = rel;
 	errpos.cur_attno = 0;
+	errpos.rel = rel;
 	errpos.fsstate = fsstate;
 	errcallback.callback = conversion_error_callback;
 	errcallback.arg = (void *) &errpos;
@@ -5814,99 +5814,134 @@ make_tuple_from_result_row(PGresult *res,
 /*
  * Callback function which is called when error occurs during column value
  * conversion.  Print names of column and relation.
+ *
+ * Note that this function mustn't do any catalog lookups, since we are in
+ * an already-failed transaction.  Fortunately, we can get the needed info
+ * from the relation or the query's rangetable instead.
  */
 static void
 conversion_error_callback(void *arg)
 {
+	ConversionLocation *errpos = (ConversionLocation *) arg;
+	Relation	rel = errpos->rel;
+	ForeignScanState *fsstate = errpos->fsstate;
 	const char *attname = NULL;
 	const char *relname = NULL;
 	bool		is_wholerow = false;
-	ConversionLocation *errpos = (ConversionLocation *) arg;
 
-	if (errpos->rel)
+	/*
+	 * If we're in a scan node, always use aliases from the rangetable, for
+	 * consistency between the simple-relation and remote-join cases.  Look at
+	 * the relation's tupdesc only if we're not in a scan node.
+	 */
+	if (fsstate)
 	{
-		/* error occurred in a scan against a foreign table */
-		TupleDesc	tupdesc = RelationGetDescr(errpos->rel);
-		Form_pg_attribute attr = TupleDescAttr(tupdesc, errpos->cur_attno - 1);
-
-		if (errpos->cur_attno > 0 && errpos->cur_attno <= tupdesc->natts)
-			attname = NameStr(attr->attname);
-		else if (errpos->cur_attno == SelfItemPointerAttributeNumber)
-			attname = "ctid";
-		else if (errpos->cur_attno == ObjectIdAttributeNumber)
-			attname = "oid";
-
-		relname = RelationGetRelationName(errpos->rel);
-	}
-	else
-	{
-		/* error occurred in a scan against a foreign join */
-		ForeignScanState *fsstate = errpos->fsstate;
+		/* ForeignScan case */
 		ForeignScan *fsplan = castNode(ForeignScan, fsstate->ss.ps.plan);
-		EState	   *estate = fsstate->ss.ps.state;
-		TargetEntry *tle;
+		int			varno = 0;
+		AttrNumber	colno = 0;
 
-		tle = list_nth_node(TargetEntry, fsplan->fdw_scan_tlist,
-							errpos->cur_attno - 1);
-
-		/*
-		 * Target list can have Vars and expressions.  For Vars, we can get
-		 * its relation, however for expressions we can't.  Thus for
-		 * expressions, just show generic context message.
-		 */
-		if (IsA(tle->expr, Var))
+		if (fsplan->scan.scanrelid > 0)
 		{
-			RangeTblEntry *rte;
-			Var		   *var = (Var *) tle->expr;
-
-			rte = rt_fetch(var->varno, estate->es_range_table);
-
-			if (var->varattno == 0)
-				is_wholerow = true;
-			else
-				attname = get_attname(rte->relid, var->varattno, false);
-
-			relname = get_rel_name(rte->relid);
+			/* error occurred in a scan against a foreign table */
+			varno = fsplan->scan.scanrelid;
+			colno = errpos->cur_attno;
 		}
 		else
-			errcontext("processing expression at position %d in select list",
-					   errpos->cur_attno);
+		{
+			/* error occurred in a scan against a foreign join */
+			TargetEntry *tle;
+
+			tle = list_nth_node(TargetEntry, fsplan->fdw_scan_tlist,
+								errpos->cur_attno - 1);
+
+			/*
+			 * Target list can have Vars and expressions.  For Vars, we can
+			 * get some information, however for expressions we can't.  Thus
+			 * for expressions, just show generic context message.
+			 */
+			if (IsA(tle->expr, Var))
+			{
+				Var		   *var = (Var *) tle->expr;
+
+				varno = var->varno;
+				colno = var->varattno;
+			}
+		}
+
+		if (varno > 0)
+		{
+			EState	   *estate = fsstate->ss.ps.state;
+			RangeTblEntry *rte = rt_fetch(varno, estate->es_range_table);
+
+			relname = rte->eref->aliasname;
+
+			if (colno == 0)
+				is_wholerow = true;
+			else if (colno > 0 && colno <= list_length(rte->eref->colnames))
+				attname = strVal(list_nth(rte->eref->colnames, colno - 1));
+			else if (colno == SelfItemPointerAttributeNumber)
+				attname = "ctid";
+			else if (colno == ObjectIdAttributeNumber)
+				attname = "oid";
+		}
+	}
+	else if (rel)
+	{
+		/* Non-ForeignScan case (we should always have a rel here) */
+		TupleDesc	tupdesc = RelationGetDescr(rel);
+
+		relname = RelationGetRelationName(rel);
+		if (errpos->cur_attno > 0 && errpos->cur_attno <= tupdesc->natts)
+		{
+			Form_pg_attribute attr = TupleDescAttr(tupdesc,
+												   errpos->cur_attno - 1);
+
+			attname = NameStr(attr->attname);
+		}
+		else if (errpos->cur_attno == SelfItemPointerAttributeNumber)
+			attname = "ctid";
 	}
 
-	if (relname)
-	{
-		if (is_wholerow)
-			errcontext("whole-row reference to foreign table \"%s\"", relname);
-		else if (attname)
-			errcontext("column \"%s\" of foreign table \"%s\"", attname, relname);
-	}
+	if (relname && is_wholerow)
+		errcontext("whole-row reference to foreign table \"%s\"", relname);
+	else if (relname && attname)
+		errcontext("column \"%s\" of foreign table \"%s\"", attname, relname);
+	else
+		errcontext("processing expression at position %d in select list",
+				   errpos->cur_attno);
 }
 
 /*
- * Find an equivalence class member expression, all of whose Vars, come from
- * the indicated relation.
+ * Given an EquivalenceClass and a foreign relation, find an EC member
+ * that can be used to sort the relation remotely according to a pathkey
+ * using this EC.
+ *
+ * If there is more than one suitable candidate, return an arbitrary
+ * one of them.  If there is none, return NULL.
+ *
+ * This checks that the EC member expression uses only Vars from the given
+ * rel and is shippable.  Caller must separately verify that the pathkey's
+ * ordering operator is shippable.
  */
-Expr *
-find_em_expr_for_rel(EquivalenceClass *ec, RelOptInfo *rel)
+EquivalenceMember *
+find_em_for_rel(PlannerInfo *root, EquivalenceClass *ec, RelOptInfo *rel)
 {
-	ListCell   *lc_em;
+	ListCell   *lc;
 
-	foreach(lc_em, ec->ec_members)
+	foreach(lc, ec->ec_members)
 	{
-		EquivalenceMember *em = lfirst(lc_em);
+		EquivalenceMember *em = (EquivalenceMember *) lfirst(lc);
 
+		/*
+		 * Note we require !bms_is_empty, else we'd accept constant
+		 * expressions which are not suitable for the purpose.
+		 */
 		if (bms_is_subset(em->em_relids, rel->relids) &&
-			!bms_is_empty(em->em_relids))
-		{
-			/*
-			 * If there is more than one equivalence member whose Vars are
-			 * taken entirely from this relation, we'll be content to choose
-			 * any one of those.
-			 */
-			return em->em_expr;
-		}
+			!bms_is_empty(em->em_relids) &&
+			is_foreign_expr(root, rel, em->em_expr))
+			return em;
 	}
 
-	/* We didn't find any suitable equivalence class expression */
 	return NULL;
 }

@@ -727,7 +727,16 @@ ReadBuffer_common(SMgrRelation smgr, char relpersistence, ForkNumber forkNum,
 
 	/* Substitute proper block number if caller asked for P_NEW */
 	if (isExtend)
+	{
 		blockNum = smgrnblocks(smgr, forkNum);
+		/* Fail if relation is already at maximum possible length */
+		if (blockNum == P_NEW)
+			ereport(ERROR,
+					(errcode(ERRCODE_PROGRAM_LIMIT_EXCEEDED),
+					 errmsg("cannot extend relation %s beyond %u blocks",
+							relpath(smgr->smgr_rnode, forkNum),
+							P_NEW)));
+	}
 
 	if (isLocalBuf)
 	{
@@ -3462,7 +3471,9 @@ MarkBufferDirtyHint(Buffer buffer, bool buffer_std)
 			 * essential that CreateCheckpoint waits for virtual transactions
 			 * rather than full transactionids.
 			 */
-			MyPgXact->delayChkpt = delayChkpt = true;
+			Assert(!MyPgXact->delayChkpt);
+			MyPgXact->delayChkpt = true;
+			delayChkpt = true;
 			lsn = XLogSaveBufferForHint(buffer, buffer_std);
 		}
 

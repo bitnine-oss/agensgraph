@@ -2590,7 +2590,8 @@ check_object_ownership(Oid roleid, ObjectType objtype, ObjectAddress address,
 			break;
 		case OBJECT_STATISTIC_EXT:
 			if (!pg_statistics_object_ownercheck(address.objectId, roleid))
-				aclcheck_error_type(ACLCHECK_NOT_OWNER, address.objectId);
+				aclcheck_error(ACLCHECK_NOT_OWNER, objtype,
+							   NameListToString(castNode(List, object)));
 			break;
 		case OBJECT_GRAPH:
 			if (!ag_graph_ownercheck(address.objectId, roleid))
@@ -5209,10 +5210,7 @@ getObjectIdentityParts(const ObjectAddress *object,
 			{
 				HeapTuple	tup;
 				Form_pg_event_trigger trigForm;
-
-				/* no objname support here */
-				if (objname)
-					*objname = NIL;
+				char	   *evtname;
 
 				tup = SearchSysCache1(EVENTTRIGGEROID,
 									  ObjectIdGetDatum(object->objectId));
@@ -5220,8 +5218,10 @@ getObjectIdentityParts(const ObjectAddress *object,
 					elog(ERROR, "cache lookup failed for event trigger %u",
 						 object->objectId);
 				trigForm = (Form_pg_event_trigger) GETSTRUCT(tup);
-				appendStringInfoString(&buffer,
-									   quote_identifier(NameStr(trigForm->evtname)));
+				evtname = pstrdup(NameStr(trigForm->evtname));
+				appendStringInfoString(&buffer, quote_identifier(evtname));
+				if (objname)
+					*objname = list_make1(evtname);
 				ReleaseSysCache(tup);
 				break;
 			}

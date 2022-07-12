@@ -1376,7 +1376,7 @@ static Query *
 transformValuesClause(ParseState *pstate, SelectStmt *stmt)
 {
 	Query	   *qry = makeNode(Query);
-	List	   *exprsLists;
+	List	   *exprsLists = NIL;
 	List	   *coltypes = NIL;
 	List	   *coltypmods = NIL;
 	List	   *colcollations = NIL;
@@ -1461,6 +1461,9 @@ transformValuesClause(ParseState *pstate, SelectStmt *stmt)
 
 		/* Release sub-list's cells to save memory */
 		list_free(sublist);
+
+		/* Prepare an exprsLists element for this row */
+		exprsLists = lappend(exprsLists, NIL);
 	}
 
 	/*
@@ -1515,25 +1518,15 @@ transformValuesClause(ParseState *pstate, SelectStmt *stmt)
 	/*
 	 * Finally, rearrange the coerced expressions into row-organized lists.
 	 */
-	exprsLists = NIL;
-	foreach(lc, colexprs[0])
-	{
-		Node	   *col = (Node *) lfirst(lc);
-		List	   *sublist;
-
-		sublist = list_make1(col);
-		exprsLists = lappend(exprsLists, sublist);
-	}
-	list_free(colexprs[0]);
-	for (i = 1; i < sublist_length; i++)
+	for (i = 0; i < sublist_length; i++)
 	{
 		forboth(lc, colexprs[i], lc2, exprsLists)
 		{
 			Node	   *col = (Node *) lfirst(lc);
 			List	   *sublist = lfirst(lc2);
 
-			/* sublist pointer in exprsLists won't need adjustment */
-			(void) lappend(sublist, col);
+			sublist = lappend(sublist, col);
+			lfirst(lc2) = sublist;
 		}
 		list_free(colexprs[i]);
 	}
@@ -2729,7 +2722,7 @@ CheckSelectLocking(Query *qry, LockClauseStrength strength)
 		  translator: %s is a SQL row locking clause such as FOR UPDATE */
 				 errmsg("%s is not allowed with DISTINCT clause",
 						LCS_asString(strength))));
-	if (qry->groupClause != NIL)
+	if (qry->groupClause != NIL || qry->groupingSets != NIL)
 		ereport(ERROR,
 				(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
 		/*------
@@ -2794,13 +2787,22 @@ transformLockingClause(ParseState *pstate, Query *qry, LockingClause *lc,
 
 	if (lockedRels == NIL)
 	{
-		/* all regular tables used in query */
+		/*
+		 * Lock all regular tables used in query and its subqueries.  We
+		 * examine inFromCl to exclude auto-added RTEs, particularly NEW/OLD
+		 * in rules.  This is a bit of an abuse of a mostly-obsolete flag, but
+		 * it's convenient.  We can't rely on the namespace mechanism that has
+		 * largely replaced inFromCl, since for example we need to lock
+		 * base-relation RTEs even if they are masked by upper joins.
+		 */
 		i = 0;
 		foreach(rt, qry->rtable)
 		{
 			RangeTblEntry *rte = (RangeTblEntry *) lfirst(rt);
 
 			++i;
+			if (!rte->inFromCl)
+				continue;
 			switch (rte->rtekind)
 			{
 				case RTE_RELATION:
@@ -2830,7 +2832,11 @@ transformLockingClause(ParseState *pstate, Query *qry, LockingClause *lc,
 	}
 	else
 	{
-		/* just the named tables */
+		/*
+		 * Lock just the named tables.  As above, we allow locking any base
+		 * relation regardless of alias-visibility rules, so we need to
+		 * examine inFromCl to exclude OLD/NEW.
+		 */
 		foreach(l, lockedRels)
 		{
 			RangeVar   *thisrel = (RangeVar *) lfirst(l);
@@ -2851,6 +2857,8 @@ transformLockingClause(ParseState *pstate, Query *qry, LockingClause *lc,
 				RangeTblEntry *rte = (RangeTblEntry *) lfirst(rt);
 
 				++i;
+				if (!rte->inFromCl)
+					continue;
 				if (strcmp(rte->eref->aliasname, thisrel->relname) == 0)
 				{
 					switch (rte->rtekind)

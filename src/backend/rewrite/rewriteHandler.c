@@ -525,6 +525,9 @@ rewriteRuleAction(Query *parsetree,
 		 *
 		 * This could possibly be fixed by using some sort of internally
 		 * generated ID, instead of names, to link CTE RTEs to their CTEs.
+		 * However, decompiling the results would be quite confusing; note the
+		 * merge of hasRecursive flags below, which could change the apparent
+		 * semantics of such redundantly-named CTEs.
 		 */
 		foreach(lc, parsetree->cteList)
 		{
@@ -546,6 +549,26 @@ rewriteRuleAction(Query *parsetree,
 		/* OK, it's safe to combine the CTE lists */
 		sub_action->cteList = list_concat(sub_action->cteList,
 										  copyObject(parsetree->cteList));
+		/* ... and don't forget about the associated flags */
+		sub_action->hasRecursive |= parsetree->hasRecursive;
+		sub_action->hasModifyingCTE |= parsetree->hasModifyingCTE;
+
+		/*
+		 * If rule_action is different from sub_action (i.e., the rule action
+		 * is an INSERT...SELECT), then we might have just added some
+		 * data-modifying CTEs that are not at the top query level.  This is
+		 * disallowed by the parser and we mustn't generate such trees here
+		 * either, so throw an error.
+		 *
+		 * Conceivably such cases could be supported by attaching the original
+		 * query's CTEs to rule_action not sub_action.  But to do that, we'd
+		 * have to increment ctelevelsup in RTEs and SubLinks copied from the
+		 * original query.  For now, it doesn't seem worth the trouble.
+		 */
+		if (sub_action->hasModifyingCTE && rule_action != sub_action)
+			ereport(ERROR,
+					(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+					 errmsg("INSERT...SELECT rule actions are not supported for queries having data-modifying statements in WITH")));
 	}
 
 	/*
@@ -3436,15 +3459,29 @@ RewriteQuery(Query *parsetree, List *rewrite_events)
 
 		/*
 		 * Currently we can only handle unconditional, single-statement DO
-		 * INSTEAD rules correctly; we have to get exactly one Query out of
-		 * the rewrite operation to stuff back into the CTE node.
+		 * INSTEAD rules correctly; we have to get exactly one non-utility
+		 * Query out of the rewrite operation to stuff back into the CTE node.
 		 */
 		if (list_length(newstuff) == 1)
 		{
-			/* Push the single Query back into the CTE node */
+			/* Must check it's not a utility command */
 			ctequery = linitial_node(Query, newstuff);
+			if (!(ctequery->commandType == CMD_SELECT ||
+				  ctequery->commandType == CMD_UPDATE ||
+				  ctequery->commandType == CMD_INSERT ||
+				  ctequery->commandType == CMD_DELETE))
+			{
+				/*
+				 * Currently it could only be NOTIFY; this error message will
+				 * need work if we ever allow other utility commands in rules.
+				 */
+				ereport(ERROR,
+						(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+						 errmsg("DO INSTEAD NOTIFY rules are not supported for data-modifying statements in WITH")));
+			}
 			/* WITH queries should never be canSetTag */
 			Assert(!ctequery->canSetTag);
+			/* Push the single Query back into the CTE node */
 			cte->ctequery = (Node *) ctequery;
 		}
 		else if (newstuff == NIL)
