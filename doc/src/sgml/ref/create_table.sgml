@@ -251,176 +251,6 @@ WITH ( MODULUS <replaceable class="parameter">numeric_literal</replaceable>, REM
     </listitem>
    </varlistentry>
 
-   <varlistentry id="sql-createtable-partition">
-    <term><literal>PARTITION OF <replaceable class="parameter">parent_table</replaceable> { FOR VALUES <replaceable class="parameter">partition_bound_spec</replaceable> | DEFAULT }</literal></term>
-    <listitem>
-     <para>
-      Creates the table as a <firstterm>partition</firstterm> of the specified
-      parent table. The table can be created either as a partition for specific
-      values using <literal>FOR VALUES</literal> or as a default partition
-      using <literal>DEFAULT</literal>.  This option is not available for
-      hash-partitioned tables.
-     </para>
-
-     <para>
-      The <replaceable class="parameter">partition_bound_spec</replaceable>
-      must correspond to the partitioning method and partition key of the
-      parent table, and must not overlap with any existing partition of that
-      parent.  The form with <literal>IN</literal> is used for list partitioning,
-      the form with <literal>FROM</literal> and <literal>TO</literal> is used
-      for range partitioning, and the form with <literal>WITH</literal> is used
-      for hash partitioning.
-     </para>
-
-     <para>
-      Each of the values specified in
-      the <replaceable class="parameter">partition_bound_spec</replaceable> is
-      a literal, <literal>NULL</literal>, <literal>MINVALUE</literal>, or
-      <literal>MAXVALUE</literal>.  Each literal value must be either a
-      numeric constant that is coercible to the corresponding partition key
-      column's type, or a string literal that is valid input for that type.
-     </para>
-
-     <para>
-      When creating a list partition, <literal>NULL</literal> can be
-      specified to signify that the partition allows the partition key
-      column to be null.  However, there cannot be more than one such
-      list partition for a given parent table.  <literal>NULL</literal>
-      cannot be specified for range partitions.
-     </para>
-
-     <para>
-      When creating a range partition, the lower bound specified with
-      <literal>FROM</literal> is an inclusive bound, whereas the upper
-      bound specified with <literal>TO</literal> is an exclusive bound.
-      That is, the values specified in the <literal>FROM</literal> list
-      are valid values of the corresponding partition key columns for this
-      partition, whereas those in the <literal>TO</literal> list are
-      not.  Note that this statement must be understood according to the
-      rules of row-wise comparison (<xref linkend="row-wise-comparison"/>).
-      For example, given <literal>PARTITION BY RANGE (x,y)</literal>, a partition
-      bound <literal>FROM (1, 2) TO (3, 4)</literal>
-      allows <literal>x=1</literal> with any <literal>y&gt;=2</literal>,
-      <literal>x=2</literal> with any non-null <literal>y</literal>,
-      and <literal>x=3</literal> with any <literal>y&lt;4</literal>.
-     </para>
-
-     <para>
-      The special values <literal>MINVALUE</literal> and <literal>MAXVALUE</literal>
-      may be used when creating a range partition to indicate that there
-      is no lower or upper bound on the column's value. For example, a
-      partition defined using <literal>FROM (MINVALUE) TO (10)</literal> allows
-      any values less than 10, and a partition defined using
-      <literal>FROM (10) TO (MAXVALUE)</literal> allows any values greater than
-      or equal to 10.
-     </para>
-
-     <para>
-      When creating a range partition involving more than one column, it
-      can also make sense to use <literal>MAXVALUE</literal> as part of the lower
-      bound, and <literal>MINVALUE</literal> as part of the upper bound. For
-      example, a partition defined using
-      <literal>FROM (0, MAXVALUE) TO (10, MAXVALUE)</literal> allows any rows
-      where the first partition key column is greater than 0 and less than
-      or equal to 10. Similarly, a partition defined using
-      <literal>FROM ('a', MINVALUE) TO ('b', MINVALUE)</literal> allows any rows
-      where the first partition key column starts with "a".
-     </para>
-
-     <para>
-      Note that if <literal>MINVALUE</literal> or <literal>MAXVALUE</literal> is used for
-      one column of a partitioning bound, the same value must be used for all
-      subsequent columns.  For example, <literal>(10, MINVALUE, 0)</literal> is not
-      a valid bound; you should write <literal>(10, MINVALUE, MINVALUE)</literal>.
-     </para>
-
-     <para>
-      Also note that some element types, such as <literal>timestamp</literal>,
-      have a notion of "infinity", which is just another value that can
-      be stored. This is different from <literal>MINVALUE</literal> and
-      <literal>MAXVALUE</literal>, which are not real values that can be stored,
-      but rather they are ways of saying that the value is unbounded.
-      <literal>MAXVALUE</literal> can be thought of as being greater than any
-      other value, including "infinity" and <literal>MINVALUE</literal> as being
-      less than any other value, including "minus infinity". Thus the range
-      <literal>FROM ('infinity') TO (MAXVALUE)</literal> is not an empty range; it
-      allows precisely one value to be stored &mdash; "infinity".
-     </para>
-
-     <para>
-      If <literal>DEFAULT</literal> is specified, the table will be
-      created as a default partition of the parent table. The parent can
-      either be a list or range partitioned table. A partition key value
-      not fitting into any other partition of the given parent will be
-      routed to the default partition. There can be only one default
-      partition for a given parent table.
-     </para>
-
-     <para>
-      When a table has an existing <literal>DEFAULT</literal> partition and
-      a new partition is added to it, the existing default partition must
-      be scanned to verify that it does not contain any rows which properly
-      belong in the new partition.  If the default partition contains a
-      large number of rows, this may be slow.  The scan will be skipped if
-      the default partition is a foreign table or if it has a constraint which
-      proves that it cannot contain rows which should be placed in the new
-      partition.
-     </para>
-
-     <para>
-      When creating a hash partition, a modulus and remainder must be specified.
-      The modulus must be a positive integer, and the remainder must be a
-      non-negative integer less than the modulus.  Typically, when initially
-      setting up a hash-partitioned table, you should choose a modulus equal to
-      the number of partitions and assign every table the same modulus and a
-      different remainder (see examples, below).   However, it is not required
-      that every partition have the same modulus, only that every modulus which
-      occurs among the partitions of a hash-partitioned table is a factor of the
-      next larger modulus.  This allows the number of partitions to be increased
-      incrementally without needing to move all the data at once.  For example,
-      suppose you have a hash-partitioned table with 8 partitions, each of which
-      has modulus 8, but find it necessary to increase the number of partitions
-      to 16.  You can detach one of the modulus-8 partitions, create two new
-      modulus-16 partitions covering the same portion of the key space (one with
-      a remainder equal to the remainder of the detached partition, and the
-      other with a remainder equal to that value plus 8), and repopulate them
-      with data.  You can then repeat this -- perhaps at a later time -- for
-      each modulus-8 partition until none remain.  While this may still involve
-      a large amount of data movement at each step, it is still better than
-      having to create a whole new table and move all the data at once.
-     </para>
-
-     <para>
-      A partition must have the same column names and types as the partitioned
-      table to which it belongs.  If the parent is specified <literal>WITH
-      OIDS</literal> then all partitions must have OIDs; the parent's OID
-      column will be inherited by all partitions just like any other column.
-      Modifications to the column names or types of a partitioned table, or
-      the addition or removal of an OID column, will automatically propagate
-      to all partitions.  <literal>CHECK</literal> constraints will be inherited
-      automatically by every partition, but an individual partition may specify
-      additional <literal>CHECK</literal> constraints; additional constraints with
-      the same name and condition as in the parent will be merged with the
-      parent constraint.  Defaults may be specified separately for each
-      partition.
-     </para>
-
-     <para>
-      Rows inserted into a partitioned table will be automatically routed to
-      the correct partition.  If no suitable partition exists, an error will
-      occur.
-     </para>
-
-     <para>
-      Operations such as TRUNCATE which normally affect a table and all of its
-      inheritance children will cascade to all partitions, but may also be
-      performed on an individual partition.  Note that dropping a partition
-      with <literal>DROP TABLE</literal> requires taking an <literal>ACCESS
-      EXCLUSIVE</literal> lock on the parent table.
-     </para>
-    </listitem>
-   </varlistentry>
-
    <varlistentry>
     <term><replaceable class="parameter">column_name</replaceable></term>
     <listitem>
@@ -552,6 +382,182 @@ WITH ( MODULUS <replaceable class="parameter">numeric_literal</replaceable>, REM
       reference a partitioned table is not yet supported.
      </para>
 
+     <para>
+      See <xref linkend="ddl-partitioning"/> for more discussion on table
+      partitioning.
+     </para>
+
+    </listitem>
+   </varlistentry>
+
+   <varlistentry id="sql-createtable-partition">
+    <term><literal>PARTITION OF <replaceable class="parameter">parent_table</replaceable> { FOR VALUES <replaceable class="parameter">partition_bound_spec</replaceable> | DEFAULT }</literal></term>
+    <listitem>
+     <para>
+      Creates the table as a <firstterm>partition</firstterm> of the specified
+      parent table. The table can be created either as a partition for specific
+      values using <literal>FOR VALUES</literal> or as a default partition
+      using <literal>DEFAULT</literal>.  Any indexes, constraints and
+      user-defined row-level triggers that exist in the parent table are cloned
+      on the new partition.
+     </para>
+
+     <para>
+      The <replaceable class="parameter">partition_bound_spec</replaceable>
+      must correspond to the partitioning method and partition key of the
+      parent table, and must not overlap with any existing partition of that
+      parent.  The form with <literal>IN</literal> is used for list partitioning,
+      the form with <literal>FROM</literal> and <literal>TO</literal> is used
+      for range partitioning, and the form with <literal>WITH</literal> is used
+      for hash partitioning.
+     </para>
+
+     <para>
+      Each of the values specified in
+      the <replaceable class="parameter">partition_bound_spec</replaceable> is
+      a literal, <literal>NULL</literal>, <literal>MINVALUE</literal>, or
+      <literal>MAXVALUE</literal>.  Each literal value must be either a
+      numeric constant that is coercible to the corresponding partition key
+      column's type, or a string literal that is valid input for that type.
+     </para>
+
+     <para>
+      When creating a list partition, <literal>NULL</literal> can be
+      specified to signify that the partition allows the partition key
+      column to be null.  However, there cannot be more than one such
+      list partition for a given parent table.  <literal>NULL</literal>
+      cannot be specified for range partitions.
+     </para>
+
+     <para>
+      When creating a range partition, the lower bound specified with
+      <literal>FROM</literal> is an inclusive bound, whereas the upper
+      bound specified with <literal>TO</literal> is an exclusive bound.
+      That is, the values specified in the <literal>FROM</literal> list
+      are valid values of the corresponding partition key columns for this
+      partition, whereas those in the <literal>TO</literal> list are
+      not.  Note that this statement must be understood according to the
+      rules of row-wise comparison (<xref linkend="row-wise-comparison"/>).
+      For example, given <literal>PARTITION BY RANGE (x,y)</literal>, a partition
+      bound <literal>FROM (1, 2) TO (3, 4)</literal>
+      allows <literal>x=1</literal> with any <literal>y&gt;=2</literal>,
+      <literal>x=2</literal> with any non-null <literal>y</literal>,
+      and <literal>x=3</literal> with any <literal>y&lt;4</literal>.
+     </para>
+
+     <para>
+      The special values <literal>MINVALUE</literal> and <literal>MAXVALUE</literal>
+      may be used when creating a range partition to indicate that there
+      is no lower or upper bound on the column's value. For example, a
+      partition defined using <literal>FROM (MINVALUE) TO (10)</literal> allows
+      any values less than 10, and a partition defined using
+      <literal>FROM (10) TO (MAXVALUE)</literal> allows any values greater than
+      or equal to 10.
+     </para>
+
+     <para>
+      When creating a range partition involving more than one column, it
+      can also make sense to use <literal>MAXVALUE</literal> as part of the lower
+      bound, and <literal>MINVALUE</literal> as part of the upper bound. For
+      example, a partition defined using
+      <literal>FROM (0, MAXVALUE) TO (10, MAXVALUE)</literal> allows any rows
+      where the first partition key column is greater than 0 and less than
+      or equal to 10. Similarly, a partition defined using
+      <literal>FROM ('a', MINVALUE) TO ('b', MINVALUE)</literal> allows any rows
+      where the first partition key column starts with "a".
+     </para>
+
+     <para>
+      Note that if <literal>MINVALUE</literal> or <literal>MAXVALUE</literal> is used for
+      one column of a partitioning bound, the same value must be used for all
+      subsequent columns.  For example, <literal>(10, MINVALUE, 0)</literal> is not
+      a valid bound; you should write <literal>(10, MINVALUE, MINVALUE)</literal>.
+     </para>
+
+     <para>
+      Also note that some element types, such as <literal>timestamp</literal>,
+      have a notion of "infinity", which is just another value that can
+      be stored. This is different from <literal>MINVALUE</literal> and
+      <literal>MAXVALUE</literal>, which are not real values that can be stored,
+      but rather they are ways of saying that the value is unbounded.
+      <literal>MAXVALUE</literal> can be thought of as being greater than any
+      other value, including "infinity" and <literal>MINVALUE</literal> as being
+      less than any other value, including "minus infinity". Thus the range
+      <literal>FROM ('infinity') TO (MAXVALUE)</literal> is not an empty range; it
+      allows precisely one value to be stored &mdash; "infinity".
+     </para>
+
+     <para>
+      If <literal>DEFAULT</literal> is specified, the table will be
+      created as the default partition of the parent table.  This option
+      is not available for hash-partitioned tables.  A partition key value
+      not fitting into any other partition of the given parent will be
+      routed to the default partition.
+     </para>
+
+     <para>
+      When a table has an existing <literal>DEFAULT</literal> partition and
+      a new partition is added to it, the default partition must
+      be scanned to verify that it does not contain any rows which properly
+      belong in the new partition.  If the default partition contains a
+      large number of rows, this may be slow.  The scan will be skipped if
+      the default partition is a foreign table or if it has a constraint which
+      proves that it cannot contain rows which should be placed in the new
+      partition.
+     </para>
+
+     <para>
+      When creating a hash partition, a modulus and remainder must be specified.
+      The modulus must be a positive integer, and the remainder must be a
+      non-negative integer less than the modulus.  Typically, when initially
+      setting up a hash-partitioned table, you should choose a modulus equal to
+      the number of partitions and assign every table the same modulus and a
+      different remainder (see examples, below).   However, it is not required
+      that every partition have the same modulus, only that every modulus which
+      occurs among the partitions of a hash-partitioned table is a factor of the
+      next larger modulus.  This allows the number of partitions to be increased
+      incrementally without needing to move all the data at once.  For example,
+      suppose you have a hash-partitioned table with 8 partitions, each of which
+      has modulus 8, but find it necessary to increase the number of partitions
+      to 16.  You can detach one of the modulus-8 partitions, create two new
+      modulus-16 partitions covering the same portion of the key space (one with
+      a remainder equal to the remainder of the detached partition, and the
+      other with a remainder equal to that value plus 8), and repopulate them
+      with data.  You can then repeat this -- perhaps at a later time -- for
+      each modulus-8 partition until none remain.  While this may still involve
+      a large amount of data movement at each step, it is still better than
+      having to create a whole new table and move all the data at once.
+     </para>
+
+     <para>
+      A partition must have the same column names and types as the partitioned
+      table to which it belongs.  If the parent is specified <literal>WITH
+      OIDS</literal> then all partitions must have OIDs; the parent's OID
+      column will be inherited by all partitions just like any other column.
+      Modifications to the column names or types of a partitioned table, or
+      the addition or removal of an OID column, will automatically propagate
+      to all partitions.  <literal>CHECK</literal> constraints will be inherited
+      automatically by every partition, but an individual partition may specify
+      additional <literal>CHECK</literal> constraints; additional constraints with
+      the same name and condition as in the parent will be merged with the
+      parent constraint.  Defaults may be specified separately for each
+      partition. But note that a partition's default value is not applied
+      when inserting a tuple through a partitioned table.
+     </para>
+
+     <para>
+      Rows inserted into a partitioned table will be automatically routed to
+      the correct partition.  If no suitable partition exists, an error will
+      occur.
+     </para>
+
+     <para>
+      Operations such as TRUNCATE which normally affect a table and all of its
+      inheritance children will cascade to all partitions, but may also be
+      performed on an individual partition.  Note that dropping a partition
+      with <literal>DROP TABLE</literal> requires taking an <literal>ACCESS
+      EXCLUSIVE</literal> lock on the parent table.
+     </para>
     </listitem>
    </varlistentry>
 
@@ -695,7 +701,8 @@ WITH ( MODULUS <replaceable class="parameter">numeric_literal</replaceable>, REM
      <para>
       Currently, <literal>CHECK</literal> expressions cannot contain
       subqueries nor refer to variables other than columns of the
-      current row.  The system column <literal>tableoid</literal>
+      current row (see <xref linkend="ddl-constraints-check-constraints"/>).
+      The system column <literal>tableoid</literal>
       may be referenced, but not any other system column.
      </para>
 
@@ -769,15 +776,17 @@ WITH ( MODULUS <replaceable class="parameter">numeric_literal</replaceable>, REM
    <varlistentry>
     <term><literal>UNIQUE</literal> (column constraint)</term>
     <term><literal>UNIQUE ( <replaceable class="parameter">column_name</replaceable> [, ... ] )</literal>
-    <optional> INCLUDE ( <replaceable class="parameter">column_name</replaceable> [, ...]) </optional> (table constraint)</term>
+    <optional> <literal>INCLUDE ( <replaceable class="parameter">column_name</replaceable> [, ...])</literal> </optional> (table constraint)</term>
 
     <listitem>
      <para>
       The <literal>UNIQUE</literal> constraint specifies that a
       group of one or more columns of a table can contain
-      only unique values. The behavior of the unique table constraint
-      is the same as that for column constraints, with the additional
-      capability to span multiple columns.
+      only unique values. The behavior of a unique table constraint
+      is the same as that of a unique column constraint, with the
+      additional capability to span multiple columns.  The constraint
+      therefore enforces that any two rows must differ in at least one
+      of these columns.
      </para>
 
      <para>
@@ -786,10 +795,10 @@ WITH ( MODULUS <replaceable class="parameter">numeric_literal</replaceable>, REM
      </para>
 
      <para>
-      Each unique table constraint must name a set of columns that is
+      Each unique constraint should name a set of columns that is
       different from the set of columns named by any other unique or
-      primary key constraint defined for the table.  (Otherwise it
-      would just be the same constraint listed twice.)
+      primary key constraint defined for the table.  (Otherwise, redundant
+      unique constraints will be discarded.)
      </para>
 
      <para>
@@ -802,13 +811,17 @@ WITH ( MODULUS <replaceable class="parameter">numeric_literal</replaceable>, REM
      <para>
       Adding a unique constraint will automatically create a unique btree
       index on the column or group of columns used in the constraint.
-      The optional clause <literal>INCLUDE</literal> adds to that index
-      one or more columns on which the uniqueness is not enforced.
-      Note that although the constraint is not enforced on the included columns,
-      it still depends on them.  Consequently, some operations on these columns
-      (e.g. <literal>DROP COLUMN</literal>) can cause cascade constraint and
-      index deletion.  See paragraph about <literal>INCLUDE</literal> in
-      <xref linkend="sql-createindex"/> for more information.
+     </para>
+
+     <para>
+      The optional <literal>INCLUDE</literal> clause adds to that index
+      one or more columns that are simply <quote>payload</quote>: uniqueness
+      is not enforced on them, and the index cannot be searched on the basis
+      of those columns.  However they can be retrieved by an index-only scan.
+      Note that although the constraint is not enforced on included columns,
+      it still depends on them.  Consequently, some operations on such columns
+      (e.g., <literal>DROP COLUMN</literal>) can cause cascaded constraint and
+      index deletion.
      </para>
     </listitem>
    </varlistentry>
@@ -816,7 +829,7 @@ WITH ( MODULUS <replaceable class="parameter">numeric_literal</replaceable>, REM
    <varlistentry>
     <term><literal>PRIMARY KEY</literal> (column constraint)</term>
     <term><literal>PRIMARY KEY ( <replaceable class="parameter">column_name</replaceable> [, ... ] )</literal>
-    <optional> INCLUDE ( <replaceable class="parameter">column_name</replaceable> [, ...]) </optional> (table constraint)</term>
+    <optional> <literal>INCLUDE ( <replaceable class="parameter">column_name</replaceable> [, ...])</literal> </optional> (table constraint)</term>
     <listitem>
      <para>
       The <literal>PRIMARY KEY</literal> constraint specifies that a column or
@@ -834,28 +847,34 @@ WITH ( MODULUS <replaceable class="parameter">numeric_literal</replaceable>, REM
 
      <para>
       <literal>PRIMARY KEY</literal> enforces the same data constraints as
-      a combination of <literal>UNIQUE</literal> and <literal>NOT NULL</literal>, but
+      a combination of <literal>UNIQUE</literal> and <literal>NOT
+      NULL</literal>.  However,
       identifying a set of columns as the primary key also provides metadata
       about the design of the schema, since a primary key implies that other
       tables can rely on this set of columns as a unique identifier for rows.
      </para>
 
      <para>
-      <literal>PRIMARY KEY</literal> constraints share the restrictions that
-      <literal>UNIQUE</literal> constraints have when placed on partitioned
-      tables.
+      When placed on a partitioned table, <literal>PRIMARY KEY</literal>
+      constraints share the restrictions previously decribed
+      for <literal>UNIQUE</literal> constraints.
      </para>
 
      <para>
       Adding a <literal>PRIMARY KEY</literal> constraint will automatically
       create a unique btree index on the column or group of columns used in the
-      constraint.  The optional <literal>INCLUDE</literal> clause allows a list
-      of columns to be specified which will be included in the non-key portion
-      of the index.  Although uniqueness is not enforced on the included columns,
-      the constraint still depends on them. Consequently, some operations on the
-      included columns (e.g. <literal>DROP COLUMN</literal>) can cause cascade
-      constraint and index deletion. See paragraph about <literal>INCLUDE</literal>
-      in <xref linkend="sql-createindex"/> for more information.
+      constraint.
+     </para>
+
+     <para>
+      The optional <literal>INCLUDE</literal> clause adds to that index
+      one or more columns that are simply <quote>payload</quote>: uniqueness
+      is not enforced on them, and the index cannot be searched on the basis
+      of those columns.  However they can be retrieved by an index-only scan.
+      Note that although the constraint is not enforced on included columns,
+      it still depends on them.  Consequently, some operations on such columns
+      (e.g., <literal>DROP COLUMN</literal>) can cause cascaded constraint and
+      index deletion.
      </para>
     </listitem>
    </varlistentry>
@@ -931,7 +950,9 @@ WITH ( MODULUS <replaceable class="parameter">numeric_literal</replaceable>, REM
       is used.  The referenced columns must be the columns of a non-deferrable
       unique or primary key constraint in the referenced table.  The user
       must have <literal>REFERENCES</literal> permission on the referenced table
-      (either the whole table, or the specific referenced columns).
+      (either the whole table, or the specific referenced columns).  The
+      addition of a foreign key constraint requires a
+      <literal>SHARE ROW EXCLUSIVE</literal> lock on the referenced table.
       Note that foreign key constraints cannot be defined between temporary
       tables and permanent tables.  Also note that while it is possible to
       define a foreign key on a partitioned table, it is not possible to
@@ -1152,7 +1173,8 @@ WITH ( MODULUS <replaceable class="parameter">numeric_literal</replaceable>, REM
           All rows in the temporary table will be deleted at the end
           of each transaction block.  Essentially, an automatic <xref
           linkend="sql-truncate"/> is done
-          at each commit.
+          at each commit.  When used on a partitioned table, this
+          is not cascaded to its partitions.
          </para>
         </listitem>
        </varlistentry>
@@ -1162,7 +1184,9 @@ WITH ( MODULUS <replaceable class="parameter">numeric_literal</replaceable>, REM
         <listitem>
          <para>
           The temporary table will be dropped at the end of the current
-          transaction block.
+          transaction block.  When used on a partitioned table, this action
+          drops its partitions and when used on tables with inheritance
+          children, it drops the dependent children.
          </para>
         </listitem>
        </varlistentry>
@@ -1250,10 +1274,11 @@ WITH ( MODULUS <replaceable class="parameter">numeric_literal</replaceable>, REM
     <listitem>
      <para>
       The toast_tuple_target specifies the minimum tuple length required before
-      we try to move long column values into TOAST tables, and is also the
-      target length we try to reduce the length below once toasting begins.
-      This only affects columns marked as either External or Extended
-      and applies only to new tuples - there is no effect on existing rows.
+      we try to compress and/or move long column values into TOAST tables, and
+      is also the target length we try to reduce the length below once toasting
+      begins. This affects columns marked as External (for move),
+      Main (for compression), or Extended (for both) and applies only to new
+      tuples. There is no effect on existing rows.
       By default this parameter is set to allow at least 4 tuples per block,
       which with the default blocksize will be 2040 bytes. Valid values are
       between 128 bytes and the (blocksize - header), by default 8160 bytes.
@@ -1311,7 +1336,7 @@ WITH ( MODULUS <replaceable class="parameter">numeric_literal</replaceable>, REM
    </varlistentry>
 
    <varlistentry>
-    <term><literal>autovacuum_vacuum_scale_factor</literal>, <literal>toast.autovacuum_vacuum_scale_factor</literal> (<type>float4</type>)</term>
+    <term><literal>autovacuum_vacuum_scale_factor</literal>, <literal>toast.autovacuum_vacuum_scale_factor</literal> (<type>floating point</type>)</term>
     <listitem>
      <para>
       Per-table value for <xref linkend="guc-autovacuum-vacuum-scale-factor"/>
@@ -1331,7 +1356,7 @@ WITH ( MODULUS <replaceable class="parameter">numeric_literal</replaceable>, REM
    </varlistentry>
 
    <varlistentry>
-    <term><literal>autovacuum_analyze_scale_factor</literal> (<type>float4</type>)</term>
+    <term><literal>autovacuum_analyze_scale_factor</literal> (<type>floating point</type>)</term>
     <listitem>
      <para>
       Per-table value for <xref linkend="guc-autovacuum-analyze-scale-factor"/>
@@ -1940,6 +1965,30 @@ CREATE TABLE cities_partdef
     other database systems (and for symmetry with the <literal>NOT
     NULL</literal> constraint).  Since it is the default for any
     column, its presence is simply noise.
+   </para>
+  </refsect2>
+
+  <refsect2>
+   <title>Constraint Naming</title>
+
+   <para>
+    The SQL standard says that table and domain constraints must have names
+    that are unique across the schema containing the table or domain.
+    <productname>PostgreSQL</productname> is laxer: it only requires
+    constraint names to be unique across the constraints attached to a
+    particular table or domain.  However, this extra freedom does not exist
+    for index-based constraints (<literal>UNIQUE</literal>,
+    <literal>PRIMARY KEY</literal>, and <literal>EXCLUDE</literal>
+    constraints), because the associated index is named the same as the
+    constraint, and index names must be unique across all relations within
+    the same schema.
+   </para>
+
+   <para>
+    Currently, <productname>PostgreSQL</productname> does not record names
+    for <literal>NOT NULL</literal> constraints at all, so they are not
+    subject to the uniqueness restriction.  This might change in a future
+    release.
    </para>
   </refsect2>
 

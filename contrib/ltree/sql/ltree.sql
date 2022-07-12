@@ -54,6 +54,9 @@ SELECT lca('{la.2.3,1.2.3.4.5.6,""}') IS NULL;
 SELECT lca('{la.2.3,1.2.3.4.5.6}') IS NULL;
 SELECT lca('{1.la.2.3,1.2.3.4.5.6}');
 SELECT lca('{1.2.3,1.2.3.4.5.6}');
+SELECT lca('{1.2.3}');
+SELECT lca('{1}'), lca('{1}') IS NULL;
+SELECT lca('{}') IS NULL;
 SELECT lca('1.la.2.3','1.2.3.4.5.6');
 SELECT lca('1.2.3','1.2.3.4.5.6');
 SELECT lca('1.2.2.3','1.2.3.4.5.6');
@@ -87,6 +90,17 @@ SELECT '1.*.4|3|2.*{1}'::lquery;
 SELECT 'qwerty%@*.tu'::lquery;
 
 SELECT nlevel('1.2.3.4');
+SELECT nlevel(('1' || repeat('.1', 65534))::ltree);
+SELECT nlevel(('1' || repeat('.1', 65535))::ltree);
+SELECT nlevel(('1' || repeat('.1', 65534))::ltree || '1');
+SELECT ('1' || repeat('.1', 65534))::lquery IS NULL;
+SELECT ('1' || repeat('.1', 65535))::lquery IS NULL;
+SELECT '*{65535}'::lquery;
+SELECT '*{65536}'::lquery;
+SELECT '*{,65534}'::lquery;
+SELECT '*{,65535}'::lquery;
+SELECT '*{,65536}'::lquery;
+
 SELECT '1.2'::ltree  < '2.2'::ltree;
 SELECT '1.2'::ltree  <= '2.2'::ltree;
 SELECT '2.2'::ltree  = '2.2'::ltree;

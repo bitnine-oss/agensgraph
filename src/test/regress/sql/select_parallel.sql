@@ -168,9 +168,29 @@ select * from
   (select count(*) from tenk1 where thousand > 99) ss
   right join (values (1),(2),(3)) v(x) on true;
 
-reset enable_material;
+-- test rescans for a Limit node with a parallel node beneath it.
 reset enable_seqscan;
+set enable_indexonlyscan to off;
+set enable_indexscan to off;
+alter table tenk1 set (parallel_workers = 0);
+alter table tenk2 set (parallel_workers = 1);
+explain (costs off)
+select count(*) from tenk1
+  left join (select tenk2.unique1 from tenk2 order by 1 limit 1000) ss
+  on tenk1.unique1 < ss.unique1 + 1
+  where tenk1.unique1 < 2;
+select count(*) from tenk1
+  left join (select tenk2.unique1 from tenk2 order by 1 limit 1000) ss
+  on tenk1.unique1 < ss.unique1 + 1
+  where tenk1.unique1 < 2;
+--reset the value of workers for each table as it was before this test.
+alter table tenk1 set (parallel_workers = 4);
+alter table tenk2 reset (parallel_workers);
+
+reset enable_material;
 reset enable_bitmapscan;
+reset enable_indexonlyscan;
+reset enable_indexscan;
 
 -- test parallel bitmap heap scan.
 set enable_seqscan to off;
@@ -362,6 +382,17 @@ select count(*) from tenk1;
 reset force_parallel_mode;
 reset role;
 
+-- Window function calculation can't be pushed to workers.
+explain (costs off, verbose)
+  select count(*) from tenk1 a where (unique1, two) in
+    (select unique1, row_number() over() from tenk1 b);
+
+
+-- LIMIT/OFFSET within sub-selects can't be pushed to workers.
+explain (costs off)
+  select * from tenk1 a where two in
+    (select two from tenk1 b where stringu1 like '%AAAA' limit 3);
+
 -- to increase the parallel query test coverage
 SAVEPOINT settings;
 SET LOCAL force_parallel_mode = 1;
@@ -369,9 +400,10 @@ EXPLAIN (analyze, timing off, summary off, costs off) SELECT * FROM tenk1;
 ROLLBACK TO SAVEPOINT settings;
 
 -- provoke error in worker
+-- (make the error message long enough to require multiple bufferloads)
 SAVEPOINT settings;
 SET LOCAL force_parallel_mode = 1;
-select stringu1::int2 from tenk1 where unique1 = 1;
+select (stringu1 || repeat('abcd', 5000))::int2 from tenk1 where unique1 = 1;
 ROLLBACK TO SAVEPOINT settings;
 
 -- test interaction with set-returning functions
@@ -399,7 +431,23 @@ ORDER BY 1;
 SELECT * FROM information_schema.foreign_data_wrapper_options
 ORDER BY 1, 2, 3;
 
--- test interation between subquery and partial_paths
+-- test passing expanded-value representations to workers
+CREATE FUNCTION make_some_array(int,int) returns int[] as
+$$declare x int[];
+  begin
+    x[1] := $1;
+    x[2] := $2;
+    return x;
+  end$$ language plpgsql parallel safe;
+CREATE TABLE fooarr(f1 text, f2 int[], f3 text);
+INSERT INTO fooarr VALUES('1', ARRAY[1,2], 'one');
+
+PREPARE pstmt(text, int[]) AS SELECT * FROM fooarr WHERE f1 = $1 AND f2 = $2;
+EXPLAIN (COSTS OFF) EXECUTE pstmt('1', make_some_array(1,2));
+EXECUTE pstmt('1', make_some_array(1,2));
+DEALLOCATE pstmt;
+
+-- test interaction between subquery and partial_paths
 SET LOCAL min_parallel_table_scan_size TO 0;
 CREATE VIEW tenk1_vw_sec WITH (security_barrier) AS SELECT * FROM tenk1;
 EXPLAIN (COSTS OFF)

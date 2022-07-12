@@ -5,7 +5,7 @@
 CREATE OPERATOR ## (
    leftarg = path,
    rightarg = path,
-   procedure = path_inter,
+   function = path_inter,
    commutator = ##
 );
 
@@ -19,17 +19,17 @@ CREATE OPERATOR <% (
 
 CREATE OPERATOR @#@ (
    rightarg = int8,		-- left unary
-   procedure = numeric_fac
+   procedure = factorial
 );
 
 CREATE OPERATOR #@# (
    leftarg = int8,		-- right unary
-   procedure = numeric_fac
+   procedure = factorial
 );
 
 CREATE OPERATOR #%# (
    leftarg = int8,		-- right unary
-   procedure = numeric_fac
+   procedure = factorial
 );
 
 -- Test operator created above
@@ -42,8 +42,39 @@ COMMENT ON OPERATOR ###### (int4, NONE) IS 'bad right unary';
 -- => is disallowed now
 CREATE OPERATOR => (
    leftarg = int8,		-- right unary
-   procedure = numeric_fac
+   procedure = factorial
 );
+
+-- lexing of <=, >=, <>, != has a number of edge cases
+-- (=> is tested elsewhere)
+
+-- this is legal because ! is not allowed in sql ops
+CREATE OPERATOR !=- (
+   leftarg = int8,		-- right unary
+   procedure = factorial
+);
+SELECT 2 !=-;
+-- make sure lexer returns != as <> even in edge cases
+SELECT 2 !=/**/ 1, 2 !=/**/ 2;
+SELECT 2 !=-- comment to be removed by psql
+  1;
+DO $$ -- use DO to protect -- from psql
+  declare r boolean;
+  begin
+    execute $e$ select 2 !=-- comment
+      1 $e$ into r;
+    raise info 'r = %', r;
+  end;
+$$;
+
+-- check that <= etc. followed by more operator characters are returned
+-- as the correct token with correct precedence
+SELECT true<>-1 BETWEEN 1 AND 1;  -- BETWEEN has prec. above <> but below Op
+SELECT false<>/**/1 BETWEEN 1 AND 1;
+SELECT false<=-1 BETWEEN 1 AND 1;
+SELECT false>=-1 BETWEEN 1 AND 1;
+SELECT 2<=/**/3, 3>=/**/2, 2<>/**/3;
+SELECT 3<=/**/2, 2>=/**/3, 2<>/**/2;
 
 -- Should fail. CREATE OPERATOR requires USAGE on SCHEMA
 BEGIN TRANSACTION;
@@ -54,7 +85,7 @@ REVOKE USAGE ON SCHEMA schema_op1 FROM regress_rol_op1;
 SET ROLE regress_rol_op1;
 CREATE OPERATOR schema_op1.#*# (
    leftarg = int8,		-- right unary
-   procedure = numeric_fac
+   procedure = factorial
 );
 ROLLBACK;
 
@@ -63,7 +94,7 @@ ROLLBACK;
 BEGIN TRANSACTION;
 CREATE OPERATOR #*# (
    leftarg = SETOF int8,
-   procedure = numeric_fac
+   procedure = factorial
 );
 ROLLBACK;
 
@@ -72,7 +103,7 @@ ROLLBACK;
 BEGIN TRANSACTION;
 CREATE OPERATOR #*# (
    rightarg = SETOF int8,
-   procedure = numeric_fac
+   procedure = factorial
 );
 ROLLBACK;
 
@@ -98,13 +129,13 @@ ROLLBACK;
 -- Should fail. Invalid attribute
 CREATE OPERATOR #@%# (
    leftarg = int8,		-- right unary
-   procedure = numeric_fac,
+   procedure = factorial,
    invalid_att = int8
 );
 
 -- Should fail. At least leftarg or rightarg should be mandatorily specified
 CREATE OPERATOR #@%# (
-   procedure = numeric_fac
+   procedure = factorial
 );
 
 -- Should fail. Procedure should be mandatorily specified
@@ -189,11 +220,11 @@ CREATE OPERATOR ===
 (
 	"Leftarg" = box,
 	"Rightarg" = box,
-	"Procedure" = area_equal_procedure,
+	"Procedure" = area_equal_function,
 	"Commutator" = ===,
 	"Negator" = !==,
-	"Restrict" = area_restriction_procedure,
-	"Join" = area_join_procedure,
+	"Restrict" = area_restriction_function,
+	"Join" = area_join_function,
 	"Hashes",
 	"Merges"
 );

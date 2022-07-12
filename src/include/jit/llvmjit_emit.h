@@ -1,6 +1,6 @@
 /*
  * llvmjit_emit.h
- *	  Helpers to make emitting LLVM IR a it more concise and pgindent proof.
+ *	  Helpers to make emitting LLVM IR a bit more concise and pgindent proof.
  *
  * Copyright (c) 2018, PostgreSQL Global Development Group
  *
@@ -9,8 +9,15 @@
 #ifndef LLVMJIT_EMIT_H
 #define LLVMJIT_EMIT_H
 
+/*
+ * To avoid breaking cpluspluscheck, allow including the file even when LLVM
+ * is not available.
+ */
+#ifdef USE_LLVM
 
 #include <llvm-c/Core.h>
+
+#include "jit/llvmjit.h"
 
 
 /*
@@ -208,4 +215,6 @@ l_mcxt_switch(LLVMModuleRef mod, LLVMBuilderRef b, LLVMValueRef nc)
 
 	return ret;
 }
+
+#endif							/* USE_LLVM */
 #endif

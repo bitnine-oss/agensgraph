@@ -219,7 +219,7 @@ protocol to make nodes agree on a serializable transactional order.
      this is unacceptable, either the middleware or the application
      must query such values from a single server and then use those
      values in write queries.  Another option is to use this replication
-     option with a traditional master-standby setup, i.e. data modification
+     option with a traditional master-standby setup, i.e., data modification
      queries are sent only to the master and are propagated to the
      standby servers via master-standby replication, not by the replication
      middleware.  Care must also be taken that all
@@ -237,7 +237,8 @@ protocol to make nodes agree on a serializable transactional order.
    <listitem>
 
     <para>
-     For servers that are not regularly connected, like laptops or
+     For servers that are not regularly connected or have slow
+     communication links, like laptops or
      remote servers, keeping data consistent among servers is a
      challenge.  Using asynchronous multimaster replication, each
      server works independently, and periodically communicates with
@@ -256,9 +257,8 @@ protocol to make nodes agree on a serializable transactional order.
      In synchronous multimaster replication, each server can accept
      write requests, and modified data is transmitted from the
      original server to every other server before each transaction
-     commits.  Heavy write activity can cause excessive locking,
-     leading to poor performance.  In fact, write performance is
-     often worse than that of a single server.  Read requests can
+     commits.  Heavy write activity can cause excessive locking and
+     commit delays, leading to poor performance.  Read requests can
      be sent to any server.  Some implementations use shared disk
      to reduce the communication overhead.  Synchronous multimaster
      replication is best for mostly read workloads, though its big
@@ -433,7 +433,7 @@ protocol to make nodes agree on a serializable transactional order.
      <entry align="center">&bull;</entry>
      <entry align="center"></entry>
      <entry align="center">&bull;</entry>
-     <entry align="center"></entry>
+     <entry align="center">&bull;</entry>
      <entry align="center"></entry>
      <entry align="center">&bull;</entry>
     </row>
@@ -475,8 +475,7 @@ protocol to make nodes agree on a serializable transactional order.
      concurrently on a single query.  It is usually accomplished by
      splitting the data among servers and having each server execute its
      part of the query and return results to a central server where they
-     are combined and returned to the user.  <productname>Pgpool-II</productname>
-     has this capability.  Also, this can be implemented using the
+     are combined and returned to the user. This can be implemented using the
      <productname>PL/Proxy</productname> tool set.
     </para>
 
@@ -658,7 +657,7 @@ protocol to make nodes agree on a serializable transactional order.
     Set up continuous archiving on the primary to an archive directory
     accessible from the standby, as described
     in <xref linkend="continuous-archiving"/>. The archive location should be
-    accessible from the standby even when the master is down, i.e. it should
+    accessible from the standby even when the master is down, i.e., it should
     reside on the standby server itself or another trusted server, not on
     the master server.
    </para>
@@ -966,10 +965,10 @@ postgres=# SELECT * FROM pg_create_physical_replication_slot('node_a_slot');
 -------------+-----
  node_a_slot |
 
-postgres=# SELECT * FROM pg_replication_slots;
-  slot_name  | slot_type | datoid | database | active | xmin | restart_lsn | confirmed_flush_lsn
--------------+-----------+--------+----------+--------+------+-------------+---------------------
- node_a_slot | physical  |        |          | f      |      |             |
+postgres=# SELECT slot_name, slot_type, active FROM pg_replication_slots;
+  slot_name  | slot_type | active 
+-------------+-----------+--------
+ node_a_slot | physical  | f
 (1 row)
 </programlisting>
      To configure the standby to use this slot, <varname>primary_slot_name</varname>
@@ -1390,7 +1389,8 @@ synchronous_standby_names = 'ANY 2 (s1, s2, s3)'
      If <varname>archive_mode</varname> is set to <literal>on</literal>, the
      archiver is not enabled during recovery or standby mode. If the standby
      server is promoted, it will start archiving after the promotion, but
-     will not archive any WAL it did not generate itself. To get a complete
+     will not archive any WAL or timeline history files that
+     it did not generate itself. To get a complete
      series of WAL files in the archive, you must ensure that all WAL is
      archived, before it reaches the standby. This is inherently true with
      file-based log shipping, as the standby can only restore files that
@@ -1499,7 +1499,7 @@ synchronous_standby_names = 'ANY 2 (s1, s2, s3)'
     Note that in this mode, the server will apply WAL one file at a
     time, so if you use the standby server for queries (see Hot Standby),
     there is a delay between an action in the master and when the
-    action becomes visible in the standby, corresponding the time it takes
+    action becomes visible in the standby, corresponding to the time it takes
     to fill up the WAL file. <varname>archive_timeout</varname> can be used to make that delay
     shorter. Also note that you can't combine streaming replication with
     this method.
@@ -1774,6 +1774,11 @@ if (!triggered)
        Plugins and extensions - <command>LOAD</command>
       </para>
      </listitem>
+     <listitem>
+      <para>
+       <command>UNLISTEN</command>
+      </para>
+     </listitem>
     </itemizedlist>
    </para>
 
@@ -1863,7 +1868,7 @@ if (!triggered)
      </listitem>
      <listitem>
       <para>
-       <command>LISTEN</command>, <command>UNLISTEN</command>, <command>NOTIFY</command>
+       <command>LISTEN</command>, <command>NOTIFY</command>
       </para>
      </listitem>
     </itemizedlist>
@@ -1871,8 +1876,8 @@ if (!triggered)
 
    <para>
     In normal operation, <quote>read-only</quote> transactions are allowed to
-    use <command>LISTEN</command>, <command>UNLISTEN</command>, and
-    <command>NOTIFY</command>, so Hot Standby sessions operate under slightly tighter
+    use <command>LISTEN</command> and <command>NOTIFY</command>,
+    so Hot Standby sessions operate under slightly tighter
     restrictions than ordinary read-only sessions.  It is possible that some
     of these restrictions might be loosened in a future release.
    </para>
@@ -2220,7 +2225,7 @@ LOG:  database system is ready to accept read only connections
       <itemizedlist>
        <listitem>
         <para>
-         Data Definition Language (DDL) - e.g. <command>CREATE INDEX</command>
+         Data Definition Language (DDL) - e.g., <command>CREATE INDEX</command>
         </para>
        </listitem>
        <listitem>
@@ -2286,7 +2291,7 @@ LOG:  database system is ready to accept read only connections
 
    <para>
     WAL file control commands will not work during recovery,
-    e.g. <function>pg_start_backup</function>, <function>pg_switch_wal</function> etc.
+    e.g., <function>pg_start_backup</function>, <function>pg_switch_wal</function> etc.
    </para>
 
    <para>
@@ -2368,9 +2373,10 @@ LOG:  database system is ready to accept read only connections
    </para>
 
    <para>
-    The background writer is active during recovery and will perform
-    restartpoints (similar to checkpoints on the primary) and normal block
-    cleaning activities. This can include updates of the hint bit
+    The checkpointer process and the background writer process are active during
+    recovery. The checkpointer process will perform restartpoints (similar to
+    checkpoints on the primary) and the background writer process will perform
+    normal block cleaning activities. This can include updates of the hint bit
     information stored on the standby server.
     The <command>CHECKPOINT</command> command is accepted during recovery,
     though it performs a restartpoint rather than a new checkpoint.

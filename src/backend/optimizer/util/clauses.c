@@ -107,6 +107,7 @@ static bool contain_volatile_functions_not_nextval_walker(Node *node, void *cont
 static bool max_parallel_hazard_walker(Node *node,
 						   max_parallel_hazard_context *context);
 static bool contain_nonstrict_functions_walker(Node *node, void *context);
+static bool contain_exec_param_walker(Node *node, List *param_ids);
 static bool contain_context_dependent_node(Node *clause);
 static bool contain_context_dependent_node_walker(Node *node, int *flags);
 static bool contain_leaked_vars_walker(Node *node, void *context);
@@ -1190,9 +1191,23 @@ max_parallel_hazard_walker(Node *node, max_parallel_hazard_context *context)
 			return true;
 	}
 
-	if (IsA(node, NextValueExpr))
+	else if (IsA(node, NextValueExpr))
 	{
 		if (max_parallel_hazard_test(PROPARALLEL_UNSAFE, context))
+			return true;
+	}
+
+	/*
+	 * Treat window functions as parallel-restricted because we aren't sure
+	 * whether the input row ordering is fully deterministic, and the output
+	 * of window functions might vary across workers if not.  (In some cases,
+	 * like where the window frame orders by a primary key, we could relax
+	 * this restriction.  But it doesn't currently seem worth expending extra
+	 * effort to do so.)
+	 */
+	else if (IsA(node, WindowFunc))
+	{
+		if (max_parallel_hazard_test(PROPARALLEL_RESTRICTED, context))
 			return true;
 	}
 
@@ -1395,9 +1410,8 @@ contain_nonstrict_functions_walker(Node *node, void *context)
 		 * the per-element expression is; so we should ignore elemexpr and
 		 * recurse only into the arg.
 		 */
-		return expression_tree_walker((Node *) ((ArrayCoerceExpr *) node)->arg,
-									  contain_nonstrict_functions_walker,
-									  context);
+		return contain_nonstrict_functions_walker((Node *) ((ArrayCoerceExpr *) node)->arg,
+												  context);
 	}
 	if (IsA(node, CaseExpr))
 		return true;
@@ -1428,6 +1442,40 @@ contain_nonstrict_functions_walker(Node *node, void *context)
 }
 
 /*****************************************************************************
+ *		Check clauses for Params
+ *****************************************************************************/
+
+/*
+ * contain_exec_param
+ *	  Recursively search for PARAM_EXEC Params within a clause.
+ *
+ * Returns true if the clause contains any PARAM_EXEC Param with a paramid
+ * appearing in the given list of Param IDs.  Does not descend into
+ * subqueries!
+ */
+bool
+contain_exec_param(Node *clause, List *param_ids)
+{
+	return contain_exec_param_walker(clause, param_ids);
+}
+
+static bool
+contain_exec_param_walker(Node *node, List *param_ids)
+{
+	if (node == NULL)
+		return false;
+	if (IsA(node, Param))
+	{
+		Param	   *p = (Param *) node;
+
+		if (p->paramkind == PARAM_EXEC &&
+			list_member_int(param_ids, p->paramid))
+			return true;
+	}
+	return expression_tree_walker(node, contain_exec_param_walker, param_ids);
+}
+
+/*****************************************************************************
  *		Check clauses for context-dependent nodes
  *****************************************************************************/
 
@@ -1438,7 +1486,8 @@ contain_nonstrict_functions_walker(Node *node, void *context)
  * CaseTestExpr nodes must appear directly within the corresponding CaseExpr,
  * not nested within another one, or they'll see the wrong test value.  If one
  * appears "bare" in the arguments of a SQL function, then we can't inline the
- * SQL function for fear of creating such a situation.
+ * SQL function for fear of creating such a situation.  The same applies for
+ * CaseTestExpr used within the elemexpr of an ArrayCoerceExpr.
  *
  * CoerceToDomainValue would have the same issue if domain CHECK expressions
  * could get inlined into larger expressions, but presently that's impossible.
@@ -1454,7 +1503,7 @@ contain_context_dependent_node(Node *clause)
 	return contain_context_dependent_node_walker(clause, &flags);
 }
 
-#define CCDN_IN_CASEEXPR	0x0001	/* CaseTestExpr okay here? */
+#define CCDN_CASETESTEXPR_OK	0x0001	/* CaseTestExpr okay here? */
 
 static bool
 contain_context_dependent_node_walker(Node *node, int *flags)
@@ -1462,8 +1511,8 @@ contain_context_dependent_node_walker(Node *node, int *flags)
 	if (node == NULL)
 		return false;
 	if (IsA(node, CaseTestExpr))
-		return !(*flags & CCDN_IN_CASEEXPR);
-	if (IsA(node, CaseExpr))
+		return !(*flags & CCDN_CASETESTEXPR_OK);
+	else if (IsA(node, CaseExpr))
 	{
 		CaseExpr   *caseexpr = (CaseExpr *) node;
 
@@ -1485,13 +1534,31 @@ contain_context_dependent_node_walker(Node *node, int *flags)
 			 * seem worth any extra code.  If there are any bare CaseTestExprs
 			 * elsewhere in the CASE, something's wrong already.
 			 */
-			*flags |= CCDN_IN_CASEEXPR;
+			*flags |= CCDN_CASETESTEXPR_OK;
 			res = expression_tree_walker(node,
 										 contain_context_dependent_node_walker,
 										 (void *) flags);
 			*flags = save_flags;
 			return res;
 		}
+	}
+	else if (IsA(node, ArrayCoerceExpr))
+	{
+		ArrayCoerceExpr *ac = (ArrayCoerceExpr *) node;
+		int			save_flags;
+		bool		res;
+
+		/* Check the array expression */
+		if (contain_context_dependent_node_walker((Node *) ac->arg, flags))
+			return true;
+
+		/* Check the elemexpr, which is allowed to contain CaseTestExpr */
+		save_flags = *flags;
+		*flags |= CCDN_CASETESTEXPR_OK;
+		res = contain_context_dependent_node_walker((Node *) ac->elemexpr,
+													flags);
+		*flags = save_flags;
+		return res;
 	}
 	return expression_tree_walker(node, contain_context_dependent_node_walker,
 								  (void *) flags);
@@ -1535,7 +1602,6 @@ contain_leaked_vars_walker(Node *node, void *context)
 		case T_Var:
 		case T_Const:
 		case T_Param:
-		case T_ArrayRef:
 		case T_ArrayExpr:
 		case T_FieldSelect:
 		case T_FieldStore:
@@ -1546,7 +1612,6 @@ contain_leaked_vars_walker(Node *node, void *context)
 		case T_CaseExpr:
 		case T_CaseTestExpr:
 		case T_RowExpr:
-		case T_MinMaxExpr:
 		case T_SQLValueFunction:
 		case T_NullTest:
 		case T_BooleanTest:
@@ -1577,6 +1642,23 @@ contain_leaked_vars_walker(Node *node, void *context)
 				return true;
 			break;
 
+		case T_ArrayRef:
+			{
+				ArrayRef *aref = (ArrayRef *) node;
+
+				/*
+				 * array assignment is leaky, but subscripted fetches
+				 * are not
+				 */
+				if (aref->refassgnexpr != NULL)
+				{
+					/* Node is leaky, so reject if it contains Vars */
+					if (contain_var_clause(node))
+						return true;
+				}
+			}
+			break;
+
 		case T_RowCompareExpr:
 			{
 				/*
@@ -1600,6 +1682,36 @@ contain_leaked_vars_walker(Node *node, void *context)
 						 contain_var_clause((Node *) lfirst(rarg))))
 						return true;
 				}
+			}
+			break;
+
+		case T_MinMaxExpr:
+			{
+				/*
+				 * MinMaxExpr is leakproof if the comparison function it calls
+				 * is leakproof.
+				 */
+				MinMaxExpr *minmaxexpr = (MinMaxExpr *) node;
+				TypeCacheEntry *typentry;
+				bool		leakproof;
+
+				/* Look up the btree comparison function for the datatype */
+				typentry = lookup_type_cache(minmaxexpr->minmaxtype,
+											 TYPECACHE_CMP_PROC);
+				if (OidIsValid(typentry->cmp_proc))
+					leakproof = get_func_leakproof(typentry->cmp_proc);
+				else
+				{
+					/*
+					 * The executor will throw an error, but here we just
+					 * treat the missing function as leaky.
+					 */
+					leakproof = false;
+				}
+
+				if (!leakproof &&
+					contain_var_clause((Node *) minmaxexpr->args))
+					return true;
 			}
 			break;
 
@@ -2567,7 +2679,14 @@ eval_const_expressions_mutator(Node *node,
 					else
 						prm = &paramLI->params[param->paramid - 1];
 
-					if (OidIsValid(prm->ptype))
+					/*
+					 * We don't just check OidIsValid, but insist that the
+					 * fetched type match the Param, just in case the hook did
+					 * something unexpected.  No need to throw an error here
+					 * though; leave that for runtime.
+					 */
+					if (OidIsValid(prm->ptype) &&
+						prm->ptype == param->paramtype)
 					{
 						/* OK to substitute parameter value? */
 						if (context->estimate ||
@@ -2583,7 +2702,6 @@ eval_const_expressions_mutator(Node *node,
 							bool		typByVal;
 							Datum		pval;
 
-							Assert(prm->ptype == param->paramtype);
 							get_typlenbyval(param->paramtype,
 											&typLen, &typByVal);
 							if (prm->isnull || typByVal)
@@ -3105,10 +3223,31 @@ eval_const_expressions_mutator(Node *node,
 			}
 		case T_ArrayCoerceExpr:
 			{
-				ArrayCoerceExpr *ac;
+				ArrayCoerceExpr *ac = makeNode(ArrayCoerceExpr);
+				Node	   *save_case_val;
 
-				/* Copy the node and const-simplify its arguments */
-				ac = (ArrayCoerceExpr *) ece_generic_processing(node);
+				/*
+				 * Copy the node and const-simplify its arguments.  We can't
+				 * use ece_generic_processing() here because we need to mess
+				 * with case_val only while processing the elemexpr.
+				 */
+				memcpy(ac, node, sizeof(ArrayCoerceExpr));
+				ac->arg = (Expr *)
+					eval_const_expressions_mutator((Node *) ac->arg,
+												   context);
+
+				/*
+				 * Set up for the CaseTestExpr node contained in the elemexpr.
+				 * We must prevent it from absorbing any outer CASE value.
+				 */
+				save_case_val = context->case_val;
+				context->case_val = NULL;
+
+				ac->elemexpr = (Expr *)
+					eval_const_expressions_mutator((Node *) ac->elemexpr,
+												   context);
+
+				context->case_val = save_case_val;
 
 				/*
 				 * If constant argument and the per-element expression is
@@ -3122,6 +3261,7 @@ eval_const_expressions_mutator(Node *node,
 					ac->elemexpr && !IsA(ac->elemexpr, CoerceToDomain) &&
 					!contain_mutable_functions((Node *) ac->elemexpr))
 					return ece_evaluate_expr(ac);
+
 				return (Node *) ac;
 			}
 		case T_CollateExpr:
@@ -4321,9 +4461,9 @@ reorder_function_arguments(List *args, HeapTuple func_tuple)
 	int			i;
 
 	Assert(nargsprovided <= pronargs);
-	if (pronargs > FUNC_MAX_ARGS)
+	if (pronargs < 0 || pronargs > FUNC_MAX_ARGS)
 		elog(ERROR, "too many function arguments");
-	MemSet(argarray, 0, pronargs * sizeof(Node *));
+	memset(argarray, 0, pronargs * sizeof(Node *));
 
 	/* Deconstruct the argument list into an array indexed by argnumber */
 	i = 0;

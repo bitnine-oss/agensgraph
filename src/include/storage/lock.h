@@ -47,10 +47,10 @@ extern bool Debug_deadlocks;
 
 /*
  * Top-level transactions are identified by VirtualTransactionIDs comprising
- * the BackendId of the backend running the xact, plus a locally-assigned
- * LocalTransactionId.  These are guaranteed unique over the short term,
- * but will be reused after a database restart; hence they should never
- * be stored on disk.
+ * PGPROC fields backendId and lxid.  For prepared transactions, the
+ * LocalTransactionId is an ordinary XID.  These are guaranteed unique over
+ * the short term, but will be reused after a database restart or XID
+ * wraparound; hence they should never be stored on disk.
  *
  * Note that struct VirtualTransactionId can not be assumed to be atomically
  * assignable as a whole.  However, type LocalTransactionId is assumed to
@@ -62,15 +62,16 @@ extern bool Debug_deadlocks;
  */
 typedef struct
 {
-	BackendId	backendId;		/* determined at backend startup */
-	LocalTransactionId localTransactionId;	/* backend-local transaction id */
+	BackendId	backendId;		/* backendId from PGPROC */
+	LocalTransactionId localTransactionId;	/* lxid from PGPROC */
 } VirtualTransactionId;
 
 #define InvalidLocalTransactionId		0
 #define LocalTransactionIdIsValid(lxid) ((lxid) != InvalidLocalTransactionId)
 #define VirtualTransactionIdIsValid(vxid) \
-	(((vxid).backendId != InvalidBackendId) && \
-	 LocalTransactionIdIsValid((vxid).localTransactionId))
+	(LocalTransactionIdIsValid((vxid).localTransactionId))
+#define VirtualTransactionIdIsPreparedXact(vxid) \
+	((vxid).backendId == InvalidBackendId)
 #define VirtualTransactionIdEquals(vxid1, vxid2) \
 	((vxid1).backendId == (vxid2).backendId && \
 	 (vxid1).localTransactionId == (vxid2).localTransactionId)
@@ -160,10 +161,12 @@ typedef enum LockTagType
 	 * Also, we use DB OID = 0 for shared objects such as tablespaces.
 	 */
 	LOCKTAG_USERLOCK,			/* reserved for old contrib/userlock code */
-	LOCKTAG_ADVISORY			/* advisory user locks */
+	LOCKTAG_ADVISORY,			/* advisory user locks */
+	LOCKTAG_DATABASE_FROZEN_IDS	/* pg_database.datfrozenxid */
+	/* ID info for frozen IDs is DB OID */
 } LockTagType;
 
-#define LOCKTAG_LAST_TYPE	LOCKTAG_ADVISORY
+#define LOCKTAG_LAST_TYPE	LOCKTAG_DATABASE_FROZEN_IDS
 
 extern const char *const LockTagTypeNames[];
 
@@ -204,6 +207,14 @@ typedef struct LOCKTAG
 	 (locktag).locktag_field3 = 0, \
 	 (locktag).locktag_field4 = 0, \
 	 (locktag).locktag_type = LOCKTAG_RELATION_EXTEND, \
+	 (locktag).locktag_lockmethodid = DEFAULT_LOCKMETHOD)
+
+#define SET_LOCKTAG_DATABASE_FROZEN_IDS(locktag,dboid) \
+	((locktag).locktag_field1 = (dboid), \
+	 (locktag).locktag_field2 = 0, \
+	 (locktag).locktag_field3 = 0, \
+	 (locktag).locktag_field4 = 0, \
+	 (locktag).locktag_type = LOCKTAG_DATABASE_FROZEN_IDS, \
 	 (locktag).locktag_lockmethodid = DEFAULT_LOCKMETHOD)
 
 #define SET_LOCKTAG_PAGE(locktag,dboid,reloid,blocknum) \
@@ -408,9 +419,10 @@ typedef struct LOCALLOCK
 	PROCLOCK   *proclock;		/* associated PROCLOCK object, if any */
 	uint32		hashcode;		/* copy of LOCKTAG's hash value */
 	int64		nLocks;			/* total number of times lock is held */
+	bool		holdsStrongLockCount;	/* bumped FastPathStrongRelationLocks */
+	bool		lockCleared;	/* we read all sinval msgs for lock */
 	int			numLockOwners;	/* # of relevant ResourceOwners */
 	int			maxLockOwners;	/* allocated size of array */
-	bool		holdsStrongLockCount;	/* bumped FastPathStrongRelationLocks */
 	LOCALLOCKOWNER *lockOwners; /* dynamically resizable array */
 } LOCALLOCK;
 
@@ -472,7 +484,8 @@ typedef enum
 {
 	LOCKACQUIRE_NOT_AVAIL,		/* lock not available, and dontWait=true */
 	LOCKACQUIRE_OK,				/* lock successfully acquired */
-	LOCKACQUIRE_ALREADY_HELD	/* incremented count for lock already held */
+	LOCKACQUIRE_ALREADY_HELD,	/* incremented count for lock already held */
+	LOCKACQUIRE_ALREADY_CLEAR	/* incremented count for lock already clear */
 } LockAcquireResult;
 
 /* Deadlock states identified by DeadLockCheck() */
@@ -528,8 +541,10 @@ extern LockAcquireResult LockAcquireExtended(const LOCKTAG *locktag,
 					LOCKMODE lockmode,
 					bool sessionLock,
 					bool dontWait,
-					bool report_memory_error);
+					bool reportMemoryError,
+					LOCALLOCK **locallockp);
 extern void AbortStrongLockAcquire(void);
+extern void MarkLockClear(LOCALLOCK *locallock);
 extern bool LockRelease(const LOCKTAG *locktag,
 			LOCKMODE lockmode, bool sessionLock);
 extern void LockReleaseAll(LOCKMETHODID lockmethodid, bool allLocks);

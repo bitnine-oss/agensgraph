@@ -179,9 +179,10 @@ typedef struct ReorderBufferTXN
 	 * * prepared transaction commit
 	 * * plain abort record
 	 * * prepared transaction abort
-	 * * error during decoding
-	 * * for a crashed transaction, the LSN of the last change, regardless of
-	 *   what it was.
+	 *
+	 * This can also become set to earlier values than transaction end when
+	 * a transaction is spilled to disk; specifically it's set to the LSN of
+	 * the latest change written to disk so far.
 	 * ----
 	 */
 	XLogRecPtr	final_lsn;
@@ -401,6 +402,9 @@ ReorderBufferTupleBuf *ReorderBufferGetTupleBuf(ReorderBuffer *, Size tuple_len)
 void		ReorderBufferReturnTupleBuf(ReorderBuffer *, ReorderBufferTupleBuf *tuple);
 ReorderBufferChange *ReorderBufferGetChange(ReorderBuffer *);
 void		ReorderBufferReturnChange(ReorderBuffer *, ReorderBufferChange *);
+
+Oid * ReorderBufferGetRelids(ReorderBuffer *, int nrelids);
+void ReorderBufferReturnRelids(ReorderBuffer *, Oid *relids);
 
 void		ReorderBufferQueueChange(ReorderBuffer *, TransactionId, XLogRecPtr lsn, ReorderBufferChange *);
 void ReorderBufferQueueMessage(ReorderBuffer *, TransactionId, Snapshot snapshot, XLogRecPtr lsn,

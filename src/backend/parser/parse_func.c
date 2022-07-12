@@ -542,14 +542,24 @@ ParseFuncOrColumn(ParseState *pstate, List *funcname, List *fargs,
 		if (is_column)
 			return NULL;
 
-		ereport(ERROR,
-				(errcode(ERRCODE_AMBIGUOUS_FUNCTION),
-				 errmsg("function %s is not unique",
-						func_signature_string(funcname, nargs, argnames,
-											  actual_arg_types)),
-				 errhint("Could not choose a best candidate function. "
-						 "You might need to add explicit type casts."),
-				 parser_errposition(pstate, location)));
+		if (proc_call)
+			ereport(ERROR,
+					(errcode(ERRCODE_AMBIGUOUS_FUNCTION),
+					 errmsg("procedure %s is not unique",
+							func_signature_string(funcname, nargs, argnames,
+												  actual_arg_types)),
+					 errhint("Could not choose a best candidate procedure. "
+							 "You might need to add explicit type casts."),
+					 parser_errposition(pstate, location)));
+		else
+			ereport(ERROR,
+					(errcode(ERRCODE_AMBIGUOUS_FUNCTION),
+					 errmsg("function %s is not unique",
+							func_signature_string(funcname, nargs, argnames,
+												  actual_arg_types)),
+					 errhint("Could not choose a best candidate function. "
+							 "You might need to add explicit type casts."),
+					 parser_errposition(pstate, location)));
 	}
 	else
 	{
@@ -591,6 +601,15 @@ ParseFuncOrColumn(ParseState *pstate, List *funcname, List *fargs,
 							 "after all regular arguments of the aggregate."),
 					 parser_errposition(pstate, location)));
 		}
+		else if (proc_call)
+			ereport(ERROR,
+					(errcode(ERRCODE_UNDEFINED_FUNCTION),
+					 errmsg("procedure %s does not exist",
+							func_signature_string(funcname, nargs, argnames,
+												  actual_arg_types)),
+					 errhint("No procedure matches the given name and argument types. "
+							 "You might need to add explicit type casts."),
+					 parser_errposition(pstate, location)));
 		else
 			ereport(ERROR,
 					(errcode(ERRCODE_UNDEFINED_FUNCTION),
@@ -1858,7 +1877,12 @@ FuncNameAsType(List *funcname)
 	Oid			result;
 	Type		typtup;
 
-	typtup = LookupTypeName(NULL, makeTypeNameFromNameList(funcname), NULL, false);
+	/*
+	 * temp_ok=false protects the <refsect1 id="sql-createfunction-security">
+	 * contract for writing SECURITY DEFINER functions safely.
+	 */
+	typtup = LookupTypeNameExtended(NULL, makeTypeNameFromNameList(funcname),
+									NULL, false, false);
 	if (typtup == NULL)
 		return InvalidOid;
 
@@ -2040,9 +2064,10 @@ LookupFuncName(List *funcname, int nargs, const Oid *argtypes, bool noError)
 							 errmsg("function name \"%s\" is not unique",
 									NameListToString(funcname)),
 							 errhint("Specify the argument list to select the function unambiguously.")));
+				return InvalidOid;
 			}
-			else
-				return clist->oid;
+			/* Otherwise return the match */
+			return clist->oid;
 		}
 		else
 		{
@@ -2051,9 +2076,14 @@ LookupFuncName(List *funcname, int nargs, const Oid *argtypes, bool noError)
 						(errcode(ERRCODE_UNDEFINED_FUNCTION),
 						 errmsg("could not find a function named \"%s\"",
 								NameListToString(funcname))));
+			return InvalidOid;
 		}
 	}
 
+	/*
+	 * Otherwise, look for a match to the arg types.  FuncnameGetCandidates
+	 * has ensured that there's at most one match in the returned list.
+	 */
 	while (clist)
 	{
 		if (memcmp(argtypes, clist->args, nargs * sizeof(Oid)) == 0)
@@ -2176,7 +2206,7 @@ LookupFuncWithArgs(ObjectType objtype, ObjectWithArgs *func, bool noError)
 			else if (func->args_unspecified)
 				ereport(ERROR,
 						(errcode(ERRCODE_UNDEFINED_FUNCTION),
-						 errmsg("could not find a aggregate named \"%s\"",
+						 errmsg("could not find an aggregate named \"%s\"",
 								NameListToString(func->objname))));
 			else if (argcount == 0)
 				ereport(ERROR,

@@ -225,13 +225,13 @@ struct RecordIOData
 	ColumnIOData columns[FLEXIBLE_ARRAY_MEMBER];
 };
 
-/* per-query cache for populate_recordset */
-typedef struct PopulateRecordsetCache
+/* per-query cache for populate_record_worker and populate_recordset_worker */
+typedef struct PopulateRecordCache
 {
 	Oid			argtype;		/* declared type of the record argument */
 	ColumnIOData c;				/* metadata cache for populate_composite() */
 	MemoryContext fn_mcxt;		/* where this is stored */
-} PopulateRecordsetCache;
+} PopulateRecordCache;
 
 /* per-call state for populate_recordset */
 typedef struct PopulateRecordsetState
@@ -244,15 +244,8 @@ typedef struct PopulateRecordsetState
 	JsonTokenType saved_token_type;
 	Tuplestorestate *tuple_store;
 	HeapTupleHeader rec;
-	PopulateRecordsetCache *cache;
+	PopulateRecordCache *cache;
 } PopulateRecordsetState;
-
-/* structure to cache metadata needed for populate_record_worker() */
-typedef struct PopulateRecordCache
-{
-	Oid			argtype;		/* declared type of the record argument */
-	ColumnIOData c;				/* metadata cache for populate_composite() */
-} PopulateRecordCache;
 
 /* common data for populate_array_json() and populate_array_dim_jsonb() */
 typedef struct PopulateArrayContext
@@ -421,14 +414,20 @@ static void sn_scalar(void *state, char *token, JsonTokenType tokentype);
 
 /* worker functions for populate_record, to_record, populate_recordset and to_recordset */
 static Datum populate_recordset_worker(FunctionCallInfo fcinfo, const char *funcname,
-						  bool have_record_arg);
+						  bool is_json, bool have_record_arg);
 static Datum populate_record_worker(FunctionCallInfo fcinfo, const char *funcname,
-					   bool have_record_arg);
+					   bool is_json, bool have_record_arg);
 
 /* helper functions for populate_record[set] */
 static HeapTupleHeader populate_record(TupleDesc tupdesc, RecordIOData **record_p,
 				HeapTupleHeader defaultval, MemoryContext mcxt,
 				JsObject *obj);
+static void get_record_type_from_argument(FunctionCallInfo fcinfo,
+										  const char *funcname,
+										  PopulateRecordCache *cache);
+static void get_record_type_from_query(FunctionCallInfo fcinfo,
+									   const char *funcname,
+									   PopulateRecordCache *cache);
 static void JsValueToJsObject(JsValue *jsv, JsObject *jso);
 static Datum populate_composite(CompositeIOData *io, Oid typid,
 				   const char *colname, MemoryContext mcxt,
@@ -2296,25 +2295,29 @@ elements_scalar(void *state, char *token, JsonTokenType tokentype)
 Datum
 jsonb_populate_record(PG_FUNCTION_ARGS)
 {
-	return populate_record_worker(fcinfo, "jsonb_populate_record", true);
+	return populate_record_worker(fcinfo, "jsonb_populate_record",
+								  false, true);
 }
 
 Datum
 jsonb_to_record(PG_FUNCTION_ARGS)
 {
-	return populate_record_worker(fcinfo, "jsonb_to_record", false);
+	return populate_record_worker(fcinfo, "jsonb_to_record",
+								  false, false);
 }
 
 Datum
 json_populate_record(PG_FUNCTION_ARGS)
 {
-	return populate_record_worker(fcinfo, "json_populate_record", true);
+	return populate_record_worker(fcinfo, "json_populate_record",
+								  true, true);
 }
 
 Datum
 json_to_record(PG_FUNCTION_ARGS)
 {
-	return populate_record_worker(fcinfo, "json_to_record", false);
+	return populate_record_worker(fcinfo, "json_to_record",
+								  true, false);
 }
 
 /* helper function for diagnostics */
@@ -2799,26 +2802,7 @@ populate_scalar(ScalarIOData *io, Oid typid, int32 typmod, JsValue *jsv)
 
 		json = jsv->val.json.str;
 		Assert(json);
-
-		/* already done the hard work in the json case */
-		if ((typid == JSONOID || typid == JSONBOID) &&
-			jsv->val.json.type == JSON_TOKEN_STRING)
-		{
-			/*
-			 * Add quotes around string value (should be already escaped) if
-			 * converting to json/jsonb.
-			 */
-
-			if (len < 0)
-				len = strlen(json);
-
-			str = palloc(len + sizeof(char) * 3);
-			str[0] = '"';
-			memcpy(&str[1], json, len);
-			str[len + 1] = '"';
-			str[len + 2] = '\0';
-		}
-		else if (len >= 0)
+		if (len >= 0)
 		{
 			/* Need to copy non-null-terminated string */
 			str = palloc(len + 1 * sizeof(char));
@@ -2826,7 +2810,21 @@ populate_scalar(ScalarIOData *io, Oid typid, int32 typmod, JsValue *jsv)
 			str[len] = '\0';
 		}
 		else
-			str = json;			/* null-terminated string */
+			str = json;			/* string is already null-terminated */
+
+		/* If converting to json/jsonb, make string into valid JSON literal */
+		if ((typid == JSONOID || typid == JSONBOID) &&
+			jsv->val.json.type == JSON_TOKEN_STRING)
+		{
+			StringInfoData buf;
+
+			initStringInfo(&buf);
+			escape_json(&buf, str);
+			/* free temporary buffer */
+			if (str != json)
+				pfree(str);
+			str = buf.data;
+		}
 	}
 	else
 	{
@@ -3203,20 +3201,85 @@ populate_record(TupleDesc tupdesc,
 	return res->t_data;
 }
 
+/*
+ * Setup for json{b}_populate_record{set}: result type will be same as first
+ * argument's type --- unless first argument is "null::record", which we can't
+ * extract type info from; we handle that later.
+ */
+static void
+get_record_type_from_argument(FunctionCallInfo fcinfo,
+							  const char *funcname,
+							  PopulateRecordCache *cache)
+{
+	cache->argtype = get_fn_expr_argtype(fcinfo->flinfo, 0);
+	prepare_column_cache(&cache->c,
+						 cache->argtype, -1,
+						 cache->fn_mcxt, false);
+	if (cache->c.typcat != TYPECAT_COMPOSITE &&
+		cache->c.typcat != TYPECAT_COMPOSITE_DOMAIN)
+		ereport(ERROR,
+				(errcode(ERRCODE_DATATYPE_MISMATCH),
+		/* translator: %s is a function name, eg json_to_record */
+				 errmsg("first argument of %s must be a row type",
+						funcname)));
+}
+
+/*
+ * Setup for json{b}_to_record{set}: result type is specified by calling
+ * query.  We'll also use this code for json{b}_populate_record{set},
+ * if we discover that the first argument is a null of type RECORD.
+ *
+ * Here it is syntactically impossible to specify the target type
+ * as domain-over-composite.
+ */
+static void
+get_record_type_from_query(FunctionCallInfo fcinfo,
+						   const char *funcname,
+						   PopulateRecordCache *cache)
+{
+	TupleDesc	tupdesc;
+	MemoryContext old_cxt;
+
+	if (get_call_result_type(fcinfo, NULL, &tupdesc) != TYPEFUNC_COMPOSITE)
+		ereport(ERROR,
+				(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+		/* translator: %s is a function name, eg json_to_record */
+				 errmsg("could not determine row type for result of %s",
+						funcname),
+				 errhint("Provide a non-null record argument, "
+						 "or call the function in the FROM clause "
+						 "using a column definition list.")));
+
+	Assert(tupdesc);
+	cache->argtype = tupdesc->tdtypeid;
+
+	/* If we go through this more than once, avoid memory leak */
+	if (cache->c.io.composite.tupdesc)
+		FreeTupleDesc(cache->c.io.composite.tupdesc);
+
+	/* Save identified tupdesc */
+	old_cxt = MemoryContextSwitchTo(cache->fn_mcxt);
+	cache->c.io.composite.tupdesc = CreateTupleDescCopy(tupdesc);
+	cache->c.io.composite.base_typid = tupdesc->tdtypeid;
+	cache->c.io.composite.base_typmod = tupdesc->tdtypmod;
+	MemoryContextSwitchTo(old_cxt);
+}
+
+/*
+ * common worker for json{b}_populate_record() and json{b}_to_record()
+ * is_json and have_record_arg identify the specific function
+ */
 static Datum
 populate_record_worker(FunctionCallInfo fcinfo, const char *funcname,
-					   bool have_record_arg)
+					   bool is_json, bool have_record_arg)
 {
 	int			json_arg_num = have_record_arg ? 1 : 0;
-	Oid			jtype = get_fn_expr_argtype(fcinfo->flinfo, json_arg_num);
 	JsValue		jsv = {0};
 	HeapTupleHeader rec;
 	Datum		rettuple;
 	JsonbValue	jbv;
 	MemoryContext fnmcxt = fcinfo->flinfo->fn_mcxt;
 	PopulateRecordCache *cache = fcinfo->flinfo->fn_extra;
-
-	Assert(jtype == JSONOID || jtype == JSONBOID);
 
 	/*
 	 * If first time through, identify input/result record type.  Note that
@@ -3227,63 +3290,24 @@ populate_record_worker(FunctionCallInfo fcinfo, const char *funcname,
 	{
 		fcinfo->flinfo->fn_extra = cache =
 			MemoryContextAllocZero(fnmcxt, sizeof(*cache));
+		cache->fn_mcxt = fnmcxt;
 
 		if (have_record_arg)
-		{
-			/*
-			 * json{b}_populate_record case: result type will be same as first
-			 * argument's.
-			 */
-			cache->argtype = get_fn_expr_argtype(fcinfo->flinfo, 0);
-			prepare_column_cache(&cache->c,
-								 cache->argtype, -1,
-								 fnmcxt, false);
-			if (cache->c.typcat != TYPECAT_COMPOSITE &&
-				cache->c.typcat != TYPECAT_COMPOSITE_DOMAIN)
-				ereport(ERROR,
-						(errcode(ERRCODE_DATATYPE_MISMATCH),
-						 errmsg("first argument of %s must be a row type",
-								funcname)));
-		}
+			get_record_type_from_argument(fcinfo, funcname, cache);
 		else
-		{
-			/*
-			 * json{b}_to_record case: result type is specified by calling
-			 * query.  Here it is syntactically impossible to specify the
-			 * target type as domain-over-composite.
-			 */
-			TupleDesc	tupdesc;
-			MemoryContext old_cxt;
-
-			if (get_call_result_type(fcinfo, NULL, &tupdesc) != TYPEFUNC_COMPOSITE)
-				ereport(ERROR,
-						(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-						 errmsg("function returning record called in context "
-								"that cannot accept type record"),
-						 errhint("Try calling the function in the FROM clause "
-								 "using a column definition list.")));
-
-			Assert(tupdesc);
-			cache->argtype = tupdesc->tdtypeid;
-
-			/* Save identified tupdesc */
-			old_cxt = MemoryContextSwitchTo(fnmcxt);
-			cache->c.io.composite.tupdesc = CreateTupleDescCopy(tupdesc);
-			cache->c.io.composite.base_typid = tupdesc->tdtypeid;
-			cache->c.io.composite.base_typmod = tupdesc->tdtypmod;
-			MemoryContextSwitchTo(old_cxt);
-		}
+			get_record_type_from_query(fcinfo, funcname, cache);
 	}
 
 	/* Collect record arg if we have one */
-	if (have_record_arg && !PG_ARGISNULL(0))
+	if (!have_record_arg)
+		rec = NULL;				/* it's json{b}_to_record() */
+	else if (!PG_ARGISNULL(0))
 	{
 		rec = PG_GETARG_HEAPTUPLEHEADER(0);
 
 		/*
 		 * When declared arg type is RECORD, identify actual record type from
-		 * the tuple itself.  Note the lookup_rowtype_tupdesc call in
-		 * update_cached_tupdesc will fail if we're unable to do this.
+		 * the tuple itself.
 		 */
 		if (cache->argtype == RECORDOID)
 		{
@@ -3292,7 +3316,20 @@ populate_record_worker(FunctionCallInfo fcinfo, const char *funcname,
 		}
 	}
 	else
+	{
 		rec = NULL;
+
+		/*
+		 * When declared arg type is RECORD, identify actual record type from
+		 * calling query, or fail if we can't.
+		 */
+		if (cache->argtype == RECORDOID)
+		{
+			get_record_type_from_query(fcinfo, funcname, cache);
+			/* This can't change argtype, which is important for next time */
+			Assert(cache->argtype == RECORDOID);
+		}
+	}
 
 	/* If no JSON argument, just return the record (if any) unchanged */
 	if (PG_ARGISNULL(json_arg_num))
@@ -3303,9 +3340,9 @@ populate_record_worker(FunctionCallInfo fcinfo, const char *funcname,
 			PG_RETURN_NULL();
 	}
 
-	jsv.is_json = jtype == JSONOID;
+	jsv.is_json = is_json;
 
-	if (jsv.is_json)
+	if (is_json)
 	{
 		text	   *json = PG_GETARG_TEXT_PP(json_arg_num);
 
@@ -3489,31 +3526,35 @@ hash_scalar(void *state, char *token, JsonTokenType tokentype)
 Datum
 jsonb_populate_recordset(PG_FUNCTION_ARGS)
 {
-	return populate_recordset_worker(fcinfo, "jsonb_populate_recordset", true);
+	return populate_recordset_worker(fcinfo, "jsonb_populate_recordset",
+									 false, true);
 }
 
 Datum
 jsonb_to_recordset(PG_FUNCTION_ARGS)
 {
-	return populate_recordset_worker(fcinfo, "jsonb_to_recordset", false);
+	return populate_recordset_worker(fcinfo, "jsonb_to_recordset",
+									 false, false);
 }
 
 Datum
 json_populate_recordset(PG_FUNCTION_ARGS)
 {
-	return populate_recordset_worker(fcinfo, "json_populate_recordset", true);
+	return populate_recordset_worker(fcinfo, "json_populate_recordset",
+									 true, true);
 }
 
 Datum
 json_to_recordset(PG_FUNCTION_ARGS)
 {
-	return populate_recordset_worker(fcinfo, "json_to_recordset", false);
+	return populate_recordset_worker(fcinfo, "json_to_recordset",
+									 true, false);
 }
 
 static void
 populate_recordset_record(PopulateRecordsetState *state, JsObject *obj)
 {
-	PopulateRecordsetCache *cache = state->cache;
+	PopulateRecordCache *cache = state->cache;
 	HeapTupleHeader tuphead;
 	HeapTupleData tuple;
 
@@ -3544,18 +3585,18 @@ populate_recordset_record(PopulateRecordsetState *state, JsObject *obj)
 }
 
 /*
- * common worker for json_populate_recordset() and json_to_recordset()
+ * common worker for json{b}_populate_recordset() and json{b}_to_recordset()
+ * is_json and have_record_arg identify the specific function
  */
 static Datum
 populate_recordset_worker(FunctionCallInfo fcinfo, const char *funcname,
-						  bool have_record_arg)
+						  bool is_json, bool have_record_arg)
 {
 	int			json_arg_num = have_record_arg ? 1 : 0;
-	Oid			jtype = get_fn_expr_argtype(fcinfo->flinfo, json_arg_num);
 	ReturnSetInfo *rsi;
 	MemoryContext old_cxt;
 	HeapTupleHeader rec;
-	PopulateRecordsetCache *cache = fcinfo->flinfo->fn_extra;
+	PopulateRecordCache *cache = fcinfo->flinfo->fn_extra;
 	PopulateRecordsetState *state;
 
 	rsi = (ReturnSetInfo *) fcinfo->resultinfo;
@@ -3581,60 +3622,21 @@ populate_recordset_worker(FunctionCallInfo fcinfo, const char *funcname,
 		cache->fn_mcxt = fcinfo->flinfo->fn_mcxt;
 
 		if (have_record_arg)
-		{
-			/*
-			 * json{b}_populate_recordset case: result type will be same as
-			 * first argument's.
-			 */
-			cache->argtype = get_fn_expr_argtype(fcinfo->flinfo, 0);
-			prepare_column_cache(&cache->c,
-								 cache->argtype, -1,
-								 cache->fn_mcxt, false);
-			if (cache->c.typcat != TYPECAT_COMPOSITE &&
-				cache->c.typcat != TYPECAT_COMPOSITE_DOMAIN)
-				ereport(ERROR,
-						(errcode(ERRCODE_DATATYPE_MISMATCH),
-						 errmsg("first argument of %s must be a row type",
-								funcname)));
-		}
+			get_record_type_from_argument(fcinfo, funcname, cache);
 		else
-		{
-			/*
-			 * json{b}_to_recordset case: result type is specified by calling
-			 * query.  Here it is syntactically impossible to specify the
-			 * target type as domain-over-composite.
-			 */
-			TupleDesc	tupdesc;
-
-			if (get_call_result_type(fcinfo, NULL, &tupdesc) != TYPEFUNC_COMPOSITE)
-				ereport(ERROR,
-						(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-						 errmsg("function returning record called in context "
-								"that cannot accept type record"),
-						 errhint("Try calling the function in the FROM clause "
-								 "using a column definition list.")));
-
-			Assert(tupdesc);
-			cache->argtype = tupdesc->tdtypeid;
-
-			/* Save identified tupdesc */
-			old_cxt = MemoryContextSwitchTo(cache->fn_mcxt);
-			cache->c.io.composite.tupdesc = CreateTupleDescCopy(tupdesc);
-			cache->c.io.composite.base_typid = tupdesc->tdtypeid;
-			cache->c.io.composite.base_typmod = tupdesc->tdtypmod;
-			MemoryContextSwitchTo(old_cxt);
-		}
+			get_record_type_from_query(fcinfo, funcname, cache);
 	}
 
 	/* Collect record arg if we have one */
-	if (have_record_arg && !PG_ARGISNULL(0))
+	if (!have_record_arg)
+		rec = NULL;				/* it's json{b}_to_recordset() */
+	else if (!PG_ARGISNULL(0))
 	{
 		rec = PG_GETARG_HEAPTUPLEHEADER(0);
 
 		/*
 		 * When declared arg type is RECORD, identify actual record type from
-		 * the tuple itself.  Note the lookup_rowtype_tupdesc call in
-		 * update_cached_tupdesc will fail if we're unable to do this.
+		 * the tuple itself.
 		 */
 		if (cache->argtype == RECORDOID)
 		{
@@ -3643,11 +3645,30 @@ populate_recordset_worker(FunctionCallInfo fcinfo, const char *funcname,
 		}
 	}
 	else
+	{
 		rec = NULL;
+
+		/*
+		 * When declared arg type is RECORD, identify actual record type from
+		 * calling query, or fail if we can't.
+		 */
+		if (cache->argtype == RECORDOID)
+		{
+			get_record_type_from_query(fcinfo, funcname, cache);
+			/* This can't change argtype, which is important for next time */
+			Assert(cache->argtype == RECORDOID);
+		}
+	}
 
 	/* if the json is null send back an empty set */
 	if (PG_ARGISNULL(json_arg_num))
 		PG_RETURN_NULL();
+
+	/*
+	 * Forcibly update the cached tupdesc, to ensure we have the right tupdesc
+	 * to return even if the JSON contains no rows.
+	 */
+	update_cached_tupdesc(&cache->c.io.composite, cache->fn_mcxt);
 
 	state = palloc0(sizeof(PopulateRecordsetState));
 
@@ -3662,7 +3683,7 @@ populate_recordset_worker(FunctionCallInfo fcinfo, const char *funcname,
 	state->cache = cache;
 	state->rec = rec;
 
-	if (jtype == JSONOID)
+	if (is_json)
 	{
 		text	   *json = PG_GETARG_TEXT_PP(json_arg_num);
 		JsonLexContext *lex;
@@ -3692,8 +3713,6 @@ populate_recordset_worker(FunctionCallInfo fcinfo, const char *funcname,
 		JsonbValue	v;
 		bool		skipNested = false;
 		JsonbIteratorToken r;
-
-		Assert(jtype == JSONBOID);
 
 		if (JB_ROOT_IS_SCALAR(jb) || !JB_ROOT_IS_ARRAY(jb))
 			ereport(ERROR,
@@ -3726,8 +3745,13 @@ populate_recordset_worker(FunctionCallInfo fcinfo, const char *funcname,
 		}
 	}
 
+	/*
+	 * Note: we must copy the cached tupdesc because the executor will free
+	 * the passed-back setDesc, but we want to hang onto the cache in case
+	 * we're called again in the same query.
+	 */
 	rsi->setResult = state->tuple_store;
-	rsi->setDesc = cache->c.io.composite.tupdesc;
+	rsi->setDesc = CreateTupleDescCopy(cache->c.io.composite.tupdesc);
 
 	PG_RETURN_NULL();
 }
@@ -4559,36 +4583,39 @@ IteratorConcat(JsonbIterator **it1, JsonbIterator **it2,
 				rk1,
 				rk2;
 
-	r1 = rk1 = JsonbIteratorNext(it1, &v1, false);
-	r2 = rk2 = JsonbIteratorNext(it2, &v2, false);
+	rk1 = JsonbIteratorNext(it1, &v1, false);
+	rk2 = JsonbIteratorNext(it2, &v2, false);
 
 	/*
-	 * Both elements are objects.
+	 * JsonbIteratorNext reports raw scalars as if they were single-element
+	 * arrays; hence we only need consider "object" and "array" cases here.
 	 */
 	if (rk1 == WJB_BEGIN_OBJECT && rk2 == WJB_BEGIN_OBJECT)
 	{
 		/*
-		 * Append the all tokens from v1 to res, except last WJB_END_OBJECT
+		 * Both inputs are objects.
+		 *
+		 * Append all the tokens from v1 to res, except last WJB_END_OBJECT
 		 * (because res will not be finished yet).
 		 */
-		pushJsonbValue(state, r1, NULL);
+		pushJsonbValue(state, rk1, NULL);
 		while ((r1 = JsonbIteratorNext(it1, &v1, true)) != WJB_END_OBJECT)
 			pushJsonbValue(state, r1, &v1);
 
 		/*
-		 * Append the all tokens from v2 to res, include last WJB_END_OBJECT
-		 * (the concatenation will be completed).
+		 * Append all the tokens from v2 to res, including last WJB_END_OBJECT
+		 * (the concatenation will be completed).  Any duplicate keys will
+		 * automatically override the value from the first object.
 		 */
 		while ((r2 = JsonbIteratorNext(it2, &v2, true)) != WJB_DONE)
 			res = pushJsonbValue(state, r2, r2 != WJB_END_OBJECT ? &v2 : NULL);
 	}
-
-	/*
-	 * Both elements are arrays (either can be scalar).
-	 */
 	else if (rk1 == WJB_BEGIN_ARRAY && rk2 == WJB_BEGIN_ARRAY)
 	{
-		pushJsonbValue(state, r1, NULL);
+		/*
+		 * Both inputs are arrays.
+		 */
+		pushJsonbValue(state, rk1, NULL);
 
 		while ((r1 = JsonbIteratorNext(it1, &v1, true)) != WJB_END_ARRAY)
 		{
@@ -4604,48 +4631,40 @@ IteratorConcat(JsonbIterator **it1, JsonbIterator **it2,
 
 		res = pushJsonbValue(state, WJB_END_ARRAY, NULL /* signal to sort */ );
 	}
-	/* have we got array || object or object || array? */
-	else if (((rk1 == WJB_BEGIN_ARRAY && !(*it1)->isScalar) && rk2 == WJB_BEGIN_OBJECT) ||
-			 (rk1 == WJB_BEGIN_OBJECT && (rk2 == WJB_BEGIN_ARRAY && !(*it2)->isScalar)))
+	else if (rk1 == WJB_BEGIN_OBJECT)
 	{
-
-		JsonbIterator **it_array = rk1 == WJB_BEGIN_ARRAY ? it1 : it2;
-		JsonbIterator **it_object = rk1 == WJB_BEGIN_OBJECT ? it1 : it2;
-
-		bool		prepend = (rk1 == WJB_BEGIN_OBJECT);
+		/*
+		 * We have object || array.
+		 */
+		Assert(rk2 == WJB_BEGIN_ARRAY);
 
 		pushJsonbValue(state, WJB_BEGIN_ARRAY, NULL);
 
-		if (prepend)
-		{
-			pushJsonbValue(state, WJB_BEGIN_OBJECT, NULL);
-			while ((r1 = JsonbIteratorNext(it_object, &v1, true)) != WJB_DONE)
-				pushJsonbValue(state, r1, r1 != WJB_END_OBJECT ? &v1 : NULL);
+		pushJsonbValue(state, WJB_BEGIN_OBJECT, NULL);
+		while ((r1 = JsonbIteratorNext(it1, &v1, true)) != WJB_DONE)
+			pushJsonbValue(state, r1, r1 != WJB_END_OBJECT ? &v1 : NULL);
 
-			while ((r2 = JsonbIteratorNext(it_array, &v2, true)) != WJB_DONE)
-				res = pushJsonbValue(state, r2, r2 != WJB_END_ARRAY ? &v2 : NULL);
-		}
-		else
-		{
-			while ((r1 = JsonbIteratorNext(it_array, &v1, true)) != WJB_END_ARRAY)
-				pushJsonbValue(state, r1, &v1);
-
-			pushJsonbValue(state, WJB_BEGIN_OBJECT, NULL);
-			while ((r2 = JsonbIteratorNext(it_object, &v2, true)) != WJB_DONE)
-				pushJsonbValue(state, r2, r2 != WJB_END_OBJECT ? &v2 : NULL);
-
-			res = pushJsonbValue(state, WJB_END_ARRAY, NULL);
-		}
+		while ((r2 = JsonbIteratorNext(it2, &v2, true)) != WJB_DONE)
+			res = pushJsonbValue(state, r2, r2 != WJB_END_ARRAY ? &v2 : NULL);
 	}
 	else
 	{
 		/*
-		 * This must be scalar || object or object || scalar, as that's all
-		 * that's left. Both of these make no sense, so error out.
+		 * We have array || object.
 		 */
-		ereport(ERROR,
-				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				 errmsg("invalid concatenation of jsonb objects")));
+		Assert(rk1 == WJB_BEGIN_ARRAY);
+		Assert(rk2 == WJB_BEGIN_OBJECT);
+
+		pushJsonbValue(state, WJB_BEGIN_ARRAY, NULL);
+
+		while ((r1 = JsonbIteratorNext(it1, &v1, true)) != WJB_END_ARRAY)
+			pushJsonbValue(state, r1, &v1);
+
+		pushJsonbValue(state, WJB_BEGIN_OBJECT, NULL);
+		while ((r2 = JsonbIteratorNext(it2, &v2, true)) != WJB_DONE)
+			pushJsonbValue(state, r2, r2 != WJB_END_OBJECT ? &v2 : NULL);
+
+		res = pushJsonbValue(state, WJB_END_ARRAY, NULL);
 	}
 
 	return res;

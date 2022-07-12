@@ -88,7 +88,7 @@ PostgreSQL documentation
    <command>initdb</command> initializes the database cluster's default
    locale and character set encoding. The character set encoding,
    collation order (<literal>LC_COLLATE</literal>) and character set classes
-   (<literal>LC_CTYPE</literal>, e.g. upper, lower, digit) can be set separately
+   (<literal>LC_CTYPE</literal>, e.g., upper, lower, digit) can be set separately
    for a database when it is created. <command>initdb</command> determines
    those settings for the <literal>template1</literal> database, which will
    serve as the default for all other databases.
@@ -202,7 +202,9 @@ PostgreSQL documentation
       <listitem>
        <para>
         Allows users in the same group as the cluster owner to read all cluster
-        files created by <command>initdb</command>.
+        files created by <command>initdb</command>.  This option is ignored
+        on <productname>Windows</productname> as it does not support
+        <acronym>POSIX</acronym>-style group permissions.
        </para>
       </listitem>
      </varlistentry>

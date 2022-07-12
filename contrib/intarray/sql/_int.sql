@@ -30,6 +30,10 @@ SELECT '{123,623,445}'::int[] | 1623;
 SELECT '{123,623,445}'::int[] | '{1623,623}';
 SELECT '{123,623,445}'::int[] & '{1623,623}';
 SELECT '{-1,3,1}'::int[] & '{1,2}';
+SELECT '{1}'::int[] & '{2}'::int[];
+SELECT array_dims('{1}'::int[] & '{2}'::int[]);
+SELECT ('{1}'::int[] & '{2}'::int[]) = '{}'::int[];
+SELECT ('{}'::int[] & '{}'::int[]) = '{}'::int[];
 
 
 --test query_int
@@ -81,9 +85,15 @@ SELECT count(*) from test__int WHERE a @@ '23|50';
 SELECT count(*) from test__int WHERE a @> '{23,50}';
 SELECT count(*) from test__int WHERE a @@ '23&50';
 SELECT count(*) from test__int WHERE a @> '{20,23}';
+SELECT count(*) from test__int WHERE a <@ '{73,23,20}';
+SELECT count(*) from test__int WHERE a = '{73,23,20}';
 SELECT count(*) from test__int WHERE a @@ '50&68';
 SELECT count(*) from test__int WHERE a @> '{20,23}' or a @> '{50,68}';
 SELECT count(*) from test__int WHERE a @@ '(20&23)|(50&68)';
+SELECT count(*) from test__int WHERE a @@ '20 | !21';
+SELECT count(*) from test__int WHERE a @@ '!20 & !21';
+
+SET enable_seqscan = off;  -- not all of these would use index by default
 
 CREATE INDEX text_idx on test__int using gist ( a gist__int_ops );
 
@@ -92,9 +102,13 @@ SELECT count(*) from test__int WHERE a @@ '23|50';
 SELECT count(*) from test__int WHERE a @> '{23,50}';
 SELECT count(*) from test__int WHERE a @@ '23&50';
 SELECT count(*) from test__int WHERE a @> '{20,23}';
+SELECT count(*) from test__int WHERE a <@ '{73,23,20}';
+SELECT count(*) from test__int WHERE a = '{73,23,20}';
 SELECT count(*) from test__int WHERE a @@ '50&68';
 SELECT count(*) from test__int WHERE a @> '{20,23}' or a @> '{50,68}';
 SELECT count(*) from test__int WHERE a @@ '(20&23)|(50&68)';
+SELECT count(*) from test__int WHERE a @@ '20 | !21';
+SELECT count(*) from test__int WHERE a @@ '!20 & !21';
 
 DROP INDEX text_idx;
 CREATE INDEX text_idx on test__int using gist ( a gist__intbig_ops );
@@ -104,9 +118,13 @@ SELECT count(*) from test__int WHERE a @@ '23|50';
 SELECT count(*) from test__int WHERE a @> '{23,50}';
 SELECT count(*) from test__int WHERE a @@ '23&50';
 SELECT count(*) from test__int WHERE a @> '{20,23}';
+SELECT count(*) from test__int WHERE a <@ '{73,23,20}';
+SELECT count(*) from test__int WHERE a = '{73,23,20}';
 SELECT count(*) from test__int WHERE a @@ '50&68';
 SELECT count(*) from test__int WHERE a @> '{20,23}' or a @> '{50,68}';
 SELECT count(*) from test__int WHERE a @@ '(20&23)|(50&68)';
+SELECT count(*) from test__int WHERE a @@ '20 | !21';
+SELECT count(*) from test__int WHERE a @@ '!20 & !21';
 
 DROP INDEX text_idx;
 CREATE INDEX text_idx on test__int using gin ( a gin__int_ops );
@@ -116,6 +134,12 @@ SELECT count(*) from test__int WHERE a @@ '23|50';
 SELECT count(*) from test__int WHERE a @> '{23,50}';
 SELECT count(*) from test__int WHERE a @@ '23&50';
 SELECT count(*) from test__int WHERE a @> '{20,23}';
+SELECT count(*) from test__int WHERE a <@ '{73,23,20}';
+SELECT count(*) from test__int WHERE a = '{73,23,20}';
 SELECT count(*) from test__int WHERE a @@ '50&68';
 SELECT count(*) from test__int WHERE a @> '{20,23}' or a @> '{50,68}';
 SELECT count(*) from test__int WHERE a @@ '(20&23)|(50&68)';
+SELECT count(*) from test__int WHERE a @@ '20 | !21';
+SELECT count(*) from test__int WHERE a @@ '!20 & !21';
+
+RESET enable_seqscan;

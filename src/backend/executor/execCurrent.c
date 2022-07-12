@@ -23,7 +23,8 @@
 
 
 static char *fetch_cursor_param_value(ExprContext *econtext, int paramId);
-static ScanState *search_plan_tree(PlanState *node, Oid table_oid);
+static ScanState *search_plan_tree(PlanState *node, Oid table_oid,
+				 bool *pending_rescan);
 
 
 /*
@@ -156,8 +157,10 @@ execCurrentOf(CurrentOfExpr *cexpr,
 		 * aggregation.
 		 */
 		ScanState  *scanstate;
+		bool		pending_rescan = false;
 
-		scanstate = search_plan_tree(queryDesc->planstate, table_oid);
+		scanstate = search_plan_tree(queryDesc->planstate, table_oid,
+									 &pending_rescan);
 		if (!scanstate)
 			ereport(ERROR,
 					(errcode(ERRCODE_INVALID_CURSOR_STATE),
@@ -177,8 +180,12 @@ execCurrentOf(CurrentOfExpr *cexpr,
 					 errmsg("cursor \"%s\" is not positioned on a row",
 							cursor_name)));
 
-		/* Now OK to return false if we found an inactive scan */
-		if (TupIsNull(scanstate->ss_ScanTupleSlot))
+		/*
+		 * Now OK to return false if we found an inactive scan.  It is
+		 * inactive either if it's not positioned on a row, or there's a
+		 * rescan pending for it.
+		 */
+		if (TupIsNull(scanstate->ss_ScanTupleSlot) || pending_rescan)
 			return false;
 
 		/*
@@ -291,16 +298,37 @@ fetch_cursor_param_value(ExprContext *econtext, int paramId)
  *
  * Search through a PlanState tree for a scan node on the specified table.
  * Return NULL if not found or multiple candidates.
+ *
+ * CAUTION: this function is not charged simply with finding some candidate
+ * scan, but with ensuring that that scan returned the plan tree's current
+ * output row.  That's why we must reject multiple-match cases.
+ *
+ * If a candidate is found, set *pending_rescan to true if that candidate
+ * or any node above it has a pending rescan action, i.e. chgParam != NULL.
+ * That indicates that we shouldn't consider the node to be positioned on a
+ * valid tuple, even if its own state would indicate that it is.  (Caller
+ * must initialize *pending_rescan to false, and should not trust its state
+ * if multiple candidates are found.)
  */
 static ScanState *
-search_plan_tree(PlanState *node, Oid table_oid)
+search_plan_tree(PlanState *node, Oid table_oid,
+				 bool *pending_rescan)
 {
+	ScanState  *result = NULL;
+
 	if (node == NULL)
 		return NULL;
 	switch (nodeTag(node))
 	{
 			/*
-			 * Relation scan nodes can all be treated alike
+			 * Relation scan nodes can all be treated alike: check to see if
+			 * they are scanning the specified table.
+			 *
+			 * ForeignScan and CustomScan might not have a currentRelation, in
+			 * which case we just ignore them.  (We dare not descend to any
+			 * child plan nodes they might have, since we do not know the
+			 * relationship of such a node's current output tuple to the
+			 * children's current outputs.)
 			 */
 		case T_SeqScanState:
 		case T_SampleScanState:
@@ -313,25 +341,44 @@ search_plan_tree(PlanState *node, Oid table_oid)
 			{
 				ScanState  *sstate = (ScanState *) node;
 
-				if (RelationGetRelid(sstate->ss_currentRelation) == table_oid)
-					return sstate;
+				if (sstate->ss_currentRelation &&
+					RelationGetRelid(sstate->ss_currentRelation) == table_oid)
+					result = sstate;
 				break;
 			}
 
 			/*
-			 * For Append, we must look through the members; watch out for
-			 * multiple matches (possible if it was from UNION ALL)
+			 * For Append, we can check each input node.  It is safe to
+			 * descend to the inputs because only the input that resulted in
+			 * the Append's current output node could be positioned on a tuple
+			 * at all; the other inputs are either at EOF or not yet started.
+			 * Hence, if the desired table is scanned by some
+			 * currently-inactive input node, we will find that node but then
+			 * our caller will realize that it didn't emit the tuple of
+			 * interest.
+			 *
+			 * We do need to watch out for multiple matches (possible if
+			 * Append was from UNION ALL rather than an inheritance tree).
+			 *
+			 * Note: we can NOT descend through MergeAppend similarly, since
+			 * its inputs are likely all active, and we don't know which one
+			 * returned the current output tuple.  (Perhaps that could be
+			 * fixed if we were to let this code know more about MergeAppend's
+			 * internal state, but it does not seem worth the trouble.  Users
+			 * should not expect plans for ORDER BY queries to be considered
+			 * simply-updatable, since they won't be if the sorting is
+			 * implemented by a Sort node.)
 			 */
 		case T_AppendState:
 			{
 				AppendState *astate = (AppendState *) node;
-				ScanState  *result = NULL;
 				int			i;
 
 				for (i = 0; i < astate->as_nplans; i++)
 				{
 					ScanState  *elem = search_plan_tree(astate->appendplans[i],
-														table_oid);
+														table_oid,
+														pending_rescan);
 
 					if (!elem)
 						continue;
@@ -339,30 +386,7 @@ search_plan_tree(PlanState *node, Oid table_oid)
 						return NULL;	/* multiple matches */
 					result = elem;
 				}
-				return result;
-			}
-
-			/*
-			 * Similarly for MergeAppend
-			 */
-		case T_MergeAppendState:
-			{
-				MergeAppendState *mstate = (MergeAppendState *) node;
-				ScanState  *result = NULL;
-				int			i;
-
-				for (i = 0; i < mstate->ms_nplans; i++)
-				{
-					ScanState  *elem = search_plan_tree(mstate->mergeplans[i],
-														table_oid);
-
-					if (!elem)
-						continue;
-					if (result)
-						return NULL;	/* multiple matches */
-					result = elem;
-				}
-				return result;
+				break;
 			}
 
 			/*
@@ -371,18 +395,31 @@ search_plan_tree(PlanState *node, Oid table_oid)
 			 */
 		case T_ResultState:
 		case T_LimitState:
-			return search_plan_tree(node->lefttree, table_oid);
+			result = search_plan_tree(node->lefttree,
+									  table_oid,
+									  pending_rescan);
+			break;
 
 			/*
 			 * SubqueryScan too, but it keeps the child in a different place
 			 */
 		case T_SubqueryScanState:
-			return search_plan_tree(((SubqueryScanState *) node)->subplan,
-									table_oid);
+			result = search_plan_tree(((SubqueryScanState *) node)->subplan,
+									  table_oid,
+									  pending_rescan);
+			break;
 
 		default:
 			/* Otherwise, assume we can't descend through it */
 			break;
 	}
-	return NULL;
+
+	/*
+	 * If we found a candidate at or below this node, then this node's
+	 * chgParam indicates a pending rescan that will affect the candidate.
+	 */
+	if (result && node->chgParam != NULL)
+		*pending_rescan = true;
+
+	return result;
 }

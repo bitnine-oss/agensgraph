@@ -13,7 +13,6 @@ SELECT relname, relhasindex
    ORDER BY relname;
 a|f
 a_star|f
-abstime_tbl|f
 ag_graph|t
 ag_graphmeta|t
 ag_label|t
@@ -22,6 +21,7 @@ array_index_op_test|t
 array_op_test|f
 b|f
 b_star|f
+bit_defaults|f
 box_tbl|f
 bprime|f
 bt_f8_heap|t
@@ -47,6 +47,7 @@ dupindexcols|t
 e_star|f
 emp|f
 equipment_r|f
+extra_wide_table|f
 f_star|f
 fast_emp4000|t
 float4_tbl|f
@@ -97,6 +98,7 @@ num_exp_sqrt|t
 num_exp_sub|t
 num_input_test|f
 num_result|f
+numrange_test|t
 onek|t
 onek2|t
 path_tbl|f
@@ -176,7 +178,6 @@ quad_poly_tbl_ord_seq2|f
 radix_text_tbl|t
 ramp|f
 real_city|f
-reltime_tbl|f
 road|t
 shighway|t
 slow_emp4000|f
@@ -203,12 +204,13 @@ test_range_spgist|t
 test_tsvector|f
 testjsonb|f
 text_tbl|f
+textrange_test|t
 time_tbl|f
 timestamp_tbl|f
 timestamptz_tbl|f
 timetz_tbl|f
-tinterval_tbl|f
 varchar_tbl|f
+view_base_table|t
 -- restore normal output mode
 \a\t
 --

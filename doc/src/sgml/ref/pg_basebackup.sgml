@@ -305,8 +305,8 @@ PostgreSQL documentation
              backup will fail and be unusable.
            </para>
            <para>
-            The write-ahead log files will be written to
-            the <filename>base.tar</filename> file.
+            When tar format mode is used, the write-ahead log files will be
+            written to the <filename>base.tar</filename> file.
            </para>
           </listitem>
          </varlistentry>
@@ -325,9 +325,10 @@ PostgreSQL documentation
              requires no extra write-ahead logs to be saved on the master.
            </para>
            <para>
-            The write-ahead log files are written to a separate file
-            named <filename>pg_wal.tar</filename> (if the server is a version
-            earlier than 10, the file will be named <filename>pg_xlog.tar</filename>).
+            When tar format mode is used, the write-ahead log files will be
+            written to a separate file named <filename>pg_wal.tar</filename> 
+            (if the server is a version earlier than 10, the file will be named
+            <filename>pg_xlog.tar</filename>).
            </para>
            <para>
             This value is the default.
@@ -387,9 +388,9 @@ PostgreSQL documentation
       <term><option>--create-slot</option></term>
       <listitem>
        <para>
-        This option causes the replication slot specified by the
-        option <literal>--slot</literal> to be created before starting the
-        backup.  In this case, an error is raised if the slot already exists.
+        This option causes creation of a replication slot named by the
+        <literal>--slot</literal> option before starting the backup.
+        An error is raised if the slot already exists.
        </para>
       </listitem>
      </varlistentry>
@@ -545,8 +546,9 @@ PostgreSQL documentation
       <term><option>--dbname=<replaceable class="parameter">connstr</replaceable></option></term>
       <listitem>
        <para>
-        Specifies parameters used to connect to the server, as a connection
-        string. See <xref linkend="libpq-connstring"/> for more information.
+        Specifies parameters used to connect to the server, as a <link
+        linkend="libpq-connstring">connection string</link>;  these
+        will override any conflicting command line options.
        </para>
        <para>
         The option is called <literal>--dbname</literal> for consistency with other

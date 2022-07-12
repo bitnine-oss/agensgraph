@@ -144,6 +144,7 @@ InitDumpOptions(DumpOptions *opts)
 	memset(opts, 0, sizeof(DumpOptions));
 	/* set any fields that shouldn't default to zeroes */
 	opts->include_everything = true;
+	opts->cparams.promptPassword = TRI_DEFAULT;
 	opts->dumpSections = DUMP_UNSECTIONED;
 }
 
@@ -157,6 +158,11 @@ dumpOptionsFromRestoreOptions(RestoreOptions *ropt)
 	DumpOptions *dopt = NewDumpOptions();
 
 	/* this is the inverse of what's at the end of pg_dump.c's main() */
+	dopt->cparams.dbname = ropt->cparams.dbname ? pg_strdup(ropt->cparams.dbname) : NULL;
+	dopt->cparams.pgport = ropt->cparams.pgport ? pg_strdup(ropt->cparams.pgport) : NULL;
+	dopt->cparams.pghost = ropt->cparams.pghost ? pg_strdup(ropt->cparams.pghost) : NULL;
+	dopt->cparams.username = ropt->cparams.username ? pg_strdup(ropt->cparams.username) : NULL;
+	dopt->cparams.promptPassword = ropt->cparams.promptPassword;
 	dopt->outputClean = ropt->dropSchema;
 	dopt->dataOnly = ropt->dataOnly;
 	dopt->schemaOnly = ropt->schemaOnly;
@@ -401,9 +407,7 @@ RestoreArchive(Archive *AHX)
 		AHX->minRemoteVersion = 0;
 		AHX->maxRemoteVersion = 9999999;
 
-		ConnectDatabase(AHX, ropt->dbname,
-						ropt->pghost, ropt->pgport, ropt->username,
-						ropt->promptPassword);
+		ConnectDatabase(AHX, &ropt->cparams, false);
 
 		/*
 		 * If we're talking to the DB directly, don't send comments since they
@@ -662,11 +666,11 @@ RestoreArchive(Archive *AHX)
 	{
 		/*
 		 * In serial mode, process everything in three phases: normal items,
-		 * then ACLs, then matview refresh items.  We might be able to skip
-		 * one or both extra phases in some cases, eg data-only restores.
+		 * then ACLs, then post-ACL items.  We might be able to skip one or
+		 * both extra phases in some cases, eg data-only restores.
 		 */
 		bool		haveACL = false;
-		bool		haveRefresh = false;
+		bool		havePostACL = false;
 
 		for (te = AH->toc->next; te != AH->toc; te = te->next)
 		{
@@ -681,8 +685,8 @@ RestoreArchive(Archive *AHX)
 				case RESTORE_PASS_ACL:
 					haveACL = true;
 					break;
-				case RESTORE_PASS_REFRESH:
-					haveRefresh = true;
+				case RESTORE_PASS_POST_ACL:
+					havePostACL = true;
 					break;
 			}
 		}
@@ -697,12 +701,12 @@ RestoreArchive(Archive *AHX)
 			}
 		}
 
-		if (haveRefresh)
+		if (havePostACL)
 		{
 			for (te = AH->toc->next; te != AH->toc; te = te->next)
 			{
 				if ((te->reqs & (REQ_SCHEMA | REQ_DATA)) != 0 &&
-					_tocEntryRestorePass(te) == RESTORE_PASS_REFRESH)
+					_tocEntryRestorePass(te) == RESTORE_PASS_POST_ACL)
 					(void) restore_toc_entry(AH, te, false);
 			}
 		}
@@ -823,16 +827,8 @@ restore_toc_entry(ArchiveHandle *AH, TocEntry *te, bool is_parallel)
 		if (strcmp(te->desc, "DATABASE") == 0 ||
 			strcmp(te->desc, "DATABASE PROPERTIES") == 0)
 		{
-			PQExpBufferData connstr;
-
-			initPQExpBuffer(&connstr);
-			appendPQExpBufferStr(&connstr, "dbname=");
-			appendConnStrVal(&connstr, te->tag);
-			/* Abandon struct, but keep its buffer until process exit. */
-
 			ahlog(AH, 1, "connecting to new database \"%s\"\n", te->tag);
 			_reconnectToDB(AH, te->tag);
-			ropt->dbname = connstr.data;
 		}
 	}
 
@@ -905,9 +901,7 @@ restore_toc_entry(ArchiveHandle *AH, TocEntry *te, bool is_parallel)
 						ahprintf(AH, "TRUNCATE TABLE %s%s;\n\n",
 								 (PQserverVersion(AH->connection) >= 80400 ?
 								  "ONLY " : ""),
-								 fmtQualifiedId(PQserverVersion(AH->connection),
-												te->namespace,
-												te->tag));
+								 fmtQualifiedId(te->namespace, te->tag));
 					}
 
 					/*
@@ -966,7 +960,7 @@ NewRestoreOptions(void)
 
 	/* set any fields that shouldn't default to zeroes */
 	opts->format = archUnknown;
-	opts->promptPassword = TRI_DEFAULT;
+	opts->cparams.promptPassword = TRI_DEFAULT;
 	opts->dumpSections = DUMP_UNSECTIONED;
 
 	return opts;
@@ -995,9 +989,7 @@ _disableTriggersIfNecessary(ArchiveHandle *AH, TocEntry *te)
 	 * Disable them.
 	 */
 	ahprintf(AH, "ALTER TABLE %s DISABLE TRIGGER ALL;\n\n",
-			 fmtQualifiedId(PQserverVersion(AH->connection),
-							te->namespace,
-							te->tag));
+			 fmtQualifiedId(te->namespace, te->tag));
 }
 
 static void
@@ -1023,9 +1015,7 @@ _enableTriggersIfNecessary(ArchiveHandle *AH, TocEntry *te)
 	 * Enable them.
 	 */
 	ahprintf(AH, "ALTER TABLE %s ENABLE TRIGGER ALL;\n\n",
-			 fmtQualifiedId(PQserverVersion(AH->connection),
-							te->namespace,
-							te->tag));
+			 fmtQualifiedId(te->namespace, te->tag));
 }
 
 /*
@@ -1521,7 +1511,12 @@ SetOutput(ArchiveHandle *AH, const char *filename, int compression)
 	int			fn;
 
 	if (filename)
-		fn = -1;
+	{
+		if (strcmp(filename, "-") == 0)
+			fn = fileno(stdout);
+		else
+			fn = -1;
+	}
 	else if (AH->FH)
 		fn = fileno(AH->FH);
 	else if (AH->fSpec)
@@ -1794,8 +1789,11 @@ warn_or_exit_horribly(ArchiveHandle *AH,
 	{
 		write_msg(modulename, "Error from TOC entry %d; %u %u %s %s %s\n",
 				  AH->currentTE->dumpId,
-				  AH->currentTE->catalogId.tableoid, AH->currentTE->catalogId.oid,
-				  AH->currentTE->desc, AH->currentTE->tag, AH->currentTE->owner);
+				  AH->currentTE->catalogId.tableoid,
+				  AH->currentTE->catalogId.oid,
+				  AH->currentTE->desc ? AH->currentTE->desc : "(no desc)",
+				  AH->currentTE->tag ? AH->currentTE->tag : "(no tag)",
+				  AH->currentTE->owner ? AH->currentTE->owner : "(no owner)");
 	}
 	AH->lastErrorStage = AH->stage;
 	AH->lastErrorTE = AH->currentTE;
@@ -2389,8 +2387,6 @@ _allocAH(const char *FileSpec, const ArchiveFormat fmt,
 	else
 		AH->format = fmt;
 
-	AH->promptPassword = TRI_DEFAULT;
-
 	switch (AH->format)
 	{
 		case archCustom:
@@ -2866,8 +2862,13 @@ _tocEntryRequired(TocEntry *te, teSection curSection, ArchiveHandle *AH)
 	if (ropt->no_comments && strcmp(te->desc, "COMMENT") == 0)
 		return 0;
 
-	/* If it's a publication, maybe ignore it */
-	if (ropt->no_publications && strcmp(te->desc, "PUBLICATION") == 0)
+	/*
+	 * If it's a publication or a table part of a publication, maybe ignore
+	 * it.
+	 */
+	if (ropt->no_publications &&
+		(strcmp(te->desc, "PUBLICATION") == 0 ||
+		 strcmp(te->desc, "PUBLICATION TABLE") == 0))
 		return 0;
 
 	/* If it's a security label, maybe ignore it */
@@ -3087,8 +3088,21 @@ _tocEntryRestorePass(TocEntry *te)
 		strcmp(te->desc, "ACL LANGUAGE") == 0 ||
 		strcmp(te->desc, "DEFAULT ACL") == 0)
 		return RESTORE_PASS_ACL;
-	if (strcmp(te->desc, "MATERIALIZED VIEW DATA") == 0)
-		return RESTORE_PASS_REFRESH;
+	if (strcmp(te->desc, "EVENT TRIGGER") == 0 ||
+		strcmp(te->desc, "MATERIALIZED VIEW DATA") == 0)
+		return RESTORE_PASS_POST_ACL;
+
+	/*
+	 * Comments need to be emitted in the same pass as their parent objects.
+	 * ACLs haven't got comments, and neither do matview data objects, but
+	 * event triggers do.  (Fortunately, event triggers haven't got ACLs, or
+	 * we'd need yet another weird special case.)
+	 */
+	if (strcmp(te->desc, "COMMENT") == 0 &&
+		strncmp(te->tag, "EVENT TRIGGER ", 14) == 0)
+		return RESTORE_PASS_POST_ACL;
+
+	/* All else can be handled in the main pass. */
 	return RESTORE_PASS_MAIN;
 }
 
@@ -3144,6 +3158,9 @@ _doSetFixedOutputState(ArchiveHandle *AH)
 
 	/* Make sure function checking is disabled */
 	ahprintf(AH, "SET check_function_bodies = false;\n");
+
+	/* Ensure that all valid XML data will be accepted */
+	ahprintf(AH, "SET xmloption = content;\n");
 
 	/* Avoid annoying notices etc */
 	ahprintf(AH, "SET client_min_messages = warning;\n");
@@ -3238,27 +3255,20 @@ _doSetWithOids(ArchiveHandle *AH, const bool withOids)
  * If we're currently restoring right into a database, this will
  * actually establish a connection. Otherwise it puts a \connect into
  * the script output.
- *
- * NULL dbname implies reconnecting to the current DB (pretty useless).
  */
 static void
 _reconnectToDB(ArchiveHandle *AH, const char *dbname)
 {
 	if (RestoringToDB(AH))
-		ReconnectToServer(AH, dbname, NULL);
+		ReconnectToServer(AH, dbname);
 	else
 	{
-		if (dbname)
-		{
-			PQExpBufferData connectbuf;
+		PQExpBufferData connectbuf;
 
-			initPQExpBuffer(&connectbuf);
-			appendPsqlMetaConnect(&connectbuf, dbname);
-			ahprintf(AH, "%s\n", connectbuf.data);
-			termPQExpBuffer(&connectbuf);
-		}
-		else
-			ahprintf(AH, "%s\n", "\\connect -\n");
+		initPQExpBuffer(&connectbuf);
+		appendPsqlMetaConnect(&connectbuf, dbname);
+		ahprintf(AH, "%s\n", connectbuf.data);
+		termPQExpBuffer(&connectbuf);
 	}
 
 	/*
@@ -4210,9 +4220,7 @@ restore_toc_entries_postfork(ArchiveHandle *AH, TocEntry *pending_list)
 	/*
 	 * Now reconnect the single parent connection.
 	 */
-	ConnectDatabase((Archive *) AH, ropt->dbname,
-					ropt->pghost, ropt->pgport, ropt->username,
-					ropt->promptPassword);
+	ConnectDatabase((Archive *) AH, &ropt->cparams, true);
 
 	/* re-establish fixed state */
 	_doSetFixedOutputState(AH);
@@ -4642,16 +4650,24 @@ identify_locking_dependencies(ArchiveHandle *AH, TocEntry *te)
 	int			nlockids;
 	int			i;
 
+	/*
+	 * We only care about this for POST_DATA items.  PRE_DATA items are not
+	 * run in parallel, and DATA items are all independent by assumption.
+	 */
+	if (te->section != SECTION_POST_DATA)
+		return;
+
 	/* Quick exit if no dependencies at all */
 	if (te->nDeps == 0)
 		return;
 
-	/* Exit if this entry doesn't need exclusive lock on other objects */
-	if (!(strcmp(te->desc, "CONSTRAINT") == 0 ||
-		  strcmp(te->desc, "CHECK CONSTRAINT") == 0 ||
-		  strcmp(te->desc, "FK CONSTRAINT") == 0 ||
-		  strcmp(te->desc, "RULE") == 0 ||
-		  strcmp(te->desc, "TRIGGER") == 0))
+	/*
+	 * Most POST_DATA items are ALTER TABLEs or some moral equivalent of that,
+	 * and hence require exclusive lock.  However, we know that CREATE INDEX
+	 * does not.  (Maybe someday index-creating CONSTRAINTs will fall in that
+	 * category too ... but today is not that day.)
+	 */
+	if (strcmp(te->desc, "INDEX") == 0)
 		return;
 
 	/*
@@ -4794,54 +4810,15 @@ CloneArchive(ArchiveHandle *AH)
 	clone->public.n_errors = 0;
 
 	/*
-	 * Connect our new clone object to the database: In parallel restore the
-	 * parent is already disconnected, because we can connect the worker
-	 * processes independently to the database (no snapshot sync required). In
-	 * parallel backup we clone the parent's existing connection.
+	 * Connect our new clone object to the database, using the same connection
+	 * parameters used for the original connection.
 	 */
+	ConnectDatabase((Archive *) clone, &clone->public.ropt->cparams, true);
+
+	/* re-establish fixed state */
 	if (AH->mode == archModeRead)
-	{
-		RestoreOptions *ropt = AH->public.ropt;
-
-		Assert(AH->connection == NULL);
-
-		/* this also sets clone->connection */
-		ConnectDatabase((Archive *) clone, ropt->dbname,
-						ropt->pghost, ropt->pgport, ropt->username,
-						ropt->promptPassword);
-
-		/* re-establish fixed state */
 		_doSetFixedOutputState(clone);
-	}
-	else
-	{
-		PQExpBufferData connstr;
-		char	   *pghost;
-		char	   *pgport;
-		char	   *username;
-
-		Assert(AH->connection != NULL);
-
-		/*
-		 * Even though we are technically accessing the parent's database
-		 * object here, these functions are fine to be called like that
-		 * because all just return a pointer and do not actually send/receive
-		 * any data to/from the database.
-		 */
-		initPQExpBuffer(&connstr);
-		appendPQExpBuffer(&connstr, "dbname=");
-		appendConnStrVal(&connstr, PQdb(AH->connection));
-		pghost = PQhost(AH->connection);
-		pgport = PQport(AH->connection);
-		username = PQuser(AH->connection);
-
-		/* this also sets clone->connection */
-		ConnectDatabase((Archive *) clone, connstr.data,
-						pghost, pgport, username, TRI_NO);
-
-		termPQExpBuffer(&connstr);
-		/* setupDumpWorker will fix up connection state */
-	}
+	/* in write case, setupDumpWorker will fix up connection state */
 
 	/* Let the format-specific code have a chance too */
 	clone->ClonePtr(clone);

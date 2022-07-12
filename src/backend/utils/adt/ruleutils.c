@@ -320,12 +320,13 @@ static char *deparse_expression_pretty(Node *expr, List *dpcontext,
 static char *pg_get_viewdef_worker(Oid viewoid,
 					  int prettyFlags, int wrapColumn);
 static char *pg_get_triggerdef_worker(Oid trigid, bool pretty);
-static void decompile_column_index_array(Datum column_index_array, Oid relId,
+static int decompile_column_index_array(Datum column_index_array, Oid relId,
 							 StringInfo buf);
 static char *pg_get_ruledef_worker(Oid ruleoid, int prettyFlags);
 static char *pg_get_indexdef_worker(Oid indexrelid, int colno,
 					   const Oid *excludeOps,
-					   bool attrsOnly, bool showTblSpc, bool inherits,
+					   bool attrsOnly, bool keysOnly,
+					   bool showTblSpc, bool inherits,
 					   int prettyFlags, bool missing_ok);
 static char *pg_get_statisticsobj_worker(Oid statextid, bool missing_ok);
 static char *pg_get_partkeydef_worker(Oid relid, int prettyFlags,
@@ -971,22 +972,24 @@ pg_get_triggerdef_worker(Oid trigid, bool pretty)
 	value = fastgetattr(ht_trig, Anum_pg_trigger_tgoldtable,
 						tgrel->rd_att, &isnull);
 	if (!isnull)
-		tgoldtable = NameStr(*((NameData *) DatumGetPointer(value)));
+		tgoldtable = NameStr(*DatumGetName(value));
 	else
 		tgoldtable = NULL;
 	value = fastgetattr(ht_trig, Anum_pg_trigger_tgnewtable,
 						tgrel->rd_att, &isnull);
 	if (!isnull)
-		tgnewtable = NameStr(*((NameData *) DatumGetPointer(value)));
+		tgnewtable = NameStr(*DatumGetName(value));
 	else
 		tgnewtable = NULL;
 	if (tgoldtable != NULL || tgnewtable != NULL)
 	{
 		appendStringInfoString(&buf, "REFERENCING ");
 		if (tgoldtable != NULL)
-			appendStringInfo(&buf, "OLD TABLE AS %s ", tgoldtable);
+			appendStringInfo(&buf, "OLD TABLE AS %s ",
+							 quote_identifier(tgoldtable));
 		if (tgnewtable != NULL)
-			appendStringInfo(&buf, "NEW TABLE AS %s ", tgnewtable);
+			appendStringInfo(&buf, "NEW TABLE AS %s ",
+							 quote_identifier(tgnewtable));
 	}
 
 	if (TRIGGER_FOR_ROW(trigrec->tgtype))
@@ -1116,7 +1119,9 @@ pg_get_indexdef(PG_FUNCTION_ARGS)
 
 	prettyFlags = PRETTYFLAG_INDENT;
 
-	res = pg_get_indexdef_worker(indexrelid, 0, NULL, false, false, false,
+	res = pg_get_indexdef_worker(indexrelid, 0, NULL,
+								 false, false,
+								 false, false,
 								 prettyFlags, true);
 
 	if (res == NULL)
@@ -1136,8 +1141,10 @@ pg_get_indexdef_ext(PG_FUNCTION_ARGS)
 
 	prettyFlags = pretty ? (PRETTYFLAG_PAREN | PRETTYFLAG_INDENT | PRETTYFLAG_SCHEMA) : PRETTYFLAG_INDENT;
 
-	res = pg_get_indexdef_worker(indexrelid, colno, NULL, colno != 0, false,
-								 false, prettyFlags, true);
+	res = pg_get_indexdef_worker(indexrelid, colno, NULL,
+								 colno != 0, false,
+								 false, false,
+								 prettyFlags, true);
 
 	if (res == NULL)
 		PG_RETURN_NULL();
@@ -1153,10 +1160,13 @@ pg_get_indexdef_ext(PG_FUNCTION_ARGS)
 char *
 pg_get_indexdef_string(Oid indexrelid)
 {
-	return pg_get_indexdef_worker(indexrelid, 0, NULL, false, true, true, 0, false);
+	return pg_get_indexdef_worker(indexrelid, 0, NULL,
+								  false, false,
+								  true, true,
+								  0, false);
 }
 
-/* Internal version that just reports the column definitions */
+/* Internal version that just reports the key-column definitions */
 char *
 pg_get_indexdef_columns(Oid indexrelid, bool pretty)
 {
@@ -1164,7 +1174,9 @@ pg_get_indexdef_columns(Oid indexrelid, bool pretty)
 
 	prettyFlags = pretty ? (PRETTYFLAG_PAREN | PRETTYFLAG_INDENT | PRETTYFLAG_SCHEMA) : PRETTYFLAG_INDENT;
 
-	return pg_get_indexdef_worker(indexrelid, 0, NULL, true, false, false,
+	return pg_get_indexdef_worker(indexrelid, 0, NULL,
+								  true, true,
+								  false, false,
 								  prettyFlags, false);
 }
 
@@ -1177,7 +1189,8 @@ pg_get_indexdef_columns(Oid indexrelid, bool pretty)
 static char *
 pg_get_indexdef_worker(Oid indexrelid, int colno,
 					   const Oid *excludeOps,
-					   bool attrsOnly, bool showTblSpc, bool inherits,
+					   bool attrsOnly, bool keysOnly,
+					   bool showTblSpc, bool inherits,
 					   int prettyFlags, bool missing_ok)
 {
 	/* might want a separate isConstraint parameter later */
@@ -1311,20 +1324,17 @@ pg_get_indexdef_worker(Oid indexrelid, int colno,
 	for (keyno = 0; keyno < idxrec->indnatts; keyno++)
 	{
 		AttrNumber	attnum = idxrec->indkey.values[keyno];
-		int16		opt = indoption->values[keyno];
 		Oid			keycoltype;
 		Oid			keycolcollation;
 
 		/*
-		 * attrsOnly flag is used for building unique-constraint and
-		 * exclusion-constraint error messages. Included attrs are meaningless
-		 * there, so do not include them in the message.
+		 * Ignore non-key attributes if told to.
 		 */
-		if (attrsOnly && keyno >= idxrec->indnkeyatts)
+		if (keysOnly && keyno >= idxrec->indnkeyatts)
 			break;
 
-		/* Report the INCLUDED attributes, if any. */
-		if ((!attrsOnly) && keyno == idxrec->indnkeyatts)
+		/* Otherwise, print INCLUDE to divide key and non-key attrs. */
+		if (!colno && keyno == idxrec->indnkeyatts)
 		{
 			appendStringInfoString(&buf, ") INCLUDE (");
 			sep = "";
@@ -1371,15 +1381,14 @@ pg_get_indexdef_worker(Oid indexrelid, int colno,
 			keycolcollation = exprCollation(indexkey);
 		}
 
-		if (!attrsOnly && (!colno || colno == keyno + 1))
+		/* Print additional decoration for (selected) key columns */
+		if (!attrsOnly && keyno < idxrec->indnkeyatts &&
+			(!colno || colno == keyno + 1))
 		{
-			Oid			indcoll;
-
-			if (keyno >= idxrec->indnkeyatts)
-				continue;
+			int16		opt = indoption->values[keyno];
+			Oid			indcoll = indcollation->values[keyno];
 
 			/* Add collation, if not default for column */
-			indcoll = indcollation->values[keyno];
 			if (OidIsValid(indcoll) && indcoll != keycolcollation)
 				appendStringInfo(&buf, " COLLATE %s",
 								 generate_collation_name((indcoll)));
@@ -2066,6 +2075,8 @@ pg_get_constraintdef_worker(Oid constraintId, bool fullCommand,
 				Datum		val;
 				bool		isnull;
 				Oid			indexId;
+				int			keyatts;
+				HeapTuple	indtup;
 
 				/* Start off the constraint definition */
 				if (conForm->contype == CONSTRAINT_PRIMARY)
@@ -2080,24 +2091,52 @@ pg_get_constraintdef_worker(Oid constraintId, bool fullCommand,
 					elog(ERROR, "null conkey for constraint %u",
 						 constraintId);
 
-				decompile_column_index_array(val, conForm->conrelid, &buf);
+				keyatts = decompile_column_index_array(val, conForm->conrelid, &buf);
 
 				appendStringInfoChar(&buf, ')');
 
-				/* Fetch and build including column list */
-				isnull = true;
-				val = SysCacheGetAttr(CONSTROID, tup,
-									  Anum_pg_constraint_conincluding, &isnull);
-				if (!isnull)
+				indexId = get_constraint_index(constraintId);
+
+				/* Build including column list (from pg_index.indkeys) */
+				indtup = SearchSysCache1(INDEXRELID, ObjectIdGetDatum(indexId));
+				if (!HeapTupleIsValid(indtup))
+					elog(ERROR, "cache lookup failed for index %u", indexId);
+				val = SysCacheGetAttr(INDEXRELID, indtup,
+									  Anum_pg_index_indnatts, &isnull);
+				if (isnull)
+					elog(ERROR, "null indnatts for index %u", indexId);
+				if (DatumGetInt32(val) > keyatts)
 				{
+					Datum		cols;
+					Datum	   *keys;
+					int			nKeys;
+					int			j;
+
 					appendStringInfoString(&buf, " INCLUDE (");
 
-					decompile_column_index_array(val, conForm->conrelid, &buf);
+					cols = SysCacheGetAttr(INDEXRELID, indtup,
+										   Anum_pg_index_indkey, &isnull);
+					if (isnull)
+						elog(ERROR, "null indkey for index %u", indexId);
+
+					deconstruct_array(DatumGetArrayTypeP(cols),
+									  INT2OID, 2, true, 's',
+									  &keys, NULL, &nKeys);
+
+					for (j = keyatts; j < nKeys; j++)
+					{
+						char	   *colName;
+
+						colName = get_attname(conForm->conrelid,
+											  DatumGetInt16(keys[j]), false);
+						if (j > keyatts)
+							appendStringInfoString(&buf, ", ");
+						appendStringInfoString(&buf, quote_identifier(colName));
+					}
 
 					appendStringInfoChar(&buf, ')');
 				}
-
-				indexId = get_constraint_index(constraintId);
+				ReleaseSysCache(indtup);
 
 				/* XXX why do we only print these bits if fullCommand? */
 				if (fullCommand && OidIsValid(indexId))
@@ -2216,6 +2255,7 @@ pg_get_constraintdef_worker(Oid constraintId, bool fullCommand,
 															  false,
 															  false,
 															  false,
+															  false,
 															  prettyFlags,
 															  false));
 				break;
@@ -2242,9 +2282,10 @@ pg_get_constraintdef_worker(Oid constraintId, bool fullCommand,
 
 /*
  * Convert an int16[] Datum into a comma-separated list of column names
- * for the indicated relation; append the list to buf.
+ * for the indicated relation; append the list to buf.  Returns the number
+ * of keys.
  */
-static void
+static int
 decompile_column_index_array(Datum column_index_array, Oid relId,
 							 StringInfo buf)
 {
@@ -2268,6 +2309,8 @@ decompile_column_index_array(Datum column_index_array, Oid relId,
 		else
 			appendStringInfo(buf, ", %s", quote_identifier(colName));
 	}
+
+	return nKeys;
 }
 
 
@@ -2650,14 +2693,39 @@ pg_get_functiondef(PG_FUNCTION_ARGS)
 				/*
 				 * Variables that are marked GUC_LIST_QUOTE were already fully
 				 * quoted by flatten_set_variable_args() before they were put
-				 * into the proconfig array; we mustn't re-quote them or we'll
-				 * make a mess.  Variables that are not so marked should just
-				 * be emitted as simple string literals.  If the variable is
-				 * not known to guc.c, we'll do the latter; this makes it
-				 * unsafe to use GUC_LIST_QUOTE for extension variables.
+				 * into the proconfig array.  However, because the quoting
+				 * rules used there aren't exactly like SQL's, we have to
+				 * break the list value apart and then quote the elements as
+				 * string literals.  (The elements may be double-quoted as-is,
+				 * but we can't just feed them to the SQL parser; it would do
+				 * the wrong thing with elements that are zero-length or
+				 * longer than NAMEDATALEN.)
+				 *
+				 * Variables that are not so marked should just be emitted as
+				 * simple string literals.  If the variable is not known to
+				 * guc.c, we'll do that; this makes it unsafe to use
+				 * GUC_LIST_QUOTE for extension variables.
 				 */
 				if (GetConfigOptionFlags(configitem, true) & GUC_LIST_QUOTE)
-					appendStringInfoString(&buf, pos);
+				{
+					List	   *namelist;
+					ListCell   *lc;
+
+					/* Parse string into list of identifiers */
+					if (!SplitGUCList(pos, ',', &namelist))
+					{
+						/* this shouldn't fail really */
+						elog(ERROR, "invalid list syntax in proconfig item");
+					}
+					foreach(lc, namelist)
+					{
+						char	   *curname = (char *) lfirst(lc);
+
+						simple_quote_literal(&buf, curname);
+						if (lnext(lc))
+							appendStringInfoString(&buf, ", ");
+					}
+				}
 				else
 					simple_quote_literal(&buf, pos);
 				appendStringInfoChar(&buf, '\n');
@@ -2994,13 +3062,14 @@ print_function_trftypes(StringInfo buf, HeapTuple proctup)
 	{
 		int			i;
 
-		appendStringInfoString(buf, "\n TRANSFORM ");
+		appendStringInfoString(buf, " TRANSFORM ");
 		for (i = 0; i < ntypes; i++)
 		{
 			if (i != 0)
 				appendStringInfoString(buf, ", ");
 			appendStringInfo(buf, "FOR TYPE %s", format_type_be(trftypes[i]));
 		}
+		appendStringInfoChar(buf, '\n');
 	}
 }
 
@@ -5255,19 +5324,20 @@ get_select_query_def(Query *query, deparse_context *context,
 }
 
 /*
- * Detect whether query looks like SELECT ... FROM VALUES();
- * if so, return the VALUES RTE.  Otherwise return NULL.
+ * Detect whether query looks like SELECT ... FROM VALUES(),
+ * with no need to rename the output columns of the VALUES RTE.
+ * If so, return the VALUES RTE.  Otherwise return NULL.
  */
 static RangeTblEntry *
-get_simple_values_rte(Query *query)
+get_simple_values_rte(Query *query, TupleDesc resultDesc)
 {
 	RangeTblEntry *result = NULL;
 	ListCell   *lc;
 
 	/*
-	 * We want to return true even if the Query also contains OLD or NEW rule
-	 * RTEs.  So the idea is to scan the rtable and see if there is only one
-	 * inFromCl RTE that is a VALUES RTE.
+	 * We want to detect a match even if the Query also contains OLD or NEW
+	 * rule RTEs.  So the idea is to scan the rtable and see if there is only
+	 * one inFromCl RTE that is a VALUES RTE.
 	 */
 	foreach(lc, query->rtable)
 	{
@@ -5290,23 +5360,36 @@ get_simple_values_rte(Query *query)
 	 * parser/analyze.c will never generate a "bare" VALUES RTE --- they only
 	 * appear inside auto-generated sub-queries with very restricted
 	 * structure.  However, DefineView might have modified the tlist by
-	 * injecting new column aliases; so compare tlist resnames against the
-	 * RTE's names to detect that.
+	 * injecting new column aliases, or we might have some other column
+	 * aliases forced by a resultDesc.  We can only simplify if the RTE's
+	 * column names match the names that get_target_list() would select.
 	 */
 	if (result)
 	{
 		ListCell   *lcn;
+		int			colno;
 
 		if (list_length(query->targetList) != list_length(result->eref->colnames))
 			return NULL;		/* this probably cannot happen */
+		colno = 0;
 		forboth(lc, query->targetList, lcn, result->eref->colnames)
 		{
 			TargetEntry *tle = (TargetEntry *) lfirst(lc);
 			char	   *cname = strVal(lfirst(lcn));
+			char	   *colname;
 
 			if (tle->resjunk)
 				return NULL;	/* this probably cannot happen */
-			if (tle->resname == NULL || strcmp(tle->resname, cname) != 0)
+
+			/* compute name that get_target_list would use for column */
+			colno++;
+			if (resultDesc && colno <= resultDesc->natts)
+				colname = NameStr(TupleDescAttr(resultDesc, colno - 1)->attname);
+			else
+				colname = tle->resname;
+
+			/* does it match the VALUES RTE? */
+			if (colname == NULL || strcmp(colname, cname) != 0)
 				return NULL;	/* column name has been changed */
 		}
 	}
@@ -5334,7 +5417,7 @@ get_basic_select_query(Query *query, deparse_context *context,
 	 * VALUES part.  This reverses what transformValuesClause() did at parse
 	 * time.
 	 */
-	values_rte = get_simple_values_rte(query);
+	values_rte = get_simple_values_rte(query, resultDesc);
 	if (values_rte)
 	{
 		get_values_def(values_rte->values_lists, context);
@@ -9621,6 +9704,14 @@ get_coercion_expr(Node *arg, deparse_context *context,
 		if (!PRETTY_PAREN(context))
 			appendStringInfoChar(buf, ')');
 	}
+
+	/*
+	 * Never emit resulttype(arg) functional notation. A pg_proc entry could
+	 * take precedence, and a resulttype in pg_temp would require schema
+	 * qualification that format_type_with_typemod() would usually omit. We've
+	 * standardized on arg::resulttype, but CAST(arg AS resulttype) notation
+	 * would work fine.
+	 */
 	appendStringInfo(buf, "::%s",
 					 format_type_with_typemod(resulttype, resulttypmod));
 }
@@ -9710,11 +9801,6 @@ get_const_expr(Const *constval, deparse_context *context, int showtype)
 				appendStringInfo(buf, "'%s'", extval);
 				needlabel = true;	/* we must attach a cast */
 			}
-			break;
-
-		case BITOID:
-		case VARBITOID:
-			appendStringInfo(buf, "B'%s'", extval);
 			break;
 
 		case BOOLOID:
@@ -10088,17 +10174,17 @@ get_tablefunc(TableFunc *tf, deparse_context *context, bool showimplicit)
 		forboth(lc1, tf->ns_uris, lc2, tf->ns_names)
 		{
 			Node	   *expr = (Node *) lfirst(lc1);
-			char	   *name = strVal(lfirst(lc2));
+			Value	   *ns_node = (Value *) lfirst(lc2);
 
 			if (!first)
 				appendStringInfoString(buf, ", ");
 			else
 				first = false;
 
-			if (name != NULL)
+			if (ns_node != NULL)
 			{
 				get_rule_expr(expr, context, showimplicit);
-				appendStringInfo(buf, " AS %s", name);
+				appendStringInfo(buf, " AS %s", strVal(ns_node));
 			}
 			else
 			{
@@ -10605,8 +10691,16 @@ get_from_clause_item(Node *jtnode, Query *query, deparse_context *context)
 		/* Yes, it's correct to put alias after the right paren ... */
 		if (j->alias != NULL)
 		{
+			/*
+			 * Note that it's correct to emit an alias clause if and only if
+			 * there was one originally.  Otherwise we'd be converting a named
+			 * join to unnamed or vice versa, which creates semantic
+			 * subtleties we don't want.  However, we might print a different
+			 * alias name than was there originally.
+			 */
 			appendStringInfo(buf, " %s",
-							 quote_identifier(j->alias->aliasname));
+							 quote_identifier(get_rtable_name(j->rtindex,
+															  context)));
 			get_column_alias_list(colinfo, context);
 		}
 	}
@@ -11175,16 +11269,11 @@ generate_function_name(Oid funcid, int nargs, List *argnames, Oid *argtypes,
 	 * Determine whether VARIADIC should be printed.  We must do this first
 	 * since it affects the lookup rules in func_get_detail().
 	 *
-	 * Currently, we always print VARIADIC if the function has a merged
-	 * variadic-array argument.  Note that this is always the case for
-	 * functions taking a VARIADIC argument type other than VARIADIC ANY.
-	 *
-	 * In principle, if VARIADIC wasn't originally specified and the array
-	 * actual argument is deconstructable, we could print the array elements
-	 * separately and not print VARIADIC, thus more nearly reproducing the
-	 * original input.  For the moment that seems like too much complication
-	 * for the benefit, and anyway we do not know whether VARIADIC was
-	 * originally specified if it's a non-ANY type.
+	 * We always print VARIADIC if the function has a merged variadic-array
+	 * argument.  Note that this is always the case for functions taking a
+	 * VARIADIC argument type other than VARIADIC ANY.  If we omitted VARIADIC
+	 * and printed the array elements as separate arguments, the call could
+	 * match a newer non-VARIADIC function.
 	 */
 	if (use_variadic_p)
 	{

@@ -156,7 +156,7 @@ int64		latency_limit = 0;
 char	   *tablespace = NULL;
 char	   *index_tablespace = NULL;
 
-/* random seed used when calling srandom() */
+/* random seed used to initialize base_random_sequence */
 int64		random_seed = -1;
 
 /*
@@ -249,6 +249,9 @@ typedef struct StatsData
 	SimpleStats latency;
 	SimpleStats lag;
 } StatsData;
+
+/* Various random sequences are initialized from this one. */
+static unsigned short base_random_sequence[3];
 
 /*
  * Connection state machine states.
@@ -353,12 +356,12 @@ typedef struct
 } CState;
 
 /*
- * Cache cell for zipfian_random call
+ * Cache cell for random_zipfian call
  */
 typedef struct
 {
 	/* cell keys */
-	double		s;				/* s - parameter of zipfan_random function */
+	double		s;				/* s - parameter of random_zipfian function */
 	int64		n;				/* number of elements in range (max - min + 1) */
 
 	double		harmonicn;		/* generalizedHarmonicNumber(n, s) */
@@ -692,7 +695,14 @@ gotdigits:
 	return ((sign < 0) ? -result : result);
 }
 
-/* random number generator: uniform distribution from min to max inclusive */
+/*
+ * Random number generator: uniform distribution from min to max inclusive.
+ *
+ * Although the limits are expressed as int64, you can't generate the full
+ * int64 range in one call, because the difference of the limits mustn't
+ * overflow int64.  In practice it's unwise to ask for more than an int32
+ * range, because of the limited precision of pg_erand48().
+ */
 static int64
 getrand(TState *thread, int64 min, int64 max)
 {
@@ -763,7 +773,7 @@ getGaussianRand(TState *thread, int64 min, int64 max, double parameter)
 		 * pg_erand48 generates [0,1), but for the basic version of the
 		 * Box-Muller transform the two uniformly distributed random numbers
 		 * are expected in (0, 1] (see
-		 * http://en.wikipedia.org/wiki/Box_muller)
+		 * https://en.wikipedia.org/wiki/Box-Muller_transform)
 		 */
 		double		rand1 = 1.0 - pg_erand48(thread->random_state);
 		double		rand2 = 1.0 - pg_erand48(thread->random_state);
@@ -1153,7 +1163,7 @@ doConnect(void)
 	if (PQstatus(conn) == CONNECTION_BAD)
 	{
 		fprintf(stderr, "connection to database \"%s\" failed:\n%s",
-				dbName, PQerrorMessage(conn));
+				PQdb(conn), PQerrorMessage(conn));
 		PQfinish(conn);
 		return NULL;
 	}
@@ -1312,6 +1322,7 @@ makeVariableValue(Variable *var)
  * "src/bin/pgbench/exprscan.l".  Also see parseVariable(), below.
  *
  * Note: this static function is copied from "src/bin/psql/variables.c"
+ * but changed to disallow variable names starting with a digit.
  */
 static bool
 valid_variable_name(const char *name)
@@ -1322,6 +1333,15 @@ valid_variable_name(const char *name)
 	if (*ptr == '\0')
 		return false;
 
+	/* must not start with [0-9] */
+	if (IS_HIGHBIT_SET(*ptr) ||
+		strchr("ABCDEFGHIJKLMNOPQRSTUVWXYZ" "abcdefghijklmnopqrstuvwxyz"
+			   "_", *ptr) != NULL)
+		ptr++;
+	else
+		return false;
+
+	/* remaining characters can include [0-9] */
 	while (*ptr)
 	{
 		if (IS_HIGHBIT_SET(*ptr) ||
@@ -1443,23 +1463,27 @@ putVariableInt(CState *st, const char *context, char *name, int64 value)
  *
  * "sql" points at a colon.  If what follows it looks like a valid
  * variable name, return a malloc'd string containing the variable name,
- * and set *eaten to the number of characters consumed.
+ * and set *eaten to the number of characters consumed (including the colon).
  * Otherwise, return NULL.
  */
 static char *
 parseVariable(const char *sql, int *eaten)
 {
-	int			i = 0;
+	int			i = 1;			/* starting at 1 skips the colon */
 	char	   *name;
 
-	do
-	{
+	/* keep this logic in sync with valid_variable_name() */
+	if (IS_HIGHBIT_SET(sql[i]) ||
+		strchr("ABCDEFGHIJKLMNOPQRSTUVWXYZ" "abcdefghijklmnopqrstuvwxyz"
+			   "_", sql[i]) != NULL)
 		i++;
-	} while (IS_HIGHBIT_SET(sql[i]) ||
-			 strchr("ABCDEFGHIJKLMNOPQRSTUVWXYZ" "abcdefghijklmnopqrstuvwxyz"
-					"_0123456789", sql[i]) != NULL);
-	if (i == 1)
-		return NULL;			/* no valid variable name chars */
+	else
+		return NULL;
+
+	while (IS_HIGHBIT_SET(sql[i]) ||
+		   strchr("ABCDEFGHIJKLMNOPQRSTUVWXYZ" "abcdefghijklmnopqrstuvwxyz"
+				  "_0123456789", sql[i]) != NULL)
+		i++;
 
 	name = pg_malloc(i);
 	memcpy(name, &sql[1], i - 1);
@@ -1607,9 +1631,9 @@ coerceToInt(PgBenchValue *pval, int64 *ival)
 	}
 	else if (pval->type == PGBT_DOUBLE)
 	{
-		double		dval = pval->u.dval;
+		double		dval = rint(pval->u.dval);
 
-		if (dval < PG_INT64_MIN || PG_INT64_MAX < dval)
+		if (isnan(dval) || !FLOAT8_FITS_IN_INT64(dval))
 		{
 			fprintf(stderr, "double to int overflow for %f\n", dval);
 			return false;
@@ -4700,12 +4724,14 @@ printResults(TState *threads, StatsData *total, instr_time total_time,
 	}
 }
 
-/* call srandom based on some seed. NULL triggers the default behavior. */
+/*
+ * Set up a random seed according to seed parameter (NULL means default),
+ * and initialize base_random_sequence for use in initializing other sequences.
+ */
 static bool
 set_random_seed(const char *seed)
 {
-	/* srandom expects an unsigned int */
-	unsigned int iseed;
+	uint64		iseed;
 
 	if (seed == NULL || strcmp(seed, "time") == 0)
 	{
@@ -4713,7 +4739,7 @@ set_random_seed(const char *seed)
 		instr_time	now;
 
 		INSTR_TIME_SET_CURRENT(now);
-		iseed = (unsigned int) INSTR_TIME_GET_MICROSEC(now);
+		iseed = (uint64) INSTR_TIME_GET_MICROSEC(now);
 	}
 	else if (strcmp(seed, "rand") == 0)
 	{
@@ -4730,23 +4756,30 @@ set_random_seed(const char *seed)
 	}
 	else
 	{
-		/* parse seed unsigned int value */
+		/* parse unsigned-int seed value */
+		unsigned long ulseed;
 		char		garbage;
 
-		if (sscanf(seed, "%u%c", &iseed, &garbage) != 1)
+		/* Don't try to use UINT64_FORMAT here; it might not work for sscanf */
+		if (sscanf(seed, "%lu%c", &ulseed, &garbage) != 1)
 		{
 			fprintf(stderr,
 					"unrecognized random seed option \"%s\": expecting an unsigned integer, \"time\" or \"rand\"\n",
 					seed);
 			return false;
 		}
+		iseed = (uint64) ulseed;
 	}
 
 	if (seed != NULL)
-		fprintf(stderr, "setting random seed to %u\n", iseed);
-	srandom(iseed);
-	/* no precision loss: 32 bit unsigned int cast to 64 bit int */
+		fprintf(stderr, "setting random seed to " UINT64_FORMAT "\n", iseed);
 	random_seed = iseed;
+
+	/* Fill base_random_sequence with low-order bits of seed */
+	base_random_sequence[0] = iseed & 0xFFFF;
+	base_random_sequence[1] = (iseed >> 16) & 0xFFFF;
+	base_random_sequence[2] = (iseed >> 32) & 0xFFFF;
+
 	return true;
 }
 
@@ -5375,13 +5408,6 @@ main(int argc, char **argv)
 	if (con == NULL)
 		exit(1);
 
-	if (PQstatus(con) == CONNECTION_BAD)
-	{
-		fprintf(stderr, "connection to database \"%s\" failed\n", dbName);
-		fprintf(stderr, "%s", PQerrorMessage(con));
-		exit(1);
-	}
-
 	if (internal_script_used)
 	{
 		/*
@@ -5444,10 +5470,9 @@ main(int argc, char **argv)
 	/* set default seed for hash functions */
 	if (lookupVariable(&state[0], "default_seed") == NULL)
 	{
-		uint64		seed = ((uint64) (random() & 0xFFFF) << 48) |
-		((uint64) (random() & 0xFFFF) << 32) |
-		((uint64) (random() & 0xFFFF) << 16) |
-		(uint64) (random() & 0xFFFF);
+		uint64		seed =
+		((uint64) pg_jrand48(base_random_sequence) & 0xFFFFFFFF) |
+		(((uint64) pg_jrand48(base_random_sequence) & 0xFFFFFFFF) << 32);
 
 		for (i = 0; i < nclients; i++)
 			if (!putVariableInt(&state[i], "startup", "default_seed", (int64) seed))
@@ -5491,9 +5516,12 @@ main(int argc, char **argv)
 		thread->state = &state[nclients_dealt];
 		thread->nstate =
 			(nclients - nclients_dealt + nthreads - i - 1) / (nthreads - i);
-		thread->random_state[0] = random();
-		thread->random_state[1] = random();
-		thread->random_state[2] = random();
+		thread->random_state[0] = (unsigned short)
+			(pg_jrand48(base_random_sequence) & 0xFFFF);
+		thread->random_state[1] = (unsigned short)
+			(pg_jrand48(base_random_sequence) & 0xFFFF);
+		thread->random_state[2] = (unsigned short)
+			(pg_jrand48(base_random_sequence) & 0xFFFF);
 		thread->logfile = NULL; /* filled in later */
 		thread->latency_late = 0;
 		thread->zipf_cache.nb_cells = 0;
@@ -5743,6 +5771,10 @@ threadRun(void *arg)
 				break;
 			}
 		}
+
+		/* under throttling we may have finished the last client above */
+		if (remains == 0)
+			break;
 
 		/* also wake up to print the next progress report on time */
 		if (progress && min_usec > 0 && thread->tid == 0)

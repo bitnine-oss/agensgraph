@@ -119,8 +119,9 @@ static void ExplainModifyTarget(ModifyTable *plan, ExplainState *es);
 static void ExplainTargetRel(Plan *plan, Index rti, ExplainState *es);
 static void show_modifytable_info(ModifyTableState *mtstate, List *ancestors,
 					  ExplainState *es);
-static void ExplainMemberNodes(PlanState **planstates, int nsubnodes,
-				   int nplans, List *ancestors, ExplainState *es);
+static void ExplainMemberNodes(PlanState **planstates, int nplans,
+				   List *ancestors, ExplainState *es);
+static void ExplainMissingMembers(int nplans, int nchildren, ExplainState *es);
 static void ExplainSubPlans(List *plans, List *ancestors,
 				const char *relationship, ExplainState *es);
 static void ExplainCustomChildren(CustomScanState *css,
@@ -564,9 +565,8 @@ ExplainOnePlan(PlannedStmt *plannedstmt, IntoClause *into, ExplainState *es,
 	 * depending on build options.  Might want to separate that out from COSTS
 	 * at a later stage.
 	 */
-	if (queryDesc->estate->es_jit && es->costs &&
-		queryDesc->estate->es_jit->created_functions > 0)
-		ExplainPrintJIT(es, queryDesc);
+	if (es->costs)
+		ExplainPrintJITSummary(es, queryDesc);
 
 	/*
 	 * Close down the query and free resources.  Include time for this in the
@@ -690,51 +690,128 @@ ExplainPrintTriggers(ExplainState *es, QueryDesc *queryDesc)
 }
 
 /*
- * ExplainPrintJIT -
- *	  Append information about JITing to es->str.
+ * ExplainPrintJITSummary -
+ *    Print summarized JIT instrumentation from leader and workers
  */
 void
-ExplainPrintJIT(ExplainState *es, QueryDesc *queryDesc)
+ExplainPrintJITSummary(ExplainState *es, QueryDesc *queryDesc)
 {
-	JitContext *jc = queryDesc->estate->es_jit;
+	JitInstrumentation ji = {0};
+
+	if (!(queryDesc->estate->es_jit_flags & PGJIT_PERFORM))
+		return;
+
+	/*
+	 * Work with a copy instead of modifying the leader state, since this
+	 * function may be called twice
+	 */
+	if (queryDesc->estate->es_jit)
+		InstrJitAgg(&ji, &queryDesc->estate->es_jit->instr);
+
+	/* If this process has done JIT in parallel workers, merge stats */
+	if (queryDesc->estate->es_jit_worker_instr)
+		InstrJitAgg(&ji, queryDesc->estate->es_jit_worker_instr);
+
+	ExplainPrintJIT(es, queryDesc->estate->es_jit_flags, &ji, -1);
+}
+
+/*
+ * ExplainPrintJIT -
+ *	  Append information about JITing to es->str.
+ *
+ * Can be used to print the JIT instrumentation of the backend (worker_num =
+ * -1) or that of a specific worker (worker_num = ...).
+ */
+void
+ExplainPrintJIT(ExplainState *es, int jit_flags,
+				JitInstrumentation *ji, int worker_num)
+{
+	instr_time	total_time;
+	bool		for_workers = (worker_num >= 0);
+
+	/* don't print information if no JITing happened */
+	if (!ji || ji->created_functions == 0)
+		return;
+
+	/* calculate total time */
+	INSTR_TIME_SET_ZERO(total_time);
+	INSTR_TIME_ADD(total_time, ji->generation_counter);
+	INSTR_TIME_ADD(total_time, ji->inlining_counter);
+	INSTR_TIME_ADD(total_time, ji->optimization_counter);
+	INSTR_TIME_ADD(total_time, ji->emission_counter);
 
 	ExplainOpenGroup("JIT", "JIT", true, es);
 
+	/* for higher density, open code the text output format */
 	if (es->format == EXPLAIN_FORMAT_TEXT)
 	{
+		appendStringInfoSpaces(es->str, es->indent * 2);
+		if (for_workers)
+			appendStringInfo(es->str, "JIT for worker %u:\n", worker_num);
+		else
+			appendStringInfo(es->str, "JIT:\n");
 		es->indent += 1;
-		appendStringInfo(es->str, "JIT:\n");
-	}
 
-	ExplainPropertyInteger("Functions", NULL, jc->created_functions, es);
-	if (es->analyze && es->timing)
-		ExplainPropertyFloat("Generation Time", "ms",
-							 1000.0 * INSTR_TIME_GET_DOUBLE(jc->generation_counter),
-							 3, es);
+		ExplainPropertyInteger("Functions", NULL, ji->created_functions, es);
 
-	ExplainPropertyBool("Inlining", jc->flags & PGJIT_INLINE, es);
+		appendStringInfoSpaces(es->str, es->indent * 2);
+		appendStringInfo(es->str, "Options: %s %s, %s %s, %s %s, %s %s\n",
+						 "Inlining", jit_flags & PGJIT_INLINE ? "true" : "false",
+						 "Optimization", jit_flags & PGJIT_OPT3 ? "true" : "false",
+						 "Expressions", jit_flags & PGJIT_EXPR ? "true" : "false",
+						 "Deforming", jit_flags & PGJIT_DEFORM ? "true" : "false");
 
-	if (es->analyze && es->timing)
-		ExplainPropertyFloat("Inlining Time", "ms",
-							 1000.0 * INSTR_TIME_GET_DOUBLE(jc->inlining_counter),
-							 3, es);
+		if (es->analyze && es->timing)
+		{
+			appendStringInfoSpaces(es->str, es->indent * 2);
+			appendStringInfo(es->str,
+							 "Timing: %s %.3f ms, %s %.3f ms, %s %.3f ms, %s %.3f ms, %s %.3f ms\n",
+							 "Generation", 1000.0 * INSTR_TIME_GET_DOUBLE(ji->generation_counter),
+							 "Inlining", 1000.0 * INSTR_TIME_GET_DOUBLE(ji->inlining_counter),
+							 "Optimization", 1000.0 * INSTR_TIME_GET_DOUBLE(ji->optimization_counter),
+							 "Emission", 1000.0 * INSTR_TIME_GET_DOUBLE(ji->emission_counter),
+							 "Total", 1000.0 * INSTR_TIME_GET_DOUBLE(total_time));
+		}
 
-	ExplainPropertyBool("Optimization", jc->flags & PGJIT_OPT3, es);
-	if (es->analyze && es->timing)
-		ExplainPropertyFloat("Optimization Time", "ms",
-							 1000.0 * INSTR_TIME_GET_DOUBLE(jc->optimization_counter),
-							 3, es);
-
-	if (es->analyze && es->timing)
-		ExplainPropertyFloat("Emission Time", "ms",
-							 1000.0 * INSTR_TIME_GET_DOUBLE(jc->emission_counter),
-							 3, es);
-
-	ExplainCloseGroup("JIT", "JIT", true, es);
-	if (es->format == EXPLAIN_FORMAT_TEXT)
-	{
 		es->indent -= 1;
 	}
+	else
+	{
+		ExplainPropertyInteger("Worker Number", NULL, worker_num, es);
+		ExplainPropertyInteger("Functions", NULL, ji->created_functions, es);
+
+		ExplainOpenGroup("Options", "Options", true, es);
+		ExplainPropertyBool("Inlining", jit_flags & PGJIT_INLINE, es);
+		ExplainPropertyBool("Optimization", jit_flags & PGJIT_OPT3, es);
+		ExplainPropertyBool("Expressions", jit_flags & PGJIT_EXPR, es);
+		ExplainPropertyBool("Deforming", jit_flags & PGJIT_DEFORM, es);
+		ExplainCloseGroup("Options", "Options", true, es);
+
+		if (es->analyze && es->timing)
+		{
+			ExplainOpenGroup("Timing", "Timing", true, es);
+
+			ExplainPropertyFloat("Generation", "ms",
+								 1000.0 * INSTR_TIME_GET_DOUBLE(ji->generation_counter),
+								 3, es);
+			ExplainPropertyFloat("Inlining", "ms",
+								 1000.0 * INSTR_TIME_GET_DOUBLE(ji->inlining_counter),
+								 3, es);
+			ExplainPropertyFloat("Optimization", "ms",
+								 1000.0 * INSTR_TIME_GET_DOUBLE(ji->optimization_counter),
+								 3, es);
+			ExplainPropertyFloat("Emission", "ms",
+								 1000.0 * INSTR_TIME_GET_DOUBLE(ji->emission_counter),
+								 3, es);
+			ExplainPropertyFloat("Total", "ms",
+								 1000.0 * INSTR_TIME_GET_DOUBLE(total_time),
+								 3, es);
+
+			ExplainCloseGroup("Timing", "Timing", true, es);
+		}
+	}
+
+	ExplainCloseGroup("JIT", "JIT", true, es);
 }
 
 /*
@@ -1279,7 +1356,8 @@ ExplainNode(PlanState *planstate, List *ancestors,
 				explain_get_index_name(bitmapindexscan->indexid);
 
 				if (es->format == EXPLAIN_FORMAT_TEXT)
-					appendStringInfo(es->str, " on %s", indexname);
+					appendStringInfo(es->str, " on %s",
+									 quote_identifier(indexname));
 				else
 					ExplainPropertyText("Index Name", indexname, es);
 			}
@@ -1603,6 +1681,25 @@ ExplainNode(PlanState *planstate, List *ancestors,
 					ExplainPropertyInteger("Workers Launched", NULL,
 										   nworkers, es);
 				}
+
+				/*
+				 * Print per-worker Jit instrumentation. Use same conditions
+				 * as for the leader's JIT instrumentation, see comment there.
+				 */
+				if (es->costs && es->verbose &&
+					outerPlanState(planstate)->worker_jit_instrument)
+				{
+					PlanState *child = outerPlanState(planstate);
+					int			n;
+					SharedJitInstrumentation *w = child->worker_jit_instrument;
+
+					for (n = 0; n < w->num_workers; ++n)
+					{
+						ExplainPrintJIT(es, child->state->es_jit_flags,
+										&w->jit_instr[n], n);
+					}
+				}
+
 				if (gather->single_copy || es->format != EXPLAIN_FORMAT_TEXT)
 					ExplainPropertyBool("Single Copy", gather->single_copy, es);
 			}
@@ -1882,6 +1979,30 @@ ExplainNode(PlanState *planstate, List *ancestors,
 			ExplainCloseGroup("Workers", "Workers", false, es);
 	}
 
+	/*
+	 * If partition pruning was done during executor initialization, the
+	 * number of child plans we'll display below will be less than the number
+	 * of subplans that was specified in the plan.  To make this a bit less
+	 * mysterious, emit an indication that this happened.  Note that this
+	 * field is emitted now because we want it to be a property of the parent
+	 * node; it *cannot* be emitted within the Plans sub-node we'll open next.
+	 */
+	switch (nodeTag(plan))
+	{
+		case T_Append:
+			ExplainMissingMembers(((AppendState *) planstate)->as_nplans,
+								  list_length(((Append *) plan)->appendplans),
+								  es);
+			break;
+		case T_MergeAppend:
+			ExplainMissingMembers(((MergeAppendState *) planstate)->ms_nplans,
+								  list_length(((MergeAppend *) plan)->mergeplans),
+								  es);
+			break;
+		default:
+			break;
+	}
+
 	/* Get ready to display the child plans */
 	haschildren = planstate->initPlan ||
 		outerPlanState(planstate) ||
@@ -1923,31 +2044,26 @@ ExplainNode(PlanState *planstate, List *ancestors,
 		case T_ModifyTable:
 			ExplainMemberNodes(((ModifyTableState *) planstate)->mt_plans,
 							   ((ModifyTableState *) planstate)->mt_nplans,
-							   list_length(((ModifyTable *) plan)->plans),
 							   ancestors, es);
 			break;
 		case T_Append:
 			ExplainMemberNodes(((AppendState *) planstate)->appendplans,
 							   ((AppendState *) planstate)->as_nplans,
-							   list_length(((Append *) plan)->appendplans),
 							   ancestors, es);
 			break;
 		case T_MergeAppend:
 			ExplainMemberNodes(((MergeAppendState *) planstate)->mergeplans,
 							   ((MergeAppendState *) planstate)->ms_nplans,
-							   list_length(((MergeAppend *) plan)->mergeplans),
 							   ancestors, es);
 			break;
 		case T_BitmapAnd:
 			ExplainMemberNodes(((BitmapAndState *) planstate)->bitmapplans,
 							   ((BitmapAndState *) planstate)->nplans,
-							   list_length(((BitmapAnd *) plan)->bitmapplans),
 							   ancestors, es);
 			break;
 		case T_BitmapOr:
 			ExplainMemberNodes(((BitmapOrState *) planstate)->bitmapplans,
 							   ((BitmapOrState *) planstate)->nplans,
-							   list_length(((BitmapOr *) plan)->bitmapplans),
 							   ancestors, es);
 			break;
 		case T_SubqueryScan:
@@ -2829,6 +2945,10 @@ show_eval_params(Bitmapset *bms_params, ExplainState *es)
  *
  * We allow plugins to get control here so that plans involving hypothetical
  * indexes can be explained.
+ *
+ * Note: names returned by this function should be "raw"; the caller will
+ * apply quoting if needed.  Formerly the convention was to do quoting here,
+ * but we don't want that in non-text output formats.
  */
 static const char *
 explain_get_index_name(Oid indexId)
@@ -2841,11 +2961,10 @@ explain_get_index_name(Oid indexId)
 		result = NULL;
 	if (result == NULL)
 	{
-		/* default behavior: look in the catalogs and quote it */
+		/* default behavior: look it up in the catalogs */
 		result = get_rel_name(indexId);
 		if (result == NULL)
 			elog(ERROR, "cache lookup failed for index %u", indexId);
-		result = quote_identifier(result);
 	}
 	return result;
 }
@@ -2987,7 +3106,7 @@ ExplainIndexScanDetails(Oid indexid, ScanDirection indexorderdir,
 	{
 		if (ScanDirectionIsBackward(indexorderdir))
 			appendStringInfoString(es->str, " Backward");
-		appendStringInfo(es->str, " using %s", indexname);
+		appendStringInfo(es->str, " using %s", quote_identifier(indexname));
 	}
 	else
 	{
@@ -3196,7 +3315,7 @@ show_modifytable_info(ModifyTableState *mtstate, List *ancestors,
 	/* Should we explicitly label target relations? */
 	labeltargets = (mtstate->mt_nplans > 1 ||
 					(mtstate->mt_nplans == 1 &&
-					 mtstate->resultRelInfo->ri_RangeTableIndex != node->nominalRelation));
+					 mtstate->resultRelInfo[0].ri_RangeTableIndex != node->nominalRelation));
 
 	if (labeltargets)
 		ExplainOpenGroup("Target Tables", "Target Tables", false, es);
@@ -3320,30 +3439,31 @@ show_modifytable_info(ModifyTableState *mtstate, List *ancestors,
  *
  * The ancestors list should already contain the immediate parent of these
  * plans.
-*
-* nsubnodes indicates the number of items in the planstates array.
-* nplans indicates the original number of subnodes in the Plan, some of these
-* may have been pruned by the run-time pruning code.
  */
 static void
-ExplainMemberNodes(PlanState **planstates, int nsubnodes, int nplans,
+ExplainMemberNodes(PlanState **planstates, int nplans,
 				   List *ancestors, ExplainState *es)
 {
 	int			j;
 
-	/*
-	 * The number of subnodes being lower than the number of subplans that was
-	 * specified in the plan means that some subnodes have been ignored per
-	 * instruction for the partition pruning code during the executor
-	 * initialization.  To make this a bit less mysterious, we'll indicate
-	 * here that this has happened.
-	 */
-	if (nsubnodes < nplans)
-		ExplainPropertyInteger("Subplans Removed", NULL, nplans - nsubnodes, es);
-
-	for (j = 0; j < nsubnodes; j++)
+	for (j = 0; j < nplans; j++)
 		ExplainNode(planstates[j], ancestors,
 					"Member", NULL, es);
+}
+
+/*
+ * Report about any pruned subnodes of an Append or MergeAppend node.
+ *
+ * nplans indicates the number of live subplans.
+ * nchildren indicates the original number of subnodes in the Plan;
+ * some of these may have been pruned by the run-time pruning code.
+ */
+static void
+ExplainMissingMembers(int nplans, int nchildren, ExplainState *es)
+{
+	if (nplans < nchildren || es->format != EXPLAIN_FORMAT_TEXT)
+		ExplainPropertyInteger("Subplans Removed", NULL,
+							   nchildren - nplans, es);
 }
 
 /*
@@ -3519,7 +3639,7 @@ ExplainPropertyListNested(const char *qlabel, List *data, ExplainState *es)
  * If "numeric" is true, the value is a number (or other value that
  * doesn't need quoting in JSON).
  *
- * If unit is is non-NULL the text format will display it after the value.
+ * If unit is non-NULL the text format will display it after the value.
  *
  * This usually should not be invoked directly, but via one of the datatype
  * specific routines ExplainPropertyText, ExplainPropertyInteger, etc.

@@ -290,6 +290,7 @@ typedef struct pgDataValue
 	const char *value;			/* data value, without zero-termination */
 } PGdataValue;
 
+/* Host address type enum for struct pg_conn_host */
 typedef enum pg_conn_host_type
 {
 	CHT_HOST_NAME,
@@ -298,21 +299,20 @@ typedef enum pg_conn_host_type
 } pg_conn_host_type;
 
 /*
- * pg_conn_host stores all information about one of possibly several hosts
- * mentioned in the connection string.  Derived by splitting the pghost
- * on the comma character and then parsing each segment.
+ * pg_conn_host stores all information about each of possibly several hosts
+ * mentioned in the connection string.  Most fields are derived by splitting
+ * the relevant connection parameter (e.g., pghost) at commas.
  */
 typedef struct pg_conn_host
 {
-	pg_conn_host_type type;		/* type of host */
+	pg_conn_host_type type;		/* type of host address */
 	char	   *host;			/* host name or socket path */
-	char	   *hostaddr;		/* host address */
-	char	   *port;			/* port number for this host; if not NULL,
-								 * overrides the PGConn's pgport */
+	char	   *hostaddr;		/* host numeric IP address */
+	char	   *port;			/* port number (always provided) */
 	char	   *password;		/* password for this host, read from the
-								 * password file.  only set if the PGconn's
-								 * pgpass field is NULL. */
-	struct addrinfo *addrlist;	/* list of possible backend addresses */
+								 * password file; NULL if not sought or not
+								 * found in password file. */
+	struct addrinfo *was_addrlist;	/* dummy for ABI compatibility */
 } pg_conn_host;
 
 /*
@@ -325,12 +325,13 @@ struct pg_conn
 	char	   *pghost;			/* the machine on which the server is running,
 								 * or a path to a UNIX-domain socket, or a
 								 * comma-separated list of machines and/or
-								 * paths, optionally with port suffixes; if
-								 * NULL, use DEFAULT_PGSOCKET_DIR */
+								 * paths; if NULL, use DEFAULT_PGSOCKET_DIR */
 	char	   *pghostaddr;		/* the numeric IP address of the machine on
-								 * which the server is running.  Takes
-								 * precedence over above. */
-	char	   *pgport;			/* the server's communication port number */
+								 * which the server is running, or a
+								 * comma-separated list of same.  Takes
+								 * precedence over pghost. */
+	char	   *pgport;			/* the server's communication port number, or
+								 * a comma-separated list of ports */
 	char	   *pgtty;			/* tty on which the backend messages is
 								 * displayed (OBSOLETE, NOT USED) */
 	char	   *connect_timeout;	/* connection timeout (numeric string) */
@@ -349,7 +350,6 @@ struct pg_conn
 										 * retransmits */
 	char	   *keepalives_count;	/* maximum number of TCP keepalive
 									 * retransmits */
-	char	   *scram_channel_binding;	/* SCRAM channel binding type */
 	char	   *sslmode;		/* SSL mode (require,prefer,allow,disable) */
 	char	   *sslcompression; /* SSL compression (0 or 1) */
 	char	   *sslkey;			/* client key filename */
@@ -357,10 +357,9 @@ struct pg_conn
 	char	   *sslrootcert;	/* root certificate filename */
 	char	   *sslcrl;			/* certificate revocation list filename */
 	char	   *requirepeer;	/* required peer credentials for local sockets */
-
-#if defined(ENABLE_GSS) || defined(ENABLE_SSPI)
 	char	   *krbsrvname;		/* Kerberos service name */
-#endif
+	char	   *gsslib;			/* What GSS library to use ("gssapi" or
+								 * "sspi") */
 
 	/* Type of connection to make.  Possible values: any, read-write. */
 	char	   *target_session_attrs;
@@ -393,9 +392,9 @@ struct pg_conn
 	PGnotify   *notifyTail;		/* newest unreported Notify msg */
 
 	/* Support for multiple hosts in connection string */
-	int			nconnhost;		/* # of possible hosts */
-	int			whichhost;		/* host we're currently considering */
-	pg_conn_host *connhost;		/* details about each possible host */
+	int			nconnhost;		/* # of hosts named in conn string */
+	int			whichhost;		/* host we're currently trying/connected to */
+	pg_conn_host *connhost;		/* details about each named host */
 
 	/* Connection data */
 	pgsocket	sock;			/* FD for socket, PGINVALID_SOCKET if
@@ -407,11 +406,12 @@ struct pg_conn
 	int			agversion;		/* server version, e.g. 20101 for 2.1.1 */
 	bool		auth_req_received;	/* true if any type of auth req received */
 	bool		password_needed;	/* true if server demanded a password */
-	bool		pgpassfile_used;	/* true if password is from pgpassfile */
 	bool		sigpipe_so;		/* have we masked SIGPIPE via SO_NOSIGPIPE? */
 	bool		sigpipe_flag;	/* can we mask SIGPIPE via MSG_NOSIGNAL? */
 
 	/* Transient state needed while establishing connection */
+	bool		try_next_addr;	/* time to advance to next address/host? */
+	bool		try_next_host;	/* time to advance to next connhost[]? */
 	struct addrinfo *addr_cur;	/* backend address currently being tried */
 	PGSetenvStatusType setenv_state;	/* for 2.0 protocol only */
 	const PQEnvironmentOption *next_eo;
@@ -480,10 +480,6 @@ struct pg_conn
 #endif
 
 #ifdef ENABLE_SSPI
-#ifdef ENABLE_GSS
-	char	   *gsslib;			/* What GSS library to use ("gssapi" or
-								 * "sspi") */
-#endif
 	CredHandle *sspicred;		/* SSPI credentials handle */
 	CtxtHandle *sspictx;		/* SSPI context */
 	char	   *sspitarget;		/* SSPI target name */
@@ -496,6 +492,10 @@ struct pg_conn
 
 	/* Buffer for receiving various parts of messages */
 	PQExpBufferData workBuffer; /* expansible string */
+
+	/* Placed at the end, in this branch, to minimize ABI breakage */
+	struct addrinfo *addrlist;	/* list of addresses for current connhost */
+	int			addrlist_family;	/* needed to know how to free addrlist */
 };
 
 /* PGcancel stores all data necessary to cancel a connection. A copy of this
@@ -717,21 +717,19 @@ extern bool pgtls_read_pending(PGconn *conn);
 extern ssize_t pgtls_write(PGconn *conn, const void *ptr, size_t len);
 
 /*
- * Get the TLS finish message sent during last handshake.
- *
- * This information is useful for callers doing channel binding during
- * authentication.
- */
-extern char *pgtls_get_finished(PGconn *conn, size_t *len);
-
-/*
  * Get the hash of the server certificate, for SCRAM channel binding type
  * tls-server-end-point.
  *
  * NULL is sent back to the caller in the event of an error, with an
  * error message for the caller to consume.
+ *
+ * This is not supported with old versions of OpenSSL that don't have
+ * the X509_get_signature_nid() function.
  */
+#if defined(USE_OPENSSL) && defined(HAVE_X509_GET_SIGNATURE_NID)
+#define HAVE_PGTLS_GET_PEER_CERTIFICATE_HASH
 extern char *pgtls_get_peer_certificate_hash(PGconn *conn, size_t *len);
+#endif
 
 /*
  * Verify that the server certificate matches the host name we connected to.

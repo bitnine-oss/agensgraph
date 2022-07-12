@@ -153,8 +153,8 @@ ALTER TABLE ft_pg_type SET WITH OIDS;
 -- ===================================================================
 -- tests for validator
 -- ===================================================================
--- requiressl, krbsrvname and gsslib are omitted because they depend on
--- configure options
+-- requiressl and some other parameters are omitted because
+-- valid values for them depend on configure options
 ALTER SERVER testserver1 OPTIONS (
 	use_remote_estimate 'false',
 	updatable 'true',
@@ -178,10 +178,10 @@ ALTER SERVER testserver1 OPTIONS (
 	sslcert 'value',
 	sslkey 'value',
 	sslrootcert 'value',
-	sslcrl 'value'
+	sslcrl 'value',
 	--requirepeer 'value',
-	-- krbsrvname 'value',
-	-- gsslib 'value',
+	krbsrvname 'value',
+	gsslib 'value'
 	--replication 'value'
 );
 
@@ -674,6 +674,16 @@ select count(*) from (select c5, count(c1) from ft1 group by c5, sqrt(c2) having
 explain (verbose, costs off)
 select sum(c1) from ft1 group by c2 having avg(c1 * (random() <= 1)::int) > 100 order by 1;
 
+-- Remote aggregate in combination with a local Param (for the output
+-- of an initplan) can be trouble, per bug #15781
+explain (verbose, costs off)
+select exists(select 1 from pg_enum), sum(c1) from ft1;
+select exists(select 1 from pg_enum), sum(c1) from ft1;
+
+explain (verbose, costs off)
+select exists(select 1 from pg_enum), sum(c1) from ft1 group by 1;
+select exists(select 1 from pg_enum), sum(c1) from ft1 group by 1;
+
 
 -- Testing ORDER BY, DISTINCT, FILTER, Ordered-sets and VARIADIC within aggregates
 
@@ -883,6 +893,32 @@ explain (verbose, costs off)
 select c2, sum from "S 1"."T 1" t1, lateral (select sum(t2.c1 + t1."C 1") sum from ft2 t2 group by t2.c1) qry where t1.c2 * 2 = qry.sum and t1.c2 < 3 and t1."C 1" < 100 order by 1;
 select c2, sum from "S 1"."T 1" t1, lateral (select sum(t2.c1 + t1."C 1") sum from ft2 t2 group by t2.c1) qry where t1.c2 * 2 = qry.sum and t1.c2 < 3 and t1."C 1" < 100 order by 1;
 reset enable_hashagg;
+
+-- bug #15613: bad plan for foreign table scan with lateral reference
+EXPLAIN (VERBOSE, COSTS OFF)
+SELECT ref_0.c2, subq_1.*
+FROM
+    "S 1"."T 1" AS ref_0,
+    LATERAL (
+        SELECT ref_0."C 1" c1, subq_0.*
+        FROM (SELECT ref_0.c2, ref_1.c3
+              FROM ft1 AS ref_1) AS subq_0
+             RIGHT JOIN ft2 AS ref_3 ON (subq_0.c3 = ref_3.c3)
+    ) AS subq_1
+WHERE ref_0."C 1" < 10 AND subq_1.c3 = '00001'
+ORDER BY ref_0."C 1";
+
+SELECT ref_0.c2, subq_1.*
+FROM
+    "S 1"."T 1" AS ref_0,
+    LATERAL (
+        SELECT ref_0."C 1" c1, subq_0.*
+        FROM (SELECT ref_0.c2, ref_1.c3
+              FROM ft1 AS ref_1) AS subq_0
+             RIGHT JOIN ft2 AS ref_3 ON (subq_0.c3 = ref_3.c3)
+    ) AS subq_1
+WHERE ref_0."C 1" < 10 AND subq_1.c3 = '00001'
+ORDER BY ref_0."C 1";
 
 -- Check with placeHolderVars
 explain (verbose, costs off)
@@ -1130,6 +1166,26 @@ DELETE FROM ft2
   WHERE ft2.c1 > 1200 AND ft2.c1 % 10 = 0 AND ft2.c2 = ft4.c1
   RETURNING 100;
 DELETE FROM ft2 WHERE ft2.c1 > 1200;
+
+-- Test UPDATE with a MULTIEXPR sub-select
+-- (maybe someday this'll be remotely executable, but not today)
+EXPLAIN (verbose, costs off)
+UPDATE ft2 AS target SET (c2, c7) = (
+    SELECT c2 * 10, c7
+        FROM ft2 AS src
+        WHERE target.c1 = src.c1
+) WHERE c1 > 1100;
+UPDATE ft2 AS target SET (c2, c7) = (
+    SELECT c2 * 10, c7
+        FROM ft2 AS src
+        WHERE target.c1 = src.c1
+) WHERE c1 > 1100;
+
+UPDATE ft2 AS target SET (c2) = (
+    SELECT c2 / 10
+        FROM ft2 AS src
+        WHERE target.c1 = src.c1
+) WHERE c1 > 1100;
 
 -- Test UPDATE/DELETE with WHERE or JOIN/ON conditions containing
 -- user-defined operators/functions
@@ -1443,6 +1499,11 @@ SELECT * from loc1;
 UPDATE rem1 set f2 = '';
 SELECT * from loc1;
 UPDATE rem1 set f2 = 'skidoo' RETURNING f2;
+SELECT * from loc1;
+
+EXPLAIN (verbose, costs off)
+UPDATE rem1 set f1 = 10;          -- all columns should be transmitted
+UPDATE rem1 set f1 = 10;
 SELECT * from loc1;
 
 DELETE FROM rem1;
@@ -1917,6 +1978,51 @@ update utrtest set a = 1 where a = 2 returning *;
 
 drop trigger loct_br_insert_trigger on loct;
 
+-- We can move rows to a foreign partition that has been updated already,
+-- but can't move rows to a foreign partition that hasn't been updated yet
+
+delete from utrtest;
+insert into utrtest values (1, 'foo');
+insert into utrtest values (2, 'qux');
+
+-- Test the former case:
+-- with a direct modification plan
+explain (verbose, costs off)
+update utrtest set a = 1 returning *;
+update utrtest set a = 1 returning *;
+
+delete from utrtest;
+insert into utrtest values (1, 'foo');
+insert into utrtest values (2, 'qux');
+
+-- with a non-direct modification plan
+explain (verbose, costs off)
+update utrtest set a = 1 from (values (1), (2)) s(x) where a = s.x returning *;
+update utrtest set a = 1 from (values (1), (2)) s(x) where a = s.x returning *;
+
+-- Change the definition of utrtest so that the foreign partition get updated
+-- after the local partition
+delete from utrtest;
+alter table utrtest detach partition remp;
+drop foreign table remp;
+alter table loct drop constraint loct_a_check;
+alter table loct add check (a in (3));
+create foreign table remp (a int check (a in (3)), b text) server loopback options (table_name 'loct');
+alter table utrtest attach partition remp for values in (3);
+insert into utrtest values (2, 'qux');
+insert into utrtest values (3, 'xyzzy');
+
+-- Test the latter case:
+-- with a direct modification plan
+explain (verbose, costs off)
+update utrtest set a = 3 returning *;
+update utrtest set a = 3 returning *; -- ERROR
+
+-- with a non-direct modification plan
+explain (verbose, costs off)
+update utrtest set a = 3 from (values (2), (3)) s(x) where a = s.x returning *;
+update utrtest set a = 3 from (values (2), (3)) s(x) where a = s.x returning *; -- ERROR
+
 drop table utrtest;
 drop table loct;
 
@@ -2085,6 +2191,20 @@ drop trigger loc2_trig_row_before_insert on loc2;
 
 delete from rem2;
 
+-- test COPY FROM with foreign table created in the same transaction
+create table loc3 (f1 int, f2 text);
+begin;
+create foreign table rem3 (f1 int, f2 text)
+	server loopback options(table_name 'loc3');
+copy rem3 from stdin;
+1	foo
+2	bar
+\.
+commit;
+select * from rem3;
+drop foreign table rem3;
+drop table loc3;
+
 -- ===================================================================
 -- test IMPORT FOREIGN SCHEMA
 -- ===================================================================
@@ -2216,8 +2336,9 @@ ALTER TABLE fprt2_p1 SET (autovacuum_enabled = 'false');
 ALTER TABLE fprt2_p2 SET (autovacuum_enabled = 'false');
 INSERT INTO fprt2_p1 SELECT i, i, to_char(i/50, 'FM0000') FROM generate_series(0, 249, 3) i;
 INSERT INTO fprt2_p2 SELECT i, i, to_char(i/50, 'FM0000') FROM generate_series(250, 499, 3) i;
-CREATE FOREIGN TABLE ftprt2_p1 PARTITION OF fprt2 FOR VALUES FROM (0) TO (250)
+CREATE FOREIGN TABLE ftprt2_p1 (b int, c varchar, a int)
 	SERVER loopback OPTIONS (table_name 'fprt2_p1', use_remote_estimate 'true');
+ALTER TABLE fprt2 ATTACH PARTITION ftprt2_p1 FOR VALUES FROM (0) TO (250);
 CREATE FOREIGN TABLE ftprt2_p2 PARTITION OF fprt2 FOR VALUES FROM (250) TO (500)
 	SERVER loopback OPTIONS (table_name 'fprt2_p2', use_remote_estimate 'true');
 ANALYZE fprt2;
@@ -2234,20 +2355,25 @@ EXPLAIN (COSTS OFF)
 SELECT t1.a,t2.b,t2.c FROM fprt1 t1 LEFT JOIN (SELECT * FROM fprt2 WHERE a < 10) t2 ON (t1.a = t2.b and t1.b = t2.a) WHERE t1.a < 10 ORDER BY 1,2,3;
 SELECT t1.a,t2.b,t2.c FROM fprt1 t1 LEFT JOIN (SELECT * FROM fprt2 WHERE a < 10) t2 ON (t1.a = t2.b and t1.b = t2.a) WHERE t1.a < 10 ORDER BY 1,2,3;
 
--- with whole-row reference
+-- with whole-row reference; partitionwise join does not apply
 EXPLAIN (COSTS OFF)
-SELECT t1,t2 FROM fprt1 t1 JOIN fprt2 t2 ON (t1.a = t2.b and t1.b = t2.a) WHERE t1.a % 25 =0 ORDER BY 1,2;
-SELECT t1,t2 FROM fprt1 t1 JOIN fprt2 t2 ON (t1.a = t2.b and t1.b = t2.a) WHERE t1.a % 25 =0 ORDER BY 1,2;
+SELECT t1.wr, t2.wr FROM (SELECT t1 wr, a FROM fprt1 t1 WHERE t1.a % 25 = 0) t1 FULL JOIN (SELECT t2 wr, b FROM fprt2 t2 WHERE t2.b % 25 = 0) t2 ON (t1.a = t2.b) ORDER BY 1,2;
+SELECT t1.wr, t2.wr FROM (SELECT t1 wr, a FROM fprt1 t1 WHERE t1.a % 25 = 0) t1 FULL JOIN (SELECT t2 wr, b FROM fprt2 t2 WHERE t2.b % 25 = 0) t2 ON (t1.a = t2.b) ORDER BY 1,2;
 
 -- join with lateral reference
 EXPLAIN (COSTS OFF)
 SELECT t1.a,t1.b FROM fprt1 t1, LATERAL (SELECT t2.a, t2.b FROM fprt2 t2 WHERE t1.a = t2.b AND t1.b = t2.a) q WHERE t1.a%25 = 0 ORDER BY 1,2;
 SELECT t1.a,t1.b FROM fprt1 t1, LATERAL (SELECT t2.a, t2.b FROM fprt2 t2 WHERE t1.a = t2.b AND t1.b = t2.a) q WHERE t1.a%25 = 0 ORDER BY 1,2;
 
--- with PHVs, partition-wise join selected but no join pushdown
+-- with PHVs, partitionwise join selected but no join pushdown
 EXPLAIN (COSTS OFF)
 SELECT t1.a, t1.phv, t2.b, t2.phv FROM (SELECT 't1_phv' phv, * FROM fprt1 WHERE a % 25 = 0) t1 FULL JOIN (SELECT 't2_phv' phv, * FROM fprt2 WHERE b % 25 = 0) t2 ON (t1.a = t2.b) ORDER BY t1.a, t2.b;
 SELECT t1.a, t1.phv, t2.b, t2.phv FROM (SELECT 't1_phv' phv, * FROM fprt1 WHERE a % 25 = 0) t1 FULL JOIN (SELECT 't2_phv' phv, * FROM fprt2 WHERE b % 25 = 0) t2 ON (t1.a = t2.b) ORDER BY t1.a, t2.b;
+
+-- test FOR UPDATE; partitionwise join does not apply
+EXPLAIN (COSTS OFF)
+SELECT t1.a, t2.b FROM fprt1 t1 INNER JOIN fprt2 t2 ON (t1.a = t2.b) WHERE t1.a % 25 = 0 ORDER BY 1,2 FOR UPDATE OF t1;
+SELECT t1.a, t2.b FROM fprt1 t1 INNER JOIN fprt2 t2 ON (t1.a = t2.b) WHERE t1.a % 25 = 0 ORDER BY 1,2 FOR UPDATE OF t1;
 
 RESET enable_partitionwise_join;
 
@@ -2301,3 +2427,17 @@ SELECT b, avg(a), max(a), count(*) FROM pagg_tab GROUP BY b HAVING sum(a) < 700 
 
 -- Clean-up
 RESET enable_partitionwise_aggregate;
+
+-- ===================================================================
+-- test connection invalidation cases
+-- ===================================================================
+-- This test case is for closing the connection in pgfdw_xact_callback
+BEGIN;
+-- Connection xact depth becomes 1 i.e. the connection is in midst of the xact.
+SELECT 1 FROM ft1 LIMIT 1;
+-- Connection is not closed at the end of the alter statement in
+-- pgfdw_inval_callback. That's because the connection is in midst of this
+-- xact, it is just marked as invalid.
+ALTER SERVER loopback OPTIONS (ADD use_remote_estimate 'off');
+-- The invalid connection gets closed in pgfdw_xact_callback during commit.
+COMMIT;

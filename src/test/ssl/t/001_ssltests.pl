@@ -3,8 +3,13 @@ use warnings;
 use PostgresNode;
 use TestLib;
 use Test::More;
-use ServerSetup;
+
 use File::Copy;
+
+use FindBin;
+use lib $FindBin::RealBin;
+
+use SSLServer;
 
 if ($ENV{with_openssl} eq 'yes')
 {
@@ -327,11 +332,16 @@ test_connect_ok(
 	"certificate authorization succeeds with correct client cert");
 
 # client key with wrong permissions
-test_connect_fails(
-	$common_connstr,
-	"user=ssltestuser sslcert=ssl/client.crt sslkey=ssl/client_wrongperms_tmp.key",
-	qr!\Qprivate key file "ssl/client_wrongperms_tmp.key" has group or world access\E!,
-	"certificate authorization fails because of file permissions");
+SKIP:
+{
+	skip "Permissions check not enforced on Windows", 2 if ($windows_os);
+
+	test_connect_fails(
+		$common_connstr,
+		"user=ssltestuser sslcert=ssl/client.crt sslkey=ssl/client_wrongperms_tmp.key",
+		qr!\Qprivate key file "ssl/client_wrongperms_tmp.key" has group or world access\E!,
+		"certificate authorization fails because of file permissions");
+}
 
 # client cert belonging to another user
 test_connect_fails(
@@ -345,7 +355,7 @@ test_connect_fails(
 test_connect_fails(
 	$common_connstr,
 	"user=ssltestuser sslcert=ssl/client-revoked.crt sslkey=ssl/client-revoked_tmp.key",
-	qr/SSL error/,
+	qr/SSL error|server closed the connection unexpectedly/,
 	"certificate authorization fails with revoked client cert");
 
 # intermediate client_ca.crt is provided by client, and isn't in server's ssl_ca_file
@@ -358,7 +368,8 @@ test_connect_ok(
 	"sslmode=require sslcert=ssl/client+client_ca.crt",
 	"intermediate client certificate is provided by client");
 test_connect_fails($common_connstr, "sslmode=require sslcert=ssl/client.crt",
-	qr/SSL error/, "intermediate client certificate is missing");
+	qr/SSL error|server closed the connection unexpectedly/,
+	"intermediate client certificate is missing");
 
 # clean up
 unlink("ssl/client_tmp.key", "ssl/client_wrongperms_tmp.key",

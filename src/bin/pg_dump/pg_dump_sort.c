@@ -28,8 +28,15 @@ static const char *modulename = gettext_noop("sorter");
  * Sort priority for database object types.
  * Objects are sorted by type, and within a type by name.
  *
- * Because materialized views can potentially reference system views,
- * DO_REFRESH_MATVIEW should always be the last thing on the list.
+ * Triggers, event triggers, and materialized views are intentionally sorted
+ * late.  Triggers must be restored after all data modifications, so that
+ * they don't interfere with loading data.  Event triggers are restored
+ * next-to-last so that they don't interfere with object creations of any
+ * kind.  Matview refreshes are last because they should execute in the
+ * database's normal state (e.g., they must come after all ACLs are restored;
+ * also, if they choose to look at system catalogs, they should see the final
+ * restore state).  If you think to change this, see also the RestorePass
+ * mechanism in pg_backup_archiver.c.
  *
  * NOTE: object-type priorities must match the section assignments made in
  * pg_dump.c; that is, PRE_DATA objects must sort before DO_PRE_DATA_BOUNDARY,
@@ -74,18 +81,18 @@ static const int dbObjectTypePriority[] =
 	15,							/* DO_TSCONFIG */
 	16,							/* DO_FDW */
 	17,							/* DO_FOREIGN_SERVER */
-	33,							/* DO_DEFAULT_ACL */
+	38,							/* DO_DEFAULT_ACL --- done in ACL pass */
 	3,							/* DO_TRANSFORM */
 	21,							/* DO_BLOB */
 	25,							/* DO_BLOB_DATA */
 	22,							/* DO_PRE_DATA_BOUNDARY */
 	26,							/* DO_POST_DATA_BOUNDARY */
-	34,							/* DO_EVENT_TRIGGER */
-	39,							/* DO_REFRESH_MATVIEW */
-	35,							/* DO_POLICY */
-	36,							/* DO_PUBLICATION */
-	37,							/* DO_PUBLICATION_REL */
-	38							/* DO_SUBSCRIPTION */
+	39,							/* DO_EVENT_TRIGGER --- next to last! */
+	40,							/* DO_REFRESH_MATVIEW --- last! */
+	34,							/* DO_POLICY */
+	35,							/* DO_PUBLICATION */
+	36,							/* DO_PUBLICATION_REL */
+	37							/* DO_SUBSCRIPTION */
 };
 
 static DumpId preDataBoundId;
@@ -223,7 +230,7 @@ DOTypeNameCompare(const void *p1, const void *p2)
 	DumpableObject *obj2 = *(DumpableObject *const *) p2;
 	int			cmpval;
 
-	/* Sort by type */
+	/* Sort by type's priority */
 	cmpval = dbObjectTypePriority[obj1->objType] -
 		dbObjectTypePriority[obj2->objType];
 
@@ -231,17 +238,24 @@ DOTypeNameCompare(const void *p1, const void *p2)
 		return cmpval;
 
 	/*
-	 * Sort by namespace.  Note that all objects of the same type should
-	 * either have or not have a namespace link, so we needn't be fancy about
-	 * cases where one link is null and the other not.
+	 * Sort by namespace.  Typically, all objects of the same priority would
+	 * either have or not have a namespace link, but there are exceptions.
+	 * Sort NULL namespace after non-NULL in such cases.
 	 */
-	if (obj1->namespace && obj2->namespace)
+	if (obj1->namespace)
 	{
-		cmpval = strcmp(obj1->namespace->dobj.name,
-						obj2->namespace->dobj.name);
-		if (cmpval != 0)
-			return cmpval;
+		if (obj2->namespace)
+		{
+			cmpval = strcmp(obj1->namespace->dobj.name,
+							obj2->namespace->dobj.name);
+			if (cmpval != 0)
+				return cmpval;
+		}
+		else
+			return -1;
 	}
+	else if (obj2->namespace)
+		return 1;
 
 	/* Sort by name */
 	cmpval = strcmp(obj1->name, obj2->name);
@@ -255,6 +269,7 @@ DOTypeNameCompare(const void *p1, const void *p2)
 		FuncInfo   *fobj2 = *(FuncInfo *const *) p2;
 		int			i;
 
+		/* Sort by number of arguments, then argument type names */
 		cmpval = fobj1->nargs - fobj2->nargs;
 		if (cmpval != 0)
 			return cmpval;
@@ -293,7 +308,30 @@ DOTypeNameCompare(const void *p1, const void *p2)
 		AttrDefInfo *adobj1 = *(AttrDefInfo *const *) p1;
 		AttrDefInfo *adobj2 = *(AttrDefInfo *const *) p2;
 
+		/* Sort by attribute number */
 		cmpval = (adobj1->adnum - adobj2->adnum);
+		if (cmpval != 0)
+			return cmpval;
+	}
+	else if (obj1->objType == DO_POLICY)
+	{
+		PolicyInfo *pobj1 = *(PolicyInfo *const *) p1;
+		PolicyInfo *pobj2 = *(PolicyInfo *const *) p2;
+
+		/* Sort by table name (table namespace was considered already) */
+		cmpval = strcmp(pobj1->poltable->dobj.name,
+						pobj2->poltable->dobj.name);
+		if (cmpval != 0)
+			return cmpval;
+	}
+	else if (obj1->objType == DO_TRIGGER)
+	{
+		TriggerInfo *tobj1 = *(TriggerInfo *const *) p1;
+		TriggerInfo *tobj2 = *(TriggerInfo *const *) p2;
+
+		/* Sort by table name (table namespace was considered already) */
+		cmpval = strcmp(tobj1->tgtable->dobj.name,
+						tobj2->tgtable->dobj.name);
 		if (cmpval != 0)
 			return cmpval;
 	}
@@ -842,19 +880,26 @@ repairViewRuleMultiLoop(DumpableObject *viewobj,
  *
  * Note that the "next object" is not necessarily the matview itself;
  * it could be the matview's rowtype, for example.  We may come through here
- * several times while removing all the pre-data linkages.
+ * several times while removing all the pre-data linkages.  In particular,
+ * if there are other matviews that depend on the one with the circularity
+ * problem, we'll come through here for each such matview and mark them all
+ * as postponed.  (This works because all MVs have pre-data dependencies
+ * to begin with, so each of them will get visited.)
  */
 static void
-repairMatViewBoundaryMultiLoop(DumpableObject *matviewobj,
-							   DumpableObject *boundaryobj,
+repairMatViewBoundaryMultiLoop(DumpableObject *boundaryobj,
 							   DumpableObject *nextobj)
 {
-	TableInfo  *matviewinfo = (TableInfo *) matviewobj;
-
 	/* remove boundary's dependency on object after it in loop */
 	removeObjectDependency(boundaryobj, nextobj->dumpId);
-	/* mark matview as postponed into post-data section */
-	matviewinfo->postponed_def = true;
+	/* if that object is a matview, mark it as postponed into post-data */
+	if (nextobj->objType == DO_TABLE)
+	{
+		TableInfo  *nextinfo = (TableInfo *) nextobj;
+
+		if (nextinfo->relkind == RELKIND_MATVIEW)
+			nextinfo->postponed_def = true;
+	}
 }
 
 /*
@@ -1043,8 +1088,7 @@ repairDependencyLoop(DumpableObject **loop,
 						DumpableObject *nextobj;
 
 						nextobj = (j < nLoop - 1) ? loop[j + 1] : loop[0];
-						repairMatViewBoundaryMultiLoop(loop[i], loop[j],
-													   nextobj);
+						repairMatViewBoundaryMultiLoop(loop[j], nextobj);
 						return;
 					}
 				}
@@ -1186,6 +1230,24 @@ repairDependencyLoop(DumpableObject **loop,
 					}
 				}
 			}
+		}
+	}
+
+	/*
+	 * Loop of table with itself --- just ignore it.
+	 *
+	 * (Actually, what this arises from is a dependency of a table column on
+	 * another column, which happens with generated columns; or a dependency
+	 * of a table column on the whole table, which happens with partitioning.
+	 * But we didn't pay attention to sub-object IDs while collecting the
+	 * dependency data, so we can't see that here.)
+	 */
+	if (nLoop == 1)
+	{
+		if (loop[0]->objType == DO_TABLE)
+		{
+			removeObjectDependency(loop[0], loop[0]->dumpId);
+			return;
 		}
 	}
 

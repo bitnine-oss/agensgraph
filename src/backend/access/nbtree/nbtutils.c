@@ -518,7 +518,7 @@ _bt_compare_array_elements(const void *a, const void *b, void *arg)
 											  cxt->collation,
 											  da, db));
 	if (cxt->reverse)
-		compare = -compare;
+		INVERT_COMPARE_RESULT(compare);
 	return compare;
 }
 
@@ -1652,7 +1652,7 @@ _bt_check_rowcompare(ScanKey skey, IndexTuple tuple, TupleDesc tupdesc,
 													subkey->sk_argument));
 
 		if (subkey->sk_flags & SK_BT_DESC)
-			cmpresult = -cmpresult;
+			INVERT_COMPARE_RESULT(cmpresult);
 
 		/* Done comparing if unequal, else advance to next column */
 		if (cmpresult != 0)
@@ -1815,9 +1815,19 @@ _bt_killitems(IndexScanDesc scan)
 
 			if (ItemPointerEquals(&ituple->t_tid, &kitem->heapTid))
 			{
-				/* found the item */
-				ItemIdMarkDead(iid);
-				killedsomething = true;
+				/*
+				 * Found the item.  Mark it as dead, if it isn't already.
+				 * Since this happens while holding a buffer lock possibly in
+				 * shared mode, it's possible that multiple processes attempt
+				 * to do this simultaneously, leading to multiple full-page
+				 * images being sent to WAL (if wal_log_hints or data checksums
+				 * are enabled), which is undesirable.
+				 */
+				if (!ItemIdIsDead(iid))
+				{
+					ItemIdMarkDead(iid);
+					killedsomething = true;
+				}
 				break;			/* out of inner search loop */
 			}
 			offnum = OffsetNumberNext(offnum);

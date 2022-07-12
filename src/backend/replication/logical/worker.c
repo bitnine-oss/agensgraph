@@ -27,6 +27,7 @@
 #include "pgstat.h"
 #include "funcapi.h"
 
+#include "access/sysattr.h"
 #include "access/xact.h"
 #include "access/xlog_internal.h"
 
@@ -380,13 +381,19 @@ slot_store_cstrings(TupleTableSlot *slot, LogicalRepRelMapEntry *rel,
 }
 
 /*
- * Modify slot with user data provided as C strings.
+ * Replace selected columns with user data provided as C strings.
  * This is somewhat similar to heap_modify_tuple but also calls the type
- * input function on the user data as the input is the text representation
- * of the types.
+ * input functions on the user data.
+ * "slot" is filled with a copy of the tuple in "srcslot", with
+ * columns selected by the "replaces" array replaced with data values
+ * from "values".
+ * Caution: unreplaced pass-by-ref columns in "slot" will point into the
+ * storage for "srcslot".  This is OK for current usage, but someday we may
+ * need to materialize "slot" at the end to make it independent of "srcslot".
  */
 static void
-slot_modify_cstrings(TupleTableSlot *slot, LogicalRepRelMapEntry *rel,
+slot_modify_cstrings(TupleTableSlot *slot, TupleTableSlot *srcslot,
+					 LogicalRepRelMapEntry *rel,
 					 char **values, bool *replaces)
 {
 	int			natts = slot->tts_tupleDescriptor->natts;
@@ -394,10 +401,19 @@ slot_modify_cstrings(TupleTableSlot *slot, LogicalRepRelMapEntry *rel,
 	SlotErrCallbackArg errarg;
 	ErrorContextCallback errcallback;
 
-	slot_getallattrs(slot);
+	/* We'll fill "slot" with a virtual tuple, so we must start with ... */
 	ExecClearTuple(slot);
 
-	/* Push callback + info on the error context stack */
+	/*
+	 * Copy all the column data from srcslot, so that we'll have valid values
+	 * for unreplaced columns.
+	 */
+	Assert(natts == srcslot->tts_tupleDescriptor->natts);
+	slot_getallattrs(srcslot);
+	memcpy(slot->tts_values, srcslot->tts_values, natts * sizeof(Datum));
+	memcpy(slot->tts_isnull, srcslot->tts_isnull, natts * sizeof(bool));
+
+	/* For error reporting, push callback + info on the error context stack */
 	errarg.rel = rel;
 	errarg.local_attnum = -1;
 	errarg.remote_attnum = -1;
@@ -445,6 +461,7 @@ slot_modify_cstrings(TupleTableSlot *slot, LogicalRepRelMapEntry *rel,
 	/* Pop the error context stack */
 	error_context_stack = errcallback.previous;
 
+	/* And finally, declare that "slot" contains a valid virtual tuple */
 	ExecStoreVirtualTuple(slot);
 }
 
@@ -610,13 +627,15 @@ apply_handle_insert(StringInfo s)
 	remoteslot = ExecInitExtraTupleSlot(estate,
 										RelationGetDescr(rel->localrel));
 
+	/* Input functions may need an active snapshot, so get one */
+	PushActiveSnapshot(GetTransactionSnapshot());
+
 	/* Process and store remote tuple in the slot */
 	oldctx = MemoryContextSwitchTo(GetPerTupleMemoryContext(estate));
 	slot_store_cstrings(remoteslot, rel, newtup.values);
 	slot_fill_defaults(rel, estate, remoteslot);
 	MemoryContextSwitchTo(oldctx);
 
-	PushActiveSnapshot(GetTransactionSnapshot());
 	ExecOpenIndices(estate->es_result_relation_info, false);
 
 	/* Do the insert. */
@@ -688,6 +707,8 @@ apply_handle_update(StringInfo s)
 	bool		has_oldtup;
 	TupleTableSlot *localslot;
 	TupleTableSlot *remoteslot;
+	RangeTblEntry *target_rte;
+	int			i;
 	bool		found;
 	MemoryContext oldctx;
 
@@ -716,6 +737,28 @@ apply_handle_update(StringInfo s)
 	localslot = ExecInitExtraTupleSlot(estate,
 									   RelationGetDescr(rel->localrel));
 	EvalPlanQualInit(&epqstate, estate, NULL, NIL, -1);
+
+	/*
+	 * Populate updatedCols so that per-column triggers can fire.  This could
+	 * include more columns than were actually changed on the publisher
+	 * because the logical replication protocol doesn't contain that
+	 * information.  But it would for example exclude columns that only exist
+	 * on the subscriber, since we are not touching those.
+	 */
+	target_rte = list_nth(estate->es_range_table, 0);
+	for (i = 0; i < remoteslot->tts_tupleDescriptor->natts; i++)
+	{
+		Form_pg_attribute att = TupleDescAttr(remoteslot->tts_tupleDescriptor, i);
+		int			remoteattnum = rel->attrmap[i];
+
+		if (!att->attisdropped && remoteattnum >= 0)
+		{
+			if (newtup.changed[remoteattnum])
+				target_rte->updatedCols =
+					bms_add_member(target_rte->updatedCols,
+								   i + 1 - FirstLowInvalidHeapAttributeNumber);
+		}
+	}
 
 	PushActiveSnapshot(GetTransactionSnapshot());
 	ExecOpenIndices(estate->es_result_relation_info, false);
@@ -753,8 +796,8 @@ apply_handle_update(StringInfo s)
 	{
 		/* Process and store remote tuple in the slot */
 		oldctx = MemoryContextSwitchTo(GetPerTupleMemoryContext(estate));
-		ExecStoreTuple(localslot->tts_tuple, remoteslot, InvalidBuffer, false);
-		slot_modify_cstrings(remoteslot, rel, newtup.values, newtup.changed);
+		slot_modify_cstrings(remoteslot, localslot, rel,
+							 newtup.values, newtup.changed);
 		MemoryContextSwitchTo(oldctx);
 
 		EvalPlanQualSetSlot(&epqstate, remoteslot);
@@ -1101,6 +1144,9 @@ UpdateWorkerStats(XLogRecPtr last_lsn, TimestampTz send_time, bool reply)
 static void
 LogicalRepApplyLoop(XLogRecPtr last_received)
 {
+	TimestampTz last_recv_timestamp = GetCurrentTimestamp();
+	bool		ping_sent = false;
+
 	/*
 	 * Init the ApplyMessageContext which we clean up after each replication
 	 * protocol message.
@@ -1112,6 +1158,7 @@ LogicalRepApplyLoop(XLogRecPtr last_received)
 	/* mark as idle, before starting to loop */
 	pgstat_report_activity(STATE_IDLE, NULL);
 
+	/* This outer loop iterates once per wait. */
 	for (;;)
 	{
 		pgsocket	fd = PGINVALID_SOCKET;
@@ -1119,8 +1166,6 @@ LogicalRepApplyLoop(XLogRecPtr last_received)
 		int			len;
 		char	   *buf = NULL;
 		bool		endofstream = false;
-		TimestampTz last_recv_timestamp = GetCurrentTimestamp();
-		bool		ping_sent = false;
 		long		wait_time;
 
 		CHECK_FOR_INTERRUPTS();
@@ -1131,7 +1176,7 @@ LogicalRepApplyLoop(XLogRecPtr last_received)
 
 		if (len != 0)
 		{
-			/* Process the data */
+			/* Loop to process all available data (without blocking). */
 			for (;;)
 			{
 				CHECK_FOR_INTERRUPTS();
@@ -1304,10 +1349,7 @@ LogicalRepApplyLoop(XLogRecPtr last_received)
 					ereport(ERROR,
 							(errmsg("terminating logical replication worker due to timeout")));
 
-				/*
-				 * We didn't receive anything new, for half of receiver
-				 * replication timeout. Ping the server.
-				 */
+				/* Check to see if it's time for a ping. */
 				if (!ping_sent)
 				{
 					timeout = TimestampTzPlusMilliseconds(last_recv_timestamp,
@@ -1614,6 +1656,12 @@ ApplyWorkerMain(Datum main_arg)
 	BackgroundWorkerInitializeConnectionByOid(MyLogicalRepWorker->dbid,
 											  MyLogicalRepWorker->userid,
 											  0);
+
+	/*
+	 * Set always-secure search path, so malicious users can't redirect user
+	 * code (e.g. pg_index.indexprs).
+	 */
+	SetConfigOption("search_path", "", PGC_SUSET, PGC_S_OVERRIDE);
 
 	/* Load the subscription into persistent memory context. */
 	ApplyContext = AllocSetContextCreate(TopMemoryContext,

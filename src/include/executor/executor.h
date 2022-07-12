@@ -15,6 +15,7 @@
 #define EXECUTOR_H
 
 #include "executor/execdesc.h"
+#include "executor/execPartition.h"
 #include "nodes/parsenodes.h"
 #include "utils/memutils.h"
 
@@ -95,8 +96,6 @@ extern PGDLLIMPORT ExecutorCheckPerms_hook_type ExecutorCheckPerms_hook;
 struct Path;					/* avoid including relation.h here */
 
 extern void ExecReScan(PlanState *node);
-extern void ExecNextContext(PlanState *node);
-extern void ExecPrevContext(PlanState *node);
 extern void ExecMarkPos(PlanState *node);
 extern void ExecRestrPos(PlanState *node);
 extern bool ExecSupportsMarkRestore(struct Path *pathnode);
@@ -131,6 +130,15 @@ extern TupleHashTable BuildTupleHashTable(PlanState *parent,
 					long nbuckets, Size additionalsize,
 					MemoryContext tablecxt,
 					MemoryContext tempcxt, bool use_variable_hash_iv);
+extern TupleHashTable BuildTupleHashTableExt(PlanState *parent,
+					TupleDesc inputDesc,
+					int numCols, AttrNumber *keyColIdx,
+					Oid *eqfuncoids,
+					FmgrInfo *hashfunctions,
+					long nbuckets, Size additionalsize,
+					MemoryContext metacxt,
+					MemoryContext tablecxt,
+					MemoryContext tempcxt, bool use_variable_hash_iv);
 extern TupleHashEntry LookupTupleHashEntry(TupleHashTable hashtable,
 					 TupleTableSlot *slot,
 					 bool *isnew);
@@ -138,6 +146,7 @@ extern TupleHashEntry FindTupleHashEntry(TupleHashTable hashtable,
 				   TupleTableSlot *slot,
 				   ExprState *eqcomp,
 				   FmgrInfo *hashfunctions);
+extern void ResetTupleHashTable(TupleHashTable hashtable);
 
 /*
  * prototypes from functions in execJunk.c
@@ -176,7 +185,7 @@ extern void CheckValidResultRel(ResultRelInfo *resultRelInfo, CmdType operation)
 extern void InitResultRelInfo(ResultRelInfo *resultRelInfo,
 				  Relation resultRelationDesc,
 				  Index resultRelationIndex,
-				  Relation partition_root,
+				  ResultRelInfo *partition_root_rri,
 				  int instrument_options);
 extern ResultRelInfo *ExecGetTriggerResultRel(EState *estate, Oid relid);
 extern void ExecCleanUpTriggerState(EState *estate);
@@ -536,7 +545,8 @@ extern Datum GetAttributeByNum(HeapTupleHeader tuple, AttrNumber attrno,
 extern int	ExecTargetListLength(List *targetlist);
 extern int	ExecCleanTargetListLength(List *targetlist);
 
-extern void InitScanLabelInfo(ScanState *node);
+extern Bitmapset *ExecGetInsertedCols(ResultRelInfo *relinfo, EState *estate);
+extern Bitmapset *ExecGetUpdatedCols(ResultRelInfo *relinfo, EState *estate);
 
 /*
  * prototypes from functions in execIndexing.c
@@ -573,5 +583,10 @@ extern void CheckCmdReplicaIdentity(Relation rel, CmdType cmd);
 
 extern void CheckSubscriptionRelkind(char relkind, const char *nspname,
 						 const char *relname);
+
+/* used on agensgraph */
+extern void ExecNextContext(PlanState *node);
+extern void ExecPrevContext(PlanState *node);
+extern void InitScanLabelInfo(ScanState *node);
 
 #endif							/* EXECUTOR_H  */

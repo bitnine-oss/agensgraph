@@ -434,6 +434,38 @@ select x, not x as not_x, q2 from
    |       |  4567890123456789
 (5 rows)
 
+-- check qual push-down rules for a subquery with grouping sets
+explain (verbose, costs off)
+select * from (
+  select 1 as x, q1, sum(q2)
+  from int8_tbl i1
+  group by grouping sets(1, 2)
+) ss
+where x = 1 and q1 = 123;
+                 QUERY PLAN                 
+--------------------------------------------
+ Subquery Scan on ss
+   Output: ss.x, ss.q1, ss.sum
+   Filter: ((ss.x = 1) AND (ss.q1 = 123))
+   ->  GroupAggregate
+         Output: (1), i1.q1, sum(i1.q2)
+         Group Key: 1
+         Sort Key: i1.q1
+           Group Key: i1.q1
+         ->  Seq Scan on public.int8_tbl i1
+               Output: 1, i1.q1, i1.q2
+(10 rows)
+
+select * from (
+  select 1 as x, q1, sum(q2)
+  from int8_tbl i1
+  group by grouping sets(1, 2)
+) ss
+where x = 1 and q1 = 123;
+ x | q1 | sum 
+---+----+-----
+(0 rows)
+
 -- simple rescan tests
 select a, b, sum(v.x)
   from (values (1),(2)) v(x), gstest_data(v.x)
@@ -636,6 +668,19 @@ select a, b, sum(v.x)
    | 3 |   3
    |   |   9
 (12 rows)
+
+-- Test reordering of grouping sets
+explain (costs off)
+select * from gstest1 group by grouping sets((a,b,v),(v)) order by v,b,a;
+                                  QUERY PLAN                                  
+------------------------------------------------------------------------------
+ GroupAggregate
+   Group Key: "*VALUES*".column3, "*VALUES*".column2, "*VALUES*".column1
+   Group Key: "*VALUES*".column3
+   ->  Sort
+         Sort Key: "*VALUES*".column3, "*VALUES*".column2, "*VALUES*".column1
+         ->  Values Scan on "*VALUES*"
+(6 rows)
 
 -- Agg level check. This query should error out.
 select (select grouping(a,b) from gstest2) from gstest2 group by a,b;
@@ -1539,5 +1584,30 @@ explain (costs off)
          Sort Key: unique1
          ->  Seq Scan on tenk1
 (12 rows)
+
+-- check collation-sensitive matching between grouping expressions
+-- (similar to a check for aggregates, but there are additional code
+-- paths for GROUPING, so check again here)
+select v||'a', case grouping(v||'a') when 1 then 1 else 0 end, count(*)
+  from unnest(array[1,1], array['a','b']) u(i,v)
+ group by rollup(i, v||'a') order by 1,3;
+ ?column? | case | count 
+----------+------+-------
+ aa       |    0 |     1
+ ba       |    0 |     1
+          |    1 |     2
+          |    1 |     2
+(4 rows)
+
+select v||'a', case when grouping(v||'a') = 1 then 1 else 0 end, count(*)
+  from unnest(array[1,1], array['a','b']) u(i,v)
+ group by rollup(i, v||'a') order by 1,3;
+ ?column? | case | count 
+----------+------+-------
+ aa       |    0 |     1
+ ba       |    0 |     1
+          |    1 |     2
+          |    1 |     2
+(4 rows)
 
 -- end

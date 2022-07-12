@@ -209,11 +209,11 @@ search_directory(const char *directory, const char *fname)
 	/* set WalSegSz if file is successfully opened */
 	if (fd >= 0)
 	{
-		char		buf[XLOG_BLCKSZ];
+		PGAlignedXLogBlock buf;
 
-		if (read(fd, buf, XLOG_BLCKSZ) == XLOG_BLCKSZ)
+		if (read(fd, buf.data, XLOG_BLCKSZ) == XLOG_BLCKSZ)
 		{
-			XLogLongPageHeader longhdr = (XLogLongPageHeader) buf;
+			XLogLongPageHeader longhdr = (XLogLongPageHeader) buf.data;
 
 			WalSegSz = longhdr->xlp_seg_size;
 
@@ -542,17 +542,18 @@ XLogDumpDisplayRecord(XLogDumpConfig *config, XLogReaderState *record)
 
 	XLogDumpRecordLen(record, &rec_len, &fpi_len);
 
-	id = desc->rm_identify(info);
-	if (id == NULL)
-		id = psprintf("UNKNOWN (%x)", info & ~XLR_INFO_MASK);
-
 	printf("rmgr: %-11s len (rec/tot): %6u/%6u, tx: %10u, lsn: %X/%08X, prev %X/%08X, ",
 		   desc->rm_name,
 		   rec_len, XLogRecGetTotalLen(record),
 		   XLogRecGetXid(record),
 		   (uint32) (record->ReadRecPtr >> 32), (uint32) record->ReadRecPtr,
 		   (uint32) (xl_prev >> 32), (uint32) xl_prev);
-	printf("desc: %s ", id);
+
+	id = desc->rm_identify(info);
+	if (id == NULL)
+		printf("desc: UNKNOWN (%x) ", info & ~XLR_INFO_MASK);
+	else
+		printf("desc: %s ", id);
 
 	/* the desc routine will printf the description directly to stdout */
 	desc->rm_desc(NULL, record);
@@ -608,7 +609,7 @@ XLogDumpDisplayRecord(XLogDumpConfig *config, XLogReaderState *record)
 					BKPIMAGE_IS_COMPRESSED)
 				{
 					printf(" (FPW%s); hole: offset: %u, length: %u, "
-						   "compression saved: %u\n",
+						   "compression saved: %u",
 						   XLogRecBlockImageApply(record, block_id) ?
 						   "" : " for WAL verification",
 						   record->blocks[block_id].hole_offset,
@@ -619,7 +620,7 @@ XLogDumpDisplayRecord(XLogDumpConfig *config, XLogReaderState *record)
 				}
 				else
 				{
-					printf(" (FPW%s); hole: offset: %u, length: %u\n",
+					printf(" (FPW%s); hole: offset: %u, length: %u",
 						   XLogRecBlockImageApply(record, block_id) ?
 						   "" : " for WAL verification",
 						   record->blocks[block_id].hole_offset,
@@ -1039,7 +1040,7 @@ main(int argc, char **argv)
 		XLogFromFileName(fname, &private.timeline, &segno, WalSegSz);
 
 		if (XLogRecPtrIsInvalid(private.startptr))
-			XLogSegNoOffsetToRecPtr(segno, 0, private.startptr, WalSegSz);
+			XLogSegNoOffsetToRecPtr(segno, 0, WalSegSz, private.startptr);
 		else if (!XLByteInSeg(private.startptr, segno, WalSegSz))
 		{
 			fprintf(stderr,
@@ -1053,7 +1054,7 @@ main(int argc, char **argv)
 
 		/* no second file specified, set end position */
 		if (!(optind + 1 < argc) && XLogRecPtrIsInvalid(private.endptr))
-			XLogSegNoOffsetToRecPtr(segno + 1, 0, private.endptr, WalSegSz);
+			XLogSegNoOffsetToRecPtr(segno + 1, 0, WalSegSz, private.endptr);
 
 		/* parse ENDSEG if passed */
 		if (optind + 1 < argc)
@@ -1076,8 +1077,8 @@ main(int argc, char **argv)
 							argv[optind + 1], argv[optind]);
 
 			if (XLogRecPtrIsInvalid(private.endptr))
-				XLogSegNoOffsetToRecPtr(endsegno + 1, 0, private.endptr,
-										WalSegSz);
+				XLogSegNoOffsetToRecPtr(endsegno + 1, 0, WalSegSz,
+										private.endptr);
 
 			/* set segno to endsegno for check of --end */
 			segno = endsegno;

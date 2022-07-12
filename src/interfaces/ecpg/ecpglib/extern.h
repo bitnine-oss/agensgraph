@@ -12,6 +12,9 @@
 #ifndef CHAR_BIT
 #include <limits.h>
 #endif
+#ifdef LOCALE_T_IN_XLOCALE
+#include <xlocale.h>
+#endif
 
 enum COMPAT_MODE
 {
@@ -61,7 +64,15 @@ struct statement
 	bool		questionmarks;
 	struct variable *inlist;
 	struct variable *outlist;
+#ifdef HAVE_USELOCALE
+	locale_t	clocale;
+	locale_t	oldlocale;
+#else
 	char	   *oldlocale;
+#ifdef HAVE__CONFIGTHREADLOCALE
+	int			oldthreadlocale;
+#endif
+#endif
 	int			nparams;
 	char	  **paramvalues;
 	PGresult   *results;
@@ -194,6 +205,12 @@ struct sqlda_compat *ecpg_build_compat_sqlda(int, PGresult *, int, enum COMPAT_M
 void		ecpg_set_compat_sqlda(int, struct sqlda_compat **, const PGresult *, int, enum COMPAT_MODE);
 struct sqlda_struct *ecpg_build_native_sqlda(int, PGresult *, int, enum COMPAT_MODE);
 void		ecpg_set_native_sqlda(int, struct sqlda_struct **, const PGresult *, int, enum COMPAT_MODE);
+
+#ifdef ENABLE_NLS
+extern char *ecpg_gettext(const char *msgid) pg_attribute_format_arg(1);
+#else
+#define ecpg_gettext(x) (x)
+#endif
 
 /* SQLSTATE values generated or processed by ecpglib (intentionally
  * not exported -- users should refer to the codes directly) */

@@ -1151,8 +1151,11 @@ parse_hba_line(TokenizedLine *tok_line, int elevel)
 
 			ret = pg_getaddrinfo_all(str, NULL, &hints, &gai_result);
 			if (ret == 0 && gai_result)
+			{
 				memcpy(&parsedline->addr, gai_result->ai_addr,
 					   gai_result->ai_addrlen);
+				parsedline->addrlen = gai_result->ai_addrlen;
+			}
 			else if (ret == EAI_NONAME)
 				parsedline->hostname = str;
 			else
@@ -1201,6 +1204,7 @@ parse_hba_line(TokenizedLine *tok_line, int elevel)
 										token->string);
 					return NULL;
 				}
+				parsedline->masklen = parsedline->addrlen;
 				pfree(str);
 			}
 			else if (!parsedline->hostname)
@@ -1251,6 +1255,7 @@ parse_hba_line(TokenizedLine *tok_line, int elevel)
 
 				memcpy(&parsedline->mask, gai_result->ai_addr,
 					   gai_result->ai_addrlen);
+				parsedline->masklen = gai_result->ai_addrlen;
 				pg_freeaddrinfo_all(hints.ai_family, gai_result);
 
 				if (parsedline->addr.ss_family != parsedline->mask.ss_family)
@@ -1881,7 +1886,7 @@ parse_hba_auth_opt(char *name, char *val, HbaLine *hbaline,
 
 		REQUIRE_AUTH_OPTION(uaRADIUS, "radiusservers", "radius");
 
-		if (!SplitIdentifierString(dupval, ',', &parsed_servers))
+		if (!SplitGUCList(dupval, ',', &parsed_servers))
 		{
 			/* syntax error in list */
 			ereport(elevel,
@@ -1930,7 +1935,7 @@ parse_hba_auth_opt(char *name, char *val, HbaLine *hbaline,
 
 		REQUIRE_AUTH_OPTION(uaRADIUS, "radiusports", "radius");
 
-		if (!SplitIdentifierString(dupval, ',', &parsed_ports))
+		if (!SplitGUCList(dupval, ',', &parsed_ports))
 		{
 			ereport(elevel,
 					(errcode(ERRCODE_CONFIG_FILE_ERROR),
@@ -1965,7 +1970,7 @@ parse_hba_auth_opt(char *name, char *val, HbaLine *hbaline,
 
 		REQUIRE_AUTH_OPTION(uaRADIUS, "radiussecrets", "radius");
 
-		if (!SplitIdentifierString(dupval, ',', &parsed_secrets))
+		if (!SplitGUCList(dupval, ',', &parsed_secrets))
 		{
 			/* syntax error in list */
 			ereport(elevel,
@@ -1987,7 +1992,7 @@ parse_hba_auth_opt(char *name, char *val, HbaLine *hbaline,
 
 		REQUIRE_AUTH_OPTION(uaRADIUS, "radiusidentifiers", "radius");
 
-		if (!SplitIdentifierString(dupval, ',', &parsed_identifiers))
+		if (!SplitGUCList(dupval, ',', &parsed_identifiers))
 		{
 			/* syntax error in list */
 			ereport(elevel,
@@ -2218,10 +2223,12 @@ load_hba(void)
 /*
  * This macro specifies the maximum number of authentication options
  * that are possible with any given authentication method that is supported.
- * Currently LDAP supports 10, so the macro value is well above the most any
- * method needs.
+ * Currently LDAP supports 11, and there are 3 that are not dependent on
+ * the auth method here.  It may not actually be possible to set all of them
+ * at the same time, but we'll set the macro value high enough to be
+ * conservative and avoid warnings from static analysis tools.
  */
-#define MAX_HBA_OPTIONS 12
+#define MAX_HBA_OPTIONS 14
 
 /*
  * Create a text array listing the options specified in the HBA line.
@@ -2327,6 +2334,7 @@ gethba_options(HbaLine *hba)
 				CStringGetTextDatum(psprintf("radiusports=%s", hba->radiusports_s));
 	}
 
+	/* If you add more options, consider increasing MAX_HBA_OPTIONS. */
 	Assert(noptions <= MAX_HBA_OPTIONS);
 
 	if (noptions > 0)
@@ -2452,20 +2460,26 @@ fill_hba_line(Tuplestorestate *tuple_store, TupleDesc tupdesc,
 				}
 				else
 				{
-					if (pg_getnameinfo_all(&hba->addr, sizeof(hba->addr),
-										   buffer, sizeof(buffer),
-										   NULL, 0,
-										   NI_NUMERICHOST) == 0)
+					/*
+					 * Note: if pg_getnameinfo_all fails, it'll set buffer to
+					 * "???", which we want to return.
+					 */
+					if (hba->addrlen > 0)
 					{
-						clean_ipv6_addr(hba->addr.ss_family, buffer);
+						if (pg_getnameinfo_all(&hba->addr, hba->addrlen,
+											   buffer, sizeof(buffer),
+											   NULL, 0,
+											   NI_NUMERICHOST) == 0)
+							clean_ipv6_addr(hba->addr.ss_family, buffer);
 						addrstr = pstrdup(buffer);
 					}
-					if (pg_getnameinfo_all(&hba->mask, sizeof(hba->mask),
-										   buffer, sizeof(buffer),
-										   NULL, 0,
-										   NI_NUMERICHOST) == 0)
+					if (hba->masklen > 0)
 					{
-						clean_ipv6_addr(hba->mask.ss_family, buffer);
+						if (pg_getnameinfo_all(&hba->mask, hba->masklen,
+											   buffer, sizeof(buffer),
+											   NULL, 0,
+											   NI_NUMERICHOST) == 0)
+							clean_ipv6_addr(hba->mask.ss_family, buffer);
 						maskstr = pstrdup(buffer);
 					}
 				}

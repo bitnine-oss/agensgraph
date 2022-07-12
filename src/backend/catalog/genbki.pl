@@ -14,10 +14,14 @@
 #
 #----------------------------------------------------------------------
 
-use Catalog;
-
 use strict;
 use warnings;
+
+use File::Basename;
+use File::Spec;
+BEGIN  { use lib File::Spec->rel2abs(dirname(__FILE__)); }
+
+use Catalog;
 
 my @input_files;
 my $output_path = '';

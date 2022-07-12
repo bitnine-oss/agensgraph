@@ -115,8 +115,10 @@
     <literal>BEFORE</literal> triggers fire immediately before a particular row is
     operated on, while row-level <literal>AFTER</literal> triggers fire at the end of
     the statement (but before any statement-level <literal>AFTER</literal> triggers).
-    These types of triggers may only be defined on non-partitioned tables and
-    foreign tables, not views.  <literal>INSTEAD OF</literal> triggers may only be
+    These types of triggers may only be defined on tables and
+    foreign tables, not views; <literal>BEFORE</literal> row-level triggers may not
+    be defined on partitioned tables.
+    <literal>INSTEAD OF</literal> triggers may only be
     defined on views, and only at row level; they fire immediately as each
     row in the view is identified as needing to be operated on.
    </para>
@@ -230,7 +232,7 @@
     used to signal that the trigger performed the necessary data
     modifications in the view.  This will cause the count of the number
     of rows affected by the command to be incremented. For
-    <command>INSERT</command> and <command>UPDATE</command> operations, the trigger
+    <command>INSERT</command> and <command>UPDATE</command> operations only, the trigger
     may modify the <varname>NEW</varname> row before returning it.  This will
     change the data returned by
     <command>INSERT RETURNING</command> or <command>UPDATE RETURNING</command>,
@@ -871,10 +873,10 @@ CREATE FUNCTION trigf() RETURNS trigger
     LANGUAGE C;
 
 CREATE TRIGGER tbefore BEFORE INSERT OR UPDATE OR DELETE ON ttest
-    FOR EACH ROW EXECUTE PROCEDURE trigf();
+    FOR EACH ROW EXECUTE FUNCTION trigf();
 
 CREATE TRIGGER tafter AFTER INSERT OR UPDATE OR DELETE ON ttest
-    FOR EACH ROW EXECUTE PROCEDURE trigf();
+    FOR EACH ROW EXECUTE FUNCTION trigf();
 </programlisting>
    </para>
 

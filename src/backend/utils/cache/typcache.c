@@ -150,7 +150,7 @@ typedef struct RecordCacheEntry
 
 /*
  * To deal with non-anonymous record types that are exchanged by backends
- * involved in a parallel query, we also need a shared verion of the above.
+ * involved in a parallel query, we also need a shared version of the above.
  */
 struct SharedRecordTypmodRegistry
 {
@@ -2105,6 +2105,16 @@ TypeCacheRelCallback(Datum arg, Oid relid)
 				if (--typentry->tupDesc->tdrefcount == 0)
 					FreeTupleDesc(typentry->tupDesc);
 				typentry->tupDesc = NULL;
+
+				/*
+				 * Also clear tupDesc_identifier, so that anything watching
+				 * that will realize that the tupdesc has possibly changed.
+				 * (Alternatively, we could specify that to detect possible
+				 * tupdesc change, one must check for tupDesc != NULL as well
+				 * as tupDesc_identifier being the same as what was previously
+				 * seen.  That seems error-prone.)
+				 */
+				typentry->tupDesc_identifier = 0;
 			}
 
 			/* Reset equality/comparison/hashing validity information */

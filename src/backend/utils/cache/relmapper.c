@@ -263,12 +263,16 @@ RelationMapUpdateMap(Oid relationId, Oid fileNode, bool shared,
 	else
 	{
 		/*
-		 * We don't currently support map changes within subtransactions. This
-		 * could be done with more bookkeeping infrastructure, but it doesn't
-		 * presently seem worth it.
+		 * We don't currently support map changes within subtransactions, and
+		 * parallel workers must avoid relying on mapping state, since it
+		 * isn't propagated from the leader.  This could be done with more
+		 * bookkeeping infrastructure, but it doesn't presently seem worth it.
 		 */
 		if (GetCurrentTransactionNestLevel() > 1)
 			elog(ERROR, "cannot change relation mapping within subtransaction");
+
+		if (IsInParallelMode())
+			elog(ERROR, "cannot change relation mapping in parallel mode");
 
 		if (immediate)
 		{
@@ -795,7 +799,7 @@ write_relmap_file(bool shared, RelMapFile *newmap,
 	 */
 	pgstat_report_wait_start(WAIT_EVENT_RELATION_MAP_SYNC);
 	if (pg_fsync(fd) != 0)
-		ereport(ERROR,
+		ereport(data_sync_elevel(ERROR),
 				(errcode_for_file_access(),
 				 errmsg("could not fsync relation mapping file \"%s\": %m",
 						mapfilename)));
@@ -843,8 +847,15 @@ write_relmap_file(bool shared, RelMapFile *newmap,
 		}
 	}
 
-	/* Success, update permanent copy */
-	memcpy(realmap, newmap, sizeof(RelMapFile));
+	/*
+	 * Success, update permanent copy.  During bootstrap, we might be working
+	 * on the permanent copy itself, in which case skip the memcpy() to avoid
+	 * invoking nominally-undefined behavior.
+	 */
+	if (realmap != newmap)
+		memcpy(realmap, newmap, sizeof(RelMapFile));
+	else
+		Assert(!send_sinval);	/* must be bootstrapping */
 
 	/* Critical section done */
 	if (write_wal)

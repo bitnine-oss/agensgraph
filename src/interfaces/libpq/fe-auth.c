@@ -199,7 +199,7 @@ pg_GSS_startup(PGconn *conn, int payloadlen)
 				min_stat;
 	int			maxlen;
 	gss_buffer_desc temp_gbuf;
-	char	   *host = PQhost(conn);
+	char	   *host = conn->connhost[conn->whichhost].host;
 
 	if (!(host && host[0] != '\0'))
 	{
@@ -414,7 +414,7 @@ pg_SSPI_startup(PGconn *conn, int use_negotiate, int payloadlen)
 {
 	SECURITY_STATUS r;
 	TimeStamp	expire;
-	char	   *host = PQhost(conn);
+	char	   *host = conn->connhost[conn->whichhost].host;
 
 	if (conn->sspictx)
 	{
@@ -526,15 +526,40 @@ pg_SASL_init(PGconn *conn, int payloadlen)
 
 		/*
 		 * Select the mechanism to use.  Pick SCRAM-SHA-256-PLUS over anything
-		 * else if a channel binding type is set.  Pick SCRAM-SHA-256 if
-		 * nothing else has already been picked.  If we add more mechanisms, a
-		 * more refined priority mechanism might become necessary.
+		 * else if a channel binding type is set and if the client supports
+		 * it. Pick SCRAM-SHA-256 if nothing else has already been picked.  If
+		 * we add more mechanisms, a more refined priority mechanism might
+		 * become necessary.
 		 */
-		if (conn->ssl_in_use &&
-			conn->scram_channel_binding &&
-			strlen(conn->scram_channel_binding) > 0 &&
-			strcmp(mechanism_buf.data, SCRAM_SHA_256_PLUS_NAME) == 0)
-			selected_mechanism = SCRAM_SHA_256_PLUS_NAME;
+		if (strcmp(mechanism_buf.data, SCRAM_SHA_256_PLUS_NAME) == 0)
+		{
+			if (conn->ssl_in_use)
+			{
+				/*
+				 * The server has offered SCRAM-SHA-256-PLUS, which is only
+				 * supported by the client if a hash of the peer certificate
+				 * can be created.
+				 */
+#ifdef HAVE_PGTLS_GET_PEER_CERTIFICATE_HASH
+				selected_mechanism = SCRAM_SHA_256_PLUS_NAME;
+#endif
+			}
+			else
+			{
+				/*
+				 * The server offered SCRAM-SHA-256-PLUS, but the connection
+				 * is not SSL-encrypted. That's not sane. Perhaps SSL was
+				 * stripped by a proxy? There's no point in continuing,
+				 * because the server will reject the connection anyway if we
+				 * try authenticate without channel binding even though both
+				 * the client and server supported it. The SCRAM exchange
+				 * checks for that, to prevent downgrade attacks.
+				 */
+				printfPQExpBuffer(&conn->errorMessage,
+								  libpq_gettext("server offered SCRAM-SHA-256-PLUS authentication over a non-SSL connection\n"));
+				goto error;
+			}
+		}
 		else if (strcmp(mechanism_buf.data, SCRAM_SHA_256_NAME) == 0 &&
 				 !selected_mechanism)
 			selected_mechanism = SCRAM_SHA_256_NAME;

@@ -10,6 +10,9 @@ BEGIN
 END
 $$ language plpgsql;
 
+-- should fail, can't call it as a plain function
+SELECT test_event_trigger();
+
 -- should fail, event triggers cannot have declared arguments
 create function test_event_trigger_arg(name text)
 returns event_trigger as $$ BEGIN RETURN 1; END $$ language plpgsql;
@@ -28,7 +31,7 @@ create event trigger regress_event_trigger on ddl_command_start
 
 -- OK
 create event trigger regress_event_trigger_end on ddl_command_end
-   execute procedure test_event_trigger();
+   execute function test_event_trigger();
 
 -- should fail, food is not a valid filter variable
 create event trigger regress_event_trigger2 on ddl_command_start
@@ -273,6 +276,19 @@ CREATE SCHEMA evttrig
 	CREATE TABLE one (col_a SERIAL PRIMARY KEY, col_b text DEFAULT 'forty two')
 	CREATE INDEX one_idx ON one (col_b)
 	CREATE TABLE two (col_c INTEGER CHECK (col_c > 0) REFERENCES one DEFAULT 42);
+
+-- Partitioned tables with a partitioned index
+CREATE TABLE evttrig.parted (
+    id int PRIMARY KEY)
+    PARTITION BY RANGE (id);
+CREATE TABLE evttrig.part_1_10 PARTITION OF evttrig.parted (id)
+  FOR VALUES FROM (1) TO (10);
+CREATE TABLE evttrig.part_10_20 PARTITION OF evttrig.parted (id)
+  FOR VALUES FROM (10) TO (20) PARTITION BY RANGE (id);
+CREATE TABLE evttrig.part_10_15 PARTITION OF evttrig.part_10_20 (id)
+  FOR VALUES FROM (10) TO (15);
+CREATE TABLE evttrig.part_15_20 PARTITION OF evttrig.part_10_20 (id)
+  FOR VALUES FROM (15) TO (20);
 
 ALTER TABLE evttrig.two DROP COLUMN col_c;
 ALTER TABLE evttrig.one ALTER COLUMN col_b DROP DEFAULT;

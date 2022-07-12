@@ -33,7 +33,6 @@ static void make_rels_by_clauseless_joins(PlannerInfo *root,
 							  ListCell *other_rels);
 static bool has_join_restriction(PlannerInfo *root, RelOptInfo *rel);
 static bool has_legal_joinclause(PlannerInfo *root, RelOptInfo *rel);
-static bool is_dummy_rel(RelOptInfo *rel);
 static bool restriction_is_constant_false(List *restrictlist,
 							  RelOptInfo *joinrel,
 							  bool only_pushed_down);
@@ -651,20 +650,15 @@ join_is_legal(PlannerInfo *root, RelOptInfo *rel1, RelOptInfo *rel2,
 				{
 					SpecialJoinInfo *sjinfo = (SpecialJoinInfo *) lfirst(l);
 
+					/* ignore full joins --- their ordering is predetermined */
+					if (sjinfo->jointype == JOIN_FULL)
+						continue;
+
 					if (bms_overlap(sjinfo->min_lefthand, join_plus_rhs) &&
 						!bms_is_subset(sjinfo->min_righthand, join_plus_rhs))
 					{
 						join_plus_rhs = bms_add_members(join_plus_rhs,
 														sjinfo->min_righthand);
-						more = true;
-					}
-					/* full joins constrain both sides symmetrically */
-					if (sjinfo->jointype == JOIN_FULL &&
-						bms_overlap(sjinfo->min_righthand, join_plus_rhs) &&
-						!bms_is_subset(sjinfo->min_lefthand, join_plus_rhs))
-					{
-						join_plus_rhs = bms_add_members(join_plus_rhs,
-														sjinfo->min_lefthand);
 						more = true;
 					}
 				}
@@ -1255,10 +1249,38 @@ have_dangerous_phv(PlannerInfo *root,
 /*
  * is_dummy_rel --- has relation been proven empty?
  */
-static bool
+bool
 is_dummy_rel(RelOptInfo *rel)
 {
-	return IS_DUMMY_REL(rel);
+	Path	   *path;
+
+	/*
+	 * A rel that is known dummy will have just one path that is a childless
+	 * Append.  (Even if somehow it has more paths, a childless Append will
+	 * have cost zero and hence should be at the front of the pathlist.)
+	 */
+	if (rel->pathlist == NIL)
+		return false;
+	path = (Path *) linitial(rel->pathlist);
+
+	/*
+	 * Initially, a dummy path will just be a childless Append.  But in later
+	 * planning stages we might stick a ProjectSetPath and/or ProjectionPath
+	 * on top, since Append can't project.  Rather than make assumptions about
+	 * which combinations can occur, just descend through whatever we find.
+	 */
+	for (;;)
+	{
+		if (IsA(path, ProjectionPath))
+			path = ((ProjectionPath *) path)->subpath;
+		else if (IsA(path, ProjectSetPath))
+			path = ((ProjectSetPath *) path)->subpath;
+		else
+			break;
+	}
+	if (IS_DUMMY_APPEND(path))
+		return true;
+	return false;
 }
 
 /*
@@ -1296,7 +1318,8 @@ mark_dummy_rel(RelOptInfo *rel)
 	rel->partial_pathlist = NIL;
 
 	/* Set up the dummy path */
-	add_path(rel, (Path *) create_append_path(NULL, rel, NIL, NIL, NULL,
+	add_path(rel, (Path *) create_append_path(NULL, rel, NIL, NIL,
+											  rel->lateral_relids,
 											  0, false, NIL, -1));
 
 	/* Set or update cheapest_total_path and related fields */
@@ -1377,6 +1400,8 @@ try_partitionwise_join(PlannerInfo *root, RelOptInfo *rel1, RelOptInfo *rel2,
 					   RelOptInfo *joinrel, SpecialJoinInfo *parent_sjinfo,
 					   List *parent_restrictlist)
 {
+	bool		rel1_is_simple = IS_SIMPLE_REL(rel1);
+	bool		rel2_is_simple = IS_SIMPLE_REL(rel2);
 	int			nparts;
 	int			cnt_parts;
 
@@ -1387,6 +1412,9 @@ try_partitionwise_join(PlannerInfo *root, RelOptInfo *rel1, RelOptInfo *rel2,
 	if (!IS_PARTITIONED_REL(joinrel))
 		return;
 
+	/* The join relation should have consider_partitionwise_join set. */
+	Assert(joinrel->consider_partitionwise_join);
+
 	/*
 	 * Since this join relation is partitioned, all the base relations
 	 * participating in this join must be partitioned and so are all the
@@ -1394,6 +1422,10 @@ try_partitionwise_join(PlannerInfo *root, RelOptInfo *rel1, RelOptInfo *rel2,
 	 */
 	Assert(IS_PARTITIONED_REL(rel1) && IS_PARTITIONED_REL(rel2));
 	Assert(REL_HAS_ALL_PART_PROPS(rel1) && REL_HAS_ALL_PART_PROPS(rel2));
+
+	/* The joining relations should have consider_partitionwise_join set. */
+	Assert(rel1->consider_partitionwise_join &&
+		   rel2->consider_partitionwise_join);
 
 	/*
 	 * The partition scheme of the join relation should match that of the
@@ -1427,12 +1459,82 @@ try_partitionwise_join(PlannerInfo *root, RelOptInfo *rel1, RelOptInfo *rel2,
 	{
 		RelOptInfo *child_rel1 = rel1->part_rels[cnt_parts];
 		RelOptInfo *child_rel2 = rel2->part_rels[cnt_parts];
+		bool		rel1_empty = (child_rel1 == NULL ||
+								  IS_DUMMY_REL(child_rel1));
+		bool		rel2_empty = (child_rel2 == NULL ||
+								  IS_DUMMY_REL(child_rel2));
 		SpecialJoinInfo *child_sjinfo;
 		List	   *child_restrictlist;
 		RelOptInfo *child_joinrel;
 		Relids		child_joinrelids;
 		AppendRelInfo **appinfos;
 		int			nappinfos;
+
+		/*
+		 * Check for cases where we can prove that this segment of the join
+		 * returns no rows, due to one or both inputs being empty (including
+		 * inputs that have been pruned away entirely).  If so just ignore it.
+		 * These rules are equivalent to populate_joinrel_with_paths's rules
+		 * for dummy input relations.
+		 */
+		switch (parent_sjinfo->jointype)
+		{
+			case JOIN_INNER:
+			case JOIN_SEMI:
+				if (rel1_empty || rel2_empty)
+					continue;	/* ignore this join segment */
+				break;
+			case JOIN_LEFT:
+			case JOIN_ANTI:
+				if (rel1_empty)
+					continue;	/* ignore this join segment */
+				break;
+			case JOIN_FULL:
+				if (rel1_empty && rel2_empty)
+					continue;	/* ignore this join segment */
+				break;
+			default:
+				/* other values not expected here */
+				elog(ERROR, "unrecognized join type: %d",
+					 (int) parent_sjinfo->jointype);
+				break;
+		}
+
+		/*
+		 * If a child has been pruned entirely then we can't generate paths
+		 * for it, so we have to reject partitionwise joining unless we were
+		 * able to eliminate this partition above.
+		 */
+		if (child_rel1 == NULL || child_rel2 == NULL)
+		{
+			/*
+			 * Mark the joinrel as unpartitioned so that later functions treat
+			 * it correctly.
+			 */
+			joinrel->nparts = 0;
+			return;
+		}
+
+		/*
+		 * If a leaf relation has consider_partitionwise_join=false, it means
+		 * that it's a dummy relation for which we skipped setting up tlist
+		 * expressions and adding EC members in set_append_rel_size(), so
+		 * again we have to fail here.
+		 */
+		if (rel1_is_simple && !child_rel1->consider_partitionwise_join)
+		{
+			Assert(child_rel1->reloptkind == RELOPT_OTHER_MEMBER_REL);
+			Assert(IS_DUMMY_REL(child_rel1));
+			joinrel->nparts = 0;
+			return;
+		}
+		if (rel2_is_simple && !child_rel2->consider_partitionwise_join)
+		{
+			Assert(child_rel2->reloptkind == RELOPT_OTHER_MEMBER_REL);
+			Assert(IS_DUMMY_REL(child_rel2));
+			joinrel->nparts = 0;
+			return;
+		}
 
 		/* We should never try to join two overlapping sets of rels. */
 		Assert(!bms_overlap(child_rel1->relids, child_rel2->relids));

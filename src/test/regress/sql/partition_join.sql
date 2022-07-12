@@ -34,7 +34,7 @@ EXPLAIN (COSTS OFF)
 SELECT t1.a, t1.c, t2.b, t2.c FROM prt1 t1, prt2 t2 WHERE t1.a = t2.b AND t1.b = 0 ORDER BY t1.a, t2.b;
 SELECT t1.a, t1.c, t2.b, t2.c FROM prt1 t1, prt2 t2 WHERE t1.a = t2.b AND t1.b = 0 ORDER BY t1.a, t2.b;
 
--- left outer join, with whole-row reference
+-- left outer join, with whole-row reference; partitionwise join does not apply
 EXPLAIN (COSTS OFF)
 SELECT t1, t2 FROM prt1 t1 LEFT JOIN prt2 t2 ON t1.a = t2.b WHERE t1.b = 0 ORDER BY t1.a, t2.b;
 SELECT t1, t2 FROM prt1 t1 LEFT JOIN prt2 t2 ON t1.a = t2.b WHERE t1.b = 0 ORDER BY t1.a, t2.b;
@@ -54,10 +54,12 @@ EXPLAIN (COSTS OFF)
 SELECT t1.a, t1.c, t2.b, t2.c FROM prt1 t1, prt2 t2 WHERE t1.a = t2.b AND t1.a < 450 AND t2.b > 250 AND t1.b = 0 ORDER BY t1.a, t2.b;
 SELECT t1.a, t1.c, t2.b, t2.c FROM prt1 t1, prt2 t2 WHERE t1.a = t2.b AND t1.a < 450 AND t2.b > 250 AND t1.b = 0 ORDER BY t1.a, t2.b;
 
+-- Currently we can't do partitioned join if nullable-side partitions are pruned
 EXPLAIN (COSTS OFF)
 SELECT t1.a, t1.c, t2.b, t2.c FROM (SELECT * FROM prt1 WHERE a < 450) t1 LEFT JOIN (SELECT * FROM prt2 WHERE b > 250) t2 ON t1.a = t2.b WHERE t1.b = 0 ORDER BY t1.a, t2.b;
 SELECT t1.a, t1.c, t2.b, t2.c FROM (SELECT * FROM prt1 WHERE a < 450) t1 LEFT JOIN (SELECT * FROM prt2 WHERE b > 250) t2 ON t1.a = t2.b WHERE t1.b = 0 ORDER BY t1.a, t2.b;
 
+-- Currently we can't do partitioned join if nullable-side partitions are pruned
 EXPLAIN (COSTS OFF)
 SELECT t1.a, t1.c, t2.b, t2.c FROM (SELECT * FROM prt1 WHERE a < 450) t1 FULL JOIN (SELECT * FROM prt2 WHERE b > 250) t2 ON t1.a = t2.b WHERE t1.b = 0 OR t2.a = 0 ORDER BY t1.a, t2.b;
 SELECT t1.a, t1.c, t2.b, t2.c FROM (SELECT * FROM prt1 WHERE a < 450) t1 FULL JOIN (SELECT * FROM prt2 WHERE b > 250) t2 ON t1.a = t2.b WHERE t1.b = 0 OR t2.a = 0 ORDER BY t1.a, t2.b;
@@ -156,9 +158,16 @@ SELECT t1.a, t1.c, t2.b, t2.c, t3.a + t3.b, t3.c FROM (prt1 t1 LEFT JOIN prt2 t2
 SELECT t1.a, t1.c, t2.b, t2.c, t3.a + t3.b, t3.c FROM (prt1 t1 LEFT JOIN prt2 t2 ON t1.a = t2.b) RIGHT JOIN prt1_e t3 ON (t1.a = (t3.a + t3.b)/2) WHERE t3.c = 0 ORDER BY t1.a, t2.b, t3.a + t3.b;
 
 -- MergeAppend on nullable column
+-- This should generate a partitionwise join, but currently fails to
 EXPLAIN (COSTS OFF)
 SELECT t1.a, t2.b FROM (SELECT * FROM prt1 WHERE a < 450) t1 LEFT JOIN (SELECT * FROM prt2 WHERE b > 250) t2 ON t1.a = t2.b WHERE t1.b = 0 ORDER BY t1.a, t2.b;
 SELECT t1.a, t2.b FROM (SELECT * FROM prt1 WHERE a < 450) t1 LEFT JOIN (SELECT * FROM prt2 WHERE b > 250) t2 ON t1.a = t2.b WHERE t1.b = 0 ORDER BY t1.a, t2.b;
+
+-- merge join when expression with whole-row reference needs to be sorted;
+-- partitionwise join does not apply
+EXPLAIN (COSTS OFF)
+SELECT t1.a, t2.b FROM prt1 t1, prt2 t2 WHERE t1::text = t2::text AND t1.a = t2.b ORDER BY t1.a;
+SELECT t1.a, t2.b FROM prt1 t1, prt2 t2 WHERE t1::text = t2::text AND t1.a = t2.b ORDER BY t1.a;
 
 RESET enable_hashjoin;
 RESET enable_nestloop;
@@ -319,6 +328,18 @@ SELECT * FROM prt1_l t1 LEFT JOIN LATERAL
 EXPLAIN (COSTS OFF)
 SELECT t1.a, t1.c, t2.b, t2.c FROM (SELECT * FROM prt1_l WHERE a = 1 AND a = 2) t1 RIGHT JOIN prt2_l t2 ON t1.a = t2.b AND t1.b = t2.a AND t1.c = t2.c;
 
+-- Test case to verify proper handling of subqueries in a partitioned delete.
+-- The weird-looking lateral join is just there to force creation of a
+-- nestloop parameter within the subquery, which exposes the problem if the
+-- planner fails to make multiple copies of the subquery as appropriate.
+EXPLAIN (COSTS OFF)
+DELETE FROM prt1_l
+WHERE EXISTS (
+  SELECT 1
+    FROM int4_tbl,
+         LATERAL (SELECT int4_tbl.f1 FROM int8_tbl LIMIT 2) ss
+    WHERE prt1_l.c IS NULL);
+
 --
 -- negative testcases
 --
@@ -373,14 +394,66 @@ SELECT t1.a, t1.c, t2.b, t2.c FROM prt1_m t1 LEFT JOIN prt2_m t2 ON t1.a = t2.b;
 EXPLAIN (COSTS OFF)
 SELECT t1.a, t1.c, t2.b, t2.c FROM prt1_m t1 LEFT JOIN prt2_m t2 ON t1.c = t2.c;
 
+-- partitionwise join can not be applied for a join between list and range
+-- partitioned tables
+EXPLAIN (COSTS OFF)
+SELECT t1.a, t1.c, t2.b, t2.c FROM prt1_n t1 LEFT JOIN prt2_n t2 ON (t1.c = t2.c);
+
 -- partitionwise join can not be applied between tables with different
 -- partition lists
 EXPLAIN (COSTS OFF)
-SELECT t1.a, t1.c, t2.b, t2.c FROM prt1_n t1 LEFT JOIN prt2_n t2 ON (t1.c = t2.c);
-EXPLAIN (COSTS OFF)
 SELECT t1.a, t1.c, t2.b, t2.c FROM prt1_n t1 JOIN prt2_n t2 ON (t1.c = t2.c) JOIN plt1 t3 ON (t1.c = t3.c);
 
--- partitionwise join can not be applied for a join between list and range
--- partitioned table
+-- partitionwise join can not be applied for a join between key column and
+-- non-key column
 EXPLAIN (COSTS OFF)
 SELECT t1.a, t1.c, t2.b, t2.c FROM prt1_n t1 FULL JOIN prt1 t2 ON (t1.c = t2.c);
+
+--
+-- Test some other plan types in a partitionwise join (unfortunately,
+-- we need larger tables to get the planner to choose these plan types)
+--
+create temp table prtx1 (a integer, b integer, c integer)
+  partition by range (a);
+create temp table prtx1_1 partition of prtx1 for values from (1) to (11);
+create temp table prtx1_2 partition of prtx1 for values from (11) to (21);
+create temp table prtx1_3 partition of prtx1 for values from (21) to (31);
+create temp table prtx2 (a integer, b integer, c integer)
+  partition by range (a);
+create temp table prtx2_1 partition of prtx2 for values from (1) to (11);
+create temp table prtx2_2 partition of prtx2 for values from (11) to (21);
+create temp table prtx2_3 partition of prtx2 for values from (21) to (31);
+insert into prtx1 select 1 + i%30, i, i
+  from generate_series(1,1000) i;
+insert into prtx2 select 1 + i%30, i, i
+  from generate_series(1,500) i, generate_series(1,10) j;
+create index on prtx2 (b);
+create index on prtx2 (c);
+analyze prtx1;
+analyze prtx2;
+
+set enable_indexscan = off;
+
+explain (costs off)
+select * from prtx1
+where not exists (select 1 from prtx2
+                  where prtx2.a=prtx1.a and prtx2.b=prtx1.b and prtx2.c=123)
+  and a<20 and c=120;
+
+select * from prtx1
+where not exists (select 1 from prtx2
+                  where prtx2.a=prtx1.a and prtx2.b=prtx1.b and prtx2.c=123)
+  and a<20 and c=120;
+
+explain (costs off)
+select * from prtx1
+where not exists (select 1 from prtx2
+                  where prtx2.a=prtx1.a and (prtx2.b=prtx1.b+1 or prtx2.c=99))
+  and a<20 and c=91;
+
+select * from prtx1
+where not exists (select 1 from prtx2
+                  where prtx2.a=prtx1.a and (prtx2.b=prtx1.b+1 or prtx2.c=99))
+  and a<20 and c=91;
+
+reset enable_indexscan;

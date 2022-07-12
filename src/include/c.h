@@ -983,11 +983,69 @@ extern void ExceptionalCondition(const char *conditionName,
 			*_start++ = 0; \
 	} while (0)
 
+/*
+ * Macros for range-checking float values before converting to integer.
+ * We must be careful here that the boundary values are expressed exactly
+ * in the float domain.  PG_INTnn_MIN is an exact power of 2, so it will
+ * be represented exactly; but PG_INTnn_MAX isn't, and might get rounded
+ * off, so avoid using that.
+ * The input must be rounded to an integer beforehand, typically with rint(),
+ * else we might draw the wrong conclusion about close-to-the-limit values.
+ * These macros will do the right thing for Inf, but not necessarily for NaN,
+ * so check isnan(num) first if that's a possibility.
+ */
+#define FLOAT4_FITS_IN_INT16(num) \
+	((num) >= (float4) PG_INT16_MIN && (num) < -((float4) PG_INT16_MIN))
+#define FLOAT4_FITS_IN_INT32(num) \
+	((num) >= (float4) PG_INT32_MIN && (num) < -((float4) PG_INT32_MIN))
+#define FLOAT4_FITS_IN_INT64(num) \
+	((num) >= (float4) PG_INT64_MIN && (num) < -((float4) PG_INT64_MIN))
+#define FLOAT8_FITS_IN_INT16(num) \
+	((num) >= (float8) PG_INT16_MIN && (num) < -((float8) PG_INT16_MIN))
+#define FLOAT8_FITS_IN_INT32(num) \
+	((num) >= (float8) PG_INT32_MIN && (num) < -((float8) PG_INT32_MIN))
+#define FLOAT8_FITS_IN_INT64(num) \
+	((num) >= (float8) PG_INT64_MIN && (num) < -((float8) PG_INT64_MIN))
+
 
 /* ----------------------------------------------------------------
  *				Section 8:	random stuff
  * ----------------------------------------------------------------
  */
+
+/*
+ * Invert the sign of a qsort-style comparison result, ie, exchange negative
+ * and positive integer values, being careful not to get the wrong answer
+ * for INT_MIN.  The argument should be an integral variable.
+ */
+#define INVERT_COMPARE_RESULT(var) \
+	((var) = ((var) < 0) ? 1 : -(var))
+
+/*
+ * Use this, not "char buf[BLCKSZ]", to declare a field or local variable
+ * holding a page buffer, if that page might be accessed as a page and not
+ * just a string of bytes.  Otherwise the variable might be under-aligned,
+ * causing problems on alignment-picky hardware.  (In some places, we use
+ * this to declare buffers even though we only pass them to read() and
+ * write(), because copying to/from aligned buffers is usually faster than
+ * using unaligned buffers.)  We include both "double" and "int64" in the
+ * union to ensure that the compiler knows the value must be MAXALIGN'ed
+ * (cf. configure's computation of MAXIMUM_ALIGNOF).
+ */
+typedef union PGAlignedBlock
+{
+	char		data[BLCKSZ];
+	double		force_align_d;
+	int64		force_align_i64;
+} PGAlignedBlock;
+
+/* Same, but for an XLOG_BLCKSZ-sized buffer */
+typedef union PGAlignedXLogBlock
+{
+	char		data[XLOG_BLCKSZ];
+	double		force_align_d;
+	int64		force_align_i64;
+} PGAlignedXLogBlock;
 
 /* msb for char */
 #define HIGHBIT					(0x80)

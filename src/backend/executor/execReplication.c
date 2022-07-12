@@ -55,7 +55,8 @@ build_replindex_scan_key(ScanKey skey, Relation rel, Relation idxrel,
 	int2vector *indkey = &idxrel->rd_index->indkey;
 	bool		hasnulls = false;
 
-	Assert(RelationGetReplicaIndex(rel) == RelationGetRelid(idxrel));
+	Assert(RelationGetReplicaIndex(rel) == RelationGetRelid(idxrel) ||
+		   RelationGetPrimaryKeyIndex(rel) == RelationGetRelid(idxrel));
 
 	indclassDatum = SysCacheGetAttr(INDEXRELID, idxrel->rd_indextuple,
 									Anum_pg_index_indclass, &isnull);
@@ -219,11 +220,6 @@ retry:
 
 /*
  * Compare the tuple and slot and check if they have equal values.
- *
- * We use binary datum comparison which might return false negatives but
- * that's the best we can do here as there may be multiple notions of
- * equality for the data types and table columns don't specify which one
- * to use.
  */
 static bool
 tuple_equals_slot(TupleDesc desc, HeapTuple tup, TupleTableSlot *slot)
@@ -325,6 +321,9 @@ retry:
 			XactLockTableWait(xwait, NULL, NULL, XLTW_None);
 			goto retry;
 		}
+
+		/* Found our tuple and it's not locked */
+		break;
 	}
 
 	/* Found tuple, try to lock it in the lockmode. */
@@ -531,7 +530,7 @@ ExecSimpleRelationDelete(EState *estate, EPQState *epqstate,
 	{
 		skip_tuple = !ExecBRDeleteTriggers(estate, epqstate, resultRelInfo,
 										   &searchslot->tts_tuple->t_self,
-										   NULL);
+										   NULL, NULL);
 	}
 
 	if (!skip_tuple)

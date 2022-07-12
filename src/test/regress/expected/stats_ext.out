@@ -6,6 +6,7 @@ SET max_parallel_workers = 0;
 SET max_parallel_workers_per_gather = 0;
 SET work_mem = '128kB';
 -- Verify failures
+CREATE TABLE ext_stats_test (x int, y int, z int);
 CREATE STATISTICS tst;
 ERROR:  syntax error at or near ";"
 LINE 1: CREATE STATISTICS tst;
@@ -20,16 +21,17 @@ LINE 1: CREATE STATISTICS tst FROM sometab;
                               ^
 CREATE STATISTICS tst ON a, b FROM nonexistant;
 ERROR:  relation "nonexistant" does not exist
-CREATE STATISTICS tst ON a, b FROM pg_class;
+CREATE STATISTICS tst ON a, b FROM ext_stats_test;
 ERROR:  column "a" does not exist
-CREATE STATISTICS tst ON relname, relname, relnatts FROM pg_class;
+CREATE STATISTICS tst ON x, x, y FROM ext_stats_test;
 ERROR:  duplicate column name in statistics definition
-CREATE STATISTICS tst ON relnatts + relpages FROM pg_class;
+CREATE STATISTICS tst ON x + y FROM ext_stats_test;
 ERROR:  only simple column references are allowed in CREATE STATISTICS
-CREATE STATISTICS tst ON (relpages, reltuples) FROM pg_class;
+CREATE STATISTICS tst ON (x, y) FROM ext_stats_test;
 ERROR:  only simple column references are allowed in CREATE STATISTICS
-CREATE STATISTICS tst (unrecognized) ON relname, relnatts FROM pg_class;
+CREATE STATISTICS tst (unrecognized) ON x, y FROM ext_stats_test;
 ERROR:  unrecognized statistics kind "unrecognized"
+DROP TABLE ext_stats_test;
 -- Ensure stats are dropped sanely, and test IF NOT EXISTS while at it
 CREATE TABLE ab1 (a INTEGER, b INTEGER, c INTEGER);
 CREATE STATISTICS IF NOT EXISTS ab1_a_b_stats ON a, b FROM ab1;
@@ -86,6 +88,14 @@ ANALYZE ab1 (a);
 WARNING:  statistics object "public.ab1_a_b_stats" could not be computed for relation "public.ab1"
 ANALYZE ab1;
 DROP TABLE ab1;
+-- Ensure we can build statistics for tables with inheritance.
+CREATE TABLE ab1 (a INTEGER, b INTEGER);
+CREATE TABLE ab1c () INHERITS (ab1);
+INSERT INTO ab1 VALUES (1,1);
+CREATE STATISTICS ab1_a_b_stats ON a, b FROM ab1;
+ANALYZE ab1;
+DROP TABLE ab1 CASCADE;
+NOTICE:  drop cascades to table ab1c
 -- Verify supported object types for extended statistics
 CREATE schema tststats;
 CREATE TABLE tststats.t (a int, b int, c text);
@@ -208,6 +218,18 @@ SELECT stxkind, stxndistinct
 ---------+---------------------------------------------------------
  {d,f}   | {"3, 4": 301, "3, 6": 301, "4, 6": 301, "3, 4, 6": 301}
 (1 row)
+
+-- minor improvement, make sure the ctid does not break the matching
+EXPLAIN (COSTS off)
+SELECT COUNT(*) FROM ndistinct GROUP BY ctid, a, b;
+            QUERY PLAN             
+-----------------------------------
+ GroupAggregate
+   Group Key: ctid, a, b
+   ->  Sort
+         Sort Key: ctid, a, b
+         ->  Seq Scan on ndistinct
+(5 rows)
 
 -- Hash Aggregate, thanks to estimates improved by the statistic
 EXPLAIN (COSTS off)

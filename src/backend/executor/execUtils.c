@@ -46,6 +46,8 @@
 #include "access/transam.h"
 #include "catalog/ag_label.h"
 #include "executor/executor.h"
+#include "executor/execPartition.h"
+#include "jit/jit.h"
 #include "mb/pg_wchar.h"
 #include "nodes/nodeFuncs.h"
 #include "parser/parsetree.h"
@@ -176,11 +178,11 @@ CreateExecutorState(void)
  *
  *		Release an EState along with all remaining working storage.
  *
- * Note: this is not responsible for releasing non-memory resources,
- * such as open relations or buffer pins.  But it will shut down any
- * still-active ExprContexts within the EState.  That is sufficient
- * cleanup for situations where the EState has only been used for expression
- * evaluation, and not to run a complete Plan.
+ * Note: this is not responsible for releasing non-memory resources, such as
+ * open relations or buffer pins.  But it will shut down any still-active
+ * ExprContexts within the EState and deallocate associated JITed expressions.
+ * That is sufficient cleanup for situations where the EState has only been
+ * used for expression evaluation, and not to run a complete Plan.
  *
  * This can be called in any memory context ... so long as it's not one
  * of the ones to be freed.
@@ -204,6 +206,13 @@ FreeExecutorState(EState *estate)
 		FreeExprContext((ExprContext *) linitial(estate->es_exprcontexts),
 						true);
 		/* FreeExprContext removed the list link for us */
+	}
+
+	/* release JIT context, if allocated */
+	if (estate->es_jit)
+	{
+		jit_release_context(estate->es_jit);
+		estate->es_jit = NULL;
 	}
 
 	/*
@@ -1061,6 +1070,69 @@ ExecCleanTargetListLength(List *targetlist)
 			len++;
 	}
 	return len;
+}
+
+/* Return a bitmap representing columns being inserted */
+Bitmapset *
+ExecGetInsertedCols(ResultRelInfo *relinfo, EState *estate)
+{
+	/*
+	 * The columns are stored in the range table entry. If this ResultRelInfo
+	 * doesn't have an entry in the range table (i.e. if it represents a
+	 * partition routing target), fetch the parent's RTE and map the columns
+	 * to the order they are in the partition.
+	 */
+	if (relinfo->ri_RangeTableIndex != 0)
+	{
+		RangeTblEntry *rte = rt_fetch(relinfo->ri_RangeTableIndex,
+									  estate->es_range_table);
+
+		return rte->insertedCols;
+	}
+	else
+	{
+		ResultRelInfo *rootRelInfo = relinfo->ri_RootResultRelInfo;
+		RangeTblEntry *rte = rt_fetch(rootRelInfo->ri_RangeTableIndex,
+									  estate->es_range_table);
+		TupleConversionMap *map;
+
+		map = convert_tuples_by_name(RelationGetDescr(rootRelInfo->ri_RelationDesc),
+									 RelationGetDescr(relinfo->ri_RelationDesc),
+									 gettext_noop("could not convert row type"));
+		if (map != NULL)
+			return execute_attr_map_cols(rte->insertedCols, map);
+		else
+			return rte->insertedCols;
+	}
+}
+
+/* Return a bitmap representing columns being updated */
+Bitmapset *
+ExecGetUpdatedCols(ResultRelInfo *relinfo, EState *estate)
+{
+	/* see ExecGetInsertedCols() */
+	if (relinfo->ri_RangeTableIndex != 0)
+	{
+		RangeTblEntry *rte = rt_fetch(relinfo->ri_RangeTableIndex,
+									  estate->es_range_table);
+
+		return rte->updatedCols;
+	}
+	else
+	{
+		ResultRelInfo *rootRelInfo = relinfo->ri_RootResultRelInfo;
+		RangeTblEntry *rte = rt_fetch(rootRelInfo->ri_RangeTableIndex,
+									  estate->es_range_table);
+		TupleConversionMap *map;
+
+		map = convert_tuples_by_name(RelationGetDescr(rootRelInfo->ri_RelationDesc),
+									 RelationGetDescr(relinfo->ri_RelationDesc),
+									 gettext_noop("could not convert row type"));
+		if (map != NULL)
+			return execute_attr_map_cols(rte->updatedCols, map);
+		else
+			return rte->updatedCols;
+	}
 }
 
 

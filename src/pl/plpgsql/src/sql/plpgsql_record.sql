@@ -270,17 +270,8 @@ create function sillyaddone(int) returns int language plpgsql as
 $$ declare r mutable; begin r.f1 := $1; return r.f1 + 1; end $$;
 select sillyaddone(42);
 
-alter table mutable drop column f1;
-alter table mutable add column f1 float8;
-
--- currently, this fails due to cached plan for "r.f1 + 1" expression
--- (but we can't actually show that, because a CLOBBER_CACHE_ALWAYS build
--- will succeed)
--- select sillyaddone(42);
-
--- but it's OK if we force plan rebuilding
-discard plans;
-select sillyaddone(42);
+-- test for change of type of column f1 should be here someday;
+-- for now see plpgsql_cache test
 
 alter table mutable drop column f1;
 select sillyaddone(42);  -- fail
@@ -296,6 +287,23 @@ alter table mutable drop column f3;
 \set SHOW_CONTEXT never
 select getf3(null::mutable);  -- fails again
 \set SHOW_CONTEXT errors
+
+-- check behavior with creating/dropping a named rowtype
+set check_function_bodies = off;  -- else reference to nonexistent type fails
+
+create function sillyaddtwo(int) returns int language plpgsql as
+$$ declare r mutable2; begin r.f1 := $1; return r.f1 + 2; end $$;
+
+reset check_function_bodies;
+
+select sillyaddtwo(42);  -- fail
+create table mutable2(f1 int, f2 text);
+select sillyaddtwo(42);
+drop table mutable2;
+select sillyaddtwo(42);  -- fail
+create table mutable2(f0 text, f1 int, f2 text);
+select sillyaddtwo(42);
+select sillyaddtwo(43);
 
 -- check access to system columns in a record variable
 
@@ -450,3 +458,13 @@ begin
     d.f2 := r.b;
   end loop;
 end$$;
+
+-- check coercion of a record result to named-composite function output type
+create function compresult(int8) returns two_int8s language plpgsql as
+$$ declare r record; begin r := row($1,$1); return r; end $$;
+
+create table two_int8s_tab (f1 two_int8s);
+insert into two_int8s_tab values (compresult(42));
+-- reconnect so we lose any local knowledge of anonymous record types
+\c -
+table two_int8s_tab;

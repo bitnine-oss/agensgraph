@@ -59,7 +59,7 @@ logicalrep_relmap_invalidate_cb(Datum arg, Oid reloid)
 		{
 			if (entry->localreloid == reloid)
 			{
-				entry->localreloid = InvalidOid;
+				entry->localrelvalid = false;
 				hash_seq_term(&status);
 				break;
 			}
@@ -73,7 +73,7 @@ logicalrep_relmap_invalidate_cb(Datum arg, Oid reloid)
 		hash_seq_init(&status, LogicalRepRelMap);
 
 		while ((entry = (LogicalRepRelMapEntry *) hash_seq_search(&status)) != NULL)
-			entry->localreloid = InvalidOid;
+			entry->localrelvalid = false;
 	}
 }
 
@@ -212,14 +212,14 @@ logicalrep_rel_att_by_name(LogicalRepRelation *remoterel, const char *attname)
 /*
  * Open the local relation associated with the remote one.
  *
- * Optionally rebuilds the Relcache mapping if it was invalidated
- * by local DDL.
+ * Rebuilds the Relcache mapping if it was invalidated by local DDL.
  */
 LogicalRepRelMapEntry *
 logicalrep_rel_open(LogicalRepRelId remoteid, LOCKMODE lockmode)
 {
 	LogicalRepRelMapEntry *entry;
 	bool		found;
+	LogicalRepRelation *remoterel;
 
 	if (LogicalRepRelMap == NULL)
 		logicalrep_relmap_init();
@@ -232,18 +232,46 @@ logicalrep_rel_open(LogicalRepRelId remoteid, LOCKMODE lockmode)
 		elog(ERROR, "no relation map entry for remote relation ID %u",
 			 remoteid);
 
-	/* Need to update the local cache? */
-	if (!OidIsValid(entry->localreloid))
+	remoterel = &entry->remoterel;
+
+	/* Ensure we don't leak a relcache refcount. */
+	if (entry->localrel)
+		elog(ERROR, "remote relation ID %u is already open", remoteid);
+
+	/*
+	 * When opening and locking a relation, pending invalidation messages are
+	 * processed which can invalidate the relation.  Hence, if the entry is
+	 * currently considered valid, try to open the local relation by OID and
+	 * see if invalidation ensues.
+	 */
+	if (entry->localrelvalid)
+	{
+		entry->localrel = try_relation_open(entry->localreloid, lockmode);
+		if (!entry->localrel)
+		{
+			/* Table was renamed or dropped. */
+			entry->localrelvalid = false;
+		}
+		else if (!entry->localrelvalid)
+		{
+			/* Note we release the no-longer-useful lock here. */
+			heap_close(entry->localrel, lockmode);
+			entry->localrel = NULL;
+		}
+	}
+
+	/*
+	 * If the entry has been marked invalid since we last had lock on it,
+	 * re-open the local relation by name and rebuild all derived data.
+	 */
+	if (!entry->localrelvalid)
 	{
 		Oid			relid;
-		int			i;
 		int			found;
 		Bitmapset  *idkey;
 		TupleDesc	desc;
-		LogicalRepRelation *remoterel;
 		MemoryContext oldctx;
-
-		remoterel = &entry->remoterel;
+		int			i;
 
 		/* Try to find and lock the relation by name. */
 		relid = RangeVarGetRelid(makeRangeVar(remoterel->nspname,
@@ -255,6 +283,7 @@ logicalrep_rel_open(LogicalRepRelId remoteid, LOCKMODE lockmode)
 					 errmsg("logical replication target relation \"%s.%s\" does not exist",
 							remoterel->nspname, remoterel->relname)));
 		entry->localrel = heap_open(relid, NoLock);
+		entry->localreloid = relid;
 
 		/* Check for supported relkind. */
 		CheckSubscriptionRelkind(entry->localrel->rd_rel->relkind,
@@ -267,7 +296,7 @@ logicalrep_rel_open(LogicalRepRelId remoteid, LOCKMODE lockmode)
 		 */
 		desc = RelationGetDescr(entry->localrel);
 		oldctx = MemoryContextSwitchTo(LogicalRepRelMapContext);
-		entry->attrmap = palloc(desc->natts * sizeof(int));
+		entry->attrmap = palloc(desc->natts * sizeof(AttrNumber));
 		MemoryContextSwitchTo(oldctx);
 
 		found = 0;
@@ -340,17 +369,16 @@ logicalrep_rel_open(LogicalRepRelId remoteid, LOCKMODE lockmode)
 
 			attnum = AttrNumberGetAttrOffset(attnum);
 
-			if (!bms_is_member(entry->attrmap[attnum], remoterel->attkeys))
+			if (entry->attrmap[attnum] < 0 ||
+				!bms_is_member(entry->attrmap[attnum], remoterel->attkeys))
 			{
 				entry->updatable = false;
 				break;
 			}
 		}
 
-		entry->localreloid = relid;
+		entry->localrelvalid = true;
 	}
-	else
-		entry->localrel = heap_open(entry->localreloid, lockmode);
 
 	if (entry->state != SUBREL_STATE_READY)
 		entry->state = GetSubscriptionRelState(MySubscription->oid,
@@ -425,7 +453,7 @@ logicalrep_typmap_gettypname(Oid remoteid)
 	bool		found;
 
 	/* Internal types are mapped directly. */
-	if (remoteid < FirstNormalObjectId)
+	if (remoteid < FirstBootstrapObjectId)
 	{
 		if (!get_typisdefined(remoteid))
 		{

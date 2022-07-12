@@ -2995,6 +2995,70 @@ order by 1,2;
 (8 rows)
 
 --
+-- variant where a PlaceHolderVar is needed at a join, but not above the join
+--
+explain (costs off)
+select * from
+  int4_tbl as i41,
+  lateral
+    (select 1 as x from
+      (select i41.f1 as lat,
+              i42.f1 as loc from
+         int8_tbl as i81, int4_tbl as i42) as ss1
+      right join int4_tbl as i43 on (i43.f1 > 1)
+      where ss1.loc = ss1.lat) as ss2
+where i41.f1 > 0;
+                    QUERY PLAN                    
+--------------------------------------------------
+ Nested Loop
+   ->  Nested Loop
+         ->  Seq Scan on int4_tbl i41
+               Filter: (f1 > 0)
+         ->  Nested Loop
+               Join Filter: (i41.f1 = i42.f1)
+               ->  Seq Scan on int8_tbl i81
+               ->  Materialize
+                     ->  Seq Scan on int4_tbl i42
+   ->  Materialize
+         ->  Seq Scan on int4_tbl i43
+               Filter: (f1 > 1)
+(12 rows)
+
+select * from
+  int4_tbl as i41,
+  lateral
+    (select 1 as x from
+      (select i41.f1 as lat,
+              i42.f1 as loc from
+         int8_tbl as i81, int4_tbl as i42) as ss1
+      right join int4_tbl as i43 on (i43.f1 > 1)
+      where ss1.loc = ss1.lat) as ss2
+where i41.f1 > 0;
+     f1     | x 
+------------+---
+     123456 | 1
+     123456 | 1
+     123456 | 1
+     123456 | 1
+     123456 | 1
+     123456 | 1
+     123456 | 1
+     123456 | 1
+     123456 | 1
+     123456 | 1
+ 2147483647 | 1
+ 2147483647 | 1
+ 2147483647 | 1
+ 2147483647 | 1
+ 2147483647 | 1
+ 2147483647 | 1
+ 2147483647 | 1
+ 2147483647 | 1
+ 2147483647 | 1
+ 2147483647 | 1
+(20 rows)
+
+--
 -- test the corner cases FULL JOIN ON TRUE and FULL JOIN ON FALSE
 --
 select * from int4_tbl a full join int4_tbl b on true;
@@ -5325,6 +5389,35 @@ select * from
          Output: 3
 (11 rows)
 
+-- check dummy rels with lateral references (bug #15694)
+explain (verbose, costs off)
+select * from int8_tbl i8 left join lateral
+  (select *, i8.q2 from int4_tbl where false) ss on true;
+              QUERY PLAN              
+--------------------------------------
+ Nested Loop Left Join
+   Output: i8.q1, i8.q2, f1, (i8.q2)
+   ->  Seq Scan on public.int8_tbl i8
+         Output: i8.q1, i8.q2
+   ->  Result
+         Output: f1, i8.q2
+         One-Time Filter: false
+(7 rows)
+
+explain (verbose, costs off)
+select * from int8_tbl i8 left join lateral
+  (select *, i8.q2 from int4_tbl i1, int4_tbl i2 where false) ss on true;
+               QUERY PLAN                
+-----------------------------------------
+ Nested Loop Left Join
+   Output: i8.q1, i8.q2, f1, f1, (i8.q2)
+   ->  Seq Scan on public.int8_tbl i8
+         Output: i8.q1, i8.q2
+   ->  Result
+         Output: f1, f1, i8.q2
+         One-Time Filter: false
+(7 rows)
+
 -- check handling of nested appendrels inside LATERAL
 select * from
   ((select 2 as v) union all (select 3 as v)) as q1
@@ -5969,6 +6062,7 @@ drop table j3;
 begin;
 set local min_parallel_table_scan_size = 0;
 set local parallel_setup_cost = 0;
+set local enable_hashjoin = on;
 -- Extract bucket and batch counts from an explain analyze plan.  In
 -- general we can't make assertions about how many batches (or
 -- buckets) will be required because it can vary, but we can in some

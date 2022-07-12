@@ -21,6 +21,7 @@
 #include "commands/trigger.h"
 #include "executor/spi.h"
 #include "utils/expandedrecord.h"
+#include "utils/typcache.h"
 
 
 /**********************************************************************
@@ -207,6 +208,10 @@ typedef struct PLpgSQL_type
 	Oid			collation;		/* from pg_type, but can be overridden */
 	bool		typisarray;		/* is "true" array, or domain over one */
 	int32		atttypmod;		/* typmod (taken from someplace else) */
+	/* Remaining fields are used only for named composite types (not RECORD) */
+	TypeName   *origtypname;	/* type name as written by user */
+	TypeCacheEntry *tcache;		/* typcache entry for composite type */
+	uint64		tupdesc_id;		/* last-seen tupdesc identifier */
 } PLpgSQL_type;
 
 /*
@@ -326,7 +331,12 @@ typedef struct PLpgSQL_var
  * Note that there's no way to name the row as such from PL/pgSQL code,
  * so many functions don't need to support these.
  *
- * refname, isconst, notnull, and default_val are unsupported (and hence
+ * That also means that there's no real name for the row variable, so we
+ * conventionally set refname to "(unnamed row)".  We could leave it NULL,
+ * but it's too convenient to be able to assume that refname is valid in
+ * all variants of PLpgSQL_variable.
+ *
+ * isconst, notnull, and default_val are unsupported (and hence
  * always zero/null) for a row.  The member variables of a row should have
  * been checked to be writable at compile time, so isconst is correctly set
  * to false.  notnull and default_val aren't applicable.
@@ -367,6 +377,12 @@ typedef struct PLpgSQL_rec
 	bool		notnull;
 	PLpgSQL_expr *default_val;
 	/* end of PLpgSQL_variable fields */
+
+	/*
+	 * Note: for non-RECORD cases, we may from time to time re-look-up the
+	 * composite type, using datatype->origtypname.  That can result in
+	 * changing rectypeid.
+	 */
 
 	PLpgSQL_type *datatype;		/* can be NULL, if rectypeid is RECORDOID */
 	Oid			rectypeid;		/* declared type of variable */
@@ -885,7 +901,8 @@ typedef struct PLpgSQL_func_hashkey
 {
 	Oid			funcOid;
 
-	bool		isTrigger;		/* true if called as a trigger */
+	bool		isTrigger;		/* true if called as a DML trigger */
+	bool		isEventTrigger; /* true if called as an event trigger */
 
 	/* be careful that pad bytes in this struct get zeroed! */
 
@@ -893,7 +910,7 @@ typedef struct PLpgSQL_func_hashkey
 	 * For a trigger function, the OID of the trigger is part of the hash key
 	 * --- we want to compile the trigger function separately for each trigger
 	 * it is used with, in case the rowtype or transition table names are
-	 * different.  Zero if not called as a trigger.
+	 * different.  Zero if not called as a DML trigger.
 	 */
 	Oid			trigOid;
 
@@ -1181,7 +1198,7 @@ extern PLpgSQL_type *plpgsql_parse_cwordtype(List *idents);
 extern PLpgSQL_type *plpgsql_parse_wordrowtype(char *ident);
 extern PLpgSQL_type *plpgsql_parse_cwordrowtype(List *idents);
 extern PLpgSQL_type *plpgsql_build_datatype(Oid typeOid, int32 typmod,
-					   Oid collation);
+					   Oid collation, TypeName *origtypname);
 extern PLpgSQL_variable *plpgsql_build_variable(const char *refname, int lineno,
 					   PLpgSQL_type *dtype,
 					   bool add2namespace);
@@ -1193,7 +1210,7 @@ extern PLpgSQL_recfield *plpgsql_build_recfield(PLpgSQL_rec *rec,
 extern int plpgsql_recognize_err_condition(const char *condname,
 								bool allow_sqlstate);
 extern PLpgSQL_condition *plpgsql_parse_err_condition(char *condname);
-extern void plpgsql_adddatum(PLpgSQL_datum *new);
+extern void plpgsql_adddatum(PLpgSQL_datum *newdatum);
 extern int	plpgsql_add_initdatums(int **varnos);
 extern void plpgsql_HashTableInit(void);
 
@@ -1220,7 +1237,7 @@ extern Oid plpgsql_exec_get_datum_type(PLpgSQL_execstate *estate,
 							PLpgSQL_datum *datum);
 extern void plpgsql_exec_get_datum_type_info(PLpgSQL_execstate *estate,
 								 PLpgSQL_datum *datum,
-								 Oid *typeid, int32 *typmod, Oid *collation);
+								 Oid *typeId, int32 *typMod, Oid *collation);
 
 /*
  * Functions for namespace handling in pl_funcs.c

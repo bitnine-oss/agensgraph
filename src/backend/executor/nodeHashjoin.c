@@ -447,7 +447,26 @@ ExecHashJoinImpl(PlanState *pstate, bool parallel)
 				if (joinqual == NULL || ExecQual(joinqual, econtext))
 				{
 					node->hj_MatchedOuter = true;
-					HeapTupleHeaderSetMatch(HJTUPLE_MINTUPLE(node->hj_CurTuple));
+
+					if (parallel)
+					{
+						/*
+						 * Full/right outer joins are currently not supported
+						 * for parallel joins, so we don't need to set the
+						 * match bit.  Experiments show that it's worth
+						 * avoiding the shared memory traffic on large
+						 * systems.
+						 */
+						Assert(!HJ_FILL_INNER(node));
+					}
+					else
+					{
+						/*
+						 * This is really only needed if HJ_FILL_INNER(node),
+						 * but we'll avoid the branch and just set it always.
+						 */
+						HeapTupleHeaderSetMatch(HJTUPLE_MINTUPLE(node->hj_CurTuple));
+					}
 
 					/* In an antijoin, we never return a matched tuple */
 					if (node->js.jointype == JOIN_ANTI)
@@ -1037,7 +1056,7 @@ ExecHashJoinNewBatch(HashJoinState *hjstate)
 		if (BufFileSeek(innerFile, 0, 0L, SEEK_SET))
 			ereport(ERROR,
 					(errcode_for_file_access(),
-					 errmsg("could not rewind hash-join temporary file: %m")));
+					 errmsg("could not rewind hash-join temporary file")));
 
 		while ((slot = ExecHashJoinGetSavedTuple(hjstate,
 												 innerFile,
@@ -1067,7 +1086,7 @@ ExecHashJoinNewBatch(HashJoinState *hjstate)
 		if (BufFileSeek(hashtable->outerBatchFile[curbatch], 0, 0L, SEEK_SET))
 			ereport(ERROR,
 					(errcode_for_file_access(),
-					 errmsg("could not rewind hash-join temporary file: %m")));
+					 errmsg("could not rewind hash-join temporary file")));
 	}
 
 	return true;
@@ -1212,7 +1231,6 @@ ExecHashJoinSaveTuple(MinimalTuple tuple, uint32 hashvalue,
 					  BufFile **fileptr)
 {
 	BufFile    *file = *fileptr;
-	size_t		written;
 
 	if (file == NULL)
 	{
@@ -1221,17 +1239,8 @@ ExecHashJoinSaveTuple(MinimalTuple tuple, uint32 hashvalue,
 		*fileptr = file;
 	}
 
-	written = BufFileWrite(file, (void *) &hashvalue, sizeof(uint32));
-	if (written != sizeof(uint32))
-		ereport(ERROR,
-				(errcode_for_file_access(),
-				 errmsg("could not write to hash-join temporary file: %m")));
-
-	written = BufFileWrite(file, (void *) tuple, tuple->t_len);
-	if (written != tuple->t_len)
-		ereport(ERROR,
-				(errcode_for_file_access(),
-				 errmsg("could not write to hash-join temporary file: %m")));
+	BufFileWrite(file, (void *) &hashvalue, sizeof(uint32));
+	BufFileWrite(file, (void *) tuple, tuple->t_len);
 }
 
 /*
@@ -1272,7 +1281,8 @@ ExecHashJoinGetSavedTuple(HashJoinState *hjstate,
 	if (nread != sizeof(header))
 		ereport(ERROR,
 				(errcode_for_file_access(),
-				 errmsg("could not read from hash-join temporary file: %m")));
+				 errmsg("could not read from hash-join temporary file: read only %zu of %zu bytes",
+						nread, sizeof(header))));
 	*hashvalue = header[0];
 	tuple = (MinimalTuple) palloc(header[1]);
 	tuple->t_len = header[1];
@@ -1282,7 +1292,8 @@ ExecHashJoinGetSavedTuple(HashJoinState *hjstate,
 	if (nread != header[1] - sizeof(uint32))
 		ereport(ERROR,
 				(errcode_for_file_access(),
-				 errmsg("could not read from hash-join temporary file: %m")));
+				 errmsg("could not read from hash-join temporary file: read only %zu of %zu bytes",
+						nread, header[1] - sizeof(uint32))));
 	return ExecStoreMinimalTuple(tuple, tupleSlot, true);
 }
 
@@ -1328,6 +1339,12 @@ ExecReScanHashJoin(HashJoinState *node)
 		else
 		{
 			/* must destroy and rebuild hash table */
+			HashState  *hashNode = castNode(HashState, innerPlanState(node));
+
+			/* for safety, be sure to clear child plan node's pointer too */
+			Assert(hashNode->hashtable == node->hj_HashTable);
+			hashNode->hashtable = NULL;
+
 			ExecHashTableDestroy(node->hj_HashTable);
 			node->hj_HashTable = NULL;
 			node->hj_JoinState = HJ_BUILD_HASHTABLE;
@@ -1395,7 +1412,7 @@ ExecParallelHashJoinPartitionOuter(HashJoinState *hjstate)
 		if (ExecHashGetHashValue(hashtable, econtext,
 								 hjstate->hj_OuterHashKeys,
 								 true,	/* outer tuple */
-								 false, /* outer join, currently unsupported */
+								 HJ_FILL_OUTER(hjstate),
 								 &hashvalue))
 		{
 			int			batchno;

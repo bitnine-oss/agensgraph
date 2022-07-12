@@ -126,7 +126,7 @@ ReplicationSlotsShmemSize(void)
 }
 
 /*
- * Allocate and initialize walsender-related shared memory.
+ * Allocate and initialize shared memory for replication slots.
  */
 void
 ReplicationSlotsShmemInit(void)
@@ -351,20 +351,28 @@ retry:
 		if (s->in_use && strcmp(name, NameStr(s->data.name)) == 0)
 		{
 			/*
-			 * This is the slot we want.  We don't know yet if it's active, so
-			 * get ready to sleep on it in case it is.  (We may end up not
-			 * sleeping, but we don't want to do this while holding the
-			 * spinlock.)
+			 * This is the slot we want; check if it's active under some other
+			 * process.  In single user mode, we don't need this check.
 			 */
-			ConditionVariablePrepareToSleep(&s->active_cv);
+			if (IsUnderPostmaster)
+			{
+				/*
+				 * Get ready to sleep on it in case it is active.  (We may end
+				 * up not sleeping, but we don't want to do this while holding
+				 * the spinlock.)
+				 */
+				ConditionVariablePrepareToSleep(&s->active_cv);
 
-			SpinLockAcquire(&s->mutex);
+				SpinLockAcquire(&s->mutex);
 
-			active_pid = s->active_pid;
-			if (active_pid == 0)
-				active_pid = s->active_pid = MyProcPid;
+				active_pid = s->active_pid;
+				if (active_pid == 0)
+					active_pid = s->active_pid = MyProcPid;
 
-			SpinLockRelease(&s->mutex);
+				SpinLockRelease(&s->mutex);
+			}
+			else
+				active_pid = MyProcPid;
 			slot = s;
 
 			break;
@@ -964,6 +972,11 @@ restart:
 void
 CheckSlotRequirements(void)
 {
+	/*
+	 * NB: Adding a new requirement likely means that RestoreSlotFromDisk()
+	 * needs the same check.
+	 */
+
 	if (max_replication_slots == 0)
 		ereport(ERROR,
 				(errcode(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
@@ -1244,6 +1257,16 @@ SaveSlotToPath(ReplicationSlot *slot, const char *dir, int elevel)
 	fd = OpenTransientFile(tmppath, O_CREAT | O_EXCL | O_WRONLY | PG_BINARY);
 	if (fd < 0)
 	{
+		/*
+		 * If not an ERROR, then release the lock before returning.  In case
+		 * of an ERROR, the error recovery path automatically releases the
+		 * lock, but no harm in explicitly releasing even in that case.  Note
+		 * that LWLockRelease() could affect errno.
+		 */
+		int			save_errno = errno;
+
+		LWLockRelease(&slot->io_in_progress_lock);
+		errno = save_errno;
 		ereport(elevel,
 				(errcode_for_file_access(),
 				 errmsg("could not create file \"%s\": %m",
@@ -1267,6 +1290,7 @@ SaveSlotToPath(ReplicationSlot *slot, const char *dir, int elevel)
 				SnapBuildOnDiskChecksummedSize);
 	FIN_CRC32C(cp.checksum);
 
+	errno = 0;
 	pgstat_report_wait_start(WAIT_EVENT_REPLICATION_SLOT_WRITE);
 	if ((write(fd, &cp, sizeof(cp))) != sizeof(cp))
 	{
@@ -1274,6 +1298,7 @@ SaveSlotToPath(ReplicationSlot *slot, const char *dir, int elevel)
 
 		pgstat_report_wait_end();
 		CloseTransientFile(fd);
+		LWLockRelease(&slot->io_in_progress_lock);
 
 		/* if write didn't set errno, assume problem is no disk space */
 		errno = save_errno ? save_errno : ENOSPC;
@@ -1293,6 +1318,7 @@ SaveSlotToPath(ReplicationSlot *slot, const char *dir, int elevel)
 
 		pgstat_report_wait_end();
 		CloseTransientFile(fd);
+		LWLockRelease(&slot->io_in_progress_lock);
 		errno = save_errno;
 		ereport(elevel,
 				(errcode_for_file_access(),
@@ -1307,6 +1333,10 @@ SaveSlotToPath(ReplicationSlot *slot, const char *dir, int elevel)
 	/* rename to permanent file, fsync file and directory */
 	if (rename(tmppath, path) != 0)
 	{
+		int			save_errno = errno;
+
+		LWLockRelease(&slot->io_in_progress_lock);
+		errno = save_errno;
 		ereport(elevel,
 				(errcode_for_file_access(),
 				 errmsg("could not rename file \"%s\" to \"%s\": %m",
@@ -1343,6 +1373,7 @@ RestoreSlotFromDisk(const char *name)
 {
 	ReplicationSlotOnDisk cp;
 	int			i;
+	char		slotdir[MAXPGPATH + 12];
 	char		path[MAXPGPATH + 22];
 	int			fd;
 	bool		restored = false;
@@ -1352,13 +1383,14 @@ RestoreSlotFromDisk(const char *name)
 	/* no need to lock here, no concurrent access allowed yet */
 
 	/* delete temp file if it exists */
-	sprintf(path, "pg_replslot/%s/state.tmp", name);
+	sprintf(slotdir, "pg_replslot/%s", name);
+	sprintf(path, "%s/state.tmp", slotdir);
 	if (unlink(path) < 0 && errno != ENOENT)
 		ereport(PANIC,
 				(errcode_for_file_access(),
 				 errmsg("could not remove file \"%s\": %m", path)));
 
-	sprintf(path, "pg_replslot/%s/state", name);
+	sprintf(path, "%s/state", slotdir);
 
 	elog(DEBUG1, "restoring replication slot from \"%s\"", path);
 
@@ -1393,7 +1425,7 @@ RestoreSlotFromDisk(const char *name)
 
 	/* Also sync the parent directory */
 	START_CRIT_SECTION();
-	fsync_fname(path, true);
+	fsync_fname(slotdir, true);
 	END_CRIT_SECTION();
 
 	/* read part of statefile that's guaranteed to be version independent */
@@ -1472,17 +1504,40 @@ RestoreSlotFromDisk(const char *name)
 	 */
 	if (cp.slotdata.persistency != RS_PERSISTENT)
 	{
-		sprintf(path, "pg_replslot/%s", name);
-
-		if (!rmtree(path, true))
+		if (!rmtree(slotdir, true))
 		{
 			ereport(WARNING,
 					(errcode_for_file_access(),
-					 errmsg("could not remove directory \"%s\"", path)));
+					 errmsg("could not remove directory \"%s\"", slotdir)));
 		}
 		fsync_fname("pg_replslot", true);
 		return;
 	}
+
+	/*
+	 * Verify that requirements for the specific slot type are met. That's
+	 * important because if these aren't met we're not guaranteed to retain
+	 * all the necessary resources for the slot.
+	 *
+	 * NB: We have to do so *after* the above checks for ephemeral slots,
+	 * because otherwise a slot that shouldn't exist anymore could prevent
+	 * restarts.
+	 *
+	 * NB: Changing the requirements here also requires adapting
+	 * CheckSlotRequirements() and CheckLogicalDecodingRequirements().
+	 */
+	if (cp.slotdata.database != InvalidOid && wal_level < WAL_LEVEL_LOGICAL)
+		ereport(FATAL,
+				(errcode(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
+				 errmsg("logical replication slot \"%s\" exists, but wal_level < logical",
+						NameStr(cp.slotdata.name)),
+				 errhint("Change wal_level to be logical or higher.")));
+	else if (wal_level < WAL_LEVEL_REPLICA)
+		ereport(FATAL,
+				(errcode(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
+				 errmsg("physical replication slot \"%s\" exists, but wal_level < replica",
+						NameStr(cp.slotdata.name)),
+				 errhint("Change wal_level to be replica or higher.")));
 
 	/* nothing can be active yet, don't lock anything */
 	for (i = 0; i < max_replication_slots; i++)

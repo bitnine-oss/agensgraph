@@ -10,10 +10,17 @@ my $node = get_new_node('main');
 $node->init;
 $node->start;
 
-# invoke pgbench
+# invoke pgbench, with parameters:
+#   $opts: options as a string to be split on spaces
+#   $stat: expected exit status
+#   $out: reference to a regexp list that must match stdout
+#   $err: reference to a regexp list that must match stderr
+#   $name: name of test for error messages
+#   $files: reference to filename/contents dictionnary
+#   @args: further raw options or arguments
 sub pgbench
 {
-	my ($opts, $stat, $out, $err, $name, $files) = @_;
+	my ($opts, $stat, $out, $err, $name, $files, @args) = @_;
 	my @cmd = ('pgbench', split /\s+/, $opts);
 	my @filenames = ();
 	if (defined $files)
@@ -38,6 +45,9 @@ sub pgbench
 			append_to_file($filename, $$files{$fn});
 		}
 	}
+
+	push @cmd, @args;
+
 	$node->command_checks_all(\@cmd, $stat, $out, $err, $name);
 
 	# cleanup?
@@ -259,11 +269,11 @@ pgbench(
 	[
 		qr{setting random seed to 5432\b},
 
-		# After explicit seeding, the four * random checks (1-3,20) should be
-		# deterministic, but not necessarily portable.
-		qr{command=1.: int 1\d\b},        # uniform random: 12 on linux
-		qr{command=2.: int 1\d\d\b},      # exponential random: 106 on linux
-		qr{command=3.: int 1\d\d\d\b},    # gaussian random: 1462 on linux
+		# After explicit seeding, the four random checks (1-3,20) are
+		# deterministic
+		qr{command=1.: int 18\b},      # uniform random
+		qr{command=2.: int 101\b},     # exponential random
+		qr{command=3.: int 1415\b},    # gaussian random
 		qr{command=4.: int 4\b},
 		qr{command=5.: int 5\b},
 		qr{command=6.: int 6\b},
@@ -277,7 +287,7 @@ pgbench(
 		qr{command=16.: double 16\b},
 		qr{command=17.: double 17\b},
 		qr{command=18.: int 9223372036854775807\b},
-		qr{command=20.: int \d\b},    # zipfian random: 1 on linux
+		qr{command=20.: int 2\b},    # zipfian random
 		qr{command=21.: double -27\b},
 		qr{command=22.: double 1024\b},
 		qr{command=23.: double 1\b},
@@ -468,7 +478,7 @@ for my $i (1, 2)
 \set ur random(1000, 1999)
 \set er random_exponential(2000, 2999, 2.0)
 \set gr random_gaussian(3000, 3999, 3.0)
-\set zr random_zipfian(4000, 4999, 2.5)
+\set zr random_zipfian(4000, 4999, 1.5)
 INSERT INTO seeded_random(seed, rand, val) VALUES
   (:random_seed, 'uniform', :ur),
   (:random_seed, 'exponential', :er),
@@ -504,7 +514,7 @@ pgbench(
 		qr{processed: 1/1},
 		qr{shell-echo-output}
 	],
-	[qr{command=8.: int 2\b}],
+	[qr{command=8.: int 1\b}],
 	'pgbench backslash commands',
 	{
 		'001_pgbench_backslash_commands' => q{-- run set
@@ -516,10 +526,10 @@ pgbench(
 \sleep 0 s
 \sleep :zero
 -- setshell and continuation
-\setshell two\
-  expr \
-    1 + :one
-\set n debug(:two)
+\setshell another_one\
+  echo \
+    :one
+\set n debug(:another_one)
 -- shell
 \shell echo shell-echo-output
 }
@@ -528,7 +538,7 @@ pgbench(
 # trigger many expression errors
 my @errors = (
 
-	# [ test name, script number, status, stderr match ]
+	# [ test name, expected status, expected stderr, script ]
 	# SQL
 	[
 		'sql syntax error',
@@ -791,18 +801,30 @@ pgbench(
 		qr{type: .*/001_pgbench_sleep},
 		qr{above the 1.0 ms latency limit: [01]/}
 	],
-	[qr{^$}i],
+	[qr{^$}],
 	'pgbench late throttling',
 	{ '001_pgbench_sleep' => q{\sleep 2ms} });
+
+# return a list of files from directory $dir matching regexpr $re
+# this works around glob portability and escaping issues
+sub list_files
+{
+	my ($dir, $re) = @_;
+	opendir my $dh, $dir or die "cannot opendir $dir: $!";
+	my @files = grep /$re/, readdir $dh;
+	closedir $dh or die "cannot closedir $dir: $!";
+	return map { $dir . '/' . $_ } @files;
+}
 
 # check log contents and cleanup
 sub check_pgbench_logs
 {
-	my ($prefix, $nb, $min, $max, $re) = @_;
+	my ($dir, $prefix, $nb, $min, $max, $re) = @_;
 
-	my @logs = glob "$prefix.*";
+	# $prefix is simple enough, thus does not need escaping
+	my @logs = list_files($dir, qr{^$prefix\..*$});
 	ok(@logs == $nb, "number of log files");
-	ok(grep(/^$prefix\.\d+(\.\d+)?$/, @logs) == $nb, "file name format");
+	ok(grep(/\/$prefix\.\d+(\.\d+)?$/, @logs) == $nb, "file name format");
 
 	my $log_number = 0;
 	for my $log (sort @logs)
@@ -826,22 +848,25 @@ my $bdir = $node->basedir;
 
 # with sampling rate
 pgbench(
-	"-n -S -t 50 -c 2 --log --log-prefix=$bdir/001_pgbench_log_2 --sampling-rate=0.5",
+	"-n -S -t 50 -c 2 --log --sampling-rate=0.5",
 	0,
 	[ qr{select only}, qr{processed: 100/100} ],
-	[qr{^$}],
-	'pgbench logs');
+	[ qr{^$} ],
+	'pgbench logs',
+	undef,
+	"--log-prefix=$bdir/001_pgbench_log_2");
 
-check_pgbench_logs("$bdir/001_pgbench_log_2", 1, 8, 92,
+check_pgbench_logs($bdir, '001_pgbench_log_2', 1, 8, 92,
 	qr{^0 \d{1,2} \d+ \d \d+ \d+$});
 
 # check log file in some detail
 pgbench(
-	"-n -b se -t 10 -l --log-prefix=$bdir/001_pgbench_log_3",
-	0, [ qr{select only}, qr{processed: 10/10} ],
-	[qr{^$}], 'pgbench logs contents');
+	"-n -b se -t 10 -l",
+	0, [ qr{select only}, qr{processed: 10/10} ], [ qr{^$} ],
+	'pgbench logs contents', undef,
+	"--log-prefix=$bdir/001_pgbench_log_3");
 
-check_pgbench_logs("$bdir/001_pgbench_log_3", 1, 10, 10,
+check_pgbench_logs($bdir, '001_pgbench_log_3', 1, 10, 10,
 	qr{^\d \d{1,2} \d+ \d \d+ \d+$});
 
 # done

@@ -181,6 +181,9 @@ PDT    -25200 D  # Pacific Daylight Time
                  #     (America/Whitehorse)
 PMDT    -7200 D  # Pierre & Miquelon Daylight Time (obsolete)
 PMST   -10800    # Pierre & Miquelon Standard Time (obsolete)
+# CONFLICT! PST is not unique
+# Other timezones:
+#  - PST: Philippine Standard Time
 PST    -28800    # Pacific Standard Time
                  #     (America/Dawson)
                  #     (America/Los_Angeles)
@@ -594,8 +597,8 @@ CHUT    36000    # Chuuk Time (obsolete)
 CKT     Pacific/Rarotonga  # Cook Islands Time (obsolete)
 EASST   Pacific/Easter  # Easter Island Summer Time (obsolete)
 EAST    Pacific/Easter  # Easter Island Time (Chile) (obsolete)
-FJST    46800 D  # Fiji Summer Time (obsolete)
-FJT     43200    # Fiji Time (obsolete)
+FJST    46800 D  # Fiji Summer Time (caution: this used to mean -46800) (obsolete)
+FJT     43200    # Fiji Time (caution: this used to mean -43200) (obsolete)
 GALT   -21600    # Galapagos Time (obsolete)
 GAMT   -32400    # Gambier Time (obsolete)
 GILT    43200    # Gilbert Islands Time (obsolete)

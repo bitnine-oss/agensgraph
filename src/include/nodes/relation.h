@@ -691,8 +691,12 @@ typedef struct RelOptInfo
 								 * involving this rel */
 	bool		has_eclass_joins;	/* T means joininfo is incomplete */
 
-	/* used by "other" relations */
-	Relids		top_parent_relids;	/* Relids of topmost parents */
+	/* used by partitionwise joins: */
+	bool		consider_partitionwise_join;	/* consider partitionwise
+												 * join paths? (if
+												 * partitioned rel) */
+	Relids		top_parent_relids;	/* Relids of topmost parents (if "other"
+									 * rel) */
 
 	/* used for partitioned relations */
 	PartitionScheme part_scheme;	/* Partitioning scheme. */
@@ -711,15 +715,12 @@ typedef struct RelOptInfo
  *
  * It's not enough to test whether rel->part_scheme is set, because it might
  * be that the basic partitioning properties of the input relations matched
- * but the partition bounds did not.
- *
- * We treat dummy relations as unpartitioned.  We could alternatively
- * treat them as partitioned, but it's not clear whether that's a useful thing
- * to do.
+ * but the partition bounds did not.  Also, if we are able to prove a rel
+ * dummy (empty), we should henceforth treat it as unpartitioned.
  */
 #define IS_PARTITIONED_REL(rel) \
 	((rel)->part_scheme && (rel)->boundinfo && (rel)->nparts > 0 && \
-	 (rel)->part_rels && !(IS_DUMMY_REL(rel)))
+	 (rel)->part_rels && !IS_DUMMY_REL(rel))
 
 /*
  * Convenience macro to make sure that a partitioned relation has all the
@@ -812,6 +813,7 @@ typedef struct IndexOptInfo
 	bool		amhasgettuple;	/* does AM have amgettuple interface? */
 	bool		amhasgetbitmap; /* does AM have amgetbitmap interface? */
 	bool		amcanparallel;	/* does AM support parallel scan? */
+	bool		amcanmarkpos;	/* does AM support mark/restore? */
 	/* Rather than include amapi.h here, we declare amcostestimate like this */
 	void		(*amcostestimate) ();	/* AM's cost estimator */
 } IndexOptInfo;
@@ -1312,6 +1314,9 @@ typedef struct CustomPath
  * elements.  These cases are optimized during create_append_plan.
  * In particular, an AppendPath with no subpaths is a "dummy" path that
  * is created to represent the case that a relation is provably empty.
+ * (This is a convenient representation because it means that when we build
+ * an appendrel and find that all its children have been excluded, no extra
+ * action is needed to recognize the relation as dummy.)
  */
 typedef struct AppendPath
 {
@@ -1324,13 +1329,16 @@ typedef struct AppendPath
 	int			first_partial_path;
 } AppendPath;
 
-#define IS_DUMMY_PATH(p) \
+#define IS_DUMMY_APPEND(p) \
 	(IsA((p), AppendPath) && ((AppendPath *) (p))->subpaths == NIL)
 
-/* A relation that's been proven empty will have one path that is dummy */
-#define IS_DUMMY_REL(r) \
-	((r)->cheapest_total_path != NULL && \
-	 IS_DUMMY_PATH((r)->cheapest_total_path))
+/*
+ * A relation that's been proven empty will have one path that is dummy
+ * (but might have projection paths on top).  For historical reasons,
+ * this is provided as a macro that wraps is_dummy_rel().
+ */
+#define IS_DUMMY_REL(r) is_dummy_rel(r)
+extern bool is_dummy_rel(RelOptInfo *rel);
 
 /*
  * MergeAppendPath represents a MergeAppend plan, ie, the merging of sorted
@@ -1413,8 +1421,7 @@ typedef struct GatherPath
 
 /*
  * GatherMergePath runs several copies of a plan in parallel and collects
- * the results, preserving their common sort order.  For gather merge, the
- * parallel leader always executes the plan too, so we don't need single_copy.
+ * the results, preserving their common sort order.
  */
 typedef struct GatherMergePath
 {
@@ -1660,17 +1667,12 @@ typedef struct MinMaxAggPath
 
 /*
  * WindowAggPath represents generic computation of window functions
- *
- * Note: winpathkeys is separate from path.pathkeys because the actual sort
- * order might be an extension of winpathkeys; but createplan.c needs to
- * know exactly how many pathkeys match the window clause.
  */
 typedef struct WindowAggPath
 {
 	Path		path;
 	Path	   *subpath;		/* path representing input source */
 	WindowClause *winclause;	/* WindowClause we'll be using */
-	List	   *winpathkeys;	/* PathKeys for PARTITION keys + ORDER keys */
 } WindowAggPath;
 
 /*

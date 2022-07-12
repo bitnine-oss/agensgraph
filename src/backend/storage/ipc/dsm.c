@@ -45,13 +45,8 @@
 
 #define PG_DYNSHMEM_CONTROL_MAGIC		0x9a503d32
 
-/*
- * There's no point in getting too cheap here, because the minimum allocation
- * is one OS page, which is probably at least 4KB and could easily be as high
- * as 64KB.  Each currently sizeof(dsm_control_item), currently 8 bytes.
- */
 #define PG_DYNSHMEM_FIXED_SLOTS			64
-#define PG_DYNSHMEM_SLOTS_PER_BACKEND	2
+#define PG_DYNSHMEM_SLOTS_PER_BACKEND	5
 
 #define INVALID_CONTROL_SLOT		((uint32) -1)
 
@@ -499,17 +494,16 @@ dsm_create(Size size, int flags)
 	/* Verify that we can support an additional mapping. */
 	if (nitems >= dsm_control->maxitems)
 	{
+		LWLockRelease(DynamicSharedMemoryControlLock);
+		dsm_impl_op(DSM_OP_DESTROY, seg->handle, 0, &seg->impl_private,
+					&seg->mapped_address, &seg->mapped_size, WARNING);
+		if (seg->resowner != NULL)
+			ResourceOwnerForgetDSM(seg->resowner, seg);
+		dlist_delete(&seg->node);
+		pfree(seg);
+
 		if ((flags & DSM_CREATE_NULL_IF_MAXSEGMENTS) != 0)
-		{
-			LWLockRelease(DynamicSharedMemoryControlLock);
-			dsm_impl_op(DSM_OP_DESTROY, seg->handle, 0, &seg->impl_private,
-						&seg->mapped_address, &seg->mapped_size, WARNING);
-			if (seg->resowner != NULL)
-				ResourceOwnerForgetDSM(seg->resowner, seg);
-			dlist_delete(&seg->node);
-			pfree(seg);
 			return NULL;
-		}
 		ereport(ERROR,
 				(errcode(ERRCODE_INSUFFICIENT_RESOURCES),
 				 errmsg("too many dynamic shared memory segments")));
@@ -584,21 +578,19 @@ dsm_attach(dsm_handle h)
 	nitems = dsm_control->nitems;
 	for (i = 0; i < nitems; ++i)
 	{
-		/* If the reference count is 0, the slot is actually unused. */
-		if (dsm_control->item[i].refcnt == 0)
+		/*
+		 * If the reference count is 0, the slot is actually unused.  If the
+		 * reference count is 1, the slot is still in use, but the segment is
+		 * in the process of going away; even if the handle matches, another
+		 * slot may already have started using the same handle value by
+		 * coincidence so we have to keep searching.
+		 */
+		if (dsm_control->item[i].refcnt <= 1)
 			continue;
 
 		/* If the handle doesn't match, it's not the slot we want. */
 		if (dsm_control->item[i].handle != seg->handle)
 			continue;
-
-		/*
-		 * If the reference count is 1, the slot is still in use, but the
-		 * segment is in the process of going away.  Treat that as if we
-		 * didn't find a match.
-		 */
-		if (dsm_control->item[i].refcnt == 1)
-			break;
 
 		/* Otherwise we've found a match. */
 		dsm_control->item[i].refcnt++;
@@ -893,8 +885,8 @@ dsm_unpin_segment(dsm_handle handle)
 	LWLockAcquire(DynamicSharedMemoryControlLock, LW_EXCLUSIVE);
 	for (i = 0; i < dsm_control->nitems; ++i)
 	{
-		/* Skip unused slots. */
-		if (dsm_control->item[i].refcnt == 0)
+		/* Skip unused slots and segments that are concurrently going away. */
+		if (dsm_control->item[i].refcnt <= 1)
 			continue;
 
 		/* If we've found our handle, we can stop searching. */

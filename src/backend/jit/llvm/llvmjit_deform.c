@@ -22,9 +22,25 @@
 
 #include "access/htup_details.h"
 #include "access/tupdesc_details.h"
+#include "catalog/pg_subscription.h"
+#include "catalog/pg_subscription_rel.h"
 #include "executor/tuptable.h"
 #include "jit/llvmjit.h"
 #include "jit/llvmjit_emit.h"
+
+
+/*
+ * Through an embarrassing oversight, pre-v13 installations may have
+ * pg_subscription.subslotname and pg_subscription_rel.srsublsn marked as
+ * attnotnull, which they should not be.  To avoid possible crashes, use
+ * this macro instead of testing attnotnull directly.
+ */
+#define ATTNOTNULL(att) \
+	((att)->attnotnull && \
+	 !(((att)->attrelid == SubscriptionRelationId && \
+		(att)->attnum == Anum_pg_subscription_subslotname) || \
+	   ((att)->attrelid == SubscriptionRelRelationId && \
+		(att)->attnum == Anum_pg_subscription_rel_srsublsn)))
 
 
 /*
@@ -113,7 +129,7 @@ slot_compile_deform(LLVMJitContext *context, TupleDesc desc, int natts)
 		 * it's guaranteed that all columns up to here exist at least in the
 		 * NULL bitmap.
 		 */
-		if (att->attnotnull)
+		if (ATTNOTNULL(att))
 			guaranteed_column_number = attnum;
 	}
 
@@ -208,10 +224,16 @@ slot_compile_deform(LLVMJitContext *context, TupleDesc desc, int natts)
 							v_infomask2,
 							"maxatt");
 
+	/*
+	 * Need to zext, as getelementptr otherwise treats hoff as a signed 8bit
+	 * integer, which'd yield a negative offset for t_hoff > 127.
+	 */
 	v_hoff =
-		l_load_struct_gep(b, v_tuplep,
-						  FIELDNO_HEAPTUPLEHEADERDATA_HOFF,
-						  "t_hoff");
+		LLVMBuildZExt(b,
+					  l_load_struct_gep(b, v_tuplep,
+										FIELDNO_HEAPTUPLEHEADERDATA_HOFF,
+										""),
+					  LLVMInt32Type(), "t_hoff");
 
 	v_tupdata_base =
 		LLVMBuildGEP(b,
@@ -370,7 +392,7 @@ slot_compile_deform(LLVMJitContext *context, TupleDesc desc, int natts)
 		 * into account, because in case they're present the heaptuple's natts
 		 * would have indicated that a slot_getmissingattrs() is needed.
 		 */
-		if (!att->attnotnull)
+		if (!ATTNOTNULL(att))
 		{
 			LLVMBasicBlockRef b_ifnotnull;
 			LLVMBasicBlockRef b_ifnull;
@@ -551,7 +573,7 @@ slot_compile_deform(LLVMJitContext *context, TupleDesc desc, int natts)
 			known_alignment = -1;
 			attguaranteedalign = false;
 		}
-		else if (att->attnotnull && attguaranteedalign && known_alignment >= 0)
+		else if (ATTNOTNULL(att) && attguaranteedalign && known_alignment >= 0)
 		{
 			/*
 			 * If the offset to the column was previously known a NOT NULL &
@@ -561,7 +583,7 @@ slot_compile_deform(LLVMJitContext *context, TupleDesc desc, int natts)
 			Assert(att->attlen > 0);
 			known_alignment += att->attlen;
 		}
-		else if (att->attnotnull && (att->attlen % alignto) == 0)
+		else if (ATTNOTNULL(att) && (att->attlen % alignto) == 0)
 		{
 			/*
 			 * After a NOT NULL fixed-width column with a length that is a

@@ -507,7 +507,7 @@
      very large number of digits. It is especially recommended for
      storing monetary amounts and other quantities where exactness is
      required.  Calculations with <type>numeric</type> values yield exact
-     results where possible, e.g.  addition, subtraction, multiplication.
+     results where possible, e.g.,  addition, subtraction, multiplication.
      However, calculations on <type>numeric</type> values are very slow
      compared to the integer types, or to the floating-point types
      described in the next section.
@@ -861,7 +861,7 @@ CREATE TABLE <replaceable class="parameter">tablename</replaceable> (
      is equivalent to specifying:
 
 <programlisting>
-CREATE SEQUENCE <replaceable class="parameter">tablename</replaceable>_<replaceable class="parameter">colname</replaceable>_seq;
+CREATE SEQUENCE <replaceable class="parameter">tablename</replaceable>_<replaceable class="parameter">colname</replaceable>_seq AS integer;
 CREATE TABLE <replaceable class="parameter">tablename</replaceable> (
     <replaceable class="parameter">colname</replaceable> integer NOT NULL DEFAULT nextval('<replaceable class="parameter">tablename</replaceable>_<replaceable class="parameter">colname</replaceable>_seq')
 );
@@ -1131,6 +1131,14 @@ SELECT '52093.89'::money::numeric::float8;
    </para>
 
    <para>
+    The characters that can be stored in any of these data types are
+    determined by the database character set, which is selected when
+    the database is created.  Regardless of the specific character set,
+    the character with code zero (sometimes called NUL) cannot be stored.
+    For more information refer to <xref linkend="multibyte"/>.
+   </para>
+
+   <para>
     The storage requirement for a short string (up to 126 bytes) is 1 byte
     plus the actual string, which includes the space padding in the case of
     <type>character</type>.  Longer strings have 4 bytes of overhead instead
@@ -1167,10 +1175,7 @@ SELECT '52093.89'::money::numeric::float8;
    <para>
     Refer to <xref linkend="sql-syntax-strings"/> for information about
     the syntax of string literals, and to <xref linkend="functions"/>
-    for information about available operators and functions. The
-    database character set determines the character set used to store
-    textual values; for more information on character set support,
-    refer to <xref linkend="multibyte"/>.
+    for information about available operators and functions.
    </para>
 
    <example>
@@ -1296,7 +1301,7 @@ SELECT b, char_length(b) FROM test2;
     strings are distinguished from character strings in two
     ways.  First, binary strings specifically allow storing
     octets of value zero and other <quote>non-printable</quote>
-    octets (usually, octets outside the range 32 to 126).
+    octets (usually, octets outside the decimal range 32 to 126).
     Character strings disallow zero octets, and also disallow any
     other octet values and sequences of octet values that are invalid
     according to the database's selected character set encoding.
@@ -1308,9 +1313,10 @@ SELECT b, char_length(b) FROM test2;
    </para>
 
    <para>
-    The <type>bytea</type> type supports two external formats for
-    input and output: <productname>PostgreSQL</productname>'s historical
-    <quote>escape</quote> format, and <quote>hex</quote> format.  Both
+    The <type>bytea</type> type supports two
+    formats for input and output: <quote>hex</quote> format
+    and <productname>PostgreSQL</productname>'s historical
+    <quote>escape</quote> format.  Both
     of these are always accepted on input.  The output format depends
     on the configuration parameter <xref linkend="guc-bytea-output"/>;
     the default is hex.  (Note that the hex format was introduced in
@@ -1334,9 +1340,9 @@ SELECT b, char_length(b) FROM test2;
     per byte, most significant nibble first.  The entire string is
     preceded by the sequence <literal>\x</literal> (to distinguish it
     from the escape format).  In some contexts, the initial backslash may
-    need to be escaped by doubling it, in the same cases in which backslashes
-    have to be doubled in escape format; details appear below.
-    The hexadecimal digits can
+    need to be escaped by doubling it
+    (see <xref linkend="sql-syntax-strings"/>).
+    For input, the hexadecimal digits can
     be either upper or lower case, and whitespace is permitted between
     digit pairs (but not within a digit pair nor in the starting
     <literal>\x</literal> sequence).
@@ -1348,7 +1354,7 @@ SELECT b, char_length(b) FROM test2;
    <para>
     Example:
 <programlisting>
-SELECT E'\\xDEADBEEF';
+SELECT '\xDEADBEEF';
 </programlisting>
    </para>
   </sect2>
@@ -1368,7 +1374,7 @@ SELECT E'\\xDEADBEEF';
     convenient.  But in practice it is usually confusing because it
     fuzzes up the distinction between binary strings and character
     strings, and also the particular escape mechanism that was chosen is
-    somewhat unwieldy.  So this format should probably be avoided
+    somewhat unwieldy.  Therefore, this format should probably be avoided
     for most new applications.
    </para>
 
@@ -1378,10 +1384,8 @@ SELECT E'\\xDEADBEEF';
     values <emphasis>must</emphasis> be escaped, while all octet
     values <emphasis>can</emphasis> be escaped.  In
     general, to escape an octet, convert it into its three-digit
-    octal value and precede it
-    by a backslash (or two backslashes, if writing the value as a
-    literal using escape string syntax).
-    Backslash itself (octet value 92) can alternatively be represented by
+    octal value and precede it by a backslash.
+    Backslash itself (octet decimal value 92) can alternatively be represented by
     double backslashes.
     <xref linkend="datatype-binary-sqlesc"/>
     shows the characters that must be escaped, and gives the alternative
@@ -1397,7 +1401,7 @@ SELECT E'\\xDEADBEEF';
        <entry>Description</entry>
        <entry>Escaped Input Representation</entry>
        <entry>Example</entry>
-       <entry>Output Representation</entry>
+       <entry>Hex Representation</entry>
       </row>
      </thead>
 
@@ -1405,33 +1409,33 @@ SELECT E'\\xDEADBEEF';
       <row>
        <entry>0</entry>
        <entry>zero octet</entry>
-       <entry><literal>E'\\000'</literal></entry>
-       <entry><literal>SELECT E'\\000'::bytea;</literal></entry>
-       <entry><literal>\000</literal></entry>
+       <entry><literal>'\000'</literal></entry>
+       <entry><literal>SELECT '\000'::bytea;</literal></entry>
+       <entry><literal>\x00</literal></entry>
       </row>
 
       <row>
        <entry>39</entry>
        <entry>single quote</entry>
-       <entry><literal>''''</literal> or <literal>E'\\047'</literal></entry>
-       <entry><literal>SELECT E'\''::bytea;</literal></entry>
-       <entry><literal>'</literal></entry>
+       <entry><literal>''''</literal> or <literal>'\047'</literal></entry>
+       <entry><literal>SELECT ''''::bytea;</literal></entry>
+       <entry><literal>\x27</literal></entry>
       </row>
 
       <row>
        <entry>92</entry>
        <entry>backslash</entry>
-       <entry><literal>E'\\\\'</literal> or <literal>E'\\134'</literal></entry>
-       <entry><literal>SELECT E'\\\\'::bytea;</literal></entry>
-       <entry><literal>\\</literal></entry>
+       <entry><literal>'\\'</literal> or <literal>'\134'</literal></entry>
+       <entry><literal>SELECT '\\'::bytea;</literal></entry>
+       <entry><literal>\x5c</literal></entry>
       </row>
 
       <row>
        <entry>0 to 31 and 127 to 255</entry>
        <entry><quote>non-printable</quote> octets</entry>
-       <entry><literal>E'\\<replaceable>xxx'</replaceable></literal> (octal value)</entry>
-       <entry><literal>SELECT E'\\001'::bytea;</literal></entry>
-       <entry><literal>\001</literal></entry>
+       <entry><literal>'\<replaceable>xxx'</replaceable></literal> (octal value)</entry>
+       <entry><literal>SELECT '\001'::bytea;</literal></entry>
+       <entry><literal>\x01</literal></entry>
       </row>
 
      </tbody>
@@ -1441,41 +1445,49 @@ SELECT E'\\xDEADBEEF';
    <para>
     The requirement to escape <emphasis>non-printable</emphasis> octets
     varies depending on locale settings. In some instances you can get away
-    with leaving them unescaped. Note that the result in each of the examples
-    in <xref linkend="datatype-binary-sqlesc"/> was exactly one octet in
-    length, even though the output representation is sometimes
-    more than one character.
+    with leaving them unescaped.
    </para>
 
    <para>
-    The reason multiple backslashes are required, as shown
-    in <xref linkend="datatype-binary-sqlesc"/>, is that an input
-    string written as a string literal must pass through two parse
-    phases in the <productname>PostgreSQL</productname> server.
-    The first backslash of each pair is interpreted as an escape
-    character by the string-literal parser (assuming escape string
-    syntax is used) and is therefore consumed, leaving the second backslash of the
-    pair.  (Dollar-quoted strings can be used to avoid this level
-    of escaping.)  The remaining backslash is then recognized by the
-    <type>bytea</type> input function as starting either a three
-    digit octal value or escaping another backslash.  For example,
-    a string literal passed to the server as <literal>E'\\001'</literal>
-    becomes <literal>\001</literal> after passing through the
-    escape string parser. The <literal>\001</literal> is then sent
-    to the <type>bytea</type> input function, where it is converted
-    to a single octet with a decimal value of 1.  Note that the
-    single-quote character is not treated specially by <type>bytea</type>,
-    so it follows the normal rules for string literals.  (See also
-    <xref linkend="sql-syntax-strings"/>.)
+    The reason that single quotes must be doubled, as shown
+    in <xref linkend="datatype-binary-sqlesc"/>, is that this
+    is true for any string literal in a SQL command.  The generic
+    string-literal parser consumes the outermost single quotes
+    and reduces any pair of single quotes to one data character.
+    What the <type>bytea</type> input function sees is just one
+    single quote, which it treats as a plain data character.
+    However, the <type>bytea</type> input function treats
+    backslashes as special, and the other behaviors shown in
+    <xref linkend="datatype-binary-sqlesc"/> are implemented by
+    that function.
    </para>
 
    <para>
-    <type>Bytea</type> octets are sometimes escaped when output. In general, each
-    <quote>non-printable</quote> octet is converted into
-    its equivalent three-digit octal value and preceded by one backslash.
-    Most <quote>printable</quote> octets are represented by their standard
-    representation in the client character set. The octet with decimal
-    value 92 (backslash) is doubled in the output.
+    In some contexts, backslashes must be doubled compared to what is
+    shown above, because the generic string-literal parser will also
+    reduce pairs of backslashes to one data character;
+    see <xref linkend="sql-syntax-strings"/>.
+   </para>
+
+   <para>
+    <type>Bytea</type> octets are output in <literal>hex</literal>
+    format by default.  If you change <xref linkend="guc-bytea-output"/>
+    to <literal>escape</literal>,
+    <quote>non-printable</quote> octets are converted to their
+    equivalent three-digit octal value and preceded by one backslash.
+    Most <quote>printable</quote> octets are output by their standard
+    representation in the client character set, e.g.:
+
+<programlisting>
+SET bytea_output = 'escape';
+
+SELECT 'abc \153\154\155 \052\251\124'::bytea;
+     bytea
+----------------
+ abc klm *\251T
+</programlisting>
+
+    The octet with decimal value 92 (backslash) is doubled in the output.
     Details are in <xref linkend="datatype-binary-resesc"/>.
    </para>
 
@@ -1498,7 +1510,7 @@ SELECT E'\\xDEADBEEF';
        <entry>92</entry>
        <entry>backslash</entry>
        <entry><literal>\\</literal></entry>
-       <entry><literal>SELECT E'\\134'::bytea;</literal></entry>
+       <entry><literal>SELECT '\134'::bytea;</literal></entry>
        <entry><literal>\\</literal></entry>
       </row>
 
@@ -1506,7 +1518,7 @@ SELECT E'\\xDEADBEEF';
        <entry>0 to 31 and 127 to 255</entry>
        <entry><quote>non-printable</quote> octets</entry>
        <entry><literal>\<replaceable>xxx</replaceable></literal> (octal value)</entry>
-       <entry><literal>SELECT E'\\001'::bytea;</literal></entry>
+       <entry><literal>SELECT '\001'::bytea;</literal></entry>
        <entry><literal>\001</literal></entry>
       </row>
 
@@ -1514,7 +1526,7 @@ SELECT E'\\xDEADBEEF';
        <entry>32 to 126</entry>
        <entry><quote>printable</quote> octets</entry>
        <entry>client character set representation</entry>
-       <entry><literal>SELECT E'\\176'::bytea;</literal></entry>
+       <entry><literal>SELECT '\176'::bytea;</literal></entry>
        <entry><literal>~</literal></entry>
       </row>
 
@@ -1628,8 +1640,9 @@ SELECT E'\\xDEADBEEF';
         <entry><type>time [ (<replaceable>p</replaceable>) ] with time zone</type></entry>
         <entry>12 bytes</entry>
         <entry>time of day (no date), with time zone</entry>
-        <entry>00:00:00+1459</entry>
-        <entry>24:00:00-1459</entry>
+        <!-- see MAX_TZDISP_HOUR in datatype/timestamp.h -->
+        <entry>00:00:00+1559</entry>
+        <entry>24:00:00-1559</entry>
         <entry>1 microsecond</entry>
        </row>
        <row>
@@ -2095,7 +2108,7 @@ January 8 04:05:06 1999 PST
      </para>
     </sect3>
 
-    <sect3>
+    <sect3 id="datatype-datetime-special-values">
      <title>Special Values</title>
 
      <indexterm>
@@ -2156,17 +2169,17 @@ January 8 04:05:06 1999 PST
          <row>
           <entry><literal>today</literal></entry>
           <entry><type>date</type>, <type>timestamp</type></entry>
-          <entry>midnight today</entry>
+          <entry>midnight (<literal>00:00</literal>) today</entry>
          </row>
          <row>
           <entry><literal>tomorrow</literal></entry>
           <entry><type>date</type>, <type>timestamp</type></entry>
-          <entry>midnight tomorrow</entry>
+          <entry>midnight (<literal>00:00</literal>) tomorrow</entry>
          </row>
          <row>
           <entry><literal>yesterday</literal></entry>
           <entry><type>date</type>, <type>timestamp</type></entry>
-          <entry>midnight yesterday</entry>
+          <entry>midnight (<literal>00:00</literal>) yesterday</entry>
          </row>
          <row>
           <entry><literal>allballs</literal></entry>
@@ -2183,11 +2196,25 @@ January 8 04:05:06 1999 PST
       type:
       <literal>CURRENT_DATE</literal>, <literal>CURRENT_TIME</literal>,
       <literal>CURRENT_TIMESTAMP</literal>, <literal>LOCALTIME</literal>,
-      <literal>LOCALTIMESTAMP</literal>.  The latter four accept an
-      optional subsecond precision specification.  (See <xref
+      <literal>LOCALTIMESTAMP</literal>.  (See <xref
       linkend="functions-datetime-current"/>.)  Note that these are
       SQL functions and are <emphasis>not</emphasis> recognized in data input strings.
      </para>
+
+     <caution>
+      <para>
+       While the input strings <literal>now</literal>,
+       <literal>today</literal>, <literal>tomorrow</literal>,
+       and <literal>yesterday</literal> are fine to use in interactive SQL
+       commands, they can have surprising behavior when the command is
+       saved to be executed later, for example in prepared statements,
+       views, and function definitions.  The string can be converted to a
+       specific time value that continues to be used long after it becomes
+       stale.  Use one of the SQL functions instead in such contexts.
+       For example, <literal>CURRENT_DATE + 1</literal> is safer than
+       <literal>'tomorrow'::date</literal>.
+      </para>
+     </caution>
 
     </sect3>
    </sect2>
@@ -2406,7 +2433,7 @@ January 8 04:05:06 1999 PST
         linkend="view-pg-timezone-names"/>).
         <productname>PostgreSQL</productname> uses the widely-used IANA
         time zone data for this purpose, so the same time zone
-        names are also recognized by much other software.
+        names are also recognized by other software.
        </para>
       </listitem>
       <listitem>
@@ -2414,7 +2441,7 @@ January 8 04:05:06 1999 PST
         A time zone abbreviation, for example <literal>PST</literal>.  Such a
         specification merely defines a particular offset from UTC, in
         contrast to full time zone names which can imply a set of daylight
-        savings transition-date rules as well.  The recognized abbreviations
+        savings transition rules as well.  The recognized abbreviations
         are listed in the <literal>pg_timezone_abbrevs</literal> view (see <xref
         linkend="view-pg-timezone-abbrevs"/>).  You cannot set the
         configuration parameters <xref linkend="guc-timezone"/> or
@@ -2428,25 +2455,10 @@ January 8 04:05:06 1999 PST
        <para>
         In addition to the timezone names and abbreviations,
         <productname>PostgreSQL</productname> will accept POSIX-style time zone
-        specifications of the form <replaceable>STD</replaceable><replaceable>offset</replaceable> or
-        <replaceable>STD</replaceable><replaceable>offset</replaceable><replaceable>DST</replaceable>, where
-        <replaceable>STD</replaceable> is a zone abbreviation, <replaceable>offset</replaceable> is a
-        numeric offset in hours west from UTC, and <replaceable>DST</replaceable> is an
-        optional daylight-savings zone abbreviation, assumed to stand for one
-        hour ahead of the given offset. For example, if <literal>EST5EDT</literal>
-        were not already a recognized zone name, it would be accepted and would
-        be functionally equivalent to United States East Coast time.  In this
-        syntax, a zone abbreviation can be a string of letters, or an
-        arbitrary string surrounded by angle brackets (<literal>&lt;&gt;</literal>).
-        When a daylight-savings zone abbreviation is present,
-        it is assumed to be used
-        according to the same daylight-savings transition rules used in the
-        IANA time zone database's <filename>posixrules</filename> entry.
-        In a standard <productname>PostgreSQL</productname> installation,
-        <filename>posixrules</filename> is the same as <literal>US/Eastern</literal>, so
-        that POSIX-style time zone specifications follow USA daylight-savings
-        rules.  If needed, you can adjust this behavior by replacing the
-        <filename>posixrules</filename> file.
+        specifications, as described in
+        <xref linkend="datetime-posix-timezone-specs"/>.  This option is not
+        normally preferable to using a named time zone, but it may be
+        necessary if no suitable IANA time zone entry is available.
        </para>
       </listitem>
      </itemizedlist>
@@ -2471,19 +2483,6 @@ January 8 04:05:06 1999 PST
      abbreviations according to whatever they meant (or had most recently
      meant) on the specified date; but, as with the <literal>EST</literal> example
      above, this is not necessarily the same as local civil time on that date.
-    </para>
-
-    <para>
-     One should be wary that the POSIX-style time zone feature can
-     lead to silently accepting bogus input, since there is no check on the
-     reasonableness of the zone abbreviations.  For example, <literal>SET
-     TIMEZONE TO FOOBAR0</literal> will work, leaving the system effectively using
-     a rather peculiar abbreviation for UTC.
-     Another issue to keep in mind is that in POSIX time zone names,
-     positive offsets are used for locations <emphasis>west</emphasis> of Greenwich.
-     Everywhere else, <productname>PostgreSQL</productname> follows the
-     ISO-8601 convention that positive timezone offsets are <emphasis>east</emphasis>
-     of Greenwich.
     </para>
 
     <para>
@@ -2887,37 +2886,36 @@ SELECT EXTRACT(days from '80 hours'::interval);
    </table>
 
    <para>
-    Valid literal values for the <quote>true</quote> state are:
-    <simplelist>
-     <member><literal>TRUE</literal></member>
-     <member><literal>'t'</literal></member>
-     <member><literal>'true'</literal></member>
-     <member><literal>'y'</literal></member>
-     <member><literal>'yes'</literal></member>
-     <member><literal>'on'</literal></member>
-     <member><literal>'1'</literal></member>
-    </simplelist>
-    For the <quote>false</quote> state, the following values can be
-    used:
-    <simplelist>
-     <member><literal>FALSE</literal></member>
-     <member><literal>'f'</literal></member>
-     <member><literal>'false'</literal></member>
-     <member><literal>'n'</literal></member>
-     <member><literal>'no'</literal></member>
-     <member><literal>'off'</literal></member>
-     <member><literal>'0'</literal></member>
-    </simplelist>
-    Leading or trailing whitespace is ignored, and case does not matter.
-    The key words
-    <literal>TRUE</literal> and <literal>FALSE</literal> are the preferred
-    (<acronym>SQL</acronym>-compliant) usage.
+    Boolean constants can be represented in SQL queries by the SQL
+    key words <literal>TRUE</literal>, <literal>FALSE</literal>,
+    and <literal>NULL</literal>.
    </para>
 
    <para>
-    <xref linkend="datatype-boolean-example"/> shows that
-    <type>boolean</type> values are output using the letters
-    <literal>t</literal> and <literal>f</literal>.
+    The datatype input function for type <type>boolean</type> accepts these
+    string representations for the <quote>true</quote> state:
+    <simplelist>
+     <member><literal>true</literal></member>
+     <member><literal>yes</literal></member>
+     <member><literal>on</literal></member>
+     <member><literal>1</literal></member>
+    </simplelist>
+    and these representations for the <quote>false</quote> state:
+    <simplelist>
+     <member><literal>false</literal></member>
+     <member><literal>no</literal></member>
+     <member><literal>off</literal></member>
+     <member><literal>0</literal></member>
+    </simplelist>
+    Unique prefixes of these strings are also accepted, for
+    example <literal>t</literal> or <literal>n</literal>.
+    Leading or trailing whitespace is ignored, and case does not matter.
+   </para>
+
+   <para>
+    The datatype output function for type <type>boolean</type> always emits
+    either <literal>t</literal> or <literal>f</literal>, as shown in
+    <xref linkend="datatype-boolean-example"/>.
    </para>
 
    <example id="datatype-boolean-example">
@@ -2939,6 +2937,27 @@ SELECT * FROM test1 WHERE a;
  t | sic est
 </programlisting>
    </example>
+
+   <para>
+    The key words <literal>TRUE</literal> and <literal>FALSE</literal> are
+    the preferred (<acronym>SQL</acronym>-compliant) method for writing
+    Boolean constants in SQL queries.  But you can also use the string
+    representations by following the generic string-literal constant syntax
+    described in <xref linkend="sql-syntax-constants-generic"/>, for
+    example <literal>'yes'::boolean</literal>.
+   </para>
+
+   <para>
+    Note that the parser automatically understands
+    that <literal>TRUE</literal> and <literal>FALSE</literal> are of
+    type <type>boolean</type>, but this is not so
+    for <literal>NULL</literal> because that can have any type.
+    So in some contexts you might have to cast <literal>NULL</literal>
+    to <type>boolean</type> explicitly, for
+    example <literal>NULL::boolean</literal>.  Conversely, the cast can be
+    omitted from a string-literal Boolean value in contexts where the parser
+    can deduce that the literal must be of type <type>boolean</type>.
+   </para>
   </sect1>
 
   <sect1 id="datatype-enum">
@@ -4190,13 +4209,20 @@ a0ee-bc99-9c0b-4ef8-bb6d-6bb9-bd38-0a11
    <para>
     The <type>xml</type> type can store well-formed
     <quote>documents</quote>, as defined by the XML standard, as well
-    as <quote>content</quote> fragments, which are defined by the
-    production <literal>XMLDecl? content</literal> in the XML
-    standard.  Roughly, this means that content fragments can have
+    as <quote>content</quote> fragments, which are defined by reference
+    to the more permissive
+    <ulink url="https://www.w3.org/TR/2010/REC-xpath-datamodel-20101214/#DocumentNode"><quote>document node</quote></ulink>
+    of the XQuery and XPath data model.
+    Roughly, this means that content fragments can have
     more than one top-level element or character node.  The expression
     <literal><replaceable>xmlvalue</replaceable> IS DOCUMENT</literal>
     can be used to evaluate whether a particular <type>xml</type>
     value is a full document or only a content fragment.
+   </para>
+
+   <para>
+    Limits and compatibility notes for the <type>xml</type> data type
+    can be found in <xref linkend="xml-limits-conformance"/>.
    </para>
 
    <sect2>
@@ -4266,16 +4292,6 @@ SET xmloption TO { DOCUMENT | CONTENT };
     The default is <literal>CONTENT</literal>, so all forms of XML
     data are allowed.
    </para>
-
-   <note>
-    <para>
-     With the default XML option setting, you cannot directly cast
-     character strings to type <type>xml</type> if they contain a
-     document type declaration, because the definition of XML content
-     fragment does not accept them.  If you need to do that, either
-     use <literal>XMLPARSE</literal> or change the XML option.
-    </para>
-   </note>
 
    </sect2>
 
@@ -4926,7 +4942,7 @@ SELECT * FROM pg_attribute
 
        <row>
         <entry><type>unknown</type></entry>
-        <entry>Identifies a not-yet-resolved type, e.g. of an undecorated
+        <entry>Identifies a not-yet-resolved type, e.g., of an undecorated
          string literal.</entry>
        </row>
 

@@ -107,21 +107,25 @@
    don't. */
 #define HAVE_DECL_F_FULLFSYNC 0
 
+/* Define to 1 if you have the declaration of
+   `LLVMCreateGDBRegistrationListener', and to 0 if you don't. */
+#undef HAVE_DECL_LLVMCREATEGDBREGISTRATIONLISTENER
+
+/* Define to 1 if you have the declaration of
+   `LLVMCreatePerfJITEventListener', and to 0 if you don't. */
+#undef HAVE_DECL_LLVMCREATEPERFJITEVENTLISTENER
+
 /* Define to 1 if you have the declaration of `LLVMGetHostCPUName', and to 0
    if you don't. */
 #define HAVE_DECL_LLVMGETHOSTCPUNAME 0
 
+/* Define to 1 if you have the declaration of `LLVMGetHostCPUFeatures', and to 0
+   if you don't. */
+#define HAVE_DECL_LLVMGETHOSTCPUFEATURES 0
+
 /* Define to 1 if you have the declaration of `LLVMOrcGetSymbolAddressIn', and
    to 0 if you don't. */
 #define HAVE_DECL_LLVMORCGETSYMBOLADDRESSIN 0
-
-/* Define to 1 if you have the declaration of `LLVMOrcRegisterGDB', and to 0
-   if you don't. */
-#define HAVE_DECL_LLVMORCREGISTERGDB 0
-
-/* Define to 1 if you have the declaration of `LLVMOrcRegisterPerf', and to 0
-   if you don't. */
-#define HAVE_DECL_LLVMORCREGISTERPERF 0
 
 /* Define to 1 if you have the declaration of `snprintf', and to 0 if you
    don't. */
@@ -410,6 +414,9 @@
 /* Define to use have a strong random number source */
 #define HAVE_STRONG_RANDOM 1
 
+/* Define to 1 if you have the `strsignal' function. */
+/* #undef HAVE_STRSIGNAL */
+
 /* Define to 1 if you have the `strtoll' function. */
 #ifdef HAVE_LONG_LONG_INT_64
 #define HAVE_STRTOLL 1
@@ -537,6 +544,9 @@
 /* Define to 1 if you have the `unsetenv' function. */
 /* #undef HAVE_UNSETENV */
 
+/* Define to 1 if you have the `uselocale' function. */
+/* #undef HAVE_USELOCALE */
+
 /* Define to 1 if you have the `utime' function. */
 #define HAVE_UTIME 1
 
@@ -588,6 +598,9 @@
 /* Define to 1 if your compiler understands __builtin_unreachable. */
 /* #undef HAVE__BUILTIN_UNREACHABLE */
 
+/* Define to 1 if you have the `_configthreadlocale' function. */
+#define HAVE__CONFIGTHREADLOCALE 1
+
 /* Define to 1 if you have __cpuid. */
 #define HAVE__CPUID 1
 
@@ -622,10 +635,10 @@
 #define PACKAGE_NAME "PostgreSQL"
 
 /* Define to the full name and version of this package. */
-#define PACKAGE_STRING "PostgreSQL 11beta2"
+#define PACKAGE_STRING "PostgreSQL 11.11"
 
 /* Define to the version of this package. */
-#define PACKAGE_VERSION "11beta2"
+#define PACKAGE_VERSION "11.11"
 
 /* Define to the name of a signed 128-bit integer type. */
 #undef PG_INT128_TYPE
@@ -634,10 +647,10 @@
 #define PG_INT64_TYPE long long int
 
 /* PostgreSQL version as a string */
-#define PG_VERSION "11beta2"
+#define PG_VERSION "11.11"
 
 /* PostgreSQL version as a number */
-#define PG_VERSION_NUM 110000
+#define PG_VERSION_NUM 110011
 
 /* Define to the one symbol short name of this package. */
 #define PACKAGE_TARNAME "postgresql"
@@ -676,7 +689,7 @@
 /* Define to 1 if you have the ANSI C header files. */
 #define STDC_HEADERS 1
 
-/* Define to 1 if strerror_r() returns a int. */
+/* Define to 1 if strerror_r() returns int. */
 /* #undef STRERROR_R_INT */
 
 /* Define to 1 if your <sys/time.h> declares `struct tm'. */

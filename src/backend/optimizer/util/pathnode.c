@@ -1120,11 +1120,27 @@ create_bitmap_and_path(PlannerInfo *root,
 					   List *bitmapquals)
 {
 	BitmapAndPath *pathnode = makeNode(BitmapAndPath);
+	Relids		required_outer = NULL;
+	ListCell   *lc;
 
 	pathnode->path.pathtype = T_BitmapAnd;
 	pathnode->path.parent = rel;
 	pathnode->path.pathtarget = rel->reltarget;
-	pathnode->path.param_info = NULL;	/* not used in bitmap trees */
+
+	/*
+	 * Identify the required outer rels as the union of what the child paths
+	 * depend on.  (Alternatively, we could insist that the caller pass this
+	 * in, but it's more convenient and reliable to compute it here.)
+	 */
+	foreach(lc, bitmapquals)
+	{
+		Path	   *bitmapqual = (Path *) lfirst(lc);
+
+		required_outer = bms_add_members(required_outer,
+										 PATH_REQ_OUTER(bitmapqual));
+	}
+	pathnode->path.param_info = get_baserel_parampathinfo(root, rel,
+														  required_outer);
 
 	/*
 	 * Currently, a BitmapHeapPath, BitmapAndPath, or BitmapOrPath will be
@@ -1156,11 +1172,27 @@ create_bitmap_or_path(PlannerInfo *root,
 					  List *bitmapquals)
 {
 	BitmapOrPath *pathnode = makeNode(BitmapOrPath);
+	Relids		required_outer = NULL;
+	ListCell   *lc;
 
 	pathnode->path.pathtype = T_BitmapOr;
 	pathnode->path.parent = rel;
 	pathnode->path.pathtarget = rel->reltarget;
-	pathnode->path.param_info = NULL;	/* not used in bitmap trees */
+
+	/*
+	 * Identify the required outer rels as the union of what the child paths
+	 * depend on.  (Alternatively, we could insist that the caller pass this
+	 * in, but it's more convenient and reliable to compute it here.)
+	 */
+	foreach(lc, bitmapquals)
+	{
+		Path	   *bitmapqual = (Path *) lfirst(lc);
+
+		required_outer = bms_add_members(required_outer,
+										 PATH_REQ_OUTER(bitmapqual));
+	}
+	pathnode->path.param_info = get_baserel_parampathinfo(root, rel,
+														  required_outer);
 
 	/*
 	 * Currently, a BitmapHeapPath, BitmapAndPath, or BitmapOrPath will be
@@ -2070,6 +2102,27 @@ create_foreignscan_path(PlannerInfo *root, RelOptInfo *rel,
 						List *fdw_private)
 {
 	ForeignPath *pathnode = makeNode(ForeignPath);
+
+	/*
+	 * Since the path's required_outer should always include all the rel's
+	 * lateral_relids, forcibly add those if necessary.  This is a bit of a
+	 * hack, but up till early 2019 the contrib FDWs failed to ensure that,
+	 * and it's likely that the same error has propagated into many external
+	 * FDWs.  Don't risk modifying the passed-in relid set here.
+	 */
+	if (rel->lateral_relids && !bms_is_subset(rel->lateral_relids,
+											  required_outer))
+		required_outer = bms_union(required_outer, rel->lateral_relids);
+
+	/*
+	 * Although this function is only designed to be used for scans of
+	 * baserels, before v12 postgres_fdw abused it to make paths for join and
+	 * upper rels.  It will work for such cases as long as required_outer is
+	 * empty (otherwise get_baserel_parampathinfo does the wrong thing), which
+	 * fortunately is the expected case for now.
+	 */
+	if (!bms_is_empty(required_outer) && !IS_SIMPLE_REL(rel))
+		elog(ERROR, "parameterized foreign joins are not supported yet");
 
 	pathnode->path.pathtype = T_ForeignScan;
 	pathnode->path.parent = rel;
@@ -3077,10 +3130,9 @@ create_minmaxagg_path(PlannerInfo *root,
  * 'target' is the PathTarget to be computed
  * 'windowFuncs' is a list of WindowFunc structs
  * 'winclause' is a WindowClause that is common to all the WindowFuncs
- * 'winpathkeys' is the pathkeys for the PARTITION keys + ORDER keys
  *
- * The actual sort order of the input must match winpathkeys, but might
- * have additional keys after those.
+ * The input must be sorted according to the WindowClause's PARTITION keys
+ * plus ORDER BY keys.
  */
 WindowAggPath *
 create_windowagg_path(PlannerInfo *root,
@@ -3088,8 +3140,7 @@ create_windowagg_path(PlannerInfo *root,
 					  Path *subpath,
 					  PathTarget *target,
 					  List *windowFuncs,
-					  WindowClause *winclause,
-					  List *winpathkeys)
+					  WindowClause *winclause)
 {
 	WindowAggPath *pathnode = makeNode(WindowAggPath);
 
@@ -3107,7 +3158,6 @@ create_windowagg_path(PlannerInfo *root,
 
 	pathnode->subpath = subpath;
 	pathnode->winclause = winclause;
-	pathnode->winpathkeys = winpathkeys;
 
 	/*
 	 * For costing purposes, assume that there are no redundant partitioning
@@ -3684,7 +3734,7 @@ do { \
 	(path) = reparameterize_path_by_child(root, (path), child_rel); \
 	if ((path) == NULL) \
 		return NULL; \
-} while(0);
+} while(0)
 
 #define REPARAMETERIZE_CHILD_PATH_LIST(pathlist) \
 do { \
@@ -3695,7 +3745,7 @@ do { \
 		if ((pathlist) == NIL) \
 			return NULL; \
 	} \
-} while(0);
+} while(0)
 
 	Path	   *new_path;
 	ParamPathInfo *new_ppi;
@@ -3710,7 +3760,18 @@ do { \
 		!bms_overlap(PATH_REQ_OUTER(path), child_rel->top_parent_relids))
 		return path;
 
-	/* Reparameterize a copy of given path. */
+	/*
+	 * If possible, reparameterize the given path, making a copy.
+	 *
+	 * This function is currently only applied to the inner side of a nestloop
+	 * join that is being partitioned by the partitionwise-join code.  Hence,
+	 * we need only support path types that plausibly arise in that context.
+	 * (In particular, supporting sorted path types would be a waste of code
+	 * and cycles: even if we translated them here, they'd just lose in
+	 * subsequent cost comparisons.)  If we do see an unsupported path type,
+	 * that just means we won't be able to generate a partitionwise-join plan
+	 * using that path type.
+	 */
 	switch (nodeTag(path))
 	{
 		case T_Path:
@@ -3755,20 +3816,6 @@ do { \
 				FLAT_COPY_PATH(bopath, path, BitmapOrPath);
 				REPARAMETERIZE_CHILD_PATH_LIST(bopath->bitmapquals);
 				new_path = (Path *) bopath;
-			}
-			break;
-
-		case T_TidPath:
-			{
-				TidPath    *tpath;
-
-				/*
-				 * TidPath contains tidquals, which do not contain any
-				 * external parameters per create_tidscan_path(). So don't
-				 * bother to translate those.
-				 */
-				FLAT_COPY_PATH(tpath, path, TidPath);
-				new_path = (Path *) tpath;
 			}
 			break;
 
@@ -3862,37 +3909,6 @@ do { \
 			}
 			break;
 
-		case T_MergeAppend:
-			{
-				MergeAppendPath *mapath;
-
-				FLAT_COPY_PATH(mapath, path, MergeAppendPath);
-				REPARAMETERIZE_CHILD_PATH_LIST(mapath->subpaths);
-				new_path = (Path *) mapath;
-			}
-			break;
-
-		case T_MaterialPath:
-			{
-				MaterialPath *mpath;
-
-				FLAT_COPY_PATH(mpath, path, MaterialPath);
-				REPARAMETERIZE_CHILD_PATH(mpath->subpath);
-				new_path = (Path *) mpath;
-			}
-			break;
-
-		case T_UniquePath:
-			{
-				UniquePath *upath;
-
-				FLAT_COPY_PATH(upath, path, UniquePath);
-				REPARAMETERIZE_CHILD_PATH(upath->subpath);
-				ADJUST_CHILD_ATTRS(upath->uniq_exprs);
-				new_path = (Path *) upath;
-			}
-			break;
-
 		case T_GatherPath:
 			{
 				GatherPath *gpath;
@@ -3900,16 +3916,6 @@ do { \
 				FLAT_COPY_PATH(gpath, path, GatherPath);
 				REPARAMETERIZE_CHILD_PATH(gpath->subpath);
 				new_path = (Path *) gpath;
-			}
-			break;
-
-		case T_GatherMergePath:
-			{
-				GatherMergePath *gmpath;
-
-				FLAT_COPY_PATH(gmpath, path, GatherMergePath);
-				REPARAMETERIZE_CHILD_PATH(gmpath->subpath);
-				new_path = (Path *) gmpath;
 			}
 			break;
 

@@ -603,8 +603,9 @@ hostnossl  <replaceable>database</replaceable>  <replaceable>user</replaceable> 
    <systemitem>SIGHUP</systemitem><indexterm><primary>SIGHUP</primary></indexterm>
    signal. If you edit the file on an
    active system, you will need to signal the postmaster
-   (using <literal>pg_ctl reload</literal> or <literal>kill -HUP</literal>) to make it
-   re-read the file.
+   (using <literal>pg_ctl reload</literal>, calling the SQL function
+   <function>pg_reload_conf()</function>, or using <literal>kill
+   -HUP</literal>) to make it re-read the file.
   </para>
 
   <note>
@@ -821,8 +822,9 @@ mymap   /^(.*)@otherdomain\.com$   guest
    <systemitem>SIGHUP</systemitem><indexterm><primary>SIGHUP</primary></indexterm>
    signal. If you edit the file on an
    active system, you will need to signal the postmaster
-   (using <literal>pg_ctl reload</literal> or <literal>kill -HUP</literal>) to make it
-   re-read the file.
+   (using <literal>pg_ctl reload</literal>, calling the SQL function
+   <function>pg_reload_conf()</function>, or using <literal>kill
+   -HUP</literal>) to make it re-read the file.
   </para>
 
   <para>
@@ -858,8 +860,101 @@ omicron         bryanh                  guest1
 
  <sect1 id="auth-methods">
   <title>Authentication Methods</title>
+
   <para>
-   The following sections describe the authentication methods in more detail.
+   <productname>PostgreSQL</productname> provides various methods for
+   authenticating users:
+
+   <itemizedlist>
+    <listitem>
+     <para>
+      <link linkend="auth-trust">Trust authentication</link>, which
+      simply trusts that users are who they say they are.
+     </para>
+    </listitem>
+    <listitem>
+     <para>
+      <link linkend="auth-password">Password authentication</link>, which
+      requires that users send a password.
+     </para>
+    </listitem>
+    <listitem>
+     <para>
+      <link linkend="gssapi-auth">GSSAPI authentication</link>, which
+      relies on a GSSAPI-compatible security library.  Typically this is
+      used to access an authentication server such as a Kerberos or
+      Microsoft Active Directory server.
+     </para>
+    </listitem>
+    <listitem>
+     <para>
+      <link linkend="sspi-auth">SSPI authentication</link>, which
+      uses a Windows-specific protocol similar to GSSAPI.
+     </para>
+    </listitem>
+    <listitem>
+     <para>
+      <link linkend="auth-ident">Ident authentication</link>, which
+      relies on an <quote>Identification Protocol</quote> (RFC 1413)
+      service on the client's machine.  (On local Unix-socket connections,
+      this is treated as peer authentication.)
+     </para>
+    </listitem>
+    <listitem>
+     <para>
+      <link linkend="auth-peer">Peer authentication</link>, which
+      relies on operating system facilities to identify the process at the
+      other end of a local connection.  This is not supported for remote
+      connections.
+     </para>
+    </listitem>
+    <listitem>
+     <para>
+      <link linkend="auth-ldap">LDAP authentication</link>, which
+      relies on an LDAP authentication server.
+     </para>
+    </listitem>
+    <listitem>
+     <para>
+      <link linkend="auth-radius">RADIUS authentication</link>, which
+      relies on a RADIUS authentication server.
+     </para>
+    </listitem>
+    <listitem>
+     <para>
+      <link linkend="auth-cert">Certificate authentication</link>, which
+      requires an SSL connection and authenticates users by checking the
+      SSL certificate they send.
+     </para>
+    </listitem>
+    <listitem>
+     <para>
+      <link linkend="auth-pam">PAM authentication</link>, which
+      relies on a PAM (Pluggable Authentication Modules) library.
+     </para>
+    </listitem>
+    <listitem>
+     <para>
+      <link linkend="auth-bsd">BSD authentication</link>, which
+      relies on the BSD Authentication framework (currently available
+      only on OpenBSD).
+     </para>
+    </listitem>
+   </itemizedlist>
+  </para>
+
+  <para>
+   Peer authentication is usually recommendable for local connections,
+   though trust authentication might be sufficient in some circumstances.
+   Password authentication is the easiest choice for remote connections.
+   All the other options require some kind of external security
+   infrastructure (usually an authentication server or a certificate
+   authority for issuing SSL certificates), or are platform-specific.
+  </para>
+
+  <para>
+   The following sections describe each of these authentication methods
+   in more detail.
   </para>
  </sect1>
 
@@ -1749,7 +1844,7 @@ host ... ldap ldapserver=ldap.example.net ldapbasedn="dc=example, dc=net" ldapse
     <literal>user name</literal>, <literal>password</literal> (encrypted) and
     <literal>NAS Identifier</literal>. The request will be encrypted using
     a secret shared with the server. The RADIUS server will respond to
-    this server with either <literal>Access Accept</literal> or
+    this request with either <literal>Access Accept</literal> or
     <literal>Access Reject</literal>. There is no support for RADIUS accounting.
    </para>
 
@@ -1758,11 +1853,11 @@ host ... ldap ldapserver=ldap.example.net ldapbasedn="dc=example, dc=net" ldapse
     be tried sequentially. If a negative response is received from
     a server, the authentication will fail. If no response is received,
     the next server in the list will be tried. To specify multiple
-    servers, put the names within quotes and separate the server names
-    with a comma. If multiple servers are specified, all other RADIUS
-    options can also be given as a comma separate list, to apply
-    individual values to each server. They can also be specified as
-    a single value, in which case this value will apply to all servers.
+    servers, separate the server names with commas and surround the list
+    with double quotes. If multiple servers are specified, the other
+    RADIUS options can also be given as comma-separated lists, to provide
+    individual values for each server. They can also be specified as
+    a single value, in which case that value will apply to all servers.
    </para>
 
    <para>
@@ -1772,7 +1867,7 @@ host ... ldap ldapserver=ldap.example.net ldapbasedn="dc=example, dc=net" ldapse
        <term><literal>radiusservers</literal></term>
        <listitem>
         <para>
-         The name or IP addresses of the RADIUS servers to connect to.
+         The DNS names or IP addresses of the RADIUS servers to connect to.
          This parameter is required.
         </para>
        </listitem>
@@ -1783,7 +1878,7 @@ host ... ldap ldapserver=ldap.example.net ldapbasedn="dc=example, dc=net" ldapse
        <listitem>
         <para>
          The shared secrets used when talking securely to the RADIUS
-         server. This must have exactly the same value on the PostgreSQL
+         servers. This must have exactly the same value on the PostgreSQL
          and RADIUS servers. It is recommended that this be a string of
          at least 16 characters. This parameter is required.
          <note>
@@ -1803,8 +1898,9 @@ host ... ldap ldapserver=ldap.example.net ldapbasedn="dc=example, dc=net" ldapse
        <term><literal>radiusports</literal></term>
        <listitem>
         <para>
-         The port number on the RADIUS servers to connect to. If no port
-         is specified, the default port <literal>1812</literal> will be used.
+         The port numbers to connect to on the RADIUS servers. If no port
+         is specified, the default RADIUS port (<literal>1812</literal>)
+         will be used.
         </para>
        </listitem>
       </varlistentry>
@@ -1813,10 +1909,10 @@ host ... ldap ldapserver=ldap.example.net ldapbasedn="dc=example, dc=net" ldapse
        <term><literal>radiusidentifiers</literal></term>
        <listitem>
         <para>
-         The string used as <literal>NAS Identifier</literal> in the RADIUS
-         requests. This parameter can be used as a second parameter
-         identifying for example which database user the user is attempting
-         to authenticate as, which can be used for policy matching on
+         The strings to be used as <literal>NAS Identifier</literal> in the
+         RADIUS requests. This parameter can be used, for example, to
+         identify which database cluster the user is attempting to connect
+         to, which can be useful for policy matching on
          the RADIUS server. If no identifier is specified, the default
          <literal>postgresql</literal> will be used.
         </para>
@@ -1824,6 +1920,16 @@ host ... ldap ldapserver=ldap.example.net ldapbasedn="dc=example, dc=net" ldapse
       </varlistentry>
 
      </variablelist>
+   </para>
+
+   <para>
+    If it is necessary to have a comma or whitespace in a RADIUS parameter
+    value, that can be done by putting double quotes around the value, but
+    it is tedious because two layers of double-quoting are now required.
+    An example of putting whitespace into RADIUS secret strings is:
+<programlisting>
+host ... radius radiusservers="server1,server2" radiussecrets="""secret one"",""secret two"""
+</programlisting>
    </para>
   </sect1>
 
@@ -1889,7 +1995,7 @@ host ... ldap ldapserver=ldap.example.net ldapbasedn="dc=example, dc=net" ldapse
     connected remote host name or IP address. Therefore the user must already
     exist in the database before PAM can be used for authentication.  For more
     information about PAM, please read the
-    <ulink url="http://www.kernel.org/pub/linux/libs/pam/">
+    <ulink url="https://www.kernel.org/pub/linux/libs/pam/">
     <productname>Linux-PAM</productname> Page</ulink>.
    </para>
 

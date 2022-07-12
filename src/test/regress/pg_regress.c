@@ -1024,7 +1024,7 @@ config_sspi_auth(const char *pgdata)
 	} while (0)
 
 	res = snprintf(fname, sizeof(fname), "%s/pg_hba.conf", pgdata);
-	if (res < 0 || res >= sizeof(fname) - 1)
+	if (res < 0 || res >= sizeof(fname))
 	{
 		/*
 		 * Truncating this name is a fatal error, because we must not fail to
@@ -1560,14 +1560,9 @@ log_child_failure(int exitstatus)
 #if defined(WIN32)
 		status(_(" (test process was terminated by exception 0x%X)"),
 			   WTERMSIG(exitstatus));
-#elif defined(HAVE_DECL_SYS_SIGLIST) && HAVE_DECL_SYS_SIGLIST
-		status(_(" (test process was terminated by signal %d: %s)"),
-			   WTERMSIG(exitstatus),
-			   WTERMSIG(exitstatus) < NSIG ?
-			   sys_siglist[WTERMSIG(exitstatus)] : "(unknown))");
 #else
-		status(_(" (test process was terminated by signal %d)"),
-			   WTERMSIG(exitstatus));
+		status(_(" (test process was terminated by signal %d: %s)"),
+			   WTERMSIG(exitstatus), pg_strsignal(WTERMSIG(exitstatus)));
 #endif
 	}
 	else
@@ -2081,6 +2076,8 @@ regression_main(int argc, char *argv[], init_function ifunc, test_function tfunc
 	progname = get_progname(argv[0]);
 	set_pglocale_pgservice(argv[0], PG_TEXTDOMAIN("pg_regress"));
 
+	get_restricted_token(progname);
+
 	atexit(stop_postmaster);
 
 #ifndef HAVE_UNIX_SOCKETS
@@ -2417,7 +2414,7 @@ regression_main(int argc, char *argv[], init_function ifunc, test_function tfunc
 			 * Fail immediately if postmaster has exited
 			 */
 #ifndef WIN32
-			if (kill(postmaster_pid, 0) != 0)
+			if (waitpid(postmaster_pid, NULL, WNOHANG) == postmaster_pid)
 #else
 			if (WaitForSingleObject(postmaster_pid, 0) == WAIT_OBJECT_0)
 #endif

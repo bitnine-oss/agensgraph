@@ -134,7 +134,7 @@ gistindex_keytest(IndexScanDesc scan,
 	GISTSTATE  *giststate = so->giststate;
 	ScanKey		key = scan->keyData;
 	int			keySize = scan->numberOfKeys;
-	double	   *distance_p;
+	IndexOrderByDistance *distance_p;
 	Relation	r = scan->indexRelation;
 
 	*recheck_p = false;
@@ -152,7 +152,10 @@ gistindex_keytest(IndexScanDesc scan,
 		if (GistPageIsLeaf(page))	/* shouldn't happen */
 			elog(ERROR, "invalid GiST tuple found on leaf page");
 		for (i = 0; i < scan->numberOfOrderBys; i++)
-			so->distances[i] = -get_float8_infinity();
+		{
+			so->distances[i].value = -get_float8_infinity();
+			so->distances[i].isnull = false;
+		}
 		return true;
 	}
 
@@ -249,8 +252,9 @@ gistindex_keytest(IndexScanDesc scan,
 
 		if ((key->sk_flags & SK_ISNULL) || isNull)
 		{
-			/* Assume distance computes as null and sorts to the end */
-			*distance_p = get_float8_infinity();
+			/* Assume distance computes as null */
+			distance_p->value = 0.0;
+			distance_p->isnull = true;
 		}
 		else
 		{
@@ -287,7 +291,8 @@ gistindex_keytest(IndexScanDesc scan,
 									 ObjectIdGetDatum(key->sk_subtype),
 									 PointerGetDatum(&recheck));
 			*recheck_distances_p |= recheck;
-			*distance_p = DatumGetFloat8(dist);
+			distance_p->value = DatumGetFloat8(dist);
+			distance_p->isnull = false;
 		}
 
 		key++;
@@ -321,8 +326,8 @@ gistindex_keytest(IndexScanDesc scan,
  * sibling will be processed next.
  */
 static void
-gistScanPage(IndexScanDesc scan, GISTSearchItem *pageItem, double *myDistances,
-			 TIDBitmap *tbm, int64 *ntids)
+gistScanPage(IndexScanDesc scan, GISTSearchItem *pageItem,
+			 IndexOrderByDistance *myDistances, TIDBitmap *tbm, int64 *ntids)
 {
 	GISTScanOpaque so = (GISTScanOpaque) scan->opaque;
 	GISTSTATE  *giststate = so->giststate;
@@ -370,7 +375,7 @@ gistScanPage(IndexScanDesc scan, GISTSearchItem *pageItem, double *myDistances,
 
 		/* Insert it into the queue using same distances as for this page */
 		memcpy(item->distances, myDistances,
-			   sizeof(double) * scan->numberOfOrderBys);
+			   sizeof(item->distances[0]) * scan->numberOfOrderBys);
 
 		pairingheap_add(so->queue, &item->phNode);
 
@@ -465,6 +470,7 @@ gistScanPage(IndexScanDesc scan, GISTSearchItem *pageItem, double *myDistances,
 			 * search.
 			 */
 			GISTSearchItem *item;
+			int			nOrderBys = scan->numberOfOrderBys;
 
 			oldcxt = MemoryContextSwitchTo(so->queueCxt);
 
@@ -500,7 +506,7 @@ gistScanPage(IndexScanDesc scan, GISTSearchItem *pageItem, double *myDistances,
 
 			/* Insert it into the queue using new distance data */
 			memcpy(item->distances, so->distances,
-				   sizeof(double) * scan->numberOfOrderBys);
+				   sizeof(item->distances[0]) * nOrderBys);
 
 			pairingheap_add(so->queue, &item->phNode);
 
@@ -574,8 +580,8 @@ getNextNearest(IndexScanDesc scan)
 					if (!scan->xs_orderbynulls[i])
 						pfree(DatumGetPointer(scan->xs_orderbyvals[i]));
 #endif
-					scan->xs_orderbyvals[i] = Float8GetDatum(item->distances[i]);
-					scan->xs_orderbynulls[i] = false;
+					scan->xs_orderbyvals[i] = Float8GetDatum(item->distances[i].value);
+					scan->xs_orderbynulls[i] = item->distances[i].isnull;
 				}
 				else if (so->orderByTypes[i] == FLOAT4OID)
 				{
@@ -585,8 +591,8 @@ getNextNearest(IndexScanDesc scan)
 					if (!scan->xs_orderbynulls[i])
 						pfree(DatumGetPointer(scan->xs_orderbyvals[i]));
 #endif
-					scan->xs_orderbyvals[i] = Float4GetDatum((float4) item->distances[i]);
-					scan->xs_orderbynulls[i] = false;
+					scan->xs_orderbyvals[i] = Float4GetDatum(item->distances[i].value);
+					scan->xs_orderbynulls[i] = item->distances[i].isnull;
 				}
 				else
 				{

@@ -43,10 +43,6 @@
  * exprstates		Array of ExprStates, indexed as per PruneCtxStateIdx; one
  *					for each partition key in each pruning step.  Allocated if
  *					planstate is non-NULL, otherwise NULL.
- * exprhasexecparam	Array of bools, each true if corresponding 'exprstate'
- *					expression contains any PARAM_EXEC Params.  (Can be NULL
- *					if planstate is NULL.)
- * evalexecparams	True if it's safe to evaluate PARAM_EXEC Params.
  */
 typedef struct PartitionPruneContext
 {
@@ -61,8 +57,6 @@ typedef struct PartitionPruneContext
 	MemoryContext ppccontext;
 	PlanState  *planstate;
 	ExprState **exprstates;
-	bool	   *exprhasexecparam;
-	bool		evalexecparams;
 } PartitionPruneContext;
 
 /*
@@ -74,9 +68,11 @@ typedef struct PartitionPruneContext
 #define PruneCxtStateIdx(partnatts, step_id, keyno) \
 	((partnatts) * (step_id) + (keyno))
 
-extern List *make_partition_pruneinfo(PlannerInfo *root,
+extern PartitionPruneInfo *make_partition_pruneinfo(PlannerInfo *root,
+						 RelOptInfo *parentrel,
+						 List *subpaths,
 						 List *partitioned_rels,
-						 List *subpaths, List *prunequal);
+						 List *prunequal);
 extern Relids prune_append_rel_partitions(RelOptInfo *rel);
 extern Bitmapset *get_matching_partitions(PartitionPruneContext *context,
 						List *pruning_steps);

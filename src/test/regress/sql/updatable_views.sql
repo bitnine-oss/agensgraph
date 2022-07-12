@@ -98,6 +98,20 @@ DELETE FROM ro_view18;
 UPDATE ro_view19 SET last_value=1000;
 UPDATE ro_view20 SET b=upper(b);
 
+-- A view with a conditional INSTEAD rule but no unconditional INSTEAD rules
+-- or INSTEAD OF triggers should be non-updatable and generate useful error
+-- messages with appropriate detail
+CREATE RULE rw_view16_ins_rule AS ON INSERT TO rw_view16
+  WHERE NEW.a > 0 DO INSTEAD INSERT INTO base_tbl VALUES (NEW.a, NEW.b);
+CREATE RULE rw_view16_upd_rule AS ON UPDATE TO rw_view16
+  WHERE OLD.a > 0 DO INSTEAD UPDATE base_tbl SET b=NEW.b WHERE a=OLD.a;
+CREATE RULE rw_view16_del_rule AS ON DELETE TO rw_view16
+  WHERE OLD.a > 0 DO INSTEAD DELETE FROM base_tbl WHERE a=OLD.a;
+
+INSERT INTO rw_view16 (a, b) VALUES (3, 'Row 3'); -- should fail
+UPDATE rw_view16 SET b='ROW 2' WHERE a=2; -- should fail
+DELETE FROM rw_view16 WHERE a=2; -- should fail
+
 DROP TABLE base_tbl CASCADE;
 DROP VIEW ro_view10, ro_view12, ro_view18;
 DROP SEQUENCE uv_seq CASCADE;
@@ -1244,3 +1258,240 @@ insert into wcowrtest_v2 values (2, 'no such row in sometable');
 
 drop view wcowrtest_v, wcowrtest_v2;
 drop table wcowrtest, sometable;
+
+-- Check INSERT .. ON CONFLICT DO UPDATE works correctly when the view's
+-- columns are named and ordered differently than the underlying table's.
+create table uv_iocu_tab (a text unique, b float);
+insert into uv_iocu_tab values ('xyxyxy', 0);
+create view uv_iocu_view as
+   select b, b+1 as c, a, '2.0'::text as two from uv_iocu_tab;
+
+insert into uv_iocu_view (a, b) values ('xyxyxy', 1)
+   on conflict (a) do update set b = uv_iocu_view.b;
+select * from uv_iocu_tab;
+insert into uv_iocu_view (a, b) values ('xyxyxy', 1)
+   on conflict (a) do update set b = excluded.b;
+select * from uv_iocu_tab;
+
+-- OK to access view columns that are not present in underlying base
+-- relation in the ON CONFLICT portion of the query
+insert into uv_iocu_view (a, b) values ('xyxyxy', 3)
+   on conflict (a) do update set b = cast(excluded.two as float);
+select * from uv_iocu_tab;
+
+explain (costs off)
+insert into uv_iocu_view (a, b) values ('xyxyxy', 3)
+   on conflict (a) do update set b = excluded.b where excluded.c > 0;
+
+insert into uv_iocu_view (a, b) values ('xyxyxy', 3)
+   on conflict (a) do update set b = excluded.b where excluded.c > 0;
+select * from uv_iocu_tab;
+
+drop view uv_iocu_view;
+drop table uv_iocu_tab;
+
+-- Test whole-row references to the view
+create table uv_iocu_tab (a int unique, b text);
+create view uv_iocu_view as
+    select b as bb, a as aa, uv_iocu_tab::text as cc from uv_iocu_tab;
+
+insert into uv_iocu_view (aa,bb) values (1,'x');
+explain (costs off)
+insert into uv_iocu_view (aa,bb) values (1,'y')
+   on conflict (aa) do update set bb = 'Rejected: '||excluded.*
+   where excluded.aa > 0
+   and excluded.bb != ''
+   and excluded.cc is not null;
+insert into uv_iocu_view (aa,bb) values (1,'y')
+   on conflict (aa) do update set bb = 'Rejected: '||excluded.*
+   where excluded.aa > 0
+   and excluded.bb != ''
+   and excluded.cc is not null;
+select * from uv_iocu_view;
+
+-- Test omitting a column of the base relation
+delete from uv_iocu_view;
+insert into uv_iocu_view (aa,bb) values (1,'x');
+insert into uv_iocu_view (aa) values (1)
+   on conflict (aa) do update set bb = 'Rejected: '||excluded.*;
+select * from uv_iocu_view;
+
+alter table uv_iocu_tab alter column b set default 'table default';
+insert into uv_iocu_view (aa) values (1)
+   on conflict (aa) do update set bb = 'Rejected: '||excluded.*;
+select * from uv_iocu_view;
+
+alter view uv_iocu_view alter column bb set default 'view default';
+insert into uv_iocu_view (aa) values (1)
+   on conflict (aa) do update set bb = 'Rejected: '||excluded.*;
+select * from uv_iocu_view;
+
+-- Should fail to update non-updatable columns
+insert into uv_iocu_view (aa) values (1)
+   on conflict (aa) do update set cc = 'XXX';
+
+drop view uv_iocu_view;
+drop table uv_iocu_tab;
+
+-- ON CONFLICT DO UPDATE permissions checks
+create user regress_view_user1;
+create user regress_view_user2;
+
+set session authorization regress_view_user1;
+create table base_tbl(a int unique, b text, c float);
+insert into base_tbl values (1,'xxx',1.0);
+create view rw_view1 as select b as bb, c as cc, a as aa from base_tbl;
+
+grant select (aa,bb) on rw_view1 to regress_view_user2;
+grant insert on rw_view1 to regress_view_user2;
+grant update (bb) on rw_view1 to regress_view_user2;
+
+set session authorization regress_view_user2;
+insert into rw_view1 values ('yyy',2.0,1)
+  on conflict (aa) do update set bb = excluded.cc; -- Not allowed
+insert into rw_view1 values ('yyy',2.0,1)
+  on conflict (aa) do update set bb = rw_view1.cc; -- Not allowed
+insert into rw_view1 values ('yyy',2.0,1)
+  on conflict (aa) do update set bb = excluded.bb; -- OK
+insert into rw_view1 values ('zzz',2.0,1)
+  on conflict (aa) do update set bb = rw_view1.bb||'xxx'; -- OK
+insert into rw_view1 values ('zzz',2.0,1)
+  on conflict (aa) do update set cc = 3.0; -- Not allowed
+reset session authorization;
+select * from base_tbl;
+
+set session authorization regress_view_user1;
+grant select (a,b) on base_tbl to regress_view_user2;
+grant insert (a,b) on base_tbl to regress_view_user2;
+grant update (a,b) on base_tbl to regress_view_user2;
+
+set session authorization regress_view_user2;
+create view rw_view2 as select b as bb, c as cc, a as aa from base_tbl;
+insert into rw_view2 (aa,bb) values (1,'xxx')
+  on conflict (aa) do update set bb = excluded.bb; -- Not allowed
+create view rw_view3 as select b as bb, a as aa from base_tbl;
+insert into rw_view3 (aa,bb) values (1,'xxx')
+  on conflict (aa) do update set bb = excluded.bb; -- OK
+reset session authorization;
+select * from base_tbl;
+
+set session authorization regress_view_user2;
+create view rw_view4 as select aa, bb, cc FROM rw_view1;
+insert into rw_view4 (aa,bb) values (1,'yyy')
+  on conflict (aa) do update set bb = excluded.bb; -- Not allowed
+create view rw_view5 as select aa, bb FROM rw_view1;
+insert into rw_view5 (aa,bb) values (1,'yyy')
+  on conflict (aa) do update set bb = excluded.bb; -- OK
+reset session authorization;
+select * from base_tbl;
+
+drop view rw_view5;
+drop view rw_view4;
+drop view rw_view3;
+drop view rw_view2;
+drop view rw_view1;
+drop table base_tbl;
+drop user regress_view_user1;
+drop user regress_view_user2;
+
+-- Test single- and multi-row inserts with table and view defaults.
+-- Table defaults should be used, unless overridden by view defaults.
+create table base_tab_def (a int, b text default 'Table default',
+                           c text default 'Table default', d text, e text);
+create view base_tab_def_view as select * from base_tab_def;
+alter view base_tab_def_view alter b set default 'View default';
+alter view base_tab_def_view alter d set default 'View default';
+insert into base_tab_def values (1);
+insert into base_tab_def values (2), (3);
+insert into base_tab_def values (4, default, default, default, default);
+insert into base_tab_def values (5, default, default, default, default),
+                                (6, default, default, default, default);
+insert into base_tab_def_view values (11);
+insert into base_tab_def_view values (12), (13);
+insert into base_tab_def_view values (14, default, default, default, default);
+insert into base_tab_def_view values (15, default, default, default, default),
+                                     (16, default, default, default, default);
+insert into base_tab_def_view values (17), (default);
+select * from base_tab_def order by a;
+
+-- Adding an INSTEAD OF trigger should cause NULLs to be inserted instead of
+-- table defaults, where there are no view defaults.
+create function base_tab_def_view_instrig_func() returns trigger
+as
+$$
+begin
+  insert into base_tab_def values (new.a, new.b, new.c, new.d, new.e);
+  return new;
+end;
+$$
+language plpgsql;
+create trigger base_tab_def_view_instrig instead of insert on base_tab_def_view
+  for each row execute function base_tab_def_view_instrig_func();
+truncate base_tab_def;
+insert into base_tab_def values (1);
+insert into base_tab_def values (2), (3);
+insert into base_tab_def values (4, default, default, default, default);
+insert into base_tab_def values (5, default, default, default, default),
+                                (6, default, default, default, default);
+insert into base_tab_def_view values (11);
+insert into base_tab_def_view values (12), (13);
+insert into base_tab_def_view values (14, default, default, default, default);
+insert into base_tab_def_view values (15, default, default, default, default),
+                                     (16, default, default, default, default);
+insert into base_tab_def_view values (17), (default);
+select * from base_tab_def order by a;
+
+-- Using an unconditional DO INSTEAD rule should also cause NULLs to be
+-- inserted where there are no view defaults.
+drop trigger base_tab_def_view_instrig on base_tab_def_view;
+drop function base_tab_def_view_instrig_func;
+create rule base_tab_def_view_ins_rule as on insert to base_tab_def_view
+  do instead insert into base_tab_def values (new.a, new.b, new.c, new.d, new.e);
+truncate base_tab_def;
+insert into base_tab_def values (1);
+insert into base_tab_def values (2), (3);
+insert into base_tab_def values (4, default, default, default, default);
+insert into base_tab_def values (5, default, default, default, default),
+                                (6, default, default, default, default);
+insert into base_tab_def_view values (11);
+insert into base_tab_def_view values (12), (13);
+insert into base_tab_def_view values (14, default, default, default, default);
+insert into base_tab_def_view values (15, default, default, default, default),
+                                     (16, default, default, default, default);
+insert into base_tab_def_view values (17), (default);
+select * from base_tab_def order by a;
+
+-- A DO ALSO rule should cause each row to be inserted twice. The first
+-- insert should behave the same as an auto-updatable view (using table
+-- defaults, unless overridden by view defaults). The second insert should
+-- behave the same as a rule-updatable view (inserting NULLs where there are
+-- no view defaults).
+drop rule base_tab_def_view_ins_rule on base_tab_def_view;
+create rule base_tab_def_view_ins_rule as on insert to base_tab_def_view
+  do also insert into base_tab_def values (new.a, new.b, new.c, new.d, new.e);
+truncate base_tab_def;
+insert into base_tab_def values (1);
+insert into base_tab_def values (2), (3);
+insert into base_tab_def values (4, default, default, default, default);
+insert into base_tab_def values (5, default, default, default, default),
+                                (6, default, default, default, default);
+insert into base_tab_def_view values (11);
+insert into base_tab_def_view values (12), (13);
+insert into base_tab_def_view values (14, default, default, default, default);
+insert into base_tab_def_view values (15, default, default, default, default),
+                                     (16, default, default, default, default);
+insert into base_tab_def_view values (17), (default);
+select * from base_tab_def order by a, c NULLS LAST;
+
+drop view base_tab_def_view;
+drop table base_tab_def;
+
+-- Test defaults with array assignments
+create table base_tab (a serial, b int[], c text, d text default 'Table default');
+create view base_tab_view as select c, a, b from base_tab;
+alter view base_tab_view alter column c set default 'View default';
+insert into base_tab_view (b[1], b[2], c, b[5], b[4], a, b[3])
+values (1, 2, default, 5, 4, default, 3), (10, 11, 'C value', 14, 13, 100, 12);
+select * from base_tab order by a;
+drop view base_tab_view;
+drop table base_tab;

@@ -114,6 +114,9 @@ struct PGPROC
 	Oid			databaseId;		/* OID of database this backend is using */
 	Oid			roleId;			/* OID of role using this backend */
 
+	Oid			tempNamespaceId;	/* OID of temp schema this backend is
+									 * using */
+
 	bool		isBackgroundWorker; /* true if background worker. */
 
 	/*
@@ -288,9 +291,9 @@ extern PGPROC *PreparedXactProcs;
 
 /* configurable options */
 extern PGDLLIMPORT int DeadlockTimeout;
-extern int	StatementTimeout;
-extern int	LockTimeout;
-extern int	IdleInTransactionSessionTimeout;
+extern PGDLLIMPORT int StatementTimeout;
+extern PGDLLIMPORT int LockTimeout;
+extern PGDLLIMPORT int IdleInTransactionSessionTimeout;
 extern bool log_lock_waits;
 
 

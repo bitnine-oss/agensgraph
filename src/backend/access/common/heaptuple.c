@@ -80,7 +80,7 @@
 /*
  * Return the missing value of an attribute, or NULL if there isn't one.
  */
-static Datum
+Datum
 getmissingattr(TupleDesc tupleDesc,
 			   int attnum, bool *isnull)
 {
@@ -823,44 +823,35 @@ expand_tuple(HeapTuple *targetHeapTuple,
 		{
 			if (attrmiss[firstmissingnum].am_present)
 				break;
+			else
+				hasNulls = true;
 		}
 
 		/*
-		 * If there are no more missing values everything else must be NULL
+		 * Now walk the missing attributes. If there is a missing value
+		 * make space for it. Otherwise, it's going to be NULL.
 		 */
-		if (firstmissingnum >= natts)
+		for (attnum = firstmissingnum;
+			 attnum < natts;
+			 attnum++)
 		{
-			hasNulls = true;
-		}
-		else
-		{
-
-			/*
-			 * Now walk the missing attributes. If there is a missing value
-			 * make space for it. Otherwise, it's going to be NULL.
-			 */
-			for (attnum = firstmissingnum;
-				 attnum < natts;
-				 attnum++)
+			if (attrmiss[attnum].am_present)
 			{
-				if (attrmiss[attnum].am_present)
-				{
-					Form_pg_attribute att = TupleDescAttr(tupleDesc, attnum);
+				Form_pg_attribute att = TupleDescAttr(tupleDesc, attnum);
 
-					targetDataLen = att_align_datum(targetDataLen,
-													att->attalign,
-													att->attlen,
-													attrmiss[attnum].am_value);
+				targetDataLen = att_align_datum(targetDataLen,
+												att->attalign,
+												att->attlen,
+												attrmiss[attnum].am_value);
 
-					targetDataLen = att_addlength_pointer(targetDataLen,
-														  att->attlen,
-														  attrmiss[attnum].am_value);
-				}
-				else
-				{
-					/* no missing value, so it must be null */
-					hasNulls = true;
-				}
+				targetDataLen = att_addlength_pointer(targetDataLen,
+													  att->attlen,
+													  attrmiss[attnum].am_value);
+			}
+			else
+			{
+				/* no missing value, so it must be null */
+				hasNulls = true;
 			}
 		}
 	}							/* end if have missing values */
@@ -902,7 +893,7 @@ expand_tuple(HeapTuple *targetHeapTuple,
 			= (HeapTupleHeader) ((char *) *targetHeapTuple + HEAPTUPLESIZE);
 		(*targetHeapTuple)->t_len = len;
 		(*targetHeapTuple)->t_tableOid = sourceTuple->t_tableOid;
-		ItemPointerSetInvalid(&((*targetHeapTuple)->t_self));
+		(*targetHeapTuple)->t_self = sourceTuple->t_self;
 
 		targetTHeader->t_infomask = sourceTHeader->t_infomask;
 		targetTHeader->t_hoff = hoff;

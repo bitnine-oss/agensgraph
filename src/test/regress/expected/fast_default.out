@@ -539,8 +539,271 @@ FROM t1;
  1 | 0
 (20 rows)
 
-DROP TABLE t1;
 DROP TABLE T;
+-- test that we account for missing columns without defaults correctly
+-- in expand_tuple, and that rows are correctly expanded for triggers
+CREATE FUNCTION test_trigger()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+
+begin
+    raise notice 'old tuple: %', to_json(OLD)::text;
+    if TG_OP = 'DELETE'
+    then
+       return OLD;
+    else
+       return NEW;
+    end if;
+end;
+
+$$;
+-- 2 new columns, both have defaults
+CREATE TABLE t (id serial PRIMARY KEY, a int, b int, c int);
+INSERT INTO t (a,b,c) VALUES (1,2,3);
+ALTER TABLE t ADD COLUMN x int NOT NULL DEFAULT 4;
+ALTER TABLE t ADD COLUMN y int NOT NULL DEFAULT 5;
+CREATE TRIGGER a BEFORE UPDATE ON t FOR EACH ROW EXECUTE PROCEDURE test_trigger();
+SELECT * FROM t;
+ id | a | b | c | x | y 
+----+---+---+---+---+---
+  1 | 1 | 2 | 3 | 4 | 5
+(1 row)
+
+UPDATE t SET y = 2;
+NOTICE:  old tuple: {"id":1,"a":1,"b":2,"c":3,"x":4,"y":5}
+SELECT * FROM t;
+ id | a | b | c | x | y 
+----+---+---+---+---+---
+  1 | 1 | 2 | 3 | 4 | 2
+(1 row)
+
+DROP TABLE t;
+-- 2 new columns, first has default
+CREATE TABLE t (id serial PRIMARY KEY, a int, b int, c int);
+INSERT INTO t (a,b,c) VALUES (1,2,3);
+ALTER TABLE t ADD COLUMN x int NOT NULL DEFAULT 4;
+ALTER TABLE t ADD COLUMN y int;
+CREATE TRIGGER a BEFORE UPDATE ON t FOR EACH ROW EXECUTE PROCEDURE test_trigger();
+SELECT * FROM t;
+ id | a | b | c | x | y 
+----+---+---+---+---+---
+  1 | 1 | 2 | 3 | 4 |  
+(1 row)
+
+UPDATE t SET y = 2;
+NOTICE:  old tuple: {"id":1,"a":1,"b":2,"c":3,"x":4,"y":null}
+SELECT * FROM t;
+ id | a | b | c | x | y 
+----+---+---+---+---+---
+  1 | 1 | 2 | 3 | 4 | 2
+(1 row)
+
+DROP TABLE t;
+-- 2 new columns, second has default
+CREATE TABLE t (id serial PRIMARY KEY, a int, b int, c int);
+INSERT INTO t (a,b,c) VALUES (1,2,3);
+ALTER TABLE t ADD COLUMN x int;
+ALTER TABLE t ADD COLUMN y int NOT NULL DEFAULT 5;
+CREATE TRIGGER a BEFORE UPDATE ON t FOR EACH ROW EXECUTE PROCEDURE test_trigger();
+SELECT * FROM t;
+ id | a | b | c | x | y 
+----+---+---+---+---+---
+  1 | 1 | 2 | 3 |   | 5
+(1 row)
+
+UPDATE t SET y = 2;
+NOTICE:  old tuple: {"id":1,"a":1,"b":2,"c":3,"x":null,"y":5}
+SELECT * FROM t;
+ id | a | b | c | x | y 
+----+---+---+---+---+---
+  1 | 1 | 2 | 3 |   | 2
+(1 row)
+
+DROP TABLE t;
+-- 2 new columns, neither has default
+CREATE TABLE t (id serial PRIMARY KEY, a int, b int, c int);
+INSERT INTO t (a,b,c) VALUES (1,2,3);
+ALTER TABLE t ADD COLUMN x int;
+ALTER TABLE t ADD COLUMN y int;
+CREATE TRIGGER a BEFORE UPDATE ON t FOR EACH ROW EXECUTE PROCEDURE test_trigger();
+SELECT * FROM t;
+ id | a | b | c | x | y 
+----+---+---+---+---+---
+  1 | 1 | 2 | 3 |   |  
+(1 row)
+
+UPDATE t SET y = 2;
+NOTICE:  old tuple: {"id":1,"a":1,"b":2,"c":3,"x":null,"y":null}
+SELECT * FROM t;
+ id | a | b | c | x | y 
+----+---+---+---+---+---
+  1 | 1 | 2 | 3 |   | 2
+(1 row)
+
+DROP TABLE t;
+-- same as last 4 tests but here the last original column has a NULL value
+-- 2 new columns, both have defaults
+CREATE TABLE t (id serial PRIMARY KEY, a int, b int, c int);
+INSERT INTO t (a,b,c) VALUES (1,2,NULL);
+ALTER TABLE t ADD COLUMN x int NOT NULL DEFAULT 4;
+ALTER TABLE t ADD COLUMN y int NOT NULL DEFAULT 5;
+CREATE TRIGGER a BEFORE UPDATE ON t FOR EACH ROW EXECUTE PROCEDURE test_trigger();
+SELECT * FROM t;
+ id | a | b | c | x | y 
+----+---+---+---+---+---
+  1 | 1 | 2 |   | 4 | 5
+(1 row)
+
+UPDATE t SET y = 2;
+NOTICE:  old tuple: {"id":1,"a":1,"b":2,"c":null,"x":4,"y":5}
+SELECT * FROM t;
+ id | a | b | c | x | y 
+----+---+---+---+---+---
+  1 | 1 | 2 |   | 4 | 2
+(1 row)
+
+DROP TABLE t;
+-- 2 new columns, first has default
+CREATE TABLE t (id serial PRIMARY KEY, a int, b int, c int);
+INSERT INTO t (a,b,c) VALUES (1,2,NULL);
+ALTER TABLE t ADD COLUMN x int NOT NULL DEFAULT 4;
+ALTER TABLE t ADD COLUMN y int;
+CREATE TRIGGER a BEFORE UPDATE ON t FOR EACH ROW EXECUTE PROCEDURE test_trigger();
+SELECT * FROM t;
+ id | a | b | c | x | y 
+----+---+---+---+---+---
+  1 | 1 | 2 |   | 4 |  
+(1 row)
+
+UPDATE t SET y = 2;
+NOTICE:  old tuple: {"id":1,"a":1,"b":2,"c":null,"x":4,"y":null}
+SELECT * FROM t;
+ id | a | b | c | x | y 
+----+---+---+---+---+---
+  1 | 1 | 2 |   | 4 | 2
+(1 row)
+
+DROP TABLE t;
+-- 2 new columns, second has default
+CREATE TABLE t (id serial PRIMARY KEY, a int, b int, c int);
+INSERT INTO t (a,b,c) VALUES (1,2,NULL);
+ALTER TABLE t ADD COLUMN x int;
+ALTER TABLE t ADD COLUMN y int NOT NULL DEFAULT 5;
+CREATE TRIGGER a BEFORE UPDATE ON t FOR EACH ROW EXECUTE PROCEDURE test_trigger();
+SELECT * FROM t;
+ id | a | b | c | x | y 
+----+---+---+---+---+---
+  1 | 1 | 2 |   |   | 5
+(1 row)
+
+UPDATE t SET y = 2;
+NOTICE:  old tuple: {"id":1,"a":1,"b":2,"c":null,"x":null,"y":5}
+SELECT * FROM t;
+ id | a | b | c | x | y 
+----+---+---+---+---+---
+  1 | 1 | 2 |   |   | 2
+(1 row)
+
+DROP TABLE t;
+-- 2 new columns, neither has default
+CREATE TABLE t (id serial PRIMARY KEY, a int, b int, c int);
+INSERT INTO t (a,b,c) VALUES (1,2,NULL);
+ALTER TABLE t ADD COLUMN x int;
+ALTER TABLE t ADD COLUMN y int;
+CREATE TRIGGER a BEFORE UPDATE ON t FOR EACH ROW EXECUTE PROCEDURE test_trigger();
+SELECT * FROM t;
+ id | a | b | c | x | y 
+----+---+---+---+---+---
+  1 | 1 | 2 |   |   |  
+(1 row)
+
+UPDATE t SET y = 2;
+NOTICE:  old tuple: {"id":1,"a":1,"b":2,"c":null,"x":null,"y":null}
+SELECT * FROM t;
+ id | a | b | c | x | y 
+----+---+---+---+---+---
+  1 | 1 | 2 |   |   | 2
+(1 row)
+
+DROP TABLE t;
+-- make sure expanded tuple has correct self pointer
+-- it will be required by the RI trigger doing the cascading delete
+CREATE TABLE leader (a int PRIMARY KEY, b int);
+CREATE TABLE follower (a int REFERENCES leader ON DELETE CASCADE, b int);
+INSERT INTO leader VALUES (1, 1), (2, 2);
+ALTER TABLE leader ADD c int;
+ALTER TABLE leader DROP c;
+DELETE FROM leader;
+-- check that ALTER TABLE ... ALTER TYPE does the right thing
+CREATE TABLE vtype( a integer);
+INSERT INTO vtype VALUES (1);
+ALTER TABLE vtype ADD COLUMN b DOUBLE PRECISION DEFAULT 0.2;
+ALTER TABLE vtype ADD COLUMN c BOOLEAN DEFAULT true;
+SELECT * FROM vtype;
+ a |  b  | c 
+---+-----+---
+ 1 | 0.2 | t
+(1 row)
+
+ALTER TABLE vtype
+      ALTER b TYPE text USING b::text,
+      ALTER c TYPE text USING c::text;
+NOTICE:  rewriting table vtype for reason 4
+SELECT * FROM vtype;
+ a |  b  |  c   
+---+-----+------
+ 1 | 0.2 | true
+(1 row)
+
+-- also check the case that doesn't rewrite the table
+CREATE TABLE vtype2 (a int);
+INSERT INTO vtype2 VALUES (1);
+ALTER TABLE vtype2 ADD COLUMN b varchar(10) DEFAULT 'xxx';
+ALTER TABLE vtype2 ALTER COLUMN b SET DEFAULT 'yyy';
+INSERT INTO vtype2 VALUES (2);
+ALTER TABLE vtype2 ALTER COLUMN b TYPE varchar(20) USING b::varchar(20);
+SELECT * FROM vtype2;
+ a |  b  
+---+-----
+ 1 | xxx
+ 2 | yyy
+(2 rows)
+
+-- Ensure that defaults are checked when evaluating whether HOT update
+-- is possible, this was broken for a while:
+-- https://postgr.es/m/20190202133521.ylauh3ckqa7colzj%40alap3.anarazel.de
+BEGIN;
+CREATE TABLE t();
+INSERT INTO t DEFAULT VALUES;
+ALTER TABLE t ADD COLUMN a int DEFAULT 1;
+CREATE INDEX ON t(a);
+-- set column with a default 1 to NULL, due to a bug that wasn't
+-- noticed has heap_getattr buggily returned NULL for default columns
+UPDATE t SET a = NULL;
+-- verify that index and non-index scans show the same result
+SET LOCAL enable_seqscan = true;
+SELECT * FROM t WHERE a IS NULL;
+ a 
+---
+  
+(1 row)
+
+SET LOCAL enable_seqscan = false;
+SELECT * FROM t WHERE a IS NULL;
+ a 
+---
+  
+(1 row)
+
+ROLLBACK;
+-- cleanup
+DROP TABLE vtype;
+DROP TABLE vtype2;
+DROP TABLE follower;
+DROP TABLE leader;
+DROP FUNCTION test_trigger();
+DROP TABLE t1;
 DROP FUNCTION set(name);
 DROP FUNCTION comp();
 DROP TABLE m;

@@ -471,6 +471,7 @@ MarkAsPreparingGuts(GlobalTransaction gxact, TransactionId xid, const char *gid,
 	proc->backendId = InvalidBackendId;
 	proc->databaseId = databaseid;
 	proc->roleId = owner;
+	proc->tempNamespaceId = InvalidOid;
 	proc->isBackgroundWorker = false;
 	proc->lwWaiting = false;
 	proc->lwWaitMode = 0;
@@ -1456,7 +1457,6 @@ FinishPreparedTransaction(const char *gid, bool isCommit)
 	RelFileNode *delrels;
 	int			ndelrels;
 	SharedInvalidationMessage *invalmsgs;
-	int			i;
 
 	/*
 	 * Validate the GID, and lock the GXACT to ensure that two backends do not
@@ -1549,13 +1549,9 @@ FinishPreparedTransaction(const char *gid, bool isCommit)
 		delrels = abortrels;
 		ndelrels = hdr->nabortrels;
 	}
-	for (i = 0; i < ndelrels; i++)
-	{
-		SMgrRelation srel = smgropen(delrels[i], InvalidBackendId);
 
-		smgrdounlink(srel, false);
-		smgrclose(srel);
-	}
+	/* Make sure files supposed to be dropped are dropped */
+	DropRelationFiles(delrels, ndelrels, false);
 
 	/*
 	 * Handle cache invalidation messages.
@@ -1578,7 +1574,7 @@ FinishPreparedTransaction(const char *gid, bool isCommit)
 	PredicateLockTwoPhaseFinish(xid, isCommit);
 
 	/* Count the prepared xact as committed or aborted */
-	AtEOXact_PgStat(isCommit);
+	AtEOXact_PgStat(isCommit, false);
 
 	/*
 	 * And now we can clean up any files we may have left.
@@ -1670,6 +1666,7 @@ RecreateTwoPhaseFile(TransactionId xid, void *content, int len)
 						path)));
 
 	/* Write content and CRC */
+	errno = 0;
 	pgstat_report_wait_start(WAIT_EVENT_TWOPHASE_FILE_WRITE);
 	if (write(fd, content, len) != len)
 	{

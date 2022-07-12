@@ -1106,6 +1106,15 @@ CREATE TABLE fk_partitioned_fk_3_1 PARTITION OF fk_partitioned_fk_3 FOR VALUES W
 ALTER TABLE fk_partitioned_fk ATTACH PARTITION fk_partitioned_fk_3
   FOR VALUES FROM (2000,2000) TO (3000,3000);
 
+-- Creating a foreign key with ONLY on a partitioned table referencing
+-- a non-partitioned table fails.
+ALTER TABLE ONLY fk_partitioned_fk ADD FOREIGN KEY (a, b)
+  REFERENCES fk_notpartitioned_pk;
+-- Adding a NOT VALID foreign key on a partitioned table referencing
+-- a non-partitioned table fails.
+ALTER TABLE fk_partitioned_fk ADD FOREIGN KEY (a, b)
+  REFERENCES fk_notpartitioned_pk NOT VALID;
+
 -- these inserts, targetting both the partition directly as well as the
 -- partitioned table, should all fail
 INSERT INTO fk_partitioned_fk (a,b) VALUES (500, 501);
@@ -1137,6 +1146,17 @@ UPDATE fk_notpartitioned_pk SET b = 1502 WHERE a = 1500;
 UPDATE fk_notpartitioned_pk SET b = 2504 WHERE a = 2500;
 ALTER TABLE fk_partitioned_fk DROP CONSTRAINT fk_partitioned_fk_a_fkey;
 -- done.
+DROP TABLE fk_notpartitioned_pk, fk_partitioned_fk;
+
+-- Altering a type referenced by a foreign key needs to drop/recreate the FK.
+-- Ensure that works.
+CREATE TABLE fk_notpartitioned_pk (a INT, PRIMARY KEY(a), CHECK (a > 0));
+CREATE TABLE fk_partitioned_fk (a INT REFERENCES fk_notpartitioned_pk(a) PRIMARY KEY) PARTITION BY RANGE(a);
+CREATE TABLE fk_partitioned_fk_1 PARTITION OF fk_partitioned_fk FOR VALUES FROM (MINVALUE) TO (MAXVALUE);
+INSERT INTO fk_notpartitioned_pk VALUES (1);
+INSERT INTO fk_partitioned_fk VALUES (1);
+ALTER TABLE fk_notpartitioned_pk ALTER COLUMN a TYPE bigint;
+DELETE FROM fk_notpartitioned_pk WHERE a = 1;
 DROP TABLE fk_notpartitioned_pk, fk_partitioned_fk;
 
 -- Test some other exotic foreign key features: MATCH SIMPLE, ON UPDATE/DELETE
@@ -1206,6 +1226,56 @@ SELECT * FROM fk_partitioned_fk WHERE a = 142857;
 -- verify that DROP works
 DROP TABLE fk_partitioned_fk_2;
 
+-- Test behavior of the constraint together with attaching and detaching
+-- partitions.
+CREATE TABLE fk_partitioned_fk_2 PARTITION OF fk_partitioned_fk FOR VALUES IN (1500,1502);
+ALTER TABLE fk_partitioned_fk DETACH PARTITION fk_partitioned_fk_2;
+BEGIN;
+DROP TABLE fk_partitioned_fk;
+-- constraint should still be there
+\d fk_partitioned_fk_2;
+ROLLBACK;
+ALTER TABLE fk_partitioned_fk ATTACH PARTITION fk_partitioned_fk_2 FOR VALUES IN (1500,1502);
+DROP TABLE fk_partitioned_fk_2;
+CREATE TABLE fk_partitioned_fk_2 (b int, c text, a int,
+	FOREIGN KEY (a, b) REFERENCES fk_notpartitioned_pk ON UPDATE CASCADE ON DELETE CASCADE);
+ALTER TABLE fk_partitioned_fk_2 DROP COLUMN c;
+ALTER TABLE fk_partitioned_fk ATTACH PARTITION fk_partitioned_fk_2 FOR VALUES IN (1500,1502);
+-- should have only one constraint
+\d fk_partitioned_fk_2
+DROP TABLE fk_partitioned_fk_2;
+
+CREATE TABLE fk_partitioned_fk_4 (a int, b int, FOREIGN KEY (a, b) REFERENCES fk_notpartitioned_pk(a, b) ON UPDATE CASCADE ON DELETE CASCADE) PARTITION BY RANGE (b, a);
+CREATE TABLE fk_partitioned_fk_4_1 PARTITION OF fk_partitioned_fk_4 FOR VALUES FROM (1,1) TO (100,100);
+CREATE TABLE fk_partitioned_fk_4_2 (a int, b int, FOREIGN KEY (a, b) REFERENCES fk_notpartitioned_pk(a, b) ON UPDATE SET NULL);
+ALTER TABLE fk_partitioned_fk_4 ATTACH PARTITION fk_partitioned_fk_4_2 FOR VALUES FROM (100,100) TO (1000,1000);
+ALTER TABLE fk_partitioned_fk ATTACH PARTITION fk_partitioned_fk_4 FOR VALUES IN (3500,3502);
+ALTER TABLE fk_partitioned_fk DETACH PARTITION fk_partitioned_fk_4;
+ALTER TABLE fk_partitioned_fk ATTACH PARTITION fk_partitioned_fk_4 FOR VALUES IN (3500,3502);
+-- should only have one constraint
+\d fk_partitioned_fk_4
+\d fk_partitioned_fk_4_1
+-- this one has an FK with mismatched properties
+\d fk_partitioned_fk_4_2
+
+CREATE TABLE fk_partitioned_fk_5 (a int, b int,
+	FOREIGN KEY (a, b) REFERENCES fk_notpartitioned_pk(a, b) ON UPDATE CASCADE ON DELETE CASCADE DEFERRABLE,
+	FOREIGN KEY (a, b) REFERENCES fk_notpartitioned_pk(a, b) MATCH FULL ON UPDATE CASCADE ON DELETE CASCADE)
+  PARTITION BY RANGE (a);
+CREATE TABLE fk_partitioned_fk_5_1 (a int, b int, FOREIGN KEY (a, b) REFERENCES fk_notpartitioned_pk);
+ALTER TABLE fk_partitioned_fk ATTACH PARTITION fk_partitioned_fk_5 FOR VALUES IN (4500);
+ALTER TABLE fk_partitioned_fk_5 ATTACH PARTITION fk_partitioned_fk_5_1 FOR VALUES FROM (0) TO (10);
+ALTER TABLE fk_partitioned_fk DETACH PARTITION fk_partitioned_fk_5;
+ALTER TABLE fk_partitioned_fk ATTACH PARTITION fk_partitioned_fk_5 FOR VALUES IN (4500);
+-- this one has two constraints, similar but not quite the one in the parent,
+-- so it gets a new one
+\d fk_partitioned_fk_5
+-- verify that it works to reattaching a child with multiple candidate
+-- constraints
+ALTER TABLE fk_partitioned_fk_5 DETACH PARTITION fk_partitioned_fk_5_1;
+ALTER TABLE fk_partitioned_fk_5 ATTACH PARTITION fk_partitioned_fk_5_1 FOR VALUES FROM (0) TO (10);
+\d fk_partitioned_fk_5_1
+
 -- verify that attaching a table checks that the existing data satisfies the
 -- constraint
 CREATE TABLE fk_partitioned_fk_2 (a int, b int) PARTITION BY RANGE (b);
@@ -1219,3 +1289,126 @@ ALTER TABLE fk_partitioned_fk ATTACH PARTITION fk_partitioned_fk_2
   FOR VALUES IN (1600);
 
 -- leave these tables around intentionally
+
+-- test the case when the referenced table is owned by a different user
+create role regress_other_partitioned_fk_owner;
+grant references on fk_notpartitioned_pk to regress_other_partitioned_fk_owner;
+set role regress_other_partitioned_fk_owner;
+create table other_partitioned_fk(a int, b int) partition by list (a);
+create table other_partitioned_fk_1 partition of other_partitioned_fk
+  for values in (2048);
+insert into other_partitioned_fk
+  select 2048, x from generate_series(1,10) x;
+-- this should fail
+alter table other_partitioned_fk add foreign key (a, b)
+  references fk_notpartitioned_pk(a, b);
+-- add the missing keys and retry
+reset role;
+insert into fk_notpartitioned_pk (a, b)
+  select 2048, x from generate_series(1,10) x;
+set role regress_other_partitioned_fk_owner;
+alter table other_partitioned_fk add foreign key (a, b)
+  references fk_notpartitioned_pk(a, b);
+-- clean up
+drop table other_partitioned_fk;
+reset role;
+revoke all on fk_notpartitioned_pk from regress_other_partitioned_fk_owner;
+drop role regress_other_partitioned_fk_owner;
+
+-- Test creating a constraint at the parent that already exists in partitions.
+-- There should be no duplicated constraints, and attempts to drop the
+-- constraint in partitions should raise appropriate errors.
+create schema fkpart0
+  create table pkey (a int primary key)
+  create table fk_part (a int) partition by list (a)
+  create table fk_part_1 partition of fk_part
+      (foreign key (a) references fkpart0.pkey) for values in (1)
+  create table fk_part_23 partition of fk_part
+      (foreign key (a) references fkpart0.pkey) for values in (2, 3)
+      partition by list (a)
+  create table fk_part_23_2 partition of fk_part_23 for values in (2);
+
+alter table fkpart0.fk_part add foreign key (a) references fkpart0.pkey;
+\d fkpart0.fk_part_1	\\ -- should have only one FK
+alter table fkpart0.fk_part_1 drop constraint fk_part_1_a_fkey;
+
+\d fkpart0.fk_part_23	\\ -- should have only one FK
+\d fkpart0.fk_part_23_2	\\ -- should have only one FK
+alter table fkpart0.fk_part_23 drop constraint fk_part_23_a_fkey;
+alter table fkpart0.fk_part_23_2 drop constraint fk_part_23_a_fkey;
+
+create table fkpart0.fk_part_4 partition of fkpart0.fk_part for values in (4);
+\d fkpart0.fk_part_4
+alter table fkpart0.fk_part_4 drop constraint fk_part_a_fkey;
+
+create table fkpart0.fk_part_56 partition of fkpart0.fk_part
+    for values in (5,6) partition by list (a);
+create table fkpart0.fk_part_56_5 partition of fkpart0.fk_part_56
+    for values in (5);
+\d fkpart0.fk_part_56
+alter table fkpart0.fk_part_56 drop constraint fk_part_a_fkey;
+alter table fkpart0.fk_part_56_5 drop constraint fk_part_a_fkey;
+
+-- verify that attaching and detaching partitions maintains the right set of
+-- triggers
+create schema fkpart1
+  create table pkey (a int primary key)
+  create table fk_part (a int) partition by list (a)
+  create table fk_part_1 partition of fk_part for values in (1) partition by list (a)
+  create table fk_part_1_1 partition of fk_part_1 for values in (1);
+alter table fkpart1.fk_part add foreign key (a) references fkpart1.pkey;
+insert into fkpart1.fk_part values (1);		-- should fail
+insert into fkpart1.pkey values (1);
+insert into fkpart1.fk_part values (1);
+delete from fkpart1.pkey where a = 1;		-- should fail
+alter table fkpart1.fk_part detach partition fkpart1.fk_part_1;
+create table fkpart1.fk_part_1_2 partition of fkpart1.fk_part_1 for values in (2);
+insert into fkpart1.fk_part_1 values (2);	-- should fail
+delete from fkpart1.pkey where a = 1;
+
+-- verify that attaching and detaching partitions manipulates the inheritance
+-- properties of their FK constraints correctly
+create schema fkpart2
+  create table pkey (a int primary key)
+  create table fk_part (a int, constraint fkey foreign key (a) references fkpart2.pkey) partition by list (a)
+  create table fk_part_1 partition of fkpart2.fk_part for values in (1) partition by list (a)
+  create table fk_part_1_1 (a int, constraint my_fkey foreign key (a) references fkpart2.pkey);
+alter table fkpart2.fk_part_1 attach partition fkpart2.fk_part_1_1 for values in (1);
+alter table fkpart2.fk_part_1 drop constraint fkey;	-- should fail
+alter table fkpart2.fk_part_1_1 drop constraint my_fkey;	-- should fail
+alter table fkpart2.fk_part detach partition fkpart2.fk_part_1;
+alter table fkpart2.fk_part_1 drop constraint fkey;	-- ok
+alter table fkpart2.fk_part_1_1 drop constraint my_fkey;	-- doesn't exist
+
+-- verify constraint deferrability
+create schema fkpart3
+  create table pkey (a int primary key)
+  create table fk_part (a int, constraint fkey foreign key (a) references fkpart3.pkey deferrable initially immediate) partition by list (a)
+  create table fk_part_1 partition of fkpart3.fk_part for values in (1) partition by list (a)
+  create table fk_part_1_1 partition of fkpart3.fk_part_1 for values in (1)
+  create table fk_part_2 partition of fkpart3.fk_part for values in (2);
+begin;
+set constraints fkpart3.fkey deferred;
+insert into fkpart3.fk_part values (1);
+insert into fkpart3.pkey values (1);
+commit;
+begin;
+set constraints fkpart3.fkey deferred;
+delete from fkpart3.pkey;
+delete from fkpart3.fk_part;
+commit;
+
+-- ensure we check partitions are "not used" when dropping constraints
+CREATE SCHEMA fkpart8
+  CREATE TABLE tbl1(f1 int PRIMARY KEY)
+  CREATE TABLE tbl2(f1 int REFERENCES tbl1 DEFERRABLE INITIALLY DEFERRED) PARTITION BY RANGE(f1)
+  CREATE TABLE tbl2_p1 PARTITION OF tbl2 FOR VALUES FROM (minvalue) TO (maxvalue);
+INSERT INTO fkpart8.tbl1 VALUES(1);
+BEGIN;
+INSERT INTO fkpart8.tbl2 VALUES(1);
+ALTER TABLE fkpart8.tbl2 DROP CONSTRAINT tbl2_f1_fkey;
+COMMIT;
+
+\set VERBOSITY terse	\\ -- suppress cascade details
+drop schema fkpart0, fkpart1, fkpart2, fkpart3, fkpart8 cascade;
+\set VERBOSITY default

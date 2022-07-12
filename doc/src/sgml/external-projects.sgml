@@ -65,7 +65,7 @@
       <entry>DBD::Pg</entry>
       <entry>Perl</entry>
       <entry>Perl DBI driver</entry>
-      <entry><ulink url="https://metacpan.org/release/DBD-Pg/"></ulink></entry>
+      <entry><ulink url="https://metacpan.org/release/DBD-Pg"></ulink></entry>
      </row>
 
      <row>
@@ -78,8 +78,8 @@
      <row>
       <entry>libpqxx</entry>
       <entry>C++</entry>
-      <entry>New-style C++ interface</entry>
-      <entry><ulink url="http://pqxx.org/"></ulink></entry>
+      <entry>C++ interface</entry>
+      <entry><ulink url="https://pqxx.org/"></ulink></entry>
      </row>
 
      <row>
@@ -93,7 +93,7 @@
       <entry>Npgsql</entry>
       <entry>.NET</entry>
       <entry>.NET data provider</entry>
-      <entry><ulink url="http://www.npgsql.org/"></ulink></entry>
+      <entry><ulink url="https://www.npgsql.org/"></ulink></entry>
      </row>
 
      <row>
@@ -107,7 +107,7 @@
       <entry>pgtclng</entry>
       <entry>Tcl</entry>
       <entry></entry>
-      <entry><ulink url="http://sourceforge.net/projects/pgtclng/"></ulink></entry>
+      <entry><ulink url="https://sourceforge.net/projects/pgtclng/"></ulink></entry>
      </row>
 
      <row>
@@ -128,7 +128,7 @@
       <entry>psycopg</entry>
       <entry>Python</entry>
       <entry>DB API 2.0-compliant</entry>
-      <entry><ulink url="http://initd.org/psycopg/"></ulink></entry>
+      <entry><ulink url="https://www.psycopg.org/"></ulink></entry>
      </row>
     </tbody>
    </tgroup>
@@ -146,7 +146,7 @@
   <para>
    There are several administration tools available for
    <productname>PostgreSQL</productname>. The most popular is
-   <application><ulink url="http://www.pgadmin.org/">pgAdmin</ulink></application>,
+   <application><ulink url="https://www.pgadmin.org/">pgAdmin</ulink></application>,
    and there are several commercially available ones as well.
   </para>
  </sect1>
@@ -199,13 +199,13 @@
      <row>
       <entry>PL/Lua</entry>
       <entry>Lua</entry>
-      <entry><ulink url="https://github.com/pllua/pllua"></ulink></entry>
+      <entry><ulink url="https://github.com/pllua/pllua-ng"></ulink></entry>
      </row>
 
      <row>
       <entry>PL/R</entry>
       <entry>R</entry>
-      <entry><ulink url="http://www.joeconway.com/plr.html"></ulink></entry>
+      <entry><ulink url="https://github.com/postgres-plr/plr"></ulink></entry>
      </row>
 
      <row>
@@ -240,10 +240,10 @@
    contains several extensions, which are described in
    <xref linkend="contrib"/>.  Other extensions are developed
    independently, like <application><ulink
-   url="http://postgis.net/">PostGIS</ulink></application>.  Even
+   url="https://postgis.net/">PostGIS</ulink></application>.  Even
    <productname>PostgreSQL</productname> replication solutions can be developed
    externally. For example, <application> <ulink
-   url="http://www.slony.info">Slony-I</ulink></application> is a popular
+   url="https://www.slony.info">Slony-I</ulink></application> is a popular
    master/standby replication solution that is developed independently
    from the core project.
   </para>

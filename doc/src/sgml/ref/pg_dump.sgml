@@ -82,7 +82,7 @@ PostgreSQL documentation
    can be used to examine the archive and/or select which parts of the
    database are to be restored. The most flexible output file formats are
    the <quote>custom</quote> format (<option>-Fc</option>) and the
-   <quote>directory</quote> format(<option>-Fd</option>). They allow
+   <quote>directory</quote> format (<option>-Fd</option>). They allow
    for selection and reordering of all archived items, support parallel
    restoration, and are compressed by default. The <quote>directory</quote>
    format is the only format that supports parallel dumps.
@@ -178,8 +178,8 @@ PostgreSQL documentation
        </para>
 
        <para>
-        This option is only meaningful for the plain-text format.  For
-        the archive formats, you can specify the option when you
+        This option is ignored when emitting an archive (non-text) output
+        file.  For the archive formats, you can specify the option when you
         call <command>pg_restore</command>.
        </para>
       </listitem>
@@ -210,8 +210,8 @@ PostgreSQL documentation
        </para>
 
        <para>
-        This option is only meaningful for the plain-text format.  For
-        the archive formats, you can specify the option when you
+        This option is ignored when emitting an archive (non-text) output
+        file.  For the archive formats, you can specify the option when you
         call <command>pg_restore</command>.
        </para>
       </listitem>
@@ -471,8 +471,8 @@ PostgreSQL documentation
        </para>
 
        <para>
-        This option is only meaningful for the plain-text format.  For
-        the archive formats, you can specify the option when you
+        This option is ignored when emitting an archive (non-text) output
+        file.  For the archive formats, you can specify the option when you
         call <command>pg_restore</command>.
        </para>
       </listitem>
@@ -640,7 +640,7 @@ PostgreSQL documentation
       <listitem>
        <para>
         Specify the compression level to use.  Zero means no compression.
-        For the custom archive format, this specifies compression of
+        For the custom and directory archive formats, this specifies compression of
         individual table-data segments, and the default is to compress
         at a moderate level.
         For plain text output, setting a nonzero compression level causes
@@ -712,8 +712,8 @@ PostgreSQL documentation
        </para>
 
        <para>
-        This option is only meaningful for the plain-text format.  For
-        the archive formats, you can specify the option when you
+        This option is ignored when emitting an archive (non-text) output
+        file.  For the archive formats, you can specify the option when you
         call <command>pg_restore</command>.
        </para>
       </listitem>
@@ -763,7 +763,7 @@ PostgreSQL documentation
       <term><option>--if-exists</option></term>
       <listitem>
        <para>
-        Use conditional commands (i.e. add an <literal>IF EXISTS</literal>
+        Use conditional commands (i.e., add an <literal>IF EXISTS</literal>
         clause) when cleaning database objects.  This option is not valid
         unless <option>--clean</option> is also specified.
        </para>
@@ -793,13 +793,26 @@ PostgreSQL documentation
       <term><option>--load-via-partition-root</option></term>
       <listitem>
        <para>
-        When dumping a <command>COPY</command> or <command>INSERT</command> statement for a partitioned table,
-        target the root of the partitioning hierarchy which contains it rather
-        than the partition itself.  This may be useful when reloading data on
-        a server where rows do not always fall into the same partitions as
-        they did on the original server.  This could happen, for example, if
-        the partitioning column is of type text and the two system have
-        different definitions of the collation used to partition the data.
+        When dumping data for a table partition, make
+        the <command>COPY</command> or <command>INSERT</command> statements
+        target the root of the partitioning hierarchy that contains it, rather
+        than the partition itself.  This causes the appropriate partition to
+        be re-determined for each row when the data is loaded.  This may be
+        useful when reloading data on a server where rows do not always fall
+        into the same partitions as they did on the original server.  That
+        could happen, for example, if the partitioning column is of type text
+        and the two systems have different definitions of the collation used
+        to sort the partitioning column.
+       </para>
+
+       <para>
+        It is best not to use parallelism when restoring from an archive made
+        with this option, because <application>pg_restore</application> will
+        not know exactly which partition(s) a given archive data item will
+        load data into.  This could result in inefficiency due to lock
+        conflicts between parallel jobs, or perhaps even reload failures due
+        to foreign key constraints being set up before all the relevant data
+        is loaded.
        </para>
       </listitem>
      </varlistentry>
@@ -890,8 +903,8 @@ PostgreSQL documentation
        </para>
 
        <para>
-        This option is only meaningful for the plain-text format.  For
-        the archive formats, you can specify the option when you
+        This option is ignored when emitting an archive (non-text) output
+        file.  For the archive formats, you can specify the option when you
         call <command>pg_restore</command>.
        </para>
       </listitem>
@@ -1065,14 +1078,10 @@ PostgreSQL documentation
        Specifies the name of the database to connect to. This is
        equivalent to specifying <replaceable
        class="parameter">dbname</replaceable> as the first non-option
-       argument on the command line.
-      </para>
-      <para>
-       If this parameter contains an <symbol>=</symbol> sign or starts
-       with a valid <acronym>URI</acronym> prefix
-       (<literal>postgresql://</literal>
-       or <literal>postgres://</literal>), it is treated as a
-       <parameter>conninfo</parameter> string. See <xref linkend="libpq-connect"/> for more information.
+       argument on the command line.  The <replaceable>dbname</replaceable>
+       can be a <link linkend="libpq-connstring">connection string</link>.
+       If so, connection string parameters will override any conflicting
+       command line options.
       </para>
       </listitem>
      </varlistentry>
@@ -1279,7 +1288,7 @@ CREATE DATABASE foo WITH TEMPLATE template0;
   <para>
    When dumping logical replication subscriptions,
    <application>pg_dump</application> will generate <command>CREATE
-   SUBSCRIPTION</command> commands that use the <literal>NOCONNECT</literal>
+   SUBSCRIPTION</command> commands that use the <literal>connect = false</literal>
    option, so that restoring the subscription does not make remote connections
    for creating a replication slot or for initial table copy.  That way, the
    dump can be restored without requiring network access to the remote

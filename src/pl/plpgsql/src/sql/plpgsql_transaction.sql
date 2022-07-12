@@ -116,6 +116,19 @@ $$;
 CALL transaction_test5();
 
 
+-- SECURITY DEFINER currently disallow transaction statements
+CREATE PROCEDURE transaction_test5b()
+LANGUAGE plpgsql
+SECURITY DEFINER
+AS $$
+BEGIN
+    COMMIT;
+END;
+$$;
+
+CALL transaction_test5b();
+
+
 TRUNCATE test1;
 
 -- nested procedure calls
@@ -316,6 +329,44 @@ $$;
 
 SELECT * FROM test3;
 
+-- failure while trying to persist a cursor across a transaction (bug #15703)
+CREATE PROCEDURE cursor_fail_during_commit()
+ LANGUAGE plpgsql
+AS $$
+  DECLARE id int;
+  BEGIN
+    FOR id IN SELECT 1/(x-1000) FROM generate_series(1,1000) x LOOP
+        INSERT INTO test1 VALUES(id);
+        COMMIT;
+    END LOOP;
+  END;
+$$;
+
+TRUNCATE test1;
+
+CALL cursor_fail_during_commit();
+
+-- note that error occurs during first COMMIT, hence nothing is in test1
+SELECT count(*) FROM test1;
+
+CREATE PROCEDURE cursor_fail_during_rollback()
+ LANGUAGE plpgsql
+AS $$
+  DECLARE id int;
+  BEGIN
+    FOR id IN SELECT 1/(x-1000) FROM generate_series(1,1000) x LOOP
+        INSERT INTO test1 VALUES(id);
+        ROLLBACK;
+    END LOOP;
+  END;
+$$;
+
+TRUNCATE test1;
+
+CALL cursor_fail_during_rollback();
+
+SELECT count(*) FROM test1;
+
 
 -- SET TRANSACTION
 DO LANGUAGE plpgsql $$
@@ -353,6 +404,84 @@ BEGIN
     EXECUTE 'COMMIT';
 END;
 $$;
+
+
+-- snapshot handling test
+TRUNCATE test2;
+
+CREATE PROCEDURE transaction_test9()
+LANGUAGE SQL
+AS $$
+INSERT INTO test2 VALUES (42);
+$$;
+
+DO LANGUAGE plpgsql $$
+BEGIN
+  ROLLBACK;
+  CALL transaction_test9();
+END
+$$;
+
+SELECT * FROM test2;
+
+
+-- Test transaction in procedure with output parameters.  This uses a
+-- different portal strategy and different code paths in pquery.c.
+CREATE PROCEDURE transaction_test10a(INOUT x int)
+LANGUAGE plpgsql
+AS $$
+BEGIN
+  x := x + 1;
+  COMMIT;
+END;
+$$;
+
+CALL transaction_test10a(10);
+
+CREATE PROCEDURE transaction_test10b(INOUT x int)
+LANGUAGE plpgsql
+AS $$
+BEGIN
+  x := x - 1;
+  ROLLBACK;
+END;
+$$;
+
+CALL transaction_test10b(10);
+
+
+-- transaction timestamp vs. statement timestamp
+CREATE PROCEDURE transaction_test11()
+LANGUAGE plpgsql
+AS $$
+DECLARE
+  s1 timestamp with time zone;
+  s2 timestamp with time zone;
+  s3 timestamp with time zone;
+  t1 timestamp with time zone;
+  t2 timestamp with time zone;
+  t3 timestamp with time zone;
+BEGIN
+  s1 := statement_timestamp();
+  t1 := transaction_timestamp();
+  ASSERT s1 = t1;
+  PERFORM pg_sleep(0.001);
+  COMMIT;
+  s2 := statement_timestamp();
+  t2 := transaction_timestamp();
+  ASSERT s2 = s1;
+  ASSERT t2 > t1;
+  PERFORM pg_sleep(0.001);
+  ROLLBACK;
+  s3 := statement_timestamp();
+  t3 := transaction_timestamp();
+  ASSERT s3 = s1;
+  ASSERT t3 > t2;
+END;
+$$;
+
+CALL transaction_test11();
+
 
 DROP TABLE test1;
 DROP TABLE test2;

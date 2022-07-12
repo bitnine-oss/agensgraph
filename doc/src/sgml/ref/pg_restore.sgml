@@ -1,4 +1,7 @@
-<!-- doc/src/sgml/ref/pg_restore.sgml -->
+<!--
+doc/src/sgml/ref/pg_restore.sgml
+PostgreSQL documentation
+-->
 
 <refentry id="app-pgrestore">
  <indexterm zone="app-pgrestore">
@@ -153,7 +156,10 @@
        <para>
         Connect to database <replaceable
         class="parameter">dbname</replaceable> and restore directly
-        into the database.
+        into the database.  The <replaceable>dbname</replaceable> can
+        be a <link linkend="libpq-connstring">connection string</link>.
+        If so, connection string parameters will override any conflicting
+        command line options.
        </para>
       </listitem>
      </varlistentry>
@@ -176,8 +182,8 @@
       <listitem>
        <para>
         Specify output file for generated script, or for the listing
-        when used with <option>-l</option>. Default is the standard
-        output.
+        when used with <option>-l</option>. Use <literal>-</literal>
+        for the standard output, which is also the default.
        </para>
       </listitem>
      </varlistentry>
@@ -568,7 +574,7 @@
       <term><option>--if-exists</option></term>
       <listitem>
        <para>
-        Use conditional commands (i.e. add an <literal>IF EXISTS</literal>
+        Use conditional commands (i.e., add an <literal>IF EXISTS</literal>
         clause) to drop database objects.  This option is not valid
         unless <option>--clean</option> is also specified.
        </para>

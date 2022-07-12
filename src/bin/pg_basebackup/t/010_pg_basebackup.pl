@@ -6,7 +6,7 @@ use File::Basename qw(basename dirname);
 use File::Path qw(rmtree);
 use PostgresNode;
 use TestLib;
-use Test::More tests => 106;
+use Test::More tests => 107;
 
 program_help_ok('pg_basebackup');
 program_version_ok('pg_basebackup');
@@ -65,8 +65,8 @@ $node->restart;
 
 # Write some files to test that they are not copied.
 foreach my $filename (
-	qw(backup_label tablespace_map postgresql.auto.conf.tmp current_logfiles.tmp)
-  )
+	qw(backup_label tablespace_map postgresql.auto.conf.tmp
+	current_logfiles.tmp global/pg_internal.init.123))
 {
 	open my $file, '>>', "$pgdata/$filename";
 	print $file "DONOTCOPY";
@@ -135,7 +135,7 @@ foreach my $dirname (
 # These files should not be copied.
 foreach my $filename (
 	qw(postgresql.auto.conf.tmp postmaster.opts postmaster.pid tablespace_map current_logfiles.tmp
-	global/pg_internal.init))
+	global/pg_internal.init global/pg_internal.init.123))
 {
 	ok(!-f "$tempdir/backup/$filename", "$filename not copied");
 }
@@ -502,7 +502,7 @@ my $block_size = $node->safe_psql('postgres', 'SHOW block_size;');
 system_or_bail 'pg_ctl', '-D', $pgdata, 'stop';
 open $file, '+<', "$pgdata/$file_corrupt1";
 seek($file, $pageheader_size, 0);
-syswrite($file, '\0\0\0\0\0\0\0\0\0');
+syswrite($file, "\0\0\0\0\0\0\0\0\0");
 close $file;
 system_or_bail 'pg_ctl', '-D', $pgdata, 'start';
 
@@ -521,7 +521,7 @@ for my $i (1 .. 5)
 {
 	my $offset = $pageheader_size + $i * $block_size;
 	seek($file, $offset, 0);
-	syswrite($file, '\0\0\0\0\0\0\0\0\0');
+	syswrite($file, "\0\0\0\0\0\0\0\0\0");
 }
 close $file;
 system_or_bail 'pg_ctl', '-D', $pgdata, 'start';
@@ -537,8 +537,8 @@ rmtree("$tempdir/backup_corrupt2");
 # induce corruption in a second file
 system_or_bail 'pg_ctl', '-D', $pgdata, 'stop';
 open $file, '+<', "$pgdata/$file_corrupt2";
-seek($file, 4000, 0);
-syswrite($file, '\0\0\0\0\0\0\0\0\0');
+seek($file, $pageheader_size, 0);
+syswrite($file, "\0\0\0\0\0\0\0\0\0");
 close $file;
 system_or_bail 'pg_ctl', '-D', $pgdata, 'start';
 

@@ -12,12 +12,13 @@ override CPPFLAGS += -DPLPERL_HAVE_UID_GID
 override CPPFLAGS += -Wno-comment
 endif
 
-# Note: we need to make sure that the CORE directory is included last,
+# Note: we need to include the perl_includespec directory last,
 # probably because it sometimes contains some header files with names
 # that clash with some of ours, or with some that we include, notably on
 # Windows.
-override CPPFLAGS := -I. -I$(srcdir) $(CPPFLAGS) $(perl_embed_ccflags) -I$(perl_archlibexp)/CORE
+override CPPFLAGS := -I. -I$(srcdir) $(CPPFLAGS) $(perl_embed_ccflags) $(perl_includespec)
 
+# this is often, but not always, the same directory named by perl_includespec
 rpathdir = $(perl_archlibexp)/CORE
 
 PGFILEDESC = "PL/Perl - procedural language"
@@ -100,7 +101,7 @@ uninstall: uninstall-lib uninstall-data
 
 install-data: installdirs
 	$(INSTALL_DATA) $(addprefix $(srcdir)/, $(DATA)) '$(DESTDIR)$(datadir)/extension/'
-	$(INSTALL_DATA) $(srcdir)/plperl.h $(srcdir)/ppport.h '$(DESTDIR)$(includedir_server)'
+	$(INSTALL_DATA) $(srcdir)/plperl.h $(srcdir)/ppport.h $(srcdir)/plperl_helpers.h '$(DESTDIR)$(includedir_server)'
 
 uninstall-data:
 	rm -f $(addprefix '$(DESTDIR)$(datadir)/extension'/, $(notdir $(DATA)))

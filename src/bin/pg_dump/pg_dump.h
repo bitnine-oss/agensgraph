@@ -136,6 +136,7 @@ typedef struct _dumpableObject
 	DumpComponents dump;		/* bitmask of components to dump */
 	DumpComponents dump_contains;	/* as above, but for contained objects */
 	bool		ext_member;		/* true if object is member of extension */
+	bool		depends_on_ext;	/* true if object depends on an extension */
 	DumpId	   *dependencies;	/* dumpIds of objects this one depends on */
 	int			nDeps;			/* number of valid dependencies */
 	int			allocDeps;		/* allocated size of dependencies[] */
@@ -361,13 +362,15 @@ typedef struct _indxInfo
 	char	   *indexdef;
 	char	   *tablespace;		/* tablespace in which index is stored */
 	char	   *indreloptions;	/* options specified by WITH (...) */
+	char	   *indstatcols;	/* column numbers with statistics */
+	char	   *indstatvals;	/* statistic values for columns */
 	int			indnkeyattrs;	/* number of index key attributes */
 	int			indnattrs;		/* total number of index attributes */
 	Oid		   *indkeys;		/* In spite of the name 'indkeys' this field
 								 * contains both key and nonkey attributes */
 	bool		indisclustered;
 	bool		indisreplident;
-	Oid			parentidx;		/* if partitioned, parent index OID */
+	Oid			parentidx;		/* if a partition, parent index OID */
 	/* if there is an associated constraint object, its dumpId: */
 	DumpId		indexconstraint;
 	int			relpages;		/* relpages of the underlying table */
@@ -608,8 +611,8 @@ typedef struct _PublicationInfo
 typedef struct _PublicationRelInfo
 {
 	DumpableObject dobj;
+	PublicationInfo *publication;
 	TableInfo  *pubtable;
-	char	   *pubname;
 } PublicationRelInfo;
 
 /*
@@ -668,6 +671,7 @@ extern OprInfo *findOprByOid(Oid oid);
 extern CollInfo *findCollationByOid(Oid oid);
 extern NamespaceInfo *findNamespaceByOid(Oid oid);
 extern ExtensionInfo *findExtensionByOid(Oid oid);
+extern PublicationInfo *findPublicationByOid(Oid oid);
 
 extern void setExtensionMembership(ExtensionMemberId *extmems, int nextmems);
 extern ExtensionInfo *findOwningExtension(CatalogId catalogId);
@@ -721,7 +725,8 @@ extern void processExtensionTables(Archive *fout, ExtensionInfo extinfo[],
 					   int numExtensions);
 extern EventTriggerInfo *getEventTriggers(Archive *fout, int *numEventTriggers);
 extern void getPolicies(Archive *fout, TableInfo tblinfo[], int numTables);
-extern void getPublications(Archive *fout);
+extern PublicationInfo *getPublications(Archive *fout,
+										int *numPublications);
 extern void getPublicationTables(Archive *fout, TableInfo tblinfo[],
 					 int numTables);
 extern void getSubscriptions(Archive *fout);

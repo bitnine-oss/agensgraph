@@ -402,7 +402,7 @@ MATCH (a:person)-[x:knows*1..1]->(b:person) RETURN a.id, b.id, x;
 
 MATCH (a:person)-[x:knows*]->(b:person) RETURN a.id, b.id, x;
 
-MATCH (a:person {id: 1})-[x:knows*0..3]->(b:person) RETURN a.id, b.id, x;
+MATCH (a:person {id: 1})-[x:knows*0..3]->(b:person) RETURN a.id, b.id, x ORDER BY length(x) DESC;
 
 MATCH (a:person {id: 1})-[x*1..2]-(b:person) RETURN a.id, b.id, x;
 

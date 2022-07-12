@@ -66,7 +66,7 @@
       <para>
        <emphasis>Numeric with Unit:</emphasis>
        Some numeric parameters have an implicit unit, because they describe
-       quantities of memory or time. The unit might be kilobytes, blocks
+       quantities of memory or time. The unit might be bytes, kilobytes, blocks
        (typically eight kilobytes), milliseconds, seconds, or minutes.
        An unadorned numeric value for one of these settings will use the
        setting's default unit, which can be learned from
@@ -81,7 +81,8 @@
        <itemizedlist>
         <listitem>
          <para>
-          Valid memory units are <literal>kB</literal> (kilobytes),
+          Valid memory units are <literal>B</literal> (bytes),
+          <literal>kB</literal> (kilobytes),
           <literal>MB</literal> (megabytes), <literal>GB</literal>
           (gigabytes), and <literal>TB</literal> (terabytes).
           The multiplier for memory units is 1024, not 1000.
@@ -136,6 +137,8 @@ shared_buffers = 128MB
      identifiers or numbers must be single-quoted.  To embed a single
      quote in a parameter value, write either two quotes (preferred)
      or backslash-quote.
+     If the file contains multiple entries for the same parameter,
+     all but the last one are ignored.
     </para>
 
     <para>
@@ -168,18 +171,29 @@ shared_buffers = 128MB
      In addition to <filename>postgresql.conf</filename>,
      a <productname>PostgreSQL</productname> data directory contains a file
      <filename>postgresql.auto.conf</filename><indexterm><primary>postgresql.auto.conf</primary></indexterm>,
-     which has the same format as <filename>postgresql.conf</filename> but should
-     never be edited manually.  This file holds settings provided through
-     the <xref linkend="sql-altersystem"/> command.  This file is automatically
-     read whenever <filename>postgresql.conf</filename> is, and its settings take
-     effect in the same way.  Settings in <filename>postgresql.auto.conf</filename>
-     override those in <filename>postgresql.conf</filename>.
+     which has the same format as <filename>postgresql.conf</filename> but
+     is intended to be edited automatically not manually.  This file holds
+     settings provided through the <xref linkend="sql-altersystem"/> command.
+     This file is read whenever <filename>postgresql.conf</filename> is,
+     and its settings take effect in the same way.  Settings
+     in <filename>postgresql.auto.conf</filename> override those
+     in <filename>postgresql.conf</filename>.
+    </para>
+
+    <para>
+     External tools may also
+     modify <filename>postgresql.auto.conf</filename>.  It is not
+     recommended to do this while the server is running, since a
+     concurrent <command>ALTER SYSTEM</command> command could overwrite
+     such changes.  Such tools might simply append new settings to the end,
+     or they might choose to remove duplicate settings and/or comments
+     (as <command>ALTER SYSTEM</command> will).
     </para>
 
     <para>
      The system view
      <link linkend="view-pg-file-settings"><structname>pg_file_settings</structname></link>
-     can be helpful for pre-testing changes to the configuration file, or for
+     can be helpful for pre-testing changes to the configuration files, or for
      diagnosing problems if a <systemitem>SIGHUP</systemitem> signal did not have the
      desired effects.
     </para>
@@ -394,7 +408,7 @@ include_dir 'directory'
       start with the <literal>.</literal> character are also ignored, to
       prevent mistakes since such files are hidden on some platforms.  Multiple
       files within an include directory are processed in file name order
-      (according to C locale rules, i.e. numbers before letters, and
+      (according to C locale rules, i.e., numbers before letters, and
       uppercase letters before lowercase ones).
      </para>
 
@@ -1033,7 +1047,7 @@ include_dir 'conf.d'
        <para>
         With this parameter enabled, you can still create ordinary global
         users.  Simply append <literal>@</literal> when specifying the user
-        name in the client, e.g. <literal>joe@</literal>.  The <literal>@</literal>
+        name in the client, e.g., <literal>joe@</literal>.  The <literal>@</literal>
         will be stripped off before the user name is looked up by the
         server.
        </para>
@@ -1164,16 +1178,22 @@ include_dir 'conf.d'
       </term>
       <listitem>
        <para>
-        Specifies a list of <acronym>SSL</acronym> cipher suites that are allowed to be
-        used on secure connections.  See
-        the <citerefentry><refentrytitle>ciphers</refentrytitle></citerefentry> manual page
-        in the <application>OpenSSL</application> package for the syntax of this setting
-        and a list of supported values.
-        This parameter can only be set in the <filename>postgresql.conf</filename>
-        file or on the server command line.
-        The default value is <literal>HIGH:MEDIUM:+3DES:!aNULL</literal>.  The
-        default is usually a reasonable choice unless you have specific
-        security requirements.
+        Specifies a list of <acronym>SSL</acronym> cipher suites that are
+        allowed to be used by SSL connections.  See the
+        <citerefentry><refentrytitle>ciphers</refentrytitle></citerefentry>
+        manual page in the <application>OpenSSL</application> package for the
+        syntax of this setting and a list of supported values.  Only
+        connections using TLS version 1.2 and lower are affected.  There is
+        currently no setting that controls the cipher choices used by TLS
+        version 1.3 connections.  The default value is
+        <literal>HIGH:MEDIUM:+3DES:!aNULL</literal>.  The default is usually a
+        reasonable choice unless you have specific security requirements.
+       </para>
+
+       <para>
+        This parameter can only be set in the
+        <filename>postgresql.conf</filename> file or on the server command
+        line.
        </para>
 
        <para>
@@ -1889,8 +1909,11 @@ include_dir 'conf.d'
       There is a separate server
       process called the <firstterm>background writer</firstterm>, whose function
       is to issue writes of <quote>dirty</quote> (new or modified) shared
-      buffers.  It writes shared buffers so server processes handling
-      user queries seldom or never need to wait for a write to occur.
+      buffers.  When the number of clean shared buffers appears to be
+      insufficient, the background writer writes some dirty buffers to the
+      file system and marks them as clean.  This reduces the likelihood
+      that server processes handling user queries will be unable to find
+      clean buffers and have to write dirty buffers themselves.
       However, the background writer does cause a net overall
       increase in I/O load, because while a repeatedly-dirtied page might
       otherwise be written only once per checkpoint interval, the
@@ -2412,14 +2435,26 @@ include_dir 'conf.d'
       </term>
       <listitem>
        <para>
-        Specifies whether transaction commit will wait for WAL records
-        to be written to disk before the command returns a <quote>success</quote>
-        indication to the client.  Valid values are <literal>on</literal>,
-        <literal>remote_apply</literal>, <literal>remote_write</literal>, <literal>local</literal>,
-        and <literal>off</literal>.  The default, and safe, setting
-        is <literal>on</literal>.  When <literal>off</literal>, there can be a delay between
-        when success is reported to the client and when the transaction is
-        really guaranteed to be safe against a server crash.  (The maximum
+        Specifies how much WAL processing must complete before
+        the database server returns a <quote>success</quote>
+        indication to the client.  Valid values are
+        <literal>remote_apply</literal>, <literal>on</literal>
+        (the default), <literal>remote_write</literal>,
+        <literal>local</literal>, and <literal>off</literal>.
+       </para>
+
+       <para>
+        If <varname>synchronous_standby_names</varname> is empty,
+        the only meaningful settings are <literal>on</literal> and
+        <literal>off</literal>;  <literal>remote_apply</literal>,
+        <literal>remote_write</literal> and <literal>local</literal>
+        all provide the same local synchronization level
+        as <literal>on</literal>.  The local behavior of all
+        non-<literal>off</literal> modes is to wait for local flush of WAL
+        to disk.  In <literal>off</literal> mode, there is no waiting,
+        so there can be a delay between when success is reported to the
+        client and when the transaction is later guaranteed to be safe
+        against a server crash.  (The maximum
         delay is three times <xref linkend="guc-wal-writer-delay"/>.)  Unlike
         <xref linkend="guc-fsync"/>, setting this parameter to <literal>off</literal>
         does not create any risk of database inconsistency: an operating
@@ -2431,38 +2466,40 @@ include_dir 'conf.d'
         exact certainty about the durability of a transaction.  For more
         discussion see <xref linkend="wal-async-commit"/>.
        </para>
+
        <para>
-        If <xref linkend="guc-synchronous-standby-names"/> is non-empty, this
-        parameter also controls whether or not transaction commits will wait
-        for their WAL records to be replicated to the standby server(s).
-        When set to <literal>on</literal>, commits will wait until replies
+        If <xref linkend="guc-synchronous-standby-names"/> is non-empty,
+        <varname>synchronous_commit</varname> also controls whether
+        transaction commits will wait for their WAL records to be
+        processed on the standby server(s).
+       </para>
+
+       <para>
+        When set to <literal>remote_apply</literal>, commits will wait
+        until replies from the current synchronous standby(s) indicate they
+        have received the commit record of the transaction and applied
+        it, so that it has become visible to queries on the standby(s),
+        and also written to durable storage on the standbys.  This will
+        cause much larger commit delays than previous settings since
+        it waits for WAL replay.  When set to <literal>on</literal>,
+        commits wait until replies
         from the current synchronous standby(s) indicate they have received
-        the commit record of the transaction and flushed it to disk.  This
+        the commit record of the transaction and flushed it to durable storage.  This
         ensures the transaction will not be lost unless both the primary and
         all synchronous standbys suffer corruption of their database storage.
-        When set to <literal>remote_apply</literal>, commits will wait until replies
-        from the current synchronous standby(s) indicate they have received the
-        commit record of the transaction and applied it, so that it has become
-        visible to queries on the standby(s).
         When set to <literal>remote_write</literal>, commits will wait until replies
         from the current synchronous standby(s) indicate they have
-        received the commit record of the transaction and written it out to
-        their operating system. This setting is sufficient to
-        ensure data preservation even if a standby instance of
-        <productname>PostgreSQL</productname> were to crash, but not if the standby
-        suffers an operating-system-level crash, since the data has not
-        necessarily reached stable storage on the standby.
-        Finally, the setting <literal>local</literal> causes commits to wait for
-        local flush to disk, but not for replication.  This is not usually
+        received the commit record of the transaction and written it to
+        their file systems. This setting ensures data preservation if a standby instance of
+        <productname>PostgreSQL</productname> crashes, but not if the standby
+        suffers an operating-system-level crash because the data has not
+        necessarily reached durable storage on the standby.
+        The setting <literal>local</literal> causes commits to wait for
+        local flush to disk, but not for replication.  This is usually not
         desirable when synchronous replication is in use, but is provided for
         completeness.
        </para>
-       <para>
-        If <varname>synchronous_standby_names</varname> is empty, the settings
-        <literal>on</literal>, <literal>remote_apply</literal>, <literal>remote_write</literal>
-        and <literal>local</literal> all provide the same synchronization level:
-        transaction commits only wait for local flush to disk.
-       </para>
+
        <para>
         This parameter can be changed at any time; the behavior for any
         one transaction is determined by the setting in effect when it
@@ -2472,6 +2509,76 @@ include_dir 'conf.d'
         asynchronously when the default is the opposite, issue <command>SET
         LOCAL synchronous_commit TO OFF</command> within the transaction.
        </para>
+
+       <para>
+        <xref linkend="synchronous-commit-matrix"/> summarizes the
+        capabilities of the <varname>synchronous_commit</varname> settings.
+       </para>
+
+       <table id="synchronous-commit-matrix">
+        <title>synchronous_commit Modes</title>
+        <tgroup cols="5">
+         <colspec colname="col1" colwidth="1.5*"/>
+         <colspec colname="col2" colwidth="1*"/>
+         <colspec colname="col3" colwidth="1*"/>
+         <colspec colname="col4" colwidth="1*"/>
+         <colspec colname="col5" colwidth="1*"/>
+         <thead>
+          <row>
+           <entry>synchronous_commit setting</entry>
+           <entry>local durable commit</entry>
+           <entry>standby durable commit after PG crash</entry>
+           <entry>standby durable commit after OS crash</entry>
+           <entry>standby query consistency</entry>
+          </row>
+         </thead>
+
+         <tbody>
+
+          <row>
+           <entry>remote_apply</entry>
+           <entry align="center">&bull;</entry>
+           <entry align="center">&bull;</entry>
+           <entry align="center">&bull;</entry>
+           <entry align="center">&bull;</entry>
+          </row>
+
+          <row>
+           <entry>on</entry>
+           <entry align="center">&bull;</entry>
+           <entry align="center">&bull;</entry>
+           <entry align="center">&bull;</entry>
+           <entry align="center"></entry>
+          </row>
+
+          <row>
+           <entry>remote_write</entry>
+           <entry align="center">&bull;</entry>
+           <entry align="center">&bull;</entry>
+           <entry align="center"></entry>
+           <entry align="center"></entry>
+          </row>
+
+          <row>
+           <entry>local</entry>
+           <entry align="center">&bull;</entry>
+           <entry align="center"></entry>
+           <entry align="center"></entry>
+           <entry align="center"></entry>
+          </row>
+
+          <row>
+           <entry>off</entry>
+           <entry align="center"></entry>
+           <entry align="center"></entry>
+           <entry align="center"></entry>
+           <entry align="center"></entry>
+          </row>
+
+         </tbody>
+        </tgroup>
+       </table>
+
       </listitem>
      </varlistentry>
 
@@ -2859,7 +2966,7 @@ include_dir 'conf.d'
       </term>
       <listitem>
        <para>
-        Maximum size to let the WAL grow to between automatic WAL
+        Maximum size to let the WAL grow during automatic
         checkpoints. This is a soft limit; WAL size can exceed
         <varname>max_wal_size</varname> under special circumstances, like
         under heavy load, a failing <varname>archive_command</varname>, or a high
@@ -2955,7 +3062,7 @@ include_dir 'conf.d'
         disabled, but the server continues to accumulate WAL segment files in
         the expectation that a command will soon be provided.  Setting
         <varname>archive_command</varname> to a command that does nothing but
-        return true, e.g. <literal>/bin/true</literal> (<literal>REM</literal> on
+        return true, e.g., <literal>/bin/true</literal> (<literal>REM</literal> on
         Windows), effectively disables
         archiving, but also breaks the chain of WAL files needed for
         archive recovery, so it should only be used in unusual circumstances.
@@ -3997,8 +4104,9 @@ ANY <replaceable class="parameter">num_sync</replaceable> ( <replaceable class="
         if your data is likely to be completely in cache, such as when
         the database is smaller than the total server memory, decreasing
         random_page_cost can be appropriate.  Storage that has a low random
-        read cost relative to sequential, e.g. solid-state drives, might
-        also be better modeled with a lower value for random_page_cost.
+        read cost relative to sequential, e.g., solid-state drives, might
+        also be better modeled with a lower value for random_page_cost,
+        e.g., <literal>1.1</literal>.
        </para>
 
        <tip>
@@ -4142,7 +4250,8 @@ ANY <replaceable class="parameter">num_sync</replaceable> ( <replaceable class="
         used. When setting this parameter you should consider both
         <productname>PostgreSQL</productname>'s shared buffers and the
         portion of the kernel's disk cache that will be used for
-        <productname>PostgreSQL</productname> data files.  Also, take
+        <productname>PostgreSQL</productname> data files, though some
+        data might exist in both places. Also, take
         into account the expected number of concurrent queries on different
         tables, since they will have to share the available
         space.  This parameter has no effect on the size of shared
@@ -4155,7 +4264,6 @@ ANY <replaceable class="parameter">num_sync</replaceable> ( <replaceable class="
       </listitem>
      </varlistentry>
 
-
      <varlistentry id="guc-jit-above-cost" xreflabel="jit_above_cost">
       <term><varname>jit_above_cost</varname> (<type>floating point</type>)
       <indexterm>
@@ -4164,29 +4272,12 @@ ANY <replaceable class="parameter">num_sync</replaceable> ( <replaceable class="
       </term>
       <listitem>
        <para>
-        Sets the planner's cutoff above which JIT compilation is used as part
-        of query execution (see <xref linkend="jit"/>). Performing
-        <acronym>JIT</acronym> costs time but can accelerate query execution.
-
+        Sets the query cost above which JIT compilation is activated, if
+        enabled (see <xref linkend="jit"/>).
+        Performing <acronym>JIT</acronym> costs planning time but can
+        accelerate query execution.
+        Setting this to <literal>-1</literal> disables JIT compilation.
         The default is <literal>100000</literal>.
-       </para>
-      </listitem>
-     </varlistentry>
-
-     <varlistentry id="guc-jit-optimize-above-cost" xreflabel="jit_optimize_above_cost">
-      <term><varname>jit_optimize_above_cost</varname> (<type>floating point</type>)
-      <indexterm>
-       <primary><varname>jit_optimize_above_cost</varname> configuration parameter</primary>
-      </indexterm>
-      </term>
-      <listitem>
-       <para>
-        Sets the planner's cutoff above which JIT compiled programs (see <xref
-        linkend="guc-jit-above-cost"/>) are optimized. Optimization initially
-        takes time, but can improve execution speed.  It is not meaningful to
-        set this to a lower value than <xref linkend="guc-jit-above-cost"/>.
-
-        The default is <literal>500000</literal>.
        </para>
       </listitem>
      </varlistentry>
@@ -4199,13 +4290,31 @@ ANY <replaceable class="parameter">num_sync</replaceable> ( <replaceable class="
       </term>
       <listitem>
        <para>
-        Sets the planner's cutoff above which JIT compiled programs (see <xref
-        linkend="guc-jit-above-cost"/>) attempt to inline functions and
-        operators. Inlining initially takes time, but can improve execution
-        speed.  It is unlikely to be beneficial to set
-        <varname>jit_inline_above_cost</varname> below
-        <varname>jit_optimize_above_cost</varname>.
+        Sets the query cost above which JIT compilation attempts to inline
+        functions and operators.  Inlining adds planning time, but can
+        improve execution speed.  It is not meaningful to set this to less
+        than <varname>jit_above_cost</varname>.
+        Setting this to <literal>-1</literal> disables inlining.
+        The default is <literal>500000</literal>.
+       </para>
+      </listitem>
+     </varlistentry>
 
+     <varlistentry id="guc-jit-optimize-above-cost" xreflabel="jit_optimize_above_cost">
+      <term><varname>jit_optimize_above_cost</varname> (<type>floating point</type>)
+      <indexterm>
+       <primary><varname>jit_optimize_above_cost</varname> configuration parameter</primary>
+      </indexterm>
+      </term>
+      <listitem>
+       <para>
+        Sets the query cost above which JIT compilation applies expensive
+        optimizations.  Such optimization adds planning time, but can improve
+        execution speed.  It is not meaningful to set this to less
+        than <varname>jit_above_cost</varname>, and it is unlikely to be
+        beneficial to set it to more
+        than <varname>jit_inline_above_cost</varname>.
+        Setting this to <literal>-1</literal> disables expensive optimizations.
         The default is <literal>500000</literal>.
        </para>
       </listitem>
@@ -4408,10 +4517,11 @@ ANY <replaceable class="parameter">num_sync</replaceable> ( <replaceable class="
         The allowed values of <varname>constraint_exclusion</varname> are
         <literal>on</literal> (examine constraints for all tables),
         <literal>off</literal> (never examine constraints), and
-        <literal>partition</literal> (examine constraints only for inheritance child
-        tables and <literal>UNION ALL</literal> subqueries).
+        <literal>partition</literal> (examine constraints only for inheritance
+        child tables and <literal>UNION ALL</literal> subqueries).
         <literal>partition</literal> is the default setting.
-        It is often used with inheritance tables to improve performance.
+        It is often used with traditional inheritance trees to improve
+        performance.
       </para>
 
        <para>
@@ -4435,15 +4545,19 @@ SELECT * FROM parent WHERE key = 2400;
        <para>
         Currently, constraint exclusion is enabled by default
         only for cases that are often used to implement table partitioning via
-        inheritance tables.  Turning it on for all tables imposes extra
+        inheritance trees.  Turning it on for all tables imposes extra
         planning overhead that is quite noticeable on simple queries, and most
         often will yield no benefit for simple queries.  If you have no
-        inheritance partitioned tables you might prefer to turn it off entirely.
+        tables that are partitioned using traditional inheritance, you might
+        prefer to turn it off entirely.  (Note that the equivalent feature for
+        partitioned tables is controlled by a separate parameter,
+        <xref linkend="guc-enable-partition-pruning"/>.)
        </para>
 
        <para>
         Refer to <xref linkend="ddl-partitioning-constraint-exclusion"/> for
-        more information on using constraint exclusion and partitioning.
+        more information on using constraint exclusion to implement
+        partitioning.
        </para>
       </listitem>
      </varlistentry>
@@ -4500,11 +4614,10 @@ SELECT * FROM parent WHERE key = 2400;
       </term>
       <listitem>
        <para>
-        Determines whether <acronym>JIT</acronym> may be used by
+        Determines whether <acronym>JIT</acronym> compilation may be used by
         <productname>PostgreSQL</productname>, if available (see <xref
         linkend="jit"/>).
-
-        The default is <literal>on</literal>.
+        The default is <literal>off</literal>.
        </para>
       </listitem>
      </varlistentry>
@@ -4804,7 +4917,7 @@ local0.*    /var/log/postgresql
         by <xref linkend="guc-log-timezone"/>.)
         The supported <literal>%</literal>-escapes are similar to those
         listed in the Open Group's <ulink
-        url="http://pubs.opengroup.org/onlinepubs/009695399/functions/strftime.html">strftime
+        url="https://pubs.opengroup.org/onlinepubs/009695399/functions/strftime.html">strftime
         </ulink> specification.
         Note that the system's <function>strftime</function> is not used
         directly, so platform-specific (nonstandard) extensions do not work.
@@ -5076,28 +5189,6 @@ local0.*    /var/log/postgresql
 
      <variablelist>
 
-     <varlistentry id="guc-client-min-messages" xreflabel="client_min_messages">
-      <term><varname>client_min_messages</varname> (<type>enum</type>)
-      <indexterm>
-       <primary><varname>client_min_messages</varname> configuration parameter</primary>
-      </indexterm>
-      </term>
-      <listitem>
-       <para>
-        Controls which message levels are sent to the client.
-        Valid values are <literal>DEBUG5</literal>,
-        <literal>DEBUG4</literal>, <literal>DEBUG3</literal>, <literal>DEBUG2</literal>,
-        <literal>DEBUG1</literal>, <literal>LOG</literal>, <literal>NOTICE</literal>,
-        <literal>WARNING</literal>, <literal>ERROR</literal>, <literal>FATAL</literal>,
-        and <literal>PANIC</literal>.  Each level
-        includes all the levels that follow it.  The later the level,
-        the fewer messages are sent.  The default is
-        <literal>NOTICE</literal>.  Note that <literal>LOG</literal> has a different
-        rank here than in <varname>log_min_messages</varname>.
-       </para>
-      </listitem>
-     </varlistentry>
-
      <varlistentry id="guc-log-min-messages" xreflabel="log_min_messages">
       <term><varname>log_min_messages</varname> (<type>enum</type>)
       <indexterm>
@@ -5106,7 +5197,8 @@ local0.*    /var/log/postgresql
       </term>
       <listitem>
        <para>
-        Controls which message levels are written to the server log.
+        Controls which <link linkend="runtime-config-severity-levels">message
+        levels</link> are written to the server log.
         Valid values are <literal>DEBUG5</literal>, <literal>DEBUG4</literal>,
         <literal>DEBUG3</literal>, <literal>DEBUG2</literal>, <literal>DEBUG1</literal>,
         <literal>INFO</literal>, <literal>NOTICE</literal>, <literal>WARNING</literal>,
@@ -5115,7 +5207,7 @@ local0.*    /var/log/postgresql
         follow it.  The later the level, the fewer messages are sent
         to the log.  The default is <literal>WARNING</literal>.  Note that
         <literal>LOG</literal> has a different rank here than in
-        <varname>client_min_messages</varname>.
+        <xref linkend="guc-client-min-messages"/>.
         Only superusers can change this setting.
        </para>
       </listitem>
@@ -5132,7 +5224,9 @@ local0.*    /var/log/postgresql
         Controls which SQL statements that cause an error
         condition are recorded in the server log.  The current
         SQL statement is included in the log entry for any message of
-        the specified severity or higher.
+        the specified
+        <link linkend="runtime-config-severity-levels">severity</link>
+        or higher.
         Valid values are <literal>DEBUG5</literal>,
         <literal>DEBUG4</literal>, <literal>DEBUG3</literal>,
         <literal>DEBUG2</literal>, <literal>DEBUG1</literal>,
@@ -5863,6 +5957,8 @@ CREATE TABLE postgres_log
 <programlisting>
 COPY postgres_log FROM '/full/path/to/logfile.csv' WITH csv;
 </programlisting>
+        It is also possible to access the file as a foreign table, using
+        the supplied <xref linkend="file-fdw"/> module.
        </para>
 
        <para>
@@ -6436,6 +6532,32 @@ COPY postgres_log FROM '/full/path/to/logfile.csv' WITH csv;
      <title>Statement Behavior</title>
      <variablelist>
 
+     <varlistentry id="guc-client-min-messages" xreflabel="client_min_messages">
+      <term><varname>client_min_messages</varname> (<type>enum</type>)
+      <indexterm>
+       <primary><varname>client_min_messages</varname> configuration parameter</primary>
+      </indexterm>
+      </term>
+      <listitem>
+       <para>
+        Controls which
+        <link linkend="runtime-config-severity-levels">message levels</link>
+        are sent to the client.
+        Valid values are <literal>DEBUG5</literal>,
+        <literal>DEBUG4</literal>, <literal>DEBUG3</literal>, <literal>DEBUG2</literal>,
+        <literal>DEBUG1</literal>, <literal>LOG</literal>, <literal>NOTICE</literal>,
+        <literal>WARNING</literal>, and <literal>ERROR</literal>.
+        Each level includes all the levels that follow it.  The later the level,
+        the fewer messages are sent.  The default is
+        <literal>NOTICE</literal>.  Note that <literal>LOG</literal> has a different
+        rank here than in <xref linkend="guc-log-min-messages"/>.
+       </para>
+       <para>
+        <literal>INFO</literal> level messages are always sent to the client.
+       </para>
+      </listitem>
+     </varlistentry>
+
      <varlistentry id="guc-search-path" xreflabel="search_path">
       <term><varname>search_path</varname> (<type>string</type>)
       <indexterm>
@@ -6464,7 +6586,7 @@ COPY postgres_log FROM '/full/path/to/logfile.csv' WITH csv;
        <para>
         If one of the list items is the special name
         <literal>$user</literal>, then the schema having the name returned by
-        <function>SESSION_USER</function> is substituted, if there is such a schema
+        <function>CURRENT_USER</function> is substituted, if there is such a schema
         and the user has <literal>USAGE</literal> permission for it.
         (If not, <literal>$user</literal> is ignored.)
        </para>
@@ -6477,6 +6599,10 @@ COPY postgres_log FROM '/full/path/to/logfile.csv' WITH csv;
         be searched <emphasis>before</emphasis> searching any of the path items.
        </para>
 
+       <!-- To further split hairs, funcname('foo') does not use the temporary
+            schema, even when it considers typname='funcname'.  This paragraph
+            refers to function names in a loose sense, "pg_proc.proname or
+            func_name grammar production". -->
        <para>
         Likewise, the current session's temporary-table schema,
         <literal>pg_temp_<replaceable>nnn</replaceable></literal>, is always searched if it
@@ -6825,9 +6951,7 @@ COPY postgres_log FROM '/full/path/to/logfile.csv' WITH csv;
         each lock acquisition attempt.  The limit applies both to explicit
         locking requests (such as <command>LOCK TABLE</command>, or <command>SELECT
         FOR UPDATE</command> without <literal>NOWAIT</literal>) and to implicitly-acquired
-        locks.  If <varname>log_min_error_statement</varname> is set to
-        <literal>ERROR</literal> or lower, the statement that timed out will be
-        logged.  A value of zero (the default) turns this off.
+        locks.  A value of zero (the default) turns this off.
        </para>
 
        <para>
@@ -6835,7 +6959,9 @@ COPY postgres_log FROM '/full/path/to/logfile.csv' WITH csv;
         while waiting for locks.  Note that if <varname>statement_timeout</varname>
         is nonzero, it is rather pointless to set <varname>lock_timeout</varname> to
         the same or larger value, since the statement timeout would always
-        trigger first.
+        trigger first.  If <varname>log_min_error_statement</varname> is set to
+        <literal>ERROR</literal> or lower, the statement that timed out will be
+        logged.  
        </para>
 
        <para>
@@ -7552,16 +7678,17 @@ SET XML OPTION { DOCUMENT | CONTENT };
       </term>
       <listitem>
        <para>
-        Determines which JIT provider (see <xref linkend="jit-extensibility"/>) is
-        used. The built-in default is <literal>llvmjit</literal>.
+        This variable is the name of the JIT provider library to be used
+        (see <xref linkend="jit-pluggable"/>).
+        The default is <literal>llvmjit</literal>.
+        This parameter can only be set at server start.
        </para>
+
        <para>
-        If set to a non-existent library <acronym>JIT</acronym> will not be
+        If set to a non-existent library, <acronym>JIT</acronym> will not be
         available, but no error will be raised. This allows JIT support to be
         installed separately from the main
         <productname>PostgreSQL</productname> package.
-
-        This parameter can only be set at server start.
        </para>
       </listitem>
      </varlistentry>
@@ -7714,7 +7841,7 @@ dynamic_library_path = 'C:\tools\postgresql;H:\my_project\lib;$libdir'
         rows that can be locked; that value is unlimited.  The default,
         64, has historically proven sufficient, but you might need to
         raise this value if you have queries that touch many different
-        tables in a single transaction, e.g. query of a parent table with
+        tables in a single transaction, e.g., query of a parent table with
         many children.  This parameter can only be set at server start.
        </para>
 
@@ -8126,6 +8253,39 @@ dynamic_library_path = 'C:\tools\postgresql;H:\my_project\lib;$libdir'
       </listitem>
      </varlistentry>
 
+     <varlistentry id="guc-data-sync-retry" xreflabel="data_sync_retry">
+      <term><varname>data_sync_retry</varname> (<type>boolean</type>)
+      <indexterm>
+       <primary><varname>data_sync_retry</varname> configuration parameter</primary>
+      </indexterm>
+      </term>
+      <listitem>
+       <para>
+        When set to false, which is the default, <productname>PostgreSQL</productname>
+        will raise a PANIC-level error on failure to flush modified data files
+        to the filesystem.  This causes the database server to crash.  This
+        parameter can only be set at server start.
+       </para>
+       <para>
+        On some operating systems, the status of data in the kernel's page
+        cache is unknown after a write-back failure.  In some cases it might
+        have been entirely forgotten, making it unsafe to retry; the second
+        attempt may be reported as successful, when in fact the data has been
+        lost.  In these circumstances, the only way to avoid data loss is to
+        recover from the WAL after any failure is reported, preferably
+        after investigating the root cause of the failure and replacing any
+        faulty hardware.
+       </para>
+       <para>
+        If set to true, <productname>PostgreSQL</productname> will instead
+        report an error but continue to run so that the data flushing
+        operation can be retried in a later checkpoint.  Only set it to true
+        after investigating the operating system's treatment of buffered data
+        in case of write-back failure.
+       </para>
+      </listitem>
+     </varlistentry>
+
     </variablelist>
 
    </sect1>
@@ -8206,7 +8366,7 @@ dynamic_library_path = 'C:\tools\postgresql;H:\my_project\lib;$libdir'
         with assertions enabled. That is the case if the
         macro <symbol>USE_ASSERT_CHECKING</symbol> is defined
         when <productname>PostgreSQL</productname> is built (accomplished
-        e.g. by the <command>configure</command> option
+        e.g., by the <command>configure</command> option
         <option>--enable-cassert</option>). By
         default <productname>PostgreSQL</productname> is built without
         assertions.
@@ -8394,11 +8554,8 @@ dynamic_library_path = 'C:\tools\postgresql;H:\my_project\lib;$libdir'
       </term>
       <listitem>
        <para>
-        Reports the number of blocks (pages) in a WAL segment file.
-        The total size of a WAL segment file in bytes is equal to
-        <varname>wal_segment_size</varname> multiplied by <varname>wal_block_size</varname>;
-        by default this is 16MB.  See <xref linkend="wal-configuration"/> for
-        more information.
+        Reports the size of write ahead log segments.  The default value is
+        16MB. See <xref linkend="wal-configuration"/> for more information.
        </para>
       </listitem>
      </varlistentry>
@@ -8663,8 +8820,8 @@ LOG:  CleanUpLock: deleting: lock(0xb7acd844) id(24688,24696,0,0,0,1)
       </term>
       <listitem>
        <para>
-        If set, do not trace locks for tables below this OID. (use to avoid
-        output on system tables)
+        If set, do not trace locks for tables below this OID (used to avoid
+        output on system tables).
        </para>
        <para>
         This parameter is only available if the <symbol>LOCK_DEBUG</symbol>
@@ -8840,9 +8997,8 @@ LOG:  CleanUpLock: deleting: lock(0xb7acd844) id(24688,24696,0,0,0,1)
        <para>
         If LLVM has the required functionality, register generated functions
         with <productname>GDB</productname>.  This makes debugging easier.
-
-        The default setting is <literal>off</literal>, and can only be set at
-        server start.
+        The default setting is <literal>off</literal>.
+        This parameter can only be set at server start.
        </para>
       </listitem>
      </varlistentry>
@@ -8858,9 +9014,8 @@ LOG:  CleanUpLock: deleting: lock(0xb7acd844) id(24688,24696,0,0,0,1)
         Writes the generated <productname>LLVM</productname> IR out to the
         file system, inside <xref linkend="guc-data-directory"/>. This is only
         useful for working on the internals of the JIT implementation.
-
-        The default setting is <literal>off</literal>, and it can only be
-        changed by a superuser.
+        The default setting is <literal>off</literal>.
+        This parameter can only be changed by a superuser.
        </para>
       </listitem>
      </varlistentry>
@@ -8873,8 +9028,8 @@ LOG:  CleanUpLock: deleting: lock(0xb7acd844) id(24688,24696,0,0,0,1)
       </term>
       <listitem>
        <para>
-        Determines whether expressions are JIT compiled, subject to costing
-        decisions (see <xref linkend="jit-decision"/>).  The default is
+        Determines whether expressions are JIT compiled, when JIT compilation
+        is activated (see <xref linkend="jit-decision"/>).  The default is
         <literal>on</literal>.
        </para>
       </listitem>
@@ -8888,13 +9043,12 @@ LOG:  CleanUpLock: deleting: lock(0xb7acd844) id(24688,24696,0,0,0,1)
       </term>
       <listitem>
        <para>
-        If LLVM has the required functionality, emit required data to allow
+        If LLVM has the required functionality, emit the data needed to allow
         <productname>perf</productname> to profile functions generated by JIT.
         This writes out files to <filename>$HOME/.debug/jit/</filename>; the
         user is responsible for performing cleanup when desired.
-
-        The default setting is <literal>off</literal>, and can only be set at
-        server start.
+        The default setting is <literal>off</literal>.
+        This parameter can only be set at server start.
        </para>
       </listitem>
      </varlistentry>
@@ -8907,9 +9061,9 @@ LOG:  CleanUpLock: deleting: lock(0xb7acd844) id(24688,24696,0,0,0,1)
       </term>
       <listitem>
        <para>
-        Determines whether tuple deforming is JIT compiled, subject to costing
-        decisions (see <xref linkend="jit-decision"/>). The default is
-        <literal>on</literal>.
+        Determines whether tuple deforming is JIT compiled, when JIT
+        compilation is activated (see <xref linkend="jit-decision"/>).
+        The default is <literal>on</literal>.
        </para>
       </listitem>
      </varlistentry>

@@ -547,7 +547,8 @@ decl_statement	: decl_varname decl_const decl_datatype decl_collate decl_notnull
 							plpgsql_build_variable($1.name, $1.lineno,
 												   plpgsql_build_datatype(REFCURSOROID,
 																		  -1,
-																		  InvalidOid),
+																		  InvalidOid,
+																		  NULL),
 												   true);
 
 						curname_def = palloc0(sizeof(PLpgSQL_expr));
@@ -613,6 +614,7 @@ decl_cursor_args :
 
 						new = palloc0(sizeof(PLpgSQL_row));
 						new->dtype = PLPGSQL_DTYPE_ROW;
+						new->refname = "(unnamed row)";
 						new->lineno = plpgsql_location_to_lineno(@1);
 						new->rowtupdesc = NULL;
 						new->nfields = list_length($2);
@@ -1491,7 +1493,8 @@ for_control		: for_variable K_IN
 														   $1.lineno,
 														   plpgsql_build_datatype(INT4OID,
 																				  -1,
-																				  InvalidOid),
+																				  InvalidOid,
+																				  NULL),
 														   true);
 
 								new = palloc0(sizeof(PLpgSQL_stmt_fori));
@@ -2282,7 +2285,8 @@ exception_sect	:
 						var = plpgsql_build_variable("sqlstate", lineno,
 													 plpgsql_build_datatype(TEXTOID,
 																			-1,
-																			plpgsql_curr_compile->fn_input_collation),
+																			plpgsql_curr_compile->fn_input_collation,
+																			NULL),
 													 true);
 						var->isconst = true;
 						new->sqlstate_varno = var->dno;
@@ -2290,7 +2294,8 @@ exception_sect	:
 						var = plpgsql_build_variable("sqlerrm", lineno,
 													 plpgsql_build_datatype(TEXTOID,
 																			-1,
-																			plpgsql_curr_compile->fn_input_collation),
+																			plpgsql_curr_compile->fn_input_collation,
+																			NULL),
 													 true);
 						var->isconst = true;
 						new->sqlerrm_varno = var->dno;
@@ -3526,6 +3531,7 @@ read_into_scalar_list(char *initial_name,
 
 	row = palloc0(sizeof(PLpgSQL_row));
 	row->dtype = PLPGSQL_DTYPE_ROW;
+	row->refname = "(unnamed row)";
 	row->lineno = plpgsql_location_to_lineno(initial_location);
 	row->rowtupdesc = NULL;
 	row->nfields = nfields;
@@ -3560,6 +3566,7 @@ make_scalar_list1(char *initial_name,
 
 	row = palloc0(sizeof(PLpgSQL_row));
 	row->dtype = PLPGSQL_DTYPE_ROW;
+	row->refname = "(unnamed row)";
 	row->lineno = lineno;
 	row->rowtupdesc = NULL;
 	row->nfields = 1;
@@ -3664,6 +3671,7 @@ plpgsql_sql_error_callback(void *arg)
 static PLpgSQL_type *
 parse_datatype(const char *string, int location)
 {
+	TypeName   *typeName;
 	Oid			type_id;
 	int32		typmod;
 	sql_error_callback_arg cbarg;
@@ -3678,14 +3686,16 @@ parse_datatype(const char *string, int location)
 	error_context_stack = &syntax_errcontext;
 
 	/* Let the main parser try to parse it under standard SQL rules */
-	parseTypeString(string, &type_id, &typmod, false);
+	typeName = typeStringToTypeName(string);
+	typenameTypeIdAndMod(NULL, typeName, &type_id, &typmod);
 
 	/* Restore former ereport callback */
 	error_context_stack = syntax_errcontext.previous;
 
 	/* Okay, build a PLpgSQL_type data structure for it */
 	return plpgsql_build_datatype(type_id, typmod,
-								  plpgsql_curr_compile->fn_input_collation);
+								  plpgsql_curr_compile->fn_input_collation,
+								  typeName);
 }
 
 /*
@@ -4036,7 +4046,8 @@ make_case(int location, PLpgSQL_expr *t_expr,
 			plpgsql_build_variable(varname, new->lineno,
 								   plpgsql_build_datatype(INT4OID,
 														  -1,
-														  InvalidOid),
+														  InvalidOid,
+														  NULL),
 								   true);
 		new->t_varno = t_var->dno;
 

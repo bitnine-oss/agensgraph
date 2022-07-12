@@ -114,7 +114,7 @@ IndexNext(IndexScanState *node)
 	{
 		/*
 		 * We reach here if the index scan is not parallel, or if we're
-		 * executing a index scan that was intended to be parallel serially.
+		 * serially executing an index scan that was planned to be parallel.
 		 */
 		scandesc = index_beginscan(node->ss.ss_currentRelation,
 								   node->iss_RelationDesc,
@@ -220,7 +220,7 @@ IndexNextWithReorder(IndexScanState *node)
 	{
 		/*
 		 * We reach here if the index scan is not parallel, or if we're
-		 * executing a index scan that was intended to be parallel serially.
+		 * serially executing an index scan that was planned to be parallel.
 		 */
 		scandesc = index_beginscan(node->ss.ss_currentRelation,
 								   node->iss_RelationDesc,
@@ -475,9 +475,10 @@ reorderqueue_cmp(const pairingheap_node *a, const pairingheap_node *b,
 	ReorderTuple *rtb = (ReorderTuple *) b;
 	IndexScanState *node = (IndexScanState *) arg;
 
-	return -cmp_orderbyvals(rta->orderbyvals, rta->orderbynulls,
-							rtb->orderbyvals, rtb->orderbynulls,
-							node);
+	/* exchange argument order to invert the sort order */
+	return cmp_orderbyvals(rtb->orderbyvals, rtb->orderbynulls,
+						   rta->orderbyvals, rta->orderbynulls,
+						   node);
 }
 
 /*

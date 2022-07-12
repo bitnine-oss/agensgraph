@@ -159,15 +159,10 @@ EOF
        Specifies the name of the database to connect to. This is
        equivalent to specifying <replaceable
        class="parameter">dbname</replaceable> as the first non-option
-       argument on the command line.
-      </para>
-      <para>
-       If this parameter contains an <symbol>=</symbol> sign or starts
-       with a valid <acronym>URI</acronym> prefix
-       (<literal>postgresql://</literal>
-       or <literal>postgres://</literal>), it is treated as a
-       <parameter>conninfo</parameter> string. See <xref
-       linkend="libpq-connstring"/> for more information.
+       argument on the command line.  The <replaceable>dbname</replaceable>
+       can be a <link linkend="libpq-connstring">connection string</link>.
+       If so, connection string parameters will override any conflicting
+       command line options.
       </para>
       </listitem>
     </varlistentry>
@@ -489,7 +484,7 @@ EOF
      <listitem>
       <para>
        Never issue a password prompt.  If the server requires password
-       authentication and a password is not available by other means
+       authentication and a password is not available from other sources
        such as a <filename>.pgpass</filename> file, the connection
        attempt will fail.  This option can be useful in batch jobs and
        scripts where no user is present to enter a password.
@@ -509,13 +504,15 @@ EOF
       <listitem>
       <para>
        Force <application>psql</application> to prompt for a
-       password before connecting to a database.
+       password before connecting to a database, even if the password will
+       not be used.
       </para>
 
       <para>
-       This option is never essential, since <application>psql</application>
-       will automatically prompt for a password if the server demands
-       password authentication.  However, <application>psql</application>
+       If the server requires password authentication and a password is not
+       available from other sources such as a <filename>.pgpass</filename>
+       file, <application>psql</application> will prompt for a
+       password in any case.  However, <application>psql</application>
        will waste a connection attempt finding out that the server wants a
        password.  In some cases it is worth typing <option>-W</option> to avoid
        the extra connection attempt.
@@ -626,7 +623,7 @@ EOF
 
   <para>
    <application>psql</application> returns 0 to the shell if it
-   finished normally, 1 if a fatal error of its own occurs (e.g. out of memory,
+   finished normally, 1 if a fatal error of its own occurs (e.g., out of memory,
    file not found), 2 if the connection to the server went bad
    and the session was not interactive, and 3 if an error occurred in a
    script and the variable <varname>ON_ERROR_STOP</varname> was set.
@@ -883,19 +880,15 @@ testdb=&gt;
         <para>
         Establishes a new connection to a <productname>PostgreSQL</productname>
         server.  The connection parameters to use can be specified either
-        using a positional syntax, or using <replaceable>conninfo</replaceable> connection
-        strings as detailed in <xref linkend="libpq-connstring"/>.
+        using a positional syntax (one or more of database name, user,
+        host, and port), or using a <replaceable>conninfo</replaceable>
+        connection string as detailed in
+        <xref linkend="libpq-connstring"/>.  If no arguments are given, a
+        new connection is made using the same parameters as before.
         </para>
 
         <para>
-        Where the command omits database name, user, host, or port, the new
-        connection can reuse values from the previous connection.  By default,
-        values from the previous connection are reused except when processing
-        a <replaceable>conninfo</replaceable> string.  Passing a first argument
-        of <literal>-reuse-previous=on</literal>
-        or <literal>-reuse-previous=off</literal> overrides that default.
-        When the command neither specifies nor reuses a particular parameter,
-        the <application>libpq</application> default is used.  Specifying any
+        Specifying any
         of <replaceable class="parameter">dbname</replaceable>,
         <replaceable class="parameter">username</replaceable>,
         <replaceable class="parameter">host</replaceable> or
@@ -904,11 +897,32 @@ testdb=&gt;
         </para>
 
         <para>
+        The new connection can re-use connection parameters from the previous
+        connection; not only database name, user, host, and port, but other
+        settings such as <replaceable>sslmode</replaceable>.  By default,
+        parameters are re-used in the positional syntax, but not when
+        a <replaceable>conninfo</replaceable> string is given.  Passing a
+        first argument of <literal>-reuse-previous=on</literal>
+        or <literal>-reuse-previous=off</literal> overrides that default.  If
+        parameters are re-used, then any parameter not explicitly specified as
+        a positional parameter or in the <replaceable>conninfo</replaceable>
+        string is taken from the existing connection's parameters.  An
+        exception is that if the <replaceable>host</replaceable> setting
+        is changed from its previous value using the positional syntax,
+        any <replaceable>hostaddr</replaceable> setting present in the
+        existing connection's parameters is dropped.
+        Also, any password used for the existing connection will be re-used
+        only if the user, host, and port settings are not changed.
+        When the command neither specifies nor reuses a particular parameter,
+        the <application>libpq</application> default is used.
+        </para>
+
+        <para>
         If the new connection is successfully made, the previous
         connection is closed.
-        If the connection attempt failed (wrong user name, access
-        denied, etc.), the previous connection will only be kept if
-        <application>psql</application> is in interactive mode. When
+        If the connection attempt fails (wrong user name, access
+        denied, etc.), the previous connection will be kept if
+        <application>psql</application> is in interactive mode. But when
         executing a non-interactive script, processing will
         immediately stop with an error. This distinction was chosen as
         a user convenience against typos on the one hand, and a safety
@@ -923,6 +937,7 @@ testdb=&gt;
 =&gt; \c mydb myuser host.dom 6432
 =&gt; \c service=foo
 =&gt; \c "host=localhost port=5432 dbname=mydb connect_timeout=10 sslmode=disable"
+=&gt; \c -reuse-previous=on sslmode=require    -- changes only sslmode
 =&gt; \c postgresql://tom@localhost/mydb?application_name=myapp
 </programlisting>
         </listitem>
@@ -1027,10 +1042,24 @@ testdb=&gt;
 
         <tip>
         <para>
-        This operation is not as efficient as the <acronym>SQL</acronym>
-        <command>COPY</command> command because all data must pass
-        through the client/server connection. For large
-        amounts of data the <acronym>SQL</acronym> command might be preferable.
+        Another way to obtain the same result as <literal>\copy
+        ... to</literal> is to use the <acronym>SQL</acronym> <literal>COPY
+        ... TO STDOUT</literal> command and terminate it
+        with <literal>\g <replaceable>filename</replaceable></literal>
+        or <literal>\g |<replaceable>program</replaceable></literal>.
+        Unlike <literal>\copy</literal>, this method allows the command to
+        span multiple lines; also, variable interpolation and backquote
+        expansion can be used.
+        </para>
+        </tip>
+
+        <tip>
+        <para>
+        These operations are not as efficient as the <acronym>SQL</acronym>
+        <command>COPY</command> command with a file or program data source or
+        destination, because all data must pass through the client/server
+        connection.  For large amounts of data the <acronym>SQL</acronym>
+        command might be preferable.
         </para>
         </tip>
 
@@ -1423,16 +1452,16 @@ testdb=&gt;
 
 
       <varlistentry>
-        <term><literal>\df[antwS+] [ <link linkend="app-psql-patterns"><replaceable class="parameter">pattern</replaceable></link> ]</literal></term>
+        <term><literal>\df[anptwS+] [ <link linkend="app-psql-patterns"><replaceable class="parameter">pattern</replaceable></link> ]</literal></term>
 
         <listitem>
         <para>
         Lists functions, together with their result data types, argument data
         types, and function types, which are classified as <quote>agg</quote>
-        (aggregate), <quote>normal</quote>, <quote>trigger</quote>, or <quote>window</quote>.
+        (aggregate), <quote>normal</quote>, <quote>procedure</quote>, <quote>trigger</quote>, or <quote>window</quote>.
         To display only functions
         of specific type(s), add the corresponding letters <literal>a</literal>,
-        <literal>n</literal>, <literal>t</literal>, or <literal>w</literal> to the command.
+        <literal>n</literal>, <literal>p</literal>, <literal>t</literal>, or <literal>w</literal> to the command.
         If <replaceable
         class="parameter">pattern</replaceable> is specified, only
         functions whose names match the pattern are shown.
@@ -2590,8 +2619,7 @@ lo_import 152801
           <literal>latex</literal> (uses <literal>tabular</literal>),
           <literal>latex-longtable</literal>, or
           <literal>troff-ms</literal>.
-          Unique abbreviations are allowed.  (That would mean one letter
-          is enough.)
+          Unique abbreviations are allowed.
           </para>
 
           <para><literal>unaligned</literal> format writes all columns of a row on one
@@ -2781,7 +2809,7 @@ lo_import 152801
           In <literal>latex-longtable</literal> format, this controls
           the proportional width of each column containing a left-aligned
           data type.  It is specified as a whitespace-separated list of values,
-          e.g. <literal>'0.2 0.2 0.6'</literal>.  Unspecified output columns
+          e.g., <literal>'0.2 0.2 0.6'</literal>.  Unspecified output columns
           use the last specified value.
           </para>
           </listitem>
@@ -4207,7 +4235,7 @@ testdb=&gt; \set PROMPT1 '%[%033[1;33;40m%]%n@%/%R%[%033[0m%]%# '
     <application>psql</application> starts up. Tab-completion is also
     supported, although the completion logic makes no claim to be an
     <acronym>SQL</acronym> parser.  The queries generated by tab-completion
-    can also interfere with other SQL commands, e.g. <literal>SET
+    can also interfere with other SQL commands, e.g., <literal>SET
     TRANSACTION ISOLATION LEVEL</literal>.
     If for some reason you do not like the tab completion, you
     can turn it off by putting this in a file named

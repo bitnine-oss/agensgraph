@@ -79,6 +79,11 @@ CheckLogicalDecodingRequirements(void)
 {
 	CheckSlotRequirements();
 
+	/*
+	 * NB: Adding a new requirement likely means that RestoreSlotFromDisk()
+	 * needs the same check.
+	 */
+
 	if (wal_level < WAL_LEVEL_LOGICAL)
 		ereport(ERROR,
 				(errcode(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
@@ -312,7 +317,7 @@ CreateInitDecodingContext(char *plugin,
 	ReplicationSlotSave();
 
 	ctx = StartupDecodingContext(NIL, InvalidXLogRecPtr, xmin_horizon,
-								 need_full_snapshot, true,
+								 need_full_snapshot, false,
 								 read_page, prepare_write, do_write,
 								 update_progress);
 
@@ -338,7 +343,10 @@ CreateInitDecodingContext(char *plugin,
  *		that, see below).
  *
  * output_plugin_options
- *		contains options passed to the output plugin.
+ *		options passed to the output plugin.
+ *
+ * fast_forward
+ *		bypass the generation of logical changes.
  *
  * read_page, prepare_write, do_write, update_progress
  *		callbacks that have to be filled to perform the use-case dependent,
@@ -954,6 +962,7 @@ LogicalIncreaseRestartDecodingForSlot(XLogRecPtr current_lsn, XLogRecPtr restart
 	{
 		slot->candidate_restart_valid = current_lsn;
 		slot->candidate_restart_lsn = restart_lsn;
+		SpinLockRelease(&slot->mutex);
 
 		elog(DEBUG1, "got new restart lsn %X/%X at %X/%X",
 			 (uint32) (restart_lsn >> 32), (uint32) restart_lsn,
@@ -961,18 +970,25 @@ LogicalIncreaseRestartDecodingForSlot(XLogRecPtr current_lsn, XLogRecPtr restart
 	}
 	else
 	{
+		XLogRecPtr	candidate_restart_lsn;
+		XLogRecPtr	candidate_restart_valid;
+		XLogRecPtr	confirmed_flush;
+
+		candidate_restart_lsn = slot->candidate_restart_lsn;
+		candidate_restart_valid = slot->candidate_restart_valid;
+		confirmed_flush = slot->data.confirmed_flush;
+		SpinLockRelease(&slot->mutex);
+
 		elog(DEBUG1, "failed to increase restart lsn: proposed %X/%X, after %X/%X, current candidate %X/%X, current after %X/%X, flushed up to %X/%X",
 			 (uint32) (restart_lsn >> 32), (uint32) restart_lsn,
 			 (uint32) (current_lsn >> 32), (uint32) current_lsn,
-			 (uint32) (slot->candidate_restart_lsn >> 32),
-			 (uint32) slot->candidate_restart_lsn,
-			 (uint32) (slot->candidate_restart_valid >> 32),
-			 (uint32) slot->candidate_restart_valid,
-			 (uint32) (slot->data.confirmed_flush >> 32),
-			 (uint32) slot->data.confirmed_flush
-			);
+			 (uint32) (candidate_restart_lsn >> 32),
+			 (uint32) candidate_restart_lsn,
+			 (uint32) (candidate_restart_valid >> 32),
+			 (uint32) candidate_restart_valid,
+			 (uint32) (confirmed_flush >> 32),
+			 (uint32) confirmed_flush);
 	}
-	SpinLockRelease(&slot->mutex);
 
 	/* candidates are already valid with the current flush position, apply */
 	if (updated_lsn)

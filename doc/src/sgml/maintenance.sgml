@@ -606,14 +606,13 @@ SELECT datname, age(datfrozenxid) FROM pg_database;
    </para>
 
    <para>
-    If for some reason autovacuum fails to clear old XIDs from a table,
-    the system will begin to emit warning messages like this when the
-    database's oldest XIDs reach ten million transactions from the wraparound
-    point:
+    If for some reason autovacuum fails to clear old XIDs from a table, the
+    system will begin to emit warning messages like this when the database's
+    oldest XIDs reach eleven million transactions from the wraparound point:
 
 <programlisting>
-WARNING:  database "mydb" must be vacuumed within 177009986 transactions
-HINT:  To avoid a database shutdown, execute a database-wide VACUUM in "mydb".
+WARNING:  database "mydb" must be vacuumed within 10985967 transactions
+HINT:  To avoid a database shutdown, execute a database-wide VACUUM in that database.
 </programlisting>
 
     (A manual <command>VACUUM</command> should fix the problem, as suggested by the
@@ -825,6 +824,26 @@ analyze threshold = analyze base threshold + analyze scale factor * number of tu
     <literal>autovacuum_vacuum_cost_limit</literal> storage parameters have been set
     are not considered in the balancing algorithm.
    </para>
+
+   <para>
+    Autovacuum workers generally don't block other commands.  If a process
+    attempts to acquire a lock that conflicts with the
+    <literal>SHARE UPDATE EXCLUSIVE</literal> lock held by autovacuum, lock
+    acquisition will interrupt the autovacuum.  For conflicting lock modes,
+    see <xref linkend="table-lock-compatibility"/>.  However, if the autovacuum
+    is running to prevent transaction ID wraparound (i.e., the autovacuum query
+    name in the <structname>pg_stat_activity</structname> view ends with
+    <literal>(to prevent wraparound)</literal>), the autovacuum is not
+    automatically interrupted.
+   </para>
+
+   <warning>
+    <para>
+     Regularly running commands that acquire locks conflicting with a
+     <literal>SHARE UPDATE EXCLUSIVE</literal> lock (e.g., ANALYZE) can
+     effectively prevent autovacuums from ever completing.
+    </para>
+   </warning>
   </sect2>
  </sect1>
 
@@ -978,7 +997,7 @@ pg_ctl start | rotatelogs /var/log/pgsql_log 86400
   </para>
 
   <para>
-   <ulink url="http://dalibo.github.io/pgbadger/"><productname>pgBadger</productname></ulink>
+   <ulink url="https://pgbadger.darold.net/"><productname>pgBadger</productname></ulink>
    is an external project that does sophisticated log file analysis.
    <ulink
    url="https://bucardo.org/check_postgres/"><productname>check_postgres</productname></ulink>

@@ -495,6 +495,7 @@ CommitTsShmemInit(void)
 	SimpleLruInit(CommitTsCtl, "commit_timestamp", CommitTsShmemBuffers(), 0,
 				  CommitTsControlLock, "pg_commit_ts",
 				  LWTRANCHE_COMMITTS_BUFFERS);
+	SlruPagePrecedesUnitTests(CommitTsCtl, COMMIT_TS_XACTS_PER_PAGE);
 
 	commitTsShared = ShmemInitStruct("CommitTs shared",
 									 sizeof(CommitTimestampShared),
@@ -573,10 +574,9 @@ CompleteCommitTsInitialization(void)
 	 * any leftover data.
 	 *
 	 * Conversely, we activate the module if the feature is enabled.  This is
-	 * not necessary in a master system because we already did it earlier, but
-	 * if we're in a standby server that got promoted which had the feature
-	 * enabled and was following a master that had the feature disabled, this
-	 * is where we turn it on locally.
+	 * necessary for primary and standby as the activation depends on the
+	 * control file contents at the beginning of recovery or when a
+	 * XLOG_PARAMETER_CHANGE is replayed.
 	 */
 	if (!track_commit_timestamp)
 		DeactivateCommitTs();
@@ -586,7 +586,7 @@ CompleteCommitTsInitialization(void)
 
 /*
  * Activate or deactivate CommitTs' upon reception of a XLOG_PARAMETER_CHANGE
- * XLog record in a standby.
+ * XLog record during recovery.
  */
 void
 CommitTsParameterChange(bool newvalue, bool oldvalue)
@@ -762,12 +762,6 @@ CheckPointCommitTs(void)
 {
 	/* Flush dirty CommitTs pages to disk */
 	SimpleLruFlush(CommitTsCtl, true);
-
-	/*
-	 * fsync pg_commit_ts to ensure that any files flushed previously are
-	 * durably on disk.
-	 */
-	fsync_fname("pg_commit_ts", true);
 }
 
 /*
@@ -884,14 +878,27 @@ AdvanceOldestCommitTsXid(TransactionId oldestXact)
 
 
 /*
- * Decide which of two commitTS page numbers is "older" for truncation
- * purposes.
+ * Decide whether a commitTS page number is "older" for truncation purposes.
+ * Analogous to CLOGPagePrecedes().
  *
- * We need to use comparison of TransactionIds here in order to do the right
- * thing with wraparound XID arithmetic.  However, if we are asked about
- * page number zero, we don't want to hand InvalidTransactionId to
- * TransactionIdPrecedes: it'll get weird about permanent xact IDs.  So,
- * offset both xids by FirstNormalTransactionId to avoid that.
+ * At default BLCKSZ, (1 << 31) % COMMIT_TS_XACTS_PER_PAGE == 128.  This
+ * introduces differences compared to CLOG and the other SLRUs having (1 <<
+ * 31) % per_page == 0.  This function never tests exactly
+ * TransactionIdPrecedes(x-2^31, x).  When the system reaches xidStopLimit,
+ * there are two possible counts of page boundaries between oldestXact and the
+ * latest XID assigned, depending on whether oldestXact is within the first
+ * 128 entries of its page.  Since this function doesn't know the location of
+ * oldestXact within page2, it returns false for one page that actually is
+ * expendable.  This is a wider (yet still negligible) version of the
+ * truncation opportunity that CLOGPagePrecedes() cannot recognize.
+ *
+ * For the sake of a worked example, number entries with decimal values such
+ * that page1==1 entries range from 1.0 to 1.999.  Let N+0.15 be the number of
+ * pages that 2^31 entries will span (N is an integer).  If oldestXact=N+2.1,
+ * then the final safe XID assignment leaves newestXact=1.95.  We keep page 2,
+ * because entry=2.85 is the border that toggles whether entries precede the
+ * last entry of the oldestXact page.  While page 2 is expendable at
+ * oldestXact=N+2.1, it would be precious at oldestXact=N+2.9.
  */
 static bool
 CommitTsPagePrecedes(int page1, int page2)
@@ -900,11 +907,12 @@ CommitTsPagePrecedes(int page1, int page2)
 	TransactionId xid2;
 
 	xid1 = ((TransactionId) page1) * COMMIT_TS_XACTS_PER_PAGE;
-	xid1 += FirstNormalTransactionId;
+	xid1 += FirstNormalTransactionId + 1;
 	xid2 = ((TransactionId) page2) * COMMIT_TS_XACTS_PER_PAGE;
-	xid2 += FirstNormalTransactionId;
+	xid2 += FirstNormalTransactionId + 1;
 
-	return TransactionIdPrecedes(xid1, xid2);
+	return (TransactionIdPrecedes(xid1, xid2) &&
+			TransactionIdPrecedes(xid1, xid2 + COMMIT_TS_XACTS_PER_PAGE - 1));
 }
 
 

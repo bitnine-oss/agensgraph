@@ -631,6 +631,25 @@ my %tests = (
 		},
 	},
 
+	'ALTER TABLE (partitioned) ADD CONSTRAINT ... FOREIGN KEY' => {
+		create_order => 4,
+		create_sql   => 'CREATE TABLE dump_test.test_table_fk (
+							col1 int references dump_test.test_table)
+							PARTITION BY RANGE (col1);
+							CREATE TABLE dump_test.test_table_fk_1
+							PARTITION OF dump_test.test_table_fk
+							FOR VALUES FROM (0) TO (10);',
+		regexp => qr/
+			\QADD CONSTRAINT test_table_fk_col1_fkey FOREIGN KEY (col1) REFERENCES dump_test.test_table\E
+			/xm,
+		like => {
+			%full_runs, %dump_test_schema_runs, section_post_data => 1,
+		},
+		unlike => {
+			exclude_dump_test_schema => 1,
+		},
+	},
+
 	'ALTER TABLE ONLY test_table ALTER COLUMN col1 SET STATISTICS 90' => {
 		create_order => 93,
 		create_sql =>
@@ -713,7 +732,12 @@ my %tests = (
 			\QALTER TABLE ONLY dump_test.measurement ATTACH PARTITION dump_test_second_schema.measurement_y2006m2 \E
 			\QFOR VALUES FROM ('2006-02-01') TO ('2006-03-01');\E\n
 			/xm,
-		like => { binary_upgrade => 1, },
+		like => {
+			%full_runs,
+			role             => 1,
+			section_pre_data => 1,
+			binary_upgrade   => 1,
+		},
 	  },
 
 	'ALTER TABLE test_table CLUSTER ON test_table_pkey' => {
@@ -1917,9 +1941,9 @@ my %tests = (
 	'CREATE TRANSFORM FOR int' => {
 		create_order => 34,
 		create_sql =>
-		  'CREATE TRANSFORM FOR int LANGUAGE SQL (FROM SQL WITH FUNCTION varchar_transform(internal), TO SQL WITH FUNCTION int4recv(internal));',
+		  'CREATE TRANSFORM FOR int LANGUAGE SQL (FROM SQL WITH FUNCTION prsd_lextype(internal), TO SQL WITH FUNCTION int4recv(internal));',
 		regexp =>
-		  qr/CREATE TRANSFORM FOR integer LANGUAGE sql \(FROM SQL WITH FUNCTION pg_catalog\.varchar_transform\(internal\), TO SQL WITH FUNCTION pg_catalog\.int4recv\(internal\)\);/m,
+		  qr/CREATE TRANSFORM FOR integer LANGUAGE sql \(FROM SQL WITH FUNCTION pg_catalog\.prsd_lextype\(internal\), TO SQL WITH FUNCTION pg_catalog\.int4recv\(internal\)\);/m,
 		like => { %full_runs, section_pre_data => 1, },
 	},
 
@@ -2295,9 +2319,9 @@ my %tests = (
 	'CREATE TABLE measurement PARTITIONED BY' => {
 		create_order => 90,
 		create_sql   => 'CREATE TABLE dump_test.measurement (
-						city_id int not null,
+						city_id serial not null,
 						logdate date not null,
-						peaktemp int,
+						peaktemp int CHECK (peaktemp >= -460),
 						unitsales int
 					   ) PARTITION BY RANGE (logdate);',
 		regexp => qr/^
@@ -2307,7 +2331,8 @@ my %tests = (
 			\s+\Qcity_id integer NOT NULL,\E\n
 			\s+\Qlogdate date NOT NULL,\E\n
 			\s+\Qpeaktemp integer,\E\n
-			\s+\Qunitsales integer\E\n
+			\s+\Qunitsales integer,\E\n
+			\s+\QCONSTRAINT measurement_peaktemp_check CHECK ((peaktemp >= '-460'::integer))\E\n
 			\)\n
 			\QPARTITION BY RANGE (logdate);\E\n
 			/xm,
@@ -2319,24 +2344,56 @@ my %tests = (
 		},
 	},
 
-	'CREATE TABLE measurement_y2006m2 PARTITION OF' => {
+	'Partition measurement_y2006m2 creation' => {
 		create_order => 91,
 		create_sql =>
 		  'CREATE TABLE dump_test_second_schema.measurement_y2006m2
-					   PARTITION OF dump_test.measurement FOR VALUES
-					   FROM (\'2006-02-01\') TO (\'2006-03-01\');',
+					   PARTITION OF dump_test.measurement (
+						   unitsales DEFAULT 0 CHECK (unitsales >= 0)
+					   )
+						FOR VALUES FROM (\'2006-02-01\') TO (\'2006-03-01\');',
 		regexp => qr/^
-			\Q-- Name: measurement_y2006m2;\E.*\n
-			\Q--\E\n\n
-			\QCREATE TABLE dump_test_second_schema.measurement_y2006m2 PARTITION OF dump_test.measurement\E\n
-			\QFOR VALUES FROM ('2006-02-01') TO ('2006-03-01');\E\n
+			\QCREATE TABLE dump_test_second_schema.measurement_y2006m2 (\E\n
+			\s+\Qcity_id integer DEFAULT nextval('dump_test.measurement_city_id_seq'::regclass) NOT NULL,\E\n
+			\s+\Qlogdate date NOT NULL,\E\n
+			\s+\Qpeaktemp integer,\E\n
+			\s+\Qunitsales integer DEFAULT 0,\E\n
+			\s+\QCONSTRAINT measurement_peaktemp_check CHECK ((peaktemp >= '-460'::integer)),\E\n
+			\s+\QCONSTRAINT measurement_y2006m2_unitsales_check CHECK ((unitsales >= 0))\E\n
+			\);\n
 			/xm,
 		like => {
 			%full_runs,
-			role             => 1,
 			section_pre_data => 1,
+			role             => 1,
+			binary_upgrade   => 1,
 		},
-		unlike => { binary_upgrade => 1, },
+	},
+
+	'Creation of row-level trigger in partitioned table' => {
+		create_order => 92,
+		create_sql   => 'CREATE TRIGGER test_trigger
+		   AFTER INSERT ON dump_test.measurement
+		   FOR EACH ROW EXECUTE PROCEDURE dump_test.trigger_func()',
+		regexp => qr/^
+			\QCREATE TRIGGER test_trigger AFTER INSERT ON dump_test.measurement \E
+			\QFOR EACH ROW \E
+			\QEXECUTE PROCEDURE dump_test.trigger_func();\E
+			/xm,
+		like => {
+			%full_runs, %dump_test_schema_runs, section_post_data => 1,
+		},
+		unlike => {
+			exclude_dump_test_schema => 1,
+		},
+	},
+
+	# this shouldn't ever get emitted
+	'Creation of row-level trigger in partition' => {
+		regexp => qr/^
+			\QCREATE TRIGGER test_trigger AFTER INSERT ON dump_test_second_schema.measurement\E
+			/xm,
+		like => {},
 	},
 
 	'CREATE TABLE test_fourth_table_zero_col' => {
@@ -2399,6 +2456,68 @@ my %tests = (
 		like =>
 		  { %full_runs, %dump_test_schema_runs, section_pre_data => 1, },
 		unlike => { exclude_dump_test_schema => 1, },
+	},
+
+	'CREATE TABLE table_with_stats' => {
+		create_order => 98,
+		create_sql   => 'CREATE TABLE dump_test.table_index_stats (
+						   col1 int,
+						   col2 int,
+						   col3 int);
+						 CREATE INDEX index_with_stats
+						  ON dump_test.table_index_stats
+						  ((col1 + 1), col1, (col2 + 1), (col3 + 1));
+						 ALTER INDEX dump_test.index_with_stats
+						   ALTER COLUMN 1 SET STATISTICS 400;
+						 ALTER INDEX dump_test.index_with_stats
+						   ALTER COLUMN 3 SET STATISTICS 500;',
+		regexp => qr/^
+			\QALTER INDEX dump_test.index_with_stats ALTER COLUMN 1 SET STATISTICS 400;\E\n
+			\QALTER INDEX dump_test.index_with_stats ALTER COLUMN 3 SET STATISTICS 500;\E\n
+			/xms,
+		like =>
+			{ %full_runs, %dump_test_schema_runs, section_post_data => 1, },
+		unlike => { exclude_dump_test_schema => 1, },
+	},
+
+	'CREATE TABLE test_inheritance_parent' => {
+		create_order => 90,
+		create_sql   => 'CREATE TABLE dump_test.test_inheritance_parent (
+						   col1 int NOT NULL,
+						   col2 int CHECK (col2 >= 42)
+						 );',
+		regexp => qr/^
+		\QCREATE TABLE dump_test.test_inheritance_parent (\E\n
+		\s+\Qcol1 integer NOT NULL,\E\n
+		\s+\Qcol2 integer,\E\n
+		\s+\QCONSTRAINT test_inheritance_parent_col2_check CHECK ((col2 >= 42))\E\n
+		\Q);\E\n
+		/xm,
+		like =>
+		  { %full_runs, %dump_test_schema_runs, section_pre_data => 1, },
+		unlike => { exclude_dump_test_schema => 1, },
+	},
+
+	'CREATE TABLE test_inheritance_child' => {
+		create_order => 91,
+		create_sql   => 'CREATE TABLE dump_test.test_inheritance_child (
+						    col1 int NOT NULL,
+						    CONSTRAINT test_inheritance_child CHECK (col2 >= 142857)
+						) INHERITS (dump_test.test_inheritance_parent);',
+		regexp => qr/^
+		\QCREATE TABLE dump_test.test_inheritance_child (\E\n
+		\s+\Qcol1 integer,\E\n
+		\s+\QCONSTRAINT test_inheritance_child CHECK ((col2 >= 142857))\E\n
+		\)\n
+		\QINHERITS (dump_test.test_inheritance_parent);\E\n
+		/xm,
+		like => {
+			%full_runs, %dump_test_schema_runs, section_pre_data => 1,
+		},
+		unlike => {
+			binary_upgrade           => 1,
+			exclude_dump_test_schema => 1,
+		},
 	},
 
 	'CREATE STATISTICS extended_stats_no_options' => {

@@ -32,8 +32,8 @@
 
 
 /* GUCs */
-bool		jit_enabled = true;
-char	   *jit_provider = "llvmjit";
+bool		jit_enabled = false;
+char	   *jit_provider = NULL;
 bool		jit_debugging_support = false;
 bool		jit_dump_bitcode = false;
 bool		jit_expressions = true;
@@ -180,6 +180,17 @@ jit_compile_expr(struct ExprState *state)
 		return provider.compile_expr(state);
 
 	return false;
+}
+
+/* Aggregate JIT instrumentation information */
+void
+InstrJitAgg(JitInstrumentation *dst, JitInstrumentation *add)
+{
+	dst->created_functions += add->created_functions;
+	INSTR_TIME_ADD(dst->generation_counter, add->generation_counter);
+	INSTR_TIME_ADD(dst->inlining_counter, add->inlining_counter);
+	INSTR_TIME_ADD(dst->optimization_counter, add->optimization_counter);
+	INSTR_TIME_ADD(dst->emission_counter, add->emission_counter);
 }
 
 static bool

@@ -1581,7 +1581,7 @@ finish_heap_swap(Oid OIDOldHeap, Oid OIDNewHeap,
 	 * swap_relation_files()), thus relfrozenxid was not updated. That's
 	 * annoying because a potential reason for doing a VACUUM FULL is a
 	 * imminent or actual anti-wraparound shutdown.  So, now that we can
-	 * access the new relation using it's indices, update relfrozenxid.
+	 * access the new relation using its indices, update relfrozenxid.
 	 * pg_class doesn't have a toast relation, so we don't need to update the
 	 * corresponding toast relation. Not that there's little point moving all
 	 * relfrozenxid updates here since swap_relation_files() needs to write to
@@ -1652,7 +1652,7 @@ finish_heap_swap(Oid OIDOldHeap, Oid OIDNewHeap,
 
 			/* Get the associated valid index to be renamed */
 			toastidx = toast_get_valid_index(newrel->rd_rel->reltoastrelid,
-											 AccessShareLock);
+											 NoLock);
 
 			/* rename the toast table ... */
 			snprintf(NewToastName, NAMEDATALEN, "pg_toast_%u",

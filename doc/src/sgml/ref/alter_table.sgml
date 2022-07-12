@@ -76,7 +76,7 @@ ALTER TABLE [ IF EXISTS ] <replaceable class="parameter">name</replaceable>
     SET WITHOUT OIDS
     SET TABLESPACE <replaceable class="parameter">new_tablespace</replaceable>
     SET { LOGGED | UNLOGGED }
-    SET ( <replaceable class="parameter">storage_parameter</replaceable> = <replaceable class="parameter">value</replaceable> [, ... ] )
+    SET ( <replaceable class="parameter">storage_parameter</replaceable> [= <replaceable class="parameter">value</replaceable>] [, ... ] )
     RESET ( <replaceable class="parameter">storage_parameter</replaceable> [, ... ] )
     INHERIT <replaceable class="parameter">parent_table</replaceable>
     NO INHERIT <replaceable class="parameter">parent_table</replaceable>
@@ -141,9 +141,9 @@ WITH ( MODULUS <replaceable class="parameter">numeric_literal</replaceable>, REM
   <para>
    <command>ALTER TABLE</command> changes the definition of an existing table.
    There are several subforms described below. Note that the lock level required
-   may differ for each subform. An <literal>ACCESS EXCLUSIVE</literal> lock is held
-   unless explicitly noted. When multiple subcommands are listed, the lock
-   held will be the strictest one required from any subcommand.
+   may differ for each subform. An <literal>ACCESS EXCLUSIVE</literal> lock is
+   acquired unless explicitly noted. When multiple subcommands are given, the
+   lock acquired will be the strictest one required by any subcommand.
 
   <variablelist>
    <varlistentry>
@@ -355,26 +355,45 @@ WITH ( MODULUS <replaceable class="parameter">numeric_literal</replaceable>, REM
     <term><literal>ADD <replaceable class="parameter">table_constraint</replaceable> [ NOT VALID ]</literal></term>
     <listitem>
      <para>
-      This form adds a new constraint to a table using the same syntax as
-      <xref linkend="sql-createtable"/>, plus the option <literal>NOT
+      This form adds a new constraint to a table using the same constraint
+      syntax as <xref linkend="sql-createtable"/>, plus the option <literal>NOT
       VALID</literal>, which is currently only allowed for foreign key
       and CHECK constraints.
-      If the constraint is marked <literal>NOT VALID</literal>, the
-      potentially-lengthy initial check to verify that all rows in the table
-      satisfy the constraint is skipped.  The constraint will still be
+     </para>
+
+     <para>
+      Normally, this form will cause a scan of the table to verify that all
+      existing rows in the table satisfy the new constraint.  But if
+      the <literal>NOT VALID</literal> option is used, this
+      potentially-lengthy scan is skipped.  The constraint will still be
       enforced against subsequent inserts or updates (that is, they'll fail
       unless there is a matching row in the referenced table, in the case
-      of foreign keys; and they'll fail unless the new row matches the
-      specified check constraints).  But the
+      of foreign keys, or they'll fail unless the new row matches the
+      specified check condition).  But the
       database will not assume that the constraint holds for all rows in
       the table, until it is validated by using the <literal>VALIDATE
-      CONSTRAINT</literal> option.  Foreign key constraints on partitioned
-      tables may not be declared <literal>NOT VALID</literal> at present.
+      CONSTRAINT</literal> option.
+      See <xref linkend="sql-altertable-notes"
+      endterm="sql-altertable-notes-title"/> below for more information
+      about using the <literal>NOT VALID</literal> option.
+     </para>
+
+     <para>
+      Although most forms of <literal>ADD
+      <replaceable class="parameter">table_constraint</replaceable></literal>
+      require an <literal>ACCESS EXCLUSIVE</literal> lock, <literal>ADD
+      FOREIGN KEY</literal> requires only a <literal>SHARE ROW
+      EXCLUSIVE</literal> lock.  Note that <literal>ADD FOREIGN KEY</literal>
+      also acquires a <literal>SHARE ROW EXCLUSIVE</literal> lock on the
+      referenced table, in addition to the lock on the table on which the
+      constraint is declared.
      </para>
 
      <para>
       Additional restrictions apply when unique or primary key constraints
-      are added to partitioned tables; see <xref linkend="sql-createtable" />.
+      are added to partitioned tables; see <xref linkend="sql-createtable"/>.
+      Also, foreign key constraints on partitioned
+      tables may not be declared <literal>NOT VALID</literal> at present.
      </para>
 
     </listitem>
@@ -449,23 +468,13 @@ WITH ( MODULUS <replaceable class="parameter">numeric_literal</replaceable>, REM
     <term><literal>VALIDATE CONSTRAINT</literal></term>
     <listitem>
      <para>
-      This form validates a foreign key or check constraint that was previously created
-      as <literal>NOT VALID</literal>, by scanning the table to ensure there
-      are no rows for which the constraint is not satisfied.
-      Nothing happens if the constraint is already marked valid.
-     </para>
-     <para>
-      Validation can be a long process on larger tables. The value of separating
-      validation from initial creation is that you can defer validation to less
-      busy times, or can be used to give additional time to correct pre-existing
-      errors while preventing new errors. Note also that validation on its own
-      does not prevent normal write commands against the table while it runs.
-     </para>
-     <para>
-      Validation acquires only a <literal>SHARE UPDATE EXCLUSIVE</literal> lock
-      on the table being altered. If the constraint is a foreign key then
-      a <literal>ROW SHARE</literal> lock is also required on
-      the table referenced by the constraint.
+      This form validates a foreign key or check constraint that was
+      previously created as <literal>NOT VALID</literal>, by scanning the
+      table to ensure there are no rows for which the constraint is not
+      satisfied.  Nothing happens if the constraint is already marked valid.
+      (See <xref linkend="sql-altertable-notes"
+      endterm="sql-altertable-notes-title"/> below for an explanation of the
+      usefulness of this command.)
      </para>
     </listitem>
    </varlistentry>
@@ -474,7 +483,8 @@ WITH ( MODULUS <replaceable class="parameter">numeric_literal</replaceable>, REM
     <term><literal>DROP CONSTRAINT [ IF EXISTS ]</literal></term>
     <listitem>
      <para>
-      This form drops the specified constraint on a table.
+      This form drops the specified constraint on a table, along with
+      any index underlying the constraint.
       If <literal>IF EXISTS</literal> is specified and the constraint
       does not exist, no error is thrown. In this case a notice is issued instead.
      </para>
@@ -674,7 +684,7 @@ WITH ( MODULUS <replaceable class="parameter">numeric_literal</replaceable>, REM
    </varlistentry>
 
    <varlistentry>
-    <term><literal>SET ( <replaceable class="parameter">storage_parameter</replaceable> = <replaceable class="parameter">value</replaceable> [, ... ] )</literal></term>
+    <term><literal>SET ( <replaceable class="parameter">storage_parameter</replaceable> [= <replaceable class="parameter">value</replaceable>] [, ... ] )</literal></term>
     <listitem>
      <para>
       This form changes one or more storage parameters for the table.  See
@@ -694,9 +704,7 @@ WITH ( MODULUS <replaceable class="parameter">numeric_literal</replaceable>, REM
      <para>
       <literal>SHARE UPDATE EXCLUSIVE</literal> lock will be taken for
       fillfactor, toast and autovacuum storage parameters, as well as the
-      following planner related parameters:
-      <varname>effective_io_concurrency</varname>, <varname>parallel_workers</varname>, <varname>seq_page_cost</varname>,
-      <varname>random_page_cost</varname>, <varname>n_distinct</varname> and <varname>n_distinct_inherited</varname>.
+      planner parameter <varname>parallel_workers</varname>.
      </para>
 
      <note>
@@ -822,8 +830,10 @@ WITH ( MODULUS <replaceable class="parameter">numeric_literal</replaceable>, REM
     <listitem>
      <para>
       The <literal>RENAME</literal> forms change the name of a table
-      (or an index, sequence, view, materialized view, or foreign table), the name
-      of an individual column in a table, or the name of a constraint of the table.
+      (or an index, sequence, view, materialized view, or foreign table), the
+      name of an individual column in a table, or the name of a constraint of
+      the table.  When renaming a constraint that has an underlying index,
+      the index is renamed as well.
       There is no effect on the stored data.
      </para>
     </listitem>
@@ -849,8 +859,14 @@ WITH ( MODULUS <replaceable class="parameter">numeric_literal</replaceable>, REM
       or as a default partition by using <literal>DEFAULT</literal>.
       For each index in the target table, a corresponding
       one will be created in the attached table; or, if an equivalent
-      index already exists, will be attached to the target table's index,
+      index already exists, it will be attached to the target table's index,
       as if <command>ALTER INDEX ATTACH PARTITION</command> had been executed.
+      Note that if the existing table is a foreign table, it is currently not
+      allowed to attach the table as a partition of the target table if there
+      are <literal>UNIQUE</literal> indexes on the target table.  (See also
+      <xref linkend="sql-createforeigntable"/>.)  For each user-defined
+      row-level trigger that exists in the target table, a corresponding one
+      is created in the attached table.
      </para>
 
      <para>
@@ -867,24 +883,25 @@ WITH ( MODULUS <replaceable class="parameter">numeric_literal</replaceable>, REM
       from the parent table will be created in the partition, if they don't
       already exist.
       If any of the <literal>CHECK</literal> constraints of the table being
-      attached is marked <literal>NO INHERIT</literal>, the command will fail;
-      such a constraint must be recreated without the <literal>NO INHERIT</literal>
-      clause.
+      attached are marked <literal>NO INHERIT</literal>, the command will fail;
+      such constraints must be recreated without the
+      <literal>NO INHERIT</literal> clause.
      </para>
 
      <para>
       If the new partition is a regular table, a full table scan is performed
-      to check that no existing row in the table violates the partition
-      constraint.  It is possible to avoid this scan by adding a valid
-      <literal>CHECK</literal> constraint to the table that would allow only
-      the rows satisfying the desired partition constraint before running this
-      command.  It will be determined using such a constraint that the table
-      need not be scanned to validate the partition constraint.  This does not
-      work, however, if any of the partition keys is an expression and the
-      partition does not accept <literal>NULL</literal> values.  If attaching
-      a list partition that will not accept <literal>NULL</literal> values,
-      also add <literal>NOT NULL</literal> constraint to the partition key
-      column, unless it's an expression.
+      to check that existing rows in the table do not violate the partition
+      constraint. It is possible to avoid this scan by adding a valid
+      <literal>CHECK</literal> constraint to the table that allows only
+      rows satisfying the desired partition constraint before running this
+      command. The <literal>CHECK</literal> constraint will be used to
+      determine that the table need not be scanned to validate the partition
+      constraint. This does not work, however, if any of the partition keys
+      is an expression and the partition does not accept
+      <literal>NULL</literal> values. If attaching a list partition that will
+      not accept <literal>NULL</literal> values, also add
+      <literal>NOT NULL</literal> constraint to the partition key column,
+      unless it's an expression.
      </para>
 
      <para>
@@ -911,10 +928,11 @@ WITH ( MODULUS <replaceable class="parameter">numeric_literal</replaceable>, REM
     <term><literal>DETACH PARTITION</literal> <replaceable class="parameter">partition_name</replaceable></term>
     <listitem>
      <para>
-      This form detaches specified partition of the target table.  The detached
+      This form detaches the specified partition of the target table.  The detached
       partition continues to exist as a standalone table, but no longer has any
       ties to the table from which it was detached.  Any indexes that were
-      attached to the target table's indexes are detached.
+      attached to the target table's indexes are detached.  Any triggers that
+      were created as clones of those in the target table are removed.
      </para>
     </listitem>
    </varlistentry>
@@ -1177,8 +1195,8 @@ WITH ( MODULUS <replaceable class="parameter">numeric_literal</replaceable>, REM
     </variablelist>
  </refsect1>
 
- <refsect1>
-  <title>Notes</title>
+ <refsect1 id="sql-altertable-notes">
+  <title id="sql-altertable-notes-title">Notes</title>
 
    <para>
     The key word <literal>COLUMN</literal> is noise and can be omitted.
@@ -1222,6 +1240,32 @@ WITH ( MODULUS <replaceable class="parameter">numeric_literal</replaceable>, REM
     The main reason for providing the option to specify multiple changes
     in a single <command>ALTER TABLE</command> is that multiple table scans or
     rewrites can thereby be combined into a single pass over the table.
+   </para>
+
+   <para>
+    Scanning a large table to verify a new foreign key or check constraint
+    can take a long time, and other updates to the table are locked out
+    until the <command>ALTER TABLE ADD CONSTRAINT</command> command is
+    committed.  The main purpose of the <literal>NOT VALID</literal>
+    constraint option is to reduce the impact of adding a constraint on
+    concurrent updates.  With <literal>NOT VALID</literal>,
+    the <command>ADD CONSTRAINT</command> command does not scan the table
+    and can be committed immediately.  After that, a <literal>VALIDATE
+    CONSTRAINT</literal> command can be issued to verify that existing rows
+    satisfy the constraint.  The validation step does not need to lock out
+    concurrent updates, since it knows that other transactions will be
+    enforcing the constraint for rows that they insert or update; only
+    pre-existing rows need to be checked.  Hence, validation acquires only
+    a <literal>SHARE UPDATE EXCLUSIVE</literal> lock on the table being
+    altered.  (If the constraint is a foreign key then a <literal>ROW
+    SHARE</literal> lock is also required on the table referenced by the
+    constraint.)  In addition to improving concurrency, it can be useful to
+    use <literal>NOT VALID</literal> and <literal>VALIDATE
+    CONSTRAINT</literal> in cases where the table is known to contain
+    pre-existing violations.  Once the constraint is in place, no new
+    violations can be inserted, and the existing problems can be corrected
+    at leisure until <literal>VALIDATE CONSTRAINT</literal> finally
+    succeeds.
    </para>
 
    <para>
@@ -1270,10 +1314,12 @@ WITH ( MODULUS <replaceable class="parameter">numeric_literal</replaceable>, REM
    <para>
     If a table has any descendant tables, it is not permitted to add,
     rename, or change the type of a column in the parent table without doing
-    same to the descendants.  This ensures that the descendants always have
-    columns matching the parent.  Similarly, a constraint cannot be renamed
-    in the parent without also renaming it in all descendants, so that
-    constraints also match between the parent and its descendants.
+    the same to the descendants.  This ensures that the descendants always
+    have columns matching the parent.  Similarly, a <literal>CHECK</literal>
+    constraint cannot be renamed in the parent without also renaming it in
+    all descendants, so that <literal>CHECK</literal> constraints also match
+    between the parent and its descendants.  (That restriction does not apply
+    to index-based constraints, however.)
     Also, because selecting from the parent also selects from its descendants,
     a constraint on the parent cannot be marked valid unless it is also marked
     valid for those descendants.  In all of these cases, <command>ALTER TABLE
@@ -1481,35 +1527,35 @@ ALTER TABLE distributors DROP CONSTRAINT distributors_pkey,
 </programlisting></para>
 
   <para>
-   Attach a partition to range partitioned table:
+   To attach a partition to a range-partitioned table:
 <programlisting>
 ALTER TABLE measurement
     ATTACH PARTITION measurement_y2016m07 FOR VALUES FROM ('2016-07-01') TO ('2016-08-01');
 </programlisting></para>
 
   <para>
-   Attach a partition to list partitioned table:
+   To attach a partition to a list-partitioned table:
 <programlisting>
 ALTER TABLE cities
     ATTACH PARTITION cities_ab FOR VALUES IN ('a', 'b');
 </programlisting></para>
 
   <para>
-   Attach a default partition to a partitioned table:
-<programlisting>
-ALTER TABLE cities
-    ATTACH PARTITION cities_partdef DEFAULT;
-</programlisting></para>
-
-  <para>
-   Attach a partition to hash partitioned table:
+   To attach a partition to a hash-partitioned table:
 <programlisting>
 ALTER TABLE orders
     ATTACH PARTITION orders_p4 FOR VALUES WITH (MODULUS 4, REMAINDER 3);
 </programlisting></para>
 
   <para>
-   Detach a partition from partitioned table:
+   To attach a default partition to a partitioned table:
+<programlisting>
+ALTER TABLE cities
+    ATTACH PARTITION cities_partdef DEFAULT;
+</programlisting></para>
+
+  <para>
+   To detach a partition from a partitioned table:
 <programlisting>
 ALTER TABLE measurement
     DETACH PARTITION measurement_y2015m12;

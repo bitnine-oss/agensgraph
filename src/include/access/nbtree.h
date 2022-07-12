@@ -97,12 +97,12 @@ typedef BTPageOpaqueData *BTPageOpaque;
 typedef struct BTMetaPageData
 {
 	uint32		btm_magic;		/* should contain BTREE_MAGIC */
-	uint32		btm_version;	/* should contain BTREE_VERSION */
+	uint32		btm_version;	/* nbtree version (always <= BTREE_VERSION) */
 	BlockNumber btm_root;		/* current root location */
 	uint32		btm_level;		/* tree level of the root page */
 	BlockNumber btm_fastroot;	/* current "fast" root location */
 	uint32		btm_fastlevel;	/* tree level of the "fast" root page */
-	/* following fields are available since page version 3 */
+	/* remaining fields only valid when btm_version is BTREE_VERSION */
 	TransactionId btm_oldest_btpo_xact; /* oldest btpo_xact among all deleted
 										 * pages */
 	float8		btm_last_cleanup_num_heap_tuples;	/* number of heap tuples
@@ -274,8 +274,7 @@ typedef struct BTMetaPageData
  *	When a new operator class is declared, we require that the user
  *	supply us with an amproc procedure (BTORDER_PROC) for determining
  *	whether, for two keys a and b, a < b, a = b, or a > b.  This routine
- *	must return < 0, 0, > 0, respectively, in these three cases.  (It must
- *	not return INT_MIN, since we may negate the result before using it.)
+ *	must return < 0, 0, > 0, respectively, in these three cases.
  *
  *	To facilitate accelerated sorting, an operator class may choose to
  *	offer a second procedure (BTSORTSUPPORT_PROC).  For full details, see
@@ -422,7 +421,7 @@ typedef BTScanPosData *BTScanPos;
 		(scanpos).buf = InvalidBuffer; \
 		(scanpos).lsn = InvalidXLogRecPtr; \
 		(scanpos).nextTupleOffset = 0; \
-	} while (0);
+	} while (0)
 
 /* We need one of these for each equality-type SK_SEARCHARRAY scan key */
 typedef struct BTArrayKeyInfo
@@ -554,7 +553,8 @@ extern void _bt_delitems_delete(Relation rel, Buffer buf,
 extern void _bt_delitems_vacuum(Relation rel, Buffer buf,
 					OffsetNumber *itemnos, int nitems,
 					BlockNumber lastBlockVacuumed);
-extern int	_bt_pagedel(Relation rel, Buffer buf);
+extern uint32 _bt_pagedel(Relation rel, Buffer leafbuf,
+						  TransactionId *oldestBtpoXact);
 
 /*
  * prototypes for functions in nbtsearch.c

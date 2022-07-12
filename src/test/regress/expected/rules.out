@@ -1319,6 +1319,14 @@ iexit| SELECT ih.name,
    FROM ihighway ih,
     ramp r
   WHERE (ih.thepath ## r.thepath);
+key_dependent_view| SELECT view_base_table.key,
+    view_base_table.data
+   FROM view_base_table
+  GROUP BY view_base_table.key;
+key_dependent_view_no_cols| SELECT
+   FROM view_base_table
+  GROUP BY view_base_table.key
+ HAVING (length((view_base_table.data)::text) > 0);
 mvtest_tv| SELECT mvtest_t.type,
     sum(mvtest_t.amt) AS totamt
    FROM mvtest_t
@@ -2601,16 +2609,27 @@ select reltoastrelid, relkind, relfrozenxid
 (1 row)
 
 drop view rules_fooview;
--- trying to convert a partitioned table to view is not allowed
+-- cannot convert an inheritance parent or child to a view, though
+create table rules_fooview (x int, y text);
+create table rules_fooview_child () inherits (rules_fooview);
+create rule "_RETURN" as on select to rules_fooview do instead
+  select 1 as x, 'aaa'::text as y;
+ERROR:  could not convert table "rules_fooview" to a view because it has child tables
+create rule "_RETURN" as on select to rules_fooview_child do instead
+  select 1 as x, 'aaa'::text as y;
+ERROR:  could not convert table "rules_fooview_child" to a view because it has parent tables
+drop table rules_fooview cascade;
+NOTICE:  drop cascades to table rules_fooview_child
+-- likewise, converting a partitioned table or partition to view is not allowed
 create table rules_fooview (x int, y text) partition by list (x);
 create rule "_RETURN" as on select to rules_fooview do instead
   select 1 as x, 'aaa'::text as y;
 ERROR:  cannot convert partitioned table "rules_fooview" to a view
--- nor can one convert a partition to view
 create table rules_fooview_part partition of rules_fooview for values in (1);
 create rule "_RETURN" as on select to rules_fooview_part do instead
   select 1 as x, 'aaa'::text as y;
 ERROR:  cannot convert partition "rules_fooview_part" to a view
+drop table rules_fooview;
 --
 -- check for planner problems with complex inherited UPDATES
 --
@@ -2848,7 +2867,7 @@ Rules:
  NOTIFY rules_src_deletion
 
 --
--- Ensure a aliased target relation for insert is correctly deparsed.
+-- Ensure an aliased target relation for insert is correctly deparsed.
 --
 create rule r4 as on insert to rules_src do instead insert into rules_log AS trgt SELECT NEW.* RETURNING trgt.f1, trgt.f2;
 create rule r5 as on update to rules_src do instead UPDATE rules_log AS trgt SET tag = 'updated' WHERE trgt.f1 = new.f1;
@@ -2928,6 +2947,18 @@ create view rule_v1 as values(1,2);
  column2 | integer |           |          |         | plain   | 
 View definition:
  VALUES (1,2);
+
+alter table rule_v1 rename column column2 to q2;
+\d+ rule_v1
+                           View "public.rule_v1"
+ Column  |  Type   | Collation | Nullable | Default | Storage | Description 
+---------+---------+-----------+----------+---------+---------+-------------
+ column1 | integer |           |          |         | plain   | 
+ q2      | integer |           |          |         | plain   | 
+View definition:
+ SELECT "*VALUES*".column1,
+    "*VALUES*".column2 AS q2
+   FROM (VALUES (1,2)) "*VALUES*";
 
 drop view rule_v1;
 create view rule_v1(x) as values(1,2);
@@ -3190,21 +3221,21 @@ CREATE FUNCTION func_with_set_params() RETURNS integer
     SET extra_float_digits TO 2
     SET work_mem TO '4MB'
     SET datestyle to iso, mdy
-    SET local_preload_libraries TO "Mixed/Case", 'c:/"a"/path'
+    SET local_preload_libraries TO "Mixed/Case", 'c:/''a"/path', '', '0123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789'
     IMMUTABLE STRICT;
 SELECT pg_get_functiondef('func_with_set_params()'::regprocedure);
-                      pg_get_functiondef                       
----------------------------------------------------------------
- CREATE OR REPLACE FUNCTION public.func_with_set_params()     +
-  RETURNS integer                                             +
-  LANGUAGE sql                                                +
-  IMMUTABLE STRICT                                            +
-  SET search_path TO pg_catalog                               +
-  SET extra_float_digits TO '2'                               +
-  SET work_mem TO '4MB'                                       +
-  SET "DateStyle" TO 'iso, mdy'                               +
-  SET local_preload_libraries TO "Mixed/Case", "c:/""a""/path"+
- AS $function$select 1;$function$                             +
+                                                                            pg_get_functiondef                                                                            
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ CREATE OR REPLACE FUNCTION public.func_with_set_params()                                                                                                                +
+  RETURNS integer                                                                                                                                                        +
+  LANGUAGE sql                                                                                                                                                           +
+  IMMUTABLE STRICT                                                                                                                                                       +
+  SET search_path TO 'pg_catalog'                                                                                                                                        +
+  SET extra_float_digits TO '2'                                                                                                                                          +
+  SET work_mem TO '4MB'                                                                                                                                                  +
+  SET "DateStyle" TO 'iso, mdy'                                                                                                                                          +
+  SET local_preload_libraries TO 'Mixed/Case', 'c:/''a"/path', '', '0123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789'+
+ AS $function$select 1;$function$                                                                                                                                        +
  
 (1 row)
 

@@ -1,5 +1,6 @@
 <!--
 doc/src/sgml/ref/create_procedure.sgml
+PostgreSQL documentation
 -->
 
 <refentry id="sql-createprocedure">
@@ -163,7 +164,7 @@ CREATE [ OR REPLACE ] PROCEDURE
        The name of the language that the procedure is implemented in.
        It can be <literal>sql</literal>, <literal>c</literal>,
        <literal>internal</literal>, or the name of a user-defined
-       procedural language, e.g. <literal>plpgsql</literal>.  Enclosing the
+       procedural language, e.g., <literal>plpgsql</literal>.  Enclosing the
        name in single quotes is deprecated and requires matching case.
       </para>
      </listitem>
@@ -202,6 +203,12 @@ CREATE [ OR REPLACE ] PROCEDURE
       The key word <literal>EXTERNAL</literal> is allowed for SQL
       conformance, but it is optional since, unlike in SQL, this feature
       applies to all procedures not only external ones.
+     </para>
+
+     <para>
+      A <literal>SECURITY DEFINER</literal> procedure cannot execute
+      transaction control statements (for example, <command>COMMIT</command>
+      and <command>ROLLBACK</command>, depending on the language).
      </para>
     </listitem>
    </varlistentry>

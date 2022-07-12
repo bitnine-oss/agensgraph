@@ -316,7 +316,7 @@ su - postgres
   <para>
    If you need to get a <acronym>GNU</acronym> package, you can find
    it at your local <acronym>GNU</acronym> mirror site (see <ulink
-   url="http://www.gnu.org/order/ftp.html"></ulink>
+   url="https://www.gnu.org/prep/ftp"></ulink>
    for a list) or at <ulink
    url="ftp://ftp.gnu.org/gnu/"></ulink>.
   </para>
@@ -979,21 +979,31 @@ su - postgres
        <term><option>--with-libxml</option></term>
        <listitem>
         <para>
-         Build with libxml (enables SQL/XML support).  Libxml version 2.6.23 or
+         Build with libxml2, enabling SQL/XML support.  Libxml2 version 2.6.23 or
          later is required for this feature.
         </para>
 
         <para>
-         Libxml installs a program <command>xml2-config</command> that
-         can be used to detect the required compiler and linker
-         options.  PostgreSQL will use it automatically if found.  To
-         specify a libxml installation at an unusual location, you can
-         either set the environment variable
-         <envar>XML2_CONFIG</envar> to point to the
-         <command>xml2-config</command> program belonging to the
-         installation, or use the options
-         <option>--with-includes</option> and
-         <option>--with-libraries</option>.
+         To detect the required compiler and linker options, PostgreSQL will
+         query <command>pkg-config</command>, if that is installed and knows
+         about libxml2.  Otherwise the program <command>xml2-config</command>,
+         which is installed by libxml2, will be used if it is found.  Use
+         of <command>pkg-config</command> is preferred, because it can deal
+         with multi-architecture installations better.
+        </para>
+
+        <para>
+         To use a libxml2 installation that is in an unusual location, you
+         can set <command>pkg-config</command>-related environment
+         variables (see its documentation), or set the environment variable
+         <envar>XML2_CONFIG</envar> to point to
+         the <command>xml2-config</command> program belonging to the libxml2
+         installation, or set the variables <envar>XML2_CFLAGS</envar>
+         and <envar>XML2_LIBS</envar>.  (If <command>pkg-config</command> is
+         installed, then to override its idea of where libxml2 is you must
+         either set <envar>XML2_CONFIG</envar> or set
+         both <envar>XML2_CFLAGS</envar> and <envar>XML2_LIBS</envar> to
+         nonempty strings.)
         </para>
        </listitem>
       </varlistentry>
@@ -1500,8 +1510,9 @@ su - postgres
        <term><envar>PERL</envar></term>
        <listitem>
         <para>
-         Full path name of the Perl interpreter.  This will be used to
-         determine the dependencies for building PL/Perl.
+         Perl interpreter program.  This will be used to determine the
+         dependencies for building PL/Perl.  The default is
+         <command>perl</command>.
         </para>
        </listitem>
       </varlistentry>
@@ -1510,13 +1521,14 @@ su - postgres
        <term><envar>PYTHON</envar></term>
        <listitem>
         <para>
-         Full path name of the Python interpreter.  This will be used to
+         Python interpreter program.  This will be used to
          determine the dependencies for building PL/Python.  Also,
          whether Python 2 or 3 is specified here (or otherwise
          implicitly chosen) determines which variant of the PL/Python
          language becomes available.  See
          <xref linkend="plpython-python23"/>
-         for more information.
+         for more information.  If this is not set, the following are probed
+         in this order: <literal>python python3 python2</literal>.
         </para>
        </listitem>
       </varlistentry>
@@ -1525,7 +1537,7 @@ su - postgres
        <term><envar>TCLSH</envar></term>
        <listitem>
         <para>
-         Full path name of the Tcl interpreter.  This will be used to
+         Tcl interpreter program.  This will be used to
          determine the dependencies for building PL/Tcl, and it will
          be substituted into Tcl scripts.
         </para>
@@ -1537,7 +1549,7 @@ su - postgres
        <listitem>
         <para>
          <command>xml2-config</command> program used to locate the
-         libxml installation.
+         libxml2 installation
         </para>
        </listitem>
       </varlistentry>
@@ -1599,12 +1611,13 @@ su - postgres
    <title>Build</title>
 
    <para>
-    To start the build, type:
+    To start the build, type either of:
 <screen>
 <userinput>make</userinput>
+<userinput>make all</userinput>
 </screen>
-    (Remember to use <acronym>GNU</acronym> <application>make</application>.) The build
-    will take a few minutes depending on your
+    (Remember to use <acronym>GNU</acronym> <application>make</application>.)
+    The build will take a few minutes depending on your
     hardware. The last line displayed should be:
 <screen>
 All of PostgreSQL successfully made. Ready to install.
@@ -1622,6 +1635,18 @@ All of PostgreSQL successfully made. Ready to install.
 <screen>
 PostgreSQL, contrib, and documentation successfully made. Ready to install.
 </screen>
+   </para>
+
+   <para>
+    If you want to invoke the build from another makefile rather than
+    manually, you must unset <varname>MAKELEVEL</varname> or set it to zero,
+    for instance like this:
+<programlisting>
+build-postgresql:
+        $(MAKE) -C postgresql MAKELEVEL=0 all
+</programlisting>
+    Failure to do that can lead to strange error messages, typically about
+    missing header files.
    </para>
   </step>
 
@@ -1805,7 +1830,7 @@ setenv LD_LIBRARY_PATH /usr/local/pgsql/lib
     <filename>/etc/profile</filename> or <filename>~/.bash_profile</filename>.  Some
     good information about the caveats associated with this method can
     be found at <ulink
-    url="http://xahlee.org/UnixResource_dir/_/ldpath.html"></ulink>.
+    url="http://xahlee.info/UnixResource_dir/_/ldpath.html"></ulink>.
    </para>
 
    <para>
@@ -1954,9 +1979,9 @@ export MANPATH
   <para>
    If you have installation problems on a platform that is known
    to be supported according to recent build farm results, please report
-   it to <email>pgsql-bugs@postgresql.org</email>.  If you are interested
+   it to <email>pgsql-bugs@lists.postgresql.org</email>.  If you are interested
    in porting <productname>PostgreSQL</productname> to a new platform,
-   <email>pgsql-hackers@postgresql.org</email> is the appropriate place
+   <email>pgsql-hackers@lists.postgresql.org</email> is the appropriate place
    to discuss that.
   </para>
  </sect1>
@@ -2250,62 +2275,6 @@ ERROR:  could not load library "/opt/dbs/pgsql/lib/plperl.so": Bad address
      out-of-memory kill is configurable on a system- or process-wide
      basis if this becomes a problem.
     </para>
-
-    <bibliography>
-     <title>References and Resources</title>
-
-     <biblioentry>
-      <biblioset relation="article">
-       <title><ulink url="http://publib.boulder.ibm.com/infocenter/pseries/topic/com.ibm.aix.doc/aixprggd/genprogc/lrg_prg_support.htm">Large Program Support</ulink></title>
-      </biblioset>
-      <biblioset relation="book">
-       <title>AIX Documentation: General Programming Concepts: Writing and Debugging Programs</title>
-      </biblioset>
-     </biblioentry>
-
-     <biblioentry>
-      <biblioset relation="article">
-       <title><ulink url="http://publib.boulder.ibm.com/infocenter/pseries/topic/com.ibm.aix.doc/aixprggd/genprogc/address_space.htm">Program Address Space Overview</ulink></title>
-      </biblioset>
-      <biblioset relation="book">
-       <title>AIX Documentation: General Programming Concepts: Writing and Debugging Programs</title>
-      </biblioset>
-     </biblioentry>
-
-     <biblioentry>
-      <biblioset relation="article">
-       <title><ulink url="http://publib.boulder.ibm.com/infocenter/pseries/v5r3/topic/com.ibm.aix.doc/aixbman/prftungd/resmgmt2.htm">Performance Overview of the Virtual Memory Manager (VMM)</ulink></title>
-      </biblioset>
-      <biblioset relation="book">
-       <title>AIX Documentation: Performance Management Guide</title>
-      </biblioset>
-     </biblioentry>
-
-     <biblioentry>
-      <biblioset relation="article">
-       <title><ulink url="http://publib.boulder.ibm.com/infocenter/pseries/v5r3/topic/com.ibm.aix.doc/aixbman/prftungd/memperf7.htm">Page Space Allocation</ulink></title>
-      </biblioset>
-      <biblioset relation="book">
-       <title>AIX Documentation: Performance Management Guide</title>
-      </biblioset>
-     </biblioentry>
-
-     <biblioentry>
-      <biblioset relation="article">
-       <title><ulink url="http://publib.boulder.ibm.com/infocenter/pseries/v5r3/topic/com.ibm.aix.doc/aixbman/prftungd/memperf6.htm">Paging-space thresholds tuning</ulink></title>
-      </biblioset>
-      <biblioset relation="book">
-       <title>AIX Documentation: Performance Management Guide</title>
-      </biblioset>
-     </biblioentry>
-
-     <biblioentry>
-       <title><ulink url="http://www.redbooks.ibm.com/abstracts/sg245674.html?Open">Developing and Porting C and C++ Applications on AIX</ulink></title>
-       <publisher>
-        <publishername>IBM Redbook</publishername>
-       </publisher>
-     </biblioentry>
-    </bibliography>
    </sect3>
   </sect2>
 
@@ -2500,6 +2469,81 @@ PHSS_30849  s700_800 u2comp/be/plugin library Patch
    </para>
   </sect2>
 
+  <sect2 id="installation-notes-macos">
+   <title>macOS</title>
+
+   <indexterm zone="installation-notes-macos">
+    <primary>macOS</primary>
+    <secondary>installation on</secondary>
+   </indexterm>
+
+   <para>
+    To build <productname>PostgreSQL</productname> from source
+    on <productname>macOS</productname>, you will need to install Apple's
+    command line developer tools, which can be done by issuing
+<programlisting>
+xcode-select --install
+</programlisting>
+    (note that this will pop up a GUI dialog window for confirmation).
+    You may or may not wish to also install Xcode.
+   </para>
+
+   <para>
+    On recent <productname>macOS</productname> releases, it's necessary to
+    embed the <quote>sysroot</quote> path in the include switches used to
+    find some system header files.  This results in the outputs of
+    the <application>configure</application> script varying depending on
+    which SDK version was used during <application>configure</application>.
+    That shouldn't pose any problem in simple scenarios, but if you are
+    trying to do something like building an extension on a different machine
+    than the server code was built on, you may need to force use of a
+    different sysroot path.  To do that, set <varname>PG_SYSROOT</varname>,
+    for example
+<programlisting>
+make PG_SYSROOT=<replaceable>/desired/path</replaceable> all
+</programlisting>
+    To find out the appropriate path on your machine, run
+<programlisting>
+xcrun --show-sdk-path
+</programlisting>
+    Note that building an extension using a different sysroot version than
+    was used to build the core server is not really recommended; in the
+    worst case it could result in hard-to-debug ABI inconsistencies.
+   </para>
+
+   <para>
+    You can also select a non-default sysroot path when configuring, by
+    specifying <varname>PG_SYSROOT</varname>
+    to <application>configure</application>:
+<programlisting>
+./configure ... PG_SYSROOT=<replaceable>/desired/path</replaceable>
+</programlisting>
+    This would primarily be useful to cross-compile for some other
+    macOS version.  There is no guarantee that the resulting executables
+    will run on the current host.
+   </para>
+
+   <para>
+    To suppress the <option>-isysroot</option> options altogether, use
+<programlisting>
+./configure ... PG_SYSROOT=none
+</programlisting>
+    (any nonexistent pathname will work).  This might be useful if you wish
+    to build with a non-Apple compiler, but beware that that case is not
+    tested or supported by the PostgreSQL developers.
+   </para>
+
+   <para>
+    <productname>macOS</productname>'s <quote>System Integrity
+    Protection</quote> (SIP) feature breaks <literal>make check</literal>,
+    because it prevents passing the needed setting
+    of <literal>DYLD_LIBRARY_PATH</literal> down to the executables being
+    tested.  You can work around that by doing <literal>make
+    install</literal> before <literal>make check</literal>.
+    Most Postgres developers just turn off SIP, though.
+   </para>
+  </sect2>
+
   <sect2 id="installation-notes-mingw">
    <title>MinGW/Native Windows</title>
 
@@ -2534,7 +2578,7 @@ PHSS_30849  s700_800 u2comp/be/plugin library Patch
 
    <para>
      To build 64 bit binaries using MinGW, install the 64 bit tool set
-     from <ulink url="http://mingw-w64.sourceforge.net/"></ulink>, put its bin
+     from <ulink url="https://mingw-w64.org/"></ulink>, put its bin
      directory in the <envar>PATH</envar>, and run
      <command>configure</command> with the
      <command>--host=x86_64-w64-mingw32</command> option.
@@ -2593,14 +2637,14 @@ PHSS_30849  s700_800 u2comp/be/plugin library Patch
 
     <para>
      You can download Sun Studio
-     from <ulink url="http://www.oracle.com/technetwork/server-storage/solarisstudio/downloads/"></ulink>.
+     from <ulink url="https://www.oracle.com/technetwork/server-storage/solarisstudio/downloads/"></ulink>.
      Many of GNU tools are integrated into Solaris 10, or they are
      present on the Solaris companion CD.  If you like packages for
      older version of Solaris, you can find these tools
      at <ulink url="http://www.sunfreeware.com"></ulink>.
      If you prefer
      sources, look
-     at <ulink url="http://www.gnu.org/order/ftp.html"></ulink>.
+     at <ulink url="https://www.gnu.org/prep/ftp"></ulink>.
     </para>
    </sect3>
 

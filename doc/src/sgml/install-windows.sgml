@@ -19,10 +19,9 @@
  <para>
   There are several different ways of building PostgreSQL on
   <productname>Windows</productname>. The simplest way to build with
-  Microsoft tools is to install <productname>Visual Studio Express 2017
-  for Windows Desktop</productname> and use the included
-  compiler. It is also possible to build with the full
-  <productname>Microsoft Visual C++ 2005 to 2017</productname>.
+  Microsoft tools is to install <productname>Visual Studio 2019</productname>
+  and use the included compiler. It is also possible to build with the full
+  <productname>Microsoft Visual C++ 2005 to 2019</productname>.
   In some cases that requires the installation of the
   <productname>Windows SDK</productname> in addition to the compiler.
  </para>
@@ -69,19 +68,20 @@
   <productname>Visual Studio Express</productname> or some versions of the
   <productname>Microsoft Windows SDK</productname>. If you do not already have a
   <productname>Visual Studio</productname> environment set up, the easiest
-  ways are to use the compilers from <productname>Visual Studio Express 2017
-  for Windows Desktop</productname> or those in the <productname>Windows SDK
-  8.1</productname>, which are both free downloads from Microsoft.
+  ways are to use the compilers from
+  <productname>Visual Studio 2019</productname> or those in the
+  <productname>Windows SDK 10</productname>, which are both free downloads
+  from Microsoft.
  </para>
 
  <para>
   Both 32-bit and 64-bit builds are possible with the Microsoft Compiler suite.
   32-bit PostgreSQL builds are possible with
   <productname>Visual Studio 2005</productname> to
-  <productname>Visual Studio 2017</productname> (including Express editions),
-  as well as standalone Windows SDK releases 6.0 to 8.1.
+  <productname>Visual Studio 2019</productname>,
+  as well as standalone Windows SDK releases 6.0 to 10.
   64-bit PostgreSQL builds are supported with
-  <productname>Microsoft Windows SDK</productname> version 6.0a to 8.1 or
+  <productname>Microsoft Windows SDK</productname> version 6.0a to 10 or
   <productname>Visual Studio 2008</productname> and above. Compilation
   is supported down to <productname>Windows XP</productname> and
   <productname>Windows Server 2003</productname> when building with
@@ -89,7 +89,8 @@
   <productname>Visual Studio 2013</productname>. Building with
   <productname>Visual Studio 2015</productname> is supported down to
   <productname>Windows Vista</productname> and <productname>Windows Server 2008</productname>.
-   Building with <productname>Visual Studio 2017</productname> is supported
+  Building with <productname>Visual Studio 2017</productname> to
+  <productname>Visual Studio 2019</productname> is supported
    down to <productname>Windows 7 SP1</productname> and <productname>Windows Server 2008 R2 SP1</productname>.
  </para>
 
@@ -107,7 +108,7 @@
   In the <productname>Microsoft Windows SDK</productname>, start the
   <application>CMD shell</application> listed under the SDK on the Start Menu.
   In recent SDK versions you can change the targeted CPU architecture, build
-  type, and target OS by using the <command>setenv</command> command, e.g.
+  type, and target OS by using the <command>setenv</command> command, e.g.,
   <command>setenv /x86 /release /xp</command> to target Windows XP or later
   with a 32-bit release build. See <command>/?</command> for other options to
   <command>setenv</command>.  All commands should be run from the
@@ -162,7 +163,7 @@ $ENV{MSBFLAGS}="/m";
       If your build environment doesn't ship with a supported version of the
       <productname>Microsoft Windows SDK</productname> it
       is recommended that you upgrade to the latest version (currently
-      version 7.1), available for download from
+      version 10), available for download from
       <ulink url="https://www.microsoft.com/download"></ulink>.
      </para>
      <para>
@@ -182,7 +183,7 @@ $ENV{MSBFLAGS}="/m";
       ActiveState Perl is required to run the build generation scripts. MinGW
       or Cygwin Perl will not work. It must also be present in the PATH.
       Binaries can be downloaded from
-      <ulink url="http://www.activestate.com"></ulink>
+      <ulink url="https://www.activestate.com"></ulink>
       (Note: version 5.8.3 or later is required,
       the free Standard Distribution is sufficient).
      </para></listitem>
@@ -240,7 +241,7 @@ $ENV{MSBFLAGS}="/m";
         installations <filename>C:\Program Files\GnuWin32</filename>.
         Consider installing into <filename>C:\GnuWin32</filename> or use the
         NTFS short name path to GnuWin32 in your PATH environment setting
-        (e.g. <filename>C:\PROGRA~1\GnuWin32</filename>).
+        (e.g., <filename>C:\PROGRA~1\GnuWin32</filename>).
        </para>
      </note>
 
@@ -277,7 +278,7 @@ $ENV{MSBFLAGS}="/m";
      <listitem><para>
       Required for GSSAPI authentication support. MIT Kerberos can be
       downloaded from
-      <ulink url="http://web.mit.edu/Kerberos/dist/index.html"></ulink>.
+      <ulink url="https://web.mit.edu/Kerberos/dist/index.html"></ulink>.
      </para></listitem>
     </varlistentry>
 
@@ -286,7 +287,7 @@ $ENV{MSBFLAGS}="/m";
       <productname>libxslt</productname></term>
      <listitem><para>
       Required for XML support. Binaries can be downloaded from
-      <ulink url="http://zlatkovic.com/pub/libxml"></ulink> or source from
+      <ulink url="https://zlatkovic.com/pub/libxml"></ulink> or source from
       <ulink url="http://xmlsoft.org"></ulink>. Note that libxml2 requires iconv,
       which is available from the same download location.
      </para></listitem>
@@ -296,7 +297,7 @@ $ENV{MSBFLAGS}="/m";
      <term><productname>OpenSSL</productname></term>
      <listitem><para>
       Required for SSL support. Binaries can be downloaded from
-      <ulink url="http://www.slproweb.com/products/Win32OpenSSL.html"></ulink>
+      <ulink url="https://slproweb.com/products/Win32OpenSSL.html"></ulink>
       or source from <ulink url="https://www.openssl.org"></ulink>.
      </para></listitem>
     </varlistentry>
@@ -314,7 +315,7 @@ $ENV{MSBFLAGS}="/m";
      <term><productname>Python</productname></term>
      <listitem><para>
       Required for building <application>PL/Python</application>. Binaries can
-      be downloaded from <ulink url="http://www.python.org"></ulink>.
+      be downloaded from <ulink url="https://www.python.org"></ulink>.
      </para></listitem>
     </varlistentry>
 
@@ -323,7 +324,7 @@ $ENV{MSBFLAGS}="/m";
      <listitem><para>
       Required for compression support in <application>pg_dump</application>
       and <application>pg_restore</application>. Binaries can be downloaded
-      from <ulink url="http://www.zlib.net"></ulink>.
+      from <ulink url="https://www.zlib.net"></ulink>.
      </para></listitem>
     </varlistentry>
 
@@ -473,7 +474,7 @@ $ENV{CONFIG}="Debug";
       ActiveState Perl installation, nor in the ActiveState Perl Package
       Manager (PPM) library. To install, download the
       <filename>IPC-Run-&lt;version&gt;.tar.gz</filename> source archive from CPAN,
-      at <ulink url="https://metacpan.org/release/IPC-Run/"></ulink>, and
+      at <ulink url="https://metacpan.org/release/IPC-Run"></ulink>, and
       uncompress. Edit the <filename>buildenv.pl</filename> file, and add a PERL5LIB
       variable to point to the <filename>lib</filename> subdirectory from the
       extracted archive. For example:
@@ -498,7 +499,7 @@ $ENV{PERL5LIB}=$ENV{PERL5LIB} . ';c:\IPC-Run-0.94\lib';
      <term>OpenJade 1.3.1-2</term>
      <listitem><para>
       Download from
-      <ulink url="http://sourceforge.net/projects/openjade/files/openjade/1.3.1/openjade-1_3_1-2-bin.zip/download"></ulink>
+      <ulink url="https://sourceforge.net/projects/openjade/files/openjade/1.3.1/openjade-1_3_1-2-bin.zip/download"></ulink>
       and uncompress in the subdirectory <filename>openjade-1.3.1</filename>.
      </para></listitem>
     </varlistentry>
@@ -507,7 +508,7 @@ $ENV{PERL5LIB}=$ENV{PERL5LIB} . ';c:\IPC-Run-0.94\lib';
      <term>DocBook DTD 4.2</term>
      <listitem><para>
       Download from
-      <ulink url="http://www.oasis-open.org/docbook/sgml/4.2/docbook-4.2.zip"></ulink>
+      <ulink url="https://www.oasis-open.org/docbook/sgml/4.2/docbook-4.2.zip"></ulink>
       and uncompress in the subdirectory <filename>docbook</filename>.
      </para></listitem>
     </varlistentry>
@@ -516,7 +517,7 @@ $ENV{PERL5LIB}=$ENV{PERL5LIB} . ';c:\IPC-Run-0.94\lib';
      <term>ISO character entities</term>
      <listitem><para>
       Download from
-      <ulink url="http://www.oasis-open.org/cover/ISOEnts.zip"></ulink> and
+      <ulink url="https://www.oasis-open.org/cover/ISOEnts.zip"></ulink> and
       uncompress in the subdirectory <filename>docbook</filename>.
      </para></listitem>
     </varlistentry>

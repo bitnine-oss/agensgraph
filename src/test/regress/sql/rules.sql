@@ -898,15 +898,27 @@ select reltoastrelid, relkind, relfrozenxid
 
 drop view rules_fooview;
 
--- trying to convert a partitioned table to view is not allowed
+-- cannot convert an inheritance parent or child to a view, though
+create table rules_fooview (x int, y text);
+create table rules_fooview_child () inherits (rules_fooview);
+
+create rule "_RETURN" as on select to rules_fooview do instead
+  select 1 as x, 'aaa'::text as y;
+create rule "_RETURN" as on select to rules_fooview_child do instead
+  select 1 as x, 'aaa'::text as y;
+
+drop table rules_fooview cascade;
+
+-- likewise, converting a partitioned table or partition to view is not allowed
 create table rules_fooview (x int, y text) partition by list (x);
 create rule "_RETURN" as on select to rules_fooview do instead
   select 1 as x, 'aaa'::text as y;
 
--- nor can one convert a partition to view
 create table rules_fooview_part partition of rules_fooview for values in (1);
 create rule "_RETURN" as on select to rules_fooview_part do instead
   select 1 as x, 'aaa'::text as y;
+
+drop table rules_fooview;
 
 --
 -- check for planner problems with complex inherited UPDATES
@@ -1007,7 +1019,7 @@ create rule r3 as on delete to rules_src do notify rules_src_deletion;
 \d+ rules_src
 
 --
--- Ensure a aliased target relation for insert is correctly deparsed.
+-- Ensure an aliased target relation for insert is correctly deparsed.
 --
 create rule r4 as on insert to rules_src do instead insert into rules_log AS trgt SELECT NEW.* RETURNING trgt.f1, trgt.f2;
 create rule r5 as on update to rules_src do instead UPDATE rules_log AS trgt SET tag = 'updated' WHERE trgt.f1 = new.f1;
@@ -1045,6 +1057,8 @@ DROP TABLE rule_t1;
 -- check display of VALUES in view definitions
 --
 create view rule_v1 as values(1,2);
+\d+ rule_v1
+alter table rule_v1 rename column column2 to q2;
 \d+ rule_v1
 drop view rule_v1;
 create view rule_v1(x) as values(1,2);
@@ -1164,7 +1178,7 @@ CREATE FUNCTION func_with_set_params() RETURNS integer
     SET extra_float_digits TO 2
     SET work_mem TO '4MB'
     SET datestyle to iso, mdy
-    SET local_preload_libraries TO "Mixed/Case", 'c:/"a"/path'
+    SET local_preload_libraries TO "Mixed/Case", 'c:/''a"/path', '', '0123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789'
     IMMUTABLE STRICT;
 SELECT pg_get_functiondef('func_with_set_params()'::regprocedure);
 

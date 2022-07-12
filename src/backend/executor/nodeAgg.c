@@ -221,6 +221,7 @@
 #include "catalog/pg_aggregate.h"
 #include "catalog/pg_proc.h"
 #include "catalog/pg_type.h"
+#include "executor/execExpr.h"
 #include "executor/executor.h"
 #include "executor/nodeAgg.h"
 #include "miscadmin.h"
@@ -627,33 +628,22 @@ advance_transition_function(AggState *aggstate,
 	 * first input, we don't need to do anything.  Also, if transfn returned a
 	 * pointer to a R/W expanded object that is already a child of the
 	 * aggcontext, assume we can adopt that value without copying it.
+	 *
+	 * It's safe to compare newVal with pergroup->transValue without
+	 * regard for either being NULL, because ExecAggTransReparent()
+	 * takes care to set transValue to 0 when NULL. Otherwise we could
+	 * end up accidentally not reparenting, when the transValue has
+	 * the same numerical value as newValue, despite being NULL.  This
+	 * is a somewhat hot path, making it undesirable to instead solve
+	 * this with another branch for the common case of the transition
+	 * function returning its (modified) input argument.
 	 */
 	if (!pertrans->transtypeByVal &&
 		DatumGetPointer(newVal) != DatumGetPointer(pergroupstate->transValue))
-	{
-		if (!fcinfo->isnull)
-		{
-			MemoryContextSwitchTo(aggstate->curaggcontext->ecxt_per_tuple_memory);
-			if (DatumIsReadWriteExpandedObject(newVal,
-											   false,
-											   pertrans->transtypeLen) &&
-				MemoryContextGetParent(DatumGetEOHP(newVal)->eoh_context) == CurrentMemoryContext)
-				 /* do nothing */ ;
-			else
-				newVal = datumCopy(newVal,
-								   pertrans->transtypeByVal,
-								   pertrans->transtypeLen);
-		}
-		if (!pergroupstate->transValueIsNull)
-		{
-			if (DatumIsReadWriteExpandedObject(pergroupstate->transValue,
-											   false,
-											   pertrans->transtypeLen))
-				DeleteExpandedObject(pergroupstate->transValue);
-			else
-				pfree(DatumGetPointer(pergroupstate->transValue));
-		}
-	}
+		newVal = ExecAggTransReparent(aggstate, pertrans,
+									  newVal, fcinfo->isnull,
+									  pergroupstate->transValue,
+									  pergroupstate->transValueIsNull);
 
 	pergroupstate->transValue = newVal;
 	pergroupstate->transValueIsNull = fcinfo->isnull;
@@ -1024,6 +1014,7 @@ finalize_partialaggregate(AggState *aggstate,
 														pergroupstate->transValueIsNull,
 														pertrans->transtypeLen);
 			fcinfo->argnull[0] = pergroupstate->transValueIsNull;
+			fcinfo->isnull = false;
 
 			*resultVal = FunctionCallInvoke(fcinfo);
 			*resultIsNull = fcinfo->isnull;
@@ -1245,7 +1236,7 @@ find_unaggregated_cols_walker(Node *node, Bitmapset **colnos)
 }
 
 /*
- * Initialize the hash table(s) to empty.
+ * (Re-)initialize the hash table(s) to empty.
  *
  * To implement hashed aggregation, we need a hashtable that stores a
  * representative tuple and an array of AggStatePerGroup structs for each
@@ -1256,9 +1247,9 @@ find_unaggregated_cols_walker(Node *node, Bitmapset **colnos)
  * We have a separate hashtable and associated perhash data structure for each
  * grouping set for which we're doing hashing.
  *
- * The hash tables always live in the hashcontext's per-tuple memory context
- * (there is only one of these for all tables together, since they are all
- * reset at the same time).
+ * The contents of the hash tables always live in the hashcontext's per-tuple
+ * memory context (there is only one of these for all tables together, since
+ * they are all reset at the same time).
  */
 static void
 build_hash_table(AggState *aggstate)
@@ -1277,17 +1268,21 @@ build_hash_table(AggState *aggstate)
 
 		Assert(perhash->aggnode->numGroups > 0);
 
-		perhash->hashtable = BuildTupleHashTable(&aggstate->ss.ps,
-												 perhash->hashslot->tts_tupleDescriptor,
-												 perhash->numCols,
-												 perhash->hashGrpColIdxHash,
-												 perhash->eqfuncoids,
-												 perhash->hashfunctions,
-												 perhash->aggnode->numGroups,
-												 additionalsize,
-												 aggstate->hashcontext->ecxt_per_tuple_memory,
-												 tmpmem,
-												 DO_AGGSPLIT_SKIPFINAL(aggstate->aggsplit));
+		if (perhash->hashtable)
+			ResetTupleHashTable(perhash->hashtable);
+		else
+			perhash->hashtable = BuildTupleHashTableExt(&aggstate->ss.ps,
+														perhash->hashslot->tts_tupleDescriptor,
+														perhash->numCols,
+														perhash->hashGrpColIdxHash,
+														perhash->eqfuncoids,
+														perhash->hashfunctions,
+														perhash->aggnode->numGroups,
+														additionalsize,
+														aggstate->ss.ps.state->es_query_cxt,
+														aggstate->hashcontext->ecxt_per_tuple_memory,
+														tmpmem,
+														DO_AGGSPLIT_SKIPFINAL(aggstate->aggsplit));
 	}
 }
 
@@ -1307,9 +1302,14 @@ build_hash_table(AggState *aggstate)
  * by themselves, and secondly ctids for row-marks.
  *
  * To eliminate duplicates, we build a bitmapset of the needed columns, and
- * then build an array of the columns included in the hashtable.  Note that
- * the array is preserved over ExecReScanAgg, so we allocate it in the
- * per-query context (unlike the hash table itself).
+ * then build an array of the columns included in the hashtable. We might
+ * still have duplicates if the passed-in grpColIdx has them, which can happen
+ * in edge cases from semijoins/distinct; these can't always be removed,
+ * because it's not certain that the duplicate cols will be using the same
+ * hash function.
+ *
+ * Note that the array is preserved over ExecReScanAgg, so we allocate it in
+ * the per-query context (unlike the hash table itself).
  */
 static void
 find_hash_columns(AggState *aggstate)
@@ -1330,6 +1330,7 @@ find_hash_columns(AggState *aggstate)
 		AttrNumber *grpColIdx = perhash->aggnode->grpColIdx;
 		List	   *hashTlist = NIL;
 		TupleDesc	hashDesc;
+		int			maxCols;
 		int			i;
 
 		perhash->largestGrpColIdx = 0;
@@ -1354,14 +1355,23 @@ find_hash_columns(AggState *aggstate)
 					colnos = bms_del_member(colnos, attnum);
 			}
 		}
-		/* Add in all the grouping columns */
-		for (i = 0; i < perhash->numCols; i++)
-			colnos = bms_add_member(colnos, grpColIdx[i]);
+
+		/*
+		 * Compute maximum number of input columns accounting for possible
+		 * duplications in the grpColIdx array, which can happen in some edge
+		 * cases where HashAggregate was generated as part of a semijoin or a
+		 * DISTINCT.
+		 */
+		maxCols = bms_num_members(colnos) + perhash->numCols;
 
 		perhash->hashGrpColIdxInput =
-			palloc(bms_num_members(colnos) * sizeof(AttrNumber));
+			palloc(maxCols * sizeof(AttrNumber));
 		perhash->hashGrpColIdxHash =
 			palloc(perhash->numCols * sizeof(AttrNumber));
+
+		/* Add all the grouping columns to colnos */
+		for (i = 0; i < perhash->numCols; i++)
+			colnos = bms_add_member(colnos, grpColIdx[i]);
 
 		/*
 		 * First build mapping for columns directly hashed. These are the
@@ -2444,7 +2454,11 @@ ExecInitAgg(Agg *node, EState *estate, int eflags)
 		aggstate->hash_pergroup = pergroups;
 
 		find_hash_columns(aggstate);
-		build_hash_table(aggstate);
+
+		/* Skip massive memory allocation if we are just doing EXPLAIN */
+		if (!(eflags & EXEC_FLAG_EXPLAIN_ONLY))
+			build_hash_table(aggstate);
+
 		aggstate->table_filled = false;
 	}
 
@@ -2903,12 +2917,6 @@ build_pertrans_for_aggref(AggStatePerTrans pertrans,
 
 	pertrans->aggtranstype = aggtranstype;
 
-	/* Detect how many arguments to pass to the transfn */
-	if (AGGKIND_IS_ORDERED_SET(aggref->aggkind))
-		pertrans->numTransInputs = numInputs;
-	else
-		pertrans->numTransInputs = numArguments;
-
 	/*
 	 * When combining states, we have no use at all for the aggregate
 	 * function's transfn. Instead we use the combinefn.  In this case, the
@@ -2918,6 +2926,17 @@ build_pertrans_for_aggref(AggStatePerTrans pertrans,
 	if (DO_AGGSPLIT_COMBINE(aggstate->aggsplit))
 	{
 		Expr	   *combinefnexpr;
+		size_t		numTransArgs;
+
+		/*
+		 * When combining there's only one input, the to-be-combined added
+		 * transition value from below (this node's transition value is
+		 * counted separately).
+		 */
+		pertrans->numTransInputs = 1;
+
+		/* account for the current transition state */
+		numTransArgs = pertrans->numTransInputs + 1;
 
 		build_aggregate_combinefn_expr(aggtranstype,
 									   aggref->inputcollid,
@@ -2928,7 +2947,7 @@ build_pertrans_for_aggref(AggStatePerTrans pertrans,
 
 		InitFunctionCallInfoData(pertrans->transfn_fcinfo,
 								 &pertrans->transfn,
-								 2,
+								 numTransArgs,
 								 pertrans->aggCollation,
 								 (void *) aggstate, NULL);
 
@@ -2946,6 +2965,16 @@ build_pertrans_for_aggref(AggStatePerTrans pertrans,
 	else
 	{
 		Expr	   *transfnexpr;
+		size_t		numTransArgs;
+
+		/* Detect how many arguments to pass to the transfn */
+		if (AGGKIND_IS_ORDERED_SET(aggref->aggkind))
+			pertrans->numTransInputs = numInputs;
+		else
+			pertrans->numTransInputs = numArguments;
+
+		/* account for the current transition state */
+		numTransArgs = pertrans->numTransInputs + 1;
 
 		/*
 		 * Set up infrastructure for calling the transfn.  Note that invtrans
@@ -2966,7 +2995,7 @@ build_pertrans_for_aggref(AggStatePerTrans pertrans,
 
 		InitFunctionCallInfoData(pertrans->transfn_fcinfo,
 								 &pertrans->transfn,
-								 pertrans->numTransInputs + 1,
+								 numTransArgs,
 								 pertrans->aggCollation,
 								 (void *) aggstate, NULL);
 

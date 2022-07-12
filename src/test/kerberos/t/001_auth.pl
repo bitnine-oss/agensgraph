@@ -48,13 +48,16 @@ if ($krb5_sbin_dir && -d $krb5_sbin_dir)
 	$krb5kdc      = $krb5_sbin_dir . '/' . $krb5kdc;
 }
 
+my $host     = 'auth-test-localhost.postgresql.example.com';
+my $hostaddr = '127.0.0.1';
 my $realm = 'EXAMPLE.COM';
 
 my $krb5_conf   = "${TestLib::tmp_check}/krb5.conf";
 my $kdc_conf    = "${TestLib::tmp_check}/kdc.conf";
-my $krb5_log    = "${TestLib::tmp_check}/krb5libs.log";
-my $kdc_log     = "${TestLib::tmp_check}/krb5kdc.log";
-my $kdc_port    = int(rand() * 16384) + 49152;
+my $krb5_cache  = "${TestLib::tmp_check}/krb5cc";
+my $krb5_log    = "${TestLib::log_path}/krb5libs.log";
+my $kdc_log     = "${TestLib::log_path}/krb5kdc.log";
+my $kdc_port    = get_free_port();
 my $kdc_datadir = "${TestLib::tmp_check}/krb5kdc";
 my $kdc_pidfile = "${TestLib::tmp_check}/krb5kdc.pid";
 my $keytab      = "${TestLib::tmp_check}/krb5.keytab";
@@ -80,7 +83,7 @@ default_realm = $realm
 
 [realms]
 $realm = {
-    kdc = localhost:$kdc_port
+    kdc = $hostaddr:$kdc_port
 }!);
 
 append_to_file(
@@ -94,8 +97,8 @@ if ($krb5_version >= 1.15)
 {
 	append_to_file(
 		$kdc_conf,
-		qq!kdc_listen = localhost:$kdc_port
-kdc_tcp_listen = localhost:$kdc_port
+		qq!kdc_listen = $hostaddr:$kdc_port
+kdc_tcp_listen = $hostaddr:$kdc_port
 !);
 }
 else
@@ -119,10 +122,12 @@ $realm = {
 
 mkdir $kdc_datadir or die;
 
+# Ensure that we use test's config and cache files, not global ones.
 $ENV{'KRB5_CONFIG'}      = $krb5_conf;
 $ENV{'KRB5_KDC_PROFILE'} = $kdc_conf;
+$ENV{'KRB5CCNAME'}       = $krb5_cache;
 
-my $service_principal = "$ENV{with_krb_srvnam}/localhost";
+my $service_principal = "$ENV{with_krb_srvnam}/$host";
 
 system_or_bail $kdb5_util, 'create', '-s', '-P', 'secret0';
 
@@ -143,7 +148,7 @@ note "setting up PostgreSQL instance";
 
 my $node = get_new_node('node');
 $node->init;
-$node->append_conf('postgresql.conf', "listen_addresses = 'localhost'");
+$node->append_conf('postgresql.conf', "listen_addresses = '$hostaddr'");
 $node->append_conf('postgresql.conf', "krb_server_keyfile = '$keytab'");
 $node->start;
 
@@ -160,7 +165,8 @@ sub test_access
 		'postgres',
 		'SELECT 1',
 		extra_params => [
-			'-d', $node->connstr('postgres') . ' host=localhost',
+			'-d',
+			$node->connstr('postgres') . " host=$host hostaddr=$hostaddr",
 			'-U', $role
 		]);
 	is($res, $expected_res, $test_name);
@@ -168,7 +174,8 @@ sub test_access
 }
 
 unlink($node->data_dir . '/pg_hba.conf');
-$node->append_conf('pg_hba.conf', qq{host all all localhost gss map=mymap});
+$node->append_conf('pg_hba.conf',
+	qq{host all all $hostaddr/32 gss map=mymap});
 $node->restart;
 
 test_access($node, 'test1', 2, 'fails without ticket');
@@ -185,7 +192,7 @@ test_access($node, 'test1', 0, 'succeeds with mapping');
 truncate($node->data_dir . '/pg_ident.conf', 0);
 unlink($node->data_dir . '/pg_hba.conf');
 $node->append_conf('pg_hba.conf',
-	qq{host all all localhost gss include_realm=0});
+	qq{host all all $hostaddr/32 gss include_realm=0});
 $node->restart;
 
 test_access($node, 'test1', 0, 'succeeds with include_realm=0');

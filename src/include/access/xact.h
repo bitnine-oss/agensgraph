@@ -68,7 +68,8 @@ typedef enum
 	SYNCHRONOUS_COMMIT_REMOTE_WRITE,	/* wait for local flush and remote
 										 * write */
 	SYNCHRONOUS_COMMIT_REMOTE_FLUSH,	/* wait for local and remote flush */
-	SYNCHRONOUS_COMMIT_REMOTE_APPLY /* wait for local flush and remote apply */
+	SYNCHRONOUS_COMMIT_REMOTE_APPLY /* wait for local and remote flush
+									   and remote apply */
 }			SyncCommitLevel;
 
 /* Define the default setting for synchronous_commit */
@@ -98,6 +99,11 @@ extern int	MyXactFlags;
  */
 #define XACT_FLAGS_ACQUIREDACCESSEXCLUSIVELOCK	(1U << 1)
 
+/*
+ * XACT_FLAGS_ACCESSEDTEMPNAMESPACE - set when a temporary namespace is
+ * accessed.  We don't allow PREPARE TRANSACTION in that case.
+ */
+#define XACT_FLAGS_ACCESSEDTEMPNAMESPACE		(1U << 2)
 
 /*
  *	start- and end-of-transaction callbacks for dynamically loaded modules
@@ -359,6 +365,7 @@ extern SubTransactionId GetCurrentSubTransactionId(void);
 extern void MarkCurrentTransactionIdLoggedIfAny(void);
 extern bool SubTransactionIsActive(SubTransactionId subxid);
 extern CommandId GetCurrentCommandId(bool used);
+extern void SetParallelStartTimestamps(TimestampTz xact_ts, TimestampTz stmt_ts);
 extern TimestampTz GetCurrentTransactionStartTimestamp(void);
 extern TimestampTz GetCurrentStatementStartTimestamp(void);
 extern TimestampTz GetCurrentTransactionStopTimestamp(void);

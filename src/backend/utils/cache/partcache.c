@@ -47,11 +47,11 @@ static int32 qsort_partition_rbound_cmp(const void *a, const void *b,
 
 /*
  * RelationBuildPartitionKey
- *		Build and attach to relcache partition key data of relation
+ *		Build partition key data of relation, and attach to relcache
  *
  * Partitioning key data is a complex structure; to avoid complicated logic to
  * free individual elements whenever the relcache entry is flushed, we give it
- * its own memory context, child of CacheMemoryContext, which can easily be
+ * its own memory context, a child of CacheMemoryContext, which can easily be
  * deleted on its own.  To avoid leaking memory in that context in case of an
  * error partway through this function, the context is initially created as a
  * child of CurTransactionContext and only re-parented to CacheMemoryContext
@@ -150,6 +150,7 @@ RelationBuildPartitionKey(Relation relation)
 		MemoryContextSwitchTo(oldcxt);
 	}
 
+	/* Allocate assorted arrays in the partkeycxt, which we'll fill below */
 	oldcxt = MemoryContextSwitchTo(partkeycxt);
 	key->partattrs = (AttrNumber *) palloc0(key->partnatts * sizeof(AttrNumber));
 	key->partopfamily = (Oid *) palloc0(key->partnatts * sizeof(Oid));
@@ -157,8 +158,6 @@ RelationBuildPartitionKey(Relation relation)
 	key->partsupfunc = (FmgrInfo *) palloc0(key->partnatts * sizeof(FmgrInfo));
 
 	key->partcollation = (Oid *) palloc0(key->partnatts * sizeof(Oid));
-
-	/* Gather type and collation info as well */
 	key->parttypid = (Oid *) palloc0(key->partnatts * sizeof(Oid));
 	key->parttypmod = (int32 *) palloc0(key->partnatts * sizeof(int32));
 	key->parttyplen = (int16 *) palloc0(key->partnatts * sizeof(int16));
@@ -241,6 +240,10 @@ RelationBuildPartitionKey(Relation relation)
 
 	ReleaseSysCache(tuple);
 
+	/* Assert that we're not leaking any old data during assignments below */
+	Assert(relation->rd_partkeycxt == NULL);
+	Assert(relation->rd_partkey == NULL);
+
 	/*
 	 * Success --- reparent our context and make the relcache point to the
 	 * newly constructed key
@@ -252,10 +255,13 @@ RelationBuildPartitionKey(Relation relation)
 
 /*
  * RelationBuildPartitionDesc
- *		Form rel's partition descriptor
+ *		Form rel's partition descriptor, and store in relcache entry
  *
- * Not flushed from the cache by RelationClearRelation() unless changed because
- * of addition or removal of partition.
+ * Note: the descriptor won't be flushed from the cache by
+ * RelationClearRelation() unless it's changed because of
+ * addition or removal of a partition.  Hence, code holding a lock
+ * that's sufficient to prevent that can assume that rd_partdesc
+ * won't change underneath it.
  */
 void
 RelationBuildPartitionDesc(Relation rel)
@@ -302,23 +308,11 @@ RelationBuildPartitionDesc(Relation rel)
 		if (!HeapTupleIsValid(tuple))
 			elog(ERROR, "cache lookup failed for relation %u", inhrelid);
 
-		/*
-		 * It is possible that the pg_class tuple of a partition has not been
-		 * updated yet to set its relpartbound field.  The only case where
-		 * this happens is when we open the parent relation to check using its
-		 * partition descriptor that a new partition's bound does not overlap
-		 * some existing partition.
-		 */
-		if (!((Form_pg_class) GETSTRUCT(tuple))->relispartition)
-		{
-			ReleaseSysCache(tuple);
-			continue;
-		}
-
 		datum = SysCacheGetAttr(RELOID, tuple,
 								Anum_pg_class_relpartbound,
 								&isnull);
-		Assert(!isnull);
+		if (isnull)
+			elog(ERROR, "null relpartbound for relation %u", inhrelid);
 		boundspec = (Node *) stringToNode(TextDatumGetCString(datum));
 
 		/*
@@ -577,11 +571,24 @@ RelationBuildPartitionDesc(Relation rel)
 				 (int) key->strategy);
 	}
 
-	/* Now build the actual relcache partition descriptor */
+	/* Assert we aren't about to leak any old data structure */
+	Assert(rel->rd_pdcxt == NULL);
+	Assert(rel->rd_partdesc == NULL);
+
+	/*
+	 * Now build the actual relcache partition descriptor.  Note that the
+	 * order of operations here is fairly critical.  If we fail partway
+	 * through this code, we won't have leaked memory because the rd_pdcxt is
+	 * attached to the relcache entry immediately, so it'll be freed whenever
+	 * the entry is rebuilt or destroyed.  However, we don't assign to
+	 * rd_partdesc until the cached data structure is fully complete and
+	 * valid, so that no other code might try to use it.
+	 */
 	rel->rd_pdcxt = AllocSetContextCreate(CacheMemoryContext,
 										  "partition descriptor",
-										  ALLOCSET_DEFAULT_SIZES);
-	MemoryContextCopyAndSetIdentifier(rel->rd_pdcxt, RelationGetRelationName(rel));
+										  ALLOCSET_SMALL_SIZES);
+	MemoryContextCopyAndSetIdentifier(rel->rd_pdcxt,
+									  RelationGetRelationName(rel));
 
 	oldcxt = MemoryContextSwitchTo(rel->rd_pdcxt);
 
@@ -615,6 +622,7 @@ RelationBuildPartitionDesc(Relation rel)
 					/* Moduli are stored in ascending order */
 					int			greatest_modulus = hbounds[ndatums - 1]->modulus;
 
+					boundinfo->nindexes = greatest_modulus;
 					boundinfo->indexes = (int *) palloc(greatest_modulus *
 														sizeof(int));
 
@@ -648,6 +656,7 @@ RelationBuildPartitionDesc(Relation rel)
 
 			case PARTITION_STRATEGY_LIST:
 				{
+					boundinfo->nindexes = ndatums;
 					boundinfo->indexes = (int *) palloc(ndatums * sizeof(int));
 
 					/*
@@ -702,7 +711,7 @@ RelationBuildPartitionDesc(Relation rel)
 						boundinfo->default_index = mapping[default_index];
 					}
 
-					/* All partition must now have a valid mapping */
+					/* All partitions must now have a valid mapping */
 					Assert(next_index == nparts);
 					break;
 				}
@@ -712,6 +721,7 @@ RelationBuildPartitionDesc(Relation rel)
 					boundinfo->kind = (PartitionRangeDatumKind **)
 						palloc(ndatums *
 							   sizeof(PartitionRangeDatumKind *));
+					boundinfo->nindexes = ndatums + 1;
 					boundinfo->indexes = (int *) palloc((ndatums + 1) *
 														sizeof(int));
 
@@ -809,31 +819,38 @@ RelationGetPartitionQual(Relation rel)
  * get_partition_qual_relid
  *
  * Returns an expression tree describing the passed-in relation's partition
- * constraint. If there is no partition constraint returns NULL; this can
- * happen if the default partition is the only partition.
+ * constraint.
+ *
+ * If the relation is not found, or is not a partition, or there is no
+ * partition constraint, return NULL.  We must guard against the first two
+ * cases because this supports a SQL function that could be passed any OID.
+ * The last case can happen even if relispartition is true, when a default
+ * partition is the only partition.
  */
 Expr *
 get_partition_qual_relid(Oid relid)
 {
-	Relation	rel = heap_open(relid, AccessShareLock);
 	Expr	   *result = NULL;
-	List	   *and_args;
 
-	/* Do the work only if this relation is a partition. */
-	if (rel->rd_rel->relispartition)
+	/* Do the work only if this relation exists and is a partition. */
+	if (get_rel_relispartition(relid))
 	{
+		Relation	rel = relation_open(relid, AccessShareLock);
+		List	   *and_args;
+
 		and_args = generate_partition_qual(rel);
 
+		/* Convert implicit-AND list format to boolean expression */
 		if (and_args == NIL)
 			result = NULL;
 		else if (list_length(and_args) > 1)
 			result = makeBoolExpr(AND_EXPR, and_args, -1);
 		else
 			result = linitial(and_args);
-	}
 
-	/* Keep the lock. */
-	heap_close(rel, NoLock);
+		/* Keep the lock, to allow safe deparsing against the rel by caller. */
+		relation_close(rel, NoLock);
+	}
 
 	return result;
 }
@@ -844,11 +861,9 @@ get_partition_qual_relid(Oid relid)
  * Generate partition predicate from rel's partition bound expression. The
  * function returns a NIL list if there is no predicate.
  *
- * Result expression tree is stored CacheMemoryContext to ensure it survives
- * as long as the relcache entry. But we should be running in a less long-lived
- * working context. To avoid leaking cache memory if this routine fails partway
- * through, we build in working memory and then copy the completed structure
- * into cache memory.
+ * We cache a copy of the result in the relcache entry, after constructing
+ * it using the caller's context.  This approach avoids leaking any data
+ * into long-lived cache contexts, especially if we fail partway through.
  */
 static List *
 generate_partition_qual(Relation rel)
@@ -857,7 +872,6 @@ generate_partition_qual(Relation rel)
 	MemoryContext oldcxt;
 	Datum		boundDatum;
 	bool		isnull;
-	PartitionBoundSpec *bound;
 	List	   *my_qual = NIL,
 			   *result = NIL;
 	Relation	parent;
@@ -866,13 +880,13 @@ generate_partition_qual(Relation rel)
 	/* Guard against stack overflow due to overly deep partition tree */
 	check_stack_depth();
 
-	/* Quick copy */
-	if (rel->rd_partcheck != NIL)
+	/* If we already cached the result, just return a copy */
+	if (rel->rd_partcheckvalid)
 		return copyObject(rel->rd_partcheck);
 
 	/* Grab at least an AccessShareLock on the parent table */
-	parent = heap_open(get_partition_parent(RelationGetRelid(rel)),
-					   AccessShareLock);
+	parent = relation_open(get_partition_parent(RelationGetRelid(rel)),
+						   AccessShareLock);
 
 	/* Get pg_class.relpartbound */
 	tuple = SearchSysCache1(RELOID, RelationGetRelid(rel));
@@ -883,14 +897,17 @@ generate_partition_qual(Relation rel)
 	boundDatum = SysCacheGetAttr(RELOID, tuple,
 								 Anum_pg_class_relpartbound,
 								 &isnull);
-	if (isnull)					/* should not happen */
-		elog(ERROR, "relation \"%s\" has relpartbound = null",
-			 RelationGetRelationName(rel));
-	bound = castNode(PartitionBoundSpec,
-					 stringToNode(TextDatumGetCString(boundDatum)));
-	ReleaseSysCache(tuple);
+	if (!isnull)
+	{
+		PartitionBoundSpec *bound;
 
-	my_qual = get_qual_from_partbound(rel, parent, bound);
+		bound = castNode(PartitionBoundSpec,
+						 stringToNode(TextDatumGetCString(boundDatum)));
+
+		my_qual = get_qual_from_partbound(rel, parent, bound);
+	}
+
+	ReleaseSysCache(tuple);
 
 	/* Add the parent's quals to the list (if any) */
 	if (parent->rd_rel->relispartition)
@@ -910,14 +927,37 @@ generate_partition_qual(Relation rel)
 	if (found_whole_row)
 		elog(ERROR, "unexpected whole-row reference found in partition key");
 
-	/* Save a copy in the relcache */
-	oldcxt = MemoryContextSwitchTo(CacheMemoryContext);
-	rel->rd_partcheck = copyObject(result);
-	MemoryContextSwitchTo(oldcxt);
+	/* Assert that we're not leaking any old data during assignments below */
+	Assert(rel->rd_partcheckcxt == NULL);
+	Assert(rel->rd_partcheck == NIL);
+
+	/*
+	 * Save a copy in the relcache.  The order of these operations is fairly
+	 * critical to avoid memory leaks and ensure that we don't leave a corrupt
+	 * relcache entry if we fail partway through copyObject.
+	 *
+	 * If, as is definitely possible, the partcheck list is NIL, then we do
+	 * not need to make a context to hold it.
+	 */
+	if (result != NIL)
+	{
+		rel->rd_partcheckcxt = AllocSetContextCreate(CacheMemoryContext,
+													 "partition constraint",
+													 ALLOCSET_SMALL_SIZES);
+		MemoryContextCopyAndSetIdentifier(rel->rd_partcheckcxt,
+										  RelationGetRelationName(rel));
+		oldcxt = MemoryContextSwitchTo(rel->rd_partcheckcxt);
+		rel->rd_partcheck = copyObject(result);
+		MemoryContextSwitchTo(oldcxt);
+	}
+	else
+		rel->rd_partcheck = NIL;
+	rel->rd_partcheckvalid = true;
 
 	/* Keep the parent locked until commit */
-	heap_close(parent, NoLock);
+	relation_close(parent, NoLock);
 
+	/* Return the working copy to the caller */
 	return result;
 }
 

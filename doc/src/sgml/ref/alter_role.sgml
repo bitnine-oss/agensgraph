@@ -33,7 +33,7 @@ ALTER ROLE <replaceable class="parameter">role_specification</replaceable> [ WIT
     | REPLICATION | NOREPLICATION
     | BYPASSRLS | NOBYPASSRLS
     | CONNECTION LIMIT <replaceable class="parameter">connlimit</replaceable>
-    | [ ENCRYPTED ] PASSWORD '<replaceable class="parameter">password</replaceable>'
+    | [ ENCRYPTED ] PASSWORD '<replaceable class="parameter">password</replaceable>' | PASSWORD NULL
     | VALID UNTIL '<replaceable class="parameter">timestamp</replaceable>'
 
 ALTER ROLE <replaceable class="parameter">name</replaceable> RENAME TO <replaceable>new_name</replaceable>
@@ -70,7 +70,9 @@ ALTER ROLE { <replaceable class="parameter">role_specification</replaceable> | A
    Attributes not mentioned in the command retain their previous settings.
    Database superusers can change any of these settings for any role.
    Roles having <literal>CREATEROLE</literal> privilege can change any of these
-   settings, but only for non-superuser and non-replication roles.
+   settings except <literal>SUPERUSER</literal>, <literal>REPLICATION</literal>,
+   and <literal>BYPASSRLS</literal>; but only for non-superuser and
+   non-replication roles.
    Ordinary roles can only change their own password.
   </para>
 
@@ -168,7 +170,8 @@ ALTER ROLE { <replaceable class="parameter">role_specification</replaceable> | A
       <term><literal>BYPASSRLS</literal></term>
       <term><literal>NOBYPASSRLS</literal></term>
       <term><literal>CONNECTION LIMIT</literal> <replaceable class="parameter">connlimit</replaceable></term>
-      <term>[ <literal>ENCRYPTED</literal> ] <literal>PASSWORD</literal> <replaceable class="parameter">password</replaceable></term>
+      <term>[ <literal>ENCRYPTED</literal> ] <literal>PASSWORD</literal> '<replaceable class="parameter">password</replaceable>'</term>
+      <term><literal>PASSWORD NULL</literal></term>
       <term><literal>VALID UNTIL</literal> '<replaceable class="parameter">timestamp</replaceable>'</term>
       <listitem>
        <para>

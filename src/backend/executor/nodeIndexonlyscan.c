@@ -87,8 +87,8 @@ IndexOnlyNext(IndexOnlyScanState *node)
 	{
 		/*
 		 * We reach here if the index only scan is not parallel, or if we're
-		 * executing a index only scan that was intended to be parallel
-		 * serially.
+		 * serially executing an index only scan that was planned to be
+		 * parallel.
 		 */
 		scandesc = index_beginscan(node->ss.ss_currentRelation,
 								   node->ioss_RelationDesc,
@@ -239,11 +239,8 @@ IndexOnlyNext(IndexOnlyScanState *node)
 					 errmsg("lossy distance functions are not supported in index-only scans")));
 
 		/*
-		 * Predicate locks for index-only scans must be acquired at the page
-		 * level when the heap is not accessed, since tuple-level predicate
-		 * locks need the tuple's xmin value.  If we had to visit the tuple
-		 * anyway, then we already have the tuple-level lock and can skip the
-		 * page lock.
+		 * If we didn't access the heap, then we'll need to take a predicate
+		 * lock explicitly, as if we had.  For now we do that at page level.
 		 */
 		if (tuple == NULL)
 			PredicateLockPage(scandesc->heapRelation,

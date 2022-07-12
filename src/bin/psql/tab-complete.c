@@ -705,6 +705,7 @@ static const SchemaQuery Query_for_list_of_tmf = {
 	"pg_catalog.pg_class c",
 	/* selcondition */
 	"c.relkind IN (" CppAsString2(RELKIND_RELATION) ", "
+	CppAsString2(RELKIND_PARTITIONED_TABLE) ", "
 	CppAsString2(RELKIND_MATVIEW) ", "
 	CppAsString2(RELKIND_FOREIGN_TABLE) ")",
 	/* viscondition */
@@ -1599,6 +1600,21 @@ psql_completion(const char *text, int start, int end)
 	 word_matches(p2, previous_words[previous_words_count - 2]) && \
 	 word_matches(p3, previous_words[previous_words_count - 3]))
 
+#define HeadMatches4(p1, p2, p3, p4) \
+	(previous_words_count >= 4 && \
+	 word_matches(p1, previous_words[previous_words_count - 1]) && \
+	 word_matches(p2, previous_words[previous_words_count - 2]) && \
+	 word_matches(p3, previous_words[previous_words_count - 3]) && \
+	 word_matches(p4, previous_words[previous_words_count - 4]))
+
+#define HeadMatches5(p1, p2, p3, p4, p5) \
+	(previous_words_count >= 5 && \
+	 word_matches(p1, previous_words[previous_words_count - 1]) && \
+	 word_matches(p2, previous_words[previous_words_count - 2]) && \
+	 word_matches(p3, previous_words[previous_words_count - 3]) && \
+	 word_matches(p4, previous_words[previous_words_count - 4]) && \
+	 word_matches(p5, previous_words[previous_words_count - 5]))
+
 	/* Known command-starting keywords. */
 	static const char *const sql_commands[] = {
 		"ABORT", "ALTER", "ANALYZE", "BEGIN", "CALL", "CHECKPOINT", "CLOSE", "CLUSTER",
@@ -1871,7 +1887,7 @@ psql_completion(const char *text, int start, int end)
 
 	/* ALTER LANGUAGE <name> */
 	else if (Matches3("ALTER", "LANGUAGE", MatchAny))
-		COMPLETE_WITH_LIST2("OWNER_TO", "RENAME TO");
+		COMPLETE_WITH_LIST2("OWNER TO", "RENAME TO");
 
 	/* ALTER LARGE OBJECT <oid> */
 	else if (Matches4("ALTER", "LARGE", "OBJECT", MatchAny))
@@ -2222,6 +2238,7 @@ psql_completion(const char *text, int start, int end)
 			"fillfactor",
 			"parallel_workers",
 			"log_autovacuum_min_duration",
+			"toast_tuple_target",
 			"toast.autovacuum_enabled",
 			"toast.autovacuum_freeze_max_age",
 			"toast.autovacuum_freeze_min_age",
@@ -2644,8 +2661,8 @@ psql_completion(const char *text, int start, int end)
 		COMPLETE_WITH_LIST3("FOR TABLE", "FOR ALL TABLES", "WITH (");
 	else if (Matches4("CREATE", "PUBLICATION", MatchAny, "FOR"))
 		COMPLETE_WITH_LIST2("TABLE", "ALL TABLES");
-	/* Complete "CREATE PUBLICATION <name> FOR TABLE <table>" */
-	else if (Matches4("CREATE", "PUBLICATION", MatchAny, "FOR TABLE"))
+	/* Complete "CREATE PUBLICATION <name> FOR TABLE <table>, ..." */
+	else if (HeadMatches5("CREATE", "PUBLICATION", MatchAny, "FOR", "TABLE"))
 		COMPLETE_WITH_SCHEMA_QUERY(Query_for_list_of_tables, NULL);
 	/* Complete "CREATE PUBLICATION <name> [...] WITH" */
 	else if (HeadMatches2("CREATE", "PUBLICATION") && TailMatches2("WITH", "("))
@@ -2703,7 +2720,7 @@ psql_completion(const char *text, int start, int end)
 		COMPLETE_WITH_LIST2("TABLE", "MATERIALIZED VIEW");
 	/* Complete PARTITION BY with RANGE ( or LIST ( or ... */
 	else if (TailMatches2("PARTITION", "BY"))
-		COMPLETE_WITH_LIST2("RANGE (", "LIST (");
+		COMPLETE_WITH_LIST3("RANGE (", "LIST (", "HASH (");
 	/* If we have xxx PARTITION OF, provide a list of partitioned tables */
 	else if (TailMatches2("PARTITION", "OF"))
 		COMPLETE_WITH_SCHEMA_QUERY(Query_for_list_of_partitioned_tables, "");
@@ -2758,7 +2775,8 @@ psql_completion(const char *text, int start, int end)
 
 	/*
 	 * complete CREATE TRIGGER <name> BEFORE,AFTER event ON with a list of
-	 * tables
+	 * tables.  EXECUTE FUNCTION is the recommended grammar instead of EXECUTE
+	 * PROCEDURE in version 11 and upwards.
 	 */
 	else if (TailMatches6("CREATE", "TRIGGER", MatchAny, "BEFORE|AFTER", MatchAny, "ON"))
 		COMPLETE_WITH_SCHEMA_QUERY(Query_for_list_of_tables, NULL);
@@ -2766,11 +2784,26 @@ psql_completion(const char *text, int start, int end)
 	else if (TailMatches7("CREATE", "TRIGGER", MatchAny, "INSTEAD", "OF", MatchAny, "ON"))
 		COMPLETE_WITH_SCHEMA_QUERY(Query_for_list_of_views, NULL);
 	else if (HeadMatches2("CREATE", "TRIGGER") && TailMatches2("ON", MatchAny))
-		COMPLETE_WITH_LIST7("NOT DEFERRABLE", "DEFERRABLE", "INITIALLY",
-							"REFERENCING", "FOR", "WHEN (", "EXECUTE PROCEDURE");
+	{
+		if (pset.sversion >= 110000)
+			COMPLETE_WITH_LIST7("NOT DEFERRABLE", "DEFERRABLE", "INITIALLY",
+								"REFERENCING", "FOR", "WHEN (",
+								"EXECUTE FUNCTION");
+		else
+			COMPLETE_WITH_LIST7("NOT DEFERRABLE", "DEFERRABLE", "INITIALLY",
+								"REFERENCING", "FOR", "WHEN (",
+								"EXECUTE PROCEDURE");
+	}
 	else if (HeadMatches2("CREATE", "TRIGGER") &&
 			 (TailMatches1("DEFERRABLE") || TailMatches2("INITIALLY", "IMMEDIATE|DEFERRED")))
-		COMPLETE_WITH_LIST4("REFERENCING", "FOR", "WHEN (", "EXECUTE PROCEDURE");
+	{
+		if (pset.sversion >= 110000)
+			COMPLETE_WITH_LIST4("REFERENCING", "FOR", "WHEN (",
+								"EXECUTE FUNCTION");
+		else
+			COMPLETE_WITH_LIST4("REFERENCING", "FOR", "WHEN (",
+								"EXECUTE PROCEDURE");
+	}
 	else if (HeadMatches2("CREATE", "TRIGGER") && TailMatches1("REFERENCING"))
 		COMPLETE_WITH_LIST2("OLD TABLE", "NEW TABLE");
 	else if (HeadMatches2("CREATE", "TRIGGER") && TailMatches2("OLD|NEW", "TABLE"))
@@ -2778,17 +2811,36 @@ psql_completion(const char *text, int start, int end)
 	else if (HeadMatches2("CREATE", "TRIGGER") &&
 			 (TailMatches5("REFERENCING", "OLD", "TABLE", "AS", MatchAny) ||
 			  TailMatches4("REFERENCING", "OLD", "TABLE", MatchAny)))
-		COMPLETE_WITH_LIST4("NEW TABLE", "FOR", "WHEN (", "EXECUTE PROCEDURE");
+	{
+		if (pset.sversion >= 110000)
+			COMPLETE_WITH_LIST4("NEW TABLE", "FOR", "WHEN (",
+								"EXECUTE FUNCTION");
+		else
+			COMPLETE_WITH_LIST4("NEW TABLE", "FOR", "WHEN (",
+								"EXECUTE PROCEDURE");
+	}
 	else if (HeadMatches2("CREATE", "TRIGGER") &&
 			 (TailMatches5("REFERENCING", "NEW", "TABLE", "AS", MatchAny) ||
 			  TailMatches4("REFERENCING", "NEW", "TABLE", MatchAny)))
-		COMPLETE_WITH_LIST4("OLD TABLE", "FOR", "WHEN (", "EXECUTE PROCEDURE");
+	{
+		if (pset.sversion >= 110000)
+			COMPLETE_WITH_LIST4("OLD TABLE", "FOR", "WHEN (",
+								"EXECUTE FUNCTION");
+		else
+			COMPLETE_WITH_LIST4("OLD TABLE", "FOR", "WHEN (",
+								"EXECUTE PROCEDURE");
+	}
 	else if (HeadMatches2("CREATE", "TRIGGER") &&
 			 (TailMatches9("REFERENCING", "OLD|NEW", "TABLE", "AS", MatchAny, "OLD|NEW", "TABLE", "AS", MatchAny) ||
 			  TailMatches8("REFERENCING", "OLD|NEW", "TABLE", MatchAny, "OLD|NEW", "TABLE", "AS", MatchAny) ||
 			  TailMatches8("REFERENCING", "OLD|NEW", "TABLE", "AS", MatchAny, "OLD|NEW", "TABLE", MatchAny) ||
 			  TailMatches7("REFERENCING", "OLD|NEW", "TABLE", MatchAny, "OLD|NEW", "TABLE", MatchAny)))
-		COMPLETE_WITH_LIST3("FOR", "WHEN (", "EXECUTE PROCEDURE");
+	{
+		if (pset.sversion >= 110000)
+			COMPLETE_WITH_LIST3("FOR", "WHEN (", "EXECUTE FUNCTION");
+		else
+			COMPLETE_WITH_LIST3("FOR", "WHEN (", "EXECUTE PROCEDURE");
+	}
 	else if (HeadMatches2("CREATE", "TRIGGER") && TailMatches1("FOR"))
 		COMPLETE_WITH_LIST3("EACH", "ROW", "STATEMENT");
 	else if (HeadMatches2("CREATE", "TRIGGER") && TailMatches2("FOR", "EACH"))
@@ -2796,11 +2848,22 @@ psql_completion(const char *text, int start, int end)
 	else if (HeadMatches2("CREATE", "TRIGGER") &&
 			 (TailMatches3("FOR", "EACH", "ROW|STATEMENT") ||
 			  TailMatches2("FOR", "ROW|STATEMENT")))
-		COMPLETE_WITH_LIST2("WHEN (", "EXECUTE PROCEDURE");
+	{
+		if (pset.sversion >= 110000)
+			COMPLETE_WITH_LIST2("WHEN (", "EXECUTE FUNCTION");
+		else
+			COMPLETE_WITH_LIST2("WHEN (", "EXECUTE PROCEDURE");
+	}
 	/* complete CREATE TRIGGER ... EXECUTE with PROCEDURE */
 	else if (HeadMatches2("CREATE", "TRIGGER") && TailMatches1("EXECUTE"))
-		COMPLETE_WITH_CONST("PROCEDURE");
-	else if (HeadMatches2("CREATE", "TRIGGER") && TailMatches2("EXECUTE", "PROCEDURE"))
+	{
+		if (pset.sversion >= 110000)
+			COMPLETE_WITH_CONST("FUNCTION");
+		else
+			COMPLETE_WITH_CONST("PROCEDURE");
+	}
+	else if (HeadMatches2("CREATE", "TRIGGER") &&
+			 TailMatches2("EXECUTE", "FUNCTION|PROCEDURE"))
 		COMPLETE_WITH_VERSIONED_SCHEMA_QUERY(Query_for_list_of_functions, NULL);
 
 /* CREATE ROLE,USER,GROUP <name> */
@@ -3469,8 +3532,13 @@ psql_completion(const char *text, int start, int end)
 	else if (HeadMatches2("ALTER", "DATABASE|FUNCTION|PROCEDURE|ROLE|ROUTINE|USER") &&
 			 TailMatches2("SET", MatchAny))
 		COMPLETE_WITH_LIST2("FROM CURRENT", "TO");
-	/* Suggest possible variable values */
-	else if (TailMatches3("SET", MatchAny, "TO|="))
+
+	/*
+	 * Suggest possible variable values in SET variable TO|=, along with the
+	 * preceding ALTER syntaxes.
+	 */
+	else if (TailMatches3("SET", MatchAny, "TO|=") &&
+			 !TailMatches5("UPDATE", MatchAny, "SET", MatchAny, "TO|="))
 	{
 		/* special cased code for individual GUCs */
 		if (TailMatches2("DateStyle", "TO|="))
@@ -3493,21 +3561,29 @@ psql_completion(const char *text, int start, int end)
 			/* generic, type based, GUC support */
 			char	   *guctype = get_guctype(prev2_wd);
 
-			if (guctype && strcmp(guctype, "enum") == 0)
-			{
-				char		querybuf[1024];
-
-				snprintf(querybuf, sizeof(querybuf), Query_for_enum, prev2_wd);
-				COMPLETE_WITH_QUERY(querybuf);
-			}
-			else if (guctype && strcmp(guctype, "bool") == 0)
-				COMPLETE_WITH_LIST9("on", "off", "true", "false", "yes", "no",
-									"1", "0", "DEFAULT");
-			else
-				COMPLETE_WITH_CONST("DEFAULT");
-
+			/*
+			 * Note: if we don't recognize the GUC name, it's important to not
+			 * offer any completions, as most likely we've misinterpreted the
+			 * context and this isn't a GUC-setting command at all.
+			 */
 			if (guctype)
+			{
+				if (strcmp(guctype, "enum") == 0)
+				{
+					char		querybuf[1024];
+
+					snprintf(querybuf, sizeof(querybuf),
+							 Query_for_enum, prev2_wd);
+					COMPLETE_WITH_QUERY(querybuf);
+				}
+				else if (strcmp(guctype, "bool") == 0)
+					COMPLETE_WITH_LIST9("on", "off", "true", "false",
+										"yes", "no", "1", "0", "DEFAULT");
+				else
+					COMPLETE_WITH_CONST("DEFAULT");
+
 				free(guctype);
+			}
 		}
 	}
 
@@ -3804,7 +3880,7 @@ psql_completion(const char *text, int start, int end)
 		COMPLETE_WITH_SCHEMA_QUERY(Query_for_list_of_routines, NULL);
 	else if (TailMatchesCS1("\\sv*"))
 		COMPLETE_WITH_SCHEMA_QUERY(Query_for_list_of_views, NULL);
-	else if (TailMatchesCS1("\\cd|\\e|\\edit|\\g|\\i|\\include|"
+	else if (TailMatchesCS1("\\cd|\\e|\\edit|\\g|\\gx|\\i|\\include|"
 							"\\ir|\\include_relative|\\o|\\out|"
 							"\\s|\\w|\\write|\\lo_import"))
 	{

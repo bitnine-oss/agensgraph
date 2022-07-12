@@ -22,6 +22,7 @@ $path = "." unless $path;
 my $copymode              = 0;
 my $brace_indent          = 0;
 my $yaccmode              = 0;
+my $in_rule               = 0;
 my $header_included       = 0;
 my $feature_not_supported = 0;
 my $tokenmode             = 0;
@@ -144,7 +145,7 @@ sub main
 		# flds are the fields to use. These may start with a '$' - in
 		# which case they are the result of a previous non-terminal
 		#
-		# if they dont start with a '$' then they are token name
+		# if they don't start with a '$' then they are token name
 		#
 		# len is the number of fields in flds...
 		# leadin is the padding to apply at the beginning (just use for formatting)
@@ -223,7 +224,7 @@ sub main
 			next line;
 		}
 
-		# Dont worry about anything if we're not in the right section of gram.y
+		# Don't worry about anything if we're not in the right section of gram.y
 		if ($yaccmode != 1)
 		{
 			next line;
@@ -288,6 +289,7 @@ sub main
 				@fields  = ();
 				$infield = 0;
 				$line    = '';
+				$in_rule = 0;
 				next;
 			}
 
@@ -365,6 +367,9 @@ sub main
 				$line    = '';
 				@fields  = ();
 				$infield = 1;
+				die "unterminated rule at grammar line $.\n"
+				  if $in_rule;
+				$in_rule = 1;
 				next;
 			}
 			elsif ($copymode)
@@ -415,6 +420,8 @@ sub main
 			}
 		}
 	}
+	die "unterminated rule at end of grammar\n"
+	  if $in_rule;
 	return;
 }
 

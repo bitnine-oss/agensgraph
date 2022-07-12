@@ -63,11 +63,14 @@
 #include "parser/parse_utilcmd.h"
 #include "postmaster/bgwriter.h"
 #include "rewrite/rewriteDefine.h"
+#include "rewrite/rewriteRemove.h"
 #include "storage/fd.h"
+#include "tcop/pquery.h"
 #include "tcop/utility.h"
 #include "utils/acl.h"
 #include "utils/guc.h"
 #include "utils/lsyscache.h"
+#include "utils/syscache.h"
 #include "utils/rel.h"
 
 
@@ -392,6 +395,9 @@ standard_ProcessUtility(PlannedStmt *pstmt,
 	bool		isAtomicContext = (!(context == PROCESS_UTILITY_TOPLEVEL || context == PROCESS_UTILITY_QUERY_NONATOMIC) || IsTransactionBlock());
 	ParseState *pstate;
 
+	/* This can recurse, so check for excessive recursion */
+	check_stack_depth();
+
 	check_xact_readonly(parsetree);
 
 	if (completionTag)
@@ -631,7 +637,7 @@ standard_ProcessUtility(PlannedStmt *pstmt,
 			{
 				UnlistenStmt *stmt = (UnlistenStmt *) parsetree;
 
-				PreventCommandDuringRecovery("UNLISTEN");
+				/* we allow UNLISTEN during recovery, as it's a noop */
 				CheckRestrictedOperation("UNLISTEN");
 				if (stmt->conditionname)
 					Async_Unlisten(stmt->conditionname);
@@ -942,6 +948,13 @@ standard_ProcessUtility(PlannedStmt *pstmt,
 	}
 
 	free_parsestate(pstate);
+
+	/*
+	 * Make effects of commands visible, for instance so that
+	 * PreCommit_on_commit_actions() can see them (see for example bug
+	 * #15631).
+	 */
+	CommandCounterIncrement();
 }
 
 /*
@@ -998,26 +1011,36 @@ ProcessUtilitySlow(ParseState *pstate,
 			case T_CreateForeignTableStmt:
 				{
 					List	   *stmts;
-					ListCell   *l;
+					RangeVar   *table_rv = NULL;
 
 					/* Run parse analysis ... */
 					stmts = transformCreateStmt((CreateStmt *) parsetree,
 												queryString);
 
-					/* ... and do it */
-					foreach(l, stmts)
+					/*
+					 * ... and do it.  We can't use foreach() because we may
+					 * modify the list midway through, so pick off the
+					 * elements one at a time, the hard way.
+					 */
+					while (stmts != NIL)
 					{
-						Node	   *stmt = (Node *) lfirst(l);
+						Node	   *stmt = (Node *) linitial(stmts);
+
+						stmts = list_delete_first(stmts);
 
 						if (IsA(stmt, CreateStmt))
 						{
+							CreateStmt *cstmt = (CreateStmt *) stmt;
 							Datum		toast_options;
 							static char *validnsps[] = HEAP_RELOPT_NAMESPACES;
 
 							CheckInheritLabel((CreateStmt *) stmt);
 
+							/* Remember transformed RangeVar for LIKE */
+							table_rv = cstmt->relation;
+
 							/* Create the table itself */
-							address = DefineRelation((CreateStmt *) stmt,
+							address = DefineRelation(cstmt,
 													 RELKIND_RELATION,
 													 InvalidOid, NULL,
 													 queryString);
@@ -1036,7 +1059,7 @@ ProcessUtilitySlow(ParseState *pstate,
 							 * table
 							 */
 							toast_options = transformRelOptions((Datum) 0,
-																((CreateStmt *) stmt)->options,
+																cstmt->options,
 																"toast",
 																validnsps,
 																true,
@@ -1050,16 +1073,37 @@ ProcessUtilitySlow(ParseState *pstate,
 						}
 						else if (IsA(stmt, CreateForeignTableStmt))
 						{
+							CreateForeignTableStmt *cstmt = (CreateForeignTableStmt *) stmt;
+
+							/* Remember transformed RangeVar for LIKE */
+							table_rv = cstmt->base.relation;
+
 							/* Create the table itself */
-							address = DefineRelation((CreateStmt *) stmt,
+							address = DefineRelation(&cstmt->base,
 													 RELKIND_FOREIGN_TABLE,
 													 InvalidOid, NULL,
 													 queryString);
-							CreateForeignTable((CreateForeignTableStmt *) stmt,
+							CreateForeignTable(cstmt,
 											   address.objectId);
 							EventTriggerCollectSimpleCommand(address,
 															 secondaryObject,
 															 stmt);
+						}
+						else if (IsA(stmt, TableLikeClause))
+						{
+							/*
+							 * Do delayed processing of LIKE options.  This
+							 * will result in additional sub-statements for us
+							 * to process.  Those should get done before any
+							 * remaining actions, so prepend them to "stmts".
+							 */
+							TableLikeClause *like = (TableLikeClause *) stmt;
+							List	   *morestmts;
+
+							Assert(table_rv != NULL);
+
+							morestmts = expandTableLikeClause(table_rv, like);
+							stmts = list_concat(morestmts, stmts);
 						}
 						else
 						{
@@ -1087,7 +1131,7 @@ ProcessUtilitySlow(ParseState *pstate,
 						}
 
 						/* Need CCI between commands */
-						if (lnext(l) != NULL)
+						if (stmts != NIL)
 							CommandCounterIncrement();
 					}
 
@@ -1317,6 +1361,7 @@ ProcessUtilitySlow(ParseState *pstate,
 					IndexStmt  *stmt = (IndexStmt *) parsetree;
 					Oid			relid;
 					LOCKMODE	lockmode;
+					bool		is_alter_table;
 
 					if (stmt->concurrent)
 						PreventInTransactionBlock(isTopLevel,
@@ -1361,16 +1406,33 @@ ProcessUtilitySlow(ParseState *pstate,
 
 							if (relkind != RELKIND_RELATION &&
 								relkind != RELKIND_MATVIEW &&
-								relkind != RELKIND_PARTITIONED_TABLE)
+								relkind != RELKIND_PARTITIONED_TABLE &&
+								relkind != RELKIND_FOREIGN_TABLE)
+								elog(ERROR, "unexpected relkind \"%c\" on partition \"%s\"",
+									 relkind, stmt->relation->relname);
+
+							if (relkind == RELKIND_FOREIGN_TABLE &&
+								(stmt->unique || stmt->primary))
 								ereport(ERROR,
-										(errcode(ERRCODE_INVALID_OBJECT_DEFINITION),
-										 errmsg("cannot create index on partitioned table \"%s\"",
+										(errcode(ERRCODE_WRONG_OBJECT_TYPE),
+										 errmsg("cannot create unique index on partitioned table \"%s\"",
 												stmt->relation->relname),
 										 errdetail("Table \"%s\" contains partitions that are foreign tables.",
 												   stmt->relation->relname)));
 						}
 						list_free(inheritors);
 					}
+
+					/*
+					 * If the IndexStmt is already transformed, it must have
+					 * come from generateClonedIndexStmt, which in current
+					 * usage means it came from expandTableLikeClause rather
+					 * than from original parse analysis.  And that means we
+					 * must treat it like ALTER TABLE ADD INDEX, not CREATE.
+					 * (This is a bit grotty, but currently it doesn't seem
+					 * worth adding a separate bool field for the purpose.)
+					 */
+					is_alter_table = stmt->transformed;
 
 					/* Run parse analysis ... */
 					stmt = transformIndexStmt(relid, stmt, queryString);
@@ -1383,7 +1445,7 @@ ProcessUtilitySlow(ParseState *pstate,
 									InvalidOid, /* no predefined OID */
 									InvalidOid, /* no parent index */
 									InvalidOid, /* no parent constraint */
-									false,	/* is_alter_table */
+									is_alter_table,
 									true,	/* check_rights */
 									true,	/* check_not_in_use */
 									false,	/* skip_build */
@@ -1893,6 +1955,12 @@ UtilityReturnsTuples(Node *parsetree)
 {
 	switch (nodeTag(parsetree))
 	{
+		case T_CallStmt:
+			{
+				CallStmt   *stmt = (CallStmt *) parsetree;
+
+				return (stmt->funcexpr->funcresulttype == RECORDOID);
+			}
 		case T_FetchStmt:
 			{
 				FetchStmt  *stmt = (FetchStmt *) parsetree;
@@ -1943,6 +2011,9 @@ UtilityTupleDescriptor(Node *parsetree)
 {
 	switch (nodeTag(parsetree))
 	{
+		case T_CallStmt:
+			return CallStmtResultDesc((CallStmt *) parsetree);
+
 		case T_FetchStmt:
 			{
 				FetchStmt  *stmt = (FetchStmt *) parsetree;

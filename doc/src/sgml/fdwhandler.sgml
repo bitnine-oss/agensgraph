@@ -123,6 +123,14 @@ GetForeignRelSize(PlannerInfo *root,
      should be replaced if at all possible.  The function may also choose to
      update <literal>baserel-&gt;width</literal> if it can compute a better estimate
      of the average result row width.
+     (The initial value is based on column data types and on column
+     average-width values measured by the last <command>ANALYZE</command>.)
+     Also, this function may update <literal>baserel-&gt;tuples</literal> if
+     it can compute a better estimate of the foreign table's total row count.
+     (The initial value is
+     from <structname>pg_class</structname>.<structfield>reltuples</structfield>
+     which represents the total row count seen by the
+     last <command>ANALYZE</command>.)
     </para>
 
     <para>
@@ -588,6 +596,14 @@ ExecForeignInsert(EState *estate,
     </para>
 
     <para>
+     Note that this function is also called when inserting routed tuples into
+     a foreign-table partition or executing <command>COPY FROM</command> on
+     a foreign table, in which case it is called in a different way than it
+     is in the <command>INSERT</command> case.  See the callback functions
+     described below that allow the FDW to support that.
+    </para>
+
+    <para>
 <programlisting>
 TupleTableSlot *
 ExecForeignUpdate(EState *estate,
@@ -744,6 +760,13 @@ BeginForeignInsert(ModifyTableState *mtstate,
     </para>
 
     <para>
+     Note that if the FDW does not support routable foreign-table partitions
+     and/or executing <command>COPY FROM</command> on foreign tables, this
+     function or <function>ExecForeignInsert</function> subsequently called
+     must throw error as needed.
+    </para>
+
+    <para>
 <programlisting>
 void
 EndForeignInsert(EState *estate,
@@ -795,9 +818,11 @@ IsForeignRelUpdatable(Relation rel);
      row-by-row approach is necessary, but it can be inefficient.  If it is
      possible for the foreign server to determine which rows should be
      modified without actually retrieving them, and if there are no local
-     triggers which would affect the operation, then it is possible to
-     arrange things so that the entire operation is performed on the remote
-     server.  The interfaces described below make this possible.
+     structures which would affect the operation (row-level local triggers
+     or <literal>WITH CHECK OPTION</literal> constraints from parent views),
+     then it is possible to arrange things so that the entire operation is
+     performed on the remote server.  The interfaces described below make
+     this possible.
     </para>
 
     <para>

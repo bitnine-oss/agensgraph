@@ -666,14 +666,16 @@
 
       <row>
        <entry> <literal>!</literal> </entry>
-       <entry>factorial</entry>
+       <entry>factorial
+        (deprecated, use <function>factorial()</function> instead)</entry>
        <entry><literal>5 !</literal></entry>
        <entry><literal>120</literal></entry>
       </row>
 
       <row>
        <entry> <literal>!!</literal> </entry>
-       <entry>factorial (prefix operator)</entry>
+       <entry>factorial as a prefix operator
+        (deprecated, use <function>factorial()</function> instead)</entry>
        <entry><literal>!! 5</literal></entry>
        <entry><literal>120</literal></entry>
       </row>
@@ -732,9 +734,8 @@
    </table>
 
    <para>
-    The bitwise operators work only on integral data types, whereas
-    the others are available for all numeric data types.  The bitwise
-    operators are also available for the bit
+    The bitwise operators work only on integral data types and are also
+    available for the bit
     string types <type>bit</type> and <type>bit varying</type>, as
     shown in <xref linkend="functions-bit-string-op-table"/>.
    </para>
@@ -855,6 +856,19 @@
        <entry>exponential</entry>
        <entry><literal>exp(1.0)</literal></entry>
        <entry><literal>2.71828182845905</literal></entry>
+      </row>
+
+      <row>
+       <entry>
+        <indexterm>
+         <primary>factorial</primary>
+        </indexterm>
+        <literal><function>factorial(<type>bigint</type>)</function></literal>
+       </entry>
+       <entry><type>numeric</type></entry>
+       <entry>factorial</entry>
+       <entry><literal>factorial(5)</literal></entry>
+       <entry><literal>120</literal></entry>
       </row>
 
       <row>
@@ -1776,7 +1790,7 @@
         octal sequences (<literal>\</literal><replaceable>nnn</replaceable>) and
         doubles backslashes.
        </entry>
-       <entry><literal>encode(E'123\\000\\001', 'base64')</literal></entry>
+       <entry><literal>encode('123\000\001', 'base64')</literal></entry>
        <entry><literal>MTIzAAE=</literal></entry>
       </row>
 
@@ -2100,7 +2114,7 @@
         the delimiter.  See <xref linkend="functions-posix-regexp"/> for more
         information.
        </entry>
-       <entry><literal>regexp_split_to_array('hello world', E'\\s+')</literal></entry>
+       <entry><literal>regexp_split_to_array('hello world', '\s+')</literal></entry>
        <entry><literal>{hello,world}</literal></entry>
       </row>
 
@@ -2117,7 +2131,7 @@
         the delimiter.  See <xref linkend="functions-posix-regexp"/> for more
         information.
        </entry>
-       <entry><literal>regexp_split_to_table('hello world', E'\\s+')</literal></entry>
+       <entry><literal>regexp_split_to_table('hello world', '\s+')</literal></entry>
        <entry><literal>hello</literal><para><literal>world</literal></para> (2 rows)</entry>
       </row>
 
@@ -2786,7 +2800,7 @@
       </row>
 
       <row>
-       <entry><literal>tcvn_to_utf8</literal></entry>
+       <entry><literal>windows_1258_to_utf8</literal></entry>
        <entry><literal>WIN1258</literal></entry>
        <entry><literal>UTF8</literal></entry>
       </row>
@@ -2954,7 +2968,7 @@
       </row>
 
       <row>
-       <entry><literal>utf8_to_tcvn</literal></entry>
+       <entry><literal>utf8_to_windows_1258</literal></entry>
        <entry><literal>UTF8</literal></entry>
        <entry><literal>WIN1258</literal></entry>
       </row>
@@ -3301,8 +3315,8 @@ SELECT format('Testing %s, %s, %s, %%', 'one', 'two', 'three');
 SELECT format('INSERT INTO %I VALUES(%L)', 'Foo bar', E'O\'Reilly');
 <lineannotation>Result: </lineannotation><computeroutput>INSERT INTO "Foo bar" VALUES('O''Reilly')</computeroutput>
 
-SELECT format('INSERT INTO %I VALUES(%L)', 'locations', E'C:\\Program Files');
-<lineannotation>Result: </lineannotation><computeroutput>INSERT INTO locations VALUES(E'C:\\Program Files')</computeroutput>
+SELECT format('INSERT INTO %I VALUES(%L)', 'locations', 'C:\Program Files');
+<lineannotation>Result: </lineannotation><computeroutput>INSERT INTO locations VALUES('C:\Program Files')</computeroutput>
 </screen>
     </para>
 
@@ -3429,7 +3443,7 @@ SELECT format('Testing %3$s, %2$s, %s', 'one', 'two', 'three');
          <secondary>concatenation</secondary>
         </indexterm>
        </entry>
-       <entry><literal>E'\\\\Post'::bytea || E'\\047gres\\000'::bytea</literal></entry>
+       <entry><literal>'\\Post'::bytea || '\047gres\000'::bytea</literal></entry>
        <entry><literal>\\Post'gres\000</literal></entry>
       </row>
 
@@ -3442,7 +3456,7 @@ SELECT format('Testing %3$s, %2$s, %s', 'one', 'two', 'three');
        </entry>
        <entry><type>int</type></entry>
        <entry>Number of bytes in binary string</entry>
-       <entry><literal>octet_length(E'jo\\000se'::bytea)</literal></entry>
+       <entry><literal>octet_length('jo\000se'::bytea)</literal></entry>
        <entry><literal>5</literal></entry>
       </row>
 
@@ -3457,7 +3471,7 @@ SELECT format('Testing %3$s, %2$s, %s', 'one', 'two', 'three');
        <entry>
         Replace substring
        </entry>
-       <entry><literal>overlay(E'Th\\000omas'::bytea placing E'\\002\\003'::bytea from 2 for 3)</literal></entry>
+       <entry><literal>overlay('Th\000omas'::bytea placing '\002\003'::bytea from 2 for 3)</literal></entry>
        <entry><literal>T\\002\\003mas</literal></entry>
       </row>
 
@@ -3470,7 +3484,7 @@ SELECT format('Testing %3$s, %2$s, %s', 'one', 'two', 'three');
        </entry>
        <entry><type>int</type></entry>
        <entry>Location of specified substring</entry>
-      <entry><literal>position(E'\\000om'::bytea in E'Th\\000omas'::bytea)</literal></entry>
+      <entry><literal>position('\000om'::bytea in 'Th\000omas'::bytea)</literal></entry>
        <entry><literal>3</literal></entry>
       </row>
 
@@ -3485,7 +3499,7 @@ SELECT format('Testing %3$s, %2$s, %s', 'one', 'two', 'three');
        <entry>
         Extract substring
        </entry>
-       <entry><literal>substring(E'Th\\000omas'::bytea from 2 for 3)</literal></entry>
+       <entry><literal>substring('Th\000omas'::bytea from 2 for 3)</literal></entry>
        <entry><literal>h\000o</literal></entry>
       </row>
 
@@ -3504,7 +3518,7 @@ SELECT format('Testing %3$s, %2$s, %s', 'one', 'two', 'three');
         <parameter>bytes</parameter> from the start
         and end of <parameter>string</parameter>
        </entry>
-       <entry><literal>trim(E'\\000\\001'::bytea from E'\\000Tom\\001'::bytea)</literal></entry>
+       <entry><literal>trim('\000\001'::bytea from '\000Tom\001'::bytea)</literal></entry>
        <entry><literal>Tom</literal></entry>
       </row>
      </tbody>
@@ -3547,7 +3561,7 @@ SELECT format('Testing %3$s, %2$s, %s', 'one', 'two', 'three');
         <parameter>bytes</parameter> from the start and end of
         <parameter>string</parameter>
       </entry>
-      <entry><literal>btrim(E'\\000trim\\001'::bytea, E'\\000\\001'::bytea)</literal></entry>
+      <entry><literal>btrim('\000trim\001'::bytea, '\000\001'::bytea)</literal></entry>
       <entry><literal>trim</literal></entry>
      </row>
 
@@ -3564,7 +3578,7 @@ SELECT format('Testing %3$s, %2$s, %s', 'one', 'two', 'three');
        Decode binary data from textual representation in <parameter>string</parameter>.
        Options for <parameter>format</parameter> are same as in <function>encode</function>.
       </entry>
-      <entry><literal>decode(E'123\\000456', 'escape')</literal></entry>
+      <entry><literal>decode('123\000456', 'escape')</literal></entry>
       <entry><literal>123\000456</literal></entry>
      </row>
 
@@ -3584,7 +3598,7 @@ SELECT format('Testing %3$s, %2$s, %s', 'one', 'two', 'three');
        octal sequences (<literal>\</literal><replaceable>nnn</replaceable>) and
        doubles backslashes.
       </entry>
-      <entry><literal>encode(E'123\\000456'::bytea, 'escape')</literal></entry>
+      <entry><literal>encode('123\000456'::bytea, 'escape')</literal></entry>
       <entry><literal>123\000456</literal></entry>
      </row>
 
@@ -3599,7 +3613,7 @@ SELECT format('Testing %3$s, %2$s, %s', 'one', 'two', 'three');
        <entry>
         Extract bit from string
        </entry>
-       <entry><literal>get_bit(E'Th\\000omas'::bytea, 45)</literal></entry>
+       <entry><literal>get_bit('Th\000omas'::bytea, 45)</literal></entry>
        <entry><literal>1</literal></entry>
       </row>
 
@@ -3614,7 +3628,7 @@ SELECT format('Testing %3$s, %2$s, %s', 'one', 'two', 'three');
        <entry>
         Extract byte from string
        </entry>
-       <entry><literal>get_byte(E'Th\\000omas'::bytea, 4)</literal></entry>
+       <entry><literal>get_byte('Th\000omas'::bytea, 4)</literal></entry>
        <entry><literal>109</literal></entry>
       </row>
 
@@ -3638,7 +3652,7 @@ SELECT format('Testing %3$s, %2$s, %s', 'one', 'two', 'three');
         <see>binary strings, length</see>
        </indexterm>
       </entry>
-      <entry><literal>length(E'jo\\000se'::bytea)</literal></entry>
+      <entry><literal>length('jo\000se'::bytea)</literal></entry>
       <entry><literal>5</literal></entry>
      </row>
 
@@ -3654,7 +3668,7 @@ SELECT format('Testing %3$s, %2$s, %s', 'one', 'two', 'three');
        Calculates the MD5 hash of <parameter>string</parameter>,
        returning the result in hexadecimal
       </entry>
-      <entry><literal>md5(E'Th\\000omas'::bytea)</literal></entry>
+      <entry><literal>md5('Th\000omas'::bytea)</literal></entry>
       <entry><literal>8ab2d3c9689aaf18&#x200B;b4958c334c82d8b1</literal></entry>
      </row>
 
@@ -3670,7 +3684,7 @@ SELECT format('Testing %3$s, %2$s, %s', 'one', 'two', 'three');
        <entry>
         Set bit in string
        </entry>
-       <entry><literal>set_bit(E'Th\\000omas'::bytea, 45, 0)</literal></entry>
+       <entry><literal>set_bit('Th\000omas'::bytea, 45, 0)</literal></entry>
        <entry><literal>Th\000omAs</literal></entry>
       </row>
 
@@ -3686,7 +3700,7 @@ SELECT format('Testing %3$s, %2$s, %s', 'one', 'two', 'three');
        <entry>
         Set byte in string
        </entry>
-       <entry><literal>set_byte(E'Th\\000omas'::bytea, 4, 64)</literal></entry>
+       <entry><literal>set_byte('Th\000omas'::bytea, 4, 64)</literal></entry>
        <entry><literal>Th\000o@as</literal></entry>
       </row>
 
@@ -4046,7 +4060,23 @@ cast(-44 as bit(12))           <lineannotation>111111010100</lineannotation>
     <literal>!~~</literal> and <literal>!~~*</literal> operators that
     represent <function>NOT LIKE</function> and <function>NOT
     ILIKE</function>, respectively.  All of these operators are
-    <productname>PostgreSQL</productname>-specific.
+    <productname>PostgreSQL</productname>-specific.  You may see these
+    operator names in <command>EXPLAIN</command> output and similar
+    places, since the parser actually translates <function>LIKE</function>
+    et al. to these operators.
+   </para>
+
+   <para>
+    The phrases <function>LIKE</function>, <function>ILIKE</function>,
+    <function>NOT LIKE</function>, and <function>NOT ILIKE</function> are
+    generally treated as operators
+    in <productname>PostgreSQL</productname> syntax; for example they can
+    be used in <replaceable>expression</replaceable>
+    <replaceable>operator</replaceable> ANY
+    (<replaceable>subquery</replaceable>) constructs, although
+    an <literal>ESCAPE</literal> clause cannot be included there.  In some
+    obscure cases it may be necessary to use the underlying operator names
+    instead.
    </para>
 
    <para>
@@ -4377,7 +4407,7 @@ regexp_replace('foobarbaz', 'b..', 'X')
                                    <lineannotation>fooXbaz</lineannotation>
 regexp_replace('foobarbaz', 'b..', 'X', 'g')
                                    <lineannotation>fooXX</lineannotation>
-regexp_replace('foobarbaz', 'b(..)', E'X\\1Y', 'g')
+regexp_replace('foobarbaz', 'b(..)', 'X\1Y', 'g')
                                    <lineannotation>fooXarYXazY</lineannotation>
 </programlisting>
    </para>
@@ -4513,7 +4543,7 @@ SELECT col1, (SELECT regexp_matches(col2, '(bar)(beque)')) FROM tab;
     Some examples:
 <programlisting>
 
-SELECT foo FROM regexp_split_to_table('the quick brown fox jumps over the lazy dog', E'\\s+') AS foo;
+SELECT foo FROM regexp_split_to_table('the quick brown fox jumps over the lazy dog', '\s+') AS foo;
   foo   
 -------
  the    
@@ -4527,13 +4557,13 @@ SELECT foo FROM regexp_split_to_table('the quick brown fox jumps over the lazy d
  dog    
 (9 rows)
 
-SELECT regexp_split_to_array('the quick brown fox jumps over the lazy dog', E'\\s+');
+SELECT regexp_split_to_array('the quick brown fox jumps over the lazy dog', '\s+');
               regexp_split_to_array             
 -----------------------------------------------
  {the,quick,brown,fox,jumps,over,the,lazy,dog}
 (1 row)
 
-SELECT foo FROM regexp_split_to_table('the quick brown fox', E'\\s*') AS foo;
+SELECT foo FROM regexp_split_to_table('the quick brown fox', '\s*') AS foo;
  foo 
 -----
  t         
@@ -6305,10 +6335,19 @@ SELECT regexp_match('abc01234xyz', '(?:(.*?)(\d+)(.*)){1,1}');
      <listitem>
       <para>
        In <function>to_timestamp</function> and <function>to_date</function>,
-       if the year format specification is less than four digits, e.g.
+       if the year format specification is less than four digits, e.g.,
        <literal>YYY</literal>, and the supplied year is less than four digits,
-       the year will be adjusted to be nearest to the year 2020, e.g.
+       the year will be adjusted to be nearest to the year 2020, e.g.,
        <literal>95</literal> becomes 1995.
+      </para>
+     </listitem>
+
+     <listitem>
+      <para>
+       In <function>to_timestamp</function> and <function>to_date</function>,
+       negative years are treated as signifying BC.  If you write both a
+       negative year and an explicit <literal>BC</literal> field, you get AD
+       again.  An input of year zero is treated as 1 BC.
       </para>
      </listitem>
 
@@ -6857,13 +6896,29 @@ SELECT regexp_match('abc01234xyz', '(?:(.*?)(\d+)(.*)){1,1}');
   </para>
 
   <para>
+   In addition, the usual comparison operators shown in
+   <xref linkend="functions-comparison-op-table"/> are available for the
+   date/time types.  Dates and timestamps (with or without time zone) are
+   all comparable, while times (with or without time zone) and intervals
+   can only be compared to other values of the same data type.  When
+   comparing a timestamp without time zone to a timestamp with time zone,
+   the former value is assumed to be given in the time zone specified by
+   the <xref linkend="guc-timezone"/> configuration parameter, and is
+   rotated to UTC for comparison to the latter value (which is already
+   in UTC internally).  Similarly, a date value is assumed to represent
+   midnight in the <varname>TimeZone</varname> zone when comparing it
+   to a timestamp.
+  </para>
+
+  <para>
    All the functions and operators described below that take <type>time</type> or <type>timestamp</type>
    inputs actually come in two variants: one that takes <type>time with time zone</type> or <type>timestamp
    with time zone</type>, and one that takes <type>time without time zone</type> or <type>timestamp without time zone</type>.
    For brevity, these variants are not shown separately.  Also, the
    <literal>+</literal> and <literal>*</literal> operators come in commutative pairs (for
-   example both date + integer and integer + date); we show only one of each
-   such pair.
+   example both <type>date</type> <literal>+</literal> <type>integer</type>
+   and <type>integer</type> <literal>+</literal> <type>date</type>); we show
+   only one of each such pair.
   </para>
 
     <table id="operators-datetime-table">
@@ -7502,18 +7557,22 @@ SELECT (DATE '2001-10-30', DATE '2001-10-30') OVERLAPS
    When adding an <type>interval</type> value to (or subtracting an
    <type>interval</type> value from) a <type>timestamp with time zone</type>
    value, the days component advances or decrements the date of the
-   <type>timestamp with time zone</type> by the indicated number of days.
+   <type>timestamp with time zone</type> by the indicated number of days,
+   keeping the time of day the same.
    Across daylight saving time changes (when the session time zone is set to a
    time zone that recognizes DST), this means <literal>interval '1 day'</literal>
    does not necessarily equal <literal>interval '24 hours'</literal>.
-   For example, with the session time zone set to <literal>CST7CDT</literal>,
-   <literal>timestamp with time zone '2005-04-02 12:00-07' + interval '1 day'</literal>
-   will produce <literal>timestamp with time zone '2005-04-03 12:00-06'</literal>,
-   while adding <literal>interval '24 hours'</literal> to the same initial
-   <type>timestamp with time zone</type> produces
-   <literal>timestamp with time zone '2005-04-03 13:00-06'</literal>, as there is
-   a change in daylight saving time at <literal>2005-04-03 02:00</literal> in time zone
-   <literal>CST7CDT</literal>.
+   For example, with the session time zone set
+   to <literal>America/Denver</literal>:
+<screen>
+SELECT timestamp with time zone '2005-04-02 12:00:00-07' + interval '1 day';
+<lineannotation>Result: </lineannotation><computeroutput>2005-04-03 12:00:00-06</computeroutput>
+SELECT timestamp with time zone '2005-04-02 12:00:00-07' + interval '24 hours';
+<lineannotation>Result: </lineannotation><computeroutput>2005-04-03 13:00:00-06</computeroutput>
+</screen>
+   This happens because an hour was skipped due to a change in daylight saving
+   time at <literal>2005-04-03 02:00:00</literal> in time zone
+   <literal>America/Denver</literal>.
   </para>
 
   <para>
@@ -7689,9 +7748,11 @@ SELECT EXTRACT(DOY FROM TIMESTAMP '2001-02-16 20:38:40');
       <listitem>
        <para>
         For <type>timestamp with time zone</type> values, the
-        number of seconds since 1970-01-01 00:00:00 UTC (can be negative);
+        number of seconds since 1970-01-01 00:00:00 UTC (negative for
+        timestamps before that);
         for <type>date</type> and <type>timestamp</type> values, the
-        number of seconds since 1970-01-01 00:00:00 local time;
+        nominal number of seconds since 1970-01-01 00:00:00,
+        without regard to timezone or daylight-savings rules;
         for <type>interval</type> values, the total number
         of seconds in the interval
        </para>
@@ -7700,18 +7761,29 @@ SELECT EXTRACT(DOY FROM TIMESTAMP '2001-02-16 20:38:40');
 SELECT EXTRACT(EPOCH FROM TIMESTAMP WITH TIME ZONE '2001-02-16 20:38:40.12-08');
 <lineannotation>Result: </lineannotation><computeroutput>982384720.12</computeroutput>
 
+SELECT EXTRACT(EPOCH FROM TIMESTAMP '2001-02-16 20:38:40.12');
+<lineannotation>Result: </lineannotation><computeroutput>982355920.12</computeroutput>
+
 SELECT EXTRACT(EPOCH FROM INTERVAL '5 days 3 hours');
 <lineannotation>Result: </lineannotation><computeroutput>442800</computeroutput>
 </screen>
 
        <para>
-        You can convert an epoch value back to a time stamp
+        You can convert an epoch value back to a <type>timestamp with time zone</type>
         with <function>to_timestamp</function>:
        </para>
 <screen>
 SELECT to_timestamp(982384720.12);
 <lineannotation>Result: </lineannotation><computeroutput>2001-02-17 04:38:40.12+00</computeroutput>
 </screen>
+
+       <para>
+        Beware that applying <function>to_timestamp</function> to an epoch
+        extracted from a <type>date</type> or <type>timestamp</type> value
+        could produce a misleading result: the result will effectively
+        assume that the original value had been given in UTC, which might
+        not be the case.
+       </para>
       </listitem>
      </varlistentry>
 
@@ -8082,10 +8154,11 @@ SELECT date_trunc('year', TIMESTAMP '2001-02-16 20:38:40');
    </indexterm>
 
    <para>
-    The <literal>AT TIME ZONE</literal> construct allows conversions
-    of time stamps to different time zones.  <xref
-    linkend="functions-datetime-zoneconvert-table"/> shows its
-    variants.
+    The <literal>AT TIME ZONE</literal> converts time
+    stamp <emphasis>without time zone</emphasis> to/from
+    time stamp <emphasis>with time zone</emphasis>, and
+    <emphasis>time</emphasis> values to different time zones. <xref
+    linkend="functions-datetime-zoneconvert-table"/> shows its variants.
    </para>
 
     <table id="functions-datetime-zoneconvert-table">
@@ -8130,24 +8203,33 @@ SELECT date_trunc('year', TIMESTAMP '2001-02-16 20:38:40');
 
    <para>
     In these expressions, the desired time zone <replaceable>zone</replaceable> can be
-    specified either as a text string (e.g., <literal>'PST'</literal>)
+    specified either as a text string (e.g., <literal>'America/Los_Angeles'</literal>)
     or as an interval (e.g., <literal>INTERVAL '-08:00'</literal>).
     In the text case, a time zone name can be specified in any of the ways
     described in <xref linkend="datatype-timezones"/>.
    </para>
 
    <para>
-    Examples (assuming the local time zone is <literal>PST8PDT</literal>):
+    Examples (assuming the local time zone is <literal>America/Los_Angeles</literal>):
 <screen>
-SELECT TIMESTAMP '2001-02-16 20:38:40' AT TIME ZONE 'MST';
+SELECT TIMESTAMP '2001-02-16 20:38:40' AT TIME ZONE 'America/Denver';
 <lineannotation>Result: </lineannotation><computeroutput>2001-02-16 19:38:40-08</computeroutput>
 
-SELECT TIMESTAMP WITH TIME ZONE '2001-02-16 20:38:40-05' AT TIME ZONE 'MST';
+SELECT TIMESTAMP WITH TIME ZONE '2001-02-16 20:38:40-05' AT TIME ZONE 'America/Denver';
 <lineannotation>Result: </lineannotation><computeroutput>2001-02-16 18:38:40</computeroutput>
+
+SELECT TIMESTAMP '2001-02-16 20:38:40-05' AT TIME ZONE 'Asia/Tokyo' AT TIME ZONE 'America/Chicago';
+<lineannotation>Result: </lineannotation><computeroutput>2001-02-16 05:38:40</computeroutput>
 </screen>
-    The first example takes a time stamp without time zone and interprets it as MST time
-    (UTC-7), which is then converted to PST (UTC-8) for display.  The second example takes
-    a time stamp specified in EST (UTC-5) and converts it to local time in MST (UTC-7).
+    The first example adds a time zone to a value that lacks it, and
+    displays the value using the current <varname>TimeZone</varname>
+    setting.  The second example shifts the time stamp with time zone value
+    to the specified time zone, and returns the value without a time zone.
+    This allows storage and display of values different from the current
+    <varname>TimeZone</varname> setting.  The third example converts
+    Tokyo time to Chicago time.   Converting <emphasis>time</emphasis>
+    values to other time zones uses the currently active time zone rules
+    since no date is supplied.
    </para>
 
    <para>
@@ -8287,20 +8369,22 @@ now()
 <programlisting>
 SELECT CURRENT_TIMESTAMP;
 SELECT now();
-SELECT TIMESTAMP 'now';  -- incorrect for use with DEFAULT
+SELECT TIMESTAMP 'now';  -- but see tip below
 </programlisting>
    </para>
 
     <tip>
      <para>
-      You do not want to use the third form when specifying a <literal>DEFAULT</literal>
-      clause while creating a table.  The system will convert <literal>now</literal>
+      Do not use the third form when specifying a value to be evaluated later,
+      for example in a <literal>DEFAULT</literal> clause for a table column.
+      The system will convert <literal>now</literal>
       to a <type>timestamp</type> as soon as the constant is parsed, so that when
       the default value is needed,
       the time of the table creation would be used!  The first two
       forms will not be evaluated until the default value is used,
       because they are function calls.  Thus they will give the desired
       behavior of defaulting to the time of row insertion.
+      (See also <xref linkend="datatype-datetime-special-values"/>.)
      </para>
     </tip>
   </sect2>
@@ -9742,7 +9826,7 @@ CREATE TYPE rainbow AS ENUM ('red', 'orange', 'yellow', 'green', 'blue', 'purple
           <literal>"string"</literal> (to include all string values), <literal>"numeric"</literal> (to include all numeric values in the string format),
           <literal>"boolean"</literal> (to include all Boolean values in the string format <literal>"true"</literal>/<literal>"false"</literal>),
           <literal>"key"</literal> (to include all keys) or <literal>"all"</literal> (to include all above). These values
-          can be combined together to include, e.g. all string and numeric values.
+          can be combined together to include, e.g., all string and numeric values.
         </entry>
         <entry><literal>json_to_tsvector('english', '{"a": "The Fat Rats", "b": 123}'::json, '["string", "numeric"]')</literal></entry>
         <entry><literal>'123':5 'fat':2 'rat':3</literal></entry>
@@ -10035,16 +10119,25 @@ CREATE TYPE rainbow AS ENUM ('red', 'orange', 'yellow', 'green', 'blue', 'purple
 
 
  <sect1 id="functions-xml">
+
   <title>XML Functions</title>
+
+  <indexterm>
+   <primary>XML Functions</primary>
+  </indexterm>
 
   <para>
    The functions and function-like expressions described in this
-   section operate on values of type <type>xml</type>.  Check <xref
+   section operate on values of type <type>xml</type>.  See <xref
    linkend="datatype-xml"/> for information about the <type>xml</type>
    type.  The function-like expressions <function>xmlparse</function>
    and <function>xmlserialize</function> for converting to and from
-   type <type>xml</type> are not repeated here.  Use of most of these
-   functions requires the installation to have been built
+   type <type>xml</type> are documented there, not in this section.
+  </para>
+
+  <para>
+   Use of most of these functions
+   requires <productname>PostgreSQL</productname> to have been built
    with <command>configure --with-libxml</command>.
   </para>
 
@@ -10239,8 +10332,8 @@ SELECT xmlelement(name foo, xmlattributes('xyz' as bar),
      encoding, depending on the setting of the configuration parameter
      <xref linkend="guc-xmlbinary"/>.  The particular behavior for
      individual data types is expected to evolve in order to align the
-     SQL and PostgreSQL data types with the XML Schema specification,
-     at which point a more precise description will appear.
+     PostgreSQL mappings with those specified in SQL:2006 and later,
+     as discussed in <xref linkend="functions-xml-limits-casts"/>.
     </para>
    </sect3>
 
@@ -10482,10 +10575,13 @@ SELECT xmlagg(x) FROM (SELECT * FROM test ORDER BY y DESC) AS tab;
 </synopsis>
 
     <para>
-     The function <function>xmlexists</function> returns true if the
-     XPath expression in the first argument returns any nodes, and
-     false otherwise.  (If either argument is null, the result is
-     null.)
+     The function <function>xmlexists</function> evaluates an XPath 1.0
+     expression (the first argument), with the passed XML value as its context
+     item.  The function returns false if the result of that evaluation
+     yields an empty node-set, true if it yields any other value.  The
+     function returns null if any argument is null.  A nonnull value
+     passed as the context item must be an XML document, not a content
+     fragment or any non-XML value.
     </para>
 
     <para>
@@ -10501,14 +10597,14 @@ SELECT xmlexists('//town[text() = ''Toronto'']' PASSING BY REF '<towns><town>Tor
     </para>
 
     <para>
-     The <literal>BY REF</literal> clauses have no effect in
-     PostgreSQL, but are allowed for SQL conformance and compatibility
-     with other implementations.  Per SQL standard, the
-     first <literal>BY REF</literal> is required, the second is
-     optional.  Also note that the SQL standard specifies
-     the <function>xmlexists</function> construct to take an XQuery
-     expression as first argument, but PostgreSQL currently only
-     supports XPath, which is a subset of XQuery.
+     The <literal>BY REF</literal> clauses
+     are accepted in <productname>PostgreSQL</productname>, but are ignored,
+     as discussed in <xref linkend="functions-xml-limits-postgresql"/>.
+     In the SQL standard, the <function>xmlexists</function> function
+     evaluates an expression in the XML Query language,
+     but <productname>PostgreSQL</productname> allows only an XPath 1.0
+     expression, as discussed in
+     <xref linkend="functions-xml-limits-xpath1"/>.
     </para>
    </sect3>
 
@@ -10614,12 +10710,12 @@ SELECT xml_is_well_formed_document('<pg:foo xmlns:pg="http://postgresql.org/stuf
 </synopsis>
 
     <para>
-     The function <function>xpath</function> evaluates the XPath
+     The function <function>xpath</function> evaluates the XPath 1.0
      expression <replaceable>xpath</replaceable> (a <type>text</type> value)
      against the XML value
      <replaceable>xml</replaceable>.  It returns an array of XML values
-     corresponding to the node set produced by the XPath expression.
-     If the XPath expression returns a scalar value rather than a node set,
+     corresponding to the node-set produced by the XPath expression.
+     If the XPath expression returns a scalar value rather than a node-set,
      a single-element array is returned.
     </para>
 
@@ -10681,9 +10777,10 @@ SELECT xpath('//mydefns:b/text()', '<a xmlns="http://example.com"><b>test</b></a
     <para>
      The function <function>xpath_exists</function> is a specialized form
      of the <function>xpath</function> function.  Instead of returning the
-     individual XML values that satisfy the XPath, this function returns a
-     Boolean indicating whether the query was satisfied or not.  This
-     function is equivalent to the standard <literal>XMLEXISTS</literal> predicate,
+     individual XML values that satisfy the XPath 1.0 expression, this function
+     returns a Boolean indicating whether the query was satisfied or not
+     (specifically, whether it produced any value other than an empty node-set).
+     This function is equivalent to the <literal>XMLEXISTS</literal> predicate,
      except that it also offers support for a namespace mapping argument.
     </para>
 
@@ -10724,8 +10821,8 @@ SELECT xpath_exists('/my:a/text()', '<my:a xmlns:my="http://example.com">test</m
 
     <para>
      The <function>xmltable</function> function produces a table based
-     on the given XML value, an XPath filter to extract rows, and an
-     optional set of column definitions.
+     on the given XML value, an XPath filter to extract rows, and a
+     set of column definitions.
     </para>
 
     <para>
@@ -10736,30 +10833,34 @@ SELECT xpath_exists('/my:a/text()', '<my:a xmlns:my="http://example.com">test</m
     </para>
 
     <para>
-     The required <replaceable>row_expression</replaceable> argument is an XPath
-     expression that is evaluated against the supplied XML document to
-     obtain an ordered sequence of XML nodes. This sequence is what
-     <function>xmltable</function> transforms into output rows.
+     The required <replaceable>row_expression</replaceable> argument is
+     an XPath 1.0 expression that is evaluated, passing the
+     <replaceable>document_expression</replaceable> as its context item, to
+     obtain a set of XML nodes. These nodes are what
+     <function>xmltable</function> transforms into output rows. No rows
+     will be produced if the <replaceable>document_expression</replaceable>
+     is null, nor if the <replaceable>row_expression</replaceable> produces
+     an empty node-set or any value other than a node-set.
     </para>
 
     <para>
-     <replaceable>document_expression</replaceable> provides the XML document to
-     operate on.
-     The <literal>BY REF</literal> clauses have no effect in PostgreSQL,
-     but are allowed for SQL conformance and compatibility with other
-     implementations.
-     The argument must be a well-formed XML document; fragments/forests
-     are not accepted.
+     <replaceable>document_expression</replaceable> provides the context
+     item for the <replaceable>row_expression</replaceable>. It must be a
+     well-formed XML document; fragments/forests are not accepted.
+     The <literal>BY REF</literal> clause
+     is accepted but ignored, as discussed in
+     <xref linkend="functions-xml-limits-postgresql"/>.
+     In the SQL standard, the <function>xmltable</function> function
+     evaluates expressions in the XML Query language,
+     but <productname>PostgreSQL</productname> allows only XPath 1.0
+     expressions, as discussed in
+     <xref linkend="functions-xml-limits-xpath1"/>.
     </para>
 
     <para>
      The mandatory <literal>COLUMNS</literal> clause specifies the list
      of columns in the output table.
-     If the <literal>COLUMNS</literal> clause is omitted, the rows in the result
-     set contain a single column of type <literal>xml</literal> containing the
-     data matched by <replaceable>row_expression</replaceable>.
-     If <literal>COLUMNS</literal> is specified, each entry describes a
-     single column.
+     Each entry describes a single column.
      See the syntax summary above for the format.
      The column name and type are required; the path, default and
      nullability clauses are optional.
@@ -10767,48 +10868,57 @@ SELECT xpath_exists('/my:a/text()', '<my:a xmlns:my="http://example.com">test</m
 
     <para>
      A column marked <literal>FOR ORDINALITY</literal> will be populated
-     with row numbers matching the order in which the
-     output rows appeared in the original input XML document.
+     with row numbers, starting with 1, in the order of nodes retrieved from
+     the <replaceable>row_expression</replaceable>'s result node-set.
      At most one column may be marked <literal>FOR ORDINALITY</literal>.
     </para>
 
+    <note>
+     <para>
+      XPath 1.0 does not specify an order for nodes in a node-set, so code
+      that relies on a particular order of the results will be
+      implementation-dependent.  Details can be found in
+      <xref linkend="xml-xpath-1-specifics"/>.
+     </para>
+    </note>
+
     <para>
-     The <literal>column_expression</literal> for a column is an XPath expression
-     that is evaluated for each row, relative to the result of the
-     <replaceable>row_expression</replaceable>, to find the value of the column.
-     If no <literal>column_expression</literal> is given, then the column name
-     is used as an implicit path.
+     The <replaceable>column_expression</replaceable> for a column is an
+     XPath 1.0 expression that is evaluated for each row, with the current
+     node from the <replaceable>row_expression</replaceable> result as its
+     context item, to find the value of the column.  If
+     no <replaceable>column_expression</replaceable> is given, then the
+     column name is used as an implicit path.
     </para>
 
     <para>
-     If a column's XPath expression returns multiple elements, an error
-     is raised.
-     If the expression matches an empty tag, the result is an
-     empty string (not <literal>NULL</literal>).
-     Any <literal>xsi:nil</literal> attributes are ignored.
+     If a column's XPath expression returns a non-XML value (limited to
+     string, boolean, or double in XPath 1.0) and the column has a
+     PostgreSQL type other than <type>xml</type>, the column will be set
+     as if by assigning the value's string representation to the PostgreSQL
+     type. In this release, an XPath boolean or double result must be explicitly
+     cast to string (that is, the XPath 1.0 <function>string</function> function
+     wrapped around the original column expression);
+     <productname>PostgreSQL</productname> can then successfully assign the
+     string to an SQL result column of boolean or double type.
+     These conversion rules differ from those of the SQL
+     standard, as discussed in <xref linkend="functions-xml-limits-casts"/>.
     </para>
 
     <para>
-     The text body of the XML matched by the <replaceable>column_expression</replaceable>
-     is used as the column value. Multiple <literal>text()</literal> nodes
-     within an element are concatenated in order. Any child elements,
-     processing instructions, and comments are ignored, but the text contents
-     of child elements are concatenated to the result.
-     Note that the whitespace-only <literal>text()</literal> node between two non-text
-     elements is preserved, and that leading whitespace on a <literal>text()</literal>
-     node is not flattened.
+     In this release, SQL result columns of <type>xml</type> type, or
+     column XPath expressions evaluating to an XML type, regardless of the
+     output column SQL type, are handled as described in
+     <xref linkend="functions-xml-limits-postgresql"/>; the behavior
+     changes significantly in <productname>PostgreSQL 12</productname>.
     </para>
 
     <para>
-     If the path expression does not match for a given row but
-     <replaceable>default_expression</replaceable> is specified, the value resulting
-     from evaluating that expression is used.
-     If no <literal>DEFAULT</literal> clause is given for the column,
-     the field will be set to <literal>NULL</literal>.
-     It is possible for a <replaceable>default_expression</replaceable> to reference
-     the value of output columns that appear prior to it in the column list,
-     so the default of one column may be based on the value of another
-     column.
+     If the path expression returns an empty node-set
+     (typically, when it does not match)
+     for a given row, the column will be set to <literal>NULL</literal>, unless
+     a <replaceable>default_expression</replaceable> is specified; then the
+     value resulting from evaluating that expression is used.
     </para>
 
     <para>
@@ -10820,20 +10930,14 @@ SELECT xpath_exists('/my:a/text()', '<my:a xmlns:my="http://example.com">test</m
     </para>
 
     <para>
-     Unlike regular PostgreSQL functions, <replaceable>column_expression</replaceable>
-     and <replaceable>default_expression</replaceable> are not evaluated to a simple
-     value before calling the function.
-     <replaceable>column_expression</replaceable> is normally evaluated
-     exactly once per input row, and <replaceable>default_expression</replaceable>
-     is evaluated each time a default is needed for a field.
-     If the expression qualifies as stable or immutable the repeat
+     A <replaceable>default_expression</replaceable>, rather than being
+     evaluated immediately when <function>xmltable</function> is called,
+     is evaluated each time a default is needed for the column.
+     If the expression qualifies as stable or immutable, the repeat
      evaluation may be skipped.
-     Effectively <function>xmltable</function> behaves more like a subquery than a
-     function call.
      This means that you can usefully use volatile functions like
-     <function>nextval</function> in <replaceable>default_expression</replaceable>, and
-     <replaceable>column_expression</replaceable> may depend on other parts of the
-     XML document.
+     <function>nextval</function> in
+     <replaceable>default_expression</replaceable>.
     </para>
 
     <para>
@@ -11131,7 +11235,7 @@ table2-mapping
     converted into other XML-based formats.
    </para>
 
-   <figure id="xslt-xml-html">
+   <example id="xslt-xml-html">
     <title>XSLT Stylesheet for Converting SQL/XML Output to HTML</title>
 <programlisting><![CDATA[
 <?xml version="1.0"?>
@@ -11179,7 +11283,7 @@ table2-mapping
 
 </xsl:stylesheet>
 ]]></programlisting>
-   </figure>
+   </example>
   </sect2>
  </sect1>
 
@@ -11380,10 +11484,13 @@ table2-mapping
 
   <note>
    <para>
-    The <literal>||</literal> operator concatenates the elements at the top level of
-    each of its operands. It does not operate recursively. For example, if
-    both operands are objects with a common key field name, the value of the
-    field in the result will just be the value from the right hand operand.
+    The <literal>||</literal> operator concatenates two JSON objects by
+    generating an object containing the union of their keys, taking the
+    second object's value when there are duplicate keys.  All other cases
+    produce a JSON array: first, any non-array input is converted into a
+    single-element array, and then the two arrays are concatenated.
+    It does not operate recursively; only the top-level array or object
+    structure is merged.
    </para>
   </note>
 
@@ -11903,7 +12010,7 @@ table2-mapping
        <entry><literal>[{"f1":1},2,null,3]</literal></entry>
        </row>
       <row>
-       <entry><para><literal>jsonb_set(target jsonb, path text[], new_value jsonb<optional>, <parameter>create_missing</parameter> <type>boolean</type></optional>)</literal>
+       <entry><para><literal>jsonb_set(target jsonb, path text[], new_value jsonb <optional>, create_missing boolean</optional>)</literal>
          </para></entry>
        <entry><para><type>jsonb</type></para></entry>
        <entry>
@@ -11911,10 +12018,10 @@ table2-mapping
          with the section designated by <replaceable>path</replaceable>
          replaced by <replaceable>new_value</replaceable>, or with
          <replaceable>new_value</replaceable> added if
-         <replaceable>create_missing</replaceable> is true ( default is
+         <replaceable>create_missing</replaceable> is true (default is
          <literal>true</literal>) and the item
          designated by <replaceable>path</replaceable> does not exist.
-         As with the path orientated operators, negative integers that
+         As with the path oriented operators, negative integers that
          appear in <replaceable>path</replaceable> count from the end
          of JSON arrays.
        </entry>
@@ -11928,7 +12035,7 @@ table2-mapping
       <row>
        <entry>
            <para><literal>
-           jsonb_insert(target jsonb, path text[], new_value jsonb, <optional><parameter>insert_after</parameter> <type>boolean</type></optional>)
+           jsonb_insert(target jsonb, path text[], new_value jsonb <optional>, insert_after boolean</optional>)
            </literal></para>
        </entry>
        <entry><para><type>jsonb</type></para></entry>
@@ -11943,7 +12050,7 @@ table2-mapping
          designated by <replaceable>path</replaceable> is in JSONB object,
          <replaceable>new_value</replaceable> will be inserted only if
          <replaceable>target</replaceable> does not exist. As with the path
-         orientated operators, negative integers that appear in
+         oriented operators, negative integers that appear in
          <replaceable>path</replaceable> count from the end of JSON arrays.
        </entry>
        <entry>
@@ -11996,29 +12103,72 @@ table2-mapping
   </note>
 
   <note>
-    <para>
-      While the examples for the functions
-      <function>json_populate_record</function>,
-      <function>json_populate_recordset</function>,
-      <function>json_to_record</function> and
-      <function>json_to_recordset</function> use constants, the typical use
-      would be to reference a table in the <literal>FROM</literal> clause
-      and use one of its <type>json</type> or <type>jsonb</type> columns
-      as an argument to the function.  Extracted key values can then be
-      referenced in other parts of the query, like <literal>WHERE</literal>
-      clauses and target lists.  Extracting multiple values in this
-      way can improve performance over extracting them separately with
-      per-key operators.
-    </para>
+   <para>
+    The functions
+    <function>json[b]_populate_record</function>,
+    <function>json[b]_populate_recordset</function>,
+    <function>json[b]_to_record</function> and
+    <function>json[b]_to_recordset</function>
+    operate on a JSON object, or array of objects, and extract the values
+    associated with keys whose names match column names of the output row
+    type.
+    Object fields that do not correspond to any output column name are
+    ignored, and output columns that do not match any object field will be
+    filled with nulls.
+    To convert a JSON value to the SQL type of an output column, the
+    following rules are applied in sequence:
+    <itemizedlist spacing="compact">
+     <listitem>
+      <para>
+       A JSON null value is converted to a SQL null in all cases.
+      </para>
+     </listitem>
+     <listitem>
+      <para>
+       If the output column is of type <type>json</type>
+       or <type>jsonb</type>, the JSON value is just reproduced exactly.
+      </para>
+     </listitem>
+     <listitem>
+      <para>
+       If the output column is a composite (row) type, and the JSON value is
+       a JSON object, the fields of the object are converted to columns of
+       the output row type by recursive application of these rules.
+      </para>
+     </listitem>
+     <listitem>
+      <para>
+       Likewise, if the output column is an array type and the JSON value is
+       a JSON array, the elements of the JSON array are converted to elements
+       of the output array by recursive application of these rules.
+      </para>
+     </listitem>
+     <listitem>
+      <para>
+       Otherwise, if the JSON value is a string literal, the contents of the
+       string are fed to the input conversion function for the column's data
+       type.
+      </para>
+     </listitem>
+     <listitem>
+      <para>
+       Otherwise, the ordinary text representation of the JSON value is fed
+       to the input conversion function for the column's data type.
+      </para>
+     </listitem>
+    </itemizedlist>
+   </para>
 
-    <para>
-      JSON keys are matched to identical column names in the target
-      row type.  JSON type coercion for these functions is <quote>best
-      effort</quote> and may not result in desired values for some types.
-      JSON fields that do not appear in the target row type will be
-      omitted from the output, and target columns that do not match any
-      JSON field will simply be NULL.
-    </para>
+   <para>
+    While the examples for these functions use constants, the typical use
+    would be to reference a table in the <literal>FROM</literal> clause
+    and use one of its <type>json</type> or <type>jsonb</type> columns
+    as an argument to the function.  Extracted key values can then be
+    referenced in other parts of the query, like <literal>WHERE</literal>
+    clauses and target lists.  Extracting multiple values in this
+    way can improve performance over extracting them separately with
+    per-key operators.
+   </para>
   </note>
 
   <note>
@@ -12360,7 +12510,7 @@ SELECT setval('foo', 42, false);    <lineannotation>Next <function>nextval</func
   <tip>
    <para>
     If your needs go beyond the capabilities of these conditional
-    expressions, you might want to consider writing a stored procedure
+    expressions, you might want to consider writing a server-side function
     in a more expressive programming language.
    </para>
   </tip>
@@ -12521,6 +12671,12 @@ SELECT COALESCE(description, short_description, '(none)') ...
   </para>
 
    <para>
+    The arguments must all be convertible to a common data type, which
+    will be the type of the result (see
+    <xref linkend="typeconv-union-case"/> for details).
+   </para>
+
+   <para>
     Like a <token>CASE</token> expression, <function>COALESCE</function> only
     evaluates the arguments that are needed to determine the result;
     that is, arguments to the right of the first non-null argument are
@@ -12550,11 +12706,28 @@ SELECT COALESCE(description, short_description, '(none)') ...
 <programlisting>
 SELECT NULLIF(value, '(none)') ...
 </programlisting>
-  </para>
-  <para>
    In this example, if <literal>value</literal> is <literal>(none)</literal>,
    null is returned, otherwise the value of <literal>value</literal>
    is returned.
+  </para>
+
+  <para>
+   The two arguments must be of comparable types.
+   To be specific, they are compared exactly as if you had
+   written <literal><replaceable>value1</replaceable>
+   = <replaceable>value2</replaceable></literal>, so there must be a
+   suitable <literal>=</literal> operator available.
+  </para>
+
+  <para>
+   The result has the same type as the first argument &mdash; but there is
+   a subtlety.  What is actually returned is the first argument of the
+   implied <literal>=</literal> operator, and in some cases that will have
+   been promoted to match the second argument's type.  For
+   example, <literal>NULLIF(1, 2.2)</literal> yields <type>numeric</type>,
+   because there is no <type>integer</type> <literal>=</literal>
+   <type>numeric</type> operator,
+   only <type>numeric</type> <literal>=</literal> <type>numeric</type>.
   </para>
 
   </sect2>
@@ -12660,14 +12833,14 @@ SELECT NULLIF(value, '(none)') ...
        <row>
         <entry> <literal>@&gt;</literal> </entry>
         <entry>contains</entry>
-        <entry><literal>ARRAY[1,4,3] @&gt; ARRAY[3,1]</literal></entry>
+        <entry><literal>ARRAY[1,4,3] @&gt; ARRAY[3,1,3]</literal></entry>
         <entry><literal>t</literal></entry>
        </row>
 
        <row>
         <entry> <literal>&lt;@</literal> </entry>
         <entry>is contained by</entry>
-        <entry><literal>ARRAY[2,7] &lt;@ ARRAY[1,7,4,2,6]</literal></entry>
+        <entry><literal>ARRAY[2,2,7] &lt;@ ARRAY[1,7,4,2,6]</literal></entry>
         <entry><literal>t</literal></entry>
        </row>
 
@@ -12710,8 +12883,10 @@ SELECT NULLIF(value, '(none)') ...
     </table>
 
   <para>
-   Array comparisons compare the array contents element-by-element,
-   using the default B-tree comparison function for the element data type.
+   The array ordering operators (<literal>&lt;</literal>,
+   <literal>&gt;=</literal>, etc) compare the array contents
+   element-by-element, using the default B-tree comparison function for
+   the element data type, and sort based on the first difference.
    In multidimensional arrays the elements are visited in row-major order
    (last subscript varies most rapidly).
    If the contents of two arrays are equal but the dimensionality is
@@ -12720,6 +12895,15 @@ SELECT NULLIF(value, '(none)') ...
    <productname>PostgreSQL</productname> prior to 8.2: older versions would claim
    that two arrays with the same contents were equal, even if the
    number of dimensions or subscript ranges were different.)
+  </para>
+
+  <para>
+   The array containment operators (<literal>&lt;@</literal>
+   and <literal>@&gt;</literal>) consider one array to be contained in
+   another one if each of its elements appears in the other one.
+   Duplicates are not treated specially, thus <literal>ARRAY[1]</literal>
+   and <literal>ARRAY[1,1]</literal> are each considered to contain the
+   other.
   </para>
 
   <para>
@@ -13460,7 +13644,7 @@ NULL baz</literallayout>(3 rows)</entry>
       <entry>No</entry>
       <entry>input arrays concatenated into array of one higher dimension
        (inputs must all have same dimensionality,
-        and cannot be empty or NULL)</entry>
+        and cannot be empty or null)</entry>
      </row>
 
      <row>
@@ -13484,7 +13668,7 @@ NULL baz</literallayout>(3 rows)</entry>
        otherwise the same as the argument data type
       </entry>
       <entry>Yes</entry>
-      <entry>the average (arithmetic mean) of all input values</entry>
+      <entry>the average (arithmetic mean) of all non-null input values</entry>
      </row>
 
      <row>
@@ -13612,7 +13796,7 @@ NULL baz</literallayout>(3 rows)</entry>
        <type>json</type>
       </entry>
       <entry>No</entry>
-      <entry>aggregates values as a JSON array</entry>
+      <entry>aggregates values, including nulls, as a JSON array</entry>
      </row>
 
      <row>
@@ -13629,7 +13813,7 @@ NULL baz</literallayout>(3 rows)</entry>
        <type>jsonb</type>
       </entry>
       <entry>No</entry>
-      <entry>aggregates values as a JSON array</entry>
+      <entry>aggregates values, including nulls, as a JSON array</entry>
      </row>
 
      <row>
@@ -13646,7 +13830,8 @@ NULL baz</literallayout>(3 rows)</entry>
        <type>json</type>
       </entry>
       <entry>No</entry>
-      <entry>aggregates name/value pairs as a JSON object</entry>
+      <entry>aggregates name/value pairs as a JSON object; values can be
+       null, but not names</entry>
      </row>
 
      <row>
@@ -13663,7 +13848,8 @@ NULL baz</literallayout>(3 rows)</entry>
        <type>jsonb</type>
       </entry>
       <entry>No</entry>
-      <entry>aggregates name/value pairs as a JSON object</entry>
+      <entry>aggregates name/value pairs as a JSON object; values can be
+       null, but not names</entry>
      </row>
 
      <row>
@@ -13679,7 +13865,7 @@ NULL baz</literallayout>(3 rows)</entry>
       <entry>Yes</entry>
       <entry>
        maximum value of <replaceable
-       class="parameter">expression</replaceable> across all input
+       class="parameter">expression</replaceable> across all non-null input
        values
       </entry>
      </row>
@@ -13697,7 +13883,7 @@ NULL baz</literallayout>(3 rows)</entry>
       <entry>Yes</entry>
       <entry>
        minimum value of <replaceable
-       class="parameter">expression</replaceable> across all input
+       class="parameter">expression</replaceable> across all non-null input
        values
       </entry>
      </row>
@@ -13719,7 +13905,7 @@ NULL baz</literallayout>(3 rows)</entry>
        same as argument types
       </entry>
       <entry>No</entry>
-      <entry>input values concatenated into a string, separated by delimiter</entry>
+      <entry>non-null input values concatenated into a string, separated by delimiter</entry>
      </row>
 
      <row>
@@ -13742,7 +13928,8 @@ NULL baz</literallayout>(3 rows)</entry>
        argument data type
       </entry>
       <entry>Yes</entry>
-      <entry>sum of <replaceable class="parameter">expression</replaceable> across all input values</entry>
+      <entry>sum of <replaceable class="parameter">expression</replaceable>
+       across all non-null input values</entry>
      </row>
 
      <row>
@@ -13759,7 +13946,8 @@ NULL baz</literallayout>(3 rows)</entry>
        <type>xml</type>
       </entry>
       <entry>No</entry>
-      <entry>concatenation of XML values (see also <xref linkend="functions-xml-xmlagg"/>)</entry>
+      <entry>concatenation of non-null XML values
+       (see also <xref linkend="functions-xml-xmlagg"/>)</entry>
      </row>
     </tbody>
    </tgroup>
@@ -15182,8 +15370,8 @@ WHERE EXISTS (SELECT 1 FROM tab2 WHERE col2 = tab1.col2);
    The result is <quote>false</quote> if the comparison returns false for every
    subquery row (including the case where the subquery returns no
    rows).
-   The result is NULL if the comparison does not return true for any row,
-   and it returns NULL for at least one row.
+   The result is NULL if no comparison with a subquery row returns true,
+   and at least one comparison returns NULL.
   </para>
 
   <para>
@@ -15208,8 +15396,8 @@ WHERE EXISTS (SELECT 1 FROM tab2 WHERE col2 = tab1.col2);
    The result of <token>ALL</token> is <quote>true</quote> if all rows yield true
    (including the case where the subquery returns no rows).
    The result is <quote>false</quote> if any false result is found.
-   The result is NULL if the comparison does not return false for any row,
-   and it returns NULL for at least one row.
+   The result is NULL if no comparison with a subquery row returns false,
+   and at least one comparison returns NULL.
   </para>
 
   <para>
@@ -15238,8 +15426,8 @@ WHERE EXISTS (SELECT 1 FROM tab2 WHERE col2 = tab1.col2);
    case where the subquery returns no rows).
    The result is <quote>false</quote> if the comparison returns false for any
    subquery row.
-   The result is NULL if the comparison does not return false for any
-   subquery row, and it returns NULL for at least one row.
+   The result is NULL if no comparison with a subquery row returns false,
+   and at least one comparison returns NULL.
   </para>
 
   <para>
@@ -16030,9 +16218,9 @@ SELECT * FROM pg_ls_dir('.') WITH ORDINALITY AS t(ls,n);
       <row>
        <entry><literal><function>pg_jit_available()</function></literal></entry>
        <entry><type>boolean</type></entry>
-       <entry>is <acronym>JIT</acronym> compilation available in this session
-       (see <xref linkend="jit"/>)? Returns <literal>false</literal> if <xref
-       linkend="guc-jit"/> is set to false.</entry>
+       <entry>is a <acronym>JIT</acronym> compiler extension available
+       (see <xref linkend="jit"/>) and the <xref linkend="guc-jit"/>
+       configuration parameter set to <literal>on</literal>.</entry>
       </row>
 
       <row>
@@ -16294,7 +16482,7 @@ SET search_path TO <replaceable>schema</replaceable> <optional>, <replaceable>sc
     optional parameter. The return value is <literal>NULL</literal> when the
     log format requested is not a configured
     <xref linkend="guc-log-destination"/>.  The
-    <function>pg_current_logfiles</function> reflects the contents of the
+    <function>pg_current_logfile</function> reflects the contents of the
     <filename>current_logfiles</filename> file.
    </para>
 
@@ -17690,24 +17878,24 @@ SELECT collation for ('foo' COLLATE "de_DE");
 
      <tbody>
       <row>
-       <entry><literal><function>pg_describe_object(<parameter>catalog_id</parameter>, <parameter>object_id</parameter>, <parameter>object_sub_id</parameter>)</function></literal></entry>
+       <entry><literal><function>pg_describe_object(<parameter>classid</parameter> <type>oid</type>, <parameter>objid</parameter> <type>oid</type>, <parameter>objsubid</parameter> <type>integer</type>)</function></literal></entry>
        <entry><type>text</type></entry>
        <entry>get description of a database object</entry>
       </row>
       <row>
-       <entry><literal><function>pg_identify_object(<parameter>catalog_id</parameter> <type>oid</type>, <parameter>object_id</parameter> <type>oid</type>, <parameter>object_sub_id</parameter> <type>integer</type>)</function></literal></entry>
+       <entry><literal><function>pg_identify_object(<parameter>classid</parameter> <type>oid</type>, <parameter>objid</parameter> <type>oid</type>, <parameter>objsubid</parameter> <type>integer</type>)</function></literal></entry>
        <entry><parameter>type</parameter> <type>text</type>, <parameter>schema</parameter> <type>text</type>, <parameter>name</parameter> <type>text</type>, <parameter>identity</parameter> <type>text</type></entry>
        <entry>get identity of a database object</entry>
       </row>
       <row>
-       <entry><literal><function>pg_identify_object_as_address(<parameter>catalog_id</parameter> <type>oid</type>, <parameter>object_id</parameter> <type>oid</type>, <parameter>object_sub_id</parameter> <type>integer</type>)</function></literal></entry>
-       <entry><parameter>type</parameter> <type>text</type>, <parameter>name</parameter> <type>text[]</type>, <parameter>args</parameter> <type>text[]</type></entry>
+       <entry><literal><function>pg_identify_object_as_address(<parameter>classid</parameter> <type>oid</type>, <parameter>objid</parameter> <type>oid</type>, <parameter>objsubid</parameter> <type>integer</type>)</function></literal></entry>
+       <entry><parameter>type</parameter> <type>text</type>, <parameter>object_names</parameter> <type>text[]</type>, <parameter>object_args</parameter> <type>text[]</type></entry>
        <entry>get external representation of a database object's address</entry>
       </row>
       <row>
-       <entry><literal><function>pg_get_object_address(<parameter>type</parameter> <type>text</type>, <parameter>name</parameter> <type>text[]</type>, <parameter>args</parameter> <type>text[]</type>)</function></literal></entry>
-       <entry><parameter>catalog_id</parameter> <type>oid</type>, <parameter>object_id</parameter> <type>oid</type>, <parameter>object_sub_id</parameter> <type>int32</type></entry>
-       <entry>get address of a database object, from its external representation</entry>
+       <entry><literal><function>pg_get_object_address(<parameter>type</parameter> <type>text</type>, <parameter>object_names</parameter> <type>text[]</type>, <parameter>object_args</parameter> <type>text[]</type>)</function></literal></entry>
+       <entry><parameter>classid</parameter> <type>oid</type>, <parameter>objid</parameter> <type>oid</type>, <parameter>objsubid</parameter> <type>integer</type></entry>
+       <entry>get address of a database object from its external representation</entry>
       </row>
      </tbody>
     </tgroup>
@@ -17715,7 +17903,9 @@ SELECT collation for ('foo' COLLATE "de_DE");
 
   <para>
    <function>pg_describe_object</function> returns a textual description of a database
-   object specified by catalog OID, object OID and a (possibly zero) sub-object ID.
+   object specified by catalog OID, object OID, and sub-object ID (such as
+   a column number within a table; the sub-object ID is zero when referring
+   to a whole object).
    This description is intended to be human-readable, and might be translated,
    depending on server configuration.
    This is useful to determine the identity of an object as stored in the
@@ -17724,29 +17914,30 @@ SELECT collation for ('foo' COLLATE "de_DE");
 
   <para>
    <function>pg_identify_object</function> returns a row containing enough information
-   to uniquely identify the database object specified by catalog OID, object OID and a
-   (possibly zero) sub-object ID.  This information is intended to be machine-readable,
+   to uniquely identify the database object specified by catalog OID, object OID and
+   sub-object ID.  This information is intended to be machine-readable,
    and is never translated.
    <parameter>type</parameter> identifies the type of database object;
    <parameter>schema</parameter> is the schema name that the object belongs in, or
    <literal>NULL</literal> for object types that do not belong to schemas;
-   <parameter>name</parameter> is the name of the object, quoted if necessary, only
-   present if it can be used (alongside schema name, if pertinent) as a unique
-   identifier of the object, otherwise <literal>NULL</literal>;
-   <parameter>identity</parameter> is the complete object identity, with the precise format
-   depending on object type, and each part within the format being
-   schema-qualified and quoted as necessary.
+   <parameter>name</parameter> is the name of the object, quoted if necessary,
+   if the name (along with schema name, if pertinent) is sufficient to
+   uniquely identify the object, otherwise <literal>NULL</literal>;
+   <parameter>identity</parameter> is the complete object identity, with the
+   precise format depending on object type, and each name within the format
+   being schema-qualified and quoted as necessary.
   </para>
 
   <para>
    <function>pg_identify_object_as_address</function> returns a row containing
    enough information to uniquely identify the database object specified by
-   catalog OID, object OID and a (possibly zero) sub-object ID.  The returned
+   catalog OID, object OID and sub-object ID.  The returned
    information is independent of the current server, that is, it could be used
    to identify an identically named object in another server.
    <parameter>type</parameter> identifies the type of database object;
-   <parameter>name</parameter> and <parameter>args</parameter> are text arrays that together
-   form a reference to the object.  These three columns can be passed to
+   <parameter>object_names</parameter> and <parameter>object_args</parameter>
+   are text arrays that together form a reference to the object.
+   These three values can be passed to
    <function>pg_get_object_address</function> to obtain the internal address
    of the object.
    This function is the inverse of <function>pg_get_object_address</function>.
@@ -17759,10 +17950,10 @@ SELECT collation for ('foo' COLLATE "de_DE");
    ones that would be used in system catalogs such as <structname>pg_depend</structname>
    and can be passed to other system functions such as
    <function>pg_identify_object</function> or <function>pg_describe_object</function>.
-   <parameter>catalog_id</parameter> is the OID of the system catalog containing the
+   <parameter>classid</parameter> is the OID of the system catalog containing the
    object;
-   <parameter>object_id</parameter> is the OID of the object itself, and
-   <parameter>object_sub_id</parameter> is the object sub-ID, or zero if none.
+   <parameter>objid</parameter> is the OID of the object itself, and
+   <parameter>objsubid</parameter> is the sub-object ID, or zero if none.
    This function is the inverse of <function>pg_identify_object_as_address</function>.
   </para>
 
@@ -17933,7 +18124,7 @@ SELECT collation for ('foo' COLLATE "de_DE");
       </row>
       <row>
        <entry><literal><function>txid_status(<parameter>bigint</parameter>)</function></literal></entry>
-       <entry><type>txid_status</type></entry>
+       <entry><type>text</type></entry>
        <entry>report the status of the given transaction: <literal>committed</literal>, <literal>aborted</literal>, <literal>in progress</literal>, or null if the transaction ID is too old</entry>
       </row>
      </tbody>
@@ -18674,6 +18865,8 @@ SELECT set_config('log_statement_stats', 'off', false);
     The functions shown in <xref
     linkend="functions-admin-backup-table"/> assist in making on-line backups.
     These functions cannot be executed during recovery (except
+    non-exclusive <function>pg_start_backup</function>,
+    non-exclusive <function>pg_stop_backup</function>,
     <function>pg_is_in_backup</function>, <function>pg_backup_start_time</function>
     and <function>pg_wal_lsn_diff</function>).
    </para>
@@ -19153,8 +19346,10 @@ postgres=# SELECT * FROM pg_walfile_name_offset(pg_stop_backup());
     See <xref linkend="streaming-replication"/>,
     <xref linkend="streaming-replication-slots"/>, and
     <xref linkend="replication-origins"/>
-    for information about the underlying features.  Use of these
-    functions is restricted to superusers.
+    for information about the underlying features.
+    Use of functions for replication origin is restricted to superusers.
+    Use of functions for replication slot is restricted to superusers
+    and users having <literal>REPLICATION</literal> privilege.
    </para>
 
    <para>
@@ -19342,8 +19537,11 @@ postgres=# SELECT * FROM pg_walfile_name_offset(pg_stop_backup());
        <entry>
         Advances the current confirmed position of a replication slot named
         <parameter>slot_name</parameter>. The slot will not be moved backwards,
-        and it will not be moved beyond the current insert location.  Returns
-        name of the slot and real position to which it was advanced to.
+        and it will not be moved beyond the current insert location. Returns
+        the name of the slot and the real position to which it was advanced to.
+        The information of the updated slot is written out at the follow-up
+        checkpoint if any advancing is done. In the event of a crash, the
+        slot may return to an earlier position.
        </entry>
       </row>
 
@@ -20103,8 +20301,8 @@ postgres=# SELECT * FROM pg_walfile_name_offset(pg_stop_backup());
    </para>
 
    <para>
-    Note that granting users the EXECUTE privilege on the
-    <function>pg_read_file()</function>, or related, functions allows them the
+    Note that granting users the EXECUTE privilege on
+    <function>pg_read_file()</function>, or related functions, allows them the
     ability to read any file on the server which the database can read and
     that those reads bypass all in-database privilege checks.  This means that,
     among other things, a user with this access is able to read the contents of the
@@ -20213,6 +20411,7 @@ postgres=# SELECT * FROM pg_walfile_name_offset(pg_stop_backup());
     (mtime) of each file in the log directory. By default, only superusers
     and members of the <literal>pg_monitor</literal> role can use this function.
     Access may be granted to others using <command>GRANT</command>.
+    Filenames beginning with a dot, directories, and other special files are not shown.
    </para>
 
    <indexterm>
@@ -20224,6 +20423,7 @@ postgres=# SELECT * FROM pg_walfile_name_offset(pg_stop_backup());
     default only superusers and members of the <literal>pg_monitor</literal> role
     can use this function. Access may be granted to others using
     <command>GRANT</command>.
+    Filenames beginning with a dot, directories, and other special files are not shown.
    </para>
 
    <indexterm>
@@ -20594,7 +20794,7 @@ SELECT (pg_stat_file('filename')).modification;
 <programlisting>
 CREATE TRIGGER z_min_update
 BEFORE UPDATE ON tablename
-FOR EACH ROW EXECUTE PROCEDURE suppress_redundant_updates_trigger();
+FOR EACH ROW EXECUTE FUNCTION suppress_redundant_updates_trigger();
 </programlisting>
       In most cases, you would want to fire this trigger last for each row.
       Bearing in mind that triggers fire in name order, you would then
@@ -20651,23 +20851,23 @@ FOR EACH ROW EXECUTE PROCEDURE suppress_redundant_updates_trigger();
       <tbody>
        <row>
         <entry><literal>classid</literal></entry>
-        <entry><type>Oid</type></entry>
+        <entry><type>oid</type></entry>
         <entry>OID of catalog the object belongs in</entry>
        </row>
        <row>
         <entry><literal>objid</literal></entry>
-        <entry><type>Oid</type></entry>
-        <entry>OID of the object in the catalog</entry>
+        <entry><type>oid</type></entry>
+        <entry>OID of the object itself</entry>
        </row>
        <row>
         <entry><literal>objsubid</literal></entry>
         <entry><type>integer</type></entry>
-        <entry>Object sub-id (e.g. attribute number for columns)</entry>
+        <entry>Sub-object ID (e.g., attribute number for a column)</entry>
        </row>
        <row>
         <entry><literal>command_tag</literal></entry>
         <entry><type>text</type></entry>
-        <entry>command tag</entry>
+        <entry>Command tag</entry>
        </row>
        <row>
         <entry><literal>object_type</literal></entry>
@@ -20686,14 +20886,14 @@ FOR EACH ROW EXECUTE PROCEDURE suppress_redundant_updates_trigger();
         <entry><literal>object_identity</literal></entry>
         <entry><type>text</type></entry>
         <entry>
-         Text rendering of the object identity, schema-qualified. Each and every
-         identifier present in the identity is quoted if necessary.
+         Text rendering of the object identity, schema-qualified. Each
+         identifier included in the identity is quoted if necessary.
         </entry>
        </row>
        <row>
         <entry><literal>in_extension</literal></entry>
         <entry><type>bool</type></entry>
-        <entry>whether the command is part of an extension script</entry>
+        <entry>True if the command is part of an extension script</entry>
        </row>
        <row>
         <entry><literal>command</literal></entry>
@@ -20738,29 +20938,29 @@ FOR EACH ROW EXECUTE PROCEDURE suppress_redundant_updates_trigger();
       <tbody>
        <row>
         <entry><literal>classid</literal></entry>
-        <entry><type>Oid</type></entry>
+        <entry><type>oid</type></entry>
         <entry>OID of catalog the object belonged in</entry>
        </row>
        <row>
         <entry><literal>objid</literal></entry>
-        <entry><type>Oid</type></entry>
-        <entry>OID the object had within the catalog</entry>
+        <entry><type>oid</type></entry>
+        <entry>OID of the object itself</entry>
        </row>
        <row>
         <entry><literal>objsubid</literal></entry>
-        <entry><type>int32</type></entry>
-        <entry>Object sub-id (e.g. attribute number for columns)</entry>
+        <entry><type>integer</type></entry>
+        <entry>Sub-object ID (e.g., attribute number for a column)</entry>
        </row>
        <row>
         <entry><literal>original</literal></entry>
         <entry><type>bool</type></entry>
-        <entry>Flag used to identify the root object(s) of the deletion</entry>
+        <entry>True if this was one of the root object(s) of the deletion</entry>
        </row>
        <row>
         <entry><literal>normal</literal></entry>
         <entry><type>bool</type></entry>
         <entry>
-         Flag indicating that there's a normal dependency relationship
+         True if there was a normal dependency relationship
          in the dependency graph leading to this object
         </entry>
        </row>
@@ -20768,7 +20968,7 @@ FOR EACH ROW EXECUTE PROCEDURE suppress_redundant_updates_trigger();
         <entry><literal>is_temporary</literal></entry>
         <entry><type>bool</type></entry>
         <entry>
-         Flag indicating that the object was a temporary object.
+         True if this was a temporary object
         </entry>
        </row>
        <row>
@@ -20797,8 +20997,8 @@ FOR EACH ROW EXECUTE PROCEDURE suppress_redundant_updates_trigger();
         <entry><literal>object_identity</literal></entry>
         <entry><type>text</type></entry>
         <entry>
-         Text rendering of the object identity, schema-qualified. Each and every
-         identifier present in the identity is quoted if necessary.
+         Text rendering of the object identity, schema-qualified. Each
+         identifier included in the identity is quoted if necessary.
         </entry>
        </row>
        <row>
@@ -20806,17 +21006,17 @@ FOR EACH ROW EXECUTE PROCEDURE suppress_redundant_updates_trigger();
         <entry><type>text[]</type></entry>
         <entry>
          An array that, together with <literal>object_type</literal> and
-         <literal>address_args</literal>,
-         can be used by the <function>pg_get_object_address()</function> to
+         <literal>address_args</literal>, can be used by
+         the <function>pg_get_object_address()</function> function to
          recreate the object address in a remote server containing an
-         identically named object of the same kind.
+         identically named object of the same kind
         </entry>
        </row>
        <row>
         <entry><literal>address_args</literal></entry>
         <entry><type>text[]</type></entry>
         <entry>
-         Complement for <literal>address_names</literal> above.
+         Complement for <literal>address_names</literal>
         </entry>
        </row>
       </tbody>
@@ -20842,11 +21042,11 @@ BEGIN
                      obj.object_name,
                      obj.object_identity;
     END LOOP;
-END
+END;
 $$;
 CREATE EVENT TRIGGER test_event_trigger_for_drops
    ON sql_drop
-   EXECUTE PROCEDURE test_event_trigger_for_drops();
+   EXECUTE FUNCTION test_event_trigger_for_drops();
 </programlisting>
     </para>
   </sect2>
@@ -20911,7 +21111,7 @@ $$;
 
 CREATE EVENT TRIGGER test_table_rewrite_oid
                   ON table_rewrite
-   EXECUTE PROCEDURE test_event_trigger_table_rewrite_oid();
+   EXECUTE FUNCTION test_event_trigger_table_rewrite_oid();
 </programlisting>
     </para>
   </sect2>

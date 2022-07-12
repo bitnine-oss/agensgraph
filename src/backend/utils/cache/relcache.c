@@ -40,7 +40,6 @@
 #include "access/xact.h"
 #include "access/xlog.h"
 #include "catalog/catalog.h"
-#include "catalog/index.h"
 #include "catalog/indexing.h"
 #include "catalog/namespace.h"
 #include "catalog/partition.h"
@@ -68,6 +67,7 @@
 #include "commands/policy.h"
 #include "commands/trigger.h"
 #include "miscadmin.h"
+#include "nodes/makefuncs.h"
 #include "nodes/nodeFuncs.h"
 #include "optimizer/clauses.h"
 #include "optimizer/cost.h"
@@ -313,7 +313,7 @@ ScanPgRelation(Oid targetRelId, bool indexOK, bool force_non_historic)
 	Relation	pg_class_desc;
 	SysScanDesc pg_class_scan;
 	ScanKeyData key[1];
-	Snapshot	snapshot;
+	Snapshot	snapshot = NULL;
 
 	/*
 	 * If something goes wrong during backend startup, we might find ourselves
@@ -343,12 +343,12 @@ ScanPgRelation(Oid targetRelId, bool indexOK, bool force_non_historic)
 	/*
 	 * The caller might need a tuple that's newer than the one the historic
 	 * snapshot; currently the only case requiring to do so is looking up the
-	 * relfilenode of non mapped system relations during decoding.
+	 * relfilenode of non mapped system relations during decoding. That
+	 * snapshot cant't change in the midst of a relcache build, so there's no
+	 * need to register the snapshot.
 	 */
 	if (force_non_historic)
 		snapshot = GetNonHistoricCatalogSnapshot(RelationRelationId);
-	else
-		snapshot = GetCatalogSnapshot(RelationRelationId);
 
 	pg_class_scan = systable_beginscan(pg_class_desc, ClassOidIndexId,
 									   indexOK && criticalRelcachesBuilt,
@@ -1192,11 +1192,15 @@ RelationBuildDesc(Oid targetRelId, bool insertIt)
 	}
 	else
 	{
-		relation->rd_partkeycxt = NULL;
 		relation->rd_partkey = NULL;
+		relation->rd_partkeycxt = NULL;
 		relation->rd_partdesc = NULL;
 		relation->rd_pdcxt = NULL;
 	}
+	/* ... but partcheck is not loaded till asked for */
+	relation->rd_partcheck = NIL;
+	relation->rd_partcheckvalid = false;
+	relation->rd_partcheckcxt = NULL;
 
 	/*
 	 * if it's an index, initialize index-related information
@@ -2286,8 +2290,8 @@ RelationDestroyRelation(Relation relation, bool remember_tupdesc)
 		MemoryContextDelete(relation->rd_partkeycxt);
 	if (relation->rd_pdcxt)
 		MemoryContextDelete(relation->rd_pdcxt);
-	if (relation->rd_partcheck)
-		pfree(relation->rd_partcheck);
+	if (relation->rd_partcheckcxt)
+		MemoryContextDelete(relation->rd_partcheckcxt);
 	if (relation->rd_fdwroutine)
 		pfree(relation->rd_fdwroutine);
 	pfree(relation);
@@ -2922,10 +2926,7 @@ AtEOXact_cleanup(Relation relation, bool isCommit)
 	 *
 	 * During commit, reset the flag to zero, since we are now out of the
 	 * creating transaction.  During abort, simply delete the relcache entry
-	 * --- it isn't interesting any longer.  (NOTE: if we have forgotten the
-	 * new-ness of a new relation due to a forced cache flush, the entry will
-	 * get deleted anyway by shared-cache-inval processing of the aborted
-	 * pg_class insertion.)
+	 * --- it isn't interesting any longer.
 	 */
 	if (relation->rd_createSubid != InvalidSubTransactionId)
 	{
@@ -3381,38 +3382,67 @@ RelationSetNewRelfilenode(Relation relation, char persistence,
 	RelationDropStorage(relation);
 
 	/*
-	 * Now update the pg_class row.  However, if we're dealing with a mapped
-	 * index, pg_class.relfilenode doesn't change; instead we have to send the
-	 * update to the relation mapper.
+	 * If we're dealing with a mapped index, pg_class.relfilenode doesn't
+	 * change; instead we have to send the update to the relation mapper.
+	 *
+	 * For mapped indexes, we don't actually change the pg_class entry at all;
+	 * this is essential when reindexing pg_class itself.  That leaves us with
+	 * possibly-inaccurate values of relpages etc, but those will be fixed up
+	 * later.
 	 */
 	if (RelationIsMapped(relation))
+	{
+		/* This case is only supported for indexes */
+		Assert(relation->rd_rel->relkind == RELKIND_INDEX);
+
+		/* Since we're not updating pg_class, these had better not change */
+		Assert(classform->relfrozenxid == freezeXid);
+		Assert(classform->relminmxid == minmulti);
+		Assert(classform->relpersistence == persistence);
+
+		/*
+		 * In some code paths it's possible that the tuple update we'd
+		 * otherwise do here is the only thing that would assign an XID for
+		 * the current transaction.  However, we must have an XID to delete
+		 * files, so make sure one is assigned.
+		 */
+		(void) GetCurrentTransactionId();
+
+		/* Do the deed */
 		RelationMapUpdateMap(RelationGetRelid(relation),
 							 newrelfilenode,
 							 relation->rd_rel->relisshared,
 							 false);
+
+		/* Since we're not updating pg_class, must trigger inval manually */
+		CacheInvalidateRelcache(relation);
+	}
 	else
+	{
+		/* Normal case, update the pg_class entry */
 		classform->relfilenode = newrelfilenode;
 
-	/* These changes are safe even for a mapped relation */
-	if (relation->rd_rel->relkind != RELKIND_SEQUENCE)
-	{
-		classform->relpages = 0;	/* it's empty until further notice */
-		classform->reltuples = 0;
-		classform->relallvisible = 0;
-	}
-	classform->relfrozenxid = freezeXid;
-	classform->relminmxid = minmulti;
-	classform->relpersistence = persistence;
+		/* relpages etc. never change for sequences */
+		if (relation->rd_rel->relkind != RELKIND_SEQUENCE)
+		{
+			classform->relpages = 0;	/* it's empty until further notice */
+			classform->reltuples = 0;
+			classform->relallvisible = 0;
+		}
+		classform->relfrozenxid = freezeXid;
+		classform->relminmxid = minmulti;
+		classform->relpersistence = persistence;
 
-	CatalogTupleUpdate(pg_class, &tuple->t_self, tuple);
+		CatalogTupleUpdate(pg_class, &tuple->t_self, tuple);
+	}
 
 	heap_freetuple(tuple);
 
 	heap_close(pg_class, RowExclusiveLock);
 
 	/*
-	 * Make the pg_class row change visible, as well as the relation map
-	 * change if any.  This will cause the relcache entry to get updated, too.
+	 * Make the pg_class row change or relation map change visible.  This will
+	 * cause the relcache entry to get updated, too.
 	 */
 	CommandCounterIncrement();
 
@@ -4016,7 +4046,7 @@ CheckConstraintFetch(Relation relation)
 				ObjectIdGetDatum(RelationGetRelid(relation)));
 
 	conrel = heap_open(ConstraintRelationId, AccessShareLock);
-	conscan = systable_beginscan(conrel, ConstraintRelidIndexId, true,
+	conscan = systable_beginscan(conrel, ConstraintRelidTypidNameIndexId, true,
 								 NULL, 1, skey);
 
 	while (HeapTupleIsValid(htup = systable_getnext(conscan)))
@@ -4108,8 +4138,9 @@ RelationGetFKeyList(Relation relation)
 	if (relation->rd_fkeyvalid)
 		return relation->rd_fkeylist;
 
-	/* Fast path: if it doesn't have any triggers, it can't have FKs */
-	if (!relation->rd_rel->relhastriggers)
+	/* Fast path: non-partitioned tables without triggers can't have FKs */
+	if (!relation->rd_rel->relhastriggers &&
+		relation->rd_rel->relkind != RELKIND_PARTITIONED_TABLE)
 		return NIL;
 
 	/*
@@ -4127,78 +4158,28 @@ RelationGetFKeyList(Relation relation)
 				ObjectIdGetDatum(RelationGetRelid(relation)));
 
 	conrel = heap_open(ConstraintRelationId, AccessShareLock);
-	conscan = systable_beginscan(conrel, ConstraintRelidIndexId, true,
+	conscan = systable_beginscan(conrel, ConstraintRelidTypidNameIndexId, true,
 								 NULL, 1, &skey);
 
 	while (HeapTupleIsValid(htup = systable_getnext(conscan)))
 	{
 		Form_pg_constraint constraint = (Form_pg_constraint) GETSTRUCT(htup);
 		ForeignKeyCacheInfo *info;
-		Datum		adatum;
-		bool		isnull;
-		ArrayType  *arr;
-		int			nelem;
 
 		/* consider only foreign keys */
 		if (constraint->contype != CONSTRAINT_FOREIGN)
 			continue;
 
 		info = makeNode(ForeignKeyCacheInfo);
+		info->conoid = HeapTupleGetOid(htup);
 		info->conrelid = constraint->conrelid;
 		info->confrelid = constraint->confrelid;
 
-		/* Extract data from conkey field */
-		adatum = fastgetattr(htup, Anum_pg_constraint_conkey,
-							 conrel->rd_att, &isnull);
-		if (isnull)
-			elog(ERROR, "null conkey for rel %s",
-				 RelationGetRelationName(relation));
-
-		arr = DatumGetArrayTypeP(adatum);	/* ensure not toasted */
-		nelem = ARR_DIMS(arr)[0];
-		if (ARR_NDIM(arr) != 1 ||
-			nelem < 1 ||
-			nelem > INDEX_MAX_KEYS ||
-			ARR_HASNULL(arr) ||
-			ARR_ELEMTYPE(arr) != INT2OID)
-			elog(ERROR, "conkey is not a 1-D smallint array");
-
-		info->nkeys = nelem;
-		memcpy(info->conkey, ARR_DATA_PTR(arr), nelem * sizeof(AttrNumber));
-
-		/* Likewise for confkey */
-		adatum = fastgetattr(htup, Anum_pg_constraint_confkey,
-							 conrel->rd_att, &isnull);
-		if (isnull)
-			elog(ERROR, "null confkey for rel %s",
-				 RelationGetRelationName(relation));
-
-		arr = DatumGetArrayTypeP(adatum);	/* ensure not toasted */
-		nelem = ARR_DIMS(arr)[0];
-		if (ARR_NDIM(arr) != 1 ||
-			nelem != info->nkeys ||
-			ARR_HASNULL(arr) ||
-			ARR_ELEMTYPE(arr) != INT2OID)
-			elog(ERROR, "confkey is not a 1-D smallint array");
-
-		memcpy(info->confkey, ARR_DATA_PTR(arr), nelem * sizeof(AttrNumber));
-
-		/* Likewise for conpfeqop */
-		adatum = fastgetattr(htup, Anum_pg_constraint_conpfeqop,
-							 conrel->rd_att, &isnull);
-		if (isnull)
-			elog(ERROR, "null conpfeqop for rel %s",
-				 RelationGetRelationName(relation));
-
-		arr = DatumGetArrayTypeP(adatum);	/* ensure not toasted */
-		nelem = ARR_DIMS(arr)[0];
-		if (ARR_NDIM(arr) != 1 ||
-			nelem != info->nkeys ||
-			ARR_HASNULL(arr) ||
-			ARR_ELEMTYPE(arr) != OIDOID)
-			elog(ERROR, "conpfeqop is not a 1-D OID array");
-
-		memcpy(info->conpfeqop, ARR_DATA_PTR(arr), nelem * sizeof(Oid));
+		DeconstructFkConstraintRow(htup, &info->nkeys,
+								   info->conkey,
+								   info->confkey,
+								   info->conpfeqop,
+								   NULL, NULL);
 
 		/* Add FK's node to the result list */
 		result = lappend(result, info);
@@ -4665,6 +4646,57 @@ RelationGetIndexExpressions(Relation relation)
 }
 
 /*
+ * RelationGetDummyIndexExpressions -- get dummy expressions for an index
+ *
+ * Return a list of dummy expressions (just Const nodes) with the same
+ * types/typmods/collations as the index's real expressions.  This is
+ * useful in situations where we don't want to run any user-defined code.
+ */
+List *
+RelationGetDummyIndexExpressions(Relation relation)
+{
+	List	   *result;
+	Datum		exprsDatum;
+	bool		isnull;
+	char	   *exprsString;
+	List	   *rawExprs;
+	ListCell   *lc;
+
+	/* Quick exit if there is nothing to do. */
+	if (relation->rd_indextuple == NULL ||
+		heap_attisnull(relation->rd_indextuple, Anum_pg_index_indexprs, NULL))
+		return NIL;
+
+	/* Extract raw node tree(s) from index tuple. */
+	exprsDatum = heap_getattr(relation->rd_indextuple,
+							  Anum_pg_index_indexprs,
+							  GetPgIndexDescriptor(),
+							  &isnull);
+	Assert(!isnull);
+	exprsString = TextDatumGetCString(exprsDatum);
+	rawExprs = (List *) stringToNode(exprsString);
+	pfree(exprsString);
+
+	/* Construct null Consts; the typlen and typbyval are arbitrary. */
+	result = NIL;
+	foreach(lc, rawExprs)
+	{
+		Node	   *rawExpr = (Node *) lfirst(lc);
+
+		result = lappend(result,
+						 makeConst(exprType(rawExpr),
+								   exprTypmod(rawExpr),
+								   exprCollation(rawExpr),
+								   1,
+								   (Datum) 0,
+								   true,
+								   true));
+	}
+
+	return result;
+}
+
+/*
  * RelationGetIndexPredicate -- get the index predicate for an index
  *
  * We cache the result of transforming pg_index.indpred into an implicit-AND
@@ -4749,11 +4781,12 @@ RelationGetIndexPredicate(Relation relation)
  * 2. "recheck_on_update" index option explicitly set by user, which overrides 1)
  */
 static bool
-IsProjectionFunctionalIndex(Relation index, IndexInfo *ii)
+IsProjectionFunctionalIndex(Relation index)
 {
 	bool		is_projection = false;
 
-	if (ii->ii_Expressions)
+#ifdef NOT_USED
+	if (RelationGetIndexExpressions(index))
 	{
 		HeapTuple	tuple;
 		Datum		reloptions;
@@ -4763,7 +4796,7 @@ IsProjectionFunctionalIndex(Relation index, IndexInfo *ii)
 		/* by default functional index is considered as non-injective */
 		is_projection = true;
 
-		cost_qual_eval(&index_expr_cost, ii->ii_Expressions, NULL);
+		cost_qual_eval(&index_expr_cost, RelationGetIndexExpressions(index), NULL);
 
 		/*
 		 * If index expression is too expensive, then disable projection
@@ -4798,6 +4831,8 @@ IsProjectionFunctionalIndex(Relation index, IndexInfo *ii)
 		}
 		ReleaseSysCache(tuple);
 	}
+#endif
+
 	return is_projection;
 }
 
@@ -4907,7 +4942,10 @@ restart:
 	{
 		Oid			indexOid = lfirst_oid(l);
 		Relation	indexDesc;
-		IndexInfo  *indexInfo;
+		Datum		datum;
+		bool		isnull;
+		Node	   *indexExpressions;
+		Node	   *indexPredicate;
 		int			i;
 		bool		isKey;		/* candidate key */
 		bool		isPK;		/* primary key */
@@ -4915,13 +4953,33 @@ restart:
 
 		indexDesc = index_open(indexOid, AccessShareLock);
 
-		/* Extract index key information from the index's pg_index row */
-		indexInfo = BuildIndexInfo(indexDesc);
+		/*
+		 * Extract index expressions and index predicate.  Note: Don't use
+		 * RelationGetIndexExpressions()/RelationGetIndexPredicate(), because
+		 * those might run constant expressions evaluation, which needs a
+		 * snapshot, which we might not have here.  (Also, it's probably more
+		 * sound to collect the bitmaps before any transformations that might
+		 * eliminate columns, but the practical impact of this is limited.)
+		 */
+
+		datum = heap_getattr(indexDesc->rd_indextuple, Anum_pg_index_indexprs,
+							 GetPgIndexDescriptor(), &isnull);
+		if (!isnull)
+			indexExpressions = stringToNode(TextDatumGetCString(datum));
+		else
+			indexExpressions = NULL;
+
+		datum = heap_getattr(indexDesc->rd_indextuple, Anum_pg_index_indpred,
+							 GetPgIndexDescriptor(), &isnull);
+		if (!isnull)
+			indexPredicate = stringToNode(TextDatumGetCString(datum));
+		else
+			indexPredicate = NULL;
 
 		/* Can this index be referenced by a foreign key? */
-		isKey = indexInfo->ii_Unique &&
-			indexInfo->ii_Expressions == NIL &&
-			indexInfo->ii_Predicate == NIL;
+		isKey = indexDesc->rd_index->indisunique &&
+			indexExpressions == NULL &&
+			indexPredicate == NULL;
 
 		/* Is this a primary key? */
 		isPK = (indexOid == relpkindex);
@@ -4930,9 +4988,9 @@ restart:
 		isIDKey = (indexOid == relreplindex);
 
 		/* Collect simple attribute references */
-		for (i = 0; i < indexInfo->ii_NumIndexAttrs; i++)
+		for (i = 0; i < indexDesc->rd_index->indnatts; i++)
 		{
-			int			attrnum = indexInfo->ii_IndexAttrNumbers[i];
+			int			attrnum = indexDesc->rd_index->indkey.values[i];
 
 			/*
 			 * Since we have covering indexes with non-key columns, we must
@@ -4947,33 +5005,33 @@ restart:
 				indexattrs = bms_add_member(indexattrs,
 											attrnum - FirstLowInvalidHeapAttributeNumber);
 
-				if (isKey && i < indexInfo->ii_NumIndexKeyAttrs)
+				if (isKey && i < indexDesc->rd_index->indnkeyatts)
 					uindexattrs = bms_add_member(uindexattrs,
 												 attrnum - FirstLowInvalidHeapAttributeNumber);
 
-				if (isPK && i < indexInfo->ii_NumIndexKeyAttrs)
+				if (isPK && i < indexDesc->rd_index->indnkeyatts)
 					pkindexattrs = bms_add_member(pkindexattrs,
 												  attrnum - FirstLowInvalidHeapAttributeNumber);
 
-				if (isIDKey && i < indexInfo->ii_NumIndexKeyAttrs)
+				if (isIDKey && i < indexDesc->rd_index->indnkeyatts)
 					idindexattrs = bms_add_member(idindexattrs,
 												  attrnum - FirstLowInvalidHeapAttributeNumber);
 			}
 		}
 
 		/* Collect attributes used in expressions, too */
-		if (IsProjectionFunctionalIndex(indexDesc, indexInfo))
+		if (IsProjectionFunctionalIndex(indexDesc))
 		{
 			projindexes = bms_add_member(projindexes, indexno);
-			pull_varattnos((Node *) indexInfo->ii_Expressions, 1, &projindexattrs);
+			pull_varattnos(indexExpressions, 1, &projindexattrs);
 		}
 		else
 		{
 			/* Collect all attributes used in expressions, too */
-			pull_varattnos((Node *) indexInfo->ii_Expressions, 1, &indexattrs);
+			pull_varattnos(indexExpressions, 1, &indexattrs);
 		}
 		/* Collect all attributes in the index predicate, too */
-		pull_varattnos((Node *) indexInfo->ii_Predicate, 1, &indexattrs);
+		pull_varattnos(indexPredicate, 1, &indexattrs);
 
 		index_close(indexDesc, AccessShareLock);
 		indexno += 1;
@@ -5049,7 +5107,7 @@ restart:
 		case INDEX_ATTR_BITMAP_KEY:
 			return uindexattrs;
 		case INDEX_ATTR_BITMAP_PRIMARY_KEY:
-			return bms_copy(relation->rd_pkattr);
+			return pkindexattrs;
 		case INDEX_ATTR_BITMAP_IDENTITY_KEY:
 			return idindexattrs;
 		default:
@@ -5105,6 +5163,10 @@ RelationGetExclusionInfo(Relation indexRelation,
 	 * Search pg_constraint for the constraint associated with the index. To
 	 * make this not too painfully slow, we use the index on conrelid; that
 	 * will hold the parent relation's OID not the index's own OID.
+	 *
+	 * Note: if we wanted to rely on the constraint name matching the index's
+	 * name, we could just do a direct lookup using pg_constraint's unique
+	 * index.  For the moment it doesn't seem worth requiring that.
 	 */
 	ScanKeyInit(&skey[0],
 				Anum_pg_constraint_conrelid,
@@ -5112,7 +5174,7 @@ RelationGetExclusionInfo(Relation indexRelation,
 				ObjectIdGetDatum(indexRelation->rd_index->indrelid));
 
 	conrel = heap_open(ConstraintRelationId, AccessShareLock);
-	conscan = systable_beginscan(conrel, ConstraintRelidIndexId, true,
+	conscan = systable_beginscan(conrel, ConstraintRelidTypidNameIndexId, true,
 								 NULL, 1, skey);
 	found = false;
 
@@ -5194,6 +5256,13 @@ GetRelationPublicationActions(Relation relation)
 	ListCell   *lc;
 	MemoryContext oldcxt;
 	PublicationActions *pubactions = palloc0(sizeof(PublicationActions));
+
+	/*
+	 * If not publishable, it publishes no actions.  (pgoutput_change() will
+	 * ignore it.)
+	 */
+	if (!is_publishable_relation(relation))
+		return pubactions;
 
 	if (relation->rd_pubactions)
 		return memcpy(pubactions, relation->rd_pubactions,
@@ -5637,18 +5706,20 @@ load_relcache_init_file(bool shared)
 		 * format is complex and subject to change).  They must be rebuilt if
 		 * needed by RelationCacheInitializePhase3.  This is not expected to
 		 * be a big performance hit since few system catalogs have such. Ditto
-		 * for RLS policy data, index expressions, predicates, exclusion info,
-		 * and FDW info.
+		 * for RLS policy data, partition info, index expressions, predicates,
+		 * exclusion info, and FDW info.
 		 */
 		rel->rd_rules = NULL;
 		rel->rd_rulescxt = NULL;
 		rel->trigdesc = NULL;
 		rel->rd_rsdesc = NULL;
-		rel->rd_partkeycxt = NULL;
 		rel->rd_partkey = NULL;
-		rel->rd_pdcxt = NULL;
+		rel->rd_partkeycxt = NULL;
 		rel->rd_partdesc = NULL;
+		rel->rd_pdcxt = NULL;
 		rel->rd_partcheck = NIL;
+		rel->rd_partcheckvalid = false;
+		rel->rd_partcheckcxt = NULL;
 		rel->rd_indexprs = NIL;
 		rel->rd_indpred = NIL;
 		rel->rd_exclops = NULL;
@@ -6001,48 +6072,6 @@ RelationIdIsInInitFile(Oid relationId)
 		return true;
 	}
 	return RelationSupportsSysCache(relationId);
-}
-
-/*
- * Tells whether any index for the relation is unlogged.
- *
- * Note: There doesn't seem to be any way to have an unlogged index attached
- * to a permanent table, but it seems best to keep this general so that it
- * returns sensible results even when they seem obvious (like for an unlogged
- * table) and to handle possible future unlogged indexes on permanent tables.
- */
-bool
-RelationHasUnloggedIndex(Relation rel)
-{
-	List	   *indexoidlist;
-	ListCell   *indexoidscan;
-	bool		result = false;
-
-	indexoidlist = RelationGetIndexList(rel);
-
-	foreach(indexoidscan, indexoidlist)
-	{
-		Oid			indexoid = lfirst_oid(indexoidscan);
-		HeapTuple	tp;
-		Form_pg_class reltup;
-
-		tp = SearchSysCache1(RELOID, ObjectIdGetDatum(indexoid));
-		if (!HeapTupleIsValid(tp))
-			elog(ERROR, "cache lookup failed for relation %u", indexoid);
-		reltup = (Form_pg_class) GETSTRUCT(tp);
-
-		if (reltup->relpersistence == RELPERSISTENCE_UNLOGGED)
-			result = true;
-
-		ReleaseSysCache(tp);
-
-		if (result == true)
-			break;
-	}
-
-	list_free(indexoidlist);
-
-	return result;
 }
 
 /*

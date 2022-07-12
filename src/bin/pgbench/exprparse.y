@@ -366,15 +366,6 @@ static const struct
 	{
 		"hash_fnv1a", PGBENCH_NARGS_HASH, PGBENCH_HASH_FNV1A
 	},
-	{
-		"hash", PGBENCH_NARGS_HASH, PGBENCH_HASH_MURMUR2
-	},
-	{
-		"hash_murmur2", PGBENCH_NARGS_HASH, PGBENCH_HASH_MURMUR2
-	},
-	{
-		"hash_fnv1a", PGBENCH_NARGS_HASH, PGBENCH_HASH_FNV1A
-	},
 	/* keep as last array element */
 	{
 		NULL, 0, 0
@@ -476,7 +467,7 @@ make_func(yyscan_t yyscanner, int fnumber, PgBenchExprList *args)
 
 		/* hash functions with optional seed argument */
 		case PGBENCH_NARGS_HASH:
-			if (len > 2)
+			if (len < 1 || len > 2)
 				expr_yyerror_more(yyscanner, "unexpected number of arguments",
 								  PGBENCH_FUNCTIONS[fnumber].fname);
 

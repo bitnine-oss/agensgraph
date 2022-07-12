@@ -68,15 +68,6 @@ int			SessionReplicationRole = SESSION_REPLICATION_ROLE_ORIGIN;
 /* How many levels deep into trigger execution are we? */
 static int	MyTriggerDepth = 0;
 
-/*
- * Note that similar macros also exist in executor/execMain.c.  There does not
- * appear to be any good header to put them into, given the structures that
- * they use, so we let them be duplicated.  Be sure to update all if one needs
- * to be changed, however.
- */
-#define GetUpdatedColumns(relinfo, estate) \
-	(rt_fetch((relinfo)->ri_RangeTableIndex, (estate)->es_range_table)->updatedCols)
-
 /* Local function prototypes */
 static void ConvertTriggerToFK(CreateTrigStmt *stmt, Oid funcoid);
 static void SetTriggerFlags(TriggerDesc *trigdesc, Trigger *trigger);
@@ -1158,7 +1149,6 @@ CreateTrigger(CreateTrigStmt *stmt, const char *queryString,
 			 */
 			childStmt = (CreateTrigStmt *) copyObject(stmt);
 			childStmt->funcname = NIL;
-			childStmt->args = NIL;
 			childStmt->whenClause = NULL;
 
 			/* If there is a WHEN clause, create a modified copy of it */
@@ -1852,27 +1842,6 @@ EnableDisableTrigger(Relation rel, const char *tgname,
 			CatalogTupleUpdate(tgrel, &newtup->t_self, newtup);
 
 			heap_freetuple(newtup);
-
-			/*
-			 * When altering FOR EACH ROW triggers on a partitioned table, do
-			 * the same on the partitions as well.
-			 */
-			if (rel->rd_rel->relkind == RELKIND_PARTITIONED_TABLE &&
-				(TRIGGER_FOR_ROW(oldtrig->tgtype)))
-			{
-				PartitionDesc partdesc = RelationGetPartitionDesc(rel);
-				int			i;
-
-				for (i = 0; i < partdesc->nparts; i++)
-				{
-					Relation	part;
-
-					part = relation_open(partdesc->oids[i], lockmode);
-					EnableDisableTrigger(part, NameStr(oldtrig->tgname),
-										 fires_when, skip_system, lockmode);
-					heap_close(part, NoLock);	/* keep lock till commit */
-				}
-			}
 
 			changed = true;
 		}
@@ -2731,11 +2700,19 @@ ExecASDeleteTriggers(EState *estate, ResultRelInfo *relinfo,
 							  false, NULL, NULL, NIL, NULL, transition_capture);
 }
 
+/*
+ * Execute BEFORE ROW DELETE triggers.
+ *
+ * True indicates caller can proceed with the delete.  False indicates caller
+ * need to suppress the delete and additionally if requested, we need to pass
+ * back the concurrently updated tuple if any.
+ */
 bool
 ExecBRDeleteTriggers(EState *estate, EPQState *epqstate,
 					 ResultRelInfo *relinfo,
 					 ItemPointer tupleid,
-					 HeapTuple fdw_trigtuple)
+					 HeapTuple fdw_trigtuple,
+					 TupleTableSlot **epqslot)
 {
 	TriggerDesc *trigdesc = relinfo->ri_TrigDesc;
 	bool		result = true;
@@ -2752,6 +2729,18 @@ ExecBRDeleteTriggers(EState *estate, EPQState *epqstate,
 									   LockTupleExclusive, &newSlot);
 		if (trigtuple == NULL)
 			return false;
+
+		/*
+		 * If the tuple was concurrently updated and the caller of this
+		 * function requested for the updated tuple, skip the trigger
+		 * execution.
+		 */
+		if (newSlot != NULL && epqslot != NULL)
+		{
+			*epqslot = newSlot;
+			heap_freetuple(trigtuple);
+			return false;
+		}
 	}
 	else
 		trigtuple = fdw_trigtuple;
@@ -2899,7 +2888,7 @@ ExecBSUpdateTriggers(EState *estate, ResultRelInfo *relinfo)
 								   CMD_UPDATE))
 		return;
 
-	updatedCols = GetUpdatedColumns(relinfo, estate);
+	updatedCols = ExecGetUpdatedCols(relinfo, estate);
 
 	LocTriggerData.type = T_TriggerData;
 	LocTriggerData.tg_event = TRIGGER_EVENT_UPDATE |
@@ -2945,10 +2934,13 @@ ExecASUpdateTriggers(EState *estate, ResultRelInfo *relinfo,
 {
 	TriggerDesc *trigdesc = relinfo->ri_TrigDesc;
 
+	/* statement-level triggers operate on the parent table */
+	Assert(relinfo->ri_RootResultRelInfo == NULL);
+
 	if (trigdesc && trigdesc->trig_update_after_statement)
 		AfterTriggerSaveEvent(estate, relinfo, TRIGGER_EVENT_UPDATE,
 							  false, NULL, NULL, NIL,
-							  GetUpdatedColumns(relinfo, estate),
+							  ExecGetUpdatedCols(relinfo, estate),
 							  transition_capture);
 }
 
@@ -3014,7 +3006,7 @@ ExecBRUpdateTriggers(EState *estate, EPQState *epqstate,
 	LocTriggerData.tg_relation = relinfo->ri_RelationDesc;
 	LocTriggerData.tg_oldtable = NULL;
 	LocTriggerData.tg_newtable = NULL;
-	updatedCols = GetUpdatedColumns(relinfo, estate);
+	updatedCols = ExecGetUpdatedCols(relinfo, estate);
 	for (i = 0; i < trigdesc->numtriggers; i++)
 	{
 		Trigger    *trigger = &trigdesc->triggers[i];
@@ -3038,7 +3030,9 @@ ExecBRUpdateTriggers(EState *estate, EPQState *epqstate,
 									   relinfo->ri_TrigFunctions,
 									   relinfo->ri_TrigInstrument,
 									   GetPerTupleMemoryContext(estate));
-		if (oldtuple != newtuple && oldtuple != slottuple)
+		if (oldtuple != newtuple &&
+			oldtuple != slottuple &&
+			oldtuple != trigtuple)
 			heap_freetuple(oldtuple);
 		if (newtuple == NULL)
 		{
@@ -3104,7 +3098,7 @@ ExecARUpdateTriggers(EState *estate, ResultRelInfo *relinfo,
 
 		AfterTriggerSaveEvent(estate, relinfo, TRIGGER_EVENT_UPDATE,
 							  true, trigtuple, newtuple, recheckIndexes,
-							  GetUpdatedColumns(relinfo, estate),
+							  ExecGetUpdatedCols(relinfo, estate),
 							  transition_capture);
 		if (trigtuple != fdw_trigtuple)
 			heap_freetuple(trigtuple);
@@ -3381,7 +3375,15 @@ ltrmark:;
 		LockBuffer(buffer, BUFFER_LOCK_UNLOCK);
 	}
 
-	result = heap_copytuple(&tuple);
+	/*
+	 * While this is not necessary anymore after 297d627e, as a defense
+	 * against C code that has not recompiled for minor releases after the
+	 * fix, continue to expand the tuple.
+	 */
+	if (HeapTupleHeaderGetNatts(tuple.t_data) < relation->rd_att->natts)
+		result = heap_expand_tuple(&tuple, relation->rd_att);
+	else
+		result = heap_copytuple(&tuple);
 	ReleaseBuffer(buffer);
 
 	return result;
@@ -4380,6 +4382,7 @@ afterTriggerMarkEvents(AfterTriggerEventList *events,
 					   bool immediate_only)
 {
 	bool		found = false;
+	bool		deferred_found = false;
 	AfterTriggerEvent event;
 	AfterTriggerEventChunk *chunk;
 
@@ -4415,12 +4418,23 @@ afterTriggerMarkEvents(AfterTriggerEventList *events,
 		 */
 		if (defer_it && move_list != NULL)
 		{
+			deferred_found = true;
 			/* add it to move_list */
 			afterTriggerAddEvent(move_list, event, evtshared);
 			/* mark original copy "done" so we don't do it again */
 			event->ate_flags |= AFTER_TRIGGER_DONE;
 		}
 	}
+
+	/*
+	 * We could allow deferred triggers if, before the end of the
+	 * security-restricted operation, we were to verify that a SET CONSTRAINTS
+	 * ... IMMEDIATE has fired all such triggers.  For now, don't bother.
+	 */
+	if (deferred_found && InSecurityRestrictedOperation())
+		ereport(ERROR,
+				(errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
+				 errmsg("cannot fire deferred trigger within security-restricted operation")));
 
 	return found;
 }
@@ -5495,12 +5509,9 @@ AfterTriggerSetState(ConstraintsSetStmt *stmt)
 		foreach(lc, conoidlist)
 		{
 			Oid			conoid = lfirst_oid(lc);
-			bool		found;
 			ScanKeyData skey;
 			SysScanDesc tgscan;
 			HeapTuple	htup;
-
-			found = false;
 
 			ScanKeyInit(&skey,
 						Anum_pg_trigger_tgconstraint,
@@ -5523,16 +5534,9 @@ AfterTriggerSetState(ConstraintsSetStmt *stmt)
 				if (pg_trigger->tgdeferrable)
 					tgoidlist = lappend_oid(tgoidlist,
 											HeapTupleGetOid(htup));
-
-				found = true;
 			}
 
 			systable_endscan(tgscan);
-
-			/* Safety check: a deferrable constraint should have triggers */
-			if (!found)
-				elog(ERROR, "no triggers found for constraint with OID %u",
-					 conoid);
 		}
 
 		heap_close(tgrel, AccessShareLock);
@@ -5740,7 +5744,7 @@ AfterTriggerSaveEvent(EState *estate, ResultRelInfo *relinfo,
 		bool		delete_old_table = transition_capture->tcs_delete_old_table;
 		bool		update_old_table = transition_capture->tcs_update_old_table;
 		bool		update_new_table = transition_capture->tcs_update_new_table;
-		bool		insert_new_table = transition_capture->tcs_insert_new_table;;
+		bool		insert_new_table = transition_capture->tcs_insert_new_table;
 
 		/*
 		 * For INSERT events newtup should be non-NULL, for DELETE events

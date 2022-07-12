@@ -13,13 +13,13 @@
 
   <para>
    PL/Perl is a loadable procedural language that enables you to write
-   <productname>PostgreSQL</productname> functions in the
-   <ulink url="http://www.perl.org">Perl programming language</ulink>.
+   <productname>PostgreSQL</productname> functions and procedures in the
+   <ulink url="https://www.perl.org">Perl programming language</ulink>.
   </para>
 
   <para>
    The main advantage to using PL/Perl is that this allows use,
-   within stored functions, of the manyfold <quote>string
+   within stored functions and procedures, of the manyfold <quote>string
    munging</quote> operators and functions available for Perl.  Parsing
    complex strings might be easier using Perl than it is with the
    string functions and control structures provided in PL/pgSQL.
@@ -1300,7 +1300,7 @@ $$ LANGUAGE plperl;
 
 CREATE TRIGGER test_valid_id_trig
     BEFORE INSERT OR UPDATE ON test
-    FOR EACH ROW EXECUTE PROCEDURE valid_id();
+    FOR EACH ROW EXECUTE FUNCTION valid_id();
 </programlisting>
   </para>
  </sect1>
@@ -1337,7 +1337,7 @@ CREATE TRIGGER test_valid_id_trig
   </para>
 
   <para>
-   The return value of the trigger procedure is ignored.
+   The return value of the trigger function is ignored.
   </para>
 
   <para>
@@ -1350,7 +1350,7 @@ $$ LANGUAGE plperl;
 
 CREATE EVENT TRIGGER perl_a_snitch
     ON ddl_command_start
-    EXECUTE PROCEDURE perlsnitch();
+    EXECUTE FUNCTION perlsnitch();
 </programlisting>
   </para>
  </sect1>

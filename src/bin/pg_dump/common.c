@@ -30,7 +30,7 @@
  */
 static DumpableObject **dumpIdMap = NULL;
 static int	allocedDumpIds = 0;
-static DumpId lastDumpId = 0;
+static DumpId lastDumpId = 0;	/* Note: 0 is InvalidDumpId */
 
 /*
  * Variables for mapping CatalogId to DumpableObject
@@ -54,6 +54,7 @@ static DumpableObject **oprinfoindex;
 static DumpableObject **collinfoindex;
 static DumpableObject **nspinfoindex;
 static DumpableObject **extinfoindex;
+static DumpableObject **pubinfoindex;
 static int	numTables;
 static int	numTypes;
 static int	numFuncs;
@@ -61,6 +62,7 @@ static int	numOperators;
 static int	numCollations;
 static int	numNamespaces;
 static int	numExtensions;
+static int	numPublications;
 
 /* This is an array of object identities, not actual DumpableObjects */
 static ExtensionMemberId *extmembers;
@@ -95,6 +97,7 @@ getSchemaData(Archive *fout, int *numTablesPtr)
 	CollInfo   *collinfo;
 	NamespaceInfo *nspinfo;
 	ExtensionInfo *extinfo;
+	PublicationInfo *pubinfo;
 	InhInfo    *inhinfo;
 	int			numAggregates;
 	int			numInherits;
@@ -286,7 +289,9 @@ getSchemaData(Archive *fout, int *numTablesPtr)
 
 	if (g_verbose)
 		write_msg(NULL, "reading publications\n");
-	getPublications(fout);
+	pubinfo = getPublications(fout, &numPublications);
+	pubinfoindex = buildIndexArray(pubinfo, numPublications,
+								   sizeof(PublicationInfo));
 
 	if (g_verbose)
 		write_msg(NULL, "reading publication membership\n");
@@ -425,17 +430,31 @@ flagInhIndexes(Archive *fout, TableInfo tblinfo[], int numTables)
 			attachinfo[k].dobj.catId.oid = 0;
 			AssignDumpId(&attachinfo[k].dobj);
 			attachinfo[k].dobj.name = pg_strdup(index->dobj.name);
+			attachinfo[k].dobj.namespace = index->indextable->dobj.namespace;
 			attachinfo[k].parentIdx = parentidx;
 			attachinfo[k].partitionIdx = index;
 
 			/*
-			 * We want dependencies from parent to partition (so that the
-			 * partition index is created first), and another one from attach
-			 * object to parent (so that the partition index is attached once
-			 * the parent index has been created).
+			 * We must state the DO_INDEX_ATTACH object's dependencies
+			 * explicitly, since it will not match anything in pg_depend.
+			 *
+			 * Give it dependencies on both the partition index and the parent
+			 * index, so that it will not be executed till both of those
+			 * exist.  (There's no need to care what order those are created
+			 * in.)
+			 *
+			 * In addition, give it dependencies on the indexes' underlying
+			 * tables.  This does nothing of great value so far as serial
+			 * restore ordering goes, but it ensures that a parallel restore
+			 * will not try to run the ATTACH concurrently with other
+			 * operations on those tables.
 			 */
-			addObjectDependency(&parentidx->dobj, index->dobj.dumpId);
+			addObjectDependency(&attachinfo[k].dobj, index->dobj.dumpId);
 			addObjectDependency(&attachinfo[k].dobj, parentidx->dobj.dumpId);
+			addObjectDependency(&attachinfo[k].dobj,
+								index->indextable->dobj.dumpId);
+			addObjectDependency(&attachinfo[k].dobj,
+								parentidx->indextable->dobj.dumpId);
 
 			k++;
 		}
@@ -573,6 +592,7 @@ AssignDumpId(DumpableObject *dobj)
 	dobj->namespace = NULL;		/* may be set later */
 	dobj->dump = DUMP_COMPONENT_ALL;	/* default assumption */
 	dobj->ext_member = false;	/* default assumption */
+	dobj->depends_on_ext = false;	/* default assumption */
 	dobj->dependencies = NULL;
 	dobj->nDeps = 0;
 	dobj->allocDeps = 0;
@@ -918,6 +938,17 @@ ExtensionInfo *
 findExtensionByOid(Oid oid)
 {
 	return (ExtensionInfo *) findObjectByOid(oid, extinfoindex, numExtensions);
+}
+
+/*
+ * findPublicationByOid
+ *	  finds the entry (in pubinfo) of the publication with the given oid
+ *	  returns NULL if not found
+ */
+PublicationInfo *
+findPublicationByOid(Oid oid)
+{
+	return (PublicationInfo *) findObjectByOid(oid, pubinfoindex, numPublications);
 }
 
 /*

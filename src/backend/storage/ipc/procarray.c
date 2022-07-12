@@ -805,10 +805,21 @@ ProcArrayApplyRecoveryInfo(RunningTransactions running)
 		qsort(xids, nxids, sizeof(TransactionId), xidComparator);
 
 		/*
-		 * Add the sorted snapshot into KnownAssignedXids
+		 * Add the sorted snapshot into KnownAssignedXids.  The running-xacts
+		 * snapshot may include duplicated xids because of prepared
+		 * transactions, so ignore them.
 		 */
 		for (i = 0; i < nxids; i++)
+		{
+			if (i > 0 && TransactionIdEquals(xids[i - 1], xids[i]))
+			{
+				elog(DEBUG1,
+					 "found duplicated transaction %u for KnownAssignedXids insertion",
+					 xids[i]);
+				continue;
+			}
 			KnownAssignedXidsAdd(xids[i], xids[i], true);
+		}
 
 		KnownAssignedXidsDisplay(trace_recovery(DEBUG3));
 	}
@@ -1904,7 +1915,8 @@ ProcArrayInstallRestoredXmin(TransactionId xmin, PGPROC *proc)
  * GetRunningTransactionData -- returns information about running transactions.
  *
  * Similar to GetSnapshotData but returns more information. We include
- * all PGXACTs with an assigned TransactionId, even VACUUM processes.
+ * all PGXACTs with an assigned TransactionId, even VACUUM processes and
+ * prepared transactions.
  *
  * We acquire XidGenLock and ProcArrayLock, but the caller is responsible for
  * releasing them. Acquiring XidGenLock ensures that no new XIDs enter the proc
@@ -1917,6 +1929,11 @@ ProcArrayInstallRestoredXmin(TransactionId xmin, PGPROC *proc)
  *
  * This is never executed during recovery so there is no need to look at
  * KnownAssignedXids.
+ *
+ * Dummy PGXACTs from prepared transaction are included, meaning that this
+ * may return entries with duplicated TransactionId values coming from
+ * transaction finishing to prepare.  Nothing is done about duplicated
+ * entries here to not hold on ProcArrayLock more than necessary.
  *
  * We don't worry about updating other counters, we want to keep this as
  * simple as possible and leave GetSnapshotData() as the primary code for
@@ -2644,6 +2661,13 @@ GetConflictingVirtualXIDs(TransactionId limitXmin, Oid dbOid)
 pid_t
 CancelVirtualTransaction(VirtualTransactionId vxid, ProcSignalReason sigmode)
 {
+	return SignalVirtualTransaction(vxid, sigmode, true);
+}
+
+pid_t
+SignalVirtualTransaction(VirtualTransactionId vxid, ProcSignalReason sigmode,
+						 bool conflictPending)
+{
 	ProcArrayStruct *arrayP = procArray;
 	int			index;
 	pid_t		pid = 0;
@@ -2661,7 +2685,7 @@ CancelVirtualTransaction(VirtualTransactionId vxid, ProcSignalReason sigmode)
 		if (procvxid.backendId == vxid.backendId &&
 			procvxid.localTransactionId == vxid.localTransactionId)
 		{
-			proc->recoveryConflictPending = true;
+			proc->recoveryConflictPending = conflictPending;
 			pid = proc->pid;
 			if (pid != 0)
 			{
@@ -3239,7 +3263,8 @@ RecordKnownAssignedTransactionIds(TransactionId xid)
 		next_expected_xid = latestObservedXid;
 		TransactionIdAdvance(next_expected_xid);
 		LWLockAcquire(XidGenLock, LW_EXCLUSIVE);
-		ShmemVariableCache->nextXid = next_expected_xid;
+		if (TransactionIdFollows(next_expected_xid, ShmemVariableCache->nextXid))
+			ShmemVariableCache->nextXid = next_expected_xid;
 		LWLockRelease(XidGenLock);
 	}
 }

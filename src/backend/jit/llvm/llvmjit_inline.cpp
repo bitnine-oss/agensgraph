@@ -14,7 +14,7 @@
  * Copyright (c) 2016-2018, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
- *	  src/backend/lib/llvmjit/llvmjit_inline.c
+ *	  src/backend/lib/llvmjit/llvmjit_inline.cpp
  *
  *-------------------------------------------------------------------------
  */
@@ -42,6 +42,9 @@ extern "C"
 #include <llvm-c/Core.h>
 #include <llvm-c/BitReader.h>
 
+/* Avoid macro clash with LLVM's C++ headers */
+#undef Min
+
 #include <llvm/ADT/SetVector.h>
 #include <llvm/ADT/StringSet.h>
 #include <llvm/ADT/StringMap.h>
@@ -53,7 +56,6 @@ extern "C"
 #include <llvm/Support/Error.h>
 #endif
 #include <llvm/IR/Attributes.h>
-#include <llvm/IR/CallSite.h>
 #include <llvm/IR/DebugInfo.h>
 #include <llvm/IR/IntrinsicInst.h>
 #include <llvm/IR/IRBuilder.h>
@@ -171,7 +173,7 @@ llvm_inline(LLVMModuleRef M)
 static std::unique_ptr<ImportMapTy>
 llvm_build_inline_plan(llvm::Module *mod)
 {
-	std::unique_ptr<ImportMapTy> globalsToInline = llvm::make_unique<ImportMapTy>();
+	std::unique_ptr<ImportMapTy> globalsToInline(new ImportMapTy());
 	FunctionInlineStates functionStates;
 	InlineWorkList worklist;
 
@@ -286,14 +288,6 @@ llvm_build_inline_plan(llvm::Module *mod)
 
 			Assert(!funcDef->isDeclaration());
 			Assert(funcDef->hasExternalLinkage());
-
-			/* don't inline functions marked as noinline */
-			if (funcDef->getAttributes().hasFnAttribute(llvm::Attribute::NoInline))
-			{
-				ilog(DEBUG1, "ineligibile to import %s due to noinline",
-					 symbolName.data());
-				continue;
-			}
 
 			llvm::StringSet<> importVars;
 			llvm::SmallPtrSet<const llvm::Function *, 8> visitedFunctions;
@@ -599,6 +593,13 @@ function_inlinable(llvm::Function &F,
 
 	if (F.materialize())
 		elog(FATAL, "failed to materialize metadata");
+
+	if (F.getAttributes().hasFnAttribute(llvm::Attribute::NoInline))
+	{
+		ilog(DEBUG1, "ineligibile to import %s due to noinline",
+			 F.getName().data());
+		return false;
+	}
 
 	function_references(F, running_instcount, referencedVars, referencedFunctions);
 

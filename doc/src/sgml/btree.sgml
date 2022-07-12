@@ -13,7 +13,7 @@
 
  <para>
   <productname>PostgreSQL</productname> includes an implementation of the
-  standard <acronym>btree</acronym> (multi-way binary tree) index data
+  standard <acronym>btree</acronym> (multi-way balanced tree) index data
   structure.  Any data type that can be sorted into a well-defined linear
   order can be indexed by a btree index.  The only limitation is that an
   index entry cannot exceed approximately one-third of a page (after TOAST
@@ -228,11 +228,8 @@
   <replaceable>B</replaceable>, <replaceable>A</replaceable>
   <literal>=</literal> <replaceable>B</replaceable>,
   or <replaceable>A</replaceable> <literal>&gt;</literal>
-  <replaceable>B</replaceable>, respectively.  The function must not
-  return <literal>INT_MIN</literal> for the <replaceable>A</replaceable>
-  <literal>&lt;</literal> <replaceable>B</replaceable> case,
-  since the value may be negated before being tested for sign.  A null
-  result is disallowed, too.
+  <replaceable>B</replaceable>, respectively.
+  A null result is disallowed: all values of the data type must be comparable.
   See <filename>src/backend/access/nbtree/nbtcompare.c</filename> for
   examples.
  </para>

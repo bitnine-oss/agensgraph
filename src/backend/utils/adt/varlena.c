@@ -817,29 +817,38 @@ text_substring(Datum str, int32 start, int32 length, bool length_not_specified)
 	int32		S = start;		/* start position */
 	int32		S1;				/* adjusted start position */
 	int32		L1;				/* adjusted substring length */
+	int32		E;				/* end position */
+
+	/*
+	 * SQL99 says S can be zero or negative, but we still must fetch from the
+	 * start of the string.
+	 */
+	S1 = Max(S, 1);
 
 	/* life is easy if the encoding max length is 1 */
 	if (eml == 1)
 	{
-		S1 = Max(S, 1);
-
 		if (length_not_specified)	/* special case - get length to end of
 									 * string */
 			L1 = -1;
+		else if (length < 0)
+		{
+			/* SQL99 says to throw an error for E < S, i.e., negative length */
+			ereport(ERROR,
+					(errcode(ERRCODE_SUBSTRING_ERROR),
+					 errmsg("negative substring length not allowed")));
+			L1 = -1;			/* silence stupider compilers */
+		}
+		else if (pg_add_s32_overflow(S, length, &E))
+		{
+			/*
+			 * L could be large enough for S + L to overflow, in which case
+			 * the substring must run to end of string.
+			 */
+			L1 = -1;
+		}
 		else
 		{
-			/* end position */
-			int			E = S + length;
-
-			/*
-			 * A negative value for L is the only way for the end position to
-			 * be before the start. SQL99 says to throw an error.
-			 */
-			if (E < S)
-				ereport(ERROR,
-						(errcode(ERRCODE_SUBSTRING_ERROR),
-						 errmsg("negative substring length not allowed")));
-
 			/*
 			 * A zero or negative value for the end position can happen if the
 			 * start was negative or one. SQL99 says to return a zero-length
@@ -853,8 +862,8 @@ text_substring(Datum str, int32 start, int32 length, bool length_not_specified)
 
 		/*
 		 * If the start position is past the end of the string, SQL99 says to
-		 * return a zero-length string -- PG_GETARG_TEXT_P_SLICE() will do
-		 * that for us. Convert to zero-based starting position
+		 * return a zero-length string -- DatumGetTextPSlice() will do that
+		 * for us.  We need only convert S1 to zero-based starting position.
 		 */
 		return DatumGetTextPSlice(str, S1 - 1, L1);
 	}
@@ -876,12 +885,6 @@ text_substring(Datum str, int32 start, int32 length, bool length_not_specified)
 		text	   *ret;
 
 		/*
-		 * if S is past the end of the string, the tuple toaster will return a
-		 * zero-length string to us
-		 */
-		S1 = Max(S, 1);
-
-		/*
 		 * We need to start at position zero because there is no way to know
 		 * in advance which byte offset corresponds to the supplied start
 		 * position.
@@ -891,19 +894,24 @@ text_substring(Datum str, int32 start, int32 length, bool length_not_specified)
 		if (length_not_specified)	/* special case - get length to end of
 									 * string */
 			slice_size = L1 = -1;
+		else if (length < 0)
+		{
+			/* SQL99 says to throw an error for E < S, i.e., negative length */
+			ereport(ERROR,
+					(errcode(ERRCODE_SUBSTRING_ERROR),
+					 errmsg("negative substring length not allowed")));
+			slice_size = L1 = -1;	/* silence stupider compilers */
+		}
+		else if (pg_add_s32_overflow(S, length, &E))
+		{
+			/*
+			 * L could be large enough for S + L to overflow, in which case
+			 * the substring must run to end of string.
+			 */
+			slice_size = L1 = -1;
+		}
 		else
 		{
-			int			E = S + length;
-
-			/*
-			 * A negative value for L is the only way for the end position to
-			 * be before the start. SQL99 says to throw an error.
-			 */
-			if (E < S)
-				ereport(ERROR,
-						(errcode(ERRCODE_SUBSTRING_ERROR),
-						 errmsg("negative substring length not allowed")));
-
 			/*
 			 * A zero or negative value for the end position can happen if the
 			 * start was negative or one. SQL99 says to return a zero-length
@@ -921,8 +929,10 @@ text_substring(Datum str, int32 start, int32 length, bool length_not_specified)
 			/*
 			 * Total slice size in bytes can't be any longer than the start
 			 * position plus substring length times the encoding max length.
+			 * If that overflows, we can just use -1.
 			 */
-			slice_size = (S1 + L1) * eml;
+			if (pg_mul_s32_overflow(E, eml, &slice_size))
+				slice_size = -1;
 		}
 
 		/*
@@ -2884,9 +2894,13 @@ bytea_substring(Datum str,
 				int L,
 				bool length_not_specified)
 {
-	int			S1;				/* adjusted start position */
-	int			L1;				/* adjusted substring length */
+	int32		S1;				/* adjusted start position */
+	int32		L1;				/* adjusted substring length */
+	int32		E;				/* end position */
 
+	/*
+	 * The logic here should generally match text_substring().
+	 */
 	S1 = Max(S, 1);
 
 	if (length_not_specified)
@@ -2897,20 +2911,24 @@ bytea_substring(Datum str,
 		 */
 		L1 = -1;
 	}
+	else if (L < 0)
+	{
+		/* SQL99 says to throw an error for E < S, i.e., negative length */
+		ereport(ERROR,
+				(errcode(ERRCODE_SUBSTRING_ERROR),
+				 errmsg("negative substring length not allowed")));
+		L1 = -1;				/* silence stupider compilers */
+	}
+	else if (pg_add_s32_overflow(S, L, &E))
+	{
+		/*
+		 * L could be large enough for S + L to overflow, in which case the
+		 * substring must run to end of string.
+		 */
+		L1 = -1;
+	}
 	else
 	{
-		/* end position */
-		int			E = S + L;
-
-		/*
-		 * A negative value for L is the only way for the end position to be
-		 * before the start. SQL99 says to throw an error.
-		 */
-		if (E < S)
-			ereport(ERROR,
-					(errcode(ERRCODE_SUBSTRING_ERROR),
-					 errmsg("negative substring length not allowed")));
-
 		/*
 		 * A zero or negative value for the end position can happen if the
 		 * start was negative or one. SQL99 says to return a zero-length
@@ -2925,7 +2943,7 @@ bytea_substring(Datum str,
 	/*
 	 * If the start position is past the end of the string, SQL99 says to
 	 * return a zero-length string -- DatumGetByteaPSlice() will do that for
-	 * us. Convert to zero-based starting position
+	 * us.  We need only convert S1 to zero-based starting position.
 	 */
 	return DatumGetByteaPSlice(str, S1 - 1, L1);
 }
@@ -3081,11 +3099,12 @@ byteaGetBit(PG_FUNCTION_ARGS)
 
 	len = VARSIZE_ANY_EXHDR(v);
 
-	if (n < 0 || n >= len * 8)
+	/* Do comparison arithmetic in int64 in case len exceeds INT_MAX/8 */
+	if (n < 0 || n >= (int64) len * 8)
 		ereport(ERROR,
 				(errcode(ERRCODE_ARRAY_SUBSCRIPT_ERROR),
 				 errmsg("index %d out of valid range, 0..%d",
-						n, len * 8 - 1)));
+						n, (int) Min((int64) len * 8 - 1, INT_MAX))));
 
 	byteNo = n / 8;
 	bitNo = n % 8;
@@ -3152,11 +3171,12 @@ byteaSetBit(PG_FUNCTION_ARGS)
 
 	len = VARSIZE(res) - VARHDRSZ;
 
-	if (n < 0 || n >= len * 8)
+	/* Do comparison arithmetic in int64 in case len exceeds INT_MAX/8 */
+	if (n < 0 || n >= (int64) len * 8)
 		ereport(ERROR,
 				(errcode(ERRCODE_ARRAY_SUBSCRIPT_ERROR),
 				 errmsg("index %d out of valid range, 0..%d",
-						n, len * 8 - 1)));
+						n, (int) Min((int64) len * 8 - 1, INT_MAX))));
 
 	byteNo = n / 8;
 	bitNo = n % 8;
@@ -3494,6 +3514,118 @@ SplitDirectoriesString(char *rawstring, char separator,
 		 */
 		curname = pstrdup(curname);
 		canonicalize_path(curname);
+		*namelist = lappend(*namelist, curname);
+
+		/* Loop back if we didn't reach end of string */
+	} while (!done);
+
+	return true;
+}
+
+
+/*
+ * SplitGUCList --- parse a string containing identifiers or file names
+ *
+ * This is used to split the value of a GUC_LIST_QUOTE GUC variable, without
+ * presuming whether the elements will be taken as identifiers or file names.
+ * We assume the input has already been through flatten_set_variable_args(),
+ * so that we need never downcase (if appropriate, that was done already).
+ * Nor do we ever truncate, since we don't know the correct max length.
+ * We disallow embedded whitespace for simplicity (it shouldn't matter,
+ * because any embedded whitespace should have led to double-quoting).
+ * Otherwise the API is identical to SplitIdentifierString.
+ *
+ * XXX it's annoying to have so many copies of this string-splitting logic.
+ * However, it's not clear that having one function with a bunch of option
+ * flags would be much better.
+ *
+ * XXX there is a version of this function in src/bin/pg_dump/dumputils.c.
+ * Be sure to update that if you have to change this.
+ *
+ * Inputs:
+ *	rawstring: the input string; must be overwritable!	On return, it's
+ *			   been modified to contain the separated identifiers.
+ *	separator: the separator punctuation expected between identifiers
+ *			   (typically '.' or ',').  Whitespace may also appear around
+ *			   identifiers.
+ * Outputs:
+ *	namelist: filled with a palloc'd list of pointers to identifiers within
+ *			  rawstring.  Caller should list_free() this even on error return.
+ *
+ * Returns true if okay, false if there is a syntax error in the string.
+ */
+bool
+SplitGUCList(char *rawstring, char separator,
+			 List **namelist)
+{
+	char	   *nextp = rawstring;
+	bool		done = false;
+
+	*namelist = NIL;
+
+	while (scanner_isspace(*nextp))
+		nextp++;				/* skip leading whitespace */
+
+	if (*nextp == '\0')
+		return true;			/* allow empty string */
+
+	/* At the top of the loop, we are at start of a new identifier. */
+	do
+	{
+		char	   *curname;
+		char	   *endp;
+
+		if (*nextp == '"')
+		{
+			/* Quoted name --- collapse quote-quote pairs */
+			curname = nextp + 1;
+			for (;;)
+			{
+				endp = strchr(nextp + 1, '"');
+				if (endp == NULL)
+					return false;	/* mismatched quotes */
+				if (endp[1] != '"')
+					break;		/* found end of quoted name */
+				/* Collapse adjacent quotes into one quote, and look again */
+				memmove(endp, endp + 1, strlen(endp));
+				nextp = endp;
+			}
+			/* endp now points at the terminating quote */
+			nextp = endp + 1;
+		}
+		else
+		{
+			/* Unquoted name --- extends to separator or whitespace */
+			curname = nextp;
+			while (*nextp && *nextp != separator &&
+				   !scanner_isspace(*nextp))
+				nextp++;
+			endp = nextp;
+			if (curname == nextp)
+				return false;	/* empty unquoted name not allowed */
+		}
+
+		while (scanner_isspace(*nextp))
+			nextp++;			/* skip trailing whitespace */
+
+		if (*nextp == separator)
+		{
+			nextp++;
+			while (scanner_isspace(*nextp))
+				nextp++;		/* skip leading whitespace for next */
+			/* we expect another name, so done remains false */
+		}
+		else if (*nextp == '\0')
+			done = true;
+		else
+			return false;		/* invalid syntax */
+
+		/* Now safe to overwrite separator with a null */
+		*endp = '\0';
+
+		/*
+		 * Finished isolating current name --- add it to list
+		 */
 		*namelist = lappend(*namelist, curname);
 
 		/* Loop back if we didn't reach end of string */

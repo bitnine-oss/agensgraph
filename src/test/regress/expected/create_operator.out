@@ -4,7 +4,7 @@
 CREATE OPERATOR ## (
    leftarg = path,
    rightarg = path,
-   procedure = path_inter,
+   function = path_inter,
    commutator = ##
 );
 CREATE OPERATOR <% (
@@ -16,15 +16,15 @@ CREATE OPERATOR <% (
 );
 CREATE OPERATOR @#@ (
    rightarg = int8,		-- left unary
-   procedure = numeric_fac
+   procedure = factorial
 );
 CREATE OPERATOR #@# (
    leftarg = int8,		-- right unary
-   procedure = numeric_fac
+   procedure = factorial
 );
 CREATE OPERATOR #%# (
    leftarg = int8,		-- right unary
-   procedure = numeric_fac
+   procedure = factorial
 );
 -- Test operator created above
 SELECT point '(1,2)' <% widget '(0,0,3)' AS t,
@@ -40,11 +40,85 @@ ERROR:  operator does not exist: integer ######
 -- => is disallowed now
 CREATE OPERATOR => (
    leftarg = int8,		-- right unary
-   procedure = numeric_fac
+   procedure = factorial
 );
 ERROR:  syntax error at or near "=>"
 LINE 1: CREATE OPERATOR => (
                         ^
+-- lexing of <=, >=, <>, != has a number of edge cases
+-- (=> is tested elsewhere)
+-- this is legal because ! is not allowed in sql ops
+CREATE OPERATOR !=- (
+   leftarg = int8,		-- right unary
+   procedure = factorial
+);
+SELECT 2 !=-;
+ ?column? 
+----------
+        2
+(1 row)
+
+-- make sure lexer returns != as <> even in edge cases
+SELECT 2 !=/**/ 1, 2 !=/**/ 2;
+ ?column? | ?column? 
+----------+----------
+ t        | f
+(1 row)
+
+SELECT 2 !=-- comment to be removed by psql
+  1;
+ ?column? 
+----------
+ t
+(1 row)
+
+DO $$ -- use DO to protect -- from psql
+  declare r boolean;
+  begin
+    execute $e$ select 2 !=-- comment
+      1 $e$ into r;
+    raise info 'r = %', r;
+  end;
+$$;
+INFO:  r = t
+-- check that <= etc. followed by more operator characters are returned
+-- as the correct token with correct precedence
+SELECT true<>-1 BETWEEN 1 AND 1;  -- BETWEEN has prec. above <> but below Op
+ ?column? 
+----------
+ t
+(1 row)
+
+SELECT false<>/**/1 BETWEEN 1 AND 1;
+ ?column? 
+----------
+ t
+(1 row)
+
+SELECT false<=-1 BETWEEN 1 AND 1;
+ ?column? 
+----------
+ t
+(1 row)
+
+SELECT false>=-1 BETWEEN 1 AND 1;
+ ?column? 
+----------
+ t
+(1 row)
+
+SELECT 2<=/**/3, 3>=/**/2, 2<>/**/3;
+ ?column? | ?column? | ?column? 
+----------+----------+----------
+ t        | t        | t
+(1 row)
+
+SELECT 3<=/**/2, 2>=/**/3, 2<>/**/2;
+ ?column? | ?column? | ?column? 
+----------+----------+----------
+ f        | f        | f
+(1 row)
+
 -- Should fail. CREATE OPERATOR requires USAGE on SCHEMA
 BEGIN TRANSACTION;
 CREATE ROLE regress_rol_op1;
@@ -54,7 +128,7 @@ REVOKE USAGE ON SCHEMA schema_op1 FROM regress_rol_op1;
 SET ROLE regress_rol_op1;
 CREATE OPERATOR schema_op1.#*# (
    leftarg = int8,		-- right unary
-   procedure = numeric_fac
+   procedure = factorial
 );
 ERROR:  permission denied for schema schema_op1
 ROLLBACK;
@@ -62,7 +136,7 @@ ROLLBACK;
 BEGIN TRANSACTION;
 CREATE OPERATOR #*# (
    leftarg = SETOF int8,
-   procedure = numeric_fac
+   procedure = factorial
 );
 ERROR:  SETOF type not allowed for operator argument
 ROLLBACK;
@@ -70,7 +144,7 @@ ROLLBACK;
 BEGIN TRANSACTION;
 CREATE OPERATOR #*# (
    rightarg = SETOF int8,
-   procedure = numeric_fac
+   procedure = factorial
 );
 ERROR:  SETOF type not allowed for operator argument
 ROLLBACK;
@@ -94,20 +168,20 @@ ROLLBACK;
 -- Should fail. Invalid attribute
 CREATE OPERATOR #@%# (
    leftarg = int8,		-- right unary
-   procedure = numeric_fac,
+   procedure = factorial,
    invalid_att = int8
 );
 WARNING:  operator attribute "invalid_att" not recognized
 -- Should fail. At least leftarg or rightarg should be mandatorily specified
 CREATE OPERATOR #@%# (
-   procedure = numeric_fac
+   procedure = factorial
 );
 ERROR:  at least one of leftarg or rightarg must be specified
 -- Should fail. Procedure should be mandatorily specified
 CREATE OPERATOR #@%# (
    leftarg = int8
 );
-ERROR:  operator procedure must be specified
+ERROR:  operator function must be specified
 -- Should fail. CREATE OPERATOR requires USAGE on TYPE
 BEGIN TRANSACTION;
 CREATE ROLE regress_rol_op3;
@@ -185,11 +259,11 @@ CREATE OPERATOR ===
 (
 	"Leftarg" = box,
 	"Rightarg" = box,
-	"Procedure" = area_equal_procedure,
+	"Procedure" = area_equal_function,
 	"Commutator" = ===,
 	"Negator" = !==,
-	"Restrict" = area_restriction_procedure,
-	"Join" = area_join_procedure,
+	"Restrict" = area_restriction_function,
+	"Join" = area_join_function,
 	"Hashes",
 	"Merges"
 );
@@ -202,4 +276,4 @@ WARNING:  operator attribute "Restrict" not recognized
 WARNING:  operator attribute "Join" not recognized
 WARNING:  operator attribute "Hashes" not recognized
 WARNING:  operator attribute "Merges" not recognized
-ERROR:  operator procedure must be specified
+ERROR:  operator function must be specified

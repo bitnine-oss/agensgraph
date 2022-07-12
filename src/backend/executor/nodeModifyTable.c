@@ -403,7 +403,7 @@ ExecInsert(ModifyTableState *mtstate,
 		 * if there's no BR trigger defined on the partition.
 		 */
 		if (resultRelInfo->ri_PartitionCheck &&
-			(resultRelInfo->ri_PartitionRoot == NULL ||
+			(resultRelInfo->ri_RootResultRelInfo == NULL ||
 			 (resultRelInfo->ri_TrigDesc &&
 			  resultRelInfo->ri_TrigDesc->trig_insert_before_row)))
 			ExecPartitionCheck(resultRelInfo, slot, estate, true);
@@ -609,7 +609,11 @@ ExecInsert(ModifyTableState *mtstate,
  *		foreign table, tupleid is invalid; the FDW has to figure out
  *		which row to delete using data from the planSlot.  oldtuple is
  *		passed to foreign table triggers; it is NULL when the foreign
- *		table has no relevant triggers.
+ *		table has no relevant triggers.  We use tupleDeleted to indicate
+ *		whether the tuple is actually deleted, callers can use it to
+ *		decide whether to continue the operation.  When this DELETE is a
+ *		part of an UPDATE of partition-key, then the slot returned by
+ *		EvalPlanQual() is passed back using output parameter epqslot.
  *
  *		Returns RETURNING result if any, otherwise NULL.
  * ----------------------------------------------------------------
@@ -621,10 +625,11 @@ ExecDelete(ModifyTableState *mtstate,
 		   TupleTableSlot *planSlot,
 		   EPQState *epqstate,
 		   EState *estate,
-		   bool *tupleDeleted,
 		   bool processReturning,
 		   bool canSetTag,
-		   bool changingPart)
+		   bool changingPart,
+		   bool *tupleDeleted,
+		   TupleTableSlot **epqslot)
 {
 	ResultRelInfo *resultRelInfo;
 	Relation	resultRelationDesc;
@@ -649,7 +654,7 @@ ExecDelete(ModifyTableState *mtstate,
 		bool		dodelete;
 
 		dodelete = ExecBRDeleteTriggers(estate, epqstate, resultRelInfo,
-										tupleid, oldtuple);
+										tupleid, oldtuple, epqslot);
 
 		if (!dodelete)			/* "do nothing" */
 			return NULL;
@@ -769,19 +774,30 @@ ldelete:;
 
 				if (!ItemPointerEquals(tupleid, &hufd.ctid))
 				{
-					TupleTableSlot *epqslot;
+					TupleTableSlot *my_epqslot;
 
-					epqslot = EvalPlanQual(estate,
-										   epqstate,
-										   resultRelationDesc,
-										   resultRelInfo->ri_RangeTableIndex,
-										   LockTupleExclusive,
-										   &hufd.ctid,
-										   hufd.xmax);
-					if (!TupIsNull(epqslot))
+					my_epqslot = EvalPlanQual(estate,
+											  epqstate,
+											  resultRelationDesc,
+											  resultRelInfo->ri_RangeTableIndex,
+											  LockTupleExclusive,
+											  &hufd.ctid,
+											  hufd.xmax);
+					if (!TupIsNull(my_epqslot))
 					{
 						*tupleid = hufd.ctid;
-						goto ldelete;
+
+						/*
+						 * If requested, skip delete and pass back the updated
+						 * row.
+						 */
+						if (epqslot)
+						{
+							*epqslot = my_epqslot;
+							return NULL;
+						}
+						else
+							goto ldelete;
 					}
 				}
 				/* tuple already deleted; nothing to do */
@@ -1052,6 +1068,7 @@ lreplace:;
 		{
 			bool		tuple_deleted;
 			TupleTableSlot *ret_slot;
+			TupleTableSlot *epqslot = NULL;
 			PartitionTupleRouting *proute = mtstate->mt_partition_tuple_routing;
 			int			map_index;
 			TupleConversionMap *tupconv_map;
@@ -1081,8 +1098,8 @@ lreplace:;
 			 * processing. We want to return rows from INSERT.
 			 */
 			ExecDelete(mtstate, tupleid, oldtuple, planSlot, epqstate,
-					   estate, &tuple_deleted, false,
-					   false /* canSetTag */ , true /* changingPart */ );
+					   estate, false, false /* canSetTag */ ,
+					   true /* changingPart */ , &tuple_deleted, &epqslot);
 
 			/*
 			 * For some reason if DELETE didn't happen (e.g. trigger prevented
@@ -1105,7 +1122,23 @@ lreplace:;
 			 * resurrect it.
 			 */
 			if (!tuple_deleted)
-				return NULL;
+			{
+				/*
+				 * epqslot will be typically NULL.  But when ExecDelete()
+				 * finds that another transaction has concurrently updated the
+				 * same row, it re-fetches the row, skips the delete, and
+				 * epqslot is set to the re-fetched tuple slot. In that case,
+				 * we need to do all the checks again.
+				 */
+				if (TupIsNull(epqslot))
+					return NULL;
+				else
+				{
+					slot = ExecFilterJunk(resultRelInfo->ri_junkFilter, epqslot);
+					tuple = ExecMaterializeSlot(slot);
+					goto lreplace;
+				}
+			}
 
 			/*
 			 * Updates set the transition capture map only when a new subplan
@@ -1314,7 +1347,7 @@ lreplace:;
  * (but still lock row, even though it may not satisfy estate's
  * snapshot).
  *
- * Returns true if if we're done (with or without an update), or false if
+ * Returns true if we're done (with or without an update), or false if
  * the caller must retry the INSERT from scratch.
  */
 static bool
@@ -2136,8 +2169,8 @@ ExecModifyTable(PlanState *pstate)
 			case CMD_DELETE:
 				slot = ExecDelete(node, tupleid, oldtuple, planSlot,
 								  &node->mt_epqstate, estate,
-								  NULL, true, node->canSetTag,
-								  false /* changingPart */ );
+								  true, node->canSetTag,
+								  false /* changingPart */ , NULL, NULL);
 				break;
 			default:
 				elog(ERROR, "unknown operation");
@@ -2291,7 +2324,8 @@ ExecInitModifyTable(ModifyTable *node, EState *estate, int eflags)
 	estate->es_result_relation_info = saved_resultRelInfo;
 
 	/* Get the target relation */
-	rel = (getTargetResultRelInfo(mtstate))->ri_RelationDesc;
+	resultRelInfo = getTargetResultRelInfo(mtstate);
+	rel = resultRelInfo->ri_RelationDesc;
 
 	/*
 	 * If it's not a partitioned table after all, UPDATE tuple routing should
@@ -2307,7 +2341,7 @@ ExecInitModifyTable(ModifyTable *node, EState *estate, int eflags)
 	if (rel->rd_rel->relkind == RELKIND_PARTITIONED_TABLE &&
 		(operation == CMD_INSERT || update_tuple_routing_needed))
 		mtstate->mt_partition_tuple_routing =
-			ExecSetupPartitionTupleRouting(mtstate, rel);
+			ExecSetupPartitionTupleRouting(mtstate, resultRelInfo);
 
 	/*
 	 * Build state for collecting transition tuples.  This requires having a
@@ -2342,7 +2376,7 @@ ExecInitModifyTable(ModifyTable *node, EState *estate, int eflags)
 		{
 			WithCheckOption *wco = (WithCheckOption *) lfirst(ll);
 			ExprState  *wcoExpr = ExecInitQual((List *) wco->qual,
-											   mtstate->mt_plans[i]);
+											   &mtstate->ps);
 
 			wcoExprs = lappend(wcoExprs, wcoExpr);
 		}

@@ -392,6 +392,22 @@ foreign_expr_walker(Node *node,
 				Param	   *p = (Param *) node;
 
 				/*
+				 * If it's a MULTIEXPR Param, punt.  We can't tell from here
+				 * whether the referenced sublink/subplan contains any remote
+				 * Vars; if it does, handling that is too complicated to
+				 * consider supporting at present.  Fortunately, MULTIEXPR
+				 * Params are not reduced to plain PARAM_EXEC until the end of
+				 * planning, so we can easily detect this case.  (Normal
+				 * PARAM_EXEC Params are safe to ship because their values
+				 * come from somewhere else in the plan tree; but a MULTIEXPR
+				 * references a sub-select elsewhere in the same targetlist,
+				 * so we'd be on the hook to evaluate it somehow if we wanted
+				 * to handle such cases as direct foreign updates.)
+				 */
+				if (p->paramkind == PARAM_MULTIEXPR)
+					return false;
+
+				/*
 				 * Collation rule is same as for Consts and non-foreign Vars.
 				 */
 				collation = p->paramcollid;
@@ -838,6 +854,55 @@ foreign_expr_walker(Node *node,
 
 	/* It looks OK */
 	return true;
+}
+
+/*
+ * Returns true if given expr is something we'd have to send the value of
+ * to the foreign server.
+ *
+ * This should return true when the expression is a shippable node that
+ * deparseExpr would add to context->params_list.  Note that we don't care
+ * if the expression *contains* such a node, only whether one appears at top
+ * level.  We need this to detect cases where setrefs.c would recognize a
+ * false match between an fdw_exprs item (which came from the params_list)
+ * and an entry in fdw_scan_tlist (which we're considering putting the given
+ * expression into).
+ */
+bool
+is_foreign_param(PlannerInfo *root,
+				 RelOptInfo *baserel,
+				 Expr *expr)
+{
+	if (expr == NULL)
+		return false;
+
+	switch (nodeTag(expr))
+	{
+		case T_Var:
+			{
+				/* It would have to be sent unless it's a foreign Var */
+				Var		   *var = (Var *) expr;
+				PgFdwRelationInfo *fpinfo = (PgFdwRelationInfo *) (baserel->fdw_private);
+				Relids		relids;
+
+				if (IS_UPPER_REL(baserel))
+					relids = fpinfo->outerrel->relids;
+				else
+					relids = baserel->relids;
+
+				if (bms_is_member(var->varno, relids) && var->varlevelsup == 0)
+					return false;	/* foreign Var, so not a param */
+				else
+					return true;	/* it'd have to be a param */
+				break;
+			}
+		case T_Param:
+			/* Params always have to be sent to the foreign server */
+			return true;
+		default:
+			break;
+	}
+	return false;
 }
 
 /*

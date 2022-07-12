@@ -26,6 +26,7 @@ static void check_for_isn_and_int8_passing_mismatch(ClusterInfo *cluster);
 static void check_for_reg_data_type_usage(ClusterInfo *cluster);
 static void check_for_jsonb_9_4_usage(ClusterInfo *cluster);
 static void check_for_pg_role_prefix(ClusterInfo *cluster);
+static void check_for_new_tablespace_dir(ClusterInfo *new_cluster);
 static char *get_canonical_locale_name(int category, const char *locale);
 
 
@@ -155,6 +156,8 @@ check_new_cluster(void)
 	check_is_install_user(&new_cluster);
 
 	check_for_prepared_transactions(&new_cluster);
+
+	check_for_new_tablespace_dir(&new_cluster);
 }
 
 
@@ -202,18 +205,10 @@ void
 output_completion_banner(char *analyze_script_file_name,
 						 char *deletion_script_file_name)
 {
-	/* Did we copy the free space files? */
-	if (GET_MAJOR_VERSION(old_cluster.major_version) >= 804)
-		pg_log(PG_REPORT,
-			   "Optimizer statistics are not transferred by pg_upgrade so,\n"
-			   "once you start the new server, consider running:\n"
-			   "    %s\n\n", analyze_script_file_name);
-	else
-		pg_log(PG_REPORT,
-			   "Optimizer statistics and free space information are not transferred\n"
-			   "by pg_upgrade so, once you start the new server, consider running:\n"
-			   "    %s\n\n", analyze_script_file_name);
-
+	pg_log(PG_REPORT,
+		   "Optimizer statistics are not transferred by pg_upgrade so,\n"
+		   "once you start the new server, consider running:\n"
+		   "    %s\n\n", analyze_script_file_name);
 
 	if (deletion_script_file_name)
 		pg_log(PG_REPORT,
@@ -280,7 +275,7 @@ check_cluster_compatibility(bool live_check)
 	check_control_data(&old_cluster.controldata, &new_cluster.controldata);
 
 	/* We read the real port number for PG >= 9.1 */
-	if (live_check && GET_MAJOR_VERSION(old_cluster.major_version) < 901 &&
+	if (live_check && GET_MAJOR_VERSION(old_cluster.major_version) <= 900 &&
 		old_cluster.port == DEF_PGUPORT)
 		pg_fatal("When checking a pre-PG 9.1 live old server, "
 				 "you must specify the old server's port number.\n");
@@ -476,19 +471,12 @@ create_script_for_cluster_analyze(char **analyze_script_file_name)
 			ECHO_QUOTE, ECHO_QUOTE);
 	fprintf(script, "echo %sthis script and run:%s\n",
 			ECHO_QUOTE, ECHO_QUOTE);
-	fprintf(script, "echo %s    \"%s/vacuumdb\" %s--all %s%s\n", ECHO_QUOTE,
-			new_cluster.bindir, user_specification.data,
-	/* Did we copy the free space files? */
-			(GET_MAJOR_VERSION(old_cluster.major_version) >= 804) ?
-			"--analyze-only" : "--analyze", ECHO_QUOTE);
+	fprintf(script, "echo %s    \"%s/vacuumdb\" %s--all --analyze-only%s\n", ECHO_QUOTE,
+			new_cluster.bindir, user_specification.data, ECHO_QUOTE);
 	fprintf(script, "echo%s\n\n", ECHO_BLANK);
 
 	fprintf(script, "\"%s/vacuumdb\" %s--all --analyze-in-stages\n",
 			new_cluster.bindir, user_specification.data);
-	/* Did we copy the free space files? */
-	if (GET_MAJOR_VERSION(old_cluster.major_version) < 804)
-		fprintf(script, "\"%s/vacuumdb\" %s--all\n", new_cluster.bindir,
-				user_specification.data);
 
 	fprintf(script, "echo%s\n\n", ECHO_BLANK);
 	fprintf(script, "echo %sDone%s\n",
@@ -507,6 +495,44 @@ create_script_for_cluster_analyze(char **analyze_script_file_name)
 	check_ok();
 }
 
+
+/*
+ * A previous run of pg_upgrade might have failed and the new cluster
+ * directory recreated, but they might have forgotten to remove
+ * the new cluster's tablespace directories.  Therefore, check that
+ * new cluster tablespace directories do not already exist.  If
+ * they do, it would cause an error while restoring global objects.
+ * This allows the failure to be detected at check time, rather than
+ * during schema restore.
+ *
+ * Note, v8.4 has no tablespace_suffix, which is fine so long as the
+ * version being upgraded *to* has a suffix, since it's not allowed
+ * to pg_upgrade from a version to the same version if tablespaces are
+ * in use.
+ */
+static void
+check_for_new_tablespace_dir(ClusterInfo *new_cluster)
+{
+	int		tblnum;
+	char	new_tablespace_dir[MAXPGPATH];
+
+	prep_status("Checking for new cluster tablespace directories");
+
+	for (tblnum = 0; tblnum < os_info.num_old_tablespaces; tblnum++)
+	{
+		struct stat statbuf;
+
+		snprintf(new_tablespace_dir, MAXPGPATH, "%s%s",
+				os_info.old_tablespaces[tblnum],
+				new_cluster->tablespace_suffix);
+
+		if (stat(new_tablespace_dir, &statbuf) == 0 || errno != ENOENT)
+			pg_fatal("new cluster tablespace directory already exists: \"%s\"\n",
+					 new_tablespace_dir);
+	}
+
+	check_ok();
+}
 
 /*
  * create_script_for_old_cluster_deletion()
@@ -915,18 +941,26 @@ check_for_reg_data_type_usage(ClusterInfo *cluster)
 								"SELECT n.nspname, c.relname, a.attname "
 								"FROM	pg_catalog.pg_class c, "
 								"		pg_catalog.pg_namespace n, "
-								"		pg_catalog.pg_attribute a "
+								"		pg_catalog.pg_attribute a, "
+								"		pg_catalog.pg_type t "
 								"WHERE	c.oid = a.attrelid AND "
 								"		NOT a.attisdropped AND "
-								"		a.atttypid IN ( "
-								"			'pg_catalog.regproc'::pg_catalog.regtype, "
-								"			'pg_catalog.regprocedure'::pg_catalog.regtype, "
-								"			'pg_catalog.regoper'::pg_catalog.regtype, "
-								"			'pg_catalog.regoperator'::pg_catalog.regtype, "
+								"       a.atttypid = t.oid AND "
+								"       t.typnamespace = "
+								"           (SELECT oid FROM pg_namespace "
+								"            WHERE nspname = 'pg_catalog') AND"
+								"		t.typname IN ( "
 		/* regclass.oid is preserved, so 'regclass' is OK */
+								"           'regconfig', "
+								"           'regdictionary', "
+								"           'regnamespace', "
+								"           'regoper', "
+								"           'regoperator', "
+								"           'regproc', "
+								"           'regprocedure' "
+		/* regrole.oid is preserved, so 'regrole' is OK */
 		/* regtype.oid is preserved, so 'regtype' is OK */
-								"			'pg_catalog.regconfig'::pg_catalog.regtype, "
-								"			'pg_catalog.regdictionary'::pg_catalog.regtype) AND "
+								"			) AND "
 								"		c.relnamespace = n.oid AND "
 								"		n.nspname NOT IN ('pg_catalog', 'information_schema')");
 

@@ -112,10 +112,10 @@ typedef struct IndexAmRoutine
     bool        ampredlocks;
     /* does AM support parallel scan? */
     bool        amcanparallel;
-    /* type of data stored in index, or InvalidOid if variable */
-    Oid         amkeytype;
     /* does AM support columns included with clause INCLUDE? */
     bool        amcaninclude;
+    /* type of data stored in index, or InvalidOid if variable */
+    Oid         amkeytype;
 
     /* interface functions */
     ambuild_function ambuild;
@@ -181,7 +181,7 @@ typedef struct IndexAmRoutine
    implications.  The requirements of <structfield>amcanunique</structfield>
    are discussed in <xref linkend="index-unique-checks"/>.
    The <structfield>amcanmulticol</structfield> flag asserts that the
-   access method supports multicolumn indexes, while
+   access method supports multi-key-column indexes, while
    <structfield>amoptionalkey</structfield> asserts that it allows scans
    where no indexable restriction clause is given for the first index column.
    When <structfield>amcanmulticol</structfield> is false,
@@ -215,6 +215,19 @@ typedef struct IndexAmRoutine
    <structfield>amsearchnulls</structfield>, indicating that it supports
    <literal>IS NULL</literal> and <literal>IS NOT NULL</literal> clauses as search
    conditions.
+  </para>
+
+  <para>
+   The <structfield>amcaninclude</structfield> flag indicates whether the
+   access method supports <quote>included</quote> columns, that is it can
+   store (without processing) additional columns beyond the key column(s).
+   The requirements of the preceding paragraph apply only to the key
+   columns.  In particular, the combination
+   of <structfield>amcanmulticol</structfield>=<literal>false</literal>
+   and <structfield>amcaninclude</structfield>=<literal>true</literal> is
+   sensible: it means that there can only be one key column, but there can
+   also be included column(s).  Also, included columns must be allowed to be
+   null, independently of <structfield>amoptionalkey</structfield>.
   </para>
 
  </sect1>
@@ -368,10 +381,13 @@ amcanreturn (Relation indexRelation, int attno);
 </programlisting>
    Check whether the index can support <link
    linkend="indexes-index-only-scans"><firstterm>index-only scans</firstterm></link> on
-   the given column, by returning the indexed column values for an index entry
-   in the form of an <structname>IndexTuple</structname>.  The attribute number
-   is 1-based, i.e. the first column's attno is 1. Returns true if supported,
-   else false.  If the access method does not support index-only scans at all,
+   the given column, by returning the column's original indexed value.
+   The attribute number is 1-based, i.e., the first column's attno is 1.
+   Returns true if supported, else false.
+   This function should always return true for included columns
+   (if those are supported), since there's little point in an included
+   column that can't be retrieved.
+   If the access method does not support index-only scans at all,
    the <structfield>amcanreturn</structfield> field in its <structname>IndexAmRoutine</structname>
    struct can be set to NULL.
   </para>
@@ -385,7 +401,8 @@ amcostestimate (PlannerInfo *root,
                 Cost *indexStartupCost,
                 Cost *indexTotalCost,
                 Selectivity *indexSelectivity,
-                double *indexCorrelation);
+                double *indexCorrelation,
+                double *indexPages);
 </programlisting>
    Estimate the costs of an index scan.  This function is described fully
    in <xref linkend="index-cost-estimation"/>, below.
@@ -460,7 +477,7 @@ amproperty (Oid index_oid, int attno,
    core code does not know how to do that and will return NULL.  It may
    also be advantageous to implement <literal>AMPROP_RETURNABLE</literal> testing,
    if that can be done more cheaply than by opening the index and calling
-   <structfield>amcanreturn</structfield>, which is the core code's default behavior.
+   <function>amcanreturn</function>, which is the core code's default behavior.
    The default behavior should be satisfactory for all other standard
    properties.
   </para>
@@ -542,7 +559,7 @@ amgettuple (IndexScanDesc scan,
    will pass the caller's snapshot test.  On success, <function>amgettuple</function>
    must also set <literal>scan-&gt;xs_recheck</literal> to true or false.
    False means it is certain that the index entry matches the scan keys.
-   true means this is not certain, and the conditions represented by the
+   True means this is not certain, and the conditions represented by the
    scan keys must be rechecked against the heap tuple after fetching it.
    This provision supports <quote>lossy</quote> index operators.
    Note that rechecking will extend only to the scan conditions; a partial
@@ -552,10 +569,13 @@ amgettuple (IndexScanDesc scan,
 
   <para>
    If the index supports <link linkend="indexes-index-only-scans">index-only
-   scans</link> (i.e., <function>amcanreturn</function> returns true for it),
+   scans</link> (i.e., <function>amcanreturn</function> returns true for any
+   of its columns),
    then on success the AM must also check <literal>scan-&gt;xs_want_itup</literal>,
    and if that is true it must return the originally indexed data for the
-   index entry.  The data can be returned in the form of an
+   index entry.  Columns for which <function>amcanreturn</function> returns
+   false can be returned as nulls.
+   The data can be returned in the form of an
    <structname>IndexTuple</structname> pointer stored at <literal>scan-&gt;xs_itup</literal>,
    with tuple descriptor <literal>scan-&gt;xs_itupdesc</literal>; or in the form of
    a <structname>HeapTuple</structname> pointer stored at <literal>scan-&gt;xs_hitup</literal>,
@@ -613,7 +633,8 @@ amendscan (IndexScanDesc scan);
 </programlisting>
    End a scan and release resources.  The <literal>scan</literal> struct itself
    should not be freed, but any locks or pins taken internally by the
-   access method must be released.
+   access method must be released, as well as any other memory allocated
+   by <function>ambeginscan</function> and other scan-related functions.
   </para>
 
   <para>
@@ -987,8 +1008,9 @@ amparallelrescan (IndexScanDesc scan);
    using <firstterm>unique indexes</firstterm>, which are indexes that disallow
    multiple entries with identical keys.  An access method that supports this
    feature sets <structfield>amcanunique</structfield> true.
-   (At present, only b-tree supports it.) Columns listed in the
-    <literal>INCLUDE</literal> clause are not used to enforce uniqueness.
+   (At present, only b-tree supports it.)  Columns listed in the
+   <literal>INCLUDE</literal> clause are not considered when enforcing
+   uniqueness.
   </para>
 
   <para>
@@ -1154,7 +1176,8 @@ amcostestimate (PlannerInfo *root,
                 Cost *indexStartupCost,
                 Cost *indexTotalCost,
                 Selectivity *indexSelectivity,
-                double *indexCorrelation);
+                double *indexCorrelation,
+                double *indexPages);
 </programlisting>
 
    The first three parameters are inputs:
@@ -1196,7 +1219,7 @@ amcostestimate (PlannerInfo *root,
   </para>
 
   <para>
-   The last four parameters are pass-by-reference outputs:
+   The last five parameters are pass-by-reference outputs:
 
    <variablelist>
     <varlistentry>
@@ -1232,6 +1255,15 @@ amcostestimate (PlannerInfo *root,
       <para>
        Set to correlation coefficient between index scan order and
        underlying table's order
+      </para>
+     </listitem>
+    </varlistentry>
+
+    <varlistentry>
+     <term><parameter>*indexPages</parameter></term>
+     <listitem>
+      <para>
+       Set to number of index leaf pages
       </para>
      </listitem>
     </varlistentry>
@@ -1280,6 +1312,11 @@ amcostestimate (PlannerInfo *root,
    -1.0 and 1.0) between the index order and the table order.  This is used
    to adjust the estimate for the cost of fetching rows from the parent
    table.
+  </para>
+
+  <para>
+   The <parameter>indexPages</parameter> should be set to the number of leaf pages.
+   This is used to estimate the number of workers for parallel index scan.
   </para>
 
   <para>

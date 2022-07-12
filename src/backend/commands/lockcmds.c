@@ -14,6 +14,7 @@
  */
 #include "postgres.h"
 
+#include "access/xact.h"
 #include "catalog/namespace.h"
 #include "catalog/pg_inherits.h"
 #include "commands/lockcmds.h"
@@ -31,7 +32,8 @@ static void LockTableRecurse(Oid reloid, LOCKMODE lockmode, bool nowait, Oid use
 static AclResult LockTableAclCheck(Oid relid, LOCKMODE lockmode, Oid userid);
 static void RangeVarCallbackForLockTable(const RangeVar *rv, Oid relid,
 							 Oid oldrelid, void *arg);
-static void LockViewRecurse(Oid reloid, LOCKMODE lockmode, bool nowait, List *ancestor_views);
+static void LockViewRecurse(Oid reloid, LOCKMODE lockmode, bool nowait,
+							List *ancestor_views);
 
 /*
  * LOCK TABLE
@@ -83,6 +85,7 @@ RangeVarCallbackForLockTable(const RangeVar *rv, Oid relid, Oid oldrelid,
 {
 	LOCKMODE	lockmode = *(LOCKMODE *) arg;
 	char		relkind;
+	char		relpersistence;
 	AclResult	aclresult;
 
 	if (!OidIsValid(relid))
@@ -99,6 +102,14 @@ RangeVarCallbackForLockTable(const RangeVar *rv, Oid relid, Oid oldrelid,
 				(errcode(ERRCODE_WRONG_OBJECT_TYPE),
 				 errmsg("\"%s\" is not a table or a view",
 						rv->relname)));
+
+	/*
+	 * Make note if a temporary relation has been accessed in this
+	 * transaction.
+	 */
+	relpersistence = get_rel_persistence(relid);
+	if (relpersistence == RELPERSISTENCE_TEMP)
+		MyXactFlags |= XACT_FLAGS_ACCESSEDTEMPREL;
 
 	/* Check permissions. */
 	aclresult = LockTableAclCheck(relid, lockmode, GetUserId());
@@ -217,12 +228,12 @@ LockViewRecurse_walker(Node *node, LockViewRecurse_context *context)
 				relkind != RELKIND_VIEW)
 				continue;
 
-			/* Check infinite recursion in the view definition. */
+			/*
+			 * We might be dealing with a self-referential view.  If so, we
+			 * can just stop recursing, since we already locked it.
+			 */
 			if (list_member_oid(context->ancestor_views, relid))
-				ereport(ERROR,
-						(errcode(ERRCODE_INVALID_OBJECT_DEFINITION),
-						 errmsg("infinite recursion detected in rules for relation \"%s\"",
-								get_rel_name(relid))));
+				continue;
 
 			/* Check permissions with the view owner's privilege. */
 			aclresult = LockTableAclCheck(relid, context->lockmode, context->viewowner);
@@ -239,7 +250,8 @@ LockViewRecurse_walker(Node *node, LockViewRecurse_context *context)
 								relname)));
 
 			if (relkind == RELKIND_VIEW)
-				LockViewRecurse(relid, context->lockmode, context->nowait, context->ancestor_views);
+				LockViewRecurse(relid, context->lockmode, context->nowait,
+								context->ancestor_views);
 			else if (rte->inh)
 				LockTableRecurse(relid, context->lockmode, context->nowait, context->viewowner);
 		}
@@ -256,13 +268,14 @@ LockViewRecurse_walker(Node *node, LockViewRecurse_context *context)
 }
 
 static void
-LockViewRecurse(Oid reloid, LOCKMODE lockmode, bool nowait, List *ancestor_views)
+LockViewRecurse(Oid reloid, LOCKMODE lockmode, bool nowait,
+				List *ancestor_views)
 {
 	LockViewRecurse_context context;
-
 	Relation	view;
 	Query	   *viewquery;
 
+	/* caller has already locked the view */
 	view = heap_open(reloid, NoLock);
 	viewquery = get_view_query(view);
 

@@ -64,7 +64,7 @@ typedef struct RelationData
 								 * valid, 2 = temporarily forced */
 	bool		rd_statvalid;	/* is rd_statlist valid? */
 
-	/*
+	/*----------
 	 * rd_createSubid is the ID of the highest subtransaction the rel has
 	 * survived into; or zero if the rel was not created in the current top
 	 * transaction.  This can be now be relied on, whereas previously it could
@@ -74,8 +74,13 @@ typedef struct RelationData
 	 * have forgotten changing it). rd_newRelfilenodeSubid can be forgotten
 	 * when a relation has multiple new relfilenodes within a single
 	 * transaction, with one of them occurring in a subsequently aborted
-	 * subtransaction, e.g. BEGIN; TRUNCATE t; SAVEPOINT save; TRUNCATE t;
-	 * ROLLBACK TO save; -- rd_newRelfilenode is now forgotten
+	 * subtransaction, e.g.
+	 *		BEGIN;
+	 *		TRUNCATE t;
+	 *		SAVEPOINT save;
+	 *		TRUNCATE t;
+	 *		ROLLBACK TO save;
+	 *		-- rd_newRelfilenodeSubid is now forgotten
 	 */
 	SubTransactionId rd_createSubid;	/* rel was created in current xact */
 	SubTransactionId rd_newRelfilenodeSubid;	/* new relfilenode assigned in
@@ -95,9 +100,9 @@ typedef struct RelationData
 	List	   *rd_fkeylist;	/* list of ForeignKeyCacheInfo (see below) */
 	bool		rd_fkeyvalid;	/* true if list has been computed */
 
-	MemoryContext rd_partkeycxt;	/* private memory cxt for the below */
+	MemoryContext rd_partkeycxt;	/* private context for rd_partkey, if any */
 	struct PartitionKeyData *rd_partkey;	/* partition key, or NULL */
-	MemoryContext rd_pdcxt;		/* private context for partdesc */
+	MemoryContext rd_pdcxt;		/* private context for rd_partdesc, if any */
 	struct PartitionDescData *rd_partdesc;	/* partitions, or NULL */
 	List	   *rd_partcheck;	/* partition CHECK quals */
 
@@ -188,6 +193,10 @@ typedef struct RelationData
 
 	/* use "struct" here to avoid needing to include pgstat.h: */
 	struct PgStat_TableStatus *pgstat_info; /* statistics collection area */
+
+	/* placed here to avoid ABI break before v12: */
+	bool		rd_partcheckvalid;	/* true if list has been computed */
+	MemoryContext rd_partcheckcxt;	/* private cxt for rd_partcheck, if any */
 } RelationData;
 
 
@@ -202,12 +211,13 @@ typedef struct RelationData
  * The per-FK-column arrays can be fixed-size because we allow at most
  * INDEX_MAX_KEYS columns in a foreign key constraint.
  *
- * Currently, we only cache fields of interest to the planner, but the
- * set of fields could be expanded in future.
+ * Currently, we mostly cache fields of interest to the planner, but the set
+ * of fields has already grown the constraint OID for other uses.
  */
 typedef struct ForeignKeyCacheInfo
 {
 	NodeTag		type;
+	Oid			conoid;			/* oid of the constraint itself */
 	Oid			conrelid;		/* relation constrained by the foreign key */
 	Oid			confrelid;		/* relation referenced by the foreign key */
 	int			nkeys;			/* number of columns in the foreign key */
@@ -218,7 +228,7 @@ typedef struct ForeignKeyCacheInfo
 } ForeignKeyCacheInfo;
 
 /*
- * Options common for all all indexes
+ * Options common for all indexes
  */
 typedef struct GenericIndexOpts
 {
@@ -597,7 +607,6 @@ typedef struct ViewOptions
 /* routines in utils/cache/relcache.c */
 extern void RelationIncrementReferenceCount(Relation rel);
 extern void RelationDecrementReferenceCount(Relation rel);
-extern bool RelationHasUnloggedIndex(Relation rel);
 extern List *RelationGetRepsetList(Relation rel);
 
 #endif							/* REL_H */

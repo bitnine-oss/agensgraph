@@ -152,7 +152,7 @@ llvm_compile_expr(ExprState *state)
 
 		param_types[0] = l_ptr(StructExprState);	/* state */
 		param_types[1] = l_ptr(StructExprContext);	/* econtext */
-		param_types[2] = l_ptr(TypeParamBool);	/* isnull */
+		param_types[2] = l_ptr(TypeStorageBool);	/* isnull */
 
 		eval_sig = LLVMFunctionType(TypeSizeT,
 									param_types, lengthof(param_types),
@@ -259,8 +259,6 @@ llvm_compile_expr(ExprState *state)
 
 					v_tmpvalue = LLVMBuildLoad(b, v_tmpvaluep, "");
 					v_tmpisnull = LLVMBuildLoad(b, v_tmpisnullp, "");
-					v_tmpisnull =
-						LLVMBuildTrunc(b, v_tmpisnull, TypeParamBool, "");
 
 					LLVMBuildStore(b, v_tmpisnull, v_isnullp);
 
@@ -2124,6 +2122,8 @@ llvm_compile_expr(ExprState *state)
 					LLVMValueRef v_nullp;
 					LLVMBasicBlockRef *b_checknulls;
 
+					Assert(nargs > 0);
+
 					jumpnull = op->d.agg_strict_input_check.jumpnull;
 					v_nullp = l_ptr_const(nulls, l_ptr(TypeStorageBool));
 
@@ -2228,6 +2228,28 @@ llvm_compile_expr(ExprState *state)
 
 					{
 						LLVMValueRef params[3];
+						LLVMValueRef v_curaggcontext;
+						LLVMValueRef v_current_set;
+						LLVMValueRef v_aggcontext;
+
+						v_aggcontext = l_ptr_const(op->d.agg_init_trans.aggcontext,
+												   l_ptr(StructExprContext));
+
+						v_current_set =
+							LLVMBuildStructGEP(b,
+											   v_aggstatep,
+											   FIELDNO_AGGSTATE_CURRENT_SET,
+											   "aggstate.current_set");
+						v_curaggcontext =
+							LLVMBuildStructGEP(b,
+											   v_aggstatep,
+											   FIELDNO_AGGSTATE_CURAGGCONTEXT,
+											   "aggstate.curaggcontext");
+
+						LLVMBuildStore(b, l_int32_const(op->d.agg_init_trans.setno),
+									   v_current_set);
+						LLVMBuildStore(b, v_aggcontext,
+									   v_curaggcontext);
 
 						params[0] = v_aggstatep;
 						params[1] = v_pertransp;
@@ -2477,6 +2499,8 @@ llvm_compile_expr(ExprState *state)
 						/* store trans value */
 						LLVMBuildStore(b, v_newval, v_transvaluep);
 						LLVMBuildStore(b, v_fcinfo_isnull, v_transnullp);
+
+						l_mcxt_switch(mod, b, v_oldcontext);
 						LLVMBuildBr(b, opblocks[i + 1]);
 
 						/* returned datum passed datum, no need to reparent */
@@ -2533,7 +2557,7 @@ llvm_compile_expr(ExprState *state)
 	llvm_leave_fatal_on_oom();
 
 	INSTR_TIME_SET_CURRENT(endtime);
-	INSTR_TIME_ACCUM_DIFF(context->base.generation_counter,
+	INSTR_TIME_ACCUM_DIFF(context->base.instr.generation_counter,
 						  endtime, starttime);
 
 	return true;

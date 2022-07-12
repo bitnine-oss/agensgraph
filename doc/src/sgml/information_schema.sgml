@@ -2621,8 +2621,9 @@ ORDER BY c.ordinal_position;
    For permission checking, the set of <quote>applicable roles</quote>
    is applied, which can be broader than the set of enabled roles.  So
    generally, it is better to use the view
-   <literal>applicable_roles</literal> instead of this one; see also
-   there.
+   <literal>applicable_roles</literal> instead of this one; See
+   <xref linkend="infoschema-applicable-roles"/> for details on
+   <literal>applicable_roles</literal> view.
   </para>
 
   <table>
@@ -5793,7 +5794,7 @@ ORDER BY c.ordinal_position;
       <entry><type>character_data</type></entry>
       <entry>
        Statement that is executed by the trigger (currently always
-       <literal>EXECUTE PROCEDURE
+       <literal>EXECUTE FUNCTION
        <replaceable>function</replaceable>(...)</literal>)
       </entry>
      </row>
@@ -6674,7 +6675,11 @@ ORDER BY c.ordinal_position;
      <row>
       <entry><literal>check_option</literal></entry>
       <entry><type>character_data</type></entry>
-      <entry>Applies to a feature not available in <productname>PostgreSQL</productname></entry>
+      <entry>
+       <literal>CASCADED</literal> or <literal>LOCAL</literal> if the view
+       has a <literal>CHECK OPTION</literal> defined on it,
+       <literal>NONE</literal> if not
+      </entry>
      </row>
 
      <row>

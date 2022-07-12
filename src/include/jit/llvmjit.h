@@ -11,9 +11,11 @@
 #ifndef LLVMJIT_H
 #define LLVMJIT_H
 
-#ifndef USE_LLVM
-#error "llvmjit.h should only be included by code dealing with llvm"
-#endif
+/*
+ * To avoid breaking cpluspluscheck, allow including the file even when LLVM
+ * is not available.
+ */
+#ifdef USE_LLVM
 
 #include <llvm-c/Types.h>
 
@@ -125,12 +127,17 @@ extern LLVMValueRef slot_compile_deform(struct LLVMJitContext *context, TupleDes
 extern char *LLVMGetHostCPUName(void);
 #endif
 
+#if defined(HAVE_DECL_LLVMGETHOSTCPUFEATURES) && !HAVE_DECL_LLVMGETHOSTCPUFEATURES
 /** Get the host CPU features as a string. The result needs to be disposed
   with LLVMDisposeMessage. */
 extern char *LLVMGetHostCPUFeatures(void);
+#endif
+
+extern unsigned LLVMGetAttributeCountAtIndexPG(LLVMValueRef F, uint32 Idx);
 
 #ifdef __cplusplus
 } /* extern "C" */
 #endif
 
+#endif							/* USE_LLVM */
 #endif							/* LLVMJIT_H */

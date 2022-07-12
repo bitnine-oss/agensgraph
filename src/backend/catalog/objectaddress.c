@@ -751,7 +751,7 @@ static const struct object_type_map
 	{
 		"transform", OBJECT_TRANSFORM
 	},
-	/* OBJECT_STATISTIC_EXT */
+	/* OCLASS_STATISTIC_EXT */
 	{
 		"statistics object", OBJECT_STATISTIC_EXT
 	},
@@ -2410,9 +2410,31 @@ check_object_ownership(Oid roleid, ObjectType objtype, ObjectAddress address,
 		case OBJECT_TYPE:
 		case OBJECT_DOMAIN:
 		case OBJECT_ATTRIBUTE:
-		case OBJECT_DOMCONSTRAINT:
 			if (!pg_type_ownercheck(address.objectId, roleid))
 				aclcheck_error_type(ACLCHECK_NOT_OWNER, address.objectId);
+			break;
+		case OBJECT_DOMCONSTRAINT:
+			{
+				HeapTuple	tuple;
+				Oid			contypid;
+
+				tuple = SearchSysCache1(CONSTROID,
+										ObjectIdGetDatum(address.objectId));
+				if (!HeapTupleIsValid(tuple))
+					elog(ERROR, "constraint with OID %u does not exist",
+						 address.objectId);
+
+				contypid = ((Form_pg_constraint) GETSTRUCT(tuple))->contypid;
+
+				ReleaseSysCache(tuple);
+
+				/*
+				 * Fallback to type ownership check in this case as this is
+				 * what domain constraints rely on.
+				 */
+				if (!pg_type_ownercheck(contypid, roleid))
+					aclcheck_error_type(ACLCHECK_NOT_OWNER, contypid);
+			}
 			break;
 		case OBJECT_AGGREGATE:
 		case OBJECT_FUNCTION:
@@ -2708,6 +2730,13 @@ get_object_attnum_acl(Oid class_id)
 	return prop->attnum_acl;
 }
 
+/*
+ * get_object_type
+ *
+ * Return the object type associated with a given object.  This routine
+ * is primarily used to determine the object type to mention in ACL check
+ * error messages, so it's desirable for it to avoid failing.
+ */
 ObjectType
 get_object_type(Oid class_id, Oid object_id)
 {
@@ -4061,7 +4090,10 @@ pg_identify_object_as_address(PG_FUNCTION_ARGS)
 	pfree(identity);
 
 	/* object_names */
-	values[1] = PointerGetDatum(strlist_to_textarray(names));
+	if (names != NIL)
+		values[1] = PointerGetDatum(strlist_to_textarray(names));
+	else
+		values[1] = PointerGetDatum(construct_empty_array(TEXTOID));
 	nulls[1] = false;
 
 	/* object_args */
@@ -5409,10 +5441,12 @@ strlist_to_textarray(List *list)
 {
 	ArrayType  *arr;
 	Datum	   *datums;
+	bool	   *nulls;
 	int			j = 0;
 	ListCell   *cell;
 	MemoryContext memcxt;
 	MemoryContext oldcxt;
+	int			lb[1];
 
 	/* Work in a temp context; easier than individually pfree'ing the Datums */
 	memcxt = AllocSetContextCreate(CurrentMemoryContext,
@@ -5421,24 +5455,42 @@ strlist_to_textarray(List *list)
 	oldcxt = MemoryContextSwitchTo(memcxt);
 
 	datums = (Datum *) palloc(sizeof(Datum) * list_length(list));
+	nulls = palloc(sizeof(bool) * list_length(list));
 
 	foreach(cell, list)
 	{
 		char	   *name = lfirst(cell);
 
-		datums[j++] = CStringGetTextDatum(name);
+		if (name)
+		{
+			nulls[j] = false;
+			datums[j++] = CStringGetTextDatum(name);
+		}
+		else
+			nulls[j] = true;
 	}
 
 	MemoryContextSwitchTo(oldcxt);
 
-	arr = construct_array(datums, list_length(list),
-						  TEXTOID, -1, false, 'i');
+	lb[0] = 1;
+	arr = construct_md_array(datums, nulls, 1, &j,
+							 lb, TEXTOID, -1, false, 'i');
 
 	MemoryContextDelete(memcxt);
 
 	return arr;
 }
 
+/*
+ * get_relkind_objtype
+ *
+ * Return the object type for the relkind given by the caller.
+ *
+ * If an unexpected relkind is passed, we say OBJECT_TABLE rather than
+ * failing.  That's because this is mostly used for generating error messages
+ * for failed ACL checks on relations, and we'd rather produce a generic
+ * message saying "table" than fail entirely.
+ */
 ObjectType
 get_relkind_objtype(char relkind)
 {
@@ -5458,14 +5510,11 @@ get_relkind_objtype(char relkind)
 			return OBJECT_MATVIEW;
 		case RELKIND_FOREIGN_TABLE:
 			return OBJECT_FOREIGN_TABLE;
-
-			/*
-			 * other relkinds are not supported here because they don't map to
-			 * OBJECT_* values
-			 */
+		case RELKIND_TOASTVALUE:
+			return OBJECT_TABLE;
 		default:
-			elog(ERROR, "unexpected relkind: %d", relkind);
-			return 0;
+			/* Per above, don't raise an error */
+			return OBJECT_TABLE;
 	}
 }
 

@@ -74,6 +74,13 @@ resetSpGistScanOpaque(SpGistScanOpaque so)
 
 	freeScanStack(so);
 
+	/*
+	 * clear traversal context before proceeding to the next scan; this must
+	 * not happen before the freeScanStack above, else we get double-free
+	 * crashes.
+	 */
+	MemoryContextReset(so->traversalCxt);
+
 	if (so->searchNulls)
 	{
 		/* Stack a work item to scan the null index entries */
@@ -212,9 +219,6 @@ spgrescan(IndexScanDesc scan, ScanKey scankey, int nscankeys,
 {
 	SpGistScanOpaque so = (SpGistScanOpaque) scan->opaque;
 
-	/* clear traversal context before proceeding to the next scan */
-	MemoryContextReset(so->traversalCxt);
-
 	/* copy scankeys into local storage */
 	if (scankey && scan->numberOfKeys > 0)
 	{
@@ -236,6 +240,14 @@ spgendscan(IndexScanDesc scan)
 
 	MemoryContextDelete(so->tempCxt);
 	MemoryContextDelete(so->traversalCxt);
+
+	if (so->keyData)
+		pfree(so->keyData);
+
+	if (so->state.deadTupleStorage)
+		pfree(so->state.deadTupleStorage);
+
+	pfree(so);
 }
 
 /*

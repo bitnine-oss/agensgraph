@@ -11,13 +11,19 @@ AS $$
 INSERT INTO cp_test VALUES (1, x);
 $$;
 
+\df ptest1
+SELECT pg_get_functiondef('ptest1'::regproc);
+
+-- show only normal functions
+\dfn public.*test*1
+
+-- show only procedures
+\dfp public.*test*1
+
 SELECT ptest1('x');  -- error
 CALL ptest1('a');  -- ok
 CALL ptest1('xy' || 'zzy');  -- ok, constant-folded arg
 CALL ptest1(substring(random()::numeric(20,15)::text, 1, 1));  -- ok, volatile arg
-
-\df ptest1
-SELECT pg_get_functiondef('ptest1'::regproc);
 
 SELECT * FROM cp_test ORDER BY b COLLATE "C";
 
@@ -82,6 +88,28 @@ CALL ptest5(10, b => 'Hello');
 CALL ptest5(b => 'Hello', a => 10);
 
 SELECT * FROM cp_test;
+
+
+-- polymorphic types
+
+CREATE PROCEDURE ptest6(a int, b anyelement)
+LANGUAGE SQL
+AS $$
+SELECT NULL::int;
+$$;
+
+CALL ptest6(1, 2);
+
+
+-- collation assignment
+
+CREATE PROCEDURE ptest7(a text, b text)
+LANGUAGE SQL
+AS $$
+SELECT a = b;
+$$;
+
+CALL ptest7(least('a', 'b'), 'a');
 
 
 -- various error cases

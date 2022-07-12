@@ -52,7 +52,8 @@ PostgreSQL documentation
 
   <para>
    The SQL script will be written to the standard output.  Use the
-   [-f|file] option or shell operators to redirect it into a file.
+   <option>-f</option>/<option>--file</option> option or shell operators to
+   redirect it into a file.
   </para>
 
   <para>
@@ -304,7 +305,7 @@ PostgreSQL documentation
       <term><option>--if-exists</option></term>
       <listitem>
        <para>
-        Use conditional commands (i.e. add an <literal>IF EXISTS</literal>
+        Use conditional commands (i.e., add an <literal>IF EXISTS</literal>
         clause) to drop databases and other objects.  This option is not valid
         unless <option>--clean</option> is also specified.
        </para>
@@ -330,14 +331,21 @@ PostgreSQL documentation
       <term><option>--load-via-partition-root</option></term>
       <listitem>
        <para>
-        When dumping a <command>COPY</command> or <command>INSERT</command> statement for a partitioned table,
-        target the root of the partitioning hierarchy which contains it rather
-        than the partition itself.  This may be useful when reloading data on
-        a server where rows do not always fall into the same partitions as
-        they did on the original server.  This could happen, for example, if
-        the partitioning column is of type text and the two system have
-        different definitions of the collation used to partition the data.
+        When dumping data for a table partition, make
+        the <command>COPY</command> or <command>INSERT</command> statements
+        target the root of the partitioning hierarchy that contains it, rather
+        than the partition itself.  This causes the appropriate partition to
+        be re-determined for each row when the data is loaded.  This may be
+        useful when reloading data on a server where rows do not always fall
+        into the same partitions as they did on the original server.  That
+        could happen, for example, if the partitioning column is of type text
+        and the two systems have different definitions of the collation used
+        to sort the partitioning column.
        </para>
+
+       <!-- Currently, we don't need pg_dump's warning about parallelism here,
+        since parallel restore from a pg_dumpall script is impossible.
+       -->
       </listitem>
      </varlistentry>
 
@@ -500,8 +508,9 @@ PostgreSQL documentation
       <term><option>--dbname=<replaceable class="parameter">connstr</replaceable></option></term>
       <listitem>
        <para>
-        Specifies parameters used to connect to the server, as a connection
-        string. See <xref linkend="libpq-connstring"/> for more information.
+        Specifies parameters used to connect to the server, as a <link
+        linkend="libpq-connstring">connection string</link>;  these
+        will override any conflicting command line options.
        </para>
        <para>
         The option is called <literal>--dbname</literal> for consistency with other

@@ -247,7 +247,7 @@ _copyAppend(const Append *from)
 	COPY_NODE_FIELD(appendplans);
 	COPY_SCALAR_FIELD(first_partial_plan);
 	COPY_NODE_FIELD(partitioned_rels);
-	COPY_NODE_FIELD(part_prune_infos);
+	COPY_NODE_FIELD(part_prune_info);
 
 	return newnode;
 }
@@ -1308,6 +1308,17 @@ _copyPartitionPruneInfo(const PartitionPruneInfo *from)
 {
 	PartitionPruneInfo *newnode = makeNode(PartitionPruneInfo);
 
+	COPY_NODE_FIELD(prune_infos);
+	COPY_BITMAPSET_FIELD(other_subplans);
+
+	return newnode;
+}
+
+static PartitionedRelPruneInfo *
+_copyPartitionedRelPruneInfo(const PartitionedRelPruneInfo *from)
+{
+	PartitionedRelPruneInfo *newnode = makeNode(PartitionedRelPruneInfo);
+
 	COPY_SCALAR_FIELD(reloid);
 	COPY_NODE_FIELD(pruning_steps);
 	COPY_BITMAPSET_FIELD(present_parts);
@@ -1319,6 +1330,8 @@ _copyPartitionPruneInfo(const PartitionPruneInfo *from)
 	COPY_SCALAR_FIELD(do_initial_prune);
 	COPY_SCALAR_FIELD(do_exec_prune);
 	COPY_BITMAPSET_FIELD(execparamids);
+	COPY_NODE_FIELD(initial_pruning_steps);
+	COPY_NODE_FIELD(exec_pruning_steps);
 
 	return newnode;
 }
@@ -3592,6 +3605,7 @@ _copyTableLikeClause(const TableLikeClause *from)
 
 	COPY_NODE_FIELD(relation);
 	COPY_SCALAR_FIELD(options);
+	COPY_SCALAR_FIELD(relationOid);
 
 	return newnode;
 }
@@ -5347,6 +5361,7 @@ _copyForeignKeyCacheInfo(const ForeignKeyCacheInfo *from)
 {
 	ForeignKeyCacheInfo *newnode = makeNode(ForeignKeyCacheInfo);
 
+	COPY_SCALAR_FIELD(conoid);
 	COPY_SCALAR_FIELD(conrelid);
 	COPY_SCALAR_FIELD(confrelid);
 	COPY_SCALAR_FIELD(nkeys);
@@ -5524,6 +5539,9 @@ copyObjectImpl(const void *from)
 			break;
 		case T_PartitionPruneInfo:
 			retval = _copyPartitionPruneInfo(from);
+			break;
+		case T_PartitionedRelPruneInfo:
+			retval = _copyPartitionedRelPruneInfo(from);
 			break;
 		case T_PartitionPruneStepOp:
 			retval = _copyPartitionPruneStepOp(from);

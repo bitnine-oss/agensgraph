@@ -74,12 +74,15 @@ typedef struct RangeVar
 
 /*
  * TableFunc - node for a table function, such as XMLTABLE.
+ *
+ * Entries in the ns_names list are either string Value nodes containing
+ * literal namespace names, or NULL pointers to represent DEFAULT.
  */
 typedef struct TableFunc
 {
 	NodeTag		type;
-	List	   *ns_uris;		/* list of namespace uri */
-	List	   *ns_names;		/* list of namespace names */
+	List	   *ns_uris;		/* list of namespace URI expressions */
+	List	   *ns_names;		/* list of namespace names or NULL */
 	Node	   *docexpr;		/* input document expression */
 	Node	   *rowexpr;		/* row filter expression */
 	List	   *colnames;		/* column names (list of String) */
@@ -930,8 +933,20 @@ typedef struct CaseWhen
  * This is effectively like a Param, but can be implemented more simply
  * since we need only one replacement value at a time.
  *
- * We also use this in nested UPDATE expressions.
- * See transformAssignmentIndirection().
+ * We also abuse this node type for some other purposes, including:
+ *	* Placeholder for the current array element value in ArrayCoerceExpr;
+ *	  see build_coercion_expression().
+ *	* Nested FieldStore/ArrayRef assignment expressions in INSERT/UPDATE;
+ *	  see transformAssignmentIndirection().
+ *
+ * The uses in CaseExpr and ArrayCoerceExpr are safe only to the extent that
+ * there is not any other CaseExpr or ArrayCoerceExpr between the value source
+ * node and its child CaseTestExpr(s).  This is true in the parse analysis
+ * output, but the planner's function-inlining logic has to be careful not to
+ * break it.
+ *
+ * The nested-assignment-expression case is safe because the only node types
+ * that can be above such CaseTestExprs are FieldStore and ArrayRef.
  */
 typedef struct CaseTestExpr
 {

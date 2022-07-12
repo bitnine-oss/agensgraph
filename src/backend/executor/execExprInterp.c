@@ -1746,6 +1746,15 @@ ExecInterpExpr(ExprState *state, ExprContext *econtext, bool *isnull)
 			 * anything.  Also, if transfn returned a pointer to a R/W
 			 * expanded object that is already a child of the aggcontext,
 			 * assume we can adopt that value without copying it.
+			 *
+			 * It's safe to compare newVal with pergroup->transValue without
+			 * regard for either being NULL, because ExecAggTransReparent()
+			 * takes care to set transValue to 0 when NULL. Otherwise we could
+			 * end up accidentally not reparenting, when the transValue has
+			 * the same numerical value as newValue, despite being NULL.  This
+			 * is a somewhat hot path, making it undesirable to instead solve
+			 * this with another branch for the common case of the transition
+			 * function returning its (modified) input argument.
 			 */
 			if (DatumGetPointer(newVal) != DatumGetPointer(pergroup->transValue))
 				newVal = ExecAggTransReparent(aggstate, pertrans,
@@ -2412,33 +2421,6 @@ ExecEvalParamExec(ExprState *state, ExprEvalStep *op, ExprContext *econtext)
 	}
 	*op->resvalue = prm->value;
 	*op->resnull = prm->isnull;
-}
-
-/*
- * ExecEvalParamExecParams
- *
- * Execute the subplan stored in PARAM_EXEC initplans params, if not executed
- * till now.
- */
-void
-ExecEvalParamExecParams(Bitmapset *params, EState *estate)
-{
-	ParamExecData *prm;
-	int			paramid;
-
-	paramid = -1;
-	while ((paramid = bms_next_member(params, paramid)) >= 0)
-	{
-		prm = &(estate->es_param_exec_vals[paramid]);
-
-		if (prm->execPlan != NULL)
-		{
-			/* Parameter not evaluated yet, so go do it */
-			ExecSetParamPlan(prm->execPlan, GetPerTupleExprContext(estate));
-			/* ExecSetParamPlan should have processed this param... */
-			Assert(prm->execPlan == NULL);
-		}
-	}
 }
 
 /*
@@ -4405,6 +4387,8 @@ ExecAggTransReparent(AggState *aggstate, AggStatePerTrans pertrans,
 					 Datum newValue, bool newValueIsNull,
 					 Datum oldValue, bool oldValueIsNull)
 {
+	Assert(newValue != oldValue);
+
 	if (!newValueIsNull)
 	{
 		MemoryContextSwitchTo(aggstate->curaggcontext->ecxt_per_tuple_memory);
@@ -4418,6 +4402,16 @@ ExecAggTransReparent(AggState *aggstate, AggStatePerTrans pertrans,
 								 pertrans->transtypeByVal,
 								 pertrans->transtypeLen);
 	}
+	else
+	{
+		/*
+		 * Ensure that AggStatePerGroup->transValue ends up being 0, so
+		 * callers can safely compare newValue/oldValue without having to
+		 * check their respective nullness.
+		 */
+		newValue = (Datum) 0;
+	}
+
 	if (!oldValueIsNull)
 	{
 		if (DatumIsReadWriteExpandedObject(oldValue,

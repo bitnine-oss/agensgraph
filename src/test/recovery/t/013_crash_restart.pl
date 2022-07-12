@@ -115,7 +115,7 @@ SELECT 1;
 ok( pump_until(
 		$killme,
 		\$killme_stderr,
-		qr/WARNING:  terminating connection because of crash of another server process|server closed the connection unexpectedly/m
+		qr/WARNING:  terminating connection because of crash of another server process|server closed the connection unexpectedly|connection to server was lost/m
 	),
 	"psql query died successfully after SIGQUIT");
 $killme_stderr = '';
@@ -128,7 +128,7 @@ $killme->finish;
 ok( pump_until(
 		$monitor,
 		\$monitor_stderr,
-		qr/WARNING:  terminating connection because of crash of another server process|server closed the connection unexpectedly/m
+		qr/WARNING:  terminating connection because of crash of another server process|server closed the connection unexpectedly|connection to server was lost/m
 	),
 	"psql monitor died successfully after SIGQUIT");
 $monitor->finish;
@@ -157,7 +157,6 @@ ok(pump_until($killme, \$killme_stdout, qr/[[:digit:]]+[\r\n]$/m),
 	"acquired pid for SIGKILL");
 $pid = $killme_stdout;
 chomp($pid);
-$pid           = $killme_stdout;
 $killme_stdout = '';
 $killme_stderr = '';
 
@@ -176,7 +175,7 @@ $killme_stderr = '';
 # signal that crash-restart has occurred.  The initial wait for the
 # trivial select is to be sure that psql successfully connected to
 # backend.
-$monitor_stdin = q[
+$monitor_stdin .= q[
 SELECT $$psql-connected$$;
 SELECT pg_sleep(3600);
 ];
@@ -198,7 +197,7 @@ SELECT 1;
 ];
 ok( pump_until(
 		$killme, \$killme_stderr,
-		qr/server closed the connection unexpectedly/m),
+		qr/server closed the connection unexpectedly|connection to server was lost/m),
 	"psql query died successfully after SIGKILL");
 $killme->finish;
 
@@ -208,7 +207,7 @@ $killme->finish;
 ok( pump_until(
 		$monitor,
 		\$monitor_stderr,
-		qr/WARNING:  terminating connection because of crash of another server process|server closed the connection unexpectedly/m
+		qr/WARNING:  terminating connection because of crash of another server process|server closed the connection unexpectedly|connection to server was lost/m
 	),
 	"psql monitor died successfully after SIGKILL");
 $monitor->finish;
@@ -252,6 +251,7 @@ sub pump_until
 	$proc->pump_nb();
 	while (1)
 	{
+		last if $$stream =~ /$untl/;
 		if ($psql_timeout->is_expired)
 		{
 			diag("aborting wait: program timed out");
@@ -269,7 +269,6 @@ sub pump_until
 			return 0;
 		}
 		$proc->pump();
-		last if $$stream =~ /$untl/;
 	}
 	return 1;
 

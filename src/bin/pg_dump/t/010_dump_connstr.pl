@@ -3,12 +3,19 @@ use warnings;
 
 use PostgresNode;
 use TestLib;
-use Test::More tests => 14;
+use Test::More;
 
-# In a SQL_ASCII database, pgwin32_message_to_UTF16() needs to
-# interpret everything as UTF8.  We're going to use byte sequences
-# that aren't valid UTF-8 strings, so that would fail.  Use LATIN1,
-# which accepts any byte and has a conversion from each byte to UTF-8.
+if ($^O eq 'msys' && `uname -or` =~ /^[2-9].*Msys/)
+{
+	plan skip_all => 'High bit name tests fail on Msys2';
+}
+else
+{
+	plan tests => 14;
+}
+
+# We're going to use byte sequences that aren't valid UTF-8 strings.  Use
+# LATIN1, which accepts any byte and has a conversion from each byte to UTF-8.
 $ENV{LC_ALL}           = 'C';
 $ENV{PGCLIENTENCODING} = 'LATIN1';
 

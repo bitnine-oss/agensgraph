@@ -2746,8 +2746,9 @@ initial_cost_mergejoin(PlannerInfo *root, JoinCostWorkspace *workspace,
 	outer_rows = clamp_row_est(outer_path_rows * outerendsel);
 	inner_rows = clamp_row_est(inner_path_rows * innerendsel);
 
-	Assert(outer_skip_rows <= outer_rows);
-	Assert(inner_skip_rows <= inner_rows);
+	/* skip rows can become NaN when path rows has become infinite */
+	Assert(outer_skip_rows <= outer_rows || isnan(outer_skip_rows));
+	Assert(inner_skip_rows <= inner_rows || isnan(inner_skip_rows));
 
 	/*
 	 * Readjust scan selectivities to account for above rounding.  This is
@@ -2759,8 +2760,9 @@ initial_cost_mergejoin(PlannerInfo *root, JoinCostWorkspace *workspace,
 	outerendsel = outer_rows / outer_path_rows;
 	innerendsel = inner_rows / inner_path_rows;
 
-	Assert(outerstartsel <= outerendsel);
-	Assert(innerstartsel <= innerendsel);
+	/* start sel can become NaN when path rows has become infinite */
+	Assert(outerstartsel <= outerendsel || isnan(outerstartsel));
+	Assert(innerstartsel <= innerendsel || isnan(innerstartsel));
 
 	/* cost of source data */
 
@@ -2983,8 +2985,13 @@ final_cost_mergejoin(PlannerInfo *root, MergePath *path,
 		if (rescannedtuples < 0)
 			rescannedtuples = 0;
 	}
-	/* We'll inflate various costs this much to account for rescanning */
-	rescanratio = 1.0 + (rescannedtuples / inner_path_rows);
+
+	/*
+	 * We'll inflate various costs this much to account for rescanning.  Note
+	 * that this is to be multiplied by something involving inner_rows, or
+	 * another number related to the portion of the inner rel we'll scan.
+	 */
+	rescanratio = 1.0 + (rescannedtuples / inner_rows);
 
 	/*
 	 * Decide whether we want to materialize the inner input to shield it from
@@ -3011,7 +3018,7 @@ final_cost_mergejoin(PlannerInfo *root, MergePath *path,
 	 * of the generated Material node.
 	 */
 	mat_inner_cost = inner_run_cost +
-		cpu_operator_cost * inner_path_rows * rescanratio;
+		cpu_operator_cost * inner_rows * rescanratio;
 
 	/*
 	 * If we don't need mark/restore at all, we don't need materialization.
@@ -3496,10 +3503,10 @@ final_cost_hashjoin(PlannerInfo *root, HashPath *path,
 			clamp_row_est(inner_path_rows / virtualbuckets) * 0.05;
 
 		/* Get # of tuples that will pass the basic join */
-		if (path->jpath.jointype == JOIN_SEMI)
-			hashjointuples = outer_matched_rows;
-		else
+		if (path->jpath.jointype == JOIN_ANTI)
 			hashjointuples = outer_path_rows - outer_matched_rows;
+		else
+			hashjointuples = outer_matched_rows;
 	}
 	else
 	{

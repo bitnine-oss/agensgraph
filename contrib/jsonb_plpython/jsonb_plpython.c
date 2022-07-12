@@ -237,17 +237,14 @@ PLyMapping_ToJsonbValue(PyObject *obj, JsonbParseState **jsonb_state)
 	JsonbValue *out = NULL;
 
 	/* We need it volatile, since we use it after longjmp */
-	volatile PyObject *items_v = NULL;
+	PyObject *volatile items = NULL;
 
 	pcount = PyMapping_Size(obj);
-	items_v = PyMapping_Items(obj);
+	items = PyMapping_Items(obj);
 
 	PG_TRY();
 	{
 		Py_ssize_t	i;
-		PyObject   *items;
-
-		items = (PyObject *) items_v;
 
 		pushJsonbValue(jsonb_state, WJB_BEGIN_OBJECT, NULL);
 
@@ -279,7 +276,7 @@ PLyMapping_ToJsonbValue(PyObject *obj, JsonbParseState **jsonb_state)
 	}
 	PG_CATCH();
 	{
-		Py_DECREF(items_v);
+		Py_DECREF(items);
 		PG_RE_THROW();
 	}
 	PG_END_TRY();
@@ -370,7 +367,6 @@ PLyNumber_ToJsonbValue(PyObject *obj, JsonbValue *jbvNum)
 static JsonbValue *
 PLyObject_ToJsonbValue(PyObject *obj, JsonbParseState **jsonb_state, bool is_elem)
 {
-	JsonbValue	buf;
 	JsonbValue *out;
 
 	if (!(PyString_Check(obj) || PyUnicode_Check(obj)))
@@ -381,11 +377,7 @@ PLyObject_ToJsonbValue(PyObject *obj, JsonbParseState **jsonb_state, bool is_ele
 			return PLyMapping_ToJsonbValue(obj, jsonb_state);
 	}
 
-	/* Allocate JsonbValue in heap only if it is raw scalar value. */
-	if (*jsonb_state)
-		out = &buf;
-	else
-		out = palloc(sizeof(JsonbValue));
+	out = palloc(sizeof(JsonbValue));
 
 	if (obj == Py_None)
 		out->type = jbvNull;
@@ -398,7 +390,6 @@ PLyObject_ToJsonbValue(PyObject *obj, JsonbParseState **jsonb_state, bool is_ele
 	 */
 	else if (PyBool_Check(obj))
 	{
-		out = palloc(sizeof(JsonbValue));
 		out->type = jbvBool;
 		out->val.boolean = (obj == Py_True);
 	}

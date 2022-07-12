@@ -67,6 +67,7 @@ typedef struct
 	List	   *quals;			/* the WHERE clauses it uses */
 	List	   *preds;			/* predicates of its partial index(es) */
 	Bitmapset  *clauseids;		/* quals+preds represented as a bitmapset */
+	bool		unclassifiable; /* has too many quals+preds to process? */
 } PathClauseUsage;
 
 /* Callback argument for ec_member_matches_indexcol */
@@ -125,7 +126,6 @@ static Cost bitmap_and_cost_est(PlannerInfo *root, RelOptInfo *rel,
 					List *paths);
 static PathClauseUsage *classify_index_clause_usage(Path *path,
 							List **clauselist);
-static Relids get_bitmap_tree_required_outer(Path *bitmapqual);
 static void find_indexpath_quals(Path *bitmapqual, List **quals, List **preds);
 static int	find_list_position(Node *node, List **nodelist);
 static bool check_index_only(RelOptInfo *rel, IndexOptInfo *index,
@@ -252,7 +252,7 @@ create_index_paths(PlannerInfo *root, RelOptInfo *rel)
 		IndexOptInfo *index = (IndexOptInfo *) lfirst(lc);
 
 		/* Protect limited-size array in IndexClauseSets */
-		Assert(index->ncolumns <= INDEX_MAX_KEYS);
+		Assert(index->nkeycolumns <= INDEX_MAX_KEYS);
 
 		/*
 		 * Ignore partial indexes that do not match the query.
@@ -359,23 +359,16 @@ create_index_paths(PlannerInfo *root, RelOptInfo *rel)
 	 */
 	if (bitjoinpaths != NIL)
 	{
-		List	   *path_outer;
 		List	   *all_path_outers;
 		ListCell   *lc;
 
-		/*
-		 * path_outer holds the parameterization of each path in bitjoinpaths
-		 * (to save recalculating that several times), while all_path_outers
-		 * holds all distinct parameterization sets.
-		 */
-		path_outer = all_path_outers = NIL;
+		/* Identify each distinct parameterization seen in bitjoinpaths */
+		all_path_outers = NIL;
 		foreach(lc, bitjoinpaths)
 		{
 			Path	   *path = (Path *) lfirst(lc);
-			Relids		required_outer;
+			Relids		required_outer = PATH_REQ_OUTER(path);
 
-			required_outer = get_bitmap_tree_required_outer(path);
-			path_outer = lappend(path_outer, required_outer);
 			if (!bms_equal_any(required_outer, all_path_outers))
 				all_path_outers = lappend(all_path_outers, required_outer);
 		}
@@ -390,16 +383,14 @@ create_index_paths(PlannerInfo *root, RelOptInfo *rel)
 			double		loop_count;
 			BitmapHeapPath *bpath;
 			ListCell   *lcp;
-			ListCell   *lco;
 
 			/* Identify all the bitmap join paths needing no more than that */
 			this_path_set = NIL;
-			forboth(lcp, bitjoinpaths, lco, path_outer)
+			foreach(lcp, bitjoinpaths)
 			{
 				Path	   *path = (Path *) lfirst(lcp);
-				Relids		p_outers = (Relids) lfirst(lco);
 
-				if (bms_is_subset(p_outers, max_outers))
+				if (bms_is_subset(PATH_REQ_OUTER(path), max_outers))
 					this_path_set = lappend(this_path_set, path);
 			}
 
@@ -413,7 +404,7 @@ create_index_paths(PlannerInfo *root, RelOptInfo *rel)
 			bitmapqual = choose_bitmap_and(root, rel, this_path_set);
 
 			/* And push that path into the mix */
-			required_outer = get_bitmap_tree_required_outer(bitmapqual);
+			required_outer = PATH_REQ_OUTER(bitmapqual);
 			loop_count = get_loop_count(root, rel->relid, required_outer);
 			bpath = create_bitmap_heap_path(root, rel, bitmapqual,
 											required_outer, loop_count, 0);
@@ -470,7 +461,7 @@ consider_index_join_clauses(PlannerInfo *root, RelOptInfo *rel,
 	 * relation itself is also included in the relids set.  considered_relids
 	 * lists all relids sets we've already tried.
 	 */
-	for (indexcol = 0; indexcol < index->ncolumns; indexcol++)
+	for (indexcol = 0; indexcol < index->nkeycolumns; indexcol++)
 	{
 		/* Consider each applicable simple join clause */
 		considered_clauses += list_length(jclauseset->indexclauses[indexcol]);
@@ -624,7 +615,7 @@ get_join_index_paths(PlannerInfo *root, RelOptInfo *rel,
 	/* Identify indexclauses usable with this relids set */
 	MemSet(&clauseset, 0, sizeof(clauseset));
 
-	for (indexcol = 0; indexcol < index->ncolumns; indexcol++)
+	for (indexcol = 0; indexcol < index->nkeycolumns; indexcol++)
 	{
 		ListCell   *lc;
 
@@ -924,7 +915,7 @@ build_index_paths(PlannerInfo *root, RelOptInfo *rel,
 	clause_columns = NIL;
 	found_lower_saop_clause = false;
 	outer_relids = bms_copy(rel->lateral_relids);
-	for (indexcol = 0; indexcol < index->ncolumns; indexcol++)
+	for (indexcol = 0; indexcol < index->nkeycolumns; indexcol++)
 	{
 		ListCell   *lc;
 
@@ -1452,9 +1443,18 @@ choose_bitmap_and(PlannerInfo *root, RelOptInfo *rel, List *paths)
 		Path	   *ipath = (Path *) lfirst(l);
 
 		pathinfo = classify_index_clause_usage(ipath, &clauselist);
+
+		/* If it's unclassifiable, treat it as distinct from all others */
+		if (pathinfo->unclassifiable)
+		{
+			pathinfoarray[npaths++] = pathinfo;
+			continue;
+		}
+
 		for (i = 0; i < npaths; i++)
 		{
-			if (bms_equal(pathinfo->clauseids, pathinfoarray[i]->clauseids))
+			if (!pathinfoarray[i]->unclassifiable &&
+				bms_equal(pathinfo->clauseids, pathinfoarray[i]->clauseids))
 				break;
 		}
 		if (i < npaths)
@@ -1489,6 +1489,10 @@ choose_bitmap_and(PlannerInfo *root, RelOptInfo *rel, List *paths)
 	 * For each surviving index, consider it as an "AND group leader", and see
 	 * whether adding on any of the later indexes results in an AND path with
 	 * cheaper total cost than before.  Then take the cheapest AND group.
+	 *
+	 * Note: paths that are either clauseless or unclassifiable will have
+	 * empty clauseids, so that they will not be rejected by the clauseids
+	 * filter here, nor will they cause later paths to be rejected by it.
 	 */
 	for (i = 0; i < npaths; i++)
 	{
@@ -1602,25 +1606,19 @@ path_usage_comparator(const void *a, const void *b)
 
 /*
  * Estimate the cost of actually executing a bitmap scan with a single
- * index path (no BitmapAnd, at least not at this level; but it could be
- * a BitmapOr).
+ * index path (which could be a BitmapAnd or BitmapOr node).
  */
 static Cost
 bitmap_scan_cost_est(PlannerInfo *root, RelOptInfo *rel, Path *ipath)
 {
 	BitmapHeapPath bpath;
-	Relids		required_outer;
-
-	/* Identify required outer rels, in case it's a parameterized scan */
-	required_outer = get_bitmap_tree_required_outer(ipath);
 
 	/* Set up a dummy BitmapHeapPath */
 	bpath.path.type = T_BitmapHeapPath;
 	bpath.path.pathtype = T_BitmapHeapScan;
 	bpath.path.parent = rel;
 	bpath.path.pathtarget = rel->reltarget;
-	bpath.path.param_info = get_baserel_parampathinfo(root, rel,
-													  required_outer);
+	bpath.path.param_info = ipath->param_info;
 	bpath.path.pathkeys = NIL;
 	bpath.bitmapqual = ipath;
 
@@ -1629,10 +1627,13 @@ bitmap_scan_cost_est(PlannerInfo *root, RelOptInfo *rel, Path *ipath)
 	 * Parallel bitmap heap path will be considered at later stage.
 	 */
 	bpath.path.parallel_workers = 0;
+
+	/* Now we can do cost_bitmap_heap_scan */
 	cost_bitmap_heap_scan(&bpath.path, root, rel,
 						  bpath.path.param_info,
 						  ipath,
-						  get_loop_count(root, rel->relid, required_outer));
+						  get_loop_count(root, rel->relid,
+										 PATH_REQ_OUTER(ipath)));
 
 	return bpath.path.total_cost;
 }
@@ -1644,46 +1645,15 @@ bitmap_scan_cost_est(PlannerInfo *root, RelOptInfo *rel, Path *ipath)
 static Cost
 bitmap_and_cost_est(PlannerInfo *root, RelOptInfo *rel, List *paths)
 {
-	BitmapAndPath apath;
-	BitmapHeapPath bpath;
-	Relids		required_outer;
-
-	/* Set up a dummy BitmapAndPath */
-	apath.path.type = T_BitmapAndPath;
-	apath.path.pathtype = T_BitmapAnd;
-	apath.path.parent = rel;
-	apath.path.pathtarget = rel->reltarget;
-	apath.path.param_info = NULL;	/* not used in bitmap trees */
-	apath.path.pathkeys = NIL;
-	apath.bitmapquals = paths;
-	cost_bitmap_and_node(&apath, root);
-
-	/* Identify required outer rels, in case it's a parameterized scan */
-	required_outer = get_bitmap_tree_required_outer((Path *) &apath);
-
-	/* Set up a dummy BitmapHeapPath */
-	bpath.path.type = T_BitmapHeapPath;
-	bpath.path.pathtype = T_BitmapHeapScan;
-	bpath.path.parent = rel;
-	bpath.path.pathtarget = rel->reltarget;
-	bpath.path.param_info = get_baserel_parampathinfo(root, rel,
-													  required_outer);
-	bpath.path.pathkeys = NIL;
-	bpath.bitmapqual = (Path *) &apath;
+	BitmapAndPath *apath;
 
 	/*
-	 * Check the cost of temporary path without considering parallelism.
-	 * Parallel bitmap heap path will be considered at later stage.
+	 * Might as well build a real BitmapAndPath here, as the work is slightly
+	 * too complicated to be worth repeating just to save one palloc.
 	 */
-	bpath.path.parallel_workers = 0;
+	apath = create_bitmap_and_path(root, rel, paths);
 
-	/* Now we can do cost_bitmap_heap_scan */
-	cost_bitmap_heap_scan(&bpath.path, root, rel,
-						  bpath.path.param_info,
-						  (Path *) &apath,
-						  get_loop_count(root, rel->relid, required_outer));
-
-	return bpath.path.total_cost;
+	return bitmap_scan_cost_est(root, rel, (Path *) apath);
 }
 
 
@@ -1716,6 +1686,21 @@ classify_index_clause_usage(Path *path, List **clauselist)
 	result->preds = NIL;
 	find_indexpath_quals(path, &result->quals, &result->preds);
 
+	/*
+	 * Some machine-generated queries have outlandish numbers of qual clauses.
+	 * To avoid getting into O(N^2) behavior even in this preliminary
+	 * classification step, we want to limit the number of entries we can
+	 * accumulate in *clauselist.  Treat any path with more than 100 quals +
+	 * preds as unclassifiable, which will cause calling code to consider it
+	 * distinct from all other paths.
+	 */
+	if (list_length(result->quals) + list_length(result->preds) > 100)
+	{
+		result->clauseids = NULL;
+		result->unclassifiable = true;
+		return result;
+	}
+
 	/* Build up a bitmapset representing the quals and preds */
 	clauseids = NULL;
 	foreach(lc, result->quals)
@@ -1733,49 +1718,7 @@ classify_index_clause_usage(Path *path, List **clauselist)
 								   find_list_position(node, clauselist));
 	}
 	result->clauseids = clauseids;
-
-	return result;
-}
-
-
-/*
- * get_bitmap_tree_required_outer
- *		Find the required outer rels for a bitmap tree (index/and/or)
- *
- * We don't associate any particular parameterization with a BitmapAnd or
- * BitmapOr node; however, the IndexPaths have parameterization info, in
- * their capacity as standalone access paths.  The parameterization required
- * for the bitmap heap scan node is the union of rels referenced in the
- * child IndexPaths.
- */
-static Relids
-get_bitmap_tree_required_outer(Path *bitmapqual)
-{
-	Relids		result = NULL;
-	ListCell   *lc;
-
-	if (IsA(bitmapqual, IndexPath))
-	{
-		return bms_copy(PATH_REQ_OUTER(bitmapqual));
-	}
-	else if (IsA(bitmapqual, BitmapAndPath))
-	{
-		foreach(lc, ((BitmapAndPath *) bitmapqual)->bitmapquals)
-		{
-			result = bms_join(result,
-							  get_bitmap_tree_required_outer((Path *) lfirst(lc)));
-		}
-	}
-	else if (IsA(bitmapqual, BitmapOrPath))
-	{
-		foreach(lc, ((BitmapOrPath *) bitmapqual)->bitmapquals)
-		{
-			result = bms_join(result,
-							  get_bitmap_tree_required_outer((Path *) lfirst(lc)));
-		}
-	}
-	else
-		elog(ERROR, "unrecognized node type: %d", nodeTag(bitmapqual));
+	result->unclassifiable = false;
 
 	return result;
 }
@@ -2644,11 +2587,12 @@ match_pathkeys_to_index(IndexOptInfo *index, List *pathkeys,
 			/*
 			 * We allow any column of the index to match each pathkey; they
 			 * don't have to match left-to-right as you might expect.  This is
-			 * correct for GiST, which is the sole existing AM supporting
-			 * amcanorderbyop.  We might need different logic in future for
-			 * other implementations.
+			 * correct for GiST, and it doesn't matter for SP-GiST because
+			 * that doesn't handle multiple columns anyway, and no other
+			 * existing AMs support amcanorderbyop.  We might need different
+			 * logic in future for other implementations.
 			 */
-			for (indexcol = 0; indexcol < index->ncolumns; indexcol++)
+			for (indexcol = 0; indexcol < index->nkeycolumns; indexcol++)
 			{
 				Expr	   *expr;
 
@@ -3079,7 +3023,7 @@ relation_has_unique_index_for(PlannerInfo *root, RelOptInfo *rel,
 		 * Try to find each index column in the lists of conditions.  This is
 		 * O(N^2) or worse, but we expect all the lists to be short.
 		 */
-		for (c = 0; c < ind->ncolumns; c++)
+		for (c = 0; c < ind->nkeycolumns; c++)
 		{
 			bool		matched = false;
 			ListCell   *lc;
@@ -3154,8 +3098,8 @@ relation_has_unique_index_for(PlannerInfo *root, RelOptInfo *rel,
 				break;			/* no match; this index doesn't help us */
 		}
 
-		/* Matched all columns of this index? */
-		if (c == ind->ncolumns)
+		/* Matched all key columns of this index? */
+		if (c == ind->nkeycolumns)
 			return true;
 	}
 
@@ -3961,7 +3905,7 @@ adjust_rowcompare_for_index(RowCompareExpr *clause,
 			break;				/* no good, volatile comparison value */
 
 		/*
-		 * The Var side can match any column of the index.
+		 * The Var side can match any key column of the index.
 		 */
 		for (i = 0; i < index->nkeycolumns; i++)
 		{
@@ -3973,7 +3917,7 @@ adjust_rowcompare_for_index(RowCompareExpr *clause,
 
 				break;
 		}
-		if (i >= index->ncolumns)
+		if (i >= index->nkeycolumns)
 			break;				/* no match found */
 
 		/* Add column number to returned list */

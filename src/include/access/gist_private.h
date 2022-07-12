@@ -136,13 +136,16 @@ typedef struct GISTSearchItem
 		/* we must store parentlsn to detect whether a split occurred */
 		GISTSearchHeapItem heap;	/* heap info, if heap tuple */
 	}			data;
-	double		distances[FLEXIBLE_ARRAY_MEMBER];	/* numberOfOrderBys
-													 * entries */
+
+	/* numberOfOrderBys entries */
+	IndexOrderByDistance distances[FLEXIBLE_ARRAY_MEMBER];
 } GISTSearchItem;
 
 #define GISTSearchItemIsHeap(item)	((item).blkno == InvalidBlockNumber)
 
-#define SizeOfGISTSearchItem(n_distances) (offsetof(GISTSearchItem, distances) + sizeof(double) * (n_distances))
+#define SizeOfGISTSearchItem(n_distances) \
+	(offsetof(GISTSearchItem, distances) + \
+	 sizeof(IndexOrderByDistance) * (n_distances))
 
 /*
  * GISTScanOpaqueData: private state for a scan of a GiST index
@@ -158,7 +161,7 @@ typedef struct GISTScanOpaqueData
 	bool		firstCall;		/* true until first gistgettuple call */
 
 	/* pre-allocated workspace arrays */
-	double	   *distances;		/* output area for gistindex_keytest */
+	IndexOrderByDistance *distances;	/* output area for gistindex_keytest */
 
 	/* info about killed items if any (killedItems is NULL if never used) */
 	OffsetNumber *killedItems;	/* offset numbers of killed items */
@@ -240,6 +243,7 @@ typedef struct GistSplitVector
 typedef struct
 {
 	Relation	r;
+	Relation	heapRel;
 	Size		freespace;		/* free space to be left */
 
 	GISTInsertStack *stack;
@@ -389,7 +393,8 @@ extern void freeGISTstate(GISTSTATE *giststate);
 extern void gistdoinsert(Relation r,
 			 IndexTuple itup,
 			 Size freespace,
-			 GISTSTATE *GISTstate);
+			 GISTSTATE *GISTstate,
+			 Relation heapRel);
 
 /* A List of these is returned from gistplacetopage() in *splitinfo */
 typedef struct
@@ -404,7 +409,8 @@ extern bool gistplacetopage(Relation rel, Size freespace, GISTSTATE *giststate,
 				OffsetNumber oldoffnum, BlockNumber *newblkno,
 				Buffer leftchildbuf,
 				List **splitinfo,
-				bool markleftchild);
+				bool markleftchild,
+				Relation heapRel);
 
 extern SplitedPageLayout *gistSplit(Relation r, Page page, IndexTuple *itup,
 		  int len, GISTSTATE *giststate);
@@ -412,7 +418,7 @@ extern SplitedPageLayout *gistSplit(Relation r, Page page, IndexTuple *itup,
 extern XLogRecPtr gistXLogUpdate(Buffer buffer,
 			   OffsetNumber *todelete, int ntodelete,
 			   IndexTuple *itup, int ntup,
-			   Buffer leftchild);
+			   Buffer leftchild, RelFileNode *hnode);
 
 extern XLogRecPtr gistXLogSplit(bool page_is_leaf,
 			  SplitedPageLayout *dist,

@@ -8,15 +8,17 @@ SET max_parallel_workers_per_gather = 0;
 SET work_mem = '128kB';
 
 -- Verify failures
+CREATE TABLE ext_stats_test (x int, y int, z int);
 CREATE STATISTICS tst;
 CREATE STATISTICS tst ON a, b;
 CREATE STATISTICS tst FROM sometab;
 CREATE STATISTICS tst ON a, b FROM nonexistant;
-CREATE STATISTICS tst ON a, b FROM pg_class;
-CREATE STATISTICS tst ON relname, relname, relnatts FROM pg_class;
-CREATE STATISTICS tst ON relnatts + relpages FROM pg_class;
-CREATE STATISTICS tst ON (relpages, reltuples) FROM pg_class;
-CREATE STATISTICS tst (unrecognized) ON relname, relnatts FROM pg_class;
+CREATE STATISTICS tst ON a, b FROM ext_stats_test;
+CREATE STATISTICS tst ON x, x, y FROM ext_stats_test;
+CREATE STATISTICS tst ON x + y FROM ext_stats_test;
+CREATE STATISTICS tst ON (x, y) FROM ext_stats_test;
+CREATE STATISTICS tst (unrecognized) ON x, y FROM ext_stats_test;
+DROP TABLE ext_stats_test;
 
 -- Ensure stats are dropped sanely, and test IF NOT EXISTS while at it
 CREATE TABLE ab1 (a INTEGER, b INTEGER, c INTEGER);
@@ -54,6 +56,14 @@ ALTER TABLE ab1 ALTER a SET STATISTICS -1;
 ANALYZE ab1 (a);
 ANALYZE ab1;
 DROP TABLE ab1;
+
+-- Ensure we can build statistics for tables with inheritance.
+CREATE TABLE ab1 (a INTEGER, b INTEGER);
+CREATE TABLE ab1c () INHERITS (ab1);
+INSERT INTO ab1 VALUES (1,1);
+CREATE STATISTICS ab1_a_b_stats ON a, b FROM ab1;
+ANALYZE ab1;
+DROP TABLE ab1 CASCADE;
 
 -- Verify supported object types for extended statistics
 CREATE schema tststats;
@@ -135,6 +145,10 @@ ANALYZE ndistinct;
 
 SELECT stxkind, stxndistinct
   FROM pg_statistic_ext WHERE stxrelid = 'ndistinct'::regclass;
+
+-- minor improvement, make sure the ctid does not break the matching
+EXPLAIN (COSTS off)
+SELECT COUNT(*) FROM ndistinct GROUP BY ctid, a, b;
 
 -- Hash Aggregate, thanks to estimates improved by the statistic
 EXPLAIN (COSTS off)

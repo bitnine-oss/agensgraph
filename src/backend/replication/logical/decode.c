@@ -199,6 +199,7 @@ DecodeXLogOp(LogicalDecodingContext *ctx, XLogRecordBuffer *buf)
 		case XLOG_FPW_CHANGE:
 		case XLOG_FPI_FOR_HINT:
 		case XLOG_FPI:
+		case XLOG_FPI_MULTI:
 			break;
 		default:
 			elog(ERROR, "unexpected RM_XLOG_ID record type: %u", info);
@@ -217,12 +218,15 @@ DecodeXactOp(LogicalDecodingContext *ctx, XLogRecordBuffer *buf)
 	uint8		info = XLogRecGetInfo(r) & XLOG_XACT_OPMASK;
 
 	/*
-	 * No point in doing anything yet, data could not be decoded anyway. It's
-	 * ok not to call ReorderBufferProcessXid() in that case, except in the
-	 * assignment case there'll not be any later records with the same xid;
-	 * and in the assignment case we'll not decode those xacts.
+	 * If the snapshot isn't yet fully built, we cannot decode anything, so
+	 * bail out.
+	 *
+	 * However, it's critical to process XLOG_XACT_ASSIGNMENT records even
+	 * when the snapshot is being built: it is possible to get later records
+	 * that require subxids to be properly assigned.
 	 */
-	if (SnapBuildCurrentState(builder) < SNAPBUILD_FULL_SNAPSHOT)
+	if (SnapBuildCurrentState(builder) < SNAPBUILD_FULL_SNAPSHOT &&
+		info != XLOG_XACT_ASSIGNMENT)
 		return;
 
 	switch (info)
@@ -665,12 +669,22 @@ DecodeAbort(LogicalDecodingContext *ctx, XLogRecordBuffer *buf,
 static void
 DecodeInsert(LogicalDecodingContext *ctx, XLogRecordBuffer *buf)
 {
+	Size		datalen;
+	char	   *tupledata;
+	Size		tuplelen;
 	XLogReaderState *r = buf->record;
 	xl_heap_insert *xlrec;
 	ReorderBufferChange *change;
 	RelFileNode target_node;
 
 	xlrec = (xl_heap_insert *) XLogRecGetData(r);
+
+	/*
+	 * Ignore insert records without new tuples (this does happen when
+	 * raw_heap_insert marks the TOAST record as HEAP_INSERT_NO_LOGICAL).
+	 */
+	if (!(xlrec->flags & XLH_INSERT_CONTAINS_NEW_TUPLE))
+		return;
 
 	/* only interested in our database */
 	XLogRecGetBlockTag(r, 0, &target_node, NULL, NULL);
@@ -690,17 +704,13 @@ DecodeInsert(LogicalDecodingContext *ctx, XLogRecordBuffer *buf)
 
 	memcpy(&change->data.tp.relnode, &target_node, sizeof(RelFileNode));
 
-	if (xlrec->flags & XLH_INSERT_CONTAINS_NEW_TUPLE)
-	{
-		Size		datalen;
-		char	   *tupledata = XLogRecGetBlockData(r, 0, &datalen);
-		Size		tuplelen = datalen - SizeOfHeapHeader;
+	tupledata = XLogRecGetBlockData(r, 0, &datalen);
+	tuplelen = datalen - SizeOfHeapHeader;
 
-		change->data.tp.newtuple =
-			ReorderBufferGetTupleBuf(ctx->reorder, tuplelen);
+	change->data.tp.newtuple =
+		ReorderBufferGetTupleBuf(ctx->reorder, tuplelen);
 
-		DecodeXLogTuple(tupledata, datalen, change->data.tp.newtuple);
-	}
+	DecodeXLogTuple(tupledata, datalen, change->data.tp.newtuple);
 
 	change->data.tp.clear_toast_afterwards = true;
 
@@ -859,7 +869,8 @@ DecodeTruncate(LogicalDecodingContext *ctx, XLogRecordBuffer *buf)
 	if (xlrec->flags & XLH_TRUNCATE_RESTART_SEQS)
 		change->data.truncate.restart_seqs = true;
 	change->data.truncate.nrelids = xlrec->nrelids;
-	change->data.truncate.relids = palloc(xlrec->nrelids * sizeof(Oid));
+	change->data.truncate.relids = ReorderBufferGetRelids(ctx->reorder,
+														  xlrec->nrelids);
 	memcpy(change->data.truncate.relids, xlrec->relids,
 		   xlrec->nrelids * sizeof(Oid));
 	ReorderBufferQueueChange(ctx->reorder, XLogRecGetXid(r),

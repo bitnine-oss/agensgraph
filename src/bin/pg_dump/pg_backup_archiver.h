@@ -99,7 +99,7 @@ typedef z_stream *z_streamp;
 #define K_VERS_MAJOR 1
 #define K_VERS_MINOR 13
 #define K_VERS_REV 0
-#define K_VERS_SELF MAKE_ARCHIVE_VERSION(K_VERS_MAJOR, K_VERS_MINOR, K_VERS_REV);
+#define K_VERS_SELF MAKE_ARCHIVE_VERSION(K_VERS_MAJOR, K_VERS_MINOR, K_VERS_REV)
 
 /* Newest format we can read */
 #define K_VERS_MAX	MAKE_ARCHIVE_VERSION(K_VERS_MAJOR, K_VERS_MINOR, 255)
@@ -213,10 +213,14 @@ typedef enum
  * data restore failures.  On the other hand, matview REFRESH commands should
  * come out after ACLs, as otherwise non-superuser-owned matviews might not
  * be able to execute.  (If the permissions at the time of dumping would not
- * allow a REFRESH, too bad; we won't fix that for you.)  These considerations
- * force us to make three passes over the TOC, restoring the appropriate
- * subset of items in each pass.  We assume that the dependency sort resulted
- * in an appropriate ordering of items within each subset.
+ * allow a REFRESH, too bad; we won't fix that for you.)  We also want event
+ * triggers to be restored after ACLs, so that they can't mess those up.
+ *
+ * These considerations force us to make three passes over the TOC,
+ * restoring the appropriate subset of items in each pass.  We assume that
+ * the dependency sort resulted in an appropriate ordering of items within
+ * each subset.
+ *
  * XXX This mechanism should be superseded by tracking dependencies on ACLs
  * properly; but we'll still need it for old dump files even after that.
  */
@@ -224,9 +228,9 @@ typedef enum
 {
 	RESTORE_PASS_MAIN = 0,		/* Main pass (most TOC item types) */
 	RESTORE_PASS_ACL,			/* ACL item types */
-	RESTORE_PASS_REFRESH		/* Matview REFRESH items */
+	RESTORE_PASS_POST_ACL		/* Event trigger and matview refresh items */
 
-#define RESTORE_PASS_LAST RESTORE_PASS_REFRESH
+#define RESTORE_PASS_LAST RESTORE_PASS_POST_ACL
 } RestorePass;
 
 typedef enum
@@ -304,7 +308,6 @@ struct _archiveHandle
 
 	/* Stuff for direct DB connection */
 	char	   *archdbname;		/* DB name *read* from archive */
-	trivalue	promptPassword;
 	char	   *savedPassword;	/* password for ropt->username, if known */
 	char	   *use_role;
 	PGconn	   *connection;
@@ -347,7 +350,8 @@ struct _archiveHandle
 	char	   *currSchema;		/* current schema, or NULL */
 	char	   *currGraph;		/* current graph, or NULL */
 	char	   *currTablespace; /* current tablespace, or NULL */
-	bool		currWithOids;	/* current default_with_oids setting */
+	char		currWithOids;	/* current default_with_oids setting: true,
+								 * false, or -1 for unknown, forcing a SET */
 
 	void	   *lo_buf;
 	size_t		lo_buf_used;
@@ -451,7 +455,7 @@ extern void InitArchiveFmt_Tar(ArchiveHandle *AH);
 
 extern bool isValidTarHeader(char *header);
 
-extern void ReconnectToServer(ArchiveHandle *AH, const char *dbname, const char *newUser);
+extern void ReconnectToServer(ArchiveHandle *AH, const char *dbname);
 extern void DropBlobIfExists(ArchiveHandle *AH, Oid oid);
 
 void		ahwrite(const void *ptr, size_t size, size_t nmemb, ArchiveHandle *AH);

@@ -480,8 +480,19 @@ set_rel_pathlist(PlannerInfo *root, RelOptInfo *rel,
 	}
 
 	/*
+	 * Allow a plugin to editorialize on the set of Paths for this base
+	 * relation.  It could add new paths (such as CustomPaths) by calling
+	 * add_path(), or add_partial_path() if parallel aware.  It could also
+	 * delete or modify paths added by the core code.
+	 */
+	if (set_rel_pathlist_hook)
+		(*set_rel_pathlist_hook) (root, rel, rti, rte);
+
+	/*
 	 * If this is a baserel, we should normally consider gathering any partial
-	 * paths we may have created for it.
+	 * paths we may have created for it.  We have to do this after calling the
+	 * set_rel_pathlist_hook, else it cannot add partial paths to be included
+	 * here.
 	 *
 	 * However, if this is an inheritance child, skip it.  Otherwise, we could
 	 * end up with a very large number of gather nodes, each trying to grab
@@ -489,20 +500,12 @@ set_rel_pathlist(PlannerInfo *root, RelOptInfo *rel,
 	 * paths for the parent appendrel.
 	 *
 	 * Also, if this is the topmost scan/join rel (that is, the only baserel),
-	 * we postpone this until the final scan/join targelist is available (see
-	 * grouping_planner).
+	 * we postpone gathering until the final scan/join targetlist is available
+	 * (see grouping_planner).
 	 */
 	if (rel->reloptkind == RELOPT_BASEREL &&
 		bms_membership(root->all_baserels) != BMS_SINGLETON)
 		generate_gather_paths(root, rel, false);
-
-	/*
-	 * Allow a plugin to editorialize on the set of Paths for this base
-	 * relation.  It could add new paths (such as CustomPaths) by calling
-	 * add_path(), or delete or modify paths added by the core code.
-	 */
-	if (set_rel_pathlist_hook)
-		(*set_rel_pathlist_hook) (root, rel, rti, rte);
 
 	/* Now find the cheapest of the paths for this rel */
 	set_cheapest(rel);
@@ -559,7 +562,7 @@ set_rel_consider_parallel(PlannerInfo *root, RelOptInfo *rel,
 
 			/*
 			 * Currently, parallel workers can't access the leader's temporary
-			 * tables.  We could possibly relax this if the wrote all of its
+			 * tables.  We could possibly relax this if we wrote all of its
 			 * local buffers at the start of the query and made no changes
 			 * thereafter (maybe we could allow hint bit changes), and if we
 			 * taught the workers to read them.  Writing a large number of
@@ -623,7 +626,20 @@ set_rel_consider_parallel(PlannerInfo *root, RelOptInfo *rel,
 			 * the SubqueryScanPath as not parallel-safe.  (Note that
 			 * set_subquery_pathlist() might push some of these quals down
 			 * into the subquery itself, but that doesn't change anything.)
+			 *
+			 * We can't push sub-select containing LIMIT/OFFSET to workers as
+			 * there is no guarantee that the row order will be fully
+			 * deterministic, and applying LIMIT/OFFSET will lead to
+			 * inconsistent results at the top-level.  (In some cases, where
+			 * the result is ordered, we could relax this restriction.  But it
+			 * doesn't currently seem worth expending extra effort to do so.)
 			 */
+			{
+				Query	   *subquery = castNode(Query, rte->subquery);
+
+				if (limit_needed(subquery))
+					return;
+			}
 			break;
 
 		case RTE_JOIN:
@@ -844,6 +860,9 @@ set_foreign_size(PlannerInfo *root, RelOptInfo *rel, RangeTblEntry *rte)
 
 	/* ... but do not let it set the rows estimate to zero */
 	rel->rows = clamp_row_est(rel->rows);
+
+	/* also, make sure rel->tuples is not insane relative to rel->rows */
+	rel->tuples = Max(rel->tuples, rel->rows);
 }
 
 /*
@@ -914,6 +933,17 @@ set_append_rel_size(PlannerInfo *root, RelOptInfo *rel,
 	}
 
 	/*
+	 * If this is a partitioned baserel, set the consider_partitionwise_join
+	 * flag; currently, we only consider partitionwise joins with the baserel
+	 * if its targetlist doesn't contain a whole-row Var.
+	 */
+	if (enable_partitionwise_join &&
+		rel->reloptkind == RELOPT_BASEREL &&
+		rte->relkind == RELKIND_PARTITIONED_TABLE &&
+		rel->attr_needed[InvalidAttrNumber - rel->min_attr] == NULL)
+		rel->consider_partitionwise_join = true;
+
+	/*
 	 * Initialize to compute size estimates for whole append relation.
 	 *
 	 * We handle width estimates by weighting the widths of different child
@@ -960,91 +990,12 @@ set_append_rel_size(PlannerInfo *root, RelOptInfo *rel,
 		childrel = find_base_rel(root, childRTindex);
 		Assert(childrel->reloptkind == RELOPT_OTHER_MEMBER_REL);
 
-		if (rel->part_scheme)
-		{
-			AttrNumber	attno;
-
-			/*
-			 * We need attr_needed data for building targetlist of a join
-			 * relation representing join between matching partitions for
-			 * partitionwise join. A given attribute of a child will be needed
-			 * in the same highest joinrel where the corresponding attribute
-			 * of parent is needed. Hence it suffices to use the same Relids
-			 * set for parent and child.
-			 */
-			for (attno = rel->min_attr; attno <= rel->max_attr; attno++)
-			{
-				int			index = attno - rel->min_attr;
-				Relids		attr_needed = rel->attr_needed[index];
-
-				/* System attributes do not need translation. */
-				if (attno <= 0)
-				{
-					Assert(rel->min_attr == childrel->min_attr);
-					childrel->attr_needed[index] = attr_needed;
-				}
-				else
-				{
-					Var		   *var = list_nth_node(Var,
-													appinfo->translated_vars,
-													attno - 1);
-					int			child_index;
-
-					/*
-					 * Ignore any column dropped from the parent.
-					 * Corresponding Var won't have any translation. It won't
-					 * have attr_needed information, since it can not be
-					 * referenced in the query.
-					 */
-					if (var == NULL)
-					{
-						Assert(attr_needed == NULL);
-						continue;
-					}
-
-					child_index = var->varattno - childrel->min_attr;
-					childrel->attr_needed[child_index] = attr_needed;
-				}
-			}
-		}
-
 		/*
-		 * Copy/Modify targetlist. Even if this child is deemed empty, we need
-		 * its targetlist in case it falls on nullable side in a child-join
-		 * because of partitionwise join.
-		 *
-		 * NB: the resulting childrel->reltarget->exprs may contain arbitrary
-		 * expressions, which otherwise would not occur in a rel's targetlist.
-		 * Code that might be looking at an appendrel child must cope with
-		 * such.  (Normally, a rel's targetlist would only include Vars and
-		 * PlaceHolderVars.)  XXX we do not bother to update the cost or width
-		 * fields of childrel->reltarget; not clear if that would be useful.
-		 */
-		childrel->reltarget->exprs = (List *)
-			adjust_appendrel_attrs(root,
-								   (Node *) rel->reltarget->exprs,
-								   1, &appinfo);
-
-		/*
-		 * We have to make child entries in the EquivalenceClass data
-		 * structures as well.  This is needed either if the parent
-		 * participates in some eclass joins (because we will want to consider
-		 * inner-indexscan joins on the individual children) or if the parent
-		 * has useful pathkeys (because we should try to build MergeAppend
-		 * paths that produce those sort orderings). Even if this child is
-		 * deemed dummy, it may fall on nullable side in a child-join, which
-		 * in turn may participate in a MergeAppend, where we will need the
-		 * EquivalenceClass data structures.
-		 */
-		if (rel->has_eclass_joins || has_useful_pathkeys(root, rel))
-			add_child_rel_equivalences(root, appinfo, rel, childrel);
-		childrel->has_eclass_joins = rel->has_eclass_joins;
-
-		/*
-		 * We have to copy the parent's quals to the child, with appropriate
-		 * substitution of variables.  However, only the baserestrictinfo
-		 * quals are needed before we can check for constraint exclusion; so
-		 * do that first and then check to see if we can disregard this child.
+		 * We have to copy the parent's targetlist and quals to the child,
+		 * with appropriate substitution of variables.  However, only the
+		 * baserestrictinfo quals are needed before we can check for
+		 * constraint exclusion; so do that first and then check to see if we
+		 * can disregard this child.
 		 *
 		 * The child rel's targetlist might contain non-Var expressions, which
 		 * means that substitution into the quals could produce opportunities
@@ -1178,11 +1129,58 @@ set_append_rel_size(PlannerInfo *root, RelOptInfo *rel,
 			continue;
 		}
 
-		/* CE failed, so finish copying/modifying join quals. */
+		/*
+		 * CE failed, so finish copying/modifying targetlist and join quals.
+		 *
+		 * NB: the resulting childrel->reltarget->exprs may contain arbitrary
+		 * expressions, which otherwise would not occur in a rel's targetlist.
+		 * Code that might be looking at an appendrel child must cope with
+		 * such.  (Normally, a rel's targetlist would only include Vars and
+		 * PlaceHolderVars.)  XXX we do not bother to update the cost or width
+		 * fields of childrel->reltarget; not clear if that would be useful.
+		 */
 		childrel->joininfo = (List *)
 			adjust_appendrel_attrs(root,
 								   (Node *) rel->joininfo,
 								   1, &appinfo);
+		childrel->reltarget->exprs = (List *)
+			adjust_appendrel_attrs(root,
+								   (Node *) rel->reltarget->exprs,
+								   1, &appinfo);
+
+		/*
+		 * We have to make child entries in the EquivalenceClass data
+		 * structures as well.  This is needed either if the parent
+		 * participates in some eclass joins (because we will want to consider
+		 * inner-indexscan joins on the individual children) or if the parent
+		 * has useful pathkeys (because we should try to build MergeAppend
+		 * paths that produce those sort orderings).
+		 */
+		if (rel->has_eclass_joins || has_useful_pathkeys(root, rel))
+			add_child_rel_equivalences(root, appinfo, rel, childrel);
+		childrel->has_eclass_joins = rel->has_eclass_joins;
+
+		/*
+		 * Note: we could compute appropriate attr_needed data for the child's
+		 * variables, by transforming the parent's attr_needed through the
+		 * translated_vars mapping.  However, currently there's no need
+		 * because attr_needed is only examined for base relations not
+		 * otherrels.  So we just leave the child's attr_needed empty.
+		 */
+
+		/*
+		 * If we consider partitionwise joins with the parent rel, do the same
+		 * for partitioned child rels.
+		 *
+		 * Note: here we abuse the consider_partitionwise_join flag by setting
+		 * it for child rels that are not themselves partitioned.  We do so to
+		 * tell try_partitionwise_join() that the child rel is sufficiently
+		 * valid to be used as a per-partition input, even if it later gets
+		 * proven to be dummy.  (It's not usable until we've set up the
+		 * reltarget and EC entries, which we just did.)
+		 */
+		if (rel->consider_partitionwise_join)
+			childrel->consider_partitionwise_join = true;
 
 		/*
 		 * If parallelism is allowable for this query in general, see whether
@@ -1392,7 +1390,6 @@ add_paths_to_append_rel(PlannerInfo *root, RelOptInfo *rel,
 	List	   *all_child_outers = NIL;
 	ListCell   *l;
 	List	   *partitioned_rels = NIL;
-	bool		build_partitioned_rels = false;
 	double		partial_rows = -1;
 
 	/* If appropriate, consider parallel append */
@@ -1417,10 +1414,11 @@ add_paths_to_append_rel(PlannerInfo *root, RelOptInfo *rel,
 	if (rel->part_scheme != NULL)
 	{
 		if (IS_SIMPLE_REL(rel))
-			partitioned_rels = rel->partitioned_child_rels;
+			partitioned_rels = list_make1(rel->partitioned_child_rels);
 		else if (IS_JOIN_REL(rel))
 		{
 			int			relid = -1;
+			List	   *partrels = NIL;
 
 			/*
 			 * For a partitioned joinrel, concatenate the component rels'
@@ -1434,16 +1432,16 @@ add_paths_to_append_rel(PlannerInfo *root, RelOptInfo *rel,
 				component = root->simple_rel_array[relid];
 				Assert(component->part_scheme != NULL);
 				Assert(list_length(component->partitioned_child_rels) >= 1);
-				partitioned_rels =
-					list_concat(partitioned_rels,
+				partrels =
+					list_concat(partrels,
 								list_copy(component->partitioned_child_rels));
 			}
+
+			partitioned_rels = list_make1(partrels);
 		}
 
 		Assert(list_length(partitioned_rels) >= 1);
 	}
-	else if (rel->rtekind == RTE_SUBQUERY)
-		build_partitioned_rels = true;
 
 	/*
 	 * For every non-dummy child, remember the cheapest path.  Also, identify
@@ -1457,17 +1455,12 @@ add_paths_to_append_rel(PlannerInfo *root, RelOptInfo *rel,
 		Path	   *cheapest_partial_path = NULL;
 
 		/*
-		 * If we need to build partitioned_rels, accumulate the partitioned
-		 * rels for this child.  We must ensure that parents are always listed
-		 * before their child partitioned tables.
+		 * For UNION ALLs with non-empty partitioned_child_rels, accumulate
+		 * the Lists of child relations.
 		 */
-		if (build_partitioned_rels)
-		{
-			List	   *cprels = childrel->partitioned_child_rels;
-
-			partitioned_rels = list_concat(partitioned_rels,
-										   list_copy(cprels));
-		}
+		if (rel->rtekind == RTE_SUBQUERY && childrel->partitioned_child_rels != NIL)
+			partitioned_rels = lappend(partitioned_rels,
+									   childrel->partitioned_child_rels);
 
 		/*
 		 * If child has an unparameterized cheapest-total path, add that to
@@ -1621,7 +1614,7 @@ add_paths_to_append_rel(PlannerInfo *root, RelOptInfo *rel,
 	 * Consider an append of unordered, unparameterized partial paths.  Make
 	 * it parallel-aware if possible.
 	 */
-	if (partial_subpaths_valid)
+	if (partial_subpaths_valid && partial_subpaths != NIL)
 	{
 		AppendPath *appendpath;
 		ListCell   *lc;
@@ -2018,9 +2011,11 @@ accumulate_append_subpath(Path *path, List **subpaths, List **special_subpaths)
  *	  Build a dummy path for a relation that's been excluded by constraints
  *
  * Rather than inventing a special "dummy" path type, we represent this as an
- * AppendPath with no members (see also IS_DUMMY_PATH/IS_DUMMY_REL macros).
+ * AppendPath with no members (see also IS_DUMMY_APPEND/IS_DUMMY_REL macros).
  *
- * This is exported because inheritance_planner() has need for it.
+ * (See also mark_dummy_rel, which does basically the same thing, but is
+ * typically used to change a rel into dummy state after we already made
+ * paths for it.)
  */
 void
 set_dummy_rel_pathlist(RelOptInfo *rel)
@@ -2033,14 +2028,16 @@ set_dummy_rel_pathlist(RelOptInfo *rel)
 	rel->pathlist = NIL;
 	rel->partial_pathlist = NIL;
 
-	add_path(rel, (Path *) create_append_path(NULL, rel, NIL, NIL, NULL,
+	/* Set up the dummy path */
+	add_path(rel, (Path *) create_append_path(NULL, rel, NIL, NIL,
+											  rel->lateral_relids,
 											  0, false, NIL, -1));
 
 	/*
-	 * We set the cheapest path immediately, to ensure that IS_DUMMY_REL()
-	 * will recognize the relation as dummy if anyone asks.  This is redundant
-	 * when we're called from set_rel_size(), but not when called from
-	 * elsewhere, and doing it twice is harmless anyway.
+	 * We set the cheapest-path fields immediately, just in case they were
+	 * pointing at some discarded path.  This is redundant when we're called
+	 * from set_rel_size(), but not when called from elsewhere, and doing it
+	 * twice is harmless anyway.
 	 */
 	set_cheapest(rel);
 }
@@ -2837,6 +2834,17 @@ standard_join_search(PlannerInfo *root, int levels_needed, List *initial_rels)
  * volatile qual could succeed for some SRF output rows and fail for others,
  * a behavior that cannot occur if it's evaluated before SRF expansion.
  *
+ * 6. If the subquery has nonempty grouping sets, we cannot push down any
+ * quals.  The concern here is that a qual referencing a "constant" grouping
+ * column could get constant-folded, which would be improper because the value
+ * is potentially nullable by grouping-set expansion.  This restriction could
+ * be removed if we had a parsetree representation that shows that such
+ * grouping columns are not really constant.  (There are other ideas that
+ * could be used to relax this restriction, but that's the approach most
+ * likely to get taken in the future.  Note that there's not much to be gained
+ * so long as subquery_planner can't move HAVING clauses to WHERE within such
+ * a subquery.)
+ *
  * In addition, we make several checks on the subquery's output columns to see
  * if it is safe to reference them in pushed-down quals.  If output column k
  * is found to be unsafe to reference, we set safetyInfo->unsafeColumns[k]
@@ -2879,6 +2887,10 @@ subquery_is_pushdown_safe(Query *subquery, Query *topquery,
 
 	/* Check point 1 */
 	if (subquery->limitOffset != NULL || subquery->limitCount != NULL)
+		return false;
+
+	/* Check point 6 */
+	if (subquery->groupClause && subquery->groupingSets)
 		return false;
 
 	/* Check points 3, 4, and 5 */
@@ -3163,8 +3175,10 @@ qual_is_pushdown_safe(Query *subquery, Index rti, Node *qual,
 	Assert(!contain_window_function(qual));
 
 	/*
-	 * Examine all Vars used in clause; since it's a restriction clause, all
-	 * such Vars must refer to subselect output columns.
+	 * Examine all Vars used in clause.  Since it's a restriction clause, all
+	 * such Vars must refer to subselect output columns ... unless this is
+	 * part of a LATERAL subquery, in which case there could be lateral
+	 * references.
 	 */
 	vars = pull_var_clause(qual, PVC_INCLUDE_PLACEHOLDERS);
 	foreach(vl, vars)
@@ -3184,7 +3198,19 @@ qual_is_pushdown_safe(Query *subquery, Index rti, Node *qual,
 			break;
 		}
 
-		Assert(var->varno == rti);
+		/*
+		 * Punt if we find any lateral references.  It would be safe to push
+		 * these down, but we'd have to convert them into outer references,
+		 * which subquery_push_qual lacks the infrastructure to do.  The case
+		 * arises so seldom that it doesn't seem worth working hard on.
+		 */
+		if (var->varno != rti)
+		{
+			safe = false;
+			break;
+		}
+
+		/* Subqueries have no system columns */
 		Assert(var->varattno >= 0);
 
 		/* Check point 4 */
@@ -3559,6 +3585,9 @@ generate_partitionwise_join_paths(PlannerInfo *root, RelOptInfo *rel)
 	if (!IS_PARTITIONED_REL(rel))
 		return;
 
+	/* The relation should have consider_partitionwise_join set. */
+	Assert(rel->consider_partitionwise_join);
+
 	/* Guard against stack overflow due to overly deep partition hierarchy. */
 	check_stack_depth();
 
@@ -3570,16 +3599,18 @@ generate_partitionwise_join_paths(PlannerInfo *root, RelOptInfo *rel)
 	{
 		RelOptInfo *child_rel = part_rels[cnt_parts];
 
-		Assert(child_rel != NULL);
+		/* If it's been pruned entirely, it's certainly dummy. */
+		if (child_rel == NULL)
+			continue;
 
 		/* Add partitionwise join paths for partitioned child-joins. */
 		generate_partitionwise_join_paths(root, child_rel);
 
+		set_cheapest(child_rel);
+
 		/* Dummy children will not be scanned, so ignore those. */
 		if (IS_DUMMY_REL(child_rel))
 			continue;
-
-		set_cheapest(child_rel);
 
 #ifdef OPTIMIZER_DEBUG
 		debug_print_rel(root, child_rel);
@@ -3705,6 +3736,21 @@ print_path(PlannerInfo *root, Path *path, int indent)
 		case T_ForeignPath:
 			ptype = "ForeignScan";
 			break;
+		case T_CustomPath:
+			ptype = "CustomScan";
+			break;
+		case T_NestPath:
+			ptype = "NestLoop";
+			join = true;
+			break;
+		case T_MergePath:
+			ptype = "MergeJoin";
+			join = true;
+			break;
+		case T_HashPath:
+			ptype = "HashJoin";
+			join = true;
+			break;
 		case T_AppendPath:
 			ptype = "Append";
 			break;
@@ -3725,6 +3771,10 @@ print_path(PlannerInfo *root, Path *path, int indent)
 		case T_GatherPath:
 			ptype = "Gather";
 			subpath = ((GatherPath *) path)->subpath;
+			break;
+		case T_GatherMergePath:
+			ptype = "GatherMerge";
+			subpath = ((GatherMergePath *) path)->subpath;
 			break;
 		case T_ProjectionPath:
 			ptype = "Projection";
@@ -3778,18 +3828,6 @@ print_path(PlannerInfo *root, Path *path, int indent)
 		case T_LimitPath:
 			ptype = "Limit";
 			subpath = ((LimitPath *) path)->subpath;
-			break;
-		case T_NestPath:
-			ptype = "NestLoop";
-			join = true;
-			break;
-		case T_MergePath:
-			ptype = "MergeJoin";
-			join = true;
-			break;
-		case T_HashPath:
-			ptype = "HashJoin";
-			join = true;
 			break;
 		default:
 			ptype = "???Path";

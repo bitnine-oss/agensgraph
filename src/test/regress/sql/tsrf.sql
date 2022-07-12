@@ -28,6 +28,18 @@ SELECT generate_series(1, generate_series(1, 3)), generate_series(2, 4);
 CREATE TABLE few(id int, dataa text, datab text);
 INSERT INTO few VALUES(1, 'a', 'foo'),(2, 'a', 'bar'),(3, 'b', 'bar');
 
+-- SRF with a provably-dummy relation
+explain (verbose, costs off)
+SELECT unnest(ARRAY[1, 2]) FROM few WHERE false;
+SELECT unnest(ARRAY[1, 2]) FROM few WHERE false;
+
+-- SRF shouldn't prevent upper query from recognizing lower as dummy
+explain (verbose, costs off)
+SELECT * FROM few f1,
+  (SELECT unnest(ARRAY[1,2]) FROM few f2 WHERE false OFFSET 0) ss;
+SELECT * FROM few f1,
+  (SELECT unnest(ARRAY[1,2]) FROM few f2 WHERE false OFFSET 0) ss;
+
 -- SRF output order of sorting is maintained, if SRF is not referenced
 SELECT few.id, generate_series(1,3) g FROM few ORDER BY id DESC;
 
@@ -87,6 +99,11 @@ SELECT dataa, datab b, generate_series(1,2) g, count(*) FROM few GROUP BY CUBE(d
 SELECT dataa, datab b, generate_series(1,2) g, count(*) FROM few GROUP BY CUBE(dataa, datab, g) ORDER BY dataa;
 SELECT dataa, datab b, generate_series(1,2) g, count(*) FROM few GROUP BY CUBE(dataa, datab, g) ORDER BY g;
 reset enable_hashagg;
+
+-- case with degenerate ORDER BY
+explain (verbose, costs off)
+select 'foo' as f, generate_series(1,2) as g from few order by 1;
+select 'foo' as f, generate_series(1,2) as g from few order by 1;
 
 -- data modification
 CREATE TABLE fewmore AS SELECT generate_series(1,3) AS data;

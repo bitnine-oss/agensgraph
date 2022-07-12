@@ -652,10 +652,22 @@ raw_heap_insert(RewriteState state, HeapTuple tup)
 		heaptup = tup;
 	}
 	else if (HeapTupleHasExternal(tup) || tup->t_len > TOAST_TUPLE_THRESHOLD)
+	{
+		int options = HEAP_INSERT_SKIP_FSM;
+
+		if (!state->rs_use_wal)
+			options |= HEAP_INSERT_SKIP_WAL;
+
+		/*
+		 * While rewriting the heap for VACUUM FULL / CLUSTER, make sure data
+		 * for the TOAST table are not logically decoded.  The main heap is
+		 * WAL-logged as XLOG FPI records, which are not logically decoded.
+		 */
+		options |= HEAP_INSERT_NO_LOGICAL;
+
 		heaptup = toast_insert_or_update(state->rs_new_rel, tup, NULL,
-										 HEAP_INSERT_SKIP_FSM |
-										 (state->rs_use_wal ?
-										  0 : HEAP_INSERT_SKIP_WAL));
+										 options);
+	}
 	else
 		heaptup = tup;
 
@@ -965,7 +977,7 @@ logical_end_heap_rewrite(RewriteState state)
 	while ((src = (RewriteMappingFile *) hash_seq_search(&seq_status)) != NULL)
 	{
 		if (FileSync(src->vfd, WAIT_EVENT_LOGICAL_REWRITE_SYNC) != 0)
-			ereport(ERROR,
+			ereport(data_sync_elevel(ERROR),
 					(errcode_for_file_access(),
 					 errmsg("could not fsync file \"%s\": %m", src->path)));
 		FileClose(src->vfd);
@@ -1166,6 +1178,7 @@ heap_xlog_logical_rewrite(XLogReaderState *r)
 	len = xlrec->num_mappings * sizeof(LogicalRewriteMappingData);
 
 	/* write out tail end of mapping file (again) */
+	errno = 0;
 	pgstat_report_wait_start(WAIT_EVENT_LOGICAL_REWRITE_MAPPING_WRITE);
 	if (write(fd, data, len) != len)
 	{
@@ -1185,7 +1198,7 @@ heap_xlog_logical_rewrite(XLogReaderState *r)
 	 */
 	pgstat_report_wait_start(WAIT_EVENT_LOGICAL_REWRITE_MAPPING_SYNC);
 	if (pg_fsync(fd) != 0)
-		ereport(ERROR,
+		ereport(data_sync_elevel(ERROR),
 				(errcode_for_file_access(),
 				 errmsg("could not fsync file \"%s\": %m", path)));
 	pgstat_report_wait_end();
@@ -1265,7 +1278,8 @@ CheckPointLogicalRewriteHeap(void)
 		}
 		else
 		{
-			int			fd = OpenTransientFile(path, O_RDONLY | PG_BINARY);
+			/* on some operating systems fsyncing a file requires O_RDWR */
+			int			fd = OpenTransientFile(path, O_RDWR | PG_BINARY);
 
 			/*
 			 * The file cannot vanish due to concurrency since this function
@@ -1284,7 +1298,7 @@ CheckPointLogicalRewriteHeap(void)
 			 */
 			pgstat_report_wait_start(WAIT_EVENT_LOGICAL_REWRITE_CHECKPOINT_SYNC);
 			if (pg_fsync(fd) != 0)
-				ereport(ERROR,
+				ereport(data_sync_elevel(ERROR),
 						(errcode_for_file_access(),
 						 errmsg("could not fsync file \"%s\": %m", path)));
 			pgstat_report_wait_end();

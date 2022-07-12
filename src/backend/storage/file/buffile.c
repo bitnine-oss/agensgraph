@@ -96,7 +96,7 @@ struct BufFile
 	off_t		curOffset;		/* offset part of current pos */
 	int			pos;			/* next read/write position in buffer */
 	int			nbytes;			/* total # of valid bytes in buffer */
-	char		buffer[BLCKSZ];
+	PGAlignedBlock buffer;
 };
 
 static BufFile *makeBufFileCommon(int nfiles);
@@ -104,7 +104,7 @@ static BufFile *makeBufFile(File firstfile);
 static void extendBufFile(BufFile *file);
 static void BufFileLoadBuffer(BufFile *file);
 static void BufFileDumpBuffer(BufFile *file);
-static int	BufFileFlush(BufFile *file);
+static void BufFileFlush(BufFile *file);
 static File MakeNewSharedSegment(BufFile *file, int segment);
 
 /*
@@ -314,7 +314,8 @@ BufFileOpenShared(SharedFileSet *fileset, const char *name)
 	if (nfiles == 0)
 		ereport(ERROR,
 				(errcode_for_file_access(),
-				 errmsg("could not open BufFile \"%s\"", name)));
+				 errmsg("could not open temporary file \"%s\" from BufFile \"%s\": %m",
+						segment_name, name)));
 
 	file = makeBufFileCommon(nfiles);
 	file->files = files;
@@ -429,7 +430,10 @@ BufFileLoadBuffer(BufFile *file)
 	if (file->curOffset != file->offsets[file->curFile])
 	{
 		if (FileSeek(thisfile, file->curOffset, SEEK_SET) != file->curOffset)
-			return;				/* seek failed, read nothing */
+			ereport(ERROR,
+					(errcode_for_file_access(),
+					 errmsg("could not seek in file \"%s\": %m",
+							FilePathName(thisfile))));
 		file->offsets[file->curFile] = file->curOffset;
 	}
 
@@ -437,11 +441,18 @@ BufFileLoadBuffer(BufFile *file)
 	 * Read whatever we can get, up to a full bufferload.
 	 */
 	file->nbytes = FileRead(thisfile,
-							file->buffer,
+							file->buffer.data,
 							sizeof(file->buffer),
 							WAIT_EVENT_BUFFILE_READ);
 	if (file->nbytes < 0)
+	{
 		file->nbytes = 0;
+		ereport(ERROR,
+				(errcode_for_file_access(),
+				 errmsg("could not read file \"%s\": %m",
+						FilePathName(thisfile))));
+	}
+
 	file->offsets[file->curFile] += file->nbytes;
 	/* we choose not to advance curOffset here */
 
@@ -498,15 +509,22 @@ BufFileDumpBuffer(BufFile *file)
 		if (file->curOffset != file->offsets[file->curFile])
 		{
 			if (FileSeek(thisfile, file->curOffset, SEEK_SET) != file->curOffset)
-				return;			/* seek failed, give up */
+				ereport(ERROR,
+						(errcode_for_file_access(),
+						 errmsg("could not seek in file \"%s\": %m",
+								FilePathName(thisfile))));
 			file->offsets[file->curFile] = file->curOffset;
 		}
 		bytestowrite = FileWrite(thisfile,
-								 file->buffer + wpos,
+								 file->buffer.data + wpos,
 								 bytestowrite,
 								 WAIT_EVENT_BUFFILE_WRITE);
 		if (bytestowrite <= 0)
-			return;				/* failed to write */
+			ereport(ERROR,
+					(errcode_for_file_access(),
+					 errmsg("could not write to file \"%s\": %m",
+							FilePathName(thisfile))));
+
 		file->offsets[file->curFile] += bytestowrite;
 		file->curOffset += bytestowrite;
 		wpos += bytestowrite;
@@ -539,7 +557,8 @@ BufFileDumpBuffer(BufFile *file)
 /*
  * BufFileRead
  *
- * Like fread() except we assume 1-byte element size.
+ * Like fread() except we assume 1-byte element size and report I/O errors via
+ * ereport().
  */
 size_t
 BufFileRead(BufFile *file, void *ptr, size_t size)
@@ -547,12 +566,7 @@ BufFileRead(BufFile *file, void *ptr, size_t size)
 	size_t		nread = 0;
 	size_t		nthistime;
 
-	if (file->dirty)
-	{
-		if (BufFileFlush(file) != 0)
-			return 0;			/* could not flush... */
-		Assert(!file->dirty);
-	}
+	BufFileFlush(file);
 
 	while (size > 0)
 	{
@@ -572,7 +586,7 @@ BufFileRead(BufFile *file, void *ptr, size_t size)
 			nthistime = size;
 		Assert(nthistime > 0);
 
-		memcpy(ptr, file->buffer + file->pos, nthistime);
+		memcpy(ptr, file->buffer.data + file->pos, nthistime);
 
 		file->pos += nthistime;
 		ptr = (void *) ((char *) ptr + nthistime);
@@ -586,7 +600,8 @@ BufFileRead(BufFile *file, void *ptr, size_t size)
 /*
  * BufFileWrite
  *
- * Like fwrite() except we assume 1-byte element size.
+ * Like fwrite() except we assume 1-byte element size and report errors via
+ * ereport().
  */
 size_t
 BufFileWrite(BufFile *file, void *ptr, size_t size)
@@ -602,11 +617,7 @@ BufFileWrite(BufFile *file, void *ptr, size_t size)
 		{
 			/* Buffer full, dump it out */
 			if (file->dirty)
-			{
 				BufFileDumpBuffer(file);
-				if (file->dirty)
-					break;		/* I/O error */
-			}
 			else
 			{
 				/* Hmm, went directly from reading to writing? */
@@ -621,7 +632,7 @@ BufFileWrite(BufFile *file, void *ptr, size_t size)
 			nthistime = size;
 		Assert(nthistime > 0);
 
-		memcpy(file->buffer + file->pos, ptr, nthistime);
+		memcpy(file->buffer.data + file->pos, ptr, nthistime);
 
 		file->dirty = true;
 		file->pos += nthistime;
@@ -638,19 +649,15 @@ BufFileWrite(BufFile *file, void *ptr, size_t size)
 /*
  * BufFileFlush
  *
- * Like fflush()
+ * Like fflush(), except that I/O errors are reported with ereport().
  */
-static int
+static void
 BufFileFlush(BufFile *file)
 {
 	if (file->dirty)
-	{
 		BufFileDumpBuffer(file);
-		if (file->dirty)
-			return EOF;
-	}
 
-	return 0;
+	Assert(!file->dirty);
 }
 
 /*
@@ -659,6 +666,7 @@ BufFileFlush(BufFile *file)
  * Like fseek(), except that target position needs two values in order to
  * work when logical filesize exceeds maximum value representable by off_t.
  * We do not support relative seeks across more than that, however.
+ * I/O errors are reported by ereport().
  *
  * Result is 0 if OK, EOF if not.  Logical position is not moved if an
  * impossible seek is attempted.
@@ -716,8 +724,7 @@ BufFileSeek(BufFile *file, int fileno, off_t offset, int whence)
 		return 0;
 	}
 	/* Otherwise, must reposition buffer, so flush any dirty data */
-	if (BufFileFlush(file) != 0)
-		return EOF;
+	BufFileFlush(file);
 
 	/*
 	 * At this point and no sooner, check for seek past last segment. The
@@ -793,23 +800,29 @@ BufFileTellBlock(BufFile *file)
 #endif
 
 /*
- * Return the current file size.
+ * Return the current shared BufFile size.
  *
  * Counts any holes left behind by BufFileAppend as part of the size.
- * Returns -1 on error.
+ * ereport()s on failure.
  */
-off_t
+int64
 BufFileSize(BufFile *file)
 {
-	off_t		lastFileSize;
+	int64		lastFileSize;
+
+	Assert(file->fileset != NULL);
 
 	/* Get the size of the last physical file by seeking to end. */
 	lastFileSize = FileSeek(file->files[file->numFiles - 1], 0, SEEK_END);
 	if (lastFileSize < 0)
-		return -1;
+		ereport(ERROR,
+				(errcode_for_file_access(),
+				 errmsg("could not determine size of temporary file \"%s\" from BufFile \"%s\": %m",
+						FilePathName(file->files[file->numFiles - 1]),
+						file->name)));
 	file->offsets[file->numFiles - 1] = lastFileSize;
 
-	return ((file->numFiles - 1) * (off_t) MAX_PHYSICAL_FILESIZE) +
+	return ((file->numFiles - 1) * (int64) MAX_PHYSICAL_FILESIZE) +
 		lastFileSize;
 }
 
