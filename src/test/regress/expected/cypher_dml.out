@@ -1424,7 +1424,7 @@ WITH max(b.id::"numeric") AS id, x[0] AS x RETURN *;
                                                                                                                                                 QUERY PLAN                                                                                                                                                 
 -----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Subquery Scan on _
-   Output: _.id, _.x
+   Output: cypher_to_jsonb(_.id), _.x
    ->  GroupAggregate
          Output: max((b.properties.'id'::text)::numeric), (x.edges[1])
          Group Key: (x.edges[1])
@@ -1531,7 +1531,7 @@ WITH max(b.id::"numeric") AS id, x AS x RETURN *;
                                                                                                                                                 QUERY PLAN                                                                                                                                                 
 -----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Subquery Scan on _
-   Output: _.id, _.x
+   Output: cypher_to_jsonb(_.id), _.x
    ->  GroupAggregate
          Output: max((b.properties.'id'::text)::numeric), x.edges
          Group Key: x.edges
@@ -1586,7 +1586,7 @@ WITH max(length(x)::"numeric") AS x, b.id AS id RETURN *;
                                                                                                                                              QUERY PLAN                                                                                                                                              
 -----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Subquery Scan on _
-   Output: _.x, _.id
+   Output: cypher_to_jsonb(_.x), _.id
    ->  HashAggregate
          Output: max((length(x.edges))::numeric), (b.properties.'id'::text)
          Group Key: b.properties.'id'::text
@@ -3198,7 +3198,7 @@ EXPLAIN (VERBOSE, COSTS OFF) MATCH (a) RETURN count(a);
                                      QUERY PLAN                                     
 ------------------------------------------------------------------------------------
  Finalize Aggregate
-   Output: count(ROW(a_1.id, a_1.properties, a_1.ctid)::vertex)
+   Output: cypher_to_jsonb(count(ROW(a_1.id, a_1.properties, a_1.ctid)::vertex))
    ->  Gather
          Output: (PARTIAL count(ROW(a_1.id, a_1.properties, a_1.ctid)::vertex))
          Workers Planned: 2

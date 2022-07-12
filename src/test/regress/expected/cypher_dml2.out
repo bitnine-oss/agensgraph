@@ -19,9 +19,20 @@ RETURN max(col);
  
 (1 row)
 
+CREATE ELABEL e1;
+-- AGV2-29, Predicates functions want jsonb, not list
+MATCH p=(n1)-[r:e1*2]->(n2)
+WHERE all(x in r where x.id is null)
+RETURN count(p);
+ count 
+-------
+ 0
+(1 row)
+
 DROP GRAPH cypher_dml2 CASCADE;
-NOTICE:  drop cascades to 4 other objects
+NOTICE:  drop cascades to 5 other objects
 DETAIL:  drop cascades to sequence cypher_dml2.ag_label_seq
 drop cascades to vlabel ag_vertex
 drop cascades to elabel ag_edge
 drop cascades to vlabel v1
+drop cascades to elabel e1

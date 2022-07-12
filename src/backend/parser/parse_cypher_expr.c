@@ -723,10 +723,9 @@ transformCypherListComp(ParseState *pstate, CypherListComp *clc)
 	list = transformCypherExprRecurse(pstate, (Node *) clc->list);
 	type = exprType(list);
 	if (type != JSONBOID)
-		ereport(ERROR,
-				(errcode(ERRCODE_DATATYPE_MISMATCH),
-				 errmsg("jsonb is expected but %s", format_type_be(type)),
-				 parser_errposition(pstate, clc->location)));
+	{
+		list = coerce_all_to_jsonb(pstate, list);
+	}
 
 	save_varname = pstate->p_lc_varname;
 	pstate->p_lc_varname = clc->varname;
@@ -2083,7 +2082,7 @@ coerce_expr(ParseState *pstate, Node *expr, Oid ityp, Oid otyp, int32 otypmod,
 		{
 			return (Node *) makeFuncExpr(F_CYPHER_TO_JSONB, JSONBOID,
 										 list_make1(expr), InvalidOid,
-										 InvalidOid, COERCE_IMPLICIT_CAST);
+										 InvalidOid, COERCE_EXPLICIT_CALL);
 		}
 	}
 
@@ -2261,7 +2260,7 @@ coerce_all_to_jsonb(ParseState *pstate, Node *expr)
 	{
 		return (Node *) makeFuncExpr(F_CYPHER_TO_JSONB, JSONBOID,
 									 list_make1(expr), InvalidOid,
-									 InvalidOid, COERCE_IMPLICIT_CAST);
+									 InvalidOid, COERCE_EXPLICIT_CALL);
 	}
 
 	expr = coerce_expr(pstate, expr, type, JSONBOID, -1,
