@@ -2376,6 +2376,29 @@ main(int argc, char **argv)
 
 	/* Note we put any -D switch into the env var above */
 	pg_config = getenv("PGDATA");
+	if (pg_config == NULL)
+	{
+		char	   *agdata_D;
+		char	   *env_var;
+
+		agdata_D = getenv("AGDATA");
+
+		if(agdata_D != NULL)
+		{
+			canonicalize_path(agdata_D);
+			env_var = psprintf("PGDATA=%s", agdata_D);
+			putenv(env_var);
+
+			/*
+			 * We could pass PGDATA just in an environment
+			 * variable but we do -D too for clearer postmaster
+			 * 'ps' display
+			 */
+			pgdata_opt = psprintf("-D \"%s\" ", agdata_D);
+			pg_config = getenv("PGDATA");
+		}
+	}
+
 	if (pg_config)
 	{
 		pg_config = pg_strdup(pg_config);

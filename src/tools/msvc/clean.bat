@@ -127,6 +127,7 @@ if exist src\bin\pg_basebackup\tmp_check rd /s /q src\bin\pg_basebackup\tmp_chec
 if exist src\bin\pg_config\tmp_check rd /s /q src\bin\pg_config\tmp_check
 if exist src\bin\pg_controldata\tmp_check rd /s /q src\bin\pg_controldata\tmp_check
 if exist src\bin\pg_ctl\tmp_check rd /s /q src\bin\pg_ctl\tmp_check
+if exist src\bin\ag_ctl\tmp_check rd /s /q src\bin\ag_ctl\tmp_check
 if exist src\bin\pg_rewind\tmp_check rd /s /q src\bin\pg_rewind\tmp_check
 if exist src\bin\pg_upgrade\tmp_check rd /s /q src\bin\pg_upgrade\tmp_check
 if exist src\bin\pgbench\tmp_check rd /s /q src\bin\pgbench\tmp_check
