@@ -14,7 +14,6 @@
 #include "postgres.h"
 
 #include <ctype.h>
-#include <float.h>				/* for _isnan */
 #include <limits.h>
 #include <math.h>
 
@@ -102,6 +101,7 @@ scanint8(const char *str, bool errorOK, int64 *result)
 
 	if (!neg)
 	{
+		/* could fail if input is most negative number */
 		if (unlikely(tmp == PG_INT64_MIN))
 			goto out_of_range;
 		tmp = -tmp;
@@ -122,8 +122,8 @@ invalid_syntax:
 	if (!errorOK)
 		ereport(ERROR,
 				(errcode(ERRCODE_INVALID_TEXT_REPRESENTATION),
-				 errmsg("invalid input syntax for integer: \"%s\"",
-						str)));
+				 errmsg("invalid input syntax for type %s: \"%s\"",
+						"bigint", str)));
 	return false;
 }
 

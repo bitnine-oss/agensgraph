@@ -64,6 +64,7 @@ static void ExecInitFunc(ExprEvalStep *scratch, Expr *node, List *args,
 static void ExecInitExprSlots(ExprState *state, Node *node);
 static void ExecPushExprSlots(ExprState *state, LastAttnumInfo *info);
 static bool get_last_attnums_walker(Node *node, LastAttnumInfo *info);
+static void ExecComputeSlotInfo(ExprState *state, ExprEvalStep *op);
 static void ExecInitWholeRowVar(ExprEvalStep *scratch, Var *variable,
 					ExprState *state);
 static void ExecInitArrayRef(ExprEvalStep *scratch, ArrayRef *aref,
@@ -1533,10 +1534,11 @@ ExecInitExprRec(Expr *node, ExprState *state,
 				/*
 				 * Read from location identified by innermost_caseval.  Note
 				 * that innermost_caseval could be NULL, if this node isn't
-				 * actually within a CASE structure; some parts of the system
-				 * abuse CaseTestExpr to cause a read of a value externally
-				 * supplied in econtext->caseValue_datum.  We'll take care of
-				 * that scenario at runtime.
+				 * actually within a CaseExpr, ArrayCoerceExpr, etc structure.
+				 * That can happen because some parts of the system abuse
+				 * CaseTestExpr to cause a read of a value externally supplied
+				 * in econtext->caseValue_datum.  We'll take care of that
+				 * scenario at runtime.
 				 */
 				scratch.opcode = EEOP_CASE_TESTVAL;
 				scratch.d.casetest.value = state->innermost_caseval;
@@ -2355,21 +2357,30 @@ ExecPushExprSlots(ExprState *state, LastAttnumInfo *info)
 	{
 		scratch.opcode = EEOP_INNER_FETCHSOME;
 		scratch.d.fetch.last_var = info->last_inner;
+		scratch.d.fetch.fixed = false;
+		scratch.d.fetch.kind = NULL;
 		scratch.d.fetch.known_desc = NULL;
+		ExecComputeSlotInfo(state, &scratch);
 		ExprEvalPushStep(state, &scratch);
 	}
 	if (info->last_outer > 0)
 	{
 		scratch.opcode = EEOP_OUTER_FETCHSOME;
 		scratch.d.fetch.last_var = info->last_outer;
+		scratch.d.fetch.fixed = false;
+		scratch.d.fetch.kind = NULL;
 		scratch.d.fetch.known_desc = NULL;
+		ExecComputeSlotInfo(state, &scratch);
 		ExprEvalPushStep(state, &scratch);
 	}
 	if (info->last_scan > 0)
 	{
 		scratch.opcode = EEOP_SCAN_FETCHSOME;
 		scratch.d.fetch.last_var = info->last_scan;
+		scratch.d.fetch.fixed = false;
+		scratch.d.fetch.kind = NULL;
 		scratch.d.fetch.known_desc = NULL;
+		ExecComputeSlotInfo(state, &scratch);
 		ExprEvalPushStep(state, &scratch);
 	}
 }
@@ -2420,6 +2431,94 @@ get_last_attnums_walker(Node *node, LastAttnumInfo *info)
 		return false;
 	return expression_tree_walker(node, get_last_attnums_walker,
 								  (void *) info);
+}
+
+/*
+ * Compute additional information for EEOP_*_FETCHSOME ops.
+ *
+ * The goal is to determine whether a slot is 'fixed', that is, every
+ * evaluation of the the expression will have the same type of slot, with an
+ * equivalent descriptor.
+ */
+static void
+ExecComputeSlotInfo(ExprState *state, ExprEvalStep *op)
+{
+	PlanState *parent = state->parent;
+	TupleDesc	desc = NULL;
+	const TupleTableSlotOps *tts_ops = NULL;
+	bool isfixed = false;
+
+	if (op->d.fetch.known_desc != NULL)
+	{
+		desc = op->d.fetch.known_desc;
+		tts_ops = op->d.fetch.kind;
+		isfixed = op->d.fetch.kind != NULL;
+	}
+	else if (!parent)
+	{
+		isfixed = false;
+	}
+	else if (op->opcode == EEOP_INNER_FETCHSOME)
+	{
+		PlanState  *is = innerPlanState(parent);
+
+		if (parent->inneropsset && !parent->inneropsfixed)
+		{
+			isfixed = false;
+		}
+		else if (parent->inneropsset && parent->innerops)
+		{
+			isfixed = true;
+			tts_ops = parent->innerops;
+		}
+		else if (is)
+		{
+			tts_ops = ExecGetResultSlotOps(is, &isfixed);
+			desc = ExecGetResultType(is);
+		}
+	}
+	else if (op->opcode == EEOP_OUTER_FETCHSOME)
+	{
+		PlanState  *os = outerPlanState(parent);
+
+		if (parent->outeropsset && !parent->outeropsfixed)
+		{
+			isfixed = false;
+		}
+		else if (parent->outeropsset && parent->outerops)
+		{
+			isfixed = true;
+			tts_ops = parent->outerops;
+		}
+		else if (os)
+		{
+			tts_ops = ExecGetResultSlotOps(os, &isfixed);
+			desc = ExecGetResultType(os);
+		}
+	}
+	else if (op->opcode == EEOP_SCAN_FETCHSOME)
+	{
+		desc = parent->scandesc;
+
+		if (parent && parent->scanops)
+			tts_ops = parent->scanops;
+
+		if (parent->scanopsset)
+			isfixed = parent->scanopsfixed;
+	}
+
+	if (isfixed && desc != NULL && tts_ops != NULL)
+	{
+		op->d.fetch.fixed = true;
+		op->d.fetch.kind = tts_ops;
+		op->d.fetch.known_desc = desc;
+	}
+	else
+	{
+		op->d.fetch.fixed = false;
+		op->d.fetch.kind = NULL;
+		op->d.fetch.known_desc = NULL;
+	}
 }
 
 /*
@@ -2490,7 +2589,8 @@ ExecInitWholeRowVar(ExprEvalStep *scratch, Var *variable, ExprState *state)
 				scratch->d.wholerow.junkFilter =
 					ExecInitJunkFilter(subplan->plan->targetlist,
 									   ExecGetResultType(subplan)->tdhasoid,
-									   ExecInitExtraTupleSlot(parent->state, NULL));
+									   ExecInitExtraTupleSlot(parent->state, NULL,
+															  &TTSOpsVirtual));
 			}
 		}
 	}
@@ -2928,7 +3028,6 @@ ExecBuildAggTrans(AggState *aggstate, AggStatePerPhase phase,
 	for (transno = 0; transno < aggstate->numtrans; transno++)
 	{
 		AggStatePerTrans pertrans = &aggstate->pertrans[transno];
-		int			numInputs = pertrans->numInputs;
 		int			argno;
 		int			setno;
 		FunctionCallInfo trans_fcinfo = &pertrans->transfn_fcinfo;
@@ -3083,19 +3182,19 @@ ExecBuildAggTrans(AggState *aggstate, AggStatePerPhase phase,
 				argno++;
 			}
 		}
-		Assert(numInputs == argno);
+		Assert(pertrans->numInputs == argno);
 
 		/*
 		 * For a strict transfn, nothing happens when there's a NULL input; we
 		 * just keep the prior transValue. This is true for both plain and
 		 * sorted/distinct aggregates.
 		 */
-		if (trans_fcinfo->flinfo->fn_strict && numInputs > 0)
+		if (trans_fcinfo->flinfo->fn_strict && pertrans->numTransInputs > 0)
 		{
 			scratch.opcode = EEOP_AGG_STRICT_INPUT_CHECK;
 			scratch.d.agg_strict_input_check.nulls = strictnulls;
 			scratch.d.agg_strict_input_check.jumpnull = -1; /* adjust later */
-			scratch.d.agg_strict_input_check.nargs = numInputs;
+			scratch.d.agg_strict_input_check.nargs = pertrans->numTransInputs;
 			ExprEvalPushStep(state, &scratch);
 			adjust_bailout = lappend_int(adjust_bailout,
 										 state->steps_len - 1);
@@ -3282,6 +3381,7 @@ ExecBuildAggTransCall(ExprState *state, AggState *aggstate,
  */
 ExprState *
 ExecBuildGroupingEqual(TupleDesc ldesc, TupleDesc rdesc,
+					   const TupleTableSlotOps *lops, const TupleTableSlotOps *rops,
 					   int numCols,
 					   AttrNumber *keyColIdx,
 					   Oid *eqfunctions,
@@ -3321,12 +3421,18 @@ ExecBuildGroupingEqual(TupleDesc ldesc, TupleDesc rdesc,
 	/* push deform steps */
 	scratch.opcode = EEOP_INNER_FETCHSOME;
 	scratch.d.fetch.last_var = maxatt;
+	scratch.d.fetch.fixed = false;
 	scratch.d.fetch.known_desc = ldesc;
+	scratch.d.fetch.kind = lops;
+	ExecComputeSlotInfo(state, &scratch);
 	ExprEvalPushStep(state, &scratch);
 
 	scratch.opcode = EEOP_OUTER_FETCHSOME;
 	scratch.d.fetch.last_var = maxatt;
+	scratch.d.fetch.fixed = false;
 	scratch.d.fetch.known_desc = rdesc;
+	scratch.d.fetch.kind = rops;
+	ExecComputeSlotInfo(state, &scratch);
 	ExprEvalPushStep(state, &scratch);
 
 	/*

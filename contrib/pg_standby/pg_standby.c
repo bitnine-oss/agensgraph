@@ -94,7 +94,6 @@ int			restoreCommandType;
 
 #define XLOG_DATA			 0
 #define XLOG_HISTORY		 1
-#define XLOG_BACKUP_LABEL	 2
 int			nextWALFileType;
 
 #define SET_RESTORE_COMMAND(cmd, arg1, arg2) \
@@ -211,15 +210,9 @@ CustomizableNextWALFileReady(void)
 		}
 
 		/*
-		 * If it's a backup file, return immediately. If it's a regular file
-		 * return only if it's the right size already.
+		 * Return only if it's the right size already.
 		 */
-		if (IsBackupHistoryFileName(nextWALFileName))
-		{
-			nextWALFileType = XLOG_BACKUP_LABEL;
-			return true;
-		}
-		else if (WalSegSz > 0 && stat_buf.st_size == WalSegSz)
+		if (WalSegSz > 0 && stat_buf.st_size == WalSegSz)
 		{
 #ifdef WIN32
 
@@ -408,9 +401,7 @@ SetWALSegSize(void)
 {
 	bool		ret_val = false;
 	int			fd;
-
-	/* malloc this buffer to ensure sufficient alignment: */
-	char	   *buf = (char *) pg_malloc(XLOG_BLCKSZ);
+	PGAlignedXLogBlock buf;
 
 	Assert(WalSegSz == -1);
 
@@ -418,14 +409,13 @@ SetWALSegSize(void)
 	{
 		fprintf(stderr, "%s: could not open WAL file \"%s\": %s\n",
 				progname, WALFilePath, strerror(errno));
-		pg_free(buf);
 		return false;
 	}
 
 	errno = 0;
-	if (read(fd, buf, XLOG_BLCKSZ) == XLOG_BLCKSZ)
+	if (read(fd, buf.data, XLOG_BLCKSZ) == XLOG_BLCKSZ)
 	{
-		XLogLongPageHeader longhdr = (XLogLongPageHeader) buf;
+		XLogLongPageHeader longhdr = (XLogLongPageHeader) buf.data;
 
 		WalSegSz = longhdr->xlp_seg_size;
 
@@ -462,7 +452,6 @@ SetWALSegSize(void)
 	fflush(stderr);
 
 	close(fd);
-	pg_free(buf);
 	return ret_val;
 }
 

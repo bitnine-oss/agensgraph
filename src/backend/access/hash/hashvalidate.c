@@ -96,7 +96,7 @@ hashvalidate(Oid opclassoid)
 		{
 			ereport(INFO,
 					(errcode(ERRCODE_INVALID_OBJECT_DEFINITION),
-					 errmsg("operator family \"%s\" of access method %s contains support procedure %s with different left and right input types",
+					 errmsg("operator family \"%s\" of access method %s contains support function %s with different left and right input types",
 							opfamilyname, "hash",
 							format_procedure(procform->amproc))));
 			result = false;
@@ -182,7 +182,7 @@ hashvalidate(Oid opclassoid)
 			result = false;
 		}
 
-		/* There should be relevant hash procedures for each datatype */
+		/* There should be relevant hash functions for each datatype */
 		if (!list_member_oid(hashabletypes, oprform->amoplefttype) ||
 			!list_member_oid(hashabletypes, oprform->amoprighttype))
 		{
@@ -311,7 +311,6 @@ check_hash_func_signature(Oid funcid, int16 amprocnum, Oid argtype)
 		 */
 		if ((funcid == F_HASHINT4 || funcid == F_HASHINT4EXTENDED) &&
 			(argtype == DATEOID ||
-			 argtype == ABSTIMEOID || argtype == RELTIMEOID ||
 			 argtype == XIDOID || argtype == CIDOID))
 			 /* okay, allowed use of hashint4() */ ;
 		else if ((funcid == F_TIMESTAMP_HASH ||

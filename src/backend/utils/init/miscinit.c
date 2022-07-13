@@ -43,10 +43,12 @@
 #include "storage/ipc.h"
 #include "storage/latch.h"
 #include "storage/pg_shmem.h"
+#include "storage/pmsignal.h"
 #include "storage/proc.h"
 #include "storage/procarray.h"
 #include "utils/builtins.h"
 #include "utils/guc.h"
+#include "utils/inval.h"
 #include "utils/memutils.h"
 #include "utils/pidfile.h"
 #include "utils/syscache.h"
@@ -272,9 +274,7 @@ InitPostmasterChild(void)
 {
 	IsUnderPostmaster = true;	/* we are a postmaster subprocess now */
 
-	MyProcPid = getpid();		/* reset MyProcPid */
-
-	MyStartTime = time(NULL);	/* set our start time in case we call elog */
+	InitProcessGlobals();
 
 	/*
 	 * make sure stderr is in binary mode before anything can possibly be
@@ -304,6 +304,9 @@ InitPostmasterChild(void)
 	if (setsid() < 0)
 		elog(FATAL, "setsid() failed: %m");
 #endif
+
+	/* Request a signal if the postmaster dies, if possible. */
+	PostmasterDeathSignalInit();
 }
 
 /*
@@ -316,9 +319,7 @@ InitStandaloneProcess(const char *argv0)
 {
 	Assert(!IsPostmasterEnvironment);
 
-	MyProcPid = getpid();		/* reset MyProcPid */
-
-	MyStartTime = time(NULL);	/* set our start time in case we call elog */
+	InitProcessGlobals();
 
 	/* Initialize process-local latch support */
 	InitializeLatchSupport();
@@ -589,6 +590,13 @@ InitializeSessionUserId(const char *rolename, Oid roleid)
 
 	/* call only once */
 	AssertState(!OidIsValid(AuthenticatedUserId));
+
+	/*
+	 * Make sure syscache entries are flushed for recent catalog changes.
+	 * This allows us to find roles that were created on-the-fly during
+	 * authentication.
+	 */
+	AcceptInvalidationMessages();
 
 	if (rolename != NULL)
 	{

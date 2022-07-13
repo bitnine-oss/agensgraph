@@ -862,11 +862,10 @@ CheckMD5Auth(Port *port, char *shadow_pass, char **logdetail)
 static int
 CheckSCRAMAuth(Port *port, char *shadow_pass, char **logdetail)
 {
-	char	   *sasl_mechs;
-	char	   *p;
+	StringInfoData sasl_mechs;
 	int			mtype;
 	StringInfoData buf;
-	void	   *scram_opaq;
+	void	   *scram_opaq = NULL;
 	char	   *output = NULL;
 	int			outputlen = 0;
 	char	   *input;
@@ -889,42 +888,16 @@ CheckSCRAMAuth(Port *port, char *shadow_pass, char **logdetail)
 
 	/*
 	 * Send the SASL authentication request to user.  It includes the list of
-	 * authentication mechanisms that are supported.  The order of mechanisms
-	 * is advertised in decreasing order of importance.  So the
-	 * channel-binding variants go first, if they are supported.  Channel
-	 * binding is only supported in SSL builds.
+	 * authentication mechanisms that are supported.
 	 */
-	sasl_mechs = palloc(strlen(SCRAM_SHA_256_PLUS_NAME) +
-						strlen(SCRAM_SHA_256_NAME) + 3);
-	p = sasl_mechs;
+	initStringInfo(&sasl_mechs);
 
-	if (port->ssl_in_use)
-	{
-		strcpy(p, SCRAM_SHA_256_PLUS_NAME);
-		p += strlen(SCRAM_SHA_256_PLUS_NAME) + 1;
-	}
-
-	strcpy(p, SCRAM_SHA_256_NAME);
-	p += strlen(SCRAM_SHA_256_NAME) + 1;
-
+	pg_be_scram_get_mechanisms(port, &sasl_mechs);
 	/* Put another '\0' to mark that list is finished. */
-	p[0] = '\0';
+	appendStringInfoChar(&sasl_mechs, '\0');
 
-	sendAuthRequest(port, AUTH_REQ_SASL, sasl_mechs, p - sasl_mechs + 1);
-	pfree(sasl_mechs);
-
-	/*
-	 * Initialize the status tracker for message exchanges.
-	 *
-	 * If the user doesn't exist, or doesn't have a valid password, or it's
-	 * expired, we still go through the motions of SASL authentication, but
-	 * tell the authentication method that the authentication is "doomed".
-	 * That is, it's going to fail, no matter what.
-	 *
-	 * This is because we don't want to reveal to an attacker what usernames
-	 * are valid, nor which users have a valid password.
-	 */
-	scram_opaq = pg_be_scram_init(port, shadow_pass);
+	sendAuthRequest(port, AUTH_REQ_SASL, sasl_mechs.data, sasl_mechs.len);
+	pfree(sasl_mechs.data);
 
 	/*
 	 * Loop through SASL message exchange.  This exchange can consist of
@@ -973,13 +946,20 @@ CheckSCRAMAuth(Port *port, char *shadow_pass, char **logdetail)
 			const char *selected_mech;
 
 			selected_mech = pq_getmsgrawstring(&buf);
-			if (strcmp(selected_mech, SCRAM_SHA_256_NAME) != 0 &&
-				strcmp(selected_mech, SCRAM_SHA_256_PLUS_NAME) != 0)
-			{
-				ereport(ERROR,
-						(errcode(ERRCODE_PROTOCOL_VIOLATION),
-						 errmsg("client selected an invalid SASL authentication mechanism")));
-			}
+
+			/*
+			 * Initialize the status tracker for message exchanges.
+			 *
+			 * If the user doesn't exist, or doesn't have a valid password, or
+			 * it's expired, we still go through the motions of SASL
+			 * authentication, but tell the authentication method that the
+			 * authentication is "doomed". That is, it's going to fail, no
+			 * matter what.
+			 *
+			 * This is because we don't want to reveal to an attacker what
+			 * usernames are valid, nor which users have a valid password.
+			 */
+			scram_opaq = pg_be_scram_init(port, selected_mech, shadow_pass);
 
 			inputlen = pq_getmsgint(&buf, 4);
 			if (inputlen == -1)
@@ -1057,6 +1037,10 @@ static GSS_DLLIMP gss_OID GSS_C_NT_USER_NAME = &GSS_C_NT_USER_NAME_desc;
 #endif
 
 
+/*
+ * Generate an error for GSSAPI authentication.  The caller should apply
+ * _() to errmsg to make it translatable.
+ */
 static void
 pg_GSS_error(int severity, const char *errmsg, OM_uint32 maj_stat, OM_uint32 min_stat)
 {
@@ -1247,7 +1231,7 @@ pg_GSS_recvauth(Port *port)
 		{
 			gss_delete_sec_context(&lmin_s, &port->gss->ctx, GSS_C_NO_BUFFER);
 			pg_GSS_error(ERROR,
-						 gettext_noop("accepting GSS security context failed"),
+						 _("accepting GSS security context failed"),
 						 maj_stat, min_stat);
 		}
 
@@ -1273,7 +1257,7 @@ pg_GSS_recvauth(Port *port)
 	maj_stat = gss_display_name(&min_stat, port->gss->name, &gbuf, NULL);
 	if (maj_stat != GSS_S_COMPLETE)
 		pg_GSS_error(ERROR,
-					 gettext_noop("retrieving GSS user name failed"),
+					 _("retrieving GSS user name failed"),
 					 maj_stat, min_stat);
 
 	/*
@@ -1337,6 +1321,11 @@ pg_GSS_recvauth(Port *port)
  *----------------------------------------------------------------
  */
 #ifdef ENABLE_SSPI
+
+/*
+ * Generate an error for SSPI authentication.  The caller should apply
+ * _() to errmsg to make it translatable.
+ */
 static void
 pg_SSPI_error(int severity, const char *errmsg, SECURITY_STATUS r)
 {
@@ -2363,12 +2352,44 @@ InitializeLDAPConnection(Port *port, LDAP **ldap)
 #else
 #ifdef HAVE_LDAP_INITIALIZE
 	{
-		char	   *uri;
+		const char *hostnames = port->hba->ldapserver;
+		char	   *uris = NULL;
 
-		uri = psprintf("%s://%s:%d", scheme, port->hba->ldapserver,
-					   port->hba->ldapport);
-		r = ldap_initialize(ldap, uri);
-		pfree(uri);
+		/*
+		 * We have a space-separated list of hostnames.  Convert it
+		 * to a space-separated list of URIs.
+		 */
+		do
+		{
+			char	   *hostname;
+			size_t		hostname_size;
+			char	   *new_uris;
+
+			/* Find the leading hostname. */
+			hostname_size = strcspn(hostnames, " ");
+			hostname = pnstrdup(hostnames, hostname_size);
+
+			/* Append a URI for this hostname. */
+			new_uris = psprintf("%s%s%s://%s:%d",
+								uris ? uris : "",
+								uris ? " " : "",
+								scheme,
+								hostname,
+								port->hba->ldapport);
+
+			pfree(hostname);
+			if (uris)
+				pfree(uris);
+			uris = new_uris;
+
+			/* Step over this hostname and any spaces. */
+			hostnames += hostname_size;
+			while (*hostnames == ' ')
+				++hostnames;
+		} while (*hostnames);
+
+		r = ldap_initialize(ldap, uris);
+		pfree(uris);
 		if (r != LDAP_SUCCESS)
 		{
 			ereport(LOG,

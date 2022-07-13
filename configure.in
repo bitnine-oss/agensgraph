@@ -17,7 +17,7 @@ dnl Read the Autoconf manual for details.
 dnl
 m4_pattern_forbid(^PGAC_)dnl to catch undefined macros
 
-AC_INIT([PostgreSQL], [11beta2], [pgsql-bugs@postgresql.org])
+AC_INIT([PostgreSQL], [12devel], [pgsql-bugs@postgresql.org])
 
 m4_if(m4_defn([m4_PACKAGE_VERSION]), [2.69], [], [m4_fatal([Autoconf version 2.69 is required.
 Untested combinations of 'autoconf' and PostgreSQL versions are not
@@ -367,6 +367,14 @@ case $template in
 esac
 
 AC_PROG_CC([$pgac_cc_list])
+AC_PROG_CC_C99()
+
+# Error out if the compiler does not support C99, as the codebase
+# relies on that.
+if test "$ac_cv_prog_cc_c99" = no; then
+    AC_MSG_ERROR([C compiler "$CC" does not support C99])
+fi
+
 AC_PROG_CXX([$pgac_cxx_list])
 
 # Check if it's Intel's compiler, which (usually) pretends to be gcc,
@@ -392,9 +400,10 @@ AC_SUBST(SUN_STUDIO_CC)
 PGAC_ARG_BOOL(with, llvm, no, [build with LLVM based JIT support],
               [AC_DEFINE([USE_LLVM], 1, [Define to 1 to build with LLVM based JIT support. (--with-llvm)])])
 AC_SUBST(with_llvm)
-if test "$with_llvm" = yes ; then
-   PGAC_LLVM_SUPPORT()
-fi
+dnl must use AS_IF here, else AC_REQUIRES inside PGAC_LLVM_SUPPORT malfunctions
+AS_IF([test "$with_llvm" = yes], [
+  PGAC_LLVM_SUPPORT()
+]) # fi
 
 
 unset CFLAGS
@@ -485,6 +494,9 @@ if test "$GCC" = yes -a "$ICC" = no; then
   # These work in some but not all gcc versions
   PGAC_PROG_CC_CFLAGS_OPT([-Wdeclaration-after-statement])
   # -Wdeclaration-after-statement isn't applicable for C++
+  # Really don't want VLAs to be used in our dialect of C
+  PGAC_PROG_CC_CFLAGS_OPT([-Werror=vla])
+  # -Wvla is not applicable for C++
   PGAC_PROG_CC_CFLAGS_OPT([-Wendif-labels])
   PGAC_PROG_CXX_CFLAGS_OPT([-Wendif-labels])
   PGAC_PROG_CC_CFLAGS_OPT([-Wmissing-format-attribute])
@@ -620,6 +632,24 @@ if test "$GCC" = yes; then
 AC_COMPILE_IFELSE([AC_LANG_PROGRAM([], [@%:@ifdef __FAST_MATH__
 choke me
 @%:@endif])], [], [AC_MSG_ERROR([do not put -ffast-math in CFLAGS])])
+fi
+
+# Defend against clang being used on x86-32 without SSE2 enabled.  As current
+# versions of clang do not understand -fexcess-precision=standard, the use of
+# x87 floating point operations leads to problems like isinf possibly returning
+# false for a value that is infinite when converted from the 80bit register to
+# the 8byte memory representation.
+#
+# Only perform the test if the compiler doesn't understand
+# -fexcess-precision=standard, that way a potentially fixed compiler will work
+# automatically.
+if test "$pgac_cv_prog_CC_cflags__fexcess_precision_standard" = no; then
+AC_COMPILE_IFELSE([AC_LANG_PROGRAM([], [
+@%:@if defined(__clang__) && defined(__i386__) && !defined(__SSE2_MATH__)
+choke me
+@%:@endif
+])], [],
+[AC_MSG_ERROR([Compiling PostgreSQL with clang, on 32bit x86, requires SSE2 support. Use -msse2 or use gcc.])])
 fi
 
 AC_PROG_CPP
@@ -1000,7 +1030,6 @@ AC_SUBST(install_bin)
 
 PGAC_PATH_PROGS(TAR, tar)
 AC_PROG_LN_S
-AC_PROG_AWK
 AC_PROG_MKDIR_P
 # When Autoconf chooses install-sh as mkdir -p program it tries to generate
 # a relative path to it in each makefile where it substitutes it. This clashes
@@ -1024,6 +1053,16 @@ You might have to rebuild your Perl installation.  Refer to the
 documentation for details.  Use --without-perl to disable building
 PL/Perl.])
   fi
+  # On most platforms, archlibexp is also where the Perl include files live ...
+  perl_includespec="-I$perl_archlibexp/CORE"
+  # ... but on newer macOS versions, we must use -iwithsysroot to look
+  # under $PG_SYSROOT
+  if test \! -f "$perl_archlibexp/CORE/perl.h" ; then
+    if test -f "$PG_SYSROOT$perl_archlibexp/CORE/perl.h" ; then
+      perl_includespec="-iwithsysroot $perl_archlibexp/CORE"
+    fi
+  fi
+  AC_SUBST(perl_includespec)dnl
   PGAC_CHECK_PERL_EMBED_CCFLAGS
   PGAC_CHECK_PERL_EMBED_LDFLAGS
 fi
@@ -1110,12 +1149,6 @@ AC_SEARCH_LIBS(setproctitle, util)
 AC_SEARCH_LIBS(dlopen, dl)
 AC_SEARCH_LIBS(socket, [socket ws2_32])
 AC_SEARCH_LIBS(shl_load, dld)
-# We only use libld in port/dynloader/aix.c
-case $host_os in
-     aix*)
-	AC_SEARCH_LIBS(ldopen, ld)
-	;;
-esac
 AC_SEARCH_LIBS(getopt_long, [getopt gnugetopt])
 AC_SEARCH_LIBS(crypt, crypt)
 AC_SEARCH_LIBS(shm_open, rt)
@@ -1269,7 +1302,35 @@ AC_SUBST(UUID_LIBS)
 
 AC_HEADER_STDBOOL
 
-AC_CHECK_HEADERS([atomic.h crypt.h dld.h fp_class.h getopt.h ieeefp.h ifaddrs.h langinfo.h mbarrier.h poll.h sys/epoll.h sys/ipc.h sys/pstat.h sys/resource.h sys/select.h sys/sem.h sys/shm.h sys/sockio.h sys/tas.h sys/un.h termios.h ucred.h utime.h wchar.h wctype.h])
+AC_CHECK_HEADERS(m4_normalize([
+	atomic.h
+	copyfile.h
+	crypt.h
+	fp_class.h
+	getopt.h
+	ieeefp.h
+	ifaddrs.h
+	langinfo.h
+	mbarrier.h
+	poll.h
+	sys/epoll.h
+	sys/ipc.h
+	sys/prctl.h
+	sys/procctl.h
+	sys/pstat.h
+	sys/resource.h
+	sys/select.h
+	sys/sem.h
+	sys/shm.h
+	sys/sockio.h
+	sys/tas.h
+	sys/un.h
+	termios.h
+	ucred.h
+	utime.h
+	wchar.h
+	wctype.h
+]))
 
 # On BSD, test for net/if.h will fail unless sys/socket.h
 # is included first.
@@ -1438,7 +1499,6 @@ PGAC_C_BUILTIN_BSWAP64
 PGAC_C_BUILTIN_CONSTANT_P
 PGAC_C_BUILTIN_UNREACHABLE
 PGAC_C_COMPUTED_GOTO
-PGAC_C_VA_ARGS
 PGAC_STRUCT_TIMEZONE
 PGAC_UNION_SEMUN
 PGAC_STRUCT_SOCKADDR_UN
@@ -1549,7 +1609,33 @@ PGAC_FUNC_WCSTOMBS_L
 LIBS_including_readline="$LIBS"
 LIBS=`echo "$LIBS" | sed -e 's/-ledit//g' -e 's/-lreadline//g'`
 
-AC_CHECK_FUNCS([cbrt clock_gettime dlopen fdatasync getifaddrs getpeerucred getrlimit mbstowcs_l memmove poll posix_fallocate pstat pthread_is_threaded_np readlink setproctitle setsid shm_open symlink sync_file_range utime utimes wcstombs_l])
+AC_CHECK_FUNCS(m4_normalize([
+	cbrt
+	clock_gettime
+	copyfile
+	fdatasync
+	getifaddrs
+	getpeerucred
+	getrlimit
+	mbstowcs_l
+	memmove
+	poll
+	posix_fallocate
+	ppoll
+	pstat
+	pthread_is_threaded_np
+	readlink
+	setproctitle
+	setproctitle_fast
+	setsid
+	shm_open
+	strchrnul
+	symlink
+	sync_file_range
+	utime
+	utimes
+	wcstombs_l
+]))
 
 AC_REPLACE_FUNCS(fseeko)
 case $host_os in
@@ -1565,24 +1651,24 @@ esac
 # posix_fadvise() is a no-op on Solaris, so don't incur function overhead
 # by calling it, 2009-04-02
 # http://src.opensolaris.org/source/xref/onnv/onnv-gate/usr/src/lib/libc/port/gen/posix_fadvise.c
-if test "$PORTNAME" != "solaris"; then
+dnl must use AS_IF here, else AC_REQUIRES inside AC_CHECK_DECLS malfunctions
+AS_IF([test "$PORTNAME" != "solaris"], [
 AC_CHECK_FUNCS(posix_fadvise)
 AC_CHECK_DECLS(posix_fadvise, [], [], [#include <fcntl.h>])
-fi
+]) # fi
 
 AC_CHECK_DECLS(fdatasync, [], [], [#include <unistd.h>])
 AC_CHECK_DECLS([strlcat, strlcpy, strnlen])
 # This is probably only present on macOS, but may as well check always
 AC_CHECK_DECLS(F_FULLFSYNC, [], [], [#include <fcntl.h>])
 
-HAVE_IPV6=no
+AC_CHECK_DECLS([RTLD_GLOBAL, RTLD_NOW], [], [], [#include <dlfcn.h>])
+
 AC_CHECK_TYPE([struct sockaddr_in6],
-        [AC_DEFINE(HAVE_IPV6, 1, [Define to 1 if you have support for IPv6.])
-         HAVE_IPV6=yes],
+        [AC_DEFINE(HAVE_IPV6, 1, [Define to 1 if you have support for IPv6.])],
         [],
 [$ac_includes_default
 #include <netinet/in.h>])
-AC_SUBST(HAVE_IPV6)
 
 AC_CACHE_CHECK([for PS_STRINGS], [pgac_cv_var_PS_STRINGS],
 [AC_LINK_IFELSE([AC_LANG_PROGRAM(
@@ -1596,53 +1682,6 @@ PS_STRINGS->ps_argvstr = "foo";])],
 if test "$pgac_cv_var_PS_STRINGS" = yes ; then
   AC_DEFINE([HAVE_PS_STRINGS], 1, [Define to 1 if the PS_STRINGS thing exists.])
 fi
-
-
-# We use our snprintf.c emulation if either snprintf() or vsnprintf()
-# is missing.  Yes, there are machines that have only one.  We may
-# also decide to use snprintf.c if snprintf() is present but does not
-# have all the features we need --- see below.
-
-if test "$PORTNAME" = "win32"; then
-  # Win32 gets snprintf.c built unconditionally.
-  #
-  # To properly translate all NLS languages strings, we must support the
-  # *printf() %$ format, which allows *printf() arguments to be selected
-  # by position in the translated string.
-  #
-  # libintl versions < 0.13 use the native *printf() functions, and Win32
-  # *printf() doesn't understand %$, so we must use our /port versions,
-  # which do understand %$. libintl versions >= 0.13 include their own
-  # *printf versions on Win32.  The libintl 0.13 release note text is:
-  #
-  #   C format strings with positions, as they arise when a translator
-  #   needs to reorder a sentence, are now supported on all platforms.
-  #   On those few platforms (NetBSD and Woe32) for which the native
-  #   printf()/fprintf()/... functions don't support such format
-  #   strings, replacements are provided through <libintl.h>.
-  #
-  # We could use libintl >= 0.13's *printf() if we were sure that we had
-  # a libintl >= 0.13 at runtime, but seeing that there is no clean way
-  # to guarantee that, it is best to just use our own, so we are sure to
-  # get %$ support. In include/port.h we disable the *printf() macros
-  # that might have been defined by libintl.
-  #
-  # We do this unconditionally whether NLS is used or not so we are sure
-  # that all Win32 libraries and binaries behave the same.
-  pgac_need_repl_snprintf=yes
-else
-  pgac_need_repl_snprintf=no
-  AC_CHECK_FUNCS(snprintf, [], pgac_need_repl_snprintf=yes)
-  AC_CHECK_FUNCS(vsnprintf, [], pgac_need_repl_snprintf=yes)
-fi
-
-
-# Check whether <stdio.h> declares snprintf() and vsnprintf(); if not,
-# include/c.h will provide declarations.  Note this is a separate test
-# from whether the functions exist in the C library --- there are
-# systems that have the functions but don't bother to declare them :-(
-
-AC_CHECK_DECLS([snprintf, vsnprintf])
 
 
 dnl Cannot use AC_CHECK_FUNC because isinf may be a macro
@@ -1663,7 +1702,23 @@ else
   AC_CHECK_FUNCS([fpclass fp_class fp_class_d class], [break])
 fi
 
-AC_REPLACE_FUNCS([crypt fls getopt getrusage inet_aton mkdtemp random rint srandom strerror strlcat strlcpy strnlen])
+AC_REPLACE_FUNCS(m4_normalize([
+	crypt
+	dlopen
+	fls
+	getopt
+	getrusage
+	inet_aton
+	mkdtemp
+	pread
+	pwrite
+	random
+	rint
+	srandom
+	strlcat
+	strlcpy
+	strnlen
+]))
 
 case $host_os in
 
@@ -1786,6 +1841,10 @@ if test "$with_icu" = yes; then
   CPPFLAGS=$ac_save_CPPFLAGS
 fi
 
+if test "$with_llvm" = yes; then
+  PGAC_CHECK_LLVM_FUNCTIONS()
+fi
+
 # Lastly, restore full LIBS list and check for readline/libedit symbols
 LIBS="$LIBS_including_readline"
 
@@ -1814,16 +1873,6 @@ for the exact reason.]])],
 # Run tests below here
 # --------------------
 
-# Force use of our snprintf if system's doesn't do arg control
-# See comment above at snprintf test for details.
-if test "$enable_nls" = yes -a "$pgac_need_repl_snprintf" = no; then
-  PGAC_FUNC_SNPRINTF_ARG_CONTROL
-  if test $pgac_cv_snprintf_arg_control != yes ; then
-    pgac_need_repl_snprintf=yes
-  fi
-fi
-
-
 dnl Check to see if we have a working 64-bit integer type.
 dnl Since Postgres 8.4, we no longer support compilers without a working
 dnl 64-bit type; but we have to determine whether that type is called
@@ -1846,8 +1895,6 @@ AC_DEFINE_UNQUOTED(PG_INT64_TYPE, $pg_int64_type,
   [Define to the name of a signed 64-bit integer type.])
 
 # Select the printf length modifier that goes with that, too.
-# (This used to be bound up with replacement-snprintf selection, but now
-# we assume that the native *printf functions use standard length modifiers.)
 if test x"$pg_int64_type" = x"long long int" ; then
   INT64_MODIFIER='"ll"'
 else
@@ -1856,21 +1903,6 @@ fi
 
 AC_DEFINE_UNQUOTED(INT64_MODIFIER, $INT64_MODIFIER,
                    [Define to the appropriate printf length modifier for 64-bit ints.])
-
-# Force use of our snprintf if the system's doesn't support the %z flag.
-# (Note this test uses PG_INT64_TYPE and INT64_MODIFIER.)
-if test "$pgac_need_repl_snprintf" = no; then
-  PGAC_FUNC_SNPRINTF_SIZE_T_SUPPORT
-  if test "$pgac_cv_snprintf_size_t_support" != yes; then
-    pgac_need_repl_snprintf=yes
-  fi
-fi
-
-# Now we have checked all the reasons to replace snprintf
-if test $pgac_need_repl_snprintf = yes; then
-  AC_DEFINE(USE_REPL_SNPRINTF, 1, [Use replacement snprintf() functions.])
-  AC_LIBOBJ(snprintf)
-fi
 
 # has to be down here, rather than with the other builtins, because
 # the test uses PG_INT64_TYPE.
@@ -2205,7 +2237,7 @@ fi
 # check for <perl.h>
 if test "$with_perl" = yes; then
   ac_save_CPPFLAGS=$CPPFLAGS
-  CPPFLAGS="$CPPFLAGS -I$perl_archlibexp/CORE"
+  CPPFLAGS="$CPPFLAGS $perl_includespec"
   AC_CHECK_HEADER(perl.h, [], [AC_MSG_ERROR([header file <perl.h> is required for Perl])],
                   [#include <EXTERN.h>])
   # While we're at it, check that we can link to libperl.
@@ -2340,6 +2372,15 @@ $AWK '{printf "%d%04d", $1, $2}'`"]
 AC_DEFINE_UNQUOTED(PG_VERSION_NUM, $PG_VERSION_NUM, [PostgreSQL version as a number])
 AC_SUBST(PG_VERSION_NUM)
 
+# If we are inserting PG_SYSROOT into CPPFLAGS, do so symbolically not
+# literally, so that it's possible to override it at build time using
+# a command like "make ... PG_SYSROOT=path".  This has to be done after
+# we've finished all configure checks that depend on CPPFLAGS.
+if test x"$PG_SYSROOT" != x; then
+  CPPFLAGS=`echo "$CPPFLAGS" | sed -e "s| $PG_SYSROOT | \\\$(PG_SYSROOT) |"`
+fi
+AC_SUBST(PG_SYSROOT)
+
 
 # Begin output steps
 
@@ -2378,10 +2419,8 @@ AC_SUBST(vpath_build)
 AC_CONFIG_FILES([GNUmakefile src/Makefile.global])
 
 AC_CONFIG_LINKS([
-  src/backend/port/dynloader.c:src/backend/port/dynloader/${template}.c
   src/backend/port/pg_sema.c:${SEMA_IMPLEMENTATION}
   src/backend/port/pg_shmem.c:${SHMEM_IMPLEMENTATION}
-  src/include/dynloader.h:src/backend/port/dynloader/${template}.h
   src/include/pg_config_os.h:src/include/port/${template}.h
   src/Makefile.port:src/makefiles/Makefile.${template}
 ])

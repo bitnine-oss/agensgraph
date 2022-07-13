@@ -67,7 +67,7 @@
 
      <row>
       <entry><link linkend="catalog-pg-amproc"><structname>pg_amproc</structname></link></entry>
-      <entry>access method support procedures</entry>
+      <entry>access method support functions</entry>
      </row>
 
      <row>
@@ -814,8 +814,8 @@
 
   <para>
    The catalog <structname>pg_amproc</structname> stores information about
-   support procedures associated with access method operator families.  There
-   is one row for each support procedure belonging to an operator family.
+   support functions associated with access method operator families.  There
+   is one row for each support function belonging to an operator family.
   </para>
 
   <table>
@@ -864,14 +864,14 @@
       <entry><structfield>amprocnum</structfield></entry>
       <entry><type>int2</type></entry>
       <entry></entry>
-      <entry>Support procedure number</entry>
+      <entry>Support function number</entry>
      </row>
 
      <row>
       <entry><structfield>amproc</structfield></entry>
       <entry><type>regproc</type></entry>
       <entry><literal><link linkend="catalog-pg-proc"><structname>pg_proc</structname></link>.oid</literal></entry>
-      <entry>OID of the procedure</entry>
+      <entry>OID of the function</entry>
      </row>
 
     </tbody>
@@ -882,9 +882,9 @@
    The usual interpretation of the
    <structfield>amproclefttype</structfield> and <structfield>amprocrighttype</structfield> fields
    is that they identify the left and right input types of the operator(s)
-   that a particular support procedure supports.  For some access methods
-   these match the input data type(s) of the support procedure itself, for
-   others not.  There is a notion of <quote>default</quote> support procedures for
+   that a particular support function supports.  For some access methods
+   these match the input data type(s) of the support function itself, for
+   others not.  There is a notion of <quote>default</quote> support functions for
    an index, which are those with <structfield>amproclefttype</structfield> and
    <structfield>amprocrighttype</structfield> both equal to the index operator class's
    <structfield>opcintype</structfield>.
@@ -901,11 +901,11 @@
   </indexterm>
 
   <para>
-   The catalog <structname>pg_attrdef</structname> stores column default values.  The main information
-   about columns is stored in <structname>pg_attribute</structname>
-   (see below).  Only columns that explicitly specify a default value
-   (when the table is created or the column is added) will have an
-   entry here.
+   The catalog <structname>pg_attrdef</structname> stores column default
+   values.  The main information about columns is stored in
+   <link linkend="catalog-pg-attribute"><structname>pg_attribute</structname></link>.
+   Only columns for which a default value has been explicitly set will have
+   an entry here.
   </para>
 
   <table>
@@ -947,27 +947,13 @@
       <entry><structfield>adbin</structfield></entry>
       <entry><type>pg_node_tree</type></entry>
       <entry></entry>
-      <entry>The internal representation of the column default value</entry>
-     </row>
-
-     <row>
-      <entry><structfield>adsrc</structfield></entry>
-      <entry><type>text</type></entry>
-      <entry></entry>
-      <entry>A human-readable representation of the default value</entry>
+      <entry>The column default value, in <function>nodeToString()</function>
+      representation.  Use <literal>pg_get_expr(adbin, adrelid)</literal> to
+      convert it to an SQL expression.</entry>
      </row>
     </tbody>
    </tgroup>
   </table>
-
-   <para>
-    The <structfield>adsrc</structfield> field is historical, and is best
-    not used, because it does not track outside changes that might affect
-    the representation of the default value.  Reverse-compiling the
-    <structfield>adbin</structfield> field (with <function>pg_get_expr</function> for
-    example) is a better way to display the default value.
-   </para>
-
  </sect1>
 
 
@@ -1900,7 +1886,9 @@ SCRAM-SHA-256$<replaceable>&lt;iteration count&gt;</replaceable>:<replaceable>&l
       <entry><structfield>relhassubclass</structfield></entry>
       <entry><type>bool</type></entry>
       <entry></entry>
-      <entry>True if table has (or once had) any inheritance children</entry>
+      <entry>
+       True if table or index has (or once had) any inheritance children
+      </entry>
      </row>
 
      <row>
@@ -1948,7 +1936,7 @@ SCRAM-SHA-256$<replaceable>&lt;iteration count&gt;</replaceable>:<replaceable>&l
       <entry><structfield>relispartition</structfield></entry>
       <entry><type>bool</type></entry>
       <entry></entry>
-      <entry>True if table is a partition</entry>
+      <entry>True if table or index is a partition</entry>
      </row>
 
      <row>
@@ -2374,14 +2362,6 @@ SCRAM-SHA-256$<replaceable>&lt;iteration count&gt;</replaceable>:<replaceable>&l
      </row>
 
      <row>
-      <entry><structfield>conincluding</structfield></entry>
-      <entry><type>int2[]</type></entry>
-      <entry><literal><link linkend="catalog-pg-attribute"><structname>pg_attribute</structname></link>.attnum</literal></entry>
-      <entry>List of the non-constrained columns which are included into
-        the same index as the constrained columns</entry>
-     </row>
-
-     <row>
       <entry><structfield>confkey</structfield></entry>
       <entry><type>int2[]</type></entry>
       <entry><literal><link linkend="catalog-pg-attribute"><structname>pg_attribute</structname></link>.attnum</literal></entry>
@@ -2420,14 +2400,10 @@ SCRAM-SHA-256$<replaceable>&lt;iteration count&gt;</replaceable>:<replaceable>&l
       <entry><structfield>conbin</structfield></entry>
       <entry><type>pg_node_tree</type></entry>
       <entry></entry>
-      <entry>If a check constraint, an internal representation of the expression</entry>
-     </row>
-
-     <row>
-      <entry><structfield>consrc</structfield></entry>
-      <entry><type>text</type></entry>
-      <entry></entry>
-      <entry>If a check constraint, a human-readable representation of the expression</entry>
+      <entry>If a check constraint, an internal representation of the
+      expression.  (It's recommended to use
+      <function>pg_get_constraintdef()</function> to extract the definition of
+      a check constraint.)</entry>
      </row>
     </tbody>
    </tgroup>
@@ -2442,15 +2418,6 @@ SCRAM-SHA-256$<replaceable>&lt;iteration count&gt;</replaceable>:<replaceable>&l
    same contents as <structname>pg_index</structname>.<structfield>indkey</structfield> for the
    index.)
   </para>
-
-  <note>
-   <para>
-    <structfield>consrc</structfield> is not updated when referenced objects
-    change; for example, it won't track renaming of columns.  Rather than
-    relying on this field, it's best to use <function>pg_get_constraintdef()</function>
-    to extract the definition of a check constraint.
-   </para>
-  </note>
 
   <note>
    <para>
@@ -2471,7 +2438,7 @@ SCRAM-SHA-256$<replaceable>&lt;iteration count&gt;</replaceable>:<replaceable>&l
 
   <para>
    The catalog <structname>pg_conversion</structname> describes
-   encoding conversion procedures.  See <xref linkend="sql-createconversion"/>
+   encoding conversion functions.  See <xref linkend="sql-createconversion"/>
    for more information.
   </para>
 
@@ -2537,7 +2504,7 @@ SCRAM-SHA-256$<replaceable>&lt;iteration count&gt;</replaceable>:<replaceable>&l
       <entry><structfield>conproc</structfield></entry>
       <entry><type>regproc</type></entry>
       <entry><literal><link linkend="catalog-pg-proc"><structname>pg_proc</structname></link>.oid</literal></entry>
-      <entry>Conversion procedure</entry>
+      <entry>Conversion function</entry>
      </row>
 
      <row>
@@ -2850,7 +2817,8 @@ SCRAM-SHA-256$<replaceable>&lt;iteration count&gt;</replaceable>:<replaceable>&l
        <literal>r</literal> = relation (table, view),
        <literal>S</literal> = sequence,
        <literal>f</literal> = function,
-       <literal>T</literal> = type
+       <literal>T</literal> = type,
+       <literal>n</literal> = schema
       </entry>
      </row>
 
@@ -3753,15 +3721,16 @@ SCRAM-SHA-256$<replaceable>&lt;iteration count&gt;</replaceable>:<replaceable>&l
       <entry><type>int2</type></entry>
       <entry></entry>
       <entry>The total number of columns in the index (duplicates
-      <literal>pg_class.relnatts</literal>). This number includes both key and included attributes.</entry>
+      <literal>pg_class.relnatts</literal>); this number includes both key and included attributes</entry>
      </row>
 
       <row>
       <entry><structfield>indnkeyatts</structfield></entry>
       <entry><type>int2</type></entry>
       <entry></entry>
-      <entry>The number of key columns in the index. "Key columns" are ordinary
-      index columns (as opposed to "included" columns).</entry>
+      <entry>The number of <firstterm>key columns</firstterm> in the index,
+       not counting any <firstterm>included columns</firstterm>, which are
+       merely stored and do not participate in the index semantics</entry>
      </row>
 
      <row>
@@ -3867,7 +3836,8 @@ SCRAM-SHA-256$<replaceable>&lt;iteration count&gt;</replaceable>:<replaceable>&l
        This is an array of <structfield>indnatts</structfield> values that
        indicate which table columns this index indexes.  For example a value
        of <literal>1 3</literal> would mean that the first and the third table
-       columns make up the index key.  A zero in this array indicates that the
+       columns make up the index entries.  Key columns come before non-key
+       (included) columns.  A zero in this array indicates that the
        corresponding index attribute is an expression over the table columns,
        rather than a simple column reference.
       </entry>
@@ -3878,9 +3848,10 @@ SCRAM-SHA-256$<replaceable>&lt;iteration count&gt;</replaceable>:<replaceable>&l
       <entry><type>oidvector</type></entry>
       <entry><literal><link linkend="catalog-pg-collation"><structname>pg_collation</structname></link>.oid</literal></entry>
       <entry>
-       For each column in the index key, this contains the OID of the
-       collation to use for the index, or zero if the column is not
-       of a collatable data type.
+       For each column in the index key
+       (<structfield>indnkeyatts</structfield> values), this contains the OID
+       of the collation to use for the index, or zero if the column is not of
+       a collatable data type.
       </entry>
      </row>
 
@@ -3889,8 +3860,9 @@ SCRAM-SHA-256$<replaceable>&lt;iteration count&gt;</replaceable>:<replaceable>&l
       <entry><type>oidvector</type></entry>
       <entry><literal><link linkend="catalog-pg-opclass"><structname>pg_opclass</structname></link>.oid</literal></entry>
       <entry>
-       For each column in the index key, this contains the OID of
-       the operator class to use.  See
+       For each column in the index key
+       (<structfield>indnkeyatts</structfield> values), this contains the OID
+       of the operator class to use.  See
        <link linkend="catalog-pg-opclass"><structname>pg_opclass</structname></link> for details.
       </entry>
      </row>
@@ -3900,7 +3872,7 @@ SCRAM-SHA-256$<replaceable>&lt;iteration count&gt;</replaceable>:<replaceable>&l
       <entry><type>int2vector</type></entry>
       <entry></entry>
       <entry>
-       This is an array of <structfield>indnatts</structfield> values that
+       This is an array of <structfield>indnkeyatts</structfield> values that
        store per-column flag bits.  The meaning of the bits is defined by
        the index's access method.
       </entry>
@@ -9867,7 +9839,8 @@ SELECT * FROM pg_locks pl LEFT JOIN pg_prepared_xacts ppx
       <entry></entry>
       <entry>The address (<literal>LSN</literal>) of oldest WAL which still
       might be required by the consumer of this slot and thus won't be
-      automatically removed during checkpoints.
+      automatically removed during checkpoints.  <literal>NULL</literal>
+      if the <literal>LSN</literal> of this slot has never been reserved.
       </entry>
      </row>
 
@@ -10648,7 +10621,7 @@ SELECT * FROM pg_locks pl LEFT JOIN pg_prepared_xacts ppx
 
      <row>
       <entry><structfield>valuntil</structfield></entry>
-      <entry><type>abstime</type></entry>
+      <entry><type>timestamptz</type></entry>
       <entry></entry>
       <entry>Password expiry time (only used for password authentication)</entry>
      </row>
@@ -11127,7 +11100,7 @@ SELECT * FROM pg_locks pl LEFT JOIN pg_prepared_xacts ppx
 
      <row>
       <entry><structfield>valuntil</structfield></entry>
-      <entry><type>abstime</type></entry>
+      <entry><type>timestamptz</type></entry>
       <entry>Password expiry time (only used for password authentication)</entry>
      </row>
 

@@ -61,6 +61,8 @@ validateWithCheckOption(const char *value)
  *
  * Create a view relation and use the rules system to store the query
  * for the view.
+ *
+ * EventTriggerAlterTableStart must have been called already.
  *---------------------------------------------------------------------
  */
 static ObjectAddress
@@ -186,6 +188,7 @@ DefineVirtualRelation(RangeVar *relation, List *tlist, bool replace,
 				atcmds = lappend(atcmds, atcmd);
 			}
 
+			/* EventTriggerAlterTableStart called by ProcessUtilitySlow */
 			AlterTableInternal(viewOid, atcmds, true);
 
 			/* Make the new view columns visible */
@@ -217,6 +220,7 @@ DefineVirtualRelation(RangeVar *relation, List *tlist, bool replace,
 		atcmd->def = (Node *) options;
 		atcmds = list_make1(atcmd);
 
+		/* EventTriggerAlterTableStart called by ProcessUtilitySlow */
 		AlterTableInternal(viewOid, atcmds, true);
 
 		ObjectAddressSet(address, RelationRelationId, viewOid);
@@ -353,7 +357,7 @@ DefineViewRules(Oid viewOid, Query *viewParse, bool replace)
  * by 2...
  *
  * These extra RT entries are not actually used in the query,
- * except for run-time permission checking.
+ * except for run-time locking and permission checking.
  *---------------------------------------------------------------
  */
 static Query *
@@ -386,9 +390,11 @@ UpdateRangeTableOfViewParse(Oid viewOid, Query *viewParse)
 	 * OLD first, then NEW....
 	 */
 	rt_entry1 = addRangeTableEntryForRelation(pstate, viewRel,
+											  AccessShareLock,
 											  makeAlias("old", NIL),
 											  false, false);
 	rt_entry2 = addRangeTableEntryForRelation(pstate, viewRel,
+											  AccessShareLock,
 											  makeAlias("new", NIL),
 											  false, false);
 	/* Must override addRangeTableEntry's default access-check flags */
@@ -502,7 +508,7 @@ DefineView(ViewStmt *stmt, const char *queryString,
 			ereport(ERROR,
 					(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
 					 errmsg("WITH CHECK OPTION is supported only on automatically updatable views"),
-					 errhint("%s", view_updatable_error)));
+					 errhint("%s", _(view_updatable_error))));
 	}
 
 	/*

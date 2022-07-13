@@ -349,7 +349,7 @@ ExecInitNestLoop(NestLoop *node, EState *estate, int eflags)
 	/*
 	 * Initialize result slot, type and projection.
 	 */
-	ExecInitResultTupleSlotTL(estate, &nlstate->js.ps);
+	ExecInitResultTupleSlotTL(&nlstate->js.ps, &TTSOpsVirtual);
 	ExecAssignProjectionInfo(&nlstate->js.ps, NULL);
 
 	/*
@@ -380,7 +380,8 @@ ExecInitNestLoop(NestLoop *node, EState *estate, int eflags)
 		case JOIN_CYPHER_DELETE:
 			nlstate->nl_NullInnerTupleSlot =
 				ExecInitNullTupleSlot(estate,
-									  ExecGetResultType(innerPlanState(nlstate)));
+									  ExecGetResultType(innerPlanState(nlstate)),
+									  &TTSOpsVirtual);
 			break;
 		default:
 			elog(ERROR, "unrecognized join type: %d",
@@ -505,8 +506,10 @@ ExecNextNestLoopContext(NestLoopState *node)
 	}
 
 	slot = econtext->ecxt_outertuple;
-	if (TTS_HAS_PHYSICAL_TUPLE(slot) && slot->tts_tuple == ctx->outer_tuple)
+	if (TTS_IS_HEAPTUPLE(slot))
 	{
+		HeapTupleTableSlot *heapTupleTableSlot = (HeapTupleTableSlot *) slot;
+
 		/*
 		 * If tts_tuple is the same with the stored one, remove it from the
 		 * slot to keep this copy from ExecStoreTuple()/ExecClearTuple() in
@@ -514,9 +517,12 @@ ExecNextNestLoopContext(NestLoopState *node)
 		 *
 		 * This can happen when there is a matched result with the tuple.
 		 */
-		slot->tts_isempty = true;
-		slot->tts_tuple = NULL;
-		slot->tts_shouldFree = false;
+		if (heapTupleTableSlot->tuple == ctx->outer_tuple)
+		{
+			slot->tts_flags |= TTS_FLAG_EMPTY;
+			slot->tts_nvalid = 0;
+			ItemPointerSetInvalid(&heapTupleTableSlot->tuple->t_self);
+		}
 	}
 	else
 	{
@@ -539,7 +545,7 @@ ExecNextNestLoopContext(NestLoopState *node)
 		 *    needs the right outer variables that are in the slot.
 		 * The tuple has to be stored in CurrentMemoryContext.
 		 */
-		ctx->outer_tuple = ExecCopySlotTuple(slot);
+		ctx->outer_tuple = ExecCopySlotHeapTuple(slot);
 	}
 	/*
 	 * We don't need to care about the inner plan and nl_NeedNewOuter because
@@ -599,7 +605,7 @@ ExecPrevNestLoopContext(NestLoopState *node)
 	 * Pass true to shouldFree here because the tuple must be freed when
 	 * ExecStoreTuple(), ExecClearTuple(), or ExecResetTupleTable() is called.
 	 */
-	ExecStoreTuple(ctx->outer_tuple, slot, InvalidBuffer, true);
+	ExecForceStoreHeapTuple(ctx->outer_tuple, slot);
 	/* restore outer variables */
 	foreach(lc, nl->nestParams)
 	{

@@ -66,7 +66,7 @@
       <para>
        <emphasis>Numeric with Unit:</emphasis>
        Some numeric parameters have an implicit unit, because they describe
-       quantities of memory or time. The unit might be kilobytes, blocks
+       quantities of memory or time. The unit might be bytes, kilobytes, blocks
        (typically eight kilobytes), milliseconds, seconds, or minutes.
        An unadorned numeric value for one of these settings will use the
        setting's default unit, which can be learned from
@@ -81,7 +81,8 @@
        <itemizedlist>
         <listitem>
          <para>
-          Valid memory units are <literal>kB</literal> (kilobytes),
+          Valid memory units are <literal>B</literal> (bytes),
+          <literal>kB</literal> (kilobytes),
           <literal>MB</literal> (megabytes), <literal>GB</literal>
           (gigabytes), and <literal>TB</literal> (terabytes).
           The multiplier for memory units is 1024, not 1000.
@@ -1290,6 +1291,50 @@ include_dir 'conf.d'
       </listitem>
      </varlistentry>
 
+     <varlistentry id="guc-ssl-min-protocol-version" xreflabel="ssl_min_protocol_version">
+      <term><varname>ssl_min_protocol_version</varname> (<type>enum</type>)
+      <indexterm>
+       <primary><varname>ssl_min_protocol_version</varname> configuration parameter</primary>
+      </indexterm>
+      </term>
+      <listitem>
+       <para>
+        Sets the minimum SSL/TLS protocol version to use.  Valid values are
+        currently: <literal>TLSv1</literal>, <literal>TLSv1.1</literal>,
+        <literal>TLSv1.2</literal>, <literal>TLSv1.3</literal>.  Older
+        versions of the <productname>OpenSSL</productname> library do not
+        support all values; an error will be raised if an unsupported setting
+        is chosen.  Protocol versions before TLS 1.0, namely SSL version 2 and
+        3, are always disabled.
+       </para>
+
+       <para>
+        The default is <literal>TLSv1</literal>, mainly to support older
+        versions of the <productname>OpenSSL</productname> library.  You might
+        want to set this to a higher value if all software components can
+        support the newer protocol versions.
+       </para>
+      </listitem>
+     </varlistentry>
+
+     <varlistentry id="guc-ssl-max-protocol-version" xreflabel="ssl_max_protocol_version">
+      <term><varname>ssl_max_protocol_version</varname> (<type>enum</type>)
+      <indexterm>
+       <primary><varname>ssl_max_protocol_version</varname> configuration parameter</primary>
+      </indexterm>
+      </term>
+      <listitem>
+       <para>
+        Sets the maximum SSL/TLS protocol version to use.  Valid values are as
+        for <xref linkend="guc-ssl-min-protocol-version"/>, with addition of
+        an empty string, which allows any protocol version.  The default is to
+        allow any version.  Setting the maximum protocol version is mainly
+        useful for testing or if some component has issues working with a
+        newer protocol.
+       </para>
+      </listitem>
+     </varlistentry>
+
      <varlistentry id="guc-ssl-dh-params-file" xreflabel="ssl_dh_params_file">
       <term><varname>ssl_dh_params_file</varname> (<type>string</type>)
       <indexterm>
@@ -1662,9 +1707,9 @@ include_dir 'conf.d'
         should use.  Possible values are <literal>posix</literal> (for POSIX shared
         memory allocated using <literal>shm_open</literal>), <literal>sysv</literal>
         (for System V shared memory allocated via <literal>shmget</literal>),
-        <literal>windows</literal> (for Windows shared memory), <literal>mmap</literal>
-        (to simulate shared memory using memory-mapped files stored in the
-        data directory), and <literal>none</literal> (to disable this feature).
+        <literal>windows</literal> (for Windows shared memory),
+        and <literal>mmap</literal> (to simulate shared memory using
+        memory-mapped files stored in the data directory).
         Not all values are supported on all platforms; the first supported
         option is the default for that platform.  The use of the
         <literal>mmap</literal> option, which is not the default on any platform,
@@ -3127,10 +3172,14 @@ include_dir 'conf.d'
         Terminate replication connections that are inactive longer
         than the specified number of milliseconds. This is useful for
         the sending server to detect a standby crash or network outage.
-        A value of zero disables the timeout mechanism.  This parameter
-        can only be set in
-        the <filename>postgresql.conf</filename> file or on the server command line.
-        The default value is 60 seconds.
+        A value of zero disables the timeout mechanism. The default value
+        is 60 seconds. With a cluster distributed across multiple geographic
+        locations, using different values per location brings more flexibility
+        in the cluster management. A smaller value is useful for faster
+        failure detection with a standby having a low-latency network
+        connection, and a larger value helps in judging better the health
+        of a standby if located on a remote location, with a high-latency
+        network connection.
        </para>
       </listitem>
      </varlistentry>
@@ -4142,7 +4191,8 @@ ANY <replaceable class="parameter">num_sync</replaceable> ( <replaceable class="
         used. When setting this parameter you should consider both
         <productname>PostgreSQL</productname>'s shared buffers and the
         portion of the kernel's disk cache that will be used for
-        <productname>PostgreSQL</productname> data files.  Also, take
+        <productname>PostgreSQL</productname> data files, though some
+        data might exist in both places. Also, take
         into account the expected number of concurrent queries on different
         tables, since they will have to share the available
         space.  This parameter has no effect on the size of shared
@@ -4155,7 +4205,6 @@ ANY <replaceable class="parameter">num_sync</replaceable> ( <replaceable class="
       </listitem>
      </varlistentry>
 
-
      <varlistentry id="guc-jit-above-cost" xreflabel="jit_above_cost">
       <term><varname>jit_above_cost</varname> (<type>floating point</type>)
       <indexterm>
@@ -4164,29 +4213,12 @@ ANY <replaceable class="parameter">num_sync</replaceable> ( <replaceable class="
       </term>
       <listitem>
        <para>
-        Sets the planner's cutoff above which JIT compilation is used as part
-        of query execution (see <xref linkend="jit"/>). Performing
-        <acronym>JIT</acronym> costs time but can accelerate query execution.
-
+        Sets the query cost above which JIT compilation is activated, if
+        enabled (see <xref linkend="jit"/>).
+        Performing <acronym>JIT</acronym> costs planning time but can
+        accelerate query execution.
+        Setting this to <literal>-1</literal> disables JIT compilation.
         The default is <literal>100000</literal>.
-       </para>
-      </listitem>
-     </varlistentry>
-
-     <varlistentry id="guc-jit-optimize-above-cost" xreflabel="jit_optimize_above_cost">
-      <term><varname>jit_optimize_above_cost</varname> (<type>floating point</type>)
-      <indexterm>
-       <primary><varname>jit_optimize_above_cost</varname> configuration parameter</primary>
-      </indexterm>
-      </term>
-      <listitem>
-       <para>
-        Sets the planner's cutoff above which JIT compiled programs (see <xref
-        linkend="guc-jit-above-cost"/>) are optimized. Optimization initially
-        takes time, but can improve execution speed.  It is not meaningful to
-        set this to a lower value than <xref linkend="guc-jit-above-cost"/>.
-
-        The default is <literal>500000</literal>.
        </para>
       </listitem>
      </varlistentry>
@@ -4199,13 +4231,31 @@ ANY <replaceable class="parameter">num_sync</replaceable> ( <replaceable class="
       </term>
       <listitem>
        <para>
-        Sets the planner's cutoff above which JIT compiled programs (see <xref
-        linkend="guc-jit-above-cost"/>) attempt to inline functions and
-        operators. Inlining initially takes time, but can improve execution
-        speed.  It is unlikely to be beneficial to set
-        <varname>jit_inline_above_cost</varname> below
-        <varname>jit_optimize_above_cost</varname>.
+        Sets the query cost above which JIT compilation attempts to inline
+        functions and operators.  Inlining adds planning time, but can
+        improve execution speed.  It is not meaningful to set this to less
+        than <varname>jit_above_cost</varname>.
+        Setting this to <literal>-1</literal> disables inlining.
+        The default is <literal>500000</literal>.
+       </para>
+      </listitem>
+     </varlistentry>
 
+     <varlistentry id="guc-jit-optimize-above-cost" xreflabel="jit_optimize_above_cost">
+      <term><varname>jit_optimize_above_cost</varname> (<type>floating point</type>)
+      <indexterm>
+       <primary><varname>jit_optimize_above_cost</varname> configuration parameter</primary>
+      </indexterm>
+      </term>
+      <listitem>
+       <para>
+        Sets the query cost above which JIT compilation applies expensive
+        optimizations.  Such optimization adds planning time, but can improve
+        execution speed.  It is not meaningful to set this to less
+        than <varname>jit_above_cost</varname>, and it is unlikely to be
+        beneficial to set it to more
+        than <varname>jit_inline_above_cost</varname>.
+        Setting this to <literal>-1</literal> disables expensive optimizations.
         The default is <literal>500000</literal>.
        </para>
       </listitem>
@@ -4500,10 +4550,9 @@ SELECT * FROM parent WHERE key = 2400;
       </term>
       <listitem>
        <para>
-        Determines whether <acronym>JIT</acronym> may be used by
+        Determines whether <acronym>JIT</acronym> compilation may be used by
         <productname>PostgreSQL</productname>, if available (see <xref
         linkend="jit"/>).
-
         The default is <literal>on</literal>.
        </para>
       </listitem>
@@ -4612,6 +4661,36 @@ SELECT * FROM parent WHERE key = 2400;
         the <literal>Gather</literal> nodes added to plans by this setting are hidden
         in <literal>EXPLAIN</literal> output so that the output matches what
         would be obtained if this setting were turned <literal>off</literal>.
+       </para>
+      </listitem>
+     </varlistentry>
+
+     <varlistentry id="guc-plan-cache_mode" xreflabel="plan_cache_mode">
+      <term><varname>plan_cache_mode</varname> (<type>enum</type>)
+      <indexterm>
+       <primary><varname>plan_cache_mode</varname> configuration parameter</primary>
+      </indexterm>
+      </term>
+      <listitem>
+       <para>
+        Prepared statements (either explicitly prepared or implicitly
+        generated, for example in PL/pgSQL) can be executed using custom or
+        generic plans.  A custom plan is replanned for a new parameter value,
+        a generic plan is reused for repeated executions of the prepared
+        statement.  The choice between them is normally made automatically.
+        This setting overrides the default behavior and forces either a custom
+        or a generic plan.  This can be used to work around performance
+        problems in specific cases.  Note, however, that the plan cache
+        behavior is subject to change, so this setting, like all settings that
+        force the planner's hand, should be reevaluated regularly.
+       </para>
+
+       <para>
+        The allowed values are <literal>auto</literal>,
+        <literal>force_custom_plan</literal> and
+        <literal>force_generic_plan</literal>.  The default value is
+        <literal>auto</literal>.  The setting is applied when a cached plan is
+        to be executed, not when it is prepared.
        </para>
       </listitem>
      </varlistentry>
@@ -5076,28 +5155,6 @@ local0.*    /var/log/postgresql
 
      <variablelist>
 
-     <varlistentry id="guc-client-min-messages" xreflabel="client_min_messages">
-      <term><varname>client_min_messages</varname> (<type>enum</type>)
-      <indexterm>
-       <primary><varname>client_min_messages</varname> configuration parameter</primary>
-      </indexterm>
-      </term>
-      <listitem>
-       <para>
-        Controls which message levels are sent to the client.
-        Valid values are <literal>DEBUG5</literal>,
-        <literal>DEBUG4</literal>, <literal>DEBUG3</literal>, <literal>DEBUG2</literal>,
-        <literal>DEBUG1</literal>, <literal>LOG</literal>, <literal>NOTICE</literal>,
-        <literal>WARNING</literal>, <literal>ERROR</literal>, <literal>FATAL</literal>,
-        and <literal>PANIC</literal>.  Each level
-        includes all the levels that follow it.  The later the level,
-        the fewer messages are sent.  The default is
-        <literal>NOTICE</literal>.  Note that <literal>LOG</literal> has a different
-        rank here than in <varname>log_min_messages</varname>.
-       </para>
-      </listitem>
-     </varlistentry>
-
      <varlistentry id="guc-log-min-messages" xreflabel="log_min_messages">
       <term><varname>log_min_messages</varname> (<type>enum</type>)
       <indexterm>
@@ -5115,7 +5172,7 @@ local0.*    /var/log/postgresql
         follow it.  The later the level, the fewer messages are sent
         to the log.  The default is <literal>WARNING</literal>.  Note that
         <literal>LOG</literal> has a different rank here than in
-        <varname>client_min_messages</varname>.
+        <xref linkend="guc-client-min-messages"/>.
         Only superusers can change this setting.
        </para>
       </listitem>
@@ -6436,6 +6493,27 @@ COPY postgres_log FROM '/full/path/to/logfile.csv' WITH csv;
      <title>Statement Behavior</title>
      <variablelist>
 
+     <varlistentry id="guc-client-min-messages" xreflabel="client_min_messages">
+      <term><varname>client_min_messages</varname> (<type>enum</type>)
+      <indexterm>
+       <primary><varname>client_min_messages</varname> configuration parameter</primary>
+      </indexterm>
+      </term>
+      <listitem>
+       <para>
+        Controls which message levels are sent to the client.
+        Valid values are <literal>DEBUG5</literal>,
+        <literal>DEBUG4</literal>, <literal>DEBUG3</literal>, <literal>DEBUG2</literal>,
+        <literal>DEBUG1</literal>, <literal>LOG</literal>, <literal>NOTICE</literal>,
+        <literal>WARNING</literal>, and <literal>ERROR</literal>.
+        Each level includes all the levels that follow it.  The later the level,
+        the fewer messages are sent.  The default is
+        <literal>NOTICE</literal>.  Note that <literal>LOG</literal> has a different
+        rank here than in <xref linkend="guc-log-min-messages"/>.
+       </para>
+      </listitem>
+     </varlistentry>
+
      <varlistentry id="guc-search-path" xreflabel="search_path">
       <term><varname>search_path</varname> (<type>string</type>)
       <indexterm>
@@ -7552,16 +7630,17 @@ SET XML OPTION { DOCUMENT | CONTENT };
       </term>
       <listitem>
        <para>
-        Determines which JIT provider (see <xref linkend="jit-extensibility"/>) is
-        used. The built-in default is <literal>llvmjit</literal>.
+        This variable is the name of the JIT provider library to be used
+        (see <xref linkend="jit-pluggable"/>).
+        The default is <literal>llvmjit</literal>.
+        This parameter can only be set at server start.
        </para>
+
        <para>
-        If set to a non-existent library <acronym>JIT</acronym> will not be
+        If set to a non-existent library, <acronym>JIT</acronym> will not be
         available, but no error will be raised. This allows JIT support to be
         installed separately from the main
         <productname>PostgreSQL</productname> package.
-
-        This parameter can only be set at server start.
        </para>
       </listitem>
      </varlistentry>
@@ -8126,6 +8205,38 @@ dynamic_library_path = 'C:\tools\postgresql;H:\my_project\lib;$libdir'
       </listitem>
      </varlistentry>
 
+     <varlistentry id="guc-data-sync-retry" xreflabel="data_sync_retry">
+      <term><varname>data_sync_retry</varname> (<type>boolean</type>)
+      <indexterm>
+       <primary><varname>data_sync_retry</varname> configuration parameter</primary>
+      </indexterm>
+      </term>
+      <listitem>
+       <para>
+        When set to false, which is the default, <productname>PostgreSQL</productname>
+        will raise a PANIC-level error on failure to flush modified data files
+        to the filesystem.  This causes the database server to crash.
+       </para>
+       <para>
+        On some operating systems, the status of data in the kernel's page
+        cache is unknown after a write-back failure.  In some cases it might
+        have been entirely forgotten, making it unsafe to retry; the second
+        attempt may be reported as successful, when in fact the data has been
+        lost.  In these circumstances, the only way to avoid data loss is to
+        recover from the WAL after any failure is reported, preferably
+        after investigating the root cause of the failure and replacing any
+        faulty hardware.
+       </para>
+       <para>
+        If set to true, <productname>PostgreSQL</productname> will instead
+        report an error but continue to run so that the data flushing
+        operation can be retried in a later checkpoint.  Only set it to true
+        after investigating the operating system's treatment of buffered data
+        in case of write-back failure.
+       </para>
+      </listitem>
+     </varlistentry>
+
     </variablelist>
 
    </sect1>
@@ -8371,6 +8482,22 @@ dynamic_library_path = 'C:\tools\postgresql;H:\my_project\lib;$libdir'
       </listitem>
      </varlistentry>
 
+     <varlistentry id="guc-ssl-library" xreflabel="ssl_library">
+      <term><varname>ssl_library</varname> (<type>string</type>)
+      <indexterm>
+       <primary><varname>ssl_library</varname> configuration parameter</primary>
+      </indexterm>
+      </term>
+      <listitem>
+       <para>
+        Reports the name of the SSL library that this PostgreSQL server was
+        built with (even if SSL is not currently configured or in use on this
+        instance), for example <literal>OpenSSL</literal>, or an empty string
+        if none.
+       </para>
+      </listitem>
+     </varlistentry>
+
      <varlistentry id="guc-wal-block-size" xreflabel="wal_block_size">
       <term><varname>wal_block_size</varname> (<type>integer</type>)
       <indexterm>
@@ -8394,11 +8521,8 @@ dynamic_library_path = 'C:\tools\postgresql;H:\my_project\lib;$libdir'
       </term>
       <listitem>
        <para>
-        Reports the number of blocks (pages) in a WAL segment file.
-        The total size of a WAL segment file in bytes is equal to
-        <varname>wal_segment_size</varname> multiplied by <varname>wal_block_size</varname>;
-        by default this is 16MB.  See <xref linkend="wal-configuration"/> for
-        more information.
+        Reports the size of write ahead log segments.  The default value is
+        16MB. See <xref linkend="wal-configuration"/> for more information.
        </para>
       </listitem>
      </varlistentry>
@@ -8840,9 +8964,8 @@ LOG:  CleanUpLock: deleting: lock(0xb7acd844) id(24688,24696,0,0,0,1)
        <para>
         If LLVM has the required functionality, register generated functions
         with <productname>GDB</productname>.  This makes debugging easier.
-
-        The default setting is <literal>off</literal>, and can only be set at
-        server start.
+        The default setting is <literal>off</literal>.
+        This parameter can only be set at server start.
        </para>
       </listitem>
      </varlistentry>
@@ -8858,9 +8981,8 @@ LOG:  CleanUpLock: deleting: lock(0xb7acd844) id(24688,24696,0,0,0,1)
         Writes the generated <productname>LLVM</productname> IR out to the
         file system, inside <xref linkend="guc-data-directory"/>. This is only
         useful for working on the internals of the JIT implementation.
-
-        The default setting is <literal>off</literal>, and it can only be
-        changed by a superuser.
+        The default setting is <literal>off</literal>.
+        This parameter can only be changed by a superuser.
        </para>
       </listitem>
      </varlistentry>
@@ -8873,8 +8995,8 @@ LOG:  CleanUpLock: deleting: lock(0xb7acd844) id(24688,24696,0,0,0,1)
       </term>
       <listitem>
        <para>
-        Determines whether expressions are JIT compiled, subject to costing
-        decisions (see <xref linkend="jit-decision"/>).  The default is
+        Determines whether expressions are JIT compiled, when JIT compilation
+        is activated (see <xref linkend="jit-decision"/>).  The default is
         <literal>on</literal>.
        </para>
       </listitem>
@@ -8888,13 +9010,12 @@ LOG:  CleanUpLock: deleting: lock(0xb7acd844) id(24688,24696,0,0,0,1)
       </term>
       <listitem>
        <para>
-        If LLVM has the required functionality, emit required data to allow
+        If LLVM has the required functionality, emit the data needed to allow
         <productname>perf</productname> to profile functions generated by JIT.
         This writes out files to <filename>$HOME/.debug/jit/</filename>; the
         user is responsible for performing cleanup when desired.
-
-        The default setting is <literal>off</literal>, and can only be set at
-        server start.
+        The default setting is <literal>off</literal>.
+        This parameter can only be set at server start.
        </para>
       </listitem>
      </varlistentry>
@@ -8907,9 +9028,9 @@ LOG:  CleanUpLock: deleting: lock(0xb7acd844) id(24688,24696,0,0,0,1)
       </term>
       <listitem>
        <para>
-        Determines whether tuple deforming is JIT compiled, subject to costing
-        decisions (see <xref linkend="jit-decision"/>). The default is
-        <literal>on</literal>.
+        Determines whether tuple deforming is JIT compiled, when JIT
+        compilation is activated (see <xref linkend="jit-decision"/>).
+        The default is <literal>on</literal>.
        </para>
       </listitem>
      </varlistentry>

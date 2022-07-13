@@ -261,8 +261,6 @@ sub check_mode_recursive
 		{
 			follow_fast => 1,
 			wanted      => sub {
-				my $file_stat = stat($File::Find::name);
-
 				# Is file in the ignore list?
 				foreach my $ignore ($ignore_list ? @{$ignore_list} : [])
 				{
@@ -272,8 +270,23 @@ sub check_mode_recursive
 					}
 				}
 
-				defined($file_stat)
-				  or die("unable to stat $File::Find::name");
+				# Allow ENOENT.  A running server can delete files, such as
+				# those in pg_stat.  Other stat() failures are fatal.
+				my $file_stat = stat($File::Find::name);
+				unless (defined($file_stat))
+				{
+					my $is_ENOENT = $!{ENOENT};
+					my $msg = "unable to stat $File::Find::name: $!";
+					if ($is_ENOENT)
+					{
+						warn $msg;
+						return;
+					}
+					else
+					{
+						die $msg;
+					}
+				}
 
 				my $file_mode = S_IMODE($file_stat->mode);
 
@@ -366,6 +379,7 @@ sub check_pg_config
 #
 sub command_ok
 {
+	local $Test::Builder::Level = $Test::Builder::Level + 1;
 	my ($cmd, $test_name) = @_;
 	my $result = run_log($cmd);
 	ok($result, $test_name);
@@ -374,6 +388,7 @@ sub command_ok
 
 sub command_fails
 {
+	local $Test::Builder::Level = $Test::Builder::Level + 1;
 	my ($cmd, $test_name) = @_;
 	my $result = run_log($cmd);
 	ok(!$result, $test_name);
@@ -382,6 +397,7 @@ sub command_fails
 
 sub command_exit_is
 {
+	local $Test::Builder::Level = $Test::Builder::Level + 1;
 	my ($cmd, $expected, $test_name) = @_;
 	print("# Running: " . join(" ", @{$cmd}) . "\n");
 	my $h = IPC::Run::start $cmd;
@@ -404,6 +420,7 @@ sub command_exit_is
 
 sub program_help_ok
 {
+	local $Test::Builder::Level = $Test::Builder::Level + 1;
 	my ($cmd) = @_;
 	my ($stdout, $stderr);
 	print("# Running: $cmd --help\n");
@@ -417,6 +434,7 @@ sub program_help_ok
 
 sub program_version_ok
 {
+	local $Test::Builder::Level = $Test::Builder::Level + 1;
 	my ($cmd) = @_;
 	my ($stdout, $stderr);
 	print("# Running: $cmd --version\n");
@@ -430,6 +448,7 @@ sub program_version_ok
 
 sub program_options_handling_ok
 {
+	local $Test::Builder::Level = $Test::Builder::Level + 1;
 	my ($cmd) = @_;
 	my ($stdout, $stderr);
 	print("# Running: $cmd --not-a-valid-option\n");
@@ -443,6 +462,7 @@ sub program_options_handling_ok
 
 sub command_like
 {
+	local $Test::Builder::Level = $Test::Builder::Level + 1;
 	my ($cmd, $expected_stdout, $test_name) = @_;
 	my ($stdout, $stderr);
 	print("# Running: " . join(" ", @{$cmd}) . "\n");
@@ -455,6 +475,7 @@ sub command_like
 
 sub command_like_safe
 {
+	local $Test::Builder::Level = $Test::Builder::Level + 1;
 
 	# Doesn't rely on detecting end of file on the file descriptors,
 	# which can fail, causing the process to hang, notably on Msys
@@ -475,6 +496,7 @@ sub command_like_safe
 
 sub command_fails_like
 {
+	local $Test::Builder::Level = $Test::Builder::Level + 1;
 	my ($cmd, $expected_stderr, $test_name) = @_;
 	my ($stdout, $stderr);
 	print("# Running: " . join(" ", @{$cmd}) . "\n");
@@ -493,6 +515,8 @@ sub command_fails_like
 # - test_name: name of test
 sub command_checks_all
 {
+	local $Test::Builder::Level = $Test::Builder::Level + 1;
+
 	my ($cmd, $expected_ret, $out, $err, $test_name) = @_;
 
 	# run command

@@ -216,23 +216,12 @@ top:
 
 	if (!fastpath)
 	{
-		/* find the first page containing this key */
+		/*
+		 * Find the first page containing this key.  Buffer returned by
+		 * _bt_search() is locked in exclusive mode.
+		 */
 		stack = _bt_search(rel, indnkeyatts, itup_scankey, false, &buf, BT_WRITE,
 						   NULL);
-
-		/* trade in our read lock for a write lock */
-		LockBuffer(buf, BUFFER_LOCK_UNLOCK);
-		LockBuffer(buf, BT_WRITE);
-
-		/*
-		 * If the page was split between the time that we surrendered our read
-		 * lock and acquired our write lock, then this page may no longer be
-		 * the right place for the key we want to insert.  In this case, we
-		 * need to move right in the tree.  See Lehman and Yao for an
-		 * excruciatingly precise description.
-		 */
-		buf = _bt_moveright(rel, buf, indnkeyatts, itup_scankey, false,
-							true, stack, BT_WRITE, NULL);
 	}
 
 	/*
@@ -247,7 +236,7 @@ top:
 	 * inserter can be making the check at one time.  Furthermore, once we are
 	 * past the check we hold write locks continuously until we have performed
 	 * our insertion, so no later inserter can fail to see our insertion.
-	 * (This requires some care in _bt_insertonpg.)
+	 * (This requires some care in _bt_findinsertloc.)
 	 *
 	 * If we must wait for another xact, we release the lock while waiting,
 	 * and then must start over completely.

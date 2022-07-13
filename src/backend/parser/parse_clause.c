@@ -217,6 +217,7 @@ setTargetTable(ParseState *pstate, RangeVar *relation,
 	 * Now build an RTE.
 	 */
 	rte = addRangeTableEntryForRelation(pstate, pstate->p_target_relation,
+										RowExclusiveLock,
 										relation->alias, inh, false);
 	pstate->p_target_rangetblentry = rte;
 
@@ -779,7 +780,7 @@ transformRangeTableFunc(ParseState *pstate, RangeTableFunc *rtf)
 	/* undef ordinality column number */
 	tf->ordinalitycol = -1;
 
-
+	/* Process column specs */
 	names = palloc(sizeof(char *) * list_length(rtf->columns));
 
 	colno = 0;
@@ -900,15 +901,15 @@ transformRangeTableFunc(ParseState *pstate, RangeTableFunc *rtf)
 			{
 				foreach(lc2, ns_names)
 				{
-					char	   *name = strVal(lfirst(lc2));
+					Value	   *ns_node = (Value *) lfirst(lc2);
 
-					if (name == NULL)
+					if (ns_node == NULL)
 						continue;
-					if (strcmp(name, r->name) == 0)
+					if (strcmp(strVal(ns_node), r->name) == 0)
 						ereport(ERROR,
 								(errcode(ERRCODE_SYNTAX_ERROR),
 								 errmsg("namespace name \"%s\" is not unique",
-										name),
+										r->name),
 								 parser_errposition(pstate, r->location)));
 				}
 			}
@@ -922,8 +923,9 @@ transformRangeTableFunc(ParseState *pstate, RangeTableFunc *rtf)
 				default_ns_seen = true;
 			}
 
-			/* Note the string may be NULL */
-			ns_names = lappend(ns_names, makeString(r->name));
+			/* We represent DEFAULT by a null pointer */
+			ns_names = lappend(ns_names,
+							   r->name ? makeString(r->name) : NULL);
 		}
 
 		tf->ns_uris = ns_uris;
@@ -2796,6 +2798,16 @@ transformWindowDefinitions(ParseState *pstate,
 			wc->inRangeColl = exprCollation(sortkey);
 			wc->inRangeAsc = (rangestrategy == BTLessStrategyNumber);
 			wc->inRangeNullsFirst = sortcl->nulls_first;
+		}
+
+		/* Per spec, GROUPS mode requires an ORDER BY clause */
+		if (wc->frameOptions & FRAMEOPTION_GROUPS)
+		{
+			if (wc->orderClause == NIL)
+				ereport(ERROR,
+						(errcode(ERRCODE_WINDOWING_ERROR),
+						 errmsg("GROUPS mode requires an ORDER BY clause"),
+						 parser_errposition(pstate, windef->location)));
 		}
 
 		/* Process frame offset expressions */

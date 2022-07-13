@@ -504,9 +504,9 @@ SELECT sum(salary),
 FROM empsalary GROUP BY depname;
   sum  | row_number |  sum  
 -------+------------+-------
- 14600 |          3 | 14600
-  7400 |          2 | 22000
  25100 |          1 | 47100
+  7400 |          2 | 22000
+ 14600 |          3 | 14600
 (3 rows)
 
 -- identical windows with different names
@@ -2834,6 +2834,101 @@ SELECT count(*) OVER (PARTITION BY four) FROM (SELECT * FROM tenk1 UNION ALL SEL
 -------
 (0 rows)
 
+-- check some degenerate cases
+create temp table t1 (f1 int, f2 int8);
+insert into t1 values (1,1),(1,2),(2,2);
+select f1, sum(f1) over (partition by f1
+                         range between 1 preceding and 1 following)
+from t1 where f1 = f2;  -- error, must have order by
+ERROR:  RANGE with offset PRECEDING/FOLLOWING requires exactly one ORDER BY column
+LINE 1: select f1, sum(f1) over (partition by f1
+                                ^
+explain (costs off)
+select f1, sum(f1) over (partition by f1 order by f2
+                         range between 1 preceding and 1 following)
+from t1 where f1 = f2;
+           QUERY PLAN            
+---------------------------------
+ WindowAgg
+   ->  Sort
+         Sort Key: f1
+         ->  Seq Scan on t1
+               Filter: (f1 = f2)
+(5 rows)
+
+select f1, sum(f1) over (partition by f1 order by f2
+                         range between 1 preceding and 1 following)
+from t1 where f1 = f2;
+ f1 | sum 
+----+-----
+  1 |   1
+  2 |   2
+(2 rows)
+
+select f1, sum(f1) over (partition by f1, f1 order by f2
+                         range between 2 preceding and 1 preceding)
+from t1 where f1 = f2;
+ f1 | sum 
+----+-----
+  1 |    
+  2 |    
+(2 rows)
+
+select f1, sum(f1) over (partition by f1, f2 order by f2
+                         range between 1 following and 2 following)
+from t1 where f1 = f2;
+ f1 | sum 
+----+-----
+  1 |    
+  2 |    
+(2 rows)
+
+select f1, sum(f1) over (partition by f1
+                         groups between 1 preceding and 1 following)
+from t1 where f1 = f2;  -- error, must have order by
+ERROR:  GROUPS mode requires an ORDER BY clause
+LINE 1: select f1, sum(f1) over (partition by f1
+                                ^
+explain (costs off)
+select f1, sum(f1) over (partition by f1 order by f2
+                         groups between 1 preceding and 1 following)
+from t1 where f1 = f2;
+           QUERY PLAN            
+---------------------------------
+ WindowAgg
+   ->  Sort
+         Sort Key: f1
+         ->  Seq Scan on t1
+               Filter: (f1 = f2)
+(5 rows)
+
+select f1, sum(f1) over (partition by f1 order by f2
+                         groups between 1 preceding and 1 following)
+from t1 where f1 = f2;
+ f1 | sum 
+----+-----
+  1 |   1
+  2 |   2
+(2 rows)
+
+select f1, sum(f1) over (partition by f1, f1 order by f2
+                         groups between 2 preceding and 1 preceding)
+from t1 where f1 = f2;
+ f1 | sum 
+----+-----
+  1 |    
+  2 |    
+(2 rows)
+
+select f1, sum(f1) over (partition by f1, f2 order by f2
+                         groups between 1 following and 2 following)
+from t1 where f1 = f2;
+ f1 | sum 
+----+-----
+  1 |    
+  2 |    
+(2 rows)
+
 -- ordering by a non-integer constant is allowed
 SELECT rank() OVER (ORDER BY length('abc'));
  rank 
@@ -2899,9 +2994,9 @@ SELECT sum(salary), row_number() OVER (ORDER BY depname), sum(
 FROM empsalary GROUP BY depname;
   sum  | row_number | filtered_sum |  depname  
 -------+------------+--------------+-----------
- 14600 |          3 |              | sales
-  7400 |          2 |         3500 | personnel
  25100 |          1 |        22600 | develop
+  7400 |          2 |         3500 | personnel
+ 14600 |          3 |              | sales
 (3 rows)
 
 -- Test pushdown of quals into a subquery containing window functions
@@ -2913,13 +3008,13 @@ SELECT * FROM
           min(salary) OVER (PARTITION BY depname || 'A', depname) depminsalary
    FROM empsalary) emp
 WHERE depname = 'sales';
-                             QUERY PLAN                              
----------------------------------------------------------------------
+                                QUERY PLAN                                
+--------------------------------------------------------------------------
  Subquery Scan on emp
    ->  WindowAgg
-         ->  Sort
-               Sort Key: (((empsalary.depname)::text || 'A'::text))
-               ->  WindowAgg
+         ->  WindowAgg
+               ->  Sort
+                     Sort Key: (((empsalary.depname)::text || 'A'::text))
                      ->  Seq Scan on empsalary
                            Filter: ((depname)::text = 'sales'::text)
 (7 rows)
@@ -2932,18 +3027,52 @@ SELECT * FROM
           min(salary) OVER (PARTITION BY depname) depminsalary
    FROM empsalary) emp
 WHERE depname = 'sales';
-                        QUERY PLAN                         
------------------------------------------------------------
+                      QUERY PLAN                       
+-------------------------------------------------------
  Subquery Scan on emp
    Filter: ((emp.depname)::text = 'sales'::text)
    ->  WindowAgg
          ->  Sort
-               Sort Key: empsalary.depname
+               Sort Key: empsalary.enroll_date
                ->  WindowAgg
                      ->  Sort
-                           Sort Key: empsalary.enroll_date
+                           Sort Key: empsalary.depname
                            ->  Seq Scan on empsalary
 (9 rows)
+
+-- Test Sort node collapsing
+EXPLAIN (COSTS OFF)
+SELECT * FROM
+  (SELECT depname,
+          sum(salary) OVER (PARTITION BY depname order by empno) depsalary,
+          min(salary) OVER (PARTITION BY depname, empno order by enroll_date) depminsalary
+   FROM empsalary) emp
+WHERE depname = 'sales';
+                              QUERY PLAN                              
+----------------------------------------------------------------------
+ Subquery Scan on emp
+   ->  WindowAgg
+         ->  WindowAgg
+               ->  Sort
+                     Sort Key: empsalary.empno, empsalary.enroll_date
+                     ->  Seq Scan on empsalary
+                           Filter: ((depname)::text = 'sales'::text)
+(7 rows)
+
+-- Test Sort node reordering
+EXPLAIN (COSTS OFF)
+SELECT
+  lead(1) OVER (PARTITION BY depname ORDER BY salary, enroll_date),
+  lag(1) OVER (PARTITION BY depname ORDER BY salary,enroll_date,empno)
+FROM empsalary;
+                         QUERY PLAN                          
+-------------------------------------------------------------
+ WindowAgg
+   ->  WindowAgg
+         ->  Sort
+               Sort Key: depname, salary, enroll_date, empno
+               ->  Seq Scan on empsalary
+(5 rows)
 
 -- cleanup
 DROP TABLE empsalary;

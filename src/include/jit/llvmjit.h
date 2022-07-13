@@ -65,6 +65,8 @@ extern LLVMTypeRef TypeStorageBool;
 extern LLVMTypeRef StructtupleDesc;
 extern LLVMTypeRef StructHeapTupleData;
 extern LLVMTypeRef StructTupleTableSlot;
+extern LLVMTypeRef StructHeapTupleTableSlot;
+extern LLVMTypeRef StructMinimalTupleTableSlot;
 extern LLVMTypeRef StructMemoryContextData;
 extern LLVMTypeRef StructFunctionCallInfoData;
 extern LLVMTypeRef StructExprContext;
@@ -77,11 +79,11 @@ extern LLVMTypeRef StructAggStatePerGroupData;
 extern LLVMValueRef AttributeTemplate;
 extern LLVMValueRef FuncStrlen;
 extern LLVMValueRef FuncVarsizeAny;
-extern LLVMValueRef FuncSlotGetsomeattrs;
 extern LLVMValueRef FuncSlotGetmissingattrs;
-extern LLVMValueRef FuncHeapGetsysattr;
+extern LLVMValueRef FuncSlotGetsomeattrsInt;
 extern LLVMValueRef FuncMakeExpandedObjectReadOnlyInternal;
 extern LLVMValueRef FuncExecEvalArrayRefSubscript;
+extern LLVMValueRef FuncExecEvalSysVar;
 extern LLVMValueRef FuncExecAggTransReparent;
 extern LLVMValueRef FuncExecAggInitGroup;
 
@@ -111,7 +113,9 @@ extern void llvm_inline(LLVMModuleRef mod);
  ****************************************************************************
  */
 extern bool llvm_compile_expr(struct ExprState *state);
-extern LLVMValueRef slot_compile_deform(struct LLVMJitContext *context, TupleDesc desc, int natts);
+struct TupleTableSlotOps;
+extern LLVMValueRef slot_compile_deform(struct LLVMJitContext *context, TupleDesc desc,
+										const struct TupleTableSlotOps *ops, int natts);
 
 /*
  ****************************************************************************
@@ -125,9 +129,11 @@ extern LLVMValueRef slot_compile_deform(struct LLVMJitContext *context, TupleDes
 extern char *LLVMGetHostCPUName(void);
 #endif
 
+#if defined(HAVE_DECL_LLVMGETHOSTCPUFEATURES) && !HAVE_DECL_LLVMGETHOSTCPUFEATURES
 /** Get the host CPU features as a string. The result needs to be disposed
   with LLVMDisposeMessage. */
 extern char *LLVMGetHostCPUFeatures(void);
+#endif
 
 #ifdef __cplusplus
 } /* extern "C" */

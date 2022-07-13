@@ -1030,7 +1030,7 @@ WaitEventSetWait(WaitEventSet *set, long timeout,
 /*
  * Wait using linux's epoll_wait(2).
  *
- * This is the preferrable wait method, as several readiness notifications are
+ * This is the preferable wait method, as several readiness notifications are
  * delivered, without having to iterate through all of set->events. The return
  * epoll_event struct contain a pointer to our events, making association
  * easy.
@@ -1112,7 +1112,7 @@ WaitEventSetWaitBlock(WaitEventSet *set, int cur_timeout,
 			 * WL_POSTMASTER_DEATH event would be painful. Re-checking doesn't
 			 * cost much.
 			 */
-			if (!PostmasterIsAlive())
+			if (!PostmasterIsAliveInternal())
 			{
 				occurred_events->fd = PGINVALID_SOCKET;
 				occurred_events->events = WL_POSTMASTER_DEATH;
@@ -1230,7 +1230,7 @@ WaitEventSetWaitBlock(WaitEventSet *set, int cur_timeout,
 			 * WL_POSTMASTER_DEATH event would be painful. Re-checking doesn't
 			 * cost much.
 			 */
-			if (!PostmasterIsAlive())
+			if (!PostmasterIsAliveInternal())
 			{
 				occurred_events->fd = PGINVALID_SOCKET;
 				occurred_events->events = WL_POSTMASTER_DEATH;
@@ -1390,7 +1390,7 @@ WaitEventSetWaitBlock(WaitEventSet *set, int cur_timeout,
 		 * even though there is no known reason to think that the event could
 		 * be falsely set on Windows.
 		 */
-		if (!PostmasterIsAlive())
+		if (!PostmasterIsAliveInternal())
 		{
 			occurred_events->fd = PGINVALID_SOCKET;
 			occurred_events->events = WL_POSTMASTER_DEATH;

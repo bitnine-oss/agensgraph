@@ -738,7 +738,7 @@ protocol to make nodes agree on a serializable transactional order.
     A simple example of a <filename>recovery.conf</filename> is:
 <programlisting>
 standby_mode = 'on'
-primary_conninfo = 'host=192.168.1.50 port=5432 user=foo password=foopass'
+primary_conninfo = 'host=192.168.1.50 port=5432 user=foo password=foopass options=''-c wal_sender_timeout=5000'''
 restore_command = 'cp /path/to/archive/%f %p'
 archive_cleanup_command = 'pg_archivecleanup /path/to/archive %r'
 </programlisting>
@@ -966,10 +966,10 @@ postgres=# SELECT * FROM pg_create_physical_replication_slot('node_a_slot');
 -------------+-----
  node_a_slot |
 
-postgres=# SELECT * FROM pg_replication_slots;
-  slot_name  | slot_type | datoid | database | active | xmin | restart_lsn | confirmed_flush_lsn
--------------+-----------+--------+----------+--------+------+-------------+---------------------
- node_a_slot | physical  |        |          | f      |      |             |
+postgres=# SELECT slot_name, slot_type, active FROM pg_replication_slots;
+  slot_name  | slot_type | active 
+-------------+-----------+--------
+ node_a_slot | physical  | f
 (1 row)
 </programlisting>
      To configure the standby to use this slot, <varname>primary_slot_name</varname>
@@ -1324,14 +1324,14 @@ synchronous_standby_names = 'ANY 2 (s1, s2, s3)'
    </para>
 
    <para>
-    If primary restarts while commits are waiting for acknowledgement, those
+    If primary restarts while commits are waiting for acknowledgment, those
     waiting transactions will be marked fully committed once the primary
     database recovers.
     There is no way to be certain that all standbys have received all
     outstanding WAL data at time of the crash of the primary. Some
     transactions may not show as committed on the standby, even though
     they show as committed on the primary. The guarantee we offer is that
-    the application will not receive explicit acknowledgement of the
+    the application will not receive explicit acknowledgment of the
     successful commit of a transaction until the WAL data is known to be
     safely received by all the synchronous standbys.
    </para>
@@ -1471,14 +1471,17 @@ synchronous_standby_names = 'ANY 2 (s1, s2, s3)'
    </para>
 
    <para>
-    To trigger failover of a log-shipping standby server,
-    run <command>pg_ctl promote</command> or create a trigger
-    file with the file name and path specified by the <varname>trigger_file</varname>
-    setting in <filename>recovery.conf</filename>. If you're planning to use
-    <command>pg_ctl promote</command> to fail over, <varname>trigger_file</varname> is
-    not required. If you're setting up the reporting servers that are
-    only used to offload read-only queries from the primary, not for high
-    availability purposes, you don't need to promote it.
+    To trigger failover of a log-shipping standby server, run
+    <command>pg_ctl promote</command>, call <function>pg_promote</function>,
+    or create a trigger file with the file name and path specified by the
+    <varname>trigger_file</varname> setting in
+    <filename>recovery.conf</filename>. If you're planning to use
+    <command>pg_ctl promote</command> or to call
+    <function>pg_promote</function> to fail over,
+    <varname>trigger_file</varname> is not required. If you're
+    setting up the reporting servers that are only used to offload read-only
+    queries from the primary, not for high availability purposes, you don't
+    need to promote it.
    </para>
   </sect1>
 

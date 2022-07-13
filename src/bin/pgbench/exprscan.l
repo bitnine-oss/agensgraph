@@ -69,7 +69,7 @@ nonspace		[^ \t\r\f\v\n]
 newline			[\n]
 
 /* Line continuation marker */
-continuation	\\{newline}
+continuation	\\\r?{newline}
 
 /* case insensitive keywords */
 and				[Aa][Nn][Dd]
@@ -122,8 +122,12 @@ notnull			[Nn][Oo][Tt][Nn][Uu][Ll][Ll]
 	 * a continuation marker just after a word:
 	 */
 {nonspace}+{continuation}	{
-					/* Found "word\\\n", emit and return just "word" */
-					psqlscan_emit(cur_state, yytext, yyleng - 2);
+					/* Found "word\\\r?\n", emit and return just "word" */
+					int		wordlen = yyleng - 2;
+					if (yytext[wordlen] == '\r')
+						wordlen--;
+					Assert(yytext[wordlen] == '\\');
+					psqlscan_emit(cur_state, yytext, wordlen);
 					return 1;
 				}
 
@@ -191,16 +195,31 @@ notnull			[Nn][Oo][Tt][Nn][Uu][Ll][Ll]
 					yylval->bval = false;
 					return BOOLEAN_CONST;
 				}
+"9223372036854775808" {
+					/*
+					 * Special handling for PG_INT64_MIN, which can't
+					 * accurately be represented here, as the minus sign is
+					 * lexed separately and INT64_MIN can't be represented as
+					 * a positive integer.
+					 */
+					return MAXINT_PLUS_ONE_CONST;
+				}
 {digit}+		{
-					yylval->ival = strtoint64(yytext);
+					if (!strtoint64(yytext, true, &yylval->ival))
+						expr_yyerror_more(yyscanner, "bigint constant overflow",
+										  strdup(yytext));
 					return INTEGER_CONST;
 				}
 {digit}+(\.{digit}*)?([eE][-+]?{digit}+)?	{
-					yylval->dval = atof(yytext);
+					if (!strtodouble(yytext, true, &yylval->dval))
+						expr_yyerror_more(yyscanner, "double constant overflow",
+										  strdup(yytext));
 					return DOUBLE_CONST;
 				}
 \.{digit}+([eE][-+]?{digit}+)?	{
-					yylval->dval = atof(yytext);
+					if (!strtodouble(yytext, true, &yylval->dval))
+						expr_yyerror_more(yyscanner, "double constant overflow",
+										  strdup(yytext));
 					return DOUBLE_CONST;
 				}
 {alpha}{alnum}*	{

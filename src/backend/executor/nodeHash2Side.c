@@ -207,7 +207,7 @@ ExecInitHash2Side(Hash2Side *node, EState *estate, int eflags)
 	 */
 	ExecAssignExprContext(estate, &hashstate->ps);
 
-	ExecInitResultTupleSlotTL(estate, &hashstate->ps);
+	ExecInitResultTupleSlotTL(&hashstate->ps, &TTSOpsMinimalTuple);
 	/*
 	 * initialize child expressions
 	 */
@@ -1002,12 +1002,20 @@ ExecHash2SideTableInsert(HashJoinTable hashtable,
 						 ShortestpathState *spstate,
 						 long *saved)
 {
-	return ExecHash2SideTableInsertTuple(hashtable,
-										 ExecFetchSlotMinimalTuple(slot),
-										 hashvalue,
-										 node,
-										 spstate,
-										 saved);
+	bool shouldFree;
+	MinimalTuple tuple = ExecFetchSlotMinimalTuple(slot, &shouldFree);
+	bool inserted =  ExecHash2SideTableInsertTuple(hashtable,
+												   tuple,
+												   hashvalue,
+												   node,
+												   spstate,
+												   saved);
+
+	if (shouldFree)
+	{
+		heap_free_minimal_tuple(tuple);
+	}
+	return inserted;
 }
 
 bool

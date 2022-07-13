@@ -20,6 +20,8 @@ mkdir $testdir
 # invoke pgbench
 sub pgbench
 {
+	local $Test::Builder::Level = $Test::Builder::Level + 1;
+
 	my ($opts, $stat, $out, $err, $name) = @_;
 	print STDERR "opts=$opts, stat=$stat, out=$out, err=$err, name=$name";
 	command_checks_all([ 'pgbench', split(/\s+/, $opts) ],
@@ -30,6 +32,8 @@ sub pgbench
 # invoke pgbench with scripts
 sub pgbench_scripts
 {
+	local $Test::Builder::Level = $Test::Builder::Level + 1;
+
 	my ($opts, $stat, $out, $err, $name, $files) = @_;
 	my @cmd = ('pgbench', split /\s+/, $opts);
 	my @filenames = ();
@@ -154,7 +158,7 @@ my @options = (
 		]
 	],
 
-	# loging sub-options
+	# logging sub-options
 	[
 		'sampling => log', '--sampling-rate=0.01',
 		[qr{log sampling .* only when}]
@@ -266,6 +270,42 @@ my @script_tests = (
 		'endif syntax error',
 		[qr{unexpected argument in command "endif"}],
 		{ 'endif-bad.sql' => "\\if 0\n\\endif BAD\n" }
+	],
+	[
+		'not enough arguments for least',
+		[qr{at least one argument expected \(least\)}],
+		{ 'bad-least.sql' => "\\set i least()\n" }
+	],
+	[
+		'not enough arguments for greatest',
+		[qr{at least one argument expected \(greatest\)}],
+		{ 'bad-greatest.sql' => "\\set i greatest()\n" }
+	],
+	[
+		'not enough arguments for hash',
+		[qr{unexpected number of arguments \(hash\)}],
+		{ 'bad-hash-1.sql' => "\\set i hash()\n" }
+	],
+	[
+		'too many arguments for hash',
+		[qr{unexpected number of arguments \(hash\)}],
+		{ 'bad-hash-2.sql' => "\\set i hash(1,2,3)\n" }
+	],
+	# overflow
+	[
+		'bigint overflow 1',
+		[qr{bigint constant overflow}],
+		{ 'overflow-1.sql' => "\\set i 100000000000000000000\n" }
+	],
+	[
+		'double overflow 2',
+		[qr{double constant overflow}],
+		{ 'overflow-2.sql' => "\\set d 1.0E309\n" }
+	],
+	[
+		'double overflow 3',
+		[qr{double constant overflow}],
+		{ 'overflow-3.sql' => "\\set d .1E310\n" }
 	],);
 
 for my $t (@script_tests)

@@ -122,9 +122,10 @@ unique_key_recheck(PG_FUNCTION_ARGS)
 	/*
 	 * The heap tuple must be put into a slot for FormIndexDatum.
 	 */
-	slot = MakeSingleTupleTableSlot(RelationGetDescr(trigdata->tg_relation));
+	slot = MakeSingleTupleTableSlot(RelationGetDescr(trigdata->tg_relation),
+									&TTSOpsHeapTuple);
 
-	ExecStoreTuple(new_row, slot, InvalidBuffer, false);
+	ExecStoreHeapTuple(new_row, slot, false);
 
 	/*
 	 * Typically the index won't have expressions, but if it does we need an

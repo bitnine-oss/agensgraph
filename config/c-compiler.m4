@@ -19,24 +19,38 @@ fi])# PGAC_C_SIGNED
 
 # PGAC_C_PRINTF_ARCHETYPE
 # -----------------------
-# Set the format archetype used by gcc to check printf type functions.  We
-# prefer "gnu_printf", which includes what glibc uses, such as %m for error
-# strings and %lld for 64 bit long longs.  GCC 4.4 introduced it.  It makes a
-# dramatic difference on Windows.
+# Select the format archetype to be used by gcc to check printf-type functions.
+# We prefer "gnu_printf", as that most closely matches the features supported
+# by src/port/snprintf.c (particularly the %m conversion spec).  However,
+# on some NetBSD versions, that doesn't work while "__syslog__" does.
+# If all else fails, use "printf".
 AC_DEFUN([PGAC_PRINTF_ARCHETYPE],
 [AC_CACHE_CHECK([for printf format archetype], pgac_cv_printf_archetype,
+[pgac_cv_printf_archetype=gnu_printf
+PGAC_TEST_PRINTF_ARCHETYPE
+if [[ "$ac_archetype_ok" = no ]]; then
+  pgac_cv_printf_archetype=__syslog__
+  PGAC_TEST_PRINTF_ARCHETYPE
+  if [[ "$ac_archetype_ok" = no ]]; then
+    pgac_cv_printf_archetype=printf
+  fi
+fi])
+AC_DEFINE_UNQUOTED([PG_PRINTF_ATTRIBUTE], [$pgac_cv_printf_archetype],
+[Define to best printf format archetype, usually gnu_printf if available.])
+])# PGAC_PRINTF_ARCHETYPE
+
+# Subroutine: test $pgac_cv_printf_archetype, set $ac_archetype_ok to yes or no
+AC_DEFUN([PGAC_TEST_PRINTF_ARCHETYPE],
 [ac_save_c_werror_flag=$ac_c_werror_flag
 ac_c_werror_flag=yes
 AC_COMPILE_IFELSE([AC_LANG_PROGRAM(
-[extern int
-pgac_write(int ignore, const char *fmt,...)
-__attribute__((format(gnu_printf, 2, 3)));], [])],
-                  [pgac_cv_printf_archetype=gnu_printf],
-                  [pgac_cv_printf_archetype=printf])
-ac_c_werror_flag=$ac_save_c_werror_flag])
-AC_DEFINE_UNQUOTED([PG_PRINTF_ATTRIBUTE], [$pgac_cv_printf_archetype],
-                   [Define to gnu_printf if compiler supports it, else printf.])
-])# PGAC_PRINTF_ARCHETYPE
+[extern void pgac_write(int ignore, const char *fmt,...)
+__attribute__((format($pgac_cv_printf_archetype, 2, 3)));],
+[pgac_write(0, "error %s: %m", "foo");])],
+                  [ac_archetype_ok=yes],
+                  [ac_archetype_ok=no])
+ac_c_werror_flag=$ac_save_c_werror_flag
+])# PGAC_TEST_PRINTF_ARCHETYPE
 
 
 # PGAC_TYPE_64BIT_INT(TYPE)
@@ -409,25 +423,6 @@ fi])# PGAC_C_COMPUTED_GOTO
 
 
 
-# PGAC_C_VA_ARGS
-# --------------
-# Check if the C compiler understands C99-style variadic macros,
-# and define HAVE__VA_ARGS if so.
-AC_DEFUN([PGAC_C_VA_ARGS],
-[AC_CACHE_CHECK(for __VA_ARGS__, pgac_cv__va_args,
-[AC_COMPILE_IFELSE([AC_LANG_PROGRAM([#include <stdio.h>],
-[#define debug(...) fprintf(stderr, __VA_ARGS__)
-debug("%s", "blarg");
-])],
-[pgac_cv__va_args=yes],
-[pgac_cv__va_args=no])])
-if test x"$pgac_cv__va_args" = xyes ; then
-AC_DEFINE(HAVE__VA_ARGS, 1,
-          [Define to 1 if your compiler understands __VA_ARGS__ in macros.])
-fi])# PGAC_C_VA_ARGS
-
-
-
 # PGAC_PROG_VARCC_VARFLAGS_OPT
 # -----------------------
 # Given a compiler, variable name and a string, check if the compiler
@@ -588,7 +583,7 @@ AC_DEFUN([PGAC_HAVE_GCC__SYNC_INT32_CAS],
   [pgac_cv_gcc_sync_int32_cas="yes"],
   [pgac_cv_gcc_sync_int32_cas="no"])])
 if test x"$pgac_cv_gcc_sync_int32_cas" = x"yes"; then
-  AC_DEFINE(HAVE_GCC__SYNC_INT32_CAS, 1, [Define to 1 if you have __sync_compare_and_swap(int *, int, int).])
+  AC_DEFINE(HAVE_GCC__SYNC_INT32_CAS, 1, [Define to 1 if you have __sync_val_compare_and_swap(int *, int, int).])
 fi])# PGAC_HAVE_GCC__SYNC_INT32_CAS
 
 # PGAC_HAVE_GCC__SYNC_INT64_CAS
@@ -603,7 +598,7 @@ AC_DEFUN([PGAC_HAVE_GCC__SYNC_INT64_CAS],
   [pgac_cv_gcc_sync_int64_cas="yes"],
   [pgac_cv_gcc_sync_int64_cas="no"])])
 if test x"$pgac_cv_gcc_sync_int64_cas" = x"yes"; then
-  AC_DEFINE(HAVE_GCC__SYNC_INT64_CAS, 1, [Define to 1 if you have __sync_compare_and_swap(int64 *, int64, int64).])
+  AC_DEFINE(HAVE_GCC__SYNC_INT64_CAS, 1, [Define to 1 if you have __sync_val_compare_and_swap(int64 *, int64, int64).])
 fi])# PGAC_HAVE_GCC__SYNC_INT64_CAS
 
 # PGAC_HAVE_GCC__ATOMIC_INT32_CAS
@@ -635,7 +630,7 @@ AC_DEFUN([PGAC_HAVE_GCC__ATOMIC_INT64_CAS],
   [pgac_cv_gcc_atomic_int64_cas="yes"],
   [pgac_cv_gcc_atomic_int64_cas="no"])])
 if test x"$pgac_cv_gcc_atomic_int64_cas" = x"yes"; then
-  AC_DEFINE(HAVE_GCC__ATOMIC_INT64_CAS, 1, [Define to 1 if you have __atomic_compare_exchange_n(int64 *, int *, int64).])
+  AC_DEFINE(HAVE_GCC__ATOMIC_INT64_CAS, 1, [Define to 1 if you have __atomic_compare_exchange_n(int64 *, int64 *, int64).])
 fi])# PGAC_HAVE_GCC__ATOMIC_INT64_CAS
 
 # PGAC_SSE42_CRC32_INTRINSICS

@@ -463,7 +463,8 @@ generateSerialExtraStmts(CreateStmtContext *cxt, ColumnDef *column,
 		sname = ChooseRelationName(cxt->relation->relname,
 								   column->colname,
 								   "seq",
-								   snamespaceid);
+								   snamespaceid,
+								   false);
 	}
 
 	ereport(DEBUG1,
@@ -1010,7 +1011,6 @@ transformTableLikeClause(CreateStmtContext *cxt, TableLikeClause *table_like_cla
 		def->is_local = true;
 		def->is_not_null = attribute->attnotnull;
 		def->is_from_type = false;
-		def->is_from_parent = false;
 		def->storage = 0;
 		def->raw_default = NULL;
 		def->cooked_default = NULL;
@@ -1287,7 +1287,6 @@ transformOfType(CreateStmtContext *cxt, TypeName *ofTypename)
 		n->is_local = true;
 		n->is_not_null = false;
 		n->is_from_type = true;
-		n->is_from_parent = false;
 		n->storage = 0;
 		n->raw_default = NULL;
 		n->cooked_default = NULL;
@@ -2087,7 +2086,7 @@ transformIndexConstraint(Constraint *constraint, CreateStmtContext *cxt)
 		for (i = 0; i < index_form->indnatts; i++)
 		{
 			int16		attnum = index_form->indkey.values[i];
-			Form_pg_attribute attform;
+			const FormData_pg_attribute *attform;
 			char	   *attname;
 			Oid			defopclass;
 
@@ -2121,7 +2120,7 @@ transformIndexConstraint(Constraint *constraint, CreateStmtContext *cxt)
 					index_rel->rd_indoption[i] != 0)
 					ereport(ERROR,
 							(errcode(ERRCODE_WRONG_OBJECT_TYPE),
-							 errmsg("index \"%s\" does not have default sorting behavior", index_name),
+							 errmsg("index \"%s\" column number %d does not have default sorting behavior", index_name, i + 1),
 							 errdetail("Cannot create a primary key or unique constraint using such an index."),
 							 parser_errposition(cxt->pstate, constraint->location)));
 
@@ -2548,7 +2547,9 @@ transformIndexStmt(Oid relid, IndexStmt *stmt, const char *queryString)
 	 * relation, but we still need to open it.
 	 */
 	rel = relation_open(relid, NoLock);
-	rte = addRangeTableEntryForRelation(pstate, rel, NULL, false, true);
+	rte = addRangeTableEntryForRelation(pstate, rel,
+										AccessShareLock,
+										NULL, false, true);
 
 	/* no to join list, yes to namespaces */
 	addRTEtoQuery(pstate, rte, false, true, true);
@@ -2660,9 +2661,11 @@ transformRuleStmt(RuleStmt *stmt, const char *queryString,
 	 * qualification.
 	 */
 	oldrte = addRangeTableEntryForRelation(pstate, rel,
+										   AccessShareLock,
 										   makeAlias("old", NIL),
 										   false, false);
 	newrte = addRangeTableEntryForRelation(pstate, rel,
+										   AccessShareLock,
 										   makeAlias("new", NIL),
 										   false, false);
 	/* Must override addRangeTableEntry's default access-check flags */
@@ -2758,9 +2761,11 @@ transformRuleStmt(RuleStmt *stmt, const char *queryString,
 			 * them in the joinlist.
 			 */
 			oldrte = addRangeTableEntryForRelation(sub_pstate, rel,
+												   AccessShareLock,
 												   makeAlias("old", NIL),
 												   false, false);
 			newrte = addRangeTableEntryForRelation(sub_pstate, rel,
+												   AccessShareLock,
 												   makeAlias("new", NIL),
 												   false, false);
 			oldrte->requiredPerms = 0;
@@ -2938,6 +2943,7 @@ transformAlterTableStmt(Oid relid, AlterTableStmt *stmt,
 						const char *queryString)
 {
 	Relation	rel;
+	TupleDesc	tupdesc;
 	ParseState *pstate;
 	CreateStmtContext cxt;
 	List	   *result;
@@ -2962,12 +2968,14 @@ transformAlterTableStmt(Oid relid, AlterTableStmt *stmt,
 
 	/* Caller is responsible for locking the relation */
 	rel = relation_open(relid, NoLock);
+	tupdesc = RelationGetDescr(rel);
 
 	/* Set up pstate */
 	pstate = make_parsestate(NULL);
 	pstate->p_sourcetext = queryString;
 	rte = addRangeTableEntryForRelation(pstate,
 										rel,
+										AccessShareLock,
 										NULL,
 										false,
 										true);
@@ -3090,7 +3098,8 @@ transformAlterTableStmt(Oid relid, AlterTableStmt *stmt,
 					 * if attribute not found, something will error about it
 					 * later
 					 */
-					if (attnum != InvalidAttrNumber && get_attidentity(relid, attnum))
+					if (attnum != InvalidAttrNumber &&
+						TupleDescAttr(tupdesc, attnum - 1)->attidentity)
 					{
 						Oid			seq_relid = getOwnedSequence(relid, attnum);
 						Oid			typeOid = typenameTypeId(pstate, def->typeName);
@@ -4333,21 +4342,21 @@ makeEdgeIndex(RangeVar *label)
 
 	edge_id_idx = makeNode(IndexStmt);
 	edge_id_idx->idxname = ChooseRelationName(labname, AG_ELEM_LOCAL_ID,
-											  "idx", graphid);
+											  "idx", graphid, false);
 	edge_id_idx->relation = copyObject(label);
 	edge_id_idx->accessMethod = "brin";
 	edge_id_idx->indexParams = list_make1(id_col);
 
 	start_idx = makeNode(IndexStmt);
 	start_idx->idxname = ChooseRelationName(labname, AG_START_ID,
-											"idx", graphid);
+											"idx", graphid, false);
 	start_idx->relation = copyObject(label);
 	start_idx->accessMethod = "btree";
 	start_idx->indexParams = list_make2(start_col, end_col);
 
 	end_idx = makeNode(IndexStmt);
 	end_idx->idxname = ChooseRelationName(labname, AG_END_ID,
-										  "idx", graphid);
+										  "idx", graphid, false);
 	end_idx->relation = copyObject(label);
 	end_idx->accessMethod = "btree";
 	end_idx->indexParams = list_make2(end_col, start_col);
@@ -4413,7 +4422,7 @@ transformLabelIdDefinition(CreateStmtContext *cxt, ColumnDef *col)
 
 	snamespace = get_namespace_name(snamespaceid);
 	sname = ChooseRelationName(cxt->relation->relname, AG_ELEM_LOCAL_ID,
-							   "seq", snamespaceid);
+							   "seq", snamespaceid, false);
 
 	/* CREATE SEQUENCE before CREATE TABLE */
 
@@ -4426,17 +4435,8 @@ transformLabelIdDefinition(CreateStmtContext *cxt, ColumnDef *col)
 
 	/* ALTER SEQUENCE OWNED BY after CREATE TABLE */
 
-#ifdef HAVE_LONG_INT_64
 	maxval = makeDefElem("maxvalue", (Node *) makeFloat(psprintf(INT64_FORMAT,
 																 GRAPHID_LOCID_MAX)), -1);
-#else
-	{
-		char buf[32];
-
-		snprintf(buf, sizeof(buf), UINT64_FORMAT, GRAPHID_LOCID_MAX);
-		maxval = makeDefElem("maxvalue", (Node *) makeFloat(pstrdup(buf)), -1);
-	}
-#endif
 	attnamelist = list_make3(makeString(snamespace),
 							 makeString(cxt->relation->relname),
 							 makeString(AG_ELEM_LOCAL_ID));
@@ -4636,7 +4636,7 @@ transformCreateConstraintStmt(ParseState *pstate,
 					nsid = LookupNamespaceNoError(label->schemaname);
 					constr->conname = ChooseRelationName(label->relname,
 														 "unique",
-														 "constraint", nsid);
+														 "constraint", nsid, true);
 				}
 			}
 			break;
@@ -4763,7 +4763,7 @@ transformCreatePropertyIndexStmt(Oid relid, CreatePropertyIndexStmt *stmt,
 	 * relation, but we still need to open it.
 	 */
 	rel = relation_open(relid, NoLock);
-	rte = addRangeTableEntryForRelation(pstate, rel, NULL, false, true);
+	rte = addRangeTableEntryForRelation(pstate, rel, AccessShareLock, NULL, false, true);
 
 	/* no to join list, yes to namespaces */
 	addRTEtoQuery(pstate, rte, false, true, true);

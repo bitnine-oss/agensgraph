@@ -25,6 +25,7 @@
 #include "catalog/catversion.h"
 #include "catalog/pg_control.h"
 #include "common/file_perm.h"
+#include "common/file_utils.h"
 #include "common/restricted_token.h"
 #include "getopt_long.h"
 #include "storage/bufpage.h"
@@ -55,6 +56,7 @@ char	   *connstr_source = NULL;
 bool		debug = false;
 bool		showprogress = false;
 bool		dry_run = false;
+bool		do_sync = true;
 
 /* Target history */
 TimeLineHistoryEntry *targetHistory;
@@ -70,6 +72,8 @@ usage(const char *progname)
 	printf(_("      --source-pgdata=DIRECTORY  source data directory to synchronize with\n"));
 	printf(_("      --source-server=CONNSTR    source server to synchronize with\n"));
 	printf(_("  -n, --dry-run                  stop before modifying anything\n"));
+	printf(_("  -N, --no-sync                  do not wait for changes to be written\n"));
+	printf(_("                                 safely to disk\n"));
 	printf(_("  -P, --progress                 write progress messages\n"));
 	printf(_("      --debug                    write a lot of debug messages\n"));
 	printf(_("  -V, --version                  output version information, then exit\n"));
@@ -88,6 +92,7 @@ main(int argc, char **argv)
 		{"source-server", required_argument, NULL, 2},
 		{"version", no_argument, NULL, 'V'},
 		{"dry-run", no_argument, NULL, 'n'},
+		{"no-sync", no_argument, NULL, 'N'},
 		{"progress", no_argument, NULL, 'P'},
 		{"debug", no_argument, NULL, 3},
 		{NULL, 0, NULL, 0}
@@ -124,7 +129,7 @@ main(int argc, char **argv)
 		}
 	}
 
-	while ((c = getopt_long(argc, argv, "D:nP", long_options, &option_index)) != -1)
+	while ((c = getopt_long(argc, argv, "D:nNP", long_options, &option_index)) != -1)
 	{
 		switch (c)
 		{
@@ -138,6 +143,10 @@ main(int argc, char **argv)
 
 			case 'n':
 				dry_run = true;
+				break;
+
+			case 'N':
+				do_sync = false;
 				break;
 
 			case 3:
@@ -701,50 +710,15 @@ updateControlFile(ControlFileData *ControlFile)
  *
  * We do this once, for the whole data directory, for performance reasons.  At
  * the end of pg_rewind's run, the kernel is likely to already have flushed
- * most dirty buffers to disk. Additionally initdb -S uses a two-pass approach
- * (only initiating writeback in the first pass), which often reduces the
- * overall amount of IO noticeably.
+ * most dirty buffers to disk.  Additionally fsync_pgdata uses a two-pass
+ * approach (only initiating writeback in the first pass), which often reduces
+ * the overall amount of IO noticeably.
  */
 static void
 syncTargetDirectory(const char *argv0)
 {
-	int			ret;
-#define MAXCMDLEN (2 * MAXPGPATH)
-	char		exec_path[MAXPGPATH];
-	char		cmd[MAXCMDLEN];
-
-	/* locate initdb binary */
-	if ((ret = find_other_exec(argv0, "initdb",
-							   "initdb (PostgreSQL) " PG_VERSION "\n",
-							   exec_path)) < 0)
-	{
-		char		full_path[MAXPGPATH];
-
-		if (find_my_exec(argv0, full_path) < 0)
-			strlcpy(full_path, progname, sizeof(full_path));
-
-		if (ret == -1)
-			pg_fatal("The program \"initdb\" is needed by %s but was\n"
-					 "not found in the same directory as \"%s\".\n"
-					 "Check your installation.\n", progname, full_path);
-		else
-			pg_fatal("The program \"initdb\" was found by \"%s\"\n"
-					 "but was not the same version as %s.\n"
-					 "Check your installation.\n", full_path, progname);
-	}
-
-	/* only skip processing after ensuring presence of initdb */
-	if (dry_run)
+	if (!do_sync || dry_run)
 		return;
 
-	/* finally run initdb -S */
-	if (debug)
-		snprintf(cmd, MAXCMDLEN, "\"%s\" -D \"%s\" -S",
-				 exec_path, datadir_target);
-	else
-		snprintf(cmd, MAXCMDLEN, "\"%s\" -D \"%s\" -S > \"%s\"",
-				 exec_path, datadir_target, DEVNULL);
-
-	if (system(cmd) != 0)
-		pg_fatal("sync of target directory failed\n");
+	fsync_pgdata(datadir_target, progname, PG_VERSION_NUM);
 }

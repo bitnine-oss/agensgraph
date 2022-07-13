@@ -110,6 +110,15 @@ ExecInitGatherMerge(GatherMerge *node, EState *estate, int eflags)
 	outerPlanState(gm_state) = ExecInitNode(outerNode, estate, eflags);
 
 	/*
+	 * Leader may access ExecProcNode result directly (if
+	 * need_to_scan_locally), or from workers via tuple queue.  So we can't
+	 * trivially rely on the slot type being fixed for expressions evaluated
+	 * within this node.
+	 */
+	gm_state->ps.outeropsset = true;
+	gm_state->ps.outeropsfixed = false;
+
+	/*
 	 * Store the tuple descriptor into gather merge state, so we can use it
 	 * while initializing the gather merge slots.
 	 */
@@ -117,10 +126,20 @@ ExecInitGatherMerge(GatherMerge *node, EState *estate, int eflags)
 	gm_state->tupDesc = tupDesc;
 
 	/*
-	 * Initialize result slot, type and projection.
+	 * Initialize result type and projection.
 	 */
-	ExecInitResultTupleSlotTL(estate, &gm_state->ps);
+	ExecInitResultTypeTL(&gm_state->ps);
 	ExecConditionalAssignProjectionInfo(&gm_state->ps, tupDesc, OUTER_VAR);
+
+	/*
+	 * Without projections result slot type is not trivially known, see
+	 * comment above.
+	 */
+	if (gm_state->ps.ps_ProjInfo == NULL)
+	{
+		gm_state->ps.resultopsset = true;
+		gm_state->ps.resultopsfixed = false;
+	}
 
 	/*
 	 * initialize sort-key information
@@ -272,7 +291,8 @@ ExecEndGatherMerge(GatherMergeState *node)
 	ExecEndNode(outerPlanState(node));	/* let children clean up first */
 	ExecShutdownGatherMerge(node);
 	ExecFreeExprContext(&node->ps);
-	ExecClearTuple(node->ps.ps_ResultTupleSlot);
+	if (node->ps.ps_ResultTupleSlot)
+		ExecClearTuple(node->ps.ps_ResultTupleSlot);
 }
 
 /* ----------------------------------------------------------------
@@ -403,7 +423,8 @@ gather_merge_setup(GatherMergeState *gm_state)
 
 		/* Initialize tuple slot for worker */
 		gm_state->gm_slots[i + 1] =
-			ExecInitExtraTupleSlot(gm_state->ps.state, gm_state->tupDesc);
+			ExecInitExtraTupleSlot(gm_state->ps.state, gm_state->tupDesc,
+								   &TTSOpsHeapTuple);
 	}
 
 	/* Allocate the resources for the merge */
@@ -679,11 +700,10 @@ gather_merge_readnext(GatherMergeState *gm_state, int reader, bool nowait)
 	Assert(HeapTupleIsValid(tup));
 
 	/* Build the TupleTableSlot for the given tuple */
-	ExecStoreTuple(tup,			/* tuple to store */
-				   gm_state->gm_slots[reader],	/* slot in which to store the
-												 * tuple */
-				   InvalidBuffer,	/* no buffer associated with tuple */
-				   true);		/* pfree tuple when done with it */
+	ExecStoreHeapTuple(tup,			/* tuple to store */
+					   gm_state->gm_slots[reader],	/* slot in which to store
+													 * the tuple */
+					   true);		/* pfree tuple when done with it */
 
 	return true;
 }
@@ -756,7 +776,10 @@ heap_compare_slots(Datum a, Datum b, void *arg)
 									  datum2, isNull2,
 									  sortKey);
 		if (compare != 0)
-			return -compare;
+		{
+			INVERT_COMPARE_RESULT(compare);
+			return compare;
+		}
 	}
 	return 0;
 }

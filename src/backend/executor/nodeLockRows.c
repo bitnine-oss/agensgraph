@@ -381,15 +381,19 @@ ExecInitLockRows(LockRows *node, EState *estate, int eflags)
 	 */
 
 	/*
-	 * Tuple table initialization (XXX not actually used, but upper nodes
-	 * access it to get this node's result tupledesc...)
+	 * Initialize result type.
 	 */
-	ExecInitResultTupleSlotTL(estate, &lrstate->ps);
+	ExecInitResultTypeTL(&lrstate->ps);
 
 	/*
 	 * then initialize outer plan
 	 */
 	outerPlanState(lrstate) = ExecInitNode(outerPlan, estate, eflags);
+
+	/* node returns unmodified slots from the outer plan */
+	lrstate->ps.resultopsset = true;
+	lrstate->ps.resultops = ExecGetResultSlotOps(outerPlanState(lrstate),
+													&lrstate->ps.resultopsfixed);
 
 	/*
 	 * LockRows nodes do no projections, so initialize projection info for
@@ -400,7 +404,7 @@ ExecInitLockRows(LockRows *node, EState *estate, int eflags)
 	/*
 	 * Create workspace in which we can remember per-RTE locked tuples
 	 */
-	lrstate->lr_ntables = list_length(estate->es_range_table);
+	lrstate->lr_ntables = estate->es_range_table_size;
 	lrstate->lr_curtuples = (HeapTuple *)
 		palloc0(lrstate->lr_ntables * sizeof(HeapTuple));
 

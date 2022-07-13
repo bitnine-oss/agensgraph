@@ -150,6 +150,7 @@ static void ExecInitInterpreter(void);
 
 /* support functions */
 static void CheckVarSlotCompatibility(TupleTableSlot *slot, int attnum, Oid vartype);
+static void CheckOpSlotCompatibility(ExprEvalStep *op, TupleTableSlot *slot);
 static TupleDesc get_cached_rowtype(Oid type_id, int32 typmod,
 				   TupleDesc *cache_field, ExprContext *econtext);
 static void ShutdownTupleDescRef(Datum arg);
@@ -452,7 +453,8 @@ ExecInterpExpr(ExprState *state, ExprContext *econtext, bool *isnull)
 
 		EEO_CASE(EEOP_INNER_FETCHSOME)
 		{
-			/* XXX: worthwhile to check tts_nvalid inline first? */
+			CheckOpSlotCompatibility(op, innerslot);
+
 			slot_getsomeattrs(innerslot, op->d.fetch.last_var);
 
 			EEO_NEXT();
@@ -460,6 +462,8 @@ ExecInterpExpr(ExprState *state, ExprContext *econtext, bool *isnull)
 
 		EEO_CASE(EEOP_OUTER_FETCHSOME)
 		{
+			CheckOpSlotCompatibility(op, outerslot);
+
 			slot_getsomeattrs(outerslot, op->d.fetch.last_var);
 
 			EEO_NEXT();
@@ -467,6 +471,8 @@ ExecInterpExpr(ExprState *state, ExprContext *econtext, bool *isnull)
 
 		EEO_CASE(EEOP_SCAN_FETCHSOME)
 		{
+			CheckOpSlotCompatibility(op, scanslot);
+
 			slot_getsomeattrs(scanslot, op->d.fetch.last_var);
 
 			EEO_NEXT();
@@ -517,55 +523,19 @@ ExecInterpExpr(ExprState *state, ExprContext *econtext, bool *isnull)
 
 		EEO_CASE(EEOP_INNER_SYSVAR)
 		{
-			int			attnum = op->d.var.attnum;
-			Datum		d;
-
-			/* these asserts must match defenses in slot_getattr */
-			Assert(innerslot->tts_tuple != NULL);
-			Assert(innerslot->tts_tuple != &(innerslot->tts_minhdr));
-
-			/* heap_getsysattr has sufficient defenses against bad attnums */
-			d = heap_getsysattr(innerslot->tts_tuple, attnum,
-								innerslot->tts_tupleDescriptor,
-								op->resnull);
-			*op->resvalue = d;
-
+			ExecEvalSysVar(state, op, econtext, innerslot);
 			EEO_NEXT();
 		}
 
 		EEO_CASE(EEOP_OUTER_SYSVAR)
 		{
-			int			attnum = op->d.var.attnum;
-			Datum		d;
-
-			/* these asserts must match defenses in slot_getattr */
-			Assert(outerslot->tts_tuple != NULL);
-			Assert(outerslot->tts_tuple != &(outerslot->tts_minhdr));
-
-			/* heap_getsysattr has sufficient defenses against bad attnums */
-			d = heap_getsysattr(outerslot->tts_tuple, attnum,
-								outerslot->tts_tupleDescriptor,
-								op->resnull);
-			*op->resvalue = d;
-
+			ExecEvalSysVar(state, op, econtext, outerslot);
 			EEO_NEXT();
 		}
 
 		EEO_CASE(EEOP_SCAN_SYSVAR)
 		{
-			int			attnum = op->d.var.attnum;
-			Datum		d;
-
-			/* these asserts must match defenses in slot_getattr */
-			Assert(scanslot->tts_tuple != NULL);
-			Assert(scanslot->tts_tuple != &(scanslot->tts_minhdr));
-
-			/* heap_getsysattr has sufficient defenses against bad attnums */
-			d = heap_getsysattr(scanslot->tts_tuple, attnum,
-								scanslot->tts_tupleDescriptor,
-								op->resnull);
-			*op->resvalue = d;
-
+			ExecEvalSysVar(state, op, econtext, scanslot);
 			EEO_NEXT();
 		}
 
@@ -1649,7 +1619,7 @@ ExecInterpExpr(ExprState *state, ExprContext *econtext, bool *isnull)
 
 		/*
 		 * Evaluate aggregate transition / combine function that has a
-		 * by-value transition type. That's a seperate case from the
+		 * by-value transition type. That's a separate case from the
 		 * by-reference implementation because it's a bit simpler.
 		 */
 		EEO_CASE(EEOP_AGG_PLAIN_TRANS_BYVAL)
@@ -2053,6 +2023,39 @@ CheckVarSlotCompatibility(TupleTableSlot *slot, int attnum, Oid vartype)
 }
 
 /*
+ * Verify that the slot is compatible with a EEOP_*_FETCHSOME operation.
+ */
+static void
+CheckOpSlotCompatibility(ExprEvalStep *op, TupleTableSlot *slot)
+{
+#ifdef USE_ASSERT_CHECKING
+	/* there's nothing to check */
+	if (!op->d.fetch.fixed)
+		return;
+
+	/*
+	 * Should probably fixed at some point, but for now it's easier to allow
+	 * buffer and heap tuples to be used interchangably.
+	 */
+	if (slot->tts_ops == &TTSOpsBufferHeapTuple &&
+		op->d.fetch.kind == &TTSOpsHeapTuple)
+		return;
+	if (slot->tts_ops == &TTSOpsHeapTuple &&
+		op->d.fetch.kind == &TTSOpsBufferHeapTuple)
+		return;
+
+	/*
+	 * At the moment we consider it OK if a virtual slot is used instead of a
+	 * specific type of slot, as a virtual slot never needs to be deformed.
+	 */
+	if (slot->tts_ops == &TTSOpsVirtual)
+		return;
+
+	Assert(op->d.fetch.kind == slot->tts_ops);
+#endif
+}
+
+/*
  * get_cached_rowtype: utility function to lookup a rowtype tupdesc
  *
  * type_id, typmod: identity of the rowtype
@@ -2119,6 +2122,8 @@ ExecJustInnerVar(ExprState *state, ExprContext *econtext, bool *isnull)
 	int			attnum = op->d.var.attnum + 1;
 	TupleTableSlot *slot = econtext->ecxt_innertuple;
 
+	CheckOpSlotCompatibility(&state->steps[0], slot);
+
 	/*
 	 * Since we use slot_getattr(), we don't need to implement the FETCHSOME
 	 * step explicitly, and we also needn't Assert that the attnum is in range
@@ -2135,6 +2140,8 @@ ExecJustOuterVar(ExprState *state, ExprContext *econtext, bool *isnull)
 	int			attnum = op->d.var.attnum + 1;
 	TupleTableSlot *slot = econtext->ecxt_outertuple;
 
+	CheckOpSlotCompatibility(&state->steps[0], slot);
+
 	/* See comments in ExecJustInnerVar */
 	return slot_getattr(slot, attnum, isnull);
 }
@@ -2146,6 +2153,8 @@ ExecJustScanVar(ExprState *state, ExprContext *econtext, bool *isnull)
 	ExprEvalStep *op = &state->steps[1];
 	int			attnum = op->d.var.attnum + 1;
 	TupleTableSlot *slot = econtext->ecxt_scantuple;
+
+	CheckOpSlotCompatibility(&state->steps[0], slot);
 
 	/* See comments in ExecJustInnerVar */
 	return slot_getattr(slot, attnum, isnull);
@@ -2171,6 +2180,8 @@ ExecJustAssignInnerVar(ExprState *state, ExprContext *econtext, bool *isnull)
 	TupleTableSlot *inslot = econtext->ecxt_innertuple;
 	TupleTableSlot *outslot = state->resultslot;
 
+	CheckOpSlotCompatibility(&state->steps[0], inslot);
+
 	/*
 	 * We do not need CheckVarSlotCompatibility here; that was taken care of
 	 * at compilation time.
@@ -2194,6 +2205,8 @@ ExecJustAssignOuterVar(ExprState *state, ExprContext *econtext, bool *isnull)
 	TupleTableSlot *inslot = econtext->ecxt_outertuple;
 	TupleTableSlot *outslot = state->resultslot;
 
+	CheckOpSlotCompatibility(&state->steps[0], inslot);
+
 	/* See comments in ExecJustAssignInnerVar */
 	outslot->tts_values[resultnum] =
 		slot_getattr(inslot, attnum, &outslot->tts_isnull[resultnum]);
@@ -2209,6 +2222,8 @@ ExecJustAssignScanVar(ExprState *state, ExprContext *econtext, bool *isnull)
 	int			resultnum = op->d.assign_var.resultnum;
 	TupleTableSlot *inslot = econtext->ecxt_scantuple;
 	TupleTableSlot *outslot = state->resultslot;
+
+	CheckOpSlotCompatibility(&state->steps[0], inslot);
 
 	/* See comments in ExecJustAssignInnerVar */
 	outslot->tts_values[resultnum] =
@@ -2412,33 +2427,6 @@ ExecEvalParamExec(ExprState *state, ExprEvalStep *op, ExprContext *econtext)
 	}
 	*op->resvalue = prm->value;
 	*op->resnull = prm->isnull;
-}
-
-/*
- * ExecEvalParamExecParams
- *
- * Execute the subplan stored in PARAM_EXEC initplans params, if not executed
- * till now.
- */
-void
-ExecEvalParamExecParams(Bitmapset *params, EState *estate)
-{
-	ParamExecData *prm;
-	int			paramid;
-
-	paramid = -1;
-	while ((paramid = bms_next_member(params, paramid)) >= 0)
-	{
-		prm = &(estate->es_param_exec_vals[paramid]);
-
-		if (prm->execPlan != NULL)
-		{
-			/* Parameter not evaluated yet, so go do it */
-			ExecSetParamPlan(prm->execPlan, GetPerTupleExprContext(estate));
-			/* ExecSetParamPlan should have processed this param... */
-			Assert(prm->execPlan == NULL);
-		}
-	}
 }
 
 /*
@@ -3474,7 +3462,7 @@ ExecEvalConvertRowtype(ExprState *state, ExprEvalStep *op, ExprContext *econtext
 	if (op->d.convert_rowtype.map != NULL)
 	{
 		/* Full conversion with attribute rearrangement needed */
-		result = do_convert_tuple(&tmptup, op->d.convert_rowtype.map);
+		result = execute_attr_map_tuple(&tmptup, op->d.convert_rowtype.map);
 		/* Result already has appropriate composite-datum header fields */
 		*op->resvalue = HeapTupleGetDatum(result);
 	}
@@ -4123,10 +4111,10 @@ ExecEvalWholeRowVar(ExprState *state, ExprEvalStep *op, ExprContext *econtext)
 		 * perhaps other places.)
 		 */
 		if (econtext->ecxt_estate &&
-			variable->varno <= list_length(econtext->ecxt_estate->es_range_table))
+			variable->varno <= econtext->ecxt_estate->es_range_table_size)
 		{
-			RangeTblEntry *rte = rt_fetch(variable->varno,
-										  econtext->ecxt_estate->es_range_table);
+			RangeTblEntry *rte = exec_rt_fetch(variable->varno,
+											   econtext->ecxt_estate);
 
 			if (rte->eref)
 				ExecTypeSetColNames(output_tupdesc, rte->eref->colnames);
@@ -4193,6 +4181,22 @@ ExecEvalWholeRowVar(ExprState *state, ExprEvalStep *op, ExprContext *econtext)
 
 	*op->resvalue = PointerGetDatum(dtuple);
 	*op->resnull = false;
+}
+
+void
+ExecEvalSysVar(ExprState *state, ExprEvalStep *op, ExprContext *econtext,
+			   TupleTableSlot *slot)
+{
+	Datum d;
+
+	/* slot_getsysattr has sufficient defenses against bad attnums */
+	d = slot_getsysattr(slot,
+						op->d.var.attnum,
+						op->resnull);
+	*op->resvalue = d;
+	/* this ought to be unreachable, but it's cheap enough to check */
+	if (unlikely(*op->resnull))
+		elog(ERROR, "failed to fetch attribute from slot");
 }
 
 /*

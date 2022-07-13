@@ -275,7 +275,12 @@ typedef struct ExprEvalStep
 		{
 			/* attribute number up to which to fetch (inclusive) */
 			int			last_var;
+			/* will the type of slot be the same for every invocation */
+			bool		fixed;
+			/* tuple descriptor, if known */
 			TupleDesc	known_desc;
+			/* type of slot, can only be relied upon if fixed is set */
+			const TupleTableSlotOps *kind;
 		}			fetch;
 
 		/* for EEOP_INNER/OUTER/SCAN_[SYS]VAR[_FIRST] */
@@ -780,7 +785,6 @@ extern void ExecEvalFuncExprStrictFusage(ExprState *state, ExprEvalStep *op,
 							 ExprContext *econtext);
 extern void ExecEvalParamExec(ExprState *state, ExprEvalStep *op,
 				  ExprContext *econtext);
-extern void ExecEvalParamExecParams(Bitmapset *params, EState *estate);
 extern void ExecEvalParamExtern(ExprState *state, ExprEvalStep *op,
 					ExprContext *econtext);
 extern void ExecEvalSQLValueFunction(ExprState *state, ExprEvalStep *op);
@@ -818,6 +822,8 @@ extern void ExecEvalAlternativeSubPlan(ExprState *state, ExprEvalStep *op,
 						   ExprContext *econtext);
 extern void ExecEvalWholeRowVar(ExprState *state, ExprEvalStep *op,
 					ExprContext *econtext);
+extern void ExecEvalSysVar(ExprState *state, ExprEvalStep *op,
+			   ExprContext *econtext, TupleTableSlot *slot);
 
 extern void ExecAggInitGroup(AggState *aggstate, AggStatePerTrans pertrans, AggStatePerGroup pergroup);
 extern Datum ExecAggTransReparent(AggState *aggstate, AggStatePerTrans pertrans,

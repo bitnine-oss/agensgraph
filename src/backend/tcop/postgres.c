@@ -316,7 +316,7 @@ interactive_getc(void)
 
 	c = getc(stdin);
 
-	ProcessClientReadInterrupt(true);
+	ProcessClientReadInterrupt(false);
 
 	return c;
 }
@@ -521,8 +521,9 @@ ReadCommand(StringInfo inBuf)
 /*
  * ProcessClientReadInterrupt() - Process interrupts specific to client reads
  *
- * This is called just after low-level reads. That might be after the read
- * finished successfully, or it was interrupted via interrupt.
+ * This is called just before and after low-level reads.
+ * 'blocked' is true if no data was available to read and we plan to retry,
+ * false if about to read or done reading.
  *
  * Must preserve errno!
  */
@@ -533,23 +534,31 @@ ProcessClientReadInterrupt(bool blocked)
 
 	if (DoingCommandRead)
 	{
-		/* Check for general interrupts that arrived while reading */
+		/* Check for general interrupts that arrived before/while reading */
 		CHECK_FOR_INTERRUPTS();
 
-		/* Process sinval catchup interrupts that happened while reading */
+		/* Process sinval catchup interrupts, if any */
 		if (catchupInterruptPending)
 			ProcessCatchupInterrupt();
 
-		/* Process sinval catchup interrupts that happened while reading */
+		/* Process notify interrupts, if any */
 		if (notifyInterruptPending)
 			ProcessNotifyInterrupt();
 	}
-	else if (ProcDiePending && blocked)
+	else if (ProcDiePending)
 	{
 		/*
-		 * We're dying. It's safe (and sane) to handle that now.
+		 * We're dying.  If there is no data available to read, then it's safe
+		 * (and sane) to handle that now.  If we haven't tried to read yet,
+		 * make sure the process latch is set, so that if there is no data
+		 * then we'll come back here and die.  If we're done reading, also
+		 * make sure the process latch is set, as we might've undesirably
+		 * cleared it while reading.
 		 */
-		CHECK_FOR_INTERRUPTS();
+		if (blocked)
+			CHECK_FOR_INTERRUPTS();
+		else
+			SetLatch(MyLatch);
 	}
 
 	errno = save_errno;
@@ -558,9 +567,9 @@ ProcessClientReadInterrupt(bool blocked)
 /*
  * ProcessClientWriteInterrupt() - Process interrupts specific to client writes
  *
- * This is called just after low-level writes. That might be after the read
- * finished successfully, or it was interrupted via interrupt. 'blocked' tells
- * us whether the
+ * This is called just before and after low-level writes.
+ * 'blocked' is true if no data could be written and we plan to retry,
+ * false if about to write or done writing.
  *
  * Must preserve errno!
  */
@@ -569,25 +578,39 @@ ProcessClientWriteInterrupt(bool blocked)
 {
 	int			save_errno = errno;
 
-	/*
-	 * We only want to process the interrupt here if socket writes are
-	 * blocking to increase the chance to get an error message to the client.
-	 * If we're not blocked there'll soon be a CHECK_FOR_INTERRUPTS(). But if
-	 * we're blocked we'll never get out of that situation if the client has
-	 * died.
-	 */
-	if (ProcDiePending && blocked)
+	if (ProcDiePending)
 	{
 		/*
-		 * We're dying. It's safe (and sane) to handle that now. But we don't
-		 * want to send the client the error message as that a) would possibly
-		 * block again b) would possibly lead to sending an error message to
-		 * the client, while we already started to send something else.
+		 * We're dying.  If it's not possible to write, then we should handle
+		 * that immediately, else a stuck client could indefinitely delay our
+		 * response to the signal.  If we haven't tried to write yet, make
+		 * sure the process latch is set, so that if the write would block
+		 * then we'll come back here and die.  If we're done writing, also
+		 * make sure the process latch is set, as we might've undesirably
+		 * cleared it while writing.
 		 */
-		if (whereToSendOutput == DestRemote)
-			whereToSendOutput = DestNone;
+		if (blocked)
+		{
+			/*
+			 * Don't mess with whereToSendOutput if ProcessInterrupts wouldn't
+			 * do anything.
+			 */
+			if (InterruptHoldoffCount == 0 && CritSectionCount == 0)
+			{
+				/*
+				 * We don't want to send the client the error message, as a)
+				 * that would possibly block again, and b) it would likely
+				 * lead to loss of protocol sync because we may have already
+				 * sent a partial protocol message.
+				 */
+				if (whereToSendOutput == DestRemote)
+					whereToSendOutput = DestNone;
 
-		CHECK_FOR_INTERRUPTS();
+				CHECK_FOR_INTERRUPTS();
+			}
+		}
+		else
+			SetLatch(MyLatch);
 	}
 
 	errno = save_errno;
@@ -633,6 +656,12 @@ pg_parse_query(const char *query_string)
 			raw_parsetree_list = new_list;
 	}
 #endif
+
+	/*
+	 * Currently, outfuncs/readfuncs support is missing for many raw parse
+	 * tree nodes, so we don't try to implement WRITE_READ_PARSE_PLAN_TREES
+	 * here.
+	 */
 
 	TRACE_POSTGRESQL_QUERY_PARSE_DONE(query_string);
 
@@ -764,7 +793,7 @@ pg_rewrite_query(Query *query)
 		ShowUsage("REWRITER STATISTICS");
 
 #ifdef COPY_PARSE_PLAN_TREES
-	/* Optional debugging check: pass querytree output through copyObject() */
+	/* Optional debugging check: pass querytree through copyObject() */
 	{
 		List	   *new_list;
 
@@ -772,6 +801,46 @@ pg_rewrite_query(Query *query)
 		/* This checks both copyObject() and the equal() routines... */
 		if (!equal(new_list, querytree_list))
 			elog(WARNING, "copyObject() failed to produce equal parse tree");
+		else
+			querytree_list = new_list;
+	}
+#endif
+
+#ifdef WRITE_READ_PARSE_PLAN_TREES
+	/* Optional debugging check: pass querytree through outfuncs/readfuncs */
+	{
+		List	   *new_list = NIL;
+		ListCell   *lc;
+
+		/*
+		 * We currently lack outfuncs/readfuncs support for most utility
+		 * statement types, so only attempt to write/read non-utility queries.
+		 */
+		foreach(lc, querytree_list)
+		{
+			Query	   *query = castNode(Query, lfirst(lc));
+
+			if (query->commandType != CMD_UTILITY)
+			{
+				char	   *str = nodeToString(query);
+				Query	   *new_query = stringToNodeWithLocations(str);
+
+				/*
+				 * queryId is not saved in stored rules, but we must preserve
+				 * it here to avoid breaking pg_stat_statements.
+				 */
+				new_query->queryId = query->queryId;
+
+				new_list = lappend(new_list, new_query);
+				pfree(str);
+			}
+			else
+				new_list = lappend(new_list, query);
+		}
+
+		/* This checks both outfuncs/readfuncs and the equal() routines... */
+		if (!equal(new_list, querytree_list))
+			elog(WARNING, "outfuncs/readfuncs failed to produce equal parse tree");
 		else
 			querytree_list = new_list;
 	}
@@ -813,7 +882,7 @@ pg_plan_query(Query *querytree, int cursorOptions, ParamListInfo boundParams)
 		ShowUsage("PLANNER STATISTICS");
 
 #ifdef COPY_PARSE_PLAN_TREES
-	/* Optional debugging check: pass plan output through copyObject() */
+	/* Optional debugging check: pass plan tree through copyObject() */
 	{
 		PlannedStmt *new_plan = copyObject(plan);
 
@@ -825,6 +894,30 @@ pg_plan_query(Query *querytree, int cursorOptions, ParamListInfo boundParams)
 		/* This checks both copyObject() and the equal() routines... */
 		if (!equal(new_plan, plan))
 			elog(WARNING, "copyObject() failed to produce an equal plan tree");
+		else
+#endif
+			plan = new_plan;
+	}
+#endif
+
+#ifdef WRITE_READ_PARSE_PLAN_TREES
+	/* Optional debugging check: pass plan tree through outfuncs/readfuncs */
+	{
+		char	   *str;
+		PlannedStmt *new_plan;
+
+		str = nodeToString(plan);
+		new_plan = stringToNodeWithLocations(str);
+		pfree(str);
+
+		/*
+		 * equal() currently does not have routines to compare Plan nodes, so
+		 * don't try to test equality here.  Perhaps fix someday?
+		 */
+#ifdef NOT_USED
+		/* This checks both outfuncs/readfuncs and the equal() routines... */
+		if (!equal(new_plan, plan))
+			elog(WARNING, "outfuncs/readfuncs failed to produce an equal plan tree");
 		else
 #endif
 			plan = new_plan;
@@ -1312,7 +1405,6 @@ exec_parse_message(const char *query_string,	/* string to execute */
 	{
 		Query	   *query;
 		bool		snapshot_set = false;
-		int			i;
 
 		raw_parse_tree = linitial_node(RawStmt, parsetree_list);
 
@@ -1368,7 +1460,7 @@ exec_parse_message(const char *query_string,	/* string to execute */
 		/*
 		 * Check all parameter types got determined.
 		 */
-		for (i = 0; i < numParams; i++)
+		for (int i = 0; i < numParams; i++)
 		{
 			Oid			ptype = paramTypes[i];
 
@@ -1557,10 +1649,8 @@ exec_bind_message(StringInfo input_message)
 	numPFormats = pq_getmsgint(input_message, 2);
 	if (numPFormats > 0)
 	{
-		int			i;
-
 		pformats = (int16 *) palloc(numPFormats * sizeof(int16));
-		for (i = 0; i < numPFormats; i++)
+		for (int i = 0; i < numPFormats; i++)
 			pformats[i] = pq_getmsgint(input_message, 2);
 	}
 
@@ -1643,8 +1733,6 @@ exec_bind_message(StringInfo input_message)
 	 */
 	if (numParams > 0)
 	{
-		int			paramno;
-
 		params = (ParamListInfo) palloc(offsetof(ParamListInfoData, params) +
 										numParams * sizeof(ParamExternData));
 		/* we have static list of params, so no hooks needed */
@@ -1656,7 +1744,7 @@ exec_bind_message(StringInfo input_message)
 		params->parserSetupArg = NULL;
 		params->numParams = numParams;
 
-		for (paramno = 0; paramno < numParams; paramno++)
+		for (int paramno = 0; paramno < numParams; paramno++)
 		{
 			Oid			ptype = psrc->param_types[paramno];
 			int32		plength;
@@ -1784,10 +1872,8 @@ exec_bind_message(StringInfo input_message)
 	numRFormats = pq_getmsgint(input_message, 2);
 	if (numRFormats > 0)
 	{
-		int			i;
-
 		rformats = (int16 *) palloc(numRFormats * sizeof(int16));
-		for (i = 0; i < numRFormats; i++)
+		for (int i = 0; i < numRFormats; i++)
 			rformats[i] = pq_getmsgint(input_message, 2);
 	}
 
@@ -2214,7 +2300,6 @@ errdetail_params(ParamListInfo params)
 	{
 		StringInfoData param_str;
 		MemoryContext oldcontext;
-		int			paramno;
 
 		/* This code doesn't support dynamic param lists */
 		Assert(params->paramFetch == NULL);
@@ -2224,7 +2309,7 @@ errdetail_params(ParamListInfo params)
 
 		initStringInfo(&param_str);
 
-		for (paramno = 0; paramno < params->numParams; paramno++)
+		for (int paramno = 0; paramno < params->numParams; paramno++)
 		{
 			ParamExternData *prm = &params->params[paramno];
 			Oid			typoutput;
@@ -2327,7 +2412,6 @@ static void
 exec_describe_statement_message(const char *stmt_name)
 {
 	CachedPlanSource *psrc;
-	int			i;
 
 	/*
 	 * Start up a transaction command. (Note that this will normally change
@@ -2386,7 +2470,7 @@ exec_describe_statement_message(const char *stmt_name)
 														 * message type */
 	pq_sendint16(&row_description_buf, psrc->num_params);
 
-	for (i = 0; i < psrc->num_params; i++)
+	for (int i = 0; i < psrc->num_params; i++)
 	{
 		Oid			ptype = psrc->param_types[i];
 
@@ -2618,6 +2702,16 @@ quickdie(SIGNAL_ARGS)
 		whereToSendOutput = DestNone;
 
 	/*
+	 * Notify the client before exiting, to give a clue on what happened.
+	 *
+	 * It's dubious to call ereport() from a signal handler.  It is certainly
+	 * not async-signal safe.  But it seems better to try, than to disconnect
+	 * abruptly and leave the client wondering what happened.  It's remotely
+	 * possible that we crash or hang while trying to send the message, but
+	 * receiving a SIGQUIT is a sign that something has already gone badly
+	 * wrong, so there's not much to lose.  Assuming the postmaster is still
+	 * running, it will SIGKILL us soon if we get stuck for some reason.
+	 *
 	 * Ideally this should be ereport(FATAL), but then we'd not get control
 	 * back...
 	 */
@@ -2632,24 +2726,20 @@ quickdie(SIGNAL_ARGS)
 					 " database and repeat your command.")));
 
 	/*
-	 * We DO NOT want to run proc_exit() callbacks -- we're here because
-	 * shared memory may be corrupted, so we don't want to try to clean up our
-	 * transaction.  Just nail the windows shut and get out of town.  Now that
-	 * there's an atexit callback to prevent third-party code from breaking
-	 * things by calling exit() directly, we have to reset the callbacks
-	 * explicitly to make this work as intended.
-	 */
-	on_exit_reset();
-
-	/*
-	 * Note we do exit(2) not exit(0).  This is to force the postmaster into a
-	 * system reset cycle if some idiot DBA sends a manual SIGQUIT to a random
+	 * We DO NOT want to run proc_exit() or atexit() callbacks -- we're here
+	 * because shared memory may be corrupted, so we don't want to try to
+	 * clean up our transaction.  Just nail the windows shut and get out of
+	 * town.  The callbacks wouldn't be safe to run from a signal handler,
+	 * anyway.
+	 *
+	 * Note we do _exit(2) not _exit(0).  This is to force the postmaster into
+	 * a system reset cycle if someone sends a manual SIGQUIT to a random
 	 * backend.  This is necessary precisely because we don't clean up our
 	 * shared memory state.  (The "dead man switch" mechanism in pmsignal.c
 	 * should ensure the postmaster sees this as a crash, too, but no harm in
 	 * being doubly sure.)
 	 */
-	exit(2);
+	_exit(2);
 }
 
 /*
@@ -4175,10 +4265,8 @@ PostgresMain(int argc, char *argv[],
 					numParams = pq_getmsgint(&input_message, 2);
 					if (numParams > 0)
 					{
-						int			i;
-
 						paramTypes = (Oid *) palloc(numParams * sizeof(Oid));
-						for (i = 0; i < numParams; i++)
+						for (int i = 0; i < numParams; i++)
 							paramTypes[i] = pq_getmsgint(&input_message, 4);
 					}
 					pq_getmsgend(&input_message);
@@ -4569,7 +4657,7 @@ log_disconnections(int code, Datum arg)
 				minutes,
 				seconds;
 
-	TimestampDifference(port->SessionStartTime,
+	TimestampDifference(MyStartTimestamp,
 						GetCurrentTimestamp(),
 						&secs, &usecs);
 	msecs = usecs / 1000;

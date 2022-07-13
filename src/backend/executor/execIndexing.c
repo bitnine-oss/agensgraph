@@ -706,7 +706,8 @@ check_exclusion_or_unique_constraint(Relation heap, Relation index,
 	 * to this slot.  Be sure to save and restore caller's value for
 	 * scantuple.
 	 */
-	existing_slot = MakeSingleTupleTableSlot(RelationGetDescr(heap));
+	existing_slot = MakeSingleTupleTableSlot(RelationGetDescr(heap),
+											 &TTSOpsHeapTuple);
 
 	econtext = GetPerTupleExprContext(estate);
 	save_scantuple = econtext->ecxt_scantuple;
@@ -750,7 +751,7 @@ retry:
 		 * Extract the index column values and isnull flags from the existing
 		 * tuple.
 		 */
-		ExecStoreTuple(tup, existing_slot, InvalidBuffer, false);
+		ExecStoreHeapTuple(tup, existing_slot, false);
 		FormIndexDatum(indexInfo, existing_slot, estate,
 					   existing_values, existing_isnull);
 

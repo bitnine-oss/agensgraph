@@ -134,7 +134,12 @@ extern unsigned char pg_tolower(unsigned char ch);
 extern unsigned char pg_ascii_toupper(unsigned char ch);
 extern unsigned char pg_ascii_tolower(unsigned char ch);
 
-#ifdef USE_REPL_SNPRINTF
+/*
+ * Beginning in v12, we always replace snprintf() and friends with our own
+ * implementation.  This symbol is no longer consulted by the core code,
+ * but keep it defined anyway in case any extensions are looking at it.
+ */
+#define USE_REPL_SNPRINTF 1
 
 /*
  * Versions of libintl >= 0.13 try to replace printf() and friends with
@@ -147,6 +152,9 @@ extern unsigned char pg_ascii_tolower(unsigned char ch);
 #ifdef snprintf
 #undef snprintf
 #endif
+#ifdef vsprintf
+#undef vsprintf
+#endif
 #ifdef sprintf
 #undef sprintf
 #endif
@@ -156,38 +164,50 @@ extern unsigned char pg_ascii_tolower(unsigned char ch);
 #ifdef fprintf
 #undef fprintf
 #endif
+#ifdef vprintf
+#undef vprintf
+#endif
 #ifdef printf
 #undef printf
 #endif
 
 extern int	pg_vsnprintf(char *str, size_t count, const char *fmt, va_list args);
 extern int	pg_snprintf(char *str, size_t count, const char *fmt,...) pg_attribute_printf(3, 4);
+extern int	pg_vsprintf(char *str, const char *fmt, va_list args);
 extern int	pg_sprintf(char *str, const char *fmt,...) pg_attribute_printf(2, 3);
 extern int	pg_vfprintf(FILE *stream, const char *fmt, va_list args);
 extern int	pg_fprintf(FILE *stream, const char *fmt,...) pg_attribute_printf(2, 3);
+extern int	pg_vprintf(const char *fmt, va_list args);
 extern int	pg_printf(const char *fmt,...) pg_attribute_printf(1, 2);
 
 /*
- *	The GCC-specific code below prevents the pg_attribute_printf above from
- *	being replaced, and this is required because gcc doesn't know anything
- *	about pg_printf.
+ * We use __VA_ARGS__ for printf to prevent replacing references to
+ * the "printf" format archetype in format() attribute declarations.
+ * That unfortunately means that taking a function pointer to printf
+ * will not do what we'd wish.  (If you need to do that, you must name
+ * pg_printf explicitly.)  For printf's sibling functions, use
+ * parameterless macros so that function pointers will work unsurprisingly.
  */
-#ifdef __GNUC__
-#define vsnprintf(...)	pg_vsnprintf(__VA_ARGS__)
-#define snprintf(...)	pg_snprintf(__VA_ARGS__)
-#define sprintf(...)	pg_sprintf(__VA_ARGS__)
-#define vfprintf(...)	pg_vfprintf(__VA_ARGS__)
-#define fprintf(...)	pg_fprintf(__VA_ARGS__)
-#define printf(...)		pg_printf(__VA_ARGS__)
-#else
 #define vsnprintf		pg_vsnprintf
 #define snprintf		pg_snprintf
+#define vsprintf		pg_vsprintf
 #define sprintf			pg_sprintf
 #define vfprintf		pg_vfprintf
 #define fprintf			pg_fprintf
-#define printf			pg_printf
-#endif
-#endif							/* USE_REPL_SNPRINTF */
+#define vprintf			pg_vprintf
+#define printf(...)		pg_printf(__VA_ARGS__)
+
+/* This is also provided by snprintf.c */
+extern int	pg_strfromd(char *str, size_t count, int precision, double value);
+
+/* Replace strerror() with our own, somewhat more robust wrapper */
+extern char *pg_strerror(int errnum);
+#define strerror pg_strerror
+
+/* Likewise for strerror_r(); note we prefer the GNU API for that */
+extern char *pg_strerror_r(int errnum, char *buf, size_t buflen);
+#define strerror_r pg_strerror_r
+#define PG_STRERROR_R_BUFLEN 256	/* Recommended buffer size for strerror_r */
 
 /* Portable prompt handling */
 extern void simple_prompt(const char *prompt, char *destination, size_t destlen,
@@ -249,11 +269,8 @@ extern bool rmtree(const char *path, bool rmtopdir);
 #define		O_DIRECT	0x80000000
 extern int	pgwin32_open(const char *, int,...);
 extern FILE *pgwin32_fopen(const char *, const char *);
-
-#ifndef FRONTEND
 #define		open(a,b,c) pgwin32_open(a,b,c)
 #define		fopen(a,b) pgwin32_fopen(a,b)
-#endif
 
 /*
  * Mingw-w64 headers #define popen and pclose to _popen and _pclose.  We want
@@ -358,7 +375,7 @@ extern int	isinf(double x);
 #undef isinf
 #define isinf __builtin_isinf
 #endif							/* __has_builtin(isinf) */
-#endif							/* __clang__ && !__cplusplus*/
+#endif							/* __clang__ && !__cplusplus */
 #endif							/* !HAVE_ISINF */
 
 #ifndef HAVE_MKDTEMP
@@ -373,6 +390,23 @@ extern double rint(double x);
 #include <netinet/in.h>
 #include <arpa/inet.h>
 extern int	inet_aton(const char *cp, struct in_addr *addr);
+#endif
+
+/*
+ * Windows and older Unix don't have pread(2) and pwrite(2).  We have
+ * replacement functions, but they have slightly different semantics so we'll
+ * use a name with a pg_ prefix to avoid confusion.
+ */
+#ifdef HAVE_PREAD
+#define pg_pread pread
+#else
+extern ssize_t pg_pread(int fd, void *buf, size_t nbyte, off_t offset);
+#endif
+
+#ifdef HAVE_PWRITE
+#define pg_pwrite pwrite
+#else
+extern ssize_t pg_pwrite(int fd, const void *buf, size_t nbyte, off_t offset);
 #endif
 
 #if !HAVE_DECL_STRLCAT
@@ -403,9 +437,30 @@ extern void srandom(unsigned int seed);
 #define SSL_get_current_compression(x) 0
 #endif
 
-/* thread.h */
-extern char *pqStrerror(int errnum, char *strerrbuf, size_t buflen);
+#ifndef HAVE_DLOPEN
+extern void *dlopen(const char *file, int mode);
+extern void *dlsym(void *handle, const char *symbol);
+extern int	dlclose(void *handle);
+extern char *dlerror(void);
+#endif
 
+/*
+ * In some older systems, the RTLD_NOW flag isn't defined and the mode
+ * argument to dlopen must always be 1.
+ */
+#if !HAVE_DECL_RTLD_NOW
+#define RTLD_NOW 1
+#endif
+
+/*
+ * The RTLD_GLOBAL flag is wanted if available, but it doesn't exist
+ * everywhere.  If it doesn't exist, set it to 0 so it has no effect.
+ */
+#if !HAVE_DECL_RTLD_GLOBAL
+#define RTLD_GLOBAL 0
+#endif
+
+/* thread.h */
 #ifndef WIN32
 extern int pqGetpwuid(uid_t uid, struct passwd *resultbuf, char *buffer,
 		   size_t buflen, struct passwd **result);

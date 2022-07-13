@@ -22,7 +22,7 @@
   Microsoft tools is to install <productname>Visual Studio Express 2017
   for Windows Desktop</productname> and use the included
   compiler. It is also possible to build with the full
-  <productname>Microsoft Visual C++ 2005 to 2017</productname>.
+  <productname>Microsoft Visual C++ 2013 to 2017</productname>.
   In some cases that requires the installation of the
   <productname>Windows SDK</productname> in addition to the compiler.
  </para>
@@ -77,20 +77,24 @@
  <para>
   Both 32-bit and 64-bit builds are possible with the Microsoft Compiler suite.
   32-bit PostgreSQL builds are possible with
-  <productname>Visual Studio 2005</productname> to
+  <productname>Visual Studio 2013</productname> to
   <productname>Visual Studio 2017</productname> (including Express editions),
   as well as standalone Windows SDK releases 6.0 to 8.1.
   64-bit PostgreSQL builds are supported with
   <productname>Microsoft Windows SDK</productname> version 6.0a to 8.1 or
-  <productname>Visual Studio 2008</productname> and above. Compilation
-  is supported down to <productname>Windows XP</productname> and
-  <productname>Windows Server 2003</productname> when building with
-  <productname>Visual Studio 2005</productname> to
-  <productname>Visual Studio 2013</productname>. Building with
-  <productname>Visual Studio 2015</productname> is supported down to
-  <productname>Windows Vista</productname> and <productname>Windows Server 2008</productname>.
-   Building with <productname>Visual Studio 2017</productname> is supported
-   down to <productname>Windows 7 SP1</productname> and <productname>Windows Server 2008 R2 SP1</productname>.
+  <productname>Visual Studio 2013</productname> and above. Compilation
+  is supported down to <productname>Windows 7</productname> and
+  <productname>Windows Server 2008 R2 SP1</productname> when building with
+  <productname>Visual Studio 2013</productname> to
+  <productname>Visual Studio 2017</productname>.
+   <!--
+       For 2013 requirements:
+       https://docs.microsoft.com/en-us/visualstudio/productinfo/vs2013-sysrequirements-vs
+       For 2015 requirements:
+       https://docs.microsoft.com/en-us/visualstudio/productinfo/vs2015-sysrequirements-vs
+       For 2017 requirements:
+       https://docs.microsoft.com/en-us/visualstudio/productinfo/vs2017-system-requirements-vs
+   -->
  </para>
 
  <para>
@@ -182,7 +186,7 @@ $ENV{MSBFLAGS}="/m";
       ActiveState Perl is required to run the build generation scripts. MinGW
       or Cygwin Perl will not work. It must also be present in the PATH.
       Binaries can be downloaded from
-      <ulink url="http://www.activestate.com"></ulink>
+      <ulink url="https://www.activestate.com"></ulink>
       (Note: version 5.8.3 or later is required,
       the free Standard Distribution is sufficient).
      </para></listitem>
@@ -296,7 +300,7 @@ $ENV{MSBFLAGS}="/m";
      <term><productname>OpenSSL</productname></term>
      <listitem><para>
       Required for SSL support. Binaries can be downloaded from
-      <ulink url="http://www.slproweb.com/products/Win32OpenSSL.html"></ulink>
+      <ulink url="https://slproweb.com/products/Win32OpenSSL.html"></ulink>
       or source from <ulink url="https://www.openssl.org"></ulink>.
      </para></listitem>
     </varlistentry>
@@ -314,7 +318,7 @@ $ENV{MSBFLAGS}="/m";
      <term><productname>Python</productname></term>
      <listitem><para>
       Required for building <application>PL/Python</application>. Binaries can
-      be downloaded from <ulink url="http://www.python.org"></ulink>.
+      be downloaded from <ulink url="https://www.python.org"></ulink>.
      </para></listitem>
     </varlistentry>
 
@@ -473,7 +477,7 @@ $ENV{CONFIG}="Debug";
       ActiveState Perl installation, nor in the ActiveState Perl Package
       Manager (PPM) library. To install, download the
       <filename>IPC-Run-&lt;version&gt;.tar.gz</filename> source archive from CPAN,
-      at <ulink url="https://metacpan.org/release/IPC-Run/"></ulink>, and
+      at <ulink url="https://metacpan.org/release/IPC-Run"></ulink>, and
       uncompress. Edit the <filename>buildenv.pl</filename> file, and add a PERL5LIB
       variable to point to the <filename>lib</filename> subdirectory from the
       extracted archive. For example:
@@ -483,53 +487,6 @@ $ENV{PERL5LIB}=$ENV{PERL5LIB} . ';c:\IPC-Run-0.94\lib';
      </para></listitem>
     </varlistentry>
    </variablelist>
-  </para>
- </sect2>
-
- <sect2>
-  <title>Building the Documentation</title>
-
-  <para>
-   Building the PostgreSQL documentation in HTML format requires several tools
-   and files. Create a root directory for all these files, and store them
-   in the subdirectories in the list below.
-   <variablelist>
-    <varlistentry>
-     <term>OpenJade 1.3.1-2</term>
-     <listitem><para>
-      Download from
-      <ulink url="http://sourceforge.net/projects/openjade/files/openjade/1.3.1/openjade-1_3_1-2-bin.zip/download"></ulink>
-      and uncompress in the subdirectory <filename>openjade-1.3.1</filename>.
-     </para></listitem>
-    </varlistentry>
-
-    <varlistentry>
-     <term>DocBook DTD 4.2</term>
-     <listitem><para>
-      Download from
-      <ulink url="http://www.oasis-open.org/docbook/sgml/4.2/docbook-4.2.zip"></ulink>
-      and uncompress in the subdirectory <filename>docbook</filename>.
-     </para></listitem>
-    </varlistentry>
-
-    <varlistentry>
-     <term>ISO character entities</term>
-     <listitem><para>
-      Download from
-      <ulink url="http://www.oasis-open.org/cover/ISOEnts.zip"></ulink> and
-      uncompress in the subdirectory <filename>docbook</filename>.
-     </para></listitem>
-    </varlistentry>
-   </variablelist>
-   Edit the <filename>buildenv.pl</filename> file, and add a variable for the
-   location of the root directory, for example:
-<programlisting>
-$ENV{DOCROOT}='c:\docbook';
-</programlisting>
-   To build the documentation, run the command
-   <filename>builddoc.bat</filename>. Note that this will actually run the
-   build twice, in order to generate the indexes. The generated HTML files
-   will be in <filename>doc\src\sgml</filename>.
   </para>
  </sect2>
 

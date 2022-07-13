@@ -225,6 +225,39 @@
 #define CppConcat(x, y)			x##y
 
 /*
+ * VA_ARGS_NARGS
+ *		Returns the number of macro arguments it is passed.
+ *
+ * An empty argument still counts as an argument, so effectively, this is
+ * "one more than the number of commas in the argument list".
+ *
+ * This works for up to 63 arguments.  Internally, VA_ARGS_NARGS_() is passed
+ * 64+N arguments, and the C99 standard only requires macros to allow up to
+ * 127 arguments, so we can't portably go higher.  The implementation is
+ * pretty trivial: VA_ARGS_NARGS_() returns its 64th argument, and we set up
+ * the call so that that is the appropriate one of the list of constants.
+ * This idea is due to Laurent Deniau.
+ */
+#define VA_ARGS_NARGS(...) \
+	VA_ARGS_NARGS_(__VA_ARGS__, \
+				   63,62,61,60,                   \
+				   59,58,57,56,55,54,53,52,51,50, \
+				   49,48,47,46,45,44,43,42,41,40, \
+				   39,38,37,36,35,34,33,32,31,30, \
+				   29,28,27,26,25,24,23,22,21,20, \
+				   19,18,17,16,15,14,13,12,11,10, \
+				   9, 8, 7, 6, 5, 4, 3, 2, 1, 0)
+#define VA_ARGS_NARGS_( \
+	_01,_02,_03,_04,_05,_06,_07,_08,_09,_10, \
+	_11,_12,_13,_14,_15,_16,_17,_18,_19,_20, \
+	_21,_22,_23,_24,_25,_26,_27,_28,_29,_30, \
+	_31,_32,_33,_34,_35,_36,_37,_38,_39,_40, \
+	_41,_42,_43,_44,_45,_46,_47,_48,_49,_50, \
+	_51,_52,_53,_54,_55,_56,_57,_58,_59,_60, \
+	_61,_62,_63,  N, ...) \
+	(N)
+
+/*
  * dummyret is used to set return values in macros that use ?: to make
  * assignments.  gcc wants these to be void, other compilers like char
  */
@@ -989,6 +1022,40 @@ extern void ExceptionalCondition(const char *conditionName,
  * ----------------------------------------------------------------
  */
 
+/*
+ * Invert the sign of a qsort-style comparison result, ie, exchange negative
+ * and positive integer values, being careful not to get the wrong answer
+ * for INT_MIN.  The argument should be an integral variable.
+ */
+#define INVERT_COMPARE_RESULT(var) \
+	((var) = ((var) < 0) ? 1 : -(var))
+
+/*
+ * Use this, not "char buf[BLCKSZ]", to declare a field or local variable
+ * holding a page buffer, if that page might be accessed as a page and not
+ * just a string of bytes.  Otherwise the variable might be under-aligned,
+ * causing problems on alignment-picky hardware.  (In some places, we use
+ * this to declare buffers even though we only pass them to read() and
+ * write(), because copying to/from aligned buffers is usually faster than
+ * using unaligned buffers.)  We include both "double" and "int64" in the
+ * union to ensure that the compiler knows the value must be MAXALIGN'ed
+ * (cf. configure's computation of MAXIMUM_ALIGNOF).
+ */
+typedef union PGAlignedBlock
+{
+	char		data[BLCKSZ];
+	double		force_align_d;
+	int64		force_align_i64;
+} PGAlignedBlock;
+
+/* Same, but for an XLOG_BLCKSZ-sized buffer */
+typedef union PGAlignedXLogBlock
+{
+	char		data[XLOG_BLCKSZ];
+	double		force_align_d;
+	int64		force_align_i64;
+} PGAlignedXLogBlock;
+
 /* msb for char */
 #define HIGHBIT					(0x80)
 #define IS_HIGHBIT_SET(ch)		((unsigned char)(ch) & HIGHBIT)
@@ -1054,6 +1121,30 @@ extern void ExceptionalCondition(const char *conditionName,
 #define PG_TEXTDOMAIN(domain) (domain "-" PG_MAJORVERSION)
 #endif
 
+/*
+ * Macro that allows to cast constness away from an expression, but doesn't
+ * allow changing the underlying type.  Enforcement of the latter
+ * currently only works for gcc like compilers.
+ *
+ * Please note IT IS NOT SAFE to cast constness away if the result will ever
+ * be modified (it would be undefined behaviour). Doing so anyway can cause
+ * compiler misoptimizations or runtime crashes (modifying readonly memory).
+ * It is only safe to use when the the result will not be modified, but API
+ * design or language restrictions prevent you from declaring that
+ * (e.g. because a function returns both const and non-const variables).
+ *
+ * Note that this only works in function scope, not for global variables (it'd
+ * be nice, but not trivial, to improve that).
+ */
+#if defined(HAVE__BUILTIN_TYPES_COMPATIBLE_P)
+#define unconstify(underlying_type, expr) \
+	(StaticAssertExpr(__builtin_types_compatible_p(__typeof(expr), const underlying_type), \
+					  "wrong cast"), \
+	 (underlying_type) (expr))
+#else
+#define unconstify(underlying_type, expr) \
+	((underlying_type) (expr))
+#endif
 
 /* ----------------------------------------------------------------
  *				Section 9: system-specific hacks
@@ -1087,14 +1178,6 @@ extern void ExceptionalCondition(const char *conditionName,
  * Provide prototypes for routines not present in a particular machine's
  * standard C library.
  */
-
-#if !HAVE_DECL_SNPRINTF
-extern int	snprintf(char *str, size_t count, const char *fmt,...) pg_attribute_printf(3, 4);
-#endif
-
-#if !HAVE_DECL_VSNPRINTF
-extern int	vsnprintf(char *str, size_t count, const char *fmt, va_list args);
-#endif
 
 #if defined(HAVE_FDATASYNC) && !HAVE_DECL_FDATASYNC
 extern int	fdatasync(int fildes);

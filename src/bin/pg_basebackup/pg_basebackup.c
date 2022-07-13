@@ -1982,7 +1982,7 @@ BaseBackup(void)
 		if (sqlstate &&
 			strcmp(sqlstate, ERRCODE_DATA_CORRUPTED) == 0)
 		{
-			fprintf(stderr, _("%s: checksum error occured\n"),
+			fprintf(stderr, _("%s: checksum error occurred\n"),
 					progname);
 			checksum_failure = true;
 		}
@@ -2112,6 +2112,9 @@ BaseBackup(void)
 	 */
 	if (do_sync)
 	{
+		if (verbose)
+			fprintf(stderr,
+					_("%s: syncing data to disk ...\n"), progname);
 		if (format == 't')
 		{
 			if (strcmp(basedir, "-") != 0)

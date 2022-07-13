@@ -1,11 +1,11 @@
 # config/llvm.m4
 
 # PGAC_LLVM_SUPPORT
-# ---------------
+# -----------------
 #
 # Look for the LLVM installation, check that it's new enough, set the
 # corresponding LLVM_{CFLAGS,CXXFLAGS,BINPATH} and LDFLAGS
-# variables. Also verifies that CLANG is available, to transform C
+# variables. Also verify that CLANG is available, to transform C
 # into bitcode.
 #
 AC_DEFUN([PGAC_LLVM_SUPPORT],
@@ -13,7 +13,7 @@ AC_DEFUN([PGAC_LLVM_SUPPORT],
   AC_REQUIRE([AC_PROG_AWK])
 
   AC_ARG_VAR(LLVM_CONFIG, [path to llvm-config command])
-  PGAC_PATH_PROGS(LLVM_CONFIG, llvm-config llvm-config-6.0 llvm-config-5.0 llvm-config-4.0 llvm-config-3.9)
+  PGAC_PATH_PROGS(LLVM_CONFIG, llvm-config llvm-config-7 llvm-config-6.0 llvm-config-5.0 llvm-config-4.0 llvm-config-3.9)
 
   # no point continuing if llvm wasn't found
   if test -z "$LLVM_CONFIG"; then
@@ -31,7 +31,7 @@ AC_DEFUN([PGAC_LLVM_SUPPORT],
 
   # need clang to create some bitcode files
   AC_ARG_VAR(CLANG, [path to clang compiler to generate bitcode])
-  PGAC_PATH_PROGS(CLANG, clang clang-6.0 clang-5.0 clang-4.0 clang-3.9)
+  PGAC_PATH_PROGS(CLANG, clang clang-7 clang-6.0 clang-5.0 clang-4.0 clang-3.9)
   if test -z "$CLANG"; then
     AC_MSG_ERROR([clang not found, but required when compiling --with-llvm, specify with CLANG=])
   fi
@@ -91,13 +91,6 @@ AC_DEFUN([PGAC_LLVM_SUPPORT],
 
   LLVM_BINPATH=`$LLVM_CONFIG --bindir`
 
-  # Check which functionality is present
-  SAVE_CPPFLAGS="$CPPFLAGS"
-  CPPFLAGS="$CPPFLAGS $LLVM_CPPFLAGS"
-  AC_CHECK_DECLS([LLVMOrcGetSymbolAddressIn, LLVMOrcRegisterGDB, LLVMOrcRegisterPerf], [], [], [[#include <llvm-c/OrcBindings.h>]])
-  AC_CHECK_DECLS([LLVMGetHostCPUName], [], [], [[#include <llvm-c/TargetMachine.h>]])
-  CPPFLAGS="$SAVE_CPPFLAGS"
-
   # LLVM_CONFIG, CLANG are already output via AC_ARG_VAR
   AC_SUBST(LLVM_LIBS)
   AC_SUBST(LLVM_CPPFLAGS)
@@ -106,3 +99,22 @@ AC_DEFUN([PGAC_LLVM_SUPPORT],
   AC_SUBST(LLVM_BINPATH)
 
 ])# PGAC_LLVM_SUPPORT
+
+
+# PGAC_CHECK_LLVM_FUNCTIONS
+# -------------------------
+#
+# Check presence of some optional LLVM functions.
+# (This shouldn't happen until we're ready to run AC_CHECK_DECLS tests;
+# because PGAC_LLVM_SUPPORT runs very early, it's not an appropriate place.)
+#
+AC_DEFUN([PGAC_CHECK_LLVM_FUNCTIONS],
+[
+  # Check which functionality is present
+  SAVE_CPPFLAGS="$CPPFLAGS"
+  CPPFLAGS="$CPPFLAGS $LLVM_CPPFLAGS"
+  AC_CHECK_DECLS([LLVMOrcGetSymbolAddressIn], [], [], [[#include <llvm-c/OrcBindings.h>]])
+  AC_CHECK_DECLS([LLVMGetHostCPUName, LLVMGetHostCPUFeatures], [], [], [[#include <llvm-c/TargetMachine.h>]])
+  AC_CHECK_DECLS([LLVMCreateGDBRegistrationListener, LLVMCreatePerfJITEventListener], [], [], [[#include <llvm-c/ExecutionEngine.h>]])
+  CPPFLAGS="$SAVE_CPPFLAGS"
+])# PGAC_CHECK_LLVM_FUNCTIONS

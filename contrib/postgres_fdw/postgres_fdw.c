@@ -35,6 +35,7 @@
 #include "optimizer/tlist.h"
 #include "parser/parsetree.h"
 #include "utils/builtins.h"
+#include "utils/float.h"
 #include "utils/guc.h"
 #include "utils/lsyscache.h"
 #include "utils/memutils.h"
@@ -1344,7 +1345,7 @@ postgresBeginForeignScan(ForeignScanState *node, int eflags)
 		rtindex = fsplan->scan.scanrelid;
 	else
 		rtindex = bms_next_member(fsplan->fs_relids, -1);
-	rte = rt_fetch(rtindex, estate->es_range_table);
+	rte = exec_rt_fetch(rtindex, estate);
 	userid = rte->checkAsUser ? rte->checkAsUser : GetUserId();
 
 	/* Get info about foreign table. */
@@ -1442,10 +1443,9 @@ postgresIterateForeignScan(ForeignScanState *node)
 	/*
 	 * Return the next tuple.
 	 */
-	ExecStoreTuple(fsstate->tuples[fsstate->next_tuple++],
-				   slot,
-				   InvalidBuffer,
-				   false);
+	ExecStoreHeapTuple(fsstate->tuples[fsstate->next_tuple++],
+					   slot,
+					   false);
 
 	return slot;
 }
@@ -1582,6 +1582,7 @@ postgresPlanForeignModify(PlannerInfo *root,
 	Relation	rel;
 	StringInfoData sql;
 	List	   *targetAttrs = NIL;
+	List	   *withCheckOptionList = NIL;
 	List	   *returningList = NIL;
 	List	   *retrieved_attrs = NIL;
 	bool		doNothing = false;
@@ -1631,6 +1632,13 @@ postgresPlanForeignModify(PlannerInfo *root,
 	}
 
 	/*
+	 * Extract the relevant WITH CHECK OPTION list if any.
+	 */
+	if (plan->withCheckOptionLists)
+		withCheckOptionList = (List *) list_nth(plan->withCheckOptionLists,
+												subplan_index);
+
+	/*
 	 * Extract the relevant RETURNING list if any.
 	 */
 	if (plan->returningLists)
@@ -1655,12 +1663,14 @@ postgresPlanForeignModify(PlannerInfo *root,
 	{
 		case CMD_INSERT:
 			deparseInsertSql(&sql, rte, resultRelation, rel,
-							 targetAttrs, doNothing, returningList,
+							 targetAttrs, doNothing,
+							 withCheckOptionList, returningList,
 							 &retrieved_attrs);
 			break;
 		case CMD_UPDATE:
 			deparseUpdateSql(&sql, rte, resultRelation, rel,
-							 targetAttrs, returningList,
+							 targetAttrs,
+							 withCheckOptionList, returningList,
 							 &retrieved_attrs);
 			break;
 		case CMD_DELETE:
@@ -1721,8 +1731,8 @@ postgresBeginForeignModify(ModifyTableState *mtstate,
 										FdwModifyPrivateRetrievedAttrs);
 
 	/* Find RTE. */
-	rte = rt_fetch(resultRelInfo->ri_RangeTableIndex,
-				   mtstate->ps.state->es_range_table);
+	rte = exec_rt_fetch(resultRelInfo->ri_RangeTableIndex,
+						mtstate->ps.state);
 
 	/* Construct an execution state. */
 	fmstate = create_foreign_modify(mtstate->ps.state,
@@ -2026,7 +2036,7 @@ postgresBeginForeignInsert(ModifyTableState *mtstate,
 	 * correspond to this partition if it is one of the UPDATE subplan target
 	 * rels; in that case, we can just use the existing RTE as-is.
 	 */
-	rte = list_nth(estate->es_range_table, resultRelation - 1);
+	rte = exec_rt_fetch(resultRelation, estate);
 	if (rte->relid != RelationGetRelid(rel))
 	{
 		rte = copyObject(rte);
@@ -2040,13 +2050,15 @@ postgresBeginForeignInsert(ModifyTableState *mtstate,
 		 * Vars contained in those expressions.
 		 */
 		if (plan && plan->operation == CMD_UPDATE &&
-			resultRelation == plan->nominalRelation)
+			resultRelation == plan->rootRelation)
 			resultRelation = mtstate->resultRelInfo[0].ri_RangeTableIndex;
 	}
 
 	/* Construct the SQL command string. */
 	deparseInsertSql(&sql, rte, resultRelation, rel, targetAttrs, doNothing,
-					 resultRelInfo->ri_returningList, &retrieved_attrs);
+					 resultRelInfo->ri_WithCheckOptions,
+					 resultRelInfo->ri_returningList,
+					 &retrieved_attrs);
 
 	/* Construct an execution state. */
 	fmstate = create_foreign_modify(mtstate->ps.state,
@@ -2384,7 +2396,7 @@ postgresBeginDirectModify(ForeignScanState *node, int eflags)
 	 * ExecCheckRTEPerms() does.
 	 */
 	rtindex = estate->es_result_relation_info->ri_RangeTableIndex;
-	rte = rt_fetch(rtindex, estate->es_range_table);
+	rte = exec_rt_fetch(rtindex, estate);
 	userid = rte->checkAsUser ? rte->checkAsUser : GetUserId();
 
 	/* Get info about foreign table. */
@@ -2533,10 +2545,6 @@ postgresEndDirectModify(ForeignScanState *node)
 	/* Release remote connection */
 	ReleaseConnection(dmstate->conn);
 	dmstate->conn = NULL;
-
-	/* close the target relation. */
-	if (dmstate->resultRel)
-		ExecCloseScanRelation(dmstate->resultRel);
 
 	/* MemoryContext will be deleted automatically. */
 }
@@ -3504,7 +3512,7 @@ store_returning_result(PgFdwModifyState *fmstate,
 											NULL,
 											fmstate->temp_cxt);
 		/* tuple will be deleted when it is cleared from the slot */
-		ExecStoreTuple(newtup, slot, InvalidBuffer, true);
+		ExecStoreHeapTuple(newtup, slot, true);
 	}
 	PG_CATCH();
 	{
@@ -3777,7 +3785,7 @@ get_returning_data(ForeignScanState *node)
 												dmstate->retrieved_attrs,
 												node,
 												dmstate->temp_cxt);
-			ExecStoreTuple(newtup, slot, InvalidBuffer, false);
+			ExecStoreHeapTuple(newtup, slot, false);
 		}
 		PG_CATCH();
 		{
@@ -3939,11 +3947,12 @@ apply_returning_filter(PgFdwDirectModifyState *dmstate,
 	ExecStoreVirtualTuple(resultSlot);
 
 	/*
-	 * If we have any system columns to return, install them.
+	 * If we have any system columns to return, materialize a heap tuple in the
+	 * slot from column values set above and install system columns in that tuple.
 	 */
 	if (dmstate->hasSystemCols)
 	{
-		HeapTuple	resultTup = ExecMaterializeSlot(resultSlot);
+		HeapTuple	resultTup = ExecFetchSlotHeapTuple(resultSlot, true, NULL);
 
 		/* ctid */
 		if (dmstate->ctidAttno)
@@ -5744,7 +5753,7 @@ conversion_error_callback(void *arg)
 			RangeTblEntry *rte;
 			Var		   *var = (Var *) tle->expr;
 
-			rte = rt_fetch(var->varno, estate->es_range_table);
+			rte = exec_rt_fetch(var->varno, estate);
 
 			if (var->varattno == 0)
 				is_wholerow = true;
@@ -5780,7 +5789,8 @@ find_em_expr_for_rel(EquivalenceClass *ec, RelOptInfo *rel)
 	{
 		EquivalenceMember *em = lfirst(lc_em);
 
-		if (bms_is_subset(em->em_relids, rel->relids))
+		if (bms_is_subset(em->em_relids, rel->relids) &&
+			!bms_is_empty(em->em_relids))
 		{
 			/*
 			 * If there is more than one equivalence member whose Vars are

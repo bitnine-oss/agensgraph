@@ -138,9 +138,8 @@ get_relation_info(PlannerInfo *root, Oid relationObjectId, bool inhparent,
 
 	/*
 	 * Estimate relation size --- unless it's an inheritance parent, in which
-	 * case the size will be computed later in set_append_rel_pathlist, and we
-	 * must leave it zero for now to avoid bollixing the total_table_pages
-	 * calculation.
+	 * case the size we want is not the rel's own size but the size of its
+	 * inheritance tree.  That will be computed in set_append_rel_size().
 	 */
 	if (!inhparent)
 		estimate_rel_size(relation, rel->attr_widths - rel->min_attr,
@@ -1692,7 +1691,7 @@ build_index_tlist(PlannerInfo *root, IndexOptInfo *index,
 		if (indexkey != 0)
 		{
 			/* simple column */
-			Form_pg_attribute att_tup;
+			const FormData_pg_attribute *att_tup;
 
 			if (indexkey < 0)
 				att_tup = SystemAttributeDefinition(indexkey,

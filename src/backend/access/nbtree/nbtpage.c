@@ -782,9 +782,14 @@ _bt_getbuf(Relation rel, BlockNumber blkno, int access)
 					/*
 					 * If we are generating WAL for Hot Standby then create a
 					 * WAL record that will allow us to conflict with queries
-					 * running on standby.
+					 * running on standby, in case they have snapshots older
+					 * than btpo.xact.  This can only apply if the page does
+					 * have a valid btpo.xact value, ie not if it's new.  (We
+					 * must check that because an all-zero page has no special
+					 * space.)
 					 */
-					if (XLogStandbyInfoActive() && RelationNeedsWAL(rel))
+					if (XLogStandbyInfoActive() && RelationNeedsWAL(rel) &&
+						!PageIsNew(page))
 					{
 						BTPageOpaque opaque = (BTPageOpaque) PageGetSpecialPointer(page);
 
@@ -897,7 +902,10 @@ _bt_pageinit(Page page, Size size)
  *	_bt_page_recyclable() -- Is an existing page recyclable?
  *
  * This exists to make sure _bt_getbuf and btvacuumscan have the same
- * policy about whether a page is safe to re-use.
+ * policy about whether a page is safe to re-use.  But note that _bt_getbuf
+ * knows enough to distinguish the PageIsNew condition from the other one.
+ * At some point it might be appropriate to redesign this to have a three-way
+ * result value.
  */
 bool
 _bt_page_recyclable(Page page)
@@ -1443,6 +1451,7 @@ _bt_pagedel(Relation rel, Buffer buf)
 		rightsib_empty = false;
 		while (P_ISHALFDEAD(opaque))
 		{
+			/* will check for interrupts, once lock is released */
 			if (!_bt_unlink_halfdead_page(rel, buf, &rightsib_empty))
 			{
 				/* _bt_unlink_halfdead_page already released buffer */
@@ -1454,6 +1463,12 @@ _bt_pagedel(Relation rel, Buffer buf)
 		rightsib = opaque->btpo_next;
 
 		_bt_relbuf(rel, buf);
+
+		/*
+		 * Check here, as calling loops will have locks held, preventing
+		 * interrupts from being processed.
+		 */
+		CHECK_FOR_INTERRUPTS();
 
 		/*
 		 * The page has now been deleted. If its right sibling is completely
@@ -1708,6 +1723,12 @@ _bt_unlink_halfdead_page(Relation rel, Buffer leafbuf, bool *rightsib_empty)
 	LockBuffer(leafbuf, BUFFER_LOCK_UNLOCK);
 
 	/*
+	 * Check here, as calling loops will have locks held, preventing
+	 * interrupts from being processed.
+	 */
+	CHECK_FOR_INTERRUPTS();
+
+	/*
 	 * If the leaf page still has a parent pointing to it (or a chain of
 	 * parents), we don't unlink the leaf page yet, but the topmost remaining
 	 * parent in the branch.  Set 'target' and 'buf' to reference the page
@@ -1766,6 +1787,14 @@ _bt_unlink_halfdead_page(Relation rel, Buffer leafbuf, bool *rightsib_empty)
 			/* step right one page */
 			leftsib = opaque->btpo_next;
 			_bt_relbuf(rel, lbuf);
+
+			/*
+			 * It'd be good to check for interrupts here, but it's not easy to
+			 * do so because a lock is always held. This block isn't
+			 * frequently reached, so hopefully the consequences of not
+			 * checking interrupts aren't too bad.
+			 */
+
 			if (leftsib == P_NONE)
 			{
 				elog(LOG, "no left sibling (concurrent deletion?) of block %u in \"%s\"",

@@ -804,6 +804,27 @@ sub promote
 	return;
 }
 
+=pod
+
+=item $node->logrotate()
+
+Wrapper for pg_ctl logrotate
+
+=cut
+
+sub logrotate
+{
+	my ($self)  = @_;
+	my $port    = $self->port;
+	my $pgdata  = $self->data_dir;
+	my $logfile = $self->logfile;
+	my $name    = $self->name;
+	print "### Rotating log in node \"$name\"\n";
+	TestLib::system_or_bail('pg_ctl', '-D', $pgdata, '-l', $logfile,
+		'logrotate');
+	return;
+}
+
 # Internal routine to enable streaming replication on a standby node.
 sub enable_streaming
 {
@@ -1348,9 +1369,18 @@ sub poll_query_until
 		$attempts++;
 	}
 
-	# The query result didn't change in 180 seconds. Give up. Print the stderr
-	# from the last attempt, hopefully that's useful for debugging.
-	diag $stderr;
+	# The query result didn't change in 180 seconds. Give up. Print the
+	# output from the last attempt, hopefully that's useful for debugging.
+	chomp($stderr);
+	$stderr =~ s/\r//g if $TestLib::windows_os;
+	diag qq(poll_query_until timed out executing this query:
+$query
+expecting this output:
+$expected
+last actual query output:
+$stdout
+with stderr:
+$stderr);
 	return 0;
 }
 
@@ -1366,6 +1396,8 @@ PostgresNode.
 
 sub command_ok
 {
+	local $Test::Builder::Level = $Test::Builder::Level + 1;
+
 	my $self = shift;
 
 	local $ENV{PGPORT} = $self->port;
@@ -1384,6 +1416,8 @@ TestLib::command_fails with our PGPORT. See command_ok(...)
 
 sub command_fails
 {
+	local $Test::Builder::Level = $Test::Builder::Level + 1;
+
 	my $self = shift;
 
 	local $ENV{PGPORT} = $self->port;
@@ -1402,6 +1436,8 @@ TestLib::command_like with our PGPORT. See command_ok(...)
 
 sub command_like
 {
+	local $Test::Builder::Level = $Test::Builder::Level + 1;
+
 	my $self = shift;
 
 	local $ENV{PGPORT} = $self->port;
@@ -1420,6 +1456,8 @@ TestLib::command_checks_all with our PGPORT. See command_ok(...)
 
 sub command_checks_all
 {
+	local $Test::Builder::Level = $Test::Builder::Level + 1;
+
 	my $self = shift;
 
 	local $ENV{PGPORT} = $self->port;
@@ -1442,6 +1480,8 @@ The log file is truncated prior to running the command, however.
 
 sub issues_sql_like
 {
+	local $Test::Builder::Level = $Test::Builder::Level + 1;
+
 	my ($self, $cmd, $expected_sql, $test_name) = @_;
 
 	local $ENV{PGPORT} = $self->port;
@@ -1525,7 +1565,8 @@ also works for logical subscriptions)
 until its replication location in pg_stat_replication equals or passes the
 upstream's WAL insert point at the time this function is called. By default
 the replay_lsn is waited for, but 'mode' may be specified to wait for any of
-sent|write|flush|replay.
+sent|write|flush|replay. The connection catching up must be in a streaming
+state.
 
 If there is no active replication connection from this peer, waits until
 poll_query_until timeout.
@@ -1570,7 +1611,7 @@ sub wait_for_catchup
 	  . $lsn_expr . " on "
 	  . $self->name . "\n";
 	my $query =
-	  qq[SELECT $lsn_expr <= ${mode}_lsn FROM pg_catalog.pg_stat_replication WHERE application_name = '$standby_name';];
+	  qq[SELECT $lsn_expr <= ${mode}_lsn AND state = 'streaming' FROM pg_catalog.pg_stat_replication WHERE application_name = '$standby_name';];
 	$self->poll_query_until('postgres', $query)
 	  or croak "timed out waiting for catchup";
 	print "done\n";

@@ -8,13 +8,12 @@
 
 #include "postgres.h"
 
-#include <float.h>
 #include <math.h>
 
 #include "access/gist.h"
 #include "access/stratnum.h"
 #include "utils/array.h"
-#include "utils/builtins.h"
+#include "utils/float.h"
 
 #include "cubedata.h"
 
@@ -152,6 +151,13 @@ cube_a_f8_f8(PG_FUNCTION_ARGS)
 				 errmsg("cannot work with arrays containing NULLs")));
 
 	dim = ARRNELEMS(ur);
+	if (dim > CUBE_MAX_DIM)
+		ereport(ERROR,
+				(errcode(ERRCODE_PROGRAM_LIMIT_EXCEEDED),
+				 errmsg("can't extend cube"),
+				 errdetail("A cube cannot have more than %d dimensions.",
+							   CUBE_MAX_DIM)));
+
 	if (ARRNELEMS(ll) != dim)
 		ereport(ERROR,
 				(errcode(ERRCODE_ARRAY_ELEMENT_ERROR),
@@ -209,6 +215,12 @@ cube_a_f8(PG_FUNCTION_ARGS)
 				 errmsg("cannot work with arrays containing NULLs")));
 
 	dim = ARRNELEMS(ur);
+	if (dim > CUBE_MAX_DIM)
+		ereport(ERROR,
+				(errcode(ERRCODE_PROGRAM_LIMIT_EXCEEDED),
+				 errmsg("array is too long"),
+				 errdetail("A cube cannot have more than %d dimensions.",
+							   CUBE_MAX_DIM)));
 
 	dur = ARRPTR(ur);
 
@@ -243,6 +255,13 @@ cube_subset(PG_FUNCTION_ARGS)
 	dx = (int32 *) ARR_DATA_PTR(idx);
 
 	dim = ARRNELEMS(idx);
+	if (dim > CUBE_MAX_DIM)
+		ereport(ERROR,
+				(errcode(ERRCODE_PROGRAM_LIMIT_EXCEEDED),
+				 errmsg("array is too long"),
+				 errdetail("A cube cannot have more than %d dimensions.",
+							   CUBE_MAX_DIM)));
+
 	size = IS_POINT(c) ? POINT_SIZE(dim) : CUBE_SIZE(dim);
 	result = (NDBOX *) palloc0(size);
 	SET_VARSIZE(result, size);
@@ -1756,6 +1775,13 @@ cube_c_f8(PG_FUNCTION_ARGS)
 	int			size;
 	int			i;
 
+	if (DIM(cube) + 1 > CUBE_MAX_DIM)
+		ereport(ERROR,
+				(errcode(ERRCODE_PROGRAM_LIMIT_EXCEEDED),
+				 errmsg("can't extend cube"),
+				 errdetail("A cube cannot have more than %d dimensions.",
+							   CUBE_MAX_DIM)));
+
 	if (IS_POINT(cube))
 	{
 		size = POINT_SIZE((DIM(cube) + 1));
@@ -1796,6 +1822,13 @@ cube_c_f8_f8(PG_FUNCTION_ARGS)
 	NDBOX	   *result;
 	int			size;
 	int			i;
+
+	if (DIM(cube) + 1 > CUBE_MAX_DIM)
+		ereport(ERROR,
+				(errcode(ERRCODE_PROGRAM_LIMIT_EXCEEDED),
+				 errmsg("can't extend cube"),
+				 errdetail("A cube cannot have more than %d dimensions.",
+							   CUBE_MAX_DIM)));
 
 	if (IS_POINT(cube) && (x1 == x2))
 	{

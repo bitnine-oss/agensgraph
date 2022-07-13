@@ -44,20 +44,18 @@ case $testhost in
 		# script; the outcome mimics pg_regress.c:make_temp_sockdir().
 		PGHOST=$PG_REGRESS_SOCK_DIR
 		if [ "x$PGHOST" = x ]; then
-			{
-				dir=`(umask 077 &&
-					  mktemp -d /tmp/pg_upgrade_check-XXXXXX) 2>/dev/null` &&
-				[ -d "$dir" ]
-			} ||
-			{
+			set +e
+			dir=`(umask 077 &&
+				  mktemp -d /tmp/pg_upgrade_check-XXXXXX) 2>/dev/null`
+			if [ ! -d "$dir" ]; then
 				dir=/tmp/pg_upgrade_check-$$-$RANDOM
 				(umask 077 && mkdir "$dir")
-			} ||
-			{
-				echo "could not create socket temporary directory in \"/tmp\""
-				exit 1
-			}
-
+				if [ ! -d "$dir" ]; then
+					echo "could not create socket temporary directory in \"/tmp\""
+					exit 1
+				fi
+			fi
+			set -e
 			PGHOST=$dir
 			trap 'rm -rf "$PGHOST"' 0
 			trap 'exit 3' 1 2 13 15
@@ -65,7 +63,7 @@ case $testhost in
 		;;
 esac
 
-POSTMASTER_OPTS="-F -c listen_addresses=$LISTEN_ADDRESSES -k \"$PGHOST\""
+POSTMASTER_OPTS="-F -c listen_addresses=\"$LISTEN_ADDRESSES\" -k \"$PGHOST\""
 export PGHOST
 
 # don't rely on $PWD here, as old shells don't set it
@@ -107,8 +105,8 @@ newsrc=`cd ../../.. && pwd`
 PATH=$bindir:$PATH
 export PATH
 
-BASE_PGDATA=$temp_root/data
-PGDATA="$BASE_PGDATA.old"
+BASE_PGDATA="$temp_root/data"
+PGDATA="${BASE_PGDATA}.old"
 export PGDATA
 export AGDATA=$PGDATA
 rm -rf "$BASE_PGDATA" "$PGDATA"
@@ -172,7 +170,7 @@ createdb "$dbname1" || createdb_status=$?
 createdb "$dbname2" || createdb_status=$?
 createdb "$dbname3" || createdb_status=$?
 
-if "$MAKE" -C "$oldsrc" installcheck; then
+if "$MAKE" -C "$oldsrc" installcheck-parallel; then
 	oldpgversion=`psql -X -A -t -d regression -c "SHOW server_version_num"`
 
 	# before dumping, get rid of objects not existing in later versions
@@ -227,18 +225,18 @@ if [ -n "$pg_dumpall1_status" ]; then
 	exit 1
 fi
 
-PGDATA=$BASE_PGDATA
+PGDATA="$BASE_PGDATA"
 AGDATA=$PGDATA
 
 standard_initdb 'initdb'
 
-pg_upgrade $PG_UPGRADE_OPTS -d "${PGDATA}.old" -D "${PGDATA}" -b "$oldbindir" -B "$bindir" -p "$PGPORT" -P "$PGPORT"
+pg_upgrade $PG_UPGRADE_OPTS -d "${PGDATA}.old" -D "$PGDATA" -b "$oldbindir" -B "$bindir" -p "$PGPORT" -P "$PGPORT"
 
 # make sure all directories and files have group permissions, on Unix hosts
 # Windows hosts don't support Unix-y permissions.
 case $testhost in
 	MINGW*) ;;
-	*)	if [ $(find ${PGDATA} -type f ! -perm 640 | wc -l) -ne 0 ]; then
+	*)	if [ `find "$PGDATA" -type f ! -perm 640 | wc -l` -ne 0 ]; then
 			echo "files in PGDATA with permission != 640";
 			exit 1;
 		fi ;;
@@ -246,7 +244,7 @@ esac
 
 case $testhost in
 	MINGW*) ;;
-	*)	if [ $(find ${PGDATA} -type d ! -perm 750 | wc -l) -ne 0 ]; then
+	*)	if [ `find "$PGDATA" -type d ! -perm 750 | wc -l` -ne 0 ]; then
 			echo "directories in PGDATA with permission != 750";
 			exit 1;
 		fi ;;

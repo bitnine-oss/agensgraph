@@ -23,12 +23,12 @@ test: numerology
 # ----------
 # The second group of parallel tests
 # ----------
-test: point lseg line box path polygon circle date time timetz timestamp timestamptz interval abstime reltime tinterval inet macaddr macaddr8 tstypes
+test: point lseg line box path polygon circle date time timetz timestamp timestamptz interval inet macaddr macaddr8 tstypes
 
 # ----------
 # Another group of parallel tests
 # geometry depends on point, lseg, box, path, polygon and circle
-# horology depends on interval, timetz, timestamp, timestamptz, reltime and abstime
+# horology depends on interval, timetz, timestamp, timestamptz
 # ----------
 test: geometry horology regex oidjoins type_sanity opr_sanity misc_sanity comments expressions
 
@@ -84,7 +84,7 @@ test: select_into select_distinct select_distinct_on select_implicit select_havi
 # ----------
 # Another group of parallel tests
 # ----------
-test: brin gin gist spgist privileges init_privs security_label collate matview lock replica_identity rowsecurity object_address tablesample groupingsets drop_operator password func_index
+test: brin gin gist spgist privileges init_privs security_label collate matview lock replica_identity rowsecurity object_address tablesample groupingsets drop_operator password
 
 # ----------
 # Another group of parallel tests
@@ -116,7 +116,7 @@ test: plancache limit plpgsql copy2 temp domain rangefuncs prepare without_oid c
 # ----------
 # Another group of parallel tests
 # ----------
-test: identity partition_join partition_prune reloptions hash_part indexing partition_aggregate
+test: identity partition_join partition_prune reloptions hash_part indexing partition_aggregate partition_info
 
 # event triggers cannot run concurrently with any test that runs DDL
 test: event_trigger

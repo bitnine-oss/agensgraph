@@ -82,23 +82,23 @@ AH_VERBATIM(GETTIMEOFDAY_1ARG_,
 
 # PGAC_FUNC_STRERROR_R_INT
 # ---------------------------
-# Check if strerror_r() returns an int (SUSv3) rather than a char * (GNU libc)
-# If so, define STRERROR_R_INT
+# Check if strerror_r() returns int (POSIX) rather than char * (GNU libc).
+# If so, define STRERROR_R_INT.
+# The result is uncertain if strerror_r() isn't provided,
+# but we don't much care.
 AC_DEFUN([PGAC_FUNC_STRERROR_R_INT],
 [AC_CACHE_CHECK(whether strerror_r returns int,
 pgac_cv_func_strerror_r_int,
 [AC_COMPILE_IFELSE([AC_LANG_PROGRAM([#include <string.h>],
-[#ifndef _AIX
-int strerror_r(int, char *, size_t);
-#else
-/* Older AIX has 'int' for the third argument so we don't test the args. */
-int strerror_r();
-#endif])],
+[[char buf[100];
+  switch (strerror_r(1, buf, sizeof(buf)))
+  { case 0: break; default: break; }
+]])],
 [pgac_cv_func_strerror_r_int=yes],
 [pgac_cv_func_strerror_r_int=no])])
 if test x"$pgac_cv_func_strerror_r_int" = xyes ; then
   AC_DEFINE(STRERROR_R_INT, 1,
-            [Define to 1 if strerror_r() returns a int.])
+            [Define to 1 if strerror_r() returns int.])
 fi
 ])# PGAC_FUNC_STRERROR_R_INT
 
@@ -169,74 +169,6 @@ AC_DEFUN([PGAC_STRUCT_ADDRINFO],
 #include <sys/socket.h>
 #include <netdb.h>
 ])])# PGAC_STRUCT_ADDRINFO
-
-
-# PGAC_FUNC_SNPRINTF_ARG_CONTROL
-# ---------------------------------------
-# Determine if snprintf supports %1$ argument selection, e.g. %5$ selects
-# the fifth argument after the printf format string.
-# This is not in the C99 standard, but in the Single Unix Specification (SUS).
-# It is used in our language translation strings.
-#
-AC_DEFUN([PGAC_FUNC_SNPRINTF_ARG_CONTROL],
-[AC_MSG_CHECKING([whether snprintf supports argument control])
-AC_CACHE_VAL(pgac_cv_snprintf_arg_control,
-[AC_RUN_IFELSE([AC_LANG_SOURCE([[#include <stdio.h>
-#include <string.h>
-
-int main()
-{
-  char buf[100];
-
-  /* can it swap arguments? */
-  snprintf(buf, 100, "%2\$d %1\$d", 3, 4);
-  if (strcmp(buf, "4 3") != 0)
-    return 1;
-  return 0;
-}]])],
-[pgac_cv_snprintf_arg_control=yes],
-[pgac_cv_snprintf_arg_control=no],
-[pgac_cv_snprintf_arg_control=cross])
-])dnl AC_CACHE_VAL
-AC_MSG_RESULT([$pgac_cv_snprintf_arg_control])
-])# PGAC_FUNC_SNPRINTF_ARG_CONTROL
-
-# PGAC_FUNC_SNPRINTF_SIZE_T_SUPPORT
-# ---------------------------------------
-# Determine if snprintf supports the z length modifier for printing
-# size_t-sized variables. That's supported by C99 and POSIX but not
-# all platforms play ball, so we must test whether it's working.
-#
-AC_DEFUN([PGAC_FUNC_SNPRINTF_SIZE_T_SUPPORT],
-[AC_MSG_CHECKING([whether snprintf supports the %z modifier])
-AC_CACHE_VAL(pgac_cv_snprintf_size_t_support,
-[AC_RUN_IFELSE([AC_LANG_SOURCE([[#include <stdio.h>
-#include <string.h>
-
-int main()
-{
-  char bufz[100];
-  char buf64[100];
-
-  /*
-   * Print the largest unsigned number fitting in a size_t using both %zu
-   * and the previously-determined format for 64-bit integers.  Note that
-   * we don't run this code unless we know snprintf handles 64-bit ints.
-   */
-  bufz[0] = '\0';  /* in case snprintf fails to emit anything */
-  snprintf(bufz, sizeof(bufz), "%zu", ~((size_t) 0));
-  snprintf(buf64, sizeof(buf64), "%" INT64_MODIFIER "u",
-    (unsigned PG_INT64_TYPE) ~((size_t) 0));
-  if (strcmp(bufz, buf64) != 0)
-    return 1;
-  return 0;
-}]])],
-[pgac_cv_snprintf_size_t_support=yes],
-[pgac_cv_snprintf_size_t_support=no],
-[pgac_cv_snprintf_size_t_support=cross])
-])dnl AC_CACHE_VAL
-AC_MSG_RESULT([$pgac_cv_snprintf_size_t_support])
-])# PGAC_FUNC_SNPRINTF_SIZE_T_SUPPORT
 
 
 # PGAC_TYPE_LOCALE_T

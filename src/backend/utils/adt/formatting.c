@@ -49,7 +49,6 @@
  *	- better number building (formatting) / parsing, now it isn't
  *		  ideal code
  *	- use Assert()
- *	- add support for abstime
  *	- add support for roman number to standard number conversion
  *	- add support for number spelling
  *	- add support for string to string formatting (we must be better
@@ -91,8 +90,10 @@
 #include "utils/builtins.h"
 #include "utils/date.h"
 #include "utils/datetime.h"
+#include "utils/float.h"
 #include "utils/formatting.h"
 #include "utils/int8.h"
+#include "utils/memutils.h"
 #include "utils/numeric.h"
 #include "utils/pg_locale.h"
 
@@ -124,10 +125,10 @@
  */
 typedef struct
 {
-	char	   *name;			/* suffix string		*/
+	const char *name;			/* suffix string		*/
 	int			len,			/* suffix length		*/
 				id,				/* used in node->suffix */
-				type;			/* prefix / postfix			*/
+				type;			/* prefix / postfix		*/
 } KeySuffix;
 
 /* ----------
@@ -155,15 +156,17 @@ typedef struct
 
 typedef struct
 {
-	int			type;			/* NODE_TYPE_XXX, see below */
-	const KeyWord *key;			/* if type is ACTION */
+	uint8		type;			/* NODE_TYPE_XXX, see below */
 	char		character[MAX_MULTIBYTE_CHAR_LEN + 1];	/* if type is CHAR */
-	int			suffix;			/* keyword prefix/suffix code, if any */
+	uint8		suffix;			/* keyword prefix/suffix code, if any */
+	const KeyWord *key;			/* if type is ACTION */
 } FormatNode;
 
 #define NODE_TYPE_END		1
 #define NODE_TYPE_ACTION	2
 #define NODE_TYPE_CHAR		3
+#define NODE_TYPE_SEPARATOR	4
+#define NODE_TYPE_SPACE		5
 
 #define SUFFTYPE_PREFIX		1
 #define SUFFTYPE_POSTFIX	2
@@ -356,14 +359,27 @@ typedef struct
  * For simplicity, the cache entries are fixed-size, so they allow for the
  * worst case of a FormatNode for each byte in the picture string.
  *
- * The max number of entries in the caches is DCH_CACHE_ENTRIES
+ * The CACHE_SIZE constants are computed to make sizeof(DCHCacheEntry) and
+ * sizeof(NUMCacheEntry) be powers of 2, or just less than that, so that
+ * we don't waste too much space by palloc'ing them individually.  Be sure
+ * to adjust those macros if you add fields to those structs.
+ *
+ * The max number of entries in each cache is DCH_CACHE_ENTRIES
  * resp. NUM_CACHE_ENTRIES.
  * ----------
  */
-#define NUM_CACHE_SIZE		64
-#define NUM_CACHE_ENTRIES	20
-#define DCH_CACHE_SIZE		128
+#define DCH_CACHE_OVERHEAD \
+	MAXALIGN(sizeof(bool) + sizeof(int))
+#define NUM_CACHE_OVERHEAD \
+	MAXALIGN(sizeof(bool) + sizeof(int) + sizeof(NUMDesc))
+
+#define DCH_CACHE_SIZE \
+	((2048 - DCH_CACHE_OVERHEAD) / (sizeof(FormatNode) + sizeof(char)) - 1)
+#define NUM_CACHE_SIZE \
+	((1024 - NUM_CACHE_OVERHEAD) / (sizeof(FormatNode) + sizeof(char)) - 1)
+
 #define DCH_CACHE_ENTRIES	20
+#define NUM_CACHE_ENTRIES	20
 
 typedef struct
 {
@@ -383,12 +399,12 @@ typedef struct
 } NUMCacheEntry;
 
 /* global cache for date/time format pictures */
-static DCHCacheEntry DCHCache[DCH_CACHE_ENTRIES];
+static DCHCacheEntry *DCHCache[DCH_CACHE_ENTRIES];
 static int	n_DCHCache = 0;		/* current number of entries */
 static int	DCHCounter = 0;		/* aging-event counter */
 
 /* global cache for number format pictures */
-static NUMCacheEntry NUMCache[NUM_CACHE_ENTRIES];
+static NUMCacheEntry *NUMCache[NUM_CACHE_ENTRIES];
 static int	n_NUMCache = 0;		/* current number of entries */
 static int	NUMCounter = 0;		/* aging-event counter */
 
@@ -494,7 +510,7 @@ do { \
  *****************************************************************************/
 
 /* ----------
- * Suffixes:
+ * Suffixes (FormatNode.suffix is an OR of these codes)
  * ----------
  */
 #define DCH_S_FM	0x01
@@ -954,6 +970,7 @@ typedef struct NUMProc
 static const KeyWord *index_seq_search(const char *str, const KeyWord *kw,
 				 const int *index);
 static const KeySuffix *suff_search(const char *str, const KeySuffix *suf, int type);
+static bool is_separator_char(const char *str);
 static void NUMDesc_prepare(NUMDesc *num, FormatNode *n);
 static void parse_format(FormatNode *node, const char *str, const KeyWord *kw,
 			 const KeySuffix *suf, const int *index, int ver, NUMDesc *Num);
@@ -1041,6 +1058,16 @@ suff_search(const char *str, const KeySuffix *suf, int type)
 			return s;
 	}
 	return NULL;
+}
+
+static bool
+is_separator_char(const char *str)
+{
+	/* ASCII printable character, but not letter or digit */
+	return (*str > 0x20 && *str < 0x7F &&
+			!(*str >= 'A' && *str <= 'Z') &&
+			!(*str >= 'a' && *str <= 'z') &&
+			!(*str >= '0' && *str <= '9'));
 }
 
 /* ----------
@@ -1318,7 +1345,14 @@ parse_format(FormatNode *node, const char *str, const KeyWord *kw,
 				if (*str == '\\' && *(str + 1) == '"')
 					str++;
 				chlen = pg_mblen(str);
-				n->type = NODE_TYPE_CHAR;
+
+				if (ver == DCH_TYPE && is_separator_char(str))
+					n->type = NODE_TYPE_SEPARATOR;
+				else if (isspace((unsigned char) *str))
+					n->type = NODE_TYPE_SPACE;
+				else
+					n->type = NODE_TYPE_CHAR;
+
 				memcpy(n->character, str, chlen);
 				n->character[chlen] = '\0';
 				n->key = NULL;
@@ -2986,25 +3020,79 @@ DCH_from_char(FormatNode *node, char *in, TmFromChar *out)
 	int			len,
 				value;
 	bool		fx_mode = false;
+	/* number of extra skipped characters (more than given in format string) */
+	int			extra_skip = 0;
 
 	for (n = node, s = in; n->type != NODE_TYPE_END && *s != '\0'; n++)
 	{
-		if (n->type != NODE_TYPE_ACTION)
-		{
-			/*
-			 * Separator, so consume one character from input string.  Notice
-			 * we don't insist that the consumed character match the format's
-			 * character.
-			 */
-			s += pg_mblen(s);
-			continue;
-		}
-
-		/* Ignore spaces before fields when not in FX (fixed width) mode */
-		if (!fx_mode && n->key->id != DCH_FX)
+		/*
+		 * Ignore spaces at the beginning of the string and before fields when
+		 * not in FX (fixed width) mode.
+		 */
+		if (!fx_mode && (n->type != NODE_TYPE_ACTION || n->key->id != DCH_FX) &&
+			(n->type == NODE_TYPE_ACTION || n == node))
 		{
 			while (*s != '\0' && isspace((unsigned char) *s))
+			{
 				s++;
+				extra_skip++;
+			}
+		}
+
+		if (n->type == NODE_TYPE_SPACE || n->type == NODE_TYPE_SEPARATOR)
+		{
+			if (!fx_mode)
+			{
+				/*
+				 * In non FX (fixed format) mode one format string space or
+				 * separator match to one space or separator in input string.
+				 * Or match nothing if there is no space or separator in
+				 * the current position of input string.
+				 */
+				extra_skip--;
+				if (isspace((unsigned char) *s) || is_separator_char(s))
+				{
+					s++;
+					extra_skip++;
+				}
+			}
+			else
+			{
+				/*
+				 * In FX mode, on format string space or separator we consume
+				 * exactly one character from input string.  Notice we don't
+				 * insist that the consumed character match the format's
+				 * character.
+				 */
+				s += pg_mblen(s);
+			}
+			continue;
+		}
+		else if (n->type != NODE_TYPE_ACTION)
+		{
+			/*
+			 * Text character, so consume one character from input string.
+			 * Notice we don't insist that the consumed character match the
+			 * format's character.
+			 */
+			if (!fx_mode)
+			{
+				/*
+				 * In non FX mode we might have skipped some extra characters
+				 * (more than specified in format string) before.  In this
+				 * case we don't skip input string character, because it might
+				 * be part of field.
+				 */
+				if (extra_skip > 0)
+					extra_skip--;
+				else
+					s += pg_mblen(s);
+			}
+			else
+			{
+				s += pg_mblen(s);
+			}
+			continue;
 		}
 
 		from_char_set_mode(out, n->key->date_mode);
@@ -3085,10 +3173,24 @@ DCH_from_char(FormatNode *node, char *in, TmFromChar *out)
 								n->key->name)));
 				break;
 			case DCH_TZH:
-				out->tzsign = *s == '-' ? -1 : +1;
-
+				/*
+				 * Value of TZH might be negative.  And the issue is that we
+				 * might swallow minus sign as the separator.  So, if we have
+				 * skipped more characters than specified in the format string,
+				 * then we consider prepending last skipped minus to TZH.
+				 */
 				if (*s == '+' || *s == '-' || *s == ' ')
+				{
+					out->tzsign = *s == '-' ? -1 : +1;
 					s++;
+				}
+				else
+				{
+					if (extra_skip > 0 && *(s - 1) == '-')
+						out->tzsign = -1;
+					else
+						out->tzsign = +1;
+				}
 
 				from_char_parse_int_len(&out->tzh, &s, 2, n);
 				break;
@@ -3260,6 +3362,35 @@ DCH_from_char(FormatNode *node, char *in, TmFromChar *out)
 				SKIP_THth(s, n->suffix);
 				break;
 		}
+
+		/* Ignore all spaces after fields */
+		if (!fx_mode)
+		{
+			extra_skip = 0;
+			while (*s != '\0' && isspace((unsigned char) *s))
+			{
+				s++;
+				extra_skip++;
+			}
+		}
+	}
+}
+
+/*
+ * The invariant for DCH cache entry management is that DCHCounter is equal
+ * to the maximum age value among the existing entries, and we increment it
+ * whenever an access occurs.  If we approach overflow, deal with that by
+ * halving all the age values, so that we retain a fairly accurate idea of
+ * which entries are oldest.
+ */
+static inline void
+DCH_prevent_counter_overflow(void)
+{
+	if (DCHCounter >= (INT_MAX - 1))
+	{
+		for (int i = 0; i < n_DCHCache; i++)
+			DCHCache[i]->age >>= 1;
+		DCHCounter >>= 1;
 	}
 }
 
@@ -3269,29 +3400,24 @@ DCH_cache_getnew(const char *str)
 {
 	DCHCacheEntry *ent;
 
-	/* counter overflow check - paranoia? */
-	if (DCHCounter >= (INT_MAX - DCH_CACHE_ENTRIES))
-	{
-		DCHCounter = 0;
-
-		for (ent = DCHCache; ent < (DCHCache + DCH_CACHE_ENTRIES); ent++)
-			ent->age = (++DCHCounter);
-	}
+	/* Ensure we can advance DCHCounter below */
+	DCH_prevent_counter_overflow();
 
 	/*
 	 * If cache is full, remove oldest entry (or recycle first not-valid one)
 	 */
 	if (n_DCHCache >= DCH_CACHE_ENTRIES)
 	{
-		DCHCacheEntry *old = DCHCache + 0;
+		DCHCacheEntry *old = DCHCache[0];
 
 #ifdef DEBUG_TO_FROM_CHAR
 		elog(DEBUG_elog_output, "cache is full (%d)", n_DCHCache);
 #endif
 		if (old->valid)
 		{
-			for (ent = DCHCache + 1; ent < (DCHCache + DCH_CACHE_ENTRIES); ent++)
+			for (int i = 1; i < DCH_CACHE_ENTRIES; i++)
 			{
+				ent = DCHCache[i];
 				if (!ent->valid)
 				{
 					old = ent;
@@ -3315,7 +3441,9 @@ DCH_cache_getnew(const char *str)
 #ifdef DEBUG_TO_FROM_CHAR
 		elog(DEBUG_elog_output, "NEW (%d)", n_DCHCache);
 #endif
-		ent = DCHCache + n_DCHCache;
+		Assert(DCHCache[n_DCHCache] == NULL);
+		DCHCache[n_DCHCache] = ent = (DCHCacheEntry *)
+			MemoryContextAllocZero(TopMemoryContext, sizeof(DCHCacheEntry));
 		ent->valid = false;
 		StrNCpy(ent->str, str, DCH_CACHE_SIZE + 1);
 		ent->age = (++DCHCounter);
@@ -3329,20 +3457,13 @@ DCH_cache_getnew(const char *str)
 static DCHCacheEntry *
 DCH_cache_search(const char *str)
 {
-	int			i;
-	DCHCacheEntry *ent;
+	/* Ensure we can advance DCHCounter below */
+	DCH_prevent_counter_overflow();
 
-	/* counter overflow check - paranoia? */
-	if (DCHCounter >= (INT_MAX - DCH_CACHE_ENTRIES))
+	for (int i = 0; i < n_DCHCache; i++)
 	{
-		DCHCounter = 0;
+		DCHCacheEntry *ent = DCHCache[i];
 
-		for (ent = DCHCache; ent < (DCHCache + DCH_CACHE_ENTRIES); ent++)
-			ent->age = (++DCHCounter);
-	}
-
-	for (i = 0, ent = DCHCache; i < n_DCHCache; i++, ent++)
-	{
 		if (ent->valid && strcmp(ent->str, str) == 0)
 		{
 			ent->age = (++DCHCounter);
@@ -3585,7 +3706,7 @@ to_timestamp(PG_FUNCTION_ARGS)
 
 /* ----------
  * TO_DATE
- *	Make Date from date_str which is formated at argument 'fmt'
+ *	Make Date from date_str which is formatted at argument 'fmt'
  * ----------
  */
 Datum
@@ -3942,35 +4063,42 @@ do { \
 	(_n)->zero_end		= 0;	\
 } while(0)
 
+/* This works the same as DCH_prevent_counter_overflow */
+static inline void
+NUM_prevent_counter_overflow(void)
+{
+	if (NUMCounter >= (INT_MAX - 1))
+	{
+		for (int i = 0; i < n_NUMCache; i++)
+			NUMCache[i]->age >>= 1;
+		NUMCounter >>= 1;
+	}
+}
+
 /* select a NUMCacheEntry to hold the given format picture */
 static NUMCacheEntry *
 NUM_cache_getnew(const char *str)
 {
 	NUMCacheEntry *ent;
 
-	/* counter overflow check - paranoia? */
-	if (NUMCounter >= (INT_MAX - NUM_CACHE_ENTRIES))
-	{
-		NUMCounter = 0;
-
-		for (ent = NUMCache; ent < (NUMCache + NUM_CACHE_ENTRIES); ent++)
-			ent->age = (++NUMCounter);
-	}
+	/* Ensure we can advance NUMCounter below */
+	NUM_prevent_counter_overflow();
 
 	/*
 	 * If cache is full, remove oldest entry (or recycle first not-valid one)
 	 */
 	if (n_NUMCache >= NUM_CACHE_ENTRIES)
 	{
-		NUMCacheEntry *old = NUMCache + 0;
+		NUMCacheEntry *old = NUMCache[0];
 
 #ifdef DEBUG_TO_FROM_CHAR
 		elog(DEBUG_elog_output, "Cache is full (%d)", n_NUMCache);
 #endif
 		if (old->valid)
 		{
-			for (ent = NUMCache + 1; ent < (NUMCache + NUM_CACHE_ENTRIES); ent++)
+			for (int i = 1; i < NUM_CACHE_ENTRIES; i++)
 			{
+				ent = NUMCache[i];
 				if (!ent->valid)
 				{
 					old = ent;
@@ -3994,7 +4122,9 @@ NUM_cache_getnew(const char *str)
 #ifdef DEBUG_TO_FROM_CHAR
 		elog(DEBUG_elog_output, "NEW (%d)", n_NUMCache);
 #endif
-		ent = NUMCache + n_NUMCache;
+		Assert(NUMCache[n_NUMCache] == NULL);
+		NUMCache[n_NUMCache] = ent = (NUMCacheEntry *)
+			MemoryContextAllocZero(TopMemoryContext, sizeof(NUMCacheEntry));
 		ent->valid = false;
 		StrNCpy(ent->str, str, NUM_CACHE_SIZE + 1);
 		ent->age = (++NUMCounter);
@@ -4008,20 +4138,13 @@ NUM_cache_getnew(const char *str)
 static NUMCacheEntry *
 NUM_cache_search(const char *str)
 {
-	int			i;
-	NUMCacheEntry *ent;
+	/* Ensure we can advance NUMCounter below */
+	NUM_prevent_counter_overflow();
 
-	/* counter overflow check - paranoia? */
-	if (NUMCounter >= (INT_MAX - NUM_CACHE_ENTRIES))
+	for (int i = 0; i < n_NUMCache; i++)
 	{
-		NUMCounter = 0;
+		NUMCacheEntry *ent = NUMCache[i];
 
-		for (ent = NUMCache; ent < (NUMCache + NUM_CACHE_ENTRIES); ent++)
-			ent->age = (++NUMCounter);
-	}
-
-	for (i = 0, ent = NUMCache; i < n_NUMCache; i++, ent++)
-	{
 		if (ent->valid && strcmp(ent->str, str) == 0)
 		{
 			ent->age = (++NUMCounter);
@@ -5631,7 +5754,7 @@ float4_to_char(PG_FUNCTION_ARGS)
 		numstr = orgnum = int_to_roman((int) rint(value));
 	else if (IS_EEEE(&Num))
 	{
-		if (isnan(value) || is_infinite(value))
+		if (isnan(value) || isinf(value))
 		{
 			/*
 			 * Allow 6 characters for the leading sign, the decimal point,
@@ -5735,7 +5858,7 @@ float8_to_char(PG_FUNCTION_ARGS)
 		numstr = orgnum = int_to_roman((int) rint(value));
 	else if (IS_EEEE(&Num))
 	{
-		if (isnan(value) || is_infinite(value))
+		if (isnan(value) || isinf(value))
 		{
 			/*
 			 * Allow 6 characters for the leading sign, the decimal point,

@@ -35,10 +35,10 @@
  *
  * We are using traversal values provided by SP-GiST to calculate and
  * to store the bounds of the quadrants, while traversing into the tree.
- * Traversal value has all the boundaries in the 4D space, and is is
- * capable of transferring the required boundaries to the following
- * traversal values.  In conclusion, three things are necessary
- * to calculate the next traversal value:
+ * Traversal value has all the boundaries in the 4D space, and is capable
+ * of transferring the required boundaries to the following traversal
+ * values.  In conclusion, three things are necessary to calculate the
+ * next traversal value:
  *
  *	(1) the traversal value of the parent
  *	(2) the quadrant of the current node
@@ -74,23 +74,26 @@
 #include "postgres.h"
 
 #include "access/spgist.h"
+#include "access/spgist_private.h"
 #include "access/stratnum.h"
 #include "catalog/pg_type.h"
-#include "utils/builtins.h"
+#include "utils/float.h"
+#include "utils/fmgroids.h"
+#include "utils/fmgrprotos.h"
 #include "utils/geo_decls.h"
 
 /*
  * Comparator for qsort
  *
  * We don't need to use the floating point macros in here, because this
- * is going only going to be used in a place to effect the performance
+ * is only going to be used in a place to effect the performance
  * of the index, not the correctness.
  */
 static int
 compareDoubles(const void *a, const void *b)
 {
-	double		x = *(double *) a;
-	double		y = *(double *) b;
+	float8		x = *(float8 *) a;
+	float8		y = *(float8 *) b;
 
 	if (x == y)
 		return 0;
@@ -99,8 +102,8 @@ compareDoubles(const void *a, const void *b)
 
 typedef struct
 {
-	double		low;
-	double		high;
+	float8		low;
+	float8		high;
 } Range;
 
 typedef struct
@@ -174,7 +177,7 @@ static RectBox *
 initRectBox(void)
 {
 	RectBox    *rect_box = (RectBox *) palloc(sizeof(RectBox));
-	double		infinity = get_float8_infinity();
+	float8		infinity = get_float8_infinity();
 
 	rect_box->range_box_x.left.low = -infinity;
 	rect_box->range_box_x.left.high = infinity;
@@ -366,6 +369,31 @@ overAbove4D(RectBox *rect_box, RangeBox *query)
 	return overHigher2D(&rect_box->range_box_y, &query->right);
 }
 
+/* Lower bound for the distance between point and rect_box */
+static double
+pointToRectBoxDistance(Point *point, RectBox *rect_box)
+{
+	double		dx;
+	double		dy;
+
+	if (point->x < rect_box->range_box_x.left.low)
+		dx = rect_box->range_box_x.left.low - point->x;
+	else if (point->x > rect_box->range_box_x.right.high)
+		dx = point->x - rect_box->range_box_x.right.high;
+	else
+		dx = 0;
+
+	if (point->y < rect_box->range_box_y.left.low)
+		dy = rect_box->range_box_y.left.low - point->y;
+	else if (point->y > rect_box->range_box_y.right.high)
+		dy = point->y - rect_box->range_box_y.right.high;
+	else
+		dy = 0;
+
+	return HYPOT(dx, dy);
+}
+
+
 /*
  * SP-GiST config function
  */
@@ -417,10 +445,10 @@ spg_box_quad_picksplit(PG_FUNCTION_ARGS)
 	BOX		   *centroid;
 	int			median,
 				i;
-	double	   *lowXs = palloc(sizeof(double) * in->nTuples);
-	double	   *highXs = palloc(sizeof(double) * in->nTuples);
-	double	   *lowYs = palloc(sizeof(double) * in->nTuples);
-	double	   *highYs = palloc(sizeof(double) * in->nTuples);
+	float8	   *lowXs = palloc(sizeof(float8) * in->nTuples);
+	float8	   *highXs = palloc(sizeof(float8) * in->nTuples);
+	float8	   *lowYs = palloc(sizeof(float8) * in->nTuples);
+	float8	   *highYs = palloc(sizeof(float8) * in->nTuples);
 
 	/* Calculate median of all 4D coordinates */
 	for (i = 0; i < in->nTuples; i++)
@@ -433,10 +461,10 @@ spg_box_quad_picksplit(PG_FUNCTION_ARGS)
 		highYs[i] = box->high.y;
 	}
 
-	qsort(lowXs, in->nTuples, sizeof(double), compareDoubles);
-	qsort(highXs, in->nTuples, sizeof(double), compareDoubles);
-	qsort(lowYs, in->nTuples, sizeof(double), compareDoubles);
-	qsort(highYs, in->nTuples, sizeof(double), compareDoubles);
+	qsort(lowXs, in->nTuples, sizeof(float8), compareDoubles);
+	qsort(highXs, in->nTuples, sizeof(float8), compareDoubles);
+	qsort(lowYs, in->nTuples, sizeof(float8), compareDoubles);
+	qsort(highYs, in->nTuples, sizeof(float8), compareDoubles);
 
 	median = in->nTuples / 2;
 
@@ -533,17 +561,6 @@ spg_box_quad_inner_consistent(PG_FUNCTION_ARGS)
 	RangeBox   *centroid,
 			  **queries;
 
-	if (in->allTheSame)
-	{
-		/* Report that all nodes should be visited */
-		out->nNodes = in->nNodes;
-		out->nodeNumbers = (int *) palloc(sizeof(int) * in->nNodes);
-		for (i = 0; i < in->nNodes; i++)
-			out->nodeNumbers[i] = i;
-
-		PG_RETURN_VOID();
-	}
-
 	/*
 	 * We are saving the traversal value or initialize it an unbounded one, if
 	 * we have just begun to walk the tree.
@@ -552,6 +569,40 @@ spg_box_quad_inner_consistent(PG_FUNCTION_ARGS)
 		rect_box = in->traversalValue;
 	else
 		rect_box = initRectBox();
+
+	if (in->allTheSame)
+	{
+		/* Report that all nodes should be visited */
+		out->nNodes = in->nNodes;
+		out->nodeNumbers = (int *) palloc(sizeof(int) * in->nNodes);
+		for (i = 0; i < in->nNodes; i++)
+			out->nodeNumbers[i] = i;
+
+		if (in->norderbys > 0 && in->nNodes > 0)
+		{
+			double	   *distances = palloc(sizeof(double) * in->norderbys);
+			int			j;
+
+			for (j = 0; j < in->norderbys; j++)
+			{
+				Point	   *pt = DatumGetPointP(in->orderbys[j].sk_argument);
+
+				distances[j] = pointToRectBoxDistance(pt, rect_box);
+			}
+
+			out->distances = (double **) palloc(sizeof(double *) * in->nNodes);
+			out->distances[0] = distances;
+
+			for (i = 1; i < in->nNodes; i++)
+			{
+				out->distances[i] = palloc(sizeof(double) * in->norderbys);
+				memcpy(out->distances[i], distances,
+					   sizeof(double) * in->norderbys);
+			}
+		}
+
+		PG_RETURN_VOID();
+	}
 
 	/*
 	 * We are casting the prefix and queries to RangeBoxes for ease of the
@@ -570,6 +621,8 @@ spg_box_quad_inner_consistent(PG_FUNCTION_ARGS)
 	out->nNodes = 0;
 	out->nodeNumbers = (int *) palloc(sizeof(int) * in->nNodes);
 	out->traversalValues = (void **) palloc(sizeof(void *) * in->nNodes);
+	if (in->norderbys > 0)
+		out->distances = (double **) palloc(sizeof(double *) * in->nNodes);
 
 	/*
 	 * We switch memory context, because we want to allocate memory for new
@@ -647,6 +700,22 @@ spg_box_quad_inner_consistent(PG_FUNCTION_ARGS)
 		{
 			out->traversalValues[out->nNodes] = next_rect_box;
 			out->nodeNumbers[out->nNodes] = quadrant;
+
+			if (in->norderbys > 0)
+			{
+				double	   *distances = palloc(sizeof(double) * in->norderbys);
+				int			j;
+
+				out->distances[out->nNodes] = distances;
+
+				for (j = 0; j < in->norderbys; j++)
+				{
+					Point	   *pt = DatumGetPointP(in->orderbys[j].sk_argument);
+
+					distances[j] = pointToRectBoxDistance(pt, next_rect_box);
+				}
+			}
+
 			out->nNodes++;
 		}
 		else
@@ -762,6 +831,17 @@ spg_box_quad_leaf_consistent(PG_FUNCTION_ARGS)
 			break;
 	}
 
+	if (flag && in->norderbys > 0)
+	{
+		Oid			distfnoid = in->orderbys[0].sk_func.fn_oid;
+
+		out->distances = spg_key_orderbys_distances(leaf, false,
+													in->orderbys, in->norderbys);
+
+		/* Recheck is necessary when computing distance to polygon */
+		out->recheckDistances = distfnoid == F_DIST_POLYP;
+	}
+
 	PG_RETURN_BOOL(flag);
 }
 
@@ -793,7 +873,8 @@ spg_poly_quad_compress(PG_FUNCTION_ARGS)
 	POLYGON    *polygon = PG_GETARG_POLYGON_P(0);
 	BOX		   *box;
 
-	box = box_copy(&polygon->boundbox);
+	box = (BOX *) palloc(sizeof(BOX));
+	*box = polygon->boundbox;
 
 	PG_RETURN_BOX_P(box);
 }

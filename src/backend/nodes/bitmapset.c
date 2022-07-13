@@ -867,10 +867,12 @@ bms_add_range(Bitmapset *a, int lower, int upper)
 				ushiftbits,
 				wordnum;
 
-	if (lower < 0 || upper < 0)
+	/* do nothing if nothing is called for, without further checking */
+	if (upper < lower)
+		return a;
+
+	if (lower < 0)
 		elog(ERROR, "negative bitmapset member not allowed");
-	if (lower > upper)
-		elog(ERROR, "lower range must not be above upper range");
 	uwordnum = WORDNUM(upper);
 
 	if (a == NULL)
@@ -878,13 +880,12 @@ bms_add_range(Bitmapset *a, int lower, int upper)
 		a = (Bitmapset *) palloc0(BITMAPSET_SIZE(uwordnum + 1));
 		a->nwords = uwordnum + 1;
 	}
-
-	/* ensure we have enough words to store the upper bit */
 	else if (uwordnum >= a->nwords)
 	{
 		int			oldnwords = a->nwords;
 		int			i;
 
+		/* ensure we have enough words to store the upper bit */
 		a = (Bitmapset *) repalloc(a, BITMAPSET_SIZE(uwordnum + 1));
 		a->nwords = uwordnum + 1;
 		/* zero out the enlarged portion */

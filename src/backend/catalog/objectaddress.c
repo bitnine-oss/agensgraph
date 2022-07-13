@@ -3674,7 +3674,8 @@ getObjectDescription(const ObjectAddress *object)
 		case OCLASS_PUBLICATION:
 			{
 				appendStringInfo(&buffer, _("publication %s"),
-								 get_publication_name(object->objectId));
+								 get_publication_name(object->objectId,
+													  false));
 				break;
 			}
 
@@ -3692,7 +3693,7 @@ getObjectDescription(const ObjectAddress *object)
 						 object->objectId);
 
 				prform = (Form_pg_publication_rel) GETSTRUCT(tup);
-				pubname = get_publication_name(prform->prpubid);
+				pubname = get_publication_name(prform->prpubid, false);
 
 				initStringInfo(&rel);
 				getRelationDescription(&rel, prform->prrelid);
@@ -3708,7 +3709,8 @@ getObjectDescription(const ObjectAddress *object)
 		case OCLASS_SUBSCRIPTION:
 			{
 				appendStringInfo(&buffer, _("subscription %s"),
-								 get_subscription_name(object->objectId));
+								 get_subscription_name(object->objectId,
+													   false));
 				break;
 			}
 
@@ -5224,7 +5226,7 @@ getObjectIdentityParts(const ObjectAddress *object,
 			{
 				char	   *pubname;
 
-				pubname = get_publication_name(object->objectId);
+				pubname = get_publication_name(object->objectId, false);
 				appendStringInfoString(&buffer,
 									   quote_identifier(pubname));
 				if (objname)
@@ -5245,7 +5247,7 @@ getObjectIdentityParts(const ObjectAddress *object,
 						 object->objectId);
 
 				prform = (Form_pg_publication_rel) GETSTRUCT(tup);
-				pubname = get_publication_name(prform->prpubid);
+				pubname = get_publication_name(prform->prpubid, false);
 
 				getRelationIdentity(&buffer, prform->prrelid, objname);
 				appendStringInfo(&buffer, " in publication %s", pubname);
@@ -5261,7 +5263,7 @@ getObjectIdentityParts(const ObjectAddress *object,
 			{
 				char	   *subname;
 
-				subname = get_subscription_name(object->objectId);
+				subname = get_subscription_name(object->objectId, false);
 				appendStringInfoString(&buffer,
 									   quote_identifier(subname));
 				if (objname)

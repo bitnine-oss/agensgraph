@@ -99,6 +99,13 @@ PostgreSQL documentation
 
   <cmdsynopsis>
    <command>pg_ctl</command>
+   <arg choice="plain"><option>logrotate</option></arg>
+   <arg choice="opt"><option>-D</option> <replaceable>datadir</replaceable></arg>
+   <arg choice="opt"><option>-s</option></arg>
+  </cmdsynopsis>
+
+  <cmdsynopsis>
+   <command>pg_ctl</command>
    <arg choice="plain"><option>kill</option></arg>
    <arg choice="plain"><replaceable>signal_name</replaceable></arg>
    <arg choice="plain"><replaceable>process_id</replaceable></arg>
@@ -227,6 +234,12 @@ PostgreSQL documentation
   </para>
 
   <para>
+   <option>logrotate</option> mode rotates the server log file.
+   For details on how to use this mode with external log rotation tools, see
+   <xref linkend="logfile-maintenance"/>.
+  </para>
+
+  <para>
    <option>kill</option> mode sends a signal to a specified process.
    This is primarily valuable on <productname>Microsoft Windows</productname>
    which does not have a built-in <application>kill</application> command.  Use
@@ -334,7 +347,7 @@ PostgreSQL documentation
         options being passed through.
        </para>
        <para>
-        The <replaceable>options</replaceable> should usually be surrounded by single or
+        The <replaceable>initdb-options</replaceable> should usually be surrounded by single or
         double quotes to ensure that they are passed through as a group.
        </para>
       </listitem>

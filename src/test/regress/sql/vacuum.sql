@@ -91,8 +91,95 @@ ANALYZE vactst (i), vacparted (does_not_exist);
 
 -- parenthesized syntax for ANALYZE
 ANALYZE (VERBOSE) does_not_exist;
-ANALYZE (nonexistant-arg) does_not_exist;
+ANALYZE (nonexistent-arg) does_not_exist;
+
+-- ensure argument order independence, and that SKIP_LOCKED on non-existing
+-- relation still errors out.
+ANALYZE (SKIP_LOCKED, VERBOSE) does_not_exist;
+ANALYZE (VERBOSE, SKIP_LOCKED) does_not_exist;
+
+-- SKIP_LOCKED option
+VACUUM (SKIP_LOCKED) vactst;
+VACUUM (SKIP_LOCKED, FULL) vactst;
+ANALYZE (SKIP_LOCKED) vactst;
 
 DROP TABLE vaccluster;
 DROP TABLE vactst;
 DROP TABLE vacparted;
+
+-- relation ownership, WARNING logs generated as all are skipped.
+CREATE TABLE vacowned (a int);
+CREATE TABLE vacowned_parted (a int) PARTITION BY LIST (a);
+CREATE TABLE vacowned_part1 PARTITION OF vacowned_parted FOR VALUES IN (1);
+CREATE TABLE vacowned_part2 PARTITION OF vacowned_parted FOR VALUES IN (2);
+CREATE ROLE regress_vacuum;
+SET ROLE regress_vacuum;
+-- Simple table
+VACUUM vacowned;
+ANALYZE vacowned;
+VACUUM (ANALYZE) vacowned;
+-- Catalog
+VACUUM pg_catalog.pg_class;
+ANALYZE pg_catalog.pg_class;
+VACUUM (ANALYZE) pg_catalog.pg_class;
+-- Shared catalog
+VACUUM pg_catalog.pg_authid;
+ANALYZE pg_catalog.pg_authid;
+VACUUM (ANALYZE) pg_catalog.pg_authid;
+-- Partitioned table and its partitions, nothing owned by other user.
+-- Relations are not listed in a single command to test ownership
+-- independently.
+VACUUM vacowned_parted;
+VACUUM vacowned_part1;
+VACUUM vacowned_part2;
+ANALYZE vacowned_parted;
+ANALYZE vacowned_part1;
+ANALYZE vacowned_part2;
+VACUUM (ANALYZE) vacowned_parted;
+VACUUM (ANALYZE) vacowned_part1;
+VACUUM (ANALYZE) vacowned_part2;
+RESET ROLE;
+-- Partitioned table and one partition owned by other user.
+ALTER TABLE vacowned_parted OWNER TO regress_vacuum;
+ALTER TABLE vacowned_part1 OWNER TO regress_vacuum;
+SET ROLE regress_vacuum;
+VACUUM vacowned_parted;
+VACUUM vacowned_part1;
+VACUUM vacowned_part2;
+ANALYZE vacowned_parted;
+ANALYZE vacowned_part1;
+ANALYZE vacowned_part2;
+VACUUM (ANALYZE) vacowned_parted;
+VACUUM (ANALYZE) vacowned_part1;
+VACUUM (ANALYZE) vacowned_part2;
+RESET ROLE;
+-- Only one partition owned by other user.
+ALTER TABLE vacowned_parted OWNER TO CURRENT_USER;
+SET ROLE regress_vacuum;
+VACUUM vacowned_parted;
+VACUUM vacowned_part1;
+VACUUM vacowned_part2;
+ANALYZE vacowned_parted;
+ANALYZE vacowned_part1;
+ANALYZE vacowned_part2;
+VACUUM (ANALYZE) vacowned_parted;
+VACUUM (ANALYZE) vacowned_part1;
+VACUUM (ANALYZE) vacowned_part2;
+RESET ROLE;
+-- Only partitioned table owned by other user.
+ALTER TABLE vacowned_parted OWNER TO regress_vacuum;
+ALTER TABLE vacowned_part1 OWNER TO CURRENT_USER;
+SET ROLE regress_vacuum;
+VACUUM vacowned_parted;
+VACUUM vacowned_part1;
+VACUUM vacowned_part2;
+ANALYZE vacowned_parted;
+ANALYZE vacowned_part1;
+ANALYZE vacowned_part2;
+VACUUM (ANALYZE) vacowned_parted;
+VACUUM (ANALYZE) vacowned_part1;
+VACUUM (ANALYZE) vacowned_part2;
+RESET ROLE;
+DROP TABLE vacowned;
+DROP TABLE vacowned_parted;
+DROP ROLE regress_vacuum;

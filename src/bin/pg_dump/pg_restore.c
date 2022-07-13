@@ -331,6 +331,17 @@ main(int argc, char **argv)
 		exit_nicely(1);
 	}
 
+	/*
+	 * -C is not compatible with -1, because we can't create a database inside
+	 * a transaction block.
+	 */
+	if (opts->createDB && opts->single_txn)
+	{
+		fprintf(stderr, _("%s: options -C/--create and -1/--single-transaction cannot be used together\n"),
+				progname);
+		exit_nicely(1);
+	}
+
 	if (numWorkers <= 0)
 	{
 		fprintf(stderr, _("%s: invalid number of parallel jobs\n"), progname);
@@ -506,7 +517,7 @@ usage(const char *progname)
 	printf(_("  --role=ROLENAME          do SET ROLE before restore\n"));
 
 	printf(_("\n"
-			 "The options -I, -n, -P, -t, -T, and --section can be combined and specified\n"
+			 "The options -I, -n, -N, -P, -t, -T, and --section can be combined and specified\n"
 			 "multiple times to select multiple objects.\n"));
 	printf(_("\nIf no input file name is supplied, then standard input is used.\n\n"));
 	printf(_("Report bugs to <pgsql-bugs@postgresql.org>.\n"));

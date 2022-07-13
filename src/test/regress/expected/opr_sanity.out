@@ -19,6 +19,8 @@
 -- Helper functions to deal with cases where binary-coercible matches are
 -- allowed.
 -- This should match IsBinaryCoercible() in parse_coerce.c.
+-- It doesn't currently know about some cases, notably domains, anyelement,
+-- anynonarray, anyenum, or record, but it doesn't need to (yet).
 create function binary_coercible(oid, oid) returns bool as $$
 begin
   if $1 = $2 then return true; end if;
@@ -39,9 +41,11 @@ begin
   return false;
 end
 $$ language plpgsql strict stable;
--- This one ignores castcontext, so it considers only physical equivalence
--- and not whether the coercion can be invoked implicitly.
-create function physically_coercible(oid, oid) returns bool as $$
+-- This one ignores castcontext, so it will allow cases where an explicit
+-- (but still binary) cast would be required to convert the input type.
+-- We don't currently use this for any tests in this file, but it is a
+-- reasonable alternative definition for some scenarios.
+create function explicitly_binary_coercible(oid, oid) returns bool as $$
 begin
   if $1 = $2 then return true; end if;
   if EXISTS(select 1 from pg_catalog.pg_cast where
@@ -522,24 +526,6 @@ int24ge(smallint,integer)
 int42ge(integer,smallint)
 oideq(oid,oid)
 oidne(oid,oid)
-abstimeeq(abstime,abstime)
-abstimene(abstime,abstime)
-abstimelt(abstime,abstime)
-abstimegt(abstime,abstime)
-abstimele(abstime,abstime)
-abstimege(abstime,abstime)
-reltimeeq(reltime,reltime)
-reltimene(reltime,reltime)
-reltimelt(reltime,reltime)
-reltimegt(reltime,reltime)
-reltimele(reltime,reltime)
-reltimege(reltime,reltime)
-tintervalleneq(tinterval,reltime)
-tintervallenne(tinterval,reltime)
-tintervallenlt(tinterval,reltime)
-tintervallengt(tinterval,reltime)
-tintervallenle(tinterval,reltime)
-tintervallenge(tinterval,reltime)
 float4eq(real,real)
 float4ne(real,real)
 float4lt(real,real)
@@ -564,6 +550,14 @@ float84lt(double precision,real)
 float84le(double precision,real)
 float84gt(double precision,real)
 float84ge(double precision,real)
+btint2cmp(smallint,smallint)
+btint4cmp(integer,integer)
+btfloat4cmp(real,real)
+btfloat8cmp(double precision,double precision)
+btoidcmp(oid,oid)
+btcharcmp("char","char")
+btnamecmp(name,name)
+cash_cmp(money,money)
 int8eq(bigint,bigint)
 int8ne(bigint,bigint)
 int8lt(bigint,bigint)
@@ -583,18 +577,14 @@ namege(name,name)
 namene(name,name)
 oidlt(oid,oid)
 oidle(oid,oid)
-tintervaleq(tinterval,tinterval)
-tintervalne(tinterval,tinterval)
-tintervallt(tinterval,tinterval)
-tintervalgt(tinterval,tinterval)
-tintervalle(tinterval,tinterval)
-tintervalge(tinterval,tinterval)
 macaddr_eq(macaddr,macaddr)
 macaddr_lt(macaddr,macaddr)
 macaddr_le(macaddr,macaddr)
 macaddr_gt(macaddr,macaddr)
 macaddr_ge(macaddr,macaddr)
 macaddr_ne(macaddr,macaddr)
+macaddr_cmp(macaddr,macaddr)
+btint8cmp(bigint,bigint)
 int48eq(integer,bigint)
 int48ne(integer,bigint)
 int48lt(integer,bigint)
@@ -613,6 +603,7 @@ network_le(inet,inet)
 network_gt(inet,inet)
 network_ge(inet,inet)
 network_ne(inet,inet)
+network_cmp(inet,inet)
 lseg_eq(lseg,lseg)
 bpchareq(character,character)
 bpcharne(character,character)
@@ -622,11 +613,13 @@ date_le(date,date)
 date_gt(date,date)
 date_ge(date,date)
 date_ne(date,date)
+date_cmp(date,date)
 time_lt(time without time zone,time without time zone)
 time_le(time without time zone,time without time zone)
 time_gt(time without time zone,time without time zone)
 time_ge(time without time zone,time without time zone)
 time_ne(time without time zone,time without time zone)
+time_cmp(time without time zone,time without time zone)
 time_eq(time without time zone,time without time zone)
 timestamptz_eq(timestamp with time zone,timestamp with time zone)
 timestamptz_ne(timestamp with time zone,timestamp with time zone)
@@ -643,6 +636,8 @@ interval_gt(interval,interval)
 charlt("char","char")
 tidne(tid,tid)
 tideq(tid,tid)
+timestamptz_cmp(timestamp with time zone,timestamp with time zone)
+interval_cmp(interval,interval)
 xideqint4(xid,integer)
 timetz_eq(time with time zone,time with time zone)
 timetz_ne(time with time zone,time with time zone)
@@ -650,6 +645,7 @@ timetz_lt(time with time zone,time with time zone)
 timetz_le(time with time zone,time with time zone)
 timetz_ge(time with time zone,time with time zone)
 timetz_gt(time with time zone,time with time zone)
+timetz_cmp(time with time zone,time with time zone)
 circle_eq(circle,circle)
 circle_ne(circle,circle)
 circle_lt(circle,circle)
@@ -667,6 +663,7 @@ bitge(bit,bit)
 bitgt(bit,bit)
 bitle(bit,bit)
 bitlt(bit,bit)
+bitcmp(bit,bit)
 oidgt(oid,oid)
 oidge(oid,oid)
 varbiteq(bit varying,bit varying)
@@ -675,8 +672,10 @@ varbitge(bit varying,bit varying)
 varbitgt(bit varying,bit varying)
 varbitle(bit varying,bit varying)
 varbitlt(bit varying,bit varying)
+varbitcmp(bit varying,bit varying)
 boolle(boolean,boolean)
 boolge(boolean,boolean)
+btboolcmp(boolean,boolean)
 int28eq(smallint,bigint)
 int28ne(smallint,bigint)
 int28lt(smallint,bigint)
@@ -695,24 +694,36 @@ byteale(bytea,bytea)
 byteagt(bytea,bytea)
 byteage(bytea,bytea)
 byteane(bytea,bytea)
+byteacmp(bytea,bytea)
+timestamp_cmp(timestamp without time zone,timestamp without time zone)
 timestamp_eq(timestamp without time zone,timestamp without time zone)
 timestamp_ne(timestamp without time zone,timestamp without time zone)
 timestamp_lt(timestamp without time zone,timestamp without time zone)
 timestamp_le(timestamp without time zone,timestamp without time zone)
 timestamp_ge(timestamp without time zone,timestamp without time zone)
 timestamp_gt(timestamp without time zone,timestamp without time zone)
+btint48cmp(integer,bigint)
+btint84cmp(bigint,integer)
+btint24cmp(smallint,integer)
+btint42cmp(integer,smallint)
+btint28cmp(smallint,bigint)
+btint82cmp(bigint,smallint)
+btfloat48cmp(real,double precision)
+btfloat84cmp(double precision,real)
 md5(text)
 md5(bytea)
 tidgt(tid,tid)
 tidlt(tid,tid)
 tidge(tid,tid)
 tidle(tid,tid)
+bttidcmp(tid,tid)
 uuid_lt(uuid,uuid)
 uuid_le(uuid,uuid)
 uuid_eq(uuid,uuid)
 uuid_ge(uuid,uuid)
 uuid_gt(uuid,uuid)
 uuid_ne(uuid,uuid)
+uuid_cmp(uuid,uuid)
 xidneq(xid,xid)
 xidneqint4(xid,integer)
 sha224(bytea)
@@ -726,6 +737,7 @@ macaddr8_le(macaddr8,macaddr8)
 macaddr8_gt(macaddr8,macaddr8)
 macaddr8_ge(macaddr8,macaddr8)
 macaddr8_ne(macaddr8,macaddr8)
+macaddr8_cmp(macaddr8,macaddr8)
 -- restore normal output mode
 \a\t
 -- List of functions used by libpq's fe-lobj.c
@@ -1042,9 +1054,6 @@ ORDER BY 1, 2;
  !~*  | ~*
  !~~  | ~~
  !~~* | ~~*
- #<   | #>=
- #<=  | #>
- #<>  | #=
  *<   | *>=
  *<=  | *>
  *<>  | *=
@@ -1054,7 +1063,7 @@ ORDER BY 1, 2;
  <>   | ~=
  ~<=~ | ~>~
  ~<~  | ~>=~
-(16 rows)
+(13 rows)
 
 -- A mergejoinable or hashjoinable operator must be binary, must return
 -- boolean, and must have a commutator (itself, unless it's a cross-type
@@ -1223,7 +1232,7 @@ WHERE d.classoid IS NULL AND p1.oid <= 9999;
 
 -- Check that operators' underlying functions have suitable comments,
 -- namely 'implementation of XXX operator'.  (Note: it's not necessary to
--- put such comments into pg_proc.h; initdb will generate them as needed.)
+-- put such comments into pg_proc.dat; initdb will generate them as needed.)
 -- In some cases involving legacy names for operators, there are multiple
 -- operators referencing the same pg_proc entry, so ignore operators whose
 -- comments say they are deprecated.
@@ -1325,8 +1334,6 @@ WHERE a.aggfnoid = p.oid AND
 (0 rows)
 
 -- Cross-check transfn against its entry in pg_proc.
--- NOTE: use physically_coercible here, not binary_coercible, because
--- max and min on abstime are implemented using int4larger/int4smaller.
 SELECT a.aggfnoid::oid, p.proname, ptr.oid, ptr.proname
 FROM pg_aggregate AS a, pg_proc AS p, pg_proc AS ptr
 WHERE a.aggfnoid = p.oid AND
@@ -1335,15 +1342,16 @@ WHERE a.aggfnoid = p.oid AND
      OR NOT (ptr.pronargs =
              CASE WHEN a.aggkind = 'n' THEN p.pronargs + 1
              ELSE greatest(p.pronargs - a.aggnumdirectargs, 1) + 1 END)
-     OR NOT physically_coercible(ptr.prorettype, a.aggtranstype)
-     OR NOT physically_coercible(a.aggtranstype, ptr.proargtypes[0])
+     OR NOT binary_coercible(ptr.prorettype, a.aggtranstype)
+     OR NOT binary_coercible(a.aggtranstype, ptr.proargtypes[0])
      OR (p.pronargs > 0 AND
-         NOT physically_coercible(p.proargtypes[0], ptr.proargtypes[1]))
+         NOT binary_coercible(p.proargtypes[0], ptr.proargtypes[1]))
      OR (p.pronargs > 1 AND
-         NOT physically_coercible(p.proargtypes[1], ptr.proargtypes[2]))
+         NOT binary_coercible(p.proargtypes[1], ptr.proargtypes[2]))
      OR (p.pronargs > 2 AND
-         NOT physically_coercible(p.proargtypes[2], ptr.proargtypes[3]))
+         NOT binary_coercible(p.proargtypes[2], ptr.proargtypes[3]))
      -- we could carry the check further, but 3 args is enough for now
+     OR (p.pronargs > 3)
     );
  aggfnoid | proname | oid | proname 
 ----------+---------+-----+---------
@@ -1365,7 +1373,8 @@ WHERE a.aggfnoid = p.oid AND
          NOT binary_coercible(p.proargtypes[1], pfn.proargtypes[2]))
      OR (pfn.pronargs > 3 AND
          NOT binary_coercible(p.proargtypes[2], pfn.proargtypes[3]))
-     -- we could carry the check further, but 3 args is enough for now
+     -- we could carry the check further, but 4 args is enough for now
+     OR (pfn.pronargs > 4)
     );
  aggfnoid | proname | oid | proname 
 ----------+---------+-----+---------
@@ -1421,15 +1430,16 @@ WHERE a.aggfnoid = p.oid AND
      OR NOT (ptr.pronargs =
              CASE WHEN a.aggkind = 'n' THEN p.pronargs + 1
              ELSE greatest(p.pronargs - a.aggnumdirectargs, 1) + 1 END)
-     OR NOT physically_coercible(ptr.prorettype, a.aggmtranstype)
-     OR NOT physically_coercible(a.aggmtranstype, ptr.proargtypes[0])
+     OR NOT binary_coercible(ptr.prorettype, a.aggmtranstype)
+     OR NOT binary_coercible(a.aggmtranstype, ptr.proargtypes[0])
      OR (p.pronargs > 0 AND
-         NOT physically_coercible(p.proargtypes[0], ptr.proargtypes[1]))
+         NOT binary_coercible(p.proargtypes[0], ptr.proargtypes[1]))
      OR (p.pronargs > 1 AND
-         NOT physically_coercible(p.proargtypes[1], ptr.proargtypes[2]))
+         NOT binary_coercible(p.proargtypes[1], ptr.proargtypes[2]))
      OR (p.pronargs > 2 AND
-         NOT physically_coercible(p.proargtypes[2], ptr.proargtypes[3]))
+         NOT binary_coercible(p.proargtypes[2], ptr.proargtypes[3]))
      -- we could carry the check further, but 3 args is enough for now
+     OR (p.pronargs > 3)
     );
  aggfnoid | proname | oid | proname 
 ----------+---------+-----+---------
@@ -1444,15 +1454,16 @@ WHERE a.aggfnoid = p.oid AND
      OR NOT (ptr.pronargs =
              CASE WHEN a.aggkind = 'n' THEN p.pronargs + 1
              ELSE greatest(p.pronargs - a.aggnumdirectargs, 1) + 1 END)
-     OR NOT physically_coercible(ptr.prorettype, a.aggmtranstype)
-     OR NOT physically_coercible(a.aggmtranstype, ptr.proargtypes[0])
+     OR NOT binary_coercible(ptr.prorettype, a.aggmtranstype)
+     OR NOT binary_coercible(a.aggmtranstype, ptr.proargtypes[0])
      OR (p.pronargs > 0 AND
-         NOT physically_coercible(p.proargtypes[0], ptr.proargtypes[1]))
+         NOT binary_coercible(p.proargtypes[0], ptr.proargtypes[1]))
      OR (p.pronargs > 1 AND
-         NOT physically_coercible(p.proargtypes[1], ptr.proargtypes[2]))
+         NOT binary_coercible(p.proargtypes[1], ptr.proargtypes[2]))
      OR (p.pronargs > 2 AND
-         NOT physically_coercible(p.proargtypes[2], ptr.proargtypes[3]))
+         NOT binary_coercible(p.proargtypes[2], ptr.proargtypes[3]))
      -- we could carry the check further, but 3 args is enough for now
+     OR (p.pronargs > 3)
     );
  aggfnoid | proname | oid | proname 
 ----------+---------+-----+---------
@@ -1474,7 +1485,8 @@ WHERE a.aggfnoid = p.oid AND
          NOT binary_coercible(p.proargtypes[1], pfn.proargtypes[2]))
      OR (pfn.pronargs > 3 AND
          NOT binary_coercible(p.proargtypes[2], pfn.proargtypes[3]))
-     -- we could carry the check further, but 3 args is enough for now
+     -- we could carry the check further, but 4 args is enough for now
+     OR (pfn.pronargs > 4)
     );
  aggfnoid | proname | oid | proname 
 ----------+---------+-----+---------
@@ -1506,15 +1518,13 @@ WHERE a.aggfnoid = p.oid AND
 
 -- Check that all combine functions have signature
 -- combine(transtype, transtype) returns transtype
--- NOTE: use physically_coercible here, not binary_coercible, because
--- max and min on abstime are implemented using int4larger/int4smaller.
 SELECT a.aggfnoid, p.proname
 FROM pg_aggregate as a, pg_proc as p
 WHERE a.aggcombinefn = p.oid AND
     (p.pronargs != 2 OR
      p.prorettype != p.proargtypes[0] OR
      p.prorettype != p.proargtypes[1] OR
-     NOT physically_coercible(a.aggtranstype, p.proargtypes[0]));
+     NOT binary_coercible(a.aggtranstype, p.proargtypes[0]));
  aggfnoid | proname 
 ----------+---------
 (0 rows)
@@ -1681,6 +1691,16 @@ FROM pg_opfamily as p1
 WHERE p1.opfmethod = 0 OR p1.opfnamespace = 0;
  oid 
 -----
+(0 rows)
+
+-- Look for opfamilies having no opclasses.  While most validation of
+-- opfamilies is now handled by AM-specific amvalidate functions, that's
+-- driven from pg_opclass entries below, so an empty opfamily would not
+-- get noticed.
+SELECT oid, opfname FROM pg_opfamily f
+WHERE NOT EXISTS (SELECT 1 FROM pg_opclass WHERE opcfamily = f.oid);
+ oid | opfname 
+-----+---------
 (0 rows)
 
 -- **************** pg_opclass ****************
@@ -1888,6 +1908,7 @@ ORDER BY 1, 2, 3;
        4000 |           12 | <=
        4000 |           12 | |&>
        4000 |           14 | >=
+       4000 |           15 | <->
        4000 |           15 | >
        4000 |           16 | @>
        4000 |           18 | =
@@ -1901,7 +1922,7 @@ ORDER BY 1, 2, 3;
        4000 |           26 | >>
        4000 |           27 | >>=
        4000 |           28 | ^@
-(127 rows)
+(128 rows)
 
 -- Check that all opclass search operators have selectivity estimators.
 -- This is not absolutely required, but it seems a reasonable thing

@@ -67,7 +67,7 @@ static void fetchOuterVars(NestLoopVLE *nlv, ExprContext *econtext,
 /* result slot */
 static void adjustResult(NestLoopVLEState *node, TupleTableSlot *slot);
 /* cleanup */
-static void freePlanStateChgParam(PlanState *root);
+static void freePlanStateChgParam(PlanState *node);
 
 
 static TupleTableSlot *
@@ -473,14 +473,14 @@ ExecInitNestLoopVLE(NestLoopVLE *node, EState *estate, int eflags)
 	/*
 	 * tuple table initialization / initialize tuple type and projection info
 	 */
-    ExecInitResultTupleSlotTL(estate, &nlvstate->nls.js.ps);
+	ExecInitResultTupleSlotTL(&nlvstate->nls.js.ps, &TTSOpsVirtual);
 	ExecAssignProjectionInfo(&nlvstate->nls.js.ps, NULL);
 
 	nlvstate->curhops = getInitialCurhops(node);
 
 	innerTupleDesc =
 			innerPlanState(nlvstate)->ps_ResultTupleSlot->tts_tupleDescriptor;
-	element_type = innerTupleDesc->attrs[INNER_EID_VARNO].atttypid;
+	element_type = TupleDescAttr(innerTupleDesc, INNER_EID_VARNO)->atttypid;
 	nlvstate->eids = initArrayResult(element_type, CurrentMemoryContext, false);
 	/*
 	 * {prev, curr, ids | next, id} + {edges | edge}
@@ -488,7 +488,7 @@ ExecInitNestLoopVLE(NestLoopVLE *node, EState *estate, int eflags)
 	 */
 	if (list_length(nlvstate->nls.js.ps.plan->targetlist) >= 7)
 	{
-		element_type = innerTupleDesc->attrs[INNER_EDGE_VARNO].atttypid;
+		element_type = TupleDescAttr(innerTupleDesc, INNER_EDGE_VARNO)->atttypid;
 		nlvstate->edges = initArrayResult(element_type, CurrentMemoryContext,
 										  false);
 	}
@@ -498,7 +498,7 @@ ExecInitNestLoopVLE(NestLoopVLE *node, EState *estate, int eflags)
 	 */
 	if (list_length(nlvstate->nls.js.ps.plan->targetlist) == 9)
 	{
-		element_type = innerTupleDesc->attrs[INNER_VERTEX_VARNO].atttypid;
+		element_type = TupleDescAttr(innerTupleDesc, INNER_VERTEX_VARNO)->atttypid;
 		nlvstate->vertices = initArrayResult(element_type, CurrentMemoryContext,
 											 false);
 	}
@@ -717,7 +717,7 @@ needResult(NestLoopVLEState *node)
 static void
 pushPathElementOuter(NestLoopVLEState *node, TupleTableSlot *slot)
 {
-    FormData_pg_attribute* attrs = slot->tts_tupleDescriptor->attrs;
+	FormData_pg_attribute *attrs = slot->tts_tupleDescriptor->attrs;
 	IntArray	upper;
 	Datum		value;
 	bool		isnull;
@@ -754,7 +754,7 @@ pushPathElementOuter(NestLoopVLEState *node, TupleTableSlot *slot)
 static void
 pushPathElementInner(NestLoopVLEState *node, TupleTableSlot *slot)
 {
-    FormData_pg_attribute* attrs = slot->tts_tupleDescriptor->attrs;
+	FormData_pg_attribute *attrs = slot->tts_tupleDescriptor->attrs;
 
 	accumArrayResult(node->eids, slot->tts_values[INNER_EID_VARNO],
 					 slot->tts_isnull[INNER_EID_VARNO],

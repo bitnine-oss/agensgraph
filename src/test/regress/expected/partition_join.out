@@ -62,33 +62,28 @@ SELECT t1.a, t1.c, t2.b, t2.c FROM prt1 t1, prt2 t2 WHERE t1.a = t2.b AND t1.b =
  450 | 0450 | 450 | 0450
 (4 rows)
 
--- left outer join, with whole-row reference
+-- left outer join, with whole-row reference; partitionwise join does not apply
 EXPLAIN (COSTS OFF)
 SELECT t1, t2 FROM prt1 t1 LEFT JOIN prt2 t2 ON t1.a = t2.b WHERE t1.b = 0 ORDER BY t1.a, t2.b;
                     QUERY PLAN                    
 --------------------------------------------------
  Sort
    Sort Key: t1.a, t2.b
-   ->  Append
-         ->  Hash Right Join
-               Hash Cond: (t2.b = t1.a)
+   ->  Hash Right Join
+         Hash Cond: (t2.b = t1.a)
+         ->  Append
                ->  Seq Scan on prt2_p1 t2
-               ->  Hash
+               ->  Seq Scan on prt2_p2 t2_1
+               ->  Seq Scan on prt2_p3 t2_2
+         ->  Hash
+               ->  Append
                      ->  Seq Scan on prt1_p1 t1
                            Filter: (b = 0)
-         ->  Hash Right Join
-               Hash Cond: (t2_1.b = t1_1.a)
-               ->  Seq Scan on prt2_p2 t2_1
-               ->  Hash
                      ->  Seq Scan on prt1_p2 t1_1
                            Filter: (b = 0)
-         ->  Hash Right Join
-               Hash Cond: (t2_2.b = t1_2.a)
-               ->  Seq Scan on prt2_p3 t2_2
-               ->  Hash
                      ->  Seq Scan on prt1_p3 t1_2
                            Filter: (b = 0)
-(21 rows)
+(16 rows)
 
 SELECT t1, t2 FROM prt1 t1 LEFT JOIN prt2 t2 ON t1.a = t2.b WHERE t1.b = 0 ORDER BY t1.a, t2.b;
       t1      |      t2      
@@ -1042,6 +1037,40 @@ SELECT t1.a, t2.b FROM (SELECT * FROM prt1 WHERE a < 450) t1 LEFT JOIN (SELECT *
  400 |    
 (9 rows)
 
+-- merge join when expression with whole-row reference needs to be sorted;
+-- partitionwise join does not apply
+EXPLAIN (COSTS OFF)
+SELECT t1.a, t2.b FROM prt1 t1, prt2 t2 WHERE t1::text = t2::text AND t1.a = t2.b ORDER BY t1.a;
+                                       QUERY PLAN                                        
+-----------------------------------------------------------------------------------------
+ Merge Join
+   Merge Cond: ((t1.a = t2.b) AND (((((t1.*)::prt1))::text) = ((((t2.*)::prt2))::text)))
+   ->  Sort
+         Sort Key: t1.a, ((((t1.*)::prt1))::text)
+         ->  Result
+               ->  Append
+                     ->  Seq Scan on prt1_p1 t1
+                     ->  Seq Scan on prt1_p2 t1_1
+                     ->  Seq Scan on prt1_p3 t1_2
+   ->  Sort
+         Sort Key: t2.b, ((((t2.*)::prt2))::text)
+         ->  Result
+               ->  Append
+                     ->  Seq Scan on prt2_p1 t2
+                     ->  Seq Scan on prt2_p2 t2_1
+                     ->  Seq Scan on prt2_p3 t2_2
+(16 rows)
+
+SELECT t1.a, t2.b FROM prt1 t1, prt2 t2 WHERE t1::text = t2::text AND t1.a = t2.b ORDER BY t1.a;
+ a  | b  
+----+----
+  0 |  0
+  6 |  6
+ 12 | 12
+ 18 | 18
+ 24 | 24
+(5 rows)
+
 RESET enable_hashjoin;
 RESET enable_nestloop;
 --
@@ -1327,6 +1356,76 @@ SELECT avg(t1.a), avg(t2.b), avg(t3.a + t3.b), t1.c, t2.c, t3.c FROM pht1 t1, ph
  225.0000000000000000 | 225.0000000000000000 | 448.0000000000000000 | 0004 | 0004 | A0004
  273.0000000000000000 | 273.0000000000000000 | 548.0000000000000000 | 0005 | 0005 | A0005
 (6 rows)
+
+-- test default partition behavior for range
+ALTER TABLE prt1 DETACH PARTITION prt1_p3;
+ALTER TABLE prt1 ATTACH PARTITION prt1_p3 DEFAULT;
+ANALYZE prt1;
+ALTER TABLE prt2 DETACH PARTITION prt2_p3;
+ALTER TABLE prt2 ATTACH PARTITION prt2_p3 DEFAULT;
+ANALYZE prt2;
+EXPLAIN (COSTS OFF)
+SELECT t1.a, t1.c, t2.b, t2.c FROM prt1 t1, prt2 t2 WHERE t1.a = t2.b AND t1.b = 0 ORDER BY t1.a, t2.b;
+                    QUERY PLAN                    
+--------------------------------------------------
+ Sort
+   Sort Key: t1.a
+   ->  Append
+         ->  Hash Join
+               Hash Cond: (t2.b = t1.a)
+               ->  Seq Scan on prt2_p1 t2
+               ->  Hash
+                     ->  Seq Scan on prt1_p1 t1
+                           Filter: (b = 0)
+         ->  Hash Join
+               Hash Cond: (t2_1.b = t1_1.a)
+               ->  Seq Scan on prt2_p2 t2_1
+               ->  Hash
+                     ->  Seq Scan on prt1_p2 t1_1
+                           Filter: (b = 0)
+         ->  Hash Join
+               Hash Cond: (t2_2.b = t1_2.a)
+               ->  Seq Scan on prt2_p3 t2_2
+               ->  Hash
+                     ->  Seq Scan on prt1_p3 t1_2
+                           Filter: (b = 0)
+(21 rows)
+
+-- test default partition behavior for list
+ALTER TABLE plt1 DETACH PARTITION plt1_p3;
+ALTER TABLE plt1 ATTACH PARTITION plt1_p3 DEFAULT;
+ANALYZE plt1;
+ALTER TABLE plt2 DETACH PARTITION plt2_p3;
+ALTER TABLE plt2 ATTACH PARTITION plt2_p3 DEFAULT;
+ANALYZE plt2;
+EXPLAIN (COSTS OFF)
+SELECT avg(t1.a), avg(t2.b), t1.c, t2.c FROM plt1 t1 RIGHT JOIN plt2 t2 ON t1.c = t2.c WHERE t1.a % 25 = 0 GROUP BY t1.c, t2.c ORDER BY t1.c, t2.c;
+                       QUERY PLAN                       
+--------------------------------------------------------
+ Sort
+   Sort Key: t1.c
+   ->  HashAggregate
+         Group Key: t1.c, t2.c
+         ->  Append
+               ->  Hash Join
+                     Hash Cond: (t2.c = t1.c)
+                     ->  Seq Scan on plt2_p1 t2
+                     ->  Hash
+                           ->  Seq Scan on plt1_p1 t1
+                                 Filter: ((a % 25) = 0)
+               ->  Hash Join
+                     Hash Cond: (t2_1.c = t1_1.c)
+                     ->  Seq Scan on plt2_p2 t2_1
+                     ->  Hash
+                           ->  Seq Scan on plt1_p2 t1_1
+                                 Filter: ((a % 25) = 0)
+               ->  Hash Join
+                     Hash Cond: (t2_2.c = t1_2.c)
+                     ->  Seq Scan on plt2_p3 t2_2
+                     ->  Hash
+                           ->  Seq Scan on plt1_p3 t1_2
+                                 Filter: ((a % 25) = 0)
+(23 rows)
 
 --
 -- multiple levels of partitioning
@@ -1652,6 +1751,49 @@ SELECT t1.a, t1.c, t2.b, t2.c FROM (SELECT * FROM prt1_l WHERE a = 1 AND a = 2) 
                One-Time Filter: false
 (11 rows)
 
+-- Test case to verify proper handling of subqueries in a partitioned delete.
+-- The weird-looking lateral join is just there to force creation of a
+-- nestloop parameter within the subquery, which exposes the problem if the
+-- planner fails to make multiple copies of the subquery as appropriate.
+EXPLAIN (COSTS OFF)
+DELETE FROM prt1_l
+WHERE EXISTS (
+  SELECT 1
+    FROM int4_tbl,
+         LATERAL (SELECT int4_tbl.f1 FROM int8_tbl LIMIT 2) ss
+    WHERE prt1_l.c IS NULL);
+                          QUERY PLAN                           
+---------------------------------------------------------------
+ Delete on prt1_l
+   Delete on prt1_l_p1
+   Delete on prt1_l_p3_p1
+   Delete on prt1_l_p3_p2
+   ->  Nested Loop Semi Join
+         ->  Seq Scan on prt1_l_p1
+               Filter: (c IS NULL)
+         ->  Nested Loop
+               ->  Seq Scan on int4_tbl
+               ->  Subquery Scan on ss
+                     ->  Limit
+                           ->  Seq Scan on int8_tbl
+   ->  Nested Loop Semi Join
+         ->  Seq Scan on prt1_l_p3_p1
+               Filter: (c IS NULL)
+         ->  Nested Loop
+               ->  Seq Scan on int4_tbl
+               ->  Subquery Scan on ss_1
+                     ->  Limit
+                           ->  Seq Scan on int8_tbl int8_tbl_1
+   ->  Nested Loop Semi Join
+         ->  Seq Scan on prt1_l_p3_p2
+               Filter: (c IS NULL)
+         ->  Nested Loop
+               ->  Seq Scan on int4_tbl
+               ->  Subquery Scan on ss_2
+                     ->  Limit
+                           ->  Seq Scan on int8_tbl int8_tbl_2
+(28 rows)
+
 --
 -- negative testcases
 --
@@ -1856,4 +1998,31 @@ SELECT t1.a, t1.c, t2.b, t2.c FROM prt1_n t1 FULL JOIN prt1 t2 ON (t1.c = t2.c);
                ->  Seq Scan on prt1_n_p1 t1
                ->  Seq Scan on prt1_n_p2 t1_1
 (10 rows)
+
+-- partitionwise join can not be applied if only one of joining table has
+-- default partition
+ALTER TABLE prt2 DETACH PARTITION prt2_p3;
+ALTER TABLE prt2 ATTACH PARTITION prt2_p3 FOR VALUES FROM (500) TO (600);
+ANALYZE prt2;
+EXPLAIN (COSTS OFF)
+SELECT t1.a, t1.c, t2.b, t2.c FROM prt1 t1, prt2 t2 WHERE t1.a = t2.b AND t1.b = 0 ORDER BY t1.a, t2.b;
+                    QUERY PLAN                    
+--------------------------------------------------
+ Sort
+   Sort Key: t1.a
+   ->  Hash Join
+         Hash Cond: (t2.b = t1.a)
+         ->  Append
+               ->  Seq Scan on prt2_p1 t2
+               ->  Seq Scan on prt2_p2 t2_1
+               ->  Seq Scan on prt2_p3 t2_2
+         ->  Hash
+               ->  Append
+                     ->  Seq Scan on prt1_p1 t1
+                           Filter: (b = 0)
+                     ->  Seq Scan on prt1_p2 t1_1
+                           Filter: (b = 0)
+                     ->  Seq Scan on prt1_p3 t1_2
+                           Filter: (b = 0)
+(16 rows)
 

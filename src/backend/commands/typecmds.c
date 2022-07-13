@@ -1270,10 +1270,10 @@ DefineEnum(CreateEnumStmt *stmt)
 
 /*
  * AlterEnum
- *		ALTER TYPE on an enum.
+ *		Adds a new label to an existing enum.
  */
 ObjectAddress
-AlterEnum(AlterEnumStmt *stmt, bool isTopLevel)
+AlterEnum(AlterEnumStmt *stmt)
 {
 	Oid			enum_type_oid;
 	TypeName   *typename;
@@ -1291,6 +1291,8 @@ AlterEnum(AlterEnumStmt *stmt, bool isTopLevel)
 	/* Check it's an enum and check user has permission to ALTER the enum */
 	checkEnumOwner(tup);
 
+	ReleaseSysCache(tup);
+
 	if (stmt->oldVal)
 	{
 		/* Rename an existing label */
@@ -1299,27 +1301,6 @@ AlterEnum(AlterEnumStmt *stmt, bool isTopLevel)
 	else
 	{
 		/* Add a new label */
-
-		/*
-		 * Ordinarily we disallow adding values within transaction blocks,
-		 * because we can't cope with enum OID values getting into indexes and
-		 * then having their defining pg_enum entries go away.  However, it's
-		 * okay if the enum type was created in the current transaction, since
-		 * then there can be no such indexes that wouldn't themselves go away
-		 * on rollback.  (We support this case because pg_dump
-		 * --binary-upgrade needs it.)  We test this by seeing if the pg_type
-		 * row has xmin == current XID and is not HEAP_UPDATED.  If it is
-		 * HEAP_UPDATED, we can't be sure whether the type was created or only
-		 * modified in this xact.  So we are disallowing some cases that could
-		 * theoretically be safe; but fortunately pg_dump only needs the
-		 * simplest case.
-		 */
-		if (HeapTupleHeaderGetXmin(tup->t_data) == GetCurrentTransactionId() &&
-			!(tup->t_data->t_infomask & HEAP_UPDATED))
-			 /* safe to do inside transaction block */ ;
-		else
-			PreventInTransactionBlock(isTopLevel, "ALTER TYPE ... ADD");
-
 		AddEnumLabel(enum_type_oid, stmt->newVal,
 					 stmt->newValNeighbor, stmt->newValIsAfter,
 					 stmt->skipIfNewValExists);
@@ -1328,8 +1309,6 @@ AlterEnum(AlterEnumStmt *stmt, bool isTopLevel)
 	InvokeObjectPostAlterHook(TypeRelationId, enum_type_oid, 0);
 
 	ObjectAddressSet(address, TypeRelationId, enum_type_oid);
-
-	ReleaseSysCache(tup);
 
 	return address;
 }
@@ -2200,6 +2179,9 @@ AlterDomainDefault(List *names, Node *defaultRaw)
 	Relation	rel;
 	char	   *defaultValue;
 	Node	   *defaultExpr = NULL; /* NULL if no default specified */
+	Acl		   *typacl;
+	Datum		aclDatum;
+	bool		isNull;
 	Datum		new_record[Natts_pg_type];
 	bool		new_record_nulls[Natts_pg_type];
 	bool		new_record_repl[Natts_pg_type];
@@ -2291,25 +2273,23 @@ AlterDomainDefault(List *names, Node *defaultRaw)
 
 	CatalogTupleUpdate(rel, &tup->t_self, newtuple);
 
+	/* Must extract ACL for use of GenerateTypeDependencies */
+	aclDatum = heap_getattr(newtuple, Anum_pg_type_typacl,
+							RelationGetDescr(rel), &isNull);
+	if (isNull)
+		typacl = NULL;
+	else
+		typacl = DatumGetAclPCopy(aclDatum);
+
 	/* Rebuild dependencies */
-	GenerateTypeDependencies(typTup->typnamespace,
-							 domainoid,
-							 InvalidOid,	/* typrelid is n/a */
-							 0, /* relation kind is n/a */
-							 typTup->typowner,
-							 typTup->typinput,
-							 typTup->typoutput,
-							 typTup->typreceive,
-							 typTup->typsend,
-							 typTup->typmodin,
-							 typTup->typmodout,
-							 typTup->typanalyze,
-							 InvalidOid,
-							 false, /* a domain isn't an implicit array */
-							 typTup->typbasetype,
-							 typTup->typcollation,
+	GenerateTypeDependencies(domainoid,
+							 (Form_pg_type) GETSTRUCT(newtuple),
 							 defaultExpr,
-							 true); /* Rebuild is true */
+							 typacl,
+							 0, /* relation kind is n/a */
+							 false, /* a domain isn't an implicit array */
+							 false, /* nor is it any kind of dependent type */
+							 true); /* We do need to rebuild dependencies */
 
 	InvokeObjectPostAlterHook(TypeRelationId, domainoid, 0);
 
@@ -2444,6 +2424,8 @@ AlterDomainNotNull(List *names, bool notNull)
  * AlterDomainDropConstraint
  *
  * Implements the ALTER DOMAIN DROP CONSTRAINT statement
+ *
+ * Returns ObjectAddress of the modified domain.
  */
 ObjectAddress
 AlterDomainDropConstraint(List *names, const char *constrName,
@@ -2455,10 +2437,10 @@ AlterDomainDropConstraint(List *names, const char *constrName,
 	Relation	rel;
 	Relation	conrel;
 	SysScanDesc conscan;
-	ScanKeyData key[1];
+	ScanKeyData skey[3];
 	HeapTuple	contup;
 	bool		found = false;
-	ObjectAddress address = InvalidObjectAddress;
+	ObjectAddress address;
 
 	/* Make a TypeName so we can use standard type lookup machinery */
 	typename = makeTypeNameFromNameList(names);
@@ -2477,36 +2459,35 @@ AlterDomainDropConstraint(List *names, const char *constrName,
 	/* Grab an appropriate lock on the pg_constraint relation */
 	conrel = heap_open(ConstraintRelationId, RowExclusiveLock);
 
-	/* Use the index to scan only constraints of the target relation */
-	ScanKeyInit(&key[0],
+	/* Find and remove the target constraint */
+	ScanKeyInit(&skey[0],
+				Anum_pg_constraint_conrelid,
+				BTEqualStrategyNumber, F_OIDEQ,
+				ObjectIdGetDatum(InvalidOid));
+	ScanKeyInit(&skey[1],
 				Anum_pg_constraint_contypid,
 				BTEqualStrategyNumber, F_OIDEQ,
-				ObjectIdGetDatum(HeapTupleGetOid(tup)));
+				ObjectIdGetDatum(domainoid));
+	ScanKeyInit(&skey[2],
+				Anum_pg_constraint_conname,
+				BTEqualStrategyNumber, F_NAMEEQ,
+				CStringGetDatum(constrName));
 
-	conscan = systable_beginscan(conrel, ConstraintTypidIndexId, true,
-								 NULL, 1, key);
+	conscan = systable_beginscan(conrel, ConstraintRelidTypidNameIndexId, true,
+								 NULL, 3, skey);
 
-	/*
-	 * Scan over the result set, removing any matching entries.
-	 */
-	while ((contup = systable_getnext(conscan)) != NULL)
+	/* There can be at most one matching row */
+	if ((contup = systable_getnext(conscan)) != NULL)
 	{
-		Form_pg_constraint con = (Form_pg_constraint) GETSTRUCT(contup);
+		ObjectAddress conobj;
 
-		if (strcmp(NameStr(con->conname), constrName) == 0)
-		{
-			ObjectAddress conobj;
+		conobj.classId = ConstraintRelationId;
+		conobj.objectId = HeapTupleGetOid(contup);
+		conobj.objectSubId = 0;
 
-			conobj.classId = ConstraintRelationId;
-			conobj.objectId = HeapTupleGetOid(contup);
-			conobj.objectSubId = 0;
-
-			performDeletion(&conobj, behavior, 0);
-			found = true;
-		}
+		performDeletion(&conobj, behavior, 0);
+		found = true;
 	}
-
-	ObjectAddressSet(address, TypeRelationId, domainoid);
 
 	/* Clean up after the scan */
 	systable_endscan(conscan);
@@ -2526,6 +2507,8 @@ AlterDomainDropConstraint(List *names, const char *constrName,
 					(errmsg("constraint \"%s\" of domain \"%s\" does not exist, skipping",
 							constrName, TypeNameToString(typename))));
 	}
+
+	ObjectAddressSet(address, TypeRelationId, domainoid);
 
 	return address;
 }
@@ -2652,16 +2635,15 @@ AlterDomainValidateConstraint(List *names, const char *constrName)
 	Relation	typrel;
 	Relation	conrel;
 	HeapTuple	tup;
-	Form_pg_constraint con = NULL;
+	Form_pg_constraint con;
 	Form_pg_constraint copy_con;
 	char	   *conbin;
 	SysScanDesc scan;
 	Datum		val;
-	bool		found = false;
 	bool		isnull;
 	HeapTuple	tuple;
 	HeapTuple	copyTuple;
-	ScanKeyData key;
+	ScanKeyData skey[3];
 	ObjectAddress address;
 
 	/* Make a TypeName so we can use standard type lookup machinery */
@@ -2682,29 +2664,31 @@ AlterDomainValidateConstraint(List *names, const char *constrName)
 	 * Find and check the target constraint
 	 */
 	conrel = heap_open(ConstraintRelationId, RowExclusiveLock);
-	ScanKeyInit(&key,
+
+	ScanKeyInit(&skey[0],
+				Anum_pg_constraint_conrelid,
+				BTEqualStrategyNumber, F_OIDEQ,
+				ObjectIdGetDatum(InvalidOid));
+	ScanKeyInit(&skey[1],
 				Anum_pg_constraint_contypid,
 				BTEqualStrategyNumber, F_OIDEQ,
 				ObjectIdGetDatum(domainoid));
-	scan = systable_beginscan(conrel, ConstraintTypidIndexId,
-							  true, NULL, 1, &key);
+	ScanKeyInit(&skey[2],
+				Anum_pg_constraint_conname,
+				BTEqualStrategyNumber, F_NAMEEQ,
+				CStringGetDatum(constrName));
 
-	while (HeapTupleIsValid(tuple = systable_getnext(scan)))
-	{
-		con = (Form_pg_constraint) GETSTRUCT(tuple);
-		if (strcmp(NameStr(con->conname), constrName) == 0)
-		{
-			found = true;
-			break;
-		}
-	}
+	scan = systable_beginscan(conrel, ConstraintRelidTypidNameIndexId, true,
+							  NULL, 3, skey);
 
-	if (!found)
+	/* There can be at most one matching row */
+	if (!HeapTupleIsValid(tuple = systable_getnext(scan)))
 		ereport(ERROR,
 				(errcode(ERRCODE_UNDEFINED_OBJECT),
 				 errmsg("constraint \"%s\" of domain \"%s\" does not exist",
 						constrName, TypeNameToString(typename))));
 
+	con = (Form_pg_constraint) GETSTRUCT(tuple);
 	if (con->contype != CONSTRAINT_CHECK)
 		ereport(ERROR,
 				(errcode(ERRCODE_WRONG_OBJECT_TYPE),
@@ -3059,7 +3043,6 @@ domainAddConstraint(Oid domainOid, Oid domainNamespace, Oid baseTypeOid,
 					const char *domainName, ObjectAddress *constrAddr)
 {
 	Node	   *expr;
-	char	   *ccsrc;
 	char	   *ccbin;
 	ParseState *pstate;
 	CoerceToDomainValue *domVal;
@@ -3072,7 +3055,6 @@ domainAddConstraint(Oid domainOid, Oid domainNamespace, Oid baseTypeOid,
 	{
 		if (ConstraintNameIsUsed(CONSTRAINT_DOMAIN,
 								 domainOid,
-								 domainNamespace,
 								 constr->conname))
 			ereport(ERROR,
 					(errcode(ERRCODE_DUPLICATE_OBJECT),
@@ -3135,12 +3117,6 @@ domainAddConstraint(Oid domainOid, Oid domainNamespace, Oid baseTypeOid,
 	ccbin = nodeToString(expr);
 
 	/*
-	 * Deparse it to produce text for consrc.
-	 */
-	ccsrc = deparse_expression(expr,
-							   NIL, false, false);
-
-	/*
 	 * Store the constraint in pg_constraint
 	 */
 	ccoid =
@@ -3169,7 +3145,6 @@ domainAddConstraint(Oid domainOid, Oid domainNamespace, Oid baseTypeOid,
 							  NULL, /* not an exclusion constraint */
 							  expr, /* Tree form of check constraint */
 							  ccbin,	/* Binary form of check constraint */
-							  ccsrc,	/* Source form of check constraint */
 							  true, /* is local */
 							  0,	/* inhcount */
 							  false,	/* connoinherit */
@@ -3280,7 +3255,7 @@ RenameType(RenameStmt *stmt)
 	 * RenameRelationInternal will call RenameTypeInternal automatically.
 	 */
 	if (typTup->typtype == TYPTYPE_COMPOSITE)
-		RenameRelationInternal(typTup->typrelid, newTypeName, false);
+		RenameRelationInternal(typTup->typrelid, newTypeName, false, false);
 	else
 		RenameTypeInternal(typeOid, newTypeName,
 						   typTup->typnamespace);

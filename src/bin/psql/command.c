@@ -596,36 +596,32 @@ exec_command_conninfo(PsqlScanState scan_state, bool active_branch)
 			printf(_("You are currently not connected to a database.\n"));
 		else
 		{
-			char	   *host;
-			PQconninfoOption *connOptions;
-			PQconninfoOption *option;
+			char	   *host = PQhost(pset.db);
+			char	   *hostaddr = PQhostaddr(pset.db);
 
-			host = PQhost(pset.db);
-			/* A usable "hostaddr" overrides the basic sense of host. */
-			connOptions = PQconninfo(pset.db);
-			if (connOptions == NULL)
-			{
-				psql_error("out of memory\n");
-				exit(EXIT_FAILURE);
-			}
-			for (option = connOptions; option && option->keyword; option++)
-				if (strcmp(option->keyword, "hostaddr") == 0)
-				{
-					if (option->val != NULL && option->val[0] != '\0')
-						host = option->val;
-					break;
-				}
-
-			/* If the host is an absolute path, the connection is via socket */
+			/*
+			 * If the host is an absolute path, the connection is via socket
+			 * unless overriden by hostaddr
+			 */
 			if (is_absolute_path(host))
-				printf(_("You are connected to database \"%s\" as user \"%s\" via socket in \"%s\" at port \"%s\".\n"),
-					   db, PQuser(pset.db), host, PQport(pset.db));
+			{
+				if (hostaddr && *hostaddr)
+					printf(_("You are connected to database \"%s\" as user \"%s\" on address \"%s\" at port \"%s\".\n"),
+						   db, PQuser(pset.db), hostaddr, PQport(pset.db));
+				else
+					printf(_("You are connected to database \"%s\" as user \"%s\" via socket in \"%s\" at port \"%s\".\n"),
+						   db, PQuser(pset.db), host, PQport(pset.db));
+			}
 			else
-				printf(_("You are connected to database \"%s\" as user \"%s\" on host \"%s\" at port \"%s\".\n"),
-					   db, PQuser(pset.db), host, PQport(pset.db));
+			{
+				if (hostaddr && *hostaddr && strcmp(host, hostaddr) != 0)
+					printf(_("You are connected to database \"%s\" as user \"%s\" on host \"%s\" (address \"%s\") at port \"%s\".\n"),
+						   db, PQuser(pset.db), host, hostaddr, PQport(pset.db));
+				else
+					printf(_("You are connected to database \"%s\" as user \"%s\" on host \"%s\" at port \"%s\".\n"),
+						   db, PQuser(pset.db), host, PQport(pset.db));
+			}
 			printSSLInfo();
-
-			PQconninfoFree(connOptions);
 		}
 	}
 
@@ -755,6 +751,7 @@ exec_command_d(PsqlScanState scan_state, bool active_branch, const char *cmd)
 					case 'S':
 					case 'a':
 					case 'n':
+					case 'p':
 					case 't':
 					case 'w':
 						success = describeFunctions(&cmd[2], pattern, show_verbose, show_system);
@@ -2898,6 +2895,7 @@ do_connect(enum trivalue reuse_previous_specification,
 	PGconn	   *o_conn = pset.db,
 			   *n_conn;
 	char	   *password = NULL;
+	char	   *hostaddr = NULL;
 	bool		keep_password;
 	bool		has_connection_string;
 	bool		reuse_previous;
@@ -2938,12 +2936,27 @@ do_connect(enum trivalue reuse_previous_specification,
 	}
 
 	/* grab missing values from the old connection */
-	if (!user && reuse_previous)
-		user = PQuser(o_conn);
-	if (!host && reuse_previous)
-		host = PQhost(o_conn);
-	if (!port && reuse_previous)
-		port = PQport(o_conn);
+	if (reuse_previous)
+	{
+		if (!user)
+			user = PQuser(o_conn);
+		if (host && strcmp(host, PQhost(o_conn)) == 0)
+		{
+			/*
+			 * if we are targetting the same host, reuse its hostaddr for
+			 * consistency
+			 */
+			hostaddr = PQhostaddr(o_conn);
+		}
+		if (!host)
+		{
+			host = PQhost(o_conn);
+			/* also set hostaddr for consistency */
+			hostaddr = PQhostaddr(o_conn);
+		}
+		if (!port)
+			port = PQport(o_conn);
+	}
 
 	/*
 	 * Any change in the parameters read above makes us discard the password.
@@ -3005,13 +3018,18 @@ do_connect(enum trivalue reuse_previous_specification,
 
 	while (true)
 	{
-#define PARAMS_ARRAY_SIZE	8
+#define PARAMS_ARRAY_SIZE	9
 		const char **keywords = pg_malloc(PARAMS_ARRAY_SIZE * sizeof(*keywords));
 		const char **values = pg_malloc(PARAMS_ARRAY_SIZE * sizeof(*values));
 		int			paramnum = -1;
 
 		keywords[++paramnum] = "host";
 		values[paramnum] = host;
+		if (hostaddr && *hostaddr)
+		{
+			keywords[++paramnum] = "hostaddr";
+			values[paramnum] = hostaddr;
+		}
 		keywords[++paramnum] = "port";
 		values[paramnum] = port;
 		keywords[++paramnum] = "user";
@@ -3115,14 +3133,27 @@ do_connect(enum trivalue reuse_previous_specification,
 			param_is_newly_set(PQport(o_conn), PQport(pset.db)))
 		{
 			char	   *host = PQhost(pset.db);
+			char	   *hostaddr = PQhostaddr(pset.db);
 
 			/* If the host is an absolute path, the connection is via socket */
 			if (is_absolute_path(host))
-				printf(_("You are now connected to database \"%s\" as user \"%s\" via socket in \"%s\" at port \"%s\".\n"),
-					   PQdb(pset.db), PQuser(pset.db), host, PQport(pset.db));
+			{
+				if (hostaddr && *hostaddr)
+					printf(_("You are now connected to database \"%s\" as user \"%s\" on address \"%s\" at port \"%s\".\n"),
+						   PQdb(pset.db), PQuser(pset.db), hostaddr, PQport(pset.db));
+				else
+					printf(_("You are now connected to database \"%s\" as user \"%s\" via socket in \"%s\" at port \"%s\".\n"),
+						   PQdb(pset.db), PQuser(pset.db), host, PQport(pset.db));
+			}
 			else
-				printf(_("You are now connected to database \"%s\" as user \"%s\" on host \"%s\" at port \"%s\".\n"),
-					   PQdb(pset.db), PQuser(pset.db), host, PQport(pset.db));
+			{
+				if (hostaddr && *hostaddr && strcmp(host, hostaddr) != 0)
+					printf(_("You are now connected to database \"%s\" as user \"%s\" on host \"%s\" (address \"%s\") at port \"%s\".\n"),
+						   PQdb(pset.db), PQuser(pset.db), host, hostaddr, PQport(pset.db));
+				else
+					printf(_("You are now connected to database \"%s\" as user \"%s\" on host \"%s\" at port \"%s\".\n"),
+						   PQdb(pset.db), PQuser(pset.db), host, PQport(pset.db));
+			}
 		}
 		else
 			printf(_("You are now connected to database \"%s\" as user \"%s\".\n"),
@@ -3604,20 +3635,14 @@ _align2string(enum printFormat in)
 		case PRINT_NOTHING:
 			return "nothing";
 			break;
-		case PRINT_UNALIGNED:
-			return "unaligned";
-			break;
 		case PRINT_ALIGNED:
 			return "aligned";
 			break;
-		case PRINT_WRAPPED:
-			return "wrapped";
+		case PRINT_ASCIIDOC:
+			return "asciidoc";
 			break;
 		case PRINT_HTML:
 			return "html";
-			break;
-		case PRINT_ASCIIDOC:
-			return "asciidoc";
 			break;
 		case PRINT_LATEX:
 			return "latex";
@@ -3627,6 +3652,12 @@ _align2string(enum printFormat in)
 			break;
 		case PRINT_TROFF_MS:
 			return "troff-ms";
+			break;
+		case PRINT_UNALIGNED:
+			return "unaligned";
+			break;
+		case PRINT_WRAPPED:
+			return "wrapped";
 			break;
 	}
 	return "unknown";
@@ -3681,28 +3712,51 @@ do_pset(const char *param, const char *value, printQueryOpt *popt, bool quiet)
 	/* set format */
 	if (strcmp(param, "format") == 0)
 	{
+		static const struct fmt
+		{
+			const char *name;
+			enum printFormat number;
+		}			formats[] =
+		{
+			/* remember to update error message below when adding more */
+			{"aligned", PRINT_ALIGNED},
+			{"asciidoc", PRINT_ASCIIDOC},
+			{"html", PRINT_HTML},
+			{"latex", PRINT_LATEX},
+			{"latex-longtable", PRINT_LATEX_LONGTABLE},
+			{"troff-ms", PRINT_TROFF_MS},
+			{"unaligned", PRINT_UNALIGNED},
+			{"wrapped", PRINT_WRAPPED}
+		};
+
 		if (!value)
 			;
-		else if (pg_strncasecmp("unaligned", value, vallen) == 0)
-			popt->topt.format = PRINT_UNALIGNED;
-		else if (pg_strncasecmp("aligned", value, vallen) == 0)
-			popt->topt.format = PRINT_ALIGNED;
-		else if (pg_strncasecmp("wrapped", value, vallen) == 0)
-			popt->topt.format = PRINT_WRAPPED;
-		else if (pg_strncasecmp("html", value, vallen) == 0)
-			popt->topt.format = PRINT_HTML;
-		else if (pg_strncasecmp("asciidoc", value, vallen) == 0)
-			popt->topt.format = PRINT_ASCIIDOC;
-		else if (pg_strncasecmp("latex", value, vallen) == 0)
-			popt->topt.format = PRINT_LATEX;
-		else if (pg_strncasecmp("latex-longtable", value, vallen) == 0)
-			popt->topt.format = PRINT_LATEX_LONGTABLE;
-		else if (pg_strncasecmp("troff-ms", value, vallen) == 0)
-			popt->topt.format = PRINT_TROFF_MS;
 		else
 		{
-			psql_error("\\pset: allowed formats are unaligned, aligned, wrapped, html, asciidoc, latex, latex-longtable, troff-ms\n");
-			return false;
+			int			match_pos = -1;
+
+			for (int i = 0; i < lengthof(formats); i++)
+			{
+				if (pg_strncasecmp(formats[i].name, value, vallen) == 0)
+				{
+					if (match_pos < 0)
+						match_pos = i;
+					else
+					{
+						psql_error("\\pset: ambiguous abbreviation \"%s\" matches both \"%s\" and \"%s\"\n",
+								   value,
+								   formats[match_pos].name, formats[i].name);
+						return false;
+					}
+				}
+			}
+			if (match_pos < 0)
+			{
+				psql_error("\\pset: allowed formats are aligned, asciidoc, html, latex, latex-longtable, troff-ms, unaligned, wrapped\n");
+				return false;
+			}
+			else
+				popt->topt.format = formats[match_pos].number;
 		}
 	}
 

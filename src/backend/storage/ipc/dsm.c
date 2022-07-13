@@ -150,10 +150,6 @@ dsm_postmaster_startup(PGShmemHeader *shim)
 
 	Assert(!IsUnderPostmaster);
 
-	/* If dynamic shared memory is disabled, there's nothing to do. */
-	if (dynamic_shared_memory_type == DSM_IMPL_NONE)
-		return;
-
 	/*
 	 * If we're using the mmap implementations, clean up any leftovers.
 	 * Cleanup isn't needed on Windows, and happens earlier in startup for
@@ -218,10 +214,6 @@ dsm_cleanup_using_control_segment(dsm_handle old_control_handle)
 	uint32		nitems;
 	uint32		i;
 	dsm_control_header *old_control;
-
-	/* If dynamic shared memory is disabled, there's nothing to do. */
-	if (dynamic_shared_memory_type == DSM_IMPL_NONE)
-		return;
 
 	/*
 	 * Try to attach the segment.  If this fails, it probably just means that
@@ -391,13 +383,6 @@ dsm_postmaster_shutdown(int code, Datum arg)
 static void
 dsm_backend_startup(void)
 {
-	/* If dynamic shared memory is disabled, reject this. */
-	if (dynamic_shared_memory_type == DSM_IMPL_NONE)
-		ereport(ERROR,
-				(errcode(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
-				 errmsg("dynamic shared memory is disabled"),
-				 errhint("Set dynamic_shared_memory_type to a value other than \"none\".")));
-
 #ifdef EXEC_BACKEND
 	{
 		void	   *control_address = NULL;
@@ -444,7 +429,7 @@ dsm_set_control_handle(dsm_handle h)
  * If there is a non-NULL CurrentResourceOwner, the new segment is associated
  * with it and must be detached before the resource owner releases, or a
  * warning will be logged.  If CurrentResourceOwner is NULL, the segment
- * remains attached until explicitely detached or the session ends.
+ * remains attached until explicitly detached or the session ends.
  * Creating with a NULL CurrentResourceOwner is equivalent to creating
  * with a non-NULL CurrentResourceOwner and then calling dsm_pin_mapping.
  */
@@ -542,7 +527,7 @@ dsm_create(Size size, int flags)
  * If there is a non-NULL CurrentResourceOwner, the attached segment is
  * associated with it and must be detached before the resource owner releases,
  * or a warning will be logged.  Otherwise the segment remains attached until
- * explicitely detached or the session ends.  See the note atop dsm_create().
+ * explicitly detached or the session ends.  See the note atop dsm_create().
  */
 dsm_segment *
 dsm_attach(dsm_handle h)
@@ -666,38 +651,6 @@ dsm_detach_all(void)
 		dsm_impl_op(DSM_OP_DETACH, dsm_control_handle, 0,
 					&dsm_control_impl_private, &control_address,
 					&dsm_control_mapped_size, ERROR);
-}
-
-/*
- * Resize an existing shared memory segment.
- *
- * This may cause the shared memory segment to be remapped at a different
- * address.  For the caller's convenience, we return the mapped address.
- */
-void *
-dsm_resize(dsm_segment *seg, Size size)
-{
-	Assert(seg->control_slot != INVALID_CONTROL_SLOT);
-	dsm_impl_op(DSM_OP_RESIZE, seg->handle, size, &seg->impl_private,
-				&seg->mapped_address, &seg->mapped_size, ERROR);
-	return seg->mapped_address;
-}
-
-/*
- * Remap an existing shared memory segment.
- *
- * This is intended to be used when some other process has extended the
- * mapping using dsm_resize(), but we've still only got the initial
- * portion mapped.  Since this might change the address at which the
- * segment is mapped, we return the new mapped address.
- */
-void *
-dsm_remap(dsm_segment *seg)
-{
-	dsm_impl_op(DSM_OP_ATTACH, seg->handle, 0, &seg->impl_private,
-				&seg->mapped_address, &seg->mapped_size, ERROR);
-
-	return seg->mapped_address;
 }
 
 /*

@@ -149,8 +149,17 @@ check_new_cluster(void)
 
 	check_loadable_libraries();
 
-	if (user_opts.transfer_mode == TRANSFER_MODE_LINK)
-		check_hard_link();
+	switch (user_opts.transfer_mode)
+	{
+		case TRANSFER_MODE_CLONE:
+			check_file_clone();
+			break;
+		case TRANSFER_MODE_COPY:
+			break;
+		case TRANSFER_MODE_LINK:
+			check_hard_link();
+			break;
+	}
 
 	check_is_install_user(&new_cluster);
 
@@ -382,8 +391,10 @@ check_new_cluster_is_empty(void)
 		{
 			/* pg_largeobject and its index should be skipped */
 			if (strcmp(rel_arr->rels[relnum].nspname, "pg_catalog") != 0)
-				pg_fatal("New cluster database \"%s\" is not empty\n",
-						 new_cluster.dbarr.dbs[dbnum].db_name);
+				pg_fatal("New cluster database \"%s\" is not empty: found relation \"%s.%s\"\n",
+						 new_cluster.dbarr.dbs[dbnum].db_name,
+						 rel_arr->rels[relnum].nspname,
+						 rel_arr->rels[relnum].relname);
 		}
 	}
 }

@@ -533,9 +533,8 @@ ExecInitDijkstra(Dijkstra *node, EState *estate, int eflags)
 	/*
 	 * tuple table initialization
 	 */
-	ExecInitResultTupleSlotTL(estate, &dstate->ps);
-	dstate->selfTupleSlot = ExecInitExtraTupleSlot(estate, NULL);
-
+    ExecInitResultTupleSlotTL(&dstate->ps, &TTSOpsVirtual);
+	dstate->selfTupleSlot = ExecInitExtraTupleSlot(estate, dstate->tupleDesc, &TTSOpsVirtual);
 
 	/*
 	 * ExecDijkstra was originally written without expectations that the

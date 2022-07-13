@@ -804,10 +804,14 @@ postgres   27093  0.0  0.0  30096  2752 ?        Ss   11:34   0:00 postgres: ser
      <entry><type>text</type></entry>
      <entry>Type of current backend. Possible types are
       <literal>autovacuum launcher</literal>, <literal>autovacuum worker</literal>,
-      <literal>background worker</literal>, <literal>background writer</literal>,
+      <literal>logical replication launcher</literal>,
+      <literal>logical replication worker</literal>,
+      <literal>parallel worker</literal>, <literal>background writer</literal>,
       <literal>client backend</literal>, <literal>checkpointer</literal>,
       <literal>startup</literal>, <literal>walreceiver</literal>,
       <literal>walsender</literal> and <literal>walwriter</literal>.
+      In addition, background workers registered by extensions may have
+      additional types.
      </entry>
     </row>
    </tbody>
@@ -1194,12 +1198,12 @@ postgres   27093  0.0  0.0  30096  2752 ?        Ss   11:34   0:00 postgres: ser
          <entry>Waiting in main loop of checkpointer process.</entry>
         </row>
         <row>
-         <entry><literal>LogicalLauncherMain</literal></entry>
-         <entry>Waiting in main loop of logical launcher process.</entry>
-        </row>
-        <row>
          <entry><literal>LogicalApplyMain</literal></entry>
          <entry>Waiting in main loop of logical apply process.</entry>
+        </row>
+        <row>
+         <entry><literal>LogicalLauncherMain</literal></entry>
+         <entry>Waiting in main loop of logical launcher process.</entry>
         </row>
         <row>
          <entry><literal>PgStatMain</literal></entry>
@@ -1268,7 +1272,7 @@ postgres   27093  0.0  0.0  30096  2752 ?        Ss   11:34   0:00 postgres: ser
          <entry>Waiting in an extension.</entry>
         </row>
         <row>
-         <entry morerows="33"><literal>IPC</literal></entry>
+         <entry morerows="34"><literal>IPC</literal></entry>
          <entry><literal>BgWorkerShutdown</literal></entry>
          <entry>Waiting for background worker to shut down.</entry>
         </row>
@@ -1279,6 +1283,10 @@ postgres   27093  0.0  0.0  30096  2752 ?        Ss   11:34   0:00 postgres: ser
         <row>
          <entry><literal>BtreePage</literal></entry>
          <entry>Waiting for the page number needed to continue a parallel B-tree scan to become available.</entry>
+        </row>
+        <row>
+         <entry><literal>ClogGroupUpdate</literal></entry>
+         <entry>Waiting for group leader to update transaction status at transaction end.</entry>
         </row>
         <row>
          <entry><literal>ExecuteGather</literal></entry>
@@ -1369,10 +1377,6 @@ postgres   27093  0.0  0.0  30096  2752 ?        Ss   11:34   0:00 postgres: ser
          <entry>Waiting to send bytes to a shared message queue.</entry>
         </row>
         <row>
-         <entry><literal>ParallelFinish</literal></entry>
-         <entry>Waiting for parallel workers to finish computing.</entry>
-        </row>
-        <row>
          <entry><literal>ParallelBitmapScan</literal></entry>
          <entry>Waiting for parallel bitmap scan to become initialized.</entry>
         </row>
@@ -1381,12 +1385,16 @@ postgres   27093  0.0  0.0  30096  2752 ?        Ss   11:34   0:00 postgres: ser
          <entry>Waiting for parallel <command>CREATE INDEX</command> workers to finish heap scan.</entry>
         </row>
         <row>
+         <entry><literal>ParallelFinish</literal></entry>
+         <entry>Waiting for parallel workers to finish computing.</entry>
+        </row>
+        <row>
          <entry><literal>ProcArrayGroupUpdate</literal></entry>
          <entry>Waiting for group leader to clear transaction id at transaction end.</entry>
         </row>
         <row>
-         <entry><literal>ClogGroupUpdate</literal></entry>
-         <entry>Waiting for group leader to update transaction status at transaction end.</entry>
+         <entry><literal>Promote</literal></entry>
+         <entry>Waiting for standby promotion.</entry>
         </row>
         <row>
          <entry><literal>ReplicationOriginDrop</literal></entry>
@@ -1418,7 +1426,7 @@ postgres   27093  0.0  0.0  30096  2752 ?        Ss   11:34   0:00 postgres: ser
          <entry>Waiting to apply WAL at recovery because it is delayed.</entry>
         </row>
         <row>
-         <entry morerows="65"><literal>IO</literal></entry>
+         <entry morerows="66"><literal>IO</literal></entry>
          <entry><literal>BufFileRead</literal></entry>
          <entry>Waiting for a read from a buffered file.</entry>
         </row>
@@ -1673,6 +1681,10 @@ postgres   27093  0.0  0.0  30096  2752 ?        Ss   11:34   0:00 postgres: ser
         <row>
          <entry><literal>WALSenderTimelineHistoryRead</literal></entry>
          <entry>Waiting for a read from a timeline history file during walsender timeline command.</entry>
+        </row>
+        <row>
+         <entry><literal>WALSync</literal></entry>
+         <entry>Waiting for a WAL file to reach stable storage.</entry>
         </row>
         <row>
          <entry><literal>WALSyncMethodAssign</literal></entry>

@@ -18,11 +18,59 @@
 
 #include <sys/stat.h>
 #include <fcntl.h>
+#ifdef HAVE_COPYFILE_H
+#include <copyfile.h>
+#endif
+#ifdef __linux__
+#include <sys/ioctl.h>
+#include <linux/fs.h>
+#endif
 
 
 #ifdef WIN32
 static int	win32_pghardlink(const char *src, const char *dst);
 #endif
+
+
+/*
+ * cloneFile()
+ *
+ * Clones/reflinks a relation file from src to dst.
+ *
+ * schemaName/relName are relation's SQL name (used for error messages only).
+ */
+void
+cloneFile(const char *src, const char *dst,
+		  const char *schemaName, const char *relName)
+{
+#if defined(HAVE_COPYFILE) && defined(COPYFILE_CLONE_FORCE)
+	if (copyfile(src, dst, NULL, COPYFILE_CLONE_FORCE) < 0)
+		pg_fatal("error while cloning relation \"%s.%s\" (\"%s\" to \"%s\"): %s\n",
+				 schemaName, relName, src, dst, strerror(errno));
+#elif defined(__linux__) && defined(FICLONE)
+	int			src_fd;
+	int			dest_fd;
+
+	if ((src_fd = open(src, O_RDONLY | PG_BINARY, 0)) < 0)
+		pg_fatal("error while cloning relation \"%s.%s\": could not open file \"%s\": %s\n",
+				 schemaName, relName, src, strerror(errno));
+
+	if ((dest_fd = open(dst, O_RDWR | O_CREAT | O_EXCL | PG_BINARY,
+						pg_file_create_mode)) < 0)
+		pg_fatal("error while cloning relation \"%s.%s\": could not create file \"%s\": %s\n",
+				 schemaName, relName, dst, strerror(errno));
+
+	if (ioctl(dest_fd, FICLONE, src_fd) < 0)
+	{
+		unlink(dst);
+		pg_fatal("error while cloning relation \"%s.%s\" (\"%s\" to \"%s\"): %s\n",
+				 schemaName, relName, src, dst, strerror(errno));
+	}
+
+	close(src_fd);
+	close(dest_fd);
+#endif
+}
 
 
 /*
@@ -132,8 +180,8 @@ rewriteVisibilityMap(const char *fromfile, const char *tofile,
 {
 	int			src_fd;
 	int			dst_fd;
-	char	   *buffer;
-	char	   *new_vmbuf;
+	PGAlignedBlock buffer;
+	PGAlignedBlock new_vmbuf;
 	ssize_t		totalBytesRead = 0;
 	ssize_t		src_filesize;
 	int			rewriteVmBytesPerPage;
@@ -160,13 +208,6 @@ rewriteVisibilityMap(const char *fromfile, const char *tofile,
 	src_filesize = statbuf.st_size;
 
 	/*
-	 * Malloc the work buffers, rather than making them local arrays, to
-	 * ensure adequate alignment.
-	 */
-	buffer = (char *) pg_malloc(BLCKSZ);
-	new_vmbuf = (char *) pg_malloc(BLCKSZ);
-
-	/*
 	 * Turn each visibility map page into 2 pages one by one. Each new page
 	 * has the same page header as the old one.  If the last section of the
 	 * last page is empty, we skip it, mostly to avoid turning one-page
@@ -181,7 +222,7 @@ rewriteVisibilityMap(const char *fromfile, const char *tofile,
 		PageHeaderData pageheader;
 		bool		old_lastblk;
 
-		if ((bytesRead = read(src_fd, buffer, BLCKSZ)) != BLCKSZ)
+		if ((bytesRead = read(src_fd, buffer.data, BLCKSZ)) != BLCKSZ)
 		{
 			if (bytesRead < 0)
 				pg_fatal("error while copying relation \"%s.%s\": could not read file \"%s\": %s\n",
@@ -195,7 +236,7 @@ rewriteVisibilityMap(const char *fromfile, const char *tofile,
 		old_lastblk = (totalBytesRead == src_filesize);
 
 		/* Save the page header data */
-		memcpy(&pageheader, buffer, SizeOfPageHeaderData);
+		memcpy(&pageheader, buffer.data, SizeOfPageHeaderData);
 
 		/*
 		 * These old_* variables point to old visibility map page. old_cur
@@ -203,8 +244,8 @@ rewriteVisibilityMap(const char *fromfile, const char *tofile,
 		 * old block.  old_break is the end+1 position on the old page for the
 		 * data that will be transferred to the current new page.
 		 */
-		old_cur = buffer + SizeOfPageHeaderData;
-		old_blkend = buffer + bytesRead;
+		old_cur = buffer.data + SizeOfPageHeaderData;
+		old_blkend = buffer.data + bytesRead;
 		old_break = old_cur + rewriteVmBytesPerPage;
 
 		while (old_break <= old_blkend)
@@ -214,12 +255,12 @@ rewriteVisibilityMap(const char *fromfile, const char *tofile,
 			bool		old_lastpart;
 
 			/* First, copy old page header to new page */
-			memcpy(new_vmbuf, &pageheader, SizeOfPageHeaderData);
+			memcpy(new_vmbuf.data, &pageheader, SizeOfPageHeaderData);
 
 			/* Rewriting the last part of the last old page? */
 			old_lastpart = old_lastblk && (old_break == old_blkend);
 
-			new_cur = new_vmbuf + SizeOfPageHeaderData;
+			new_cur = new_vmbuf.data + SizeOfPageHeaderData;
 
 			/* Process old page bytes one by one, and turn it into new page. */
 			while (old_cur < old_break)
@@ -253,11 +294,11 @@ rewriteVisibilityMap(const char *fromfile, const char *tofile,
 
 			/* Set new checksum for visibility map page, if enabled */
 			if (new_cluster.controldata.data_checksum_version != 0)
-				((PageHeader) new_vmbuf)->pd_checksum =
-					pg_checksum_page(new_vmbuf, new_blkno);
+				((PageHeader) new_vmbuf.data)->pd_checksum =
+					pg_checksum_page(new_vmbuf.data, new_blkno);
 
 			errno = 0;
-			if (write(dst_fd, new_vmbuf, BLCKSZ) != BLCKSZ)
+			if (write(dst_fd, new_vmbuf.data, BLCKSZ) != BLCKSZ)
 			{
 				/* if write didn't set errno, assume problem is no disk space */
 				if (errno == 0)
@@ -273,10 +314,50 @@ rewriteVisibilityMap(const char *fromfile, const char *tofile,
 	}
 
 	/* Clean up */
-	pg_free(buffer);
-	pg_free(new_vmbuf);
 	close(dst_fd);
 	close(src_fd);
+}
+
+void
+check_file_clone(void)
+{
+	char		existing_file[MAXPGPATH];
+	char		new_link_file[MAXPGPATH];
+
+	snprintf(existing_file, sizeof(existing_file), "%s/PG_VERSION", old_cluster.pgdata);
+	snprintf(new_link_file, sizeof(new_link_file), "%s/PG_VERSION.clonetest", new_cluster.pgdata);
+	unlink(new_link_file);		/* might fail */
+
+#if defined(HAVE_COPYFILE) && defined(COPYFILE_CLONE_FORCE)
+	if (copyfile(existing_file, new_link_file, NULL, COPYFILE_CLONE_FORCE) < 0)
+		pg_fatal("could not clone file between old and new data directories: %s\n",
+				 strerror(errno));
+#elif defined(__linux__) && defined(FICLONE)
+	{
+		int			src_fd;
+		int			dest_fd;
+
+		if ((src_fd = open(existing_file, O_RDONLY | PG_BINARY, 0)) < 0)
+			pg_fatal("could not open file \"%s\": %s\n",
+					 existing_file, strerror(errno));
+
+		if ((dest_fd = open(new_link_file, O_RDWR | O_CREAT | O_EXCL | PG_BINARY,
+							pg_file_create_mode)) < 0)
+			pg_fatal("could not create file \"%s\": %s\n",
+					 new_link_file, strerror(errno));
+
+		if (ioctl(dest_fd, FICLONE, src_fd) < 0)
+			pg_fatal("could not clone file between old and new data directories: %s\n",
+					 strerror(errno));
+
+		close(src_fd);
+		close(dest_fd);
+	}
+#else
+	pg_fatal("file cloning not supported on this platform\n");
+#endif
+
+	unlink(new_link_file);
 }
 
 void

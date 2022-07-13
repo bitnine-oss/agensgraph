@@ -27,18 +27,20 @@
  */
 #undef _POSIX_C_SOURCE
 #undef _XOPEN_SOURCE
-#undef HAVE_STRERROR
 #undef HAVE_TZNAME
 
 /*
  * Sometimes python carefully scribbles on our *printf macros.
  * So we undefine them here and redefine them after it's done its dirty deed.
  */
-
-#ifdef USE_REPL_SNPRINTF
-#undef snprintf
 #undef vsnprintf
-#endif
+#undef snprintf
+#undef vsprintf
+#undef sprintf
+#undef vfprintf
+#undef fprintf
+#undef vprintf
+#undef printf
 
 #if defined(_MSC_VER) && defined(_DEBUG)
 /* Python uses #pragma to bring in a non-default libpython on VC++ if
@@ -124,22 +126,40 @@ typedef int Py_ssize_t;
 #include <compile.h>
 #include <eval.h>
 
-/* put back our snprintf and vsnprintf */
-#ifdef USE_REPL_SNPRINTF
-#ifdef snprintf
-#undef snprintf
-#endif
+/* put back our *printf macros ... this must match src/include/port.h */
 #ifdef vsnprintf
 #undef vsnprintf
 #endif
-#ifdef __GNUC__
-#define vsnprintf(...)	pg_vsnprintf(__VA_ARGS__)
-#define snprintf(...)	pg_snprintf(__VA_ARGS__)
-#else
-#define vsnprintf				pg_vsnprintf
-#define snprintf				pg_snprintf
-#endif							/* __GNUC__ */
-#endif							/* USE_REPL_SNPRINTF */
+#ifdef snprintf
+#undef snprintf
+#endif
+#ifdef vsprintf
+#undef vsprintf
+#endif
+#ifdef sprintf
+#undef sprintf
+#endif
+#ifdef vfprintf
+#undef vfprintf
+#endif
+#ifdef fprintf
+#undef fprintf
+#endif
+#ifdef vprintf
+#undef vprintf
+#endif
+#ifdef printf
+#undef printf
+#endif
+
+#define vsnprintf		pg_vsnprintf
+#define snprintf		pg_snprintf
+#define vsprintf		pg_vsprintf
+#define sprintf			pg_sprintf
+#define vfprintf		pg_vfprintf
+#define fprintf			pg_fprintf
+#define vprintf			pg_vprintf
+#define printf(...)		pg_printf(__VA_ARGS__)
 
 /*
  * Used throughout, and also by the Python 2/3 porting layer, so it's easier to

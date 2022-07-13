@@ -92,15 +92,35 @@ ExecInitGather(Gather *node, EState *estate, int eflags)
 	tupDesc = ExecGetResultType(outerPlanState(gatherstate));
 
 	/*
-	 * Initialize result slot, type and projection.
+	 * Leader may access ExecProcNode result directly (if
+	 * need_to_scan_locally), or from workers via tuple queue.  So we can't
+	 * trivially rely on the slot type being fixed for expressions evaluated
+	 * within this node.
 	 */
-	ExecInitResultTupleSlotTL(estate, &gatherstate->ps);
+	gatherstate->ps.outeropsset = true;
+	gatherstate->ps.outeropsfixed = false;
+
+	/*
+	 * Initialize result type and projection.
+	 */
+	ExecInitResultTypeTL(&gatherstate->ps);
 	ExecConditionalAssignProjectionInfo(&gatherstate->ps, tupDesc, OUTER_VAR);
+
+	/*
+	 * Without projections result slot type is not trivially known, see
+	 * comment above.
+	 */
+	if (gatherstate->ps.ps_ProjInfo == NULL)
+	{
+		gatherstate->ps.resultopsset = true;
+		gatherstate->ps.resultopsfixed = false;
+	}
 
 	/*
 	 * Initialize funnel slot to same tuple descriptor as outer plan.
 	 */
-	gatherstate->funnel_slot = ExecInitExtraTupleSlot(estate, tupDesc);
+	gatherstate->funnel_slot = ExecInitExtraTupleSlot(estate, tupDesc,
+													  &TTSOpsHeapTuple);
 
 	/*
 	 * Gather doesn't support checking a qual (it's always more efficient to
@@ -231,7 +251,8 @@ ExecEndGather(GatherState *node)
 	ExecEndNode(outerPlanState(node));	/* let children clean up first */
 	ExecShutdownGather(node);
 	ExecFreeExprContext(&node->ps);
-	ExecClearTuple(node->ps.ps_ResultTupleSlot);
+	if (node->ps.ps_ResultTupleSlot)
+		ExecClearTuple(node->ps.ps_ResultTupleSlot);
 }
 
 /*
@@ -257,11 +278,9 @@ gather_getnext(GatherState *gatherstate)
 
 			if (HeapTupleIsValid(tup))
 			{
-				ExecStoreTuple(tup, /* tuple to store */
-							   fslot,	/* slot in which to store the tuple */
-							   InvalidBuffer,	/* buffer associated with this
-												 * tuple */
-							   true);	/* pfree tuple when done with it */
+				ExecStoreHeapTuple(tup, /* tuple to store */
+								   fslot,	/* slot to store the tuple */
+								   true);	/* pfree tuple when done with it */
 				return fslot;
 			}
 		}
@@ -324,7 +343,10 @@ gather_readnext(GatherState *gatherstate)
 			Assert(!tup);
 			--gatherstate->nreaders;
 			if (gatherstate->nreaders == 0)
+			{
+				ExecShutdownGatherWorkers(gatherstate);
 				return NULL;
+			}
 			memmove(&gatherstate->reader[gatherstate->nextreader],
 					&gatherstate->reader[gatherstate->nextreader + 1],
 					sizeof(TupleQueueReader *)

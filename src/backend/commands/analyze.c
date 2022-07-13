@@ -120,7 +120,6 @@ analyze_rel(Oid relid, RangeVar *relation, int options,
 	int			elevel;
 	AcquireSampleRowsFunc acquirefunc = NULL;
 	BlockNumber relpages = 0;
-	bool		rel_lock = true;
 
 	/* Select logging level */
 	if (options & VACOPT_VERBOSE)
@@ -142,81 +141,29 @@ analyze_rel(Oid relid, RangeVar *relation, int options,
 	 * concurrent VACUUM, which doesn't matter much at the moment but might
 	 * matter if we ever try to accumulate stats on dead tuples.) If the rel
 	 * has been dropped since we last saw it, we don't need to process it.
+	 *
+	 * Make sure to generate only logs for ANALYZE in this case.
 	 */
-	if (!(options & VACOPT_NOWAIT))
-		onerel = try_relation_open(relid, ShareUpdateExclusiveLock);
-	else if (ConditionalLockRelationOid(relid, ShareUpdateExclusiveLock))
-		onerel = try_relation_open(relid, NoLock);
-	else
-	{
-		onerel = NULL;
-		rel_lock = false;
-	}
+	onerel = vacuum_open_relation(relid, relation, params,
+								  options & ~(VACOPT_VACUUM),
+								  ShareUpdateExclusiveLock);
 
-	/*
-	 * If we failed to open or lock the relation, emit a log message before
-	 * exiting.
-	 */
+	/* leave if relation could not be opened or locked */
 	if (!onerel)
-	{
-		/*
-		 * If the RangeVar is not defined, we do not have enough information
-		 * to provide a meaningful log statement.  Chances are that
-		 * analyze_rel's caller has intentionally not provided this
-		 * information so that this logging is skipped, anyway.
-		 */
-		if (relation == NULL)
-			return;
-
-		/*
-		 * Determine the log level.  For autovacuum logs, we emit a LOG if
-		 * log_autovacuum_min_duration is not disabled.  For manual ANALYZE,
-		 * we emit a WARNING to match the log statements in the permissions
-		 * checks.
-		 */
-		if (!IsAutoVacuumWorkerProcess())
-			elevel = WARNING;
-		else if (params->log_min_duration >= 0)
-			elevel = LOG;
-		else
-			return;
-
-		if (!rel_lock)
-			ereport(elevel,
-					(errcode(ERRCODE_LOCK_NOT_AVAILABLE),
-					 errmsg("skipping analyze of \"%s\" --- lock not available",
-							relation->relname)));
-		else
-			ereport(elevel,
-					(errcode(ERRCODE_UNDEFINED_TABLE),
-					 errmsg("skipping analyze of \"%s\" --- relation no longer exists",
-							relation->relname)));
-
 		return;
-	}
 
 	/*
-	 * Check permissions --- this should match vacuum's check!
+	 * Check if relation needs to be skipped based on ownership.  This check
+	 * happens also when building the relation list to analyze for a manual
+	 * operation, and needs to be done additionally here as ANALYZE could
+	 * happen across multiple transactions where relation ownership could have
+	 * changed in-between.  Make sure to generate only logs for ANALYZE in
+	 * this case.
 	 */
-	if (!(pg_class_ownercheck(RelationGetRelid(onerel), GetUserId()) ||
-		  (pg_database_ownercheck(MyDatabaseId, GetUserId()) && !onerel->rd_rel->relisshared)))
+	if (!vacuum_is_relation_owner(RelationGetRelid(onerel),
+								  onerel->rd_rel,
+								  options & VACOPT_ANALYZE))
 	{
-		/* No need for a WARNING if we already complained during VACUUM */
-		if (!(options & VACOPT_VACUUM))
-		{
-			if (onerel->rd_rel->relisshared)
-				ereport(WARNING,
-						(errmsg("skipping \"%s\" --- only superuser can analyze it",
-								RelationGetRelationName(onerel))));
-			else if (onerel->rd_rel->relnamespace == PG_CATALOG_NAMESPACE)
-				ereport(WARNING,
-						(errmsg("skipping \"%s\" --- only superuser or database owner can analyze it",
-								RelationGetRelationName(onerel))));
-			else
-				ereport(WARNING,
-						(errmsg("skipping \"%s\" --- only table or database owner can analyze it",
-								RelationGetRelationName(onerel))));
-		}
 		relation_close(onerel, ShareUpdateExclusiveLock);
 		return;
 	}
@@ -783,7 +730,8 @@ compute_index_stats(Relation onerel, double totalrows,
 		estate = CreateExecutorState();
 		econtext = GetPerTupleExprContext(estate);
 		/* Need a slot to hold the current heap tuple, too */
-		slot = MakeSingleTupleTableSlot(RelationGetDescr(onerel));
+		slot = MakeSingleTupleTableSlot(RelationGetDescr(onerel),
+										&TTSOpsHeapTuple);
 
 		/* Arrange for econtext's scan tuple to be the tuple under test */
 		econtext->ecxt_scantuple = slot;
@@ -809,7 +757,7 @@ compute_index_stats(Relation onerel, double totalrows,
 			ResetExprContext(econtext);
 
 			/* Set up for predicate or expression evaluation */
-			ExecStoreTuple(heapTuple, slot, InvalidBuffer, false);
+			ExecStoreHeapTuple(heapTuple, slot, false);
 
 			/* If index is partial, check predicate */
 			if (predicate != NULL)
@@ -1505,7 +1453,7 @@ acquire_inherited_sample_rows(Relation onerel, int elevel,
 						{
 							HeapTuple	newtup;
 
-							newtup = do_convert_tuple(rows[numrows + j], map);
+							newtup = execute_attr_map_tuple(rows[numrows + j], map);
 							heap_freetuple(rows[numrows + j]);
 							rows[numrows + j] = newtup;
 						}
@@ -2898,7 +2846,7 @@ analyze_mcv_list(int *mcv_counts,
 	 * significantly more common than the estimated selectivity they would
 	 * have if they weren't in the list.  All non-MCV values are assumed to be
 	 * equally common, after taking into account the frequencies of all the
-	 * the values in the MCV list and the number of nulls (c.f. eqsel()).
+	 * values in the MCV list and the number of nulls (c.f. eqsel()).
 	 *
 	 * Here sumcount tracks the total count of all but the last (least common)
 	 * value in the MCV list, allowing us to determine the effect of excluding

@@ -36,9 +36,6 @@ test: timetz
 test: timestamp
 test: timestamptz
 test: interval
-test: abstime
-test: reltime
-test: tinterval
 test: inet
 test: macaddr
 test: macaddr8
@@ -102,7 +99,6 @@ test: portals
 test: arrays
 test: btree_index
 test: hash_index
-test: func_index
 test: update
 test: delete
 test: namespace
@@ -188,6 +184,7 @@ test: reloptions
 test: hash_part
 test: indexing
 test: partition_aggregate
+test: partition_info
 test: event_trigger
 test: fast_default
 test: stats

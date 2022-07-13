@@ -764,8 +764,11 @@ SELECT mleast(ARRAY[10, -1, 5, 4.4]);    -- doesn't work
     <para>
      Sometimes it is useful to be able to pass an already-constructed array
      to a variadic function; this is particularly handy when one variadic
-     function wants to pass on its array parameter to another one.  You can
-     do that by specifying <literal>VARIADIC</literal> in the call:
+     function wants to pass on its array parameter to another one.  Also,
+     this is the only secure way to call a variadic function found in a schema
+     that permits untrusted users to create objects; see
+     <xref linkend="typeconv-func"/>.  You can do this by
+     specifying <literal>VARIADIC</literal> in the call:
 
 <screen>
 SELECT mleast(VARIADIC ARRAY[10, -1, 5, 4.4]);
@@ -827,7 +830,10 @@ SELECT mleast(arr =&gt; ARRAY[10, -1, 5, 4.4]);
      parameters after a parameter with a default value have to have
      default values as well.  (Although the use of named argument notation
      could allow this restriction to be relaxed, it's still enforced so that
-     positional argument notation works sensibly.)
+     positional argument notation works sensibly.)  Whether or not you use it,
+     this capability creates a need for precautions when calling functions in
+     databases where some users mistrust other users; see
+     <xref linkend="typeconv-func"/>.
     </para>
 
     <para>
@@ -1399,11 +1405,14 @@ $$ LANGUAGE SQL;
    <para>
     More than one function can be defined with the same SQL name, so long
     as the arguments they take are different.  In other words,
-    function names can be <firstterm>overloaded</firstterm>.  When a
-    query is executed, the server will determine which function to
-    call from the data types and the number of the provided arguments.
-    Overloading can also be used to simulate functions with a variable
-    number of arguments, up to a finite maximum number.
+    function names can be <firstterm>overloaded</firstterm>.  Whether or not
+    you use it, this capability entails security precautions when calling
+    functions in databases where some users mistrust other users; see
+    <xref linkend="typeconv-func"/>.  When a query is executed, the server
+    will determine which function to call from the data types and the number
+    of the provided arguments.  Overloading can also be used to simulate
+    functions with a variable number of arguments, up to a finite maximum
+    number.
    </para>
 
    <para>
@@ -2061,16 +2070,6 @@ memcpy(destination->data, buffer, 40);
        </thead>
        <tbody>
         <row>
-         <entry><type>abstime</type></entry>
-         <entry><type>AbsoluteTime</type></entry>
-         <entry><filename>utils/nabstime.h</filename></entry>
-        </row>
-        <row>
-         <entry><type>bigint</type> (<type>int8</type>)</entry>
-         <entry><type>int64</type></entry>
-         <entry><filename>postgres.h</filename></entry>
-        </row>
-        <row>
          <entry><type>boolean</type></entry>
          <entry><type>bool</type></entry>
          <entry><filename>postgres.h</filename> (maybe compiler built-in)</entry>
@@ -2171,11 +2170,6 @@ memcpy(destination->data, buffer, 40);
          <entry><filename>postgres.h</filename></entry>
         </row>
         <row>
-         <entry><type>reltime</type></entry>
-         <entry><type>RelativeTime</type></entry>
-         <entry><filename>utils/nabstime.h</filename></entry>
-        </row>
-        <row>
          <entry><type>text</type></entry>
          <entry><type>text*</type></entry>
          <entry><filename>postgres.h</filename></entry>
@@ -2199,11 +2193,6 @@ memcpy(destination->data, buffer, 40);
          <entry><type>timestamp</type></entry>
          <entry><type>Timestamp*</type></entry>
          <entry><filename>datatype/timestamp.h</filename></entry>
-        </row>
-        <row>
-         <entry><type>tinterval</type></entry>
-         <entry><type>TimeInterval</type></entry>
-         <entry><filename>utils/nabstime.h</filename></entry>
         </row>
         <row>
          <entry><type>varchar</type></entry>
@@ -2860,14 +2849,6 @@ typedef struct FuncCallContext
      * function is done.
      */
     uint64 max_calls;
-
-    /*
-     * OPTIONAL pointer to result slot
-     *
-     * This is obsolete and only present for backward compatibility, viz,
-     * user-defined SRFs that use the deprecated TupleDescGetSlot().
-     */
-    TupleTableSlot *slot;
 
     /*
      * OPTIONAL pointer to miscellaneous user-provided context information

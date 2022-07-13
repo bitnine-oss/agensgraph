@@ -116,9 +116,9 @@ SELECT p.name, p.age FROM person* p ORDER BY age using >, name;
 --
 -- Test some cases involving whole-row Var referencing a subquery
 --
-select foo from (select 1) as foo;
-select foo from (select null) as foo;
-select foo from (select 'xyzzy',1,null) as foo;
+select foo from (select 1 offset 0) as foo;
+select foo from (select null offset 0) as foo;
+select foo from (select 'xyzzy',1,null offset 0) as foo;
 
 --
 -- Test VALUES lists
@@ -254,3 +254,11 @@ drop function sillysrf(int);
 -- (see bug #5084)
 select * from (values (2),(null),(1)) v(k) where k = k order by k;
 select * from (values (2),(null),(1)) v(k) where k = k;
+
+-- Test partitioned tables with no partitions, which should be handled the
+-- same as the non-inheritance case when expanding its RTE.
+create table list_parted_tbl (a int,b int) partition by list (a);
+create table list_parted_tbl1 partition of list_parted_tbl
+  for values in (1) partition by list(b);
+explain (costs off) select * from list_parted_tbl;
+drop table list_parted_tbl;

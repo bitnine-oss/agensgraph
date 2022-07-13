@@ -87,6 +87,8 @@ sub standby_psql
 # expected
 sub check_query
 {
+	local $Test::Builder::Level = $Test::Builder::Level + 1;
+
 	my ($query, $expected_stdout, $test_name) = @_;
 	my ($stdout, $stderr);
 
@@ -229,7 +231,8 @@ sub run_pg_rewind
 				'pg_rewind',
 				"--debug",
 				"--source-pgdata=$standby_pgdata",
-				"--target-pgdata=$master_pgdata"
+				"--target-pgdata=$master_pgdata",
+				"--no-sync"
 			],
 			'pg_rewind local');
 	}
@@ -241,7 +244,8 @@ sub run_pg_rewind
 			[
 				'pg_rewind',       "--debug",
 				"--source-server", $standby_connstr,
-				"--target-pgdata=$master_pgdata"
+				"--target-pgdata=$master_pgdata",
+				"--no-sync"
 			],
 			'pg_rewind remote');
 	}

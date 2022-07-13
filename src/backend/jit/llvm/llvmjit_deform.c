@@ -31,7 +31,8 @@
  * Create a function that deforms a tuple of type desc up to natts columns.
  */
 LLVMValueRef
-slot_compile_deform(LLVMJitContext *context, TupleDesc desc, int natts)
+slot_compile_deform(LLVMJitContext *context, TupleDesc desc,
+					const TupleTableSlotOps *ops, int natts)
 {
 	char	   *funcname;
 
@@ -60,7 +61,7 @@ slot_compile_deform(LLVMJitContext *context, TupleDesc desc, int natts)
 	LLVMValueRef v_tts_values;
 	LLVMValueRef v_tts_nulls;
 	LLVMValueRef v_slotoffp;
-	LLVMValueRef v_slowp;
+	LLVMValueRef v_flagsp;
 	LLVMValueRef v_nvalidp;
 	LLVMValueRef v_nvalid;
 	LLVMValueRef v_maxatt;
@@ -87,6 +88,15 @@ slot_compile_deform(LLVMJitContext *context, TupleDesc desc, int natts)
 	bool		attguaranteedalign = true;
 
 	int			attnum;
+
+	/* virtual tuples never need deforming, so don't generate code */
+	if (ops == &TTSOpsVirtual)
+		return NULL;
+
+	/* decline to JIT for slot types we don't know to handle */
+	if (ops != &TTSOpsHeapTuple && ops != &TTSOpsBufferHeapTuple &&
+		ops != &TTSOpsMinimalTuple)
+		return NULL;
 
 	mod = llvm_mutable_module(context);
 
@@ -166,14 +176,44 @@ slot_compile_deform(LLVMJitContext *context, TupleDesc desc, int natts)
 	v_tts_nulls =
 		l_load_struct_gep(b, v_slot, FIELDNO_TUPLETABLESLOT_ISNULL,
 						  "tts_ISNULL");
-
-	v_slotoffp = LLVMBuildStructGEP(b, v_slot, FIELDNO_TUPLETABLESLOT_OFF, "");
-	v_slowp = LLVMBuildStructGEP(b, v_slot, FIELDNO_TUPLETABLESLOT_SLOW, "");
+	v_flagsp = LLVMBuildStructGEP(b, v_slot, FIELDNO_TUPLETABLESLOT_FLAGS, "");
 	v_nvalidp = LLVMBuildStructGEP(b, v_slot, FIELDNO_TUPLETABLESLOT_NVALID, "");
 
-	v_tupleheaderp =
-		l_load_struct_gep(b, v_slot, FIELDNO_TUPLETABLESLOT_TUPLE,
-						  "tupleheader");
+	if (ops == &TTSOpsHeapTuple || ops == &TTSOpsBufferHeapTuple)
+	{
+		LLVMValueRef v_heapslot;
+
+		v_heapslot =
+			LLVMBuildBitCast(b,
+							 v_slot,
+							 l_ptr(StructHeapTupleTableSlot),
+							 "heapslot");
+		v_slotoffp = LLVMBuildStructGEP(b, v_heapslot, FIELDNO_HEAPTUPLETABLESLOT_OFF, "");
+		v_tupleheaderp =
+			l_load_struct_gep(b, v_heapslot, FIELDNO_HEAPTUPLETABLESLOT_TUPLE,
+							  "tupleheader");
+
+	}
+	else if (ops == &TTSOpsMinimalTuple)
+	{
+		LLVMValueRef v_minimalslot;
+
+		v_minimalslot =
+			LLVMBuildBitCast(b,
+							 v_slot,
+							 l_ptr(StructMinimalTupleTableSlot),
+							 "minimalslotslot");
+		v_slotoffp = LLVMBuildStructGEP(b, v_minimalslot, FIELDNO_MINIMALTUPLETABLESLOT_OFF, "");
+		v_tupleheaderp =
+			l_load_struct_gep(b, v_minimalslot, FIELDNO_MINIMALTUPLETABLESLOT_TUPLE,
+							  "tupleheader");
+	}
+	else
+	{
+		/* should've returned at the start of the function */
+		pg_unreachable();
+	}
+
 	v_tuplep =
 		l_load_struct_gep(b, v_tupleheaderp, FIELDNO_HEAPTUPLEDATA_DATA,
 						  "tuple");
@@ -304,7 +344,7 @@ slot_compile_deform(LLVMJitContext *context, TupleDesc desc, int natts)
 
 		for (attnum = 0; attnum < natts; attnum++)
 		{
-			LLVMValueRef v_attno = l_int32_const(attnum);
+			LLVMValueRef v_attno = l_int16_const(attnum);
 
 			LLVMAddCase(v_switch, v_attno, attcheckattnoblocks[attnum]);
 		}
@@ -690,11 +730,14 @@ slot_compile_deform(LLVMJitContext *context, TupleDesc desc, int natts)
 
 	{
 		LLVMValueRef v_off = LLVMBuildLoad(b, v_offp, "");
+		LLVMValueRef v_flags;
 
-		LLVMBuildStore(b, l_int32_const(natts), v_nvalidp);
+		LLVMBuildStore(b, l_int16_const(natts), v_nvalidp);
 		v_off = LLVMBuildTrunc(b, v_off, LLVMInt32Type(), "");
 		LLVMBuildStore(b, v_off, v_slotoffp);
-		LLVMBuildStore(b, l_int8_const(1), v_slowp);
+		v_flags = LLVMBuildLoad(b, v_flagsp, "tts_flags");
+		v_flags = LLVMBuildOr(b, v_flags, l_int16_const(TTS_FLAG_SLOW), "");
+		LLVMBuildStore(b, v_flags, v_flagsp);
 		LLVMBuildRetVoid(b);
 	}
 

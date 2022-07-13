@@ -237,9 +237,14 @@ drop table p1 cascade;
 -- tables. See the pgsql-hackers thread beginning Dec. 4/04
 create table base (i integer);
 create table derived () inherits (base);
+create table more_derived (like derived, b int) inherits (derived);
 insert into derived (i) values (0);
 select derived::base from derived;
 select NULL::derived::base;
+-- remove redundant conversions.
+explain (verbose on, costs off) select row(i, b)::more_derived::derived::base from more_derived;
+explain (verbose on, costs off) select (1, 2)::more_derived::derived::base;
+drop table more_derived;
 drop table derived;
 drop table base;
 
@@ -257,40 +262,40 @@ drop table p1;
 CREATE TABLE ac (aa TEXT);
 alter table ac add constraint ac_check check (aa is not null);
 CREATE TABLE bc (bb TEXT) INHERITS (ac);
-select pc.relname, pgc.conname, pgc.contype, pgc.conislocal, pgc.coninhcount, pgc.consrc from pg_class as pc inner join pg_constraint as pgc on (pgc.conrelid = pc.oid) where pc.relname in ('ac', 'bc') order by 1,2;
+select pc.relname, pgc.conname, pgc.contype, pgc.conislocal, pgc.coninhcount, pg_get_expr(pgc.conbin, pc.oid) as consrc from pg_class as pc inner join pg_constraint as pgc on (pgc.conrelid = pc.oid) where pc.relname in ('ac', 'bc') order by 1,2;
 
 insert into ac (aa) values (NULL);
 insert into bc (aa) values (NULL);
 
 alter table bc drop constraint ac_check;  -- fail, disallowed
 alter table ac drop constraint ac_check;
-select pc.relname, pgc.conname, pgc.contype, pgc.conislocal, pgc.coninhcount, pgc.consrc from pg_class as pc inner join pg_constraint as pgc on (pgc.conrelid = pc.oid) where pc.relname in ('ac', 'bc') order by 1,2;
+select pc.relname, pgc.conname, pgc.contype, pgc.conislocal, pgc.coninhcount, pg_get_expr(pgc.conbin, pc.oid) as consrc from pg_class as pc inner join pg_constraint as pgc on (pgc.conrelid = pc.oid) where pc.relname in ('ac', 'bc') order by 1,2;
 
 -- try the unnamed-constraint case
 alter table ac add check (aa is not null);
-select pc.relname, pgc.conname, pgc.contype, pgc.conislocal, pgc.coninhcount, pgc.consrc from pg_class as pc inner join pg_constraint as pgc on (pgc.conrelid = pc.oid) where pc.relname in ('ac', 'bc') order by 1,2;
+select pc.relname, pgc.conname, pgc.contype, pgc.conislocal, pgc.coninhcount, pg_get_expr(pgc.conbin, pc.oid) as consrc from pg_class as pc inner join pg_constraint as pgc on (pgc.conrelid = pc.oid) where pc.relname in ('ac', 'bc') order by 1,2;
 
 insert into ac (aa) values (NULL);
 insert into bc (aa) values (NULL);
 
 alter table bc drop constraint ac_aa_check;  -- fail, disallowed
 alter table ac drop constraint ac_aa_check;
-select pc.relname, pgc.conname, pgc.contype, pgc.conislocal, pgc.coninhcount, pgc.consrc from pg_class as pc inner join pg_constraint as pgc on (pgc.conrelid = pc.oid) where pc.relname in ('ac', 'bc') order by 1,2;
+select pc.relname, pgc.conname, pgc.contype, pgc.conislocal, pgc.coninhcount, pg_get_expr(pgc.conbin, pc.oid) as consrc from pg_class as pc inner join pg_constraint as pgc on (pgc.conrelid = pc.oid) where pc.relname in ('ac', 'bc') order by 1,2;
 
 alter table ac add constraint ac_check check (aa is not null);
 alter table bc no inherit ac;
-select pc.relname, pgc.conname, pgc.contype, pgc.conislocal, pgc.coninhcount, pgc.consrc from pg_class as pc inner join pg_constraint as pgc on (pgc.conrelid = pc.oid) where pc.relname in ('ac', 'bc') order by 1,2;
+select pc.relname, pgc.conname, pgc.contype, pgc.conislocal, pgc.coninhcount, pg_get_expr(pgc.conbin, pc.oid) as consrc from pg_class as pc inner join pg_constraint as pgc on (pgc.conrelid = pc.oid) where pc.relname in ('ac', 'bc') order by 1,2;
 alter table bc drop constraint ac_check;
-select pc.relname, pgc.conname, pgc.contype, pgc.conislocal, pgc.coninhcount, pgc.consrc from pg_class as pc inner join pg_constraint as pgc on (pgc.conrelid = pc.oid) where pc.relname in ('ac', 'bc') order by 1,2;
+select pc.relname, pgc.conname, pgc.contype, pgc.conislocal, pgc.coninhcount, pg_get_expr(pgc.conbin, pc.oid) as consrc from pg_class as pc inner join pg_constraint as pgc on (pgc.conrelid = pc.oid) where pc.relname in ('ac', 'bc') order by 1,2;
 alter table ac drop constraint ac_check;
-select pc.relname, pgc.conname, pgc.contype, pgc.conislocal, pgc.coninhcount, pgc.consrc from pg_class as pc inner join pg_constraint as pgc on (pgc.conrelid = pc.oid) where pc.relname in ('ac', 'bc') order by 1,2;
+select pc.relname, pgc.conname, pgc.contype, pgc.conislocal, pgc.coninhcount, pg_get_expr(pgc.conbin, pc.oid) as consrc from pg_class as pc inner join pg_constraint as pgc on (pgc.conrelid = pc.oid) where pc.relname in ('ac', 'bc') order by 1,2;
 
 drop table bc;
 drop table ac;
 
 create table ac (a int constraint check_a check (a <> 0));
 create table bc (a int constraint check_a check (a <> 0), b int constraint check_b check (b <> 0)) inherits (ac);
-select pc.relname, pgc.conname, pgc.contype, pgc.conislocal, pgc.coninhcount, pgc.consrc from pg_class as pc inner join pg_constraint as pgc on (pgc.conrelid = pc.oid) where pc.relname in ('ac', 'bc') order by 1,2;
+select pc.relname, pgc.conname, pgc.contype, pgc.conislocal, pgc.coninhcount, pg_get_expr(pgc.conbin, pc.oid) as consrc from pg_class as pc inner join pg_constraint as pgc on (pgc.conrelid = pc.oid) where pc.relname in ('ac', 'bc') order by 1,2;
 
 drop table bc;
 drop table ac;
@@ -298,10 +303,10 @@ drop table ac;
 create table ac (a int constraint check_a check (a <> 0));
 create table bc (b int constraint check_b check (b <> 0));
 create table cc (c int constraint check_c check (c <> 0)) inherits (ac, bc);
-select pc.relname, pgc.conname, pgc.contype, pgc.conislocal, pgc.coninhcount, pgc.consrc from pg_class as pc inner join pg_constraint as pgc on (pgc.conrelid = pc.oid) where pc.relname in ('ac', 'bc', 'cc') order by 1,2;
+select pc.relname, pgc.conname, pgc.contype, pgc.conislocal, pgc.coninhcount, pg_get_expr(pgc.conbin, pc.oid) as consrc from pg_class as pc inner join pg_constraint as pgc on (pgc.conrelid = pc.oid) where pc.relname in ('ac', 'bc', 'cc') order by 1,2;
 
 alter table cc no inherit bc;
-select pc.relname, pgc.conname, pgc.contype, pgc.conislocal, pgc.coninhcount, pgc.consrc from pg_class as pc inner join pg_constraint as pgc on (pgc.conrelid = pc.oid) where pc.relname in ('ac', 'bc', 'cc') order by 1,2;
+select pc.relname, pgc.conname, pgc.contype, pgc.conislocal, pgc.coninhcount, pg_get_expr(pgc.conbin, pc.oid) as consrc from pg_class as pc inner join pg_constraint as pgc on (pgc.conrelid = pc.oid) where pc.relname in ('ac', 'bc', 'cc') order by 1,2;
 
 drop table cc;
 drop table bc;
@@ -634,6 +639,23 @@ insert into cnullchild values(null);
 select * from cnullparent;
 select * from cnullparent where f1 = 2;
 drop table cnullparent cascade;
+
+--
+-- Check use of temporary tables with inheritance trees
+--
+create table inh_perm_parent (a1 int);
+create temp table inh_temp_parent (a1 int);
+create temp table inh_temp_child () inherits (inh_perm_parent); -- ok
+create table inh_perm_child () inherits (inh_temp_parent); -- error
+create temp table inh_temp_child_2 () inherits (inh_temp_parent); -- ok
+insert into inh_perm_parent values (1);
+insert into inh_temp_parent values (2);
+insert into inh_temp_child values (3);
+insert into inh_temp_child_2 values (4);
+select tableoid::regclass, a1 from inh_perm_parent;
+select tableoid::regclass, a1 from inh_temp_parent;
+drop table inh_perm_parent cascade;
+drop table inh_temp_parent cascade;
 
 --
 -- Check that constraint exclusion works correctly with partitions using

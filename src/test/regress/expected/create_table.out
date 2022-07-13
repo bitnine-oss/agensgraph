@@ -288,11 +288,6 @@ CREATE TABLE partitioned (
 ERROR:  exclusion constraints are not supported on partitioned tables
 LINE 3:  EXCLUDE USING gist (a WITH &&)
          ^
--- prevent column from being used twice in the partition key
-CREATE TABLE partitioned (
-	a int
-) PARTITION BY RANGE (a, a);
-ERROR:  column "a" appears more than once in partition key
 -- prevent using prohibited expressions in the key
 CREATE FUNCTION retset (a int) RETURNS SETOF int AS $$ SELECT 1; $$ LANGUAGE SQL IMMUTABLE;
 CREATE TABLE partitioned (
@@ -333,11 +328,15 @@ CREATE TABLE partitioned (
 	a int
 ) PARTITION BY RANGE (b);
 ERROR:  column "b" named in partition key does not exist
+LINE 3: ) PARTITION BY RANGE (b);
+                              ^
 -- cannot use system columns in partition key
 CREATE TABLE partitioned (
 	a int
 ) PARTITION BY RANGE (xmin);
 ERROR:  cannot use system column "xmin" in partition key
+LINE 3: ) PARTITION BY RANGE (xmin);
+                              ^
 -- functions in key must be immutable
 CREATE FUNCTION immut_func (a int) RETURNS int AS $$ SELECT a + random()::int; $$ LANGUAGE SQL;
 CREATE TABLE partitioned (
@@ -404,7 +403,7 @@ CREATE TABLE fail () INHERITS (partitioned2);
 ERROR:  cannot inherit from partitioned table "partitioned2"
 -- Partition key in describe output
 \d partitioned
-            Table "public.partitioned"
+      Partitioned table "public.partitioned"
  Column |  Type   | Collation | Nullable | Default 
 --------+---------+-----------+----------+---------
  a      | integer |           |          | 
@@ -415,7 +414,7 @@ Partition key: RANGE (a oid_ops, plusone(b), c, d COLLATE "C")
 Number of partitions: 0
 
 \d+ partitioned2
-                                Table "public.partitioned2"
+                          Partitioned table "public.partitioned2"
  Column |  Type   | Collation | Nullable | Default | Storage  | Stats target | Description 
 --------+---------+-----------+----------+---------+----------+--------------+-------------
  a      | integer |           |          |         | plain    |              | 
@@ -724,9 +723,37 @@ SELECT conislocal, coninhcount FROM pg_constraint WHERE conrelid = 'part_b'::reg
 -- specify PARTITION BY for a partition
 CREATE TABLE fail_part_col_not_found PARTITION OF parted FOR VALUES IN ('c') PARTITION BY RANGE (c);
 ERROR:  column "c" named in partition key does not exist
+LINE 1: ...TITION OF parted FOR VALUES IN ('c') PARTITION BY RANGE (c);
+                                                                    ^
 CREATE TABLE part_c PARTITION OF parted (b WITH OPTIONS NOT NULL DEFAULT 0) FOR VALUES IN ('c') PARTITION BY RANGE ((b));
 -- create a level-2 partition
 CREATE TABLE part_c_1_10 PARTITION OF part_c FOR VALUES FROM (1) TO (10);
+-- check that NOT NULL and default value are inherited correctly
+create table parted_notnull_inh_test (a int default 1, b int not null default 0) partition by list (a);
+create table parted_notnull_inh_test1 partition of parted_notnull_inh_test (a not null, b default 1) for values in (1);
+insert into parted_notnull_inh_test (b) values (null);
+ERROR:  null value in column "b" violates not-null constraint
+DETAIL:  Failing row contains (1, null).
+-- note that while b's default is overriden, a's default is preserved
+\d parted_notnull_inh_test1
+      Table "public.parted_notnull_inh_test1"
+ Column |  Type   | Collation | Nullable | Default 
+--------+---------+-----------+----------+---------
+ a      | integer |           | not null | 1
+ b      | integer |           | not null | 1
+Partition of: parted_notnull_inh_test FOR VALUES IN (1)
+
+drop table parted_notnull_inh_test;
+-- check for a conflicting COLLATE clause
+create table parted_collate_must_match (a text collate "C", b text collate "C")
+  partition by range (a);
+-- on the partition key
+create table parted_collate_must_match1 partition of parted_collate_must_match
+  (a collate "POSIX") for values from ('a') to ('m');
+-- on another column
+create table parted_collate_must_match2 partition of parted_collate_must_match
+  (b collate "POSIX") for values from ('m') to ('z');
+drop table parted_collate_must_match;
 -- Partition bound in describe output
 \d+ part_b
                                    Table "public.part_b"
@@ -742,7 +769,7 @@ Check constraints:
 
 -- Both partition bound and partition key in describe output
 \d+ part_c
-                                   Table "public.part_c"
+                             Partitioned table "public.part_c"
  Column |  Type   | Collation | Nullable | Default | Storage  | Stats target | Description 
 --------+---------+-----------+----------+---------+----------+--------------+-------------
  a      | text    |           |          |         | extended |              | 
@@ -771,7 +798,7 @@ Check constraints:
 -- output could vary depending on the order in which partition oids are
 -- returned.
 \d parted
-               Table "public.parted"
+         Partitioned table "public.parted"
  Column |  Type   | Collation | Nullable | Default 
 --------+---------+-----------+----------+---------
  a      | text    |           |          | 
@@ -782,7 +809,7 @@ Check constraints:
 Number of partitions: 3 (Use \d+ to list them.)
 
 \d hash_parted
-            Table "public.hash_parted"
+      Partitioned table "public.hash_parted"
  Column |  Type   | Collation | Nullable | Default 
 --------+---------+-----------+----------+---------
  a      | integer |           |          | 
@@ -864,7 +891,7 @@ SELECT obj_description('parted_col_comment'::regclass);
 (1 row)
 
 \d+ parted_col_comment
-                              Table "public.parted_col_comment"
+                        Partitioned table "public.parted_col_comment"
  Column |  Type   | Collation | Nullable | Default | Storage  | Stats target |  Description  
 --------+---------+-----------+----------+---------+----------+--------------+---------------
  a      | integer |           |          |         | plain    |              | Partition key
@@ -882,7 +909,7 @@ CREATE TABLE arrlp12 PARTITION OF arrlp FOR VALUES IN ('{1}', '{2}');
 --------+-----------+-----------+----------+---------+----------+--------------+-------------
  a      | integer[] |           |          |         | extended |              | 
 Partition of: arrlp FOR VALUES IN ('{1}', '{2}')
-Partition constraint: ((a IS NOT NULL) AND (((a)::anyarray OPERATOR(pg_catalog.=) '{1}'::integer[]) OR ((a)::anyarray OPERATOR(pg_catalog.=) '{2}'::integer[])))
+Partition constraint: ((a IS NOT NULL) AND ((a = '{1}'::integer[]) OR (a = '{2}'::integer[])))
 
 DROP TABLE arrlp;
 -- partition on boolean column
@@ -890,7 +917,7 @@ create table boolspart (a bool) partition by list (a);
 create table boolspart_t partition of boolspart for values in (true);
 create table boolspart_f partition of boolspart for values in (false);
 \d+ boolspart
-                                 Table "public.boolspart"
+                           Partitioned table "public.boolspart"
  Column |  Type   | Collation | Nullable | Default | Storage | Stats target | Description 
 --------+---------+-----------+----------+---------+---------+--------------+-------------
  a      | boolean |           |          |         | plain   |              | 
@@ -909,3 +936,19 @@ ERROR:  cannot create a temporary relation as partition of permanent relation "p
 create temp table temp_part partition of temp_parted default; -- ok
 drop table perm_parted cascade;
 drop table temp_parted cascade;
+-- check that adding partitions to a table while it is being used is prevented
+create table tab_part_create (a int) partition by list (a);
+create or replace function func_part_create() returns trigger
+  language plpgsql as $$
+  begin
+    execute 'create table tab_part_create_1 partition of tab_part_create for values in (1)';
+    return null;
+  end $$;
+create trigger trig_part_create before insert on tab_part_create
+  for each statement execute procedure func_part_create();
+insert into tab_part_create values (1);
+ERROR:  cannot CREATE TABLE .. PARTITION OF "tab_part_create" because it is being used by active queries in this session
+CONTEXT:  SQL statement "create table tab_part_create_1 partition of tab_part_create for values in (1)"
+PL/pgSQL function func_part_create() line 3 at EXECUTE
+drop table tab_part_create;
+drop function func_part_create();

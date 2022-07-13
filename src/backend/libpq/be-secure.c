@@ -38,6 +38,7 @@
 #include "storage/proc.h"
 
 
+char	   *ssl_library;
 char	   *ssl_cert_file;
 char	   *ssl_key_file;
 char	   *ssl_ca_file;
@@ -58,6 +59,9 @@ char	   *SSLECDHCurve;
 
 /* GUC variable: if false, prefer client ciphers */
 bool		SSLPreferServerCiphers;
+
+int			ssl_min_protocol_version;
+int			ssl_max_protocol_version;
 
 /* ------------------------------------------------------------ */
 /*			 Procedures common to all secure sessions			*/
@@ -144,6 +148,9 @@ secure_read(Port *port, void *ptr, size_t len)
 	ssize_t		n;
 	int			waitfor;
 
+	/* Deal with any already-pending interrupt condition. */
+	ProcessClientReadInterrupt(false);
+
 retry:
 #ifdef USE_SSL
 	waitfor = 0;
@@ -208,9 +215,8 @@ retry:
 	}
 
 	/*
-	 * Process interrupts that happened while (or before) receiving. Note that
-	 * we signal that we're not blocking, which will prevent some types of
-	 * interrupts from being processed.
+	 * Process interrupts that happened during a successful (or non-blocking,
+	 * or hard-failed) read.
 	 */
 	ProcessClientReadInterrupt(false);
 
@@ -246,6 +252,9 @@ secure_write(Port *port, void *ptr, size_t len)
 {
 	ssize_t		n;
 	int			waitfor;
+
+	/* Deal with any already-pending interrupt condition. */
+	ProcessClientWriteInterrupt(false);
 
 retry:
 	waitfor = 0;
@@ -286,17 +295,16 @@ retry:
 
 			/*
 			 * We'll retry the write. Most likely it will return immediately
-			 * because there's still no data available, and we'll wait for the
-			 * socket to become ready again.
+			 * because there's still no buffer space available, and we'll wait
+			 * for the socket to become ready again.
 			 */
 		}
 		goto retry;
 	}
 
 	/*
-	 * Process interrupts that happened while (or before) sending. Note that
-	 * we signal that we're not blocking, which will prevent some types of
-	 * interrupts from being processed.
+	 * Process interrupts that happened during a successful (or non-blocking,
+	 * or hard-failed) write.
 	 */
 	ProcessClientWriteInterrupt(false);
 

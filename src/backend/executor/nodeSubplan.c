@@ -65,6 +65,9 @@ ExecSubPlan(SubPlanState *node,
 			bool *isNull)
 {
 	SubPlan    *subplan = node->subplan;
+	EState	   *estate = node->planstate->state;
+	ScanDirection dir = estate->es_direction;
+	Datum		retval;
 
 	CHECK_FOR_INTERRUPTS();
 
@@ -77,11 +80,19 @@ ExecSubPlan(SubPlanState *node,
 	if (subplan->setParam != NIL && subplan->subLinkType != MULTIEXPR_SUBLINK)
 		elog(ERROR, "cannot set parent params from subquery");
 
+	/* Force forward-scan mode for evaluation */
+	estate->es_direction = ForwardScanDirection;
+
 	/* Select appropriate evaluation strategy */
 	if (subplan->useHashTable)
-		return ExecHashSubPlan(node, econtext, isNull);
+		retval = ExecHashSubPlan(node, econtext, isNull);
 	else
-		return ExecScanSubPlan(node, econtext, isNull);
+		retval = ExecScanSubPlan(node, econtext, isNull);
+
+	/* restore scan direction */
+	estate->es_direction = dir;
+
+	return retval;
 }
 
 /*
@@ -346,7 +357,7 @@ ExecScanSubPlan(SubPlanState *node,
 			 */
 			if (node->curTuple)
 				heap_freetuple(node->curTuple);
-			node->curTuple = ExecCopySlotTuple(slot);
+			node->curTuple = ExecCopySlotHeapTuple(slot);
 
 			result = heap_getattr(node->curTuple, 1, tdesc, isNull);
 			/* keep scanning subplan to make sure there's only one tuple */
@@ -957,7 +968,7 @@ ExecInitSubPlan(SubPlan *subplan, PlanState *parent)
 		 * own innerecontext.
 		 */
 		tupDescLeft = ExecTypeFromTL(lefttlist, false);
-		slot = ExecInitExtraTupleSlot(estate, tupDescLeft);
+		slot = ExecInitExtraTupleSlot(estate, tupDescLeft, &TTSOpsVirtual);
 		sstate->projLeft = ExecBuildProjectionInfo(lefttlist,
 												   NULL,
 												   slot,
@@ -965,7 +976,7 @@ ExecInitSubPlan(SubPlan *subplan, PlanState *parent)
 												   NULL);
 
 		sstate->descRight = tupDescRight = ExecTypeFromTL(righttlist, false);
-		slot = ExecInitExtraTupleSlot(estate, tupDescRight);
+		slot = ExecInitExtraTupleSlot(estate, tupDescRight, &TTSOpsVirtual);
 		sstate->projRight = ExecBuildProjectionInfo(righttlist,
 													sstate->innerecontext,
 													slot,
@@ -977,6 +988,7 @@ ExecInitSubPlan(SubPlan *subplan, PlanState *parent)
 		 * across-type comparison).
 		 */
 		sstate->cur_eq_comp = ExecBuildGroupingEqual(tupDescLeft, tupDescRight,
+													 &TTSOpsVirtual, &TTSOpsMinimalTuple,
 													 ncols,
 													 sstate->keyColIdx,
 													 sstate->tab_eq_funcoids,
@@ -998,6 +1010,17 @@ ExecInitSubPlan(SubPlan *subplan, PlanState *parent)
  * of initplans: we don't run the subplan until/unless we need its output.
  * Note that this routine MUST clear the execPlan fields of the plan's
  * output parameters after evaluating them!
+ *
+ * The results of this function are stored in the EState associated with the
+ * ExprContext (particularly, its ecxt_param_exec_vals); any pass-by-ref
+ * result Datums are allocated in the EState's per-query memory.  The passed
+ * econtext can be any ExprContext belonging to that EState; which one is
+ * important only to the extent that the ExprContext's per-tuple memory
+ * context is used to evaluate any parameters passed down to the subplan.
+ * (Thus in principle, the shorter-lived the ExprContext the better, since
+ * that data isn't needed after we return.  In practice, because initplan
+ * parameters are never more complex than Vars, Aggrefs, etc, evaluating them
+ * currently never leaks any memory anyway.)
  * ----------------------------------------------------------------
  */
 void
@@ -1006,6 +1029,8 @@ ExecSetParamPlan(SubPlanState *node, ExprContext *econtext)
 	SubPlan    *subplan = node->subplan;
 	PlanState  *planstate = node->planstate;
 	SubLinkType subLinkType = subplan->subLinkType;
+	EState	   *estate = planstate->state;
+	ScanDirection dir = estate->es_direction;
 	MemoryContext oldcontext;
 	TupleTableSlot *slot;
 	ListCell   *pvar;
@@ -1018,6 +1043,12 @@ ExecSetParamPlan(SubPlanState *node, ExprContext *econtext)
 		elog(ERROR, "ANY/ALL subselect unsupported as initplan");
 	if (subLinkType == CTE_SUBLINK)
 		elog(ERROR, "CTE subplans should not be executed via ExecSetParamPlan");
+
+	/*
+	 * Enforce forward scan direction regardless of caller. It's hard but not
+	 * impossible to get here in backward scan, so make it work anyway.
+	 */
+	estate->es_direction = ForwardScanDirection;
 
 	/* Initialize ArrayBuildStateAny in caller's context, if needed */
 	if (subLinkType == ARRAY_SUBLINK)
@@ -1106,7 +1137,7 @@ ExecSetParamPlan(SubPlanState *node, ExprContext *econtext)
 		 */
 		if (node->curTuple)
 			heap_freetuple(node->curTuple);
-		node->curTuple = ExecCopySlotTuple(slot);
+		node->curTuple = ExecCopySlotHeapTuple(slot);
 
 		/*
 		 * Now set all the setParam params from the columns of the tuple
@@ -1171,6 +1202,40 @@ ExecSetParamPlan(SubPlanState *node, ExprContext *econtext)
 	}
 
 	MemoryContextSwitchTo(oldcontext);
+
+	/* restore scan direction */
+	estate->es_direction = dir;
+}
+
+/*
+ * ExecSetParamPlanMulti
+ *
+ * Apply ExecSetParamPlan to evaluate any not-yet-evaluated initplan output
+ * parameters whose ParamIDs are listed in "params".  Any listed params that
+ * are not initplan outputs are ignored.
+ *
+ * As with ExecSetParamPlan, any ExprContext belonging to the current EState
+ * can be used, but in principle a shorter-lived ExprContext is better than a
+ * longer-lived one.
+ */
+void
+ExecSetParamPlanMulti(const Bitmapset *params, ExprContext *econtext)
+{
+	int			paramid;
+
+	paramid = -1;
+	while ((paramid = bms_next_member(params, paramid)) >= 0)
+	{
+		ParamExecData *prm = &(econtext->ecxt_param_exec_vals[paramid]);
+
+		if (prm->execPlan != NULL)
+		{
+			/* Parameter not evaluated yet, so go do it */
+			ExecSetParamPlan(prm->execPlan, econtext);
+			/* ExecSetParamPlan should have processed this param... */
+			Assert(prm->execPlan == NULL);
+		}
+	}
 }
 
 /*

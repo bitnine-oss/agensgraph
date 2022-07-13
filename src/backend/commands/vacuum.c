@@ -68,8 +68,8 @@ static BufferAccessStrategy vac_strategy;
 
 
 /* non-export function prototypes */
-static List *expand_vacuum_rel(VacuumRelation *vrel);
-static List *get_all_vacuum_rels(void);
+static List *expand_vacuum_rel(VacuumRelation *vrel, int options);
+static List *get_all_vacuum_rels(int options);
 static void vac_truncate_clog(TransactionId frozenXID,
 				  MultiXactId minMulti,
 				  TransactionId lastSaneFrozenXid,
@@ -257,7 +257,7 @@ vacuum(int options, List *relations, VacuumParams *params,
 			List	   *sublist;
 			MemoryContext old_context;
 
-			sublist = expand_vacuum_rel(vrel);
+			sublist = expand_vacuum_rel(vrel, options);
 			old_context = MemoryContextSwitchTo(vac_context);
 			newrels = list_concat(newrels, sublist);
 			MemoryContextSwitchTo(old_context);
@@ -265,7 +265,7 @@ vacuum(int options, List *relations, VacuumParams *params,
 		relations = newrels;
 	}
 	else
-		relations = get_all_vacuum_rels();
+		relations = get_all_vacuum_rels(options);
 
 	/*
 	 * Decide whether we need to start/commit our own transactions.
@@ -409,6 +409,186 @@ vacuum(int options, List *relations, VacuumParams *params,
 }
 
 /*
+ * Check if a given relation can be safely vacuumed or analyzed.  If the
+ * user is not the relation owner, issue a WARNING log message and return
+ * false to let the caller decide what to do with this relation.  This
+ * routine is used to decide if a relation can be processed for VACUUM or
+ * ANALYZE.
+ */
+bool
+vacuum_is_relation_owner(Oid relid, Form_pg_class reltuple, int options)
+{
+	char	   *relname;
+
+	Assert((options & (VACOPT_VACUUM | VACOPT_ANALYZE)) != 0);
+
+	/*
+	 * Check permissions.
+	 *
+	 * We allow the user to vacuum or analyze a table if he is superuser, the
+	 * table owner, or the database owner (but in the latter case, only if
+	 * it's not a shared relation).  pg_class_ownercheck includes the
+	 * superuser case.
+	 *
+	 * Note we choose to treat permissions failure as a WARNING and keep
+	 * trying to vacuum or analyze the rest of the DB --- is this appropriate?
+	 */
+	if (pg_class_ownercheck(relid, GetUserId()) ||
+		(pg_database_ownercheck(MyDatabaseId, GetUserId()) && !reltuple->relisshared))
+		return true;
+
+	relname = NameStr(reltuple->relname);
+
+	if ((options & VACOPT_VACUUM) != 0)
+	{
+		if (reltuple->relisshared)
+			ereport(WARNING,
+					(errmsg("skipping \"%s\" --- only superuser can vacuum it",
+							relname)));
+		else if (reltuple->relnamespace == PG_CATALOG_NAMESPACE)
+			ereport(WARNING,
+					(errmsg("skipping \"%s\" --- only superuser or database owner can vacuum it",
+							relname)));
+		else
+			ereport(WARNING,
+					(errmsg("skipping \"%s\" --- only table or database owner can vacuum it",
+							relname)));
+
+		/*
+		 * For VACUUM ANALYZE, both logs could show up, but just generate
+		 * information for VACUUM as that would be the first one to be
+		 * processed.
+		 */
+		return false;
+	}
+
+	if ((options & VACOPT_ANALYZE) != 0)
+	{
+		if (reltuple->relisshared)
+			ereport(WARNING,
+					(errmsg("skipping \"%s\" --- only superuser can analyze it",
+							relname)));
+		else if (reltuple->relnamespace == PG_CATALOG_NAMESPACE)
+			ereport(WARNING,
+					(errmsg("skipping \"%s\" --- only superuser or database owner can analyze it",
+							relname)));
+		else
+			ereport(WARNING,
+					(errmsg("skipping \"%s\" --- only table or database owner can analyze it",
+							relname)));
+	}
+
+	return false;
+}
+
+
+/*
+ * vacuum_open_relation
+ *
+ * This routine is used for attempting to open and lock a relation which
+ * is going to be vacuumed or analyzed.  If the relation cannot be opened
+ * or locked, a log is emitted if possible.
+ */
+Relation
+vacuum_open_relation(Oid relid, RangeVar *relation, VacuumParams *params,
+					 int options, LOCKMODE lmode)
+{
+	Relation	onerel;
+	bool		rel_lock = true;
+	int			elevel;
+
+	Assert(params != NULL);
+	Assert((options & (VACOPT_VACUUM | VACOPT_ANALYZE)) != 0);
+
+	/*
+	 * Open the relation and get the appropriate lock on it.
+	 *
+	 * There's a race condition here: the relation may have gone away since
+	 * the last time we saw it.  If so, we don't need to vacuum or analyze it.
+	 *
+	 * If we've been asked not to wait for the relation lock, acquire it first
+	 * in non-blocking mode, before calling try_relation_open().
+	 */
+	if (!(options & VACOPT_SKIP_LOCKED))
+		onerel = try_relation_open(relid, lmode);
+	else if (ConditionalLockRelationOid(relid, lmode))
+		onerel = try_relation_open(relid, NoLock);
+	else
+	{
+		onerel = NULL;
+		rel_lock = false;
+	}
+
+	/* if relation is opened, leave */
+	if (onerel)
+		return onerel;
+
+	/*
+	 * Relation could not be opened, hence generate if possible a log
+	 * informing on the situation.
+	 *
+	 * If the RangeVar is not defined, we do not have enough information to
+	 * provide a meaningful log statement.  Chances are that the caller has
+	 * intentionally not provided this information so that this logging is
+	 * skipped, anyway.
+	 */
+	if (relation == NULL)
+		return NULL;
+
+	/*
+	 * Determine the log level.
+	 *
+	 * For autovacuum logs, we emit a LOG if log_autovacuum_min_duration is
+	 * not disabled.  For manual VACUUM or ANALYZE, we emit a WARNING to match
+	 * the log statements in the permission checks.
+	 */
+	if (!IsAutoVacuumWorkerProcess())
+		elevel = WARNING;
+	else if (params->log_min_duration >= 0)
+		elevel = LOG;
+	else
+		return NULL;
+
+	if ((options & VACOPT_VACUUM) != 0)
+	{
+		if (!rel_lock)
+			ereport(elevel,
+					(errcode(ERRCODE_LOCK_NOT_AVAILABLE),
+					 errmsg("skipping vacuum of \"%s\" --- lock not available",
+							relation->relname)));
+		else
+			ereport(elevel,
+					(errcode(ERRCODE_UNDEFINED_TABLE),
+					 errmsg("skipping vacuum of \"%s\" --- relation no longer exists",
+							relation->relname)));
+
+		/*
+		 * For VACUUM ANALYZE, both logs could show up, but just generate
+		 * information for VACUUM as that would be the first one to be
+		 * processed.
+		 */
+		return NULL;
+	}
+
+	if ((options & VACOPT_ANALYZE) != 0)
+	{
+		if (!rel_lock)
+			ereport(elevel,
+					(errcode(ERRCODE_LOCK_NOT_AVAILABLE),
+					 errmsg("skipping analyze of \"%s\" --- lock not available",
+							relation->relname)));
+		else
+			ereport(elevel,
+					(errcode(ERRCODE_UNDEFINED_TABLE),
+					 errmsg("skipping analyze of \"%s\" --- relation no longer exists",
+							relation->relname)));
+	}
+
+	return NULL;
+}
+
+
+/*
  * Given a VacuumRelation, fill in the table OID if it wasn't specified,
  * and optionally add VacuumRelations for partitions of the table.
  *
@@ -423,7 +603,7 @@ vacuum(int options, List *relations, VacuumParams *params,
  * are made in vac_context.
  */
 static List *
-expand_vacuum_rel(VacuumRelation *vrel)
+expand_vacuum_rel(VacuumRelation *vrel, int options)
 {
 	List	   *vacrels = NIL;
 	MemoryContext oldcontext;
@@ -442,31 +622,67 @@ expand_vacuum_rel(VacuumRelation *vrel)
 		HeapTuple	tuple;
 		Form_pg_class classForm;
 		bool		include_parts;
+		int			rvr_opts;
+
+		/*
+		 * Since autovacuum workers supply OIDs when calling vacuum(), no
+		 * autovacuum worker should reach this code.
+		 */
+		Assert(!IsAutoVacuumWorkerProcess());
 
 		/*
 		 * We transiently take AccessShareLock to protect the syscache lookup
 		 * below, as well as find_all_inheritors's expectation that the caller
 		 * holds some lock on the starting relation.
 		 */
-		relid = RangeVarGetRelid(vrel->relation, AccessShareLock, false);
+		rvr_opts = (options & VACOPT_SKIP_LOCKED) ? RVR_SKIP_LOCKED : 0;
+		relid = RangeVarGetRelidExtended(vrel->relation,
+										 AccessShareLock,
+										 rvr_opts,
+										 NULL, NULL);
 
 		/*
-		 * Make a returnable VacuumRelation for this rel.
+		 * If the lock is unavailable, emit the same log statement that
+		 * vacuum_rel() and analyze_rel() would.
 		 */
-		oldcontext = MemoryContextSwitchTo(vac_context);
-		vacrels = lappend(vacrels, makeVacuumRelation(vrel->relation,
-													  relid,
-													  vrel->va_cols));
-		MemoryContextSwitchTo(oldcontext);
+		if (!OidIsValid(relid))
+		{
+			if (options & VACOPT_VACUUM)
+				ereport(WARNING,
+						(errcode(ERRCODE_LOCK_NOT_AVAILABLE),
+						 errmsg("skipping vacuum of \"%s\" --- lock not available",
+								vrel->relation->relname)));
+			else
+				ereport(WARNING,
+						(errcode(ERRCODE_LOCK_NOT_AVAILABLE),
+						 errmsg("skipping analyze of \"%s\" --- lock not available",
+								vrel->relation->relname)));
+			return vacrels;
+		}
 
 		/*
-		 * To check whether the relation is a partitioned table, fetch its
-		 * syscache entry.
+		 * To check whether the relation is a partitioned table and its
+		 * ownership, fetch its syscache entry.
 		 */
 		tuple = SearchSysCache1(RELOID, ObjectIdGetDatum(relid));
 		if (!HeapTupleIsValid(tuple))
 			elog(ERROR, "cache lookup failed for relation %u", relid);
 		classForm = (Form_pg_class) GETSTRUCT(tuple);
+
+		/*
+		 * Make a returnable VacuumRelation for this rel if user is a proper
+		 * owner.
+		 */
+		if (vacuum_is_relation_owner(relid, classForm, options))
+		{
+			oldcontext = MemoryContextSwitchTo(vac_context);
+			vacrels = lappend(vacrels, makeVacuumRelation(vrel->relation,
+														  relid,
+														  vrel->va_cols));
+			MemoryContextSwitchTo(oldcontext);
+		}
+
+
 		include_parts = (classForm->relkind == RELKIND_PARTITIONED_TABLE);
 		ReleaseSysCache(tuple);
 
@@ -475,7 +691,9 @@ expand_vacuum_rel(VacuumRelation *vrel)
 		 * the list returned by find_all_inheritors() includes the passed-in
 		 * OID, so we have to skip that.  There's no point in taking locks on
 		 * the individual partitions yet, and doing so would just add
-		 * unnecessary deadlock risk.
+		 * unnecessary deadlock risk.  For this last reason we do not check
+		 * yet the ownership of the partitions, which get added to the list to
+		 * process.  Ownership will be checked later on anyway.
 		 */
 		if (include_parts)
 		{
@@ -524,7 +742,7 @@ expand_vacuum_rel(VacuumRelation *vrel)
  * the current database.  The list is built in vac_context.
  */
 static List *
-get_all_vacuum_rels(void)
+get_all_vacuum_rels(int options)
 {
 	List	   *vacrels = NIL;
 	Relation	pgclass;
@@ -539,6 +757,11 @@ get_all_vacuum_rels(void)
 	{
 		Form_pg_class classForm = (Form_pg_class) GETSTRUCT(tuple);
 		MemoryContext oldcontext;
+		Oid			relid = HeapTupleGetOid(tuple);
+
+		/* check permissions of relation */
+		if (!vacuum_is_relation_owner(relid, classForm, options))
+			continue;
 
 		/*
 		 * We include partitioned tables here; depending on which operation is
@@ -557,7 +780,7 @@ get_all_vacuum_rels(void)
 		 */
 		oldcontext = MemoryContextSwitchTo(vac_context);
 		vacrels = lappend(vacrels, makeVacuumRelation(NULL,
-													  HeapTupleGetOid(tuple),
+													  relid,
 													  NIL));
 		MemoryContextSwitchTo(oldcontext);
 	}
@@ -1307,7 +1530,6 @@ vacuum_rel(Oid relid, RangeVar *relation, int options, VacuumParams *params)
 	Oid			save_userid;
 	int			save_sec_context;
 	int			save_nestlevel;
-	bool		rel_lock = true;
 
 	Assert(params != NULL);
 
@@ -1362,98 +1584,29 @@ vacuum_rel(Oid relid, RangeVar *relation, int options, VacuumParams *params)
 	 */
 	lmode = (options & VACOPT_FULL) ? AccessExclusiveLock : ShareUpdateExclusiveLock;
 
-	/*
-	 * Open the relation and get the appropriate lock on it.
-	 *
-	 * There's a race condition here: the rel may have gone away since the
-	 * last time we saw it.  If so, we don't need to vacuum it.
-	 *
-	 * If we've been asked not to wait for the relation lock, acquire it first
-	 * in non-blocking mode, before calling try_relation_open().
-	 */
-	if (!(options & VACOPT_NOWAIT))
-		onerel = try_relation_open(relid, lmode);
-	else if (ConditionalLockRelationOid(relid, lmode))
-		onerel = try_relation_open(relid, NoLock);
-	else
-	{
-		onerel = NULL;
-		rel_lock = false;
-	}
+	/* open the relation and get the appropriate lock on it */
+	onerel = vacuum_open_relation(relid, relation, params, options, lmode);
 
-	/*
-	 * If we failed to open or lock the relation, emit a log message before
-	 * exiting.
-	 */
+	/* leave if relation could not be opened or locked */
 	if (!onerel)
 	{
-		int			elevel = 0;
-
-		/*
-		 * Determine the log level.
-		 *
-		 * If the RangeVar is not defined, we do not have enough information
-		 * to provide a meaningful log statement.  Chances are that
-		 * vacuum_rel's caller has intentionally not provided this information
-		 * so that this logging is skipped, anyway.
-		 *
-		 * Otherwise, for autovacuum logs, we emit a LOG if
-		 * log_autovacuum_min_duration is not disabled.  For manual VACUUM, we
-		 * emit a WARNING to match the log statements in the permission
-		 * checks.
-		 */
-		if (relation != NULL)
-		{
-			if (!IsAutoVacuumWorkerProcess())
-				elevel = WARNING;
-			else if (params->log_min_duration >= 0)
-				elevel = LOG;
-		}
-
-		if (elevel != 0)
-		{
-			if (!rel_lock)
-				ereport(elevel,
-						(errcode(ERRCODE_LOCK_NOT_AVAILABLE),
-						 errmsg("skipping vacuum of \"%s\" --- lock not available",
-								relation->relname)));
-			else
-				ereport(elevel,
-						(errcode(ERRCODE_UNDEFINED_TABLE),
-						 errmsg("skipping vacuum of \"%s\" --- relation no longer exists",
-								relation->relname)));
-		}
-
 		PopActiveSnapshot();
 		CommitTransactionCommand();
 		return false;
 	}
 
 	/*
-	 * Check permissions.
-	 *
-	 * We allow the user to vacuum a table if he is superuser, the table
-	 * owner, or the database owner (but in the latter case, only if it's not
-	 * a shared relation).  pg_class_ownercheck includes the superuser case.
-	 *
-	 * Note we choose to treat permissions failure as a WARNING and keep
-	 * trying to vacuum the rest of the DB --- is this appropriate?
+	 * Check if relation needs to be skipped based on ownership.  This check
+	 * happens also when building the relation list to vacuum for a manual
+	 * operation, and needs to be done additionally here as VACUUM could
+	 * happen across multiple transactions where relation ownership could have
+	 * changed in-between.  Make sure to only generate logs for VACUUM in this
+	 * case.
 	 */
-	if (!(pg_class_ownercheck(RelationGetRelid(onerel), GetUserId()) ||
-		  (pg_database_ownercheck(MyDatabaseId, GetUserId()) && !onerel->rd_rel->relisshared)))
+	if (!vacuum_is_relation_owner(RelationGetRelid(onerel),
+								  onerel->rd_rel,
+								  options & VACOPT_VACUUM))
 	{
-		if (onerel->rd_rel->relisshared)
-			ereport(WARNING,
-					(errmsg("skipping \"%s\" --- only superuser can vacuum it",
-							RelationGetRelationName(onerel))));
-		else if (onerel->rd_rel->relnamespace == PG_CATALOG_NAMESPACE)
-			ereport(WARNING,
-					(errmsg("skipping \"%s\" --- only superuser or database owner can vacuum it",
-							RelationGetRelationName(onerel))));
-		else
-			ereport(WARNING,
-					(errmsg("skipping \"%s\" --- only table or database owner can vacuum it",
-							RelationGetRelationName(onerel))));
 		relation_close(onerel, lmode);
 		PopActiveSnapshot();
 		CommitTransactionCommand();
@@ -1545,13 +1698,17 @@ vacuum_rel(Oid relid, RangeVar *relation, int options, VacuumParams *params)
 	 */
 	if (options & VACOPT_FULL)
 	{
+		int			cluster_options = 0;
+
 		/* close relation before vacuuming, but hold lock until commit */
 		relation_close(onerel, NoLock);
 		onerel = NULL;
 
+		if ((options & VACOPT_VERBOSE) != 0)
+			cluster_options |= CLUOPT_VERBOSE;
+
 		/* VACUUM FULL is now a variant of CLUSTER; see cluster.c */
-		cluster_rel(relid, InvalidOid, false,
-					(options & VACOPT_VERBOSE) != 0);
+		cluster_rel(relid, InvalidOid, cluster_options);
 	}
 	else
 		lazy_vacuum_rel(onerel, options, params, vac_strategy);

@@ -795,6 +795,44 @@ WINDOW w AS (ORDER BY x groups between 1 preceding and 1 following);
 -- with UNION
 SELECT count(*) OVER (PARTITION BY four) FROM (SELECT * FROM tenk1 UNION ALL SELECT * FROM tenk2)s LIMIT 0;
 
+-- check some degenerate cases
+create temp table t1 (f1 int, f2 int8);
+insert into t1 values (1,1),(1,2),(2,2);
+
+select f1, sum(f1) over (partition by f1
+                         range between 1 preceding and 1 following)
+from t1 where f1 = f2;  -- error, must have order by
+explain (costs off)
+select f1, sum(f1) over (partition by f1 order by f2
+                         range between 1 preceding and 1 following)
+from t1 where f1 = f2;
+select f1, sum(f1) over (partition by f1 order by f2
+                         range between 1 preceding and 1 following)
+from t1 where f1 = f2;
+select f1, sum(f1) over (partition by f1, f1 order by f2
+                         range between 2 preceding and 1 preceding)
+from t1 where f1 = f2;
+select f1, sum(f1) over (partition by f1, f2 order by f2
+                         range between 1 following and 2 following)
+from t1 where f1 = f2;
+
+select f1, sum(f1) over (partition by f1
+                         groups between 1 preceding and 1 following)
+from t1 where f1 = f2;  -- error, must have order by
+explain (costs off)
+select f1, sum(f1) over (partition by f1 order by f2
+                         groups between 1 preceding and 1 following)
+from t1 where f1 = f2;
+select f1, sum(f1) over (partition by f1 order by f2
+                         groups between 1 preceding and 1 following)
+from t1 where f1 = f2;
+select f1, sum(f1) over (partition by f1, f1 order by f2
+                         groups between 2 preceding and 1 preceding)
+from t1 where f1 = f2;
+select f1, sum(f1) over (partition by f1, f2 order by f2
+                         groups between 1 following and 2 following)
+from t1 where f1 = f2;
+
 -- ordering by a non-integer constant is allowed
 SELECT rank() OVER (ORDER BY length('abc'));
 
@@ -853,6 +891,22 @@ SELECT * FROM
           min(salary) OVER (PARTITION BY depname) depminsalary
    FROM empsalary) emp
 WHERE depname = 'sales';
+
+-- Test Sort node collapsing
+EXPLAIN (COSTS OFF)
+SELECT * FROM
+  (SELECT depname,
+          sum(salary) OVER (PARTITION BY depname order by empno) depsalary,
+          min(salary) OVER (PARTITION BY depname, empno order by enroll_date) depminsalary
+   FROM empsalary) emp
+WHERE depname = 'sales';
+
+-- Test Sort node reordering
+EXPLAIN (COSTS OFF)
+SELECT
+  lead(1) OVER (PARTITION BY depname ORDER BY salary, enroll_date),
+  lag(1) OVER (PARTITION BY depname ORDER BY salary,enroll_date,empno)
+FROM empsalary;
 
 -- cleanup
 DROP TABLE empsalary;

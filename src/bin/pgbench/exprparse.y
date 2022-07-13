@@ -61,7 +61,8 @@ static PgBenchExpr *make_case(yyscan_t yyscanner, PgBenchExprList *when_then_lis
 %type <bval> BOOLEAN_CONST
 %type <str> VARIABLE FUNCTION
 
-%token NULL_CONST INTEGER_CONST DOUBLE_CONST BOOLEAN_CONST VARIABLE FUNCTION
+%token NULL_CONST INTEGER_CONST MAXINT_PLUS_ONE_CONST DOUBLE_CONST
+%token BOOLEAN_CONST VARIABLE FUNCTION
 %token AND_OP OR_OP NOT_OP NE_OP LE_OP GE_OP LS_OP RS_OP IS_OP
 %token CASE_KW WHEN_KW THEN_KW ELSE_KW END_KW
 
@@ -90,6 +91,9 @@ expr: '(' expr ')'			{ $$ = $2; }
 	/* unary minus "-x" implemented as "0 - x" */
 	| '-' expr %prec UNARY	{ $$ = make_op(yyscanner, "-",
 										   make_integer_constant(0), $2); }
+	/* special PG_INT64_MIN handling, only after a unary minus */
+	| '-' MAXINT_PLUS_ONE_CONST %prec UNARY
+							{ $$ = make_integer_constant(PG_INT64_MIN); }
 	/* binary ones complement "~x" implemented as 0xffff... xor x" */
 	| '~' expr				{ $$ = make_op(yyscanner, "#",
 										   make_integer_constant(~INT64CONST(0)), $2); }
@@ -366,15 +370,6 @@ static const struct
 	{
 		"hash_fnv1a", PGBENCH_NARGS_HASH, PGBENCH_HASH_FNV1A
 	},
-	{
-		"hash", PGBENCH_NARGS_HASH, PGBENCH_HASH_MURMUR2
-	},
-	{
-		"hash_murmur2", PGBENCH_NARGS_HASH, PGBENCH_HASH_MURMUR2
-	},
-	{
-		"hash_fnv1a", PGBENCH_NARGS_HASH, PGBENCH_HASH_FNV1A
-	},
 	/* keep as last array element */
 	{
 		NULL, 0, 0
@@ -476,7 +471,7 @@ make_func(yyscan_t yyscanner, int fnumber, PgBenchExprList *args)
 
 		/* hash functions with optional seed argument */
 		case PGBENCH_NARGS_HASH:
-			if (len > 2)
+			if (len < 1 || len > 2)
 				expr_yyerror_more(yyscanner, "unexpected number of arguments",
 								  PGBENCH_FUNCTIONS[fnumber].fname);
 

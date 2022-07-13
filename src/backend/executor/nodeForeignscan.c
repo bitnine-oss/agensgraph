@@ -62,7 +62,7 @@ ForeignNext(ForeignScanState *node)
 	 */
 	if (plan->fsSystemCol && !TupIsNull(slot))
 	{
-		HeapTuple	tup = ExecMaterializeSlot(slot);
+		HeapTuple	tup = ExecFetchSlotHeapTuple(slot, true, NULL);
 
 		tup->t_tableOid = RelationGetRelid(node->ss.ss_currentRelation);
 	}
@@ -156,8 +156,8 @@ ExecInitForeignScan(ForeignScan *node, EState *estate, int eflags)
 	ExecAssignExprContext(estate, &scanstate->ss.ps);
 
 	/*
-	 * open the base relation, if any, and acquire an appropriate lock on it;
-	 * also acquire function pointers from the FDW's handler
+	 * open the scan relation, if any; also acquire function pointers from the
+	 * FDW's handler
 	 */
 	if (scanrelid > 0)
 	{
@@ -180,7 +180,8 @@ ExecInitForeignScan(ForeignScan *node, EState *estate, int eflags)
 		TupleDesc	scan_tupdesc;
 
 		scan_tupdesc = ExecTypeFromTL(node->fdw_scan_tlist, false);
-		ExecInitScanTupleSlot(estate, &scanstate->ss, scan_tupdesc);
+		ExecInitScanTupleSlot(estate, &scanstate->ss, scan_tupdesc,
+							  &TTSOpsHeapTuple);
 		/* Node's targetlist will contain Vars with varno = INDEX_VAR */
 		tlistvarno = INDEX_VAR;
 	}
@@ -190,15 +191,20 @@ ExecInitForeignScan(ForeignScan *node, EState *estate, int eflags)
 
 		/* don't trust FDWs to return tuples fulfilling NOT NULL constraints */
 		scan_tupdesc = CreateTupleDescCopy(RelationGetDescr(currentRelation));
-		ExecInitScanTupleSlot(estate, &scanstate->ss, scan_tupdesc);
+		ExecInitScanTupleSlot(estate, &scanstate->ss, scan_tupdesc,
+							  &TTSOpsHeapTuple);
 		/* Node's targetlist will contain Vars with varno = scanrelid */
 		tlistvarno = scanrelid;
 	}
 
+	/* Don't know what an FDW might return */
+	scanstate->ss.ps.scanopsfixed = false;
+	scanstate->ss.ps.scanopsset = true;
+
 	/*
 	 * Initialize result slot, type and projection.
 	 */
-	ExecInitResultTupleSlotTL(estate, &scanstate->ss.ps);
+	ExecInitResultTypeTL(&scanstate->ss.ps);
 	ExecAssignScanProjectionInfoWithVarno(&scanstate->ss, tlistvarno);
 
 	/*
@@ -256,12 +262,9 @@ ExecEndForeignScan(ForeignScanState *node)
 	ExecFreeExprContext(&node->ss.ps);
 
 	/* clean out the tuple table */
-	ExecClearTuple(node->ss.ps.ps_ResultTupleSlot);
+	if (node->ss.ps.ps_ResultTupleSlot)
+		ExecClearTuple(node->ss.ps.ps_ResultTupleSlot);
 	ExecClearTuple(node->ss.ss_ScanTupleSlot);
-
-	/* close the relation. */
-	if (node->ss.ss_currentRelation)
-		ExecCloseScanRelation(node->ss.ss_currentRelation);
 }
 
 /* ----------------------------------------------------------------

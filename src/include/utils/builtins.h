@@ -37,32 +37,20 @@ extern unsigned hex_decode(const char *src, unsigned len, char *dst);
 extern int2vector *buildint2vector(const int16 *int2s, int n);
 
 /* name.c */
-extern int	namecpy(Name n1, Name n2);
+extern int	namecpy(Name n1, const NameData *n2);
 extern int	namestrcpy(Name name, const char *str);
 extern int	namestrcmp(Name name, const char *str);
 
 /* numutils.c */
 extern int32 pg_atoi(const char *s, int size, int c);
+extern int16 pg_strtoint16(const char *s);
+extern int32 pg_strtoint32(const char *s);
 extern void pg_itoa(int16 i, char *a);
 extern void pg_ltoa(int32 l, char *a);
 extern void pg_lltoa(int64 ll, char *a);
 extern char *pg_ltostr_zeropad(char *str, int32 value, int32 minwidth);
 extern char *pg_ltostr(char *str, int32 value);
 extern uint64 pg_strtouint64(const char *str, char **endptr, int base);
-
-/* float.c */
-extern PGDLLIMPORT int extra_float_digits;
-
-extern double get_float8_infinity(void);
-extern float get_float4_infinity(void);
-extern double get_float8_nan(void);
-extern float get_float4_nan(void);
-extern int	is_infinite(double val);
-extern double float8in_internal(char *num, char **endptr_p,
-				  const char *type_name, const char *orig_string);
-extern char *float8out_internal(double num);
-extern int	float4_cmp_internal(float4 a, float4 b);
-extern int	float8_cmp_internal(float8 a, float8 b);
 
 /* oid.c */
 extern oidvector *buildoidvector(const Oid *oids, int n);

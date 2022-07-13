@@ -284,10 +284,11 @@ FindStreamingStart(uint32 *tli)
 			char		buf[4];
 			int			bytes_out;
 			char		fullpath[MAXPGPATH * 2];
+			int			r;
 
 			snprintf(fullpath, sizeof(fullpath), "%s/%s", basedir, dirent->d_name);
 
-			fd = open(fullpath, O_RDONLY | PG_BINARY);
+			fd = open(fullpath, O_RDONLY | PG_BINARY, 0);
 			if (fd < 0)
 			{
 				fprintf(stderr, _("%s: could not open compressed file \"%s\": %s\n"),
@@ -300,10 +301,15 @@ FindStreamingStart(uint32 *tli)
 						progname, fullpath, strerror(errno));
 				disconnect_and_exit(1);
 			}
-			if (read(fd, (char *) buf, sizeof(buf)) != sizeof(buf))
+			r = read(fd, (char *) buf, sizeof(buf));
+			if (r != sizeof(buf))
 			{
-				fprintf(stderr, _("%s: could not read compressed file \"%s\": %s\n"),
-						progname, fullpath, strerror(errno));
+				if (r < 0)
+					fprintf(stderr, _("%s: could not read compressed file \"%s\": %s\n"),
+							progname, fullpath, strerror(errno));
+				else
+					fprintf(stderr, _("%s: could not read compressed file \"%s\": read %d of %zu\n"),
+							progname, fullpath, r, sizeof(buf));
 				disconnect_and_exit(1);
 			}
 
@@ -352,7 +358,7 @@ FindStreamingStart(uint32 *tli)
 		if (!high_ispartial)
 			high_segno++;
 
-		XLogSegNoOffsetToRecPtr(high_segno, 0, high_ptr, WalSegSz);
+		XLogSegNoOffsetToRecPtr(high_segno, 0, WalSegSz, high_ptr);
 
 		*tli = high_tli;
 		return high_ptr;

@@ -23,7 +23,6 @@
 
 #include "postgres.h"
 
-#include "executor/execExpr.h"
 #include "executor/execParallel.h"
 #include "executor/executor.h"
 #include "executor/nodeAppend.h"
@@ -36,7 +35,9 @@
 #include "executor/nodeIndexonlyscan.h"
 #include "executor/nodeSeqscan.h"
 #include "executor/nodeSort.h"
+#include "executor/nodeSubplan.h"
 #include "executor/tqueue.h"
+#include "jit/jit.h"
 #include "nodes/nodeFuncs.h"
 #include "optimizer/planmain.h"
 #include "optimizer/planner.h"
@@ -62,6 +63,7 @@
 #define PARALLEL_KEY_INSTRUMENTATION	UINT64CONST(0xE000000000000006)
 #define PARALLEL_KEY_DSA				UINT64CONST(0xE000000000000007)
 #define PARALLEL_KEY_QUERY_TEXT		UINT64CONST(0xE000000000000008)
+#define PARALLEL_KEY_JIT_INSTRUMENTATION UINT64CONST(0xE000000000000009)
 
 #define PARALLEL_TUPLE_QUEUE_SIZE		65536
 
@@ -181,7 +183,6 @@ ExecSerializePlan(Plan *plan, EState *estate)
 	pstmt->planTree = plan;
 	pstmt->rtable = estate->es_range_table;
 	pstmt->resultRelations = NIL;
-	pstmt->nonleafResultRelations = NIL;
 
 	/*
 	 * Transfer only parallel-safe subplans, leaving a NULL "hole" in the list
@@ -573,16 +574,28 @@ ExecInitParallelPlan(PlanState *planstate, EState *estate,
 	char	   *paramlistinfo_space;
 	BufferUsage *bufusage_space;
 	SharedExecutorInstrumentation *instrumentation = NULL;
+	SharedJitInstrumentation *jit_instrumentation = NULL;
 	int			pstmt_len;
 	int			paramlistinfo_len;
 	int			instrumentation_len = 0;
+	int			jit_instrumentation_len = 0;
 	int			instrument_offset = 0;
 	Size		dsa_minsize = dsa_minimum_size();
 	char	   *query_string;
 	int			query_len;
 
-	/* Force parameters we're going to pass to workers to be evaluated. */
-	ExecEvalParamExecParams(sendParams, estate);
+	/*
+	 * Force any initplan outputs that we're going to pass to workers to be
+	 * evaluated, if they weren't already.
+	 *
+	 * For simplicity, we use the EState's per-output-tuple ExprContext here.
+	 * That risks intra-query memory leakage, since we might pass through here
+	 * many times before that ExprContext gets reset; but ExecSetParamPlan
+	 * doesn't normally leak any memory in the context (see its comments), so
+	 * it doesn't seem worth complicating this function's API to pass it a
+	 * shorter-lived ExprContext.  This might need to change someday.
+	 */
+	ExecSetParamPlanMulti(sendParams, GetPerTupleExprContext(estate));
 
 	/* Allocate object for return value. */
 	pei = palloc0(sizeof(ParallelExecutorInfo));
@@ -659,6 +672,16 @@ ExecInitParallelPlan(PlanState *planstate, EState *estate,
 					 mul_size(e.nnodes, nworkers));
 		shm_toc_estimate_chunk(&pcxt->estimator, instrumentation_len);
 		shm_toc_estimate_keys(&pcxt->estimator, 1);
+
+		/* Estimate space for JIT instrumentation, if required. */
+		if (estate->es_jit_flags != PGJIT_NONE)
+		{
+			jit_instrumentation_len =
+				offsetof(SharedJitInstrumentation, jit_instr) +
+				sizeof(JitInstrumentation) * nworkers;
+			shm_toc_estimate_chunk(&pcxt->estimator, jit_instrumentation_len);
+			shm_toc_estimate_keys(&pcxt->estimator, 1);
+		}
 	}
 
 	/* Estimate space for DSA area. */
@@ -732,6 +755,18 @@ ExecInitParallelPlan(PlanState *planstate, EState *estate,
 		shm_toc_insert(pcxt->toc, PARALLEL_KEY_INSTRUMENTATION,
 					   instrumentation);
 		pei->instrumentation = instrumentation;
+
+		if (estate->es_jit_flags != PGJIT_NONE)
+		{
+			jit_instrumentation = shm_toc_allocate(pcxt->toc,
+												   jit_instrumentation_len);
+			jit_instrumentation->num_workers = nworkers;
+			memset(jit_instrumentation->jit_instr, 0,
+				   sizeof(JitInstrumentation) * nworkers);
+			shm_toc_insert(pcxt->toc, PARALLEL_KEY_JIT_INSTRUMENTATION,
+						   jit_instrumentation);
+			pei->jit_instrumentation = jit_instrumentation;
+		}
 	}
 
 	/*
@@ -831,8 +866,12 @@ ExecParallelReinitialize(PlanState *planstate,
 	/* Old workers must already be shut down */
 	Assert(pei->finished);
 
-	/* Force parameters we're going to pass to workers to be evaluated. */
-	ExecEvalParamExecParams(sendParams, estate);
+	/*
+	 * Force any initplan outputs that we're going to pass to workers to be
+	 * evaluated, if they weren't already (see comments in
+	 * ExecInitParallelPlan).
+	 */
+	ExecSetParamPlanMulti(sendParams, GetPerTupleExprContext(estate));
 
 	ReinitializeParallelDSM(pei->pcxt);
 	pei->tqueue = ExecParallelSetupTupleQueues(pei->pcxt, true);
@@ -990,6 +1029,45 @@ ExecParallelRetrieveInstrumentation(PlanState *planstate,
 }
 
 /*
+ * Add up the workers' JIT instrumentation from dynamic shared memory.
+ */
+static void
+ExecParallelRetrieveJitInstrumentation(PlanState *planstate,
+									   SharedJitInstrumentation *shared_jit)
+{
+	JitInstrumentation *combined;
+	int			ibytes;
+
+	int			n;
+
+	/*
+	 * Accumulate worker JIT instrumentation into the combined JIT
+	 * instrumentation, allocating it if required.
+	 */
+	if (!planstate->state->es_jit_worker_instr)
+		planstate->state->es_jit_worker_instr =
+			MemoryContextAllocZero(planstate->state->es_query_cxt, sizeof(JitInstrumentation));
+	combined = planstate->state->es_jit_worker_instr;
+
+	/* Accummulate all the workers' instrumentations. */
+	for (n = 0; n < shared_jit->num_workers; ++n)
+		InstrJitAgg(combined, &shared_jit->jit_instr[n]);
+
+	/*
+	 * Store the per-worker detail.
+	 *
+	 * Similar to ExecParallelRetrieveInstrumentation(), allocate the
+	 * instrumentation in per-query context.
+	 */
+	ibytes = offsetof(SharedJitInstrumentation, jit_instr)
+			 + mul_size(shared_jit->num_workers, sizeof(JitInstrumentation));
+	planstate->worker_jit_instrument =
+		MemoryContextAlloc(planstate->state->es_query_cxt, ibytes);
+
+	memcpy(planstate->worker_jit_instrument, shared_jit, ibytes);
+}
+
+/*
  * Finish parallel execution.  We wait for parallel workers to finish, and
  * accumulate their buffer usage.
  */
@@ -1054,6 +1132,11 @@ ExecParallelCleanup(ParallelExecutorInfo *pei)
 		ExecParallelRetrieveInstrumentation(pei->planstate,
 											pei->instrumentation);
 
+	/* Accumulate JIT instrumentation, if any. */
+	if (pei->jit_instrumentation)
+		ExecParallelRetrieveJitInstrumentation(pei->planstate,
+											pei->jit_instrumentation);
+
 	/* Free any serialized parameters. */
 	if (DsaPointerIsValid(pei->param_exec))
 	{
@@ -1114,14 +1197,7 @@ ExecParallelGetQueryDesc(shm_toc *toc, DestReceiver *receiver,
 	paramspace = shm_toc_lookup(toc, PARALLEL_KEY_PARAMLISTINFO, false);
 	paramLI = RestoreParamList(&paramspace);
 
-	/*
-	 * Create a QueryDesc for the query.
-	 *
-	 * It's not obvious how to obtain the query string from here; and even if
-	 * we could copying it would take more cycles than not copying it. But
-	 * it's a bit unsatisfying to just use a dummy string here, so consider
-	 * revising this someday.
-	 */
+	/* Create a QueryDesc for the query. */
 	return CreateQueryDesc(pstmt,
 						   queryString,
 						   GetActiveSnapshot(), InvalidSnapshot,
@@ -1260,6 +1336,7 @@ ParallelQueryMain(dsm_segment *seg, shm_toc *toc)
 	DestReceiver *receiver;
 	QueryDesc  *queryDesc;
 	SharedExecutorInstrumentation *instrumentation;
+	SharedJitInstrumentation *jit_instrumentation;
 	int			instrument_options = 0;
 	void	   *area_space;
 	dsa_area   *area;
@@ -1273,6 +1350,8 @@ ParallelQueryMain(dsm_segment *seg, shm_toc *toc)
 	instrumentation = shm_toc_lookup(toc, PARALLEL_KEY_INSTRUMENTATION, true);
 	if (instrumentation != NULL)
 		instrument_options = instrumentation->instrument_options;
+	jit_instrumentation = shm_toc_lookup(toc, PARALLEL_KEY_JIT_INSTRUMENTATION,
+										 true);
 	queryDesc = ExecParallelGetQueryDesc(toc, receiver, instrument_options);
 
 	/* Setting debug_query_string for individual workers */
@@ -1280,9 +1359,6 @@ ParallelQueryMain(dsm_segment *seg, shm_toc *toc)
 
 	/* Report workers' query for monitoring purposes */
 	pgstat_report_activity(STATE_RUNNING, debug_query_string);
-
-	/* Prepare to track buffer usage during query execution. */
-	InstrStartParallelQuery();
 
 	/* Attach to the dynamic shared memory area. */
 	area_space = shm_toc_lookup(toc, PARALLEL_KEY_DSA, false);
@@ -1310,6 +1386,15 @@ ParallelQueryMain(dsm_segment *seg, shm_toc *toc)
 	ExecSetTupleBound(fpes->tuples_needed, queryDesc->planstate);
 
 	/*
+	 * Prepare to track buffer usage during query execution.
+	 *
+	 * We do this after starting up the executor to match what happens in the
+	 * leader, which also doesn't count buffer accesses that occur during
+	 * executor startup.
+	 */
+	InstrStartParallelQuery();
+
+	/*
 	 * Run the plan.  If we specified a tuple bound, be careful not to demand
 	 * more tuples than that.
 	 */
@@ -1329,6 +1414,14 @@ ParallelQueryMain(dsm_segment *seg, shm_toc *toc)
 	if (instrumentation != NULL)
 		ExecParallelReportInstrumentation(queryDesc->planstate,
 										  instrumentation);
+
+	/* Report JIT instrumentation data if any */
+	if (queryDesc->estate->es_jit && jit_instrumentation != NULL)
+	{
+		Assert(ParallelWorkerNumber < jit_instrumentation->num_workers);
+		jit_instrumentation->jit_instr[ParallelWorkerNumber] =
+			queryDesc->estate->es_jit->instr;
+	}
 
 	/* Must do this after capturing instrumentation. */
 	ExecutorEnd(queryDesc);

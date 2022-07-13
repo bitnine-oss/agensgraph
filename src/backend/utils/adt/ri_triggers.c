@@ -724,39 +724,6 @@ ri_restrict(TriggerData *trigdata, bool is_no_action)
 			 */
 		case FKCONSTR_MATCH_SIMPLE:
 		case FKCONSTR_MATCH_FULL:
-			switch (ri_NullCheck(RelationGetDescr(pk_rel), old_row, riinfo, true))
-			{
-				case RI_KEYS_ALL_NULL:
-				case RI_KEYS_SOME_NULL:
-
-					/*
-					 * No check needed - there cannot be any reference to old
-					 * key if it contains a NULL
-					 */
-					heap_close(fk_rel, RowShareLock);
-					return PointerGetDatum(NULL);
-
-				case RI_KEYS_NONE_NULL:
-
-					/*
-					 * Have a full qualified key - continue below
-					 */
-					break;
-			}
-
-			/*
-			 * In UPDATE, no need to do anything if old and new keys are equal
-			 */
-			if (TRIGGER_FIRED_BY_UPDATE(trigdata->tg_event))
-			{
-				HeapTuple	new_row = trigdata->tg_newtuple;
-
-				if (ri_KeysEqual(pk_rel, old_row, new_row, riinfo, true))
-				{
-					heap_close(fk_rel, RowShareLock);
-					return PointerGetDatum(NULL);
-				}
-			}
 
 			/*
 			 * If another PK row now exists providing the old key values, we
@@ -914,26 +881,6 @@ RI_FKey_cascade_del(PG_FUNCTION_ARGS)
 			 */
 		case FKCONSTR_MATCH_SIMPLE:
 		case FKCONSTR_MATCH_FULL:
-			switch (ri_NullCheck(RelationGetDescr(pk_rel), old_row, riinfo, true))
-			{
-				case RI_KEYS_ALL_NULL:
-				case RI_KEYS_SOME_NULL:
-
-					/*
-					 * No check needed - there cannot be any reference to old
-					 * key if it contains a NULL
-					 */
-					heap_close(fk_rel, RowExclusiveLock);
-					return PointerGetDatum(NULL);
-
-				case RI_KEYS_NONE_NULL:
-
-					/*
-					 * Have a full qualified key - continue below
-					 */
-					break;
-			}
-
 			if (SPI_connect() != SPI_OK_CONNECT)
 				elog(ERROR, "SPI_connect failed");
 
@@ -1078,35 +1025,6 @@ RI_FKey_cascade_upd(PG_FUNCTION_ARGS)
 			 */
 		case FKCONSTR_MATCH_SIMPLE:
 		case FKCONSTR_MATCH_FULL:
-			switch (ri_NullCheck(RelationGetDescr(pk_rel), old_row, riinfo, true))
-			{
-				case RI_KEYS_ALL_NULL:
-				case RI_KEYS_SOME_NULL:
-
-					/*
-					 * No check needed - there cannot be any reference to old
-					 * key if it contains a NULL
-					 */
-					heap_close(fk_rel, RowExclusiveLock);
-					return PointerGetDatum(NULL);
-
-				case RI_KEYS_NONE_NULL:
-
-					/*
-					 * Have a full qualified key - continue below
-					 */
-					break;
-			}
-
-			/*
-			 * No need to do anything if old and new keys are equal
-			 */
-			if (ri_KeysEqual(pk_rel, old_row, new_row, riinfo, true))
-			{
-				heap_close(fk_rel, RowExclusiveLock);
-				return PointerGetDatum(NULL);
-			}
-
 			if (SPI_connect() != SPI_OK_CONNECT)
 				elog(ERROR, "SPI_connect failed");
 
@@ -1296,40 +1214,6 @@ ri_setnull(TriggerData *trigdata)
 			 */
 		case FKCONSTR_MATCH_SIMPLE:
 		case FKCONSTR_MATCH_FULL:
-			switch (ri_NullCheck(RelationGetDescr(pk_rel), old_row, riinfo, true))
-			{
-				case RI_KEYS_ALL_NULL:
-				case RI_KEYS_SOME_NULL:
-
-					/*
-					 * No check needed - there cannot be any reference to old
-					 * key if it contains a NULL
-					 */
-					heap_close(fk_rel, RowExclusiveLock);
-					return PointerGetDatum(NULL);
-
-				case RI_KEYS_NONE_NULL:
-
-					/*
-					 * Have a full qualified key - continue below
-					 */
-					break;
-			}
-
-			/*
-			 * In UPDATE, no need to do anything if old and new keys are equal
-			 */
-			if (TRIGGER_FIRED_BY_UPDATE(trigdata->tg_event))
-			{
-				HeapTuple	new_row = trigdata->tg_newtuple;
-
-				if (ri_KeysEqual(pk_rel, old_row, new_row, riinfo, true))
-				{
-					heap_close(fk_rel, RowExclusiveLock);
-					return PointerGetDatum(NULL);
-				}
-			}
-
 			if (SPI_connect() != SPI_OK_CONNECT)
 				elog(ERROR, "SPI_connect failed");
 
@@ -1516,40 +1400,6 @@ ri_setdefault(TriggerData *trigdata)
 			 */
 		case FKCONSTR_MATCH_SIMPLE:
 		case FKCONSTR_MATCH_FULL:
-			switch (ri_NullCheck(RelationGetDescr(pk_rel), old_row, riinfo, true))
-			{
-				case RI_KEYS_ALL_NULL:
-				case RI_KEYS_SOME_NULL:
-
-					/*
-					 * No check needed - there cannot be any reference to old
-					 * key if it contains a NULL
-					 */
-					heap_close(fk_rel, RowExclusiveLock);
-					return PointerGetDatum(NULL);
-
-				case RI_KEYS_NONE_NULL:
-
-					/*
-					 * Have a full qualified key - continue below
-					 */
-					break;
-			}
-
-			/*
-			 * In UPDATE, no need to do anything if old and new keys are equal
-			 */
-			if (TRIGGER_FIRED_BY_UPDATE(trigdata->tg_event))
-			{
-				HeapTuple	new_row = trigdata->tg_newtuple;
-
-				if (ri_KeysEqual(pk_rel, old_row, new_row, riinfo, true))
-				{
-					heap_close(fk_rel, RowExclusiveLock);
-					return PointerGetDatum(NULL);
-				}
-			}
-
 			if (SPI_connect() != SPI_OK_CONNECT)
 				elog(ERROR, "SPI_connect failed");
 
@@ -1668,11 +1518,13 @@ ri_setdefault(TriggerData *trigdata)
 /* ----------
  * RI_FKey_pk_upd_check_required -
  *
- *	Check if we really need to fire the RI trigger for an update to a PK
+ *	Check if we really need to fire the RI trigger for an update or delete to a PK
  *	relation.  This is called by the AFTER trigger queue manager to see if
  *	it can skip queuing an instance of an RI trigger.  Returns true if the
  *	trigger must be fired, false if we can prove the constraint will still
  *	be satisfied.
+ *
+ *	new_row will be NULL if this is called for a delete.
  * ----------
  */
 bool
@@ -1699,7 +1551,7 @@ RI_FKey_pk_upd_check_required(Trigger *trigger, Relation pk_rel,
 				return false;
 
 			/* If all old and new key values are equal, no check is needed */
-			if (ri_KeysEqual(pk_rel, old_row, new_row, riinfo, true))
+			if (new_row && ri_KeysEqual(pk_rel, old_row, new_row, riinfo, true))
 				return false;
 
 			/* Else we need to fire the trigger. */
@@ -1878,12 +1730,14 @@ RI_Initial_Check(Trigger *trigger, Relation fk_rel, Relation pk_rel)
 	pkrte->rtekind = RTE_RELATION;
 	pkrte->relid = RelationGetRelid(pk_rel);
 	pkrte->relkind = pk_rel->rd_rel->relkind;
+	pkrte->rellockmode = AccessShareLock;
 	pkrte->requiredPerms = ACL_SELECT;
 
 	fkrte = makeNode(RangeTblEntry);
 	fkrte->rtekind = RTE_RELATION;
 	fkrte->relid = RelationGetRelid(fk_rel);
 	fkrte->relkind = fk_rel->rd_rel->relkind;
+	fkrte->rellockmode = AccessShareLock;
 	fkrte->requiredPerms = ACL_SELECT;
 
 	for (i = 0; i < riinfo->nkeys; i++)

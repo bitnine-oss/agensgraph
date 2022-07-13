@@ -159,8 +159,13 @@ ExecInitWorkTableScan(WorkTableScan *node, EState *estate, int eflags)
 	/*
 	 * tuple table initialization
 	 */
-	ExecInitResultTupleSlotTL(estate, &scanstate->ss.ps);
-	ExecInitScanTupleSlot(estate, &scanstate->ss, NULL);
+	ExecInitResultTypeTL(&scanstate->ss.ps);
+
+	/* signal that return type is not yet known */
+	scanstate->ss.ps.resultopsset = true;
+	scanstate->ss.ps.resultopsfixed = false;
+
+	ExecInitScanTupleSlot(estate, &scanstate->ss, NULL, &TTSOpsMinimalTuple);
 
 	/*
 	 * initialize child expressions
@@ -193,7 +198,8 @@ ExecEndWorkTableScan(WorkTableScanState *node)
 	/*
 	 * clean out the tuple table
 	 */
-	ExecClearTuple(node->ss.ps.ps_ResultTupleSlot);
+	if (node->ss.ps.ps_ResultTupleSlot)
+		ExecClearTuple(node->ss.ps.ps_ResultTupleSlot);
 	ExecClearTuple(node->ss.ss_ScanTupleSlot);
 }
 
@@ -206,7 +212,8 @@ ExecEndWorkTableScan(WorkTableScanState *node)
 void
 ExecReScanWorkTableScan(WorkTableScanState *node)
 {
-	ExecClearTuple(node->ss.ps.ps_ResultTupleSlot);
+	if (node->ss.ps.ps_ResultTupleSlot)
+		ExecClearTuple(node->ss.ps.ps_ResultTupleSlot);
 
 	ExecScanReScan(&node->ss);
 

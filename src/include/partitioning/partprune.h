@@ -23,8 +23,6 @@
  *		Stores information needed at runtime for pruning computations
  *		related to a single partitioned table.
  *
- * partrel			Relcache pointer for the partitioned table,
- *					if we have it open (else NULL).
  * strategy			Partition strategy, e.g. LIST, RANGE, HASH.
  * partnatts		Number of columns in the partition key.
  * nparts			Number of partitions in this partitioned table.
@@ -50,7 +48,6 @@
  */
 typedef struct PartitionPruneContext
 {
-	Relation	partrel;
 	char		strategy;
 	int			partnatts;
 	int			nparts;
@@ -74,9 +71,11 @@ typedef struct PartitionPruneContext
 #define PruneCxtStateIdx(partnatts, step_id, keyno) \
 	((partnatts) * (step_id) + (keyno))
 
-extern List *make_partition_pruneinfo(PlannerInfo *root,
+extern PartitionPruneInfo *make_partition_pruneinfo(PlannerInfo *root,
+						 RelOptInfo *parentrel,
+						 List *subpaths,
 						 List *partitioned_rels,
-						 List *subpaths, List *prunequal);
+						 List *prunequal);
 extern Relids prune_append_rel_partitions(RelOptInfo *rel);
 extern Bitmapset *get_matching_partitions(PartitionPruneContext *context,
 						List *pruning_steps);

@@ -230,9 +230,12 @@ typedef HashScanOpaqueData *HashScanOpaque;
  *
  * There is no particular upper limit on the size of mapp[], other than
  * needing to fit into the metapage.  (With 8K block size, 1024 bitmaps
- * limit us to 256 GB of overflow space...)
+ * limit us to 256 GB of overflow space...).  For smaller block size we
+ * can not use 1024 bitmaps as it will lead to the meta page data crossing
+ * the block size boundary.  So we use BLCKSZ to determine the maximum number
+ * of bitmaps.
  */
-#define HASH_MAX_BITMAPS			1024
+#define HASH_MAX_BITMAPS			Min(BLCKSZ / 8, 1024)
 
 #define HASH_SPLITPOINT_PHASE_BITS	2
 #define HASH_SPLITPOINT_PHASES_PER_GRP	(1 << HASH_SPLITPOINT_PHASE_BITS)
@@ -263,7 +266,7 @@ typedef struct HashMetaPageData
 									 * allocated */
 	uint32		hashm_firstfree;	/* lowest-number free ovflpage (bit#) */
 	uint32		hashm_nmaps;	/* number of bitmap pages */
-	RegProcedure hashm_procid;	/* hash procedure id from pg_proc */
+	RegProcedure hashm_procid;	/* hash function id from pg_proc */
 	uint32		hashm_spares[HASH_MAX_SPLITPOINTS]; /* spare pages before each
 													 * splitpoint */
 	BlockNumber hashm_mapp[HASH_MAX_BITMAPS];	/* blknos of ovfl bitmaps */
@@ -338,15 +341,15 @@ typedef HashMetaPageData *HashMetaPage;
 
 /*
  * When a new operator class is declared, we require that the user supply
- * us with an amproc procedure for hashing a key of the new type, returning
- * a 32-bit hash value.  We call this the "standard" hash procedure.  We
- * also allow an optional "extended" hash procedure which accepts a salt and
+ * us with an amproc function for hashing a key of the new type, returning
+ * a 32-bit hash value.  We call this the "standard" hash function.  We
+ * also allow an optional "extended" hash function which accepts a salt and
  * returns a 64-bit hash value.  This is highly recommended but, for reasons
  * of backward compatibility, optional.
  *
  * When the salt is 0, the low 32 bits of the value returned by the extended
- * hash procedure should match the value that would have been returned by the
- * standard hash procedure.
+ * hash function should match the value that would have been returned by the
+ * standard hash function.
  */
 #define HASHSTANDARD_PROC		1
 #define HASHEXTENDED_PROC		2

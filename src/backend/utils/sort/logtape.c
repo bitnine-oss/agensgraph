@@ -240,11 +240,11 @@ ltsWriteBlock(LogicalTapeSet *lts, long blocknum, void *buffer)
 	 */
 	while (blocknum > lts->nBlocksWritten)
 	{
-		char		zerobuf[BLCKSZ];
+		PGAlignedBlock zerobuf;
 
-		MemSet(zerobuf, 0, sizeof(zerobuf));
+		MemSet(zerobuf.data, 0, sizeof(zerobuf));
 
-		ltsWriteBlock(lts, lts->nBlocksWritten, zerobuf);
+		ltsWriteBlock(lts, lts->nBlocksWritten, zerobuf.data);
 	}
 
 	/* Write the requested block */
@@ -426,7 +426,7 @@ ltsConcatWorkerTapes(LogicalTapeSet *lts, TapeShare *shared,
 	{
 		char		filename[MAXPGPATH];
 		BufFile    *file;
-		off_t		filesize;
+		int64		filesize;
 
 		lt = &lts->tapes[i];
 

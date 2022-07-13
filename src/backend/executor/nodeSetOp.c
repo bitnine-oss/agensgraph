@@ -252,7 +252,7 @@ setop_retrieve_direct(SetOpState *setopstate)
 			if (!TupIsNull(outerslot))
 			{
 				/* Make a copy of the first input tuple */
-				setopstate->grp_firstTuple = ExecCopySlotTuple(outerslot);
+				setopstate->grp_firstTuple = ExecCopySlotHeapTuple(outerslot);
 			}
 			else
 			{
@@ -267,10 +267,9 @@ setop_retrieve_direct(SetOpState *setopstate)
 		 * for it.  The tuple will be deleted when it is cleared from the
 		 * slot.
 		 */
-		ExecStoreTuple(setopstate->grp_firstTuple,
-					   resultTupleSlot,
-					   InvalidBuffer,
-					   true);
+		ExecStoreHeapTuple(setopstate->grp_firstTuple,
+						   resultTupleSlot,
+						   true);
 		setopstate->grp_firstTuple = NULL;	/* don't keep two pointers */
 
 		/* Initialize working state for a new input tuple group */
@@ -304,7 +303,7 @@ setop_retrieve_direct(SetOpState *setopstate)
 				/*
 				 * Save the first input tuple of the next group.
 				 */
-				setopstate->grp_firstTuple = ExecCopySlotTuple(outerslot);
+				setopstate->grp_firstTuple = ExecCopySlotHeapTuple(outerslot);
 				break;
 			}
 
@@ -533,7 +532,9 @@ ExecInitSetOp(SetOp *node, EState *estate, int eflags)
 	 * Initialize result slot and type. Setop nodes do no projections, so
 	 * initialize projection info for this node appropriately.
 	 */
-	ExecInitResultTupleSlotTL(estate, &setopstate->ps);
+	ExecInitResultTupleSlotTL(&setopstate->ps,
+							  node->strategy == SETOP_HASHED ?
+							  &TTSOpsMinimalTuple : &TTSOpsHeapTuple);
 	setopstate->ps.ps_ProjInfo = NULL;
 
 	/*

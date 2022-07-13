@@ -40,7 +40,6 @@ REM Delete files created with GenerateFiles() in Solution.pm
 if exist src\include\pg_config.h del /q src\include\pg_config.h
 if exist src\include\pg_config_ext.h del /q src\include\pg_config_ext.h
 if exist src\include\pg_config_os.h del /q src\include\pg_config_os.h
-if exist src\include\dynloader.h del /q src\include\dynloader.h
 if %DIST%==1 if exist src\backend\parser\gram.h del /q src\backend\parser\gram.h
 if exist src\include\utils\errcodes.h del /q src\include\utils\errcodes.h
 if exist src\include\utils\fmgroids.h del /q src\include\utils\fmgroids.h
@@ -122,17 +121,8 @@ if exist src\test\regress\autoinc.dll del /q src\test\regress\autoinc.dll
 if %DIST%==1 if exist src\test\isolation\specscanner.c del /q src\test\isolation\specscanner.c
 if %DIST%==1 if exist src\test\isolation\specparse.c del /q src\test\isolation\specparse.c
 
-if exist src\bin\initdb\tmp_check rd /s /q src\bin\initdb\tmp_check
-if exist src\bin\pg_basebackup\tmp_check rd /s /q src\bin\pg_basebackup\tmp_check
-if exist src\bin\pg_config\tmp_check rd /s /q src\bin\pg_config\tmp_check
-if exist src\bin\pg_controldata\tmp_check rd /s /q src\bin\pg_controldata\tmp_check
-if exist src\bin\pg_ctl\tmp_check rd /s /q src\bin\pg_ctl\tmp_check
-if exist src\bin\ag_ctl\tmp_check rd /s /q src\bin\ag_ctl\tmp_check
-if exist src\bin\pg_rewind\tmp_check rd /s /q src\bin\pg_rewind\tmp_check
-if exist src\bin\pg_upgrade\tmp_check rd /s /q src\bin\pg_upgrade\tmp_check
-if exist src\bin\pgbench\tmp_check rd /s /q src\bin\pgbench\tmp_check
-if exist src\bin\scripts\tmp_check rd /s /q src\bin\scripts\tmp_check
-if exist src\test\recovery\tmp_check rd /s /q src\test\recovery\tmp_check
+for /d %%f in (contrib\* src\bin\* src\test\* src\test\modules\*
+  ) do if exist %%f\tmp_check rd /s /q %%f\tmp_check
 
 REM Clean up datafiles built with contrib
 REM cd contrib

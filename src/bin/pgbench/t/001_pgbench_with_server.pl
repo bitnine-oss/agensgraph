@@ -13,6 +13,8 @@ $node->start;
 # invoke pgbench
 sub pgbench
 {
+	local $Test::Builder::Level = $Test::Builder::Level + 1;
+
 	my ($opts, $stat, $out, $err, $name, $files) = @_;
 	my @cmd = ('pgbench', split /\s+/, $opts);
 	my @filenames = ();
@@ -253,7 +255,7 @@ COMMIT;
 # test expressions
 # command 1..3 and 23 depend on random seed which is used to call srandom.
 pgbench(
-	'--random-seed=5432 -t 1 -Dfoo=-10.1 -Dbla=false -Di=+3 -Dminint=-9223372036854775808 -Dn=null -Dt=t -Df=of -Dd=1.0',
+	'--random-seed=5432 -t 1 -Dfoo=-10.1 -Dbla=false -Di=+3 -Dn=null -Dt=t -Df=of -Dd=1.0',
 	0,
 	[ qr{type: .*/001_pgbench_expressions}, qr{processed: 1/1} ],
 	[
@@ -276,7 +278,6 @@ pgbench(
 		qr{command=15.: double 15\b},
 		qr{command=16.: double 16\b},
 		qr{command=17.: double 17\b},
-		qr{command=18.: int 9223372036854775807\b},
 		qr{command=20.: int \d\b},    # zipfian random: 1 on linux
 		qr{command=21.: double -27\b},
 		qr{command=22.: double 1024\b},
@@ -320,6 +321,8 @@ pgbench(
 		qr{command=96.: int 1\b},       # :scale
 		qr{command=97.: int 0\b},       # :client_id
 		qr{command=98.: int 5432\b},    # :random_seed
+		qr{command=99.: int -9223372036854775808\b},    # min int
+		qr{command=100.: int 9223372036854775807\b},    # max int
 	],
 	'pgbench expressions',
 	{
@@ -343,10 +346,9 @@ pgbench(
 \set pi debug(pi() * 4.9)
 \set d4 debug(greatest(4, 2, -1.17) * 4.0 * Ln(Exp(1.0)))
 \set d5 debug(least(-5.18, .0E0, 1.0/0) * -3.3)
--- forced overflow
-\set maxint debug(:minint - 1)
--- reset a variable
+-- reset variables
 \set i1 0
+\set d1 false
 -- yet another integer function
 \set id debug(random_zipfian(1, 9, 1.3))
 --- pow and power
@@ -445,6 +447,9 @@ SELECT :v0, :v1, :v2, :v3;
 \set sc debug(:scale)
 \set ci debug(:client_id)
 \set rs debug(:random_seed)
+-- minint constant parsing
+\set min debug(-9223372036854775808)
+\set max debug(-(:min + 1))
 }
 	});
 
@@ -528,11 +533,11 @@ pgbench(
 # trigger many expression errors
 my @errors = (
 
-	# [ test name, script number, status, stderr match ]
+	# [ test name, expected status, expected stderr, script ]
 	# SQL
 	[
 		'sql syntax error',
-		0,
+		2,
 		[
 			qr{ERROR:  syntax error},
 			qr{prepared statement .* does not exist}
@@ -551,11 +556,11 @@ SELECT LEAST(:i, :i, :i, :i, :i, :i, :i, :i, :i, :i, :i);
 
 	# SHELL
 	[
-		'shell bad command',                    0,
+		'shell bad command',                    2,
 		[qr{\(shell\) .* meta-command failed}], q{\shell no-such-command}
 	],
 	[
-		'shell undefined variable', 0,
+		'shell undefined variable', 2,
 		[qr{undefined variable ":nosuchvariable"}],
 		q{-- undefined variable in shell
 \shell echo ::foo :nosuchvariable
@@ -595,81 +600,75 @@ SELECT LEAST(:i, :i, :i, :i, :i, :i, :i, :i, :i, :i, :i);
 		[qr{unexpected function name}], q{\set i noSuchFunction()}
 	],
 	[
-		'set invalid variable name', 0,
+		'set invalid variable name', 2,
 		[qr{invalid variable name}], q{\set . 1}
 	],
 	[
-		'set int overflow',                   0,
-		[qr{double to int overflow for 100}], q{\set i int(1E32)}
+		'set division by zero', 2,
+		[qr{division by zero}], q{\set i 1/0}
 	],
-	[ 'set division by zero', 0, [qr{division by zero}], q{\set i 1/0} ],
-	[
-		'set bigint out of range', 0,
-		[qr{bigint out of range}], q{\set i 9223372036854775808 / -1}
-	],
-	[
-		'set undefined variable',
-		0,
+	[   'set undefined variable',
+		2,
 		[qr{undefined variable "nosuchvariable"}],
 		q{\set i :nosuchvariable}
 	],
 	[ 'set unexpected char', 1, [qr{unexpected character .;.}], q{\set i ;} ],
 	[
 		'set too many args',
-		0,
+		2,
 		[qr{too many function arguments}],
 		q{\set i least(0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16)}
 	],
 	[
-		'set empty random range',          0,
+		'set empty random range',          2,
 		[qr{empty range given to random}], q{\set i random(5,3)}
 	],
 	[
 		'set random range too large',
-		0,
+		2,
 		[qr{random range is too large}],
-		q{\set i random(-9223372036854775808, 9223372036854775807)}
+		q{\set i random(:minint, :maxint)}
 	],
 	[
 		'set gaussian param too small',
-		0,
+		2,
 		[qr{gaussian param.* at least 2}],
 		q{\set i random_gaussian(0, 10, 1.0)}
 	],
 	[
 		'set exponential param greater 0',
-		0,
+		2,
 		[qr{exponential parameter must be greater }],
 		q{\set i random_exponential(0, 10, 0.0)}
 	],
 	[
 		'set zipfian param to 1',
-		0,
+		2,
 		[qr{zipfian parameter must be in range \(0, 1\) U \(1, \d+\]}],
 		q{\set i random_zipfian(0, 10, 1)}
 	],
 	[
 		'set zipfian param too large',
-		0,
+		2,
 		[qr{zipfian parameter must be in range \(0, 1\) U \(1, \d+\]}],
 		q{\set i random_zipfian(0, 10, 1000000)}
 	],
 	[
-		'set non numeric value',                     0,
+		'set non numeric value',                     2,
 		[qr{malformed variable "foo" value: "bla"}], q{\set i :foo + 1}
 	],
 	[ 'set no expression',    1, [qr{syntax error}],      q{\set i} ],
 	[ 'set missing argument', 1, [qr{missing argument}i], q{\set} ],
 	[
-		'set not a bool',                      0,
+		'set not a bool',                      2,
 		[qr{cannot coerce double to boolean}], q{\set b NOT 0.0}
 	],
 	[
-		'set not an int',                   0,
+		'set not an int',                   2,
 		[qr{cannot coerce boolean to int}], q{\set i TRUE + 2}
 	],
 	[
-		'set not a double',                    0,
+		'set not a double',                    2,
 		[qr{cannot coerce boolean to double}], q{\set d ln(TRUE)}
 	],
 	[
@@ -679,7 +678,7 @@ SELECT LEAST(:i, :i, :i, :i, :i, :i, :i, :i, :i, :i, :i);
 		q{\set i CASE TRUE THEN 1 ELSE 0 END}
 	],
 	[
-		'set random error',                 0,
+		'set random error',                 2,
 		[qr{cannot coerce boolean to int}], q{\set b random(FALSE, TRUE)}
 	],
 	[
@@ -691,20 +690,32 @@ SELECT LEAST(:i, :i, :i, :i, :i, :i, :i, :i, :i, :i, :i);
 		[qr{at least one argument expected}], q{\set i greatest())}
 	],
 
+	# SET: ARITHMETIC OVERFLOW DETECTION
+	[ 'set double to int overflow',                   2,
+		[ qr{double to int overflow for 100} ], q{\set i int(1E32)} ],
+	[ 'set bigint add overflow', 2,
+		[ qr{int add out} ], q{\set i (1<<62) + (1<<62)} ],
+	[ 'set bigint sub overflow', 2,
+		[ qr{int sub out} ], q{\set i 0 - (1<<62) - (1<<62) - (1<<62)} ],
+	[ 'set bigint mul overflow', 2,
+		[ qr{int mul out} ], q{\set i 2 * (1<<62)} ],
+	[ 'set bigint div out of range', 2,
+		[ qr{bigint div out of range} ], q{\set i :minint / -1} ],
+
 	# SETSHELL
 	[
-		'setshell not an int',                0,
+		'setshell not an int',                2,
 		[qr{command must return an integer}], q{\setshell i echo -n one}
 	],
 	[ 'setshell missing arg', 1, [qr{missing argument }], q{\setshell var} ],
 	[
-		'setshell no such command',   0,
+		'setshell no such command',   2,
 		[qr{could not read result }], q{\setshell var no-such-command}
 	],
 
 	# SLEEP
 	[
-		'sleep undefined variable',      0,
+		'sleep undefined variable',      2,
 		[qr{sleep: undefined variable}], q{\sleep :nosuchvariable}
 	],
 	[
@@ -727,7 +738,7 @@ SELECT LEAST(:i, :i, :i, :i, :i, :i, :i, :i, :i, :i, :i);
 	],
 	[ 'misc empty script', 1, [qr{empty command list for script}], q{} ],
 	[
-		'bad boolean',                     0,
+		'bad boolean',                     2,
 		[qr{malformed variable.*trueXXX}], q{\set b :badtrue or true}
 	],);
 
@@ -735,12 +746,14 @@ SELECT LEAST(:i, :i, :i, :i, :i, :i, :i, :i, :i, :i, :i);
 for my $e (@errors)
 {
 	my ($name, $status, $re, $script) = @$e;
+	$status != 0 or die "invalid expected status for test \"$name\"";
 	my $n = '001_pgbench_error_' . $name;
 	$n =~ s/ /_/g;
 	pgbench(
-		'-n -t 1 -Dfoo=bla -Dnull=null -Dtrue=true -Done=1 -Dzero=0.0 -Dbadtrue=trueXXX -M prepared',
+		'-n -t 1 -M prepared -Dfoo=bla -Dnull=null -Dtrue=true -Done=1 -Dzero=0.0 ' .
+		'-Dbadtrue=trueXXX -Dmaxint=9223372036854775807 -Dminint=-9223372036854775808',
 		$status,
-		[ $status ? qr{^$} : qr{processed: 0/1} ],
+		[ $status == 1 ? qr{^$} : qr{processed: 0/1} ],
 		$re,
 		'pgbench script error: ' . $name,
 		{ $n => $script });
@@ -798,6 +811,8 @@ pgbench(
 # check log contents and cleanup
 sub check_pgbench_logs
 {
+	local $Test::Builder::Level = $Test::Builder::Level + 1;
+
 	my ($prefix, $nb, $min, $max, $re) = @_;
 
 	my @logs = glob "$prefix.*";

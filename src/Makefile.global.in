@@ -241,6 +241,7 @@ BITCODE_CXXFLAGS = @BITCODE_CXXFLAGS@
 
 CPP = @CPP@
 CPPFLAGS = @CPPFLAGS@
+PG_SYSROOT = @PG_SYSROOT@
 
 override CPPFLAGS := $(ICU_CFLAGS) $(CPPFLAGS)
 
@@ -331,6 +332,7 @@ else
 endif
 perl_archlibexp		= @perl_archlibexp@
 perl_privlibexp		= @perl_privlibexp@
+perl_includespec	= @perl_includespec@
 perl_embed_ccflags	= @perl_embed_ccflags@
 perl_embed_ldflags	= @perl_embed_ldflags@
 
@@ -355,11 +357,11 @@ BZIP2	= bzip2
 # available before building, but we don't want parallel makes all trying
 # to build the same headers.  These rules, together with the recursion rules
 # below, ensure that we update the generated headers once, if needed,
-# at the top level of any "make all/install/check" request.  If a particular
-# subdirectory knows this isn't needed in itself or its children, it can set
-# NO_GENERATED_HEADERS.
+# at the top level of any "make all/install/check/installcheck" request.
+# If a particular subdirectory knows this isn't needed in itself or its
+# children, it can set NO_GENERATED_HEADERS.
 
-all install check: submake-generated-headers
+all install check installcheck: submake-generated-headers
 
 .PHONY: submake-generated-headers
 
@@ -495,9 +497,6 @@ host_tuple = @host@
 host_os = @host_os@
 host_cpu = @host_cpu@
 
-# Make HAVE_IPV6 available for initdb script creation
-HAVE_IPV6= @HAVE_IPV6@
-
 # This is mainly for use on FreeBSD, where we have both a.out and elf
 # systems now.  May be applicable to other systems to?
 ELF_SYSTEM= @ELF_SYS@
@@ -533,21 +532,26 @@ libpq_srcdir = $(top_srcdir)/src/interfaces/libpq
 libpq_builddir = $(top_builddir)/src/interfaces/libpq
 endif
 
-# This macro is for use by libraries linking to libpq.  (Because libpgport
-# isn't created with the same link flags as libpq, it can't be used.)
+# How to link to libpq.  (This macro may be used as-is by backend extensions.
+# Client-side code should go through libpq_pgport or libpq_pgport_shlib,
+# instead.)
 libpq = -L$(libpq_builddir) -lpq
 
-# This macro is for use by client executables (not libraries) that use libpq.
+# libpq_pgport is for use by client executables (not libraries) that use libpq.
 # We force clients to pull symbols from the non-shared libraries libpgport
 # and libpgcommon rather than pulling some libpgport symbols from libpq just
 # because libpq uses those functions too.  This makes applications less
-# dependent on changes in libpq's usage of pgport.  To do this we link to
+# dependent on changes in libpq's usage of pgport (on platforms where we
+# don't have symbol export control for libpq).  To do this we link to
 # pgport before libpq.  This does cause duplicate -lpgport's to appear
-# on client link lines.
+# on client link lines, since that also appears in $(LIBS).
+# libpq_pgport_shlib is the same idea, but for use in client shared libraries.
 ifdef PGXS
 libpq_pgport = -L$(libdir) -lpgcommon -lpgport $(libpq)
+libpq_pgport_shlib = -L$(libdir) -lpgcommon_shlib -lpgport_shlib $(libpq)
 else
 libpq_pgport = -L$(top_builddir)/src/common -lpgcommon -L$(top_builddir)/src/port -lpgport $(libpq)
+libpq_pgport_shlib = -L$(top_builddir)/src/common -lpgcommon_shlib -L$(top_builddir)/src/port -lpgport_shlib $(libpq)
 endif
 
 # Cygwin seems to need ldap libraries to be mentioned here, too
@@ -806,8 +810,8 @@ $(error GNU make 3.80 or newer is required.  You are using version $(MAKE_VERSIO
 endif
 
 # This function is only for internal use below.  It should be called
-# using $(eval).  It will set up a target so that it recurses into
-# a given subdirectory.  For the tree-wide all/install/check cases,
+# using $(eval).  It will set up a target so that it recurses into a
+# given subdirectory.  For the tree-wide all/install/check/installcheck cases,
 # ensure we do our one-time tasks before recursing (see targets above).
 # Note that to avoid a nasty bug in make 3.80,
 # this function has to avoid using any complicated constructs (like
@@ -820,7 +824,7 @@ endif
 define _create_recursive_target
 .PHONY: $(1)-$(2)-recurse
 $(1): $(1)-$(2)-recurse
-$(1)-$(2)-recurse: $(if $(filter all install check, $(3)), submake-generated-headers) $(if $(filter check, $(3)), temp-install)
+$(1)-$(2)-recurse: $(if $(filter all install check installcheck, $(3)), submake-generated-headers) $(if $(filter check, $(3)), temp-install)
 	$$(MAKE) -C $(2) $(3)
 endef
 # Note that the use of $$ on the last line above is important; we want

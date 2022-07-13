@@ -190,7 +190,7 @@ static const char *excludeFiles[] =
 /*
  * List of files excluded from checksum validation.
  */
-static const char *noChecksumFiles[] = {
+static const char *const noChecksumFiles[] = {
 	"pg_control",
 	"pg_filenode.map",
 	"pg_internal.init",
@@ -333,7 +333,7 @@ perform_base_backup(basebackup_options *opt)
 				if (lstat(XLOG_CONTROL_FILE, &statbuf) != 0)
 					ereport(ERROR,
 							(errcode_for_file_access(),
-							 errmsg("could not stat control file \"%s\": %m",
+							 errmsg("could not stat file \"%s\": %m",
 									XLOG_CONTROL_FILE)));
 				sendFile(XLOG_CONTROL_FILE, XLOG_CONTROL_FILE, &statbuf, false);
 			}
@@ -1321,7 +1321,7 @@ sendDir(const char *path, int basepathlen, bool sizeonly, List *tablespaces,
 static bool
 is_checksummed_file(const char *fullpath, const char *filename)
 {
-	const char **f;
+	const char *const *f;
 
 	/* Check that the file is in a tablespace */
 	if (strncmp(fullpath, "./global/", 9) == 0 ||

@@ -121,12 +121,6 @@ ExecInitAppend(Append *node, EState *estate, int eflags)
 	Assert(!(eflags & EXEC_FLAG_MARK));
 
 	/*
-	 * Lock the non-leaf tables in the partition tree controlled by this node.
-	 * It's a no-op for non-partitioned parent tables.
-	 */
-	ExecLockNonLeafAppendTables(node->partitioned_rels, estate);
-
-	/*
 	 * create new AppendState for our append node
 	 */
 	appendstate->ps.plan = (Plan *) node;
@@ -137,7 +131,7 @@ ExecInitAppend(Append *node, EState *estate, int eflags)
 	appendstate->as_whichplan = INVALID_SUBPLAN_INDEX;
 
 	/* If run-time partition pruning is enabled, then set that up now */
-	if (node->part_prune_infos != NIL)
+	if (node->part_prune_info != NULL)
 	{
 		PartitionPruneState *prunestate;
 
@@ -146,7 +140,7 @@ ExecInitAppend(Append *node, EState *estate, int eflags)
 
 		/* Create the working data structure for pruning. */
 		prunestate = ExecCreatePartitionPruneState(&appendstate->ps,
-												   node->part_prune_infos);
+												   node->part_prune_info);
 		appendstate->as_prune_state = prunestate;
 
 		/* Perform an initial partition prune, if required. */
@@ -179,6 +173,7 @@ ExecInitAppend(Append *node, EState *estate, int eflags)
 		{
 			/* We'll need to initialize all subplans */
 			nplans = list_length(node->appendplans);
+			Assert(nplans > 0);
 			validsubplans = bms_add_range(NULL, 0, nplans - 1);
 		}
 
@@ -187,7 +182,10 @@ ExecInitAppend(Append *node, EState *estate, int eflags)
 		 * immediately, preventing later calls to ExecFindMatchingSubPlans.
 		 */
 		if (!prunestate->do_exec_prune)
+		{
+			Assert(nplans > 0);
 			appendstate->as_valid_subplans = bms_add_range(NULL, 0, nplans - 1);
+		}
 	}
 	else
 	{
@@ -197,6 +195,7 @@ ExecInitAppend(Append *node, EState *estate, int eflags)
 		 * When run-time partition pruning is not enabled we can just mark all
 		 * subplans as valid; they must also all be initialized.
 		 */
+		Assert(nplans > 0);
 		appendstate->as_valid_subplans = validsubplans =
 			bms_add_range(NULL, 0, nplans - 1);
 		appendstate->as_prune_state = NULL;
@@ -205,7 +204,11 @@ ExecInitAppend(Append *node, EState *estate, int eflags)
 	/*
 	 * Initialize result tuple type and slot.
 	 */
-	ExecInitResultTupleSlotTL(estate, &appendstate->ps);
+	ExecInitResultTupleSlotTL(&appendstate->ps, &TTSOpsVirtual);
+
+	/* node returns slots from each of its subnodes, therefore not fixed */
+	appendstate->ps.resultopsset = true;
+	appendstate->ps.resultopsfixed = false;
 
 	appendplanstates = (PlanState **) palloc(nplans *
 											 sizeof(PlanState *));
@@ -342,12 +345,6 @@ ExecEndAppend(AppendState *node)
 	 */
 	for (i = 0; i < nplans; i++)
 		ExecEndNode(appendplans[i]);
-
-	/*
-	 * release any resources associated with run-time pruning
-	 */
-	if (node->as_prune_state)
-		ExecDestroyPartitionPruneState(node->as_prune_state);
 
 	dlist_foreach_modify(iter, &node->ctxs_head)
 	{

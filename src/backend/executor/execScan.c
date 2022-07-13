@@ -78,8 +78,8 @@ ExecScanFetch(ScanState *node,
 				return ExecClearTuple(slot);
 
 			/* Store test tuple in the plan node's scan slot */
-			ExecStoreTuple(estate->es_epqTuple[scanrelid - 1],
-						   slot, InvalidBuffer, false);
+			ExecForceStoreHeapTuple(estate->es_epqTuple[scanrelid - 1],
+									slot);
 
 			/* Check if it meets the access-method conditions */
 			if (!(*recheckMtd) (node, slot))
@@ -262,6 +262,12 @@ void
 ExecScanReScan(ScanState *node)
 {
 	EState	   *estate = node->ps.state;
+
+	/*
+	 * We must clear the scan tuple so that observers (e.g., execCurrent.c)
+	 * can tell that this plan node is not positioned on a tuple.
+	 */
+	ExecClearTuple(node->ss_ScanTupleSlot);
 
 	/* Rescan EvalPlanQual tuple if we're inside an EvalPlanQual recheck */
 	if (estate->es_epqScanDone != NULL)

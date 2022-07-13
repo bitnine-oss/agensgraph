@@ -521,7 +521,7 @@ restart:
 			{
 				/* We must return the whole tuple as a Datum. */
 				*isNull = false;
-				return ExecFetchSlotTupleDatum(fcache->funcResultSlot);
+				return ExecFetchSlotHeapTupleDatum(fcache->funcResultSlot);
 			}
 			else
 			{
@@ -873,7 +873,8 @@ ExecPrepareTuplestoreResult(SetExprState *sexpr,
 			slotDesc = NULL;	/* keep compiler quiet */
 		}
 
-		sexpr->funcResultSlot = MakeSingleTupleTableSlot(slotDesc);
+		sexpr->funcResultSlot = MakeSingleTupleTableSlot(slotDesc,
+														 &TTSOpsMinimalTuple);
 		MemoryContextSwitchTo(oldcontext);
 	}
 

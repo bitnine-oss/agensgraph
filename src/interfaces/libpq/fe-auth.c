@@ -199,7 +199,7 @@ pg_GSS_startup(PGconn *conn, int payloadlen)
 				min_stat;
 	int			maxlen;
 	gss_buffer_desc temp_gbuf;
-	char	   *host = PQhost(conn);
+	char	   *host = conn->connhost[conn->whichhost].host;
 
 	if (!(host && host[0] != '\0'))
 	{
@@ -414,7 +414,7 @@ pg_SSPI_startup(PGconn *conn, int use_negotiate, int payloadlen)
 {
 	SECURITY_STATUS r;
 	TimeStamp	expire;
-	char	   *host = PQhost(conn);
+	char	   *host = conn->connhost[conn->whichhost].host;
 
 	if (conn->sspictx)
 	{
@@ -530,11 +530,26 @@ pg_SASL_init(PGconn *conn, int payloadlen)
 		 * nothing else has already been picked.  If we add more mechanisms, a
 		 * more refined priority mechanism might become necessary.
 		 */
-		if (conn->ssl_in_use &&
-			conn->scram_channel_binding &&
-			strlen(conn->scram_channel_binding) > 0 &&
-			strcmp(mechanism_buf.data, SCRAM_SHA_256_PLUS_NAME) == 0)
-			selected_mechanism = SCRAM_SHA_256_PLUS_NAME;
+		if (strcmp(mechanism_buf.data, SCRAM_SHA_256_PLUS_NAME) == 0)
+		{
+			if (conn->ssl_in_use)
+				selected_mechanism = SCRAM_SHA_256_PLUS_NAME;
+			else
+			{
+				/*
+				 * The server offered SCRAM-SHA-256-PLUS, but the connection
+				 * is not SSL-encrypted. That's not sane. Perhaps SSL was
+				 * stripped by a proxy? There's no point in continuing,
+				 * because the server will reject the connection anyway if we
+				 * try authenticate without channel binding even though both
+				 * the client and server supported it. The SCRAM exchange
+				 * checks for that, to prevent downgrade attacks.
+				 */
+				printfPQExpBuffer(&conn->errorMessage,
+								  libpq_gettext("server offered SCRAM-SHA-256-PLUS authentication over a non-SSL connection\n"));
+				goto error;
+			}
+		}
 		else if (strcmp(mechanism_buf.data, SCRAM_SHA_256_NAME) == 0 &&
 				 !selected_mechanism)
 			selected_mechanism = SCRAM_SHA_256_NAME;
@@ -741,11 +756,11 @@ pg_local_sendauth(PGconn *conn)
 
 	if (sendmsg(conn->sock, &msg, 0) == -1)
 	{
-		char		sebuf[256];
+		char		sebuf[PG_STRERROR_R_BUFLEN];
 
 		printfPQExpBuffer(&conn->errorMessage,
 						  "pg_local_sendauth: sendmsg: %s\n",
-						  pqStrerror(errno, sebuf, sizeof(sebuf)));
+						  strerror_r(errno, sebuf, sizeof(sebuf)));
 		return STATUS_ERROR;
 	}
 	return STATUS_OK;
@@ -1083,7 +1098,7 @@ pg_fe_getauthname(PQExpBuffer errorMessage)
 			printfPQExpBuffer(errorMessage,
 							  libpq_gettext("could not look up local user ID %d: %s\n"),
 							  (int) user_id,
-							  pqStrerror(pwerr, pwdbuf, sizeof(pwdbuf)));
+							  strerror_r(pwerr, pwdbuf, sizeof(pwdbuf)));
 		else
 			printfPQExpBuffer(errorMessage,
 							  libpq_gettext("local user with ID %d does not exist\n"),

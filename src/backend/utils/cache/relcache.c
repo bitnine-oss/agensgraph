@@ -4016,7 +4016,7 @@ CheckConstraintFetch(Relation relation)
 				ObjectIdGetDatum(RelationGetRelid(relation)));
 
 	conrel = heap_open(ConstraintRelationId, AccessShareLock);
-	conscan = systable_beginscan(conrel, ConstraintRelidIndexId, true,
+	conscan = systable_beginscan(conrel, ConstraintRelidTypidNameIndexId, true,
 								 NULL, 1, skey);
 
 	while (HeapTupleIsValid(htup = systable_getnext(conscan)))
@@ -4108,8 +4108,9 @@ RelationGetFKeyList(Relation relation)
 	if (relation->rd_fkeyvalid)
 		return relation->rd_fkeylist;
 
-	/* Fast path: if it doesn't have any triggers, it can't have FKs */
-	if (!relation->rd_rel->relhastriggers)
+	/* Fast path: non-partitioned tables without triggers can't have FKs */
+	if (!relation->rd_rel->relhastriggers &&
+		relation->rd_rel->relkind != RELKIND_PARTITIONED_TABLE)
 		return NIL;
 
 	/*
@@ -4127,7 +4128,7 @@ RelationGetFKeyList(Relation relation)
 				ObjectIdGetDatum(RelationGetRelid(relation)));
 
 	conrel = heap_open(ConstraintRelationId, AccessShareLock);
-	conscan = systable_beginscan(conrel, ConstraintRelidIndexId, true,
+	conscan = systable_beginscan(conrel, ConstraintRelidTypidNameIndexId, true,
 								 NULL, 1, &skey);
 
 	while (HeapTupleIsValid(htup = systable_getnext(conscan)))
@@ -4144,6 +4145,7 @@ RelationGetFKeyList(Relation relation)
 			continue;
 
 		info = makeNode(ForeignKeyCacheInfo);
+		info->conoid = HeapTupleGetOid(htup);
 		info->conrelid = constraint->conrelid;
 		info->confrelid = constraint->confrelid;
 
@@ -4753,6 +4755,7 @@ IsProjectionFunctionalIndex(Relation index, IndexInfo *ii)
 {
 	bool		is_projection = false;
 
+#ifdef NOT_USED
 	if (ii->ii_Expressions)
 	{
 		HeapTuple	tuple;
@@ -4798,6 +4801,8 @@ IsProjectionFunctionalIndex(Relation index, IndexInfo *ii)
 		}
 		ReleaseSysCache(tuple);
 	}
+#endif
+
 	return is_projection;
 }
 
@@ -5105,6 +5110,10 @@ RelationGetExclusionInfo(Relation indexRelation,
 	 * Search pg_constraint for the constraint associated with the index. To
 	 * make this not too painfully slow, we use the index on conrelid; that
 	 * will hold the parent relation's OID not the index's own OID.
+	 *
+	 * Note: if we wanted to rely on the constraint name matching the index's
+	 * name, we could just do a direct lookup using pg_constraint's unique
+	 * index.  For the moment it doesn't seem worth requiring that.
 	 */
 	ScanKeyInit(&skey[0],
 				Anum_pg_constraint_conrelid,
@@ -5112,7 +5121,7 @@ RelationGetExclusionInfo(Relation indexRelation,
 				ObjectIdGetDatum(indexRelation->rd_index->indrelid));
 
 	conrel = heap_open(ConstraintRelationId, AccessShareLock);
-	conscan = systable_beginscan(conrel, ConstraintRelidIndexId, true,
+	conscan = systable_beginscan(conrel, ConstraintRelidTypidNameIndexId, true,
 								 NULL, 1, skey);
 	found = false;
 

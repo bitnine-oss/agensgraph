@@ -78,8 +78,8 @@ SeqNext(SeqScanState *node)
 	if (scandesc == NULL)
 	{
 		/*
-		 * We reach here if the scan is not parallel, or if we're executing a
-		 * scan that was intended to be parallel serially.
+		 * We reach here if the scan is not parallel, or if we're serially
+		 * executing a scan that was planned to be parallel.
 		 */
 		scandesc = heap_beginscan(node->ss.ss_currentRelation,
 								  estate->es_snapshot,
@@ -97,15 +97,14 @@ SeqNext(SeqScanState *node)
 	 * our scan tuple slot and return the slot.  Note: we pass 'false' because
 	 * tuples returned by heap_getnext() are pointers onto disk pages and were
 	 * not created with palloc() and so should not be pfree()'d.  Note also
-	 * that ExecStoreTuple will increment the refcount of the buffer; the
+	 * that ExecStoreHeapTuple will increment the refcount of the buffer; the
 	 * refcount will not be dropped until the tuple table slot is cleared.
 	 */
 	if (tuple)
-		ExecStoreTuple(tuple,	/* tuple to store */
-					   slot,	/* slot to store in */
-					   scandesc->rs_cbuf,	/* buffer associated with this
-											 * tuple */
-					   false);	/* don't pfree this pointer */
+		ExecStoreBufferHeapTuple(tuple, /* tuple to store */
+								 slot,	/* slot to store in */
+								 scandesc->rs_cbuf);	/* buffer associated
+														 * with this tuple */
 	else
 		ExecClearTuple(slot);
 
@@ -183,10 +182,7 @@ ExecInitSeqScan(SeqScan *node, EState *estate, int eflags)
 	ExecAssignExprContext(estate, &scanstate->ss.ps);
 
 	/*
-	 * Initialize scan relation.
-	 *
-	 * Get the relation object id from the relid'th entry in the range table,
-	 * open that relation and acquire appropriate lock on it.
+	 * open the scan relation
 	 */
 	scanstate->ss.ss_currentRelation =
 		ExecOpenScanRelation(estate,
@@ -195,12 +191,13 @@ ExecInitSeqScan(SeqScan *node, EState *estate, int eflags)
 
 	/* and create slot with the appropriate rowtype */
 	ExecInitScanTupleSlot(estate, &scanstate->ss,
-						  RelationGetDescr(scanstate->ss.ss_currentRelation));
+						  RelationGetDescr(scanstate->ss.ss_currentRelation),
+						  &TTSOpsBufferHeapTuple);
 
 	/*
-	 * Initialize result slot, type and projection.
+	 * Initialize result type and projection.
 	 */
-	ExecInitResultTupleSlotTL(estate, &scanstate->ss.ps);
+	ExecInitResultTypeTL(&scanstate->ss.ps);
 	ExecAssignScanProjectionInfo(&scanstate->ss);
 
 	/*
@@ -223,13 +220,11 @@ ExecInitSeqScan(SeqScan *node, EState *estate, int eflags)
 void
 ExecEndSeqScan(SeqScanState *node)
 {
-	Relation	relation;
 	HeapScanDesc scanDesc;
 
 	/*
 	 * get information from node
 	 */
-	relation = node->ss.ss_currentRelation;
 	scanDesc = node->ss.ss_currentScanDesc;
 
 	/*
@@ -240,7 +235,8 @@ ExecEndSeqScan(SeqScanState *node)
 	/*
 	 * clean out the tuple table
 	 */
-	ExecClearTuple(node->ss.ps.ps_ResultTupleSlot);
+	if (node->ss.ps.ps_ResultTupleSlot)
+		ExecClearTuple(node->ss.ps.ps_ResultTupleSlot);
 	ExecClearTuple(node->ss.ss_ScanTupleSlot);
 
 	if (!dlist_is_empty(&node->ctxs_head))
@@ -273,11 +269,6 @@ ExecEndSeqScan(SeqScanState *node)
 	 */
 	if (scanDesc != NULL)
 		heap_endscan(scanDesc);
-
-	/*
-	 * close the heap relation.
-	 */
-	ExecCloseScanRelation(relation);
 }
 
 /* ----------------------------------------------------------------

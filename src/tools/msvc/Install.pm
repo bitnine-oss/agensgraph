@@ -554,6 +554,49 @@ sub CopySubdirFiles
 		}
 	}
 
+	{
+		$flist = '';
+		if ($mf =~ /^HEADERS\s*=\s*(.*)$/m) { $flist .= $1 }
+		my @modlist = ();
+		my %fmodlist = ();
+		while ($mf =~ /^HEADERS_([^\s=]+)\s*=\s*(.*)$/mg) { $fmodlist{$1} .= $2 }
+
+		if ($mf =~ /^MODULE_big\s*=\s*(.*)$/m)
+		{
+			push @modlist, $1;
+			if ($flist ne '')
+			{
+				$fmodlist{$1} = $flist;
+				$flist = '';
+			}
+		}
+		elsif ($mf =~ /^MODULES\s*=\s*(.*)$/m)
+		{
+			push @modlist, split /\s+/, $1;
+		}
+
+		croak "HEADERS requires MODULE_big in $subdir $module"
+		  if $flist ne '';
+
+		foreach my $mod (keys %fmodlist)
+		{
+			croak "HEADERS_$mod for unknown module in $subdir $module"
+			  unless grep { $_ eq $mod } @modlist;
+			$flist = ParseAndCleanRule($fmodlist{$mod}, $mf);
+			EnsureDirectories($target,
+							  "include", "include/server",
+							  "include/server/$moduledir",
+							  "include/server/$moduledir/$mod");
+			foreach my $f (split /\s+/, $flist)
+			{
+				lcopy("$subdir/$module/$f",
+					  "$target/include/server/$moduledir/$mod/" . basename($f))
+				  || croak("Could not copy file $f in $subdir $module");
+				print '.';
+			}
+		}
+	}
+
 	$flist = '';
 	if ($mf =~ /^DOCS\s*=\s*(.*)$/mg) { $flist .= $1 }
 	if ($flist ne '')
@@ -562,7 +605,7 @@ sub CopySubdirFiles
 
 		# Special case for contrib/spi
 		$flist =
-		  "autoinc.example insert_username.example moddatetime.example refint.example timetravel.example"
+		  "autoinc.example insert_username.example moddatetime.example refint.example"
 		  if ($module eq 'spi');
 		foreach my $f (split /\s+/, $flist)
 		{
@@ -611,7 +654,7 @@ sub CopyIncludeFiles
 		'Public headers', $target . '/include/',
 		'src/include/',   'postgres_ext.h',
 		'pg_config.h',    'pg_config_ext.h',
-		'pg_config_os.h', 'dynloader.h',
+		'pg_config_os.h',
 		'pg_config_manual.h');
 	lcopy('src/include/libpq/libpq-fs.h', $target . '/include/libpq/')
 	  || croak 'Could not copy libpq-fs.h';
@@ -635,8 +678,7 @@ sub CopyIncludeFiles
 	CopyFiles(
 		'Server headers',
 		$target . '/include/server/',
-		'src/include/', 'pg_config.h', 'pg_config_ext.h', 'pg_config_os.h',
-		'dynloader.h');
+		'src/include/', 'pg_config.h', 'pg_config_ext.h', 'pg_config_os.h');
 	CopyFiles(
 		'Grammar header',
 		$target . '/include/server/parser/',

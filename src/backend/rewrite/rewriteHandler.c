@@ -29,6 +29,7 @@
 #include "nodes/nodeFuncs.h"
 #include "parser/analyze.h"
 #include "parser/parse_coerce.h"
+#include "parser/parse_relation.h"
 #include "parser/parsetree.h"
 #include "rewrite/rewriteDefine.h"
 #include "rewrite/rewriteHandler.h"
@@ -86,13 +87,14 @@ static Bitmapset *adjust_view_column_set(Bitmapset *cols, List *targetlist);
  * AcquireRewriteLocks -
  *	  Acquire suitable locks on all the relations mentioned in the Query.
  *	  These locks will ensure that the relation schemas don't change under us
- *	  while we are rewriting and planning the query.
+ *	  while we are rewriting, planning, and executing the query.
  *
- * forExecute indicates that the query is about to be executed.
- * If so, we'll acquire RowExclusiveLock on the query's resultRelation,
- * RowShareLock on any relation accessed FOR [KEY] UPDATE/SHARE, and
- * AccessShareLock on all other relations mentioned.
+ * Caution: this may modify the querytree, therefore caller should usually
+ * have done a copyObject() to make a writable copy of the querytree in the
+ * current memory context.
  *
+ * forExecute indicates that the query is about to be executed.  If so,
+ * we'll acquire the lock modes specified in the RTE rellockmode fields.
  * If forExecute is false, AccessShareLock is acquired on all relations.
  * This case is suitable for ruleutils.c, for example, where we only need
  * schema stability and we don't intend to actually modify any relations.
@@ -100,13 +102,11 @@ static Bitmapset *adjust_view_column_set(Bitmapset *cols, List *targetlist);
  * forUpdatePushedDown indicates that a pushed-down FOR [KEY] UPDATE/SHARE
  * applies to the current subquery, requiring all rels to be opened with at
  * least RowShareLock.  This should always be false at the top of the
- * recursion.  This flag is ignored if forExecute is false.
+ * recursion.  When it is true, we adjust RTE rellockmode fields to reflect
+ * the higher lock level.  This flag is ignored if forExecute is false.
  *
  * A secondary purpose of this routine is to fix up JOIN RTE references to
- * dropped columns (see details below).  Because the RTEs are modified in
- * place, it is generally appropriate for the caller of this routine to have
- * first done a copyObject() to make a writable copy of the querytree in the
- * current memory context.
+ * dropped columns (see details below).  Such RTEs are modified in-place.
  *
  * This processing can, and for efficiency's sake should, be skipped when the
  * querytree has just been built by the parser: parse analysis already got
@@ -159,21 +159,24 @@ AcquireRewriteLocks(Query *parsetree,
 
 				/*
 				 * Grab the appropriate lock type for the relation, and do not
-				 * release it until end of transaction. This protects the
-				 * rewriter and planner against schema changes mid-query.
+				 * release it until end of transaction.  This protects the
+				 * rewriter, planner, and executor against schema changes
+				 * mid-query.
 				 *
-				 * Assuming forExecute is true, this logic must match what the
-				 * executor will do, else we risk lock-upgrade deadlocks.
+				 * If forExecute is false, ignore rellockmode and just use
+				 * AccessShareLock.
 				 */
 				if (!forExecute)
 					lockmode = AccessShareLock;
-				else if (rt_index == parsetree->resultRelation)
-					lockmode = RowExclusiveLock;
-				else if (forUpdatePushedDown ||
-						 get_parse_rowmark(parsetree, rt_index) != NULL)
-					lockmode = RowShareLock;
+				else if (forUpdatePushedDown)
+				{
+					/* Upgrade RTE's lock mode to reflect pushed-down lock */
+					if (rte->rellockmode == AccessShareLock)
+						rte->rellockmode = RowShareLock;
+					lockmode = rte->rellockmode;
+				}
 				else
-					lockmode = AccessShareLock;
+					lockmode = rte->rellockmode;
 
 				rel = heap_open(rte->relid, lockmode);
 
@@ -1581,15 +1584,19 @@ ApplyRetrieveRule(Query *parsetree,
 	rule_action = fireRIRrules(rule_action, activeRIRs);
 
 	/*
-	 * Now, plug the view query in as a subselect, replacing the relation's
-	 * original RTE.
+	 * Now, plug the view query in as a subselect, converting the relation's
+	 * original RTE to a subquery RTE.
 	 */
 	rte = rt_fetch(rt_index, parsetree->rtable);
 
 	rte->rtekind = RTE_SUBQUERY;
-	rte->relid = InvalidOid;
-	rte->security_barrier = RelationIsSecurityView(relation);
 	rte->subquery = rule_action;
+	rte->security_barrier = RelationIsSecurityView(relation);
+	/* Clear fields that should not be set in a subquery RTE */
+	rte->relid = InvalidOid;
+	rte->relkind = 0;
+	rte->rellockmode = 0;
+	rte->tablesample = NULL;
 	rte->inh = false;			/* must not be set for a subquery */
 
 	/*
@@ -1768,6 +1775,17 @@ fireRIRrules(Query *parsetree, List *activeRIRs)
 		 * opened the rel, so that we could check its state.
 		 */
 		if (rte->relkind == RELKIND_MATVIEW)
+			continue;
+
+		/*
+		 * In INSERT ... ON CONFLICT, ignore the EXCLUDED pseudo-relation;
+		 * even if it points to a view, we needn't expand it, and should not
+		 * because we want the RTE to remain of RTE_RELATION type.  Otherwise,
+		 * it would get changed to RTE_SUBQUERY type, which is an
+		 * untested/unsupported situation.
+		 */
+		if (parsetree->onConflict &&
+			rt_index == parsetree->onConflict->exclRelIndex)
 			continue;
 
 		/*
@@ -2205,6 +2223,9 @@ view_has_instead_trigger(Relation view, CmdType event)
  * is auto-updatable. Returns NULL (if the column can be updated) or a message
  * string giving the reason that it cannot be.
  *
+ * The returned string has not been translated; if it is shown as an error
+ * message, the caller should apply _() to translate it.
+ *
  * Note that the checks performed here are local to this view. We do not check
  * whether the referenced column of the underlying base relation is updatable.
  */
@@ -2244,6 +2265,9 @@ view_col_is_auto_updatable(RangeTblRef *rtr, TargetEntry *tle)
  * view_query_is_auto_updatable - test whether the specified view definition
  * represents an auto-updatable view. Returns NULL (if the view can be updated)
  * or a message string giving the reason that it cannot be.
+
+ * The returned string has not been translated; if it is shown as an error
+ * message, the caller should apply _() to translate it.
  *
  * If check_cols is true, the view is required to have at least one updatable
  * column (necessary for INSERT/UPDATE). Otherwise the view's columns are not
@@ -2383,6 +2407,9 @@ view_query_is_auto_updatable(Query *viewquery, bool check_cols)
  * an auto-updatable view are actually updatable. Returns NULL (if all the
  * required columns can be updated) or a message string giving the reason that
  * they cannot be.
+ *
+ * The returned string has not been translated; if it is shown as an error
+ * message, the caller should apply _() to translate it.
  *
  * This should be used for INSERT/UPDATE to ensure that we don't attempt to
  * assign to any non-updatable columns.
@@ -2875,8 +2902,6 @@ rewriteTargetView(Query *parsetree, Relation view)
 	 */
 	base_rte->relkind = base_rel->rd_rel->relkind;
 
-	heap_close(base_rel, NoLock);
-
 	/*
 	 * If the view query contains any sublink subqueries then we need to also
 	 * acquire locks on any relations they refer to.  We know that there won't
@@ -2898,8 +2923,14 @@ rewriteTargetView(Query *parsetree, Relation view)
 	 * very much like what the planner would do to "pull up" the view into the
 	 * outer query.  Perhaps someday we should refactor things enough so that
 	 * we can share code with the planner.)
+	 *
+	 * Be sure to set rellockmode to the correct thing for the target table.
+	 * Since we copied the whole viewquery above, we can just scribble on
+	 * base_rte instead of copying it.
 	 */
-	new_rte = (RangeTblEntry *) base_rte;
+	new_rte = base_rte;
+	new_rte->rellockmode = RowExclusiveLock;
+
 	parsetree->rtable = lappend(parsetree->rtable, new_rte);
 	new_rt_index = list_length(parsetree->rtable);
 
@@ -3035,6 +3066,93 @@ rewriteTargetView(Query *parsetree, Relation view)
 	}
 
 	/*
+	 * For INSERT .. ON CONFLICT .. DO UPDATE, we must also update assorted
+	 * stuff in the onConflict data structure.
+	 */
+	if (parsetree->onConflict &&
+		parsetree->onConflict->action == ONCONFLICT_UPDATE)
+	{
+		Index		old_exclRelIndex,
+					new_exclRelIndex;
+		RangeTblEntry *new_exclRte;
+		List	   *tmp_tlist;
+
+		/*
+		 * Like the INSERT/UPDATE code above, update the resnos in the
+		 * auxiliary UPDATE targetlist to refer to columns of the base
+		 * relation.
+		 */
+		foreach(lc, parsetree->onConflict->onConflictSet)
+		{
+			TargetEntry *tle = (TargetEntry *) lfirst(lc);
+			TargetEntry *view_tle;
+
+			if (tle->resjunk)
+				continue;
+
+			view_tle = get_tle_by_resno(view_targetlist, tle->resno);
+			if (view_tle != NULL && !view_tle->resjunk && IsA(view_tle->expr, Var))
+				tle->resno = ((Var *) view_tle->expr)->varattno;
+			else
+				elog(ERROR, "attribute number %d not found in view targetlist",
+					 tle->resno);
+		}
+
+		/*
+		 * Also, create a new RTE for the EXCLUDED pseudo-relation, using the
+		 * query's new base rel (which may well have a different column list
+		 * from the view, hence we need a new column alias list).  This should
+		 * match transformOnConflictClause.  In particular, note that the
+		 * relkind is set to composite to signal that we're not dealing with
+		 * an actual relation, and no permissions checks are wanted.
+		 */
+		old_exclRelIndex = parsetree->onConflict->exclRelIndex;
+
+		new_exclRte = addRangeTableEntryForRelation(make_parsestate(NULL),
+													base_rel,
+													RowExclusiveLock,
+													makeAlias("excluded", NIL),
+													false, false);
+		new_exclRte->relkind = RELKIND_COMPOSITE_TYPE;
+		new_exclRte->requiredPerms = 0;
+		/* other permissions fields in new_exclRte are already empty */
+
+		parsetree->rtable = lappend(parsetree->rtable, new_exclRte);
+		new_exclRelIndex = parsetree->onConflict->exclRelIndex =
+			list_length(parsetree->rtable);
+
+		/*
+		 * Replace the targetlist for the EXCLUDED pseudo-relation with a new
+		 * one, representing the columns from the new base relation.
+		 */
+		parsetree->onConflict->exclRelTlist =
+			BuildOnConflictExcludedTargetlist(base_rel, new_exclRelIndex);
+
+		/*
+		 * Update all Vars in the ON CONFLICT clause that refer to the old
+		 * EXCLUDED pseudo-relation.  We want to use the column mappings
+		 * defined in the view targetlist, but we need the outputs to refer to
+		 * the new EXCLUDED pseudo-relation rather than the new target RTE.
+		 * Also notice that "EXCLUDED.*" will be expanded using the view's
+		 * rowtype, which seems correct.
+		 */
+		tmp_tlist = copyObject(view_targetlist);
+
+		ChangeVarNodes((Node *) tmp_tlist, new_rt_index,
+					   new_exclRelIndex, 0);
+
+		parsetree->onConflict = (OnConflictExpr *)
+			ReplaceVarsFromTargetList((Node *) parsetree->onConflict,
+									  old_exclRelIndex,
+									  0,
+									  view_rte,
+									  tmp_tlist,
+									  REPLACEVARS_REPORT_ERROR,
+									  0,
+									  &parsetree->hasSubLinks);
+	}
+
+	/*
 	 * For UPDATE/DELETE, pull up any WHERE quals from the view.  We know that
 	 * any Vars in the quals must reference the one base relation, so we need
 	 * only adjust their varnos to reference the new target (just the same as
@@ -3160,6 +3278,8 @@ rewriteTargetView(Query *parsetree, Relation view)
 			}
 		}
 	}
+
+	heap_close(base_rel, NoLock);
 
 	return parsetree;
 }

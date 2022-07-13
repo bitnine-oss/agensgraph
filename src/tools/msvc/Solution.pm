@@ -321,13 +321,6 @@ sub GenerateFiles
 			'src/include/storage/lwlocknames.h');
 	}
 
-	if (IsNewer(
-			'src/include/dynloader.h', 'src/backend/port/dynloader/win32.h'))
-	{
-		copyFile('src/backend/port/dynloader/win32.h',
-			'src/include/dynloader.h');
-	}
-
 	if (IsNewer('src/include/utils/probes.h', 'src/backend/utils/probes.d'))
 	{
 		print "Generating probes.h...\n";
@@ -758,108 +751,6 @@ sub GetFakeConfigure
 	$cfg .= ' --with-python'        if ($self->{options}->{python});
 
 	return $cfg;
-}
-
-package VS2005Solution;
-
-#
-# Package that encapsulates a Visual Studio 2005 solution file
-#
-
-use strict;
-use warnings;
-use base qw(Solution);
-
-no warnings qw(redefine);    ## no critic
-
-sub new
-{
-	my $classname = shift;
-	my $self      = $classname->SUPER::_new(@_);
-	bless($self, $classname);
-
-	$self->{solutionFileVersion} = '9.00';
-	$self->{vcver}               = '8.00';
-	$self->{visualStudioName}    = 'Visual Studio 2005';
-
-	return $self;
-}
-
-package VS2008Solution;
-
-#
-# Package that encapsulates a Visual Studio 2008 solution file
-#
-
-use strict;
-use warnings;
-use base qw(Solution);
-
-no warnings qw(redefine);    ## no critic
-
-sub new
-{
-	my $classname = shift;
-	my $self      = $classname->SUPER::_new(@_);
-	bless($self, $classname);
-
-	$self->{solutionFileVersion} = '10.00';
-	$self->{vcver}               = '9.00';
-	$self->{visualStudioName}    = 'Visual Studio 2008';
-
-	return $self;
-}
-
-package VS2010Solution;
-
-#
-# Package that encapsulates a Visual Studio 2010 solution file
-#
-
-use Carp;
-use strict;
-use warnings;
-use base qw(Solution);
-
-no warnings qw(redefine);    ## no critic
-
-sub new
-{
-	my $classname = shift;
-	my $self      = $classname->SUPER::_new(@_);
-	bless($self, $classname);
-
-	$self->{solutionFileVersion} = '11.00';
-	$self->{vcver}               = '10.00';
-	$self->{visualStudioName}    = 'Visual Studio 2010';
-
-	return $self;
-}
-
-package VS2012Solution;
-
-#
-# Package that encapsulates a Visual Studio 2012 solution file
-#
-
-use Carp;
-use strict;
-use warnings;
-use base qw(Solution);
-
-no warnings qw(redefine);    ## no critic
-
-sub new
-{
-	my $classname = shift;
-	my $self      = $classname->SUPER::_new(@_);
-	bless($self, $classname);
-
-	$self->{solutionFileVersion} = '12.00';
-	$self->{vcver}               = '11.00';
-	$self->{visualStudioName}    = 'Visual Studio 2012';
-
-	return $self;
 }
 
 package VS2013Solution;

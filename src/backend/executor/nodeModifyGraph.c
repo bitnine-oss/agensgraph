@@ -123,6 +123,8 @@ ExecInitModifyGraph(ModifyGraph *mgplan, EState *estate, int eflags)
 	ModifyGraphState *mgstate;
 	CommandId	svCid;
 	int			numResultRelInfo;
+	List *newRangeTable = NIL;
+	List *newRelations = NIL;
 
 	Assert(!(eflags & (EXEC_FLAG_BACKWARD | EXEC_FLAG_MARK)));
 
@@ -132,9 +134,15 @@ ExecInitModifyGraph(ModifyGraph *mgplan, EState *estate, int eflags)
 	mgstate->ps.ExecProcNode = ExecModifyGraph;
 
 	/* Tuple desc for result is the same as the subplan. */
-	slot = ExecAllocTableSlot(&estate->es_tupleTable, NULL);
+	slot = ExecAllocTableSlot(&estate->es_tupleTable, NULL, &TTSOpsMinimalTuple);
 	mgstate->ps.ps_ResultTupleSlot = slot;
-	ExecSetSlotDescriptor(slot, ExecTypeFromTL(mgplan->subplan->targetlist, false));
+
+	/*
+	 * We don't use ExecInitResultTypeTL because we need to get the
+	 * information of the subplan, not the current plan.
+	 */
+	mgstate->ps.ps_ResultTupleDesc = ExecTypeFromTL(mgplan->subplan->targetlist, false);
+	ExecSetSlotDescriptor(slot, mgstate->ps.ps_ResultTupleDesc);
 	ExecAssignExprContext(estate, &mgstate->ps);
 
 	mgstate->done = false;
@@ -156,7 +164,7 @@ ExecInitModifyGraph(ModifyGraph *mgplan, EState *estate, int eflags)
 
 	estate->es_snapshot->curcid = svCid;
 
-	mgstate->elemTupleSlot = ExecInitExtraTupleSlot(estate, NULL);
+	mgstate->elemTupleSlot = ExecInitExtraTupleSlot(estate, NULL, &TTSOpsMinimalTuple);
 
 	mgstate->graphid = get_graph_path_oid();
 	mgstate->numOldRtable = list_length(estate->es_range_table);
@@ -225,9 +233,10 @@ ExecInitModifyGraph(ModifyGraph *mgplan, EState *estate, int eflags)
 			int			index = 1;
 			/* open relation in Executor context */
 			Relation	relation = heap_open(relid, RowExclusiveLock);
-
 			/* Switch to the memory context for building RTEs */
 			MemoryContext oldmctx = MemoryContextSwitchTo(rtemctx);
+
+			newRelations = lappend(newRelations, relation);
 
 			/*
 			 * If the ert_base_index is equal to numOldRtable then we need
@@ -239,7 +248,11 @@ ExecInitModifyGraph(ModifyGraph *mgplan, EState *estate, int eflags)
 			if (mgplan->ert_base_index == mgstate->numOldRtable)
 			{
 				RangeTblEntry *our_rte = addRangeTableEntryForRelation(pstate,
-																	   relation, NULL, false, false);
+																	   relation,
+																	   AccessShareLock,
+																	   NULL,
+																	   false,
+																	   false);
 
 				/*
 				 * remove the cell containing the RTE from pstate and reset
@@ -251,7 +264,7 @@ ExecInitModifyGraph(ModifyGraph *mgplan, EState *estate, int eflags)
 				our_rte->requiredPerms = ACL_INSERT;
 
 				/* Now add in our RTE */
-				estate->es_range_table = lappend(estate->es_range_table, our_rte);
+				newRangeTable = lappend(newRangeTable, our_rte);
 
 				/* increment the number of RTEs we've added */
 				if (mgplan->ert_rtes_added == -1)
@@ -277,6 +290,14 @@ ExecInitModifyGraph(ModifyGraph *mgplan, EState *estate, int eflags)
 			ExecOpenIndices(resultRelInfo, false);
 			resultRelInfo++;
 			index++;
+		}
+
+		if (mgplan->ert_rtes_added > 0)
+		{
+			estate->es_range_table = list_concat(estate->es_range_table, newRangeTable);
+
+			/* todo: It makes warning. */
+			ExecInitRangeTable(estate, estate->es_range_table);
 		}
 
 		mgstate->resultRelations = resultRelInfos;
@@ -428,7 +449,7 @@ ExecModifyGraph(PlanState *pstate)
 			if (result->tts_isnull[i])
 				continue;
 
-			type = tupDesc->attrs[i].atttypid;
+			type = TupleDescAttr(tupDesc, i)->atttypid;
 			if (type == VERTEXOID)
 			{
 				elem = getVertexFinal(mgstate, result->tts_values[i]);
@@ -446,7 +467,7 @@ ExecModifyGraph(PlanState *pstate)
 				 * deleting vertex array of the graphpath.
 				 */
 				if (isEdgeArrayOfPath(mgstate->exprs,
-									  NameStr(tupDesc->attrs[i].attname)))
+									  NameStr(TupleDescAttr(tupDesc, i)->attname)))
 					continue;
 
 				elem = getPathFinal(mgstate, result->tts_values[i]);
@@ -749,6 +770,7 @@ createVertex(ModifyGraphState *mgstate, GraphVertex *gvertex, Graphid *vid,
 	Datum		vertex;
 	Datum		vertexProp;
 	HeapTuple	tuple;
+	bool		tupleShouldFree;
 
 	resultRelInfo = getResultRelInfo(mgstate, gvertex->relid);
 	savedResultRelInfo = estate->es_result_relation_info;
@@ -772,7 +794,7 @@ createVertex(ModifyGraphState *mgstate, GraphVertex *gvertex, Graphid *vid,
 		   elemTupleSlot->tts_tupleDescriptor->natts * sizeof(bool));
 	ExecStoreVirtualTuple(elemTupleSlot);
 
-	tuple = ExecMaterializeSlot(elemTupleSlot);
+	tuple = ExecFetchSlotHeapTuple(elemTupleSlot, true, &tupleShouldFree);
 
 	/*
 	 * Constraints might reference the tableoid column, so initialize
@@ -803,6 +825,11 @@ createVertex(ModifyGraphState *mgstate, GraphVertex *gvertex, Graphid *vid,
 	vertex = makeGraphVertexDatum(elemTupleSlot->tts_values[0],
 								  elemTupleSlot->tts_values[1],
 								  PointerGetDatum(&tuple->t_self));
+
+	if (tupleShouldFree)
+	{
+		heap_freetuple(tuple);
+	}
 
 	if (gvertex->resno > 0)
 		setSlotValueByAttnum(slot, vertex, gvertex->resno);
@@ -852,7 +879,7 @@ createEdge(ModifyGraphState *mgstate, GraphEdge *gedge, Graphid start,
 		   elemTupleSlot->tts_tupleDescriptor->natts * sizeof(bool));
 	ExecStoreVirtualTuple(elemTupleSlot);
 
-	tuple = ExecMaterializeSlot(elemTupleSlot);
+	tuple = ExecFetchSlotHeapTuple(elemTupleSlot, true, NULL);
 
 	tuple->t_tableOid = RelationGetRelid(resultRelInfo->ri_RelationDesc);
 
@@ -943,7 +970,7 @@ ExecDeleteGraph(ModifyGraphState *mgstate, TupleTableSlot *slot)
 		 * vertex array of the graphpath.
 		 */
 		if (type == EDGEARRAYOID &&
-			tupDesc->attrs[attno - 1].atttypid == GRAPHPATHOID)
+			TupleDescAttr(tupDesc, attno - 1)->atttypid == GRAPHPATHOID)
 			continue;
 
 		setSlotValueByAttnum(slot, (Datum) 0, attno);
@@ -1286,7 +1313,7 @@ updateElemProp(ModifyGraphState *mgstate, Oid elemtype, Datum gid,
 		   elemTupleSlot->tts_tupleDescriptor->natts * sizeof(bool));
 	ExecStoreVirtualTuple(elemTupleSlot);
 
-	tuple = ExecMaterializeSlot(elemTupleSlot);
+	tuple = ExecFetchSlotHeapTuple(elemTupleSlot, true, NULL);
 	tuple->t_tableOid = RelationGetRelid(resultRelationDesc);
 
 	if (resultRelationDesc->rd_att->constr)
@@ -1530,7 +1557,7 @@ createMergeVertex(ModifyGraphState *mgstate, GraphVertex *gvertex,
 		   insertSlot->tts_tupleDescriptor->natts * sizeof(bool));
 	ExecStoreVirtualTuple(insertSlot);
 
-	tuple = ExecMaterializeSlot(insertSlot);
+	tuple = ExecFetchSlotHeapTuple(insertSlot, true, NULL);
 	tuple->t_tableOid = RelationGetRelid(resultRelInfo->ri_RelationDesc);
 
 	if (resultRelInfo->ri_RelationDesc->rd_att->constr != NULL)
@@ -1600,7 +1627,7 @@ createMergeEdge(ModifyGraphState *mgstate, GraphEdge *gedge, Graphid start,
 		   insertSlot->tts_tupleDescriptor->natts * sizeof(bool));
 	ExecStoreVirtualTuple(insertSlot);
 
-	tuple = ExecMaterializeSlot(insertSlot);
+	tuple = ExecFetchSlotHeapTuple(insertSlot, true, NULL);
 
 	tuple->t_tableOid = RelationGetRelid(resultRelInfo->ri_RelationDesc);
 
@@ -2039,9 +2066,9 @@ findAttrInSlotByName(TupleTableSlot *slot, char *name)
 
 	for (i = 0; i < tupDesc->natts; i++)
 	{
-		if (namestrcmp(&(tupDesc->attrs[i].attname), name) == 0 &&
-			!tupDesc->attrs[i].attisdropped)
-			return tupDesc->attrs[i].attnum;
+		Form_pg_attribute attr = TupleDescAttr(tupDesc, i);
+		if (namestrcmp(&(attr->attname), name) == 0 && !attr->attisdropped)
+			return attr->attnum;
 	}
 
 	ereport(ERROR,

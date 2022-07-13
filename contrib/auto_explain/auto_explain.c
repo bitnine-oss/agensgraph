@@ -16,6 +16,7 @@
 
 #include "commands/explain.h"
 #include "executor/instrument.h"
+#include "jit/jit.h"
 #include "utils/guc.h"
 
 PG_MODULE_MAGIC;
@@ -28,6 +29,7 @@ static bool auto_explain_log_buffers = false;
 static bool auto_explain_log_triggers = false;
 static bool auto_explain_log_timing = true;
 static int	auto_explain_log_format = EXPLAIN_FORMAT_TEXT;
+static int	auto_explain_log_level = LOG;
 static bool auto_explain_log_nested_statements = false;
 static double auto_explain_sample_rate = 1;
 
@@ -36,6 +38,20 @@ static const struct config_enum_entry format_options[] = {
 	{"xml", EXPLAIN_FORMAT_XML, false},
 	{"json", EXPLAIN_FORMAT_JSON, false},
 	{"yaml", EXPLAIN_FORMAT_YAML, false},
+	{NULL, 0, false}
+};
+
+static const struct config_enum_entry loglevel_options[] = {
+	{"debug5", DEBUG5, false},
+	{"debug4", DEBUG4, false},
+	{"debug3", DEBUG3, false},
+	{"debug2", DEBUG2, false},
+	{"debug1", DEBUG1, false},
+	{"debug", DEBUG2, true},
+	{"info", INFO, false},
+	{"notice", NOTICE, false},
+	{"warning", WARNING, false},
+	{"log", LOG, false},
 	{NULL, 0, false}
 };
 
@@ -135,6 +151,18 @@ _PG_init(void)
 							 &auto_explain_log_format,
 							 EXPLAIN_FORMAT_TEXT,
 							 format_options,
+							 PGC_SUSET,
+							 0,
+							 NULL,
+							 NULL,
+							 NULL);
+
+	DefineCustomEnumVariable("auto_explain.log_level",
+							 "Log level for the plan.",
+							 NULL,
+							 &auto_explain_log_level,
+							 LOG,
+							 loglevel_options,
 							 PGC_SUSET,
 							 0,
 							 NULL,
@@ -334,6 +362,8 @@ explain_ExecutorEnd(QueryDesc *queryDesc)
 			ExplainPrintPlan(es, queryDesc);
 			if (es->analyze && auto_explain_log_triggers)
 				ExplainPrintTriggers(es, queryDesc);
+			if (es->costs)
+				ExplainPrintJITSummary(es, queryDesc);
 			ExplainEndOutput(es);
 
 			/* Remove last line break */
@@ -353,7 +383,7 @@ explain_ExecutorEnd(QueryDesc *queryDesc)
 			 * reported.  This isn't ideal but trying to do it here would
 			 * often result in duplication.
 			 */
-			ereport(LOG,
+			ereport(auto_explain_log_level,
 					(errmsg("duration: %.3f ms  plan:\n%s",
 							msec, es->str->data),
 					 errhidestmt(true)));

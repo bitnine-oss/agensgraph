@@ -377,20 +377,18 @@ TidNext(TidScanState *node)
 		if (heap_fetch(heapRelation, snapshot, tuple, &buffer, false, NULL))
 		{
 			/*
-			 * store the scanned tuple in the scan tuple slot of the scan
+			 * Store the scanned tuple in the scan tuple slot of the scan
 			 * state.  Eventually we will only do this and not return a tuple.
-			 * Note: we pass 'false' because tuples returned by amgetnext are
-			 * pointers onto disk pages and were not created with palloc() and
-			 * so should not be pfree()'d.
 			 */
-			ExecStoreTuple(tuple,	/* tuple to store */
-						   slot,	/* slot to store in */
-						   buffer,	/* buffer associated with tuple  */
-						   false);	/* don't pfree */
+			ExecStoreBufferHeapTuple(tuple, /* tuple to store */
+									 slot,	/* slot to store in */
+									 buffer);	/* buffer associated with
+												 * tuple */
 
 			/*
 			 * At this point we have an extra pin on the buffer, because
-			 * ExecStoreTuple incremented the pin count. Drop our local pin.
+			 * ExecStoreHeapTuple incremented the pin count. Drop our local
+			 * pin.
 			 */
 			ReleaseBuffer(buffer);
 
@@ -489,13 +487,9 @@ ExecEndTidScan(TidScanState *node)
 	/*
 	 * clear out tuple table slots
 	 */
-	ExecClearTuple(node->ss.ps.ps_ResultTupleSlot);
+	if (node->ss.ps.ps_ResultTupleSlot)
+		ExecClearTuple(node->ss.ps.ps_ResultTupleSlot);
 	ExecClearTuple(node->ss.ss_ScanTupleSlot);
-
-	/*
-	 * close the heap relation.
-	 */
-	ExecCloseScanRelation(node->ss.ss_currentRelation);
 }
 
 /* ----------------------------------------------------------------
@@ -538,7 +532,7 @@ ExecInitTidScan(TidScan *node, EState *estate, int eflags)
 	tidstate->tss_TidPtr = -1;
 
 	/*
-	 * open the base relation and acquire appropriate lock on it.
+	 * open the scan relation
 	 */
 	currentRelation = ExecOpenScanRelation(estate, node->scan.scanrelid, eflags);
 
@@ -549,12 +543,13 @@ ExecInitTidScan(TidScan *node, EState *estate, int eflags)
 	 * get the scan type from the relation descriptor.
 	 */
 	ExecInitScanTupleSlot(estate, &tidstate->ss,
-						  RelationGetDescr(currentRelation));
+						  RelationGetDescr(currentRelation),
+						  &TTSOpsBufferHeapTuple);
 
 	/*
-	 * Initialize result slot, type and projection.
+	 * Initialize result type and projection.
 	 */
-	ExecInitResultTupleSlotTL(estate, &tidstate->ss.ps);
+	ExecInitResultTypeTL(&tidstate->ss.ps);
 	ExecAssignScanProjectionInfo(&tidstate->ss);
 
 	/*

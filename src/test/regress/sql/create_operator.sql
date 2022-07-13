@@ -5,7 +5,7 @@
 CREATE OPERATOR ## (
    leftarg = path,
    rightarg = path,
-   procedure = path_inter,
+   function = path_inter,
    commutator = ##
 );
 
@@ -44,6 +44,37 @@ CREATE OPERATOR => (
    leftarg = int8,		-- right unary
    procedure = numeric_fac
 );
+
+-- lexing of <=, >=, <>, != has a number of edge cases
+-- (=> is tested elsewhere)
+
+-- this is legal because ! is not allowed in sql ops
+CREATE OPERATOR !=- (
+   leftarg = int8,		-- right unary
+   procedure = numeric_fac
+);
+SELECT 2 !=-;
+-- make sure lexer returns != as <> even in edge cases
+SELECT 2 !=/**/ 1, 2 !=/**/ 2;
+SELECT 2 !=-- comment to be removed by psql
+  1;
+DO $$ -- use DO to protect -- from psql
+  declare r boolean;
+  begin
+    execute $e$ select 2 !=-- comment
+      1 $e$ into r;
+    raise info 'r = %', r;
+  end;
+$$;
+
+-- check that <= etc. followed by more operator characters are returned
+-- as the correct token with correct precedence
+SELECT true<>-1 BETWEEN 1 AND 1;  -- BETWEEN has prec. above <> but below Op
+SELECT false<>/**/1 BETWEEN 1 AND 1;
+SELECT false<=-1 BETWEEN 1 AND 1;
+SELECT false>=-1 BETWEEN 1 AND 1;
+SELECT 2<=/**/3, 3>=/**/2, 2<>/**/3;
+SELECT 3<=/**/2, 2>=/**/3, 2<>/**/2;
 
 -- Should fail. CREATE OPERATOR requires USAGE on SCHEMA
 BEGIN TRANSACTION;
@@ -189,11 +220,11 @@ CREATE OPERATOR ===
 (
 	"Leftarg" = box,
 	"Rightarg" = box,
-	"Procedure" = area_equal_procedure,
+	"Procedure" = area_equal_function,
 	"Commutator" = ===,
 	"Negator" = !==,
-	"Restrict" = area_restriction_procedure,
-	"Join" = area_join_procedure,
+	"Restrict" = area_restriction_function,
+	"Join" = area_join_function,
 	"Hashes",
 	"Merges"
 );

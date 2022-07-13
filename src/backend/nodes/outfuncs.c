@@ -15,9 +15,13 @@
  *	  have an output function defined here (as well as an input function
  *	  in readfuncs.c).  In addition, plan nodes should have input and
  *	  output functions so that they can be sent to parallel workers.
+ *
  *	  For use in debugging, we also provide output functions for nodes
- *	  that appear in raw parsetrees and path.  These nodes however need
- *	  not have input functions.
+ *	  that appear in raw parsetrees and planner Paths.  These node types
+ *	  need not have input functions.  Output support for raw parsetrees
+ *	  is somewhat incomplete, too; in particular, utility statements are
+ *	  almost entirely unsupported.  We try to support everything that can
+ *	  appear in a raw SELECT, though.
  *
  *-------------------------------------------------------------------------
  */
@@ -277,7 +281,6 @@ _outPlannedStmt(StringInfo str, const PlannedStmt *node)
 	WRITE_NODE_FIELD(planTree);
 	WRITE_NODE_FIELD(rtable);
 	WRITE_NODE_FIELD(resultRelations);
-	WRITE_NODE_FIELD(nonleafResultRelations);
 	WRITE_NODE_FIELD(rootResultRelations);
 	WRITE_NODE_FIELD(subplans);
 	WRITE_BITMAPSET_FIELD(rewindPlanIDs);
@@ -374,7 +377,7 @@ _outModifyTable(StringInfo str, const ModifyTable *node)
 	WRITE_ENUM_FIELD(operation, CmdType);
 	WRITE_BOOL_FIELD(canSetTag);
 	WRITE_UINT_FIELD(nominalRelation);
-	WRITE_NODE_FIELD(partitioned_rels);
+	WRITE_UINT_FIELD(rootRelation);
 	WRITE_BOOL_FIELD(partColsUpdated);
 	WRITE_NODE_FIELD(resultRelations);
 	WRITE_INT_FIELD(resultRelIndex);
@@ -403,8 +406,7 @@ _outAppend(StringInfo str, const Append *node)
 
 	WRITE_NODE_FIELD(appendplans);
 	WRITE_INT_FIELD(first_partial_plan);
-	WRITE_NODE_FIELD(partitioned_rels);
-	WRITE_NODE_FIELD(part_prune_infos);
+	WRITE_NODE_FIELD(part_prune_info);
 }
 
 static void
@@ -416,7 +418,6 @@ _outMergeAppend(StringInfo str, const MergeAppend *node)
 
 	_outPlanInfo(str, (const Plan *) node);
 
-	WRITE_NODE_FIELD(partitioned_rels);
 	WRITE_NODE_FIELD(mergeplans);
 
 	WRITE_INT_FIELD(numCols);
@@ -436,6 +437,8 @@ _outMergeAppend(StringInfo str, const MergeAppend *node)
 	appendStringInfoString(str, " :nullsFirst");
 	for (i = 0; i < node->numCols; i++)
 		appendStringInfo(str, " %s", booltostr(node->nullsFirst[i]));
+
+	WRITE_NODE_FIELD(part_prune_info);
 }
 
 static void
@@ -1103,11 +1106,20 @@ _outPlanRowMark(StringInfo str, const PlanRowMark *node)
 static void
 _outPartitionPruneInfo(StringInfo str, const PartitionPruneInfo *node)
 {
-	int			i;
-
 	WRITE_NODE_TYPE("PARTITIONPRUNEINFO");
 
-	WRITE_OID_FIELD(reloid);
+	WRITE_NODE_FIELD(prune_infos);
+	WRITE_BITMAPSET_FIELD(other_subplans);
+}
+
+static void
+_outPartitionedRelPruneInfo(StringInfo str, const PartitionedRelPruneInfo *node)
+{
+	int			i;
+
+	WRITE_NODE_TYPE("PARTITIONEDRELPRUNEINFO");
+
+	WRITE_UINT_FIELD(rtindex);
 	WRITE_NODE_FIELD(pruning_steps);
 	WRITE_BITMAPSET_FIELD(present_parts);
 	WRITE_INT_FIELD(nparts);
@@ -2277,7 +2289,6 @@ _outWindowAggPath(StringInfo str, const WindowAggPath *node)
 
 	WRITE_NODE_FIELD(subpath);
 	WRITE_NODE_FIELD(winclause);
-	WRITE_NODE_FIELD(winpathkeys);
 }
 
 static void
@@ -2333,7 +2344,7 @@ _outModifyTablePath(StringInfo str, const ModifyTablePath *node)
 	WRITE_ENUM_FIELD(operation, CmdType);
 	WRITE_BOOL_FIELD(canSetTag);
 	WRITE_UINT_FIELD(nominalRelation);
-	WRITE_NODE_FIELD(partitioned_rels);
+	WRITE_UINT_FIELD(rootRelation);
 	WRITE_BOOL_FIELD(partColsUpdated);
 	WRITE_NODE_FIELD(resultRelations);
 	WRITE_NODE_FIELD(subpaths);
@@ -2450,7 +2461,6 @@ _outPlannerGlobal(StringInfo str, const PlannerGlobal *node)
 	WRITE_NODE_FIELD(finalrtable);
 	WRITE_NODE_FIELD(finalrowmarks);
 	WRITE_NODE_FIELD(resultRelations);
-	WRITE_NODE_FIELD(nonleafResultRelations);
 	WRITE_NODE_FIELD(rootResultRelations);
 	WRITE_NODE_FIELD(relationOids);
 	WRITE_NODE_FIELD(invalItems);
@@ -2563,6 +2573,7 @@ _outRelOptInfo(StringInfo str, const RelOptInfo *node)
 	WRITE_UINT_FIELD(baserestrict_min_security);
 	WRITE_NODE_FIELD(joininfo);
 	WRITE_BOOL_FIELD(has_eclass_joins);
+	WRITE_BOOL_FIELD(consider_partitionwise_join);
 	WRITE_BITMAPSET_FIELD(top_parent_relids);
 	WRITE_NODE_FIELD(partitioned_child_rels);
 }
@@ -3071,7 +3082,6 @@ _outColumnDef(StringInfo str, const ColumnDef *node)
 	WRITE_BOOL_FIELD(is_local);
 	WRITE_BOOL_FIELD(is_not_null);
 	WRITE_BOOL_FIELD(is_from_type);
-	WRITE_BOOL_FIELD(is_from_parent);
 	WRITE_CHAR_FIELD(storage);
 	WRITE_NODE_FIELD(raw_default);
 	WRITE_NODE_FIELD(cooked_default);
@@ -3199,7 +3209,7 @@ _outQuery(StringInfo str, const Query *node)
 	WRITE_NODE_FIELD(rowMarks);
 	WRITE_NODE_FIELD(setOperations);
 	WRITE_NODE_FIELD(constraintDeps);
-	/* withCheckOptions intentionally omitted, see comment in parsenodes.h */
+	WRITE_NODE_FIELD(withCheckOptions);
 	WRITE_LOCATION_FIELD(stmt_location);
 	WRITE_LOCATION_FIELD(stmt_len);
 
@@ -3360,6 +3370,7 @@ _outRangeTblEntry(StringInfo str, const RangeTblEntry *node)
 		case RTE_RELATION:
 			WRITE_OID_FIELD(relid);
 			WRITE_CHAR_FIELD(relkind);
+			WRITE_INT_FIELD(rellockmode);
 			WRITE_NODE_FIELD(tablesample);
 			break;
 		case RTE_SUBQUERY:
@@ -3580,6 +3591,20 @@ _outParamRef(StringInfo str, const ParamRef *node)
 
 	WRITE_INT_FIELD(number);
 	WRITE_LOCATION_FIELD(location);
+}
+
+/*
+ * Node types found in raw parse trees (supported for debug purposes)
+ */
+
+static void
+_outRawStmt(StringInfo str, const RawStmt *node)
+{
+	WRITE_NODE_TYPE("RAWSTMT");
+
+	WRITE_NODE_FIELD(stmt);
+	WRITE_LOCATION_FIELD(stmt_location);
+	WRITE_INT_FIELD(stmt_len);
 }
 
 static void
@@ -3853,6 +3878,7 @@ _outForeignKeyCacheInfo(StringInfo str, const ForeignKeyCacheInfo *node)
 
 	WRITE_NODE_TYPE("FOREIGNKEYCACHEINFO");
 
+	WRITE_OID_FIELD(conoid);
 	WRITE_OID_FIELD(conrelid);
 	WRITE_OID_FIELD(confrelid);
 	WRITE_INT_FIELD(nkeys);
@@ -4374,6 +4400,9 @@ outNode(StringInfo str, const void *obj)
 			case T_PartitionPruneInfo:
 				_outPartitionPruneInfo(str, obj);
 				break;
+			case T_PartitionedRelPruneInfo:
+				_outPartitionedRelPruneInfo(str, obj);
+				break;
 			case T_PartitionPruneStepOp:
 				_outPartitionPruneStepOp(str, obj);
 				break;
@@ -4808,6 +4837,9 @@ outNode(StringInfo str, const void *obj)
 				break;
 			case T_ParamRef:
 				_outParamRef(str, obj);
+				break;
+			case T_RawStmt:
+				_outRawStmt(str, obj);
 				break;
 			case T_A_Const:
 				_outAConst(str, obj);

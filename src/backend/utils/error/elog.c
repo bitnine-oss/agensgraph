@@ -177,9 +177,6 @@ static void write_csvlog(ErrorData *edata);
 static void send_message_to_server_log(ErrorData *edata);
 static void write_pipe_chunks(char *data, int len, int dest);
 static void send_message_to_frontend(ErrorData *edata);
-static char *expand_fmt_string(const char *fmt, ErrorData *edata);
-static const char *useful_strerror(int errnum);
-static const char *get_errno_symbol(int errnum);
 static const char *error_severity(int elevel);
 static void append_with_tabs(StringInfo buf, const char *str);
 static bool is_log_level_output(int elevel, int log_min_level);
@@ -472,9 +469,7 @@ errfinish(int dummy,...)
 	 * progress, so that we can report the message before dying.  (Without
 	 * this, pq_putmessage will refuse to send the message at all, which is
 	 * what we want for NOTICE messages, but not for fatal exits.) This hack
-	 * is necessary because of poor design of old-style copy protocol.  Note
-	 * we must do this even if client is fool enough to have set
-	 * client_min_messages above FATAL, so don't look at output_to_client.
+	 * is necessary because of poor design of old-style copy protocol.
 	 */
 	if (elevel >= FATAL && whereToSendOutput == DestRemote)
 		pq_endcopyout(true);
@@ -707,13 +702,10 @@ errcode_for_socket_access(void)
  */
 #define EVALUATE_MESSAGE(domain, targetfield, appendval, translateit)	\
 	{ \
-		char		   *fmtbuf; \
 		StringInfoData	buf; \
 		/* Internationalize the error format string */ \
 		if ((translateit) && !in_error_recursion_trouble()) \
 			fmt = dgettext((domain), fmt);				  \
-		/* Expand %m in format string */ \
-		fmtbuf = expand_fmt_string(fmt, edata); \
 		initStringInfo(&buf); \
 		if ((appendval) && edata->targetfield) { \
 			appendStringInfoString(&buf, edata->targetfield); \
@@ -724,15 +716,14 @@ errcode_for_socket_access(void)
 		{ \
 			va_list		args; \
 			int			needed; \
+			errno = edata->saved_errno; \
 			va_start(args, fmt); \
-			needed = appendStringInfoVA(&buf, fmtbuf, args); \
+			needed = appendStringInfoVA(&buf, fmt, args); \
 			va_end(args); \
 			if (needed == 0) \
 				break; \
 			enlargeStringInfo(&buf, needed); \
 		} \
-		/* Done with expanded fmt */ \
-		pfree(fmtbuf); \
 		/* Save the completed message into the stack item */ \
 		if (edata->targetfield) \
 			pfree(edata->targetfield); \
@@ -748,15 +739,12 @@ errcode_for_socket_access(void)
 #define EVALUATE_MESSAGE_PLURAL(domain, targetfield, appendval)  \
 	{ \
 		const char	   *fmt; \
-		char		   *fmtbuf; \
 		StringInfoData	buf; \
 		/* Internationalize the error format string */ \
 		if (!in_error_recursion_trouble()) \
 			fmt = dngettext((domain), fmt_singular, fmt_plural, n); \
 		else \
 			fmt = (n == 1 ? fmt_singular : fmt_plural); \
-		/* Expand %m in format string */ \
-		fmtbuf = expand_fmt_string(fmt, edata); \
 		initStringInfo(&buf); \
 		if ((appendval) && edata->targetfield) { \
 			appendStringInfoString(&buf, edata->targetfield); \
@@ -767,15 +755,14 @@ errcode_for_socket_access(void)
 		{ \
 			va_list		args; \
 			int			needed; \
+			errno = edata->saved_errno; \
 			va_start(args, n); \
-			needed = appendStringInfoVA(&buf, fmtbuf, args); \
+			needed = appendStringInfoVA(&buf, fmt, args); \
 			va_end(args); \
 			if (needed == 0) \
 				break; \
 			enlargeStringInfo(&buf, needed); \
 		} \
-		/* Done with expanded fmt */ \
-		pfree(fmtbuf); \
 		/* Save the completed message into the stack item */ \
 		if (edata->targetfield) \
 			pfree(edata->targetfield); \
@@ -1758,12 +1745,7 @@ pg_re_throw(void)
 		else
 			edata->output_to_server = (FATAL >= log_min_messages);
 		if (whereToSendOutput == DestRemote)
-		{
-			if (ClientAuthInProgress)
-				edata->output_to_client = true;
-			else
-				edata->output_to_client = (FATAL >= client_min_messages);
-		}
+			edata->output_to_client = true;
 
 		/*
 		 * We can use errfinish() for the rest, but we don't want it to call
@@ -3328,272 +3310,6 @@ send_message_to_frontend(ErrorData *edata)
 /*
  * Support routines for formatting error messages.
  */
-
-
-/*
- * expand_fmt_string --- process special format codes in a format string
- *
- * We must replace %m with the appropriate strerror string, since vsnprintf
- * won't know what to do with it.
- *
- * The result is a palloc'd string.
- */
-static char *
-expand_fmt_string(const char *fmt, ErrorData *edata)
-{
-	StringInfoData buf;
-	const char *cp;
-
-	initStringInfo(&buf);
-
-	for (cp = fmt; *cp; cp++)
-	{
-		if (cp[0] == '%' && cp[1] != '\0')
-		{
-			cp++;
-			if (*cp == 'm')
-			{
-				/*
-				 * Replace %m by system error string.  If there are any %'s in
-				 * the string, we'd better double them so that vsnprintf won't
-				 * misinterpret.
-				 */
-				const char *cp2;
-
-				cp2 = useful_strerror(edata->saved_errno);
-				for (; *cp2; cp2++)
-				{
-					if (*cp2 == '%')
-						appendStringInfoCharMacro(&buf, '%');
-					appendStringInfoCharMacro(&buf, *cp2);
-				}
-			}
-			else
-			{
-				/* copy % and next char --- this avoids trouble with %%m */
-				appendStringInfoCharMacro(&buf, '%');
-				appendStringInfoCharMacro(&buf, *cp);
-			}
-		}
-		else
-			appendStringInfoCharMacro(&buf, *cp);
-	}
-
-	return buf.data;
-}
-
-
-/*
- * A slightly cleaned-up version of strerror()
- */
-static const char *
-useful_strerror(int errnum)
-{
-	/* this buffer is only used if strerror() and get_errno_symbol() fail */
-	static char errorstr_buf[48];
-	const char *str;
-
-#ifdef WIN32
-	/* Winsock error code range, per WinError.h */
-	if (errnum >= 10000 && errnum <= 11999)
-		return pgwin32_socket_strerror(errnum);
-#endif
-	str = strerror(errnum);
-
-	/*
-	 * Some strerror()s return an empty string for out-of-range errno.  This
-	 * is ANSI C spec compliant, but not exactly useful.  Also, we may get
-	 * back strings of question marks if libc cannot transcode the message to
-	 * the codeset specified by LC_CTYPE.  If we get nothing useful, first try
-	 * get_errno_symbol(), and if that fails, print the numeric errno.
-	 */
-	if (str == NULL || *str == '\0' || *str == '?')
-		str = get_errno_symbol(errnum);
-
-	if (str == NULL)
-	{
-		snprintf(errorstr_buf, sizeof(errorstr_buf),
-		/*------
-		  translator: This string will be truncated at 47
-		  characters expanded. */
-				 _("operating system error %d"), errnum);
-		str = errorstr_buf;
-	}
-
-	return str;
-}
-
-/*
- * Returns a symbol (e.g. "ENOENT") for an errno code.
- * Returns NULL if the code is unrecognized.
- */
-static const char *
-get_errno_symbol(int errnum)
-{
-	switch (errnum)
-	{
-		case E2BIG:
-			return "E2BIG";
-		case EACCES:
-			return "EACCES";
-#ifdef EADDRINUSE
-		case EADDRINUSE:
-			return "EADDRINUSE";
-#endif
-#ifdef EADDRNOTAVAIL
-		case EADDRNOTAVAIL:
-			return "EADDRNOTAVAIL";
-#endif
-		case EAFNOSUPPORT:
-			return "EAFNOSUPPORT";
-#ifdef EAGAIN
-		case EAGAIN:
-			return "EAGAIN";
-#endif
-#ifdef EALREADY
-		case EALREADY:
-			return "EALREADY";
-#endif
-		case EBADF:
-			return "EBADF";
-#ifdef EBADMSG
-		case EBADMSG:
-			return "EBADMSG";
-#endif
-		case EBUSY:
-			return "EBUSY";
-		case ECHILD:
-			return "ECHILD";
-#ifdef ECONNABORTED
-		case ECONNABORTED:
-			return "ECONNABORTED";
-#endif
-		case ECONNREFUSED:
-			return "ECONNREFUSED";
-#ifdef ECONNRESET
-		case ECONNRESET:
-			return "ECONNRESET";
-#endif
-		case EDEADLK:
-			return "EDEADLK";
-		case EDOM:
-			return "EDOM";
-		case EEXIST:
-			return "EEXIST";
-		case EFAULT:
-			return "EFAULT";
-		case EFBIG:
-			return "EFBIG";
-#ifdef EHOSTUNREACH
-		case EHOSTUNREACH:
-			return "EHOSTUNREACH";
-#endif
-		case EIDRM:
-			return "EIDRM";
-		case EINPROGRESS:
-			return "EINPROGRESS";
-		case EINTR:
-			return "EINTR";
-		case EINVAL:
-			return "EINVAL";
-		case EIO:
-			return "EIO";
-#ifdef EISCONN
-		case EISCONN:
-			return "EISCONN";
-#endif
-		case EISDIR:
-			return "EISDIR";
-#ifdef ELOOP
-		case ELOOP:
-			return "ELOOP";
-#endif
-		case EMFILE:
-			return "EMFILE";
-		case EMLINK:
-			return "EMLINK";
-		case EMSGSIZE:
-			return "EMSGSIZE";
-		case ENAMETOOLONG:
-			return "ENAMETOOLONG";
-		case ENFILE:
-			return "ENFILE";
-		case ENOBUFS:
-			return "ENOBUFS";
-		case ENODEV:
-			return "ENODEV";
-		case ENOENT:
-			return "ENOENT";
-		case ENOEXEC:
-			return "ENOEXEC";
-		case ENOMEM:
-			return "ENOMEM";
-		case ENOSPC:
-			return "ENOSPC";
-		case ENOSYS:
-			return "ENOSYS";
-#ifdef ENOTCONN
-		case ENOTCONN:
-			return "ENOTCONN";
-#endif
-		case ENOTDIR:
-			return "ENOTDIR";
-#if defined(ENOTEMPTY) && (ENOTEMPTY != EEXIST) /* same code on AIX */
-		case ENOTEMPTY:
-			return "ENOTEMPTY";
-#endif
-#ifdef ENOTSOCK
-		case ENOTSOCK:
-			return "ENOTSOCK";
-#endif
-#ifdef ENOTSUP
-		case ENOTSUP:
-			return "ENOTSUP";
-#endif
-		case ENOTTY:
-			return "ENOTTY";
-		case ENXIO:
-			return "ENXIO";
-#if defined(EOPNOTSUPP) && (!defined(ENOTSUP) || (EOPNOTSUPP != ENOTSUP))
-		case EOPNOTSUPP:
-			return "EOPNOTSUPP";
-#endif
-#ifdef EOVERFLOW
-		case EOVERFLOW:
-			return "EOVERFLOW";
-#endif
-		case EPERM:
-			return "EPERM";
-		case EPIPE:
-			return "EPIPE";
-		case EPROTONOSUPPORT:
-			return "EPROTONOSUPPORT";
-		case ERANGE:
-			return "ERANGE";
-#ifdef EROFS
-		case EROFS:
-			return "EROFS";
-#endif
-		case ESRCH:
-			return "ESRCH";
-#ifdef ETIMEDOUT
-		case ETIMEDOUT:
-			return "ETIMEDOUT";
-#endif
-#ifdef ETXTBSY
-		case ETXTBSY:
-			return "ETXTBSY";
-#endif
-#if defined(EWOULDBLOCK) && (!defined(EAGAIN) || (EWOULDBLOCK != EAGAIN))
-		case EWOULDBLOCK:
-			return "EWOULDBLOCK";
-#endif
-		case EXDEV:
-			return "EXDEV";
-	}
-
-	return NULL;
-}
 
 
 /*

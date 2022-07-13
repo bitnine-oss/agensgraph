@@ -139,16 +139,16 @@ typedef struct Port
 	List	   *guc_options;
 
 	/*
+	 * The startup packet application name, only used here for the "connection
+	 * authorized" log message. We shouldn't use this post-startup, instead
+	 * the GUC should be used as application can change it afterward.
+	 */
+	char	   *application_name;
+
+	/*
 	 * Information that needs to be held during the authentication cycle.
 	 */
 	HbaLine    *hba;
-
-	/*
-	 * Information that really has no business at all being in struct Port,
-	 * but since it gets used by elog.c in the same way as database_name and
-	 * other members of this struct, we may as well keep it here.
-	 */
-	TimestampTz SessionStartTime;	/* backend start time */
 
 	/*
 	 * TCP keepalive settings.
@@ -261,22 +261,21 @@ extern const char *be_tls_get_cipher(Port *port);
 extern void be_tls_get_peerdn_name(Port *port, char *ptr, size_t len);
 
 /*
- * Get the expected TLS Finished message information from the client, useful
- * for authorization when doing channel binding.
- *
- * Result is a palloc'd copy of the TLS Finished message with its size.
- */
-extern char *be_tls_get_peer_finished(Port *port, size_t *len);
-
-/*
  * Get the server certificate hash for SCRAM channel binding type
  * tls-server-end-point.
  *
  * The result is a palloc'd hash of the server certificate with its
  * size, and NULL if there is no certificate available.
+ *
+ * This is not supported with old versions of OpenSSL that don't have
+ * the X509_get_signature_nid() function.
  */
+#if defined(USE_OPENSSL) && defined(HAVE_X509_GET_SIGNATURE_NID)
+#define HAVE_BE_TLS_GET_CERTIFICATE_HASH
 extern char *be_tls_get_certificate_hash(Port *port, size_t *len);
 #endif
+
+#endif	/* USE_SSL */
 
 extern ProtocolVersion FrontendProtocol;
 

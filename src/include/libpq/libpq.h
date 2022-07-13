@@ -33,7 +33,7 @@ typedef struct
 	void		(*endcopyout) (bool errorAbort);
 } PQcommMethods;
 
-extern PGDLLIMPORT PQcommMethods *PqCommMethods;
+extern const PGDLLIMPORT PQcommMethods *PqCommMethods;
 
 #define pq_comm_reset() (PqCommMethods->comm_reset())
 #define pq_flush() (PqCommMethods->flush())
@@ -75,6 +75,7 @@ extern int	pq_putbytes(const char *s, size_t len);
 /*
  * prototypes for functions in be-secure.c
  */
+extern char *ssl_library;
 extern char *ssl_cert_file;
 extern char *ssl_key_file;
 extern char *ssl_ca_file;
@@ -101,6 +102,17 @@ extern WaitEventSet *FeBeWaitSet;
 extern char *SSLCipherSuites;
 extern char *SSLECDHCurve;
 extern bool SSLPreferServerCiphers;
+extern int	ssl_min_protocol_version;
+extern int	ssl_max_protocol_version;
+
+enum ssl_protocol_versions
+{
+	PG_TLS_ANY = 0,
+	PG_TLS1_VERSION,
+	PG_TLS1_1_VERSION,
+	PG_TLS1_2_VERSION,
+	PG_TLS1_3_VERSION,
+};
 
 /*
  * prototypes for functions in be-secure-common.c

@@ -51,6 +51,7 @@
 #include "utils/lsyscache.h"
 #include "utils/rel.h"
 #include "utils/selfuncs.h"
+#include "utils/syscache.h"
 
 
 typedef struct
@@ -1569,7 +1570,6 @@ expand_inherited_tables(PlannerInfo *root)
 static void
 expand_inherited_rtentry(PlannerInfo *root, RangeTblEntry *rte, Index rti)
 {
-	Query	   *parse = root->parse;
 	Oid			parentOID;
 	PlanRowMark *oldrc;
 	Relation	oldrelation;
@@ -1600,21 +1600,9 @@ expand_inherited_rtentry(PlannerInfo *root, RangeTblEntry *rte, Index rti)
 	 * relation named in the query.  However, for each child relation we add
 	 * to the query, we must obtain an appropriate lock, because this will be
 	 * the first use of those relations in the parse/rewrite/plan pipeline.
-	 *
-	 * If the parent relation is the query's result relation, then we need
-	 * RowExclusiveLock.  Otherwise, if it's accessed FOR UPDATE/SHARE, we
-	 * need RowShareLock; otherwise AccessShareLock.  We can't just grab
-	 * AccessShareLock because then the executor would be trying to upgrade
-	 * the lock, leading to possible deadlocks.  (This code should match the
-	 * parser and rewriter.)
+	 * Child rels should use the same lockmode as their parent.
 	 */
-	oldrc = get_plan_rowmark(root->rowMarks, rti);
-	if (rti == parse->resultRelation)
-		lockmode = RowExclusiveLock;
-	else if (oldrc && RowMarkRequiresRowShareLock(oldrc->markType))
-		lockmode = RowShareLock;
-	else
-		lockmode = AccessShareLock;
+	lockmode = rte->rellockmode;
 
 	/* Scan for all members of inheritance set, acquire needed locks */
 	inhOIDs = find_all_inheritors(parentOID, lockmode, NULL);
@@ -1636,6 +1624,7 @@ expand_inherited_rtentry(PlannerInfo *root, RangeTblEntry *rte, Index rti)
 	 * PlanRowMark as isParent = true, and generate a new PlanRowMark for each
 	 * child.
 	 */
+	oldrc = get_plan_rowmark(root->rowMarks, rti);
 	if (oldrc)
 		oldrc->isParent = true;
 
@@ -1723,9 +1712,6 @@ expand_inherited_rtentry(PlannerInfo *root, RangeTblEntry *rte, Index rti)
 /*
  * expand_partitioned_rtentry
  *		Recursively expand an RTE for a partitioned table.
- *
- * Note that RelationGetPartitionDispatchInfo will expand partitions in the
- * same order as this code.
  */
 static void
 expand_partitioned_rtentry(PlannerInfo *root, RangeTblEntry *parentrte,
@@ -1736,7 +1722,6 @@ expand_partitioned_rtentry(PlannerInfo *root, RangeTblEntry *parentrte,
 	int			i;
 	RangeTblEntry *childrte;
 	Index		childRTindex;
-	bool		has_child = false;
 	PartitionDesc partdesc = RelationGetPartitionDesc(parentrel);
 
 	check_stack_depth();
@@ -1762,6 +1747,16 @@ expand_partitioned_rtentry(PlannerInfo *root, RangeTblEntry *parentrte,
 									top_parentrc, parentrel,
 									appinfos, &childrte, &childRTindex);
 
+	/*
+	 * If the partitioned table has no partitions, treat this as the
+	 * non-inheritance case.
+	 */
+	if (partdesc->nparts == 0)
+	{
+		parentrte->inh = false;
+		return;
+	}
+
 	for (i = 0; i < partdesc->nparts; i++)
 	{
 		Oid			childOID = partdesc->oids[i];
@@ -1770,15 +1765,13 @@ expand_partitioned_rtentry(PlannerInfo *root, RangeTblEntry *parentrte,
 		/* Open rel; we already have required locks */
 		childrel = heap_open(childOID, NoLock);
 
-		/* As in expand_inherited_rtentry, skip non-local temp tables */
+		/*
+		 * Temporary partitions belonging to other sessions should have been
+		 * disallowed at definition, but for paranoia's sake, let's double
+		 * check.
+		 */
 		if (RELATION_IS_OTHER_TEMP(childrel))
-		{
-			heap_close(childrel, lockmode);
-			continue;
-		}
-
-		/* We have a real partition. */
-		has_child = true;
+			elog(ERROR, "temporary relation from another session found as partition");
 
 		expand_single_inheritance_child(root, parentrte, parentRTindex,
 										parentrel, top_parentrc, childrel,
@@ -1793,14 +1786,6 @@ expand_partitioned_rtentry(PlannerInfo *root, RangeTblEntry *parentrte,
 		/* Close child relation, but keep locks */
 		heap_close(childrel, NoLock);
 	}
-
-	/*
-	 * If the partitioned table has no partitions or all the partitions are
-	 * temporary tables from other backends, treat this as non-inheritance
-	 * case.
-	 */
-	if (!has_child)
-		parentrte->inh = false;
 }
 
 /*
@@ -1951,9 +1936,11 @@ make_inh_translation_list(Relation oldrelation, Relation newrelation,
 	List	   *vars = NIL;
 	TupleDesc	old_tupdesc = RelationGetDescr(oldrelation);
 	TupleDesc	new_tupdesc = RelationGetDescr(newrelation);
+	Oid			new_relid = RelationGetRelid(newrelation);
 	int			oldnatts = old_tupdesc->natts;
 	int			newnatts = new_tupdesc->natts;
 	int			old_attno;
+	int			new_attno = 0;
 
 	for (old_attno = 0; old_attno < oldnatts; old_attno++)
 	{
@@ -1962,7 +1949,6 @@ make_inh_translation_list(Relation oldrelation, Relation newrelation,
 		Oid			atttypid;
 		int32		atttypmod;
 		Oid			attcollation;
-		int			new_attno;
 
 		att = TupleDescAttr(old_tupdesc, old_attno);
 		if (att->attisdropped)
@@ -1995,29 +1981,25 @@ make_inh_translation_list(Relation oldrelation, Relation newrelation,
 		 * Otherwise we have to search for the matching column by name.
 		 * There's no guarantee it'll have the same column position, because
 		 * of cases like ALTER TABLE ADD COLUMN and multiple inheritance.
-		 * However, in simple cases it will be the same column number, so try
-		 * that before we go groveling through all the columns.
-		 *
-		 * Note: the test for (att = ...) != NULL cannot fail, it's just a
-		 * notational device to include the assignment into the if-clause.
+		 * However, in simple cases, the relative order of columns is mostly
+		 * the same in both relations, so try the column of newrelation that
+		 * follows immediately after the one that we just found, and if that
+		 * fails, let syscache handle it.
 		 */
-		if (old_attno < newnatts &&
-			(att = TupleDescAttr(new_tupdesc, old_attno)) != NULL &&
-			!att->attisdropped &&
-			strcmp(attname, NameStr(att->attname)) == 0)
-			new_attno = old_attno;
-		else
+		if (new_attno >= newnatts ||
+			(att = TupleDescAttr(new_tupdesc, new_attno))->attisdropped ||
+			strcmp(attname, NameStr(att->attname)) != 0)
 		{
-			for (new_attno = 0; new_attno < newnatts; new_attno++)
-			{
-				att = TupleDescAttr(new_tupdesc, new_attno);
-				if (!att->attisdropped &&
-					strcmp(attname, NameStr(att->attname)) == 0)
-					break;
-			}
-			if (new_attno >= newnatts)
+			HeapTuple	newtup;
+
+			newtup = SearchSysCacheAttName(new_relid, attname);
+			if (!newtup)
 				elog(ERROR, "could not find inherited attribute \"%s\" of relation \"%s\"",
 					 attname, RelationGetRelationName(newrelation));
+			new_attno = ((Form_pg_attribute) GETSTRUCT(newtup))->attnum - 1;
+			ReleaseSysCache(newtup);
+
+			att = TupleDescAttr(new_tupdesc, new_attno);
 		}
 
 		/* Found it, check type and collation match */
@@ -2034,6 +2016,7 @@ make_inh_translation_list(Relation oldrelation, Relation newrelation,
 									 atttypmod,
 									 attcollation,
 									 0));
+		new_attno++;
 	}
 
 	*translated_vars = vars;

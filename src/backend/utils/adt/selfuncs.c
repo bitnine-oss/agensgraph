@@ -98,7 +98,6 @@
 #include "postgres.h"
 
 #include <ctype.h>
-#include <float.h>
 #include <math.h>
 
 #include "access/brin.h"
@@ -138,7 +137,6 @@
 #include "utils/fmgroids.h"
 #include "utils/index_selfuncs.h"
 #include "utils/lsyscache.h"
-#include "utils/nabstime.h"
 #include "utils/pg_locale.h"
 #include "utils/rel.h"
 #include "utils/selfuncs.h"
@@ -4160,11 +4158,8 @@ convert_to_scalar(Datum value, Oid valuetypid, double *scaledvalue,
 			 */
 		case TIMESTAMPOID:
 		case TIMESTAMPTZOID:
-		case ABSTIMEOID:
 		case DATEOID:
 		case INTERVALOID:
-		case RELTIMEOID:
-		case TINTERVALOID:
 		case TIMEOID:
 		case TIMETZOID:
 			*scaledvalue = convert_timevalue_to_scalar(value, valuetypid,
@@ -4587,9 +4582,6 @@ convert_timevalue_to_scalar(Datum value, Oid typid, bool *failure)
 			return DatumGetTimestamp(value);
 		case TIMESTAMPTZOID:
 			return DatumGetTimestampTz(value);
-		case ABSTIMEOID:
-			return DatumGetTimestamp(DirectFunctionCall1(abstime_timestamp,
-														 value));
 		case DATEOID:
 			return date2timestamp_no_overflow(DatumGetDateADT(value));
 		case INTERVALOID:
@@ -4603,16 +4595,6 @@ convert_timevalue_to_scalar(Datum value, Oid typid, bool *failure)
 				 */
 				return interval->time + interval->day * (double) USECS_PER_DAY +
 					interval->month * ((DAYS_PER_YEAR / (double) MONTHS_PER_YEAR) * USECS_PER_DAY);
-			}
-		case RELTIMEOID:
-			return (DatumGetRelativeTime(value) * 1000000.0);
-		case TINTERVALOID:
-			{
-				TimeInterval tinterval = DatumGetTimeInterval(value);
-
-				if (tinterval->status != 0)
-					return ((tinterval->data[1] - tinterval->data[0]) * 1000000.0);
-				return 0;		/* for lack of a better idea */
 			}
 		case TIMEOID:
 			return DatumGetTimeADT(value);
@@ -5555,7 +5537,8 @@ get_actual_variable_range(PlannerInfo *root, VariableStatData *vardata,
 			indexInfo = BuildIndexInfo(indexRel);
 
 			/* some other stuff */
-			slot = MakeSingleTupleTableSlot(RelationGetDescr(heapRel));
+			slot = MakeSingleTupleTableSlot(RelationGetDescr(heapRel),
+											&TTSOpsHeapTuple);
 			econtext->ecxt_scantuple = slot;
 			get_typlenbyval(vardata->atttype, &typLen, &typByVal);
 			InitNonVacuumableSnapshot(SnapshotNonVacuumable, RecentGlobalXmin);
@@ -5611,7 +5594,7 @@ get_actual_variable_range(PlannerInfo *root, VariableStatData *vardata,
 										 indexscandir)) != NULL)
 				{
 					/* Extract the index column values from the heap tuple */
-					ExecStoreTuple(tup, slot, InvalidBuffer, false);
+					ExecStoreHeapTuple(tup, slot, false);
 					FormIndexDatum(indexInfo, slot, estate,
 								   values, isnull);
 
@@ -5644,7 +5627,7 @@ get_actual_variable_range(PlannerInfo *root, VariableStatData *vardata,
 										 -indexscandir)) != NULL)
 				{
 					/* Extract the index column values from the heap tuple */
-					ExecStoreTuple(tup, slot, InvalidBuffer, false);
+					ExecStoreHeapTuple(tup, slot, false);
 					FormIndexDatum(indexInfo, slot, estate,
 								   values, isnull);
 

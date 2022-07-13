@@ -19,7 +19,7 @@
     <itemizedlist>
      <listitem>
       <para>
-       can be used to create functions and trigger procedures,
+       can be used to create functions and triggers,
       </para>
      </listitem>
      <listitem>
@@ -305,10 +305,9 @@ $$ LANGUAGE plpgsql;
      for transaction
      control.  <application>PL/pgSQL</application>'s <command>BEGIN</command>/<command>END</command>
      are only for grouping; they do not start or end a transaction.
-     Functions and trigger procedures are always executed within a transaction
-     established by an outer query &mdash; they cannot start or commit that
-     transaction, since there would be no context for them to execute in.
-     However, a block containing an <literal>EXCEPTION</literal> clause effectively
+     See <xref linkend="plpgsql-transactions"/> for information on managing
+     transactions in <application>PL/pgSQL</application>.
+     Also, a block containing an <literal>EXCEPTION</literal> clause effectively
      forms a subtransaction that can be rolled back without affecting the
      outer transaction.  For more about that see <xref
      linkend="plpgsql-error-trapping"/>.
@@ -579,7 +578,7 @@ $$ LANGUAGE plpgsql;
     function parameters.  The main practical use for this is to assign
     a different name for variables with predetermined names, such as
     <varname>NEW</varname> or <varname>OLD</varname> within
-    a trigger procedure.
+    a trigger function.
    </para>
 
    <para>
@@ -1865,15 +1864,29 @@ SELECT * FROM get_available_flightid(CURRENT_DATE);
 
     <para>
      A procedure does not have a return value.  A procedure can therefore end
-     without a <command>RETURN</command> statement.  If
-     a <command>RETURN</command> statement is desired to exit the code early,
-     then <symbol>NULL</symbol> must be returned.  Returning any other value
-     will result in an error.
+     without a <command>RETURN</command> statement.  If you wish to use
+     a <command>RETURN</command> statement to exit the code early, write
+     just <command>RETURN</command> with no expression.
     </para>
 
     <para>
-     If a procedure has output parameters, then the output values can be
-     assigned to the parameters as if they were variables.  For example:
+     If the procedure has output parameters, the final values of the output
+     parameter variables will be returned to the caller.
+    </para>
+   </sect2>
+
+   <sect2 id="plpgsql-statements-calling-procedure">
+    <title>Calling a Procedure</title>
+
+    <para>
+     A <application>PL/pgSQL</application> function, procedure,
+     or <command>DO</command> block can call a procedure
+     using <command>CALL</command>.  Output parameters are handled
+     differently from the way that <command>CALL</command> works in plain
+     SQL.  Each <literal>INOUT</literal> parameter of the procedure must
+     correspond to a variable in the <command>CALL</command> statement, and
+     whatever the procedure returns is assigned back to that variable after
+     it returns.  For example:
 <programlisting>
 CREATE PROCEDURE triple(INOUT x int)
 LANGUAGE plpgsql
@@ -1883,7 +1896,13 @@ BEGIN
 END;
 $$;
 
-CALL triple(5);
+DO $$
+DECLARE myvar int := 5;
+BEGIN
+  CALL triple(myvar);
+  RAISE NOTICE 'myvar = %', myvar;  -- prints 15
+END
+$$;
 </programlisting>
     </para>
    </sect2>
@@ -3196,6 +3215,10 @@ FETCH <optional> <replaceable>direction</replaceable> { FROM | IN } </optional> 
      <literal>BACKWARD</literal>.
      Omitting <replaceable>direction</replaceable> is the same
      as specifying <literal>NEXT</literal>.
+     In the forms using a <replaceable>count</replaceable>,
+     the <replaceable>count</replaceable> can be any integer-valued
+     expression (unlike the SQL <command>FETCH</command> command,
+     which only allows an integer constant).
      <replaceable>direction</replaceable> values that require moving
      backward are likely to fail unless the cursor was declared or opened
      with the <literal>SCROLL</literal> option.
@@ -3231,26 +3254,6 @@ MOVE <optional> <replaceable>direction</replaceable> { FROM | IN } </optional> <
      cursor and does not return the row moved to. As with <command>SELECT
      INTO</command>, the special variable <literal>FOUND</literal> can
      be checked to see whether there was a next row to move to.
-    </para>
-
-    <para>
-     The <replaceable>direction</replaceable> clause can be any of the
-     variants allowed in the SQL <xref linkend="sql-fetch"/>
-     command, namely
-     <literal>NEXT</literal>,
-     <literal>PRIOR</literal>,
-     <literal>FIRST</literal>,
-     <literal>LAST</literal>,
-     <literal>ABSOLUTE</literal> <replaceable>count</replaceable>,
-     <literal>RELATIVE</literal> <replaceable>count</replaceable>,
-     <literal>ALL</literal>,
-     <literal>FORWARD</literal> <optional> <replaceable>count</replaceable> | <literal>ALL</literal> </optional>, or
-     <literal>BACKWARD</literal> <optional> <replaceable>count</replaceable> | <literal>ALL</literal> </optional>.
-     Omitting <replaceable>direction</replaceable> is the same
-     as specifying <literal>NEXT</literal>.
-     <replaceable>direction</replaceable> values that require moving
-     backward are likely to fail unless the cursor was declared or opened
-     with the <literal>SCROLL</literal> option.
     </para>
 
     <para>
@@ -3812,7 +3815,7 @@ ASSERT <replaceable class="parameter">condition</replaceable> <optional> , <repl
  </sect1>
 
  <sect1 id="plpgsql-trigger">
-  <title>Trigger Procedures</title>
+  <title>Trigger Functions</title>
 
   <indexterm zone="plpgsql-trigger">
    <primary>trigger</primary>
@@ -3821,8 +3824,8 @@ ASSERT <replaceable class="parameter">condition</replaceable> <optional> , <repl
 
   <para>
    <application>PL/pgSQL</application> can be used to define trigger
-   procedures on data changes or database events.
-   A trigger procedure is created with the <command>CREATE FUNCTION</command>
+   functions on data changes or database events.
+   A trigger function is created with the <command>CREATE FUNCTION</command>
    command, declaring it as a function with no arguments and a return type of
    <type>trigger</type> (for data change triggers) or
    <type>event_trigger</type> (for database event triggers).
@@ -3962,7 +3965,7 @@ ASSERT <replaceable class="parameter">condition</replaceable> <optional> , <repl
      <listitem>
       <para>
        Data type <type>integer</type>; the number of arguments given to the trigger
-       procedure in the <command>CREATE TRIGGER</command> statement.
+       function in the <command>CREATE TRIGGER</command> statement.
       </para>
      </listitem>
     </varlistentry>
@@ -4041,11 +4044,11 @@ ASSERT <replaceable class="parameter">condition</replaceable> <optional> , <repl
 
    <para>
     <xref linkend="plpgsql-trigger-example"/> shows an example of a
-    trigger procedure in <application>PL/pgSQL</application>.
+    trigger function in <application>PL/pgSQL</application>.
    </para>
 
    <example id="plpgsql-trigger-example">
-    <title>A <application>PL/pgSQL</application> Trigger Procedure</title>
+    <title>A <application>PL/pgSQL</application> Trigger Function</title>
 
     <para>
      This example trigger ensures that any time a row is inserted or updated
@@ -4085,7 +4088,7 @@ CREATE FUNCTION emp_stamp() RETURNS trigger AS $emp_stamp$
 $emp_stamp$ LANGUAGE plpgsql;
 
 CREATE TRIGGER emp_stamp BEFORE INSERT OR UPDATE ON emp
-    FOR EACH ROW EXECUTE PROCEDURE emp_stamp();
+    FOR EACH ROW EXECUTE FUNCTION emp_stamp();
 </programlisting>
    </example>
 
@@ -4094,11 +4097,11 @@ CREATE TRIGGER emp_stamp BEFORE INSERT OR UPDATE ON emp
     holds a row for each insert, update, or delete that occurs. This approach
     can be thought of as auditing changes to a table.
     <xref linkend="plpgsql-trigger-audit-example"/> shows an example of an
-    audit trigger procedure in <application>PL/pgSQL</application>.
+    audit trigger function in <application>PL/pgSQL</application>.
    </para>
 
    <example id="plpgsql-trigger-audit-example">
-    <title>A <application>PL/pgSQL</application> Trigger Procedure For Auditing</title>
+    <title>A <application>PL/pgSQL</application> Trigger Function For Auditing</title>
 
     <para>
      This example trigger ensures that any insert, update or delete of a row
@@ -4140,7 +4143,7 @@ $emp_audit$ LANGUAGE plpgsql;
 
 CREATE TRIGGER emp_audit
 AFTER INSERT OR UPDATE OR DELETE ON emp
-    FOR EACH ROW EXECUTE PROCEDURE process_emp_audit();
+    FOR EACH ROW EXECUTE FUNCTION process_emp_audit();
 </programlisting>
    </example>
 
@@ -4155,7 +4158,7 @@ AFTER INSERT OR UPDATE OR DELETE ON emp
    </para>
 
    <example id="plpgsql-view-trigger-audit-example">
-    <title>A <application>PL/pgSQL</application> View Trigger Procedure For Auditing</title>
+    <title>A <application>PL/pgSQL</application> View Trigger Function For Auditing</title>
 
     <para>
      This example uses a trigger on the view to make it updatable, and
@@ -4219,7 +4222,7 @@ $$ LANGUAGE plpgsql;
 
 CREATE TRIGGER emp_audit
 INSTEAD OF INSERT OR UPDATE OR DELETE ON emp_view
-    FOR EACH ROW EXECUTE PROCEDURE update_emp_view();
+    FOR EACH ROW EXECUTE FUNCTION update_emp_view();
 </programlisting>
    </example>
 
@@ -4231,13 +4234,13 @@ INSTEAD OF INSERT OR UPDATE OR DELETE ON emp_view
     This technique is commonly used in Data Warehousing, where the tables
     of measured or observed data (called fact tables) might be extremely large.
     <xref linkend="plpgsql-trigger-summary-example"/> shows an example of a
-    trigger procedure in <application>PL/pgSQL</application> that maintains
+    trigger function in <application>PL/pgSQL</application> that maintains
     a summary table for a fact table in a data warehouse.
    </para>
 
 
    <example id="plpgsql-trigger-summary-example">
-    <title>A <application>PL/pgSQL</application> Trigger Procedure For Maintaining A Summary Table</title>
+    <title>A <application>PL/pgSQL</application> Trigger Function For Maintaining A Summary Table</title>
 
     <para>
      The schema detailed here is partly based on the <emphasis>Grocery Store
@@ -4364,7 +4367,7 @@ $maint_sales_summary_bytime$ LANGUAGE plpgsql;
 
 CREATE TRIGGER maint_sales_summary_bytime
 AFTER INSERT OR UPDATE OR DELETE ON sales_fact
-    FOR EACH ROW EXECUTE PROCEDURE maint_sales_summary_bytime();
+    FOR EACH ROW EXECUTE FUNCTION maint_sales_summary_bytime();
 
 INSERT INTO sales_fact VALUES(1,1,1,10,3,15);
 INSERT INTO sales_fact VALUES(1,2,1,20,5,35);
@@ -4441,15 +4444,15 @@ $emp_audit$ LANGUAGE plpgsql;
 CREATE TRIGGER emp_audit_ins
     AFTER INSERT ON emp
     REFERENCING NEW TABLE AS new_table
-    FOR EACH STATEMENT EXECUTE PROCEDURE process_emp_audit();
+    FOR EACH STATEMENT EXECUTE FUNCTION process_emp_audit();
 CREATE TRIGGER emp_audit_upd
     AFTER UPDATE ON emp
     REFERENCING OLD TABLE AS old_table NEW TABLE AS new_table
-    FOR EACH STATEMENT EXECUTE PROCEDURE process_emp_audit();
+    FOR EACH STATEMENT EXECUTE FUNCTION process_emp_audit();
 CREATE TRIGGER emp_audit_del
     AFTER DELETE ON emp
     REFERENCING OLD TABLE AS old_table
-    FOR EACH STATEMENT EXECUTE PROCEDURE process_emp_audit();
+    FOR EACH STATEMENT EXECUTE FUNCTION process_emp_audit();
 </programlisting>
    </example>
 
@@ -4461,7 +4464,7 @@ CREATE TRIGGER emp_audit_del
    <para>
     <application>PL/pgSQL</application> can be used to define
     <link linkend="event-triggers">event triggers</link>.
-    <productname>PostgreSQL</productname> requires that a procedure that
+    <productname>PostgreSQL</productname> requires that a function that
     is to be called as an event trigger must be declared as a function with
     no arguments and a return type of <literal>event_trigger</literal>.
    </para>
@@ -4496,11 +4499,11 @@ CREATE TRIGGER emp_audit_del
 
    <para>
     <xref linkend="plpgsql-event-trigger-example"/> shows an example of an
-    event trigger procedure in <application>PL/pgSQL</application>.
+    event trigger function in <application>PL/pgSQL</application>.
    </para>
 
    <example id="plpgsql-event-trigger-example">
-    <title>A <application>PL/pgSQL</application> Event Trigger Procedure</title>
+    <title>A <application>PL/pgSQL</application> Event Trigger Function</title>
 
     <para>
      This example trigger simply raises a <literal>NOTICE</literal> message
@@ -4514,7 +4517,7 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
-CREATE EVENT TRIGGER snitch ON ddl_command_start EXECUTE PROCEDURE snitch();
+CREATE EVENT TRIGGER snitch ON ddl_command_start EXECUTE FUNCTION snitch();
 </programlisting>
    </example>
   </sect2>
@@ -5050,7 +5053,7 @@ a_output := a_output || $$ if v_$$ || referrer_keys.kind || $$ like '$$
 
   </sect2>
   <sect2 id="plpgsql-extra-checks">
-   <title>Additional Compile-time Checks</title>
+   <title>Additional Compile-time and Run-time Checks</title>
 
    <para>
     To aid the user in finding instances of simple but common problems before
@@ -5062,26 +5065,64 @@ a_output := a_output || $$ if v_$$ || referrer_keys.kind || $$ like '$$
     so you are advised to test in a separate development environment.
    </para>
 
- <para>
-  These additional checks are enabled through the configuration variables
-  <varname>plpgsql.extra_warnings</varname> for warnings and
-  <varname>plpgsql.extra_errors</varname> for errors. Both can be set either to
-  a comma-separated list of checks, <literal>"none"</literal> or <literal>"all"</literal>.
-  The default is <literal>"none"</literal>. Currently the list of available checks
-  includes only one:
-  <variablelist>
-   <varlistentry>
-    <term><varname>shadowed_variables</varname></term>
-    <listitem>
-     <para>
-      Checks if a declaration shadows a previously defined variable.
-     </para>
-    </listitem>
-   </varlistentry>
-  </variablelist>
+   <para>
+    Setting <varname>plpgsql.extra_warnings</varname>, or
+    <varname>plpgsql.extra_errors</varname>, as appropriate, to <literal>"all"</literal>
+    is encouraged in development and/or testing environments.
+   </para>
 
-  The following example shows the effect of <varname>plpgsql.extra_warnings</varname>
-  set to <varname>shadowed_variables</varname>:
+   <para>
+    These additional checks are enabled through the configuration variables
+    <varname>plpgsql.extra_warnings</varname> for warnings and
+    <varname>plpgsql.extra_errors</varname> for errors. Both can be set either to
+    a comma-separated list of checks, <literal>"none"</literal> or
+    <literal>"all"</literal>. The default is <literal>"none"</literal>. Currently
+    the list of available checks includes:
+    <variablelist>
+     <varlistentry>
+      <term><varname>shadowed_variables</varname></term>
+      <listitem>
+       <para>
+        Checks if a declaration shadows a previously defined variable.
+       </para>
+      </listitem>
+     </varlistentry>
+
+     <varlistentry>
+      <term><varname>strict_multi_assignment</varname></term>
+      <listitem>
+       <para>
+        Some <application>PL/PgSQL</application> commands allow assigning
+        values to more than one variable at a time, such as
+        <command>SELECT INTO</command>.  Typically, the number of target
+        variables and the number of source variables should match, though
+        <application>PL/PgSQL</application> will use <literal>NULL</literal>
+        for missing values and extra variables are ignored.  Enabling this
+        check will cause <application>PL/PgSQL</application> to throw a
+        <literal>WARNING</literal> or <literal>ERROR</literal> whenever the
+        number of target variables and the number of source variables are
+        different.
+       </para>
+      </listitem>
+     </varlistentry>
+
+     <varlistentry>
+      <term><varname>too_many_rows</varname></term>
+      <listitem>
+       <para>
+        Enabling this check will cause <application>PL/PgSQL</application> to
+        check if a given query returns more than one row when an
+        <literal>INTO</literal> clause is used.  As an <literal>INTO</literal>
+        statement will only ever use one row, having a query return multiple
+        rows is generally either inefficient and/or nondeterministic and
+        therefore is likely an error.
+       </para>
+      </listitem>
+     </varlistentry>
+    </variablelist>
+
+    The following example shows the effect of <varname>plpgsql.extra_warnings</varname>
+    set to <varname>shadowed_variables</varname>:
 <programlisting>
 SET plpgsql.extra_warnings TO 'shadowed_variables';
 
@@ -5097,8 +5138,41 @@ LINE 3: f1 int;
         ^
 CREATE FUNCTION
 </programlisting>
- </para>
- </sect2>
+    The below example shows the effects of setting
+    <varname>plpgsql.extra_warnings</varname> to
+    <varname>strict_multi_assignment</varname>:
+<programlisting>
+SET plpgsql.extra_warnings TO 'strict_multi_assignment';
+
+CREATE OR REPLACE FUNCTION public.foo()
+ RETURNS void
+ LANGUAGE plpgsql
+AS $$
+DECLARE
+  x int;
+  y int;
+BEGIN
+  SELECT 1 INTO x, y;
+  SELECT 1, 2 INTO x, y;
+  SELECT 1, 2, 3 INTO x, y;
+END;
+$$;
+
+SELECT foo();
+WARNING:  number of source and target fields in assignment do not match
+DETAIL:  strict_multi_assignment check of extra_warnings is active.
+HINT:  Make sure the query returns the exact list of columns.
+WARNING:  number of source and target fields in assignment do not match
+DETAIL:  strict_multi_assignment check of extra_warnings is active.
+HINT:  Make sure the query returns the exact list of columns.
+
+ foo 
+-----
+ 
+(1 row)
+</programlisting>
+   </para>
+  </sect2>
  </sect1>
 
   <!-- **** Porting from Oracle PL/SQL **** -->

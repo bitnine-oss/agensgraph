@@ -24,6 +24,7 @@
 #include "catalog/index.h"
 #include "catalog/pg_collation.h"
 #include "catalog/pg_type.h"
+#include "common/link-canary.h"
 #include "libpq/pqsignal.h"
 #include "miscadmin.h"
 #include "nodes/makefuncs.h"
@@ -403,6 +404,13 @@ AuxiliaryProcessMain(int argc, char *argv[])
 		/* finish setting up bufmgr.c */
 		InitBufferPoolBackend();
 
+		/*
+		 * Auxiliary processes don't run transactions, but they may need a
+		 * resource owner anyway to manage buffer pins acquired outside
+		 * transactions (and, perhaps, other things in future).
+		 */
+		CreateAuxProcessResourceOwner();
+
 		/* Initialize backend status information */
 		pgstat_initialize();
 		pgstat_bestart();
@@ -494,6 +502,13 @@ BootstrapModeMain(void)
 
 	Assert(!IsUnderPostmaster);
 	Assert(IsBootstrapProcessingMode());
+
+	/*
+	 * To ensure that src/common/link-canary.c is linked into the backend, we
+	 * must call it from somewhere.  Here is as good as anywhere.
+	 */
+	if (pg_link_canary_is_frontend())
+		elog(ERROR, "backend is incorrectly linked to frontend functions");
 
 	/*
 	 * Do backend-like initialization for bootstrap mode

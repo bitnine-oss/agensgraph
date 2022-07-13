@@ -182,7 +182,7 @@ char *
 text_to_cstring(const text *t)
 {
 	/* must cast away the const, unfortunately */
-	text	   *tunpacked = pg_detoast_datum_packed((struct varlena *) t);
+	text	   *tunpacked = pg_detoast_datum_packed(unconstify(text *, t));
 	int			len = VARSIZE_ANY_EXHDR(tunpacked);
 	char	   *result;
 
@@ -213,7 +213,7 @@ void
 text_to_cstring_buffer(const text *src, char *dst, size_t dst_len)
 {
 	/* must cast away the const, unfortunately */
-	text	   *srcunpacked = pg_detoast_datum_packed((struct varlena *) src);
+	text	   *srcunpacked = pg_detoast_datum_packed(unconstify(text *, src));
 	size_t		src_len = VARSIZE_ANY_EXHDR(srcunpacked);
 
 	if (dst_len > 0)
@@ -3503,6 +3503,118 @@ SplitDirectoriesString(char *rawstring, char separator,
 }
 
 
+/*
+ * SplitGUCList --- parse a string containing identifiers or file names
+ *
+ * This is used to split the value of a GUC_LIST_QUOTE GUC variable, without
+ * presuming whether the elements will be taken as identifiers or file names.
+ * We assume the input has already been through flatten_set_variable_args(),
+ * so that we need never downcase (if appropriate, that was done already).
+ * Nor do we ever truncate, since we don't know the correct max length.
+ * We disallow embedded whitespace for simplicity (it shouldn't matter,
+ * because any embedded whitespace should have led to double-quoting).
+ * Otherwise the API is identical to SplitIdentifierString.
+ *
+ * XXX it's annoying to have so many copies of this string-splitting logic.
+ * However, it's not clear that having one function with a bunch of option
+ * flags would be much better.
+ *
+ * XXX there is a version of this function in src/bin/pg_dump/dumputils.c.
+ * Be sure to update that if you have to change this.
+ *
+ * Inputs:
+ *	rawstring: the input string; must be overwritable!	On return, it's
+ *			   been modified to contain the separated identifiers.
+ *	separator: the separator punctuation expected between identifiers
+ *			   (typically '.' or ',').  Whitespace may also appear around
+ *			   identifiers.
+ * Outputs:
+ *	namelist: filled with a palloc'd list of pointers to identifiers within
+ *			  rawstring.  Caller should list_free() this even on error return.
+ *
+ * Returns true if okay, false if there is a syntax error in the string.
+ */
+bool
+SplitGUCList(char *rawstring, char separator,
+			 List **namelist)
+{
+	char	   *nextp = rawstring;
+	bool		done = false;
+
+	*namelist = NIL;
+
+	while (scanner_isspace(*nextp))
+		nextp++;				/* skip leading whitespace */
+
+	if (*nextp == '\0')
+		return true;			/* allow empty string */
+
+	/* At the top of the loop, we are at start of a new identifier. */
+	do
+	{
+		char	   *curname;
+		char	   *endp;
+
+		if (*nextp == '"')
+		{
+			/* Quoted name --- collapse quote-quote pairs */
+			curname = nextp + 1;
+			for (;;)
+			{
+				endp = strchr(nextp + 1, '"');
+				if (endp == NULL)
+					return false;	/* mismatched quotes */
+				if (endp[1] != '"')
+					break;		/* found end of quoted name */
+				/* Collapse adjacent quotes into one quote, and look again */
+				memmove(endp, endp + 1, strlen(endp));
+				nextp = endp;
+			}
+			/* endp now points at the terminating quote */
+			nextp = endp + 1;
+		}
+		else
+		{
+			/* Unquoted name --- extends to separator or whitespace */
+			curname = nextp;
+			while (*nextp && *nextp != separator &&
+				   !scanner_isspace(*nextp))
+				nextp++;
+			endp = nextp;
+			if (curname == nextp)
+				return false;	/* empty unquoted name not allowed */
+		}
+
+		while (scanner_isspace(*nextp))
+			nextp++;			/* skip trailing whitespace */
+
+		if (*nextp == separator)
+		{
+			nextp++;
+			while (scanner_isspace(*nextp))
+				nextp++;		/* skip leading whitespace for next */
+			/* we expect another name, so done remains false */
+		}
+		else if (*nextp == '\0')
+			done = true;
+		else
+			return false;		/* invalid syntax */
+
+		/* Now safe to overwrite separator with a null */
+		*endp = '\0';
+
+		/*
+		 * Finished isolating current name --- add it to list
+		 */
+		*namelist = lappend(*namelist, curname);
+
+		/* Loop back if we didn't reach end of string */
+	} while (!done);
+
+	return true;
+}
+
+
 /*****************************************************************************
  *	Comparison Functions used for bytea
  *
@@ -5155,8 +5267,8 @@ text_format(PG_FUNCTION_ARGS)
 
 				str = OutputFunctionCall(&typoutputinfo_width, value);
 
-				/* pg_atoi will complain about bad data or overflow */
-				width = pg_atoi(str, sizeof(int), '\0');
+				/* pg_strtoint32 will complain about bad data or overflow */
+				width = pg_strtoint32(str);
 
 				pfree(str);
 			}

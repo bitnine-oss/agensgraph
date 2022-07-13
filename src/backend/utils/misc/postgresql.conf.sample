@@ -103,6 +103,8 @@
 #ssl_ciphers = 'HIGH:MEDIUM:+3DES:!aNULL' # allowed SSL ciphers
 #ssl_prefer_server_ciphers = on
 #ssl_ecdh_curve = 'prime256v1'
+#ssl_min_protocol_version = 'TLSv1'
+#ssl_max_protocol_version = ''
 #ssl_dh_params_file = ''
 #ssl_passphrase_command = ''
 #ssl_passphrase_command_supports_reload = off
@@ -134,7 +136,6 @@
 					#   sysv
 					#   windows
 					#   mmap
-					# use none to disable dynamic shared memory
 					# (change requires restart)
 
 # - Disk -
@@ -323,11 +324,12 @@
 #parallel_setup_cost = 1000.0	# same scale as above
 
 #jit_above_cost = 100000		# perform JIT compilation if available
-					# and query more expensive, -1 disables
-#jit_optimize_above_cost = 500000	# optimize JITed functions if query is
-					# more expensive, -1 disables
-#jit_inline_above_cost = 500000		# attempt to inline operators and
-					# functions if query is more expensive,
+					# and query more expensive than this;
+					# -1 disables
+#jit_inline_above_cost = 500000		# inline small functions if query is
+					# more expensive than this; -1 disables
+#jit_optimize_above_cost = 500000	# use expensive JIT optimizations if
+					# query is more expensive than this;
 					# -1 disables
 
 #min_parallel_table_scan_size = 8MB
@@ -353,6 +355,9 @@
 #join_collapse_limit = 8		# 1 disables collapsing of explicit
 					# JOIN clauses
 #force_parallel_mode = off
+#jit = on				# allow JIT compilation
+#plan_cache_mode = auto			# auto, force_generic_plan or
+					# force_custom_plan
 
 
 #------------------------------------------------------------------------------
@@ -404,17 +409,6 @@
 #event_source = 'PostgreSQL'
 
 # - When to Log -
-
-#client_min_messages = notice		# values in order of decreasing detail:
-					#   debug5
-					#   debug4
-					#   debug3
-					#   debug2
-					#   debug1
-					#   log
-					#   notice
-					#   warning
-					#   error
 
 #log_min_messages = warning		# values in order of decreasing detail:
 					#   debug5
@@ -560,6 +554,16 @@
 
 # - Statement Behavior -
 
+#client_min_messages = notice		# values in order of decreasing detail:
+					#   debug5
+					#   debug4
+					#   debug3
+					#   debug2
+					#   debug1
+					#   log
+					#   notice
+					#   warning
+					#   error
 #search_path = '"$user", public'	# schema names
 #row_security = on
 #default_tablespace = ''		# a tablespace name, '' uses the default
@@ -617,13 +621,12 @@
 #shared_preload_libraries = ''	# (change requires restart)
 #local_preload_libraries = ''
 #session_preload_libraries = ''
+#jit_provider = 'llvmjit'		# JIT library to use
 
 # - Other Defaults -
 
 #dynamic_library_path = '$libdir'
 
-#jit = on				# allow JIT compilation
-#jit_provider = 'llvmjit'		# JIT implementation to use
 
 #------------------------------------------------------------------------------
 # LOCK MANAGEMENT
@@ -667,6 +670,7 @@
 
 #exit_on_error = off			# terminate session on any error?
 #restart_after_crash = on		# reinitialize after backend crash?
+#data_sync_retry = off			# retry or panic on failure to fsync data?
 
 
 #------------------------------------------------------------------------------

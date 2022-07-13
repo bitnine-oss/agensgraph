@@ -186,7 +186,7 @@ cluster(ClusterStmt *stmt, bool isTopLevel)
 		heap_close(rel, NoLock);
 
 		/* Do the job. */
-		cluster_rel(tableOid, indexOid, false, stmt->verbose);
+		cluster_rel(tableOid, indexOid, stmt->options);
 	}
 	else
 	{
@@ -234,7 +234,8 @@ cluster(ClusterStmt *stmt, bool isTopLevel)
 			/* functions in indexes may want a snapshot set */
 			PushActiveSnapshot(GetTransactionSnapshot());
 			/* Do the job. */
-			cluster_rel(rvtc->tableOid, rvtc->indexOid, true, stmt->verbose);
+			cluster_rel(rvtc->tableOid, rvtc->indexOid,
+						stmt->options | CLUOPT_RECHECK);
 			PopActiveSnapshot();
 			CommitTransactionCommand();
 		}
@@ -265,9 +266,11 @@ cluster(ClusterStmt *stmt, bool isTopLevel)
  * and error messages should refer to the operation as VACUUM not CLUSTER.
  */
 void
-cluster_rel(Oid tableOid, Oid indexOid, bool recheck, bool verbose)
+cluster_rel(Oid tableOid, Oid indexOid, int options)
 {
 	Relation	OldHeap;
+	bool		verbose = ((options & CLUOPT_VERBOSE) != 0);
+	bool		recheck = ((options & CLUOPT_RECHECK) != 0);
 
 	/* Check for user-requested abort. */
 	CHECK_FOR_INTERRUPTS();
@@ -1581,7 +1584,7 @@ finish_heap_swap(Oid OIDOldHeap, Oid OIDNewHeap,
 	 * swap_relation_files()), thus relfrozenxid was not updated. That's
 	 * annoying because a potential reason for doing a VACUUM FULL is a
 	 * imminent or actual anti-wraparound shutdown.  So, now that we can
-	 * access the new relation using it's indices, update relfrozenxid.
+	 * access the new relation using its indices, update relfrozenxid.
 	 * pg_class doesn't have a toast relation, so we don't need to update the
 	 * corresponding toast relation. Not that there's little point moving all
 	 * relfrozenxid updates here since swap_relation_files() needs to write to
@@ -1658,14 +1661,14 @@ finish_heap_swap(Oid OIDOldHeap, Oid OIDNewHeap,
 			snprintf(NewToastName, NAMEDATALEN, "pg_toast_%u",
 					 OIDOldHeap);
 			RenameRelationInternal(newrel->rd_rel->reltoastrelid,
-								   NewToastName, true);
+								   NewToastName, true, false);
 
 			/* ... and its valid index too. */
 			snprintf(NewToastName, NAMEDATALEN, "pg_toast_%u_index",
 					 OIDOldHeap);
 
 			RenameRelationInternal(toastidx,
-								   NewToastName, true);
+								   NewToastName, true, true);
 		}
 		relation_close(newrel, NoLock);
 	}

@@ -7,22 +7,20 @@
  *
  *	src/bin/pg_verify_checksums/pg_verify_checksums.c
  */
+#include "postgres_fe.h"
 
-#define FRONTEND 1
+#include <dirent.h>
+#include <sys/stat.h>
+#include <unistd.h>
 
-#include "postgres.h"
 #include "catalog/pg_control.h"
 #include "common/controldata_utils.h"
+#include "common/relpath.h"
 #include "getopt_long.h"
+#include "pg_getopt.h"
 #include "storage/bufpage.h"
 #include "storage/checksum.h"
 #include "storage/checksum_impl.h"
-
-#include <sys/stat.h>
-#include <dirent.h>
-#include <unistd.h>
-
-#include "pg_getopt.h"
 
 
 static int64 files = 0;
@@ -31,20 +29,20 @@ static int64 badblocks = 0;
 static ControlFileData *ControlFile;
 
 static char *only_relfilenode = NULL;
-static bool debug = false;
+static bool verbose = false;
 
 static const char *progname;
 
 static void
-usage()
+usage(void)
 {
-	printf(_("%s verifies page level checksums in offline PostgreSQL database cluster.\n\n"), progname);
+	printf(_("%s verifies data checksums in a PostgreSQL database cluster.\n\n"), progname);
 	printf(_("Usage:\n"));
-	printf(_("  %s [OPTION] [DATADIR]\n"), progname);
+	printf(_("  %s [OPTION]... [DATADIR]\n"), progname);
 	printf(_("\nOptions:\n"));
 	printf(_(" [-D, --pgdata=]DATADIR  data directory\n"));
-	printf(_("  -r relfilenode         check only relation with specified relfilenode\n"));
-	printf(_("  -d                     debug output, listing all checked blocks\n"));
+	printf(_("  -v, --verbose          output verbose messages\n"));
+	printf(_("  -r RELFILENODE         check only relation with specified relfilenode\n"));
 	printf(_("  -V, --version          output version information, then exit\n"));
 	printf(_("  -?, --help             show this help, then exit\n"));
 	printf(_("\nIf no data directory (DATADIR) is specified, "
@@ -52,38 +50,80 @@ usage()
 	printf(_("Report bugs to <pgsql-bugs@postgresql.org>.\n"));
 }
 
-static const char *skip[] = {
-	"pg_control",
-	"pg_filenode.map",
-	"pg_internal.init",
-	"PG_VERSION",
-	NULL,
-};
-
+/*
+ * isRelFileName
+ *
+ * Check if the given file name is authorized for checksum verification.
+ */
 static bool
-skipfile(char *fn)
+isRelFileName(const char *fn)
 {
-	const char **f;
+	int			pos;
 
-	if (strcmp(fn, ".") == 0 ||
-		strcmp(fn, "..") == 0)
+	/*----------
+	 * Only files including data checksums are authorized for verification.
+	 * This is guessed based on the file name by reverse-engineering
+	 * GetRelationPath() so make sure to update both code paths if any
+	 * updates are done.  The following file name formats are allowed:
+	 * <digits>
+	 * <digits>.<segment>
+	 * <digits>_<forkname>
+	 * <digits>_<forkname>.<segment>
+	 *
+	 * Note that temporary files, beginning with 't', are also skipped.
+	 *
+	 *----------
+	 */
+
+	/* A non-empty string of digits should follow */
+	for (pos = 0; isdigit((unsigned char) fn[pos]); ++pos)
+		;
+	/* leave if no digits */
+	if (pos == 0)
+		return false;
+	/* good to go if only digits */
+	if (fn[pos] == '\0')
 		return true;
 
-	for (f = skip; *f; f++)
-		if (strcmp(*f, fn) == 0)
-			return true;
-	return false;
+	/* Authorized fork files can be scanned */
+	if (fn[pos] == '_')
+	{
+		int			forkchar = forkname_chars(&fn[pos + 1], NULL);
+
+		if (forkchar <= 0)
+			return false;
+
+		pos += forkchar + 1;
+	}
+
+	/* Check for an optional segment number */
+	if (fn[pos] == '.')
+	{
+		int			segchar;
+
+		for (segchar = 1; isdigit((unsigned char) fn[pos + segchar]); ++segchar)
+			;
+
+		if (segchar <= 1)
+			return false;
+		pos += segchar;
+	}
+
+	/* Now this should be the end */
+	if (fn[pos] != '\0')
+		return false;
+	return true;
 }
 
 static void
-scan_file(char *fn, int segmentno)
+scan_file(const char *fn, BlockNumber segmentno)
 {
-	char		buf[BLCKSZ];
-	PageHeader	header = (PageHeader) buf;
+	PGAlignedBlock buf;
+	PageHeader	header = (PageHeader) buf.data;
 	int			f;
-	int			blockno;
+	BlockNumber blockno;
 
-	f = open(fn, 0);
+	f = open(fn, O_RDONLY | PG_BINARY, 0);
 	if (f < 0)
 	{
 		fprintf(stderr, _("%s: could not open file \"%s\": %s\n"),
@@ -96,40 +136,41 @@ scan_file(char *fn, int segmentno)
 	for (blockno = 0;; blockno++)
 	{
 		uint16		csum;
-		int			r = read(f, buf, BLCKSZ);
+		int			r = read(f, buf.data, BLCKSZ);
 
 		if (r == 0)
 			break;
 		if (r != BLCKSZ)
 		{
-			fprintf(stderr, _("%s: short read of block %d in file \"%s\", got only %d bytes\n"),
-					progname, blockno, fn, r);
+			fprintf(stderr, _("%s: could not read block %u in file \"%s\": read %d of %d\n"),
+					progname, blockno, fn, r, BLCKSZ);
 			exit(1);
 		}
 		blocks++;
 
 		/* New pages have no checksum yet */
-		if (PageIsNew(buf))
+		if (PageIsNew(header))
 			continue;
 
-		csum = pg_checksum_page(buf, blockno + segmentno * RELSEG_SIZE);
+		csum = pg_checksum_page(buf.data, blockno + segmentno * RELSEG_SIZE);
 		if (csum != header->pd_checksum)
 		{
 			if (ControlFile->data_checksum_version == PG_DATA_CHECKSUM_VERSION)
-				fprintf(stderr, _("%s: checksum verification failed in file \"%s\", block %d: calculated checksum %X but expected %X\n"),
+				fprintf(stderr, _("%s: checksum verification failed in file \"%s\", block %u: calculated checksum %X but block contains %X\n"),
 						progname, fn, blockno, csum, header->pd_checksum);
 			badblocks++;
 		}
-		else if (debug)
-			fprintf(stderr, _("%s: checksum verified in file \"%s\", block %d: %X\n"),
-					progname, fn, blockno, csum);
 	}
+
+	if (verbose)
+		fprintf(stderr,
+				_("%s: checksums verified in file \"%s\"\n"), progname, fn);
 
 	close(f);
 }
 
 static void
-scan_directory(char *basedir, char *subdir)
+scan_directory(const char *basedir, const char *subdir)
 {
 	char		path[MAXPGPATH];
 	DIR		   *dir;
@@ -145,10 +186,10 @@ scan_directory(char *basedir, char *subdir)
 	}
 	while ((de = readdir(dir)) != NULL)
 	{
-		char		fn[MAXPGPATH + 1];
+		char		fn[MAXPGPATH];
 		struct stat st;
 
-		if (skipfile(de->d_name))
+		if (!isRelFileName(de->d_name))
 			continue;
 
 		snprintf(fn, sizeof(fn), "%s/%s", path, de->d_name);
@@ -160,9 +201,10 @@ scan_directory(char *basedir, char *subdir)
 		}
 		if (S_ISREG(st.st_mode))
 		{
+			char		fnonly[MAXPGPATH];
 			char	   *forkpath,
 					   *segmentpath;
-			int			segmentno = 0;
+			BlockNumber segmentno = 0;
 
 			/*
 			 * Cut off at the segment boundary (".") to get the segment number
@@ -170,24 +212,25 @@ scan_directory(char *basedir, char *subdir)
 			 * fork boundary, to get the relfilenode the file belongs to for
 			 * filtering.
 			 */
-			segmentpath = strchr(de->d_name, '.');
+			strlcpy(fnonly, de->d_name, sizeof(fnonly));
+			segmentpath = strchr(fnonly, '.');
 			if (segmentpath != NULL)
 			{
 				*segmentpath++ = '\0';
 				segmentno = atoi(segmentpath);
 				if (segmentno == 0)
 				{
-					fprintf(stderr, _("%s: invalid segment number %d in filename \"%s\"\n"),
+					fprintf(stderr, _("%s: invalid segment number %d in file name \"%s\"\n"),
 							progname, segmentno, fn);
 					exit(1);
 				}
 			}
 
-			forkpath = strchr(de->d_name, '_');
+			forkpath = strchr(fnonly, '_');
 			if (forkpath != NULL)
 				*forkpath++ = '\0';
 
-			if (only_relfilenode && strcmp(only_relfilenode, de->d_name) != 0)
+			if (only_relfilenode && strcmp(only_relfilenode, fnonly) != 0)
 				/* Relfilenode not to be included */
 				continue;
 
@@ -208,6 +251,7 @@ main(int argc, char *argv[])
 {
 	static struct option long_options[] = {
 		{"pgdata", required_argument, NULL, 'D'},
+		{"verbose", no_argument, NULL, 'v'},
 		{NULL, 0, NULL, 0}
 	};
 
@@ -234,20 +278,20 @@ main(int argc, char *argv[])
 		}
 	}
 
-	while ((c = getopt_long(argc, argv, "D:r:d", long_options, &option_index)) != -1)
+	while ((c = getopt_long(argc, argv, "D:r:v", long_options, &option_index)) != -1)
 	{
 		switch (c)
 		{
-			case 'd':
-				debug = true;
+			case 'v':
+				verbose = true;
 				break;
 			case 'D':
 				DataDir = optarg;
 				break;
 			case 'r':
-				if (atoi(optarg) <= 0)
+				if (atoi(optarg) == 0)
 				{
-					fprintf(stderr, _("%s: invalid relfilenode: %s\n"), progname, optarg);
+					fprintf(stderr, _("%s: invalid relfilenode specification, must be numeric: %s\n"), progname, optarg);
 					exit(1);
 				}
 				only_relfilenode = pstrdup(optarg);
@@ -288,20 +332,20 @@ main(int argc, char *argv[])
 	ControlFile = get_controlfile(DataDir, progname, &crc_ok);
 	if (!crc_ok)
 	{
-		fprintf(stderr, _("%s: pg_control CRC value is incorrect.\n"), progname);
+		fprintf(stderr, _("%s: pg_control CRC value is incorrect\n"), progname);
 		exit(1);
 	}
 
 	if (ControlFile->state != DB_SHUTDOWNED &&
 		ControlFile->state != DB_SHUTDOWNED_IN_RECOVERY)
 	{
-		fprintf(stderr, _("%s: cluster must be shut down to verify checksums.\n"), progname);
+		fprintf(stderr, _("%s: cluster must be shut down to verify checksums\n"), progname);
 		exit(1);
 	}
 
 	if (ControlFile->data_checksum_version == 0)
 	{
-		fprintf(stderr, _("%s: data checksums are not enabled in cluster.\n"), progname);
+		fprintf(stderr, _("%s: data checksums are not enabled in cluster\n"), progname);
 		exit(1);
 	}
 
@@ -312,9 +356,9 @@ main(int argc, char *argv[])
 
 	printf(_("Checksum scan completed\n"));
 	printf(_("Data checksum version: %d\n"), ControlFile->data_checksum_version);
-	printf(_("Files scanned:  %" INT64_MODIFIER "d\n"), files);
-	printf(_("Blocks scanned: %" INT64_MODIFIER "d\n"), blocks);
-	printf(_("Bad checksums:  %" INT64_MODIFIER "d\n"), badblocks);
+	printf(_("Files scanned:  %s\n"), psprintf(INT64_FORMAT, files));
+	printf(_("Blocks scanned: %s\n"), psprintf(INT64_FORMAT, blocks));
+	printf(_("Bad checksums:  %s\n"), psprintf(INT64_FORMAT, badblocks));
 
 	if (badblocks > 0)
 		return 1;

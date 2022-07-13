@@ -233,6 +233,7 @@ enlargePQExpBuffer(PQExpBuffer str, size_t needed)
 void
 printfPQExpBuffer(PQExpBuffer str, const char *fmt,...)
 {
+	int			save_errno = errno;
 	va_list		args;
 	bool		done;
 
@@ -244,6 +245,7 @@ printfPQExpBuffer(PQExpBuffer str, const char *fmt,...)
 	/* Loop in case we have to retry after enlarging the buffer. */
 	do
 	{
+		errno = save_errno;
 		va_start(args, fmt);
 		done = appendPQExpBufferVA(str, fmt, args);
 		va_end(args);
@@ -261,6 +263,7 @@ printfPQExpBuffer(PQExpBuffer str, const char *fmt,...)
 void
 appendPQExpBuffer(PQExpBuffer str, const char *fmt,...)
 {
+	int			save_errno = errno;
 	va_list		args;
 	bool		done;
 
@@ -270,6 +273,7 @@ appendPQExpBuffer(PQExpBuffer str, const char *fmt,...)
 	/* Loop in case we have to retry after enlarging the buffer. */
 	do
 	{
+		errno = save_errno;
 		va_start(args, fmt);
 		done = appendPQExpBufferVA(str, fmt, args);
 		va_end(args);
@@ -281,6 +285,9 @@ appendPQExpBuffer(PQExpBuffer str, const char *fmt,...)
  * Shared guts of printfPQExpBuffer/appendPQExpBuffer.
  * Attempt to format data and append it to str.  Returns true if done
  * (either successful or hard failure), false if need to retry.
+ *
+ * Caution: callers must be sure to preserve their entry-time errno
+ * when looping, in case the fmt contains "%m".
  */
 static bool
 appendPQExpBufferVA(PQExpBuffer str, const char *fmt, va_list args)
@@ -295,76 +302,50 @@ appendPQExpBufferVA(PQExpBuffer str, const char *fmt, va_list args)
 	 */
 	if (str->maxlen > str->len + 16)
 	{
-		/*
-		 * Note: we intentionally leave one byte unused, as a guard against
-		 * old broken versions of vsnprintf.
-		 */
-		avail = str->maxlen - str->len - 1;
-
-		errno = 0;
+		avail = str->maxlen - str->len;
 
 		nprinted = vsnprintf(str->data + str->len, avail, fmt, args);
 
 		/*
-		 * If vsnprintf reports an error other than ENOMEM, fail.
+		 * If vsnprintf reports an error, fail (we assume this means there's
+		 * something wrong with the format string).
 		 */
-		if (nprinted < 0 && errno != 0 && errno != ENOMEM)
+		if (unlikely(nprinted < 0))
 		{
 			markPQExpBufferBroken(str);
 			return true;
 		}
 
-		/*
-		 * Note: some versions of vsnprintf return the number of chars
-		 * actually stored, not the total space needed as C99 specifies.  And
-		 * at least one returns -1 on failure.  Be conservative about
-		 * believing whether the print worked.
-		 */
-		if (nprinted >= 0 && (size_t) nprinted < avail - 1)
+		if ((size_t) nprinted < avail)
 		{
 			/* Success.  Note nprinted does not include trailing null. */
 			str->len += nprinted;
 			return true;
 		}
 
-		if (nprinted >= 0 && (size_t) nprinted > avail)
+		/*
+		 * We assume a C99-compliant vsnprintf, so believe its estimate of the
+		 * required space, and add one for the trailing null.  (If it's wrong,
+		 * the logic will still work, but we may loop multiple times.)
+		 *
+		 * Choke if the required space would exceed INT_MAX, since str->maxlen
+		 * can't represent more than that.
+		 */
+		if (unlikely(nprinted > INT_MAX - 1))
 		{
-			/*
-			 * This appears to be a C99-compliant vsnprintf, so believe its
-			 * estimate of the required space. (If it's wrong, the logic will
-			 * still work, but we may loop multiple times.)  Note that the
-			 * space needed should be only nprinted+1 bytes, but we'd better
-			 * allocate one more than that so that the test above will succeed
-			 * next time.
-			 *
-			 * In the corner case where the required space just barely
-			 * overflows, fail.
-			 */
-			if (nprinted > INT_MAX - 2)
-			{
-				markPQExpBufferBroken(str);
-				return true;
-			}
-			needed = nprinted + 2;
+			markPQExpBufferBroken(str);
+			return true;
 		}
-		else
-		{
-			/*
-			 * Buffer overrun, and we don't know how much space is needed.
-			 * Estimate twice the previous buffer size, but not more than
-			 * INT_MAX.
-			 */
-			if (avail >= INT_MAX / 2)
-				needed = INT_MAX;
-			else
-				needed = avail * 2;
-		}
+		needed = nprinted + 1;
 	}
 	else
 	{
 		/*
 		 * We have to guess at how much to enlarge, since we're skipping the
-		 * formatting work.
+		 * formatting work.  Fortunately, because of enlargePQExpBuffer's
+		 * preference for power-of-2 sizes, this number isn't very sensitive;
+		 * the net effect is that we'll double the buffer size before trying
+		 * to run vsnprintf, which seems sensible.
 		 */
 		needed = 32;
 	}

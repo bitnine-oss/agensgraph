@@ -112,10 +112,10 @@ typedef struct IndexAmRoutine
     bool        ampredlocks;
     /* does AM support parallel scan? */
     bool        amcanparallel;
-    /* type of data stored in index, or InvalidOid if variable */
-    Oid         amkeytype;
     /* does AM support columns included with clause INCLUDE? */
     bool        amcaninclude;
+    /* type of data stored in index, or InvalidOid if variable */
+    Oid         amkeytype;
 
     /* interface functions */
     ambuild_function ambuild;
@@ -385,7 +385,8 @@ amcostestimate (PlannerInfo *root,
                 Cost *indexStartupCost,
                 Cost *indexTotalCost,
                 Selectivity *indexSelectivity,
-                double *indexCorrelation);
+                double *indexCorrelation,
+                double *indexPages);
 </programlisting>
    Estimate the costs of an index scan.  This function is described fully
    in <xref linkend="index-cost-estimation"/>, below.
@@ -613,7 +614,8 @@ amendscan (IndexScanDesc scan);
 </programlisting>
    End a scan and release resources.  The <literal>scan</literal> struct itself
    should not be freed, but any locks or pins taken internally by the
-   access method must be released.
+   access method must be released, as well as any other memory allocated
+   by <function>ambeginscan</function> and other scan-related functions.
   </para>
 
   <para>
@@ -987,8 +989,9 @@ amparallelrescan (IndexScanDesc scan);
    using <firstterm>unique indexes</firstterm>, which are indexes that disallow
    multiple entries with identical keys.  An access method that supports this
    feature sets <structfield>amcanunique</structfield> true.
-   (At present, only b-tree supports it.) Columns listed in the
-    <literal>INCLUDE</literal> clause are not used to enforce uniqueness.
+   (At present, only b-tree supports it.)  Columns listed in the
+   <literal>INCLUDE</literal> clause are not considered when enforcing
+   uniqueness.
   </para>
 
   <para>
@@ -1154,7 +1157,8 @@ amcostestimate (PlannerInfo *root,
                 Cost *indexStartupCost,
                 Cost *indexTotalCost,
                 Selectivity *indexSelectivity,
-                double *indexCorrelation);
+                double *indexCorrelation,
+                double *indexPages);
 </programlisting>
 
    The first three parameters are inputs:
@@ -1196,7 +1200,7 @@ amcostestimate (PlannerInfo *root,
   </para>
 
   <para>
-   The last four parameters are pass-by-reference outputs:
+   The last five parameters are pass-by-reference outputs:
 
    <variablelist>
     <varlistentry>
@@ -1232,6 +1236,15 @@ amcostestimate (PlannerInfo *root,
       <para>
        Set to correlation coefficient between index scan order and
        underlying table's order
+      </para>
+     </listitem>
+    </varlistentry>
+
+    <varlistentry>
+     <term><parameter>*indexPages</parameter></term>
+     <listitem>
+      <para>
+       Set to number of index leaf pages
       </para>
      </listitem>
     </varlistentry>
@@ -1280,6 +1293,11 @@ amcostestimate (PlannerInfo *root,
    -1.0 and 1.0) between the index order and the table order.  This is used
    to adjust the estimate for the cost of fetching rows from the parent
    table.
+  </para>
+
+  <para>
+   The <parameter>indexPages</parameter> should be set to the number of leaf pages.
+   This is used to estimate the number of workers for parallel index scan.
   </para>
 
   <para>

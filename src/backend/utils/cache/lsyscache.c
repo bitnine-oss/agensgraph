@@ -824,38 +824,6 @@ get_attnum(Oid relid, const char *attname)
 }
 
 /*
- * get_attidentity
- *
- *		Given the relation id and the attribute name,
- *		return the "attidentity" field from the attribute relation.
- *
- *		Returns '\0' if not found.
- *
- *		Since no identity is represented by '\0', this can also be used as a
- *		Boolean test.
- */
-char
-get_attidentity(Oid relid, AttrNumber attnum)
-{
-	HeapTuple	tp;
-
-	tp = SearchSysCache2(ATTNUM,
-						 ObjectIdGetDatum(relid),
-						 Int16GetDatum(attnum));
-	if (HeapTupleIsValid(tp))
-	{
-		Form_pg_attribute att_tup = (Form_pg_attribute) GETSTRUCT(tp);
-		char		result;
-
-		result = att_tup->attidentity;
-		ReleaseSysCache(tp);
-		return result;
-	}
-	else
-		return '\0';
-}
-
-/*
  * get_atttype
  *
  *		Given the relation OID and the attribute number with the relation,
@@ -883,39 +851,12 @@ get_atttype(Oid relid, AttrNumber attnum)
 }
 
 /*
- * get_atttypmod
- *
- *		Given the relation id and the attribute number,
- *		return the "atttypmod" field from the attribute relation.
- */
-int32
-get_atttypmod(Oid relid, AttrNumber attnum)
-{
-	HeapTuple	tp;
-
-	tp = SearchSysCache2(ATTNUM,
-						 ObjectIdGetDatum(relid),
-						 Int16GetDatum(attnum));
-	if (HeapTupleIsValid(tp))
-	{
-		Form_pg_attribute att_tup = (Form_pg_attribute) GETSTRUCT(tp);
-		int32		result;
-
-		result = att_tup->atttypmod;
-		ReleaseSysCache(tp);
-		return result;
-	}
-	else
-		return -1;
-}
-
-/*
  * get_atttypetypmodcoll
  *
  *		A three-fer: given the relation id and the attribute number,
  *		fetch atttypid, atttypmod, and attcollation in a single cache lookup.
  *
- * Unlike the otherwise-similar get_atttype/get_atttypmod, this routine
+ * Unlike the otherwise-similar get_atttype, this routine
  * raises an error if it can't obtain the information.
  */
 void
@@ -1067,6 +1008,32 @@ get_opclass_input_type(Oid opclass)
 	result = cla_tup->opcintype;
 	ReleaseSysCache(tp);
 	return result;
+}
+
+/*
+ * get_opclass_family_and_input_type
+ *
+ *		Returns the OID of the operator family the opclass belongs to,
+ *				the OID of the datatype the opclass indexes
+ */
+bool
+get_opclass_opfamily_and_input_type(Oid opclass, Oid *opfamily, Oid *opcintype)
+{
+	HeapTuple	tp;
+	Form_pg_opclass cla_tup;
+
+	tp = SearchSysCache1(CLAOID, ObjectIdGetDatum(opclass));
+	if (!HeapTupleIsValid(tp))
+		return false;
+
+	cla_tup = (Form_pg_opclass) GETSTRUCT(tp);
+
+	*opfamily = cla_tup->opcfamily;
+	*opcintype = cla_tup->opcintype;
+
+	ReleaseSysCache(tp);
+
+	return true;
 }
 
 /*				---------- OPERATOR CACHE ----------					 */
@@ -1820,6 +1787,30 @@ get_rel_relkind(Oid relid)
 	}
 	else
 		return '\0';
+}
+
+/*
+ * get_rel_relispartition
+ *
+ *		Returns the relispartition flag associated with a given relation.
+ */
+bool
+get_rel_relispartition(Oid relid)
+{
+	HeapTuple	tp;
+
+	tp = SearchSysCache1(RELOID, ObjectIdGetDatum(relid));
+	if (HeapTupleIsValid(tp))
+	{
+		Form_pg_class reltup = (Form_pg_class) GETSTRUCT(tp);
+		bool		result;
+
+		result = reltup->relispartition;
+		ReleaseSysCache(tp);
+		return result;
+	}
+	else
+		return false;
 }
 
 /*
@@ -3107,6 +3098,48 @@ get_range_subtype(Oid rangeOid)
 	}
 	else
 		return InvalidOid;
+}
+
+/*				---------- PG_INDEX CACHE ----------				 */
+
+/*
+ * get_index_column_opclass
+ *
+ *		Given the index OID and column number,
+ *		return opclass of the index column
+ *			or InvalidOid if the index was not found.
+ */
+Oid
+get_index_column_opclass(Oid index_oid, int attno)
+{
+	HeapTuple	tuple;
+	Form_pg_index rd_index PG_USED_FOR_ASSERTS_ONLY;
+	Datum		datum;
+	bool		isnull;
+	oidvector  *indclass;
+	Oid			opclass;
+
+	/* First we need to know the column's opclass. */
+
+	tuple = SearchSysCache1(INDEXRELID, ObjectIdGetDatum(index_oid));
+	if (!HeapTupleIsValid(tuple))
+		return InvalidOid;
+
+	rd_index = (Form_pg_index) GETSTRUCT(tuple);
+
+	/* caller is supposed to guarantee this */
+	Assert(attno > 0 && attno <= rd_index->indnatts);
+
+	datum = SysCacheGetAttr(INDEXRELID, tuple,
+							Anum_pg_index_indclass, &isnull);
+	Assert(!isnull);
+
+	indclass = ((oidvector *) DatumGetPointer(datum));
+	opclass = indclass->values[attno - 1];
+
+	ReleaseSysCache(tuple);
+
+	return opclass;
 }
 
 /*				---------- AG_GRAPH CACHE ----------				 */

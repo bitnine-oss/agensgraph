@@ -7,7 +7,7 @@
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
- *	  src/backend/utils/cache/relfilenode.c
+ *	  src/backend/utils/cache/relfilenodemap.c
  *
  *-------------------------------------------------------------------------
  */
@@ -29,7 +29,7 @@
 #include "utils/relfilenodemap.h"
 #include "utils/relmapper.h"
 
-/* Hash table for informations about each relfilenode <-> oid pair */
+/* Hash table for information about each relfilenode <-> oid pair */
 static HTAB *RelfilenodeMapHash = NULL;
 
 /* built first time through in InitializeRelfilenodeMap */

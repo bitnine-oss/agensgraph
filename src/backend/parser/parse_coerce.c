@@ -540,7 +540,7 @@ coerce_type(ParseState *pstate, Node *node,
  * as this determines the set of available casts.
  */
 bool
-can_coerce_type(int nargs, Oid *input_typeids, Oid *target_typeids,
+can_coerce_type(int nargs, const Oid *input_typeids, const Oid *target_typeids,
 				CoercionContext ccontext)
 {
 	bool		have_generics = false;
@@ -907,7 +907,12 @@ build_coercion_expression(Node *node,
 		sourceBaseTypeId = getBaseTypeAndTypmod(exprType(node),
 												&sourceBaseTypeMod);
 
-		/* Set up CaseTestExpr representing one element of source array */
+		/*
+		 * Set up a CaseTestExpr representing one element of the source array.
+		 * This is an abuse of CaseTestExpr, but it's OK as long as there
+		 * can't be any CaseExpr or ArrayCoerceExpr within the completed
+		 * elemexpr.
+		 */
 		ctest->typeId = get_element_type(sourceBaseTypeId);
 		Assert(OidIsValid(ctest->typeId));
 		ctest->typeMod = sourceBaseTypeMod;
@@ -1467,8 +1472,8 @@ coerce_to_common_type(ParseState *pstate, Node *node,
  * We do not ereport here, but just return false if a rule is violated.
  */
 bool
-check_generic_type_consistency(Oid *actual_arg_types,
-							   Oid *declared_arg_types,
+check_generic_type_consistency(const Oid *actual_arg_types,
+							   const Oid *declared_arg_types,
 							   int nargs)
 {
 	int			j;
@@ -1664,7 +1669,7 @@ check_generic_type_consistency(Oid *actual_arg_types,
  * assume that successive inputs are of the same actual element type.
  */
 Oid
-enforce_generic_type_consistency(Oid *actual_arg_types,
+enforce_generic_type_consistency(const Oid *actual_arg_types,
 								 Oid *declared_arg_types,
 								 int nargs,
 								 Oid rettype,

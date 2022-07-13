@@ -1080,7 +1080,7 @@ prepare_projection_slot(AggState *aggstate, TupleTableSlot *slot, int currentSet
 
 		aggstate->grouped_cols = grouped_cols;
 
-		if (slot->tts_isempty)
+		if (TTS_EMPTY(slot))
 		{
 			/*
 			 * Force all values to be NULL if working on an empty input tuple
@@ -1403,7 +1403,8 @@ find_hash_columns(AggState *aggstate)
 							  &perhash->eqfuncoids,
 							  &perhash->hashfunctions);
 		perhash->hashslot =
-			ExecAllocTableSlot(&estate->es_tupleTable, hashDesc);
+			ExecAllocTableSlot(&estate->es_tupleTable, hashDesc,
+							   &TTSOpsMinimalTuple);
 
 		list_free(hashTlist);
 		bms_free(colnos);
@@ -1740,7 +1741,7 @@ agg_retrieve_direct(AggState *aggstate)
 					 * Make a copy of the first input tuple; we will use this
 					 * for comparisons (in group mode) and for projection.
 					 */
-					aggstate->grp_firstTuple = ExecCopySlotTuple(outerslot);
+					aggstate->grp_firstTuple = ExecCopySlotHeapTuple(outerslot);
 				}
 				else
 				{
@@ -1799,10 +1800,8 @@ agg_retrieve_direct(AggState *aggstate)
 				 * reserved for it.  The tuple will be deleted when it is
 				 * cleared from the slot.
 				 */
-				ExecStoreTuple(aggstate->grp_firstTuple,
-							   firstSlot,
-							   InvalidBuffer,
-							   true);
+				ExecForceStoreHeapTuple(aggstate->grp_firstTuple,
+								   firstSlot);
 				aggstate->grp_firstTuple = NULL;	/* don't keep two pointers */
 
 				/* set up for first advance_aggregates call */
@@ -1858,7 +1857,7 @@ agg_retrieve_direct(AggState *aggstate)
 						if (!ExecQual(aggstate->phase->eqfunctions[node->numCols - 1],
 									  tmpcontext))
 						{
-							aggstate->grp_firstTuple = ExecCopySlotTuple(outerslot);
+							aggstate->grp_firstTuple = ExecCopySlotHeapTuple(outerslot);
 							break;
 						}
 					}
@@ -2212,15 +2211,17 @@ ExecInitAgg(Agg *node, EState *estate, int eflags)
 	/*
 	 * initialize source tuple type.
 	 */
-	ExecCreateScanSlotFromOuterPlan(estate, &aggstate->ss);
+	ExecCreateScanSlotFromOuterPlan(estate, &aggstate->ss,
+									ExecGetResultSlotOps(outerPlanState(&aggstate->ss), NULL));
 	scanDesc = aggstate->ss.ss_ScanTupleSlot->tts_tupleDescriptor;
 	if (node->chain)
-		aggstate->sort_slot = ExecInitExtraTupleSlot(estate, scanDesc);
+		aggstate->sort_slot = ExecInitExtraTupleSlot(estate, scanDesc,
+													 &TTSOpsMinimalTuple);
 
 	/*
 	 * Initialize result type, slot and projection.
 	 */
-	ExecInitResultTupleSlotTL(estate, &aggstate->ss.ps);
+	ExecInitResultTupleSlotTL(&aggstate->ss.ps, &TTSOpsVirtual);
 	ExecAssignProjectionInfo(&aggstate->ss.ps, NULL);
 
 	/*
@@ -3063,7 +3064,8 @@ build_pertrans_for_aggref(AggStatePerTrans pertrans,
 	{
 		pertrans->sortdesc = ExecTypeFromTL(aggref->args, false);
 		pertrans->sortslot =
-			ExecInitExtraTupleSlot(estate, pertrans->sortdesc);
+			ExecInitExtraTupleSlot(estate, pertrans->sortdesc,
+								   &TTSOpsMinimalTuple);
 	}
 
 	if (numSortCols > 0)
@@ -3085,7 +3087,8 @@ build_pertrans_for_aggref(AggStatePerTrans pertrans,
 		{
 			/* we will need an extra slot to store prior values */
 			pertrans->uniqslot =
-				ExecInitExtraTupleSlot(estate, pertrans->sortdesc);
+				ExecInitExtraTupleSlot(estate, pertrans->sortdesc,
+									   &TTSOpsMinimalTuple);
 		}
 
 		/* Extract the sort information for use later */

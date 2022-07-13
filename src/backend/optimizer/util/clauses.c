@@ -1190,9 +1190,23 @@ max_parallel_hazard_walker(Node *node, max_parallel_hazard_context *context)
 			return true;
 	}
 
-	if (IsA(node, NextValueExpr))
+	else if (IsA(node, NextValueExpr))
 	{
 		if (max_parallel_hazard_test(PROPARALLEL_UNSAFE, context))
+			return true;
+	}
+
+	/*
+	 * Treat window functions as parallel-restricted because we aren't sure
+	 * whether the input row ordering is fully deterministic, and the output
+	 * of window functions might vary across workers if not.  (In some cases,
+	 * like where the window frame orders by a primary key, we could relax
+	 * this restriction.  But it doesn't currently seem worth expending extra
+	 * effort to do so.)
+	 */
+	else if (IsA(node, WindowFunc))
+	{
+		if (max_parallel_hazard_test(PROPARALLEL_RESTRICTED, context))
 			return true;
 	}
 
@@ -1438,7 +1452,8 @@ contain_nonstrict_functions_walker(Node *node, void *context)
  * CaseTestExpr nodes must appear directly within the corresponding CaseExpr,
  * not nested within another one, or they'll see the wrong test value.  If one
  * appears "bare" in the arguments of a SQL function, then we can't inline the
- * SQL function for fear of creating such a situation.
+ * SQL function for fear of creating such a situation.  The same applies for
+ * CaseTestExpr used within the elemexpr of an ArrayCoerceExpr.
  *
  * CoerceToDomainValue would have the same issue if domain CHECK expressions
  * could get inlined into larger expressions, but presently that's impossible.
@@ -1454,7 +1469,7 @@ contain_context_dependent_node(Node *clause)
 	return contain_context_dependent_node_walker(clause, &flags);
 }
 
-#define CCDN_IN_CASEEXPR	0x0001	/* CaseTestExpr okay here? */
+#define CCDN_CASETESTEXPR_OK	0x0001	/* CaseTestExpr okay here? */
 
 static bool
 contain_context_dependent_node_walker(Node *node, int *flags)
@@ -1462,8 +1477,8 @@ contain_context_dependent_node_walker(Node *node, int *flags)
 	if (node == NULL)
 		return false;
 	if (IsA(node, CaseTestExpr))
-		return !(*flags & CCDN_IN_CASEEXPR);
-	if (IsA(node, CaseExpr))
+		return !(*flags & CCDN_CASETESTEXPR_OK);
+	else if (IsA(node, CaseExpr))
 	{
 		CaseExpr   *caseexpr = (CaseExpr *) node;
 
@@ -1485,13 +1500,31 @@ contain_context_dependent_node_walker(Node *node, int *flags)
 			 * seem worth any extra code.  If there are any bare CaseTestExprs
 			 * elsewhere in the CASE, something's wrong already.
 			 */
-			*flags |= CCDN_IN_CASEEXPR;
+			*flags |= CCDN_CASETESTEXPR_OK;
 			res = expression_tree_walker(node,
 										 contain_context_dependent_node_walker,
 										 (void *) flags);
 			*flags = save_flags;
 			return res;
 		}
+	}
+	else if (IsA(node, ArrayCoerceExpr))
+	{
+		ArrayCoerceExpr *ac = (ArrayCoerceExpr *) node;
+		int			save_flags;
+		bool		res;
+
+		/* Check the array expression */
+		if (contain_context_dependent_node_walker((Node *) ac->arg, flags))
+			return true;
+
+		/* Check the elemexpr, which is allowed to contain CaseTestExpr */
+		save_flags = *flags;
+		*flags |= CCDN_CASETESTEXPR_OK;
+		res = contain_context_dependent_node_walker((Node *) ac->elemexpr,
+													flags);
+		*flags = save_flags;
+		return res;
 	}
 	return expression_tree_walker(node, contain_context_dependent_node_walker,
 								  (void *) flags);
@@ -2567,7 +2600,14 @@ eval_const_expressions_mutator(Node *node,
 					else
 						prm = &paramLI->params[param->paramid - 1];
 
-					if (OidIsValid(prm->ptype))
+					/*
+					 * We don't just check OidIsValid, but insist that the
+					 * fetched type match the Param, just in case the hook did
+					 * something unexpected.  No need to throw an error here
+					 * though; leave that for runtime.
+					 */
+					if (OidIsValid(prm->ptype) &&
+						prm->ptype == param->paramtype)
 					{
 						/* OK to substitute parameter value? */
 						if (context->estimate ||
@@ -2583,7 +2623,6 @@ eval_const_expressions_mutator(Node *node,
 							bool		typByVal;
 							Datum		pval;
 
-							Assert(prm->ptype == param->paramtype);
 							get_typlenbyval(param->paramtype,
 											&typLen, &typByVal);
 							if (prm->isnull || typByVal)
@@ -3105,10 +3144,31 @@ eval_const_expressions_mutator(Node *node,
 			}
 		case T_ArrayCoerceExpr:
 			{
-				ArrayCoerceExpr *ac;
+				ArrayCoerceExpr *ac = makeNode(ArrayCoerceExpr);
+				Node	   *save_case_val;
 
-				/* Copy the node and const-simplify its arguments */
-				ac = (ArrayCoerceExpr *) ece_generic_processing(node);
+				/*
+				 * Copy the node and const-simplify its arguments.  We can't
+				 * use ece_generic_processing() here because we need to mess
+				 * with case_val only while processing the elemexpr.
+				 */
+				memcpy(ac, node, sizeof(ArrayCoerceExpr));
+				ac->arg = (Expr *)
+					eval_const_expressions_mutator((Node *) ac->arg,
+												   context);
+
+				/*
+				 * Set up for the CaseTestExpr node contained in the elemexpr.
+				 * We must prevent it from absorbing any outer CASE value.
+				 */
+				save_case_val = context->case_val;
+				context->case_val = NULL;
+
+				ac->elemexpr = (Expr *)
+					eval_const_expressions_mutator((Node *) ac->elemexpr,
+												   context);
+
+				context->case_val = save_case_val;
 
 				/*
 				 * If constant argument and the per-element expression is
@@ -3122,6 +3182,7 @@ eval_const_expressions_mutator(Node *node,
 					ac->elemexpr && !IsA(ac->elemexpr, CoerceToDomain) &&
 					!contain_mutable_functions((Node *) ac->elemexpr))
 					return ece_evaluate_expr(ac);
+
 				return (Node *) ac;
 			}
 		case T_CollateExpr:
@@ -3655,6 +3716,52 @@ eval_const_expressions_mutator(Node *node,
 													  context);
 			}
 			break;
+		case T_ConvertRowtypeExpr:
+			{
+				ConvertRowtypeExpr *cre = castNode(ConvertRowtypeExpr, node);
+				Node		   *arg;
+				ConvertRowtypeExpr *newcre;
+
+				arg = eval_const_expressions_mutator((Node *) cre->arg,
+													 context);
+
+				newcre = makeNode(ConvertRowtypeExpr);
+				newcre->resulttype = cre->resulttype;
+				newcre->convertformat = cre->convertformat;
+				newcre->location = cre->location;
+
+				/*
+				 * In case of a nested ConvertRowtypeExpr, we can convert the
+				 * leaf row directly to the topmost row format without any
+				 * intermediate conversions. (This works because
+				 * ConvertRowtypeExpr is used only for child->parent
+				 * conversion in inheritance trees, which works by exact match
+				 * of column name, and a column absent in an intermediate
+				 * result can't be present in the final result.)
+				 *
+				 * No need to check more than one level deep, because the
+				 * above recursion will have flattened anything else.
+				 */
+				if (arg != NULL && IsA(arg, ConvertRowtypeExpr))
+				{
+					ConvertRowtypeExpr *argcre = (ConvertRowtypeExpr *) arg;
+
+					arg = (Node *) argcre->arg;
+
+					/*
+					 * Make sure an outer implicit conversion can't hide an
+					 * inner explicit one.
+					 */
+					if (newcre->convertformat == COERCE_IMPLICIT_CAST)
+						newcre->convertformat = argcre->convertformat;
+				}
+
+				newcre->arg = (Expr *) arg;
+
+				if (arg != NULL && IsA(arg, Const))
+					return ece_evaluate_expr((Node *) newcre);
+				return (Node *) newcre;
+			}
 		case T_CypherTypeCast:
 			{
 				CypherTypeCast *tc = (CypherTypeCast *) node;

@@ -16,7 +16,6 @@
 #define POSTGRES_ECPG_INTERNAL
 #include "postgres_fe.h"
 
-#include <float.h>
 #include <math.h>
 
 #include "catalog/pg_type_d.h"
@@ -222,12 +221,6 @@ ecpg_is_type_an_array(int type, const struct statement *stmt, const struct varia
 		if (!ecpg_type_infocache_push(&(stmt->connection->cache_head), FLOAT4OID, ECPG_ARRAY_NONE, stmt->lineno))
 			return ECPG_ARRAY_ERROR;
 		if (!ecpg_type_infocache_push(&(stmt->connection->cache_head), FLOAT8OID, ECPG_ARRAY_NONE, stmt->lineno))
-			return ECPG_ARRAY_ERROR;
-		if (!ecpg_type_infocache_push(&(stmt->connection->cache_head), ABSTIMEOID, ECPG_ARRAY_NONE, stmt->lineno))
-			return ECPG_ARRAY_ERROR;
-		if (!ecpg_type_infocache_push(&(stmt->connection->cache_head), RELTIMEOID, ECPG_ARRAY_NONE, stmt->lineno))
-			return ECPG_ARRAY_ERROR;
-		if (!ecpg_type_infocache_push(&(stmt->connection->cache_head), TINTERVALOID, ECPG_ARRAY_NONE, stmt->lineno))
 			return ECPG_ARRAY_ERROR;
 		if (!ecpg_type_infocache_push(&(stmt->connection->cache_head), UNKNOWNOID, ECPG_ARRAY_NONE, stmt->lineno))
 			return ECPG_ARRAY_ERROR;
@@ -1309,8 +1302,8 @@ ecpg_build_params(struct statement *stmt)
 		if ((position = next_insert(stmt->command, position, stmt->questionmarks, std_strings) + 1) == 0)
 		{
 			/*
-			 * We have an argument but we dont have the matched up placeholder
-			 * in the string
+			 * We have an argument but we don't have the matched up
+			 * placeholder in the string
 			 */
 			ecpg_raise(stmt->lineno, ECPG_TOO_MANY_ARGUMENTS,
 					   ECPG_SQLSTATE_USING_CLAUSE_DOES_NOT_MATCH_PARAMETERS,
@@ -1729,12 +1722,13 @@ ecpg_process_output(struct statement *stmt, bool clear_result)
 	}
 
 	/* check for asynchronous returns */
-	notify = PQnotifies(stmt->connection->connection);
-	if (notify)
+	PQconsumeInput(stmt->connection->connection);
+	while ((notify = PQnotifies(stmt->connection->connection)) != NULL)
 	{
 		ecpg_log("ecpg_process_output on line %d: asynchronous notification of \"%s\" from backend PID %d received\n",
 				 stmt->lineno, notify->relname, notify->be_pid);
 		PQfreemem(notify);
+		PQconsumeInput(stmt->connection->connection);
 	}
 
 	return status;

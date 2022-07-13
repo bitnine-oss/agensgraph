@@ -19,7 +19,7 @@
  * Copyright (c) 2016-2018, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
- *	  src/backend/lib/llvmjit_types.c
+ *	  src/backend/jit/llvm/llvmjit_types.c
  *
  *-------------------------------------------------------------------------
  */
@@ -59,6 +59,8 @@ FunctionCallInfoData StructFunctionCallInfoData;
 HeapTupleData StructHeapTupleData;
 MemoryContextData StructMemoryContextData;
 TupleTableSlot StructTupleTableSlot;
+HeapTupleTableSlot StructHeapTupleTableSlot;
+MinimalTupleTableSlot StructMinimalTupleTableSlot;
 struct tupleDesc StructtupleDesc;
 
 
@@ -97,11 +99,11 @@ void	   *referenced_functions[] =
 {
 	strlen,
 	varsize_any,
-	slot_getsomeattrs,
+	slot_getsomeattrs_int,
 	slot_getmissingattrs,
-	heap_getsysattr,
 	MakeExpandedObjectReadOnlyInternal,
 	ExecEvalArrayRefSubscript,
+	ExecEvalSysVar,
 	ExecAggTransReparent,
 	ExecAggInitGroup
 };

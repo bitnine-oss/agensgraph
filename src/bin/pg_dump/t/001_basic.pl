@@ -4,7 +4,7 @@ use warnings;
 use Config;
 use PostgresNode;
 use TestLib;
-use Test::More tests => 68;
+use Test::More tests => 72;
 
 my $tempdir       = TestLib::tempdir;
 my $tempdir_short = TestLib::tempdir_short;
@@ -122,6 +122,11 @@ command_fails_like(
 	qr/\Qpg_restore: unrecognized archive format "garbage";\E/,
 	'pg_dump: unrecognized archive format');
 
+command_fails_like(
+	[ 'pg_dump', '--on-conflict-do-nothing' ],
+	qr/\Qpg_dump: option --on-conflict-do-nothing requires option --inserts or --column-inserts\E/,
+	'pg_dump: option --on-conflict-do-nothing requires option --inserts or --column-inserts');
+
 # pg_dumpall command-line argument checks
 command_fails_like(
 	[ 'pg_dumpall', '-g', '-r' ],
@@ -145,3 +150,9 @@ command_fails_like(
 	[ 'pg_dumpall', '--if-exists' ],
 	qr/\Qpg_dumpall: option --if-exists requires option -c\/--clean\E/,
 	'pg_dumpall: option --if-exists requires option -c/--clean');
+
+command_fails_like(
+	[ 'pg_restore', '-C', '-1' ],
+	qr/\Qpg_restore: options -C\/--create and -1\/--single-transaction cannot be used together\E/,
+	'pg_restore: options -C\/--create and -1\/--single-transaction cannot be used together'
+);

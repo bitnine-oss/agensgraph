@@ -276,6 +276,8 @@ llvm_compile_expr(ExprState *state)
 					LLVMValueRef v_slot;
 					LLVMBasicBlockRef b_fetch;
 					LLVMValueRef v_nvalid;
+					LLVMValueRef l_jit_deform = NULL;
+					const TupleTableSlotOps *tts_ops = NULL;
 
 					b_fetch = l_bb_before_v(opblocks[i + 1],
 											"op.%d.fetch", i);
@@ -283,40 +285,22 @@ llvm_compile_expr(ExprState *state)
 					if (op->d.fetch.known_desc)
 						desc = op->d.fetch.known_desc;
 
+					if (op->d.fetch.fixed)
+						tts_ops = op->d.fetch.kind;
+
 					if (opcode == EEOP_INNER_FETCHSOME)
-					{
-						PlanState  *is = innerPlanState(parent);
-
 						v_slot = v_innerslot;
-
-						if (!desc &&
-							is &&
-							is->ps_ResultTupleSlot &&
-							is->ps_ResultTupleSlot->tts_fixedTupleDescriptor)
-							desc = is->ps_ResultTupleSlot->tts_tupleDescriptor;
-					}
 					else if (opcode == EEOP_OUTER_FETCHSOME)
-					{
-						PlanState  *os = outerPlanState(parent);
-
 						v_slot = v_outerslot;
-
-						if (!desc &&
-							os &&
-							os->ps_ResultTupleSlot &&
-							os->ps_ResultTupleSlot->tts_fixedTupleDescriptor)
-							desc = os->ps_ResultTupleSlot->tts_tupleDescriptor;
-					}
 					else
-					{
 						v_slot = v_scanslot;
-						if (!desc && parent)
-							desc = parent->scandesc;
-					}
 
 					/*
 					 * Check if all required attributes are available, or
 					 * whether deforming is required.
+					 *
+					 * TODO: skip nvalid check if slot is fixed and known to
+					 * be a virtual slot.
 					 */
 					v_nvalid =
 						l_load_struct_gep(b, v_slot,
@@ -324,7 +308,7 @@ llvm_compile_expr(ExprState *state)
 										  "");
 					LLVMBuildCondBr(b,
 									LLVMBuildICmp(b, LLVMIntUGE, v_nvalid,
-												  l_int32_const(op->d.fetch.last_var),
+												  l_int16_const(op->d.fetch.last_var),
 												  ""),
 									opblocks[i + 1], b_fetch);
 
@@ -336,19 +320,22 @@ llvm_compile_expr(ExprState *state)
 					 * function specific to tupledesc and the exact number of
 					 * to-be-extracted attributes.
 					 */
-					if (desc && (context->base.flags & PGJIT_DEFORM))
+					if (tts_ops && desc && (context->base.flags & PGJIT_DEFORM))
 					{
-						LLVMValueRef params[1];
-						LLVMValueRef l_jit_deform;
-
 						l_jit_deform =
 							slot_compile_deform(context, desc,
+												tts_ops,
 												op->d.fetch.last_var);
+					}
+
+					if (l_jit_deform)
+					{
+						LLVMValueRef params[1];
+
 						params[0] = v_slot;
 
 						LLVMBuildCall(b, l_jit_deform,
 									  params, lengthof(params), "");
-
 					}
 					else
 					{
@@ -358,7 +345,7 @@ llvm_compile_expr(ExprState *state)
 						params[1] = l_int32_const(op->d.fetch.last_var);
 
 						LLVMBuildCall(b,
-									  llvm_get_decl(mod, FuncSlotGetsomeattrs),
+									  llvm_get_decl(mod, FuncSlotGetsomeattrsInt),
 									  params, lengthof(params), "");
 					}
 
@@ -406,13 +393,8 @@ llvm_compile_expr(ExprState *state)
 			case EEOP_OUTER_SYSVAR:
 			case EEOP_SCAN_SYSVAR:
 				{
-					int			attnum = op->d.var.attnum;
-					LLVMValueRef v_attnum;
-					LLVMValueRef v_tuple;
-					LLVMValueRef v_tupleDescriptor;
-					LLVMValueRef v_params[4];
-					LLVMValueRef v_syscol;
 					LLVMValueRef v_slot;
+					LLVMValueRef v_params[4];
 
 					if (opcode == EEOP_INNER_SYSVAR)
 						v_slot = v_innerslot;
@@ -421,31 +403,14 @@ llvm_compile_expr(ExprState *state)
 					else
 						v_slot = v_scanslot;
 
-					Assert(op->d.var.attnum < 0);
+					v_params[0] = v_state;
+					v_params[1] = l_ptr_const(op, l_ptr(StructExprEvalStep));
+					v_params[2] = v_econtext;
+					v_params[3] = v_slot;
 
-					v_tuple = l_load_struct_gep(b, v_slot,
-												FIELDNO_TUPLETABLESLOT_TUPLE,
-												"v.tuple");
-
-					/*
-					 * Could optimize this a bit for fixed descriptors, but
-					 * this shouldn't be that critical a path.
-					 */
-					v_tupleDescriptor =
-						l_load_struct_gep(b, v_slot,
-										  FIELDNO_TUPLETABLESLOT_TUPLEDESCRIPTOR,
-										  "v.tupledesc");
-					v_attnum = l_int32_const(attnum);
-
-					v_params[0] = v_tuple;
-					v_params[1] = v_attnum;
-					v_params[2] = v_tupleDescriptor;
-					v_params[3] = v_resnullp;
-					v_syscol = LLVMBuildCall(b,
-											 llvm_get_decl(mod, FuncHeapGetsysattr),
-											 v_params, lengthof(v_params),
-											 "");
-					LLVMBuildStore(b, v_syscol, v_resvaluep);
+					LLVMBuildCall(b,
+								  llvm_get_decl(mod, FuncExecEvalSysVar),
+								  v_params, lengthof(v_params), "");
 
 					LLVMBuildBr(b, opblocks[i + 1]);
 					break;
@@ -2124,6 +2089,8 @@ llvm_compile_expr(ExprState *state)
 					LLVMValueRef v_nullp;
 					LLVMBasicBlockRef *b_checknulls;
 
+					Assert(nargs > 0);
+
 					jumpnull = op->d.agg_strict_input_check.jumpnull;
 					v_nullp = l_ptr_const(nulls, l_ptr(TypeStorageBool));
 
@@ -2228,6 +2195,28 @@ llvm_compile_expr(ExprState *state)
 
 					{
 						LLVMValueRef params[3];
+						LLVMValueRef v_curaggcontext;
+						LLVMValueRef v_current_set;
+						LLVMValueRef v_aggcontext;
+
+						v_aggcontext = l_ptr_const(op->d.agg_init_trans.aggcontext,
+												   l_ptr(StructExprContext));
+
+						v_current_set =
+							LLVMBuildStructGEP(b,
+											   v_aggstatep,
+											   FIELDNO_AGGSTATE_CURRENT_SET,
+											   "aggstate.current_set");
+						v_curaggcontext =
+							LLVMBuildStructGEP(b,
+											   v_aggstatep,
+											   FIELDNO_AGGSTATE_CURAGGCONTEXT,
+											   "aggstate.curaggcontext");
+
+						LLVMBuildStore(b, l_int32_const(op->d.agg_init_trans.setno),
+									   v_current_set);
+						LLVMBuildStore(b, v_aggcontext,
+									   v_curaggcontext);
 
 						params[0] = v_aggstatep;
 						params[1] = v_pertransp;
@@ -2477,6 +2466,8 @@ llvm_compile_expr(ExprState *state)
 						/* store trans value */
 						LLVMBuildStore(b, v_newval, v_transvaluep);
 						LLVMBuildStore(b, v_fcinfo_isnull, v_transnullp);
+
+						l_mcxt_switch(mod, b, v_oldcontext);
 						LLVMBuildBr(b, opblocks[i + 1]);
 
 						/* returned datum passed datum, no need to reparent */
@@ -2533,7 +2524,7 @@ llvm_compile_expr(ExprState *state)
 	llvm_leave_fatal_on_oom();
 
 	INSTR_TIME_SET_CURRENT(endtime);
-	INSTR_TIME_ACCUM_DIFF(context->base.generation_counter,
+	INSTR_TIME_ACCUM_DIFF(context->base.instr.generation_counter,
 						  endtime, starttime);
 
 	return true;

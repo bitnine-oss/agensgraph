@@ -790,11 +790,7 @@ ExecEndNode(PlanState *node)
  * ExecShutdownNode
  *
  * Give execution nodes a chance to stop asynchronous resource consumption
- * and release any resources still held.  Currently, this is only used for
- * parallel query, but we might want to extend it to other cases also (e.g.
- * FDW).  We might also want to call it sooner, as soon as it's evident that
- * no more rows will be needed (e.g. when a Limit is filled) rather than only
- * at the end of ExecutorRun.
+ * and release any resources still held.
  */
 bool
 ExecShutdownNode(PlanState *node)
@@ -805,6 +801,19 @@ ExecShutdownNode(PlanState *node)
 	check_stack_depth();
 
 	planstate_tree_walker(node, ExecShutdownNode, NULL);
+
+	/*
+	 * Treat the node as running while we shut it down, but only if it's run
+	 * at least once already.  We don't expect much CPU consumption during
+	 * node shutdown, but in the case of Gather or Gather Merge, we may shut
+	 * down workers at this stage.  If so, their buffer usage will get
+	 * propagated into pgBufferUsage at this point, and we want to make sure
+	 * that it gets associated with the Gather node.  We skip this if the node
+	 * has never been executed, so as to avoid incorrectly making it appear
+	 * that it has.
+	 */
+	if (node->instrument && node->instrument->running)
+		InstrStartNode(node->instrument);
 
 	switch (nodeTag(node))
 	{
@@ -829,6 +838,10 @@ ExecShutdownNode(PlanState *node)
 		default:
 			break;
 	}
+
+	/* Stop the node if we started it above, reporting 0 tuples. */
+	if (node->instrument && node->instrument->running)
+		InstrStopNode(node->instrument, 0);
 
 	return false;
 }

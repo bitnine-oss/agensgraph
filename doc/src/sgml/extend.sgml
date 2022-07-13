@@ -1015,7 +1015,7 @@ CREATE TYPE pair AS ( k text, v text );
 CREATE OR REPLACE FUNCTION pair(text, text)
 RETURNS pair LANGUAGE SQL AS 'SELECT ROW($1, $2)::@extschema@.pair;';
 
-CREATE OPERATOR ~> (LEFTARG = text, RIGHTARG = text, PROCEDURE = pair);
+CREATE OPERATOR ~> (LEFTARG = text, RIGHTARG = text, FUNCTION = pair);
 
 -- "SET search_path" is easy to get right, but qualified names perform better.
 CREATE OR REPLACE FUNCTION lower(pair)
@@ -1100,13 +1100,15 @@ include $(PGXS)
     and include the global <acronym>PGXS</acronym> makefile.
     Here is an example that builds an extension module named
     <literal>isbn_issn</literal>, consisting of a shared library containing
-    some C code, an extension control file, a SQL script, and a documentation
-    text file:
+    some C code, an extension control file, a SQL script, an include file
+    (only needed if other modules might need to access the extension functions
+    without going via SQL), and a documentation text file:
 <programlisting>
 MODULES = isbn_issn
 EXTENSION = isbn_issn
 DATA = isbn_issn--1.0.sql
 DOCS = README.isbn_issn
+HEADERS_isbn_issn = isbn_issn.h
 
 PG_CONFIG = pg_config
 PGXS := $(shell $(PG_CONFIG) --pgxs)
@@ -1216,6 +1218,48 @@ include $(PGXS)
        <para>
         random files to install under
         <literal><replaceable>prefix</replaceable>/doc/$MODULEDIR</literal>
+       </para>
+      </listitem>
+     </varlistentry>
+
+     <varlistentry>
+      <term><varname>HEADERS</varname></term>
+      <term><varname>HEADERS_built</varname></term>
+      <listitem>
+       <para>
+        Files to (optionally build and) install under
+        <literal><replaceable>prefix</replaceable>/include/server/$MODULEDIR/$MODULE_big</literal>.
+       </para>
+       <para>
+        Unlike <literal>DATA_built</literal>, files in <literal>HEADERS_built</literal>
+        are not removed by the <literal>clean</literal> target; if you want them removed,
+        also add them to <literal>EXTRA_CLEAN</literal> or add your own rules to do it.
+       </para>
+      </listitem>
+     </varlistentry>
+
+     <varlistentry>
+      <term><varname>HEADERS_$MODULE</varname></term>
+      <term><varname>HEADERS_built_$MODULE</varname></term>
+      <listitem>
+       <para>
+        Files to install (after building if specified) under
+        <literal><replaceable>prefix</replaceable>/include/server/$MODULEDIR/$MODULE</literal>,
+        where <literal>$MODULE</literal> must be a module name used
+        in <literal>MODULES</literal> or <literal>MODULE_big</literal>.
+       </para>
+       <para>
+        Unlike <literal>DATA_built</literal>, files in <literal>HEADERS_built_$MODULE</literal>
+        are not removed by the <literal>clean</literal> target; if you want them removed,
+        also add them to <literal>EXTRA_CLEAN</literal> or add your own rules to do it.
+       </para>
+       <para>
+        It is legal to use both variables for the same module, or any
+        combination, unless you have two module names in the
+        <literal>MODULES</literal> list that differ only by the presence of a
+        prefix <literal>built_</literal>, which would cause ambiguity. In
+        that (hopefully unlikely) case, you should use only the
+        <literal>HEADERS_built_$MODULE</literal> variables.
        </para>
       </listitem>
      </varlistentry>

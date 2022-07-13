@@ -353,19 +353,6 @@ XLogReadRecord(XLogReaderState *state, XLogRecPtr RecPtr, char **errormsg)
 		gotheader = false;
 	}
 
-	/*
-	 * Enlarge readRecordBuf as needed.
-	 */
-	if (total_len > state->readRecordBufSize &&
-		!allocate_recordbuf(state, total_len))
-	{
-		/* We treat this as a "bogus data" condition */
-		report_invalid_record(state, "record length %u at %X/%X too long",
-							  total_len,
-							  (uint32) (RecPtr >> 32), (uint32) RecPtr);
-		goto err;
-	}
-
 	len = XLOG_BLCKSZ - RecPtr % XLOG_BLCKSZ;
 	if (total_len > len)
 	{
@@ -374,6 +361,19 @@ XLogReadRecord(XLogReaderState *state, XLogRecPtr RecPtr, char **errormsg)
 		XLogPageHeader pageHeader;
 		char	   *buffer;
 		uint32		gotlen;
+
+		/*
+		 * Enlarge readRecordBuf as needed.
+		 */
+		if (total_len > state->readRecordBufSize &&
+			!allocate_recordbuf(state, total_len))
+		{
+			/* We treat this as a "bogus data" condition */
+			report_invalid_record(state, "record length %u at %X/%X too long",
+								  total_len,
+								  (uint32) (RecPtr >> 32), (uint32) RecPtr);
+			goto err;
+		}
 
 		/* Copy the first fragment of the record from the first page. */
 		memcpy(state->readRecordBuf,
@@ -479,7 +479,6 @@ XLogReadRecord(XLogReaderState *state, XLogRecPtr RecPtr, char **errormsg)
 		state->EndRecPtr = RecPtr + MAXALIGN(total_len);
 
 		state->ReadRecPtr = RecPtr;
-		memcpy(state->readRecordBuf, record, total_len);
 	}
 
 	/*
@@ -747,7 +746,7 @@ XLogReaderValidatePageHeader(XLogReaderState *state, XLogRecPtr recptr,
 	XLByteToSeg(recptr, segno, state->wal_segment_size);
 	offset = XLogSegmentOffset(recptr, state->wal_segment_size);
 
-	XLogSegNoOffsetToRecPtr(segno, offset, recaddr, state->wal_segment_size);
+	XLogSegNoOffsetToRecPtr(segno, offset, state->wal_segment_size, recaddr);
 
 	if (hdr->xlp_magic != XLOG_PAGE_MAGIC)
 	{
@@ -1412,7 +1411,7 @@ RestoreBlockImage(XLogReaderState *record, uint8 block_id, char *page)
 {
 	DecodedBkpBlock *bkpb;
 	char	   *ptr;
-	char		tmp[BLCKSZ];
+	PGAlignedBlock tmp;
 
 	if (!record->blocks[block_id].in_use)
 		return false;
@@ -1425,7 +1424,7 @@ RestoreBlockImage(XLogReaderState *record, uint8 block_id, char *page)
 	if (bkpb->bimg_info & BKPIMAGE_IS_COMPRESSED)
 	{
 		/* If a backup block image is compressed, decompress it */
-		if (pglz_decompress(ptr, bkpb->bimg_len, tmp,
+		if (pglz_decompress(ptr, bkpb->bimg_len, tmp.data,
 							BLCKSZ - bkpb->hole_length) < 0)
 		{
 			report_invalid_record(record, "invalid compressed image at %X/%X, block %d",
@@ -1434,7 +1433,7 @@ RestoreBlockImage(XLogReaderState *record, uint8 block_id, char *page)
 								  block_id);
 			return false;
 		}
-		ptr = tmp;
+		ptr = tmp.data;
 	}
 
 	/* generate page, taking into account hole if necessary */

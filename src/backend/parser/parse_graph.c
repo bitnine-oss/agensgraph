@@ -3628,12 +3628,12 @@ hasGinOnProp(Oid relid)
 		Form_pg_index index;
 		int			attnum;
 
-		indexRel = index_open(indexoid, NoLock);
+		indexRel = index_open(indexoid, AccessShareLock);
 		index = indexRel->rd_index;
 
 		if (!IndexIsValid(index))
 		{
-			index_close(indexRel, NoLock);
+			index_close(indexRel, AccessShareLock);
 			continue;
 		}
 
@@ -3642,31 +3642,31 @@ hasGinOnProp(Oid relid)
 					HeapTupleHeaderGetXmin(indexRel->rd_indextuple->t_data),
 					TransactionXmin))
 		{
-			index_close(indexRel, NoLock);
+			index_close(indexRel, AccessShareLock);
 			continue;
 		}
 
 		if (indexRel->rd_rel->relam != GIN_AM_OID)
 		{
-			index_close(indexRel, NoLock);
+			index_close(indexRel, AccessShareLock);
 			continue;
 		}
 
 		attnum = attnameAttNum(rel, AG_ELEM_PROP_MAP, false);
 		if (attnum == InvalidAttrNumber)
 		{
-			index_close(indexRel, NoLock);
+			index_close(indexRel, AccessShareLock);
 			continue;
 		}
 
 		if (index->indkey.values[0] == attnum)
 		{
-			index_close(indexRel, NoLock);
+			index_close(indexRel, AccessShareLock);
 			ret = true;
 			break;
 		}
 
-		index_close(indexRel, NoLock);
+		index_close(indexRel, AccessShareLock);
 	}
 
 	list_free(indexoidlist);
