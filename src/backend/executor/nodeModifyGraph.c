@@ -141,7 +141,7 @@ ExecInitModifyGraph(ModifyGraph *mgplan, EState *estate, int eflags)
 	 * We don't use ExecInitResultTypeTL because we need to get the
 	 * information of the subplan, not the current plan.
 	 */
-	mgstate->ps.ps_ResultTupleDesc = ExecTypeFromTL(mgplan->subplan->targetlist, false);
+	mgstate->ps.ps_ResultTupleDesc = ExecTypeFromTL(mgplan->subplan->targetlist);
 	ExecSetSlotDescriptor(slot, mgstate->ps.ps_ResultTupleDesc);
 	ExecAssignExprContext(estate, &mgstate->ps);
 
@@ -2110,8 +2110,6 @@ static void removeRangeTable(EState* estate, int n)
 {
 	int i = -1;
 	ListCell *lc;
-	Index new_rtsize = estate->es_range_table_size - n;
-	List *new_range_table = estate->es_range_table;
 
 	for (lc = list_head(estate->es_range_table); lc != NULL;) {
 		RangeTblEntry *es_rte = lfirst(lc);
@@ -2133,7 +2131,6 @@ static void removeRangeTable(EState* estate, int n)
 
 static void fitRangeTableSpace(EState *estate, int newsize)
 {
-	Index saved_range_table_size = estate->es_range_table_size;
 	RangeTblEntry **saved_rta = estate->es_range_table_array;
 	Relation *saved_relations = estate->es_relations;
 

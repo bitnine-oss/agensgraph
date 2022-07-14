@@ -23,6 +23,7 @@
 
 CATALOG(ag_graph,7040,GraphRelationId) BKI_SCHEMA_MACRO
 {
+	Oid			oid;
 	NameData	graphname;
 	Oid			nspid;
 } FormData_ag_graph;

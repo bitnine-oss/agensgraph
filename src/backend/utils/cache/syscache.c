@@ -503,7 +503,7 @@ static const struct cachedesc cacheinfo[] = {
 		GraphOidIndexId,
 		1,
 		{
-			ObjectIdAttributeNumber,
+			Anum_ag_graph_oid,
 			0,
 			0,
 			0
@@ -547,7 +547,7 @@ static const struct cachedesc cacheinfo[] = {
 		LabelOidIndexId,
 		1,
 		{
-			ObjectIdAttributeNumber,
+			Anum_ag_label_oid,
 			0,
 			0,
 			0

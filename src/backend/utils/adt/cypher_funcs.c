@@ -1235,7 +1235,7 @@ get_last_graph_write_stats(PG_FUNCTION_ARGS)
 		funcctx = SRF_FIRSTCALL_INIT();
 		oldcontext = MemoryContextSwitchTo(funcctx->multi_call_memory_ctx);
 
-		tupdesc = CreateTemplateTupleDesc(5, false);
+		tupdesc = CreateTemplateTupleDesc(5);
 
 		TupleDescInitEntry(tupdesc, (AttrNumber) 1, "insertedvertices",
 						   INT8OID, -1, 0);

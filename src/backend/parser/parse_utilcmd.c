@@ -4101,7 +4101,6 @@ transformCreateLabelStmt(CreateLabelStmt *labelStmt, const char *queryString)
 	cxt.inhRelations = stmt->inhRelations;
 	cxt.isforeign = false;
 	cxt.isalter = false;
-	cxt.hasoids = false;
 	cxt.columns = NIL;
 	cxt.ckconstraints = NIL;
 	cxt.fkconstraints = NIL;

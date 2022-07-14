@@ -11958,7 +11958,7 @@ ag_get_graphconstraintdef_worker(Oid constraintId, int prettyFlags,
 	Relation	relation = heap_open(ConstraintRelationId, AccessShareLock);
 
 	ScanKeyInit(&scankey[0],
-				ObjectIdAttributeNumber,
+				Anum_pg_constraint_oid,
 				BTEqualStrategyNumber, F_OIDEQ,
 				ObjectIdGetDatum(constraintId));
 

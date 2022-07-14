@@ -3168,7 +3168,7 @@ get_graphid_graphname(Oid graphid)
 Oid
 get_graphname_oid(const char *graphname)
 {
-	return GetSysCacheOid1(GRAPHNAME, PointerGetDatum(graphname));
+	return GetSysCacheOid1(GRAPHNAME, Anum_ag_graph_oid, PointerGetDatum(graphname));
 }
 
 /*				---------- AG_LABEL CACHE ----------				 */
@@ -3239,6 +3239,7 @@ Oid
 get_labname_laboid(const char *labname, Oid graphid)
 {
 	return GetSysCacheOid2(LABELNAMEGRAPH,
+						   Anum_ag_label_oid,
 						   PointerGetDatum(labname),
 						   ObjectIdGetDatum(graphid));
 }
@@ -3304,7 +3305,7 @@ get_laboid_relid(Oid laboid)
 Oid
 get_relid_laboid(Oid relid)
 {
-	return GetSysCacheOid1(LABELRELID, ObjectIdGetDatum(relid));
+	return GetSysCacheOid1(LABELRELID, Anum_ag_label_oid, ObjectIdGetDatum(relid));
 }
 
 Oid

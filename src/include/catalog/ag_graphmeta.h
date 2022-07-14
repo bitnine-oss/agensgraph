@@ -27,7 +27,7 @@
  *		typedef struct FormData_ag_graphmeta
  * ----------------
  */
-CATALOG(ag_graphmeta,7055,GraphMetaRelationId) BKI_SCHEMA_MACRO BKI_WITHOUT_OIDS
+CATALOG(ag_graphmeta,7055,GraphMetaRelationId) BKI_SCHEMA_MACRO
 {
 	Oid		graph;            /* graph oid */
 	int16	edge;            /* edge label id */

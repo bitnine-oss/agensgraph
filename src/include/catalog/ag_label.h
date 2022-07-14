@@ -28,11 +28,12 @@
  */
 CATALOG(ag_label,7045,LabelRelationId) BKI_SCHEMA_MACRO
 {
-	NameData	labname;        /* label name */
-	Oid         graphid;        /* graph oid */
-	int32       labid;            /* label ID in a graph */
-	Oid         relid;            /* table oid under the label */
-	char        labkind;        /* see LABEL_KIND_XXX constants below */
+	Oid			oid;			/* oid */
+	NameData	labname;		/* label name */
+	Oid         graphid;		/* graph oid */
+	int32       labid;			/* label ID in a graph */
+	Oid         relid;			/* table oid under the label */
+	char        labkind;		/* see LABEL_KIND_XXX constants below */
 } FormData_ag_label;
 
 /* ----------------

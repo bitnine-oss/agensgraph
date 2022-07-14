@@ -13,7 +13,6 @@ SELECT relname, relhasindex
    ORDER BY relname;
 a|f
 a_star|f
-abstime_tbl|f
 ag_graph|t
 ag_graphmeta|t
 ag_label|t

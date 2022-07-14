@@ -16681,7 +16681,7 @@ dumpConstraint(Archive *fout, ConstraintInfo *coninfo)
 							 tag,
 							 tbinfo->dobj.namespace->dobj.name,
 							 NULL,
-							 tbinfo->rolname, false,
+							 tbinfo->rolname,
 							 "CHECK CONSTRAINT", SECTION_POST_DATA,
 							 q->data, "", NULL,
 							 NULL, 0,
@@ -18337,7 +18337,7 @@ makeAlterGraphPathConfigCommand(Archive *fout, PGconn *conn,
 	appendPQExpBufferStr(buf, ";\n");
 
 	ArchiveEntry(fout, nilCatalogId, createDumpId(), "Graph Path", NULL,
-				 NULL, "", false, "GRAPH", SECTION_DATA, buf->data, "", NULL,
+				 NULL, "", "GRAPH", SECTION_DATA, buf->data, "", NULL,
 				 NULL, 0, NULL, NULL);
 
 	destroyPQExpBuffer(buf);
@@ -18485,7 +18485,7 @@ insertGraphCatalog(Archive *fout)
 					  LabelRelationId);
 
 	ArchiveEntry(fout, nilCatalogId, createDumpId(), "Graph Catalog", NULL,
-				 NULL, "", false, "GRAPH", SECTION_DATA, q->data, "", NULL,
+				 NULL, "", "GRAPH", SECTION_DATA, q->data, "", NULL,
 				 NULL, 0, NULL, NULL);
 
 	destroyPQExpBuffer(q);

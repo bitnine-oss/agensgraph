@@ -25,6 +25,7 @@
 #include "utils/lsyscache.h"
 #include "utils/rel.h"
 #include "utils/syscache.h"
+#include "catalog/catalog.h"
 
 /* a global variable for the GUC variable */
 char *graph_path = NULL;
@@ -143,15 +144,20 @@ GraphCreate(CreateGraphStmt *stmt, const char *queryString,
 		isnull[i] = false;
 	}
 	namestrcpy(&gname, graphName);
-	values[Anum_ag_graph_graphname - 1] = NameGetDatum(&gname);
-	values[Anum_ag_graph_nspid - 1] = ObjectIdGetDatum(schemaoid);
 
 	graphdesc = heap_open(GraphRelationId, RowExclusiveLock);
 	tupDesc = graphdesc->rd_att;
 
+	graphoid = values[Anum_ag_graph_oid - 1] = GetNewOidWithIndex(graphdesc,
+																  GraphOidIndexId,
+																  Anum_ag_graph_oid);
+	values[Anum_ag_graph_graphname - 1] = NameGetDatum(&gname);
+	values[Anum_ag_graph_nspid - 1] = ObjectIdGetDatum(schemaoid);
+
+
 	tup = heap_form_tuple(tupDesc, values, isnull);
 
-	graphoid = CatalogTupleInsert(graphdesc, tup);
+	CatalogTupleInsert(graphdesc, tup);
 	Assert(OidIsValid(graphoid));
 
 	heap_close(graphdesc, RowExclusiveLock);

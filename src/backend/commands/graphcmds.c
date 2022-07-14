@@ -122,6 +122,7 @@ RenameGraph(const char *oldname, const char *newname)
 	HeapTuple	tup;
 	Relation	rel;
 	ObjectAddress address;
+	Form_ag_graph form_ag_graph;
 
 	rel = heap_open(GraphRelationId, RowExclusiveLock);
 
@@ -137,15 +138,16 @@ RenameGraph(const char *oldname, const char *newname)
 	/* renamimg schema and graph should be processed in one lock */
 	RenameSchema(oldname, newname);
 
-	graphOid = HeapTupleGetOid(tup);
+	form_ag_graph = (Form_ag_graph) GETSTRUCT(tup);
+	graphOid = form_ag_graph->oid;
 
 	/* Skip privilege and error check. It was already done in RenameSchema() */
 
 	/* rename */
-	namestrcpy(&(((Form_ag_graph) GETSTRUCT(tup))->graphname), newname);
+	namestrcpy(&form_ag_graph->graphname, newname);
 	CatalogTupleUpdate(rel, &tup->t_self, tup);
 
-	InvokeObjectPostAlterHook(GraphRelationId, HeapTupleGetOid(tup), 0);
+	InvokeObjectPostAlterHook(GraphRelationId, graphOid, 0);
 
 	ObjectAddressSet(address, GraphRelationId, graphOid);
 
@@ -345,7 +347,7 @@ GetSuperOids(List *supers, char labkind, List **supOids)
 					 errmsg("invalid parent label with labkind '%c'",
 							labtup->labkind)));
 
-		parent_laboid = HeapTupleGetOid(tuple);
+		parent_laboid = labtup->oid;
 		ReleaseSysCache(tuple);
 
 		parentOids = lappend_oid(parentOids, parent_laboid);
@@ -387,6 +389,7 @@ RenameLabel(RenameStmt *stmt)
 	HeapTuple	tup;
 	Oid			laboid;
 	ObjectAddress address;
+	Form_ag_label form_ag_label;
 
 	/* schemaname is NULL always */
 	stmt->relation->schemaname = get_graph_path(false);
@@ -405,8 +408,8 @@ RenameLabel(RenameStmt *stmt)
 						stmt->relation->relname)));
 		return InvalidObjectAddress;
 	}
-
-	laboid = HeapTupleGetOid(tup);
+	form_ag_label = (Form_ag_label) GETSTRUCT(tup);
+	laboid = form_ag_label->oid;
 
 	CheckLabelType(stmt->renameType, laboid, "RENAME");
 
@@ -419,7 +422,7 @@ RenameLabel(RenameStmt *stmt)
 	namestrcpy(&(((Form_ag_label) GETSTRUCT(tup))->labname), stmt->newname);
 	CatalogTupleUpdate(rel, &tup->t_self, tup);
 
-	InvokeObjectPostAlterHook(LabelRelationId, HeapTupleGetOid(tup), 0);
+	InvokeObjectPostAlterHook(LabelRelationId, laboid, 0);
 
 	ObjectAddressSet(address, LabelRelationId, laboid);
 
