@@ -150,7 +150,7 @@ static const struct cachedesc cacheinfo[] = {
 		AmOidIndexId,
 		1,
 		{
-			ObjectIdAttributeNumber,
+			Anum_pg_am_oid,
 			0,
 			0,
 			0
@@ -249,7 +249,7 @@ static const struct cachedesc cacheinfo[] = {
 		AuthIdOidIndexId,
 		1,
 		{
-			ObjectIdAttributeNumber,
+			Anum_pg_authid_oid,
 			0,
 			0,
 			0
@@ -283,7 +283,7 @@ static const struct cachedesc cacheinfo[] = {
 		OpclassOidIndexId,
 		1,
 		{
-			ObjectIdAttributeNumber,
+			Anum_pg_opclass_oid,
 			0,
 			0,
 			0
@@ -305,7 +305,7 @@ static const struct cachedesc cacheinfo[] = {
 		CollationOidIndexId,
 		1,
 		{
-			ObjectIdAttributeNumber,
+			Anum_pg_collation_oid,
 			0,
 			0,
 			0
@@ -319,7 +319,7 @@ static const struct cachedesc cacheinfo[] = {
 			Anum_pg_conversion_connamespace,
 			Anum_pg_conversion_conforencoding,
 			Anum_pg_conversion_contoencoding,
-			ObjectIdAttributeNumber,
+			Anum_pg_conversion_oid
 		},
 		8
 	},
@@ -338,7 +338,7 @@ static const struct cachedesc cacheinfo[] = {
 		ConstraintOidIndexId,
 		1,
 		{
-			ObjectIdAttributeNumber,
+			Anum_pg_constraint_oid,
 			0,
 			0,
 			0
@@ -349,7 +349,7 @@ static const struct cachedesc cacheinfo[] = {
 		ConversionOidIndexId,
 		1,
 		{
-			ObjectIdAttributeNumber,
+			Anum_pg_conversion_oid,
 			0,
 			0,
 			0
@@ -360,7 +360,7 @@ static const struct cachedesc cacheinfo[] = {
 		DatabaseOidIndexId,
 		1,
 		{
-			ObjectIdAttributeNumber,
+			Anum_pg_database_oid,
 			0,
 			0,
 			0
@@ -382,7 +382,7 @@ static const struct cachedesc cacheinfo[] = {
 		EnumOidIndexId,
 		1,
 		{
-			ObjectIdAttributeNumber,
+			Anum_pg_enum_oid,
 			0,
 			0,
 			0
@@ -415,7 +415,7 @@ static const struct cachedesc cacheinfo[] = {
 		EventTriggerOidIndexId,
 		1,
 		{
-			ObjectIdAttributeNumber,
+			Anum_pg_event_trigger_oid,
 			0,
 			0,
 			0
@@ -437,7 +437,7 @@ static const struct cachedesc cacheinfo[] = {
 		ForeignDataWrapperOidIndexId,
 		1,
 		{
-			ObjectIdAttributeNumber,
+			Anum_pg_foreign_data_wrapper_oid,
 			0,
 			0,
 			0
@@ -459,7 +459,7 @@ static const struct cachedesc cacheinfo[] = {
 		ForeignServerOidIndexId,
 		1,
 		{
-			ObjectIdAttributeNumber,
+			Anum_pg_foreign_server_oid,
 			0,
 			0,
 			0
@@ -580,7 +580,7 @@ static const struct cachedesc cacheinfo[] = {
 		LanguageOidIndexId,
 		1,
 		{
-			ObjectIdAttributeNumber,
+			Anum_pg_language_oid,
 			0,
 			0,
 			0
@@ -602,7 +602,7 @@ static const struct cachedesc cacheinfo[] = {
 		NamespaceOidIndexId,
 		1,
 		{
-			ObjectIdAttributeNumber,
+			Anum_pg_namespace_oid,
 			0,
 			0,
 			0
@@ -624,7 +624,7 @@ static const struct cachedesc cacheinfo[] = {
 		OperatorOidIndexId,
 		1,
 		{
-			ObjectIdAttributeNumber,
+			Anum_pg_operator_oid,
 			0,
 			0,
 			0
@@ -646,7 +646,7 @@ static const struct cachedesc cacheinfo[] = {
 		OpfamilyOidIndexId,
 		1,
 		{
-			ObjectIdAttributeNumber,
+			Anum_pg_opfamily_oid,
 			0,
 			0,
 			0
@@ -679,7 +679,7 @@ static const struct cachedesc cacheinfo[] = {
 		ProcedureOidIndexId,
 		1,
 		{
-			ObjectIdAttributeNumber,
+			Anum_pg_proc_oid,
 			0,
 			0,
 			0
@@ -701,7 +701,7 @@ static const struct cachedesc cacheinfo[] = {
 		PublicationObjectIndexId,
 		1,
 		{
-			ObjectIdAttributeNumber,
+			Anum_pg_publication_oid,
 			0,
 			0,
 			0
@@ -712,7 +712,7 @@ static const struct cachedesc cacheinfo[] = {
 		PublicationRelObjectIndexId,
 		1,
 		{
-			ObjectIdAttributeNumber,
+			Anum_pg_publication_rel_oid,
 			0,
 			0,
 			0
@@ -756,7 +756,7 @@ static const struct cachedesc cacheinfo[] = {
 		ClassOidIndexId,
 		1,
 		{
-			ObjectIdAttributeNumber,
+			Anum_pg_class_oid,
 			0,
 			0,
 			0
@@ -822,7 +822,7 @@ static const struct cachedesc cacheinfo[] = {
 		StatisticExtOidIndexId,
 		1,
 		{
-			ObjectIdAttributeNumber,
+			Anum_pg_statistic_ext_oid,
 			0,
 			0,
 			0
@@ -855,7 +855,7 @@ static const struct cachedesc cacheinfo[] = {
 		SubscriptionObjectIndexId,
 		1,
 		{
-			ObjectIdAttributeNumber,
+			Anum_pg_subscription_oid,
 			0,
 			0,
 			0
@@ -877,7 +877,7 @@ static const struct cachedesc cacheinfo[] = {
 		TablespaceOidIndexId,
 		1,
 		{
-			ObjectIdAttributeNumber,
+			Anum_pg_tablespace_oid,
 			0,
 			0,
 			0,
@@ -888,7 +888,7 @@ static const struct cachedesc cacheinfo[] = {
 		TransformOidIndexId,
 		1,
 		{
-			ObjectIdAttributeNumber,
+			Anum_pg_transform_oid,
 			0,
 			0,
 			0,
@@ -932,7 +932,7 @@ static const struct cachedesc cacheinfo[] = {
 		TSConfigOidIndexId,
 		1,
 		{
-			ObjectIdAttributeNumber,
+			Anum_pg_ts_config_oid,
 			0,
 			0,
 			0
@@ -954,7 +954,7 @@ static const struct cachedesc cacheinfo[] = {
 		TSDictionaryOidIndexId,
 		1,
 		{
-			ObjectIdAttributeNumber,
+			Anum_pg_ts_dict_oid,
 			0,
 			0,
 			0
@@ -976,7 +976,7 @@ static const struct cachedesc cacheinfo[] = {
 		TSParserOidIndexId,
 		1,
 		{
-			ObjectIdAttributeNumber,
+			Anum_pg_ts_parser_oid,
 			0,
 			0,
 			0
@@ -998,7 +998,7 @@ static const struct cachedesc cacheinfo[] = {
 		TSTemplateOidIndexId,
 		1,
 		{
-			ObjectIdAttributeNumber,
+			Anum_pg_ts_template_oid,
 			0,
 			0,
 			0
@@ -1020,7 +1020,7 @@ static const struct cachedesc cacheinfo[] = {
 		TypeOidIndexId,
 		1,
 		{
-			ObjectIdAttributeNumber,
+			Anum_pg_type_oid,
 			0,
 			0,
 			0
@@ -1031,7 +1031,7 @@ static const struct cachedesc cacheinfo[] = {
 		UserMappingOidIndexId,
 		1,
 		{
-			ObjectIdAttributeNumber,
+			Anum_pg_user_mapping_oid,
 			0,
 			0,
 			0
@@ -1293,24 +1293,29 @@ SearchSysCacheExists(int cacheId,
 /*
  * GetSysCacheOid
  *
- * A convenience routine that does SearchSysCache and returns the OID
- * of the found tuple, or InvalidOid if no tuple could be found.
+ * A convenience routine that does SearchSysCache and returns the OID in the
+ * oidcol column of the found tuple, or InvalidOid if no tuple could be found.
  * No lock is retained on the syscache entry.
  */
 Oid
 GetSysCacheOid(int cacheId,
+			   AttrNumber oidcol,
 			   Datum key1,
 			   Datum key2,
 			   Datum key3,
 			   Datum key4)
 {
 	HeapTuple	tuple;
+	bool		isNull;
 	Oid			result;
 
 	tuple = SearchSysCache(cacheId, key1, key2, key3, key4);
 	if (!HeapTupleIsValid(tuple))
 		return InvalidOid;
-	result = HeapTupleGetOid(tuple);
+	result = heap_getattr(tuple, oidcol,
+						  SysCache[cacheId]->cc_tupdesc,
+						  &isNull);
+	Assert(!isNull); /* columns used as oids should never be NULL */
 	ReleaseSysCache(tuple);
 	return result;
 }

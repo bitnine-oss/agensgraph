@@ -5219,7 +5219,6 @@ get_variable_numdistinct(VariableStatData *vardata, bool *isdefault)
 		{
 			switch (((Var *) vardata->var)->varattno)
 			{
-				case ObjectIdAttributeNumber:
 				case SelfItemPointerAttributeNumber:
 					stadistinct = -1.0; /* unique (and all non null) */
 					break;

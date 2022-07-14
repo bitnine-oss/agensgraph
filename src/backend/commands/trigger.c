@@ -769,7 +769,8 @@ CreateTrigger(CreateTrigStmt *stmt, const char *queryString,
 	 */
 	tgrel = heap_open(TriggerRelationId, RowExclusiveLock);
 
-	trigoid = GetNewOid(tgrel);
+	trigoid = GetNewOidWithIndex(tgrel, TriggerOidIndexId,
+								 Anum_pg_trigger_oid);
 
 	/*
 	 * If trigger is internally generated, modify the provided trigger name to
@@ -829,6 +830,7 @@ CreateTrigger(CreateTrigStmt *stmt, const char *queryString,
 	 */
 	memset(nulls, false, sizeof(nulls));
 
+	values[Anum_pg_trigger_oid - 1] = ObjectIdGetDatum(trigoid);
 	values[Anum_pg_trigger_tgrelid - 1] = ObjectIdGetDatum(RelationGetRelid(rel));
 	values[Anum_pg_trigger_tgname - 1] = DirectFunctionCall1(namein,
 															 CStringGetDatum(trigname));
@@ -944,9 +946,6 @@ CreateTrigger(CreateTrigStmt *stmt, const char *queryString,
 		nulls[Anum_pg_trigger_tgnewtable - 1] = true;
 
 	tuple = heap_form_tuple(tgrel->rd_att, values, nulls);
-
-	/* force tuple to have the desired OID */
-	HeapTupleSetOid(tuple, trigoid);
 
 	/*
 	 * Insert tuple into pg_trigger.
@@ -1499,7 +1498,7 @@ RemoveTriggerById(Oid trigOid)
 	 * Find the trigger to delete.
 	 */
 	ScanKeyInit(&skey[0],
-				ObjectIdAttributeNumber,
+				Anum_pg_trigger_oid,
 				BTEqualStrategyNumber, F_OIDEQ,
 				ObjectIdGetDatum(trigOid));
 
@@ -1600,7 +1599,7 @@ get_trigger_oid(Oid relid, const char *trigname, bool missing_ok)
 	}
 	else
 	{
-		oid = HeapTupleGetOid(tup);
+		oid = ((Form_pg_trigger) GETSTRUCT(tup))->oid;
 	}
 
 	systable_endscan(tgscan);
@@ -1727,20 +1726,22 @@ renametrig(RenameStmt *stmt)
 								NULL, 2, key);
 	if (HeapTupleIsValid(tuple = systable_getnext(tgscan)))
 	{
-		tgoid = HeapTupleGetOid(tuple);
+		Form_pg_trigger trigform = (Form_pg_trigger) GETSTRUCT(tuple);
+
+		tgoid = trigform->oid;
 
 		/*
 		 * Update pg_trigger tuple with new tgname.
 		 */
 		tuple = heap_copytuple(tuple);	/* need a modifiable copy */
 
-		namestrcpy(&((Form_pg_trigger) GETSTRUCT(tuple))->tgname,
+		namestrcpy(&trigform->tgname,
 				   stmt->newname);
 
 		CatalogTupleUpdate(tgrel, &tuple->t_self, tuple);
 
 		InvokeObjectPostAlterHook(TriggerRelationId,
-								  HeapTupleGetOid(tuple), 0);
+								  tgoid, 0);
 
 		/*
 		 * Invalidate relation's relcache entry so that other backends (and
@@ -1879,7 +1880,7 @@ EnableDisableTrigger(Relation rel, const char *tgname,
 		}
 
 		InvokeObjectPostAlterHook(TriggerRelationId,
-								  HeapTupleGetOid(tuple), 0);
+								  oldtrig->oid, 0);
 	}
 
 	systable_endscan(tgscan);
@@ -1963,7 +1964,7 @@ RelationBuildTriggers(Relation relation)
 		}
 		build = &(triggers[numtrigs]);
 
-		build->tgoid = HeapTupleGetOid(htup);
+		build->tgoid = pg_trigger->oid;
 		build->tgname = DatumGetCString(DirectFunctionCall1(nameout,
 															NameGetDatum(&pg_trigger->tgname)));
 		build->tgfoid = pg_trigger->tgfoid;
@@ -5468,8 +5469,7 @@ AfterTriggerSetState(ConstraintsSetStmt *stmt)
 					Form_pg_constraint con = (Form_pg_constraint) GETSTRUCT(tup);
 
 					if (con->condeferrable)
-						conoidlist = lappend_oid(conoidlist,
-												 HeapTupleGetOid(tup));
+						conoidlist = lappend_oid(conoidlist, con->oid);
 					else if (stmt->deferred)
 						ereport(ERROR,
 								(errcode(ERRCODE_WRONG_OBJECT_TYPE),
@@ -5521,7 +5521,11 @@ AfterTriggerSetState(ConstraintsSetStmt *stmt)
 			scan = systable_beginscan(conrel, ConstraintParentIndexId, true, NULL, 1, &key);
 
 			while (HeapTupleIsValid(tuple = systable_getnext(scan)))
-				conoidlist = lappend_oid(conoidlist, HeapTupleGetOid(tuple));
+			{
+				Form_pg_constraint con = (Form_pg_constraint) GETSTRUCT(tuple);
+
+				conoidlist = lappend_oid(conoidlist, con->oid);
+			}
 
 			systable_endscan(scan);
 		}
@@ -5563,8 +5567,7 @@ AfterTriggerSetState(ConstraintsSetStmt *stmt)
 				 * actions.
 				 */
 				if (pg_trigger->tgdeferrable)
-					tgoidlist = lappend_oid(tgoidlist,
-											HeapTupleGetOid(htup));
+					tgoidlist = lappend_oid(tgoidlist, pg_trigger->oid);
 
 				found = true;
 			}

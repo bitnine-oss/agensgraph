@@ -348,8 +348,6 @@ struct _archiveHandle
 	char	   *currSchema;		/* current schema, or NULL */
 	char	   *currGraph;		/* current graph, or NULL */
 	char	   *currTablespace; /* current tablespace, or NULL */
-	char		currWithOids;	/* current default_with_oids setting: true,
-								 * false, or -1 for unknown, forcing a SET */
 
 	void	   *lo_buf;
 	size_t		lo_buf_used;
@@ -377,7 +375,6 @@ struct _tocEntry
 	char	   *tablespace;		/* null if not in a tablespace; empty string
 								 * means use database default */
 	char	   *owner;
-	bool		withOids;		/* Used only by "TABLE" tags */
 	char	   *desc;
 	char	   *defn;
 	char	   *dropStmt;
@@ -414,7 +411,7 @@ extern TocEntry *ArchiveEntry(Archive *AHX,
 			 CatalogId catalogId, DumpId dumpId,
 			 const char *tag,
 			 const char *namespace, const char *tablespace,
-			 const char *owner, bool withOids,
+			 const char *owner,
 			 const char *desc, teSection section,
 			 const char *defn,
 			 const char *dropStmt, const char *copyStmt,
