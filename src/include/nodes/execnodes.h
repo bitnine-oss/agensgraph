@@ -2394,7 +2394,6 @@ typedef struct ModifyGraphState
 	PlanState  *subplan;
 	TupleTableSlot *elemTupleSlot;	/* to insert vertex/edge */
 	Oid			graphid;
-	int			numOldRtable;
 	ResultRelInfo *resultRelations;
 	int			numResultRelations;
 	CommandId	modify_cid;

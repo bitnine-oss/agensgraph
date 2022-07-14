@@ -113,6 +113,9 @@ static void setSlotValueByName(TupleTableSlot *slot, Datum value, char *name);
 static void setSlotValueByAttnum(TupleTableSlot *slot, Datum value, int attnum);
 static Datum *makeDatumArray(ExprContext *econtext, int len);
 
+static void removeRangeTable(EState* estate, int n);
+static void fitRangeTableSpace(EState *estate, int newsize);
+
 /* global variable - see postgres.c */
 extern GraphWriteStats graphWriteStats;
 
@@ -122,9 +125,6 @@ ExecInitModifyGraph(ModifyGraph *mgplan, EState *estate, int eflags)
 	TupleTableSlot *slot;
 	ModifyGraphState *mgstate;
 	CommandId	svCid;
-	int			numResultRelInfo;
-	List *newRangeTable = NIL;
-	List *newRelations = NIL;
 
 	Assert(!(eflags & (EXEC_FLAG_BACKWARD | EXEC_FLAG_MARK)));
 
@@ -167,18 +167,26 @@ ExecInitModifyGraph(ModifyGraph *mgplan, EState *estate, int eflags)
 	mgstate->elemTupleSlot = ExecInitExtraTupleSlot(estate, NULL, &TTSOpsMinimalTuple);
 
 	mgstate->graphid = get_graph_path_oid();
-	mgstate->numOldRtable = list_length(estate->es_range_table);
 
 	mgstate->pattern = ExecInitGraphPattern(mgplan->pattern, mgstate);
 
 	/* Check to see if we have RTEs to add to the es_range_table. */
-	numResultRelInfo = list_length(mgplan->targets);
 	if (mgplan->targets != NIL)
 	{
+		/*
+		 * If the ert_base_index is equal to es_range_table_size then we need
+		 * to add our RTEs to the end of the es_range_table. Otherwise, we just
+		 * need to link the resultRels to their RTEs. In the later case we
+		 * don't need to search the es_range_table for our RTEs because we
+		 * already know the order and the base offset.
+		 */
+		bool build_new_range_table;
 		ResultRelInfo *resultRelInfos;
 		ParseState *pstate;
-		ResultRelInfo *resultRelInfo;
 		ListCell   *lt;
+		int targets_length = list_length(mgplan->targets);
+		int rtindex;
+
 		/*
 		 * RTEs need to be added to the es_range_table using the
 		 * proper memory context due to cached plans. So, we need to
@@ -188,8 +196,7 @@ ExecInitModifyGraph(ModifyGraph *mgplan, EState *estate, int eflags)
 		MemoryContext rtemctx = GetMemoryChunkContext((void *) mgplan);
 
 		/* Allocate our stuff in the Executor memory context. */
-		resultRelInfos = palloc(numResultRelInfo * sizeof(*resultRelInfos));
-		resultRelInfo = resultRelInfos;
+		resultRelInfos = palloc(targets_length * sizeof(ResultRelInfo));
 		pstate = make_parsestate(NULL);
 
 		/*
@@ -197,46 +204,34 @@ ExecInitModifyGraph(ModifyGraph *mgplan, EState *estate, int eflags)
 		 * free and truncate the es_range_table from this point. This will
 		 * not effect parent plans, as they would not have added RTEs yet.
 		 */
-		if (mgplan->ert_rtes_added != numResultRelInfo &&
+		if (mgplan->ert_rtes_added != targets_length &&
 			mgplan->ert_rtes_added != -1 &&
-			mgplan->ert_base_index != -1)
+			mgplan->ert_base_index > 0)
 		{
-			int			index = -1;
-
-			for (lt = list_head(estate->es_range_table); lt != NULL;)
-			{
-				RangeTblEntry *es_rte = lfirst(lt);
-				ListCell	  *next = lnext(lt);
-
-				index++;
-
-				if (index < mgplan->ert_base_index)
-					continue;
-				pfree(es_rte);
-				pfree(lt);
-				lt = next;
-			}
-
-			list_truncate(estate->es_range_table, mgplan->ert_base_index);
-			mgstate->numOldRtable = list_length(estate->es_range_table);
+			removeRangeTable(estate, (int) mgplan->ert_base_index);
 		}
 
 		/* save the es_range_table index where we start adding our RTEs */
 		if (mgplan->ert_base_index == -1)
-			mgplan->ert_base_index = list_length(estate->es_range_table);
+			mgplan->ert_base_index = estate->es_range_table_size;
 
+		build_new_range_table =
+				(mgplan->ert_base_index == estate->es_range_table_size) && targets_length > 0;
+
+		if (build_new_range_table)
+		{
+			fitRangeTableSpace(estate, (int) estate->es_range_table_size + targets_length);
+		}
+
+		rtindex = 0;
 		/* Process each new RTE to add. */
 		foreach(lt, mgplan->targets)
 		{
 			Oid			relid = lfirst_oid(lt);
-			/* todo: AgensGraph team needs to be review */
-			int			index = 1;
 			/* open relation in Executor context */
 			Relation	relation = heap_open(relid, RowExclusiveLock);
 			/* Switch to the memory context for building RTEs */
 			MemoryContext oldmctx = MemoryContextSwitchTo(rtemctx);
-
-			newRelations = lappend(newRelations, relation);
 
 			/*
 			 * If the ert_base_index is equal to numOldRtable then we need
@@ -245,7 +240,7 @@ ExecInitModifyGraph(ModifyGraph *mgplan, EState *estate, int eflags)
 			 * case we don't need to search the es_range_table for our RTEs
 			 * because we already know the order and the base offset.
 			 */
-			if (mgplan->ert_base_index == mgstate->numOldRtable)
+			if (build_new_range_table)
 			{
 				RangeTblEntry *our_rte = addRangeTableEntryForRelation(pstate,
 																	   relation,
@@ -264,7 +259,13 @@ ExecInitModifyGraph(ModifyGraph *mgplan, EState *estate, int eflags)
 				our_rte->requiredPerms = ACL_INSERT;
 
 				/* Now add in our RTE */
-				newRangeTable = lappend(newRangeTable, our_rte);
+				estate->es_range_table = lappend(estate->es_range_table, our_rte);
+				estate->es_range_table_array[mgplan->ert_base_index + rtindex] = our_rte;
+				estate->es_relations[mgplan->ert_base_index + rtindex] = NULL;
+				if (estate->es_range_table_array[mgplan->ert_base_index + rtindex]->rtekind == RTE_RELATION)
+				{
+					ExecGetRangeTableRelation(estate, mgplan->ert_base_index + rtindex +1);
+				}
 
 				/* increment the number of RTEs we've added */
 				if (mgplan->ert_rtes_added == -1)
@@ -281,27 +282,18 @@ ExecInitModifyGraph(ModifyGraph *mgplan, EState *estate, int eflags)
 			 */
 			MemoryContextSwitchTo(oldmctx);
 
-			InitResultRelInfo(resultRelInfo,
+			InitResultRelInfo(&resultRelInfos[rtindex],
 							  relation,
-							  (mgplan->ert_base_index + index),
+							  (mgplan->ert_base_index + rtindex) + 1,
 							  NULL,
 							  estate->es_instrument);
 
-			ExecOpenIndices(resultRelInfo, false);
-			resultRelInfo++;
-			index++;
-		}
-
-		if (mgplan->ert_rtes_added > 0)
-		{
-			estate->es_range_table = list_concat(estate->es_range_table, newRangeTable);
-
-			/* todo: It makes warning. */
-			ExecInitRangeTable(estate, estate->es_range_table);
+			ExecOpenIndices(&resultRelInfos[rtindex], false);
+			rtindex++;
 		}
 
 		mgstate->resultRelations = resultRelInfos;
-		mgstate->numResultRelations = numResultRelInfo;
+		mgstate->numResultRelations = targets_length;
 
 		/* es_result_relation_info is NULL except ModifyTable case */
 		estate->es_result_relation_info = NULL;
@@ -2015,7 +2007,7 @@ getResultRelInfo(ModifyGraphState *mgstate, Oid relid)
 	}
 
 	if (i >= mgstate->numResultRelations)
-		elog(ERROR, "invalid object ID %u for the target label", relid);
+	elog(ERROR, "invalid object ID %u for the target label", relid);
 
 	return resultRelInfo;
 }
@@ -2109,4 +2101,54 @@ makeDatumArray(ExprContext *econtext, int len)
 		return NULL;
 
 	return palloc(len * sizeof(Datum));
+}
+
+/*
+ * Remove elements from range table.
+ */
+static void removeRangeTable(EState* estate, int n)
+{
+	int i = -1;
+	ListCell *lc;
+	Index new_rtsize = estate->es_range_table_size - n;
+	List *new_range_table = estate->es_range_table;
+
+	for (lc = list_head(estate->es_range_table); lc != NULL;) {
+		RangeTblEntry *es_rte = lfirst(lc);
+		ListCell *next = lnext(lc);
+
+		i++;
+
+		if (i < n)
+			continue;
+		pfree(es_rte);
+		pfree(lc);
+		lc = next;
+		heap_close(estate->es_relations[i], NoLock);
+	}
+
+	estate->es_range_table = list_truncate(estate->es_range_table, n);
+	estate->es_range_table_size = n;
+}
+
+static void fitRangeTableSpace(EState *estate, int newsize)
+{
+	Index saved_range_table_size = estate->es_range_table_size;
+	RangeTblEntry **saved_rta = estate->es_range_table_array;
+	Relation *saved_relations = estate->es_relations;
+
+	estate->es_range_table_size = newsize;
+
+	estate->es_range_table_array = (RangeTblEntry **)
+			palloc0(estate->es_range_table_size * sizeof(RangeTblEntry *));
+	estate->es_relations = (Relation *)
+			palloc0(estate->es_range_table_size * sizeof(Relation));
+
+	memcpy(estate->es_range_table_array, saved_rta,
+		   estate->es_range_table_size * sizeof(RangeTblEntry *));
+	memcpy(estate->es_relations, saved_relations,
+		   estate->es_range_table_size * sizeof(Relation));
+
+	pfree(saved_rta);
+	pfree(saved_relations);
 }
