@@ -51,6 +51,16 @@ SELECT count(*) FROM test_tsvector WHERE a @@ 'w:*|q:*';
 SELECT count(*) FROM test_tsvector WHERE a @@ any ('{wr,qh}');
 SELECT count(*) FROM test_tsvector WHERE a @@ 'no_such_lexeme';
 SELECT count(*) FROM test_tsvector WHERE a @@ '!no_such_lexeme';
+SELECT count(*) FROM test_tsvector WHERE a @@ 'pl <-> yh';
+SELECT count(*) FROM test_tsvector WHERE a @@ 'yh <-> pl';
+SELECT count(*) FROM test_tsvector WHERE a @@ 'qe <2> qt';
+SELECT count(*) FROM test_tsvector WHERE a @@ '!pl <-> yh';
+SELECT count(*) FROM test_tsvector WHERE a @@ '!pl <-> !yh';
+SELECT count(*) FROM test_tsvector WHERE a @@ '!yh <-> pl';
+SELECT count(*) FROM test_tsvector WHERE a @@ '!qe <2> qt';
+SELECT count(*) FROM test_tsvector WHERE a @@ '!(pl <-> yh)';
+SELECT count(*) FROM test_tsvector WHERE a @@ '!(yh <-> pl)';
+SELECT count(*) FROM test_tsvector WHERE a @@ '!(qe <2> qt)';
 
 create index wowidx on test_tsvector using gist (a);
 
@@ -70,6 +80,16 @@ SELECT count(*) FROM test_tsvector WHERE a @@ 'w:*|q:*';
 SELECT count(*) FROM test_tsvector WHERE a @@ any ('{wr,qh}');
 SELECT count(*) FROM test_tsvector WHERE a @@ 'no_such_lexeme';
 SELECT count(*) FROM test_tsvector WHERE a @@ '!no_such_lexeme';
+SELECT count(*) FROM test_tsvector WHERE a @@ 'pl <-> yh';
+SELECT count(*) FROM test_tsvector WHERE a @@ 'yh <-> pl';
+SELECT count(*) FROM test_tsvector WHERE a @@ 'qe <2> qt';
+SELECT count(*) FROM test_tsvector WHERE a @@ '!pl <-> yh';
+SELECT count(*) FROM test_tsvector WHERE a @@ '!pl <-> !yh';
+SELECT count(*) FROM test_tsvector WHERE a @@ '!yh <-> pl';
+SELECT count(*) FROM test_tsvector WHERE a @@ '!qe <2> qt';
+SELECT count(*) FROM test_tsvector WHERE a @@ '!(pl <-> yh)';
+SELECT count(*) FROM test_tsvector WHERE a @@ '!(yh <-> pl)';
+SELECT count(*) FROM test_tsvector WHERE a @@ '!(qe <2> qt)';
 
 SET enable_indexscan=OFF;
 SET enable_bitmapscan=ON;
@@ -86,6 +106,16 @@ SELECT count(*) FROM test_tsvector WHERE a @@ 'w:*|q:*';
 SELECT count(*) FROM test_tsvector WHERE a @@ any ('{wr,qh}');
 SELECT count(*) FROM test_tsvector WHERE a @@ 'no_such_lexeme';
 SELECT count(*) FROM test_tsvector WHERE a @@ '!no_such_lexeme';
+SELECT count(*) FROM test_tsvector WHERE a @@ 'pl <-> yh';
+SELECT count(*) FROM test_tsvector WHERE a @@ 'yh <-> pl';
+SELECT count(*) FROM test_tsvector WHERE a @@ 'qe <2> qt';
+SELECT count(*) FROM test_tsvector WHERE a @@ '!pl <-> yh';
+SELECT count(*) FROM test_tsvector WHERE a @@ '!pl <-> !yh';
+SELECT count(*) FROM test_tsvector WHERE a @@ '!yh <-> pl';
+SELECT count(*) FROM test_tsvector WHERE a @@ '!qe <2> qt';
+SELECT count(*) FROM test_tsvector WHERE a @@ '!(pl <-> yh)';
+SELECT count(*) FROM test_tsvector WHERE a @@ '!(yh <-> pl)';
+SELECT count(*) FROM test_tsvector WHERE a @@ '!(qe <2> qt)';
 
 RESET enable_seqscan;
 RESET enable_indexscan;
@@ -110,6 +140,16 @@ SELECT count(*) FROM test_tsvector WHERE a @@ 'w:*|q:*';
 SELECT count(*) FROM test_tsvector WHERE a @@ any ('{wr,qh}');
 SELECT count(*) FROM test_tsvector WHERE a @@ 'no_such_lexeme';
 SELECT count(*) FROM test_tsvector WHERE a @@ '!no_such_lexeme';
+SELECT count(*) FROM test_tsvector WHERE a @@ 'pl <-> yh';
+SELECT count(*) FROM test_tsvector WHERE a @@ 'yh <-> pl';
+SELECT count(*) FROM test_tsvector WHERE a @@ 'qe <2> qt';
+SELECT count(*) FROM test_tsvector WHERE a @@ '!pl <-> yh';
+SELECT count(*) FROM test_tsvector WHERE a @@ '!pl <-> !yh';
+SELECT count(*) FROM test_tsvector WHERE a @@ '!yh <-> pl';
+SELECT count(*) FROM test_tsvector WHERE a @@ '!qe <2> qt';
+SELECT count(*) FROM test_tsvector WHERE a @@ '!(pl <-> yh)';
+SELECT count(*) FROM test_tsvector WHERE a @@ '!(yh <-> pl)';
+SELECT count(*) FROM test_tsvector WHERE a @@ '!(qe <2> qt)';
 
 RESET enable_seqscan;
 
@@ -330,6 +370,11 @@ Water, water, every where,
 S. T. Coleridge (1772-1834)
 ', phraseto_tsquery('english', 'idle as a painted Ship'));
 
+SELECT ts_headline('english',
+'Lorem ipsum urna.  Nullam nullam ullamcorper urna.',
+to_tsquery('english','Lorem') && phraseto_tsquery('english','ullamcorper urna'),
+'MaxWords=100, MinWords=1');
+
 SELECT ts_headline('english', '
 <html>
 <!-- some comment -->
@@ -399,6 +444,12 @@ Water, water, every where,
   Nor any drop to drink.
 S. T. Coleridge (1772-1834)
 ', to_tsquery('english', 'Coleridge & stuck'), 'MaxFragments=2,FragmentDelimiter=***');
+
+--Fragments with phrase search
+SELECT ts_headline('english',
+'Lorem ipsum urna.  Nullam nullam ullamcorper urna.',
+to_tsquery('english','Lorem') && phraseto_tsquery('english','ullamcorper urna'),
+'MaxFragments=100, MaxWords=100, MinWords=1');
 
 --Rewrite sub system
 

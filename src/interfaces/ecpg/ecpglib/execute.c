@@ -825,8 +825,8 @@ ecpg_store_input(const int lineno, const bool force_indicator, const struct vari
 
 			case ECPGt_bytea:
 				{
-					struct ECPGgeneric_varchar *variable =
-					(struct ECPGgeneric_varchar *) (var->value);
+					struct ECPGgeneric_bytea *variable =
+					(struct ECPGgeneric_bytea *) (var->value);
 
 					if (!(mallocedval = (char *) ecpg_alloc(variable->len, lineno)))
 						return false;
@@ -1404,7 +1404,7 @@ ecpg_build_params(struct statement *stmt)
 
 			if (var->type == ECPGt_bytea)
 			{
-				binary_length = ((struct ECPGgeneric_varchar *) (var->value))->len;
+				binary_length = ((struct ECPGgeneric_bytea *) (var->value))->len;
 				binary_format = true;
 			}
 		}
@@ -1502,26 +1502,37 @@ ecpg_build_params(struct statement *stmt)
 		}
 		else
 		{
-			if (!(stmt->paramvalues = (char **) ecpg_realloc(stmt->paramvalues, sizeof(char *) * (stmt->nparams + 1), stmt->lineno)))
+			bool		realloc_failed = false;
+			char	  **newparamvalues;
+			int		   *newparamlengths;
+			int		   *newparamformats;
+
+			/* enlarge all the param arrays */
+			if ((newparamvalues = (char **) ecpg_realloc(stmt->paramvalues, sizeof(char *) * (stmt->nparams + 1), stmt->lineno)))
+				stmt->paramvalues = newparamvalues;
+			else
+				realloc_failed = true;
+
+			if ((newparamlengths = (int *) ecpg_realloc(stmt->paramlengths, sizeof(int) * (stmt->nparams + 1), stmt->lineno)))
+				stmt->paramlengths = newparamlengths;
+			else
+				realloc_failed = true;
+
+			if ((newparamformats = (int *) ecpg_realloc(stmt->paramformats, sizeof(int) * (stmt->nparams + 1), stmt->lineno)))
+				stmt->paramformats = newparamformats;
+			else
+				realloc_failed = true;
+
+			if (realloc_failed)
 			{
 				ecpg_free_params(stmt, false);
 				ecpg_free(tobeinserted);
 				return false;
 			}
+
+			/* only now can we assign ownership of "tobeinserted" to stmt */
 			stmt->paramvalues[stmt->nparams] = tobeinserted;
-
-			if (!(stmt->paramlengths = (int *) ecpg_realloc(stmt->paramlengths, sizeof(int) * (stmt->nparams + 1), stmt->lineno)))
-			{
-				ecpg_free_params(stmt, false);
-				return false;
-			}
 			stmt->paramlengths[stmt->nparams] = binary_length;
-
-			if (!(stmt->paramformats = (int *) ecpg_realloc(stmt->paramformats, sizeof(int) * (stmt->nparams + 1), stmt->lineno)))
-			{
-				ecpg_free_params(stmt, false);
-				return false;
-			}
 			stmt->paramformats[stmt->nparams] = (binary_format ? 1 : 0);
 			stmt->nparams++;
 
@@ -2279,32 +2290,9 @@ ECPGdo(const int lineno, const int compat, const int force_indicator, const char
 {
 	va_list		args;
 	bool		ret;
-	const char *real_connection_name = NULL;
-
-	real_connection_name = connection_name;
-
-	if (!query)
-	{
-		ecpg_raise(lineno, ECPG_EMPTY, ECPG_SQLSTATE_ECPG_INTERNAL_ERROR, NULL);
-		return false;
-	}
-
-	/* Handle the EXEC SQL EXECUTE... statement */
-	if (ECPGst_execute == st)
-	{
-		real_connection_name = ecpg_get_con_name_by_declared_name(query);
-		if (real_connection_name == NULL)
-		{
-			/*
-			 * If can't get the connection name by declared name then using
-			 * connection name coming from the parameter connection_name
-			 */
-			real_connection_name = connection_name;
-		}
-	}
 
 	va_start(args, query);
-	ret = ecpg_do(lineno, compat, force_indicator, real_connection_name,
+	ret = ecpg_do(lineno, compat, force_indicator, connection_name,
 				  questionmarks, st, query, args);
 	va_end(args);
 

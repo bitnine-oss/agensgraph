@@ -266,6 +266,9 @@ void
 cluster_rel(Oid tableOid, Oid indexOid, int options)
 {
 	Relation	OldHeap;
+	Oid			save_userid;
+	int			save_sec_context;
+	int			save_nestlevel;
 	bool		verbose = ((options & CLUOPT_VERBOSE) != 0);
 	bool		recheck = ((options & CLUOPT_RECHECK) != 0);
 
@@ -296,6 +299,16 @@ cluster_rel(Oid tableOid, Oid indexOid, int options)
 	}
 
 	/*
+	 * Switch to the table owner's userid, so that any index functions are run
+	 * as that user.  Also lock down security-restricted operations and
+	 * arrange to make GUC variable changes local to this command.
+	 */
+	GetUserIdAndSecContext(&save_userid, &save_sec_context);
+	SetUserIdAndSecContext(OldHeap->rd_rel->relowner,
+						   save_sec_context | SECURITY_RESTRICTED_OPERATION);
+	save_nestlevel = NewGUCNestLevel();
+
+	/*
 	 * Since we may open a new transaction for each relation, we have to check
 	 * that the relation still is what we think it is.
 	 *
@@ -309,11 +322,10 @@ cluster_rel(Oid tableOid, Oid indexOid, int options)
 		Form_pg_index indexForm;
 
 		/* Check that the user still owns the relation */
-		if (!pg_class_ownercheck(tableOid, GetUserId()))
+		if (!pg_class_ownercheck(tableOid, save_userid))
 		{
 			relation_close(OldHeap, AccessExclusiveLock);
-			pgstat_progress_end_command();
-			return;
+			goto out;
 		}
 
 		/*
@@ -327,8 +339,7 @@ cluster_rel(Oid tableOid, Oid indexOid, int options)
 		if (RELATION_IS_OTHER_TEMP(OldHeap))
 		{
 			relation_close(OldHeap, AccessExclusiveLock);
-			pgstat_progress_end_command();
-			return;
+			goto out;
 		}
 
 		if (OidIsValid(indexOid))
@@ -339,8 +350,7 @@ cluster_rel(Oid tableOid, Oid indexOid, int options)
 			if (!SearchSysCacheExists1(RELOID, ObjectIdGetDatum(indexOid)))
 			{
 				relation_close(OldHeap, AccessExclusiveLock);
-				pgstat_progress_end_command();
-				return;
+				goto out;
 			}
 
 			/*
@@ -350,16 +360,14 @@ cluster_rel(Oid tableOid, Oid indexOid, int options)
 			if (!HeapTupleIsValid(tuple))	/* probably can't happen */
 			{
 				relation_close(OldHeap, AccessExclusiveLock);
-				pgstat_progress_end_command();
-				return;
+				goto out;
 			}
 			indexForm = (Form_pg_index) GETSTRUCT(tuple);
 			if (!indexForm->indisclustered)
 			{
 				ReleaseSysCache(tuple);
 				relation_close(OldHeap, AccessExclusiveLock);
-				pgstat_progress_end_command();
-				return;
+				goto out;
 			}
 			ReleaseSysCache(tuple);
 		}
@@ -413,8 +421,7 @@ cluster_rel(Oid tableOid, Oid indexOid, int options)
 		!RelationIsPopulated(OldHeap))
 	{
 		relation_close(OldHeap, AccessExclusiveLock);
-		pgstat_progress_end_command();
-		return;
+		goto out;
 	}
 
 	/*
@@ -429,6 +436,13 @@ cluster_rel(Oid tableOid, Oid indexOid, int options)
 	rebuild_relation(OldHeap, indexOid, verbose);
 
 	/* NB: rebuild_relation does table_close() on OldHeap */
+
+out:
+	/* Roll back any GUC changes executed by index functions */
+	AtEOXact_GUC(false, save_nestlevel);
+
+	/* Restore userid and security context */
+	SetUserIdAndSecContext(save_userid, save_sec_context);
 
 	pgstat_progress_end_command();
 }
@@ -745,7 +759,7 @@ make_new_heap(Oid OIDOldHeap, Oid NewTableSpace, char relpersistence,
 		if (isNull)
 			reloptions = (Datum) 0;
 
-		NewHeapCreateToastTable(OIDNewHeap, reloptions, lockmode);
+		NewHeapCreateToastTable(OIDNewHeap, reloptions, lockmode, toastid);
 
 		ReleaseSysCache(tuple);
 	}
@@ -1490,7 +1504,7 @@ finish_heap_swap(Oid OIDOldHeap, Oid OIDNewHeap,
 
 			/* Get the associated valid index to be renamed */
 			toastidx = toast_get_valid_index(newrel->rd_rel->reltoastrelid,
-											 AccessShareLock);
+											 NoLock);
 
 			/* rename the toast table ... */
 			snprintf(NewToastName, NAMEDATALEN, "pg_toast_%u",
@@ -1504,6 +1518,14 @@ finish_heap_swap(Oid OIDOldHeap, Oid OIDNewHeap,
 
 			RenameRelationInternal(toastidx,
 								   NewToastName, true, true);
+
+			/*
+			 * Reset the relrewrite for the toast. The command-counter
+			 * increment is required here as we are about to update
+			 * the tuple that is updated as part of RenameRelationInternal.
+			 */
+			CommandCounterIncrement();
+			ResetRelRewrite(newrel->rd_rel->reltoastrelid);
 		}
 		relation_close(newrel, NoLock);
 	}

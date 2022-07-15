@@ -210,6 +210,7 @@ CreatePortal(const char *name, bool allowDup, bool dupSilent)
 	portal->cleanup = PortalCleanup;
 	portal->createSubid = GetCurrentSubTransactionId();
 	portal->activeSubid = portal->createSubid;
+	portal->createLevel = GetCurrentTransactionNestLevel();
 	portal->strategy = PORTAL_MULTI_QUERY;
 	portal->cursorOptions = CURSOR_OPT_NO_SCROLL;
 	portal->atStart = true;
@@ -500,6 +501,9 @@ PortalDrop(Portal portal, bool isTopCommit)
 		portal->cleanup = NULL;
 	}
 
+	/* There shouldn't be an active snapshot anymore, except after error */
+	Assert(portal->portalSnapshot == NULL || !isTopCommit);
+
 	/*
 	 * Remove portal from hash table.  Because we do this here, we will not
 	 * come back to try to remove the portal again if there's any error in the
@@ -652,6 +656,7 @@ HoldPortal(Portal portal)
 	 */
 	portal->createSubid = InvalidSubTransactionId;
 	portal->activeSubid = InvalidSubTransactionId;
+	portal->createLevel = 0;
 }
 
 /*
@@ -707,6 +712,8 @@ PreCommit_Portals(bool isPrepare)
 				portal->holdSnapshot = NULL;
 			}
 			portal->resowner = NULL;
+			/* Clear portalSnapshot too, for cleanliness */
+			portal->portalSnapshot = NULL;
 			continue;
 		}
 
@@ -933,6 +940,7 @@ PortalErrorCleanup(void)
 void
 AtSubCommit_Portals(SubTransactionId mySubid,
 					SubTransactionId parentSubid,
+					int parentLevel,
 					ResourceOwner parentXactOwner)
 {
 	HASH_SEQ_STATUS status;
@@ -947,6 +955,7 @@ AtSubCommit_Portals(SubTransactionId mySubid,
 		if (portal->createSubid == mySubid)
 		{
 			portal->createSubid = parentSubid;
+			portal->createLevel = parentLevel;
 			if (portal->resowner)
 				ResourceOwnerNewParent(portal->resowner, parentXactOwner);
 		}
@@ -1276,4 +1285,55 @@ HoldPinnedPortals(void)
 			portal->autoHeld = true;
 		}
 	}
+}
+
+/*
+ * Drop the outer active snapshots for all portals, so that no snapshots
+ * remain active.
+ *
+ * Like HoldPinnedPortals, this must be called when initiating a COMMIT or
+ * ROLLBACK inside a procedure.  This has to be separate from that since it
+ * should not be run until we're done with steps that are likely to fail.
+ *
+ * It's tempting to fold this into PreCommit_Portals, but to do so, we'd
+ * need to clean up snapshot management in VACUUM and perhaps other places.
+ */
+void
+ForgetPortalSnapshots(void)
+{
+	HASH_SEQ_STATUS status;
+	PortalHashEnt *hentry;
+	int			numPortalSnaps = 0;
+	int			numActiveSnaps = 0;
+
+	/* First, scan PortalHashTable and clear portalSnapshot fields */
+	hash_seq_init(&status, PortalHashTable);
+
+	while ((hentry = (PortalHashEnt *) hash_seq_search(&status)) != NULL)
+	{
+		Portal		portal = hentry->portal;
+
+		if (portal->portalSnapshot != NULL)
+		{
+			portal->portalSnapshot = NULL;
+			numPortalSnaps++;
+		}
+		/* portal->holdSnapshot will be cleaned up in PreCommit_Portals */
+	}
+
+	/*
+	 * Now, pop all the active snapshots, which should be just those that were
+	 * portal snapshots.  Ideally we'd drive this directly off the portal
+	 * scan, but there's no good way to visit the portals in the correct
+	 * order.  So just cross-check after the fact.
+	 */
+	while (ActiveSnapshotSet())
+	{
+		PopActiveSnapshot();
+		numActiveSnaps++;
+	}
+
+	if (numPortalSnaps != numActiveSnaps)
+		elog(ERROR, "portal snapshots (%d) did not account for all active snapshots (%d)",
+			 numPortalSnaps, numActiveSnaps);
 }

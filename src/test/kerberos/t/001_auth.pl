@@ -19,7 +19,7 @@ use Test::More;
 
 if ($ENV{with_gssapi} eq 'yes')
 {
-	plan tests => 12;
+	plan tests => 18;
 }
 else
 {
@@ -67,9 +67,10 @@ my $realm    = 'EXAMPLE.COM';
 
 my $krb5_conf   = "${TestLib::tmp_check}/krb5.conf";
 my $kdc_conf    = "${TestLib::tmp_check}/kdc.conf";
-my $krb5_log    = "${TestLib::tmp_check}/krb5libs.log";
-my $kdc_log     = "${TestLib::tmp_check}/krb5kdc.log";
-my $kdc_port    = int(rand() * 16384) + 49152;
+my $krb5_cache  = "${TestLib::tmp_check}/krb5cc";
+my $krb5_log    = "${TestLib::log_path}/krb5libs.log";
+my $kdc_log     = "${TestLib::log_path}/krb5kdc.log";
+my $kdc_port    = get_free_port();
 my $kdc_datadir = "${TestLib::tmp_check}/krb5kdc";
 my $kdc_pidfile = "${TestLib::tmp_check}/krb5kdc.pid";
 my $keytab      = "${TestLib::tmp_check}/krb5.keytab";
@@ -134,8 +135,10 @@ $realm = {
 
 mkdir $kdc_datadir or die;
 
+# Ensure that we use test's config and cache files, not global ones.
 $ENV{'KRB5_CONFIG'}      = $krb5_conf;
 $ENV{'KRB5_KDC_PROFILE'} = $kdc_conf;
+$ENV{'KRB5CCNAME'}       = $krb5_cache;
 
 my $service_principal = "$ENV{with_krb_srvnam}/$host";
 
@@ -166,21 +169,23 @@ $node->safe_psql('postgres', 'CREATE USER test1;');
 
 note "running tests";
 
+# Test connection success or failure, and if success, that query returns true.
 sub test_access
 {
-	my ($node, $role, $server_check, $expected_res, $gssencmode, $test_name)
-	  = @_;
+	my ($node, $role, $query, $expected_res, $gssencmode, $test_name) = @_;
 
 	# need to connect over TCP/IP for Kerberos
 	my ($res, $stdoutres, $stderrres) = $node->psql(
 		'postgres',
-		"$server_check",
+		undef,
 		extra_params => [
 			'-XAtd',
 			$node->connstr('postgres')
 			  . " host=$host hostaddr=$hostaddr $gssencmode",
 			'-U',
-			$role
+			$role,
+			'-c',
+			$query
 		]);
 
 	# If we get a query result back, it should be true.
@@ -192,6 +197,31 @@ sub test_access
 	{
 		is($res, $expected_res, $test_name);
 	}
+	return;
+}
+
+# As above, but test for an arbitrary query result.
+sub test_query
+{
+	local $Test::Builder::Level = $Test::Builder::Level + 1;
+
+	my ($node, $role, $query, $expected, $gssencmode, $test_name) = @_;
+
+	# need to connect over TCP/IP for Kerberos
+	my ($res, $stdoutres, $stderrres) = $node->psql(
+		'postgres',
+		"$query",
+		extra_params => [
+			'-XAtd',
+			$node->connstr('postgres')
+			  . " host=$host hostaddr=$hostaddr $gssencmode",
+			'-U',
+			$role
+		]);
+
+	is($res, 0, $test_name);
+	like($stdoutres, $expected, $test_name);
+	is($stderrres, "", $test_name);
 	return;
 }
 
@@ -230,6 +260,27 @@ test_access(
 	0,
 	"gssencmode=require",
 	"succeeds with GSS-encrypted access required with host hba");
+
+# Test that we can transport a reasonable amount of data.
+test_query(
+	$node,
+	"test1",
+	'SELECT * FROM generate_series(1, 100000);',
+	qr/^1\n.*\n1024\n.*\n9999\n.*\n100000$/s,
+	"gssencmode=require",
+	"receiving 100K lines works");
+
+test_query(
+	$node,
+	"test1",
+	"CREATE TABLE mytab (f1 int primary key);\n"
+	  . "COPY mytab FROM STDIN;\n"
+	  . join("\n", (1 .. 100000))
+	  . "\n\\.\n"
+	  . "SELECT COUNT(*) FROM mytab;",
+	qr/^100000$/s,
+	"gssencmode=require",
+	"sending 100K lines works");
 
 unlink($node->data_dir . '/pg_hba.conf');
 $node->append_conf('pg_hba.conf',

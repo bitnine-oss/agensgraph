@@ -787,7 +787,7 @@ static const struct object_type_map
 	{
 		"transform", OBJECT_TRANSFORM
 	},
-	/* OBJECT_STATISTIC_EXT */
+	/* OCLASS_STATISTIC_EXT */
 	{
 		"statistics object", OBJECT_STATISTIC_EXT
 	},
@@ -2630,7 +2630,8 @@ check_object_ownership(Oid roleid, ObjectType objtype, ObjectAddress address,
 			break;
 		case OBJECT_STATISTIC_EXT:
 			if (!pg_statistics_object_ownercheck(address.objectId, roleid))
-				aclcheck_error_type(ACLCHECK_NOT_OWNER, address.objectId);
+				aclcheck_error(ACLCHECK_NOT_OWNER, objtype,
+							   NameListToString(castNode(List, object)));
 			break;
 		case OBJECT_GRAPH:
 			if (!ag_graph_ownercheck(address.objectId, roleid))
@@ -2778,6 +2779,13 @@ get_object_attnum_acl(Oid class_id)
 	return prop->attnum_acl;
 }
 
+/*
+ * get_object_type
+ *
+ * Return the object type associated with a given object.  This routine
+ * is primarily used to determine the object type to mention in ACL check
+ * error messages, so it's desirable for it to avoid failing.
+ */
 ObjectType
 get_object_type(Oid class_id, Oid object_id)
 {
@@ -5258,10 +5266,7 @@ getObjectIdentityParts(const ObjectAddress *object,
 			{
 				HeapTuple	tup;
 				Form_pg_event_trigger trigForm;
-
-				/* no objname support here */
-				if (objname)
-					*objname = NIL;
+				char	   *evtname;
 
 				tup = SearchSysCache1(EVENTTRIGGEROID,
 									  ObjectIdGetDatum(object->objectId));
@@ -5269,8 +5274,10 @@ getObjectIdentityParts(const ObjectAddress *object,
 					elog(ERROR, "cache lookup failed for event trigger %u",
 						 object->objectId);
 				trigForm = (Form_pg_event_trigger) GETSTRUCT(tup);
-				appendStringInfoString(&buffer,
-									   quote_identifier(NameStr(trigForm->evtname)));
+				evtname = pstrdup(NameStr(trigForm->evtname));
+				appendStringInfoString(&buffer, quote_identifier(evtname));
+				if (objname)
+					*objname = list_make1(evtname);
 				ReleaseSysCache(tup);
 				break;
 			}
@@ -5533,6 +5540,16 @@ strlist_to_textarray(List *list)
 	return arr;
 }
 
+/*
+ * get_relkind_objtype
+ *
+ * Return the object type for the relkind given by the caller.
+ *
+ * If an unexpected relkind is passed, we say OBJECT_TABLE rather than
+ * failing.  That's because this is mostly used for generating error messages
+ * for failed ACL checks on relations, and we'd rather produce a generic
+ * message saying "table" than fail entirely.
+ */
 ObjectType
 get_relkind_objtype(char relkind)
 {
@@ -5552,14 +5569,11 @@ get_relkind_objtype(char relkind)
 			return OBJECT_MATVIEW;
 		case RELKIND_FOREIGN_TABLE:
 			return OBJECT_FOREIGN_TABLE;
-
-			/*
-			 * other relkinds are not supported here because they don't map to
-			 * OBJECT_* values
-			 */
+		case RELKIND_TOASTVALUE:
+			return OBJECT_TABLE;
 		default:
-			elog(ERROR, "unexpected relkind: %d", relkind);
-			return 0;
+			/* Per above, don't raise an error */
+			return OBJECT_TABLE;
 	}
 }
 

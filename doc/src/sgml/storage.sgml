@@ -400,7 +400,7 @@ of the LZ family of compression techniques.  See
 </para>
 
 <sect2 id="storage-toast-ondisk">
- <title>Out-of-line, on-disk TOAST storage</title>
+ <title>Out-of-Line, On-Disk TOAST Storage</title>
 
 <para>
 If any of the columns of a table are <acronym>TOAST</acronym>-able, the table will
@@ -516,7 +516,7 @@ comparison table, in which all the HTML pages were cut down to 7 kB to fit.
 </sect2>
 
 <sect2 id="storage-toast-inmemory">
- <title>Out-of-line, in-memory TOAST storage</title>
+ <title>Out-of-Line, In-Memory TOAST Storage</title>
 
 <para>
 <acronym>TOAST</acronym> pointers can point to data that is not on disk, but is
@@ -957,7 +957,8 @@ data. Empty in ordinary tables.</entry>
   only present if the <firstterm>HEAP_HASNULL</firstterm> bit is set in
   <structfield>t_infomask</structfield>. If it is present it begins just after
   the fixed header and occupies enough bytes to have one bit per data column
-  (that is, <structfield>t_natts</structfield> bits altogether). In this list of bits, a
+  (that is, the number of bits that equals the attribute count in
+  <structfield>t_infomask2</structfield>). In this list of bits, a
   1 bit indicates not-null, a 0 bit is a null.  When the bitmap is not
   present, all columns are assumed not-null.
   The object ID is only present if the <firstterm>HEAP_HASOID_OLD</firstterm> bit

@@ -16,6 +16,7 @@
 
 #include <sys/file.h>
 #include <dirent.h>
+#include <fcntl.h>
 #include <math.h>
 #include <unistd.h>
 
@@ -195,72 +196,82 @@ current_query(PG_FUNCTION_ARGS)
 
 /* Function to find out which databases make use of a tablespace */
 
-typedef struct
-{
-	char	   *location;
-	DIR		   *dirdesc;
-} ts_db_fctx;
-
 Datum
 pg_tablespace_databases(PG_FUNCTION_ARGS)
 {
-	FuncCallContext *funcctx;
+	Oid			tablespaceOid = PG_GETARG_OID(0);
+	ReturnSetInfo *rsinfo = (ReturnSetInfo *) fcinfo->resultinfo;
+	bool		randomAccess;
+	TupleDesc	tupdesc;
+	Tuplestorestate *tupstore;
+	char	   *location;
+	DIR		   *dirdesc;
 	struct dirent *de;
-	ts_db_fctx *fctx;
+	MemoryContext oldcontext;
 
-	if (SRF_IS_FIRSTCALL())
+	/* check to see if caller supports us returning a tuplestore */
+	if (rsinfo == NULL || !IsA(rsinfo, ReturnSetInfo))
+		ereport(ERROR,
+				(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+				 errmsg("set-valued function called in context that cannot accept a set")));
+	if (!(rsinfo->allowedModes & SFRM_Materialize))
+		ereport(ERROR,
+				(errcode(ERRCODE_SYNTAX_ERROR),
+				 errmsg("materialize mode required, but it is not allowed in this context")));
+
+	/* The tupdesc and tuplestore must be created in ecxt_per_query_memory */
+	oldcontext = MemoryContextSwitchTo(rsinfo->econtext->ecxt_per_query_memory);
+
+	tupdesc = CreateTemplateTupleDesc(1);
+	TupleDescInitEntry(tupdesc, (AttrNumber) 1, "pg_tablespace_databases",
+					   OIDOID, -1, 0);
+
+	randomAccess = (rsinfo->allowedModes & SFRM_Materialize_Random) != 0;
+	tupstore = tuplestore_begin_heap(randomAccess, false, work_mem);
+
+	rsinfo->returnMode = SFRM_Materialize;
+	rsinfo->setResult = tupstore;
+	rsinfo->setDesc = tupdesc;
+
+	MemoryContextSwitchTo(oldcontext);
+
+	if (tablespaceOid == GLOBALTABLESPACE_OID)
 	{
-		MemoryContext oldcontext;
-		Oid			tablespaceOid = PG_GETARG_OID(0);
-
-		funcctx = SRF_FIRSTCALL_INIT();
-		oldcontext = MemoryContextSwitchTo(funcctx->multi_call_memory_ctx);
-
-		fctx = palloc(sizeof(ts_db_fctx));
-
-		if (tablespaceOid == GLOBALTABLESPACE_OID)
-		{
-			fctx->dirdesc = NULL;
-			ereport(WARNING,
-					(errmsg("global tablespace never has databases")));
-		}
-		else
-		{
-			if (tablespaceOid == DEFAULTTABLESPACE_OID)
-				fctx->location = psprintf("base");
-			else
-				fctx->location = psprintf("pg_tblspc/%u/%s", tablespaceOid,
-										  TABLESPACE_VERSION_DIRECTORY);
-
-			fctx->dirdesc = AllocateDir(fctx->location);
-
-			if (!fctx->dirdesc)
-			{
-				/* the only expected error is ENOENT */
-				if (errno != ENOENT)
-					ereport(ERROR,
-							(errcode_for_file_access(),
-							 errmsg("could not open directory \"%s\": %m",
-									fctx->location)));
-				ereport(WARNING,
-						(errmsg("%u is not a tablespace OID", tablespaceOid)));
-			}
-		}
-		funcctx->user_fctx = fctx;
-		MemoryContextSwitchTo(oldcontext);
+		ereport(WARNING,
+				(errmsg("global tablespace never has databases")));
+		/* return empty tuplestore */
+		return (Datum) 0;
 	}
 
-	funcctx = SRF_PERCALL_SETUP();
-	fctx = (ts_db_fctx *) funcctx->user_fctx;
+	if (tablespaceOid == DEFAULTTABLESPACE_OID)
+		location = psprintf("base");
+	else
+		location = psprintf("pg_tblspc/%u/%s", tablespaceOid,
+							TABLESPACE_VERSION_DIRECTORY);
 
-	if (!fctx->dirdesc)			/* not a tablespace */
-		SRF_RETURN_DONE(funcctx);
+	dirdesc = AllocateDir(location);
 
-	while ((de = ReadDir(fctx->dirdesc, fctx->location)) != NULL)
+	if (!dirdesc)
+	{
+		/* the only expected error is ENOENT */
+		if (errno != ENOENT)
+			ereport(ERROR,
+					(errcode_for_file_access(),
+					 errmsg("could not open directory \"%s\": %m",
+							location)));
+		ereport(WARNING,
+				(errmsg("%u is not a tablespace OID", tablespaceOid)));
+		/* return empty tuplestore */
+		return (Datum) 0;
+	}
+
+	while ((de = ReadDir(dirdesc, location)) != NULL)
 	{
 		Oid			datOid = atooid(de->d_name);
 		char	   *subdir;
 		bool		isempty;
+		Datum		values[1];
+		bool		nulls[1];
 
 		/* this test skips . and .., but is awfully weak */
 		if (!datOid)
@@ -268,18 +279,21 @@ pg_tablespace_databases(PG_FUNCTION_ARGS)
 
 		/* if database subdir is empty, don't report tablespace as used */
 
-		subdir = psprintf("%s/%s", fctx->location, de->d_name);
+		subdir = psprintf("%s/%s", location, de->d_name);
 		isempty = directory_is_empty(subdir);
 		pfree(subdir);
 
 		if (isempty)
 			continue;			/* indeed, nothing in it */
 
-		SRF_RETURN_NEXT(funcctx, ObjectIdGetDatum(datOid));
+		values[0] = ObjectIdGetDatum(datOid);
+		nulls[0] = false;
+
+		tuplestore_putvalues(tupstore, tupdesc, values, nulls);
 	}
 
-	FreeDir(fctx->dirdesc);
-	SRF_RETURN_DONE(funcctx);
+	FreeDir(dirdesc);
+	return (Datum) 0;
 }
 
 
@@ -510,7 +524,7 @@ pg_relation_is_updatable(PG_FUNCTION_ARGS)
 	Oid			reloid = PG_GETARG_OID(0);
 	bool		include_triggers = PG_GETARG_BOOL(1);
 
-	PG_RETURN_INT32(relation_is_updatable(reloid, include_triggers, NULL));
+	PG_RETURN_INT32(relation_is_updatable(reloid, NIL, include_triggers, NULL));
 }
 
 /*
@@ -534,7 +548,7 @@ pg_column_is_updatable(PG_FUNCTION_ARGS)
 	if (attnum <= 0)
 		PG_RETURN_BOOL(false);
 
-	events = relation_is_updatable(reloid, include_triggers,
+	events = relation_is_updatable(reloid, NIL, include_triggers,
 								   bms_make_singleton(col));
 
 	/* We require both updatability and deletability of the relation */
@@ -726,9 +740,6 @@ pg_current_logfile(PG_FUNCTION_ARGS)
 	FILE	   *fd;
 	char		lbuffer[MAXPGPATH];
 	char	   *logfmt;
-	char	   *log_filepath;
-	char	   *log_format = lbuffer;
-	char	   *nlpos;
 
 	/* The log format parameter is optional */
 	if (PG_NARGS() == 0 || PG_ARGISNULL(0))
@@ -755,16 +766,23 @@ pg_current_logfile(PG_FUNCTION_ARGS)
 		PG_RETURN_NULL();
 	}
 
+#ifdef WIN32
+	/* syslogger.c writes CRLF line endings on Windows */
+	_setmode(_fileno(fd), _O_TEXT);
+#endif
+
 	/*
 	 * Read the file to gather current log filename(s) registered by the
 	 * syslogger.
 	 */
 	while (fgets(lbuffer, sizeof(lbuffer), fd) != NULL)
 	{
-		/*
-		 * Extract log format and log file path from the line; lbuffer ==
-		 * log_format, they share storage.
-		 */
+		char	   *log_format;
+		char	   *log_filepath;
+		char	   *nlpos;
+
+		/* Extract log format and log file path from the line. */
+		log_format = lbuffer;
 		log_filepath = strchr(lbuffer, ' ');
 		if (log_filepath == NULL)
 		{

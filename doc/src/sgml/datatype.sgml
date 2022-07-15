@@ -507,7 +507,7 @@
      very large number of digits. It is especially recommended for
      storing monetary amounts and other quantities where exactness is
      required.  Calculations with <type>numeric</type> values yield exact
-     results where possible, e.g.  addition, subtraction, multiplication.
+     results where possible, e.g.,  addition, subtraction, multiplication.
      However, calculations on <type>numeric</type> values are very slow
      compared to the integer types, or to the floating-point types
      described in the next section.
@@ -731,7 +731,7 @@ FROM generate_series(-3.5, 3.5, 1) as x;
      representable in the same binary precision. (However, the output value is
      currently never <emphasis>exactly</emphasis> midway between two
      representable values, in order to avoid a widespread bug where input
-     routines do not properly respect the round-to-even rule.) This value will
+     routines do not properly respect the round-to-nearest-even rule.) This value will
      use at most 17 significant decimal digits for <type>float8</type>
      values, and at most 9 digits for <type>float4</type> values.
     </para>
@@ -1150,6 +1150,14 @@ SELECT '52093.89'::money::numeric::float8;
    </para>
 
    <para>
+    The characters that can be stored in any of these data types are
+    determined by the database character set, which is selected when
+    the database is created.  Regardless of the specific character set,
+    the character with code zero (sometimes called NUL) cannot be stored.
+    For more information refer to <xref linkend="multibyte"/>.
+   </para>
+
+   <para>
     The storage requirement for a short string (up to 126 bytes) is 1 byte
     plus the actual string, which includes the space padding in the case of
     <type>character</type>.  Longer strings have 4 bytes of overhead instead
@@ -1186,10 +1194,7 @@ SELECT '52093.89'::money::numeric::float8;
    <para>
     Refer to <xref linkend="sql-syntax-strings"/> for information about
     the syntax of string literals, and to <xref linkend="functions"/>
-    for information about available operators and functions. The
-    database character set determines the character set used to store
-    textual values; for more information on character set support,
-    refer to <xref linkend="multibyte"/>.
+    for information about available operators and functions.
    </para>
 
    <example>
@@ -1654,8 +1659,9 @@ SELECT 'abc \153\154\155 \052\251\124'::bytea;
         <entry><type>time [ (<replaceable>p</replaceable>) ] with time zone</type></entry>
         <entry>12 bytes</entry>
         <entry>time of day (no date), with time zone</entry>
-        <entry>00:00:00+1459</entry>
-        <entry>24:00:00-1459</entry>
+        <!-- see MAX_TZDISP_HOUR in datatype/timestamp.h -->
+        <entry>00:00:00+1559</entry>
+        <entry>24:00:00-1559</entry>
         <entry>1 microsecond</entry>
        </row>
        <row>
@@ -1937,19 +1943,27 @@ MINUTE TO SECOND
          </row>
          <row>
           <entry><literal>04:05:06.789-8</literal></entry>
-          <entry>ISO 8601</entry>
+          <entry>ISO 8601, with time zone as UTC offset</entry>
          </row>
          <row>
           <entry><literal>04:05:06-08:00</literal></entry>
-          <entry>ISO 8601</entry>
+          <entry>ISO 8601, with time zone as UTC offset</entry>
          </row>
          <row>
           <entry><literal>04:05-08:00</literal></entry>
-          <entry>ISO 8601</entry>
+          <entry>ISO 8601, with time zone as UTC offset</entry>
          </row>
          <row>
           <entry><literal>040506-08</literal></entry>
-          <entry>ISO 8601</entry>
+          <entry>ISO 8601, with time zone as UTC offset</entry>
+         </row>
+         <row>
+          <entry><literal>040506+0730</literal></entry>
+          <entry>ISO 8601, with fractional-hour time zone as UTC offset</entry>
+         </row>
+         <row>
+          <entry><literal>040506+07:30:00</literal></entry>
+          <entry>UTC offset specified to seconds (not allowed in ISO 8601)</entry>
          </row>
          <row>
           <entry><literal>04:05:06 PST</literal></entry>
@@ -1986,16 +2000,20 @@ MINUTE TO SECOND
           <entry>POSIX-style time zone specification</entry>
          </row>
          <row>
+          <entry><literal>-8:00:00</literal></entry>
+          <entry>UTC offset for PST</entry>
+         </row>
+         <row>
           <entry><literal>-8:00</literal></entry>
-          <entry>ISO-8601 offset for PST</entry>
+          <entry>UTC offset for PST (ISO 8601 extended format)</entry>
          </row>
          <row>
           <entry><literal>-800</literal></entry>
-          <entry>ISO-8601 offset for PST</entry>
+          <entry>UTC offset for PST (ISO 8601 basic format)</entry>
          </row>
          <row>
           <entry><literal>-8</literal></entry>
-          <entry>ISO-8601 offset for PST</entry>
+          <entry>UTC offset for PST (ISO 8601 basic format)</entry>
          </row>
          <row>
           <entry><literal>zulu</literal></entry>
@@ -2003,7 +2021,7 @@ MINUTE TO SECOND
          </row>
          <row>
           <entry><literal>z</literal></entry>
-          <entry>Short form of <literal>zulu</literal></entry>
+          <entry>Short form of <literal>zulu</literal> (also in ISO 8601)</entry>
          </row>
         </tbody>
        </tgroup>
@@ -2113,7 +2131,7 @@ January 8 04:05:06 1999 PST
      </para>
     </sect3>
 
-    <sect3>
+    <sect3 id="datatype-datetime-special-values">
      <title>Special Values</title>
 
      <indexterm>
@@ -2174,17 +2192,17 @@ January 8 04:05:06 1999 PST
          <row>
           <entry><literal>today</literal></entry>
           <entry><type>date</type>, <type>timestamp</type></entry>
-          <entry>midnight today</entry>
+          <entry>midnight (<literal>00:00</literal>) today</entry>
          </row>
          <row>
           <entry><literal>tomorrow</literal></entry>
           <entry><type>date</type>, <type>timestamp</type></entry>
-          <entry>midnight tomorrow</entry>
+          <entry>midnight (<literal>00:00</literal>) tomorrow</entry>
          </row>
          <row>
           <entry><literal>yesterday</literal></entry>
           <entry><type>date</type>, <type>timestamp</type></entry>
-          <entry>midnight yesterday</entry>
+          <entry>midnight (<literal>00:00</literal>) yesterday</entry>
          </row>
          <row>
           <entry><literal>allballs</literal></entry>
@@ -2201,11 +2219,25 @@ January 8 04:05:06 1999 PST
       type:
       <literal>CURRENT_DATE</literal>, <literal>CURRENT_TIME</literal>,
       <literal>CURRENT_TIMESTAMP</literal>, <literal>LOCALTIME</literal>,
-      <literal>LOCALTIMESTAMP</literal>.  The latter four accept an
-      optional subsecond precision specification.  (See <xref
+      <literal>LOCALTIMESTAMP</literal>.  (See <xref
       linkend="functions-datetime-current"/>.)  Note that these are
       SQL functions and are <emphasis>not</emphasis> recognized in data input strings.
      </para>
+
+     <caution>
+      <para>
+       While the input strings <literal>now</literal>,
+       <literal>today</literal>, <literal>tomorrow</literal>,
+       and <literal>yesterday</literal> are fine to use in interactive SQL
+       commands, they can have surprising behavior when the command is
+       saved to be executed later, for example in prepared statements,
+       views, and function definitions.  The string can be converted to a
+       specific time value that continues to be used long after it becomes
+       stale.  Use one of the SQL functions instead in such contexts.
+       For example, <literal>CURRENT_DATE + 1</literal> is safer than
+       <literal>'tomorrow'::date</literal>.
+      </para>
+     </caution>
 
     </sect3>
    </sect2>
@@ -2328,6 +2360,24 @@ January 8 04:05:06 1999 PST
      </table>
 
     <para>
+     In the <acronym>ISO</acronym> style, the time zone is always shown as
+     a signed numeric offset from UTC, with positive sign used for zones
+     east of Greenwich.  The offset will be shown
+     as <replaceable>hh</replaceable> (hours only) if it is an integral
+     number of hours, else
+     as <replaceable>hh</replaceable>:<replaceable>mm</replaceable> if it
+     is an integral number of minutes, else as
+     <replaceable>hh</replaceable>:<replaceable>mm</replaceable>:<replaceable>ss</replaceable>.
+     (The third case is not possible with any modern time zone standard,
+     but it can appear when working with timestamps that predate the
+     adoption of standardized time zones.)
+     In the other date styles, the time zone is shown as an alphabetic
+     abbreviation if one is in common use in the current zone.  Otherwise
+     it appears as a signed numeric offset in ISO 8601 basic format
+     (<replaceable>hh</replaceable> or <replaceable>hhmm</replaceable>).
+    </para>
+
+    <para>
      The date/time style can be selected by the user using the
      <command>SET datestyle</command> command, the <xref
      linkend="guc-datestyle"/> parameter in the
@@ -2432,7 +2482,7 @@ January 8 04:05:06 1999 PST
         A time zone abbreviation, for example <literal>PST</literal>.  Such a
         specification merely defines a particular offset from UTC, in
         contrast to full time zone names which can imply a set of daylight
-        savings transition-date rules as well.  The recognized abbreviations
+        savings transition rules as well.  The recognized abbreviations
         are listed in the <literal>pg_timezone_abbrevs</literal> view (see <xref
         linkend="view-pg-timezone-abbrevs"/>).  You cannot set the
         configuration parameters <xref linkend="guc-timezone"/> or
@@ -2446,25 +2496,10 @@ January 8 04:05:06 1999 PST
        <para>
         In addition to the timezone names and abbreviations,
         <productname>PostgreSQL</productname> will accept POSIX-style time zone
-        specifications of the form <replaceable>STD</replaceable><replaceable>offset</replaceable> or
-        <replaceable>STD</replaceable><replaceable>offset</replaceable><replaceable>DST</replaceable>, where
-        <replaceable>STD</replaceable> is a zone abbreviation, <replaceable>offset</replaceable> is a
-        numeric offset in hours west from UTC, and <replaceable>DST</replaceable> is an
-        optional daylight-savings zone abbreviation, assumed to stand for one
-        hour ahead of the given offset. For example, if <literal>EST5EDT</literal>
-        were not already a recognized zone name, it would be accepted and would
-        be functionally equivalent to United States East Coast time.  In this
-        syntax, a zone abbreviation can be a string of letters, or an
-        arbitrary string surrounded by angle brackets (<literal>&lt;&gt;</literal>).
-        When a daylight-savings zone abbreviation is present,
-        it is assumed to be used
-        according to the same daylight-savings transition rules used in the
-        IANA time zone database's <filename>posixrules</filename> entry.
-        In a standard <productname>PostgreSQL</productname> installation,
-        <filename>posixrules</filename> is the same as <literal>US/Eastern</literal>, so
-        that POSIX-style time zone specifications follow USA daylight-savings
-        rules.  If needed, you can adjust this behavior by replacing the
-        <filename>posixrules</filename> file.
+        specifications, as described in
+        <xref linkend="datetime-posix-timezone-specs"/>.  This option is not
+        normally preferable to using a named time zone, but it may be
+        necessary if no suitable IANA time zone entry is available.
        </para>
       </listitem>
      </itemizedlist>
@@ -2489,19 +2524,6 @@ January 8 04:05:06 1999 PST
      abbreviations according to whatever they meant (or had most recently
      meant) on the specified date; but, as with the <literal>EST</literal> example
      above, this is not necessarily the same as local civil time on that date.
-    </para>
-
-    <para>
-     One should be wary that the POSIX-style time zone feature can
-     lead to silently accepting bogus input, since there is no check on the
-     reasonableness of the zone abbreviations.  For example, <literal>SET
-     TIMEZONE TO FOOBAR0</literal> will work, leaving the system effectively using
-     a rather peculiar abbreviation for UTC.
-     Another issue to keep in mind is that in POSIX time zone names,
-     positive offsets are used for locations <emphasis>west</emphasis> of Greenwich.
-     Everywhere else, <productname>PostgreSQL</productname> follows the
-     ISO-8601 convention that positive timezone offsets are <emphasis>east</emphasis>
-     of Greenwich.
     </para>
 
     <para>
@@ -2688,15 +2710,18 @@ P <optional> <replaceable>years</replaceable>-<replaceable>months</replaceable>-
     </para>
 
     <para>
-     In the verbose input format, and in some fields of the more compact
-     input formats, field values can have fractional parts; for example
-     <literal>'1.5 week'</literal> or <literal>'01:02:03.45'</literal>.  Such input is
-     converted to the appropriate number of months, days, and seconds
-     for storage.  When this would result in a fractional number of
-     months or days, the fraction is added to the lower-order fields
-     using the conversion factors 1 month = 30 days and 1 day = 24 hours.
-     For example, <literal>'1.5 month'</literal> becomes 1 month and 15 days.
-     Only seconds will ever be shown as fractional on output.
+     Field values can have fractional parts:  for example, <literal>'1.5
+     weeks'</literal> or <literal>'01:02:03.45'</literal>.  However,
+     because interval internally stores only three integer units (months,
+     days, microseconds), fractional units must be spilled to smaller
+     units.  Fractional parts of units greater than months are truncated to
+     be an integer number of months, e.g. <literal>'1.5 years'</literal>
+     becomes <literal>'1 year 6 mons'</literal>.  Fractional parts of
+     weeks and days are computed to be an integer number of days and
+     microseconds, assuming 30 days per month and 24 hours per day, e.g.,
+     <literal>'1.75 months'</literal> becomes <literal>1 mon 22 days
+     12:00:00</literal>.  Only seconds will ever be shown as fractional
+     on output.
     </para>
 
     <para>
@@ -2740,10 +2765,10 @@ P <optional> <replaceable>years</replaceable>-<replaceable>months</replaceable>-
 
     <para>
      Internally <type>interval</type> values are stored as months, days,
-     and seconds. This is done because the number of days in a month
+     and microseconds. This is done because the number of days in a month
      varies, and a day can have 23 or 25 hours if a daylight savings
      time adjustment is involved.  The months and days fields are integers
-     while the seconds field can store fractions.  Because intervals are
+     while the microseconds field can store fractional seconds.  Because intervals are
      usually created from constant strings or <type>timestamp</type> subtraction,
      this storage method works well in most cases, but can cause unexpected
      results:
@@ -4958,7 +4983,7 @@ SELECT * FROM pg_attribute
 
        <row>
         <entry><type>unknown</type></entry>
-        <entry>Identifies a not-yet-resolved type, e.g. of an undecorated
+        <entry>Identifies a not-yet-resolved type, e.g., of an undecorated
          string literal.</entry>
        </row>
 

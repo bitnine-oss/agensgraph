@@ -65,7 +65,7 @@
 
 # composite types
 { oid => '7010',
-relname => 'vertex', relnamespace => 'PGNSP', reltype => '7012',
+relname => 'vertex', relnamespace => 'PGNSP', reltype => 'vertex',
 reloftype => '0', relowner => 'PGUID', relam => '0', relfilenode => '7010',
 reltablespace => '0', relpages => '0', reltuples => '0', relallvisible => '0',
 reltoastrelid => '0', relhasindex => 'f', relisshared => 'f',
@@ -77,7 +77,7 @@ relrewrite => '0', relfrozenxid => '0', relminmxid => '0', relacl => '_null_',
 reloptions => '_null_', relpartbound => '_null_' },
 
 { oid => '7020',
-relname => 'edge', relnamespace => 'PGNSP', reltype => '7022',
+relname => 'edge', relnamespace => 'PGNSP', reltype => 'edge',
 reloftype => '0', relowner => 'PGUID', relam => '0', relfilenode => '7020',
 reltablespace => '0', relpages => '0', reltuples => '0', relallvisible => '0',
 reltoastrelid => '0', relhasindex => 'f', relisshared => 'f',
@@ -89,7 +89,7 @@ relrewrite => '0', relfrozenxid => '0', relminmxid => '0', relacl => '_null_',
 reloptions => '_null_', relpartbound => '_null_' },
 
 { oid => '7030',
-relname => 'graphpath', relnamespace => 'PGNSP', reltype => '7032',
+relname => 'graphpath', relnamespace => 'PGNSP', reltype => 'graphpath',
 reloftype => '0', relowner => 'PGUID', relam => '0', relfilenode => '7030',
 reltablespace => '0', relpages => '0', reltuples => '0', relallvisible => '0',
 reltoastrelid => '0', relhasindex => 'f', relisshared => 'f',

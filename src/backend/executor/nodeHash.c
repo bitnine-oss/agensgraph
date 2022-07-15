@@ -37,6 +37,7 @@
 #include "miscadmin.h"
 #include "pgstat.h"
 #include "port/atomics.h"
+#include "port/pg_bitutils.h"
 #include "utils/dynahash.h"
 #include "utils/memutils.h"
 #include "utils/lsyscache.h"
@@ -157,7 +158,8 @@ MultiExecPrivateHash(HashState *node)
 	econtext = node->ps.ps_ExprContext;
 
 	/*
-	 * get all inner tuples and insert into the hash table (or temp files)
+	 * Get all tuples from the node below the Hash node and insert into the
+	 * hash table (or temp files).
 	 */
 	for (;;)
 	{
@@ -165,7 +167,7 @@ MultiExecPrivateHash(HashState *node)
 		if (TupIsNull(slot))
 			break;
 		/* We have to compute the hash value */
-		econtext->ecxt_innertuple = slot;
+		econtext->ecxt_outertuple = slot;
 		if (ExecHashGetHashValue(hashtable, econtext, hashkeys,
 								 false, hashtable->keepNulls,
 								 &hashvalue))
@@ -281,7 +283,7 @@ MultiExecParallelHash(HashState *node)
 				slot = ExecProcNode(outerNode);
 				if (TupIsNull(slot))
 					break;
-				econtext->ecxt_innertuple = slot;
+				econtext->ecxt_outertuple = slot;
 				if (ExecHashGetHashValue(hashtable, econtext, hashkeys,
 										 false, hashtable->keepNulls,
 										 &hashvalue))
@@ -388,8 +390,9 @@ ExecInitHash(Hash *node, EState *estate, int eflags)
 	/*
 	 * initialize child expressions
 	 */
-	hashstate->ps.qual =
-		ExecInitQual(node->plan.qual, (PlanState *) hashstate);
+	Assert(node->plan.qual == NIL);
+	hashstate->hashkeys =
+		ExecInitExprList(node->hashkeys, (PlanState *) hashstate);
 
 	return hashstate;
 }
@@ -1773,9 +1776,13 @@ ExecParallelHashTableInsertCurrentBatch(HashJoinTable hashtable,
  * ExecHashGetHashValue
  *		Compute the hash value for a tuple
  *
- * The tuple to be tested must be in either econtext->ecxt_outertuple or
- * econtext->ecxt_innertuple.  Vars in the hashkeys expressions should have
- * varno either OUTER_VAR or INNER_VAR.
+ * The tuple to be tested must be in econtext->ecxt_outertuple (thus Vars in
+ * the hashkeys expressions need to have OUTER_VAR as varno). If outer_tuple
+ * is false (meaning it's the HashJoin's inner node, Hash), econtext,
+ * hashkeys, and slot need to be from Hash, with hashkeys/slot referencing and
+ * being suitable for tuples from the node below the Hash. Conversely, if
+ * outer_tuple is true, econtext is from HashJoin, and hashkeys/slot need to
+ * be appropriate for tuples from HashJoin's outer node.
  *
  * A true result means the tuple's hash value has been successfully computed
  * and stored at *hashvalue.  A false result means the tuple cannot match
@@ -1872,7 +1879,7 @@ ExecHashGetHashValue(HashJoinTable hashtable,
  * chains), and must only cause the batch number to remain the same or
  * increase.  Our algorithm is
  *		bucketno = hashvalue MOD nbuckets
- *		batchno = (hashvalue DIV nbuckets) MOD nbatch
+ *		batchno = ROR(hashvalue, log2_nbuckets) MOD nbatch
  * where nbuckets and nbatch are both expected to be powers of 2, so we can
  * do the computations by shifting and masking.  (This assumes that all hash
  * functions are good about randomizing all their output bits, else we are
@@ -1884,7 +1891,11 @@ ExecHashGetHashValue(HashJoinTable hashtable,
  * number the way we do here).
  *
  * nbatch is always a power of 2; we increase it only by doubling it.  This
- * effectively adds one more bit to the top of the batchno.
+ * effectively adds one more bit to the top of the batchno.  In very large
+ * joins, we might run out of bits to add, so we do this by rotating the hash
+ * value.  This causes batchno to steal bits from bucketno when the number of
+ * virtual buckets exceeds 2^32.  It's better to have longer bucket chains
+ * than to lose the ability to divide batches.
  */
 void
 ExecHashGetBucketAndBatch(HashJoinTable hashtable,
@@ -1897,9 +1908,9 @@ ExecHashGetBucketAndBatch(HashJoinTable hashtable,
 
 	if (nbatch > 1)
 	{
-		/* we can do MOD by masking, DIV by shifting */
 		*bucketno = hashvalue & (nbuckets - 1);
-		*batchno = (hashvalue >> hashtable->log2_nbuckets) & (nbatch - 1);
+		*batchno = pg_rotate_right32(hashvalue,
+									 hashtable->log2_nbuckets) & (nbatch - 1);
 	}
 	else
 	{

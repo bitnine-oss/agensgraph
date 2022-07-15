@@ -273,6 +273,41 @@ mdunlink(RelFileNodeBackend rnode, ForkNumber forkNum, bool isRedo)
 		mdunlinkfork(rnode, forkNum, isRedo);
 }
 
+/*
+ * Truncate a file to release disk space.
+ */
+static int
+do_truncate(const char *path)
+{
+	int			save_errno;
+	int			ret;
+	int			fd;
+
+	/* truncate(2) would be easier here, but Windows hasn't got it */
+	fd = OpenTransientFile(path, O_RDWR | PG_BINARY);
+	if (fd >= 0)
+	{
+		ret = ftruncate(fd, 0);
+		save_errno = errno;
+		CloseTransientFile(fd);
+		errno = save_errno;
+	}
+	else
+		ret = -1;
+
+	/* Log a warning here to avoid repetition in callers. */
+	if (ret < 0 && errno != ENOENT)
+	{
+		save_errno = errno;
+		ereport(WARNING,
+				(errcode_for_file_access(),
+				 errmsg("could not truncate file \"%s\": %m", path)));
+		errno = save_errno;
+	}
+
+	return ret;
+}
+
 static void
 mdunlinkfork(RelFileNodeBackend rnode, ForkNumber forkNum, bool isRedo)
 {
@@ -286,38 +321,31 @@ mdunlinkfork(RelFileNodeBackend rnode, ForkNumber forkNum, bool isRedo)
 	 */
 	if (isRedo || forkNum != MAIN_FORKNUM || RelFileNodeBackendIsTemp(rnode))
 	{
-		/* First, forget any pending sync requests for the first segment */
 		if (!RelFileNodeBackendIsTemp(rnode))
-			register_forget_request(rnode, forkNum, 0 /* first seg */ );
+		{
+			/* Prevent other backends' fds from holding on to the disk space */
+			ret = do_truncate(path);
 
-		/* Next unlink the file */
-		ret = unlink(path);
-		if (ret < 0 && errno != ENOENT)
-			ereport(WARNING,
-					(errcode_for_file_access(),
-					 errmsg("could not remove file \"%s\": %m", path)));
+			/* Forget any pending sync requests for the first segment */
+			register_forget_request(rnode, forkNum, 0 /* first seg */ );
+		}
+		else
+			ret = 0;
+
+		/* Next unlink the file, unless it was already found to be missing */
+		if (ret == 0 || errno != ENOENT)
+		{
+			ret = unlink(path);
+			if (ret < 0 && errno != ENOENT)
+				ereport(WARNING,
+						(errcode_for_file_access(),
+						 errmsg("could not remove file \"%s\": %m", path)));
+		}
 	}
 	else
 	{
-		/* truncate(2) would be easier here, but Windows hasn't got it */
-		int			fd;
-
-		fd = OpenTransientFile(path, O_RDWR | PG_BINARY);
-		if (fd >= 0)
-		{
-			int			save_errno;
-
-			ret = ftruncate(fd, 0);
-			save_errno = errno;
-			CloseTransientFile(fd);
-			errno = save_errno;
-		}
-		else
-			ret = -1;
-		if (ret < 0 && errno != ENOENT)
-			ereport(WARNING,
-					(errcode_for_file_access(),
-					 errmsg("could not truncate file \"%s\": %m", path)));
+		/* Prevent other backends' fds from holding on to the disk space */
+		ret = do_truncate(path);
 
 		/* Register request to unlink first segment later */
 		register_unlink_segment(rnode, forkNum, 0 /* first seg */ );
@@ -337,14 +365,24 @@ mdunlinkfork(RelFileNodeBackend rnode, ForkNumber forkNum, bool isRedo)
 		 */
 		for (segno = 1;; segno++)
 		{
-			/*
-			 * Forget any pending sync requests for this segment before we try
-			 * to unlink.
-			 */
-			if (!RelFileNodeBackendIsTemp(rnode))
-				register_forget_request(rnode, forkNum, segno);
-
 			sprintf(segpath, "%s.%u", path, segno);
+
+			if (!RelFileNodeBackendIsTemp(rnode))
+			{
+				/*
+				 * Prevent other backends' fds from holding on to the disk
+				 * space.
+				 */
+				if (do_truncate(segpath) < 0 && errno == ENOENT)
+					break;
+
+				/*
+				 * Forget any pending sync requests for this segment before we
+				 * try to unlink.
+				 */
+				register_forget_request(rnode, forkNum, segno);
+			}
+
 			if (unlink(segpath) < 0)
 			{
 				/* ENOENT is expected after the last segment... */
@@ -386,7 +424,8 @@ mdextend(SMgrRelation reln, ForkNumber forknum, BlockNumber blocknum,
 	/*
 	 * If a relation manages to grow to 2^32-1 blocks, refuse to extend it any
 	 * more --- we mustn't create a block whose number actually is
-	 * InvalidBlockNumber.
+	 * InvalidBlockNumber.  (Note that this failure should be unreachable
+	 * because of upstream checks in bufmgr.c.)
 	 */
 	if (blocknum == InvalidBlockNumber)
 		ereport(ERROR,
@@ -491,18 +530,10 @@ mdclose(SMgrRelation reln, ForkNumber forknum)
 	{
 		MdfdVec    *v = &reln->md_seg_fds[forknum][nopensegs - 1];
 
-		/* if not closed already */
-		if (v->mdfd_vfd >= 0)
-		{
-			FileClose(v->mdfd_vfd);
-			v->mdfd_vfd = -1;
-		}
-
+		FileClose(v->mdfd_vfd);
+		_fdvec_resize(reln, forknum, nopensegs - 1);
 		nopensegs--;
 	}
-
-	/* resize just once, avoids pointless reallocations */
-	_fdvec_resize(reln, forknum, 0);
 }
 
 /*
@@ -1025,10 +1056,10 @@ _fdvec_resize(SMgrRelation reln,
 	else
 	{
 		/*
-		 * It doesn't seem worthwhile complicating the code by having a more
-		 * aggressive growth strategy here; the number of segments doesn't
-		 * grow that fast, and the memory context internally will sometimes
-		 * avoid doing an actual reallocation.
+		 * It doesn't seem worthwhile complicating the code to amortize
+		 * repalloc() calls.  Those are far faster than PathNameOpenFile() or
+		 * FileClose(), and the memory context internally will sometimes avoid
+		 * doing an actual reallocation.
 		 */
 		reln->md_seg_fds[forknum] =
 			repalloc(reln->md_seg_fds[forknum],
@@ -1258,25 +1289,41 @@ int
 mdsyncfiletag(const FileTag *ftag, char *path)
 {
 	SMgrRelation reln = smgropen(ftag->rnode, InvalidBackendId);
-	MdfdVec    *v;
-	char	   *p;
+	File		file;
+	bool		need_to_close;
+	int			result,
+				save_errno;
 
-	/* Provide the path for informational messages. */
-	p = _mdfd_segpath(reln, ftag->forknum, ftag->segno);
-	strlcpy(path, p, MAXPGPATH);
-	pfree(p);
+	/* See if we already have the file open, or need to open it. */
+	if (ftag->segno < reln->md_num_open_segs[ftag->forknum])
+	{
+		file = reln->md_seg_fds[ftag->forknum][ftag->segno].mdfd_vfd;
+		strlcpy(path, FilePathName(file), MAXPGPATH);
+		need_to_close = false;
+	}
+	else
+	{
+		char	   *p;
 
-	/* Try to open the requested segment. */
-	v = _mdfd_getseg(reln,
-					 ftag->forknum,
-					 ftag->segno * (BlockNumber) RELSEG_SIZE,
-					 false,
-					 EXTENSION_RETURN_NULL | EXTENSION_DONT_CHECK_SIZE);
-	if (v == NULL)
-		return -1;
+		p = _mdfd_segpath(reln, ftag->forknum, ftag->segno);
+		strlcpy(path, p, MAXPGPATH);
+		pfree(p);
 
-	/* Try to fsync the file. */
-	return FileSync(v->mdfd_vfd, WAIT_EVENT_DATA_FILE_SYNC);
+		file = PathNameOpenFile(path, O_RDWR | PG_BINARY);
+		if (file < 0)
+			return -1;
+		need_to_close = true;
+	}
+
+	/* Sync the file. */
+	result = FileSync(file, WAIT_EVENT_DATA_FILE_SYNC);
+	save_errno = errno;
+
+	if (need_to_close)
+		FileClose(file);
+
+	errno = save_errno;
+	return result;
 }
 
 /*

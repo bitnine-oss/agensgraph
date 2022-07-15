@@ -26,8 +26,6 @@
 /* global variable - see postgres.c*/
 extern GraphWriteStats graphWriteStats;
 
-static Datum get_numeric_10_datum(void);
-
 #define FUNC_JSONB_MAX_ARGS 3
 
 typedef struct FunctionCallJsonbInfo

@@ -1,13 +1,13 @@
 # Russian message translation file for plperl
 # Copyright (C) 2012-2016 PostgreSQL Global Development Group
 # This file is distributed under the same license as the PostgreSQL package.
-# Alexander Lakhin <exclusion@gmail.com>, 2012-2017.
+# Alexander Lakhin <exclusion@gmail.com>, 2012-2017, 2019.
 msgid ""
 msgstr ""
 "Project-Id-Version: plperl (PostgreSQL current)\n"
-"Report-Msgid-Bugs-To: pgsql-bugs@postgresql.org\n"
-"POT-Creation-Date: 2019-04-30 07:03+0300\n"
-"PO-Revision-Date: 2017-03-29 13:41+0300\n"
+"Report-Msgid-Bugs-To: pgsql-bugs@lists.postgresql.org\n"
+"POT-Creation-Date: 2022-03-11 08:14+0300\n"
+"PO-Revision-Date: 2019-08-29 15:42+0300\n"
 "Last-Translator: Alexander Lakhin <exclusion@gmail.com>\n"
 "Language-Team: Russian <pgsql-ru-general@postgresql.org>\n"
 "Language: ru\n"
@@ -49,8 +49,8 @@ msgid "cannot allocate multiple Perl interpreters on this platform"
 msgstr "на этой платформе нельзя запустить множество интерпретаторов Perl"
 
 #: plperl.c:673 plperl.c:857 plperl.c:863 plperl.c:980 plperl.c:992
-#: plperl.c:1035 plperl.c:1058 plperl.c:2143 plperl.c:2253 plperl.c:2321
-#: plperl.c:2384
+#: plperl.c:1035 plperl.c:1058 plperl.c:2159 plperl.c:2269 plperl.c:2337
+#: plperl.c:2400
 #, c-format
 msgid "%s"
 msgstr "%s"
@@ -90,15 +90,15 @@ msgstr "при выполнении plperl.on_plperl_init"
 msgid "while executing plperl.on_plperlu_init"
 msgstr "при выполнении plperl.on_plperlu_init"
 
-#: plperl.c:1105 plperl.c:1787
+#: plperl.c:1105 plperl.c:1798
 #, c-format
 msgid "Perl hash contains nonexistent column \"%s\""
 msgstr "Perl-хеш содержит несуществующий столбец \"%s\""
 
-#: plperl.c:1110 plperl.c:1792
+#: plperl.c:1110 plperl.c:1803
 #, c-format
 msgid "cannot set system attribute \"%s\""
-msgstr "установить системный атрибут \"%s\" нельзя"
+msgstr "присвоить значение системному атрибуту \"%s\" нельзя"
 
 #: plperl.c:1198
 #, c-format
@@ -123,65 +123,70 @@ msgstr "Perl-массив нельзя преобразовать в тип не
 msgid "cannot convert Perl hash to non-composite type %s"
 msgstr "Perl-хеш нельзя преобразовать в не составной тип %s"
 
-#: plperl.c:1388 plperl.c:3288
+#: plperl.c:1388 plperl.c:3328
 #, c-format
 msgid ""
 "function returning record called in context that cannot accept type record"
 msgstr ""
 "функция, возвращающая запись, вызвана в контексте, не допускающем этот тип"
 
-#: plperl.c:1447
+#: plperl.c:1449
 #, c-format
 msgid "lookup failed for type %s"
 msgstr "найти тип %s не удалось"
 
-#: plperl.c:1762
+#: plperl.c:1773
 #, c-format
 msgid "$_TD->{new} does not exist"
 msgstr "$_TD->{new} не существует"
 
-#: plperl.c:1766
+#: plperl.c:1777
 #, c-format
 msgid "$_TD->{new} is not a hash reference"
 msgstr "$_TD->{new} - не ссылка на хеш"
 
-#: plperl.c:2018 plperl.c:2860
+#: plperl.c:1808
+#, c-format
+msgid "cannot set generated column \"%s\""
+msgstr "присвоить значение генерируемому столбцу \"%s\" нельзя"
+
+#: plperl.c:2034 plperl.c:2876
 #, c-format
 msgid "PL/Perl functions cannot return type %s"
 msgstr "функции PL/Perl не могут возвращать тип %s"
 
-#: plperl.c:2031 plperl.c:2901
+#: plperl.c:2047 plperl.c:2917
 #, c-format
 msgid "PL/Perl functions cannot accept type %s"
 msgstr "функции PL/Perl не могут принимать тип %s"
 
-#: plperl.c:2148
+#: plperl.c:2164
 #, c-format
 msgid "didn't get a CODE reference from compiling function \"%s\""
 msgstr "не удалось получить ссылку на код после компиляции функции \"%s\""
 
-#: plperl.c:2241
+#: plperl.c:2257
 #, c-format
 msgid "didn't get a return item from function"
 msgstr "не удалось получить возвращаемый элемент от функции"
 
-#: plperl.c:2285 plperl.c:2352
+#: plperl.c:2301 plperl.c:2368
 #, c-format
 msgid "couldn't fetch $_TD"
 msgstr "не удалось получить $_TD"
 
-#: plperl.c:2309 plperl.c:2372
+#: plperl.c:2325 plperl.c:2388
 #, c-format
 msgid "didn't get a return item from trigger function"
 msgstr "не удалось получить возвращаемый элемент от триггерной функции"
 
-#: plperl.c:2433
+#: plperl.c:2449
 #, c-format
 msgid "set-valued function called in context that cannot accept a set"
 msgstr ""
 "функция, возвращающая множество, вызвана в контексте, где ему нет места"
 
-#: plperl.c:2478
+#: plperl.c:2494
 #, c-format
 msgid ""
 "set-returning PL/Perl function must return reference to array or use "
@@ -190,12 +195,12 @@ msgstr ""
 "функция PL/Perl, возвращающая множество, должна возвращать ссылку на массив "
 "или вызывать return_next"
 
-#: plperl.c:2599
+#: plperl.c:2615
 #, c-format
 msgid "ignoring modified row in DELETE trigger"
 msgstr "в триггере DELETE изменённая строка игнорируется"
 
-#: plperl.c:2607
+#: plperl.c:2623
 #, c-format
 msgid ""
 "result of PL/Perl trigger function must be undef, \"SKIP\", or \"MODIFY\""
@@ -203,24 +208,24 @@ msgstr ""
 "результатом триггерной функции PL/Perl должен быть undef, \"SKIP\" или "
 "\"MODIFY\""
 
-#: plperl.c:2855
+#: plperl.c:2871
 #, c-format
 msgid "trigger functions can only be called as triggers"
 msgstr "триггерные функции могут вызываться только в триггерах"
 
-#: plperl.c:3195
+#: plperl.c:3233
 #, c-format
 msgid "query result has too many rows to fit in a Perl array"
 msgstr ""
 "результат запроса содержит слишком много строк для передачи в массиве Perl"
 
-#: plperl.c:3265
+#: plperl.c:3305
 #, c-format
 msgid "cannot use return_next in a non-SETOF function"
 msgstr ""
 "return_next можно использовать только в функциях, возвращающих множества"
 
-#: plperl.c:3339
+#: plperl.c:3379
 #, c-format
 msgid ""
 "SETOF-composite-returning PL/Perl function must call return_next with "
@@ -229,17 +234,17 @@ msgstr ""
 "функция PL/Perl, возвращающая составное множество, должна вызывать "
 "return_next со ссылкой на хеш"
 
-#: plperl.c:4113
+#: plperl.c:4163
 #, c-format
 msgid "PL/Perl function \"%s\""
 msgstr "функция PL/Perl \"%s\""
 
-#: plperl.c:4125
+#: plperl.c:4175
 #, c-format
 msgid "compilation of PL/Perl function \"%s\""
 msgstr "компиляция функции PL/Perl \"%s\""
 
-#: plperl.c:4134
+#: plperl.c:4184
 #, c-format
 msgid "PL/Perl anonymous code block"
 msgstr "анонимный блок кода PL/Perl"

@@ -178,6 +178,19 @@ EXEC SQL CONNECT TO <replaceable>target</replaceable> <optional>AS <replaceable>
   </para>
 
   <para>
+   If the connection target includes any <replaceable>options</replaceable>,
+   those consist of
+   <literal><replaceable>keyword</replaceable>=<replaceable>value</replaceable></literal>
+   specifications separated by ampersands (<literal>&amp;</literal>).
+   The allowed key words are the same ones recognized
+   by <application>libpq</application> (see
+   <xref linkend="libpq-paramkeywords"/>).  Spaces are ignored before
+   any <replaceable>keyword</replaceable> or <replaceable>value</replaceable>,
+   though not within or after one.  Note that there is no way to
+   write <literal>&amp;</literal> within a <replaceable>value</replaceable>.
+  </para>
+
+  <para>
    The <replaceable>connection-name</replaceable> is used to handle
    multiple connections in one program.  It can be omitted if a
    program uses only one connection.  The most recently opened
@@ -191,7 +204,7 @@ EXEC SQL CONNECT TO <replaceable>target</replaceable> <optional>AS <replaceable>
    <link linkend="ddl-schemas-patterns">secure schema usage pattern</link>,
    begin each session by removing publicly-writable schemas
    from <varname>search_path</varname>.  For example,
-   add <literal>options=-csearch_path=</literal>
+   add <literal>options=-c search_path=</literal>
    to <literal><replaceable>options</replaceable></literal>, or
    issue <literal>EXEC SQL SELECT pg_catalog.set_config('search_path', '',
    false);</literal> after connecting.  This consideration is not specific to
@@ -236,7 +249,7 @@ EXEC SQL CONNECT TO :target USER :user USING :passwd;
    SQL statements in embedded SQL programs are by default executed on
    the current connection, that is, the most recently opened one.  If
    an application needs to manage multiple connections, then there are
-   three ways to handle this.
+   two ways to handle this.
   </para>
 
   <para>
@@ -309,17 +322,6 @@ current=testdb3 (should be testdb3)
 current=testdb2 (should be testdb2)
 current=testdb1 (should be testdb1)
 </screen>
-  </para>
-
-  <para>
-   The third option is to declare a sql identifier linked to
-   the connection, for example:
-<programlisting>
-EXEC SQL AT <replaceable>connection-name</replaceable> DECLARE <replaceable>statement-name</replaceable> STATEMENT;
-EXEC SQL PREPARE <replaceable>statement-name</replaceable> FROM :<replaceable>dyn-string</replaceable>;
-</programlisting>
-   Once you link a sql identifier to a connection, you execute a dynamic SQL
-   without AT clause.
   </para>
   </sect2>
 
@@ -1209,8 +1211,8 @@ EXEC SQL END DECLARE SECTION;
      <title id="ecpg-type-bytea">bytea</title>
 
      <para>
-      The handling of the <type>bytea</type> type is also similar to
-      the <type>VARCHAR</type>. The definition on an array of type
+      The handling of the <type>bytea</type> type is similar to
+      that of <type>VARCHAR</type>. The definition on an array of type
       <type>bytea</type> is converted into a named struct for every
       variable. A declaration like:
 <programlisting>
@@ -1221,8 +1223,8 @@ bytea var[180];
 struct bytea_var { int len; char arr[180]; } var;
 </programlisting>
       The member <structfield>arr</structfield> hosts binary format
-      data. It also can handle even <literal>'\0'</literal> as part of
-      data unlike <type>VARCHAR</type>.
+      data. It can also handle <literal>'\0'</literal> as part of
+      data, unlike <type>VARCHAR</type>.
       The data is converted from/to hex format and sent/received by
       ecpglib.
      </para>
@@ -1707,7 +1709,7 @@ while (1)
    </sect3>
 
    <sect3>
-    <title>User-defined Base Types</title>
+    <title>User-Defined Base Types</title>
 
     <para>
      New user-defined base types are not directly supported by ECPG.
@@ -3370,7 +3372,7 @@ interval *PGTYPESinterval_new(void);
        <para>
         Release the memory of a previously allocated interval variable.
 <synopsis>
-void PGTYPESinterval_new(interval *intvl);
+void PGTYPESinterval_free(interval *intvl);
 </synopsis>
        </para>
       </listitem>
@@ -3687,7 +3689,7 @@ EXEC SQL DEALLOCATE DESCRIPTOR <replaceable>identifier</replaceable>;
 EXEC SQL FETCH NEXT FROM mycursor INTO SQL DESCRIPTOR mydesc;
 </programlisting>
     If the result set is empty, the Descriptor Area will still contain
-    the metadata from the query, i.e. the field names.
+    the metadata from the query, i.e., the field names.
    </para>
 
    <para>
@@ -4104,7 +4106,7 @@ typedef struct sqlvar_struct sqlvar_t;
          <term><literal>sqllen</literal></term>
           <listitem>
            <para>
-            Contains the binary length of the field. e.g. 4 bytes for <type>ECPGt_int</type>.
+            Contains the binary length of the field. e.g., 4 bytes for <type>ECPGt_int</type>.
            </para>
           </listitem>
          </varlistentry>
@@ -5011,7 +5013,7 @@ struct
 
    <para>
     The fields <structfield>sqlcaid</structfield>,
-    <structfield>sqlcabc</structfield>,
+    <structfield>sqlabc</structfield>,
     <structfield>sqlerrp</structfield>, and the remaining elements of
     <structfield>sqlerrd</structfield> and
     <structfield>sqlwarn</structfield> currently contain no useful
@@ -6499,7 +6501,7 @@ DATABASE <replaceable>connection_target</replaceable>
      </varlistentry>
 
      <varlistentry>
-      <term><replaceable class="parameter">connection_object</replaceable></term>
+      <term><replaceable class="parameter">connection_name</replaceable></term>
       <listitem>
        <para>
         An optional identifier for the connection, so that it can be
@@ -6803,185 +6805,6 @@ EXEC SQL DECLARE cur1 CURSOR FOR stmt1;
      <member><xref linkend="ecpg-sql-open"/></member>
      <member><xref linkend="sql-close"/></member>
      <member><xref linkend="sql-declare"/></member>
-    </simplelist>
-   </refsect1>
-  </refentry>
-
-  <refentry id="ecpg-sql-declare-statement">
-   <refnamediv>
-    <refname>DECLARE STATEMENT</refname>
-    <refpurpose>declares SQL statement identifier associated with connection</refpurpose>
-   </refnamediv>
-
-   <refsynopsisdiv>
-<synopsis>
-EXEC SQL [ AT <replaceable class="parameter">connection_name</replaceable> ] DECLARE <replaceable class="parameter">statement_name</replaceable> STATEMENT
-</synopsis>
-   </refsynopsisdiv>
-
-   <refsect1>
-    <title>Description</title>
-
-    <para>
-     <command>DECLARE STATEMENT</command> declares SQL statement identifier.
-     SQL statement identifier is associated with connection.
-    </para>
-
-    <para>
-     <command>DECLARE CURSOR</command> with a SQL statement identifier can be written before PREPARE.
-    </para>
-   </refsect1>
-
-   <refsect1>
-    <title>Parameters</title>
-
-    <variablelist>
-     <varlistentry>
-      <term><replaceable class="parameter">connection_name</replaceable></term>
-      <listitem>
-       <para>
-        A database connection name established by the <command>CONNECT</command> command.
-       </para>
-       <para>
-        If AT clause is omitted, an SQL statement identifier is associated with the DEFAULT connection.
-       </para>
-      </listitem>
-     </varlistentry>
-    </variablelist>
-
-    <variablelist>
-     <varlistentry>
-      <term><replaceable class="parameter">statement_name</replaceable></term>
-      <listitem>
-       <para>
-        The name of a SQL statement identifier, either as an SQL identifier or a host variable.
-       </para>
-      </listitem>
-     </varlistentry>
-    </variablelist>
-   </refsect1>
-
-   <refsect1>
-    <title>Notes</title>
-    <para>
-     AT clause can be used at other dynamic SQL statements. The following table
-     gives the connected database when AT clause is used at DECLARE STATEMENT
-     and other dynamic statements.
-    </para>
-    <table tocentry="1" id="ecpg-declare-statement-table">
-     <title>Scenario</title>
-     <tgroup cols="4">
-      <thead>
-       <row>
-        <entry>
-         Using Scenario
-        </entry>
-        <entry>
-         Declare Statement
-        </entry>
-        <entry>
-         Other Dynamic Statements
-        </entry>
-        <entry>
-         Executed Database
-        </entry>
-       </row>
-      </thead>
-      <tbody>
-       <row>
-        <entry>
-         1
-        </entry>
-        <entry>
-         Without AT clause
-        </entry>
-        <entry>
-         Without AT clause
-        </entry>
-        <entry>
-         Default connection
-        </entry>
-       </row>
-       <row>
-        <entry>
-         2
-        </entry>
-        <entry>
-         Using AT clause connecting at con1
-        </entry>
-        <entry>
-         Without AT clause
-        </entry>
-        <entry>
-         con1
-        </entry>
-       </row>
-       <row>
-        <entry>
-         3
-        </entry>
-        <entry>
-         Using AT clause connecting at con1
-        </entry>
-        <entry>
-         Using AT clause connecting at con2
-        </entry>
-        <entry>
-         con1
-        </entry>
-       </row>
-       <row>
-        <entry>
-         4
-        </entry>
-        <entry>
-         Without AT clause
-        </entry>
-        <entry>
-         Using AT clause connecting at con2
-        </entry>
-        <entry>
-         con2
-        </entry>
-       </row>
-      </tbody>
-     </tgroup>
-    </table>
-    <para>
-     In scenario 4, DECLARE STATEMENT will be ignored.
-    </para>
-   </refsect1>
-
-   <refsect1>
-    <title>Examples</title>
-
-<programlisting>
-EXEC SQL CONNECT TO postgres AS con1;
-EXEC SQL AT con1 DECLARE sql_stmt STATEMENT;
-EXEC SQL DECLARE cursor_name CURSOR FOR sql_stmt;
-EXEC SQL PREPARE sql_stmt FROM :dyn_string;
-EXEC SQL OPEN cursor_name;
-EXEC SQL FETCH cursor_name INTO :column1;
-EXEC SQL CLOSE cursor_name;
-</programlisting>
-   </refsect1>
-
-   <refsect1>
-    <title>Compatibility</title>
-
-    <para>
-     <command>DECLARE STATEMENT</command> is a PostgreSQL extension of the SQL standard,
-     but can be used in Oracle and DB2.
-    </para>
-   </refsect1>
-
-   <refsect1>
-    <title>See Also</title>
-
-    <simplelist type="inline">
-     <member><xref linkend="ecpg-sql-connect"/></member>
-     <member><xref linkend="ecpg-sql-declare"/></member>
-     <member><xref linkend="ecpg-sql-open"/></member>
     </simplelist>
    </refsect1>
   </refentry>
@@ -8221,7 +8044,7 @@ EXEC SQL CLOSE DATABASE;
       <term><literal>FREE cursor_name</literal></term>
       <listitem>
        <para>
-        Due to the differences how ECPG works compared to Informix's ESQL/C (i.e. which steps
+        Due to the differences how ECPG works compared to Informix's ESQL/C (i.e., which steps
         are purely grammar transformations and which steps rely on the underlying run-time library)
         there is no <literal>FREE cursor_name</literal> statement in ECPG. This is because in ECPG,
         <literal>DECLARE CURSOR</literal> doesn't translate to a function call into
@@ -8825,7 +8648,7 @@ int dectoint(decimal *np, int *ip);
         Note that the ECPG implementation differs from the <productname>Informix</productname>
         implementation. <productname>Informix</productname> limits an integer to the range from -32767 to
         32767, while the limits in the ECPG implementation depend on the
-        architecture (<literal>-INT_MAX .. INT_MAX</literal>).
+        architecture (<literal>INT_MIN .. INT_MAX</literal>).
        </para>
       </listitem>
      </varlistentry>

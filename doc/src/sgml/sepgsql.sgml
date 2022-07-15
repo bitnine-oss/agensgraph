@@ -527,7 +527,7 @@ UPDATE t1 SET x = 2, y = func1(y) WHERE z = 100;
     commands. <productname>SELinux</productname> provides a feature to allow trusted
     code to run using a security label different from that of the client,
     generally for the purpose of providing highly controlled access to
-    sensitive data (e.g. rows might be omitted, or the precision of stored
+    sensitive data (e.g., rows might be omitted, or the precision of stored
     values might be reduced).  Whether or not a function acts as a trusted
     procedure is controlled by its security label and the operating system
     security policy.  For example:
@@ -762,7 +762,7 @@ ERROR:  SELinux: security policy violation
     </listitem>
    </varlistentry>
    <varlistentry>
-    <term><ulink url="https://access.redhat.com/documentation/en-US/Red_Hat_Enterprise_Linux/7/html/SELinux_Users_and_Administrators_Guide/">SELinux User's and Administrator's Guide</ulink></term>
+    <term><ulink url="https://access.redhat.com/documentation/en-us/red_hat_enterprise_linux/7/html/selinux_users_and_administrators_guide/index">SELinux User's and Administrator's Guide</ulink></term>
     <listitem>
      <para>
       This document provides a wide spectrum of knowledge to administer

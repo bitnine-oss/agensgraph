@@ -1370,7 +1370,7 @@
       <entry><type>bool</type></entry>
       <entry>
        Role can log in. That is, this role can be given as the initial
-       session authorization identifier
+       session authorization identifier.
       </entry>
      </row>
 
@@ -1940,8 +1940,10 @@ SCRAM-SHA-256$<replaceable>&lt;iteration count&gt;</replaceable>:<replaceable>&l
        Columns used to form <quote>replica identity</quote> for rows:
        <literal>d</literal> = default (primary key, if any),
        <literal>n</literal> = nothing,
-       <literal>f</literal> = all columns
-       <literal>i</literal> = index with <structfield>indisreplident</structfield> set, or default
+       <literal>f</literal> = all columns,
+       <literal>i</literal> = index with
+       <structfield>indisreplident</structfield> set (same as nothing if the
+       index used has been dropped)
       </entry>
      </row>
 
@@ -3017,9 +3019,9 @@ SCRAM-SHA-256$<replaceable>&lt;iteration count&gt;</replaceable>:<replaceable>&l
        A <command>DROP</command> of the referenced object will result in
        automatically dropping the dependent object
        whether <literal>CASCADE</literal> is specified or not.  If the
-       dependent object is reached due to a dependency on some other object,
-       the drop is converted to a drop of the referenced object, so
-       that <literal>NORMAL</literal> and <literal>AUTO</literal>
+       dependent object has to be dropped due to a dependency on some other
+       object being removed, its drop is converted to a drop of the referenced
+       object, so that <literal>NORMAL</literal> and <literal>AUTO</literal>
        dependencies of the dependent object behave much like they were
        dependencies of the referenced object.
        Example: a view's <literal>ON SELECT</literal> rule is made
@@ -3965,9 +3967,9 @@ SCRAM-SHA-256$<replaceable>&lt;iteration count&gt;</replaceable>:<replaceable>&l
 
   <para>
    The catalog <structname>pg_inherits</structname> records information about
-   table inheritance hierarchies.  There is one entry for each direct
-   parent-child table relationship in the database.  (Indirect inheritance can be determined
-   by following chains of entries.)
+   table and index inheritance hierarchies.  There is one entry for each direct
+   parent-child table or index relationship in the database.  (Indirect
+   inheritance can be determined by following chains of entries.)
   </para>
 
   <table>
@@ -3989,7 +3991,7 @@ SCRAM-SHA-256$<replaceable>&lt;iteration count&gt;</replaceable>:<replaceable>&l
       <entry><type>oid</type></entry>
       <entry><literal><link linkend="catalog-pg-class"><structname>pg_class</structname></link>.oid</literal></entry>
       <entry>
-       The OID of the child table
+       The OID of the child table or index
       </entry>
      </row>
 
@@ -3998,7 +4000,7 @@ SCRAM-SHA-256$<replaceable>&lt;iteration count&gt;</replaceable>:<replaceable>&l
       <entry><type>oid</type></entry>
       <entry><literal><link linkend="catalog-pg-class"><structname>pg_class</structname></link>.oid</literal></entry>
       <entry>
-       The OID of the parent table
+       The OID of the parent table or index
       </entry>
      </row>
 
@@ -4010,6 +4012,8 @@ SCRAM-SHA-256$<replaceable>&lt;iteration count&gt;</replaceable>:<replaceable>&l
        If there is more than one direct parent for a child table (multiple
        inheritance), this number tells the order in which the
        inherited columns are to be arranged.  The count starts at 1.
+       Indexes can not have multiple inheritance, since they can only inherit
+       when using declarative partitioning.
       </entry>
      </row>
     </tbody>
@@ -4700,7 +4704,7 @@ SCRAM-SHA-256$<replaceable>&lt;iteration count&gt;</replaceable>:<replaceable>&l
   </table>
 
   <para>
-   Unused column contain zeroes. For example, <structfield>oprleft</structfield>
+   Unused columns contain zeroes. For example, <structfield>oprleft</structfield>
    is zero for a prefix operator.
   </para>
 
@@ -6171,10 +6175,21 @@ SCRAM-SHA-256$<replaceable>&lt;iteration count&gt;</replaceable>:<replaceable>&l
       </para>
      </listitem>
     </varlistentry>
+
+    <varlistentry>
+     <term><symbol>SHARED_DEPENDENCY_TABLESPACE</symbol> (<literal>t</literal>)</term>
+     <listitem>
+      <para>
+       The referenced object (which must be a tablespace) is mentioned as
+       the tablespace for a relation that doesn't have storage.
+      </para>
+     </listitem>
+    </varlistentry>
    </variablelist>
 
    Other dependency flavors might be needed in future.  Note in particular
-   that the current definition only supports roles as referenced objects.
+   that the current definition only supports roles and tablespaces as referenced
+   objects.
   </para>
 
  </sect1>
@@ -6374,28 +6389,6 @@ SCRAM-SHA-256$<replaceable>&lt;iteration count&gt;</replaceable>:<replaceable>&l
    is a publicly readable view on
    <structname>pg_statistic</structname> that only exposes information
    about those tables that are readable by the current user.
-  </para>
-
-  <para>
-   <structname>pg_statistic</structname> should not be readable by the
-   public, since even statistical information about a table's contents
-   might be considered sensitive.  (Example: minimum and maximum values
-   of a salary column might be quite interesting.)
-   <link linkend="view-pg-stats"><structname>pg_stats</structname></link>
-   is a publicly readable view on
-   <structname>pg_statistic</structname> that only exposes information
-   about those tables that are readable by the current user.
-  </para>
-
-  <para>
-   Similarly, <structname>pg_statistic_ext_data</structname> should not be
-   readable by the public, since the contents might be considered sensitive.
-   (Example: most common combination of values in columns might be quite
-   interesting.)
-   <link linkend="view-pg-stats-ext"><structname>pg_stats_ext</structname></link>
-   is a publicly readable view on <structname>pg_statistic_ext_data</structname>
-   (after joining with <structname>pg_statistic_ext</structname>) that only exposes
-   information about those tables and columns that are readable by the current user.
   </para>
 
   <table>
@@ -6603,7 +6596,7 @@ SCRAM-SHA-256$<replaceable>&lt;iteration count&gt;</replaceable>:<replaceable>&l
       <entry><type>char[]</type></entry>
       <entry></entry>
       <entry>
-        An array containing codes for the enabled statistic kinds;
+        An array containing codes for the enabled statistics kinds;
         valid values are:
         <literal>d</literal> for n-distinct statistics,
         <literal>f</literal> for functional dependency statistics, and
@@ -6616,9 +6609,11 @@ SCRAM-SHA-256$<replaceable>&lt;iteration count&gt;</replaceable>:<replaceable>&l
   </table>
 
   <para>
-   The <structfield>stxkind</structfield> field is filled at creation of the
-   statistics object, indicating which statistic type(s) are desired. The
-   statistics (once computed by <command>ANALYZE</command>) are stored in
+   The <structname>pg_statistic_ext</structname> entry is filled in
+   completely during <command>CREATE STATISTICS</command>, but the actual
+   statistical values are not computed then.
+   Subsequent <command>ANALYZE</command> commands compute the desired values
+   and populate an entry in the
    <link linkend="catalog-pg-statistic-ext-data"><structname>pg_statistic_ext_data</structname></link>
    catalog.
   </para>
@@ -6636,6 +6631,20 @@ SCRAM-SHA-256$<replaceable>&lt;iteration count&gt;</replaceable>:<replaceable>&l
    holds data for extended planner statistics defined in <structname>pg_statistic_ext</structname>.
    Each row in this catalog corresponds to a <firstterm>statistics object</firstterm>
    created with <xref linkend="sql-createstatistics"/>.
+  </para>
+
+  <para>
+   Like <structname>pg_statistic</structname>,
+   <structname>pg_statistic_ext_data</structname> should not be
+   readable by the public, since the contents might be considered sensitive.
+   (Example: most common combinations of values in columns might be quite
+   interesting.)
+   <link linkend="view-pg-stats-ext"><structname>pg_stats_ext</structname></link>
+   is a publicly readable view
+   on <structname>pg_statistic_ext_data</structname> (after joining
+   with <structname>pg_statistic_ext</structname>) that only exposes
+   information about those tables and columns that are readable by the
+   current user.
   </para>
 
   <table>
@@ -6657,7 +6666,7 @@ SCRAM-SHA-256$<replaceable>&lt;iteration count&gt;</replaceable>:<replaceable>&l
       <entry><structfield>stxoid</structfield></entry>
       <entry><type>oid</type></entry>
       <entry><literal><link linkend="catalog-pg-statistic-ext"><structname>pg_statistic_ext</structname></link>.oid</literal></entry>
-      <entry>Extended statistic containing the definition for this data.</entry>
+      <entry>Extended statistic object containing the definition for this data</entry>
      </row>
 
      <row>
@@ -6685,7 +6694,7 @@ SCRAM-SHA-256$<replaceable>&lt;iteration count&gt;</replaceable>:<replaceable>&l
       <entry></entry>
       <entry>
        MCV (most-common values) list statistics, serialized as
-       <structname>pg_mcv_list</structname> type.
+       <structname>pg_mcv_list</structname> type
       </entry>
      </row>
 
@@ -6790,8 +6799,9 @@ SCRAM-SHA-256$<replaceable>&lt;iteration count&gt;</replaceable>:<replaceable>&l
       <entry><structfield>subslotname</structfield></entry>
       <entry><type>name</type></entry>
       <entry></entry>
-      <entry>Name of the replication slot in the upstream database. Also used
-       for local replication origin name.</entry>
+      <entry>Name of the replication slot in the upstream database (also used
+       for the local replication origin name);
+       null represents <literal>NONE</literal></entry>
      </row>
 
      <row>
@@ -6873,7 +6883,9 @@ SCRAM-SHA-256$<replaceable>&lt;iteration count&gt;</replaceable>:<replaceable>&l
       <entry><type>pg_lsn</type></entry>
       <entry></entry>
       <entry>
-       End LSN for <literal>s</literal> and <literal>r</literal> states.
+       Remote LSN of the state change used for synchronization coordination
+       when in <literal>s</literal> or <literal>r</literal> states,
+       otherwise null
       </entry>
      </row>
     </tbody>
@@ -9094,7 +9106,8 @@ SCRAM-SHA-256$<replaceable>&lt;iteration count&gt;</replaceable>:<replaceable>&l
    and general database objects (identified by class OID and object OID,
    in the same way as in <structname>pg_description</structname> or
    <structname>pg_depend</structname>).  Also, the right to extend a
-   relation is represented as a separate lockable object.
+   relation is represented as a separate lockable object, as is the right to
+   update <structname>pg_database</structname>.<structfield>datfrozenxid</structfield>.
    Also, <quote>advisory</quote> locks can be taken on numbers that have
    user-defined meanings.
   </para>
@@ -9120,6 +9133,7 @@ SCRAM-SHA-256$<replaceable>&lt;iteration count&gt;</replaceable>:<replaceable>&l
        Type of the lockable object:
        <literal>relation</literal>,
        <literal>extend</literal>,
+       <literal>frozenid</literal>,
        <literal>page</literal>,
        <literal>tuple</literal>,
        <literal>transactionid</literal>,
@@ -9993,11 +10007,6 @@ SELECT * FROM pg_locks pl LEFT JOIN pg_prepared_xacts ppx
    readable view of
    <link linkend="catalog-pg-authid"><structname>pg_authid</structname></link>
    that blanks out the password field.
-  </para>
-
-  <para>
-   This view explicitly exposes the OID column of the underlying table,
-   since that is needed to do joins to other catalogs.
   </para>
 
   <table>
@@ -10972,7 +10981,7 @@ SELECT * FROM pg_locks pl LEFT JOIN pg_prepared_xacts ppx
 
   <para>
    <structname>pg_stats_ext</structname> is also designed to present the
-   information in a more readable format than the underlying catalog
+   information in a more readable format than the underlying catalogs
    &mdash; at the cost that its schema must be extended whenever new types
    of extended statistics are added to <structname>pg_statistic_ext</structname>.
   </para>
@@ -11029,23 +11038,23 @@ SELECT * FROM pg_locks pl LEFT JOIN pg_prepared_xacts ppx
       <entry><structfield>attnames</structfield></entry>
       <entry><type>name[]</type></entry>
       <entry><literal><link linkend="catalog-pg-attribute"><structname>pg_attribute</structname></link>.attname</literal></entry>
-      <entry>Names of the column the extended statistics is defined on</entry>
+      <entry>Names of the columns the extended statistics is defined on</entry>
      </row>
 
      <row>
       <entry><structfield>kinds</structfield></entry>
       <entry><type>text[]</type></entry>
       <entry></entry>
-      <entry>Types of exdended statistics enabled for this record</entry>
+      <entry>Types of extended statistics enabled for this record</entry>
      </row>
 
      <row>
       <entry><structfield>n_distinct</structfield></entry>
       <entry><type>pg_ndistinct</type></entry>
       <entry></entry>
-      <entry>N-distinct counts for combinations of columns. If greater than
-       zero, the estimated number of distinct values in the combination.  If
-       less than zero, the negative of the number of distinct values divided
+      <entry>N-distinct counts for combinations of column values. If greater
+       than zero, the estimated number of distinct values in the combination.
+       If less than zero, the negative of the number of distinct values divided
        by the number of rows.
        (The negated form is used when <command>ANALYZE</command> believes that
        the number of distinct values is likely to increase as the table grows;
@@ -11068,8 +11077,8 @@ SELECT * FROM pg_locks pl LEFT JOIN pg_prepared_xacts ppx
       <entry><type>anyarray</type></entry>
       <entry></entry>
       <entry>
-       A list of the most common combinations in the columns. (Null if
-       no values seem to be more common than any others.)
+       A list of the most common combinations of values in the columns.
+       (Null if no combinations seem to be more common than any others.)
       </entry>
      </row>
 

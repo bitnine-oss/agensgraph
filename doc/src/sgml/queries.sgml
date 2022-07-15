@@ -762,7 +762,8 @@ SELECT * FROM vw_getfoo;
      In some cases it is useful to define table functions that can
      return different column sets depending on how they are invoked.
      To support this, the table function can be declared as returning
-     the pseudo-type <type>record</type>.  When such a function is used in
+     the pseudo-type <type>record</type> with no <literal>OUT</literal>
+     parameters.  When such a function is used in
      a query, the expected row structure must be specified in the
      query itself, so that the system can know how to parse and plan
      the query.  This syntax looks like:
@@ -802,6 +803,33 @@ SELECT *
      The actual column set must be specified in the calling query so
      that the parser knows, for example, what <literal>*</literal> should
      expand to.
+    </para>
+
+    <para>
+     This example uses <literal>ROWS FROM</literal>:
+<programlisting>
+SELECT *
+FROM ROWS FROM
+    (
+        json_to_recordset('[{"a":40,"b":"foo"},{"a":"100","b":"bar"}]')
+            AS (a INTEGER, b TEXT),
+        generate_series(1, 3)
+    ) AS x (p, q, s)
+ORDER BY p;
+
+  p  |  q  | s
+-----+-----+---
+  40 | foo | 1
+ 100 | bar | 2
+     |     | 3
+</programlisting>
+     It joins two functions into a single <literal>FROM</literal>
+     target.  <function>json_to_recordset()</function> is instructed
+     to return two columns, the first <type>integer</type>
+     and the second <type>text</type>.  The result of
+     <function>generate_series()</function> is used directly.
+     The <literal>ORDER BY</literal> clause sorts the column values
+     as integers.
     </para>
    </sect3>
 
@@ -1256,7 +1284,7 @@ GROUPING SETS (
     ( )
 )
 </programlisting>
-    This is commonly used for analysis over hierarchical data; e.g. total
+    This is commonly used for analysis over hierarchical data; e.g., total
     salary by department, division, and company-wide total.
    </para>
 
@@ -1265,7 +1293,7 @@ GROUPING SETS (
 <programlisting>
 CUBE ( <replaceable>e1</replaceable>, <replaceable>e2</replaceable>, ... )
 </programlisting>
-    represents the given list and all of its possible subsets (i.e. the power
+    represents the given list and all of its possible subsets (i.e., the power
     set).  Thus
 <programlisting>
 CUBE ( a, b, c )
@@ -1621,17 +1649,9 @@ SELECT DISTINCT ON (<replaceable>expression</replaceable> <optional>, <replaceab
 <replaceable>query1</replaceable> INTERSECT <optional>ALL</optional> <replaceable>query2</replaceable>
 <replaceable>query1</replaceable> EXCEPT <optional>ALL</optional> <replaceable>query2</replaceable>
 </synopsis>
-   <replaceable>query1</replaceable> and
+   where <replaceable>query1</replaceable> and
    <replaceable>query2</replaceable> are queries that can use any of
-   the features discussed up to this point.  Set operations can also
-   be nested and chained, for example
-<synopsis>
-<replaceable>query1</replaceable> UNION <replaceable>query2</replaceable> UNION <replaceable>query3</replaceable>
-</synopsis>
-   which is executed as:
-<synopsis>
-(<replaceable>query1</replaceable> UNION <replaceable>query2</replaceable>) UNION <replaceable>query3</replaceable>
-</synopsis>
+   the features discussed up to this point.
   </para>
 
   <para>
@@ -1664,6 +1684,47 @@ SELECT DISTINCT ON (<replaceable>expression</replaceable> <optional>, <replaceab
    which means that they return the same number of columns and
    the corresponding columns have compatible data types, as
    described in <xref linkend="typeconv-union-case"/>.
+  </para>
+
+  <para>
+   Set operations can be combined, for example
+<synopsis>
+<replaceable>query1</replaceable> UNION <replaceable>query2</replaceable> EXCEPT <replaceable>query3</replaceable>
+</synopsis>
+   which is equivalent to
+<synopsis>
+(<replaceable>query1</replaceable> UNION <replaceable>query2</replaceable>) EXCEPT <replaceable>query3</replaceable>
+</synopsis>
+   As shown here, you can use parentheses to control the order of
+   evaluation.  Without parentheses, <literal>UNION</literal>
+   and <literal>EXCEPT</literal> associate left-to-right,
+   but <literal>INTERSECT</literal> binds more tightly than those two
+   operators.  Thus
+<synopsis>
+<replaceable>query1</replaceable> UNION <replaceable>query2</replaceable> INTERSECT <replaceable>query3</replaceable>
+</synopsis>
+   means
+<synopsis>
+<replaceable>query1</replaceable> UNION (<replaceable>query2</replaceable> INTERSECT <replaceable>query3</replaceable>)
+</synopsis>
+   You can also surround an individual <replaceable>query</replaceable>
+   with parentheses.  This is important if
+   the <replaceable>query</replaceable> needs to use any of the clauses
+   discussed in following sections, such as <literal>LIMIT</literal>.
+   Without parentheses, you'll get a syntax error, or else the clause will
+   be understood as applying to the output of the set operation rather
+   than one of its inputs.  For example,
+<synopsis>
+SELECT a FROM b UNION SELECT x FROM y LIMIT 10
+</synopsis>
+   is accepted, but it means
+<synopsis>
+(SELECT a FROM b UNION SELECT x FROM y) LIMIT 10
+</synopsis>
+   not
+<synopsis>
+SELECT a FROM b UNION (SELECT x FROM y LIMIT 10)
+</synopsis>
   </para>
  </sect1>
 

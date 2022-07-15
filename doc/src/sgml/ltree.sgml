@@ -19,8 +19,8 @@
   <para>
    A <firstterm>label</firstterm> is a sequence of alphanumeric characters
    and underscores (for example, in C locale the characters
-   <literal>A-Za-z0-9_</literal> are allowed).  Labels must be less than 256 bytes
-   long.
+   <literal>A-Za-z0-9_</literal> are allowed).
+   Labels must be less than 256 characters long.
   </para>
 
   <para>
@@ -31,8 +31,7 @@
    A <firstterm>label path</firstterm> is a sequence of zero or more
    labels separated by dots, for example <literal>L1.L2.L3</literal>, representing
    a path from the root of a hierarchical tree to a particular node.  The
-   length of a label path must be less than 65kB, but keeping it under 2kB is
-   preferable.
+   length of a label path cannot exceed 65535 labels.
   </para>
 
   <para>
@@ -675,6 +674,15 @@ ltreetest=&gt; SELECT ins_label(path,2,'Space') FROM test WHERE path &lt;@ 'Top.
    creating a function, <type>ltree</type> values are mapped to Python lists.
    (The reverse is currently not supported, however.)
   </para>
+
+  <caution>
+   <para>
+    It is strongly recommended that the transform extensions be installed in
+    the same schema as <filename>ltree</filename>.  Otherwise there are
+    installation-time security hazards if a transform extension's schema
+    contains objects defined by a hostile user.
+   </para>
+  </caution>
  </sect2>
 
  <sect2>

@@ -232,10 +232,15 @@
   </para>
 
   <para>
-   Columns of a table are also matched by name.  A different order of columns
-   in the target table is allowed, but the column types have to match.  The
-   target table can have additional columns not provided by the published
-   table.  Those will be filled with their default values.
+   Columns of a table are also matched by name.  The order of columns in the
+   subscriber table does not need to match that of the publisher.  The data
+   types of the columns do not need to match, as long as the text
+   representation of the data can be converted to the target type.  For
+   example, you can replicate from a column of type <type>integer</type> to a
+   column of type <type>bigint</type>.  The target table can also have
+   additional columns not provided by the published table.  Any such columns
+   will be filled with the default value as specified in the definition of the
+   target table.
   </para>
 
   <sect2 id="logical-replication-subscription-slot">
@@ -498,10 +503,26 @@
   <title>Security</title>
 
   <para>
+   A user able to modify the schema of subscriber-side tables can execute
+   arbitrary code as a superuser.  Limit ownership
+   and <literal>TRIGGER</literal> privilege on such tables to roles that
+   superusers trust.  Moreover, if untrusted users can create tables, use only
+   publications that list tables explicitly.  That is to say, create a
+   subscription <literal>FOR ALL TABLES</literal> only when superusers trust
+   every user permitted to create a non-temp table on the publisher or the
+   subscriber.
+  </para>
+
+  <para>
    The role used for the replication connection must have
-   the <literal>REPLICATION</literal> attribute (or be a superuser).  Access for the role must be
-   configured in <filename>pg_hba.conf</filename> and it must have the
-   <literal>LOGIN</literal> attribute.
+   the <literal>REPLICATION</literal> attribute (or be a superuser).  If the
+   role lacks <literal>SUPERUSER</literal> and <literal>BYPASSRLS</literal>,
+   publisher row security policies can execute.  If the role does not trust
+   all table owners, include <literal>options=-crow_security=off</literal> in
+   the connection string; if a table owner then adds a row security policy,
+   that setting will cause replication to halt rather than execute the policy.
+   Access for the role must be configured in <filename>pg_hba.conf</filename>
+   and it must have the <literal>LOGIN</literal> attribute.
   </para>
 
   <para>
@@ -556,11 +577,11 @@
 
   <para>
    The subscriber also requires the <varname>max_replication_slots</varname>
-   to be set.  In this case it should be set to at least the number of
-   subscriptions that will be added to the subscriber.
-   <varname>max_logical_replication_workers</varname> must be set to at
-   least the number of subscriptions, again plus some reserve for the table
-   synchronization.  Additionally the <varname>max_worker_processes</varname>
+   be set to configure how many replication origins can be tracked.  In this
+   case it should be set to at least the number of subscriptions that will be
+   added to the subscriber.  <varname>max_logical_replication_workers</varname>
+   must be set to at least the number of subscriptions, again plus some reserve
+   for the table synchronization.  Additionally the <varname>max_worker_processes</varname>
    may need to be adjusted to accommodate for replication workers, at least
    (<varname>max_logical_replication_workers</varname>
    + <literal>1</literal>).  Note that some extensions and parallel queries

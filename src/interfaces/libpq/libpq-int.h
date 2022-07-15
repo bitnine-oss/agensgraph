@@ -359,10 +359,10 @@ struct pg_conn
 	char	   *sslrootcert;	/* root certificate filename */
 	char	   *sslcrl;			/* certificate revocation list filename */
 	char	   *requirepeer;	/* required peer credentials for local sockets */
-
-#if defined(ENABLE_GSS) || defined(ENABLE_SSPI)
+	char	   *gssencmode;		/* GSS mode (require,prefer,disable) */
 	char	   *krbsrvname;		/* Kerberos service name */
-#endif
+	char	   *gsslib;			/* What GSS library to use ("gssapi" or
+								 * "sspi") */
 
 	/* Type of connection to make.  Possible values: any, read-write. */
 	char	   *target_session_attrs;
@@ -482,7 +482,6 @@ struct pg_conn
 #endif							/* USE_OPENSSL */
 #endif							/* USE_SSL */
 
-	char	   *gssencmode;		/* GSS mode (require,prefer,disable) */
 #ifdef ENABLE_GSS
 	gss_ctx_id_t gctx;			/* GSS context */
 	gss_name_t	gtarg_nam;		/* GSS target name */
@@ -491,13 +490,26 @@ struct pg_conn
 	bool		try_gss;		/* GSS attempting permitted */
 	bool		gssenc;			/* GSS encryption is usable */
 	gss_cred_id_t gcred;		/* GSS credential temp storage. */
+
+	/* GSS encryption I/O state --- see fe-secure-gssapi.c */
+	char	   *gss_SendBuffer; /* Encrypted data waiting to be sent */
+	int			gss_SendLength; /* End of data available in gss_SendBuffer */
+	int			gss_SendNext;	/* Next index to send a byte from
+								 * gss_SendBuffer */
+	int			gss_SendConsumed;	/* Number of *unencrypted* bytes consumed
+									 * for current contents of gss_SendBuffer */
+	char	   *gss_RecvBuffer; /* Received, encrypted data */
+	int			gss_RecvLength; /* End of data available in gss_RecvBuffer */
+	char	   *gss_ResultBuffer;	/* Decryption of data in gss_RecvBuffer */
+	int			gss_ResultLength;	/* End of data available in
+									 * gss_ResultBuffer */
+	int			gss_ResultNext; /* Next index to read a byte from
+								 * gss_ResultBuffer */
+	uint32		gss_MaxPktSize; /* Maximum size we can encrypt and fit the
+								 * results into our output buffer */
 #endif
 
 #ifdef ENABLE_SSPI
-#ifdef ENABLE_GSS
-	char	   *gsslib;			/* What GSS library to use ("gssapi" or
-								 * "sspi") */
-#endif
 	CredHandle *sspicred;		/* SSPI credentials handle */
 	CtxtHandle *sspictx;		/* SSPI context */
 	char	   *sspitarget;		/* SSPI target name */

@@ -15,12 +15,20 @@ documentation.  See standalone-profile.xsl for details.
   <primary>installation</primary>
  </indexterm>
 
+ <!-- See also the version of this text in standalone-install.xml -->
  <para>
   This chapter describes the installation of
   <productname>PostgreSQL</productname> using the source code
-  distribution.  (If you are installing a pre-packaged distribution,
+  distribution.  If you are installing a pre-packaged distribution,
   such as an RPM or Debian package, ignore this chapter
-  and read the packager's instructions instead.)
+  and read the packager's instructions instead.
+ </para>
+
+ <para>
+  If you are building <productname>PostgreSQL</productname> for Microsoft
+  Windows, read this chapter if you intend to build with MinGW or Cygwin;
+  but if you intend to build with Microsoft's <productname>Visual
+  C++</productname>, see <xref linkend="install-windows"/> instead.
  </para>
 
  <sect1 id="install-short">
@@ -54,10 +62,8 @@ su - postgres
    In general, a modern Unix-compatible platform should be able to run
    <productname>PostgreSQL</productname>.
    The platforms that had received specific testing at the
-   time of release are listed in <xref linkend="supported-platforms"/>
-   below. In the <filename>doc</filename> subdirectory of the distribution
-   there are several platform-specific <acronym>FAQ</acronym> documents you
-   might wish to consult if you are having trouble.
+   time of release are described in <xref linkend="supported-platforms"/>
+   below.
   </para>
 
   <para>
@@ -189,10 +195,10 @@ su - postgres
       To build the <application>PL/Python</application> server programming
       language, you need a <productname>Python</productname>
       installation with the header files and
-      the <application>distutils</application> module.  The minimum
-      required version is <productname>Python</productname> 2.4.
+      the <application>sysconfig</application> module.  The minimum
+      required version is <productname>Python</productname> 2.7.
       <productname>Python 3</productname> is supported if it's
-      version 3.1 or later; but see
+      version 3.2 or later; but see
       <xref linkend="plpython-python23"/>
       when using Python 3.
      </para>
@@ -336,7 +342,7 @@ su - postgres
  </sect1>
 
  <sect1 id="install-getsource">
-  <title>Getting The Source</title>
+  <title>Getting the Source</title>
 
   <para>
    The <productname>PostgreSQL</productname> &version; sources can be obtained from the
@@ -981,21 +987,31 @@ su - postgres
        <term><option>--with-libxml</option></term>
        <listitem>
         <para>
-         Build with libxml (enables SQL/XML support).  Libxml version 2.6.23 or
+         Build with libxml2, enabling SQL/XML support.  Libxml2 version 2.6.23 or
          later is required for this feature.
         </para>
 
         <para>
-         Libxml installs a program <command>xml2-config</command> that
-         can be used to detect the required compiler and linker
-         options.  PostgreSQL will use it automatically if found.  To
-         specify a libxml installation at an unusual location, you can
-         either set the environment variable
-         <envar>XML2_CONFIG</envar> to point to the
-         <command>xml2-config</command> program belonging to the
-         installation, or use the options
-         <option>--with-includes</option> and
-         <option>--with-libraries</option>.
+         To detect the required compiler and linker options, PostgreSQL will
+         query <command>pkg-config</command>, if that is installed and knows
+         about libxml2.  Otherwise the program <command>xml2-config</command>,
+         which is installed by libxml2, will be used if it is found.  Use
+         of <command>pkg-config</command> is preferred, because it can deal
+         with multi-architecture installations better.
+        </para>
+
+        <para>
+         To use a libxml2 installation that is in an unusual location, you
+         can set <command>pkg-config</command>-related environment
+         variables (see its documentation), or set the environment variable
+         <envar>XML2_CONFIG</envar> to point to
+         the <command>xml2-config</command> program belonging to the libxml2
+         installation, or set the variables <envar>XML2_CFLAGS</envar>
+         and <envar>XML2_LIBS</envar>.  (If <command>pkg-config</command> is
+         installed, then to override its idea of where libxml2 is you must
+         either set <envar>XML2_CONFIG</envar> or set
+         both <envar>XML2_CFLAGS</envar> and <envar>XML2_LIBS</envar> to
+         nonempty strings.)
         </para>
        </listitem>
       </varlistentry>
@@ -1523,7 +1539,7 @@ su - postgres
        <listitem>
         <para>
          <command>xml2-config</command> program used to locate the
-         libxml installation.
+         libxml2 installation
         </para>
        </listitem>
       </varlistentry>
@@ -1611,6 +1627,15 @@ PostgreSQL, contrib, and documentation successfully made. Ready to install.
 </screen>
    </para>
 
+  <para>
+   If you want to build everything that can be built, including the
+   additional modules (<filename>contrib</filename>), but without
+   the documentation, type instead:
+<screen>
+<userinput>make world-bin</userinput>
+</screen>
+   </para>
+
    <para>
     If you want to invoke the build from another makefile rather than
     manually, you must unset <varname>MAKELEVEL</varname> or set it to zero,
@@ -1685,6 +1710,13 @@ build-postgresql:
 <userinput>make install-world</userinput>
 </screen>
     This also installs the documentation.
+   </para>
+
+   <para>
+    If you built the world without the documentation above, type instead:
+<screen>
+<userinput>make install-world-bin</userinput>
+</screen>
    </para>
 
    <para>
@@ -1961,7 +1993,7 @@ export MANPATH
  </sect1>
 
  <sect1 id="installation-platform-notes">
-  <title>Platform-specific Notes</title>
+  <title>Platform-Specific Notes</title>
 
   <para>
    This section documents additional platform-specific issues
@@ -1986,174 +2018,10 @@ export MANPATH
    </indexterm>
 
    <para>
-    PostgreSQL works on AIX, but getting it installed properly can be
-    challenging.  AIX versions from 4.3.3 to 6.1 are considered supported.
-    You can use GCC or the native IBM compiler <command>xlc</command>.  In
-    general, using recent versions of AIX and PostgreSQL helps.  Check
-    the build farm for up to date information about which versions of
-    AIX are known to work.
+    PostgreSQL works on AIX, but AIX versions before about 6.1 have
+    various issues and are not recommended.
+    You can use GCC or the native IBM compiler <command>xlc</command>.
    </para>
-
-   <para>
-    The minimum recommended fix levels for supported AIX versions are:
-   </para>
-
-   <variablelist>
-    <varlistentry>
-     <term>AIX 4.3.3</term>
-     <listitem><para>Maintenance Level 11 + post ML11 bundle</para></listitem>
-    </varlistentry>
-
-    <varlistentry>
-     <term>AIX 5.1</term>
-     <listitem><para>Maintenance Level 9 + post ML9 bundle</para></listitem>
-    </varlistentry>
-
-    <varlistentry>
-     <term>AIX 5.2</term>
-     <listitem><para>Technology Level 10 Service Pack 3</para></listitem>
-    </varlistentry>
-
-    <varlistentry>
-     <term>AIX 5.3</term>
-     <listitem><para>Technology Level 7</para></listitem>
-    </varlistentry>
-
-    <varlistentry>
-     <term>AIX 6.1</term>
-     <listitem><para>Base Level</para></listitem>
-    </varlistentry>
-   </variablelist>
-
-   <para>
-    To check your current fix level, use
-    <command>oslevel -r</command> in AIX 4.3.3 to AIX 5.2 ML 7, or
-    <command>oslevel -s</command> in later versions.
-   </para>
-
-   <para>
-    Use the following <command>configure</command> flags in addition
-    to your own if you have installed Readline or libz in
-    <literal>/usr/local</literal>:
-    <literal>--with-includes=/usr/local/include
-    --with-libraries=/usr/local/lib</literal>.
-   </para>
-
-   <sect3>
-    <title>GCC Issues</title>
-
-    <para>
-     On AIX 5.3, there have been some problems getting PostgreSQL to
-     compile and run using GCC.
-    </para>
-
-    <para>
-     You will want to use a version of GCC subsequent to 3.3.2,
-     particularly if you use a prepackaged version.  We had good
-     success with 4.0.1.  Problems with earlier versions seem to have
-     more to do with the way IBM packaged GCC than with actual issues
-     with GCC, so that if you compile GCC yourself, you might well
-     have success with an earlier version of GCC.
-    </para>
-   </sect3>
-
-   <sect3>
-    <title>Unix-Domain Sockets Broken</title>
-
-    <para>
-     AIX 5.3 has a problem
-     where <structname>sockaddr_storage</structname> is not defined to
-     be large enough.  In version 5.3, IBM increased the size of
-     <structname>sockaddr_un</structname>, the address structure for
-     Unix-domain sockets, but did not correspondingly increase the
-     size of <structname>sockaddr_storage</structname>.  The result of
-     this is that attempts to use Unix-domain sockets with PostgreSQL
-     lead to libpq overflowing the data structure.  TCP/IP connections
-     work OK, but not Unix-domain sockets, which prevents the
-     regression tests from working.
-    </para>
-
-    <para>
-     The problem was reported to IBM, and is recorded as bug report
-     PMR29657.  If you upgrade to maintenance level 5300-03 or later,
-     that will include this fix.  A quick workaround
-     is to alter <symbol>_SS_MAXSIZE</symbol> to 1025 in
-     <filename>/usr/include/sys/socket.h</filename>.  In either case,
-     recompile PostgreSQL once you have the corrected header file.
-    </para>
-   </sect3>
-
-   <sect3>
-    <title>Internet Address Issues</title>
-
-    <para>
-     PostgreSQL relies on the system's <function>getaddrinfo</function> function
-     to parse IP addresses in <varname>listen_addresses</varname>,
-     <filename>pg_hba.conf</filename>, etc.  Older versions of AIX have assorted
-     bugs in this function.  If you have problems related to these settings,
-     updating to the appropriate AIX fix level shown above
-     should take care of it.
-    </para>
-
-    <!-- https://archives.postgresql.org/message-id/6064jt6cfm.fsf_-_@dba2.int.libertyrms.com -->
-
-    <para>
-     One user reports:
-    </para>
-
-    <para>
-     When implementing PostgreSQL version 8.1 on AIX 5.3, we
-     periodically ran into problems where the statistics collector
-     would <quote>mysteriously</quote> not come up successfully.  This
-     appears to be the result of unexpected behavior in the IPv6
-     implementation.  It looks like PostgreSQL and IPv6 do not play
-     very well together on AIX 5.3.
-    </para>
-
-    <para>
-     Any of the following actions <quote>fix</quote> the problem.
-     <itemizedlist>
-      <listitem>
-       <para>
-        Delete the IPv6 address for localhost:
-<screen>
-(as root)
-# ifconfig lo0 inet6 ::1/0 delete
-</screen>
-       </para>
-      </listitem>
-
-      <listitem>
-       <para>
-        Remove IPv6 from net services.  The
-        file <filename>/etc/netsvc.conf</filename> on AIX is roughly
-        equivalent to <filename>/etc/nsswitch.conf</filename> on
-        Solaris/Linux.  The default, on AIX, is thus:
-<programlisting>
-hosts=local,bind
-</programlisting>
-        Replace this with:
-<programlisting>
-hosts=local4,bind4
-</programlisting>
-        to deactivate searching for IPv6 addresses.
-       </para>
-      </listitem>
-     </itemizedlist>
-    </para>
-
-    <warning>
-    <para>
-     This is really a workaround for problems relating
-     to immaturity of IPv6 support, which improved visibly during the
-     course of AIX 5.3 releases.  It has worked with AIX version 5.3,
-     but does not represent an elegant solution to the problem.  It has
-     been reported that this workaround is not only unnecessary, but
-     causes problems on AIX 6.1, where IPv6 support has become more mature.
-    </para>
-    </warning>
-
-   </sect3>
 
    <sect3>
     <title>Memory Management</title>
@@ -2249,62 +2117,6 @@ ERROR:  could not load library "/opt/dbs/pgsql/lib/plperl.so": Bad address
      out-of-memory kill is configurable on a system- or process-wide
      basis if this becomes a problem.
     </para>
-
-    <bibliography>
-     <title>References and Resources</title>
-
-     <biblioentry>
-      <biblioset relation="article">
-       <title><ulink url="http://publib.boulder.ibm.com/infocenter/pseries/topic/com.ibm.aix.doc/aixprggd/genprogc/lrg_prg_support.htm">Large Program Support</ulink></title>
-      </biblioset>
-      <biblioset relation="book">
-       <title>AIX Documentation: General Programming Concepts: Writing and Debugging Programs</title>
-      </biblioset>
-     </biblioentry>
-
-     <biblioentry>
-      <biblioset relation="article">
-       <title><ulink url="http://publib.boulder.ibm.com/infocenter/pseries/topic/com.ibm.aix.doc/aixprggd/genprogc/address_space.htm">Program Address Space Overview</ulink></title>
-      </biblioset>
-      <biblioset relation="book">
-       <title>AIX Documentation: General Programming Concepts: Writing and Debugging Programs</title>
-      </biblioset>
-     </biblioentry>
-
-     <biblioentry>
-      <biblioset relation="article">
-       <title><ulink url="http://publib.boulder.ibm.com/infocenter/pseries/v5r3/topic/com.ibm.aix.doc/aixbman/prftungd/resmgmt2.htm">Performance Overview of the Virtual Memory Manager (VMM)</ulink></title>
-      </biblioset>
-      <biblioset relation="book">
-       <title>AIX Documentation: Performance Management Guide</title>
-      </biblioset>
-     </biblioentry>
-
-     <biblioentry>
-      <biblioset relation="article">
-       <title><ulink url="http://publib.boulder.ibm.com/infocenter/pseries/v5r3/topic/com.ibm.aix.doc/aixbman/prftungd/memperf7.htm">Page Space Allocation</ulink></title>
-      </biblioset>
-      <biblioset relation="book">
-       <title>AIX Documentation: Performance Management Guide</title>
-      </biblioset>
-     </biblioentry>
-
-     <biblioentry>
-      <biblioset relation="article">
-       <title><ulink url="http://publib.boulder.ibm.com/infocenter/pseries/v5r3/topic/com.ibm.aix.doc/aixbman/prftungd/memperf6.htm">Paging-space thresholds tuning</ulink></title>
-      </biblioset>
-      <biblioset relation="book">
-       <title>AIX Documentation: Performance Management Guide</title>
-      </biblioset>
-     </biblioentry>
-
-     <biblioentry>
-       <title><ulink url="http://www.redbooks.ibm.com/abstracts/sg245674.html?Open">Developing and Porting C and C++ Applications on AIX</ulink></title>
-       <publisher>
-        <publishername>IBM Redbook</publishername>
-       </publisher>
-     </biblioentry>
-    </bibliography>
    </sect3>
   </sect2>
 
@@ -2324,9 +2136,9 @@ ERROR:  could not load library "/opt/dbs/pgsql/lib/plperl.so": Bad address
    </para>
 
    <para>
-    When building from source, proceed according to the normal
+    When building from source, proceed according to the Unix-style
     installation procedure (i.e., <literal>./configure;
-    make</literal>; etc.), noting the following-Cygwin specific
+    make</literal>; etc.), noting the following Cygwin-specific
     differences:
 
     <itemizedlist>
@@ -2378,7 +2190,7 @@ ERROR:  could not load library "/opt/dbs/pgsql/lib/plperl.so": Bad address
         Building might fail on some systems where a locale other than
         C is in use. To fix this, set the locale to C by doing
         <command>export LANG=C.utf8</command> before building, and then
-        setting it back to the previous setting, after you have installed
+        setting it back to the previous setting after you have installed
         PostgreSQL.
       </para>
      </listitem>
@@ -2395,7 +2207,7 @@ ERROR:  could not load library "/opt/dbs/pgsql/lib/plperl.so": Bad address
 make MAX_CONNECTIONS=5 check
 </programlisting>
        (On some systems you can have up to about 10 simultaneous
-       connections).
+       connections.)
       </para>
      </listitem>
     </itemizedlist>
@@ -2411,94 +2223,6 @@ make MAX_CONNECTIONS=5 check
    </para>
   </sect2>
 
-  <sect2 id="installation-notes-hpux">
-   <title>HP-UX</title>
-
-   <indexterm zone="installation-notes-hpux">
-    <primary>HP-UX</primary>
-    <secondary>installation on</secondary>
-   </indexterm>
-
-   <para>
-    PostgreSQL 7.3+ should work on Series 700/800 PA-RISC machines
-    running HP-UX 10.X or 11.X, given appropriate system patch levels
-    and build tools.  At least one developer routinely tests on HP-UX
-    10.20, and we have reports of successful installations on HP-UX
-    11.00 and 11.11.
-   </para>
-
-   <para>
-    Aside from the PostgreSQL source distribution, you will need GNU
-    make (HP's make will not do), and either GCC or HP's full ANSI C
-    compiler.  If you intend to build from Git sources rather than a
-    distribution tarball, you will also need Flex (GNU lex) and Bison
-    (GNU yacc).  We also recommend making sure you are fairly
-    up-to-date on HP patches.  At a minimum, if you are building 64
-    bit binaries on HP-UX 11.11 you may need PHSS_30966 (11.11) or a
-    successor patch otherwise <command>initdb</command> may hang:
-<literallayout>
-PHSS_30966  s700_800 ld(1) and linker tools cumulative patch
-</literallayout>
-
-    On general principles you should be current on libc and ld/dld
-    patches, as well as compiler patches if you are using HP's C
-    compiler.  See HP's support sites such
-    as <ulink url="ftp://us-ffs.external.hp.com/"></ulink> for free
-    copies of their latest patches.
-   </para>
-
-   <para>
-    If you are building on a PA-RISC 2.0 machine and want to have
-    64-bit binaries using GCC, you must use a GCC 64-bit version.
-   </para>
-
-   <para>
-    If you are building on a PA-RISC 2.0 machine and want the compiled
-    binaries to run on PA-RISC 1.1 machines you will need to specify
-    <option>+DAportable</option> in <envar>CFLAGS</envar>.
-   </para>
-
-   <para>
-    If you are building on a HP-UX Itanium machine, you will need the
-    latest HP ANSI C compiler with its dependent patch or successor
-    patches:
-<literallayout>
-PHSS_30848  s700_800 HP C Compiler (A.05.57)
-PHSS_30849  s700_800 u2comp/be/plugin library Patch
-</literallayout>
-   </para>
-
-   <para>
-    If you have both HP's C compiler and GCC's, then you might want to
-    explicitly select the compiler to use when you
-    run <command>configure</command>:
-<programlisting>
-./configure CC=cc
-</programlisting>
-    for HP's C compiler, or
-<programlisting>
-./configure CC=gcc
-</programlisting>
-    for GCC.  If you omit this setting, then configure will
-    pick <command>gcc</command> if it has a choice.
-   </para>
-
-   <para>
-    The default install target location
-    is <filename>/usr/local/pgsql</filename>, which you might want to
-    change to something under <filename>/opt</filename>.  If so, use
-    the
-    <option>--prefix</option> switch to <command>configure</command>.
-   </para>
-
-   <para>
-    In the regression tests, there might be some low-order-digit
-    differences in the geometry tests, which vary depending on which
-    compiler and math library versions you use.  Any other error is
-    cause for suspicion.
-   </para>
-  </sect2>
-
   <sect2 id="installation-notes-macos">
    <title>macOS</title>
 
@@ -2506,6 +2230,17 @@ PHSS_30849  s700_800 u2comp/be/plugin library Patch
     <primary>macOS</primary>
     <secondary>installation on</secondary>
    </indexterm>
+
+   <para>
+    To build <productname>PostgreSQL</productname> from source
+    on <productname>macOS</productname>, you will need to install Apple's
+    command line developer tools, which can be done by issuing
+<programlisting>
+xcode-select --install
+</programlisting>
+    (note that this will pop up a GUI dialog window for confirmation).
+    You may or may not wish to also install Xcode.
+   </para>
 
    <para>
     On recent <productname>macOS</productname> releases, it's necessary to
@@ -2523,7 +2258,7 @@ make PG_SYSROOT=<replaceable>/desired/path</replaceable> all
 </programlisting>
     To find out the appropriate path on your machine, run
 <programlisting>
-xcodebuild -version -sdk macosx Path
+xcrun --show-sdk-path
 </programlisting>
     Note that building an extension using a different sysroot version than
     was used to build the core server is not really recommended; in the
@@ -2537,6 +2272,19 @@ xcodebuild -version -sdk macosx Path
 <programlisting>
 ./configure ... PG_SYSROOT=<replaceable>/desired/path</replaceable>
 </programlisting>
+    This would primarily be useful to cross-compile for some other
+    macOS version.  There is no guarantee that the resulting executables
+    will run on the current host.
+   </para>
+
+   <para>
+    To suppress the <option>-isysroot</option> options altogether, use
+<programlisting>
+./configure ... PG_SYSROOT=none
+</programlisting>
+    (any nonexistent pathname will work).  This might be useful if you wish
+    to build with a non-Apple compiler, but beware that that case is not
+    tested or supported by the PostgreSQL developers.
    </para>
 
    <para>
@@ -2546,7 +2294,7 @@ xcodebuild -version -sdk macosx Path
     of <literal>DYLD_LIBRARY_PATH</literal> down to the executables being
     tested.  You can work around that by doing <literal>make
     install</literal> before <literal>make check</literal>.
-    Most Postgres developers just turn off SIP, though.
+    Most PostgreSQL developers just turn off SIP, though.
    </para>
   </sect2>
 
@@ -2562,12 +2310,9 @@ xcodebuild -version -sdk macosx Path
     PostgreSQL for Windows can be built using MinGW, a Unix-like build
     environment for Microsoft operating systems, or using
     Microsoft's <productname>Visual C++</productname> compiler suite.
-    The MinGW build variant uses the normal build system described in
+    The MinGW build procedure uses the normal build system described in
     this chapter; the Visual C++ build works completely differently
     and is described in <xref linkend="install-windows"/>.
-    It is a fully native build and uses no additional software like
-    MinGW.  A ready-made installer is available on the main
-    PostgreSQL web site.
    </para>
 
    <para>
@@ -2624,8 +2369,7 @@ xcodebuild -version -sdk macosx Path
 
    <para>
     PostgreSQL is well-supported on Solaris.  The more up to date your
-    operating system, the fewer issues you will experience; details
-    below.
+    operating system, the fewer issues you will experience.
    </para>
 
    <sect3>
@@ -2634,8 +2378,7 @@ xcodebuild -version -sdk macosx Path
     <para>
      You can build with either GCC or Sun's compiler suite.  For
      better code optimization, Sun's compiler is strongly recommended
-     on the SPARC architecture.  We have heard reports of problems
-     when using GCC 2.95.1; GCC 2.95.3 or later is recommended.  If
+     on the SPARC architecture.  If
      you are using Sun's compiler, be careful not to select
      <filename>/usr/ucb/cc</filename>;
      use <filename>/opt/SUNWspro/bin/cc</filename>.
@@ -2644,9 +2387,9 @@ xcodebuild -version -sdk macosx Path
     <para>
      You can download Sun Studio
      from <ulink url="https://www.oracle.com/technetwork/server-storage/solarisstudio/downloads/"></ulink>.
-     Many of GNU tools are integrated into Solaris 10, or they are
-     present on the Solaris companion CD.  If you like packages for
-     older version of Solaris, you can find these tools
+     Many GNU tools are integrated into Solaris 10, or they are
+     present on the Solaris companion CD.  If you need packages for
+     older versions of Solaris, you can find these tools
      at <ulink url="http://www.sunfreeware.com"></ulink>.
      If you prefer
      sources, look
@@ -2682,18 +2425,15 @@ configure ... LDFLAGS="-R /usr/sfw/lib:/opt/sfw/lib:/usr/local/lib"
      flag to generate significantly faster binaries.  Do not use any
      flags that modify behavior of floating-point operations
      and <varname>errno</varname> processing (e.g.,
-     <option>-fast</option>).  These flags could raise some
-     nonstandard PostgreSQL behavior for example in the date/time
-     computing.
+     <option>-fast</option>).
     </para>
 
     <para>
      If you do not have a reason to use 64-bit binaries on SPARC,
      prefer the 32-bit version.  The 64-bit operations are slower and
-     64-bit binaries are slower than the 32-bit variants.  And on
+     64-bit binaries are slower than the 32-bit variants.  On the
      other hand, 32-bit code on the AMD64 CPU family is not native,
-     and that is why 32-bit code is significant slower on this CPU
-     family.
+     so 32-bit code is significantly slower on that CPU family.
     </para>
    </sect3>
 
@@ -2718,7 +2458,7 @@ collect2: ld returned 1 exit status
 make: *** [postgres] Error 1
 </screen>
      your DTrace installation is too old to handle probes in static
-     functions.  You need Solaris 10u4 or newer.
+     functions.  You need Solaris 10u4 or newer to use DTrace.
     </para>
    </sect3>
   </sect2>

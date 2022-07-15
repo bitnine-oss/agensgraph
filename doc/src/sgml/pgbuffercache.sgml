@@ -24,8 +24,8 @@
  </para>
 
  <para>
-  By default use is restricted to superusers and members of the
-  <literal>pg_read_all_stats</literal> role. Access may be granted to others
+  By default, use is restricted to superusers and members of the
+  <literal>pg_monitor</literal> role. Access may be granted to others
   using <command>GRANT</command>.
  </para>
 
@@ -135,12 +135,11 @@
   </para>
 
   <para>
-   When the <structname>pg_buffercache</structname> view is accessed, internal buffer
-   manager locks are taken for long enough to copy all the buffer state
-   data that the view will display.
-   This ensures that the view produces a consistent set of results, while not
-   blocking normal buffer activity longer than necessary.  Nonetheless there
-   could be some impact on database performance if this view is read often.
+   Since buffer manager locks are not taken to copy the buffer state data that
+   the view will display, accessing <structname>pg_buffercache</structname> view
+   has less impact on normal buffer activity but it doesn't provide a consistent
+   set of results across all buffers.  However, we ensure that the information of
+   each buffer is self-consistent.
   </para>
  </sect2>
 
@@ -148,27 +147,28 @@
   <title>Sample Output</title>
 
 <screen>
-regression=# SELECT c.relname, count(*) AS buffers
-             FROM pg_buffercache b INNER JOIN pg_class c
+regression=# SELECT n.nspname, c.relname, count(*) AS buffers
+             FROM pg_buffercache b JOIN pg_class c
              ON b.relfilenode = pg_relation_filenode(c.oid) AND
                 b.reldatabase IN (0, (SELECT oid FROM pg_database
                                       WHERE datname = current_database()))
-             GROUP BY c.relname
-             ORDER BY 2 DESC
+             JOIN pg_namespace n ON n.oid = c.relnamespace
+             GROUP BY n.nspname, c.relname
+             ORDER BY 3 DESC
              LIMIT 10;
 
-             relname             | buffers
----------------------------------+---------
- tenk2                           |     345
- tenk1                           |     141
- pg_proc                         |      46
- pg_class                        |      45
- pg_attribute                    |      43
- pg_class_relname_nsp_index      |      30
- pg_proc_proname_args_nsp_index  |      28
- pg_attribute_relid_attnam_index |      26
- pg_depend                       |      22
- pg_depend_reference_index       |      20
+  nspname   |        relname         | buffers
+------------+------------------------+---------
+ public     | delete_test_table      |     593
+ public     | delete_test_table_pkey |     494
+ pg_catalog | pg_attribute           |     472
+ public     | quad_poly_tbl          |     353
+ public     | tenk2                  |     349
+ public     | tenk1                  |     349
+ public     | gin_test_idx           |     306
+ pg_catalog | pg_largeobject         |     206
+ public     | gin_test_tbl           |     188
+ public     | spgist_text_tbl        |     182
 (10 rows)
 </screen>
  </sect2>

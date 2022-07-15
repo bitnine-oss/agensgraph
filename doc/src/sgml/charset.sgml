@@ -580,7 +580,7 @@ SELECT * FROM test1 ORDER BY a || b COLLATE "fr_FR";
    </para>
 
   <sect4>
-   <title>libc collations</title>
+   <title>libc Collations</title>
 
    <para>
     For example, the operating system might
@@ -617,7 +617,7 @@ SELECT * FROM test1 ORDER BY a || b COLLATE "fr_FR";
     name such as <literal>de_DE</literal> can be considered unique
     within a given database even though it would not be unique globally.
     Use of the stripped collation names is recommended, since it will
-    make one less thing you need to change if you decide to change to
+    make one fewer thing you need to change if you decide to change to
     another database encoding.  Note however that the <literal>default</literal>,
     <literal>C</literal>, and <literal>POSIX</literal> collations can be used regardless of
     the database encoding.
@@ -637,7 +637,7 @@ SELECT a COLLATE "C" &lt; b COLLATE "POSIX" FROM test1;
   </sect4>
 
   <sect4>
-   <title>ICU collations</title>
+   <title>ICU Collations</title>
 
    <para>
     With ICU, it is not sensible to enumerate all possible locale names.  ICU
@@ -713,7 +713,7 @@ SELECT a COLLATE "C" &lt; b COLLATE "POSIX" FROM test1;
    </para>
 
    <sect4>
-    <title>libc collations</title>
+    <title>libc Collations</title>
 
     <para>
      New libc collations can be created like this:
@@ -737,15 +737,15 @@ CREATE COLLATION german (provider = libc, locale = 'de_DE');
    </sect4>
 
    <sect4>
-    <title>ICU collations</title>
+    <title>ICU Collations</title>
 
    <para>
     ICU allows collations to be customized beyond the basic language+country
     set that is preloaded by <command>initdb</command>.  Users are encouraged
     to define their own collation objects that make use of these facilities to
     suit the sorting behavior to their requirements.
-    See <ulink url="http://userguide.icu-project.org/locale"></ulink>
-    and <ulink url="http://userguide.icu-project.org/collation/api"></ulink> for
+    See <ulink url="https://unicode-org.github.io/icu/userguide/locale/"></ulink>
+    and <ulink url="https://unicode-org.github.io/icu/userguide/collation/api.html"></ulink> for
     information on ICU locale naming.  The set of acceptable names and
     attributes depends on the particular ICU version.
    </para>
@@ -789,11 +789,11 @@ CREATE COLLATION german (provider = libc, locale = 'de_DE');
      </varlistentry>
 
      <varlistentry>
-      <term><literal>CREATE COLLATION digitslast (provider = icu, locale = 'en-u-kr-latn-digit');</literal></term>
-      <term><literal>CREATE COLLATION digitslast (provider = icu, locale = 'en@colReorder=latn-digit');</literal></term>
+      <term><literal>CREATE COLLATION latinlast (provider = icu, locale = 'en-u-kr-grek-latn');</literal></term>
+      <term><literal>CREATE COLLATION latinlast (provider = icu, locale = 'en@colReorder=grek-latn');</literal></term>
       <listitem>
        <para>
-        Sort digits after Latin letters.  (The default is digits before letters.)
+        Sort Greek letters before Latin ones.  (The default is Latin before Greek.)
        </para>
       </listitem>
      </varlistentry>
@@ -809,9 +809,9 @@ CREATE COLLATION german (provider = libc, locale = 'de_DE');
       </listitem>
      </varlistentry>
 
-     <varlistentry>
-      <term><literal>CREATE COLLATION special (provider = icu, locale = 'en-u-kf-upper-kr-latn-digit');</literal></term>
-      <term><literal>CREATE COLLATION special (provider = icu, locale = 'en@colCaseFirst=upper;colReorder=latn-digit');</literal></term>
+    <varlistentry>
+      <term><literal>CREATE COLLATION special (provider = icu, locale = 'en-u-kf-upper-kr-grek-latn');</literal></term>
+      <term><literal>CREATE COLLATION special (provider = icu, locale = 'en@colCaseFirst=upper;colReorder=grek-latn');</literal></term>
       <listitem>
        <para>
         Combines both of the above options.
@@ -837,12 +837,8 @@ CREATE COLLATION german (provider = libc, locale = 'de_DE');
     and <ulink url="https://tools.ietf.org/html/bcp47">BCP 47</ulink> for
     details.  The list of possible collation types (<literal>co</literal>
     subtag) can be found in
-    the <ulink url="http://www.unicode.org/repos/cldr/trunk/common/bcp47/collation.xml">CLDR
+    the <ulink url="https://github.com/unicode-org/cldr/blob/master/common/bcp47/collation.xml">CLDR
     repository</ulink>.
-    The <ulink url="https://ssl.icu-project.org/icu-bin/locexp">ICU Locale
-    Explorer</ulink> can be used to check the details of a particular locale
-    definition.  The examples using the <literal>k*</literal> subtags require
-    at least ICU version 54.
    </para>
 
    <para>
@@ -887,7 +883,7 @@ CREATE COLLATION french FROM "fr-x-icu";
    </sect3>
 
    <sect3 id="collation-nondeterministic">
-    <title>Nondeterminstic Collations</title>
+    <title>Nondeterministic Collations</title>
 
     <para>
      A collation is either <firstterm>deterministic</firstterm> or

@@ -8,7 +8,7 @@
 
  <para>
   The <application>PL/Python</application> procedural language allows
-  <productname>PostgreSQL</productname> functions to be written in the
+  <productname>PostgreSQL</productname> functions and procedures to be written in the
   <ulink url="https://www.python.org">Python language</ulink>.
  </para>
 
@@ -573,7 +573,7 @@ CREATE FUNCTION make_pair (name text, value integer)
   RETURNS named_value
 AS $$
   return ( name, value )
-  # or alternatively, as tuple: return [ name, value ]
+  # or alternatively, as list: return [ name, value ]
 $$ LANGUAGE plpythonu;
 </programlisting>
 
@@ -665,7 +665,7 @@ CALL python_triple(5, 10);
   </sect2>
 
   <sect2>
-   <title>Set-returning Functions</title>
+   <title>Set-Returning Functions</title>
   <para>
    A <application>PL/Python</application> function can also return sets of
    scalar or composite types. There are several ways to achieve this because

@@ -1,7 +1,7 @@
 <!-- doc/src/sgml/fdwhandler.sgml -->
 
  <chapter id="fdwhandler">
-   <title>Writing A Foreign Data Wrapper</title>
+   <title>Writing a Foreign Data Wrapper</title>
 
    <indexterm zone="fdwhandler">
     <primary>foreign data wrapper</primary>
@@ -96,7 +96,7 @@
     </para>
 
    <sect2 id="fdw-callbacks-scan">
-    <title>FDW Routines For Scanning Foreign Tables</title>
+    <title>FDW Routines for Scanning Foreign Tables</title>
 
     <para>
 <programlisting>
@@ -123,6 +123,14 @@ GetForeignRelSize(PlannerInfo *root,
      should be replaced if at all possible.  The function may also choose to
      update <literal>baserel-&gt;width</literal> if it can compute a better estimate
      of the average result row width.
+     (The initial value is based on column data types and on column
+     average-width values measured by the last <command>ANALYZE</command>.)
+     Also, this function may update <literal>baserel-&gt;tuples</literal> if
+     it can compute a better estimate of the foreign table's total row count.
+     (The initial value is
+     from <structname>pg_class</structname>.<structfield>reltuples</structfield>
+     which represents the total row count seen by the
+     last <command>ANALYZE</command>.)
     </para>
 
     <para>
@@ -286,7 +294,7 @@ EndForeignScan(ForeignScanState *node);
    </sect2>
 
    <sect2 id="fdw-callbacks-join-scan">
-    <title>FDW Routines For Scanning Foreign Joins</title>
+    <title>FDW Routines for Scanning Foreign Joins</title>
 
     <para>
      If an FDW supports performing foreign joins remotely (rather than
@@ -348,7 +356,7 @@ GetForeignJoinPaths(PlannerInfo *root,
    </sect2>
 
    <sect2 id="fdw-callbacks-upper-planning">
-    <title>FDW Routines For Planning Post-Scan/Join Processing</title>
+    <title>FDW Routines for Planning Post-Scan/Join Processing</title>
 
     <para>
      If an FDW supports performing remote post-scan/join processing, such as
@@ -404,7 +412,7 @@ GetForeignUpperPaths(PlannerInfo *root,
    </sect2>
 
    <sect2 id="fdw-callbacks-update">
-    <title>FDW Routines For Updating Foreign Tables</title>
+    <title>FDW Routines for Updating Foreign Tables</title>
 
     <para>
      If an FDW supports writable foreign tables, it should provide
@@ -820,9 +828,11 @@ IsForeignRelUpdatable(Relation rel);
      row-by-row approach is necessary, but it can be inefficient.  If it is
      possible for the foreign server to determine which rows should be
      modified without actually retrieving them, and if there are no local
-     triggers which would affect the operation, then it is possible to
-     arrange things so that the entire operation is performed on the remote
-     server.  The interfaces described below make this possible.
+     structures which would affect the operation (row-level local triggers,
+     stored generated columns, or <literal>WITH CHECK OPTION</literal>
+     constraints from parent views), then it is possible to arrange things
+     so that the entire operation is performed on the remote server.  The
+     interfaces described below make this possible.
     </para>
 
     <para>
@@ -967,7 +977,7 @@ EndDirectModify(ForeignScanState *node);
    </sect2>
 
    <sect2 id="fdw-callbacks-row-locking">
-    <title>FDW Routines For Row Locking</title>
+    <title>FDW Routines for Row Locking</title>
 
     <para>
      If an FDW wishes to support <firstterm>late row locking</firstterm> (as described
@@ -1231,7 +1241,7 @@ AcquireSampleRowsFunc(Relation relation,
    </sect2>
 
    <sect2 id="fdw-callbacks-import">
-    <title>FDW Routines For <command>IMPORT FOREIGN SCHEMA</command></title>
+    <title>FDW Routines for <command>IMPORT FOREIGN SCHEMA</command></title>
 
     <para>
 <programlisting>
@@ -1394,7 +1404,7 @@ ShutdownForeignScan(ForeignScanState *node);
    </sect2>
 
    <sect2 id="fdw-callbacks-reparameterize-paths">
-    <title>FDW Routines For reparameterization of paths</title>
+    <title>FDW Routines for Reparameterization of Paths</title>
 
     <para>
 <programlisting>

@@ -25,8 +25,24 @@
  * Sort priority for database object types.
  * Objects are sorted by type, and within a type by name.
  *
- * Because materialized views can potentially reference system views,
- * DO_REFRESH_MATVIEW should always be the last thing on the list.
+ * Triggers, event triggers, and materialized views are intentionally sorted
+ * late.  Triggers must be restored after all data modifications, so that
+ * they don't interfere with loading data.  Event triggers are restored
+ * next-to-last so that they don't interfere with object creations of any
+ * kind.  Matview refreshes are last because they should execute in the
+ * database's normal state (e.g., they must come after all ACLs are restored;
+ * also, if they choose to look at system catalogs, they should see the final
+ * restore state).  If you think to change this, see also the RestorePass
+ * mechanism in pg_backup_archiver.c.
+ *
+ * On the other hand, casts are intentionally sorted earlier than you might
+ * expect; logically they should come after functions, since they usually
+ * depend on those.  This works around the backend's habit of recording
+ * views that use casts as dependent on the cast's underlying function.
+ * We initially sort casts first, and then any functions used by casts
+ * will be hoisted above the casts, and in turn views that those functions
+ * depend on will be hoisted above the functions.  But views not used that
+ * way won't be hoisted.
  *
  * NOTE: object-type priorities must match the section assignments made in
  * pg_dump.c; that is, PRE_DATA objects must sort before DO_PRE_DATA_BOUNDARY,
@@ -39,12 +55,12 @@ static const int dbObjectTypePriority[] =
 	4,							/* DO_EXTENSION */
 	5,							/* DO_TYPE */
 	5,							/* DO_SHELL_TYPE */
-	6,							/* DO_FUNC */
-	7,							/* DO_AGG */
-	8,							/* DO_OPERATOR */
-	8,							/* DO_ACCESS_METHOD */
-	9,							/* DO_OPCLASS */
-	9,							/* DO_OPFAMILY */
+	7,							/* DO_FUNC */
+	8,							/* DO_AGG */
+	9,							/* DO_OPERATOR */
+	9,							/* DO_ACCESS_METHOD */
+	10,							/* DO_OPCLASS */
+	10,							/* DO_OPFAMILY */
 	3,							/* DO_COLLATION */
 	11,							/* DO_CONVERSION */
 	18,							/* DO_TABLE */
@@ -57,7 +73,7 @@ static const int dbObjectTypePriority[] =
 	27,							/* DO_CONSTRAINT */
 	33,							/* DO_FK_CONSTRAINT */
 	2,							/* DO_PROCLANG */
-	10,							/* DO_CAST */
+	6,							/* DO_CAST */
 	23,							/* DO_TABLE_DATA */
 	24,							/* DO_SEQUENCE_SET */
 	19,							/* DO_DUMMY_TYPE */
@@ -67,18 +83,18 @@ static const int dbObjectTypePriority[] =
 	15,							/* DO_TSCONFIG */
 	16,							/* DO_FDW */
 	17,							/* DO_FOREIGN_SERVER */
-	33,							/* DO_DEFAULT_ACL */
+	38,							/* DO_DEFAULT_ACL --- done in ACL pass */
 	3,							/* DO_TRANSFORM */
 	21,							/* DO_BLOB */
 	25,							/* DO_BLOB_DATA */
 	22,							/* DO_PRE_DATA_BOUNDARY */
 	26,							/* DO_POST_DATA_BOUNDARY */
-	34,							/* DO_EVENT_TRIGGER */
-	39,							/* DO_REFRESH_MATVIEW */
-	35,							/* DO_POLICY */
-	36,							/* DO_PUBLICATION */
-	37,							/* DO_PUBLICATION_REL */
-	38							/* DO_SUBSCRIPTION */
+	39,							/* DO_EVENT_TRIGGER --- next to last! */
+	40,							/* DO_REFRESH_MATVIEW --- last! */
+	34,							/* DO_POLICY */
+	35,							/* DO_PUBLICATION */
+	36,							/* DO_PUBLICATION_REL */
+	37							/* DO_SUBSCRIPTION */
 };
 
 static DumpId preDataBoundId;
@@ -165,6 +181,7 @@ DOTypeNameCompare(const void *p1, const void *p2)
 		FuncInfo   *fobj2 = *(FuncInfo *const *) p2;
 		int			i;
 
+		/* Sort by number of arguments, then argument type names */
 		cmpval = fobj1->nargs - fobj2->nargs;
 		if (cmpval != 0)
 			return cmpval;
@@ -203,7 +220,30 @@ DOTypeNameCompare(const void *p1, const void *p2)
 		AttrDefInfo *adobj1 = *(AttrDefInfo *const *) p1;
 		AttrDefInfo *adobj2 = *(AttrDefInfo *const *) p2;
 
+		/* Sort by attribute number */
 		cmpval = (adobj1->adnum - adobj2->adnum);
+		if (cmpval != 0)
+			return cmpval;
+	}
+	else if (obj1->objType == DO_POLICY)
+	{
+		PolicyInfo *pobj1 = *(PolicyInfo *const *) p1;
+		PolicyInfo *pobj2 = *(PolicyInfo *const *) p2;
+
+		/* Sort by table name (table namespace was considered already) */
+		cmpval = strcmp(pobj1->poltable->dobj.name,
+						pobj2->poltable->dobj.name);
+		if (cmpval != 0)
+			return cmpval;
+	}
+	else if (obj1->objType == DO_TRIGGER)
+	{
+		TriggerInfo *tobj1 = *(TriggerInfo *const *) p1;
+		TriggerInfo *tobj2 = *(TriggerInfo *const *) p2;
+
+		/* Sort by table name (table namespace was considered already) */
+		cmpval = strcmp(tobj1->tgtable->dobj.name,
+						tobj2->tgtable->dobj.name);
 		if (cmpval != 0)
 			return cmpval;
 	}
@@ -1104,7 +1144,15 @@ repairDependencyLoop(DumpableObject **loop,
 		}
 	}
 
-	/* Loop of table with itself, happens with generated columns */
+	/*
+	 * Loop of table with itself --- just ignore it.
+	 *
+	 * (Actually, what this arises from is a dependency of a table column on
+	 * another column, which happens with generated columns; or a dependency
+	 * of a table column on the whole table, which happens with partitioning.
+	 * But we didn't pay attention to sub-object IDs while collecting the
+	 * dependency data, so we can't see that here.)
+	 */
 	if (nLoop == 1)
 	{
 		if (loop[0]->objType == DO_TABLE)

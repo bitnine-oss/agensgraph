@@ -14,9 +14,9 @@
   <para>
    PL/Tcl is a loadable procedural language for the
    <productname>PostgreSQL</productname> database system
-   that enables the <ulink url="http://www.tcl.tk/">
+   that enables the <ulink url="https://www.tcl.tk/">
    Tcl language</ulink> to be used to write
-   <productname>PostgreSQL</productname> functions.
+   <productname>PostgreSQL</productname> functions and procedures.
   </para>
 
   <!-- **** PL/Tcl overview **** -->
@@ -320,8 +320,10 @@ $$ LANGUAGE pltcl;
     <title>Database Access from PL/Tcl</title>
 
     <para>
-     The following commands are available to access the database from
-     the body of a PL/Tcl function:
+     In this section, we follow the usual Tcl convention of using question
+     marks, rather than brackets, to indicate an optional element in a
+     syntax synopsis.  The following commands are available to access
+     the database from the body of a PL/Tcl function:
 
     <variablelist>
 
