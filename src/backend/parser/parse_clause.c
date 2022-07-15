@@ -103,6 +103,7 @@ static Node *transformFrameOffset(ParseState *pstate, int frameOptions,
 								  Oid rangeopfamily, Oid rangeopcintype, Oid *inRangeFunc,
 								  Node *clause);
 
+static bool add_expr_to_group_exprs(Expr *expr, List **group_exprs);
 
 /*
  * transformFromClause -
@@ -3733,7 +3734,7 @@ find_agg_walker(Node *node, find_agg_context *ctx)
 }
 
 /* used from agensgraph */
-bool
+static bool
 add_expr_to_group_exprs(Expr *expr, List **group_exprs)
 {
 	ListCell *le;

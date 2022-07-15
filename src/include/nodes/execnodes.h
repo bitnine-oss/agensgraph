@@ -1428,7 +1428,7 @@ typedef struct IndexScanContext
 {
 	dlist_node	list;
 	Bitmapset  *chgParam;
-	TableScanDesc scanDesc;
+	struct IndexScanDescData *scanDesc;
 } IndexScanContext;
 
 /* ----------------
