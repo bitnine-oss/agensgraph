@@ -3,7 +3,7 @@
  * dlopen.c
  *	  dynamic loader for platforms without dlopen()
  *
- * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -24,7 +24,7 @@
 void *
 dlopen(const char *file, int mode)
 {
-	int		flags = 0;
+	int			flags = 0;
 
 	if (mode & RTLD_NOW)
 		flags |= BIND_IMMEDIATE;

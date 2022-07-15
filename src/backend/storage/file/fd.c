@@ -3,7 +3,7 @@
  * fd.c
  *	  Virtual file descriptor code.
  *
- * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -308,14 +308,14 @@ static int	FreeDesc(AllocateDesc *desc);
 static void AtProcExit_Files(int code, Datum arg);
 static void CleanupTempFiles(bool isCommit, bool isProcExit);
 static void RemovePgTempFilesInDir(const char *tmpdirname, bool missing_ok,
-					   bool unlink_all);
+								   bool unlink_all);
 static void RemovePgTempRelationFiles(const char *tsdirname);
 static void RemovePgTempRelationFilesInDbspace(const char *dbspacedirname);
 
 static void walkdir(const char *path,
-		void (*action) (const char *fname, bool isdir, int elevel),
-		bool process_symlinks,
-		int elevel);
+					void (*action) (const char *fname, bool isdir, int elevel),
+					bool process_symlinks,
+					int elevel);
 #ifdef PG_FLUSH_DATA_WORKS
 static void pre_sync_fname(const char *fname, bool isdir, int elevel);
 #endif
@@ -420,6 +420,10 @@ pg_flush_data(int fd, off_t offset, off_t nbytes)
 #if defined(HAVE_SYNC_FILE_RANGE)
 	{
 		int			rc;
+		static bool not_implemented_by_kernel = false;
+
+		if (not_implemented_by_kernel)
+			return;
 
 		/*
 		 * sync_file_range(SYNC_FILE_RANGE_WRITE), currently linux specific,
@@ -434,7 +438,22 @@ pg_flush_data(int fd, off_t offset, off_t nbytes)
 							 SYNC_FILE_RANGE_WRITE);
 		if (rc != 0)
 		{
-			ereport(data_sync_elevel(WARNING),
+			int			elevel;
+
+			/*
+			 * For systems that don't have an implementation of
+			 * sync_file_range() such as Windows WSL, generate only one
+			 * warning and then suppress all further attempts by this process.
+			 */
+			if (errno == ENOSYS)
+			{
+				elevel = WARNING;
+				not_implemented_by_kernel = true;
+			}
+			else
+				elevel = data_sync_elevel(WARNING);
+
+			ereport(elevel,
 					(errcode_for_file_access(),
 					 errmsg("could not flush dirty data: %m")));
 		}
@@ -627,7 +646,14 @@ durable_rename(const char *oldfile, const char *newfile, int elevel)
 					 errmsg("could not fsync file \"%s\": %m", newfile)));
 			return -1;
 		}
-		CloseTransientFile(fd);
+
+		if (CloseTransientFile(fd))
+		{
+			ereport(elevel,
+					(errcode_for_file_access(),
+					 errmsg("could not close file \"%s\": %m", newfile)));
+			return -1;
+		}
 	}
 
 	/* Time to do the real deal... */
@@ -1566,7 +1592,7 @@ OpenTemporaryFileInTablespace(Oid tblspcOid, bool rejectError)
  * If the file is inside the top-level temporary directory, its name should
  * begin with PG_TEMP_FILE_PREFIX so that it can be identified as temporary
  * and deleted at startup by RemovePgTempFiles().  Alternatively, it can be
- * inside a directory created with PathnameCreateTemporaryDir(), in which case
+ * inside a directory created with PathNameCreateTemporaryDir(), in which case
  * the prefix isn't needed.
  */
 File
@@ -1705,7 +1731,7 @@ FileClose(File file)
 			 * see LruDelete.
 			 */
 			elog(vfdP->fdstate & FD_TEMP_FILE_LIMIT ? LOG : data_sync_elevel(LOG),
-				"could not close file \"%s\": %m", vfdP->fileName);
+				 "could not close file \"%s\": %m", vfdP->fileName);
 		}
 
 		--nfile;
@@ -3276,7 +3302,10 @@ pre_sync_fname(const char *fname, bool isdir, int elevel)
 	 */
 	pg_flush_data(fd, 0, 0);
 
-	(void) CloseTransientFile(fd);
+	if (CloseTransientFile(fd))
+		ereport(elevel,
+				(errcode_for_file_access(),
+				 errmsg("could not close file \"%s\": %m", fname)));
 }
 
 #endif							/* PG_FLUSH_DATA_WORKS */
@@ -3360,7 +3389,7 @@ fsync_fname_ext(const char *fname, bool isdir, bool ignore_perm, int elevel)
 	 * Some OSes don't allow us to fsync directories at all, so we can ignore
 	 * those errors. Anything else needs to be logged.
 	 */
-	if (returncode != 0 && !(isdir && errno == EBADF))
+	if (returncode != 0 && !(isdir && (errno == EBADF || errno == EINVAL)))
 	{
 		int			save_errno;
 
@@ -3375,7 +3404,13 @@ fsync_fname_ext(const char *fname, bool isdir, bool ignore_perm, int elevel)
 		return -1;
 	}
 
-	(void) CloseTransientFile(fd);
+	if (CloseTransientFile(fd))
+	{
+		ereport(elevel,
+				(errcode_for_file_access(),
+				 errmsg("could not close file \"%s\": %m", fname)));
+		return -1;
+	}
 
 	return 0;
 }

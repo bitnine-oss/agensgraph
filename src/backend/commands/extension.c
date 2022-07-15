@@ -9,10 +9,10 @@
  * dependent objects can be associated with it.  An extension is created by
  * populating the pg_extension catalog from a "control" file.
  * The extension control file is parsed with the same parser we use for
- * postgresql.conf and recovery.conf.  An extension also has an installation
- * script file, containing SQL commands to create the extension's objects.
+ * postgresql.conf.  An extension also has an installation script file,
+ * containing SQL commands to create the extension's objects.
  *
- * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -29,8 +29,11 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
+#include "access/genam.h"
 #include "access/htup_details.h"
+#include "access/relation.h"
 #include "access/sysattr.h"
+#include "access/table.h"
 #include "access/xact.h"
 #include "catalog/catalog.h"
 #include "catalog/dependency.h"
@@ -60,7 +63,6 @@
 #include "utils/memutils.h"
 #include "utils/rel.h"
 #include "utils/snapmgr.h"
-#include "utils/tqual.h"
 #include "utils/varlena.h"
 
 
@@ -102,27 +104,27 @@ typedef struct ExtensionVersionInfo
 
 /* Local functions */
 static List *find_update_path(List *evi_list,
-				 ExtensionVersionInfo *evi_start,
-				 ExtensionVersionInfo *evi_target,
-				 bool reject_indirect,
-				 bool reinitialize);
-static Oid get_required_extension(char *reqExtensionName,
-					   char *extensionName,
-					   char *origSchemaName,
-					   bool cascade,
-					   List *parents,
-					   bool is_create);
+							  ExtensionVersionInfo *evi_start,
+							  ExtensionVersionInfo *evi_target,
+							  bool reject_indirect,
+							  bool reinitialize);
+static Oid	get_required_extension(char *reqExtensionName,
+								   char *extensionName,
+								   char *origSchemaName,
+								   bool cascade,
+								   List *parents,
+								   bool is_create);
 static void get_available_versions_for_extension(ExtensionControlFile *pcontrol,
-									 Tuplestorestate *tupstore,
-									 TupleDesc tupdesc);
+												 Tuplestorestate *tupstore,
+												 TupleDesc tupdesc);
 static Datum convert_requires_to_datum(List *requires);
 static void ApplyExtensionUpdates(Oid extensionOid,
-					  ExtensionControlFile *pcontrol,
-					  const char *initialVersion,
-					  List *updateVersions,
-					  char *origSchemaName,
-					  bool cascade,
-					  bool is_create);
+								  ExtensionControlFile *pcontrol,
+								  const char *initialVersion,
+								  List *updateVersions,
+								  char *origSchemaName,
+								  bool cascade,
+								  bool is_create);
 static char *read_whole_file(const char *filename, int *length);
 
 
@@ -141,7 +143,7 @@ get_extension_oid(const char *extname, bool missing_ok)
 	HeapTuple	tuple;
 	ScanKeyData entry[1];
 
-	rel = heap_open(ExtensionRelationId, AccessShareLock);
+	rel = table_open(ExtensionRelationId, AccessShareLock);
 
 	ScanKeyInit(&entry[0],
 				Anum_pg_extension_extname,
@@ -161,7 +163,7 @@ get_extension_oid(const char *extname, bool missing_ok)
 
 	systable_endscan(scandesc);
 
-	heap_close(rel, AccessShareLock);
+	table_close(rel, AccessShareLock);
 
 	if (!OidIsValid(result) && !missing_ok)
 		ereport(ERROR,
@@ -186,7 +188,7 @@ get_extension_name(Oid ext_oid)
 	HeapTuple	tuple;
 	ScanKeyData entry[1];
 
-	rel = heap_open(ExtensionRelationId, AccessShareLock);
+	rel = table_open(ExtensionRelationId, AccessShareLock);
 
 	ScanKeyInit(&entry[0],
 				Anum_pg_extension_oid,
@@ -206,7 +208,7 @@ get_extension_name(Oid ext_oid)
 
 	systable_endscan(scandesc);
 
-	heap_close(rel, AccessShareLock);
+	table_close(rel, AccessShareLock);
 
 	return result;
 }
@@ -225,7 +227,7 @@ get_extension_schema(Oid ext_oid)
 	HeapTuple	tuple;
 	ScanKeyData entry[1];
 
-	rel = heap_open(ExtensionRelationId, AccessShareLock);
+	rel = table_open(ExtensionRelationId, AccessShareLock);
 
 	ScanKeyInit(&entry[0],
 				Anum_pg_extension_oid,
@@ -245,7 +247,7 @@ get_extension_schema(Oid ext_oid)
 
 	systable_endscan(scandesc);
 
-	heap_close(rel, AccessShareLock);
+	table_close(rel, AccessShareLock);
 
 	return result;
 }
@@ -899,10 +901,11 @@ execute_extension_script(Oid extensionOid, ExtensionControlFile *control,
 		{
 			const char *qSchemaName = quote_identifier(schemaName);
 
-			t_sql = DirectFunctionCall3(replace_text,
-										t_sql,
-										CStringGetTextDatum("@extschema@"),
-										CStringGetTextDatum(qSchemaName));
+			t_sql = DirectFunctionCall3Coll(replace_text,
+											C_COLLATION_OID,
+											t_sql,
+											CStringGetTextDatum("@extschema@"),
+											CStringGetTextDatum(qSchemaName));
 		}
 
 		/*
@@ -911,10 +914,11 @@ execute_extension_script(Oid extensionOid, ExtensionControlFile *control,
 		 */
 		if (control->module_pathname)
 		{
-			t_sql = DirectFunctionCall3(replace_text,
-										t_sql,
-										CStringGetTextDatum("MODULE_PATHNAME"),
-										CStringGetTextDatum(control->module_pathname));
+			t_sql = DirectFunctionCall3Coll(replace_text,
+											C_COLLATION_OID,
+											t_sql,
+											CStringGetTextDatum("MODULE_PATHNAME"),
+											CStringGetTextDatum(control->module_pathname));
 		}
 
 		/* And now back to C string */
@@ -1474,6 +1478,13 @@ CreateExtensionInternal(char *extensionName,
 	}
 
 	/*
+	 * Make note if a temporary namespace has been accessed in this
+	 * transaction.
+	 */
+	if (isTempNamespace(schemaOid))
+		MyXactFlags |= XACT_FLAGS_ACCESSEDTEMPNAMESPACE;
+
+	/*
 	 * We don't check creation rights on the target namespace here.  If the
 	 * extension script actually creates any objects there, it will fail if
 	 * the user doesn't have such permissions.  But there are cases such as
@@ -1754,7 +1765,7 @@ InsertExtensionTuple(const char *extName, Oid extOwner,
 	/*
 	 * Build and insert the pg_extension tuple
 	 */
-	rel = heap_open(ExtensionRelationId, RowExclusiveLock);
+	rel = table_open(ExtensionRelationId, RowExclusiveLock);
 
 	memset(values, 0, sizeof(values));
 	memset(nulls, 0, sizeof(nulls));
@@ -1784,7 +1795,7 @@ InsertExtensionTuple(const char *extName, Oid extOwner,
 	CatalogTupleInsert(rel, tuple);
 
 	heap_freetuple(tuple);
-	heap_close(rel, RowExclusiveLock);
+	table_close(rel, RowExclusiveLock);
 
 	/*
 	 * Record dependencies on owner, schema, and prerequisite extensions
@@ -1849,7 +1860,7 @@ RemoveExtensionById(Oid extId)
 				 errmsg("cannot drop extension \"%s\" because it is being modified",
 						get_extension_name(extId))));
 
-	rel = heap_open(ExtensionRelationId, RowExclusiveLock);
+	rel = table_open(ExtensionRelationId, RowExclusiveLock);
 
 	ScanKeyInit(&entry[0],
 				Anum_pg_extension_oid,
@@ -1866,7 +1877,7 @@ RemoveExtensionById(Oid extId)
 
 	systable_endscan(scandesc);
 
-	heap_close(rel, RowExclusiveLock);
+	table_close(rel, RowExclusiveLock);
 }
 
 /*
@@ -2348,8 +2359,8 @@ pg_extension_config_dump(PG_FUNCTION_ARGS)
 	if (!creating_extension)
 		ereport(ERROR,
 				(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-				 errmsg("pg_extension_config_dump() can only be called "
-						"from an SQL script executed by CREATE EXTENSION")));
+				 errmsg("%s can only be called from an SQL script executed by CREATE EXTENSION",
+						"pg_extension_config_dump()")));
 
 	/*
 	 * Check that the table exists and is a member of the extension being
@@ -2377,7 +2388,7 @@ pg_extension_config_dump(PG_FUNCTION_ARGS)
 	 */
 
 	/* Find the pg_extension tuple */
-	extRel = heap_open(ExtensionRelationId, RowExclusiveLock);
+	extRel = table_open(ExtensionRelationId, RowExclusiveLock);
 
 	ScanKeyInit(&key[0],
 				Anum_pg_extension_oid,
@@ -2496,7 +2507,7 @@ pg_extension_config_dump(PG_FUNCTION_ARGS)
 
 	systable_endscan(extScan);
 
-	heap_close(extRel, RowExclusiveLock);
+	table_close(extRel, RowExclusiveLock);
 
 	PG_RETURN_VOID();
 }
@@ -2525,7 +2536,7 @@ extension_config_remove(Oid extensionoid, Oid tableoid)
 	ArrayType  *a;
 
 	/* Find the pg_extension tuple */
-	extRel = heap_open(ExtensionRelationId, RowExclusiveLock);
+	extRel = table_open(ExtensionRelationId, RowExclusiveLock);
 
 	ScanKeyInit(&key[0],
 				Anum_pg_extension_oid,
@@ -2583,7 +2594,7 @@ extension_config_remove(Oid extensionoid, Oid tableoid)
 	if (arrayIndex < 0)
 	{
 		systable_endscan(extScan);
-		heap_close(extRel, RowExclusiveLock);
+		table_close(extRel, RowExclusiveLock);
 		return;
 	}
 
@@ -2671,7 +2682,7 @@ extension_config_remove(Oid extensionoid, Oid tableoid)
 
 	systable_endscan(extScan);
 
-	heap_close(extRel, RowExclusiveLock);
+	table_close(extRel, RowExclusiveLock);
 }
 
 /*
@@ -2724,7 +2735,7 @@ AlterExtensionNamespace(const char *extensionName, const char *newschema, Oid *o
 						extensionName, newschema)));
 
 	/* Locate the pg_extension tuple */
-	extRel = heap_open(ExtensionRelationId, RowExclusiveLock);
+	extRel = table_open(ExtensionRelationId, RowExclusiveLock);
 
 	ScanKeyInit(&key[0],
 				Anum_pg_extension_oid,
@@ -2752,7 +2763,7 @@ AlterExtensionNamespace(const char *extensionName, const char *newschema, Oid *o
 	 */
 	if (extForm->extnamespace == nspOid)
 	{
-		heap_close(extRel, RowExclusiveLock);
+		table_close(extRel, RowExclusiveLock);
 		return InvalidObjectAddress;
 	}
 
@@ -2769,7 +2780,7 @@ AlterExtensionNamespace(const char *extensionName, const char *newschema, Oid *o
 	 * Scan pg_depend to find objects that depend directly on the extension,
 	 * and alter each one's schema.
 	 */
-	depRel = heap_open(DependRelationId, AccessShareLock);
+	depRel = table_open(DependRelationId, AccessShareLock);
 
 	ScanKeyInit(&key[0],
 				Anum_pg_depend_refclassid,
@@ -2843,7 +2854,7 @@ AlterExtensionNamespace(const char *extensionName, const char *newschema, Oid *o
 
 	CatalogTupleUpdate(extRel, &extTup->t_self, extTup);
 
-	heap_close(extRel, RowExclusiveLock);
+	table_close(extRel, RowExclusiveLock);
 
 	/* update dependencies to point to the new schema */
 	changeDependencyFor(ExtensionRelationId, extensionOid,
@@ -2889,7 +2900,7 @@ ExecAlterExtensionStmt(ParseState *pstate, AlterExtensionStmt *stmt)
 	/*
 	 * Look up the extension --- it must already exist in pg_extension
 	 */
-	extRel = heap_open(ExtensionRelationId, AccessShareLock);
+	extRel = table_open(ExtensionRelationId, AccessShareLock);
 
 	ScanKeyInit(&key[0],
 				Anum_pg_extension_extname,
@@ -2920,7 +2931,7 @@ ExecAlterExtensionStmt(ParseState *pstate, AlterExtensionStmt *stmt)
 
 	systable_endscan(extScan);
 
-	heap_close(extRel, AccessShareLock);
+	table_close(extRel, AccessShareLock);
 
 	/* Permission check: must own extension */
 	if (!pg_extension_ownercheck(extensionOid, GetUserId()))
@@ -3046,7 +3057,7 @@ ApplyExtensionUpdates(Oid extensionOid,
 		control = read_extension_aux_control_file(pcontrol, versionName);
 
 		/* Find the pg_extension tuple */
-		extRel = heap_open(ExtensionRelationId, RowExclusiveLock);
+		extRel = table_open(ExtensionRelationId, RowExclusiveLock);
 
 		ScanKeyInit(&key[0],
 					Anum_pg_extension_oid,
@@ -3091,7 +3102,7 @@ ApplyExtensionUpdates(Oid extensionOid,
 
 		systable_endscan(extScan);
 
-		heap_close(extRel, RowExclusiveLock);
+		table_close(extRel, RowExclusiveLock);
 
 		/*
 		 * Look up the prerequisite extensions for this version, install them

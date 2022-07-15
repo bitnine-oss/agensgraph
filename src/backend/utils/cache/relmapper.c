@@ -28,7 +28,7 @@
  * all these files commit in a single map file update rather than being tied
  * to transaction commit.
  *
- * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -133,13 +133,13 @@ static RelMapFile pending_local_updates;
 
 /* non-export function prototypes */
 static void apply_map_update(RelMapFile *map, Oid relationId, Oid fileNode,
-				 bool add_okay);
+							 bool add_okay);
 static void merge_map_updates(RelMapFile *map, const RelMapFile *updates,
-				  bool add_okay);
+							  bool add_okay);
 static void load_relmap_file(bool shared);
 static void write_relmap_file(bool shared, RelMapFile *newmap,
-				  bool write_wal, bool send_sinval, bool preserve_files,
-				  Oid dbid, Oid tsid, const char *dbpath);
+							  bool write_wal, bool send_sinval, bool preserve_files,
+							  Oid dbid, Oid tsid, const char *dbpath);
 static void perform_relmap_update(bool shared, const RelMapFile *updates);
 
 
@@ -656,7 +656,7 @@ EstimateRelationMapSpace(void)
 void
 SerializeRelationMap(Size maxSize, char *startAddress)
 {
-	SerializedActiveRelMaps	   *relmaps;
+	SerializedActiveRelMaps *relmaps;
 
 	Assert(maxSize >= EstimateRelationMapSpace());
 
@@ -673,7 +673,7 @@ SerializeRelationMap(Size maxSize, char *startAddress)
 void
 RestoreRelationMap(char *startAddress)
 {
-	SerializedActiveRelMaps	   *relmaps;
+	SerializedActiveRelMaps *relmaps;
 
 	if (active_shared_updates.num_mappings != 0 ||
 		active_local_updates.num_mappings != 0 ||
@@ -747,7 +747,11 @@ load_relmap_file(bool shared)
 	}
 	pgstat_report_wait_end();
 
-	CloseTransientFile(fd);
+	if (CloseTransientFile(fd))
+		ereport(FATAL,
+				(errcode_for_file_access(),
+				 errmsg("could not close file \"%s\": %m",
+						mapfilename)));
 
 	/* check for correct magic number, etc */
 	if (map->magic != RELMAPPER_FILEMAGIC ||

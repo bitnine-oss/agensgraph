@@ -3,7 +3,7 @@
  * snapmgr.h
  *	  POSTGRES snapshot manager
  *
- * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/utils/snapmgr.h
@@ -61,6 +61,45 @@ extern PGDLLIMPORT TransactionId RecentXmin;
 extern PGDLLIMPORT TransactionId RecentGlobalXmin;
 extern PGDLLIMPORT TransactionId RecentGlobalDataXmin;
 
+/* Variables representing various special snapshot semantics */
+extern PGDLLIMPORT SnapshotData SnapshotSelfData;
+extern PGDLLIMPORT SnapshotData SnapshotAnyData;
+extern PGDLLIMPORT SnapshotData CatalogSnapshotData;
+
+#define SnapshotSelf		(&SnapshotSelfData)
+#define SnapshotAny			(&SnapshotAnyData)
+
+/*
+ * We don't provide a static SnapshotDirty variable because it would be
+ * non-reentrant.  Instead, users of that snapshot type should declare a
+ * local variable of type SnapshotData, and initialize it with this macro.
+ */
+#define InitDirtySnapshot(snapshotdata)  \
+	((snapshotdata).snapshot_type = SNAPSHOT_DIRTY)
+
+/*
+ * Similarly, some initialization is required for a NonVacuumable snapshot.
+ * The caller must supply the xmin horizon to use (e.g., RecentGlobalXmin).
+ */
+#define InitNonVacuumableSnapshot(snapshotdata, xmin_horizon)  \
+	((snapshotdata).snapshot_type = SNAPSHOT_NON_VACUUMABLE, \
+	 (snapshotdata).xmin = (xmin_horizon))
+
+/*
+ * Similarly, some initialization is required for SnapshotToast.  We need
+ * to set lsn and whenTaken correctly to support snapshot_too_old.
+ */
+#define InitToastSnapshot(snapshotdata, l, w)  \
+	((snapshotdata).snapshot_type = SNAPSHOT_TOAST, \
+	 (snapshotdata).lsn = (l),					\
+	 (snapshotdata).whenTaken = (w))
+
+/* This macro encodes the knowledge of which snapshots are MVCC-safe */
+#define IsMVCCSnapshot(snapshot)  \
+	((snapshot)->snapshot_type == SNAPSHOT_MVCC || \
+	 (snapshot)->snapshot_type == SNAPSHOT_HISTORIC_MVCC)
+
+
 extern Snapshot GetTransactionSnapshot(void);
 extern Snapshot GetLatestSnapshot(void);
 extern void SnapshotSetCommandId(CommandId curcid);
@@ -93,11 +132,16 @@ extern bool XactHasExportedSnapshots(void);
 extern void DeleteAllExportedSnapshotFiles(void);
 extern bool ThereAreNoPriorRegisteredSnapshots(void);
 extern TransactionId TransactionIdLimitedForOldSnapshots(TransactionId recentXmin,
-									Relation relation);
+														 Relation relation);
 extern void MaintainOldSnapshotTimeMapping(TimestampTz whenTaken,
-							   TransactionId xmin);
+										   TransactionId xmin);
 
 extern char *ExportSnapshot(Snapshot snapshot);
+
+/*
+ * Utility functions for implementing visibility routines in table AMs.
+ */
+extern bool XidInMVCCSnapshot(TransactionId xid, Snapshot snapshot);
 
 /* Support for catalog timetravel for logical decoding */
 struct HTAB;

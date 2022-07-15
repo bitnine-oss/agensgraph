@@ -588,6 +588,13 @@ explain (analyze, costs off, summary off, timing off)
 update ab_a1 set b = 3 from ab where ab.a = 1 and ab.a = ab_a1.a;
 table ab;
 
+-- Test UPDATE where source relation has run-time pruning enabled
+truncate ab;
+insert into ab values (1, 1), (1, 2), (1, 3), (2, 1);
+explain (analyze, costs off, summary off, timing off)
+update ab_a1 set b = 3 from ab_a2 where ab_a2.b = (select 1);
+select tableoid::regclass, * from ab;
+
 drop table ab, lprt_a;
 
 -- Join
@@ -747,6 +754,81 @@ select * from listp where a = (select null::int);
 
 drop table listp;
 
+--
+-- check that stable query clauses are only used in run-time pruning
+--
+create table stable_qual_pruning (a timestamp) partition by range (a);
+create table stable_qual_pruning1 partition of stable_qual_pruning
+  for values from ('2000-01-01') to ('2000-02-01');
+create table stable_qual_pruning2 partition of stable_qual_pruning
+  for values from ('2000-02-01') to ('2000-03-01');
+create table stable_qual_pruning3 partition of stable_qual_pruning
+  for values from ('3000-02-01') to ('3000-03-01');
+
+-- comparison against a stable value requires run-time pruning
+explain (analyze, costs off, summary off, timing off)
+select * from stable_qual_pruning where a < localtimestamp;
+
+-- timestamp < timestamptz comparison is only stable, not immutable
+explain (analyze, costs off, summary off, timing off)
+select * from stable_qual_pruning where a < '2000-02-01'::timestamptz;
+
+-- check ScalarArrayOp cases
+explain (analyze, costs off, summary off, timing off)
+select * from stable_qual_pruning
+  where a = any(array['2010-02-01', '2020-01-01']::timestamp[]);
+explain (analyze, costs off, summary off, timing off)
+select * from stable_qual_pruning
+  where a = any(array['2000-02-01', '2010-01-01']::timestamp[]);
+explain (analyze, costs off, summary off, timing off)
+select * from stable_qual_pruning
+  where a = any(array['2000-02-01', localtimestamp]::timestamp[]);
+explain (analyze, costs off, summary off, timing off)
+select * from stable_qual_pruning
+  where a = any(array['2010-02-01', '2020-01-01']::timestamptz[]);
+explain (analyze, costs off, summary off, timing off)
+select * from stable_qual_pruning
+  where a = any(array['2000-02-01', '2010-01-01']::timestamptz[]);
+
+drop table stable_qual_pruning;
+
+--
+-- Check that pruning with composite range partitioning works correctly when
+-- it must ignore clauses for trailing keys once it has seen a clause with
+-- non-inclusive operator for an earlier key
+--
+create table mc3p (a int, b int, c int) partition by range (a, abs(b), c);
+create table mc3p0 partition of mc3p
+  for values from (0, 0, 0) to (0, maxvalue, maxvalue);
+create table mc3p1 partition of mc3p
+  for values from (1, 1, 1) to (2, minvalue, minvalue);
+create table mc3p2 partition of mc3p
+  for values from (2, minvalue, minvalue) to (3, maxvalue, maxvalue);
+insert into mc3p values (0, 1, 1), (1, 1, 1), (2, 1, 1);
+
+explain (analyze, costs off, summary off, timing off)
+select * from mc3p where a < 3 and abs(b) = 1;
+
+--
+-- Check that pruning with composite range partitioning works correctly when
+-- a combination of runtime parameters is specified, not all of whose values
+-- are available at the same time
+--
+set plan_cache_mode = force_generic_plan;
+prepare ps1 as
+  select * from mc3p where a = $1 and abs(b) < (select 3);
+explain (analyze, costs off, summary off, timing off)
+execute ps1(1);
+deallocate ps1;
+prepare ps2 as
+  select * from mc3p where a <= $1 and abs(b) < (select 3);
+explain (analyze, costs off, summary off, timing off)
+execute ps2(1);
+deallocate ps2;
+reset plan_cache_mode;
+
+drop table mc3p;
+
 -- Ensure runtime pruning works with initplans params with boolean types
 create table boolvalues (value bool not null);
 insert into boolvalues values('t'),('f');
@@ -768,15 +850,15 @@ drop table boolp;
 --
 set enable_seqscan = off;
 set enable_sort = off;
-create table ma_test (a int) partition by range (a);
+create table ma_test (a int, b int) partition by range (a);
 create table ma_test_p1 partition of ma_test for values from (0) to (10);
 create table ma_test_p2 partition of ma_test for values from (10) to (20);
 create table ma_test_p3 partition of ma_test for values from (20) to (30);
-insert into ma_test select x from generate_series(0,29) t(x);
-create index on ma_test (a);
+insert into ma_test select x,x from generate_series(0,29) t(x);
+create index on ma_test (b);
 
 analyze ma_test;
-prepare mt_q1 (int) as select * from ma_test where a >= $1 and a % 10 = 5 order by a;
+prepare mt_q1 (int) as select a from ma_test where a >= $1 and a % 10 = 5 order by b;
 
 -- Execute query 5 times to allow choose_custom_plan
 -- to start considering a generic plan.
@@ -797,7 +879,7 @@ execute mt_q1(35);
 deallocate mt_q1;
 
 -- ensure initplan params properly prune partitions
-explain (analyze, costs off, summary off, timing off) select * from ma_test where a >= (select min(a) from ma_test_p2) order by a;
+explain (analyze, costs off, summary off, timing off) select * from ma_test where a >= (select min(b) from ma_test_p2) order by b;
 
 reset enable_seqscan;
 reset enable_sort;
@@ -906,9 +988,7 @@ explain (costs off) delete from inh_lp where a = 1;
 -- inheritance children
 explain (costs off) update inh_lp1 set value = 10 where a = 2;
 
-\set VERBOSITY terse	\\ -- suppress cascade details
 drop table inh_lp cascade;
-\set VERBOSITY default
 
 reset enable_partition_pruning;
 reset constraint_exclusion;
@@ -984,5 +1064,25 @@ create table listp2_10 partition of listp2 for values in (10);
 
 explain (analyze, costs off, summary off, timing off)
 select * from listp where a = (select 2) and b <> 10;
+
+--
+-- check that a partition directly accessed in a query is excluded with
+-- constraint_exclusion = on
+--
+
+-- turn off partition pruning, so that it doesn't interfere
+set enable_partition_pruning to off;
+
+-- setting constraint_exclusion to 'partition' disables exclusion
+set constraint_exclusion to 'partition';
+explain (costs off) select * from listp1 where a = 2;
+explain (costs off) update listp1 set a = 1 where a = 2;
+-- constraint exclusion enabled
+set constraint_exclusion to 'on';
+explain (costs off) select * from listp1 where a = 2;
+explain (costs off) update listp1 set a = 1 where a = 2;
+
+reset constraint_exclusion;
+reset enable_partition_pruning;
 
 drop table listp;

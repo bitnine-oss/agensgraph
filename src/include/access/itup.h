@@ -4,7 +4,7 @@
  *	  POSTGRES index tuple definitions.
  *
  *
- * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/access/itup.h
@@ -131,7 +131,7 @@ typedef IndexAttributeBitMapData * IndexAttributeBitMap;
  * fit on one index page.  An index tuple must have either data or a null
  * bitmap, so we can safely assume it's at least 1 byte bigger than a bare
  * IndexTupleData struct.  We arrive at the divisor because each tuple
- * must be maxaligned, and it must have an associated item pointer.
+ * must be maxaligned, and it must have an associated line pointer.
  *
  * To be index-type-independent, this does not account for any special space
  * on the page, and is thus conservative.
@@ -149,13 +149,13 @@ typedef IndexAttributeBitMapData * IndexAttributeBitMap;
 
 /* routines in indextuple.c */
 extern IndexTuple index_form_tuple(TupleDesc tupleDescriptor,
-				 Datum *values, bool *isnull);
+								   Datum *values, bool *isnull);
 extern Datum nocache_index_getattr(IndexTuple tup, int attnum,
-					  TupleDesc tupleDesc);
+								   TupleDesc tupleDesc);
 extern void index_deform_tuple(IndexTuple tup, TupleDesc tupleDescriptor,
-				   Datum *values, bool *isnull);
+							   Datum *values, bool *isnull);
 extern IndexTuple CopyIndexTuple(IndexTuple source);
 extern IndexTuple index_truncate_tuple(TupleDesc sourceDescriptor,
-					 IndexTuple source, int leavenatts);
+									   IndexTuple source, int leavenatts);
 
 #endif							/* ITUP_H */

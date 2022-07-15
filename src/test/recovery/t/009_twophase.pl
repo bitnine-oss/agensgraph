@@ -4,7 +4,7 @@ use warnings;
 
 use PostgresNode;
 use TestLib;
-use Test::More tests => 20;
+use Test::More tests => 24;
 
 my $psql_out = '';
 my $psql_rc  = '';
@@ -229,10 +229,6 @@ is($psql_rc, '0', "Restore of prepared transaction on promoted standby");
 
 # restart old master as new standby
 $cur_standby->enable_streaming($cur_master);
-$cur_standby->append_conf(
-	'recovery.conf', qq(
-recovery_target_timeline='latest'
-));
 $cur_standby->start;
 
 ###############################################################################
@@ -267,10 +263,6 @@ is($psql_out, '1',
 
 # restart old master as new standby
 $cur_standby->enable_streaming($cur_master);
-$cur_standby->append_conf(
-	'recovery.conf', qq(
-recovery_target_timeline='latest'
-));
 $cur_standby->start;
 
 $cur_master->psql('postgres', "COMMIT PREPARED 'xact_009_11'");
@@ -307,10 +299,6 @@ is($psql_out, '1',
 
 # restart old master as new standby
 $cur_standby->enable_streaming($cur_master);
-$cur_standby->append_conf(
-	'recovery.conf', qq(
-recovery_target_timeline='latest'
-));
 $cur_standby->start;
 
 $cur_master->psql('postgres', "COMMIT PREPARED 'xact_009_12'");
@@ -345,6 +333,60 @@ $cur_standby->psql(
 	"SELECT count(*) FROM t_009_tbl2",
 	stdout => \$psql_out);
 is($psql_out, '1', "Replay prepared transaction with DDL");
+
+###############################################################################
+# Check recovery of prepared transaction with DDL inside after a hard restart
+# of the master.
+###############################################################################
+
+$cur_master->psql(
+	'postgres', "
+	BEGIN;
+	CREATE TABLE t_009_tbl3 (id int, msg text);
+	SAVEPOINT s1;
+	INSERT INTO t_009_tbl3 VALUES (28, 'issued to ${cur_master_name}');
+	PREPARE TRANSACTION 'xact_009_14';
+	BEGIN;
+	CREATE TABLE t_009_tbl4 (id int, msg text);
+	SAVEPOINT s1;
+	INSERT INTO t_009_tbl4 VALUES (29, 'issued to ${cur_master_name}');
+	PREPARE TRANSACTION 'xact_009_15';");
+
+$cur_master->teardown_node;
+$cur_master->start;
+
+$psql_rc = $cur_master->psql('postgres', "COMMIT PREPARED 'xact_009_14'");
+is($psql_rc, '0', 'Commit prepared transaction after teardown');
+
+$psql_rc = $cur_master->psql('postgres', "ROLLBACK PREPARED 'xact_009_15'");
+is($psql_rc, '0', 'Rollback prepared transaction after teardown');
+
+###############################################################################
+# Check recovery of prepared transaction with DDL inside after a soft restart
+# of the master.
+###############################################################################
+
+$cur_master->psql(
+	'postgres', "
+	BEGIN;
+	CREATE TABLE t_009_tbl5 (id int, msg text);
+	SAVEPOINT s1;
+	INSERT INTO t_009_tbl5 VALUES (30, 'issued to ${cur_master_name}');
+	PREPARE TRANSACTION 'xact_009_16';
+	BEGIN;
+	CREATE TABLE t_009_tbl6 (id int, msg text);
+	SAVEPOINT s1;
+	INSERT INTO t_009_tbl6 VALUES (31, 'issued to ${cur_master_name}');
+	PREPARE TRANSACTION 'xact_009_17';");
+
+$cur_master->stop;
+$cur_master->start;
+
+$psql_rc = $cur_master->psql('postgres', "COMMIT PREPARED 'xact_009_16'");
+is($psql_rc, '0', 'Commit prepared transaction after restart');
+
+$psql_rc = $cur_master->psql('postgres', "ROLLBACK PREPARED 'xact_009_17'");
+is($psql_rc, '0', 'Rollback prepared transaction after restart');
 
 ###############################################################################
 # Verify expected data appears on both servers.

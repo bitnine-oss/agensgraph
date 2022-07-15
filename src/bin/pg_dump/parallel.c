@@ -4,7 +4,7 @@
  *
  *	Parallel support for pg_dump and pg_restore
  *
- * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -197,8 +197,6 @@ bool		parallel_init_done = false;
 DWORD		mainThreadId;
 #endif							/* WIN32 */
 
-static const char *modulename = gettext_noop("parallel archiver");
-
 /* Local function prototypes */
 static ParallelSlot *GetMyPSlot(ParallelState *pstate);
 static void archive_close_connection(int code, void *arg);
@@ -213,20 +211,18 @@ static bool HasEveryWorkerTerminated(ParallelState *pstate);
 static void lockTableForWorker(ArchiveHandle *AH, TocEntry *te);
 static void WaitForCommands(ArchiveHandle *AH, int pipefd[2]);
 static bool ListenToWorkers(ArchiveHandle *AH, ParallelState *pstate,
-				bool do_wait);
+							bool do_wait);
 static char *getMessageFromMaster(int pipefd[2]);
 static void sendMessageToMaster(int pipefd[2], const char *str);
 static int	select_loop(int maxFd, fd_set *workerset);
 static char *getMessageFromWorker(ParallelState *pstate,
-					 bool do_wait, int *worker);
+								  bool do_wait, int *worker);
 static void sendMessageToWorker(ParallelState *pstate,
-					int worker, const char *str);
+								int worker, const char *str);
 static char *readMessageFromPipe(int fd);
 
 #define messageStartsWith(msg, prefix) \
 	(strncmp(msg, prefix, strlen(prefix)) == 0)
-#define messageEquals(msg, pattern) \
-	(strcmp(msg, pattern) == 0)
 
 
 /*
@@ -264,7 +260,7 @@ init_parallel_dump_utils(void)
 		err = WSAStartup(MAKEWORD(2, 2), &wsaData);
 		if (err != 0)
 		{
-			fprintf(stderr, _("%s: WSAStartup failed: %d\n"), progname, err);
+			pg_log_error("WSAStartup failed: %d", err);
 			exit_nicely(1);
 		}
 		/* ... and arrange to shut it down at exit */
@@ -406,8 +402,8 @@ archive_close_connection(int code, void *arg)
  * Forcibly shut down any remaining workers, waiting for them to finish.
  *
  * Note that we don't expect to come here during normal exit (the workers
- * should be long gone, and the ParallelState too).  We're only here in an
- * exit_horribly() situation, so intervening to cancel active commands is
+ * should be long gone, and the ParallelState too).  We're only here in a
+ * fatal() situation, so intervening to cancel active commands is
  * appropriate.
  */
 static void
@@ -699,7 +695,7 @@ consoleHandler(DWORD dwCtrlType)
 
 		/*
 		 * Report we're quitting, using nothing more complicated than
-		 * write(2).  (We might be able to get away with using write_msg()
+		 * write(2).  (We might be able to get away with using pg_log_*()
 		 * here, but since we terminated other threads uncleanly above, it
 		 * seems better to assume as little as possible.)
 		 */
@@ -969,9 +965,7 @@ ParallelBackupStart(ArchiveHandle *AH)
 
 		/* Create communication pipes for this worker */
 		if (pgpipe(pipeMW) < 0 || pgpipe(pipeWM) < 0)
-			exit_horribly(modulename,
-						  "could not create communication channels: %s\n",
-						  strerror(errno));
+			fatal("could not create communication channels: %m");
 
 		pstate->te[i] = NULL;	/* just for safety */
 
@@ -1034,9 +1028,7 @@ ParallelBackupStart(ArchiveHandle *AH)
 		else if (pid < 0)
 		{
 			/* fork failed */
-			exit_horribly(modulename,
-						  "could not create worker process: %s\n",
-						  strerror(errno));
+			fatal("could not create worker process: %m");
 		}
 
 		/* In Master after successful fork */
@@ -1165,9 +1157,8 @@ parseWorkerCommand(ArchiveHandle *AH, TocEntry **te, T_Action *act,
 		Assert(*te != NULL);
 	}
 	else
-		exit_horribly(modulename,
-					  "unrecognized command received from master: \"%s\"\n",
-					  msg);
+		fatal("unrecognized command received from master: \"%s\"",
+			  msg);
 }
 
 /*
@@ -1209,9 +1200,8 @@ parseWorkerResponse(ArchiveHandle *AH, TocEntry *te,
 		AH->public.n_errors += n_errors;
 	}
 	else
-		exit_horribly(modulename,
-					  "invalid message received from worker: \"%s\"\n",
-					  msg);
+		fatal("invalid message received from worker: \"%s\"",
+			  msg);
 
 	return status;
 }
@@ -1342,11 +1332,10 @@ lockTableForWorker(ArchiveHandle *AH, TocEntry *te)
 	res = PQexec(AH->connection, query->data);
 
 	if (!res || PQresultStatus(res) != PGRES_COMMAND_OK)
-		exit_horribly(modulename,
-					  "could not obtain lock on relation \"%s\"\n"
-					  "This usually means that someone requested an ACCESS EXCLUSIVE lock "
-					  "on the table after the pg_dump parent process had gotten the "
-					  "initial ACCESS SHARE lock on the table.\n", qualId);
+		fatal("could not obtain lock on relation \"%s\"\n"
+			  "This usually means that someone requested an ACCESS EXCLUSIVE lock "
+			  "on the table after the pg_dump parent process had gotten the "
+			  "initial ACCESS SHARE lock on the table.", qualId);
 
 	PQclear(res);
 	destroyPQExpBuffer(query);
@@ -1432,7 +1421,7 @@ ListenToWorkers(ArchiveHandle *AH, ParallelState *pstate, bool do_wait)
 	{
 		/* If do_wait is true, we must have detected EOF on some socket */
 		if (do_wait)
-			exit_horribly(modulename, "a worker process died unexpectedly\n");
+			fatal("a worker process died unexpectedly");
 		return false;
 	}
 
@@ -1449,9 +1438,8 @@ ListenToWorkers(ArchiveHandle *AH, ParallelState *pstate, bool do_wait)
 		pstate->te[worker] = NULL;
 	}
 	else
-		exit_horribly(modulename,
-					  "invalid message received from worker: \"%s\"\n",
-					  msg);
+		fatal("invalid message received from worker: \"%s\"",
+			  msg);
 
 	/* Free the string returned from getMessageFromWorker */
 	free(msg);
@@ -1555,9 +1543,7 @@ sendMessageToMaster(int pipefd[2], const char *str)
 	int			len = strlen(str) + 1;
 
 	if (pipewrite(pipefd[PIPE_WRITE], str, len) != len)
-		exit_horribly(modulename,
-					  "could not write to the communication channel: %s\n",
-					  strerror(errno));
+		fatal("could not write to the communication channel: %m");
 }
 
 /*
@@ -1634,7 +1620,7 @@ getMessageFromWorker(ParallelState *pstate, bool do_wait, int *worker)
 	}
 
 	if (i < 0)
-		exit_horribly(modulename, "select() failed: %s\n", strerror(errno));
+		fatal("select() failed: %m");
 
 	for (i = 0; i < pstate->numWorkers; i++)
 	{
@@ -1673,9 +1659,7 @@ sendMessageToWorker(ParallelState *pstate, int worker, const char *str)
 
 	if (pipewrite(pstate->parallelSlot[worker].pipeWrite, str, len) != len)
 	{
-		exit_horribly(modulename,
-					  "could not write to the communication channel: %s\n",
-					  strerror(errno));
+		fatal("could not write to the communication channel: %m");
 	}
 }
 
@@ -1759,8 +1743,8 @@ pgpipe(int handles[2])
 	 */
 	if ((s = socket(AF_INET, SOCK_STREAM, 0)) == PGINVALID_SOCKET)
 	{
-		write_msg(modulename, "pgpipe: could not create socket: error code %d\n",
-				  WSAGetLastError());
+		pg_log_error("pgpipe: could not create socket: error code %d",
+					 WSAGetLastError());
 		return -1;
 	}
 
@@ -1770,22 +1754,22 @@ pgpipe(int handles[2])
 	serv_addr.sin_addr.s_addr = pg_hton32(INADDR_LOOPBACK);
 	if (bind(s, (SOCKADDR *) &serv_addr, len) == SOCKET_ERROR)
 	{
-		write_msg(modulename, "pgpipe: could not bind: error code %d\n",
-				  WSAGetLastError());
+		pg_log_error("pgpipe: could not bind: error code %d",
+					 WSAGetLastError());
 		closesocket(s);
 		return -1;
 	}
 	if (listen(s, 1) == SOCKET_ERROR)
 	{
-		write_msg(modulename, "pgpipe: could not listen: error code %d\n",
-				  WSAGetLastError());
+		pg_log_error("pgpipe: could not listen: error code %d",
+					 WSAGetLastError());
 		closesocket(s);
 		return -1;
 	}
 	if (getsockname(s, (SOCKADDR *) &serv_addr, &len) == SOCKET_ERROR)
 	{
-		write_msg(modulename, "pgpipe: getsockname() failed: error code %d\n",
-				  WSAGetLastError());
+		pg_log_error("pgpipe: getsockname() failed: error code %d",
+					 WSAGetLastError());
 		closesocket(s);
 		return -1;
 	}
@@ -1795,8 +1779,8 @@ pgpipe(int handles[2])
 	 */
 	if ((tmp_sock = socket(AF_INET, SOCK_STREAM, 0)) == PGINVALID_SOCKET)
 	{
-		write_msg(modulename, "pgpipe: could not create second socket: error code %d\n",
-				  WSAGetLastError());
+		pg_log_error("pgpipe: could not create second socket: error code %d",
+					 WSAGetLastError());
 		closesocket(s);
 		return -1;
 	}
@@ -1804,8 +1788,8 @@ pgpipe(int handles[2])
 
 	if (connect(handles[1], (SOCKADDR *) &serv_addr, len) == SOCKET_ERROR)
 	{
-		write_msg(modulename, "pgpipe: could not connect socket: error code %d\n",
-				  WSAGetLastError());
+		pg_log_error("pgpipe: could not connect socket: error code %d",
+					 WSAGetLastError());
 		closesocket(handles[1]);
 		handles[1] = -1;
 		closesocket(s);
@@ -1813,8 +1797,8 @@ pgpipe(int handles[2])
 	}
 	if ((tmp_sock = accept(s, (SOCKADDR *) &serv_addr, &len)) == PGINVALID_SOCKET)
 	{
-		write_msg(modulename, "pgpipe: could not accept connection: error code %d\n",
-				  WSAGetLastError());
+		pg_log_error("pgpipe: could not accept connection: error code %d",
+					 WSAGetLastError());
 		closesocket(handles[1]);
 		handles[1] = -1;
 		closesocket(s);

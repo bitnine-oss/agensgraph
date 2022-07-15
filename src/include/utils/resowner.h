@@ -9,7 +9,7 @@
  * See utils/resowner/README for more info.
  *
  *
- * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/utils/resowner.h
@@ -66,19 +66,19 @@ typedef void (*ResourceReleaseCallback) (ResourceReleasePhase phase,
 
 /* generic routines */
 extern ResourceOwner ResourceOwnerCreate(ResourceOwner parent,
-					const char *name);
+										 const char *name);
 extern void ResourceOwnerRelease(ResourceOwner owner,
-					 ResourceReleasePhase phase,
-					 bool isCommit,
-					 bool isTopLevel);
+								 ResourceReleasePhase phase,
+								 bool isCommit,
+								 bool isTopLevel);
 extern void ResourceOwnerDelete(ResourceOwner owner);
 extern ResourceOwner ResourceOwnerGetParent(ResourceOwner owner);
 extern void ResourceOwnerNewParent(ResourceOwner owner,
-					   ResourceOwner newparent);
+								   ResourceOwner newparent);
 extern void RegisterResourceReleaseCallback(ResourceReleaseCallback callback,
-								void *arg);
+											void *arg);
 extern void UnregisterResourceReleaseCallback(ResourceReleaseCallback callback,
-								  void *arg);
+											  void *arg);
 extern void CreateAuxProcessResourceOwner(void);
 extern void ReleaseAuxProcessResources(bool isCommit);
 

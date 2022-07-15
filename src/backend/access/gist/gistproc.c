@@ -7,7 +7,7 @@
  * This gives R-tree behavior, with Guttman's poly-time split algorithm.
  *
  *
- * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -27,9 +27,9 @@
 
 
 static bool gist_box_leaf_consistent(BOX *key, BOX *query,
-						 StrategyNumber strategy);
+									 StrategyNumber strategy);
 static bool rtree_internal_consistent(BOX *key, BOX *query,
-						  StrategyNumber strategy);
+									  StrategyNumber strategy);
 
 /* Minimum accepted ratio of split */
 #define LIMIT_RATIO 0.3

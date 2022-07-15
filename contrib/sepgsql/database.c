@@ -4,16 +4,16 @@
  *
  * Routines corresponding to database objects
  *
- * Copyright (c) 2010-2018, PostgreSQL Global Development Group
+ * Copyright (c) 2010-2019, PostgreSQL Global Development Group
  *
  * -------------------------------------------------------------------------
  */
 #include "postgres.h"
 
 #include "access/genam.h"
-#include "access/heapam.h"
 #include "access/htup_details.h"
 #include "access/sysattr.h"
+#include "access/table.h"
 #include "catalog/dependency.h"
 #include "catalog/pg_database.h"
 #include "catalog/indexing.h"
@@ -21,7 +21,7 @@
 #include "commands/seclabel.h"
 #include "utils/builtins.h"
 #include "utils/fmgroids.h"
-#include "utils/tqual.h"
+#include "utils/snapmgr.h"
 #include "sepgsql.h"
 
 /*
@@ -77,10 +77,10 @@ sepgsql_database_post_create(Oid databaseId, const char *dtemplate)
 	 * XXX - uncoming version of libselinux supports to take object name to
 	 * handle special treatment on default security label.
 	 */
-	rel = heap_open(DatabaseRelationId, AccessShareLock);
+	rel = table_open(DatabaseRelationId, AccessShareLock);
 
 	ScanKeyInit(&skey,
-				ObjectIdAttributeNumber,
+				Anum_pg_database_oid,
 				BTEqualStrategyNumber, F_OIDEQ,
 				ObjectIdGetDatum(databaseId));
 
@@ -110,7 +110,7 @@ sepgsql_database_post_create(Oid databaseId, const char *dtemplate)
 								  true);
 
 	systable_endscan(sscan);
-	heap_close(rel, AccessShareLock);
+	table_close(rel, AccessShareLock);
 
 	/*
 	 * Assign the default security label on the new database

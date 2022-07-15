@@ -5,7 +5,7 @@
  *	  (pg_ts_config_map)
  *
  *
- * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/catalog/pg_ts_config_map.h
@@ -29,10 +29,17 @@
  */
 CATALOG(pg_ts_config_map,3603,TSConfigMapRelationId)
 {
-	Oid			mapcfg;			/* OID of configuration owning this entry */
-	int32		maptokentype;	/* token type from parser */
-	int32		mapseqno;		/* order in which to consult dictionaries */
-	Oid			mapdict;		/* dictionary to consult */
+	/* OID of configuration owning this entry */
+	Oid			mapcfg BKI_LOOKUP(pg_ts_config);
+
+	/* token type from parser */
+	int32		maptokentype;
+
+	/* order in which to consult dictionaries */
+	int32		mapseqno;
+
+	/* dictionary to consult */
+	Oid			mapdict BKI_LOOKUP(pg_ts_dict);
 } FormData_pg_ts_config_map;
 
 typedef FormData_pg_ts_config_map *Form_pg_ts_config_map;

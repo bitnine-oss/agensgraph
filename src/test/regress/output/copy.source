@@ -117,7 +117,7 @@ copy parted_copytest from '@abs_builddir@/results/parted_copytest.csv';
 begin;
 truncate parted_copytest;
 copy parted_copytest from '@abs_builddir@/results/parted_copytest.csv' (freeze);
-ERROR:  cannot perform FREEZE on a partitioned table
+ERROR:  cannot perform COPY FREEZE on a partitioned table
 rollback;
 select tableoid::regclass,count(*),sum(a) from parted_copytest
 group by tableoid order by tableoid::regclass::name;
@@ -146,5 +146,22 @@ group by tableoid order by tableoid::regclass::name;
  parted_copytest_a1 |  1010 | 510655
  parted_copytest_a2 |    10 |  10055
 (2 rows)
+
+truncate table parted_copytest;
+create index on parted_copytest (b);
+drop trigger part_ins_trig on parted_copytest_a2;
+copy parted_copytest from stdin;
+-- Ensure index entries were properly added during the copy.
+select * from parted_copytest where b = 1;
+ a | b |  c   
+---+---+------
+ 1 | 1 | str1
+(1 row)
+
+select * from parted_copytest where b = 2;
+ a | b |  c   
+---+---+------
+ 2 | 2 | str2
+(1 row)
 
 drop table parted_copytest;

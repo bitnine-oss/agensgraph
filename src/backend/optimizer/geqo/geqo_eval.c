@@ -3,7 +3,7 @@
  * geqo_eval.c
  *	  Routines to evaluate query trees
  *
- * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/backend/optimizer/geqo/geqo_eval.c
@@ -40,9 +40,9 @@ typedef struct
 } Clump;
 
 static List *merge_clump(PlannerInfo *root, List *clumps, Clump *new_clump,
-			int num_gene, bool force);
+						 int num_gene, bool force);
 static bool desirable_join(PlannerInfo *root,
-			   RelOptInfo *outer_rel, RelOptInfo *inner_rel);
+						   RelOptInfo *outer_rel, RelOptInfo *inner_rel);
 
 
 /*

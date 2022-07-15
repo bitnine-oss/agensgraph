@@ -4,7 +4,7 @@
  *	  routines to support running postgres in 'bootstrap' mode
  *	bootstrap mode is used to create the initial template database
  *
- * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -17,7 +17,10 @@
 #include <unistd.h>
 #include <signal.h>
 
+#include "access/genam.h"
+#include "access/heapam.h"
 #include "access/htup_details.h"
+#include "access/tableam.h"
 #include "access/xact.h"
 #include "access/xlog_internal.h"
 #include "bootstrap/bootstrap.h"
@@ -46,7 +49,6 @@
 #include "utils/ps_status.h"
 #include "utils/rel.h"
 #include "utils/relmapper.h"
-#include "utils/tqual.h"
 
 uint32		bootstrap_data_checksum_version = 0;	/* No checksum */
 
@@ -111,7 +113,7 @@ static const struct typinfo TypInfo[] = {
 	F_INT4IN, F_INT4OUT},
 	{"float4", FLOAT4OID, 0, 4, FLOAT4PASSBYVAL, 'i', 'p', InvalidOid,
 	F_FLOAT4IN, F_FLOAT4OUT},
-	{"name", NAMEOID, CHAROID, NAMEDATALEN, false, 'c', 'p', InvalidOid,
+	{"name", NAMEOID, CHAROID, NAMEDATALEN, false, 'c', 'p', C_COLLATION_OID,
 	F_NAMEIN, F_NAMEOUT},
 	{"regclass", REGCLASSOID, 0, 4, true, 'i', 'p', InvalidOid,
 	F_REGCLASSIN, F_REGCLASSOUT},
@@ -556,11 +558,15 @@ bootstrap_signals(void)
 {
 	Assert(!IsUnderPostmaster);
 
-	/* Set up appropriately for interactive use */
-	pqsignal(SIGHUP, die);
-	pqsignal(SIGINT, die);
-	pqsignal(SIGTERM, die);
-	pqsignal(SIGQUIT, die);
+	/*
+	 * We don't actually need any non-default signal handling in bootstrap
+	 * mode; "curl up and die" is a sufficient response for all these cases.
+	 * Let's set that handling explicitly, as documentation if nothing else.
+	 */
+	pqsignal(SIGHUP, SIG_DFL);
+	pqsignal(SIGINT, SIG_DFL);
+	pqsignal(SIGTERM, SIG_DFL);
+	pqsignal(SIGQUIT, SIG_DFL);
 }
 
 /*
@@ -593,7 +599,7 @@ boot_openrel(char *relname)
 	int			i;
 	struct typmap **app;
 	Relation	rel;
-	HeapScanDesc scan;
+	TableScanDesc scan;
 	HeapTuple	tup;
 
 	if (strlen(relname) >= NAMEDATALEN)
@@ -602,17 +608,17 @@ boot_openrel(char *relname)
 	if (Typ == NULL)
 	{
 		/* We can now load the pg_type data */
-		rel = heap_open(TypeRelationId, NoLock);
-		scan = heap_beginscan_catalog(rel, 0, NULL);
+		rel = table_open(TypeRelationId, NoLock);
+		scan = table_beginscan_catalog(rel, 0, NULL);
 		i = 0;
 		while ((tup = heap_getnext(scan, ForwardScanDirection)) != NULL)
 			++i;
-		heap_endscan(scan);
+		table_endscan(scan);
 		app = Typ = ALLOC(struct typmap *, i + 1);
 		while (i-- > 0)
 			*app++ = ALLOC(struct typmap, 1);
 		*app = NULL;
-		scan = heap_beginscan_catalog(rel, 0, NULL);
+		scan = table_beginscan_catalog(rel, 0, NULL);
 		app = Typ;
 		while ((tup = heap_getnext(scan, ForwardScanDirection)) != NULL)
 		{
@@ -622,8 +628,8 @@ boot_openrel(char *relname)
 				   sizeof((*app)->am_typ));
 			app++;
 		}
-		heap_endscan(scan);
-		heap_close(rel, NoLock);
+		table_endscan(scan);
+		table_close(rel, NoLock);
 	}
 
 	if (boot_reldesc != NULL)
@@ -632,7 +638,7 @@ boot_openrel(char *relname)
 	elog(DEBUG4, "open relation %s, attrsize %d",
 		 relname, (int) ATTRIBUTE_FIXED_PART_SIZE);
 
-	boot_reldesc = heap_openrv(makeRangeVar(NULL, relname, -1), NoLock);
+	boot_reldesc = table_openrv(makeRangeVar(NULL, relname, -1), NoLock);
 	numattr = RelationGetNumberOfAttributes(boot_reldesc);
 	for (i = 0; i < numattr; i++)
 	{
@@ -678,7 +684,7 @@ closerel(char *name)
 	{
 		elog(DEBUG4, "close relation %s",
 			 RelationGetRelationName(boot_reldesc));
-		heap_close(boot_reldesc, NoLock);
+		table_close(boot_reldesc, NoLock);
 		boot_reldesc = NULL;
 	}
 }
@@ -743,6 +749,15 @@ DefineAttr(char *name, char *type, int attnum, int nullness)
 		else
 			attrtypes[attnum]->attndims = 0;
 	}
+
+	/*
+	 * If a system catalog column is collation-aware, force it to use C
+	 * collation, so that its behavior is independent of the database's
+	 * collation.  This is essential to allow template0 to be cloned with a
+	 * different database collation.
+	 */
+	if (OidIsValid(attrtypes[attnum]->attcollation))
+		attrtypes[attnum]->attcollation = C_COLLATION_OID;
 
 	attrtypes[attnum]->attstattarget = -1;
 	attrtypes[attnum]->attcacheoff = -1;
@@ -905,7 +920,7 @@ gettype(char *type)
 {
 	int			i;
 	Relation	rel;
-	HeapScanDesc scan;
+	TableScanDesc scan;
 	HeapTuple	tup;
 	struct typmap **app;
 
@@ -928,17 +943,17 @@ gettype(char *type)
 				return i;
 		}
 		elog(DEBUG4, "external type: %s", type);
-		rel = heap_open(TypeRelationId, NoLock);
-		scan = heap_beginscan_catalog(rel, 0, NULL);
+		rel = table_open(TypeRelationId, NoLock);
+		scan = table_beginscan_catalog(rel, 0, NULL);
 		i = 0;
 		while ((tup = heap_getnext(scan, ForwardScanDirection)) != NULL)
 			++i;
-		heap_endscan(scan);
+		table_endscan(scan);
 		app = Typ = ALLOC(struct typmap *, i + 1);
 		while (i-- > 0)
 			*app++ = ALLOC(struct typmap, 1);
 		*app = NULL;
-		scan = heap_beginscan_catalog(rel, 0, NULL);
+		scan = table_beginscan_catalog(rel, 0, NULL);
 		app = Typ;
 		while ((tup = heap_getnext(scan, ForwardScanDirection)) != NULL)
 		{
@@ -947,8 +962,8 @@ gettype(char *type)
 					(char *) GETSTRUCT(tup),
 					sizeof((*app)->am_typ));
 		}
-		heap_endscan(scan);
-		heap_close(rel, NoLock);
+		table_endscan(scan);
+		table_close(rel, NoLock);
 		return gettype(type);
 	}
 	elog(ERROR, "unrecognized type \"%s\"", type);
@@ -1117,12 +1132,12 @@ build_indices(void)
 		Relation	ind;
 
 		/* need not bother with locks during bootstrap */
-		heap = heap_open(ILHead->il_heap, NoLock);
+		heap = table_open(ILHead->il_heap, NoLock);
 		ind = index_open(ILHead->il_ind, NoLock);
 
-		index_build(heap, ind, ILHead->il_info, false, false, false);
+		index_build(heap, ind, ILHead->il_info, false, false);
 
 		index_close(ind, NoLock);
-		heap_close(heap, NoLock);
+		table_close(heap, NoLock);
 	}
 }

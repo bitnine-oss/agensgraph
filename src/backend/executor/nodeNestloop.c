@@ -3,7 +3,7 @@
  * nodeNestloop.c
  *	  routines to support nest-loop joins
  *
- * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -28,7 +28,6 @@
 #include "miscadmin.h"
 #include "utils/memutils.h"
 #include "utils/snapmgr.h"
-#include "utils/tqual.h"
 
 
 typedef struct NestLoopContext
@@ -605,7 +604,7 @@ ExecPrevNestLoopContext(NestLoopState *node)
 	 * Pass true to shouldFree here because the tuple must be freed when
 	 * ExecStoreTuple(), ExecClearTuple(), or ExecResetTupleTable() is called.
 	 */
-	ExecForceStoreHeapTuple(ctx->outer_tuple, slot);
+	ExecForceStoreHeapTuple(ctx->outer_tuple, slot, true);
 	/* restore outer variables */
 	foreach(lc, nl->nestParams)
 	{

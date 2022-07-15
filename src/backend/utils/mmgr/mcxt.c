@@ -9,7 +9,7 @@
  * context's MemoryContextMethods struct.
  *
  *
- * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -54,10 +54,10 @@ MemoryContext PortalContext = NULL;
 
 static void MemoryContextCallResetCallbacks(MemoryContext context);
 static void MemoryContextStatsInternal(MemoryContext context, int level,
-						   bool print, int max_children,
-						   MemoryContextCounters *totals);
+									   bool print, int max_children,
+									   MemoryContextCounters *totals);
 static void MemoryContextStatsPrint(MemoryContext context, void *passthru,
-						const char *stats_string);
+									const char *stats_string);
 
 /*
  * You should not do memory allocations within a critical section, because

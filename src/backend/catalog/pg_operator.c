@@ -3,7 +3,7 @@
  * pg_operator.c
  *	  routines to support manipulation of the pg_operator relation
  *
- * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -17,8 +17,8 @@
  */
 #include "postgres.h"
 
-#include "access/heapam.h"
 #include "access/htup_details.h"
+#include "access/table.h"
 #include "access/xact.h"
 #include "catalog/catalog.h"
 #include "catalog/dependency.h"
@@ -38,27 +38,27 @@
 #include "utils/syscache.h"
 
 
-static Oid OperatorGet(const char *operatorName,
-			Oid operatorNamespace,
-			Oid leftObjectId,
-			Oid rightObjectId,
-			bool *defined);
+static Oid	OperatorGet(const char *operatorName,
+						Oid operatorNamespace,
+						Oid leftObjectId,
+						Oid rightObjectId,
+						bool *defined);
 
-static Oid OperatorLookup(List *operatorName,
-			   Oid leftObjectId,
-			   Oid rightObjectId,
-			   bool *defined);
+static Oid	OperatorLookup(List *operatorName,
+						   Oid leftObjectId,
+						   Oid rightObjectId,
+						   bool *defined);
 
-static Oid OperatorShellMake(const char *operatorName,
-				  Oid operatorNamespace,
-				  Oid leftTypeId,
-				  Oid rightTypeId);
+static Oid	OperatorShellMake(const char *operatorName,
+							  Oid operatorNamespace,
+							  Oid leftTypeId,
+							  Oid rightTypeId);
 
-static Oid get_other_operator(List *otherOp,
-				   Oid otherLeftTypeId, Oid otherRightTypeId,
-				   const char *operatorName, Oid operatorNamespace,
-				   Oid leftTypeId, Oid rightTypeId,
-				   bool isCommutator);
+static Oid	get_other_operator(List *otherOp,
+							   Oid otherLeftTypeId, Oid otherRightTypeId,
+							   const char *operatorName, Oid operatorNamespace,
+							   Oid leftTypeId, Oid rightTypeId,
+							   bool isCommutator);
 
 
 /*
@@ -222,7 +222,7 @@ OperatorShellMake(const char *operatorName,
 	/*
 	 * open pg_operator
 	 */
-	pg_operator_desc = heap_open(OperatorRelationId, RowExclusiveLock);
+	pg_operator_desc = table_open(OperatorRelationId, RowExclusiveLock);
 	tupDesc = pg_operator_desc->rd_att;
 
 	/*
@@ -283,7 +283,7 @@ OperatorShellMake(const char *operatorName,
 	/*
 	 * close the operator relation and return the oid.
 	 */
-	heap_close(pg_operator_desc, RowExclusiveLock);
+	table_close(pg_operator_desc, RowExclusiveLock);
 
 	return operatorObjectId;
 }
@@ -506,7 +506,7 @@ OperatorCreate(const char *operatorName,
 	values[Anum_pg_operator_oprrest - 1] = ObjectIdGetDatum(restrictionId);
 	values[Anum_pg_operator_oprjoin - 1] = ObjectIdGetDatum(joinId);
 
-	pg_operator_desc = heap_open(OperatorRelationId, RowExclusiveLock);
+	pg_operator_desc = table_open(OperatorRelationId, RowExclusiveLock);
 
 	/*
 	 * If we are replacing an operator shell, update; else insert
@@ -551,7 +551,7 @@ OperatorCreate(const char *operatorName,
 	/* Post creation hook for new operator */
 	InvokeObjectPostCreateHook(OperatorRelationId, operatorObjectId, 0);
 
-	heap_close(pg_operator_desc, RowExclusiveLock);
+	table_close(pg_operator_desc, RowExclusiveLock);
 
 	/*
 	 * If a commutator and/or negator link is provided, update the other
@@ -666,7 +666,7 @@ OperatorUpd(Oid baseId, Oid commId, Oid negId, bool isDelete)
 		CommandCounterIncrement();
 
 	/* Open the relation. */
-	pg_operator_desc = heap_open(OperatorRelationId, RowExclusiveLock);
+	pg_operator_desc = table_open(OperatorRelationId, RowExclusiveLock);
 
 	/* Get a writable copy of the commutator's tuple. */
 	if (OidIsValid(commId))
@@ -758,7 +758,7 @@ OperatorUpd(Oid baseId, Oid commId, Oid negId, bool isDelete)
 	}
 
 	/* Close relation and release catalog lock. */
-	heap_close(pg_operator_desc, RowExclusiveLock);
+	table_close(pg_operator_desc, RowExclusiveLock);
 }
 
 /*

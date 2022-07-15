@@ -49,6 +49,8 @@ static void GetSuperOids(List *supers, char labkind, List **supOids);
 static void AgInheritanceDependancy(Oid laboid, List *supers);
 static void SetMaxStatisticsTarget(Oid laboid);
 
+static bool IsLabel(const char *label_name, Oid namespaceId);
+
 /* See ProcessUtilitySlow() case T_CreateSchemaStmt */
 void
 CreateGraphCommand(CreateGraphStmt *stmt, const char *queryString,
@@ -250,7 +252,7 @@ DefineLabel(CreateStmt *stmt, char labkind, const char *queryString)
 	 */
 
 	/* current implementation does not get tablespace name; so */
-	tablespaceId = GetDefaultTablespace(stmt->relation->relpersistence);
+	tablespaceId = GetDefaultTablespace(stmt->relation->relpersistence, false);
 
 	laboid = label_create_with_catalog(stmt->relation, reladdr.objectId,
 									   labkind, tablespaceId);
@@ -482,24 +484,34 @@ CheckInheritLabel(CreateStmt *stmt)
 	}
 }
 
-bool
-RangeVarIsLabel(RangeVar *rel)
+static bool
+IsLabel(const char *label_name, Oid namespaceId)
 {
-	Oid			nspid;
 	Oid			graphid;
 	HeapTuple	nsptuple;
 	Form_pg_namespace nspdata;
 
-	nspid = RangeVarGetCreationNamespace(rel);
-	nsptuple = SearchSysCache1(NAMESPACEOID, ObjectIdGetDatum(nspid));
+	nsptuple = SearchSysCache1(NAMESPACEOID, ObjectIdGetDatum(namespaceId));
 	if (!HeapTupleIsValid(nsptuple))
-		elog(ERROR, "cache lookup failed for label (OID=%u)", nspid);
+		elog(ERROR, "cache lookup failed for label (OID=%u)", namespaceId);
 
 	nspdata = (Form_pg_namespace) GETSTRUCT(nsptuple);
 	graphid = get_graphname_oid(NameStr(nspdata->nspname));
 	ReleaseSysCache(nsptuple);
 
-	return OidIsValid(get_labname_laboid(rel->relname, graphid));
+	return OidIsValid(get_labname_laboid(label_name, graphid));
+}
+
+bool
+RelationIsLabel(Relation rel)
+{
+	return IsLabel(RelationGetRelationName(rel), RelationGetNamespace(rel));
+}
+
+bool
+RangeVarIsLabel(RangeVar *rel)
+{
+	return IsLabel(rel->relname, RangeVarGetCreationNamespace(rel));
 }
 
 void

@@ -41,7 +41,7 @@
  * function must be supplied; comparison defaults to memcmp() and key copying
  * to memcpy() when a user-defined hashing function is selected.
  *
- * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -817,7 +817,7 @@ hash_destroy(HTAB *hashp)
 	{
 		/* allocation method must be one we know how to free, too */
 		Assert(hashp->alloc == DynaHashAlloc);
-		/* so this hashtable must have it's own context */
+		/* so this hashtable must have its own context */
 		Assert(hashp->hcxt != NULL);
 
 		hash_stats("destroy", hashp);

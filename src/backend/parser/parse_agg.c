@@ -3,7 +3,7 @@
  * parse_agg.c
  *	  handle aggregates and window functions in parser
  *
- * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -19,8 +19,7 @@
 #include "catalog/pg_type.h"
 #include "nodes/makefuncs.h"
 #include "nodes/nodeFuncs.h"
-#include "optimizer/tlist.h"
-#include "optimizer/var.h"
+#include "optimizer/optimizer.h"
 #include "parser/parse_agg.h"
 #include "parser/parse_clause.h"
 #include "parser/parse_coerce.h"
@@ -43,7 +42,7 @@ typedef struct
 {
 	ParseState *pstate;
 	Query	   *qry;
-	PlannerInfo *root;
+	bool		hasJoinRTEs;
 	List	   *groupClauses;
 	List	   *groupClauseCommonVars;
 	bool		have_non_var_grouping;
@@ -52,23 +51,23 @@ typedef struct
 	bool		in_agg_direct_args;
 } check_ungrouped_columns_context;
 
-static int check_agg_arguments(ParseState *pstate,
-					List *directargs,
-					List *args,
-					Expr *filter);
+static int	check_agg_arguments(ParseState *pstate,
+								List *directargs,
+								List *args,
+								Expr *filter);
 static bool check_agg_arguments_walker(Node *node,
-						   check_agg_arguments_context *context);
+									   check_agg_arguments_context *context);
 static void check_ungrouped_columns(Node *node, ParseState *pstate, Query *qry,
-						List *groupClauses, List *groupClauseVars,
-						bool have_non_var_grouping,
-						List **func_grouped_rels);
+									List *groupClauses, List *groupClauseVars,
+									bool have_non_var_grouping,
+									List **func_grouped_rels);
 static bool check_ungrouped_columns_walker(Node *node,
-							   check_ungrouped_columns_context *context);
+										   check_ungrouped_columns_context *context);
 static void finalize_grouping_exprs(Node *node, ParseState *pstate, Query *qry,
-						List *groupClauses, PlannerInfo *root,
-						bool have_non_var_grouping);
+									List *groupClauses, bool hasJoinRTEs,
+									bool have_non_var_grouping);
 static bool finalize_grouping_exprs_walker(Node *node,
-							   check_ungrouped_columns_context *context);
+										   check_ungrouped_columns_context *context);
 static void check_agglevels_and_constraints(ParseState *pstate, Node *expr);
 static List *expand_groupingset_node(GroupingSet *gs);
 static Node *make_agg_arg(Oid argtype, Oid argcollation);
@@ -507,11 +506,26 @@ check_agglevels_and_constraints(ParseState *pstate, Node *expr)
 				err = _("grouping operations are not allowed in trigger WHEN conditions");
 
 			break;
+		case EXPR_KIND_PARTITION_BOUND:
+			if (isAgg)
+				err = _("aggregate functions are not allowed in partition bound");
+			else
+				err = _("grouping operations are not allowed in partition bound");
+
+			break;
 		case EXPR_KIND_PARTITION_EXPRESSION:
 			if (isAgg)
 				err = _("aggregate functions are not allowed in partition key expressions");
 			else
 				err = _("grouping operations are not allowed in partition key expressions");
+
+			break;
+		case EXPR_KIND_GENERATED_COLUMN:
+
+			if (isAgg)
+				err = _("aggregate functions are not allowed in column generation expressions");
+			else
+				err = _("grouping operations are not allowed in column generation expressions");
 
 			break;
 
@@ -520,6 +534,14 @@ check_agglevels_and_constraints(ParseState *pstate, Node *expr)
 				err = _("aggregate functions are not allowed in CALL arguments");
 			else
 				err = _("grouping operations are not allowed in CALL arguments");
+
+			break;
+
+		case EXPR_KIND_COPY_WHERE:
+			if (isAgg)
+				err = _("aggregate functions are not allowed in COPY FROM WHERE conditions");
+			else
+				err = _("grouping operations are not allowed in COPY FROM WHERE conditions");
 
 			break;
 
@@ -896,11 +918,20 @@ transformWindowFuncCall(ParseState *pstate, WindowFunc *wfunc,
 		case EXPR_KIND_TRIGGER_WHEN:
 			err = _("window functions are not allowed in trigger WHEN conditions");
 			break;
+		case EXPR_KIND_PARTITION_BOUND:
+			err = _("window functions are not allowed in partition bound");
+			break;
 		case EXPR_KIND_PARTITION_EXPRESSION:
 			err = _("window functions are not allowed in partition key expressions");
 			break;
 		case EXPR_KIND_CALL_ARGUMENT:
 			err = _("window functions are not allowed in CALL arguments");
+			break;
+		case EXPR_KIND_COPY_WHERE:
+			err = _("window functions are not allowed in COPY FROM WHERE conditions");
+			break;
+		case EXPR_KIND_GENERATED_COLUMN:
+			err = _("window functions are not allowed in column generation expressions");
 			break;
 
 			/*
@@ -1018,7 +1049,6 @@ parseCheckAggregates(ParseState *pstate, Query *qry)
 	ListCell   *l;
 	bool		hasJoinRTEs;
 	bool		hasSelfRefRTEs;
-	PlannerInfo *root = NULL;
 	Node	   *clause;
 
 	/* This should only be called if we found aggregates or grouping */
@@ -1109,20 +1139,11 @@ parseCheckAggregates(ParseState *pstate, Query *qry)
 	 * If there are join alias vars involved, we have to flatten them to the
 	 * underlying vars, so that aliased and unaliased vars will be correctly
 	 * taken as equal.  We can skip the expense of doing this if no rangetable
-	 * entries are RTE_JOIN kind. We use the planner's flatten_join_alias_vars
-	 * routine to do the flattening; it wants a PlannerInfo root node, which
-	 * fortunately can be mostly dummy.
+	 * entries are RTE_JOIN kind.
 	 */
 	if (hasJoinRTEs)
-	{
-		root = makeNode(PlannerInfo);
-		root->parse = qry;
-		root->planner_cxt = CurrentMemoryContext;
-		root->hasJoinRTEs = true;
-
-		groupClauses = (List *) flatten_join_alias_vars(root,
+		groupClauses = (List *) flatten_join_alias_vars(qry,
 														(Node *) groupClauses);
-	}
 
 	/*
 	 * Detect whether any of the grouping expressions aren't simple Vars; if
@@ -1162,10 +1183,10 @@ parseCheckAggregates(ParseState *pstate, Query *qry)
 	 */
 	clause = (Node *) qry->targetList;
 	finalize_grouping_exprs(clause, pstate, qry,
-							groupClauses, root,
+							groupClauses, hasJoinRTEs,
 							have_non_var_grouping);
 	if (hasJoinRTEs)
-		clause = flatten_join_alias_vars(root, clause);
+		clause = flatten_join_alias_vars(qry, clause);
 	check_ungrouped_columns(clause, pstate, qry,
 							groupClauses, groupClauseCommonVars,
 							have_non_var_grouping,
@@ -1173,10 +1194,10 @@ parseCheckAggregates(ParseState *pstate, Query *qry)
 
 	clause = (Node *) qry->havingQual;
 	finalize_grouping_exprs(clause, pstate, qry,
-							groupClauses, root,
+							groupClauses, hasJoinRTEs,
 							have_non_var_grouping);
 	if (hasJoinRTEs)
-		clause = flatten_join_alias_vars(root, clause);
+		clause = flatten_join_alias_vars(qry, clause);
 	check_ungrouped_columns(clause, pstate, qry,
 							groupClauses, groupClauseCommonVars,
 							have_non_var_grouping,
@@ -1224,7 +1245,7 @@ check_ungrouped_columns(Node *node, ParseState *pstate, Query *qry,
 
 	context.pstate = pstate;
 	context.qry = qry;
-	context.root = NULL;
+	context.hasJoinRTEs = false;	/* assume caller flattened join Vars */
 	context.groupClauses = groupClauses;
 	context.groupClauseCommonVars = groupClauseCommonVars;
 	context.have_non_var_grouping = have_non_var_grouping;
@@ -1424,14 +1445,14 @@ check_ungrouped_columns_walker(Node *node,
  */
 static void
 finalize_grouping_exprs(Node *node, ParseState *pstate, Query *qry,
-						List *groupClauses, PlannerInfo *root,
+						List *groupClauses, bool hasJoinRTEs,
 						bool have_non_var_grouping)
 {
 	check_ungrouped_columns_context context;
 
 	context.pstate = pstate;
 	context.qry = qry;
-	context.root = root;
+	context.hasJoinRTEs = hasJoinRTEs;
 	context.groupClauses = groupClauses;
 	context.groupClauseCommonVars = NIL;
 	context.have_non_var_grouping = have_non_var_grouping;
@@ -1504,8 +1525,8 @@ finalize_grouping_exprs_walker(Node *node,
 				Node	   *expr = lfirst(lc);
 				Index		ref = 0;
 
-				if (context->root)
-					expr = flatten_join_alias_vars(context->root, expr);
+				if (context->hasJoinRTEs)
+					expr = flatten_join_alias_vars(context->qry, expr);
 
 				/*
 				 * Each expression must match a grouping entry at the current

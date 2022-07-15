@@ -3,12 +3,17 @@ use warnings;
 use PostgresNode;
 use TestLib;
 use Test::More;
-use ServerSetup;
+
 use File::Copy;
+
+use FindBin;
+use lib $FindBin::RealBin;
+
+use SSLServer;
 
 if ($ENV{with_openssl} eq 'yes')
 {
-	plan tests => 65;
+	plan tests => 75;
 }
 else
 {
@@ -309,6 +314,20 @@ test_connect_fails(
 	qr/SSL error/,
 	"does not connect with client-side CRL");
 
+# pg_stat_ssl
+command_like(
+	[
+		'psql',                                '-X',
+		'-A',                                  '-F',
+		',',                                   '-P',
+		'null=_null_',                         '-d',
+		"$common_connstr sslrootcert=invalid", '-c',
+		"SELECT * FROM pg_stat_ssl WHERE pid = pg_backend_pid()"
+	],
+	qr{^pid,ssl,version,cipher,bits,compression,client_dn,client_serial,issuer_dn\n
+				^\d+,t,TLSv[\d.]+,[\w-]+,\d+,f,_null_,_null_,_null_$}mx,
+	'pg_stat_ssl view without client certificate');
+
 ### Server-side tests.
 ###
 ### Test certificate authorization.
@@ -331,6 +350,25 @@ test_connect_ok(
 	"user=ssltestuser sslcert=ssl/client.crt sslkey=ssl/client_tmp.key",
 	"certificate authorization succeeds with correct client cert");
 
+# pg_stat_ssl
+command_like(
+	[
+		'psql',
+		'-X',
+		'-A',
+		'-F',
+		',',
+		'-P',
+		'null=_null_',
+		'-d',
+		"$common_connstr user=ssltestuser sslcert=ssl/client.crt sslkey=ssl/client_tmp.key",
+		'-c',
+		"SELECT * FROM pg_stat_ssl WHERE pid = pg_backend_pid()"
+	],
+	qr{^pid,ssl,version,cipher,bits,compression,client_dn,client_serial,issuer_dn\n
+				^\d+,t,TLSv[\d.]+,[\w-]+,\d+,f,/CN=ssltestuser,1,\Q/CN=Test CA for PostgreSQL SSL regression test client certs\E$}mx,
+	'pg_stat_ssl with client certificate');
+
 # client key with wrong permissions
 test_connect_fails(
 	$common_connstr,
@@ -352,6 +390,33 @@ test_connect_fails(
 	"user=ssltestuser sslcert=ssl/client-revoked.crt sslkey=ssl/client-revoked_tmp.key",
 	qr/SSL error/,
 	"certificate authorization fails with revoked client cert");
+
+# Check that connecting with auth-option verify-full in pg_hba:
+# works, iff username matches Common Name
+# fails, iff username doesn't match Common Name.
+$common_connstr =
+  "sslrootcert=ssl/root+server_ca.crt sslmode=require dbname=verifydb hostaddr=$SERVERHOSTADDR";
+
+test_connect_ok(
+	$common_connstr,
+	"user=ssltestuser sslcert=ssl/client.crt sslkey=ssl/client_tmp.key",
+	"auth_option clientcert=verify-full succeeds with matching username and Common Name"
+);
+
+test_connect_fails(
+	$common_connstr,
+	"user=anotheruser sslcert=ssl/client.crt sslkey=ssl/client_tmp.key",
+	qr/FATAL/,
+	"auth_option clientcert=verify-full fails with mismatching username and Common Name"
+);
+
+# Check that connecting with auth-optionverify-ca in pg_hba :
+# works, when username doesn't match Common Name
+test_connect_ok(
+	$common_connstr,
+	"user=yetanotheruser sslcert=ssl/client.crt sslkey=ssl/client_tmp.key",
+	"auth_option clientcert=verify-ca succeeds with mismatching username and Common Name"
+);
 
 # intermediate client_ca.crt is provided by client, and isn't in server's ssl_ca_file
 switch_server_cert($node, 'server-cn-only', 'root_ca');

@@ -4,7 +4,7 @@
  *	 functions for instrumentation of plan execution
  *
  *
- * Copyright (c) 2001-2018, PostgreSQL Global Development Group
+ * Copyright (c) 2001-2019, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
  *	  src/backend/executor/instrument.c
@@ -22,7 +22,7 @@ static BufferUsage save_pgBufferUsage;
 
 static void BufferUsageAdd(BufferUsage *dst, const BufferUsage *add);
 static void BufferUsageAccumDiff(BufferUsage *dst,
-					 const BufferUsage *add, const BufferUsage *sub);
+								 const BufferUsage *add, const BufferUsage *sub);
 
 
 /* Allocate new instrumentation structure(s) */
@@ -62,13 +62,9 @@ InstrInit(Instrumentation *instr, int instrument_options)
 void
 InstrStartNode(Instrumentation *instr)
 {
-	if (instr->need_timer)
-	{
-		if (INSTR_TIME_IS_ZERO(instr->starttime))
-			INSTR_TIME_SET_CURRENT(instr->starttime);
-		else
-			elog(ERROR, "InstrStartNode called twice in a row");
-	}
+	if (instr->need_timer &&
+		!INSTR_TIME_SET_CURRENT_LAZY(instr->starttime))
+		elog(ERROR, "InstrStartNode called twice in a row");
 
 	/* save buffer usage totals at node entry, if needed */
 	if (instr->need_bufusage)

@@ -9,7 +9,7 @@
  * bootstrap file from these header files.)
  *
  *
- * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/catalog/genbki.h
@@ -35,7 +35,10 @@
 #define BKI_DEFAULT(value)
 /* Specifies a default value for auto-generated array types */
 #define BKI_ARRAY_DEFAULT(value)
-/* Indicates how to perform name lookups for an OID or OID-array field */
+/*
+ * Indicates how to perform name lookups, typically for an OID or
+ * OID-array field
+ */
 #define BKI_LOOKUP(catalog)
 
 /* The following are never defined; they are here only for documentation. */

@@ -2,7 +2,7 @@
  * Copyright (c) 1983, 1995, 1996 Eric P. Allman
  * Copyright (c) 1988, 1993
  *	The Regents of the University of California.  All rights reserved.
- * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -317,24 +317,24 @@ flushbuffer(PrintfTarget *target)
 
 
 static bool find_arguments(const char *format, va_list args,
-			   PrintfArgValue *argvalues);
+						   PrintfArgValue *argvalues);
 static void fmtstr(const char *value, int leftjust, int minlen, int maxwidth,
-	   int pointflag, PrintfTarget *target);
+				   int pointflag, PrintfTarget *target);
 static void fmtptr(void *value, PrintfTarget *target);
 static void fmtint(long long value, char type, int forcesign,
-	   int leftjust, int minlen, int zpad, int precision, int pointflag,
-	   PrintfTarget *target);
+				   int leftjust, int minlen, int zpad, int precision, int pointflag,
+				   PrintfTarget *target);
 static void fmtchar(int value, int leftjust, int minlen, PrintfTarget *target);
 static void fmtfloat(double value, char type, int forcesign,
-		 int leftjust, int minlen, int zpad, int precision, int pointflag,
-		 PrintfTarget *target);
+					 int leftjust, int minlen, int zpad, int precision, int pointflag,
+					 PrintfTarget *target);
 static void dostr(const char *str, int slen, PrintfTarget *target);
 static void dopr_outch(int c, PrintfTarget *target);
 static void dopr_outchmulti(int c, int slen, PrintfTarget *target);
 static int	adjust_sign(int is_negative, int forcesign, int *signvalue);
 static int	compute_padlen(int minlen, int vallen, int leftjust);
 static void leading_pad(int zpad, int signvalue, int *padlen,
-			PrintfTarget *target);
+						PrintfTarget *target);
 static void trailing_pad(int padlen, PrintfTarget *target);
 
 /*
@@ -452,8 +452,6 @@ dopr(PrintfTarget *target, const char *format, va_list args)
 		have_star = afterstar = false;
 nextch2:
 		ch = *format++;
-		if (ch == '\0')
-			break;				/* illegal, but we don't complain */
 		switch (ch)
 		{
 			case '-':
@@ -718,6 +716,13 @@ nextch2:
 			case '%':
 				dopr_outch('%', target);
 				break;
+			default:
+
+				/*
+				 * Anything else --- in particular, '\0' indicating end of
+				 * format string --- is bogus.
+				 */
+				goto bad_format;
 		}
 
 		/* Check for failure after each conversion spec */
@@ -782,8 +787,6 @@ find_arguments(const char *format, va_list args,
 		afterstar = false;
 nextch1:
 		ch = *format++;
-		if (ch == '\0')
-			break;				/* illegal, but we don't complain */
 		switch (ch)
 		{
 			case '-':
@@ -918,6 +921,8 @@ nextch1:
 			case 'm':
 			case '%':
 				break;
+			default:
+				return false;	/* bogus format string */
 		}
 
 		/*

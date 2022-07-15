@@ -5,7 +5,7 @@
  *
  * This should be included _AFTER_ postgres.h and system include files
  *
- * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
  * Portions Copyright (c) 1995, Regents of the University of California
  *
  * src/pl/plperl/plperl.h
@@ -37,6 +37,11 @@
 #undef fprintf
 #undef vprintf
 #undef printf
+
+/*
+ * Perl scribbles on the "_" macro too.
+ */
+#undef _
 
 /*
  * ActivePerl 5.18 and later are MinGW-built, and their headers use GCC's
@@ -79,7 +84,7 @@
  */
 #ifdef PG_NEED_PERL_XSUB_H
 /*
- * On Windows, port_win32.h defines macros for a lot of these same functions.
+ * On Windows, win32_port.h defines macros for a lot of these same functions.
  * To avoid compiler warnings when XSUB.h redefines them, #undef our versions.
  */
 #ifdef WIN32
@@ -139,6 +144,16 @@
 #define fprintf			pg_fprintf
 #define vprintf			pg_vprintf
 #define printf(...)		pg_printf(__VA_ARGS__)
+
+/*
+ * Put back "_" too; but rather than making it just gettext() as the core
+ * code does, make it dgettext() so that the right things will happen in
+ * loadable modules (if they've set up TEXTDOMAIN correctly).  Note that
+ * we can't just set TEXTDOMAIN here, because this file is used by more
+ * extensions than just PL/Perl itself.
+ */
+#undef _
+#define _(x) dgettext(TEXTDOMAIN, x)
 
 /* put back the definition of isnan if needed */
 #ifdef _MSC_VER

@@ -4,7 +4,7 @@
  *	  definition of the "aggregate" system catalog (pg_aggregate)
  *
  *
- * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/catalog/pg_aggregate.h
@@ -141,35 +141,36 @@ typedef FormData_pg_aggregate *Form_pg_aggregate;
 
 
 extern ObjectAddress AggregateCreate(const char *aggName,
-				Oid aggNamespace,
-				char aggKind,
-				int numArgs,
-				int numDirectArgs,
-				oidvector *parameterTypes,
-				Datum allParameterTypes,
-				Datum parameterModes,
-				Datum parameterNames,
-				List *parameterDefaults,
-				Oid variadicArgType,
-				List *aggtransfnName,
-				List *aggfinalfnName,
-				List *aggcombinefnName,
-				List *aggserialfnName,
-				List *aggdeserialfnName,
-				List *aggmtransfnName,
-				List *aggminvtransfnName,
-				List *aggmfinalfnName,
-				bool finalfnExtraArgs,
-				bool mfinalfnExtraArgs,
-				char finalfnModify,
-				char mfinalfnModify,
-				List *aggsortopName,
-				Oid aggTransType,
-				int32 aggTransSpace,
-				Oid aggmTransType,
-				int32 aggmTransSpace,
-				const char *agginitval,
-				const char *aggminitval,
-				char proparallel);
+									 Oid aggNamespace,
+									 bool replace,
+									 char aggKind,
+									 int numArgs,
+									 int numDirectArgs,
+									 oidvector *parameterTypes,
+									 Datum allParameterTypes,
+									 Datum parameterModes,
+									 Datum parameterNames,
+									 List *parameterDefaults,
+									 Oid variadicArgType,
+									 List *aggtransfnName,
+									 List *aggfinalfnName,
+									 List *aggcombinefnName,
+									 List *aggserialfnName,
+									 List *aggdeserialfnName,
+									 List *aggmtransfnName,
+									 List *aggminvtransfnName,
+									 List *aggmfinalfnName,
+									 bool finalfnExtraArgs,
+									 bool mfinalfnExtraArgs,
+									 char finalfnModify,
+									 char mfinalfnModify,
+									 List *aggsortopName,
+									 Oid aggTransType,
+									 int32 aggTransSpace,
+									 Oid aggmTransType,
+									 int32 aggmTransSpace,
+									 const char *agginitval,
+									 const char *aggminitval,
+									 char proparallel);
 
 #endif							/* PG_AGGREGATE_H */

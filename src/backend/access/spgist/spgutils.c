@@ -4,7 +4,7 @@
  *	  various support functions for SP-GiST
  *
  *
- * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -22,7 +22,6 @@
 #include "access/transam.h"
 #include "access/xact.h"
 #include "catalog/pg_amop.h"
-#include "optimizer/paths.h"
 #include "storage/bufmgr.h"
 #include "storage/indexfsm.h"
 #include "storage/lmgr.h"
@@ -32,9 +31,6 @@
 #include "utils/lsyscache.h"
 #include "utils/syscache.h"
 
-extern Expr *spgcanorderbyop(IndexOptInfo *index,
-				PathKey *pathkey, int pathkeyno,
-				Expr *orderby_clause, int *indexcol_p);
 
 /*
  * SP-GiST handler function: return IndexAmRoutine with access method parameters
@@ -71,6 +67,7 @@ spghandler(PG_FUNCTION_ARGS)
 	amroutine->amcostestimate = spgcostestimate;
 	amroutine->amoptions = spgoptions;
 	amroutine->amproperty = spgproperty;
+	amroutine->ambuildphasename = NULL;
 	amroutine->amvalidate = spgvalidate;
 	amroutine->ambeginscan = spgbeginscan;
 	amroutine->amrescan = spgrescan;

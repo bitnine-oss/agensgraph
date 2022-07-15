@@ -3,7 +3,7 @@
  * lockcmds.c
  *	  LOCK command support code
  *
- * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -14,6 +14,8 @@
  */
 #include "postgres.h"
 
+#include "access/table.h"
+#include "access/xact.h"
 #include "catalog/namespace.h"
 #include "catalog/pg_inherits.h"
 #include "commands/lockcmds.h"
@@ -24,13 +26,12 @@
 #include "utils/lsyscache.h"
 #include "utils/syscache.h"
 #include "rewrite/rewriteHandler.h"
-#include "access/heapam.h"
 #include "nodes/nodeFuncs.h"
 
 static void LockTableRecurse(Oid reloid, LOCKMODE lockmode, bool nowait, Oid userid);
 static AclResult LockTableAclCheck(Oid relid, LOCKMODE lockmode, Oid userid);
 static void RangeVarCallbackForLockTable(const RangeVar *rv, Oid relid,
-							 Oid oldrelid, void *arg);
+										 Oid oldrelid, void *arg);
 static void LockViewRecurse(Oid reloid, LOCKMODE lockmode, bool nowait, List *ancestor_views);
 
 /*
@@ -83,6 +84,7 @@ RangeVarCallbackForLockTable(const RangeVar *rv, Oid relid, Oid oldrelid,
 {
 	LOCKMODE	lockmode = *(LOCKMODE *) arg;
 	char		relkind;
+	char		relpersistence;
 	AclResult	aclresult;
 
 	if (!OidIsValid(relid))
@@ -97,8 +99,16 @@ RangeVarCallbackForLockTable(const RangeVar *rv, Oid relid, Oid oldrelid,
 		relkind != RELKIND_VIEW)
 		ereport(ERROR,
 				(errcode(ERRCODE_WRONG_OBJECT_TYPE),
-				 errmsg("\"%s\" is not a table or a view",
+				 errmsg("\"%s\" is not a table or view",
 						rv->relname)));
+
+	/*
+	 * Make note if a temporary relation has been accessed in this
+	 * transaction.
+	 */
+	relpersistence = get_rel_persistence(relid);
+	if (relpersistence == RELPERSISTENCE_TEMP)
+		MyXactFlags |= XACT_FLAGS_ACCESSEDTEMPNAMESPACE;
 
 	/* Check permissions. */
 	aclresult = LockTableAclCheck(relid, lockmode, GetUserId());
@@ -209,7 +219,8 @@ LockViewRecurse_walker(Node *node, LockViewRecurse_context *context)
 			 * skipped.
 			 */
 			if (relid == context->viewoid &&
-				(!strcmp(rte->eref->aliasname, "old") || !strcmp(rte->eref->aliasname, "new")))
+				(strcmp(rte->eref->aliasname, "old") == 0 ||
+				 strcmp(rte->eref->aliasname, "new") == 0))
 				continue;
 
 			/* Currently, we only allow plain tables or views to be locked. */
@@ -263,7 +274,7 @@ LockViewRecurse(Oid reloid, LOCKMODE lockmode, bool nowait, List *ancestor_views
 	Relation	view;
 	Query	   *viewquery;
 
-	view = heap_open(reloid, NoLock);
+	view = table_open(reloid, NoLock);
 	viewquery = get_view_query(view);
 
 	context.lockmode = lockmode;
@@ -276,7 +287,7 @@ LockViewRecurse(Oid reloid, LOCKMODE lockmode, bool nowait, List *ancestor_views
 
 	ancestor_views = list_delete_oid(ancestor_views, reloid);
 
-	heap_close(view, NoLock);
+	table_close(view, NoLock);
 }
 
 /*

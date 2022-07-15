@@ -3,7 +3,7 @@
  * int8.c
  *	  Internal 64-bit integer operations
  *
- * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -20,6 +20,9 @@
 #include "common/int.h"
 #include "funcapi.h"
 #include "libpq/pqformat.h"
+#include "nodes/nodeFuncs.h"
+#include "nodes/supportnodes.h"
+#include "optimizer/optimizer.h"
 #include "utils/int8.h"
 #include "utils/builtins.h"
 
@@ -1204,22 +1207,29 @@ i8tod(PG_FUNCTION_ARGS)
 Datum
 dtoi8(PG_FUNCTION_ARGS)
 {
-	float8		arg = PG_GETARG_FLOAT8(0);
-	int64		result;
+	float8		num = PG_GETARG_FLOAT8(0);
 
-	/* Round arg to nearest integer (but it's still in float form) */
-	arg = rint(arg);
+	/*
+	 * Get rid of any fractional part in the input.  This is so we don't fail
+	 * on just-out-of-range values that would round into range.  Note
+	 * assumption that rint() will pass through a NaN or Inf unchanged.
+	 */
+	num = rint(num);
 
-	if (unlikely(arg < (double) PG_INT64_MIN) ||
-		unlikely(arg > (double) PG_INT64_MAX) ||
-		unlikely(isnan(arg)))
+	/*
+	 * Range check.  We must be careful here that the boundary values are
+	 * expressed exactly in the float domain.  We expect PG_INT64_MIN to be an
+	 * exact power of 2, so it will be represented exactly; but PG_INT64_MAX
+	 * isn't, and might get rounded off, so avoid using it.
+	 */
+	if (unlikely(num < (float8) PG_INT64_MIN ||
+				 num >= -((float8) PG_INT64_MIN) ||
+				 isnan(num)))
 		ereport(ERROR,
 				(errcode(ERRCODE_NUMERIC_VALUE_OUT_OF_RANGE),
 				 errmsg("bigint out of range")));
 
-	result = (int64) arg;
-
-	PG_RETURN_INT64(result);
+	PG_RETURN_INT64((int64) num);
 }
 
 Datum
@@ -1239,20 +1249,29 @@ i8tof(PG_FUNCTION_ARGS)
 Datum
 ftoi8(PG_FUNCTION_ARGS)
 {
-	float4		arg = PG_GETARG_FLOAT4(0);
-	float8		darg;
+	float4		num = PG_GETARG_FLOAT4(0);
 
-	/* Round arg to nearest integer (but it's still in float form) */
-	darg = rint(arg);
+	/*
+	 * Get rid of any fractional part in the input.  This is so we don't fail
+	 * on just-out-of-range values that would round into range.  Note
+	 * assumption that rint() will pass through a NaN or Inf unchanged.
+	 */
+	num = rint(num);
 
-	if (unlikely(arg < (float4) PG_INT64_MIN) ||
-		unlikely(arg > (float4) PG_INT64_MAX) ||
-		unlikely(isnan(arg)))
+	/*
+	 * Range check.  We must be careful here that the boundary values are
+	 * expressed exactly in the float domain.  We expect PG_INT64_MIN to be an
+	 * exact power of 2, so it will be represented exactly; but PG_INT64_MAX
+	 * isn't, and might get rounded off, so avoid using it.
+	 */
+	if (unlikely(num < (float4) PG_INT64_MIN ||
+				 num >= -((float4) PG_INT64_MIN) ||
+				 isnan(num)))
 		ereport(ERROR,
 				(errcode(ERRCODE_NUMERIC_VALUE_OUT_OF_RANGE),
 				 errmsg("bigint out of range")));
 
-	PG_RETURN_INT64((int64) darg);
+	PG_RETURN_INT64((int64) num);
 }
 
 Datum
@@ -1356,4 +1375,74 @@ generate_series_step_int8(PG_FUNCTION_ARGS)
 	else
 		/* do when there is no more left */
 		SRF_RETURN_DONE(funcctx);
+}
+
+/*
+ * Planner support function for generate_series(int8, int8 [, int8])
+ */
+Datum
+generate_series_int8_support(PG_FUNCTION_ARGS)
+{
+	Node	   *rawreq = (Node *) PG_GETARG_POINTER(0);
+	Node	   *ret = NULL;
+
+	if (IsA(rawreq, SupportRequestRows))
+	{
+		/* Try to estimate the number of rows returned */
+		SupportRequestRows *req = (SupportRequestRows *) rawreq;
+
+		if (is_funcclause(req->node))	/* be paranoid */
+		{
+			List	   *args = ((FuncExpr *) req->node)->args;
+			Node	   *arg1,
+					   *arg2,
+					   *arg3;
+
+			/* We can use estimated argument values here */
+			arg1 = estimate_expression_value(req->root, linitial(args));
+			arg2 = estimate_expression_value(req->root, lsecond(args));
+			if (list_length(args) >= 3)
+				arg3 = estimate_expression_value(req->root, lthird(args));
+			else
+				arg3 = NULL;
+
+			/*
+			 * If any argument is constant NULL, we can safely assume that
+			 * zero rows are returned.  Otherwise, if they're all non-NULL
+			 * constants, we can calculate the number of rows that will be
+			 * returned.  Use double arithmetic to avoid overflow hazards.
+			 */
+			if ((IsA(arg1, Const) &&
+				 ((Const *) arg1)->constisnull) ||
+				(IsA(arg2, Const) &&
+				 ((Const *) arg2)->constisnull) ||
+				(arg3 != NULL && IsA(arg3, Const) &&
+				 ((Const *) arg3)->constisnull))
+			{
+				req->rows = 0;
+				ret = (Node *) req;
+			}
+			else if (IsA(arg1, Const) &&
+					 IsA(arg2, Const) &&
+					 (arg3 == NULL || IsA(arg3, Const)))
+			{
+				double		start,
+							finish,
+							step;
+
+				start = DatumGetInt64(((Const *) arg1)->constvalue);
+				finish = DatumGetInt64(((Const *) arg2)->constvalue);
+				step = arg3 ? DatumGetInt64(((Const *) arg3)->constvalue) : 1;
+
+				/* This equation works for either sign of step */
+				if (step != 0)
+				{
+					req->rows = floor((finish - start + step) / step);
+					ret = (Node *) req;
+				}
+			}
+		}
+	}
+
+	PG_RETURN_POINTER(ret);
 }

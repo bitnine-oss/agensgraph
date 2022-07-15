@@ -108,6 +108,8 @@ hostnossl  <replaceable>database</replaceable>  <replaceable>user</replaceable> 
 host       <replaceable>database</replaceable>  <replaceable>user</replaceable>  <replaceable>IP-address</replaceable>  <replaceable>IP-mask</replaceable>  <replaceable>auth-method</replaceable>  <optional><replaceable>auth-options</replaceable></optional>
 hostssl    <replaceable>database</replaceable>  <replaceable>user</replaceable>  <replaceable>IP-address</replaceable>  <replaceable>IP-mask</replaceable>  <replaceable>auth-method</replaceable>  <optional><replaceable>auth-options</replaceable></optional>
 hostnossl  <replaceable>database</replaceable>  <replaceable>user</replaceable>  <replaceable>IP-address</replaceable>  <replaceable>IP-mask</replaceable>  <replaceable>auth-method</replaceable>  <optional><replaceable>auth-options</replaceable></optional>
+hostgssenc <replaceable>database</replaceable>  <replaceable>user</replaceable>  <replaceable>IP-address</replaceable>  <replaceable>IP-mask</replaceable>  <replaceable>auth-method</replaceable>  <optional><replaceable>auth-options</replaceable></optional>
+hostnogssenc <replaceable>database</replaceable>  <replaceable>user</replaceable>  <replaceable>IP-address</replaceable>  <replaceable>IP-mask</replaceable>  <replaceable>auth-method</replaceable>  <optional><replaceable>auth-options</replaceable></optional>
 </synopsis>
    The meaning of the fields is as follows:
 
@@ -128,9 +130,10 @@ hostnossl  <replaceable>database</replaceable>  <replaceable>user</replaceable> 
      <listitem>
       <para>
        This record matches connection attempts made using TCP/IP.
-       <literal>host</literal> records match either
+       <literal>host</literal> records match
        <acronym>SSL</acronym> or non-<acronym>SSL</acronym> connection
-       attempts.
+       attempts as well as <acronym>GSSAPI</acronym> encrypted or
+       non-<acronym>GSSAPI</acronym> encrypted connection attempts.
       </para>
      <note>
       <para>
@@ -172,6 +175,42 @@ hostnossl  <replaceable>database</replaceable>  <replaceable>user</replaceable> 
        This record type has the opposite behavior of <literal>hostssl</literal>;
        it only matches connection attempts made over
        TCP/IP that do not use <acronym>SSL</acronym>.
+      </para>
+     </listitem>
+    </varlistentry>
+
+    <varlistentry>
+     <term><literal>hostgssenc</literal></term>
+     <listitem>
+      <para>
+       This record matches connection attempts made using TCP/IP,
+       but only when the connection is made with <acronym>GSSAPI</acronym>
+       encryption.
+      </para>
+
+      <para>
+       To make use of this option the server must be built with
+       <acronym>GSSAPI</acronym> support.  Otherwise,
+       the <literal>hostgssenc</literal> record is ignored except for logging
+       a warning that it cannot match any connections.
+      </para>
+
+      <para>
+        Note that the only supported <xref linkend="auth-methods"/> for use
+        with <acronym>GSSAPI</acronym> encryption
+        are <literal>gss</literal>, <literal>reject</literal>,
+        and <literal>trust</literal>.
+      </para>
+     </listitem>
+    </varlistentry>
+
+    <varlistentry>
+     <term><literal>hostnogssenc</literal></term>
+     <listitem>
+      <para>
+       This record type has the opposite behavior of <literal>hostgssenc</literal>;
+       it only matches connection attempts made over
+       TCP/IP that do not use <acronym>GSSAPI</acronym> encryption.
       </para>
      </listitem>
     </varlistentry>
@@ -450,8 +489,9 @@ hostnossl  <replaceable>database</replaceable>  <replaceable>user</replaceable> 
         <listitem>
          <para>
           Use GSSAPI to authenticate the user. This is only
-          available for TCP/IP connections. See <xref
-          linkend="gssapi-auth"/> for details.
+          available for TCP/IP connections . See <xref
+          linkend="gssapi-auth"/> for details.  It can be used in conjunction
+          with GSSAPI encryption.
          </para>
         </listitem>
        </varlistentry>
@@ -563,10 +603,17 @@ hostnossl  <replaceable>database</replaceable>  <replaceable>user</replaceable> 
       <para>
        In addition to the method-specific options listed below, there is one
        method-independent authentication option <literal>clientcert</literal>, which
-       can be specified in any <literal>hostssl</literal> record.  When set
-       to <literal>1</literal>, this option requires the client to present a valid
-       (trusted) SSL certificate, in addition to the other requirements of the
-       authentication method.
+       can be specified in any <literal>hostssl</literal> record.
+       This option can be set to <literal>verify-ca</literal> or
+       <literal>verify-full</literal>. Both options require the client
+       to present a valid (trusted) SSL certificate, while
+       <literal>verify-full</literal> additionally enforces that the
+       <literal>cn</literal> (Common Name) in the certificate matches
+       the username or an applicable mapping.
+       This behavior is similar to the cert authentication method
+       (see <xref linkend="auth-cert"/> ) but enables pairing
+       the verification of client certificates with any authentication
+       method that supports <literal>hostssl</literal> entries.
       </para>
      </listitem>
     </varlistentry>
@@ -624,7 +671,7 @@ hostnossl  <replaceable>database</replaceable>  <replaceable>user</replaceable> 
    non-null <structfield>error</structfield> fields indicate problems in the
    corresponding lines of the file.
   </para>
- 
+
   <tip>
    <para>
     To connect to a particular database, a user must not only pass the
@@ -696,15 +743,18 @@ host    postgres        all             192.168.12.10/32        scram-sha-256
 host    all             mike            .example.com            md5
 host    all             all             .example.com            scram-sha-256
 
-# In the absence of preceding "host" lines, these two lines will
+# In the absence of preceding "host" lines, these three lines will
 # reject all connections from 192.168.54.1 (since that entry will be
-# matched first), but allow GSSAPI connections from anywhere else
-# on the Internet.  The zero mask causes no bits of the host IP
-# address to be considered, so it matches any host.
+# matched first), but allow GSSAPI-encrypted connections from anywhere else
+# on the Internet.  The zero mask causes no bits of the host IP address to
+# be considered, so it matches any host.  Unencrypted GSSAPI connections
+# (which "fall through" to the third line since "hostgssenc" only matches
+# encrypted GSSAPI connections) are allowed, but only from 192.168.12.10.
 #
 # TYPE  DATABASE        USER            ADDRESS                 METHOD
 host    all             all             192.168.54.1/32         reject
-host    all             all             0.0.0.0/0               gss
+hostgssenc all          all             0.0.0.0/0               gss
+host    all             all             192.168.12.10/32        gss
 
 # Allow users from 192.168.x.x hosts to connect to any database, if
 # they pass the ident check.  If, for example, ident says the user is
@@ -1051,13 +1101,16 @@ omicron         bryanh                  guest1
    <para>
     <productname>GSSAPI</productname> is an industry-standard protocol
     for secure authentication defined in RFC 2743.
-    <productname>PostgreSQL</productname> supports
-    <productname>GSSAPI</productname> with <productname>Kerberos</productname>
-    authentication according to RFC 1964. <productname>GSSAPI</productname>
-    provides automatic authentication (single sign-on) for systems
-    that support it. The authentication itself is secure, but the
-    data sent over the database connection will be sent unencrypted unless
-    <acronym>SSL</acronym> is used.
+
+    <productname>PostgreSQL</productname>
+    supports <productname>GSSAPI</productname> for use as either an encrypted,
+    authenticated layer, or for authentication only.
+    <productname>GSSAPI</productname> provides automatic authentication
+    (single sign-on) for systems that support it. The authentication itself is
+    secure.  If <productname>GSSAPI</productname> encryption
+    (see <literal>hostgssenc</literal>) or <acronym>SSL</acronym> encryption are
+    used, the data sent along the database connection will be encrypted;
+    otherwise, it will not.
    </para>
 
    <para>
@@ -1648,7 +1701,8 @@ ldap[s]://<replaceable>host</replaceable>[:<replaceable>port</replaceable>]/<rep
         </para>
 
         <para>
-         LDAP URLs are currently only supported with OpenLDAP, not on Windows.
+         LDAP URLs are currently only supported with
+         <productname>OpenLDAP</productname>, not on Windows.
         </para>
        </listitem>
       </varlistentry>
@@ -1669,6 +1723,15 @@ ldap[s]://<replaceable>host</replaceable>[:<replaceable>port</replaceable>]/<rep
     specifying <literal>ldapsearchfilter="(foo=$username)"</literal>.  If neither
     option is specified the default is
     <literal>ldapsearchattribute=uid</literal>.
+   </para>
+
+   <para>
+     If <productname>PostgreSQL</productname> was compiled with
+     <productname>OpenLDAP</productname> as the LDAP client library, the
+     <literal>ldapserver</literal> setting may be omitted.  In that case, a
+     list of hostnames and ports is looked up via RFC 2782 DNS SRV records.
+     The name <literal>_ldap._tcp.DOMAIN</literal> is looked up, where
+     <literal>DOMAIN</literal> is extracted from <literal>ldapbasedn</literal>.
    </para>
 
    <para>
@@ -1713,6 +1776,15 @@ host ... ldap ldapurl="ldap://ldap.example.net/dc=example,dc=net?uid?sub"
     user ID or email address:
 <programlisting>
 host ... ldap ldapserver=ldap.example.net ldapbasedn="dc=example, dc=net" ldapsearchfilter="(|(uid=$username)(mail=$username))"
+</programlisting>
+   </para>
+
+   <para>
+    Here is an example for a search+bind configuration that uses DNS SRV
+    discovery to find the hostname(s) and port(s) for the LDAP service for the
+    domain name <literal>example.net</literal>:
+<programlisting>
+host ... ldap ldapbasedn="dc=example,dc=net"
 </programlisting>
    </para>
 
@@ -1865,11 +1937,11 @@ host ... ldap ldapserver=ldap.example.net ldapbasedn="dc=example, dc=net" ldapse
    <para>
     In a <filename>pg_hba.conf</filename> record specifying certificate
     authentication, the authentication option <literal>clientcert</literal> is
-    assumed to be <literal>1</literal>, and it cannot be turned off since a client
-    certificate is necessary for this method.  What the <literal>cert</literal>
-    method adds to the basic <literal>clientcert</literal> certificate validity test
-    is a check that the <literal>cn</literal> attribute matches the database
-    user name.
+    assumed to be <literal>verify-ca</literal> or <literal>verify-full</literal>,
+    and it cannot be turned off since a client certificate is necessary for this
+    method. What the <literal>cert</literal> method adds to the basic
+    <literal>clientcert</literal> certificate validity test is a check that the
+    <literal>cn</literal> attribute matches the database user name.
    </para>
   </sect1>
 

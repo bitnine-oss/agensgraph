@@ -3,7 +3,7 @@
  * async.c
  *	  Asynchronous notification: NOTIFY, LISTEN, UNLISTEN
  *
- * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -139,7 +139,6 @@
 #include "utils/ps_status.h"
 #include "utils/snapmgr.h"
 #include "utils/timestamp.h"
-#include "utils/tqual.h"
 
 
 /*
@@ -388,9 +387,9 @@ static void asyncQueueFillWarning(void);
 static bool SignalBackends(void);
 static void asyncQueueReadAllNotifications(void);
 static bool asyncQueueProcessPageEntries(volatile QueuePosition *current,
-							 QueuePosition stop,
-							 char *page_buffer,
-							 Snapshot snapshot);
+										 QueuePosition stop,
+										 char *page_buffer,
+										 Snapshot snapshot);
 static void asyncQueueAdvanceTail(void);
 static void ProcessIncomingNotify(void);
 static bool AsyncExistsPendingNotify(const char *channel, const char *payload);
@@ -1956,7 +1955,7 @@ asyncQueueProcessPageEntries(volatile QueuePosition *current,
 				 * Note that we must test XidInMVCCSnapshot before we test
 				 * TransactionIdDidCommit, else we might return a message from
 				 * a transaction that is not yet visible to snapshots; compare
-				 * the comments at the head of tqual.c.
+				 * the comments at the head of heapam_visibility.c.
 				 *
 				 * Also, while our own xact won't be listed in the snapshot,
 				 * we need not check for TransactionIdIsCurrentTransactionId

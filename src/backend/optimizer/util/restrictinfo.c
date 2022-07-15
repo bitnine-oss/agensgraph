@@ -3,7 +3,7 @@
  * restrictinfo.c
  *	  RestrictInfo node manipulation routines.
  *
- * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -14,28 +14,30 @@
  */
 #include "postgres.h"
 
+#include "nodes/makefuncs.h"
+#include "nodes/nodeFuncs.h"
 #include "optimizer/clauses.h"
+#include "optimizer/optimizer.h"
 #include "optimizer/restrictinfo.h"
-#include "optimizer/var.h"
 
 
 static RestrictInfo *make_restrictinfo_internal(Expr *clause,
-						   Expr *orclause,
-						   bool is_pushed_down,
-						   bool outerjoin_delayed,
-						   bool pseudoconstant,
-						   Index security_level,
-						   Relids required_relids,
-						   Relids outer_relids,
-						   Relids nullable_relids);
+												Expr *orclause,
+												bool is_pushed_down,
+												bool outerjoin_delayed,
+												bool pseudoconstant,
+												Index security_level,
+												Relids required_relids,
+												Relids outer_relids,
+												Relids nullable_relids);
 static Expr *make_sub_restrictinfos(Expr *clause,
-					   bool is_pushed_down,
-					   bool outerjoin_delayed,
-					   bool pseudoconstant,
-					   Index security_level,
-					   Relids required_relids,
-					   Relids outer_relids,
-					   Relids nullable_relids);
+									bool is_pushed_down,
+									bool outerjoin_delayed,
+									bool pseudoconstant,
+									Index security_level,
+									Relids required_relids,
+									Relids outer_relids,
+									Relids nullable_relids);
 
 
 /*
@@ -67,7 +69,7 @@ make_restrictinfo(Expr *clause,
 	 * If it's an OR clause, build a modified copy with RestrictInfos inserted
 	 * above each subclause of the top-level AND/OR structure.
 	 */
-	if (or_clause((Node *) clause))
+	if (is_orclause(clause))
 		return (RestrictInfo *) make_sub_restrictinfos(clause,
 													   is_pushed_down,
 													   outerjoin_delayed,
@@ -78,7 +80,7 @@ make_restrictinfo(Expr *clause,
 													   nullable_relids);
 
 	/* Shouldn't be an AND clause, else AND/OR flattening messed up */
-	Assert(!and_clause((Node *) clause));
+	Assert(!is_andclause(clause));
 
 	return make_restrictinfo_internal(clause,
 									  NULL,
@@ -232,7 +234,7 @@ make_sub_restrictinfos(Expr *clause,
 					   Relids outer_relids,
 					   Relids nullable_relids)
 {
-	if (or_clause((Node *) clause))
+	if (is_orclause(clause))
 	{
 		List	   *orlist = NIL;
 		ListCell   *temp;
@@ -257,7 +259,7 @@ make_sub_restrictinfos(Expr *clause,
 												   outer_relids,
 												   nullable_relids);
 	}
-	else if (and_clause((Node *) clause))
+	else if (is_andclause(clause))
 	{
 		List	   *andlist = NIL;
 		ListCell   *temp;
@@ -284,6 +286,70 @@ make_sub_restrictinfos(Expr *clause,
 												   required_relids,
 												   outer_relids,
 												   nullable_relids);
+}
+
+/*
+ * commute_restrictinfo
+ *
+ * Given a RestrictInfo containing a binary opclause, produce a RestrictInfo
+ * representing the commutation of that clause.  The caller must pass the
+ * OID of the commutator operator (which it's presumably looked up, else
+ * it would not know this is valid).
+ *
+ * Beware that the result shares sub-structure with the given RestrictInfo.
+ * That's okay for the intended usage with derived index quals, but might
+ * be hazardous if the source is subject to change.  Also notice that we
+ * assume without checking that the commutator op is a member of the same
+ * btree and hash opclasses as the original op.
+ */
+RestrictInfo *
+commute_restrictinfo(RestrictInfo *rinfo, Oid comm_op)
+{
+	RestrictInfo *result;
+	OpExpr	   *newclause;
+	OpExpr	   *clause = castNode(OpExpr, rinfo->clause);
+
+	Assert(list_length(clause->args) == 2);
+
+	/* flat-copy all the fields of clause ... */
+	newclause = makeNode(OpExpr);
+	memcpy(newclause, clause, sizeof(OpExpr));
+
+	/* ... and adjust those we need to change to commute it */
+	newclause->opno = comm_op;
+	newclause->opfuncid = InvalidOid;
+	newclause->args = list_make2(lsecond(clause->args),
+								 linitial(clause->args));
+
+	/* likewise, flat-copy all the fields of rinfo ... */
+	result = makeNode(RestrictInfo);
+	memcpy(result, rinfo, sizeof(RestrictInfo));
+
+	/*
+	 * ... and adjust those we need to change.  Note in particular that we can
+	 * preserve any cached selectivity or cost estimates, since those ought to
+	 * be the same for the new clause.  Likewise we can keep the source's
+	 * parent_ec.
+	 */
+	result->clause = (Expr *) newclause;
+	result->left_relids = rinfo->right_relids;
+	result->right_relids = rinfo->left_relids;
+	Assert(result->orclause == NULL);
+	result->left_ec = rinfo->right_ec;
+	result->right_ec = rinfo->left_ec;
+	result->left_em = rinfo->right_em;
+	result->right_em = rinfo->left_em;
+	result->scansel_cache = NIL;	/* not worth updating this */
+	if (rinfo->hashjoinoperator == clause->opno)
+		result->hashjoinoperator = comm_op;
+	else
+		result->hashjoinoperator = InvalidOid;
+	result->left_bucketsize = rinfo->right_bucketsize;
+	result->right_bucketsize = rinfo->left_bucketsize;
+	result->left_mcvfreq = rinfo->right_mcvfreq;
+	result->right_mcvfreq = rinfo->left_mcvfreq;
+
+	return result;
 }
 
 /*

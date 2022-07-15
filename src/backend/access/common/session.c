@@ -12,7 +12,7 @@
  * Currently this infrastructure is used to share:
  * - typemod registry for ephemeral row-types, i.e. BlessTupleDesc etc.
  *
- * Portions Copyright (c) 2017-2018, PostgreSQL Global Development Group
+ * Portions Copyright (c) 2017-2019, PostgreSQL Global Development Group
  *
  * src/backend/access/common/session.c
  *
@@ -133,7 +133,7 @@ GetSessionDsmHandle(void)
 	 * If we got this far, we can pin the shared memory so it stays mapped for
 	 * the rest of this backend's life.  If we don't make it this far, cleanup
 	 * callbacks for anything we installed above (ie currently
-	 * SharedRecordTypemodRegistry) will run when the DSM segment is detached
+	 * SharedRecordTypmodRegistry) will run when the DSM segment is detached
 	 * by CurrentResourceOwner so we aren't left with a broken CurrentSession.
 	 */
 	dsm_pin_mapping(seg);

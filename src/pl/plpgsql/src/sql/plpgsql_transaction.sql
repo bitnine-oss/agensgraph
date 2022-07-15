@@ -329,6 +329,44 @@ $$;
 
 SELECT * FROM test3;
 
+-- failure while trying to persist a cursor across a transaction (bug #15703)
+CREATE PROCEDURE cursor_fail_during_commit()
+ LANGUAGE plpgsql
+AS $$
+  DECLARE id int;
+  BEGIN
+    FOR id IN SELECT 1/(x-1000) FROM generate_series(1,1000) x LOOP
+        INSERT INTO test1 VALUES(id);
+        COMMIT;
+    END LOOP;
+  END;
+$$;
+
+TRUNCATE test1;
+
+CALL cursor_fail_during_commit();
+
+-- note that error occurs during first COMMIT, hence nothing is in test1
+SELECT count(*) FROM test1;
+
+CREATE PROCEDURE cursor_fail_during_rollback()
+ LANGUAGE plpgsql
+AS $$
+  DECLARE id int;
+  BEGIN
+    FOR id IN SELECT 1/(x-1000) FROM generate_series(1,1000) x LOOP
+        INSERT INTO test1 VALUES(id);
+        ROLLBACK;
+    END LOOP;
+  END;
+$$;
+
+TRUNCATE test1;
+
+CALL cursor_fail_during_rollback();
+
+SELECT count(*) FROM test1;
+
 
 -- SET TRANSACTION
 DO LANGUAGE plpgsql $$
@@ -443,6 +481,29 @@ END;
 $$;
 
 CALL transaction_test11();
+
+
+-- transaction chain
+
+TRUNCATE test1;
+
+DO LANGUAGE plpgsql $$
+BEGIN
+    ROLLBACK;
+    SET TRANSACTION ISOLATION LEVEL REPEATABLE READ;
+    FOR i IN 0..3 LOOP
+        RAISE INFO 'transaction_isolation = %', current_setting('transaction_isolation');
+        INSERT INTO test1 (a) VALUES (i);
+        IF i % 2 = 0 THEN
+            COMMIT AND CHAIN;
+        ELSE
+            ROLLBACK AND CHAIN;
+        END IF;
+    END LOOP;
+END
+$$;
+
+SELECT * FROM test1;
 
 
 DROP TABLE test1;

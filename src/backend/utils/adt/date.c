@@ -3,7 +3,7 @@
  * date.c
  *	  implements DATE and TIME data types specified in SQL standard
  *
- * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994-5, Regents of the University of California
  *
  *
@@ -20,15 +20,16 @@
 #include <float.h>
 #include <time.h>
 
-#include "access/hash.h"
 #include "access/xact.h"
 #include "libpq/pqformat.h"
 #include "miscadmin.h"
+#include "nodes/supportnodes.h"
 #include "parser/scansup.h"
 #include "utils/array.h"
 #include "utils/builtins.h"
 #include "utils/date.h"
 #include "utils/datetime.h"
+#include "utils/hashutils.h"
 #include "utils/sortsupport.h"
 
 /*
@@ -135,14 +136,6 @@ date_in(PG_FUNCTION_ARGS)
 	switch (dtype)
 	{
 		case DTK_DATE:
-			break;
-
-		case DTK_CURRENT:
-			ereport(ERROR,
-					(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-					 errmsg("date/time value \"current\" is no longer supported")));
-
-			GetCurrentDateTime(tm);
 			break;
 
 		case DTK_EPOCH:
@@ -1341,15 +1334,25 @@ make_time(PG_FUNCTION_ARGS)
 }
 
 
-/* time_transform()
- * Flatten calls to time_scale() and timetz_scale() that solely represent
- * increases in allowed precision.
+/* time_support()
+ *
+ * Planner support function for the time_scale() and timetz_scale()
+ * length coercion functions (we need not distinguish them here).
  */
 Datum
-time_transform(PG_FUNCTION_ARGS)
+time_support(PG_FUNCTION_ARGS)
 {
-	PG_RETURN_POINTER(TemporalTransform(MAX_TIME_PRECISION,
-										(Node *) PG_GETARG_POINTER(0)));
+	Node	   *rawreq = (Node *) PG_GETARG_POINTER(0);
+	Node	   *ret = NULL;
+
+	if (IsA(rawreq, SupportRequestSimplify))
+	{
+		SupportRequestSimplify *req = (SupportRequestSimplify *) rawreq;
+
+		ret = TemporalSimplify(MAX_TIME_PRECISION, (Node *) req->fcall);
+	}
+
+	PG_RETURN_POINTER(ret);
 }
 
 /* time_scale()
@@ -1371,7 +1374,7 @@ time_scale(PG_FUNCTION_ARGS)
 
 /* AdjustTimeForTypmod()
  * Force the precision of the time value to a specified value.
- * Uses *exactly* the same code as in AdjustTimestampForTypemod()
+ * Uses *exactly* the same code as in AdjustTimestampForTypmod()
  * but we make a separate copy because those types do not
  * have a fundamental tie together but rather a coincidence of
  * implementation. - thomas

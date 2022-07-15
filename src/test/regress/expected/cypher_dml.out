@@ -1405,7 +1405,7 @@ WITH x[0] AS x1, x[1] AS x2 ORDER BY x2 RETURN x1;
                                                          Filter: (a.id = friendships.start)
                                                    ->  Index Scan using familyship_start_idx on t.familyship
                                                          Output: familyship.start, familyship."end", familyship.id, familyship.properties, familyship.ctid
-                                                         Index Cond: (a.id = familyship.start)
+                                                         Index Cond: (familyship.start = a.id)
                                        ->  Result
                                              Output: knows_1."end", knows_1.id, ROW(knows_1.id, knows_1.start, knows_1."end", knows_1.properties, knows_1.ctid)::edge
                                              ->  Append
@@ -1417,7 +1417,7 @@ WITH x[0] AS x1, x[1] AS x2 ORDER BY x2 RETURN x1;
                                                          Filter: ($1 = friendships_1.start)
                                                    ->  Index Scan using familyship_start_idx on t.familyship familyship_1
                                                          Output: familyship_1."end", familyship_1.id, familyship_1.start, familyship_1.properties, familyship_1.ctid
-                                                         Index Cond: ($1 = familyship_1.start)
+                                                         Index Cond: (familyship_1.start = $1)
 (45 rows)
 
 EXPLAIN (VERBOSE, COSTS OFF)
@@ -1460,7 +1460,7 @@ WITH max(b.id::"numeric") AS id, x[0] AS x RETURN *;
                                                                Filter: (a.id = friendships.start)
                                                          ->  Index Scan using familyship_start_idx on t.familyship
                                                                Output: familyship.start, familyship."end", familyship.id, familyship.properties, familyship.ctid
-                                                               Index Cond: (a.id = familyship.start)
+                                                               Index Cond: (familyship.start = a.id)
                                              ->  Result
                                                    Output: knows_1."end", knows_1.id, ROW(knows_1.id, knows_1.start, knows_1."end", knows_1.properties, knows_1.ctid)::edge
                                                    ->  Append
@@ -1472,7 +1472,7 @@ WITH max(b.id::"numeric") AS id, x[0] AS x RETURN *;
                                                                Filter: ($1 = friendships_1.start)
                                                          ->  Index Scan using familyship_start_idx on t.familyship familyship_1
                                                                Output: familyship_1."end", familyship_1.id, familyship_1.start, familyship_1.properties, familyship_1.ctid
-                                                               Index Cond: ($1 = familyship_1.start)
+                                                               Index Cond: (familyship_1.start = $1)
 (48 rows)
 
 EXPLAIN (VERBOSE, COSTS OFF)
@@ -1512,7 +1512,7 @@ WITH DISTINCT x AS path RETURN *;
                                                          Filter: (a.id = friendships.start)
                                                    ->  Index Scan using familyship_start_idx on t.familyship
                                                          Output: familyship.start, familyship."end", familyship.id, familyship.properties, familyship.ctid
-                                                         Index Cond: (a.id = familyship.start)
+                                                         Index Cond: (familyship.start = a.id)
                                        ->  Result
                                              Output: knows_1."end", knows_1.id, ROW(knows_1.id, knows_1.start, knows_1."end", knows_1.properties, knows_1.ctid)::edge
                                              ->  Append
@@ -1524,7 +1524,7 @@ WITH DISTINCT x AS path RETURN *;
                                                          Filter: ($1 = friendships_1.start)
                                                    ->  Index Scan using familyship_start_idx on t.familyship familyship_1
                                                          Output: familyship_1."end", familyship_1.id, familyship_1.start, familyship_1.properties, familyship_1.ctid
-                                                         Index Cond: ($1 = familyship_1.start)
+                                                         Index Cond: (familyship_1.start = $1)
 (45 rows)
 
 EXPLAIN (VERBOSE, COSTS OFF)
@@ -1567,7 +1567,7 @@ WITH max(b.id::"numeric") AS id, x AS x RETURN *;
                                                                Filter: (a.id = friendships.start)
                                                          ->  Index Scan using familyship_start_idx on t.familyship
                                                                Output: familyship.start, familyship."end", familyship.id, familyship.properties, familyship.ctid
-                                                               Index Cond: (a.id = familyship.start)
+                                                               Index Cond: (familyship.start = a.id)
                                              ->  Result
                                                    Output: knows_1."end", knows_1.id, ROW(knows_1.id, knows_1.start, knows_1."end", knows_1.properties, knows_1.ctid)::edge
                                                    ->  Append
@@ -1579,7 +1579,7 @@ WITH max(b.id::"numeric") AS id, x AS x RETURN *;
                                                                Filter: ($1 = friendships_1.start)
                                                          ->  Index Scan using familyship_start_idx on t.familyship familyship_1
                                                                Output: familyship_1."end", familyship_1.id, familyship_1.start, familyship_1.properties, familyship_1.ctid
-                                                               Index Cond: ($1 = familyship_1.start)
+                                                               Index Cond: (familyship_1.start = $1)
 (48 rows)
 
 EXPLAIN (VERBOSE, COSTS OFF)
@@ -1619,7 +1619,7 @@ WITH max(length(x)::"numeric") AS x, b.id AS id RETURN *;
                                                          Filter: (a.id = friendships.start)
                                                    ->  Index Scan using familyship_start_idx on t.familyship
                                                          Output: familyship.start, familyship."end", familyship.id, familyship.properties, familyship.ctid
-                                                         Index Cond: (a.id = familyship.start)
+                                                         Index Cond: (familyship.start = a.id)
                                        ->  Result
                                              Output: knows_1."end", knows_1.id, ROW(knows_1.id, knows_1.start, knows_1."end", knows_1.properties, knows_1.ctid)::edge
                                              ->  Append
@@ -1631,7 +1631,7 @@ WITH max(length(x)::"numeric") AS x, b.id AS id RETURN *;
                                                          Filter: ($1 = friendships_1.start)
                                                    ->  Index Scan using familyship_start_idx on t.familyship familyship_1
                                                          Output: familyship_1."end", familyship_1.id, familyship_1.start, familyship_1.properties, familyship_1.ctid
-                                                         Index Cond: ($1 = familyship_1.start)
+                                                         Index Cond: (familyship_1.start = $1)
 (45 rows)
 
 EXPLAIN (VERBOSE, COSTS OFF)
@@ -1666,7 +1666,7 @@ RETURN x, x IS NOT NULL, x[0] IS NULL;
                                              Filter: (a.id = friendships.start)
                                        ->  Index Scan using familyship_start_idx on t.familyship
                                              Output: familyship.start, familyship."end", familyship.id, familyship.properties, familyship.ctid
-                                             Index Cond: (a.id = familyship.start)
+                                             Index Cond: (familyship.start = a.id)
                            ->  Result
                                  Output: knows_1."end", knows_1.id, ROW(knows_1.id, knows_1.start, knows_1."end", knows_1.properties, knows_1.ctid)::edge
                                  ->  Append
@@ -1678,7 +1678,7 @@ RETURN x, x IS NOT NULL, x[0] IS NULL;
                                              Filter: ($1 = friendships_1.start)
                                        ->  Index Scan using familyship_start_idx on t.familyship familyship_1
                                              Output: familyship_1."end", familyship_1.id, familyship_1.start, familyship_1.properties, familyship_1.ctid
-                                             Index Cond: ($1 = familyship_1.start)
+                                             Index Cond: (familyship_1.start = $1)
 (40 rows)
 
 EXPLAIN (VERBOSE, COSTS OFF)
@@ -1714,7 +1714,7 @@ WHERE x[0] IS NOT NULL RETURN x[0];
                                              Filter: (a.id = friendships.start)
                                        ->  Index Scan using familyship_start_idx on t.familyship
                                              Output: familyship.start, familyship."end", familyship.id, familyship.properties, familyship.ctid
-                                             Index Cond: (a.id = familyship.start)
+                                             Index Cond: (familyship.start = a.id)
                            ->  Result
                                  Output: knows_1."end", knows_1.id, ROW(knows_1.id, knows_1.start, knows_1."end", knows_1.properties, knows_1.ctid)::edge
                                  ->  Append
@@ -1726,7 +1726,7 @@ WHERE x[0] IS NOT NULL RETURN x[0];
                                              Filter: ($1 = friendships_1.start)
                                        ->  Index Scan using familyship_start_idx on t.familyship familyship_1
                                              Output: familyship_1."end", familyship_1.id, familyship_1.start, familyship_1.properties, familyship_1.ctid
-                                             Index Cond: ($1 = familyship_1.start)
+                                             Index Cond: (familyship_1.start = $1)
 (41 rows)
 
 EXPLAIN (VERBOSE, COSTS OFF)
@@ -1768,7 +1768,7 @@ SELECT * FROM (
                                                    Filter: (a.id = friendships.start)
                                              ->  Index Scan using familyship_start_idx on t.familyship
                                                    Output: familyship.start, familyship."end", familyship.id, familyship.properties, familyship.ctid
-                                                   Index Cond: (a.id = familyship.start)
+                                                   Index Cond: (familyship.start = a.id)
                                  ->  Result
                                        Output: knows_1."end", knows_1.id, ROW(knows_1.id, knows_1.start, knows_1."end", knows_1.properties, knows_1.ctid)::edge
                                        ->  Append
@@ -1780,7 +1780,7 @@ SELECT * FROM (
                                                    Filter: ($1 = friendships_1.start)
                                              ->  Index Scan using familyship_start_idx on t.familyship familyship_1
                                                    Output: familyship_1."end", familyship_1.id, familyship_1.start, familyship_1.properties, familyship_1.ctid
-                                                   Index Cond: ($1 = familyship_1.start)
+                                                   Index Cond: (familyship_1.start = $1)
    ->  Nested Loop
          Output: x_1.edges[2]
          ->  Seq Scan on t.person a_1
@@ -1808,7 +1808,7 @@ SELECT * FROM (
                                                    Filter: (a_1.id = friendships_2.start)
                                              ->  Index Scan using familyship_start_idx on t.familyship familyship_2
                                                    Output: familyship_2.start, familyship_2."end", familyship_2.id, familyship_2.properties, familyship_2.ctid
-                                                   Index Cond: (a_1.id = familyship_2.start)
+                                                   Index Cond: (familyship_2.start = a_1.id)
                                  ->  Result
                                        Output: knows_3."end", knows_3.id, ROW(knows_3.id, knows_3.start, knows_3."end", knows_3.properties, knows_3.ctid)::edge
                                        ->  Append
@@ -1820,7 +1820,7 @@ SELECT * FROM (
                                                    Filter: ($3 = friendships_3.start)
                                              ->  Index Scan using familyship_start_idx on t.familyship familyship_3
                                                    Output: familyship_3."end", familyship_3.id, familyship_3.start, familyship_3.properties, familyship_3.ctid
-                                                   Index Cond: ($3 = familyship_3.start)
+                                                   Index Cond: (familyship_3.start = $3)
 (82 rows)
 
 -- AG-154, CS-34 - VLE returns incoreect result with sequential scan

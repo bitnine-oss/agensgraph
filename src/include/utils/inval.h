@@ -4,7 +4,7 @@
  *	  POSTGRES cache invalidation dispatcher definitions.
  *
  *
- * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/utils/inval.h
@@ -29,15 +29,13 @@ extern void AtEOXact_Inval(bool isCommit);
 
 extern void AtEOSubXact_Inval(bool isCommit);
 
-extern void AtPrepare_Inval(void);
-
 extern void PostPrepare_Inval(void);
 
 extern void CommandEndInvalidationMessages(void);
 
 extern void CacheInvalidateHeapTuple(Relation relation,
-						 HeapTuple tuple,
-						 HeapTuple newtuple);
+									 HeapTuple tuple,
+									 HeapTuple newtuple);
 
 extern void CacheInvalidateCatalog(Oid catalogId);
 
@@ -54,11 +52,11 @@ extern void CacheInvalidateSmgr(RelFileNodeBackend rnode);
 extern void CacheInvalidateRelmap(Oid databaseId);
 
 extern void CacheRegisterSyscacheCallback(int cacheid,
-							  SyscacheCallbackFunction func,
-							  Datum arg);
+										  SyscacheCallbackFunction func,
+										  Datum arg);
 
 extern void CacheRegisterRelcacheCallback(RelcacheCallbackFunction func,
-							  Datum arg);
+										  Datum arg);
 
 extern void CallSyscacheCallbacks(int cacheid, uint32 hashvalue);
 

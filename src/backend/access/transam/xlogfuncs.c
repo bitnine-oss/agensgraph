@@ -7,7 +7,7 @@
  * This file contains WAL control and information functions.
  *
  *
- * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/backend/access/transam/xlogfuncs.c
@@ -465,7 +465,8 @@ pg_walfile_name_offset(PG_FUNCTION_ARGS)
 		ereport(ERROR,
 				(errcode(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
 				 errmsg("recovery is in progress"),
-				 errhint("pg_walfile_name_offset() cannot be executed during recovery.")));
+				 errhint("%s cannot be executed during recovery.",
+						 "pg_walfile_name_offset()")));
 
 	/*
 	 * Construct a tuple descriptor for the result row.  This must match this
@@ -521,7 +522,8 @@ pg_walfile_name(PG_FUNCTION_ARGS)
 		ereport(ERROR,
 				(errcode(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
 				 errmsg("recovery is in progress"),
-				 errhint("pg_walfile_name() cannot be executed during recovery.")));
+				 errhint("%s cannot be executed during recovery.",
+						 "pg_walfile_name()")));
 
 	XLByteToPrevSeg(locationpoint, xlogsegno, wal_segment_size);
 	XLogFileName(xlogfilename, ThisTimeLineID, xlogsegno, wal_segment_size);
@@ -764,10 +766,10 @@ pg_promote(PG_FUNCTION_ARGS)
 
 		CHECK_FOR_INTERRUPTS();
 
-		WaitLatch(MyLatch,
-				  WL_LATCH_SET | WL_TIMEOUT | WL_POSTMASTER_DEATH,
-				  1000L / WAITS_PER_SECOND,
-				  WAIT_EVENT_PROMOTE);
+		(void) WaitLatch(MyLatch,
+						 WL_LATCH_SET | WL_TIMEOUT | WL_POSTMASTER_DEATH,
+						 1000L / WAITS_PER_SECOND,
+						 WAIT_EVENT_PROMOTE);
 	}
 
 	ereport(WARNING,

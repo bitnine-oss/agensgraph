@@ -4,7 +4,7 @@
  *	  Standard POSTGRES buffer page definitions.
  *
  *
- * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/storage/bufpage.h
@@ -53,14 +53,18 @@
  *
  * NOTES:
  *
- * linp1..N form an ItemId array.  ItemPointers point into this array
- * rather than pointing directly to a tuple.  Note that OffsetNumbers
+ * linp1..N form an ItemId (line pointer) array.  ItemPointers point
+ * to a physical block number and a logical offset (line pointer
+ * number) within that block/page.  Note that OffsetNumbers
  * conventionally start at 1, not 0.
  *
- * tuple1..N are added "backwards" on the page.  because a tuple's
- * ItemPointer points to its ItemId entry rather than its actual
+ * tuple1..N are added "backwards" on the page.  Since an ItemPointer
+ * offset is used to access an ItemId entry rather than an actual
  * byte-offset position, tuples can be physically shuffled on a page
- * whenever the need arises.
+ * whenever the need arises.  This indirection also keeps crash recovery
+ * relatively simple, because the low-level details of page space
+ * management can be controlled by standard buffer page code during
+ * logging, and during recovery.
  *
  * AM-generic per-page information is kept in PageHeaderData.
  *
@@ -233,7 +237,7 @@ typedef PageHeaderData *PageHeader;
 
 /*
  * PageGetContents
- *		To be used in case the page does not contain item pointers.
+ *		To be used in cases where the page does not contain line pointers.
  *
  * Note: prior to 8.3 this was not guaranteed to yield a MAXALIGN'd result.
  * Now it is.  Beware of old code that might think the offset to the contents
@@ -417,7 +421,7 @@ do { \
 extern void PageInit(Page page, Size pageSize, Size specialSize);
 extern bool PageIsVerified(Page page, BlockNumber blkno);
 extern OffsetNumber PageAddItemExtended(Page page, Item item, Size size,
-					OffsetNumber offsetNumber, int flags);
+										OffsetNumber offsetNumber, int flags);
 extern Page PageGetTempPage(Page page);
 extern Page PageGetTempPageCopy(Page page);
 extern Page PageGetTempPageCopySpecial(Page page);
@@ -431,7 +435,7 @@ extern void PageIndexTupleDelete(Page page, OffsetNumber offset);
 extern void PageIndexMultiDelete(Page page, OffsetNumber *itemnos, int nitems);
 extern void PageIndexTupleDeleteNoCompact(Page page, OffsetNumber offset);
 extern bool PageIndexTupleOverwrite(Page page, OffsetNumber offnum,
-						Item newtup, Size newsize);
+									Item newtup, Size newsize);
 extern char *PageSetChecksumCopy(Page page, BlockNumber blkno);
 extern void PageSetChecksumInplace(Page page, BlockNumber blkno);
 

@@ -9,12 +9,12 @@
  * for an external function is found - not guaranteed! - the index will then
  * be used to judge their instruction count / inline worthiness. After doing
  * so for all external functions, all the referenced functions (and
- * prerequisites) will be imorted.
+ * prerequisites) will be imported.
  *
- * Copyright (c) 2016-2018, PostgreSQL Global Development Group
+ * Copyright (c) 2016-2019, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
- *	  src/backend/lib/llvmjit/llvmjit_inline.c
+ *	  src/backend/lib/llvmjit/llvmjit_inline.cpp
  *
  *-------------------------------------------------------------------------
  */
@@ -308,7 +308,7 @@ llvm_build_inline_plan(llvm::Module *mod)
 				 * Check whether function and all its dependencies are too
 				 * big. Dependencies already counted for other functions that
 				 * will get inlined are not counted again. While this make
-				 * things somewhat order dependant, I can't quite see a point
+				 * things somewhat order dependent, I can't quite see a point
 				 * in a different behaviour.
 				 */
 				if (running_instcount > inlineState.costLimit)

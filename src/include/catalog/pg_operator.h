@@ -4,7 +4,7 @@
  *	  definition of the "operator" system catalog (pg_operator)
  *
  *
- * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/catalog/pg_operator.h
@@ -85,16 +85,16 @@ typedef FormData_pg_operator *Form_pg_operator;
 
 
 extern ObjectAddress OperatorCreate(const char *operatorName,
-			   Oid operatorNamespace,
-			   Oid leftTypeId,
-			   Oid rightTypeId,
-			   Oid procedureId,
-			   List *commutatorName,
-			   List *negatorName,
-			   Oid restrictionId,
-			   Oid joinId,
-			   bool canMerge,
-			   bool canHash);
+									Oid operatorNamespace,
+									Oid leftTypeId,
+									Oid rightTypeId,
+									Oid procedureId,
+									List *commutatorName,
+									List *negatorName,
+									Oid restrictionId,
+									Oid joinId,
+									bool canMerge,
+									bool canHash);
 
 extern ObjectAddress makeOperatorDependencies(HeapTuple tuple, bool isUpdate);
 

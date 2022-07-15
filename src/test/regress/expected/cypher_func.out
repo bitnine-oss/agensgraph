@@ -221,7 +221,7 @@ ERROR:  cannot cast "10" (jsonb type string) to numeric
 MATCH (u:numbers) RETURN ln(u.string);
 ERROR:  cannot cast "10" (jsonb type string) to numeric
 MATCH (u:numbers) RETURN log10(u.string);
-ERROR:  log10(): number is expected but "10"
+ERROR:  cannot cast "10" (jsonb type string) to numeric
 -- Check that log() == ln() != log10
 MATCH (u:numbers) RETURN log(u.numeric), ln(u.numeric), log10(u.numeric);
          ln         |         ln         |       log10        
@@ -231,19 +231,23 @@ MATCH (u:numbers) RETURN log(u.numeric), ln(u.numeric), log10(u.numeric);
 
 -- Check with a string constant
 RETURN log('10'), ln('10'), log10('10');
-ERROR:  log10(): number is expected but "10"
+        ln         |        ln         | log10 
+-------------------+-------------------+-------
+ 2.302585092994046 | 2.302585092994046 | 1
+(1 row)
+
 -- Check with a numeric constant;
 RETURN log(10), ln(10), log10(10);
-        ln        |        ln        |       log10        
-------------------+------------------+--------------------
- 2.30258509299405 | 2.30258509299405 | 1.0000000000000000
+        ln         |        ln         | log10 
+-------------------+-------------------+-------
+ 2.302585092994046 | 2.302585092994046 | 1
 (1 row)
 
 -- Check hybrid query
 return log10(10), (select log(10));
-       log10        | log 
---------------------+-----
- 1.0000000000000000 | 1
+ log10 | log 
+-------+-----
+ 1     | 1
 (1 row)
 
 -- cleanup

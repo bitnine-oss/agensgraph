@@ -367,12 +367,29 @@ WHERE relkind NOT IN ('r', 'i', 'S', 't', 'v', 'm', 'c', 'f', 'p') OR
     relpersistence NOT IN ('p', 'u', 't') OR
     relreplident NOT IN ('d', 'n', 'f', 'i');
 
--- Indexes should have an access method, others not.
-
+-- All tables and indexes should have an access method.
 SELECT p1.oid, p1.relname
 FROM pg_class as p1
-WHERE (p1.relkind = 'i' AND p1.relam = 0) OR
-    (p1.relkind != 'i' AND p1.relam != 0);
+WHERE p1.relkind NOT IN ('S', 'v', 'f', 'c') and
+    p1.relam = 0;
+
+-- Conversely, sequences, views, types shouldn't have them
+SELECT p1.oid, p1.relname
+FROM pg_class as p1
+WHERE p1.relkind IN ('S', 'v', 'f', 'c') and
+    p1.relam != 0;
+
+-- Indexes should have AMs of type 'i'
+SELECT pc.oid, pc.relname, pa.amname, pa.amtype
+FROM pg_class as pc JOIN pg_am AS pa ON (pc.relam = pa.oid)
+WHERE pc.relkind IN ('i') and
+    pa.amtype != 'i';
+
+-- Tables, matviews etc should have AMs of type 't'
+SELECT pc.oid, pc.relname, pa.amname, pa.amtype
+FROM pg_class as pc JOIN pg_am AS pa ON (pc.relam = pa.oid)
+WHERE pc.relkind IN ('r', 't', 'm') and
+    pa.amtype != 't';
 
 -- **************** pg_attribute ****************
 

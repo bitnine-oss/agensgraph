@@ -5,7 +5,7 @@
 # Input: UnicodeData.txt and CompositionExclusions.txt
 # Output: unicode_norm_table.h
 #
-# Copyright (c) 2000-2018, PostgreSQL Global Development Group
+# Copyright (c) 2000-2019, PostgreSQL Global Development Group
 
 use strict;
 use warnings;
@@ -74,7 +74,7 @@ print $OUTPUT <<HEADER;
  * unicode_norm_table.h
  *	  Composition table used for Unicode normalization
  *
- * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/common/unicode_norm_table.h
@@ -97,7 +97,8 @@ typedef struct
 } pg_unicode_decomposition;
 
 #define DECOMP_NO_COMPOSE	0x80	/* don't use for re-composition */
-#define DECOMP_INLINE		0x40	/* decomposition is stored inline in dec_index */
+#define DECOMP_INLINE		0x40	/* decomposition is stored inline in
+									 * dec_index */
 
 #define DECOMPOSITION_SIZE(x) ((x)->dec_size_flags & 0x3F)
 #define DECOMPOSITION_NO_COMPOSE(x) (((x)->dec_size_flags & DECOMP_NO_COMPOSE) != 0)

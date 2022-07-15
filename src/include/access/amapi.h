@@ -3,7 +3,7 @@
  * amapi.h
  *	  API for Postgres index access methods.
  *
- * Copyright (c) 2015-2018, PostgreSQL Global Development Group
+ * Copyright (c) 2015-2019, PostgreSQL Global Development Group
  *
  * src/include/access/amapi.h
  *
@@ -107,6 +107,9 @@ typedef bytea *(*amoptions_function) (Datum reloptions,
 typedef bool (*amproperty_function) (Oid index_oid, int attno,
 									 IndexAMProperty prop, const char *propname,
 									 bool *res, bool *isnull);
+
+/* name of phase as used in progress reporting */
+typedef char *(*ambuildphasename_function) (int64 phasenum);
 
 /* validate definition of an opclass for this AM */
 typedef bool (*amvalidate_function) (Oid opclassoid);
@@ -213,6 +216,7 @@ typedef struct IndexAmRoutine
 	amcostestimate_function amcostestimate;
 	amoptions_function amoptions;
 	amproperty_function amproperty; /* can be NULL */
+	ambuildphasename_function ambuildphasename; /* can be NULL */
 	amvalidate_function amvalidate;
 	ambeginscan_function ambeginscan;
 	amrescan_function amrescan;

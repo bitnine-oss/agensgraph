@@ -318,8 +318,48 @@ EXPLAIN SELECT * FROM ft1;                                      -- ERROR
 CREATE TABLE lt1 (a INT) PARTITION BY RANGE (a);
 CREATE FOREIGN TABLE ft_part1
   PARTITION OF lt1 FOR VALUES FROM (0) TO (1000) SERVER s0;
-CREATE INDEX ON lt1 (a);                                        -- ERROR
+CREATE INDEX ON lt1 (a);                              -- skips partition
+CREATE UNIQUE INDEX ON lt1 (a);                                 -- ERROR
+ALTER TABLE lt1 ADD PRIMARY KEY (a);                            -- ERROR
 DROP TABLE lt1;
+
+CREATE TABLE lt1 (a INT) PARTITION BY RANGE (a);
+CREATE INDEX ON lt1 (a);
+CREATE FOREIGN TABLE ft_part1
+  PARTITION OF lt1 FOR VALUES FROM (0) TO (1000) SERVER s0;
+CREATE FOREIGN TABLE ft_part2 (a INT) SERVER s0;
+ALTER TABLE lt1 ATTACH PARTITION ft_part2 FOR VALUES FROM (1000) TO (2000);
+DROP FOREIGN TABLE ft_part1, ft_part2;
+CREATE UNIQUE INDEX ON lt1 (a);
+ALTER TABLE lt1 ADD PRIMARY KEY (a);
+CREATE FOREIGN TABLE ft_part1
+  PARTITION OF lt1 FOR VALUES FROM (0) TO (1000) SERVER s0;     -- ERROR
+CREATE FOREIGN TABLE ft_part2 (a INT NOT NULL) SERVER s0;
+ALTER TABLE lt1 ATTACH PARTITION ft_part2
+  FOR VALUES FROM (1000) TO (2000);                             -- ERROR
+DROP TABLE lt1;
+DROP FOREIGN TABLE ft_part2;
+
+CREATE TABLE lt1 (a INT) PARTITION BY RANGE (a);
+CREATE INDEX ON lt1 (a);
+CREATE TABLE lt1_part1
+  PARTITION OF lt1 FOR VALUES FROM (0) TO (1000)
+  PARTITION BY RANGE (a);
+CREATE FOREIGN TABLE ft_part_1_1
+  PARTITION OF lt1_part1 FOR VALUES FROM (0) TO (100) SERVER s0;
+CREATE FOREIGN TABLE ft_part_1_2 (a INT) SERVER s0;
+ALTER TABLE lt1_part1 ATTACH PARTITION ft_part_1_2 FOR VALUES FROM (100) TO (200);
+CREATE UNIQUE INDEX ON lt1 (a);
+ALTER TABLE lt1 ADD PRIMARY KEY (a);
+DROP FOREIGN TABLE ft_part_1_1, ft_part_1_2;
+CREATE UNIQUE INDEX ON lt1 (a);
+ALTER TABLE lt1 ADD PRIMARY KEY (a);
+CREATE FOREIGN TABLE ft_part_1_1
+  PARTITION OF lt1_part1 FOR VALUES FROM (0) TO (100) SERVER s0;
+CREATE FOREIGN TABLE ft_part_1_2 (a INT NOT NULL) SERVER s0;
+ALTER TABLE lt1_part1 ATTACH PARTITION ft_part_1_2 FOR VALUES FROM (100) TO (200);
+DROP TABLE lt1;
+DROP FOREIGN TABLE ft_part_1_2;
 
 -- ALTER FOREIGN TABLE
 COMMENT ON FOREIGN TABLE ft1 IS 'foreign table';
@@ -501,10 +541,7 @@ CREATE SERVER s10 FOREIGN DATA WRAPPER foo;                     -- ERROR
 ALTER SERVER s9 VERSION '1.1';
 GRANT USAGE ON FOREIGN SERVER s9 TO regress_test_role;
 CREATE USER MAPPING FOR current_user SERVER s9;
--- We use terse mode to avoid ordering issues in cascade detail output.
-\set VERBOSITY terse
 DROP SERVER s9 CASCADE;
-\set VERBOSITY default
 RESET ROLE;
 CREATE SERVER s9 FOREIGN DATA WRAPPER foo;
 GRANT USAGE ON FOREIGN SERVER s9 TO regress_unprivileged_role;
@@ -528,9 +565,7 @@ RESET ROLE;
 SET ROLE regress_unprivileged_role;
 \deu+
 RESET ROLE;
-\set VERBOSITY terse
 DROP SERVER s10 CASCADE;
-\set VERBOSITY default
 
 -- Triggers
 CREATE FUNCTION dummy_trigger() RETURNS TRIGGER AS $$
@@ -660,10 +695,8 @@ SELECT relname, conname, contype, conislocal, coninhcount, connoinherit
 -- child does not inherit NO INHERIT constraints
 \d+ fd_pt1
 \d+ ft2
-\set VERBOSITY terse
 DROP FOREIGN TABLE ft2; -- ERROR
 DROP FOREIGN TABLE ft2 CASCADE;
-\set VERBOSITY default
 CREATE FOREIGN TABLE ft2 (
 	c1 integer NOT NULL,
 	c2 text,
@@ -809,10 +842,8 @@ DROP SCHEMA foreign_schema CASCADE;
 DROP ROLE regress_test_role;                                -- ERROR
 DROP SERVER t1 CASCADE;
 DROP USER MAPPING FOR regress_test_role SERVER s6;
-\set VERBOSITY terse
 DROP FOREIGN DATA WRAPPER foo CASCADE;
 DROP SERVER s8 CASCADE;
-\set VERBOSITY default
 DROP ROLE regress_test_indirect;
 DROP ROLE regress_test_role;
 DROP ROLE regress_unprivileged_role;                        -- ERROR

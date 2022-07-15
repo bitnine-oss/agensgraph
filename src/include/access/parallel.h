@@ -3,7 +3,7 @@
  * parallel.h
  *	  Infrastructure for launching parallel workers
  *
- * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/access/parallel.h
@@ -60,8 +60,7 @@ extern PGDLLIMPORT bool InitializingParallelWorker;
 #define		IsParallelWorker()		(ParallelWorkerNumber >= 0)
 
 extern ParallelContext *CreateParallelContext(const char *library_name,
-					  const char *function_name, int nworkers,
-					  bool serializable_okay);
+											  const char *function_name, int nworkers);
 extern void InitializeParallelDSM(ParallelContext *pcxt);
 extern void ReinitializeParallelDSM(ParallelContext *pcxt);
 extern void LaunchParallelWorkers(ParallelContext *pcxt);

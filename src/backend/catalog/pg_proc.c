@@ -3,7 +3,7 @@
  * pg_proc.c
  *	  routines to support manipulation of the pg_proc relation
  *
- * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -15,6 +15,7 @@
 #include "postgres.h"
 
 #include "access/htup_details.h"
+#include "access/table.h"
 #include "access/xact.h"
 #include "catalog/catalog.h"
 #include "catalog/dependency.h"
@@ -49,10 +50,10 @@ typedef struct
 } parse_error_callback_arg;
 
 static void sql_function_parse_error_callback(void *arg);
-static int match_prosrc_to_query(const char *prosrc, const char *queryText,
-					  int cursorpos);
+static int	match_prosrc_to_query(const char *prosrc, const char *queryText,
+								  int cursorpos);
 static bool match_prosrc_to_literal(const char *prosrc, const char *literal,
-						int cursorpos, int *newcursorpos);
+									int cursorpos, int *newcursorpos);
 
 
 /* ----------------------------------------------------------------
@@ -87,6 +88,7 @@ ProcedureCreate(const char *procedureName,
 				List *parameterDefaults,
 				Datum trftypes,
 				Datum proconfig,
+				Oid prosupport,
 				float4 procost,
 				float4 prorows)
 {
@@ -318,7 +320,7 @@ ProcedureCreate(const char *procedureName,
 	values[Anum_pg_proc_procost - 1] = Float4GetDatum(procost);
 	values[Anum_pg_proc_prorows - 1] = Float4GetDatum(prorows);
 	values[Anum_pg_proc_provariadic - 1] = ObjectIdGetDatum(variadicType);
-	values[Anum_pg_proc_protransform - 1] = ObjectIdGetDatum(InvalidOid);
+	values[Anum_pg_proc_prosupport - 1] = ObjectIdGetDatum(prosupport);
 	values[Anum_pg_proc_prokind - 1] = CharGetDatum(prokind);
 	values[Anum_pg_proc_prosecdef - 1] = BoolGetDatum(security_definer);
 	values[Anum_pg_proc_proleakproof - 1] = BoolGetDatum(isLeakProof);
@@ -361,7 +363,7 @@ ProcedureCreate(const char *procedureName,
 		nulls[Anum_pg_proc_proconfig - 1] = true;
 	/* proacl will be determined later */
 
-	rel = heap_open(ProcedureRelationId, RowExclusiveLock);
+	rel = table_open(ProcedureRelationId, RowExclusiveLock);
 	tupDesc = RelationGetDescr(rel);
 
 	/* Check for pre-existing definition */
@@ -402,7 +404,9 @@ ProcedureCreate(const char *procedureName,
 					  errdetail("\"%s\" is a window function.", procedureName) :
 					  0)));
 
-		dropcmd = (prokind == PROKIND_PROCEDURE ? "DROP PROCEDURE" : "DROP FUNCTION");
+		dropcmd = (prokind == PROKIND_PROCEDURE ? "DROP PROCEDURE" :
+				   prokind == PROKIND_AGGREGATE ? "DROP AGGREGATE" :
+				   "DROP FUNCTION");
 
 		/*
 		 * Not okay to change the return type of the existing proc, since
@@ -419,7 +423,11 @@ ProcedureCreate(const char *procedureName,
 					 prokind == PROKIND_PROCEDURE
 					 ? errmsg("cannot change whether a procedure has output parameters")
 					 : errmsg("cannot change return type of existing function"),
-					 /* translator: first %s is DROP FUNCTION or DROP PROCEDURE */
+
+			/*
+			 * translator: first %s is DROP FUNCTION, DROP PROCEDURE, or DROP
+			 * AGGREGATE
+			 */
 					 errhint("Use %s %s first.",
 							 dropcmd,
 							 format_procedure(oldproc->oid))));
@@ -446,7 +454,7 @@ ProcedureCreate(const char *procedureName,
 						(errcode(ERRCODE_INVALID_FUNCTION_DEFINITION),
 						 errmsg("cannot change return type of existing function"),
 						 errdetail("Row type defined by OUT parameters is different."),
-						 /* translator: first %s is DROP FUNCTION or DROP PROCEDURE */
+				/* translator: first %s is DROP FUNCTION or DROP PROCEDURE */
 						 errhint("Use %s %s first.",
 								 dropcmd,
 								 format_procedure(oldproc->oid))));
@@ -491,7 +499,7 @@ ProcedureCreate(const char *procedureName,
 							(errcode(ERRCODE_INVALID_FUNCTION_DEFINITION),
 							 errmsg("cannot change name of input parameter \"%s\"",
 									old_arg_names[j]),
-							 /* translator: first %s is DROP FUNCTION or DROP PROCEDURE */
+					/* translator: first %s is DROP FUNCTION or DROP PROCEDURE */
 							 errhint("Use %s %s first.",
 									 dropcmd,
 									 format_procedure(oldproc->oid))));
@@ -517,7 +525,7 @@ ProcedureCreate(const char *procedureName,
 				ereport(ERROR,
 						(errcode(ERRCODE_INVALID_FUNCTION_DEFINITION),
 						 errmsg("cannot remove parameter defaults from existing function"),
-						 /* translator: first %s is DROP FUNCTION or DROP PROCEDURE */
+				/* translator: first %s is DROP FUNCTION or DROP PROCEDURE */
 						 errhint("Use %s %s first.",
 								 dropcmd,
 								 format_procedure(oldproc->oid))));
@@ -545,7 +553,7 @@ ProcedureCreate(const char *procedureName,
 					ereport(ERROR,
 							(errcode(ERRCODE_INVALID_FUNCTION_DEFINITION),
 							 errmsg("cannot change data type of existing parameter default value"),
-							 /* translator: first %s is DROP FUNCTION or DROP PROCEDURE */
+					/* translator: first %s is DROP FUNCTION or DROP PROCEDURE */
 							 errhint("Use %s %s first.",
 									 dropcmd,
 									 format_procedure(oldproc->oid))));
@@ -571,7 +579,7 @@ ProcedureCreate(const char *procedureName,
 	else
 	{
 		/* Creating a new procedure */
-		Oid		newOid;
+		Oid			newOid;
 
 		/* First, get default permissions and set up proacl */
 		proacl = get_user_default_acl(OBJECT_FUNCTION, proowner,
@@ -655,6 +663,15 @@ ProcedureCreate(const char *procedureName,
 		recordDependencyOnExpr(&myself, (Node *) parameterDefaults,
 							   NIL, DEPENDENCY_NORMAL);
 
+	/* dependency on support function, if any */
+	if (OidIsValid(prosupport))
+	{
+		referenced.classId = ProcedureRelationId;
+		referenced.objectId = prosupport;
+		referenced.objectSubId = 0;
+		recordDependencyOn(&myself, &referenced, DEPENDENCY_NORMAL);
+	}
+
 	/* dependency on owner */
 	if (!is_update)
 		recordDependencyOnOwner(ProcedureRelationId, retval, proowner);
@@ -672,7 +689,7 @@ ProcedureCreate(const char *procedureName,
 	/* Post creation hook for new function */
 	InvokeObjectPostCreateHook(ProcedureRelationId, retval, 0);
 
-	heap_close(rel, RowExclusiveLock);
+	table_close(rel, RowExclusiveLock);
 
 	/* Verify function body */
 	if (OidIsValid(languageValidator))

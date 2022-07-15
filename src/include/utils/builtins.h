@@ -4,7 +4,7 @@
  *	  Declarations for operations on built-in types.
  *
  *
- * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/utils/builtins.h
@@ -25,7 +25,7 @@ extern bool parse_bool_with_len(const char *value, size_t len, bool *result);
 
 /* domains.c */
 extern void domain_check(Datum value, bool isnull, Oid domainType,
-			 void **extra, MemoryContext mcxt);
+						 void **extra, MemoryContext mcxt);
 extern int	errdatatype(Oid datatypeOid);
 extern int	errdomainconstraint(Oid datatypeOid, const char *conname);
 
@@ -59,17 +59,17 @@ extern int	oid_cmp(const void *p1, const void *p2);
 
 /* regexp.c */
 extern char *regexp_fixed_prefix(text *text_re, bool case_insensitive,
-					Oid collation, bool *exact);
+								 Oid collation, bool *exact);
 
 /* ruleutils.c */
 extern bool quote_all_identifiers;
 extern const char *quote_identifier(const char *ident);
 extern char *quote_qualified_identifier(const char *qualifier,
-						   const char *ident);
+										const char *ident);
 extern void generate_operator_clause(fmStringInfo buf,
-						 const char *leftop, Oid leftoptype,
-						 Oid opoid,
-						 const char *rightop, Oid rightoptype);
+									 const char *leftop, Oid leftoptype,
+									 Oid opoid,
+									 const char *rightop, Oid rightoptype);
 
 extern Datum ag_get_propindexdef(PG_FUNCTION_ARGS);
 extern Datum ag_get_graphconstraintdef(PG_FUNCTION_ARGS);
@@ -91,11 +91,11 @@ extern int	xidComparator(const void *arg1, const void *arg2);
 
 /* inet_cidr_ntop.c */
 extern char *inet_cidr_ntop(int af, const void *src, int bits,
-			   char *dst, size_t size);
+							char *dst, size_t size);
 
 /* inet_net_pton.c */
-extern int inet_net_pton(int af, const char *src,
-			  void *dst, size_t size);
+extern int	inet_net_pton(int af, const char *src,
+						  void *dst, size_t size);
 
 /* network.c */
 extern double convert_network_to_scalar(Datum value, Oid typid, bool *failure);

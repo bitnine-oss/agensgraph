@@ -29,6 +29,7 @@ CREATE [ [ GLOBAL | LOCAL ] { TEMPORARY | TEMP } | UNLOGGED ] TABLE [ IF NOT EXI
 ] )
 [ INHERITS ( <replaceable>parent_table</replaceable> [, ... ] ) ]
 [ PARTITION BY { RANGE | LIST | HASH } ( { <replaceable class="parameter">column_name</replaceable> | ( <replaceable class="parameter">expression</replaceable> ) } [ COLLATE <replaceable class="parameter">collation</replaceable> ] [ <replaceable class="parameter">opclass</replaceable> ] [, ... ] ) ]
+[ USING <replaceable class="parameter">method</replaceable> ]
 [ WITH ( <replaceable class="parameter">storage_parameter</replaceable> [= <replaceable class="parameter">value</replaceable>] [, ... ] ) | WITHOUT OIDS ]
 [ ON COMMIT { PRESERVE ROWS | DELETE ROWS | DROP } ]
 [ TABLESPACE <replaceable class="parameter">tablespace_name</replaceable> ]
@@ -40,6 +41,7 @@ CREATE [ [ GLOBAL | LOCAL ] { TEMPORARY | TEMP } | UNLOGGED ] TABLE [ IF NOT EXI
     [, ... ]
 ) ]
 [ PARTITION BY { RANGE | LIST | HASH } ( { <replaceable class="parameter">column_name</replaceable> | ( <replaceable class="parameter">expression</replaceable> ) } [ COLLATE <replaceable class="parameter">collation</replaceable> ] [ <replaceable class="parameter">opclass</replaceable> ] [, ... ] ) ]
+[ USING <replaceable class="parameter">method</replaceable> ]
 [ WITH ( <replaceable class="parameter">storage_parameter</replaceable> [= <replaceable class="parameter">value</replaceable>] [, ... ] ) | WITHOUT OIDS ]
 [ ON COMMIT { PRESERVE ROWS | DELETE ROWS | DROP } ]
 [ TABLESPACE <replaceable class="parameter">tablespace_name</replaceable> ]
@@ -51,6 +53,7 @@ CREATE [ [ GLOBAL | LOCAL ] { TEMPORARY | TEMP } | UNLOGGED ] TABLE [ IF NOT EXI
     [, ... ]
 ) ] { FOR VALUES <replaceable class="parameter">partition_bound_spec</replaceable> | DEFAULT }
 [ PARTITION BY { RANGE | LIST | HASH } ( { <replaceable class="parameter">column_name</replaceable> | ( <replaceable class="parameter">expression</replaceable> ) } [ COLLATE <replaceable class="parameter">collation</replaceable> ] [ <replaceable class="parameter">opclass</replaceable> ] [, ... ] ) ]
+[ USING <replaceable class="parameter">method</replaceable> ]
 [ WITH ( <replaceable class="parameter">storage_parameter</replaceable> [= <replaceable class="parameter">value</replaceable>] [, ... ] ) | WITHOUT OIDS ]
 [ ON COMMIT { PRESERVE ROWS | DELETE ROWS | DROP } ]
 [ TABLESPACE <replaceable class="parameter">tablespace_name</replaceable> ]
@@ -62,11 +65,12 @@ CREATE [ [ GLOBAL | LOCAL ] { TEMPORARY | TEMP } | UNLOGGED ] TABLE [ IF NOT EXI
   NULL |
   CHECK ( <replaceable class="parameter">expression</replaceable> ) [ NO INHERIT ] |
   DEFAULT <replaceable>default_expr</replaceable> |
+  GENERATED ALWAYS AS ( <replaceable>generation_expr</replaceable> ) STORED |
   GENERATED { ALWAYS | BY DEFAULT } AS IDENTITY [ ( <replaceable>sequence_options</replaceable> ) ] |
   UNIQUE <replaceable class="parameter">index_parameters</replaceable> |
   PRIMARY KEY <replaceable class="parameter">index_parameters</replaceable> |
   REFERENCES <replaceable class="parameter">reftable</replaceable> [ ( <replaceable class="parameter">refcolumn</replaceable> ) ] [ MATCH FULL | MATCH PARTIAL | MATCH SIMPLE ]
-    [ ON DELETE <replaceable class="parameter">action</replaceable> ] [ ON UPDATE <replaceable class="parameter">action</replaceable> ] }
+    [ ON DELETE <replaceable class="parameter">referential_action</replaceable> ] [ ON UPDATE <replaceable class="parameter">referential_action</replaceable> ] }
 [ DEFERRABLE | NOT DEFERRABLE ] [ INITIALLY DEFERRED | INITIALLY IMMEDIATE ]
 
 <phrase>and <replaceable class="parameter">table_constraint</replaceable> is:</phrase>
@@ -77,18 +81,19 @@ CREATE [ [ GLOBAL | LOCAL ] { TEMPORARY | TEMP } | UNLOGGED ] TABLE [ IF NOT EXI
   PRIMARY KEY ( <replaceable class="parameter">column_name</replaceable> [, ... ] ) <replaceable class="parameter">index_parameters</replaceable> |
   EXCLUDE [ USING <replaceable class="parameter">index_method</replaceable> ] ( <replaceable class="parameter">exclude_element</replaceable> WITH <replaceable class="parameter">operator</replaceable> [, ... ] ) <replaceable class="parameter">index_parameters</replaceable> [ WHERE ( <replaceable class="parameter">predicate</replaceable> ) ] |
   FOREIGN KEY ( <replaceable class="parameter">column_name</replaceable> [, ... ] ) REFERENCES <replaceable class="parameter">reftable</replaceable> [ ( <replaceable class="parameter">refcolumn</replaceable> [, ... ] ) ]
-    [ MATCH FULL | MATCH PARTIAL | MATCH SIMPLE ] [ ON DELETE <replaceable class="parameter">action</replaceable> ] [ ON UPDATE <replaceable class="parameter">action</replaceable> ] }
+    [ MATCH FULL | MATCH PARTIAL | MATCH SIMPLE ] [ ON DELETE <replaceable
+class="parameter">referential_action</replaceable> ] [ ON UPDATE <replaceable class="parameter">referential_action</replaceable> ] }
 [ DEFERRABLE | NOT DEFERRABLE ] [ INITIALLY DEFERRED | INITIALLY IMMEDIATE ]
 
 <phrase>and <replaceable class="parameter">like_option</replaceable> is:</phrase>
 
-{ INCLUDING | EXCLUDING } { COMMENTS | CONSTRAINTS | DEFAULTS | IDENTITY | INDEXES | STATISTICS | STORAGE | ALL }
+{ INCLUDING | EXCLUDING } { COMMENTS | CONSTRAINTS | DEFAULTS | GENERATED | IDENTITY | INDEXES | STATISTICS | STORAGE | ALL }
 
 <phrase>and <replaceable class="parameter">partition_bound_spec</replaceable> is:</phrase>
 
-IN ( { <replaceable class="parameter">numeric_literal</replaceable> | <replaceable class="parameter">string_literal</replaceable> | TRUE | FALSE | NULL } [, ...] ) |
-FROM ( { <replaceable class="parameter">numeric_literal</replaceable> | <replaceable class="parameter">string_literal</replaceable> | TRUE | FALSE | MINVALUE | MAXVALUE } [, ...] )
-  TO ( { <replaceable class="parameter">numeric_literal</replaceable> | <replaceable class="parameter">string_literal</replaceable> | TRUE | FALSE | MINVALUE | MAXVALUE } [, ...] ) |
+IN ( <replaceable class="parameter">partition_bound_expr</replaceable> [, ...] ) |
+FROM ( { <replaceable class="parameter">partition_bound_expr</replaceable> | MINVALUE | MAXVALUE } [, ...] )
+  TO ( { <replaceable class="parameter">partition_bound_expr</replaceable> | MINVALUE | MAXVALUE } [, ...] ) |
 WITH ( MODULUS <replaceable class="parameter">numeric_literal</replaceable>, REMAINDER <replaceable class="parameter">numeric_literal</replaceable> )
 
 <phrase><replaceable class="parameter">index_parameters</replaceable> in <literal>UNIQUE</literal>, <literal>PRIMARY KEY</literal>, and <literal>EXCLUDE</literal> constraints are:</phrase>
@@ -377,9 +382,6 @@ WITH ( MODULUS <replaceable class="parameter">numeric_literal</replaceable>, REM
      <para>
       Partitioned tables do not support <literal>EXCLUDE</literal> constraints;
       however, you can define these constraints on individual partitions.
-      Also, while it's possible to define <literal>PRIMARY KEY</literal>
-      constraints on partitioned tables, creating foreign keys that
-      reference a partitioned table is not yet supported.
      </para>
 
      <para>
@@ -412,12 +414,13 @@ WITH ( MODULUS <replaceable class="parameter">numeric_literal</replaceable>, REM
      </para>
 
      <para>
-      Each of the values specified in
-      the <replaceable class="parameter">partition_bound_spec</replaceable> is
-      a literal, <literal>NULL</literal>, <literal>MINVALUE</literal>, or
-      <literal>MAXVALUE</literal>.  Each literal value must be either a
-      numeric constant that is coercible to the corresponding partition key
-      column's type, or a string literal that is valid input for that type.
+      <replaceable class="parameter">partition_bound_expr</replaceable> is
+      any variable-free expression (subqueries, window functions, aggregate
+      functions, and set-returning functions are not allowed).  Its data type
+      must match the data type of the corresponding partition key column.
+      The expression is evaluated once at table creation time, so it can
+      even contain volatile expressions such as
+      <literal><function>CURRENT_TIMESTAMP</function></literal>.
      </para>
 
      <para>
@@ -626,6 +629,16 @@ WITH ( MODULUS <replaceable class="parameter">numeric_literal</replaceable>, REM
        </varlistentry>
 
        <varlistentry>
+        <term><literal>INCLUDING GENERATED</literal></term>
+        <listitem>
+         <para>
+          Any generation expressions of copied column definitions will be
+          copied.  By default, new columns will be regular base columns.
+         </para>
+        </listitem>
+       </varlistentry>
+
+       <varlistentry>
         <term><literal>INCLUDING IDENTITY</literal></term>
         <listitem>
          <para>
@@ -754,7 +767,8 @@ WITH ( MODULUS <replaceable class="parameter">numeric_literal</replaceable>, REM
      <para>
       Currently, <literal>CHECK</literal> expressions cannot contain
       subqueries nor refer to variables other than columns of the
-      current row.  The system column <literal>tableoid</literal>
+      current row (see <xref linkend="ddl-constraints-check-constraints"/>).
+      The system column <literal>tableoid</literal>
       may be referenced, but not any other system column.
      </para>
 
@@ -780,16 +794,38 @@ WITH ( MODULUS <replaceable class="parameter">numeric_literal</replaceable>, REM
      <para>
       The <literal>DEFAULT</literal> clause assigns a default data value for
       the column whose column definition it appears within.  The value
-      is any variable-free expression (subqueries and cross-references
-      to other columns in the current table are not allowed).  The
-      data type of the default expression must match the data type of the
-      column.
+      is any variable-free expression (in particular, cross-references
+      to other columns in the current table are not allowed).  Subqueries
+      are not allowed either.  The data type of the default expression must
+      match the data type of the column.
      </para>
 
      <para>
       The default expression will be used in any insert operation that
       does not specify a value for the column.  If there is no default
       for a column, then the default is null.
+     </para>
+    </listitem>
+   </varlistentry>
+
+   <varlistentry>
+    <term><literal>GENERATED ALWAYS AS ( <replaceable>generation_expr</replaceable> ) STORED</literal><indexterm><primary>generated column</primary></indexterm></term>
+    <listitem>
+     <para>
+      This clause creates the column as a <firstterm>generated
+      column</firstterm>.  The column cannot be written to, and when read the
+      result of the specified expression will be returned.
+     </para>
+
+     <para>
+      The keyword <literal>STORED</literal> is required to signify that the
+      column will be computed on write and will be stored on disk.
+     </para>
+
+     <para>
+      The generation expression can refer to other columns in the table, but
+      not other generated columns.  Any functions and operators used must be
+      immutable.  References to other tables are not allowed.
      </para>
     </listitem>
    </varlistentry>
@@ -968,13 +1004,13 @@ WITH ( MODULUS <replaceable class="parameter">numeric_literal</replaceable>, REM
    </varlistentry>
 
    <varlistentry>
-    <term><literal>REFERENCES <replaceable class="parameter">reftable</replaceable> [ ( <replaceable class="parameter">refcolumn</replaceable> ) ] [ MATCH <replaceable class="parameter">matchtype</replaceable> ] [ ON DELETE <replaceable class="parameter">action</replaceable> ] [ ON UPDATE <replaceable class="parameter">action</replaceable> ]</literal> (column constraint)</term>
+    <term><literal>REFERENCES <replaceable class="parameter">reftable</replaceable> [ ( <replaceable class="parameter">refcolumn</replaceable> ) ] [ MATCH <replaceable class="parameter">matchtype</replaceable> ] [ ON DELETE <replaceable class="parameter">referential_action</replaceable> ] [ ON UPDATE <replaceable class="parameter">referential_action</replaceable> ]</literal> (column constraint)</term>
 
    <term><literal>FOREIGN KEY ( <replaceable class="parameter">column_name</replaceable> [, ... ] )
     REFERENCES <replaceable class="parameter">reftable</replaceable> [ ( <replaceable class="parameter">refcolumn</replaceable> [, ... ] ) ]
     [ MATCH <replaceable class="parameter">matchtype</replaceable> ]
-    [ ON DELETE <replaceable class="parameter">action</replaceable> ]
-    [ ON UPDATE <replaceable class="parameter">action</replaceable> ]</literal>
+    [ ON DELETE <replaceable class="parameter">referential_action</replaceable> ]
+    [ ON UPDATE <replaceable class="parameter">referential_action</replaceable> ]</literal>
     (table constraint)</term>
 
     <listitem>
@@ -992,9 +1028,7 @@ WITH ( MODULUS <replaceable class="parameter">numeric_literal</replaceable>, REM
       addition of a foreign key constraint requires a
       <literal>SHARE ROW EXCLUSIVE</literal> lock on the referenced table.
       Note that foreign key constraints cannot be defined between temporary
-      tables and permanent tables.  Also note that while it is possible to
-      define a foreign key on a partitioned table, it is not possible to
-      declare a foreign key that references a partitioned table.
+      tables and permanent tables.
      </para>
 
      <para>
@@ -1134,6 +1168,20 @@ WITH ( MODULUS <replaceable class="parameter">numeric_literal</replaceable>, REM
     </listitem>
    </varlistentry>
 
+   <varlistentry id="sql-createtable-method">
+    <term><literal>USING <replaceable class="parameter">method</replaceable></literal></term>
+    <listitem>
+     <para>
+      This optional clause specifies the table access method to use to store
+      the contents for the new table; the method needs be an access method of
+      type <literal>TABLE</literal>. See <xref linkend="tableam"/> for more
+      information.  If this option is not specified, the default table access
+      method is chosen for the new table. See <xref
+      linkend="guc-default-table-access-method"/> for more information.
+     </para>
+    </listitem>
+   </varlistentry>
+
    <varlistentry>
     <term><literal>WITH ( <replaceable class="parameter">storage_parameter</replaceable> [= <replaceable class="parameter">value</replaceable>] [, ... ] )</literal></term>
     <listitem>
@@ -1207,7 +1255,7 @@ WITH ( MODULUS <replaceable class="parameter">numeric_literal</replaceable>, REM
     </listitem>
    </varlistentry>
 
-   <varlistentry>
+   <varlistentry id="sql-createtable-tablespace">
     <term><literal>TABLESPACE <replaceable class="parameter">tablespace_name</replaceable></literal></term>
     <listitem>
      <para>
@@ -1215,7 +1263,11 @@ WITH ( MODULUS <replaceable class="parameter">numeric_literal</replaceable>, REM
       of the tablespace in which the new table is to be created.
       If not specified,
       <xref linkend="guc-default-tablespace"/> is consulted, or
-      <xref linkend="guc-temp-tablespaces"/> if the table is temporary.
+      <xref linkend="guc-temp-tablespaces"/> if the table is temporary.  For
+      partitioned tables, since no storage is required for the table itself,
+      the tablespace specified overrides <literal>default_tablespace</literal>
+      as the default tablespace to use for any newly created partitions when no
+      other tablespace is explicitly specified.
      </para>
     </listitem>
    </varlistentry>
@@ -1264,8 +1316,12 @@ WITH ( MODULUS <replaceable class="parameter">numeric_literal</replaceable>, REM
 
    <variablelist>
 
-   <varlistentry>
-    <term><literal>fillfactor</literal> (<type>integer</type>)</term>
+    <varlistentry id="reloption-fillfactor" xreflabel="fillfactor">
+    <term><varname>fillfactor</varname> (<type>integer</type>)
+    <indexterm>
+     <primary><varname>fillfactor</varname> storage parameter</primary>
+    </indexterm>
+    </term>
     <listitem>
      <para>
       The fillfactor for a table is a percentage between 10 and 100.
@@ -1282,8 +1338,12 @@ WITH ( MODULUS <replaceable class="parameter">numeric_literal</replaceable>, REM
     </listitem>
    </varlistentry>
 
-   <varlistentry>
-    <term><literal>toast_tuple_target</literal> (<type>integer</type>)</term>
+   <varlistentry id="reloption-toast-tuple-target" xreflabel="toast_tuple_target">
+    <term><literal>toast_tuple_target</literal> (<type>integer</type>)
+    <indexterm>
+     <primary><varname>toast_tuple_target</varname> storage parameter</primary>
+    </indexterm>
+    </term>
     <listitem>
      <para>
       The toast_tuple_target specifies the minimum tuple length required before
@@ -1303,8 +1363,12 @@ WITH ( MODULUS <replaceable class="parameter">numeric_literal</replaceable>, REM
     </listitem>
    </varlistentry>
 
-   <varlistentry>
-    <term><literal>parallel_workers</literal> (<type>integer</type>)</term>
+   <varlistentry id="reloption-parallel-workers" xreflabel="parallel_workers">
+    <term><literal>parallel_workers</literal> (<type>integer</type>)
+     <indexterm>
+     <primary><varname>parallel_workers</varname> storage parameter</primary>
+    </indexterm>
+    </term>
     <listitem>
      <para>
       This sets the number of workers that should be used to assist a parallel
@@ -1316,8 +1380,12 @@ WITH ( MODULUS <replaceable class="parameter">numeric_literal</replaceable>, REM
     </listitem>
    </varlistentry>
 
-   <varlistentry>
-    <term><literal>autovacuum_enabled</literal>, <literal>toast.autovacuum_enabled</literal> (<type>boolean</type>)</term>
+   <varlistentry id="reloption-autovacuum-enabled" xreflabel="autovacuum_enabled">
+    <term><literal>autovacuum_enabled</literal>, <literal>toast.autovacuum_enabled</literal> (<type>boolean</type>)
+    <indexterm>
+     <primary><varname>autovacuum_enabled</varname> storage parameter</primary>
+    </indexterm>
+    </term>
     <listitem>
      <para>
      Enables or disables the autovacuum daemon for a particular table.
@@ -1337,8 +1405,53 @@ WITH ( MODULUS <replaceable class="parameter">numeric_literal</replaceable>, REM
     </listitem>
    </varlistentry>
 
-   <varlistentry>
-    <term><literal>autovacuum_vacuum_threshold</literal>, <literal>toast.autovacuum_vacuum_threshold</literal> (<type>integer</type>)</term>
+   <varlistentry id="reloption-vacuum-index-cleanup" xreflabel="vacuum_index_cleanup">
+    <term><literal>vacuum_index_cleanup</literal>, <literal>toast.vacuum_index_cleanup</literal> (<type>boolean</type>)
+    <indexterm>
+     <primary><varname>vacuum_index_cleanup</varname> storage parameter</primary>
+    </indexterm>
+    </term>
+    <listitem>
+     <para>
+      Enables or disables index cleanup when <command>VACUUM</command> is
+      run on this table.  The default value is <literal>true</literal>.
+      Disabling index cleanup can speed up <command>VACUUM</command> very
+      significantly, but may also lead to severely bloated indexes if table
+      modifications are frequent.  The <literal>INDEX_CLEANUP</literal>
+      parameter of <xref linkend="sql-vacuum"/>, if specified, overrides
+      the value of this option.
+     </para>
+    </listitem>
+   </varlistentry>
+
+   <varlistentry id="reloption-vacuum-truncate" xreflabel="vacuum_truncate">
+    <term><literal>vacuum_truncate</literal>, <literal>toast.vacuum_truncate</literal> (<type>boolean</type>)
+    <indexterm>
+     <primary><varname>vacuum_truncate</varname> storage parameter</primary>
+    </indexterm>
+    </term>
+    <listitem>
+     <para>
+      Enables or disables vacuum to try to truncate off any empty pages
+      at the end of this table. The default value is <literal>true</literal>.
+      If <literal>true</literal>, <command>VACUUM</command> and
+      autovacuum do the truncation and the disk space for
+      the truncated pages is returned to the operating system.
+      Note that the truncation requires <literal>ACCESS EXCLUSIVE</literal>
+      lock on the table. The <literal>TRUNCATE</literal> parameter
+      of <xref linkend="sql-vacuum"/>, if specified, overrides the value
+      of this option.
+     </para>
+    </listitem>
+   </varlistentry>
+
+   <varlistentry id="reloption-autovacuum-vacuum-threshold" xreflabel="autovacuum_vacuum_threshold">
+    <term><literal>autovacuum_vacuum_threshold</literal>, <literal>toast.autovacuum_vacuum_threshold</literal> (<type>integer</type>)
+    <indexterm>
+     <primary><varname>autovacuum_vacuum_threshold</varname></primary>
+     <secondary>storage parameter</secondary>
+    </indexterm>
+    </term>
     <listitem>
      <para>
       Per-table value for <xref linkend="guc-autovacuum-vacuum-threshold"/>
@@ -1347,8 +1460,13 @@ WITH ( MODULUS <replaceable class="parameter">numeric_literal</replaceable>, REM
     </listitem>
    </varlistentry>
 
-   <varlistentry>
-    <term><literal>autovacuum_vacuum_scale_factor</literal>, <literal>toast.autovacuum_vacuum_scale_factor</literal> (<type>float4</type>)</term>
+   <varlistentry id="reloption-autovacuum-vauum-scale-factor" xreflabel="autovacuum_vacuum_scale_factor">
+    <term><literal>autovacuum_vacuum_scale_factor</literal>, <literal>toast.autovacuum_vacuum_scale_factor</literal> (<type>float4</type>)
+    <indexterm>
+     <primary><varname>autovacuum_vacuum_scale_factor</varname> </primary>
+     <secondary>storage parameter</secondary>
+    </indexterm>
+    </term>
     <listitem>
      <para>
       Per-table value for <xref linkend="guc-autovacuum-vacuum-scale-factor"/>
@@ -1357,8 +1475,13 @@ WITH ( MODULUS <replaceable class="parameter">numeric_literal</replaceable>, REM
     </listitem>
    </varlistentry>
 
-   <varlistentry>
-    <term><literal>autovacuum_analyze_threshold</literal> (<type>integer</type>)</term>
+   <varlistentry id="reloption-autovacuum-analyze-threshold" xreflabel="autovacuum_analyze_threshold">
+    <term><literal>autovacuum_analyze_threshold</literal> (<type>integer</type>)
+    <indexterm>
+     <primary><varname>autovacuum_analyze_threshold</varname></primary>
+     <secondary>storage parameter</secondary>
+    </indexterm>
+    </term>
     <listitem>
      <para>
       Per-table value for <xref linkend="guc-autovacuum-analyze-threshold"/>
@@ -1367,8 +1490,13 @@ WITH ( MODULUS <replaceable class="parameter">numeric_literal</replaceable>, REM
     </listitem>
    </varlistentry>
 
-   <varlistentry>
-    <term><literal>autovacuum_analyze_scale_factor</literal> (<type>float4</type>)</term>
+   <varlistentry id="reloption-autovacuum-analyze-scale-factor" xreflabel="autovacuum_analyze_scale_factor">
+    <term><literal>autovacuum_analyze_scale_factor</literal> (<type>float4</type>)
+    <indexterm>
+     <primary><varname>autovacuum_analyze_scale_factor</varname></primary>
+     <secondary>storage parameter</secondary>
+    </indexterm>
+    </term>
     <listitem>
      <para>
       Per-table value for <xref linkend="guc-autovacuum-analyze-scale-factor"/>
@@ -1377,8 +1505,13 @@ WITH ( MODULUS <replaceable class="parameter">numeric_literal</replaceable>, REM
     </listitem>
    </varlistentry>
 
-   <varlistentry>
-    <term><literal>autovacuum_vacuum_cost_delay</literal>, <literal>toast.autovacuum_vacuum_cost_delay</literal> (<type>integer</type>)</term>
+   <varlistentry id="reloption-autovacuum-vacuum-cost-delay" xreflabel="autovacuum_vacuum_cost_delay">
+    <term><literal>autovacuum_vacuum_cost_delay</literal>, <literal>toast.autovacuum_vacuum_cost_delay</literal> (<type>floating point</type>)
+    <indexterm>
+     <primary><varname>autovacuum_vacuum_cost_delay</varname></primary>
+     <secondary>storage parameter</secondary>
+    </indexterm>
+    </term>
     <listitem>
      <para>
       Per-table value for <xref linkend="guc-autovacuum-vacuum-cost-delay"/>
@@ -1387,8 +1520,13 @@ WITH ( MODULUS <replaceable class="parameter">numeric_literal</replaceable>, REM
     </listitem>
    </varlistentry>
 
-   <varlistentry>
-    <term><literal>autovacuum_vacuum_cost_limit</literal>, <literal>toast.autovacuum_vacuum_cost_limit</literal> (<type>integer</type>)</term>
+   <varlistentry id="reloption-autovacuum-vauum-cost-limit" xreflabel="autovacuum_vacuum_cost_limit">
+    <term><literal>autovacuum_vacuum_cost_limit</literal>, <literal>toast.autovacuum_vacuum_cost_limit</literal> (<type>integer</type>)
+    <indexterm>
+     <primary><varname>autovacuum_vacuum_cost_limit</varname></primary>
+     <secondary>storage parameter</secondary>
+    </indexterm>
+    </term>
     <listitem>
      <para>
       Per-table value for <xref linkend="guc-autovacuum-vacuum-cost-limit"/>
@@ -1397,8 +1535,12 @@ WITH ( MODULUS <replaceable class="parameter">numeric_literal</replaceable>, REM
     </listitem>
    </varlistentry>
 
-   <varlistentry>
-    <term><literal>autovacuum_freeze_min_age</literal>, <literal>toast.autovacuum_freeze_min_age</literal> (<type>integer</type>)</term>
+   <varlistentry id="reloption-autovacuum-freeze-min-age" xreflabel="autovacuum_freeze_min_age">
+    <term><literal>autovacuum_freeze_min_age</literal>, <literal>toast.autovacuum_freeze_min_age</literal> (<type>integer</type>)
+    <indexterm>
+     <primary><varname>autovacuum_freeze_min_age</varname> storage parameter</primary>
+    </indexterm>
+    </term>
     <listitem>
      <para>
       Per-table value for <xref linkend="guc-vacuum-freeze-min-age"/>
@@ -1410,8 +1552,13 @@ WITH ( MODULUS <replaceable class="parameter">numeric_literal</replaceable>, REM
     </listitem>
    </varlistentry>
 
-   <varlistentry>
-    <term><literal>autovacuum_freeze_max_age</literal>, <literal>toast.autovacuum_freeze_max_age</literal> (<type>integer</type>)</term>
+   <varlistentry id="reloption-autovacuum-freeze-max-age" xreflabel="autovacuum_freeze_max_age">
+    <term><literal>autovacuum_freeze_max_age</literal>, <literal>toast.autovacuum_freeze_max_age</literal> (<type>integer</type>)
+    <indexterm>
+     <primary><varname>autovacuum_freeze_max_age</varname></primary>
+     <secondary>storage parameter</secondary>
+    </indexterm>
+    </term>
     <listitem>
      <para>
       Per-table value for <xref linkend="guc-autovacuum-freeze-max-age"/>
@@ -1422,8 +1569,12 @@ WITH ( MODULUS <replaceable class="parameter">numeric_literal</replaceable>, REM
     </listitem>
    </varlistentry>
 
-   <varlistentry>
-    <term><literal>autovacuum_freeze_table_age</literal>, <literal>toast.autovacuum_freeze_table_age</literal> (<type>integer</type>)</term>
+   <varlistentry id="reloption-autovacuum-freeze-table-age" xreflabel="autovacuum_freeze_table_age">
+    <term><literal>autovacuum_freeze_table_age</literal>, <literal>toast.autovacuum_freeze_table_age</literal> (<type>integer</type>)
+    <indexterm>
+     <primary><varname>autovacuum_freeze_table_age</varname> storage parameter</primary>
+    </indexterm>
+    </term>
     <listitem>
      <para>
       Per-table value for <xref linkend="guc-vacuum-freeze-table-age"/>
@@ -1432,8 +1583,12 @@ WITH ( MODULUS <replaceable class="parameter">numeric_literal</replaceable>, REM
     </listitem>
    </varlistentry>
 
-   <varlistentry>
-    <term><literal>autovacuum_multixact_freeze_min_age</literal>, <literal>toast.autovacuum_multixact_freeze_min_age</literal> (<type>integer</type>)</term>
+   <varlistentry id="reloption-autovacuum-multixact-freeze-min-age" xreflabel="autovacuum_multixact_freeze_min_age">
+    <term><literal>autovacuum_multixact_freeze_min_age</literal>, <literal>toast.autovacuum_multixact_freeze_min_age</literal> (<type>integer</type>)
+    <indexterm>
+     <primary><varname>autovacuum_multixact_freeze_min_age</varname> storage parameter</primary>
+    </indexterm>
+    </term>
     <listitem>
      <para>
       Per-table value for <xref linkend="guc-vacuum-multixact-freeze-min-age"/>
@@ -1446,8 +1601,13 @@ WITH ( MODULUS <replaceable class="parameter">numeric_literal</replaceable>, REM
     </listitem>
    </varlistentry>
 
-   <varlistentry>
-    <term><literal>autovacuum_multixact_freeze_max_age</literal>, <literal>toast.autovacuum_multixact_freeze_max_age</literal> (<type>integer</type>)</term>
+   <varlistentry id="reloption-autovacuum-multixact-freeze-max-age" xreflabel="autovacuum_multixact_freeze_max_age">
+    <term><literal>autovacuum_multixact_freeze_max_age</literal>, <literal>toast.autovacuum_multixact_freeze_max_age</literal> (<type>integer</type>)
+    <indexterm>
+     <primary><varname>autovacuum_multixact_freeze_max_age</varname></primary>
+     <secondary>storage parameter</secondary>
+    </indexterm>
+    </term>
     <listitem>
      <para>
       Per-table value
@@ -1460,8 +1620,12 @@ WITH ( MODULUS <replaceable class="parameter">numeric_literal</replaceable>, REM
     </listitem>
    </varlistentry>
 
-   <varlistentry>
-    <term><literal>autovacuum_multixact_freeze_table_age</literal>, <literal>toast.autovacuum_multixact_freeze_table_age</literal> (<type>integer</type>)</term>
+   <varlistentry id="reloption-autovacuum-multixact-freeze-table-age" xreflabel="autovacuum_multixact_freeze_table_age">
+    <term><literal>autovacuum_multixact_freeze_table_age</literal>, <literal>toast.autovacuum_multixact_freeze_table_age</literal> (<type>integer</type>)
+    <indexterm>
+     <primary><varname>autovacuum_multixact_freeze_table_age</varname> storage parameter</primary>
+    </indexterm>
+    </term>
     <listitem>
      <para>
       Per-table value
@@ -1470,8 +1634,13 @@ WITH ( MODULUS <replaceable class="parameter">numeric_literal</replaceable>, REM
     </listitem>
    </varlistentry>
 
-   <varlistentry>
-    <term><literal>log_autovacuum_min_duration</literal>, <literal>toast.log_autovacuum_min_duration</literal> (<type>integer</type>)</term>
+   <varlistentry id="reloption-log-autovacuum-min-duration" xreflabel="log_autovacuum_min_duration">
+    <term><literal>log_autovacuum_min_duration</literal>, <literal>toast.log_autovacuum_min_duration</literal> (<type>integer</type>)
+    <indexterm>
+     <primary><varname>log_autovacuum_min_duration</varname></primary>
+     <secondary>storage parameter</secondary>
+    </indexterm>
+    </term>
     <listitem>
      <para>
       Per-table value for <xref linkend="guc-log-autovacuum-min-duration"/>
@@ -1480,8 +1649,12 @@ WITH ( MODULUS <replaceable class="parameter">numeric_literal</replaceable>, REM
     </listitem>
    </varlistentry>
 
-   <varlistentry>
-    <term><literal>user_catalog_table</literal> (<type>boolean</type>)</term>
+   <varlistentry id="reloption-user-catalog-table" xreflabel="user_catalog_table">
+    <term><literal>user_catalog_table</literal> (<type>boolean</type>)
+    <indexterm>
+     <primary><varname>user_catalog_table</varname> storage parameter</primary>
+    </indexterm>
+    </term>
     <listitem>
      <para>
       Declare the table as an additional catalog table for purposes of
@@ -2018,6 +2191,16 @@ CREATE TABLE cities_partdef
     the <command>INSERT</command> command supports only one override clause
     that applies to the entire statement, so having multiple identity columns
     with different behaviors is not well supported.
+   </para>
+  </refsect2>
+
+  <refsect2>
+   <title>Generated Columns</title>
+
+   <para>
+    The option <literal>STORED</literal> is not standard but is also used by
+    other SQL implementations.  The SQL standard does not specify the storage
+    of generated columns.
    </para>
   </refsect2>
 

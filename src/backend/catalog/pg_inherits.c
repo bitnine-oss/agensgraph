@@ -8,7 +8,7 @@
  * Perhaps someday that code should be moved here, but it'd have to be
  * disentangled from other stuff such as pg_depend updates.
  *
- * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -20,8 +20,8 @@
 #include "postgres.h"
 
 #include "access/genam.h"
-#include "access/heapam.h"
 #include "access/htup_details.h"
+#include "access/table.h"
 #include "catalog/indexing.h"
 #include "catalog/pg_inherits.h"
 #include "parser/parse_type.h"
@@ -30,7 +30,6 @@
 #include "utils/fmgroids.h"
 #include "utils/memutils.h"
 #include "utils/syscache.h"
-#include "utils/tqual.h"
 
 /*
  * Entry of a hash table used in find_all_inheritors. See below.
@@ -82,7 +81,7 @@ find_inheritance_children(Oid parentrelId, LOCKMODE lockmode)
 	oidarr = (Oid *) palloc(maxoids * sizeof(Oid));
 	numoids = 0;
 
-	relation = heap_open(InheritsRelationId, AccessShareLock);
+	relation = table_open(InheritsRelationId, AccessShareLock);
 
 	ScanKeyInit(&key[0],
 				Anum_pg_inherits_inhparent,
@@ -105,7 +104,7 @@ find_inheritance_children(Oid parentrelId, LOCKMODE lockmode)
 
 	systable_endscan(scan);
 
-	heap_close(relation, AccessShareLock);
+	table_close(relation, AccessShareLock);
 
 	/*
 	 * If we found more than one child, sort them by OID.  This ensures
@@ -287,14 +286,14 @@ has_superclass(Oid relationId)
 	ScanKeyData skey;
 	bool		result;
 
-	catalog = heap_open(InheritsRelationId, AccessShareLock);
+	catalog = table_open(InheritsRelationId, AccessShareLock);
 	ScanKeyInit(&skey, Anum_pg_inherits_inhrelid, BTEqualStrategyNumber,
 				F_OIDEQ, ObjectIdGetDatum(relationId));
 	scan = systable_beginscan(catalog, InheritsRelidSeqnoIndexId, true,
 							  NULL, 1, &skey);
 	result = HeapTupleIsValid(systable_getnext(scan));
 	systable_endscan(scan);
-	heap_close(catalog, AccessShareLock);
+	table_close(catalog, AccessShareLock);
 
 	return result;
 }
@@ -337,7 +336,7 @@ typeInheritsFrom(Oid subclassTypeId, Oid superclassTypeId)
 	queue = list_make1_oid(subclassRelid);
 	visited = NIL;
 
-	inhrel = heap_open(InheritsRelationId, AccessShareLock);
+	inhrel = table_open(InheritsRelationId, AccessShareLock);
 
 	/*
 	 * Use queue to do a breadth-first traversal of the inheritance graph from
@@ -399,7 +398,7 @@ typeInheritsFrom(Oid subclassTypeId, Oid superclassTypeId)
 	}
 
 	/* clean up ... */
-	heap_close(inhrel, AccessShareLock);
+	table_close(inhrel, AccessShareLock);
 
 	list_free(visited);
 	list_free(queue);
@@ -418,7 +417,7 @@ StoreSingleInheritance(Oid relationId, Oid parentOid, int32 seqNumber)
 	HeapTuple	tuple;
 	Relation	inhRelation;
 
-	inhRelation = heap_open(InheritsRelationId, RowExclusiveLock);
+	inhRelation = table_open(InheritsRelationId, RowExclusiveLock);
 
 	/*
 	 * Make the pg_inherits entry
@@ -435,7 +434,7 @@ StoreSingleInheritance(Oid relationId, Oid parentOid, int32 seqNumber)
 
 	heap_freetuple(tuple);
 
-	heap_close(inhRelation, RowExclusiveLock);
+	table_close(inhRelation, RowExclusiveLock);
 }
 
 /*
@@ -459,7 +458,7 @@ DeleteInheritsTuple(Oid inhrelid, Oid inhparent)
 	/*
 	 * Find pg_inherits entries by inhrelid.
 	 */
-	catalogRelation = heap_open(InheritsRelationId, RowExclusiveLock);
+	catalogRelation = table_open(InheritsRelationId, RowExclusiveLock);
 	ScanKeyInit(&key,
 				Anum_pg_inherits_inhrelid,
 				BTEqualStrategyNumber, F_OIDEQ,
@@ -482,7 +481,7 @@ DeleteInheritsTuple(Oid inhrelid, Oid inhparent)
 
 	/* Done */
 	systable_endscan(scan);
-	heap_close(catalogRelation, RowExclusiveLock);
+	table_close(catalogRelation, RowExclusiveLock);
 
 	return found;
 }

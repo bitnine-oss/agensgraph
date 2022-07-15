@@ -2,7 +2,7 @@
  * ginblock.h
  *	  details of structures stored in GIN index blocks
  *
- *	Copyright (c) 2006-2018, PostgreSQL Global Development Group
+ *	Copyright (c) 2006-2019, PostgreSQL Global Development Group
  *
  *	src/include/access/ginblock.h
  *--------------------------------------------------------------------------
@@ -10,6 +10,7 @@
 #ifndef GINBLOCK_H
 #define GINBLOCK_H
 
+#include "access/transam.h"
 #include "storage/block.h"
 #include "storage/itemptr.h"
 #include "storage/off.h"
@@ -126,6 +127,15 @@ typedef struct GinMetaPageData
 #define GinPageIsIncompleteSplit(page) ( (GinPageGetOpaque(page)->flags & GIN_INCOMPLETE_SPLIT) != 0 )
 
 #define GinPageRightMost(page) ( GinPageGetOpaque(page)->rightlink == InvalidBlockNumber)
+
+/*
+ * We should reclaim deleted page only once every transaction started before
+ * its deletion is over.
+ */
+#define GinPageGetDeleteXid(page) ( ((PageHeader) (page))->pd_prune_xid )
+#define GinPageSetDeleteXid(page, xid) ( ((PageHeader) (page))->pd_prune_xid = xid)
+#define GinPageIsRecyclable(page) ( PageIsNew(page) || (GinPageIsDeleted(page) \
+	&& TransactionIdPrecedes(GinPageGetDeleteXid(page), RecentGlobalXmin)))
 
 /*
  * We use our own ItemPointerGet(BlockNumber|OffsetNumber)

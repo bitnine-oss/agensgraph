@@ -3,7 +3,7 @@
  * parallel.c
  *	  Infrastructure for launching parallel workers
  *
- * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -28,9 +28,10 @@
 #include "libpq/pqformat.h"
 #include "libpq/pqmq.h"
 #include "miscadmin.h"
-#include "optimizer/planmain.h"
+#include "optimizer/optimizer.h"
 #include "pgstat.h"
 #include "storage/ipc.h"
+#include "storage/predicate.h"
 #include "storage/sinval.h"
 #include "storage/spin.h"
 #include "tcop/tcopprot.h"
@@ -91,6 +92,7 @@ typedef struct FixedParallelState
 	BackendId	parallel_master_backend_id;
 	TimestampTz xact_ts;
 	TimestampTz stmt_ts;
+	SerializableXactHandle serializable_xact_handle;
 
 	/* Mutex protects remaining fields. */
 	slock_t		mutex;
@@ -155,7 +157,7 @@ static void ParallelWorkerShutdown(int code, Datum arg);
  */
 ParallelContext *
 CreateParallelContext(const char *library_name, const char *function_name,
-					  int nworkers, bool serializable_okay)
+					  int nworkers)
 {
 	MemoryContext oldcontext;
 	ParallelContext *pcxt;
@@ -165,16 +167,6 @@ CreateParallelContext(const char *library_name, const char *function_name,
 
 	/* Number of workers should be non-negative. */
 	Assert(nworkers >= 0);
-
-	/*
-	 * If we are running under serializable isolation, we can't use parallel
-	 * workers, at least not until somebody enhances that mechanism to be
-	 * parallel-aware.  Utility statement callers may ask us to ignore this
-	 * restriction because they're always able to safely ignore the fact that
-	 * SIREAD locks do not work with parallelism.
-	 */
-	if (IsolationIsSerializable() && !serializable_okay)
-		nworkers = 0;
 
 	/* We might be running in a short-lived memory context. */
 	oldcontext = MemoryContextSwitchTo(TopTransactionContext);
@@ -327,6 +319,7 @@ InitializeParallelDSM(ParallelContext *pcxt)
 	fps->parallel_master_backend_id = MyBackendId;
 	fps->xact_ts = GetCurrentTransactionStartTimestamp();
 	fps->stmt_ts = GetCurrentStatementStartTimestamp();
+	fps->serializable_xact_handle = ShareSerializableXact();
 	SpinLockInit(&fps->mutex);
 	fps->last_xlog_end = 0;
 	shm_toc_insert(pcxt->toc, PARALLEL_KEY_FIXED, fps);
@@ -692,12 +685,8 @@ WaitForParallelWorkersToAttach(ParallelContext *pcxt)
 				 * just end up waiting for the same worker again.
 				 */
 				rc = WaitLatch(MyLatch,
-							   WL_LATCH_SET | WL_POSTMASTER_DEATH,
+							   WL_LATCH_SET | WL_EXIT_ON_PM_DEATH,
 							   -1, WAIT_EVENT_BGWORKER_STARTUP);
-
-				/* emergency bailout if postmaster has died */
-				if (rc & WL_POSTMASTER_DEATH)
-					proc_exit(1);
 
 				if (rc & WL_LATCH_SET)
 					ResetLatch(MyLatch);
@@ -815,8 +804,8 @@ WaitForParallelWorkersToFinish(ParallelContext *pcxt)
 			}
 		}
 
-		WaitLatch(MyLatch, WL_LATCH_SET, -1,
-				  WAIT_EVENT_PARALLEL_FINISH);
+		(void) WaitLatch(MyLatch, WL_LATCH_SET | WL_EXIT_ON_PM_DEATH, -1,
+						 WAIT_EVENT_PARALLEL_FINISH);
 		ResetLatch(MyLatch);
 	}
 
@@ -1425,6 +1414,9 @@ ParallelWorkerMain(Datum main_arg)
 	enumblacklistspace = shm_toc_lookup(toc, PARALLEL_KEY_ENUMBLACKLIST,
 										false);
 	RestoreEnumBlacklist(enumblacklistspace);
+
+	/* Attach to the leader's serializable transaction, if SERIALIZABLE. */
+	AttachSerializableXact(fps->serializable_xact_handle);
 
 	/*
 	 * We've initialized all of our state now; nothing should change

@@ -6,17 +6,17 @@
  * access control decisions recently used, and reduce number of kernel
  * invocations to avoid unnecessary performance hit.
  *
- * Copyright (c) 2011-2018, PostgreSQL Global Development Group
+ * Copyright (c) 2011-2019, PostgreSQL Global Development Group
  *
  * -------------------------------------------------------------------------
  */
 #include "postgres.h"
 
-#include "access/hash.h"
 #include "catalog/pg_proc.h"
 #include "commands/seclabel.h"
 #include "storage/ipc.h"
 #include "utils/guc.h"
+#include "utils/hashutils.h"
 #include "utils/memutils.h"
 
 #include "sepgsql.h"

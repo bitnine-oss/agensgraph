@@ -2,7 +2,7 @@
 #
 # Makefile for src/bin (client programs)
 #
-# Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
+# Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
 # Portions Copyright (c) 1994, Regents of the University of California
 #
 # src/bin/Makefile
@@ -17,6 +17,7 @@ SUBDIRS = \
 	initdb \
 	pg_archivecleanup \
 	pg_basebackup \
+	pg_checksums \
 	pg_config \
 	pg_controldata \
 	pg_ctl \
@@ -26,7 +27,6 @@ SUBDIRS = \
 	pg_test_fsync \
 	pg_test_timing \
 	pg_upgrade \
-	pg_verify_checksums \
 	pg_waldump \
 	pgbench \
 	psql \

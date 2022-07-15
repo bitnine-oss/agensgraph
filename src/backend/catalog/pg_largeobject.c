@@ -3,7 +3,7 @@
  * pg_largeobject.c
  *	  routines to support manipulation of the pg_largeobject relation
  *
- * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -15,9 +15,9 @@
 #include "postgres.h"
 
 #include "access/genam.h"
-#include "access/heapam.h"
 #include "access/htup_details.h"
 #include "access/sysattr.h"
+#include "access/table.h"
 #include "catalog/catalog.h"
 #include "catalog/dependency.h"
 #include "catalog/indexing.h"
@@ -27,7 +27,6 @@
 #include "utils/acl.h"
 #include "utils/fmgroids.h"
 #include "utils/rel.h"
-#include "utils/tqual.h"
 
 
 /*
@@ -46,8 +45,8 @@ LargeObjectCreate(Oid loid)
 	Datum		values[Natts_pg_largeobject_metadata];
 	bool		nulls[Natts_pg_largeobject_metadata];
 
-	pg_lo_meta = heap_open(LargeObjectMetadataRelationId,
-						   RowExclusiveLock);
+	pg_lo_meta = table_open(LargeObjectMetadataRelationId,
+							RowExclusiveLock);
 
 	/*
 	 * Insert metadata of the largeobject
@@ -74,7 +73,7 @@ LargeObjectCreate(Oid loid)
 
 	heap_freetuple(ntup);
 
-	heap_close(pg_lo_meta, RowExclusiveLock);
+	table_close(pg_lo_meta, RowExclusiveLock);
 
 	return loid_new;
 }
@@ -92,11 +91,11 @@ LargeObjectDrop(Oid loid)
 	SysScanDesc scan;
 	HeapTuple	tuple;
 
-	pg_lo_meta = heap_open(LargeObjectMetadataRelationId,
-						   RowExclusiveLock);
+	pg_lo_meta = table_open(LargeObjectMetadataRelationId,
+							RowExclusiveLock);
 
-	pg_largeobject = heap_open(LargeObjectRelationId,
-							   RowExclusiveLock);
+	pg_largeobject = table_open(LargeObjectRelationId,
+								RowExclusiveLock);
 
 	/*
 	 * Delete an entry from pg_largeobject_metadata
@@ -138,9 +137,9 @@ LargeObjectDrop(Oid loid)
 
 	systable_endscan(scan);
 
-	heap_close(pg_largeobject, RowExclusiveLock);
+	table_close(pg_largeobject, RowExclusiveLock);
 
-	heap_close(pg_lo_meta, RowExclusiveLock);
+	table_close(pg_lo_meta, RowExclusiveLock);
 }
 
 /*
@@ -169,8 +168,8 @@ LargeObjectExists(Oid loid)
 				BTEqualStrategyNumber, F_OIDEQ,
 				ObjectIdGetDatum(loid));
 
-	pg_lo_meta = heap_open(LargeObjectMetadataRelationId,
-						   AccessShareLock);
+	pg_lo_meta = table_open(LargeObjectMetadataRelationId,
+							AccessShareLock);
 
 	sd = systable_beginscan(pg_lo_meta,
 							LargeObjectMetadataOidIndexId, true,
@@ -182,7 +181,7 @@ LargeObjectExists(Oid loid)
 
 	systable_endscan(sd);
 
-	heap_close(pg_lo_meta, AccessShareLock);
+	table_close(pg_lo_meta, AccessShareLock);
 
 	return retval;
 }

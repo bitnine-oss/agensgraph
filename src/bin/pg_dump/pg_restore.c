@@ -128,6 +128,8 @@ main(int argc, char **argv)
 		{NULL, 0, NULL, 0}
 	};
 
+	pg_logging_init(argv[0]);
+	pg_logging_set_level(PG_LOG_WARNING);
 	set_pglocale_pgservice(argv[0], PG_TEXTDOMAIN("pg_dump"));
 
 	init_parallel_dump_utils();
@@ -247,6 +249,7 @@ main(int argc, char **argv)
 
 			case 'v':			/* verbose */
 				opts->verbose = 1;
+				pg_logging_set_level(PG_LOG_INFO);
 				break;
 
 			case 'w':
@@ -296,10 +299,17 @@ main(int argc, char **argv)
 	/* Complain if any arguments remain */
 	if (optind < argc)
 	{
-		fprintf(stderr, _("%s: too many command-line arguments (first is \"%s\")\n"),
-				progname, argv[optind]);
+		pg_log_error("too many command-line arguments (first is \"%s\")",
+					 argv[optind]);
 		fprintf(stderr, _("Try \"%s --help\" for more information.\n"),
 				progname);
+		exit_nicely(1);
+	}
+
+	/* Complain if neither -f nor -d was specified (except if dumping TOC) */
+	if (!opts->dbname && !opts->filename && !opts->tocSummary)
+	{
+		pg_log_error("one of -d/--dbname and -f/--file must be specified");
 		exit_nicely(1);
 	}
 
@@ -308,8 +318,7 @@ main(int argc, char **argv)
 	{
 		if (opts->filename)
 		{
-			fprintf(stderr, _("%s: options -d/--dbname and -f/--file cannot be used together\n"),
-					progname);
+			pg_log_error("options -d/--dbname and -f/--file cannot be used together");
 			fprintf(stderr, _("Try \"%s --help\" for more information.\n"),
 					progname);
 			exit_nicely(1);
@@ -319,15 +328,13 @@ main(int argc, char **argv)
 
 	if (opts->dataOnly && opts->schemaOnly)
 	{
-		fprintf(stderr, _("%s: options -s/--schema-only and -a/--data-only cannot be used together\n"),
-				progname);
+		pg_log_error("options -s/--schema-only and -a/--data-only cannot be used together");
 		exit_nicely(1);
 	}
 
 	if (opts->dataOnly && opts->dropSchema)
 	{
-		fprintf(stderr, _("%s: options -c/--clean and -a/--data-only cannot be used together\n"),
-				progname);
+		pg_log_error("options -c/--clean and -a/--data-only cannot be used together");
 		exit_nicely(1);
 	}
 
@@ -337,14 +344,13 @@ main(int argc, char **argv)
 	 */
 	if (opts->createDB && opts->single_txn)
 	{
-		fprintf(stderr, _("%s: options -C/--create and -1/--single-transaction cannot be used together\n"),
-				progname);
+		pg_log_error("options -C/--create and -1/--single-transaction cannot be used together");
 		exit_nicely(1);
 	}
 
 	if (numWorkers <= 0)
 	{
-		fprintf(stderr, _("%s: invalid number of parallel jobs\n"), progname);
+		pg_log_error("invalid number of parallel jobs");
 		exit(1);
 	}
 
@@ -352,8 +358,8 @@ main(int argc, char **argv)
 #ifdef WIN32
 	if (numWorkers > MAXIMUM_WAIT_OBJECTS)
 	{
-		fprintf(stderr, _("%s: maximum number of parallel jobs is %d\n"),
-				progname, MAXIMUM_WAIT_OBJECTS);
+		pg_log_error("maximum number of parallel jobs is %d",
+					 MAXIMUM_WAIT_OBJECTS);
 		exit(1);
 	}
 #endif
@@ -361,8 +367,7 @@ main(int argc, char **argv)
 	/* Can't do single-txn mode with multiple connections */
 	if (opts->single_txn && numWorkers > 1)
 	{
-		fprintf(stderr, _("%s: cannot specify both --single-transaction and multiple jobs\n"),
-				progname);
+		pg_log_error("cannot specify both --single-transaction and multiple jobs");
 		exit_nicely(1);
 	}
 
@@ -378,8 +383,7 @@ main(int argc, char **argv)
 
 	if (if_exists && !opts->dropSchema)
 	{
-		fprintf(stderr, _("%s: option --if-exists requires option -c/--clean\n"),
-				progname);
+		pg_log_error("option --if-exists requires option -c/--clean");
 		exit_nicely(1);
 	}
 	opts->if_exists = if_exists;
@@ -405,8 +409,8 @@ main(int argc, char **argv)
 				break;
 
 			default:
-				write_msg(NULL, "unrecognized archive format \"%s\"; please specify \"c\", \"d\", or \"t\"\n",
-						  opts->formatName);
+				pg_log_error("unrecognized archive format \"%s\"; please specify \"c\", \"d\", or \"t\"",
+							 opts->formatName);
 				exit_nicely(1);
 		}
 	}
@@ -445,8 +449,7 @@ main(int argc, char **argv)
 
 	/* done, print a summary of ignored errors */
 	if (AH->n_errors)
-		fprintf(stderr, _("WARNING: errors ignored on restore: %d\n"),
-				AH->n_errors);
+		pg_log_warning("errors ignored on restore: %d", AH->n_errors);
 
 	/* AH may be freed in CloseArchive? */
 	exit_code = AH->n_errors ? 1 : 0;
@@ -465,7 +468,7 @@ usage(const char *progname)
 
 	printf(_("\nGeneral options:\n"));
 	printf(_("  -d, --dbname=NAME        connect to database name\n"));
-	printf(_("  -f, --file=FILENAME      output file name\n"));
+	printf(_("  -f, --file=FILENAME      output file name (- for stdout)\n"));
 	printf(_("  -F, --format=c|d|t       backup file format (should be automatic)\n"));
 	printf(_("  -l, --list               print summarized TOC of the archive\n"));
 	printf(_("  -v, --verbose            verbose mode\n"));
@@ -520,5 +523,5 @@ usage(const char *progname)
 			 "The options -I, -n, -N, -P, -t, -T, and --section can be combined and specified\n"
 			 "multiple times to select multiple objects.\n"));
 	printf(_("\nIf no input file name is supplied, then standard input is used.\n\n"));
-	printf(_("Report bugs to <pgsql-bugs@postgresql.org>.\n"));
+	printf(_("Report bugs to <pgsql-bugs@lists.postgresql.org>.\n"));
 }

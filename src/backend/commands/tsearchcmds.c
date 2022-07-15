@@ -4,7 +4,7 @@
  *
  *	  Routines for tsearch manipulation commands
  *
- * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -18,8 +18,8 @@
 #include <ctype.h>
 
 #include "access/genam.h"
-#include "access/heapam.h"
 #include "access/htup_details.h"
+#include "access/table.h"
 #include "access/xact.h"
 #include "catalog/catalog.h"
 #include "catalog/dependency.h"
@@ -46,13 +46,12 @@
 #include "utils/lsyscache.h"
 #include "utils/rel.h"
 #include "utils/syscache.h"
-#include "utils/tqual.h"
 
 
 static void MakeConfigurationMapping(AlterTSConfigurationStmt *stmt,
-						 HeapTuple tup, Relation relMap);
+									 HeapTuple tup, Relation relMap);
 static void DropConfigurationMapping(AlterTSConfigurationStmt *stmt,
-						 HeapTuple tup, Relation relMap);
+									 HeapTuple tup, Relation relMap);
 
 
 /* --------------------- TS Parser commands ------------------------ */
@@ -192,7 +191,7 @@ DefineTSParser(List *names, List *parameters)
 				(errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
 				 errmsg("must be superuser to create text search parsers")));
 
-	prsRel = heap_open(TSParserRelationId, RowExclusiveLock);
+	prsRel = table_open(TSParserRelationId, RowExclusiveLock);
 
 	/* Convert list of names to a name and namespace */
 	namespaceoid = QualifiedNameGetCreationNamespace(names, &prsname);
@@ -284,7 +283,7 @@ DefineTSParser(List *names, List *parameters)
 
 	heap_freetuple(tup);
 
-	heap_close(prsRel, RowExclusiveLock);
+	table_close(prsRel, RowExclusiveLock);
 
 	return address;
 }
@@ -298,7 +297,7 @@ RemoveTSParserById(Oid prsId)
 	Relation	relation;
 	HeapTuple	tup;
 
-	relation = heap_open(TSParserRelationId, RowExclusiveLock);
+	relation = table_open(TSParserRelationId, RowExclusiveLock);
 
 	tup = SearchSysCache1(TSPARSEROID, ObjectIdGetDatum(prsId));
 
@@ -309,7 +308,7 @@ RemoveTSParserById(Oid prsId)
 
 	ReleaseSysCache(tup);
 
-	heap_close(relation, RowExclusiveLock);
+	table_close(relation, RowExclusiveLock);
 }
 
 /* ---------------------- TS Dictionary commands -----------------------*/
@@ -464,7 +463,7 @@ DefineTSDictionary(List *names, List *parameters)
 	verify_dictoptions(templId, dictoptions);
 
 
-	dictRel = heap_open(TSDictionaryRelationId, RowExclusiveLock);
+	dictRel = table_open(TSDictionaryRelationId, RowExclusiveLock);
 
 	/*
 	 * Looks good, insert
@@ -497,7 +496,7 @@ DefineTSDictionary(List *names, List *parameters)
 
 	heap_freetuple(tup);
 
-	heap_close(dictRel, RowExclusiveLock);
+	table_close(dictRel, RowExclusiveLock);
 
 	return address;
 }
@@ -511,7 +510,7 @@ RemoveTSDictionaryById(Oid dictId)
 	Relation	relation;
 	HeapTuple	tup;
 
-	relation = heap_open(TSDictionaryRelationId, RowExclusiveLock);
+	relation = table_open(TSDictionaryRelationId, RowExclusiveLock);
 
 	tup = SearchSysCache1(TSDICTOID, ObjectIdGetDatum(dictId));
 
@@ -523,7 +522,7 @@ RemoveTSDictionaryById(Oid dictId)
 
 	ReleaseSysCache(tup);
 
-	heap_close(relation, RowExclusiveLock);
+	table_close(relation, RowExclusiveLock);
 }
 
 /*
@@ -547,7 +546,7 @@ AlterTSDictionary(AlterTSDictionaryStmt *stmt)
 
 	dictId = get_ts_dict_oid(stmt->dictname, false);
 
-	rel = heap_open(TSDictionaryRelationId, RowExclusiveLock);
+	rel = table_open(TSDictionaryRelationId, RowExclusiveLock);
 
 	tup = SearchSysCache1(TSDICTOID, ObjectIdGetDatum(dictId));
 
@@ -639,7 +638,7 @@ AlterTSDictionary(AlterTSDictionaryStmt *stmt)
 	heap_freetuple(newtup);
 	ReleaseSysCache(tup);
 
-	heap_close(rel, RowExclusiveLock);
+	table_close(rel, RowExclusiveLock);
 
 	return address;
 }
@@ -756,7 +755,7 @@ DefineTSTemplate(List *names, List *parameters)
 	/* Convert list of names to a name and namespace */
 	namespaceoid = QualifiedNameGetCreationNamespace(names, &tmplname);
 
-	tmplRel = heap_open(TSTemplateRelationId, RowExclusiveLock);
+	tmplRel = table_open(TSTemplateRelationId, RowExclusiveLock);
 
 	for (i = 0; i < Natts_pg_ts_template; i++)
 	{
@@ -819,7 +818,7 @@ DefineTSTemplate(List *names, List *parameters)
 
 	heap_freetuple(tup);
 
-	heap_close(tmplRel, RowExclusiveLock);
+	table_close(tmplRel, RowExclusiveLock);
 
 	return address;
 }
@@ -833,7 +832,7 @@ RemoveTSTemplateById(Oid tmplId)
 	Relation	relation;
 	HeapTuple	tup;
 
-	relation = heap_open(TSTemplateRelationId, RowExclusiveLock);
+	relation = table_open(TSTemplateRelationId, RowExclusiveLock);
 
 	tup = SearchSysCache1(TSTEMPLATEOID, ObjectIdGetDatum(tmplId));
 
@@ -845,7 +844,7 @@ RemoveTSTemplateById(Oid tmplId)
 
 	ReleaseSysCache(tup);
 
-	heap_close(relation, RowExclusiveLock);
+	table_close(relation, RowExclusiveLock);
 }
 
 /* ---------------------- TS Configuration commands -----------------------*/
@@ -1052,7 +1051,7 @@ DefineTSConfiguration(List *names, List *parameters, ObjectAddress *copied)
 				(errcode(ERRCODE_INVALID_OBJECT_DEFINITION),
 				 errmsg("text search parser is required")));
 
-	cfgRel = heap_open(TSConfigRelationId, RowExclusiveLock);
+	cfgRel = table_open(TSConfigRelationId, RowExclusiveLock);
 
 	/*
 	 * Looks good, build tuple and insert
@@ -1082,7 +1081,7 @@ DefineTSConfiguration(List *names, List *parameters, ObjectAddress *copied)
 		SysScanDesc scan;
 		HeapTuple	maptup;
 
-		mapRel = heap_open(TSConfigMapRelationId, RowExclusiveLock);
+		mapRel = table_open(TSConfigMapRelationId, RowExclusiveLock);
 
 		ScanKeyInit(&skey,
 					Anum_pg_ts_config_map_mapcfg,
@@ -1125,8 +1124,8 @@ DefineTSConfiguration(List *names, List *parameters, ObjectAddress *copied)
 	heap_freetuple(tup);
 
 	if (mapRel)
-		heap_close(mapRel, RowExclusiveLock);
-	heap_close(cfgRel, RowExclusiveLock);
+		table_close(mapRel, RowExclusiveLock);
+	table_close(cfgRel, RowExclusiveLock);
 
 	return address;
 }
@@ -1144,7 +1143,7 @@ RemoveTSConfigurationById(Oid cfgId)
 	SysScanDesc scan;
 
 	/* Remove the pg_ts_config entry */
-	relCfg = heap_open(TSConfigRelationId, RowExclusiveLock);
+	relCfg = table_open(TSConfigRelationId, RowExclusiveLock);
 
 	tup = SearchSysCache1(TSCONFIGOID, ObjectIdGetDatum(cfgId));
 
@@ -1156,10 +1155,10 @@ RemoveTSConfigurationById(Oid cfgId)
 
 	ReleaseSysCache(tup);
 
-	heap_close(relCfg, RowExclusiveLock);
+	table_close(relCfg, RowExclusiveLock);
 
 	/* Remove any pg_ts_config_map entries */
-	relMap = heap_open(TSConfigMapRelationId, RowExclusiveLock);
+	relMap = table_open(TSConfigMapRelationId, RowExclusiveLock);
 
 	ScanKeyInit(&skey,
 				Anum_pg_ts_config_map_mapcfg,
@@ -1176,7 +1175,7 @@ RemoveTSConfigurationById(Oid cfgId)
 
 	systable_endscan(scan);
 
-	heap_close(relMap, RowExclusiveLock);
+	table_close(relMap, RowExclusiveLock);
 }
 
 /*
@@ -1205,7 +1204,7 @@ AlterTSConfiguration(AlterTSConfigurationStmt *stmt)
 		aclcheck_error(ACLCHECK_NOT_OWNER, OBJECT_TSCONFIGURATION,
 					   NameListToString(stmt->cfgname));
 
-	relMap = heap_open(TSConfigMapRelationId, RowExclusiveLock);
+	relMap = table_open(TSConfigMapRelationId, RowExclusiveLock);
 
 	/* Add or drop mappings */
 	if (stmt->dicts)
@@ -1220,7 +1219,7 @@ AlterTSConfiguration(AlterTSConfigurationStmt *stmt)
 
 	ObjectAddressSet(address, TSConfigRelationId, cfgId);
 
-	heap_close(relMap, RowExclusiveLock);
+	table_close(relMap, RowExclusiveLock);
 
 	ReleaseSysCache(tup);
 

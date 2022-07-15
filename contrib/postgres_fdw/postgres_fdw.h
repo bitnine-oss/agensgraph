@@ -3,7 +3,7 @@
  * postgres_fdw.h
  *		  Foreign-data wrapper for remote PostgreSQL servers
  *
- * Portions Copyright (c) 2012-2018, PostgreSQL Global Development Group
+ * Portions Copyright (c) 2012-2019, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
  *		  contrib/postgres_fdw/postgres_fdw.h
@@ -15,7 +15,7 @@
 
 #include "foreign/foreign.h"
 #include "lib/stringinfo.h"
-#include "nodes/relation.h"
+#include "nodes/pathnodes.h"
 #include "utils/relcache.h"
 
 #include "libpq-fe.h"
@@ -49,6 +49,9 @@ typedef struct PgFdwRelationInfo
 	/* Bitmap of attr numbers we need to fetch from the remote server. */
 	Bitmapset  *attrs_used;
 
+	/* True means that the query_pathkeys is safe to push down */
+	bool		qp_is_pushdown_safe;
+
 	/* Cost and selectivity of local_conds. */
 	QualCost	local_conds_cost;
 	Selectivity local_conds_sel;
@@ -56,12 +59,18 @@ typedef struct PgFdwRelationInfo
 	/* Selectivity of join conditions */
 	Selectivity joinclause_sel;
 
-	/* Estimated size and cost for a scan or join. */
+	/* Estimated size and cost for a scan, join, or grouping/aggregation. */
 	double		rows;
 	int			width;
 	Cost		startup_cost;
 	Cost		total_cost;
-	/* Costs excluding costs for transferring data from the foreign server */
+
+	/*
+	 * Estimated number of rows fetched from the foreign server, and costs
+	 * excluding costs for transferring those rows from the foreign server.
+	 * These are only used by estimate_path_cost_size().
+	 */
+	double		retrieved_rows;
 	Cost		rel_startup_cost;
 	Cost		rel_total_cost;
 
@@ -91,6 +100,9 @@ typedef struct PgFdwRelationInfo
 	JoinType	jointype;
 	/* joinclauses contains only JOIN/ON conditions for an outer join */
 	List	   *joinclauses;	/* List of RestrictInfo */
+
+	/* Upper relation information */
+	UpperRelationKind stage;
 
 	/* Grouping information */
 	List	   *grouped_tlist;
@@ -122,64 +134,72 @@ extern unsigned int GetPrepStmtNumber(PGconn *conn);
 extern PGresult *pgfdw_get_result(PGconn *conn, const char *query);
 extern PGresult *pgfdw_exec_query(PGconn *conn, const char *query);
 extern void pgfdw_report_error(int elevel, PGresult *res, PGconn *conn,
-				   bool clear, const char *sql);
+							   bool clear, const char *sql);
 
 /* in option.c */
-extern int ExtractConnectionOptions(List *defelems,
-						 const char **keywords,
-						 const char **values);
+extern int	ExtractConnectionOptions(List *defelems,
+									 const char **keywords,
+									 const char **values);
 extern List *ExtractExtensionList(const char *extensionsString,
-					 bool warnOnMissing);
+								  bool warnOnMissing);
 
 /* in deparse.c */
 extern void classifyConditions(PlannerInfo *root,
-				   RelOptInfo *baserel,
-				   List *input_conds,
-				   List **remote_conds,
-				   List **local_conds);
+							   RelOptInfo *baserel,
+							   List *input_conds,
+							   List **remote_conds,
+							   List **local_conds);
 extern bool is_foreign_expr(PlannerInfo *root,
-				RelOptInfo *baserel,
-				Expr *expr);
+							RelOptInfo *baserel,
+							Expr *expr);
+extern bool is_foreign_param(PlannerInfo *root,
+							 RelOptInfo *baserel,
+							 Expr *expr);
 extern void deparseInsertSql(StringInfo buf, RangeTblEntry *rte,
-				 Index rtindex, Relation rel,
-				 List *targetAttrs, bool doNothing,
-				 List *withCheckOptionList, List *returningList,
-				 List **retrieved_attrs);
+							 Index rtindex, Relation rel,
+							 List *targetAttrs, bool doNothing,
+							 List *withCheckOptionList, List *returningList,
+							 List **retrieved_attrs);
 extern void deparseUpdateSql(StringInfo buf, RangeTblEntry *rte,
-				 Index rtindex, Relation rel,
-				 List *targetAttrs,
-				 List *withCheckOptionList, List *returningList,
-				 List **retrieved_attrs);
+							 Index rtindex, Relation rel,
+							 List *targetAttrs,
+							 List *withCheckOptionList, List *returningList,
+							 List **retrieved_attrs);
 extern void deparseDirectUpdateSql(StringInfo buf, PlannerInfo *root,
-					   Index rtindex, Relation rel,
-					   RelOptInfo *foreignrel,
-					   List *targetlist,
-					   List *targetAttrs,
-					   List *remote_conds,
-					   List **params_list,
-					   List *returningList,
-					   List **retrieved_attrs);
+								   Index rtindex, Relation rel,
+								   RelOptInfo *foreignrel,
+								   List *targetlist,
+								   List *targetAttrs,
+								   List *remote_conds,
+								   List **params_list,
+								   List *returningList,
+								   List **retrieved_attrs);
 extern void deparseDeleteSql(StringInfo buf, RangeTblEntry *rte,
-				 Index rtindex, Relation rel,
-				 List *returningList,
-				 List **retrieved_attrs);
+							 Index rtindex, Relation rel,
+							 List *returningList,
+							 List **retrieved_attrs);
 extern void deparseDirectDeleteSql(StringInfo buf, PlannerInfo *root,
-					   Index rtindex, Relation rel,
-					   RelOptInfo *foreignrel,
-					   List *remote_conds,
-					   List **params_list,
-					   List *returningList,
-					   List **retrieved_attrs);
+								   Index rtindex, Relation rel,
+								   RelOptInfo *foreignrel,
+								   List *remote_conds,
+								   List **params_list,
+								   List *returningList,
+								   List **retrieved_attrs);
 extern void deparseAnalyzeSizeSql(StringInfo buf, Relation rel);
 extern void deparseAnalyzeSql(StringInfo buf, Relation rel,
-				  List **retrieved_attrs);
+							  List **retrieved_attrs);
 extern void deparseStringLiteral(StringInfo buf, const char *val);
 extern Expr *find_em_expr_for_rel(EquivalenceClass *ec, RelOptInfo *rel);
+extern Expr *find_em_expr_for_input_target(PlannerInfo *root,
+										   EquivalenceClass *ec,
+										   PathTarget *target);
 extern List *build_tlist_to_deparse(RelOptInfo *foreignrel);
 extern void deparseSelectStmtForRel(StringInfo buf, PlannerInfo *root,
-						RelOptInfo *foreignrel, List *tlist,
-						List *remote_conds, List *pathkeys, bool is_subquery,
-						List **retrieved_attrs, List **params_list);
+									RelOptInfo *foreignrel, List *tlist,
+									List *remote_conds, List *pathkeys,
+									bool has_final_sort, bool has_limit,
+									bool is_subquery,
+									List **retrieved_attrs, List **params_list);
 extern const char *get_jointype_name(JoinType jointype);
 
 /* in shippable.c */

@@ -11,7 +11,7 @@
 #error -ffast-math is known to break this code
 #endif
 
-#include "extern.h"
+#include "pgtypeslib_extern.h"
 #include "dt.h"
 #include "pgtypes_timestamp.h"
 #include "pgtypes_date.h"
@@ -252,10 +252,6 @@ PGTYPEStimestamp_from_asc(char *str, char **endptr)
 		case DTK_EARLY:
 			TIMESTAMP_NOBEGIN(result);
 			break;
-
-		case DTK_INVALID:
-			errno = PGTYPES_TS_BAD_TIMESTAMP;
-			return noresult;
 
 		default:
 			errno = PGTYPES_TS_BAD_TIMESTAMP;

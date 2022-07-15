@@ -29,7 +29,6 @@
 #include "nodes/makefuncs.h"
 #include "nodes/nodeFuncs.h"
 #include "optimizer/tlist.h"
-#include "optimizer/var.h"
 #include "parser/analyze.h"
 #include "parser/parse_clause.h"
 #include "parser/parse_coerce.h"
@@ -46,6 +45,7 @@
 #include "utils/builtins.h"
 #include "utils/fmgroids.h"
 #include "utils/jsonb.h"
+#include "optimizer/optimizer.h"
 
 static Node *transformCypherExprRecurse(ParseState *pstate, Node *expr);
 static Node *transformColumnRef(ParseState *pstate, ColumnRef *cref);
@@ -1594,13 +1594,13 @@ transformIndirection(ParseState *pstate, A_Indirection *indir)
 		}
 		else
 		{
-			A_Indices  *ind;
-			Node	   *lidx = NULL;
-			Node	   *uidx = NULL;
-			Oid			arrtype;
-			int32		arrtypmod;
-			Oid			elemtype;
-			ArrayRef   *aref;
+			A_Indices		*ind;
+			Node			*lidx = NULL;
+			Node			*uidx = NULL;
+			Oid				arrtype;
+			int32			arrtypmod;
+			Oid				elemtype;
+			SubscriptingRef	*aref;
 
 			Assert(IsA(i, A_Indices));
 
@@ -1617,10 +1617,10 @@ transformIndirection(ParseState *pstate, A_Indirection *indir)
 
 			arrtype = restype;
 			arrtypmod = exprTypmod(res);
-			elemtype = transformArrayType(&arrtype, &arrtypmod);
+			elemtype = transformContainerType(&arrtype, &arrtypmod);
 
-			aref = makeNode(ArrayRef);
-			aref->refarraytype = arrtype;
+			aref = makeNode(SubscriptingRef);
+			aref->refcontainertype = arrtype;
 			aref->refelemtype = elemtype;
 			aref->reftypmod = arrtypmod;
 			aref->refupperindexpr = list_make1(uidx);

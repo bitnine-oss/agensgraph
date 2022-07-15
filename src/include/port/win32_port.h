@@ -6,7 +6,7 @@
  * Note this is read in MinGW as well as native Windows builds,
  * but not in Cygwin builds.
  *
- * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/port/win32_port.h
@@ -514,5 +514,24 @@ typedef unsigned short mode_t;
 #define DLSUFFIX ".dll"
 
 #endif							/* _MSC_VER */
+
+#if (defined(_MSC_VER) && (_MSC_VER < 1900)) || \
+	defined(__MINGW32__) || defined(__MINGW64__)
+/*
+ * VS2013 has a strtof() that seems to give correct answers for valid input,
+ * even on the rounding edge cases, but which doesn't handle out-of-range
+ * input correctly. Work around that.
+ *
+ * Mingw claims to have a strtof, and my reading of its source code suggests
+ * that it ought to work (and not need this hack), but the regression test
+ * results disagree with me; whether this is a version issue or not is not
+ * clear. However, using our wrapper (and the misrounded-input variant file,
+ * already required for supporting ancient systems) can't make things any
+ * worse, except for a tiny performance loss when reading zeros.
+ *
+ * See also cygwin.h for another instance of this.
+ */
+#define HAVE_BUGGY_STRTOF 1
+#endif
 
 #endif							/* PG_WIN32_PORT_H */

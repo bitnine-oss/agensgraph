@@ -1,7 +1,7 @@
 /* src/interfaces/ecpg/preproc/ecpg.c */
 
 /* Main for ecpg, the PostgreSQL embedded SQL precompiler. */
-/* Copyright (c) 1996-2018, PostgreSQL Global Development Group */
+/* Copyright (c) 1996-2019, PostgreSQL Global Development Group */
 
 #include "postgres_fe.h"
 
@@ -9,7 +9,7 @@
 
 #include "getopt_long.h"
 
-#include "extern.h"
+#include "preproc_extern.h"
 
 int			ret_value = 0;
 bool		autocommit = false,
@@ -28,6 +28,7 @@ struct _include_path *include_paths = NULL;
 struct cursor *cur = NULL;
 struct typedefs *types = NULL;
 struct _defines *defines = NULL;
+struct declared_name_st *g_declared_list = NULL;
 
 static void
 help(const char *progname)
@@ -58,7 +59,7 @@ help(const char *progname)
 	printf(_("  -?, --help     show this help, then exit\n"));
 	printf(_("\nIf no output file is specified, the name is formed by adding .c to the\n"
 			 "input file name, after stripping off .pgc if present.\n"));
-	printf(_("\nReport bugs to <pgsql-bugs@postgresql.org>.\n"));
+	printf(_("\nReport bugs to <pgsql-bugs@lists.postgresql.org>.\n"));
 }
 
 static void
@@ -98,17 +99,59 @@ add_preprocessor_define(char *define)
 		/* symbol has a value */
 		for (tmp = ptr - 1; *tmp == ' '; tmp--);
 		tmp[1] = '\0';
-		defines->old = define_copy;
-		defines->new = ptr + 1;
+		defines->olddef = define_copy;
+		defines->newdef = ptr + 1;
 	}
 	else
 	{
-		defines->old = define_copy;
-		defines->new = mm_strdup("1");
+		defines->olddef = define_copy;
+		defines->newdef = mm_strdup("1");
 	}
 	defines->pertinent = true;
 	defines->used = NULL;
 	defines->next = pd;
+}
+
+static void
+free_argument(struct arguments *arg)
+{
+	if (arg == NULL)
+		return;
+
+	free_argument(arg->next);
+
+	/*
+	 * Don't free variables in it because the original codes don't free it
+	 * either variables are static structures instead of allocating
+	 */
+	free(arg);
+}
+
+static void
+free_cursor(struct cursor *c)
+{
+	if (c == NULL)
+		return;
+
+	free_cursor(c->next);
+	free_argument(c->argsinsert);
+	free_argument(c->argsresult);
+
+	free(c->name);
+	free(c->function);
+	free(c->command);
+	free(c->prepared_name);
+	free(c);
+}
+
+static void
+free_declared_stmt(struct declared_name_st *st)
+{
+	if (st == NULL)
+		return;
+
+	free_declared_stmt(st->next);
+	free(st);
 }
 
 #define ECPG_GETOPT_LONG_REGRESSION		1
@@ -348,29 +391,18 @@ main(int argc, char *const argv[])
 				struct typedefs *typeptr;
 
 				/* remove old cursor definitions if any are still there */
-				for (ptr = cur; ptr != NULL;)
+				if (cur)
 				{
-					struct cursor *this = ptr;
-					struct arguments *l1,
-							   *l2;
-
-					free(ptr->command);
-					free(ptr->connection);
-					free(ptr->name);
-					for (l1 = ptr->argsinsert; l1; l1 = l2)
-					{
-						l2 = l1->next;
-						free(l1);
-					}
-					for (l1 = ptr->argsresult; l1; l1 = l2)
-					{
-						l2 = l1->next;
-						free(l1);
-					}
-					ptr = ptr->next;
-					free(this);
+					free_cursor(cur);
+					cur = NULL;
 				}
-				cur = NULL;
+
+				/* remove old declared statements if any are still there */
+				if (g_declared_list)
+				{
+					free_declared_stmt(g_declared_list);
+					g_declared_list = NULL;
+				}
 
 				/* remove non-pertinent old defines as well */
 				while (defines && !defines->pertinent)
@@ -378,8 +410,8 @@ main(int argc, char *const argv[])
 					defptr = defines;
 					defines = defines->next;
 
-					free(defptr->new);
-					free(defptr->old);
+					free(defptr->newdef);
+					free(defptr->olddef);
 					free(defptr);
 				}
 
@@ -391,8 +423,8 @@ main(int argc, char *const argv[])
 					{
 						defptr->next = this->next;
 
-						free(this->new);
-						free(this->old);
+						free(this->newdef);
+						free(this->olddef);
 						free(this);
 					}
 				}
@@ -486,6 +518,18 @@ main(int argc, char *const argv[])
 			}
 
 			free(input_filename);
+		}
+
+		if (g_declared_list)
+		{
+			free_declared_stmt(g_declared_list);
+			g_declared_list = NULL;
+		}
+
+		if (cur)
+		{
+			free_cursor(cur);
+			cur = NULL;
 		}
 	}
 	return ret_value;

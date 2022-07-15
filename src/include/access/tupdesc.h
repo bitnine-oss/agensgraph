@@ -4,7 +4,7 @@
  *	  POSTGRES tuple descriptor definitions.
  *
  *
- * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/access/tupdesc.h
@@ -19,15 +19,13 @@
 #include "nodes/pg_list.h"
 
 
-typedef struct attrDefault
+typedef struct AttrDefault
 {
 	AttrNumber	adnum;
 	char	   *adbin;			/* nodeToString representation of expr */
 } AttrDefault;
 
-typedef struct attrMissing *MissingPtr;
-
-typedef struct constrCheck
+typedef struct ConstrCheck
 {
 	char	   *ccname;
 	char	   *ccbin;			/* nodeToString representation of expr */
@@ -36,14 +34,15 @@ typedef struct constrCheck
 } ConstrCheck;
 
 /* This structure contains constraints of a tuple */
-typedef struct tupleConstr
+typedef struct TupleConstr
 {
 	AttrDefault *defval;		/* array */
 	ConstrCheck *check;			/* array */
-	MissingPtr	missing;		/* missing attributes values, NULL if none */
+	struct AttrMissing *missing;	/* missing attributes values, NULL if none */
 	uint16		num_defval;
 	uint16		num_check;
 	bool		has_not_null;
+	bool		has_generated_stored;
 } TupleConstr;
 
 /*
@@ -77,7 +76,7 @@ typedef struct tupleConstr
  * field of such a descriptor to -1, while reference-counted descriptors
  * always have tdrefcount >= 0.
  */
-typedef struct tupleDesc
+typedef struct TupleDescData
 {
 	int			natts;			/* number of attributes in the tuple */
 	Oid			tdtypeid;		/* composite type ID for tuple type */
@@ -86,7 +85,8 @@ typedef struct tupleDesc
 	TupleConstr *constr;		/* constraints, or NULL if none */
 	/* attrs[N] is the description of Attribute Number N+1 */
 	FormData_pg_attribute attrs[FLEXIBLE_ARRAY_MEMBER];
-}		   *TupleDesc;
+}			TupleDescData;
+typedef struct TupleDescData *TupleDesc;
 
 /* Accessor for the i'th attribute of tupdesc. */
 #define TupleDescAttr(tupdesc, i) (&(tupdesc)->attrs[(i)])
@@ -100,13 +100,13 @@ extern TupleDesc CreateTupleDescCopy(TupleDesc tupdesc);
 extern TupleDesc CreateTupleDescCopyConstr(TupleDesc tupdesc);
 
 #define TupleDescSize(src) \
-	(offsetof(struct tupleDesc, attrs) + \
+	(offsetof(struct TupleDescData, attrs) + \
 	 (src)->natts * sizeof(FormData_pg_attribute))
 
 extern void TupleDescCopy(TupleDesc dst, TupleDesc src);
 
 extern void TupleDescCopyEntry(TupleDesc dst, AttrNumber dstAttno,
-				   TupleDesc src, AttrNumber srcAttno);
+							   TupleDesc src, AttrNumber srcAttno);
 
 extern void FreeTupleDesc(TupleDesc tupdesc);
 
@@ -130,22 +130,22 @@ extern bool equalTupleDescs(TupleDesc tupdesc1, TupleDesc tupdesc2);
 extern uint32 hashTupleDesc(TupleDesc tupdesc);
 
 extern void TupleDescInitEntry(TupleDesc desc,
-				   AttrNumber attributeNumber,
-				   const char *attributeName,
-				   Oid oidtypeid,
-				   int32 typmod,
-				   int attdim);
+							   AttrNumber attributeNumber,
+							   const char *attributeName,
+							   Oid oidtypeid,
+							   int32 typmod,
+							   int attdim);
 
 extern void TupleDescInitBuiltinEntry(TupleDesc desc,
-						  AttrNumber attributeNumber,
-						  const char *attributeName,
-						  Oid oidtypeid,
-						  int32 typmod,
-						  int attdim);
+									  AttrNumber attributeNumber,
+									  const char *attributeName,
+									  Oid oidtypeid,
+									  int32 typmod,
+									  int attdim);
 
 extern void TupleDescInitEntryCollation(TupleDesc desc,
-							AttrNumber attributeNumber,
-							Oid collationid);
+										AttrNumber attributeNumber,
+										Oid collationid);
 
 extern TupleDesc BuildDescForRelation(List *schema);
 

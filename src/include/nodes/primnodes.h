@@ -7,7 +7,7 @@
  *	  and join trees.
  *
  *
- * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/nodes/primnodes.h
@@ -110,6 +110,7 @@ typedef struct IntoClause
 
 	RangeVar   *rel;			/* target relation name */
 	List	   *colNames;		/* column names to assign, or NIL */
+	char	   *accessMethod;	/* table access method */
 	List	   *options;		/* options from WITH clause */
 	OnCommitAction onCommit;	/* what do we do at COMMIT? */
 	char	   *tableSpaceName; /* table space to use, or NULL */
@@ -367,18 +368,19 @@ typedef struct WindowFunc
 } WindowFunc;
 
 /* ----------------
- *	ArrayRef: describes an array subscripting operation
+ *	SubscriptingRef: describes a subscripting operation over a container
+ *			(array, etc).
  *
- * An ArrayRef can describe fetching a single element from an array,
- * fetching a subarray (array slice), storing a single element into
- * an array, or storing a slice.  The "store" cases work with an
- * initial array value and a source value that is inserted into the
- * appropriate part of the array; the result of the operation is an
- * entire new modified array value.
+ * A SubscriptingRef can describe fetching a single element from a container,
+ * fetching a part of container (e.g. array slice), storing a single element into
+ * a container, or storing a slice.  The "store" cases work with an
+ * initial container value and a source value that is inserted into the
+ * appropriate part of the container; the result of the operation is an
+ * entire new modified container value.
  *
- * If reflowerindexpr = NIL, then we are fetching or storing a single array
- * element at the subscripts given by refupperindexpr.  Otherwise we are
- * fetching or storing an array slice, that is a rectangular subarray
+ * If reflowerindexpr = NIL, then we are fetching or storing a single container
+ * element at the subscripts given by refupperindexpr. Otherwise we are
+ * fetching or storing a container slice, that is a rectangular subcontainer
  * with lower and upper bounds given by the index expressions.
  * reflowerindexpr must be the same length as refupperindexpr when it
  * is not NIL.
@@ -390,28 +392,29 @@ typedef struct WindowFunc
  * element; but it is the array type when doing subarray fetch or either
  * type of store.
  *
- * Note: for the cases where an array is returned, if refexpr yields a R/W
- * expanded array, then the implementation is allowed to modify that object
+ * Note: for the cases where a container is returned, if refexpr yields a R/W
+ * expanded container, then the implementation is allowed to modify that object
  * in-place and return the same object.)
  * ----------------
  */
-typedef struct ArrayRef
+typedef struct SubscriptingRef
 {
 	Expr		xpr;
-	Oid			refarraytype;	/* type of the array proper */
-	Oid			refelemtype;	/* type of the array elements */
-	int32		reftypmod;		/* typmod of the array (and elements too) */
+	Oid			refcontainertype;	/* type of the container proper */
+	Oid			refelemtype;	/* type of the container elements */
+	int32		reftypmod;		/* typmod of the container (and elements too) */
 	Oid			refcollid;		/* OID of collation, or InvalidOid if none */
 	List	   *refupperindexpr;	/* expressions that evaluate to upper
-									 * array indexes */
+									 * container indexes */
 	List	   *reflowerindexpr;	/* expressions that evaluate to lower
-									 * array indexes, or NIL for single array
-									 * element */
-	Expr	   *refexpr;		/* the expression that evaluates to an array
-								 * value */
+									 * container indexes, or NIL for single
+									 * container element */
+	Expr	   *refexpr;		/* the expression that evaluates to a
+								 * container value */
+
 	Expr	   *refassgnexpr;	/* expression for the source value, or NULL if
 								 * fetch */
-} ArrayRef;
+} SubscriptingRef;
 
 /*
  * CoercionContext - distinguishes the allowed set of type casts
@@ -754,7 +757,7 @@ typedef struct FieldSelect
  *
  * FieldStore represents the operation of modifying one field in a tuple
  * value, yielding a new tuple value (the input is not touched!).  Like
- * the assign case of ArrayRef, this is used to implement UPDATE of a
+ * the assign case of SubscriptingRef, this is used to implement UPDATE of a
  * portion of a column.
  *
  * resulttype is always a named composite type (not a domain).  To update
@@ -936,7 +939,7 @@ typedef struct CaseWhen
  * We also abuse this node type for some other purposes, including:
  *	* Placeholder for the current array element value in ArrayCoerceExpr;
  *	  see build_coercion_expression().
- *	* Nested FieldStore/ArrayRef assignment expressions in INSERT/UPDATE;
+ *	* Nested FieldStore/SubscriptingRef assignment expressions in INSERT/UPDATE;
  *	  see transformAssignmentIndirection().
  *
  * The uses in CaseExpr and ArrayCoerceExpr are safe only to the extent that
@@ -946,7 +949,7 @@ typedef struct CaseWhen
  * break it.
  *
  * The nested-assignment-expression case is safe because the only node types
- * that can be above such CaseTestExprs are FieldStore and ArrayRef.
+ * that can be above such CaseTestExprs are FieldStore and SubscriptingRef.
  */
 typedef struct CaseTestExpr
 {

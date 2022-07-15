@@ -92,7 +92,7 @@
  * heap's TOAST table will go through the normal bufmgr.
  *
  *
- * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994-5, Regents of the University of California
  *
  * IDENTIFICATION
@@ -130,7 +130,6 @@
 
 #include "utils/memutils.h"
 #include "utils/rel.h"
-#include "utils/tqual.h"
 
 #include "storage/procarray.h"
 
@@ -351,7 +350,7 @@ end_heap_rewrite(RewriteState state)
 	 *
 	 * It's obvious that we must do this when not WAL-logging. It's less
 	 * obvious that we have to do it even if we did WAL-log the pages. The
-	 * reason is the same as in tablecmds.c's copy_relation_data(): we're
+	 * reason is the same as in storage.c's RelationCopyStorage(): we're
 	 * writing data that's not in shared buffers, and so a CHECKPOINT
 	 * occurring during the rewriteheap operation won't have fsync'd data we
 	 * wrote before the checkpoint.
@@ -653,18 +652,17 @@ raw_heap_insert(RewriteState state, HeapTuple tup)
 	}
 	else if (HeapTupleHasExternal(tup) || tup->t_len > TOAST_TUPLE_THRESHOLD)
 	{
-		int options = HEAP_INSERT_SKIP_FSM;
+		int			options = HEAP_INSERT_SKIP_FSM;
 
 		if (!state->rs_use_wal)
 			options |= HEAP_INSERT_SKIP_WAL;
 
 		/*
-		 * The new relfilenode's relcache entrye doesn't have the necessary
-		 * information to determine whether a relation should emit data for
-		 * logical decoding.  Force it to off if necessary.
+		 * While rewriting the heap for VACUUM FULL / CLUSTER, make sure data
+		 * for the TOAST table are not logically decoded.  The main heap is
+		 * WAL-logged as XLOG FPI records, which are not logically decoded.
 		 */
-		if (!RelationIsLogicallyLogged(state->rs_old_rel))
-			options |= HEAP_INSERT_NO_LOGICAL;
+		options |= HEAP_INSERT_NO_LOGICAL;
 
 		heaptup = toast_insert_or_update(state->rs_new_rel, tup, NULL,
 										 options);
@@ -1204,7 +1202,10 @@ heap_xlog_logical_rewrite(XLogReaderState *r)
 				 errmsg("could not fsync file \"%s\": %m", path)));
 	pgstat_report_wait_end();
 
-	CloseTransientFile(fd);
+	if (CloseTransientFile(fd))
+		ereport(ERROR,
+				(errcode_for_file_access(),
+				 errmsg("could not close file \"%s\": %m", path)));
 }
 
 /* ---
@@ -1302,7 +1303,11 @@ CheckPointLogicalRewriteHeap(void)
 						(errcode_for_file_access(),
 						 errmsg("could not fsync file \"%s\": %m", path)));
 			pgstat_report_wait_end();
-			CloseTransientFile(fd);
+
+			if (CloseTransientFile(fd))
+				ereport(ERROR,
+						(errcode_for_file_access(),
+						 errmsg("could not close file \"%s\": %m", path)));
 		}
 	}
 	FreeDir(mappings_dir);

@@ -4,7 +4,7 @@
  *	  definition of the "range type" system catalog (pg_range)
  *
  *
- * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/catalog/pg_range.h
@@ -59,8 +59,8 @@ typedef FormData_pg_range *Form_pg_range;
  */
 
 extern void RangeCreate(Oid rangeTypeOid, Oid rangeSubType, Oid rangeCollation,
-			Oid rangeSubOpclass, RegProcedure rangeCanonical,
-			RegProcedure rangeSubDiff);
+						Oid rangeSubOpclass, RegProcedure rangeCanonical,
+						RegProcedure rangeSubDiff);
 extern void RangeDelete(Oid rangeTypeOid);
 
 #endif							/* PG_RANGE_H */

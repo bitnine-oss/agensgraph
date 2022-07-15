@@ -3,7 +3,7 @@
  * blutils.c
  *		Bloom index utilities.
  *
- * Portions Copyright (c) 2016-2018, PostgreSQL Global Development Group
+ * Portions Copyright (c) 2016-2019, PostgreSQL Global Development Group
  * Portions Copyright (c) 1990-1993, Regents of the University of California
  *
  * IDENTIFICATION
@@ -132,6 +132,7 @@ blhandler(PG_FUNCTION_ARGS)
 	amroutine->amcostestimate = blcostestimate;
 	amroutine->amoptions = bloptions;
 	amroutine->amproperty = NULL;
+	amroutine->ambuildphasename = NULL;
 	amroutine->amvalidate = blvalidate;
 	amroutine->ambeginscan = blbeginscan;
 	amroutine->amrescan = blrescan;
@@ -163,6 +164,7 @@ initBloomState(BloomState *state, Relation index)
 		fmgr_info_copy(&(state->hashFn[i]),
 					   index_getprocinfo(index, i + 1, BLOOM_HASH_PROC),
 					   CurrentMemoryContext);
+		state->collations[i] = index->rd_indcollation[i];
 	}
 
 	/* Initialize amcache if needed with options from metapage */
@@ -267,7 +269,7 @@ signValue(BloomState *state, BloomSignatureWord *sign, Datum value, int attno)
 	 * different columns will be mapped into different bits because of step
 	 * above
 	 */
-	hashVal = DatumGetInt32(FunctionCall1(&state->hashFn[attno], value));
+	hashVal = DatumGetInt32(FunctionCall1Coll(&state->hashFn[attno], state->collations[attno], value));
 	mySrand(hashVal ^ myRand());
 
 	for (j = 0; j < state->opts.bitSize[attno]; j++)
@@ -339,7 +341,7 @@ BloomPageAddItem(BloomState *state, Page page, BloomTuple *tuple)
 /*
  * Allocate a new page (either by recycling, or by extending the index file)
  * The returned buffer is already pinned and exclusive-locked
- * Caller is responsible for initializing the page by calling BloomInitBuffer
+ * Caller is responsible for initializing the page by calling BloomInitPage
  */
 Buffer
 BloomNewBuffer(Relation index)

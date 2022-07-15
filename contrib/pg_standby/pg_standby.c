@@ -115,7 +115,7 @@ static bool SetWALSegSize(void);
  *	accessible directory. If you want to make other assumptions,
  *	such as using a vendor-specific archive and access API, these
  *	routines are the ones you'll need to change. You're
- *	encouraged to submit any changes to pgsql-hackers@postgresql.org
+ *	encouraged to submit any changes to pgsql-hackers@lists.postgresql.org
  *	or personally to the current maintainer. Those changes may be
  *	folded in to later versions of this program.
  */
@@ -611,11 +611,11 @@ usage(void)
 	printf("  -w MAXWAITTIME     max seconds to wait for a file (0=no limit) (default=0)\n");
 	printf("  -?, --help         show this help, then exit\n");
 	printf("\n"
-		   "Main intended use as restore_command in recovery.conf:\n"
+		   "Main intended use as restore_command in postgresql.conf:\n"
 		   "  restore_command = 'pg_standby [OPTION]... ARCHIVELOCATION %%f %%p %%r'\n"
 		   "e.g.\n"
 		   "  restore_command = 'pg_standby /mnt/server/archiverdir %%f %%p %%r'\n");
-	printf("\nReport bugs to <pgsql-bugs@postgresql.org>.\n");
+	printf("\nReport bugs to <pgsql-bugs@lists.postgresql.org>.\n");
 }
 
 #ifndef WIN32

@@ -3,13 +3,13 @@
  * sharedfileset.c
  *	  Shared temporary file management.
  *
- * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
  *	  src/backend/storage/file/sharedfileset.c
  *
- * SharefFileSets provide a temporary namespace (think directory) so that
+ * SharedFileSets provide a temporary namespace (think directory) so that
  * files can be discovered by name, and a shared ownership semantics so that
  * shared files survive until the last user detaches.
  *
@@ -18,13 +18,15 @@
 
 #include "postgres.h"
 
-#include "access/hash.h"
+#include <limits.h>
+
 #include "catalog/pg_tablespace.h"
 #include "commands/tablespace.h"
 #include "miscadmin.h"
 #include "storage/dsm.h"
 #include "storage/sharedfileset.h"
 #include "utils/builtins.h"
+#include "utils/hashutils.h"
 
 static void SharedFileSetOnDetach(dsm_segment *segment, Datum datum);
 static void SharedFileSetPath(char *path, SharedFileSet *fileset, Oid tablespace);
@@ -141,7 +143,7 @@ SharedFileSetOpen(SharedFileSet *fileset, const char *name)
 }
 
 /*
- * Delete a file that was created with PathNameCreateShared().
+ * Delete a file that was created with SharedFileSetCreate().
  * Return true if the file existed, false if didn't.
  */
 bool

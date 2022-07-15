@@ -5,7 +5,7 @@
 #    Perl script that generates fmgroids.h, fmgrprotos.h, and fmgrtab.c
 #    from pg_proc.dat
 #
-# Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
+# Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
 # Portions Copyright (c) 1994, Regents of the University of California
 #
 #
@@ -18,32 +18,14 @@ use Catalog;
 
 use strict;
 use warnings;
+use Getopt::Long;
 
-# Collect arguments
-my @input_files;
 my $output_path = '';
 my $include_path;
 
-while (@ARGV)
-{
-	my $arg = shift @ARGV;
-	if ($arg !~ /^-/)
-	{
-		push @input_files, $arg;
-	}
-	elsif ($arg =~ /^-o/)
-	{
-		$output_path = length($arg) > 2 ? substr($arg, 2) : shift @ARGV;
-	}
-	elsif ($arg =~ /^-I/)
-	{
-		$include_path = length($arg) > 2 ? substr($arg, 2) : shift @ARGV;
-	}
-	else
-	{
-		usage();
-	}
-}
+GetOptions(
+	'output:s'       => \$output_path,
+	'include-path:s' => \$include_path) || usage();
 
 # Make sure output_path ends in a slash.
 if ($output_path ne '' && substr($output_path, -1) ne '/')
@@ -52,16 +34,18 @@ if ($output_path ne '' && substr($output_path, -1) ne '/')
 }
 
 # Sanity check arguments.
-die "No input files.\n"                       if !@input_files;
-die "No include path; you must specify -I.\n" if !$include_path;
+die "No input files.\n"                   unless @ARGV;
+die "--include-path must be specified.\n" unless $include_path;
 
 # Read all the input files into internal data structures.
 # Note: We pass data file names as arguments and then look for matching
 # headers to parse the schema from. This is backwards from genbki.pl,
 # but the Makefile dependencies look more sensible this way.
+# We currently only need pg_proc, but retain the possibility of reading
+# more than one data file.
 my %catalogs;
 my %catalog_data;
-foreach my $datfile (@input_files)
+foreach my $datfile (@ARGV)
 {
 	$datfile =~ /(.+)\.dat$/
 	  or die "Input files need to be data (.dat) files.\n";
@@ -78,14 +62,6 @@ foreach my $datfile (@input_files)
 	$catalog_data{$catname} = Catalog::ParseData($datfile, $schema, 0);
 }
 
-# Fetch some values for later.
-my $FirstBootstrapObjectId =
-  Catalog::FindDefinedSymbol('access/transam.h', $include_path,
-	'FirstBootstrapObjectId');
-my $INTERNALlanguageId =
-  Catalog::FindDefinedSymbolFromData($catalog_data{pg_language},
-	'INTERNALlanguageId');
-
 # Collect certain fields from pg_proc.dat.
 my @fmgr = ();
 
@@ -94,7 +70,7 @@ foreach my $row (@{ $catalog_data{pg_proc} })
 	my %bki_values = %$row;
 
 	# Select out just the rows for internal-language procedures.
-	next if $bki_values{prolang} ne $INTERNALlanguageId;
+	next if $bki_values{prolang} ne 'internal';
 
 	push @fmgr,
 	  {
@@ -128,7 +104,7 @@ print $ofh <<OFH;
  * These macros can be used to avoid a catalog lookup when a specific
  * fmgr-callable function needs to be referenced.
  *
- * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * NOTES
@@ -162,7 +138,7 @@ print $pfh <<PFH;
  * fmgrprotos.h
  *    Prototypes for built-in functions.
  *
- * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * NOTES
@@ -188,7 +164,7 @@ print $tfh <<TFH;
  * fmgrtab.c
  *    The function manager's table of internal functions.
  *
- * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * NOTES
@@ -226,13 +202,15 @@ my %bmap;
 $bmap{'t'} = 'true';
 $bmap{'f'} = 'false';
 my @fmgr_builtin_oid_index;
-my $fmgr_count = 0;
+my $last_builtin_oid = 0;
+my $fmgr_count       = 0;
 foreach my $s (sort { $a->{oid} <=> $b->{oid} } @fmgr)
 {
 	print $tfh
 	  "  { $s->{oid}, $s->{nargs}, $bmap{$s->{strict}}, $bmap{$s->{retset}}, \"$s->{prosrc}\", $s->{prosrc} }";
 
 	$fmgr_builtin_oid_index[ $s->{oid} ] = $fmgr_count++;
+	$last_builtin_oid = $s->{oid};
 
 	if ($fmgr_count <= $#fmgr)
 	{
@@ -245,31 +223,30 @@ foreach my $s (sort { $a->{oid} <=> $b->{oid} } @fmgr)
 }
 print $tfh "};\n";
 
-print $tfh qq|
+printf $tfh qq|
 const int fmgr_nbuiltins = (sizeof(fmgr_builtins) / sizeof(FmgrBuiltin));
-|;
+
+const Oid fmgr_last_builtin_oid = %u;
+|, $last_builtin_oid;
 
 
-# Create fmgr_builtins_oid_index table.
-#
-# Note that the array has to be filled up to FirstBootstrapObjectId,
-# as we can't rely on zero initialization as 0 is a valid mapping.
-print $tfh qq|
-const uint16 fmgr_builtin_oid_index[FirstBootstrapObjectId] = {
-|;
+# Create fmgr_builtin_oid_index table.
+printf $tfh qq|
+const uint16 fmgr_builtin_oid_index[%u] = {
+|, $last_builtin_oid + 1;
 
-for (my $i = 0; $i < $FirstBootstrapObjectId; $i++)
+for (my $i = 0; $i <= $last_builtin_oid; $i++)
 {
 	my $oid = $fmgr_builtin_oid_index[$i];
 
-	# fmgr_builtin_oid_index is sparse, map nonexistant functions to
+	# fmgr_builtin_oid_index is sparse, map nonexistent functions to
 	# InvalidOidBuiltinMapping
 	if (not defined $oid)
 	{
 		$oid = 'InvalidOidBuiltinMapping';
 	}
 
-	if ($i + 1 == $FirstBootstrapObjectId)
+	if ($i == $last_builtin_oid)
 	{
 		print $tfh "  $oid\n";
 	}
@@ -297,12 +274,16 @@ Catalog::RenameTempFile($tabfile,    $tmpext);
 sub usage
 {
 	die <<EOM;
-Usage: perl -I [directory of Catalog.pm] Gen_fmgrtab.pl -I [include path] [path to pg_proc.dat]
+Usage: perl -I [directory of Catalog.pm] Gen_fmgrtab.pl [--include-path/-i <path>] [path to pg_proc.dat]
+
+Options:
+    --output         Output directory (default '.')
+    --include-path   Include path in source tree
 
 Gen_fmgrtab.pl generates fmgroids.h, fmgrprotos.h, and fmgrtab.c from
 pg_proc.dat
 
-Report bugs to <pgsql-bugs\@postgresql.org>.
+Report bugs to <pgsql-bugs\@lists.postgresql.org>.
 EOM
 }
 

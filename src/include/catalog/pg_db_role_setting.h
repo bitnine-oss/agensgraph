@@ -5,7 +5,7 @@
  *	  configuration settings (pg_db_role_setting)
  *
  *
- * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/catalog/pg_db_role_setting.h
@@ -49,6 +49,6 @@ typedef FormData_pg_db_role_setting * Form_pg_db_role_setting;
 extern void AlterSetting(Oid databaseid, Oid roleid, VariableSetStmt *setstmt);
 extern void DropSetting(Oid databaseid, Oid roleid);
 extern void ApplySetting(Snapshot snapshot, Oid databaseid, Oid roleid,
-			 Relation relsetting, GucSource source);
+						 Relation relsetting, GucSource source);
 
 #endif							/* PG_DB_ROLE_SETTING_H */

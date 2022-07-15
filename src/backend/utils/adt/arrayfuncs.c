@@ -3,7 +3,7 @@
  * arrayfuncs.c
  *	  Support functions for arrays.
  *
- * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -17,17 +17,20 @@
 #include <ctype.h>
 #include <math.h>
 
-#include "access/hash.h"
 #include "access/htup_details.h"
 #include "catalog/pg_type.h"
 #include "funcapi.h"
 #include "libpq/pqformat.h"
+#include "nodes/nodeFuncs.h"
+#include "nodes/supportnodes.h"
+#include "optimizer/optimizer.h"
 #include "utils/array.h"
 #include "utils/arrayaccess.h"
 #include "utils/builtins.h"
 #include "utils/datum.h"
 #include "utils/lsyscache.h"
 #include "utils/memutils.h"
+#include "utils/selfuncs.h"
 #include "utils/typcache.h"
 
 
@@ -87,74 +90,74 @@ typedef struct ArrayIteratorData
 static bool array_isspace(char ch);
 static int	ArrayCount(const char *str, int *dim, char typdelim);
 static void ReadArrayStr(char *arrayStr, const char *origStr,
-			 int nitems, int ndim, int *dim,
-			 FmgrInfo *inputproc, Oid typioparam, int32 typmod,
-			 char typdelim,
-			 int typlen, bool typbyval, char typalign,
-			 Datum *values, bool *nulls,
-			 bool *hasnulls, int32 *nbytes);
+						 int nitems, int ndim, int *dim,
+						 FmgrInfo *inputproc, Oid typioparam, int32 typmod,
+						 char typdelim,
+						 int typlen, bool typbyval, char typalign,
+						 Datum *values, bool *nulls,
+						 bool *hasnulls, int32 *nbytes);
 static void ReadArrayBinary(StringInfo buf, int nitems,
-				FmgrInfo *receiveproc, Oid typioparam, int32 typmod,
-				int typlen, bool typbyval, char typalign,
-				Datum *values, bool *nulls,
-				bool *hasnulls, int32 *nbytes);
+							FmgrInfo *receiveproc, Oid typioparam, int32 typmod,
+							int typlen, bool typbyval, char typalign,
+							Datum *values, bool *nulls,
+							bool *hasnulls, int32 *nbytes);
 static Datum array_get_element_expanded(Datum arraydatum,
-						   int nSubscripts, int *indx,
-						   int arraytyplen,
-						   int elmlen, bool elmbyval, char elmalign,
-						   bool *isNull);
+										int nSubscripts, int *indx,
+										int arraytyplen,
+										int elmlen, bool elmbyval, char elmalign,
+										bool *isNull);
 static Datum array_set_element_expanded(Datum arraydatum,
-						   int nSubscripts, int *indx,
-						   Datum dataValue, bool isNull,
-						   int arraytyplen,
-						   int elmlen, bool elmbyval, char elmalign);
+										int nSubscripts, int *indx,
+										Datum dataValue, bool isNull,
+										int arraytyplen,
+										int elmlen, bool elmbyval, char elmalign);
 static bool array_get_isnull(const bits8 *nullbitmap, int offset);
 static void array_set_isnull(bits8 *nullbitmap, int offset, bool isNull);
 static Datum ArrayCast(char *value, bool byval, int len);
-static int ArrayCastAndSet(Datum src,
-				int typlen, bool typbyval, char typalign,
-				char *dest);
+static int	ArrayCastAndSet(Datum src,
+							int typlen, bool typbyval, char typalign,
+							char *dest);
 static char *array_seek(char *ptr, int offset, bits8 *nullbitmap, int nitems,
-		   int typlen, bool typbyval, char typalign);
-static int array_nelems_size(char *ptr, int offset, bits8 *nullbitmap,
-				  int nitems, int typlen, bool typbyval, char typalign);
-static int array_copy(char *destptr, int nitems,
-		   char *srcptr, int offset, bits8 *nullbitmap,
-		   int typlen, bool typbyval, char typalign);
-static int array_slice_size(char *arraydataptr, bits8 *arraynullsptr,
-				 int ndim, int *dim, int *lb,
-				 int *st, int *endp,
-				 int typlen, bool typbyval, char typalign);
+						int typlen, bool typbyval, char typalign);
+static int	array_nelems_size(char *ptr, int offset, bits8 *nullbitmap,
+							  int nitems, int typlen, bool typbyval, char typalign);
+static int	array_copy(char *destptr, int nitems,
+					   char *srcptr, int offset, bits8 *nullbitmap,
+					   int typlen, bool typbyval, char typalign);
+static int	array_slice_size(char *arraydataptr, bits8 *arraynullsptr,
+							 int ndim, int *dim, int *lb,
+							 int *st, int *endp,
+							 int typlen, bool typbyval, char typalign);
 static void array_extract_slice(ArrayType *newarray,
-					int ndim, int *dim, int *lb,
-					char *arraydataptr, bits8 *arraynullsptr,
-					int *st, int *endp,
-					int typlen, bool typbyval, char typalign);
+								int ndim, int *dim, int *lb,
+								char *arraydataptr, bits8 *arraynullsptr,
+								int *st, int *endp,
+								int typlen, bool typbyval, char typalign);
 static void array_insert_slice(ArrayType *destArray, ArrayType *origArray,
-				   ArrayType *srcArray,
-				   int ndim, int *dim, int *lb,
-				   int *st, int *endp,
-				   int typlen, bool typbyval, char typalign);
+							   ArrayType *srcArray,
+							   int ndim, int *dim, int *lb,
+							   int *st, int *endp,
+							   int typlen, bool typbyval, char typalign);
 static int	array_cmp(FunctionCallInfo fcinfo);
 static ArrayType *create_array_envelope(int ndims, int *dimv, int *lbv, int nbytes,
-					  Oid elmtype, int dataoffset);
+										Oid elmtype, int dataoffset);
 static ArrayType *array_fill_internal(ArrayType *dims, ArrayType *lbs,
-					Datum value, bool isnull, Oid elmtype,
-					FunctionCallInfo fcinfo);
+									  Datum value, bool isnull, Oid elmtype,
+									  FunctionCallInfo fcinfo);
 static ArrayType *array_replace_internal(ArrayType *array,
-					   Datum search, bool search_isnull,
-					   Datum replace, bool replace_isnull,
-					   bool remove, Oid collation,
-					   FunctionCallInfo fcinfo);
+										 Datum search, bool search_isnull,
+										 Datum replace, bool replace_isnull,
+										 bool remove, Oid collation,
+										 FunctionCallInfo fcinfo);
 static int	width_bucket_array_float8(Datum operand, ArrayType *thresholds);
-static int width_bucket_array_fixed(Datum operand,
-						 ArrayType *thresholds,
-						 Oid collation,
-						 TypeCacheEntry *typentry);
-static int width_bucket_array_variable(Datum operand,
-							ArrayType *thresholds,
-							Oid collation,
-							TypeCacheEntry *typentry);
+static int	width_bucket_array_fixed(Datum operand,
+									 ArrayType *thresholds,
+									 Oid collation,
+									 TypeCacheEntry *typentry);
+static int	width_bucket_array_variable(Datum operand,
+										ArrayType *thresholds,
+										Oid collation,
+										TypeCacheEntry *typentry);
 
 
 /*
@@ -1319,7 +1322,7 @@ array_recv(PG_FUNCTION_ARGS)
 		lBound[i] = pq_getmsgint(buf, 4);
 
 		/*
-		 * Check overflow of upper bound. (ArrayNItems() below checks that
+		 * Check overflow of upper bound. (ArrayGetNItems() below checks that
 		 * dim[i] >= 0)
 		 */
 		if (dim[i] != 0)
@@ -3571,6 +3574,7 @@ array_contains_nulls(ArrayType *array)
 Datum
 array_eq(PG_FUNCTION_ARGS)
 {
+	LOCAL_FCINFO(locfcinfo, 2);
 	AnyArrayType *array1 = PG_GETARG_ANY_ARRAY_P(0);
 	AnyArrayType *array2 = PG_GETARG_ANY_ARRAY_P(1);
 	Oid			collation = PG_GET_COLLATION();
@@ -3590,7 +3594,6 @@ array_eq(PG_FUNCTION_ARGS)
 	array_iter	it1;
 	array_iter	it2;
 	int			i;
-	FunctionCallInfoData locfcinfo;
 
 	if (element_type != AARR_ELEMTYPE(array2))
 		ereport(ERROR,
@@ -3630,7 +3633,7 @@ array_eq(PG_FUNCTION_ARGS)
 		/*
 		 * apply the operator to each pair of array elements.
 		 */
-		InitFunctionCallInfoData(locfcinfo, &typentry->eq_opr_finfo, 2,
+		InitFunctionCallInfoData(*locfcinfo, &typentry->eq_opr_finfo, 2,
 								 collation, NULL, NULL);
 
 		/* Loop over source data */
@@ -3666,12 +3669,12 @@ array_eq(PG_FUNCTION_ARGS)
 			/*
 			 * Apply the operator to the element pair
 			 */
-			locfcinfo.arg[0] = elt1;
-			locfcinfo.arg[1] = elt2;
-			locfcinfo.argnull[0] = false;
-			locfcinfo.argnull[1] = false;
-			locfcinfo.isnull = false;
-			oprresult = DatumGetBool(FunctionCallInvoke(&locfcinfo));
+			locfcinfo->args[0].value = elt1;
+			locfcinfo->args[0].isnull = false;
+			locfcinfo->args[1].value = elt2;
+			locfcinfo->args[1].isnull = false;
+			locfcinfo->isnull = false;
+			oprresult = DatumGetBool(FunctionCallInvoke(locfcinfo));
 			if (!oprresult)
 			{
 				result = false;
@@ -3742,6 +3745,7 @@ btarraycmp(PG_FUNCTION_ARGS)
 static int
 array_cmp(FunctionCallInfo fcinfo)
 {
+	LOCAL_FCINFO(locfcinfo, 2);
 	AnyArrayType *array1 = PG_GETARG_ANY_ARRAY_P(0);
 	AnyArrayType *array2 = PG_GETARG_ANY_ARRAY_P(1);
 	Oid			collation = PG_GET_COLLATION();
@@ -3761,7 +3765,6 @@ array_cmp(FunctionCallInfo fcinfo)
 	array_iter	it1;
 	array_iter	it2;
 	int			i;
-	FunctionCallInfoData locfcinfo;
 
 	if (element_type != AARR_ELEMTYPE(array2))
 		ereport(ERROR,
@@ -3794,7 +3797,7 @@ array_cmp(FunctionCallInfo fcinfo)
 	/*
 	 * apply the operator to each pair of array elements.
 	 */
-	InitFunctionCallInfoData(locfcinfo, &typentry->cmp_proc_finfo, 2,
+	InitFunctionCallInfoData(*locfcinfo, &typentry->cmp_proc_finfo, 2,
 							 collation, NULL, NULL);
 
 	/* Loop over source data */
@@ -3833,12 +3836,12 @@ array_cmp(FunctionCallInfo fcinfo)
 		}
 
 		/* Compare the pair of elements */
-		locfcinfo.arg[0] = elt1;
-		locfcinfo.arg[1] = elt2;
-		locfcinfo.argnull[0] = false;
-		locfcinfo.argnull[1] = false;
-		locfcinfo.isnull = false;
-		cmpresult = DatumGetInt32(FunctionCallInvoke(&locfcinfo));
+		locfcinfo->args[0].value = elt1;
+		locfcinfo->args[0].isnull = false;
+		locfcinfo->args[1].value = elt2;
+		locfcinfo->args[1].isnull = false;
+		locfcinfo->isnull = false;
+		cmpresult = DatumGetInt32(FunctionCallInvoke(locfcinfo));
 
 		if (cmpresult == 0)
 			continue;			/* equal */
@@ -3913,6 +3916,7 @@ array_cmp(FunctionCallInfo fcinfo)
 Datum
 hash_array(PG_FUNCTION_ARGS)
 {
+	LOCAL_FCINFO(locfcinfo, 1);
 	AnyArrayType *array = PG_GETARG_ANY_ARRAY_P(0);
 	int			ndims = AARR_NDIM(array);
 	int		   *dims = AARR_DIMS(array);
@@ -3925,7 +3929,6 @@ hash_array(PG_FUNCTION_ARGS)
 	char		typalign;
 	int			i;
 	array_iter	iter;
-	FunctionCallInfoData locfcinfo;
 
 	/*
 	 * We arrange to look up the hash function only once per series of calls,
@@ -3953,8 +3956,8 @@ hash_array(PG_FUNCTION_ARGS)
 	/*
 	 * apply the hash function to each array element.
 	 */
-	InitFunctionCallInfoData(locfcinfo, &typentry->hash_proc_finfo, 1,
-							 InvalidOid, NULL, NULL);
+	InitFunctionCallInfoData(*locfcinfo, &typentry->hash_proc_finfo, 1,
+							 PG_GET_COLLATION(), NULL, NULL);
 
 	/* Loop over source data */
 	nitems = ArrayGetNItems(ndims, dims);
@@ -3977,10 +3980,10 @@ hash_array(PG_FUNCTION_ARGS)
 		else
 		{
 			/* Apply the hash function */
-			locfcinfo.arg[0] = elt;
-			locfcinfo.argnull[0] = false;
-			locfcinfo.isnull = false;
-			elthash = DatumGetUInt32(FunctionCallInvoke(&locfcinfo));
+			locfcinfo->args[0].value = elt;
+			locfcinfo->args[0].isnull = false;
+			locfcinfo->isnull = false;
+			elthash = DatumGetUInt32(FunctionCallInvoke(locfcinfo));
 		}
 
 		/*
@@ -4010,6 +4013,7 @@ hash_array(PG_FUNCTION_ARGS)
 Datum
 hash_array_extended(PG_FUNCTION_ARGS)
 {
+	LOCAL_FCINFO(locfcinfo, 2);
 	AnyArrayType *array = PG_GETARG_ANY_ARRAY_P(0);
 	uint64		seed = PG_GETARG_INT64(1);
 	int			ndims = AARR_NDIM(array);
@@ -4023,7 +4027,6 @@ hash_array_extended(PG_FUNCTION_ARGS)
 	char		typalign;
 	int			i;
 	array_iter	iter;
-	FunctionCallInfoData locfcinfo;
 
 	typentry = (TypeCacheEntry *) fcinfo->flinfo->fn_extra;
 	if (typentry == NULL ||
@@ -4042,7 +4045,7 @@ hash_array_extended(PG_FUNCTION_ARGS)
 	typbyval = typentry->typbyval;
 	typalign = typentry->typalign;
 
-	InitFunctionCallInfoData(locfcinfo, &typentry->hash_extended_proc_finfo, 2,
+	InitFunctionCallInfoData(*locfcinfo, &typentry->hash_extended_proc_finfo, 2,
 							 InvalidOid, NULL, NULL);
 
 	/* Loop over source data */
@@ -4065,12 +4068,11 @@ hash_array_extended(PG_FUNCTION_ARGS)
 		else
 		{
 			/* Apply the hash function */
-			locfcinfo.arg[0] = elt;
-			locfcinfo.arg[1] = Int64GetDatum(seed);
-			locfcinfo.argnull[0] = false;
-			locfcinfo.argnull[1] = false;
-			locfcinfo.isnull = false;
-			elthash = DatumGetUInt64(FunctionCallInvoke(&locfcinfo));
+			locfcinfo->args[0].value = elt;
+			locfcinfo->args[0].isnull = false;
+			locfcinfo->args[1].value = Int64GetDatum(seed);
+			locfcinfo->args[1].isnull = false;
+			elthash = DatumGetUInt64(FunctionCallInvoke(locfcinfo));
 		}
 
 		result = (result << 5) - result + elthash;
@@ -4100,6 +4102,7 @@ static bool
 array_contain_compare(AnyArrayType *array1, AnyArrayType *array2, Oid collation,
 					  bool matchall, void **fn_extra)
 {
+	LOCAL_FCINFO(locfcinfo, 2);
 	bool		result = matchall;
 	Oid			element_type = AARR_ELEMTYPE(array1);
 	TypeCacheEntry *typentry;
@@ -4113,7 +4116,6 @@ array_contain_compare(AnyArrayType *array1, AnyArrayType *array2, Oid collation,
 	int			i;
 	int			j;
 	array_iter	it1;
-	FunctionCallInfoData locfcinfo;
 
 	if (element_type != AARR_ELEMTYPE(array2))
 		ereport(ERROR,
@@ -4157,14 +4159,14 @@ array_contain_compare(AnyArrayType *array1, AnyArrayType *array2, Oid collation,
 		nelems2 = array2->xpn.nelems;
 	}
 	else
-		deconstruct_array(&(array2->flt),
+		deconstruct_array((ArrayType *) array2,
 						  element_type, typlen, typbyval, typalign,
 						  &values2, &nulls2, &nelems2);
 
 	/*
 	 * Apply the comparison operator to each pair of array elements.
 	 */
-	InitFunctionCallInfoData(locfcinfo, &typentry->eq_opr_finfo, 2,
+	InitFunctionCallInfoData(*locfcinfo, &typentry->eq_opr_finfo, 2,
 							 collation, NULL, NULL);
 
 	/* Loop over source data */
@@ -4206,12 +4208,12 @@ array_contain_compare(AnyArrayType *array1, AnyArrayType *array2, Oid collation,
 			/*
 			 * Apply the operator to the element pair
 			 */
-			locfcinfo.arg[0] = elt1;
-			locfcinfo.arg[1] = elt2;
-			locfcinfo.argnull[0] = false;
-			locfcinfo.argnull[1] = false;
-			locfcinfo.isnull = false;
-			oprresult = DatumGetBool(FunctionCallInvoke(&locfcinfo));
+			locfcinfo->args[0].value = elt1;
+			locfcinfo->args[0].isnull = false;
+			locfcinfo->args[1].value = elt2;
+			locfcinfo->args[1].isnull = false;
+			locfcinfo->isnull = false;
+			oprresult = DatumGetBool(FunctionCallInvoke(locfcinfo));
 			if (oprresult)
 				break;
 		}
@@ -6026,6 +6028,36 @@ array_unnest(PG_FUNCTION_ARGS)
 	}
 }
 
+/*
+ * Planner support function for array_unnest(anyarray)
+ */
+Datum
+array_unnest_support(PG_FUNCTION_ARGS)
+{
+	Node	   *rawreq = (Node *) PG_GETARG_POINTER(0);
+	Node	   *ret = NULL;
+
+	if (IsA(rawreq, SupportRequestRows))
+	{
+		/* Try to estimate the number of rows returned */
+		SupportRequestRows *req = (SupportRequestRows *) rawreq;
+
+		if (is_funcclause(req->node))	/* be paranoid */
+		{
+			List	   *args = ((FuncExpr *) req->node)->args;
+			Node	   *arg1;
+
+			/* We can use estimated argument values here */
+			arg1 = estimate_expression_value(req->root, linitial(args));
+
+			req->rows = estimate_array_length(arg1);
+			ret = (Node *) req;
+		}
+	}
+
+	PG_RETURN_POINTER(ret);
+}
+
 
 /*
  * array_replace/array_remove support
@@ -6042,6 +6074,7 @@ array_replace_internal(ArrayType *array,
 					   bool remove, Oid collation,
 					   FunctionCallInfo fcinfo)
 {
+	LOCAL_FCINFO(locfcinfo, 2);
 	ArrayType  *result;
 	Oid			element_type;
 	Datum	   *values;
@@ -6062,7 +6095,6 @@ array_replace_internal(ArrayType *array,
 	int			bitmask;
 	bool		changed = false;
 	TypeCacheEntry *typentry;
-	FunctionCallInfoData locfcinfo;
 
 	element_type = ARR_ELEMTYPE(array);
 	ndim = ARR_NDIM(array);
@@ -6117,7 +6149,7 @@ array_replace_internal(ArrayType *array,
 	}
 
 	/* Prepare to apply the comparison operator */
-	InitFunctionCallInfoData(locfcinfo, &typentry->eq_opr_finfo, 2,
+	InitFunctionCallInfoData(*locfcinfo, &typentry->eq_opr_finfo, 2,
 							 collation, NULL, NULL);
 
 	/* Allocate temporary arrays for new values */
@@ -6175,12 +6207,12 @@ array_replace_internal(ArrayType *array,
 				/*
 				 * Apply the operator to the element pair
 				 */
-				locfcinfo.arg[0] = elt;
-				locfcinfo.arg[1] = search;
-				locfcinfo.argnull[0] = false;
-				locfcinfo.argnull[1] = false;
-				locfcinfo.isnull = false;
-				oprresult = DatumGetBool(FunctionCallInvoke(&locfcinfo));
+				locfcinfo->args[0].value = elt;
+				locfcinfo->args[0].isnull = false;
+				locfcinfo->args[1].value = search;
+				locfcinfo->args[1].isnull = false;
+				locfcinfo->isnull = false;
+				oprresult = DatumGetBool(FunctionCallInvoke(locfcinfo));
 				if (!oprresult)
 				{
 					/* no match, keep element */
@@ -6457,10 +6489,10 @@ width_bucket_array_fixed(Datum operand,
 						 Oid collation,
 						 TypeCacheEntry *typentry)
 {
+	LOCAL_FCINFO(locfcinfo, 2);
 	char	   *thresholds_data;
 	int			typlen = typentry->typlen;
 	bool		typbyval = typentry->typbyval;
-	FunctionCallInfoData locfcinfo;
 	int			left;
 	int			right;
 
@@ -6470,7 +6502,7 @@ width_bucket_array_fixed(Datum operand,
 	 */
 	thresholds_data = (char *) ARR_DATA_PTR(thresholds);
 
-	InitFunctionCallInfoData(locfcinfo, &typentry->cmp_proc_finfo, 2,
+	InitFunctionCallInfoData(*locfcinfo, &typentry->cmp_proc_finfo, 2,
 							 collation, NULL, NULL);
 
 	/* Find the bucket */
@@ -6484,13 +6516,13 @@ width_bucket_array_fixed(Datum operand,
 
 		ptr = thresholds_data + mid * typlen;
 
-		locfcinfo.arg[0] = operand;
-		locfcinfo.arg[1] = fetch_att(ptr, typbyval, typlen);
-		locfcinfo.argnull[0] = false;
-		locfcinfo.argnull[1] = false;
-		locfcinfo.isnull = false;
+		locfcinfo->args[0].value = operand;
+		locfcinfo->args[0].isnull = false;
+		locfcinfo->args[1].value = fetch_att(ptr, typbyval, typlen);
+		locfcinfo->args[1].isnull = false;
+		locfcinfo->isnull = false;
 
-		cmpresult = DatumGetInt32(FunctionCallInvoke(&locfcinfo));
+		cmpresult = DatumGetInt32(FunctionCallInvoke(locfcinfo));
 
 		if (cmpresult < 0)
 			right = mid;
@@ -6510,17 +6542,17 @@ width_bucket_array_variable(Datum operand,
 							Oid collation,
 							TypeCacheEntry *typentry)
 {
+	LOCAL_FCINFO(locfcinfo, 2);
 	char	   *thresholds_data;
 	int			typlen = typentry->typlen;
 	bool		typbyval = typentry->typbyval;
 	char		typalign = typentry->typalign;
-	FunctionCallInfoData locfcinfo;
 	int			left;
 	int			right;
 
 	thresholds_data = (char *) ARR_DATA_PTR(thresholds);
 
-	InitFunctionCallInfoData(locfcinfo, &typentry->cmp_proc_finfo, 2,
+	InitFunctionCallInfoData(*locfcinfo, &typentry->cmp_proc_finfo, 2,
 							 collation, NULL, NULL);
 
 	/* Find the bucket */
@@ -6541,13 +6573,12 @@ width_bucket_array_variable(Datum operand,
 			ptr = (char *) att_align_nominal(ptr, typalign);
 		}
 
-		locfcinfo.arg[0] = operand;
-		locfcinfo.arg[1] = fetch_att(ptr, typbyval, typlen);
-		locfcinfo.argnull[0] = false;
-		locfcinfo.argnull[1] = false;
-		locfcinfo.isnull = false;
+		locfcinfo->args[0].value = operand;
+		locfcinfo->args[0].isnull = false;
+		locfcinfo->args[1].value = fetch_att(ptr, typbyval, typlen);
+		locfcinfo->args[1].isnull = false;
 
-		cmpresult = DatumGetInt32(FunctionCallInvoke(&locfcinfo));
+		cmpresult = DatumGetInt32(FunctionCallInvoke(locfcinfo));
 
 		if (cmpresult < 0)
 			right = mid;

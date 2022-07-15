@@ -2,7 +2,7 @@
  * ginxlog.h
  *	  header file for postgres inverted index xlog implementation.
  *
- *	Copyright (c) 2006-2018, PostgreSQL Global Development Group
+ *	Copyright (c) 2006-2019, PostgreSQL Global Development Group
  *
  *	src/include/access/ginxlog.h
  *--------------------------------------------------------------------------
@@ -15,8 +15,6 @@
 #include "access/xlogreader.h"
 #include "lib/stringinfo.h"
 #include "storage/off.h"
-
-#define XLOG_GIN_CREATE_INDEX  0x00
 
 #define XLOG_GIN_CREATE_PTREE  0x10
 
@@ -158,6 +156,7 @@ typedef struct ginxlogDeletePage
 {
 	OffsetNumber parentOffset;
 	BlockNumber rightLink;
+	TransactionId deleteXid;	/* last Xid which could see this page in scan */
 } ginxlogDeletePage;
 
 #define XLOG_GIN_UPDATE_META_PAGE 0x60

@@ -3,7 +3,7 @@
  * twophase.c
  *		Two-phase commit support functions.
  *
- * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -98,6 +98,7 @@
 #include "replication/walsender.h"
 #include "storage/fd.h"
 #include "storage/ipc.h"
+#include "storage/md.h"
 #include "storage/predicate.h"
 #include "storage/proc.h"
 #include "storage/procarray.h"
@@ -201,31 +202,31 @@ static GlobalTransaction MyLockedGxact = NULL;
 static bool twophaseExitRegistered = false;
 
 static void RecordTransactionCommitPrepared(TransactionId xid,
-								int nchildren,
-								TransactionId *children,
-								int nrels,
-								RelFileNode *rels,
-								int ninvalmsgs,
-								SharedInvalidationMessage *invalmsgs,
-								bool initfileinval,
-								const char *gid);
+											int nchildren,
+											TransactionId *children,
+											int nrels,
+											RelFileNode *rels,
+											int ninvalmsgs,
+											SharedInvalidationMessage *invalmsgs,
+											bool initfileinval,
+											const char *gid);
 static void RecordTransactionAbortPrepared(TransactionId xid,
-							   int nchildren,
-							   TransactionId *children,
-							   int nrels,
-							   RelFileNode *rels,
-							   const char *gid);
+										   int nchildren,
+										   TransactionId *children,
+										   int nrels,
+										   RelFileNode *rels,
+										   const char *gid);
 static void ProcessRecords(char *bufptr, TransactionId xid,
-			   const TwoPhaseCallback callbacks[]);
+						   const TwoPhaseCallback callbacks[]);
 static void RemoveGXact(GlobalTransaction gxact);
 
 static void XlogReadTwoPhaseData(XLogRecPtr lsn, char **buf, int *len);
 static char *ProcessTwoPhaseBuffer(TransactionId xid,
-					  XLogRecPtr prepare_start_lsn,
-					  bool fromdisk, bool setParent, bool setNextXid);
+								   XLogRecPtr prepare_start_lsn,
+								   bool fromdisk, bool setParent, bool setNextXid);
 static void MarkAsPreparingGuts(GlobalTransaction gxact, TransactionId xid,
-					const char *gid, TimestampTz prepared_at, Oid owner,
-					Oid databaseid);
+								const char *gid, TimestampTz prepared_at, Oid owner,
+								Oid databaseid);
 static void RemoveTwoPhaseFile(TransactionId xid, bool giveWarning);
 static void RecreateTwoPhaseFile(TransactionId xid, void *content, int len);
 
@@ -801,15 +802,20 @@ pg_prepared_xact(PG_FUNCTION_ARGS)
  * TwoPhaseGetGXact
  *		Get the GlobalTransaction struct for a prepared transaction
  *		specified by XID
+ *
+ * If lock_held is set to true, TwoPhaseStateLock will not be taken, so the
+ * caller had better hold it.
  */
 static GlobalTransaction
-TwoPhaseGetGXact(TransactionId xid)
+TwoPhaseGetGXact(TransactionId xid, bool lock_held)
 {
 	GlobalTransaction result = NULL;
 	int			i;
 
 	static TransactionId cached_xid = InvalidTransactionId;
 	static GlobalTransaction cached_gxact = NULL;
+
+	Assert(!lock_held || LWLockHeldByMe(TwoPhaseStateLock));
 
 	/*
 	 * During a recovery, COMMIT PREPARED, or ABORT PREPARED, we'll be called
@@ -818,7 +824,8 @@ TwoPhaseGetGXact(TransactionId xid)
 	if (xid == cached_xid)
 		return cached_gxact;
 
-	LWLockAcquire(TwoPhaseStateLock, LW_SHARED);
+	if (!lock_held)
+		LWLockAcquire(TwoPhaseStateLock, LW_SHARED);
 
 	for (i = 0; i < TwoPhaseState->numPrepXacts; i++)
 	{
@@ -832,7 +839,8 @@ TwoPhaseGetGXact(TransactionId xid)
 		}
 	}
 
-	LWLockRelease(TwoPhaseStateLock);
+	if (!lock_held)
+		LWLockRelease(TwoPhaseStateLock);
 
 	if (result == NULL)			/* should not happen */
 		elog(ERROR, "failed to find GlobalTransaction for xid %u", xid);
@@ -844,17 +852,18 @@ TwoPhaseGetGXact(TransactionId xid)
 }
 
 /*
- * TwoPhaseGetDummyProc
+ * TwoPhaseGetDummyBackendId
  *		Get the dummy backend ID for prepared transaction specified by XID
  *
  * Dummy backend IDs are similar to real backend IDs of real backends.
  * They start at MaxBackends + 1, and are unique across all currently active
- * real backends and prepared transactions.
+ * real backends and prepared transactions.  If lock_held is set to true,
+ * TwoPhaseStateLock will not be taken, so the caller had better hold it.
  */
 BackendId
-TwoPhaseGetDummyBackendId(TransactionId xid)
+TwoPhaseGetDummyBackendId(TransactionId xid, bool lock_held)
 {
-	GlobalTransaction gxact = TwoPhaseGetGXact(xid);
+	GlobalTransaction gxact = TwoPhaseGetGXact(xid, lock_held);
 
 	return gxact->dummyBackendId;
 }
@@ -862,11 +871,14 @@ TwoPhaseGetDummyBackendId(TransactionId xid)
 /*
  * TwoPhaseGetDummyProc
  *		Get the PGPROC that represents a prepared transaction specified by XID
+ *
+ * If lock_held is set to true, TwoPhaseStateLock will not be taken, so the
+ * caller had better hold it.
  */
 PGPROC *
-TwoPhaseGetDummyProc(TransactionId xid)
+TwoPhaseGetDummyProc(TransactionId xid, bool lock_held)
 {
-	GlobalTransaction gxact = TwoPhaseGetGXact(xid);
+	GlobalTransaction gxact = TwoPhaseGetGXact(xid, lock_held);
 
 	return &ProcGlobal->allProcs[gxact->pgprocno];
 }
@@ -1286,7 +1298,11 @@ ReadTwoPhaseFile(TransactionId xid, bool missing_ok)
 	}
 
 	pgstat_report_wait_end();
-	CloseTransientFile(fd);
+
+	if (CloseTransientFile(fd))
+		ereport(ERROR,
+				(errcode_for_file_access(),
+				 errmsg("could not close file \"%s\": %m", path)));
 
 	hdr = (TwoPhaseFileHeader *) buf;
 	if (hdr->magic != TWOPHASE_MAGIC)
@@ -1560,6 +1576,14 @@ FinishPreparedTransaction(const char *gid, bool isCommit)
 	if (hdr->initfileinval)
 		RelationCacheInitFilePostInvalidate();
 
+	/*
+	 * Acquire the two-phase lock.  We want to work on the two-phase callbacks
+	 * while holding it to avoid potential conflicts with other transactions
+	 * attempting to use the same GID, so the lock is released once the shared
+	 * memory state is cleared.
+	 */
+	LWLockAcquire(TwoPhaseStateLock, LW_EXCLUSIVE);
+
 	/* And now do the callbacks */
 	if (isCommit)
 		ProcessRecords(bufptr, xid, twophase_postcommit_callbacks);
@@ -1568,8 +1592,17 @@ FinishPreparedTransaction(const char *gid, bool isCommit)
 
 	PredicateLockTwoPhaseFinish(xid, isCommit);
 
+	/* Clear shared memory state */
+	RemoveGXact(gxact);
+
+	/*
+	 * Release the lock as all callbacks are called and shared memory cleanup
+	 * is done.
+	 */
+	LWLockRelease(TwoPhaseStateLock);
+
 	/* Count the prepared xact as committed or aborted */
-	AtEOXact_PgStat(isCommit);
+	AtEOXact_PgStat(isCommit, false);
 
 	/*
 	 * And now we can clean up any files we may have left.
@@ -1577,9 +1610,6 @@ FinishPreparedTransaction(const char *gid, bool isCommit)
 	if (gxact->ondisk)
 		RemoveTwoPhaseFile(xid, true);
 
-	LWLockAcquire(TwoPhaseStateLock, LW_EXCLUSIVE);
-	RemoveGXact(gxact);
-	LWLockRelease(TwoPhaseStateLock);
 	MyLockedGxact = NULL;
 
 	RESUME_INTERRUPTS();
@@ -1663,26 +1693,18 @@ RecreateTwoPhaseFile(TransactionId xid, void *content, int len)
 	pgstat_report_wait_start(WAIT_EVENT_TWOPHASE_FILE_WRITE);
 	if (write(fd, content, len) != len)
 	{
-		int			save_errno = errno;
-
-		pgstat_report_wait_end();
-		CloseTransientFile(fd);
-
 		/* if write didn't set errno, assume problem is no disk space */
-		errno = save_errno ? save_errno : ENOSPC;
+		if (errno == 0)
+			errno = ENOSPC;
 		ereport(ERROR,
 				(errcode_for_file_access(),
 				 errmsg("could not write file \"%s\": %m", path)));
 	}
 	if (write(fd, &statefile_crc, sizeof(pg_crc32c)) != sizeof(pg_crc32c))
 	{
-		int			save_errno = errno;
-
-		pgstat_report_wait_end();
-		CloseTransientFile(fd);
-
 		/* if write didn't set errno, assume problem is no disk space */
-		errno = save_errno ? save_errno : ENOSPC;
+		if (errno == 0)
+			errno = ENOSPC;
 		ereport(ERROR,
 				(errcode_for_file_access(),
 				 errmsg("could not write file \"%s\": %m", path)));
@@ -1695,15 +1717,9 @@ RecreateTwoPhaseFile(TransactionId xid, void *content, int len)
 	 */
 	pgstat_report_wait_start(WAIT_EVENT_TWOPHASE_FILE_SYNC);
 	if (pg_fsync(fd) != 0)
-	{
-		int			save_errno = errno;
-
-		CloseTransientFile(fd);
-		errno = save_errno;
 		ereport(ERROR,
 				(errcode_for_file_access(),
 				 errmsg("could not fsync file \"%s\": %m", path)));
-	}
 	pgstat_report_wait_end();
 
 	if (CloseTransientFile(fd) != 0)
@@ -1849,16 +1865,16 @@ restoreTwoPhaseData(void)
  *
  * Scan the shared memory entries of TwoPhaseState and determine the range
  * of valid XIDs present.  This is run during database startup, after we
- * have completed reading WAL.  ShmemVariableCache->nextXid has been set to
+ * have completed reading WAL.  ShmemVariableCache->nextFullXid has been set to
  * one more than the highest XID for which evidence exists in WAL.
  *
- * We throw away any prepared xacts with main XID beyond nextXid --- if any
+ * We throw away any prepared xacts with main XID beyond nextFullXid --- if any
  * are present, it suggests that the DBA has done a PITR recovery to an
  * earlier point in time without cleaning out pg_twophase.  We dare not
  * try to recover such prepared xacts since they likely depend on database
  * state that doesn't exist now.
  *
- * However, we will advance nextXid beyond any subxact XIDs belonging to
+ * However, we will advance nextFullXid beyond any subxact XIDs belonging to
  * valid prepared xacts.  We need to do this since subxact commit doesn't
  * write a WAL entry, and so there might be no evidence in WAL of those
  * subxact XIDs.
@@ -1868,7 +1884,7 @@ restoreTwoPhaseData(void)
  * backup should be rolled in.
  *
  * Our other responsibility is to determine and return the oldest valid XID
- * among the prepared xacts (if none, return ShmemVariableCache->nextXid).
+ * among the prepared xacts (if none, return ShmemVariableCache->nextFullXid).
  * This is needed to synchronize pg_subtrans startup properly.
  *
  * If xids_p and nxids_p are not NULL, pointer to a palloc'd array of all
@@ -1878,7 +1894,8 @@ restoreTwoPhaseData(void)
 TransactionId
 PrescanPreparedTransactions(TransactionId **xids_p, int *nxids_p)
 {
-	TransactionId origNextXid = ShmemVariableCache->nextXid;
+	FullTransactionId nextFullXid = ShmemVariableCache->nextFullXid;
+	TransactionId origNextXid = XidFromFullTransactionId(nextFullXid);
 	TransactionId result = origNextXid;
 	TransactionId *xids = NULL;
 	int			nxids = 0;
@@ -2094,7 +2111,7 @@ RecoverPreparedTransactions(void)
  *
  * If setParent is true, set up subtransaction parent linkages.
  *
- * If setNextXid is true, set ShmemVariableCache->nextXid to the newest
+ * If setNextXid is true, set ShmemVariableCache->nextFullXid to the newest
  * value scanned.
  */
 static char *
@@ -2103,7 +2120,8 @@ ProcessTwoPhaseBuffer(TransactionId xid,
 					  bool fromdisk,
 					  bool setParent, bool setNextXid)
 {
-	TransactionId origNextXid = ShmemVariableCache->nextXid;
+	FullTransactionId nextFullXid = ShmemVariableCache->nextFullXid;
+	TransactionId origNextXid = XidFromFullTransactionId(nextFullXid);
 	TransactionId *subxids;
 	char	   *buf;
 	TwoPhaseFileHeader *hdr;
@@ -2172,18 +2190,18 @@ ProcessTwoPhaseBuffer(TransactionId xid,
 		if (fromdisk)
 			ereport(ERROR,
 					(errcode(ERRCODE_DATA_CORRUPTED),
-					 errmsg("corrupted two-phase state file for transaction \"%u\"",
+					 errmsg("corrupted two-phase state file for transaction %u",
 							xid)));
 		else
 			ereport(ERROR,
 					(errcode(ERRCODE_DATA_CORRUPTED),
-					 errmsg("corrupted two-phase state in memory for transaction \"%u\"",
+					 errmsg("corrupted two-phase state in memory for transaction %u",
 							xid)));
 	}
 
 	/*
 	 * Examine subtransaction XIDs ... they should all follow main XID, and
-	 * they may force us to advance nextXid.
+	 * they may force us to advance nextFullXid.
 	 */
 	subxids = (TransactionId *) (buf +
 								 MAXALIGN(sizeof(TwoPhaseFileHeader)) +
@@ -2194,25 +2212,9 @@ ProcessTwoPhaseBuffer(TransactionId xid,
 
 		Assert(TransactionIdFollows(subxid, xid));
 
-		/* update nextXid if needed */
-		if (setNextXid &&
-			TransactionIdFollowsOrEquals(subxid,
-										 ShmemVariableCache->nextXid))
-		{
-			/*
-			 * We don't expect anyone else to modify nextXid, hence we don't
-			 * need to hold a lock while examining it.  We still acquire the
-			 * lock to modify it, though, so we recheck.
-			 */
-			LWLockAcquire(XidGenLock, LW_EXCLUSIVE);
-			if (TransactionIdFollowsOrEquals(subxid,
-											 ShmemVariableCache->nextXid))
-			{
-				ShmemVariableCache->nextXid = subxid;
-				TransactionIdAdvance(ShmemVariableCache->nextXid);
-			}
-			LWLockRelease(XidGenLock);
-		}
+		/* update nextFullXid if needed */
+		if (setNextXid)
+			AdvanceNextFullTransactionIdPastXid(subxid);
 
 		if (setParent)
 			SubTransSetParent(subxid, xid);

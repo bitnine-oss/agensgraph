@@ -4,7 +4,7 @@
  *	  support for communication destinations
  *
  *
- * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -113,8 +113,8 @@ DestReceiver *
 CreateDestReceiver(CommandDest dest)
 {
 	/*
-	 * It's ok to cast the constness away as any modification of the none receiver
-	 * would be a bug (which gets easier to catch this way).
+	 * It's ok to cast the constness away as any modification of the none
+	 * receiver would be a bug (which gets easier to catch this way).
 	 */
 
 	switch (dest)

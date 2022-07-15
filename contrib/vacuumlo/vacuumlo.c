@@ -3,7 +3,7 @@
  * vacuumlo.c
  *	  This removes orphaned large objects from a database.
  *
- * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -198,9 +198,6 @@ vacuumlo(const char *database, const struct _param *param)
 	 * table formed above is ignored, and pg_largeobject will be too. If
 	 * either of these were scanned, obviously we'd end up with nothing to
 	 * delete...
-	 *
-	 * NOTE: the system oid column is ignored, as it has attnum < 1. This
-	 * shouldn't matter for correctness, but it saves time.
 	 */
 	buf[0] = '\0';
 	strcat(buf, "SELECT s.nspname, c.relname, a.attname ");
@@ -246,9 +243,9 @@ vacuumlo(const char *database, const struct _param *param)
 			PQfinish(conn);
 			if (schema != NULL)
 				PQfreemem(schema);
-			if (schema != NULL)
+			if (table != NULL)
 				PQfreemem(table);
-			if (schema != NULL)
+			if (field != NULL)
 				PQfreemem(field);
 			return -1;
 		}
@@ -317,7 +314,7 @@ vacuumlo(const char *database, const struct _param *param)
 
 	deleted = 0;
 
-	while (1)
+	do
 	{
 		res = PQexec(conn, buf);
 		if (PQresultStatus(res) != PGRES_TUPLES_OK)
@@ -355,8 +352,7 @@ vacuumlo(const char *database, const struct _param *param)
 					if (PQtransactionStatus(conn) == PQTRANS_INERROR)
 					{
 						success = false;
-						PQclear(res);
-						break;
+						break;	/* out of inner for-loop */
 					}
 				}
 				else
@@ -394,7 +390,7 @@ vacuumlo(const char *database, const struct _param *param)
 		}
 
 		PQclear(res);
-	}
+	} while (success);
 
 	/*
 	 * That's all folks!
@@ -447,7 +443,7 @@ usage(const char *progname)
 	printf("  -w, --no-password         never prompt for password\n");
 	printf("  -W, --password            force password prompt\n");
 	printf("\n");
-	printf("Report bugs to <pgsql-bugs@postgresql.org>.\n");
+	printf("Report bugs to <pgsql-bugs@lists.postgresql.org>.\n");
 }
 
 

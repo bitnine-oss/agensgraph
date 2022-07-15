@@ -6,7 +6,7 @@
  * See src/backend/utils/misc/README for more information.
  *
  *
- * Copyright (c) 2000-2018, PostgreSQL Global Development Group
+ * Copyright (c) 2000-2019, PostgreSQL Global Development Group
  * Written by Peter Eisentraut <peter_e@gmx.net>.
  *
  * IDENTIFICATION
@@ -29,6 +29,7 @@
 #include "access/commit_ts.h"
 #include "access/gin.h"
 #include "access/rmgr.h"
+#include "access/tableam.h"
 #include "access/transam.h"
 #include "access/twophase.h"
 #include "access/xact.h"
@@ -52,6 +53,7 @@
 #include "miscadmin.h"
 #include "optimizer/cost.h"
 #include "optimizer/geqo.h"
+#include "optimizer/optimizer.h"
 #include "optimizer/paths.h"
 #include "optimizer/planmain.h"
 #include "parser/parse_cypher_expr.h"
@@ -88,6 +90,7 @@
 #include "utils/float.h"
 #include "utils/memutils.h"
 #include "utils/pg_locale.h"
+#include "utils/pg_lsn.h"
 #include "utils/plancache.h"
 #include "utils/portal.h"
 #include "utils/ps_status.h"
@@ -142,23 +145,23 @@ char	   *GUC_check_errhint_string;
 static void do_serialize(char **destptr, Size *maxbytes, const char *fmt,...) pg_attribute_printf(3, 4);
 
 static void set_config_sourcefile(const char *name, char *sourcefile,
-					  int sourceline);
+								  int sourceline);
 static bool call_bool_check_hook(struct config_bool *conf, bool *newval,
-					 void **extra, GucSource source, int elevel);
+								 void **extra, GucSource source, int elevel);
 static bool call_int_check_hook(struct config_int *conf, int *newval,
-					void **extra, GucSource source, int elevel);
+								void **extra, GucSource source, int elevel);
 static bool call_real_check_hook(struct config_real *conf, double *newval,
-					 void **extra, GucSource source, int elevel);
+								 void **extra, GucSource source, int elevel);
 static bool call_string_check_hook(struct config_string *conf, char **newval,
-					   void **extra, GucSource source, int elevel);
+								   void **extra, GucSource source, int elevel);
 static bool call_enum_check_hook(struct config_enum *conf, int *newval,
-					 void **extra, GucSource source, int elevel);
+								 void **extra, GucSource source, int elevel);
 
 static bool check_log_destination(char **newval, void **extra, GucSource source);
 static void assign_log_destination(const char *newval, void *extra);
 
 static bool check_wal_consistency_checking(char **newval, void **extra,
-							   GucSource source);
+										   GucSource source);
 static void assign_wal_consistency_checking(const char *newval, void *extra);
 
 #ifdef HAVE_SYSLOG
@@ -183,12 +186,15 @@ static const char *show_archive_command(void);
 static void assign_tcp_keepalives_idle(int newval, void *extra);
 static void assign_tcp_keepalives_interval(int newval, void *extra);
 static void assign_tcp_keepalives_count(int newval, void *extra);
+static void assign_tcp_user_timeout(int newval, void *extra);
 static const char *show_tcp_keepalives_idle(void);
 static const char *show_tcp_keepalives_interval(void);
 static const char *show_tcp_keepalives_count(void);
+static const char *show_tcp_user_timeout(void);
 static bool check_maxconnections(int *newval, void **extra, GucSource source);
 static bool check_max_worker_processes(int *newval, void **extra, GucSource source);
 static bool check_autovacuum_max_workers(int *newval, void **extra, GucSource source);
+static bool check_max_wal_senders(int *newval, void **extra, GucSource source);
 static bool check_autovacuum_work_mem(int *newval, void **extra, GucSource source);
 static bool check_effective_io_concurrency(int *newval, void **extra, GucSource source);
 static void assign_effective_io_concurrency(int newval, void *extra);
@@ -199,10 +205,24 @@ static bool check_cluster_name(char **newval, void **extra, GucSource source);
 static const char *show_unix_socket_permissions(void);
 static const char *show_log_file_mode(void);
 static const char *show_data_directory_mode(void);
+static bool check_recovery_target_timeline(char **newval, void **extra, GucSource source);
+static void assign_recovery_target_timeline(const char *newval, void *extra);
+static bool check_recovery_target(char **newval, void **extra, GucSource source);
+static void assign_recovery_target(const char *newval, void *extra);
+static bool check_recovery_target_xid(char **newval, void **extra, GucSource source);
+static void assign_recovery_target_xid(const char *newval, void *extra);
+static bool check_recovery_target_time(char **newval, void **extra, GucSource source);
+static void assign_recovery_target_time(const char *newval, void *extra);
+static bool check_recovery_target_name(char **newval, void **extra, GucSource source);
+static void assign_recovery_target_name(const char *newval, void *extra);
+static bool check_recovery_target_lsn(char **newval, void **extra, GucSource source);
+static void assign_recovery_target_lsn(const char *newval, void *extra);
+static bool check_primary_slot_name(char **newval, void **extra, GucSource source);
+static bool check_default_with_oids(bool *newval, void **extra, GucSource source);
 
 /* Private functions in guc-file.l that need to be called from guc.c */
 static ConfigVariable *ProcessConfigFileInternal(GucContext context,
-						  bool applySettings, int elevel);
+												 bool applySettings, int elevel);
 
 
 /*
@@ -441,11 +461,25 @@ const struct config_enum_entry ssl_protocol_versions_info[] = {
 	{NULL, 0, false}
 };
 
+static struct config_enum_entry shared_memory_options[] = {
+#ifndef WIN32
+	{"sysv", SHMEM_TYPE_SYSV, false},
+#endif
+#ifndef EXEC_BACKEND
+	{"mmap", SHMEM_TYPE_MMAP, false},
+#endif
+#ifdef WIN32
+	{"windows", SHMEM_TYPE_WINDOWS, false},
+#endif
+	{NULL, 0, false}
+};
+
 /*
  * Options for enum values stored in other modules
  */
 extern const struct config_enum_entry wal_level_options[];
 extern const struct config_enum_entry archive_mode_options[];
+extern const struct config_enum_entry recovery_target_action_options[];
 extern const struct config_enum_entry sync_method_options[];
 extern const struct config_enum_entry dynamic_shared_memory_options[];
 
@@ -468,6 +502,12 @@ char	   *event_source;
 
 bool		row_security;
 bool		check_function_bodies = true;
+
+/*
+ * This GUC exists solely for backward compatibility, check its definition for
+ * details.
+ */
+bool		default_with_oids = false;
 bool		session_auth_is_superuser;
 
 int			log_min_error_statement = ERROR;
@@ -475,6 +515,8 @@ int			log_min_messages = WARNING;
 int			client_min_messages = NOTICE;
 int			log_min_duration_statement = -1;
 int			log_temp_files = -1;
+double		log_statement_sample_rate = 1.0;
+double		log_xact_sample_rate = 0;
 int			trace_recovery_messages = LOG;
 
 int			temp_file_limit = -1;
@@ -494,6 +536,7 @@ char	   *application_name;
 int			tcp_keepalives_idle;
 int			tcp_keepalives_interval;
 int			tcp_keepalives_count;
+int			tcp_user_timeout;
 
 /*
  * SSL renegotiation was been removed in PostgreSQL 9.5, but we tolerate it
@@ -537,6 +580,12 @@ static int	wal_block_size;
 static bool data_checksums;
 static bool integer_datetimes;
 static bool assert_enabled;
+static char *recovery_target_timeline_string;
+static char *recovery_target_string;
+static char *recovery_target_xid_string;
+static char *recovery_target_name_string;
+static char *recovery_target_lsn_string;
+
 static char *agversion_string;
 
 /* should be static, but commands/variable.c needs to get at this */
@@ -621,6 +670,10 @@ const char *const config_group_names[] =
 	gettext_noop("Write-Ahead Log / Checkpoints"),
 	/* WAL_ARCHIVING */
 	gettext_noop("Write-Ahead Log / Archiving"),
+	/* WAL_ARCHIVE_RECOVERY */
+	gettext_noop("Write-Ahead Log / Archive Recovery"),
+	/* WAL_RECOVERY_TARGET */
+	gettext_noop("Write-Ahead Log / Recovery Target"),
 	/* REPLICATION */
 	gettext_noop("Replication"),
 	/* REPLICATION_SENDING */
@@ -710,13 +763,13 @@ const char *const config_type_names[] =
  * For each supported conversion from one unit to another, we have an entry
  * in the table.
  *
- * To keep things simple, and to avoid intermediate-value overflows,
+ * To keep things simple, and to avoid possible roundoff error,
  * conversions are never chained.  There needs to be a direct conversion
  * between all units (of the same type).
  *
- * The conversions from each base unit must be kept in order from greatest
- * to smallest unit; convert_from_base_unit() relies on that.  (The order of
- * the base units does not matter.)
+ * The conversions for each base unit must be kept in order from greatest to
+ * smallest human-friendly unit; convert_xxx_from_base_unit() rely on that.
+ * (The order of the base-unit groups does not matter.)
  */
 #define MAX_UNIT_LEN		3	/* length of longest recognized unit string */
 
@@ -725,9 +778,7 @@ typedef struct
 	char		unit[MAX_UNIT_LEN + 1]; /* unit, as a string, like "kB" or
 										 * "min" */
 	int			base_unit;		/* GUC_UNIT_XXX */
-	int64		multiplier;		/* If positive, multiply the value with this
-								 * for unit -> base_unit conversion.  If
-								 * negative, divide (with the absolute value) */
+	double		multiplier;		/* Factor for converting unit -> base_unit */
 } unit_conversion;
 
 /* Ensure that the constants in the tables don't overflow or underflow */
@@ -742,45 +793,40 @@ static const char *memory_units_hint = gettext_noop("Valid units for this parame
 
 static const unit_conversion memory_unit_conversion_table[] =
 {
-	/*
-	 * TB -> bytes conversion always overflows 32-bit integer, so this always
-	 * produces an error.  Include it nevertheless for completeness, and so
-	 * that you get an "out of range" error, rather than "invalid unit".
-	 */
-	{"TB", GUC_UNIT_BYTE, INT64CONST(1024) * 1024 * 1024 * 1024},
-	{"GB", GUC_UNIT_BYTE, 1024 * 1024 * 1024},
-	{"MB", GUC_UNIT_BYTE, 1024 * 1024},
-	{"kB", GUC_UNIT_BYTE, 1024},
-	{"B", GUC_UNIT_BYTE, 1},
+	{"TB", GUC_UNIT_BYTE, 1024.0 * 1024.0 * 1024.0 * 1024.0},
+	{"GB", GUC_UNIT_BYTE, 1024.0 * 1024.0 * 1024.0},
+	{"MB", GUC_UNIT_BYTE, 1024.0 * 1024.0},
+	{"kB", GUC_UNIT_BYTE, 1024.0},
+	{"B", GUC_UNIT_BYTE, 1.0},
 
-	{"TB", GUC_UNIT_KB, 1024 * 1024 * 1024},
-	{"GB", GUC_UNIT_KB, 1024 * 1024},
-	{"MB", GUC_UNIT_KB, 1024},
-	{"kB", GUC_UNIT_KB, 1},
-	{"B", GUC_UNIT_KB, -1024},
+	{"TB", GUC_UNIT_KB, 1024.0 * 1024.0 * 1024.0},
+	{"GB", GUC_UNIT_KB, 1024.0 * 1024.0},
+	{"MB", GUC_UNIT_KB, 1024.0},
+	{"kB", GUC_UNIT_KB, 1.0},
+	{"B", GUC_UNIT_KB, 1.0 / 1024.0},
 
-	{"TB", GUC_UNIT_MB, 1024 * 1024},
-	{"GB", GUC_UNIT_MB, 1024},
-	{"MB", GUC_UNIT_MB, 1},
-	{"kB", GUC_UNIT_MB, -1024},
-	{"B", GUC_UNIT_MB, -(1024 * 1024)},
+	{"TB", GUC_UNIT_MB, 1024.0 * 1024.0},
+	{"GB", GUC_UNIT_MB, 1024.0},
+	{"MB", GUC_UNIT_MB, 1.0},
+	{"kB", GUC_UNIT_MB, 1.0 / 1024.0},
+	{"B", GUC_UNIT_MB, 1.0 / (1024.0 * 1024.0)},
 
-	{"TB", GUC_UNIT_BLOCKS, (1024 * 1024 * 1024) / (BLCKSZ / 1024)},
-	{"GB", GUC_UNIT_BLOCKS, (1024 * 1024) / (BLCKSZ / 1024)},
-	{"MB", GUC_UNIT_BLOCKS, 1024 / (BLCKSZ / 1024)},
-	{"kB", GUC_UNIT_BLOCKS, -(BLCKSZ / 1024)},
-	{"B", GUC_UNIT_BLOCKS, -BLCKSZ},
+	{"TB", GUC_UNIT_BLOCKS, (1024.0 * 1024.0 * 1024.0) / (BLCKSZ / 1024)},
+	{"GB", GUC_UNIT_BLOCKS, (1024.0 * 1024.0) / (BLCKSZ / 1024)},
+	{"MB", GUC_UNIT_BLOCKS, 1024.0 / (BLCKSZ / 1024)},
+	{"kB", GUC_UNIT_BLOCKS, 1.0 / (BLCKSZ / 1024)},
+	{"B", GUC_UNIT_BLOCKS, 1.0 / BLCKSZ},
 
-	{"TB", GUC_UNIT_XBLOCKS, (1024 * 1024 * 1024) / (XLOG_BLCKSZ / 1024)},
-	{"GB", GUC_UNIT_XBLOCKS, (1024 * 1024) / (XLOG_BLCKSZ / 1024)},
-	{"MB", GUC_UNIT_XBLOCKS, 1024 / (XLOG_BLCKSZ / 1024)},
-	{"kB", GUC_UNIT_XBLOCKS, -(XLOG_BLCKSZ / 1024)},
-	{"B", GUC_UNIT_XBLOCKS, -XLOG_BLCKSZ},
+	{"TB", GUC_UNIT_XBLOCKS, (1024.0 * 1024.0 * 1024.0) / (XLOG_BLCKSZ / 1024)},
+	{"GB", GUC_UNIT_XBLOCKS, (1024.0 * 1024.0) / (XLOG_BLCKSZ / 1024)},
+	{"MB", GUC_UNIT_XBLOCKS, 1024.0 / (XLOG_BLCKSZ / 1024)},
+	{"kB", GUC_UNIT_XBLOCKS, 1.0 / (XLOG_BLCKSZ / 1024)},
+	{"B", GUC_UNIT_XBLOCKS, 1.0 / XLOG_BLCKSZ},
 
 	{""}						/* end of table marker */
 };
 
-static const char *time_units_hint = gettext_noop("Valid units for this parameter are \"ms\", \"s\", \"min\", \"h\", and \"d\".");
+static const char *time_units_hint = gettext_noop("Valid units for this parameter are \"us\", \"ms\", \"s\", \"min\", \"h\", and \"d\".");
 
 static const unit_conversion time_unit_conversion_table[] =
 {
@@ -789,18 +835,21 @@ static const unit_conversion time_unit_conversion_table[] =
 	{"min", GUC_UNIT_MS, 1000 * 60},
 	{"s", GUC_UNIT_MS, 1000},
 	{"ms", GUC_UNIT_MS, 1},
+	{"us", GUC_UNIT_MS, 1.0 / 1000},
 
 	{"d", GUC_UNIT_S, 60 * 60 * 24},
 	{"h", GUC_UNIT_S, 60 * 60},
 	{"min", GUC_UNIT_S, 60},
 	{"s", GUC_UNIT_S, 1},
-	{"ms", GUC_UNIT_S, -1000},
+	{"ms", GUC_UNIT_S, 1.0 / 1000},
+	{"us", GUC_UNIT_S, 1.0 / (1000 * 1000)},
 
 	{"d", GUC_UNIT_MIN, 60 * 24},
 	{"h", GUC_UNIT_MIN, 60},
 	{"min", GUC_UNIT_MIN, 1},
-	{"s", GUC_UNIT_MIN, -60},
-	{"ms", GUC_UNIT_MIN, -1000 * 60},
+	{"s", GUC_UNIT_MIN, 1.0 / 60},
+	{"ms", GUC_UNIT_MIN, 1.0 / (1000 * 60)},
+	{"us", GUC_UNIT_MIN, 1.0 / (1000 * 1000 * 60)},
 
 	{""}						/* end of table marker */
 };
@@ -840,7 +889,8 @@ static struct config_bool ConfigureNamesBool[] =
 	{
 		{"enable_seqscan", PGC_USERSET, QUERY_TUNING_METHOD,
 			gettext_noop("Enables the planner's use of sequential-scan plans."),
-			NULL
+			NULL,
+			GUC_EXPLAIN
 		},
 		&enable_seqscan,
 		true,
@@ -849,7 +899,8 @@ static struct config_bool ConfigureNamesBool[] =
 	{
 		{"enable_indexscan", PGC_USERSET, QUERY_TUNING_METHOD,
 			gettext_noop("Enables the planner's use of index-scan plans."),
-			NULL
+			NULL,
+			GUC_EXPLAIN
 		},
 		&enable_indexscan,
 		true,
@@ -858,7 +909,8 @@ static struct config_bool ConfigureNamesBool[] =
 	{
 		{"enable_indexonlyscan", PGC_USERSET, QUERY_TUNING_METHOD,
 			gettext_noop("Enables the planner's use of index-only-scan plans."),
-			NULL
+			NULL,
+			GUC_EXPLAIN
 		},
 		&enable_indexonlyscan,
 		true,
@@ -867,7 +919,8 @@ static struct config_bool ConfigureNamesBool[] =
 	{
 		{"enable_bitmapscan", PGC_USERSET, QUERY_TUNING_METHOD,
 			gettext_noop("Enables the planner's use of bitmap-scan plans."),
-			NULL
+			NULL,
+			GUC_EXPLAIN
 		},
 		&enable_bitmapscan,
 		true,
@@ -876,7 +929,8 @@ static struct config_bool ConfigureNamesBool[] =
 	{
 		{"enable_tidscan", PGC_USERSET, QUERY_TUNING_METHOD,
 			gettext_noop("Enables the planner's use of TID scan plans."),
-			NULL
+			NULL,
+			GUC_EXPLAIN
 		},
 		&enable_tidscan,
 		true,
@@ -885,7 +939,8 @@ static struct config_bool ConfigureNamesBool[] =
 	{
 		{"enable_sort", PGC_USERSET, QUERY_TUNING_METHOD,
 			gettext_noop("Enables the planner's use of explicit sort steps."),
-			NULL
+			NULL,
+			GUC_EXPLAIN
 		},
 		&enable_sort,
 		true,
@@ -894,7 +949,8 @@ static struct config_bool ConfigureNamesBool[] =
 	{
 		{"enable_hashagg", PGC_USERSET, QUERY_TUNING_METHOD,
 			gettext_noop("Enables the planner's use of hashed aggregation plans."),
-			NULL
+			NULL,
+			GUC_EXPLAIN
 		},
 		&enable_hashagg,
 		true,
@@ -903,7 +959,8 @@ static struct config_bool ConfigureNamesBool[] =
 	{
 		{"enable_material", PGC_USERSET, QUERY_TUNING_METHOD,
 			gettext_noop("Enables the planner's use of materialization."),
-			NULL
+			NULL,
+			GUC_EXPLAIN
 		},
 		&enable_material,
 		true,
@@ -912,7 +969,8 @@ static struct config_bool ConfigureNamesBool[] =
 	{
 		{"enable_nestloop", PGC_USERSET, QUERY_TUNING_METHOD,
 			gettext_noop("Enables the planner's use of nested-loop join plans."),
-			NULL
+			NULL,
+			GUC_EXPLAIN
 		},
 		&enable_nestloop,
 		true,
@@ -921,7 +979,8 @@ static struct config_bool ConfigureNamesBool[] =
 	{
 		{"enable_mergejoin", PGC_USERSET, QUERY_TUNING_METHOD,
 			gettext_noop("Enables the planner's use of merge join plans."),
-			NULL
+			NULL,
+			GUC_EXPLAIN
 		},
 		&enable_mergejoin,
 		true,
@@ -930,7 +989,8 @@ static struct config_bool ConfigureNamesBool[] =
 	{
 		{"enable_hashjoin", PGC_USERSET, QUERY_TUNING_METHOD,
 			gettext_noop("Enables the planner's use of hash join plans."),
-			NULL
+			NULL,
+			GUC_EXPLAIN
 		},
 		&enable_hashjoin,
 		true,
@@ -939,7 +999,8 @@ static struct config_bool ConfigureNamesBool[] =
 	{
 		{"enable_gathermerge", PGC_USERSET, QUERY_TUNING_METHOD,
 			gettext_noop("Enables the planner's use of gather merge plans."),
-			NULL
+			NULL,
+			GUC_EXPLAIN
 		},
 		&enable_gathermerge,
 		true,
@@ -948,7 +1009,8 @@ static struct config_bool ConfigureNamesBool[] =
 	{
 		{"enable_partitionwise_join", PGC_USERSET, QUERY_TUNING_METHOD,
 			gettext_noop("Enables partitionwise join."),
-			NULL
+			NULL,
+			GUC_EXPLAIN
 		},
 		&enable_partitionwise_join,
 		false,
@@ -957,7 +1019,8 @@ static struct config_bool ConfigureNamesBool[] =
 	{
 		{"enable_partitionwise_aggregate", PGC_USERSET, QUERY_TUNING_METHOD,
 			gettext_noop("Enables partitionwise aggregation and grouping."),
-			NULL
+			NULL,
+			GUC_EXPLAIN
 		},
 		&enable_partitionwise_aggregate,
 		false,
@@ -966,7 +1029,8 @@ static struct config_bool ConfigureNamesBool[] =
 	{
 		{"enable_parallel_append", PGC_USERSET, QUERY_TUNING_METHOD,
 			gettext_noop("Enables the planner's use of parallel append plans."),
-			NULL
+			NULL,
+			GUC_EXPLAIN
 		},
 		&enable_parallel_append,
 		true,
@@ -975,7 +1039,8 @@ static struct config_bool ConfigureNamesBool[] =
 	{
 		{"enable_parallel_hash", PGC_USERSET, QUERY_TUNING_METHOD,
 			gettext_noop("Enables the planner's use of parallel hash plans."),
-			NULL
+			NULL,
+			GUC_EXPLAIN
 		},
 		&enable_parallel_hash,
 		true,
@@ -986,7 +1051,8 @@ static struct config_bool ConfigureNamesBool[] =
 			gettext_noop("Enable plan-time and run-time partition pruning."),
 			gettext_noop("Allows the query planner and executor to compare partition "
 						 "bounds to conditions in the query to determine which "
-						 "partitions must be scanned.")
+						 "partitions must be scanned."),
+			GUC_EXPLAIN
 		},
 		&enable_partition_pruning,
 		true,
@@ -1023,7 +1089,8 @@ static struct config_bool ConfigureNamesBool[] =
 		{"geqo", PGC_USERSET, QUERY_TUNING_GEQO,
 			gettext_noop("Enables genetic query optimization."),
 			gettext_noop("This algorithm attempts to do planning without "
-						 "exhaustive searching.")
+						 "exhaustive searching."),
+			GUC_EXPLAIN
 		},
 		&enable_geqo,
 		true,
@@ -1157,6 +1224,26 @@ static struct config_bool ConfigureNamesBool[] =
 		},
 		&wal_compression,
 		false,
+		NULL, NULL, NULL
+	},
+
+	{
+		{"wal_init_zero", PGC_SUSET, WAL_SETTINGS,
+			gettext_noop("Writes zeroes to new WAL files before first use."),
+			NULL
+		},
+		&wal_init_zero,
+		true,
+		NULL, NULL, NULL
+	},
+
+	{
+		{"wal_recycle", PGC_SUSET, WAL_SETTINGS,
+			gettext_noop("Recycles WAL files by renaming them."),
+			NULL
+		},
+		&wal_recycle,
+		true,
 		NULL, NULL, NULL
 	},
 
@@ -1543,6 +1630,22 @@ static struct config_bool ConfigureNamesBool[] =
 		true,
 		NULL, NULL, NULL
 	},
+
+	/*
+	 * WITH OIDS support, and consequently default_with_oids, was removed in
+	 * PostgreSQL 12, but we tolerate the parameter being set to false to
+	 * avoid unnecessarily breaking older dump files.
+	 */
+	{
+		{"default_with_oids", PGC_USERSET, COMPAT_OPTIONS_PREVIOUS,
+			gettext_noop("WITH OIDS is no longer supported; this can only be false."),
+			NULL,
+			GUC_NO_SHOW_ALL | GUC_NOT_IN_SAMPLE
+		},
+		&default_with_oids,
+		false,
+		check_default_with_oids, NULL, NULL
+	},
 	{
 		{"logging_collector", PGC_POSTMASTER, LOGGING_WHERE,
 			gettext_noop("Start a subprocess to capture stderr output and/or csvlogs into log files."),
@@ -1596,7 +1699,7 @@ static struct config_bool ConfigureNamesBool[] =
 			"optimize_bounded_sort", PGC_USERSET, QUERY_TUNING_METHOD,
 			gettext_noop("Enable bounded sorting using heap sort."),
 			NULL,
-			GUC_NOT_IN_SAMPLE
+			GUC_NOT_IN_SAMPLE | GUC_EXPLAIN
 		},
 		&optimize_bounded_sort,
 		true,
@@ -1665,6 +1768,16 @@ static struct config_bool ConfigureNamesBool[] =
 			NULL
 		},
 		&synchronize_seqscans,
+		true,
+		NULL, NULL, NULL
+	},
+
+	{
+		{"recovery_target_inclusive", PGC_POSTMASTER, WAL_RECOVERY_TARGET,
+			gettext_noop("Sets whether to include or exclude transaction with recovery target."),
+			NULL
+		},
+		&recoveryTargetInclusive,
 		true,
 		NULL, NULL, NULL
 	},
@@ -1787,7 +1900,8 @@ static struct config_bool ConfigureNamesBool[] =
 	{
 		{"parallel_leader_participation", PGC_USERSET, RESOURCES_ASYNCHRONOUS,
 			gettext_noop("Controls whether Gather and Gather Merge also run subplans."),
-			gettext_noop("Should gather nodes also run subplans, or just gather tuples?")
+			gettext_noop("Should gather nodes also run subplans, or just gather tuples?"),
+			GUC_EXPLAIN
 		},
 		&parallel_leader_participation,
 		true,
@@ -1797,7 +1911,8 @@ static struct config_bool ConfigureNamesBool[] =
 	{
 		{"jit", PGC_USERSET, QUERY_TUNING_OTHER,
 			gettext_noop("Allow JIT compilation."),
-			NULL
+			NULL,
+			GUC_EXPLAIN
 		},
 		&jit_enabled,
 		true,
@@ -1926,7 +2041,8 @@ static struct config_int ConfigureNamesInt[] =
 						 "are not collapsed."),
 			gettext_noop("The planner will merge subqueries into upper "
 						 "queries if the resulting FROM list would have no more than "
-						 "this many items.")
+						 "this many items."),
+			GUC_EXPLAIN
 		},
 		&from_collapse_limit,
 		8, 1, INT_MAX,
@@ -1938,7 +2054,8 @@ static struct config_int ConfigureNamesInt[] =
 						 "constructs are not flattened."),
 			gettext_noop("The planner will flatten explicit JOIN "
 						 "constructs into lists of FROM items whenever a "
-						 "list of no more than this many items would result.")
+						 "list of no more than this many items would result."),
+			GUC_EXPLAIN
 		},
 		&join_collapse_limit,
 		8, 1, INT_MAX,
@@ -1947,7 +2064,8 @@ static struct config_int ConfigureNamesInt[] =
 	{
 		{"geqo_threshold", PGC_USERSET, QUERY_TUNING_GEQO,
 			gettext_noop("Sets the threshold of FROM items beyond which GEQO is used."),
-			NULL
+			NULL,
+			GUC_EXPLAIN
 		},
 		&geqo_threshold,
 		12, 2, INT_MAX,
@@ -1956,7 +2074,8 @@ static struct config_int ConfigureNamesInt[] =
 	{
 		{"geqo_effort", PGC_USERSET, QUERY_TUNING_GEQO,
 			gettext_noop("GEQO: effort is used to set the default for other GEQO parameters."),
-			NULL
+			NULL,
+			GUC_EXPLAIN
 		},
 		&Geqo_effort,
 		DEFAULT_GEQO_EFFORT, MIN_GEQO_EFFORT, MAX_GEQO_EFFORT,
@@ -1965,7 +2084,8 @@ static struct config_int ConfigureNamesInt[] =
 	{
 		{"geqo_pool_size", PGC_USERSET, QUERY_TUNING_GEQO,
 			gettext_noop("GEQO: number of individuals in the population."),
-			gettext_noop("Zero selects a suitable default value.")
+			gettext_noop("Zero selects a suitable default value."),
+			GUC_EXPLAIN
 		},
 		&Geqo_pool_size,
 		0, 0, INT_MAX,
@@ -1974,7 +2094,8 @@ static struct config_int ConfigureNamesInt[] =
 	{
 		{"geqo_generations", PGC_USERSET, QUERY_TUNING_GEQO,
 			gettext_noop("GEQO: number of iterations of the algorithm."),
-			gettext_noop("Zero selects a suitable default value.")
+			gettext_noop("Zero selects a suitable default value."),
+			GUC_EXPLAIN
 		},
 		&Geqo_generations,
 		0, 0, INT_MAX,
@@ -2016,6 +2137,17 @@ static struct config_int ConfigureNamesInt[] =
 	},
 
 	{
+		{"recovery_min_apply_delay", PGC_SIGHUP, REPLICATION_STANDBY,
+			gettext_noop("Sets the minimum delay for applying changes during recovery."),
+			NULL,
+			GUC_UNIT_MS
+		},
+		&recovery_min_apply_delay,
+		0, 0, INT_MAX,
+		NULL, NULL, NULL
+	},
+
+	{
 		{"wal_receiver_status_interval", PGC_SIGHUP, REPLICATION_STANDBY,
 			gettext_noop("Sets the maximum interval between WAL receiver status reports to the sending server."),
 			NULL,
@@ -2048,7 +2180,7 @@ static struct config_int ConfigureNamesInt[] =
 	},
 
 	{
-		/* see max_connections and max_wal_senders */
+		/* see max_connections */
 		{"superuser_reserved_connections", PGC_POSTMASTER, CONN_AUTH_SETTINGS,
 			gettext_noop("Sets the number of connection slots reserved for superusers."),
 			NULL
@@ -2077,7 +2209,7 @@ static struct config_int ConfigureNamesInt[] =
 		{"temp_buffers", PGC_USERSET, RESOURCES_MEM,
 			gettext_noop("Sets the maximum number of temporary buffers used by each session."),
 			NULL,
-			GUC_UNIT_BLOCKS
+			GUC_UNIT_BLOCKS | GUC_EXPLAIN
 		},
 		&num_temp_buffers,
 		1024, 100, INT_MAX / 2,
@@ -2144,7 +2276,7 @@ static struct config_int ConfigureNamesInt[] =
 			gettext_noop("This much memory can be used by each internal "
 						 "sort operation and hash table before switching to "
 						 "temporary disk files."),
-			GUC_UNIT_KB
+			GUC_UNIT_KB | GUC_EXPLAIN
 		},
 		&work_mem,
 		4096, 64, MAX_KILOBYTES,
@@ -2237,28 +2369,6 @@ static struct config_int ConfigureNamesInt[] =
 		},
 		&VacuumCostLimit,
 		200, 1, 10000,
-		NULL, NULL, NULL
-	},
-
-	{
-		{"vacuum_cost_delay", PGC_USERSET, RESOURCES_VACUUM_DELAY,
-			gettext_noop("Vacuum cost delay in milliseconds."),
-			NULL,
-			GUC_UNIT_MS
-		},
-		&VacuumCostDelay,
-		0, 0, 100,
-		NULL, NULL, NULL
-	},
-
-	{
-		{"autovacuum_vacuum_cost_delay", PGC_SIGHUP, AUTOVACUUM,
-			gettext_noop("Vacuum cost delay in milliseconds, for autovacuum."),
-			NULL,
-			GUC_UNIT_MS
-		},
-		&autovacuum_vac_cost_delay,
-		20, -1, 100,
 		NULL, NULL, NULL
 	},
 
@@ -2577,14 +2687,13 @@ static struct config_int ConfigureNamesInt[] =
 	},
 
 	{
-		/* see max_connections and superuser_reserved_connections */
 		{"max_wal_senders", PGC_POSTMASTER, REPLICATION_SENDING,
 			gettext_noop("Sets the maximum number of simultaneously running WAL sender processes."),
 			NULL
 		},
 		&max_wal_senders,
 		10, 0, MAX_BACKENDS,
-		NULL, NULL, NULL
+		check_max_wal_senders, NULL, NULL
 	},
 
 	{
@@ -2636,11 +2745,12 @@ static struct config_int ConfigureNamesInt[] =
 		{"extra_float_digits", PGC_USERSET, CLIENT_CONN_LOCALE,
 			gettext_noop("Sets the number of digits displayed for floating-point values."),
 			gettext_noop("This affects real, double precision, and geometric data types. "
-						 "The parameter value is added to the standard number of digits "
-						 "(FLT_DIG or DBL_DIG as appropriate).")
+						 "A zero or negative parameter value is added to the standard "
+						 "number of digits (FLT_DIG or DBL_DIG as appropriate). "
+						 "Any value greater than zero selects precise output mode.")
 		},
 		&extra_float_digits,
-		0, -15, 3,
+		1, -15, 3,
 		NULL, NULL, NULL
 	},
 
@@ -2648,7 +2758,8 @@ static struct config_int ConfigureNamesInt[] =
 		{"log_min_duration_statement", PGC_SUSET, LOGGING_WHEN,
 			gettext_noop("Sets the minimum execution time above which "
 						 "statements will be logged."),
-			gettext_noop("Zero prints all queries. -1 turns this feature off."),
+			gettext_noop("Zero prints all queries, subject to log_statement_sample_rate. "
+						 "-1 turns this feature off."),
 			GUC_UNIT_MS
 		},
 		&log_min_duration_statement,
@@ -2705,7 +2816,8 @@ static struct config_int ConfigureNamesInt[] =
 			PGC_USERSET,
 			RESOURCES_ASYNCHRONOUS,
 			gettext_noop("Number of simultaneous requests that can be handled efficiently by the disk subsystem."),
-			gettext_noop("For RAID arrays, this should be approximately the number of drive spindles in the array.")
+			gettext_noop("For RAID arrays, this should be approximately the number of drive spindles in the array."),
+			GUC_EXPLAIN
 		},
 		&effective_io_concurrency,
 #ifdef USE_PREFETCH
@@ -2950,7 +3062,8 @@ static struct config_int ConfigureNamesInt[] =
 	{
 		{"max_parallel_workers_per_gather", PGC_USERSET, RESOURCES_ASYNCHRONOUS,
 			gettext_noop("Sets the maximum number of parallel processes per executor node."),
-			NULL
+			NULL,
+			GUC_EXPLAIN
 		},
 		&max_parallel_workers_per_gather,
 		2, 0, MAX_PARALLEL_WORKER_LIMIT,
@@ -2960,7 +3073,8 @@ static struct config_int ConfigureNamesInt[] =
 	{
 		{"max_parallel_workers", PGC_USERSET, RESOURCES_ASYNCHRONOUS,
 			gettext_noop("Sets the maximum number of parallel workers that can be active at one time."),
-			NULL
+			NULL,
+			GUC_EXPLAIN
 		},
 		&max_parallel_workers,
 		8, 0, MAX_PARALLEL_WORKER_LIMIT,
@@ -3050,7 +3164,7 @@ static struct config_int ConfigureNamesInt[] =
 			gettext_noop("Sets the planner's assumption about the total size of the data caches."),
 			gettext_noop("That is, the total size of the caches (kernel cache and shared buffers) used for PostgreSQL data files. "
 						 "This is measured in disk pages, which are normally 8 kB each."),
-			GUC_UNIT_BLOCKS,
+			GUC_UNIT_BLOCKS | GUC_EXPLAIN,
 		},
 		&effective_cache_size,
 		DEFAULT_EFFECTIVE_CACHE_SIZE, 1, INT_MAX,
@@ -3061,7 +3175,7 @@ static struct config_int ConfigureNamesInt[] =
 		{"min_parallel_table_scan_size", PGC_USERSET, QUERY_TUNING_COST,
 			gettext_noop("Sets the minimum amount of table data for a parallel scan."),
 			gettext_noop("If the planner estimates that it will read a number of table pages too small to reach this limit, a parallel scan will not be considered."),
-			GUC_UNIT_BLOCKS,
+			GUC_UNIT_BLOCKS | GUC_EXPLAIN,
 		},
 		&min_parallel_table_scan_size,
 		(8 * 1024 * 1024) / BLCKSZ, 0, INT_MAX / 3,
@@ -3072,7 +3186,7 @@ static struct config_int ConfigureNamesInt[] =
 		{"min_parallel_index_scan_size", PGC_USERSET, QUERY_TUNING_COST,
 			gettext_noop("Sets the minimum amount of index data for a parallel scan."),
 			gettext_noop("If the planner estimates that it will read a number of index pages too small to reach this limit, a parallel scan will not be considered."),
-			GUC_UNIT_BLOCKS,
+			GUC_UNIT_BLOCKS | GUC_EXPLAIN,
 		},
 		&min_parallel_index_scan_size,
 		(512 * 1024) / BLCKSZ, 0, INT_MAX / 3,
@@ -3124,6 +3238,17 @@ static struct config_int ConfigureNamesInt[] =
 		NULL, NULL, NULL
 	},
 
+	{
+		{"tcp_user_timeout", PGC_USERSET, CLIENT_CONN_OTHER,
+			gettext_noop("TCP user timeout."),
+			gettext_noop("A value of 0 uses the system default."),
+			GUC_UNIT_MS
+		},
+		&tcp_user_timeout,
+		0, 0, INT_MAX,
+		NULL, assign_tcp_user_timeout, show_tcp_user_timeout
+	},
+
 	/* End-of-list marker */
 	{
 		{NULL, 0, 0, NULL, NULL}, NULL, 0, 0, 0, NULL, NULL, NULL
@@ -3137,7 +3262,8 @@ static struct config_real ConfigureNamesReal[] =
 		{"seq_page_cost", PGC_USERSET, QUERY_TUNING_COST,
 			gettext_noop("Sets the planner's estimate of the cost of a "
 						 "sequentially fetched disk page."),
-			NULL
+			NULL,
+			GUC_EXPLAIN
 		},
 		&seq_page_cost,
 		DEFAULT_SEQ_PAGE_COST, 0, DBL_MAX,
@@ -3147,7 +3273,8 @@ static struct config_real ConfigureNamesReal[] =
 		{"random_page_cost", PGC_USERSET, QUERY_TUNING_COST,
 			gettext_noop("Sets the planner's estimate of the cost of a "
 						 "nonsequentially fetched disk page."),
-			NULL
+			NULL,
+			GUC_EXPLAIN
 		},
 		&random_page_cost,
 		DEFAULT_RANDOM_PAGE_COST, 0, DBL_MAX,
@@ -3157,7 +3284,8 @@ static struct config_real ConfigureNamesReal[] =
 		{"cpu_tuple_cost", PGC_USERSET, QUERY_TUNING_COST,
 			gettext_noop("Sets the planner's estimate of the cost of "
 						 "processing each tuple (row)."),
-			NULL
+			NULL,
+			GUC_EXPLAIN
 		},
 		&cpu_tuple_cost,
 		DEFAULT_CPU_TUPLE_COST, 0, DBL_MAX,
@@ -3167,7 +3295,8 @@ static struct config_real ConfigureNamesReal[] =
 		{"cpu_index_tuple_cost", PGC_USERSET, QUERY_TUNING_COST,
 			gettext_noop("Sets the planner's estimate of the cost of "
 						 "processing each index entry during an index scan."),
-			NULL
+			NULL,
+			GUC_EXPLAIN
 		},
 		&cpu_index_tuple_cost,
 		DEFAULT_CPU_INDEX_TUPLE_COST, 0, DBL_MAX,
@@ -3177,7 +3306,8 @@ static struct config_real ConfigureNamesReal[] =
 		{"cpu_operator_cost", PGC_USERSET, QUERY_TUNING_COST,
 			gettext_noop("Sets the planner's estimate of the cost of "
 						 "processing each operator or function call."),
-			NULL
+			NULL,
+			GUC_EXPLAIN
 		},
 		&cpu_operator_cost,
 		DEFAULT_CPU_OPERATOR_COST, 0, DBL_MAX,
@@ -3187,7 +3317,8 @@ static struct config_real ConfigureNamesReal[] =
 		{"parallel_tuple_cost", PGC_USERSET, QUERY_TUNING_COST,
 			gettext_noop("Sets the planner's estimate of the cost of "
 						 "passing each tuple (row) from worker to master backend."),
-			NULL
+			NULL,
+			GUC_EXPLAIN
 		},
 		&parallel_tuple_cost,
 		DEFAULT_PARALLEL_TUPLE_COST, 0, DBL_MAX,
@@ -3197,7 +3328,8 @@ static struct config_real ConfigureNamesReal[] =
 		{"parallel_setup_cost", PGC_USERSET, QUERY_TUNING_COST,
 			gettext_noop("Sets the planner's estimate of the cost of "
 						 "starting up worker processes for parallel query."),
-			NULL
+			NULL,
+			GUC_EXPLAIN
 		},
 		&parallel_setup_cost,
 		DEFAULT_PARALLEL_SETUP_COST, 0, DBL_MAX,
@@ -3207,7 +3339,8 @@ static struct config_real ConfigureNamesReal[] =
 	{
 		{"jit_above_cost", PGC_USERSET, QUERY_TUNING_COST,
 			gettext_noop("Perform JIT compilation if query is more expensive."),
-			gettext_noop("-1 disables JIT compilation.")
+			gettext_noop("-1 disables JIT compilation."),
+			GUC_EXPLAIN
 		},
 		&jit_above_cost,
 		100000, -1, DBL_MAX,
@@ -3217,7 +3350,8 @@ static struct config_real ConfigureNamesReal[] =
 	{
 		{"jit_optimize_above_cost", PGC_USERSET, QUERY_TUNING_COST,
 			gettext_noop("Optimize JITed functions if query is more expensive."),
-			gettext_noop("-1 disables optimization.")
+			gettext_noop("-1 disables optimization."),
+			GUC_EXPLAIN
 		},
 		&jit_optimize_above_cost,
 		500000, -1, DBL_MAX,
@@ -3227,7 +3361,8 @@ static struct config_real ConfigureNamesReal[] =
 	{
 		{"jit_inline_above_cost", PGC_USERSET, QUERY_TUNING_COST,
 			gettext_noop("Perform JIT inlining if query is more expensive."),
-			gettext_noop("-1 disables inlining.")
+			gettext_noop("-1 disables inlining."),
+			GUC_EXPLAIN
 		},
 		&jit_inline_above_cost,
 		500000, -1, DBL_MAX,
@@ -3238,7 +3373,8 @@ static struct config_real ConfigureNamesReal[] =
 		{"cursor_tuple_fraction", PGC_USERSET, QUERY_TUNING_OTHER,
 			gettext_noop("Sets the planner's estimate of the fraction of "
 						 "a cursor's rows that will be retrieved."),
-			NULL
+			NULL,
+			GUC_EXPLAIN
 		},
 		&cursor_tuple_fraction,
 		DEFAULT_CURSOR_TUPLE_FRACTION, 0.0, 1.0,
@@ -3248,7 +3384,8 @@ static struct config_real ConfigureNamesReal[] =
 	{
 		{"geqo_selection_bias", PGC_USERSET, QUERY_TUNING_GEQO,
 			gettext_noop("GEQO: selective pressure within the population."),
-			NULL
+			NULL,
+			GUC_EXPLAIN
 		},
 		&Geqo_selection_bias,
 		DEFAULT_GEQO_SELECTION_BIAS,
@@ -3258,7 +3395,8 @@ static struct config_real ConfigureNamesReal[] =
 	{
 		{"geqo_seed", PGC_USERSET, QUERY_TUNING_GEQO,
 			gettext_noop("GEQO: seed for random path selection."),
-			NULL
+			NULL,
+			GUC_EXPLAIN
 		},
 		&Geqo_seed,
 		0.0, 0.0, 1.0,
@@ -3284,6 +3422,28 @@ static struct config_real ConfigureNamesReal[] =
 		&phony_random_seed,
 		0.0, -1.0, 1.0,
 		check_random_seed, assign_random_seed, show_random_seed
+	},
+
+	{
+		{"vacuum_cost_delay", PGC_USERSET, RESOURCES_VACUUM_DELAY,
+			gettext_noop("Vacuum cost delay in milliseconds."),
+			NULL,
+			GUC_UNIT_MS
+		},
+		&VacuumCostDelay,
+		0, 0, 100,
+		NULL, NULL, NULL
+	},
+
+	{
+		{"autovacuum_vacuum_cost_delay", PGC_SIGHUP, AUTOVACUUM,
+			gettext_noop("Vacuum cost delay in milliseconds, for autovacuum."),
+			NULL,
+			GUC_UNIT_MS
+		},
+		&autovacuum_vac_cost_delay,
+		2, -1, 100,
+		NULL, NULL, NULL
 	},
 
 	{
@@ -3325,6 +3485,29 @@ static struct config_real ConfigureNamesReal[] =
 		NULL, NULL, NULL
 	},
 
+	{
+		{"log_statement_sample_rate", PGC_SUSET, LOGGING_WHEN,
+			gettext_noop("Fraction of statements exceeding log_min_duration_statement to be logged."),
+			gettext_noop("If you only want a sample, use a value between 0.0 (never "
+						 "log) and 1.0 (always log).")
+		},
+		&log_statement_sample_rate,
+		1.0, 0.0, 1.0,
+		NULL, NULL, NULL
+	},
+
+	{
+		{"log_transaction_sample_rate", PGC_SUSET, LOGGING_WHEN,
+			gettext_noop("Set the fraction of transactions to log for new transactions."),
+			gettext_noop("Logs all statements from a fraction of transactions. "
+						 "Use a value between 0.0 (never log) and 1.0 (log all "
+						 "statements for all transactions).")
+		},
+		&log_xact_sample_rate,
+		0.0, 0.0, 1.0,
+		NULL, NULL, NULL
+	},
+
 	/* End-of-list marker */
 	{
 		{NULL, 0, 0, NULL, NULL}, NULL, 0.0, 0.0, 0.0, NULL, NULL, NULL
@@ -3342,6 +3525,123 @@ static struct config_string ConfigureNamesString[] =
 		&XLogArchiveCommand,
 		"",
 		NULL, NULL, show_archive_command
+	},
+
+	{
+		{"restore_command", PGC_POSTMASTER, WAL_ARCHIVE_RECOVERY,
+			gettext_noop("Sets the shell command that will retrieve an archived WAL file."),
+			NULL
+		},
+		&recoveryRestoreCommand,
+		"",
+		NULL, NULL, NULL
+	},
+
+	{
+		{"archive_cleanup_command", PGC_SIGHUP, WAL_ARCHIVE_RECOVERY,
+			gettext_noop("Sets the shell command that will be executed at every restart point."),
+			NULL
+		},
+		&archiveCleanupCommand,
+		"",
+		NULL, NULL, NULL
+	},
+
+	{
+		{"recovery_end_command", PGC_SIGHUP, WAL_ARCHIVE_RECOVERY,
+			gettext_noop("Sets the shell command that will be executed once at the end of recovery."),
+			NULL
+		},
+		&recoveryEndCommand,
+		"",
+		NULL, NULL, NULL
+	},
+
+	{
+		{"recovery_target_timeline", PGC_POSTMASTER, WAL_RECOVERY_TARGET,
+			gettext_noop("Specifies the timeline to recovery into."),
+			NULL
+		},
+		&recovery_target_timeline_string,
+		"latest",
+		check_recovery_target_timeline, assign_recovery_target_timeline, NULL
+	},
+
+	{
+		{"recovery_target", PGC_POSTMASTER, WAL_RECOVERY_TARGET,
+			gettext_noop("Set to 'immediate' to end recovery as soon as a consistent state is reached."),
+			NULL
+		},
+		&recovery_target_string,
+		"",
+		check_recovery_target, assign_recovery_target, NULL
+	},
+	{
+		{"recovery_target_xid", PGC_POSTMASTER, WAL_RECOVERY_TARGET,
+			gettext_noop("Sets the transaction ID up to which recovery will proceed."),
+			NULL
+		},
+		&recovery_target_xid_string,
+		"",
+		check_recovery_target_xid, assign_recovery_target_xid, NULL
+	},
+	{
+		{"recovery_target_time", PGC_POSTMASTER, WAL_RECOVERY_TARGET,
+			gettext_noop("Sets the time stamp up to which recovery will proceed."),
+			NULL
+		},
+		&recovery_target_time_string,
+		"",
+		check_recovery_target_time, assign_recovery_target_time, NULL
+	},
+	{
+		{"recovery_target_name", PGC_POSTMASTER, WAL_RECOVERY_TARGET,
+			gettext_noop("Sets the named restore point up to which recovery will proceed."),
+			NULL
+		},
+		&recovery_target_name_string,
+		"",
+		check_recovery_target_name, assign_recovery_target_name, NULL
+	},
+	{
+		{"recovery_target_lsn", PGC_POSTMASTER, WAL_RECOVERY_TARGET,
+			gettext_noop("Sets the LSN of the write-ahead log location up to which recovery will proceed."),
+			NULL
+		},
+		&recovery_target_lsn_string,
+		"",
+		check_recovery_target_lsn, assign_recovery_target_lsn, NULL
+	},
+
+	{
+		{"promote_trigger_file", PGC_SIGHUP, REPLICATION_STANDBY,
+			gettext_noop("Specifies a file name whose presence ends recovery in the standby."),
+			NULL
+		},
+		&PromoteTriggerFile,
+		"",
+		NULL, NULL, NULL
+	},
+
+	{
+		{"primary_conninfo", PGC_POSTMASTER, REPLICATION_STANDBY,
+			gettext_noop("Sets the connection string to be used to connect to the sending server."),
+			NULL,
+			GUC_SUPERUSER_ONLY
+		},
+		&PrimaryConnInfo,
+		"",
+		NULL, NULL, NULL
+	},
+
+	{
+		{"primary_slot_name", PGC_POSTMASTER, REPLICATION_STANDBY,
+			gettext_noop("Sets the name of the replication slot to use on the sending server."),
+			NULL
+		},
+		&PrimarySlotName,
+		"",
+		check_primary_slot_name, NULL, NULL
 	},
 
 	{
@@ -3385,6 +3685,17 @@ static struct config_string ConfigureNamesString[] =
 		&datestyle_string,
 		"ISO, MDY",
 		check_datestyle, assign_datestyle, NULL
+	},
+
+	{
+		{"default_table_access_method", PGC_USERSET, CLIENT_CONN_STATEMENT,
+			gettext_noop("Sets the default table access method for new tables."),
+			NULL,
+			GUC_IS_NAME
+		},
+		&default_table_access_method,
+		DEFAULT_TABLE_ACCESS_METHOD,
+		check_default_table_access_method, NULL, NULL
 	},
 
 	{
@@ -3545,7 +3856,7 @@ static struct config_string ConfigureNamesString[] =
 		{"search_path", PGC_USERSET, CLIENT_CONN_STATEMENT,
 			gettext_noop("Sets the schema search order for names that are not schema-qualified."),
 			NULL,
-			GUC_LIST_INPUT | GUC_LIST_QUOTE
+			GUC_LIST_INPUT | GUC_LIST_QUOTE | GUC_EXPLAIN
 		},
 		&namespace_search_path,
 		"\"$user\", public",
@@ -4021,7 +4332,8 @@ static struct config_enum ConfigureNamesEnum[] =
 		{"constraint_exclusion", PGC_USERSET, QUERY_TUNING_OTHER,
 			gettext_noop("Enables the planner to use constraints to optimize queries."),
 			gettext_noop("Table scans will be skipped if their constraints"
-						 " guarantee that no rows match the query.")
+						 " guarantee that no rows match the query."),
+			GUC_EXPLAIN
 		},
 		&constraint_exclusion,
 		CONSTRAINT_EXCLUSION_PARTITION, constraint_exclusion_options,
@@ -4148,6 +4460,16 @@ static struct config_enum ConfigureNamesEnum[] =
 	},
 
 	{
+		{"recovery_target_action", PGC_POSTMASTER, WAL_RECOVERY_TARGET,
+			gettext_noop("Sets the action to perform upon reaching the recovery target."),
+			NULL
+		},
+		&recoveryTargetAction,
+		RECOVERY_TARGET_ACTION_PAUSE, recovery_target_action_options,
+		NULL, NULL, NULL
+	},
+
+	{
 		{"trace_recovery_messages", PGC_SIGHUP, DEVELOPER_OPTIONS,
 			gettext_noop("Enables logging of recovery-related debugging information."),
 			gettext_noop("Each level includes all the levels that follow it. The later"
@@ -4190,6 +4512,16 @@ static struct config_enum ConfigureNamesEnum[] =
 		},
 		&dynamic_shared_memory_type,
 		DEFAULT_DYNAMIC_SHARED_MEMORY_TYPE, dynamic_shared_memory_options,
+		NULL, NULL, NULL
+	},
+
+	{
+		{"shared_memory_type", PGC_POSTMASTER, RESOURCES_MEM,
+			gettext_noop("Selects the shared memory implementation used for the main shared memory region."),
+			NULL
+		},
+		&shared_memory_type,
+		DEFAULT_SHARED_MEMORY_TYPE, shared_memory_options,
 		NULL, NULL, NULL
 	},
 
@@ -4237,7 +4569,8 @@ static struct config_enum ConfigureNamesEnum[] =
 	{
 		{"force_parallel_mode", PGC_USERSET, QUERY_TUNING_OTHER,
 			gettext_noop("Forces use of parallel query facilities."),
-			gettext_noop("If possible, run query using a parallel worker and with parallel restrictions.")
+			gettext_noop("If possible, run query using a parallel worker and with parallel restrictions."),
+			GUC_EXPLAIN
 		},
 		&force_parallel_mode,
 		FORCE_PARALLEL_OFF, force_parallel_mode_options,
@@ -4261,7 +4594,8 @@ static struct config_enum ConfigureNamesEnum[] =
 			gettext_noop("Controls the planner's selection of custom or generic plan."),
 			gettext_noop("Prepared statements can have custom and generic plans, and the planner "
 						 "will attempt to choose which is better.  This can be set to override "
-						 "the default behavior.")
+						 "the default behavior."),
+			GUC_EXPLAIN
 		},
 		&plan_cache_mode,
 		PLAN_CACHE_MODE_AUTO, plan_cache_mode_options,
@@ -4276,7 +4610,7 @@ static struct config_enum ConfigureNamesEnum[] =
 		},
 		&ssl_min_protocol_version,
 		PG_TLS1_VERSION,
-		ssl_protocol_versions_info + 1 /* don't allow PG_TLS_ANY */,
+		ssl_protocol_versions_info + 1, /* don't allow PG_TLS_ANY */
 		NULL, NULL, NULL
 	},
 
@@ -4322,6 +4656,9 @@ static struct config_generic **guc_variables;
 /* Current number of variables contained in the vector */
 static int	num_guc_variables;
 
+/* Current number of variables marked with GUC_EXPLAIN */
+static int	num_guc_explain_variables;
+
 /* Vector capacity */
 static int	size_guc_variables;
 
@@ -4340,18 +4677,18 @@ static void InitializeOneGUCOption(struct config_generic *gconf);
 static void push_old_value(struct config_generic *gconf, GucAction action);
 static void ReportGUCOption(struct config_generic *record);
 static void reapply_stacked_values(struct config_generic *variable,
-					   struct config_string *pHolder,
-					   GucStack *stack,
-					   const char *curvalue,
-					   GucContext curscontext, GucSource cursource);
+								   struct config_string *pHolder,
+								   GucStack *stack,
+								   const char *curvalue,
+								   GucContext curscontext, GucSource cursource);
 static void ShowGUCConfigOption(const char *name, DestReceiver *dest);
 static void ShowAllGUCConfig(DestReceiver *dest);
 static char *_ShowOption(struct config_generic *record, bool use_units);
 static bool validate_option_array_item(const char *name, const char *value,
-						   bool skipIfNoPermissions);
+									   bool skipIfNoPermissions);
 static void write_auto_conf_file(int fd, const char *filename, ConfigVariable *head_p);
 static void replace_auto_config_value(ConfigVariable **head_p, ConfigVariable **tail_p,
-						  const char *name, const char *value);
+									  const char *name, const char *value);
 
 
 /*
@@ -4585,6 +4922,7 @@ build_guc_variables(void)
 {
 	int			size_vars;
 	int			num_vars = 0;
+	int			num_explain_vars = 0;
 	struct config_generic **guc_vars;
 	int			i;
 
@@ -4595,6 +4933,9 @@ build_guc_variables(void)
 		/* Rather than requiring vartype to be filled in by hand, do this: */
 		conf->gen.vartype = PGC_BOOL;
 		num_vars++;
+
+		if (conf->gen.flags & GUC_EXPLAIN)
+			num_explain_vars++;
 	}
 
 	for (i = 0; ConfigureNamesInt[i].gen.name; i++)
@@ -4603,6 +4944,9 @@ build_guc_variables(void)
 
 		conf->gen.vartype = PGC_INT;
 		num_vars++;
+
+		if (conf->gen.flags & GUC_EXPLAIN)
+			num_explain_vars++;
 	}
 
 	for (i = 0; ConfigureNamesReal[i].gen.name; i++)
@@ -4611,6 +4955,9 @@ build_guc_variables(void)
 
 		conf->gen.vartype = PGC_REAL;
 		num_vars++;
+
+		if (conf->gen.flags & GUC_EXPLAIN)
+			num_explain_vars++;
 	}
 
 	for (i = 0; ConfigureNamesString[i].gen.name; i++)
@@ -4619,6 +4966,9 @@ build_guc_variables(void)
 
 		conf->gen.vartype = PGC_STRING;
 		num_vars++;
+
+		if (conf->gen.flags & GUC_EXPLAIN)
+			num_explain_vars++;
 	}
 
 	for (i = 0; ConfigureNamesEnum[i].gen.name; i++)
@@ -4627,6 +4977,9 @@ build_guc_variables(void)
 
 		conf->gen.vartype = PGC_ENUM;
 		num_vars++;
+
+		if (conf->gen.flags & GUC_EXPLAIN)
+			num_explain_vars++;
 	}
 
 	/*
@@ -4658,6 +5011,7 @@ build_guc_variables(void)
 		free(guc_variables);
 	guc_variables = guc_vars;
 	num_guc_variables = num_vars;
+	num_guc_explain_variables = num_explain_vars;
 	size_guc_variables = size_vars;
 	qsort((void *) guc_variables, num_guc_variables,
 		  sizeof(struct config_generic *), guc_var_compare);
@@ -4740,7 +5094,7 @@ add_placeholder_variable(const char *name, int elevel)
 
 	if (!add_guc_variable((struct config_generic *) var, elevel))
 	{
-		free((void *) gen->name);
+		free(unconstify(char *, gen->name));
 		free(var);
 		return NULL;
 	}
@@ -5790,17 +6144,35 @@ ReportGUCOption(struct config_generic *record)
 /*
  * Convert a value from one of the human-friendly units ("kB", "min" etc.)
  * to the given base unit.  'value' and 'unit' are the input value and unit
- * to convert from.  The converted value is stored in *base_value.
+ * to convert from (there can be trailing spaces in the unit string).
+ * The converted value is stored in *base_value.
+ * It's caller's responsibility to round off the converted value as necessary
+ * and check for out-of-range.
  *
  * Returns true on success, false if the input unit is not recognized.
  */
 static bool
-convert_to_base_unit(int64 value, const char *unit,
-					 int base_unit, int64 *base_value)
+convert_to_base_unit(double value, const char *unit,
+					 int base_unit, double *base_value)
 {
+	char		unitstr[MAX_UNIT_LEN + 1];
+	int			unitlen;
 	const unit_conversion *table;
 	int			i;
 
+	/* extract unit string to compare to table entries */
+	unitlen = 0;
+	while (*unit != '\0' && !isspace((unsigned char) *unit) &&
+		   unitlen < MAX_UNIT_LEN)
+		unitstr[unitlen++] = *(unit++);
+	unitstr[unitlen] = '\0';
+	/* allow whitespace after unit */
+	while (isspace((unsigned char) *unit))
+		unit++;
+	if (*unit != '\0')
+		return false;			/* unit too long, or garbage after it */
+
+	/* now search the appropriate table */
 	if (base_unit & GUC_UNIT_MEMORY)
 		table = memory_unit_conversion_table;
 	else
@@ -5809,12 +6181,21 @@ convert_to_base_unit(int64 value, const char *unit,
 	for (i = 0; *table[i].unit; i++)
 	{
 		if (base_unit == table[i].base_unit &&
-			strcmp(unit, table[i].unit) == 0)
+			strcmp(unitstr, table[i].unit) == 0)
 		{
-			if (table[i].multiplier < 0)
-				*base_value = value / (-table[i].multiplier);
-			else
-				*base_value = value * table[i].multiplier;
+			double		cvalue = value * table[i].multiplier;
+
+			/*
+			 * If the user gave a fractional value such as "30.1GB", round it
+			 * off to the nearest multiple of the next smaller unit, if there
+			 * is one.
+			 */
+			if (*table[i + 1].unit &&
+				base_unit == table[i + 1].base_unit)
+				cvalue = rint(cvalue / table[i + 1].multiplier) *
+					table[i + 1].multiplier;
+
+			*base_value = cvalue;
 			return true;
 		}
 	}
@@ -5822,14 +6203,15 @@ convert_to_base_unit(int64 value, const char *unit,
 }
 
 /*
- * Convert a value in some base unit to a human-friendly unit.  The output
- * unit is chosen so that it's the greatest unit that can represent the value
- * without loss.  For example, if the base unit is GUC_UNIT_KB, 1024 is
- * converted to 1 MB, but 1025 is represented as 1025 kB.
+ * Convert an integer value in some base unit to a human-friendly unit.
+ *
+ * The output unit is chosen so that it's the greatest unit that can represent
+ * the value without loss.  For example, if the base unit is GUC_UNIT_KB, 1024
+ * is converted to 1 MB, but 1025 is represented as 1025 kB.
  */
 static void
-convert_from_base_unit(int64 base_value, int base_unit,
-					   int64 *value, const char **unit)
+convert_int_from_base_unit(int64 base_value, int base_unit,
+						   int64 *value, const char **unit)
 {
 	const unit_conversion *table;
 	int			i;
@@ -5846,19 +6228,14 @@ convert_from_base_unit(int64 base_value, int base_unit,
 		if (base_unit == table[i].base_unit)
 		{
 			/*
-			 * Accept the first conversion that divides the value evenly. We
+			 * Accept the first conversion that divides the value evenly.  We
 			 * assume that the conversions for each base unit are ordered from
 			 * greatest unit to the smallest!
 			 */
-			if (table[i].multiplier < 0)
+			if (table[i].multiplier <= 1.0 ||
+				base_value % (int64) table[i].multiplier == 0)
 			{
-				*value = base_value * (-table[i].multiplier);
-				*unit = table[i].unit;
-				break;
-			}
-			else if (base_value % table[i].multiplier == 0)
-			{
-				*value = base_value / table[i].multiplier;
+				*value = (int64) rint(base_value / table[i].multiplier);
 				*unit = table[i].unit;
 				break;
 			}
@@ -5868,21 +6245,120 @@ convert_from_base_unit(int64 base_value, int base_unit,
 	Assert(*unit != NULL);
 }
 
+/*
+ * Convert a floating-point value in some base unit to a human-friendly unit.
+ *
+ * Same as above, except we have to do the math a bit differently, and
+ * there's a possibility that we don't find any exact divisor.
+ */
+static void
+convert_real_from_base_unit(double base_value, int base_unit,
+							double *value, const char **unit)
+{
+	const unit_conversion *table;
+	int			i;
+
+	*unit = NULL;
+
+	if (base_unit & GUC_UNIT_MEMORY)
+		table = memory_unit_conversion_table;
+	else
+		table = time_unit_conversion_table;
+
+	for (i = 0; *table[i].unit; i++)
+	{
+		if (base_unit == table[i].base_unit)
+		{
+			/*
+			 * Accept the first conversion that divides the value evenly; or
+			 * if there is none, use the smallest (last) target unit.
+			 *
+			 * What we actually care about here is whether snprintf with "%g"
+			 * will print the value as an integer, so the obvious test of
+			 * "*value == rint(*value)" is too strict; roundoff error might
+			 * make us choose an unreasonably small unit.  As a compromise,
+			 * accept a divisor that is within 1e-8 of producing an integer.
+			 */
+			*value = base_value / table[i].multiplier;
+			*unit = table[i].unit;
+			if (*value > 0 &&
+				fabs((rint(*value) / *value) - 1.0) <= 1e-8)
+				break;
+		}
+	}
+
+	Assert(*unit != NULL);
+}
+
+/*
+ * Return the name of a GUC's base unit (e.g. "ms") given its flags.
+ * Return NULL if the GUC is unitless.
+ */
+static const char *
+get_config_unit_name(int flags)
+{
+	switch (flags & (GUC_UNIT_MEMORY | GUC_UNIT_TIME))
+	{
+		case 0:
+			return NULL;		/* GUC has no units */
+		case GUC_UNIT_BYTE:
+			return "B";
+		case GUC_UNIT_KB:
+			return "kB";
+		case GUC_UNIT_MB:
+			return "MB";
+		case GUC_UNIT_BLOCKS:
+			{
+				static char bbuf[8];
+
+				/* initialize if first time through */
+				if (bbuf[0] == '\0')
+					snprintf(bbuf, sizeof(bbuf), "%dkB", BLCKSZ / 1024);
+				return bbuf;
+			}
+		case GUC_UNIT_XBLOCKS:
+			{
+				static char xbuf[8];
+
+				/* initialize if first time through */
+				if (xbuf[0] == '\0')
+					snprintf(xbuf, sizeof(xbuf), "%dkB", XLOG_BLCKSZ / 1024);
+				return xbuf;
+			}
+		case GUC_UNIT_MS:
+			return "ms";
+		case GUC_UNIT_S:
+			return "s";
+		case GUC_UNIT_MIN:
+			return "min";
+		default:
+			elog(ERROR, "unrecognized GUC units value: %d",
+				 flags & (GUC_UNIT_MEMORY | GUC_UNIT_TIME));
+			return NULL;
+	}
+}
+
 
 /*
  * Try to parse value as an integer.  The accepted formats are the
- * usual decimal, octal, or hexadecimal formats, optionally followed by
- * a unit name if "flags" indicates a unit is allowed.
+ * usual decimal, octal, or hexadecimal formats, as well as floating-point
+ * formats (which will be rounded to integer after any units conversion).
+ * Optionally, the value can be followed by a unit name if "flags" indicates
+ * a unit is allowed.
  *
  * If the string parses okay, return true, else false.
  * If okay and result is not NULL, return the value in *result.
  * If not okay and hintmsg is not NULL, *hintmsg is set to a suitable
- *	HINT message, or NULL if no hint provided.
+ * HINT message, or NULL if no hint provided.
  */
 bool
 parse_int(const char *value, int *result, int flags, const char **hintmsg)
 {
-	int64		val;
+	/*
+	 * We assume here that double is wide enough to represent any integer
+	 * value with adequate precision.
+	 */
+	double		val;
 	char	   *endptr;
 
 	/* To suppress compiler warnings, always set output params */
@@ -5891,47 +6367,42 @@ parse_int(const char *value, int *result, int flags, const char **hintmsg)
 	if (hintmsg)
 		*hintmsg = NULL;
 
-	/* We assume here that int64 is at least as wide as long */
+	/*
+	 * Try to parse as an integer (allowing octal or hex input).  If the
+	 * conversion stops at a decimal point or 'e', or overflows, re-parse as
+	 * float.  This should work fine as long as we have no unit names starting
+	 * with 'e'.  If we ever do, the test could be extended to check for a
+	 * sign or digit after 'e', but for now that's unnecessary.
+	 */
 	errno = 0;
 	val = strtol(value, &endptr, 0);
-
-	if (endptr == value)
-		return false;			/* no HINT for integer syntax error */
-
-	if (errno == ERANGE || val != (int64) ((int32) val))
+	if (*endptr == '.' || *endptr == 'e' || *endptr == 'E' ||
+		errno == ERANGE)
 	{
-		if (hintmsg)
-			*hintmsg = gettext_noop("Value exceeds integer range.");
-		return false;
+		errno = 0;
+		val = strtod(value, &endptr);
 	}
 
-	/* allow whitespace between integer and unit */
+	if (endptr == value || errno == ERANGE)
+		return false;			/* no HINT for these cases */
+
+	/* reject NaN (infinities will fail range check below) */
+	if (isnan(val))
+		return false;			/* treat same as syntax error; no HINT */
+
+	/* allow whitespace between number and unit */
 	while (isspace((unsigned char) *endptr))
 		endptr++;
 
 	/* Handle possible unit */
 	if (*endptr != '\0')
 	{
-		char		unit[MAX_UNIT_LEN + 1];
-		int			unitlen;
-		bool		converted = false;
-
 		if ((flags & GUC_UNIT) == 0)
 			return false;		/* this setting does not accept a unit */
 
-		unitlen = 0;
-		while (*endptr != '\0' && !isspace((unsigned char) *endptr) &&
-			   unitlen < MAX_UNIT_LEN)
-			unit[unitlen++] = *(endptr++);
-		unit[unitlen] = '\0';
-		/* allow whitespace after unit */
-		while (isspace((unsigned char) *endptr))
-			endptr++;
-
-		if (*endptr == '\0')
-			converted = convert_to_base_unit(val, unit, (flags & GUC_UNIT),
-											 &val);
-		if (!converted)
+		if (!convert_to_base_unit(val,
+								  endptr, (flags & GUC_UNIT),
+								  &val))
 		{
 			/* invalid unit, or garbage after the unit; set hint and fail. */
 			if (hintmsg)
@@ -5943,14 +6414,16 @@ parse_int(const char *value, int *result, int flags, const char **hintmsg)
 			}
 			return false;
 		}
+	}
 
-		/* Check for overflow due to units conversion */
-		if (val != (int64) ((int32) val))
-		{
-			if (hintmsg)
-				*hintmsg = gettext_noop("Value exceeds integer range.");
-			return false;
-		}
+	/* Round to int, then check for overflow */
+	val = rint(val);
+
+	if (val > INT_MAX || val < INT_MIN)
+	{
+		if (hintmsg)
+			*hintmsg = gettext_noop("Value exceeds integer range.");
+		return false;
 	}
 
 	if (result)
@@ -5958,32 +6431,63 @@ parse_int(const char *value, int *result, int flags, const char **hintmsg)
 	return true;
 }
 
-
-
 /*
  * Try to parse value as a floating point number in the usual format.
+ * Optionally, the value can be followed by a unit name if "flags" indicates
+ * a unit is allowed.
+ *
  * If the string parses okay, return true, else false.
  * If okay and result is not NULL, return the value in *result.
+ * If not okay and hintmsg is not NULL, *hintmsg is set to a suitable
+ * HINT message, or NULL if no hint provided.
  */
 bool
-parse_real(const char *value, double *result)
+parse_real(const char *value, double *result, int flags, const char **hintmsg)
 {
 	double		val;
 	char	   *endptr;
 
+	/* To suppress compiler warnings, always set output params */
 	if (result)
-		*result = 0;			/* suppress compiler warning */
+		*result = 0;
+	if (hintmsg)
+		*hintmsg = NULL;
 
 	errno = 0;
 	val = strtod(value, &endptr);
-	if (endptr == value || errno == ERANGE)
-		return false;
 
-	/* allow whitespace after number */
+	if (endptr == value || errno == ERANGE)
+		return false;			/* no HINT for these cases */
+
+	/* reject NaN (infinities will fail range checks later) */
+	if (isnan(val))
+		return false;			/* treat same as syntax error; no HINT */
+
+	/* allow whitespace between number and unit */
 	while (isspace((unsigned char) *endptr))
 		endptr++;
+
+	/* Handle possible unit */
 	if (*endptr != '\0')
-		return false;
+	{
+		if ((flags & GUC_UNIT) == 0)
+			return false;		/* this setting does not accept a unit */
+
+		if (!convert_to_base_unit(val,
+								  endptr, (flags & GUC_UNIT),
+								  &val))
+		{
+			/* invalid unit, or garbage after the unit; set hint and fail. */
+			if (hintmsg)
+			{
+				if (flags & GUC_UNIT_MEMORY)
+					*hintmsg = memory_units_hint;
+				else
+					*hintmsg = time_units_hint;
+			}
+			return false;
+		}
+	}
 
 	if (result)
 		*result = val;
@@ -6150,10 +6654,15 @@ parse_and_validate_value(struct config_generic *record,
 
 				if (newval->intval < conf->min || newval->intval > conf->max)
 				{
+					const char *unit = get_config_unit_name(conf->gen.flags);
+
 					ereport(elevel,
 							(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-							 errmsg("%d is outside the valid range for parameter \"%s\" (%d .. %d)",
-									newval->intval, name,
+							 errmsg("%d%s%s is outside the valid range for parameter \"%s\" (%d .. %d)",
+									newval->intval,
+									unit ? " " : "",
+									unit ? unit : "",
+									name,
 									conf->min, conf->max)));
 					return false;
 				}
@@ -6166,22 +6675,30 @@ parse_and_validate_value(struct config_generic *record,
 		case PGC_REAL:
 			{
 				struct config_real *conf = (struct config_real *) record;
+				const char *hintmsg;
 
-				if (!parse_real(value, &newval->realval))
+				if (!parse_real(value, &newval->realval,
+								conf->gen.flags, &hintmsg))
 				{
 					ereport(elevel,
 							(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-							 errmsg("parameter \"%s\" requires a numeric value",
-									name)));
+							 errmsg("invalid value for parameter \"%s\": \"%s\"",
+									name, value),
+							 hintmsg ? errhint("%s", _(hintmsg)) : 0));
 					return false;
 				}
 
 				if (newval->realval < conf->min || newval->realval > conf->max)
 				{
+					const char *unit = get_config_unit_name(conf->gen.flags);
+
 					ereport(elevel,
 							(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-							 errmsg("%g is outside the valid range for parameter \"%s\" (%g .. %g)",
-									newval->realval, name,
+							 errmsg("%g%s%s is outside the valid range for parameter \"%s\" (%g .. %g)",
+									newval->realval,
+									unit ? " " : "",
+									unit ? unit : "",
+									name,
 									conf->min, conf->max)));
 					return false;
 				}
@@ -8446,6 +8963,104 @@ ShowAllGUCConfig(DestReceiver *dest)
 }
 
 /*
+ * Returns an array of modified GUC options to show in EXPLAIN. Only options
+ * related to query planning (marked with GUC_EXPLAIN), with values different
+ * from built-in defaults.
+ */
+struct config_generic **
+get_explain_guc_options(int *num)
+{
+	int			i;
+	struct config_generic **result;
+
+	*num = 0;
+
+	/*
+	 * Allocate enough space to fit all GUC_EXPLAIN options. We may not need
+	 * all the space, but there are fairly few such options so we don't waste
+	 * a lot of memory.
+	 */
+	result = palloc(sizeof(struct config_generic *) * num_guc_explain_variables);
+
+	for (i = 0; i < num_guc_variables; i++)
+	{
+		bool		modified;
+		struct config_generic *conf = guc_variables[i];
+
+		/* return only options visible to the user */
+		if ((conf->flags & GUC_NO_SHOW_ALL) ||
+			((conf->flags & GUC_SUPERUSER_ONLY) &&
+			 !is_member_of_role(GetUserId(), DEFAULT_ROLE_READ_ALL_SETTINGS)))
+			continue;
+
+		/* only parameters explicitly marked for inclusion in explain */
+		if (!(conf->flags & GUC_EXPLAIN))
+			continue;
+
+		/* return only options that were modified (w.r.t. config file) */
+		modified = false;
+
+		switch (conf->vartype)
+		{
+			case PGC_BOOL:
+				{
+					struct config_bool *lconf = (struct config_bool *) conf;
+
+					modified = (lconf->boot_val != *(lconf->variable));
+				}
+				break;
+
+			case PGC_INT:
+				{
+					struct config_int *lconf = (struct config_int *) conf;
+
+					modified = (lconf->boot_val != *(lconf->variable));
+				}
+				break;
+
+			case PGC_REAL:
+				{
+					struct config_real *lconf = (struct config_real *) conf;
+
+					modified = (lconf->boot_val != *(lconf->variable));
+				}
+				break;
+
+			case PGC_STRING:
+				{
+					struct config_string *lconf = (struct config_string *) conf;
+
+					modified = (strcmp(lconf->boot_val, *(lconf->variable)) != 0);
+				}
+				break;
+
+			case PGC_ENUM:
+				{
+					struct config_enum *lconf = (struct config_enum *) conf;
+
+					modified = (lconf->boot_val != *(lconf->variable));
+				}
+				break;
+
+			default:
+				elog(ERROR, "unexpected GUC type: %d", conf->vartype);
+		}
+
+		/* skip GUC variables that match the built-in default */
+		if (!modified)
+			continue;
+
+		/* assign to the values array */
+		result[*num] = conf;
+		*num = *num + 1;
+
+		Assert(*num <= num_guc_explain_variables);
+	}
+
+	return result;
+}
+
+/*
  * Return GUC variable value by name; optionally return canonical form of
  * name.  If the GUC is unset, then throw an error unless missing_ok is true,
  * in which case return NULL.  Return value is palloc'd (but *varname isn't).
@@ -8513,52 +9128,11 @@ GetConfigOptionByNum(int varnum, const char **values, bool *noshow)
 	/* name */
 	values[0] = conf->name;
 
-	/* setting : use _ShowOption in order to avoid duplicating the logic */
+	/* setting: use _ShowOption in order to avoid duplicating the logic */
 	values[1] = _ShowOption(conf, false);
 
-	/* unit */
-	if (conf->vartype == PGC_INT)
-	{
-		switch (conf->flags & (GUC_UNIT_MEMORY | GUC_UNIT_TIME))
-		{
-			case GUC_UNIT_BYTE:
-				values[2] = "B";
-				break;
-			case GUC_UNIT_KB:
-				values[2] = "kB";
-				break;
-			case GUC_UNIT_MB:
-				values[2] = "MB";
-				break;
-			case GUC_UNIT_BLOCKS:
-				snprintf(buffer, sizeof(buffer), "%dkB", BLCKSZ / 1024);
-				values[2] = pstrdup(buffer);
-				break;
-			case GUC_UNIT_XBLOCKS:
-				snprintf(buffer, sizeof(buffer), "%dkB", XLOG_BLCKSZ / 1024);
-				values[2] = pstrdup(buffer);
-				break;
-			case GUC_UNIT_MS:
-				values[2] = "ms";
-				break;
-			case GUC_UNIT_S:
-				values[2] = "s";
-				break;
-			case GUC_UNIT_MIN:
-				values[2] = "min";
-				break;
-			case 0:
-				values[2] = NULL;
-				break;
-			default:
-				elog(ERROR, "unrecognized GUC units value: %d",
-					 conf->flags & (GUC_UNIT_MEMORY | GUC_UNIT_TIME));
-				values[2] = NULL;
-				break;
-		}
-	}
-	else
-		values[2] = NULL;
+	/* unit, if any (NULL is fine) */
+	values[2] = get_config_unit_name(conf->flags);
 
 	/* group */
 	values[3] = _(config_group_names[conf->group]);
@@ -9087,10 +9661,9 @@ _ShowOption(struct config_generic *record, bool use_units)
 					const char *unit;
 
 					if (use_units && result > 0 && (record->flags & GUC_UNIT))
-					{
-						convert_from_base_unit(result, record->flags & GUC_UNIT,
-											   &result, &unit);
-					}
+						convert_int_from_base_unit(result,
+												   record->flags & GUC_UNIT,
+												   &result, &unit);
 					else
 						unit = "";
 
@@ -9109,8 +9682,18 @@ _ShowOption(struct config_generic *record, bool use_units)
 					val = conf->show_hook();
 				else
 				{
-					snprintf(buffer, sizeof(buffer), "%g",
-							 *conf->variable);
+					double		result = *conf->variable;
+					const char *unit;
+
+					if (use_units && result > 0 && (record->flags & GUC_UNIT))
+						convert_real_from_base_unit(result,
+													record->flags & GUC_UNIT,
+													&result, &unit);
+					else
+						unit = "";
+
+					snprintf(buffer, sizeof(buffer), "%g%s",
+							 result, unit);
 					val = buffer;
 				}
 			}
@@ -9555,7 +10138,7 @@ do_serialize(char **destptr, Size *maxbytes, const char *fmt,...)
 	if (n < 0)
 	{
 		/* Shouldn't happen. Better show errno description. */
-		elog(ERROR, "vsnprintf failed: %m");
+		elog(ERROR, "vsnprintf failed: %m with format string \"%s\"", fmt);
 	}
 	if (n >= *maxbytes)
 	{
@@ -10750,11 +11333,28 @@ show_tcp_keepalives_count(void)
 	return nbuf;
 }
 
+static void
+assign_tcp_user_timeout(int newval, void *extra)
+{
+	/* See comments in assign_tcp_keepalives_idle */
+	(void) pq_settcpusertimeout(newval, MyProcPort);
+}
+
+static const char *
+show_tcp_user_timeout(void)
+{
+	/* See comments in assign_tcp_keepalives_idle */
+	static char nbuf[16];
+
+	snprintf(nbuf, sizeof(nbuf), "%d", pq_gettcpusertimeout(MyProcPort));
+	return nbuf;
+}
+
 static bool
 check_maxconnections(int *newval, void **extra, GucSource source)
 {
 	if (*newval + autovacuum_max_workers + 1 +
-		max_worker_processes > MAX_BACKENDS)
+		max_worker_processes + max_wal_senders > MAX_BACKENDS)
 		return false;
 	return true;
 }
@@ -10762,7 +11362,17 @@ check_maxconnections(int *newval, void **extra, GucSource source)
 static bool
 check_autovacuum_max_workers(int *newval, void **extra, GucSource source)
 {
-	if (MaxConnections + *newval + 1 + max_worker_processes > MAX_BACKENDS)
+	if (MaxConnections + *newval + 1 +
+		max_worker_processes + max_wal_senders > MAX_BACKENDS)
+		return false;
+	return true;
+}
+
+static bool
+check_max_wal_senders(int *newval, void **extra, GucSource source)
+{
+	if (MaxConnections + autovacuum_max_workers + 1 +
+		max_worker_processes + *newval > MAX_BACKENDS)
 		return false;
 	return true;
 }
@@ -10793,7 +11403,8 @@ check_autovacuum_work_mem(int *newval, void **extra, GucSource source)
 static bool
 check_max_worker_processes(int *newval, void **extra, GucSource source)
 {
-	if (MaxConnections + autovacuum_max_workers + 1 + *newval > MAX_BACKENDS)
+	if (MaxConnections + autovacuum_max_workers + 1 +
+		*newval + max_wal_senders > MAX_BACKENDS)
 		return false;
 	return true;
 }
@@ -10818,7 +11429,7 @@ check_effective_io_concurrency(int *newval, void **extra, GucSource source)
 #else
 	if (*newval != 0)
 	{
-		GUC_check_errdetail("effective_io_concurrency must be set to 0 on platforms that lack posix_fadvise()");
+		GUC_check_errdetail("effective_io_concurrency must be set to 0 on platforms that lack posix_fadvise().");
 		return false;
 	}
 	return true;
@@ -10912,6 +11523,288 @@ show_data_directory_mode(void)
 
 	snprintf(buf, sizeof(buf), "%04o", data_directory_mode);
 	return buf;
+}
+
+static bool
+check_recovery_target_timeline(char **newval, void **extra, GucSource source)
+{
+	RecoveryTargetTimeLineGoal rttg;
+	RecoveryTargetTimeLineGoal *myextra;
+
+	if (strcmp(*newval, "current") == 0)
+		rttg = RECOVERY_TARGET_TIMELINE_CONTROLFILE;
+	else if (strcmp(*newval, "latest") == 0)
+		rttg = RECOVERY_TARGET_TIMELINE_LATEST;
+	else
+	{
+		rttg = RECOVERY_TARGET_TIMELINE_NUMERIC;
+
+		errno = 0;
+		strtoul(*newval, NULL, 0);
+		if (errno == EINVAL || errno == ERANGE)
+		{
+			GUC_check_errdetail("recovery_target_timeline is not a valid number.");
+			return false;
+		}
+	}
+
+	myextra = (RecoveryTargetTimeLineGoal *) guc_malloc(ERROR, sizeof(RecoveryTargetTimeLineGoal));
+	*myextra = rttg;
+	*extra = (void *) myextra;
+
+	return true;
+}
+
+static void
+assign_recovery_target_timeline(const char *newval, void *extra)
+{
+	recoveryTargetTimeLineGoal = *((RecoveryTargetTimeLineGoal *) extra);
+	if (recoveryTargetTimeLineGoal == RECOVERY_TARGET_TIMELINE_NUMERIC)
+		recoveryTargetTLIRequested = (TimeLineID) strtoul(newval, NULL, 0);
+	else
+		recoveryTargetTLIRequested = 0;
+}
+
+/*
+ * Recovery target settings: Only one of the several recovery_target* settings
+ * may be set.  Setting a second one results in an error.  The global variable
+ * recoveryTarget tracks which kind of recovery target was chosen.  Other
+ * variables store the actual target value (for example a string or a xid).
+ * The assign functions of the parameters check whether a competing parameter
+ * was already set.  But we want to allow setting the same parameter multiple
+ * times.  We also want to allow unsetting a parameter and setting a different
+ * one, so we unset recoveryTarget when the parameter is set to an empty
+ * string.
+ */
+
+static void
+pg_attribute_noreturn()
+error_multiple_recovery_targets(void)
+{
+	ereport(ERROR,
+			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+			 errmsg("multiple recovery targets specified"),
+			 errdetail("At most one of recovery_target, recovery_target_lsn, recovery_target_name, recovery_target_time, recovery_target_xid may be set.")));
+}
+
+static bool
+check_recovery_target(char **newval, void **extra, GucSource source)
+{
+	if (strcmp(*newval, "immediate") != 0 && strcmp(*newval, "") != 0)
+	{
+		GUC_check_errdetail("The only allowed value is \"immediate\".");
+		return false;
+	}
+	return true;
+}
+
+static void
+assign_recovery_target(const char *newval, void *extra)
+{
+	if (recoveryTarget != RECOVERY_TARGET_UNSET &&
+		recoveryTarget != RECOVERY_TARGET_IMMEDIATE)
+		error_multiple_recovery_targets();
+
+	if (newval && strcmp(newval, "") != 0)
+		recoveryTarget = RECOVERY_TARGET_IMMEDIATE;
+	else
+		recoveryTarget = RECOVERY_TARGET_UNSET;
+}
+
+static bool
+check_recovery_target_xid(char **newval, void **extra, GucSource source)
+{
+	if (strcmp(*newval, "") != 0)
+	{
+		TransactionId xid;
+		TransactionId *myextra;
+
+		errno = 0;
+		xid = (TransactionId) strtoul(*newval, NULL, 0);
+		if (errno == EINVAL || errno == ERANGE)
+			return false;
+
+		myextra = (TransactionId *) guc_malloc(ERROR, sizeof(TransactionId));
+		*myextra = xid;
+		*extra = (void *) myextra;
+	}
+	return true;
+}
+
+static void
+assign_recovery_target_xid(const char *newval, void *extra)
+{
+	if (recoveryTarget != RECOVERY_TARGET_UNSET &&
+		recoveryTarget != RECOVERY_TARGET_XID)
+		error_multiple_recovery_targets();
+
+	if (newval && strcmp(newval, "") != 0)
+	{
+		recoveryTarget = RECOVERY_TARGET_XID;
+		recoveryTargetXid = *((TransactionId *) extra);
+	}
+	else
+		recoveryTarget = RECOVERY_TARGET_UNSET;
+}
+
+/*
+ * The interpretation of the recovery_target_time string can depend on the
+ * time zone setting, so we need to wait until after all GUC processing is
+ * done before we can do the final parsing of the string.  This check function
+ * only does a parsing pass to catch syntax errors, but we store the string
+ * and parse it again when we need to use it.
+ */
+static bool
+check_recovery_target_time(char **newval, void **extra, GucSource source)
+{
+	if (strcmp(*newval, "") != 0)
+	{
+		/* reject some special values */
+		if (strcmp(*newval, "now") == 0 ||
+			strcmp(*newval, "today") == 0 ||
+			strcmp(*newval, "tomorrow") == 0 ||
+			strcmp(*newval, "yesterday") == 0)
+		{
+			return false;
+		}
+
+		/*
+		 * parse timestamp value (see also timestamptz_in())
+		 */
+		{
+			char	   *str = *newval;
+			fsec_t		fsec;
+			struct pg_tm tt,
+					   *tm = &tt;
+			int			tz;
+			int			dtype;
+			int			nf;
+			int			dterr;
+			char	   *field[MAXDATEFIELDS];
+			int			ftype[MAXDATEFIELDS];
+			char		workbuf[MAXDATELEN + MAXDATEFIELDS];
+			TimestampTz timestamp;
+
+			dterr = ParseDateTime(str, workbuf, sizeof(workbuf),
+								  field, ftype, MAXDATEFIELDS, &nf);
+			if (dterr == 0)
+				dterr = DecodeDateTime(field, ftype, nf, &dtype, tm, &fsec, &tz);
+			if (dterr != 0)
+				return false;
+			if (dtype != DTK_DATE)
+				return false;
+
+			if (tm2timestamp(tm, fsec, &tz, &timestamp) != 0)
+			{
+				GUC_check_errdetail("timestamp out of range: \"%s\"", str);
+				return false;
+			}
+		}
+	}
+	return true;
+}
+
+static void
+assign_recovery_target_time(const char *newval, void *extra)
+{
+	if (recoveryTarget != RECOVERY_TARGET_UNSET &&
+		recoveryTarget != RECOVERY_TARGET_TIME)
+		error_multiple_recovery_targets();
+
+	if (newval && strcmp(newval, "") != 0)
+		recoveryTarget = RECOVERY_TARGET_TIME;
+	else
+		recoveryTarget = RECOVERY_TARGET_UNSET;
+}
+
+static bool
+check_recovery_target_name(char **newval, void **extra, GucSource source)
+{
+	/* Use the value of newval directly */
+	if (strlen(*newval) >= MAXFNAMELEN)
+	{
+		GUC_check_errdetail("%s is too long (maximum %d characters).",
+							"recovery_target_name", MAXFNAMELEN - 1);
+		return false;
+	}
+	return true;
+}
+
+static void
+assign_recovery_target_name(const char *newval, void *extra)
+{
+	if (recoveryTarget != RECOVERY_TARGET_UNSET &&
+		recoveryTarget != RECOVERY_TARGET_NAME)
+		error_multiple_recovery_targets();
+
+	if (newval && strcmp(newval, "") != 0)
+	{
+		recoveryTarget = RECOVERY_TARGET_NAME;
+		recoveryTargetName = newval;
+	}
+	else
+		recoveryTarget = RECOVERY_TARGET_UNSET;
+}
+
+static bool
+check_recovery_target_lsn(char **newval, void **extra, GucSource source)
+{
+	if (strcmp(*newval, "") != 0)
+	{
+		XLogRecPtr	lsn;
+		XLogRecPtr *myextra;
+		bool		have_error = false;
+
+		lsn = pg_lsn_in_internal(*newval, &have_error);
+		if (have_error)
+			return false;
+
+		myextra = (XLogRecPtr *) guc_malloc(ERROR, sizeof(XLogRecPtr));
+		*myextra = lsn;
+		*extra = (void *) myextra;
+	}
+	return true;
+}
+
+static void
+assign_recovery_target_lsn(const char *newval, void *extra)
+{
+	if (recoveryTarget != RECOVERY_TARGET_UNSET &&
+		recoveryTarget != RECOVERY_TARGET_LSN)
+		error_multiple_recovery_targets();
+
+	if (newval && strcmp(newval, "") != 0)
+	{
+		recoveryTarget = RECOVERY_TARGET_LSN;
+		recoveryTargetLSN = *((XLogRecPtr *) extra);
+	}
+	else
+		recoveryTarget = RECOVERY_TARGET_UNSET;
+}
+
+static bool
+check_primary_slot_name(char **newval, void **extra, GucSource source)
+{
+	if (*newval && strcmp(*newval, "") != 0 &&
+		!ReplicationSlotValidateName(*newval, WARNING))
+		return false;
+
+	return true;
+}
+
+static bool
+check_default_with_oids(bool *newval, void **extra, GucSource source)
+{
+	if (*newval)
+	{
+		/* check the GUC's definition for an explanation */
+		GUC_check_errcode(ERRCODE_FEATURE_NOT_SUPPORTED);
+		GUC_check_errmsg("tables declared WITH OIDS are not supported");
+
+		return false;
+	}
+
+	return true;
 }
 
 #include "guc-file.c"

@@ -8,7 +8,7 @@
  * relations need be included.
  *
  *
- * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/catalog/pg_attribute.h
@@ -140,6 +140,9 @@ CATALOG(pg_attribute,1249,AttributeRelationId) BKI_BOOTSTRAP BKI_ROWTYPE_OID(75,
 	/* One of the ATTRIBUTE_IDENTITY_* constants below, or '\0' */
 	char		attidentity BKI_DEFAULT('\0');
 
+	/* One of the ATTRIBUTE_GENERATED_* constants below, or '\0' */
+	char		attgenerated BKI_DEFAULT('\0');
+
 	/* Is dropped (ie, logically invisible) or not */
 	bool		attisdropped BKI_DEFAULT(f);
 
@@ -200,6 +203,8 @@ typedef FormData_pg_attribute *Form_pg_attribute;
 
 #define		  ATTRIBUTE_IDENTITY_ALWAYS		'a'
 #define		  ATTRIBUTE_IDENTITY_BY_DEFAULT 'd'
+
+#define		  ATTRIBUTE_GENERATED_STORED	's'
 
 #endif							/* EXPOSE_TO_CLIENT_CODE */
 

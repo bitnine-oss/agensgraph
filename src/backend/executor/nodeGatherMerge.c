@@ -3,7 +3,7 @@
  * nodeGatherMerge.c
  *		Scan a plan in multiple workers, and do order-preserving merge.
  *
- * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -23,7 +23,7 @@
 #include "executor/tqueue.h"
 #include "lib/binaryheap.h"
 #include "miscadmin.h"
-#include "optimizer/planmain.h"
+#include "optimizer/optimizer.h"
 #include "utils/memutils.h"
 #include "utils/rel.h"
 
@@ -55,13 +55,13 @@ static TupleTableSlot *ExecGatherMerge(PlanState *pstate);
 static int32 heap_compare_slots(Datum a, Datum b, void *arg);
 static TupleTableSlot *gather_merge_getnext(GatherMergeState *gm_state);
 static HeapTuple gm_readnext_tuple(GatherMergeState *gm_state, int nreader,
-				  bool nowait, bool *done);
+								   bool nowait, bool *done);
 static void ExecShutdownGatherMergeWorkers(GatherMergeState *node);
 static void gather_merge_setup(GatherMergeState *gm_state);
 static void gather_merge_init(GatherMergeState *gm_state);
 static void gather_merge_clear_tuples(GatherMergeState *gm_state);
 static bool gather_merge_readnext(GatherMergeState *gm_state, int reader,
-					  bool nowait);
+								  bool nowait);
 static void load_tuple_array(GatherMergeState *gm_state, int reader);
 
 /* ----------------------------------------------------------------
@@ -700,10 +700,10 @@ gather_merge_readnext(GatherMergeState *gm_state, int reader, bool nowait)
 	Assert(HeapTupleIsValid(tup));
 
 	/* Build the TupleTableSlot for the given tuple */
-	ExecStoreHeapTuple(tup,			/* tuple to store */
+	ExecStoreHeapTuple(tup,		/* tuple to store */
 					   gm_state->gm_slots[reader],	/* slot in which to store
 													 * the tuple */
-					   true);		/* pfree tuple when done with it */
+					   true);	/* pfree tuple when done with it */
 
 	return true;
 }

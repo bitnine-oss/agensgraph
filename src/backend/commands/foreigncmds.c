@@ -3,7 +3,7 @@
  * foreigncmds.c
  *	  foreign-data wrapper/server creation/manipulation commands
  *
- * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
  *
  *
  * IDENTIFICATION
@@ -13,9 +13,9 @@
  */
 #include "postgres.h"
 
-#include "access/heapam.h"
 #include "access/htup_details.h"
 #include "access/reloptions.h"
+#include "access/table.h"
 #include "access/xact.h"
 #include "catalog/catalog.h"
 #include "catalog/dependency.h"
@@ -284,7 +284,7 @@ AlterForeignDataWrapperOwner(const char *name, Oid newOwnerId)
 	Form_pg_foreign_data_wrapper form;
 
 
-	rel = heap_open(ForeignDataWrapperRelationId, RowExclusiveLock);
+	rel = table_open(ForeignDataWrapperRelationId, RowExclusiveLock);
 
 	tup = SearchSysCacheCopy1(FOREIGNDATAWRAPPERNAME, CStringGetDatum(name));
 
@@ -302,7 +302,7 @@ AlterForeignDataWrapperOwner(const char *name, Oid newOwnerId)
 
 	heap_freetuple(tup);
 
-	heap_close(rel, RowExclusiveLock);
+	table_close(rel, RowExclusiveLock);
 
 	return address;
 }
@@ -318,7 +318,7 @@ AlterForeignDataWrapperOwner_oid(Oid fwdId, Oid newOwnerId)
 	HeapTuple	tup;
 	Relation	rel;
 
-	rel = heap_open(ForeignDataWrapperRelationId, RowExclusiveLock);
+	rel = table_open(ForeignDataWrapperRelationId, RowExclusiveLock);
 
 	tup = SearchSysCacheCopy1(FOREIGNDATAWRAPPEROID, ObjectIdGetDatum(fwdId));
 
@@ -331,7 +331,7 @@ AlterForeignDataWrapperOwner_oid(Oid fwdId, Oid newOwnerId)
 
 	heap_freetuple(tup);
 
-	heap_close(rel, RowExclusiveLock);
+	table_close(rel, RowExclusiveLock);
 }
 
 /*
@@ -423,7 +423,7 @@ AlterForeignServerOwner(const char *name, Oid newOwnerId)
 	ObjectAddress address;
 	Form_pg_foreign_server form;
 
-	rel = heap_open(ForeignServerRelationId, RowExclusiveLock);
+	rel = table_open(ForeignServerRelationId, RowExclusiveLock);
 
 	tup = SearchSysCacheCopy1(FOREIGNSERVERNAME, CStringGetDatum(name));
 
@@ -441,7 +441,7 @@ AlterForeignServerOwner(const char *name, Oid newOwnerId)
 
 	heap_freetuple(tup);
 
-	heap_close(rel, RowExclusiveLock);
+	table_close(rel, RowExclusiveLock);
 
 	return address;
 }
@@ -455,7 +455,7 @@ AlterForeignServerOwner_oid(Oid srvId, Oid newOwnerId)
 	HeapTuple	tup;
 	Relation	rel;
 
-	rel = heap_open(ForeignServerRelationId, RowExclusiveLock);
+	rel = table_open(ForeignServerRelationId, RowExclusiveLock);
 
 	tup = SearchSysCacheCopy1(FOREIGNSERVEROID, ObjectIdGetDatum(srvId));
 
@@ -468,7 +468,7 @@ AlterForeignServerOwner_oid(Oid srvId, Oid newOwnerId)
 
 	heap_freetuple(tup);
 
-	heap_close(rel, RowExclusiveLock);
+	table_close(rel, RowExclusiveLock);
 }
 
 /*
@@ -579,7 +579,7 @@ CreateForeignDataWrapper(CreateFdwStmt *stmt)
 	ObjectAddress myself;
 	ObjectAddress referenced;
 
-	rel = heap_open(ForeignDataWrapperRelationId, RowExclusiveLock);
+	rel = table_open(ForeignDataWrapperRelationId, RowExclusiveLock);
 
 	/* Must be super user */
 	if (!superuser())
@@ -669,7 +669,7 @@ CreateForeignDataWrapper(CreateFdwStmt *stmt)
 	/* Post creation hook for new foreign data wrapper */
 	InvokeObjectPostCreateHook(ForeignDataWrapperRelationId, fdwId, 0);
 
-	heap_close(rel, RowExclusiveLock);
+	table_close(rel, RowExclusiveLock);
 
 	return myself;
 }
@@ -696,7 +696,7 @@ AlterForeignDataWrapper(AlterFdwStmt *stmt)
 	Oid			fdwvalidator;
 	ObjectAddress myself;
 
-	rel = heap_open(ForeignDataWrapperRelationId, RowExclusiveLock);
+	rel = table_open(ForeignDataWrapperRelationId, RowExclusiveLock);
 
 	/* Must be super user */
 	if (!superuser())
@@ -833,7 +833,7 @@ AlterForeignDataWrapper(AlterFdwStmt *stmt)
 
 	InvokeObjectPostAlterHook(ForeignDataWrapperRelationId, fdwId, 0);
 
-	heap_close(rel, RowExclusiveLock);
+	table_close(rel, RowExclusiveLock);
 
 	return myself;
 }
@@ -848,7 +848,7 @@ RemoveForeignDataWrapperById(Oid fdwId)
 	HeapTuple	tp;
 	Relation	rel;
 
-	rel = heap_open(ForeignDataWrapperRelationId, RowExclusiveLock);
+	rel = table_open(ForeignDataWrapperRelationId, RowExclusiveLock);
 
 	tp = SearchSysCache1(FOREIGNDATAWRAPPEROID, ObjectIdGetDatum(fdwId));
 
@@ -859,7 +859,7 @@ RemoveForeignDataWrapperById(Oid fdwId)
 
 	ReleaseSysCache(tp);
 
-	heap_close(rel, RowExclusiveLock);
+	table_close(rel, RowExclusiveLock);
 }
 
 
@@ -881,7 +881,7 @@ CreateForeignServer(CreateForeignServerStmt *stmt)
 	ObjectAddress referenced;
 	ForeignDataWrapper *fdw;
 
-	rel = heap_open(ForeignServerRelationId, RowExclusiveLock);
+	rel = table_open(ForeignServerRelationId, RowExclusiveLock);
 
 	/* For now the owner cannot be specified on create. Use effective user ID. */
 	ownerId = GetUserId();
@@ -898,7 +898,7 @@ CreateForeignServer(CreateForeignServerStmt *stmt)
 					(errcode(ERRCODE_DUPLICATE_OBJECT),
 					 errmsg("server \"%s\" already exists, skipping",
 							stmt->servername)));
-			heap_close(rel, RowExclusiveLock);
+			table_close(rel, RowExclusiveLock);
 			return InvalidObjectAddress;
 		}
 		else
@@ -984,7 +984,7 @@ CreateForeignServer(CreateForeignServerStmt *stmt)
 	/* Post creation hook for new foreign server */
 	InvokeObjectPostCreateHook(ForeignServerRelationId, srvId, 0);
 
-	heap_close(rel, RowExclusiveLock);
+	table_close(rel, RowExclusiveLock);
 
 	return myself;
 }
@@ -1005,7 +1005,7 @@ AlterForeignServer(AlterForeignServerStmt *stmt)
 	Form_pg_foreign_server srvForm;
 	ObjectAddress address;
 
-	rel = heap_open(ForeignServerRelationId, RowExclusiveLock);
+	rel = table_open(ForeignServerRelationId, RowExclusiveLock);
 
 	tp = SearchSysCacheCopy1(FOREIGNSERVERNAME,
 							 CStringGetDatum(stmt->servername));
@@ -1083,7 +1083,7 @@ AlterForeignServer(AlterForeignServerStmt *stmt)
 
 	heap_freetuple(tp);
 
-	heap_close(rel, RowExclusiveLock);
+	table_close(rel, RowExclusiveLock);
 
 	return address;
 }
@@ -1098,7 +1098,7 @@ RemoveForeignServerById(Oid srvId)
 	HeapTuple	tp;
 	Relation	rel;
 
-	rel = heap_open(ForeignServerRelationId, RowExclusiveLock);
+	rel = table_open(ForeignServerRelationId, RowExclusiveLock);
 
 	tp = SearchSysCache1(FOREIGNSERVEROID, ObjectIdGetDatum(srvId));
 
@@ -1109,7 +1109,7 @@ RemoveForeignServerById(Oid srvId)
 
 	ReleaseSysCache(tp);
 
-	heap_close(rel, RowExclusiveLock);
+	table_close(rel, RowExclusiveLock);
 }
 
 
@@ -1159,7 +1159,7 @@ CreateUserMapping(CreateUserMappingStmt *stmt)
 	ForeignDataWrapper *fdw;
 	RoleSpec   *role = (RoleSpec *) stmt->user;
 
-	rel = heap_open(UserMappingRelationId, RowExclusiveLock);
+	rel = table_open(UserMappingRelationId, RowExclusiveLock);
 
 	if (role->roletype == ROLESPEC_PUBLIC)
 		useId = ACL_ID_PUBLIC;
@@ -1184,17 +1184,17 @@ CreateUserMapping(CreateUserMappingStmt *stmt)
 		{
 			ereport(NOTICE,
 					(errcode(ERRCODE_DUPLICATE_OBJECT),
-					 errmsg("user mapping for \"%s\" already exists for server %s, skipping",
+					 errmsg("user mapping for \"%s\" already exists for server \"%s\", skipping",
 							MappingUserName(useId),
 							stmt->servername)));
 
-			heap_close(rel, RowExclusiveLock);
+			table_close(rel, RowExclusiveLock);
 			return InvalidObjectAddress;
 		}
 		else
 			ereport(ERROR,
 					(errcode(ERRCODE_DUPLICATE_OBJECT),
-					 errmsg("user mapping for \"%s\" already exists for server %s",
+					 errmsg("user mapping for \"%s\" already exists for server \"%s\"",
 							MappingUserName(useId),
 							stmt->servername)));
 	}
@@ -1256,7 +1256,7 @@ CreateUserMapping(CreateUserMappingStmt *stmt)
 	/* Post creation hook for new user mapping */
 	InvokeObjectPostCreateHook(UserMappingRelationId, umId, 0);
 
-	heap_close(rel, RowExclusiveLock);
+	table_close(rel, RowExclusiveLock);
 
 	return myself;
 }
@@ -1279,7 +1279,7 @@ AlterUserMapping(AlterUserMappingStmt *stmt)
 	ObjectAddress address;
 	RoleSpec   *role = (RoleSpec *) stmt->user;
 
-	rel = heap_open(UserMappingRelationId, RowExclusiveLock);
+	rel = table_open(UserMappingRelationId, RowExclusiveLock);
 
 	if (role->roletype == ROLESPEC_PUBLIC)
 		useId = ACL_ID_PUBLIC;
@@ -1294,8 +1294,8 @@ AlterUserMapping(AlterUserMappingStmt *stmt)
 	if (!OidIsValid(umId))
 		ereport(ERROR,
 				(errcode(ERRCODE_UNDEFINED_OBJECT),
-				 errmsg("user mapping for \"%s\" does not exist for the server",
-						MappingUserName(useId))));
+				 errmsg("user mapping for \"%s\" does not exist for server \"%s\"",
+						MappingUserName(useId), stmt->servername)));
 
 	user_mapping_ddl_aclcheck(useId, srv->serverid, stmt->servername);
 
@@ -1351,7 +1351,7 @@ AlterUserMapping(AlterUserMappingStmt *stmt)
 
 	heap_freetuple(tp);
 
-	heap_close(rel, RowExclusiveLock);
+	table_close(rel, RowExclusiveLock);
 
 	return address;
 }
@@ -1396,7 +1396,9 @@ RemoveUserMapping(DropUserMappingStmt *stmt)
 					 errmsg("server \"%s\" does not exist",
 							stmt->servername)));
 		/* IF EXISTS, just note it */
-		ereport(NOTICE, (errmsg("server does not exist, skipping")));
+		ereport(NOTICE,
+				(errmsg("server \"%s\" does not exist, skipping",
+						stmt->servername)));
 		return InvalidOid;
 	}
 
@@ -1409,13 +1411,13 @@ RemoveUserMapping(DropUserMappingStmt *stmt)
 		if (!stmt->missing_ok)
 			ereport(ERROR,
 					(errcode(ERRCODE_UNDEFINED_OBJECT),
-					 errmsg("user mapping for \"%s\" does not exist for the server",
-							MappingUserName(useId))));
+					 errmsg("user mapping for \"%s\" does not exist for server \"%s\"",
+							MappingUserName(useId), stmt->servername)));
 
 		/* IF EXISTS specified, just note it */
 		ereport(NOTICE,
-				(errmsg("user mapping for \"%s\" does not exist for the server, skipping",
-						MappingUserName(useId))));
+				(errmsg("user mapping for \"%s\" does not exist for server \"%s\", skipping",
+						MappingUserName(useId), stmt->servername)));
 		return InvalidOid;
 	}
 
@@ -1443,7 +1445,7 @@ RemoveUserMappingById(Oid umId)
 	HeapTuple	tp;
 	Relation	rel;
 
-	rel = heap_open(UserMappingRelationId, RowExclusiveLock);
+	rel = table_open(UserMappingRelationId, RowExclusiveLock);
 
 	tp = SearchSysCache1(USERMAPPINGOID, ObjectIdGetDatum(umId));
 
@@ -1454,7 +1456,7 @@ RemoveUserMappingById(Oid umId)
 
 	ReleaseSysCache(tp);
 
-	heap_close(rel, RowExclusiveLock);
+	table_close(rel, RowExclusiveLock);
 }
 
 /*
@@ -1482,7 +1484,7 @@ CreateForeignTable(CreateForeignTableStmt *stmt, Oid relid)
 	 */
 	CommandCounterIncrement();
 
-	ftrel = heap_open(ForeignTableRelationId, RowExclusiveLock);
+	ftrel = table_open(ForeignTableRelationId, RowExclusiveLock);
 
 	/*
 	 * For now the owner cannot be specified on create. Use effective user ID.
@@ -1535,7 +1537,7 @@ CreateForeignTable(CreateForeignTableStmt *stmt, Oid relid)
 	referenced.objectSubId = 0;
 	recordDependencyOn(&myself, &referenced, DEPENDENCY_NORMAL);
 
-	heap_close(ftrel, RowExclusiveLock);
+	table_close(ftrel, RowExclusiveLock);
 }
 
 /*

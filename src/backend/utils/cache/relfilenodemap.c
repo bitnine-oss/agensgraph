@@ -3,7 +3,7 @@
  * relfilenodemap.c
  *	  relfilenode to oid mapping cache.
  *
- * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -14,8 +14,8 @@
 #include "postgres.h"
 
 #include "access/genam.h"
-#include "access/heapam.h"
 #include "access/htup_details.h"
+#include "access/table.h"
 #include "catalog/indexing.h"
 #include "catalog/pg_class.h"
 #include "catalog/pg_tablespace.h"
@@ -192,7 +192,7 @@ RelidByRelfilenode(Oid reltablespace, Oid relfilenode)
 		 */
 
 		/* check for plain relations by looking in pg_class */
-		relation = heap_open(RelationRelationId, AccessShareLock);
+		relation = table_open(RelationRelationId, AccessShareLock);
 
 		/* copy scankey to local copy, it will be modified during the scan */
 		memcpy(skey, relfilenode_skey, sizeof(skey));
@@ -226,7 +226,7 @@ RelidByRelfilenode(Oid reltablespace, Oid relfilenode)
 		}
 
 		systable_endscan(scandesc);
-		heap_close(relation, AccessShareLock);
+		table_close(relation, AccessShareLock);
 
 		/* check for tables that are mapped but not shared */
 		if (!found)

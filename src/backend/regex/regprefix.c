@@ -4,7 +4,7 @@
  *	  Extract a common prefix, if any, from a compiled regex.
  *
  *
- * Portions Copyright (c) 2012-2018, PostgreSQL Global Development Group
+ * Portions Copyright (c) 2012-2019, PostgreSQL Global Development Group
  * Portions Copyright (c) 1998, 1999 Henry Spencer
  *
  * IDENTIFICATION
@@ -19,8 +19,8 @@
 /*
  * forward declarations
  */
-static int findprefix(struct cnfa *cnfa, struct colormap *cm,
-		   chr *string, size_t *slength);
+static int	findprefix(struct cnfa *cnfa, struct colormap *cm,
+					   chr *string, size_t *slength);
 
 
 /*

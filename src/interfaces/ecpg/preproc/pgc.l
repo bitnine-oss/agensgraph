@@ -7,7 +7,7 @@
  * This is a modified version of src/backend/parser/scan.l
  *
  *
- * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -22,7 +22,7 @@
 
 #include "common/string.h"
 
-#include "extern.h"
+#include "preproc_extern.h"
 #include "preproc.h"
 }
 
@@ -920,19 +920,19 @@ cppline			{space}*#([^i][A-Za-z]*|{if}|{ifdef}|{ifndef}|{import})((\/\*[^*/]*\*+
 				}
 
 {identifier}	{
-					const ScanKeyword  *keyword;
-
 					if (!isdefine())
 					{
+						int		kwvalue;
+
 						/* Is it an SQL/ECPG keyword? */
-						keyword = ScanECPGKeywordLookup(yytext);
-						if (keyword != NULL)
-							return keyword->value;
+						kwvalue = ScanECPGKeywordLookup(yytext);
+						if (kwvalue >= 0)
+							return kwvalue;
 
 						/* Is it a C keyword? */
-						keyword = ScanCKeywordLookup(yytext);
-						if (keyword != NULL)
-							return keyword->value;
+						kwvalue = ScanCKeywordLookup(yytext);
+						if (kwvalue >= 0)
+							return kwvalue;
 
 						/*
 						 * None of the above.  Return it as an identifier.
@@ -1010,12 +1010,11 @@ cppline			{space}*#([^i][A-Za-z]*|{if}|{ifdef}|{ifndef}|{import})((\/\*[^*/]*\*+
 						return CPP_LINE;
 					}
 <C>{identifier}		{
-						const ScanKeyword		*keyword;
-
 						/*
 						 * Try to detect a function name:
 						 * look for identifiers at the global scope
-						 * keep the last identifier before the first '(' and '{' */
+						 * keep the last identifier before the first '(' and '{'
+						 */
 						if (braces_open == 0 && parenths_open == 0)
 						{
 							if (current_function)
@@ -1026,9 +1025,11 @@ cppline			{space}*#([^i][A-Za-z]*|{if}|{ifdef}|{ifndef}|{import})((\/\*[^*/]*\*+
 						/* however, some defines have to be taken care of for compatibility */
 						if ((!INFORMIX_MODE || !isinformixdefine()) && !isdefine())
 						{
-							keyword = ScanCKeywordLookup(yytext);
-							if (keyword != NULL)
-								return keyword->value;
+							int		kwvalue;
+
+							kwvalue = ScanCKeywordLookup(yytext);
+							if (kwvalue >= 0)
+								return kwvalue;
 							else
 							{
 								base_yylval.str = mm_strdup(yytext);
@@ -1113,14 +1114,14 @@ cppline			{space}*#([^i][A-Za-z]*|{if}|{ifdef}|{ifndef}|{import})((\/\*[^*/]*\*+
 
 					for (ptr = defines; ptr != NULL; ptr2 = ptr, ptr = ptr->next)
 					{
-						if (strcmp(yytext, ptr->old) == 0)
+						if (strcmp(yytext, ptr->olddef) == 0)
 						{
 							if (ptr2 == NULL)
 								defines = ptr->next;
 							else
 								ptr2->next = ptr->next;
-							free(ptr->new);
-							free(ptr->old);
+							free(ptr->newdef);
+							free(ptr->olddef);
 							free(ptr);
 							break;
 						}
@@ -1299,8 +1300,10 @@ cppline			{space}*#([^i][A-Za-z]*|{if}|{ifdef}|{ifndef}|{import})((\/\*[^*/]*\*+
 						yytext[i+1] = '\0';
 
 						for (defptr = defines;
-							 defptr != NULL && strcmp(yytext, defptr->old) != 0;
-							 defptr = defptr->next);
+							 defptr != NULL &&
+							 strcmp(yytext, defptr->olddef) != 0;
+							 defptr = defptr->next)
+							/* skip */ ;
 
 						preproc_tos++;
 						stacked_if_value[preproc_tos].else_branch = false;
@@ -1332,10 +1335,10 @@ cppline			{space}*#([^i][A-Za-z]*|{if}|{ifdef}|{ifndef}|{import})((\/\*[^*/]*\*+
 
 						for (ptr = defines; ptr != NULL; ptr = ptr->next)
 						{
-							 if (strcmp(old, ptr->old) == 0)
+							 if (strcmp(old, ptr->olddef) == 0)
 							 {
-								free(ptr->new);
-								ptr->new = mm_strdup(literalbuf);
+								free(ptr->newdef);
+								ptr->newdef = mm_strdup(literalbuf);
 							 }
 						}
 						if (ptr == NULL)
@@ -1343,8 +1346,8 @@ cppline			{space}*#([^i][A-Za-z]*|{if}|{ifdef}|{ifndef}|{import})((\/\*[^*/]*\*+
 							this = (struct _defines *) mm_alloc(sizeof(struct _defines));
 
 							/* initial definition */
-							this->old = old;
-							this->new = mm_strdup(literalbuf);
+							this->olddef = old;
+							this->newdef = mm_strdup(literalbuf);
 							this->next = defines;
 							this->used = NULL;
 							defines = this;
@@ -1407,7 +1410,7 @@ cppline			{space}*#([^i][A-Za-z]*|{if}|{ifdef}|{ifndef}|{import})((\/\*[^*/]*\*+
 					}
 				}
 
-<INITIAL>{other}|\n	{ mmfatal(PARSE_ERROR, "internal error: unreachable state; please report this to <pgsql-bugs@postgresql.org>"); }
+<INITIAL>{other}|\n	{ mmfatal(PARSE_ERROR, "internal error: unreachable state; please report this to <pgsql-bugs@lists.postgresql.org>"); }
 
 %%
 
@@ -1537,7 +1540,7 @@ parse_include(void)
 		yyin = fopen(inc_file, "r");
 		if (!yyin)
 		{
-			if (strcmp(inc_file + strlen(inc_file) - 2, ".h") != 0)
+			if (strlen(inc_file) <= 2 || strcmp(inc_file + strlen(inc_file) - 2, ".h") != 0)
 			{
 				strcat(inc_file, ".h");
 				yyin = fopen(inc_file, "r");
@@ -1555,7 +1558,7 @@ parse_include(void)
 
 		for (ip = include_paths; yyin == NULL && ip != NULL; ip = ip->next)
 		{
-			if (strlen(ip->path) + strlen(yytext) + 3 > MAXPGPATH)
+			if (strlen(ip->path) + strlen(yytext) + 4 > MAXPGPATH)
 			{
 				fprintf(stderr, _("Error: include path \"%s/%s\" is too long on line %d, skipping\n"), ip->path, yytext, yylineno);
 				continue;
@@ -1612,7 +1615,7 @@ static bool isdefine(void)
 	/* is it a define? */
 	for (ptr = defines; ptr; ptr = ptr->next)
 	{
-		if (strcmp(yytext, ptr->old) == 0 && ptr->used == NULL)
+		if (strcmp(yytext, ptr->olddef) == 0 && ptr->used == NULL)
 		{
 			struct _yy_buffer *yb;
 
@@ -1625,7 +1628,7 @@ static bool isdefine(void)
 
 			ptr->used = yy_buffer = yb;
 
-			yy_scan_string(ptr->new);
+			yy_scan_string(ptr->newdef);
 			return true;
 		}
 	}

@@ -6,7 +6,7 @@
  *	  message integrity and endpoint authentication.
  *
  *
- * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -160,6 +160,14 @@ retry:
 	}
 	else
 #endif
+#ifdef ENABLE_GSS
+	if (port->gss->enc)
+	{
+		n = be_gssapi_read(port, ptr, len);
+		waitfor = WL_SOCKET_READABLE;
+	}
+	else
+#endif
 	{
 		n = secure_raw_read(port, ptr, len);
 		waitfor = WL_SOCKET_READABLE;
@@ -180,7 +188,7 @@ retry:
 		/*
 		 * If the postmaster has died, it's not safe to continue running,
 		 * because it is the postmaster's job to kill us if some other backend
-		 * exists uncleanly.  Moreover, we won't run very well in this state;
+		 * exits uncleanly.  Moreover, we won't run very well in this state;
 		 * helper processes like walwriter and the bgwriter will exit, so
 		 * performance may be poor.  Finally, if we don't exit, pg_ctl will be
 		 * unable to restart the postmaster without manual intervention, so no
@@ -262,6 +270,14 @@ retry:
 	if (port->ssl_in_use)
 	{
 		n = be_tls_write(port, ptr, len, &waitfor);
+	}
+	else
+#endif
+#ifdef ENABLE_GSS
+	if (port->gss->enc)
+	{
+		n = be_gssapi_write(port, ptr, len);
+		waitfor = WL_SOCKET_WRITEABLE;
 	}
 	else
 #endif

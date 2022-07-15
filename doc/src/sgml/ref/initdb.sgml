@@ -202,7 +202,9 @@ PostgreSQL documentation
       <listitem>
        <para>
         Allows users in the same group as the cluster owner to read all cluster
-        files created by <command>initdb</command>.
+        files created by <command>initdb</command>.  This option is ignored
+        on <productname>Windows</productname> as it does not support
+        <acronym>POSIX</acronym>-style group permissions.
        </para>
       </listitem>
      </varlistentry>
@@ -216,7 +218,9 @@ PostgreSQL documentation
         I/O system that would otherwise be silent. Enabling checksums
         may incur a noticeable performance penalty. This option can only
         be set during initialization, and cannot be changed later. If
-        set, checksums are calculated for all objects, in all databases.
+        set, checksums are calculated for all objects, in all databases. All
+        checksum failures will be reported in the <xref
+        linkend="pg-stat-database-view"/> view.
        </para>
       </listitem>
      </varlistentry>
@@ -455,6 +459,17 @@ PostgreSQL documentation
      <para>
       Specifies the directory where the database cluster is to be
       stored; can be overridden using the <option>-D</option> option.
+     </para>
+    </listitem>
+   </varlistentry>
+
+   <varlistentry>
+    <term><envar>PG_COLOR</envar></term>
+    <listitem>
+     <para>
+      Specifies whether to use color in diagnostics messages.  Possible values
+      are <literal>always</literal>, <literal>auto</literal>,
+      <literal>never</literal>.
      </para>
     </listitem>
    </varlistentry>

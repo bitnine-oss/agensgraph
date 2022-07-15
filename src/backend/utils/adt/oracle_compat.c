@@ -2,7 +2,7 @@
  * oracle_compat.c
  *	Oracle compatible functions.
  *
- * Copyright (c) 1996-2018, PostgreSQL Global Development Group
+ * Copyright (c) 1996-2019, PostgreSQL Global Development Group
  *
  *	Author: Edmund Mergl <E.Mergl@bawue.de>
  *	Multibyte enhancement: Tatsuo Ishii <ishii@postgresql.org>
@@ -22,8 +22,8 @@
 
 
 static text *dotrim(const char *string, int stringlen,
-	   const char *set, int setlen,
-	   bool doltrim, bool dortrim);
+					const char *set, int setlen,
+					bool doltrim, bool dortrim);
 
 
 /********************************************************************
@@ -527,7 +527,7 @@ dotrim(const char *string, int stringlen,
  *
  * Syntax:
  *
- *	 bytea byteatrim(byta string, bytea set)
+ *	 bytea byteatrim(bytea string, bytea set)
  *
  * Purpose:
  *

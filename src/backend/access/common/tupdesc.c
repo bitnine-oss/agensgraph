@@ -3,7 +3,7 @@
  * tupdesc.c
  *	  POSTGRES tuple descriptor support code
  *
- * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -19,7 +19,6 @@
 
 #include "postgres.h"
 
-#include "access/hash.h"
 #include "access/htup_details.h"
 #include "access/tupdesc_details.h"
 #include "catalog/pg_collation.h"
@@ -63,7 +62,7 @@ CreateTemplateTupleDesc(int natts)
 	 * could be less due to trailing padding, although with the current
 	 * definition of pg_attribute there probably isn't any padding.
 	 */
-	desc = (TupleDesc) palloc(offsetof(struct tupleDesc, attrs) +
+	desc = (TupleDesc) palloc(offsetof(struct TupleDescData, attrs) +
 							  natts * sizeof(FormData_pg_attribute));
 
 	/*
@@ -132,6 +131,7 @@ CreateTupleDescCopy(TupleDesc tupdesc)
 		att->atthasdef = false;
 		att->atthasmissing = false;
 		att->attidentity = '\0';
+		att->attgenerated = '\0';
 	}
 
 	/* We can copy the tuple type identification, too */
@@ -166,6 +166,7 @@ CreateTupleDescCopyConstr(TupleDesc tupdesc)
 		TupleConstr *cpy = (TupleConstr *) palloc0(sizeof(TupleConstr));
 
 		cpy->has_not_null = constr->has_not_null;
+		cpy->has_generated_stored = constr->has_generated_stored;
 
 		if ((cpy->num_defval = constr->num_defval) > 0)
 		{
@@ -248,6 +249,7 @@ TupleDescCopy(TupleDesc dst, TupleDesc src)
 		att->atthasdef = false;
 		att->atthasmissing = false;
 		att->attidentity = '\0';
+		att->attgenerated = '\0';
 	}
 	dst->constr = NULL;
 
@@ -301,6 +303,7 @@ TupleDescCopyEntry(TupleDesc dst, AttrNumber dstAttno,
 	dstAtt->atthasdef = false;
 	dstAtt->atthasmissing = false;
 	dstAtt->attidentity = '\0';
+	dstAtt->attgenerated = '\0';
 }
 
 /*
@@ -457,6 +460,8 @@ equalTupleDescs(TupleDesc tupdesc1, TupleDesc tupdesc2)
 			return false;
 		if (attr1->attidentity != attr2->attidentity)
 			return false;
+		if (attr1->attgenerated != attr2->attgenerated)
+			return false;
 		if (attr1->attisdropped != attr2->attisdropped)
 			return false;
 		if (attr1->attislocal != attr2->attislocal)
@@ -476,6 +481,8 @@ equalTupleDescs(TupleDesc tupdesc1, TupleDesc tupdesc2)
 		if (constr2 == NULL)
 			return false;
 		if (constr1->has_not_null != constr2->has_not_null)
+			return false;
+		if (constr1->has_generated_stored != constr2->has_generated_stored)
 			return false;
 		n = constr1->num_defval;
 		if (n != (int) constr2->num_defval)
@@ -639,6 +646,7 @@ TupleDescInitEntry(TupleDesc desc,
 	att->atthasdef = false;
 	att->atthasmissing = false;
 	att->attidentity = '\0';
+	att->attgenerated = '\0';
 	att->attisdropped = false;
 	att->attislocal = true;
 	att->attinhcount = 0;
@@ -698,6 +706,7 @@ TupleDescInitBuiltinEntry(TupleDesc desc,
 	att->atthasdef = false;
 	att->atthasmissing = false;
 	att->attidentity = '\0';
+	att->attgenerated = '\0';
 	att->attisdropped = false;
 	att->attislocal = true;
 	att->attinhcount = 0;
@@ -744,6 +753,9 @@ TupleDescInitBuiltinEntry(TupleDesc desc,
 			att->attstorage = 'p';
 			att->attcollation = InvalidOid;
 			break;
+
+		default:
+			elog(ERROR, "unsupported type %u", oidtypeid);
 	}
 }
 
@@ -851,6 +863,7 @@ BuildDescForRelation(List *schema)
 		TupleConstr *constr = (TupleConstr *) palloc0(sizeof(TupleConstr));
 
 		constr->has_not_null = true;
+		constr->has_generated_stored = false;
 		constr->defval = NULL;
 		constr->missing = NULL;
 		constr->num_defval = 0;
@@ -899,23 +912,12 @@ BuildDescFromLists(List *names, List *types, List *typmods, List *collations)
 	desc = CreateTemplateTupleDesc(natts);
 
 	attnum = 0;
-
-	l2 = list_head(types);
-	l3 = list_head(typmods);
-	l4 = list_head(collations);
-	foreach(l1, names)
+	forfour(l1, names, l2, types, l3, typmods, l4, collations)
 	{
 		char	   *attname = strVal(lfirst(l1));
-		Oid			atttypid;
-		int32		atttypmod;
-		Oid			attcollation;
-
-		atttypid = lfirst_oid(l2);
-		l2 = lnext(l2);
-		atttypmod = lfirst_int(l3);
-		l3 = lnext(l3);
-		attcollation = lfirst_oid(l4);
-		l4 = lnext(l4);
+		Oid			atttypid = lfirst_oid(l2);
+		int32		atttypmod = lfirst_int(l3);
+		Oid			attcollation = lfirst_oid(l4);
 
 		attnum++;
 

@@ -3,7 +3,7 @@
  * buffile.c
  *	  Management of large buffered temporary files.
  *
- * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -41,6 +41,7 @@
 
 #include "postgres.h"
 
+#include "commands/tablespace.h"
 #include "executor/instrument.h"
 #include "miscadmin.h"
 #include "pgstat.h"
@@ -185,6 +186,17 @@ BufFileCreateTemp(bool interXact)
 	BufFile    *file;
 	File		pfile;
 
+	/*
+	 * Ensure that temp tablespaces are set up for OpenTemporaryFile to use.
+	 * Possibly the caller will have done this already, but it seems useful to
+	 * double-check here.  Failure to do this at all would result in the temp
+	 * files always getting placed in the default tablespace, which is a
+	 * pretty hard-to-detect bug.  Callers may prefer to do it earlier if they
+	 * want to be sure that any required catalog access is done in some other
+	 * resource context.
+	 */
+	PrepareTempTablespaces();
+
 	pfile = OpenTemporaryFile(interXact);
 	Assert(pfile >= 0);
 
@@ -304,7 +316,8 @@ BufFileOpenShared(SharedFileSet *fileset, const char *name)
 	if (nfiles == 0)
 		ereport(ERROR,
 				(errcode_for_file_access(),
-				 errmsg("could not open BufFile \"%s\"", name)));
+				 errmsg("could not open temporary file \"%s\" from BufFile \"%s\": %m",
+						segment_name, name)));
 
 	file = makeBufFileCommon(nfiles);
 	file->files = files;
@@ -763,20 +776,26 @@ BufFileTellBlock(BufFile *file)
 #endif
 
 /*
- * Return the current file size.
+ * Return the current shared BufFile size.
  *
  * Counts any holes left behind by BufFileAppend as part of the size.
- * Returns -1 on error.
+ * ereport()s on failure.
  */
 int64
 BufFileSize(BufFile *file)
 {
 	int64		lastFileSize;
 
+	Assert(file->fileset != NULL);
+
 	/* Get the size of the last physical file. */
 	lastFileSize = FileSize(file->files[file->numFiles - 1]);
 	if (lastFileSize < 0)
-		return -1;
+		ereport(ERROR,
+				(errcode_for_file_access(),
+				 errmsg("could not determine size of temporary file \"%s\" from BufFile \"%s\": %m",
+						FilePathName(file->files[file->numFiles - 1]),
+						file->name)));
 
 	return ((file->numFiles - 1) * (int64) MAX_PHYSICAL_FILESIZE) +
 		lastFileSize;

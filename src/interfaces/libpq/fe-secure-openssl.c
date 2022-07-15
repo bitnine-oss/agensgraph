@@ -4,7 +4,7 @@
  *	  OpenSSL support
  *
  *
- * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -62,9 +62,9 @@
 #include <openssl/x509v3.h>
 
 static int	verify_cb(int ok, X509_STORE_CTX *ctx);
-static int openssl_verify_peer_name_matches_certificate_name(PGconn *conn,
-												  ASN1_STRING *name,
-												  char **store_name);
+static int	openssl_verify_peer_name_matches_certificate_name(PGconn *conn,
+															  ASN1_STRING *name,
+															  char **store_name);
 static void destroy_ssl_system(void);
 static int	initialize_SSL(PGconn *conn);
 static PostgresPollingStatusType open_client_SSL(PGconn *);
@@ -264,7 +264,7 @@ rloop:
 bool
 pgtls_read_pending(PGconn *conn)
 {
-	return SSL_pending(conn->ssl);
+	return SSL_pending(conn->ssl) > 0;
 }
 
 ssize_t
@@ -736,7 +736,7 @@ static void
 destroy_ssl_system(void)
 {
 #if defined(ENABLE_THREAD_SAFETY) && defined(HAVE_CRYPTO_LOCK)
-	/* Mutex is created in initialize_ssl_system() */
+	/* Mutex is created in pgtls_init() */
 	if (pthread_mutex_lock(&ssl_config_mutex))
 		return;
 

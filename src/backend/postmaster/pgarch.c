@@ -14,7 +14,7 @@
  *
  *	Initial author: Simon Riggs		simon@2ndquadrant.com
  *
- * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -28,6 +28,7 @@
 #include <fcntl.h>
 #include <signal.h>
 #include <time.h>
+#include <sys/stat.h>
 #include <sys/time.h>
 #include <sys/wait.h>
 #include <unistd.h>
@@ -59,7 +60,17 @@
 #define PGARCH_RESTART_INTERVAL 10	/* How often to attempt to restart a
 									 * failed archiver; in seconds. */
 
+/*
+ * Maximum number of retries allowed when attempting to archive a WAL
+ * file.
+ */
 #define NUM_ARCHIVE_RETRIES 3
+
+/*
+ * Maximum number of retries allowed when attempting to remove an
+ * orphan archive status file.
+ */
+#define NUM_ORPHAN_CLEANUP_RETRIES 3
 
 
 /* ----------
@@ -390,6 +401,8 @@ pgarch_MainLoop(void)
 							   WAIT_EVENT_ARCHIVER_MAIN);
 				if (rc & WL_TIMEOUT)
 					wakened = true;
+				if (rc & WL_POSTMASTER_DEATH)
+					time_to_stop = true;
 			}
 			else
 				wakened = true;
@@ -400,7 +413,7 @@ pgarch_MainLoop(void)
 		 * or after completing one more archiving cycle after receiving
 		 * SIGUSR2.
 		 */
-	} while (PostmasterIsAlive() && !time_to_stop);
+	} while (!time_to_stop);
 }
 
 /*
@@ -422,9 +435,13 @@ pgarch_ArchiverCopyLoop(void)
 	while (pgarch_readyXlog(xlog))
 	{
 		int			failures = 0;
+		int			failures_orphan = 0;
 
 		for (;;)
 		{
+			struct stat stat_buf;
+			char		pathname[MAXPGPATH];
+
 			/*
 			 * Do not initiate any more archive commands after receiving
 			 * SIGTERM, nor after the postmaster has died unexpectedly. The
@@ -452,6 +469,46 @@ pgarch_ArchiverCopyLoop(void)
 				ereport(WARNING,
 						(errmsg("archive_mode enabled, yet archive_command is not set")));
 				return;
+			}
+
+			/*
+			 * Since archive status files are not removed in a durable manner,
+			 * a system crash could leave behind .ready files for WAL segments
+			 * that have already been recycled or removed.  In this case,
+			 * simply remove the orphan status file and move on.  unlink() is
+			 * used here as even on subsequent crashes the same orphan files
+			 * would get removed, so there is no need to worry about
+			 * durability.
+			 */
+			snprintf(pathname, MAXPGPATH, XLOGDIR "/%s", xlog);
+			if (stat(pathname, &stat_buf) != 0 && errno == ENOENT)
+			{
+				char		xlogready[MAXPGPATH];
+
+				StatusFilePath(xlogready, xlog, ".ready");
+				if (unlink(xlogready) == 0)
+				{
+					ereport(WARNING,
+							(errmsg("removed orphan archive status file \"%s\"",
+									xlogready)));
+
+					/* leave loop and move to the next status file */
+					break;
+				}
+
+				if (++failures_orphan >= NUM_ORPHAN_CLEANUP_RETRIES)
+				{
+					ereport(WARNING,
+							(errmsg("removal of orphan archive status file \"%s\" failed too many times, will try again later",
+									xlogready)));
+
+					/* give up cleanup of orphan status files */
+					return;
+				}
+
+				/* wait a bit before retrying */
+				pg_usleep(1000000L);
+				continue;
 			}
 
 			if (pgarch_archiveXlog(xlog))
@@ -570,13 +627,11 @@ pgarch_archiveXlog(char *xlog)
 		 * If either the shell itself, or a called command, died on a signal,
 		 * abort the archiver.  We do this because system() ignores SIGINT and
 		 * SIGQUIT while waiting; so a signal is very likely something that
-		 * should have interrupted us too.  If we overreact it's no big deal,
-		 * the postmaster will just start the archiver again.
-		 *
-		 * Per the Single Unix Spec, shells report exit status > 128 when a
-		 * called command died on a signal.
+		 * should have interrupted us too.  Also die if the shell got a hard
+		 * "command not found" type of error.  If we overreact it's no big
+		 * deal, the postmaster will just start the archiver again.
 		 */
-		int			lev = (WIFSIGNALED(rc) || WEXITSTATUS(rc) > 128) ? FATAL : LOG;
+		int			lev = wait_result_is_any_signal(rc, true) ? FATAL : LOG;
 
 		if (WIFEXITED(rc))
 		{
@@ -595,17 +650,10 @@ pgarch_archiveXlog(char *xlog)
 					 errhint("See C include file \"ntstatus.h\" for a description of the hexadecimal value."),
 					 errdetail("The failed archive command was: %s",
 							   xlogarchcmd)));
-#elif defined(HAVE_DECL_SYS_SIGLIST) && HAVE_DECL_SYS_SIGLIST
-			ereport(lev,
-					(errmsg("archive command was terminated by signal %d: %s",
-							WTERMSIG(rc),
-							WTERMSIG(rc) < NSIG ? sys_siglist[WTERMSIG(rc)] : "(unknown)"),
-					 errdetail("The failed archive command was: %s",
-							   xlogarchcmd)));
 #else
 			ereport(lev,
-					(errmsg("archive command was terminated by signal %d",
-							WTERMSIG(rc)),
+					(errmsg("archive command was terminated by signal %d: %s",
+							WTERMSIG(rc), pg_strsignal(WTERMSIG(rc))),
 					 errdetail("The failed archive command was: %s",
 							   xlogarchcmd)));
 #endif
@@ -647,11 +695,12 @@ pgarch_archiveXlog(char *xlog)
  * 2) because the oldest ones will sooner become candidates for
  * recycling at time of checkpoint
  *
- * NOTE: the "oldest" comparison will presently consider all segments of
- * a timeline with a smaller ID to be older than all segments of a timeline
- * with a larger ID; the net result being that past timelines are given
- * higher priority for archiving.  This seems okay, or at least not
- * obviously worth changing.
+ * NOTE: the "oldest" comparison will consider any .history file to be older
+ * than any other file except another .history file.  Segments on a timeline
+ * with a smaller ID will be older than all segments on a timeline with a
+ * larger ID; the net result being that past timelines are given higher
+ * priority for archiving.  This seems okay, or at least not obviously worth
+ * changing.
  */
 static bool
 pgarch_readyXlog(char *xlog)
@@ -663,10 +712,10 @@ pgarch_readyXlog(char *xlog)
 	 * of calls, so....
 	 */
 	char		XLogArchiveStatusDir[MAXPGPATH];
-	char		newxlog[MAX_XFN_CHARS + 6 + 1];
 	DIR		   *rldir;
 	struct dirent *rlde;
 	bool		found = false;
+	bool		historyFound = false;
 
 	snprintf(XLogArchiveStatusDir, MAXPGPATH, XLOGDIR "/archive_status");
 	rldir = AllocateDir(XLogArchiveStatusDir);
@@ -674,32 +723,51 @@ pgarch_readyXlog(char *xlog)
 	while ((rlde = ReadDir(rldir, XLogArchiveStatusDir)) != NULL)
 	{
 		int			basenamelen = (int) strlen(rlde->d_name) - 6;
+		char		basename[MAX_XFN_CHARS + 1];
+		bool		ishistory;
 
-		if (basenamelen >= MIN_XFN_CHARS &&
-			basenamelen <= MAX_XFN_CHARS &&
-			strspn(rlde->d_name, VALID_XFN_CHARS) >= basenamelen &&
-			strcmp(rlde->d_name + basenamelen, ".ready") == 0)
+		/* Ignore entries with unexpected number of characters */
+		if (basenamelen < MIN_XFN_CHARS ||
+			basenamelen > MAX_XFN_CHARS)
+			continue;
+
+		/* Ignore entries with unexpected characters */
+		if (strspn(rlde->d_name, VALID_XFN_CHARS) < basenamelen)
+			continue;
+
+		/* Ignore anything not suffixed with .ready */
+		if (strcmp(rlde->d_name + basenamelen, ".ready") != 0)
+			continue;
+
+		/* Truncate off the .ready */
+		memcpy(basename, rlde->d_name, basenamelen);
+		basename[basenamelen] = '\0';
+
+		/* Is this a history file? */
+		ishistory = IsTLHistoryFileName(basename);
+
+		/*
+		 * Consume the file to archive.  History files have the highest
+		 * priority.  If this is the first file or the first history file
+		 * ever, copy it.  In the presence of a history file already chosen as
+		 * target, ignore all other files except history files which have been
+		 * generated for an older timeline than what is already chosen as
+		 * target to archive.
+		 */
+		if (!found || (ishistory && !historyFound))
 		{
-			if (!found)
-			{
-				strcpy(newxlog, rlde->d_name);
-				found = true;
-			}
-			else
-			{
-				if (strcmp(rlde->d_name, newxlog) < 0)
-					strcpy(newxlog, rlde->d_name);
-			}
+			strcpy(xlog, basename);
+			found = true;
+			historyFound = ishistory;
+		}
+		else if (ishistory || !historyFound)
+		{
+			if (strcmp(basename, xlog) < 0)
+				strcpy(xlog, basename);
 		}
 	}
 	FreeDir(rldir);
 
-	if (found)
-	{
-		/* truncate off the .ready */
-		newxlog[strlen(newxlog) - 6] = '\0';
-		strcpy(xlog, newxlog);
-	}
 	return found;
 }
 

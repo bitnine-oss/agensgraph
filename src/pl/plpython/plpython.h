@@ -2,7 +2,7 @@
  *
  * plpython.h - Python as a procedural language for PostgreSQL
  *
- * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/pl/plpython/plpython.h
@@ -14,7 +14,8 @@
 
 /*
  * Include order should be: postgres.h, other postgres headers, plpython.h,
- * other plpython headers
+ * other plpython headers.  (In practice, other plpython headers will also
+ * include this file, so that they can compile standalone.)
  */
 #ifndef POSTGRES_H
 #error postgres.h must be included before plpython.h

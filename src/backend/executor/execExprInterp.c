@@ -46,7 +46,7 @@
  * exported rather than being "static" in this file.)
  *
  *
- * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -152,10 +152,10 @@ static void ExecInitInterpreter(void);
 static void CheckVarSlotCompatibility(TupleTableSlot *slot, int attnum, Oid vartype);
 static void CheckOpSlotCompatibility(ExprEvalStep *op, TupleTableSlot *slot);
 static TupleDesc get_cached_rowtype(Oid type_id, int32 typmod,
-				   TupleDesc *cache_field, ExprContext *econtext);
+									TupleDesc *cache_field, ExprContext *econtext);
 static void ShutdownTupleDescRef(Datum arg);
 static void ExecEvalRowNullInt(ExprState *state, ExprEvalStep *op,
-				   ExprContext *econtext, bool checkisnull);
+							   ExprContext *econtext, bool checkisnull);
 
 /* fast-path evaluation functions */
 static Datum ExecJustInnerVar(ExprState *state, ExprContext *econtext, bool *isnull);
@@ -387,10 +387,10 @@ ExecInterpExpr(ExprState *state, ExprContext *econtext, bool *isnull)
 		&&CASE_EEOP_FIELDSELECT,
 		&&CASE_EEOP_FIELDSTORE_DEFORM,
 		&&CASE_EEOP_FIELDSTORE_FORM,
-		&&CASE_EEOP_ARRAYREF_SUBSCRIPT,
-		&&CASE_EEOP_ARRAYREF_OLD,
-		&&CASE_EEOP_ARRAYREF_ASSIGN,
-		&&CASE_EEOP_ARRAYREF_FETCH,
+		&&CASE_EEOP_SBSREF_SUBSCRIPT,
+		&&CASE_EEOP_SBSREF_OLD,
+		&&CASE_EEOP_SBSREF_ASSIGN,
+		&&CASE_EEOP_SBSREF_FETCH,
 		&&CASE_EEOP_DOMAIN_TESTVAL,
 		&&CASE_EEOP_DOMAIN_NOTNULL,
 		&&CASE_EEOP_DOMAIN_CHECK,
@@ -404,7 +404,8 @@ ExecInterpExpr(ExprState *state, ExprContext *econtext, bool *isnull)
 		&&CASE_EEOP_ALTERNATIVE_SUBPLAN,
 		&&CASE_EEOP_AGG_STRICT_DESERIALIZE,
 		&&CASE_EEOP_AGG_DESERIALIZE,
-		&&CASE_EEOP_AGG_STRICT_INPUT_CHECK,
+		&&CASE_EEOP_AGG_STRICT_INPUT_CHECK_ARGS,
+		&&CASE_EEOP_AGG_STRICT_INPUT_CHECK_NULLS,
 		&&CASE_EEOP_AGG_INIT_TRANS,
 		&&CASE_EEOP_AGG_STRICT_TRANS_CHECK,
 		&&CASE_EEOP_AGG_PLAIN_TRANS_BYVAL,
@@ -658,14 +659,14 @@ ExecInterpExpr(ExprState *state, ExprContext *econtext, bool *isnull)
 		EEO_CASE(EEOP_FUNCEXPR_STRICT)
 		{
 			FunctionCallInfo fcinfo = op->d.func.fcinfo_data;
-			bool	   *argnull = fcinfo->argnull;
+			NullableDatum *args = fcinfo->args;
 			int			argno;
 			Datum		d;
 
 			/* strict function, so check for NULL args */
 			for (argno = 0; argno < op->d.func.nargs; argno++)
 			{
-				if (argnull[argno])
+				if (args[argno].isnull)
 				{
 					*op->resnull = true;
 					goto strictfail;
@@ -1081,8 +1082,8 @@ ExecInterpExpr(ExprState *state, ExprContext *econtext, bool *isnull)
 				FunctionCallInfo fcinfo_out;
 
 				fcinfo_out = op->d.iocoerce.fcinfo_data_out;
-				fcinfo_out->arg[0] = *op->resvalue;
-				fcinfo_out->argnull[0] = false;
+				fcinfo_out->args[0].value = *op->resvalue;
+				fcinfo_out->args[0].isnull = false;
 
 				fcinfo_out->isnull = false;
 				str = DatumGetCString(FunctionCallInvoke(fcinfo_out));
@@ -1098,8 +1099,8 @@ ExecInterpExpr(ExprState *state, ExprContext *econtext, bool *isnull)
 				Datum		d;
 
 				fcinfo_in = op->d.iocoerce.fcinfo_data_in;
-				fcinfo_in->arg[0] = PointerGetDatum(str);
-				fcinfo_in->argnull[0] = *op->resnull;
+				fcinfo_in->args[0].value = PointerGetDatum(str);
+				fcinfo_in->args[0].isnull = *op->resnull;
 				/* second and third arguments are already set up */
 
 				fcinfo_in->isnull = false;
@@ -1126,23 +1127,23 @@ ExecInterpExpr(ExprState *state, ExprContext *econtext, bool *isnull)
 		{
 			/*
 			 * IS DISTINCT FROM must evaluate arguments (already done into
-			 * fcinfo->arg/argnull) to determine whether they are NULL; if
-			 * either is NULL then the result is determined.  If neither is
-			 * NULL, then proceed to evaluate the comparison function, which
-			 * is just the type's standard equality operator.  We need not
-			 * care whether that function is strict.  Because the handling of
-			 * nulls is different, we can't just reuse EEOP_FUNCEXPR.
+			 * fcinfo->args) to determine whether they are NULL; if either is
+			 * NULL then the result is determined.  If neither is NULL, then
+			 * proceed to evaluate the comparison function, which is just the
+			 * type's standard equality operator.  We need not care whether
+			 * that function is strict.  Because the handling of nulls is
+			 * different, we can't just reuse EEOP_FUNCEXPR.
 			 */
 			FunctionCallInfo fcinfo = op->d.func.fcinfo_data;
 
 			/* check function arguments for NULLness */
-			if (fcinfo->argnull[0] && fcinfo->argnull[1])
+			if (fcinfo->args[0].isnull && fcinfo->args[1].isnull)
 			{
 				/* Both NULL? Then is not distinct... */
 				*op->resvalue = BoolGetDatum(false);
 				*op->resnull = false;
 			}
-			else if (fcinfo->argnull[0] || fcinfo->argnull[1])
+			else if (fcinfo->args[0].isnull || fcinfo->args[1].isnull)
 			{
 				/* Only one is NULL? Then is distinct... */
 				*op->resvalue = BoolGetDatum(true);
@@ -1168,12 +1169,12 @@ ExecInterpExpr(ExprState *state, ExprContext *econtext, bool *isnull)
 		{
 			FunctionCallInfo fcinfo = op->d.func.fcinfo_data;
 
-			if (fcinfo->argnull[0] && fcinfo->argnull[1])
+			if (fcinfo->args[0].isnull && fcinfo->args[1].isnull)
 			{
 				*op->resvalue = BoolGetDatum(true);
 				*op->resnull = false;
 			}
-			else if (fcinfo->argnull[0] || fcinfo->argnull[1])
+			else if (fcinfo->args[0].isnull || fcinfo->args[1].isnull)
 			{
 				*op->resvalue = BoolGetDatum(false);
 				*op->resnull = false;
@@ -1194,12 +1195,12 @@ ExecInterpExpr(ExprState *state, ExprContext *econtext, bool *isnull)
 		EEO_CASE(EEOP_NULLIF)
 		{
 			/*
-			 * The arguments are already evaluated into fcinfo->arg/argnull.
+			 * The arguments are already evaluated into fcinfo->args.
 			 */
 			FunctionCallInfo fcinfo = op->d.func.fcinfo_data;
 
 			/* if either argument is NULL they can't be equal */
-			if (!fcinfo->argnull[0] && !fcinfo->argnull[1])
+			if (!fcinfo->args[0].isnull && !fcinfo->args[1].isnull)
 			{
 				Datum		result;
 
@@ -1217,8 +1218,8 @@ ExecInterpExpr(ExprState *state, ExprContext *econtext, bool *isnull)
 			}
 
 			/* Arguments aren't equal, so return the first one */
-			*op->resvalue = fcinfo->arg[0];
-			*op->resnull = fcinfo->argnull[0];
+			*op->resvalue = fcinfo->args[0].value;
+			*op->resnull = fcinfo->args[0].isnull;
 
 			EEO_NEXT();
 		}
@@ -1284,7 +1285,7 @@ ExecInterpExpr(ExprState *state, ExprContext *econtext, bool *isnull)
 
 			/* force NULL result if strict fn and NULL input */
 			if (op->d.rowcompare_step.finfo->fn_strict &&
-				(fcinfo->argnull[0] || fcinfo->argnull[1]))
+				(fcinfo->args[0].isnull || fcinfo->args[1].isnull))
 			{
 				*op->resnull = true;
 				EEO_JUMP(op->d.rowcompare_step.jumpnull);
@@ -1373,43 +1374,43 @@ ExecInterpExpr(ExprState *state, ExprContext *econtext, bool *isnull)
 			EEO_NEXT();
 		}
 
-		EEO_CASE(EEOP_ARRAYREF_SUBSCRIPT)
+		EEO_CASE(EEOP_SBSREF_SUBSCRIPT)
 		{
 			/* Process an array subscript */
 
 			/* too complex for an inline implementation */
-			if (ExecEvalArrayRefSubscript(state, op))
+			if (ExecEvalSubscriptingRef(state, op))
 			{
 				EEO_NEXT();
 			}
 			else
 			{
-				/* Subscript is null, short-circuit ArrayRef to NULL */
-				EEO_JUMP(op->d.arrayref_subscript.jumpdone);
+				/* Subscript is null, short-circuit SubscriptingRef to NULL */
+				EEO_JUMP(op->d.sbsref_subscript.jumpdone);
 			}
 		}
 
-		EEO_CASE(EEOP_ARRAYREF_OLD)
+		EEO_CASE(EEOP_SBSREF_OLD)
 		{
 			/*
-			 * Fetch the old value in an arrayref assignment, in case it's
+			 * Fetch the old value in an sbsref assignment, in case it's
 			 * referenced (via a CaseTestExpr) inside the assignment
 			 * expression.
 			 */
 
 			/* too complex for an inline implementation */
-			ExecEvalArrayRefOld(state, op);
+			ExecEvalSubscriptingRefOld(state, op);
 
 			EEO_NEXT();
 		}
 
 		/*
-		 * Perform ArrayRef assignment
+		 * Perform SubscriptingRef assignment
 		 */
-		EEO_CASE(EEOP_ARRAYREF_ASSIGN)
+		EEO_CASE(EEOP_SBSREF_ASSIGN)
 		{
 			/* too complex for an inline implementation */
-			ExecEvalArrayRefAssign(state, op);
+			ExecEvalSubscriptingRefAssign(state, op);
 
 			EEO_NEXT();
 		}
@@ -1417,10 +1418,10 @@ ExecInterpExpr(ExprState *state, ExprContext *econtext, bool *isnull)
 		/*
 		 * Fetch subset of an array.
 		 */
-		EEO_CASE(EEOP_ARRAYREF_FETCH)
+		EEO_CASE(EEOP_SBSREF_FETCH)
 		{
 			/* too complex for an inline implementation */
-			ExecEvalArrayRefFetch(state, op);
+			ExecEvalSubscriptingRefFetch(state, op);
 
 			EEO_NEXT();
 		}
@@ -1523,10 +1524,8 @@ ExecInterpExpr(ExprState *state, ExprContext *econtext, bool *isnull)
 		/* evaluate a strict aggregate deserialization function */
 		EEO_CASE(EEOP_AGG_STRICT_DESERIALIZE)
 		{
-			bool	   *argnull = op->d.agg_deserialize.fcinfo_data->argnull;
-
 			/* Don't call a strict deserialization function with NULL input */
-			if (argnull[0])
+			if (op->d.agg_deserialize.fcinfo_data->args[0].isnull)
 				EEO_JUMP(op->d.agg_deserialize.jumpnull);
 
 			/* fallthrough */
@@ -1556,7 +1555,7 @@ ExecInterpExpr(ExprState *state, ExprContext *econtext, bool *isnull)
 		 * Check that a strict aggregate transition / combination function's
 		 * input is not NULL.
 		 */
-		EEO_CASE(EEOP_AGG_STRICT_INPUT_CHECK)
+		EEO_CASE(EEOP_AGG_STRICT_INPUT_CHECK_NULLS)
 		{
 			int			argno;
 			bool	   *nulls = op->d.agg_strict_input_check.nulls;
@@ -1565,6 +1564,20 @@ ExecInterpExpr(ExprState *state, ExprContext *econtext, bool *isnull)
 			for (argno = 0; argno < nargs; argno++)
 			{
 				if (nulls[argno])
+					EEO_JUMP(op->d.agg_strict_input_check.jumpnull);
+			}
+			EEO_NEXT();
+		}
+
+		EEO_CASE(EEOP_AGG_STRICT_INPUT_CHECK_ARGS)
+		{
+			int			argno;
+			NullableDatum *args = op->d.agg_strict_input_check.args;
+			int			nargs = op->d.agg_strict_input_check.nargs;
+
+			for (argno = 0; argno < nargs; argno++)
+			{
+				if (args[argno].isnull)
 					EEO_JUMP(op->d.agg_strict_input_check.jumpnull);
 			}
 			EEO_NEXT();
@@ -1640,7 +1653,7 @@ ExecInterpExpr(ExprState *state, ExprContext *econtext, bool *isnull)
 
 			Assert(pertrans->transtypeByVal);
 
-			fcinfo = &pertrans->transfn_fcinfo;
+			fcinfo = pertrans->transfn_fcinfo;
 
 			/* cf. select_current_set() */
 			aggstate->curaggcontext = op->d.agg_trans.aggcontext;
@@ -1652,8 +1665,8 @@ ExecInterpExpr(ExprState *state, ExprContext *econtext, bool *isnull)
 			/* invoke transition function in per-tuple context */
 			oldContext = MemoryContextSwitchTo(aggstate->tmpcontext->ecxt_per_tuple_memory);
 
-			fcinfo->arg[0] = pergroup->transValue;
-			fcinfo->argnull[0] = pergroup->transValueIsNull;
+			fcinfo->args[0].value = pergroup->transValue;
+			fcinfo->args[0].isnull = pergroup->transValueIsNull;
 			fcinfo->isnull = false; /* just in case transfn doesn't set it */
 
 			newVal = FunctionCallInvoke(fcinfo);
@@ -1691,7 +1704,7 @@ ExecInterpExpr(ExprState *state, ExprContext *econtext, bool *isnull)
 
 			Assert(!pertrans->transtypeByVal);
 
-			fcinfo = &pertrans->transfn_fcinfo;
+			fcinfo = pertrans->transfn_fcinfo;
 
 			/* cf. select_current_set() */
 			aggstate->curaggcontext = op->d.agg_trans.aggcontext;
@@ -1703,8 +1716,8 @@ ExecInterpExpr(ExprState *state, ExprContext *econtext, bool *isnull)
 			/* invoke transition function in per-tuple context */
 			oldContext = MemoryContextSwitchTo(aggstate->tmpcontext->ecxt_per_tuple_memory);
 
-			fcinfo->arg[0] = pergroup->transValue;
-			fcinfo->argnull[0] = pergroup->transValueIsNull;
+			fcinfo->args[0].value = pergroup->transValue;
+			fcinfo->args[0].isnull = pergroup->transValueIsNull;
 			fcinfo->isnull = false; /* just in case transfn doesn't set it */
 
 			newVal = FunctionCallInvoke(fcinfo);
@@ -2035,7 +2048,7 @@ CheckOpSlotCompatibility(ExprEvalStep *op, TupleTableSlot *slot)
 
 	/*
 	 * Should probably fixed at some point, but for now it's easier to allow
-	 * buffer and heap tuples to be used interchangably.
+	 * buffer and heap tuples to be used interchangeably.
 	 */
 	if (slot->tts_ops == &TTSOpsBufferHeapTuple &&
 		op->d.fetch.kind == &TTSOpsHeapTuple)
@@ -2237,7 +2250,7 @@ ExecJustApplyFuncToCase(ExprState *state, ExprContext *econtext, bool *isnull)
 {
 	ExprEvalStep *op = &state->steps[0];
 	FunctionCallInfo fcinfo;
-	bool	   *argnull;
+	NullableDatum *args;
 	int			argno;
 	Datum		d;
 
@@ -2251,12 +2264,12 @@ ExecJustApplyFuncToCase(ExprState *state, ExprContext *econtext, bool *isnull)
 	op++;
 
 	fcinfo = op->d.func.fcinfo_data;
-	argnull = fcinfo->argnull;
+	args = fcinfo->args;
 
 	/* strict function, so check for NULL args */
 	for (argno = 0; argno < op->d.func.nargs; argno++)
 	{
-		if (argnull[argno])
+		if (args[argno].isnull)
 		{
 			*isnull = true;
 			return (Datum) 0;
@@ -2382,14 +2395,14 @@ ExecEvalFuncExprStrictFusage(ExprState *state, ExprEvalStep *op,
 
 	FunctionCallInfo fcinfo = op->d.func.fcinfo_data;
 	PgStat_FunctionCallUsage fcusage;
-	bool	   *argnull = fcinfo->argnull;
+	NullableDatum *args = fcinfo->args;
 	int			argno;
 	Datum		d;
 
 	/* strict function, so check for NULL args */
 	for (argno = 0; argno < op->d.func.nargs; argno++)
 	{
-		if (argnull[argno])
+		if (args[argno].isnull)
 		{
 			*op->resnull = true;
 			return;
@@ -2479,8 +2492,8 @@ ExecEvalParamExtern(ExprState *state, ExprEvalStep *op, ExprContext *econtext)
 void
 ExecEvalSQLValueFunction(ExprState *state, ExprEvalStep *op)
 {
+	LOCAL_FCINFO(fcinfo, 0);
 	SQLValueFunction *svf = op->d.sqlvaluefunction.svf;
-	FunctionCallInfoData fcinfo;
 
 	*op->resnull = false;
 
@@ -2512,24 +2525,24 @@ ExecEvalSQLValueFunction(ExprState *state, ExprEvalStep *op)
 		case SVFOP_CURRENT_ROLE:
 		case SVFOP_CURRENT_USER:
 		case SVFOP_USER:
-			InitFunctionCallInfoData(fcinfo, NULL, 0, InvalidOid, NULL, NULL);
-			*op->resvalue = current_user(&fcinfo);
-			*op->resnull = fcinfo.isnull;
+			InitFunctionCallInfoData(*fcinfo, NULL, 0, InvalidOid, NULL, NULL);
+			*op->resvalue = current_user(fcinfo);
+			*op->resnull = fcinfo->isnull;
 			break;
 		case SVFOP_SESSION_USER:
-			InitFunctionCallInfoData(fcinfo, NULL, 0, InvalidOid, NULL, NULL);
-			*op->resvalue = session_user(&fcinfo);
-			*op->resnull = fcinfo.isnull;
+			InitFunctionCallInfoData(*fcinfo, NULL, 0, InvalidOid, NULL, NULL);
+			*op->resvalue = session_user(fcinfo);
+			*op->resnull = fcinfo->isnull;
 			break;
 		case SVFOP_CURRENT_CATALOG:
-			InitFunctionCallInfoData(fcinfo, NULL, 0, InvalidOid, NULL, NULL);
-			*op->resvalue = current_database(&fcinfo);
-			*op->resnull = fcinfo.isnull;
+			InitFunctionCallInfoData(*fcinfo, NULL, 0, InvalidOid, NULL, NULL);
+			*op->resvalue = current_database(fcinfo);
+			*op->resnull = fcinfo->isnull;
 			break;
 		case SVFOP_CURRENT_SCHEMA:
-			InitFunctionCallInfoData(fcinfo, NULL, 0, InvalidOid, NULL, NULL);
-			*op->resvalue = current_schema(&fcinfo);
-			*op->resnull = fcinfo.isnull;
+			InitFunctionCallInfoData(*fcinfo, NULL, 0, InvalidOid, NULL, NULL);
+			*op->resvalue = current_schema(fcinfo);
+			*op->resnull = fcinfo->isnull;
 			break;
 	}
 }
@@ -2962,8 +2975,8 @@ ExecEvalMinMax(ExprState *state, ExprEvalStep *op)
 	int			off;
 
 	/* set at initialization */
-	Assert(fcinfo->argnull[0] == false);
-	Assert(fcinfo->argnull[1] == false);
+	Assert(fcinfo->args[0].isnull == false);
+	Assert(fcinfo->args[1].isnull == false);
 
 	/* default to null result */
 	*op->resnull = true;
@@ -2985,8 +2998,8 @@ ExecEvalMinMax(ExprState *state, ExprEvalStep *op)
 			int			cmpresult;
 
 			/* apply comparison function */
-			fcinfo->arg[0] = *op->resvalue;
-			fcinfo->arg[1] = values[off];
+			fcinfo->args[0].value = *op->resvalue;
+			fcinfo->args[1].value = values[off];
 
 			fcinfo->isnull = false;
 			cmpresult = DatumGetInt32(FunctionCallInvoke(fcinfo));
@@ -3193,27 +3206,27 @@ ExecEvalFieldStoreForm(ExprState *state, ExprEvalStep *op, ExprContext *econtext
 }
 
 /*
- * Process a subscript in an ArrayRef expression.
+ * Process a subscript in a SubscriptingRef expression.
  *
  * If subscript is NULL, throw error in assignment case, or in fetch case
  * set result to NULL and return false (instructing caller to skip the rest
- * of the ArrayRef sequence).
+ * of the SubscriptingRef sequence).
  *
  * Subscript expression result is in subscriptvalue/subscriptnull.
  * On success, integer subscript value has been saved in upperindex[] or
  * lowerindex[] for use later.
  */
 bool
-ExecEvalArrayRefSubscript(ExprState *state, ExprEvalStep *op)
+ExecEvalSubscriptingRef(ExprState *state, ExprEvalStep *op)
 {
-	ArrayRefState *arefstate = op->d.arrayref_subscript.state;
+	SubscriptingRefState *sbsrefstate = op->d.sbsref_subscript.state;
 	int		   *indexes;
 	int			off;
 
 	/* If any index expr yields NULL, result is NULL or error */
-	if (arefstate->subscriptnull)
+	if (sbsrefstate->subscriptnull)
 	{
-		if (arefstate->isassignment)
+		if (sbsrefstate->isassignment)
 			ereport(ERROR,
 					(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
 					 errmsg("array subscript in assignment must not be null")));
@@ -3222,124 +3235,124 @@ ExecEvalArrayRefSubscript(ExprState *state, ExprEvalStep *op)
 	}
 
 	/* Convert datum to int, save in appropriate place */
-	if (op->d.arrayref_subscript.isupper)
-		indexes = arefstate->upperindex;
+	if (op->d.sbsref_subscript.isupper)
+		indexes = sbsrefstate->upperindex;
 	else
-		indexes = arefstate->lowerindex;
-	off = op->d.arrayref_subscript.off;
+		indexes = sbsrefstate->lowerindex;
+	off = op->d.sbsref_subscript.off;
 
-	indexes[off] = DatumGetInt32(arefstate->subscriptvalue);
+	indexes[off] = DatumGetInt32(sbsrefstate->subscriptvalue);
 
 	return true;
 }
 
 /*
- * Evaluate ArrayRef fetch.
+ * Evaluate SubscriptingRef fetch.
  *
- * Source array is in step's result variable.
+ * Source container is in step's result variable.
  */
 void
-ExecEvalArrayRefFetch(ExprState *state, ExprEvalStep *op)
+ExecEvalSubscriptingRefFetch(ExprState *state, ExprEvalStep *op)
 {
-	ArrayRefState *arefstate = op->d.arrayref.state;
+	SubscriptingRefState *sbsrefstate = op->d.sbsref.state;
 
-	/* Should not get here if source array (or any subscript) is null */
+	/* Should not get here if source container (or any subscript) is null */
 	Assert(!(*op->resnull));
 
-	if (arefstate->numlower == 0)
+	if (sbsrefstate->numlower == 0)
 	{
 		/* Scalar case */
 		*op->resvalue = array_get_element(*op->resvalue,
-										  arefstate->numupper,
-										  arefstate->upperindex,
-										  arefstate->refattrlength,
-										  arefstate->refelemlength,
-										  arefstate->refelembyval,
-										  arefstate->refelemalign,
+										  sbsrefstate->numupper,
+										  sbsrefstate->upperindex,
+										  sbsrefstate->refattrlength,
+										  sbsrefstate->refelemlength,
+										  sbsrefstate->refelembyval,
+										  sbsrefstate->refelemalign,
 										  op->resnull);
 	}
 	else
 	{
 		/* Slice case */
 		*op->resvalue = array_get_slice(*op->resvalue,
-										arefstate->numupper,
-										arefstate->upperindex,
-										arefstate->lowerindex,
-										arefstate->upperprovided,
-										arefstate->lowerprovided,
-										arefstate->refattrlength,
-										arefstate->refelemlength,
-										arefstate->refelembyval,
-										arefstate->refelemalign);
+										sbsrefstate->numupper,
+										sbsrefstate->upperindex,
+										sbsrefstate->lowerindex,
+										sbsrefstate->upperprovided,
+										sbsrefstate->lowerprovided,
+										sbsrefstate->refattrlength,
+										sbsrefstate->refelemlength,
+										sbsrefstate->refelembyval,
+										sbsrefstate->refelemalign);
 	}
 }
 
 /*
- * Compute old array element/slice value for an ArrayRef assignment
- * expression.  Will only be generated if the new-value subexpression
- * contains ArrayRef or FieldStore.  The value is stored into the
- * ArrayRefState's prevvalue/prevnull fields.
+ * Compute old container element/slice value for a SubscriptingRef assignment
+ * expression. Will only be generated if the new-value subexpression
+ * contains SubscriptingRef or FieldStore. The value is stored into the
+ * SubscriptingRefState's prevvalue/prevnull fields.
  */
 void
-ExecEvalArrayRefOld(ExprState *state, ExprEvalStep *op)
+ExecEvalSubscriptingRefOld(ExprState *state, ExprEvalStep *op)
 {
-	ArrayRefState *arefstate = op->d.arrayref.state;
+	SubscriptingRefState *sbsrefstate = op->d.sbsref.state;
 
 	if (*op->resnull)
 	{
 		/* whole array is null, so any element or slice is too */
-		arefstate->prevvalue = (Datum) 0;
-		arefstate->prevnull = true;
+		sbsrefstate->prevvalue = (Datum) 0;
+		sbsrefstate->prevnull = true;
 	}
-	else if (arefstate->numlower == 0)
+	else if (sbsrefstate->numlower == 0)
 	{
 		/* Scalar case */
-		arefstate->prevvalue = array_get_element(*op->resvalue,
-												 arefstate->numupper,
-												 arefstate->upperindex,
-												 arefstate->refattrlength,
-												 arefstate->refelemlength,
-												 arefstate->refelembyval,
-												 arefstate->refelemalign,
-												 &arefstate->prevnull);
+		sbsrefstate->prevvalue = array_get_element(*op->resvalue,
+												   sbsrefstate->numupper,
+												   sbsrefstate->upperindex,
+												   sbsrefstate->refattrlength,
+												   sbsrefstate->refelemlength,
+												   sbsrefstate->refelembyval,
+												   sbsrefstate->refelemalign,
+												   &sbsrefstate->prevnull);
 	}
 	else
 	{
 		/* Slice case */
 		/* this is currently unreachable */
-		arefstate->prevvalue = array_get_slice(*op->resvalue,
-											   arefstate->numupper,
-											   arefstate->upperindex,
-											   arefstate->lowerindex,
-											   arefstate->upperprovided,
-											   arefstate->lowerprovided,
-											   arefstate->refattrlength,
-											   arefstate->refelemlength,
-											   arefstate->refelembyval,
-											   arefstate->refelemalign);
-		arefstate->prevnull = false;
+		sbsrefstate->prevvalue = array_get_slice(*op->resvalue,
+												 sbsrefstate->numupper,
+												 sbsrefstate->upperindex,
+												 sbsrefstate->lowerindex,
+												 sbsrefstate->upperprovided,
+												 sbsrefstate->lowerprovided,
+												 sbsrefstate->refattrlength,
+												 sbsrefstate->refelemlength,
+												 sbsrefstate->refelembyval,
+												 sbsrefstate->refelemalign);
+		sbsrefstate->prevnull = false;
 	}
 }
 
 /*
- * Evaluate ArrayRef assignment.
+ * Evaluate SubscriptingRef assignment.
  *
- * Input array (possibly null) is in result area, replacement value is in
- * ArrayRefState's replacevalue/replacenull.
+ * Input container (possibly null) is in result area, replacement value is in
+ * SubscriptingRefState's replacevalue/replacenull.
  */
 void
-ExecEvalArrayRefAssign(ExprState *state, ExprEvalStep *op)
+ExecEvalSubscriptingRefAssign(ExprState *state, ExprEvalStep *op)
 {
-	ArrayRefState *arefstate = op->d.arrayref.state;
+	SubscriptingRefState *sbsrefstate = op->d.sbsref_subscript.state;
 
 	/*
-	 * For an assignment to a fixed-length array type, both the original array
-	 * and the value to be assigned into it must be non-NULL, else we punt and
-	 * return the original array.
+	 * For an assignment to a fixed-length container type, both the original
+	 * container and the value to be assigned into it must be non-NULL, else
+	 * we punt and return the original container.
 	 */
-	if (arefstate->refattrlength > 0)	/* fixed-length array? */
+	if (sbsrefstate->refattrlength > 0)
 	{
-		if (*op->resnull || arefstate->replacenull)
+		if (*op->resnull || sbsrefstate->replacenull)
 			return;
 	}
 
@@ -3351,38 +3364,38 @@ ExecEvalArrayRefAssign(ExprState *state, ExprEvalStep *op)
 	 */
 	if (*op->resnull)
 	{
-		*op->resvalue = PointerGetDatum(construct_empty_array(arefstate->refelemtype));
+		*op->resvalue = PointerGetDatum(construct_empty_array(sbsrefstate->refelemtype));
 		*op->resnull = false;
 	}
 
-	if (arefstate->numlower == 0)
+	if (sbsrefstate->numlower == 0)
 	{
 		/* Scalar case */
 		*op->resvalue = array_set_element(*op->resvalue,
-										  arefstate->numupper,
-										  arefstate->upperindex,
-										  arefstate->replacevalue,
-										  arefstate->replacenull,
-										  arefstate->refattrlength,
-										  arefstate->refelemlength,
-										  arefstate->refelembyval,
-										  arefstate->refelemalign);
+										  sbsrefstate->numupper,
+										  sbsrefstate->upperindex,
+										  sbsrefstate->replacevalue,
+										  sbsrefstate->replacenull,
+										  sbsrefstate->refattrlength,
+										  sbsrefstate->refelemlength,
+										  sbsrefstate->refelembyval,
+										  sbsrefstate->refelemalign);
 	}
 	else
 	{
 		/* Slice case */
 		*op->resvalue = array_set_slice(*op->resvalue,
-										arefstate->numupper,
-										arefstate->upperindex,
-										arefstate->lowerindex,
-										arefstate->upperprovided,
-										arefstate->lowerprovided,
-										arefstate->replacevalue,
-										arefstate->replacenull,
-										arefstate->refattrlength,
-										arefstate->refelemlength,
-										arefstate->refelembyval,
-										arefstate->refelemalign);
+										sbsrefstate->numupper,
+										sbsrefstate->upperindex,
+										sbsrefstate->lowerindex,
+										sbsrefstate->upperprovided,
+										sbsrefstate->lowerprovided,
+										sbsrefstate->replacevalue,
+										sbsrefstate->replacenull,
+										sbsrefstate->refattrlength,
+										sbsrefstate->refelemlength,
+										sbsrefstate->refelembyval,
+										sbsrefstate->refelemalign);
 	}
 }
 
@@ -3486,7 +3499,7 @@ ExecEvalConvertRowtype(ExprState *state, ExprEvalStep *op, ExprContext *econtext
  * Evaluate "scalar op ANY/ALL (array)".
  *
  * Source array is in our result area, scalar arg is already evaluated into
- * fcinfo->arg[0]/argnull[0].
+ * fcinfo->args[0].
  *
  * The operator always yields boolean, and we combine the results across all
  * array elements using OR and AND (for ANY and ALL respectively).  Of course
@@ -3538,7 +3551,7 @@ ExecEvalScalarArrayOp(ExprState *state, ExprEvalStep *op)
 	 * If the scalar is NULL, and the function is strict, return NULL; no
 	 * point in iterating the loop.
 	 */
-	if (fcinfo->argnull[0] && strictfunc)
+	if (fcinfo->args[0].isnull && strictfunc)
 	{
 		*op->resnull = true;
 		return;
@@ -3578,20 +3591,20 @@ ExecEvalScalarArrayOp(ExprState *state, ExprEvalStep *op)
 		/* Get array element, checking for NULL */
 		if (bitmap && (*bitmap & bitmask) == 0)
 		{
-			fcinfo->arg[1] = (Datum) 0;
-			fcinfo->argnull[1] = true;
+			fcinfo->args[1].value = (Datum) 0;
+			fcinfo->args[1].isnull = true;
 		}
 		else
 		{
 			elt = fetch_att(s, typbyval, typlen);
 			s = att_addlength_pointer(s, typlen, s);
 			s = (char *) att_align_nominal(s, typalign);
-			fcinfo->arg[1] = elt;
-			fcinfo->argnull[1] = false;
+			fcinfo->args[1].value = elt;
+			fcinfo->args[1].isnull = false;
 		}
 
 		/* Call comparison function */
-		if (fcinfo->argnull[1] && strictfunc)
+		if (fcinfo->args[1].isnull && strictfunc)
 		{
 			fcinfo->isnull = true;
 			thisresult = (Datum) 0;
@@ -4187,7 +4200,7 @@ void
 ExecEvalSysVar(ExprState *state, ExprEvalStep *op, ExprContext *econtext,
 			   TupleTableSlot *slot)
 {
-	Datum d;
+	Datum		d;
 
 	/* slot_getsysattr has sufficient defenses against bad attnums */
 	d = slot_getsysattr(slot,
@@ -4248,7 +4261,7 @@ ExecEvalCypherTypeCast(ExprState *state, ExprEvalStep *op)
 	cfn_expr = (CypherTypeCast *) fcinfo_data_in->flinfo->fn_expr;
 	Assert(cfn_expr != NULL);
 
-	typeCastOid = fcinfo_data_in->arg[1];
+	typeCastOid = fcinfo_data_in->args[1].value;
 	typcategory = cfn_expr->typcategory;
 	cctx = cfn_expr->cctx;
 
@@ -4364,8 +4377,8 @@ ExecEvalCypherTypeCast(ExprState *state, ExprEvalStep *op)
 			return;
 	}
 
-	fcinfo_data_in->arg[0] = PointerGetDatum(str);
-	fcinfo_data_in->argnull[0] = false;
+	fcinfo_data_in->args[0].value = PointerGetDatum(str);
+	fcinfo_data_in->args[0].isnull = false;
 
 	fcinfo_data_in->isnull = false;
 	*op->resvalue = FunctionCallInvoke(fcinfo_data_in);
@@ -4379,7 +4392,7 @@ ExecEvalCypherTypeCast(ExprState *state, ExprEvalStep *op)
 void
 ExecAggInitGroup(AggState *aggstate, AggStatePerTrans pertrans, AggStatePerGroup pergroup)
 {
-	FunctionCallInfo fcinfo = &pertrans->transfn_fcinfo;
+	FunctionCallInfo fcinfo = pertrans->transfn_fcinfo;
 	MemoryContext oldContext;
 
 	/*
@@ -4390,7 +4403,7 @@ ExecAggInitGroup(AggState *aggstate, AggStatePerTrans pertrans, AggStatePerGroup
 	 */
 	oldContext = MemoryContextSwitchTo(
 									   aggstate->curaggcontext->ecxt_per_tuple_memory);
-	pergroup->transValue = datumCopy(fcinfo->arg[1],
+	pergroup->transValue = datumCopy(fcinfo->args[1].value,
 									 pertrans->transtypeByVal,
 									 pertrans->transtypeLen);
 	pergroup->transValueIsNull = false;

@@ -3,7 +3,7 @@
  * explain.c
  *	  Explain query execution plans
  *
- * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994-5, Regents of the University of California
  *
  * IDENTIFICATION
@@ -14,7 +14,6 @@
 #include "postgres.h"
 
 #include "access/xact.h"
-#include "catalog/pg_collation.h"
 #include "catalog/pg_type.h"
 #include "commands/createas.h"
 #include "commands/defrem.h"
@@ -23,14 +22,14 @@
 #include "foreign/fdwapi.h"
 #include "jit/jit.h"
 #include "nodes/extensible.h"
+#include "nodes/makefuncs.h"
 #include "nodes/nodeFuncs.h"
-#include "optimizer/clauses.h"
-#include "optimizer/planmain.h"
 #include "parser/parsetree.h"
 #include "rewrite/rewriteHandler.h"
 #include "storage/bufmgr.h"
 #include "tcop/tcopprot.h"
 #include "utils/builtins.h"
+#include "utils/guc_tables.h"
 #include "utils/json.h"
 #include "utils/lsyscache.h"
 #include "utils/rel.h"
@@ -55,80 +54,80 @@ explain_get_index_name_hook_type explain_get_index_name_hook = NULL;
 #define X_NOWHITESPACE 4
 
 static void ExplainOneQuery(Query *query, int cursorOptions,
-				IntoClause *into, ExplainState *es,
-				const char *queryString, ParamListInfo params,
-				QueryEnvironment *queryEnv);
+							IntoClause *into, ExplainState *es,
+							const char *queryString, ParamListInfo params,
+							QueryEnvironment *queryEnv);
 static void report_triggers(ResultRelInfo *rInfo, bool show_relname,
-				ExplainState *es);
+							ExplainState *es);
 static double elapsed_time(instr_time *starttime);
 static bool ExplainPreScanNode(PlanState *planstate, Bitmapset **rels_used);
 static void ExplainNode(PlanState *planstate, List *ancestors,
-			const char *relationship, const char *plan_name,
-			ExplainState *es);
+						const char *relationship, const char *plan_name,
+						ExplainState *es);
 static void show_plan_tlist(PlanState *planstate, List *ancestors,
-				ExplainState *es);
+							ExplainState *es);
 static void show_expression(Node *node, const char *qlabel,
-				PlanState *planstate, List *ancestors,
-				bool useprefix, ExplainState *es);
+							PlanState *planstate, List *ancestors,
+							bool useprefix, ExplainState *es);
 static void show_qual(List *qual, const char *qlabel,
-		  PlanState *planstate, List *ancestors,
-		  bool useprefix, ExplainState *es);
+					  PlanState *planstate, List *ancestors,
+					  bool useprefix, ExplainState *es);
 static void show_scan_qual(List *qual, const char *qlabel,
-			   PlanState *planstate, List *ancestors,
-			   ExplainState *es);
+						   PlanState *planstate, List *ancestors,
+						   ExplainState *es);
 static void show_upper_qual(List *qual, const char *qlabel,
-				PlanState *planstate, List *ancestors,
-				ExplainState *es);
+							PlanState *planstate, List *ancestors,
+							ExplainState *es);
 static void show_sort_keys(SortState *sortstate, List *ancestors,
-			   ExplainState *es);
+						   ExplainState *es);
 static void show_merge_append_keys(MergeAppendState *mstate, List *ancestors,
-					   ExplainState *es);
+								   ExplainState *es);
 static void show_agg_keys(AggState *astate, List *ancestors,
-			  ExplainState *es);
+						  ExplainState *es);
 static void show_grouping_sets(PlanState *planstate, Agg *agg,
-				   List *ancestors, ExplainState *es);
+							   List *ancestors, ExplainState *es);
 static void show_grouping_set_keys(PlanState *planstate,
-					   Agg *aggnode, Sort *sortnode,
-					   List *context, bool useprefix,
-					   List *ancestors, ExplainState *es);
+								   Agg *aggnode, Sort *sortnode,
+								   List *context, bool useprefix,
+								   List *ancestors, ExplainState *es);
 static void show_group_keys(GroupState *gstate, List *ancestors,
-				ExplainState *es);
+							ExplainState *es);
 static void show_sort_group_keys(PlanState *planstate, const char *qlabel,
-					 int nkeys, AttrNumber *keycols,
-					 Oid *sortOperators, Oid *collations, bool *nullsFirst,
-					 List *ancestors, ExplainState *es);
+								 int nkeys, AttrNumber *keycols,
+								 Oid *sortOperators, Oid *collations, bool *nullsFirst,
+								 List *ancestors, ExplainState *es);
 static void show_sortorder_options(StringInfo buf, Node *sortexpr,
-					   Oid sortOperator, Oid collation, bool nullsFirst);
+								   Oid sortOperator, Oid collation, bool nullsFirst);
 static void show_tablesample(TableSampleClause *tsc, PlanState *planstate,
-				 List *ancestors, ExplainState *es);
+							 List *ancestors, ExplainState *es);
 static void show_sort_info(SortState *sortstate, ExplainState *es);
 static void show_hash_info(HashState *hashstate, ExplainState *es);
 static void show_hash2side_info(Hash2SideState *hashstate, ExplainState *es);
 static void show_tidbitmap_info(BitmapHeapScanState *planstate,
-					ExplainState *es);
+								ExplainState *es);
 static void show_instrumentation_count(const char *qlabel, int which,
-						   PlanState *planstate, ExplainState *es);
+									   PlanState *planstate, ExplainState *es);
 static void show_foreignscan_info(ForeignScanState *fsstate, ExplainState *es);
 static void show_eval_params(Bitmapset *bms_params, ExplainState *es);
 static const char *explain_get_index_name(Oid indexId);
 static void show_buffer_usage(ExplainState *es, const BufferUsage *usage);
 static void ExplainIndexScanDetails(Oid indexid, ScanDirection indexorderdir,
-						ExplainState *es);
+									ExplainState *es);
 static void ExplainScanTarget(Scan *plan, ExplainState *es);
 static void ExplainModifyTarget(ModifyTable *plan, ExplainState *es);
 static void ExplainTargetRel(Plan *plan, Index rti, ExplainState *es);
 static void show_modifytable_info(ModifyTableState *mtstate, List *ancestors,
-					  ExplainState *es);
+								  ExplainState *es);
 static void ExplainMemberNodes(PlanState **planstates, int nsubnodes,
-				   int nplans, List *ancestors, ExplainState *es);
+							   int nplans, List *ancestors, ExplainState *es);
 static void ExplainSubPlans(List *plans, List *ancestors,
-				const char *relationship, ExplainState *es);
+							const char *relationship, ExplainState *es);
 static void ExplainCustomChildren(CustomScanState *css,
-					  List *ancestors, ExplainState *es);
+								  List *ancestors, ExplainState *es);
 static void ExplainProperty(const char *qlabel, const char *unit,
-				const char *value, bool numeric, ExplainState *es);
+							const char *value, bool numeric, ExplainState *es);
 static void ExplainDummyGroup(const char *objtype, const char *labelname,
-				  ExplainState *es);
+							  ExplainState *es);
 static void ExplainXMLTag(const char *tagname, int flags, ExplainState *es);
 static void ExplainJSONLineEnding(ExplainState *es);
 static void ExplainYAMLLineStarting(ExplainState *es);
@@ -165,6 +164,8 @@ ExplainQuery(ParseState *pstate, ExplainStmt *stmt, const char *queryString,
 			es->costs = defGetBoolean(opt);
 		else if (strcmp(opt->defname, "buffers") == 0)
 			es->buffers = defGetBoolean(opt);
+		else if (strcmp(opt->defname, "settings") == 0)
+			es->settings = defGetBoolean(opt);
 		else if (strcmp(opt->defname, "timing") == 0)
 		{
 			timing_set = true;
@@ -600,6 +601,73 @@ ExplainOnePlan(PlannedStmt *plannedstmt, IntoClause *into, ExplainState *es,
 }
 
 /*
+ * ExplainPrintSettings -
+ *    Print summary of modified settings affecting query planning.
+ */
+static void
+ExplainPrintSettings(ExplainState *es)
+{
+	int			num;
+	struct config_generic **gucs;
+
+	/* bail out if information about settings not requested */
+	if (!es->settings)
+		return;
+
+	/* request an array of relevant settings */
+	gucs = get_explain_guc_options(&num);
+
+	/* also bail out of there are no options */
+	if (!num)
+		return;
+
+	if (es->format != EXPLAIN_FORMAT_TEXT)
+	{
+		int			i;
+
+		ExplainOpenGroup("Settings", "Settings", true, es);
+
+		for (i = 0; i < num; i++)
+		{
+			char	   *setting;
+			struct config_generic *conf = gucs[i];
+
+			setting = GetConfigOptionByName(conf->name, NULL, true);
+
+			ExplainPropertyText(conf->name, setting, es);
+		}
+
+		ExplainCloseGroup("Settings", "Settings", true, es);
+	}
+	else
+	{
+		int			i;
+		StringInfoData str;
+
+		initStringInfo(&str);
+
+		for (i = 0; i < num; i++)
+		{
+			char	   *setting;
+			struct config_generic *conf = gucs[i];
+
+			if (i > 0)
+				appendStringInfoString(&str, ", ");
+
+			setting = GetConfigOptionByName(conf->name, NULL, true);
+
+			if (setting)
+				appendStringInfo(&str, "%s = '%s'", conf->name, setting);
+			else
+				appendStringInfo(&str, "%s = NULL", conf->name);
+		}
+
+		if (num > 0)
+			ExplainPropertyText("Settings", str.data, es);
+	}
+}
+
+/*
  * ExplainPrintPlan -
  *	  convert a QueryDesc's plan tree to text and append it to es->str
  *
@@ -636,6 +704,12 @@ ExplainPrintPlan(ExplainState *es, QueryDesc *queryDesc)
 	if (IsA(ps, GatherState) &&((Gather *) ps->plan)->invisible)
 		ps = outerPlanState(ps);
 	ExplainNode(ps, NIL, NULL, NULL, es);
+
+	/*
+	 * If requested, include information about GUC parameters with values that
+	 * don't match the built-in defaults.
+	 */
+	ExplainPrintSettings(es);
 }
 
 /*
@@ -1688,7 +1762,7 @@ ExplainNode(PlanState *planstate, List *ancestors,
 				if (es->costs && es->verbose &&
 					outerPlanState(planstate)->worker_jit_instrument)
 				{
-					PlanState *child = outerPlanState(planstate);
+					PlanState  *child = outerPlanState(planstate);
 					int			n;
 					SharedJitInstrumentation *w = child->worker_jit_instrument;
 
@@ -2467,11 +2541,13 @@ show_sortorder_options(StringInfo buf, Node *sortexpr,
 								 TYPECACHE_LT_OPR | TYPECACHE_GT_OPR);
 
 	/*
-	 * Print COLLATE if it's not default.  There are some cases where this is
-	 * redundant, eg if expression is a column whose declared collation is
-	 * that collation, but it's hard to distinguish that here.
+	 * Print COLLATE if it's not default for the column's type.  There are
+	 * some cases where this is redundant, eg if expression is a column whose
+	 * declared collation is that collation, but it's hard to distinguish that
+	 * here (and arguably, printing COLLATE explicitly is a good idea anyway
+	 * in such cases).
 	 */
-	if (OidIsValid(collation) && collation != DEFAULT_COLLATION_OID)
+	if (OidIsValid(collation) && collation != get_typcollation(sortcoltype))
 	{
 		char	   *collname = get_collation_name(collation);
 

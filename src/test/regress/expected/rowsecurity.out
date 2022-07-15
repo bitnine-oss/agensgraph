@@ -1057,15 +1057,14 @@ NOTICE:  f_leak => awesome science fiction
 (4 rows)
 
 EXPLAIN (COSTS OFF) SELECT * FROM part_document WHERE f_leak(dtitle);
-                             QUERY PLAN                             
---------------------------------------------------------------------
- Append
+                          QUERY PLAN                          
+--------------------------------------------------------------
+ Seq Scan on part_document_fiction
+   Filter: ((cid < 55) AND (dlevel <= $0) AND f_leak(dtitle))
    InitPlan 1 (returns $0)
      ->  Index Scan using uaccount_pkey on uaccount
            Index Cond: (pguser = CURRENT_USER)
-   ->  Seq Scan on part_document_fiction
-         Filter: ((cid < 55) AND (dlevel <= $0) AND f_leak(dtitle))
-(6 rows)
+(5 rows)
 
 -- pp1 ERROR
 INSERT INTO part_document VALUES (100, 11, 5, 'regress_rls_dave', 'testing pp1'); -- fail
@@ -1136,15 +1135,14 @@ NOTICE:  f_leak => awesome science fiction
 (4 rows)
 
 EXPLAIN (COSTS OFF) SELECT * FROM part_document WHERE f_leak(dtitle);
-                             QUERY PLAN                             
---------------------------------------------------------------------
- Append
+                          QUERY PLAN                          
+--------------------------------------------------------------
+ Seq Scan on part_document_fiction
+   Filter: ((cid < 55) AND (dlevel <= $0) AND f_leak(dtitle))
    InitPlan 1 (returns $0)
      ->  Index Scan using uaccount_pkey on uaccount
            Index Cond: (pguser = CURRENT_USER)
-   ->  Seq Scan on part_document_fiction
-         Filter: ((cid < 55) AND (dlevel <= $0) AND f_leak(dtitle))
-(6 rows)
+(5 rows)
 
 -- viewpoint from regress_rls_carol
 SET SESSION AUTHORIZATION regress_rls_carol;
@@ -1393,10 +1391,10 @@ ERROR:  infinite recursion detected in policy for relation "rec1"
 -- Mutual recursion via .s.b views
 --
 SET SESSION AUTHORIZATION regress_rls_bob;
-\set VERBOSITY terse \\ -- suppress cascade details
 DROP VIEW rec1v, rec2v CASCADE;
 NOTICE:  drop cascades to 2 other objects
-\set VERBOSITY default
+DETAIL:  drop cascades to policy r1 on table rec1
+drop cascades to policy r2 on table rec2
 CREATE VIEW rec1v WITH (security_barrier) AS SELECT * FROM rec1;
 CREATE VIEW rec2v WITH (security_barrier) AS SELECT * FROM rec2;
 SET SESSION AUTHORIZATION regress_rls_alice;
@@ -2179,7 +2177,7 @@ EXPLAIN (COSTS OFF) EXECUTE plancache_test;
    Filter: (((a % 2) = 0) AND f_leak(b))
 (2 rows)
 
-PREPARE plancache_test2 AS WITH q AS (SELECT * FROM z1 WHERE f_leak(b)) SELECT * FROM q,z2;
+PREPARE plancache_test2 AS WITH q AS MATERIALIZED (SELECT * FROM z1 WHERE f_leak(b)) SELECT * FROM q,z2;
 EXPLAIN (COSTS OFF) EXECUTE plancache_test2;
                    QUERY PLAN                    
 -------------------------------------------------
@@ -2192,7 +2190,7 @@ EXPLAIN (COSTS OFF) EXECUTE plancache_test2;
          ->  Seq Scan on z2
 (7 rows)
 
-PREPARE plancache_test3 AS WITH q AS (SELECT * FROM z2) SELECT * FROM q,z1 WHERE f_leak(z1.b);
+PREPARE plancache_test3 AS WITH q AS MATERIALIZED (SELECT * FROM z2) SELECT * FROM q,z1 WHERE f_leak(z1.b);
 EXPLAIN (COSTS OFF) EXECUTE plancache_test3;
                      QUERY PLAN                      
 -----------------------------------------------------
@@ -2775,10 +2773,10 @@ DROP TABLE test_qual_pushdown;
 -- Plancache invalidate on user change.
 --
 RESET SESSION AUTHORIZATION;
-\set VERBOSITY terse \\ -- suppress cascade details
 DROP TABLE t1 CASCADE;
 NOTICE:  drop cascades to 2 other objects
-\set VERBOSITY default
+DETAIL:  drop cascades to table t2
+drop cascades to table t3
 CREATE TABLE t1 (a integer);
 GRANT SELECT ON t1 TO regress_rls_bob, regress_rls_carol;
 CREATE POLICY p1 ON t1 TO regress_rls_bob USING ((a % 2) = 0);
@@ -2826,7 +2824,7 @@ ALTER TABLE t1 ENABLE ROW LEVEL SECURITY;
 GRANT ALL ON t1 TO regress_rls_bob;
 INSERT INTO t1 (SELECT x, md5(x::text) FROM generate_series(0,20) x);
 SET SESSION AUTHORIZATION regress_rls_bob;
-WITH cte1 AS (SELECT * FROM t1 WHERE f_leak(b)) SELECT * FROM cte1;
+WITH cte1 AS MATERIALIZED (SELECT * FROM t1 WHERE f_leak(b)) SELECT * FROM cte1;
 NOTICE:  f_leak => cfcd208495d565ef66e7dff9f98764da
 NOTICE:  f_leak => c81e728d9d4c2f636f067f89cc14862c
 NOTICE:  f_leak => a87ff679a2f3e71d9181a67b7542122c
@@ -2853,7 +2851,8 @@ NOTICE:  f_leak => 98f13708210194c475687be6106a3b84
  20 | 98f13708210194c475687be6106a3b84
 (11 rows)
 
-EXPLAIN (COSTS OFF) WITH cte1 AS (SELECT * FROM t1 WHERE f_leak(b)) SELECT * FROM cte1;
+EXPLAIN (COSTS OFF)
+WITH cte1 AS MATERIALIZED (SELECT * FROM t1 WHERE f_leak(b)) SELECT * FROM cte1;
                    QUERY PLAN                    
 -------------------------------------------------
  CTE Scan on cte1
@@ -3502,8 +3501,8 @@ SELECT refclassid::regclass, deptype
 SAVEPOINT q;
 DROP ROLE regress_rls_eve; --fails due to dependency on POLICY p
 ERROR:  role "regress_rls_eve" cannot be dropped because some objects depend on it
-DETAIL:  target of policy p on table tbl1
-privileges for table tbl1
+DETAIL:  privileges for table tbl1
+target of policy p on table tbl1
 ROLLBACK TO q;
 ALTER POLICY p ON tbl1 TO regress_rls_frank USING (true);
 SAVEPOINT q;
@@ -3911,14 +3910,89 @@ DROP OWNED BY regress_rls_dob_role1;
 DROP POLICY p1 ON dob_t2; -- should succeed
 DROP USER regress_rls_dob_role1;
 DROP USER regress_rls_dob_role2;
+-- Bug #15708: view + table with RLS should check policies as view owner
+CREATE TABLE ref_tbl (a int);
+INSERT INTO ref_tbl VALUES (1);
+CREATE TABLE rls_tbl (a int);
+INSERT INTO rls_tbl VALUES (10);
+ALTER TABLE rls_tbl ENABLE ROW LEVEL SECURITY;
+CREATE POLICY p1 ON rls_tbl USING (EXISTS (SELECT 1 FROM ref_tbl));
+GRANT SELECT ON ref_tbl TO regress_rls_bob;
+GRANT SELECT ON rls_tbl TO regress_rls_bob;
+CREATE VIEW rls_view AS SELECT * FROM rls_tbl;
+ALTER VIEW rls_view OWNER TO regress_rls_bob;
+GRANT SELECT ON rls_view TO regress_rls_alice;
+SET SESSION AUTHORIZATION regress_rls_alice;
+SELECT * FROM ref_tbl; -- Permission denied
+ERROR:  permission denied for table ref_tbl
+SELECT * FROM rls_tbl; -- Permission denied
+ERROR:  permission denied for table rls_tbl
+SELECT * FROM rls_view; -- OK
+ a  
+----
+ 10
+(1 row)
+
+RESET SESSION AUTHORIZATION;
+DROP VIEW rls_view;
+DROP TABLE rls_tbl;
+DROP TABLE ref_tbl;
+-- Leaky operator test
+CREATE TABLE rls_tbl (a int);
+INSERT INTO rls_tbl SELECT x/10 FROM generate_series(1, 100) x;
+ANALYZE rls_tbl;
+ALTER TABLE rls_tbl ENABLE ROW LEVEL SECURITY;
+GRANT SELECT ON rls_tbl TO regress_rls_alice;
+SET SESSION AUTHORIZATION regress_rls_alice;
+CREATE FUNCTION op_leak(int, int) RETURNS bool
+    AS 'BEGIN RAISE NOTICE ''op_leak => %, %'', $1, $2; RETURN $1 < $2; END'
+    LANGUAGE plpgsql;
+CREATE OPERATOR <<< (procedure = op_leak, leftarg = int, rightarg = int,
+                     restrict = scalarltsel);
+SELECT * FROM rls_tbl WHERE a <<< 1000;
+ a 
+---
+(0 rows)
+
+DROP OPERATOR <<< (int, int);
+DROP FUNCTION op_leak(int, int);
+RESET SESSION AUTHORIZATION;
+DROP TABLE rls_tbl;
 --
 -- Clean up objects
 --
 RESET SESSION AUTHORIZATION;
-\set VERBOSITY terse \\ -- suppress cascade details
 DROP SCHEMA regress_rls_schema CASCADE;
 NOTICE:  drop cascades to 29 other objects
-\set VERBOSITY default
+DETAIL:  drop cascades to function f_leak(text)
+drop cascades to table uaccount
+drop cascades to table category
+drop cascades to table document
+drop cascades to table part_document
+drop cascades to table dependent
+drop cascades to table rec1
+drop cascades to table rec2
+drop cascades to view rec1v
+drop cascades to view rec2v
+drop cascades to table s1
+drop cascades to table s2
+drop cascades to view v2
+drop cascades to table b1
+drop cascades to view bv1
+drop cascades to table z1
+drop cascades to table z2
+drop cascades to table x1
+drop cascades to table y1
+drop cascades to table y2
+drop cascades to table t1
+drop cascades to table t2
+drop cascades to table t3
+drop cascades to table t4
+drop cascades to table current_check
+drop cascades to table dep1
+drop cascades to table dep2
+drop cascades to table dob_t1
+drop cascades to table dob_t2
 DROP USER regress_rls_alice;
 DROP USER regress_rls_bob;
 DROP USER regress_rls_carol;

@@ -3,7 +3,7 @@
 # pg_amproc.dat
 #    Initial contents of the pg_amproc system catalog.
 #
-# Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
+# Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
 # Portions Copyright (c) 1994, Regents of the University of California
 #
 # src/include/catalog/pg_amproc.dat
@@ -148,10 +148,6 @@
 { amprocfamily => 'btree/macaddr_ops', amproclefttype => 'macaddr',
   amprocrighttype => 'macaddr', amprocnum => '2',
   amproc => 'macaddr_sortsupport' },
-{ amprocfamily => 'btree/name_ops', amproclefttype => 'name',
-  amprocrighttype => 'name', amprocnum => '1', amproc => 'btnamecmp' },
-{ amprocfamily => 'btree/name_ops', amproclefttype => 'name',
-  amprocrighttype => 'name', amprocnum => '2', amproc => 'btnamesortsupport' },
 { amprocfamily => 'btree/numeric_ops', amproclefttype => 'numeric',
   amprocrighttype => 'numeric', amprocnum => '1', amproc => 'numeric_cmp' },
 { amprocfamily => 'btree/numeric_ops', amproclefttype => 'numeric',
@@ -171,6 +167,14 @@
   amprocrighttype => 'text', amprocnum => '1', amproc => 'bttextcmp' },
 { amprocfamily => 'btree/text_ops', amproclefttype => 'text',
   amprocrighttype => 'text', amprocnum => '2', amproc => 'bttextsortsupport' },
+{ amprocfamily => 'btree/text_ops', amproclefttype => 'name',
+  amprocrighttype => 'name', amprocnum => '1', amproc => 'btnamecmp' },
+{ amprocfamily => 'btree/text_ops', amproclefttype => 'name',
+  amprocrighttype => 'name', amprocnum => '2', amproc => 'btnamesortsupport' },
+{ amprocfamily => 'btree/text_ops', amproclefttype => 'name',
+  amprocrighttype => 'text', amprocnum => '1', amproc => 'btnametextcmp' },
+{ amprocfamily => 'btree/text_ops', amproclefttype => 'text',
+  amprocrighttype => 'name', amprocnum => '1', amproc => 'bttextnamecmp' },
 { amprocfamily => 'btree/time_ops', amproclefttype => 'time',
   amprocrighttype => 'time', amprocnum => '1', amproc => 'time_cmp' },
 { amprocfamily => 'btree/time_ops', amproclefttype => 'time',
@@ -276,10 +280,6 @@
 { amprocfamily => 'hash/macaddr_ops', amproclefttype => 'macaddr',
   amprocrighttype => 'macaddr', amprocnum => '2',
   amproc => 'hashmacaddrextended' },
-{ amprocfamily => 'hash/name_ops', amproclefttype => 'name',
-  amprocrighttype => 'name', amprocnum => '1', amproc => 'hashname' },
-{ amprocfamily => 'hash/name_ops', amproclefttype => 'name',
-  amprocrighttype => 'name', amprocnum => '2', amproc => 'hashnameextended' },
 { amprocfamily => 'hash/oid_ops', amproclefttype => 'oid',
   amprocrighttype => 'oid', amprocnum => '1', amproc => 'hashoid' },
 { amprocfamily => 'hash/oid_ops', amproclefttype => 'oid',
@@ -293,6 +293,10 @@
   amprocrighttype => 'text', amprocnum => '1', amproc => 'hashtext' },
 { amprocfamily => 'hash/text_ops', amproclefttype => 'text',
   amprocrighttype => 'text', amprocnum => '2', amproc => 'hashtextextended' },
+{ amprocfamily => 'hash/text_ops', amproclefttype => 'name',
+  amprocrighttype => 'name', amprocnum => '1', amproc => 'hashname' },
+{ amprocfamily => 'hash/text_ops', amproclefttype => 'name',
+  amprocrighttype => 'name', amprocnum => '2', amproc => 'hashnameextended' },
 { amprocfamily => 'hash/time_ops', amproclefttype => 'time',
   amprocrighttype => 'time', amprocnum => '1', amproc => 'time_hash' },
 { amprocfamily => 'hash/time_ops', amproclefttype => 'time',
@@ -336,6 +340,10 @@
   amprocrighttype => 'cid', amprocnum => '1', amproc => 'hashint4' },
 { amprocfamily => 'hash/cid_ops', amproclefttype => 'cid',
   amprocrighttype => 'cid', amprocnum => '2', amproc => 'hashint4extended' },
+{ amprocfamily => 'hash/tid_ops', amproclefttype => 'tid',
+  amprocrighttype => 'tid', amprocnum => '1', amproc => 'hashtid' },
+{ amprocfamily => 'hash/tid_ops', amproclefttype => 'tid',
+  amprocrighttype => 'tid', amprocnum => '2', amproc => 'hashtidextended' },
 { amprocfamily => 'hash/text_pattern_ops', amproclefttype => 'text',
   amprocrighttype => 'text', amprocnum => '1', amproc => 'hashtext' },
 { amprocfamily => 'hash/text_pattern_ops', amproclefttype => 'text',

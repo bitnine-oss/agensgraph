@@ -3,7 +3,7 @@
  * int.c
  *	  Functions for the built-in integer types (except int8).
  *
- * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -30,11 +30,15 @@
 
 #include <ctype.h>
 #include <limits.h>
+#include <math.h>
 
 #include "catalog/pg_type.h"
 #include "common/int.h"
 #include "funcapi.h"
 #include "libpq/pqformat.h"
+#include "nodes/nodeFuncs.h"
+#include "nodes/supportnodes.h"
+#include "optimizer/optimizer.h"
 #include "utils/array.h"
 #include "utils/builtins.h"
 
@@ -201,8 +205,8 @@ int2vectorout(PG_FUNCTION_ARGS)
 Datum
 int2vectorrecv(PG_FUNCTION_ARGS)
 {
+	LOCAL_FCINFO(locfcinfo, 3);
 	StringInfo	buf = (StringInfo) PG_GETARG_POINTER(0);
-	FunctionCallInfoData locfcinfo;
 	int2vector *result;
 
 	/*
@@ -211,19 +215,19 @@ int2vectorrecv(PG_FUNCTION_ARGS)
 	 * fcinfo->flinfo->fn_extra.  So we need to pass it our own flinfo
 	 * parameter.
 	 */
-	InitFunctionCallInfoData(locfcinfo, fcinfo->flinfo, 3,
+	InitFunctionCallInfoData(*locfcinfo, fcinfo->flinfo, 3,
 							 InvalidOid, NULL, NULL);
 
-	locfcinfo.arg[0] = PointerGetDatum(buf);
-	locfcinfo.arg[1] = ObjectIdGetDatum(INT2OID);
-	locfcinfo.arg[2] = Int32GetDatum(-1);
-	locfcinfo.argnull[0] = false;
-	locfcinfo.argnull[1] = false;
-	locfcinfo.argnull[2] = false;
+	locfcinfo->args[0].value = PointerGetDatum(buf);
+	locfcinfo->args[0].isnull = false;
+	locfcinfo->args[1].value = ObjectIdGetDatum(INT2OID);
+	locfcinfo->args[1].isnull = false;
+	locfcinfo->args[2].value = Int32GetDatum(-1);
+	locfcinfo->args[2].isnull = false;
 
-	result = (int2vector *) DatumGetPointer(array_recv(&locfcinfo));
+	result = (int2vector *) DatumGetPointer(array_recv(locfcinfo));
 
-	Assert(!locfcinfo.isnull);
+	Assert(!locfcinfo->isnull);
 
 	/* sanity checks: int2vector must be 1-D, 0-based, no nulls */
 	if (ARR_NDIM(result) != 1 ||
@@ -1426,4 +1430,74 @@ generate_series_step_int4(PG_FUNCTION_ARGS)
 	else
 		/* do when there is no more left */
 		SRF_RETURN_DONE(funcctx);
+}
+
+/*
+ * Planner support function for generate_series(int4, int4 [, int4])
+ */
+Datum
+generate_series_int4_support(PG_FUNCTION_ARGS)
+{
+	Node	   *rawreq = (Node *) PG_GETARG_POINTER(0);
+	Node	   *ret = NULL;
+
+	if (IsA(rawreq, SupportRequestRows))
+	{
+		/* Try to estimate the number of rows returned */
+		SupportRequestRows *req = (SupportRequestRows *) rawreq;
+
+		if (is_funcclause(req->node))	/* be paranoid */
+		{
+			List	   *args = ((FuncExpr *) req->node)->args;
+			Node	   *arg1,
+					   *arg2,
+					   *arg3;
+
+			/* We can use estimated argument values here */
+			arg1 = estimate_expression_value(req->root, linitial(args));
+			arg2 = estimate_expression_value(req->root, lsecond(args));
+			if (list_length(args) >= 3)
+				arg3 = estimate_expression_value(req->root, lthird(args));
+			else
+				arg3 = NULL;
+
+			/*
+			 * If any argument is constant NULL, we can safely assume that
+			 * zero rows are returned.  Otherwise, if they're all non-NULL
+			 * constants, we can calculate the number of rows that will be
+			 * returned.  Use double arithmetic to avoid overflow hazards.
+			 */
+			if ((IsA(arg1, Const) &&
+				 ((Const *) arg1)->constisnull) ||
+				(IsA(arg2, Const) &&
+				 ((Const *) arg2)->constisnull) ||
+				(arg3 != NULL && IsA(arg3, Const) &&
+				 ((Const *) arg3)->constisnull))
+			{
+				req->rows = 0;
+				ret = (Node *) req;
+			}
+			else if (IsA(arg1, Const) &&
+					 IsA(arg2, Const) &&
+					 (arg3 == NULL || IsA(arg3, Const)))
+			{
+				double		start,
+							finish,
+							step;
+
+				start = DatumGetInt32(((Const *) arg1)->constvalue);
+				finish = DatumGetInt32(((Const *) arg2)->constvalue);
+				step = arg3 ? DatumGetInt32(((Const *) arg3)->constvalue) : 1;
+
+				/* This equation works for either sign of step */
+				if (step != 0)
+				{
+					req->rows = floor((finish - start + step) / step);
+					ret = (Node *) req;
+				}
+			}
+		}
+	}
+
+	PG_RETURN_POINTER(ret);
 }

@@ -1,5 +1,5 @@
 /*
- * brin_tuples.c
+ * brin_tuple.c
  *		Method implementations for tuples in BRIN indexes.
  *
  * Intended usage is that code outside this file only deals with
@@ -23,7 +23,7 @@
  * Note the size of the null bitmask may not be the same as that of the
  * datum array.
  *
- * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -40,8 +40,8 @@
 
 
 static inline void brin_deconstruct_tuple(BrinDesc *brdesc,
-					   char *tp, bits8 *nullbits, bool nulls,
-					   Datum *values, bool *allnulls, bool *hasnulls);
+										  char *tp, bits8 *nullbits, bool nulls,
+										  Datum *values, bool *allnulls, bool *hasnulls);
 
 
 /*
@@ -207,7 +207,7 @@ brin_form_tuple(BrinDesc *brdesc, BlockNumber blkno, BrinMemTuple *tuple,
 		/*
 		 * Note that we reverse the sense of null bits in this module: we
 		 * store a 1 for a null attribute rather than a 0.  So we must reverse
-		 * the sense of the att_isnull test in br_deconstruct_tuple as well.
+		 * the sense of the att_isnull test in brin_deconstruct_tuple as well.
 		 */
 		bitP = ((bits8 *) ((char *) rettuple + SizeOfBrinTuple)) - 1;
 		bitmask = HIGHBIT;

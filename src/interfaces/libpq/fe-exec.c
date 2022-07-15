@@ -3,7 +3,7 @@
  * fe-exec.c
  *	  functions related to sending a query down to the backend
  *
- * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -53,23 +53,23 @@ static bool static_std_strings = false;
 
 static PGEvent *dupEvents(PGEvent *events, int count, size_t *memSize);
 static bool pqAddTuple(PGresult *res, PGresAttValue *tup,
-		   const char **errmsgp);
+					   const char **errmsgp);
 static bool PQsendQueryStart(PGconn *conn);
-static int PQsendQueryGuts(PGconn *conn,
-				const char *command,
-				const char *stmtName,
-				int nParams,
-				const Oid *paramTypes,
-				const char *const *paramValues,
-				const int *paramLengths,
-				const int *paramFormats,
-				int resultFormat);
+static int	PQsendQueryGuts(PGconn *conn,
+							const char *command,
+							const char *stmtName,
+							int nParams,
+							const Oid *paramTypes,
+							const char *const *paramValues,
+							const int *paramLengths,
+							const int *paramFormats,
+							int resultFormat);
 static void parseInput(PGconn *conn);
 static PGresult *getCopyResult(PGconn *conn, ExecStatusType copytype);
 static bool PQexecStart(PGconn *conn);
 static PGresult *PQexecFinish(PGconn *conn);
-static int PQsendDescribe(PGconn *conn, char desc_type,
-			   const char *desc_target);
+static int	PQsendDescribe(PGconn *conn, char desc_type,
+						   const char *desc_target);
 static int	check_field_number(const PGresult *res, int field_num);
 
 
@@ -791,6 +791,32 @@ pqSaveErrorResult(PGconn *conn)
 }
 
 /*
+ * As above, and append conn->write_err_msg to whatever other error we have.
+ * This is used when we've detected a write failure and have exhausted our
+ * chances of reporting something else instead.
+ */
+static void
+pqSaveWriteError(PGconn *conn)
+{
+	/*
+	 * Ensure conn->result is an error result, and add anything in
+	 * conn->errorMessage to it.
+	 */
+	pqSaveErrorResult(conn);
+
+	/*
+	 * Now append write_err_msg to that.  If it's null because of previous
+	 * strdup failure, do what we can.  (It's likely our machinations here are
+	 * all getting OOM failures as well, but ...)
+	 */
+	if (conn->write_err_msg && conn->write_err_msg[0] != '\0')
+		pqCatenateResultError(conn->result, conn->write_err_msg);
+	else
+		pqCatenateResultError(conn->result,
+							  libpq_gettext("write to server failed\n"));
+}
+
+/*
  * This subroutine prepares an async result object for return to the caller.
  * If there is not already an async result object, build an error object
  * using whatever is in conn->errorMessage.  In any case, clear the async
@@ -1246,7 +1272,7 @@ PQsendQuery(PGconn *conn, const char *query)
 		pqPuts(query, conn) < 0 ||
 		pqPutMsgEnd(conn) < 0)
 	{
-		pqHandleSendFailure(conn);
+		/* error message should be set up already */
 		return 0;
 	}
 
@@ -1265,7 +1291,7 @@ PQsendQuery(PGconn *conn, const char *query)
 	 */
 	if (pqFlush(conn) < 0)
 	{
-		pqHandleSendFailure(conn);
+		/* error message should be set up already */
 		return 0;
 	}
 
@@ -1411,7 +1437,7 @@ PQsendPrepare(PGconn *conn,
 	return 1;
 
 sendFailed:
-	pqHandleSendFailure(conn);
+	/* error message should be set up already */
 	return 0;
 }
 
@@ -1663,37 +1689,8 @@ PQsendQueryGuts(PGconn *conn,
 	return 1;
 
 sendFailed:
-	pqHandleSendFailure(conn);
+	/* error message should be set up already */
 	return 0;
-}
-
-/*
- * pqHandleSendFailure: try to clean up after failure to send command.
- *
- * Primarily, what we want to accomplish here is to process any ERROR or
- * NOTICE messages that the backend might have sent just before it died.
- * Since we're in IDLE state, all such messages will get sent to the notice
- * processor.
- *
- * NOTE: this routine should only be called in PGASYNC_IDLE state.
- */
-void
-pqHandleSendFailure(PGconn *conn)
-{
-	/*
-	 * Accept and parse any available input data, ignoring I/O errors.  Note
-	 * that if pqReadData decides the backend has closed the channel, it will
-	 * close our side of the socket --- that's just what we want here.
-	 */
-	while (pqReadData(conn) > 0)
-		parseInput(conn);
-
-	/*
-	 * Be sure to parse available input messages even if we read no data.
-	 * (Note: calling parseInput within the above loop isn't really necessary,
-	 * but it prevents buffer bloat if there's a lot of data available.)
-	 */
-	parseInput(conn);
 }
 
 /*
@@ -1785,8 +1782,11 @@ PQisBusy(PGconn *conn)
 	/* Parse any available data, if our state permits. */
 	parseInput(conn);
 
-	/* PQgetResult will return immediately in all states except BUSY. */
-	return conn->asyncStatus == PGASYNC_BUSY;
+	/*
+	 * PQgetResult will return immediately in all states except BUSY, or if we
+	 * had a write failure.
+	 */
+	return conn->asyncStatus == PGASYNC_BUSY || conn->write_failed;
 }
 
 
@@ -1826,7 +1826,13 @@ PQgetResult(PGconn *conn)
 			}
 		}
 
-		/* Wait for some more data, and load it. */
+		/*
+		 * Wait for some more data, and load it.  (Note: if the connection has
+		 * been lost, pqWait should return immediately because the socket
+		 * should be read-ready, either with the last server data or with an
+		 * EOF indication.  We expect therefore that this won't result in any
+		 * undue delay in reporting a previous write failure.)
+		 */
 		if (flushResult ||
 			pqWait(true, false, conn) ||
 			pqReadData(conn) < 0)
@@ -1842,6 +1848,17 @@ PQgetResult(PGconn *conn)
 
 		/* Parse it. */
 		parseInput(conn);
+
+		/*
+		 * If we had a write error, but nothing above obtained a query result
+		 * or detected a read error, report the write error.
+		 */
+		if (conn->write_failed && conn->asyncStatus == PGASYNC_BUSY)
+		{
+			pqSaveWriteError(conn);
+			conn->asyncStatus = PGASYNC_IDLE;
+			return pqPrepareAsyncResult(conn);
+		}
 	}
 
 	/* Return the appropriate thing. */
@@ -2274,7 +2291,7 @@ PQsendDescribe(PGconn *conn, char desc_type, const char *desc_target)
 	return 1;
 
 sendFailed:
-	pqHandleSendFailure(conn);
+	/* error message should be set up already */
 	return 0;
 }
 

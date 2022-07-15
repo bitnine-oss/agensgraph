@@ -25,7 +25,7 @@
  * This implementation only uses the comparison function of the range element
  * datatype, therefore it works for any range type.
  *
- * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -44,14 +44,14 @@
 #include "utils/rangetypes.h"
 
 static int16 getQuadrant(TypeCacheEntry *typcache, RangeType *centroid,
-			RangeType *tst);
+						 RangeType *tst);
 static int	bound_cmp(const void *a, const void *b, void *arg);
 
-static int adjacent_inner_consistent(TypeCacheEntry *typcache,
-						  RangeBound *arg, RangeBound *centroid,
-						  RangeBound *prev);
-static int adjacent_cmp_bounds(TypeCacheEntry *typcache, RangeBound *arg,
-					RangeBound *centroid);
+static int	adjacent_inner_consistent(TypeCacheEntry *typcache,
+									  RangeBound *arg, RangeBound *centroid,
+									  RangeBound *prev);
+static int	adjacent_cmp_bounds(TypeCacheEntry *typcache, RangeBound *arg,
+								RangeBound *centroid);
 
 /*
  * SP-GiST 'config' interface function.

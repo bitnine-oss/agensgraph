@@ -7,7 +7,7 @@
  * collation-sensitive, so the code in this file has no support for passing
  * collation settings through from callers.  That may have to change someday.
  *
- * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -18,7 +18,6 @@
  */
 #include "postgres.h"
 
-#include "access/hash.h"
 #include "access/parallel.h"
 #include "executor/executor.h"
 #include "miscadmin.h"
@@ -59,8 +58,9 @@ static int	TupleHashTableMatch(struct tuplehash_hash *tb, const MinimalTuple tup
 ExprState *
 execTuplesMatchPrepare(TupleDesc desc,
 					   int numCols,
-					   AttrNumber *keyColIdx,
-					   Oid *eqOperators,
+					   const AttrNumber *keyColIdx,
+					   const Oid *eqOperators,
+					   const Oid *collations,
 					   PlanState *parent)
 {
 	Oid		   *eqFunctions = (Oid *) palloc(numCols * sizeof(Oid));
@@ -76,7 +76,7 @@ execTuplesMatchPrepare(TupleDesc desc,
 
 	/* build actual expression */
 	expr = ExecBuildGroupingEqual(desc, desc, NULL, NULL,
-								  numCols, keyColIdx, eqFunctions,
+								  numCols, keyColIdx, eqFunctions, collations,
 								  parent);
 
 	return expr;
@@ -94,7 +94,7 @@ execTuplesMatchPrepare(TupleDesc desc,
  */
 void
 execTuplesHashPrepare(int numCols,
-					  Oid *eqOperators,
+					  const Oid *eqOperators,
 					  Oid **eqFuncOids,
 					  FmgrInfo **hashFunctions)
 {
@@ -139,7 +139,8 @@ execTuplesHashPrepare(int numCols,
  *	hashfunctions: datatype-specific hashing functions to use
  *	nbuckets: initial estimate of hashtable size
  *	additionalsize: size of data stored in ->additional
- *	tablecxt: memory context in which to store table and table entries
+ *	metacxt: memory context for long-lived allocation, but not per-entry data
+ *	tablecxt: memory context in which to store table entries
  *	tempcxt: short-lived context for evaluation hash and comparison functions
  *
  * The function arrays may be made with execTuplesHashPrepare().  Note they
@@ -150,14 +151,17 @@ execTuplesHashPrepare(int numCols,
  * storage that will live as long as the hashtable does.
  */
 TupleHashTable
-BuildTupleHashTable(PlanState *parent,
-					TupleDesc inputDesc,
-					int numCols, AttrNumber *keyColIdx,
-					Oid *eqfuncoids,
-					FmgrInfo *hashfunctions,
-					long nbuckets, Size additionalsize,
-					MemoryContext tablecxt, MemoryContext tempcxt,
-					bool use_variable_hash_iv)
+BuildTupleHashTableExt(PlanState *parent,
+					   TupleDesc inputDesc,
+					   int numCols, AttrNumber *keyColIdx,
+					   const Oid *eqfuncoids,
+					   FmgrInfo *hashfunctions,
+					   Oid *collations,
+					   long nbuckets, Size additionalsize,
+					   MemoryContext metacxt,
+					   MemoryContext tablecxt,
+					   MemoryContext tempcxt,
+					   bool use_variable_hash_iv)
 {
 	TupleHashTable hashtable;
 	Size		entrysize = sizeof(TupleHashEntryData) + additionalsize;
@@ -168,12 +172,14 @@ BuildTupleHashTable(PlanState *parent,
 	/* Limit initial table size request to not more than work_mem */
 	nbuckets = Min(nbuckets, (long) ((work_mem * 1024L) / entrysize));
 
-	hashtable = (TupleHashTable)
-		MemoryContextAlloc(tablecxt, sizeof(TupleHashTableData));
+	oldcontext = MemoryContextSwitchTo(metacxt);
+
+	hashtable = (TupleHashTable) palloc(sizeof(TupleHashTableData));
 
 	hashtable->numCols = numCols;
 	hashtable->keyColIdx = keyColIdx;
 	hashtable->tab_hash_funcs = hashfunctions;
+	hashtable->tab_collations = collations;
 	hashtable->tablecxt = tablecxt;
 	hashtable->tempcxt = tempcxt;
 	hashtable->entrysize = entrysize;
@@ -195,9 +201,7 @@ BuildTupleHashTable(PlanState *parent,
 	else
 		hashtable->hash_iv = 0;
 
-	hashtable->hashtab = tuplehash_create(tablecxt, nbuckets, hashtable);
-
-	oldcontext = MemoryContextSwitchTo(hashtable->tablecxt);
+	hashtable->hashtab = tuplehash_create(metacxt, nbuckets, hashtable);
 
 	/*
 	 * We copy the input tuple descriptor just for safety --- we assume all
@@ -211,14 +215,62 @@ BuildTupleHashTable(PlanState *parent,
 	hashtable->tab_eq_func = ExecBuildGroupingEqual(inputDesc, inputDesc,
 													&TTSOpsMinimalTuple, &TTSOpsMinimalTuple,
 													numCols,
-													keyColIdx, eqfuncoids,
-													parent);
+													keyColIdx, eqfuncoids, collations,
+													NULL);
+
+	/*
+	 * While not pretty, it's ok to not shut down this context, but instead
+	 * rely on the containing memory context being reset, as
+	 * ExecBuildGroupingEqual() only builds a very simple expression calling
+	 * functions (i.e. nothing that'd employ RegisterExprContextCallback()).
+	 */
+	hashtable->exprcontext = CreateStandaloneExprContext();
 
 	MemoryContextSwitchTo(oldcontext);
 
-	hashtable->exprcontext = CreateExprContext(parent->state);
-
 	return hashtable;
+}
+
+/*
+ * BuildTupleHashTable is a backwards-compatibilty wrapper for
+ * BuildTupleHashTableExt(), that allocates the hashtable's metadata in
+ * tablecxt. Note that hashtables created this way cannot be reset leak-free
+ * with ResetTupleHashTable().
+ */
+TupleHashTable
+BuildTupleHashTable(PlanState *parent,
+					TupleDesc inputDesc,
+					int numCols, AttrNumber *keyColIdx,
+					const Oid *eqfuncoids,
+					FmgrInfo *hashfunctions,
+					Oid *collations,
+					long nbuckets, Size additionalsize,
+					MemoryContext tablecxt,
+					MemoryContext tempcxt,
+					bool use_variable_hash_iv)
+{
+	return BuildTupleHashTableExt(parent,
+								  inputDesc,
+								  numCols, keyColIdx,
+								  eqfuncoids,
+								  hashfunctions,
+								  collations,
+								  nbuckets, additionalsize,
+								  tablecxt,
+								  tablecxt,
+								  tempcxt,
+								  use_variable_hash_iv);
+}
+
+/*
+ * Reset contents of the hashtable to be empty, preserving all the non-content
+ * state. Note that the tablecxt passed to BuildTupleHashTableExt() should
+ * also be reset, otherwise there will be leaks.
+ */
+void
+ResetTupleHashTable(TupleHashTable hashtable)
+{
+	tuplehash_reset(hashtable->hashtab);
 }
 
 /*
@@ -374,8 +426,9 @@ TupleHashTableHash(struct tuplehash_hash *tb, const MinimalTuple tuple)
 		{
 			uint32		hkey;
 
-			hkey = DatumGetUInt32(FunctionCall1(&hashfunctions[i],
-												attr));
+			hkey = DatumGetUInt32(FunctionCall1Coll(&hashfunctions[i],
+													hashtable->tab_collations[i],
+													attr));
 			hashkey ^= hkey;
 		}
 	}

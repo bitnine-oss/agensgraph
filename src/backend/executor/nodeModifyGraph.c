@@ -30,6 +30,8 @@
 #include "utils/memutils.h"
 #include "utils/rel.h"
 #include "utils/tuplestore.h"
+#include "access/table.h"
+#include "access/heapam.h"
 
 bool		enable_multiple_update = true;
 bool		auto_gather_graphmeta = false;
@@ -229,7 +231,7 @@ ExecInitModifyGraph(ModifyGraph *mgplan, EState *estate, int eflags)
 		{
 			Oid			relid = lfirst_oid(lt);
 			/* open relation in Executor context */
-			Relation	relation = heap_open(relid, RowExclusiveLock);
+			Relation	relation = table_open(relid, RowExclusiveLock);
 			/* Switch to the memory context for building RTEs */
 			MemoryContext oldmctx = MemoryContextSwitchTo(rtemctx);
 
@@ -509,7 +511,7 @@ ExecEndModifyGraph(ModifyGraphState *mgstate)
 	for (i = mgstate->numResultRelations; i > 0; i--)
 	{
 		ExecCloseIndices(resultRelInfo);
-		heap_close(resultRelInfo->ri_RelationDesc, NoLock);
+		table_close(resultRelInfo->ri_RelationDesc, NoLock);
 
 		resultRelInfo++;
 	}
@@ -761,8 +763,6 @@ createVertex(ModifyGraphState *mgstate, GraphVertex *gvertex, Graphid *vid,
 	ResultRelInfo *savedResultRelInfo;
 	Datum		vertex;
 	Datum		vertexProp;
-	HeapTuple	tuple;
-	bool		tupleShouldFree;
 
 	resultRelInfo = getResultRelInfo(mgstate, gvertex->relid);
 	savedResultRelInfo = estate->es_result_relation_info;
@@ -786,13 +786,13 @@ createVertex(ModifyGraphState *mgstate, GraphVertex *gvertex, Graphid *vid,
 		   elemTupleSlot->tts_tupleDescriptor->natts * sizeof(bool));
 	ExecStoreVirtualTuple(elemTupleSlot);
 
-	tuple = ExecFetchSlotHeapTuple(elemTupleSlot, true, &tupleShouldFree);
+	ExecMaterializeSlot(elemTupleSlot);
 
 	/*
 	 * Constraints might reference the tableoid column, so initialize
 	 * t_tableOid before evaluating them.
 	 */
-	tuple->t_tableOid = RelationGetRelid(resultRelInfo->ri_RelationDesc);
+	elemTupleSlot->tts_tableOid = RelationGetRelid(resultRelInfo->ri_RelationDesc);
 
 	/*
 	 * Check the constraints of the tuple
@@ -802,26 +802,19 @@ createVertex(ModifyGraphState *mgstate, GraphVertex *gvertex, Graphid *vid,
 
 	/*
 	 * insert the tuple normally
-	 *
-	 * NOTE: heap_insert() returns the cid of the new tuple in the t_self.
 	 */
-	heap_insert(resultRelInfo->ri_RelationDesc, tuple,
-				mgstate->modify_cid + MODIFY_CID_OUTPUT,
-				0, NULL);
+	table_tuple_insert(resultRelInfo->ri_RelationDesc, elemTupleSlot,
+					   mgstate->modify_cid + MODIFY_CID_OUTPUT,
+					   0, NULL);
 
 	/* insert index entries for the tuple */
 	if (resultRelInfo->ri_NumIndices > 0)
-		ExecInsertIndexTuples(elemTupleSlot, &(tuple->t_self), estate, false,
+		ExecInsertIndexTuples(elemTupleSlot, estate, false,
 							  NULL, NIL);
 
 	vertex = makeGraphVertexDatum(elemTupleSlot->tts_values[0],
 								  elemTupleSlot->tts_values[1],
-								  PointerGetDatum(&tuple->t_self));
-
-	if (tupleShouldFree)
-	{
-		heap_freetuple(tuple);
-	}
+								  PointerGetDatum(&elemTupleSlot->tts_tid));
 
 	if (gvertex->resno > 0)
 		setSlotValueByAttnum(slot, vertex, gvertex->resno);
@@ -844,7 +837,6 @@ createEdge(ModifyGraphState *mgstate, GraphEdge *gedge, Graphid start,
 	Graphid		id = 0;
 	Datum		edge;
 	Datum		edgeProp;
-	HeapTuple	tuple;
 
 	resultRelInfo = getResultRelInfo(mgstate, gedge->relid);
 	savedResultRelInfo = estate->es_result_relation_info;
@@ -871,26 +863,25 @@ createEdge(ModifyGraphState *mgstate, GraphEdge *gedge, Graphid start,
 		   elemTupleSlot->tts_tupleDescriptor->natts * sizeof(bool));
 	ExecStoreVirtualTuple(elemTupleSlot);
 
-	tuple = ExecFetchSlotHeapTuple(elemTupleSlot, true, NULL);
-
-	tuple->t_tableOid = RelationGetRelid(resultRelInfo->ri_RelationDesc);
+	ExecMaterializeSlot(elemTupleSlot);
+	elemTupleSlot->tts_tableOid = RelationGetRelid(resultRelInfo->ri_RelationDesc);
 
 	if (resultRelInfo->ri_RelationDesc->rd_att->constr != NULL)
 		ExecConstraints(resultRelInfo, elemTupleSlot, estate);
 
-	heap_insert(resultRelInfo->ri_RelationDesc, tuple,
-				mgstate->modify_cid + MODIFY_CID_OUTPUT,
-				0, NULL);
+	table_tuple_insert(resultRelInfo->ri_RelationDesc, elemTupleSlot,
+					   mgstate->modify_cid + MODIFY_CID_OUTPUT,
+					   0, NULL);
 
 	if (resultRelInfo->ri_NumIndices > 0)
-		ExecInsertIndexTuples(elemTupleSlot, &(tuple->t_self), estate, false,
+		ExecInsertIndexTuples(elemTupleSlot, estate, false,
 							  NULL, NIL);
 
 	edge = makeGraphEdgeDatum(elemTupleSlot->tts_values[0],
 							  elemTupleSlot->tts_values[1],
 							  elemTupleSlot->tts_values[2],
 							  elemTupleSlot->tts_values[3],
-							  PointerGetDatum(&tuple->t_self));
+							  PointerGetDatum(&elemTupleSlot->tts_tid));
 
 	if (gedge->resno > 0)
 		setSlotValueByAttnum(slot, edge, gedge->resno);
@@ -1016,8 +1007,8 @@ deleteElem(ModifyGraphState *mgstate, Datum gid, ItemPointer tid, Oid type)
 	ResultRelInfo *resultRelInfo;
 	ResultRelInfo *savedResultRelInfo;
 	Relation	resultRelationDesc;
-	HTSU_Result	result;
-	HeapUpdateFailureData hufd;
+	TM_Result	result;
+	TM_FailureData hufd;
 
 	relid = get_labid_relid(mgstate->graphid,
 							GraphidGetLabid(DatumGetGraphid(gid)));
@@ -1033,16 +1024,16 @@ deleteElem(ModifyGraphState *mgstate, Datum gid, ItemPointer tid, Oid type)
 						 estate->es_crosscheck_snapshot, true, &hufd, false);
 	switch (result)
 	{
-		case HeapTupleSelfUpdated:
+		case TM_SelfModified:
 			ereport(ERROR,
 					(errcode(ERRCODE_INTERNAL_ERROR),
 							errmsg("modifying the same element more than once cannot happen")));
 			return;
 
-		case HeapTupleMayBeUpdated:
+		case TM_Ok:
 			break;
 
-		case HeapTupleUpdated:
+		case TM_Updated:
 			/* TODO: A solution to concurrent update is needed. */
 			ereport(ERROR,
 					(errcode(ERRCODE_T_R_SERIALIZATION_FAILURE),
@@ -1265,8 +1256,8 @@ updateElemProp(ModifyGraphState *mgstate, Oid elemtype, Datum gid,
 	ResultRelInfo *savedResultRelInfo;
 	Relation	resultRelationDesc;
 	LockTupleMode lockmode;
-	HTSU_Result	result;
-	HeapUpdateFailureData hufd;
+	TM_Result	result;
+	TM_FailureData hufd;
 
 	relid = get_labid_relid(mgstate->graphid,
 							GraphidGetLabid(DatumGetGraphid(gid)));
@@ -1317,16 +1308,16 @@ updateElemProp(ModifyGraphState *mgstate, Oid elemtype, Datum gid,
 						 true, &hufd, &lockmode);
 	switch (result)
 	{
-		case HeapTupleSelfUpdated:
+		case TM_SelfModified:
 			ereport(ERROR,
 					(errcode(ERRCODE_INTERNAL_ERROR),
 							errmsg("graph element(%hu," UINT64_FORMAT ") has been SET multiple times",
 							GraphidGetLabid(DatumGetGraphid(gid)),
 							GraphidGetLocid(DatumGetGraphid(gid)))));
 			break;
-		case HeapTupleMayBeUpdated:
+		case TM_Ok:
 			break;
-		case HeapTupleUpdated:
+		case TM_Updated:
 			/* TODO: A solution to concurrent update is needed. */
 			ereport(ERROR,
 					(errcode(ERRCODE_T_R_SERIALIZATION_FAILURE),
@@ -1337,8 +1328,7 @@ updateElemProp(ModifyGraphState *mgstate, Oid elemtype, Datum gid,
 	}
 
 	if (resultRelInfo->ri_NumIndices > 0 && !HeapTupleIsHeapOnly(tuple))
-		ExecInsertIndexTuples(elemTupleSlot, &(tuple->t_self),
-							  estate, false, NULL, NIL);
+		ExecInsertIndexTuples(elemTupleSlot, estate, false, NULL, NIL);
 
 	graphWriteStats.updateProperty++;
 
@@ -1518,7 +1508,6 @@ createMergeVertex(ModifyGraphState *mgstate, GraphVertex *gvertex,
 	Datum		vertexId;
 	Datum		vertexProp;
 	TupleTableSlot *insertSlot = mgstate->elemTupleSlot;
-	HeapTuple	tuple;
 
 	resultRelInfo = getResultRelInfo(mgstate, gvertex->relid);
 	savedResultRelInfo = estate->es_result_relation_info;
@@ -1549,23 +1538,22 @@ createMergeVertex(ModifyGraphState *mgstate, GraphVertex *gvertex,
 		   insertSlot->tts_tupleDescriptor->natts * sizeof(bool));
 	ExecStoreVirtualTuple(insertSlot);
 
-	tuple = ExecFetchSlotHeapTuple(insertSlot, true, NULL);
-	tuple->t_tableOid = RelationGetRelid(resultRelInfo->ri_RelationDesc);
+	ExecMaterializeSlot(insertSlot);
+	insertSlot->tts_tableOid = RelationGetRelid(resultRelInfo->ri_RelationDesc);
 
 	if (resultRelInfo->ri_RelationDesc->rd_att->constr != NULL)
 		ExecConstraints(resultRelInfo, insertSlot, estate);
 
-	heap_insert(resultRelInfo->ri_RelationDesc, tuple,
-				mgstate->modify_cid + MODIFY_CID_OUTPUT,
-				0, NULL);
+	table_tuple_insert(resultRelInfo->ri_RelationDesc, insertSlot,
+					   mgstate->modify_cid + MODIFY_CID_OUTPUT,
+					   0, NULL);
 
 	if (resultRelInfo->ri_NumIndices > 0)
-		ExecInsertIndexTuples(insertSlot, &(tuple->t_self), estate, false,
-							  NULL, NIL);
+		ExecInsertIndexTuples(insertSlot, estate, false, NULL, NIL);
 
 	vertex = makeGraphVertexDatum(insertSlot->tts_values[0],
 								  insertSlot->tts_values[1],
-								  PointerGetDatum(&tuple->t_self));
+								  PointerGetDatum(&insertSlot->tts_tid));
 
 	if (gvertex->resno > 0)
 		setSlotValueByAttnum(slot, vertex, gvertex->resno);
@@ -1589,7 +1577,6 @@ createMergeEdge(ModifyGraphState *mgstate, GraphEdge *gedge, Graphid start,
 	Datum		edge;
 	Datum		edgeProp;
 	TupleTableSlot *insertSlot = mgstate->elemTupleSlot;
-	HeapTuple	tuple;
 
 	resultRelInfo = getResultRelInfo(mgstate, gedge->relid);
 	savedResultRelInfo = estate->es_result_relation_info;
@@ -1619,26 +1606,25 @@ createMergeEdge(ModifyGraphState *mgstate, GraphEdge *gedge, Graphid start,
 		   insertSlot->tts_tupleDescriptor->natts * sizeof(bool));
 	ExecStoreVirtualTuple(insertSlot);
 
-	tuple = ExecFetchSlotHeapTuple(insertSlot, true, NULL);
+	ExecMaterializeSlot(insertSlot);
 
-	tuple->t_tableOid = RelationGetRelid(resultRelInfo->ri_RelationDesc);
+	insertSlot->tts_tableOid = RelationGetRelid(resultRelInfo->ri_RelationDesc);
 
 	if (resultRelInfo->ri_RelationDesc->rd_att->constr != NULL)
 		ExecConstraints(resultRelInfo, insertSlot, estate);
 
-	heap_insert(resultRelInfo->ri_RelationDesc, tuple,
-				mgstate->modify_cid + MODIFY_CID_OUTPUT,
-				0, NULL);
+	table_tuple_insert(resultRelInfo->ri_RelationDesc, insertSlot,
+					   mgstate->modify_cid + MODIFY_CID_OUTPUT,
+					   0, NULL);
 
 	if (resultRelInfo->ri_NumIndices > 0)
-		ExecInsertIndexTuples(insertSlot, &(tuple->t_self), estate, false,
-							  NULL, NIL);
+		ExecInsertIndexTuples(insertSlot, estate, false, NULL, NIL);
 
 	edge = makeGraphEdgeDatum(insertSlot->tts_values[0],
 							  insertSlot->tts_values[1],
 							  insertSlot->tts_values[2],
 							  insertSlot->tts_values[3],
-							  PointerGetDatum(&tuple->t_self));
+							  PointerGetDatum(&insertSlot->tts_tid));
 
 	if (gedge->resno > 0)
 		setSlotValueByAttnum(slot, edge, gedge->resno);
@@ -2122,7 +2108,7 @@ static void removeRangeTable(EState* estate, int n)
 		pfree(es_rte);
 		pfree(lc);
 		lc = next;
-		heap_close(estate->es_relations[i], NoLock);
+		table_close(estate->es_relations[i], NoLock);
 	}
 
 	estate->es_range_table = list_truncate(estate->es_range_table, n);

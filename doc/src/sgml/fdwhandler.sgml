@@ -309,7 +309,9 @@ GetForeignJoinPaths(PlannerInfo *root,
      function is called during query planning.  As
      with <function>GetForeignPaths</function>, this function should
      generate <structname>ForeignPath</structname> path(s) for the
-     supplied <literal>joinrel</literal>, and call <function>add_path</function> to add these
+     supplied <literal>joinrel</literal>
+     (use <function>create_foreign_join_path</function> to build them),
+     and call <function>add_path</function> to add these
      paths to the set of paths considered for the join.  But unlike
      <function>GetForeignPaths</function>, it is not necessary that this function
      succeed in creating at least one path, since paths involving local
@@ -369,7 +371,9 @@ GetForeignUpperPaths(PlannerInfo *root,
      called only if all base relation(s) involved in the query belong to the
      same FDW.  This function should generate <structname>ForeignPath</structname>
      path(s) for any post-scan/join processing that the FDW knows how to
-     perform remotely, and call <function>add_path</function> to add these paths to
+     perform remotely
+     (use <function>create_foreign_upper_path</function> to build them),
+     and call <function>add_path</function> to add these paths to
      the indicated upper relation.  As with <function>GetForeignJoinPaths</function>,
      it is not necessary that this function succeed in creating any paths,
      since paths involving local processing are always possible.
@@ -383,7 +387,9 @@ GetForeignUpperPaths(PlannerInfo *root,
      step.  The <literal>extra</literal> parameter provides additional details,
      currently, it is set only for <literal>UPPERREL_PARTIAL_GROUP_AGG</literal>
      or <literal>UPPERREL_GROUP_AGG</literal>, in which case it points to a
-     <literal>GroupPathExtraData</literal> structure.
+     <literal>GroupPathExtraData</literal> structure;
+     or for <literal>UPPERREL_FINAL</literal>, in which case it points to a
+     <literal>FinalPathExtraData</literal> structure.
      (Note that <structname>ForeignPath</structname> paths added
      to <literal>output_rel</literal> would typically not have any direct dependency
      on paths of the <literal>input_rel</literal>, since their processing is expected
@@ -590,6 +596,14 @@ ExecForeignInsert(EState *estate,
     </para>
 
     <para>
+     Note that this function is also called when inserting routed tuples into
+     a foreign-table partition or executing <command>COPY FROM</command> on
+     a foreign table, in which case it is called in a different way than it
+     is in the <command>INSERT</command> case.  See the callback functions
+     described below that allow the FDW to support that.
+    </para>
+
+    <para>
 <programlisting>
 TupleTableSlot *
 ExecForeignUpdate(EState *estate,
@@ -745,6 +759,13 @@ BeginForeignInsert(ModifyTableState *mtstate,
     <para>
      If the <function>BeginForeignInsert</function> pointer is set to
      <literal>NULL</literal>, no action is taken for the initialization.
+    </para>
+
+    <para>
+     Note that if the FDW does not support routable foreign-table partitions
+     and/or executing <command>COPY FROM</command> on foreign tables, this
+     function or <function>ExecForeignInsert</function> subsequently called
+     must throw error as needed.
     </para>
 
     <para>
@@ -988,29 +1009,31 @@ GetForeignRowMarkType(RangeTblEntry *rte,
 
     <para>
 <programlisting>
-HeapTuple
+void
 RefetchForeignRow(EState *estate,
                   ExecRowMark *erm,
                   Datum rowid,
+                  TupleTableSlot *slot,
                   bool *updated);
 </programlisting>
 
-     Re-fetch one tuple from the foreign table, after locking it if required.
+     Re-fetch one tuple slot from the foreign table, after locking it if required.
      <literal>estate</literal> is global execution state for the query.
      <literal>erm</literal> is the <structname>ExecRowMark</structname> struct describing
      the target foreign table and the row lock type (if any) to acquire.
      <literal>rowid</literal> identifies the tuple to be fetched.
-     <literal>updated</literal> is an output parameter.
+     <literal>slot</literal> contains nothing useful upon call, but can be used to
+     hold the returned tuple. <literal>updated</literal> is an output parameter.
     </para>
 
     <para>
-     This function should return a palloc'ed copy of the fetched tuple,
-     or <literal>NULL</literal> if the row lock couldn't be obtained.  The row lock
-     type to acquire is defined by <literal>erm-&gt;markType</literal>, which is the
-     value previously returned by <function>GetForeignRowMarkType</function>.
-     (<literal>ROW_MARK_REFERENCE</literal> means to just re-fetch the tuple without
-     acquiring any lock, and <literal>ROW_MARK_COPY</literal> will never be seen by
-     this routine.)
+     This function should store the tuple into the provided slot, or clear it if
+     the row lock couldn't be obtained.  The row lock type to acquire is
+     defined by <literal>erm-&gt;markType</literal>, which is the value
+     previously returned by <function>GetForeignRowMarkType</function>.
+     (<literal>ROW_MARK_REFERENCE</literal> means to just re-fetch the tuple
+     without acquiring any lock, and <literal>ROW_MARK_COPY</literal> will
+     never be seen by this routine.)
     </para>
 
     <para>
@@ -1022,7 +1045,7 @@ RefetchForeignRow(EState *estate,
 
     <para>
      Note that by default, failure to acquire a row lock should result in
-     raising an error; a <literal>NULL</literal> return is only appropriate if
+     raising an error; returning with an empty slot is only appropriate if
      the <literal>SKIP LOCKED</literal> option is specified
      by <literal>erm-&gt;waitPolicy</literal>.
     </para>
@@ -1408,6 +1431,23 @@ ReparameterizeForeignPathByChild(PlannerInfo *root, List *fdw_private,
     <para>
 <programlisting>
 ForeignDataWrapper *
+GetForeignDataWrapperExtended(Oid fdwid, bits16 flags);
+</programlisting>
+
+     This function returns a <structname>ForeignDataWrapper</structname>
+     object for the foreign-data wrapper with the given OID.  A
+     <structname>ForeignDataWrapper</structname> object contains properties
+     of the FDW (see <filename>foreign/foreign.h</filename> for details).
+     <structfield>flags</structfield> is a bitwise-or'd bit mask indicating
+     an extra set of options.  It can take the value
+     <literal>FDW_MISSING_OK</literal>, in which case a <literal>NULL</literal>
+     result is returned to the caller instead of an error for an undefined
+     object.
+    </para>
+
+    <para>
+<programlisting>
+ForeignDataWrapper *
 GetForeignDataWrapper(Oid fdwid);
 </programlisting>
 
@@ -1415,6 +1455,23 @@ GetForeignDataWrapper(Oid fdwid);
      object for the foreign-data wrapper with the given OID.  A
      <structname>ForeignDataWrapper</structname> object contains properties
      of the FDW (see <filename>foreign/foreign.h</filename> for details).
+    </para>
+
+    <para>
+<programlisting>
+ForeignServer *
+GetForeignServerExtended(Oid serverid, bits16 flags);
+</programlisting>
+
+     This function returns a <structname>ForeignServer</structname> object
+     for the foreign server with the given OID.  A
+     <structname>ForeignServer</structname> object contains properties
+     of the server (see <filename>foreign/foreign.h</filename> for details).
+     <structfield>flags</structfield> is a bitwise-or'd bit mask indicating
+     an extra set of options.  It can take the value
+     <literal>FSV_MISSING_OK</literal>, in which case a <literal>NULL</literal>
+     result is returned to the caller instead of an error for an undefined
+     object.
     </para>
 
     <para>

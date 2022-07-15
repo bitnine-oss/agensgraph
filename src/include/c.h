@@ -9,7 +9,7 @@
  *	  polluting the namespace with lots of stuff...
  *
  *
- * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/c.h
@@ -305,7 +305,7 @@
 #else
 
 #ifndef bool
-typedef char bool;
+typedef unsigned char bool;
 #endif
 
 #ifndef true
@@ -414,15 +414,15 @@ typedef unsigned long long int uint64;
 
 typedef PG_INT128_TYPE int128
 #if defined(pg_attribute_aligned)
-pg_attribute_aligned(MAXIMUM_ALIGNOF)
+			pg_attribute_aligned(MAXIMUM_ALIGNOF)
 #endif
-;
+		   ;
 
 typedef unsigned PG_INT128_TYPE uint128
 #if defined(pg_attribute_aligned)
-pg_attribute_aligned(MAXIMUM_ALIGNOF)
+			pg_attribute_aligned(MAXIMUM_ALIGNOF)
 #endif
-;
+		   ;
 
 #endif
 #endif
@@ -800,8 +800,8 @@ typedef NameData *Name;
  */
 #ifndef FRONTEND
 extern void ExceptionalCondition(const char *conditionName,
-					 const char *errorType,
-					 const char *fileName, int lineNumber) pg_attribute_noreturn();
+								 const char *errorType,
+								 const char *fileName, int lineNumber) pg_attribute_noreturn();
 #endif
 
 /*
@@ -1122,14 +1122,14 @@ typedef union PGAlignedXLogBlock
 #endif
 
 /*
- * Macro that allows to cast constness away from an expression, but doesn't
+ * Macro that allows to cast constness and volatile away from an expression, but doesn't
  * allow changing the underlying type.  Enforcement of the latter
  * currently only works for gcc like compilers.
  *
  * Please note IT IS NOT SAFE to cast constness away if the result will ever
  * be modified (it would be undefined behaviour). Doing so anyway can cause
  * compiler misoptimizations or runtime crashes (modifying readonly memory).
- * It is only safe to use when the the result will not be modified, but API
+ * It is only safe to use when the result will not be modified, but API
  * design or language restrictions prevent you from declaring that
  * (e.g. because a function returns both const and non-const variables).
  *
@@ -1141,8 +1141,14 @@ typedef union PGAlignedXLogBlock
 	(StaticAssertExpr(__builtin_types_compatible_p(__typeof(expr), const underlying_type), \
 					  "wrong cast"), \
 	 (underlying_type) (expr))
+#define unvolatize(underlying_type, expr) \
+	(StaticAssertExpr(__builtin_types_compatible_p(__typeof(expr), volatile underlying_type), \
+					  "wrong cast"), \
+	 (underlying_type) (expr))
 #else
 #define unconstify(underlying_type, expr) \
+	((underlying_type) (expr))
+#define unvolatize(underlying_type, expr) \
 	((underlying_type) (expr))
 #endif
 

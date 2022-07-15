@@ -4,7 +4,7 @@
  *	  Routines for interprocess signalling
  *
  *
- * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/storage/procsignal.h
@@ -52,8 +52,8 @@ extern Size ProcSignalShmemSize(void);
 extern void ProcSignalShmemInit(void);
 
 extern void ProcSignalInit(int pss_idx);
-extern int SendProcSignal(pid_t pid, ProcSignalReason reason,
-			   BackendId backendId);
+extern int	SendProcSignal(pid_t pid, ProcSignalReason reason,
+						   BackendId backendId);
 
 extern void procsignal_sigusr1_handler(SIGNAL_ARGS);
 

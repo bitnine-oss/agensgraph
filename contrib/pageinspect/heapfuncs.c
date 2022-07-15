@@ -15,7 +15,7 @@
  * there's hardly any use case for using these without superuser-rights
  * anyway.
  *
- * Copyright (c) 2007-2018, PostgreSQL Global Development Group
+ * Copyright (c) 2007-2019, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
  *	  contrib/pageinspect/heapfuncs.c
@@ -28,7 +28,9 @@
 #include "pageinspect.h"
 
 #include "access/htup_details.h"
+#include "access/relation.h"
 #include "funcapi.h"
+#include "catalog/pg_am_d.h"
 #include "catalog/pg_type.h"
 #include "miscadmin.h"
 #include "utils/array.h"
@@ -316,6 +318,10 @@ tuple_data_split_internal(Oid relid, char *tupdata,
 
 	raw_attrs = initArrayResult(BYTEAOID, CurrentMemoryContext, false);
 	nattrs = tupdesc->natts;
+
+	if (rel->rd_rel->relam != HEAP_TABLE_AM_OID)
+		ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+						errmsg("only heap AM is supported")));
 
 	if (nattrs < (t_infomask2 & HEAP_NATTS_MASK))
 		ereport(ERROR,

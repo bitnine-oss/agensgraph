@@ -3,7 +3,7 @@
  * joinpath.c
  *	  Routines to find all possible paths for processing a set of joins
  *
- * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -38,58 +38,59 @@ set_join_pathlist_hook_type set_join_pathlist_hook = NULL;
 	(PATH_PARAM_BY_REL_SELF(path, rel) || PATH_PARAM_BY_PARENT(path, rel))
 
 static void try_partial_mergejoin_path(PlannerInfo *root,
-						   RelOptInfo *joinrel,
-						   Path *outer_path,
-						   Path *inner_path,
-						   List *pathkeys,
-						   List *mergeclauses,
-						   List *outersortkeys,
-						   List *innersortkeys,
-						   JoinType jointype,
-						   JoinPathExtraData *extra);
+									   RelOptInfo *joinrel,
+									   Path *outer_path,
+									   Path *inner_path,
+									   List *pathkeys,
+									   List *mergeclauses,
+									   List *outersortkeys,
+									   List *innersortkeys,
+									   JoinType jointype,
+									   JoinPathExtraData *extra);
 static void sort_inner_and_outer(PlannerInfo *root, RelOptInfo *joinrel,
-					 RelOptInfo *outerrel, RelOptInfo *innerrel,
-					 JoinType jointype, JoinPathExtraData *extra);
+								 RelOptInfo *outerrel, RelOptInfo *innerrel,
+								 JoinType jointype, JoinPathExtraData *extra);
 static void match_unsorted_outer(PlannerInfo *root, RelOptInfo *joinrel,
-					 RelOptInfo *outerrel, RelOptInfo *innerrel,
-					 JoinType jointype, JoinPathExtraData *extra);
-static void match_unsorted_outer_for_vle(PlannerInfo *root, RelOptInfo *joinrel,
-					 RelOptInfo *outerrel, RelOptInfo *innerrel,
-					 JoinPathExtraData *extra);
+								 RelOptInfo *outerrel, RelOptInfo *innerrel,
+								 JoinType jointype, JoinPathExtraData *extra);
 static void consider_parallel_nestloop(PlannerInfo *root,
-						   RelOptInfo *joinrel,
-						   RelOptInfo *outerrel,
-						   RelOptInfo *innerrel,
-						   JoinType jointype,
-						   JoinPathExtraData *extra);
+									   RelOptInfo *joinrel,
+									   RelOptInfo *outerrel,
+									   RelOptInfo *innerrel,
+									   JoinType jointype,
+									   JoinPathExtraData *extra);
 static void consider_parallel_mergejoin(PlannerInfo *root,
-							RelOptInfo *joinrel,
-							RelOptInfo *outerrel,
-							RelOptInfo *innerrel,
-							JoinType jointype,
-							JoinPathExtraData *extra,
-							Path *inner_cheapest_total);
+										RelOptInfo *joinrel,
+										RelOptInfo *outerrel,
+										RelOptInfo *innerrel,
+										JoinType jointype,
+										JoinPathExtraData *extra,
+										Path *inner_cheapest_total);
 static void hash_inner_and_outer(PlannerInfo *root, RelOptInfo *joinrel,
-					 RelOptInfo *outerrel, RelOptInfo *innerrel,
-					 JoinType jointype, JoinPathExtraData *extra);
+								 RelOptInfo *outerrel, RelOptInfo *innerrel,
+								 JoinType jointype, JoinPathExtraData *extra);
 static List *select_mergejoin_clauses(PlannerInfo *root,
-						 RelOptInfo *joinrel,
-						 RelOptInfo *outerrel,
-						 RelOptInfo *innerrel,
-						 List *restrictlist,
-						 JoinType jointype,
-						 bool *mergejoin_allowed);
+									  RelOptInfo *joinrel,
+									  RelOptInfo *outerrel,
+									  RelOptInfo *innerrel,
+									  List *restrictlist,
+									  JoinType jointype,
+									  bool *mergejoin_allowed);
 static void generate_mergejoin_paths(PlannerInfo *root,
-						 RelOptInfo *joinrel,
-						 RelOptInfo *innerrel,
-						 Path *outerpath,
-						 JoinType jointype,
-						 JoinPathExtraData *extra,
-						 bool useallclauses,
-						 Path *inner_cheapest_total,
-						 List *merge_pathkeys,
-						 bool is_partial);
+									 RelOptInfo *joinrel,
+									 RelOptInfo *innerrel,
+									 Path *outerpath,
+									 JoinType jointype,
+									 JoinPathExtraData *extra,
+									 bool useallclauses,
+									 Path *inner_cheapest_total,
+									 List *merge_pathkeys,
+									 bool is_partial);
 
+/* for agensgraph */
+static void match_unsorted_outer_for_vle(PlannerInfo *root, RelOptInfo *joinrel,
+										 RelOptInfo *outerrel, RelOptInfo *innerrel,
+										 JoinPathExtraData *extra);
 static void add_cyphermerge_path(PlannerInfo *root, RelOptInfo *joinrel,
 								 RelOptInfo *outerrel, RelOptInfo *innerrel,
 								 JoinPathExtraData *extra);
@@ -2045,9 +2046,12 @@ hash_inner_and_outer(PlannerInfo *root,
 
 			/*
 			 * Can we use a partial inner plan too, so that we can build a
-			 * shared hash table in parallel?
+			 * shared hash table in parallel?  We can't handle
+			 * JOIN_UNIQUE_INNER because we can't guarantee uniqueness.
 			 */
-			if (innerrel->partial_pathlist != NIL && enable_parallel_hash)
+			if (innerrel->partial_pathlist != NIL &&
+				save_jointype != JOIN_UNIQUE_INNER &&
+				enable_parallel_hash)
 			{
 				cheapest_partial_inner =
 					(Path *) linitial(innerrel->partial_pathlist);

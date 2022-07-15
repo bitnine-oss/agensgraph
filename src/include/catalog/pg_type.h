@@ -4,7 +4,7 @@
  *	  definition of the "type" system catalog (pg_type)
  *
  *
- * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/catalog/pg_type.h
@@ -99,7 +99,7 @@ CATALOG(pg_type,1247,TypeRelationId) BKI_BOOTSTRAP BKI_ROWTYPE_OID(71,TypeRelati
 	char		typdelim BKI_DEFAULT(',');
 
 	/* associated pg_class OID if a composite type, else 0 */
-	Oid			typrelid BKI_DEFAULT(0) BKI_ARRAY_DEFAULT(0);
+	Oid			typrelid BKI_DEFAULT(0) BKI_ARRAY_DEFAULT(0) BKI_LOOKUP(pg_class);
 
 	/*
 	 * If typelem is not 0 then it identifies another row in pg_type. The
@@ -211,10 +211,11 @@ CATALOG(pg_type,1247,TypeRelationId) BKI_BOOTSTRAP BKI_ROWTYPE_OID(71,TypeRelati
 	int32		typndims BKI_DEFAULT(0);
 
 	/*
-	 * Collation: 0 if type cannot use collations, DEFAULT_COLLATION_OID for
-	 * collatable base types, possibly other OID for domains
+	 * Collation: 0 if type cannot use collations, nonzero (typically
+	 * DEFAULT_COLLATION_OID) for collatable base types, possibly some other
+	 * OID for domains over collatable types
 	 */
-	Oid			typcollation BKI_DEFAULT(0);
+	Oid			typcollation BKI_DEFAULT(0) BKI_LOOKUP(pg_collation);
 
 #ifdef CATALOG_VARLEN			/* variable-length fields start here */
 
@@ -290,56 +291,57 @@ typedef FormData_pg_type *Form_pg_type;
 
 
 extern ObjectAddress TypeShellMake(const char *typeName,
-			  Oid typeNamespace,
-			  Oid ownerId);
+								   Oid typeNamespace,
+								   Oid ownerId);
 
 extern ObjectAddress TypeCreate(Oid newTypeOid,
-		   const char *typeName,
-		   Oid typeNamespace,
-		   Oid relationOid,
-		   char relationKind,
-		   Oid ownerId,
-		   int16 internalSize,
-		   char typeType,
-		   char typeCategory,
-		   bool typePreferred,
-		   char typDelim,
-		   Oid inputProcedure,
-		   Oid outputProcedure,
-		   Oid receiveProcedure,
-		   Oid sendProcedure,
-		   Oid typmodinProcedure,
-		   Oid typmodoutProcedure,
-		   Oid analyzeProcedure,
-		   Oid elementType,
-		   bool isImplicitArray,
-		   Oid arrayType,
-		   Oid baseType,
-		   const char *defaultTypeValue,
-		   char *defaultTypeBin,
-		   bool passedByValue,
-		   char alignment,
-		   char storage,
-		   int32 typeMod,
-		   int32 typNDims,
-		   bool typeNotNull,
-		   Oid typeCollation);
+								const char *typeName,
+								Oid typeNamespace,
+								Oid relationOid,
+								char relationKind,
+								Oid ownerId,
+								int16 internalSize,
+								char typeType,
+								char typeCategory,
+								bool typePreferred,
+								char typDelim,
+								Oid inputProcedure,
+								Oid outputProcedure,
+								Oid receiveProcedure,
+								Oid sendProcedure,
+								Oid typmodinProcedure,
+								Oid typmodoutProcedure,
+								Oid analyzeProcedure,
+								Oid elementType,
+								bool isImplicitArray,
+								Oid arrayType,
+								Oid baseType,
+								const char *defaultTypeValue,
+								char *defaultTypeBin,
+								bool passedByValue,
+								char alignment,
+								char storage,
+								int32 typeMod,
+								int32 typNDims,
+								bool typeNotNull,
+								Oid typeCollation);
 
 extern void GenerateTypeDependencies(Oid typeObjectId,
-						 Form_pg_type typeForm,
-						 Node *defaultExpr,
-						 void *typacl,
-						 char relationKind, /* only for relation rowtypes */
-						 bool isImplicitArray,
-						 bool isDependentType,
-						 bool rebuild);
+									 Form_pg_type typeForm,
+									 Node *defaultExpr,
+									 void *typacl,
+									 char relationKind, /* only for relation
+														 * rowtypes */
+									 bool isImplicitArray,
+									 bool isDependentType,
+									 bool rebuild);
 
 extern void RenameTypeInternal(Oid typeOid, const char *newTypeName,
-				   Oid typeNamespace);
+							   Oid typeNamespace);
 
 extern char *makeArrayTypeName(const char *typeName, Oid typeNamespace);
 
 extern bool moveArrayTypeName(Oid typeOid, const char *typeName,
-				  Oid typeNamespace);
+							  Oid typeNamespace);
 
 #endif							/* PG_TYPE_H */

@@ -24,10 +24,13 @@
 
 #include "postgres.h"
 
+#include "access/heapam.h"
 #include "access/multixact.h"
 #include "access/relscan.h"
+#include "access/tableam.h"
 #include "access/xact.h"
 #include "catalog/namespace.h"
+#include "catalog/pg_am_d.h"
 #include "catalog/pg_authid.h"
 #include "funcapi.h"
 #include "miscadmin.h"
@@ -37,7 +40,6 @@
 #include "utils/builtins.h"
 #include "utils/rel.h"
 #include "utils/snapmgr.h"
-#include "utils/tqual.h"
 #include "utils/varlena.h"
 
 PG_MODULE_MAGIC;
@@ -55,7 +57,7 @@ PG_FUNCTION_INFO_V1(pgrowlocks);
 typedef struct
 {
 	Relation	rel;
-	HeapScanDesc scan;
+	TableScanDesc scan;
 	int			ncolumns;
 } MyData;
 
@@ -70,7 +72,8 @@ Datum
 pgrowlocks(PG_FUNCTION_ARGS)
 {
 	FuncCallContext *funcctx;
-	HeapScanDesc scan;
+	TableScanDesc scan;
+	HeapScanDesc hscan;
 	HeapTuple	tuple;
 	TupleDesc	tupdesc;
 	AttInMetadata *attinmeta;
@@ -99,6 +102,10 @@ pgrowlocks(PG_FUNCTION_ARGS)
 		relrv = makeRangeVarFromNameList(textToQualifiedNameList(relname));
 		rel = relation_openrv(relrv, AccessShareLock);
 
+		if (rel->rd_rel->relam != HEAP_TABLE_AM_OID)
+			ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+							errmsg("only heap AM is supported")));
+
 		if (rel->rd_rel->relkind == RELKIND_PARTITIONED_TABLE)
 			ereport(ERROR,
 					(errcode(ERRCODE_WRONG_OBJECT_TYPE),
@@ -124,7 +131,8 @@ pgrowlocks(PG_FUNCTION_ARGS)
 			aclcheck_error(aclresult, get_relkind_objtype(rel->rd_rel->relkind),
 						   RelationGetRelationName(rel));
 
-		scan = heap_beginscan(rel, GetActiveSnapshot(), 0, NULL);
+		scan = table_beginscan(rel, GetActiveSnapshot(), 0, NULL);
+		hscan = (HeapScanDesc) scan;
 		mydata = palloc(sizeof(*mydata));
 		mydata->rel = rel;
 		mydata->scan = scan;
@@ -138,27 +146,28 @@ pgrowlocks(PG_FUNCTION_ARGS)
 	attinmeta = funcctx->attinmeta;
 	mydata = (MyData *) funcctx->user_fctx;
 	scan = mydata->scan;
+	hscan = (HeapScanDesc) scan;
 
 	/* scan the relation */
 	while ((tuple = heap_getnext(scan, ForwardScanDirection)) != NULL)
 	{
-		HTSU_Result htsu;
+		TM_Result	htsu;
 		TransactionId xmax;
 		uint16		infomask;
 
 		/* must hold a buffer lock to call HeapTupleSatisfiesUpdate */
-		LockBuffer(scan->rs_cbuf, BUFFER_LOCK_SHARE);
+		LockBuffer(hscan->rs_cbuf, BUFFER_LOCK_SHARE);
 
 		htsu = HeapTupleSatisfiesUpdate(tuple,
 										GetCurrentCommandId(false),
-										scan->rs_cbuf);
+										hscan->rs_cbuf);
 		xmax = HeapTupleHeaderGetRawXmax(tuple->t_data);
 		infomask = tuple->t_data->t_infomask;
 
 		/*
-		 * A tuple is locked if HTSU returns BeingUpdated.
+		 * A tuple is locked if HTSU returns BeingModified.
 		 */
-		if (htsu == HeapTupleBeingUpdated)
+		if (htsu == TM_BeingModified)
 		{
 			char	  **values;
 
@@ -284,7 +293,7 @@ pgrowlocks(PG_FUNCTION_ARGS)
 						 BackendXidGetPid(xmax));
 			}
 
-			LockBuffer(scan->rs_cbuf, BUFFER_LOCK_UNLOCK);
+			LockBuffer(hscan->rs_cbuf, BUFFER_LOCK_UNLOCK);
 
 			/* build a tuple */
 			tuple = BuildTupleFromCStrings(attinmeta, values);
@@ -301,12 +310,12 @@ pgrowlocks(PG_FUNCTION_ARGS)
 		}
 		else
 		{
-			LockBuffer(scan->rs_cbuf, BUFFER_LOCK_UNLOCK);
+			LockBuffer(hscan->rs_cbuf, BUFFER_LOCK_UNLOCK);
 		}
 	}
 
-	heap_endscan(scan);
-	heap_close(mydata->rel, AccessShareLock);
+	table_endscan(scan);
+	table_close(mydata->rel, AccessShareLock);
 
 	SRF_RETURN_DONE(funcctx);
 }

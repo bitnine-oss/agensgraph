@@ -5,7 +5,7 @@
  *		number of background workers for shared memory message queue
  *		testing.
  *
- * Copyright (c) 2013-2018, PostgreSQL Global Development Group
+ * Copyright (c) 2013-2019, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
  *		src/test/modules/test_shm_mq/setup.c
@@ -31,14 +31,14 @@ typedef struct
 } worker_state;
 
 static void setup_dynamic_shared_memory(int64 queue_size, int nworkers,
-							dsm_segment **segp,
-							test_shm_mq_header **hdrp,
-							shm_mq **outp, shm_mq **inp);
+										dsm_segment **segp,
+										test_shm_mq_header **hdrp,
+										shm_mq **outp, shm_mq **inp);
 static worker_state *setup_background_workers(int nworkers,
-						 dsm_segment *seg);
+											  dsm_segment *seg);
 static void cleanup_background_workers(dsm_segment *seg, Datum arg);
 static void wait_for_workers_to_become_ready(worker_state *wstate,
-								 volatile test_shm_mq_header *hdr);
+											 volatile test_shm_mq_header *hdr);
 static bool check_worker_status(worker_state *wstate);
 
 /*
@@ -280,7 +280,8 @@ wait_for_workers_to_become_ready(worker_state *wstate,
 		}
 
 		/* Wait to be signalled. */
-		WaitLatch(MyLatch, WL_LATCH_SET, 0, PG_WAIT_EXTENSION);
+		(void) WaitLatch(MyLatch, WL_LATCH_SET | WL_EXIT_ON_PM_DEATH, 0,
+						 PG_WAIT_EXTENSION);
 
 		/* Reset the latch so we don't spin. */
 		ResetLatch(MyLatch);

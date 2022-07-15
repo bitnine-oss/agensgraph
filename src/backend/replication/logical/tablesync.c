@@ -2,7 +2,7 @@
  * tablesync.c
  *	  PostgreSQL logical replication
  *
- * Copyright (c) 2012-2018, PostgreSQL Global Development Group
+ * Copyright (c) 2012-2019, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
  *	  src/backend/replication/logical/tablesync.c
@@ -88,6 +88,7 @@
 #include "miscadmin.h"
 #include "pgstat.h"
 
+#include "access/table.h"
 #include "access/xact.h"
 
 #include "catalog/pg_subscription_rel.h"
@@ -159,7 +160,6 @@ finish_sync_worker(void)
 static bool
 wait_for_relation_state_change(Oid relid, char expected_state)
 {
-	int			rc;
 	char		state;
 
 	for (;;)
@@ -192,13 +192,9 @@ wait_for_relation_state_change(Oid relid, char expected_state)
 		if (!worker)
 			return false;
 
-		rc = WaitLatch(MyLatch,
-					   WL_LATCH_SET | WL_TIMEOUT | WL_POSTMASTER_DEATH,
-					   1000L, WAIT_EVENT_LOGICAL_SYNC_STATE_CHANGE);
-
-		/* emergency bailout if postmaster has died */
-		if (rc & WL_POSTMASTER_DEATH)
-			proc_exit(1);
+		(void) WaitLatch(MyLatch,
+						 WL_LATCH_SET | WL_TIMEOUT | WL_EXIT_ON_PM_DEATH,
+						 1000L, WAIT_EVENT_LOGICAL_SYNC_STATE_CHANGE);
 
 		ResetLatch(MyLatch);
 	}
@@ -250,12 +246,8 @@ wait_for_worker_state_change(char expected_state)
 		 * but use a timeout in case it dies without sending one.
 		 */
 		rc = WaitLatch(MyLatch,
-					   WL_LATCH_SET | WL_TIMEOUT | WL_POSTMASTER_DEATH,
+					   WL_LATCH_SET | WL_TIMEOUT | WL_EXIT_ON_PM_DEATH,
 					   1000L, WAIT_EVENT_LOGICAL_SYNC_STATE_CHANGE);
-
-		/* emergency bailout if postmaster has died */
-		if (rc & WL_POSTMASTER_DEATH)
-			proc_exit(1);
 
 		if (rc & WL_LATCH_SET)
 			ResetLatch(MyLatch);
@@ -593,7 +585,6 @@ copy_read_data(void *outbuf, int minread, int maxread)
 	while (maxread > 0 && bytesread < minread)
 	{
 		pgsocket	fd = PGINVALID_SOCKET;
-		int			rc;
 		int			len;
 		char	   *buf = NULL;
 
@@ -632,14 +623,10 @@ copy_read_data(void *outbuf, int minread, int maxread)
 		/*
 		 * Wait for more data or latch.
 		 */
-		rc = WaitLatchOrSocket(MyLatch,
-							   WL_SOCKET_READABLE | WL_LATCH_SET |
-							   WL_TIMEOUT | WL_POSTMASTER_DEATH,
-							   fd, 1000L, WAIT_EVENT_LOGICAL_SYNC_DATA);
-
-		/* Emergency bailout if postmaster has died */
-		if (rc & WL_POSTMASTER_DEATH)
-			proc_exit(1);
+		(void) WaitLatchOrSocket(MyLatch,
+								 WL_SOCKET_READABLE | WL_LATCH_SET |
+								 WL_TIMEOUT | WL_EXIT_ON_PM_DEATH,
+								 fd, 1000L, WAIT_EVENT_LOGICAL_SYNC_DATA);
 
 		ResetLatch(MyLatch);
 	}
@@ -710,10 +697,12 @@ fetch_remote_table_info(char *nspname, char *relname,
 					 "  LEFT JOIN pg_catalog.pg_index i"
 					 "       ON (i.indexrelid = pg_get_replica_identity_index(%u))"
 					 " WHERE a.attnum > 0::pg_catalog.int2"
-					 "   AND NOT a.attisdropped"
+					 "   AND NOT a.attisdropped %s"
 					 "   AND a.attrelid = %u"
 					 " ORDER BY a.attnum",
-					 lrel->remoteid, lrel->remoteid);
+					 lrel->remoteid,
+					 (walrcv_server_version(wrconn) >= 120000 ? "AND a.attgenerated = ''" : ""),
+					 lrel->remoteid);
 	res = walrcv_exec(wrconn, cmd.data, 4, attrRow);
 
 	if (res->status != WALRCV_OK_TUPLES)
@@ -890,7 +879,7 @@ LogicalRepSyncTableStart(XLogRecPtr *origin_startpos)
 				 * working and it has to open the relation in RowExclusiveLock
 				 * when remapping remote relation id to local one.
 				 */
-				rel = heap_open(MyLogicalRepWorker->relid, RowExclusiveLock);
+				rel = table_open(MyLogicalRepWorker->relid, RowExclusiveLock);
 
 				/*
 				 * Create a temporary slot for the sync process. We do this
@@ -928,7 +917,7 @@ LogicalRepSyncTableStart(XLogRecPtr *origin_startpos)
 							 errdetail("The error was: %s", res->err)));
 				walrcv_clear_result(res);
 
-				heap_close(rel, NoLock);
+				table_close(rel, NoLock);
 
 				/* Make the copy visible. */
 				CommandCounterIncrement();

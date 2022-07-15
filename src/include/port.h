@@ -3,7 +3,7 @@
  * port.h
  *	  Header for src/port/ compatibility functions.
  *
- * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/port.h
@@ -48,7 +48,7 @@ extern char *first_dir_separator(const char *filename);
 extern char *last_dir_separator(const char *filename);
 extern char *first_path_var_separator(const char *pathlist);
 extern void join_path_components(char *ret_path,
-					 const char *head, const char *tail);
+								 const char *head, const char *tail);
 extern void canonicalize_path(char *path);
 extern void make_native_path(char *path);
 extern void cleanup_path(char *path);
@@ -104,8 +104,8 @@ extern void set_pglocale_pgservice(const char *argv0, const char *app);
 
 /* Portable way to find binaries (in exec.c) */
 extern int	find_my_exec(const char *argv0, char *retpath);
-extern int find_other_exec(const char *argv0, const char *target,
-				const char *versionstr, char *retpath);
+extern int	find_other_exec(const char *argv0, const char *target,
+							const char *versionstr, char *retpath);
 
 /* Doesn't belong here, but this is used with find_other_exec(), so... */
 #define PG_BACKEND_VERSIONSTR "postgres (PostgreSQL) " PG_VERSION "\n"
@@ -209,9 +209,12 @@ extern char *pg_strerror_r(int errnum, char *buf, size_t buflen);
 #define strerror_r pg_strerror_r
 #define PG_STRERROR_R_BUFLEN 256	/* Recommended buffer size for strerror_r */
 
+/* Wrap strsignal(), or provide our own version if necessary */
+extern const char *pg_strsignal(int signum);
+
 /* Portable prompt handling */
 extern void simple_prompt(const char *prompt, char *destination, size_t destlen,
-			  bool echo);
+						  bool echo);
 
 extern int	pclose_check(FILE *stream);
 
@@ -378,6 +381,15 @@ extern int	isinf(double x);
 #endif							/* __clang__ && !__cplusplus */
 #endif							/* !HAVE_ISINF */
 
+#ifndef HAVE_STRTOF
+extern float strtof(const char *nptr, char **endptr);
+#endif
+
+#ifdef HAVE_BUGGY_STRTOF
+extern float pg_strtof(const char *nptr, char **endptr);
+#define strtof(a,b) (pg_strtof((a),(b)))
+#endif
+
 #ifndef HAVE_MKDTEMP
 extern char *mkdtemp(char *path);
 #endif
@@ -462,18 +474,18 @@ extern char *dlerror(void);
 
 /* thread.h */
 #ifndef WIN32
-extern int pqGetpwuid(uid_t uid, struct passwd *resultbuf, char *buffer,
-		   size_t buflen, struct passwd **result);
+extern int	pqGetpwuid(uid_t uid, struct passwd *resultbuf, char *buffer,
+					   size_t buflen, struct passwd **result);
 #endif
 
-extern int pqGethostbyname(const char *name,
-				struct hostent *resultbuf,
-				char *buffer, size_t buflen,
-				struct hostent **result,
-				int *herrno);
+extern int	pqGethostbyname(const char *name,
+							struct hostent *resultbuf,
+							char *buffer, size_t buflen,
+							struct hostent **result,
+							int *herrno);
 
 extern void pg_qsort(void *base, size_t nel, size_t elsize,
-		 int (*cmp) (const void *, const void *));
+					 int (*cmp) (const void *, const void *));
 extern int	pg_qsort_strcmp(const void *a, const void *b);
 
 #define qsort(a,b,c,d) pg_qsort(a,b,c,d)
@@ -481,7 +493,7 @@ extern int	pg_qsort_strcmp(const void *a, const void *b);
 typedef int (*qsort_arg_comparator) (const void *a, const void *b, void *arg);
 
 extern void qsort_arg(void *base, size_t nel, size_t elsize,
-		  qsort_arg_comparator cmp, void *arg);
+					  qsort_arg_comparator cmp, void *arg);
 
 /* port/chklocale.c */
 extern int	pg_get_encoding_from_locale(const char *ctype, bool write_message);
@@ -492,12 +504,16 @@ extern int	pg_codepage_to_encoding(UINT cp);
 
 /* port/inet_net_ntop.c */
 extern char *inet_net_ntop(int af, const void *src, int bits,
-			  char *dst, size_t size);
+						   char *dst, size_t size);
 
 /* port/pg_strong_random.c */
-#ifdef HAVE_STRONG_RANDOM
 extern bool pg_strong_random(void *buf, size_t len);
-#endif
+
+/*
+ * pg_backend_random used to be a wrapper for pg_strong_random before
+ * Postgres 12 for the backend code.
+ */
+#define pg_backend_random pg_strong_random
 
 /* port/pgcheckdir.c */
 extern int	pg_check_dir(const char *dir);
@@ -517,7 +533,9 @@ extern pqsigfunc pqsignal_no_restart(int signo, pqsigfunc func);
 /* port/quotes.c */
 extern char *escape_single_quotes_ascii(const char *src);
 
-/* port/wait_error.c */
+/* common/wait_error.c */
 extern char *wait_result_to_str(int exit_status);
+extern bool wait_result_is_signal(int exit_status, int signum);
+extern bool wait_result_is_any_signal(int exit_status, bool include_command_not_found);
 
 #endif							/* PG_PORT_H */

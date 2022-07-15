@@ -173,16 +173,18 @@ jsonb_uminus(PG_FUNCTION_ARGS)
 static Jsonb *
 jnumber_op(PGFunction f, Jsonb *l, Jsonb *r)
 {
-	FunctionCallInfoData fcinfo;
-	JsonbValue *jv;
+	FunctionCallInfo fcinfo;
+	JsonbValue	*jv;
 	Datum		n;
+	Jsonb		*op_result = NULL;
 
 	AssertArg(r != NULL);
 
 	if (!((l == NULL || JB_ROOT_IS_SCALAR(l)) && JB_ROOT_IS_SCALAR(r)))
 		ereport_op(f, l, r);
 
-	InitFunctionCallInfoData(fcinfo, NULL, 0, InvalidOid, NULL, NULL);
+	fcinfo = palloc(SizeForFunctionCallInfo(2));
+	InitFunctionCallInfoData(*fcinfo, NULL, 0, InvalidOid, NULL, NULL);
 
 	if (l != NULL)
 	{
@@ -190,34 +192,36 @@ jnumber_op(PGFunction f, Jsonb *l, Jsonb *r)
 		if (jv->type != jbvNumeric)
 			ereport_op(f, l, r);
 
-		fcinfo.arg[fcinfo.nargs] = NumericGetDatum(jv->val.numeric);
-		fcinfo.argnull[fcinfo.nargs] = false;
-		fcinfo.nargs++;
+		fcinfo->args[fcinfo->nargs].value = NumericGetDatum(jv->val.numeric);
+		fcinfo->args[fcinfo->nargs].isnull = false;
+		fcinfo->nargs++;
 	}
 
 	jv = getIthJsonbValueFromContainer(&r->root, 0);
 	if (jv->type != jbvNumeric)
 		ereport_op(f, l, r);
 
-	fcinfo.arg[fcinfo.nargs] = NumericGetDatum(jv->val.numeric);
-	fcinfo.argnull[fcinfo.nargs] = false;
-	fcinfo.nargs++;
+	fcinfo->args[fcinfo->nargs].value = NumericGetDatum(jv->val.numeric);
+	fcinfo->args[fcinfo->nargs].isnull = false;
+	fcinfo->nargs++;
 
-	n = (*f) (&fcinfo);
-	if (fcinfo.isnull)
+	n = (*f) (fcinfo);
+	if (fcinfo->isnull)
 		elog(ERROR, "function %p returned NULL", (void *) f);
 
 	if (f == numeric_power || f == numeric_div)
 	{
 		int			s;
 
-		s = DatumGetInt32(DirectFunctionCall1(numeric_scale, fcinfo.arg[0])) +
-			DatumGetInt32(DirectFunctionCall1(numeric_scale, fcinfo.arg[1]));
+		s = DatumGetInt32(DirectFunctionCall1(numeric_scale, fcinfo->args[0].value)) +
+			DatumGetInt32(DirectFunctionCall1(numeric_scale, fcinfo->args[1].value));
 		if (s == 0)
 			n = DirectFunctionCall2(numeric_trunc, n, 0);
 	}
 
-	return numeric_to_jnumber(DatumGetNumeric(n));
+	op_result = numeric_to_jnumber(DatumGetNumeric(n));
+	pfree(fcinfo);
+	return op_result;
 }
 
 static Jsonb *

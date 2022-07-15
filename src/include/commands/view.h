@@ -4,7 +4,7 @@
  *
  *
  *
- * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/commands/view.h
@@ -20,7 +20,7 @@
 extern void validateWithCheckOption(const char *value);
 
 extern ObjectAddress DefineView(ViewStmt *stmt, const char *queryString,
-		   int stmt_location, int stmt_len);
+								int stmt_location, int stmt_len);
 
 extern void StoreViewQuery(Oid viewOid, Query *viewParse, bool replace);
 

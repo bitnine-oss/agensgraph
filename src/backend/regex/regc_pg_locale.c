@@ -6,7 +6,7 @@
  *
  * This file is #included by regcomp.c; it's not meant to compile standalone.
  *
- * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -262,6 +262,11 @@ pg_set_regex_collation(Oid collation)
 					 errmsg("could not determine which collation to use for regular expression"),
 					 errhint("Use the COLLATE clause to set the collation explicitly.")));
 		}
+
+		if (pg_regex_locale && !pg_regex_locale->deterministic)
+			ereport(ERROR,
+					(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+					 errmsg("nondeterministic collations are not supported for regular expressions")));
 
 #ifdef USE_ICU
 		if (pg_regex_locale && pg_regex_locale->provider == COLLPROVIDER_ICU)

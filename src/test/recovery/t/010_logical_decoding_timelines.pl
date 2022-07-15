@@ -76,7 +76,7 @@ $node_replica->init_from_backup(
 	$node_master, $backup_name,
 	has_streaming => 1,
 	has_restoring => 1);
-$node_replica->append_conf('recovery.conf',
+$node_replica->append_conf('postgresql.conf',
 	q[primary_slot_name = 'phys_slot']);
 
 $node_replica->start;
@@ -183,7 +183,7 @@ my $endpos = $node_replica->safe_psql('postgres',
 
 $stdout = $node_replica->pg_recvlogical_upto(
 	'postgres', 'before_basebackup',
-	$endpos,    30,
+	$endpos,    180,
 	'include-xids'     => '0',
 	'skip-empty-xacts' => '1');
 

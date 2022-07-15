@@ -3,7 +3,7 @@
 # pg_opfamily.dat
 #    Initial contents of the pg_opfamily system catalog.
 #
-# Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
+# Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
 # Portions Copyright (c) 1994, Regents of the University of California
 #
 # src/include/catalog/pg_opfamily.dat
@@ -62,10 +62,6 @@
   opfmethod => 'btree', opfname => 'macaddr8_ops' },
 { oid => '3372',
   opfmethod => 'hash', opfname => 'macaddr8_ops' },
-{ oid => '1986', oid_symbol => 'NAME_BTREE_FAM_OID',
-  opfmethod => 'btree', opfname => 'name_ops' },
-{ oid => '1987',
-  opfmethod => 'hash', opfname => 'name_ops' },
 { oid => '1988',
   opfmethod => 'btree', opfname => 'numeric_ops' },
 { oid => '1998',
@@ -116,6 +112,8 @@
   opfmethod => 'hash', opfname => 'xid_ops' },
 { oid => '2226',
   opfmethod => 'hash', opfname => 'cid_ops' },
+{ oid => '2227',
+  opfmethod => 'hash', opfname => 'tid_ops' },
 { oid => '2229',
   opfmethod => 'hash', opfname => 'text_pattern_ops' },
 { oid => '2231',

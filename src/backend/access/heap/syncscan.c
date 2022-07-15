@@ -36,7 +36,7 @@
  *		ss_report_location	- update current scan location
  *
  *
- * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -116,7 +116,7 @@ static ss_scan_locations_t *scan_locations;
 
 /* prototypes for internal functions */
 static BlockNumber ss_search(RelFileNode relfilenode,
-		  BlockNumber location, bool set);
+							 BlockNumber location, bool set);
 
 
 /*

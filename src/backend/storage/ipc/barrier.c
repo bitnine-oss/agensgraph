@@ -3,7 +3,7 @@
  * barrier.c
  *	  Barriers for synchronizing cooperating processes.
  *
- * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * From Wikipedia[1]: "In parallel computing, a barrier is a type of
@@ -113,7 +113,7 @@ BarrierInit(Barrier *barrier, int participants)
  * too and then return.  Increments the current phase.  The caller must be
  * attached.
  *
- * While waiting, pg_stat_activity shows a wait_event_class and wait_event
+ * While waiting, pg_stat_activity shows a wait_event_type and wait_event
  * controlled by the wait_event_info passed in, which should be a value from
  * one of the WaitEventXXX enums defined in pgstat.h.
  *
@@ -226,9 +226,9 @@ BarrierAttach(Barrier *barrier)
 }
 
 /*
- * Detach from a barrier.  This may release other waiters from BarrierWait and
- * advance the phase if they were only waiting for this backend.  Return true
- * if this participant was the last to detach.
+ * Detach from a barrier.  This may release other waiters from
+ * BarrierArriveAndWait() and advance the phase if they were only waiting for
+ * this backend.  Return true if this participant was the last to detach.
  */
 bool
 BarrierDetach(Barrier *barrier)

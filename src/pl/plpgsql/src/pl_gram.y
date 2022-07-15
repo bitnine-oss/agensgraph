@@ -3,7 +3,7 @@
  *
  * pl_gram.y			- Parser for the PL/pgSQL procedural language
  *
- * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -219,6 +219,8 @@ static	void			check_raise_parameters(PLpgSQL_stmt_raise *stmt);
 %type <ival>	opt_scrollable
 %type <fetch>	opt_fetch_direction
 
+%type <ival>	opt_transaction_chain
+
 %type <keyword>	unreserved_keyword
 
 
@@ -252,6 +254,7 @@ static	void			check_raise_parameters(PLpgSQL_stmt_raise *stmt);
 %token <keyword>	K_ABSOLUTE
 %token <keyword>	K_ALIAS
 %token <keyword>	K_ALL
+%token <keyword>	K_AND
 %token <keyword>	K_ARRAY
 %token <keyword>	K_ASSERT
 %token <keyword>	K_BACKWARD
@@ -259,6 +262,7 @@ static	void			check_raise_parameters(PLpgSQL_stmt_raise *stmt);
 %token <keyword>	K_BY
 %token <keyword>	K_CALL
 %token <keyword>	K_CASE
+%token <keyword>	K_CHAIN
 %token <keyword>	K_CLOSE
 %token <keyword>	K_COLLATE
 %token <keyword>	K_COLUMN
@@ -414,6 +418,7 @@ pl_block		: decl_sect K_BEGIN proc_sect exception_sect K_END opt_label
 
 						new->cmd_type	= PLPGSQL_STMT_BLOCK;
 						new->lineno		= plpgsql_location_to_lineno(@2);
+						new->stmtid		= ++plpgsql_curr_compile->nstatements;
 						new->label		= $1.label;
 						new->n_initvars = $1.n_initvars;
 						new->initvarnos = $1.initvarnos;
@@ -905,6 +910,7 @@ stmt_perform	: K_PERFORM expr_until_semi
 						new = palloc0(sizeof(PLpgSQL_stmt_perform));
 						new->cmd_type = PLPGSQL_STMT_PERFORM;
 						new->lineno   = plpgsql_location_to_lineno(@1);
+						new->stmtid = ++plpgsql_curr_compile->nstatements;
 						new->expr  = $2;
 
 						$$ = (PLpgSQL_stmt *)new;
@@ -918,6 +924,7 @@ stmt_call		: K_CALL
 						new = palloc0(sizeof(PLpgSQL_stmt_call));
 						new->cmd_type = PLPGSQL_STMT_CALL;
 						new->lineno = plpgsql_location_to_lineno(@1);
+						new->stmtid = ++plpgsql_curr_compile->nstatements;
 						new->expr = read_sql_stmt("CALL ");
 						new->is_call = true;
 
@@ -932,6 +939,7 @@ stmt_call		: K_CALL
 						new = palloc0(sizeof(PLpgSQL_stmt_call));
 						new->cmd_type = PLPGSQL_STMT_CALL;
 						new->lineno = plpgsql_location_to_lineno(@1);
+						new->stmtid = ++plpgsql_curr_compile->nstatements;
 						new->expr = read_sql_stmt("DO ");
 						new->is_call = false;
 
@@ -947,6 +955,7 @@ stmt_assign		: assign_var assign_operator expr_until_semi
 						new = palloc0(sizeof(PLpgSQL_stmt_assign));
 						new->cmd_type = PLPGSQL_STMT_ASSIGN;
 						new->lineno   = plpgsql_location_to_lineno(@1);
+						new->stmtid = ++plpgsql_curr_compile->nstatements;
 						new->varno = $1->dno;
 						new->expr  = $3;
 
@@ -962,6 +971,7 @@ stmt_getdiag	: K_GET getdiag_area_opt K_DIAGNOSTICS getdiag_list ';'
 						new = palloc0(sizeof(PLpgSQL_stmt_getdiag));
 						new->cmd_type = PLPGSQL_STMT_GETDIAG;
 						new->lineno   = plpgsql_location_to_lineno(@1);
+						new->stmtid	  = ++plpgsql_curr_compile->nstatements;
 						new->is_stacked = $2;
 						new->diag_items = $4;
 
@@ -1149,6 +1159,7 @@ stmt_if			: K_IF expr_until_then proc_sect stmt_elsifs stmt_else K_END K_IF ';'
 						new = palloc0(sizeof(PLpgSQL_stmt_if));
 						new->cmd_type	= PLPGSQL_STMT_IF;
 						new->lineno		= plpgsql_location_to_lineno(@1);
+						new->stmtid		= ++plpgsql_curr_compile->nstatements;
 						new->cond		= $2;
 						new->then_body	= $3;
 						new->elsif_list = $4;
@@ -1253,6 +1264,7 @@ stmt_loop		: opt_loop_label K_LOOP loop_body
 						new = palloc0(sizeof(PLpgSQL_stmt_loop));
 						new->cmd_type = PLPGSQL_STMT_LOOP;
 						new->lineno   = plpgsql_location_to_lineno(@2);
+						new->stmtid   = ++plpgsql_curr_compile->nstatements;
 						new->label	  = $1;
 						new->body	  = $3.stmts;
 
@@ -1270,6 +1282,7 @@ stmt_while		: opt_loop_label K_WHILE expr_until_loop loop_body
 						new = palloc0(sizeof(PLpgSQL_stmt_while));
 						new->cmd_type = PLPGSQL_STMT_WHILE;
 						new->lineno   = plpgsql_location_to_lineno(@2);
+						new->stmtid	  = ++plpgsql_curr_compile->nstatements;
 						new->label	  = $1;
 						new->cond	  = $3;
 						new->body	  = $4.stmts;
@@ -1290,6 +1303,7 @@ stmt_for		: opt_loop_label K_FOR for_control loop_body
 
 							new = (PLpgSQL_stmt_fori *) $3;
 							new->lineno   = plpgsql_location_to_lineno(@2);
+							new->stmtid	  = ++plpgsql_curr_compile->nstatements;
 							new->label	  = $1;
 							new->body	  = $4.stmts;
 							$$ = (PLpgSQL_stmt *) new;
@@ -1304,6 +1318,7 @@ stmt_for		: opt_loop_label K_FOR for_control loop_body
 							/* forq is the common supertype of all three */
 							new = (PLpgSQL_stmt_forq *) $3;
 							new->lineno   = plpgsql_location_to_lineno(@2);
+							new->stmtid	  = ++plpgsql_curr_compile->nstatements;
 							new->label	  = $1;
 							new->body	  = $4.stmts;
 							$$ = (PLpgSQL_stmt *) new;
@@ -1333,6 +1348,7 @@ for_control		: for_variable K_IN
 
 							new = palloc0(sizeof(PLpgSQL_stmt_dynfors));
 							new->cmd_type = PLPGSQL_STMT_DYNFORS;
+							new->stmtid	  = ++plpgsql_curr_compile->nstatements;
 							if ($1.row)
 							{
 								new->var = (PLpgSQL_variable *) $1.row;
@@ -1378,6 +1394,7 @@ for_control		: for_variable K_IN
 
 							new = (PLpgSQL_stmt_forc *) palloc0(sizeof(PLpgSQL_stmt_forc));
 							new->cmd_type = PLPGSQL_STMT_FORC;
+							new->stmtid = ++plpgsql_curr_compile->nstatements;
 							new->curvar = cursor->dno;
 
 							/* Should have had a single variable name */
@@ -1492,6 +1509,7 @@ for_control		: for_variable K_IN
 
 								new = palloc0(sizeof(PLpgSQL_stmt_fori));
 								new->cmd_type = PLPGSQL_STMT_FORI;
+								new->stmtid	  = ++plpgsql_curr_compile->nstatements;
 								new->var	  = fvar;
 								new->reverse  = reverse;
 								new->lower	  = expr1;
@@ -1526,6 +1544,7 @@ for_control		: for_variable K_IN
 
 								new = palloc0(sizeof(PLpgSQL_stmt_fors));
 								new->cmd_type = PLPGSQL_STMT_FORS;
+								new->stmtid = ++plpgsql_curr_compile->nstatements;
 								if ($1.row)
 								{
 									new->var = (PLpgSQL_variable *) $1.row;
@@ -1626,6 +1645,7 @@ stmt_foreach_a	: opt_loop_label K_FOREACH for_variable foreach_slice K_IN K_ARRA
 						new = palloc0(sizeof(PLpgSQL_stmt_foreach_a));
 						new->cmd_type = PLPGSQL_STMT_FOREACH_A;
 						new->lineno = plpgsql_location_to_lineno(@2);
+						new->stmtid = ++plpgsql_curr_compile->nstatements;
 						new->label = $1;
 						new->slice = $4;
 						new->expr = $7;
@@ -1672,6 +1692,7 @@ stmt_exit		: exit_type opt_label opt_exitcond
 
 						new = palloc0(sizeof(PLpgSQL_stmt_exit));
 						new->cmd_type = PLPGSQL_STMT_EXIT;
+						new->stmtid	  = ++plpgsql_curr_compile->nstatements;
 						new->is_exit  = $1;
 						new->lineno	  = plpgsql_location_to_lineno(@1);
 						new->label	  = $2;
@@ -1763,6 +1784,7 @@ stmt_raise		: K_RAISE
 
 						new->cmd_type	= PLPGSQL_STMT_RAISE;
 						new->lineno		= plpgsql_location_to_lineno(@1);
+						new->stmtid		= ++plpgsql_curr_compile->nstatements;
 						new->elog_level = ERROR;	/* default */
 						new->condname	= NULL;
 						new->message	= NULL;
@@ -1907,6 +1929,7 @@ stmt_assert		: K_ASSERT
 
 						new->cmd_type	= PLPGSQL_STMT_ASSERT;
 						new->lineno		= plpgsql_location_to_lineno(@1);
+						new->stmtid		= ++plpgsql_curr_compile->nstatements;
 
 						new->cond = read_sql_expression2(',', ';',
 														 ", or ;",
@@ -1984,6 +2007,7 @@ stmt_dynexecute : K_EXECUTE
 						new = palloc(sizeof(PLpgSQL_stmt_dynexecute));
 						new->cmd_type = PLPGSQL_STMT_DYNEXECUTE;
 						new->lineno = plpgsql_location_to_lineno(@1);
+						new->stmtid = ++plpgsql_curr_compile->nstatements;
 						new->query = expr;
 						new->into = false;
 						new->strict = false;
@@ -2040,6 +2064,7 @@ stmt_open		: K_OPEN cursor_variable
 						new = palloc0(sizeof(PLpgSQL_stmt_open));
 						new->cmd_type = PLPGSQL_STMT_OPEN;
 						new->lineno = plpgsql_location_to_lineno(@1);
+						new->stmtid = ++plpgsql_curr_compile->nstatements;
 						new->curvar = $2->dno;
 						new->cursor_options = CURSOR_OPT_FAST_PLAN;
 
@@ -2164,6 +2189,7 @@ stmt_close		: K_CLOSE cursor_variable ';'
 						new = palloc(sizeof(PLpgSQL_stmt_close));
 						new->cmd_type = PLPGSQL_STMT_CLOSE;
 						new->lineno = plpgsql_location_to_lineno(@1);
+						new->stmtid = ++plpgsql_curr_compile->nstatements;
 						new->curvar = $2->dno;
 
 						$$ = (PLpgSQL_stmt *)new;
@@ -2177,28 +2203,38 @@ stmt_null		: K_NULL ';'
 					}
 				;
 
-stmt_commit		: K_COMMIT ';'
+stmt_commit		: K_COMMIT opt_transaction_chain ';'
 					{
 						PLpgSQL_stmt_commit *new;
 
 						new = palloc(sizeof(PLpgSQL_stmt_commit));
 						new->cmd_type = PLPGSQL_STMT_COMMIT;
 						new->lineno = plpgsql_location_to_lineno(@1);
+						new->stmtid = ++plpgsql_curr_compile->nstatements;
+						new->chain = $2;
 
 						$$ = (PLpgSQL_stmt *)new;
 					}
 				;
 
-stmt_rollback	: K_ROLLBACK ';'
+stmt_rollback	: K_ROLLBACK opt_transaction_chain ';'
 					{
 						PLpgSQL_stmt_rollback *new;
 
 						new = palloc(sizeof(PLpgSQL_stmt_rollback));
 						new->cmd_type = PLPGSQL_STMT_ROLLBACK;
 						new->lineno = plpgsql_location_to_lineno(@1);
+						new->stmtid = ++plpgsql_curr_compile->nstatements;
+						new->chain = $2;
 
 						$$ = (PLpgSQL_stmt *)new;
 					}
+				;
+
+opt_transaction_chain:
+			K_AND K_CHAIN			{ $$ = true; }
+			| K_AND K_NO K_CHAIN	{ $$ = false; }
+			| /* EMPTY */			{ $$ = false; }
 				;
 
 stmt_set	: K_SET
@@ -2208,6 +2244,8 @@ stmt_set	: K_SET
 						new = palloc0(sizeof(PLpgSQL_stmt_set));
 						new->cmd_type = PLPGSQL_STMT_SET;
 						new->lineno = plpgsql_location_to_lineno(@1);
+						new->stmtid = ++plpgsql_curr_compile->nstatements;
+
 						new->expr = read_sql_stmt("SET ");
 
 						$$ = (PLpgSQL_stmt *)new;
@@ -2219,6 +2257,7 @@ stmt_set	: K_SET
 						new = palloc0(sizeof(PLpgSQL_stmt_set));
 						new->cmd_type = PLPGSQL_STMT_SET;
 						new->lineno = plpgsql_location_to_lineno(@1);
+						new->stmtid = ++plpgsql_curr_compile->nstatements;
 						new->expr = read_sql_stmt("RESET ");
 
 						$$ = (PLpgSQL_stmt *)new;
@@ -2455,10 +2494,12 @@ any_identifier	: T_WORD
 unreserved_keyword	:
 				K_ABSOLUTE
 				| K_ALIAS
+				| K_AND
 				| K_ARRAY
 				| K_ASSERT
 				| K_BACKWARD
 				| K_CALL
+				| K_CHAIN
 				| K_CLOSE
 				| K_COLLATE
 				| K_COLUMN
@@ -3000,6 +3041,7 @@ make_execsql_stmt(int firsttoken, int location)
 	execsql = palloc(sizeof(PLpgSQL_stmt_execsql));
 	execsql->cmd_type = PLPGSQL_STMT_EXECSQL;
 	execsql->lineno  = plpgsql_location_to_lineno(location);
+	execsql->stmtid  = ++plpgsql_curr_compile->nstatements;
 	execsql->sqlstmt = expr;
 	execsql->into	 = have_into;
 	execsql->strict	 = have_strict;
@@ -3025,6 +3067,7 @@ read_fetch_direction(void)
 	 */
 	fetch = (PLpgSQL_stmt_fetch *) palloc0(sizeof(PLpgSQL_stmt_fetch));
 	fetch->cmd_type = PLPGSQL_STMT_FETCH;
+	fetch->stmtid	= ++plpgsql_curr_compile->nstatements;
 	/* set direction defaults: */
 	fetch->direction = FETCH_FORWARD;
 	fetch->how_many  = 1;
@@ -3177,6 +3220,7 @@ make_return_stmt(int location)
 	new = palloc0(sizeof(PLpgSQL_stmt_return));
 	new->cmd_type = PLPGSQL_STMT_RETURN;
 	new->lineno   = plpgsql_location_to_lineno(location);
+	new->stmtid	  = ++plpgsql_curr_compile->nstatements;
 	new->expr	  = NULL;
 	new->retvarno = -1;
 
@@ -3264,6 +3308,7 @@ make_return_next_stmt(int location)
 	new = palloc0(sizeof(PLpgSQL_stmt_return_next));
 	new->cmd_type	= PLPGSQL_STMT_RETURN_NEXT;
 	new->lineno		= plpgsql_location_to_lineno(location);
+	new->stmtid		= ++plpgsql_curr_compile->nstatements;
 	new->expr		= NULL;
 	new->retvarno	= -1;
 
@@ -3327,6 +3372,7 @@ make_return_query_stmt(int location)
 	new = palloc0(sizeof(PLpgSQL_stmt_return_query));
 	new->cmd_type = PLPGSQL_STMT_RETURN_QUERY;
 	new->lineno = plpgsql_location_to_lineno(location);
+	new->stmtid = ++plpgsql_curr_compile->nstatements;
 
 	/* check for RETURN QUERY EXECUTE */
 	if ((tok = yylex()) != K_EXECUTE)
@@ -3997,6 +4043,7 @@ make_case(int location, PLpgSQL_expr *t_expr,
 	new = palloc(sizeof(PLpgSQL_stmt_case));
 	new->cmd_type = PLPGSQL_STMT_CASE;
 	new->lineno = plpgsql_location_to_lineno(location);
+	new->stmtid = ++plpgsql_curr_compile->nstatements;
 	new->t_expr = t_expr;
 	new->t_varno = 0;
 	new->case_when_list = case_when_list;

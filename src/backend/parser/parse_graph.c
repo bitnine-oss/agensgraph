@@ -53,6 +53,8 @@
 #include "utils/syscache.h"
 #include "utils/typcache.h"
 #include "catalog/pg_inherits.h"
+#include "access/table.h"
+#include "access/genam.h"
 
 #define CYPHER_SUBQUERY_ALIAS	"_"
 #define CYPHER_OPTMATCH_ALIAS	"_o"
@@ -2850,7 +2852,7 @@ genVLEEdgeSubselect(ParseState *pstate, CypherRel *crel, char *aliasname)
 			edge = (Node *) r;
 		}
 
-		heap_close(rel, NoLock);
+		table_close(rel, NoLock);
 	}
 
 	return edge;
@@ -2972,7 +2974,7 @@ genInhEdge(RangeVar *r, Oid parentoid)
 							   -1);
 		childrv->inh = true;
 
-		heap_close(childrel, AccessShareLock);
+		table_close(childrel, AccessShareLock);
 
 		rsel = copyObject(sel);
 		rsel->fromClause = list_delete_first(rsel->fromClause);
@@ -3614,7 +3616,7 @@ hasGinOnProp(Oid relid)
 
 	if (!rel->rd_rel->relhasindex)
 	{
-		heap_close(rel, NoLock);
+		table_close(rel, NoLock);
 
 		return false;
 	}
@@ -3631,7 +3633,7 @@ hasGinOnProp(Oid relid)
 		indexRel = index_open(indexoid, AccessShareLock);
 		index = indexRel->rd_index;
 
-		if (!IndexIsValid(index))
+		if (!index->indisvalid)
 		{
 			index_close(indexRel, AccessShareLock);
 			continue;
@@ -3671,7 +3673,7 @@ hasGinOnProp(Oid relid)
 
 	list_free(indexoidlist);
 
-	heap_close(rel, NoLock);
+	table_close(rel, NoLock);
 
 	return ret;
 }
@@ -4189,7 +4191,7 @@ transformCreateNode(ParseState *pstate, CypherNode *cnode, List **targetList)
 		relid = RelationGetRelid(relation);
 
 		/* keep the lock */
-		heap_close(relation, NoLock);
+		table_close(relation, NoLock);
 
 		te = makeTargetEntry((Expr *) vertex,
 							 (AttrNumber) pstate->p_next_resno++,
@@ -4265,7 +4267,7 @@ transformCreateRel(ParseState *pstate, CypherRel *crel, List **targetList)
 	edge = makeNewEdge(pstate, relation, crel->prop_map);
 	relid = RelationGetRelid(relation);
 
-	heap_close(relation, NoLock);
+	table_close(relation, NoLock);
 
 	te = makeTargetEntry((Expr *) edge,
 						 (AttrNumber) pstate->p_next_resno++,
@@ -4775,7 +4777,7 @@ transformMergeNode(ParseState *pstate, CypherNode *cnode, bool singlenode,
 	vertex = makeNewVertex(pstate, relation, cnode->prop_map);
 	relid = RelationGetRelid(relation);
 
-	heap_close(relation, NoLock);
+	table_close(relation, NoLock);
 
 	te = makeTargetEntry((Expr *) vertex,
 						 InvalidAttrNumber,
@@ -4849,7 +4851,7 @@ transformMergeRel(ParseState *pstate, CypherRel *crel, List **targetList,
 	edge = makeNewEdge(pstate, relation, crel->prop_map);
 	relid = RelationGetRelid(relation);
 
-	heap_close(relation, NoLock);
+	table_close(relation, NoLock);
 
 	te = makeTargetEntry((Expr *) edge,
 						 InvalidAttrNumber,

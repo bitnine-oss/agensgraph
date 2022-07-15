@@ -3,7 +3,7 @@
  * fe-protocol2.c
  *	  functions that are specific to frontend/backend protocol version 2
  *
- * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -1450,42 +1450,30 @@ pqFunctionCall2(PGconn *conn, Oid fnid,
 		pqPutInt(fnid, 4, conn) != 0 || /* function id */
 		pqPutInt(nargs, 4, conn) != 0)	/* # of args */
 	{
-		pqHandleSendFailure(conn);
+		/* error message should be set up already */
 		return NULL;
 	}
 
 	for (i = 0; i < nargs; ++i)
 	{							/* len.int4 + contents	   */
 		if (pqPutInt(args[i].len, 4, conn))
-		{
-			pqHandleSendFailure(conn);
 			return NULL;
-		}
 
 		if (args[i].isint)
 		{
 			if (pqPutInt(args[i].u.integer, 4, conn))
-			{
-				pqHandleSendFailure(conn);
 				return NULL;
-			}
 		}
 		else
 		{
 			if (pqPutnchar((char *) args[i].u.ptr, args[i].len, conn))
-			{
-				pqHandleSendFailure(conn);
 				return NULL;
-			}
 		}
 	}
 
 	if (pqPutMsgEnd(conn) < 0 ||
 		pqFlush(conn))
-	{
-		pqHandleSendFailure(conn);
 		return NULL;
-	}
 
 	for (;;)
 	{

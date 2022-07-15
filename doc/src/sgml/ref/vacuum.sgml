@@ -26,12 +26,14 @@ VACUUM [ FULL ] [ FREEZE ] [ VERBOSE ] [ ANALYZE ] [ <replaceable class="paramet
 
 <phrase>where <replaceable class="parameter">option</replaceable> can be one of:</phrase>
 
-    FULL
-    FREEZE
-    VERBOSE
-    ANALYZE
-    DISABLE_PAGE_SKIPPING
-    SKIP_LOCKED
+    FULL [ <replaceable class="parameter">boolean</replaceable> ]
+    FREEZE [ <replaceable class="parameter">boolean</replaceable> ]
+    VERBOSE [ <replaceable class="parameter">boolean</replaceable> ]
+    ANALYZE [ <replaceable class="parameter">boolean</replaceable> ]
+    DISABLE_PAGE_SKIPPING [ <replaceable class="parameter">boolean</replaceable> ]
+    SKIP_LOCKED [ <replaceable class="parameter">boolean</replaceable> ]
+    INDEX_CLEANUP [ <replaceable class="parameter">boolean</replaceable> ]
+    TRUNCATE [ <replaceable class="parameter">boolean</replaceable> ]
 
 <phrase>and <replaceable class="parameter">table_and_columns</replaceable> is:</phrase>
 
@@ -177,6 +179,60 @@ VACUUM [ FULL ] [ FREEZE ] [ VERBOSE ] [ ANALYZE ] [ <replaceable class="paramet
       specified partitioned tables, this option will cause
       <command>VACUUM</command> to skip all partitions if there is a
       conflicting lock on the partitioned table.
+     </para>
+    </listitem>
+   </varlistentry>
+
+   <varlistentry>
+    <term><literal>INDEX_CLEANUP</literal></term>
+    <listitem>
+     <para>
+      Specifies that <command>VACUUM</command> should attempt to remove
+      index entries pointing to dead tuples.  This is normally the desired
+      behavior and is the default unless the
+      <literal>vacuum_index_cleanup</literal> option has been set to false
+      for the table to be vacuumed.  Setting this option to false may be
+      useful when it is necessary to make vacuum run as quickly as possible,
+      for example to avoid imminent transaction ID wraparound
+      (see <xref linkend="vacuum-for-wraparound"/>).  However, if index
+      cleanup is not performed regularly, performance may suffer, because
+      as the table is modified, indexes will accumulate dead tuples
+      and the table itself will accumulate dead line pointers that cannot be
+      removed until index cleanup is completed.  This option has no effect
+      for tables that do not have an index and is ignored if the
+      <literal>FULL</literal> option is used.
+     </para>
+    </listitem>
+   </varlistentry>
+
+   <varlistentry>
+    <term><literal>TRUNCATE</literal></term>
+    <listitem>
+     <para>
+      Specifies that <command>VACUUM</command> should attempt to
+      truncate off any empty pages at the end of the table and allow
+      the disk space for the truncated pages to be returned to
+      the operating system. This is normally the desired behavior
+      and is the default unless the <literal>vacuum_truncate</literal>
+      option has been set to false for the table to be vacuumed.
+      Setting this option to false may be useful to avoid
+      <literal>ACCESS EXCLUSIVE</literal> lock on the table that
+      the truncation requires. This option is ignored if the
+      <literal>FULL</literal> option is used.
+     </para>
+    </listitem>
+   </varlistentry>
+
+   <varlistentry>
+    <term><replaceable class="parameter">boolean</replaceable></term>
+    <listitem>
+     <para>
+      Specifies whether the selected option should be turned on or off.
+      You can write <literal>TRUE</literal>, <literal>ON</literal>, or
+      <literal>1</literal> to enable the option, and <literal>FALSE</literal>,
+      <literal>OFF</literal>, or <literal>0</literal> to disable it.  The
+      <replaceable class="parameter">boolean</replaceable> value can also
+      be omitted, in which case <literal>TRUE</literal> is assumed.
      </para>
     </listitem>
    </varlistentry>

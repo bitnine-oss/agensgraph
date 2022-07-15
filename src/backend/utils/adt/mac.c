@@ -3,7 +3,7 @@
  * mac.c
  *	  PostgreSQL type definitions for 6 byte, EUI-48, MAC addresses.
  *
- * Portions Copyright (c) 1998-2018, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1998-2019, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
  *		  src/backend/utils/adt/mac.c
@@ -13,12 +13,12 @@
 
 #include "postgres.h"
 
-#include "access/hash.h"
 #include "lib/hyperloglog.h"
 #include "libpq/pqformat.h"
 #include "port/pg_bswap.h"
 #include "utils/builtins.h"
 #include "utils/guc.h"
+#include "utils/hashutils.h"
 #include "utils/inet.h"
 #include "utils/sortsupport.h"
 

@@ -79,9 +79,9 @@ $$ language plpgsql;
 
 -- test effects of TRUNCATE on n_live_tup/n_dead_tup counters
 CREATE TABLE trunc_stats_test(id serial);
-CREATE TABLE trunc_stats_test1(id serial);
+CREATE TABLE trunc_stats_test1(id serial, stuff text);
 CREATE TABLE trunc_stats_test2(id serial);
-CREATE TABLE trunc_stats_test3(id serial);
+CREATE TABLE trunc_stats_test3(id serial, stuff text);
 CREATE TABLE trunc_stats_test4(id serial);
 
 -- check that n_live_tup is reset to 0 after truncate
@@ -173,6 +173,14 @@ SELECT st.heap_blks_read + st.heap_blks_hit >= pr.heap_blks + cl.relpages,
 
 SELECT pr.snap_ts < pg_stat_get_snapshot_timestamp() as snapshot_newer
 FROM prevstats AS pr;
+
+-- Temporary hack to investigate whether extra vacuum/analyze is happening
+select relname, relpages, reltuples
+from pg_class
+where relname like '__star' order by relname;
+select relname, vacuum_count, analyze_count, autovacuum_count, autoanalyze_count
+from pg_stat_all_tables
+where relname like '__star' order by relname;
 
 DROP TABLE trunc_stats_test, trunc_stats_test1, trunc_stats_test2, trunc_stats_test3, trunc_stats_test4;
 DROP TABLE prevstats;

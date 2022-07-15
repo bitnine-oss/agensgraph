@@ -4,7 +4,7 @@
  *	  Shared temporary file management.
  *
  *
- * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/storage/sharedfileset.h
@@ -39,7 +39,7 @@ extern void SharedFileSetAttach(SharedFileSet *fileset, dsm_segment *seg);
 extern File SharedFileSetCreate(SharedFileSet *fileset, const char *name);
 extern File SharedFileSetOpen(SharedFileSet *fileset, const char *name);
 extern bool SharedFileSetDelete(SharedFileSet *fileset, const char *name,
-					bool error_on_failure);
+								bool error_on_failure);
 extern void SharedFileSetDeleteAll(SharedFileSet *fileset);
 
 #endif

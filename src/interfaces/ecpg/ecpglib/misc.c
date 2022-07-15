@@ -9,7 +9,7 @@
 #include "ecpgtype.h"
 #include "ecpglib.h"
 #include "ecpgerrno.h"
-#include "extern.h"
+#include "ecpglib_extern.h"
 #include "sqlca.h"
 #include "pgtypes_numeric.h"
 #include "pgtypes_date.h"
@@ -355,6 +355,9 @@ ECPGset_noind_null(enum ECPGttype type, void *ptr)
 			*(((struct ECPGgeneric_varchar *) ptr)->arr) = 0x00;
 			((struct ECPGgeneric_varchar *) ptr)->len = 0;
 			break;
+		case ECPGt_bytea:
+			((struct ECPGgeneric_bytea *) ptr)->len = 0;
+			break;
 		case ECPGt_decimal:
 			memset((char *) ptr, 0, sizeof(decimal));
 			((decimal *) ptr)->sign = NUMERIC_NULL;
@@ -426,6 +429,10 @@ ECPGis_noind_null(enum ECPGttype type, const void *ptr)
 			break;
 		case ECPGt_varchar:
 			if (*(((const struct ECPGgeneric_varchar *) ptr)->arr) == 0x00)
+				return true;
+			break;
+		case ECPGt_bytea:
+			if (((const struct ECPGgeneric_bytea *) ptr)->len == 0)
 				return true;
 			break;
 		case ECPGt_decimal:
@@ -524,6 +531,17 @@ void
 ECPGset_var(int number, void *pointer, int lineno)
 {
 	struct var_list *ptr;
+
+	struct sqlca_t *sqlca = ECPGget_sqlca();
+
+	if (sqlca == NULL)
+	{
+		ecpg_raise(lineno, ECPG_OUT_OF_MEMORY,
+				   ECPG_SQLSTATE_ECPG_OUT_OF_MEMORY, NULL);
+		return;
+	}
+
+	ecpg_init_sqlca(sqlca);
 
 	for (ptr = ivlist; ptr != NULL; ptr = ptr->next)
 	{

@@ -8,7 +8,7 @@
  * higher-level API provided by parser.h.
  *
  *
- * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/parser/scanner.h
@@ -73,10 +73,10 @@ typedef struct core_yy_extra_type
 	Size		scanbuflen;
 
 	/*
-	 * The keyword list to use.
+	 * The keyword list to use, and the associated grammar token codes.
 	 */
-	const ScanKeyword *keywords;
-	int			num_keywords;
+	const ScanKeywordList *keywordlist;
+	const uint16 *keyword_tokens;
 
 	/*
 	 * Scanner settings to use.  These are initialized from the corresponding
@@ -116,14 +116,17 @@ typedef struct core_yy_extra_type
 typedef void *core_yyscan_t;
 
 
+/* Constant data exported from parser/scan.l */
+extern PGDLLIMPORT const uint16 ScanKeywordTokens[];
+
 /* Entry points in parser/scan.l */
 extern core_yyscan_t scanner_init(const char *str,
-			 core_yy_extra_type *yyext,
-			 const ScanKeyword *keywords,
-			 int num_keywords);
+								  core_yy_extra_type *yyext,
+								  const ScanKeywordList *keywordlist,
+								  const uint16 *keyword_tokens);
 extern void scanner_finish(core_yyscan_t yyscanner);
-extern int core_yylex(core_YYSTYPE *lvalp, YYLTYPE *llocp,
-		   core_yyscan_t yyscanner);
+extern int	core_yylex(core_YYSTYPE *lvalp, YYLTYPE *llocp,
+					   core_yyscan_t yyscanner);
 extern int	scanner_errposition(int location, core_yyscan_t yyscanner);
 extern void scanner_yyerror(const char *message, core_yyscan_t yyscanner) pg_attribute_noreturn();
 

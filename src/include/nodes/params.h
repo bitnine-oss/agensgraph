@@ -4,7 +4,7 @@
  *	  Support for finding the values associated with Param nodes.
  *
  *
- * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/nodes/params.h
@@ -151,6 +151,7 @@ typedef struct ParamExecData
 
 
 /* Functions found in src/backend/nodes/params.c */
+extern ParamListInfo makeParamList(int numParams);
 extern ParamListInfo copyParamList(ParamListInfo from);
 extern Size EstimateParamListSpace(ParamListInfo paramLI);
 extern void SerializeParamList(ParamListInfo paramLI, char **start_address);

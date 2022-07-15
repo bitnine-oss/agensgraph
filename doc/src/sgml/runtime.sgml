@@ -229,42 +229,75 @@ postgres$ <userinput>initdb -D /usr/local/pgsql/data</userinput>
 
   </sect2>
 
-  <sect2 id="creating-cluster-nfs">
-   <title>Use of Network File Systems</title>
-
-   <indexterm zone="creating-cluster-nfs">
-    <primary>Network File Systems</primary>
-   </indexterm>
-   <indexterm><primary><acronym>NFS</acronym></primary><see>Network File Systems</see></indexterm>
-   <indexterm><primary>Network Attached Storage (<acronym>NAS</acronym>)</primary><see>Network File Systems</see></indexterm>
+  <sect2 id="creating-cluster-filesystem">
+   <title>File Systems</title>
 
    <para>
-    Many installations create their database clusters on network file
-    systems.  Sometimes this is done via <acronym>NFS</acronym>, or by using a
-    Network Attached Storage (<acronym>NAS</acronym>) device that uses
-    <acronym>NFS</acronym> internally.  <productname>PostgreSQL</productname> does nothing
-    special for <acronym>NFS</acronym> file systems, meaning it assumes
-    <acronym>NFS</acronym> behaves exactly like locally-connected drives.
-    If the client or server <acronym>NFS</acronym> implementation does not
-    provide standard file system semantics, this can
-    cause reliability problems (see <ulink
-    url="https://www.time-travellers.org/shane/papers/NFS_considered_harmful.html"></ulink>).
-    Specifically, delayed (asynchronous) writes to the <acronym>NFS</acronym>
-    server can cause data corruption problems.  If possible, mount the
-    <acronym>NFS</acronym> file system synchronously (without caching) to avoid
-    this hazard.  Also, soft-mounting the <acronym>NFS</acronym> file system is
-    not recommended.
+    Generally, any file system with POSIX semantics can be used for
+    PostgreSQL.  Users prefer different file systems for a variety of reasons,
+    including vendor support, performance, and familiarity.  Experience
+    suggests that, all other things being equal, one should not expect major
+    performance or behavior changes merely from switching file systems or
+    making minor file system configuration changes.
    </para>
 
-   <para>
-    Storage Area Networks (<acronym>SAN</acronym>) typically use communication
-    protocols other than <acronym>NFS</acronym>, and may or may not be subject
-    to hazards of this sort.  It's advisable to consult the vendor's
-    documentation concerning data consistency guarantees.
-    <productname>PostgreSQL</productname> cannot be more reliable than
-    the file system it's using.
-   </para>
+   <sect3 id="creating-cluster-nfs">
+    <title>NFS</title>
 
+    <indexterm zone="creating-cluster-nfs">
+     <primary>NFS</primary>
+    </indexterm>
+
+    <para>
+     It is possible to use an <acronym>NFS</acronym> file system for storing
+     the <productname>PostgreSQL</productname> data directory.
+     <productname>PostgreSQL</productname> does nothing special for
+     <acronym>NFS</acronym> file systems, meaning it assumes
+     <acronym>NFS</acronym> behaves exactly like locally-connected drives.
+     <productname>PostgreSQL</productname> does not use any functionality that
+     is known to have nonstandard behavior on <acronym>NFS</acronym>, such as
+     file locking.
+    </para>
+
+    <para>
+     The only firm requirement for using <acronym>NFS</acronym> with
+     <productname>PostgreSQL</productname> is that the file system is mounted
+     using the <literal>hard</literal> option.  With the
+     <literal>hard</literal> option, processes can <quote>hang</quote>
+     indefinitely if there are network problems, so this configuration will
+     require a careful monitoring setup.  The <literal>soft</literal> option
+     will interrupt system calls in case of network problems, but
+     <productname>PostgreSQL</productname> will not repeat system calls
+     interrupted in this way, so any such interruption will result in an I/O
+     error being reported.
+    </para>
+
+    <para>
+     It is not necessary to use the <literal>sync</literal> mount option.  The
+     behavior of the <literal>async</literal> option is sufficient, since
+     <productname>PostgreSQL</productname> issues <literal>fsync</literal>
+     calls at appropriate times to flush the write caches.  (This is analogous
+     to how it works on a local file system.)  However, it is strongly
+     recommended to use the <literal>sync</literal> export option on the NFS
+     <emphasis>server</emphasis> on systems where it exists (mainly Linux).
+     Otherwise, an <literal>fsync</literal> or equivalent on the NFS client is
+     not actually guaranteed to reach permanent storage on the server, which
+     could cause corruption similar to running with the parameter <xref
+     linkend="guc-fsync"/> off.  The defaults of these mount and export
+     options differ between vendors and versions, so it is recommended to
+     check and perhaps specify them explicitly in any case to avoid any
+     ambiguity.
+    </para>
+
+    <para>
+     In some cases, an external storage product can be accessed either via NFS
+     or a lower-level protocol such as iSCSI.  In the latter case, the storage
+     appears as a block device and any available file system can be created on
+     it.  That approach might relieve the DBA from having to deal with some of
+     the idiosyncrasies of NFS, but of course the complexity of managing
+     remote storage then happens at other levels.
+    </para>
+   </sect3>
   </sect2>
 
  </sect1>
@@ -638,9 +671,12 @@ psql: could not connect to server: No such file or directory
    </para>
 
    <para>
-    Upon starting the server, <productname>PostgreSQL</productname> normally allocates
+    By default, <productname>PostgreSQL</productname> allocates
     a very small amount of System V shared memory, as well as a much larger
-    amount of POSIX (<function>mmap</function>) shared memory.
+    amount of anonymous <function>mmap</function> shared memory.
+    Alternatively, a single large System V shared memory region can be used
+    (see <xref linkend="guc-shared-memory-type"/>).
+
     In addition a significant number of semaphores, which can be either
     System V or POSIX style, are created at server startup.  Currently,
     POSIX semaphores are used on Linux and FreeBSD systems while other
@@ -717,13 +753,13 @@ psql: could not connect to server: No such file or directory
        <row>
         <entry><varname>SEMMNI</varname></entry>
         <entry>Maximum number of semaphore identifiers (i.e., sets)</entry>
-        <entry>at least <literal>ceil((max_connections + autovacuum_max_workers + max_worker_processes + 5) / 16)</literal> plus room for other applications</entry>
+        <entry>at least <literal>ceil((max_connections + autovacuum_max_workers + max_wal_senders + max_worker_processes + 5) / 16)</literal> plus room for other applications</entry>
        </row>
 
        <row>
         <entry><varname>SEMMNS</varname></entry>
         <entry>Maximum number of semaphores system-wide</entry>
-        <entry><literal>ceil((max_connections + autovacuum_max_workers + max_worker_processes + 5) / 16) * 17</literal> plus room for other applications</entry>
+        <entry><literal>ceil((max_connections + autovacuum_max_workers + max_wal_senders + max_worker_processes + 5) / 16) * 17</literal> plus room for other applications</entry>
        </row>
 
        <row>
@@ -752,8 +788,10 @@ psql: could not connect to server: No such file or directory
     <productname>PostgreSQL</productname> requires a few bytes of System V shared memory
     (typically 48 bytes, on 64-bit platforms) for each copy of the server.
     On most modern operating systems, this amount can easily be allocated.
-    However, if you are running many copies of the server, or if other
-    applications are also using System V shared memory, it may be necessary to
+    However, if you are running many copies of the server or you explicitly
+    configure the server to use large amounts of System V shared memory (see
+    <xref linkend="guc-shared-memory-type"/> and <xref
+    linkend="guc-dynamic-shared-memory-type"/>), it may be necessary to
     increase <varname>SHMALL</varname>, which is the total amount of System V shared
     memory system-wide.  Note that <varname>SHMALL</varname> is measured in pages
     rather than bytes on many systems.
@@ -780,13 +818,13 @@ psql: could not connect to server: No such file or directory
     other applications. The maximum number of semaphores in the system
     is set by <varname>SEMMNS</varname>, which consequently must be at least
     as high as <varname>max_connections</varname> plus
-    <varname>autovacuum_max_workers</varname> plus <varname>max_worker_processes</varname>,
-    plus one extra for each 16
+    <varname>autovacuum_max_workers</varname> plus <varname>max_wal_senders</varname>,
+    plus <varname>max_worker_processes</varname>, plus one extra for each 16
     allowed connections plus workers (see the formula in <xref
     linkend="sysvipc-parameters"/>).  The parameter <varname>SEMMNI</varname>
     determines the limit on the number of semaphore sets that can
     exist on the system at one time.  Hence this parameter must be at
-    least <literal>ceil((max_connections + autovacuum_max_workers + max_worker_processes + 5) / 16)</literal>.
+    least <literal>ceil((max_connections + autovacuum_max_workers + max_wal_senders + max_worker_processes + 5) / 16)</literal>.
     Lowering the number
     of allowed connections is a temporary workaround for failures,
     which are usually confusingly worded <quote>No space
@@ -796,7 +834,8 @@ psql: could not connect to server: No such file or directory
    <para>
     In some cases it might also be necessary to increase
     <varname>SEMMAP</varname> to be at least on the order of
-    <varname>SEMMNS</varname>. This parameter defines the size of the semaphore
+    <varname>SEMMNS</varname>.  If the system has this parameter
+    (many do not), it defines the size of the semaphore
     resource map, in which each contiguous block of available semaphores
     needs an entry. When a semaphore set is freed it is either added to
     an existing entry that is adjacent to the freed block or it is
@@ -853,7 +892,7 @@ psql: could not connect to server: No such file or directory
       </term>
       <listitem>
        <para>
-        The default settings can be changed using
+        The default IPC settings can be changed using
         the <command>sysctl</command> or
         <command>loader</command> interfaces.  The following
         parameters can be set using <command>sysctl</command>:
@@ -872,17 +911,13 @@ psql: could not connect to server: No such file or directory
 <programlisting>
 kern.ipc.semmni=256
 kern.ipc.semmns=512
-kern.ipc.semmnu=256
 </programlisting>
-        After modifying these values a reboot is required for the new
+        After modifying that file, a reboot is required for the new
         settings to take effect.
-        (Note: FreeBSD does not use <varname>SEMMAP</varname>.  Older versions
-        would accept but ignore a setting for <literal>kern.ipc.semmap</literal>;
-        newer versions reject it altogether.)
        </para>
 
        <para>
-        You might also want to configure your kernel to lock shared
+        You might also want to configure your kernel to lock System V shared
         memory into RAM and prevent it from being paged out to swap.
         This can be accomplished using the <command>sysctl</command>
         setting <literal>kern.ipc.shm_use_phys</literal>.
@@ -902,7 +937,7 @@ kern.ipc.semmnu=256
 
        <para>
         <systemitem class="osname">FreeBSD</systemitem> versions before 4.0 work like
-        <systemitem class="osname">OpenBSD</systemitem> (see below).
+        old <systemitem class="osname">OpenBSD</systemitem> (see below).
        </para>
       </listitem>
      </varlistentry>
@@ -917,24 +952,31 @@ kern.ipc.semmnu=256
         IPC parameters can be adjusted using <command>sysctl</command>,
         for example:
 <screen>
-<prompt>$</prompt> <userinput>sysctl -w kern.ipc.shmmax=16777216</userinput>
+<prompt>#</prompt> <userinput>sysctl -w kern.ipc.semmni=100</userinput>
 </screen>
-        To have these settings persist over reboots, modify
+        To make these settings persist over reboots, modify
         <filename>/etc/sysctl.conf</filename>.
        </para>
 
        <para>
-        You might also want to configure your kernel to lock shared
+        You will usually want to increase <literal>kern.ipc.semmni</literal>
+        and <literal>kern.ipc.semmns</literal>,
+        as <systemitem class="osname">NetBSD</systemitem>'s default settings
+        for these are uncomfortably small.
+       </para>
+
+       <para>
+        You might also want to configure your kernel to lock System V shared
         memory into RAM and prevent it from being paged out to swap.
         This can be accomplished using the <command>sysctl</command>
         setting <literal>kern.ipc.shm_use_phys</literal>.
        </para>
 
        <para>
-        <systemitem class="osname">NetBSD</systemitem> versions before 5.0 work like
-        <systemitem class="osname">OpenBSD</systemitem> (see below), except that
-        parameters should be set with the keyword <literal>options</literal> not
-        <literal>option</literal>.
+        <systemitem class="osname">NetBSD</systemitem> versions before 5.0
+        work like old <systemitem class="osname">OpenBSD</systemitem>
+        (see below), except that kernel parameters should be set with the
+        keyword <literal>options</literal> not <literal>option</literal>.
        </para>
       </listitem>
      </varlistentry>
@@ -945,11 +987,31 @@ kern.ipc.semmnu=256
       </term>
       <listitem>
        <para>
-        The options <varname>SYSVSHM</varname> and <varname>SYSVSEM</varname> need
-        to be enabled when the kernel is compiled. (They are by
-        default.) The maximum size of shared memory is determined by
-        the option <varname>SHMMAXPGS</varname> (in pages). The following
-        shows an example of how to set the various parameters:
+        In <systemitem class="osname">OpenBSD</systemitem> 3.3 and later,
+        IPC parameters can be adjusted using <command>sysctl</command>,
+        for example:
+<screen>
+<prompt>#</prompt> <userinput>sysctl kern.seminfo.semmni=100</userinput>
+</screen>
+        To make these settings persist over reboots, modify
+        <filename>/etc/sysctl.conf</filename>.
+       </para>
+
+       <para>
+        You will usually want to
+        increase <literal>kern.seminfo.semmni</literal>
+        and <literal>kern.seminfo.semmns</literal>,
+        as <systemitem class="osname">OpenBSD</systemitem>'s default settings
+        for these are uncomfortably small.
+       </para>
+
+       <para>
+        In older <systemitem class="osname">OpenBSD</systemitem> versions,
+        you will need to build a custom kernel to change the IPC parameters.
+        Make sure that the options <varname>SYSVSHM</varname>
+        and <varname>SYSVSEM</varname> are enabled, too.  (They are by
+        default.)  The following shows an example of how to set the various
+        parameters in the kernel configuration file:
 <programlisting>
 option        SYSVSHM
 option        SHMMAXPGS=4096
@@ -1623,14 +1685,12 @@ $ <userinput>kill -INT `head -1 /usr/local/pgsql/data/postmaster.pid`</userinput
 
   <important>
    <para>
-    It is best not to use <systemitem>SIGKILL</systemitem> to shut down
-    the server.  Doing so will prevent the server from releasing
-    shared memory and semaphores, which might then have to be done
-    manually before a new server can be started.  Furthermore,
-    <systemitem>SIGKILL</systemitem> kills the <command>postgres</command>
-    process without letting it relay the signal to its subprocesses,
-    so it will be necessary to kill the individual subprocesses by hand as
-    well.
+    It is best not to use <systemitem>SIGKILL</systemitem> to shut down the
+    server.  Doing so will prevent the server from releasing shared memory and
+    semaphores.  Furthermore, <systemitem>SIGKILL</systemitem> kills
+    the <command>postgres</command> process without letting it relay the
+    signal to its subprocesses, so it might be necessary to kill the
+    individual subprocesses by hand as well.
    </para>
   </important>
 
@@ -2008,15 +2068,27 @@ pg_dumpall -p 5432 | psql -d postgres -p 5433
   </para>
 
   <para>
-   To prevent spoofing on TCP connections, the best solution is to use
-   SSL certificates and make sure that clients check the server's certificate.
-   To do that, the server
+   To prevent spoofing on TCP connections, either use
+   SSL certificates and make sure that clients check the server's certificate,
+   or use GSSAPI encryption (or both, if they're on separate connections).
+  </para>
+
+  <para>
+   To prevent spoofing with SSL, the server
    must be configured to accept only <literal>hostssl</literal> connections (<xref
    linkend="auth-pg-hba-conf"/>) and have SSL key and certificate files
    (<xref linkend="ssl-tcp"/>). The TCP client must connect using
    <literal>sslmode=verify-ca</literal> or
    <literal>verify-full</literal> and have the appropriate root certificate
    file installed (<xref linkend="libq-ssl-certificates"/>).
+  </para>
+
+  <para>
+    To prevent spoofing with GSSAPI, the server must be configured to accept
+    only <literal>hostgssenc</literal> connections
+    (<xref linkend="auth-pg-hba-conf"/>) and use <literal>gss</literal>
+    authentication with them.  The TCP client must connect
+    using <literal>gssencmode=require</literal>.
   </para>
  </sect1>
 
@@ -2114,8 +2186,24 @@ pg_dumpall -p 5432 | psql -d postgres -p 5433
       which hosts can use non-encrypted connections (<literal>host</literal>)
       and which require SSL-encrypted connections
       (<literal>hostssl</literal>). Also, clients can specify that they
-      connect to servers only via SSL. <application>Stunnel</application> or
-      <application>SSH</application> can also be used to encrypt transmissions.
+      connect to servers only via SSL.
+     </para>
+
+     <para>
+      GSSAPI-encrypted connections encrypt all data sent across the network,
+      including queries and data returned.  (No password is sent across the
+      network.)  The <filename>pg_hba.conf</filename> file allows
+      administrators to specify which hosts can use non-encrypted connections
+      (<literal>host</literal>) and which require GSSAPI-encrypted connections
+      (<literal>hostgssenc</literal>).  Also, clients can specify that they
+      connect to servers only on GSSAPI-encrypted connections
+      (<literal>gssencmode=require</literal>).
+     </para>
+
+     <para>
+      <application>Stunnel</application> or
+      <application>SSH</application> can also be used to encrypt
+      transmissions.
      </para>
     </listitem>
   </varlistentry>
@@ -2287,13 +2375,25 @@ pg_dumpall -p 5432 | psql -d postgres -p 5433
    (<acronym>CA</acronym>s) you trust in a file in the data
    directory, set the parameter <xref linkend="guc-ssl-ca-file"/> in
    <filename>postgresql.conf</filename> to the new file name, and add the
-   authentication option <literal>clientcert=1</literal> to the appropriate
+   authentication option <literal>clientcert=verify-ca</literal> or
+   <literal>clientcert=verify-full</literal> to the appropriate
    <literal>hostssl</literal> line(s) in <filename>pg_hba.conf</filename>.
    A certificate will then be requested from the client during SSL
    connection startup.  (See <xref linkend="libpq-ssl"/> for a description
-   of how to set up certificates on the client.)  The server will
-   verify that the client's certificate is signed by one of the trusted
-   certificate authorities.
+   of how to set up certificates on the client.)
+  </para>
+
+  <para>
+   For a <literal>hostssl</literal> entry with
+   <literal>clientcert=verify-ca</literal>, the server will verify
+   that the client's certificate is signed by one of the trusted
+   certificate authorities. If <literal>clientcert=verify-full</literal>
+   is specified, the server will not only verify the certificate
+   chain, but it will also check whether the username or its mapping
+   matches the <literal>cn</literal> (Common Name) of the provided certificate.
+   Note that certificate chain validation is always ensured when the
+   <literal>cert</literal> authentication method is used
+   (see <xref linkend="auth-cert"/>).
   </para>
 
   <para>
@@ -2312,18 +2412,34 @@ pg_dumpall -p 5432 | psql -d postgres -p 5433
    The <literal>clientcert</literal> authentication option is available for
    all authentication methods, but only in <filename>pg_hba.conf</filename> lines
    specified as <literal>hostssl</literal>.  When <literal>clientcert</literal> is
-   not specified or is set to 0, the server will still verify any presented
-   client certificates against its CA file, if one is configured &mdash; but
-   it will not insist that a client certificate be presented.
+   not specified or is set to <literal>no-verify</literal>, the server will still
+   verify any presented client certificates against its CA file, if one is
+   configured &mdash; but it will not insist that a client certificate be presented.
   </para>
 
   <para>
-   If you are setting up client certificates, you may wish to use
-   the <literal>cert</literal> authentication method, so that the certificates
-   control user authentication as well as providing connection security.
-   See <xref linkend="auth-cert"/> for details.  (It is not necessary to
-   specify <literal>clientcert=1</literal> explicitly when using
-   the <literal>cert</literal> authentication method.)
+   There are two approaches to enforce that users provide a certificate during login.
+  </para>
+
+  <para>
+   The first approach makes use of the <literal>cert</literal> authentication
+   method for <literal>hostssl</literal> entries in <filename>pg_hba.conf</filename>,
+   such that the certificate itself is used for authentication while also
+   providing ssl connection security. See <xref linkend="auth-cert"/> for details.
+   (It is not necessary to specify any <literal>clientcert</literal> options
+   explicitly when using the <literal>cert</literal> authentication method.)
+   In this case, the <literal>cn</literal> (Common Name) provided in
+   the certificate is checked against the user name or an applicable mapping.
+  </para>
+
+  <para>
+   The second approach combines any authentication method for <literal>hostssl</literal>
+   entries with the verification of client certificates by setting the
+   <literal>clientcert</literal> authentication option to <literal>verify-ca</literal>
+   or <literal>verify-full</literal>. The former option only enforces that
+   the certificate is valid, while the latter also ensures that the
+   <literal>cn</literal> (Common Name) in the certificate matches
+   the user name or an applicable mapping.
   </para>
   </sect2>
 
@@ -2502,6 +2618,45 @@ openssl x509 -req -in server.csr -text -days 365 \
    </para>
   </sect2>
 
+ </sect1>
+
+ <sect1 id="gssapi-enc">
+  <title>Secure TCP/IP Connections with GSSAPI encryption</title>
+
+  <indexterm zone="gssapi-enc">
+   <primary>gssapi</primary>
+  </indexterm>
+
+  <para>
+   <productname>PostgreSQL</productname> also has native support for
+   using <acronym>GSSAPI</acronym> to encrypt client/server communications for
+   increased security.  Support requires that a <acronym>GSSAPI</acronym>
+   implementation (such as MIT krb5) is installed on both client and server
+   systems, and that support in <productname>PostgreSQL</productname> is
+   enabled at build time (see <xref linkend="installation"/>).
+  </para>
+
+  <sect2 id="gssapi-setup">
+   <title>Basic Setup</title>
+
+   <para>
+    The <productname>PostgreSQL</productname> server will listen for both
+    normal and <acronym>GSSAPI</acronym>-encrypted connections on the same TCP
+    port, and will negotiate with any connecting client on whether to
+    use <acronym>GSSAPI</acronym> for encryption (and for authentication).  By
+    default, this decision is up to the client (which means it can be
+    downgraded by an attacker); see <xref linkend="auth-pg-hba-conf"/> about
+    setting up the server to require the use of <acronym>GSSAPI</acronym> for
+    some or all connections.
+   </para>
+
+   <para>
+    Other than configuration of the negotiation
+    behavior, <acronym>GSSAPI</acronym> encryption requires no setup beyond
+    that which is necessary for GSSAPI authentication.  (For more information
+    on configuring that, see <xref linkend="gssapi-auth"/>.)
+   </para>
+  </sect2>
  </sect1>
 
  <sect1 id="ssh-tunnels">

@@ -119,6 +119,16 @@ PostgreSQL documentation
      </varlistentry>
 
      <varlistentry>
+      <term><option>--concurrently</option></term>
+      <listitem>
+       <para>
+        Use the <literal>CONCURRENTLY</literal> option.  See <xref
+        linkend="sql-reindex"/> for further information.
+       </para>
+      </listitem>
+     </varlistentry>
+
+     <varlistentry>
       <term><option><optional>-d</optional> <replaceable class="parameter">dbname</replaceable></option></term>
       <term><option><optional>--dbname=</optional><replaceable class="parameter">dbname</replaceable></option></term>
       <listitem>
@@ -339,6 +349,17 @@ PostgreSQL documentation
     <listitem>
      <para>
       Default connection parameters
+     </para>
+    </listitem>
+   </varlistentry>
+
+   <varlistentry>
+    <term><envar>PG_COLOR</envar></term>
+    <listitem>
+     <para>
+      Specifies whether to use color in diagnostics messages.  Possible values
+      are <literal>always</literal>, <literal>auto</literal>,
+      <literal>never</literal>.
      </para>
     </listitem>
    </varlistentry>

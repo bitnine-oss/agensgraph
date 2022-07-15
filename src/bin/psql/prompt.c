@@ -1,7 +1,7 @@
 /*
  * psql - the PostgreSQL interactive terminal
  *
- * Copyright (c) 2000-2018, PostgreSQL Global Development Group
+ * Copyright (c) 2000-2019, PostgreSQL Global Development Group
  *
  * src/bin/psql/prompt.c
  */
@@ -181,7 +181,7 @@ get_prompt(promptStatus_t status, ConditionalStack cstack)
 				case '5':
 				case '6':
 				case '7':
-					*buf = (char) strtol(p, (char **) &p, 8);
+					*buf = (char) strtol(p, unconstify(char **, &p), 8);
 					--p;
 					break;
 				case 'R':

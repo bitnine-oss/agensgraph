@@ -36,13 +36,13 @@ int
 main(void)
 {
 	/* exec sql begin declare section */
-		
+		 
 		
 		
 		
 	
 #line 21 "nan_test.pgc"
- int id ;
+ int id , loopcount ;
  
 #line 22 "nan_test.pgc"
  double d ;
@@ -84,15 +84,15 @@ if (sqlca.sqlcode < 0) sqlprint ( );}
 	/* declare cur cursor for select id , d , d from nantest1 */
 #line 35 "nan_test.pgc"
 
-	{ ECPGdo(__LINE__, 0, 1, NULL, 0, ECPGst_normal, "declare cur cursor for select id , d , d from nantest1", ECPGt_EOIT, ECPGt_EORT);
+	{ ECPGopen("cur", NULL, __LINE__, 0, 1, NULL, 0, ECPGst_normal, "declare cur cursor for select id , d , d from nantest1", ECPGt_EOIT, ECPGt_EORT);
 #line 36 "nan_test.pgc"
 
 if (sqlca.sqlcode < 0) sqlprint ( );}
 #line 36 "nan_test.pgc"
 
-	while (1)
+	for (loopcount = 0; loopcount < 100; loopcount++)
 	{
-		{ ECPGdo(__LINE__, 0, 1, NULL, 0, ECPGst_normal, "fetch from cur", ECPGt_EOIT, 
+		{ ECPGfetch("cur", __LINE__, 0, 1, NULL, 0, ECPGst_normal, "fetch from cur", ECPGt_EOIT, 
 	ECPGt_int,&(id),(long)1,(long)1,sizeof(int), 
 	ECPGt_NO_INDICATOR, NULL , 0L, 0L, 0L, 
 	ECPGt_double,&(d),(long)1,(long)1,sizeof(double), 
@@ -132,22 +132,22 @@ if (sqlca.sqlcode < 0) sqlprint ( );}
 #line 48 "nan_test.pgc"
 
 	}
-	{ ECPGdo(__LINE__, 0, 1, NULL, 0, ECPGst_normal, "close cur", ECPGt_EOIT, ECPGt_EORT);
+	{ ECPGclose("cur", __LINE__, 0, 1, NULL, 0, ECPGst_normal, "close cur", ECPGt_EOIT, ECPGt_EORT);
 #line 50 "nan_test.pgc"
 
 if (sqlca.sqlcode < 0) sqlprint ( );}
 #line 50 "nan_test.pgc"
 
 
-	{ ECPGdo(__LINE__, 0, 1, NULL, 0, ECPGst_normal, "declare cur cursor for select id , d , d from nantest1", ECPGt_EOIT, ECPGt_EORT);
+	{ ECPGopen("cur", NULL, __LINE__, 0, 1, NULL, 0, ECPGst_normal, "declare cur cursor for select id , d , d from nantest1", ECPGt_EOIT, ECPGt_EORT);
 #line 52 "nan_test.pgc"
 
 if (sqlca.sqlcode < 0) sqlprint ( );}
 #line 52 "nan_test.pgc"
 
-	while (1)
+	for (loopcount = 0; loopcount < 100; loopcount++)
 	{
-		{ ECPGdo(__LINE__, 0, 1, NULL, 0, ECPGst_normal, "fetch from cur", ECPGt_EOIT, 
+		{ ECPGfetch("cur", __LINE__, 0, 1, NULL, 0, ECPGst_normal, "fetch from cur", ECPGt_EOIT, 
 	ECPGt_int,&(id),(long)1,(long)1,sizeof(int), 
 	ECPGt_NO_INDICATOR, NULL , 0L, 0L, 0L, 
 	ECPGt_double,&(d),(long)1,(long)1,sizeof(double), 
@@ -166,7 +166,7 @@ if (sqlca.sqlcode < 0) sqlprint ( );}
 		if (isnan(d))
 			printf("%d  NaN '%s'\n", id, val);
 	}
-	{ ECPGdo(__LINE__, 0, 1, NULL, 0, ECPGst_normal, "close cur", ECPGt_EOIT, ECPGt_EORT);
+	{ ECPGclose("cur", __LINE__, 0, 1, NULL, 0, ECPGst_normal, "close cur", ECPGt_EOIT, ECPGt_EORT);
 #line 63 "nan_test.pgc"
 
 if (sqlca.sqlcode < 0) sqlprint ( );}
@@ -223,15 +223,15 @@ if (sqlca.sqlcode < 0) sqlprint ( );}
 	/* declare cur1 cursor for select id , d , d from nantest2 */
 #line 77 "nan_test.pgc"
 
-	{ ECPGdo(__LINE__, 0, 1, NULL, 0, ECPGst_normal, "declare cur1 cursor for select id , d , d from nantest2", ECPGt_EOIT, ECPGt_EORT);
+	{ ECPGopen("cur1", NULL, __LINE__, 0, 1, NULL, 0, ECPGst_normal, "declare cur1 cursor for select id , d , d from nantest2", ECPGt_EOIT, ECPGt_EORT);
 #line 78 "nan_test.pgc"
 
 if (sqlca.sqlcode < 0) sqlprint ( );}
 #line 78 "nan_test.pgc"
 
-	while (1)
+	for (loopcount = 0; loopcount < 100; loopcount++)
 	{
-		{ ECPGdo(__LINE__, 0, 1, NULL, 0, ECPGst_normal, "fetch from cur1", ECPGt_EOIT, 
+		{ ECPGfetch("cur1", __LINE__, 0, 1, NULL, 0, ECPGst_normal, "fetch from cur1", ECPGt_EOIT, 
 	ECPGt_int,&(id),(long)1,(long)1,sizeof(int), 
 	ECPGt_NO_INDICATOR, NULL , 0L, 0L, 0L, 
 	ECPGt_numeric,&(num),(long)1,(long)0,sizeof(numeric), 
@@ -247,7 +247,7 @@ if (sqlca.sqlcode < 0) sqlprint ( );}
 			break;
 		printf("%d %s '%s'\n", id, (num->sign == NUMERIC_NAN ? "NaN" : "not NaN"), val);
 	}
-	{ ECPGdo(__LINE__, 0, 1, NULL, 0, ECPGst_normal, "close cur1", ECPGt_EOIT, ECPGt_EORT);
+	{ ECPGclose("cur1", __LINE__, 0, 1, NULL, 0, ECPGst_normal, "close cur1", ECPGt_EOIT, ECPGt_EORT);
 #line 86 "nan_test.pgc"
 
 if (sqlca.sqlcode < 0) sqlprint ( );}

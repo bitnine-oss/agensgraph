@@ -31,7 +31,7 @@
 
 static PyObject *PLy_spi_execute_query(char *query, long limit);
 static PyObject *PLy_spi_execute_fetch_result(SPITupleTable *tuptable,
-							 uint64 rows, int status);
+											  uint64 rows, int status);
 static void PLy_spi_exception_set(PyObject *excclass, ErrorData *edata);
 
 
@@ -419,7 +419,8 @@ PLy_spi_execute_fetch_result(SPITupleTable *tuptable, uint64 rows, int status)
 					{
 						PyObject   *row = PLy_input_from_tuple(&ininfo,
 															   tuptable->vals[i],
-															   tuptable->tupdesc);
+															   tuptable->tupdesc,
+															   true);
 
 						PyList_SetItem(result->rows, i, row);
 					}

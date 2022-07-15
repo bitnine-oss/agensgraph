@@ -90,9 +90,9 @@ $killme_stdout = '';
 $killme_stderr = '';
 
 
-# Start longrunning query in second session, it's failure will signal
-# that crash-restart has occurred.  The initial wait for the trivial
-# select is to be sure that psql successfully connected to backend.
+# Start longrunning query in second session; its failure will signal that
+# crash-restart has occurred.  The initial wait for the trivial select is to
+# be sure that psql successfully connected to backend.
 $monitor_stdin .= q[
 SELECT $$psql-connected$$;
 SELECT pg_sleep(3600);
@@ -115,7 +115,7 @@ SELECT 1;
 ok( pump_until(
 		$killme,
 		\$killme_stderr,
-		qr/WARNING:  terminating connection because of crash of another server process|server closed the connection unexpectedly/m
+		qr/WARNING:  terminating connection because of crash of another server process|server closed the connection unexpectedly|connection to server was lost/m
 	),
 	"psql query died successfully after SIGQUIT");
 $killme_stderr = '';
@@ -128,7 +128,7 @@ $killme->finish;
 ok( pump_until(
 		$monitor,
 		\$monitor_stderr,
-		qr/WARNING:  terminating connection because of crash of another server process|server closed the connection unexpectedly/m
+		qr/WARNING:  terminating connection because of crash of another server process|server closed the connection unexpectedly|connection to server was lost/m
 	),
 	"psql monitor died successfully after SIGQUIT");
 $monitor->finish;
@@ -171,10 +171,9 @@ ok(pump_until($killme, \$killme_stdout, qr/in-progress-before-sigkill/m),
 $killme_stdout = '';
 $killme_stderr = '';
 
-# Re-start longrunning query in second session, it's failure will
-# signal that crash-restart has occurred.  The initial wait for the
-# trivial select is to be sure that psql successfully connected to
-# backend.
+# Re-start longrunning query in second session; its failure will signal that
+# crash-restart has occurred.  The initial wait for the trivial select is to
+# be sure that psql successfully connected to backend.
 $monitor_stdin .= q[
 SELECT $$psql-connected$$;
 SELECT pg_sleep(3600);
@@ -186,7 +185,7 @@ $monitor_stderr = '';
 
 
 # kill with SIGKILL this time - we expect the backend to exit, without
-# being able to emit an error error message
+# being able to emit an error message
 $ret = TestLib::system_log('pg_ctl', 'kill', 'KILL', $pid);
 is($ret, 0, "killed process with KILL");
 
@@ -196,8 +195,10 @@ $killme_stdin .= q[
 SELECT 1;
 ];
 ok( pump_until(
-		$killme, \$killme_stderr,
-		qr/server closed the connection unexpectedly/m),
+		$killme,
+		\$killme_stderr,
+		qr/server closed the connection unexpectedly|connection to server was lost/m
+	),
 	"psql query died successfully after SIGKILL");
 $killme->finish;
 
@@ -207,7 +208,7 @@ $killme->finish;
 ok( pump_until(
 		$monitor,
 		\$monitor_stderr,
-		qr/WARNING:  terminating connection because of crash of another server process|server closed the connection unexpectedly/m
+		qr/WARNING:  terminating connection because of crash of another server process|server closed the connection unexpectedly|connection to server was lost/m
 	),
 	"psql monitor died successfully after SIGKILL");
 $monitor->finish;

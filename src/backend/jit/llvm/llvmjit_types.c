@@ -16,7 +16,7 @@
  * bitcode.
  *
  *
- * Copyright (c) 2016-2018, PostgreSQL Global Development Group
+ * Copyright (c) 2016-2019, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
  *	  src/backend/jit/llvm/llvmjit_types.c
@@ -49,19 +49,20 @@ PGFunction	TypePGFunction;
 size_t		TypeSizeT;
 bool		TypeStorageBool;
 
+NullableDatum StructNullableDatum;
 AggState	StructAggState;
 AggStatePerGroupData StructAggStatePerGroupData;
 AggStatePerTransData StructAggStatePerTransData;
 ExprContext StructExprContext;
 ExprEvalStep StructExprEvalStep;
 ExprState	StructExprState;
-FunctionCallInfoData StructFunctionCallInfoData;
+FunctionCallInfoBaseData StructFunctionCallInfoData;
 HeapTupleData StructHeapTupleData;
 MemoryContextData StructMemoryContextData;
 TupleTableSlot StructTupleTableSlot;
 HeapTupleTableSlot StructHeapTupleTableSlot;
 MinimalTupleTableSlot StructMinimalTupleTableSlot;
-struct tupleDesc StructtupleDesc;
+TupleDescData StructTupleDescData;
 
 
 /*
@@ -102,7 +103,7 @@ void	   *referenced_functions[] =
 	slot_getsomeattrs_int,
 	slot_getmissingattrs,
 	MakeExpandedObjectReadOnlyInternal,
-	ExecEvalArrayRefSubscript,
+	ExecEvalSubscriptingRef,
 	ExecEvalSysVar,
 	ExecAggTransReparent,
 	ExecAggInitGroup

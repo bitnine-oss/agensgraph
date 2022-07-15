@@ -1414,7 +1414,7 @@ EXECUTE 'UPDATE tbl SET '
     <para>
      Dynamic SQL statements can also be safely constructed using the
      <function>format</function> function (see <xref
-     linkend="functions-string"/>). For example:
+     linkend="functions-string-format"/>). For example:
 <programlisting>
 EXECUTE format('UPDATE tbl SET %I = %L '
    'WHERE key = %L', colname, newvalue, keyvalue);
@@ -3490,6 +3490,20 @@ CALL transaction_test1();
 </programlisting>
    </para>
 
+   <indexterm zone="plpgsql-transaction-chain">
+    <primary>chained transactions</primary>
+    <secondary>in PL/pgSQL</secondary>
+   </indexterm>
+
+   <para id="plpgsql-transaction-chain">
+    A new transaction starts out with default transaction characteristics such
+    as transaction isolation level.  In cases where transactions are committed
+    in a loop, it might be desirable to start new transactions automatically
+    with the same characteristics as the previous one.  The commands
+    <command>COMMIT AND CHAIN</command> and <command>ROLLBACK AND
+    CHAIN</command> accomplish this.
+   </para>
+
    <para>
     Transaction control is only possible in <command>CALL</command> or
     <command>DO</command> invocations from the top level or nested
@@ -3849,7 +3863,7 @@ ASSERT <replaceable class="parameter">condition</replaceable> <optional> , <repl
       <para>
        Data type <type>RECORD</type>; variable holding the new
        database row for <command>INSERT</command>/<command>UPDATE</command> operations in row-level
-       triggers. This variable is unassigned in statement-level triggers
+       triggers. This variable is null in statement-level triggers
        and for <command>DELETE</command> operations.
       </para>
      </listitem>
@@ -3861,7 +3875,7 @@ ASSERT <replaceable class="parameter">condition</replaceable> <optional> , <repl
       <para>
        Data type <type>RECORD</type>; variable holding the old
        database row for <command>UPDATE</command>/<command>DELETE</command> operations in row-level
-       triggers. This variable is unassigned in statement-level triggers
+       triggers. This variable is null in statement-level triggers
        and for <command>INSERT</command> operations.
       </para>
      </listitem>
@@ -5151,10 +5165,10 @@ END;
 $$;
 
 SELECT foo();
-WARNING:  number of source and target fields in assignment do not match
+WARNING:  number of source and target fields in assignment does not match
 DETAIL:  strict_multi_assignment check of extra_warnings is active.
 HINT:  Make sure the query returns the exact list of columns.
-WARNING:  number of source and target fields in assignment do not match
+WARNING:  number of source and target fields in assignment does not match
 DETAIL:  strict_multi_assignment check of extra_warnings is active.
 HINT:  Make sure the query returns the exact list of columns.
 
@@ -5193,7 +5207,7 @@ HINT:  Make sure the query returns the exact list of columns.
   <para>
    <application>PL/pgSQL</application> is similar to PL/SQL in many
    aspects. It is a block-structured, imperative language, and all
-   variables have to be declared.  Assignments, loops, conditionals
+   variables have to be declared.  Assignments, loops, and conditionals
    are similar.  The main differences you should keep in mind when
    porting from <application>PL/SQL</application> to
    <application>PL/pgSQL</application> are:

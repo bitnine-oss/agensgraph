@@ -3,7 +3,7 @@
  * pg_namespace.c
  *	  routines to support manipulation of the pg_namespace relation
  *
- * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -14,8 +14,8 @@
  */
 #include "postgres.h"
 
-#include "access/heapam.h"
 #include "access/htup_details.h"
+#include "access/table.h"
 #include "catalog/catalog.h"
 #include "catalog/dependency.h"
 #include "catalog/indexing.h"
@@ -69,7 +69,7 @@ NamespaceCreate(const char *nspName, Oid ownerId, bool isTemp)
 	else
 		nspacl = NULL;
 
-	nspdesc = heap_open(NamespaceRelationId, RowExclusiveLock);
+	nspdesc = table_open(NamespaceRelationId, RowExclusiveLock);
 	tupDesc = nspdesc->rd_att;
 
 	/* initialize nulls and values */
@@ -96,7 +96,7 @@ NamespaceCreate(const char *nspName, Oid ownerId, bool isTemp)
 	CatalogTupleInsert(nspdesc, tup);
 	Assert(OidIsValid(nspoid));
 
-	heap_close(nspdesc, RowExclusiveLock);
+	table_close(nspdesc, RowExclusiveLock);
 
 	/* Record dependencies */
 	myself.classId = NamespaceRelationId;

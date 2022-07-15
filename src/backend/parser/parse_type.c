@@ -3,7 +3,7 @@
  * parse_type.c
  *		handle type operations for parser
  *
- * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -28,7 +28,7 @@
 
 
 static int32 typenameTypeMod(ParseState *pstate, const TypeName *typeName,
-				Type typ);
+							 Type typ);
 
 
 /*
@@ -739,7 +739,7 @@ typeStringToTypeName(const char *str)
 	 * Setup error traceback support in case of ereport() during parse
 	 */
 	ptserrcontext.callback = pts_error_callback;
-	ptserrcontext.arg = (void *) str;
+	ptserrcontext.arg = unconstify(char *, str);
 	ptserrcontext.previous = error_context_stack;
 	error_context_stack = &ptserrcontext;
 

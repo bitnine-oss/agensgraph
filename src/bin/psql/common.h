@@ -1,7 +1,7 @@
 /*
  * psql - the PostgreSQL interactive terminal
  *
- * Copyright (c) 2000-2018, PostgreSQL Global Development Group
+ * Copyright (c) 2000-2019, PostgreSQL Global Development Group
  *
  * src/bin/psql/common.h
  */
@@ -18,9 +18,7 @@ extern bool openQueryOutputFile(const char *fname, FILE **fout, bool *is_pipe);
 extern bool setQFout(const char *fname);
 
 extern char *psql_get_variable(const char *varname, PsqlScanQuoteType quote,
-				  void *passthrough);
-
-extern void psql_error(const char *fmt,...) pg_attribute_printf(1, 2);
+							   void *passthrough);
 
 extern void NoticeProcessor(void *arg, const char *message);
 

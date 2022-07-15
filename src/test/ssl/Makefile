@@ -2,7 +2,7 @@
 #
 # Makefile for src/test/ssl
 #
-# Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
+# Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
 # Portions Copyright (c) 1994, Regents of the University of California
 #
 # src/test/ssl/Makefile
@@ -39,7 +39,7 @@ ssl/new_certs_dir:
 
 # Rule for creating private/public key pairs.
 ssl/%.key:
-	openssl genrsa -out $@ 1024
+	openssl genrsa -out $@ 2048
 	chmod 0600 $@
 
 # Root CA certificate
@@ -136,6 +136,7 @@ sslfiles-clean:
 
 clean distclean maintainer-clean:
 	rm -rf tmp_check
+	rm -rf ssl/*.old ssl/new_certs_dir ssl/client*_tmp.key
 
 check:
 	$(prove_check)

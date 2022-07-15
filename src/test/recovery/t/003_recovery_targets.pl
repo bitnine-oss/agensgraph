@@ -3,7 +3,7 @@ use strict;
 use warnings;
 use PostgresNode;
 use TestLib;
-use Test::More tests => 9;
+use Test::More tests => 8;
 
 # Create and test a standby from given backup, with a certain recovery target.
 # Choose $until_lsn later than the transaction commit that causes the row
@@ -23,7 +23,7 @@ sub test_recovery_standby
 
 	foreach my $param_item (@$recovery_params)
 	{
-		$node_standby->append_conf('recovery.conf', qq($param_item));
+		$node_standby->append_conf('postgresql.conf', qq($param_item));
 	}
 
 	$node_standby->start;
@@ -116,30 +116,32 @@ test_recovery_standby('LSN', 'standby_5', $node_master, \@recovery_params,
 	"5000", $lsn5);
 
 # Multiple targets
-# Last entry has priority (note that an array respects the order of items
-# not hashes).
+#
+# Multiple conflicting settings are not allowed, but setting the same
+# parameter multiple times or unsetting a parameter and setting a
+# different one is allowed.
+
 @recovery_params = (
 	"recovery_target_name = '$recovery_name'",
-	"recovery_target_xid  = '$recovery_txid'",
+	"recovery_target_name = ''",
 	"recovery_target_time = '$recovery_time'");
-test_recovery_standby('name + XID + time',
+test_recovery_standby('multiple overriding settings',
 	'standby_6', $node_master, \@recovery_params, "3000", $lsn3);
-@recovery_params = (
-	"recovery_target_time = '$recovery_time'",
-	"recovery_target_name = '$recovery_name'",
-	"recovery_target_xid  = '$recovery_txid'");
-test_recovery_standby('time + name + XID',
-	'standby_7', $node_master, \@recovery_params, "2000", $lsn2);
-@recovery_params = (
-	"recovery_target_xid  = '$recovery_txid'",
-	"recovery_target_time = '$recovery_time'",
-	"recovery_target_name = '$recovery_name'");
-test_recovery_standby('XID + time + name',
-	'standby_8', $node_master, \@recovery_params, "4000", $lsn4);
-@recovery_params = (
-	"recovery_target_xid  = '$recovery_txid'",
-	"recovery_target_time = '$recovery_time'",
-	"recovery_target_name = '$recovery_name'",
-	"recovery_target_lsn = '$recovery_lsn'",);
-test_recovery_standby('XID + time + name + LSN',
-	'standby_9', $node_master, \@recovery_params, "5000", $lsn5);
+
+my $node_standby = get_new_node('standby_7');
+$node_standby->init_from_backup($node_master, 'my_backup',
+	has_restoring => 1);
+$node_standby->append_conf(
+	'postgresql.conf', "recovery_target_name = '$recovery_name'
+recovery_target_time = '$recovery_time'");
+
+my $res = run_log(
+	[
+		'pg_ctl',               '-D', $node_standby->data_dir, '-l',
+		$node_standby->logfile, 'start'
+	]);
+ok(!$res, 'invalid recovery startup fails');
+
+my $logfile = slurp_file($node_standby->logfile());
+ok($logfile =~ qr/multiple recovery targets specified/,
+	'multiple conflicting settings');

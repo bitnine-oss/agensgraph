@@ -5,7 +5,7 @@
  * Basically this is stuff that is useful in both pg_dump and pg_dumpall.
  *
  *
- * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/bin/pg_dump/dumputils.c
@@ -21,12 +21,12 @@
 
 
 static bool parseAclItem(const char *item, const char *type,
-			 const char *name, const char *subname, int remoteVersion,
-			 PQExpBuffer grantee, PQExpBuffer grantor,
-			 PQExpBuffer privs, PQExpBuffer privswgo);
+						 const char *name, const char *subname, int remoteVersion,
+						 PQExpBuffer grantee, PQExpBuffer grantor,
+						 PQExpBuffer privs, PQExpBuffer privswgo);
 static char *copyAclUserName(PQExpBuffer output, char *input);
 static void AddAcl(PQExpBuffer aclbuf, const char *keyword,
-	   const char *subname);
+				   const char *subname);
 
 
 /*
@@ -95,6 +95,8 @@ buildACLCommands(const char *name, const char *subname, const char *nspname,
 	{
 		if (!parsePGArray(racls, &raclitems, &nraclitems))
 		{
+			if (aclitems)
+				free(aclitems);
 			if (raclitems)
 				free(raclitems);
 			return false;
@@ -479,15 +481,13 @@ parseAclItem(const char *item, const char *type,
 	char	   *slpos;
 	char	   *pos;
 
-	buf = strdup(item);
-	if (!buf)
-		return false;
+	buf = pg_strdup(item);
 
 	/* user or group name is string up to = */
 	eqpos = copyAclUserName(grantee, buf);
 	if (*eqpos != '=')
 	{
-		free(buf);
+		pg_free(buf);
 		return false;
 	}
 
@@ -499,13 +499,13 @@ parseAclItem(const char *item, const char *type,
 		slpos = copyAclUserName(grantor, slpos);
 		if (*slpos != '\0')
 		{
-			free(buf);
+			pg_free(buf);
 			return false;
 		}
 	}
 	else
 	{
-		free(buf);
+		pg_free(buf);
 		return false;
 	}
 
@@ -615,7 +615,7 @@ do { \
 			appendPQExpBuffer(privs, "(%s)", subname);
 	}
 
-	free(buf);
+	pg_free(buf);
 
 	return true;
 }

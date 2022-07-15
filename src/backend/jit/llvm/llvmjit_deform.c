@@ -7,7 +7,7 @@
  * knowledge of the tuple descriptor. Fixed column widths, NOT NULLness, etc
  * can be taken advantage of.
  *
- * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -103,27 +103,27 @@ slot_compile_deform(LLVMJitContext *context, TupleDesc desc,
 	funcname = llvm_expand_funcname(context, "deform");
 
 	/*
-	 * Check which columns do have to exist, so we don't have to check the
-	 * rows natts unnecessarily.
+	 * Check which columns have to exist, so we don't have to check the row's
+	 * natts unnecessarily.
 	 */
 	for (attnum = 0; attnum < desc->natts; attnum++)
 	{
 		Form_pg_attribute att = TupleDescAttr(desc, attnum);
 
 		/*
-		 * If the column is possibly missing, we can't rely on its (or
-		 * subsequent) NOT NULL constraints to indicate minimum attributes in
-		 * the tuple, so stop here.
+		 * If the column is declared NOT NULL then it must be present in every
+		 * tuple, unless there's a "missing" entry that could provide a
+		 * non-NULL value for it. That in turn guarantees that the NULL bitmap
+		 * - if there are any NULLable columns - is at least long enough to
+		 * cover columns up to attnum.
+		 *
+		 * Be paranoid and also check !attisdropped, even though the
+		 * combination of attisdropped && attnotnull combination shouldn't
+		 * exist.
 		 */
-		if (att->atthasmissing)
-			break;
-
-		/*
-		 * Column is NOT NULL and there've been no preceding missing columns,
-		 * it's guaranteed that all columns up to here exist at least in the
-		 * NULL bitmap.
-		 */
-		if (att->attnotnull)
+		if (att->attnotnull &&
+			!att->atthasmissing &&
+			!att->attisdropped)
 			guaranteed_column_number = attnum;
 	}
 
@@ -202,7 +202,7 @@ slot_compile_deform(LLVMJitContext *context, TupleDesc desc,
 			LLVMBuildBitCast(b,
 							 v_slot,
 							 l_ptr(StructMinimalTupleTableSlot),
-							 "minimalslotslot");
+							 "minimalslot");
 		v_slotoffp = LLVMBuildStructGEP(b, v_minimalslot, FIELDNO_MINIMALTUPLETABLESLOT_OFF, "");
 		v_tupleheaderp =
 			l_load_struct_gep(b, v_minimalslot, FIELDNO_MINIMALTUPLETABLESLOT_TUPLE,
@@ -248,10 +248,16 @@ slot_compile_deform(LLVMJitContext *context, TupleDesc desc,
 							v_infomask2,
 							"maxatt");
 
+	/*
+	 * Need to zext, as getelementptr otherwise treats hoff as a signed 8bit
+	 * integer, which'd yield a negative offset for t_hoff > 127.
+	 */
 	v_hoff =
-		l_load_struct_gep(b, v_tuplep,
-						  FIELDNO_HEAPTUPLEHEADERDATA_HOFF,
-						  "t_hoff");
+		LLVMBuildZExt(b,
+					  l_load_struct_gep(b, v_tuplep,
+										FIELDNO_HEAPTUPLEHEADERDATA_HOFF,
+										""),
+					  LLVMInt32Type(), "t_hoff");
 
 	v_tupdata_base =
 		LLVMBuildGEP(b,
@@ -292,9 +298,12 @@ slot_compile_deform(LLVMJitContext *context, TupleDesc desc,
 	}
 
 	/*
-	 * Check if's guaranteed the all the desired attributes are available in
-	 * tuple. If so, we can start deforming. If not, need to make sure to
-	 * fetch the missing columns.
+	 * Check if it is guaranteed that all the desired attributes are available
+	 * in the tuple (but still possibly NULL), by dint of either the last
+	 * to-be-deformed column being NOT NULL, or subsequent ones not accessed
+	 * here being NOT NULL.  If that's not guaranteed the tuple headers natt's
+	 * has to be checked, and missing attributes potentially have to be
+	 * fetched (using slot_getmissingattrs().
 	 */
 	if ((natts - 1) <= guaranteed_column_number)
 	{
@@ -377,7 +386,7 @@ slot_compile_deform(LLVMJitContext *context, TupleDesc desc,
 
 		/*
 		 * If this is the first attribute, slot->tts_nvalid was 0. Therefore
-		 * reset offset to 0 to, it be from a previous execution.
+		 * also reset offset to 0, it may be from a previous execution.
 		 */
 		if (attnum == 0)
 		{
@@ -407,7 +416,7 @@ slot_compile_deform(LLVMJitContext *context, TupleDesc desc,
 
 		/*
 		 * Check for nulls if necessary. No need to take missing attributes
-		 * into account, because in case they're present the heaptuple's natts
+		 * into account, because if they're present the heaptuple's natts
 		 * would have indicated that a slot_getmissingattrs() is needed.
 		 */
 		if (!att->attnotnull)
@@ -494,13 +503,13 @@ slot_compile_deform(LLVMJitContext *context, TupleDesc desc,
 			(known_alignment < 0 || known_alignment != TYPEALIGN(alignto, known_alignment)))
 		{
 			/*
-			 * When accessing a varlena field we have to "peek" to see if we
+			 * When accessing a varlena field, we have to "peek" to see if we
 			 * are looking at a pad byte or the first byte of a 1-byte-header
 			 * datum.  A zero byte must be either a pad byte, or the first
-			 * byte of a correctly aligned 4-byte length word; in either case
+			 * byte of a correctly aligned 4-byte length word; in either case,
 			 * we can align safely.  A non-zero byte must be either a 1-byte
 			 * length word, or the first byte of a correctly aligned 4-byte
-			 * length word; in either case we need not align.
+			 * length word; in either case, we need not align.
 			 */
 			if (att->attlen == -1)
 			{
@@ -594,8 +603,8 @@ slot_compile_deform(LLVMJitContext *context, TupleDesc desc,
 		else if (att->attnotnull && attguaranteedalign && known_alignment >= 0)
 		{
 			/*
-			 * If the offset to the column was previously known a NOT NULL &
-			 * fixed width column guarantees that alignment is just the
+			 * If the offset to the column was previously known, a NOT NULL &
+			 * fixed-width column guarantees that alignment is just the
 			 * previous alignment plus column width.
 			 */
 			Assert(att->attlen > 0);
@@ -636,8 +645,8 @@ slot_compile_deform(LLVMJitContext *context, TupleDesc desc,
 					   LLVMBuildGEP(b, v_tts_nulls, &l_attno, 1, ""));
 
 		/*
-		 * Store datum. For byval datums copy the value, extend to Datum's
-		 * width, and store. For byref types, store pointer to data.
+		 * Store datum. For byval: datums copy the value, extend to Datum's
+		 * width, and store. For byref types: store pointer to data.
 		 */
 		if (att->attbyval)
 		{

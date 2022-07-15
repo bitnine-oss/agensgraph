@@ -4,7 +4,7 @@
  *	  Support routines for external and compressed storage of
  *	  variable size attributes.
  *
- * Copyright (c) 2000-2018, PostgreSQL Global Development Group
+ * Copyright (c) 2000-2019, PostgreSQL Global Development Group
  *
  *
  * IDENTIFICATION
@@ -42,7 +42,6 @@
 #include "utils/rel.h"
 #include "utils/snapmgr.h"
 #include "utils/typcache.h"
-#include "utils/tqual.h"
 
 
 #undef TOAST_DEBUG
@@ -69,19 +68,20 @@ typedef struct toast_compress_header
 
 static void toast_delete_datum(Relation rel, Datum value, bool is_speculative);
 static Datum toast_save_datum(Relation rel, Datum value,
-				 struct varlena *oldexternal, int options);
+							  struct varlena *oldexternal, int options);
 static bool toastrel_valueid_exists(Relation toastrel, Oid valueid);
 static bool toastid_valueid_exists(Oid toastrelid, Oid valueid);
 static struct varlena *toast_fetch_datum(struct varlena *attr);
 static struct varlena *toast_fetch_datum_slice(struct varlena *attr,
-						int32 sliceoffset, int32 length);
+											   int32 sliceoffset, int32 length);
 static struct varlena *toast_decompress_datum(struct varlena *attr);
-static int toast_open_indexes(Relation toastrel,
-				   LOCKMODE lock,
-				   Relation **toastidxs,
-				   int *num_indexes);
+static struct varlena *toast_decompress_datum_slice(struct varlena *attr, int32 slicelength);
+static int	toast_open_indexes(Relation toastrel,
+							   LOCKMODE lock,
+							   Relation **toastidxs,
+							   int *num_indexes);
 static void toast_close_indexes(Relation *toastidxs, int num_indexes,
-					LOCKMODE lock);
+								LOCKMODE lock);
 static void init_toast_snapshot(Snapshot toast_snapshot);
 
 
@@ -302,7 +302,11 @@ heap_tuple_untoast_attr_slice(struct varlena *attr,
 	{
 		struct varlena *tmp = preslice;
 
-		preslice = toast_decompress_datum(tmp);
+		/* Decompress enough to encompass the slice and the offset */
+		if (slicelength > 0 && sliceoffset >= 0)
+			preslice = toast_decompress_datum_slice(tmp, slicelength + sliceoffset);
+		else
+			preslice = toast_decompress_datum(tmp);
 
 		if (tmp != attr)
 			pfree(tmp);
@@ -1422,7 +1426,7 @@ toast_get_valid_index(Oid toastoid, LOCKMODE lock)
 	Relation	toastrel;
 
 	/* Open the toast relation */
-	toastrel = heap_open(toastoid, lock);
+	toastrel = table_open(toastoid, lock);
 
 	/* Look for the valid index of the toast relation */
 	validIndex = toast_open_indexes(toastrel,
@@ -1433,7 +1437,7 @@ toast_get_valid_index(Oid toastoid, LOCKMODE lock)
 
 	/* Close the toast relation and all its indexes */
 	toast_close_indexes(toastidxs, num_indexes, lock);
-	heap_close(toastrel, lock);
+	table_close(toastrel, lock);
 
 	return validIndexOid;
 }
@@ -1487,7 +1491,7 @@ toast_save_datum(Relation rel, Datum value,
 	 * uniqueness of the OID we assign to the toasted item, even though it has
 	 * additional columns besides OID.
 	 */
-	toastrel = heap_open(rel->rd_rel->reltoastrelid, RowExclusiveLock);
+	toastrel = table_open(rel->rd_rel->reltoastrelid, RowExclusiveLock);
 	toasttupDesc = toastrel->rd_att;
 
 	/* Open all the toast indexes and look for the valid one */
@@ -1667,7 +1671,7 @@ toast_save_datum(Relation rel, Datum value,
 		for (i = 0; i < num_indexes; i++)
 		{
 			/* Only index relations marked as ready can be updated */
-			if (IndexIsReady(toastidxs[i]->rd_index))
+			if (toastidxs[i]->rd_index->indisready)
 				index_insert(toastidxs[i], t_values, t_isnull,
 							 &(toasttup->t_self),
 							 toastrel,
@@ -1692,7 +1696,7 @@ toast_save_datum(Relation rel, Datum value,
 	 * Done - close toast relation and its indexes
 	 */
 	toast_close_indexes(toastidxs, num_indexes, RowExclusiveLock);
-	heap_close(toastrel, RowExclusiveLock);
+	table_close(toastrel, RowExclusiveLock);
 
 	/*
 	 * Create the TOAST pointer value that we'll return
@@ -1734,7 +1738,7 @@ toast_delete_datum(Relation rel, Datum value, bool is_speculative)
 	/*
 	 * Open the toast relation and its indexes
 	 */
-	toastrel = heap_open(toast_pointer.va_toastrelid, RowExclusiveLock);
+	toastrel = table_open(toast_pointer.va_toastrelid, RowExclusiveLock);
 
 	/* Fetch valid relation used for process */
 	validIndex = toast_open_indexes(toastrel,
@@ -1764,7 +1768,7 @@ toast_delete_datum(Relation rel, Datum value, bool is_speculative)
 		 * Have a chunk, delete it
 		 */
 		if (is_speculative)
-			heap_abort_speculative(toastrel, toasttup);
+			heap_abort_speculative(toastrel, &toasttup->t_self);
 		else
 			simple_heap_delete(toastrel, &toasttup->t_self);
 	}
@@ -1774,7 +1778,7 @@ toast_delete_datum(Relation rel, Datum value, bool is_speculative)
 	 */
 	systable_endscan_ordered(toastscan);
 	toast_close_indexes(toastidxs, num_indexes, RowExclusiveLock);
-	heap_close(toastrel, RowExclusiveLock);
+	table_close(toastrel, RowExclusiveLock);
 }
 
 
@@ -1840,11 +1844,11 @@ toastid_valueid_exists(Oid toastrelid, Oid valueid)
 	bool		result;
 	Relation	toastrel;
 
-	toastrel = heap_open(toastrelid, AccessShareLock);
+	toastrel = table_open(toastrelid, AccessShareLock);
 
 	result = toastrel_valueid_exists(toastrel, valueid);
 
-	heap_close(toastrel, AccessShareLock);
+	table_close(toastrel, AccessShareLock);
 
 	return result;
 }
@@ -1899,7 +1903,7 @@ toast_fetch_datum(struct varlena *attr)
 	/*
 	 * Open the toast relation and its indexes
 	 */
-	toastrel = heap_open(toast_pointer.va_toastrelid, AccessShareLock);
+	toastrel = table_open(toast_pointer.va_toastrelid, AccessShareLock);
 	toasttupDesc = toastrel->rd_att;
 
 	/* Look for the valid index of the toast relation */
@@ -2016,7 +2020,7 @@ toast_fetch_datum(struct varlena *attr)
 	 */
 	systable_endscan_ordered(toastscan);
 	toast_close_indexes(toastidxs, num_indexes, AccessShareLock);
-	heap_close(toastrel, AccessShareLock);
+	table_close(toastrel, AccessShareLock);
 
 	return result;
 }
@@ -2026,6 +2030,8 @@ toast_fetch_datum(struct varlena *attr)
  *
  *	Reconstruct a segment of a Datum from the chunks saved
  *	in the toast relation
+ *
+ *	Note that this function only supports non-compressed external datums.
  * ----------
  */
 static struct varlena *
@@ -2085,10 +2091,7 @@ toast_fetch_datum_slice(struct varlena *attr, int32 sliceoffset, int32 length)
 
 	result = (struct varlena *) palloc(length + VARHDRSZ);
 
-	if (VARATT_EXTERNAL_IS_COMPRESSED(toast_pointer))
-		SET_VARSIZE_COMPRESSED(result, length + VARHDRSZ);
-	else
-		SET_VARSIZE(result, length + VARHDRSZ);
+	SET_VARSIZE(result, length + VARHDRSZ);
 
 	if (length == 0)
 		return result;			/* Can save a lot of work at this point! */
@@ -2103,7 +2106,7 @@ toast_fetch_datum_slice(struct varlena *attr, int32 sliceoffset, int32 length)
 	/*
 	 * Open the toast relation and its indexes
 	 */
-	toastrel = heap_open(toast_pointer.va_toastrelid, AccessShareLock);
+	toastrel = table_open(toast_pointer.va_toastrelid, AccessShareLock);
 	toasttupDesc = toastrel->rd_att;
 
 	/* Look for the valid index of toast relation */
@@ -2250,7 +2253,7 @@ toast_fetch_datum_slice(struct varlena *attr, int32 sliceoffset, int32 length)
 	 */
 	systable_endscan_ordered(toastscan);
 	toast_close_indexes(toastidxs, num_indexes, AccessShareLock);
-	heap_close(toastrel, AccessShareLock);
+	table_close(toastrel, AccessShareLock);
 
 	return result;
 }
@@ -2274,9 +2277,38 @@ toast_decompress_datum(struct varlena *attr)
 	if (pglz_decompress(TOAST_COMPRESS_RAWDATA(attr),
 						VARSIZE(attr) - TOAST_COMPRESS_HDRSZ,
 						VARDATA(result),
-						TOAST_COMPRESS_RAWSIZE(attr)) < 0)
+						TOAST_COMPRESS_RAWSIZE(attr), true) < 0)
 		elog(ERROR, "compressed data is corrupted");
 
+	return result;
+}
+
+
+/* ----------
+ * toast_decompress_datum_slice -
+ *
+ * Decompress the front of a compressed version of a varlena datum.
+ * offset handling happens in heap_tuple_untoast_attr_slice.
+ * Here we just decompress a slice from the front.
+ */
+static struct varlena *
+toast_decompress_datum_slice(struct varlena *attr, int32 slicelength)
+{
+	struct varlena *result;
+	int32		rawsize;
+
+	Assert(VARATT_IS_COMPRESSED(attr));
+
+	result = (struct varlena *) palloc(slicelength + VARHDRSZ);
+
+	rawsize = pglz_decompress(TOAST_COMPRESS_RAWDATA(attr),
+							  VARSIZE(attr) - TOAST_COMPRESS_HDRSZ,
+							  VARDATA(result),
+							  slicelength, false);
+	if (rawsize < 0)
+		elog(ERROR, "compressed data is corrupted");
+
+	SET_VARSIZE(result, rawsize + VARHDRSZ);
 	return result;
 }
 

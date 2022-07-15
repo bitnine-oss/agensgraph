@@ -11,7 +11,7 @@
  * on callers, since this is an opaque structure.  This is the reason to
  * require a create function.
  *
- * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -22,7 +22,7 @@
  */
 #include "postgres.h"
 
-#include "access/heapam.h"
+#include "access/table.h"
 #include "utils/queryenvironment.h"
 #include "utils/rel.h"
 
@@ -135,9 +135,9 @@ ENRMetadataGetTupDesc(EphemeralNamedRelationMetadata enrmd)
 	{
 		Relation	relation;
 
-		relation = heap_open(enrmd->reliddesc, NoLock);
+		relation = table_open(enrmd->reliddesc, NoLock);
 		tupdesc = relation->rd_att;
-		heap_close(relation, NoLock);
+		table_close(relation, NoLock);
 	}
 
 	return tupdesc;

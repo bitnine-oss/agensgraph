@@ -3,7 +3,7 @@
  * fe-lobj.c
  *	  Front-end large object interface
  *
- * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -341,7 +341,7 @@ lo_write(PGconn *conn, int fd, const char *buf, size_t len)
 
 	argv[1].isint = 0;
 	argv[1].len = (int) len;
-	argv[1].u.ptr = (int *) buf;
+	argv[1].u.ptr = (int *) unconstify(char *, buf);
 
 	res = PQfn(conn, conn->lobjfuncs->fn_lo_write,
 			   &retval, &result_len, 1, argv, 2);

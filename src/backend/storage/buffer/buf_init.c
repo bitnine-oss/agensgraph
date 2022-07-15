@@ -3,7 +3,7 @@
  * buf_init.c
  *	  buffer manager initialization routines
  *
- * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -179,7 +179,7 @@ BufferShmemSize(void)
 	 * and benchmarking has shown that keeping every BufferDesc aligned on a
 	 * cache line boundary is important for performance.  So, instead, the
 	 * array of I/O locks is allocated in a separate tranche.  Because those
-	 * locks are not highly contentended, we lay out the array with minimal
+	 * locks are not highly contended, we lay out the array with minimal
 	 * padding.
 	 */
 	size = add_size(size, mul_size(NBuffers, sizeof(LWLockMinimallyPadded)));

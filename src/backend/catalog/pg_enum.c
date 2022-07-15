@@ -3,7 +3,7 @@
  * pg_enum.c
  *	  routines to support manipulation of the pg_enum relation
  *
- * Copyright (c) 2006-2018, PostgreSQL Global Development Group
+ * Copyright (c) 2006-2019, PostgreSQL Global Development Group
  *
  *
  * IDENTIFICATION
@@ -14,8 +14,8 @@
 #include "postgres.h"
 
 #include "access/genam.h"
-#include "access/heapam.h"
 #include "access/htup_details.h"
+#include "access/table.h"
 #include "access/xact.h"
 #include "catalog/binary_upgrade.h"
 #include "catalog/catalog.h"
@@ -31,7 +31,6 @@
 #include "utils/hsearch.h"
 #include "utils/memutils.h"
 #include "utils/syscache.h"
-#include "utils/tqual.h"
 
 
 /* Potentially set by pg_upgrade_support functions */
@@ -79,7 +78,7 @@ EnumValuesCreate(Oid enumTypeOid, List *vals)
 	 * probably not worth trying harder.
 	 */
 
-	pg_enum = heap_open(EnumRelationId, RowExclusiveLock);
+	pg_enum = table_open(EnumRelationId, RowExclusiveLock);
 
 	/*
 	 * Allocate OIDs for the enum's members.
@@ -146,7 +145,7 @@ EnumValuesCreate(Oid enumTypeOid, List *vals)
 
 	/* clean up */
 	pfree(oids);
-	heap_close(pg_enum, RowExclusiveLock);
+	table_close(pg_enum, RowExclusiveLock);
 }
 
 
@@ -162,7 +161,7 @@ EnumValuesDelete(Oid enumTypeOid)
 	SysScanDesc scan;
 	HeapTuple	tup;
 
-	pg_enum = heap_open(EnumRelationId, RowExclusiveLock);
+	pg_enum = table_open(EnumRelationId, RowExclusiveLock);
 
 	ScanKeyInit(&key[0],
 				Anum_pg_enum_enumtypid,
@@ -179,7 +178,7 @@ EnumValuesDelete(Oid enumTypeOid)
 
 	systable_endscan(scan);
 
-	heap_close(pg_enum, RowExclusiveLock);
+	table_close(pg_enum, RowExclusiveLock);
 }
 
 /*
@@ -269,7 +268,7 @@ AddEnumLabel(Oid enumTypeOid,
 							newVal)));
 	}
 
-	pg_enum = heap_open(EnumRelationId, RowExclusiveLock);
+	pg_enum = table_open(EnumRelationId, RowExclusiveLock);
 
 	/* If we have to renumber the existing members, we restart from here */
 restart:
@@ -491,7 +490,7 @@ restart:
 	CatalogTupleInsert(pg_enum, enum_tup);
 	heap_freetuple(enum_tup);
 
-	heap_close(pg_enum, RowExclusiveLock);
+	table_close(pg_enum, RowExclusiveLock);
 
 	/* Set up the blacklist hash if not already done in this transaction */
 	if (enum_blacklist == NULL)
@@ -537,7 +536,7 @@ RenameEnumLabel(Oid enumTypeOid,
 	 */
 	LockDatabaseObject(TypeRelationId, enumTypeOid, 0, ExclusiveLock);
 
-	pg_enum = heap_open(EnumRelationId, RowExclusiveLock);
+	pg_enum = table_open(EnumRelationId, RowExclusiveLock);
 
 	/* Get the list of existing members of the enum */
 	list = SearchSysCacheList1(ENUMTYPOIDNAME,
@@ -582,7 +581,7 @@ RenameEnumLabel(Oid enumTypeOid,
 	CatalogTupleUpdate(pg_enum, &enum_tup->t_self, enum_tup);
 	heap_freetuple(enum_tup);
 
-	heap_close(pg_enum, RowExclusiveLock);
+	table_close(pg_enum, RowExclusiveLock);
 }
 
 

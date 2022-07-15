@@ -2,7 +2,7 @@
  * brinfuncs.c
  *		Functions to investigate BRIN indexes
  *
- * Copyright (c) 2014-2018, PostgreSQL Global Development Group
+ * Copyright (c) 2014-2019, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
  *		contrib/pageinspect/brinfuncs.c
@@ -41,7 +41,7 @@ typedef struct brin_column_state
 
 
 static Page verify_brin_page(bytea *raw_page, uint16 type,
-				 const char *strtype);
+							 const char *strtype);
 
 Datum
 brin_page_type(PG_FUNCTION_ARGS)

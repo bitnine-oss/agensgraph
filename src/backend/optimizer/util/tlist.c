@@ -3,7 +3,7 @@
  * tlist.c
  *	  Target list manipulation routines
  *
- * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -17,6 +17,7 @@
 #include "nodes/makefuncs.h"
 #include "nodes/nodeFuncs.h"
 #include "optimizer/cost.h"
+#include "optimizer/optimizer.h"
 #include "optimizer/tlist.h"
 
 
@@ -53,9 +54,9 @@ typedef struct
 } split_pathtarget_context;
 
 static bool split_pathtarget_walker(Node *node,
-						split_pathtarget_context *context);
+									split_pathtarget_context *context);
 static void add_sp_item_to_pathtarget(PathTarget *target,
-						  split_pathtarget_item *item);
+									  split_pathtarget_item *item);
 static void add_sp_items_to_pathtarget(PathTarget *target, List *items);
 
 
@@ -500,6 +501,31 @@ extract_grouping_ops(List *groupClause)
 	}
 
 	return groupOperators;
+}
+
+/*
+ * extract_grouping_collations - make an array of the grouping column collations
+ *		for a SortGroupClause list
+ */
+Oid *
+extract_grouping_collations(List *groupClause, List *tlist)
+{
+	int			numCols = list_length(groupClause);
+	int			colno = 0;
+	Oid		   *grpCollations;
+	ListCell   *glitem;
+
+	grpCollations = (Oid *) palloc(sizeof(Oid) * numCols);
+
+	foreach(glitem, groupClause)
+	{
+		SortGroupClause *groupcl = (SortGroupClause *) lfirst(glitem);
+		TargetEntry *tle = get_sortgroupclause_tle(groupcl, tlist);
+
+		grpCollations[colno++] = exprCollation((Node *) tle->expr);
+	}
+
+	return grpCollations;
 }
 
 /*

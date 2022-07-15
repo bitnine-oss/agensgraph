@@ -3,7 +3,7 @@
  * walsender_private.h
  *	  Private definitions from replication/walsender.c.
  *
- * Portions Copyright (c) 2010-2018, PostgreSQL Global Development Group
+ * Portions Copyright (c) 2010-2019, PostgreSQL Global Development Group
  *
  * src/include/replication/walsender_private.h
  *
@@ -75,6 +75,11 @@ typedef struct WalSnd
 	 * SyncRepLock.
 	 */
 	int			sync_standby_priority;
+
+	/*
+	 * Timestamp of the last message received from standby.
+	 */
+	TimestampTz replyTime;
 } WalSnd;
 
 extern WalSnd *MyWalSnd;

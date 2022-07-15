@@ -3,7 +3,7 @@
  * signalfuncs.c
  *	  Functions for signalling backends
  *
- * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -181,7 +181,9 @@ pg_rotate_logfile(PG_FUNCTION_ARGS)
 		ereport(ERROR,
 				(errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
 				 (errmsg("must be superuser to rotate log files with adminpack 1.0"),
-				  errhint("Consider using pg_logfile_rotate(), which is part of core, instead."))));
+		/* translator: %s is a SQL function name */
+				  errhint("Consider using %s, which is part of core, instead.",
+						  "pg_logfile_rotate()"))));
 
 	if (!Logging_collector)
 	{

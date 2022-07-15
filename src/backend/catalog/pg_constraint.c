@@ -3,7 +3,7 @@
  * pg_constraint.c
  *	  routines to support manipulation of the pg_constraint relation
  *
- * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -15,16 +15,15 @@
 #include "postgres.h"
 
 #include "access/genam.h"
-#include "access/heapam.h"
 #include "access/htup_details.h"
 #include "access/sysattr.h"
+#include "access/table.h"
 #include "access/tupconvert.h"
 #include "access/xact.h"
 #include "catalog/catalog.h"
 #include "catalog/dependency.h"
 #include "catalog/indexing.h"
 #include "catalog/objectaccess.h"
-#include "catalog/partition.h"
 #include "catalog/pg_constraint.h"
 #include "catalog/pg_operator.h"
 #include "catalog/pg_type.h"
@@ -36,11 +35,6 @@
 #include "utils/lsyscache.h"
 #include "utils/rel.h"
 #include "utils/syscache.h"
-#include "utils/tqual.h"
-
-
-static void clone_fk_constraints(Relation pg_constraint, Relation parentRel,
-					 Relation partRel, List *clone, List **cloned);
 
 
 /*
@@ -99,7 +93,7 @@ CreateConstraintEntry(const char *constraintName,
 	int			i;
 	ObjectAddress conobject;
 
-	conDesc = heap_open(ConstraintRelationId, RowExclusiveLock);
+	conDesc = table_open(ConstraintRelationId, RowExclusiveLock);
 
 	Assert(constraintName);
 	namestrcpy(&cname, constraintName);
@@ -234,7 +228,7 @@ CreateConstraintEntry(const char *constraintName,
 	conobject.objectId = conOid;
 	conobject.objectSubId = 0;
 
-	heap_close(conDesc, RowExclusiveLock);
+	table_close(conDesc, RowExclusiveLock);
 
 	if (OidIsValid(relId))
 	{
@@ -378,394 +372,6 @@ CreateConstraintEntry(const char *constraintName,
 }
 
 /*
- * CloneForeignKeyConstraints
- *		Clone foreign keys from a partitioned table to a newly acquired
- *		partition.
- *
- * relationId is a partition of parentId, so we can be certain that it has the
- * same columns with the same datatypes.  The columns may be in different
- * order, though.
- *
- * The *cloned list is appended ClonedConstraint elements describing what was
- * created.
- */
-void
-CloneForeignKeyConstraints(Oid parentId, Oid relationId, List **cloned)
-{
-	Relation	pg_constraint;
-	Relation	parentRel;
-	Relation	rel;
-	ScanKeyData key;
-	SysScanDesc scan;
-	HeapTuple	tuple;
-	List	   *clone = NIL;
-
-	parentRel = heap_open(parentId, NoLock);	/* already got lock */
-	/* see ATAddForeignKeyConstraint about lock level */
-	rel = heap_open(relationId, AccessExclusiveLock);
-	pg_constraint = heap_open(ConstraintRelationId, RowShareLock);
-
-	/* Obtain the list of constraints to clone or attach */
-	ScanKeyInit(&key,
-				Anum_pg_constraint_conrelid, BTEqualStrategyNumber,
-				F_OIDEQ, ObjectIdGetDatum(parentId));
-	scan = systable_beginscan(pg_constraint, ConstraintRelidTypidNameIndexId, true,
-							  NULL, 1, &key);
-	while ((tuple = systable_getnext(scan)) != NULL)
-	{
-		Oid		oid = ((Form_pg_constraint) GETSTRUCT(tuple))->oid;
-
-		clone = lappend_oid(clone, oid);
-	}
-	systable_endscan(scan);
-
-	/* Do the actual work, recursing to partitions as needed */
-	clone_fk_constraints(pg_constraint, parentRel, rel, clone, cloned);
-
-	/* We're done.  Clean up */
-	heap_close(parentRel, NoLock);
-	heap_close(rel, NoLock);	/* keep lock till commit */
-	heap_close(pg_constraint, RowShareLock);
-}
-
-/*
- * clone_fk_constraints
- *		Recursive subroutine for CloneForeignKeyConstraints
- *
- * Clone the given list of FK constraints when a partition is attached.
- *
- * When cloning foreign keys to a partition, it may happen that equivalent
- * constraints already exist in the partition for some of them.  We can skip
- * creating a clone in that case, and instead just attach the existing
- * constraint to the one in the parent.
- *
- * This function recurses to partitions, if the new partition is partitioned;
- * of course, only do this for FKs that were actually cloned.
- */
-static void
-clone_fk_constraints(Relation pg_constraint, Relation parentRel,
-					 Relation partRel, List *clone, List **cloned)
-{
-	TupleDesc	tupdesc;
-	AttrNumber *attmap;
-	List	   *partFKs;
-	List	   *subclone = NIL;
-	ListCell   *cell;
-
-	tupdesc = RelationGetDescr(pg_constraint);
-
-	/*
-	 * The constraint key may differ, if the columns in the partition are
-	 * different.  This map is used to convert them.
-	 */
-	attmap = convert_tuples_by_name_map(RelationGetDescr(partRel),
-										RelationGetDescr(parentRel),
-										gettext_noop("could not convert row type"));
-
-	partFKs = copyObject(RelationGetFKeyList(partRel));
-
-	foreach(cell, clone)
-	{
-		Oid			parentConstrOid = lfirst_oid(cell);
-		Form_pg_constraint constrForm;
-		HeapTuple	tuple;
-		AttrNumber	conkey[INDEX_MAX_KEYS];
-		AttrNumber	mapped_conkey[INDEX_MAX_KEYS];
-		AttrNumber	confkey[INDEX_MAX_KEYS];
-		Oid			conpfeqop[INDEX_MAX_KEYS];
-		Oid			conppeqop[INDEX_MAX_KEYS];
-		Oid			conffeqop[INDEX_MAX_KEYS];
-		Constraint *fkconstraint;
-		bool		attach_it;
-		Oid			constrOid;
-		ObjectAddress parentAddr,
-					childAddr;
-		int			nelem;
-		ListCell   *cell;
-		int			i;
-		ArrayType  *arr;
-		Datum		datum;
-		bool		isnull;
-
-		tuple = SearchSysCache1(CONSTROID, parentConstrOid);
-		if (!tuple)
-			elog(ERROR, "cache lookup failed for constraint %u",
-				 parentConstrOid);
-		constrForm = (Form_pg_constraint) GETSTRUCT(tuple);
-
-		/* only foreign keys */
-		if (constrForm->contype != CONSTRAINT_FOREIGN)
-		{
-			ReleaseSysCache(tuple);
-			continue;
-		}
-
-		ObjectAddressSet(parentAddr, ConstraintRelationId, parentConstrOid);
-
-		datum = fastgetattr(tuple, Anum_pg_constraint_conkey,
-							tupdesc, &isnull);
-		if (isnull)
-			elog(ERROR, "null conkey");
-		arr = DatumGetArrayTypeP(datum);
-		nelem = ARR_DIMS(arr)[0];
-		if (ARR_NDIM(arr) != 1 ||
-			nelem < 1 ||
-			nelem > INDEX_MAX_KEYS ||
-			ARR_HASNULL(arr) ||
-			ARR_ELEMTYPE(arr) != INT2OID)
-			elog(ERROR, "conkey is not a 1-D smallint array");
-		memcpy(conkey, ARR_DATA_PTR(arr), nelem * sizeof(AttrNumber));
-
-		for (i = 0; i < nelem; i++)
-			mapped_conkey[i] = attmap[conkey[i] - 1];
-
-		datum = fastgetattr(tuple, Anum_pg_constraint_confkey,
-							tupdesc, &isnull);
-		if (isnull)
-			elog(ERROR, "null confkey");
-		arr = DatumGetArrayTypeP(datum);
-		nelem = ARR_DIMS(arr)[0];
-		if (ARR_NDIM(arr) != 1 ||
-			nelem < 1 ||
-			nelem > INDEX_MAX_KEYS ||
-			ARR_HASNULL(arr) ||
-			ARR_ELEMTYPE(arr) != INT2OID)
-			elog(ERROR, "confkey is not a 1-D smallint array");
-		memcpy(confkey, ARR_DATA_PTR(arr), nelem * sizeof(AttrNumber));
-
-		datum = fastgetattr(tuple, Anum_pg_constraint_conpfeqop,
-							tupdesc, &isnull);
-		if (isnull)
-			elog(ERROR, "null conpfeqop");
-		arr = DatumGetArrayTypeP(datum);
-		nelem = ARR_DIMS(arr)[0];
-		if (ARR_NDIM(arr) != 1 ||
-			nelem < 1 ||
-			nelem > INDEX_MAX_KEYS ||
-			ARR_HASNULL(arr) ||
-			ARR_ELEMTYPE(arr) != OIDOID)
-			elog(ERROR, "conpfeqop is not a 1-D OID array");
-		memcpy(conpfeqop, ARR_DATA_PTR(arr), nelem * sizeof(Oid));
-
-		datum = fastgetattr(tuple, Anum_pg_constraint_conpfeqop,
-							tupdesc, &isnull);
-		if (isnull)
-			elog(ERROR, "null conpfeqop");
-		arr = DatumGetArrayTypeP(datum);
-		nelem = ARR_DIMS(arr)[0];
-		if (ARR_NDIM(arr) != 1 ||
-			nelem < 1 ||
-			nelem > INDEX_MAX_KEYS ||
-			ARR_HASNULL(arr) ||
-			ARR_ELEMTYPE(arr) != OIDOID)
-			elog(ERROR, "conpfeqop is not a 1-D OID array");
-		memcpy(conpfeqop, ARR_DATA_PTR(arr), nelem * sizeof(Oid));
-
-		datum = fastgetattr(tuple, Anum_pg_constraint_conppeqop,
-							tupdesc, &isnull);
-		if (isnull)
-			elog(ERROR, "null conppeqop");
-		arr = DatumGetArrayTypeP(datum);
-		nelem = ARR_DIMS(arr)[0];
-		if (ARR_NDIM(arr) != 1 ||
-			nelem < 1 ||
-			nelem > INDEX_MAX_KEYS ||
-			ARR_HASNULL(arr) ||
-			ARR_ELEMTYPE(arr) != OIDOID)
-			elog(ERROR, "conppeqop is not a 1-D OID array");
-		memcpy(conppeqop, ARR_DATA_PTR(arr), nelem * sizeof(Oid));
-
-		datum = fastgetattr(tuple, Anum_pg_constraint_conffeqop,
-							tupdesc, &isnull);
-		if (isnull)
-			elog(ERROR, "null conffeqop");
-		arr = DatumGetArrayTypeP(datum);
-		nelem = ARR_DIMS(arr)[0];
-		if (ARR_NDIM(arr) != 1 ||
-			nelem < 1 ||
-			nelem > INDEX_MAX_KEYS ||
-			ARR_HASNULL(arr) ||
-			ARR_ELEMTYPE(arr) != OIDOID)
-			elog(ERROR, "conffeqop is not a 1-D OID array");
-		memcpy(conffeqop, ARR_DATA_PTR(arr), nelem * sizeof(Oid));
-
-		/*
-		 * Before creating a new constraint, see whether any existing FKs are
-		 * fit for the purpose.  If one is, attach the parent constraint to it,
-		 * and don't clone anything.  This way we avoid the expensive
-		 * verification step and don't end up with a duplicate FK.  This also
-		 * means we don't consider this constraint when recursing to
-		 * partitions.
-		 */
-		attach_it = false;
-		foreach(cell, partFKs)
-		{
-			ForeignKeyCacheInfo *fk = lfirst_node(ForeignKeyCacheInfo, cell);
-			Form_pg_constraint partConstr;
-			HeapTuple	partcontup;
-
-			attach_it = true;
-
-			/*
-			 * Do some quick & easy initial checks.  If any of these fail, we
-			 * cannot use this constraint, but keep looking.
-			 */
-			if (fk->confrelid != constrForm->confrelid || fk->nkeys != nelem)
-			{
-				attach_it = false;
-				continue;
-			}
-			for (i = 0; i < nelem; i++)
-			{
-				if (fk->conkey[i] != mapped_conkey[i] ||
-					fk->confkey[i] != confkey[i] ||
-					fk->conpfeqop[i] != conpfeqop[i])
-				{
-					attach_it = false;
-					break;
-				}
-			}
-			if (!attach_it)
-				continue;
-
-			/*
-			 * Looks good so far; do some more extensive checks.  Presumably
-			 * the check for 'convalidated' could be dropped, since we don't
-			 * really care about that, but let's be careful for now.
-			 */
-			partcontup = SearchSysCache1(CONSTROID,
-										 ObjectIdGetDatum(fk->conoid));
-			if (!partcontup)
-				elog(ERROR, "cache lookup failed for constraint %u",
-					 fk->conoid);
-			partConstr = (Form_pg_constraint) GETSTRUCT(partcontup);
-			if (OidIsValid(partConstr->conparentid) ||
-				!partConstr->convalidated ||
-				partConstr->condeferrable != constrForm->condeferrable ||
-				partConstr->condeferred != constrForm->condeferred ||
-				partConstr->confupdtype != constrForm->confupdtype ||
-				partConstr->confdeltype != constrForm->confdeltype ||
-				partConstr->confmatchtype != constrForm->confmatchtype)
-			{
-				ReleaseSysCache(partcontup);
-				attach_it = false;
-				continue;
-			}
-
-			ReleaseSysCache(partcontup);
-
-			/* looks good!  Attach this constraint */
-			ConstraintSetParentConstraint(fk->conoid, constrForm->oid);
-			CommandCounterIncrement();
-			attach_it = true;
-			break;
-		}
-
-		/*
-		 * If we attached to an existing constraint, there is no need to
-		 * create a new one.  In fact, there's no need to recurse for this
-		 * constraint to partitions, either.
-		 */
-		if (attach_it)
-		{
-			ReleaseSysCache(tuple);
-			continue;
-		}
-
-		constrOid =
-			CreateConstraintEntry(NameStr(constrForm->conname),
-								  constrForm->connamespace,
-								  CONSTRAINT_FOREIGN,
-								  constrForm->condeferrable,
-								  constrForm->condeferred,
-								  constrForm->convalidated,
-								  constrForm->oid,
-								  RelationGetRelid(partRel),
-								  mapped_conkey,
-								  nelem,
-								  nelem,
-								  InvalidOid,	/* not a domain constraint */
-								  constrForm->conindid, /* same index */
-								  constrForm->confrelid,	/* same foreign rel */
-								  confkey,
-								  conpfeqop,
-								  conppeqop,
-								  conffeqop,
-								  nelem,
-								  constrForm->confupdtype,
-								  constrForm->confdeltype,
-								  constrForm->confmatchtype,
-								  NULL,
-								  NULL,
-								  NULL,
-								  false,
-								  1, false, true);
-		subclone = lappend_oid(subclone, constrOid);
-
-		ObjectAddressSet(childAddr, ConstraintRelationId, constrOid);
-		recordDependencyOn(&childAddr, &parentAddr, DEPENDENCY_INTERNAL_AUTO);
-
-		fkconstraint = makeNode(Constraint);
-		/* for now this is all we need */
-		fkconstraint->conname = pstrdup(NameStr(constrForm->conname));
-		fkconstraint->fk_upd_action = constrForm->confupdtype;
-		fkconstraint->fk_del_action = constrForm->confdeltype;
-		fkconstraint->deferrable = constrForm->condeferrable;
-		fkconstraint->initdeferred = constrForm->condeferred;
-
-		createForeignKeyTriggers(partRel, constrForm->confrelid, fkconstraint,
-								 constrOid, constrForm->conindid, false);
-
-		if (cloned)
-		{
-			ClonedConstraint *newc;
-
-			/*
-			 * Feed back caller about the constraints we created, so that they
-			 * can set up constraint verification.
-			 */
-			newc = palloc(sizeof(ClonedConstraint));
-			newc->relid = RelationGetRelid(partRel);
-			newc->refrelid = constrForm->confrelid;
-			newc->conindid = constrForm->conindid;
-			newc->conid = constrOid;
-			newc->constraint = fkconstraint;
-
-			*cloned = lappend(*cloned, newc);
-		}
-
-		ReleaseSysCache(tuple);
-	}
-
-	pfree(attmap);
-	list_free_deep(partFKs);
-
-	/*
-	 * If the partition is partitioned, recurse to handle any constraints that
-	 * were cloned.
-	 */
-	if (partRel->rd_rel->relkind == RELKIND_PARTITIONED_TABLE &&
-		subclone != NIL)
-	{
-		PartitionDesc partdesc = RelationGetPartitionDesc(partRel);
-		int			i;
-
-		for (i = 0; i < partdesc->nparts; i++)
-		{
-			Relation	childRel;
-
-			childRel = heap_open(partdesc->oids[i], AccessExclusiveLock);
-			clone_fk_constraints(pg_constraint,
-								 partRel,
-								 childRel,
-								 subclone,
-								 cloned);
-			heap_close(childRel, NoLock);	/* keep lock till commit */
-		}
-	}
-}
-
-/*
  * Test whether given name is currently used as a constraint name
  * for the given object (relation or domain).
  *
@@ -786,7 +392,7 @@ ConstraintNameIsUsed(ConstraintCategory conCat, Oid objId,
 	SysScanDesc conscan;
 	ScanKeyData skey[3];
 
-	conDesc = heap_open(ConstraintRelationId, AccessShareLock);
+	conDesc = table_open(ConstraintRelationId, AccessShareLock);
 
 	ScanKeyInit(&skey[0],
 				Anum_pg_constraint_conrelid,
@@ -810,7 +416,7 @@ ConstraintNameIsUsed(ConstraintCategory conCat, Oid objId,
 	found = (HeapTupleIsValid(systable_getnext(conscan)));
 
 	systable_endscan(conscan);
-	heap_close(conDesc, AccessShareLock);
+	table_close(conDesc, AccessShareLock);
 
 	return found;
 }
@@ -830,7 +436,7 @@ ConstraintNameExists(const char *conname, Oid namespaceid)
 	SysScanDesc conscan;
 	ScanKeyData skey[2];
 
-	conDesc = heap_open(ConstraintRelationId, AccessShareLock);
+	conDesc = table_open(ConstraintRelationId, AccessShareLock);
 
 	ScanKeyInit(&skey[0],
 				Anum_pg_constraint_conname,
@@ -848,7 +454,7 @@ ConstraintNameExists(const char *conname, Oid namespaceid)
 	found = (HeapTupleIsValid(systable_getnext(conscan)));
 
 	systable_endscan(conscan);
-	heap_close(conDesc, AccessShareLock);
+	table_close(conDesc, AccessShareLock);
 
 	return found;
 }
@@ -890,7 +496,7 @@ ChooseConstraintName(const char *name1, const char *name2,
 	bool		found;
 	ListCell   *l;
 
-	conDesc = heap_open(ConstraintRelationId, AccessShareLock);
+	conDesc = table_open(ConstraintRelationId, AccessShareLock);
 
 	/* try the unmodified label first */
 	StrNCpy(modlabel, label, sizeof(modlabel));
@@ -938,7 +544,7 @@ ChooseConstraintName(const char *name1, const char *name2,
 		snprintf(modlabel, sizeof(modlabel), "%s%d", label, ++pass);
 	}
 
-	heap_close(conDesc, AccessShareLock);
+	table_close(conDesc, AccessShareLock);
 
 	return conname;
 }
@@ -953,7 +559,7 @@ RemoveConstraintById(Oid conId)
 	HeapTuple	tup;
 	Form_pg_constraint con;
 
-	conDesc = heap_open(ConstraintRelationId, RowExclusiveLock);
+	conDesc = table_open(ConstraintRelationId, RowExclusiveLock);
 
 	tup = SearchSysCache1(CONSTROID, ObjectIdGetDatum(conId));
 	if (!HeapTupleIsValid(tup)) /* should not happen */
@@ -971,7 +577,7 @@ RemoveConstraintById(Oid conId)
 		 * If the constraint is for a relation, open and exclusive-lock the
 		 * relation it's for.
 		 */
-		rel = heap_open(con->conrelid, AccessExclusiveLock);
+		rel = table_open(con->conrelid, AccessExclusiveLock);
 
 		/*
 		 * We need to update the relcheck count if it is a check constraint
@@ -984,7 +590,7 @@ RemoveConstraintById(Oid conId)
 			HeapTuple	relTup;
 			Form_pg_class classForm;
 
-			pgrel = heap_open(RelationRelationId, RowExclusiveLock);
+			pgrel = table_open(RelationRelationId, RowExclusiveLock);
 			relTup = SearchSysCacheCopy1(RELOID,
 										 ObjectIdGetDatum(con->conrelid));
 			if (!HeapTupleIsValid(relTup))
@@ -1001,11 +607,11 @@ RemoveConstraintById(Oid conId)
 
 			heap_freetuple(relTup);
 
-			heap_close(pgrel, RowExclusiveLock);
+			table_close(pgrel, RowExclusiveLock);
 		}
 
 		/* Keep lock on constraint's rel until end of xact */
-		heap_close(rel, NoLock);
+		table_close(rel, NoLock);
 	}
 	else if (OidIsValid(con->contypid))
 	{
@@ -1024,7 +630,7 @@ RemoveConstraintById(Oid conId)
 
 	/* Clean up */
 	ReleaseSysCache(tup);
-	heap_close(conDesc, RowExclusiveLock);
+	table_close(conDesc, RowExclusiveLock);
 }
 
 /*
@@ -1044,7 +650,7 @@ RenameConstraintById(Oid conId, const char *newname)
 	HeapTuple	tuple;
 	Form_pg_constraint con;
 
-	conDesc = heap_open(ConstraintRelationId, RowExclusiveLock);
+	conDesc = table_open(ConstraintRelationId, RowExclusiveLock);
 
 	tuple = SearchSysCacheCopy1(CONSTROID, ObjectIdGetDatum(conId));
 	if (!HeapTupleIsValid(tuple))
@@ -1079,7 +685,7 @@ RenameConstraintById(Oid conId, const char *newname)
 	InvokeObjectPostAlterHook(ConstraintRelationId, conId, 0);
 
 	heap_freetuple(tuple);
-	heap_close(conDesc, RowExclusiveLock);
+	table_close(conDesc, RowExclusiveLock);
 }
 
 /*
@@ -1098,7 +704,7 @@ AlterConstraintNamespaces(Oid ownerId, Oid oldNspId,
 	SysScanDesc scan;
 	HeapTuple	tup;
 
-	conRel = heap_open(ConstraintRelationId, RowExclusiveLock);
+	conRel = table_open(ConstraintRelationId, RowExclusiveLock);
 
 	ScanKeyInit(&key[0],
 				Anum_pg_constraint_conrelid,
@@ -1148,18 +754,22 @@ AlterConstraintNamespaces(Oid ownerId, Oid oldNspId,
 
 	systable_endscan(scan);
 
-	heap_close(conRel, RowExclusiveLock);
+	table_close(conRel, RowExclusiveLock);
 }
 
 /*
  * ConstraintSetParentConstraint
- *		Set a partition's constraint as child of its parent table's
+ *		Set a partition's constraint as child of its parent constraint,
+ *		or remove the linkage if parentConstrId is InvalidOid.
  *
  * This updates the constraint's pg_constraint row to show it as inherited, and
- * add a dependency to the parent so that it cannot be removed on its own.
+ * adds PARTITION dependencies to prevent the constraint from being deleted
+ * on its own.  Alternatively, reverse that.
  */
 void
-ConstraintSetParentConstraint(Oid childConstrId, Oid parentConstrId)
+ConstraintSetParentConstraint(Oid childConstrId,
+							  Oid parentConstrId,
+							  Oid childTableId)
 {
 	Relation	constrRel;
 	Form_pg_constraint constrForm;
@@ -1168,7 +778,7 @@ ConstraintSetParentConstraint(Oid childConstrId, Oid parentConstrId)
 	ObjectAddress depender;
 	ObjectAddress referenced;
 
-	constrRel = heap_open(ConstraintRelationId, RowExclusiveLock);
+	constrRel = table_open(ConstraintRelationId, RowExclusiveLock);
 	tuple = SearchSysCache1(CONSTROID, ObjectIdGetDatum(childConstrId));
 	if (!HeapTupleIsValid(tuple))
 		elog(ERROR, "cache lookup failed for constraint %u", childConstrId);
@@ -1176,32 +786,47 @@ ConstraintSetParentConstraint(Oid childConstrId, Oid parentConstrId)
 	constrForm = (Form_pg_constraint) GETSTRUCT(newtup);
 	if (OidIsValid(parentConstrId))
 	{
+		/* don't allow setting parent for a constraint that already has one */
+		Assert(constrForm->coninhcount == 0);
+		if (constrForm->conparentid != InvalidOid)
+			elog(ERROR, "constraint %u already has a parent constraint",
+				 childConstrId);
+
 		constrForm->conislocal = false;
 		constrForm->coninhcount++;
 		constrForm->conparentid = parentConstrId;
 
 		CatalogTupleUpdate(constrRel, &tuple->t_self, newtup);
 
-		ObjectAddressSet(referenced, ConstraintRelationId, parentConstrId);
 		ObjectAddressSet(depender, ConstraintRelationId, childConstrId);
 
-		recordDependencyOn(&depender, &referenced, DEPENDENCY_INTERNAL_AUTO);
+		ObjectAddressSet(referenced, ConstraintRelationId, parentConstrId);
+		recordDependencyOn(&depender, &referenced, DEPENDENCY_PARTITION_PRI);
+
+		ObjectAddressSet(referenced, RelationRelationId, childTableId);
+		recordDependencyOn(&depender, &referenced, DEPENDENCY_PARTITION_SEC);
 	}
 	else
 	{
 		constrForm->coninhcount--;
-		if (constrForm->coninhcount <= 0)
-			constrForm->conislocal = true;
+		constrForm->conislocal = true;
 		constrForm->conparentid = InvalidOid;
+
+		/* Make sure there's no further inheritance. */
+		Assert(constrForm->coninhcount == 0);
+
+		CatalogTupleUpdate(constrRel, &tuple->t_self, newtup);
 
 		deleteDependencyRecordsForClass(ConstraintRelationId, childConstrId,
 										ConstraintRelationId,
-										DEPENDENCY_INTERNAL_AUTO);
-		CatalogTupleUpdate(constrRel, &tuple->t_self, newtup);
+										DEPENDENCY_PARTITION_PRI);
+		deleteDependencyRecordsForClass(ConstraintRelationId, childConstrId,
+										RelationRelationId,
+										DEPENDENCY_PARTITION_SEC);
 	}
 
 	ReleaseSysCache(tuple);
-	heap_close(constrRel, RowExclusiveLock);
+	table_close(constrRel, RowExclusiveLock);
 }
 
 
@@ -1219,7 +844,7 @@ get_relation_constraint_oid(Oid relid, const char *conname, bool missing_ok)
 	ScanKeyData skey[3];
 	Oid			conOid = InvalidOid;
 
-	pg_constraint = heap_open(ConstraintRelationId, AccessShareLock);
+	pg_constraint = table_open(ConstraintRelationId, AccessShareLock);
 
 	ScanKeyInit(&skey[0],
 				Anum_pg_constraint_conrelid,
@@ -1250,7 +875,7 @@ get_relation_constraint_oid(Oid relid, const char *conname, bool missing_ok)
 				 errmsg("constraint \"%s\" for table \"%s\" does not exist",
 						conname, get_rel_name(relid))));
 
-	heap_close(pg_constraint, AccessShareLock);
+	table_close(pg_constraint, AccessShareLock);
 
 	return conOid;
 }
@@ -1280,7 +905,7 @@ get_relation_constraint_attnos(Oid relid, const char *conname,
 	/* Set *constraintOid, to avoid complaints about uninitialized vars */
 	*constraintOid = InvalidOid;
 
-	pg_constraint = heap_open(ConstraintRelationId, AccessShareLock);
+	pg_constraint = table_open(ConstraintRelationId, AccessShareLock);
 
 	ScanKeyInit(&skey[0],
 				Anum_pg_constraint_conrelid,
@@ -1343,7 +968,7 @@ get_relation_constraint_attnos(Oid relid, const char *conname,
 				 errmsg("constraint \"%s\" for table \"%s\" does not exist",
 						conname, get_rel_name(relid))));
 
-	heap_close(pg_constraint, AccessShareLock);
+	table_close(pg_constraint, AccessShareLock);
 
 	return conattnos;
 }
@@ -1361,7 +986,7 @@ get_relation_idx_constraint_oid(Oid relationId, Oid indexId)
 	HeapTuple	tuple;
 	Oid			constraintId = InvalidOid;
 
-	pg_constraint = heap_open(ConstraintRelationId, AccessShareLock);
+	pg_constraint = table_open(ConstraintRelationId, AccessShareLock);
 
 	ScanKeyInit(&key,
 				Anum_pg_constraint_conrelid,
@@ -1383,7 +1008,7 @@ get_relation_idx_constraint_oid(Oid relationId, Oid indexId)
 	}
 	systable_endscan(scan);
 
-	heap_close(pg_constraint, AccessShareLock);
+	table_close(pg_constraint, AccessShareLock);
 	return constraintId;
 }
 
@@ -1401,7 +1026,7 @@ get_domain_constraint_oid(Oid typid, const char *conname, bool missing_ok)
 	ScanKeyData skey[3];
 	Oid			conOid = InvalidOid;
 
-	pg_constraint = heap_open(ConstraintRelationId, AccessShareLock);
+	pg_constraint = table_open(ConstraintRelationId, AccessShareLock);
 
 	ScanKeyInit(&skey[0],
 				Anum_pg_constraint_conrelid,
@@ -1432,7 +1057,7 @@ get_domain_constraint_oid(Oid typid, const char *conname, bool missing_ok)
 				 errmsg("constraint \"%s\" for domain %s does not exist",
 						conname, format_type_be(typid))));
 
-	heap_close(pg_constraint, AccessShareLock);
+	table_close(pg_constraint, AccessShareLock);
 
 	return conOid;
 }
@@ -1464,7 +1089,7 @@ get_primary_key_attnos(Oid relid, bool deferrableOk, Oid *constraintOid)
 	*constraintOid = InvalidOid;
 
 	/* Scan pg_constraint for constraints of the target rel */
-	pg_constraint = heap_open(ConstraintRelationId, AccessShareLock);
+	pg_constraint = table_open(ConstraintRelationId, AccessShareLock);
 
 	ScanKeyInit(&skey[0],
 				Anum_pg_constraint_conrelid,
@@ -1525,9 +1150,118 @@ get_primary_key_attnos(Oid relid, bool deferrableOk, Oid *constraintOid)
 
 	systable_endscan(scan);
 
-	heap_close(pg_constraint, AccessShareLock);
+	table_close(pg_constraint, AccessShareLock);
 
 	return pkattnos;
+}
+
+/*
+ * Extract data from the pg_constraint tuple of a foreign-key constraint.
+ *
+ * All arguments save the first are output arguments; the last three of them
+ * can be passed as NULL if caller doesn't need them.
+ */
+void
+DeconstructFkConstraintRow(HeapTuple tuple, int *numfks,
+						   AttrNumber *conkey, AttrNumber *confkey,
+						   Oid *pf_eq_oprs, Oid *pp_eq_oprs, Oid *ff_eq_oprs)
+{
+	Oid			constrId;
+	Datum		adatum;
+	bool		isNull;
+	ArrayType  *arr;
+	int			numkeys;
+
+	constrId = ((Form_pg_constraint) GETSTRUCT(tuple))->oid;
+
+	/*
+	 * We expect the arrays to be 1-D arrays of the right types; verify that.
+	 * We don't need to use deconstruct_array() since the array data is just
+	 * going to look like a C array of values.
+	 */
+	adatum = SysCacheGetAttr(CONSTROID, tuple,
+							 Anum_pg_constraint_conkey, &isNull);
+	if (isNull)
+		elog(ERROR, "null conkey for constraint %u", constrId);
+	arr = DatumGetArrayTypeP(adatum);	/* ensure not toasted */
+	if (ARR_NDIM(arr) != 1 ||
+		ARR_HASNULL(arr) ||
+		ARR_ELEMTYPE(arr) != INT2OID)
+		elog(ERROR, "conkey is not a 1-D smallint array");
+	numkeys = ARR_DIMS(arr)[0];
+	if (numkeys <= 0 || numkeys > INDEX_MAX_KEYS)
+		elog(ERROR, "foreign key constraint cannot have %d columns", numkeys);
+	memcpy(conkey, ARR_DATA_PTR(arr), numkeys * sizeof(int16));
+	if ((Pointer) arr != DatumGetPointer(adatum))
+		pfree(arr);				/* free de-toasted copy, if any */
+
+	adatum = SysCacheGetAttr(CONSTROID, tuple,
+							 Anum_pg_constraint_confkey, &isNull);
+	if (isNull)
+		elog(ERROR, "null confkey for constraint %u", constrId);
+	arr = DatumGetArrayTypeP(adatum);	/* ensure not toasted */
+	if (ARR_NDIM(arr) != 1 ||
+		ARR_DIMS(arr)[0] != numkeys ||
+		ARR_HASNULL(arr) ||
+		ARR_ELEMTYPE(arr) != INT2OID)
+		elog(ERROR, "confkey is not a 1-D smallint array");
+	memcpy(confkey, ARR_DATA_PTR(arr), numkeys * sizeof(int16));
+	if ((Pointer) arr != DatumGetPointer(adatum))
+		pfree(arr);				/* free de-toasted copy, if any */
+
+	if (pf_eq_oprs)
+	{
+		adatum = SysCacheGetAttr(CONSTROID, tuple,
+								 Anum_pg_constraint_conpfeqop, &isNull);
+		if (isNull)
+			elog(ERROR, "null conpfeqop for constraint %u", constrId);
+		arr = DatumGetArrayTypeP(adatum);	/* ensure not toasted */
+		/* see TryReuseForeignKey if you change the test below */
+		if (ARR_NDIM(arr) != 1 ||
+			ARR_DIMS(arr)[0] != numkeys ||
+			ARR_HASNULL(arr) ||
+			ARR_ELEMTYPE(arr) != OIDOID)
+			elog(ERROR, "conpfeqop is not a 1-D Oid array");
+		memcpy(pf_eq_oprs, ARR_DATA_PTR(arr), numkeys * sizeof(Oid));
+		if ((Pointer) arr != DatumGetPointer(adatum))
+			pfree(arr);			/* free de-toasted copy, if any */
+	}
+
+	if (pp_eq_oprs)
+	{
+		adatum = SysCacheGetAttr(CONSTROID, tuple,
+								 Anum_pg_constraint_conppeqop, &isNull);
+		if (isNull)
+			elog(ERROR, "null conppeqop for constraint %u", constrId);
+		arr = DatumGetArrayTypeP(adatum);	/* ensure not toasted */
+		if (ARR_NDIM(arr) != 1 ||
+			ARR_DIMS(arr)[0] != numkeys ||
+			ARR_HASNULL(arr) ||
+			ARR_ELEMTYPE(arr) != OIDOID)
+			elog(ERROR, "conppeqop is not a 1-D Oid array");
+		memcpy(pp_eq_oprs, ARR_DATA_PTR(arr), numkeys * sizeof(Oid));
+		if ((Pointer) arr != DatumGetPointer(adatum))
+			pfree(arr);			/* free de-toasted copy, if any */
+	}
+
+	if (ff_eq_oprs)
+	{
+		adatum = SysCacheGetAttr(CONSTROID, tuple,
+								 Anum_pg_constraint_conffeqop, &isNull);
+		if (isNull)
+			elog(ERROR, "null conffeqop for constraint %u", constrId);
+		arr = DatumGetArrayTypeP(adatum);	/* ensure not toasted */
+		if (ARR_NDIM(arr) != 1 ||
+			ARR_DIMS(arr)[0] != numkeys ||
+			ARR_HASNULL(arr) ||
+			ARR_ELEMTYPE(arr) != OIDOID)
+			elog(ERROR, "conffeqop is not a 1-D Oid array");
+		memcpy(ff_eq_oprs, ARR_DATA_PTR(arr), numkeys * sizeof(Oid));
+		if ((Pointer) arr != DatumGetPointer(adatum))
+			pfree(arr);			/* free de-toasted copy, if any */
+	}
+
+	*numfks = numkeys;
 }
 
 /*

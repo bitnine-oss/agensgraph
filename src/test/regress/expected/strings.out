@@ -313,7 +313,7 @@ SELECT SUBSTRING('1234567890' FROM 4 FOR 3) = '456' AS "456";
  t
 (1 row)
 
--- T581 regular expression substring (with SQL99's bizarre regexp syntax)
+-- T581 regular expression substring (with SQL's bizarre regexp syntax)
 SELECT SUBSTRING('abcdefg' FROM 'a#"(b_d)#"%' FOR '#') AS "bcd";
  bcd 
 -----
@@ -328,13 +328,13 @@ SELECT SUBSTRING('abcdefg' FROM '#"(b_d)#"%' FOR '#') IS NULL AS "True";
 (1 row)
 
 -- Null inputs should return NULL
-SELECT SUBSTRING('abcdefg' FROM '(b|c)' FOR NULL) IS NULL AS "True";
+SELECT SUBSTRING('abcdefg' FROM '%' FOR NULL) IS NULL AS "True";
  True 
 ------
  t
 (1 row)
 
-SELECT SUBSTRING(NULL FROM '(b|c)' FOR '#') IS NULL AS "True";
+SELECT SUBSTRING(NULL FROM '%' FOR '#') IS NULL AS "True";
  True 
 ------
  t
@@ -346,8 +346,57 @@ SELECT SUBSTRING('abcdefg' FROM NULL FOR '#') IS NULL AS "True";
  t
 (1 row)
 
--- PostgreSQL extension to allow omitting the escape character;
--- here the regexp is taken as Posix syntax
+-- The first and last parts should act non-greedy
+SELECT SUBSTRING('abcdefg' FROM 'a#"%#"g' FOR '#') AS "bcdef";
+ bcdef 
+-------
+ bcdef
+(1 row)
+
+SELECT SUBSTRING('abcdefg' FROM 'a*#"%#"g*' FOR '#') AS "abcdefg";
+ abcdefg 
+---------
+ abcdefg
+(1 row)
+
+-- Vertical bar in any part affects only that part
+SELECT SUBSTRING('abcdefg' FROM 'a|b#"%#"g' FOR '#') AS "bcdef";
+ bcdef 
+-------
+ bcdef
+(1 row)
+
+SELECT SUBSTRING('abcdefg' FROM 'a#"%#"x|g' FOR '#') AS "bcdef";
+ bcdef 
+-------
+ bcdef
+(1 row)
+
+SELECT SUBSTRING('abcdefg' FROM 'a#"%|ab#"g' FOR '#') AS "bcdef";
+ bcdef 
+-------
+ bcdef
+(1 row)
+
+-- Can't have more than two part separators
+SELECT SUBSTRING('abcdefg' FROM 'a*#"%#"g*#"x' FOR '#') AS "error";
+ERROR:  SQL regular expression may not contain more than two escape-double-quote separators
+CONTEXT:  SQL function "substring" statement 1
+-- Postgres extension: with 0 or 1 separator, assume parts 1 and 3 are empty
+SELECT SUBSTRING('abcdefg' FROM 'a#"%g' FOR '#') AS "bcdefg";
+ bcdefg 
+--------
+ bcdefg
+(1 row)
+
+SELECT SUBSTRING('abcdefg' FROM 'a%g' FOR '#') AS "abcdefg";
+ abcdefg 
+---------
+ abcdefg
+(1 row)
+
+-- substring() with just two arguments is not allowed by SQL spec;
+-- we accept it, but we interpret the pattern as a POSIX regexp not SQL
 SELECT SUBSTRING('abcdefg' FROM 'c.e') AS "cde";
  cde 
 -----
@@ -388,7 +437,7 @@ SELECT regexp_replace('AAA aaa', 'A+', 'Z', 'gi');
 
 -- invalid regexp option
 SELECT regexp_replace('AAA aaa', 'A+', 'Z', 'z');
-ERROR:  invalid regexp option: "z"
+ERROR:  invalid regular expression option: "z"
 -- set so we can tell NULL from empty string
 \pset null '\\N'
 -- return all matches from regexp
@@ -500,7 +549,7 @@ SELECT regexp_matches(chr(10) || '1' || chr(10) || '2' || chr(10) || '3' || chr(
 
 -- give me errors
 SELECT regexp_matches('foobarbequebaz', $re$(bar)(beque)$re$, 'gz');
-ERROR:  invalid regexp option: "z"
+ERROR:  invalid regular expression option: "z"
 SELECT regexp_matches('foobarbequebaz', $re$(barbeque$re$);
 ERROR:  invalid regular expression: parentheses () not balanced
 SELECT regexp_matches('foobarbequebaz', $re$(bar)(beque){2,1}$re$);
@@ -694,14 +743,14 @@ SELECT regexp_split_to_array('1','');
 
 -- errors
 SELECT foo, length(foo) FROM regexp_split_to_table('thE QUick bROWn FOx jUMPs ovEr The lazy dOG', 'e', 'zippy') AS foo;
-ERROR:  invalid regexp option: "z"
+ERROR:  invalid regular expression option: "z"
 SELECT regexp_split_to_array('thE QUick bROWn FOx jUMPs ovEr The lazy dOG', 'e', 'iz');
-ERROR:  invalid regexp option: "z"
+ERROR:  invalid regular expression option: "z"
 -- global option meaningless for regexp_split
 SELECT foo, length(foo) FROM regexp_split_to_table('thE QUick bROWn FOx jUMPs ovEr The lazy dOG', 'e', 'g') AS foo;
-ERROR:  regexp_split_to_table does not support the global option
+ERROR:  regexp_split_to_table() does not support the "global" option
 SELECT regexp_split_to_array('thE QUick bROWn FOx jUMPs ovEr The lazy dOG', 'e', 'g');
-ERROR:  regexp_split_to_array does not support the global option
+ERROR:  regexp_split_to_array() does not support the "global" option
 -- change NULL-display back
 \pset null ''
 -- E021-11 position expression
@@ -1102,6 +1151,22 @@ SELECT 'jack' LIKE '%____%' AS t;
 (1 row)
 
 --
+-- basic tests of LIKE with indexes
+--
+CREATE TABLE texttest (a text PRIMARY KEY, b int);
+SELECT * FROM texttest WHERE a LIKE '%1%';
+ a | b 
+---+---
+(0 rows)
+
+CREATE TABLE byteatest (a bytea PRIMARY KEY, b int);
+SELECT * FROM byteatest WHERE a LIKE '%1%';
+ a | b 
+---+---
+(0 rows)
+
+DROP TABLE texttest, byteatest;
+--
 -- test implicit type conversion
 --
 -- E021-07 character concatenation
@@ -1190,9 +1255,10 @@ INSERT INTO toasttest values (repeat('1234567890',300));
 INSERT INTO toasttest values (repeat('1234567890',300));
 INSERT INTO toasttest values (repeat('1234567890',300));
 -- expect >0 blocks
-select 0 = pg_relation_size('pg_toast.pg_toast_'||(select oid from pg_class where relname = 'toasttest'))/current_setting('block_size')::integer as blocks;
- blocks 
---------
+SELECT pg_relation_size(reltoastrelid) = 0 AS is_empty
+  FROM pg_class where relname = 'toasttest';
+ is_empty 
+----------
  f
 (1 row)
 
@@ -1203,9 +1269,10 @@ INSERT INTO toasttest values (repeat('1234567890',300));
 INSERT INTO toasttest values (repeat('1234567890',300));
 INSERT INTO toasttest values (repeat('1234567890',300));
 -- expect 0 blocks
-select 0 = pg_relation_size('pg_toast.pg_toast_'||(select oid from pg_class where relname = 'toasttest'))/current_setting('block_size')::integer as blocks;
- blocks 
---------
+SELECT pg_relation_size(reltoastrelid) = 0 AS is_empty
+  FROM pg_class where relname = 'toasttest';
+ is_empty 
+----------
  t
 (1 row)
 

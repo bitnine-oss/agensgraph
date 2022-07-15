@@ -3,7 +3,7 @@
  * sha2.h
  *	  Generic headers for SHA224, 256, 384 AND 512 functions of PostgreSQL.
  *
- * Portions Copyright (c) 2016-2018, PostgreSQL Global Development Group
+ * Portions Copyright (c) 2016-2019, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
  *		  src/include/common/sha2.h
@@ -50,7 +50,7 @@
 #ifndef _PG_SHA2_H_
 #define _PG_SHA2_H_
 
-#ifdef USE_SSL
+#ifdef USE_OPENSSL
 #include <openssl/sha.h>
 #endif
 
@@ -69,7 +69,7 @@
 #define PG_SHA512_DIGEST_STRING_LENGTH	(PG_SHA512_DIGEST_LENGTH * 2 + 1)
 
 /* Context Structures for SHA-1/224/256/384/512 */
-#ifdef USE_SSL
+#ifdef USE_OPENSSL
 typedef SHA256_CTX pg_sha256_ctx;
 typedef SHA512_CTX pg_sha512_ctx;
 typedef SHA256_CTX pg_sha224_ctx;
@@ -89,27 +89,27 @@ typedef struct pg_sha512_ctx
 } pg_sha512_ctx;
 typedef struct pg_sha256_ctx pg_sha224_ctx;
 typedef struct pg_sha512_ctx pg_sha384_ctx;
-#endif							/* USE_SSL */
+#endif							/* USE_OPENSSL */
 
 /* Interface routines for SHA224/256/384/512 */
 extern void pg_sha224_init(pg_sha224_ctx *ctx);
 extern void pg_sha224_update(pg_sha224_ctx *ctx, const uint8 *input0,
-				 size_t len);
+							 size_t len);
 extern void pg_sha224_final(pg_sha224_ctx *ctx, uint8 *dest);
 
 extern void pg_sha256_init(pg_sha256_ctx *ctx);
 extern void pg_sha256_update(pg_sha256_ctx *ctx, const uint8 *input0,
-				 size_t len);
+							 size_t len);
 extern void pg_sha256_final(pg_sha256_ctx *ctx, uint8 *dest);
 
 extern void pg_sha384_init(pg_sha384_ctx *ctx);
 extern void pg_sha384_update(pg_sha384_ctx *ctx,
-				 const uint8 *, size_t len);
+							 const uint8 *, size_t len);
 extern void pg_sha384_final(pg_sha384_ctx *ctx, uint8 *dest);
 
 extern void pg_sha512_init(pg_sha512_ctx *ctx);
 extern void pg_sha512_update(pg_sha512_ctx *ctx, const uint8 *input0,
-				 size_t len);
+							 size_t len);
 extern void pg_sha512_final(pg_sha512_ctx *ctx, uint8 *dest);
 
 #endif							/* _PG_SHA2_H_ */

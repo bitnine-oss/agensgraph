@@ -365,57 +365,6 @@ jsonb_log(PG_FUNCTION_ARGS)
 }
 
 Datum
-jsonb_log10(PG_FUNCTION_ARGS)
-{
-	Jsonb	   *j = PG_GETARG_JSONB_P(0);
-
-	if (JB_ROOT_IS_SCALAR(j))
-	{
-		JsonbValue *jv;
-
-		jv = getIthJsonbValueFromContainer(&j->root, 0);
-		if (jv->type == jbvNumeric)
-		{
-			Datum		n;
-			JsonbValue	njv;
-
-			n = DirectFunctionCall2(numeric_log, get_numeric_10_datum(),
-									NumericGetDatum(jv->val.numeric));
-
-			njv.type = jbvNumeric;
-			njv.val.numeric = DatumGetNumeric(n);
-
-			PG_RETURN_JSONB_P(JsonbValueToJsonb(&njv));
-		}
-	}
-
-	ereport(ERROR,
-			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-			 errmsg("log10(): number is expected but %s",
-					JsonbToCString(NULL, &j->root, VARSIZE(j)))));
-	PG_RETURN_NULL();
-}
-
-static Datum
-get_numeric_10_datum(void)
-{
-	static Datum n = 0;
-
-	if (n == 0)
-	{
-		MemoryContext oldMemoryContext;
-
-		oldMemoryContext = MemoryContextSwitchTo(TopMemoryContext);
-
-		n = DirectFunctionCall1(int8_numeric, Int64GetDatum(10));
-
-		MemoryContextSwitchTo(oldMemoryContext);
-	}
-
-	return n;
-}
-
-Datum
 jsonb_sqrt(PG_FUNCTION_ARGS)
 {
 	FunctionCallJsonbInfo fcjinfo;
@@ -884,17 +833,18 @@ jsonb_trim(PG_FUNCTION_ARGS)
 static Jsonb *
 FunctionCallJsonb(FunctionCallJsonbInfo *fcjinfo)
 {
-	FunctionCallInfoData fcinfo;
+	FunctionCallInfo fcinfo;
 	int			i;
-	Datum		result;
+	Datum		datum;
+	Jsonb		*result;
 
 	if (fcjinfo->nargs > FUNC_JSONB_MAX_ARGS)
 	{
 		elog(ERROR, "unexpected number of arguments: %d", fcjinfo->nargs);
-		return NULL;
 	}
 
-	InitFunctionCallInfoData(fcinfo, NULL, fcjinfo->nargs,
+	fcinfo = palloc(SizeForFunctionCallInfo(fcjinfo->nargs));
+	InitFunctionCallInfoData(*fcinfo, NULL, fcjinfo->nargs,
 							 DEFAULT_COLLATION_OID, NULL, NULL);
 
 	for (i = 0; i < fcjinfo->nargs; i++)
@@ -902,13 +852,15 @@ FunctionCallJsonb(FunctionCallJsonbInfo *fcjinfo)
 		if (!JB_ROOT_IS_SCALAR(fcjinfo->args[i]))
 			ereport_invalid_jsonb_param(fcjinfo);
 
-		fcinfo.arg[i] = jsonb_to_datum(fcjinfo->args[i], fcjinfo->argtypes[i]);
-		fcinfo.argnull[i] = false;
+		fcinfo->args[i].value = jsonb_to_datum(fcjinfo->args[i], fcjinfo->argtypes[i]);
+		fcinfo->args[i].isnull = false;
 	}
 
-	result = (*fcjinfo->fn) (&fcinfo);
+	datum = (*fcjinfo->fn) (fcinfo);
+	result = datum_to_jsonb(datum, fcjinfo->rettype);
 
-	return datum_to_jsonb(result, fcjinfo->rettype);
+	pfree(fcinfo);
+	return result;
 }
 
 static Datum

@@ -401,6 +401,50 @@ SELECT * FROM test3;
  1
 (1 row)
 
+-- failure while trying to persist a cursor across a transaction (bug #15703)
+CREATE PROCEDURE cursor_fail_during_commit()
+ LANGUAGE plpgsql
+AS $$
+  DECLARE id int;
+  BEGIN
+    FOR id IN SELECT 1/(x-1000) FROM generate_series(1,1000) x LOOP
+        INSERT INTO test1 VALUES(id);
+        COMMIT;
+    END LOOP;
+  END;
+$$;
+TRUNCATE test1;
+CALL cursor_fail_during_commit();
+ERROR:  division by zero
+CONTEXT:  PL/pgSQL function cursor_fail_during_commit() line 6 at COMMIT
+-- note that error occurs during first COMMIT, hence nothing is in test1
+SELECT count(*) FROM test1;
+ count 
+-------
+     0
+(1 row)
+
+CREATE PROCEDURE cursor_fail_during_rollback()
+ LANGUAGE plpgsql
+AS $$
+  DECLARE id int;
+  BEGIN
+    FOR id IN SELECT 1/(x-1000) FROM generate_series(1,1000) x LOOP
+        INSERT INTO test1 VALUES(id);
+        ROLLBACK;
+    END LOOP;
+  END;
+$$;
+TRUNCATE test1;
+CALL cursor_fail_during_rollback();
+ERROR:  division by zero
+CONTEXT:  PL/pgSQL function cursor_fail_during_rollback() line 6 at ROLLBACK
+SELECT count(*) FROM test1;
+ count 
+-------
+     0
+(1 row)
+
 -- SET TRANSACTION
 DO LANGUAGE plpgsql $$
 BEGIN
@@ -523,6 +567,34 @@ BEGIN
 END;
 $$;
 CALL transaction_test11();
+-- transaction chain
+TRUNCATE test1;
+DO LANGUAGE plpgsql $$
+BEGIN
+    ROLLBACK;
+    SET TRANSACTION ISOLATION LEVEL REPEATABLE READ;
+    FOR i IN 0..3 LOOP
+        RAISE INFO 'transaction_isolation = %', current_setting('transaction_isolation');
+        INSERT INTO test1 (a) VALUES (i);
+        IF i % 2 = 0 THEN
+            COMMIT AND CHAIN;
+        ELSE
+            ROLLBACK AND CHAIN;
+        END IF;
+    END LOOP;
+END
+$$;
+INFO:  transaction_isolation = repeatable read
+INFO:  transaction_isolation = repeatable read
+INFO:  transaction_isolation = repeatable read
+INFO:  transaction_isolation = repeatable read
+SELECT * FROM test1;
+ a | b 
+---+---
+ 0 | 
+ 2 | 
+(2 rows)
+
 DROP TABLE test1;
 DROP TABLE test2;
 DROP TABLE test3;

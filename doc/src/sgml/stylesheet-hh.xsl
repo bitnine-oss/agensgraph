@@ -10,12 +10,14 @@
 <!-- Parameters -->
 <xsl:param name="htmlhelp.use.hhk" select="'1'"/>
 
+<xsl:param name="base.dir" select="'htmlhelp/'"></xsl:param>
 <xsl:param name="html.stylesheet" select="'stylesheet.css'"></xsl:param>
 <xsl:param name="use.id.as.filename" select="'1'"></xsl:param>
+<xsl:param name="manifest.in.base.dir" select="1"/>
 <xsl:param name="make.valid.html" select="1"></xsl:param>
 <xsl:param name="generate.id.attributes" select="1"></xsl:param>
 <xsl:param name="generate.legalnotice.link" select="1"></xsl:param>
-<xsl:param name="link.mailto.url">pgsql-docs@postgresql.org</xsl:param>
+<xsl:param name="link.mailto.url">pgsql-docs@lists.postgresql.org</xsl:param>
 <xsl:param name="chunker.output.indent" select="'yes'"/>
 <xsl:param name="chunk.quietly" select="1"></xsl:param>
 
@@ -36,6 +38,12 @@
     <xsl:call-template name="anchor"/>
     <xsl:apply-templates/>
   </span><br/>
+</xsl:template>
+
+
+<!-- strip directory name from image filerefs -->
+<xsl:template match="imagedata/@fileref">
+ <xsl:value-of select="substring-after(., '/')"/>
 </xsl:template>
 
 </xsl:stylesheet>

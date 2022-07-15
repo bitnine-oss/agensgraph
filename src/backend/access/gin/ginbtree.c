@@ -4,7 +4,7 @@
  *	  page utilities routines for the postgres inverted index access method.
  *
  *
- * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -24,10 +24,10 @@
 
 static void ginFindParents(GinBtree btree, GinBtreeStack *stack);
 static bool ginPlaceToPage(GinBtree btree, GinBtreeStack *stack,
-			   void *insertdata, BlockNumber updateblkno,
-			   Buffer childbuf, GinStatsData *buildStats);
+						   void *insertdata, BlockNumber updateblkno,
+						   Buffer childbuf, GinStatsData *buildStats);
 static void ginFinishSplit(GinBtree btree, GinBtreeStack *stack,
-			   bool freestack, GinStatsData *buildStats);
+						   bool freestack, GinStatsData *buildStats);
 
 /*
  * Lock buffer by needed method for search.
@@ -72,9 +72,13 @@ ginTraverseLock(Buffer buffer, bool searchMode)
  * If 'searchmode' is false, on return stack->buffer is exclusively locked,
  * and the stack represents the full path to the root. Otherwise stack->buffer
  * is share-locked, and stack->parent is NULL.
+ *
+ * If 'rootConflictCheck' is true, tree root is checked for serialization
+ * conflict.
  */
 GinBtreeStack *
-ginFindLeafPage(GinBtree btree, bool searchMode, Snapshot snapshot)
+ginFindLeafPage(GinBtree btree, bool searchMode,
+				bool rootConflictCheck, Snapshot snapshot)
 {
 	GinBtreeStack *stack;
 
@@ -84,7 +88,7 @@ ginFindLeafPage(GinBtree btree, bool searchMode, Snapshot snapshot)
 	stack->parent = NULL;
 	stack->predictNumber = 1;
 
-	if (!searchMode)
+	if (rootConflictCheck)
 		CheckForSerializableConflictIn(btree->index, NULL, stack->buffer);
 
 	for (;;)
@@ -392,7 +396,7 @@ ginPlaceToPage(GinBtree btree, GinBtreeStack *stack,
 		/* It will fit, perform the insertion */
 		START_CRIT_SECTION();
 
-		if (RelationNeedsWAL(btree->index))
+		if (RelationNeedsWAL(btree->index) && !btree->isBuild)
 		{
 			XLogBeginInsert();
 			XLogRegisterBuffer(0, stack->buffer, REGBUF_STANDARD);
@@ -413,7 +417,7 @@ ginPlaceToPage(GinBtree btree, GinBtreeStack *stack,
 			MarkBufferDirty(childbuf);
 		}
 
-		if (RelationNeedsWAL(btree->index))
+		if (RelationNeedsWAL(btree->index) && !btree->isBuild)
 		{
 			XLogRecPtr	recptr;
 			ginxlogInsert xlrec;
@@ -591,7 +595,7 @@ ginPlaceToPage(GinBtree btree, GinBtreeStack *stack,
 		}
 
 		/* write WAL record */
-		if (RelationNeedsWAL(btree->index))
+		if (RelationNeedsWAL(btree->index) && !btree->isBuild)
 		{
 			XLogRecPtr	recptr;
 

@@ -4,7 +4,7 @@
  *
  *	  Routines for opclass (and opfamily) manipulation commands
  *
- * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -19,10 +19,10 @@
 
 #include "access/genam.h"
 #include "access/hash.h"
-#include "access/heapam.h"
 #include "access/nbtree.h"
 #include "access/htup_details.h"
 #include "access/sysattr.h"
+#include "access/table.h"
 #include "catalog/catalog.h"
 #include "catalog/dependency.h"
 #include "catalog/indexing.h"
@@ -49,31 +49,30 @@
 #include "utils/lsyscache.h"
 #include "utils/rel.h"
 #include "utils/syscache.h"
-#include "utils/tqual.h"
 
 
 static void AlterOpFamilyAdd(AlterOpFamilyStmt *stmt,
-				 Oid amoid, Oid opfamilyoid,
-				 int maxOpNumber, int maxProcNumber,
-				 List *items);
+							 Oid amoid, Oid opfamilyoid,
+							 int maxOpNumber, int maxProcNumber,
+							 List *items);
 static void AlterOpFamilyDrop(AlterOpFamilyStmt *stmt,
-				  Oid amoid, Oid opfamilyoid,
-				  int maxOpNumber, int maxProcNumber,
-				  List *items);
+							  Oid amoid, Oid opfamilyoid,
+							  int maxOpNumber, int maxProcNumber,
+							  List *items);
 static void processTypesSpec(List *args, Oid *lefttype, Oid *righttype);
 static void assignOperTypes(OpFamilyMember *member, Oid amoid, Oid typeoid);
 static void assignProcTypes(OpFamilyMember *member, Oid amoid, Oid typeoid);
 static void addFamilyMember(List **list, OpFamilyMember *member, bool isProc);
 static void storeOperators(List *opfamilyname, Oid amoid,
-			   Oid opfamilyoid, Oid opclassoid,
-			   List *operators, bool isAdd);
+						   Oid opfamilyoid, Oid opclassoid,
+						   List *operators, bool isAdd);
 static void storeProcedures(List *opfamilyname, Oid amoid,
-				Oid opfamilyoid, Oid opclassoid,
-				List *procedures, bool isAdd);
+							Oid opfamilyoid, Oid opclassoid,
+							List *procedures, bool isAdd);
 static void dropOperators(List *opfamilyname, Oid amoid, Oid opfamilyoid,
-			  List *operators);
+						  List *operators);
 static void dropProcedures(List *opfamilyname, Oid amoid, Oid opfamilyoid,
-			   List *procedures);
+						   List *procedures);
 
 /*
  * OpFamilyCacheLookup
@@ -255,7 +254,7 @@ CreateOpFamily(const char *amname, const char *opfname, Oid namespaceoid, Oid am
 	ObjectAddress myself,
 				referenced;
 
-	rel = heap_open(OperatorFamilyRelationId, RowExclusiveLock);
+	rel = table_open(OperatorFamilyRelationId, RowExclusiveLock);
 
 	/*
 	 * Make sure there is no existing opfamily of this name (this is just to
@@ -319,7 +318,7 @@ CreateOpFamily(const char *amname, const char *opfname, Oid namespaceoid, Oid am
 	/* Post creation hook for new operator family */
 	InvokeObjectPostCreateHook(OperatorFamilyRelationId, opfamilyoid, 0);
 
-	heap_close(rel, RowExclusiveLock);
+	table_close(rel, RowExclusiveLock);
 
 	return myself;
 }
@@ -587,7 +586,7 @@ DefineOpClass(CreateOpClassStmt *stmt)
 							stmt->amname)));
 	}
 
-	rel = heap_open(OperatorClassRelationId, RowExclusiveLock);
+	rel = table_open(OperatorClassRelationId, RowExclusiveLock);
 
 	/*
 	 * Make sure there is no existing opclass of this name (this is just to
@@ -718,7 +717,7 @@ DefineOpClass(CreateOpClassStmt *stmt)
 	/* Post creation hook for new operator class */
 	InvokeObjectPostCreateHook(OperatorClassRelationId, opclassoid, 0);
 
-	heap_close(rel, RowExclusiveLock);
+	table_close(rel, RowExclusiveLock);
 
 	return myself;
 }
@@ -1072,7 +1071,7 @@ assignOperTypes(OpFamilyMember *member, Oid amoid, Oid typeoid)
 
 	/* Fetch the operator definition */
 	optup = SearchSysCache1(OPEROID, ObjectIdGetDatum(member->object));
-	if (optup == NULL)
+	if (!HeapTupleIsValid(optup))
 		elog(ERROR, "cache lookup failed for operator %u", member->object);
 	opform = (Form_pg_operator) GETSTRUCT(optup);
 
@@ -1138,7 +1137,7 @@ assignProcTypes(OpFamilyMember *member, Oid amoid, Oid typeoid)
 
 	/* Fetch the procedure definition */
 	proctup = SearchSysCache1(PROCOID, ObjectIdGetDatum(member->object));
-	if (proctup == NULL)
+	if (!HeapTupleIsValid(proctup))
 		elog(ERROR, "cache lookup failed for function %u", member->object);
 	procform = (Form_pg_proc) GETSTRUCT(proctup);
 
@@ -1317,7 +1316,7 @@ storeOperators(List *opfamilyname, Oid amoid,
 				referenced;
 	ListCell   *l;
 
-	rel = heap_open(AccessMethodOperatorRelationId, RowExclusiveLock);
+	rel = table_open(AccessMethodOperatorRelationId, RowExclusiveLock);
 
 	foreach(l, operators)
 	{
@@ -1411,7 +1410,7 @@ storeOperators(List *opfamilyname, Oid amoid,
 								   entryoid, 0);
 	}
 
-	heap_close(rel, RowExclusiveLock);
+	table_close(rel, RowExclusiveLock);
 }
 
 /*
@@ -1435,7 +1434,7 @@ storeProcedures(List *opfamilyname, Oid amoid,
 				referenced;
 	ListCell   *l;
 
-	rel = heap_open(AccessMethodProcedureRelationId, RowExclusiveLock);
+	rel = table_open(AccessMethodProcedureRelationId, RowExclusiveLock);
 
 	foreach(l, procedures)
 	{
@@ -1514,7 +1513,7 @@ storeProcedures(List *opfamilyname, Oid amoid,
 								   entryoid, 0);
 	}
 
-	heap_close(rel, RowExclusiveLock);
+	table_close(rel, RowExclusiveLock);
 }
 
 
@@ -1607,7 +1606,7 @@ RemoveOpFamilyById(Oid opfamilyOid)
 	Relation	rel;
 	HeapTuple	tup;
 
-	rel = heap_open(OperatorFamilyRelationId, RowExclusiveLock);
+	rel = table_open(OperatorFamilyRelationId, RowExclusiveLock);
 
 	tup = SearchSysCache1(OPFAMILYOID, ObjectIdGetDatum(opfamilyOid));
 	if (!HeapTupleIsValid(tup)) /* should not happen */
@@ -1617,7 +1616,7 @@ RemoveOpFamilyById(Oid opfamilyOid)
 
 	ReleaseSysCache(tup);
 
-	heap_close(rel, RowExclusiveLock);
+	table_close(rel, RowExclusiveLock);
 }
 
 void
@@ -1626,7 +1625,7 @@ RemoveOpClassById(Oid opclassOid)
 	Relation	rel;
 	HeapTuple	tup;
 
-	rel = heap_open(OperatorClassRelationId, RowExclusiveLock);
+	rel = table_open(OperatorClassRelationId, RowExclusiveLock);
 
 	tup = SearchSysCache1(CLAOID, ObjectIdGetDatum(opclassOid));
 	if (!HeapTupleIsValid(tup)) /* should not happen */
@@ -1636,7 +1635,7 @@ RemoveOpClassById(Oid opclassOid)
 
 	ReleaseSysCache(tup);
 
-	heap_close(rel, RowExclusiveLock);
+	table_close(rel, RowExclusiveLock);
 }
 
 void
@@ -1652,7 +1651,7 @@ RemoveAmOpEntryById(Oid entryOid)
 				BTEqualStrategyNumber, F_OIDEQ,
 				ObjectIdGetDatum(entryOid));
 
-	rel = heap_open(AccessMethodOperatorRelationId, RowExclusiveLock);
+	rel = table_open(AccessMethodOperatorRelationId, RowExclusiveLock);
 
 	scan = systable_beginscan(rel, AccessMethodOperatorOidIndexId, true,
 							  NULL, 1, skey);
@@ -1665,7 +1664,7 @@ RemoveAmOpEntryById(Oid entryOid)
 	CatalogTupleDelete(rel, &tup->t_self);
 
 	systable_endscan(scan);
-	heap_close(rel, RowExclusiveLock);
+	table_close(rel, RowExclusiveLock);
 }
 
 void
@@ -1681,7 +1680,7 @@ RemoveAmProcEntryById(Oid entryOid)
 				BTEqualStrategyNumber, F_OIDEQ,
 				ObjectIdGetDatum(entryOid));
 
-	rel = heap_open(AccessMethodProcedureRelationId, RowExclusiveLock);
+	rel = table_open(AccessMethodProcedureRelationId, RowExclusiveLock);
 
 	scan = systable_beginscan(rel, AccessMethodProcedureOidIndexId, true,
 							  NULL, 1, skey);
@@ -1694,7 +1693,7 @@ RemoveAmProcEntryById(Oid entryOid)
 	CatalogTupleDelete(rel, &tup->t_self);
 
 	systable_endscan(scan);
-	heap_close(rel, RowExclusiveLock);
+	table_close(rel, RowExclusiveLock);
 }
 
 /*

@@ -45,7 +45,7 @@
  * and we'd like to still refer to them via C struct offsets.
  *
  *
- * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -71,8 +71,6 @@
 #define VARLENA_ATT_IS_PACKABLE(att) \
 	((att)->attstorage != 'p')
 
-static Datum getmissingattr(TupleDesc tupleDesc, int attnum, bool *isnull);
-
 
 /* ----------------------------------------------------------------
  *						misc support routines
@@ -82,7 +80,7 @@ static Datum getmissingattr(TupleDesc tupleDesc, int attnum, bool *isnull);
 /*
  * Return the missing value of an attribute, or NULL if there isn't one.
  */
-static Datum
+Datum
 getmissingattr(TupleDesc tupleDesc,
 			   int attnum, bool *isnull)
 {
@@ -789,8 +787,8 @@ expand_tuple(HeapTuple *targetHeapTuple,
 		}
 
 		/*
-		 * Now walk the missing attributes. If there is a missing value
-		 * make space for it. Otherwise, it's going to be NULL.
+		 * Now walk the missing attributes. If there is a missing value make
+		 * space for it. Otherwise, it's going to be NULL.
 		 */
 		for (attnum = firstmissingnum;
 			 attnum < natts;

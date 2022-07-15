@@ -3,7 +3,7 @@
  * json.c
  *		JSON data type support.
  *
- * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -78,7 +78,7 @@ typedef struct JsonAggState
 static inline void json_lex(JsonLexContext *lex);
 static inline void json_lex_string(JsonLexContext *lex);
 static inline void json_lex_number(JsonLexContext *lex, char *s,
-				bool *num_err, int *total_len);
+								   bool *num_err, int *total_len);
 static inline void parse_scalar(JsonLexContext *lex, JsonSemAction *sem);
 static void parse_object_field(JsonLexContext *lex, JsonSemAction *sem);
 static void parse_object(JsonLexContext *lex, JsonSemAction *sem);
@@ -89,21 +89,21 @@ static void report_invalid_token(JsonLexContext *lex) pg_attribute_noreturn();
 static int	report_json_context(JsonLexContext *lex);
 static char *extract_mb_char(char *s);
 static void composite_to_json(Datum composite, StringInfo result,
-				  bool use_line_feeds);
+							  bool use_line_feeds);
 static void array_dim_to_json(StringInfo result, int dim, int ndims, int *dims,
-				  Datum *vals, bool *nulls, int *valcount,
-				  JsonTypeCategory tcategory, Oid outfuncoid,
-				  bool use_line_feeds);
+							  Datum *vals, bool *nulls, int *valcount,
+							  JsonTypeCategory tcategory, Oid outfuncoid,
+							  bool use_line_feeds);
 static void array_to_json_internal(Datum array, StringInfo result,
-					   bool use_line_feeds);
+								   bool use_line_feeds);
 static void json_categorize_type(Oid typoid,
-					 JsonTypeCategory *tcategory,
-					 Oid *outfuncoid);
+								 JsonTypeCategory *tcategory,
+								 Oid *outfuncoid);
 static void datum_to_json(Datum val, bool is_null, StringInfo result,
-			  JsonTypeCategory tcategory, Oid outfuncoid,
-			  bool key_scalar);
+						  JsonTypeCategory tcategory, Oid outfuncoid,
+						  bool key_scalar);
 static void add_json(Datum val, bool is_null, StringInfo result,
-		 Oid val_type, bool key_scalar);
+					 Oid val_type, bool key_scalar);
 static text *catenate_stringinfo_string(StringInfo buffer, const char *addon);
 
 /* the null action object used for pure validation */
@@ -207,7 +207,7 @@ IsValidJsonNumber(const char *str, int len)
 	 */
 	if (*str == '-')
 	{
-		dummy_lex.input = unconstify(char *, str) + 1;
+		dummy_lex.input = unconstify(char *, str) +1;
 		dummy_lex.input_length = len - 1;
 	}
 	else
@@ -2192,7 +2192,9 @@ json_build_object(PG_FUNCTION_ARGS)
 		ereport(ERROR,
 				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 				 errmsg("argument list must have even number of elements"),
-				 errhint("The arguments of json_build_object() must consist of alternating keys and values.")));
+		/* translator: %s is a SQL function name */
+				 errhint("The arguments of %s must consist of alternating keys and values.",
+						 "json_build_object()")));
 
 	result = makeStringInfo();
 

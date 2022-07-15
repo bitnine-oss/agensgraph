@@ -4,7 +4,7 @@
  *	  Catalog-to-filenode mapping
  *
  *
- * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/utils/relmapper.h
@@ -40,7 +40,7 @@ extern Oid	RelationMapOidToFilenode(Oid relationId, bool shared);
 extern Oid	RelationMapFilenodeToOid(Oid relationId, bool shared);
 
 extern void RelationMapUpdateMap(Oid relationId, Oid fileNode, bool shared,
-					 bool immediate);
+								 bool immediate);
 
 extern void RelationMapRemoveMapping(Oid relationId);
 

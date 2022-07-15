@@ -9,7 +9,7 @@
  * See utils/resowner/README for more info.
  *
  *
- * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -20,11 +20,12 @@
  */
 #include "postgres.h"
 
-#include "access/hash.h"
 #include "jit/jit.h"
+#include "storage/bufmgr.h"
 #include "storage/ipc.h"
 #include "storage/predicate.h"
 #include "storage/proc.h"
+#include "utils/hashutils.h"
 #include "utils/memutils.h"
 #include "utils/rel.h"
 #include "utils/resowner_private.h"
@@ -164,9 +165,9 @@ static bool ResourceArrayRemove(ResourceArray *resarr, Datum value);
 static bool ResourceArrayGetAny(ResourceArray *resarr, Datum *value);
 static void ResourceArrayFree(ResourceArray *resarr);
 static void ResourceOwnerReleaseInternal(ResourceOwner owner,
-							 ResourceReleasePhase phase,
-							 bool isCommit,
-							 bool isTopLevel);
+										 ResourceReleasePhase phase,
+										 bool isCommit,
+										 bool isTopLevel);
 static void ReleaseAuxProcessResourcesCallback(int code, Datum arg);
 static void PrintRelCacheLeakWarning(Relation rel);
 static void PrintPlanCacheLeakWarning(CachedPlan *plan);
@@ -565,7 +566,7 @@ ResourceOwnerReleaseInternal(ResourceOwner owner,
 			if (owner == TopTransactionResourceOwner)
 			{
 				ProcReleaseLocks(isCommit);
-				ReleasePredicateLocks(isCommit);
+				ReleasePredicateLocks(isCommit, false);
 			}
 		}
 		else

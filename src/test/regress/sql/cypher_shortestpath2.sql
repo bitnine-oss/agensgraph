@@ -351,10 +351,10 @@ match (s1:s), (s2:s) return s1.id as s1id, s2.id as s2id, ids(nodes(shortestpath
 match (s1:s), (s2:s) return s1.id as s1id, s2.id as s2id, ids(nodes(shortestpath((s1)<-[:e*]-(s2)))) order by s1id, s2id;
 match (s1:s), (s2:s) return s1.id as s1id, s2.id as s2id, ids(nodes(shortestpath((s1)<-[:e*..2]-(s2)))) order by s1id, s2id;
 
-match (s1:s), (s2:s) return s1.id as s1id, s2.id as s2id, allshortestpaths((s1)-[:e]-(s2)) order by s1id, s2id;
-match (s1:s), (s2:s) return s1.id as s1id, s2.id as s2id, allshortestpaths((s1)-[:e*0..]-(s2)) order by s1id, s2id;
-match (s1:s), (s2:s) return s1.id as s1id, s2.id as s2id, allshortestpaths((s1)-[:e*]-(s2)) order by s1id, s2id;
-match (s1:s), (s2:s) return s1.id as s1id, s2.id as s2id, allshortestpaths((s1)-[:e*..2]-(s2)) order by s1id, s2id;
+match (s1:s), (s2:s) return s1.id as s1id, s2.id as s2id, size(allshortestpaths((s1)-[:e]-(s2))) order by s1id, s2id;
+match (s1:s), (s2:s) return s1.id as s1id, s2.id as s2id, size(allshortestpaths((s1)-[:e*0..]-(s2))) order by s1id, s2id;
+match (s1:s), (s2:s) return s1.id as s1id, s2.id as s2id, size(allshortestpaths((s1)-[:e*]-(s2))) order by s1id, s2id;
+match (s1:s), (s2:s) return s1.id as s1id, s2.id as s2id, size(allshortestpaths((s1)-[:e*..2]-(s2))) order by s1id, s2id;
 
 match (s1:s), (s2:s) return s1.id as s1id, s2.id as s2id, ids(nodes(shortestpath((s1)-[:e*0..0]->(s2)))) order by s1id, s2id;
 match (s1:s), (s2:s) return s1.id as s1id, s2.id as s2id, ids(nodes(shortestpath((s1)-[:e*..1]->(s2)))) order by s1id, s2id;
@@ -391,10 +391,10 @@ match (c1:c), (c2:c) where c1.id >= 11 and c1.id <= 19 and c2.id >= 21 and c2.id
 match (c1:c), (c2:c) where c1.id >= 31 and c1.id <= 39 and c2.id >= 31 and c2.id <= 39 return c1.id as c1id, c2.id as c2id, allshortestpaths((c1)<-[:e*]-(c2)) order by c1id, c2id;
 match (c1:c), (c2:c) where c1.id >= 31 and c1.id <= 39 and c2.id >= 41 and c2.id <= 49 return c1.id as c1id, c2.id as c2id, allshortestpaths((c1)<-[:e*]-(c2)) order by c1id, c2id;
 
-match (c1:c), (c2:c) where c1.id >= 11 and c1.id <= 19 and c2.id >= 11 and c2.id <= 19 return c1.id as c1id, c2.id as c2id, allshortestpaths((c1)-[:e*]-(c2)) order by c1id, c2id;
-match (c1:c), (c2:c) where c1.id >= 11 and c1.id <= 19 and c2.id >= 21 and c2.id <= 29 return c1.id as c1id, c2.id as c2id, allshortestpaths((c1)-[:e*]-(c2)) order by c1id, c2id;
-match (c1:c), (c2:c) where c1.id >= 31 and c1.id <= 39 and c2.id >= 31 and c2.id <= 39 return c1.id as c1id, c2.id as c2id, allshortestpaths((c1)-[:e*]-(c2)) order by c1id, c2id;
-match (c1:c), (c2:c) where c1.id >= 31 and c1.id <= 39 and c2.id >= 41 and c2.id <= 49 return c1.id as c1id, c2.id as c2id, allshortestpaths((c1)-[:e*]-(c2)) order by c1id, c2id;
+match (c1:c), (c2:c) where c1.id >= 11 and c1.id <= 19 and c2.id >= 11 and c2.id <= 19 return c1.id as c1id, c2.id as c2id, size(allshortestpaths((c1)-[:e*]-(c2))) order by c1id, c2id;
+match (c1:c), (c2:c) where c1.id >= 11 and c1.id <= 19 and c2.id >= 21 and c2.id <= 29 return c1.id as c1id, c2.id as c2id, size(allshortestpaths((c1)-[:e*]-(c2))) order by c1id, c2id;
+match (c1:c), (c2:c) where c1.id >= 31 and c1.id <= 39 and c2.id >= 31 and c2.id <= 39 return c1.id as c1id, c2.id as c2id, size(allshortestpaths((c1)-[:e*]-(c2))) order by c1id, c2id;
+match (c1:c), (c2:c) where c1.id >= 31 and c1.id <= 39 and c2.id >= 41 and c2.id <= 49 return c1.id as c1id, c2.id as c2id, size(allshortestpaths((c1)-[:e*]-(c2))) order by c1id, c2id;
 
 match (c1:c), (c2:c) where c1.id >= 51 and c1.id <= 59 and c2.id >= 61 and c2.id <= 69 return c1.id as c1id, c2.id as c2id, allshortestpaths((c1)-[:e*]->(c2)) order by c1id, c2id;
 match (c1:c), (c2:c) where c1.id >= 71 and c1.id <= 79 and c2.id >= 81 and c2.id <= 99 return c1.id as c1id, c2.id as c2id, allshortestpaths((c1)-[:e*]->(c2)) order by c1id, c2id;
@@ -402,8 +402,8 @@ match (c1:c), (c2:c) where c1.id >= 71 and c1.id <= 79 and c2.id >= 81 and c2.id
 match (c1:c), (c2:c) where c1.id >= 51 and c1.id <= 59 and c2.id >= 61 and c2.id <= 69 return c1.id as c1id, c2.id as c2id, allshortestpaths((c1)<-[:e*]-(c2)) order by c1id, c2id;
 match (c1:c), (c2:c) where c1.id >= 71 and c1.id <= 79 and c2.id >= 81 and c2.id <= 99 return c1.id as c1id, c2.id as c2id, allshortestpaths((c1)<-[:e*]-(c2)) order by c1id, c2id;
 
-match (c1:c), (c2:c) where c1.id >= 51 and c1.id <= 59 and c2.id >= 61 and c2.id <= 69 return c1.id as c1id, c2.id as c2id, allshortestpaths((c1)-[:e*]-(c2)) order by c1id, c2id;
-match (c1:c), (c2:c) where c1.id >= 71 and c1.id <= 79 and c2.id >= 81 and c2.id <= 99 return c1.id as c1id, c2.id as c2id, allshortestpaths((c1)-[:e*]-(c2)) order by c1id, c2id;
+match (c1:c), (c2:c) where c1.id >= 51 and c1.id <= 59 and c2.id >= 61 and c2.id <= 69 return c1.id as c1id, c2.id as c2id, size(allshortestpaths((c1)-[:e*]-(c2))) order by c1id, c2id;
+match (c1:c), (c2:c) where c1.id >= 71 and c1.id <= 79 and c2.id >= 81 and c2.id <= 99 return c1.id as c1id, c2.id as c2id, size(allshortestpaths((c1)-[:e*]-(c2))) order by c1id, c2id;
 
 
 -- Spread

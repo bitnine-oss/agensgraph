@@ -15,7 +15,7 @@
  * a usable vsnprintf(), then a copy of our own implementation of it will
  * be linked into libpq.
  *
- * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/interfaces/libpq/pqexpbuffer.c
@@ -37,6 +37,9 @@
 /* All "broken" PQExpBuffers point to this string. */
 static const char oom_buffer[1] = "";
 
+/* Need a char * for unconstify() compatibility */
+static const char *oom_buffer_ptr = oom_buffer;
+
 static bool appendPQExpBufferVA(PQExpBuffer str, const char *fmt, va_list args) pg_attribute_printf(2, 0);
 
 
@@ -57,7 +60,7 @@ markPQExpBufferBroken(PQExpBuffer str)
 	 * to put oom_buffer in read-only storage, so that anyone who tries to
 	 * scribble on a broken PQExpBuffer will get a failure.
 	 */
-	str->data = (char *) oom_buffer;
+	str->data = unconstify(char *, oom_buffer_ptr);
 	str->len = 0;
 	str->maxlen = 0;
 }
@@ -91,7 +94,7 @@ initPQExpBuffer(PQExpBuffer str)
 	str->data = (char *) malloc(INITIAL_EXPBUFFER_SIZE);
 	if (str->data == NULL)
 	{
-		str->data = (char *) oom_buffer;	/* see comment above */
+		str->data = unconstify(char *, oom_buffer_ptr); /* see comment above */
 		str->maxlen = 0;
 		str->len = 0;
 	}
@@ -130,7 +133,7 @@ termPQExpBuffer(PQExpBuffer str)
 	if (str->data != oom_buffer)
 		free(str->data);
 	/* just for luck, make the buffer validly empty. */
-	str->data = (char *) oom_buffer;	/* see comment above */
+	str->data = unconstify(char *, oom_buffer_ptr); /* see comment above */
 	str->maxlen = 0;
 	str->len = 0;
 }

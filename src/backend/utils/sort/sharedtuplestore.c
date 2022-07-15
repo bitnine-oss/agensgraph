@@ -10,7 +10,7 @@
  * scan where each backend reads an arbitrary subset of the tuples that were
  * written.
  *
- * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -97,7 +97,7 @@ struct SharedTuplestoreAccessor
 };
 
 static void sts_filename(char *name, SharedTuplestoreAccessor *accessor,
-			 int participant);
+						 int participant);
 
 /*
  * Return the amount of shared memory required to hold SharedTuplestore for a
@@ -173,7 +173,7 @@ sts_initialize(SharedTuplestore *sts, int participants,
 }
 
 /*
- * Attach to a SharedTupleStore that has been initialized by another backend,
+ * Attach to a SharedTuplestore that has been initialized by another backend,
  * so that this backend can read and write tuples.
  */
 SharedTuplestoreAccessor *

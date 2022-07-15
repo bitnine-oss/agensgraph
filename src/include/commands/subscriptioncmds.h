@@ -4,7 +4,7 @@
  *	  prototypes for subscriptioncmds.c.
  *
  *
- * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/commands/subscriptioncmds.h
@@ -19,7 +19,7 @@
 #include "nodes/parsenodes.h"
 
 extern ObjectAddress CreateSubscription(CreateSubscriptionStmt *stmt,
-				   bool isTopLevel);
+										bool isTopLevel);
 extern ObjectAddress AlterSubscription(AlterSubscriptionStmt *stmt);
 extern void DropSubscription(DropSubscriptionStmt *stmt, bool isTopLevel);
 

@@ -3,7 +3,7 @@
  * misc.c
  *
  *
- * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -20,6 +20,7 @@
 #include <unistd.h>
 
 #include "access/sysattr.h"
+#include "access/table.h"
 #include "catalog/catalog.h"
 #include "catalog/pg_tablespace.h"
 #include "catalog/pg_type.h"
@@ -379,7 +380,7 @@ pg_sleep(PG_FUNCTION_ARGS)
 			break;
 
 		(void) WaitLatch(MyLatch,
-						 WL_LATCH_SET | WL_TIMEOUT,
+						 WL_LATCH_SET | WL_TIMEOUT | WL_EXIT_ON_PM_DEATH,
 						 delay_ms,
 						 WAIT_EVENT_PG_SLEEP);
 		ResetLatch(MyLatch);
@@ -417,15 +418,17 @@ pg_get_keywords(PG_FUNCTION_ARGS)
 
 	funcctx = SRF_PERCALL_SETUP();
 
-	if (funcctx->call_cntr < NumScanKeywords)
+	if (funcctx->call_cntr < ScanKeywords.num_keywords)
 	{
 		char	   *values[3];
 		HeapTuple	tuple;
 
 		/* cast-away-const is ugly but alternatives aren't much better */
-		values[0] = unconstify(char *, ScanKeywords[funcctx->call_cntr].name);
+		values[0] = unconstify(char *,
+							   GetScanKeyword(funcctx->call_cntr,
+											  &ScanKeywords));
 
-		switch (ScanKeywords[funcctx->call_cntr].category)
+		switch (ScanKeywordCategories[funcctx->call_cntr])
 		{
 			case UNRESERVED_KEYWORD:
 				values[1] = "U";
@@ -819,9 +822,9 @@ pg_get_replica_identity_index(PG_FUNCTION_ARGS)
 	Oid			idxoid;
 	Relation	rel;
 
-	rel = heap_open(reloid, AccessShareLock);
+	rel = table_open(reloid, AccessShareLock);
 	idxoid = RelationGetReplicaIndex(rel);
-	heap_close(rel, AccessShareLock);
+	table_close(rel, AccessShareLock);
 
 	if (OidIsValid(idxoid))
 		PG_RETURN_OID(idxoid);

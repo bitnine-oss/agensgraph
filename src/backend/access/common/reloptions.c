@@ -3,7 +3,7 @@
  * reloptions.c
  *	  Core support for relation options (pg_class.reloptions)
  *
- * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -52,9 +52,6 @@
  * (v) make sure the lock level is set correctly for that operation
  * (vi) don't forget to document the option
  *
- * Note that we don't handle "oids" in relOpts because it is handled by
- * interpretOidsOption().
- *
  * The default choice for any new option should be AccessExclusiveLock.
  * In some cases the lock level can be reduced from there, but the lock
  * level chosen should always conflict with itself to ensure that multiple
@@ -77,7 +74,7 @@
  * n_distinct options can be set at ShareUpdateExclusiveLock because they
  * are only used during ANALYZE, which uses a ShareUpdateExclusiveLock,
  * so the ANALYZE will not be affected by in-flight changes. Changing those
- * values has no affect until the next ANALYZE, so no need for stronger lock.
+ * values has no effect until the next ANALYZE, so no need for stronger lock.
  *
  * Planner-related parameters can be set with ShareUpdateExclusiveLock because
  * they only affect planning and not the correctness of the execution. Plans
@@ -89,6 +86,11 @@
  * Setting parallel_workers is safe, since it acts the same as
  * max_parallel_workers_per_gather which is a USERSET parameter that doesn't
  * affect existing plans or queries.
+ *
+ * vacuum_truncate can be set at ShareUpdateExclusiveLock because it
+ * is only used during VACUUM, which uses a ShareUpdateExclusiveLock,
+ * so the VACUUM will not be affected by in-flight changes. Changing its
+ * value has no effect until the next VACUUM, so no need for stronger lock.
  */
 
 static relopt_bool boolRelOpts[] =
@@ -131,21 +133,30 @@ static relopt_bool boolRelOpts[] =
 	},
 	{
 		{
-			"recheck_on_update",
-			"Recheck functional index expression for changed value after update",
-			RELOPT_KIND_INDEX,
-			ShareUpdateExclusiveLock	/* since only applies to later UPDATEs */
-		},
-		true
-	},
-	{
-		{
 			"security_barrier",
 			"View acts as a row security barrier",
 			RELOPT_KIND_VIEW,
 			AccessExclusiveLock
 		},
 		false
+	},
+	{
+		{
+			"vacuum_index_cleanup",
+			"Enables index vacuuming and index cleanup",
+			RELOPT_KIND_HEAP | RELOPT_KIND_TOAST,
+			ShareUpdateExclusiveLock
+		},
+		true
+	},
+	{
+		{
+			"vacuum_truncate",
+			"Enables vacuum to truncate empty pages at the end of this table",
+			RELOPT_KIND_HEAP | RELOPT_KIND_TOAST,
+			ShareUpdateExclusiveLock
+		},
+		true
 	},
 	/* list terminator */
 	{{NULL}}
@@ -220,15 +231,6 @@ static relopt_int intRelOpts[] =
 			ShareUpdateExclusiveLock
 		},
 		-1, 0, INT_MAX
-	},
-	{
-		{
-			"autovacuum_vacuum_cost_delay",
-			"Vacuum cost delay in milliseconds, for autovacuum",
-			RELOPT_KIND_HEAP | RELOPT_KIND_TOAST,
-			ShareUpdateExclusiveLock
-		},
-		-1, 0, 100
 	},
 	{
 		{
@@ -357,6 +359,15 @@ static relopt_real realRelOpts[] =
 {
 	{
 		{
+			"autovacuum_vacuum_cost_delay",
+			"Vacuum cost delay in milliseconds, for autovacuum",
+			RELOPT_KIND_HEAP | RELOPT_KIND_TOAST,
+			ShareUpdateExclusiveLock
+		},
+		-1, 0.0, 100.0
+	},
+	{
+		{
 			"autovacuum_vacuum_scale_factor",
 			"Number of tuple updates or deletes prior to vacuum as a fraction of reltuples",
 			RELOPT_KIND_HEAP | RELOPT_KIND_TOAST,
@@ -461,7 +472,7 @@ static bool need_initialization = true;
 
 static void initialize_reloptions(void);
 static void parse_one_reloption(relopt_value *option, char *text_str,
-					int text_len, bool validate);
+								int text_len, bool validate);
 
 /*
  * initialize_reloptions
@@ -1207,7 +1218,7 @@ parse_one_reloption(relopt_value *option, char *text_str, int text_len,
 			{
 				relopt_real *optreal = (relopt_real *) option->gen;
 
-				parsed = parse_real(value, &option->values.real_val);
+				parsed = parse_real(value, &option->values.real_val, 0, NULL);
 				if (validate && !parsed)
 					ereport(ERROR,
 							(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
@@ -1343,7 +1354,7 @@ fillRelOptions(void *rdopts, Size basesize,
 				break;
 			}
 		}
-		if (validate && !found && options[i].gen->kinds != RELOPT_KIND_INDEX)
+		if (validate && !found)
 			elog(ERROR, "reloption \"%s\" not found in parse table",
 				 options[i].gen->name);
 	}
@@ -1368,8 +1379,6 @@ default_reloptions(Datum reloptions, bool validate, relopt_kind kind)
 		offsetof(StdRdOptions, autovacuum) + offsetof(AutoVacOpts, vacuum_threshold)},
 		{"autovacuum_analyze_threshold", RELOPT_TYPE_INT,
 		offsetof(StdRdOptions, autovacuum) + offsetof(AutoVacOpts, analyze_threshold)},
-		{"autovacuum_vacuum_cost_delay", RELOPT_TYPE_INT,
-		offsetof(StdRdOptions, autovacuum) + offsetof(AutoVacOpts, vacuum_cost_delay)},
 		{"autovacuum_vacuum_cost_limit", RELOPT_TYPE_INT,
 		offsetof(StdRdOptions, autovacuum) + offsetof(AutoVacOpts, vacuum_cost_limit)},
 		{"autovacuum_freeze_min_age", RELOPT_TYPE_INT,
@@ -1388,6 +1397,8 @@ default_reloptions(Datum reloptions, bool validate, relopt_kind kind)
 		offsetof(StdRdOptions, autovacuum) + offsetof(AutoVacOpts, log_min_duration)},
 		{"toast_tuple_target", RELOPT_TYPE_INT,
 		offsetof(StdRdOptions, toast_tuple_target)},
+		{"autovacuum_vacuum_cost_delay", RELOPT_TYPE_REAL,
+		offsetof(StdRdOptions, autovacuum) + offsetof(AutoVacOpts, vacuum_cost_delay)},
 		{"autovacuum_vacuum_scale_factor", RELOPT_TYPE_REAL,
 		offsetof(StdRdOptions, autovacuum) + offsetof(AutoVacOpts, vacuum_scale_factor)},
 		{"autovacuum_analyze_scale_factor", RELOPT_TYPE_REAL,
@@ -1397,7 +1408,11 @@ default_reloptions(Datum reloptions, bool validate, relopt_kind kind)
 		{"parallel_workers", RELOPT_TYPE_INT,
 		offsetof(StdRdOptions, parallel_workers)},
 		{"vacuum_cleanup_index_scale_factor", RELOPT_TYPE_REAL,
-		offsetof(StdRdOptions, vacuum_cleanup_index_scale_factor)}
+		offsetof(StdRdOptions, vacuum_cleanup_index_scale_factor)},
+		{"vacuum_index_cleanup", RELOPT_TYPE_BOOL,
+		offsetof(StdRdOptions, vacuum_index_cleanup)},
+		{"vacuum_truncate", RELOPT_TYPE_BOOL,
+		offsetof(StdRdOptions, vacuum_truncate)}
 	};
 
 	options = parseRelOptions(reloptions, validate, kind, &numoptions);
@@ -1499,40 +1514,6 @@ index_reloptions(amoptions_function amoptions, Datum reloptions, bool validate)
 		return NULL;
 
 	return amoptions(reloptions, validate);
-}
-
-/*
- * Parse generic options for all indexes.
- *
- *	reloptions	options as text[] datum
- *	validate	error flag
- */
-bytea *
-index_generic_reloptions(Datum reloptions, bool validate)
-{
-	int			numoptions;
-	GenericIndexOpts *idxopts;
-	relopt_value *options;
-	static const relopt_parse_elt tab[] = {
-		{"recheck_on_update", RELOPT_TYPE_BOOL, offsetof(GenericIndexOpts, recheck_on_update)}
-	};
-
-	options = parseRelOptions(reloptions, validate,
-							  RELOPT_KIND_INDEX,
-							  &numoptions);
-
-	/* if none set, we're done */
-	if (numoptions == 0)
-		return NULL;
-
-	idxopts = allocateReloptStruct(sizeof(GenericIndexOpts), options, numoptions);
-
-	fillRelOptions((void *) idxopts, sizeof(GenericIndexOpts), options, numoptions,
-				   validate, tab, lengthof(tab));
-
-	pfree(options);
-
-	return (bytea *) idxopts;
 }
 
 /*

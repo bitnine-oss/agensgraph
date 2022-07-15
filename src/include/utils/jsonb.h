@@ -3,7 +3,7 @@
  * jsonb.h
  *	  Declarations for jsonb data type support.
  *
- * Copyright (c) 1996-2018, PostgreSQL Global Development Group
+ * Copyright (c) 1996-2019, PostgreSQL Global Development Group
  *
  * src/include/utils/jsonb.h
  *
@@ -34,6 +34,9 @@ typedef enum
 #define JsonbExistsStrategyNumber		9
 #define JsonbExistsAnyStrategyNumber	10
 #define JsonbExistsAllStrategyNumber	11
+#define JsonbJsonpathExistsStrategyNumber		15
+#define JsonbJsonpathPredicateStrategyNumber	16
+
 
 /*
  * In the standard jsonb_ops GIN opclass for jsonb, we choose to index both
@@ -66,8 +69,10 @@ typedef enum
 
 /* Convenience macros */
 #define DatumGetJsonbP(d)	((Jsonb *) PG_DETOAST_DATUM(d))
+#define DatumGetJsonbPCopy(d)	((Jsonb *) PG_DETOAST_DATUM_COPY(d))
 #define JsonbPGetDatum(p)	PointerGetDatum(p)
 #define PG_GETARG_JSONB_P(x)	DatumGetJsonbP(PG_GETARG_DATUM(x))
+#define PG_GETARG_JSONB_P_COPY(x)	DatumGetJsonbPCopy(PG_GETARG_DATUM(x))
 #define PG_RETURN_JSONB_P(x)	PG_RETURN_POINTER(x)
 
 typedef struct JsonbPair JsonbPair;
@@ -357,27 +362,29 @@ extern uint32 getJsonbOffset(const JsonbContainer *jc, int index);
 extern uint32 getJsonbLength(const JsonbContainer *jc, int index);
 extern int	compareJsonbContainers(JsonbContainer *a, JsonbContainer *b);
 extern JsonbValue *findJsonbValueFromContainer(JsonbContainer *sheader,
-							uint32 flags,
-							JsonbValue *key);
+											   uint32 flags,
+											   JsonbValue *key);
 extern JsonbValue *getIthJsonbValueFromContainer(JsonbContainer *sheader,
-							  uint32 i);
+												 uint32 i);
 extern JsonbValue *pushJsonbValue(JsonbParseState **pstate,
-			   JsonbIteratorToken seq, JsonbValue *jbVal);
+								  JsonbIteratorToken seq, JsonbValue *jbVal);
 extern JsonbIterator *JsonbIteratorInit(JsonbContainer *container);
 extern JsonbIteratorToken JsonbIteratorNext(JsonbIterator **it, JsonbValue *val,
-				  bool skipNested);
+											bool skipNested);
 extern Jsonb *JsonbValueToJsonb(JsonbValue *val);
 extern bool JsonbDeepContains(JsonbIterator **val,
-				  JsonbIterator **mContained);
+							  JsonbIterator **mContained);
 extern void JsonbHashScalarValue(const JsonbValue *scalarVal, uint32 *hash);
 extern void JsonbHashScalarValueExtended(const JsonbValue *scalarVal,
-							 uint64 *hash, uint64 seed);
+										 uint64 *hash, uint64 seed);
 
 /* jsonb.c support functions */
 extern char *JsonbToCString(StringInfo out, JsonbContainer *in,
-			   int estimated_len);
+							int estimated_len);
 extern char *JsonbToCStringIndent(StringInfo out, JsonbContainer *in,
-					 int estimated_len);
+								  int estimated_len);
+extern bool JsonbExtractScalar(JsonbContainer *jbc, JsonbValue *res);
+extern const char *JsonbTypeName(JsonbValue *jb);
 
 
 #endif							/* __JSONB_H__ */

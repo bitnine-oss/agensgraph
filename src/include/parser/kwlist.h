@@ -2,12 +2,12 @@
  *
  * kwlist.h
  *
- * The keyword list is kept in its own source file for possible use by
+ * The keyword lists are kept in their own source files for use by
  * automatic tools.  The exact representation of a keyword is determined
  * by the PG_KEYWORD macro, which is not defined in this file; it can
  * be defined by the caller for special purposes.
  *
- * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -21,8 +21,7 @@
 /*
  * List of keyword (name, token-value, category) entries.
  *
- * !!WARNING!!: This list must be sorted by ASCII name, because binary
- *		 search is used to locate entries.
+ * Note: gen_keywordlist.pl requires the entries to appear in ASCII order.
  */
 
 /* name, value, category */
@@ -400,10 +399,12 @@ PG_KEYWORD("statistics", STATISTICS, UNRESERVED_KEYWORD)
 PG_KEYWORD("stdin", STDIN, UNRESERVED_KEYWORD)
 PG_KEYWORD("stdout", STDOUT, UNRESERVED_KEYWORD)
 PG_KEYWORD("storage", STORAGE, UNRESERVED_KEYWORD)
+PG_KEYWORD("stored", STORED, UNRESERVED_KEYWORD)
 PG_KEYWORD("strict", STRICT_P, UNRESERVED_KEYWORD)
 PG_KEYWORD("strip", STRIP_P, UNRESERVED_KEYWORD)
 PG_KEYWORD("subscription", SUBSCRIPTION, UNRESERVED_KEYWORD)
 PG_KEYWORD("substring", SUBSTRING, COL_NAME_KEYWORD)
+PG_KEYWORD("support", SUPPORT, UNRESERVED_KEYWORD)
 PG_KEYWORD("symmetric", SYMMETRIC, RESERVED_KEYWORD)
 PG_KEYWORD("sysid", SYSID, UNRESERVED_KEYWORD)
 PG_KEYWORD("system", SYSTEM_P, UNRESERVED_KEYWORD)

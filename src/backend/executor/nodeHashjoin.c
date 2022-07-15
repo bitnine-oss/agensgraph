@@ -3,7 +3,7 @@
  * nodeHashjoin.c
  *	  Routines to handle hash join nodes
  *
- * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -134,15 +134,15 @@
 #define HJ_FILL_INNER(hjstate)	((hjstate)->hj_NullOuterTupleSlot != NULL)
 
 static TupleTableSlot *ExecHashJoinOuterGetTuple(PlanState *outerNode,
-						  HashJoinState *hjstate,
-						  uint32 *hashvalue);
+												 HashJoinState *hjstate,
+												 uint32 *hashvalue);
 static TupleTableSlot *ExecParallelHashJoinOuterGetTuple(PlanState *outerNode,
-								  HashJoinState *hjstate,
-								  uint32 *hashvalue);
+														 HashJoinState *hjstate,
+														 uint32 *hashvalue);
 static TupleTableSlot *ExecHashJoinGetSavedTuple(HashJoinState *hjstate,
-						  BufFile *file,
-						  uint32 *hashvalue,
-						  TupleTableSlot *tupleSlot);
+												 BufFile *file,
+												 uint32 *hashvalue,
+												 TupleTableSlot *tupleSlot);
 static bool ExecHashJoinNewBatch(HashJoinState *hjstate);
 static bool ExecParallelHashJoinNewBatch(HashJoinState *hjstate);
 static void ExecParallelHashJoinPartitionOuter(HashJoinState *node);
@@ -278,6 +278,7 @@ ExecHashJoinImpl(PlanState *pstate, bool parallel)
 				 */
 				hashtable = ExecHashTableCreate(hashNode,
 												node->hj_HashOperators,
+												node->hj_Collations,
 												HJ_FILL_INNER(node));
 				node->hj_HashTable = hashtable;
 
@@ -603,6 +604,7 @@ ExecInitHashJoin(HashJoin *node, EState *estate, int eflags)
 	List	   *rclauses;
 	List	   *rhclauses;
 	List	   *hoperators;
+	List	   *hcollations;
 	TupleDesc	outerDesc,
 				innerDesc;
 	ListCell   *l;
@@ -738,6 +740,7 @@ ExecInitHashJoin(HashJoin *node, EState *estate, int eflags)
 	rclauses = NIL;
 	rhclauses = NIL;
 	hoperators = NIL;
+	hcollations = NIL;
 	foreach(l, node->hashclauses)
 	{
 		OpExpr	   *hclause = lfirst_node(OpExpr, l);
@@ -747,12 +750,14 @@ ExecInitHashJoin(HashJoin *node, EState *estate, int eflags)
 		rclauses = lappend(rclauses, ExecInitExpr(lsecond(hclause->args),
 												  (PlanState *) hjstate));
 		rhclauses = lappend(rhclauses, ExecInitExpr(lsecond(hclause->args),
-												   innerPlanState(hjstate)));
+													innerPlanState(hjstate)));
 		hoperators = lappend_oid(hoperators, hclause->opno);
+		hcollations = lappend_oid(hcollations, hclause->inputcollid);
 	}
 	hjstate->hj_OuterHashKeys = lclauses;
 	hjstate->hj_InnerHashKeys = rclauses;
 	hjstate->hj_HashOperators = hoperators;
+	hjstate->hj_Collations = hcollations;
 	/* child Hash node needs to evaluate inner hash keys, too */
 	((HashState *) innerPlanState(hjstate))->hashkeys = rhclauses;
 

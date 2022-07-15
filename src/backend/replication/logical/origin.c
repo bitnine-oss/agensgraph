@@ -3,7 +3,7 @@
  * origin.c
  *	  Logical replication progress tracking support.
  *
- * Copyright (c) 2013-2018, PostgreSQL Global Development Group
+ * Copyright (c) 2013-2019, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
  *	  src/backend/replication/logical/origin.c
@@ -74,10 +74,11 @@
 #include "miscadmin.h"
 
 #include "access/genam.h"
-#include "access/heapam.h"
 #include "access/htup_details.h"
+#include "access/table.h"
 #include "access/xact.h"
 
+#include "catalog/catalog.h"
 #include "catalog/indexing.h"
 #include "nodes/execnodes.h"
 
@@ -95,7 +96,7 @@
 #include "utils/pg_lsn.h"
 #include "utils/rel.h"
 #include "utils/syscache.h"
-#include "utils/tqual.h"
+#include "utils/snapmgr.h"
 
 /*
  * Replay progress of a single remote node.
@@ -270,7 +271,7 @@ replorigin_create(char *roname)
 	 */
 	InitDirtySnapshot(SnapshotDirty);
 
-	rel = heap_open(ReplicationOriginRelationId, ExclusiveLock);
+	rel = table_open(ReplicationOriginRelationId, ExclusiveLock);
 
 	for (roident = InvalidOid + 1; roident < PG_UINT16_MAX; roident++)
 	{
@@ -313,7 +314,7 @@ replorigin_create(char *roname)
 	}
 
 	/* now release lock again,	*/
-	heap_close(rel, ExclusiveLock);
+	table_close(rel, ExclusiveLock);
 
 	if (tuple == NULL)
 		ereport(ERROR,
@@ -343,7 +344,7 @@ replorigin_drop(RepOriginId roident, bool nowait)
 	 * To interlock against concurrent drops, we hold ExclusiveLock on
 	 * pg_replication_origin throughout this function.
 	 */
-	rel = heap_open(ReplicationOriginRelationId, ExclusiveLock);
+	rel = table_open(ReplicationOriginRelationId, ExclusiveLock);
 
 	/*
 	 * First, clean up the slot state info, if there is any matching slot.
@@ -419,7 +420,7 @@ restart:
 	CommandCounterIncrement();
 
 	/* now release lock again */
-	heap_close(rel, ExclusiveLock);
+	table_close(rel, ExclusiveLock);
 }
 
 
@@ -579,12 +580,9 @@ CheckPointReplicationOrigin(void)
 	errno = 0;
 	if ((write(tmpfd, &magic, sizeof(magic))) != sizeof(magic))
 	{
-		int			save_errno = errno;
-
-		CloseTransientFile(tmpfd);
-
 		/* if write didn't set errno, assume problem is no disk space */
-		errno = save_errno ? save_errno : ENOSPC;
+		if (errno == 0)
+			errno = ENOSPC;
 		ereport(PANIC,
 				(errcode_for_file_access(),
 				 errmsg("could not write to file \"%s\": %m",
@@ -624,12 +622,9 @@ CheckPointReplicationOrigin(void)
 		if ((write(tmpfd, &disk_state, sizeof(disk_state))) !=
 			sizeof(disk_state))
 		{
-			int			save_errno = errno;
-
-			CloseTransientFile(tmpfd);
-
 			/* if write didn't set errno, assume problem is no disk space */
-			errno = save_errno ? save_errno : ENOSPC;
+			if (errno == 0)
+				errno = ENOSPC;
 			ereport(PANIC,
 					(errcode_for_file_access(),
 					 errmsg("could not write to file \"%s\": %m",
@@ -646,19 +641,20 @@ CheckPointReplicationOrigin(void)
 	errno = 0;
 	if ((write(tmpfd, &crc, sizeof(crc))) != sizeof(crc))
 	{
-		int			save_errno = errno;
-
-		CloseTransientFile(tmpfd);
-
 		/* if write didn't set errno, assume problem is no disk space */
-		errno = save_errno ? save_errno : ENOSPC;
+		if (errno == 0)
+			errno = ENOSPC;
 		ereport(PANIC,
 				(errcode_for_file_access(),
 				 errmsg("could not write to file \"%s\": %m",
 						tmppath)));
 	}
 
-	CloseTransientFile(tmpfd);
+	if (CloseTransientFile(tmpfd))
+		ereport(PANIC,
+				(errcode_for_file_access(),
+				 errmsg("could not close file \"%s\": %m",
+						tmppath)));
 
 	/* fsync, rename to permanent file, fsync file and directory */
 	durable_rename(tmppath, path, PANIC);
@@ -793,7 +789,11 @@ StartupReplicationOrigin(void)
 				 errmsg("replication slot checkpoint has wrong checksum %u, expected %u",
 						crc, file_crc)));
 
-	CloseTransientFile(fd);
+	if (CloseTransientFile(fd))
+		ereport(PANIC,
+				(errcode_for_file_access(),
+				 errmsg("could not close file \"%s\": %m",
+						path)));
 }
 
 void
@@ -1229,6 +1229,24 @@ pg_replication_origin_create(PG_FUNCTION_ARGS)
 	replorigin_check_prerequisites(false, false);
 
 	name = text_to_cstring((text *) DatumGetPointer(PG_GETARG_DATUM(0)));
+
+	/* Replication origins "pg_xxx" are reserved for internal use */
+	if (IsReservedName(name))
+		ereport(ERROR,
+				(errcode(ERRCODE_RESERVED_NAME),
+				 errmsg("replication origin name \"%s\" is reserved",
+						name),
+				 errdetail("Origin names starting with \"pg_\" are reserved.")));
+
+	/*
+	 * If built with appropriate switch, whine when regression-testing
+	 * conventions for replication origin names are violated.
+	 */
+#ifdef ENFORCE_REGRESSION_TEST_NAME_RESTRICTIONS
+	if (strncmp(name, "regress_", 8) != 0)
+		elog(WARNING, "replication origins created by regression test cases should have names starting with \"regress_\"");
+#endif
+
 	roident = replorigin_create(name);
 
 	pfree(name);

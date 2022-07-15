@@ -54,6 +54,19 @@ CREATE INDEX ON vaccluster(wrap_do_analyze(i));
 INSERT INTO vaccluster VALUES (1), (2);
 ANALYZE vaccluster;
 
+-- Test ANALYZE in transaction, where the transaction surrounding
+-- analyze performed modifications. This tests for the bug at
+-- https://postgr.es/m/c7988239-d42c-ddc4-41db-171b23b35e4f%40ssinger.info
+-- (which hopefully is unlikely to be reintroduced), but also seems
+-- independently worthwhile to cover.
+INSERT INTO vactst SELECT generate_series(1, 300);
+DELETE FROM vactst WHERE i % 7 = 0; -- delete a few rows outside
+BEGIN;
+INSERT INTO vactst SELECT generate_series(301, 400);
+DELETE FROM vactst WHERE i % 5 <> 0; -- delete a few rows inside
+ANALYZE vactst;
+COMMIT;
+
 VACUUM FULL pg_am;
 VACUUM FULL pg_class;
 VACUUM FULL pg_database;
@@ -61,6 +74,52 @@ VACUUM FULL vaccluster;
 VACUUM FULL vactst;
 
 VACUUM (DISABLE_PAGE_SKIPPING) vaccluster;
+
+-- INDEX_CLEANUP option
+CREATE TABLE no_index_cleanup (i INT PRIMARY KEY, t TEXT);
+-- Use uncompressed data stored in toast.
+CREATE INDEX no_index_cleanup_idx ON no_index_cleanup(t);
+ALTER TABLE no_index_cleanup ALTER COLUMN t SET STORAGE EXTERNAL;
+INSERT INTO no_index_cleanup(i, t) VALUES (generate_series(1,30),
+    repeat('1234567890',300));
+-- index cleanup option is ignored if VACUUM FULL
+VACUUM (INDEX_CLEANUP TRUE, FULL TRUE) no_index_cleanup;
+VACUUM (FULL TRUE) no_index_cleanup;
+-- Toast inherits the value from its parent table.
+ALTER TABLE no_index_cleanup SET (vacuum_index_cleanup = false);
+DELETE FROM no_index_cleanup WHERE i < 15;
+-- Nothing is cleaned up.
+VACUUM no_index_cleanup;
+-- Both parent relation and toast are cleaned up.
+ALTER TABLE no_index_cleanup SET (vacuum_index_cleanup = true);
+VACUUM no_index_cleanup;
+-- Parameter is set for both the parent table and its toast relation.
+INSERT INTO no_index_cleanup(i, t) VALUES (generate_series(31,60),
+    repeat('1234567890',300));
+DELETE FROM no_index_cleanup WHERE i < 45;
+-- Only toast index is cleaned up.
+ALTER TABLE no_index_cleanup SET (vacuum_index_cleanup = false,
+    toast.vacuum_index_cleanup = true);
+VACUUM no_index_cleanup;
+-- Only parent is cleaned up.
+ALTER TABLE no_index_cleanup SET (vacuum_index_cleanup = true,
+    toast.vacuum_index_cleanup = false);
+VACUUM no_index_cleanup;
+-- Test some extra relations.
+VACUUM (INDEX_CLEANUP FALSE) vaccluster;
+VACUUM (INDEX_CLEANUP FALSE) vactst; -- index cleanup option is ignored if no indexes
+VACUUM (INDEX_CLEANUP FALSE, FREEZE TRUE) vaccluster;
+
+-- TRUNCATE option
+CREATE TABLE vac_truncate_test(i INT NOT NULL, j text)
+	WITH (vacuum_truncate=true, autovacuum_enabled=false);
+INSERT INTO vac_truncate_test VALUES (1, NULL), (NULL, NULL);
+VACUUM (TRUNCATE FALSE) vac_truncate_test;
+SELECT pg_relation_size('vac_truncate_test') > 0;
+VACUUM vac_truncate_test;
+SELECT pg_relation_size('vac_truncate_test') = 0;
+VACUUM (TRUNCATE FALSE, FULL TRUE) vac_truncate_test;
+DROP TABLE vac_truncate_test;
 
 -- partitioned table
 CREATE TABLE vacparted (a int, b char) PARTITION BY LIST (a);
@@ -92,6 +151,7 @@ ANALYZE vactst (i), vacparted (does_not_exist);
 -- parenthesized syntax for ANALYZE
 ANALYZE (VERBOSE) does_not_exist;
 ANALYZE (nonexistent-arg) does_not_exist;
+ANALYZE (nonexistentarg) does_not_exit;
 
 -- ensure argument order independence, and that SKIP_LOCKED on non-existing
 -- relation still errors out.
@@ -103,9 +163,19 @@ VACUUM (SKIP_LOCKED) vactst;
 VACUUM (SKIP_LOCKED, FULL) vactst;
 ANALYZE (SKIP_LOCKED) vactst;
 
+-- ensure VACUUM and ANALYZE don't have a problem with serializable
+SET default_transaction_isolation = serializable;
+VACUUM vactst;
+ANALYZE vactst;
+RESET default_transaction_isolation;
+BEGIN TRANSACTION ISOLATION LEVEL SERIALIZABLE;
+ANALYZE vactst;
+COMMIT;
+
 DROP TABLE vaccluster;
 DROP TABLE vactst;
 DROP TABLE vacparted;
+DROP TABLE no_index_cleanup;
 
 -- relation ownership, WARNING logs generated as all are skipped.
 CREATE TABLE vacowned (a int);

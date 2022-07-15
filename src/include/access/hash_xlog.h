@@ -4,7 +4,7 @@
  *	  header file for Postgres hash AM implementation
  *
  *
- * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/access/hash_xlog.h
@@ -263,7 +263,7 @@ typedef struct xl_hash_init_bitmap_page
  */
 typedef struct xl_hash_vacuum_one_page
 {
-	RelFileNode hnode;
+	TransactionId latestRemovedXid;
 	int			ntuples;
 
 	/* TARGET OFFSET NUMBERS FOLLOW AT THE END */

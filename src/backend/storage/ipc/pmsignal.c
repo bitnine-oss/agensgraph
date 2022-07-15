@@ -4,7 +4,7 @@
  *	  routines for signaling the postmaster from its child processes
  *
  *
- * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -134,7 +134,7 @@ PMSignalShmemInit(void)
 
 	if (!found)
 	{
-		MemSet(PMSignalState, 0, PMSignalShmemSize());
+		MemSet(unvolatize(PMSignalData *, PMSignalState), 0, PMSignalShmemSize());
 		PMSignalState->num_child_flags = MaxLivePostmasterChildren();
 	}
 }
@@ -370,7 +370,7 @@ void
 PostmasterDeathSignalInit(void)
 {
 #ifdef USE_POSTMASTER_DEATH_SIGNAL
-	int 		signum = POSTMASTER_DEATH_SIGNAL;
+	int			signum = POSTMASTER_DEATH_SIGNAL;
 
 	/* Register our signal handler. */
 	pqsignal(signum, postmaster_death_handler);

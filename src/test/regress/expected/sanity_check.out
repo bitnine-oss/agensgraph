@@ -41,12 +41,12 @@ d_star|f
 date_tbl|f
 default_tbl|f
 defaultexpr_tbl|f
-delete_test_table|t
 dept|f
 dupindexcols|t
 e_star|f
 emp|f
 equipment_r|f
+extra_wide_table|f
 f_star|f
 fast_emp4000|t
 float4_tbl|f
@@ -59,8 +59,6 @@ hash_txt_heap|t
 hobbies_r|f
 ihighway|t
 inet_tbl|f
-inhf|f
-inhx|t
 insert_tbl|f
 int2_tbl|f
 int4_tbl|f
@@ -154,6 +152,7 @@ pg_shdescription|t
 pg_shseclabel|t
 pg_statistic|t
 pg_statistic_ext|t
+pg_statistic_ext_data|t
 pg_subscription|t
 pg_subscription_rel|t
 pg_tablespace|t
@@ -171,8 +170,6 @@ polygon_tbl|t
 quad_box_tbl|t
 quad_point_tbl|t
 quad_poly_tbl|t
-quad_poly_tbl_ord_seq1|f
-quad_poly_tbl_ord_seq2|f
 radix_text_tbl|t
 ramp|f
 real_city|f
@@ -188,6 +185,13 @@ sql_sizing|f
 sql_sizing_profiles|f
 stud_emp|f
 student|f
+tableam_parted_a_heap2|f
+tableam_parted_b_heap2|f
+tableam_parted_c_heap2|f
+tableam_parted_d_heap2|f
+tableam_parted_heap2|f
+tableam_tbl_heap2|f
+tableam_tblas_heap2|f
 tbl_include_box|t
 tbl_include_box_pk|f
 tbl_include_pk|t
@@ -206,7 +210,9 @@ time_tbl|f
 timestamp_tbl|f
 timestamptz_tbl|f
 timetz_tbl|f
+tmp|f
 varchar_tbl|f
+view_base_table|t
 -- restore normal output mode
 \a\t
 --
@@ -225,4 +231,16 @@ SELECT relname, nspname
  relname | nspname 
 ---------+---------
 (0 rows)
+
+-- check that relations without storage don't have relfilenode
+SELECT relname, relkind
+  FROM pg_class
+ WHERE relkind IN ('v', 'c', 'f', 'p', 'I')
+       AND relfilenode <> 0;
+  relname  | relkind 
+-----------+---------
+ vertex    | c
+ edge      | c
+ graphpath | c
+(3 rows)
 

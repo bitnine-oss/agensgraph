@@ -3,7 +3,7 @@
  * test_predtest.c
  *		Test correctness of optimizer's predicate proof logic.
  *
- * Copyright (c) 2018, PostgreSQL Global Development Group
+ * Copyright (c) 2018-2019, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
  *		src/test/modules/test_predtest/test_predtest.c
@@ -17,8 +17,8 @@
 #include "catalog/pg_type.h"
 #include "executor/spi.h"
 #include "funcapi.h"
-#include "optimizer/clauses.h"
-#include "optimizer/predtest.h"
+#include "nodes/makefuncs.h"
+#include "optimizer/optimizer.h"
 #include "utils/builtins.h"
 
 PG_MODULE_MAGIC;

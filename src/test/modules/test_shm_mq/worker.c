@@ -9,7 +9,7 @@
  *		but it should be possible to use much of the control logic just
  *		as presented here.
  *
- * Copyright (c) 2013-2018, PostgreSQL Global Development Group
+ * Copyright (c) 2013-2019, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
  *		src/test/modules/test_shm_mq/worker.c
@@ -29,8 +29,8 @@
 
 static void handle_sigterm(SIGNAL_ARGS);
 static void attach_to_queues(dsm_segment *seg, shm_toc *toc,
-				 int myworkernumber, shm_mq_handle **inqhp,
-				 shm_mq_handle **outqhp);
+							 int myworkernumber, shm_mq_handle **inqhp,
+							 shm_mq_handle **outqhp);
 static void copy_messages(shm_mq_handle *inqh, shm_mq_handle *outqh);
 
 /*

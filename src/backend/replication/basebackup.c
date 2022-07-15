@@ -3,7 +3,7 @@
  * basebackup.c
  *	  code for taking a base backup and streaming it to a standby
  *
- * Portions Copyright (c) 2010-2018, PostgreSQL Global Development Group
+ * Portions Copyright (c) 2010-2019, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
  *	  src/backend/replication/basebackup.c
@@ -56,14 +56,14 @@ typedef struct
 
 
 static int64 sendDir(const char *path, int basepathlen, bool sizeonly,
-		List *tablespaces, bool sendtblspclinks);
+					 List *tablespaces, bool sendtblspclinks);
 static bool sendFile(const char *readfilename, const char *tarfilename,
-		 struct stat *statbuf, bool missing_ok);
+					 struct stat *statbuf, bool missing_ok, Oid dboid);
 static void sendFileWithContent(const char *filename, const char *content);
 static int64 _tarWriteHeader(const char *filename, const char *linktarget,
-				struct stat *statbuf, bool sizeonly);
+							 struct stat *statbuf, bool sizeonly);
 static int64 _tarWriteDir(const char *pathbuf, int basepathlen, struct stat *statbuf,
-			 bool sizeonly);
+						  bool sizeonly);
 static void send_int8_string(StringInfoData *buf, int64 intval);
 static void SendBackupHeader(List *tablespaces);
 static void base_backup_cleanup(int code, Datum arg);
@@ -189,12 +189,19 @@ static const char *excludeFiles[] =
 
 /*
  * List of files excluded from checksum validation.
+ *
+ * Note: this list should be kept in sync with what pg_checksums.c
+ * includes.
  */
 static const char *const noChecksumFiles[] = {
 	"pg_control",
 	"pg_filenode.map",
 	"pg_internal.init",
 	"PG_VERSION",
+#ifdef EXEC_BACKEND
+	"config_exec_params",
+	"config_exec_params.new",
+#endif
 	NULL,
 };
 
@@ -335,7 +342,7 @@ perform_base_backup(basebackup_options *opt)
 							(errcode_for_file_access(),
 							 errmsg("could not stat file \"%s\": %m",
 									XLOG_CONTROL_FILE)));
-				sendFile(XLOG_CONTROL_FILE, XLOG_CONTROL_FILE, &statbuf, false);
+				sendFile(XLOG_CONTROL_FILE, XLOG_CONTROL_FILE, &statbuf, false, InvalidOid);
 			}
 			else
 				sendTablespace(ti->path, false);
@@ -585,7 +592,7 @@ perform_base_backup(basebackup_options *opt)
 						(errcode_for_file_access(),
 						 errmsg("could not stat file \"%s\": %m", pathbuf)));
 
-			sendFile(pathbuf, pathbuf, &statbuf, false);
+			sendFile(pathbuf, pathbuf, &statbuf, false, InvalidOid);
 
 			/* unconditionally mark file as archived */
 			StatusFilePath(pathbuf, fname, ".done");
@@ -1295,7 +1302,7 @@ sendDir(const char *path, int basepathlen, bool sizeonly, List *tablespaces,
 
 			if (!sizeonly)
 				sent = sendFile(pathbuf, pathbuf + basepathlen + 1, &statbuf,
-								true);
+								true, isDbDir ? pg_atoi(lastDir + 1, sizeof(Oid), 0) : InvalidOid);
 
 			if (sent || sizeonly)
 			{
@@ -1351,12 +1358,15 @@ is_checksummed_file(const char *fullpath, const char *filename)
  *
  * If 'missing_ok' is true, will not throw an error if the file is not found.
  *
+ * If dboid is anything other than InvalidOid then any checksum failures detected
+ * will get reported to the stats collector.
+ *
  * Returns true if the file was successfully sent, false if 'missing_ok',
  * and the file did not exist.
  */
 static bool
 sendFile(const char *readfilename, const char *tarfilename, struct stat *statbuf,
-		 bool missing_ok)
+		 bool missing_ok, Oid dboid)
 {
 	FILE	   *fp;
 	BlockNumber blkno = 0;
@@ -1573,7 +1583,10 @@ sendFile(const char *readfilename, const char *tarfilename, struct stat *statbuf
 		ereport(WARNING,
 				(errmsg("file \"%s\" has a total of %d checksum verification "
 						"failures", readfilename, checksum_failures)));
+
+		pgstat_report_checksum_failures_in_db(dboid, checksum_failures);
 	}
+
 	total_checksum_failures += checksum_failures;
 
 	return true;
@@ -1686,7 +1699,7 @@ throttle(size_t increment)
 		 * the maximum time to sleep. Thus the cast to long is safe.
 		 */
 		wait_result = WaitLatch(MyLatch,
-								WL_LATCH_SET | WL_TIMEOUT | WL_POSTMASTER_DEATH,
+								WL_LATCH_SET | WL_TIMEOUT | WL_EXIT_ON_PM_DEATH,
 								(long) (sleep / 1000),
 								WAIT_EVENT_BASE_BACKUP_THROTTLE);
 

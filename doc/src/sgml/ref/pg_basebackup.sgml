@@ -214,10 +214,11 @@ PostgreSQL documentation
       <listitem>
 
        <para>
-        Write a minimal <filename>recovery.conf</filename> in the output
+        Create <filename>standby.signal</filename> and append connection settings
+        to <filename>postgresql.auto.conf</filename> in the output
         directory (or into the base archive file when using tar format) to
         ease setting up a standby server.
-        The <filename>recovery.conf</filename> file will record the connection
+        The <filename>postgresql.auto.conf</filename> file will record the connection
         settings and, if specified, the replication slot
         that <application>pg_basebackup</application> is using, so that the
         streaming replication will use the same settings later on.
@@ -305,8 +306,8 @@ PostgreSQL documentation
              backup will fail and be unusable.
            </para>
            <para>
-            The write-ahead log files will be written to
-            the <filename>base.tar</filename> file.
+            When tar format mode is used, the write-ahead log files will be
+            written to the <filename>base.tar</filename> file.
            </para>
           </listitem>
          </varlistentry>
@@ -325,9 +326,10 @@ PostgreSQL documentation
              requires no extra write-ahead logs to be saved on the master.
            </para>
            <para>
-            The write-ahead log files are written to a separate file
-            named <filename>pg_wal.tar</filename> (if the server is a version
-            earlier than 10, the file will be named <filename>pg_xlog.tar</filename>).
+            When tar format mode is used, the write-ahead log files will be
+            written to a separate file named <filename>pg_wal.tar</filename>
+            (if the server is a version earlier than 10, the file will be named
+            <filename>pg_xlog.tar</filename>).
            </para>
            <para>
             This value is the default.
@@ -470,7 +472,7 @@ PostgreSQL documentation
         replication slot.  If the base backup is intended to be used as a
         streaming replication standby using replication slots, it should then
         use the same replication slot name
-        in <filename>recovery.conf</filename>.  That way, it is ensured that
+        in <xref linkend="guc-primary-slot-name"/>.  That way, it is ensured that
         the server does not remove any necessary WAL data in the time between
         the end of the base backup and the start of streaming replication.
        </para>
@@ -529,7 +531,8 @@ PostgreSQL documentation
         By default, checksums are verified and checksum failures will result
         in a non-zero exit status. However, the base backup will not be
         removed in such a case, as if the <option>--no-clean</option> option
-        had been used.
+        had been used.  Checksum verifications failures will also be reported
+        in the <xref linkend="pg-stat-database-view"/> view.
        </para>
       </listitem>
      </varlistentry>
@@ -685,6 +688,12 @@ PostgreSQL documentation
    (see <xref linkend="libpq-envars"/>).
   </para>
 
+  <para>
+   The environment variable <envar>PG_COLOR</envar> specifies whether to use
+   color in diagnostics messages.  Possible values are
+   <literal>always</literal>, <literal>auto</literal>,
+   <literal>never</literal>.
+  </para>
  </refsect1>
 
  <refsect1>

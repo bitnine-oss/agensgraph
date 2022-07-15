@@ -97,35 +97,7 @@ CREATE INDEX ggpolygonind ON gpolygon_tbl USING gist (f1);
 CREATE INDEX ggcircleind ON gcircle_tbl USING gist (f1);
 
 --
--- SP-GiST
---
-
-CREATE TABLE quad_point_tbl AS
-    SELECT point(unique1,unique2) AS p FROM tenk1;
-
-INSERT INTO quad_point_tbl
-    SELECT '(333.0,400.0)'::point FROM generate_series(1,1000);
-
-INSERT INTO quad_point_tbl VALUES (NULL), (NULL), (NULL);
-
-CREATE INDEX sp_quad_ind ON quad_point_tbl USING spgist (p);
-
-CREATE TABLE kd_point_tbl AS SELECT * FROM quad_point_tbl;
-
-CREATE INDEX sp_kd_ind ON kd_point_tbl USING spgist (p kd_point_ops);
-
-CREATE TABLE radix_text_tbl AS
-    SELECT name AS t FROM road WHERE name !~ '^[0-9]';
-
-INSERT INTO radix_text_tbl
-    SELECT 'P0123456789abcdef' FROM generate_series(1,1000);
-INSERT INTO radix_text_tbl VALUES ('P0123456789abcde');
-INSERT INTO radix_text_tbl VALUES ('P0123456789abcdefF');
-
-CREATE INDEX sp_radix_ind ON radix_text_tbl USING spgist (t);
-
---
--- Test GiST and SP-GiST indexes
+-- Test GiST indexes
 --
 
 -- get non-indexed results for comparison purposes
@@ -177,66 +149,6 @@ SELECT * FROM point_tbl WHERE f1 IS NULL;
 SELECT * FROM point_tbl WHERE f1 IS NOT NULL ORDER BY f1 <-> '0,1';
 
 SELECT * FROM point_tbl WHERE f1 <@ '(-10,-10),(10,10)':: box ORDER BY f1 <-> '0,1';
-
-SELECT count(*) FROM quad_point_tbl WHERE p IS NULL;
-
-SELECT count(*) FROM quad_point_tbl WHERE p IS NOT NULL;
-
-SELECT count(*) FROM quad_point_tbl;
-
-SELECT count(*) FROM quad_point_tbl WHERE p <@ box '(200,200,1000,1000)';
-
-SELECT count(*) FROM quad_point_tbl WHERE box '(200,200,1000,1000)' @> p;
-
-SELECT count(*) FROM quad_point_tbl WHERE p << '(5000, 4000)';
-
-SELECT count(*) FROM quad_point_tbl WHERE p >> '(5000, 4000)';
-
-SELECT count(*) FROM quad_point_tbl WHERE p <^ '(5000, 4000)';
-
-SELECT count(*) FROM quad_point_tbl WHERE p >^ '(5000, 4000)';
-
-SELECT count(*) FROM quad_point_tbl WHERE p ~= '(4585, 365)';
-
-CREATE TEMP TABLE quad_point_tbl_ord_seq1 AS
-SELECT rank() OVER (ORDER BY p <-> '0,0') n, p <-> '0,0' dist, p
-FROM quad_point_tbl;
-
-CREATE TEMP TABLE quad_point_tbl_ord_seq2 AS
-SELECT rank() OVER (ORDER BY p <-> '0,0') n, p <-> '0,0' dist, p
-FROM quad_point_tbl WHERE p <@ box '(200,200,1000,1000)';
-
-CREATE TEMP TABLE quad_point_tbl_ord_seq3 AS
-SELECT rank() OVER (ORDER BY p <-> '333,400') n, p <-> '333,400' dist, p
-FROM quad_point_tbl WHERE p IS NOT NULL;
-
-SELECT count(*) FROM radix_text_tbl WHERE t = 'P0123456789abcdef';
-
-SELECT count(*) FROM radix_text_tbl WHERE t = 'P0123456789abcde';
-
-SELECT count(*) FROM radix_text_tbl WHERE t = 'P0123456789abcdefF';
-
-SELECT count(*) FROM radix_text_tbl WHERE t <    'Aztec                         Ct  ';
-
-SELECT count(*) FROM radix_text_tbl WHERE t ~<~  'Aztec                         Ct  ';
-
-SELECT count(*) FROM radix_text_tbl WHERE t <=   'Aztec                         Ct  ';
-
-SELECT count(*) FROM radix_text_tbl WHERE t ~<=~ 'Aztec                         Ct  ';
-
-SELECT count(*) FROM radix_text_tbl WHERE t =    'Aztec                         Ct  ';
-
-SELECT count(*) FROM radix_text_tbl WHERE t =    'Worth                         St  ';
-
-SELECT count(*) FROM radix_text_tbl WHERE t >=   'Worth                         St  ';
-
-SELECT count(*) FROM radix_text_tbl WHERE t ~>=~ 'Worth                         St  ';
-
-SELECT count(*) FROM radix_text_tbl WHERE t >    'Worth                         St  ';
-
-SELECT count(*) FROM radix_text_tbl WHERE t ~>~  'Worth                         St  ';
-
-SELECT count(*) FROM radix_text_tbl WHERE t ^@  'Worth';
 
 SELECT * FROM gpolygon_tbl ORDER BY f1 <-> '(0,0)'::point LIMIT 10;
 
@@ -336,196 +248,6 @@ SELECT * FROM point_tbl WHERE f1 <@ '(-10,-10),(10,10)':: box ORDER BY f1 <-> '0
 SELECT * FROM point_tbl WHERE f1 <@ '(-10,-10),(10,10)':: box ORDER BY f1 <-> '0,1';
 
 EXPLAIN (COSTS OFF)
-SELECT count(*) FROM quad_point_tbl WHERE p IS NULL;
-SELECT count(*) FROM quad_point_tbl WHERE p IS NULL;
-
-EXPLAIN (COSTS OFF)
-SELECT count(*) FROM quad_point_tbl WHERE p IS NOT NULL;
-SELECT count(*) FROM quad_point_tbl WHERE p IS NOT NULL;
-
-EXPLAIN (COSTS OFF)
-SELECT count(*) FROM quad_point_tbl;
-SELECT count(*) FROM quad_point_tbl;
-
-EXPLAIN (COSTS OFF)
-SELECT count(*) FROM quad_point_tbl WHERE p <@ box '(200,200,1000,1000)';
-SELECT count(*) FROM quad_point_tbl WHERE p <@ box '(200,200,1000,1000)';
-
-EXPLAIN (COSTS OFF)
-SELECT count(*) FROM quad_point_tbl WHERE box '(200,200,1000,1000)' @> p;
-SELECT count(*) FROM quad_point_tbl WHERE box '(200,200,1000,1000)' @> p;
-
-EXPLAIN (COSTS OFF)
-SELECT count(*) FROM quad_point_tbl WHERE p << '(5000, 4000)';
-SELECT count(*) FROM quad_point_tbl WHERE p << '(5000, 4000)';
-
-EXPLAIN (COSTS OFF)
-SELECT count(*) FROM quad_point_tbl WHERE p >> '(5000, 4000)';
-SELECT count(*) FROM quad_point_tbl WHERE p >> '(5000, 4000)';
-
-EXPLAIN (COSTS OFF)
-SELECT count(*) FROM quad_point_tbl WHERE p <^ '(5000, 4000)';
-SELECT count(*) FROM quad_point_tbl WHERE p <^ '(5000, 4000)';
-
-EXPLAIN (COSTS OFF)
-SELECT count(*) FROM quad_point_tbl WHERE p >^ '(5000, 4000)';
-SELECT count(*) FROM quad_point_tbl WHERE p >^ '(5000, 4000)';
-
-EXPLAIN (COSTS OFF)
-SELECT count(*) FROM quad_point_tbl WHERE p ~= '(4585, 365)';
-SELECT count(*) FROM quad_point_tbl WHERE p ~= '(4585, 365)';
-
-EXPLAIN (COSTS OFF)
-SELECT rank() OVER (ORDER BY p <-> '0,0') n, p <-> '0,0' dist, p
-FROM quad_point_tbl;
-CREATE TEMP TABLE quad_point_tbl_ord_idx1 AS
-SELECT rank() OVER (ORDER BY p <-> '0,0') n, p <-> '0,0' dist, p
-FROM quad_point_tbl;
-SELECT * FROM quad_point_tbl_ord_seq1 seq FULL JOIN quad_point_tbl_ord_idx1 idx
-ON seq.n = idx.n
-AND (seq.dist = idx.dist AND seq.p ~= idx.p OR seq.p IS NULL AND idx.p IS NULL)
-WHERE seq.n IS NULL OR idx.n IS NULL;
-
-EXPLAIN (COSTS OFF)
-SELECT rank() OVER (ORDER BY p <-> '0,0') n, p <-> '0,0' dist, p
-FROM quad_point_tbl WHERE p <@ box '(200,200,1000,1000)';
-CREATE TEMP TABLE quad_point_tbl_ord_idx2 AS
-SELECT rank() OVER (ORDER BY p <-> '0,0') n, p <-> '0,0' dist, p
-FROM quad_point_tbl WHERE p <@ box '(200,200,1000,1000)';
-SELECT * FROM quad_point_tbl_ord_seq2 seq FULL JOIN quad_point_tbl_ord_idx2 idx
-ON seq.n = idx.n
-AND (seq.dist = idx.dist AND seq.p ~= idx.p OR seq.p IS NULL AND idx.p IS NULL)
-WHERE seq.n IS NULL OR idx.n IS NULL;
-
-EXPLAIN (COSTS OFF)
-SELECT rank() OVER (ORDER BY p <-> '333,400') n, p <-> '333,400' dist, p
-FROM quad_point_tbl WHERE p IS NOT NULL;
-CREATE TEMP TABLE quad_point_tbl_ord_idx3 AS
-SELECT rank() OVER (ORDER BY p <-> '333,400') n, p <-> '333,400' dist, p
-FROM quad_point_tbl WHERE p IS NOT NULL;
-SELECT * FROM quad_point_tbl_ord_seq3 seq FULL JOIN quad_point_tbl_ord_idx3 idx
-ON seq.n = idx.n
-AND (seq.dist = idx.dist AND seq.p ~= idx.p OR seq.p IS NULL AND idx.p IS NULL)
-WHERE seq.n IS NULL OR idx.n IS NULL;
-
-EXPLAIN (COSTS OFF)
-SELECT count(*) FROM kd_point_tbl WHERE p <@ box '(200,200,1000,1000)';
-SELECT count(*) FROM kd_point_tbl WHERE p <@ box '(200,200,1000,1000)';
-
-EXPLAIN (COSTS OFF)
-SELECT count(*) FROM kd_point_tbl WHERE box '(200,200,1000,1000)' @> p;
-SELECT count(*) FROM kd_point_tbl WHERE box '(200,200,1000,1000)' @> p;
-
-EXPLAIN (COSTS OFF)
-SELECT count(*) FROM kd_point_tbl WHERE p << '(5000, 4000)';
-SELECT count(*) FROM kd_point_tbl WHERE p << '(5000, 4000)';
-
-EXPLAIN (COSTS OFF)
-SELECT count(*) FROM kd_point_tbl WHERE p >> '(5000, 4000)';
-SELECT count(*) FROM kd_point_tbl WHERE p >> '(5000, 4000)';
-
-EXPLAIN (COSTS OFF)
-SELECT count(*) FROM kd_point_tbl WHERE p <^ '(5000, 4000)';
-SELECT count(*) FROM kd_point_tbl WHERE p <^ '(5000, 4000)';
-
-EXPLAIN (COSTS OFF)
-SELECT count(*) FROM kd_point_tbl WHERE p >^ '(5000, 4000)';
-SELECT count(*) FROM kd_point_tbl WHERE p >^ '(5000, 4000)';
-
-EXPLAIN (COSTS OFF)
-SELECT count(*) FROM kd_point_tbl WHERE p ~= '(4585, 365)';
-SELECT count(*) FROM kd_point_tbl WHERE p ~= '(4585, 365)';
-
-EXPLAIN (COSTS OFF)
-SELECT rank() OVER (ORDER BY p <-> '0,0') n, p <-> '0,0' dist, p
-FROM kd_point_tbl;
-CREATE TEMP TABLE kd_point_tbl_ord_idx1 AS
-SELECT rank() OVER (ORDER BY p <-> '0,0') n, p <-> '0,0' dist, p
-FROM kd_point_tbl;
-SELECT * FROM quad_point_tbl_ord_seq1 seq FULL JOIN kd_point_tbl_ord_idx1 idx
-ON seq.n = idx.n AND
-(seq.dist = idx.dist AND seq.p ~= idx.p OR seq.p IS NULL AND idx.p IS NULL)
-WHERE seq.n IS NULL OR idx.n IS NULL;
-
-EXPLAIN (COSTS OFF)
-SELECT rank() OVER (ORDER BY p <-> '0,0') n, p <-> '0,0' dist, p
-FROM kd_point_tbl WHERE p <@ box '(200,200,1000,1000)';
-CREATE TEMP TABLE kd_point_tbl_ord_idx2 AS
-SELECT rank() OVER (ORDER BY p <-> '0,0') n, p <-> '0,0' dist, p
-FROM kd_point_tbl WHERE p <@ box '(200,200,1000,1000)';
-SELECT * FROM quad_point_tbl_ord_seq2 seq FULL JOIN kd_point_tbl_ord_idx2 idx
-ON seq.n = idx.n AND
-(seq.dist = idx.dist AND seq.p ~= idx.p OR seq.p IS NULL AND idx.p IS NULL)
-WHERE seq.n IS NULL OR idx.n IS NULL;
-
-EXPLAIN (COSTS OFF)
-SELECT rank() OVER (ORDER BY p <-> '333,400') n, p <-> '333,400' dist, p
-FROM kd_point_tbl WHERE p IS NOT NULL;
-CREATE TEMP TABLE kd_point_tbl_ord_idx3 AS
-SELECT rank() OVER (ORDER BY p <-> '333,400') n, p <-> '333,400' dist, p
-FROM kd_point_tbl WHERE p IS NOT NULL;
-SELECT * FROM quad_point_tbl_ord_seq3 seq FULL JOIN kd_point_tbl_ord_idx3 idx
-ON seq.n = idx.n AND
-(seq.dist = idx.dist AND seq.p ~= idx.p OR seq.p IS NULL AND idx.p IS NULL)
-WHERE seq.n IS NULL OR idx.n IS NULL;
-
-EXPLAIN (COSTS OFF)
-SELECT count(*) FROM radix_text_tbl WHERE t = 'P0123456789abcdef';
-SELECT count(*) FROM radix_text_tbl WHERE t = 'P0123456789abcdef';
-
-EXPLAIN (COSTS OFF)
-SELECT count(*) FROM radix_text_tbl WHERE t = 'P0123456789abcde';
-SELECT count(*) FROM radix_text_tbl WHERE t = 'P0123456789abcde';
-
-EXPLAIN (COSTS OFF)
-SELECT count(*) FROM radix_text_tbl WHERE t = 'P0123456789abcdefF';
-SELECT count(*) FROM radix_text_tbl WHERE t = 'P0123456789abcdefF';
-
-EXPLAIN (COSTS OFF)
-SELECT count(*) FROM radix_text_tbl WHERE t <    'Aztec                         Ct  ';
-SELECT count(*) FROM radix_text_tbl WHERE t <    'Aztec                         Ct  ';
-
-EXPLAIN (COSTS OFF)
-SELECT count(*) FROM radix_text_tbl WHERE t ~<~  'Aztec                         Ct  ';
-SELECT count(*) FROM radix_text_tbl WHERE t ~<~  'Aztec                         Ct  ';
-
-EXPLAIN (COSTS OFF)
-SELECT count(*) FROM radix_text_tbl WHERE t <=   'Aztec                         Ct  ';
-SELECT count(*) FROM radix_text_tbl WHERE t <=   'Aztec                         Ct  ';
-
-EXPLAIN (COSTS OFF)
-SELECT count(*) FROM radix_text_tbl WHERE t ~<=~ 'Aztec                         Ct  ';
-SELECT count(*) FROM radix_text_tbl WHERE t ~<=~ 'Aztec                         Ct  ';
-
-EXPLAIN (COSTS OFF)
-SELECT count(*) FROM radix_text_tbl WHERE t =    'Aztec                         Ct  ';
-SELECT count(*) FROM radix_text_tbl WHERE t =    'Aztec                         Ct  ';
-
-EXPLAIN (COSTS OFF)
-SELECT count(*) FROM radix_text_tbl WHERE t =    'Worth                         St  ';
-SELECT count(*) FROM radix_text_tbl WHERE t =    'Worth                         St  ';
-
-EXPLAIN (COSTS OFF)
-SELECT count(*) FROM radix_text_tbl WHERE t >=   'Worth                         St  ';
-SELECT count(*) FROM radix_text_tbl WHERE t >=   'Worth                         St  ';
-
-EXPLAIN (COSTS OFF)
-SELECT count(*) FROM radix_text_tbl WHERE t ~>=~ 'Worth                         St  ';
-SELECT count(*) FROM radix_text_tbl WHERE t ~>=~ 'Worth                         St  ';
-
-EXPLAIN (COSTS OFF)
-SELECT count(*) FROM radix_text_tbl WHERE t >    'Worth                         St  ';
-SELECT count(*) FROM radix_text_tbl WHERE t >    'Worth                         St  ';
-
-EXPLAIN (COSTS OFF)
-SELECT count(*) FROM radix_text_tbl WHERE t ~>~  'Worth                         St  ';
-SELECT count(*) FROM radix_text_tbl WHERE t ~>~  'Worth                         St  ';
-
-EXPLAIN (COSTS OFF)
-SELECT count(*) FROM radix_text_tbl WHERE t ^@	 'Worth';
-SELECT count(*) FROM radix_text_tbl WHERE t ^@	 'Worth';
-
-EXPLAIN (COSTS OFF)
 SELECT * FROM gpolygon_tbl ORDER BY f1 <-> '(0,0)'::point LIMIT 10;
 SELECT * FROM gpolygon_tbl ORDER BY f1 <-> '(0,0)'::point LIMIT 10;
 
@@ -541,130 +263,6 @@ SET enable_bitmapscan = ON;
 EXPLAIN (COSTS OFF)
 SELECT * FROM point_tbl WHERE f1 <@ '(-10,-10),(10,10)':: box ORDER BY f1 <-> '0,1';
 SELECT * FROM point_tbl WHERE f1 <@ '(-10,-10),(10,10)':: box ORDER BY f1 <-> '0,1';
-
-EXPLAIN (COSTS OFF)
-SELECT count(*) FROM quad_point_tbl WHERE p IS NULL;
-SELECT count(*) FROM quad_point_tbl WHERE p IS NULL;
-
-EXPLAIN (COSTS OFF)
-SELECT count(*) FROM quad_point_tbl WHERE p IS NOT NULL;
-SELECT count(*) FROM quad_point_tbl WHERE p IS NOT NULL;
-
-EXPLAIN (COSTS OFF)
-SELECT count(*) FROM quad_point_tbl;
-SELECT count(*) FROM quad_point_tbl;
-
-EXPLAIN (COSTS OFF)
-SELECT count(*) FROM quad_point_tbl WHERE p <@ box '(200,200,1000,1000)';
-SELECT count(*) FROM quad_point_tbl WHERE p <@ box '(200,200,1000,1000)';
-
-EXPLAIN (COSTS OFF)
-SELECT count(*) FROM quad_point_tbl WHERE box '(200,200,1000,1000)' @> p;
-SELECT count(*) FROM quad_point_tbl WHERE box '(200,200,1000,1000)' @> p;
-
-EXPLAIN (COSTS OFF)
-SELECT count(*) FROM quad_point_tbl WHERE p << '(5000, 4000)';
-SELECT count(*) FROM quad_point_tbl WHERE p << '(5000, 4000)';
-
-EXPLAIN (COSTS OFF)
-SELECT count(*) FROM quad_point_tbl WHERE p >> '(5000, 4000)';
-SELECT count(*) FROM quad_point_tbl WHERE p >> '(5000, 4000)';
-
-EXPLAIN (COSTS OFF)
-SELECT count(*) FROM quad_point_tbl WHERE p <^ '(5000, 4000)';
-SELECT count(*) FROM quad_point_tbl WHERE p <^ '(5000, 4000)';
-
-EXPLAIN (COSTS OFF)
-SELECT count(*) FROM quad_point_tbl WHERE p >^ '(5000, 4000)';
-SELECT count(*) FROM quad_point_tbl WHERE p >^ '(5000, 4000)';
-
-EXPLAIN (COSTS OFF)
-SELECT count(*) FROM quad_point_tbl WHERE p ~= '(4585, 365)';
-SELECT count(*) FROM quad_point_tbl WHERE p ~= '(4585, 365)';
-
-EXPLAIN (COSTS OFF)
-SELECT count(*) FROM kd_point_tbl WHERE p <@ box '(200,200,1000,1000)';
-SELECT count(*) FROM kd_point_tbl WHERE p <@ box '(200,200,1000,1000)';
-
-EXPLAIN (COSTS OFF)
-SELECT count(*) FROM kd_point_tbl WHERE box '(200,200,1000,1000)' @> p;
-SELECT count(*) FROM kd_point_tbl WHERE box '(200,200,1000,1000)' @> p;
-
-EXPLAIN (COSTS OFF)
-SELECT count(*) FROM kd_point_tbl WHERE p << '(5000, 4000)';
-SELECT count(*) FROM kd_point_tbl WHERE p << '(5000, 4000)';
-
-EXPLAIN (COSTS OFF)
-SELECT count(*) FROM kd_point_tbl WHERE p >> '(5000, 4000)';
-SELECT count(*) FROM kd_point_tbl WHERE p >> '(5000, 4000)';
-
-EXPLAIN (COSTS OFF)
-SELECT count(*) FROM kd_point_tbl WHERE p <^ '(5000, 4000)';
-SELECT count(*) FROM kd_point_tbl WHERE p <^ '(5000, 4000)';
-
-EXPLAIN (COSTS OFF)
-SELECT count(*) FROM kd_point_tbl WHERE p >^ '(5000, 4000)';
-SELECT count(*) FROM kd_point_tbl WHERE p >^ '(5000, 4000)';
-
-EXPLAIN (COSTS OFF)
-SELECT count(*) FROM kd_point_tbl WHERE p ~= '(4585, 365)';
-SELECT count(*) FROM kd_point_tbl WHERE p ~= '(4585, 365)';
-
-EXPLAIN (COSTS OFF)
-SELECT count(*) FROM radix_text_tbl WHERE t = 'P0123456789abcdef';
-SELECT count(*) FROM radix_text_tbl WHERE t = 'P0123456789abcdef';
-
-EXPLAIN (COSTS OFF)
-SELECT count(*) FROM radix_text_tbl WHERE t = 'P0123456789abcde';
-SELECT count(*) FROM radix_text_tbl WHERE t = 'P0123456789abcde';
-
-EXPLAIN (COSTS OFF)
-SELECT count(*) FROM radix_text_tbl WHERE t = 'P0123456789abcdefF';
-SELECT count(*) FROM radix_text_tbl WHERE t = 'P0123456789abcdefF';
-
-EXPLAIN (COSTS OFF)
-SELECT count(*) FROM radix_text_tbl WHERE t <    'Aztec                         Ct  ';
-SELECT count(*) FROM radix_text_tbl WHERE t <    'Aztec                         Ct  ';
-
-EXPLAIN (COSTS OFF)
-SELECT count(*) FROM radix_text_tbl WHERE t ~<~  'Aztec                         Ct  ';
-SELECT count(*) FROM radix_text_tbl WHERE t ~<~  'Aztec                         Ct  ';
-
-EXPLAIN (COSTS OFF)
-SELECT count(*) FROM radix_text_tbl WHERE t <=   'Aztec                         Ct  ';
-SELECT count(*) FROM radix_text_tbl WHERE t <=   'Aztec                         Ct  ';
-
-EXPLAIN (COSTS OFF)
-SELECT count(*) FROM radix_text_tbl WHERE t ~<=~ 'Aztec                         Ct  ';
-SELECT count(*) FROM radix_text_tbl WHERE t ~<=~ 'Aztec                         Ct  ';
-
-EXPLAIN (COSTS OFF)
-SELECT count(*) FROM radix_text_tbl WHERE t =    'Aztec                         Ct  ';
-SELECT count(*) FROM radix_text_tbl WHERE t =    'Aztec                         Ct  ';
-
-EXPLAIN (COSTS OFF)
-SELECT count(*) FROM radix_text_tbl WHERE t =    'Worth                         St  ';
-SELECT count(*) FROM radix_text_tbl WHERE t =    'Worth                         St  ';
-
-EXPLAIN (COSTS OFF)
-SELECT count(*) FROM radix_text_tbl WHERE t >=   'Worth                         St  ';
-SELECT count(*) FROM radix_text_tbl WHERE t >=   'Worth                         St  ';
-
-EXPLAIN (COSTS OFF)
-SELECT count(*) FROM radix_text_tbl WHERE t ~>=~ 'Worth                         St  ';
-SELECT count(*) FROM radix_text_tbl WHERE t ~>=~ 'Worth                         St  ';
-
-EXPLAIN (COSTS OFF)
-SELECT count(*) FROM radix_text_tbl WHERE t >    'Worth                         St  ';
-SELECT count(*) FROM radix_text_tbl WHERE t >    'Worth                         St  ';
-
-EXPLAIN (COSTS OFF)
-SELECT count(*) FROM radix_text_tbl WHERE t ~>~  'Worth                         St  ';
-SELECT count(*) FROM radix_text_tbl WHERE t ~>~  'Worth                         St  ';
-
-EXPLAIN (COSTS OFF)
-SELECT count(*) FROM radix_text_tbl WHERE t ^@	 'Worth';
-SELECT count(*) FROM radix_text_tbl WHERE t ^@	 'Worth';
 
 RESET enable_seqscan;
 RESET enable_indexscan;
@@ -1135,25 +733,144 @@ explain (costs off)
   select * from boolindex where b = true order by i desc limit 10;
 explain (costs off)
   select * from boolindex where not b order by i limit 10;
-
---
--- Test for multilevel page deletion
---
-CREATE TABLE delete_test_table (a bigint, b bigint, c bigint, d bigint);
-INSERT INTO delete_test_table SELECT i, 1, 2, 3 FROM generate_series(1,80000) i;
-ALTER TABLE delete_test_table ADD PRIMARY KEY (a,b,c,d);
-DELETE FROM delete_test_table WHERE a > 40000;
-VACUUM delete_test_table;
-DELETE FROM delete_test_table WHERE a > 10;
-VACUUM delete_test_table;
+explain (costs off)
+  select * from boolindex where b is true order by i desc limit 10;
+explain (costs off)
+  select * from boolindex where b is false order by i desc limit 10;
 
 --
 -- REINDEX (VERBOSE)
 --
 CREATE TABLE reindex_verbose(id integer primary key);
-\set VERBOSITY terse
+\set VERBOSITY terse \\ -- suppress machine-dependent details
 REINDEX (VERBOSE) TABLE reindex_verbose;
+\set VERBOSITY default
 DROP TABLE reindex_verbose;
+
+--
+-- REINDEX CONCURRENTLY
+--
+CREATE TABLE concur_reindex_tab (c1 int);
+-- REINDEX
+REINDEX TABLE concur_reindex_tab; -- notice
+REINDEX TABLE CONCURRENTLY concur_reindex_tab; -- notice
+ALTER TABLE concur_reindex_tab ADD COLUMN c2 text; -- add toast index
+-- Normal index with integer column
+CREATE UNIQUE INDEX concur_reindex_ind1 ON concur_reindex_tab(c1);
+-- Normal index with text column
+CREATE INDEX concur_reindex_ind2 ON concur_reindex_tab(c2);
+-- UNIQUE index with expression
+CREATE UNIQUE INDEX concur_reindex_ind3 ON concur_reindex_tab(abs(c1));
+-- Duplicate column names
+CREATE INDEX concur_reindex_ind4 ON concur_reindex_tab(c1, c1, c2);
+-- Create table for check on foreign key dependence switch with indexes swapped
+ALTER TABLE concur_reindex_tab ADD PRIMARY KEY USING INDEX concur_reindex_ind1;
+CREATE TABLE concur_reindex_tab2 (c1 int REFERENCES concur_reindex_tab);
+INSERT INTO concur_reindex_tab VALUES  (1, 'a');
+INSERT INTO concur_reindex_tab VALUES  (2, 'a');
+-- Reindex concurrently of exclusion constraint currently not supported
+CREATE TABLE concur_reindex_tab3 (c1 int, c2 int4range, EXCLUDE USING gist (c2 WITH &&));
+INSERT INTO concur_reindex_tab3 VALUES  (3, '[1,2]');
+REINDEX INDEX CONCURRENTLY  concur_reindex_tab3_c2_excl;  -- error
+REINDEX TABLE CONCURRENTLY concur_reindex_tab3;  -- succeeds with warning
+INSERT INTO concur_reindex_tab3 VALUES  (4, '[2,4]');
+-- Check materialized views
+CREATE MATERIALIZED VIEW concur_reindex_matview AS SELECT * FROM concur_reindex_tab;
+REINDEX INDEX CONCURRENTLY concur_reindex_ind1;
+REINDEX TABLE CONCURRENTLY concur_reindex_tab;
+REINDEX TABLE CONCURRENTLY concur_reindex_matview;
+-- Check that comments are preserved
+CREATE TABLE testcomment (i int);
+CREATE INDEX testcomment_idx1 ON testcomment (i);
+COMMENT ON INDEX testcomment_idx1 IS 'test comment';
+SELECT obj_description('testcomment_idx1'::regclass, 'pg_class');
+REINDEX TABLE testcomment;
+SELECT obj_description('testcomment_idx1'::regclass, 'pg_class');
+REINDEX TABLE CONCURRENTLY testcomment ;
+SELECT obj_description('testcomment_idx1'::regclass, 'pg_class');
+DROP TABLE testcomment;
+-- Partitions
+-- Create some partitioned tables
+CREATE TABLE concur_reindex_part (c1 int, c2 int) PARTITION BY RANGE (c1);
+CREATE TABLE concur_reindex_part_0 PARTITION OF concur_reindex_part
+  FOR VALUES FROM (0) TO (10) PARTITION BY list (c2);
+CREATE TABLE concur_reindex_part_0_1 PARTITION OF concur_reindex_part_0
+  FOR VALUES IN (1);
+CREATE TABLE concur_reindex_part_0_2 PARTITION OF concur_reindex_part_0
+  FOR VALUES IN (2);
+-- This partitioned table will have no partitions.
+CREATE TABLE concur_reindex_part_10 PARTITION OF concur_reindex_part
+  FOR VALUES FROM (10) TO (20) PARTITION BY list (c2);
+-- Create some partitioned indexes
+CREATE INDEX concur_reindex_part_index ON ONLY concur_reindex_part (c1);
+CREATE INDEX concur_reindex_part_index_0 ON ONLY concur_reindex_part_0 (c1);
+ALTER INDEX concur_reindex_part_index ATTACH PARTITION concur_reindex_part_index_0;
+-- This partitioned index will have no partitions.
+CREATE INDEX concur_reindex_part_index_10 ON ONLY concur_reindex_part_10 (c1);
+ALTER INDEX concur_reindex_part_index ATTACH PARTITION concur_reindex_part_index_10;
+CREATE INDEX concur_reindex_part_index_0_1 ON ONLY concur_reindex_part_0_1 (c1);
+ALTER INDEX concur_reindex_part_index_0 ATTACH PARTITION concur_reindex_part_index_0_1;
+CREATE INDEX concur_reindex_part_index_0_2 ON ONLY concur_reindex_part_0_2 (c1);
+ALTER INDEX concur_reindex_part_index_0 ATTACH PARTITION concur_reindex_part_index_0_2;
+SELECT relid, parentrelid, level FROM pg_partition_tree('concur_reindex_part_index')
+  ORDER BY relid, level;
+-- REINDEX fails for partitioned indexes
+REINDEX INDEX concur_reindex_part_index_10;
+REINDEX INDEX CONCURRENTLY concur_reindex_part_index_10;
+-- REINDEX is a no-op for partitioned tables
+REINDEX TABLE concur_reindex_part_10;
+REINDEX TABLE CONCURRENTLY concur_reindex_part_10;
+SELECT relid, parentrelid, level FROM pg_partition_tree('concur_reindex_part_index')
+  ORDER BY relid, level;
+-- REINDEX should preserve dependencies of partition tree.
+REINDEX INDEX CONCURRENTLY concur_reindex_part_index_0_1;
+REINDEX INDEX CONCURRENTLY concur_reindex_part_index_0_2;
+SELECT relid, parentrelid, level FROM pg_partition_tree('concur_reindex_part_index')
+  ORDER BY relid, level;
+REINDEX TABLE CONCURRENTLY concur_reindex_part_0_1;
+REINDEX TABLE CONCURRENTLY concur_reindex_part_0_2;
+SELECT relid, parentrelid, level FROM pg_partition_tree('concur_reindex_part_index')
+  ORDER BY relid, level;
+DROP TABLE concur_reindex_part;
+
+-- Check errors
+-- Cannot run inside a transaction block
+BEGIN;
+REINDEX TABLE CONCURRENTLY concur_reindex_tab;
+COMMIT;
+REINDEX TABLE CONCURRENTLY pg_class; -- no catalog relation
+REINDEX INDEX CONCURRENTLY pg_class_oid_index; -- no catalog index
+-- These are the toast table and index of pg_authid.
+REINDEX TABLE CONCURRENTLY pg_toast.pg_toast_1260; -- no catalog toast table
+REINDEX INDEX CONCURRENTLY pg_toast.pg_toast_1260_index; -- no catalog toast index
+REINDEX SYSTEM CONCURRENTLY postgres; -- not allowed for SYSTEM
+-- Warns about catalog relations
+REINDEX SCHEMA CONCURRENTLY pg_catalog;
+
+-- Check the relation status, there should not be invalid indexes
+\d concur_reindex_tab
+DROP MATERIALIZED VIEW concur_reindex_matview;
+DROP TABLE concur_reindex_tab, concur_reindex_tab2, concur_reindex_tab3;
+
+-- Check handling of invalid indexes
+CREATE TABLE concur_reindex_tab4 (c1 int);
+INSERT INTO concur_reindex_tab4 VALUES (1), (1), (2);
+-- This trick creates an invalid index.
+CREATE UNIQUE INDEX CONCURRENTLY concur_reindex_ind5 ON concur_reindex_tab4 (c1);
+-- Reindexing concurrently this index fails with the same failure.
+-- The extra index created is itself invalid, and can be dropped.
+REINDEX INDEX CONCURRENTLY concur_reindex_ind5;
+\d concur_reindex_tab4
+DROP INDEX concur_reindex_ind5_ccnew;
+-- This makes the previous failure go away, so the index can become valid.
+DELETE FROM concur_reindex_tab4 WHERE c1 = 1;
+-- The invalid index is not processed when running REINDEX TABLE.
+REINDEX TABLE CONCURRENTLY concur_reindex_tab4;
+\d concur_reindex_tab4
+-- But it is fixed with REINDEX INDEX.
+REINDEX INDEX CONCURRENTLY concur_reindex_ind5;
+\d concur_reindex_tab4
+DROP TABLE concur_reindex_tab4;
 
 --
 -- REINDEX SCHEMA
@@ -1197,6 +914,9 @@ BEGIN;
 REINDEX SCHEMA schema_to_reindex; -- failure, cannot run in a transaction
 END;
 
+-- concurrently
+REINDEX SCHEMA CONCURRENTLY schema_to_reindex;
+
 -- Failure for unauthorized user
 CREATE ROLE regress_reindexuser NOLOGIN;
 SET SESSION ROLE regress_reindexuser;
@@ -1205,5 +925,4 @@ REINDEX SCHEMA schema_to_reindex;
 -- Clean up
 RESET ROLE;
 DROP ROLE regress_reindexuser;
-\set VERBOSITY terse \\ -- suppress cascade details
 DROP SCHEMA schema_to_reindex CASCADE;

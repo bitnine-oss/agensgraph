@@ -3,13 +3,13 @@
  * pwrite.c
  *	  Implementation of pwrite(2) for platforms that lack one.
  *
- * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
  *	  src/port/pwrite.c
  *
  * Note that this implementation changes the current file position, unlike
- * the POSIX function, so we use the name pg_write().
+ * the POSIX function, so we use the name pg_pwrite().
  *
  *-------------------------------------------------------------------------
  */

@@ -11,7 +11,7 @@
 #    to take over what was intended as expansion space for something
 #    else.
 #
-# Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
+# Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
 # Portions Copyright (c) 1994, Regents of the University of California
 #
 # src/include/catalog/unused_oids
@@ -32,11 +32,10 @@ my @input_files = (glob("ag_*.h"), glob("pg_*.h"), qw(indexing.h toasting.h));
 
 my $oids = Catalog::FindAllOidsFromHeaders(@input_files);
 
-# Also push FirstBootstrapObjectId to serve as a terminator for the last gap.
-my $FirstBootstrapObjectId =
-  Catalog::FindDefinedSymbol('access/transam.h', '..',
-	'FirstBootstrapObjectId');
-push @{$oids}, $FirstBootstrapObjectId;
+# Also push FirstGenbkiObjectId to serve as a terminator for the last gap.
+my $FirstGenbkiObjectId =
+  Catalog::FindDefinedSymbol('access/transam.h', '..', 'FirstGenbkiObjectId');
+push @{$oids}, $FirstGenbkiObjectId;
 
 my $prev_oid = 0;
 foreach my $oid (sort { $a <=> $b } @{$oids})

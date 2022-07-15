@@ -36,12 +36,12 @@ int main() {
   /* exec sql whenever sql_warning  do warn ( ) ; */
 #line 18 "char_array.pgc"
 
-  /* exec sql whenever sqlerror  sqlprint ; */
+  /* exec sql whenever sqlerror  stop ; */
 #line 19 "char_array.pgc"
 
 
   const char *ppppp = "XXXXX";
-
+  int loopcount;
   /* exec sql begin declare section */
    
    
@@ -70,7 +70,7 @@ int main() {
 if (sqlca.sqlwarn[0] == 'W') warn ( );
 #line 31 "char_array.pgc"
 
-if (sqlca.sqlcode < 0) sqlprint();}
+if (sqlca.sqlcode < 0) exit (1);}
 #line 31 "char_array.pgc"
 
 
@@ -80,7 +80,7 @@ if (sqlca.sqlcode < 0) sqlprint();}
 if (sqlca.sqlwarn[0] == 'W') warn ( );
 #line 33 "char_array.pgc"
 
-if (sqlca.sqlcode < 0) sqlprint();}
+if (sqlca.sqlcode < 0) exit (1);}
 #line 33 "char_array.pgc"
 
   { ECPGdo(__LINE__, 3, 1, NULL, 0, ECPGst_normal, "insert into strdbase values ( '' )", ECPGt_EOIT, ECPGt_EORT);
@@ -89,7 +89,7 @@ if (sqlca.sqlcode < 0) sqlprint();}
 if (sqlca.sqlwarn[0] == 'W') warn ( );
 #line 34 "char_array.pgc"
 
-if (sqlca.sqlcode < 0) sqlprint();}
+if (sqlca.sqlcode < 0) exit (1);}
 #line 34 "char_array.pgc"
 
   { ECPGdo(__LINE__, 3, 1, NULL, 0, ECPGst_normal, "insert into strdbase values ( 'AB' )", ECPGt_EOIT, ECPGt_EORT);
@@ -98,7 +98,7 @@ if (sqlca.sqlcode < 0) sqlprint();}
 if (sqlca.sqlwarn[0] == 'W') warn ( );
 #line 35 "char_array.pgc"
 
-if (sqlca.sqlcode < 0) sqlprint();}
+if (sqlca.sqlcode < 0) exit (1);}
 #line 35 "char_array.pgc"
 
   { ECPGdo(__LINE__, 3, 1, NULL, 0, ECPGst_normal, "insert into strdbase values ( 'ABCD' )", ECPGt_EOIT, ECPGt_EORT);
@@ -107,7 +107,7 @@ if (sqlca.sqlcode < 0) sqlprint();}
 if (sqlca.sqlwarn[0] == 'W') warn ( );
 #line 36 "char_array.pgc"
 
-if (sqlca.sqlcode < 0) sqlprint();}
+if (sqlca.sqlcode < 0) exit (1);}
 #line 36 "char_array.pgc"
 
   { ECPGdo(__LINE__, 3, 1, NULL, 0, ECPGst_normal, "insert into strdbase values ( 'ABCDE' )", ECPGt_EOIT, ECPGt_EORT);
@@ -116,7 +116,7 @@ if (sqlca.sqlcode < 0) sqlprint();}
 if (sqlca.sqlwarn[0] == 'W') warn ( );
 #line 37 "char_array.pgc"
 
-if (sqlca.sqlcode < 0) sqlprint();}
+if (sqlca.sqlcode < 0) exit (1);}
 #line 37 "char_array.pgc"
 
   { ECPGdo(__LINE__, 3, 1, NULL, 0, ECPGst_normal, "insert into strdbase values ( 'ABCDEF' )", ECPGt_EOIT, ECPGt_EORT);
@@ -125,7 +125,7 @@ if (sqlca.sqlcode < 0) sqlprint();}
 if (sqlca.sqlwarn[0] == 'W') warn ( );
 #line 38 "char_array.pgc"
 
-if (sqlca.sqlcode < 0) sqlprint();}
+if (sqlca.sqlcode < 0) exit (1);}
 #line 38 "char_array.pgc"
 
   { ECPGdo(__LINE__, 3, 1, NULL, 0, ECPGst_normal, "insert into strdbase values ( 'ABCDEFGHIJ' )", ECPGt_EOIT, ECPGt_EORT);
@@ -134,20 +134,20 @@ if (sqlca.sqlcode < 0) sqlprint();}
 if (sqlca.sqlwarn[0] == 'W') warn ( );
 #line 39 "char_array.pgc"
 
-if (sqlca.sqlcode < 0) sqlprint();}
+if (sqlca.sqlcode < 0) exit (1);}
 #line 39 "char_array.pgc"
 
 
   /* declare C cursor for select strval , strval from strdbase */
 #line 41 "char_array.pgc"
 
-  { ECPGdo(__LINE__, 3, 1, NULL, 0, ECPGst_normal, "declare C cursor for select strval , strval from strdbase", ECPGt_EOIT, ECPGt_EORT);
+  { ECPGopen("C", NULL, __LINE__, 3, 1, NULL, 0, ECPGst_normal, "declare C cursor for select strval , strval from strdbase", ECPGt_EOIT, ECPGt_EORT);
 #line 42 "char_array.pgc"
 
 if (sqlca.sqlwarn[0] == 'W') warn ( );
 #line 42 "char_array.pgc"
 
-if (sqlca.sqlcode < 0) sqlprint();}
+if (sqlca.sqlcode < 0) exit (1);}
 #line 42 "char_array.pgc"
 
 
@@ -156,10 +156,10 @@ if (sqlca.sqlcode < 0) sqlprint();}
 
 
   printf("Full Str.  :  Short  Ind.\n");
-  while(1) {
+  for (loopcount = 0; loopcount < 100; loopcount++) {
     strncpy(shortstr, ppppp, sizeof shortstr);
     memset(bigstr, 0, sizeof bigstr);
-    { ECPGdo(__LINE__, 3, 1, NULL, 0, ECPGst_normal, "fetch C", ECPGt_EOIT, 
+    { ECPGfetch("C", __LINE__, 3, 1, NULL, 0, ECPGst_normal, "fetch C", ECPGt_EOIT, 
 	ECPGt_char,(bigstr),(long)11,(long)1,(11)*sizeof(char), 
 	ECPGt_short,&(bigstr_ind),(long)1,(long)1,sizeof(short), 
 	ECPGt_char,(shortstr),(long)5,(long)1,(5)*sizeof(char), 
@@ -172,19 +172,19 @@ if (sqlca.sqlcode == ECPG_NOT_FOUND) break;
 if (sqlca.sqlwarn[0] == 'W') warn ( );
 #line 50 "char_array.pgc"
 
-if (sqlca.sqlcode < 0) sqlprint();}
+if (sqlca.sqlcode < 0) exit (1);}
 #line 50 "char_array.pgc"
 
     printf("\"%s\": \"%s\"  %d\n", bigstr, shortstr, shstr_ind);
   }
 
-  { ECPGdo(__LINE__, 3, 1, NULL, 0, ECPGst_normal, "close C", ECPGt_EOIT, ECPGt_EORT);
+  { ECPGclose("C", __LINE__, 3, 1, NULL, 0, ECPGst_normal, "close C", ECPGt_EOIT, ECPGt_EORT);
 #line 54 "char_array.pgc"
 
 if (sqlca.sqlwarn[0] == 'W') warn ( );
 #line 54 "char_array.pgc"
 
-if (sqlca.sqlcode < 0) sqlprint();}
+if (sqlca.sqlcode < 0) exit (1);}
 #line 54 "char_array.pgc"
 
   { ECPGdo(__LINE__, 3, 1, NULL, 0, ECPGst_normal, "drop table strdbase", ECPGt_EOIT, ECPGt_EORT);
@@ -193,7 +193,7 @@ if (sqlca.sqlcode < 0) sqlprint();}
 if (sqlca.sqlwarn[0] == 'W') warn ( );
 #line 55 "char_array.pgc"
 
-if (sqlca.sqlcode < 0) sqlprint();}
+if (sqlca.sqlcode < 0) exit (1);}
 #line 55 "char_array.pgc"
 
 
@@ -205,7 +205,7 @@ if (sqlca.sqlcode < 0) sqlprint();}
 if (sqlca.sqlwarn[0] == 'W') warn ( );
 #line 59 "char_array.pgc"
 
-if (sqlca.sqlcode < 0) sqlprint();}
+if (sqlca.sqlcode < 0) exit (1);}
 #line 59 "char_array.pgc"
 
 
@@ -215,7 +215,7 @@ if (sqlca.sqlcode < 0) sqlprint();}
 if (sqlca.sqlwarn[0] == 'W') warn ( );
 #line 61 "char_array.pgc"
 
-if (sqlca.sqlcode < 0) sqlprint();}
+if (sqlca.sqlcode < 0) exit (1);}
 #line 61 "char_array.pgc"
 
 

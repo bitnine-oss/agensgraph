@@ -95,6 +95,32 @@ COPY x from stdin WITH DELIMITER AS ':' NULL AS E'\\X' ENCODING 'sql_ascii';
 4008:8:Delimiter:\::\:
 \.
 
+COPY x TO stdout WHERE a = 1;
+COPY x from stdin WHERE a = 50004;
+50003	24	34	44	54
+50004	25	35	45	55
+50005	26	36	46	56
+\.
+
+COPY x from stdin WHERE a > 60003;
+60001	22	32	42	52
+60002	23	33	43	53
+60003	24	34	44	54
+60004	25	35	45	55
+60005	26	36	46	56
+\.
+
+COPY x from stdin WHERE f > 60003;
+
+COPY x from stdin WHERE a = max(x.b);
+
+COPY x from stdin WHERE a IN (SELECT 1 FROM x);
+
+COPY x from stdin WHERE a IN (generate_series(1,5));
+
+COPY x from stdin WHERE a = row_number() over(b);
+
+
 -- check results of copy in
 SELECT * FROM x;
 
@@ -398,6 +424,21 @@ test1
 
 SELECT * FROM instead_of_insert_tbl;
 
+-- Test of COPY optimization with view using INSTEAD OF INSERT
+-- trigger when relation is created in the same transaction as
+-- when COPY is executed.
+BEGIN;
+CREATE VIEW instead_of_insert_tbl_view_2 as select ''::text as str;
+CREATE TRIGGER trig_instead_of_insert_tbl_view_2
+  INSTEAD OF INSERT ON instead_of_insert_tbl_view_2
+  FOR EACH ROW EXECUTE PROCEDURE fun_instead_of_insert_tbl();
+
+COPY instead_of_insert_tbl_view_2 FROM stdin;
+test1
+\.
+
+SELECT * FROM instead_of_insert_tbl;
+COMMIT;
 
 -- clean up
 DROP TABLE forcetest;
@@ -411,4 +452,5 @@ DROP FUNCTION fn_x_before();
 DROP FUNCTION fn_x_after();
 DROP TABLE instead_of_insert_tbl;
 DROP VIEW instead_of_insert_tbl_view;
+DROP VIEW instead_of_insert_tbl_view_2;
 DROP FUNCTION fun_instead_of_insert_tbl();

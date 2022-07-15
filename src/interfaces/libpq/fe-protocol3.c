@@ -3,7 +3,7 @@
  * fe-protocol3.c
  *	  functions that are specific to frontend/backend protocol version 3
  *
- * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -51,9 +51,9 @@ static int	getNotify(PGconn *conn);
 static int	getCopyStart(PGconn *conn, ExecStatusType copytype);
 static int	getReadyForQuery(PGconn *conn);
 static void reportErrorPosition(PQExpBuffer msg, const char *query,
-					int loc, int encoding);
-static int build_startup_packet(const PGconn *conn, char *packet,
-					 const PQEnvironmentOption *options);
+								int loc, int encoding);
+static int	build_startup_packet(const PGconn *conn, char *packet,
+								 const PQEnvironmentOption *options);
 
 
 /*
@@ -1017,6 +1017,24 @@ pqBuildErrorMessage3(PQExpBuffer msg, const PGresult *res,
 	val = PQresultErrorField(res, PG_DIAG_SEVERITY);
 	if (val)
 		appendPQExpBuffer(msg, "%s:  ", val);
+
+	if (verbosity == PQERRORS_SQLSTATE)
+	{
+		/*
+		 * If we have a SQLSTATE, print that and nothing else.  If not (which
+		 * shouldn't happen for server-generated errors, but might possibly
+		 * happen for libpq-generated ones), fall back to TERSE format, as
+		 * that seems better than printing nothing at all.
+		 */
+		val = PQresultErrorField(res, PG_DIAG_SQLSTATE);
+		if (val)
+		{
+			appendPQExpBuffer(msg, "%s\n", val);
+			return;
+		}
+		verbosity = PQERRORS_TERSE;
+	}
+
 	if (verbosity == PQERRORS_VERBOSE)
 	{
 		val = PQresultErrorField(res, PG_DIAG_SQLSTATE);
@@ -1926,50 +1944,35 @@ pqFunctionCall3(PGconn *conn, Oid fnid,
 		pqPutInt(1, 2, conn) < 0 || /* format code: BINARY */
 		pqPutInt(nargs, 2, conn) < 0)	/* # of args */
 	{
-		pqHandleSendFailure(conn);
+		/* error message should be set up already */
 		return NULL;
 	}
 
 	for (i = 0; i < nargs; ++i)
 	{							/* len.int4 + contents	   */
 		if (pqPutInt(args[i].len, 4, conn))
-		{
-			pqHandleSendFailure(conn);
 			return NULL;
-		}
 		if (args[i].len == -1)
 			continue;			/* it's NULL */
 
 		if (args[i].isint)
 		{
 			if (pqPutInt(args[i].u.integer, args[i].len, conn))
-			{
-				pqHandleSendFailure(conn);
 				return NULL;
-			}
 		}
 		else
 		{
 			if (pqPutnchar((char *) args[i].u.ptr, args[i].len, conn))
-			{
-				pqHandleSendFailure(conn);
 				return NULL;
-			}
 		}
 	}
 
 	if (pqPutInt(1, 2, conn) < 0)	/* result format code: BINARY */
-	{
-		pqHandleSendFailure(conn);
 		return NULL;
-	}
 
 	if (pqPutMsgEnd(conn) < 0 ||
 		pqFlush(conn))
-	{
-		pqHandleSendFailure(conn);
 		return NULL;
-	}
 
 	for (;;)
 	{

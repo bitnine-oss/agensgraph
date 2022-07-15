@@ -4,7 +4,7 @@
  *	  Sort the items of a dump into a safe order for dumping
  *
  *
- * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -20,9 +20,6 @@
 #include "pg_dump.h"
 
 #include "catalog/pg_class_d.h"
-
-/* translator: this is a module name */
-static const char *modulename = gettext_noop("sorter");
 
 /*
  * Sort priority for database object types.
@@ -90,22 +87,22 @@ static DumpId postDataBoundId;
 
 static int	DOTypeNameCompare(const void *p1, const void *p2);
 static bool TopoSort(DumpableObject **objs,
-		 int numObjs,
-		 DumpableObject **ordering,
-		 int *nOrdering);
+					 int numObjs,
+					 DumpableObject **ordering,
+					 int *nOrdering);
 static void addHeapElement(int val, int *heap, int heapLength);
 static int	removeHeapElement(int *heap, int heapLength);
 static void findDependencyLoops(DumpableObject **objs, int nObjs, int totObjs);
-static int findLoop(DumpableObject *obj,
-		 DumpId startPoint,
-		 bool *processed,
-		 DumpId *searchFailed,
-		 DumpableObject **workspace,
-		 int depth);
+static int	findLoop(DumpableObject *obj,
+					 DumpId startPoint,
+					 bool *processed,
+					 DumpId *searchFailed,
+					 DumpableObject **workspace,
+					 int depth);
 static void repairDependencyLoop(DumpableObject **loop,
-					 int nLoop);
+								 int nLoop);
 static void describeDumpableObject(DumpableObject *obj,
-					   char *buf, int bufsize);
+								   char *buf, int bufsize);
 
 
 /*
@@ -320,21 +317,20 @@ TopoSort(DumpableObject **objs,
 	 * We also make a map showing the input-order index of the item with
 	 * dumpId j.
 	 */
-	beforeConstraints = (int *) pg_malloc((maxDumpId + 1) * sizeof(int));
-	memset(beforeConstraints, 0, (maxDumpId + 1) * sizeof(int));
+	beforeConstraints = (int *) pg_malloc0((maxDumpId + 1) * sizeof(int));
 	idMap = (int *) pg_malloc((maxDumpId + 1) * sizeof(int));
 	for (i = 0; i < numObjs; i++)
 	{
 		obj = objs[i];
 		j = obj->dumpId;
 		if (j <= 0 || j > maxDumpId)
-			exit_horribly(modulename, "invalid dumpId %d\n", j);
+			fatal("invalid dumpId %d", j);
 		idMap[j] = i;
 		for (j = 0; j < obj->nDeps; j++)
 		{
 			k = obj->dependencies[j];
 			if (k <= 0 || k > maxDumpId)
-				exit_horribly(modulename, "invalid dependency %d\n", k);
+				fatal("invalid dependency %d", k);
 			beforeConstraints[k]++;
 		}
 	}
@@ -567,7 +563,7 @@ findDependencyLoops(DumpableObject **objs, int nObjs, int totObjs)
 
 	/* We'd better have fixed at least one loop */
 	if (!fixedloop)
-		exit_horribly(modulename, "could not identify dependency loop\n");
+		fatal("could not identify dependency loop");
 
 	free(workspace);
 	free(searchFailed);
@@ -755,19 +751,26 @@ repairViewRuleMultiLoop(DumpableObject *viewobj,
  *
  * Note that the "next object" is not necessarily the matview itself;
  * it could be the matview's rowtype, for example.  We may come through here
- * several times while removing all the pre-data linkages.
+ * several times while removing all the pre-data linkages.  In particular,
+ * if there are other matviews that depend on the one with the circularity
+ * problem, we'll come through here for each such matview and mark them all
+ * as postponed.  (This works because all MVs have pre-data dependencies
+ * to begin with, so each of them will get visited.)
  */
 static void
-repairMatViewBoundaryMultiLoop(DumpableObject *matviewobj,
-							   DumpableObject *boundaryobj,
+repairMatViewBoundaryMultiLoop(DumpableObject *boundaryobj,
 							   DumpableObject *nextobj)
 {
-	TableInfo  *matviewinfo = (TableInfo *) matviewobj;
-
 	/* remove boundary's dependency on object after it in loop */
 	removeObjectDependency(boundaryobj, nextobj->dumpId);
-	/* mark matview as postponed into post-data section */
-	matviewinfo->postponed_def = true;
+	/* if that object is a matview, mark it as postponed into post-data */
+	if (nextobj->objType == DO_TABLE)
+	{
+		TableInfo  *nextinfo = (TableInfo *) nextobj;
+
+		if (nextinfo->relkind == RELKIND_MATVIEW)
+			nextinfo->postponed_def = true;
+	}
 }
 
 /*
@@ -956,8 +959,7 @@ repairDependencyLoop(DumpableObject **loop,
 						DumpableObject *nextobj;
 
 						nextobj = (j < nLoop - 1) ? loop[j + 1] : loop[0];
-						repairMatViewBoundaryMultiLoop(loop[i], loop[j],
-													   nextobj);
+						repairMatViewBoundaryMultiLoop(loop[j], nextobj);
 						return;
 					}
 				}
@@ -1102,6 +1104,16 @@ repairDependencyLoop(DumpableObject **loop,
 		}
 	}
 
+	/* Loop of table with itself, happens with generated columns */
+	if (nLoop == 1)
+	{
+		if (loop[0]->objType == DO_TABLE)
+		{
+			removeObjectDependency(loop[0], loop[0]->dumpId);
+			return;
+		}
+	}
+
 	/*
 	 * If all the objects are TABLE_DATA items, what we must have is a
 	 * circular set of foreign key constraints (or a single self-referential
@@ -1114,13 +1126,13 @@ repairDependencyLoop(DumpableObject **loop,
 	}
 	if (i >= nLoop)
 	{
-		write_msg(NULL, ngettext("NOTICE: there are circular foreign-key constraints on this table:\n",
-								 "NOTICE: there are circular foreign-key constraints among these tables:\n",
-								 nLoop));
+		pg_log_warning(ngettext("there are circular foreign-key constraints on this table:",
+								"there are circular foreign-key constraints among these tables:",
+								nLoop));
 		for (i = 0; i < nLoop; i++)
-			write_msg(NULL, "  %s\n", loop[i]->name);
-		write_msg(NULL, "You might not be able to restore the dump without using --disable-triggers or temporarily dropping the constraints.\n");
-		write_msg(NULL, "Consider using a full dump instead of a --data-only dump to avoid this problem.\n");
+			pg_log_generic(PG_LOG_INFO, "  %s", loop[i]->name);
+		pg_log_generic(PG_LOG_INFO, "You might not be able to restore the dump without using --disable-triggers or temporarily dropping the constraints.");
+		pg_log_generic(PG_LOG_INFO, "Consider using a full dump instead of a --data-only dump to avoid this problem.");
 		if (nLoop > 1)
 			removeObjectDependency(loop[0], loop[1]->dumpId);
 		else					/* must be a self-dependency */
@@ -1132,13 +1144,13 @@ repairDependencyLoop(DumpableObject **loop,
 	 * If we can't find a principled way to break the loop, complain and break
 	 * it in an arbitrary fashion.
 	 */
-	write_msg(modulename, "WARNING: could not resolve dependency loop among these items:\n");
+	pg_log_warning("could not resolve dependency loop among these items:");
 	for (i = 0; i < nLoop; i++)
 	{
 		char		buf[1024];
 
 		describeDumpableObject(loop[i], buf, sizeof(buf));
-		write_msg(modulename, "  %s\n", buf);
+		pg_log_generic(PG_LOG_INFO, "  %s", buf);
 	}
 
 	if (nLoop > 1)

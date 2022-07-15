@@ -3,7 +3,7 @@
 # pg_amop.dat
 #    Initial contents of the pg_amop system catalog.
 #
-# Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
+# Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
 # Portions Copyright (c) 1994, Regents of the University of California
 #
 # src/include/catalog/pg_amop.dat
@@ -299,24 +299,6 @@
   amoprighttype => 'char', amopstrategy => '5', amopopr => '>(char,char)',
   amopmethod => 'btree' },
 
-# btree name_ops
-
-{ amopfamily => 'btree/name_ops', amoplefttype => 'name',
-  amoprighttype => 'name', amopstrategy => '1', amopopr => '<(name,name)',
-  amopmethod => 'btree' },
-{ amopfamily => 'btree/name_ops', amoplefttype => 'name',
-  amoprighttype => 'name', amopstrategy => '2', amopopr => '<=(name,name)',
-  amopmethod => 'btree' },
-{ amopfamily => 'btree/name_ops', amoplefttype => 'name',
-  amoprighttype => 'name', amopstrategy => '3', amopopr => '=(name,name)',
-  amopmethod => 'btree' },
-{ amopfamily => 'btree/name_ops', amoplefttype => 'name',
-  amoprighttype => 'name', amopstrategy => '4', amopopr => '>=(name,name)',
-  amopmethod => 'btree' },
-{ amopfamily => 'btree/name_ops', amoplefttype => 'name',
-  amoprighttype => 'name', amopstrategy => '5', amopopr => '>(name,name)',
-  amopmethod => 'btree' },
-
 # btree text_ops
 
 { amopfamily => 'btree/text_ops', amoplefttype => 'text',
@@ -333,6 +315,51 @@
   amopmethod => 'btree' },
 { amopfamily => 'btree/text_ops', amoplefttype => 'text',
   amoprighttype => 'text', amopstrategy => '5', amopopr => '>(text,text)',
+  amopmethod => 'btree' },
+{ amopfamily => 'btree/text_ops', amoplefttype => 'name',
+  amoprighttype => 'name', amopstrategy => '1', amopopr => '<(name,name)',
+  amopmethod => 'btree' },
+{ amopfamily => 'btree/text_ops', amoplefttype => 'name',
+  amoprighttype => 'name', amopstrategy => '2', amopopr => '<=(name,name)',
+  amopmethod => 'btree' },
+{ amopfamily => 'btree/text_ops', amoplefttype => 'name',
+  amoprighttype => 'name', amopstrategy => '3', amopopr => '=(name,name)',
+  amopmethod => 'btree' },
+{ amopfamily => 'btree/text_ops', amoplefttype => 'name',
+  amoprighttype => 'name', amopstrategy => '4', amopopr => '>=(name,name)',
+  amopmethod => 'btree' },
+{ amopfamily => 'btree/text_ops', amoplefttype => 'name',
+  amoprighttype => 'name', amopstrategy => '5', amopopr => '>(name,name)',
+  amopmethod => 'btree' },
+{ amopfamily => 'btree/text_ops', amoplefttype => 'name',
+  amoprighttype => 'text', amopstrategy => '1', amopopr => '<(name,text)',
+  amopmethod => 'btree' },
+{ amopfamily => 'btree/text_ops', amoplefttype => 'name',
+  amoprighttype => 'text', amopstrategy => '2', amopopr => '<=(name,text)',
+  amopmethod => 'btree' },
+{ amopfamily => 'btree/text_ops', amoplefttype => 'name',
+  amoprighttype => 'text', amopstrategy => '3', amopopr => '=(name,text)',
+  amopmethod => 'btree' },
+{ amopfamily => 'btree/text_ops', amoplefttype => 'name',
+  amoprighttype => 'text', amopstrategy => '4', amopopr => '>=(name,text)',
+  amopmethod => 'btree' },
+{ amopfamily => 'btree/text_ops', amoplefttype => 'name',
+  amoprighttype => 'text', amopstrategy => '5', amopopr => '>(name,text)',
+  amopmethod => 'btree' },
+{ amopfamily => 'btree/text_ops', amoplefttype => 'text',
+  amoprighttype => 'name', amopstrategy => '1', amopopr => '<(text,name)',
+  amopmethod => 'btree' },
+{ amopfamily => 'btree/text_ops', amoplefttype => 'text',
+  amoprighttype => 'name', amopstrategy => '2', amopopr => '<=(text,name)',
+  amopmethod => 'btree' },
+{ amopfamily => 'btree/text_ops', amoplefttype => 'text',
+  amoprighttype => 'name', amopstrategy => '3', amopopr => '=(text,name)',
+  amopmethod => 'btree' },
+{ amopfamily => 'btree/text_ops', amoplefttype => 'text',
+  amoprighttype => 'name', amopstrategy => '4', amopopr => '>=(text,name)',
+  amopmethod => 'btree' },
+{ amopfamily => 'btree/text_ops', amoplefttype => 'text',
+  amoprighttype => 'name', amopstrategy => '5', amopopr => '>(text,name)',
   amopmethod => 'btree' },
 
 # btree bpchar_ops
@@ -925,11 +952,6 @@
   amoprighttype => 'macaddr8', amopstrategy => '1',
   amopopr => '=(macaddr8,macaddr8)', amopmethod => 'hash' },
 
-# name_ops
-{ amopfamily => 'hash/name_ops', amoplefttype => 'name',
-  amoprighttype => 'name', amopstrategy => '1', amopopr => '=(name,name)',
-  amopmethod => 'hash' },
-
 # oid_ops
 { amopfamily => 'hash/oid_ops', amoplefttype => 'oid', amoprighttype => 'oid',
   amopstrategy => '1', amopopr => '=(oid,oid)', amopmethod => 'hash' },
@@ -942,6 +964,15 @@
 # text_ops
 { amopfamily => 'hash/text_ops', amoplefttype => 'text',
   amoprighttype => 'text', amopstrategy => '1', amopopr => '=(text,text)',
+  amopmethod => 'hash' },
+{ amopfamily => 'hash/text_ops', amoplefttype => 'name',
+  amoprighttype => 'name', amopstrategy => '1', amopopr => '=(name,name)',
+  amopmethod => 'hash' },
+{ amopfamily => 'hash/text_ops', amoplefttype => 'name',
+  amoprighttype => 'text', amopstrategy => '1', amopopr => '=(name,text)',
+  amopmethod => 'hash' },
+{ amopfamily => 'hash/text_ops', amoplefttype => 'text',
+  amoprighttype => 'name', amopstrategy => '1', amopopr => '=(text,name)',
   amopmethod => 'hash' },
 
 # time_ops
@@ -981,6 +1012,10 @@
 # cid_ops
 { amopfamily => 'hash/cid_ops', amoplefttype => 'cid', amoprighttype => 'cid',
   amopstrategy => '1', amopopr => '=(cid,cid)', amopmethod => 'hash' },
+
+# tid_ops
+{ amopfamily => 'hash/tid_ops', amoplefttype => 'tid', amoprighttype => 'tid',
+  amopstrategy => '1', amopopr => '=(tid,tid)', amopmethod => 'hash' },
 
 # text_pattern_ops
 { amopfamily => 'hash/text_pattern_ops', amoplefttype => 'text',
@@ -1433,11 +1468,23 @@
 { amopfamily => 'gin/jsonb_ops', amoplefttype => 'jsonb',
   amoprighttype => '_text', amopstrategy => '11', amopopr => '?&(jsonb,_text)',
   amopmethod => 'gin' },
+{ amopfamily => 'gin/jsonb_ops', amoplefttype => 'jsonb',
+  amoprighttype => 'jsonpath', amopstrategy => '15',
+  amopopr => '@?(jsonb,jsonpath)', amopmethod => 'gin' },
+{ amopfamily => 'gin/jsonb_ops', amoplefttype => 'jsonb',
+  amoprighttype => 'jsonpath', amopstrategy => '16',
+  amopopr => '@@(jsonb,jsonpath)', amopmethod => 'gin' },
 
 # GIN jsonb_path_ops
 { amopfamily => 'gin/jsonb_path_ops', amoplefttype => 'jsonb',
   amoprighttype => 'jsonb', amopstrategy => '7', amopopr => '@>(jsonb,jsonb)',
   amopmethod => 'gin' },
+{ amopfamily => 'gin/jsonb_path_ops', amoplefttype => 'jsonb',
+  amoprighttype => 'jsonpath', amopstrategy => '15',
+  amopopr => '@?(jsonb,jsonpath)', amopmethod => 'gin' },
+{ amopfamily => 'gin/jsonb_path_ops', amoplefttype => 'jsonb',
+  amoprighttype => 'jsonpath', amopstrategy => '16',
+  amopopr => '@@(jsonb,jsonpath)', amopmethod => 'gin' },
 
 # SP-GiST range_ops
 { amopfamily => 'spgist/range_ops', amoplefttype => 'anyrange',

@@ -139,6 +139,9 @@
    don't. */
 #define HAVE_DECL_STRNLEN 1
 
+/* Define to 1 if you have the `strtof' function. */
+#define HAVE_STRTOF 1
+
 /* Define to 1 if you have the declaration of `strtoll', and to 0 if you
    don't. */
 #define HAVE_DECL_STRTOLL 1
@@ -412,8 +415,8 @@
 /* Define to 1 if you have the <string.h> header file. */
 #define HAVE_STRING_H 1
 
-/* Define to use have a strong random number source */
-#define HAVE_STRONG_RANDOM 1
+/* Define to 1 if you have the `strsignal' function. */
+/* #undef HAVE_STRSIGNAL */
 
 /* Define to 1 if you have the `strtoll' function. */
 #ifdef HAVE_LONG_LONG_INT_64
@@ -545,6 +548,9 @@
 /* Define to 1 if you have the `unsetenv' function. */
 /* #undef HAVE_UNSETENV */
 
+/* Define to 1 if you have the `uselocale' function. */
+/* #undef HAVE_USELOCALE */
+
 /* Define to 1 if you have the `utime' function. */
 #define HAVE_UTIME 1
 
@@ -569,6 +575,9 @@
 /* Define to 1 if you have the `X509_get_signature_nid' function. */
 #define HAVE_X509_GET_SIGNATURE_NID 1
 
+/* Define to 1 if the assembler supports X86_64's POPCNTQ instruction. */
+/* #undef HAVE_X86_64_POPCNTQ */
+
 /* Define to 1 if the system has the type `_Bool'. */
 /* #undef HAVE__BOOL */
 
@@ -581,17 +590,29 @@
 /* Define to 1 if your compiler understands __builtin_bswap64. */
 /* #undef HAVE__BUILTIN_BSWAP64 */
 
+/* Define to 1 if your compiler understands __builtin_clz. */
+/* #undef HAVE__BUILTIN_CLZ */
+
 /* Define to 1 if your compiler understands __builtin_constant_p. */
 /* #undef HAVE__BUILTIN_CONSTANT_P */
 
+/* Define to 1 if your compiler understands __builtin_ctz. */
+/* #undef HAVE__BUILTIN_CTZ */
+
 /* Define to 1 if your compiler understands __builtin_$op_overflow. */
 /* #undef HAVE__BUILTIN_OP_OVERFLOW */
+
+/* Define to 1 if your compiler understands __builtin_popcount. */
+/* #undef HAVE__BUILTIN_POPCOUNT */
 
 /* Define to 1 if your compiler understands __builtin_types_compatible_p. */
 /* #undef HAVE__BUILTIN_TYPES_COMPATIBLE_P */
 
 /* Define to 1 if your compiler understands __builtin_unreachable. */
 /* #undef HAVE__BUILTIN_UNREACHABLE */
+
+/* Define to 1 if you have the `_configthreadlocale' function. */
+#define HAVE__CONFIGTHREADLOCALE 1
 
 /* Define to 1 if you have __cpuid. */
 #define HAVE__CPUID 1
@@ -618,16 +639,16 @@
 #define MEMSET_LOOP_LIMIT 1024
 
 /* Define to the address where bug reports for this package should be sent. */
-#define PACKAGE_BUGREPORT "pgsql-bugs@postgresql.org"
+#define PACKAGE_BUGREPORT "pgsql-bugs@lists.postgresql.org"
 
 /* Define to the full name of this package. */
 #define PACKAGE_NAME "PostgreSQL"
 
 /* Define to the full name and version of this package. */
-#define PACKAGE_STRING "PostgreSQL 12devel"
+#define PACKAGE_STRING "PostgreSQL 12beta2"
 
 /* Define to the version of this package. */
-#define PACKAGE_VERSION "12devel"
+#define PACKAGE_VERSION "12beta2"
 
 /* Define to the name of a signed 128-bit integer type. */
 #undef PG_INT128_TYPE
@@ -636,7 +657,7 @@
 #define PG_INT64_TYPE long long int
 
 /* PostgreSQL version as a string */
-#define PG_VERSION "12devel"
+#define PG_VERSION "12beta2"
 
 /* PostgreSQL version as a number */
 #define PG_VERSION_NUM 120000

@@ -238,9 +238,9 @@ CREATE SERVER s1 FOREIGN DATA WRAPPER foo;
 COMMENT ON SERVER s1 IS 'foreign server';
 CREATE USER MAPPING FOR current_user SERVER s1;
 CREATE USER MAPPING FOR current_user SERVER s1;				-- ERROR
-ERROR:  user mapping for "regress_foreign_data_user" already exists for server s1
+ERROR:  user mapping for "regress_foreign_data_user" already exists for server "s1"
 CREATE USER MAPPING IF NOT EXISTS FOR current_user SERVER s1; -- NOTICE
-NOTICE:  user mapping for "regress_foreign_data_user" already exists for server s1, skipping
+NOTICE:  user mapping for "regress_foreign_data_user" already exists for server "s1", skipping
 \dew+
                                                 List of foreign-data wrappers
     Name    |           Owner           | Handler |        Validator         | Access privileges | FDW options | Description 
@@ -441,8 +441,8 @@ ALTER SERVER s1 OWNER TO regress_test_indirect;
 RESET ROLE;
 DROP ROLE regress_test_indirect;                            -- ERROR
 ERROR:  role "regress_test_indirect" cannot be dropped because some objects depend on it
-DETAIL:  owner of server s1
-privileges for foreign-data wrapper foo
+DETAIL:  privileges for foreign-data wrapper foo
+owner of server s1
 \des+
                                                                                  List of foreign servers
  Name |           Owner           | Foreign-data wrapper |                   Access privileges                   |  Type  | Version |             FDW options              | Description 
@@ -578,7 +578,7 @@ CREATE USER MAPPING FOR current_user SERVER s1;             -- ERROR
 ERROR:  server "s1" does not exist
 CREATE USER MAPPING FOR current_user SERVER s4;
 CREATE USER MAPPING FOR user SERVER s4;                     -- ERROR duplicate
-ERROR:  user mapping for "regress_foreign_data_user" already exists for server s4
+ERROR:  user mapping for "regress_foreign_data_user" already exists for server "s4"
 CREATE USER MAPPING FOR public SERVER s4 OPTIONS ("this mapping" 'is public');
 CREATE USER MAPPING FOR user SERVER s8 OPTIONS (username 'test', password 'secret');    -- ERROR
 ERROR:  invalid option "username"
@@ -618,7 +618,7 @@ ERROR:  role "regress_test_missing_role" does not exist
 ALTER USER MAPPING FOR user SERVER ss4 OPTIONS (gotcha 'true'); -- ERROR
 ERROR:  server "ss4" does not exist
 ALTER USER MAPPING FOR public SERVER s5 OPTIONS (gotcha 'true');            -- ERROR
-ERROR:  user mapping for "public" does not exist for the server
+ERROR:  user mapping for "public" does not exist for server "s5"
 ALTER USER MAPPING FOR current_user SERVER s8 OPTIONS (username 'test');    -- ERROR
 ERROR:  invalid option "username"
 HINT:  Valid options in this context are: user, password
@@ -648,13 +648,13 @@ ERROR:  role "regress_test_missing_role" does not exist
 DROP USER MAPPING FOR user SERVER ss4;
 ERROR:  server "ss4" does not exist
 DROP USER MAPPING FOR public SERVER s7;                     -- ERROR
-ERROR:  user mapping for "public" does not exist for the server
+ERROR:  user mapping for "public" does not exist for server "s7"
 DROP USER MAPPING IF EXISTS FOR regress_test_missing_role SERVER s4;
 NOTICE:  role "regress_test_missing_role" does not exist, skipping
 DROP USER MAPPING IF EXISTS FOR user SERVER ss4;
-NOTICE:  server does not exist, skipping
+NOTICE:  server "ss4" does not exist, skipping
 DROP USER MAPPING IF EXISTS FOR public SERVER s7;
-NOTICE:  user mapping for "public" does not exist for the server, skipping
+NOTICE:  user mapping for "public" does not exist for server "s7", skipping
 CREATE USER MAPPING FOR public SERVER s8;
 SET ROLE regress_test_role;
 DROP USER MAPPING FOR public SERVER s8;                     -- ERROR
@@ -748,10 +748,62 @@ ERROR:  foreign-data wrapper "dummy" has no handler
 CREATE TABLE lt1 (a INT) PARTITION BY RANGE (a);
 CREATE FOREIGN TABLE ft_part1
   PARTITION OF lt1 FOR VALUES FROM (0) TO (1000) SERVER s0;
-CREATE INDEX ON lt1 (a);                                        -- ERROR
-ERROR:  cannot create index on partitioned table "lt1"
+CREATE INDEX ON lt1 (a);                              -- skips partition
+CREATE UNIQUE INDEX ON lt1 (a);                                 -- ERROR
+ERROR:  cannot create unique index on partitioned table "lt1"
+DETAIL:  Table "lt1" contains partitions that are foreign tables.
+ALTER TABLE lt1 ADD PRIMARY KEY (a);                            -- ERROR
+ERROR:  cannot create unique index on partitioned table "lt1"
 DETAIL:  Table "lt1" contains partitions that are foreign tables.
 DROP TABLE lt1;
+CREATE TABLE lt1 (a INT) PARTITION BY RANGE (a);
+CREATE INDEX ON lt1 (a);
+CREATE FOREIGN TABLE ft_part1
+  PARTITION OF lt1 FOR VALUES FROM (0) TO (1000) SERVER s0;
+CREATE FOREIGN TABLE ft_part2 (a INT) SERVER s0;
+ALTER TABLE lt1 ATTACH PARTITION ft_part2 FOR VALUES FROM (1000) TO (2000);
+DROP FOREIGN TABLE ft_part1, ft_part2;
+CREATE UNIQUE INDEX ON lt1 (a);
+ALTER TABLE lt1 ADD PRIMARY KEY (a);
+CREATE FOREIGN TABLE ft_part1
+  PARTITION OF lt1 FOR VALUES FROM (0) TO (1000) SERVER s0;     -- ERROR
+ERROR:  cannot create foreign partition of partitioned table "lt1"
+DETAIL:  Table "lt1" contains indexes that are unique.
+CREATE FOREIGN TABLE ft_part2 (a INT NOT NULL) SERVER s0;
+ALTER TABLE lt1 ATTACH PARTITION ft_part2
+  FOR VALUES FROM (1000) TO (2000);                             -- ERROR
+ERROR:  cannot attach foreign table "ft_part2" as partition of partitioned table "lt1"
+DETAIL:  Table "lt1" contains unique indexes.
+DROP TABLE lt1;
+DROP FOREIGN TABLE ft_part2;
+CREATE TABLE lt1 (a INT) PARTITION BY RANGE (a);
+CREATE INDEX ON lt1 (a);
+CREATE TABLE lt1_part1
+  PARTITION OF lt1 FOR VALUES FROM (0) TO (1000)
+  PARTITION BY RANGE (a);
+CREATE FOREIGN TABLE ft_part_1_1
+  PARTITION OF lt1_part1 FOR VALUES FROM (0) TO (100) SERVER s0;
+CREATE FOREIGN TABLE ft_part_1_2 (a INT) SERVER s0;
+ALTER TABLE lt1_part1 ATTACH PARTITION ft_part_1_2 FOR VALUES FROM (100) TO (200);
+CREATE UNIQUE INDEX ON lt1 (a);
+ERROR:  cannot create unique index on partitioned table "lt1"
+DETAIL:  Table "lt1" contains partitions that are foreign tables.
+ALTER TABLE lt1 ADD PRIMARY KEY (a);
+ERROR:  cannot create unique index on partitioned table "lt1_part1"
+DETAIL:  Table "lt1_part1" contains partitions that are foreign tables.
+DROP FOREIGN TABLE ft_part_1_1, ft_part_1_2;
+CREATE UNIQUE INDEX ON lt1 (a);
+ALTER TABLE lt1 ADD PRIMARY KEY (a);
+CREATE FOREIGN TABLE ft_part_1_1
+  PARTITION OF lt1_part1 FOR VALUES FROM (0) TO (100) SERVER s0;
+ERROR:  cannot create foreign partition of partitioned table "lt1_part1"
+DETAIL:  Table "lt1_part1" contains indexes that are unique.
+CREATE FOREIGN TABLE ft_part_1_2 (a INT NOT NULL) SERVER s0;
+ALTER TABLE lt1_part1 ATTACH PARTITION ft_part_1_2 FOR VALUES FROM (100) TO (200);
+ERROR:  cannot attach foreign table "ft_part_1_2" as partition of partitioned table "lt1_part1"
+DETAIL:  Table "lt1_part1" contains unique indexes.
+DROP TABLE lt1;
+DROP FOREIGN TABLE ft_part_1_2;
 -- ALTER FOREIGN TABLE
 COMMENT ON FOREIGN TABLE ft1 IS 'foreign table';
 COMMENT ON FOREIGN TABLE ft1 IS NULL;
@@ -1203,11 +1255,10 @@ ERROR:  permission denied for foreign-data wrapper foo
 ALTER SERVER s9 VERSION '1.1';
 GRANT USAGE ON FOREIGN SERVER s9 TO regress_test_role;
 CREATE USER MAPPING FOR current_user SERVER s9;
--- We use terse mode to avoid ordering issues in cascade detail output.
-\set VERBOSITY terse
 DROP SERVER s9 CASCADE;
 NOTICE:  drop cascades to 2 other objects
-\set VERBOSITY default
+DETAIL:  drop cascades to user mapping for public on server s9
+drop cascades to user mapping for regress_unprivileged_role on server s9
 RESET ROLE;
 CREATE SERVER s9 FOREIGN DATA WRAPPER foo;
 GRANT USAGE ON FOREIGN SERVER s9 TO regress_unprivileged_role;
@@ -1275,10 +1326,10 @@ SET ROLE regress_unprivileged_role;
 (9 rows)
 
 RESET ROLE;
-\set VERBOSITY terse
 DROP SERVER s10 CASCADE;
 NOTICE:  drop cascades to 2 other objects
-\set VERBOSITY default
+DETAIL:  drop cascades to user mapping for public on server s10
+drop cascades to user mapping for regress_unprivileged_role on server s10
 -- Triggers
 CREATE FUNCTION dummy_trigger() RETURNS TRIGGER AS $$
   BEGIN
@@ -1620,12 +1671,15 @@ Inherits: fd_pt1
 Child tables: ct3,
               ft3
 
-\set VERBOSITY terse
 DROP FOREIGN TABLE ft2; -- ERROR
 ERROR:  cannot drop foreign table ft2 because other objects depend on it
+DETAIL:  table ct3 depends on foreign table ft2
+foreign table ft3 depends on foreign table ft2
+HINT:  Use DROP ... CASCADE to drop the dependent objects too.
 DROP FOREIGN TABLE ft2 CASCADE;
 NOTICE:  drop cascades to 2 other objects
-\set VERBOSITY default
+DETAIL:  drop cascades to table ct3
+drop cascades to foreign table ft3
 CREATE FOREIGN TABLE ft2 (
 	c1 integer NOT NULL,
 	c2 text,
@@ -1998,18 +2052,23 @@ DROP TABLE temp_parted;
 DROP SCHEMA foreign_schema CASCADE;
 DROP ROLE regress_test_role;                                -- ERROR
 ERROR:  role "regress_test_role" cannot be dropped because some objects depend on it
-DETAIL:  privileges for server s4
-privileges for foreign-data wrapper foo
+DETAIL:  privileges for foreign-data wrapper foo
+privileges for server s4
 owner of user mapping for regress_test_role on server s6
 DROP SERVER t1 CASCADE;
 NOTICE:  drop cascades to user mapping for public on server t1
 DROP USER MAPPING FOR regress_test_role SERVER s6;
-\set VERBOSITY terse
 DROP FOREIGN DATA WRAPPER foo CASCADE;
 NOTICE:  drop cascades to 5 other objects
+DETAIL:  drop cascades to server s4
+drop cascades to user mapping for regress_foreign_data_user on server s4
+drop cascades to server s6
+drop cascades to server s9
+drop cascades to user mapping for regress_unprivileged_role on server s9
 DROP SERVER s8 CASCADE;
 NOTICE:  drop cascades to 2 other objects
-\set VERBOSITY default
+DETAIL:  drop cascades to user mapping for regress_foreign_data_user on server s8
+drop cascades to user mapping for public on server s8
 DROP ROLE regress_test_indirect;
 DROP ROLE regress_test_role;
 DROP ROLE regress_unprivileged_role;                        -- ERROR

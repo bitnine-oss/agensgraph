@@ -22,7 +22,7 @@
  * The Windows implementation uses Windows events that are inherited by all
  * postmaster child processes. There's no need for the self-pipe trick there.
  *
- * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -48,6 +48,7 @@
 #include "port/atomics.h"
 #include "portability/instr_time.h"
 #include "postmaster/postmaster.h"
+#include "storage/ipc.h"
 #include "storage/latch.h"
 #include "storage/pmsignal.h"
 #include "storage/shmem.h"
@@ -92,6 +93,13 @@ struct WaitEventSet
 	Latch	   *latch;
 	int			latch_pos;
 
+	/*
+	 * WL_EXIT_ON_PM_DEATH is converted to WL_POSTMASTER_DEATH, but this flag
+	 * is set so that we'll exit immediately if postmaster death is detected,
+	 * instead of returning.
+	 */
+	bool		exit_on_postmaster_death;
+
 #if defined(WAIT_USE_EPOLL)
 	int			epoll_fd;
 	/* epoll_wait returns events in a user provided arrays, allocate once */
@@ -135,7 +143,7 @@ static void WaitEventAdjustWin32(WaitEventSet *set, WaitEvent *event);
 #endif
 
 static inline int WaitEventSetWaitBlock(WaitEventSet *set, int cur_timeout,
-					  WaitEvent *occurred_events, int nevents);
+										WaitEvent *occurred_events, int nevents);
 
 /*
  * Initialize the process-local latch infrastructure.
@@ -217,7 +225,7 @@ InitializeLatchSupport(void)
  * Initialize a process-local latch.
  */
 void
-InitLatch(volatile Latch *latch)
+InitLatch(Latch *latch)
 {
 	latch->is_set = false;
 	latch->owner_pid = MyProcPid;
@@ -249,7 +257,7 @@ InitLatch(volatile Latch *latch)
  * process references to postmaster-private latches or WaitEventSets.
  */
 void
-InitSharedLatch(volatile Latch *latch)
+InitSharedLatch(Latch *latch)
 {
 #ifdef WIN32
 	SECURITY_ATTRIBUTES sa;
@@ -285,7 +293,7 @@ InitSharedLatch(volatile Latch *latch)
  * as shared latches use SIGUSR1 for inter-process communication.
  */
 void
-OwnLatch(volatile Latch *latch)
+OwnLatch(Latch *latch)
 {
 	/* Sanity checks */
 	Assert(latch->is_shared);
@@ -305,7 +313,7 @@ OwnLatch(volatile Latch *latch)
  * Disown a shared latch currently owned by the current process.
  */
 void
-DisownLatch(volatile Latch *latch)
+DisownLatch(Latch *latch)
 {
 	Assert(latch->is_shared);
 	Assert(latch->owner_pid == MyProcPid);
@@ -333,7 +341,7 @@ DisownLatch(volatile Latch *latch)
  * we return all of them in one call, but we will return at least one.
  */
 int
-WaitLatch(volatile Latch *latch, int wakeEvents, long timeout,
+WaitLatch(Latch *latch, int wakeEvents, long timeout,
 		  uint32 wait_event_info)
 {
 	return WaitLatchOrSocket(latch, wakeEvents, PGINVALID_SOCKET, timeout,
@@ -348,12 +356,17 @@ WaitLatch(volatile Latch *latch, int wakeEvents, long timeout,
  * to be reported as readable/writable/connected, so that the caller can deal
  * with the condition.
  *
+ * wakeEvents must include either WL_EXIT_ON_PM_DEATH for automatic exit
+ * if the postmaster dies or WL_POSTMASTER_DEATH for a flag set in the
+ * return value if the postmaster dies.  The latter is useful for rare cases
+ * where some behavior other than immediate exit is needed.
+ *
  * NB: These days this is just a wrapper around the WaitEventSet API. When
  * using a latch very frequently, consider creating a longer living
  * WaitEventSet instead; that's more efficient.
  */
 int
-WaitLatchOrSocket(volatile Latch *latch, int wakeEvents, pgsocket sock,
+WaitLatchOrSocket(Latch *latch, int wakeEvents, pgsocket sock,
 				  long timeout, uint32 wait_event_info)
 {
 	int			ret = 0;
@@ -368,10 +381,19 @@ WaitLatchOrSocket(volatile Latch *latch, int wakeEvents, pgsocket sock,
 
 	if (wakeEvents & WL_LATCH_SET)
 		AddWaitEventToSet(set, WL_LATCH_SET, PGINVALID_SOCKET,
-						  (Latch *) latch, NULL);
+						  latch, NULL);
 
-	if (wakeEvents & WL_POSTMASTER_DEATH && IsUnderPostmaster)
+	/* Postmaster-managed callers must handle postmaster death somehow. */
+	Assert(!IsUnderPostmaster ||
+		   (wakeEvents & WL_EXIT_ON_PM_DEATH) ||
+		   (wakeEvents & WL_POSTMASTER_DEATH));
+
+	if ((wakeEvents & WL_POSTMASTER_DEATH) && IsUnderPostmaster)
 		AddWaitEventToSet(set, WL_POSTMASTER_DEATH, PGINVALID_SOCKET,
+						  NULL, NULL);
+
+	if ((wakeEvents & WL_EXIT_ON_PM_DEATH) && IsUnderPostmaster)
+		AddWaitEventToSet(set, WL_EXIT_ON_PM_DEATH, PGINVALID_SOCKET,
 						  NULL, NULL);
 
 	if (wakeEvents & WL_SOCKET_MASK)
@@ -411,7 +433,7 @@ WaitLatchOrSocket(volatile Latch *latch, int wakeEvents, pgsocket sock,
  * throwing an error is not a good idea.
  */
 void
-SetLatch(volatile Latch *latch)
+SetLatch(Latch *latch)
 {
 #ifndef WIN32
 	pid_t		owner_pid;
@@ -494,7 +516,7 @@ SetLatch(volatile Latch *latch)
  * the latch is set again before the WaitLatch call.
  */
 void
-ResetLatch(volatile Latch *latch)
+ResetLatch(Latch *latch)
 {
 	/* Only the owner should reset the latch */
 	Assert(latch->owner_pid == MyProcPid);
@@ -562,6 +584,7 @@ CreateWaitEventSet(MemoryContext context, int nevents)
 
 	set->latch = NULL;
 	set->nevents_space = nevents;
+	set->exit_on_postmaster_death = false;
 
 #if defined(WAIT_USE_EPOLL)
 #ifdef EPOLL_CLOEXEC
@@ -646,6 +669,7 @@ FreeWaitEventSet(WaitEventSet *set)
  * - WL_SOCKET_CONNECTED: Wait for socket connection to be established,
  *	 can be combined with other WL_SOCKET_* events (on non-Windows
  *	 platforms, this is the same as WL_SOCKET_WRITEABLE)
+ * - WL_EXIT_ON_PM_DEATH: Exit immediately if the postmaster dies
  *
  * Returns the offset in WaitEventSet->events (starting from 0), which can be
  * used to modify previously added wait events using ModifyWaitEvent().
@@ -670,6 +694,12 @@ AddWaitEventToSet(WaitEventSet *set, uint32 events, pgsocket fd, Latch *latch,
 
 	/* not enough space */
 	Assert(set->nevents < set->nevents_space);
+
+	if (events == WL_EXIT_ON_PM_DEATH)
+	{
+		events = WL_POSTMASTER_DEATH;
+		set->exit_on_postmaster_death = true;
+	}
 
 	if (latch)
 	{
@@ -826,7 +856,9 @@ WaitEventAdjustEpoll(WaitEventSet *set, WaitEvent *event, int action)
 	if (rc < 0)
 		ereport(ERROR,
 				(errcode_for_socket_access(),
-				 errmsg("epoll_ctl() failed: %m")));
+		/* translator: %s is a syscall name, such as "poll()" */
+				 errmsg("%s failed: %m",
+						"epoll_ctl()")));
 }
 #endif
 
@@ -1057,7 +1089,9 @@ WaitEventSetWaitBlock(WaitEventSet *set, int cur_timeout,
 			waiting = false;
 			ereport(ERROR,
 					(errcode_for_socket_access(),
-					 errmsg("epoll_wait() failed: %m")));
+			/* translator: %s is a syscall name, such as "poll()" */
+					 errmsg("%s failed: %m",
+							"epoll_wait()")));
 		}
 		return 0;
 	}
@@ -1114,6 +1148,8 @@ WaitEventSetWaitBlock(WaitEventSet *set, int cur_timeout,
 			 */
 			if (!PostmasterIsAliveInternal())
 			{
+				if (set->exit_on_postmaster_death)
+					proc_exit(1);
 				occurred_events->fd = PGINVALID_SOCKET;
 				occurred_events->events = WL_POSTMASTER_DEATH;
 				occurred_events++;
@@ -1179,7 +1215,9 @@ WaitEventSetWaitBlock(WaitEventSet *set, int cur_timeout,
 			waiting = false;
 			ereport(ERROR,
 					(errcode_for_socket_access(),
-					 errmsg("poll() failed: %m")));
+			/* translator: %s is a syscall name, such as "poll()" */
+					 errmsg("%s failed: %m",
+							"poll()")));
 		}
 		return 0;
 	}
@@ -1232,6 +1270,8 @@ WaitEventSetWaitBlock(WaitEventSet *set, int cur_timeout,
 			 */
 			if (!PostmasterIsAliveInternal())
 			{
+				if (set->exit_on_postmaster_death)
+					proc_exit(1);
 				occurred_events->fd = PGINVALID_SOCKET;
 				occurred_events->events = WL_POSTMASTER_DEATH;
 				occurred_events++;
@@ -1392,6 +1432,8 @@ WaitEventSetWaitBlock(WaitEventSet *set, int cur_timeout,
 		 */
 		if (!PostmasterIsAliveInternal())
 		{
+			if (set->exit_on_postmaster_death)
+				proc_exit(1);
 			occurred_events->fd = PGINVALID_SOCKET;
 			occurred_events->events = WL_POSTMASTER_DEATH;
 			occurred_events++;

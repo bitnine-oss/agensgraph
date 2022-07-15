@@ -174,4 +174,6 @@ PQresultVerboseErrorMessage 171
 PQencryptPasswordConn     172
 PQresultMemorySize        173
 PQhostaddr                174
-PQagVersion               175
+PQgssEncInUse             175
+PQgetgssctx               176
+PQagVersion               177

@@ -3,7 +3,7 @@
  * uuid.c
  *	  Functions for the built-in type "uuid".
  *
- * Copyright (c) 2007-2018, PostgreSQL Global Development Group
+ * Copyright (c) 2007-2019, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
  *	  src/backend/utils/adt/uuid.c
@@ -13,12 +13,12 @@
 
 #include "postgres.h"
 
-#include "access/hash.h"
 #include "lib/hyperloglog.h"
 #include "libpq/pqformat.h"
 #include "port/pg_bswap.h"
 #include "utils/builtins.h"
 #include "utils/guc.h"
+#include "utils/hashutils.h"
 #include "utils/sortsupport.h"
 #include "utils/uuid.h"
 

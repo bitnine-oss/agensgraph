@@ -33,6 +33,7 @@ CREATE [ OR REPLACE ] FUNCTION
     | PARALLEL { UNSAFE | RESTRICTED | SAFE }
     | COST <replaceable class="parameter">execution_cost</replaceable>
     | ROWS <replaceable class="parameter">result_rows</replaceable>
+    | SUPPORT <replaceable class="parameter">support_function</replaceable>
     | SET <replaceable class="parameter">configuration_parameter</replaceable> { TO <replaceable class="parameter">value</replaceable> | = <replaceable class="parameter">value</replaceable> | FROM CURRENT }
     | AS '<replaceable class="parameter">definition</replaceable>'
     | AS '<replaceable class="parameter">obj_file</replaceable>', '<replaceable class="parameter">link_symbol</replaceable>'
@@ -478,6 +479,19 @@ CREATE [ OR REPLACE ] FUNCTION
     </varlistentry>
 
     <varlistentry>
+     <term><literal>SUPPORT</literal> <replaceable class="parameter">support_function</replaceable></term>
+
+     <listitem>
+      <para>
+       The name (optionally schema-qualified) of a <firstterm>planner support
+       function</firstterm> to use for this function.  See
+       <xref linkend="xfunc-optimization"/> for details.
+       You must be superuser to use this option.
+      </para>
+     </listitem>
+    </varlistentry>
+
+    <varlistentry>
      <term><replaceable>configuration_parameter</replaceable></term>
      <term><replaceable>value</replaceable></term>
      <listitem>
@@ -761,7 +775,7 @@ $$  LANGUAGE plpgsql
    <para>
     Another point to keep in mind is that by default, execute privilege
     is granted to <literal>PUBLIC</literal> for newly created functions
-    (see <xref linkend="sql-grant"/> for more
+    (see <xref linkend="ddl-priv"/> for more
     information).  Frequently you will wish to restrict use of a security
     definer function to only some users.  To do that, you must revoke
     the default <literal>PUBLIC</literal> privileges and then grant execute

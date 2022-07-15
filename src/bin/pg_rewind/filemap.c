@@ -3,7 +3,7 @@
  * filemap.c
  *	  A data structure for keeping track of files that have changed.
  *
- * Copyright (c) 2013-2018, PostgreSQL Global Development Group
+ * Copyright (c) 2013-2019, PostgreSQL Global Development Group
  *
  *-------------------------------------------------------------------------
  */
@@ -15,7 +15,6 @@
 
 #include "datapagemap.h"
 #include "filemap.h"
-#include "logging.h"
 #include "pg_rewind.h"
 
 #include "common/string.h"
@@ -26,7 +25,7 @@ filemap_t  *filemap = NULL;
 
 static bool isRelDataFile(const char *path);
 static char *datasegpath(RelFileNode rnode, ForkNumber forknum,
-			BlockNumber segno);
+						 BlockNumber segno);
 static int	path_cmp(const void *a, const void *b);
 static int	final_filemap_cmp(const void *a, const void *b);
 static void filemap_list_to_array(filemap_t *map);
@@ -147,7 +146,10 @@ process_source_file(const char *path, file_type_t type, size_t newsize,
 
 	Assert(map->array == NULL);
 
-	/* ignore any path matching the exclusion filters */
+	/*
+	 * Skip any files matching the exclusion filters. This has the effect to
+	 * remove all those files on the target.
+	 */
 	if (check_file_excluded(path, true))
 		return;
 
@@ -174,7 +176,7 @@ process_source_file(const char *path, file_type_t type, size_t newsize,
 	 * regular file
 	 */
 	if (type != FILE_TYPE_REGULAR && isRelDataFile(path))
-		pg_fatal("data file \"%s\" in source is not a regular file\n", path);
+		pg_fatal("data file \"%s\" in source is not a regular file", path);
 
 	snprintf(localpath, sizeof(localpath), "%s/%s", datadir_target, path);
 
@@ -182,8 +184,8 @@ process_source_file(const char *path, file_type_t type, size_t newsize,
 	if (lstat(localpath, &statbuf) < 0)
 	{
 		if (errno != ENOENT)
-			pg_fatal("could not stat file \"%s\": %s\n",
-					 localpath, strerror(errno));
+			pg_fatal("could not stat file \"%s\": %m",
+					 localpath);
 
 		exists = false;
 	}
@@ -196,7 +198,7 @@ process_source_file(const char *path, file_type_t type, size_t newsize,
 			if (exists && !S_ISDIR(statbuf.st_mode) && strcmp(path, "pg_wal") != 0)
 			{
 				/* it's a directory in source, but not in target. Strange.. */
-				pg_fatal("\"%s\" is not a directory\n", localpath);
+				pg_fatal("\"%s\" is not a directory", localpath);
 			}
 
 			if (!exists)
@@ -219,7 +221,7 @@ process_source_file(const char *path, file_type_t type, size_t newsize,
 				 * It's a symbolic link in source, but not in target.
 				 * Strange..
 				 */
-				pg_fatal("\"%s\" is not a symbolic link\n", localpath);
+				pg_fatal("\"%s\" is not a symbolic link", localpath);
 			}
 
 			if (!exists)
@@ -231,7 +233,7 @@ process_source_file(const char *path, file_type_t type, size_t newsize,
 
 		case FILE_TYPE_REGULAR:
 			if (exists && !S_ISREG(statbuf.st_mode))
-				pg_fatal("\"%s\" is not a regular file\n", localpath);
+				pg_fatal("\"%s\" is not a regular file", localpath);
 
 			if (!exists || !isRelDataFile(path))
 			{
@@ -334,19 +336,17 @@ process_target_file(const char *path, file_type_t type, size_t oldsize,
 	file_entry_t *entry;
 
 	/*
-	 * Ignore any path matching the exclusion filters.  This is not actually
-	 * mandatory for target files, but this does not hurt and let's be
-	 * consistent with the source processing.
+	 * Do not apply any exclusion filters here.  This has advantage to remove
+	 * from the target data folder all paths which have been filtered out from
+	 * the source data folder when processing the source files.
 	 */
-	if (check_file_excluded(path, false))
-		return;
 
 	snprintf(localpath, sizeof(localpath), "%s/%s", datadir_target, path);
 	if (lstat(localpath, &statbuf) < 0)
 	{
 		if (errno != ENOENT)
-			pg_fatal("could not stat file \"%s\": %s\n",
-					 localpath, strerror(errno));
+			pg_fatal("could not stat file \"%s\": %m",
+					 localpath);
 
 		exists = false;
 	}
@@ -357,7 +357,7 @@ process_target_file(const char *path, file_type_t type, size_t oldsize,
 		if (map->nlist == 0)
 		{
 			/* should not happen */
-			pg_fatal("source file list is empty\n");
+			pg_fatal("source file list is empty");
 		}
 
 		filemap_list_to_array(map);
@@ -472,7 +472,7 @@ process_block_change(ForkNumber forknum, RelFileNode rnode, BlockNumber blkno)
 				break;
 
 			case FILE_ACTION_CREATE:
-				pg_fatal("unexpected page modification for directory or symbolic link \"%s\"\n", entry->path);
+				pg_fatal("unexpected page modification for directory or symbolic link \"%s\"", entry->path);
 		}
 	}
 	else
@@ -507,11 +507,11 @@ check_file_excluded(const char *path, bool is_source)
 		if (strcmp(filename, excludeFiles[excludeIdx]) == 0)
 		{
 			if (is_source)
-				pg_log(PG_DEBUG, "entry \"%s\" excluded from source file list\n",
-					   path);
+				pg_log_debug("entry \"%s\" excluded from source file list",
+							 path);
 			else
-				pg_log(PG_DEBUG, "entry \"%s\" excluded from target file list\n",
-					   path);
+				pg_log_debug("entry \"%s\" excluded from target file list",
+							 path);
 			return true;
 		}
 	}
@@ -527,11 +527,11 @@ check_file_excluded(const char *path, bool is_source)
 		if (strstr(path, localpath) == path)
 		{
 			if (is_source)
-				pg_log(PG_DEBUG, "entry \"%s\" excluded from source file list\n",
-					   path);
+				pg_log_debug("entry \"%s\" excluded from source file list",
+							 path);
 			else
-				pg_log(PG_DEBUG, "entry \"%s\" excluded from target file list\n",
-					   path);
+				pg_log_debug("entry \"%s\" excluded from target file list",
+							 path);
 			return true;
 		}
 	}
@@ -658,11 +658,8 @@ print_filemap(void)
 		if (entry->action != FILE_ACTION_NONE ||
 			entry->pagemap.bitmapsize > 0)
 		{
-			pg_log(PG_DEBUG,
-			/*------
-			   translator: first %s is a file path, second is a keyword such as COPY */
-				   "%s (%s)\n", entry->path,
-				   action_to_str(entry->action));
+			pg_log_debug("%s (%s)", entry->path,
+						 action_to_str(entry->action));
 
 			if (entry->pagemap.bitmapsize > 0)
 				datapagemap_print(&entry->pagemap);

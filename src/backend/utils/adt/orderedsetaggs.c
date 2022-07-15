@@ -3,7 +3,7 @@
  * orderedsetaggs.c
  *		Ordered-set aggregate functions.
  *
- * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -22,7 +22,7 @@
 #include "executor/executor.h"
 #include "miscadmin.h"
 #include "nodes/nodeFuncs.h"
-#include "optimizer/tlist.h"
+#include "optimizer/optimizer.h"
 #include "utils/array.h"
 #include "utils/builtins.h"
 #include "utils/lsyscache.h"
@@ -1084,7 +1084,7 @@ mode_final(PG_FUNCTION_ARGS)
 			last_abbrev_val = abbrev_val;
 		}
 		else if (abbrev_val == last_abbrev_val &&
-				 DatumGetBool(FunctionCall2(equalfn, val, last_val)))
+				 DatumGetBool(FunctionCall2Coll(equalfn, PG_GET_COLLATION(), val, last_val)))
 		{
 			/* value equal to previous value, count it */
 			if (last_val_is_mode)
@@ -1345,6 +1345,7 @@ hypothetical_dense_rank_final(PG_FUNCTION_ARGS)
 											  numDistinctCols,
 											  sortColIdx,
 											  osastate->qstate->eqOperators,
+											  osastate->qstate->sortCollations,
 											  NULL);
 		MemoryContextSwitchTo(oldContext);
 		osastate->qstate->compareTuple = compareTuple;

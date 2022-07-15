@@ -4,7 +4,7 @@
  * src/backend/utils/adt/formatting.c
  *
  *
- *	 Portions Copyright (c) 1999-2018, PostgreSQL Global Development Group
+ *	 Portions Copyright (c) 1999-2019, PostgreSQL Global Development Group
  *
  *
  *	 TO_CHAR(); TO_TIMESTAMP(); TO_DATE(); TO_NUMBER();
@@ -968,15 +968,15 @@ typedef struct NUMProc
  * ----------
  */
 static const KeyWord *index_seq_search(const char *str, const KeyWord *kw,
-				 const int *index);
+									   const int *index);
 static const KeySuffix *suff_search(const char *str, const KeySuffix *suf, int type);
 static bool is_separator_char(const char *str);
 static void NUMDesc_prepare(NUMDesc *num, FormatNode *n);
 static void parse_format(FormatNode *node, const char *str, const KeyWord *kw,
-			 const KeySuffix *suf, const int *index, int ver, NUMDesc *Num);
+						 const KeySuffix *suf, const int *index, int ver, NUMDesc *Num);
 
 static void DCH_to_char(FormatNode *node, bool is_interval,
-			TmToChar *in, char *out, Oid collid);
+						TmToChar *in, char *out, Oid collid);
 static void DCH_from_char(FormatNode *node, char *in, TmFromChar *out);
 
 #ifdef DEBUG_TO_FROM_CHAR
@@ -995,7 +995,7 @@ static int	from_char_parse_int(int *dest, char **src, FormatNode *node);
 static int	seq_search(char *name, const char *const *array, int type, int max, int *len);
 static int	from_char_seq_search(int *dest, char **src, const char *const *array, int type, int max, FormatNode *node);
 static void do_to_timestamp(text *date_txt, text *fmt,
-				struct pg_tm *tm, fsec_t *fsec);
+							struct pg_tm *tm, fsec_t *fsec);
 static char *fill_str(char *str, int c, int max);
 static FormatNode *NUM_cache(int len, NUMDesc *Num, text *pars_str, bool *shouldFree);
 static char *int_to_roman(int number);
@@ -1004,8 +1004,8 @@ static char *get_last_relevant_decnum(char *num);
 static void NUM_numpart_from_char(NUMProc *Np, int id, int input_len);
 static void NUM_numpart_to_char(NUMProc *Np, int id);
 static char *NUM_processor(FormatNode *node, NUMDesc *Num, char *inout,
-			  char *number, int input_len, int to_char_out_pre_spaces,
-			  int sign, bool is_to_char, Oid collid);
+						   char *number, int input_len, int to_char_out_pre_spaces,
+						   int sign, bool is_to_char, Oid collid);
 static DCHCacheEntry *DCH_cache_getnew(const char *str);
 static DCHCacheEntry *DCH_cache_search(const char *str);
 static DCHCacheEntry *DCH_cache_fetch(const char *str);
@@ -1566,7 +1566,8 @@ str_tolower(const char *buff, size_t nbytes, Oid collid)
 				 */
 				ereport(ERROR,
 						(errcode(ERRCODE_INDETERMINATE_COLLATION),
-						 errmsg("could not determine which collation to use for lower() function"),
+						 errmsg("could not determine which collation to use for %s function",
+								"lower()"),
 						 errhint("Use the COLLATE clause to set the collation explicitly.")));
 			}
 			mylocale = pg_newlocale_from_collation(collid);
@@ -1688,7 +1689,8 @@ str_toupper(const char *buff, size_t nbytes, Oid collid)
 				 */
 				ereport(ERROR,
 						(errcode(ERRCODE_INDETERMINATE_COLLATION),
-						 errmsg("could not determine which collation to use for upper() function"),
+						 errmsg("could not determine which collation to use for %s function",
+								"upper()"),
 						 errhint("Use the COLLATE clause to set the collation explicitly.")));
 			}
 			mylocale = pg_newlocale_from_collation(collid);
@@ -1811,7 +1813,8 @@ str_initcap(const char *buff, size_t nbytes, Oid collid)
 				 */
 				ereport(ERROR,
 						(errcode(ERRCODE_INDETERMINATE_COLLATION),
-						 errmsg("could not determine which collation to use for initcap() function"),
+						 errmsg("could not determine which collation to use for %s function",
+								"initcap()"),
 						 errhint("Use the COLLATE clause to set the collation explicitly.")));
 			}
 			mylocale = pg_newlocale_from_collation(collid);
@@ -3020,6 +3023,7 @@ DCH_from_char(FormatNode *node, char *in, TmFromChar *out)
 	int			len,
 				value;
 	bool		fx_mode = false;
+
 	/* number of extra skipped characters (more than given in format string) */
 	int			extra_skip = 0;
 
@@ -3046,8 +3050,8 @@ DCH_from_char(FormatNode *node, char *in, TmFromChar *out)
 				/*
 				 * In non FX (fixed format) mode one format string space or
 				 * separator match to one space or separator in input string.
-				 * Or match nothing if there is no space or separator in
-				 * the current position of input string.
+				 * Or match nothing if there is no space or separator in the
+				 * current position of input string.
 				 */
 				extra_skip--;
 				if (isspace((unsigned char) *s) || is_separator_char(s))
@@ -3173,11 +3177,13 @@ DCH_from_char(FormatNode *node, char *in, TmFromChar *out)
 								n->key->name)));
 				break;
 			case DCH_TZH:
+
 				/*
 				 * Value of TZH might be negative.  And the issue is that we
 				 * might swallow minus sign as the separator.  So, if we have
-				 * skipped more characters than specified in the format string,
-				 * then we consider prepending last skipped minus to TZH.
+				 * skipped more characters than specified in the format
+				 * string, then we consider prepending last skipped minus to
+				 * TZH.
 				 */
 				if (*s == '+' || *s == '-' || *s == ' ')
 				{
@@ -3688,7 +3694,7 @@ to_timestamp(PG_FUNCTION_ARGS)
 	/* Use the specified time zone, if any. */
 	if (tm.tm_zone)
 	{
-		int			dterr = DecodeTimezone((char *) tm.tm_zone, &tz);
+		int			dterr = DecodeTimezone(unconstify(char *, tm.tm_zone), &tz);
 
 		if (dterr)
 			DateTimeParseError(dterr, text_to_cstring(date_txt), "timestamptz");

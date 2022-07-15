@@ -3,7 +3,7 @@
  * enum.c
  *	  I/O functions, operators, aggregates etc for enum types
  *
- * Copyright (c) 2006-2018, PostgreSQL Global Development Group
+ * Copyright (c) 2006-2019, PostgreSQL Global Development Group
  *
  *
  * IDENTIFICATION
@@ -14,8 +14,8 @@
 #include "postgres.h"
 
 #include "access/genam.h"
-#include "access/heapam.h"
 #include "access/htup_details.h"
+#include "access/table.h"
 #include "catalog/indexing.h"
 #include "catalog/pg_enum.h"
 #include "libpq/pqformat.h"
@@ -403,7 +403,7 @@ enum_endpoint(Oid enumtypoid, ScanDirection direction)
 				BTEqualStrategyNumber, F_OIDEQ,
 				ObjectIdGetDatum(enumtypoid));
 
-	enum_rel = heap_open(EnumRelationId, AccessShareLock);
+	enum_rel = table_open(EnumRelationId, AccessShareLock);
 	enum_idx = index_open(EnumTypIdSortOrderIndexId, AccessShareLock);
 	enum_scan = systable_beginscan_ordered(enum_rel, enum_idx, NULL,
 										   1, &skey);
@@ -423,7 +423,7 @@ enum_endpoint(Oid enumtypoid, ScanDirection direction)
 
 	systable_endscan_ordered(enum_scan);
 	index_close(enum_idx, AccessShareLock);
-	heap_close(enum_rel, AccessShareLock);
+	table_close(enum_rel, AccessShareLock);
 
 	return minmax;
 }
@@ -562,7 +562,7 @@ enum_range_internal(Oid enumtypoid, Oid lower, Oid upper)
 				BTEqualStrategyNumber, F_OIDEQ,
 				ObjectIdGetDatum(enumtypoid));
 
-	enum_rel = heap_open(EnumRelationId, AccessShareLock);
+	enum_rel = table_open(EnumRelationId, AccessShareLock);
 	enum_idx = index_open(EnumTypIdSortOrderIndexId, AccessShareLock);
 	enum_scan = systable_beginscan_ordered(enum_rel, enum_idx, NULL, 1, &skey);
 
@@ -598,7 +598,7 @@ enum_range_internal(Oid enumtypoid, Oid lower, Oid upper)
 
 	systable_endscan_ordered(enum_scan);
 	index_close(enum_idx, AccessShareLock);
-	heap_close(enum_rel, AccessShareLock);
+	table_close(enum_rel, AccessShareLock);
 
 	/* and build the result array */
 	/* note this hardwires some details about the representation of Oid */

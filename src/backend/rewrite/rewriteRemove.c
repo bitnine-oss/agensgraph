@@ -3,7 +3,7 @@
  * rewriteRemove.c
  *	  routines for removing rewrite rules
  *
- * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -15,9 +15,9 @@
 #include "postgres.h"
 
 #include "access/genam.h"
-#include "access/heapam.h"
 #include "access/htup_details.h"
 #include "access/sysattr.h"
+#include "access/table.h"
 #include "catalog/dependency.h"
 #include "catalog/indexing.h"
 #include "catalog/namespace.h"
@@ -29,7 +29,6 @@
 #include "utils/inval.h"
 #include "utils/lsyscache.h"
 #include "utils/syscache.h"
-#include "utils/tqual.h"
 
 /*
  * Guts of rule deletion.
@@ -47,7 +46,7 @@ RemoveRewriteRuleById(Oid ruleOid)
 	/*
 	 * Open the pg_rewrite relation.
 	 */
-	RewriteRelation = heap_open(RewriteRelationId, RowExclusiveLock);
+	RewriteRelation = table_open(RewriteRelationId, RowExclusiveLock);
 
 	/*
 	 * Find the tuple for the target rule.
@@ -71,7 +70,7 @@ RemoveRewriteRuleById(Oid ruleOid)
 	 * suffice if it's not an ON SELECT rule.)
 	 */
 	eventRelationOid = ((Form_pg_rewrite) GETSTRUCT(tuple))->ev_class;
-	event_relation = heap_open(eventRelationOid, AccessExclusiveLock);
+	event_relation = table_open(eventRelationOid, AccessExclusiveLock);
 
 	/*
 	 * Now delete the pg_rewrite tuple for the rule
@@ -80,7 +79,7 @@ RemoveRewriteRuleById(Oid ruleOid)
 
 	systable_endscan(rcscan);
 
-	heap_close(RewriteRelation, RowExclusiveLock);
+	table_close(RewriteRelation, RowExclusiveLock);
 
 	/*
 	 * Issue shared-inval notice to force all backends (including me!) to
@@ -89,5 +88,5 @@ RemoveRewriteRuleById(Oid ruleOid)
 	CacheInvalidateRelcache(event_relation);
 
 	/* Close rel, but keep lock till commit... */
-	heap_close(event_relation, NoLock);
+	table_close(event_relation, NoLock);
 }

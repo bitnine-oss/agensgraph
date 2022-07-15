@@ -3,7 +3,7 @@
  * fe-connect.c
  *	  functions related to setting up a connection to the backend
  *
- * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -66,8 +66,8 @@
 #include <ldap.h>
 typedef struct timeval LDAP_TIMEVAL;
 #endif
-static int ldapServiceLookup(const char *purl, PQconninfoOption *options,
-				  PQExpBuffer errorMessage);
+static int	ldapServiceLookup(const char *purl, PQconninfoOption *options,
+							  PQExpBuffer errorMessage);
 #endif
 
 #include "common/ip.h"
@@ -128,6 +128,12 @@ static int ldapServiceLookup(const char *purl, PQconninfoOption *options,
 #define DefaultSSLMode "prefer"
 #else
 #define DefaultSSLMode	"disable"
+#endif
+#ifdef ENABLE_GSS
+#include "fe-gssapi-common.h"
+#define DefaultGSSMode "prefer"
+#else
+#define DefaultGSSMode "disable"
 #endif
 
 /* ----------
@@ -264,6 +270,10 @@ static const internalPQconninfoOption PQconninfoOptions[] = {
 		"TCP-Keepalives-Count", "", 10, /* strlen(INT32_MAX) == 10 */
 	offsetof(struct pg_conn, keepalives_count)},
 
+	{"tcp_user_timeout", NULL, NULL, NULL,
+		"TCP-User-Timeout", "", 10, /* strlen(INT32_MAX) == 10 */
+	offsetof(struct pg_conn, pgtcp_user_timeout)},
+
 	/*
 	 * ssl options are allowed even without client SSL support because the
 	 * client can still handle SSL modes "disable" and "allow". Other
@@ -297,6 +307,14 @@ static const internalPQconninfoOption PQconninfoOptions[] = {
 	{"requirepeer", "PGREQUIREPEER", NULL, NULL,
 		"Require-Peer", "", 10,
 	offsetof(struct pg_conn, requirepeer)},
+
+	/*
+	 * Expose gssencmode similarly to sslmode - we can still handle "disable"
+	 * and "prefer".
+	 */
+	{"gssencmode", "PGGSSENCMODE", DefaultGSSMode, NULL,
+		"GSSENC-Mode", "", 7,	/* sizeof("disable") == 7 */
+	offsetof(struct pg_conn, gssencmode)},
 
 #if defined(ENABLE_GSS) || defined(ENABLE_SSPI)
 	/* Kerberos and GSSAPI authentication support specifying the service name */
@@ -365,44 +383,44 @@ static void release_conn_addrinfo(PGconn *conn);
 static void sendTerminateConn(PGconn *conn);
 static PQconninfoOption *conninfo_init(PQExpBuffer errorMessage);
 static PQconninfoOption *parse_connection_string(const char *conninfo,
-						PQExpBuffer errorMessage, bool use_defaults);
+												 PQExpBuffer errorMessage, bool use_defaults);
 static int	uri_prefix_length(const char *connstr);
 static bool recognized_connection_string(const char *connstr);
 static PQconninfoOption *conninfo_parse(const char *conninfo,
-			   PQExpBuffer errorMessage, bool use_defaults);
+										PQExpBuffer errorMessage, bool use_defaults);
 static PQconninfoOption *conninfo_array_parse(const char *const *keywords,
-					 const char *const *values, PQExpBuffer errorMessage,
-					 bool use_defaults, int expand_dbname);
+											  const char *const *values, PQExpBuffer errorMessage,
+											  bool use_defaults, int expand_dbname);
 static bool conninfo_add_defaults(PQconninfoOption *options,
-					  PQExpBuffer errorMessage);
+								  PQExpBuffer errorMessage);
 static PQconninfoOption *conninfo_uri_parse(const char *uri,
-				   PQExpBuffer errorMessage, bool use_defaults);
+											PQExpBuffer errorMessage, bool use_defaults);
 static bool conninfo_uri_parse_options(PQconninfoOption *options,
-						   const char *uri, PQExpBuffer errorMessage);
+									   const char *uri, PQExpBuffer errorMessage);
 static bool conninfo_uri_parse_params(char *params,
-						  PQconninfoOption *connOptions,
-						  PQExpBuffer errorMessage);
+									  PQconninfoOption *connOptions,
+									  PQExpBuffer errorMessage);
 static char *conninfo_uri_decode(const char *str, PQExpBuffer errorMessage);
 static bool get_hexdigit(char digit, int *value);
 static const char *conninfo_getval(PQconninfoOption *connOptions,
-				const char *keyword);
+								   const char *keyword);
 static PQconninfoOption *conninfo_storeval(PQconninfoOption *connOptions,
-				  const char *keyword, const char *value,
-				  PQExpBuffer errorMessage, bool ignoreMissing, bool uri_decode);
+										   const char *keyword, const char *value,
+										   PQExpBuffer errorMessage, bool ignoreMissing, bool uri_decode);
 static PQconninfoOption *conninfo_find(PQconninfoOption *connOptions,
-			  const char *keyword);
+									   const char *keyword);
 static void defaultNoticeReceiver(void *arg, const PGresult *res);
 static void defaultNoticeProcessor(void *arg, const char *message);
-static int parseServiceInfo(PQconninfoOption *options,
-				 PQExpBuffer errorMessage);
-static int parseServiceFile(const char *serviceFile,
-				 const char *service,
-				 PQconninfoOption *options,
-				 PQExpBuffer errorMessage,
-				 bool *group_found);
+static int	parseServiceInfo(PQconninfoOption *options,
+							 PQExpBuffer errorMessage);
+static int	parseServiceFile(const char *serviceFile,
+							 const char *service,
+							 PQconninfoOption *options,
+							 PQExpBuffer errorMessage,
+							 bool *group_found);
 static char *pwdfMatchesString(char *buf, const char *token);
 static char *passwordFromFile(const char *hostname, const char *port, const char *dbname,
-				 const char *username, const char *pgpassfile);
+							  const char *username, const char *pgpassfile);
 static void pgpassfileWarning(PGconn *conn);
 static void default_threadlock(int acquire);
 
@@ -537,6 +555,10 @@ pqDropServerData(PGconn *conn)
 	conn->last_sqlstate[0] = '\0';
 	conn->auth_req_received = false;
 	conn->password_needed = false;
+	conn->write_failed = false;
+	if (conn->write_err_msg)
+		free(conn->write_err_msg);
+	conn->write_err_msg = NULL;
 	conn->be_pid = 0;
 	conn->be_key = 0;
 }
@@ -1223,6 +1245,39 @@ connectOptions2(PGconn *conn)
 	}
 
 	/*
+	 * validate gssencmode option
+	 */
+	if (conn->gssencmode)
+	{
+		if (strcmp(conn->gssencmode, "disable") != 0 &&
+			strcmp(conn->gssencmode, "prefer") != 0 &&
+			strcmp(conn->gssencmode, "require") != 0)
+		{
+			conn->status = CONNECTION_BAD;
+			printfPQExpBuffer(&conn->errorMessage,
+							  libpq_gettext("invalid gssencmode value: \"%s\"\n"),
+							  conn->gssencmode);
+			return false;
+		}
+#ifndef ENABLE_GSS
+		if (strcmp(conn->gssencmode, "require") == 0)
+		{
+			conn->status = CONNECTION_BAD;
+			printfPQExpBuffer(
+							  &conn->errorMessage,
+							  libpq_gettext("no GSSAPI support; cannot require GSSAPI\n"));
+			return false;
+		}
+#endif
+	}
+	else
+	{
+		conn->gssencmode = strdup(DefaultGSSMode);
+		if (!conn->gssencmode)
+			goto oom_error;
+	}
+
+	/*
 	 * Resolve special "auto" client_encoding from the locale
 	 */
 	if (conn->client_encoding_initial &&
@@ -1481,9 +1536,7 @@ getHostaddr(PGconn *conn, char *host_addr, int host_addr_len)
 {
 	struct sockaddr_storage *addr = &conn->raddr.addr;
 
-	if (conn->connhost[conn->whichhost].type == CHT_HOST_ADDRESS)
-		strlcpy(host_addr, conn->connhost[conn->whichhost].hostaddr, host_addr_len);
-	else if (addr->ss_family == AF_INET)
+	if (addr->ss_family == AF_INET)
 	{
 		if (inet_net_ntop(AF_INET,
 						  &((struct sockaddr_in *) addr)->sin_addr.s_addr,
@@ -1782,6 +1835,41 @@ setKeepalivesWin32(PGconn *conn)
 #endif							/* SIO_KEEPALIVE_VALS */
 #endif							/* WIN32 */
 
+/*
+ * Set the TCP user timeout.
+ */
+static int
+setTCPUserTimeout(PGconn *conn)
+{
+	int			timeout;
+
+	if (conn->pgtcp_user_timeout == NULL)
+		return 1;
+
+	if (!parse_int_param(conn->pgtcp_user_timeout, &timeout, conn,
+						 "tcp_user_timeout"))
+		return 0;
+
+	if (timeout < 0)
+		timeout = 0;
+
+#ifdef TCP_USER_TIMEOUT
+	if (setsockopt(conn->sock, IPPROTO_TCP, TCP_USER_TIMEOUT,
+				   (char *) &timeout, sizeof(timeout)) < 0)
+	{
+		char		sebuf[256];
+
+		appendPQExpBuffer(&conn->errorMessage,
+						  libpq_gettext("setsockopt(%s) failed: %s\n"),
+						  "TCP_USER_TIMEOUT",
+						  SOCK_STRERROR(SOCK_ERRNO, sebuf, sizeof(sebuf)));
+		return 0;
+	}
+#endif
+
+	return 1;
+}
+
 /* ----------
  * connectDBStart -
  *		Begin the process of making a connection to the backend.
@@ -1822,6 +1910,11 @@ connectDBStart(PGconn *conn)
 	 * details about each failure.
 	 */
 	resetPQExpBuffer(&conn->errorMessage);
+
+#ifdef ENABLE_GSS
+	if (conn->gssencmode[0] == 'd') /* "disable" */
+		conn->try_gss = false;
+#endif
 
 	/*
 	 * Set up to try to connect to the first host.  (Setting whichhost = -1 is
@@ -2095,6 +2188,7 @@ PQconnectPoll(PGconn *conn)
 		case CONNECTION_NEEDED:
 		case CONNECTION_CHECK_WRITABLE:
 		case CONNECTION_CONSUME:
+		case CONNECTION_GSS_STARTUP:
 			break;
 
 		default:
@@ -2324,6 +2418,7 @@ keep_going:						/* We will come back to here until there is
 					getHostaddr(conn, host_addr, NI_MAXHOST);
 					if (strlen(host_addr) > 0)
 						conn->connip = strdup(host_addr);
+
 					/*
 					 * purposely ignore strdup failure; not a big problem if
 					 * it fails anyway.
@@ -2423,6 +2518,8 @@ keep_going:						/* We will come back to here until there is
 							err = 1;
 #endif							/* SIO_KEEPALIVE_VALS */
 #endif							/* WIN32 */
+						else if (!setTCPUserTimeout(conn))
+							err = 1;
 
 						if (err)
 						{
@@ -2636,17 +2733,57 @@ keep_going:						/* We will come back to here until there is
 				}
 #endif							/* HAVE_UNIX_SOCKETS */
 
+				if (IS_AF_UNIX(conn->raddr.addr.ss_family))
+				{
+					/* Don't request SSL or GSSAPI over Unix sockets */
+#ifdef USE_SSL
+					conn->allow_ssl_try = false;
+#endif
+#ifdef ENABLE_GSS
+					conn->try_gss = false;
+#endif
+				}
+
+#ifdef ENABLE_GSS
+
+				/*
+				 * If GSSAPI is enabled and we have a ccache, try to set it up
+				 * before sending startup messages.  If it's already
+				 * operating, don't try SSL and instead just build the startup
+				 * packet.
+				 */
+				if (conn->try_gss && !conn->gctx)
+					conn->try_gss = pg_GSS_have_ccache(&conn->gcred);
+				if (conn->try_gss && !conn->gctx)
+				{
+					ProtocolVersion pv = pg_hton32(NEGOTIATE_GSS_CODE);
+
+					if (pqPacketSend(conn, 0, &pv, sizeof(pv)) != STATUS_OK)
+					{
+						appendPQExpBuffer(&conn->errorMessage,
+										  libpq_gettext("could not send GSSAPI negotiation packet: %s\n"),
+										  SOCK_STRERROR(SOCK_ERRNO, sebuf, sizeof(sebuf)));
+						goto error_return;
+					}
+
+					/* Ok, wait for response */
+					conn->status = CONNECTION_GSS_STARTUP;
+					return PGRES_POLLING_READING;
+				}
+				else if (!conn->gctx && conn->gssencmode[0] == 'r')
+				{
+					appendPQExpBuffer(&conn->errorMessage,
+									  libpq_gettext("GSSAPI encryption required, but was impossible (possibly no ccache, no server support, or using a local socket)\n"));
+					goto error_return;
+				}
+#endif
+
 #ifdef USE_SSL
 
 				/*
 				 * If SSL is enabled and we haven't already got it running,
 				 * request it instead of sending the startup message.
 				 */
-				if (IS_AF_UNIX(conn->raddr.addr.ss_family))
-				{
-					/* Don't bother requesting SSL over a Unix socket */
-					conn->allow_ssl_try = false;
-				}
 				if (conn->allow_ssl_try && !conn->wait_ssl_try &&
 					!conn->ssl_in_use)
 				{
@@ -2840,6 +2977,98 @@ keep_going:						/* We will come back to here until there is
 #endif							/* USE_SSL */
 			}
 
+		case CONNECTION_GSS_STARTUP:
+			{
+#ifdef ENABLE_GSS
+				PostgresPollingStatusType pollres;
+
+				/*
+				 * If we haven't yet, get the postmaster's response to our
+				 * negotiation packet
+				 */
+				if (conn->try_gss && !conn->gctx)
+				{
+					char		gss_ok;
+					int			rdresult = pqReadData(conn);
+
+					if (rdresult < 0)
+						/* pqReadData fills in error message */
+						goto error_return;
+					else if (rdresult == 0)
+						/* caller failed to wait for data */
+						return PGRES_POLLING_READING;
+					if (pqGetc(&gss_ok, conn) < 0)
+						/* shouldn't happen... */
+						return PGRES_POLLING_READING;
+
+					if (gss_ok == 'E')
+					{
+						/*
+						 * Server failure of some sort.  Assume it's a
+						 * protocol version support failure, and let's see if
+						 * we can't recover (if it's not, we'll get a better
+						 * error message on retry).  Server gets fussy if we
+						 * don't hang up the socket, though.
+						 */
+						conn->try_gss = false;
+						pqDropConnection(conn, true);
+						conn->status = CONNECTION_NEEDED;
+						goto keep_going;
+					}
+
+					/* mark byte consumed */
+					conn->inStart = conn->inCursor;
+
+					if (gss_ok == 'N')
+					{
+						/* Server doesn't want GSSAPI; fall back if we can */
+						if (conn->gssencmode[0] == 'r')
+						{
+							appendPQExpBufferStr(&conn->errorMessage,
+												 libpq_gettext("server doesn't support GSSAPI encryption, but it was required\n"));
+							goto error_return;
+						}
+
+						conn->try_gss = false;
+						conn->status = CONNECTION_MADE;
+						return PGRES_POLLING_WRITING;
+					}
+					else if (gss_ok != 'G')
+					{
+						appendPQExpBuffer(&conn->errorMessage,
+										  libpq_gettext("received invalid response to GSSAPI negotiation: %c\n"),
+										  gss_ok);
+						goto error_return;
+					}
+				}
+
+				/* Begin or continue GSSAPI negotiation */
+				pollres = pqsecure_open_gss(conn);
+				if (pollres == PGRES_POLLING_OK)
+				{
+					/* All set for startup packet */
+					conn->status = CONNECTION_MADE;
+					return PGRES_POLLING_WRITING;
+				}
+				else if (pollres == PGRES_POLLING_FAILED &&
+						 conn->gssencmode[0] == 'p')
+				{
+					/*
+					 * We failed, but we can retry on "prefer".  Have to drop
+					 * the current connection to do so, though.
+					 */
+					conn->try_gss = false;
+					pqDropConnection(conn, true);
+					conn->status = CONNECTION_NEEDED;
+					goto keep_going;
+				}
+				return pollres;
+#else							/* !ENABLE_GSS */
+				/* unreachable */
+				goto error_return;
+#endif							/* ENABLE_GSS */
+			}
+
 			/*
 			 * Handle authentication exchange: wait for postmaster messages
 			 * and respond as necessary.
@@ -2992,6 +3221,26 @@ keep_going:						/* We will come back to here until there is
 
 					/* Check to see if we should mention pgpassfile */
 					pgpassfileWarning(conn);
+
+#ifdef ENABLE_GSS
+
+					/*
+					 * If gssencmode is "prefer" and we're using GSSAPI, retry
+					 * without it.
+					 */
+					if (conn->gssenc && conn->gssencmode[0] == 'p')
+					{
+						OM_uint32	minor;
+
+						/* postmaster expects us to drop the connection */
+						conn->try_gss = false;
+						conn->gssenc = false;
+						gss_delete_sec_context(&minor, &conn->gctx, NULL);
+						pqDropConnection(conn, true);
+						conn->status = CONNECTION_NEEDED;
+						goto keep_going;
+					}
+#endif
 
 #ifdef USE_SSL
 
@@ -3349,9 +3598,6 @@ keep_going:						/* We will come back to here until there is
 					if (strncmp(val, "on", 2) == 0)
 					{
 						/* Not writable; fail this connection. */
-						const char *displayed_host;
-						const char *displayed_port;
-
 						PQclear(res);
 						restoreErrorMessage(conn, &savedMessage);
 
@@ -3563,6 +3809,9 @@ makeEmptyPGconn(void)
 	conn->verbosity = PQERRORS_DEFAULT;
 	conn->show_context = PQSHOW_CONTEXT_ERRORS;
 	conn->sock = PGINVALID_SOCKET;
+#ifdef ENABLE_GSS
+	conn->try_gss = true;
+#endif
 
 	/*
 	 * We try to send at least 8K at a time, which is the usual size of pipe
@@ -3654,6 +3903,8 @@ freePGconn(PGconn *conn)
 		free(conn->pgtty);
 	if (conn->connect_timeout)
 		free(conn->connect_timeout);
+	if (conn->pgtcp_user_timeout)
+		free(conn->pgtcp_user_timeout);
 	if (conn->pgoptions)
 		free(conn->pgoptions);
 	if (conn->appname)
@@ -3694,9 +3945,27 @@ freePGconn(PGconn *conn)
 		free(conn->requirepeer);
 	if (conn->connip)
 		free(conn->connip);
+	if (conn->gssencmode)
+		free(conn->gssencmode);
 #if defined(ENABLE_GSS) || defined(ENABLE_SSPI)
 	if (conn->krbsrvname)
 		free(conn->krbsrvname);
+#endif
+#ifdef ENABLE_GSS
+	if (conn->gcred != GSS_C_NO_CREDENTIAL)
+	{
+		OM_uint32	minor;
+
+		gss_release_cred(&minor, &conn->gcred);
+		conn->gcred = GSS_C_NO_CREDENTIAL;
+	}
+	if (conn->gctx)
+	{
+		OM_uint32	minor;
+
+		gss_delete_sec_context(&minor, &conn->gctx, GSS_C_NO_BUFFER);
+		conn->gctx = NULL;
+	}
 #endif
 #if defined(ENABLE_GSS) && defined(ENABLE_SSPI)
 	if (conn->gsslib)
@@ -3705,6 +3974,8 @@ freePGconn(PGconn *conn)
 	/* Note that conn->Pfdebug is not ours to close or free */
 	if (conn->last_query)
 		free(conn->last_query);
+	if (conn->write_err_msg)
+		free(conn->write_err_msg);
 	if (conn->inBuffer)
 		free(conn->inBuffer);
 	if (conn->outBuffer)
@@ -6190,6 +6461,10 @@ PQhost(const PGconn *conn)
 
 	if (conn->connhost != NULL)
 	{
+		/*
+		 * Return the verbatim host value provided by user, or hostaddr in its
+		 * lack.
+		 */
 		if (conn->connhost[conn->whichhost].host != NULL &&
 			conn->connhost[conn->whichhost].host[0] != '\0')
 			return conn->connhost[conn->whichhost].host;
@@ -6207,15 +6482,9 @@ PQhostaddr(const PGconn *conn)
 	if (!conn)
 		return NULL;
 
-	if (conn->connhost != NULL)
-	{
-		if (conn->connhost[conn->whichhost].hostaddr != NULL &&
-			conn->connhost[conn->whichhost].hostaddr[0] != '\0')
-			return conn->connhost[conn->whichhost].hostaddr;
-
-		if (conn->connip != NULL)
-			return conn->connip;
-	}
+	/* Return the parsed IP address */
+	if (conn->connhost != NULL && conn->connip != NULL)
+		return conn->connip;
 
 	return "";
 }

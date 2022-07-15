@@ -1,7 +1,7 @@
 /*-------------------------------------------------------------------------
  * pg_regress.h --- regression test driver
  *
- * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/test/regress/pg_regress.h
@@ -45,8 +45,8 @@ extern char *launcher;
 extern const char *basic_diff_opts;
 extern const char *pretty_diff_opts;
 
-int regression_main(int argc, char *argv[],
-				init_function ifunc, test_function tfunc);
+int			regression_main(int argc, char *argv[],
+							init_function ifunc, test_function tfunc);
 void		add_stringlist_item(_stringlist **listhead, const char *str);
 PID_TYPE	spawn_process(const char *cmdline);
 void		replace_string(char *string, const char *replace, const char *replacement);

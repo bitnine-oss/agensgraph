@@ -454,10 +454,10 @@ WHERE proallargtypes IS NOT NULL AND
 -----+---------+-------------+----------------+-------------
 (0 rows)
 
--- Check for protransform functions with the wrong signature
+-- Check for prosupport functions with the wrong signature
 SELECT p1.oid, p1.proname, p2.oid, p2.proname
 FROM pg_proc AS p1, pg_proc AS p2
-WHERE p2.oid = p1.protransform AND
+WHERE p2.oid = p1.prosupport AND
     (p2.prorettype != 'internal'::regtype OR p2.proretset OR p2.pronargs != 1
      OR p2.proargtypes[0] != 'internal'::regtype);
  oid | proname | oid | proname 
@@ -526,6 +526,10 @@ int24ge(smallint,integer)
 int42ge(integer,smallint)
 oideq(oid,oid)
 oidne(oid,oid)
+nameeqtext(name,text)
+namenetext(name,text)
+texteqname(text,name)
+textnename(text,name)
 float4eq(real,real)
 float4ne(real,real)
 float4lt(real,real)
@@ -556,8 +560,8 @@ btfloat4cmp(real,real)
 btfloat8cmp(double precision,double precision)
 btoidcmp(oid,oid)
 btcharcmp("char","char")
-btnamecmp(name,name)
 cash_cmp(money,money)
+btoidvectorcmp(oidvector,oidvector)
 int8eq(bigint,bigint)
 int8ne(bigint,bigint)
 int8lt(bigint,bigint)
@@ -570,11 +574,13 @@ int84lt(bigint,integer)
 int84gt(bigint,integer)
 int84le(bigint,integer)
 int84ge(bigint,integer)
-namelt(name,name)
-namele(name,name)
-namegt(name,name)
-namege(name,name)
+oidvectorne(oidvector,oidvector)
 namene(name,name)
+oidvectorlt(oidvector,oidvector)
+oidvectorle(oidvector,oidvector)
+oidvectoreq(oidvector,oidvector)
+oidvectorge(oidvector,oidvector)
+oidvectorgt(oidvector,oidvector)
 oidlt(oid,oid)
 oidle(oid,oid)
 macaddr_eq(macaddr,macaddr)
@@ -724,6 +730,13 @@ uuid_ge(uuid,uuid)
 uuid_gt(uuid,uuid)
 uuid_ne(uuid,uuid)
 uuid_cmp(uuid,uuid)
+pg_lsn_lt(pg_lsn,pg_lsn)
+pg_lsn_le(pg_lsn,pg_lsn)
+pg_lsn_eq(pg_lsn,pg_lsn)
+pg_lsn_ge(pg_lsn,pg_lsn)
+pg_lsn_gt(pg_lsn,pg_lsn)
+pg_lsn_ne(pg_lsn,pg_lsn)
+pg_lsn_cmp(pg_lsn,pg_lsn)
 xidneq(xid,xid)
 xidneqint4(xid,integer)
 sha224(bytea)
@@ -880,11 +893,12 @@ WHERE c.castmethod = 'b' AND
  pg_node_tree      | text              |        0 | i
  pg_ndistinct      | bytea             |        0 | i
  pg_dependencies   | bytea             |        0 | i
+ pg_mcv_list       | bytea             |        0 | i
  cidr              | inet              |        0 | i
  xml               | text              |        0 | a
  xml               | character varying |        0 | a
  xml               | character         |        0 | a
-(9 rows)
+(10 rows)
 
 -- **************** pg_conversion ****************
 -- Look for illegal values in pg_conversion fields.
@@ -1290,6 +1304,54 @@ ORDER BY 1;
   3951 | json_extract_path       | get value from json with path elements
   3953 | json_extract_path_text  | get value from json as text with path elements
 (9 rows)
+
+-- Operators that are commutator pairs should have identical volatility
+-- and leakproofness markings on their implementation functions.
+SELECT o1.oid, o1.oprcode, o2.oid, o2.oprcode
+FROM pg_operator AS o1, pg_operator AS o2, pg_proc AS p1, pg_proc AS p2
+WHERE o1.oprcom = o2.oid AND p1.oid = o1.oprcode AND p2.oid = o2.oprcode AND
+    (p1.provolatile != p2.provolatile OR
+     p1.proleakproof != p2.proleakproof);
+ oid | oprcode | oid | oprcode 
+-----+---------+-----+---------
+(0 rows)
+
+-- Likewise for negator pairs.
+SELECT o1.oid, o1.oprcode, o2.oid, o2.oprcode
+FROM pg_operator AS o1, pg_operator AS o2, pg_proc AS p1, pg_proc AS p2
+WHERE o1.oprnegate = o2.oid AND p1.oid = o1.oprcode AND p2.oid = o2.oprcode AND
+    (p1.provolatile != p2.provolatile OR
+     p1.proleakproof != p2.proleakproof);
+ oid | oprcode | oid | oprcode 
+-----+---------+-----+---------
+(0 rows)
+
+-- Btree comparison operators' functions should have the same volatility
+-- and leakproofness markings as the associated comparison support function.
+-- As of Postgres 12, the only exceptions are that textual equality functions
+-- are marked leakproof but textual comparison/inequality functions are not.
+SELECT pp.oid::regprocedure as proc, pp.provolatile as vp, pp.proleakproof as lp,
+       po.oid::regprocedure as opr, po.provolatile as vo, po.proleakproof as lo
+FROM pg_proc pp, pg_proc po, pg_operator o, pg_amproc ap, pg_amop ao
+WHERE pp.oid = ap.amproc AND po.oid = o.oprcode AND o.oid = ao.amopopr AND
+    ao.amopmethod = (SELECT oid FROM pg_am WHERE amname = 'btree') AND
+    ao.amopfamily = ap.amprocfamily AND
+    ao.amoplefttype = ap.amproclefttype AND
+    ao.amoprighttype = ap.amprocrighttype AND
+    ap.amprocnum = 1 AND
+    (pp.provolatile != po.provolatile OR
+     pp.proleakproof != po.proleakproof)
+ORDER BY 1;
+                   proc                    | vp | lp |              opr              | vo | lo 
+-------------------------------------------+----+----+-------------------------------+----+----
+ btnametextcmp(name,text)                  | i  | f  | nameeqtext(name,text)         | i  | t
+ bttextnamecmp(text,name)                  | i  | f  | texteqname(text,name)         | i  | t
+ btnamecmp(name,name)                      | i  | f  | nameeq(name,name)             | i  | t
+ bttextcmp(text,text)                      | i  | f  | texteq(text,text)             | i  | t
+ bpcharcmp(character,character)            | i  | f  | bpchareq(character,character) | i  | t
+ bttext_pattern_cmp(text,text)             | i  | f  | texteq(text,text)             | i  | t
+ btbpchar_pattern_cmp(character,character) | i  | f  | bpchareq(character,character) | i  | t
+(7 rows)
 
 -- **************** pg_aggregate ****************
 -- Look for illegal values in pg_aggregate fields.
@@ -1748,11 +1810,24 @@ WHERE p1.amhandler = 0;
 -----+--------
 (0 rows)
 
--- Check for amhandler functions with the wrong signature
+-- Check for index amhandler functions with the wrong signature
 SELECT p1.oid, p1.amname, p2.oid, p2.proname
 FROM pg_am AS p1, pg_proc AS p2
-WHERE p2.oid = p1.amhandler AND
-    (p2.prorettype != 'index_am_handler'::regtype OR p2.proretset
+WHERE p2.oid = p1.amhandler AND p1.amtype = 'i' AND
+    (p2.prorettype != 'index_am_handler'::regtype
+     OR p2.proretset
+     OR p2.pronargs != 1
+     OR p2.proargtypes[0] != 'internal'::regtype);
+ oid | amname | oid | proname 
+-----+--------+-----+---------
+(0 rows)
+
+-- Check for table amhandler functions with the wrong signature
+SELECT p1.oid, p1.amname, p2.oid, p2.proname
+FROM pg_am AS p1, pg_proc AS p2
+WHERE p2.oid = p1.amhandler AND p1.amtype = 's' AND
+    (p2.prorettype != 'table_am_handler'::regtype
+     OR p2.proretset
      OR p2.pronargs != 1
      OR p2.proargtypes[0] != 'internal'::regtype);
  oid | amname | oid | proname 
@@ -1857,6 +1932,8 @@ ORDER BY 1, 2, 3;
        2742 |            9 | ?
        2742 |           10 | ?|
        2742 |           11 | ?&
+       2742 |           15 | @?
+       2742 |           16 | @@
        3580 |            1 | <
        3580 |            1 | <<
        3580 |            2 | &<
@@ -1922,7 +1999,7 @@ ORDER BY 1, 2, 3;
        4000 |           26 | >>
        4000 |           27 | >>=
        4000 |           28 | ^@
-(128 rows)
+(130 rows)
 
 -- Check that all opclass search operators have selectivity estimators.
 -- This is not absolutely required, but it seems a reasonable thing
@@ -2072,18 +2149,25 @@ ORDER BY 1;
 -- a representational error in pg_index, but simply wrong catalog design.
 -- It's bad because we expect to be able to clone template0 and assign the
 -- copy a different database collation.  It would especially not work for
--- shared catalogs.  Note that although text columns will show a collation
--- in indcollation, they're still okay to index with text_pattern_ops,
--- so allow that case.
+-- shared catalogs.
+SELECT relname, attname, attcollation
+FROM pg_class c, pg_attribute a
+WHERE c.oid = attrelid AND c.oid < 16384 AND
+    c.relkind != 'v' AND  -- we don't care about columns in views
+    attcollation != 0 AND
+    attcollation != (SELECT oid FROM pg_collation WHERE collname = 'C');
+ relname | attname | attcollation 
+---------+---------+--------------
+(0 rows)
+
+-- Double-check that collation-sensitive indexes have "C" collation, too.
 SELECT indexrelid::regclass, indrelid::regclass, iclass, icoll
 FROM (SELECT indexrelid, indrelid,
              unnest(indclass) as iclass, unnest(indcollation) as icoll
       FROM pg_index
       WHERE indrelid < 16384) ss
-WHERE icoll != 0 AND iclass !=
-    (SELECT oid FROM pg_opclass
-     WHERE opcname = 'text_pattern_ops' AND opcmethod =
-           (SELECT oid FROM pg_am WHERE amname = 'btree'));
+WHERE icoll != 0 AND
+    icoll != (SELECT oid FROM pg_collation WHERE collname = 'C');
  indexrelid | indrelid | iclass | icoll 
 ------------+----------+--------+-------
 (0 rows)

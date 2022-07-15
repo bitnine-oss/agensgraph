@@ -3,7 +3,7 @@
  * llvmjit.c
  *	  Core part of the LLVM JIT provider.
  *
- * Copyright (c) 2016-2018, PostgreSQL Global Development Group
+ * Copyright (c) 2016-2019, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
  *	  src/backend/jit/llvm/llvmjit.c
@@ -53,6 +53,7 @@ LLVMTypeRef TypeSizeT;
 LLVMTypeRef TypeParamBool;
 LLVMTypeRef TypeStorageBool;
 LLVMTypeRef TypePGFunction;
+LLVMTypeRef StructNullableDatum;
 LLVMTypeRef StructHeapTupleFieldsField3;
 LLVMTypeRef StructHeapTupleFields;
 LLVMTypeRef StructHeapTupleHeaderData;
@@ -63,7 +64,7 @@ LLVMTypeRef StructItemPointerData;
 LLVMTypeRef StructBlockId;
 LLVMTypeRef StructFormPgAttribute;
 LLVMTypeRef StructTupleConstr;
-LLVMTypeRef StructtupleDesc;
+LLVMTypeRef StructTupleDescData;
 LLVMTypeRef StructTupleTableSlot;
 LLVMTypeRef StructHeapTupleTableSlot;
 LLVMTypeRef StructMinimalTupleTableSlot;
@@ -84,7 +85,7 @@ LLVMValueRef FuncVarsizeAny;
 LLVMValueRef FuncSlotGetsomeattrsInt;
 LLVMValueRef FuncSlotGetmissingattrs;
 LLVMValueRef FuncMakeExpandedObjectReadOnlyInternal;
-LLVMValueRef FuncExecEvalArrayRefSubscript;
+LLVMValueRef FuncExecEvalSubscriptingRef;
 LLVMValueRef FuncExecEvalSysVar;
 LLVMValueRef FuncExecAggTransReparent;
 LLVMValueRef FuncExecAggInitGroup;
@@ -807,6 +808,7 @@ llvm_create_types(void)
 	TypeParamBool = load_return_type(mod, "FunctionReturningBool");
 	TypeStorageBool = load_type(mod, "TypeStorageBool");
 	TypePGFunction = load_type(mod, "TypePGFunction");
+	StructNullableDatum = load_type(mod, "StructNullableDatum");
 	StructExprContext = load_type(mod, "StructExprContext");
 	StructExprEvalStep = load_type(mod, "StructExprEvalStep");
 	StructExprState = load_type(mod, "StructExprState");
@@ -816,7 +818,7 @@ llvm_create_types(void)
 	StructHeapTupleTableSlot = load_type(mod, "StructHeapTupleTableSlot");
 	StructMinimalTupleTableSlot = load_type(mod, "StructMinimalTupleTableSlot");
 	StructHeapTupleData = load_type(mod, "StructHeapTupleData");
-	StructtupleDesc = load_type(mod, "StructtupleDesc");
+	StructTupleDescData = load_type(mod, "StructTupleDescData");
 	StructAggState = load_type(mod, "StructAggState");
 	StructAggStatePerGroupData = load_type(mod, "StructAggStatePerGroupData");
 	StructAggStatePerTransData = load_type(mod, "StructAggStatePerTransData");
@@ -827,7 +829,7 @@ llvm_create_types(void)
 	FuncSlotGetsomeattrsInt = LLVMGetNamedFunction(mod, "slot_getsomeattrs_int");
 	FuncSlotGetmissingattrs = LLVMGetNamedFunction(mod, "slot_getmissingattrs");
 	FuncMakeExpandedObjectReadOnlyInternal = LLVMGetNamedFunction(mod, "MakeExpandedObjectReadOnlyInternal");
-	FuncExecEvalArrayRefSubscript = LLVMGetNamedFunction(mod, "ExecEvalArrayRefSubscript");
+	FuncExecEvalSubscriptingRef = LLVMGetNamedFunction(mod, "ExecEvalSubscriptingRef");
 	FuncExecEvalSysVar = LLVMGetNamedFunction(mod, "ExecEvalSysVar");
 	FuncExecAggTransReparent = LLVMGetNamedFunction(mod, "ExecAggTransReparent");
 	FuncExecAggInitGroup = LLVMGetNamedFunction(mod, "ExecAggInitGroup");

@@ -66,14 +66,14 @@ scan_label(Oid relid, Oid graphid)
 	Relation	rel;
 	HeapTuple	tup;
 	Snapshot	snapshot;
-	HeapScanDesc scan;
+	TableScanDesc scan;
 
 	AgStat_key	key;
 	AgStat_GraphMeta   *meta_elem;
 
-	rel = heap_open(relid, AccessShareLock);
+	rel = table_open(relid, AccessShareLock);
 	snapshot = RegisterSnapshot(GetLatestSnapshot());
-	scan = heap_beginscan(rel, snapshot, 0, NULL);
+	scan = table_beginscan(rel, snapshot, 0, NULL);
 
 	memset(&key, 0, sizeof(key));
 
@@ -114,9 +114,9 @@ scan_label(Oid relid, Oid graphid)
 			meta_elem->edges_deleted = 0;
 		}
 	}
-	heap_endscan(scan);
+	table_endscan(scan);
 	UnregisterSnapshot(snapshot);
-	heap_close(rel, AccessShareLock);
+	table_close(rel, AccessShareLock);
 }
 
 Datum
@@ -125,7 +125,7 @@ regather_graphmeta(PG_FUNCTION_ARGS)
 	Relation	rel;
 	HeapTuple	tup;
 	Snapshot	snapshot;
-	HeapScanDesc scan;
+	TableScanDesc scan;
 
 	if (auto_gather_graphmeta)
 	{
@@ -134,9 +134,9 @@ regather_graphmeta(PG_FUNCTION_ARGS)
 		PG_RETURN_BOOL(false);
 	}
 
-	rel = heap_open(LabelRelationId, AccessShareLock);
+	rel = table_open(LabelRelationId, AccessShareLock);
 	snapshot = RegisterSnapshot(GetLatestSnapshot());
-	scan = heap_beginscan(rel, snapshot, 0, NULL);
+	scan = table_beginscan(rel, snapshot, 0, NULL);
 
 	/* hash initialize */
 	memset(&hash_ctl, 0, sizeof(hash_ctl));
@@ -171,14 +171,14 @@ regather_graphmeta(PG_FUNCTION_ARGS)
 
 		scan_label(DatumGetObjectId(relid), DatumGetObjectId(graphid));
 	}
-	heap_endscan(scan);
+	table_endscan(scan);
 	UnregisterSnapshot(snapshot);
-	heap_close(rel, AccessShareLock);
+	table_close(rel, AccessShareLock);
 
 	/* delete meta */
-	rel = heap_open(GraphMetaRelationId, RowExclusiveLock);
+	rel = table_open(GraphMetaRelationId, RowExclusiveLock);
 	snapshot = RegisterSnapshot(GetLatestSnapshot());
-	scan = heap_beginscan(rel, snapshot, 0, NULL);
+	scan = table_beginscan(rel, snapshot, 0, NULL);
 
 	while ((tup = heap_getnext(scan, ForwardScanDirection)) != NULL)
 		simple_heap_delete(rel, &tup->t_self);
@@ -186,9 +186,9 @@ regather_graphmeta(PG_FUNCTION_ARGS)
 	/* merge hash table data with meta catalog */
 	merge_meta(rel);
 
-	heap_endscan(scan);
+	table_endscan(scan);
 	UnregisterSnapshot(snapshot);
-	heap_close(rel, RowExclusiveLock);
+	table_close(rel, RowExclusiveLock);
 
 	PG_RETURN_BOOL(true);
 }

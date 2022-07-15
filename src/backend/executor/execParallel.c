@@ -3,7 +3,7 @@
  * execParallel.c
  *	  Support routines for parallel execution.
  *
- * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * This file contains routines that are intended to support setting up,
@@ -39,8 +39,6 @@
 #include "executor/tqueue.h"
 #include "jit/jit.h"
 #include "nodes/nodeFuncs.h"
-#include "optimizer/planmain.h"
-#include "optimizer/planner.h"
 #include "storage/spin.h"
 #include "tcop/tcopprot.h"
 #include "utils/datum.h"
@@ -125,15 +123,15 @@ typedef struct ExecParallelInitializeDSMContext
 /* Helper functions that run in the parallel leader. */
 static char *ExecSerializePlan(Plan *plan, EState *estate);
 static bool ExecParallelEstimate(PlanState *node,
-					 ExecParallelEstimateContext *e);
+								 ExecParallelEstimateContext *e);
 static bool ExecParallelInitializeDSM(PlanState *node,
-						  ExecParallelInitializeDSMContext *d);
+									  ExecParallelInitializeDSMContext *d);
 static shm_mq_handle **ExecParallelSetupTupleQueues(ParallelContext *pcxt,
-							 bool reinitialize);
+													bool reinitialize);
 static bool ExecParallelReInitializeDSM(PlanState *planstate,
-							ParallelContext *pcxt);
+										ParallelContext *pcxt);
 static bool ExecParallelRetrieveInstrumentation(PlanState *planstate,
-									SharedExecutorInstrumentation *instrumentation);
+												SharedExecutorInstrumentation *instrumentation);
 
 /* Helper function that runs in the parallel worker. */
 static DestReceiver *ExecParallelGetReceiver(dsm_segment *seg, shm_toc *toc);
@@ -221,7 +219,7 @@ ExecSerializePlan(Plan *plan, EState *estate)
  * &pcxt->estimator.
  *
  * While we're at it, count the number of PlanState nodes in the tree, so
- * we know how many SharedPlanStateInstrumentation structures we need.
+ * we know how many Instrumentation structures we need.
  */
 static bool
 ExecParallelEstimate(PlanState *planstate, ExecParallelEstimateContext *e)
@@ -606,7 +604,7 @@ ExecInitParallelPlan(PlanState *planstate, EState *estate,
 	pstmt_data = ExecSerializePlan(planstate->plan, estate);
 
 	/* Create a parallel context. */
-	pcxt = CreateParallelContext("postgres", "ParallelQueryMain", nworkers, false);
+	pcxt = CreateParallelContext("postgres", "ParallelQueryMain", nworkers);
 	pei->pcxt = pcxt;
 
 	/*
@@ -1049,7 +1047,7 @@ ExecParallelRetrieveJitInstrumentation(PlanState *planstate,
 			MemoryContextAllocZero(planstate->state->es_query_cxt, sizeof(JitInstrumentation));
 	combined = planstate->state->es_jit_worker_instr;
 
-	/* Accummulate all the workers' instrumentations. */
+	/* Accumulate all the workers' instrumentations. */
 	for (n = 0; n < shared_jit->num_workers; ++n)
 		InstrJitAgg(combined, &shared_jit->jit_instr[n]);
 
@@ -1060,7 +1058,7 @@ ExecParallelRetrieveJitInstrumentation(PlanState *planstate,
 	 * instrumentation in per-query context.
 	 */
 	ibytes = offsetof(SharedJitInstrumentation, jit_instr)
-			 + mul_size(shared_jit->num_workers, sizeof(JitInstrumentation));
+		+ mul_size(shared_jit->num_workers, sizeof(JitInstrumentation));
 	planstate->worker_jit_instrument =
 		MemoryContextAlloc(planstate->state->es_query_cxt, ibytes);
 
@@ -1135,7 +1133,7 @@ ExecParallelCleanup(ParallelExecutorInfo *pei)
 	/* Accumulate JIT instrumentation, if any. */
 	if (pei->jit_instrumentation)
 		ExecParallelRetrieveJitInstrumentation(pei->planstate,
-											pei->jit_instrumentation);
+											   pei->jit_instrumentation);
 
 	/* Free any serialized parameters. */
 	if (DsaPointerIsValid(pei->param_exec))

@@ -3,7 +3,7 @@
  * pl_funcs.c		- Misc functions for the PL/pgSQL
  *			  procedural language
  *
- * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -1318,14 +1318,20 @@ static void
 dump_commit(PLpgSQL_stmt_commit *stmt)
 {
 	dump_ind();
-	printf("COMMIT\n");
+	if (stmt->chain)
+		printf("COMMIT AND CHAIN\n");
+	else
+		printf("COMMIT\n");
 }
 
 static void
 dump_rollback(PLpgSQL_stmt_rollback *stmt)
 {
 	dump_ind();
-	printf("ROLLBACK\n");
+	if (stmt->chain)
+		printf("ROLLBACK AND CHAIN\n");
+	else
+		printf("ROLLBACK\n");
 }
 
 static void

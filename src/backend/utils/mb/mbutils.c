@@ -23,7 +23,7 @@
  * the result is validly encoded according to the destination encoding.
  *
  *
- * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -86,7 +86,7 @@ static int	pending_client_encoding = PG_SQL_ASCII;
 
 /* Internal functions */
 static char *perform_default_encoding_conversion(const char *src,
-									int len, bool is_client_to_server);
+												 int len, bool is_client_to_server);
 static int	cliplen(const char *str, int len, int limit);
 
 
@@ -464,7 +464,7 @@ pg_convert(PG_FUNCTION_ARGS)
 	pg_verify_mbstr_len(src_encoding, src_str, len, false);
 
 	/* perform conversion */
-	dest_str = (char *) pg_do_encoding_conversion((unsigned char *) src_str,
+	dest_str = (char *) pg_do_encoding_conversion((unsigned char *) unconstify(char *, src_str),
 												  len,
 												  src_encoding,
 												  dest_encoding);
@@ -561,7 +561,7 @@ char *
 pg_any_to_server(const char *s, int len, int encoding)
 {
 	if (len <= 0)
-		return (char *) s;		/* empty string is always valid */
+		return unconstify(char *, s);	/* empty string is always valid */
 
 	if (encoding == DatabaseEncoding->encoding ||
 		encoding == PG_SQL_ASCII)
@@ -570,7 +570,7 @@ pg_any_to_server(const char *s, int len, int encoding)
 		 * No conversion is needed, but we must still validate the data.
 		 */
 		(void) pg_verify_mbstr(DatabaseEncoding->encoding, s, len, false);
-		return (char *) s;
+		return unconstify(char *, s);
 	}
 
 	if (DatabaseEncoding->encoding == PG_SQL_ASCII)
@@ -600,7 +600,7 @@ pg_any_to_server(const char *s, int len, int encoding)
 									(unsigned char) s[i])));
 			}
 		}
-		return (char *) s;
+		return unconstify(char *, s);
 	}
 
 	/* Fast path if we can use cached conversion function */
@@ -608,7 +608,7 @@ pg_any_to_server(const char *s, int len, int encoding)
 		return perform_default_encoding_conversion(s, len, true);
 
 	/* General case ... will not work outside transactions */
-	return (char *) pg_do_encoding_conversion((unsigned char *) s,
+	return (char *) pg_do_encoding_conversion((unsigned char *) unconstify(char *, s),
 											  len,
 											  encoding,
 											  DatabaseEncoding->encoding);
@@ -634,17 +634,17 @@ char *
 pg_server_to_any(const char *s, int len, int encoding)
 {
 	if (len <= 0)
-		return (char *) s;		/* empty string is always valid */
+		return unconstify(char *, s);	/* empty string is always valid */
 
 	if (encoding == DatabaseEncoding->encoding ||
 		encoding == PG_SQL_ASCII)
-		return (char *) s;		/* assume data is valid */
+		return unconstify(char *, s);	/* assume data is valid */
 
 	if (DatabaseEncoding->encoding == PG_SQL_ASCII)
 	{
 		/* No conversion is possible, but we must validate the result */
 		(void) pg_verify_mbstr(encoding, s, len, false);
-		return (char *) s;
+		return unconstify(char *, s);
 	}
 
 	/* Fast path if we can use cached conversion function */
@@ -652,7 +652,7 @@ pg_server_to_any(const char *s, int len, int encoding)
 		return perform_default_encoding_conversion(s, len, false);
 
 	/* General case ... will not work outside transactions */
-	return (char *) pg_do_encoding_conversion((unsigned char *) s,
+	return (char *) pg_do_encoding_conversion((unsigned char *) unconstify(char *, s),
 											  len,
 											  DatabaseEncoding->encoding,
 											  encoding);
@@ -687,7 +687,7 @@ perform_default_encoding_conversion(const char *src, int len,
 	}
 
 	if (flinfo == NULL)
-		return (char *) src;
+		return unconstify(char *, src);
 
 	/*
 	 * Allocate space for conversion result, being wary of integer overflow
@@ -1046,11 +1046,16 @@ GetMessageEncoding(void)
 WCHAR *
 pgwin32_message_to_UTF16(const char *str, int len, int *utf16len)
 {
+	int			msgenc = GetMessageEncoding();
 	WCHAR	   *utf16;
 	int			dstlen;
 	UINT		codepage;
 
-	codepage = pg_enc2name_tbl[GetMessageEncoding()].codepage;
+	if (msgenc == PG_SQL_ASCII)
+		/* No conversion is possible, and SQL_ASCII is never utf16. */
+		return NULL;
+
+	codepage = pg_enc2name_tbl[msgenc].codepage;
 
 	/*
 	 * Use MultiByteToWideChar directly if there is a corresponding codepage,
@@ -1075,7 +1080,7 @@ pgwin32_message_to_UTF16(const char *str, int len, int *utf16len)
 		{
 			utf8 = (char *) pg_do_encoding_conversion((unsigned char *) str,
 													  len,
-													  GetMessageEncoding(),
+													  msgenc,
 													  PG_UTF8);
 			if (utf8 != str)
 				len = strlen(utf8);

@@ -13,6 +13,7 @@
 #include "executor/spi.h"
 #include "funcapi.h"
 #include "utils/builtins.h"
+#include "utils/lsyscache.h"
 #include "utils/rel.h"
 #include "utils/typcache.h"
 
@@ -44,9 +45,9 @@ static void plpython_srf_cleanup_callback(void *arg);
 static void plpython_return_error_callback(void *arg);
 
 static PyObject *PLy_trigger_build_args(FunctionCallInfo fcinfo, PLyProcedure *proc,
-					   HeapTuple *rv);
+										HeapTuple *rv);
 static HeapTuple PLy_modify_tuple(PLyProcedure *proc, PyObject *pltd,
-				 TriggerData *tdata, HeapTuple otup);
+								  TriggerData *tdata, HeapTuple otup);
 static void plpython_trigger_error_callback(void *arg);
 
 static PyObject *PLy_procedure_call(PLyProcedure *proc, const char *kargs, PyObject *vargs);
@@ -436,10 +437,10 @@ PLy_function_build_args(FunctionCallInfo fcinfo, PLyProcedure *proc)
 		{
 			PLyDatumToOb *arginfo = &proc->args[i];
 
-			if (fcinfo->argnull[i])
+			if (fcinfo->args[i].isnull)
 				arg = NULL;
 			else
-				arg = PLy_input_convert(arginfo, fcinfo->arg[i]);
+				arg = PLy_input_convert(arginfo, fcinfo->args[i].value);
 
 			if (arg == NULL)
 			{
@@ -751,6 +752,11 @@ PLy_trigger_build_args(FunctionCallInfo fcinfo, PLyProcedure *proc, HeapTuple *r
 			PyDict_SetItemString(pltdata, "level", pltlevel);
 			Py_DECREF(pltlevel);
 
+			/*
+			 * Note: In BEFORE trigger, stored generated columns are not
+			 * computed yet, so don't make them accessible in NEW row.
+			 */
+
 			if (TRIGGER_FIRED_BY_INSERT(tdata->tg_event))
 			{
 				pltevent = PyString_FromString("INSERT");
@@ -758,7 +764,8 @@ PLy_trigger_build_args(FunctionCallInfo fcinfo, PLyProcedure *proc, HeapTuple *r
 				PyDict_SetItemString(pltdata, "old", Py_None);
 				pytnew = PLy_input_from_tuple(&proc->result_in,
 											  tdata->tg_trigtuple,
-											  rel_descr);
+											  rel_descr,
+											  !TRIGGER_FIRED_BEFORE(tdata->tg_event));
 				PyDict_SetItemString(pltdata, "new", pytnew);
 				Py_DECREF(pytnew);
 				*rv = tdata->tg_trigtuple;
@@ -770,7 +777,8 @@ PLy_trigger_build_args(FunctionCallInfo fcinfo, PLyProcedure *proc, HeapTuple *r
 				PyDict_SetItemString(pltdata, "new", Py_None);
 				pytold = PLy_input_from_tuple(&proc->result_in,
 											  tdata->tg_trigtuple,
-											  rel_descr);
+											  rel_descr,
+											  true);
 				PyDict_SetItemString(pltdata, "old", pytold);
 				Py_DECREF(pytold);
 				*rv = tdata->tg_trigtuple;
@@ -781,12 +789,14 @@ PLy_trigger_build_args(FunctionCallInfo fcinfo, PLyProcedure *proc, HeapTuple *r
 
 				pytnew = PLy_input_from_tuple(&proc->result_in,
 											  tdata->tg_newtuple,
-											  rel_descr);
+											  rel_descr,
+											  !TRIGGER_FIRED_BEFORE(tdata->tg_event));
 				PyDict_SetItemString(pltdata, "new", pytnew);
 				Py_DECREF(pytnew);
 				pytold = PLy_input_from_tuple(&proc->result_in,
 											  tdata->tg_trigtuple,
-											  rel_descr);
+											  rel_descr,
+											  true);
 				PyDict_SetItemString(pltdata, "old", pytold);
 				Py_DECREF(pytold);
 				*rv = tdata->tg_newtuple;
@@ -951,6 +961,11 @@ PLy_modify_tuple(PLyProcedure *proc, PyObject *pltd, TriggerData *tdata,
 				ereport(ERROR,
 						(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
 						 errmsg("cannot set system attribute \"%s\"",
+								plattstr)));
+			if (TupleDescAttr(tupdesc, attn - 1)->attgenerated)
+				ereport(ERROR,
+						(errcode(ERRCODE_E_R_I_E_TRIGGER_PROTOCOL_VIOLATED),
+						 errmsg("cannot set generated column \"%s\"",
 								plattstr)));
 
 			plval = PyDict_GetItem(plntup, platt);

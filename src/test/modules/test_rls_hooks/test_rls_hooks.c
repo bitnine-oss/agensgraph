@@ -3,7 +3,7 @@
  * test_rls_hooks.c
  *		Code for testing RLS hooks.
  *
- * Copyright (c) 2015-2018, PostgreSQL Global Development Group
+ * Copyright (c) 2015-2019, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
  *		src/test/modules/test_rls_hooks/test_rls_hooks.c
@@ -22,6 +22,7 @@
 #include "nodes/makefuncs.h"
 #include "nodes/makefuncs.h"
 #include "parser/parse_clause.h"
+#include "parser/parse_collate.h"
 #include "parser/parse_node.h"
 #include "parser/parse_relation.h"
 #include "rewrite/rowsecurity.h"
@@ -74,8 +75,8 @@ test_rls_hooks_permissive(CmdType cmdtype, Relation relation)
 	ParseState *qual_pstate;
 	RangeTblEntry *rte;
 
-	if (strcmp(RelationGetRelationName(relation), "rls_test_permissive")
-		&& strcmp(RelationGetRelationName(relation), "rls_test_both"))
+	if (strcmp(RelationGetRelationName(relation), "rls_test_permissive") != 0 &&
+		strcmp(RelationGetRelationName(relation), "rls_test_both") != 0)
 		return NIL;
 
 	qual_pstate = make_parsestate(NULL);
@@ -107,6 +108,8 @@ test_rls_hooks_permissive(CmdType cmdtype, Relation relation)
 	policy->qual = (Expr *) transformWhereClause(qual_pstate, copyObject(e),
 												 EXPR_KIND_POLICY,
 												 "POLICY");
+	/* Fix up collation information */
+	assign_expr_collations(qual_pstate, (Node *) policy->qual);
 
 	policy->with_check_qual = copyObject(policy->qual);
 	policy->hassublinks = false;
@@ -137,8 +140,8 @@ test_rls_hooks_restrictive(CmdType cmdtype, Relation relation)
 	RangeTblEntry *rte;
 
 
-	if (strcmp(RelationGetRelationName(relation), "rls_test_restrictive")
-		&& strcmp(RelationGetRelationName(relation), "rls_test_both"))
+	if (strcmp(RelationGetRelationName(relation), "rls_test_restrictive") != 0 &&
+		strcmp(RelationGetRelationName(relation), "rls_test_both") != 0)
 		return NIL;
 
 	qual_pstate = make_parsestate(NULL);
@@ -165,6 +168,8 @@ test_rls_hooks_restrictive(CmdType cmdtype, Relation relation)
 	policy->qual = (Expr *) transformWhereClause(qual_pstate, copyObject(e),
 												 EXPR_KIND_POLICY,
 												 "POLICY");
+	/* Fix up collation information */
+	assign_expr_collations(qual_pstate, (Node *) policy->qual);
 
 	policy->with_check_qual = copyObject(policy->qual);
 	policy->hassublinks = false;

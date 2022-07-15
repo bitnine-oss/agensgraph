@@ -5,7 +5,7 @@
 #
 # NormalizationTest.txt is part of the Unicode Character Database.
 #
-# Copyright (c) 2000-2018, PostgreSQL Global Development Group
+# Copyright (c) 2000-2019, PostgreSQL Global Development Group
 
 use strict;
 use warnings;
@@ -30,7 +30,7 @@ print $OUTPUT <<HEADER;
  * norm_test_table.h
  *	  Test strings for Unicode normalization.
  *
- * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/common/unicode/norm_test_table.h
@@ -56,7 +56,7 @@ HEADER
 print $OUTPUT
   "static const pg_unicode_test UnicodeNormalizationTests[] =\n{\n";
 
-# Helper routine to conver a space-separated list of Unicode characters to
+# Helper routine to convert a space-separated list of Unicode characters to
 # hexadecimal list format, suitable for outputting in a C array.
 sub codepoint_string_to_hex
 {

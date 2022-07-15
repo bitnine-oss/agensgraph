@@ -3,7 +3,7 @@
  * proto.c
  *		logical replication protocol functions
  *
- * Copyright (c) 2015-2018, PostgreSQL Global Development Group
+ * Copyright (c) 2015-2019, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
  *		src/backend/replication/logical/proto.c
@@ -31,7 +31,7 @@
 
 static void logicalrep_write_attrs(StringInfo out, Relation rel);
 static void logicalrep_write_tuple(StringInfo out, Relation rel,
-					   HeapTuple tuple);
+								   HeapTuple tuple);
 
 static void logicalrep_read_attrs(StringInfo in, LogicalRepRelation *rel);
 static void logicalrep_read_tuple(StringInfo in, LogicalRepTupleData *tuple);
@@ -453,7 +453,7 @@ logicalrep_write_tuple(StringInfo out, Relation rel, HeapTuple tuple)
 
 	for (i = 0; i < desc->natts; i++)
 	{
-		if (TupleDescAttr(desc, i)->attisdropped)
+		if (TupleDescAttr(desc, i)->attisdropped || TupleDescAttr(desc, i)->attgenerated)
 			continue;
 		nliveatts++;
 	}
@@ -473,8 +473,7 @@ logicalrep_write_tuple(StringInfo out, Relation rel, HeapTuple tuple)
 		Form_pg_attribute att = TupleDescAttr(desc, i);
 		char	   *outputstr;
 
-		/* skip dropped columns */
-		if (att->attisdropped)
+		if (att->attisdropped || att->attgenerated)
 			continue;
 
 		if (isnull[i])
@@ -573,7 +572,7 @@ logicalrep_write_attrs(StringInfo out, Relation rel)
 	/* send number of live attributes */
 	for (i = 0; i < desc->natts; i++)
 	{
-		if (TupleDescAttr(desc, i)->attisdropped)
+		if (TupleDescAttr(desc, i)->attisdropped || TupleDescAttr(desc, i)->attgenerated)
 			continue;
 		nliveatts++;
 	}
@@ -591,7 +590,7 @@ logicalrep_write_attrs(StringInfo out, Relation rel)
 		Form_pg_attribute att = TupleDescAttr(desc, i);
 		uint8		flags = 0;
 
-		if (att->attisdropped)
+		if (att->attisdropped || att->attgenerated)
 			continue;
 
 		/* REPLICA IDENTITY FULL means all columns are sent as part of key. */

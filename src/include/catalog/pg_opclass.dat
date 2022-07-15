@@ -3,7 +3,7 @@
 # pg_opclass.dat
 #    Initial contents of the pg_opclass system catalog.
 #
-# Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
+# Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
 # Portions Copyright (c) 1994, Regents of the University of California
 #
 # src/include/catalog/pg_opclass.dat
@@ -93,10 +93,10 @@
 # but cstring and name are the same thing except for trailing padding,
 # and we can safely omit that within an index entry.  So we declare the
 # btree opclass for name as using cstring storage type.
-{ opcmethod => 'btree', opcname => 'name_ops', opcfamily => 'btree/name_ops',
+{ opcmethod => 'btree', opcname => 'name_ops', opcfamily => 'btree/text_ops',
   opcintype => 'name', opckeytype => 'cstring' },
 
-{ opcmethod => 'hash', opcname => 'name_ops', opcfamily => 'hash/name_ops',
+{ opcmethod => 'hash', opcname => 'name_ops', opcfamily => 'hash/text_ops',
   opcintype => 'name' },
 { oid => '3125', oid_symbol => 'NUMERIC_BTREE_OPS_OID',
   opcmethod => 'btree', opcname => 'numeric_ops',
@@ -167,6 +167,8 @@
   opcintype => 'xid' },
 { opcmethod => 'hash', opcname => 'cid_ops', opcfamily => 'hash/cid_ops',
   opcintype => 'cid' },
+{ opcmethod => 'hash', opcname => 'tid_ops', opcfamily => 'hash/tid_ops',
+  opcintype => 'tid' },
 { opcmethod => 'hash', opcname => 'text_pattern_ops',
   opcfamily => 'hash/text_pattern_ops', opcintype => 'text',
   opcdefault => 'f' },

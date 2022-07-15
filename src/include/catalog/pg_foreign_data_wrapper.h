@@ -4,7 +4,7 @@
  *	  definition of the "foreign-data wrapper" system catalog (pg_foreign_data_wrapper)
  *
  *
- * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/catalog/pg_foreign_data_wrapper.h
@@ -41,8 +41,8 @@ CATALOG(pg_foreign_data_wrapper,2328,ForeignDataWrapperRelationId)
 } FormData_pg_foreign_data_wrapper;
 
 /* ----------------
- *		Form_pg_fdw corresponds to a pointer to a tuple with
- *		the format of pg_fdw relation.
+ *		Form_pg_foreign_data_wrapper corresponds to a pointer to a tuple with
+ *		the format of pg_foreign_data_wrapper relation.
  * ----------------
  */
 typedef FormData_pg_foreign_data_wrapper *Form_pg_foreign_data_wrapper;

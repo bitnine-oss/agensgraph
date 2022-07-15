@@ -4,7 +4,7 @@
  *	  POSTGRES error reporting/logging definitions.
  *
  *
- * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/utils/elog.h
@@ -144,7 +144,7 @@
 #define TEXTDOMAIN NULL
 
 extern bool errstart(int elevel, const char *filename, int lineno,
-		 const char *funcname, const char *domain);
+					 const char *funcname, const char *domain);
 extern void errfinish(int dummy,...);
 
 extern int	errcode(int sqlerrcode);
@@ -155,20 +155,20 @@ extern int	errcode_for_socket_access(void);
 extern int	errmsg(const char *fmt,...) pg_attribute_printf(1, 2);
 extern int	errmsg_internal(const char *fmt,...) pg_attribute_printf(1, 2);
 
-extern int errmsg_plural(const char *fmt_singular, const char *fmt_plural,
-			  unsigned long n,...) pg_attribute_printf(1, 4) pg_attribute_printf(2, 4);
+extern int	errmsg_plural(const char *fmt_singular, const char *fmt_plural,
+						  unsigned long n,...) pg_attribute_printf(1, 4) pg_attribute_printf(2, 4);
 
 extern int	errdetail(const char *fmt,...) pg_attribute_printf(1, 2);
 extern int	errdetail_internal(const char *fmt,...) pg_attribute_printf(1, 2);
 
 extern int	errdetail_log(const char *fmt,...) pg_attribute_printf(1, 2);
 
-extern int errdetail_log_plural(const char *fmt_singular,
-					 const char *fmt_plural,
-					 unsigned long n,...) pg_attribute_printf(1, 4) pg_attribute_printf(2, 4);
+extern int	errdetail_log_plural(const char *fmt_singular,
+								 const char *fmt_plural,
+								 unsigned long n,...) pg_attribute_printf(1, 4) pg_attribute_printf(2, 4);
 
-extern int errdetail_plural(const char *fmt_singular, const char *fmt_plural,
-				 unsigned long n,...) pg_attribute_printf(1, 4) pg_attribute_printf(2, 4);
+extern int	errdetail_plural(const char *fmt_singular, const char *fmt_plural,
+							 unsigned long n,...) pg_attribute_printf(1, 4) pg_attribute_printf(2, 4);
 
 extern int	errhint(const char *fmt,...) pg_attribute_printf(1, 2);
 
@@ -272,8 +272,10 @@ extern PGDLLIMPORT ErrorContextCallback *error_context_stack;
  *		PG_END_TRY();
  *
  * (The braces are not actually necessary, but are recommended so that
- * pgindent will indent the construct nicely.)	The error recovery code
- * can optionally do PG_RE_THROW() to propagate the same error outwards.
+ * pgindent will indent the construct nicely.)  The error recovery code
+ * can either do PG_RE_THROW to propagate the error outwards, or do a
+ * (sub)transaction abort. Failure to do so may leave the system in an
+ * inconsistent state for further processing.
  *
  * Note: while the system will correctly propagate any new ereport(ERROR)
  * occurring in the recovery section, there is a small limit on the number

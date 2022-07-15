@@ -4,7 +4,7 @@
  *	  WAL replay logic for btrees.
  *
  *
- * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -15,7 +15,6 @@
 #include "postgres.h"
 
 #include "access/bufmask.h"
-#include "access/heapam_xlog.h"
 #include "access/nbtree.h"
 #include "access/nbtxlog.h"
 #include "access/transam.h"
@@ -103,7 +102,7 @@ _bt_restore_meta(XLogReaderState *record, uint8 block_id)
 
 	md = BTPageGetMeta(metapg);
 	md->btm_magic = BTREE_MAGIC;
-	md->btm_version = BTREE_VERSION;
+	md->btm_version = xlrec->version;
 	md->btm_root = xlrec->root;
 	md->btm_level = xlrec->level;
 	md->btm_fastroot = xlrec->fastroot;
@@ -182,7 +181,7 @@ btree_xlog_insert(bool isleaf, bool ismeta, XLogReaderState *record)
 
 		if (PageAddItem(page, (Item) datapos, datalen, xlrec->offnum,
 						false, false) == InvalidOffsetNumber)
-			elog(PANIC, "btree_insert_redo: failed to add item");
+			elog(PANIC, "btree_xlog_insert: failed to add item");
 
 		PageSetLSN(page, lsn);
 		MarkBufferDirty(buffer);
@@ -202,7 +201,7 @@ btree_xlog_insert(bool isleaf, bool ismeta, XLogReaderState *record)
 }
 
 static void
-btree_xlog_split(bool onleft, bool lhighkey, XLogReaderState *record)
+btree_xlog_split(bool onleft, XLogReaderState *record)
 {
 	XLogRecPtr	lsn = record->EndRecPtr;
 	xl_btree_split *xlrec = (xl_btree_split *) XLogRecGetData(record);
@@ -213,8 +212,6 @@ btree_xlog_split(bool onleft, bool lhighkey, XLogReaderState *record)
 	BTPageOpaque ropaque;
 	char	   *datapos;
 	Size		datalen;
-	IndexTuple	left_hikey = NULL;
-	Size		left_hikeysz = 0;
 	BlockNumber leftsib;
 	BlockNumber rightsib;
 	BlockNumber rnext;
@@ -248,24 +245,8 @@ btree_xlog_split(bool onleft, bool lhighkey, XLogReaderState *record)
 
 	_bt_restore_page(rpage, datapos, datalen);
 
-	/*
-	 * When the high key isn't present is the wal record, then we assume it to
-	 * be equal to the first key on the right page.  It must be from the leaf
-	 * level.
-	 */
-	if (!lhighkey)
-	{
-		ItemId		hiItemId = PageGetItemId(rpage, P_FIRSTDATAKEY(ropaque));
-
-		Assert(isleaf);
-		left_hikey = (IndexTuple) PageGetItem(rpage, hiItemId);
-		left_hikeysz = ItemIdGetLength(hiItemId);
-	}
-
 	PageSetLSN(rpage, lsn);
 	MarkBufferDirty(rbuf);
-
-	/* don't release the buffer yet; we touch right page's first item below */
 
 	/* Now reconstruct left (original) sibling page */
 	if (XLogReadBufferForRedo(record, 0, &lbuf) == BLK_NEEDS_REDO)
@@ -274,16 +255,17 @@ btree_xlog_split(bool onleft, bool lhighkey, XLogReaderState *record)
 		 * To retain the same physical order of the tuples that they had, we
 		 * initialize a temporary empty page for the left page and add all the
 		 * items to that in item number order.  This mirrors how _bt_split()
-		 * works.  It's not strictly required to retain the same physical
-		 * order, as long as the items are in the correct item number order,
-		 * but it helps debugging.  See also _bt_restore_page(), which does
-		 * the same for the right page.
+		 * works.  Retaining the same physical order makes WAL consistency
+		 * checking possible.  See also _bt_restore_page(), which does the
+		 * same for the right page.
 		 */
 		Page		lpage = (Page) BufferGetPage(lbuf);
 		BTPageOpaque lopaque = (BTPageOpaque) PageGetSpecialPointer(lpage);
 		OffsetNumber off;
-		IndexTuple	newitem = NULL;
-		Size		newitemsz = 0;
+		IndexTuple	newitem = NULL,
+					left_hikey = NULL;
+		Size		newitemsz = 0,
+					left_hikeysz = 0;
 		Page		newlpage;
 		OffsetNumber leftoff;
 
@@ -298,13 +280,10 @@ btree_xlog_split(bool onleft, bool lhighkey, XLogReaderState *record)
 		}
 
 		/* Extract left hikey and its size (assuming 16-bit alignment) */
-		if (lhighkey)
-		{
-			left_hikey = (IndexTuple) datapos;
-			left_hikeysz = MAXALIGN(IndexTupleSize(left_hikey));
-			datapos += left_hikeysz;
-			datalen -= left_hikeysz;
-		}
+		left_hikey = (IndexTuple) datapos;
+		left_hikeysz = MAXALIGN(IndexTupleSize(left_hikey));
+		datapos += left_hikeysz;
+		datalen -= left_hikeysz;
 
 		Assert(datalen == 0);
 
@@ -363,7 +342,10 @@ btree_xlog_split(bool onleft, bool lhighkey, XLogReaderState *record)
 		MarkBufferDirty(lbuf);
 	}
 
-	/* We no longer need the buffers */
+	/*
+	 * We no longer need the buffers.  They must be released together, so that
+	 * readers cannot observe two inconsistent halves.
+	 */
 	if (BufferIsValid(lbuf))
 		UnlockReleaseBuffer(lbuf);
 	UnlockReleaseBuffer(rbuf);
@@ -518,159 +500,6 @@ btree_xlog_vacuum(XLogReaderState *record)
 		UnlockReleaseBuffer(buffer);
 }
 
-/*
- * Get the latestRemovedXid from the heap pages pointed at by the index
- * tuples being deleted. This puts the work for calculating latestRemovedXid
- * into the recovery path rather than the primary path.
- *
- * It's possible that this generates a fair amount of I/O, since an index
- * block may have hundreds of tuples being deleted. Repeat accesses to the
- * same heap blocks are common, though are not yet optimised.
- *
- * XXX optimise later with something like XLogPrefetchBuffer()
- */
-static TransactionId
-btree_xlog_delete_get_latestRemovedXid(XLogReaderState *record)
-{
-	xl_btree_delete *xlrec = (xl_btree_delete *) XLogRecGetData(record);
-	OffsetNumber *unused;
-	Buffer		ibuffer,
-				hbuffer;
-	Page		ipage,
-				hpage;
-	RelFileNode rnode;
-	BlockNumber blkno;
-	ItemId		iitemid,
-				hitemid;
-	IndexTuple	itup;
-	HeapTupleHeader htuphdr;
-	BlockNumber hblkno;
-	OffsetNumber hoffnum;
-	TransactionId latestRemovedXid = InvalidTransactionId;
-	int			i;
-
-	/*
-	 * If there's nothing running on the standby we don't need to derive a
-	 * full latestRemovedXid value, so use a fast path out of here.  This
-	 * returns InvalidTransactionId, and so will conflict with all HS
-	 * transactions; but since we just worked out that that's zero people,
-	 * it's OK.
-	 *
-	 * XXX There is a race condition here, which is that a new backend might
-	 * start just after we look.  If so, it cannot need to conflict, but this
-	 * coding will result in throwing a conflict anyway.
-	 */
-	if (CountDBBackends(InvalidOid) == 0)
-		return latestRemovedXid;
-
-	/*
-	 * In what follows, we have to examine the previous state of the index
-	 * page, as well as the heap page(s) it points to.  This is only valid if
-	 * WAL replay has reached a consistent database state; which means that
-	 * the preceding check is not just an optimization, but is *necessary*. We
-	 * won't have let in any user sessions before we reach consistency.
-	 */
-	if (!reachedConsistency)
-		elog(PANIC, "btree_xlog_delete_get_latestRemovedXid: cannot operate with inconsistent data");
-
-	/*
-	 * Get index page.  If the DB is consistent, this should not fail, nor
-	 * should any of the heap page fetches below.  If one does, we return
-	 * InvalidTransactionId to cancel all HS transactions.  That's probably
-	 * overkill, but it's safe, and certainly better than panicking here.
-	 */
-	XLogRecGetBlockTag(record, 0, &rnode, NULL, &blkno);
-	ibuffer = XLogReadBufferExtended(rnode, MAIN_FORKNUM, blkno, RBM_NORMAL);
-	if (!BufferIsValid(ibuffer))
-		return InvalidTransactionId;
-	LockBuffer(ibuffer, BT_READ);
-	ipage = (Page) BufferGetPage(ibuffer);
-
-	/*
-	 * Loop through the deleted index items to obtain the TransactionId from
-	 * the heap items they point to.
-	 */
-	unused = (OffsetNumber *) ((char *) xlrec + SizeOfBtreeDelete);
-
-	for (i = 0; i < xlrec->nitems; i++)
-	{
-		/*
-		 * Identify the index tuple about to be deleted
-		 */
-		iitemid = PageGetItemId(ipage, unused[i]);
-		itup = (IndexTuple) PageGetItem(ipage, iitemid);
-
-		/*
-		 * Locate the heap page that the index tuple points at
-		 */
-		hblkno = ItemPointerGetBlockNumber(&(itup->t_tid));
-		hbuffer = XLogReadBufferExtended(xlrec->hnode, MAIN_FORKNUM, hblkno, RBM_NORMAL);
-		if (!BufferIsValid(hbuffer))
-		{
-			UnlockReleaseBuffer(ibuffer);
-			return InvalidTransactionId;
-		}
-		LockBuffer(hbuffer, BT_READ);
-		hpage = (Page) BufferGetPage(hbuffer);
-
-		/*
-		 * Look up the heap tuple header that the index tuple points at by
-		 * using the heap node supplied with the xlrec. We can't use
-		 * heap_fetch, since it uses ReadBuffer rather than XLogReadBuffer.
-		 * Note that we are not looking at tuple data here, just headers.
-		 */
-		hoffnum = ItemPointerGetOffsetNumber(&(itup->t_tid));
-		hitemid = PageGetItemId(hpage, hoffnum);
-
-		/*
-		 * Follow any redirections until we find something useful.
-		 */
-		while (ItemIdIsRedirected(hitemid))
-		{
-			hoffnum = ItemIdGetRedirect(hitemid);
-			hitemid = PageGetItemId(hpage, hoffnum);
-			CHECK_FOR_INTERRUPTS();
-		}
-
-		/*
-		 * If the heap item has storage, then read the header and use that to
-		 * set latestRemovedXid.
-		 *
-		 * Some LP_DEAD items may not be accessible, so we ignore them.
-		 */
-		if (ItemIdHasStorage(hitemid))
-		{
-			htuphdr = (HeapTupleHeader) PageGetItem(hpage, hitemid);
-
-			HeapTupleHeaderAdvanceLatestRemovedXid(htuphdr, &latestRemovedXid);
-		}
-		else if (ItemIdIsDead(hitemid))
-		{
-			/*
-			 * Conjecture: if hitemid is dead then it had xids before the xids
-			 * marked on LP_NORMAL items. So we just ignore this item and move
-			 * onto the next, for the purposes of calculating
-			 * latestRemovedxids.
-			 */
-		}
-		else
-			Assert(!ItemIdIsUsed(hitemid));
-
-		UnlockReleaseBuffer(hbuffer);
-	}
-
-	UnlockReleaseBuffer(ibuffer);
-
-	/*
-	 * If all heap tuples were LP_DEAD then we will be returning
-	 * InvalidTransactionId here, which avoids conflicts. This matches
-	 * existing logic which assumes that LP_DEAD tuples must already be older
-	 * than the latestRemovedXid on the cleanup record that set them as
-	 * LP_DEAD, hence must already have generated a conflict.
-	 */
-	return latestRemovedXid;
-}
-
 static void
 btree_xlog_delete(XLogReaderState *record)
 {
@@ -693,12 +522,11 @@ btree_xlog_delete(XLogReaderState *record)
 	 */
 	if (InHotStandby)
 	{
-		TransactionId latestRemovedXid = btree_xlog_delete_get_latestRemovedXid(record);
 		RelFileNode rnode;
 
 		XLogRecGetBlockTag(record, 0, &rnode, NULL, NULL);
 
-		ResolveRecoveryConflictWithSnapshot(latestRemovedXid, rnode);
+		ResolveRecoveryConflictWithSnapshot(xlrec->latestRemovedXid, rnode);
 	}
 
 	/*
@@ -1003,16 +831,10 @@ btree_redo(XLogReaderState *record)
 			btree_xlog_insert(false, true, record);
 			break;
 		case XLOG_BTREE_SPLIT_L:
-			btree_xlog_split(true, false, record);
-			break;
-		case XLOG_BTREE_SPLIT_L_HIGHKEY:
-			btree_xlog_split(true, true, record);
+			btree_xlog_split(true, record);
 			break;
 		case XLOG_BTREE_SPLIT_R:
-			btree_xlog_split(false, false, record);
-			break;
-		case XLOG_BTREE_SPLIT_R_HIGHKEY:
-			btree_xlog_split(false, true, record);
+			btree_xlog_split(false, record);
 			break;
 		case XLOG_BTREE_VACUUM:
 			btree_xlog_vacuum(record);

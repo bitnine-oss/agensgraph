@@ -29,7 +29,7 @@
  * at runtime.  If we knew exactly which functions require collation
  * information, we could throw those errors at parse time instead.
  *
- * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -74,19 +74,19 @@ typedef struct
 
 static bool assign_query_collations_walker(Node *node, ParseState *pstate);
 static bool assign_collations_walker(Node *node,
-						 assign_collations_context *context);
+									 assign_collations_context *context);
 static void merge_collation_state(Oid collation,
-					  CollateStrength strength,
-					  int location,
-					  Oid collation2,
-					  int location2,
-					  assign_collations_context *context);
+								  CollateStrength strength,
+								  int location,
+								  Oid collation2,
+								  int location2,
+								  assign_collations_context *context);
 static void assign_aggregate_collations(Aggref *aggref,
-							assign_collations_context *loccontext);
+										assign_collations_context *loccontext);
 static void assign_ordered_set_collations(Aggref *aggref,
-							  assign_collations_context *loccontext);
+										  assign_collations_context *loccontext);
 static void assign_hypothetical_collations(Aggref *aggref,
-							   assign_collations_context *loccontext);
+										   assign_collations_context *loccontext);
 
 
 /*

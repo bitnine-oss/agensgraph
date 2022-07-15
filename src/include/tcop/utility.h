@@ -4,7 +4,7 @@
  *	  prototypes for utility.c.
  *
  *
- * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/tcop/utility.h
@@ -34,13 +34,13 @@ typedef void (*ProcessUtility_hook_type) (PlannedStmt *pstmt,
 extern PGDLLIMPORT ProcessUtility_hook_type ProcessUtility_hook;
 
 extern void ProcessUtility(PlannedStmt *pstmt, const char *queryString,
-			   ProcessUtilityContext context, ParamListInfo params,
-			   QueryEnvironment *queryEnv,
-			   DestReceiver *dest, char *completionTag);
+						   ProcessUtilityContext context, ParamListInfo params,
+						   QueryEnvironment *queryEnv,
+						   DestReceiver *dest, char *completionTag);
 extern void standard_ProcessUtility(PlannedStmt *pstmt, const char *queryString,
-						ProcessUtilityContext context, ParamListInfo params,
-						QueryEnvironment *queryEnv,
-						DestReceiver *dest, char *completionTag);
+									ProcessUtilityContext context, ParamListInfo params,
+									QueryEnvironment *queryEnv,
+									DestReceiver *dest, char *completionTag);
 
 extern bool UtilityReturnsTuples(Node *parsetree);
 

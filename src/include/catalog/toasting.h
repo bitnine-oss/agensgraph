@@ -3,8 +3,11 @@
  * toasting.h
  *	  This file provides some definitions to support creation of toast tables
  *
+ * Caution: all #define's with numeric values in this file had better be
+ * object OIDs, else renumber_oids.pl might change them inappropriately.
  *
- * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
+ *
+ * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/catalog/toasting.h
@@ -21,11 +24,11 @@
  */
 extern void NewRelationCreateToastTable(Oid relOid, Datum reloptions);
 extern void NewHeapCreateToastTable(Oid relOid, Datum reloptions,
-						LOCKMODE lockmode);
+									LOCKMODE lockmode);
 extern void AlterTableCreateToastTable(Oid relOid, Datum reloptions,
-						   LOCKMODE lockmode);
+									   LOCKMODE lockmode);
 extern void BootstrapToastTable(char *relName,
-					Oid toastOid, Oid toastIndexOid);
+								Oid toastOid, Oid toastIndexOid);
 
 
 /*
@@ -67,6 +70,7 @@ DECLARE_TOAST(pg_rewrite, 2838, 2839);
 DECLARE_TOAST(pg_seclabel, 3598, 3599);
 DECLARE_TOAST(pg_statistic, 2840, 2841);
 DECLARE_TOAST(pg_statistic_ext, 3439, 3440);
+DECLARE_TOAST(pg_statistic_ext_data, 3430, 3431);
 DECLARE_TOAST(pg_trigger, 2336, 2337);
 DECLARE_TOAST(pg_ts_dict, 4169, 4170);
 DECLARE_TOAST(pg_type, 4171, 4172);

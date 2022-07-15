@@ -12,12 +12,14 @@ SUBDIRS = \
 		  test_bloomfilter \
 		  test_ddl_deparse \
 		  test_extensions \
+		  test_integerset \
 		  test_parser \
 		  test_pg_dump \
 		  test_predtest \
 		  test_rbtree \
 		  test_rls_hooks \
 		  test_shm_mq \
+		  unsafe_tests \
 		  worker_spi
 
 $(recurse)

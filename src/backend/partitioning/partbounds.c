@@ -3,16 +3,20 @@
  * partbounds.c
  *		Support routines for manipulating partition bounds
  *
- * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
  *		  src/backend/partitioning/partbounds.c
  *
  *-------------------------------------------------------------------------
-*/
+ */
+
 #include "postgres.h"
 
+#include "access/relation.h"
+#include "access/table.h"
+#include "access/tableam.h"
 #include "catalog/partition.h"
 #include "catalog/pg_inherits.h"
 #include "catalog/pg_type.h"
@@ -21,10 +25,10 @@
 #include "miscadmin.h"
 #include "nodes/makefuncs.h"
 #include "nodes/nodeFuncs.h"
-#include "optimizer/clauses.h"
 #include "parser/parse_coerce.h"
-#include "partitioning/partprune.h"
 #include "partitioning/partbounds.h"
+#include "partitioning/partdesc.h"
+#include "partitioning/partprune.h"
 #include "utils/builtins.h"
 #include "utils/datum.h"
 #include "utils/fmgroids.h"
@@ -67,42 +71,42 @@ typedef struct PartitionRangeBound
 
 static int32 qsort_partition_hbound_cmp(const void *a, const void *b);
 static int32 qsort_partition_list_value_cmp(const void *a, const void *b,
-							   void *arg);
+											void *arg);
 static int32 qsort_partition_rbound_cmp(const void *a, const void *b,
-						   void *arg);
+										void *arg);
 static PartitionBoundInfo create_hash_bounds(PartitionBoundSpec **boundspecs,
-				   int nparts, PartitionKey key, int **mapping);
+											 int nparts, PartitionKey key, int **mapping);
 static PartitionBoundInfo create_list_bounds(PartitionBoundSpec **boundspecs,
-				   int nparts, PartitionKey key, int **mapping);
+											 int nparts, PartitionKey key, int **mapping);
 static PartitionBoundInfo create_range_bounds(PartitionBoundSpec **boundspecs,
-					int nparts, PartitionKey key, int **mapping);
+											  int nparts, PartitionKey key, int **mapping);
 static PartitionRangeBound *make_one_partition_rbound(PartitionKey key, int index,
-						  List *datums, bool lower);
+													  List *datums, bool lower);
 static int32 partition_hbound_cmp(int modulus1, int remainder1, int modulus2,
-					 int remainder2);
+								  int remainder2);
 static int32 partition_rbound_cmp(int partnatts, FmgrInfo *partsupfunc,
-					 Oid *partcollation, Datum *datums1,
-					 PartitionRangeDatumKind *kind1, bool lower1,
-					 PartitionRangeBound *b2);
-static int partition_range_bsearch(int partnatts, FmgrInfo *partsupfunc,
-						Oid *partcollation,
-						PartitionBoundInfo boundinfo,
-						PartitionRangeBound *probe, bool *is_equal);
+								  Oid *partcollation, Datum *datums1,
+								  PartitionRangeDatumKind *kind1, bool lower1,
+								  PartitionRangeBound *b2);
+static int	partition_range_bsearch(int partnatts, FmgrInfo *partsupfunc,
+									Oid *partcollation,
+									PartitionBoundInfo boundinfo,
+									PartitionRangeBound *probe, bool *is_equal);
 static int	get_partition_bound_num_indexes(PartitionBoundInfo b);
 static Expr *make_partition_op_expr(PartitionKey key, int keynum,
-					   uint16 strategy, Expr *arg1, Expr *arg2);
-static Oid get_partition_operator(PartitionKey key, int col,
-					   StrategyNumber strategy, bool *need_relabel);
+									uint16 strategy, Expr *arg1, Expr *arg2);
+static Oid	get_partition_operator(PartitionKey key, int col,
+								   StrategyNumber strategy, bool *need_relabel);
 static List *get_qual_for_hash(Relation parent, PartitionBoundSpec *spec);
 static List *get_qual_for_list(Relation parent, PartitionBoundSpec *spec);
 static List *get_qual_for_range(Relation parent, PartitionBoundSpec *spec,
-				   bool for_default);
+								bool for_default);
 static void get_range_key_properties(PartitionKey key, int keynum,
-						 PartitionRangeDatum *ldatum,
-						 PartitionRangeDatum *udatum,
-						 ListCell **partexprs_item,
-						 Expr **keyCol,
-						 Const **lower_val, Const **upper_val);
+									 PartitionRangeDatum *ldatum,
+									 PartitionRangeDatum *udatum,
+									 ListCell **partexprs_item,
+									 Expr **keyCol,
+									 Const **lower_val, Const **upper_val);
 static List *get_range_nulltest(PartitionKey key);
 
 /*
@@ -858,6 +862,70 @@ partition_bounds_copy(PartitionBoundInfo src,
 }
 
 /*
+ * partitions_are_ordered
+ *		Determine whether the partitions described by 'boundinfo' are ordered,
+ *		that is partitions appearing earlier in the PartitionDesc sequence
+ *		contain partition keys strictly less than those appearing later.
+ *		Also, if NULL values are possible, they must come in the last
+ *		partition defined in the PartitionDesc.
+ *
+ * If out of order, or there is insufficient info to know the order,
+ * then we return false.
+ */
+bool
+partitions_are_ordered(PartitionBoundInfo boundinfo, int nparts)
+{
+	Assert(boundinfo != NULL);
+
+	switch (boundinfo->strategy)
+	{
+		case PARTITION_STRATEGY_RANGE:
+
+			/*
+			 * RANGE-type partitioning guarantees that the partitions can be
+			 * scanned in the order that they're defined in the PartitionDesc
+			 * to provide sequential, non-overlapping ranges of tuples.
+			 * However, if a DEFAULT partition exists then it doesn't work, as
+			 * that could contain tuples from either below or above the
+			 * defined range, or tuples belonging to gaps between partitions.
+			 */
+			if (!partition_bound_has_default(boundinfo))
+				return true;
+			break;
+
+		case PARTITION_STRATEGY_LIST:
+
+			/*
+			 * LIST partitioning can also guarantee ordering, but only if the
+			 * partitions don't accept interleaved values.  We could likely
+			 * check for this by looping over the PartitionBound's indexes
+			 * array to check that the indexes are in order.  For now, let's
+			 * just keep it simple and just accept LIST partitioning when
+			 * there's no DEFAULT partition, exactly one value per partition,
+			 * and optionally a NULL partition that does not accept any other
+			 * values.  Such a NULL partition will come last in the
+			 * PartitionDesc, and the other partitions will be properly
+			 * ordered.  This is a cheap test to make as it does not require
+			 * any per-partition processing.  Maybe we'd like to handle more
+			 * complex cases in the future.
+			 */
+			if (partition_bound_has_default(boundinfo))
+				return false;
+
+			if (boundinfo->ndatums + partition_bound_accepts_nulls(boundinfo)
+				== nparts)
+				return true;
+			break;
+
+		default:
+			/* HASH, or some other strategy */
+			break;
+	}
+
+	return false;
+}
+
+/*
  * check_new_partition_bound
  *
  * Checks if the new partition's bound overlaps any of the existing partitions
@@ -1171,6 +1239,14 @@ check_default_partition_contents(Relation parent, Relation default_rel,
 		get_proposed_default_constraint(new_part_constraints);
 
 	/*
+	 * Map the Vars in the constraint expression from parent's attnos to
+	 * default_rel's.
+	 */
+	def_part_constraints =
+		map_partition_varattnos(def_part_constraints, 1, default_rel,
+								parent, NULL);
+
+	/*
 	 * If the existing constraints on the default partition imply that it will
 	 * not contain any row that would belong to the new partition, we can
 	 * avoid scanning the default partition.
@@ -1197,22 +1273,28 @@ check_default_partition_contents(Relation parent, Relation default_rel,
 	{
 		Oid			part_relid = lfirst_oid(lc);
 		Relation	part_rel;
-		Expr	   *constr;
 		Expr	   *partition_constraint;
 		EState	   *estate;
-		HeapTuple	tuple;
 		ExprState  *partqualstate = NULL;
 		Snapshot	snapshot;
-		TupleDesc	tupdesc;
 		ExprContext *econtext;
-		HeapScanDesc scan;
+		TableScanDesc scan;
 		MemoryContext oldCxt;
 		TupleTableSlot *tupslot;
 
 		/* Lock already taken above. */
 		if (part_relid != RelationGetRelid(default_rel))
 		{
-			part_rel = heap_open(part_relid, NoLock);
+			part_rel = table_open(part_relid, NoLock);
+
+			/*
+			 * Map the Vars in the constraint expression from default_rel's
+			 * the sub-partition's.
+			 */
+			partition_constraint = make_ands_explicit(def_part_constraints);
+			partition_constraint = (Expr *)
+				map_partition_varattnos((List *) partition_constraint, 1,
+										part_rel, default_rel, NULL);
 
 			/*
 			 * If the partition constraints on default partition child imply
@@ -1226,12 +1308,15 @@ check_default_partition_contents(Relation parent, Relation default_rel,
 						(errmsg("updated partition constraint for default partition \"%s\" is implied by existing constraints",
 								RelationGetRelationName(part_rel))));
 
-				heap_close(part_rel, NoLock);
+				table_close(part_rel, NoLock);
 				continue;
 			}
 		}
 		else
+		{
 			part_rel = default_rel;
+			partition_constraint = make_ands_explicit(def_part_constraints);
+		}
 
 		/*
 		 * Only RELKIND_RELATION relations (i.e. leaf partitions) need to be
@@ -1247,16 +1332,11 @@ check_default_partition_contents(Relation parent, Relation default_rel,
 								RelationGetRelationName(default_rel))));
 
 			if (RelationGetRelid(default_rel) != RelationGetRelid(part_rel))
-				heap_close(part_rel, NoLock);
+				table_close(part_rel, NoLock);
 
 			continue;
 		}
 
-		tupdesc = CreateTupleDescCopy(RelationGetDescr(part_rel));
-		constr = linitial(def_part_constraints);
-		partition_constraint = (Expr *)
-			map_partition_varattnos((List *) constr,
-									1, part_rel, parent, NULL);
 		estate = CreateExecutorState();
 
 		/* Build expression execution states for partition check quals */
@@ -1264,8 +1344,8 @@ check_default_partition_contents(Relation parent, Relation default_rel,
 
 		econtext = GetPerTupleExprContext(estate);
 		snapshot = RegisterSnapshot(GetLatestSnapshot());
-		scan = heap_beginscan(part_rel, snapshot, 0, NULL);
-		tupslot = MakeSingleTupleTableSlot(tupdesc, &TTSOpsHeapTuple);
+		tupslot = table_slot_create(part_rel, &estate->es_tupleTable);
+		scan = table_beginscan(part_rel, snapshot, 0, NULL);
 
 		/*
 		 * Switch to per-tuple memory context and reset it for each tuple
@@ -1273,9 +1353,8 @@ check_default_partition_contents(Relation parent, Relation default_rel,
 		 */
 		oldCxt = MemoryContextSwitchTo(GetPerTupleMemoryContext(estate));
 
-		while ((tuple = heap_getnext(scan, ForwardScanDirection)) != NULL)
+		while (table_scan_getnextslot(scan, ForwardScanDirection, tupslot))
 		{
-			ExecStoreHeapTuple(tuple, tupslot, false);
 			econtext->ecxt_scantuple = tupslot;
 
 			if (!ExecCheck(partqualstate, econtext))
@@ -1289,13 +1368,13 @@ check_default_partition_contents(Relation parent, Relation default_rel,
 		}
 
 		MemoryContextSwitchTo(oldCxt);
-		heap_endscan(scan);
+		table_endscan(scan);
 		UnregisterSnapshot(snapshot);
 		ExecDropSingleTupleTableSlot(tupslot);
 		FreeExecutorState(estate);
 
 		if (RelationGetRelid(default_rel) != RelationGetRelid(part_rel))
-			heap_close(part_rel, NoLock);	/* keep the lock until commit */
+			table_close(part_rel, NoLock);	/* keep the lock until commit */
 	}
 }
 
@@ -1684,8 +1763,8 @@ qsort_partition_hbound_cmp(const void *a, const void *b)
 static int32
 qsort_partition_list_value_cmp(const void *a, const void *b, void *arg)
 {
-	Datum		val1 = (*(const PartitionListValue **) a)->value,
-				val2 = (*(const PartitionListValue **) b)->value;
+	Datum		val1 = (*(PartitionListValue *const *) a)->value,
+				val2 = (*(PartitionListValue *const *) b)->value;
 	PartitionKey key = (PartitionKey) arg;
 
 	return DatumGetInt32(FunctionCall2Coll(&key->partsupfunc[0],
@@ -2657,7 +2736,7 @@ get_range_nulltest(PartitionKey key)
  * Compute the hash value for given partition key values.
  */
 uint64
-compute_partition_hash_value(int partnatts, FmgrInfo *partsupfunc,
+compute_partition_hash_value(int partnatts, FmgrInfo *partsupfunc, Oid *partcollation,
 							 Datum *values, bool *isnull)
 {
 	int			i;
@@ -2678,7 +2757,8 @@ compute_partition_hash_value(int partnatts, FmgrInfo *partsupfunc,
 			 * datatype-specific hash functions of each partition key
 			 * attribute.
 			 */
-			hash = FunctionCall2(&partsupfunc[i], values[i], seed);
+			hash = FunctionCall2Coll(&partsupfunc[i], partcollation[i],
+									 values[i], seed);
 
 			/* Form a single 64-bit hash value */
 			rowHash = hash_combine64(rowHash, DatumGetUInt64(hash));
@@ -2713,7 +2793,8 @@ satisfies_hash_partition(PG_FUNCTION_ARGS)
 		int16		variadic_typlen;
 		bool		variadic_typbyval;
 		char		variadic_typalign;
-		FmgrInfo	partsupfunc[PARTITION_MAX_KEYS];
+		Oid			partcollid[PARTITION_MAX_KEYS];
+		FmgrInfo	partsupfunc[FLEXIBLE_ARRAY_MEMBER];
 	} ColumnsHashData;
 	Oid			parentId;
 	int			modulus;
@@ -2786,6 +2867,8 @@ satisfies_hash_partition(PG_FUNCTION_ARGS)
 			my_extra = (ColumnsHashData *) fcinfo->flinfo->fn_extra;
 			my_extra->relid = parentId;
 			my_extra->nkeys = key->partnatts;
+			memcpy(my_extra->partcollid, key->partcollation,
+				   key->partnatts * sizeof(Oid));
 
 			/* check argument types and save fmgr_infos */
 			for (j = 0; j < key->partnatts; ++j)
@@ -2802,7 +2885,6 @@ satisfies_hash_partition(PG_FUNCTION_ARGS)
 							   &key->partsupfunc[j],
 							   fcinfo->flinfo->fn_mcxt);
 			}
-
 		}
 		else
 		{
@@ -2821,6 +2903,7 @@ satisfies_hash_partition(PG_FUNCTION_ARGS)
 								 &my_extra->variadic_typlen,
 								 &my_extra->variadic_typbyval,
 								 &my_extra->variadic_typalign);
+			my_extra->partcollid[0] = key->partcollation[0];
 
 			/* check argument types */
 			for (j = 0; j < key->partnatts; ++j)
@@ -2862,11 +2945,10 @@ satisfies_hash_partition(PG_FUNCTION_ARGS)
 			if (PG_ARGISNULL(argno))
 				continue;
 
-			Assert(OidIsValid(my_extra->partsupfunc[i].fn_oid));
-
-			hash = FunctionCall2(&my_extra->partsupfunc[i],
-								 PG_GETARG_DATUM(argno),
-								 seed);
+			hash = FunctionCall2Coll(&my_extra->partsupfunc[i],
+									 my_extra->partcollid[i],
+									 PG_GETARG_DATUM(argno),
+									 seed);
 
 			/* Form a single 64-bit hash value */
 			rowHash = hash_combine64(rowHash, DatumGetUInt64(hash));
@@ -2901,11 +2983,10 @@ satisfies_hash_partition(PG_FUNCTION_ARGS)
 			if (isnull[i])
 				continue;
 
-			Assert(OidIsValid(my_extra->partsupfunc[0].fn_oid));
-
-			hash = FunctionCall2(&my_extra->partsupfunc[0],
-								 datum[i],
-								 seed);
+			hash = FunctionCall2Coll(&my_extra->partsupfunc[0],
+									 my_extra->partcollid[0],
+									 datum[i],
+									 seed);
 
 			/* Form a single 64-bit hash value */
 			rowHash = hash_combine64(rowHash, DatumGetUInt64(hash));

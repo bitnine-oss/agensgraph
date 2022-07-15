@@ -6,7 +6,7 @@
  *	  changes should be made with care.
  *
  *
- * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/access/gist.h
@@ -48,6 +48,13 @@
 										 * but not deleted yet */
 
 typedef XLogRecPtr GistNSN;
+
+/*
+ * A bogus LSN / NSN value used during index build. Must be smaller than any
+ * real or fake unlogged LSN, so that after an index build finishes, all the
+ * splits are considered completed.
+ */
+#define GistBuildLSN	((XLogRecPtr) 1)
 
 /*
  * For on-disk compatibility with pre-9.3 servers, NSN is stored as two
@@ -150,6 +157,10 @@ typedef struct GISTENTRY
 
 #define GistPageGetNSN(page) ( PageXLogRecPtrGet(GistPageGetOpaque(page)->nsn))
 #define GistPageSetNSN(page, val) ( PageXLogRecPtrSet(GistPageGetOpaque(page)->nsn, val))
+
+/* For deleted pages we store last xid which could see the page in scan */
+#define GistPageGetDeleteXid(page) ( ((PageHeader) (page))->pd_prune_xid )
+#define GistPageSetDeleteXid(page, val) ( ((PageHeader) (page))->pd_prune_xid = val)
 
 /*
  * Vector of GISTENTRY structs; user-defined methods union and picksplit
