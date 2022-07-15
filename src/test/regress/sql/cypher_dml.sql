@@ -1123,7 +1123,7 @@ MATCH (n:v) RETURN n;
 CREATE (n:v {z: 0}) SET n.z = null;
 CREATE (n:v {z: 0}) SET n.z = (SELECT 'null'::jsonb);
 CREATE (n:v {z: 0}) REMOVE n.z;
-MATCH (n:v) RETURN n;
+MATCH (n:v) RETURN n, graphid_labid(id(n)), pg_typeof(id(n));
 
 SET allow_null_properties = on;
 
