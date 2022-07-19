@@ -66,7 +66,4 @@ extern void makeAlterConfigCommand(PGconn *conn, const char *configitem,
 								   const char *type2, const char *name2,
 								   PQExpBuffer buf);
 
-extern bool isGraphPathConfig(const char *config);
-extern char *extractConfigValue(const char *config);
-
 #endif							/* DUMPUTILS_H */

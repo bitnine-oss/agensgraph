@@ -1995,6 +1995,17 @@ static struct config_bool ConfigureNamesBool[] =
 		NULL, NULL, NULL
 	},
 
+	{
+		{"cypher_allow_unsafe_ddl", PGC_USERSET, CLIENT_CONN_STATEMENT,
+			gettext_noop("Allows unsafe DDL on Cypher."),
+			NULL,
+			GUC_IS_NAME
+		},
+		&cypher_allow_unsafe_ddl,
+		false,
+		NULL, NULL, NULL
+	},
+
 	/* End-of-list marker */
 	{
 		{NULL, 0, 0, NULL, NULL}, NULL, false, NULL, NULL, NULL
