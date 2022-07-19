@@ -24,24 +24,42 @@
 #include "utils/rel.h"
 #include "utils/lsyscache.h"
 #include "utils/syscache.h"
+#include "miscadmin.h"
 
 static void InsertAgLabelTuple(Relation ag_label_desc, Oid laboid,
-							   RangeVar *label, Oid relid, char labkind);
+							   RangeVar *label, Oid relid, char labkind,
+							   bool is_fixed_id, int32 fixed_id);
 static uint16 GetNewLabelId(char *graphname, Oid graphid);
+
+/* Potentially set by pg_upgrade_support functions */
+Oid binary_upgrade_next_ag_label_oid = InvalidOid;
 
 Oid
 label_create_with_catalog(RangeVar *label, Oid relid, char labkind,
-						  Oid labtablespace)
+						  Oid labtablespace, bool is_fixed_id, int32 fixed_id)
 {
 	Relation	ag_label_desc;
 	Oid			laboid;
 
 	ag_label_desc = table_open(LabelRelationId, RowExclusiveLock);
 
-	laboid = GetNewRelFileNode(labtablespace, ag_label_desc,
+	if (IsBinaryUpgrade)
+	{
+		if (!OidIsValid(binary_upgrade_next_ag_label_oid))
+			ereport(ERROR,
+					(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+							errmsg("ag_label OID value not set when in binary upgrade mode")));
+		laboid = binary_upgrade_next_ag_label_oid;
+		binary_upgrade_next_ag_label_oid = InvalidOid;
+	}
+	else
+	{
+		laboid = GetNewRelFileNode(labtablespace, ag_label_desc,
 							   label->relpersistence);
+	}
 
-	InsertAgLabelTuple(ag_label_desc, laboid, label, relid, labkind);
+	InsertAgLabelTuple(ag_label_desc, laboid, label, relid, labkind,
+					   is_fixed_id, fixed_id);
 
 	table_close(ag_label_desc, RowExclusiveLock);
 
@@ -79,7 +97,7 @@ label_drop_with_catalog(Oid laboid)
  */
 static void
 InsertAgLabelTuple(Relation ag_label_desc, Oid laboid, RangeVar *label,
-				   Oid relid, char labkind)
+				   Oid relid, char labkind, bool is_fixed_id, int32 fixed_id)
 {
 	Oid			graphid = get_graphname_oid(label->schemaname);
 	char		labname[NAMEDATALEN]={'\0'};
@@ -90,7 +108,12 @@ InsertAgLabelTuple(Relation ag_label_desc, Oid laboid, RangeVar *label,
 
 	AssertArg(labkind == LABEL_KIND_VERTEX || labkind == LABEL_KIND_EDGE);
 
-	labid = (int32) GetNewLabelId(label->schemaname, graphid);
+	if (is_fixed_id)
+	{
+		labid = fixed_id;
+	}
+	else
+		labid = (int32) GetNewLabelId(label->schemaname, graphid);
 	strcpy(labname, label->relname);
 
 	values[Anum_ag_label_oid - 1] = ObjectIdGetDatum(laboid);
