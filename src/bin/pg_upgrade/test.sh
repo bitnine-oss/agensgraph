@@ -258,6 +258,7 @@ case $testhost in
 esac
 
 pg_dumpall --no-sync -f "$temp_root"/dump2.sql || pg_dumpall2_status=$?
+psql -d regression -c "SELECT regather_graphmeta()"
 psql -d regression -c "SELECT * FROM ag_graphmeta_view" -o "$temp_root"/meta2.out
 pg_ctl -m fast stop
 

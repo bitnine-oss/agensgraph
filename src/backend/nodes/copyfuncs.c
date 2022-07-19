@@ -5001,6 +5001,7 @@ _copyCreateGraphStmt(const CreateGraphStmt *from)
 	COPY_STRING_FIELD(graphname);
 	COPY_NODE_FIELD(authrole);
 	COPY_SCALAR_FIELD(if_not_exists);
+	COPY_SCALAR_FIELD(kind);
 
 	return newnode;
 }
@@ -5016,6 +5017,8 @@ _copyCreateLabelStmt(const CreateLabelStmt *from)
 	COPY_NODE_FIELD(options);
 	COPY_STRING_FIELD(tablespacename);
 	COPY_SCALAR_FIELD(if_not_exists);
+	COPY_SCALAR_FIELD(only_base);
+	COPY_SCALAR_FIELD(fixed_id);
 
 	return newnode;
 }

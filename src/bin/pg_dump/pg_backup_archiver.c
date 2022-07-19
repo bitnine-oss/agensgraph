@@ -79,7 +79,7 @@ static void _doSetSessionAuth(ArchiveHandle *AH, const char *user);
 static void _reconnectToDB(ArchiveHandle *AH, const char *dbname);
 static void _becomeUser(ArchiveHandle *AH, const char *user);
 static void _becomeOwner(ArchiveHandle *AH, TocEntry *te);
-static void _selectOutputSchema(ArchiveHandle *AH, const char *schemaName, teSection sec);
+static void _selectOutputSchema(ArchiveHandle *AH, const char *schemaName);
 static void _selectTablespace(ArchiveHandle *AH, const char *tablespace);
 static void _selectTableAccessMethod(ArchiveHandle *AH, const char *tableam);
 static void processEncodingEntry(ArchiveHandle *AH, TocEntry *te);
@@ -514,7 +514,7 @@ RestoreArchive(Archive *AHX)
 				pg_log_info("dropping %s %s", te->desc, te->tag);
 				/* Select owner and schema as necessary */
 				_becomeOwner(AH, te);
-				_selectOutputSchema(AH, te->namespace, te->section);
+				_selectOutputSchema(AH, te->namespace);
 
 				/*
 				 * Now emit the DROP command, if the object has one.  Note we
@@ -637,10 +637,6 @@ RestoreArchive(Archive *AHX)
 		if (AH->currSchema)
 			free(AH->currSchema);
 		AH->currSchema = NULL;
-
-		if (AH->currGraph)
-			free(AH->currGraph);
-		AH->currGraph = NULL;
 	}
 
 	if (parallel_mode)
@@ -792,7 +788,9 @@ restore_toc_entry(ArchiveHandle *AH, TocEntry *te, bool is_parallel)
 		_printTocEntry(AH, te, false);
 		defnDumped = true;
 
-		if (strcmp(te->desc, "TABLE") == 0)
+		if (strcmp(te->desc, "TABLE") == 0 ||
+			strcmp(te->desc, "ELABEL") == 0 ||
+			strcmp(te->desc, "VLABEL") == 0)
 		{
 			if (AH->lastErrorTE == te)
 			{
@@ -873,7 +871,7 @@ restore_toc_entry(ArchiveHandle *AH, TocEntry *te, bool is_parallel)
 				{
 					pg_log_info("processing %s", te->desc);
 
-					_selectOutputSchema(AH, "pg_catalog", te->section);
+					_selectOutputSchema(AH, "pg_catalog");
 
 					/* Send BLOB COMMENTS data to ExecuteSimpleCommands() */
 					if (strcmp(te->desc, "BLOB COMMENTS") == 0)
@@ -889,7 +887,7 @@ restore_toc_entry(ArchiveHandle *AH, TocEntry *te, bool is_parallel)
 
 					/* Select owner and schema as necessary */
 					_becomeOwner(AH, te);
-					_selectOutputSchema(AH, te->namespace, te->section);
+					_selectOutputSchema(AH, te->namespace);
 
 					pg_log_info("processing data for table \"%s.%s\"",
 								te->namespace, te->tag);
@@ -2318,7 +2316,6 @@ _allocAH(const char *FileSpec, const ArchiveFormat fmt,
 
 	AH->currUser = NULL;		/* unknown */
 	AH->currSchema = NULL;		/* ditto */
-	AH->currGraph = NULL;		/* ditto */
 	AH->currTablespace = NULL;	/* ditto */
 	AH->currTableAm = NULL;		/* ditto */
 
@@ -2966,7 +2963,9 @@ _tocEntryRequired(TocEntry *te, teSection curSection, ArchiveHandle *AH)
 				strcmp(te->desc, "MATERIALIZED VIEW") == 0 ||
 				strcmp(te->desc, "MATERIALIZED VIEW DATA") == 0 ||
 				strcmp(te->desc, "SEQUENCE") == 0 ||
-				strcmp(te->desc, "SEQUENCE SET") == 0)
+				strcmp(te->desc, "SEQUENCE SET") == 0 ||
+				strcmp(te->desc, "ELABEL") == 0 ||
+				strcmp(te->desc, "VLABEL") == 0)
 			{
 				if (!ropt->selTable)
 					return 0;
@@ -3172,6 +3171,8 @@ _doSetFixedOutputState(ArchiveHandle *AH)
 	else
 		ahprintf(AH, "SET row_security = off;\n");
 
+	ahprintf(AH, "SET cypher_allow_unsafe_ddl = on;\n");
+
 	ahprintf(AH, "\n");
 }
 
@@ -3257,11 +3258,6 @@ _reconnectToDB(ArchiveHandle *AH, const char *dbname)
 	if (AH->currSchema)
 		free(AH->currSchema);
 	AH->currSchema = NULL;
-
-	if (AH->currGraph)
-		free(AH->currGraph);
-	AH->currGraph = NULL;
-
 	if (AH->currTablespace)
 		free(AH->currTablespace);
 	AH->currTablespace = NULL;
@@ -3316,7 +3312,7 @@ _becomeOwner(ArchiveHandle *AH, TocEntry *te)
  * in the target database.
  */
 static void
-_selectOutputSchema(ArchiveHandle *AH, const char *schemaName, teSection sec)
+_selectOutputSchema(ArchiveHandle *AH, const char *schemaName)
 {
 	PQExpBuffer qry;
 
@@ -3329,15 +3325,9 @@ _selectOutputSchema(ArchiveHandle *AH, const char *schemaName, teSection sec)
 	if (AH->public.searchpath)
 		return;
 
-	if (!schemaName || *schemaName == '\0')
-		return;
-	else if	(AH->currSchema && strcmp(AH->currSchema, schemaName) == 0)
-	{
-		if (sec < SECTION_POST_DATA)
-			return;					/* no need to do anything */
-		else if (AH->currGraph && strcmp(AH->currGraph, schemaName) == 0)
-			return;
-	}
+	if (!schemaName || *schemaName == '\0' ||
+		(AH->currSchema && strcmp(AH->currSchema, schemaName) == 0))
+		return;					/* no need to do anything */
 
 	qry = createPQExpBuffer();
 
@@ -3345,32 +3335,6 @@ _selectOutputSchema(ArchiveHandle *AH, const char *schemaName, teSection sec)
 					  fmtId(schemaName));
 	if (strcmp(schemaName, "pg_catalog") != 0)
 		appendPQExpBufferStr(qry, ", pg_catalog");
-
-	if (sec == SECTION_POST_DATA)
-	{
-		PQExpBuffer tmp;
-		PGresult   *res;
-
-		/* if the given schema is a graph, set graph_path too */
-
-		tmp = createPQExpBuffer();
-		appendPQExpBuffer(tmp,
-						  "SELECT 1 FROM pg_catalog.ag_graph WHERE graphname = '%s'",
-						  schemaName);
-		res = ExecuteSqlQuery(&AH->public, tmp->data, PGRES_TUPLES_OK);
-
-		if (PQntuples(res) > 0)
-		{
-			appendPQExpBuffer(qry, ";\nSET graph_path = %s", fmtId(schemaName));
-
-			if (AH->currGraph)
-				free(AH->currGraph);
-			AH->currGraph = pg_strdup(schemaName);
-		}
-
-		PQclear(res);
-		destroyPQExpBuffer(tmp);
-	}
 
 	if (RestoringToDB(AH))
 	{
@@ -3534,11 +3498,19 @@ _getObjectDescription(PQExpBuffer buf, TocEntry *te, ArchiveHandle *AH)
 		strcmp(type, "SERVER") == 0 ||
 		strcmp(type, "PUBLICATION") == 0 ||
 		strcmp(type, "SUBSCRIPTION") == 0 ||
-		strcmp(type, "USER MAPPING") == 0)
+		strcmp(type, "USER MAPPING") == 0 ||
+		strcmp(type, "GRAPH") == 0)
 	{
 		appendPQExpBuffer(buf, "%s ", type);
 		if (te->namespace && *te->namespace)
 			appendPQExpBuffer(buf, "%s.", fmtId(te->namespace));
+		appendPQExpBufferStr(buf, fmtId(te->tag));
+		return;
+	}
+
+	if (strcmp(type, "ELABEL") == 0 || strcmp(type, "VLABEL") == 0)
+	{
+		appendPQExpBuffer(buf, "%s ", type);
 		appendPQExpBufferStr(buf, fmtId(te->tag));
 		return;
 	}
@@ -3597,7 +3569,7 @@ _printTocEntry(ArchiveHandle *AH, TocEntry *te, bool isData)
 
 	/* Select owner, schema, tablespace and default AM as necessary */
 	_becomeOwner(AH, te);
-	_selectOutputSchema(AH, te->namespace, te->section);
+	_selectOutputSchema(AH, te->namespace);
 	_selectTablespace(AH, te->tablespace);
 	_selectTableAccessMethod(AH, te->tableam);
 
@@ -3668,6 +3640,10 @@ _printTocEntry(ArchiveHandle *AH, TocEntry *te, bool isData)
 	{
 		ahprintf(AH, "CREATE SCHEMA %s;\n\n\n", fmtId(te->tag));
 	}
+	else if (ropt->noOwner && strcmp(te->desc, "GRAPH") == 0)
+	{
+		ahprintf(AH, "CREATE GRAPH ONLY %s;\n\n\n", fmtId(te->tag));
+	}
 	else
 	{
 		if (te->defn && strlen(te->defn) > 0)
@@ -3710,7 +3686,10 @@ _printTocEntry(ArchiveHandle *AH, TocEntry *te, bool isData)
 			strcmp(te->desc, "SERVER") == 0 ||
 			strcmp(te->desc, "STATISTICS") == 0 ||
 			strcmp(te->desc, "PUBLICATION") == 0 ||
-			strcmp(te->desc, "SUBSCRIPTION") == 0)
+			strcmp(te->desc, "SUBSCRIPTION") == 0 ||
+			strcmp(te->desc, "GRAPH") == 0 ||
+			strcmp(te->desc, "ELABEL") == 0 ||
+			strcmp(te->desc, "VLABEL") == 0)
 		{
 			PQExpBuffer temp = createPQExpBuffer();
 
@@ -4065,11 +4044,6 @@ restore_toc_entries_prefork(ArchiveHandle *AH, TocEntry *pending_list)
 	if (AH->currSchema)
 		free(AH->currSchema);
 	AH->currSchema = NULL;
-
-	if (AH->currGraph)
-		free(AH->currGraph);
-	AH->currGraph = NULL;
-
 	if (AH->currTablespace)
 		free(AH->currTablespace);
 	AH->currTablespace = NULL;
@@ -4759,7 +4733,9 @@ identify_locking_dependencies(ArchiveHandle *AH, TocEntry *te)
 
 		if (depid <= AH->maxDumpId && AH->tocsByDumpId[depid] != NULL &&
 			((strcmp(AH->tocsByDumpId[depid]->desc, "TABLE DATA") == 0) ||
-			 strcmp(AH->tocsByDumpId[depid]->desc, "TABLE") == 0))
+			  strcmp(AH->tocsByDumpId[depid]->desc, "TABLE") == 0 ||
+			  strcmp(AH->tocsByDumpId[depid]->desc, "ELABEL") == 0 ||
+			  strcmp(AH->tocsByDumpId[depid]->desc, "VLABEL") == 0 ))
 			lockids[nlockids++] = depid;
 	}
 
@@ -4870,7 +4846,6 @@ CloneArchive(ArchiveHandle *AH)
 	clone->connCancel = NULL;
 	clone->currUser = NULL;
 	clone->currSchema = NULL;
-	clone->currGraph = NULL;
 	clone->currTablespace = NULL;
 
 	/* savedPassword must be local in case we change it while connecting */
@@ -4960,8 +4935,6 @@ DeCloneArchive(ArchiveHandle *AH)
 		free(AH->currUser);
 	if (AH->currSchema)
 		free(AH->currSchema);
-	if (AH->currGraph)
-		free(AH->currGraph);
 	if (AH->currTablespace)
 		free(AH->currTablespace);
 	if (AH->currTableAm)
