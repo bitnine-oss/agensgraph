@@ -342,7 +342,6 @@ struct _archiveHandle
 	/* these vars track state to avoid sending redundant SET commands */
 	char	   *currUser;		/* current username, or NULL if unknown */
 	char	   *currSchema;		/* current schema, or NULL */
-	char	   *currGraph;		/* current graph, or NULL */
 	char	   *currTablespace; /* current tablespace, or NULL */
 	char	   *currTableAm;	/* current table access method, or NULL */
 

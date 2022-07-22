@@ -1,0 +1,1 @@
+ALTER DATABASE regression SET GRAPH_PATH TO ddl;

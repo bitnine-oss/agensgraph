@@ -149,6 +149,8 @@ typedef struct _namespaceInfo
 	char	   *rnspacl;
 	char	   *initnspacl;
 	char	   *initrnspacl;
+	bool		ag_isgraph;
+	Oid			ag_graphoid;
 } NamespaceInfo;
 
 typedef struct _extensionInfo
@@ -326,6 +328,9 @@ typedef struct _tableInfo
 	char	   *partbound;		/* partition bound definition */
 	bool		needs_override; /* has GENERATED ALWAYS AS IDENTITY */
 	char	   *amname;			/* relation access method */
+	char		ag_labkind;
+	Oid 		ag_laboid;
+	int			ag_labid;
 
 	/*
 	 * Stuff computed only for dumpable tables.
@@ -373,6 +378,7 @@ typedef struct _indxInfo
 	Oid			parentidx;		/* if partitioned, parent index OID */
 	/* if there is an associated constraint object, its dumpId: */
 	DumpId		indexconstraint;
+	bool		ispropidx;		/* Is it cypher property index? */
 } IndxInfo;
 
 typedef struct _indexAttachInfo

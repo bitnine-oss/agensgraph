@@ -14,6 +14,7 @@
 
 extern char *graph_path;
 extern bool enableGraphDML;
+extern bool cypher_allow_unsafe_ddl;
 
 extern char *get_graph_path(bool lookup_cache);
 extern Oid get_graph_path_oid(void);
