@@ -1466,7 +1466,6 @@ makeComponents(List *pattern)
 		List	   *repr;
 		ListCell   *lc;
 		List	   *c;
-		ListCell   *prev;
 
 		/* find the first connected component */
 		repr = NIL;
@@ -1494,7 +1493,6 @@ makeComponents(List *pattern)
 
 		/* find other connected components and merge them to `repr` */
 		Assert(lc != NULL);
-		prev = lc;
 		for_each_cell(lc, components, lnext(components, lc))
 		{
 			c = lfirst(lc);
@@ -1503,12 +1501,7 @@ makeComponents(List *pattern)
 			{
 				list_concat(repr, c);
 
-				components = list_delete_cell(components, lc);
-				lc = prev;
-			}
-			else
-			{
-				prev = lc;
+				components = foreach_delete_current(components, lc);
 			}
 		}
 
@@ -3446,7 +3439,6 @@ transform_prop_constr_worker(Node *node, prop_constr_context *ctx)
 		Node	   *k;
 		Node	   *v;
 		Const	   *pathelem;
-		ListCell   *prev;
 
 		k = lfirst(le);
 		le = lnext(m->keyvals, le);
@@ -3457,7 +3449,6 @@ transform_prop_constr_worker(Node *node, prop_constr_context *ctx)
 		pathelem = makeConst(TEXTOID, -1, DEFAULT_COLLATION_OID, -1,
 							 CStringGetTextDatum(strVal(k)), false, false);
 
-		prev = list_tail(ctx->pathelems);
 		ctx->pathelems = lappend(ctx->pathelems, pathelem);
 
 		if (IsA(v, CypherMapExpr))
@@ -3718,27 +3709,20 @@ findFutureVertex(ParseState *pstate, Index varno, AttrNumber varattno,
 static List *
 adjustFutureVertices(List *future_vertices, RangeTblEntry *rte, int rtindex)
 {
-	ListCell   *prev;
 	ListCell   *le;
-	ListCell   *next;
 
 	AssertArg(rte->rtekind == RTE_SUBQUERY);
 
-	prev = NULL;
-	for (le = list_head(future_vertices); le != NULL; le = next)
+	foreach(le, future_vertices)
 	{
 		FutureVertex *fv = lfirst(le);
 		bool		found;
 		ListCell   *lt;
 
-		next = lnext(future_vertices, le);
-
 		/* set `varno` of new future vertex to its `rtindex` */
 		if (fv->varno == InvalidAttrNumber)
 		{
 			fv->varno = rtindex;
-
-			prev = le;
 			continue;
 		}
 
@@ -3775,9 +3759,7 @@ adjustFutureVertices(List *future_vertices, RangeTblEntry *rte, int rtindex)
 		}
 
 		if (!found)
-			future_vertices = list_delete_cell(future_vertices, le);
-		else
-			prev = le;
+			future_vertices = foreach_delete_current(future_vertices, le);
 	}
 
 	return future_vertices;
@@ -4047,20 +4029,16 @@ makeVertexRTE(ParseState *parentParseState, char *varname, char *labname)
 static List *
 removeResolvedFutureVertices(List *future_vertices)
 {
-	ListCell   *prev;
 	ListCell   *le;
 	ListCell   *next;
 
-	prev = NULL;
-	for (le = list_head(future_vertices); le != NULL; le = next)
+	foreach(le, future_vertices)
 	{
 		FutureVertex *fv = lfirst(le);
-
-		next = lnext(future_vertices, le);
-		if (fv->expr == NULL)
-			prev = le;
-		else
-			future_vertices = list_delete_cell(future_vertices, le);
+		if (fv->expr != NULL)
+		{
+			future_vertices = foreach_delete_current(future_vertices, le);
+		}
 	}
 
 	return future_vertices;

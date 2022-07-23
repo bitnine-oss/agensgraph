@@ -17930,6 +17930,7 @@ cypher_return:
 					n->order = $4;
 					n->skip = $5;
 					n->limit = $6;
+					n->where = NULL;
 					$$ = (Node *) n;
 				}
 		;
