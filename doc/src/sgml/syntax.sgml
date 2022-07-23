@@ -333,7 +333,7 @@ SELECT 'foo'      'bar';
    </sect3>
 
    <sect3 id="sql-syntax-strings-escape">
-    <title>String Constants with C-style Escapes</title>
+    <title>String Constants with C-Style Escapes</title>
 
      <indexterm zone="sql-syntax-strings-escape">
       <primary>escape string syntax</primary>
@@ -392,7 +392,7 @@ SELECT 'foo'      'bar';
          <literal>\<replaceable>o</replaceable></literal>,
          <literal>\<replaceable>oo</replaceable></literal>,
          <literal>\<replaceable>ooo</replaceable></literal>
-         (<replaceable>o</replaceable> = 0 - 7)
+         (<replaceable>o</replaceable> = 0&ndash;7)
         </entry>
         <entry>octal byte value</entry>
        </row>
@@ -400,7 +400,7 @@ SELECT 'foo'      'bar';
         <entry>
          <literal>\x<replaceable>h</replaceable></literal>,
          <literal>\x<replaceable>hh</replaceable></literal>
-         (<replaceable>h</replaceable> = 0 - 9, A - F)
+         (<replaceable>h</replaceable> = 0&ndash;9, A&ndash;F)
         </entry>
         <entry>hexadecimal byte value</entry>
        </row>
@@ -408,7 +408,7 @@ SELECT 'foo'      'bar';
         <entry>
          <literal>\u<replaceable>xxxx</replaceable></literal>,
          <literal>\U<replaceable>xxxxxxxx</replaceable></literal>
-         (<replaceable>x</replaceable> = 0 - 9, A - F)
+         (<replaceable>x</replaceable> = 0&ndash;9, A&ndash;F)
         </entry>
         <entry>16 or 32-bit hexadecimal Unicode character value</entry>
        </row>
@@ -554,7 +554,7 @@ U&amp;'d!0061t!+000061' UESCAPE '!'
    </sect3>
 
    <sect3 id="sql-syntax-dollar-quoting">
-    <title>Dollar-quoted String Constants</title>
+    <title>Dollar-Quoted String Constants</title>
 
      <indexterm>
       <primary>dollar quoting</primary>
@@ -634,7 +634,7 @@ $function$
    </sect3>
 
    <sect3 id="sql-syntax-bit-strings">
-    <title>Bit-string Constants</title>
+    <title>Bit-String Constants</title>
 
     <indexterm zone="sql-syntax-bit-strings">
      <primary>bit string</primary>

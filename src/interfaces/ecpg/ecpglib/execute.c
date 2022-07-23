@@ -19,19 +19,18 @@
 #include <math.h>
 
 #include "catalog/pg_type_d.h"
-
-#include "ecpgtype.h"
-#include "ecpglib.h"
 #include "ecpgerrno.h"
+#include "ecpglib.h"
 #include "ecpglib_extern.h"
-#include "sqlca.h"
-#include "sqlda-native.h"
-#include "sqlda-compat.h"
-#include "sql3types.h"
-#include "pgtypes_numeric.h"
+#include "ecpgtype.h"
 #include "pgtypes_date.h"
-#include "pgtypes_timestamp.h"
 #include "pgtypes_interval.h"
+#include "pgtypes_numeric.h"
+#include "pgtypes_timestamp.h"
+#include "sql3types.h"
+#include "sqlca.h"
+#include "sqlda-compat.h"
+#include "sqlda-native.h"
 
 /*
  *	This function returns a newly malloced string that has ' and \
@@ -544,13 +543,11 @@ ecpg_store_input(const int lineno, const bool force_indicator, const struct vari
 			if (*(long *) var->ind_value < 0L)
 				*tobeinserted_p = NULL;
 			break;
-#ifdef HAVE_LONG_LONG_INT
 		case ECPGt_long_long:
 		case ECPGt_unsigned_long_long:
 			if (*(long long int *) var->ind_value < (long long) 0)
 				*tobeinserted_p = NULL;
 			break;
-#endif							/* HAVE_LONG_LONG_INT */
 		case ECPGt_NO_INDICATOR:
 			if (force_indicator == false)
 			{
@@ -682,7 +679,7 @@ ecpg_store_input(const int lineno, const bool force_indicator, const struct vari
 
 				*tobeinserted_p = mallocedval;
 				break;
-#ifdef HAVE_LONG_LONG_INT
+
 			case ECPGt_long_long:
 				if (!(mallocedval = ecpg_alloc(asize * 30, lineno)))
 					return false;
@@ -720,7 +717,7 @@ ecpg_store_input(const int lineno, const bool force_indicator, const struct vari
 
 				*tobeinserted_p = mallocedval;
 				break;
-#endif							/* HAVE_LONG_LONG_INT */
+
 			case ECPGt_float:
 				if (!(mallocedval = ecpg_alloc(asize * 25, lineno)))
 					return false;
@@ -2280,32 +2277,9 @@ ECPGdo(const int lineno, const int compat, const int force_indicator, const char
 {
 	va_list		args;
 	bool		ret;
-	const char *real_connection_name = NULL;
-
-	real_connection_name = connection_name;
-
-	if (!query)
-	{
-		ecpg_raise(lineno, ECPG_EMPTY, ECPG_SQLSTATE_ECPG_INTERNAL_ERROR, NULL);
-		return false;
-	}
-
-	/* Handle the EXEC SQL EXECUTE... statement */
-	if (ECPGst_execute == st)
-	{
-		real_connection_name = ecpg_get_con_name_by_declared_name(query);
-		if (real_connection_name == NULL)
-		{
-			/*
-			 * If can't get the connection name by declared name then using
-			 * connection name coming from the parameter connection_name
-			 */
-			real_connection_name = connection_name;
-		}
-	}
 
 	va_start(args, query);
-	ret = ecpg_do(lineno, compat, force_indicator, real_connection_name,
+	ret = ecpg_do(lineno, compat, force_indicator, connection_name,
 				  questionmarks, st, query, args);
 	va_end(args);
 

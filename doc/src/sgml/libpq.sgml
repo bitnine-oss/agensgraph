@@ -1,7 +1,7 @@
 <!-- doc/src/sgml/libpq.sgml -->
 
 <chapter id="libpq">
- <title><application>libpq</application> - C Library</title>
+ <title><application>libpq</application> &mdash; C Library</title>
 
  <indexterm zone="libpq">
   <primary>libpq</primary>
@@ -993,10 +993,14 @@ postgresql://%2Fvar%2Flib%2Fpostgresql/dbname
         your machine supports IPv6, you can also use those addresses.
         TCP/IP communication is
         always used when a nonempty string is specified for this parameter.
+        If this parameter is not specified, the value of <literal>host</literal>
+        will be looked up to find the corresponding IP address &mdash; or, if
+        <literal>host</literal> specifies an IP address, that value will be
+        used directly.
        </para>
 
        <para>
-        Using <literal>hostaddr</literal> instead of <literal>host</literal> allows the
+        Using <literal>hostaddr</literal> allows the
         application to avoid a host name look-up, which might be important
         in applications with time constraints. However, a host name is
         required for GSSAPI or SSPI authentication
@@ -1114,6 +1118,28 @@ postgresql://%2Fvar%2Flib%2Fpostgresql/dbname
        Defaults to <filename>~/.pgpass</filename>, or
        <filename>%APPDATA%\postgresql\pgpass.conf</filename> on Microsoft Windows.
        (No error is reported if this file does not exist.)
+      </para>
+      </listitem>
+     </varlistentry>
+
+     <varlistentry id="libpq-connect-channel-binding" xreflabel="channel_binding">
+      <term><literal>channel_binding</literal></term>
+      <listitem>
+      <para>
+        This option controls the client's use of channel binding. A setting
+        of <literal>require</literal> means that the connection must employ
+        channel binding, <literal>prefer</literal> means that the client will
+        choose channel binding if available, and <literal>disable</literal>
+        prevents the use of channel binding. The default
+        is <literal>prefer</literal> if
+        <productname>PostgreSQL</productname> is compiled with SSL support;
+        otherwise the default is <literal>disable</literal>.
+      </para>
+      <para>
+        Channel binding is a method for the server to authenticate itself to
+        the client. It is only supported over SSL connections
+        with <productname>PostgreSQL</productname> 11 or later servers using
+        the <literal>SCRAM</literal> authentication method.
       </para>
       </listitem>
      </varlistentry>
@@ -4664,7 +4690,7 @@ int PQflush(PGconn *conn);
  </sect1>
 
  <sect1 id="libpq-single-row-mode">
-  <title>Retrieving Query Results Row-By-Row</title>
+  <title>Retrieving Query Results Row-by-Row</title>
 
   <indexterm zone="libpq-single-row-mode">
    <primary>libpq</primary>
@@ -6863,6 +6889,16 @@ myEventProc(PGEventId evtId, void *evtInfo, void *passThrough)
     <listitem>
      <para>
       <indexterm>
+       <primary><envar>PGCHANNELBINDING</envar></primary>
+      </indexterm>
+      <envar>PGCHANNELBINDING</envar> behaves the same as the <xref
+      linkend="libpq-connect-channel-binding"/> connection parameter.
+     </para>
+    </listitem>
+
+    <listitem>
+     <para>
+      <indexterm>
        <primary><envar>PGSERVICE</envar></primary>
       </indexterm>
       <envar>PGSERVICE</envar> behaves the same as the <xref
@@ -7599,7 +7635,7 @@ ldap://ldap.acme.com/cn=dbserver,cn=hosts?pgconnectinfo?base?(objectclass=*)
      <row>
       <entry><literal>verify-ca</literal></entry>
       <entry>Yes</entry>
-      <entry><literal>Depends on CA</literal>-policy</entry>
+      <entry>Depends on CA policy</entry>
       <entry>I want my data encrypted, and I accept the overhead. I want to be
        sure that I connect to a server that I trust.
       </entry>
@@ -8328,9 +8364,10 @@ main(int argc, char **argv)
  *
  * CREATE SCHEMA testlibpq3;
  * SET search_path = testlibpq3;
+ * SET standard_conforming_strings = ON;
  * CREATE TABLE test1 (i int4, t text, b bytea);
- * INSERT INTO test1 values (1, 'joe''s place', '\\000\\001\\002\\003\\004');
- * INSERT INTO test1 values (2, 'ho there', '\\004\\003\\002\\001\\000');
+ * INSERT INTO test1 values (1, 'joe''s place', '\000\001\002\003\004');
+ * INSERT INTO test1 values (2, 'ho there', '\004\003\002\001\000');
  *
  * The expected output is:
  *

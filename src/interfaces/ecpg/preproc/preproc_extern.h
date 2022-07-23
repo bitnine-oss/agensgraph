@@ -3,9 +3,8 @@
 #ifndef _ECPG_PREPROC_EXTERN_H
 #define _ECPG_PREPROC_EXTERN_H
 
-#include "type.h"
-
 #include "common/keywords.h"
+#include "type.h"
 
 #ifndef CHAR_BIT
 #include <limits.h>
@@ -48,7 +47,6 @@ extern struct _include_path *include_paths;
 extern struct cursor *cur;
 extern struct typedefs *types;
 extern struct _defines *defines;
-extern struct declared_name_st *g_declared_list;
 extern struct ECPGtype ecpg_no_indicator;
 extern struct variable no_indicator;
 extern struct arguments *argsinsert;
@@ -70,8 +68,6 @@ extern void output_statement(char *, int, enum ECPG_statement_type);
 extern void output_prepare_statement(char *, char *);
 extern void output_deallocate_prepare_statement(char *);
 extern void output_simple_statement(char *, int);
-extern void output_declare_statement(char *);
-extern void output_cursor_statement(int, char *, char *, char *, int, enum ECPG_statement_type);
 extern char *hashline_number(void);
 extern int	base_yyparse(void);
 extern int	base_yylex(void);

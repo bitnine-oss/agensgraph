@@ -29,14 +29,13 @@
 #include <sys/resource.h>
 #endif
 
-#include "pg_regress.h"
-
 #include "common/logging.h"
 #include "common/restricted_token.h"
 #include "common/username.h"
 #include "getopt_long.h"
 #include "libpq/pqcomm.h"		/* needed for UNIXSOCK_PATH() */
 #include "pg_config_paths.h"
+#include "pg_regress.h"
 #include "portability/instr_time.h"
 
 /* for resultmap we need a list of pairs of strings */
@@ -862,6 +861,14 @@ initialize_environment(void)
 			doputenv("PGUSER", user);
 
 		/*
+		 * However, we *don't* honor PGDATABASE, since we certainly don't wish
+		 * to connect to whatever database the user might like as default.
+		 * (Most tests override PGDATABASE anyway, but there are some ECPG
+		 * test cases that don't.)
+		 */
+		unsetenv("PGDATABASE");
+
+		/*
 		 * Report what we're connecting to
 		 */
 		pghost = getenv("PGHOST");
@@ -1186,9 +1193,15 @@ spawn_process(const char *cmdline)
 	PROCESS_INFORMATION pi;
 	char	   *cmdline2;
 	HANDLE		restrictedToken;
+	const char *comspec;
+
+	/* Find CMD.EXE location using COMSPEC, if it's set */
+	comspec = getenv("COMSPEC");
+	if (comspec == NULL)
+		comspec = "CMD";
 
 	memset(&pi, 0, sizeof(pi));
-	cmdline2 = psprintf("cmd /c \"%s\"", cmdline);
+	cmdline2 = psprintf("\"%s\" /c \"%s\"", comspec, cmdline);
 
 	if ((restrictedToken =
 		 CreateRestrictedProcess(cmdline2, &pi)) == 0)

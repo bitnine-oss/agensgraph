@@ -556,7 +556,7 @@ elif test "$PORTNAME" = "hpux"; then
   PGAC_PROG_CXX_CFLAGS_OPT([+Olibmerrno])
 fi
 
-AC_SUBST(CFLAGS_VECTOR, $CFLAGS_VECTOR)
+AC_SUBST(CFLAGS_VECTOR)
 
 # Determine flags used to emit bitcode for JIT inlining. Need to test
 # for behaviour changing compiler flags, to keep compatibility with
@@ -616,8 +616,11 @@ CXXFLAGS="$CXXFLAGS $user_CXXFLAGS"
 BITCODE_CFLAGS="$BITCODE_CFLAGS $user_BITCODE_CFLAGS"
 BITCODE_CXXFLAGS="$BITCODE_CXXFLAGS $user_BITCODE_CXXFLAGS"
 
-AC_SUBST(BITCODE_CFLAGS, $BITCODE_CFLAGS)
-AC_SUBST(BITCODE_CXXFLAGS, $BITCODE_CXXFLAGS)
+AC_SUBST(BITCODE_CFLAGS)
+AC_SUBST(BITCODE_CXXFLAGS)
+
+# The template file must set up CFLAGS_SL; we don't support user override
+AC_SUBST(CFLAGS_SL)
 
 # Check if the compiler still works with the final flag settings
 # (note, we're not checking that for CXX, which is optional)
@@ -1139,6 +1142,8 @@ AC_SEARCH_LIBS(sched_yield, rt)
 AC_SEARCH_LIBS(gethostbyname_r, nsl)
 # Cygwin:
 AC_SEARCH_LIBS(shmget, cygipc)
+# *BSD:
+AC_SEARCH_LIBS(backtrace_symbols, execinfo)
 
 if test "$with_readline" = yes; then
   PGAC_CHECK_READLINE
@@ -1281,6 +1286,7 @@ AC_HEADER_STDBOOL
 AC_CHECK_HEADERS(m4_normalize([
 	atomic.h
 	copyfile.h
+	execinfo.h
 	fp_class.h
 	getopt.h
 	ieeefp.h
@@ -1479,7 +1485,6 @@ PGAC_STRUCT_SOCKADDR_STORAGE_MEMBERS
 PGAC_STRUCT_ADDRINFO
 AC_TYPE_INTPTR_T
 AC_TYPE_UINTPTR_T
-AC_TYPE_LONG_LONG_INT
 
 PGAC_TYPE_LOCALE_T
 
@@ -1548,6 +1553,26 @@ case $host_cpu in
     if test x"$pgac_cv_have_ppc_mutex_hint" = xyes ; then
 	AC_DEFINE(HAVE_PPC_LWARX_MUTEX_HINT, 1, [Define to 1 if the assembler supports PPC's LWARX mutex hint bit.])
     fi
+    # Check if compiler accepts "i"(x) when __builtin_constant_p(x).
+    AC_CACHE_CHECK([whether __builtin_constant_p(x) implies "i"(x) acceptance],
+                   [pgac_cv_have_i_constraint__builtin_constant_p],
+    [AC_COMPILE_IFELSE([AC_LANG_PROGRAM(
+    [static inline int
+     addi(int ra, int si)
+     {
+         int res = 0;
+         if (__builtin_constant_p(si))
+             __asm__ __volatile__(
+                 " addi %0,%1,%2\n" : "=r"(res) : "b"(ra), "i"(si));
+         return res;
+     }
+     int test_adds(int x) { return addi(3, x) + addi(x, 5); }], [])],
+    [pgac_cv_have_i_constraint__builtin_constant_p=yes],
+    [pgac_cv_have_i_constraint__builtin_constant_p=no])])
+    if test x"$pgac_cv_have_i_constraint__builtin_constant_p" = xyes ; then
+      AC_DEFINE(HAVE_I_CONSTRAINT__BUILTIN_CONSTANT_P, 1,
+                [Define to 1 if __builtin_constant_p(x) implies "i"(x) acceptance.])
+    fi
   ;;
 esac
 
@@ -1577,6 +1602,13 @@ AC_CHECK_SIZEOF([bool], [],
 #include <stdbool.h>
 #endif])
 
+dnl We use <stdbool.h> if we have it and it declares type bool as having
+dnl size 1.  Otherwise, c.h will fall back to declaring bool as unsigned char.
+if test "$ac_cv_header_stdbool_h" = yes -a "$ac_cv_sizeof_bool" = 1; then
+  AC_DEFINE([PG_USE_STDBOOL], 1,
+            [Define to 1 to use <stdbool.h> to define type bool.])
+fi
+
 
 ##
 ## Functions, global variables
@@ -1595,6 +1627,7 @@ LIBS_including_readline="$LIBS"
 LIBS=`echo "$LIBS" | sed -e 's/-ledit//g' -e 's/-lreadline//g'`
 
 AC_CHECK_FUNCS(m4_normalize([
+	backtrace_symbols
 	cbrt
 	clock_gettime
 	copyfile
@@ -1603,6 +1636,7 @@ AC_CHECK_FUNCS(m4_normalize([
 	getpeerucred
 	getrlimit
 	mbstowcs_l
+	memset_s
 	memmove
 	poll
 	posix_fallocate
@@ -1700,6 +1734,7 @@ fi
 
 AC_REPLACE_FUNCS(m4_normalize([
 	dlopen
+	explicit_bzero
 	fls
 	getopt
 	getrusage
@@ -1914,39 +1949,6 @@ PGAC_C_BUILTIN_OP_OVERFLOW
 AC_CHECK_SIZEOF([void *])
 AC_CHECK_SIZEOF([size_t])
 AC_CHECK_SIZEOF([long])
-
-# Decide whether float4 is passed by value: user-selectable, enabled by default
-AC_MSG_CHECKING([whether to build with float4 passed by value])
-PGAC_ARG_BOOL(enable, float4-byval, yes, [disable float4 passed by value],
-              [AC_DEFINE([USE_FLOAT4_BYVAL], 1,
-                         [Define to 1 if you want float4 values to be passed by value. (--enable-float4-byval)])
-               float4passbyval=true],
-              [float4passbyval=false])
-AC_MSG_RESULT([$enable_float4_byval])
-AC_DEFINE_UNQUOTED([FLOAT4PASSBYVAL], [$float4passbyval], [float4 values are passed by value if 'true', by reference if 'false'])
-
-# Decide whether float8 is passed by value.
-# Note: this setting also controls int8 and related types such as timestamp.
-# If sizeof(Datum) >= 8, this is user-selectable, enabled by default.
-# If not, trying to select it is an error.
-AC_MSG_CHECKING([whether to build with float8 passed by value])
-if test $ac_cv_sizeof_void_p -ge 8 ; then
-  PGAC_ARG_BOOL(enable, float8-byval, yes, [disable float8 passed by value])
-else
-  PGAC_ARG_BOOL(enable, float8-byval, no, [disable float8 passed by value])
-  if test "$enable_float8_byval" = yes ; then
-    AC_MSG_ERROR([--enable-float8-byval is not supported on 32-bit platforms.])
-  fi
-fi
-if test "$enable_float8_byval" = yes ; then
-  AC_DEFINE([USE_FLOAT8_BYVAL], 1,
-            [Define to 1 if you want float8, int8, etc values to be passed by value. (--enable-float8-byval)])
-  float8passbyval=true
-else
-  float8passbyval=false
-fi
-AC_MSG_RESULT([$enable_float8_byval])
-AC_DEFINE_UNQUOTED([FLOAT8PASSBYVAL], [$float8passbyval], [float8, int8, and related values are passed by value if 'true', by reference if 'false'])
 
 # Determine memory alignment requirements for the basic C data types.
 
@@ -2237,6 +2239,10 @@ if test "$with_perl" = yes; then
   # On most platforms, if perl.h is there then libperl.so will be too, but at
   # this writing Debian packages them separately.  There is no known reason to
   # waste cycles on separate probes for the Tcl or Python libraries, though.
+  # On some Red Hat platforms, the link attempt can fail if we don't use
+  # CFLAGS_SL while building the test program.
+  ac_save_CFLAGS=$CFLAGS
+  CFLAGS="$CFLAGS $CFLAGS_SL"
   pgac_save_LIBS=$LIBS
   LIBS="$perl_embed_ldflags"
   AC_MSG_CHECKING([for libperl])
@@ -2248,6 +2254,7 @@ if test "$with_perl" = yes; then
     [AC_MSG_RESULT(no)
      AC_MSG_ERROR([libperl library is required for Perl])])
   LIBS=$pgac_save_LIBS
+  CFLAGS=$ac_save_CFLAGS
   CPPFLAGS=$ac_save_CPPFLAGS
 fi
 

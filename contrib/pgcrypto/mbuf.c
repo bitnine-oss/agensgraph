@@ -31,8 +31,8 @@
 
 #include "postgres.h"
 
-#include "px.h"
 #include "mbuf.h"
+#include "px.h"
 
 #define STEP  (16*1024)
 
@@ -94,8 +94,6 @@ prepare_room(MBuf *mbuf, int block_len)
 	mbuf->data_end = newbuf + (mbuf->data_end - mbuf->data);
 	mbuf->read_pos = newbuf + (mbuf->read_pos - mbuf->data);
 	mbuf->data = newbuf;
-
-	return;
 }
 
 int

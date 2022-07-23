@@ -17,10 +17,10 @@
 
 #include <ctype.h>
 
+#include "access/detoast.h"
 #include "access/htup_details.h"
 #include "access/transam.h"
 #include "access/tupconvert.h"
-#include "access/tuptoaster.h"
 #include "catalog/pg_proc.h"
 #include "catalog/pg_type.h"
 #include "commands/defrem.h"
@@ -34,6 +34,7 @@
 #include "parser/parse_coerce.h"
 #include "parser/parse_type.h"
 #include "parser/scansup.h"
+#include "plpgsql.h"
 #include "storage/proc.h"
 #include "tcop/tcopprot.h"
 #include "tcop/utility.h"
@@ -47,9 +48,6 @@
 #include "utils/snapmgr.h"
 #include "utils/syscache.h"
 #include "utils/typcache.h"
-
-#include "plpgsql.h"
-
 
 typedef struct
 {
@@ -1191,8 +1189,6 @@ plpgsql_exec_event_trigger(PLpgSQL_function *func, EventTriggerData *trigdata)
 	 * Pop the error context stack
 	 */
 	error_context_stack = plerrcontext.previous;
-
-	return;
 }
 
 /*
@@ -6085,6 +6081,7 @@ exec_eval_simple_expr(PLpgSQL_execstate *estate,
 	LocalTransactionId curlxid = MyProc->lxid;
 	CachedPlan *cplan;
 	void	   *save_setup_arg;
+	bool		need_snapshot;
 	MemoryContext oldcontext;
 
 	/*
@@ -6156,12 +6153,19 @@ exec_eval_simple_expr(PLpgSQL_execstate *estate,
 
 	/*
 	 * We have to do some of the things SPI_execute_plan would do, in
-	 * particular advance the snapshot if we are in a non-read-only function.
-	 * Without this, stable functions within the expression would fail to see
-	 * updates made so far by our own function.
+	 * particular push a new snapshot so that stable functions within the
+	 * expression can see updates made so far by our own function.  However,
+	 * we can skip doing that (and just invoke the expression with the same
+	 * snapshot passed to our function) in some cases, which is useful because
+	 * it's quite expensive relative to the cost of a simple expression.  We
+	 * can skip it if the expression contains no stable or volatile functions;
+	 * immutable functions shouldn't need to see our updates.  Also, if this
+	 * is a read-only function, we haven't made any updates so again it's okay
+	 * to skip.
 	 */
 	oldcontext = MemoryContextSwitchTo(get_eval_mcontext(estate));
-	if (!estate->readonly_func)
+	need_snapshot = (expr->expr_simple_mutable && !estate->readonly_func);
+	if (need_snapshot)
 	{
 		CommandCounterIncrement();
 		PushActiveSnapshot(GetTransactionSnapshot());
@@ -6186,7 +6190,7 @@ exec_eval_simple_expr(PLpgSQL_execstate *estate,
 
 	estate->paramLI->parserSetupArg = save_setup_arg;
 
-	if (!estate->readonly_func)
+	if (need_snapshot)
 		PopActiveSnapshot();
 
 	MemoryContextSwitchTo(oldcontext);
@@ -8057,6 +8061,8 @@ exec_save_simple_expr(PLpgSQL_expr *expr, CachedPlan *cplan)
 	/* Also stash away the expression result type */
 	expr->expr_simple_type = exprType((Node *) tle_expr);
 	expr->expr_simple_typmod = exprTypmod((Node *) tle_expr);
+	/* We also want to remember if it is immutable or not */
+	expr->expr_simple_mutable = contain_mutable_functions((Node *) tle_expr);
 }
 
 /*
@@ -8348,7 +8354,7 @@ assign_simple_var(PLpgSQL_execstate *estate, PLpgSQL_var *var,
 		 * pain, but there's little choice.
 		 */
 		oldcxt = MemoryContextSwitchTo(get_eval_mcontext(estate));
-		detoasted = PointerGetDatum(heap_tuple_fetch_attr((struct varlena *) DatumGetPointer(newvalue)));
+		detoasted = PointerGetDatum(detoast_external_attr((struct varlena *) DatumGetPointer(newvalue)));
 		MemoryContextSwitchTo(oldcxt);
 		/* Now's a good time to not leak the input value if it's freeable */
 		if (freeable)

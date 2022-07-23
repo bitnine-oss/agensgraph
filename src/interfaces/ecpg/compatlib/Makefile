@@ -28,7 +28,9 @@ SHLIB_PREREQS = submake-ecpglib submake-pgtypeslib
 
 SHLIB_EXPORTS = exports.txt
 
-OBJS= informix.o $(WIN32RES)
+OBJS = \
+	$(WIN32RES) \
+	informix.o
 
 PKG_CONFIG_REQUIRES_PRIVATE = libecpg libpgtypes
 
@@ -54,4 +56,4 @@ uninstall: uninstall-lib
 clean distclean: clean-lib
 	rm -f $(OBJS)
 
-maintainer-clean: distclean maintainer-clean-lib
+maintainer-clean: distclean

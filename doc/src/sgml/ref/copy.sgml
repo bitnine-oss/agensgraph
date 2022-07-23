@@ -827,8 +827,8 @@ filters, dropped zero bytes, dropped high bits, or parity changes.)
 are numbered from 0 (<acronym>LSB</acronym>) to 31 (<acronym>MSB</acronym>).  Note that
 this field is stored in network byte order (most significant byte first),
 as are all the integer fields used in the file format.  Bits
-16-31 are reserved to denote critical file format issues; a reader
-should abort if it finds an unexpected bit set in this range. Bits 0-15
+16&ndash;31 are reserved to denote critical file format issues; a reader
+should abort if it finds an unexpected bit set in this range. Bits 0&ndash;15
 are reserved to signal backwards-compatible format issues; a reader
 should simply ignore any unexpected bits set in this range. Currently
 only one flag bit is defined, and the rest must be zero:
@@ -1015,22 +1015,22 @@ COPY <replaceable class="parameter">table_name</replaceable> [ ( <replaceable cl
     FROM { '<replaceable class="parameter">filename</replaceable>' | STDIN }
     [ [ WITH ]
           [ BINARY ]
-          [ DELIMITER [ AS ] '<replaceable class="parameter">delimiter</replaceable>' ]
-          [ NULL [ AS ] '<replaceable class="parameter">null string</replaceable>' ]
+          [ DELIMITER [ AS ] '<replaceable class="parameter">delimiter_character</replaceable>' ]
+          [ NULL [ AS ] '<replaceable class="parameter">null_string</replaceable>' ]
           [ CSV [ HEADER ]
-                [ QUOTE [ AS ] '<replaceable class="parameter">quote</replaceable>' ]
-                [ ESCAPE [ AS ] '<replaceable class="parameter">escape</replaceable>' ]
+                [ QUOTE [ AS ] '<replaceable class="parameter">quote_character</replaceable>' ]
+                [ ESCAPE [ AS ] '<replaceable class="parameter">escape_character</replaceable>' ]
                 [ FORCE NOT NULL <replaceable class="parameter">column_name</replaceable> [, ...] ] ] ]
 
 COPY { <replaceable class="parameter">table_name</replaceable> [ ( <replaceable class="parameter">column_name</replaceable> [, ...] ) ] | ( <replaceable class="parameter">query</replaceable> ) }
     TO { '<replaceable class="parameter">filename</replaceable>' | STDOUT }
     [ [ WITH ]
           [ BINARY ]
-          [ DELIMITER [ AS ] '<replaceable class="parameter">delimiter</replaceable>' ]
-          [ NULL [ AS ] '<replaceable class="parameter">null string</replaceable>' ]
+          [ DELIMITER [ AS ] '<replaceable class="parameter">delimiter_character</replaceable>' ]
+          [ NULL [ AS ] '<replaceable class="parameter">null_string</replaceable>' ]
           [ CSV [ HEADER ]
-                [ QUOTE [ AS ] '<replaceable class="parameter">quote</replaceable>' ]
-                [ ESCAPE [ AS ] '<replaceable class="parameter">escape</replaceable>' ]
+                [ QUOTE [ AS ] '<replaceable class="parameter">quote_character</replaceable>' ]
+                [ ESCAPE [ AS ] '<replaceable class="parameter">escape_character</replaceable>' ]
                 [ FORCE QUOTE { <replaceable class="parameter">column_name</replaceable> [, ...] | * } ] ] ]
 </synopsis>
 
@@ -1046,13 +1046,13 @@ COPY { <replaceable class="parameter">table_name</replaceable> [ ( <replaceable 
 <synopsis>
 COPY [ BINARY ] <replaceable class="parameter">table_name</replaceable>
     FROM { '<replaceable class="parameter">filename</replaceable>' | STDIN }
-    [ [USING] DELIMITERS '<replaceable class="parameter">delimiter</replaceable>' ]
-    [ WITH NULL AS '<replaceable class="parameter">null string</replaceable>' ]
+    [ [USING] DELIMITERS '<replaceable class="parameter">delimiter_character</replaceable>' ]
+    [ WITH NULL AS '<replaceable class="parameter">null_string</replaceable>' ]
 
 COPY [ BINARY ] <replaceable class="parameter">table_name</replaceable>
     TO { '<replaceable class="parameter">filename</replaceable>' | STDOUT }
-    [ [USING] DELIMITERS '<replaceable class="parameter">delimiter</replaceable>' ]
-    [ WITH NULL AS '<replaceable class="parameter">null string</replaceable>' ]
+    [ [USING] DELIMITERS '<replaceable class="parameter">delimiter_character</replaceable>' ]
+    [ WITH NULL AS '<replaceable class="parameter">null_string</replaceable>' ]
 </synopsis></para>
  </refsect1>
 </refentry>

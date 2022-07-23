@@ -120,6 +120,35 @@ pg_fe_scram_init(PGconn *conn,
 }
 
 /*
+ * Return true if channel binding was employed and the SCRAM exchange
+ * completed. This should be used after a successful exchange to determine
+ * whether the server authenticated itself to the client.
+ *
+ * Note that the caller must also ensure that the exchange was actually
+ * successful.
+ */
+bool
+pg_fe_scram_channel_bound(void *opaq)
+{
+	fe_scram_state *state = (fe_scram_state *) opaq;
+
+	/* no SCRAM exchange done */
+	if (state == NULL)
+		return false;
+
+	/* SCRAM exchange not completed */
+	if (state->state != FE_SCRAM_FINISHED)
+		return false;
+
+	/* channel binding mechanism not used */
+	if (strcmp(state->sasl_mechanism, SCRAM_SHA_256_PLUS_NAME) != 0)
+		return false;
+
+	/* all clear! */
+	return true;
+}
+
+/*
  * Free SCRAM exchange status
  */
 void
@@ -225,9 +254,7 @@ pg_fe_scram_exchange(void *opaq, char *input, int inputlen,
 
 			/*
 			 * Verify server signature, to make sure we're talking to the
-			 * genuine server.  XXX: A fake server could simply not require
-			 * authentication, though.  There is currently no option in libpq
-			 * to reject a connection, if SCRAM authentication did not happen.
+			 * genuine server.
 			 */
 			if (verify_server_signature(state))
 				*success = true;
@@ -252,7 +279,6 @@ pg_fe_scram_exchange(void *opaq, char *input, int inputlen,
 error:
 	*done = true;
 	*success = false;
-	return;
 }
 
 /*
@@ -358,7 +384,8 @@ build_client_first_message(fe_scram_state *state)
 		appendPQExpBufferStr(&buf, "p=tls-server-end-point");
 	}
 #ifdef HAVE_PGTLS_GET_PEER_CERTIFICATE_HASH
-	else if (conn->ssl_in_use)
+	else if (conn->channel_binding[0] != 'd' && /* disable */
+			 conn->ssl_in_use)
 	{
 		/*
 		 * Client supports channel binding, but thinks the server does not.
@@ -369,7 +396,7 @@ build_client_first_message(fe_scram_state *state)
 	else
 	{
 		/*
-		 * Client does not support channel binding.
+		 * Client does not support channel binding, or has disabled it.
 		 */
 		appendPQExpBufferChar(&buf, 'n');
 	}
@@ -498,7 +525,8 @@ build_client_final_message(fe_scram_state *state)
 #endif							/* HAVE_PGTLS_GET_PEER_CERTIFICATE_HASH */
 	}
 #ifdef HAVE_PGTLS_GET_PEER_CERTIFICATE_HASH
-	else if (conn->ssl_in_use)
+	else if (conn->channel_binding[0] != 'd' && /* disable */
+			 conn->ssl_in_use)
 		appendPQExpBufferStr(&buf, "c=eSws");	/* base64 of "y,," */
 #endif
 	else
@@ -793,10 +821,10 @@ verify_server_signature(fe_scram_state *state)
 }
 
 /*
- * Build a new SCRAM verifier.
+ * Build a new SCRAM secret.
  */
 char *
-pg_fe_scram_build_verifier(const char *password)
+pg_fe_scram_build_secret(const char *password)
 {
 	char	   *prep_password;
 	pg_saslprep_rc rc;
@@ -822,7 +850,7 @@ pg_fe_scram_build_verifier(const char *password)
 		return NULL;
 	}
 
-	result = scram_build_verifier(saltbuf, SCRAM_DEFAULT_SALT_LEN,
+	result = scram_build_secret(saltbuf, SCRAM_DEFAULT_SALT_LEN,
 								  SCRAM_DEFAULT_ITERATIONS, password);
 
 	if (prep_password)

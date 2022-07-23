@@ -4,9 +4,9 @@
 #include "postgres_fe.h"
 
 #include "ecpgerrno.h"
-#include "ecpgtype.h"
 #include "ecpglib.h"
 #include "ecpglib_extern.h"
+#include "ecpgtype.h"
 #include "sqlca.h"
 
 void
@@ -198,13 +198,6 @@ ecpg_raise(int line, int code, const char *sqlstate, const char *str)
 			/*------
 			   translator: this string will be truncated at 149 characters expanded.  */
 					 ecpg_gettext("could not connect to database \"%s\" on line %d"), str, line);
-			break;
-
-		case ECPG_INVALID_CURSOR:
-			snprintf(sqlca->sqlerrm.sqlerrmc, sizeof(sqlca->sqlerrm.sqlerrmc),
-			/*------
-				translator: this string will be truncated at 149 characters expanded.  */
-					 ecpg_gettext("The cursor is invalid on line %d"), line);
 			break;
 
 		default:

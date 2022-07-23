@@ -39,6 +39,7 @@
 #include "access/htup_details.h"
 #include "access/stratnum.h"
 #include "catalog/pg_collation.h"
+#include "catalog/pg_operator.h"
 #include "catalog/pg_opfamily.h"
 #include "catalog/pg_statistic.h"
 #include "catalog/pg_type.h"
@@ -90,7 +91,8 @@ static Pattern_Prefix_Status pattern_fixed_prefix(Const *patt,
 												  Selectivity *rest_selec);
 static Selectivity prefix_selectivity(PlannerInfo *root,
 									  VariableStatData *vardata,
-									  Oid vartype, Oid opfamily, Const *prefixcon);
+									  Oid eqopr, Oid ltopr, Oid geopr,
+									  Const *prefixcon);
 static Selectivity like_selectivity(const char *patt, int pattlen,
 									bool case_insensitive);
 static Selectivity regex_selectivity(const char *patt, int pattlen,
@@ -240,7 +242,10 @@ match_pattern_prefix(Node *leftop,
 	Pattern_Prefix_Status pstatus;
 	Oid			ldatatype;
 	Oid			rdatatype;
-	Oid			oproid;
+	Oid			eqopr;
+	Oid			ltopr;
+	Oid			geopr;
+	bool		collation_aware;
 	Expr	   *expr;
 	FmgrInfo	ltproc;
 	Const	   *greaterstr;
@@ -265,7 +270,7 @@ match_pattern_prefix(Node *leftop,
 	 * pattern-matching is not supported with nondeterministic collations. (We
 	 * could also error out here, but by doing it later we get more precise
 	 * error messages.)  (It should be possible to support at least
-	 * Pattern_Prefix_Exact, but no point as along as the actual
+	 * Pattern_Prefix_Exact, but no point as long as the actual
 	 * pattern-matching implementations don't support it.)
 	 *
 	 * expr_coll is not set for a non-collation-aware data type such as bytea.
@@ -284,62 +289,89 @@ match_pattern_prefix(Node *leftop,
 		return NIL;
 
 	/*
-	 * Must also check that index's opfamily supports the operators we will
-	 * want to apply.  (A hash index, for example, will not support ">=".)
-	 * Currently, only btree and spgist support the operators we need.
-	 *
-	 * Note: actually, in the Pattern_Prefix_Exact case, we only need "=" so a
-	 * hash index would work.  Currently it doesn't seem worth checking for
-	 * that, however.
-	 *
-	 * We insist on the opfamily being one of the specific ones we expect,
-	 * else we'd do the wrong thing if someone were to make a reverse-sort
-	 * opfamily with the same operators.
-	 *
-	 * The non-pattern opclasses will not sort the way we need in most non-C
-	 * locales.  We can use such an index anyway for an exact match (simple
-	 * equality), but not for prefix-match cases.  Note that here we are
-	 * looking at the index's collation, not the expression's collation --
-	 * this test is *not* dependent on the LIKE/regex operator's collation.
-	 *
-	 * While we're at it, identify the type the comparison constant(s) should
-	 * have, based on the opfamily.
+	 * Identify the operators we want to use, based on the type of the
+	 * left-hand argument.  Usually these are just the type's regular
+	 * comparison operators, but if we are considering one of the semi-legacy
+	 * "pattern" opclasses, use the "pattern" operators instead.  Those are
+	 * not collation-sensitive but always use C collation, as we want.  The
+	 * selected operators also determine the needed type of the prefix
+	 * constant.
 	 */
-	switch (opfamily)
+	ldatatype = exprType(leftop);
+	switch (ldatatype)
 	{
-		case TEXT_BTREE_FAM_OID:
-			if (!(pstatus == Pattern_Prefix_Exact ||
-				  lc_collate_is_c(indexcollation)))
-				return NIL;
+		case TEXTOID:
+			if (opfamily == TEXT_PATTERN_BTREE_FAM_OID ||
+				opfamily == TEXT_SPGIST_FAM_OID)
+			{
+				eqopr = TextEqualOperator;
+				ltopr = TextPatternLessOperator;
+				geopr = TextPatternGreaterEqualOperator;
+				collation_aware = false;
+			}
+			else
+			{
+				eqopr = TextEqualOperator;
+				ltopr = TextLessOperator;
+				geopr = TextGreaterEqualOperator;
+				collation_aware = true;
+			}
 			rdatatype = TEXTOID;
 			break;
+		case NAMEOID:
 
-		case TEXT_PATTERN_BTREE_FAM_OID:
-		case TEXT_SPGIST_FAM_OID:
+			/*
+			 * Note that here, we need the RHS type to be text, so that the
+			 * comparison value isn't improperly truncated to NAMEDATALEN.
+			 */
+			eqopr = NameEqualTextOperator;
+			ltopr = NameLessTextOperator;
+			geopr = NameGreaterEqualTextOperator;
+			collation_aware = true;
 			rdatatype = TEXTOID;
 			break;
-
-		case BPCHAR_BTREE_FAM_OID:
-			if (!(pstatus == Pattern_Prefix_Exact ||
-				  lc_collate_is_c(indexcollation)))
-				return NIL;
+		case BPCHAROID:
+			if (opfamily == BPCHAR_PATTERN_BTREE_FAM_OID)
+			{
+				eqopr = BpcharEqualOperator;
+				ltopr = BpcharPatternLessOperator;
+				geopr = BpcharPatternGreaterEqualOperator;
+				collation_aware = false;
+			}
+			else
+			{
+				eqopr = BpcharEqualOperator;
+				ltopr = BpcharLessOperator;
+				geopr = BpcharGreaterEqualOperator;
+				collation_aware = true;
+			}
 			rdatatype = BPCHAROID;
 			break;
-
-		case BPCHAR_PATTERN_BTREE_FAM_OID:
-			rdatatype = BPCHAROID;
-			break;
-
-		case BYTEA_BTREE_FAM_OID:
+		case BYTEAOID:
+			eqopr = ByteaEqualOperator;
+			ltopr = ByteaLessOperator;
+			geopr = ByteaGreaterEqualOperator;
+			collation_aware = false;
 			rdatatype = BYTEAOID;
 			break;
-
 		default:
+			/* Can't get here unless we're attached to the wrong operator */
 			return NIL;
 	}
 
-	/* OK, prepare to create the indexqual(s) */
-	ldatatype = exprType(leftop);
+	/*
+	 * If necessary, verify that the index's collation behavior is compatible.
+	 * For an exact-match case, we don't have to be picky.  Otherwise, insist
+	 * that the index collation be "C".  Note that here we are looking at the
+	 * index's collation, not the expression's collation -- this test is *not*
+	 * dependent on the LIKE/regex operator's collation.
+	 */
+	if (collation_aware)
+	{
+		if (!(pstatus == Pattern_Prefix_Exact ||
+			  lc_collate_is_c(indexcollation)))
+			return NIL;
+	}
 
 	/*
 	 * If necessary, coerce the prefix constant to the right type.  The given
@@ -357,14 +389,18 @@ match_pattern_prefix(Node *leftop,
 
 	/*
 	 * If we found an exact-match pattern, generate an "=" indexqual.
+	 *
+	 * Here and below, check to see whether the desired operator is actually
+	 * supported by the index opclass, and fail quietly if not.  This allows
+	 * us to not be concerned with specific opclasses (except for the legacy
+	 * "pattern" cases); any index that correctly implements the operators
+	 * will work.
 	 */
 	if (pstatus == Pattern_Prefix_Exact)
 	{
-		oproid = get_opfamily_member(opfamily, ldatatype, rdatatype,
-									 BTEqualStrategyNumber);
-		if (oproid == InvalidOid)
-			elog(ERROR, "no = operator for opfamily %u", opfamily);
-		expr = make_opclause(oproid, BOOLOID, false,
+		if (!op_in_opfamily(eqopr, opfamily))
+			return NIL;
+		expr = make_opclause(eqopr, BOOLOID, false,
 							 (Expr *) leftop, (Expr *) prefix,
 							 InvalidOid, indexcollation);
 		result = list_make1(expr);
@@ -376,11 +412,9 @@ match_pattern_prefix(Node *leftop,
 	 *
 	 * We can always say "x >= prefix".
 	 */
-	oproid = get_opfamily_member(opfamily, ldatatype, rdatatype,
-								 BTGreaterEqualStrategyNumber);
-	if (oproid == InvalidOid)
-		elog(ERROR, "no >= operator for opfamily %u", opfamily);
-	expr = make_opclause(oproid, BOOLOID, false,
+	if (!op_in_opfamily(geopr, opfamily))
+		return NIL;
+	expr = make_opclause(geopr, BOOLOID, false,
 						 (Expr *) leftop, (Expr *) prefix,
 						 InvalidOid, indexcollation);
 	result = list_make1(expr);
@@ -393,15 +427,13 @@ match_pattern_prefix(Node *leftop,
 	 * using a C-locale index collation.
 	 *-------
 	 */
-	oproid = get_opfamily_member(opfamily, ldatatype, rdatatype,
-								 BTLessStrategyNumber);
-	if (oproid == InvalidOid)
-		elog(ERROR, "no < operator for opfamily %u", opfamily);
-	fmgr_info(get_opcode(oproid), &ltproc);
+	if (!op_in_opfamily(ltopr, opfamily))
+		return result;
+	fmgr_info(get_opcode(ltopr), &ltproc);
 	greaterstr = make_greater_string(prefix, &ltproc, indexcollation);
 	if (greaterstr)
 	{
-		expr = make_opclause(oproid, BOOLOID, false,
+		expr = make_opclause(ltopr, BOOLOID, false,
 							 (Expr *) leftop, (Expr *) greaterstr,
 							 InvalidOid, indexcollation);
 		result = lappend(result, expr);
@@ -439,7 +471,10 @@ patternsel_common(PlannerInfo *root,
 	Datum		constval;
 	Oid			consttype;
 	Oid			vartype;
-	Oid			opfamily;
+	Oid			rdatatype;
+	Oid			eqopr;
+	Oid			ltopr;
+	Oid			geopr;
 	Pattern_Prefix_Status pstatus;
 	Const	   *patt;
 	Const	   *prefix = NULL;
@@ -496,29 +531,51 @@ patternsel_common(PlannerInfo *root,
 	/*
 	 * Similarly, the exposed type of the left-hand side should be one of
 	 * those we know.  (Do not look at vardata.atttype, which might be
-	 * something binary-compatible but different.)	We can use it to choose
-	 * the index opfamily from which we must draw the comparison operators.
+	 * something binary-compatible but different.)	We can use it to identify
+	 * the comparison operators and the required type of the comparison
+	 * constant, much as in match_pattern_prefix().
 	 *
-	 * NOTE: It would be more correct to use the PATTERN opfamilies than the
-	 * simple ones, but at the moment ANALYZE will not generate statistics for
-	 * the PATTERN operators.  But our results are so approximate anyway that
-	 * it probably hardly matters.
+	 * NOTE: this logic does not consider collations.  Ideally we'd force use
+	 * of "C" collation, but since ANALYZE only generates statistics for the
+	 * column's specified collation, we have little choice but to use those.
+	 * But our results are so approximate anyway that it probably hardly
+	 * matters.
 	 */
 	vartype = vardata.vartype;
 
 	switch (vartype)
 	{
 		case TEXTOID:
+			eqopr = TextEqualOperator;
+			ltopr = TextLessOperator;
+			geopr = TextGreaterEqualOperator;
+			rdatatype = TEXTOID;
+			break;
 		case NAMEOID:
-			opfamily = TEXT_BTREE_FAM_OID;
+
+			/*
+			 * Note that here, we need the RHS type to be text, so that the
+			 * comparison value isn't improperly truncated to NAMEDATALEN.
+			 */
+			eqopr = NameEqualTextOperator;
+			ltopr = NameLessTextOperator;
+			geopr = NameGreaterEqualTextOperator;
+			rdatatype = TEXTOID;
 			break;
 		case BPCHAROID:
-			opfamily = BPCHAR_BTREE_FAM_OID;
+			eqopr = BpcharEqualOperator;
+			ltopr = BpcharLessOperator;
+			geopr = BpcharGreaterEqualOperator;
+			rdatatype = BPCHAROID;
 			break;
 		case BYTEAOID:
-			opfamily = BYTEA_BTREE_FAM_OID;
+			eqopr = ByteaEqualOperator;
+			ltopr = ByteaLessOperator;
+			geopr = ByteaGreaterEqualOperator;
+			rdatatype = BYTEAOID;
 			break;
 		default:
+			/* Can't get here unless we're attached to the wrong operator */
 			ReleaseVariableStats(vardata);
 			return result;
 	}
@@ -548,41 +605,23 @@ patternsel_common(PlannerInfo *root,
 								   &prefix, &rest_selec);
 
 	/*
-	 * If necessary, coerce the prefix constant to the right type.
+	 * If necessary, coerce the prefix constant to the right type.  The only
+	 * case where we need to do anything is when converting text to bpchar.
+	 * Those two types are binary-compatible, so relabeling the Const node is
+	 * sufficient.
 	 */
-	if (prefix && prefix->consttype != vartype)
+	if (prefix && prefix->consttype != rdatatype)
 	{
-		char	   *prefixstr;
-
-		switch (prefix->consttype)
-		{
-			case TEXTOID:
-				prefixstr = TextDatumGetCString(prefix->constvalue);
-				break;
-			case BYTEAOID:
-				prefixstr = DatumGetCString(DirectFunctionCall1(byteaout,
-																prefix->constvalue));
-				break;
-			default:
-				elog(ERROR, "unrecognized consttype: %u",
-					 prefix->consttype);
-				ReleaseVariableStats(vardata);
-				return result;
-		}
-		prefix = string_to_const(prefixstr, vartype);
-		pfree(prefixstr);
+		Assert(prefix->consttype == TEXTOID &&
+			   rdatatype == BPCHAROID);
+		prefix->consttype = rdatatype;
 	}
 
 	if (pstatus == Pattern_Prefix_Exact)
 	{
 		/*
-		 * Pattern specifies an exact match, so pretend operator is '='
+		 * Pattern specifies an exact match, so estimate as for '='
 		 */
-		Oid			eqopr = get_opfamily_member(opfamily, vartype, vartype,
-												BTEqualStrategyNumber);
-
-		if (eqopr == InvalidOid)
-			elog(ERROR, "no = operator for opfamily %u", opfamily);
 		result = var_eq_const(&vardata, eqopr, prefix->constvalue,
 							  false, true, false);
 	}
@@ -625,8 +664,9 @@ patternsel_common(PlannerInfo *root,
 			Selectivity prefixsel;
 
 			if (pstatus == Pattern_Prefix_Partial)
-				prefixsel = prefix_selectivity(root, &vardata, vartype,
-											   opfamily, prefix);
+				prefixsel = prefix_selectivity(root, &vardata,
+											   eqopr, ltopr, geopr,
+											   prefix);
 			else
 				prefixsel = 1.0;
 			heursel = prefixsel * rest_selec;
@@ -1150,15 +1190,14 @@ pattern_fixed_prefix(Const *patt, Pattern_Type ptype, Oid collation,
  * Estimate the selectivity of a fixed prefix for a pattern match.
  *
  * A fixed prefix "foo" is estimated as the selectivity of the expression
- * "variable >= 'foo' AND variable < 'fop'" (see also indxpath.c).
+ * "variable >= 'foo' AND variable < 'fop'".
  *
  * The selectivity estimate is with respect to the portion of the column
  * population represented by the histogram --- the caller must fold this
  * together with info about MCVs and NULLs.
  *
- * We use the >= and < operators from the specified btree opfamily to do the
- * estimation.  The given variable and Const must be of the associated
- * datatype.
+ * We use the specified btree comparison operators to do the estimation.
+ * The given variable and Const must be of the associated datatype(s).
  *
  * XXX Note: we make use of the upper bound to estimate operator selectivity
  * even if the locale is such that we cannot rely on the upper-bound string.
@@ -1167,20 +1206,17 @@ pattern_fixed_prefix(Const *patt, Pattern_Type ptype, Oid collation,
  */
 static Selectivity
 prefix_selectivity(PlannerInfo *root, VariableStatData *vardata,
-				   Oid vartype, Oid opfamily, Const *prefixcon)
+				   Oid eqopr, Oid ltopr, Oid geopr,
+				   Const *prefixcon)
 {
 	Selectivity prefixsel;
-	Oid			cmpopr;
 	FmgrInfo	opproc;
 	AttStatsSlot sslot;
 	Const	   *greaterstrcon;
 	Selectivity eq_sel;
 
-	cmpopr = get_opfamily_member(opfamily, vartype, vartype,
-								 BTGreaterEqualStrategyNumber);
-	if (cmpopr == InvalidOid)
-		elog(ERROR, "no >= operator for opfamily %u", opfamily);
-	fmgr_info(get_opcode(cmpopr), &opproc);
+	/* Estimate the selectivity of "x >= prefix" */
+	fmgr_info(get_opcode(geopr), &opproc);
 
 	prefixsel = ineq_histogram_selectivity(root, vardata,
 										   &opproc, true, true,
@@ -1206,11 +1242,7 @@ prefix_selectivity(PlannerInfo *root, VariableStatData *vardata,
 		 /* sslot.stacoll is set up */ ;
 	else
 		sslot.stacoll = DEFAULT_COLLATION_OID;
-	cmpopr = get_opfamily_member(opfamily, vartype, vartype,
-								 BTLessStrategyNumber);
-	if (cmpopr == InvalidOid)
-		elog(ERROR, "no < operator for opfamily %u", opfamily);
-	fmgr_info(get_opcode(cmpopr), &opproc);
+	fmgr_info(get_opcode(ltopr), &opproc);
 	greaterstrcon = make_greater_string(prefixcon, &opproc, sslot.stacoll);
 	if (greaterstrcon)
 	{
@@ -1246,11 +1278,7 @@ prefix_selectivity(PlannerInfo *root, VariableStatData *vardata,
 	 * probably off the end of the histogram, and thus we probably got a very
 	 * small estimate from the >= condition; so we still need to clamp.
 	 */
-	cmpopr = get_opfamily_member(opfamily, vartype, vartype,
-								 BTEqualStrategyNumber);
-	if (cmpopr == InvalidOid)
-		elog(ERROR, "no = operator for opfamily %u", opfamily);
-	eq_sel = var_eq_const(vardata, cmpopr, prefixcon->constvalue,
+	eq_sel = var_eq_const(vardata, eqopr, prefixcon->constvalue,
 						  false, true, false);
 
 	prefixsel = Max(prefixsel, eq_sel);

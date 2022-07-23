@@ -2960,7 +2960,7 @@ genInhEdge(RangeVar *r, Oid parentoid)
 		SelectStmt *rsel;
 		SelectStmt *u;
 
-		childrel = heap_open(childoid, AccessShareLock);
+		childrel = table_open(childoid, AccessShareLock);
 
 		childrv = makeRangeVar(get_graph_path(true),
 							   RelationGetRelationName(childrel),
@@ -3602,7 +3602,7 @@ hasGinOnProp(Oid relid)
 	ListCell   *li;
 	bool		ret = false;
 
-	rel = heap_open(relid, NoLock);
+	rel = table_open(relid, NoLock);
 
 	if (!rel->rd_rel->relhasindex)
 	{
@@ -4030,7 +4030,6 @@ static List *
 removeResolvedFutureVertices(List *future_vertices)
 {
 	ListCell   *le;
-	ListCell   *next;
 
 	foreach(le, future_vertices)
 	{

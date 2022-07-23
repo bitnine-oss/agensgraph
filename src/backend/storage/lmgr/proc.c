@@ -45,7 +45,6 @@
 #include "replication/syncrep.h"
 #include "replication/walsender.h"
 #include "storage/condition_variable.h"
-#include "storage/standby.h"
 #include "storage/ipc.h"
 #include "storage/lmgr.h"
 #include "storage/pmsignal.h"
@@ -53,9 +52,9 @@
 #include "storage/procarray.h"
 #include "storage/procsignal.h"
 #include "storage/spin.h"
+#include "storage/standby.h"
 #include "utils/timeout.h"
 #include "utils/timestamp.h"
-
 
 /* GUC variables */
 int			DeadlockTimeout = 1000;
@@ -636,7 +635,7 @@ PublishStartupProcessInformation(void)
 }
 
 /*
- * Used from bufgr to share the value of the buffer that Startup waits on,
+ * Used from bufmgr to share the value of the buffer that Startup waits on,
  * or to reset the value to "not waiting" (-1). This allows processing
  * of recovery conflicts for buffer pins. Set is made before backends look
  * at this value, so locking not required, especially since the set is

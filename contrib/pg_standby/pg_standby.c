@@ -30,9 +30,8 @@
 #include <signal.h>
 #include <sys/time.h>
 
-#include "pg_getopt.h"
-
 #include "access/xlog_internal.h"
+#include "pg_getopt.h"
 
 const char *progname;
 
@@ -145,7 +144,7 @@ CustomizableInitialize(void)
 	switch (restoreCommandType)
 	{
 		case RESTORE_COMMAND_LINK:
-#if HAVE_WORKING_LINK
+#ifdef HAVE_WORKING_LINK
 			SET_RESTORE_COMMAND("ln -s -f", WALFilePath, xlogFilePath);
 			break;
 #endif
@@ -546,7 +545,6 @@ CheckForExternalTrigger(void)
 
 	fprintf(stderr, "WARNING: invalid content in \"%s\"\n", triggerPath);
 	fflush(stderr);
-	return;
 }
 
 /*

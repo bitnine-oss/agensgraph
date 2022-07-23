@@ -23,10 +23,10 @@
 #include "access/tupconvert.h"
 #include "catalog/objectaccess.h"
 #include "catalog/pg_type.h"
+#include "executor/execExpr.h"
 #include "executor/execdebug.h"
 #include "executor/nodeAgg.h"
 #include "executor/nodeSubplan.h"
-#include "executor/execExpr.h"
 #include "funcapi.h"
 #include "jit/llvmjit.h"
 #include "jit/llvmjit_emit.h"
@@ -45,7 +45,6 @@
 #include "utils/timestamp.h"
 #include "utils/typcache.h"
 #include "utils/xml.h"
-
 
 typedef struct CompiledExprState
 {
@@ -287,6 +286,9 @@ llvm_compile_expr(ExprState *state)
 					if (op->d.fetch.fixed)
 						tts_ops = op->d.fetch.kind;
 
+					/* step should not have been generated */
+					Assert(tts_ops != &TTSOpsVirtual);
+
 					if (opcode == EEOP_INNER_FETCHSOME)
 						v_slot = v_innerslot;
 					else if (opcode == EEOP_OUTER_FETCHSOME)
@@ -297,9 +299,6 @@ llvm_compile_expr(ExprState *state)
 					/*
 					 * Check if all required attributes are available, or
 					 * whether deforming is required.
-					 *
-					 * TODO: skip nvalid check if slot is fixed and known to
-					 * be a virtual slot.
 					 */
 					v_nvalid =
 						l_load_struct_gep(b, v_slot,

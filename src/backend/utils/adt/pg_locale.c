@@ -70,6 +70,10 @@
 #include <unicode/ucnv.h>
 #endif
 
+#ifdef __GLIBC__
+#include <gnu/libc-version.h>
+#endif
+
 #ifdef WIN32
 /*
  * This Windows file defines StrNCpy. We don't need it here, so we undefine
@@ -973,7 +977,7 @@ cache_locale_time(void)
 static char *
 IsoLocaleName(const char *winlocname)
 {
-#if (_MSC_VER >= 1400)			/* VC8.0 or later */
+#ifdef _MSC_VER
 	static char iso_lc_messages[32];
 	_locale_t	loct = NULL;
 
@@ -987,7 +991,6 @@ IsoLocaleName(const char *winlocname)
 	loct = _create_locale(LC_CTYPE, winlocname);
 	if (loct != NULL)
 	{
-#if (_MSC_VER >= 1700)			/* Visual Studio 2012 or later */
 		size_t		rc;
 		char	   *hyphen;
 
@@ -1014,28 +1017,10 @@ IsoLocaleName(const char *winlocname)
 		hyphen = strchr(iso_lc_messages, '-');
 		if (hyphen)
 			*hyphen = '_';
-#else
-		char		isolang[32],
-					isocrty[32];
-		LCID		lcid;
-
-		lcid = loct->locinfo->lc_handle[LC_CTYPE];
-		if (lcid == 0)
-			lcid = MAKELCID(MAKELANGID(LANG_ENGLISH, SUBLANG_ENGLISH_US), SORT_DEFAULT);
-		_free_locale(loct);
-
-		if (!GetLocaleInfoA(lcid, LOCALE_SISO639LANGNAME, isolang, sizeof(isolang)))
-			return NULL;
-		if (!GetLocaleInfoA(lcid, LOCALE_SISO3166CTRYNAME, isocrty, sizeof(isocrty)))
-			return NULL;
-		snprintf(iso_lc_messages, sizeof(iso_lc_messages) - 1, "%s_%s", isolang, isocrty);
-#endif
 		return iso_lc_messages;
 	}
-	return NULL;
-#else
+#endif							/* _MSC_VER */
 	return NULL;				/* Not supported on this version of msvc/mingw */
-#endif							/* _MSC_VER >= 1400 */
 }
 #endif							/* WIN32 && LC_MESSAGES */
 
@@ -1518,7 +1503,7 @@ pg_newlocale_from_collation(Oid collid)
 char *
 get_collation_actual_version(char collprovider, const char *collcollate)
 {
-	char	   *collversion;
+	char	   *collversion = NULL;
 
 #ifdef USE_ICU
 	if (collprovider == COLLPROVIDER_ICU)
@@ -1542,7 +1527,13 @@ get_collation_actual_version(char collprovider, const char *collcollate)
 	}
 	else
 #endif
-		collversion = NULL;
+	if (collprovider == COLLPROVIDER_LIBC)
+	{
+#if defined(__GLIBC__)
+		/* Use the glibc version because we don't have anything better. */
+		collversion = pstrdup(gnu_get_libc_version());
+#endif
+	}
 
 	return collversion;
 }

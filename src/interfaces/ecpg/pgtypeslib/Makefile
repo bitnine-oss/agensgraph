@@ -27,8 +27,14 @@ SHLIB_LINK += $(filter -lintl -lm, $(LIBS))
 
 SHLIB_EXPORTS = exports.txt
 
-OBJS= numeric.o datetime.o common.o dt_common.o timestamp.o interval.o \
-	$(WIN32RES)
+OBJS = \
+	$(WIN32RES) \
+	common.o \
+	datetime.o \
+	dt_common.o \
+	interval.o \
+	numeric.o \
+	timestamp.o
 
 all: all-lib
 
@@ -44,4 +50,4 @@ uninstall: uninstall-lib
 clean distclean: clean-lib
 	rm -f $(OBJS)
 
-maintainer-clean: distclean maintainer-clean-lib
+maintainer-clean: distclean

@@ -16,10 +16,17 @@
 
 #include "postgres.h"
 
+#include "access/detoast.h"
+#include "access/heaptoast.h"
 #include "access/htup_details.h"
 #include "access/itup.h"
-#include "access/tuptoaster.h"
+#include "access/toast_internals.h"
 
+/*
+ * This enables de-toasting of index entries.  Needed until VACUUM is
+ * smart enough to rebuild indexes from scratch.
+ */
+#define TOAST_INDEX_HACK
 
 /* ----------------------------------------------------------------
  *				  index_ tuple interface routines
@@ -82,7 +89,7 @@ index_form_tuple(TupleDesc tupleDescriptor,
 		if (VARATT_IS_EXTERNAL(DatumGetPointer(values[i])))
 		{
 			untoasted_values[i] =
-				PointerGetDatum(heap_tuple_fetch_attr((struct varlena *)
+				PointerGetDatum(detoast_external_attr((struct varlena *)
 													  DatumGetPointer(values[i])));
 			untoasted_free[i] = true;
 		}

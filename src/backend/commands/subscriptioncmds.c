@@ -14,38 +14,30 @@
 
 #include "postgres.h"
 
-#include "miscadmin.h"
-
 #include "access/htup_details.h"
 #include "access/table.h"
 #include "access/xact.h"
-
 #include "catalog/catalog.h"
 #include "catalog/dependency.h"
 #include "catalog/indexing.h"
 #include "catalog/namespace.h"
 #include "catalog/objectaccess.h"
 #include "catalog/objectaddress.h"
-#include "catalog/pg_type.h"
 #include "catalog/pg_subscription.h"
 #include "catalog/pg_subscription_rel.h"
-
+#include "catalog/pg_type.h"
 #include "commands/defrem.h"
 #include "commands/event_trigger.h"
 #include "commands/subscriptioncmds.h"
-
 #include "executor/executor.h"
-
+#include "miscadmin.h"
 #include "nodes/makefuncs.h"
-
 #include "replication/logicallauncher.h"
 #include "replication/origin.h"
 #include "replication/walreceiver.h"
 #include "replication/walsender.h"
 #include "replication/worker_internal.h"
-
 #include "storage/lmgr.h"
-
 #include "utils/builtins.h"
 #include "utils/guc.h"
 #include "utils/lsyscache.h"
@@ -493,16 +485,11 @@ CreateSubscription(CreateSubscriptionStmt *stmt, bool isTopLevel)
 								slotname)));
 			}
 		}
-		PG_CATCH();
+		PG_FINALLY();
 		{
-			/* Close the connection in case of failure. */
 			walrcv_disconnect(wrconn);
-			PG_RE_THROW();
 		}
 		PG_END_TRY();
-
-		/* And we are done with the remote side. */
-		walrcv_disconnect(wrconn);
 	}
 	else
 		ereport(WARNING,
@@ -1023,15 +1010,11 @@ DropSubscription(DropSubscriptionStmt *stmt, bool isTopLevel)
 
 		walrcv_clear_result(res);
 	}
-	PG_CATCH();
+	PG_FINALLY();
 	{
-		/* Close the connection in case of failure */
 		walrcv_disconnect(wrconn);
-		PG_RE_THROW();
 	}
 	PG_END_TRY();
-
-	walrcv_disconnect(wrconn);
 
 	pfree(cmd.data);
 

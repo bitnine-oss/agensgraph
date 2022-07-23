@@ -11,11 +11,10 @@
 #error -ffast-math is known to break this code
 #endif
 
-#include "pgtypeslib_extern.h"
 #include "dt.h"
-#include "pgtypes_timestamp.h"
 #include "pgtypes_date.h"
-
+#include "pgtypes_timestamp.h"
+#include "pgtypeslib_extern.h"
 
 static int64
 time2t(const int hour, const int min, const int sec, const fsec_t fsec)
@@ -100,7 +99,7 @@ timestamp2tm(timestamp dt, int *tzp, struct tm *tm, fsec_t *fsec, const char **t
 	int64		dDate,
 				date0;
 	int64		time;
-#if defined(HAVE_TM_ZONE) || defined(HAVE_INT_TIMEZONE)
+#if defined(HAVE_STRUCT_TM_TM_ZONE) || defined(HAVE_INT_TIMEZONE)
 	time_t		utime;
 	struct tm  *tx;
 #endif
@@ -134,7 +133,7 @@ timestamp2tm(timestamp dt, int *tzp, struct tm *tm, fsec_t *fsec, const char **t
 		 */
 		if (IS_VALID_UTIME(tm->tm_year, tm->tm_mon, tm->tm_mday))
 		{
-#if defined(HAVE_TM_ZONE) || defined(HAVE_INT_TIMEZONE)
+#if defined(HAVE_STRUCT_TM_TM_ZONE) || defined(HAVE_INT_TIMEZONE)
 
 			utime = dt / USECS_PER_SEC +
 				((date0 - date2j(1970, 1, 1)) * INT64CONST(86400));
@@ -147,7 +146,7 @@ timestamp2tm(timestamp dt, int *tzp, struct tm *tm, fsec_t *fsec, const char **t
 			tm->tm_min = tx->tm_min;
 			tm->tm_isdst = tx->tm_isdst;
 
-#if defined(HAVE_TM_ZONE)
+#if defined(HAVE_STRUCT_TM_TM_ZONE)
 			tm->tm_gmtoff = tx->tm_gmtoff;
 			tm->tm_zone = tx->tm_zone;
 
@@ -159,7 +158,7 @@ timestamp2tm(timestamp dt, int *tzp, struct tm *tm, fsec_t *fsec, const char **t
 			if (tzn != NULL)
 				*tzn = TZNAME_GLOBAL[(tm->tm_isdst > 0)];
 #endif
-#else							/* not (HAVE_TM_ZONE || HAVE_INT_TIMEZONE) */
+#else							/* not (HAVE_STRUCT_TM_TM_ZONE || HAVE_INT_TIMEZONE) */
 			*tzp = 0;
 			/* Mark this as *no* time zone available */
 			tm->tm_isdst = -1;
@@ -298,7 +297,6 @@ PGTYPEStimestamp_current(timestamp * ts)
 	GetCurrentDateTime(&tm);
 	if (errno == 0)
 		tm2timestamp(&tm, 0, NULL, ts);
-	return;
 }
 
 static int
@@ -336,13 +334,13 @@ dttofmtasc_replace(timestamp * ts, date dDate, int dow, struct tm *tm,
 					/* XXX should be locale aware */
 				case 'b':
 				case 'h':
-					replace_val.str_val = months[tm->tm_mon];
+					replace_val.str_val = months[tm->tm_mon - 1];
 					replace_type = PGTYPES_TYPE_STRING_CONSTANT;
 					break;
 					/* the full name of the month */
 					/* XXX should be locale aware */
 				case 'B':
-					replace_val.str_val = pgtypes_date_months[tm->tm_mon];
+					replace_val.str_val = pgtypes_date_months[tm->tm_mon - 1];
 					replace_type = PGTYPES_TYPE_STRING_CONSTANT;
 					break;
 

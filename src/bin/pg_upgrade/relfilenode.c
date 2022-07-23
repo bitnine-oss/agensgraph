@@ -9,12 +9,11 @@
 
 #include "postgres_fe.h"
 
-#include "pg_upgrade.h"
-
 #include <sys/stat.h>
-#include "catalog/pg_class_d.h"
-#include "access/transam.h"
 
+#include "access/transam.h"
+#include "catalog/pg_class_d.h"
+#include "pg_upgrade.h"
 
 static void transfer_single_new_db(FileNameMap *maps, int size, char *old_tablespace);
 static void transfer_relfile(FileNameMap *map, const char *suffix, bool vm_must_add_frozenbit);
@@ -74,8 +73,6 @@ transfer_all_new_tablespaces(DbInfoArr *old_db_arr, DbInfoArr *new_db_arr,
 
 	end_progress_output();
 	check_ok();
-
-	return;
 }
 
 
@@ -129,8 +126,6 @@ transfer_all_new_dbs(DbInfoArr *old_db_arr, DbInfoArr *new_db_arr,
 		/* We allocate something even for n_maps == 0 */
 		pg_free(mappings);
 	}
-
-	return;
 }
 
 /*

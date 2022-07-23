@@ -68,10 +68,20 @@ INSERT INTO ab1 SELECT a, a%23 FROM generate_series(1, 1000) a;
 CREATE STATISTICS ab1_a_b_stats ON a, b FROM ab1;
 ANALYZE ab1;
 ALTER TABLE ab1 ALTER a SET STATISTICS -1;
+-- setting statistics target 0 skips the statistics, without printing any message, so check catalog
+ALTER STATISTICS ab1_a_b_stats SET STATISTICS 0;
+ANALYZE ab1;
+SELECT stxname, stxdndistinct, stxddependencies, stxdmcv
+  FROM pg_statistic_ext s, pg_statistic_ext_data d
+ WHERE s.stxname = 'ab1_a_b_stats'
+   AND d.stxoid = s.oid;
+ALTER STATISTICS ab1_a_b_stats SET STATISTICS -1;
 -- partial analyze doesn't build stats either
 ANALYZE ab1 (a);
 ANALYZE ab1;
 DROP TABLE ab1;
+ALTER STATISTICS ab1_a_b_stats SET STATISTICS 0;
+ALTER STATISTICS IF EXISTS ab1_a_b_stats SET STATISTICS 0;
 
 -- Ensure we can build statistics for tables with inheritance.
 CREATE TABLE ab1 (a INTEGER, b INTEGER);
@@ -156,6 +166,9 @@ SELECT s.stxkind, d.stxdndistinct
   FROM pg_statistic_ext s, pg_statistic_ext_data d
  WHERE s.stxrelid = 'ndistinct'::regclass
    AND d.stxoid = s.oid;
+
+-- minor improvement, make sure the ctid does not break the matching
+SELECT * FROM check_estimated_rows('SELECT COUNT(*) FROM ndistinct GROUP BY ctid, a, b');
 
 -- Hash Aggregate, thanks to estimates improved by the statistic
 SELECT * FROM check_estimated_rows('SELECT COUNT(*) FROM ndistinct GROUP BY a, b');
@@ -329,6 +342,10 @@ SELECT * FROM check_estimated_rows('SELECT * FROM mcv_lists WHERE a < 5 AND b < 
 
 SELECT * FROM check_estimated_rows('SELECT * FROM mcv_lists WHERE a <= 4 AND b <= ''0'' AND c <= 4');
 
+SELECT * FROM check_estimated_rows('SELECT * FROM mcv_lists WHERE a = 1 OR b = ''1'' OR c = 1');
+
+SELECT * FROM check_estimated_rows('SELECT * FROM mcv_lists WHERE a = 1 OR b = ''1'' OR c = 1 OR d IS NOT NULL');
+
 -- create statistics
 CREATE STATISTICS mcv_lists_stats (mcv) ON a, b, c FROM mcv_lists;
 
@@ -345,6 +362,11 @@ SELECT * FROM check_estimated_rows('SELECT * FROM mcv_lists WHERE a = 1 AND b = 
 SELECT * FROM check_estimated_rows('SELECT * FROM mcv_lists WHERE a < 5 AND b < ''1'' AND c < 5');
 
 SELECT * FROM check_estimated_rows('SELECT * FROM mcv_lists WHERE a <= 4 AND b <= ''0'' AND c <= 4');
+
+SELECT * FROM check_estimated_rows('SELECT * FROM mcv_lists WHERE a = 1 OR b = ''1'' OR c = 1');
+
+-- we can't use the statistic for OR clauses that are not fully covered (missing 'd' attribute)
+SELECT * FROM check_estimated_rows('SELECT * FROM mcv_lists WHERE a = 1 OR b = ''1'' OR c = 1 OR d IS NOT NULL');
 
 -- check change of unrelated column type does not reset the MCV statistics
 ALTER TABLE mcv_lists ALTER COLUMN d TYPE VARCHAR(64);
@@ -483,23 +505,26 @@ SELECT * FROM check_estimated_rows('SELECT * FROM mcv_lists_bool WHERE NOT a AND
 -- the underlying table.
 --
 -- Currently this is only relevant for MCV stats.
-CREATE TABLE priv_test_tbl (
+CREATE SCHEMA tststats;
+
+CREATE TABLE tststats.priv_test_tbl (
     a int,
     b int
 );
 
-INSERT INTO priv_test_tbl
+INSERT INTO tststats.priv_test_tbl
      SELECT mod(i,5), mod(i,10) FROM generate_series(1,100) s(i);
 
-CREATE STATISTICS priv_test_stats (mcv) ON a, b
-  FROM priv_test_tbl;
+CREATE STATISTICS tststats.priv_test_stats (mcv) ON a, b
+  FROM tststats.priv_test_tbl;
 
-ANALYZE priv_test_tbl;
+ANALYZE tststats.priv_test_tbl;
 
 -- User with no access
 CREATE USER regress_stats_user1;
+GRANT USAGE ON SCHEMA tststats TO regress_stats_user1;
 SET SESSION AUTHORIZATION regress_stats_user1;
-SELECT * FROM priv_test_tbl; -- Permission denied
+SELECT * FROM tststats.priv_test_tbl; -- Permission denied
 
 -- Attempt to gain access using a leaky operator
 CREATE FUNCTION op_leak(int, int) RETURNS bool
@@ -507,34 +532,33 @@ CREATE FUNCTION op_leak(int, int) RETURNS bool
     LANGUAGE plpgsql;
 CREATE OPERATOR <<< (procedure = op_leak, leftarg = int, rightarg = int,
                      restrict = scalarltsel);
-SELECT * FROM priv_test_tbl WHERE a <<< 0 AND b <<< 0; -- Permission denied
-DELETE FROM priv_test_tbl WHERE a <<< 0 AND b <<< 0; -- Permission denied
+SELECT * FROM tststats.priv_test_tbl WHERE a <<< 0 AND b <<< 0; -- Permission denied
+DELETE FROM tststats.priv_test_tbl WHERE a <<< 0 AND b <<< 0; -- Permission denied
 
 -- Grant access via a security barrier view, but hide all data
 RESET SESSION AUTHORIZATION;
-CREATE VIEW priv_test_view WITH (security_barrier=true)
-    AS SELECT * FROM priv_test_tbl WHERE false;
-GRANT SELECT, DELETE ON priv_test_view TO regress_stats_user1;
+CREATE VIEW tststats.priv_test_view WITH (security_barrier=true)
+    AS SELECT * FROM tststats.priv_test_tbl WHERE false;
+GRANT SELECT, DELETE ON tststats.priv_test_view TO regress_stats_user1;
 
 -- Should now have access via the view, but see nothing and leak nothing
 SET SESSION AUTHORIZATION regress_stats_user1;
-SELECT * FROM priv_test_view WHERE a <<< 0 AND b <<< 0; -- Should not leak
-DELETE FROM priv_test_view WHERE a <<< 0 AND b <<< 0; -- Should not leak
+SELECT * FROM tststats.priv_test_view WHERE a <<< 0 AND b <<< 0; -- Should not leak
+DELETE FROM tststats.priv_test_view WHERE a <<< 0 AND b <<< 0; -- Should not leak
 
 -- Grant table access, but hide all data with RLS
 RESET SESSION AUTHORIZATION;
-ALTER TABLE priv_test_tbl ENABLE ROW LEVEL SECURITY;
-GRANT SELECT, DELETE ON priv_test_tbl TO regress_stats_user1;
+ALTER TABLE tststats.priv_test_tbl ENABLE ROW LEVEL SECURITY;
+GRANT SELECT, DELETE ON tststats.priv_test_tbl TO regress_stats_user1;
 
 -- Should now have direct table access, but see nothing and leak nothing
 SET SESSION AUTHORIZATION regress_stats_user1;
-SELECT * FROM priv_test_tbl WHERE a <<< 0 AND b <<< 0; -- Should not leak
-DELETE FROM priv_test_tbl WHERE a <<< 0 AND b <<< 0; -- Should not leak
+SELECT * FROM tststats.priv_test_tbl WHERE a <<< 0 AND b <<< 0; -- Should not leak
+DELETE FROM tststats.priv_test_tbl WHERE a <<< 0 AND b <<< 0; -- Should not leak
 
 -- Tidy up
 DROP OPERATOR <<< (int, int);
 DROP FUNCTION op_leak(int, int);
 RESET SESSION AUTHORIZATION;
-DROP VIEW priv_test_view;
-DROP TABLE priv_test_tbl;
+DROP SCHEMA tststats CASCADE;
 DROP USER regress_stats_user1;

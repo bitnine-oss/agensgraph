@@ -14,22 +14,21 @@
 #include "access/htup_details.h"
 #include "access/sysattr.h"
 #include "access/table.h"
-#include "catalog/indexing.h"
 #include "catalog/dependency.h"
+#include "catalog/indexing.h"
 #include "catalog/pg_attribute.h"
 #include "catalog/pg_class.h"
 #include "catalog/pg_namespace.h"
 #include "commands/seclabel.h"
 #include "lib/stringinfo.h"
+#include "sepgsql.h"
 #include "utils/builtins.h"
-#include "utils/fmgroids.h"
 #include "utils/catcache.h"
+#include "utils/fmgroids.h"
 #include "utils/lsyscache.h"
 #include "utils/rel.h"
 #include "utils/snapmgr.h"
 #include "utils/syscache.h"
-
-#include "sepgsql.h"
 
 static void sepgsql_index_modify(Oid indexOid);
 
@@ -515,6 +514,46 @@ sepgsql_relation_drop(Oid relOid)
 		}
 		ReleaseCatCacheList(attrList);
 	}
+}
+
+/*
+ * sepgsql_relation_truncate
+ *
+ * Check privileges to TRUNCATE the supplied relation.
+ */
+void
+sepgsql_relation_truncate(Oid relOid)
+{
+	ObjectAddress object;
+	char	   *audit_name;
+	uint16_t	tclass = 0;
+	char		relkind = get_rel_relkind(relOid);
+
+	switch (relkind)
+	{
+		case RELKIND_RELATION:
+		case RELKIND_PARTITIONED_TABLE:
+			tclass = SEPG_CLASS_DB_TABLE;
+			break;
+		default:
+			/* ignore other relkinds */
+			return;
+	}
+
+	/*
+	 * check db_table:{truncate} permission
+	 */
+	object.classId = RelationRelationId;
+	object.objectId = relOid;
+	object.objectSubId = 0;
+	audit_name = getObjectIdentity(&object);
+
+	sepgsql_avc_check_perms(&object,
+							tclass,
+							SEPG_DB_TABLE__TRUNCATE,
+							audit_name,
+							true);
+	pfree(audit_name);
 }
 
 /*

@@ -17,9 +17,9 @@
 #include "funcapi.h"
 #include "miscadmin.h"
 #include "replication/decode.h"
-#include "replication/slot.h"
 #include "replication/logical.h"
 #include "replication/logicalfuncs.h"
+#include "replication/slot.h"
 #include "utils/builtins.h"
 #include "utils/inval.h"
 #include "utils/pg_lsn.h"
@@ -523,7 +523,7 @@ pg_replication_slot_advance(PG_FUNCTION_ARGS)
 
 	if (XLogRecPtrIsInvalid(moveto))
 		ereport(ERROR,
-				(errmsg("invalid target wal lsn")));
+				(errmsg("invalid target WAL LSN")));
 
 	/* Build a tuple descriptor for our result type */
 	if (get_call_result_type(fcinfo, NULL, &tupdesc) != TYPEFUNC_COMPOSITE)

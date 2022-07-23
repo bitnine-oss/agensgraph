@@ -1348,7 +1348,7 @@ WITH ( MODULUS <replaceable class="parameter">numeric_literal</replaceable>, REM
       we try to move long column values into TOAST tables, and is also the
       target length we try to reduce the length below once toasting begins.
       This only affects columns marked as either External or Extended
-      and applies only to new tuples - there is no effect on existing rows.
+      and applies only to new tuples; there is no effect on existing rows.
       By default this parameter is set to allow at least 4 tuples per block,
       which with the default blocksize will be 2040 bytes. Valid values are
       between 128 bytes and the (blocksize - header), by default 8160 bytes.
@@ -2078,7 +2078,7 @@ CREATE TABLE cities_partdef
   </refsect2>
 
   <refsect2>
-   <title>Non-deferred Uniqueness Constraints</title>
+   <title>Non-Deferred Uniqueness Constraints</title>
 
    <para>
     When a <literal>UNIQUE</literal> or <literal>PRIMARY KEY</literal> constraint is
@@ -2166,7 +2166,7 @@ CREATE TABLE cities_partdef
   </refsect2>
 
   <refsect2>
-   <title>Zero-column Tables</title>
+   <title>Zero-Column Tables</title>
 
    <para>
     <productname>PostgreSQL</productname> allows a table of no columns

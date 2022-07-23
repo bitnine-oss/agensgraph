@@ -20,11 +20,10 @@
 #include "executor/executor.h"
 #include "fmgr.h"
 #include "miscadmin.h"
+#include "sepgsql.h"
 #include "tcop/utility.h"
 #include "utils/guc.h"
 #include "utils/queryenvironment.h"
-
-#include "sepgsql.h"
 
 PG_MODULE_MAGIC;
 
@@ -182,6 +181,20 @@ sepgsql_object_access(ObjectAccessType access,
 						sepgsql_proc_drop(objectId);
 						break;
 
+					default:
+						/* Ignore unsupported object classes */
+						break;
+				}
+			}
+			break;
+
+		case OAT_TRUNCATE:
+			{
+				switch (classId)
+				{
+					case RelationRelationId:
+						sepgsql_relation_truncate(objectId);
+						break;
 					default:
 						/* Ignore unsupported object classes */
 						break;
@@ -373,13 +386,11 @@ sepgsql_utility_command(PlannedStmt *pstmt,
 									context, params, queryEnv,
 									dest, completionTag);
 	}
-	PG_CATCH();
+	PG_FINALLY();
 	{
 		sepgsql_context_info = saved_context_info;
-		PG_RE_THROW();
 	}
 	PG_END_TRY();
-	sepgsql_context_info = saved_context_info;
 }
 
 /*

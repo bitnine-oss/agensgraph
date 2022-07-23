@@ -1376,8 +1376,8 @@ my %tests = (
 	'CREATE COLLATION test0 FROM "C"' => {
 		create_order => 76,
 		create_sql   => 'CREATE COLLATION test0 FROM "C";',
-		regexp       => qr/^
-		  \QCREATE COLLATION public.test0 (provider = libc, locale = 'C');\E/xm,
+		regexp       =>
+		  qr/CREATE COLLATION public.test0 \(provider = libc, locale = 'C'(, version = '[^']*')?\);/m,
 		collation => 1,
 		like      => { %full_runs, section_pre_data => 1, },
 	},
@@ -2536,6 +2536,17 @@ my %tests = (
 							(ndistinct) ON col1, col2 FROM dump_test.test_fifth_table',
 		regexp => qr/^
 			\QCREATE STATISTICS dump_test.test_ext_stats_opts (ndistinct) ON col1, col2 FROM dump_test.test_fifth_table;\E
+		    /xms,
+		like =>
+		  { %full_runs, %dump_test_schema_runs, section_post_data => 1, },
+		unlike => { exclude_dump_test_schema => 1, },
+	},
+
+	'ALTER STATISTICS extended_stats_options' => {
+		create_order => 98,
+		create_sql   => 'ALTER STATISTICS dump_test.test_ext_stats_opts SET STATISTICS 1000',
+		regexp => qr/^
+			\QALTER STATISTICS dump_test.test_ext_stats_opts SET STATISTICS 1000;\E
 		    /xms,
 		like =>
 		  { %full_runs, %dump_test_schema_runs, section_post_data => 1, },

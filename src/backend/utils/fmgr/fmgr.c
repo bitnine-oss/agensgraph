@@ -15,7 +15,7 @@
 
 #include "postgres.h"
 
-#include "access/tuptoaster.h"
+#include "access/detoast.h"
 #include "catalog/pg_language.h"
 #include "catalog/pg_proc.h"
 #include "executor/functions.h"
@@ -1683,7 +1683,7 @@ OidSendFunctionCall(Oid functionId, Datum val)
 /*-------------------------------------------------------------------------
  *		Support routines for standard maybe-pass-by-reference datatypes
  *
- * int8, float4, and float8 can be passed by value if Datum is wide enough.
+ * int8 and float8 can be passed by value if Datum is wide enough.
  * (For backwards-compatibility reasons, we allow pass-by-ref to be chosen
  * at compile time even if pass-by-val is possible.)
  *
@@ -1703,21 +1703,6 @@ Int64GetDatum(int64 X)
 	*retval = X;
 	return PointerGetDatum(retval);
 }
-#endif							/* USE_FLOAT8_BYVAL */
-
-#ifndef USE_FLOAT4_BYVAL
-
-Datum
-Float4GetDatum(float4 X)
-{
-	float4	   *retval = (float4 *) palloc(sizeof(float4));
-
-	*retval = X;
-	return PointerGetDatum(retval);
-}
-#endif
-
-#ifndef USE_FLOAT8_BYVAL
 
 Datum
 Float8GetDatum(float8 X)
@@ -1727,7 +1712,7 @@ Float8GetDatum(float8 X)
 	*retval = X;
 	return PointerGetDatum(retval);
 }
-#endif
+#endif							/* USE_FLOAT8_BYVAL */
 
 
 /*-------------------------------------------------------------------------
@@ -1739,7 +1724,7 @@ struct varlena *
 pg_detoast_datum(struct varlena *datum)
 {
 	if (VARATT_IS_EXTENDED(datum))
-		return heap_tuple_untoast_attr(datum);
+		return detoast_attr(datum);
 	else
 		return datum;
 }
@@ -1748,7 +1733,7 @@ struct varlena *
 pg_detoast_datum_copy(struct varlena *datum)
 {
 	if (VARATT_IS_EXTENDED(datum))
-		return heap_tuple_untoast_attr(datum);
+		return detoast_attr(datum);
 	else
 	{
 		/* Make a modifiable copy of the varlena object */
@@ -1764,14 +1749,14 @@ struct varlena *
 pg_detoast_datum_slice(struct varlena *datum, int32 first, int32 count)
 {
 	/* Only get the specified portion from the toast rel */
-	return heap_tuple_untoast_attr_slice(datum, first, count);
+	return detoast_attr_slice(datum, first, count);
 }
 
 struct varlena *
 pg_detoast_datum_packed(struct varlena *datum)
 {
 	if (VARATT_IS_COMPRESSED(datum) || VARATT_IS_EXTERNAL(datum))
-		return heap_tuple_untoast_attr(datum);
+		return detoast_attr(datum);
 	else
 		return datum;
 }

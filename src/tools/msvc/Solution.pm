@@ -29,14 +29,7 @@ sub _new
 	bless($self, $classname);
 
 	$self->DeterminePlatform();
-	my $bits = $self->{platform} eq 'Win32' ? 32 : 64;
 
-	$options->{float4byval} = 1
-	  unless exists $options->{float4byval};
-	$options->{float8byval} = ($bits == 64)
-	  unless exists $options->{float8byval};
-	die "float8byval not permitted on 32 bit platforms"
-	  if $options->{float8byval} && $bits == 32;
 	if ($options->{xslt} && !$options->{xml})
 	{
 		die "XSLT requires XML\n";
@@ -125,8 +118,9 @@ sub GetOpenSSLVersion
 
 	# Attempt to get OpenSSL version and location.  This assumes that
 	# openssl.exe is in the specified directory.
+	# Quote the .exe name in case it has spaces
 	my $opensslcmd =
-	  $self->{options}->{openssl} . "\\bin\\openssl.exe version 2>&1";
+	  qq("$self->{options}->{openssl}\\bin\\openssl.exe" version 2>&1);
 	my $sslout = `$opensslcmd`;
 
 	$? >> 8 == 0
@@ -207,25 +201,6 @@ sub GenerateFiles
 		  $self->{options}->{segsize} * 1024, "\n";
 		print $o "#define XLOG_BLCKSZ ",
 		  1024 * $self->{options}->{wal_blocksize}, "\n";
-
-		if ($self->{options}->{float4byval})
-		{
-			print $o "#define USE_FLOAT4_BYVAL 1\n";
-			print $o "#define FLOAT4PASSBYVAL true\n";
-		}
-		else
-		{
-			print $o "#define FLOAT4PASSBYVAL false\n";
-		}
-		if ($self->{options}->{float8byval})
-		{
-			print $o "#define USE_FLOAT8_BYVAL 1\n";
-			print $o "#define FLOAT8PASSBYVAL true\n";
-		}
-		else
-		{
-			print $o "#define FLOAT8PASSBYVAL false\n";
-		}
 
 		if ($self->{options}->{uuid})
 		{
@@ -510,10 +485,9 @@ sub GenerateFiles
 		open(my $o, '>', 'src/interfaces/ecpg/include/ecpg_config.h')
 		  || confess "Could not open ecpg_config.h";
 		print $o <<EOF;
-#if (_MSC_VER > 1200)
 #define HAVE_LONG_LONG_INT 1
 #define HAVE_LONG_LONG_INT_64 1
-#endif
+#define PG_USE_STDBOOL 1
 #define ENABLE_THREAD_SAFETY 1
 EOF
 		close($o);

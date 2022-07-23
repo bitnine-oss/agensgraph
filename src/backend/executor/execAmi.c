@@ -29,7 +29,6 @@
 #include "executor/nodeGather.h"
 #include "executor/nodeGatherMerge.h"
 #include "executor/nodeGroup.h"
-#include "executor/nodeGroup.h"
 #include "executor/nodeHash.h"
 #include "executor/nodeHash2Side.h"
 #include "executor/nodeHashjoin.h"
@@ -65,7 +64,6 @@
 #include "nodes/pathnodes.h"
 #include "utils/rel.h"
 #include "utils/syscache.h"
-
 
 static bool IndexSupportsBackwardScan(Oid indexid);
 

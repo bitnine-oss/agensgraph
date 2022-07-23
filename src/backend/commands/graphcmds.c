@@ -98,7 +98,7 @@ RemoveGraphById(Oid graphid)
 	Form_ag_graph graphtup;
 	NameData	graphname;
 
-	ag_graph_desc = heap_open(GraphRelationId, RowExclusiveLock);
+	ag_graph_desc = table_open(GraphRelationId, RowExclusiveLock);
 
 	tup = SearchSysCache1(GRAPHOID, ObjectIdGetDatum(graphid));
 	if (!HeapTupleIsValid(tup))
@@ -111,7 +111,7 @@ RemoveGraphById(Oid graphid)
 
 	ReleaseSysCache(tup);
 
-	heap_close(ag_graph_desc, RowExclusiveLock);
+	table_close(ag_graph_desc, RowExclusiveLock);
 
 	if (graph_path != NULL && namestrcmp(&graphname, graph_path) == 0)
 		SetConfigOption("graph_path", NULL, PGC_USERSET, PGC_S_SESSION);
@@ -126,7 +126,7 @@ RenameGraph(const char *oldname, const char *newname)
 	ObjectAddress address;
 	Form_ag_graph form_ag_graph;
 
-	rel = heap_open(GraphRelationId, RowExclusiveLock);
+	rel = table_open(GraphRelationId, RowExclusiveLock);
 
 	tup = SearchSysCacheCopy1(GRAPHNAME, CStringGetDatum(oldname));
 	if (!HeapTupleIsValid(tup))
@@ -153,7 +153,7 @@ RenameGraph(const char *oldname, const char *newname)
 
 	ObjectAddressSet(address, GraphRelationId, graphOid);
 
-	heap_close(rel, NoLock);
+	table_close(rel, NoLock);
 	heap_freetuple(tup);
 
 	CommandCounterIncrement();
@@ -281,7 +281,7 @@ SetMaxStatisticsTarget(Oid laboid)
 	Form_pg_attribute attrtuple;
 	int			maxtarget = 10000;
 
-	attrelation = heap_open(AttributeRelationId, RowExclusiveLock);
+	attrelation = table_open(AttributeRelationId, RowExclusiveLock);
 
 	/* start column */
 
@@ -316,7 +316,7 @@ SetMaxStatisticsTarget(Oid laboid)
 
 	heap_freetuple(tuple);
 
-	heap_close(attrelation, RowExclusiveLock);
+	table_close(attrelation, RowExclusiveLock);
 }
 
 static void
@@ -396,14 +396,14 @@ RenameLabel(RenameStmt *stmt)
 	/* schemaname is NULL always */
 	stmt->relation->schemaname = get_graph_path(false);
 
-	rel = heap_open(LabelRelationId, RowExclusiveLock);
+	rel = table_open(LabelRelationId, RowExclusiveLock);
 
 	tup = SearchSysCacheCopy2(LABELNAMEGRAPH,
 							  CStringGetDatum(stmt->relation->relname),
 							  ObjectIdGetDatum(graphid));
 	if (!HeapTupleIsValid(tup))
 	{
-		heap_close(rel, NoLock);
+		table_close(rel, NoLock);
 
 		ereport(NOTICE,
 				(errmsg("label \"%s\" does not exist, skipping",
@@ -428,7 +428,7 @@ RenameLabel(RenameStmt *stmt)
 
 	ObjectAddressSet(address, LabelRelationId, laboid);
 
-	heap_close(rel, NoLock);
+	table_close(rel, NoLock);
 	heap_freetuple(tup);
 
 	return address;

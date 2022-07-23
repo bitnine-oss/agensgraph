@@ -37,16 +37,16 @@
 
 #include "postgres_fe.h"
 
-#include "pg_upgrade.h"
+#ifdef HAVE_LANGINFO_H
+#include <langinfo.h>
+#endif
+
 #include "catalog/pg_class_d.h"
 #include "common/file_perm.h"
 #include "common/logging.h"
 #include "common/restricted_token.h"
 #include "fe_utils/string_utils.h"
-
-#ifdef HAVE_LANGINFO_H
-#include <langinfo.h>
-#endif
+#include "pg_upgrade.h"
 
 static void prepare_new_cluster(void);
 static void prepare_new_globals(void);
@@ -105,11 +105,8 @@ main(int argc, char **argv)
 
 	/* Set mask based on PGDATA permissions */
 	if (!GetDataDirectoryCreatePerm(new_cluster.pgdata))
-	{
-		pg_log(PG_FATAL, "could not read permissions of directory \"%s\": %s\n",
-			   new_cluster.pgdata, strerror(errno));
-		exit(1);
-	}
+		pg_fatal("could not read permissions of directory \"%s\": %s\n",
+				 new_cluster.pgdata, strerror(errno));
 
 	umask(pg_mode_mask);
 

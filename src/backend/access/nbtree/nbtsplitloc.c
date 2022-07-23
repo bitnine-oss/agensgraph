@@ -167,7 +167,7 @@ _bt_findsplitloc(Relation rel,
 
 	/* Count up total space in data items before actually scanning 'em */
 	olddataitemstotal = rightspace - (int) PageGetExactFreeSpace(page);
-	leaffillfactor = RelationGetFillFactor(rel, BTREE_DEFAULT_FILLFACTOR);
+	leaffillfactor = BTGetFillFactor(rel);
 
 	/* Passed-in newitemsz is MAXALIGNED but does not include line pointer */
 	newitemsz += sizeof(ItemIdData);
@@ -814,7 +814,7 @@ _bt_bestsplitloc(FindSplitData *state, int perfectpenalty,
 		final->firstoldonright < state->newitemoff + MAX_LEAF_INTERVAL)
 	{
 		/*
-		 * Avoid the problem by peforming a 50:50 split when the new item is
+		 * Avoid the problem by performing a 50:50 split when the new item is
 		 * just to the right of the would-be "many duplicates" split point.
 		 */
 		final = &state->splits[0];

@@ -251,9 +251,13 @@ extern bool session_auth_is_superuser;
 extern int	log_min_error_statement;
 extern PGDLLIMPORT int log_min_messages;
 extern PGDLLIMPORT int client_min_messages;
+extern int	log_min_duration_sample;
 extern int	log_min_duration_statement;
 extern int	log_temp_files;
+extern double log_statement_sample_rate;
 extern double log_xact_sample_rate;
+extern char *backtrace_functions;
+extern char *backtrace_symbol_list;
 
 extern int	temp_file_limit;
 

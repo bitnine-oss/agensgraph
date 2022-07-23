@@ -102,6 +102,7 @@
 #include <math.h>
 
 #include "access/brin.h"
+#include "access/brin_page.h"
 #include "access/gin.h"
 #include "access/table.h"
 #include "access/tableam.h"
@@ -3585,14 +3586,19 @@ estimate_multivariate_ndistinct(PlannerInfo *root, RelOptInfo *rel,
 	foreach(lc, *varinfos)
 	{
 		GroupVarInfo *varinfo = (GroupVarInfo *) lfirst(lc);
+		AttrNumber	attnum;
 
 		Assert(varinfo->rel == rel);
 
-		if (IsA(varinfo->var, Var))
-		{
-			attnums = bms_add_member(attnums,
-									 ((Var *) varinfo->var)->varattno);
-		}
+		if (!IsA(varinfo->var, Var))
+			continue;
+
+		attnum = ((Var *) varinfo->var)->varattno;
+
+		if (!AttrNumberIsForUserDefinedAttr(attnum))
+			continue;
+
+		attnums = bms_add_member(attnums, attnum);
 	}
 
 	/* look for the ndistinct statistics matching the most vars */
@@ -3672,6 +3678,10 @@ estimate_multivariate_ndistinct(PlannerInfo *root, RelOptInfo *rel,
 			}
 
 			attnum = ((Var *) varinfo->var)->varattno;
+
+			if (!AttrNumberIsForUserDefinedAttr(attnum))
+				continue;
+
 			if (!bms_is_member(attnum, matched))
 				newlist = lappend(newlist, varinfo);
 		}
@@ -4095,20 +4105,7 @@ convert_string_datum(Datum value, Oid typid, Oid collid, bool *failure)
 		 * crashes since it will only give an estimation error and nothing
 		 * fatal.
 		 */
-#if _MSC_VER == 1400			/* VS.Net 2005 */
-
-		/*
-		 *
-		 * http://connect.microsoft.com/VisualStudio/feedback/ViewFeedback.aspx?FeedbackID=99694
-		 */
-		{
-			char		x[1];
-
-			xfrmlen = strxfrm(x, val, 0);
-		}
-#else
 		xfrmlen = strxfrm(NULL, val, 0);
-#endif
 #ifdef WIN32
 
 		/*
@@ -4619,6 +4616,52 @@ examine_variable(PlannerInfo *root, Node *node, int varRelid,
 									rte->securityQuals == NIL &&
 									(pg_class_aclcheck(rte->relid, userid,
 													   ACL_SELECT) == ACLCHECK_OK);
+
+								/*
+								 * If the user doesn't have permissions to
+								 * access an inheritance child relation, check
+								 * the permissions of the table actually
+								 * mentioned in the query, since most likely
+								 * the user does have that permission.  Note
+								 * that whole-table select privilege on the
+								 * parent doesn't quite guarantee that the
+								 * user could read all columns of the child.
+								 * But in practice it's unlikely that any
+								 * interesting security violation could result
+								 * from allowing access to the expression
+								 * index's stats, so we allow it anyway.  See
+								 * similar code in examine_simple_variable()
+								 * for additional comments.
+								 */
+								if (!vardata->acl_ok &&
+									root->append_rel_array != NULL)
+								{
+									AppendRelInfo *appinfo;
+									Index		varno = index->rel->relid;
+
+									appinfo = root->append_rel_array[varno];
+									while (appinfo &&
+										   planner_rt_fetch(appinfo->parent_relid,
+															root)->rtekind == RTE_RELATION)
+									{
+										varno = appinfo->parent_relid;
+										appinfo = root->append_rel_array[varno];
+									}
+									if (varno != index->rel->relid)
+									{
+										/* Repeat access check on this rel */
+										rte = planner_rt_fetch(varno, root);
+										Assert(rte->rtekind == RTE_RELATION);
+
+										userid = rte->checkAsUser ? rte->checkAsUser : GetUserId();
+
+										vardata->acl_ok =
+											rte->securityQuals == NIL &&
+											(pg_class_aclcheck(rte->relid,
+															   userid,
+															   ACL_SELECT) == ACLCHECK_OK);
+									}
+								}
 							}
 							else
 							{
@@ -4696,6 +4739,88 @@ examine_simple_variable(PlannerInfo *root, Var *var,
 									ACL_SELECT) == ACLCHECK_OK) ||
 				 (pg_attribute_aclcheck(rte->relid, var->varattno, userid,
 										ACL_SELECT) == ACLCHECK_OK));
+
+			/*
+			 * If the user doesn't have permissions to access an inheritance
+			 * child relation or specifically this attribute, check the
+			 * permissions of the table/column actually mentioned in the
+			 * query, since most likely the user does have that permission
+			 * (else the query will fail at runtime), and if the user can read
+			 * the column there then he can get the values of the child table
+			 * too.  To do that, we must find out which of the root parent's
+			 * attributes the child relation's attribute corresponds to.
+			 */
+			if (!vardata->acl_ok && var->varattno > 0 &&
+				root->append_rel_array != NULL)
+			{
+				AppendRelInfo *appinfo;
+				Index		varno = var->varno;
+				int			varattno = var->varattno;
+				bool		found = false;
+
+				appinfo = root->append_rel_array[varno];
+
+				/*
+				 * Partitions are mapped to their immediate parent, not the
+				 * root parent, so must be ready to walk up multiple
+				 * AppendRelInfos.  But stop if we hit a parent that is not
+				 * RTE_RELATION --- that's a flattened UNION ALL subquery, not
+				 * an inheritance parent.
+				 */
+				while (appinfo &&
+					   planner_rt_fetch(appinfo->parent_relid,
+										root)->rtekind == RTE_RELATION)
+				{
+					int			parent_varattno;
+					ListCell   *l;
+
+					parent_varattno = 1;
+					found = false;
+					foreach(l, appinfo->translated_vars)
+					{
+						Var		   *childvar = lfirst_node(Var, l);
+
+						/* Ignore dropped attributes of the parent. */
+						if (childvar != NULL &&
+							varattno == childvar->varattno)
+						{
+							found = true;
+							break;
+						}
+						parent_varattno++;
+					}
+
+					if (!found)
+						break;
+
+					varno = appinfo->parent_relid;
+					varattno = parent_varattno;
+
+					/* If the parent is itself a child, continue up. */
+					appinfo = root->append_rel_array[varno];
+				}
+
+				/*
+				 * In rare cases, the Var may be local to the child table, in
+				 * which case, we've got to live with having no access to this
+				 * column's stats.
+				 */
+				if (!found)
+					return;
+
+				/* Repeat the access check on this parent rel & column */
+				rte = planner_rt_fetch(varno, root);
+				Assert(rte->rtekind == RTE_RELATION);
+
+				userid = rte->checkAsUser ? rte->checkAsUser : GetUserId();
+
+				vardata->acl_ok =
+					rte->securityQuals == NIL &&
+					((pg_class_aclcheck(rte->relid, userid,
+										ACL_SELECT) == ACLCHECK_OK) ||
+					 (pg_attribute_aclcheck(rte->relid, varattno, userid,
+											ACL_SELECT) == ACLCHECK_OK));
+			}
 		}
 		else
 		{
@@ -6872,12 +6997,34 @@ brincostestimate(PlannerInfo *root, IndexPath *path, double loop_count,
 							  &spc_seq_page_cost);
 
 	/*
-	 * Obtain some data from the index itself.  A lock should have already
-	 * been obtained on the index in plancat.c.
+	 * Obtain some data from the index itself, if possible.  Otherwise invent
+	 * some plausible internal statistics based on the relation page count.
 	 */
-	indexRel = index_open(index->indexoid, NoLock);
-	brinGetStats(indexRel, &statsData);
-	index_close(indexRel, NoLock);
+	if (!index->hypothetical)
+	{
+		/*
+		 * A lock should have already been obtained on the index in plancat.c.
+		 */
+		indexRel = index_open(index->indexoid, NoLock);
+		brinGetStats(indexRel, &statsData);
+		index_close(indexRel, NoLock);
+
+		/* work out the actual number of ranges in the index */
+		indexRanges = Max(ceil((double) baserel->pages /
+							   statsData.pagesPerRange), 1.0);
+	}
+	else
+	{
+		/*
+		 * Assume default number of pages per range, and estimate the number
+		 * of ranges based on that.
+		 */
+		indexRanges = Max(ceil((double) baserel->pages /
+							   BRIN_DEFAULT_PAGES_PER_RANGE), 1.0);
+
+		statsData.pagesPerRange = BRIN_DEFAULT_PAGES_PER_RANGE;
+		statsData.revmapNumPages = (indexRanges / REVMAP_PAGE_MAXITEMS) + 1;
+	}
 
 	/*
 	 * Compute index correlation
@@ -6976,10 +7123,6 @@ brincostestimate(PlannerInfo *root, IndexPath *path, double loop_count,
 	qualSelectivity = clauselist_selectivity(root, indexQuals,
 											 baserel->relid,
 											 JOIN_INNER, NULL);
-
-	/* work out the actual number of ranges in the index */
-	indexRanges = Max(ceil((double) baserel->pages / statsData.pagesPerRange),
-					  1.0);
 
 	/*
 	 * Now calculate the minimum possible ranges we could match with if all of

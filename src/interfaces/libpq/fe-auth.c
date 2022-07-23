@@ -40,9 +40,8 @@
 
 #include "common/md5.h"
 #include "common/scram-common.h"
-#include "libpq-fe.h"
 #include "fe-auth.h"
-
+#include "libpq-fe.h"
 
 #ifdef ENABLE_GSS
 /*
@@ -423,6 +422,14 @@ pg_SASL_init(PGconn *conn, int payloadlen)
 
 	initPQExpBuffer(&mechanism_buf);
 
+	if (conn->channel_binding[0] == 'r' &&	/* require */
+		!conn->ssl_in_use)
+	{
+		printfPQExpBuffer(&conn->errorMessage,
+						  libpq_gettext("Channel binding required, but SSL not in use\n"));
+		goto error;
+	}
+
 	if (conn->sasl_state)
 	{
 		printfPQExpBuffer(&conn->errorMessage,
@@ -454,22 +461,37 @@ pg_SASL_init(PGconn *conn, int payloadlen)
 
 		/*
 		 * Select the mechanism to use.  Pick SCRAM-SHA-256-PLUS over anything
-		 * else if a channel binding type is set and if the client supports
-		 * it. Pick SCRAM-SHA-256 if nothing else has already been picked.  If
-		 * we add more mechanisms, a more refined priority mechanism might
-		 * become necessary.
+		 * else if a channel binding type is set and if the client supports it
+		 * (and did not set channel_binding=disable). Pick SCRAM-SHA-256 if
+		 * nothing else has already been picked.  If we add more mechanisms, a
+		 * more refined priority mechanism might become necessary.
 		 */
 		if (strcmp(mechanism_buf.data, SCRAM_SHA_256_PLUS_NAME) == 0)
 		{
 			if (conn->ssl_in_use)
 			{
-				/*
-				 * The server has offered SCRAM-SHA-256-PLUS, which is only
-				 * supported by the client if a hash of the peer certificate
-				 * can be created.
-				 */
+				/* The server has offered SCRAM-SHA-256-PLUS. */
+
 #ifdef HAVE_PGTLS_GET_PEER_CERTIFICATE_HASH
-				selected_mechanism = SCRAM_SHA_256_PLUS_NAME;
+				/*
+				 * The client supports channel binding, which is chosen if
+				 * channel_binding is not disabled.
+				 */
+				if (conn->channel_binding[0] != 'd')	/* disable */
+					selected_mechanism = SCRAM_SHA_256_PLUS_NAME;
+#else
+				/*
+				 * The client does not support channel binding.  If it is
+				 * required, complain immediately instead of the error below
+				 * which would be confusing as the server is publishing
+				 * SCRAM-SHA-256-PLUS.
+				 */
+				if (conn->channel_binding[0] == 'r')	/* require */
+				{
+					printfPQExpBuffer(&conn->errorMessage,
+									  libpq_gettext("channel binding is required, but client does not support it\n"));
+					goto error;
+				}
 #endif
 			}
 			else
@@ -497,6 +519,14 @@ pg_SASL_init(PGconn *conn, int payloadlen)
 	{
 		printfPQExpBuffer(&conn->errorMessage,
 						  libpq_gettext("none of the server's SASL authentication mechanisms are supported\n"));
+		goto error;
+	}
+
+	if (conn->channel_binding[0] == 'r' &&	/* require */
+		strcmp(selected_mechanism, SCRAM_SHA_256_PLUS_NAME) != 0)
+	{
+		printfPQExpBuffer(&conn->errorMessage,
+						  libpq_gettext("channel binding is required, but server did not offer an authentication method that supports channel binding\n"));
 		goto error;
 	}
 
@@ -775,6 +805,50 @@ pg_password_sendauth(PGconn *conn, const char *password, AuthRequest areq)
 }
 
 /*
+ * Verify that the authentication request is expected, given the connection
+ * parameters. This is especially important when the client wishes to
+ * authenticate the server before any sensitive information is exchanged.
+ */
+static bool
+check_expected_areq(AuthRequest areq, PGconn *conn)
+{
+	bool		result = true;
+
+	/*
+	 * When channel_binding=require, we must protect against two cases: (1) we
+	 * must not respond to non-SASL authentication requests, which might leak
+	 * information such as the client's password; and (2) even if we receive
+	 * AUTH_REQ_OK, we still must ensure that channel binding has happened in
+	 * order to authenticate the server.
+	 */
+	if (conn->channel_binding[0] == 'r' /* require */ )
+	{
+		switch (areq)
+		{
+			case AUTH_REQ_SASL:
+			case AUTH_REQ_SASL_CONT:
+			case AUTH_REQ_SASL_FIN:
+				break;
+			case AUTH_REQ_OK:
+				if (!pg_fe_scram_channel_bound(conn->sasl_state))
+				{
+					printfPQExpBuffer(&conn->errorMessage,
+									  libpq_gettext("Channel binding required, but server authenticated client without channel binding\n"));
+					result = false;
+				}
+				break;
+			default:
+				printfPQExpBuffer(&conn->errorMessage,
+								  libpq_gettext("Channel binding required but not supported by server's authentication request\n"));
+				result = false;
+				break;
+		}
+	}
+
+	return result;
+}
+
+/*
  * pg_fe_sendauth
  *		client demux routine for processing an authentication request
  *
@@ -788,6 +862,9 @@ pg_password_sendauth(PGconn *conn, const char *password, AuthRequest areq)
 int
 pg_fe_sendauth(AuthRequest areq, int payloadlen, PGconn *conn)
 {
+	if (!check_expected_areq(areq, conn))
+		return STATUS_ERROR;
+
 	switch (areq)
 	{
 		case AUTH_REQ_OK:
@@ -1173,7 +1250,7 @@ PQencryptPasswordConn(PGconn *conn, const char *passwd, const char *user,
 	 */
 	if (strcmp(algorithm, "scram-sha-256") == 0)
 	{
-		crypt_pwd = pg_fe_scram_build_verifier(passwd);
+		crypt_pwd = pg_fe_scram_build_secret(passwd);
 	}
 	else if (strcmp(algorithm, "md5") == 0)
 	{

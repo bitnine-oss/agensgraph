@@ -24,8 +24,8 @@
 #include "libpq/pqformat.h"
 #include "miscadmin.h"
 #include "nodes/pg_list.h"
-#include "pgtar.h"
 #include "pgstat.h"
+#include "pgtar.h"
 #include "port.h"
 #include "postmaster/syslogger.h"
 #include "replication/basebackup.h"
@@ -41,7 +41,6 @@
 #include "utils/ps_status.h"
 #include "utils/relcache.h"
 #include "utils/timestamp.h"
-
 
 typedef struct
 {
@@ -90,6 +89,18 @@ static char *statrelpath = NULL;
  */
 #define THROTTLING_FREQUENCY	8
 
+/*
+ * Checks whether we encountered any error in fread().  fread() doesn't give
+ * any clue what has happened, so we check with ferror().  Also, neither
+ * fread() nor ferror() set errno, so we just throw a generic error.
+ */
+#define CHECK_FREAD_ERROR(fp, filename) \
+do { \
+	if (ferror(fp)) \
+		ereport(ERROR, \
+				(errmsg("could not read from file \"%s\"", filename))); \
+} while (0)
+
 /* The actual number of bytes, transfer of which may cause sleep. */
 static uint64 throttling_sample;
 
@@ -119,7 +130,7 @@ static bool noverify_checksums = false;
  * Note: this list should be kept in sync with the filter lists in pg_rewind's
  * filemap.c.
  */
-static const char *excludeDirContents[] =
+static const char *const excludeDirContents[] =
 {
 	/*
 	 * Skip temporary statistics files. PG_STAT_TMP_DIR must be skipped even
@@ -160,7 +171,7 @@ static const char *excludeDirContents[] =
 /*
  * List of files excluded from backups.
  */
-static const char *excludeFiles[] =
+static const char *const excludeFiles[] =
 {
 	/* Skip auto conf temporary file. */
 	PG_AUTOCONF_FILENAME ".tmp",
@@ -542,6 +553,8 @@ perform_base_backup(basebackup_options *opt)
 				if (len == wal_segment_size)
 					break;
 			}
+
+			CHECK_FREAD_ERROR(fp, pathbuf);
 
 			if (len != wal_segment_size)
 			{
@@ -1428,7 +1441,7 @@ sendFile(const char *readfilename, const char *tarfilename, struct stat *statbuf
 		if (verify_checksum && (cnt % BLCKSZ != 0))
 		{
 			ereport(WARNING,
-					(errmsg("cannot verify checksum in file \"%s\", block "
+					(errmsg("could not verify checksum in file \"%s\", block "
 							"%d: read buffer size %d and page size %d "
 							"differ",
 							readfilename, blkno, (int) cnt, BLCKSZ)));
@@ -1478,6 +1491,20 @@ sendFile(const char *readfilename, const char *tarfilename, struct stat *statbuf
 
 							if (fread(buf + BLCKSZ * i, 1, BLCKSZ, fp) != BLCKSZ)
 							{
+								/*
+								 * If we hit end-of-file, a concurrent
+								 * truncation must have occurred, so break out
+								 * of this loop just as if the initial fread()
+								 * returned 0. We'll drop through to the same
+								 * code that handles that case. (We must fix
+								 * up cnt first, though.)
+								 */
+								if (feof(fp))
+								{
+									cnt = BLCKSZ * i;
+									break;
+								}
+
 								ereport(ERROR,
 										(errcode_for_file_access(),
 										 errmsg("could not reread block %d of file \"%s\": %m",
@@ -1529,7 +1556,7 @@ sendFile(const char *readfilename, const char *tarfilename, struct stat *statbuf
 		len += cnt;
 		throttle(cnt);
 
-		if (len >= statbuf->st_size)
+		if (feof(fp) || len >= statbuf->st_size)
 		{
 			/*
 			 * Reached end of file. The file could be longer, if it was
@@ -1539,6 +1566,8 @@ sendFile(const char *readfilename, const char *tarfilename, struct stat *statbuf
 			break;
 		}
 	}
+
+	CHECK_FREAD_ERROR(fp, readfilename);
 
 	/* If the file was truncated while we were sending it, pad it with zeros */
 	if (len < statbuf->st_size)
@@ -1569,8 +1598,10 @@ sendFile(const char *readfilename, const char *tarfilename, struct stat *statbuf
 	if (checksum_failures > 1)
 	{
 		ereport(WARNING,
-				(errmsg("file \"%s\" has a total of %d checksum verification "
-						"failures", readfilename, checksum_failures)));
+				(errmsg_plural("file \"%s\" has a total of %d checksum verification failure",
+							   "file \"%s\" has a total of %d checksum verification failures",
+							   checksum_failures,
+							   readfilename, checksum_failures)));
 
 		pgstat_report_checksum_failures_in_db(dboid, checksum_failures);
 	}

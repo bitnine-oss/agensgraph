@@ -36,8 +36,8 @@
 #include "utils/lsyscache.h"
 #include "utils/partcache.h"
 #include "utils/rel.h"
-#include "utils/snapmgr.h"
 #include "utils/ruleutils.h"
+#include "utils/snapmgr.h"
 #include "utils/syscache.h"
 
 /*
@@ -360,9 +360,8 @@ create_list_bounds(PartitionBoundSpec **boundspecs, int nparts,
 			else
 			{
 				/*
-				 * Never put a null into the values array, flag instead for
-				 * the code further down below where we construct the actual
-				 * relcache struct.
+				 * Never put a null into the values array; save the index of
+				 * the partition that stores nulls, instead.
 				 */
 				if (null_index != -1)
 					elog(ERROR, "found null more than once");
@@ -1253,7 +1252,7 @@ check_default_partition_contents(Relation parent, Relation default_rel,
 	 */
 	if (PartConstraintImpliedByRelConstraint(default_rel, def_part_constraints))
 	{
-		ereport(INFO,
+		ereport(DEBUG1,
 				(errmsg("updated partition constraint for default partition \"%s\" is implied by existing constraints",
 						RelationGetRelationName(default_rel))));
 		return;
@@ -1304,7 +1303,7 @@ check_default_partition_contents(Relation parent, Relation default_rel,
 			if (PartConstraintImpliedByRelConstraint(part_rel,
 													 def_part_constraints))
 			{
-				ereport(INFO,
+				ereport(DEBUG1,
 						(errmsg("updated partition constraint for default partition \"%s\" is implied by existing constraints",
 								RelationGetRelationName(part_rel))));
 

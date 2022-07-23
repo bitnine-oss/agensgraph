@@ -21,7 +21,6 @@
 #include "access/twophase.h"
 #include "access/xact.h"
 #include "access/xlog.h"
-#include "catalog/ag_graph_fn.h"
 #include "catalog/catalog.h"
 #include "catalog/namespace.h"
 #include "catalog/pg_inherits.h"
@@ -29,8 +28,8 @@
 #include "commands/alter.h"
 #include "commands/async.h"
 #include "commands/cluster.h"
-#include "commands/comment.h"
 #include "commands/collationcmds.h"
+#include "commands/comment.h"
 #include "commands/conversioncmds.h"
 #include "commands/copy.h"
 #include "commands/createas.h"
@@ -40,9 +39,8 @@
 #include "commands/event_trigger.h"
 #include "commands/explain.h"
 #include "commands/extension.h"
-#include "commands/graphcmds.h"
-#include "commands/matview.h"
 #include "commands/lockcmds.h"
+#include "commands/matview.h"
 #include "commands/policy.h"
 #include "commands/portalcmds.h"
 #include "commands/prepare.h"
@@ -63,13 +61,17 @@
 #include "parser/parse_utilcmd.h"
 #include "postmaster/bgwriter.h"
 #include "rewrite/rewriteDefine.h"
+#include "rewrite/rewriteRemove.h"
 #include "storage/fd.h"
+#include "tcop/pquery.h"
 #include "tcop/utility.h"
 #include "utils/acl.h"
 #include "utils/guc.h"
 #include "utils/lsyscache.h"
 #include "utils/rel.h"
-
+#include "utils/syscache.h"
+#include "catalog/ag_graph_fn.h"
+#include "commands/graphcmds.h"
 
 /* Hook for plugins to get control in ProcessUtility() */
 ProcessUtility_hook_type ProcessUtility_hook = NULL;
@@ -601,13 +603,9 @@ standard_ProcessUtility(PlannedStmt *pstmt,
 			break;
 
 		case T_DropdbStmt:
-			{
-				DropdbStmt *stmt = (DropdbStmt *) parsetree;
-
-				/* no event triggers for global objects */
-				PreventInTransactionBlock(isTopLevel, "DROP DATABASE");
-				dropdb(stmt->dbname, stmt->missing_ok);
-			}
+			/* no event triggers for global objects */
+			PreventInTransactionBlock(isTopLevel, "DROP DATABASE");
+			DropDatabase(pstate, (DropdbStmt *) parsetree);
 			break;
 
 			/* Query-level asynchronous notification */
@@ -1543,13 +1541,11 @@ ProcessUtilitySlow(ParseState *pstate,
 					address = ExecRefreshMatView((RefreshMatViewStmt *) parsetree,
 												 queryString, params, completionTag);
 				}
-				PG_CATCH();
+				PG_FINALLY();
 				{
 					EventTriggerUndoInhibitCommandCollection();
-					PG_RE_THROW();
 				}
 				PG_END_TRY();
-				EventTriggerUndoInhibitCommandCollection();
 				break;
 
 			case T_CreateTrigStmt:
@@ -1815,6 +1811,10 @@ ProcessUtilitySlow(ParseState *pstate,
 				address = CreateStatistics((CreateStatsStmt *) parsetree);
 				break;
 
+			case T_AlterStatsStmt:
+				address = AlterStatistics((AlterStatsStmt *) parsetree);
+				break;
+
 			case T_AlterCollationStmt:
 				address = AlterCollation((AlterCollationStmt *) parsetree);
 				break;
@@ -1839,16 +1839,12 @@ ProcessUtilitySlow(ParseState *pstate,
 			EventTriggerDDLCommandEnd(parsetree);
 		}
 	}
-	PG_CATCH();
+	PG_FINALLY();
 	{
 		if (needCleanup)
 			EventTriggerEndCompleteQuery();
-		PG_RE_THROW();
 	}
 	PG_END_TRY();
-
-	if (needCleanup)
-		EventTriggerEndCompleteQuery();
 }
 
 /*
@@ -2630,7 +2626,14 @@ CreateCommandTag(Node *parsetree)
 			break;
 
 		case T_RenameStmt:
-			tag = AlterObjectTypeCommandTag(((RenameStmt *) parsetree)->renameType);
+			/*
+			 * When the column is renamed, the command tag is created
+			 * from its relation type
+			 */
+			tag = AlterObjectTypeCommandTag(
+				((RenameStmt *) parsetree)->renameType == OBJECT_COLUMN ?
+				((RenameStmt *) parsetree)->relationType :
+				((RenameStmt *) parsetree)->renameType);
 			break;
 
 		case T_AlterObjectDependsStmt:
@@ -3032,6 +3035,10 @@ CreateCommandTag(Node *parsetree)
 
 		case T_CreateStatsStmt:
 			tag = "CREATE STATISTICS";
+			break;
+
+		case T_AlterStatsStmt:
+			tag = "ALTER STATISTICS";
 			break;
 
 		case T_DeallocateStmt:
@@ -3635,6 +3642,10 @@ GetCommandLogLevel(Node *parsetree)
 			break;
 
 		case T_CreateStatsStmt:
+			lev = LOGSTMT_DDL;
+			break;
+
+		case T_AlterStatsStmt:
 			lev = LOGSTMT_DDL;
 			break;
 

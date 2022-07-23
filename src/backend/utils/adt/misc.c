@@ -29,17 +29,16 @@
 #include "common/keywords.h"
 #include "funcapi.h"
 #include "miscadmin.h"
-#include "pgstat.h"
 #include "parser/scansup.h"
+#include "pgstat.h"
 #include "postmaster/syslogger.h"
 #include "rewrite/rewriteHandler.h"
 #include "storage/fd.h"
-#include "utils/lsyscache.h"
-#include "utils/ruleutils.h"
 #include "tcop/tcopprot.h"
 #include "utils/builtins.h"
+#include "utils/lsyscache.h"
+#include "utils/ruleutils.h"
 #include "utils/timestamp.h"
-
 
 /*
  * Common subroutine for num_nulls() and num_nonnulls().
@@ -510,7 +509,7 @@ pg_relation_is_updatable(PG_FUNCTION_ARGS)
 	Oid			reloid = PG_GETARG_OID(0);
 	bool		include_triggers = PG_GETARG_BOOL(1);
 
-	PG_RETURN_INT32(relation_is_updatable(reloid, include_triggers, NULL));
+	PG_RETURN_INT32(relation_is_updatable(reloid, NIL, include_triggers, NULL));
 }
 
 /*
@@ -534,7 +533,7 @@ pg_column_is_updatable(PG_FUNCTION_ARGS)
 	if (attnum <= 0)
 		PG_RETURN_BOOL(false);
 
-	events = relation_is_updatable(reloid, include_triggers,
+	events = relation_is_updatable(reloid, NIL, include_triggers,
 								   bms_make_singleton(col));
 
 	/* We require both updatability and deletability of the relation */

@@ -16,7 +16,6 @@
 
 #include "pg_upgrade.h"
 
-
 static int	parallel_jobs;
 
 #ifdef WIN32
@@ -149,8 +148,6 @@ parallel_exec_prog(const char *log_file, const char *opt_log_file,
 		thread_handles[parallel_jobs - 1] = child;
 #endif
 	}
-
-	return;
 }
 
 
@@ -264,8 +261,6 @@ parallel_transfer_all_new_dbs(DbInfoArr *old_db_arr, DbInfoArr *new_db_arr,
 		thread_handles[parallel_jobs - 1] = child;
 #endif
 	}
-
-	return;
 }
 
 
@@ -334,7 +329,7 @@ reap_child(bool wait_for_child)
 		thread_handles[thread_num] = thread_handles[parallel_jobs - 1];
 
 		/*
-		 * Move last active thead arg struct into the now-dead slot, and the
+		 * Move last active thread arg struct into the now-dead slot, and the
 		 * now-dead slot to the end for reuse by the next thread. Though the
 		 * thread struct is in use by another thread, we can safely swap the
 		 * struct pointers within the array.

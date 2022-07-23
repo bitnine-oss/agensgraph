@@ -44,13 +44,14 @@
 #include "miscadmin.h"
 #include "pgstat.h"
 #include "postmaster/bgwriter.h"
-#include "storage/bufmgr.h"
 #include "storage/buf_internals.h"
+#include "storage/bufmgr.h"
 #include "storage/condition_variable.h"
 #include "storage/fd.h"
 #include "storage/ipc.h"
 #include "storage/lwlock.h"
 #include "storage/proc.h"
+#include "storage/procsignal.h"
 #include "storage/shmem.h"
 #include "storage/smgr.h"
 #include "storage/spin.h"
@@ -59,7 +60,6 @@
 #include "utils/memutils.h"
 #include "utils/resowner.h"
 #include "utils/timestamp.h"
-
 
 /*
  * GUC parameters
@@ -97,7 +97,6 @@ static volatile sig_atomic_t shutdown_requested = false;
 static void bg_quickdie(SIGNAL_ARGS);
 static void BgSigHupHandler(SIGNAL_ARGS);
 static void ReqShutdownHandler(SIGNAL_ARGS);
-static void bgwriter_sigusr1_handler(SIGNAL_ARGS);
 
 
 /*
@@ -115,10 +114,7 @@ BackgroundWriterMain(void)
 	WritebackContext wb_context;
 
 	/*
-	 * Properly accept or ignore signals the postmaster might send us.
-	 *
-	 * bgwriter doesn't participate in ProcSignal signalling, but a SIGUSR1
-	 * handler is still needed for latch wakeups.
+	 * Properly accept or ignore signals that might be sent to us.
 	 */
 	pqsignal(SIGHUP, BgSigHupHandler);	/* set flag to read config file */
 	pqsignal(SIGINT, SIG_IGN);
@@ -126,7 +122,7 @@ BackgroundWriterMain(void)
 	pqsignal(SIGQUIT, bg_quickdie); /* hard crash time */
 	pqsignal(SIGALRM, SIG_IGN);
 	pqsignal(SIGPIPE, SIG_IGN);
-	pqsignal(SIGUSR1, bgwriter_sigusr1_handler);
+	pqsignal(SIGUSR1, procsignal_sigusr1_handler);
 	pqsignal(SIGUSR2, SIG_IGN);
 
 	/*
@@ -425,17 +421,6 @@ ReqShutdownHandler(SIGNAL_ARGS)
 
 	shutdown_requested = true;
 	SetLatch(MyLatch);
-
-	errno = save_errno;
-}
-
-/* SIGUSR1: used for latch wakeups */
-static void
-bgwriter_sigusr1_handler(SIGNAL_ARGS)
-{
-	int			save_errno = errno;
-
-	latch_sigusr1_handler();
 
 	errno = save_errno;
 }

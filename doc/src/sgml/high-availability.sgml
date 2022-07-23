@@ -237,7 +237,8 @@ protocol to make nodes agree on a serializable transactional order.
    <listitem>
 
     <para>
-     For servers that are not regularly connected, like laptops or
+     For servers that are not regularly connected or have slow
+     communication links, like laptops or
      remote servers, keeping data consistent among servers is a
      challenge.  Using asynchronous multimaster replication, each
      server works independently, and periodically communicates with
@@ -256,9 +257,8 @@ protocol to make nodes agree on a serializable transactional order.
      In synchronous multimaster replication, each server can accept
      write requests, and modified data is transmitted from the
      original server to every other server before each transaction
-     commits.  Heavy write activity can cause excessive locking,
-     leading to poor performance.  In fact, write performance is
-     often worse than that of a single server.  Read requests can
+     commits.  Heavy write activity can cause excessive locking and
+     commit delays, leading to poor performance.  Read requests can
      be sent to any server.  Some implementations use shared disk
      to reduce the communication overhead.  Synchronous multimaster
      replication is best for mostly read workloads, though its big
@@ -938,7 +938,7 @@ primary_conninfo = 'host=192.168.1.50 port=5432 user=foo password=foopass'
     protection.  Replication slots overcome these disadvantages.
    </para>
    <sect3 id="streaming-replication-slots-manipulation">
-    <title>Querying and manipulating replication slots</title>
+    <title>Querying and Manipulating Replication Slots</title>
     <para>
      Each replication slot has a name, which can contain lower-case letters,
      numbers, and the underscore character.
@@ -1357,7 +1357,7 @@ synchronous_standby_names = 'ANY 2 (s1, s2, s3)'
   </sect2>
 
   <sect2 id="continuous-archiving-in-standby">
-   <title>Continuous archiving in standby</title>
+   <title>Continuous Archiving in Standby</title>
 
    <indexterm>
      <primary>continuous archiving</primary>
@@ -1626,7 +1626,7 @@ if (!triggered)
   </sect2>
 
   <sect2 id="warm-standby-record">
-   <title>Record-based Log Shipping</title>
+   <title>Record-Based Log Shipping</title>
 
    <para>
     It is also possible to implement record-based log shipping using this
@@ -1715,22 +1715,22 @@ if (!triggered)
     <itemizedlist>
      <listitem>
       <para>
-       Query access - <command>SELECT</command>, <command>COPY TO</command>
+       Query access: <command>SELECT</command>, <command>COPY TO</command>
       </para>
      </listitem>
      <listitem>
       <para>
-       Cursor commands - <command>DECLARE</command>, <command>FETCH</command>, <command>CLOSE</command>
+       Cursor commands: <command>DECLARE</command>, <command>FETCH</command>, <command>CLOSE</command>
       </para>
      </listitem>
      <listitem>
       <para>
-       Parameters - <command>SHOW</command>, <command>SET</command>, <command>RESET</command>
+       Settings: <command>SHOW</command>, <command>SET</command>, <command>RESET</command>
       </para>
      </listitem>
      <listitem>
       <para>
-       Transaction management commands
+       Transaction management commands:
         <itemizedlist>
          <listitem>
           <para>
@@ -1758,13 +1758,13 @@ if (!triggered)
      </listitem>
      <listitem>
       <para>
-       Plans and resources - <command>PREPARE</command>, <command>EXECUTE</command>,
+       Plans and resources: <command>PREPARE</command>, <command>EXECUTE</command>,
        <command>DEALLOCATE</command>, <command>DISCARD</command>
       </para>
      </listitem>
      <listitem>
       <para>
-       Plugins and extensions - <command>LOAD</command>
+       Plugins and extensions: <command>LOAD</command>
       </para>
      </listitem>
      <listitem>
@@ -1783,7 +1783,7 @@ if (!triggered)
     <itemizedlist>
      <listitem>
       <para>
-       Data Manipulation Language (DML) - <command>INSERT</command>,
+       Data Manipulation Language (DML): <command>INSERT</command>,
        <command>UPDATE</command>, <command>DELETE</command>, <command>COPY FROM</command>,
        <command>TRUNCATE</command>.
        Note that there are no allowed actions that result in a trigger
@@ -1795,7 +1795,7 @@ if (!triggered)
      </listitem>
      <listitem>
       <para>
-       Data Definition Language (DDL) - <command>CREATE</command>,
+       Data Definition Language (DDL): <command>CREATE</command>,
        <command>DROP</command>, <command>ALTER</command>, <command>COMMENT</command>.
        This restriction applies even to temporary tables, because carrying
        out these operations would require updating the system catalog tables.
@@ -1848,7 +1848,7 @@ if (!triggered)
      </listitem>
      <listitem>
       <para>
-       Two-phase commit commands - <command>PREPARE TRANSACTION</command>,
+       Two-phase commit commands: <command>PREPARE TRANSACTION</command>,
        <command>COMMIT PREPARED</command>, <command>ROLLBACK PREPARED</command>
        because even read-only transactions need to write WAL in the
        prepare phase (the first phase of two phase commit).
@@ -1856,7 +1856,7 @@ if (!triggered)
      </listitem>
      <listitem>
       <para>
-       Sequence updates - <function>nextval()</function>, <function>setval()</function>
+       Sequence updates: <function>nextval()</function>, <function>setval()</function>
       </para>
      </listitem>
      <listitem>
@@ -2223,18 +2223,18 @@ LOG:  database system is ready to accept read only connections
       <itemizedlist>
        <listitem>
         <para>
-         Data Definition Language (DDL) - e.g. <command>CREATE INDEX</command>
+         Data Definition Language (DDL): e.g. <command>CREATE INDEX</command>
         </para>
        </listitem>
        <listitem>
         <para>
-         Privilege and Ownership - <command>GRANT</command>, <command>REVOKE</command>,
+         Privilege and Ownership: <command>GRANT</command>, <command>REVOKE</command>,
          <command>REASSIGN</command>
         </para>
        </listitem>
        <listitem>
         <para>
-         Maintenance commands - <command>ANALYZE</command>, <command>VACUUM</command>,
+         Maintenance commands: <command>ANALYZE</command>, <command>VACUUM</command>,
          <command>CLUSTER</command>, <command>REINDEX</command>
         </para>
        </listitem>
@@ -2351,7 +2351,7 @@ LOG:  database system is ready to accept read only connections
    <para>
     In normal (non-recovery) mode, if you issue <command>DROP USER</command> or <command>DROP ROLE</command>
     for a role with login capability while that user is still connected then
-    nothing happens to the connected user - they remain connected. The user cannot
+    nothing happens to the connected user &mdash; they remain connected. The user cannot
     reconnect however. This behavior applies in recovery also, so a
     <command>DROP USER</command> on the primary does not disconnect that user on the standby.
    </para>

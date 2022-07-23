@@ -54,11 +54,10 @@
 #include "access/slru.h"
 #include "access/transam.h"
 #include "access/xlog.h"
+#include "miscadmin.h"
 #include "pgstat.h"
 #include "storage/fd.h"
 #include "storage/shmem.h"
-#include "miscadmin.h"
-
 
 #define SlruFileName(ctl, path, seg) \
 	snprintf(path, MAXPGPATH, "%s/%04X", (ctl)->Dir, seg)
@@ -920,18 +919,29 @@ SlruReportIOError(SlruCtl ctl, int pageno, TransactionId xid)
 							   path, offset)));
 			break;
 		case SLRU_READ_FAILED:
-			ereport(ERROR,
-					(errcode_for_file_access(),
-					 errmsg("could not access status of transaction %u", xid),
-					 errdetail("Could not read from file \"%s\" at offset %u: %m.",
-							   path, offset)));
+			if (errno)
+				ereport(ERROR,
+						(errcode_for_file_access(),
+						 errmsg("could not access status of transaction %u", xid),
+						 errdetail("Could not read from file \"%s\" at offset %u: %m.",
+								   path, offset)));
+			else
+				ereport(ERROR,
+						(errmsg("could not access status of transaction %u", xid),
+						 errdetail("Could not read from file \"%s\" at offset %u: read too few bytes.", path, offset)));
 			break;
 		case SLRU_WRITE_FAILED:
-			ereport(ERROR,
-					(errcode_for_file_access(),
-					 errmsg("could not access status of transaction %u", xid),
-					 errdetail("Could not write to file \"%s\" at offset %u: %m.",
-							   path, offset)));
+			if (errno)
+				ereport(ERROR,
+						(errcode_for_file_access(),
+						 errmsg("could not access status of transaction %u", xid),
+						 errdetail("Could not write to file \"%s\" at offset %u: %m.",
+								   path, offset)));
+			else
+				ereport(ERROR,
+						(errmsg("could not access status of transaction %u", xid),
+						 errdetail("Could not write to file \"%s\" at offset %u: wrote too few bytes.",
+								   path, offset)));
 			break;
 		case SLRU_FSYNC_FAILED:
 			ereport(data_sync_elevel(ERROR),

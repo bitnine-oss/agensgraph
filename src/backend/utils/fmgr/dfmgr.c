@@ -23,7 +23,7 @@
  * On macOS, <dlfcn.h> insists on including <stdbool.h>.  If we're not
  * using stdbool, undef bool to undo the damage.
  */
-#ifndef USE_STDBOOL
+#ifndef PG_USE_STDBOOL
 #ifdef bool
 #undef bool
 #endif
@@ -364,15 +364,6 @@ incompatible_module_error(const char *libname,
 						 _("Server has NAMEDATALEN = %d, library has %d."),
 						 magic_data.namedatalen,
 						 module_magic_data->namedatalen);
-	}
-	if (module_magic_data->float4byval != magic_data.float4byval)
-	{
-		if (details.len)
-			appendStringInfoChar(&details, '\n');
-		appendStringInfo(&details,
-						 _("Server has FLOAT4PASSBYVAL = %s, library has %s."),
-						 magic_data.float4byval ? "true" : "false",
-						 module_magic_data->float4byval ? "true" : "false");
 	}
 	if (module_magic_data->float8byval != magic_data.float8byval)
 	{

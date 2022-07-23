@@ -39,8 +39,8 @@
 #include "libpq/pqformat.h"
 #include "mb/pg_wchar.h"
 #include "miscadmin.h"
-#include "optimizer/optimizer.h"
 #include "nodes/makefuncs.h"
+#include "optimizer/optimizer.h"
 #include "parser/parse_coerce.h"
 #include "parser/parse_collate.h"
 #include "parser/parse_expr.h"
@@ -57,7 +57,6 @@
 #include "utils/rel.h"
 #include "utils/rls.h"
 #include "utils/snapmgr.h"
-
 
 #define ISOCTAL(c) (((c) >= '0') && ((c) <= '7'))
 #define OCTVALUE(c) ((c) - '0')
@@ -1916,13 +1915,11 @@ BeginCopyTo(ParseState *pstate,
 			{
 				cstate->copy_file = AllocateFile(cstate->filename, PG_BINARY_W);
 			}
-			PG_CATCH();
+			PG_FINALLY();
 			{
 				umask(oumask);
-				PG_RE_THROW();
 			}
 			PG_END_TRY();
-			umask(oumask);
 			if (cstate->copy_file == NULL)
 			{
 				/* copy errno because ereport subfunctions might change it */

@@ -12,20 +12,16 @@
 #include "commands/trigger.h"
 #include "executor/spi.h"
 #include "funcapi.h"
+#include "plpy_elog.h"
+#include "plpy_exec.h"
+#include "plpy_main.h"
+#include "plpy_procedure.h"
+#include "plpy_subxactobject.h"
+#include "plpython.h"
 #include "utils/builtins.h"
 #include "utils/lsyscache.h"
 #include "utils/rel.h"
 #include "utils/typcache.h"
-
-#include "plpython.h"
-
-#include "plpy_exec.h"
-
-#include "plpy_elog.h"
-#include "plpy_main.h"
-#include "plpy_procedure.h"
-#include "plpy_subxactobject.h"
-
 
 /* saved state for a set-returning function */
 typedef struct PLySRFState
@@ -403,17 +399,12 @@ PLy_exec_trigger(FunctionCallInfo fcinfo, PLyProcedure *proc)
 			}
 		}
 	}
-	PG_CATCH();
+	PG_FINALLY();
 	{
 		Py_XDECREF(plargs);
 		Py_XDECREF(plrv);
-
-		PG_RE_THROW();
 	}
 	PG_END_TRY();
-
-	Py_DECREF(plargs);
-	Py_DECREF(plrv);
 
 	return rv;
 }
@@ -1030,7 +1021,7 @@ plpython_trigger_error_callback(void *arg)
 static PyObject *
 PLy_procedure_call(PLyProcedure *proc, const char *kargs, PyObject *vargs)
 {
-	PyObject   *rv;
+	PyObject   *rv = NULL;
 	int volatile save_subxact_level = list_length(explicit_subtransactions);
 
 	PyDict_SetItemString(proc->globals, kargs, vargs);
@@ -1052,14 +1043,11 @@ PLy_procedure_call(PLyProcedure *proc, const char *kargs, PyObject *vargs)
 		 */
 		Assert(list_length(explicit_subtransactions) >= save_subxact_level);
 	}
-	PG_CATCH();
+	PG_FINALLY();
 	{
 		PLy_abort_open_subtransactions(save_subxact_level);
-		PG_RE_THROW();
 	}
 	PG_END_TRY();
-
-	PLy_abort_open_subtransactions(save_subxact_level);
 
 	/* If the Python code returned an error, propagate it */
 	if (rv == NULL)

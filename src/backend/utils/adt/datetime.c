@@ -31,7 +31,6 @@
 #include "utils/memutils.h"
 #include "utils/tzparser.h"
 
-
 static int	DecodeNumber(int flen, char *field, bool haveTextMonth,
 						 int fmask, int *tmask,
 						 struct pg_tm *tm, fsec_t *fsec, bool *is2digits);
@@ -314,8 +313,6 @@ j2date(int jd, int *year, int *month, int *day)
 	quad = julian * 2141 / 65536;
 	*day = julian - 7834 * quad / 256;
 	*month = (quad + 10) % MONTHS_PER_YEAR + 1;
-
-	return;
 }								/* j2date() */
 
 

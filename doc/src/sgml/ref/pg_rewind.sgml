@@ -166,6 +166,36 @@ PostgreSQL documentation
      </varlistentry>
 
      <varlistentry>
+      <term><option>--no-ensure-shutdown</option></term>
+      <listitem>
+       <para>
+        <application>pg_rewind</application> requires that the target server
+        is cleanly shut down before rewinding. By default, if the target server
+        is not shut down cleanly, <application>pg_rewind</application> starts
+        the target server in single-user mode to complete crash recovery first,
+        and stops it.
+        By passing this option, <application>pg_rewind</application> skips
+        this and errors out immediately if the server is not cleanly shut
+        down. Users are expected to handle the situation themselves in that
+        case.
+       </para>
+      </listitem>
+     </varlistentry>
+
+     <varlistentry>
+      <term><option>-R</option></term>
+      <term><option>--write-recovery-conf</option></term>
+      <listitem>
+       <para>
+        Create <filename>standby.signal</filename> and append connection
+        settings to <filename>postgresql.auto.conf</filename> in the output
+        directory.  <literal>--source-server</literal> is mandatory with
+        this option.
+       </para>
+      </listitem>
+     </varlistentry>
+
+     <varlistentry>
       <term><option>-n</option></term>
       <term><option>--dry-run</option></term>
       <listitem>
@@ -273,7 +303,7 @@ GRANT EXECUTE ON function pg_catalog.pg_read_binary_file(text, bigint, bigint, b
   </para>
 
   <refsect2>
-   <title>How it works</title>
+   <title>How It Works</title>
 
    <para>
     The basic idea is to copy all file system-level changes from the source

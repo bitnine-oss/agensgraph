@@ -728,6 +728,7 @@ autodepend
 TAS
 GCC
 CPP
+CFLAGS_SL
 BITCODE_CXXFLAGS
 BITCODE_CFLAGS
 CFLAGS_VECTOR
@@ -865,8 +866,6 @@ with_system_tzdata
 with_zlib
 with_gnu_ld
 enable_largefile
-enable_float4_byval
-enable_float8_byval
 '
       ac_precious_vars='build_alias
 host_alias
@@ -1524,8 +1523,6 @@ Optional Features:
   --enable-cassert        enable assertion checks (for debugging)
   --disable-thread-safety disable thread-safety in client libraries
   --disable-largefile     omit support for large files
-  --disable-float4-byval  disable float4 passed by value
-  --disable-float8-byval  disable float8 passed by value
 
 Optional Packages:
   --with-PACKAGE[=ARG]    use PACKAGE [ARG=yes]
@@ -6600,7 +6597,6 @@ fi
 
 fi
 
-CFLAGS_VECTOR=$CFLAGS_VECTOR
 
 
 # Determine flags used to emit bitcode for JIT inlining. Need to test
@@ -6920,9 +6916,10 @@ CXXFLAGS="$CXXFLAGS $user_CXXFLAGS"
 BITCODE_CFLAGS="$BITCODE_CFLAGS $user_BITCODE_CFLAGS"
 BITCODE_CXXFLAGS="$BITCODE_CXXFLAGS $user_BITCODE_CXXFLAGS"
 
-BITCODE_CFLAGS=$BITCODE_CFLAGS
 
-BITCODE_CXXFLAGS=$BITCODE_CXXFLAGS
+
+
+# The template file must set up CFLAGS_SL; we don't support user override
 
 
 # Check if the compiler still works with the final flag settings
@@ -11627,6 +11624,63 @@ if test "$ac_res" != no; then :
 
 fi
 
+# *BSD:
+{ $as_echo "$as_me:${as_lineno-$LINENO}: checking for library containing backtrace_symbols" >&5
+$as_echo_n "checking for library containing backtrace_symbols... " >&6; }
+if ${ac_cv_search_backtrace_symbols+:} false; then :
+  $as_echo_n "(cached) " >&6
+else
+  ac_func_search_save_LIBS=$LIBS
+cat confdefs.h - <<_ACEOF >conftest.$ac_ext
+/* end confdefs.h.  */
+
+/* Override any GCC internal prototype to avoid an error.
+   Use char because int might match the return type of a GCC
+   builtin and then its argument prototype would still apply.  */
+#ifdef __cplusplus
+extern "C"
+#endif
+char backtrace_symbols ();
+int
+main ()
+{
+return backtrace_symbols ();
+  ;
+  return 0;
+}
+_ACEOF
+for ac_lib in '' execinfo; do
+  if test -z "$ac_lib"; then
+    ac_res="none required"
+  else
+    ac_res=-l$ac_lib
+    LIBS="-l$ac_lib  $ac_func_search_save_LIBS"
+  fi
+  if ac_fn_c_try_link "$LINENO"; then :
+  ac_cv_search_backtrace_symbols=$ac_res
+fi
+rm -f core conftest.err conftest.$ac_objext \
+    conftest$ac_exeext
+  if ${ac_cv_search_backtrace_symbols+:} false; then :
+  break
+fi
+done
+if ${ac_cv_search_backtrace_symbols+:} false; then :
+
+else
+  ac_cv_search_backtrace_symbols=no
+fi
+rm conftest.$ac_ext
+LIBS=$ac_func_search_save_LIBS
+fi
+{ $as_echo "$as_me:${as_lineno-$LINENO}: result: $ac_cv_search_backtrace_symbols" >&5
+$as_echo "$ac_cv_search_backtrace_symbols" >&6; }
+ac_res=$ac_cv_search_backtrace_symbols
+if test "$ac_res" != no; then :
+  test "$ac_res" = "none required" || LIBS="$ac_res $LIBS"
+
+fi
+
 
 if test "$with_readline" = yes; then
 
@@ -12725,7 +12779,7 @@ $as_echo "#define HAVE_STDBOOL_H 1" >>confdefs.h
 fi
 
 
-for ac_header in atomic.h copyfile.h fp_class.h getopt.h ieeefp.h ifaddrs.h langinfo.h mbarrier.h poll.h sys/epoll.h sys/ipc.h sys/prctl.h sys/procctl.h sys/pstat.h sys/resource.h sys/select.h sys/sem.h sys/shm.h sys/sockio.h sys/tas.h sys/un.h termios.h ucred.h utime.h wchar.h wctype.h
+for ac_header in atomic.h copyfile.h execinfo.h fp_class.h getopt.h ieeefp.h ifaddrs.h langinfo.h mbarrier.h poll.h sys/epoll.h sys/ipc.h sys/prctl.h sys/procctl.h sys/pstat.h sys/resource.h sys/select.h sys/sem.h sys/shm.h sys/sockio.h sys/tas.h sys/un.h termios.h ucred.h utime.h wchar.h wctype.h
 do :
   as_ac_Header=`$as_echo "ac_cv_header_$ac_header" | $as_tr_sh`
 ac_fn_c_check_header_mongrel "$LINENO" "$ac_header" "$as_ac_Header" "$ac_includes_default"
@@ -13985,43 +14039,8 @@ if test x"$pgac_cv_computed_goto" = xyes ; then
 $as_echo "#define HAVE_COMPUTED_GOTO 1" >>confdefs.h
 
 fi
-{ $as_echo "$as_me:${as_lineno-$LINENO}: checking whether struct tm is in sys/time.h or time.h" >&5
-$as_echo_n "checking whether struct tm is in sys/time.h or time.h... " >&6; }
-if ${ac_cv_struct_tm+:} false; then :
-  $as_echo_n "(cached) " >&6
-else
-  cat confdefs.h - <<_ACEOF >conftest.$ac_ext
-/* end confdefs.h.  */
-#include <sys/types.h>
-#include <time.h>
-
-int
-main ()
-{
-struct tm tm;
-				     int *p = &tm.tm_sec;
-				     return !p;
-  ;
-  return 0;
-}
-_ACEOF
-if ac_fn_c_try_compile "$LINENO"; then :
-  ac_cv_struct_tm=time.h
-else
-  ac_cv_struct_tm=sys/time.h
-fi
-rm -f core conftest.err conftest.$ac_objext conftest.$ac_ext
-fi
-{ $as_echo "$as_me:${as_lineno-$LINENO}: result: $ac_cv_struct_tm" >&5
-$as_echo "$ac_cv_struct_tm" >&6; }
-if test $ac_cv_struct_tm = sys/time.h; then
-
-$as_echo "#define TM_IN_SYS_TIME 1" >>confdefs.h
-
-fi
-
 ac_fn_c_check_member "$LINENO" "struct tm" "tm_zone" "ac_cv_member_struct_tm_tm_zone" "#include <sys/types.h>
-#include <$ac_cv_struct_tm>
+#include <time.h>
 
 "
 if test "x$ac_cv_member_struct_tm_tm_zone" = xyes; then :
@@ -14033,47 +14052,6 @@ _ACEOF
 
 fi
 
-if test "$ac_cv_member_struct_tm_tm_zone" = yes; then
-
-$as_echo "#define HAVE_TM_ZONE 1" >>confdefs.h
-
-fi
-{ $as_echo "$as_me:${as_lineno-$LINENO}: checking for tzname" >&5
-$as_echo_n "checking for tzname... " >&6; }
-if ${ac_cv_var_tzname+:} false; then :
-  $as_echo_n "(cached) " >&6
-else
-  cat confdefs.h - <<_ACEOF >conftest.$ac_ext
-/* end confdefs.h.  */
-#include <stdlib.h>
-#include <time.h>
-#ifndef tzname /* For SGI.  */
-extern char *tzname[]; /* RS6000 and others reject char **tzname.  */
-#endif
-
-int
-main ()
-{
-atoi(*tzname);
-  ;
-  return 0;
-}
-_ACEOF
-if ac_fn_c_try_link "$LINENO"; then :
-  ac_cv_var_tzname=yes
-else
-  ac_cv_var_tzname=no
-fi
-rm -f core conftest.err conftest.$ac_objext \
-    conftest$ac_exeext conftest.$ac_ext
-fi
-{ $as_echo "$as_me:${as_lineno-$LINENO}: result: $ac_cv_var_tzname" >&5
-$as_echo "$ac_cv_var_tzname" >&6; }
-if test $ac_cv_var_tzname = yes; then
-
-$as_echo "#define HAVE_TZNAME 1" >>confdefs.h
-
-fi
 
 ac_fn_c_check_type "$LINENO" "union semun" "ac_cv_type_union_semun" "#include <sys/types.h>
 #ifdef HAVE_SYS_IPC_H
@@ -14264,123 +14242,6 @@ rm -f core conftest.err conftest.$ac_objext conftest.$ac_ext
      done
 fi
 
-
-
-  { $as_echo "$as_me:${as_lineno-$LINENO}: checking for unsigned long long int" >&5
-$as_echo_n "checking for unsigned long long int... " >&6; }
-if ${ac_cv_type_unsigned_long_long_int+:} false; then :
-  $as_echo_n "(cached) " >&6
-else
-  ac_cv_type_unsigned_long_long_int=yes
-     if test "x${ac_cv_prog_cc_c99-no}" = xno; then
-       cat confdefs.h - <<_ACEOF >conftest.$ac_ext
-/* end confdefs.h.  */
-
-  /* For now, do not test the preprocessor; as of 2007 there are too many
-	 implementations with broken preprocessors.  Perhaps this can
-	 be revisited in 2012.  In the meantime, code should not expect
-	 #if to work with literals wider than 32 bits.  */
-      /* Test literals.  */
-      long long int ll = 9223372036854775807ll;
-      long long int nll = -9223372036854775807LL;
-      unsigned long long int ull = 18446744073709551615ULL;
-      /* Test constant expressions.   */
-      typedef int a[((-9223372036854775807LL < 0 && 0 < 9223372036854775807ll)
-		     ? 1 : -1)];
-      typedef int b[(18446744073709551615ULL <= (unsigned long long int) -1
-		     ? 1 : -1)];
-      int i = 63;
-int
-main ()
-{
-/* Test availability of runtime routines for shift and division.  */
-      long long int llmax = 9223372036854775807ll;
-      unsigned long long int ullmax = 18446744073709551615ull;
-      return ((ll << 63) | (ll >> 63) | (ll < i) | (ll > i)
-	      | (llmax / ll) | (llmax % ll)
-	      | (ull << 63) | (ull >> 63) | (ull << i) | (ull >> i)
-	      | (ullmax / ull) | (ullmax % ull));
-  ;
-  return 0;
-}
-
-_ACEOF
-if ac_fn_c_try_link "$LINENO"; then :
-
-else
-  ac_cv_type_unsigned_long_long_int=no
-fi
-rm -f core conftest.err conftest.$ac_objext \
-    conftest$ac_exeext conftest.$ac_ext
-     fi
-fi
-{ $as_echo "$as_me:${as_lineno-$LINENO}: result: $ac_cv_type_unsigned_long_long_int" >&5
-$as_echo "$ac_cv_type_unsigned_long_long_int" >&6; }
-  if test $ac_cv_type_unsigned_long_long_int = yes; then
-
-$as_echo "#define HAVE_UNSIGNED_LONG_LONG_INT 1" >>confdefs.h
-
-  fi
-
-
-
-  { $as_echo "$as_me:${as_lineno-$LINENO}: checking for long long int" >&5
-$as_echo_n "checking for long long int... " >&6; }
-if ${ac_cv_type_long_long_int+:} false; then :
-  $as_echo_n "(cached) " >&6
-else
-  ac_cv_type_long_long_int=yes
-      if test "x${ac_cv_prog_cc_c99-no}" = xno; then
-	ac_cv_type_long_long_int=$ac_cv_type_unsigned_long_long_int
-	if test $ac_cv_type_long_long_int = yes; then
-	  	  	  	  if test "$cross_compiling" = yes; then :
-  :
-else
-  cat confdefs.h - <<_ACEOF >conftest.$ac_ext
-/* end confdefs.h.  */
-#include <limits.h>
-		 #ifndef LLONG_MAX
-		 # define HALF \
-			  (1LL << (sizeof (long long int) * CHAR_BIT - 2))
-		 # define LLONG_MAX (HALF - 1 + HALF)
-		 #endif
-int
-main ()
-{
-long long int n = 1;
-		 int i;
-		 for (i = 0; ; i++)
-		   {
-		     long long int m = n << i;
-		     if (m >> i != n)
-		       return 1;
-		     if (LLONG_MAX / 2 < m)
-		       break;
-		   }
-		 return 0;
-  ;
-  return 0;
-}
-_ACEOF
-if ac_fn_c_try_run "$LINENO"; then :
-
-else
-  ac_cv_type_long_long_int=no
-fi
-rm -f core *.core core.conftest.* gmon.out bb.out conftest$ac_exeext \
-  conftest.$ac_objext conftest.beam conftest.$ac_ext
-fi
-
-	fi
-      fi
-fi
-{ $as_echo "$as_me:${as_lineno-$LINENO}: result: $ac_cv_type_long_long_int" >&5
-$as_echo "$ac_cv_type_long_long_int" >&6; }
-  if test $ac_cv_type_long_long_int = yes; then
-
-$as_echo "#define HAVE_LONG_LONG_INT 1" >>confdefs.h
-
-  fi
 
 
 { $as_echo "$as_me:${as_lineno-$LINENO}: checking for locale_t" >&5
@@ -14613,6 +14474,46 @@ $as_echo "$pgac_cv_have_ppc_mutex_hint" >&6; }
     if test x"$pgac_cv_have_ppc_mutex_hint" = xyes ; then
 
 $as_echo "#define HAVE_PPC_LWARX_MUTEX_HINT 1" >>confdefs.h
+
+    fi
+    # Check if compiler accepts "i"(x) when __builtin_constant_p(x).
+    { $as_echo "$as_me:${as_lineno-$LINENO}: checking whether __builtin_constant_p(x) implies \"i\"(x) acceptance" >&5
+$as_echo_n "checking whether __builtin_constant_p(x) implies \"i\"(x) acceptance... " >&6; }
+if ${pgac_cv_have_i_constraint__builtin_constant_p+:} false; then :
+  $as_echo_n "(cached) " >&6
+else
+  cat confdefs.h - <<_ACEOF >conftest.$ac_ext
+/* end confdefs.h.  */
+static inline int
+     addi(int ra, int si)
+     {
+         int res = 0;
+         if (__builtin_constant_p(si))
+             __asm__ __volatile__(
+                 " addi %0,%1,%2\n" : "=r"(res) : "b"(ra), "i"(si));
+         return res;
+     }
+     int test_adds(int x) { return addi(3, x) + addi(x, 5); }
+int
+main ()
+{
+
+  ;
+  return 0;
+}
+_ACEOF
+if ac_fn_c_try_compile "$LINENO"; then :
+  pgac_cv_have_i_constraint__builtin_constant_p=yes
+else
+  pgac_cv_have_i_constraint__builtin_constant_p=no
+fi
+rm -f core conftest.err conftest.$ac_objext conftest.$ac_ext
+fi
+{ $as_echo "$as_me:${as_lineno-$LINENO}: result: $pgac_cv_have_i_constraint__builtin_constant_p" >&5
+$as_echo "$pgac_cv_have_i_constraint__builtin_constant_p" >&6; }
+    if test x"$pgac_cv_have_i_constraint__builtin_constant_p" = xyes ; then
+
+$as_echo "#define HAVE_I_CONSTRAINT__BUILTIN_CONSTANT_P 1" >>confdefs.h
 
     fi
   ;;
@@ -14902,6 +14803,12 @@ _ACEOF
 
 
 
+if test "$ac_cv_header_stdbool_h" = yes -a "$ac_cv_sizeof_bool" = 1; then
+
+$as_echo "#define PG_USE_STDBOOL 1" >>confdefs.h
+
+fi
+
 
 ##
 ## Functions, global variables
@@ -15108,7 +15015,7 @@ fi
 LIBS_including_readline="$LIBS"
 LIBS=`echo "$LIBS" | sed -e 's/-ledit//g' -e 's/-lreadline//g'`
 
-for ac_func in cbrt clock_gettime copyfile fdatasync getifaddrs getpeerucred getrlimit mbstowcs_l memmove poll posix_fallocate ppoll pstat pthread_is_threaded_np readlink setproctitle setproctitle_fast setsid shm_open strchrnul strsignal symlink sync_file_range uselocale utime utimes wcstombs_l
+for ac_func in backtrace_symbols cbrt clock_gettime copyfile fdatasync getifaddrs getpeerucred getrlimit mbstowcs_l memset_s memmove poll posix_fallocate ppoll pstat pthread_is_threaded_np readlink setproctitle setproctitle_fast setsid shm_open strchrnul strsignal symlink sync_file_range uselocale utime utimes wcstombs_l
 do :
   as_ac_var=`$as_echo "ac_cv_func_$ac_func" | $as_tr_sh`
 ac_fn_c_check_func "$LINENO" "$ac_func" "$as_ac_var"
@@ -15755,6 +15662,19 @@ else
   case " $LIBOBJS " in
   *" dlopen.$ac_objext "* ) ;;
   *) LIBOBJS="$LIBOBJS dlopen.$ac_objext"
+ ;;
+esac
+
+fi
+
+ac_fn_c_check_func "$LINENO" "explicit_bzero" "ac_cv_func_explicit_bzero"
+if test "x$ac_cv_func_explicit_bzero" = xyes; then :
+  $as_echo "#define HAVE_EXPLICIT_BZERO 1" >>confdefs.h
+
+else
+  case " $LIBOBJS " in
+  *" explicit_bzero.$ac_objext "* ) ;;
+  *) LIBOBJS="$LIBOBJS explicit_bzero.$ac_objext"
  ;;
 esac
 
@@ -16842,120 +16762,6 @@ cat >>confdefs.h <<_ACEOF
 #define SIZEOF_LONG $ac_cv_sizeof_long
 _ACEOF
 
-
-
-# Decide whether float4 is passed by value: user-selectable, enabled by default
-{ $as_echo "$as_me:${as_lineno-$LINENO}: checking whether to build with float4 passed by value" >&5
-$as_echo_n "checking whether to build with float4 passed by value... " >&6; }
-
-
-# Check whether --enable-float4-byval was given.
-if test "${enable_float4_byval+set}" = set; then :
-  enableval=$enable_float4_byval;
-  case $enableval in
-    yes)
-
-$as_echo "#define USE_FLOAT4_BYVAL 1" >>confdefs.h
-
-               float4passbyval=true
-      ;;
-    no)
-      float4passbyval=false
-      ;;
-    *)
-      as_fn_error $? "no argument expected for --enable-float4-byval option" "$LINENO" 5
-      ;;
-  esac
-
-else
-  enable_float4_byval=yes
-
-$as_echo "#define USE_FLOAT4_BYVAL 1" >>confdefs.h
-
-               float4passbyval=true
-fi
-
-
-{ $as_echo "$as_me:${as_lineno-$LINENO}: result: $enable_float4_byval" >&5
-$as_echo "$enable_float4_byval" >&6; }
-
-cat >>confdefs.h <<_ACEOF
-#define FLOAT4PASSBYVAL $float4passbyval
-_ACEOF
-
-
-# Decide whether float8 is passed by value.
-# Note: this setting also controls int8 and related types such as timestamp.
-# If sizeof(Datum) >= 8, this is user-selectable, enabled by default.
-# If not, trying to select it is an error.
-{ $as_echo "$as_me:${as_lineno-$LINENO}: checking whether to build with float8 passed by value" >&5
-$as_echo_n "checking whether to build with float8 passed by value... " >&6; }
-if test $ac_cv_sizeof_void_p -ge 8 ; then
-
-
-# Check whether --enable-float8-byval was given.
-if test "${enable_float8_byval+set}" = set; then :
-  enableval=$enable_float8_byval;
-  case $enableval in
-    yes)
-      :
-      ;;
-    no)
-      :
-      ;;
-    *)
-      as_fn_error $? "no argument expected for --enable-float8-byval option" "$LINENO" 5
-      ;;
-  esac
-
-else
-  enable_float8_byval=yes
-
-fi
-
-
-else
-
-
-# Check whether --enable-float8-byval was given.
-if test "${enable_float8_byval+set}" = set; then :
-  enableval=$enable_float8_byval;
-  case $enableval in
-    yes)
-      :
-      ;;
-    no)
-      :
-      ;;
-    *)
-      as_fn_error $? "no argument expected for --enable-float8-byval option" "$LINENO" 5
-      ;;
-  esac
-
-else
-  enable_float8_byval=no
-
-fi
-
-
-  if test "$enable_float8_byval" = yes ; then
-    as_fn_error $? "--enable-float8-byval is not supported on 32-bit platforms." "$LINENO" 5
-  fi
-fi
-if test "$enable_float8_byval" = yes ; then
-
-$as_echo "#define USE_FLOAT8_BYVAL 1" >>confdefs.h
-
-  float8passbyval=true
-else
-  float8passbyval=false
-fi
-{ $as_echo "$as_me:${as_lineno-$LINENO}: result: $enable_float8_byval" >&5
-$as_echo "$enable_float8_byval" >&6; }
-
-cat >>confdefs.h <<_ACEOF
-#define FLOAT8PASSBYVAL $float8passbyval
-_ACEOF
 
 
 # Determine memory alignment requirements for the basic C data types.
@@ -18533,6 +18339,10 @@ fi
   # On most platforms, if perl.h is there then libperl.so will be too, but at
   # this writing Debian packages them separately.  There is no known reason to
   # waste cycles on separate probes for the Tcl or Python libraries, though.
+  # On some Red Hat platforms, the link attempt can fail if we don't use
+  # CFLAGS_SL while building the test program.
+  ac_save_CFLAGS=$CFLAGS
+  CFLAGS="$CFLAGS $CFLAGS_SL"
   pgac_save_LIBS=$LIBS
   LIBS="$perl_embed_ldflags"
   { $as_echo "$as_me:${as_lineno-$LINENO}: checking for libperl" >&5
@@ -18562,6 +18372,7 @@ fi
 rm -f core conftest.err conftest.$ac_objext \
     conftest$ac_exeext conftest.$ac_ext
   LIBS=$pgac_save_LIBS
+  CFLAGS=$ac_save_CFLAGS
   CPPFLAGS=$ac_save_CPPFLAGS
 fi
 

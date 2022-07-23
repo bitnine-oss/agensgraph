@@ -386,12 +386,14 @@ WaitForOlderSnapshots(TransactionId limitXmin, bool progress)
 
 		if (VirtualTransactionIdIsValid(old_snapshots[i]))
 		{
+			/* If requested, publish who we're going to wait for. */
 			if (progress)
 			{
 				PGPROC	   *holder = BackendIdGetProc(old_snapshots[i].backendId);
 
-				pgstat_progress_update_param(PROGRESS_WAITFOR_CURRENT_PID,
-											 holder->pid);
+				if (holder)
+					pgstat_progress_update_param(PROGRESS_WAITFOR_CURRENT_PID,
+												 holder->pid);
 			}
 			VirtualXactLock(old_snapshots[i], true);
 		}
@@ -1088,8 +1090,7 @@ DefineIndex(Oid relationId,
 				childidxs = RelationGetIndexList(childrel);
 				attmap =
 					convert_tuples_by_name_map(RelationGetDescr(childrel),
-											   parentDesc,
-											   gettext_noop("could not convert row type"));
+											   parentDesc);
 				maplen = parentDesc->natts;
 
 				foreach(cell, childidxs)
@@ -2353,7 +2354,8 @@ ReindexIndex(RangeVar *indexRelation, int options, bool concurrent)
 	if (concurrent)
 		ReindexRelationConcurrently(indOid, options);
 	else
-		reindex_index(indOid, false, persistence, options);
+		reindex_index(indOid, false, persistence,
+					  options | REINDEXOPT_REPORT_PROGRESS);
 }
 
 /*
@@ -2456,7 +2458,7 @@ ReindexTable(RangeVar *relation, int options, bool concurrent)
 		result = reindex_relation(heapOid,
 								  REINDEX_REL_PROCESS_TOAST |
 								  REINDEX_REL_CHECK_CONSTRAINTS,
-								  options);
+								  options | REINDEXOPT_REPORT_PROGRESS);
 		if (!result)
 			ereport(NOTICE,
 					(errmsg("table \"%s\" has no indexes to reindex",
@@ -2687,7 +2689,7 @@ ReindexMultipleTables(const char *objectName, ReindexObjectType objectKind,
 			result = reindex_relation(relid,
 									  REINDEX_REL_PROCESS_TOAST |
 									  REINDEX_REL_CHECK_CONSTRAINTS,
-									  options);
+									  options | REINDEXOPT_REPORT_PROGRESS);
 
 			if (result && (options & REINDEXOPT_VERBOSE))
 				ereport(INFO,
@@ -2768,7 +2770,7 @@ ReindexRelationConcurrently(Oid relationOid, int options)
 
 	/*
 	 * Extract the list of indexes that are going to be rebuilt based on the
-	 * list of relation Oids given by caller.
+	 * relation Oid given by caller.
 	 */
 	switch (relkind)
 	{
@@ -2987,8 +2989,11 @@ ReindexRelationConcurrently(Oid relationOid, int options)
 													indexId,
 													concurrentName);
 
-		/* Now open the relation of the new index, a lock is also needed on it */
-		newIndexRel = index_open(indexId, ShareUpdateExclusiveLock);
+		/*
+		 * Now open the relation of the new index, a session-level lock is
+		 * also needed on it.
+		 */
+		newIndexRel = index_open(newIndexId, ShareUpdateExclusiveLock);
 
 		/*
 		 * Save the list of OIDs and locks in private context
@@ -3081,10 +3086,15 @@ ReindexRelationConcurrently(Oid relationOid, int options)
 		Oid			newIndexId = lfirst_oid(lc2);
 		Oid			heapId;
 
-		CHECK_FOR_INTERRUPTS();
-
 		/* Start new transaction for this index's concurrent build */
 		StartTransactionCommand();
+
+		/*
+		 * Check for user-requested abort.  This is inside a transaction so as
+		 * xact.c does not issue a useless WARNING, and ensures that
+		 * session-level locks are cleaned up on abort.
+		 */
+		CHECK_FOR_INTERRUPTS();
 
 		/* Set ActiveSnapshot since functions in the indexes may need it */
 		PushActiveSnapshot(GetTransactionSnapshot());
@@ -3125,9 +3135,14 @@ ReindexRelationConcurrently(Oid relationOid, int options)
 		TransactionId limitXmin;
 		Snapshot	snapshot;
 
-		CHECK_FOR_INTERRUPTS();
-
 		StartTransactionCommand();
+
+		/*
+		 * Check for user-requested abort.  This is inside a transaction so as
+		 * xact.c does not issue a useless WARNING, and ensures that
+		 * session-level locks are cleaned up on abort.
+		 */
+		CHECK_FOR_INTERRUPTS();
 
 		heapId = IndexGetRelation(newIndexId, false);
 
@@ -3190,6 +3205,11 @@ ReindexRelationConcurrently(Oid relationOid, int options)
 		Oid			newIndexId = lfirst_oid(lc2);
 		Oid			heapId;
 
+		/*
+		 * Check for user-requested abort.  This is inside a transaction so as
+		 * xact.c does not issue a useless WARNING, and ensures that
+		 * session-level locks are cleaned up on abort.
+		 */
 		CHECK_FOR_INTERRUPTS();
 
 		heapId = IndexGetRelation(oldIndexId, false);
@@ -3245,7 +3265,13 @@ ReindexRelationConcurrently(Oid relationOid, int options)
 		Oid			oldIndexId = lfirst_oid(lc);
 		Oid			heapId;
 
+		/*
+		 * Check for user-requested abort.  This is inside a transaction so as
+		 * xact.c does not issue a useless WARNING, and ensures that
+		 * session-level locks are cleaned up on abort.
+		 */
 		CHECK_FOR_INTERRUPTS();
+
 		heapId = IndexGetRelation(oldIndexId, false);
 		index_concurrently_set_dead(heapId, oldIndexId);
 	}

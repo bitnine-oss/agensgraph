@@ -14,8 +14,8 @@
 #include "access/sysattr.h"
 #include "access/tupdesc.h"
 #include "catalog/catalog.h"
-#include "catalog/heap.h"
 #include "catalog/dependency.h"
+#include "catalog/heap.h"
 #include "catalog/pg_attribute.h"
 #include "catalog/pg_class.h"
 #include "catalog/pg_inherits.h"
@@ -23,10 +23,9 @@
 #include "commands/tablecmds.h"
 #include "executor/executor.h"
 #include "nodes/bitmapset.h"
+#include "sepgsql.h"
 #include "utils/lsyscache.h"
 #include "utils/syscache.h"
-
-#include "sepgsql.h"
 
 /*
  * fixup_whole_row_references
@@ -86,7 +85,7 @@ fixup_whole_row_references(Oid relOid, Bitmapset *columns)
  * When user is querying on a table with children, it implicitly accesses
  * child tables also. So, we also need to check security label of child
  * tables and columns, but here is no guarantee attribute numbers are
- * same between the parent ans children.
+ * same between the parent and children.
  * It returns a bitmapset which contains attribute number of the child
  * table based on the given bitmapset of the parent.
  */

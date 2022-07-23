@@ -25,11 +25,10 @@
  */
 #include "postgres_fe.h"
 
+#include "common/file_utils.h"
 #include "compress_io.h"
 #include "parallel.h"
 #include "pg_backup_utils.h"
-#include "common/file_utils.h"
-
 
 /*--------
  * Routines in the format interface
@@ -318,8 +317,6 @@ _WriteData(ArchiveHandle *AH, const void *data, size_t dLen)
 	if (dLen > 0)
 		/* WriteDataToArchive() internally throws write errors */
 		WriteDataToArchive(AH, cs, data, dLen);
-
-	return;
 }
 
 /*
@@ -645,8 +642,6 @@ _WriteBuf(ArchiveHandle *AH, const void *buf, size_t len)
 	if (fwrite(buf, 1, len, AH->FH) != len)
 		WRITE_ERROR_EXIT;
 	ctx->filePos += len;
-
-	return;
 }
 
 /*
@@ -664,8 +659,6 @@ _ReadBuf(ArchiveHandle *AH, void *buf, size_t len)
 	if (fread(buf, 1, len, AH->FH) != len)
 		READ_ERROR_EXIT(AH->FH);
 	ctx->filePos += len;
-
-	return;
 }
 
 /*
@@ -946,7 +939,6 @@ _CustomWriteFunc(ArchiveHandle *AH, const char *buf, size_t len)
 		WriteInt(AH, len);
 		_WriteBuf(AH, buf, len);
 	}
-	return;
 }
 
 /*

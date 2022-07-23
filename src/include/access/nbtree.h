@@ -18,6 +18,7 @@
 #include "access/itup.h"
 #include "access/sdir.h"
 #include "access/xlogreader.h"
+#include "catalog/pg_am_d.h"
 #include "catalog/pg_index.h"
 #include "lib/stringinfo.h"
 #include "storage/bufmgr.h"
@@ -680,6 +681,23 @@ typedef BTScanOpaqueData *BTScanOpaque;
 #define SK_BT_DESC			(INDOPTION_DESC << SK_BT_INDOPTION_SHIFT)
 #define SK_BT_NULLS_FIRST	(INDOPTION_NULLS_FIRST << SK_BT_INDOPTION_SHIFT)
 
+typedef struct BTOptions
+{
+	int32		varlena_header_;	/* varlena header (do not touch directly!) */
+	int			fillfactor;		/* page fill factor in percent (0..100) */
+	/* fraction of newly inserted tuples prior to trigger index cleanup */
+	float8		vacuum_cleanup_index_scale_factor;
+} BTOptions;
+
+#define BTGetFillFactor(relation) \
+	(AssertMacro(relation->rd_rel->relkind == RELKIND_INDEX && \
+				 relation->rd_rel->relam == BTREE_AM_OID), \
+	 (relation)->rd_options ? \
+	 ((BTOptions *) (relation)->rd_options)->fillfactor : \
+	 BTREE_DEFAULT_FILLFACTOR)
+#define BTGetTargetPageFreeSpace(relation) \
+	(BLCKSZ * (100 - BTGetFillFactor(relation)) / 100)
+
 /*
  * Constant definition for progress reporting.  Phase numbers must match
  * btbuildphasename.
@@ -730,8 +748,8 @@ extern void _bt_parallel_advance_array_keys(IndexScanDesc scan);
  */
 extern bool _bt_doinsert(Relation rel, IndexTuple itup,
 						 IndexUniqueCheck checkUnique, Relation heapRel);
-extern Buffer _bt_getstackbuf(Relation rel, BTStack stack, BlockNumber child);
 extern void _bt_finish_split(Relation rel, Buffer bbuf, BTStack stack);
+extern Buffer _bt_getstackbuf(Relation rel, BTStack stack, BlockNumber child);
 
 /*
  * prototypes for functions in nbtsplitloc.c

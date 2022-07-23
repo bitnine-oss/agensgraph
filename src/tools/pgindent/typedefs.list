@@ -171,6 +171,7 @@ BTInsertStateData
 BTLeader
 BTMetaPageData
 BTOneVacInfo
+BTOptions
 BTPS_State
 BTPageOpaque
 BTPageOpaqueData
@@ -535,6 +536,7 @@ DropSubscriptionStmt
 DropTableSpaceStmt
 DropUserMappingStmt
 DropdbStmt
+DummyIndexOptions
 DumpComponents
 DumpId
 DumpOptions
@@ -977,6 +979,7 @@ HashJoinTuple
 HashMemoryChunk
 HashMetaPage
 HashMetaPageData
+HashOptions
 HashPageOpaque
 HashPageOpaqueData
 HashPageStat
@@ -1043,6 +1046,7 @@ IndexList
 IndexOnlyScan
 IndexOnlyScanState
 IndexOptInfo
+IndexOrderByDistance
 IndexPath
 IndexRuntimeKeyInfo
 IndexScan
@@ -2268,6 +2272,7 @@ SpGistLeafTupleData
 SpGistMetaPageData
 SpGistNodeTuple
 SpGistNodeTupleData
+SpGistOptions
 SpGistPageOpaque
 SpGistPageOpaqueData
 SpGistScanOpaque
@@ -2349,6 +2354,8 @@ TBlockState
 TIDBitmap
 TM_FailureData
 TM_Result
+ToastAttrInfo
+ToastTupleContext
 TOKEN_DEFAULT_DACL
 TOKEN_INFORMATION_CLASS
 TOKEN_PRIVILEGES

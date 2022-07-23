@@ -22,11 +22,11 @@
 #endif
 
 #include "catalog/pg_class_d.h"
-
+#include "common/logging.h"
 #include "fe_utils/connect.h"
+#include "getopt_long.h"
 #include "libpq-fe.h"
 #include "pg_getopt.h"
-#include "getopt_long.h"
 
 #define BUFSIZE			1024
 
@@ -109,8 +109,7 @@ vacuumlo(const char *database, const struct _param *param)
 		conn = PQconnectdbParams(keywords, values, true);
 		if (!conn)
 		{
-			fprintf(stderr, "Connection to database \"%s\" failed\n",
-					database);
+			pg_log_error("connection to database \"%s\" failed", database);
 			return -1;
 		}
 
@@ -129,8 +128,8 @@ vacuumlo(const char *database, const struct _param *param)
 	/* check to see that the backend connection was successfully made */
 	if (PQstatus(conn) == CONNECTION_BAD)
 	{
-		fprintf(stderr, "Connection to database \"%s\" failed:\n%s",
-				database, PQerrorMessage(conn));
+		pg_log_error("connection to database \"%s\" failed: %s",
+					 database, PQerrorMessage(conn));
 		PQfinish(conn);
 		return -1;
 	}
@@ -145,8 +144,7 @@ vacuumlo(const char *database, const struct _param *param)
 	res = PQexec(conn, ALWAYS_SECURE_SEARCH_PATH_SQL);
 	if (PQresultStatus(res) != PGRES_TUPLES_OK)
 	{
-		fprintf(stderr, "Failed to set search_path:\n");
-		fprintf(stderr, "%s", PQerrorMessage(conn));
+		pg_log_error("failed to set search_path: %s", PQerrorMessage(conn));
 		PQclear(res);
 		PQfinish(conn);
 		return -1;
@@ -165,8 +163,7 @@ vacuumlo(const char *database, const struct _param *param)
 	res = PQexec(conn, buf);
 	if (PQresultStatus(res) != PGRES_COMMAND_OK)
 	{
-		fprintf(stderr, "Failed to create temp table:\n");
-		fprintf(stderr, "%s", PQerrorMessage(conn));
+		pg_log_error("failed to create temp table: %s", PQerrorMessage(conn));
 		PQclear(res);
 		PQfinish(conn);
 		return -1;
@@ -182,8 +179,7 @@ vacuumlo(const char *database, const struct _param *param)
 	res = PQexec(conn, buf);
 	if (PQresultStatus(res) != PGRES_COMMAND_OK)
 	{
-		fprintf(stderr, "Failed to vacuum temp table:\n");
-		fprintf(stderr, "%s", PQerrorMessage(conn));
+		pg_log_error("failed to vacuum temp table: %s", PQerrorMessage(conn));
 		PQclear(res);
 		PQfinish(conn);
 		return -1;
@@ -212,8 +208,7 @@ vacuumlo(const char *database, const struct _param *param)
 	res = PQexec(conn, buf);
 	if (PQresultStatus(res) != PGRES_TUPLES_OK)
 	{
-		fprintf(stderr, "Failed to find OID columns:\n");
-		fprintf(stderr, "%s", PQerrorMessage(conn));
+		pg_log_error("failed to find OID columns: %s", PQerrorMessage(conn));
 		PQclear(res);
 		PQfinish(conn);
 		return -1;
@@ -238,7 +233,7 @@ vacuumlo(const char *database, const struct _param *param)
 
 		if (!schema || !table || !field)
 		{
-			fprintf(stderr, "%s", PQerrorMessage(conn));
+			pg_log_error("%s", PQerrorMessage(conn));
 			PQclear(res);
 			PQfinish(conn);
 			if (schema != NULL)
@@ -257,9 +252,8 @@ vacuumlo(const char *database, const struct _param *param)
 		res2 = PQexec(conn, buf);
 		if (PQresultStatus(res2) != PGRES_COMMAND_OK)
 		{
-			fprintf(stderr, "Failed to check %s in table %s.%s:\n",
-					field, schema, table);
-			fprintf(stderr, "%s", PQerrorMessage(conn));
+			pg_log_error("failed to check %s in table %s.%s: %s",
+						 field, schema, table, PQerrorMessage(conn));
 			PQclear(res2);
 			PQclear(res);
 			PQfinish(conn);
@@ -288,8 +282,7 @@ vacuumlo(const char *database, const struct _param *param)
 	res = PQexec(conn, "begin");
 	if (PQresultStatus(res) != PGRES_COMMAND_OK)
 	{
-		fprintf(stderr, "Failed to start transaction:\n");
-		fprintf(stderr, "%s", PQerrorMessage(conn));
+		pg_log_error("failed to start transaction: %s", PQerrorMessage(conn));
 		PQclear(res);
 		PQfinish(conn);
 		return -1;
@@ -302,7 +295,7 @@ vacuumlo(const char *database, const struct _param *param)
 	res = PQexec(conn, buf);
 	if (PQresultStatus(res) != PGRES_COMMAND_OK)
 	{
-		fprintf(stderr, "DECLARE CURSOR failed: %s", PQerrorMessage(conn));
+		pg_log_error("DECLARE CURSOR failed: %s", PQerrorMessage(conn));
 		PQclear(res);
 		PQfinish(conn);
 		return -1;
@@ -319,7 +312,7 @@ vacuumlo(const char *database, const struct _param *param)
 		res = PQexec(conn, buf);
 		if (PQresultStatus(res) != PGRES_TUPLES_OK)
 		{
-			fprintf(stderr, "FETCH FORWARD failed: %s", PQerrorMessage(conn));
+			pg_log_error("FETCH FORWARD failed: %s", PQerrorMessage(conn));
 			PQclear(res);
 			PQfinish(conn);
 			return -1;
@@ -347,8 +340,8 @@ vacuumlo(const char *database, const struct _param *param)
 			{
 				if (lo_unlink(conn, lo) < 0)
 				{
-					fprintf(stderr, "\nFailed to remove lo %u: ", lo);
-					fprintf(stderr, "%s", PQerrorMessage(conn));
+					pg_log_error("failed to remove lo %u: %s", lo,
+								 PQerrorMessage(conn));
 					if (PQtransactionStatus(conn) == PQTRANS_INERROR)
 					{
 						success = false;
@@ -367,8 +360,8 @@ vacuumlo(const char *database, const struct _param *param)
 				res2 = PQexec(conn, "commit");
 				if (PQresultStatus(res2) != PGRES_COMMAND_OK)
 				{
-					fprintf(stderr, "Failed to commit transaction:\n");
-					fprintf(stderr, "%s", PQerrorMessage(conn));
+					pg_log_error("failed to commit transaction: %s",
+								 PQerrorMessage(conn));
 					PQclear(res2);
 					PQclear(res);
 					PQfinish(conn);
@@ -378,8 +371,8 @@ vacuumlo(const char *database, const struct _param *param)
 				res2 = PQexec(conn, "begin");
 				if (PQresultStatus(res2) != PGRES_COMMAND_OK)
 				{
-					fprintf(stderr, "Failed to start transaction:\n");
-					fprintf(stderr, "%s", PQerrorMessage(conn));
+					pg_log_error("failed to start transaction: %s",
+								 PQerrorMessage(conn));
 					PQclear(res2);
 					PQclear(res);
 					PQfinish(conn);
@@ -398,8 +391,8 @@ vacuumlo(const char *database, const struct _param *param)
 	res = PQexec(conn, "commit");
 	if (PQresultStatus(res) != PGRES_COMMAND_OK)
 	{
-		fprintf(stderr, "Failed to commit transaction:\n");
-		fprintf(stderr, "%s", PQerrorMessage(conn));
+		pg_log_error("failed to commit transaction: %s",
+					 PQerrorMessage(conn));
 		PQclear(res);
 		PQfinish(conn);
 		return -1;
@@ -471,6 +464,7 @@ main(int argc, char **argv)
 	const char *progname;
 	int			optindex;
 
+	pg_logging_init(argv[0]);
 	progname = get_progname(argv[0]);
 
 	/* Set default parameter values */
@@ -512,9 +506,7 @@ main(int argc, char **argv)
 				param.transaction_limit = strtol(optarg, NULL, 10);
 				if (param.transaction_limit < 0)
 				{
-					fprintf(stderr,
-							"%s: transaction limit must not be negative (0 disables)\n",
-							progname);
+					pg_log_error("transaction limit must not be negative (0 disables)");
 					exit(1);
 				}
 				break;
@@ -526,7 +518,7 @@ main(int argc, char **argv)
 				port = strtol(optarg, NULL, 10);
 				if ((port < 1) || (port > 65535))
 				{
-					fprintf(stderr, "%s: invalid port number: %s\n", progname, optarg);
+					pg_log_error("invalid port number: %s", optarg);
 					exit(1);
 				}
 				param.pg_port = pg_strdup(optarg);
@@ -552,7 +544,7 @@ main(int argc, char **argv)
 	/* No database given? Show usage */
 	if (optind >= argc)
 	{
-		fprintf(stderr, "vacuumlo: missing required argument: database name\n");
+		pg_log_error("missing required argument: database name");
 		fprintf(stderr, _("Try \"%s --help\" for more information.\n"), progname);
 		exit(1);
 	}

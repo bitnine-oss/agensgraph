@@ -2228,18 +2228,13 @@ find_expr_references_walker(Node *node,
 							   context->addrs);
 		}
 
-		/* query_tree_walker ignores ORDER BY etc, but we need those opers */
-		find_expr_references_walker((Node *) query->sortClause, context);
-		find_expr_references_walker((Node *) query->groupClause, context);
-		find_expr_references_walker((Node *) query->windowClause, context);
-		find_expr_references_walker((Node *) query->distinctClause, context);
-
 		/* Examine substructure of query */
 		context->rtables = lcons(query->rtable, context->rtables);
 		result = query_tree_walker(query,
 								   find_expr_references_walker,
 								   (void *) context,
-								   QTW_IGNORE_JOINALIASES);
+								   QTW_IGNORE_JOINALIASES |
+								   QTW_EXAMINE_SORTGROUP);
 		context->rtables = list_delete_first(context->rtables);
 		return result;
 	}
@@ -2267,6 +2262,28 @@ find_expr_references_walker(Node *node,
 							   context->addrs);
 		}
 		foreach(ct, rtfunc->funccolcollations)
+		{
+			Oid			collid = lfirst_oid(ct);
+
+			if (OidIsValid(collid) && collid != DEFAULT_COLLATION_OID)
+				add_object_address(OCLASS_COLLATION, collid, 0,
+								   context->addrs);
+		}
+	}
+	else if (IsA(node, TableFunc))
+	{
+		TableFunc  *tf = (TableFunc *) node;
+		ListCell   *ct;
+
+		/*
+		 * Add refs for the datatypes and collations used in the TableFunc.
+		 */
+		foreach(ct, tf->coltypes)
+		{
+			add_object_address(OCLASS_TYPE, lfirst_oid(ct), 0,
+							   context->addrs);
+		}
+		foreach(ct, tf->colcollations)
 		{
 			Oid			collid = lfirst_oid(ct);
 

@@ -33,8 +33,9 @@
  */
 
 #include "postgres_fe.h"
-#include "tab-complete.h"
+
 #include "input.h"
+#include "tab-complete.h"
 
 /* If we don't have this, we might as well forget about the whole thing: */
 #ifdef USE_READLINE
@@ -43,10 +44,9 @@
 
 #include "catalog/pg_am_d.h"
 #include "catalog/pg_class_d.h"
-
+#include "common.h"
 #include "libpq-fe.h"
 #include "pqexpbuffer.h"
-#include "common.h"
 #include "settings.h"
 #include "stringutils.h"
 
@@ -1007,6 +1007,7 @@ static const pgsql_thing_t words_after_create[] = {
 	{"MATERIALIZED VIEW", NULL, NULL, &Query_for_list_of_matviews},
 	{"OPERATOR", NULL, NULL, NULL}, /* Querying for this is probably not such
 									 * a good idea. */
+	{"OR REPLACE", NULL, NULL, NULL, THING_NO_DROP | THING_NO_ALTER},
 	{"OWNED", NULL, NULL, NULL, THING_NO_CREATE | THING_NO_ALTER},	/* for DROP OWNED BY ... */
 	{"PARSER", Query_for_list_of_ts_parsers, NULL, NULL, THING_NO_SHOW},
 	{"POLICY", NULL, NULL, NULL},
@@ -1489,6 +1490,11 @@ psql_completion(const char *text, int start, int end)
 	else if (TailMatches("CREATE"))
 		matches = completion_matches(text, create_command_generator);
 
+	/* complete with something you can create or replace */
+	else if (TailMatches("CREATE", "OR", "REPLACE"))
+		COMPLETE_WITH("FUNCTION", "PROCEDURE", "LANGUAGE", "RULE", "VIEW",
+					  "AGGREGATE", "TRANSFORM");
+
 /* DROP, but not DROP embedded in other commands */
 	/* complete with something you can drop */
 	else if (Matches("DROP"))
@@ -1791,13 +1797,38 @@ psql_completion(const char *text, int start, int end)
 		COMPLETE_WITH("TO");
 	/* ALTER VIEW <name> */
 	else if (Matches("ALTER", "VIEW", MatchAny))
-		COMPLETE_WITH("ALTER COLUMN", "OWNER TO", "RENAME TO",
+		COMPLETE_WITH("ALTER COLUMN", "OWNER TO", "RENAME",
 					  "SET SCHEMA");
+	/* ALTER VIEW xxx RENAME */
+	else if (Matches("ALTER", "VIEW", MatchAny, "RENAME"))
+		COMPLETE_WITH_ATTR(prev2_wd, " UNION SELECT 'COLUMN' UNION SELECT 'TO'");
+	else if (Matches("ALTER", "VIEW", MatchAny, "ALTER|RENAME", "COLUMN"))
+		COMPLETE_WITH_ATTR(prev3_wd, "");
+	/* ALTER VIEW xxx RENAME yyy */
+	else if (Matches("ALTER", "VIEW", MatchAny, "RENAME", MatchAnyExcept("TO")))
+		COMPLETE_WITH("TO");
+	/* ALTER VIEW xxx RENAME COLUMN yyy */
+	else if (Matches("ALTER", "VIEW", MatchAny, "RENAME", "COLUMN", MatchAnyExcept("TO")))
+		COMPLETE_WITH("TO");
+
 	/* ALTER MATERIALIZED VIEW <name> */
 	else if (Matches("ALTER", "MATERIALIZED", "VIEW", MatchAny))
-		COMPLETE_WITH("ALTER COLUMN", "OWNER TO", "RENAME TO",
-					  "SET SCHEMA");
-
+		COMPLETE_WITH("ALTER COLUMN", "CLUSTER ON", "DEPENDS ON EXTENSION",
+					  "OWNER TO", "RENAME", "RESET (", "SET");
+	/* ALTER MATERIALIZED VIEW xxx RENAME */
+	else if (Matches("ALTER", "MATERIALIZED", "VIEW", MatchAny, "RENAME"))
+		COMPLETE_WITH_ATTR(prev2_wd, " UNION SELECT 'COLUMN' UNION SELECT 'TO'");
+	else if (Matches("ALTER", "MATERIALIZED", "VIEW", MatchAny, "ALTER|RENAME", "COLUMN"))
+		COMPLETE_WITH_ATTR(prev3_wd, "");
+	/* ALTER MATERIALIZED VIEW xxx RENAME yyy */
+	else if (Matches("ALTER", "MATERIALIZED", "VIEW", MatchAny, "RENAME", MatchAnyExcept("TO")))
+		COMPLETE_WITH("TO");
+	/* ALTER MATERIALIZED VIEW xxx RENAME COLUMN yyy */
+	else if (Matches("ALTER", "MATERIALIZED", "VIEW", MatchAny, "RENAME", "COLUMN", MatchAnyExcept("TO")))
+		COMPLETE_WITH("TO");
+	/* ALTER MATERIALIZED VIEW xxx SET */
+	else if (Matches("ALTER", "MATERIALIZED", "VIEW", MatchAny, "SET"))
+		COMPLETE_WITH("(", "SCHEMA", "TABLESPACE", "WITHOUT CLUSTER");
 	/* ALTER POLICY <name> */
 	else if (Matches("ALTER", "POLICY"))
 		COMPLETE_WITH_QUERY(Query_for_list_of_policies);
@@ -1840,7 +1871,7 @@ psql_completion(const char *text, int start, int end)
 
 	/* ALTER STATISTICS <name> */
 	else if (Matches("ALTER", "STATISTICS", MatchAny))
-		COMPLETE_WITH("OWNER TO", "RENAME TO", "SET SCHEMA");
+		COMPLETE_WITH("OWNER TO", "RENAME TO", "SET SCHEMA", "SET STATISTICS");
 
 	/* ALTER TRIGGER <name>, add ON */
 	else if (Matches("ALTER", "TRIGGER", MatchAny))
@@ -2345,6 +2376,10 @@ psql_completion(const char *text, int start, int end)
 			 !TailMatches("FOR", MatchAny, MatchAny, MatchAny))
 		COMPLETE_WITH("(");
 
+	/* CREATE OR REPLACE */
+	else if (Matches("CREATE", "OR"))
+		COMPLETE_WITH("REPLACE");
+
 	/* CREATE POLICY */
 	/* Complete "CREATE POLICY <name> ON" */
 	else if (Matches("CREATE", "POLICY", MatchAny))
@@ -2440,14 +2475,17 @@ psql_completion(const char *text, int start, int end)
 		COMPLETE_WITH("publish");
 
 /* CREATE RULE */
-	/* Complete "CREATE RULE <sth>" with "AS ON" */
-	else if (Matches("CREATE", "RULE", MatchAny))
+	/* Complete "CREATE [ OR REPLACE ] RULE <sth>" with "AS ON" */
+	else if (Matches("CREATE", "RULE", MatchAny) ||
+			 Matches("CREATE", "OR", "REPLACE", "RULE", MatchAny))
 		COMPLETE_WITH("AS ON");
-	/* Complete "CREATE RULE <sth> AS" with "ON" */
-	else if (Matches("CREATE", "RULE", MatchAny, "AS"))
+	/* Complete "CREATE [ OR REPLACE ] RULE <sth> AS" with "ON" */
+	else if (Matches("CREATE", "RULE", MatchAny, "AS") ||
+			 Matches("CREATE", "OR", "REPLACE", "RULE", MatchAny, "AS"))
 		COMPLETE_WITH("ON");
-	/* Complete "CREATE RULE <sth> AS ON" with SELECT|UPDATE|INSERT|DELETE */
-	else if (Matches("CREATE", "RULE", MatchAny, "AS", "ON"))
+	/* Complete "CREATE [ OR REPLACE ] RULE <sth> AS ON" with SELECT|UPDATE|INSERT|DELETE */
+	else if (Matches("CREATE", "RULE", MatchAny, "AS", "ON") ||
+			 Matches("CREATE", "OR", "REPLACE", "RULE", MatchAny, "AS", "ON"))
 		COMPLETE_WITH("SELECT", "UPDATE", "INSERT", "DELETE");
 	/* Complete "AS ON SELECT|UPDATE|INSERT|DELETE" with a "TO" */
 	else if (TailMatches("AS", "ON", "SELECT|UPDATE|INSERT|DELETE"))
@@ -2726,11 +2764,13 @@ psql_completion(const char *text, int start, int end)
 	}
 
 /* CREATE VIEW --- is allowed inside CREATE SCHEMA, so use TailMatches */
-	/* Complete CREATE VIEW <name> with AS */
-	else if (TailMatches("CREATE", "VIEW", MatchAny))
+	/* Complete CREATE [ OR REPLACE ] VIEW <name> with AS */
+	else if (TailMatches("CREATE", "VIEW", MatchAny) ||
+			 TailMatches("CREATE", "OR", "REPLACE", "VIEW", MatchAny))
 		COMPLETE_WITH("AS");
-	/* Complete "CREATE VIEW <sth> AS with "SELECT" */
-	else if (TailMatches("CREATE", "VIEW", MatchAny, "AS"))
+	/* Complete "CREATE [ OR REPLACE ] VIEW <sth> AS with "SELECT" */
+	else if (TailMatches("CREATE", "VIEW", MatchAny, "AS") ||
+			 TailMatches("CREATE", "OR", "REPLACE", "VIEW", MatchAny, "AS"))
 		COMPLETE_WITH("SELECT");
 
 /* CREATE MATERIALIZED VIEW */
@@ -2829,6 +2869,10 @@ psql_completion(const char *text, int start, int end)
 		COMPLETE_WITH_FUNCTION_ARG(prev2_wd);
 	else if (Matches("DROP", "FOREIGN"))
 		COMPLETE_WITH("DATA WRAPPER", "TABLE");
+	else if (Matches("DROP", "DATABASE", MatchAny))
+		COMPLETE_WITH("WITH (");
+	else if (HeadMatches("DROP", "DATABASE") && (ends_with(prev_wd, '(')))
+		COMPLETE_WITH("FORCE");
 
 	/* DROP INDEX */
 	else if (Matches("DROP", "INDEX"))
@@ -2924,9 +2968,9 @@ psql_completion(const char *text, int start, int end)
 		 * one word, so the above test is correct.
 		 */
 		if (ends_with(prev_wd, '(') || ends_with(prev_wd, ','))
-			COMPLETE_WITH("ANALYZE", "VERBOSE", "COSTS", "BUFFERS",
-						  "TIMING", "SUMMARY", "FORMAT");
-		else if (TailMatches("ANALYZE|VERBOSE|COSTS|BUFFERS|TIMING|SUMMARY"))
+			COMPLETE_WITH("ANALYZE", "VERBOSE", "COSTS", "SETTINGS",
+						  "BUFFERS", "TIMING", "SUMMARY", "FORMAT");
+		else if (TailMatches("ANALYZE|VERBOSE|COSTS|SETTINGS|BUFFERS|TIMING|SUMMARY"))
 			COMPLETE_WITH("ON", "OFF");
 		else if (TailMatches("FORMAT"))
 			COMPLETE_WITH("TEXT", "XML", "JSON", "YAML");

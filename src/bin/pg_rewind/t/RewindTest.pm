@@ -149,7 +149,7 @@ sub start_master
 
 	# Create custom role which is used to run pg_rewind, and adjust its
 	# permissions to the minimum necessary.
-	$node_master->psql(
+	$node_master->safe_psql(
 		'postgres', "
 		CREATE ROLE rewind_user LOGIN;
 		GRANT EXECUTE ON function pg_catalog.pg_ls_dir(text, boolean, boolean)
@@ -227,8 +227,10 @@ sub run_pg_rewind
 	# Append the rewind-specific role to the connection string.
 	$standby_connstr = "$standby_connstr user=rewind_user";
 
-	# Stop the master and be ready to perform the rewind
-	$node_master->stop;
+	# Stop the master and be ready to perform the rewind.  The cluster
+	# needs recovery to finish once, and pg_rewind makes sure that it
+	# happens automatically.
+	$node_master->stop('immediate');
 
 	# At this point, the rewind processing is ready to run.
 	# We now have a very simple scenario with a few diverged WAL record.
@@ -260,15 +262,27 @@ sub run_pg_rewind
 	}
 	elsif ($test_mode eq "remote")
 	{
-
-		# Do rewind using a remote connection as source
+		# Do rewind using a remote connection as source, generating
+		# recovery configuration automatically.
 		command_ok(
 			[
 				'pg_rewind',                      "--debug",
 				"--source-server",                $standby_connstr,
-				"--target-pgdata=$master_pgdata", "--no-sync"
+				"--target-pgdata=$master_pgdata", "--no-sync",
+				"--write-recovery-conf"
 			],
 			'pg_rewind remote');
+
+		# Check that standby.signal is here as recovery configuration
+		# was requested.
+		ok( -e "$master_pgdata/standby.signal",
+			'standby.signal created after pg_rewind');
+
+		# Now, when pg_rewind apparently succeeded with minimal permissions,
+		# add REPLICATION privilege.  So we could test that new standby
+		# is able to connect to the new master with generated config.
+		$node_standby->safe_psql('postgres',
+			"ALTER ROLE rewind_user WITH REPLICATION;");
 	}
 	else
 	{
@@ -289,13 +303,15 @@ sub run_pg_rewind
 		"unable to set permissions for $master_pgdata/postgresql.conf");
 
 	# Plug-in rewound node to the now-promoted standby node
-	my $port_standby = $node_standby->port;
-	$node_master->append_conf(
-		'postgresql.conf', qq(
-primary_conninfo='port=$port_standby'
-));
+	if ($test_mode ne "remote")
+	{
+		my $port_standby = $node_standby->port;
+		$node_master->append_conf(
+			'postgresql.conf', qq(
+primary_conninfo='port=$port_standby'));
 
-	$node_master->set_standby_mode();
+		$node_master->set_standby_mode();
+	}
 
 	# Restart the master to check that rewind went correctly
 	$node_master->start;

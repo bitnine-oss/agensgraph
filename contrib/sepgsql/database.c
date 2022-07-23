@@ -15,14 +15,14 @@
 #include "access/sysattr.h"
 #include "access/table.h"
 #include "catalog/dependency.h"
-#include "catalog/pg_database.h"
 #include "catalog/indexing.h"
+#include "catalog/pg_database.h"
 #include "commands/dbcommands.h"
 #include "commands/seclabel.h"
+#include "sepgsql.h"
 #include "utils/builtins.h"
 #include "utils/fmgroids.h"
 #include "utils/snapmgr.h"
-#include "sepgsql.h"
 
 /*
  * sepgsql_database_post_create
@@ -74,7 +74,7 @@ sepgsql_database_post_create(Oid databaseId, const char *dtemplate)
 	 * Compute a default security label of the newly created database based on
 	 * a pair of security label of client and source database.
 	 *
-	 * XXX - uncoming version of libselinux supports to take object name to
+	 * XXX - upcoming version of libselinux supports to take object name to
 	 * handle special treatment on default security label.
 	 */
 	rel = table_open(DatabaseRelationId, AccessShareLock);

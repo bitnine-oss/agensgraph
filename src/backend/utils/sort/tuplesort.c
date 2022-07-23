@@ -933,7 +933,7 @@ tuplesort_begin_cluster(TupleDesc tupDesc,
 		 * scantuple has to point to that slot, too.
 		 */
 		state->estate = CreateExecutorState();
-		slot = MakeSingleTupleTableSlot(tupDesc, &TTSOpsVirtual);
+		slot = MakeSingleTupleTableSlot(tupDesc, &TTSOpsHeapTuple);
 		econtext = GetPerTupleExprContext(state->estate);
 		econtext->ecxt_scantuple = slot;
 	}
@@ -1186,20 +1186,21 @@ void
 tuplesort_set_bound(Tuplesortstate *state, int64 bound)
 {
 	/* Assert we're called before loading any tuples */
-	Assert(state->status == TSS_INITIAL);
-	Assert(state->memtupcount == 0);
+	Assert(state->status == TSS_INITIAL && state->memtupcount == 0);
+	/* Can't set the bound twice, either */
 	Assert(!state->bounded);
+	/* Also, this shouldn't be called in a parallel worker */
 	Assert(!WORKER(state));
+
+	/* Parallel leader allows but ignores hint */
+	if (LEADER(state))
+		return;
 
 #ifdef DEBUG_BOUNDED_SORT
 	/* Honor GUC setting that disables the feature (for easy testing) */
 	if (!optimize_bounded_sort)
 		return;
 #endif
-
-	/* Parallel leader ignores hint */
-	if (LEADER(state))
-		return;
 
 	/* We want to be able to compute bound * 2, so limit the setting */
 	if (bound > (int64) (INT_MAX / 2))
@@ -4140,67 +4141,8 @@ comparetup_index_hash(const SortTuple *a, const SortTuple *b,
 static void
 copytup_index(Tuplesortstate *state, SortTuple *stup, void *tup)
 {
-	IndexTuple	tuple = (IndexTuple) tup;
-	unsigned int tuplen = IndexTupleSize(tuple);
-	IndexTuple	newtuple;
-	Datum		original;
-
-	/* copy the tuple into sort storage */
-	newtuple = (IndexTuple) MemoryContextAlloc(state->tuplecontext, tuplen);
-	memcpy(newtuple, tuple, tuplen);
-	USEMEM(state, GetMemoryChunkSpace(newtuple));
-	stup->tuple = (void *) newtuple;
-	/* set up first-column key value */
-	original = index_getattr(newtuple,
-							 1,
-							 RelationGetDescr(state->indexRel),
-							 &stup->isnull1);
-
-	if (!state->sortKeys->abbrev_converter || stup->isnull1)
-	{
-		/*
-		 * Store ordinary Datum representation, or NULL value.  If there is a
-		 * converter it won't expect NULL values, and cost model is not
-		 * required to account for NULL, so in that case we avoid calling
-		 * converter and just set datum1 to zeroed representation (to be
-		 * consistent, and to support cheap inequality tests for NULL
-		 * abbreviated keys).
-		 */
-		stup->datum1 = original;
-	}
-	else if (!consider_abort_common(state))
-	{
-		/* Store abbreviated key representation */
-		stup->datum1 = state->sortKeys->abbrev_converter(original,
-														 state->sortKeys);
-	}
-	else
-	{
-		/* Abort abbreviation */
-		int			i;
-
-		stup->datum1 = original;
-
-		/*
-		 * Set state to be consistent with never trying abbreviation.
-		 *
-		 * Alter datum1 representation in already-copied tuples, so as to
-		 * ensure a consistent representation (current tuple was just
-		 * handled).  It does not matter if some dumped tuples are already
-		 * sorted on tape, since serialized tuples lack abbreviated keys
-		 * (TSS_BUILDRUNS state prevents control reaching here in any case).
-		 */
-		for (i = 0; i < state->memtupcount; i++)
-		{
-			SortTuple  *mtup = &state->memtuples[i];
-
-			tuple = (IndexTuple) mtup->tuple;
-			mtup->datum1 = index_getattr(tuple,
-										 1,
-										 RelationGetDescr(state->indexRel),
-										 &mtup->isnull1);
-		}
-	}
+	/* Not currently needed */
+	elog(ERROR, "copytup_index() should not be called");
 }
 
 static void

@@ -367,6 +367,8 @@ typedef struct _indxInfo
 	bool		indisclustered;
 	bool		indisreplident;
 	Oid			parentidx;		/* if partitioned, parent index OID */
+	SimplePtrList partattaches;	/* if partitioned, partition attach objects */
+
 	/* if there is an associated constraint object, its dumpId: */
 	DumpId		indexconstraint;
 } IndxInfo;
@@ -382,6 +384,7 @@ typedef struct _statsExtInfo
 {
 	DumpableObject dobj;
 	char	   *rolname;		/* name of owner, or empty string */
+	int			stattarget;		/* statistics target */
 } StatsExtInfo;
 
 typedef struct _ruleInfo

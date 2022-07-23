@@ -15,15 +15,13 @@
  */
 #include "postgres_fe.h"
 
-#include "pg_backup_archiver.h"
-#include "pg_backup_utils.h"
-#include "pg_dump.h"
-
 #include <ctype.h>
 
 #include "catalog/pg_class_d.h"
 #include "fe_utils/string_utils.h"
-
+#include "pg_backup_archiver.h"
+#include "pg_backup_utils.h"
+#include "pg_dump.h"
 
 /*
  * Variables for mapping DumpId to DumpableObject
@@ -411,6 +409,9 @@ flagInhIndexes(Archive *fout, TableInfo tblinfo[], int numTables)
 								index->indextable->dobj.dumpId);
 			addObjectDependency(&attachinfo[k].dobj,
 								parentidx->indextable->dobj.dumpId);
+
+			/* keep track of the list of partitions in the parent index */
+			simple_ptr_list_append(&parentidx->partattaches, &attachinfo[k].dobj);
 
 			k++;
 		}

@@ -19,7 +19,7 @@
 
 
 #define DatumGetSegP(X) ((SEG *) DatumGetPointer(X))
-#define PG_GETARG_SEG_P(n) DatumGetSegP(PG_GETARG_POINTER(n))
+#define PG_GETARG_SEG_P(n) DatumGetSegP(PG_GETARG_DATUM(n))
 
 
 /*
@@ -706,8 +706,6 @@ rt_seg_size(SEG *a, float *size)
 		*size = 0.0;
 	else
 		*size = (float) Abs(a->upper - a->lower);
-
-	return;
 }
 
 Datum

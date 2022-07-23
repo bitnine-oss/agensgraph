@@ -36,14 +36,14 @@ label_create_with_catalog(RangeVar *label, Oid relid, char labkind,
 	Relation	ag_label_desc;
 	Oid			laboid;
 
-	ag_label_desc = heap_open(LabelRelationId, RowExclusiveLock);
+	ag_label_desc = table_open(LabelRelationId, RowExclusiveLock);
 
 	laboid = GetNewRelFileNode(labtablespace, ag_label_desc,
 							   label->relpersistence);
 
 	InsertAgLabelTuple(ag_label_desc, laboid, label, relid, labkind);
 
-	heap_close(ag_label_desc, RowExclusiveLock);
+	table_close(ag_label_desc, RowExclusiveLock);
 
 	return laboid;
 }
@@ -59,7 +59,7 @@ label_drop_with_catalog(Oid laboid)
 	Relation	ag_label_desc;
 	HeapTuple	tup;
 
-	ag_label_desc = heap_open(LabelRelationId, RowExclusiveLock);
+	ag_label_desc = table_open(LabelRelationId, RowExclusiveLock);
 
 	tup = SearchSysCache1(LABELOID, ObjectIdGetDatum(laboid));
 	if (!HeapTupleIsValid(tup))
@@ -69,7 +69,7 @@ label_drop_with_catalog(Oid laboid)
 
 	ReleaseSysCache(tup);
 
-	heap_close(ag_label_desc, RowExclusiveLock);
+	table_close(ag_label_desc, RowExclusiveLock);
 }
 
 /*

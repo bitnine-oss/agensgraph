@@ -24,17 +24,23 @@
 # Latin-ASCII.xml, the latest data sets released can be browsed directly
 # via [3].  Note that this script is compatible with at least release 29.
 #
-# [1] http://unicode.org/Public/8.0.0/ucd/UnicodeData.txt
-# [2] http://unicode.org/cldr/trac/export/14746/tags/release-34/common/transforms/Latin-ASCII.xml
-# [3] https://unicode.org/cldr/trac/browser/tags
+# [1] https://www.unicode.org/Public/8.0.0/ucd/UnicodeData.txt
+# [2] https://raw.githubusercontent.com/unicode-org/cldr/release-34/common/transforms/Latin-ASCII.xml
+# [3] https://github.com/unicode-org/cldr/tags
 
 # BEGIN: Python 2/3 compatibility - remove when Python 2 compatibility dropped
 # The approach is to be Python3 compatible with Python2 "backports".
 from __future__ import print_function
 from __future__ import unicode_literals
-import codecs
-import sys
+# END: Python 2/3 compatibility - remove when Python 2 compatibility dropped
 
+import argparse
+import codecs
+import re
+import sys
+import xml.etree.ElementTree as ET
+
+# BEGIN: Python 2/3 compatibility - remove when Python 2 compatibility dropped
 if sys.version_info[0] <= 2:
     # Encode stdout as UTF-8, so we can just print to it
     sys.stdout = codecs.getwriter('utf8')(sys.stdout)
@@ -45,12 +51,9 @@ if sys.version_info[0] <= 2:
     # Python 2 and 3 compatible bytes call
     def bytes(source, encoding='ascii', errors='strict'):
         return source.encode(encoding=encoding, errors=errors)
+else:
 # END: Python 2/3 compatibility - remove when Python 2 compatibility dropped
-
-import re
-import argparse
-import sys
-import xml.etree.ElementTree as ET
+    sys.stdout = codecs.getwriter('utf8')(sys.stdout.buffer)
 
 # The ranges of Unicode characters that we consider to be "plain letters".
 # For now we are being conservative by including only Latin and Greek.  This
@@ -110,7 +113,7 @@ def is_mark(codepoint):
 
 def is_letter_with_marks(codepoint, table):
     """Returns true for letters combined with one or more marks."""
-    # See http://www.unicode.org/reports/tr44/tr44-14.html#General_Category_Values
+    # See https://www.unicode.org/reports/tr44/tr44-14.html#General_Category_Values
 
     # Letter may have no combining characters, in which case it has
     # no marks.
@@ -223,7 +226,7 @@ def special_cases():
     return charactersSet
 
 def main(args):
-    # http://www.unicode.org/reports/tr44/tr44-14.html#Character_Decomposition_Mappings
+    # https://www.unicode.org/reports/tr44/tr44-14.html#Character_Decomposition_Mappings
     decomposition_type_pattern = re.compile(" *<[^>]*> *")
 
     table = {}
@@ -233,21 +236,22 @@ def main(args):
     charactersSet = set()
 
     # read file UnicodeData.txt
-    unicodeDataFile = open(args.unicodeDataFilePath, 'r')
-
-    # read everything we need into memory
-    for line in unicodeDataFile:
-        fields = line.split(";")
-        if len(fields) > 5:
-            # http://www.unicode.org/reports/tr44/tr44-14.html#UnicodeData.txt
-            general_category = fields[2]
-            decomposition = fields[5]
-            decomposition = re.sub(decomposition_type_pattern, ' ', decomposition)
-            id = int(fields[0], 16)
-            combining_ids = [int(s, 16) for s in decomposition.split(" ") if s != ""]
-            codepoint = Codepoint(id, general_category, combining_ids)
-            table[id] = codepoint
-            all.append(codepoint)
+    with codecs.open(
+      args.unicodeDataFilePath, mode='r', encoding='UTF-8',
+      ) as unicodeDataFile:
+        # read everything we need into memory
+        for line in unicodeDataFile:
+            fields = line.split(";")
+            if len(fields) > 5:
+                # https://www.unicode.org/reports/tr44/tr44-14.html#UnicodeData.txt
+                general_category = fields[2]
+                decomposition = fields[5]
+                decomposition = re.sub(decomposition_type_pattern, ' ', decomposition)
+                id = int(fields[0], 16)
+                combining_ids = [int(s, 16) for s in decomposition.split(" ") if s != ""]
+                codepoint = Codepoint(id, general_category, combining_ids)
+                table[id] = codepoint
+                all.append(codepoint)
 
     # walk through all the codepoints looking for interesting mappings
     for codepoint in all:
@@ -277,8 +281,8 @@ def main(args):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='This script builds unaccent.rules on standard output when given the contents of UnicodeData.txt and Latin-ASCII.xml given as arguments.')
-    parser.add_argument("--unicode-data-file", help="Path to formatted text file corresponding to UnicodeData.txt. See <http://unicode.org/Public/8.0.0/ucd/UnicodeData.txt>.", type=str, required=True, dest='unicodeDataFilePath')
-    parser.add_argument("--latin-ascii-file", help="Path to XML file from Unicode Common Locale Data Repository (CLDR) corresponding to Latin-ASCII transliterator (Latin-ASCII.xml). See <http://unicode.org/cldr/trac/export/12304/tags/release-28/common/transforms/Latin-ASCII.xml>.", type=str, dest='latinAsciiFilePath')
+    parser.add_argument("--unicode-data-file", help="Path to formatted text file corresponding to UnicodeData.txt.", type=str, required=True, dest='unicodeDataFilePath')
+    parser.add_argument("--latin-ascii-file", help="Path to XML file from Unicode Common Locale Data Repository (CLDR) corresponding to Latin-ASCII transliterator (Latin-ASCII.xml).", type=str, dest='latinAsciiFilePath')
     parser.add_argument("--no-ligatures-expansion", help="Do not expand ligatures and do not use Unicode CLDR Latin-ASCII transliterator. By default, this option is not enabled and \"--latin-ascii-file\" argument is required. If this option is enabled, \"--latin-ascii-file\" argument is optional and ignored.", action="store_true", dest='noLigaturesExpansion')
     args = parser.parse_args()
 

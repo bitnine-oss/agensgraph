@@ -16,10 +16,27 @@
 
 #include "access/itup.h"
 #include "access/spgist.h"
+#include "catalog/pg_am_d.h"
 #include "nodes/tidbitmap.h"
 #include "storage/buf.h"
 #include "utils/geo_decls.h"
 #include "utils/relcache.h"
+
+
+typedef struct SpGistOptions
+{
+	int32		varlena_header_;	/* varlena header (do not touch directly!) */
+	int			fillfactor;		/* page fill factor in percent (0..100) */
+} SpGistOptions;
+
+#define SpGistGetFillFactor(relation) \
+	(AssertMacro(relation->rd_rel->relkind == RELKIND_INDEX && \
+				 relation->rd_rel->relam == SPGIST_AM_OID), \
+	 (relation)->rd_options ? \
+	 ((SpGistOptions *) (relation)->rd_options)->fillfactor : \
+	 SPGIST_DEFAULT_FILLFACTOR)
+#define SpGistGetTargetPageFreeSpace(relation) \
+	(BLCKSZ * (100 - SpGistGetFillFactor(relation)) / 100)
 
 
 /* Page numbers of fixed-location pages */
@@ -169,8 +186,12 @@ typedef struct SpGistScanOpaqueData
 	int			numberOfKeys;	/* number of index qualifier conditions */
 	ScanKey		keyData;		/* array of index qualifier descriptors */
 	int			numberOfOrderBys;	/* number of ordering operators */
+	int			numberOfNonNullOrderBys;	/* number of ordering operators
+											 * with non-NULL arguments */
 	ScanKey		orderByData;	/* array of ordering op descriptors */
 	Oid		   *orderByTypes;	/* array of ordering op return types */
+	int		   *nonNullOrderByOffsets;	/* array of offset of non-NULL
+										 * ordering keys in the original array */
 	Oid			indexCollation; /* collation of index column */
 
 	/* Opclass defined functions: */
@@ -195,7 +216,9 @@ typedef struct SpGistScanOpaqueData
 	bool		recheckDistances[MaxIndexTuplesPerPage];	/* distance recheck
 															 * flags */
 	HeapTuple	reconTups[MaxIndexTuplesPerPage];	/* reconstructed tuples */
-	double	   *distances[MaxIndexTuplesPerPage];	/* distances (for recheck) */
+
+	/* distances (for recheck) */
+	IndexOrderByDistance *distances[MaxIndexTuplesPerPage];
 
 	/*
 	 * Note: using MaxIndexTuplesPerPage above is a bit hokey since
@@ -417,6 +440,11 @@ typedef SpGistDeadTupleData *SpGistDeadTuple;
 #define GBUF_REQ_NULLS(flags)	((flags) & GBUF_NULLS)
 
 /* spgutils.c */
+
+/* reloption parameters */
+#define SPGIST_MIN_FILLFACTOR			10
+#define SPGIST_DEFAULT_FILLFACTOR		80
+
 extern SpGistCache *spgGetCache(Relation index);
 extern void initSpGistState(SpGistState *state, Relation index);
 extern Buffer SpGistNewBuffer(Relation index);

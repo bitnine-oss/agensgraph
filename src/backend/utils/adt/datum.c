@@ -42,7 +42,7 @@
 
 #include "postgres.h"
 
-#include "access/tuptoaster.h"
+#include "access/detoast.h"
 #include "fmgr.h"
 #include "utils/datum.h"
 #include "utils/expandeddatum.h"
@@ -263,13 +263,22 @@ datumIsEqual(Datum value1, Datum value2, bool typByVal, int typLen)
 bool
 datum_image_eq(Datum value1, Datum value2, bool typByVal, int typLen)
 {
+	Size		len1,
+				len2;
 	bool		result = true;
 
-	if (typLen == -1)
+	if (typByVal)
 	{
-		Size		len1,
-					len2;
-
+		result = (value1 == value2);
+	}
+	else if (typLen > 0)
+	{
+		result = (memcmp(DatumGetPointer(value1),
+						 DatumGetPointer(value2),
+						 typLen) == 0);
+	}
+	else if (typLen == -1)
+	{
 		len1 = toast_raw_datum_size(value1);
 		len2 = toast_raw_datum_size(value2);
 		/* No need to de-toast if lengths don't match. */
@@ -294,16 +303,22 @@ datum_image_eq(Datum value1, Datum value2, bool typByVal, int typLen)
 				pfree(arg2val);
 		}
 	}
-	else if (typByVal)
+	else if (typLen == -2)
 	{
-		result = (value1 == value2);
+		char	   *s1,
+				   *s2;
+
+		/* Compare cstring datums */
+		s1 = DatumGetCString(value1);
+		s2 = DatumGetCString(value2);
+		len1 = strlen(s1) + 1;
+		len2 = strlen(s2) + 1;
+		if (len1 != len2)
+			return false;
+		result = (memcmp(s1, s2, len1) == 0);
 	}
 	else
-	{
-		result = (memcmp(DatumGetPointer(value1),
-						 DatumGetPointer(value2),
-						 typLen) == 0);
-	}
+		elog(ERROR, "unexpected typLen: %d", typLen);
 
 	return result;
 }

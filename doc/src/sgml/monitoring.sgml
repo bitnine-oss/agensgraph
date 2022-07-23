@@ -652,7 +652,8 @@ postgres   27093  0.0  0.0  30096  2752 ?        Ss   11:34   0:00 postgres: ser
      <entry><structfield>client_port</structfield></entry>
      <entry><type>integer</type></entry>
      <entry>TCP port number that the client is using for communication
-      with this backend, or <literal>-1</literal> if a Unix socket is used
+      with this backend, or <literal>-1</literal> if a Unix socket is used.
+      If this field is null, it indicates that this is an internal server process.
      </entry>
     </row>
     <row>
@@ -1970,6 +1971,26 @@ SELECT pid, wait_event_type, wait_event FROM pg_stat_activity WHERE wait_event i
      <entry><structfield>reply_time</structfield></entry>
      <entry><type>timestamp with time zone</type></entry>
      <entry>Send time of last reply message received from standby server</entry>
+    </row>
+    <row>
+     <entry><structfield>spill_bytes</structfield></entry>
+     <entry><type>bigint</type></entry>
+     <entry>Amount of decoded transaction data spilled to disk.</entry>
+    </row>
+    <row>
+     <entry><structfield>spill_txns</structfield></entry>
+     <entry><type>bigint</type></entry>
+     <entry>Number of transactions spilled to disk after the memory used by
+      logical decoding exceeds <literal>logical_decoding_work_mem</literal>. The
+      counter gets incremented both for toplevel transactions and
+      subtransactions.</entry>
+    </row>
+    <row>
+     <entry><structfield>spill_count</structfield></entry>
+     <entry><type>bigint</type></entry>
+     <entry>Number of times transactions were spilled to disk. Transactions
+      may get spilled repeatedly, and this counter gets incremented on every
+      such invocation.</entry>
     </row>
    </tbody>
    </tgroup>
@@ -3620,7 +3641,7 @@ SELECT pg_stat_get_backend_pid(s.backendid) AS pid,
   </table>
 
   <table id="create-index-phases">
-   <title>CREATE INDEX phases</title>
+   <title>CREATE INDEX Phases</title>
    <tgroup cols="2">
     <thead>
      <row>
@@ -3849,7 +3870,7 @@ SELECT pg_stat_get_backend_pid(s.backendid) AS pid,
   </table>
 
   <table id="vacuum-phases">
-   <title>VACUUM phases</title>
+   <title>VACUUM Phases</title>
    <tgroup cols="2">
     <thead>
     <row>
@@ -4043,7 +4064,7 @@ SELECT pg_stat_get_backend_pid(s.backendid) AS pid,
   </table>
 
   <table id="cluster-phases">
-   <title>CLUSTER and VACUUM FULL phases</title>
+   <title>CLUSTER and VACUUM FULL Phases</title>
    <tgroup cols="2">
     <thead>
     <row>
@@ -4076,6 +4097,12 @@ SELECT pg_stat_get_backend_pid(s.backendid) AS pid,
      <entry><literal>sorting tuples</literal></entry>
      <entry>
        <command>CLUSTER</command> is currently sorting tuples.
+     </entry>
+    </row>
+    <row>
+     <entry><literal>writing new heap</literal></entry>
+     <entry>
+       <command>CLUSTER</command> is currently writing the new heap.
      </entry>
     </row>
     <row>
@@ -4632,7 +4659,7 @@ SELECT pg_stat_get_backend_pid(s.backendid) AS pid,
     </row>
     <row>
      <entry><type>bool</type></entry>
-     <entry><type>char</type></entry>
+     <entry><type>unsigned char</type></entry>
     </row>
 
    </tbody>

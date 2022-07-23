@@ -7,15 +7,14 @@
 #include "postgres_fe.h"
 
 #include "catalog/pg_type_d.h"
-
 #include "ecpg-pthread-win32.h"
-#include "ecpgtype.h"
-#include "ecpglib.h"
 #include "ecpgerrno.h"
+#include "ecpglib.h"
 #include "ecpglib_extern.h"
+#include "ecpgtype.h"
+#include "sql3types.h"
 #include "sqlca.h"
 #include "sqlda.h"
-#include "sql3types.h"
 
 static void descriptor_free(struct descriptor *desc);
 
@@ -135,14 +134,12 @@ get_int_item(int lineno, void *var, enum ECPGttype vartype, int value)
 		case ECPGt_unsigned_long:
 			*(unsigned long *) var = (unsigned long) value;
 			break;
-#ifdef HAVE_LONG_LONG_INT
 		case ECPGt_long_long:
 			*(long long int *) var = (long long int) value;
 			break;
 		case ECPGt_unsigned_long_long:
 			*(unsigned long long int *) var = (unsigned long long int) value;
 			break;
-#endif							/* HAVE_LONG_LONG_INT */
 		case ECPGt_float:
 			*(float *) var = (float) value;
 			break;
@@ -180,14 +177,12 @@ set_int_item(int lineno, int *target, const void *var, enum ECPGttype vartype)
 		case ECPGt_unsigned_long:
 			*target = *(const unsigned long *) var;
 			break;
-#ifdef HAVE_LONG_LONG_INT
 		case ECPGt_long_long:
 			*target = *(const long long int *) var;
 			break;
 		case ECPGt_unsigned_long_long:
 			*target = *(const unsigned long long int *) var;
 			break;
-#endif							/* HAVE_LONG_LONG_INT */
 		case ECPGt_float:
 			*target = *(const float *) var;
 			break;
@@ -861,7 +856,6 @@ ECPGdescribe(int line, int compat, bool input, const char *connection_name, cons
 	struct prepared_statement *prep;
 	PGresult   *res;
 	va_list		args;
-	const char *real_connection_name = NULL;
 
 	/* DESCRIBE INPUT is not yet supported */
 	if (input)
@@ -870,21 +864,11 @@ ECPGdescribe(int line, int compat, bool input, const char *connection_name, cons
 		return ret;
 	}
 
-	real_connection_name = ecpg_get_con_name_by_declared_name(stmt_name);
-	if (real_connection_name == NULL)
-	{
-		/*
-		 * If can't get the connection name by declared name then using
-		 * connection name coming from the parameter connection_name
-		 */
-		real_connection_name = connection_name;
-	}
-
-	con = ecpg_get_connection(real_connection_name);
+	con = ecpg_get_connection(connection_name);
 	if (!con)
 	{
 		ecpg_raise(line, ECPG_NO_CONN, ECPG_SQLSTATE_CONNECTION_DOES_NOT_EXIST,
-				   real_connection_name ? real_connection_name : ecpg_gettext("NULL"));
+				   connection_name ? connection_name : ecpg_gettext("NULL"));
 		return ret;
 	}
 	prep = ecpg_find_prepared_statement(stmt_name, con, NULL);

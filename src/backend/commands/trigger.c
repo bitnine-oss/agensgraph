@@ -179,7 +179,6 @@ CreateTrigger(CreateTrigStmt *stmt, const char *queryString,
 	ScanKeyData key;
 	Relation	pgrel;
 	HeapTuple	tuple;
-	Oid			fargtypes[1];	/* dummy */
 	Oid			funcrettype;
 	Oid			trigoid;
 	char		internaltrigname[NAMEDATALEN];
@@ -695,7 +694,7 @@ CreateTrigger(CreateTrigStmt *stmt, const char *queryString,
 	 * Find and validate the trigger function.
 	 */
 	if (!OidIsValid(funcoid))
-		funcoid = LookupFuncName(stmt->funcname, 0, fargtypes, false);
+		funcoid = LookupFuncName(stmt->funcname, 0, NULL, false);
 	if (!isInternal)
 	{
 		aclresult = pg_proc_aclcheck(funcoid, GetUserId(), ACL_EXECUTE);
@@ -2436,13 +2435,11 @@ ExecCallTriggerFunc(TriggerData *trigdata,
 	{
 		result = FunctionCallInvoke(fcinfo);
 	}
-	PG_CATCH();
+	PG_FINALLY();
 	{
 		MyTriggerDepth--;
-		PG_RE_THROW();
 	}
 	PG_END_TRY();
-	MyTriggerDepth--;
 
 	pgstat_end_function_usage(&fcusage, true);
 
@@ -2541,7 +2538,7 @@ ExecBRInsertTriggers(EState *estate, ResultRelInfo *relinfo,
 					 TupleTableSlot *slot)
 {
 	TriggerDesc *trigdesc = relinfo->ri_TrigDesc;
-	HeapTuple	newtuple = false;
+	HeapTuple	newtuple = NULL;
 	bool		should_free;
 	TriggerData LocTriggerData;
 	int			i;
@@ -2778,10 +2775,10 @@ ExecBRDeleteTriggers(EState *estate, EPQState *epqstate,
 	Assert(HeapTupleIsValid(fdw_trigtuple) ^ ItemPointerIsValid(tupleid));
 	if (fdw_trigtuple == NULL)
 	{
-		TupleTableSlot *newSlot;
+		TupleTableSlot *epqslot_candidate = NULL;
 
 		if (!GetTupleForTrigger(estate, epqstate, relinfo, tupleid,
-								LockTupleExclusive, slot, &newSlot))
+								LockTupleExclusive, slot, &epqslot_candidate))
 			return false;
 
 		/*
@@ -2789,9 +2786,9 @@ ExecBRDeleteTriggers(EState *estate, EPQState *epqstate,
 		 * function requested for the updated tuple, skip the trigger
 		 * execution.
 		 */
-		if (newSlot != NULL && epqslot != NULL)
+		if (epqslot_candidate != NULL && epqslot != NULL)
 		{
-			*epqslot = newSlot;
+			*epqslot = epqslot_candidate;
 			return false;
 		}
 
@@ -3031,11 +3028,11 @@ ExecBRUpdateTriggers(EState *estate, EPQState *epqstate,
 	Assert(HeapTupleIsValid(fdw_trigtuple) ^ ItemPointerIsValid(tupleid));
 	if (fdw_trigtuple == NULL)
 	{
-		TupleTableSlot *newSlot = NULL;
+		TupleTableSlot *epqslot_candidate = NULL;
 
 		/* get a copy of the on-disk tuple we are planning to update */
 		if (!GetTupleForTrigger(estate, epqstate, relinfo, tupleid,
-								lockmode, oldslot, &newSlot))
+								lockmode, oldslot, &epqslot_candidate))
 			return false;		/* cancel the update action */
 
 		/*
@@ -3050,11 +3047,14 @@ ExecBRUpdateTriggers(EState *estate, EPQState *epqstate,
 		 * nor our caller have any more interest in the prior contents of that
 		 * slot.
 		 */
-		if (newSlot != NULL)
+		if (epqslot_candidate != NULL)
 		{
-			TupleTableSlot *slot = ExecFilterJunk(relinfo->ri_junkFilter, newSlot);
+			TupleTableSlot *epqslot_clean;
 
-			ExecCopySlot(newslot, slot);
+			epqslot_clean = ExecFilterJunk(relinfo->ri_junkFilter, epqslot_candidate);
+
+			if (newslot != epqslot_clean)
+				ExecCopySlot(newslot, epqslot_clean);
 		}
 
 		trigtuple = ExecFetchSlotHeapTuple(oldslot, true, &should_free_trig);
@@ -3183,7 +3183,7 @@ ExecIRUpdateTriggers(EState *estate, ResultRelInfo *relinfo,
 {
 	TriggerDesc *trigdesc = relinfo->ri_TrigDesc;
 	TupleTableSlot *oldslot = ExecGetTriggerOldSlot(estate, relinfo);
-	HeapTuple	newtuple = false;
+	HeapTuple	newtuple = NULL;
 	bool		should_free;
 	TriggerData LocTriggerData;
 	int			i;
@@ -3316,17 +3316,17 @@ GetTupleForTrigger(EState *estate,
 				   ItemPointer tid,
 				   LockTupleMode lockmode,
 				   TupleTableSlot *oldslot,
-				   TupleTableSlot **newSlot)
+				   TupleTableSlot **epqslot)
 {
 	Relation	relation = relinfo->ri_RelationDesc;
 
-	if (newSlot != NULL)
+	if (epqslot != NULL)
 	{
 		TM_Result	test;
 		TM_FailureData tmfd;
 		int			lockflags = 0;
 
-		*newSlot = NULL;
+		*epqslot = NULL;
 
 		/* caller must pass an epqstate if EvalPlanQual is possible */
 		Assert(epqstate != NULL);
@@ -3366,22 +3366,20 @@ GetTupleForTrigger(EState *estate,
 			case TM_Ok:
 				if (tmfd.traversed)
 				{
-					TupleTableSlot *epqslot;
-
-					epqslot = EvalPlanQual(estate,
-										   epqstate,
-										   relation,
-										   relinfo->ri_RangeTableIndex,
-										   oldslot);
+					*epqslot = EvalPlanQual(epqstate,
+											relation,
+											relinfo->ri_RangeTableIndex,
+											oldslot);
 
 					/*
 					 * If PlanQual failed for updated tuple - we must not
 					 * process this tuple!
 					 */
-					if (TupIsNull(epqslot))
+					if (TupIsNull(*epqslot))
+					{
+						*epqslot = NULL;
 						return false;
-
-					*newSlot = epqslot;
+					}
 				}
 				break;
 
@@ -5516,12 +5514,9 @@ AfterTriggerSetState(ConstraintsSetStmt *stmt)
 		foreach(lc, conoidlist)
 		{
 			Oid			conoid = lfirst_oid(lc);
-			bool		found;
 			ScanKeyData skey;
 			SysScanDesc tgscan;
 			HeapTuple	htup;
-
-			found = false;
 
 			ScanKeyInit(&skey,
 						Anum_pg_trigger_tgconstraint,
@@ -5543,16 +5538,9 @@ AfterTriggerSetState(ConstraintsSetStmt *stmt)
 				 */
 				if (pg_trigger->tgdeferrable)
 					tgoidlist = lappend_oid(tgoidlist, pg_trigger->oid);
-
-				found = true;
 			}
 
 			systable_endscan(tgscan);
-
-			/* Safety check: a deferrable constraint should have triggers */
-			if (!found)
-				elog(ERROR, "no triggers found for constraint with OID %u",
-					 conoid);
 		}
 
 		table_close(tgrel, AccessShareLock);

@@ -847,24 +847,14 @@ index_getprocinfo(Relation irel,
  */
 void
 index_store_float8_orderby_distances(IndexScanDesc scan, Oid *orderByTypes,
-									 double *distances, bool recheckOrderBy)
+									 IndexOrderByDistance *distances,
+									 bool recheckOrderBy)
 {
 	int			i;
 
+	Assert(distances || !recheckOrderBy);
+
 	scan->xs_recheckorderby = recheckOrderBy;
-
-	if (!distances)
-	{
-		Assert(!scan->xs_recheckorderby);
-
-		for (i = 0; i < scan->numberOfOrderBys; i++)
-		{
-			scan->xs_orderbyvals[i] = (Datum) 0;
-			scan->xs_orderbynulls[i] = true;
-		}
-
-		return;
-	}
 
 	for (i = 0; i < scan->numberOfOrderBys; i++)
 	{
@@ -875,19 +865,30 @@ index_store_float8_orderby_distances(IndexScanDesc scan, Oid *orderByTypes,
 			if (!scan->xs_orderbynulls[i])
 				pfree(DatumGetPointer(scan->xs_orderbyvals[i]));
 #endif
-			scan->xs_orderbyvals[i] = Float8GetDatum(distances[i]);
-			scan->xs_orderbynulls[i] = false;
+			if (distances && !distances[i].isnull)
+			{
+				scan->xs_orderbyvals[i] = Float8GetDatum(distances[i].value);
+				scan->xs_orderbynulls[i] = false;
+			}
+			else
+			{
+				scan->xs_orderbyvals[i] = (Datum) 0;
+				scan->xs_orderbynulls[i] = true;
+			}
 		}
 		else if (orderByTypes[i] == FLOAT4OID)
 		{
 			/* convert distance function's result to ORDER BY type */
-#ifndef USE_FLOAT4_BYVAL
-			/* must free any old value to avoid memory leakage */
-			if (!scan->xs_orderbynulls[i])
-				pfree(DatumGetPointer(scan->xs_orderbyvals[i]));
-#endif
-			scan->xs_orderbyvals[i] = Float4GetDatum((float4) distances[i]);
-			scan->xs_orderbynulls[i] = false;
+			if (distances && !distances[i].isnull)
+			{
+				scan->xs_orderbyvals[i] = Float4GetDatum((float4) distances[i].value);
+				scan->xs_orderbynulls[i] = false;
+			}
+			else
+			{
+				scan->xs_orderbyvals[i] = (Datum) 0;
+				scan->xs_orderbynulls[i] = true;
+			}
 		}
 		else
 		{

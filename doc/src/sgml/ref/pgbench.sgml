@@ -193,11 +193,33 @@ pgbench <optional> <replaceable>options</replaceable> </optional> <replaceable>d
           </listitem>
          </varlistentry>
          <varlistentry>
-          <term><literal>g</literal> (Generate data)</term>
+          <term><literal>g</literal> or <literal>G</literal> (Generate data, client-side or server-side)</term>
           <listitem>
            <para>
             Generate data and load it into the standard tables,
             replacing any data already present.
+           </para>
+           <para>
+            With <literal>g</literal> (client-side data generation),
+            data is generated in <command>pgbench</command> client and then
+            sent to the server. This uses the client/server bandwidth
+            extensively through a <command>COPY</command>.
+            Using <literal>g</literal> causes logging to print one message
+            every 100,000 rows when generating data into
+            <structname>pgbench_accounts</structname> table.
+           </para>
+           <para>
+            With <literal>G</literal> (server-side data generation),
+            only limited queries are sent from <command>pgbench</command>
+            client and then data is actually generated in the server.
+            No significant bandwidth is required for this variant, but
+            the server will do more work.
+            Using <literal>G</literal> causes logging not to print any progress
+            message when generating data into
+            <structname>pgbench_accounts</structname> table.
+           </para>
+           <para>
+            
            </para>
           </listitem>
          </varlistentry>
@@ -262,8 +284,12 @@ pgbench <optional> <replaceable>options</replaceable> </optional> <replaceable>d
       <listitem>
        <para>
         Switch logging to quiet mode, producing only one progress message per 5
-        seconds. The default logging prints one message each 100000 rows, which
+        seconds. The default logging prints one message each 100,000 rows, which
         often outputs many lines per second (especially on good hardware).
+       </para>
+       <para>
+        This setting has no effect if <literal>G</literal> is specified
+        in <option>-I</option>.
        </para>
       </listitem>
      </varlistentry>
@@ -302,6 +328,31 @@ pgbench <optional> <replaceable>options</replaceable> </optional> <replaceable>d
        <para>
         Create indexes in the specified tablespace, rather than the default
         tablespace.
+       </para>
+      </listitem>
+     </varlistentry>
+
+     <varlistentry>
+      <term><option>--partitions=<replaceable>NUM</replaceable></option></term>
+      <listitem>
+       <para>
+        Create a partitioned <literal>pgbench_accounts</literal> table with
+        <replaceable>NUM</replaceable> partitions of nearly equal size for
+        the scaled number of accounts.
+        Default is <literal>0</literal>, meaning no partitioning.
+       </para>
+      </listitem>
+     </varlistentry>
+
+     <varlistentry>
+      <term><option>--partition-method=<replaceable>NAME</replaceable></option></term>
+      <listitem>
+       <para>
+        Create a partitioned <literal>pgbench_accounts</literal> table with
+        <replaceable>NAME</replaceable> method.
+        Expected values are <literal>range</literal> or <literal>hash</literal>.
+        This option requires that <option>--partitions</option> is set to non-zero.
+        If unspecified, default is <literal>range</literal>.
        </para>
       </listitem>
      </varlistentry>
@@ -836,7 +887,7 @@ pgbench <optional> <replaceable>options</replaceable> </optional> <replaceable>d
   <title>Notes</title>
 
  <refsect2>
-  <title>What is the <quote>Transaction</quote> Actually Performed in <application>pgbench</application>?</title>
+  <title>What Is the <quote>Transaction</quote> Actually Performed in <application>pgbench</application>?</title>
 
   <para>
    <application>pgbench</application> executes test scripts chosen randomly
@@ -1151,7 +1202,7 @@ SELECT 2 AS two, 3 AS three \gset p_
  </refsect2>
 
  <refsect2 id="pgbench-builtin-operators">
-  <title>Built-In Operators</title>
+  <title>Built-in Operators</title>
 
   <para>
    The arithmetic, bitwise, comparison and logical operators listed in
@@ -1161,7 +1212,7 @@ SELECT 2 AS two, 3 AS three \gset p_
   </para>
 
   <table id="pgbench-operators">
-   <title>pgbench Operators by increasing precedence</title>
+   <title>pgbench Operators by Increasing Precedence</title>
    <tgroup cols="4">
     <thead>
      <row>

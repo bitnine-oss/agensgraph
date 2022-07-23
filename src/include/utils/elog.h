@@ -189,6 +189,8 @@ extern int	errcontext_msg(const char *fmt,...) pg_attribute_printf(1, 2);
 extern int	errhidestmt(bool hide_stmt);
 extern int	errhidecontext(bool hide_ctx);
 
+extern int	errbacktrace(void);
+
 extern int	errfunction(const char *funcname);
 extern int	errposition(int cursorpos);
 
@@ -277,6 +279,25 @@ extern PGDLLIMPORT ErrorContextCallback *error_context_stack;
  * (sub)transaction abort. Failure to do so may leave the system in an
  * inconsistent state for further processing.
  *
+ * For the common case that the error recovery code and the cleanup in the
+ * normal code path are identical, the following can be used instead:
+ *
+ *		PG_TRY();
+ *		{
+ *			... code that might throw ereport(ERROR) ...
+ *		}
+ *		PG_FINALLY();
+ *		{
+ *			... cleanup code ...
+ *		}
+ *      PG_END_TRY();
+ *
+ * The cleanup code will be run in either case, and any error will be rethrown
+ * afterwards.
+ *
+ * You cannot use both PG_CATCH() and PG_FINALLY() in the same
+ * PG_TRY()/PG_END_TRY() block.
+ *
  * Note: while the system will correctly propagate any new ereport(ERROR)
  * occurring in the recovery section, there is a small limit on the number
  * of levels this will work for.  It's best to keep the error recovery
@@ -300,24 +321,35 @@ extern PGDLLIMPORT ErrorContextCallback *error_context_stack;
  */
 #define PG_TRY()  \
 	do { \
-		sigjmp_buf *save_exception_stack = PG_exception_stack; \
-		ErrorContextCallback *save_context_stack = error_context_stack; \
-		sigjmp_buf local_sigjmp_buf; \
-		if (sigsetjmp(local_sigjmp_buf, 0) == 0) \
+		sigjmp_buf *_save_exception_stack = PG_exception_stack; \
+		ErrorContextCallback *_save_context_stack = error_context_stack; \
+		sigjmp_buf _local_sigjmp_buf; \
+		bool _do_rethrow = false; \
+		if (sigsetjmp(_local_sigjmp_buf, 0) == 0) \
 		{ \
-			PG_exception_stack = &local_sigjmp_buf
+			PG_exception_stack = &_local_sigjmp_buf
 
 #define PG_CATCH()	\
 		} \
 		else \
 		{ \
-			PG_exception_stack = save_exception_stack; \
-			error_context_stack = save_context_stack
+			PG_exception_stack = _save_exception_stack; \
+			error_context_stack = _save_context_stack
+
+#define PG_FINALLY() \
+		} \
+		else \
+			_do_rethrow = true; \
+		{ \
+			PG_exception_stack = _save_exception_stack; \
+			error_context_stack = _save_context_stack
 
 #define PG_END_TRY()  \
 		} \
-		PG_exception_stack = save_exception_stack; \
-		error_context_stack = save_context_stack; \
+		if (_do_rethrow) \
+				PG_RE_THROW(); \
+		PG_exception_stack = _save_exception_stack; \
+		error_context_stack = _save_context_stack; \
 	} while (0)
 
 /*
@@ -362,6 +394,7 @@ typedef struct ErrorData
 	char	   *detail_log;		/* detail error message for server log only */
 	char	   *hint;			/* hint message */
 	char	   *context;		/* context message */
+	char	   *backtrace;		/* backtrace */
 	const char *message_id;		/* primary message's id (original string) */
 	char	   *schema_name;	/* name of schema */
 	char	   *table_name;		/* name of table */

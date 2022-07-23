@@ -18,8 +18,9 @@
  */
 #include "postgres.h"
 
+#include "access/detoast.h"
+#include "access/heaptoast.h"
 #include "access/htup_details.h"
-#include "access/tuptoaster.h"
 #include "catalog/heap.h"
 #include "catalog/pg_type.h"
 #include "utils/builtins.h"
@@ -1158,7 +1159,7 @@ expanded_record_set_field_internal(ExpandedRecordHeader *erh, int fnumber,
 			{
 				/* Detoasting should be done in short-lived context. */
 				oldcxt = MemoryContextSwitchTo(get_short_term_cxt(erh));
-				newValue = PointerGetDatum(heap_tuple_fetch_attr((struct varlena *) DatumGetPointer(newValue)));
+				newValue = PointerGetDatum(detoast_external_attr((struct varlena *) DatumGetPointer(newValue)));
 				MemoryContextSwitchTo(oldcxt);
 			}
 			else
@@ -1304,7 +1305,7 @@ expanded_record_set_fields(ExpandedRecordHeader *erh,
 					if (expand_external)
 					{
 						/* Detoast as requested while copying the value */
-						newValue = PointerGetDatum(heap_tuple_fetch_attr((struct varlena *) DatumGetPointer(newValue)));
+						newValue = PointerGetDatum(detoast_external_attr((struct varlena *) DatumGetPointer(newValue)));
 					}
 					else
 					{

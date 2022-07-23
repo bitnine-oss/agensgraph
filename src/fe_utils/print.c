@@ -30,11 +30,9 @@
 #include <termios.h>
 #endif
 
-#include "fe_utils/print.h"
-
 #include "catalog/pg_type_d.h"
 #include "fe_utils/mbprint.h"
-
+#include "fe_utils/print.h"
 
 /*
  * If the calling program doesn't have any mechanism for setting
@@ -3621,8 +3619,6 @@ refresh_utf8format(const printTableOpt *opt)
 	popt->wrap_left = unicode_style.wrap_left;
 	popt->wrap_right = unicode_style.wrap_right;
 	popt->wrap_right_border = unicode_style.wrap_right_border;
-
-	return;
 }
 
 /*

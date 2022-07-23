@@ -18,17 +18,15 @@
 #include <win32.h>
 #endif
 
+#include "command.h"
+#include "common.h"
 #include "common/logging.h"
+#include "copy.h"
+#include "crosstabview.h"
 #include "fe_utils/mbprint.h"
 #include "fe_utils/string_utils.h"
 #include "portability/instr_time.h"
-
-#include "command.h"
-#include "common.h"
-#include "copy.h"
-#include "crosstabview.h"
 #include "settings.h"
-
 
 static bool DescribeQuery(const char *query, double *elapsed_msec);
 static bool ExecQueryUsingCursor(const char *query, double *elapsed_msec);
@@ -402,13 +400,27 @@ CheckConnection(void)
 		if (!OK)
 		{
 			fprintf(stderr, _("Failed.\n"));
+
+			/*
+			 * Transition to having no connection.  Keep this bit in sync with
+			 * do_connect().
+			 */
 			PQfinish(pset.db);
 			pset.db = NULL;
 			ResetCancelConn();
 			UnsyncVariables();
 		}
 		else
+		{
 			fprintf(stderr, _("Succeeded.\n"));
+
+			/*
+			 * Re-sync, just in case anything changed.  Keep this in sync with
+			 * do_connect().
+			 */
+			SyncVariables();
+			connection_warnings(false); /* Must be after SyncVariables */
+		}
 	}
 
 	return OK;
@@ -2387,8 +2399,6 @@ expand_tilde(char **filename)
 		}
 	}
 #endif
-
-	return;
 }
 
 /*

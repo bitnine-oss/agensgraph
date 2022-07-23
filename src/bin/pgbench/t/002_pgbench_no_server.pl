@@ -147,7 +147,7 @@ my @options = (
 	[
 		'invalid init step',
 		'-i -I dta',
-		[ qr{unrecognized initialization step}, qr{allowed steps are} ]
+		[ qr{unrecognized initialization step}, qr{Allowed step characters are} ]
 	],
 	[
 		'bad random seed',
@@ -156,6 +156,13 @@ my @options = (
 			qr{unrecognized random seed option "one": expecting an unsigned integer, "time" or "rand"},
 			qr{error while setting random seed from --random-seed option}
 		]
+	],
+	[ 'bad partition type', '-i --partition-method=BAD', [qr{"range"}, qr{"hash"}, qr{"BAD"}] ],
+	[ 'bad partition number', '-i --partitions -1', [ qr{invalid number of partitions: "-1"} ] ],
+	[
+		'partition method without partitioning',
+		'-i --partition-method=hash',
+		[ qr{partition-method requires greater than zero --partitions} ]
 	],
 
 	# logging sub-options

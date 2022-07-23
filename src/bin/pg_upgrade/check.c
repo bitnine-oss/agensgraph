@@ -14,7 +14,6 @@
 #include "mb/pg_wchar.h"
 #include "pg_upgrade.h"
 
-
 static void check_new_cluster_is_empty(void);
 static void check_databases_are_compatible(void);
 static void check_locale_and_encoding(DbInfo *olddb, DbInfo *newdb);
@@ -107,6 +106,14 @@ check_and_dump_old_cluster(bool live_check)
 	 */
 	if (GET_MAJOR_VERSION(old_cluster.major_version) <= 1100)
 		check_for_tables_with_oids(&old_cluster);
+
+	/*
+	 * PG 12 changed the 'sql_identifier' type storage to be based on name,
+	 * not varchar, which breaks on-disk format for existing data. So we need
+	 * to prevent upgrade when used in user objects (tables, indexes, ...).
+	 */
+	if (GET_MAJOR_VERSION(old_cluster.major_version) <= 1100)
+		old_11_check_for_sql_identifier_data_type_usage(&old_cluster);
 
 	/*
 	 * Pre-PG 10 allowed tables with 'unknown' type columns and non WAL logged
@@ -858,7 +865,7 @@ check_for_isn_and_int8_passing_mismatch(ClusterInfo *cluster)
 						 output_path, strerror(errno));
 			if (!db_used)
 			{
-				fprintf(script, "Database: %s\n", active_db->db_name);
+				fprintf(script, "In database: %s\n", active_db->db_name);
 				db_used = true;
 			}
 			fprintf(script, "  %s.%s\n",
@@ -880,9 +887,9 @@ check_for_isn_and_int8_passing_mismatch(ClusterInfo *cluster)
 		pg_fatal("Your installation contains \"contrib/isn\" functions which rely on the\n"
 				 "bigint data type.  Your old and new clusters pass bigint values\n"
 				 "differently so this cluster cannot currently be upgraded.  You can\n"
-				 "manually upgrade databases that use \"contrib/isn\" facilities and remove\n"
-				 "\"contrib/isn\" from the old cluster and restart the upgrade.  A list of\n"
-				 "the problem functions is in the file:\n"
+				 "manually dump databases in the old cluster that use \"contrib/isn\"\n"
+				 "facilities, drop them, perform the upgrade, and then restore them.  A\n"
+				 "list of the problem functions is in the file:\n"
 				 "    %s\n\n", output_path);
 	}
 	else
@@ -937,7 +944,7 @@ check_for_tables_with_oids(ClusterInfo *cluster)
 						 output_path, strerror(errno));
 			if (!db_used)
 			{
-				fprintf(script, "Database: %s\n", active_db->db_name);
+				fprintf(script, "In database: %s\n", active_db->db_name);
 				db_used = true;
 			}
 			fprintf(script, "  %s.%s\n",
@@ -956,8 +963,8 @@ check_for_tables_with_oids(ClusterInfo *cluster)
 	if (found)
 	{
 		pg_log(PG_REPORT, "fatal\n");
-		pg_fatal("Your installation contains tables declared WITH OIDS, which is not supported\n"
-				 "anymore. Consider removing the oid column using\n"
+		pg_fatal("Your installation contains tables declared WITH OIDS, which is not\n"
+				 "supported anymore.  Consider removing the oid column using\n"
 				 "    ALTER TABLE ... SET WITHOUT OIDS;\n"
 				 "A list of tables with the problem is in the file:\n"
 				 "    %s\n\n", output_path);
@@ -1046,7 +1053,7 @@ check_for_reg_data_type_usage(ClusterInfo *cluster)
 						 output_path, strerror(errno));
 			if (!db_used)
 			{
-				fprintf(script, "Database: %s\n", active_db->db_name);
+				fprintf(script, "In database: %s\n", active_db->db_name);
 				db_used = true;
 			}
 			fprintf(script, "  %s.%s.%s\n",
@@ -1069,8 +1076,8 @@ check_for_reg_data_type_usage(ClusterInfo *cluster)
 		pg_fatal("Your installation contains one of the reg* data types in user tables.\n"
 				 "These data types reference system OIDs that are not preserved by\n"
 				 "pg_upgrade, so this cluster cannot currently be upgraded.  You can\n"
-				 "remove the problem tables and restart the upgrade.  A list of the problem\n"
-				 "columns is in the file:\n"
+				 "remove the problem tables and restart the upgrade.  A list of the\n"
+				 "problem columns is in the file:\n"
 				 "    %s\n\n", output_path);
 	}
 	else
@@ -1137,7 +1144,7 @@ check_for_jsonb_9_4_usage(ClusterInfo *cluster)
 						 output_path, strerror(errno));
 			if (!db_used)
 			{
-				fprintf(script, "Database: %s\n", active_db->db_name);
+				fprintf(script, "In database: %s\n", active_db->db_name);
 				db_used = true;
 			}
 			fprintf(script, "  %s.%s.%s\n",
@@ -1158,9 +1165,10 @@ check_for_jsonb_9_4_usage(ClusterInfo *cluster)
 	{
 		pg_log(PG_REPORT, "fatal\n");
 		pg_fatal("Your installation contains the \"jsonb\" data type in user tables.\n"
-				 "The internal format of \"jsonb\" changed during 9.4 beta so this cluster cannot currently\n"
-				 "be upgraded.  You can remove the problem tables and restart the upgrade.  A list\n"
-				 "of the problem columns is in the file:\n"
+				 "The internal format of \"jsonb\" changed during 9.4 beta so this\n"
+				 "cluster cannot currently be upgraded.  You can remove the problem\n"
+				 "tables and restart the upgrade.  A list of the problem columns is\n"
+				 "in the file:\n"
 				 "    %s\n\n", output_path);
 	}
 	else

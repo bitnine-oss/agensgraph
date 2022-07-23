@@ -382,7 +382,7 @@ The oldest and most common type is a pointer to out-of-line data stored in
 a <firstterm><acronym>TOAST</acronym> table</firstterm> that is separate from, but
 associated with, the table containing the <acronym>TOAST</acronym> pointer datum
 itself.  These <firstterm>on-disk</firstterm> pointer datums are created by the
-<acronym>TOAST</acronym> management code (in <filename>access/heap/tuptoaster.c</filename>)
+<acronym>TOAST</acronym> management code (in <filename>access/common/toast_internals.c</filename>)
 when a tuple to be stored on disk is too large to be stored as-is.
 Further details appear in <xref linkend="storage-toast-ondisk"/>.
 Alternatively, a <acronym>TOAST</acronym> pointer datum can contain a pointer to
@@ -400,7 +400,7 @@ of the LZ family of compression techniques.  See
 </para>
 
 <sect2 id="storage-toast-ondisk">
- <title>Out-of-line, on-disk TOAST storage</title>
+ <title>Out-of-Line, On-Disk TOAST Storage</title>
 
 <para>
 If any of the columns of a table are <acronym>TOAST</acronym>-able, the table will
@@ -516,7 +516,7 @@ comparison table, in which all the HTML pages were cut down to 7 kB to fit.
 </sect2>
 
 <sect2 id="storage-toast-inmemory">
- <title>Out-of-line, in-memory TOAST storage</title>
+ <title>Out-of-Line, In-Memory TOAST Storage</title>
 
 <para>
 <acronym>TOAST</acronym> pointers can point to data that is not on disk, but is

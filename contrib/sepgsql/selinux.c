@@ -360,6 +360,9 @@ static struct
 				"lock", SEPG_DB_TABLE__LOCK
 			},
 			{
+				"truncate", SEPG_DB_TABLE__TRUNCATE
+			},
+			{
 				NULL, 0UL
 			},
 		}
@@ -806,8 +809,6 @@ sepgsql_compute_avd(const char *scontext,
 		if (avd_ex.auditdeny & av_code_ex)
 			avd->auditdeny |= av_code;
 	}
-
-	return;
 }
 
 /*
@@ -871,13 +872,11 @@ sepgsql_compute_create(const char *scontext,
 	{
 		result = pstrdup(ncontext);
 	}
-	PG_CATCH();
+	PG_FINALLY();
 	{
 		freecon(ncontext);
-		PG_RE_THROW();
 	}
 	PG_END_TRY();
-	freecon(ncontext);
 
 	return result;
 }

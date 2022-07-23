@@ -145,7 +145,7 @@ GraphCreate(CreateGraphStmt *stmt, const char *queryString,
 	}
 	namestrcpy(&gname, graphName);
 
-	graphdesc = heap_open(GraphRelationId, RowExclusiveLock);
+	graphdesc = table_open(GraphRelationId, RowExclusiveLock);
 	tupDesc = graphdesc->rd_att;
 
 	graphoid = values[Anum_ag_graph_oid - 1] = GetNewOidWithIndex(graphdesc,
@@ -160,7 +160,7 @@ GraphCreate(CreateGraphStmt *stmt, const char *queryString,
 	CatalogTupleInsert(graphdesc, tup);
 	Assert(OidIsValid(graphoid));
 
-	heap_close(graphdesc, RowExclusiveLock);
+	table_close(graphdesc, RowExclusiveLock);
 
 	graphobj.classId = GraphRelationId;
 	graphobj.objectId = graphoid;

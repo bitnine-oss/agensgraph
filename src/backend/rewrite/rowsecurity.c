@@ -51,12 +51,12 @@
 #include "rewrite/rewriteHandler.h"
 #include "rewrite/rewriteManip.h"
 #include "rewrite/rowsecurity.h"
+#include "tcop/utility.h"
 #include "utils/acl.h"
 #include "utils/lsyscache.h"
 #include "utils/rel.h"
 #include "utils/rls.h"
 #include "utils/syscache.h"
-#include "tcop/utility.h"
 
 static void get_policies_for_relation(Relation relation,
 									  CmdType cmd, Oid user_id,
@@ -394,8 +394,6 @@ get_row_security_policies(Query *root, RangeTblEntry *rte, int rt_index,
 	 * when necessary (eg: role changes)
 	 */
 	*hasRowSecurity = true;
-
-	return;
 }
 
 /*

@@ -32,9 +32,6 @@
 #include <sys/select.h>
 #endif
 
-#include "pgstat.h"
-
-#include "access/genam.h"
 #include "access/heapam.h"
 #include "access/htup_details.h"
 #include "access/tableam.h"
@@ -43,15 +40,13 @@
 #include "access/xact.h"
 #include "catalog/pg_database.h"
 #include "catalog/pg_proc.h"
-#include "catalog/ag_graphmeta.h"
-#include "catalog/ag_graph_fn.h"
-#include "catalog/indexing.h"
 #include "common/ip.h"
 #include "libpq/libpq.h"
 #include "libpq/pqsignal.h"
 #include "mb/pg_wchar.h"
 #include "miscadmin.h"
 #include "pg_trace.h"
+#include "pgstat.h"
 #include "postmaster/autovacuum.h"
 #include "postmaster/fork_process.h"
 #include "postmaster/postmaster.h"
@@ -66,17 +61,20 @@
 #include "storage/procsignal.h"
 #include "storage/sinvaladt.h"
 #include "utils/ascii.h"
-#include "utils/catcache.h"
-#include "utils/fmgroids.h"
 #include "utils/guc.h"
 #include "utils/memutils.h"
 #include "utils/ps_status.h"
 #include "utils/rel.h"
 #include "utils/snapmgr.h"
-#include "utils/lsyscache.h"
-#include "utils/syscache.h"
 #include "utils/timestamp.h"
-
+#include "catalog/ag_graphmeta.h"
+#include "utils/catcache.h"
+#include "utils/lsyscache.h"
+#include "catalog/ag_graph_fn.h"
+#include "access/genam.h"
+#include "catalog/indexing.h"
+#include "utils/fmgroids.h"
+#include "utils/syscache.h"
 
 /* ----------
  * Timer definitions.
@@ -3299,10 +3297,10 @@ pgstat_progress_end_command(void)
 {
 	volatile PgBackendStatus *beentry = MyBEEntry;
 
-	if (!beentry)
+	if (!beentry || !pgstat_track_activities)
 		return;
-	if (!pgstat_track_activities
-		&& beentry->st_progress_command == PROGRESS_COMMAND_INVALID)
+
+	if (beentry->st_progress_command == PROGRESS_COMMAND_INVALID)
 		return;
 
 	PGSTAT_BEGIN_WRITE_ACTIVITY(beentry);
@@ -6736,7 +6734,7 @@ agstat_drop_vlabel(const char *vlab)
 	if (vlid == InvalidLabid)
 		elog(ERROR, "Cannot find VLABEL %s", vlab);
 
-	ag_graphmeta = heap_open(GraphMetaRelationId, RowExclusiveLock);
+	ag_graphmeta = table_open(GraphMetaRelationId, RowExclusiveLock);
 
 	/* delete tuple which start = vid */
 	ScanKeyInit(&key[0],
@@ -6776,7 +6774,7 @@ agstat_drop_vlabel(const char *vlab)
 
 	systable_endscan(scan);
 
-	heap_close(ag_graphmeta, RowExclusiveLock);
+	table_close(ag_graphmeta, RowExclusiveLock);
 }
 
 void
@@ -6794,7 +6792,7 @@ agstat_drop_elabel(const char *elab)
 	if (elid == InvalidLabid)
 		elog(ERROR, "Cannot find ELABEL %s", elab);
 
-	ag_graphmeta = heap_open(GraphMetaRelationId, RowExclusiveLock);
+	ag_graphmeta = table_open(GraphMetaRelationId, RowExclusiveLock);
 
 	tuplist = SearchSysCacheList2(GRAPHMETAFULL, graph, elid);
 
@@ -6806,7 +6804,7 @@ agstat_drop_elabel(const char *elab)
 	}
 
 	ReleaseCatCacheList(tuplist);
-	heap_close(ag_graphmeta, RowExclusiveLock);
+	table_close(ag_graphmeta, RowExclusiveLock);
 }
 
 void
@@ -6819,7 +6817,7 @@ agstat_drop_graph(const char *graphname)
 
 	graph = get_graphname_oid(graphname);
 
-	ag_graphmeta = heap_open(GraphMetaRelationId, RowExclusiveLock);
+	ag_graphmeta = table_open(GraphMetaRelationId, RowExclusiveLock);
 	tuplist = SearchSysCacheList1(GRAPHMETAFULL, graph);
 
 	for (i = 0; i < tuplist->n_members; i++)
@@ -6830,7 +6828,7 @@ agstat_drop_graph(const char *graphname)
 	}
 
 	ReleaseCatCacheList(tuplist);
-	heap_close(ag_graphmeta, RowExclusiveLock);
+	table_close(ag_graphmeta, RowExclusiveLock);
 }
 
 /* ----------
@@ -6859,7 +6857,7 @@ AtEOXact_AgStat(bool isCommit)
 
 		hash_seq_init(&seq, xact_state->htab);
 
-		ag_graphmeta = heap_open(GraphMetaRelationId, RowExclusiveLock);
+		ag_graphmeta = table_open(GraphMetaRelationId, RowExclusiveLock);
 
 		while ((graphmeta = hash_seq_search(&seq)) != NULL)
 		{
@@ -6912,7 +6910,7 @@ AtEOXact_AgStat(bool isCommit)
 				heap_freetuple(tup);
 			}
 		}
-		heap_close(ag_graphmeta, RowExclusiveLock);
+		table_close(ag_graphmeta, RowExclusiveLock);
 	}
 	agStatXactStack = NULL;
 }

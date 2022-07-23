@@ -235,7 +235,7 @@ typedef struct ForeignKeyCacheInfo
 
 /*
  * StdRdOptions
- *		Standard contents of rd_options for heaps and generic indexes.
+ *		Standard contents of rd_options for heaps.
  *
  * RelationGetFillFactor() and RelationGetTargetPageFreeSpace() can only
  * be applied to relations that use this format or a superset for
@@ -265,7 +265,6 @@ typedef struct StdRdOptions
 	int32		vl_len_;		/* varlena header (do not touch directly!) */
 	int			fillfactor;		/* page fill factor in percent (0..100) */
 	/* fraction of newly inserted tuples prior to trigger index cleanup */
-	float8		vacuum_cleanup_index_scale_factor;
 	int			toast_tuple_target; /* target for tuple toasting */
 	AutoVacOpts autovacuum;		/* autovacuum-related options */
 	bool		user_catalog_table; /* use as an additional catalog relation */
@@ -327,6 +326,13 @@ typedef struct StdRdOptions
 	((relation)->rd_options ? \
 	 ((StdRdOptions *) (relation)->rd_options)->parallel_workers : (defaultpw))
 
+/* ViewOptions->check_option values */
+typedef enum ViewOptCheckOption
+{
+	VIEW_OPTION_CHECK_OPTION_NOT_SET,
+	VIEW_OPTION_CHECK_OPTION_LOCAL,
+	VIEW_OPTION_CHECK_OPTION_CASCADED
+} ViewOptCheckOption;
 
 /*
  * ViewOptions
@@ -336,7 +342,7 @@ typedef struct ViewOptions
 {
 	int32		vl_len_;		/* varlena header (do not touch directly!) */
 	bool		security_barrier;
-	int			check_option_offset;
+	ViewOptCheckOption check_option;
 } ViewOptions;
 
 /*
@@ -344,9 +350,10 @@ typedef struct ViewOptions
  *		Returns whether the relation is security view, or not.  Note multiple
  *		eval of argument!
  */
-#define RelationIsSecurityView(relation)	\
-	((relation)->rd_options ?				\
-	 ((ViewOptions *) (relation)->rd_options)->security_barrier : false)
+#define RelationIsSecurityView(relation)									\
+	(AssertMacro(relation->rd_rel->relkind == RELKIND_VIEW),				\
+	 (relation)->rd_options ?												\
+	  ((ViewOptions *) (relation)->rd_options)->security_barrier : false)
 
 /*
  * RelationHasCheckOption
@@ -354,8 +361,10 @@ typedef struct ViewOptions
  *		or the cascaded check option.  Note multiple eval of argument!
  */
 #define RelationHasCheckOption(relation)									\
-	((relation)->rd_options &&												\
-	 ((ViewOptions *) (relation)->rd_options)->check_option_offset != 0)
+	(AssertMacro(relation->rd_rel->relkind == RELKIND_VIEW),				\
+	 (relation)->rd_options &&												\
+	 ((ViewOptions *) (relation)->rd_options)->check_option !=				\
+	 VIEW_OPTION_CHECK_OPTION_NOT_SET)
 
 /*
  * RelationHasLocalCheckOption
@@ -363,11 +372,10 @@ typedef struct ViewOptions
  *		option.  Note multiple eval of argument!
  */
 #define RelationHasLocalCheckOption(relation)								\
-	((relation)->rd_options &&												\
-	 ((ViewOptions *) (relation)->rd_options)->check_option_offset != 0 ?	\
-	 strcmp((char *) (relation)->rd_options +								\
-			((ViewOptions *) (relation)->rd_options)->check_option_offset,	\
-			"local") == 0 : false)
+	(AssertMacro(relation->rd_rel->relkind == RELKIND_VIEW),				\
+	 (relation)->rd_options &&												\
+	 ((ViewOptions *) (relation)->rd_options)->check_option ==				\
+	 VIEW_OPTION_CHECK_OPTION_LOCAL)
 
 /*
  * RelationHasCascadedCheckOption
@@ -375,12 +383,10 @@ typedef struct ViewOptions
  *		option.  Note multiple eval of argument!
  */
 #define RelationHasCascadedCheckOption(relation)							\
-	((relation)->rd_options &&												\
-	 ((ViewOptions *) (relation)->rd_options)->check_option_offset != 0 ?	\
-	 strcmp((char *) (relation)->rd_options +								\
-			((ViewOptions *) (relation)->rd_options)->check_option_offset,	\
-			"cascaded") == 0 : false)
-
+	(AssertMacro(relation->rd_rel->relkind == RELKIND_VIEW),				\
+	 (relation)->rd_options &&												\
+	 ((ViewOptions *) (relation)->rd_options)->check_option ==				\
+	  VIEW_OPTION_CHECK_OPTION_CASCADED)
 
 /*
  * RelationIsValid

@@ -30,14 +30,13 @@
 #include <io.h>
 #endif
 
+#include "dumputils.h"
+#include "fe_utils/string_utils.h"
+#include "libpq/libpq-fs.h"
 #include "parallel.h"
 #include "pg_backup_archiver.h"
 #include "pg_backup_db.h"
 #include "pg_backup_utils.h"
-#include "dumputils.h"
-#include "fe_utils/string_utils.h"
-
-#include "libpq/libpq-fs.h"
 
 #define TEXT_DUMP_HEADER "--\n-- PostgreSQL database dump\n--\n\n"
 #define TEXT_DUMPALL_HEADER "--\n-- PostgreSQL database cluster dump\n--\n\n"
@@ -1050,8 +1049,6 @@ WriteData(Archive *AHX, const void *data, size_t dLen)
 		fatal("internal error -- WriteData cannot be called outside the context of a DataDumper routine");
 
 	AH->WriteDataPtr(AH, data, dLen);
-
-	return;
 }
 
 /*
@@ -1466,7 +1463,6 @@ void
 archputs(const char *s, Archive *AH)
 {
 	WriteData(AH, s, strlen(s));
-	return;
 }
 
 /* Public */
@@ -1741,8 +1737,6 @@ ahwrite(const void *ptr, size_t size, size_t nmemb, ArchiveHandle *AH)
 
 	if (bytes_written != size * nmemb)
 		WRITE_ERROR_EXIT;
-
-	return;
 }
 
 /* on some error, we may decide to go on... */

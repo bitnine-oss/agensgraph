@@ -14,12 +14,10 @@
 #include <io.h>
 #endif
 
-#include "getopt_long.h"
 #include "common/string.h"
-#include "utils/pidfile.h"
-
+#include "getopt_long.h"
 #include "pg_upgrade.h"
-
+#include "utils/pidfile.h"
 
 static void usage(void);
 static void check_required_directory(char **dirpath,
@@ -169,18 +167,12 @@ parseCommandLine(int argc, char *argv[])
 				 */
 			case 'p':
 				if ((old_cluster.port = atoi(optarg)) <= 0)
-				{
 					pg_fatal("invalid old port number\n");
-					exit(1);
-				}
 				break;
 
 			case 'P':
 				if ((new_cluster.port = atoi(optarg)) <= 0)
-				{
 					pg_fatal("invalid new port number\n");
-					exit(1);
-				}
 				break;
 
 			case 'r':

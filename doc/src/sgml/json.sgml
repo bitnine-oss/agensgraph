@@ -23,7 +23,7 @@
 
  <para>
   <productname>PostgreSQL</productname> offers two types for storing JSON
-  data: <type>json</type> and <type>jsonb</type>. To implement effective query
+  data: <type>json</type> and <type>jsonb</type>. To implement efficient query
   mechanisms for these data types, <productname>PostgreSQL</productname>
   also provides the <type>jsonpath</type> data type described in
   <xref linkend="datatype-jsonpath"/>.
@@ -131,7 +131,7 @@
  </para>
 
   <table id="json-type-mapping-table">
-     <title>JSON primitive types and corresponding <productname>PostgreSQL</productname> types</title>
+     <title>JSON Primitive Types and Corresponding <productname>PostgreSQL</productname> Types</title>
      <tgroup cols="3">
       <thead>
        <row>
@@ -233,7 +233,7 @@ SELECT '{"reading": 1.230e-5}'::json, '{"reading": 1.230e-5}'::jsonb;
  </sect2>
 
  <sect2 id="json-doc-design">
-  <title>Designing JSON documents effectively</title>
+  <title>Designing JSON Documents</title>
   <para>
    Representing data as JSON can be considerably more flexible than
    the traditional relational data model, which is compelling in
@@ -490,11 +490,11 @@ SELECT jdoc->'guid', jdoc->'name' FROM api WHERE jdoc @@ '$.tags[*] == "qui"';
 SELECT jdoc->'guid', jdoc->'name' FROM api WHERE jdoc @@ '$.tags[*] ? (@ == "qui")';
 </programlisting>
     GIN index extracts statements of following form out of
-    <literal>jsonpath</literal>: <literal>accessors_chain = const</literal>.
+    <literal>jsonpath</literal>: <replaceable>accessors_chain</replaceable> = <replaceable>const</replaceable>.
     Accessors chain may consist of <literal>.key</literal>,
-    <literal>[*]</literal> and <literal>[index]</literal> accessors.
+    <literal>[*]</literal>, and <literal>[<replaceable>index</replaceable>]</literal> accessors.
     <literal>jsonb_ops</literal> additionally supports <literal>.*</literal>
-    and <literal>.**</literal> statements.
+    and <literal>.**</literal> accessors.
   </para>
   <para>
     Another approach to querying is to exploit containment, for example:
@@ -633,7 +633,7 @@ SELECT jdoc-&gt;'guid', jdoc-&gt;'name' FROM api WHERE jdoc @&gt; '{"tags": ["qu
 
   <para>
    The <type>jsonpath</type> type implements support for the SQL/JSON path language
-   in <productname>PostgreSQL</productname> to effectively query JSON data.
+   in <productname>PostgreSQL</productname> to efficiently query JSON data.
    It provides a binary representation of the parsed SQL/JSON path
    expression that specifies the items to be retrieved by the path
    engine from the JSON data for further processing with the
@@ -641,8 +641,7 @@ SELECT jdoc-&gt;'guid', jdoc-&gt;'name' FROM api WHERE jdoc @&gt; '{"tags": ["qu
   </para>
 
   <para>
-   The SQL/JSON path language is fully integrated into the SQL engine:
-   the semantics of its predicates and operators generally follow SQL.
+   The semantics of SQL/JSON path predicates and operators generally follow SQL.
    At the same time, to provide a most natural way of working with JSON data,
    SQL/JSON path syntax uses some of the JavaScript conventions:
   </para>
@@ -650,12 +649,12 @@ SELECT jdoc-&gt;'guid', jdoc-&gt;'name' FROM api WHERE jdoc @&gt; '{"tags": ["qu
   <itemizedlist>
    <listitem>
     <para>
-     Dot <literal>.</literal> is used for member access.
+     Dot (<literal>.</literal>) is used for member access.
     </para>
    </listitem>
    <listitem>
     <para>
-     Square brackets <literal>[]</literal> are used for array access.
+     Square brackets (<literal>[]</literal>) are used for array access.
     </para>
    </listitem>
    <listitem>
@@ -666,13 +665,32 @@ SELECT jdoc-&gt;'guid', jdoc-&gt;'name' FROM api WHERE jdoc @&gt; '{"tags": ["qu
   </itemizedlist>
 
   <para>
-   An SQL/JSON path expression is an SQL character string literal,
-   so it must be enclosed in single quotes when passed to an SQL/JSON
-   query function. Following the JavaScript
-   conventions, character string literals within the path expression
-   must be enclosed in double quotes. Any single quotes within this
-   character string literal must be escaped with a single quote
-   by the SQL convention.
+   An SQL/JSON path expression is typically written in an SQL query as an
+   SQL character string literal, so it must be enclosed in single quotes,
+   and any single quotes desired within the value must be doubled
+   (see <xref linkend="sql-syntax-strings"/>).
+   Some forms of path expressions require string literals within them.
+   These embedded string literals follow JavaScript/ECMAScript conventions:
+   they must be surrounded by double quotes, and backslash escapes may be
+   used within them to represent otherwise-hard-to-type characters.
+   In particular, the way to write a double quote within an embedded string
+   literal is <literal>\"</literal>, and to write a backslash itself, you
+   must write <literal>\\</literal>.  Other special backslash sequences
+   include those recognized in JSON strings:
+   <literal>\b</literal>,
+   <literal>\f</literal>,
+   <literal>\n</literal>,
+   <literal>\r</literal>,
+   <literal>\t</literal>,
+   <literal>\v</literal>
+   for various ASCII control characters, and
+   <literal>\u<replaceable>NNNN</replaceable></literal> for a Unicode
+   character identified by its 4-hex-digit code point.  The backslash
+   syntax also includes two cases not allowed by JSON:
+   <literal>\x<replaceable>NN</replaceable></literal> for a character code
+   written with only two hex digits, and
+   <literal>\u{<replaceable>N...</replaceable>}</literal> for a character
+   code written with 1 to 6 hex digits.
   </para>
 
   <para>

@@ -512,7 +512,7 @@ find_inheritance_parents(Oid childrelId, LOCKMODE lockmode)
 	oidarr = (Oid *) palloc(maxoids * sizeof(Oid));
 	numoids = 0;
 
-	relation = heap_open(InheritsRelationId, AccessShareLock);
+	relation = table_open(InheritsRelationId, AccessShareLock);
 
 	ScanKeyInit(&key[0],
 				Anum_pg_inherits_inhrelid,
@@ -535,7 +535,7 @@ find_inheritance_parents(Oid childrelId, LOCKMODE lockmode)
 
 	systable_endscan(scan);
 
-	heap_close(relation, AccessShareLock);
+	table_close(relation, AccessShareLock);
 
 	if (numoids > 1)
 		qsort(oidarr, numoids, sizeof(Oid), oid_cmp);

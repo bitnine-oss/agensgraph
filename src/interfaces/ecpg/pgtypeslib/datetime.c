@@ -6,10 +6,10 @@
 #include <ctype.h>
 #include <limits.h>
 
-#include "pgtypeslib_extern.h"
 #include "dt.h"
-#include "pgtypes_error.h"
 #include "pgtypes_date.h"
+#include "pgtypes_error.h"
+#include "pgtypeslib_extern.h"
 
 date *
 PGTYPESdate_new(void)
@@ -152,7 +152,6 @@ PGTYPESdate_today(date * d)
 	GetCurrentDateTime(&ts);
 	if (errno == 0)
 		*d = date2j(ts.tm_year, ts.tm_mon, ts.tm_mday) - date2j(2000, 1, 1);
-	return;
 }
 
 #define PGTYPES_DATE_NUM_MAX_DIGITS		20	/* should suffice for most

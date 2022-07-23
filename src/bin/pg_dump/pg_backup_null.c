@@ -23,11 +23,10 @@
  */
 #include "postgres_fe.h"
 
+#include "fe_utils/string_utils.h"
+#include "libpq/libpq-fs.h"
 #include "pg_backup_archiver.h"
 #include "pg_backup_utils.h"
-#include "fe_utils/string_utils.h"
-
-#include "libpq/libpq-fs.h"
 
 static void _WriteData(ArchiveHandle *AH, const void *data, size_t dLen);
 static void _WriteBlobData(ArchiveHandle *AH, const void *data, size_t dLen);
@@ -87,7 +86,6 @@ _WriteData(ArchiveHandle *AH, const void *data, size_t dLen)
 {
 	/* Just send it to output, ahwrite() already errors on failure */
 	ahwrite(data, 1, dLen, AH);
-	return;
 }
 
 /*
@@ -110,7 +108,6 @@ _WriteBlobData(ArchiveHandle *AH, const void *data, size_t dLen)
 
 		destroyPQExpBuffer(buf);
 	}
-	return;
 }
 
 static void
@@ -222,7 +219,6 @@ static void
 _WriteBuf(ArchiveHandle *AH, const void *buf, size_t len)
 {
 	/* Don't do anything */
-	return;
 }
 
 static void

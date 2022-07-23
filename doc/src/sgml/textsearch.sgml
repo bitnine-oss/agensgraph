@@ -2253,7 +2253,7 @@ SELECT alias, description, token FROM ts_debug('http://example.com/stuff/index.h
 
     <listitem>
      <para>
-      Linguistic - Ispell dictionaries try to reduce input words to a
+      Linguistic &mdash; Ispell dictionaries try to reduce input words to a
       normalized form; stemmer dictionaries remove word endings
      </para>
     </listitem>
@@ -3915,7 +3915,7 @@ Parser: "pg_catalog.default"
    text search features are:
    <itemizedlist  spacing="compact" mark="bullet">
     <listitem>
-     <para>The length of each lexeme must be less than 2K bytes</para>
+     <para>The length of each lexeme must be less than 2 kilobytes</para>
     </listitem>
     <listitem>
      <para>The length of a <type>tsvector</type> (lexemes + positions) must be

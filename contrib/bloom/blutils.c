@@ -15,17 +15,15 @@
 
 #include "access/amapi.h"
 #include "access/generic_xlog.h"
+#include "access/reloptions.h"
+#include "bloom.h"
 #include "catalog/index.h"
-#include "storage/lmgr.h"
 #include "miscadmin.h"
 #include "storage/bufmgr.h"
-#include "storage/indexfsm.h"
-#include "utils/memutils.h"
-#include "access/reloptions.h"
 #include "storage/freespace.h"
 #include "storage/indexfsm.h"
-
-#include "bloom.h"
+#include "storage/lmgr.h"
+#include "utils/memutils.h"
 
 /* Signature dealing macros - note i is assumed to be of type int */
 #define GETWORD(x,i) ( *( (BloomSignatureWord *)(x) + ( (i) / SIGNWORDBITS ) ) )
@@ -60,7 +58,8 @@ _PG_init(void)
 	/* Option for length of signature */
 	add_int_reloption(bl_relopt_kind, "length",
 					  "Length of signature in bits",
-					  DEFAULT_BLOOM_LENGTH, 1, MAX_BLOOM_LENGTH);
+					  DEFAULT_BLOOM_LENGTH, 1, MAX_BLOOM_LENGTH,
+					  AccessExclusiveLock);
 	bl_relopt_tab[0].optname = "length";
 	bl_relopt_tab[0].opttype = RELOPT_TYPE_INT;
 	bl_relopt_tab[0].offset = offsetof(BloomOptions, bloomLength);
@@ -71,7 +70,8 @@ _PG_init(void)
 		snprintf(buf, sizeof(buf), "col%d", i + 1);
 		add_int_reloption(bl_relopt_kind, buf,
 						  "Number of bits generated for each index column",
-						  DEFAULT_BLOOM_BITS, 1, MAX_BLOOM_BITS);
+						  DEFAULT_BLOOM_BITS, 1, MAX_BLOOM_BITS,
+						  AccessExclusiveLock);
 		bl_relopt_tab[i + 1].optname = MemoryContextStrdup(TopMemoryContext,
 														   buf);
 		bl_relopt_tab[i + 1].opttype = RELOPT_TYPE_INT;
@@ -475,18 +475,18 @@ BloomInitMetapage(Relation index)
 bytea *
 bloptions(Datum reloptions, bool validate)
 {
-	relopt_value *options;
-	int			numoptions;
 	BloomOptions *rdopts;
 
 	/* Parse the user-given reloptions */
-	options = parseRelOptions(reloptions, validate, bl_relopt_kind, &numoptions);
-	rdopts = allocateReloptStruct(sizeof(BloomOptions), options, numoptions);
-	fillRelOptions((void *) rdopts, sizeof(BloomOptions), options, numoptions,
-				   validate, bl_relopt_tab, lengthof(bl_relopt_tab));
+	rdopts = (BloomOptions *) build_reloptions(reloptions, validate,
+											   bl_relopt_kind,
+											   sizeof(BloomOptions),
+											   bl_relopt_tab,
+											   lengthof(bl_relopt_tab));
 
 	/* Convert signature length from # of bits to # to words, rounding up */
-	rdopts->bloomLength = (rdopts->bloomLength + SIGNWORDBITS - 1) / SIGNWORDBITS;
+	if (rdopts)
+		rdopts->bloomLength = (rdopts->bloomLength + SIGNWORDBITS - 1) / SIGNWORDBITS;
 
 	return (bytea *) rdopts;
 }
