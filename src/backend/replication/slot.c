@@ -108,7 +108,7 @@ static void CreateSlotOnDisk(ReplicationSlot *slot);
 static void SaveSlotToPath(ReplicationSlot *slot, const char *path, int elevel);
 
 /*
- * Report shared-memory space needed by ReplicationSlotShmemInit.
+ * Report shared-memory space needed by ReplicationSlotsShmemInit.
  */
 Size
 ReplicationSlotsShmemSize(void)
@@ -298,7 +298,7 @@ ReplicationSlotCreate(const char *name, bool db_specific,
 	 * We need to briefly prevent any other backend from iterating over the
 	 * slots while we flip the in_use flag. We also need to set the active
 	 * flag while holding the ControlLock as otherwise a concurrent
-	 * SlotAcquire() could acquire the slot as well.
+	 * ReplicationSlotAcquire() could acquire the slot as well.
 	 */
 	LWLockAcquire(ReplicationSlotControlLock, LW_EXCLUSIVE);
 
@@ -1315,7 +1315,7 @@ SaveSlotToPath(ReplicationSlot *slot, const char *dir, int elevel)
 	}
 	pgstat_report_wait_end();
 
-	if (CloseTransientFile(fd))
+	if (CloseTransientFile(fd) != 0)
 	{
 		ereport(elevel,
 				(errcode_for_file_access(),
@@ -1472,7 +1472,7 @@ RestoreSlotFromDisk(const char *name)
 							path, readBytes, (Size) cp.length)));
 	}
 
-	if (CloseTransientFile(fd))
+	if (CloseTransientFile(fd) != 0)
 		ereport(PANIC,
 				(errcode_for_file_access(),
 				 errmsg("could not close file \"%s\": %m", path)));

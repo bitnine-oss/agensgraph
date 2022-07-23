@@ -364,7 +364,7 @@ static SERIALIZABLEXACT *OldCommittedSxact;
  * These configuration variables are used to set the predicate lock table size
  * and to control promotion of predicate locks to coarser granularity in an
  * attempt to degrade performance (mostly as false positive serialization
- * failure) gracefully in the face of memory pressurel
+ * failure) gracefully in the face of memory pressure.
  */
 int			max_predicate_locks_per_xact;	/* set by guc.c */
 int			max_predicate_locks_per_relation;	/* set by guc.c */
@@ -849,7 +849,7 @@ OldSerXidInit(void)
 /*
  * Record a committed read write serializable xid and the minimum
  * commitSeqNo of any transactions to which this xid had a rw-conflict out.
- * An invalid seqNo means that there were no conflicts out from xid.
+ * An invalid commitSeqNo means that there were no conflicts out from xid.
  */
 static void
 OldSerXidAdd(TransactionId xid, SerCommitSeqNo minConflictCommitSeqNo)
@@ -1685,7 +1685,7 @@ SetSerializableTransactionSnapshot(Snapshot snapshot,
 /*
  * Guts of GetSerializableTransactionSnapshot
  *
- * If sourcexid is valid, this is actually an import operation and we should
+ * If sourcevxid is valid, this is actually an import operation and we should
  * skip calling GetSnapshotData, because the snapshot contents are already
  * loaded up.  HOWEVER: to avoid race conditions, we must check that the
  * source xact is still running after we acquire SerializableXactHashLock.
@@ -3405,8 +3405,8 @@ ReleasePredicateLocks(bool isCommit, bool isReadOnlySafe)
 	 *
 	 * If this value is changing, we don't care that much whether we get the
 	 * old or new value -- it is just used to determine how far
-	 * GlobalSerializableXmin must advance before this transaction can be
-	 * fully cleaned up.  The worst that could happen is we wait for one more
+	 * SxactGlobalXmin must advance before this transaction can be fully
+	 * cleaned up.  The worst that could happen is we wait for one more
 	 * transaction to complete before freeing some RAM; correctness of visible
 	 * behavior is not affected.
 	 */
@@ -4360,7 +4360,7 @@ CheckTargetForConflictsIn(PREDICATELOCKTARGETTAG *targettag)
 	/*
 	 * If we found one of our own SIREAD locks to remove, remove it now.
 	 *
-	 * At this point our transaction already has an ExclusiveRowLock on the
+	 * At this point our transaction already has a RowExclusiveLock on the
 	 * relation, so we are OK to drop the predicate lock on the tuple, if
 	 * found, without fearing that another write against the tuple will occur
 	 * before the MVCC information makes it to the buffer.
@@ -4809,7 +4809,7 @@ OnConflict_CheckForSerializationFailure(const SERIALIZABLEXACT *reader,
 }
 
 /*
- * PreCommit_CheckForSerializableConflicts
+ * PreCommit_CheckForSerializationFailure
  *		Check for dangerous structures in a serializable transaction
  *		at commit.
  *
@@ -4820,7 +4820,7 @@ OnConflict_CheckForSerializationFailure(const SERIALIZABLEXACT *reader,
  *
  * If a dangerous structure is found, the pivot (the near conflict) is
  * marked for death, because rolling back another transaction might mean
- * that we flail without ever making progress.  This transaction is
+ * that we fail without ever making progress.  This transaction is
  * committing writes, so letting it commit ensures progress.  If we
  * canceled the far conflict, it might immediately fail again on retry.
  */

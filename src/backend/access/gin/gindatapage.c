@@ -92,7 +92,7 @@ typedef struct
 
 	/*
 	 * The following fields represent the items in this segment. If 'items' is
-	 * not NULL, it contains a palloc'd array of the itemsin this segment. If
+	 * not NULL, it contains a palloc'd array of the items in this segment. If
 	 * 'seg' is not NULL, it contains the items in an already-compressed
 	 * format. It can point to an on-disk page (!modified), or a palloc'd
 	 * segment in memory. If both are set, they must represent the same items.
@@ -1371,7 +1371,7 @@ disassembleLeaf(Page page)
 	if (GinPageIsCompressed(page))
 	{
 		/*
-		 * Create a leafSegment entry for each segment.
+		 * Create a leafSegmentInfo entry for each segment.
 		 */
 		seg = GinDataLeafPageGetPostingList(page);
 		segbegin = (Pointer) seg;

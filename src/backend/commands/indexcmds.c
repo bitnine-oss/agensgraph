@@ -204,18 +204,8 @@ CheckIndexCompatible(Oid oldId,
 	 * contains only key attributes, thus we're filling ii_NumIndexAttrs and
 	 * ii_NumIndexKeyAttrs with same value.
 	 */
-	indexInfo = makeNode(IndexInfo);
-	indexInfo->ii_NumIndexAttrs = numberOfAttributes;
-	indexInfo->ii_NumIndexKeyAttrs = numberOfAttributes;
-	indexInfo->ii_Expressions = NIL;
-	indexInfo->ii_ExpressionsState = NIL;
-	indexInfo->ii_PredicateState = NULL;
-	indexInfo->ii_ExclusionOps = NULL;
-	indexInfo->ii_ExclusionProcs = NULL;
-	indexInfo->ii_ExclusionStrats = NULL;
-	indexInfo->ii_Am = accessMethodId;
-	indexInfo->ii_AmCache = NULL;
-	indexInfo->ii_Context = CurrentMemoryContext;
+	indexInfo = makeIndexInfo(numberOfAttributes, numberOfAttributes,
+							  accessMethodId, NIL, NIL, false, false, false);
 	typeObjectId = (Oid *) palloc(numberOfAttributes * sizeof(Oid));
 	collationObjectId = (Oid *) palloc(numberOfAttributes * sizeof(Oid));
 	classObjectId = (Oid *) palloc(numberOfAttributes * sizeof(Oid));
@@ -528,8 +518,8 @@ DefineIndex(Oid relationId,
 	 * is part of the key columns, and anything equal to and over is part of
 	 * the INCLUDE columns.
 	 */
-	allIndexParams = list_concat(list_copy(stmt->indexParams),
-								 list_copy(stmt->indexIncludingParams));
+	allIndexParams = list_concat_copy(stmt->indexParams,
+									  stmt->indexIncludingParams);
 	numberOfAttributes = list_length(allIndexParams);
 
 	if (numberOfAttributes <= 0)
@@ -782,27 +772,17 @@ DefineIndex(Oid relationId,
 
 	/*
 	 * Prepare arguments for index_create, primarily an IndexInfo structure.
-	 * Note that ii_Predicate must be in implicit-AND format.
+	 * Note that predicates must be in implicit-AND format.  In a concurrent
+	 * build, mark it not-ready-for-inserts.
 	 */
-	indexInfo = makeNode(IndexInfo);
-	indexInfo->ii_NumIndexAttrs = numberOfAttributes;
-	indexInfo->ii_NumIndexKeyAttrs = numberOfKeyAttributes;
-	indexInfo->ii_Expressions = NIL;	/* for now */
-	indexInfo->ii_ExpressionsState = NIL;
-	indexInfo->ii_Predicate = make_ands_implicit((Expr *) stmt->whereClause);
-	indexInfo->ii_PredicateState = NULL;
-	indexInfo->ii_ExclusionOps = NULL;
-	indexInfo->ii_ExclusionProcs = NULL;
-	indexInfo->ii_ExclusionStrats = NULL;
-	indexInfo->ii_Unique = stmt->unique;
-	/* In a concurrent build, mark it not-ready-for-inserts */
-	indexInfo->ii_ReadyForInserts = !stmt->concurrent;
-	indexInfo->ii_Concurrent = stmt->concurrent;
-	indexInfo->ii_BrokenHotChain = false;
-	indexInfo->ii_ParallelWorkers = 0;
-	indexInfo->ii_Am = accessMethodId;
-	indexInfo->ii_AmCache = NULL;
-	indexInfo->ii_Context = CurrentMemoryContext;
+	indexInfo = makeIndexInfo(numberOfAttributes,
+							  numberOfKeyAttributes,
+							  accessMethodId,
+							  NIL,	/* expressions, NIL for now */
+							  make_ands_implicit((Expr *) stmt->whereClause),
+							  stmt->unique,
+							  !stmt->concurrent,
+							  stmt->concurrent);
 
 	typeObjectId = (Oid *) palloc(numberOfAttributes * sizeof(Oid));
 	collationObjectId = (Oid *) palloc(numberOfAttributes * sizeof(Oid));
@@ -1795,7 +1775,7 @@ ComputeIndexAttrs(IndexInfo *indexInfo,
 			indexInfo->ii_ExclusionOps[attn] = opid;
 			indexInfo->ii_ExclusionProcs[attn] = get_opcode(opid);
 			indexInfo->ii_ExclusionStrats[attn] = strat;
-			nextExclOp = lnext(nextExclOp);
+			nextExclOp = lnext(exclusionOpNames, nextExclOp);
 		}
 
 		/*

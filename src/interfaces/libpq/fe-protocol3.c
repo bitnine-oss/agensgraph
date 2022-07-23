@@ -317,8 +317,8 @@ pqParseInput3(PGconn *conn)
 					 *
 					 * If we're doing a Describe, we have to pass something
 					 * back to the client, so set up a COMMAND_OK result,
-					 * instead of TUPLES_OK.  Otherwise we can just ignore
-					 * this message.
+					 * instead of PGRES_TUPLES_OK.  Otherwise we can just
+					 * ignore this message.
 					 */
 					if (conn->queryclass == PGQUERY_DESCRIBE)
 					{
@@ -996,7 +996,7 @@ pqBuildErrorMessage3(PQExpBuffer msg, const PGresult *res,
 	/* If we couldn't allocate a PGresult, just say "out of memory" */
 	if (res == NULL)
 	{
-		appendPQExpBuffer(msg, libpq_gettext("out of memory\n"));
+		appendPQExpBufferStr(msg, libpq_gettext("out of memory\n"));
 		return;
 	}
 
@@ -1009,7 +1009,7 @@ pqBuildErrorMessage3(PQExpBuffer msg, const PGresult *res,
 		if (res->errMsg && res->errMsg[0])
 			appendPQExpBufferStr(msg, res->errMsg);
 		else
-			appendPQExpBuffer(msg, libpq_gettext("no error message available\n"));
+			appendPQExpBufferStr(msg, libpq_gettext("no error message available\n"));
 		return;
 	}
 

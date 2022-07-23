@@ -504,15 +504,13 @@ explain (costs off) select * from rlp where a <= 31;
          Filter: (a <= 31)
    ->  Seq Scan on rlp5_1
          Filter: (a <= 31)
-   ->  Seq Scan on rlp5_default
-         Filter: (a <= 31)
    ->  Seq Scan on rlp_default_10
          Filter: (a <= 31)
    ->  Seq Scan on rlp_default_30
          Filter: (a <= 31)
    ->  Seq Scan on rlp_default_default
          Filter: (a <= 31)
-(29 rows)
+(27 rows)
 
 explain (costs off) select * from rlp where a = 1 or a = 7;
            QUERY PLAN           
@@ -559,11 +557,7 @@ explain (costs off) select * from rlp where a > 20 and a < 27;
          Filter: ((a > 20) AND (a < 27))
    ->  Seq Scan on rlp4_2
          Filter: ((a > 20) AND (a < 27))
-   ->  Seq Scan on rlp4_default
-         Filter: ((a > 20) AND (a < 27))
-   ->  Seq Scan on rlp_default_default
-         Filter: ((a > 20) AND (a < 27))
-(9 rows)
+(5 rows)
 
 explain (costs off) select * from rlp where a = 29;
         QUERY PLAN        
@@ -587,6 +581,34 @@ explain (costs off) select * from rlp where a >= 29;
    ->  Seq Scan on rlp_default_default
          Filter: (a >= 29)
 (11 rows)
+
+explain (costs off) select * from rlp where a < 1 or (a > 20 and a < 25);
+                      QUERY PLAN                      
+------------------------------------------------------
+ Append
+   ->  Seq Scan on rlp1
+         Filter: ((a < 1) OR ((a > 20) AND (a < 25)))
+   ->  Seq Scan on rlp4_1
+         Filter: ((a < 1) OR ((a > 20) AND (a < 25)))
+(5 rows)
+
+-- where clause contradicts sub-partition's constraint
+explain (costs off) select * from rlp where a = 20 or a = 40;
+               QUERY PLAN               
+----------------------------------------
+ Append
+   ->  Seq Scan on rlp4_1
+         Filter: ((a = 20) OR (a = 40))
+   ->  Seq Scan on rlp5_default
+         Filter: ((a = 20) OR (a = 40))
+(5 rows)
+
+explain (costs off) select * from rlp3 where a = 20;   /* empty */
+        QUERY PLAN        
+--------------------------
+ Result
+   One-Time Filter: false
+(2 rows)
 
 -- redundant clauses are eliminated
 explain (costs off) select * from rlp where a > 1 and a = 10;	/* only default */
@@ -1086,6 +1108,19 @@ explain (costs off) select * from boolpart where a is not unknown;
          Filter: (a IS NOT UNKNOWN)
 (7 rows)
 
+create table boolrangep (a bool, b bool, c int) partition by range (a,b,c);
+create table boolrangep_tf partition of boolrangep for values from ('true', 'false', 0) to ('true', 'false', 100);
+create table boolrangep_ft partition of boolrangep for values from ('false', 'true', 0) to ('false', 'true', 100);
+create table boolrangep_ff1 partition of boolrangep for values from ('false', 'false', 0) to ('false', 'false', 50);
+create table boolrangep_ff2 partition of boolrangep for values from ('false', 'false', 50) to ('false', 'false', 100);
+-- try a more complex case that's been known to trip up pruning in the past
+explain (costs off)  select * from boolrangep where not a and not b and c = 25;
+                  QUERY PLAN                  
+----------------------------------------------
+ Seq Scan on boolrangep_ff1
+   Filter: ((NOT a) AND (NOT b) AND (c = 25))
+(2 rows)
+
 -- test scalar-to-array operators
 create table coercepart (a varchar) partition by list (a);
 create table coercepart_ab partition of coercepart for values in ('ab');
@@ -1150,6 +1185,58 @@ explain (costs off) select * from coercepart where a !~ all ('{ab,bc}');
    ->  Seq Scan on coercepart_cd
          Filter: ((a)::text !~ ALL ('{ab,bc}'::text[]))
 (7 rows)
+
+explain (costs off) select * from coercepart where a = any ('{ab,bc}');
+                      QUERY PLAN                       
+-------------------------------------------------------
+ Append
+   ->  Seq Scan on coercepart_ab
+         Filter: ((a)::text = ANY ('{ab,bc}'::text[]))
+   ->  Seq Scan on coercepart_bc
+         Filter: ((a)::text = ANY ('{ab,bc}'::text[]))
+(5 rows)
+
+explain (costs off) select * from coercepart where a = any ('{ab,null}');
+                    QUERY PLAN                     
+---------------------------------------------------
+ Seq Scan on coercepart_ab
+   Filter: ((a)::text = ANY ('{ab,NULL}'::text[]))
+(2 rows)
+
+explain (costs off) select * from coercepart where a = any (null::text[]);
+        QUERY PLAN        
+--------------------------
+ Result
+   One-Time Filter: false
+(2 rows)
+
+explain (costs off) select * from coercepart where a = all ('{ab}');
+                  QUERY PLAN                  
+----------------------------------------------
+ Seq Scan on coercepart_ab
+   Filter: ((a)::text = ALL ('{ab}'::text[]))
+(2 rows)
+
+explain (costs off) select * from coercepart where a = all ('{ab,bc}');
+        QUERY PLAN        
+--------------------------
+ Result
+   One-Time Filter: false
+(2 rows)
+
+explain (costs off) select * from coercepart where a = all ('{ab,null}');
+        QUERY PLAN        
+--------------------------
+ Result
+   One-Time Filter: false
+(2 rows)
+
+explain (costs off) select * from coercepart where a = all (null::text[]);
+        QUERY PLAN        
+--------------------------
+ Result
+   One-Time Filter: false
+(2 rows)
 
 drop table coercepart;
 CREATE TABLE part (a INT, b INT) PARTITION BY LIST (a);
@@ -1420,7 +1507,7 @@ explain (costs off) select * from rparted_by_int2 where a > 100000000000000;
    Filter: (a > '100000000000000'::bigint)
 (2 rows)
 
-drop table lp, coll_pruning, rlp, mc3p, mc2p, boolpart, rp, coll_pruning_multi, like_op_noprune, lparted_by_int2, rparted_by_int2;
+drop table lp, coll_pruning, rlp, mc3p, mc2p, boolpart, boolrangep, rp, coll_pruning_multi, like_op_noprune, lparted_by_int2, rparted_by_int2;
 --
 -- Test Partition pruning for HASH partitioning
 --
@@ -3121,6 +3208,20 @@ select * from stable_qual_pruning
    ->  Seq Scan on stable_qual_pruning2 (actual rows=0 loops=1)
          Filter: (a = ANY ('{"Tue Feb 01 00:00:00 2000 PST","Fri Jan 01 00:00:00 2010 PST"}'::timestamp with time zone[]))
 (4 rows)
+
+explain (analyze, costs off, summary off, timing off)
+select * from stable_qual_pruning
+  where a = any(null::timestamptz[]);
+                           QUERY PLAN                           
+----------------------------------------------------------------
+ Append (actual rows=0 loops=1)
+   ->  Seq Scan on stable_qual_pruning1 (actual rows=0 loops=1)
+         Filter: (a = ANY (NULL::timestamp with time zone[]))
+   ->  Seq Scan on stable_qual_pruning2 (actual rows=0 loops=1)
+         Filter: (a = ANY (NULL::timestamp with time zone[]))
+   ->  Seq Scan on stable_qual_pruning3 (actual rows=0 loops=1)
+         Filter: (a = ANY (NULL::timestamp with time zone[]))
+(7 rows)
 
 drop table stable_qual_pruning;
 --

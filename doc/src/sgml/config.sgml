@@ -153,6 +153,8 @@ shared_buffers = 128MB
      identifiers or numbers must be single-quoted.  To embed a single
      quote in a parameter value, write either two quotes (preferred)
      or backslash-quote.
+     If the file contains multiple entries for the same parameter,
+     all but the last one are ignored.
     </para>
 
     <para>
@@ -185,18 +187,29 @@ shared_buffers = 128MB
      In addition to <filename>postgresql.conf</filename>,
      a <productname>PostgreSQL</productname> data directory contains a file
      <filename>postgresql.auto.conf</filename><indexterm><primary>postgresql.auto.conf</primary></indexterm>,
-     which has the same format as <filename>postgresql.conf</filename> but should
-     never be edited manually.  This file holds settings provided through
-     the <xref linkend="sql-altersystem"/> command.  This file is automatically
-     read whenever <filename>postgresql.conf</filename> is, and its settings take
-     effect in the same way.  Settings in <filename>postgresql.auto.conf</filename>
-     override those in <filename>postgresql.conf</filename>.
+     which has the same format as <filename>postgresql.conf</filename> but
+     is intended to be edited automatically not manually.  This file holds
+     settings provided through the <xref linkend="sql-altersystem"/> command.
+     This file is read whenever <filename>postgresql.conf</filename> is,
+     and its settings take effect in the same way.  Settings
+     in <filename>postgresql.auto.conf</filename> override those
+     in <filename>postgresql.conf</filename>.
+    </para>
+
+    <para>
+     External tools may also
+     modify <filename>postgresql.auto.conf</filename>.  It is not
+     recommended to do this while the server is running, since a
+     concurrent <command>ALTER SYSTEM</command> command could overwrite
+     such changes.  Such tools might simply append new settings to the end,
+     or they might choose to remove duplicate settings and/or comments
+     (as <command>ALTER SYSTEM</command> will).
     </para>
 
     <para>
      The system view
      <link linkend="view-pg-file-settings"><structname>pg_file_settings</structname></link>
-     can be helpful for pre-testing changes to the configuration file, or for
+     can be helpful for pre-testing changes to the configuration files, or for
      diagnosing problems if a <systemitem>SIGHUP</systemitem> signal did not have the
      desired effects.
     </para>
@@ -3133,29 +3146,29 @@ include_dir 'conf.d'
     </para>
 
     <para>
-     To start the server in standby mode create file called
+     To start the server in standby mode, create a file called
      <filename>standby.signal</filename><indexterm><primary>standby.signal</primary></indexterm>
      in the data directory.  The server will enter recovery and will not stop
      recovery when the end of archived WAL is reached, but will keep trying to
      continue recovery by connecting to the sending server as specified by the
      <varname>primary_conninfo</varname> setting and/or by fetching new WAL
-     segments using <varname>restore_command</varname>.  In this mode, you may
+     segments using <varname>restore_command</varname>.  In this mode, you can
      use parameters in both <xref
      linkend="runtime-config-wal-archive-recovery"/> and <xref
-     linkend="runtime-config-replication-standby"/> sections.  Parameters from
+     linkend="runtime-config-replication-standby"/>.  Parameters from
      <xref linkend="runtime-config-wal-recovery-target"/> will not be used.
     </para>
 
     <para>
-     To start the server in targeted recovery create a file called
+     To start the server in targeted recovery mode, create a file called
      <filename>recovery.signal</filename><indexterm><primary>recovery.signal</primary></indexterm>
      in the data directory.  If both <filename>standby.signal</filename> and
      <filename>recovery.signal</filename> files are created, standby mode
-     takes precedence.  Targeted recovery mode will end when end of archived
-     WAL is reached, or when <varname>recovery_target</varname> is reached.
-     In this mode you may use parameters from both <xref
+     takes precedence.  Targeted recovery mode ends when the archived WAL is
+     fully replayed, or when <varname>recovery_target</varname> is reached.
+     In this mode, you can use parameters from both <xref
      linkend="runtime-config-wal-archive-recovery"/> and <xref
-     linkend="runtime-config-wal-recovery-target"/> sections.  Parameters from <xref
+     linkend="runtime-config-wal-recovery-target"/>.  Parameters from <xref
      linkend="runtime-config-replication-standby"/> will not be used.
     </para>
 
@@ -3624,9 +3637,9 @@ restore_command = 'copy "C:\\server\\archivedir\\%f" "%p"'  # Windows
       <listitem>
        <para>
         If set to <literal>on</literal> (the default), this option causes new
-        WAL files to be filled with zeroes.  On some filesystems, this ensures
+        WAL files to be filled with zeroes.  On some file systems, this ensures
         that space is allocated before we need to write WAL records.  However,
-        <firstterm>Copy-On-Write</firstterm> (COW) filesystems may not benefit
+        <firstterm>Copy-On-Write</firstterm> (COW) file systems may not benefit
         from this technique, so the option is given to skip the unnecessary
         work.  If set to <literal>off</literal>, only the final byte is written
         when the file is created so that it has the expected size.
@@ -3644,7 +3657,7 @@ restore_command = 'copy "C:\\server\\archivedir\\%f" "%p"'  # Windows
        <para>
         If set to <literal>on</literal> (the default), this option causes WAL
         files to be recycled by renaming them, avoiding the need to create new
-        ones.  On COW filesystems, it may be faster to create new ones, so the
+        ones.  On COW file systems, it may be faster to create new ones, so the
         option is given to disable this behavior.
        </para>
       </listitem>
@@ -5850,13 +5863,12 @@ local0.*    /var/log/postgresql
         <para>
          Causes the duration of each completed statement to be logged
          if the statement ran for at least the specified number of
-         milliseconds, modulated by <varname>log_statement_sample_rate</varname>.
-         Setting this to zero prints all statement durations.
-         <literal>-1</literal> (the default) disables logging statements due to
-         exceeding duration threshold; for example, if you set it to
-         <literal>250ms</literal>, then all SQL statements that run 250ms or
-         longer will be logged. Enabling this parameter can be helpful in
-         tracking down unoptimized queries in your applications.
+         milliseconds.  Setting this to zero prints all statement durations.
+         Minus-one (the default) disables logging statement durations.
+         For example, if you set it to <literal>250ms</literal>
+         then all SQL statements that run 250ms or longer will be
+         logged.  Enabling this parameter can be helpful in tracking down
+         unoptimized queries in your applications.
          Only superusers can change this setting.
         </para>
 
@@ -5879,27 +5891,6 @@ local0.*    /var/log/postgresql
          duration message using the process ID or session ID.
         </para>
        </note>
-       </listitem>
-      </varlistentry>
-
-     <varlistentry id="guc-log-statement-sample-rate" xreflabel="log_statement_sample_rate">
-      <term><varname>log_statement_sample_rate</varname> (<type>real</type>)
-      <indexterm>
-       <primary><varname>log_statement_sample_rate</varname> configuration parameter</primary>
-      </indexterm>
-      </term>
-       <listitem>
-        <para>
-         Determines the fraction of statements that exceed
-         <xref linkend="guc-log-min-duration-statement"/> to be logged.
-         The default is <literal>1.0</literal>, meaning log all such
-         statements.
-         Setting this to zero disables logging by duration, same as setting
-         <varname>log_min_duration_statement</varname> to
-         <literal>-1</literal>.
-         <varname>log_statement_sample_rate</varname> is helpful when the
-         traffic is too high to log all queries.
-        </para>
        </listitem>
       </varlistentry>
 
@@ -7258,6 +7249,10 @@ COPY postgres_log FROM '/full/path/to/logfile.csv' WITH csv;
         be searched <emphasis>before</emphasis> searching any of the path items.
        </para>
 
+       <!-- To further split hairs, funcname('foo') does not use the temporary
+            schema, even when it considers typname='funcname'.  This paragraph
+            refers to function names in a loose sense, "pg_proc.proname or
+            func_name grammar production". -->
        <para>
         Likewise, the current session's temporary-table schema,
         <literal>pg_temp_<replaceable>nnn</replaceable></literal>, is always searched if it
@@ -8037,8 +8032,9 @@ SET XML OPTION { DOCUMENT | CONTENT };
         given decimal precision. The precision used is the standard number of
         digits for the type (<literal>FLT_DIG</literal>
         or <literal>DBL_DIG</literal> as appropriate) reduced according to the
-        value of this parameter. (For example, specifying -1 will cause float4
-        values to be output rounded to 5 significant digits, and float8 values
+        value of this parameter. (For example, specifying -1 will cause
+        <type>float4</type> values to be output rounded to 5 significant
+        digits, and <type>float8</type> values
         rounded to 14 digits.) This format is slower and does not preserve all
         the bits of the binary float value, but may be more human-readable.
        </para>
@@ -8930,7 +8926,7 @@ dynamic_library_path = 'C:\tools\postgresql;H:\my_project\lib;$libdir'
        <para>
         When set to off, which is the default, <productname>PostgreSQL</productname>
         will raise a PANIC-level error on failure to flush modified data files
-        to the filesystem.  This causes the database server to crash.  This
+        to the file system.  This causes the database server to crash.  This
         parameter can only be set at server start.
        </para>
        <para>
@@ -9206,10 +9202,10 @@ dynamic_library_path = 'C:\tools\postgresql;H:\my_project\lib;$libdir'
       </term>
       <listitem>
        <para>
-        Reports the name of the SSL library that this PostgreSQL server was
-        built with (even if SSL is not currently configured or in use on this
-        instance), for example <literal>OpenSSL</literal>, or an empty string
-        if none.
+        Reports the name of the SSL library that this
+        <productname>PostgreSQL</productname> server was built with (even if
+        SSL is not currently configured or in use on this instance), for
+        example <literal>OpenSSL</literal>, or an empty string if none.
        </para>
       </listitem>
      </varlistentry>

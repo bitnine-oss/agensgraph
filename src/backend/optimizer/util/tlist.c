@@ -287,7 +287,7 @@ tlist_same_datatypes(List *tlist, List *colTypes, bool junkOK)
 				return false;	/* tlist longer than colTypes */
 			if (exprType((Node *) tle->expr) != lfirst_oid(curColType))
 				return false;
-			curColType = lnext(curColType);
+			curColType = lnext(colTypes, curColType);
 		}
 	}
 	if (curColType != NULL)
@@ -321,7 +321,7 @@ tlist_same_collations(List *tlist, List *colCollations, bool junkOK)
 				return false;	/* tlist longer than colCollations */
 			if (exprCollation((Node *) tle->expr) != lfirst_oid(curColColl))
 				return false;
-			curColColl = lnext(curColColl);
+			curColColl = lnext(colCollations, curColColl);
 		}
 	}
 	if (curColColl != NULL)
@@ -665,9 +665,8 @@ make_tlist_from_pathtarget(PathTarget *target)
  * copy_pathtarget
  *	  Copy a PathTarget.
  *
- * The new PathTarget has its own List cells, but shares the underlying
- * target expression trees with the old one.  We duplicate the List cells
- * so that items can be added to one target without damaging the other.
+ * The new PathTarget has its own exprs List, but shares the underlying
+ * target expression trees with the old one.
  */
 PathTarget *
 copy_pathtarget(PathTarget *src)
@@ -1022,7 +1021,7 @@ split_pathtarget_at_srfs(PlannerInfo *root,
 		List	   *level_srfs = (List *) lfirst(lc1);
 		PathTarget *ntarget;
 
-		if (lnext(lc1) == NULL)
+		if (lnext(context.level_srfs, lc1) == NULL)
 		{
 			ntarget = target;
 		}
@@ -1037,13 +1036,15 @@ split_pathtarget_at_srfs(PlannerInfo *root,
 			 * later levels.
 			 */
 			add_sp_items_to_pathtarget(ntarget, level_srfs);
-			for_each_cell(lc, lnext(lc2))
+			for_each_cell(lc, context.level_input_vars,
+						  lnext(context.level_input_vars, lc2))
 			{
 				List	   *input_vars = (List *) lfirst(lc);
 
 				add_sp_items_to_pathtarget(ntarget, input_vars);
 			}
-			for_each_cell(lc, lnext(lc3))
+			for_each_cell(lc, context.level_input_srfs,
+						  lnext(context.level_input_srfs, lc3))
 			{
 				List	   *input_srfs = (List *) lfirst(lc);
 				ListCell   *lcx;

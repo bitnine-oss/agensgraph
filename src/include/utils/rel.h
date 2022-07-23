@@ -19,7 +19,6 @@
 #include "catalog/pg_class.h"
 #include "catalog/pg_index.h"
 #include "catalog/pg_publication.h"
-#include "fmgr.h"
 #include "nodes/bitmapset.h"
 #include "rewrite/prs2lock.h"
 #include "storage/block.h"
@@ -75,7 +74,7 @@ typedef struct RelationData
 	 * when a relation has multiple new relfilenodes within a single
 	 * transaction, with one of them occurring in a subsequently aborted
 	 * subtransaction, e.g. BEGIN; TRUNCATE t; SAVEPOINT save; TRUNCATE t;
-	 * ROLLBACK TO save; -- rd_newRelfilenode is now forgotten
+	 * ROLLBACK TO save; -- rd_newRelfilenodeSubid is now forgotten
 	 */
 	SubTransactionId rd_createSubid;	/* rel was created in current xact */
 	SubTransactionId rd_newRelfilenodeSubid;	/* new relfilenode assigned in
@@ -152,13 +151,6 @@ typedef struct RelationData
 	 * those with lefttype and righttype equal to the opclass's opcintype. The
 	 * arrays are indexed by support function number, which is a sufficient
 	 * identifier given that restriction.
-	 *
-	 * Note: rd_amcache is available for index AMs to cache private data about
-	 * an index.  This must be just a cache since it may get reset at any time
-	 * (in particular, it will get reset by a relcache inval message for the
-	 * index).  If used, it must point to a single memory chunk palloc'd in
-	 * rd_indexcxt.  A relcache reset will include freeing that chunk and
-	 * setting rd_amcache = NULL.
 	 */
 	MemoryContext rd_indexcxt;	/* private memory cxt for this stuff */
 	/* use "struct" here to avoid needing to include amapi.h: */
@@ -166,15 +158,25 @@ typedef struct RelationData
 	Oid		   *rd_opfamily;	/* OIDs of op families for each index col */
 	Oid		   *rd_opcintype;	/* OIDs of opclass declared input data types */
 	RegProcedure *rd_support;	/* OIDs of support procedures */
-	FmgrInfo   *rd_supportinfo; /* lookup info for support procedures */
+	struct FmgrInfo *rd_supportinfo; /* lookup info for support procedures */
 	int16	   *rd_indoption;	/* per-column AM-specific flags */
 	List	   *rd_indexprs;	/* index expression trees, if any */
 	List	   *rd_indpred;		/* index predicate tree, if any */
 	Oid		   *rd_exclops;		/* OIDs of exclusion operators, if any */
 	Oid		   *rd_exclprocs;	/* OIDs of exclusion ops' procs, if any */
 	uint16	   *rd_exclstrats;	/* exclusion ops' strategy numbers, if any */
-	void	   *rd_amcache;		/* available for use by index AM */
 	Oid		   *rd_indcollation;	/* OIDs of index collations */
+
+	/*
+	 * rd_amcache is available for index and table AMs to cache private data
+	 * about the relation.  This must be just a cache since it may get reset
+	 * at any time (in particular, it will get reset by a relcache inval
+	 * message for the relation).  If used, it must point to a single memory
+	 * chunk palloc'd in CacheMemoryContext, or in rd_indexcxt for an index
+	 * relation.  A relcache reset will include freeing that chunk and setting
+	 * rd_amcache = NULL.
+	 */
+	void	   *rd_amcache;		/* available for use by index/table AM */
 
 	/*
 	 * foreign-table support
@@ -603,7 +605,5 @@ typedef struct ViewOptions
 /* routines in utils/cache/relcache.c */
 extern void RelationIncrementReferenceCount(Relation rel);
 extern void RelationDecrementReferenceCount(Relation rel);
-extern bool RelationHasUnloggedIndex(Relation rel);
-extern List *RelationGetRepsetList(Relation rel);
 
 #endif							/* REL_H */

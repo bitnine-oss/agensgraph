@@ -679,11 +679,6 @@ intoasc(interval * i, char *str)
 	return 0;
 }
 
-/*
- *	rfmt.c	-  description
- *	by Carsten Wolff <carsten.wolff@credativ.de>, Wed Apr 2 2003
- */
-
 static struct
 {
 	long		val;
@@ -745,7 +740,7 @@ initValue(long lng_val)
 	return 0;
 }
 
-/* return the position oft the right-most dot in some string */
+/* return the position of the right-most dot in some string */
 static int
 getRightMostDot(const char *str)
 {
@@ -811,7 +806,7 @@ rfmtlong(long lng_val, const char *fmt, char *outbuf)
 	/* and fill the temp-string wit '0's up to there. */
 	dotpos = getRightMostDot(fmt);
 
-	/* start to parse the formatstring */
+	/* start to parse the format-string */
 	temp[0] = '\0';
 	k = value.digits - 1;		/* position in the value_string */
 	for (i = fmt_len - 1, j = 0; i >= 0; i--, j++)

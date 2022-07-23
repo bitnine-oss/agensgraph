@@ -269,7 +269,7 @@ static void SnapBuildSnapIncRefcount(Snapshot snap);
 
 static void SnapBuildDistributeNewCatalogSnapshot(SnapBuild *builder, XLogRecPtr lsn);
 
-/* xlog reading helper functions for SnapBuildProcessRecord */
+/* xlog reading helper functions for SnapBuildProcessRunningXacts */
 static bool SnapBuildFindSnapshot(SnapBuild *builder, XLogRecPtr lsn, xl_running_xacts *running);
 static void SnapBuildWaitSnapshot(xl_running_xacts *running, TransactionId cutoff);
 
@@ -1652,7 +1652,7 @@ SnapBuildSerialize(SnapBuild *builder, XLogRecPtr lsn)
 	}
 	pgstat_report_wait_end();
 
-	if (CloseTransientFile(fd))
+	if (CloseTransientFile(fd) != 0)
 		ereport(ERROR,
 				(errcode_for_file_access(),
 				 errmsg("could not close file \"%s\": %m", tmppath)));
@@ -1850,7 +1850,7 @@ SnapBuildRestore(SnapBuild *builder, XLogRecPtr lsn)
 	}
 	COMP_CRC32C(checksum, ondisk.builder.committed.xip, sz);
 
-	if (CloseTransientFile(fd))
+	if (CloseTransientFile(fd) != 0)
 		ereport(ERROR,
 				(errcode_for_file_access(),
 				 errmsg("could not close file \"%s\": %m", path)));

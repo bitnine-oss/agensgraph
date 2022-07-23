@@ -219,7 +219,7 @@ _outList(StringInfo str, const List *node)
 		if (IsA(node, List))
 		{
 			outNode(str, lfirst(lc));
-			if (lnext(lc))
+			if (lnext(node, lc))
 				appendStringInfoChar(str, ' ');
 		}
 		else if (IsA(node, IntList))
@@ -778,6 +778,9 @@ _outHashJoin(StringInfo str, const HashJoin *node)
 	_outJoinPlanInfo(str, (const Join *) node);
 
 	WRITE_NODE_FIELD(hashclauses);
+	WRITE_NODE_FIELD(hashoperators);
+	WRITE_NODE_FIELD(hashcollations);
+	WRITE_NODE_FIELD(hashkeys);
 }
 
 static void
@@ -880,6 +883,7 @@ _outHash(StringInfo str, const Hash *node)
 
 	_outPlanInfo(str, (const Plan *) node);
 
+	WRITE_NODE_FIELD(hashkeys);
 	WRITE_OID_FIELD(skewTable);
 	WRITE_INT_FIELD(skewColumn);
 	WRITE_BOOL_FIELD(skewInherit);
@@ -2400,6 +2404,7 @@ _outPlannerInfo(StringInfo str, const PlannerInfo *node)
 	WRITE_NODE_FIELD(cte_plan_ids);
 	WRITE_NODE_FIELD(multiexpr_params);
 	WRITE_NODE_FIELD(eq_classes);
+	WRITE_BOOL_FIELD(ec_merging_done);
 	WRITE_NODE_FIELD(canon_pathkeys);
 	WRITE_NODE_FIELD(left_join_clauses);
 	WRITE_NODE_FIELD(right_join_clauses);
@@ -2466,6 +2471,7 @@ _outRelOptInfo(StringInfo str, const RelOptInfo *node)
 	WRITE_UINT_FIELD(pages);
 	WRITE_FLOAT_FIELD(tuples, "%.0f");
 	WRITE_FLOAT_FIELD(allvisfrac, "%.6f");
+	WRITE_BITMAPSET_FIELD(eclass_indexes);
 	WRITE_NODE_FIELD(subroot);
 	WRITE_NODE_FIELD(subplan_params);
 	WRITE_INT_FIELD(rel_parallel_workers);

@@ -40,7 +40,7 @@
  *
  *	For each block, we maintain pointer to the first free chunk - this is quite
  *	cheap and allows us to skip all the preceding used chunks, eliminating
- *	a significant number of lookups in many common usage patters. In the worst
+ *	a significant number of lookups in many common usage patterns. In the worst
  *	case this performs as if the pointer was not maintained.
  *
  *	We cache the freelist index for the blocks with the fewest free chunks
@@ -182,7 +182,7 @@ static const MemoryContextMethods SlabMethods = {
  * chunkSize: allocation chunk size
  *
  * The chunkSize may not exceed:
- *		MAXALIGN_DOWN(SIZE_MAX) - MAXALIGN(sizeof(SlabBlock)) - SLAB_CHUNKHDRSZ
+ *		MAXALIGN_DOWN(SIZE_MAX) - MAXALIGN(sizeof(SlabBlock)) - sizeof(SlabChunk)
  */
 MemoryContext
 SlabContextCreate(MemoryContext parent,

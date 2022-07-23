@@ -104,9 +104,13 @@ SELECT row_to_json(row((select array_agg(x) as d from generate_series(5,10) x)),
 
 -- anyarray column
 
-select to_json(histogram_bounds) histogram_bounds
+analyze rows;
+
+select attname, to_json(histogram_bounds) histogram_bounds
 from pg_stats
-where attname = 'tmplname' and tablename = 'pg_pltemplate';
+where tablename = 'rows' and
+      schemaname = pg_my_temp_schema()::regnamespace::text
+order by 1;
 
 -- to_json, timestamps
 
@@ -522,6 +526,8 @@ SELECT rec FROM json_populate_record(
 -- anonymous record type
 SELECT json_populate_record(null::record, '{"x": 0, "y": 1}');
 SELECT json_populate_record(row(1,2), '{"f1": 0, "f2": 1}');
+SELECT * FROM
+  json_populate_record(null::record, '{"x": 776}') AS (x int, y int);
 
 -- composite domain
 SELECT json_populate_record(null::j_ordered_pair, '{"x": 0, "y": 1}');
@@ -549,11 +555,15 @@ SELECT json_populate_recordset(null::record, '[{"x": 0, "y": 1}]');
 SELECT json_populate_recordset(row(1,2), '[{"f1": 0, "f2": 1}]');
 SELECT i, json_populate_recordset(row(i,50), '[{"f1":"42"},{"f2":"43"}]')
 FROM (VALUES (1),(2)) v(i);
+SELECT * FROM
+  json_populate_recordset(null::record, '[{"x": 776}]') AS (x int, y int);
 
 -- empty array is a corner case
 SELECT json_populate_recordset(null::record, '[]');
 SELECT json_populate_recordset(row(1,2), '[]');
 SELECT * FROM json_populate_recordset(NULL::jpop,'[]') q;
+SELECT * FROM
+  json_populate_recordset(null::record, '[]') AS (x int, y int);
 
 -- composite domain
 SELECT json_populate_recordset(null::j_ordered_pair, '[{"x": 0, "y": 1}]');

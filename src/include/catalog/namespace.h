@@ -77,6 +77,7 @@ extern Oid	RelnameGetRelid(const char *relname);
 extern bool RelationIsVisible(Oid relid);
 
 extern Oid	TypenameGetTypid(const char *typname);
+extern Oid	TypenameGetTypidExtended(const char *typname, bool temp_ok);
 extern bool TypeIsVisible(Oid typid);
 
 extern FuncCandidateList FuncnameGetCandidates(List *names,
@@ -104,7 +105,7 @@ extern Oid	ConversionGetConid(const char *conname);
 extern bool ConversionIsVisible(Oid conid);
 
 extern Oid	get_statistics_object_oid(List *names, bool missing_ok);
-extern bool StatisticsObjIsVisible(Oid stxid);
+extern bool StatisticsObjIsVisible(Oid relid);
 
 extern Oid	get_ts_parser_oid(List *names, bool missing_ok);
 extern bool TSParserIsVisible(Oid prsId);

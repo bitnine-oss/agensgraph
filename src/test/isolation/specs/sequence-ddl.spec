@@ -15,7 +15,6 @@ setup           { BEGIN; }
 step "s1alter"  { ALTER SEQUENCE seq1 MAXVALUE 10; }
 step "s1alter2" { ALTER SEQUENCE seq1 MAXVALUE 20; }
 step "s1restart" { ALTER SEQUENCE seq1 RESTART WITH 5; }
-step "s1setval" { SELECT setval('seq1', 5); }
 step "s1commit" { COMMIT; }
 
 session "s2"
@@ -29,7 +28,7 @@ permutation "s1alter" "s1commit" "s2nv"
 # change, but now it waits.
 permutation "s1alter" "s2nv" "s1commit"
 
-# Prior to PG10, the s2nv step would see the uncommitted s1reset
+# Prior to PG10, the s2nv step would see the uncommitted s1restart
 # change, but now it waits.
 permutation "s1restart" "s2nv" "s1commit"
 

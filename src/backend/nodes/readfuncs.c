@@ -2153,6 +2153,9 @@ _readHashJoin(void)
 	ReadCommonJoin(&local_node->join);
 
 	READ_NODE_FIELD(hashclauses);
+	READ_NODE_FIELD(hashoperators);
+	READ_NODE_FIELD(hashcollations);
+	READ_NODE_FIELD(hashkeys);
 
 	READ_DONE();
 }
@@ -2331,6 +2334,7 @@ _readHash(void)
 
 	ReadCommonPlan(&local_node->plan);
 
+	READ_NODE_FIELD(hashkeys);
 	READ_OID_FIELD(skewTable);
 	READ_INT_FIELD(skewColumn);
 	READ_BOOL_FIELD(skewInherit);

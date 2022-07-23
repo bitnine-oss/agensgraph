@@ -42,6 +42,9 @@ extern "C"
 #include <llvm-c/Core.h>
 #include <llvm-c/BitReader.h>
 
+/* Avoid macro clash with LLVM's C++ headers */
+#undef Min
+
 #include <llvm/ADT/SetVector.h>
 #include <llvm/ADT/StringSet.h>
 #include <llvm/ADT/StringMap.h>
@@ -171,7 +174,7 @@ llvm_inline(LLVMModuleRef M)
 static std::unique_ptr<ImportMapTy>
 llvm_build_inline_plan(llvm::Module *mod)
 {
-	std::unique_ptr<ImportMapTy> globalsToInline = llvm::make_unique<ImportMapTy>();
+	std::unique_ptr<ImportMapTy> globalsToInline(new ImportMapTy());
 	FunctionInlineStates functionStates;
 	InlineWorkList worklist;
 

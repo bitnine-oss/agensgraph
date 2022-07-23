@@ -1899,7 +1899,7 @@ ecpg_process_output(struct statement *stmt, bool clear_result)
 
 			/*
 			 * execution should never reach this code because it is already
-			 * handled in ECPGcheck_PQresult()
+			 * handled in ecpg_check_PQresult()
 			 */
 			ecpg_log("ecpg_process_output on line %d: unknown execution status type\n",
 					 stmt->lineno);
@@ -2062,8 +2062,9 @@ ecpg_do_prologue(int lineno, const int compat, const int force_indicator,
 	/*------
 	 * create a list of variables
 	 *
-	 * The variables are listed with input variables preceding outputvariables
-	 * The end of each group is marked by an end marker. per variable we list:
+	 * The variables are listed with input variables preceding output
+	 * variables.  The end of each group is marked by an end marker.
+	 * Per variable we list:
 	 *
 	 * type - as defined in ecpgtype.h
 	 * value - where to store the data
@@ -2073,9 +2074,9 @@ ecpg_do_prologue(int lineno, const int compat, const int force_indicator,
 	 * offset - offset between ith and (i+1)th entry in an array, normally
 	 * that means sizeof(type)
 	 * ind_type - type of indicator variable
-	 * ind_value - pointer to indicator variable
+	 * ind_pointer - pointer to indicator variable
 	 * ind_varcharsize - empty
-	 * ind_arraysize - arraysize of indicator array
+	 * ind_arrsize - arraysize of indicator array
 	 * ind_offset - indicator offset
 	 *------
 	 */

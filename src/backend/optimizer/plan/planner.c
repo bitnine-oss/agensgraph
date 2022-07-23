@@ -634,6 +634,7 @@ subquery_planner(PlannerGlobal *glob, Query *parse,
 	root->cte_plan_ids = NIL;
 	root->multiexpr_params = NIL;
 	root->eq_classes = NIL;
+	root->ec_merging_done = false;
 	root->append_rel_list = NIL;
 	root->rowMarks = NIL;
 	memset(root->upper_rels, 0, sizeof(root->upper_rels));
@@ -677,11 +678,12 @@ subquery_planner(PlannerGlobal *glob, Query *parse,
 		pull_up_sublinks(root);
 
 	/*
-	 * Scan the rangetable for set-returning functions, and inline them if
-	 * possible (producing subqueries that might get pulled up next).
-	 * Recursion issues here are handled in the same way as for SubLinks.
+	 * Scan the rangetable for function RTEs, do const-simplification on them,
+	 * and then inline them if possible (producing subqueries that might get
+	 * pulled up next).  Recursion issues here are handled in the same way as
+	 * for SubLinks.
 	 */
-	inline_set_returning_functions(root);
+	preprocess_function_rtes(root);
 
 	/*
 	 * Check to see if any subqueries in the jointree can be merged into this
@@ -1144,7 +1146,9 @@ preprocess_expression(PlannerInfo *root, Node *expr, int kind)
 		expr = flatten_join_alias_vars(root->parse, expr);
 
 	/*
-	 * Simplify constant expressions.
+	 * Simplify constant expressions.  For function RTEs, this was already
+	 * done by preprocess_function_rtes ... but we have to do it again if the
+	 * RTE is LATERAL and might have contained join alias variables.
 	 *
 	 * Note: an essential effect of this is to convert named-argument function
 	 * calls to positional notation and insert the current actual values of
@@ -1158,7 +1162,9 @@ preprocess_expression(PlannerInfo *root, Node *expr, int kind)
 	 * careful to maintain AND/OR flatness --- that is, do not generate a tree
 	 * with AND directly under AND, nor OR directly under OR.
 	 */
-	expr = eval_const_expressions(root, expr);
+	if (!(kind == EXPRKIND_RTFUNC ||
+		  (kind == EXPRKIND_RTFUNC_LATERAL && !root->hasJoinRTEs)))
+		expr = eval_const_expressions(root, expr);
 
 	/*
 	 * If it's a qual or havingQual, canonicalize it.
@@ -3293,6 +3299,14 @@ remove_useless_groupby_columns(PlannerInfo *root)
 		if (rte->rtekind != RTE_RELATION)
 			continue;
 
+		/*
+		 * We must skip inheritance parent tables as some of the child rels
+		 * may cause duplicate rows.  This cannot happen with partitioned
+		 * tables, however.
+		 */
+		if (rte->inh && rte->relkind != RELKIND_PARTITIONED_TABLE)
+			continue;
+
 		/* Nothing to do unless this rel has multiple Vars in GROUP BY */
 		relattnos = groupbyattnos[relid];
 		if (bms_membership(relattnos) != BMS_MULTIPLE)
@@ -3512,7 +3526,7 @@ extract_rollup_sets(List *groupingSets)
 	while (lc1 && lfirst(lc1) == NIL)
 	{
 		++num_empty;
-		lc1 = lnext(lc1);
+		lc1 = lnext(groupingSets, lc1);
 	}
 
 	/* bail out now if it turns out that all we had were empty sets. */
@@ -3546,7 +3560,7 @@ extract_rollup_sets(List *groupingSets)
 	j = 0;
 	i = 1;
 
-	for_each_cell(lc, lc1)
+	for_each_cell(lc, groupingSets, lc1)
 	{
 		List	   *candidate = (List *) lfirst(lc);
 		Bitmapset  *candidate_set = NULL;
@@ -3727,10 +3741,6 @@ reorder_grouping_sets(List *groupingsets, List *sortclause)
 			}
 		}
 
-		/*
-		 * Safe to use list_concat (which shares cells of the second arg)
-		 * because we know that new_elems does not share cells with anything.
-		 */
 		previous = list_concat(previous, new_elems);
 
 		gs->set = list_copy(previous);
@@ -4397,14 +4407,14 @@ consider_groupingsets_paths(PlannerInfo *root,
 		 * 2) If there are no empty sets and only unsortable sets, then the
 		 * rollups list will be empty (and thus l_start == NULL), and
 		 * group_pathkeys will be NIL; we must ensure that the vacuously-true
-		 * pathkeys_contain_in test doesn't cause us to crash.
+		 * pathkeys_contained_in test doesn't cause us to crash.
 		 */
 		if (l_start != NULL &&
 			pathkeys_contained_in(root->group_pathkeys, path->pathkeys))
 		{
 			unhashed_rollup = lfirst_node(RollupData, l_start);
 			exclude_groups = unhashed_rollup->numGroups;
-			l_start = lnext(l_start);
+			l_start = lnext(gd->rollups, l_start);
 		}
 
 		hashsize = estimate_hashagg_tablesize(path,
@@ -4425,7 +4435,7 @@ consider_groupingsets_paths(PlannerInfo *root,
 		 */
 		sets_data = list_copy(gd->unsortable_sets);
 
-		for_each_cell(lc, l_start)
+		for_each_cell(lc, gd->rollups, l_start)
 		{
 			RollupData *rollup = lfirst_node(RollupData, lc);
 
@@ -4442,8 +4452,8 @@ consider_groupingsets_paths(PlannerInfo *root,
 			 */
 			if (!rollup->hashable)
 				return;
-			else
-				sets_data = list_concat(sets_data, list_copy(rollup->gsets_data));
+
+			sets_data = list_concat(sets_data, rollup->gsets_data);
 		}
 		foreach(lc, sets_data)
 		{
@@ -4586,7 +4596,7 @@ consider_groupingsets_paths(PlannerInfo *root,
 			 * below, must use the same condition.
 			 */
 			i = 0;
-			for_each_cell(lc, lnext(list_head(gd->rollups)))
+			for_each_cell(lc, gd->rollups, list_second_cell(gd->rollups))
 			{
 				RollupData *rollup = lfirst_node(RollupData, lc);
 
@@ -4620,7 +4630,7 @@ consider_groupingsets_paths(PlannerInfo *root,
 				rollups = list_make1(linitial(gd->rollups));
 
 				i = 0;
-				for_each_cell(lc, lnext(list_head(gd->rollups)))
+				for_each_cell(lc, gd->rollups, list_second_cell(gd->rollups))
 				{
 					RollupData *rollup = lfirst_node(RollupData, lc);
 
@@ -4628,7 +4638,7 @@ consider_groupingsets_paths(PlannerInfo *root,
 					{
 						if (bms_is_member(i, hash_items))
 							hash_sets = list_concat(hash_sets,
-													list_copy(rollup->gsets_data));
+													rollup->gsets_data);
 						else
 							rollups = lappend(rollups, rollup);
 						++i;
@@ -4833,7 +4843,7 @@ create_one_window_path(PlannerInfo *root,
 											 -1.0);
 		}
 
-		if (lnext(l))
+		if (lnext(activeWindows, l))
 		{
 			/*
 			 * Add the current WindowFuncs to the output target for this
@@ -5425,7 +5435,7 @@ make_dijkstra_input_target(PlannerInfo *root, PathTarget *final_target)
  * a regular aggregation node would, plus any aggregates used in HAVING;
  * except that the Aggref nodes should be marked as partial aggregates.
  *
- * In addition, we'd better emit any Vars and PlaceholderVars that are
+ * In addition, we'd better emit any Vars and PlaceHolderVars that are
  * used outside of Aggrefs in the aggregation tlist and HAVING.  (Presumably,
  * these would be Vars that are grouped by or used in grouping expressions.)
  *
@@ -5587,7 +5597,7 @@ postprocess_setop_tlist(List *new_tlist, List *orig_tlist)
 
 		Assert(orig_tlist_item != NULL);
 		orig_tle = lfirst_node(TargetEntry, orig_tlist_item);
-		orig_tlist_item = lnext(orig_tlist_item);
+		orig_tlist_item = lnext(orig_tlist, orig_tlist_item);
 		if (orig_tle->resjunk)	/* should not happen */
 			elog(ERROR, "resjunk output columns are not implemented");
 		Assert(new_tle->resno == orig_tle->resno);
@@ -5890,8 +5900,7 @@ make_pathkeys_for_window(PlannerInfo *root, WindowClause *wc,
 				 errdetail("Window ordering columns must be of sortable datatypes.")));
 
 	/* Okay, make the combined pathkeys */
-	window_sortclauses = list_concat(list_copy(wc->partitionClause),
-									 list_copy(wc->orderClause));
+	window_sortclauses = list_concat_copy(wc->partitionClause, wc->orderClause);
 	window_pathkeys = make_pathkeys_for_sortclauses(root,
 													window_sortclauses,
 													tlist);

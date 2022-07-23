@@ -89,8 +89,7 @@ extractPageMap(const char *datadir, XLogRecPtr startpoint, int tliIndex,
 						 errormsg);
 			else
 				pg_fatal("could not read WAL record at %X/%X",
-						 (uint32) (startpoint >> 32),
-						 (uint32) (startpoint));
+						 (uint32) (errptr >> 32), (uint32) (errptr));
 		}
 
 		extractPageInfo(xlogreader);
@@ -235,7 +234,7 @@ findLastCheckpoint(const char *datadir, XLogRecPtr forkptr, int tliIndex,
 	}
 }
 
-/* XLogreader callback function, to read a WAL page */
+/* XLogReader callback function, to read a WAL page */
 static int
 SimpleXLogPageRead(XLogReaderState *xlogreader, XLogRecPtr targetPagePtr,
 				   int reqLen, XLogRecPtr targetRecPtr, char *readBuf,

@@ -103,6 +103,14 @@ ANALYZE ab1 (a);
 WARNING:  statistics object "public.ab1_a_b_stats" could not be computed for relation "public.ab1"
 ANALYZE ab1;
 DROP TABLE ab1;
+-- Ensure we can build statistics for tables with inheritance.
+CREATE TABLE ab1 (a INTEGER, b INTEGER);
+CREATE TABLE ab1c () INHERITS (ab1);
+INSERT INTO ab1 VALUES (1,1);
+CREATE STATISTICS ab1_a_b_stats ON a, b FROM ab1;
+ANALYZE ab1;
+DROP TABLE ab1 CASCADE;
+NOTICE:  drop cascades to table ab1c
 -- Verify supported object types for extended statistics
 CREATE schema tststats;
 CREATE TABLE tststats.t (a int, b int, c text);
@@ -614,9 +622,35 @@ SELECT m.*
        pg_mcv_list_items(d.stxdmcv) m
  WHERE s.stxname = 'mcv_lists_stats'
    AND d.stxoid = s.oid;
- index |  values   |  nulls  | frequency | base_frequency 
--------+-----------+---------+-----------+----------------
-     0 | {1, 2, 3} | {f,f,f} |         1 |              1
+ index | values  |  nulls  | frequency | base_frequency 
+-------+---------+---------+-----------+----------------
+     0 | {1,2,3} | {f,f,f} |         1 |              1
+(1 row)
+
+-- 2 distinct combinations with NULL values, all in the MCV list
+TRUNCATE mcv_lists;
+DROP STATISTICS mcv_lists_stats;
+INSERT INTO mcv_lists (a, b, c, d)
+     SELECT
+         (CASE WHEN mod(i,2) = 0 THEN NULL ELSE 0 END),
+         (CASE WHEN mod(i,2) = 0 THEN NULL ELSE 'x' END),
+         (CASE WHEN mod(i,2) = 0 THEN NULL ELSE 0 END),
+         (CASE WHEN mod(i,2) = 0 THEN NULL ELSE 'x' END)
+     FROM generate_series(1,5000) s(i);
+ANALYZE mcv_lists;
+SELECT * FROM check_estimated_rows('SELECT * FROM mcv_lists WHERE b = ''x'' OR d = ''x''');
+ estimated | actual 
+-----------+--------
+      3750 |   2500
+(1 row)
+
+-- create statistics
+CREATE STATISTICS mcv_lists_stats (mcv) ON b, d FROM mcv_lists;
+ANALYZE mcv_lists;
+SELECT * FROM check_estimated_rows('SELECT * FROM mcv_lists WHERE b = ''x'' OR d = ''x''');
+ estimated | actual 
+-----------+--------
+      2500 |   2500
 (1 row)
 
 -- mcv with arrays

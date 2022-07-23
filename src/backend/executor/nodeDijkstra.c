@@ -93,7 +93,7 @@ vnode_next_enode(vnode *vertex)
 	if (vertex->out_edge == NULL)
 		vertex->out_edge = list_head(vertex->incoming_enodes);
 	else
-		vertex->out_edge = lnext(vertex->out_edge);
+		vertex->out_edge = lnext(vertex->incoming_enodes, vertex->out_edge);
 }
 
 /* returns true if out_edge is reset to the first incoming edge */
@@ -241,7 +241,7 @@ proj_path(DijkstraState *node)
 		node->n = node->max_n; /* no more path */
 
 	null_edge = list_nth_cell(edges, 0);
-	edges = list_delete_cell(edges, null_edge, NULL);
+	edges = list_delete_cell(edges, null_edge);
 
 	projInfo = node->ps.ps_ProjInfo;
 	slot = projInfo->pi_state.resultslot;

@@ -15,6 +15,7 @@
 #define EXECUTOR_H
 
 #include "executor/execdesc.h"
+#include "fmgr.h"
 #include "nodes/lockoptions.h"
 #include "nodes/parsenodes.h"
 #include "utils/memutils.h"
@@ -314,7 +315,7 @@ ExecEvalExprSwitchContext(ExprState *state,
  * ExecProject
  *
  * Projects a tuple based on projection info and stores it in the slot passed
- * to ExecBuildProjectInfo().
+ * to ExecBuildProjectionInfo().
  *
  * Note: the result is always a virtual tuple; therefore it may reference
  * the contents of the exprContext's scan tuples and/or temporary results
@@ -535,8 +536,7 @@ extern void ExecInitRangeTable(EState *estate, List *rangeTable);
 static inline RangeTblEntry *
 exec_rt_fetch(Index rti, EState *estate)
 {
-	Assert(rti > 0 && rti <= estate->es_range_table_size);
-	return estate->es_range_table_array[rti - 1];
+	return (RangeTblEntry *) list_nth(estate->es_range_table, rti - 1);
 }
 
 extern Relation ExecGetRangeTableRelation(EState *estate, Index rti);

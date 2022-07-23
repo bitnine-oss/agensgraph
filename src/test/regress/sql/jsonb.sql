@@ -64,9 +64,17 @@ SELECT array_to_json(ARRAY [jsonb '{"a":1}', jsonb '{"b":[2,3]}']);
 
 -- anyarray column
 
-select to_jsonb(histogram_bounds) histogram_bounds
+CREATE TEMP TABLE rows AS
+SELECT x, 'txt' || x as y
+FROM generate_series(1,3) AS x;
+
+analyze rows;
+
+select attname, to_jsonb(histogram_bounds) histogram_bounds
 from pg_stats
-where attname = 'tmplname' and tablename = 'pg_pltemplate';
+where tablename = 'rows' and
+      schemaname = pg_my_temp_schema()::regnamespace::text
+order by 1;
 
 -- to_jsonb, timestamps
 
@@ -89,10 +97,6 @@ select to_jsonb(timestamptz 'Infinity');
 select to_jsonb(timestamptz '-Infinity');
 
 --jsonb_agg
-
-CREATE TEMP TABLE rows AS
-SELECT x, 'txt' || x as y
-FROM generate_series(1,3) AS x;
 
 SELECT jsonb_agg(q)
   FROM ( SELECT $$a$$ || x AS b, y AS c,
@@ -642,6 +646,8 @@ SELECT rec FROM jsonb_populate_record(
 -- anonymous record type
 SELECT jsonb_populate_record(null::record, '{"x": 0, "y": 1}');
 SELECT jsonb_populate_record(row(1,2), '{"f1": 0, "f2": 1}');
+SELECT * FROM
+  jsonb_populate_record(null::record, '{"x": 776}') AS (x int, y int);
 
 -- composite domain
 SELECT jsonb_populate_record(null::jb_ordered_pair, '{"x": 0, "y": 1}');
@@ -665,11 +671,15 @@ SELECT jsonb_populate_recordset(null::record, '[{"x": 0, "y": 1}]');
 SELECT jsonb_populate_recordset(row(1,2), '[{"f1": 0, "f2": 1}]');
 SELECT i, jsonb_populate_recordset(row(i,50), '[{"f1":"42"},{"f2":"43"}]')
 FROM (VALUES (1),(2)) v(i);
+SELECT * FROM
+  jsonb_populate_recordset(null::record, '[{"x": 776}]') AS (x int, y int);
 
 -- empty array is a corner case
 SELECT jsonb_populate_recordset(null::record, '[]');
 SELECT jsonb_populate_recordset(row(1,2), '[]');
 SELECT * FROM jsonb_populate_recordset(NULL::jbpop,'[]') q;
+SELECT * FROM
+  jsonb_populate_recordset(null::record, '[]') AS (x int, y int);
 
 -- composite domain
 SELECT jsonb_populate_recordset(null::jb_ordered_pair, '[{"x": 0, "y": 1}]');

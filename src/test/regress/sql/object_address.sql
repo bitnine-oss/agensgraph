@@ -45,7 +45,10 @@ ALTER DEFAULT PRIVILEGES FOR ROLE regress_addr_user REVOKE DELETE ON TABLES FROM
 CREATE TRANSFORM FOR int LANGUAGE SQL (
 	FROM SQL WITH FUNCTION prsd_lextype(internal),
 	TO SQL WITH FUNCTION int4recv(internal));
+-- suppress warning that depends on wal_level
+SET client_min_messages = 'ERROR';
 CREATE PUBLICATION addr_pub FOR TABLE addr_nsp.gentable;
+RESET client_min_messages;
 CREATE SUBSCRIPTION regress_addr_sub CONNECTION '' PUBLICATION bar WITH (connect = false, slot_name = NONE);
 CREATE STATISTICS addr_nsp.gentable_stat ON a, b FROM addr_nsp.gentable;
 
@@ -164,7 +167,7 @@ WITH objects (type, name, args) AS (VALUES
 				('collation', '{default}', '{}'),
 				('table constraint', '{addr_nsp, gentable, a_chk}', '{}'),
 				('domain constraint', '{addr_nsp.gendomain}', '{domconstr}'),
-				('conversion', '{pg_catalog, ascii_to_mic}', '{}'),
+				('conversion', '{pg_catalog, koi8_r_to_mic}', '{}'),
 				('default value', '{addr_nsp, gentable, b}', '{}'),
 				('language', '{plpgsql}', '{}'),
 				-- large object

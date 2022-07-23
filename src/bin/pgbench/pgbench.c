@@ -651,6 +651,7 @@ usage(void)
 		   "  --progress-timestamp     use Unix epoch timestamps for progress\n"
 		   "  --random-seed=SEED       set random seed (\"time\", \"rand\", integer)\n"
 		   "  --sampling-rate=NUM      fraction of transactions to log (e.g., 0.01 for 1%%)\n"
+		   "  --show-script=NAME       show builtin script code, then exit\n"
 		   "\nCommon options:\n"
 		   "  -d, --debug              print debugging output\n"
 		   "  -h, --host=HOSTNAME      database server host or socket directory\n"
@@ -3931,32 +3932,48 @@ checkInitSteps(const char *initialize_steps)
 static void
 runInitSteps(const char *initialize_steps)
 {
+	PQExpBufferData stats;
 	PGconn	   *con;
 	const char *step;
+	double		run_time = 0.0;
+	bool		first = true;
+
+	initPQExpBuffer(&stats);
 
 	if ((con = doConnect()) == NULL)
 		exit(1);
 
 	for (step = initialize_steps; *step != '\0'; step++)
 	{
+		instr_time	start;
+		char	   *op = NULL;
+
+		INSTR_TIME_SET_CURRENT(start);
+
 		switch (*step)
 		{
 			case 'd':
+				op = "drop tables";
 				initDropTables(con);
 				break;
 			case 't':
+				op = "create tables";
 				initCreateTables(con);
 				break;
 			case 'g':
+				op = "generate";
 				initGenerateData(con);
 				break;
 			case 'v':
+				op = "vacuum";
 				initVacuum(con);
 				break;
 			case 'p':
+				op = "primary keys";
 				initCreatePKeys(con);
 				break;
 			case 'f':
+				op = "foreign keys";
 				initCreateFKeys(con);
 				break;
 			case ' ':
@@ -3967,10 +3984,30 @@ runInitSteps(const char *initialize_steps)
 				PQfinish(con);
 				exit(1);
 		}
+
+		if (op != NULL)
+		{
+			instr_time	diff;
+			double		elapsed_sec;
+
+			INSTR_TIME_SET_CURRENT(diff);
+			INSTR_TIME_SUBTRACT(diff, start);
+			elapsed_sec = INSTR_TIME_GET_DOUBLE(diff);
+
+			if (!first)
+				appendPQExpBufferStr(&stats, ", ");
+			else
+				first = false;
+
+			appendPQExpBuffer(&stats, "%s %.2f s", op, elapsed_sec);
+
+			run_time += elapsed_sec;
+		}
 	}
 
-	fprintf(stderr, "done.\n");
+	fprintf(stderr, "done in %.2f s (%s).\n", run_time, stats.data);
 	PQfinish(con);
+	termPQExpBuffer(&stats);
 }
 
 /*
@@ -4648,7 +4685,7 @@ listAvailableScripts(void)
 
 	fprintf(stderr, "Available builtin scripts:\n");
 	for (i = 0; i < lengthof(builtin_script); i++)
-		fprintf(stderr, "\t%s\n", builtin_script[i].name);
+		fprintf(stderr, "  %13s: %s\n", builtin_script[i].name, builtin_script[i].desc);
 	fprintf(stderr, "\n");
 }
 
@@ -5088,6 +5125,7 @@ main(int argc, char **argv)
 		{"log-prefix", required_argument, NULL, 7},
 		{"foreign-keys", no_argument, NULL, 8},
 		{"random-seed", required_argument, NULL, 9},
+		{"show-script", required_argument, NULL, 10},
 		{NULL, 0, NULL, 0}
 	};
 
@@ -5440,6 +5478,14 @@ main(int argc, char **argv)
 					exit(1);
 				}
 				break;
+			case 10:			/* list */
+				{
+					const BuiltinScript *s = findBuiltin(optarg);
+
+					fprintf(stderr, "-- %s: %s\n%s\n", s->name, s->desc, s->script);
+					exit(0);
+				}
+				break;
 			default:
 				fprintf(stderr, _("Try \"%s --help\" for more information.\n"), progname);
 				exit(1);
@@ -5494,7 +5540,7 @@ main(int argc, char **argv)
 	throttle_delay *= nthreads;
 
 	if (argc > optind)
-		dbName = argv[optind];
+		dbName = argv[optind++];
 	else
 	{
 		if ((env = getenv("PGDATABASE")) != NULL && *env != '\0')
@@ -5503,6 +5549,14 @@ main(int argc, char **argv)
 			dbName = login;
 		else
 			dbName = "";
+	}
+
+	if (optind < argc)
+	{
+		fprintf(stderr, _("%s: too many command-line arguments (first is \"%s\")\n"),
+				progname, argv[optind]);
+		fprintf(stderr, _("Try \"%s --help\" for more information.\n"), progname);
+		exit(1);
 	}
 
 	if (is_init_mode)

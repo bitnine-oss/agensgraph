@@ -515,7 +515,6 @@ int			log_min_messages = WARNING;
 int			client_min_messages = NOTICE;
 int			log_min_duration_statement = -1;
 int			log_temp_files = -1;
-double		log_statement_sample_rate = 1.0;
 double		log_xact_sample_rate = 0;
 int			trace_recovery_messages = LOG;
 
@@ -2758,8 +2757,7 @@ static struct config_int ConfigureNamesInt[] =
 		{"log_min_duration_statement", PGC_SUSET, LOGGING_WHEN,
 			gettext_noop("Sets the minimum execution time above which "
 						 "statements will be logged."),
-			gettext_noop("Zero prints all queries, subject to log_statement_sample_rate. "
-						 "-1 turns this feature off."),
+			gettext_noop("Zero prints all queries. -1 turns this feature off."),
 			GUC_UNIT_MS
 		},
 		&log_min_duration_statement,
@@ -3486,17 +3484,6 @@ static struct config_real ConfigureNamesReal[] =
 	},
 
 	{
-		{"log_statement_sample_rate", PGC_SUSET, LOGGING_WHEN,
-			gettext_noop("Fraction of statements exceeding log_min_duration_statement to be logged."),
-			gettext_noop("If you only want a sample, use a value between 0.0 (never "
-						 "log) and 1.0 (always log).")
-		},
-		&log_statement_sample_rate,
-		1.0, 0.0, 1.0,
-		NULL, NULL, NULL
-	},
-
-	{
 		{"log_transaction_sample_rate", PGC_SUSET, LOGGING_WHEN,
 			gettext_noop("Set the fraction of transactions to log for new transactions."),
 			gettext_noop("Logs all statements from a fraction of transactions. "
@@ -4189,7 +4176,7 @@ static struct config_string ConfigureNamesString[] =
 			GUC_SUPERUSER_ONLY
 		},
 		&SSLCipherSuites,
-#ifdef USE_SSL
+#ifdef USE_OPENSSL
 		"HIGH:MEDIUM:+3DES:!aNULL",
 #else
 		"none",
@@ -7926,40 +7913,37 @@ replace_auto_config_value(ConfigVariable **head_p, ConfigVariable **tail_p,
 						  const char *name, const char *value)
 {
 	ConfigVariable *item,
+			   *next,
 			   *prev = NULL;
 
-	/* Search the list for an existing match (we assume there's only one) */
-	for (item = *head_p; item != NULL; item = item->next)
+	/*
+	 * Remove any existing match(es) for "name".  Normally there'd be at most
+	 * one, but if external tools have modified the config file, there could
+	 * be more.
+	 */
+	for (item = *head_p; item != NULL; item = next)
 	{
-		if (strcmp(item->name, name) == 0)
+		next = item->next;
+		if (guc_name_compare(item->name, name) == 0)
 		{
-			/* found a match, replace it */
-			pfree(item->value);
-			if (value != NULL)
-			{
-				/* update the parameter value */
-				item->value = pstrdup(value);
-			}
+			/* found a match, delete it */
+			if (prev)
+				prev->next = next;
 			else
-			{
-				/* delete the configuration parameter from list */
-				if (*head_p == item)
-					*head_p = item->next;
-				else
-					prev->next = item->next;
-				if (*tail_p == item)
-					*tail_p = prev;
+				*head_p = next;
+			if (next == NULL)
+				*tail_p = prev;
 
-				pfree(item->name);
-				pfree(item->filename);
-				pfree(item);
-			}
-			return;
+			pfree(item->name);
+			pfree(item->value);
+			pfree(item->filename);
+			pfree(item);
 		}
-		prev = item;
+		else
+			prev = item;
 	}
 
-	/* Not there; no work if we're trying to delete it */
+	/* Done if we're trying to delete it */
 	if (value == NULL)
 		return;
 

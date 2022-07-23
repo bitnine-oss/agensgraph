@@ -17,7 +17,6 @@
 #include "access/amapi.h"
 #include "access/gist.h"
 #include "access/itup.h"
-#include "fmgr.h"
 #include "lib/pairingheap.h"
 #include "storage/bufmgr.h"
 #include "storage/buffile.h"
@@ -400,7 +399,7 @@ extern void freeGISTstate(GISTSTATE *giststate);
 extern void gistdoinsert(Relation r,
 						 IndexTuple itup,
 						 Size freespace,
-						 GISTSTATE *GISTstate,
+						 GISTSTATE *giststate,
 						 Relation heapRel,
 						 bool is_build);
 
@@ -417,7 +416,7 @@ extern bool gistplacetopage(Relation rel, Size freespace, GISTSTATE *giststate,
 							OffsetNumber oldoffnum, BlockNumber *newblkno,
 							Buffer leftchildbuf,
 							List **splitinfo,
-							bool markleftchild,
+							bool markfollowright,
 							Relation heapRel,
 							bool is_build);
 
@@ -426,11 +425,11 @@ extern SplitedPageLayout *gistSplit(Relation r, Page page, IndexTuple *itup,
 
 /* gistxlog.c */
 extern XLogRecPtr gistXLogPageDelete(Buffer buffer,
-									 TransactionId xid, Buffer parentBuffer,
+									 FullTransactionId xid, Buffer parentBuffer,
 									 OffsetNumber downlinkOffset);
 
 extern void gistXLogPageReuse(Relation rel, BlockNumber blkno,
-							  TransactionId latestRemovedXid);
+							  FullTransactionId latestRemovedXid);
 
 extern XLogRecPtr gistXLogUpdate(Buffer buffer,
 								 OffsetNumber *todelete, int ntodelete,
@@ -473,8 +472,7 @@ extern bool gistPageRecyclable(Page page);
 extern void gistfillbuffer(Page page, IndexTuple *itup, int len,
 						   OffsetNumber off);
 extern IndexTuple *gistextractpage(Page page, int *len /* out */ );
-extern IndexTuple *gistjoinvector(
-								  IndexTuple *itvec, int *len,
+extern IndexTuple *gistjoinvector(IndexTuple *itvec, int *len,
 								  IndexTuple *additvec, int addlen);
 extern IndexTupleData *gistfillitupvec(IndexTuple *vec, int veclen, int *memlen);
 

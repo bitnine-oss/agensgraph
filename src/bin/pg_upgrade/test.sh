@@ -31,11 +31,13 @@ standard_initdb() {
 	../../test/regress/pg_regress --config-auth "$PGDATA"
 }
 
-# Establish how the server will listen for connections
-testhost=`uname -s`
+# What flavor of host are we on?
+# Treat MINGW* (msys1) and MSYS* (msys2) the same.
+testhost=`uname -s | sed s/^MSYS/MINGW/`
 
+# Establish how the server will listen for connections
 case $testhost in
-	MINGW*|MSYS*)
+	MINGW*)
 		LISTEN_ADDRESSES="localhost"
 		PGHOST=localhost
 		;;
@@ -224,7 +226,7 @@ AGDATA=$PGDATA
 
 standard_initdb 'initdb'
 
-pg_upgrade $PG_UPGRADE_OPTS -d "${PGDATA}.old" -D "$PGDATA" -b "$oldbindir" -B "$bindir" -p "$PGPORT" -P "$PGPORT"
+pg_upgrade $PG_UPGRADE_OPTS -d "${PGDATA}.old" -D "$PGDATA" -b "$oldbindir" -p "$PGPORT" -P "$PGPORT"
 
 # make sure all directories and files have group permissions, on Unix hosts
 # Windows hosts don't support Unix-y permissions.

@@ -957,6 +957,36 @@ xmin_cmp(const pairingheap_node *a, const pairingheap_node *b, void *arg)
 }
 
 /*
+ * Get current RecentGlobalXmin value, as a FullTransactionId.
+ */
+FullTransactionId
+GetFullRecentGlobalXmin(void)
+{
+	FullTransactionId nextxid_full;
+	uint32		nextxid_epoch;
+	TransactionId nextxid_xid;
+	uint32		epoch;
+
+	Assert(TransactionIdIsNormal(RecentGlobalXmin));
+
+	/*
+	 * Compute the epoch from the next XID's epoch. This relies on the fact
+	 * that RecentGlobalXmin must be within the 2 billion XID horizon from the
+	 * next XID.
+	 */
+	nextxid_full = ReadNextFullTransactionId();
+	nextxid_epoch = EpochFromFullTransactionId(nextxid_full);
+	nextxid_xid = XidFromFullTransactionId(nextxid_full);
+
+	if (RecentGlobalXmin > nextxid_xid)
+		epoch = nextxid_epoch - 1;
+	else
+		epoch = nextxid_epoch;
+
+	return FullTransactionIdFromEpochAndXid(epoch, RecentGlobalXmin);
+}
+
+/*
  * SnapshotResetXmin
  *
  * If there are no more snapshots, we can reset our PGXACT->xmin to InvalidXid.
@@ -1093,7 +1123,7 @@ AtEOXact_Snapshot(bool isCommit, bool resetXmin)
 		 * prevent a warning below.
 		 *
 		 * As with the FirstXactSnapshot, we don't need to free resources of
-		 * the snapshot iself as it will go away with the memory context.
+		 * the snapshot itself as it will go away with the memory context.
 		 */
 		foreach(lc, exportedSnapshots)
 		{
@@ -1141,7 +1171,7 @@ AtEOXact_Snapshot(bool isCommit, bool resetXmin)
 
 	/*
 	 * During normal commit processing, we call ProcArrayEndTransaction() to
-	 * reset the PgXact->xmin. That call happens prior to the call to
+	 * reset the MyPgXact->xmin. That call happens prior to the call to
 	 * AtEOXact_Snapshot(), so we need not touch xmin here at all.
 	 */
 	if (resetXmin)

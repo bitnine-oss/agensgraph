@@ -163,7 +163,7 @@ algorithms.
 
 * The posting list can be accessed with GinGetPosting(itup)
 
-* If GinITupIsCompressed(itup), the posting list is stored in compressed
+* If GinItupIsCompressed(itup), the posting list is stored in compressed
   format. Otherwise it is just an array of ItemPointers. New tuples are always
   stored in compressed format, uncompressed items can be present if the
   database was migrated from 9.3 or earlier version.
@@ -270,7 +270,7 @@ is stored in the higher bits. That requires 43 bits in total, which
 conveniently fits in at most 6 bytes.
 
 A compressed posting list is passed around and stored on disk in a
-PackedPostingList struct. The first item in the list is stored uncompressed
+GinPostingList struct. The first item in the list is stored uncompressed
 as a regular ItemPointerData, followed by the length of the list in bytes,
 followed by the packed items.
 

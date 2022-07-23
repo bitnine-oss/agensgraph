@@ -73,6 +73,7 @@ static int	ldapServiceLookup(const char *purl, PQconninfoOption *options,
 #include "common/ip.h"
 #include "common/link-canary.h"
 #include "common/scram-common.h"
+#include "common/string.h"
 #include "mb/pg_wchar.h"
 #include "port/pg_bswap.h"
 
@@ -1538,19 +1539,19 @@ getHostaddr(PGconn *conn, char *host_addr, int host_addr_len)
 
 	if (addr->ss_family == AF_INET)
 	{
-		if (inet_net_ntop(AF_INET,
-						  &((struct sockaddr_in *) addr)->sin_addr.s_addr,
-						  32,
-						  host_addr, host_addr_len) == NULL)
+		if (pg_inet_net_ntop(AF_INET,
+							 &((struct sockaddr_in *) addr)->sin_addr.s_addr,
+							 32,
+							 host_addr, host_addr_len) == NULL)
 			host_addr[0] = '\0';
 	}
 #ifdef HAVE_IPV6
 	else if (addr->ss_family == AF_INET6)
 	{
-		if (inet_net_ntop(AF_INET6,
-						  &((struct sockaddr_in6 *) addr)->sin6_addr.s6_addr,
-						  128,
-						  host_addr, host_addr_len) == NULL)
+		if (pg_inet_net_ntop(AF_INET6,
+							 &((struct sockaddr_in6 *) addr)->sin6_addr.s6_addr,
+							 128,
+							 host_addr, host_addr_len) == NULL)
 			host_addr[0] = '\0';
 	}
 #endif
@@ -2772,8 +2773,8 @@ keep_going:						/* We will come back to here until there is
 				}
 				else if (!conn->gctx && conn->gssencmode[0] == 'r')
 				{
-					appendPQExpBuffer(&conn->errorMessage,
-									  libpq_gettext("GSSAPI encryption required, but was impossible (possibly no ccache, no server support, or using a local socket)\n"));
+					appendPQExpBufferStr(&conn->errorMessage,
+										 libpq_gettext("GSSAPI encryption required, but was impossible (possibly no ccache, no server support, or using a local socket)\n"));
 					goto error_return;
 				}
 #endif
@@ -3732,8 +3733,8 @@ internal_ping(PGconn *conn)
 	 * PQPING_NO_RESPONSE.  This result could be somewhat misleading for a
 	 * pre-7.4 server, since it won't send back a SQLSTATE, but those are long
 	 * out of support.  Another corner case where the server could return a
-	 * failure without a SQLSTATE is fork failure, but NO_RESPONSE isn't
-	 * totally unreasonable for that anyway.  We expect that every other
+	 * failure without a SQLSTATE is fork failure, but PQPING_NO_RESPONSE
+	 * isn't totally unreasonable for that anyway.  We expect that every other
 	 * failure case in a modern server will produce a report with a SQLSTATE.
 	 *
 	 * NOTE: whenever we get around to making libpq generate SQLSTATEs for
@@ -5020,6 +5021,8 @@ parseServiceFile(const char *serviceFile,
 
 	while ((line = fgets(buf, sizeof(buf), f)) != NULL)
 	{
+		int			len;
+
 		linenr++;
 
 		if (strlen(line) >= sizeof(buf) - 1)
@@ -5032,16 +5035,17 @@ parseServiceFile(const char *serviceFile,
 			return 2;
 		}
 
-		/* ignore EOL at end of line */
-		if (strlen(line) && line[strlen(line) - 1] == '\n')
-			line[strlen(line) - 1] = 0;
+		/* ignore whitespace at end of line, especially the newline */
+		len = strlen(line);
+		while (len > 0 && isspace((unsigned char) line[len - 1]))
+			line[--len] = '\0';
 
-		/* ignore leading blanks */
+		/* ignore leading whitespace too */
 		while (*line && isspace((unsigned char) line[0]))
 			line++;
 
 		/* ignore comments and empty lines */
-		if (strlen(line) == 0 || line[0] == '#')
+		if (line[0] == '\0' || line[0] == '#')
 			continue;
 
 		/* Check for right groupname */
@@ -6918,16 +6922,8 @@ passwordFromFile(const char *hostname, const char *port, const char *dbname,
 		if (fgets(buf, sizeof(buf), fp) == NULL)
 			break;
 
-		len = strlen(buf);
-
-		/* Remove trailing newline */
-		if (len > 0 && buf[len - 1] == '\n')
-		{
-			buf[--len] = '\0';
-			/* Handle DOS-style line endings, too, even when not on Windows */
-			if (len > 0 && buf[len - 1] == '\r')
-				buf[--len] = '\0';
-		}
+		/* strip trailing newline and carriage return */
+		len = pg_strip_crlf(buf);
 
 		if (len == 0)
 			continue;

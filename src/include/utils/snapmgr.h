@@ -13,7 +13,7 @@
 #ifndef SNAPMGR_H
 #define SNAPMGR_H
 
-#include "fmgr.h"
+#include "access/transam.h"
 #include "utils/relcache.h"
 #include "utils/resowner.h"
 #include "utils/snapshot.h"
@@ -40,7 +40,6 @@
 	 RelationNeedsWAL(rel) \
   && !IsCatalogRelation(rel) \
   && !RelationIsAccessibleInLogicalDecoding(rel) \
-  && !RelationHasUnloggedIndex(rel) \
 )
 
 #define EarlyPruningEnabled(rel) (old_snapshot_threshold >= 0 && RelationAllowsEarlyPruning(rel))
@@ -122,6 +121,8 @@ extern void UnregisterSnapshot(Snapshot snapshot);
 extern Snapshot RegisterSnapshotOnOwner(Snapshot snapshot, ResourceOwner owner);
 extern void UnregisterSnapshotFromOwner(Snapshot snapshot, ResourceOwner owner);
 extern Snapshot RegisterCopiedSnapshot(Snapshot snapshot);
+
+extern FullTransactionId GetFullRecentGlobalXmin(void);
 
 extern void AtSubCommit_Snapshot(int level);
 extern void AtSubAbort_Snapshot(int level);

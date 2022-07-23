@@ -2497,18 +2497,6 @@
 
      <tbody>
       <row>
-       <entry><literal>ascii_to_mic</literal></entry>
-       <entry><literal>SQL_ASCII</literal></entry>
-       <entry><literal>MULE_INTERNAL</literal></entry>
-      </row>
-
-      <row>
-       <entry><literal>ascii_to_utf8</literal></entry>
-       <entry><literal>SQL_ASCII</literal></entry>
-       <entry><literal>UTF8</literal></entry>
-      </row>
-
-      <row>
        <entry><literal>big5_to_euc_tw</literal></entry>
        <entry><literal>BIG5</literal></entry>
        <entry><literal>EUC_TW</literal></entry>
@@ -2779,12 +2767,6 @@
       </row>
 
       <row>
-       <entry><literal>mic_to_ascii</literal></entry>
-       <entry><literal>MULE_INTERNAL</literal></entry>
-       <entry><literal>SQL_ASCII</literal></entry>
-      </row>
-
-      <row>
        <entry><literal>mic_to_big5</literal></entry>
        <entry><literal>MULE_INTERNAL</literal></entry>
        <entry><literal>BIG5</literal></entry>
@@ -2893,7 +2875,7 @@
       </row>
 
       <row>
-       <entry><literal>tcvn_to_utf8</literal></entry>
+       <entry><literal>windows_1258_to_utf8</literal></entry>
        <entry><literal>WIN1258</literal></entry>
        <entry><literal>UTF8</literal></entry>
       </row>
@@ -2902,12 +2884,6 @@
        <entry><literal>uhc_to_utf8</literal></entry>
        <entry><literal>UHC</literal></entry>
        <entry><literal>UTF8</literal></entry>
-      </row>
-
-      <row>
-       <entry><literal>utf8_to_ascii</literal></entry>
-       <entry><literal>UTF8</literal></entry>
-       <entry><literal>SQL_ASCII</literal></entry>
       </row>
 
       <row>
@@ -3061,7 +3037,7 @@
       </row>
 
       <row>
-       <entry><literal>utf8_to_tcvn</literal></entry>
+       <entry><literal>utf8_to_windows_1258</literal></entry>
        <entry><literal>UTF8</literal></entry>
        <entry><literal>WIN1258</literal></entry>
       </row>
@@ -6444,20 +6420,20 @@ SELECT regexp_match('abc01234xyz', '(?:(.*?)(\d+)(.*)){1,1}');
       </para>
       <para>
        If <literal>FX</literal> is specified, a separator in the template string
-       matches exactly one character in input string.  Notice we don't insist the
-       input string character be the same as the template string separator.
+       matches exactly one character in the input string.  But note that the
+       input string character is not required to be the same as the separator from the template string.
        For example, <literal>to_timestamp('2000/JUN', 'FXYYYY MON')</literal>
        works, but <literal>to_timestamp('2000/JUN', 'FXYYYY&nbsp;&nbsp;MON')</literal>
-       returns an error because the second template string space is consumed
-       by the letter <literal>J</literal> in the input string.
+       returns an error because the second space in the template string consumes
+       the letter <literal>J</literal> from the input string.
       </para>
      </listitem>
 
      <listitem>
       <para>
        A <literal>TZH</literal> template pattern can match a signed number.
-       Without the <literal>FX</literal> option, it can lead to ambiguity in
-       interpretation of the minus sign, which can also be interpreted as a separator.
+       Without the <literal>FX</literal> option, minus signs may be ambiguous,
+       and could be interpreted as a separator.
        This ambiguity is resolved as follows:  If the number of separators before
        <literal>TZH</literal> in the template string is less than the number of
        separators before the minus sign in the input string, the minus sign
@@ -10291,6 +10267,32 @@ CREATE TYPE rainbow AS ENUM ('red', 'orange', 'yellow', 'green', 'blue', 'purple
 
  </sect1>
 
+ <sect1 id="functions-uuid">
+  <title>UUID Functions</title>
+
+  <indexterm zone="datatype-uuid">
+   <primary>UUID</primary>
+   <secondary>generating</secondary>
+  </indexterm>
+
+  <indexterm>
+   <primary>gen_random_uuid</primary>
+  </indexterm>
+
+  <para>
+   <productname>PostgreSQL</productname> includes one function to generate a UUID:
+<synopsis>
+gen_random_uuid() returns uuid
+</synopsis>
+   This function returns a version 4 (random) UUID.  This is the most commonly
+   used type of UUID and is appropriate for most applications.
+  </para>
+
+  <para>
+   The <xref linkend="uuid-ossp"/> module provides additional functions that
+   implement other standard algorithms for generating UUIDs.
+  </para>
+ </sect1>
 
  <sect1 id="functions-xml">
 
@@ -11538,7 +11540,8 @@ table2-mapping
    from the JSON data, similar to XPath expressions used
    for SQL access to XML. In <productname>PostgreSQL</productname>,
    path expressions are implemented as the <type>jsonpath</type>
-   data type, described in <xref linkend="datatype-jsonpath"/>.
+   data type and can use any elements described in
+   <xref linkend="datatype-jsonpath"/>.
   </para>
 
   <para>JSON query functions and operators
@@ -11585,7 +11588,7 @@ table2-mapping
       },
       { "location":   [ 47.706, 13.2635 ],
         "start time": "2018-10-14 10:39:21",
-        "HR": 130
+        "HR": 135
       } ]
   }
 }
@@ -11624,7 +11627,7 @@ table2-mapping
    The result of each path evaluation step can be processed
    by one or more <type>jsonpath</type> operators and methods
    listed in <xref linkend="functions-sqljson-path-operators"/>.
-   Each method must be preceded by a dot, while arithmetic and boolean
+   Each method must be preceded by a dot, while arithmetic and Boolean
    operators are separated from the operands by spaces. For example,
    you can get an array size:
 <programlisting>
@@ -11637,23 +11640,33 @@ table2-mapping
 
   <para>
    When defining the path, you can also use one or more
-   <firstterm>filter expressions</firstterm>, which work similar to
-   the <literal>WHERE</literal> clause in SQL. Each filter expression
-   can provide one or more filtering conditions that are applied
-   to the result of the path evaluation. Each filter expression must
-   be enclosed in parentheses and preceded by a question mark.
-   Filter expressions are evaluated from left to right and can be nested.
-   The <literal>@</literal> variable denotes the current path evaluation
-   result to be filtered, and can be followed by one or more accessor
-   operators to define the JSON element by which to filter the result.
-   Functions and operators that can be used in the filtering condition
-   are listed in <xref linkend="functions-sqljson-filter-ex-table"/>.
-   SQL/JSON defines three-valued logic, so the result of the filter
-   expression may be <literal>true</literal>, <literal>false</literal>,
+   <firstterm>filter expressions</firstterm> that work similar to the
+   <literal>WHERE</literal> clause in SQL. A filter expression begins with
+   a question mark and provides a condition in parentheses:
+
+    <programlisting>
+? (<replaceable>condition</replaceable>)
+    </programlisting>
+  </para>
+
+  <para>
+   Filter expressions must be specified right after the path evaluation step
+   to which they are applied. The result of this step is filtered to include
+   only those items that satisfy the provided condition. SQL/JSON defines
+   three-valued logic, so the condition can be <literal>true</literal>, <literal>false</literal>,
    or <literal>unknown</literal>. The <literal>unknown</literal> value
-   plays the same role as SQL <literal>NULL</literal>. Further path
+   plays the same role as SQL <literal>NULL</literal> and can be tested
+   for with the <literal>is unknown</literal> predicate. Further path
    evaluation steps use only those items for which filter expressions
-   return true.
+   return <literal>true</literal>.
+  </para>
+
+  <para>
+   Functions and operators that can be used in filter expressions are listed
+   in <xref linkend="functions-sqljson-filter-ex-table"/>. The path
+   evaluation result to be filtered is denoted by the <literal>@</literal>
+   variable. To refer to a JSON element stored at a lower nesting level,
+   add one or more accessor operators after <literal>@</literal>.
   </para>
 
   <para>
@@ -11667,8 +11680,8 @@ table2-mapping
   <para>
    To get the start time of segments with such values instead, you have to
    filter out irrelevant segments before returning the start time, so the
-   filter is applied to the previous step and the path in the filtering
-   condition is different:
+   filter expression is applied to the previous step, and the path used
+   in the condition is different:
 <programlisting>
 '$.track.segments[*] ? (@.HR &gt; 130)."start time"'
 </programlisting>
@@ -11693,9 +11706,9 @@ table2-mapping
   </para>
 
   <para>
-   You can also nest filters within each other:
+   You can also nest filter expressions within each other:
 <programlisting>
-'$.track ? (@.segments[*] ? (@.HR &gt; 130)).segments.size()'
+'$.track ? (exists(@.segments[*] ? (@.HR &gt; 130))).segments.size()'
 </programlisting>
    This expression returns the size of the track if it contains any
    segments with high heart rate values, or an empty sequence otherwise.
@@ -11719,10 +11732,10 @@ table2-mapping
 
    <listitem>
     <para>
-     A path expression can be a boolean predicate, although the SQL/JSON
+     A path expression can be a Boolean predicate, although the SQL/JSON
      standard allows predicates only in filters.  This is necessary for
      implementation of the <literal>@@</literal> operator. For example,
-     the following<type>jsonpath</type> expression is valid in
+     the following <type>jsonpath</type> expression is valid in
      <productname>PostgreSQL</productname>:
 <programlisting>
 '$.track.segments[*].HR &lt; 70'
@@ -11978,14 +11991,14 @@ table2-mapping
         <entry>Less-than operator</entry>
         <entry><literal>[1, 2, 3]</literal></entry>
         <entry><literal>$[*] ? (@ &lt; 2)</literal></entry>
-        <entry><literal>1, 2</literal></entry>
+        <entry><literal>1</literal></entry>
        </row>
        <row>
         <entry><literal>&lt;=</literal></entry>
         <entry>Less-than-or-equal-to operator</entry>
         <entry><literal>[1, 2, 3]</literal></entry>
-        <entry><literal>$[*] ? (@ &lt; 2)</literal></entry>
-        <entry><literal>1</literal></entry>
+        <entry><literal>$[*] ? (@ &lt;= 2)</literal></entry>
+        <entry><literal>1, 2</literal></entry>
        </row>
        <row>
         <entry><literal>&gt;</literal></entry>
@@ -11995,7 +12008,7 @@ table2-mapping
         <entry><literal>3</literal></entry>
        </row>
        <row>
-        <entry><literal>&gt;</literal></entry>
+        <entry><literal>&gt;=</literal></entry>
         <entry>Greater-than-or-equal-to operator</entry>
         <entry><literal>[1, 2, 3]</literal></entry>
         <entry><literal>$[*] ? (@ &gt;= 2)</literal></entry>
@@ -12073,7 +12086,7 @@ table2-mapping
        </row>
        <row>
         <entry><literal>is unknown</literal></entry>
-        <entry>Tests whether a boolean condition is <literal>unknown</literal></entry>
+        <entry>Tests whether a Boolean condition is <literal>unknown</literal></entry>
         <entry><literal>[-1, 2, 7, "infinity"]</literal></entry>
         <entry><literal>$[*] ? ((@ > 0) is unknown)</literal></entry>
         <entry><literal>"infinity"</literal></entry>
@@ -12285,15 +12298,15 @@ table2-mapping
        <row>
         <entry><literal>@?</literal></entry>
         <entry><type>jsonpath</type></entry>
-        <entry>Does JSON path returns any item for the specified JSON value?</entry>
+        <entry>Does JSON path return any item for the specified JSON value?</entry>
         <entry><literal>'{"a":[1,2,3,4,5]}'::jsonb @? '$.a[*] ? (@ > 2)'</literal></entry>
        </row>
        <row>
         <entry><literal>@@</literal></entry>
         <entry><type>jsonpath</type></entry>
         <entry>JSON path predicate check result for the specified JSON value.
-        Only first result item is taken into account.  If there is no results
-        or first result item is not bool, then <literal>NULL</literal>
+        Only first result item is taken into account.  If there are no results
+        or the first result item is not Boolean, then null
         is returned.</entry>
         <entry><literal>'{"a":[1,2,3,4,5]}'::jsonb @@ '$.a[*] > 2'</literal></entry>
        </row>
@@ -12313,8 +12326,8 @@ table2-mapping
   <note>
    <para>
     The <literal>@?</literal> and <literal>@@</literal> operators suppress
-    errors including: lacking object field or array element, unexpected JSON
-    item type and numeric errors.
+    the following errors: lacking object field or array element, unexpected
+    JSON item type, and numeric errors.
     This behavior might be helpful while searching over JSON document
     collections of varying structure.
    </para>
@@ -12958,8 +12971,8 @@ table2-mapping
         <entry><type>boolean</type></entry>
         <entry>
           Returns JSON path predicate result for the specified JSON value.
-          Only first result item is taken into account.  If there is no results
-          or first result item is not bool, then <literal>NULL</literal>
+          Only first result item is taken into account.  If there are no results
+          or the first result item is not Boolean, then null
           is returned.
         </entry>
         <entry>
@@ -12984,7 +12997,7 @@ table2-mapping
         </entry>
         <entry>
          <para><literal>
-           select * jsonb_path_query('{"a":[1,2,3,4,5]}', '$.a[*] ? (@ >= $min &amp;&amp; @ &lt;= $max)', '{"min":2,"max":4}');
+           select * from jsonb_path_query('{"a":[1,2,3,4,5]}', '$.a[*] ? (@ >= $min &amp;&amp; @ &lt;= $max)', '{"min":2,"max":4}');
          </literal></para>
         </entry>
         <entry>
@@ -13170,17 +13183,17 @@ table2-mapping
     <literal>jsonb_path_query</literal>, <literal>jsonb_path_query_array</literal> and
     <literal>jsonb_path_query_first</literal>
     functions have optional <literal>vars</literal> and <literal>silent</literal>
-    argument.
+    arguments.
    </para>
    <para>
-    When <literal>vars</literal> argument is specified, it constitutes an object
-    contained variables to be substituted into <literal>jsonpath</literal>
-    expression.
+    If the <literal>vars</literal> argument is specified, it provides an
+    object containing named variables to be substituted into a
+    <literal>jsonpath</literal> expression.
    </para>
    <para>
-    When <literal>silent</literal> argument is specified and has
-    <literal>true</literal> value, the same errors are suppressed as it is in
-    the <literal>@?</literal> and <literal>@@</literal> operators.
+    If the <literal>silent</literal> argument is specified and has the
+    <literal>true</literal> value, these functions suppress the same errors
+    as the <literal>@?</literal> and <literal>@@</literal> operators.
    </para>
   </note>
 
@@ -14591,7 +14604,7 @@ NULL baz</literallayout>(3 rows)</entry>
       <entry>No</entry>
       <entry>input arrays concatenated into array of one higher dimension
        (inputs must all have same dimensionality,
-        and cannot be empty or NULL)</entry>
+        and cannot be empty or null)</entry>
      </row>
 
      <row>
@@ -14615,7 +14628,7 @@ NULL baz</literallayout>(3 rows)</entry>
        otherwise the same as the argument data type
       </entry>
       <entry>Yes</entry>
-      <entry>the average (arithmetic mean) of all input values</entry>
+      <entry>the average (arithmetic mean) of all non-null input values</entry>
      </row>
 
      <row>
@@ -14743,7 +14756,7 @@ NULL baz</literallayout>(3 rows)</entry>
        <type>json</type>
       </entry>
       <entry>No</entry>
-      <entry>aggregates values as a JSON array</entry>
+      <entry>aggregates values, including nulls, as a JSON array</entry>
      </row>
 
      <row>
@@ -14760,7 +14773,7 @@ NULL baz</literallayout>(3 rows)</entry>
        <type>jsonb</type>
       </entry>
       <entry>No</entry>
-      <entry>aggregates values as a JSON array</entry>
+      <entry>aggregates values, including nulls, as a JSON array</entry>
      </row>
 
      <row>
@@ -14777,7 +14790,8 @@ NULL baz</literallayout>(3 rows)</entry>
        <type>json</type>
       </entry>
       <entry>No</entry>
-      <entry>aggregates name/value pairs as a JSON object</entry>
+      <entry>aggregates name/value pairs as a JSON object; values can be
+       null, but not names</entry>
      </row>
 
      <row>
@@ -14794,7 +14808,8 @@ NULL baz</literallayout>(3 rows)</entry>
        <type>jsonb</type>
       </entry>
       <entry>No</entry>
-      <entry>aggregates name/value pairs as a JSON object</entry>
+      <entry>aggregates name/value pairs as a JSON object; values can be
+       null, but not names</entry>
      </row>
 
      <row>
@@ -14804,13 +14819,13 @@ NULL baz</literallayout>(3 rows)</entry>
        </indexterm>
        <function>max(<replaceable class="parameter">expression</replaceable>)</function>
       </entry>
-      <entry>any numeric, string, date/time, network, or enum type,
+      <entry>any numeric, string, date/time, network, pg_lsn, or enum type,
              or arrays of these types</entry>
       <entry>same as argument type</entry>
       <entry>Yes</entry>
       <entry>
        maximum value of <replaceable
-       class="parameter">expression</replaceable> across all input
+       class="parameter">expression</replaceable> across all non-null input
        values
       </entry>
      </row>
@@ -14822,13 +14837,13 @@ NULL baz</literallayout>(3 rows)</entry>
        </indexterm>
        <function>min(<replaceable class="parameter">expression</replaceable>)</function>
       </entry>
-      <entry>any numeric, string, date/time, network, or enum type,
+      <entry>any numeric, string, date/time, network, pg_lsn, or enum type,
              or arrays of these types</entry>
       <entry>same as argument type</entry>
       <entry>Yes</entry>
       <entry>
        minimum value of <replaceable
-       class="parameter">expression</replaceable> across all input
+       class="parameter">expression</replaceable> across all non-null input
        values
       </entry>
      </row>
@@ -14850,7 +14865,7 @@ NULL baz</literallayout>(3 rows)</entry>
        same as argument types
       </entry>
       <entry>No</entry>
-      <entry>input values concatenated into a string, separated by delimiter</entry>
+      <entry>non-null input values concatenated into a string, separated by delimiter</entry>
      </row>
 
      <row>
@@ -14873,7 +14888,8 @@ NULL baz</literallayout>(3 rows)</entry>
        argument data type
       </entry>
       <entry>Yes</entry>
-      <entry>sum of <replaceable class="parameter">expression</replaceable> across all input values</entry>
+      <entry>sum of <replaceable class="parameter">expression</replaceable>
+       across all non-null input values</entry>
      </row>
 
      <row>
@@ -14890,7 +14906,8 @@ NULL baz</literallayout>(3 rows)</entry>
        <type>xml</type>
       </entry>
       <entry>No</entry>
-      <entry>concatenation of XML values (see also <xref linkend="functions-xml-xmlagg"/>)</entry>
+      <entry>concatenation of non-null XML values
+       (see also <xref linkend="functions-xml-xmlagg"/>)</entry>
      </row>
     </tbody>
    </tgroup>
@@ -17505,7 +17522,7 @@ SET search_path TO <replaceable>schema</replaceable> <optional>, <replaceable>sc
     get this information from <xref linkend="guc-server-version"/> or
     for a machine-readable version, <xref linkend="guc-server-version-num"/>.
     Software developers should use <literal>server_version_num</literal>
-    (available since 8.2) or <xref linkend="libpq-pqserverversion"/> instead
+    (available since 8.2) or <xref linkend="libpq-PQserverVersion"/> instead
     of parsing the text version.
    </para>
 

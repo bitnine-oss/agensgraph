@@ -2272,7 +2272,7 @@ PQsendDescribe(PGconn *conn, char desc_type, const char *desc_target)
 	/* remember we are doing a Describe */
 	conn->queryclass = PGQUERY_DESCRIBE;
 
-	/* reset last-query string (not relevant now) */
+	/* reset last_query string (not relevant now) */
 	if (conn->last_query)
 	{
 		free(conn->last_query);
@@ -3313,7 +3313,7 @@ PQflush(PGconn *conn)
  *		PQfreemem - safely frees memory allocated
  *
  * Needed mostly by Win32, unless multithreaded DLL (/MD in VC6)
- * Used for freeing memory from PQescapeByte()a/PQunescapeBytea()
+ * Used for freeing memory from PQescapeBytea()/PQunescapeBytea()
  */
 void
 PQfreemem(void *ptr)

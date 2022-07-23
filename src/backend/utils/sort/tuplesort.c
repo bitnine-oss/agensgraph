@@ -141,7 +141,8 @@ bool		optimize_bounded_sort = true;
  * which is a separate palloc chunk --- we assume it is just one chunk and
  * can be freed by a simple pfree() (except during merge, when we use a
  * simple slab allocator).  SortTuples also contain the tuple's first key
- * column in Datum/nullflag format, and an index integer.
+ * column in Datum/nullflag format, and a source/input tape number that
+ * tracks which tape each heap element/slot belongs to during merging.
  *
  * Storing the first key column lets us save heap_getattr or index_getattr
  * calls during tuple comparisons.  We could extract and save all the key
@@ -162,16 +163,13 @@ bool		optimize_bounded_sort = true;
  * either the same pointer as "tuple", or is an abbreviated key value as
  * described above.  Accordingly, "tuple" is always used in preference to
  * datum1 as the authoritative value for pass-by-reference cases.
- *
- * tupindex holds the input tape number that each tuple in the heap was read
- * from during merge passes.
  */
 typedef struct
 {
 	void	   *tuple;			/* the tuple itself */
 	Datum		datum1;			/* value of first key column */
 	bool		isnull1;		/* is first key column NULL? */
-	int			tupindex;		/* see notes above */
+	int			srctape;		/* source tape number */
 } SortTuple;
 
 /*
@@ -574,10 +572,12 @@ struct Sharedsort
  * a lot better than what we were doing before 7.3.  As of 9.6, a
  * separate memory context is used for caller passed tuples.  Resetting
  * it at certain key increments significantly ameliorates fragmentation.
- * Note that this places a responsibility on readtup and copytup routines
- * to use the right memory context for these tuples (and to not use the
- * reset context for anything whose lifetime needs to span multiple
- * external sort runs).
+ * Note that this places a responsibility on copytup routines to use the
+ * correct memory context for these tuples (and to not use the reset
+ * context for anything whose lifetime needs to span multiple external
+ * sort runs).  readtup routines use the slab allocator (they cannot use
+ * the reset context because it gets deleted at the point that merging
+ * begins).
  */
 
 /* When using this macro, beware of double evaluation of len */
@@ -1148,9 +1148,9 @@ tuplesort_begin_datum(Oid datumType, Oid sortOperator, Oid sortCollation,
 	 * Abbreviation is possible here only for by-reference types.  In theory,
 	 * a pass-by-value datatype could have an abbreviated form that is cheaper
 	 * to compare.  In a tuple sort, we could support that, because we can
-	 * always extract the original datum from the tuple is needed.  Here, we
+	 * always extract the original datum from the tuple as needed.  Here, we
 	 * can't, because a datum sort only stores a single copy of the datum; the
-	 * "tuple" field of each sortTuple is NULL.
+	 * "tuple" field of each SortTuple is NULL.
 	 */
 	state->sortKeys->abbreviate = !typbyval;
 
@@ -2091,7 +2091,7 @@ tuplesort_gettuple_common(Tuplesortstate *state, bool forward,
 			 */
 			if (state->memtupcount > 0)
 			{
-				int			srcTape = state->memtuples[0].tupindex;
+				int			srcTape = state->memtuples[0].srctape;
 				SortTuple	newtup;
 
 				*stup = state->memtuples[0];
@@ -2122,7 +2122,7 @@ tuplesort_gettuple_common(Tuplesortstate *state, bool forward,
 					LogicalTapeRewindForWrite(state->tapeset, srcTape);
 					return true;
 				}
-				newtup.tupindex = srcTape;
+				newtup.srctape = srcTape;
 				tuplesort_heap_replace_top(state, &newtup);
 				return true;
 			}
@@ -2806,7 +2806,7 @@ mergeonerun(Tuplesortstate *state)
 		SortTuple	stup;
 
 		/* write the tuple to destTape */
-		srcTape = state->memtuples[0].tupindex;
+		srcTape = state->memtuples[0].srctape;
 		WRITETUP(state, destTape, &state->memtuples[0]);
 
 		/* recycle the slot of the tuple we just wrote out, for the next read */
@@ -2819,9 +2819,8 @@ mergeonerun(Tuplesortstate *state)
 		 */
 		if (mergereadnext(state, srcTape, &stup))
 		{
-			stup.tupindex = srcTape;
+			stup.srctape = srcTape;
 			tuplesort_heap_replace_top(state, &stup);
-
 		}
 		else
 			tuplesort_heap_delete_top(state);
@@ -2885,7 +2884,7 @@ beginmerge(Tuplesortstate *state)
 
 		if (mergereadnext(state, srcTape, &tup))
 		{
-			tup.tupindex = srcTape;
+			tup.srctape = srcTape;
 			tuplesort_heap_insert(state, &tup);
 		}
 	}

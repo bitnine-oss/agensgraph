@@ -482,7 +482,7 @@ main(int argc, char *argv[])
 		OPF = fopen(filename, PG_BINARY_W);
 		if (!OPF)
 		{
-			pg_log_error("could not open the output file \"%s\": %m",
+			pg_log_error("could not open output file \"%s\": %m",
 						 filename);
 			exit_nicely(1);
 		}
@@ -1432,8 +1432,8 @@ expand_dbname_patterns(PGconn *conn,
 
 	for (SimpleStringListCell *cell = patterns->head; cell; cell = cell->next)
 	{
-		appendPQExpBuffer(query,
-						  "SELECT datname FROM pg_catalog.pg_database n\n");
+		appendPQExpBufferStr(query,
+							 "SELECT datname FROM pg_catalog.pg_database n\n");
 		processSQLNamePattern(conn, query, cell->val, false,
 							  false, NULL, "datname", NULL, NULL);
 
@@ -1492,11 +1492,11 @@ dumpDatabases(PGconn *conn)
 		/* Skip any explicitly excluded database */
 		if (simple_string_list_member(&database_exclude_names, dbname))
 		{
-			pg_log_info("excluding database \"%s\"...", dbname);
+			pg_log_info("excluding database \"%s\"", dbname);
 			continue;
 		}
 
-		pg_log_info("dumping database \"%s\"...", dbname);
+		pg_log_info("dumping database \"%s\"", dbname);
 
 		fprintf(OPF, "--\n-- Database \"%s\" dump\n--\n\n", dbname);
 

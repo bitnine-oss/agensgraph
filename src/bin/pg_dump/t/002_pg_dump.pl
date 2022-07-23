@@ -1407,6 +1407,15 @@ my %tests = (
 		like => { pg_dumpall_dbprivs => 1, },
 	},
 
+	"CREATE DATABASE dump_test2 LOCALE = 'C'" => {
+		create_order => 47,
+		create_sql   => "CREATE DATABASE dump_test2 LOCALE = 'C' TEMPLATE = template0;",
+		regexp       => qr/^
+			\QCREATE DATABASE dump_test2 \E.*\QLOCALE = 'C';\E
+			/xm,
+		like => { pg_dumpall_dbprivs => 1, },
+	},
+
 	'CREATE EXTENSION ... plpgsql' => {
 		regexp => qr/^
 			\QCREATE EXTENSION IF NOT EXISTS plpgsql WITH SCHEMA pg_catalog;\E
@@ -1557,6 +1566,35 @@ my %tests = (
 			\QFUNCTION 1 (bigint, bigint) btint8cmp(bigint,bigint) ,\E\n\s+
 			\QFUNCTION 2 (bigint, bigint) btint8sortsupport(internal);\E
 			/xm,
+		like =>
+		  { %full_runs, %dump_test_schema_runs, section_pre_data => 1, },
+		unlike => { exclude_dump_test_schema => 1, },
+	},
+
+    # verify that a custom operator/opclass/range type is dumped in right order
+	'CREATE OPERATOR CLASS dump_test.op_class_custom' => {
+		create_order => 74,
+		create_sql   => 'CREATE OPERATOR dump_test.~~ (
+							 PROCEDURE = int4eq,
+							 LEFTARG = int,
+							 RIGHTARG = int);
+						 CREATE OPERATOR CLASS dump_test.op_class_custom
+							 FOR TYPE int USING btree AS
+							 OPERATOR 3 dump_test.~~;
+						 CREATE TYPE dump_test.range_type_custom AS RANGE (
+							 subtype = int,
+							 subtype_opclass = dump_test.op_class_custom);',
+		regexp => qr/^
+			\QCREATE OPERATOR dump_test.~~ (\E\n.+
+			\QCREATE OPERATOR FAMILY dump_test.op_class_custom USING btree;\E\n.+
+			\QCREATE OPERATOR CLASS dump_test.op_class_custom\E\n\s+
+			\QFOR TYPE integer USING btree FAMILY dump_test.op_class_custom AS\E\n\s+
+			\QOPERATOR 3 dump_test.~~(integer,integer);\E\n.+
+			\QCREATE TYPE dump_test.range_type_custom AS RANGE (\E\n\s+
+			\Qsubtype = integer,\E\n\s+
+			\Qsubtype_opclass = dump_test.op_class_custom\E\n
+			\Q);\E
+			/xms,
 		like =>
 		  { %full_runs, %dump_test_schema_runs, section_pre_data => 1, },
 		unlike => { exclude_dump_test_schema => 1, },

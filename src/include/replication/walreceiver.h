@@ -14,7 +14,6 @@
 
 #include "access/xlog.h"
 #include "access/xlogdefs.h"
-#include "fmgr.h"
 #include "getaddrinfo.h"		/* for NI_MAXHOST */
 #include "replication/logicalproto.h"
 #include "replication/walsender.h"
@@ -188,7 +187,7 @@ typedef enum
 } WalRcvExecStatus;
 
 /*
- * Return value for walrcv_query, returns the status of the execution and
+ * Return value for walrcv_exec, returns the status of the execution and
  * tuples if any.
  */
 typedef struct WalRcvExecResult

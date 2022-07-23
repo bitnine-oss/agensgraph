@@ -258,7 +258,7 @@ ExplainQuery(ParseState *pstate, ExplainStmt *stmt, const char *queryString,
 							queryString, params, queryEnv);
 
 			/* Separate plans with an appropriate separator */
-			if (lnext(l) != NULL)
+			if (lnext(rewritten, l) != NULL)
 				ExplainSeparatePlans(es);
 		}
 	}
@@ -823,7 +823,7 @@ ExplainPrintJIT(ExplainState *es, int jit_flags,
 		if (for_workers)
 			appendStringInfo(es->str, "JIT for worker %u:\n", worker_num);
 		else
-			appendStringInfo(es->str, "JIT:\n");
+			appendStringInfoString(es->str, "JIT:\n");
 		es->indent += 1;
 
 		ExplainPropertyInteger("Functions", NULL, ji->created_functions, es);

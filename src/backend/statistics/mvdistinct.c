@@ -339,7 +339,7 @@ statext_ndistinct_deserialize(bytea *data)
  *		input routine for type pg_ndistinct
  *
  * pg_ndistinct is real enough to be a table column, but it has no
- * operations of its own, and disallows input (jus like pg_node_tree).
+ * operations of its own, and disallows input (just like pg_node_tree).
  */
 Datum
 pg_ndistinct_in(PG_FUNCTION_ARGS)
@@ -477,7 +477,7 @@ ndistinct_for_combination(double totalrows, int numrows, HeapTuple *rows,
 				 colstat->attrtypid);
 
 		/* prepare the sort function for this dimension */
-		multi_sort_add_dimension(mss, i, type->lt_opr, type->typcollation);
+		multi_sort_add_dimension(mss, i, type->lt_opr, colstat->attrcollid);
 
 		/* accumulate all the data for this dimension into the arrays */
 		for (j = 0; j < numrows; j++)

@@ -2308,7 +2308,7 @@ ExecBuildSlotValueDescription(Oid reloid,
 			/* truncate if needed */
 			vallen = strlen(val);
 			if (vallen <= maxfieldlen)
-				appendStringInfoString(&buf, val);
+				appendBinaryStringInfo(&buf, val, vallen);
 			else
 			{
 				vallen = pg_mbcliplen(val, vallen, maxfieldlen);
@@ -2327,7 +2327,7 @@ ExecBuildSlotValueDescription(Oid reloid,
 	if (!table_perm)
 	{
 		appendStringInfoString(&collist, ") = ");
-		appendStringInfoString(&collist, buf.data);
+		appendBinaryStringInfo(&collist, buf.data, buf.len);
 
 		return collist.data;
 	}
@@ -2808,9 +2808,9 @@ EvalPlanQualStart(EPQState *epqstate, EState *parentestate, Plan *planTree)
 	estate->es_snapshot = parentestate->es_snapshot;
 	estate->es_crosscheck_snapshot = parentestate->es_crosscheck_snapshot;
 	estate->es_range_table = parentestate->es_range_table;
-	estate->es_range_table_array = parentestate->es_range_table_array;
 	estate->es_range_table_size = parentestate->es_range_table_size;
 	estate->es_relations = parentestate->es_relations;
+	estate->es_queryEnv = parentestate->es_queryEnv;
 	estate->es_rowmarks = parentestate->es_rowmarks;
 	estate->es_plannedstmt = parentestate->es_plannedstmt;
 	estate->es_junkFilter = parentestate->es_junkFilter;

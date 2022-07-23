@@ -100,7 +100,7 @@ bool		g_cube_leaf_consistent(NDBOX *key, NDBOX *query, StrategyNumber strategy);
 bool		g_cube_internal_consistent(NDBOX *key, NDBOX *query, StrategyNumber strategy);
 
 /*
-** Auxiliary funxtions
+** Auxiliary functions
 */
 static double distance_1D(double a1, double a2, double b1, double b2);
 static bool cube_is_point_internal(NDBOX *cube);
@@ -590,7 +590,7 @@ g_cube_picksplit(PG_FUNCTION_ARGS)
 			v->spl_nright++;
 		}
 	}
-	*left = *right = FirstOffsetNumber; /* sentinel value, see dosplit() */
+	*left = *right = FirstOffsetNumber; /* sentinel value */
 
 	v->spl_ldatum = PointerGetDatum(datum_l);
 	v->spl_rdatum = PointerGetDatum(datum_r);

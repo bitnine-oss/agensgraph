@@ -92,7 +92,7 @@ static int	ZeroCLOGPage(int pageno, bool writeXlog);
 static bool CLOGPagePrecedes(int page1, int page2);
 static void WriteZeroPageXlogRec(int pageno);
 static void WriteTruncateXlogRec(int pageno, TransactionId oldestXact,
-								 Oid oldestXidDb);
+								 Oid oldestXactDb);
 static void TransactionIdSetPageStatus(TransactionId xid, int nsubxids,
 									   TransactionId *subxids, XidStatus status,
 									   XLogRecPtr lsn, int pageno,
@@ -155,7 +155,7 @@ static void TransactionIdSetPageStatusInternal(TransactionId xid, int nsubxids,
  * NB: this is a low-level routine and is NOT the preferred entry point
  * for most uses; functions in transam.c are the intended callers.
  *
- * XXX Think about issuing FADVISE_WILLNEED on pages that we will need,
+ * XXX Think about issuing POSIX_FADV_WILLNEED on pages that we will need,
  * but aren't yet in cache, as well as hinting pages not to fall out of
  * cache yet.
  */
@@ -891,7 +891,7 @@ ExtendCLOG(TransactionId newestXact)
  * Remove all CLOG segments before the one holding the passed transaction ID
  *
  * Before removing any CLOG data, we must flush XLOG to disk, to ensure
- * that any recently-emitted HEAP_FREEZE records have reached disk; otherwise
+ * that any recently-emitted FREEZE_PAGE records have reached disk; otherwise
  * a crash and restart might leave us with some unfrozen tuples referencing
  * removed CLOG data.  We choose to emit a special TRUNCATE XLOG record too.
  * Replaying the deletion from XLOG is not critical, since the files could

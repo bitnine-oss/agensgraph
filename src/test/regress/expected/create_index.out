@@ -1374,10 +1374,10 @@ VACUUM FULL concur_heap;
  f1     | text |           |          | 
  f2     | text |           |          | 
 Indexes:
-    "concur_index2" UNIQUE, btree (f1)
-    "concur_index3" UNIQUE, btree (f2) INVALID
     "concur_heap_expr_idx" btree ((f2 || f1))
     "concur_index1" btree (f2, f1)
+    "concur_index2" UNIQUE, btree (f1)
+    "concur_index3" UNIQUE, btree (f2) INVALID
     "concur_index4" btree (f2) WHERE f1 = 'a'::text
     "concur_index5" btree (f2) WHERE f1 = 'x'::text
     "std_index" btree (f2)
@@ -1390,10 +1390,10 @@ REINDEX TABLE concur_heap;
  f1     | text |           |          | 
  f2     | text |           |          | 
 Indexes:
-    "concur_index2" UNIQUE, btree (f1)
-    "concur_index3" UNIQUE, btree (f2)
     "concur_heap_expr_idx" btree ((f2 || f1))
     "concur_index1" btree (f2, f1)
+    "concur_index2" UNIQUE, btree (f1)
+    "concur_index3" UNIQUE, btree (f2)
     "concur_index4" btree (f2) WHERE f1 = 'a'::text
     "concur_index5" btree (f2) WHERE f1 = 'x'::text
     "std_index" btree (f2)
@@ -2115,8 +2115,8 @@ WARNING:  cannot reindex system catalogs concurrently, skipping all
  c2     | text    |           |          | 
 Indexes:
     "concur_reindex_ind1" PRIMARY KEY, btree (c1)
-    "concur_reindex_ind3" UNIQUE, btree (abs(c1))
     "concur_reindex_ind2" btree (c2)
+    "concur_reindex_ind3" UNIQUE, btree (abs(c1))
     "concur_reindex_ind4" btree (c1, c1, c2)
 Referenced by:
     TABLE "concur_reindex_tab2" CONSTRAINT "concur_reindex_tab2_c1_fkey" FOREIGN KEY (c1) REFERENCES concur_reindex_tab(c1)
@@ -2170,6 +2170,78 @@ Indexes:
     "concur_reindex_ind5" UNIQUE, btree (c1)
 
 DROP TABLE concur_reindex_tab4;
+-- Check handling of indexes with expressions and predicates.  The
+-- definitions of the rebuilt indexes should match the original
+-- definitions.
+CREATE TABLE concur_exprs_tab (c1 int , c2 boolean);
+INSERT INTO concur_exprs_tab (c1, c2) VALUES (1369652450, FALSE),
+  (414515746, TRUE),
+  (897778963, FALSE);
+CREATE UNIQUE INDEX concur_exprs_index_expr
+  ON concur_exprs_tab ((c1::text COLLATE "C"));
+CREATE UNIQUE INDEX concur_exprs_index_pred ON concur_exprs_tab (c1)
+  WHERE (c1::text > 500000000::text COLLATE "C");
+CREATE UNIQUE INDEX concur_exprs_index_pred_2
+  ON concur_exprs_tab ((1 / c1))
+  WHERE ('-H') >= (c2::TEXT) COLLATE "C";
+SELECT pg_get_indexdef('concur_exprs_index_expr'::regclass);
+                                                pg_get_indexdef                                                
+---------------------------------------------------------------------------------------------------------------
+ CREATE UNIQUE INDEX concur_exprs_index_expr ON public.concur_exprs_tab USING btree (((c1)::text) COLLATE "C")
+(1 row)
+
+SELECT pg_get_indexdef('concur_exprs_index_pred'::regclass);
+                                                               pg_get_indexdef                                                                
+----------------------------------------------------------------------------------------------------------------------------------------------
+ CREATE UNIQUE INDEX concur_exprs_index_pred ON public.concur_exprs_tab USING btree (c1) WHERE ((c1)::text > ((500000000)::text COLLATE "C"))
+(1 row)
+
+SELECT pg_get_indexdef('concur_exprs_index_pred_2'::regclass);
+                                                                 pg_get_indexdef                                                                  
+--------------------------------------------------------------------------------------------------------------------------------------------------
+ CREATE UNIQUE INDEX concur_exprs_index_pred_2 ON public.concur_exprs_tab USING btree (((1 / c1))) WHERE ('-H'::text >= ((c2)::text COLLATE "C"))
+(1 row)
+
+REINDEX TABLE CONCURRENTLY concur_exprs_tab;
+SELECT pg_get_indexdef('concur_exprs_index_expr'::regclass);
+                                                pg_get_indexdef                                                
+---------------------------------------------------------------------------------------------------------------
+ CREATE UNIQUE INDEX concur_exprs_index_expr ON public.concur_exprs_tab USING btree (((c1)::text) COLLATE "C")
+(1 row)
+
+SELECT pg_get_indexdef('concur_exprs_index_pred'::regclass);
+                                                               pg_get_indexdef                                                                
+----------------------------------------------------------------------------------------------------------------------------------------------
+ CREATE UNIQUE INDEX concur_exprs_index_pred ON public.concur_exprs_tab USING btree (c1) WHERE ((c1)::text > ((500000000)::text COLLATE "C"))
+(1 row)
+
+SELECT pg_get_indexdef('concur_exprs_index_pred_2'::regclass);
+                                                                 pg_get_indexdef                                                                  
+--------------------------------------------------------------------------------------------------------------------------------------------------
+ CREATE UNIQUE INDEX concur_exprs_index_pred_2 ON public.concur_exprs_tab USING btree (((1 / c1))) WHERE ('-H'::text >= ((c2)::text COLLATE "C"))
+(1 row)
+
+-- ALTER TABLE recreates the indexes, which should keep their collations.
+ALTER TABLE concur_exprs_tab ALTER c2 TYPE TEXT;
+SELECT pg_get_indexdef('concur_exprs_index_expr'::regclass);
+                                                pg_get_indexdef                                                
+---------------------------------------------------------------------------------------------------------------
+ CREATE UNIQUE INDEX concur_exprs_index_expr ON public.concur_exprs_tab USING btree (((c1)::text) COLLATE "C")
+(1 row)
+
+SELECT pg_get_indexdef('concur_exprs_index_pred'::regclass);
+                                                               pg_get_indexdef                                                                
+----------------------------------------------------------------------------------------------------------------------------------------------
+ CREATE UNIQUE INDEX concur_exprs_index_pred ON public.concur_exprs_tab USING btree (c1) WHERE ((c1)::text > ((500000000)::text COLLATE "C"))
+(1 row)
+
+SELECT pg_get_indexdef('concur_exprs_index_pred_2'::regclass);
+                                                             pg_get_indexdef                                                              
+------------------------------------------------------------------------------------------------------------------------------------------
+ CREATE UNIQUE INDEX concur_exprs_index_pred_2 ON public.concur_exprs_tab USING btree (((1 / c1))) WHERE ('-H'::text >= (c2 COLLATE "C"))
+(1 row)
+
+DROP TABLE concur_exprs_tab;
 --
 -- REINDEX SCHEMA
 --

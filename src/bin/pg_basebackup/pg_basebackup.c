@@ -1445,7 +1445,9 @@ ReceiveAndUnpackTarFile(PGconn *conn, PGresult *res, int rownum)
 
 		if (file == NULL)
 		{
+#ifndef WIN32
 			int			filemode;
+#endif
 
 			/*
 			 * No current file, so this must be the header for a new file
@@ -1459,8 +1461,10 @@ ReceiveAndUnpackTarFile(PGconn *conn, PGresult *res, int rownum)
 
 			current_len_left = read_tar_number(&copybuf[124], 12);
 
+#ifndef WIN32
 			/* Set permissions on the file */
 			filemode = read_tar_number(&copybuf[100], 8);
+#endif
 
 			/*
 			 * All files are padded up to 512 bytes
@@ -1712,9 +1716,9 @@ GenerateRecoveryConf(PGconn *conn)
 
 	if (replication_slot)
 	{
-		escaped = escape_quotes(replication_slot);
-		appendPQExpBuffer(recoveryconfcontents, "primary_slot_name = '%s'\n", replication_slot);
-		free(escaped);
+		/* unescaped: ReplicationSlotValidateName allows [a-z0-9_] only */
+		appendPQExpBuffer(recoveryconfcontents, "primary_slot_name = '%s'\n",
+						  replication_slot);
 	}
 
 	if (PQExpBufferBroken(recoveryconfcontents) ||
@@ -2236,7 +2240,7 @@ main(int argc, char **argv)
 					format = 't';
 				else
 				{
-					pg_log_error("invalid output format \"%s\", must be \"plain\" or \"tar\"\n",
+					pg_log_error("invalid output format \"%s\", must be \"plain\" or \"tar\"",
 								 optarg);
 					exit(1);
 				}
@@ -2308,7 +2312,7 @@ main(int argc, char **argv)
 				compresslevel = atoi(optarg);
 				if (compresslevel < 0 || compresslevel > 9)
 				{
-					pg_log_error("invalid compression level \"%s\"\n", optarg);
+					pg_log_error("invalid compression level \"%s\"", optarg);
 					exit(1);
 				}
 				break;

@@ -1855,7 +1855,7 @@ DecodeTimeOnly(char **field, int *ftype, int nf,
 
 				/*
 				 * Was this an "ISO time" with embedded field labels? An
-				 * example is "h04m05s06" - thomas 2001-02-04
+				 * example is "h04mm05s06" - thomas 2001-02-04
 				 */
 				if (ptype != 0)
 				{
@@ -2280,6 +2280,9 @@ DecodeTimeOnly(char **field, int *ftype, int nf,
 			GetCurrentDateTime(tmp);
 		else
 		{
+			/* a date has to be specified */
+			if ((fmask & DTK_DATE_M) != DTK_DATE_M)
+				return DTERR_BAD_FORMAT;
 			tmp->tm_year = tm->tm_year;
 			tmp->tm_mon = tm->tm_mon;
 			tmp->tm_mday = tm->tm_mday;
@@ -2307,6 +2310,9 @@ DecodeTimeOnly(char **field, int *ftype, int nf,
 			GetCurrentDateTime(tmp);
 		else
 		{
+			/* a date has to be specified */
+			if ((fmask & DTK_DATE_M) != DTK_DATE_M)
+				return DTERR_BAD_FORMAT;
 			tmp->tm_year = tm->tm_year;
 			tmp->tm_mon = tm->tm_mon;
 			tmp->tm_mday = tm->tm_mday;
@@ -4826,16 +4832,15 @@ pg_timezone_names(PG_FUNCTION_ARGS)
 			continue;			/* ignore if conversion fails */
 
 		/*
-		 * Ignore zic's rather silly "Factory" time zone.  The long string
-		 * about "see zic manual page" is used in tzdata versions before
-		 * 2016g; we can drop it someday when we're pretty sure no such data
-		 * exists in the wild on platforms using --with-system-tzdata.  In
-		 * 2016g and later, the time zone abbreviation "-00" is used for
-		 * "Factory" as well as some invalid cases, all of which we can
-		 * reasonably omit from the pg_timezone_names view.
+		 * IANA's rather silly "Factory" time zone used to emit ridiculously
+		 * long "abbreviations" such as "Local time zone must be set--see zic
+		 * manual page" or "Local time zone must be set--use tzsetup".  While
+		 * modern versions of tzdb emit the much saner "-00", it seems some
+		 * benighted packagers are hacking the IANA data so that it continues
+		 * to produce these strings.  To prevent producing a weirdly wide
+		 * abbrev column, reject ridiculously long abbreviations.
 		 */
-		if (tzn && (strcmp(tzn, "-00") == 0 ||
-					strcmp(tzn, "Local time zone must be set--see zic manual page") == 0))
+		if (tzn && strlen(tzn) > 31)
 			continue;
 
 		/* Found a displayable zone */

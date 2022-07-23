@@ -2266,7 +2266,6 @@ transformRowExpr(ParseState *pstate, RowExpr *r, bool allowDefault)
 	RowExpr    *newr;
 	char		fname[16];
 	int			fnum;
-	ListCell   *lc;
 
 	newr = makeNode(RowExpr);
 
@@ -2280,10 +2279,9 @@ transformRowExpr(ParseState *pstate, RowExpr *r, bool allowDefault)
 
 	/* ROW() has anonymous columns, so invent some field names */
 	newr->colnames = NIL;
-	fnum = 1;
-	foreach(lc, newr->args)
+	for (fnum = 1; fnum <= list_length(newr->args); fnum++)
 	{
-		snprintf(fname, sizeof(fname), "f%d", fnum++);
+		snprintf(fname, sizeof(fname), "f%d", fnum);
 		newr->colnames = lappend(newr->colnames, makeString(pstrdup(fname)));
 	}
 

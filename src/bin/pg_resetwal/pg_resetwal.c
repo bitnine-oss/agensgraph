@@ -54,6 +54,7 @@
 #include "common/file_perm.h"
 #include "common/logging.h"
 #include "common/restricted_token.h"
+#include "common/string.h"
 #include "storage/large_object.h"
 #include "pg_getopt.h"
 #include "getopt_long.h"
@@ -538,7 +539,6 @@ CheckDataVersion(void)
 	const char *ver_file = "PG_VERSION";
 	FILE	   *ver_fd;
 	char		rawline[64];
-	int			len;
 
 	if ((ver_fd = fopen(ver_file, "r")) == NULL)
 	{
@@ -557,14 +557,8 @@ CheckDataVersion(void)
 		exit(1);
 	}
 
-	/* remove trailing newline, handling Windows newlines as well */
-	len = strlen(rawline);
-	if (len > 0 && rawline[len - 1] == '\n')
-	{
-		rawline[--len] = '\0';
-		if (len > 0 && rawline[len - 1] == '\r')
-			rawline[--len] = '\0';
-	}
+	/* strip trailing newline and carriage return */
+	(void) pg_strip_crlf(rawline);
 
 	if (strcmp(rawline, PG_MAJORVERSION) != 0)
 	{
@@ -748,26 +742,17 @@ GuessControlValues(void)
 static void
 PrintControlValues(bool guessed)
 {
-	char		sysident_str[32];
-
 	if (guessed)
 		printf(_("Guessed pg_control values:\n\n"));
 	else
 		printf(_("Current pg_control values:\n\n"));
 
-	/*
-	 * Format system_identifier separately to keep platform-dependent format
-	 * code out of the translatable message string.
-	 */
-	snprintf(sysident_str, sizeof(sysident_str), UINT64_FORMAT,
-			 ControlFile.system_identifier);
-
 	printf(_("pg_control version number:            %u\n"),
 		   ControlFile.pg_control_version);
 	printf(_("Catalog version number:               %u\n"),
 		   ControlFile.catalog_version_no);
-	printf(_("Database system identifier:           %s\n"),
-		   sysident_str);
+	printf(_("Database system identifier:           %llu\n"),
+		   (unsigned long long) ControlFile.system_identifier);
 	printf(_("Latest checkpoint's TimeLineID:       %u\n"),
 		   ControlFile.checkPointCopy.ThisTimeLineID);
 	printf(_("Latest checkpoint's full_page_writes: %s\n"),
@@ -945,8 +930,8 @@ RewriteControlFile(void)
  *
  * On entry, ControlFile.checkPointCopy.redo and ControlFile.xlog_seg_size
  * are assumed valid (note that we allow the old xlog seg size to differ
- * from what we're using).  On exit, newXlogId and newXlogSeg are set to
- * suitable values for the beginning of replacement WAL (in our seg size).
+ * from what we're using).  On exit, newXlogSegNo is set to suitable
+ * value for the beginning of replacement WAL (in our seg size).
  */
 static void
 FindEndOfXLOG(void)

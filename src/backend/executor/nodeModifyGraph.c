@@ -262,9 +262,8 @@ ExecInitModifyGraph(ModifyGraph *mgplan, EState *estate, int eflags)
 
 				/* Now add in our RTE */
 				estate->es_range_table = lappend(estate->es_range_table, our_rte);
-				estate->es_range_table_array[mgplan->ert_base_index + rtindex] = our_rte;
 				estate->es_relations[mgplan->ert_base_index + rtindex] = NULL;
-				if (estate->es_range_table_array[mgplan->ert_base_index + rtindex]->rtekind == RTE_RELATION)
+				if (our_rte->rtekind == RTE_RELATION)
 				{
 					ExecGetRangeTableRelation(estate, mgplan->ert_base_index + rtindex +1);
 				}
@@ -2099,7 +2098,7 @@ static void removeRangeTable(EState* estate, int n)
 
 	for (lc = list_head(estate->es_range_table); lc != NULL;) {
 		RangeTblEntry *es_rte = lfirst(lc);
-		ListCell *next = lnext(lc);
+		ListCell *next = lnext(estate->es_range_table, lc);
 
 		i++;
 
@@ -2117,21 +2116,15 @@ static void removeRangeTable(EState* estate, int n)
 
 static void fitRangeTableSpace(EState *estate, int newsize)
 {
-	RangeTblEntry **saved_rta = estate->es_range_table_array;
 	Relation *saved_relations = estate->es_relations;
 
 	estate->es_range_table_size = newsize;
-
-	estate->es_range_table_array = (RangeTblEntry **)
-			palloc0(estate->es_range_table_size * sizeof(RangeTblEntry *));
+\
 	estate->es_relations = (Relation *)
 			palloc0(estate->es_range_table_size * sizeof(Relation));
 
-	memcpy(estate->es_range_table_array, saved_rta,
-		   estate->es_range_table_size * sizeof(RangeTblEntry *));
 	memcpy(estate->es_relations, saved_relations,
 		   estate->es_range_table_size * sizeof(Relation));
 
-	pfree(saved_rta);
 	pfree(saved_relations);
 }

@@ -17,7 +17,7 @@ dnl Read the Autoconf manual for details.
 dnl
 m4_pattern_forbid(^PGAC_)dnl to catch undefined macros
 
-AC_INIT([PostgreSQL], [12beta2], [pgsql-bugs@lists.postgresql.org])
+AC_INIT([PostgreSQL], [13devel], [pgsql-bugs@lists.postgresql.org])
 
 m4_if(m4_defn([m4_PACKAGE_VERSION]), [2.69], [], [m4_fatal([Autoconf version 2.69 is required.
 Untested combinations of 'autoconf' and PostgreSQL versions are not
@@ -974,30 +974,6 @@ PGAC_ARG_BOOL(with, zlib, yes,
 AC_SUBST(with_zlib)
 
 #
-# Elf
-#
-
-# Assume system is ELF if it predefines __ELF__ as 1,
-# otherwise believe host_os based default.
-case $host_os in
-    freebsd1*|freebsd2*) elf=no;;
-    freebsd3*|freebsd4*) elf=yes;;
-esac
-
-AC_EGREP_CPP(yes,
-[#if __ELF__
-  yes
-#endif
-],
-[ELF_SYS=true],
-[if test "X$elf" = "Xyes" ; then
-  ELF_SYS=true
-else
-  ELF_SYS=
-fi])
-AC_SUBST(ELF_SYS)
-
-#
 # Assignments
 #
 
@@ -1151,7 +1127,6 @@ AC_SEARCH_LIBS(dlopen, dl)
 AC_SEARCH_LIBS(socket, [socket ws2_32])
 AC_SEARCH_LIBS(shl_load, dld)
 AC_SEARCH_LIBS(getopt_long, [getopt gnugetopt])
-AC_SEARCH_LIBS(crypt, crypt)
 AC_SEARCH_LIBS(shm_open, rt)
 AC_SEARCH_LIBS(shm_unlink, rt)
 AC_SEARCH_LIBS(clock_gettime, [rt posix4])
@@ -1306,7 +1281,6 @@ AC_HEADER_STDBOOL
 AC_CHECK_HEADERS(m4_normalize([
 	atomic.h
 	copyfile.h
-	crypt.h
 	fp_class.h
 	getopt.h
 	ieeefp.h
@@ -1725,7 +1699,6 @@ else
 fi
 
 AC_REPLACE_FUNCS(m4_normalize([
-	crypt
 	dlopen
 	fls
 	getopt
@@ -2290,7 +2263,7 @@ fi
 # Check for DocBook and tools
 #
 PGAC_PATH_XMLLINT
-PGAC_CHECK_DOCBOOK(4.2)
+PGAC_CHECK_DOCBOOK(4.5)
 PGAC_PATH_PROGS(DBTOEPUB, dbtoepub)
 PGAC_PATH_PROGS(XSLTPROC, xsltproc)
 PGAC_PATH_PROGS(FOP, fop)

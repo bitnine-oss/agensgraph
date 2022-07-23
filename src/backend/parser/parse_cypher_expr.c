@@ -542,7 +542,7 @@ transformFields(ParseState *pstate, Node *basenode, List *fields, int location)
 
 	res = filterAccessArg(pstate, res, location, "map");
 
-	for_each_cell(lf, lf)
+	for_each_cell(lf, fields, lf)
 	{
 		Node	   *elem;
 
@@ -664,9 +664,9 @@ transformCypherMapExpr(ParseState *pstate, CypherMapExpr *m)
 		Const	   *newk;
 
 		k = lfirst(le);
-		le = lnext(le);
+		le = lnext(m->keyvals, le);
 		v = lfirst(le);
-		le = lnext(le);
+		le = lnext(m->keyvals, le);
 
 		newv = transformCypherExprRecurse(pstate, v);
 		newv = coerce_to_jsonb(pstate, newv, "property value");
@@ -947,8 +947,8 @@ preprocess_func_args(ParseState *pstate, FuncCall *fn)
 			aconst->location = -1;
 
 			/* replace the second argument with `second_arg + 1` */
-			la->data.ptr_value = makeSimpleA_Expr(AEXPR_OP, "+", lfirst(la),
-												  (Node *) aconst, -1);
+			la->ptr_value = makeSimpleA_Expr(AEXPR_OP, "+", lfirst(la),
+											 (Node *) aconst, -1);
 		}
 
 		arg = transformCypherExprRecurse(pstate, lfirst(la));
@@ -1643,7 +1643,7 @@ transformIndirection(ParseState *pstate, A_Indirection *indir)
 		getAccessorArguments(res, &res, &path);
 	}
 
-	for_each_cell(li, li)
+	for_each_cell(li, indir->indirection, li)
 	{
 		Node	   *i = lfirst(li);
 		Node	   *elem;

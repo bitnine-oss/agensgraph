@@ -125,7 +125,6 @@ static void SetRelationNumChecks(Relation rel, int numchecks);
 static Node *cookConstraint(ParseState *pstate,
 							Node *raw_constraint,
 							char *relname);
-static List *insert_ordered_unique_oid(List *list, Oid datum);
 
 
 /* ----------------------------------------------------------------
@@ -634,7 +633,7 @@ CheckAttributeType(const char *attname,
 					 errmsg("composite type %s cannot be made a member of itself",
 							format_type_be(atttypid))));
 
-		containing_rowtypes = lcons_oid(atttypid, containing_rowtypes);
+		containing_rowtypes = lappend_oid(containing_rowtypes, atttypid);
 
 		relation = relation_open(get_typ_typrelid(atttypid), AccessShareLock);
 
@@ -654,7 +653,7 @@ CheckAttributeType(const char *attname,
 
 		relation_close(relation, AccessShareLock);
 
-		containing_rowtypes = list_delete_first(containing_rowtypes);
+		containing_rowtypes = list_delete_last(containing_rowtypes);
 	}
 	else if (OidIsValid((att_typelem = get_element_type(atttypid))))
 	{
@@ -3384,55 +3383,19 @@ heap_truncate_find_FKs(List *relationIds)
 		if (!list_member_oid(relationIds, con->confrelid))
 			continue;
 
-		/* Add referencer unless already in input or result list */
+		/* Add referencer to result, unless present in input list */
 		if (!list_member_oid(relationIds, con->conrelid))
-			result = insert_ordered_unique_oid(result, con->conrelid);
+			result = lappend_oid(result, con->conrelid);
 	}
 
 	systable_endscan(fkeyScan);
 	table_close(fkeyRel, AccessShareLock);
 
+	/* Now sort and de-duplicate the result list */
+	list_sort(result, list_oid_cmp);
+	list_deduplicate_oid(result);
+
 	return result;
-}
-
-/*
- * insert_ordered_unique_oid
- *		Insert a new Oid into a sorted list of Oids, preserving ordering,
- *		and eliminating duplicates
- *
- * Building the ordered list this way is O(N^2), but with a pretty small
- * constant, so for the number of entries we expect it will probably be
- * faster than trying to apply qsort().  It seems unlikely someone would be
- * trying to truncate a table with thousands of dependent tables ...
- */
-static List *
-insert_ordered_unique_oid(List *list, Oid datum)
-{
-	ListCell   *prev;
-
-	/* Does the datum belong at the front? */
-	if (list == NIL || datum < linitial_oid(list))
-		return lcons_oid(datum, list);
-	/* Does it match the first entry? */
-	if (datum == linitial_oid(list))
-		return list;			/* duplicate, so don't insert */
-	/* No, so find the entry it belongs after */
-	prev = list_head(list);
-	for (;;)
-	{
-		ListCell   *curr = lnext(prev);
-
-		if (curr == NULL || datum < lfirst_oid(curr))
-			break;				/* it belongs after 'prev', before 'curr' */
-
-		if (datum == lfirst_oid(curr))
-			return list;		/* duplicate, so don't insert */
-
-		prev = curr;
-	}
-	/* Insert datum into list after 'prev' */
-	lappend_cell_oid(list, prev, datum);
-	return list;
 }
 
 /*
@@ -3528,16 +3491,36 @@ StorePartitionKey(Relation rel,
 	}
 
 	/*
-	 * Anything mentioned in the expressions.  We must ignore the column
-	 * references, which will depend on the table itself; there is no separate
-	 * partition key object.
+	 * The partitioning columns are made internally dependent on the table,
+	 * because we cannot drop any of them without dropping the whole table.
+	 * (ATExecDropColumn independently enforces that, but it's not bulletproof
+	 * so we need the dependencies too.)
+	 */
+	for (i = 0; i < partnatts; i++)
+	{
+		if (partattrs[i] == 0)
+			continue;			/* ignore expressions here */
+
+		referenced.classId = RelationRelationId;
+		referenced.objectId = RelationGetRelid(rel);
+		referenced.objectSubId = partattrs[i];
+
+		recordDependencyOn(&referenced, &myself, DEPENDENCY_INTERNAL);
+	}
+
+	/*
+	 * Also consider anything mentioned in partition expressions.  External
+	 * references (e.g. functions) get NORMAL dependencies.  Table columns
+	 * mentioned in the expressions are handled the same as plain partitioning
+	 * columns, i.e. they become internally dependent on the whole table.
 	 */
 	if (partexprs)
 		recordDependencyOnSingleRelExpr(&myself,
 										(Node *) partexprs,
 										RelationGetRelid(rel),
 										DEPENDENCY_NORMAL,
-										DEPENDENCY_AUTO, true);
+										DEPENDENCY_INTERNAL,
+										true /* reverse the self-deps */ );
 
 	/*
 	 * We must invalidate the relcache so that the next

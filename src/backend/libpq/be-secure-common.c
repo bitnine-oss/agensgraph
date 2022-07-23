@@ -22,6 +22,7 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
+#include "common/string.h"
 #include "libpq/libpq.h"
 #include "storage/fd.h"
 
@@ -112,10 +113,8 @@ run_ssl_passphrase_command(const char *prompt, bool is_server_start, char *buf, 
 		goto error;
 	}
 
-	/* strip trailing newline */
-	len = strlen(buf);
-	if (len > 0 && buf[len - 1] == '\n')
-		buf[--len] = '\0';
+	/* strip trailing newline and carriage return */
+	len = pg_strip_crlf(buf);
 
 error:
 	pfree(command.data);

@@ -7,7 +7,7 @@
  *	 Portions Copyright (c) 1999-2019, PostgreSQL Global Development Group
  *
  *	 The PostgreSQL routines for a DateTime/int/float/numeric formatting,
- *	 inspire with Oracle TO_CHAR() / TO_DATE() / TO_NUMBER() routines.
+ *	 inspired by the Oracle TO_CHAR() / TO_DATE() / TO_NUMBER() routines.
  *
  *	 Karel Zak
  *
@@ -16,8 +16,6 @@
 
 #ifndef _FORMATTING_H_
 #define _FORMATTING_H_
-
-#include "fmgr.h"
 
 
 extern char *str_tolower(const char *buff, size_t nbytes, Oid collid);

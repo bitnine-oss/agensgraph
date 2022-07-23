@@ -22,6 +22,7 @@
 #include "prompt.h"
 #include "settings.h"
 
+#include "common/string.h"
 
 /*--------------------------
  * get_prompt
@@ -274,8 +275,10 @@ get_prompt(promptStatus_t status, ConditionalStack cstack)
 								buf[0] = '\0';
 							pclose(fd);
 						}
-						if (strlen(buf) > 0 && buf[strlen(buf) - 1] == '\n')
-							buf[strlen(buf) - 1] = '\0';
+
+						/* strip trailing newline and carriage return */
+						(void) pg_strip_crlf(buf);
+
 						free(file);
 						p += cmdend + 1;
 						break;

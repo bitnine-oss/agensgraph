@@ -146,6 +146,7 @@ typedef struct JsonValueList
 typedef struct JsonValueListIterator
 {
 	JsonbValue *value;
+	List	   *list;
 	ListCell   *next;
 } JsonValueListIterator;
 
@@ -184,11 +185,9 @@ static JsonPathExecResult executeItemUnwrapTargetArray(JsonPathExecContext *cxt,
 static JsonPathExecResult executeNextItem(JsonPathExecContext *cxt,
 										  JsonPathItem *cur, JsonPathItem *next,
 										  JsonbValue *v, JsonValueList *found, bool copy);
-static JsonPathExecResult executeItemOptUnwrapResult(
-													 JsonPathExecContext *cxt, JsonPathItem *jsp, JsonbValue *jb,
+static JsonPathExecResult executeItemOptUnwrapResult(JsonPathExecContext *cxt, JsonPathItem *jsp, JsonbValue *jb,
 													 bool unwrap, JsonValueList *found);
-static JsonPathExecResult executeItemOptUnwrapResultNoThrow(
-															JsonPathExecContext *cxt, JsonPathItem *jsp,
+static JsonPathExecResult executeItemOptUnwrapResultNoThrow(JsonPathExecContext *cxt, JsonPathItem *jsp,
 															JsonbValue *jb, bool unwrap, JsonValueList *found);
 static JsonPathBool executeBoolItem(JsonPathExecContext *cxt,
 									JsonPathItem *jsp, JsonbValue *jb, bool canHaveNext);
@@ -338,7 +337,7 @@ jsonb_path_match(PG_FUNCTION_ARGS)
 
 	if (!silent)
 		ereport(ERROR,
-				(errcode(ERRCODE_SINGLETON_JSON_ITEM_REQUIRED),
+				(errcode(ERRCODE_SINGLETON_SQL_JSON_ITEM_REQUIRED),
 				 errmsg("single boolean result is expected")));
 
 	PG_RETURN_NULL();
@@ -603,7 +602,7 @@ executeItemOptUnwrapTarget(JsonPathExecContext *cxt, JsonPathItem *jsp,
 						return jperError;
 
 					ereport(ERROR,
-							(errcode(ERRCODE_JSON_MEMBER_NOT_FOUND), \
+							(errcode(ERRCODE_SQL_JSON_MEMBER_NOT_FOUND), \
 							 errmsg("JSON object does not contain key \"%s\"",
 									pnstrdup(key.val.string.val,
 											 key.val.string.len))));
@@ -615,7 +614,7 @@ executeItemOptUnwrapTarget(JsonPathExecContext *cxt, JsonPathItem *jsp,
 			{
 				Assert(found);
 				RETURN_ERROR(ereport(ERROR,
-									 (errcode(ERRCODE_JSON_MEMBER_NOT_FOUND),
+									 (errcode(ERRCODE_SQL_JSON_MEMBER_NOT_FOUND),
 									  errmsg("jsonpath member accessor can only be applied to an object"))));
 			}
 			break;
@@ -644,7 +643,7 @@ executeItemOptUnwrapTarget(JsonPathExecContext *cxt, JsonPathItem *jsp,
 				res = executeNextItem(cxt, jsp, NULL, jb, found, true);
 			else if (!jspIgnoreStructuralErrors(cxt))
 				RETURN_ERROR(ereport(ERROR,
-									 (errcode(ERRCODE_JSON_ARRAY_NOT_FOUND),
+									 (errcode(ERRCODE_SQL_JSON_ARRAY_NOT_FOUND),
 									  errmsg("jsonpath wildcard array accessor can only be applied to an array"))));
 			break;
 
@@ -692,7 +691,7 @@ executeItemOptUnwrapTarget(JsonPathExecContext *cxt, JsonPathItem *jsp,
 						 index_from > index_to ||
 						 index_to >= size))
 						RETURN_ERROR(ereport(ERROR,
-											 (errcode(ERRCODE_INVALID_JSON_SUBSCRIPT),
+											 (errcode(ERRCODE_INVALID_SQL_JSON_SUBSCRIPT),
 											  errmsg("jsonpath array subscript is out of bounds"))));
 
 					if (index_from < 0)
@@ -749,7 +748,7 @@ executeItemOptUnwrapTarget(JsonPathExecContext *cxt, JsonPathItem *jsp,
 			else if (!jspIgnoreStructuralErrors(cxt))
 			{
 				RETURN_ERROR(ereport(ERROR,
-									 (errcode(ERRCODE_JSON_ARRAY_NOT_FOUND),
+									 (errcode(ERRCODE_SQL_JSON_ARRAY_NOT_FOUND),
 									  errmsg("jsonpath array accessor can only be applied to an array"))));
 			}
 			break;
@@ -803,7 +802,7 @@ executeItemOptUnwrapTarget(JsonPathExecContext *cxt, JsonPathItem *jsp,
 			{
 				Assert(found);
 				RETURN_ERROR(ereport(ERROR,
-									 (errcode(ERRCODE_JSON_OBJECT_NOT_FOUND),
+									 (errcode(ERRCODE_SQL_JSON_OBJECT_NOT_FOUND),
 									  errmsg("jsonpath wildcard member accessor can only be applied to an object"))));
 			}
 			break;
@@ -933,7 +932,7 @@ executeItemOptUnwrapTarget(JsonPathExecContext *cxt, JsonPathItem *jsp,
 					{
 						if (!jspIgnoreStructuralErrors(cxt))
 							RETURN_ERROR(ereport(ERROR,
-												 (errcode(ERRCODE_JSON_ARRAY_NOT_FOUND),
+												 (errcode(ERRCODE_SQL_JSON_ARRAY_NOT_FOUND),
 												  errmsg("jsonpath item method .%s() can only be applied to an array",
 														 jspOperationName(jsp->type)))));
 						break;
@@ -987,7 +986,7 @@ executeItemOptUnwrapTarget(JsonPathExecContext *cxt, JsonPathItem *jsp,
 
 					if (have_error)
 						RETURN_ERROR(ereport(ERROR,
-											 (errcode(ERRCODE_NON_NUMERIC_JSON_ITEM),
+											 (errcode(ERRCODE_NON_NUMERIC_SQL_JSON_ITEM),
 											  errmsg("jsonpath item method .%s() can only be applied to a numeric value",
 													 jspOperationName(jsp->type)))));
 					res = jperOk;
@@ -1008,7 +1007,7 @@ executeItemOptUnwrapTarget(JsonPathExecContext *cxt, JsonPathItem *jsp,
 
 					if (have_error || isinf(val))
 						RETURN_ERROR(ereport(ERROR,
-											 (errcode(ERRCODE_NON_NUMERIC_JSON_ITEM),
+											 (errcode(ERRCODE_NON_NUMERIC_SQL_JSON_ITEM),
 											  errmsg("jsonpath item method .%s() can only be applied to a numeric value",
 													 jspOperationName(jsp->type)))));
 
@@ -1021,7 +1020,7 @@ executeItemOptUnwrapTarget(JsonPathExecContext *cxt, JsonPathItem *jsp,
 
 				if (res == jperNotFound)
 					RETURN_ERROR(ereport(ERROR,
-										 (errcode(ERRCODE_NON_NUMERIC_JSON_ITEM),
+										 (errcode(ERRCODE_NON_NUMERIC_SQL_JSON_ITEM),
 										  errmsg("jsonpath item method .%s() can only be applied to a string or numeric value",
 												 jspOperationName(jsp->type)))));
 
@@ -1505,14 +1504,14 @@ executeBinaryArithmExpr(JsonPathExecContext *cxt, JsonPathItem *jsp,
 	if (JsonValueListLength(&lseq) != 1 ||
 		!(lval = getScalar(JsonValueListHead(&lseq), jbvNumeric)))
 		RETURN_ERROR(ereport(ERROR,
-							 (errcode(ERRCODE_SINGLETON_JSON_ITEM_REQUIRED),
+							 (errcode(ERRCODE_SINGLETON_SQL_JSON_ITEM_REQUIRED),
 							  errmsg("left operand of jsonpath operator %s is not a single numeric value",
 									 jspOperationName(jsp->type)))));
 
 	if (JsonValueListLength(&rseq) != 1 ||
 		!(rval = getScalar(JsonValueListHead(&rseq), jbvNumeric)))
 		RETURN_ERROR(ereport(ERROR,
-							 (errcode(ERRCODE_SINGLETON_JSON_ITEM_REQUIRED),
+							 (errcode(ERRCODE_SINGLETON_SQL_JSON_ITEM_REQUIRED),
 							  errmsg("right operand of jsonpath operator %s is not a single numeric value",
 									 jspOperationName(jsp->type)))));
 
@@ -1580,7 +1579,7 @@ executeUnaryArithmExpr(JsonPathExecContext *cxt, JsonPathItem *jsp,
 				continue;		/* skip non-numerics processing */
 
 			RETURN_ERROR(ereport(ERROR,
-								 (errcode(ERRCODE_JSON_NUMBER_NOT_FOUND),
+								 (errcode(ERRCODE_SQL_JSON_NUMBER_NOT_FOUND),
 								  errmsg("operand of unary jsonpath operator %s is not a numeric value",
 										 jspOperationName(jsp->type)))));
 		}
@@ -1702,7 +1701,7 @@ executeNumericItemMethod(JsonPathExecContext *cxt, JsonPathItem *jsp,
 
 	if (!(jb = getScalar(jb, jbvNumeric)))
 		RETURN_ERROR(ereport(ERROR,
-							 (errcode(ERRCODE_NON_NUMERIC_JSON_ITEM),
+							 (errcode(ERRCODE_NON_NUMERIC_SQL_JSON_ITEM),
 							  errmsg("jsonpath item method .%s() can only be applied to a numeric value",
 									 jspOperationName(jsp->type)))));
 
@@ -1761,7 +1760,7 @@ executeKeyValueMethod(JsonPathExecContext *cxt, JsonPathItem *jsp,
 
 	if (JsonbType(jb) != jbvObject || jb->type != jbvBinary)
 		RETURN_ERROR(ereport(ERROR,
-							 (errcode(ERRCODE_JSON_OBJECT_NOT_FOUND),
+							 (errcode(ERRCODE_SQL_JSON_OBJECT_NOT_FOUND),
 							  errmsg("jsonpath item method .%s() can only be applied to an object",
 									 jspOperationName(jsp->type)))));
 
@@ -1982,6 +1981,94 @@ executeComparison(JsonPathItem *cmp, JsonbValue *lv, JsonbValue *rv, void *p)
 }
 
 /*
+ * Perform per-byte comparison of two strings.
+ */
+static int
+binaryCompareStrings(const char *s1, int len1,
+					 const char *s2, int len2)
+{
+	int			cmp;
+
+	cmp = memcmp(s1, s2, Min(len1, len2));
+
+	if (cmp != 0)
+		return cmp;
+
+	if (len1 == len2)
+		return 0;
+
+	return len1 < len2 ? -1 : 1;
+}
+
+/*
+ * Compare two strings in the current server encoding using Unicode codepoint
+ * collation.
+ */
+static int
+compareStrings(const char *mbstr1, int mblen1,
+			   const char *mbstr2, int mblen2)
+{
+	if (GetDatabaseEncoding() == PG_SQL_ASCII ||
+		GetDatabaseEncoding() == PG_UTF8)
+	{
+		/*
+		 * It's known property of UTF-8 strings that their per-byte comparison
+		 * result matches codepoints comparison result.  ASCII can be
+		 * considered as special case of UTF-8.
+		 */
+		return binaryCompareStrings(mbstr1, mblen1, mbstr2, mblen2);
+	}
+	else
+	{
+		char	   *utf8str1,
+				   *utf8str2;
+		int			cmp,
+					utf8len1,
+					utf8len2;
+
+		/*
+		 * We have to convert other encodings to UTF-8 first, then compare.
+		 * Input strings may be not null-terminated and pg_server_to_any() may
+		 * return them "as is".  So, use strlen() only if there is real
+		 * conversion.
+		 */
+		utf8str1 = pg_server_to_any(mbstr1, mblen1, PG_UTF8);
+		utf8str2 = pg_server_to_any(mbstr2, mblen2, PG_UTF8);
+		utf8len1 = (mbstr1 == utf8str1) ? mblen1 : strlen(utf8str1);
+		utf8len2 = (mbstr2 == utf8str2) ? mblen2 : strlen(utf8str2);
+
+		cmp = binaryCompareStrings(utf8str1, utf8len1, utf8str2, utf8len2);
+
+		/*
+		 * If pg_server_to_any() did no real conversion, then we actually
+		 * compared original strings.  So, we already done.
+		 */
+		if (mbstr1 == utf8str1 && mbstr2 == utf8str2)
+			return cmp;
+
+		/* Free memory if needed */
+		if (mbstr1 != utf8str1)
+			pfree(utf8str1);
+		if (mbstr2 != utf8str2)
+			pfree(utf8str2);
+
+		/*
+		 * When all Unicode codepoints are equal, return result of binary
+		 * comparison.  In some edge cases, same characters may have different
+		 * representations in encoding.  Then our behavior could diverge from
+		 * standard.  However, that allow us to do simple binary comparison
+		 * for "==" operator, which is performance critical in typical cases.
+		 * In future to implement strict standard conformance, we can do
+		 * normalization of input JSON strings.
+		 */
+		if (cmp == 0)
+			return binaryCompareStrings(mbstr1, mblen1, mbstr2, mblen2);
+		else
+			return cmp;
+	}
+}
+
+/*
  * Compare two SQL/JSON items using comparison operation 'op'.
  */
 static JsonPathBool
@@ -2023,9 +2110,8 @@ compareItems(int32 op, JsonbValue *jb1, JsonbValue *jb2)
 						   jb2->val.string.val,
 						   jb1->val.string.len) ? jpbFalse : jpbTrue;
 
-			cmp = varstr_cmp(jb1->val.string.val, jb1->val.string.len,
-							 jb2->val.string.val, jb2->val.string.len,
-							 DEFAULT_COLLATION_OID);
+			cmp = compareStrings(jb1->val.string.val, jb1->val.string.len,
+								 jb2->val.string.val, jb2->val.string.len);
 			break;
 
 		case jbvBinary:
@@ -2104,7 +2190,7 @@ getArrayIndex(JsonPathExecContext *cxt, JsonPathItem *jsp, JsonbValue *jb,
 	if (JsonValueListLength(&found) != 1 ||
 		!(jbv = getScalar(JsonValueListHead(&found), jbvNumeric)))
 		RETURN_ERROR(ereport(ERROR,
-							 (errcode(ERRCODE_INVALID_JSON_SUBSCRIPT),
+							 (errcode(ERRCODE_INVALID_SQL_JSON_SUBSCRIPT),
 							  errmsg("jsonpath array subscript is not a single numeric value"))));
 
 	numeric_index = DirectFunctionCall2(numeric_trunc,
@@ -2116,7 +2202,7 @@ getArrayIndex(JsonPathExecContext *cxt, JsonPathItem *jsp, JsonbValue *jb,
 
 	if (have_error)
 		RETURN_ERROR(ereport(ERROR,
-							 (errcode(ERRCODE_INVALID_JSON_SUBSCRIPT),
+							 (errcode(ERRCODE_INVALID_SQL_JSON_SUBSCRIPT),
 							  errmsg("jsonpath array subscript is out of integer range"))));
 
 	return jperOk;
@@ -2182,16 +2268,19 @@ JsonValueListInitIterator(const JsonValueList *jvl, JsonValueListIterator *it)
 	if (jvl->singleton)
 	{
 		it->value = jvl->singleton;
+		it->list = NIL;
 		it->next = NULL;
 	}
-	else if (list_head(jvl->list) != NULL)
+	else if (jvl->list != NIL)
 	{
 		it->value = (JsonbValue *) linitial(jvl->list);
-		it->next = lnext(list_head(jvl->list));
+		it->list = jvl->list;
+		it->next = list_second_cell(jvl->list);
 	}
 	else
 	{
 		it->value = NULL;
+		it->list = NIL;
 		it->next = NULL;
 	}
 }
@@ -2207,7 +2296,7 @@ JsonValueListNext(const JsonValueList *jvl, JsonValueListIterator *it)
 	if (it->next)
 	{
 		it->value = lfirst(it->next);
-		it->next = lnext(it->next);
+		it->next = lnext(it->list, it->next);
 	}
 	else
 	{

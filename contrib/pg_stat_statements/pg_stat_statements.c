@@ -333,6 +333,7 @@ static void AppendJumble(pgssJumbleState *jstate,
 						 const unsigned char *item, Size size);
 static void JumbleQuery(pgssJumbleState *jstate, Query *query);
 static void JumbleRangeTable(pgssJumbleState *jstate, List *rtable);
+static void JumbleRowMarks(pgssJumbleState *jstate, List *rowMarks);
 static void JumbleExpr(pgssJumbleState *jstate, Node *node);
 static void RecordConstLocation(pgssJumbleState *jstate, int location);
 static char *generate_normalized_query(pgssJumbleState *jstate, const char *query,
@@ -787,7 +788,7 @@ pgss_post_parse_analyze(ParseState *pstate, Query *query)
 	Assert(query->queryId == UINT64CONST(0));
 
 	/* Safety check... */
-	if (!pgss || !pgss_hash)
+	if (!pgss || !pgss_hash || !pgss_enabled())
 		return;
 
 	/*
@@ -1992,7 +1993,7 @@ qtext_load_file(Size *buffer_size)
 		return NULL;
 	}
 
-	if (CloseTransientFile(fd))
+	if (CloseTransientFile(fd) != 0)
 		ereport(LOG,
 				(errcode_for_file_access(),
 				 errmsg("could not close file \"%s\": %m", PGSS_TEXT_FILE)));
@@ -2430,7 +2431,7 @@ JumbleQuery(pgssJumbleState *jstate, Query *query)
 	JumbleExpr(jstate, (Node *) query->sortClause);
 	JumbleExpr(jstate, query->limitOffset);
 	JumbleExpr(jstate, query->limitCount);
-	/* we ignore rowMarks */
+	JumbleRowMarks(jstate, query->rowMarks);
 	JumbleExpr(jstate, query->setOperations);
 }
 
@@ -2485,6 +2486,26 @@ JumbleRangeTable(pgssJumbleState *jstate, List *rtable)
 			default:
 				elog(ERROR, "unrecognized RTE kind: %d", (int) rte->rtekind);
 				break;
+		}
+	}
+}
+
+/*
+ * Jumble a rowMarks list
+ */
+static void
+JumbleRowMarks(pgssJumbleState *jstate, List *rowMarks)
+{
+	ListCell   *lc;
+
+	foreach(lc, rowMarks)
+	{
+		RowMarkClause *rowmark = lfirst_node(RowMarkClause, lc);
+		if (!rowmark->pushedDown)
+		{
+			APP_JUMB(rowmark->rti);
+			APP_JUMB(rowmark->strength);
+			APP_JUMB(rowmark->waitPolicy);
 		}
 	}
 }

@@ -554,8 +554,8 @@ RestoreArchive(Archive *AHX)
 							 */
 							if (strncmp(dropStmt, "ALTER TABLE", 11) == 0)
 							{
-								appendPQExpBuffer(ftStmt,
-												  "ALTER TABLE IF EXISTS");
+								appendPQExpBufferStr(ftStmt,
+													 "ALTER TABLE IF EXISTS");
 								dropStmt = dropStmt + 11;
 							}
 
@@ -1993,7 +1993,7 @@ WriteInt(ArchiveHandle *AH, int i)
 	 * This is a bit yucky, but I don't want to make the binary format very
 	 * dependent on representation, and not knowing much about it, I write out
 	 * a sign byte. If you change this, don't forget to change the file
-	 * version #, and modify readInt to read the new format AS WELL AS the old
+	 * version #, and modify ReadInt to read the new format AS WELL AS the old
 	 * formats.
 	 */
 
@@ -4918,7 +4918,7 @@ CloneArchive(ArchiveHandle *AH)
 		 * any data to/from the database.
 		 */
 		initPQExpBuffer(&connstr);
-		appendPQExpBuffer(&connstr, "dbname=");
+		appendPQExpBufferStr(&connstr, "dbname=");
 		appendConnStrVal(&connstr, PQdb(AH->connection));
 		pghost = PQhost(AH->connection);
 		pgport = PQport(AH->connection);

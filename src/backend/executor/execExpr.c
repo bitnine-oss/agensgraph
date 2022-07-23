@@ -42,6 +42,7 @@
 #include "nodes/nodeFuncs.h"
 #include "optimizer/optimizer.h"
 #include "pgstat.h"
+#include "utils/array.h"
 #include "utils/builtins.h"
 #include "utils/lsyscache.h"
 #include "utils/typcache.h"
@@ -803,7 +804,7 @@ ExecInitExprRec(Expr *node, ExprState *state,
 				{
 					AggState   *aggstate = (AggState *) state->parent;
 
-					aggstate->aggs = lcons(astate, aggstate->aggs);
+					aggstate->aggs = lappend(aggstate->aggs, astate);
 					aggstate->numaggs++;
 				}
 				else
@@ -851,7 +852,7 @@ ExecInitExprRec(Expr *node, ExprState *state,
 					WindowAggState *winstate = (WindowAggState *) state->parent;
 					int			nfuncs;
 
-					winstate->funcs = lcons(wfstate, winstate->funcs);
+					winstate->funcs = lappend(winstate->funcs, wfstate);
 					nfuncs = ++winstate->numfuncs;
 					if (wfunc->winagg)
 						winstate->numaggs++;
@@ -1792,7 +1793,7 @@ ExecInitExprRec(Expr *node, ExprState *state,
 				scratch.d.rowcompare_final.rctype = rcexpr->rctype;
 				ExprEvalPushStep(state, &scratch);
 
-				/* adjust jump targetss */
+				/* adjust jump targets */
 				foreach(lc, adjust_jumps)
 				{
 					ExprEvalStep *as = &state->steps[lfirst_int(lc)];
@@ -3584,12 +3585,12 @@ ExecInitCypherMap(ExprEvalStep *scratch, CypherMapExpr *mapexpr,
 		Expr	   *val;
 
 		key = lfirst_node(Const, le);
-		le = lnext(le);
+		le = lnext(mapexpr->keyvals, le);
 
 		Assert(le != NULL);
 
 		val = (Expr *) lfirst(le);
-		le = lnext(le);
+		le = lnext(mapexpr->keyvals, le);
 
 		/*
 		 * Since all keys of jsonb objects are C strings, convert

@@ -100,7 +100,6 @@ ParseFuncOrColumn(ParseState *pstate, List *funcname, List *fargs,
 	Oid			rettype;
 	Oid			funcid;
 	ListCell   *l;
-	ListCell   *nextl;
 	Node	   *first_arg = NULL;
 	int			nargs;
 	int			nargsplusdefs;
@@ -147,21 +146,18 @@ ParseFuncOrColumn(ParseState *pstate, List *funcname, List *fargs,
 	 * to distinguish "input" and "output" parameter symbols while parsing
 	 * function-call constructs.  Don't do this if dealing with column syntax,
 	 * nor if we had WITHIN GROUP (because in that case it's critical to keep
-	 * the argument count unchanged).  We can't use foreach() because we may
-	 * modify the list ...
+	 * the argument count unchanged).
 	 */
 	nargs = 0;
-	for (l = list_head(fargs); l != NULL; l = nextl)
+	foreach(l, fargs)
 	{
 		Node	   *arg = lfirst(l);
 		Oid			argtype = exprType(arg);
 
-		nextl = lnext(l);
-
 		if (argtype == VOIDOID && IsA(arg, Param) &&
 			!is_column && !agg_within_group)
 		{
-			fargs = list_delete_ptr(fargs, arg);
+			fargs = foreach_delete_current(fargs, l);
 			continue;
 		}
 
@@ -1683,8 +1679,8 @@ func_get_detail(List *funcname,
 				int			ndelete;
 
 				ndelete = list_length(defaults) - best_candidate->ndargs;
-				while (ndelete-- > 0)
-					defaults = list_delete_first(defaults);
+				if (ndelete > 0)
+					defaults = list_copy_tail(defaults, ndelete);
 				*argdefaults = defaults;
 			}
 		}
@@ -1738,11 +1734,9 @@ unify_hypothetical_args(ParseState *pstate,
 						Oid *actual_arg_types,
 						Oid *declared_arg_types)
 {
-	Node	   *args[FUNC_MAX_ARGS];
 	int			numDirectArgs,
 				numNonHypotheticalArgs;
-	int			i;
-	ListCell   *lc;
+	int			hargpos;
 
 	numDirectArgs = list_length(fargs) - numAggregatedArgs;
 	numNonHypotheticalArgs = numDirectArgs - numAggregatedArgs;
@@ -1750,25 +1744,20 @@ unify_hypothetical_args(ParseState *pstate,
 	if (numNonHypotheticalArgs < 0)
 		elog(ERROR, "incorrect number of arguments to hypothetical-set aggregate");
 
-	/* Deconstruct fargs into an array for ease of subscripting */
-	i = 0;
-	foreach(lc, fargs)
-	{
-		args[i++] = (Node *) lfirst(lc);
-	}
-
 	/* Check each hypothetical arg and corresponding aggregated arg */
-	for (i = numNonHypotheticalArgs; i < numDirectArgs; i++)
+	for (hargpos = numNonHypotheticalArgs; hargpos < numDirectArgs; hargpos++)
 	{
-		int			aargpos = numDirectArgs + (i - numNonHypotheticalArgs);
+		int			aargpos = numDirectArgs + (hargpos - numNonHypotheticalArgs);
+		ListCell   *harg = list_nth_cell(fargs, hargpos);
+		ListCell   *aarg = list_nth_cell(fargs, aargpos);
 		Oid			commontype;
 
 		/* A mismatch means AggregateCreate didn't check properly ... */
-		if (declared_arg_types[i] != declared_arg_types[aargpos])
+		if (declared_arg_types[hargpos] != declared_arg_types[aargpos])
 			elog(ERROR, "hypothetical-set aggregate has inconsistent declared argument types");
 
 		/* No need to unify if make_fn_arguments will coerce */
-		if (declared_arg_types[i] != ANYOID)
+		if (declared_arg_types[hargpos] != ANYOID)
 			continue;
 
 		/*
@@ -1777,7 +1766,7 @@ unify_hypothetical_args(ParseState *pstate,
 		 * the aggregated values).
 		 */
 		commontype = select_common_type(pstate,
-										list_make2(args[aargpos], args[i]),
+										list_make2(lfirst(aarg), lfirst(harg)),
 										"WITHIN GROUP",
 										NULL);
 
@@ -1785,29 +1774,22 @@ unify_hypothetical_args(ParseState *pstate,
 		 * Perform the coercions.  We don't need to worry about NamedArgExprs
 		 * here because they aren't supported with aggregates.
 		 */
-		args[i] = coerce_type(pstate,
-							  args[i],
-							  actual_arg_types[i],
-							  commontype, -1,
-							  COERCION_IMPLICIT,
-							  COERCE_IMPLICIT_CAST,
-							  -1);
-		actual_arg_types[i] = commontype;
-		args[aargpos] = coerce_type(pstate,
-									args[aargpos],
-									actual_arg_types[aargpos],
-									commontype, -1,
-									COERCION_IMPLICIT,
-									COERCE_IMPLICIT_CAST,
-									-1);
+		lfirst(harg) = coerce_type(pstate,
+								   (Node *) lfirst(harg),
+								   actual_arg_types[hargpos],
+								   commontype, -1,
+								   COERCION_IMPLICIT,
+								   COERCE_IMPLICIT_CAST,
+								   -1);
+		actual_arg_types[hargpos] = commontype;
+		lfirst(aarg) = coerce_type(pstate,
+								   (Node *) lfirst(aarg),
+								   actual_arg_types[aargpos],
+								   commontype, -1,
+								   COERCION_IMPLICIT,
+								   COERCE_IMPLICIT_CAST,
+								   -1);
 		actual_arg_types[aargpos] = commontype;
-	}
-
-	/* Reconstruct fargs from array */
-	i = 0;
-	foreach(lc, fargs)
-	{
-		lfirst(lc) = args[i++];
 	}
 }
 
@@ -1887,7 +1869,12 @@ FuncNameAsType(List *funcname)
 	Oid			result;
 	Type		typtup;
 
-	typtup = LookupTypeName(NULL, makeTypeNameFromNameList(funcname), NULL, false);
+	/*
+	 * temp_ok=false protects the <refsect1 id="sql-createfunction-security">
+	 * contract for writing SECURITY DEFINER functions safely.
+	 */
+	typtup = LookupTypeNameExtended(NULL, makeTypeNameFromNameList(funcname),
+									NULL, false, false);
 	if (typtup == NULL)
 		return InvalidOid;
 
@@ -2009,7 +1996,7 @@ funcname_signature_string(const char *funcname, int nargs,
 		if (i >= numposargs)
 		{
 			appendStringInfo(&argbuf, "%s => ", (char *) lfirst(lc));
-			lc = lnext(lc);
+			lc = lnext(argnames, lc);
 		}
 		appendStringInfoString(&argbuf, format_type_be(argtypes[i]));
 	}

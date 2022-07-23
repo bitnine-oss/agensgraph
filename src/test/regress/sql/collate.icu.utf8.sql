@@ -2,6 +2,14 @@
  * This test is for ICU collations.
  */
 
+/* skip test if not UTF8 server encoding or no ICU collations installed */
+SELECT getdatabaseencoding() <> 'UTF8' OR
+       (SELECT count(*) FROM pg_collation WHERE collprovider = 'i') = 0
+       AS skip_test \gset
+\if :skip_test
+\quit
+\endif
+
 SET client_encoding TO UTF8;
 
 CREATE SCHEMA collate_tests;
@@ -333,6 +341,15 @@ CREATE INDEX collate_test1_idx6 ON collate_test1 ((a COLLATE "C")); -- fail
 
 SELECT relname, pg_get_indexdef(oid) FROM pg_class WHERE relname LIKE 'collate_test%_idx%' ORDER BY 1;
 
+set enable_seqscan = off;
+explain (costs off)
+select * from collate_test1 where b ilike 'abc';
+select * from collate_test1 where b ilike 'abc';
+explain (costs off)
+select * from collate_test1 where b ilike 'ABC';
+select * from collate_test1 where b ilike 'ABC';
+reset enable_seqscan;
+
 
 -- schema manipulation commands
 
@@ -586,8 +603,10 @@ SELECT 'ὀδυσσεύς' = 'ὈΔΥΣΣΕΎΣ' COLLATE case_insensitive;
 SELECT relname FROM pg_class WHERE relname = 'PG_CLASS'::text COLLATE case_insensitive;
 SELECT relname FROM pg_class WHERE 'PG_CLASS'::text = relname COLLATE case_insensitive;
 
-SELECT typname FROM pg_type WHERE typname LIKE 'int_' AND typname <> 'INT2'::text COLLATE case_insensitive;
-SELECT typname FROM pg_type WHERE typname LIKE 'int_' AND 'INT2'::text <> typname COLLATE case_insensitive;;
+SELECT typname FROM pg_type WHERE typname LIKE 'int_' AND typname <> 'INT2'::text
+  COLLATE case_insensitive ORDER BY typname;
+SELECT typname FROM pg_type WHERE typname LIKE 'int_' AND 'INT2'::text <> typname
+  COLLATE case_insensitive ORDER BY typname;
 
 -- test case adapted from subselect.sql
 CREATE TEMP TABLE outer_text (f1 text COLLATE case_insensitive, f2 text);
@@ -704,9 +723,10 @@ SELECT (SELECT count(*) FROM test33_0) <> (SELECT count(*) FROM test33_1);
 
 
 -- cleanup
+RESET search_path;
 SET client_min_messages TO warning;
 DROP SCHEMA collate_tests CASCADE;
-RESET search_path;
+RESET client_min_messages;
 
 -- leave a collation for pg_upgrade test
 CREATE COLLATION coll_icu_upgrade FROM "und-x-icu";

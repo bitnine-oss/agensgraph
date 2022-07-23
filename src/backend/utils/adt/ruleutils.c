@@ -118,7 +118,7 @@ typedef struct
 	List	   *windowTList;	/* targetlist for resolving WINDOW clause */
 	int			prettyFlags;	/* enabling of pretty-print functions */
 	int			wrapColumn;		/* max line length, or -1 for no limit */
-	int			indentLevel;	/* current indent level for prettyprint */
+	int			indentLevel;	/* current indent level for pretty-print */
 	bool		varprefix;		/* true to print prefixes on Vars */
 	ParseExprKind special_exprkind; /* set only for exprkinds needing special
 									 * handling */
@@ -493,7 +493,7 @@ static char *deparse_prop_expression_pretty(Node *expr, List *dpcontext,
 
 
 /* ----------
- * get_ruledef			- Do it all and return a text
+ * pg_get_ruledef		- Do it all and return a text
  *				  that could be used as a statement
  *				  to recreate the rule
  * ----------
@@ -613,7 +613,7 @@ pg_get_ruledef_worker(Oid ruleoid, int prettyFlags)
 
 
 /* ----------
- * get_viewdef			- Mainly the same thing, but we
+ * pg_get_viewdef		- Mainly the same thing, but we
  *				  only return the SELECT part of a view
  * ----------
  */
@@ -808,7 +808,7 @@ pg_get_viewdef_worker(Oid viewoid, int prettyFlags, int wrapColumn)
 }
 
 /* ----------
- * get_triggerdef			- Get the definition of a trigger
+ * pg_get_triggerdef		- Get the definition of a trigger
  * ----------
  */
 Datum
@@ -1103,7 +1103,7 @@ pg_get_triggerdef_worker(Oid trigid, bool pretty)
 }
 
 /* ----------
- * get_indexdef			- Get the definition of an index
+ * pg_get_indexdef			- Get the definition of an index
  *
  * In the extended version, there is a colno argument as well as pretty bool.
  *	if colno == 0, we want a complete index definition.
@@ -1369,7 +1369,7 @@ pg_get_indexdef_worker(Oid indexrelid, int colno,
 			if (indexpr_item == NULL)
 				elog(ERROR, "too few entries in indexprs list");
 			indexkey = (Node *) lfirst(indexpr_item);
-			indexpr_item = lnext(indexpr_item);
+			indexpr_item = lnext(indexprs, indexpr_item);
 			/* Deparse */
 			str = deparse_expression_pretty(indexkey, context, false, false,
 											prettyFlags, 0);
@@ -1743,7 +1743,7 @@ pg_get_partkeydef_worker(Oid relid, int prettyFlags,
 	{
 		case PARTITION_STRATEGY_HASH:
 			if (!attrsOnly)
-				appendStringInfo(&buf, "HASH");
+				appendStringInfoString(&buf, "HASH");
 			break;
 		case PARTITION_STRATEGY_LIST:
 			if (!attrsOnly)
@@ -1790,7 +1790,7 @@ pg_get_partkeydef_worker(Oid relid, int prettyFlags,
 			if (partexpr_item == NULL)
 				elog(ERROR, "too few entries in partexprs list");
 			partkey = (Node *) lfirst(partexpr_item);
-			partexpr_item = lnext(partexpr_item);
+			partexpr_item = lnext(partexprs, partexpr_item);
 
 			/* Deparse */
 			str = deparse_expression_pretty(partkey, context, false, false,
@@ -2362,7 +2362,7 @@ decompile_column_index_array(Datum column_index_array, Oid relId,
 
 
 /* ----------
- * get_expr			- Decompile an expression tree
+ * pg_get_expr			- Decompile an expression tree
  *
  * Input: an expression tree in nodeToString form, and a relation OID
  *
@@ -2460,7 +2460,7 @@ pg_get_expr_worker(text *expr, Oid relid, const char *relname, int prettyFlags)
 
 
 /* ----------
- * get_userbyid			- Get a user name by roleid and
+ * pg_get_userbyid		- Get a user name by roleid and
  *				  fallback to 'unknown (OID=n)'
  * ----------
  */
@@ -2784,7 +2784,7 @@ pg_get_functiondef(PG_FUNCTION_ARGS)
 						char	   *curname = (char *) lfirst(lc);
 
 						simple_quote_literal(&buf, curname);
-						if (lnext(lc))
+						if (lnext(namelist, lc))
 							appendStringInfoString(&buf, ", ");
 					}
 				}
@@ -2824,9 +2824,9 @@ pg_get_functiondef(PG_FUNCTION_ARGS)
 		appendStringInfoChar(&dq, 'x');
 	appendStringInfoChar(&dq, '$');
 
-	appendStringInfoString(&buf, dq.data);
+	appendBinaryStringInfo(&buf, dq.data, dq.len);
 	appendStringInfoString(&buf, prosrc);
-	appendStringInfoString(&buf, dq.data);
+	appendBinaryStringInfo(&buf, dq.data, dq.len);
 
 	appendStringInfoChar(&buf, '\n');
 
@@ -2950,7 +2950,7 @@ print_function_rettype(StringInfo buf, HeapTuple proctup)
 		appendStringInfoString(&rbuf, format_type_be(proc->prorettype));
 	}
 
-	appendStringInfoString(buf, rbuf.data);
+	appendBinaryStringInfo(buf, rbuf.data, rbuf.len);
 }
 
 /*
@@ -2973,6 +2973,7 @@ print_function_arguments(StringInfo buf, HeapTuple proctup,
 	int			argsprinted;
 	int			inputargno;
 	int			nlackdefaults;
+	List	   *argdefaults = NIL;
 	ListCell   *nextargdefault = NULL;
 	int			i;
 
@@ -2991,7 +2992,6 @@ print_function_arguments(StringInfo buf, HeapTuple proctup,
 		if (!isnull)
 		{
 			char	   *str;
-			List	   *argdefaults;
 
 			str = TextDatumGetCString(proargdefaults);
 			argdefaults = castNode(List, stringToNode(str));
@@ -3081,7 +3081,7 @@ print_function_arguments(StringInfo buf, HeapTuple proctup,
 
 			Assert(nextargdefault != NULL);
 			expr = (Node *) lfirst(nextargdefault);
-			nextargdefault = lnext(nextargdefault);
+			nextargdefault = lnext(argdefaults, nextargdefault);
 
 			appendStringInfo(buf, " DEFAULT %s",
 							 deparse_expression(expr, NIL, false, false));
@@ -4784,16 +4784,14 @@ push_ancestor_plan(deparse_namespace *dpns, ListCell *ancestor_cell,
 				   deparse_namespace *save_dpns)
 {
 	PlanState  *ps = (PlanState *) lfirst(ancestor_cell);
-	List	   *ancestors;
 
 	/* Save state for restoration later */
 	*save_dpns = *dpns;
 
 	/* Build a new ancestor list with just this node's ancestors */
-	ancestors = NIL;
-	while ((ancestor_cell = lnext(ancestor_cell)) != NULL)
-		ancestors = lappend(ancestors, lfirst(ancestor_cell));
-	dpns->ancestors = ancestors;
+	dpns->ancestors =
+		list_copy_tail(dpns->ancestors,
+					   list_cell_number(dpns->ancestors, ancestor_cell) + 1);
 
 	/* Set attention on selected ancestor */
 	set_deparse_planstate(dpns, ps);
@@ -5707,7 +5705,7 @@ get_target_list(List *targetList, deparse_context *context,
 		}
 
 		/* Add the new field */
-		appendStringInfoString(buf, targetbuf.data);
+		appendBinaryStringInfo(buf, targetbuf.data, targetbuf.len);
 	}
 
 	/* clean up */
@@ -6534,7 +6532,7 @@ get_update_query_targetlist_def(Query *query, List *targetList,
 				((Param *) expr)->paramkind == PARAM_MULTIEXPR)
 			{
 				cur_ma_sublink = (SubLink *) lfirst(next_ma_cell);
-				next_ma_cell = lnext(next_ma_cell);
+				next_ma_cell = lnext(ma_sublinks, next_ma_cell);
 				remaining_ma_columns = count_nonjunk_tlist_entries(
 																   ((Query *) cur_ma_sublink->subselect)->targetList);
 				Assert(((Param *) expr)->paramid ==
@@ -6836,8 +6834,8 @@ get_variable(Var *var, int levelsup, bool istoplevel, deparse_context *context)
 
 /*
  * Deparse a Var which references OUTER_VAR, INNER_VAR, or INDEX_VAR.  This
- * routine is actually a callback for get_special_varno, which handles finding
- * the correct TargetEntry.  We get the expression contained in that
+ * routine is actually a callback for resolve_special_varno, which handles
+ * finding the correct TargetEntry.  We get the expression contained in that
  * TargetEntry and just need to deparse it, a job we can throw back on
  * get_rule_expr.
  */
@@ -8064,7 +8062,7 @@ get_rule_expr(Node *node, deparse_context *context,
 			{
 				BoolExpr   *expr = (BoolExpr *) node;
 				Node	   *first_arg = linitial(expr->args);
-				ListCell   *arg = lnext(list_head(expr->args));
+				ListCell   *arg = list_second_cell(expr->args);
 
 				switch (expr->boolop)
 				{
@@ -8078,7 +8076,7 @@ get_rule_expr(Node *node, deparse_context *context,
 							appendStringInfoString(buf, " AND ");
 							get_rule_expr_paren((Node *) lfirst(arg), context,
 												false, node);
-							arg = lnext(arg);
+							arg = lnext(expr->args, arg);
 						}
 						if (!PRETTY_PAREN(context))
 							appendStringInfoChar(buf, ')');
@@ -8094,7 +8092,7 @@ get_rule_expr(Node *node, deparse_context *context,
 							appendStringInfoString(buf, " OR ");
 							get_rule_expr_paren((Node *) lfirst(arg), context,
 												false, node);
-							arg = lnext(arg);
+							arg = lnext(expr->args, arg);
 						}
 						if (!PRETTY_PAREN(context))
 							appendStringInfoChar(buf, ')');
@@ -8153,7 +8151,7 @@ get_rule_expr(Node *node, deparse_context *context,
 						appendStringInfo(buf, "hashed %s", splan->plan_name);
 					else
 						appendStringInfoString(buf, splan->plan_name);
-					if (lnext(lc))
+					if (lnext(asplan->subplans, lc))
 						appendStringInfoString(buf, " or ");
 				}
 				appendStringInfoChar(buf, ')');
@@ -9078,14 +9076,14 @@ get_rule_expr(Node *node, deparse_context *context,
 					appendStringInfoString(buf, sep);
 
 					e = lfirst(le);
-					le = lnext(le);
+					le = lnext(m->keyvals, le);
 
 					get_rule_expr((Node *) e, context, false);
 
 					appendBinaryStringInfo(buf, ": ", 2);
 
 					e = lfirst(le);
-					le = lnext(le);
+					le = lnext(m->keyvals, le);
 
 					get_rule_expr((Node *) e, context, false);
 
@@ -9521,7 +9519,7 @@ get_func_expr(FuncExpr *expr, deparse_context *context,
 	{
 		if (nargs++ > 0)
 			appendStringInfoString(buf, ", ");
-		if (use_variadic && lnext(l) == NULL)
+		if (use_variadic && lnext(expr->args, l) == NULL)
 			appendStringInfoString(buf, "VARIADIC ");
 		get_rule_expr((Node *) lfirst(l), context, true);
 	}
@@ -9767,6 +9765,14 @@ get_coercion_expr(Node *arg, deparse_context *context,
 		if (!PRETTY_PAREN(context))
 			appendStringInfoChar(buf, ')');
 	}
+
+	/*
+	 * Never emit resulttype(arg) functional notation. A pg_proc entry could
+	 * take precedence, and a resulttype in pg_temp would require schema
+	 * qualification that format_type_with_typemod() would usually omit. We've
+	 * standardized on arg::resulttype, but CAST(arg AS resulttype) notation
+	 * would work fine.
+	 */
 	appendStringInfo(buf, "::%s",
 					 format_type_with_typemod(resulttype, resulttypmod));
 }
@@ -10401,7 +10407,7 @@ get_from_clause(Query *query, const char *prefix, deparse_context *context)
 			}
 
 			/* Add the new item */
-			appendStringInfoString(buf, itembuf.data);
+			appendBinaryStringInfo(buf, itembuf.data, itembuf.len);
 
 			/* clean up */
 			pfree(itembuf.data);
@@ -10503,7 +10509,7 @@ get_from_clause_item(Node *jtnode, Query *query, deparse_context *context)
 							RangeTblFunction *rtfunc = (RangeTblFunction *) lfirst(lc);
 							List	   *args = ((FuncExpr *) rtfunc->funcexpr)->args;
 
-							allargs = list_concat(allargs, list_copy(args));
+							allargs = list_concat(allargs, args);
 						}
 
 						appendStringInfoString(buf, "UNNEST(");
@@ -11028,7 +11034,7 @@ printSubscripts(SubscriptingRef *sbsref, deparse_context *context)
 			/* If subexpression is NULL, get_rule_expr prints nothing */
 			get_rule_expr((Node *) lfirst(lowlist_item), context, false);
 			appendStringInfoChar(buf, ':');
-			lowlist_item = lnext(lowlist_item);
+			lowlist_item = lnext(sbsref->reflowerindexpr, lowlist_item);
 		}
 		/* If subexpression is NULL, get_rule_expr prints nothing */
 		get_rule_expr((Node *) lfirst(uplist_item), context, false);
@@ -11680,7 +11686,7 @@ flatten_reloptions(Oid relid)
 }
 
 /*
- * get_one_range_partition_bound_string
+ * get_range_partbound_string
  *		A C string representation of one range partition bound
  */
 char *
@@ -11890,7 +11896,7 @@ ag_get_propindexdef_worker(Oid indexrelid, const Oid *excludeOps,
 		if (indexpr_item == NULL)
 			elog(ERROR, "too few entries in indexprs list");
 		indexkey = (Node *) lfirst(indexpr_item);
-		indexpr_item = lnext(indexpr_item);
+		indexpr_item = lnext(indexprs, indexpr_item);
 		/* Deparse */
 		str = deparse_prop_expression_pretty(indexkey, context, prettyFlags);
 		if (IsA(indexkey, CypherAccessExpr))

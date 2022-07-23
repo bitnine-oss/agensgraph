@@ -25,6 +25,7 @@
 #include "miscadmin.h"
 #include "parser/parse_coerce.h"
 #include "tsearch/ts_utils.h"
+#include "utils/array.h"
 #include "utils/builtins.h"
 #include "utils/lsyscache.h"
 #include "utils/regproc.h"
@@ -1152,7 +1153,7 @@ tsvector_concat(PG_FUNCTION_ARGS)
 /*
  * Compare two strings by tsvector rules.
  *
- * if isPrefix = true then it returns zero value iff b has prefix a
+ * if prefix = true then it returns zero value iff b has prefix a
  */
 int32
 tsCompareString(char *a, int lena, char *b, int lenb, bool prefix)

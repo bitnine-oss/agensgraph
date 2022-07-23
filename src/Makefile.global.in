@@ -23,7 +23,7 @@ standard_targets = all install installdirs uninstall distprep clean distclean ma
 # these targets should recurse even into subdirectories not being built:
 standard_always_targets = distprep clean distclean maintainer-clean
 
-.PHONY: $(standard_targets) install-strip html man installcheck-parallel maintainer-check
+.PHONY: $(standard_targets) install-strip html man installcheck-parallel
 
 # make `all' the default target
 all:
@@ -505,10 +505,6 @@ build_os = @build_os@
 host_tuple = @host@
 host_os = @host_os@
 host_cpu = @host_cpu@
-
-# This is mainly for use on FreeBSD, where we have both a.out and elf
-# systems now.  May be applicable to other systems to?
-ELF_SYSTEM= @ELF_SYS@
 
 # Backend stack size limit has to be hard-wired on Windows (it's in bytes)
 WIN32_STACK_RLIMIT=4194304

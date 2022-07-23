@@ -117,6 +117,41 @@ select * from trigtest;
 delete from trigtest;
 select * from trigtest;
 
+-- Also check what happens when such a trigger runs before or after others
+create function f1_times_10() returns trigger as
+$$ begin new.f1 := new.f1 * 10; return new; end $$ language plpgsql;
+
+create trigger trigger_alpha
+	before insert or update on trigtest
+	for each row execute procedure f1_times_10();
+
+insert into trigtest values(1, 'foo');
+select * from trigtest;
+update trigtest set f2 = f2 || 'bar';
+select * from trigtest;
+delete from trigtest;
+select * from trigtest;
+
+create trigger trigger_zed
+	before insert or update on trigtest
+	for each row execute procedure f1_times_10();
+
+insert into trigtest values(1, 'foo');
+select * from trigtest;
+update trigtest set f2 = f2 || 'bar';
+select * from trigtest;
+delete from trigtest;
+select * from trigtest;
+
+drop trigger trigger_alpha on trigtest;
+
+insert into trigtest values(1, 'foo');
+select * from trigtest;
+update trigtest set f2 = f2 || 'bar';
+select * from trigtest;
+delete from trigtest;
+select * from trigtest;
+
 drop table trigtest;
 
 create sequence ttdummy_seq increment 10 start 0 minvalue 0;
@@ -1458,6 +1493,29 @@ create trigger aaa after insert on parted_trig_1 for each row execute procedure 
 create trigger bbb after insert on parted_trig for each row execute procedure trigger_notice();
 create trigger qqq after insert on parted_trig_1_1 for each row execute procedure trigger_notice();
 insert into parted_trig values (50), (1500);
+drop table parted_trig;
+
+-- Verify propagation of trigger arguments to partitions
+create table parted_trig (a int) partition by list (a);
+create table parted_trig1 partition of parted_trig for values in (1);
+create or replace function trigger_notice() returns trigger as $$
+  declare
+    arg1 text = TG_ARGV[0];
+    arg2 integer = TG_ARGV[1];
+  begin
+    raise notice 'trigger % on % % % for % args % %',
+		TG_NAME, TG_TABLE_NAME, TG_WHEN, TG_OP, TG_LEVEL, arg1, arg2;
+    return null;
+  end;
+  $$ language plpgsql;
+create trigger aaa after insert on parted_trig
+   for each row execute procedure trigger_notice('quirky', 1);
+
+-- Verify propagation of trigger arguments to partitions attached after creating trigger
+create table parted_trig2 partition of parted_trig for values in (2);
+create table parted_trig3 (like parted_trig);
+alter table parted_trig attach partition parted_trig3 for values in (3);
+insert into parted_trig values (1), (2), (3);
 drop table parted_trig;
 
 -- test irregular partitions (i.e., different column definitions),

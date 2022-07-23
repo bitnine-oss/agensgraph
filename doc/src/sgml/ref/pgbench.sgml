@@ -355,7 +355,6 @@ pgbench <optional> <replaceable>options</replaceable> </optional> <replaceable>d
       </listitem>
      </varlistentry>
 
-
      <varlistentry>
       <term><option>-c</option> <replaceable>clients</replaceable></term>
       <term><option>--client=</option><replaceable>clients</replaceable></term>
@@ -474,10 +473,10 @@ pgbench <optional> <replaceable>options</replaceable> </optional> <replaceable>d
            </listitem>
           </itemizedlist>
 
-        Because in "prepared" mode <application>pgbench</application> reuses
-        the parse analysis result for the second and subsequent query
-        iteration, <application>pgbench</application> runs faster in the
-        prepared mode than in other modes.
+        In the <literal>prepared</literal> mode, <application>pgbench</application>
+        reuses the parse analysis result starting from the second query
+        iteration, so <application>pgbench</application> runs faster
+        than in other modes.
        </para>
        <para>
         The default is simple query protocol.  (See <xref linkend="protocol"/>
@@ -613,6 +612,16 @@ pgbench <optional> <replaceable>options</replaceable> </optional> <replaceable>d
        <para>
         Run built-in select-only script.
         Shorthand for <option>-b select-only</option>.
+       </para>
+      </listitem>
+     </varlistentry>
+
+     <varlistentry>
+      <term><option>--show-script</option><replaceable>scriptname</replaceable></term>
+      <listitem>
+       <para>
+        Show the actual code of builtin script <replaceable>scriptname</replaceable>
+        on stderr, and exit immediately.
        </para>
       </listitem>
      </varlistentry>
@@ -843,7 +852,7 @@ pgbench <optional> <replaceable>options</replaceable> </optional> <replaceable>d
   <para>
    The default built-in transaction script (also invoked with <option>-b tpcb-like</option>)
    issues seven commands per transaction over randomly chosen <literal>aid</literal>,
-   <literal>tid</literal>, <literal>bid</literal> and <literal>balance</literal>.
+   <literal>tid</literal>, <literal>bid</literal> and <literal>delta</literal>.
    The scenario is inspired by the TPC-B benchmark, but is not actually TPC-B,
    hence the name.
   </para>

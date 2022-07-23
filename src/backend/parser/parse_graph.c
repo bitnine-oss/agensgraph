@@ -1495,7 +1495,7 @@ makeComponents(List *pattern)
 		/* find other connected components and merge them to `repr` */
 		Assert(lc != NULL);
 		prev = lc;
-		for_each_cell(lc, lnext(lc))
+		for_each_cell(lc, components, lnext(components, lc))
 		{
 			c = lfirst(lc);
 
@@ -1503,7 +1503,7 @@ makeComponents(List *pattern)
 			{
 				list_concat(repr, c);
 
-				components = list_delete_cell(components, lc, prev);
+				components = list_delete_cell(components, lc);
 				lc = prev;
 			}
 			else
@@ -1639,7 +1639,7 @@ transformComponents(ParseState *pstate, List *components, List **targetList)
 				{
 					bool		zero;
 
-					le = lnext(le);
+					le = lnext(p->chain, le);
 
 					/* vertex only path */
 					if (le == NULL)
@@ -1662,7 +1662,7 @@ transformComponents(ParseState *pstate, List *components, List **targetList)
 
 					if (p->kind != CPATH_NORMAL)
 					{
-						le = lnext(le);
+						le = lnext(p->chain, le);
 						continue;
 					}
 
@@ -1680,7 +1680,7 @@ transformComponents(ParseState *pstate, List *components, List **targetList)
 					qual = addQualNodeIn(pstate, qual, vertex,
 										 prev_crel, prev_edge, true);
 
-					le = lnext(le);
+					le = lnext(p->chain, le);
 					/* end of the path */
 					if (le == NULL)
 						break;
@@ -1743,7 +1743,7 @@ transformComponents(ParseState *pstate, List *components, List **targetList)
 				prev_crel = crel;
 				prev_edge = edge;
 
-				le = lnext(le);
+				le = lnext(p->chain, le);
 			}
 
 			if (out && p->kind == CPATH_NORMAL)
@@ -3276,7 +3276,7 @@ addQualUniqueEdges(ParseState *pstate, Node *qual, List *ueids, List *ueidarrs)
 		Node	   *eid1 = lfirst(le1);
 		ListCell   *le2;
 
-		for_each_cell(le2, lnext(le1))
+		for_each_cell(le2, ueids, lnext(ueids, le1))
 		{
 			Node	   *eid2 = lfirst(le2);
 			Expr	   *ne;
@@ -3314,7 +3314,7 @@ addQualUniqueEdges(ParseState *pstate, Node *qual, List *ueids, List *ueidarrs)
 		Node	   *eidarr1 = lfirst(lea1);
 		ListCell   *lea2;
 
-		for_each_cell(lea2, lnext(lea1))
+		for_each_cell(lea2, ueidarrs, lnext(ueidarrs, lea1))
 		{
 			Node	   *eidarr2 = lfirst(lea2);
 			Node	   *funcexpr;
@@ -3449,9 +3449,9 @@ transform_prop_constr_worker(Node *node, prop_constr_context *ctx)
 		ListCell   *prev;
 
 		k = lfirst(le);
-		le = lnext(le);
+		le = lnext(m->keyvals, le);
 		v = lfirst(le);
-		le = lnext(le);
+		le = lnext(m->keyvals, le);
 
 		Assert(IsA(k, String));
 		pathelem = makeConst(TEXTOID, -1, DEFAULT_COLLATION_OID, -1,
@@ -3493,8 +3493,7 @@ transform_prop_constr_worker(Node *node, prop_constr_context *ctx)
 		}
 
 		ctx->pathelems = list_delete_cell(ctx->pathelems,
-										  list_tail(ctx->pathelems),
-										  prev);
+										  list_tail(ctx->pathelems));
 	}
 }
 
@@ -3732,7 +3731,7 @@ adjustFutureVertices(List *future_vertices, RangeTblEntry *rte, int rtindex)
 		bool		found;
 		ListCell   *lt;
 
-		next = lnext(le);
+		next = lnext(future_vertices, le);
 
 		/* set `varno` of new future vertex to its `rtindex` */
 		if (fv->varno == InvalidAttrNumber)
@@ -3776,7 +3775,7 @@ adjustFutureVertices(List *future_vertices, RangeTblEntry *rte, int rtindex)
 		}
 
 		if (!found)
-			future_vertices = list_delete_cell(future_vertices, le, prev);
+			future_vertices = list_delete_cell(future_vertices, le);
 		else
 			prev = le;
 	}
@@ -4057,11 +4056,11 @@ removeResolvedFutureVertices(List *future_vertices)
 	{
 		FutureVertex *fv = lfirst(le);
 
-		next = lnext(le);
+		next = lnext(future_vertices, le);
 		if (fv->expr == NULL)
 			prev = le;
 		else
-			future_vertices = list_delete_cell(future_vertices, le, prev);
+			future_vertices = list_delete_cell(future_vertices, le);
 	}
 
 	return future_vertices;
@@ -6180,7 +6179,7 @@ makeTargetListFromRTE(ParseState *pstate, RangeTblEntry *rte)
 		targetlist = lappend(targetlist, tmp);
 
 		varattno++;
-		ln = lnext(ln);
+		ln = lnext(rte->eref->colnames, ln);
 	}
 
 	return targetlist;

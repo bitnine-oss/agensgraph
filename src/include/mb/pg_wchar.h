@@ -289,7 +289,7 @@ typedef enum pg_enc
 #define PG_ENCODING_BE_LAST PG_KOI8U
 
 /*
- * Please use these tests before access to pg_encconv_tbl[]
+ * Please use these tests before access to pg_enc2name_tbl[]
  * or to other places...
  */
 #define PG_VALID_BE_ENCODING(_enc) \
@@ -544,7 +544,7 @@ extern int	pg_mbstrlen_with_len(const char *mbstr, int len);
 extern int	pg_mbcliplen(const char *mbstr, int len, int limit);
 extern int	pg_encoding_mbcliplen(int encoding, const char *mbstr,
 								  int len, int limit);
-extern int	pg_mbcharcliplen(const char *mbstr, int len, int imit);
+extern int	pg_mbcharcliplen(const char *mbstr, int len, int limit);
 extern int	pg_encoding_max_length(int encoding);
 extern int	pg_database_encoding_max_length(void);
 extern mbcharacter_incrementer pg_database_encoding_character_incrementer(void);
@@ -614,8 +614,6 @@ extern void report_untranslatable_char(int src_encoding, int dest_encoding,
 
 extern void local2local(const unsigned char *l, unsigned char *p, int len,
 						int src_encoding, int dest_encoding, const unsigned char *tab);
-extern void pg_ascii2mic(const unsigned char *l, unsigned char *p, int len);
-extern void pg_mic2ascii(const unsigned char *mic, unsigned char *p, int len);
 extern void latin2mic(const unsigned char *l, unsigned char *p, int len,
 					  int lc, int encoding);
 extern void mic2latin(const unsigned char *mic, unsigned char *p, int len,

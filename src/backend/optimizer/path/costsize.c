@@ -1823,7 +1823,7 @@ append_nonpartial_cost(List *subpaths, int numpaths, int parallel_workers)
 		return 0;
 
 	/*
-	 * Array length is number of workers or number of relevants paths,
+	 * Array length is number of workers or number of relevant paths,
 	 * whichever is less.
 	 */
 	arrlen = Min(parallel_workers, numpaths);
@@ -1850,7 +1850,7 @@ append_nonpartial_cost(List *subpaths, int numpaths, int parallel_workers)
 	 * For each of the remaining subpaths, add its cost to the array element
 	 * with minimum cost.
 	 */
-	for_each_cell(l, cell)
+	for_each_cell(l, subpaths, cell)
 	{
 		Path	   *subpath = (Path *) lfirst(l);
 		int			i;
@@ -4482,8 +4482,7 @@ get_parameterized_baserel_size(PlannerInfo *root, RelOptInfo *rel,
 	 * restriction clauses.  Note that we force the clauses to be treated as
 	 * non-join clauses during selectivity estimation.
 	 */
-	allclauses = list_concat(list_copy(param_clauses),
-							 rel->baserestrictinfo);
+	allclauses = list_concat_copy(param_clauses, rel->baserestrictinfo);
 	nrows = rel->tuples *
 		clauselist_selectivity(root,
 							   allclauses,
@@ -4774,8 +4773,6 @@ get_foreign_key_join_selectivity(PlannerInfo *root,
 		bool		ref_is_outer;
 		List	   *removedlist;
 		ListCell   *cell;
-		ListCell   *prev;
-		ListCell   *next;
 
 		/*
 		 * This FK is not relevant unless it connects a baserel on one side of
@@ -4816,14 +4813,12 @@ get_foreign_key_join_selectivity(PlannerInfo *root,
 			worklist = list_copy(worklist);
 
 		removedlist = NIL;
-		prev = NULL;
-		for (cell = list_head(worklist); cell; cell = next)
+		foreach(cell, worklist)
 		{
 			RestrictInfo *rinfo = (RestrictInfo *) lfirst(cell);
 			bool		remove_it = false;
 			int			i;
 
-			next = lnext(cell);
 			/* Drop this clause if it matches any column of the FK */
 			for (i = 0; i < fkinfo->nkeys; i++)
 			{
@@ -4863,11 +4858,9 @@ get_foreign_key_join_selectivity(PlannerInfo *root,
 			}
 			if (remove_it)
 			{
-				worklist = list_delete_cell(worklist, cell, prev);
+				worklist = foreach_delete_current(worklist, cell);
 				removedlist = lappend(removedlist, rinfo);
 			}
-			else
-				prev = cell;
 		}
 
 		/*

@@ -287,7 +287,7 @@ extern PQconninfoOption *PQconninfo(PGconn *conn);
 extern void PQconninfoFree(PQconninfoOption *connOptions);
 
 /*
- * close the current connection and restablish a new one with the same
+ * close the current connection and reestablish a new one with the same
  * parameters
  */
 /* Asynchronous (non-blocking) */
@@ -566,10 +566,10 @@ extern void PQdisplayTuples(const PGresult *res,
 
 extern void PQprintTuples(const PGresult *res,
 						  FILE *fout,	/* output stream */
-						  int printAttName, /* print attribute names */
-						  int terseOutput,	/* delimiter bars */
-						  int width);	/* width of column, if 0, use variable
-										 * width */
+						  int PrintAttNames,	/* print attribute names */
+						  int TerseOutput,	/* delimiter bars */
+						  int colWidth);	/* width of column, if 0, use
+											 * variable width */
 
 
 /* === in fe-lobj.c === */

@@ -1925,12 +1925,12 @@ create unique index on anothertab(f4);
 Indexes:
     "anothertab_pkey" PRIMARY KEY, btree (f1)
     "anothertab_f1_f4_key" UNIQUE CONSTRAINT, btree (f1, f4)
-    "anothertab_f2_key" UNIQUE CONSTRAINT, btree (f2)
-    "anothertab_f4_idx" UNIQUE, btree (f4)
     "anothertab_f2_f3_idx" btree (f2, f3)
+    "anothertab_f2_key" UNIQUE CONSTRAINT, btree (f2)
     "anothertab_f3_excl" EXCLUDE USING btree (f3 WITH =)
     "anothertab_f4_excl" EXCLUDE USING btree (f4 WITH =) WHERE (f4 IS NOT NULL)
     "anothertab_f4_excl1" EXCLUDE USING btree (f4 WITH =) WHERE (f5 > 0)
+    "anothertab_f4_idx" UNIQUE, btree (f4)
 
 alter table anothertab alter column f1 type bigint;
 alter table anothertab
@@ -1950,12 +1950,12 @@ alter table anothertab alter column f5 type bigint;
 Indexes:
     "anothertab_pkey" PRIMARY KEY, btree (f1)
     "anothertab_f1_f4_key" UNIQUE CONSTRAINT, btree (f1, f4)
-    "anothertab_f2_key" UNIQUE CONSTRAINT, btree (f2)
-    "anothertab_f4_idx" UNIQUE, btree (f4)
     "anothertab_f2_f3_idx" btree (f2, f3)
+    "anothertab_f2_key" UNIQUE CONSTRAINT, btree (f2)
     "anothertab_f3_excl" EXCLUDE USING btree (f3 WITH =)
     "anothertab_f4_excl" EXCLUDE USING btree (f4 WITH =) WHERE (f4 IS NOT NULL)
     "anothertab_f4_excl1" EXCLUDE USING btree (f4 WITH =) WHERE (f5 > 0)
+    "anothertab_f4_idx" UNIQUE, btree (f4)
 
 drop table anothertab;
 create table another (f1 int, f2 text);
@@ -2713,7 +2713,7 @@ as 'select $1.f1 is not distinct from $2.f1 and $1.f2 is not distinct from $2.f2
 create operator alter1.=(procedure = alter1.same, leftarg  = alter1.ctype, rightarg = alter1.ctype);
 create operator class alter1.ctype_hash_ops default for type alter1.ctype using hash as
   operator 1 alter1.=(alter1.ctype, alter1.ctype);
-create conversion alter1.ascii_to_utf8 for 'sql_ascii' to 'utf8' from ascii_to_utf8;
+create conversion alter1.latin1_to_utf8 for 'latin1' to 'utf8' from iso8859_1_to_utf8;
 create text search parser alter1.prs(start = prsd_start, gettoken = prsd_nexttoken, end = prsd_end, lextypes = prsd_lextype);
 create text search configuration alter1.cfg(parser = alter1.prs);
 create text search template alter1.tmpl(init = dsimple_init, lexize = dsimple_lexize);
@@ -2731,7 +2731,7 @@ alter operator alter1.=(alter1.ctype, alter1.ctype) set schema alter2;
 alter function alter1.same(alter1.ctype, alter1.ctype) set schema alter2;
 alter type alter1.ctype set schema alter1; -- no-op, same schema
 alter type alter1.ctype set schema alter2;
-alter conversion alter1.ascii_to_utf8 set schema alter2;
+alter conversion alter1.latin1_to_utf8 set schema alter2;
 alter text search parser alter1.prs set schema alter2;
 alter text search configuration alter1.cfg set schema alter2;
 alter text search template alter1.tmpl set schema alter2;
@@ -2775,7 +2775,7 @@ drop cascades to type alter2.ctype
 drop cascades to function alter2.same(alter2.ctype,alter2.ctype)
 drop cascades to operator alter2.=(alter2.ctype,alter2.ctype)
 drop cascades to operator family alter2.ctype_hash_ops for access method hash
-drop cascades to conversion alter2.ascii_to_utf8
+drop cascades to conversion alter2.latin1_to_utf8
 drop cascades to text search parser alter2.prs
 drop cascades to text search configuration alter2.cfg
 drop cascades to text search template alter2.tmpl
@@ -3446,13 +3446,13 @@ LINE 1: ALTER TABLE partitioned ADD EXCLUDE USING gist (a WITH &&);
                                     ^
 -- cannot drop column that is part of the partition key
 ALTER TABLE partitioned DROP COLUMN a;
-ERROR:  cannot drop column named in partition key
+ERROR:  cannot drop column "a" because it is part of the partition key of relation "partitioned"
 ALTER TABLE partitioned ALTER COLUMN a TYPE char(5);
-ERROR:  cannot alter type of column named in partition key
+ERROR:  cannot alter column "a" because it is part of the partition key of relation "partitioned"
 ALTER TABLE partitioned DROP COLUMN b;
-ERROR:  cannot drop column referenced in partition key expression
+ERROR:  cannot drop column "b" because it is part of the partition key of relation "partitioned"
 ALTER TABLE partitioned ALTER COLUMN b TYPE char(5);
-ERROR:  cannot alter type of column referenced in partition key expression
+ERROR:  cannot alter column "b" because it is part of the partition key of relation "partitioned"
 -- partitioned table cannot participate in regular inheritance
 CREATE TABLE nonpartitioned (
 	a int,
@@ -3945,9 +3945,9 @@ ERROR:  cannot change inheritance of a partition
 -- partitioned tables; for example, part_5, which is list_parted2's
 -- partition, is partitioned on b;
 ALTER TABLE list_parted2 DROP COLUMN b;
-ERROR:  cannot drop column named in partition key
+ERROR:  cannot drop column "b" because it is part of the partition key of relation "part_5"
 ALTER TABLE list_parted2 ALTER COLUMN b TYPE text;
-ERROR:  cannot alter type of column named in partition key
+ERROR:  cannot alter column "b" because it is part of the partition key of relation "part_5"
 -- dropping non-partition key columns should be allowed on the parent table.
 ALTER TABLE list_parted DROP COLUMN b;
 SELECT * FROM list_parted;

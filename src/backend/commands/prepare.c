@@ -143,7 +143,7 @@ PrepareQuery(PrepareStmt *stmt, const char *queryString,
 	}
 
 	/*
-	 * grammar only allows OptimizableStmt, so this check should be redundant
+	 * grammar only allows PreparableStmt, so this check should be redundant
 	 */
 	switch (query->commandType)
 	{
@@ -683,7 +683,7 @@ ExplainExecuteQuery(ExecuteStmt *execstmt, IntoClause *into, ExplainState *es,
 		/* No need for CommandCounterIncrement, as ExplainOnePlan did it */
 
 		/* Separate plans with an appropriate separator */
-		if (lnext(p) != NULL)
+		if (lnext(plan_list, p) != NULL)
 			ExplainSeparatePlans(es);
 	}
 

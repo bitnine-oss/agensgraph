@@ -307,21 +307,9 @@ do { \
 		output_failed = true, output_errno = errno; \
 } while (0)
 
-#define PG_CMD_PRINTF1(fmt, arg1) \
+#define PG_CMD_PRINTF(fmt, ...) \
 do { \
-	if (fprintf(cmdfd, fmt, arg1) < 0 || fflush(cmdfd) < 0) \
-		output_failed = true, output_errno = errno; \
-} while (0)
-
-#define PG_CMD_PRINTF2(fmt, arg1, arg2) \
-do { \
-	if (fprintf(cmdfd, fmt, arg1, arg2) < 0 || fflush(cmdfd) < 0) \
-		output_failed = true, output_errno = errno; \
-} while (0)
-
-#define PG_CMD_PRINTF3(fmt, arg1, arg2, arg3)		\
-do { \
-	if (fprintf(cmdfd, fmt, arg1, arg2, arg3) < 0 || fflush(cmdfd) < 0) \
+	if (fprintf(cmdfd, fmt, __VA_ARGS__) < 0 || fflush(cmdfd) < 0) \
 		output_failed = true, output_errno = errno; \
 } while (0)
 
@@ -716,6 +704,8 @@ static const struct tsearch_config_match tsearch_config_languages[] =
 	{"french", "French"},
 	{"german", "de"},
 	{"german", "German"},
+	{"greek", "el"},
+	{"greek", "Greek"},
 	{"hungarian", "hu"},
 	{"hungarian", "Hungarian"},
 	{"indonesian", "id"},
@@ -1073,7 +1063,7 @@ test_config_settings(void)
 	else
 		printf("%dkB\n", n_buffers * (BLCKSZ / 1024));
 
-	printf(_("selecting default timezone ... "));
+	printf(_("selecting default time zone ... "));
 	fflush(stdout);
 	default_timezone = select_default_timezone(share_path);
 	printf("%s\n", default_timezone ? default_timezone : "GMT");
@@ -1317,7 +1307,7 @@ setup_config(void)
 		err = WSAStartup(MAKEWORD(2, 2), &wsaData);
 #endif
 
-		/* for best results, this code should match parse_hba() */
+		/* for best results, this code should match parse_hba_line() */
 		hints.ai_flags = AI_NUMERICHOST;
 		hints.ai_family = AF_UNSPEC;
 		hints.ai_socktype = 0;
@@ -1451,20 +1441,6 @@ bootstrap_template1(void)
 	bki_lines = replace_token(bki_lines, "LC_CTYPE",
 							  escape_quotes_bki(lc_ctype));
 
-	/*
-	 * Pass correct LC_xxx environment to bootstrap.
-	 *
-	 * The shell script arranged to restore the LC settings afterwards, but
-	 * there doesn't seem to be any compelling reason to do that.
-	 */
-	snprintf(cmd, sizeof(cmd), "LC_COLLATE=%s", lc_collate);
-	putenv(pg_strdup(cmd));
-
-	snprintf(cmd, sizeof(cmd), "LC_CTYPE=%s", lc_ctype);
-	putenv(pg_strdup(cmd));
-
-	unsetenv("LC_ALL");
-
 	/* Also ensure backend isn't confused by this environment var: */
 	unsetenv("PGCLIENTENCODING");
 
@@ -1512,7 +1488,7 @@ setup_auth(FILE *cmdfd)
 		PG_CMD_PUTS(*line);
 
 	if (superuser_password)
-		PG_CMD_PRINTF2("ALTER USER \"%s\" WITH PASSWORD E'%s';\n\n",
+		PG_CMD_PRINTF("ALTER USER \"%s\" WITH PASSWORD E'%s';\n\n",
 					   username, escape_quotes(superuser_password));
 }
 
@@ -1706,7 +1682,7 @@ setup_description(FILE *cmdfd)
 				"	objsubid int4, "
 				"	description text);\n\n");
 
-	PG_CMD_PRINTF1("COPY tmp_pg_description FROM E'%s';\n\n",
+	PG_CMD_PRINTF("COPY tmp_pg_description FROM E'%s';\n\n",
 				   escape_quotes(desc_file));
 
 	PG_CMD_PUTS("INSERT INTO pg_description "
@@ -1719,7 +1695,7 @@ setup_description(FILE *cmdfd)
 				" classname name, "
 				" description text);\n\n");
 
-	PG_CMD_PRINTF1("COPY tmp_pg_shdescription FROM E'%s';\n\n",
+	PG_CMD_PRINTF("COPY tmp_pg_shdescription FROM E'%s';\n\n",
 				   escape_quotes(shdesc_file));
 
 	PG_CMD_PUTS("INSERT INTO pg_shdescription "
@@ -1760,7 +1736,7 @@ setup_collation(FILE *cmdfd)
 	 * in pg_collation.h.  But add it before reading system collations, so
 	 * that it wins if libc defines a locale named ucs_basic.
 	 */
-	PG_CMD_PRINTF3("INSERT INTO pg_collation (oid, collname, collnamespace, collowner, collprovider, collisdeterministic, collencoding, collcollate, collctype)"
+	PG_CMD_PRINTF("INSERT INTO pg_collation (oid, collname, collnamespace, collowner, collprovider, collisdeterministic, collencoding, collcollate, collctype)"
 				   "VALUES (pg_nextoid('pg_catalog.pg_collation', 'oid', 'pg_catalog.pg_collation_oid_index'), 'ucs_basic', 'pg_catalog'::regnamespace, %u, '%c', true, %d, 'C', 'C');\n\n",
 				   BOOTSTRAP_SUPERUSERID, COLLPROVIDER_LIBC, PG_UTF8);
 
@@ -2004,12 +1980,12 @@ setup_schema(FILE *cmdfd)
 
 	free(lines);
 
-	PG_CMD_PRINTF1("UPDATE information_schema.sql_implementation_info "
+	PG_CMD_PRINTF("UPDATE information_schema.sql_implementation_info "
 				   "  SET character_value = '%s' "
 				   "  WHERE implementation_info_name = 'DBMS VERSION';\n\n",
 				   infoversion);
 
-	PG_CMD_PRINTF1("COPY information_schema.sql_features "
+	PG_CMD_PRINTF("COPY information_schema.sql_features "
 				   "  (feature_id, feature_name, sub_feature_id, "
 				   "  sub_feature_name, is_supported, comments) "
 				   " FROM E'%s';\n\n",
@@ -2046,7 +2022,7 @@ make_template0(FILE *cmdfd)
 		"CREATE DATABASE template0 IS_TEMPLATE = true ALLOW_CONNECTIONS = false;\n\n",
 
 		/*
-		 * We use the OID of template0 to determine lastsysoid
+		 * We use the OID of template0 to determine datlastsysoid
 		 */
 		"UPDATE pg_database SET datlastsysoid = "
 		"    (SELECT oid FROM pg_database "
@@ -2525,7 +2501,7 @@ setup_bin_paths(const char *argv0)
 			pg_log_error("The program \"postgres\" is needed by %s but was not found in the\n"
 						 "same directory as \"%s\".\n"
 						 "Check your installation.",
-						 full_path, progname);
+						 progname, full_path);
 		else
 			pg_log_error("The program \"postgres\" was found by \"%s\"\n"
 						 "but was not the same version as %s.\n"

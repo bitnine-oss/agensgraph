@@ -27,6 +27,7 @@
 #include "common/controldata_utils.h"
 #include "common/file_perm.h"
 #include "common/logging.h"
+#include "common/string.h"
 #include "getopt_long.h"
 #include "utils/pidfile.h"
 
@@ -1481,14 +1482,14 @@ pgwin32_CommandLine(bool registration)
 		appendPQExpBuffer(cmdLine, " -e \"%s\"", event_source);
 
 	if (registration && do_wait)
-		appendPQExpBuffer(cmdLine, " -w");
+		appendPQExpBufferStr(cmdLine, " -w");
 
 	/* Don't propagate a value from an environment variable. */
 	if (registration && wait_seconds_arg && wait_seconds != DEFAULT_WAIT)
 		appendPQExpBuffer(cmdLine, " -t %d", wait_seconds);
 
 	if (registration && silent_mode)
-		appendPQExpBuffer(cmdLine, " -s");
+		appendPQExpBufferStr(cmdLine, " -s");
 
 	if (post_opts)
 	{
@@ -1725,7 +1726,7 @@ pgwin32_doRunAsService(void)
 /*
  * Mingw headers are incomplete, and so are the libraries. So we have to load
  * a whole lot of API functions dynamically. Since we have to do this anyway,
- * also load the couple of functions that *do* exist in minwg headers but not
+ * also load the couple of functions that *do* exist in mingw headers but not
  * on NT4. That way, we don't break on NT4.
  */
 typedef BOOL (WINAPI * __CreateRestrictedToken) (HANDLE, DWORD, DWORD, PSID_AND_ATTRIBUTES, DWORD, PLUID_AND_ATTRIBUTES, DWORD, PSID_AND_ATTRIBUTES, PHANDLE);
@@ -2218,9 +2219,8 @@ adjust_data_dir(void)
 	pclose(fd);
 	free(my_exec_path);
 
-	/* Remove trailing newline */
-	if (strchr(filename, '\n') != NULL)
-		*strchr(filename, '\n') = '\0';
+	/* strip trailing newline and carriage return */
+	(void) pg_strip_crlf(filename);
 
 	free(pg_data);
 	pg_data = pg_strdup(filename);

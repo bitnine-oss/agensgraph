@@ -146,11 +146,6 @@ resetSpGistScanOpaque(SpGistScanOpaque so)
 {
 	MemoryContext oldCtx;
 
-	/*
-	 * clear traversal context before proceeding to the next scan; this must
-	 * not happen before the freeScanStack above, else we get double-free
-	 * crashes.
-	 */
 	MemoryContextReset(so->traversalCxt);
 
 	oldCtx = MemoryContextSwitchTo(so->traversalCxt);
@@ -648,7 +643,7 @@ spgInnerTest(SpGistScanOpaque so, SpGistSearchItem *item,
 				continue;
 
 			/*
-			 * Use infinity distances if innerConsistent() failed to return
+			 * Use infinity distances if innerConsistentFn() failed to return
 			 * them or if is a NULL item (their distances are really unused).
 			 */
 			distances = out.distances ? out.distances[i] : so->infDistances;

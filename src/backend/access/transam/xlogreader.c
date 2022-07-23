@@ -26,6 +26,7 @@
 #include "replication/origin.h"
 
 #ifndef FRONTEND
+#include "miscadmin.h"
 #include "utils/memutils.h"
 #endif
 
@@ -701,7 +702,7 @@ ValidXLogRecordHeader(XLogReaderState *state, XLogRecPtr RecPtr,
  * We assume all of the record (that is, xl_tot_len bytes) has been read
  * into memory at *record.  Also, ValidXLogRecordHeader() has accepted the
  * record's header, which means in particular that xl_tot_len is at least
- * SizeOfXlogRecord.
+ * SizeOfXLogRecord.
  */
 static bool
 ValidXLogRecord(XLogReaderState *state, XLogRecord *record, XLogRecPtr recptr)
@@ -783,20 +784,10 @@ XLogReaderValidatePageHeader(XLogReaderState *state, XLogRecPtr recptr,
 		if (state->system_identifier &&
 			longhdr->xlp_sysid != state->system_identifier)
 		{
-			char		fhdrident_str[32];
-			char		sysident_str[32];
-
-			/*
-			 * Format sysids separately to keep platform-dependent format code
-			 * out of the translatable message string.
-			 */
-			snprintf(fhdrident_str, sizeof(fhdrident_str), UINT64_FORMAT,
-					 longhdr->xlp_sysid);
-			snprintf(sysident_str, sizeof(sysident_str), UINT64_FORMAT,
-					 state->system_identifier);
 			report_invalid_record(state,
-								  "WAL file is from different database system: WAL file database system identifier is %s, pg_control database system identifier is %s",
-								  fhdrident_str, sysident_str);
+								  "WAL file is from different database system: WAL file database system identifier is %llu, pg_control database system identifier is %llu",
+								  (unsigned long long) longhdr->xlp_sysid,
+								  (unsigned long long) state->system_identifier);
 			return false;
 		}
 		else if (longhdr->xlp_seg_size != state->wal_segment_size)
@@ -1453,3 +1444,37 @@ RestoreBlockImage(XLogReaderState *record, uint8 block_id, char *page)
 
 	return true;
 }
+
+#ifndef FRONTEND
+
+/*
+ * Extract the FullTransactionId from a WAL record.
+ */
+FullTransactionId
+XLogRecGetFullXid(XLogReaderState *record)
+{
+	TransactionId	xid,
+					next_xid;
+	uint32			epoch;
+
+	/*
+	 * This function is only safe during replay, because it depends on the
+	 * replay state.  See AdvanceNextFullTransactionIdPastXid() for more.
+	 */
+	Assert(AmStartupProcess() || !IsUnderPostmaster);
+
+	xid = XLogRecGetXid(record);
+	next_xid = XidFromFullTransactionId(ShmemVariableCache->nextFullXid);
+	epoch = EpochFromFullTransactionId(ShmemVariableCache->nextFullXid);
+
+	/*
+	 * If xid is numerically greater than next_xid, it has to be from the
+	 * last epoch.
+	 */
+	if (unlikely(xid > next_xid))
+		--epoch;
+
+	return FullTransactionIdFromEpochAndXid(epoch, xid);
+}
+
+#endif

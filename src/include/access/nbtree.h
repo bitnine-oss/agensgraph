@@ -97,12 +97,12 @@ typedef BTPageOpaqueData *BTPageOpaque;
 typedef struct BTMetaPageData
 {
 	uint32		btm_magic;		/* should contain BTREE_MAGIC */
-	uint32		btm_version;	/* should contain BTREE_VERSION */
+	uint32		btm_version;	/* nbtree version (always <= BTREE_VERSION) */
 	BlockNumber btm_root;		/* current root location */
 	uint32		btm_level;		/* tree level of the root page */
 	BlockNumber btm_fastroot;	/* current "fast" root location */
 	uint32		btm_fastlevel;	/* tree level of the "fast" root page */
-	/* following fields are available since page version 3 */
+	/* remaining fields only valid when btm_version >= BTREE_NOVAC_VERSION */
 	TransactionId btm_oldest_btpo_xact; /* oldest btpo_xact among all deleted
 										 * pages */
 	float8		btm_last_cleanup_num_heap_tuples;	/* number of heap tuples
@@ -403,20 +403,19 @@ typedef struct BTMetaPageData
 #define BT_WRITE		BUFFER_LOCK_EXCLUSIVE
 
 /*
- *	BTStackData -- As we descend a tree, we push the (location, downlink)
- *	pairs from internal pages onto a private stack.  If we split a
- *	leaf, we use this stack to walk back up the tree and insert data
- *	into parent pages (and possibly to split them, too).  Lehman and
- *	Yao's update algorithm guarantees that under no circumstances can
- *	our private stack give us an irredeemably bad picture up the tree.
- *	Again, see the paper for details.
+ * BTStackData -- As we descend a tree, we push the location of pivot
+ * tuples whose downlink we are about to follow onto a private stack.  If
+ * we split a leaf, we use this stack to walk back up the tree and insert
+ * data into its parent page at the correct location.  We also have to
+ * recursively insert into the grandparent page if and when the parent page
+ * splits.  Our private stack can become stale due to concurrent page
+ * splits and page deletions, but it should never give us an irredeemably
+ * bad picture.
  */
-
 typedef struct BTStackData
 {
 	BlockNumber bts_blkno;
 	OffsetNumber bts_offset;
-	BlockNumber bts_btentry;
 	struct BTStackData *bts_parent;
 } BTStackData;
 
@@ -731,7 +730,7 @@ extern void _bt_parallel_advance_array_keys(IndexScanDesc scan);
  */
 extern bool _bt_doinsert(Relation rel, IndexTuple itup,
 						 IndexUniqueCheck checkUnique, Relation heapRel);
-extern Buffer _bt_getstackbuf(Relation rel, BTStack stack);
+extern Buffer _bt_getstackbuf(Relation rel, BTStack stack, BlockNumber child);
 extern void _bt_finish_split(Relation rel, Buffer bbuf, BTStack stack);
 
 /*

@@ -1497,7 +1497,7 @@ deparseFromExprForRel(StringInfo buf, PlannerInfo *root, RelOptInfo *foreignrel,
 			if (fpinfo->jointype == JOIN_INNER)
 			{
 				*ignore_conds = list_concat(*ignore_conds,
-											list_copy(fpinfo->joinclauses));
+											fpinfo->joinclauses);
 				fpinfo->joinclauses = NIL;
 			}
 
@@ -1531,7 +1531,7 @@ deparseFromExprForRel(StringInfo buf, PlannerInfo *root, RelOptInfo *foreignrel,
 			{
 				Assert(fpinfo->jointype == JOIN_INNER);
 				Assert(fpinfo->joinclauses == NIL);
-				appendStringInfo(buf, "%s", join_sql_o.data);
+				appendBinaryStringInfo(buf, join_sql_o.data, join_sql_o.len);
 				return;
 			}
 		}
@@ -1552,7 +1552,7 @@ deparseFromExprForRel(StringInfo buf, PlannerInfo *root, RelOptInfo *foreignrel,
 			{
 				Assert(fpinfo->jointype == JOIN_INNER);
 				Assert(fpinfo->joinclauses == NIL);
-				appendStringInfo(buf, "%s", join_sql_i.data);
+				appendBinaryStringInfo(buf, join_sql_i.data, join_sql_i.len);
 				return;
 			}
 		}
@@ -1861,7 +1861,7 @@ deparseDirectUpdateSql(StringInfo buf, PlannerInfo *root,
 	{
 		List	   *ignore_conds = NIL;
 
-		appendStringInfo(buf, " FROM ");
+		appendStringInfoString(buf, " FROM ");
 		deparseFromExprForRel(buf, root, foreignrel, true, rtindex,
 							  &ignore_conds, params_list);
 		remote_conds = list_concat(remote_conds, ignore_conds);
@@ -1944,7 +1944,7 @@ deparseDirectDeleteSql(StringInfo buf, PlannerInfo *root,
 	{
 		List	   *ignore_conds = NIL;
 
-		appendStringInfo(buf, " USING ");
+		appendStringInfoString(buf, " USING ");
 		deparseFromExprForRel(buf, root, foreignrel, true, rtindex,
 							  &ignore_conds, params_list);
 		remote_conds = list_concat(remote_conds, ignore_conds);
@@ -2610,7 +2610,7 @@ deparseSubscriptingRef(SubscriptingRef *node, deparse_expr_cxt *context)
 		{
 			deparseExpr(lfirst(lowlist_item), context);
 			appendStringInfoChar(buf, ':');
-			lowlist_item = lnext(lowlist_item);
+			lowlist_item = lnext(node->reflowerindexpr, lowlist_item);
 		}
 		deparseExpr(lfirst(uplist_item), context);
 		appendStringInfoChar(buf, ']');
@@ -2673,7 +2673,7 @@ deparseFuncExpr(FuncExpr *node, deparse_expr_cxt *context)
 	{
 		if (!first)
 			appendStringInfoString(buf, ", ");
-		if (use_variadic && lnext(arg) == NULL)
+		if (use_variadic && lnext(node->args, arg) == NULL)
 			appendStringInfoString(buf, "VARIADIC ");
 		deparseExpr((Expr *) lfirst(arg), context);
 		first = false;
@@ -3001,7 +3001,7 @@ deparseAggref(Aggref *node, deparse_expr_cxt *context)
 				first = false;
 
 				/* Add VARIADIC */
-				if (use_variadic && lnext(arg) == NULL)
+				if (use_variadic && lnext(node->args, arg) == NULL)
 					appendStringInfoString(buf, "VARIADIC ");
 
 				deparseExpr((Expr *) n, context);

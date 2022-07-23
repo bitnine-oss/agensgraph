@@ -133,8 +133,7 @@ static int	CheckBSDAuth(Port *port, char *user);
 
 /* Correct header from the Platform SDK */
 typedef
-ULONG		(*__ldap_start_tls_sA) (
-									IN PLDAP ExternalHandle,
+ULONG		(*__ldap_start_tls_sA) (IN PLDAP ExternalHandle,
 									OUT PULONG ServerReturnValue,
 									OUT LDAPMessage **result,
 									IN PLDAPControlA * ServerControls,
@@ -1796,14 +1795,9 @@ interpret_ident_response(const char *ident_response,
 
 
 /*
- *	Talk to the ident server on host "remote_ip_addr" and find out who
- *	owns the tcp connection from his port "remote_port" to port
- *	"local_port_addr" on host "local_ip_addr".  Return the user name the
- *	ident server gives as "*ident_user".
- *
- *	IP addresses and port numbers are in network byte order.
- *
- *	But iff we're unable to get the information from ident, return false.
+ *	Talk to the ident server on "remote_addr" and find out who
+ *	owns the tcp connection to "local_addr"
+ *	If the username is successfully retrieved, check the usermap.
  *
  *	XXX: Using WaitLatchOrSocket() and doing a CHECK_FOR_INTERRUPTS() if the
  *	latch was set would improve the responsiveness to timeouts/cancellations.
@@ -3031,11 +3025,11 @@ CheckRADIUSAuth(Port *port)
 		 * don't and will then reuse the correct value.
 		 */
 		if (list_length(port->hba->radiussecrets) > 1)
-			secrets = lnext(secrets);
+			secrets = lnext(port->hba->radiussecrets, secrets);
 		if (list_length(port->hba->radiusports) > 1)
-			radiusports = lnext(radiusports);
+			radiusports = lnext(port->hba->radiusports, radiusports);
 		if (list_length(port->hba->radiusidentifiers) > 1)
-			identifiers = lnext(identifiers);
+			identifiers = lnext(port->hba->radiusidentifiers, identifiers);
 	}
 
 	/* No servers left to try, so give up */

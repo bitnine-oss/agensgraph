@@ -18,10 +18,6 @@
 
 
 #define oidcmp(x,y) ( ((x) < (y) ? -1 : ((x) > (y)) ?  1 : 0) )
-#define oideq(x,y) ( (x) == (y) )
-#define oidle(x,y) ( (x) <= (y) )
-#define oidge(x,y) ( (x) >= (y) )
-#define oidzero(x) ( (x) == 0 )
 
 /*
  * The data structures used to store system catalog information.  Every
@@ -636,9 +632,6 @@ typedef struct _extensionMemberId
 	CatalogId	catId;			/* tableoid+oid of some member object */
 	ExtensionInfo *ext;			/* owning extension */
 } ExtensionMemberId;
-
-/* global decls */
-extern bool force_quotes;		/* double-quotes for identifiers flag */
 
 /* placeholders for comment starting and ending delimiters */
 extern char g_comment_start[10];

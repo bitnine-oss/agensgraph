@@ -873,7 +873,7 @@ sub GetFakeConfigure
 	$cfg .= ' --without-zlib' unless ($self->{options}->{zlib});
 	$cfg .= ' --with-extra-version' if ($self->{options}->{extraver});
 	$cfg .= ' --with-openssl'       if ($self->{options}->{openssl});
-	$cfg .= ' --with-ossp-uuid'     if ($self->{options}->{uuid});
+	$cfg .= ' --with-uuid'          if ($self->{options}->{uuid});
 	$cfg .= ' --with-libxml'        if ($self->{options}->{xml});
 	$cfg .= ' --with-libxslt'       if ($self->{options}->{xslt});
 	$cfg .= ' --with-gssapi'        if ($self->{options}->{gss});
@@ -964,6 +964,34 @@ sub new
 	$self->{vcver}                      = '15.00';
 	$self->{visualStudioName}           = 'Visual Studio 2017';
 	$self->{VisualStudioVersion}        = '15.0.26730.3';
+	$self->{MinimumVisualStudioVersion} = '10.0.40219.1';
+
+	return $self;
+}
+
+package VS2019Solution;
+
+#
+# Package that encapsulates a Visual Studio 2019 solution file
+#
+
+use Carp;
+use strict;
+use warnings;
+use base qw(Solution);
+
+no warnings qw(redefine);    ## no critic
+
+sub new
+{
+	my $classname = shift;
+	my $self      = $classname->SUPER::_new(@_);
+	bless($self, $classname);
+
+	$self->{solutionFileVersion}        = '12.00';
+	$self->{vcver}                      = '16.00';
+	$self->{visualStudioName}           = 'Visual Studio 2019';
+	$self->{VisualStudioVersion}        = '16.0.28729.10';
 	$self->{MinimumVisualStudioVersion} = '10.0.40219.1';
 
 	return $self;

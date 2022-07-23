@@ -207,23 +207,16 @@ sepgsql_subxact_callback(SubXactEvent event, SubTransactionId mySubid,
 						 SubTransactionId parentSubid, void *arg)
 {
 	ListCell   *cell;
-	ListCell   *prev;
-	ListCell   *next;
 
 	if (event == SUBXACT_EVENT_ABORT_SUB)
 	{
-		prev = NULL;
-		for (cell = list_head(client_label_pending); cell; cell = next)
+		foreach(cell, client_label_pending)
 		{
 			pending_label *plabel = lfirst(cell);
 
-			next = lnext(cell);
-
 			if (plabel->subid == mySubid)
 				client_label_pending
-					= list_delete_cell(client_label_pending, cell, prev);
-			else
-				prev = cell;
+					= foreach_delete_current(client_label_pending, cell);
 		}
 	}
 }
@@ -660,7 +653,7 @@ sepgsql_mcstrans_out(PG_FUNCTION_ARGS)
 }
 
 /*
- * quote_object_names
+ * quote_object_name
  *
  * It tries to quote the supplied identifiers
  */
@@ -676,7 +669,7 @@ quote_object_name(const char *src1, const char *src2,
 	if (src1)
 	{
 		temp = quote_identifier(src1);
-		appendStringInfo(&result, "%s", temp);
+		appendStringInfoString(&result, temp);
 		if (src1 != temp)
 			pfree((void *) temp);
 	}

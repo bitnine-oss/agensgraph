@@ -1,5 +1,5 @@
 /*
- *	opt.c
+ *	option.c
  *
  *	options functions
  *
@@ -15,6 +15,7 @@
 #endif
 
 #include "getopt_long.h"
+#include "common/string.h"
 #include "utils/pidfile.h"
 
 #include "pg_upgrade.h"
@@ -23,7 +24,8 @@
 static void usage(void);
 static void check_required_directory(char **dirpath,
 									 const char *envVarName, bool useCwd,
-									 const char *cmdLineOption, const char *description);
+									 const char *cmdLineOption, const char *description,
+									 bool missingOk);
 #define FIX_DEFAULT_READ_ONLY "-c default_transaction_read_only=false"
 
 
@@ -216,6 +218,9 @@ parseCommandLine(int argc, char *argv[])
 		}
 	}
 
+	if (optind < argc)
+		pg_fatal("too many command-line arguments (first is \"%s\")\n", argv[optind]);
+
 	if ((log_opts.internal = fopen_priv(INTERNAL_LOG_FILE, "a")) == NULL)
 		pg_fatal("could not open log file \"%s\": %m\n", INTERNAL_LOG_FILE);
 
@@ -251,15 +256,15 @@ parseCommandLine(int argc, char *argv[])
 
 	/* Get values from env if not already set */
 	check_required_directory(&old_cluster.bindir, "PGBINOLD", false,
-							 "-b", _("old cluster binaries reside"));
+							 "-b", _("old cluster binaries reside"), false);
 	check_required_directory(&new_cluster.bindir, "PGBINNEW", false,
-							 "-B", _("new cluster binaries reside"));
+							 "-B", _("new cluster binaries reside"), true);
 	check_required_directory(&old_cluster.pgdata, "PGDATAOLD", false,
-							 "-d", _("old cluster data resides"));
+							 "-d", _("old cluster data resides"), false);
 	check_required_directory(&new_cluster.pgdata, "PGDATANEW", false,
-							 "-D", _("new cluster data resides"));
+							 "-D", _("new cluster data resides"), false);
 	check_required_directory(&user_opts.socketdir, "PGSOCKETDIR", true,
-							 "-s", _("sockets will be created"));
+							 "-s", _("sockets will be created"), false);
 
 #ifdef WIN32
 
@@ -293,7 +298,8 @@ usage(void)
 	printf(_("  pg_upgrade [OPTION]...\n\n"));
 	printf(_("Options:\n"));
 	printf(_("  -b, --old-bindir=BINDIR       old cluster executable directory\n"));
-	printf(_("  -B, --new-bindir=BINDIR       new cluster executable directory\n"));
+	printf(_("  -B, --new-bindir=BINDIR       new cluster executable directory (default\n"
+			 "                                same directory as pg_upgrade)\n"));
 	printf(_("  -c, --check                   check clusters only, don't change any data\n"));
 	printf(_("  -d, --old-datadir=DATADIR     old cluster data directory\n"));
 	printf(_("  -D, --new-datadir=DATADIR     new cluster data directory\n"));
@@ -304,7 +310,7 @@ usage(void)
 	printf(_("  -p, --old-port=PORT           old cluster port number (default %d)\n"), old_cluster.port);
 	printf(_("  -P, --new-port=PORT           new cluster port number (default %d)\n"), new_cluster.port);
 	printf(_("  -r, --retain                  retain SQL and log files after success\n"));
-	printf(_("  -s, --socketdir=DIR           socket directory to use (default CWD)\n"));
+	printf(_("  -s, --socketdir=DIR           socket directory to use (default current dir.)\n"));
 	printf(_("  -U, --username=NAME           cluster superuser (default \"%s\")\n"), os_info.user);
 	printf(_("  -v, --verbose                 enable verbose internal logging\n"));
 	printf(_("  -V, --version                 display version information, then exit\n"));
@@ -351,13 +357,15 @@ usage(void)
  *	useCwd		  - true if OK to default to CWD
  *	cmdLineOption - the command line option for this directory
  *	description   - a description of this directory option
+ *	missingOk	  - true if OK that both dirpath and envVarName are not existing
  *
  * We use the last two arguments to construct a meaningful error message if the
  * user hasn't provided the required directory name.
  */
 static void
 check_required_directory(char **dirpath, const char *envVarName, bool useCwd,
-						 const char *cmdLineOption, const char *description)
+						 const char *cmdLineOption, const char *description,
+						 bool missingOk)
 {
 	if (*dirpath == NULL || strlen(*dirpath) == 0)
 	{
@@ -373,6 +381,8 @@ check_required_directory(char **dirpath, const char *envVarName, bool useCwd,
 				pg_fatal("could not determine current directory\n");
 			*dirpath = pg_strdup(cwd);
 		}
+		else if (missingOk)
+			return;
 		else
 			pg_fatal("You must identify the directory where the %s.\n"
 					 "Please use the %s command-line option or the %s environment variable.\n",
@@ -445,9 +455,8 @@ adjust_data_dir(ClusterInfo *cluster)
 
 	pclose(output);
 
-	/* Remove trailing newline */
-	if (strchr(cmd_output, '\n') != NULL)
-		*strchr(cmd_output, '\n') = '\0';
+	/* strip trailing newline and carriage return */
+	(void) pg_strip_crlf(cmd_output);
 
 	cluster->pgdata = pg_strdup(cmd_output);
 
@@ -508,10 +517,9 @@ get_sock_dir(ClusterInfo *cluster, bool live_check)
 					sscanf(line, "%hu", &old_cluster.port);
 				if (lineno == LOCK_FILE_LINE_SOCKET_DIR)
 				{
+					/* strip trailing newline and carriage return */
 					cluster->sockdir = pg_strdup(line);
-					/* strip off newline */
-					if (strchr(cluster->sockdir, '\n') != NULL)
-						*strchr(cluster->sockdir, '\n') = '\0';
+					(void) pg_strip_crlf(cluster->sockdir);
 				}
 			}
 			fclose(fp);
