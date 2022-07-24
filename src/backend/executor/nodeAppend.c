@@ -86,7 +86,6 @@ struct ParallelAppendState
 };
 
 #define INVALID_SUBPLAN_INDEX		-1
-#define NO_MATCHING_SUBPLANS		-2
 
 static TupleTableSlot *ExecAppend(PlanState *pstate);
 static bool choose_next_subplan_locally(AppendState *node);
@@ -149,23 +148,6 @@ ExecInitAppend(Append *node, EState *estate, int eflags)
 			validsubplans = ExecFindInitialMatchingSubPlans(prunestate,
 															list_length(node->appendplans));
 
-			/*
-			 * The case where no subplans survive pruning must be handled
-			 * specially.  The problem here is that code in explain.c requires
-			 * an Append to have at least one subplan in order for it to
-			 * properly determine the Vars in that subplan's targetlist.  We
-			 * sidestep this issue by just initializing the first subplan and
-			 * setting as_whichplan to NO_MATCHING_SUBPLANS to indicate that
-			 * we don't really need to scan any subnodes.
-			 */
-			if (bms_is_empty(validsubplans))
-			{
-				appendstate->as_whichplan = NO_MATCHING_SUBPLANS;
-
-				/* Mark the first as valid so that it's initialized below */
-				validsubplans = bms_make_singleton(0);
-			}
-
 			nplans = bms_num_members(validsubplans);
 		}
 		else
@@ -177,14 +159,12 @@ ExecInitAppend(Append *node, EState *estate, int eflags)
 		}
 
 		/*
-		 * If no runtime pruning is required, we can fill as_valid_subplans
-		 * immediately, preventing later calls to ExecFindMatchingSubPlans.
+		 * When no run-time pruning is required and there's at least one
+		 * subplan, we can fill as_valid_subplans immediately, preventing
+		 * later calls to ExecFindMatchingSubPlans.
 		 */
-		if (!prunestate->do_exec_prune)
-		{
-			Assert(nplans > 0);
+		if (!prunestate->do_exec_prune && nplans > 0)
 			appendstate->as_valid_subplans = bms_add_range(NULL, 0, nplans - 1);
-		}
 	}
 	else
 	{
@@ -266,16 +246,16 @@ ExecAppend(PlanState *pstate)
 
 	if (node->as_whichplan < 0)
 	{
+		/* Nothing to do if there are no subplans */
+		if (node->as_nplans == 0)
+			return ExecClearTuple(node->ps.ps_ResultTupleSlot);
+
 		/*
 		 * If no subplan has been chosen, we must choose one before
 		 * proceeding.
 		 */
 		if (node->as_whichplan == INVALID_SUBPLAN_INDEX &&
 			!node->choose_next_subplan(node))
-			return ExecClearTuple(node->ps.ps_ResultTupleSlot);
-
-		/* Nothing to do if there are no matching subplans */
-		else if (node->as_whichplan == NO_MATCHING_SUBPLANS)
 			return ExecClearTuple(node->ps.ps_ResultTupleSlot);
 	}
 
@@ -483,7 +463,7 @@ choose_next_subplan_locally(AppendState *node)
 	int			nextplan;
 
 	/* We should never be called when there are no subplans */
-	Assert(whichplan != NO_MATCHING_SUBPLANS);
+	Assert(node->as_nplans > 0);
 
 	/*
 	 * If first call then have the bms member function choose the first valid
@@ -534,7 +514,7 @@ choose_next_subplan_for_leader(AppendState *node)
 	Assert(ScanDirectionIsForward(node->ps.state->es_direction));
 
 	/* We should never be called when there are no subplans */
-	Assert(node->as_whichplan != NO_MATCHING_SUBPLANS);
+	Assert(node->as_nplans > 0);
 
 	LWLockAcquire(&pstate->pa_lock, LW_EXCLUSIVE);
 
@@ -615,7 +595,7 @@ choose_next_subplan_for_worker(AppendState *node)
 	Assert(ScanDirectionIsForward(node->ps.state->es_direction));
 
 	/* We should never be called when there are no subplans */
-	Assert(node->as_whichplan != NO_MATCHING_SUBPLANS);
+	Assert(node->as_nplans > 0);
 
 	LWLockAcquire(&pstate->pa_lock, LW_EXCLUSIVE);
 

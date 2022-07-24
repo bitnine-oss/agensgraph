@@ -49,6 +49,7 @@
 #include "pgstat.h"
 #include "postmaster/autovacuum.h"
 #include "postmaster/fork_process.h"
+#include "postmaster/interrupt.h"
 #include "postmaster/postmaster.h"
 #include "replication/walsender.h"
 #include "storage/backendid.h"
@@ -71,10 +72,10 @@
 #include "utils/catcache.h"
 #include "utils/lsyscache.h"
 #include "catalog/ag_graph_fn.h"
-#include "access/genam.h"
 #include "catalog/indexing.h"
 #include "utils/fmgroids.h"
 #include "utils/syscache.h"
+#include "access/indexgenam.h"
 
 /* ----------
  * Timer definitions.
@@ -289,10 +290,6 @@ static PgStat_GlobalStats globalStats;
  */
 static List *pending_write_requests = NIL;
 
-/* Signal handler flags */
-static volatile bool need_exit = false;
-static volatile bool got_SIGHUP = false;
-
 /*
  * Total time charged to functions so far in the current backend.
  * We use this to help separate "self" and "other" time charges.
@@ -310,9 +307,7 @@ static pid_t pgstat_forkexec(void);
 #endif
 
 NON_EXEC_STATIC void PgstatCollectorMain(int argc, char *argv[]) pg_attribute_noreturn();
-static void pgstat_exit(SIGNAL_ARGS);
 static void pgstat_beshutdown_hook(int code, Datum arg);
-static void pgstat_sighup_handler(SIGNAL_ARGS);
 
 static PgStat_StatDBEntry *pgstat_get_db_entry(Oid databaseid, bool create);
 static PgStat_StatTabEntry *pgstat_get_tab_entry(PgStat_StatDBEntry *dbentry,
@@ -4020,6 +4015,9 @@ pgstat_get_wait_io(WaitEventIO w)
 		case WAIT_EVENT_LOGICAL_REWRITE_WRITE:
 			event_name = "LogicalRewriteWrite";
 			break;
+		case WAIT_EVENT_PROC_SIGNAL_BARRIER:
+			event_name = "ProcSignalBarrier";
+			break;
 		case WAIT_EVENT_RELATION_MAP_READ:
 			event_name = "RelationMapRead";
 			break;
@@ -4461,10 +4459,10 @@ PgstatCollectorMain(int argc, char *argv[])
 	 * except SIGHUP and SIGQUIT.  Note we don't need a SIGUSR1 handler to
 	 * support latch operations, because we only use a local latch.
 	 */
-	pqsignal(SIGHUP, pgstat_sighup_handler);
+	pqsignal(SIGHUP, SignalHandlerForConfigReload);
 	pqsignal(SIGINT, SIG_IGN);
 	pqsignal(SIGTERM, SIG_IGN);
-	pqsignal(SIGQUIT, pgstat_exit);
+	pqsignal(SIGQUIT, SignalHandlerForShutdownRequest);
 	pqsignal(SIGALRM, SIG_IGN);
 	pqsignal(SIGPIPE, SIG_IGN);
 	pqsignal(SIGUSR1, SIG_IGN);
@@ -4493,10 +4491,10 @@ PgstatCollectorMain(int argc, char *argv[])
 	 * message.  (This effectively means that if backends are sending us stuff
 	 * like mad, we won't notice postmaster death until things slack off a
 	 * bit; which seems fine.)	To do that, we have an inner loop that
-	 * iterates as long as recv() succeeds.  We do recognize got_SIGHUP inside
-	 * the inner loop, which means that such interrupts will get serviced but
-	 * the latch won't get cleared until next time there is a break in the
-	 * action.
+	 * iterates as long as recv() succeeds.  We do check ConfigReloadPending
+	 * inside the inner loop, which means that such interrupts will get
+	 * serviced but the latch won't get cleared until next time there is a
+	 * break in the action.
 	 */
 	for (;;)
 	{
@@ -4506,21 +4504,21 @@ PgstatCollectorMain(int argc, char *argv[])
 		/*
 		 * Quit if we get SIGQUIT from the postmaster.
 		 */
-		if (need_exit)
+		if (ShutdownRequestPending)
 			break;
 
 		/*
 		 * Inner loop iterates as long as we keep getting messages, or until
-		 * need_exit becomes set.
+		 * ShutdownRequestPending becomes set.
 		 */
-		while (!need_exit)
+		while (!ShutdownRequestPending)
 		{
 			/*
 			 * Reload configuration if we got SIGHUP from the postmaster.
 			 */
-			if (got_SIGHUP)
+			if (ConfigReloadPending)
 			{
-				got_SIGHUP = false;
+				ConfigReloadPending = false;
 				ProcessConfigFile(PGC_SIGHUP);
 			}
 
@@ -4703,31 +4701,6 @@ PgstatCollectorMain(int argc, char *argv[])
 	pgstat_write_statsfiles(true, true);
 
 	exit(0);
-}
-
-
-/* SIGQUIT signal handler for collector process */
-static void
-pgstat_exit(SIGNAL_ARGS)
-{
-	int			save_errno = errno;
-
-	need_exit = true;
-	SetLatch(MyLatch);
-
-	errno = save_errno;
-}
-
-/* SIGHUP handler for collector process */
-static void
-pgstat_sighup_handler(SIGNAL_ARGS)
-{
-	int			save_errno = errno;
-
-	got_SIGHUP = true;
-	SetLatch(MyLatch);
-
-	errno = save_errno;
 }
 
 /*

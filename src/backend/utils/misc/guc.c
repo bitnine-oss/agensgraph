@@ -490,6 +490,7 @@ extern const struct config_enum_entry dynamic_shared_memory_options[];
  * GUC option variables that are exported from this module
  */
 bool		log_duration = false;
+bool		log_parameters_on_error = false;
 bool		Debug_print_plan = false;
 bool		Debug_print_parse = false;
 bool		Debug_print_rewritten = false;
@@ -1329,6 +1330,15 @@ static struct config_bool ConfigureNamesBool[] =
 			NULL
 		},
 		&log_duration,
+		false,
+		NULL, NULL, NULL
+	},
+	{
+		{"log_parameters_on_error", PGC_SUSET, LOGGING_WHAT,
+			gettext_noop("Logs bind parameters of the logged statements where possible."),
+			NULL
+		},
+		&log_parameters_on_error,
 		false,
 		NULL, NULL, NULL
 	},
@@ -4649,7 +4659,7 @@ static struct config_enum ConfigureNamesEnum[] =
 			GUC_SUPERUSER_ONLY
 		},
 		&ssl_min_protocol_version,
-		PG_TLS1_VERSION,
+		PG_TLS1_2_VERSION,
 		ssl_protocol_versions_info + 1, /* don't allow PG_TLS_ANY */
 		NULL, NULL, NULL
 	},
@@ -9573,8 +9583,7 @@ show_all_file_settings(PG_FUNCTION_ARGS)
 	if (!(rsinfo->allowedModes & SFRM_Materialize))
 		ereport(ERROR,
 				(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-				 errmsg("materialize mode required, but it is not " \
-						"allowed in this context")));
+				 errmsg("materialize mode required, but it is not allowed in this context")));
 
 	/* Scan the config files using current context as workspace */
 	conf = ProcessConfigFileInternal(PGC_SIGHUP, false, DEBUG3);

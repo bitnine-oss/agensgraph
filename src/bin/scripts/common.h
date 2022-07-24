@@ -21,8 +21,6 @@ enum trivalue
 	TRI_YES
 };
 
-extern bool CancelRequested;
-
 typedef void (*help_handler) (const char *progname);
 
 extern void handle_help_version_opts(int argc, char *argv[],
@@ -59,11 +57,5 @@ extern void appendQualifiedRelation(PQExpBuffer buf, const char *name,
 									PGconn *conn, bool echo);
 
 extern bool yesno_prompt(const char *question);
-
-extern void setup_cancel_handler(void);
-
-extern void SetCancelConn(PGconn *conn);
-extern void ResetCancelConn(void);
-
 
 #endif							/* COMMON_H */

@@ -68,7 +68,7 @@ PGAC_ARG_REQ(with, template, [NAME], [override operating system template],
 
 case $host_os in
      aix*) template=aix ;;
-  cygwin*) template=cygwin ;;
+  cygwin*|msys*) template=cygwin ;;
   darwin*) template=darwin ;;
 dragonfly*) template=netbsd ;;
  freebsd*) template=freebsd ;;
@@ -1195,7 +1195,8 @@ if test "$with_openssl" = yes ; then
      AC_SEARCH_LIBS(CRYPTO_new_ex_data, [eay32 crypto], [], [AC_MSG_ERROR([library 'eay32' or 'crypto' is required for OpenSSL])])
      AC_SEARCH_LIBS(SSL_new, [ssleay32 ssl], [], [AC_MSG_ERROR([library 'ssleay32' or 'ssl' is required for OpenSSL])])
   fi
-  AC_CHECK_FUNCS([SSL_clear_options SSL_get_current_compression X509_get_signature_nid])
+  # Function introduced in OpenSSL 1.0.2.
+  AC_CHECK_FUNCS([X509_get_signature_nid])
   # Functions introduced in OpenSSL 1.1.0. We used to check for
   # OPENSSL_VERSION_NUMBER, but that didn't work with 1.1.0, because LibreSSL
   # defines OPENSSL_VERSION_NUMBER to claim version 2.0.0, even though it
@@ -1737,6 +1738,7 @@ AC_REPLACE_FUNCS(m4_normalize([
 	explicit_bzero
 	fls
 	getopt
+	getpeereid
 	getrusage
 	inet_aton
 	mkdtemp
@@ -1751,32 +1753,26 @@ AC_REPLACE_FUNCS(m4_normalize([
 	strtof
 ]))
 
-case $host_os in
+if test "$PORTNAME" = "win32" -o "$PORTNAME" = "cygwin"; then
 	# Cygwin and (apparently, based on test results) Mingw both
 	# have a broken strtof(), so substitute the same replacement
 	# code we use with VS2013. That's not a perfect fix, since
 	# (unlike with VS2013) it doesn't avoid double-rounding, but
 	# we have no better options. To get that, though, we have to
 	# force the file to be compiled despite HAVE_STRTOF.
-	mingw*|cygwin*)
-		AC_LIBOBJ([strtof])
-		AC_MSG_NOTICE([On $host_os we will use our strtof wrapper.])
-	;;
-esac
+	AC_LIBOBJ([strtof])
+	AC_MSG_NOTICE([On $host_os we will use our strtof wrapper.])
+fi
 
 case $host_os in
-
         # Windows uses a specialised env handler
-        # and doesn't need a replacement getpeereid because it doesn't use
-        # Unix sockets.
         mingw*)
                 AC_DEFINE(HAVE_UNSETENV, 1, [Define to 1 because replacement version used.])
-                AC_DEFINE(HAVE_GETPEEREID, 1, [Define to 1 because function not required.])
                 ac_cv_func_unsetenv=yes
-                ac_cv_func_getpeereid=yes;;
+                ;;
         *)
-                AC_REPLACE_FUNCS([unsetenv getpeereid])
-		;;
+                AC_REPLACE_FUNCS([unsetenv])
+                ;;
 esac
 
 # System's version of getaddrinfo(), if any, may be used only if we found

@@ -45,6 +45,7 @@
 #include "parser/parse_relation.h"
 #include "pgstat.h"
 #include "postmaster/bgworker.h"
+#include "postmaster/interrupt.h"
 #include "postmaster/postmaster.h"
 #include "postmaster/walwriter.h"
 #include "replication/decode.h"
@@ -110,9 +111,6 @@ static void send_feedback(XLogRecPtr recvpos, bool force, bool requestReply);
 static void store_flush_position(XLogRecPtr remote_lsn);
 
 static void maybe_reread_subscription(void);
-
-/* Flags set by signal handlers */
-static volatile sig_atomic_t got_SIGHUP = false;
 
 /*
  * Should this worker apply changes for given relation.
@@ -232,6 +230,7 @@ slot_fill_defaults(LogicalRepRelMapEntry *rel, EState *estate,
 	defmap = (int *) palloc(num_phys_attrs * sizeof(int));
 	defexprs = (ExprState **) palloc(num_phys_attrs * sizeof(ExprState *));
 
+	Assert(rel->attrmap->maplen == num_phys_attrs);
 	for (attnum = 0; attnum < num_phys_attrs; attnum++)
 	{
 		Expr	   *defexpr;
@@ -239,7 +238,7 @@ slot_fill_defaults(LogicalRepRelMapEntry *rel, EState *estate,
 		if (TupleDescAttr(desc, attnum)->attisdropped || TupleDescAttr(desc, attnum)->attgenerated)
 			continue;
 
-		if (rel->attrmap[attnum] >= 0)
+		if (rel->attrmap->attnums[attnum] >= 0)
 			continue;
 
 		defexpr = (Expr *) build_column_default(rel->localrel, attnum + 1);
@@ -321,10 +320,11 @@ slot_store_cstrings(TupleTableSlot *slot, LogicalRepRelMapEntry *rel,
 	error_context_stack = &errcallback;
 
 	/* Call the "in" function for each non-dropped attribute */
+	Assert(natts == rel->attrmap->maplen);
 	for (i = 0; i < natts; i++)
 	{
 		Form_pg_attribute att = TupleDescAttr(slot->tts_tupleDescriptor, i);
-		int			remoteattnum = rel->attrmap[i];
+		int			remoteattnum = rel->attrmap->attnums[i];
 
 		if (!att->attisdropped && remoteattnum >= 0 &&
 			values[remoteattnum] != NULL)
@@ -405,10 +405,11 @@ slot_modify_cstrings(TupleTableSlot *slot, TupleTableSlot *srcslot,
 	error_context_stack = &errcallback;
 
 	/* Call the "in" function for each replaced attribute */
+	Assert(natts == rel->attrmap->maplen);
 	for (i = 0; i < natts; i++)
 	{
 		Form_pg_attribute att = TupleDescAttr(slot->tts_tupleDescriptor, i);
-		int			remoteattnum = rel->attrmap[i];
+		int			remoteattnum = rel->attrmap->attnums[i];
 
 		if (remoteattnum < 0)
 			continue;
@@ -1270,9 +1271,9 @@ LogicalRepApplyLoop(XLogRecPtr last_received)
 			CHECK_FOR_INTERRUPTS();
 		}
 
-		if (got_SIGHUP)
+		if (ConfigReloadPending)
 		{
-			got_SIGHUP = false;
+			ConfigReloadPending = false;
 			ProcessConfigFile(PGC_SIGHUP);
 		}
 
@@ -1563,20 +1564,6 @@ subscription_change_cb(Datum arg, int cacheid, uint32 hashvalue)
 	MySubscriptionValid = false;
 }
 
-/* SIGHUP: set flag to reload configuration at next convenient time */
-static void
-logicalrep_worker_sighup(SIGNAL_ARGS)
-{
-	int			save_errno = errno;
-
-	got_SIGHUP = true;
-
-	/* Waken anything waiting on the process latch */
-	SetLatch(MyLatch);
-
-	errno = save_errno;
-}
-
 /* Logical Replication Apply worker entry point */
 void
 ApplyWorkerMain(Datum main_arg)
@@ -1592,7 +1579,7 @@ ApplyWorkerMain(Datum main_arg)
 	logicalrep_worker_attach(worker_slot);
 
 	/* Setup signal handling */
-	pqsignal(SIGHUP, logicalrep_worker_sighup);
+	pqsignal(SIGHUP, SignalHandlerForConfigReload);
 	pqsignal(SIGTERM, die);
 	BackgroundWorkerUnblockSignals();
 

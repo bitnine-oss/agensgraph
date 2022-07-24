@@ -30,6 +30,7 @@
 #include "pgstat.h"
 #include "postmaster/bgworker.h"
 #include "postmaster/fork_process.h"
+#include "postmaster/interrupt.h"
 #include "postmaster/postmaster.h"
 #include "replication/logicallauncher.h"
 #include "replication/logicalworker.h"
@@ -91,9 +92,6 @@ static void logicalrep_launcher_onexit(int code, Datum arg);
 static void logicalrep_worker_onexit(int code, Datum arg);
 static void logicalrep_worker_detach(void);
 static void logicalrep_worker_cleanup(LogicalRepWorker *worker);
-
-/* Flags set by signal handlers */
-static volatile sig_atomic_t got_SIGHUP = false;
 
 static bool on_commit_launcher_wakeup = false;
 
@@ -714,20 +712,6 @@ logicalrep_worker_onexit(int code, Datum arg)
 	ApplyLauncherWakeup();
 }
 
-/* SIGHUP: set flag to reload configuration at next convenient time */
-static void
-logicalrep_launcher_sighup(SIGNAL_ARGS)
-{
-	int			save_errno = errno;
-
-	got_SIGHUP = true;
-
-	/* Waken anything waiting on the process latch */
-	SetLatch(MyLatch);
-
-	errno = save_errno;
-}
-
 /*
  * Count the number of registered (not necessarily running) sync workers
  * for a subscription.
@@ -972,7 +956,7 @@ ApplyLauncherMain(Datum main_arg)
 	LogicalRepCtx->launcher_pid = MyProcPid;
 
 	/* Establish signal handlers. */
-	pqsignal(SIGHUP, logicalrep_launcher_sighup);
+	pqsignal(SIGTERM, SignalHandlerForConfigReload);
 	pqsignal(SIGTERM, die);
 	BackgroundWorkerUnblockSignals();
 
@@ -1061,9 +1045,9 @@ ApplyLauncherMain(Datum main_arg)
 			CHECK_FOR_INTERRUPTS();
 		}
 
-		if (got_SIGHUP)
+		if (ConfigReloadPending)
 		{
-			got_SIGHUP = false;
+			ConfigReloadPending = false;
 			ProcessConfigFile(PGC_SIGHUP);
 		}
 	}
@@ -1103,8 +1087,7 @@ pg_stat_get_subscription(PG_FUNCTION_ARGS)
 	if (!(rsinfo->allowedModes & SFRM_Materialize))
 		ereport(ERROR,
 				(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-				 errmsg("materialize mode required, but it is not " \
-						"allowed in this context")));
+				 errmsg("materialize mode required, but it is not allowed in this context")));
 
 	/* Build a tuple descriptor for our result type */
 	if (get_call_result_type(fcinfo, NULL, &tupdesc) != TYPEFUNC_COMPOSITE)

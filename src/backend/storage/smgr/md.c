@@ -1280,25 +1280,41 @@ int
 mdsyncfiletag(const FileTag *ftag, char *path)
 {
 	SMgrRelation reln = smgropen(ftag->rnode, InvalidBackendId);
-	MdfdVec    *v;
-	char	   *p;
+	File		file;
+	bool		need_to_close;
+	int			result,
+				save_errno;
 
-	/* Provide the path for informational messages. */
-	p = _mdfd_segpath(reln, ftag->forknum, ftag->segno);
-	strlcpy(path, p, MAXPGPATH);
-	pfree(p);
+	/* See if we already have the file open, or need to open it. */
+	if (ftag->segno < reln->md_num_open_segs[ftag->forknum])
+	{
+		file = reln->md_seg_fds[ftag->forknum][ftag->segno].mdfd_vfd;
+		strlcpy(path, FilePathName(file), MAXPGPATH);
+		need_to_close = false;
+	}
+	else
+	{
+		char	   *p;
 
-	/* Try to open the requested segment. */
-	v = _mdfd_getseg(reln,
-					 ftag->forknum,
-					 ftag->segno * (BlockNumber) RELSEG_SIZE,
-					 false,
-					 EXTENSION_RETURN_NULL | EXTENSION_DONT_CHECK_SIZE);
-	if (v == NULL)
-		return -1;
+		p = _mdfd_segpath(reln, ftag->forknum, ftag->segno);
+		strlcpy(path, p, MAXPGPATH);
+		pfree(p);
 
-	/* Try to fsync the file. */
-	return FileSync(v->mdfd_vfd, WAIT_EVENT_DATA_FILE_SYNC);
+		file = PathNameOpenFile(path, O_RDWR | PG_BINARY);
+		if (file < 0)
+			return -1;
+		need_to_close = true;
+	}
+
+	/* Sync the file. */
+	result = FileSync(file, WAIT_EVENT_DATA_FILE_SYNC);
+	save_errno = errno;
+
+	if (need_to_close)
+		FileClose(file);
+
+	errno = save_errno;
+	return result;
 }
 
 /*

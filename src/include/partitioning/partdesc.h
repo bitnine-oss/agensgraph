@@ -29,15 +29,13 @@ typedef struct PartitionDescData
 	PartitionBoundInfo boundinfo;	/* collection of partition bounds */
 } PartitionDescData;
 
-extern void RelationBuildPartitionDesc(Relation rel);
+
+extern PartitionDesc RelationGetPartitionDesc(Relation rel);
 
 extern PartitionDirectory CreatePartitionDirectory(MemoryContext mcxt);
 extern PartitionDesc PartitionDirectoryLookup(PartitionDirectory, Relation);
 extern void DestroyPartitionDirectory(PartitionDirectory pdir);
 
 extern Oid	get_default_oid_from_partdesc(PartitionDesc partdesc);
-
-extern bool equalPartitionDescs(PartitionKey key, PartitionDesc partdesc1,
-								PartitionDesc partdesc2);
 
 #endif							/* PARTCACHE_H */

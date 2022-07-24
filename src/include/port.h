@@ -354,8 +354,11 @@ extern int	fls(int mask);
 #define ftello(a)		ftell(a)
 #endif
 
-#if !defined(HAVE_GETPEEREID) && !defined(WIN32)
+#ifndef HAVE_GETPEEREID
+/* On Windows, Perl might have incompatible definitions of uid_t and gid_t. */
+#ifndef PLPERL_HAVE_UID_GID
 extern int	getpeereid(int sock, uid_t *uid, gid_t *gid);
+#endif
 #endif
 
 #ifndef HAVE_ISINF
@@ -444,10 +447,6 @@ extern void unsetenv(const char *name);
 
 #ifndef HAVE_SRANDOM
 extern void srandom(unsigned int seed);
-#endif
-
-#ifndef HAVE_SSL_GET_CURRENT_COMPRESSION
-#define SSL_get_current_compression(x) 0
 #endif
 
 #ifndef HAVE_DLOPEN

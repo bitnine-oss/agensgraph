@@ -132,8 +132,8 @@ CREATE FOREIGN TABLE ft6 (
 -- ===================================================================
 -- tests for validator
 -- ===================================================================
--- requiressl, krbsrvname and gsslib are omitted because they depend on
--- configure options
+-- requiressl and some other parameters are omitted because
+-- valid values for them depend on configure options
 ALTER SERVER testserver1 OPTIONS (
 	use_remote_estimate 'false',
 	updatable 'true',
@@ -158,10 +158,10 @@ ALTER SERVER testserver1 OPTIONS (
 	sslcert 'value',
 	sslkey 'value',
 	sslrootcert 'value',
-	sslcrl 'value'
+	sslcrl 'value',
 	--requirepeer 'value',
-	-- krbsrvname 'value',
-	-- gsslib 'value',
+	krbsrvname 'value',
+	gsslib 'value'
 	--replication 'value'
 );
 -- Error, invalid list syntax
@@ -1348,7 +1348,7 @@ SELECT t1.c1, ss.a, ss.b FROM (SELECT c1 FROM ft4 WHERE c1 between 50 and 60) t1
 --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Foreign Scan
    Output: ft4.c1, ft4_1.c1, ft5.c1
-   Relations: (public.ft4) FULL JOIN ((public.ft4) FULL JOIN (public.ft5))
+   Relations: (public.ft4) FULL JOIN ((public.ft4 ft4_1) FULL JOIN (public.ft5))
    Remote SQL: SELECT s4.c1, s10.c1, s10.c2 FROM ((SELECT c1 FROM "S 1"."T 3" WHERE ((c1 >= 50)) AND ((c1 <= 60))) s4(c1) FULL JOIN (SELECT s8.c1, s9.c1 FROM ((SELECT c1 FROM "S 1"."T 3" WHERE ((c1 >= 50)) AND ((c1 <= 60))) s8(c1) FULL JOIN (SELECT c1 FROM "S 1"."T 4" WHERE ((c1 >= 50)) AND ((c1 <= 60))) s9(c1) ON (((s8.c1 = s9.c1)))) WHERE (((s8.c1 IS NULL) OR (s8.c1 IS NOT NULL)))) s10(c1, c2) ON (((s4.c1 = s10.c1)))) ORDER BY s4.c1 ASC NULLS LAST, s10.c1 ASC NULLS LAST, s10.c2 ASC NULLS LAST
 (4 rows)
 
@@ -2084,7 +2084,7 @@ SELECT t1c1, avg(t1c1 + t2c1) FROM (SELECT t1.c1, t2.c1 FROM ft1 t1 JOIN ft2 t2 
                                  Remote SQL: SELECT r1."C 1", r2."C 1" FROM ("S 1"."T 1" r1 INNER JOIN "S 1"."T 1" r2 ON (((r1."C 1" = r2."C 1"))))
                            ->  Foreign Scan
                                  Output: t1_1.c1, t2_1.c1
-                                 Relations: (public.ft1 t1) INNER JOIN (public.ft2 t2)
+                                 Relations: (public.ft1 t1_1) INNER JOIN (public.ft2 t2_1)
                                  Remote SQL: SELECT r1."C 1", r2."C 1" FROM ("S 1"."T 1" r1 INNER JOIN "S 1"."T 1" r2 ON (((r1."C 1" = r2."C 1"))))
 (20 rows)
 
@@ -3230,7 +3230,7 @@ select count(*), x.b from ft1, (select c2 a, sum(c1) b from ft1 group by c2) x w
                            Output: x.b, x.a
                            ->  Foreign Scan
                                  Output: ft1_1.c2, (sum(ft1_1.c1))
-                                 Relations: Aggregate on (public.ft1)
+                                 Relations: Aggregate on (public.ft1 ft1_1)
                                  Remote SQL: SELECT c2, sum("C 1") FROM "S 1"."T 1" GROUP BY 1
 (21 rows)
 
@@ -6260,10 +6260,10 @@ UPDATE rw_view SET b = b + 5;
                                        QUERY PLAN                                       
 ----------------------------------------------------------------------------------------
  Update on public.parent_tbl
-   Foreign Update on public.foreign_tbl
+   Foreign Update on public.foreign_tbl parent_tbl_1
      Remote SQL: UPDATE public.child_tbl SET b = $2 WHERE ctid = $1 RETURNING a, b
-   ->  Foreign Scan on public.foreign_tbl
-         Output: foreign_tbl.a, (foreign_tbl.b + 5), foreign_tbl.ctid
+   ->  Foreign Scan on public.foreign_tbl parent_tbl_1
+         Output: parent_tbl_1.a, (parent_tbl_1.b + 5), parent_tbl_1.ctid
          Remote SQL: SELECT a, b, ctid FROM public.child_tbl WHERE ((a < b)) FOR UPDATE
 (6 rows)
 
@@ -6275,10 +6275,10 @@ UPDATE rw_view SET b = b + 15;
                                        QUERY PLAN                                       
 ----------------------------------------------------------------------------------------
  Update on public.parent_tbl
-   Foreign Update on public.foreign_tbl
+   Foreign Update on public.foreign_tbl parent_tbl_1
      Remote SQL: UPDATE public.child_tbl SET b = $2 WHERE ctid = $1 RETURNING a, b
-   ->  Foreign Scan on public.foreign_tbl
-         Output: foreign_tbl.a, (foreign_tbl.b + 15), foreign_tbl.ctid
+   ->  Foreign Scan on public.foreign_tbl parent_tbl_1
+         Output: parent_tbl_1.a, (parent_tbl_1.b + 15), parent_tbl_1.ctid
          Remote SQL: SELECT a, b, ctid FROM public.child_tbl WHERE ((a < b)) FOR UPDATE
 (6 rows)
 
@@ -6459,6 +6459,36 @@ DROP TRIGGER trig_row_after ON rem1;
 DROP TRIGGER trig_stmt_before ON rem1;
 DROP TRIGGER trig_stmt_after ON rem1;
 DELETE from rem1;
+-- Test multiple AFTER ROW triggers on a foreign table
+CREATE TRIGGER trig_row_after1
+AFTER INSERT OR UPDATE OR DELETE ON rem1
+FOR EACH ROW EXECUTE PROCEDURE trigger_data(23,'skidoo');
+CREATE TRIGGER trig_row_after2
+AFTER INSERT OR UPDATE OR DELETE ON rem1
+FOR EACH ROW EXECUTE PROCEDURE trigger_data(23,'skidoo');
+insert into rem1 values(1,'insert');
+NOTICE:  trig_row_after1(23, skidoo) AFTER ROW INSERT ON rem1
+NOTICE:  NEW: (1,insert)
+NOTICE:  trig_row_after2(23, skidoo) AFTER ROW INSERT ON rem1
+NOTICE:  NEW: (1,insert)
+update rem1 set f2  = 'update' where f1 = 1;
+NOTICE:  trig_row_after1(23, skidoo) AFTER ROW UPDATE ON rem1
+NOTICE:  OLD: (1,insert),NEW: (1,update)
+NOTICE:  trig_row_after2(23, skidoo) AFTER ROW UPDATE ON rem1
+NOTICE:  OLD: (1,insert),NEW: (1,update)
+update rem1 set f2 = f2 || f2;
+NOTICE:  trig_row_after1(23, skidoo) AFTER ROW UPDATE ON rem1
+NOTICE:  OLD: (1,update),NEW: (1,updateupdate)
+NOTICE:  trig_row_after2(23, skidoo) AFTER ROW UPDATE ON rem1
+NOTICE:  OLD: (1,update),NEW: (1,updateupdate)
+delete from rem1;
+NOTICE:  trig_row_after1(23, skidoo) AFTER ROW DELETE ON rem1
+NOTICE:  OLD: (1,updateupdate)
+NOTICE:  trig_row_after2(23, skidoo) AFTER ROW DELETE ON rem1
+NOTICE:  OLD: (1,updateupdate)
+-- cleanup
+DROP TRIGGER trig_row_after1 ON rem1;
+DROP TRIGGER trig_row_after2 ON rem1;
 -- Test WHEN conditions
 CREATE TRIGGER trig_row_before_insupd
 BEFORE INSERT OR UPDATE ON rem1
@@ -6689,7 +6719,7 @@ NOTICE:  trig_row_after(23, skidoo) AFTER ROW INSERT ON rem1
 NOTICE:  NEW: (13,"test triggered !")
   ctid  
 --------
- (0,29)
+ (0,32)
 (1 row)
 
 -- cleanup
@@ -7064,10 +7094,10 @@ select * from bar where f1 in (select f1 from foo) for update;
          Inner Unique: true
          Hash Cond: (bar.f1 = foo.f1)
          ->  Append
-               ->  Seq Scan on public.bar
-                     Output: bar.f1, bar.f2, bar.ctid, bar.*, bar.tableoid
-               ->  Foreign Scan on public.bar2
-                     Output: bar2.f1, bar2.f2, bar2.ctid, bar2.*, bar2.tableoid
+               ->  Seq Scan on public.bar bar_1
+                     Output: bar_1.f1, bar_1.f2, bar_1.ctid, bar_1.*, bar_1.tableoid
+               ->  Foreign Scan on public.bar2 bar_2
+                     Output: bar_2.f1, bar_2.f2, bar_2.ctid, bar_2.*, bar_2.tableoid
                      Remote SQL: SELECT f1, f2, f3, ctid FROM public.loct2 FOR UPDATE
          ->  Hash
                Output: foo.ctid, foo.f1, foo.*, foo.tableoid
@@ -7075,10 +7105,10 @@ select * from bar where f1 in (select f1 from foo) for update;
                      Output: foo.ctid, foo.f1, foo.*, foo.tableoid
                      Group Key: foo.f1
                      ->  Append
-                           ->  Seq Scan on public.foo
-                                 Output: foo.ctid, foo.f1, foo.*, foo.tableoid
-                           ->  Foreign Scan on public.foo2
-                                 Output: foo2.ctid, foo2.f1, foo2.*, foo2.tableoid
+                           ->  Seq Scan on public.foo foo_1
+                                 Output: foo_1.ctid, foo_1.f1, foo_1.*, foo_1.tableoid
+                           ->  Foreign Scan on public.foo2 foo_2
+                                 Output: foo_2.ctid, foo_2.f1, foo_2.*, foo_2.tableoid
                                  Remote SQL: SELECT f1, f2, f3, ctid FROM public.loct1
 (23 rows)
 
@@ -7102,10 +7132,10 @@ select * from bar where f1 in (select f1 from foo) for share;
          Inner Unique: true
          Hash Cond: (bar.f1 = foo.f1)
          ->  Append
-               ->  Seq Scan on public.bar
-                     Output: bar.f1, bar.f2, bar.ctid, bar.*, bar.tableoid
-               ->  Foreign Scan on public.bar2
-                     Output: bar2.f1, bar2.f2, bar2.ctid, bar2.*, bar2.tableoid
+               ->  Seq Scan on public.bar bar_1
+                     Output: bar_1.f1, bar_1.f2, bar_1.ctid, bar_1.*, bar_1.tableoid
+               ->  Foreign Scan on public.bar2 bar_2
+                     Output: bar_2.f1, bar_2.f2, bar_2.ctid, bar_2.*, bar_2.tableoid
                      Remote SQL: SELECT f1, f2, f3, ctid FROM public.loct2 FOR SHARE
          ->  Hash
                Output: foo.ctid, foo.f1, foo.*, foo.tableoid
@@ -7113,10 +7143,10 @@ select * from bar where f1 in (select f1 from foo) for share;
                      Output: foo.ctid, foo.f1, foo.*, foo.tableoid
                      Group Key: foo.f1
                      ->  Append
-                           ->  Seq Scan on public.foo
-                                 Output: foo.ctid, foo.f1, foo.*, foo.tableoid
-                           ->  Foreign Scan on public.foo2
-                                 Output: foo2.ctid, foo2.f1, foo2.*, foo2.tableoid
+                           ->  Seq Scan on public.foo foo_1
+                                 Output: foo_1.ctid, foo_1.f1, foo_1.*, foo_1.tableoid
+                           ->  Foreign Scan on public.foo2 foo_2
+                                 Output: foo_2.ctid, foo_2.f1, foo_2.*, foo_2.tableoid
                                  Remote SQL: SELECT f1, f2, f3, ctid FROM public.loct1
 (23 rows)
 
@@ -7132,11 +7162,11 @@ select * from bar where f1 in (select f1 from foo) for share;
 -- Check UPDATE with inherited target and an inherited source table
 explain (verbose, costs off)
 update bar set f2 = f2 + 100 where f1 in (select f1 from foo);
-                                         QUERY PLAN                                          
----------------------------------------------------------------------------------------------
+                                           QUERY PLAN                                            
+-------------------------------------------------------------------------------------------------
  Update on public.bar
    Update on public.bar
-   Foreign Update on public.bar2
+   Foreign Update on public.bar2 bar_1
      Remote SQL: UPDATE public.loct2 SET f2 = $2 WHERE ctid = $1
    ->  Hash Join
          Output: bar.f1, (bar.f2 + 100), bar.ctid, foo.ctid, foo.*, foo.tableoid
@@ -7150,17 +7180,17 @@ update bar set f2 = f2 + 100 where f1 in (select f1 from foo);
                      Output: foo.ctid, foo.f1, foo.*, foo.tableoid
                      Group Key: foo.f1
                      ->  Append
-                           ->  Seq Scan on public.foo
-                                 Output: foo.ctid, foo.f1, foo.*, foo.tableoid
-                           ->  Foreign Scan on public.foo2
-                                 Output: foo2.ctid, foo2.f1, foo2.*, foo2.tableoid
+                           ->  Seq Scan on public.foo foo_1
+                                 Output: foo_1.ctid, foo_1.f1, foo_1.*, foo_1.tableoid
+                           ->  Foreign Scan on public.foo2 foo_2
+                                 Output: foo_2.ctid, foo_2.f1, foo_2.*, foo_2.tableoid
                                  Remote SQL: SELECT f1, f2, f3, ctid FROM public.loct1
    ->  Hash Join
-         Output: bar2.f1, (bar2.f2 + 100), bar2.f3, bar2.ctid, foo.ctid, foo.*, foo.tableoid
+         Output: bar_1.f1, (bar_1.f2 + 100), bar_1.f3, bar_1.ctid, foo.ctid, foo.*, foo.tableoid
          Inner Unique: true
-         Hash Cond: (bar2.f1 = foo.f1)
-         ->  Foreign Scan on public.bar2
-               Output: bar2.f1, bar2.f2, bar2.f3, bar2.ctid
+         Hash Cond: (bar_1.f1 = foo.f1)
+         ->  Foreign Scan on public.bar2 bar_1
+               Output: bar_1.f1, bar_1.f2, bar_1.f3, bar_1.ctid
                Remote SQL: SELECT f1, f2, f3, ctid FROM public.loct2 FOR UPDATE
          ->  Hash
                Output: foo.ctid, foo.f1, foo.*, foo.tableoid
@@ -7168,10 +7198,10 @@ update bar set f2 = f2 + 100 where f1 in (select f1 from foo);
                      Output: foo.ctid, foo.f1, foo.*, foo.tableoid
                      Group Key: foo.f1
                      ->  Append
-                           ->  Seq Scan on public.foo
-                                 Output: foo.ctid, foo.f1, foo.*, foo.tableoid
-                           ->  Foreign Scan on public.foo2
-                                 Output: foo2.ctid, foo2.f1, foo2.*, foo2.tableoid
+                           ->  Seq Scan on public.foo foo_1
+                                 Output: foo_1.ctid, foo_1.f1, foo_1.*, foo_1.tableoid
+                           ->  Foreign Scan on public.foo2 foo_2
+                                 Output: foo_2.ctid, foo_2.f1, foo_2.*, foo_2.tableoid
                                  Remote SQL: SELECT f1, f2, f3, ctid FROM public.loct1
 (39 rows)
 
@@ -7197,7 +7227,7 @@ where bar.f1 = ss.f1;
 --------------------------------------------------------------------------------------
  Update on public.bar
    Update on public.bar
-   Foreign Update on public.bar2
+   Foreign Update on public.bar2 bar_1
      Remote SQL: UPDATE public.loct2 SET f2 = $2 WHERE ctid = $1
    ->  Hash Join
          Output: bar.f1, (bar.f2 + 100), bar.ctid, (ROW(foo.f1))
@@ -7205,26 +7235,26 @@ where bar.f1 = ss.f1;
          ->  Append
                ->  Seq Scan on public.foo
                      Output: ROW(foo.f1), foo.f1
-               ->  Foreign Scan on public.foo2
-                     Output: ROW(foo2.f1), foo2.f1
+               ->  Foreign Scan on public.foo2 foo_1
+                     Output: ROW(foo_1.f1), foo_1.f1
                      Remote SQL: SELECT f1 FROM public.loct1
-               ->  Seq Scan on public.foo foo_1
-                     Output: ROW((foo_1.f1 + 3)), (foo_1.f1 + 3)
-               ->  Foreign Scan on public.foo2 foo2_1
-                     Output: ROW((foo2_1.f1 + 3)), (foo2_1.f1 + 3)
+               ->  Seq Scan on public.foo foo_2
+                     Output: ROW((foo_2.f1 + 3)), (foo_2.f1 + 3)
+               ->  Foreign Scan on public.foo2 foo_3
+                     Output: ROW((foo_3.f1 + 3)), (foo_3.f1 + 3)
                      Remote SQL: SELECT f1 FROM public.loct1
          ->  Hash
                Output: bar.f1, bar.f2, bar.ctid
                ->  Seq Scan on public.bar
                      Output: bar.f1, bar.f2, bar.ctid
    ->  Merge Join
-         Output: bar2.f1, (bar2.f2 + 100), bar2.f3, bar2.ctid, (ROW(foo.f1))
-         Merge Cond: (bar2.f1 = foo.f1)
+         Output: bar_1.f1, (bar_1.f2 + 100), bar_1.f3, bar_1.ctid, (ROW(foo.f1))
+         Merge Cond: (bar_1.f1 = foo.f1)
          ->  Sort
-               Output: bar2.f1, bar2.f2, bar2.f3, bar2.ctid
-               Sort Key: bar2.f1
-               ->  Foreign Scan on public.bar2
-                     Output: bar2.f1, bar2.f2, bar2.f3, bar2.ctid
+               Output: bar_1.f1, bar_1.f2, bar_1.f3, bar_1.ctid
+               Sort Key: bar_1.f1
+               ->  Foreign Scan on public.bar2 bar_1
+                     Output: bar_1.f1, bar_1.f2, bar_1.f3, bar_1.ctid
                      Remote SQL: SELECT f1, f2, f3, ctid FROM public.loct2 FOR UPDATE
          ->  Sort
                Output: (ROW(foo.f1)), foo.f1
@@ -7232,13 +7262,13 @@ where bar.f1 = ss.f1;
                ->  Append
                      ->  Seq Scan on public.foo
                            Output: ROW(foo.f1), foo.f1
-                     ->  Foreign Scan on public.foo2
-                           Output: ROW(foo2.f1), foo2.f1
+                     ->  Foreign Scan on public.foo2 foo_1
+                           Output: ROW(foo_1.f1), foo_1.f1
                            Remote SQL: SELECT f1 FROM public.loct1
-                     ->  Seq Scan on public.foo foo_1
-                           Output: ROW((foo_1.f1 + 3)), (foo_1.f1 + 3)
-                     ->  Foreign Scan on public.foo2 foo2_1
-                           Output: ROW((foo2_1.f1 + 3)), (foo2_1.f1 + 3)
+                     ->  Seq Scan on public.foo foo_2
+                           Output: ROW((foo_2.f1 + 3)), (foo_2.f1 + 3)
+                     ->  Foreign Scan on public.foo2 foo_3
+                           Output: ROW((foo_3.f1 + 3)), (foo_3.f1 + 3)
                            Remote SQL: SELECT f1 FROM public.loct1
 (45 rows)
 
@@ -7286,10 +7316,10 @@ explain (verbose, costs off)
                Merge Cond: (foo.f1 = loct1.f1)
                ->  Merge Append
                      Sort Key: foo.f1
-                     ->  Index Scan using i_foo_f1 on public.foo
-                           Output: foo.f1, foo.f2
-                     ->  Foreign Scan on public.foo2
-                           Output: foo2.f1, foo2.f2
+                     ->  Index Scan using i_foo_f1 on public.foo foo_1
+                           Output: foo_1.f1, foo_1.f2
+                     ->  Foreign Scan on public.foo2 foo_2
+                           Output: foo_2.f1, foo_2.f2
                            Remote SQL: SELECT f1, f2 FROM public.loct1 ORDER BY f1 ASC NULLS LAST
                ->  Index Only Scan using i_loct1_f1 on public.loct1
                      Output: loct1.f1
@@ -7326,10 +7356,10 @@ explain (verbose, costs off)
                Merge Cond: (foo.f1 = loct1.f1)
                ->  Merge Append
                      Sort Key: foo.f1
-                     ->  Index Scan using i_foo_f1 on public.foo
-                           Output: foo.f1, foo.f2
-                     ->  Foreign Scan on public.foo2
-                           Output: foo2.f1, foo2.f2
+                     ->  Index Scan using i_foo_f1 on public.foo foo_1
+                           Output: foo_1.f1, foo_1.f2
+                     ->  Foreign Scan on public.foo2 foo_2
+                           Output: foo_2.f1, foo_2.f2
                            Remote SQL: SELECT f1, f2 FROM public.loct1 ORDER BY f1 ASC NULLS LAST
                ->  Index Only Scan using i_loct1_f1 on public.loct1
                      Output: loct1.f1
@@ -7371,11 +7401,11 @@ delete from foo where f1 < 5 returning *;
  Delete on public.foo
    Output: foo.f1, foo.f2
    Delete on public.foo
-   Foreign Delete on public.foo2
+   Foreign Delete on public.foo2 foo_1
    ->  Index Scan using i_foo_f1 on public.foo
          Output: foo.ctid
          Index Cond: (foo.f1 < 5)
-   ->  Foreign Delete on public.foo2
+   ->  Foreign Delete on public.foo2 foo_1
          Remote SQL: DELETE FROM public.loct1 WHERE ((f1 < 5)) RETURNING f1, f2
 (9 rows)
 
@@ -7396,10 +7426,10 @@ update bar set f2 = f2 + 100 returning *;
  Update on public.bar
    Output: bar.f1, bar.f2
    Update on public.bar
-   Foreign Update on public.bar2
+   Foreign Update on public.bar2 bar_1
    ->  Seq Scan on public.bar
          Output: bar.f1, (bar.f2 + 100), bar.ctid
-   ->  Foreign Update on public.bar2
+   ->  Foreign Update on public.bar2 bar_1
          Remote SQL: UPDATE public.loct2 SET f2 = (f2 + 100) RETURNING f1, f2
 (8 rows)
 
@@ -7427,12 +7457,12 @@ update bar set f2 = f2 + 100;
 --------------------------------------------------------------------------------------------------------
  Update on public.bar
    Update on public.bar
-   Foreign Update on public.bar2
+   Foreign Update on public.bar2 bar_1
      Remote SQL: UPDATE public.loct2 SET f1 = $2, f2 = $3, f3 = $4 WHERE ctid = $1 RETURNING f1, f2, f3
    ->  Seq Scan on public.bar
          Output: bar.f1, (bar.f2 + 100), bar.ctid
-   ->  Foreign Scan on public.bar2
-         Output: bar2.f1, (bar2.f2 + 100), bar2.f3, bar2.ctid, bar2.*
+   ->  Foreign Scan on public.bar2 bar_1
+         Output: bar_1.f1, (bar_1.f2 + 100), bar_1.f3, bar_1.ctid, bar_1.*
          Remote SQL: SELECT f1, f2, f3, ctid FROM public.loct2 FOR UPDATE
 (9 rows)
 
@@ -7455,13 +7485,13 @@ delete from bar where f2 < 400;
 ---------------------------------------------------------------------------------------------
  Delete on public.bar
    Delete on public.bar
-   Foreign Delete on public.bar2
+   Foreign Delete on public.bar2 bar_1
      Remote SQL: DELETE FROM public.loct2 WHERE ctid = $1 RETURNING f1, f2, f3
    ->  Seq Scan on public.bar
          Output: bar.ctid
          Filter: (bar.f2 < 400)
-   ->  Foreign Scan on public.bar2
-         Output: bar2.ctid, bar2.*
+   ->  Foreign Scan on public.bar2 bar_1
+         Output: bar_1.ctid, bar_1.*
          Remote SQL: SELECT f1, f2, f3, ctid FROM public.loct2 WHERE ((f2 < 400)) FOR UPDATE
 (10 rows)
 
@@ -7499,7 +7529,7 @@ update parent set b = parent.b || remt2.b from remt2 where parent.a = remt2.a re
  Update on public.parent
    Output: parent.a, parent.b, remt2.a, remt2.b
    Update on public.parent
-   Foreign Update on public.remt1
+   Foreign Update on public.remt1 parent_1
    ->  Nested Loop
          Output: parent.a, (parent.b || remt2.b), parent.ctid, remt2.*, remt2.a, remt2.b
          Join Filter: (parent.a = remt2.a)
@@ -7526,7 +7556,7 @@ delete from parent using remt2 where parent.a = remt2.a returning parent;
  Delete on public.parent
    Output: parent.*
    Delete on public.parent
-   Foreign Delete on public.remt1
+   Foreign Delete on public.remt1 parent_1
    ->  Nested Loop
          Output: parent.ctid, remt2.*
          Join Filter: (parent.a = remt2.a)
@@ -7753,14 +7783,14 @@ update utrtest set a = 1 where a = 1 or a = 2 returning *;
                                           QUERY PLAN                                          
 ----------------------------------------------------------------------------------------------
  Update on public.utrtest
-   Output: remp.a, remp.b
-   Foreign Update on public.remp
-   Update on public.locp
-   ->  Foreign Update on public.remp
+   Output: utrtest_1.a, utrtest_1.b
+   Foreign Update on public.remp utrtest_1
+   Update on public.locp utrtest_2
+   ->  Foreign Update on public.remp utrtest_1
          Remote SQL: UPDATE public.loct SET a = 1 WHERE (((a = 1) OR (a = 2))) RETURNING a, b
-   ->  Seq Scan on public.locp
-         Output: 1, locp.b, locp.ctid
-         Filter: ((locp.a = 1) OR (locp.a = 2))
+   ->  Seq Scan on public.locp utrtest_2
+         Output: 1, utrtest_2.b, utrtest_2.ctid
+         Filter: ((utrtest_2.a = 1) OR (utrtest_2.a = 2))
 (9 rows)
 
 -- The new values are concatenated with ' triggered !'
@@ -7775,14 +7805,14 @@ insert into utrtest values (2, 'qux');
 -- Check case where the foreign partition isn't a subplan target rel
 explain (verbose, costs off)
 update utrtest set a = 1 where a = 2 returning *;
-              QUERY PLAN              
---------------------------------------
+                   QUERY PLAN                   
+------------------------------------------------
  Update on public.utrtest
-   Output: locp.a, locp.b
-   Update on public.locp
-   ->  Seq Scan on public.locp
-         Output: 1, locp.b, locp.ctid
-         Filter: (locp.a = 2)
+   Output: utrtest_1.a, utrtest_1.b
+   Update on public.locp utrtest_1
+   ->  Seq Scan on public.locp utrtest_1
+         Output: 1, utrtest_1.b, utrtest_1.ctid
+         Filter: (utrtest_1.a = 2)
 (6 rows)
 
 -- The new values are concatenated with ' triggered !'
@@ -7805,13 +7835,13 @@ update utrtest set a = 1 returning *;
                            QUERY PLAN                            
 -----------------------------------------------------------------
  Update on public.utrtest
-   Output: remp.a, remp.b
-   Foreign Update on public.remp
-   Update on public.locp
-   ->  Foreign Update on public.remp
+   Output: utrtest_1.a, utrtest_1.b
+   Foreign Update on public.remp utrtest_1
+   Update on public.locp utrtest_2
+   ->  Foreign Update on public.remp utrtest_1
          Remote SQL: UPDATE public.loct SET a = 1 RETURNING a, b
-   ->  Seq Scan on public.locp
-         Output: 1, locp.b, locp.ctid
+   ->  Seq Scan on public.locp utrtest_2
+         Output: 1, utrtest_2.b, utrtest_2.ctid
 (8 rows)
 
 update utrtest set a = 1 returning *;
@@ -7827,28 +7857,28 @@ insert into utrtest values (2, 'qux');
 -- with a non-direct modification plan
 explain (verbose, costs off)
 update utrtest set a = 1 from (values (1), (2)) s(x) where a = s.x returning *;
-                                  QUERY PLAN                                  
-------------------------------------------------------------------------------
+                                    QUERY PLAN                                    
+----------------------------------------------------------------------------------
  Update on public.utrtest
-   Output: remp.a, remp.b, "*VALUES*".column1
-   Foreign Update on public.remp
+   Output: utrtest_1.a, utrtest_1.b, "*VALUES*".column1
+   Foreign Update on public.remp utrtest_1
      Remote SQL: UPDATE public.loct SET a = $2 WHERE ctid = $1 RETURNING a, b
-   Update on public.locp
+   Update on public.locp utrtest_2
    ->  Hash Join
-         Output: 1, remp.b, remp.ctid, "*VALUES*".*, "*VALUES*".column1
-         Hash Cond: (remp.a = "*VALUES*".column1)
-         ->  Foreign Scan on public.remp
-               Output: remp.b, remp.ctid, remp.a
+         Output: 1, utrtest_1.b, utrtest_1.ctid, "*VALUES*".*, "*VALUES*".column1
+         Hash Cond: (utrtest_1.a = "*VALUES*".column1)
+         ->  Foreign Scan on public.remp utrtest_1
+               Output: utrtest_1.b, utrtest_1.ctid, utrtest_1.a
                Remote SQL: SELECT a, b, ctid FROM public.loct FOR UPDATE
          ->  Hash
                Output: "*VALUES*".*, "*VALUES*".column1
                ->  Values Scan on "*VALUES*"
                      Output: "*VALUES*".*, "*VALUES*".column1
    ->  Hash Join
-         Output: 1, locp.b, locp.ctid, "*VALUES*".*, "*VALUES*".column1
-         Hash Cond: (locp.a = "*VALUES*".column1)
-         ->  Seq Scan on public.locp
-               Output: locp.b, locp.ctid, locp.a
+         Output: 1, utrtest_2.b, utrtest_2.ctid, "*VALUES*".*, "*VALUES*".column1
+         Hash Cond: (utrtest_2.a = "*VALUES*".column1)
+         ->  Seq Scan on public.locp utrtest_2
+               Output: utrtest_2.b, utrtest_2.ctid, utrtest_2.a
          ->  Hash
                Output: "*VALUES*".*, "*VALUES*".column1
                ->  Values Scan on "*VALUES*"
@@ -7880,12 +7910,12 @@ update utrtest set a = 3 returning *;
                            QUERY PLAN                            
 -----------------------------------------------------------------
  Update on public.utrtest
-   Output: locp.a, locp.b
-   Update on public.locp
-   Foreign Update on public.remp
-   ->  Seq Scan on public.locp
-         Output: 3, locp.b, locp.ctid
-   ->  Foreign Update on public.remp
+   Output: utrtest_1.a, utrtest_1.b
+   Update on public.locp utrtest_1
+   Foreign Update on public.remp utrtest_2
+   ->  Seq Scan on public.locp utrtest_1
+         Output: 3, utrtest_1.b, utrtest_1.ctid
+   ->  Foreign Update on public.remp utrtest_2
          Remote SQL: UPDATE public.loct SET a = 3 RETURNING a, b
 (8 rows)
 
@@ -7894,27 +7924,27 @@ ERROR:  cannot route tuples into foreign table to be updated "remp"
 -- with a non-direct modification plan
 explain (verbose, costs off)
 update utrtest set a = 3 from (values (2), (3)) s(x) where a = s.x returning *;
-                                  QUERY PLAN                                  
-------------------------------------------------------------------------------
+                                    QUERY PLAN                                    
+----------------------------------------------------------------------------------
  Update on public.utrtest
-   Output: locp.a, locp.b, "*VALUES*".column1
-   Update on public.locp
-   Foreign Update on public.remp
+   Output: utrtest_1.a, utrtest_1.b, "*VALUES*".column1
+   Update on public.locp utrtest_1
+   Foreign Update on public.remp utrtest_2
      Remote SQL: UPDATE public.loct SET a = $2 WHERE ctid = $1 RETURNING a, b
    ->  Hash Join
-         Output: 3, locp.b, locp.ctid, "*VALUES*".*, "*VALUES*".column1
-         Hash Cond: (locp.a = "*VALUES*".column1)
-         ->  Seq Scan on public.locp
-               Output: locp.b, locp.ctid, locp.a
+         Output: 3, utrtest_1.b, utrtest_1.ctid, "*VALUES*".*, "*VALUES*".column1
+         Hash Cond: (utrtest_1.a = "*VALUES*".column1)
+         ->  Seq Scan on public.locp utrtest_1
+               Output: utrtest_1.b, utrtest_1.ctid, utrtest_1.a
          ->  Hash
                Output: "*VALUES*".*, "*VALUES*".column1
                ->  Values Scan on "*VALUES*"
                      Output: "*VALUES*".*, "*VALUES*".column1
    ->  Hash Join
-         Output: 3, remp.b, remp.ctid, "*VALUES*".*, "*VALUES*".column1
-         Hash Cond: (remp.a = "*VALUES*".column1)
-         ->  Foreign Scan on public.remp
-               Output: remp.b, remp.ctid, remp.a
+         Output: 3, utrtest_2.b, utrtest_2.ctid, "*VALUES*".*, "*VALUES*".column1
+         Hash Cond: (utrtest_2.a = "*VALUES*".column1)
+         ->  Foreign Scan on public.remp utrtest_2
+               Output: utrtest_2.b, utrtest_2.ctid, utrtest_2.a
                Remote SQL: SELECT a, b, ctid FROM public.loct FOR UPDATE
          ->  Hash
                Output: "*VALUES*".*, "*VALUES*".column1
@@ -8480,15 +8510,15 @@ ANALYZE fprt2_p2;
 -- inner join three tables
 EXPLAIN (COSTS OFF)
 SELECT t1.a,t2.b,t3.c FROM fprt1 t1 INNER JOIN fprt2 t2 ON (t1.a = t2.b) INNER JOIN fprt1 t3 ON (t2.b = t3.a) WHERE t1.a % 25 =0 ORDER BY 1,2,3;
-                                                     QUERY PLAN                                                     
---------------------------------------------------------------------------------------------------------------------
+                                             QUERY PLAN                                              
+-----------------------------------------------------------------------------------------------------
  Sort
    Sort Key: t1.a, t3.c
    ->  Append
          ->  Foreign Scan
-               Relations: ((public.ftprt1_p1 t1) INNER JOIN (public.ftprt2_p1 t2)) INNER JOIN (public.ftprt1_p1 t3)
+               Relations: ((ftprt1_p1 t1_1) INNER JOIN (ftprt2_p1 t2_1)) INNER JOIN (ftprt1_p1 t3_1)
          ->  Foreign Scan
-               Relations: ((public.ftprt1_p2 t1) INNER JOIN (public.ftprt2_p2 t2)) INNER JOIN (public.ftprt1_p2 t3)
+               Relations: ((ftprt1_p2 t1_2) INNER JOIN (ftprt2_p2 t2_2)) INNER JOIN (ftprt1_p2 t3_2)
 (7 rows)
 
 SELECT t1.a,t2.b,t3.c FROM fprt1 t1 INNER JOIN fprt2 t2 ON (t1.a = t2.b) INNER JOIN fprt1 t3 ON (t2.b = t3.a) WHERE t1.a % 25 =0 ORDER BY 1,2,3;
@@ -8506,7 +8536,7 @@ SELECT t1.a,t2.b,t2.c FROM fprt1 t1 LEFT JOIN (SELECT * FROM fprt2 WHERE a < 10)
                                                                                                                      QUERY PLAN                                                                                                                     
 ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Foreign Scan
-   Output: t1.a, ftprt2_p1.b, ftprt2_p1.c
+   Output: t1.a, fprt2.b, fprt2.c
    Relations: (public.ftprt1_p1 t1) LEFT JOIN (public.ftprt2_p1 fprt2)
    Remote SQL: SELECT r5.a, r6.b, r6.c FROM (public.fprt1_p1 r5 LEFT JOIN public.fprt2_p1 r6 ON (((r5.a = r6.b)) AND ((r5.b = r6.a)) AND ((r6.a < 10)))) WHERE ((r5.a < 10)) ORDER BY r5.a ASC NULLS LAST, r6.b ASC NULLS LAST, r6.c ASC NULLS LAST
 (4 rows)
@@ -8531,12 +8561,12 @@ SELECT t1.wr, t2.wr FROM (SELECT t1 wr, a FROM fprt1 t1 WHERE t1.a % 25 = 0) t1 
    ->  Hash Full Join
          Hash Cond: (t1.a = t2.b)
          ->  Append
-               ->  Foreign Scan on ftprt1_p1 t1
-               ->  Foreign Scan on ftprt1_p2 t1_1
+               ->  Foreign Scan on ftprt1_p1 t1_1
+               ->  Foreign Scan on ftprt1_p2 t1_2
          ->  Hash
                ->  Append
-                     ->  Foreign Scan on ftprt2_p1 t2
-                     ->  Foreign Scan on ftprt2_p2 t2_1
+                     ->  Foreign Scan on ftprt2_p1 t2_1
+                     ->  Foreign Scan on ftprt2_p2 t2_2
 (11 rows)
 
 SELECT t1.wr, t2.wr FROM (SELECT t1 wr, a FROM fprt1 t1 WHERE t1.a % 25 = 0) t1 FULL JOIN (SELECT t2 wr, b FROM fprt2 t2 WHERE t2.b % 25 = 0) t2 ON (t1.a = t2.b) ORDER BY 1,2;
@@ -8561,15 +8591,15 @@ SELECT t1.wr, t2.wr FROM (SELECT t1 wr, a FROM fprt1 t1 WHERE t1.a % 25 = 0) t1 
 -- join with lateral reference
 EXPLAIN (COSTS OFF)
 SELECT t1.a,t1.b FROM fprt1 t1, LATERAL (SELECT t2.a, t2.b FROM fprt2 t2 WHERE t1.a = t2.b AND t1.b = t2.a) q WHERE t1.a%25 = 0 ORDER BY 1,2;
-                                   QUERY PLAN                                    
----------------------------------------------------------------------------------
+                              QUERY PLAN                               
+-----------------------------------------------------------------------
  Sort
    Sort Key: t1.a, t1.b
    ->  Append
          ->  Foreign Scan
-               Relations: (public.ftprt1_p1 t1) INNER JOIN (public.ftprt2_p1 t2)
+               Relations: (ftprt1_p1 t1_1) INNER JOIN (ftprt2_p1 t2_1)
          ->  Foreign Scan
-               Relations: (public.ftprt1_p2 t1) INNER JOIN (public.ftprt2_p2 t2)
+               Relations: (ftprt1_p2 t1_2) INNER JOIN (ftprt2_p2 t2_2)
 (7 rows)
 
 SELECT t1.a,t1.b FROM fprt1 t1, LATERAL (SELECT t2.a, t2.b FROM fprt2 t2 WHERE t1.a = t2.b AND t1.b = t2.a) q WHERE t1.a%25 = 0 ORDER BY 1,2;
@@ -8584,21 +8614,21 @@ SELECT t1.a,t1.b FROM fprt1 t1, LATERAL (SELECT t2.a, t2.b FROM fprt2 t2 WHERE t
 -- with PHVs, partitionwise join selected but no join pushdown
 EXPLAIN (COSTS OFF)
 SELECT t1.a, t1.phv, t2.b, t2.phv FROM (SELECT 't1_phv' phv, * FROM fprt1 WHERE a % 25 = 0) t1 FULL JOIN (SELECT 't2_phv' phv, * FROM fprt2 WHERE b % 25 = 0) t2 ON (t1.a = t2.b) ORDER BY t1.a, t2.b;
-                      QUERY PLAN                      
-------------------------------------------------------
+                        QUERY PLAN                         
+-----------------------------------------------------------
  Sort
-   Sort Key: ftprt1_p1.a, ftprt2_p1.b
+   Sort Key: fprt1.a, fprt2.b
    ->  Append
          ->  Hash Full Join
-               Hash Cond: (ftprt1_p1.a = ftprt2_p1.b)
-               ->  Foreign Scan on ftprt1_p1
+               Hash Cond: (fprt1_1.a = fprt2_1.b)
+               ->  Foreign Scan on ftprt1_p1 fprt1_1
                ->  Hash
-                     ->  Foreign Scan on ftprt2_p1
+                     ->  Foreign Scan on ftprt2_p1 fprt2_1
          ->  Hash Full Join
-               Hash Cond: (ftprt1_p2.a = ftprt2_p2.b)
-               ->  Foreign Scan on ftprt1_p2
+               Hash Cond: (fprt1_2.a = fprt2_2.b)
+               ->  Foreign Scan on ftprt1_p2 fprt1_2
                ->  Hash
-                     ->  Foreign Scan on ftprt2_p2
+                     ->  Foreign Scan on ftprt2_p2 fprt2_2
 (13 rows)
 
 SELECT t1.a, t1.phv, t2.b, t2.phv FROM (SELECT 't1_phv' phv, * FROM fprt1 WHERE a % 25 = 0) t1 FULL JOIN (SELECT 't2_phv' phv, * FROM fprt2 WHERE b % 25 = 0) t2 ON (t1.a = t2.b) ORDER BY t1.a, t2.b;
@@ -8631,12 +8661,12 @@ SELECT t1.a, t2.b FROM fprt1 t1 INNER JOIN fprt2 t2 ON (t1.a = t2.b) WHERE t1.a 
          ->  Hash Join
                Hash Cond: (t2.b = t1.a)
                ->  Append
-                     ->  Foreign Scan on ftprt2_p1 t2
-                     ->  Foreign Scan on ftprt2_p2 t2_1
+                     ->  Foreign Scan on ftprt2_p1 t2_1
+                     ->  Foreign Scan on ftprt2_p2 t2_2
                ->  Hash
                      ->  Append
-                           ->  Foreign Scan on ftprt1_p1 t1
-                           ->  Foreign Scan on ftprt1_p2 t1_1
+                           ->  Foreign Scan on ftprt1_p1 t1_1
+                           ->  Foreign Scan on ftprt1_p2 t1_2
 (12 rows)
 
 SELECT t1.a, t2.b FROM fprt1 t1 INNER JOIN fprt2 t2 ON (t1.a = t2.b) WHERE t1.a % 25 = 0 ORDER BY 1,2 FOR UPDATE OF t1;
@@ -8672,34 +8702,34 @@ ANALYZE fpagg_tab_p3;
 SET enable_partitionwise_aggregate TO false;
 EXPLAIN (COSTS OFF)
 SELECT a, sum(b), min(b), count(*) FROM pagg_tab GROUP BY a HAVING avg(b) < 22 ORDER BY 1;
-                      QUERY PLAN                       
--------------------------------------------------------
+                        QUERY PLAN                         
+-----------------------------------------------------------
  Sort
-   Sort Key: fpagg_tab_p1.a
+   Sort Key: pagg_tab.a
    ->  HashAggregate
-         Group Key: fpagg_tab_p1.a
-         Filter: (avg(fpagg_tab_p1.b) < '22'::numeric)
+         Group Key: pagg_tab.a
+         Filter: (avg(pagg_tab.b) < '22'::numeric)
          ->  Append
-               ->  Foreign Scan on fpagg_tab_p1
-               ->  Foreign Scan on fpagg_tab_p2
-               ->  Foreign Scan on fpagg_tab_p3
+               ->  Foreign Scan on fpagg_tab_p1 pagg_tab_1
+               ->  Foreign Scan on fpagg_tab_p2 pagg_tab_2
+               ->  Foreign Scan on fpagg_tab_p3 pagg_tab_3
 (9 rows)
 
 -- Plan with partitionwise aggregates is enabled
 SET enable_partitionwise_aggregate TO true;
 EXPLAIN (COSTS OFF)
 SELECT a, sum(b), min(b), count(*) FROM pagg_tab GROUP BY a HAVING avg(b) < 22 ORDER BY 1;
-                              QUERY PLAN                              
-----------------------------------------------------------------------
+                           QUERY PLAN                            
+-----------------------------------------------------------------
  Sort
-   Sort Key: fpagg_tab_p1.a
+   Sort Key: pagg_tab.a
    ->  Append
          ->  Foreign Scan
-               Relations: Aggregate on (public.fpagg_tab_p1 pagg_tab)
+               Relations: Aggregate on (fpagg_tab_p1 pagg_tab)
          ->  Foreign Scan
-               Relations: Aggregate on (public.fpagg_tab_p2 pagg_tab)
+               Relations: Aggregate on (fpagg_tab_p2 pagg_tab_1)
          ->  Foreign Scan
-               Relations: Aggregate on (public.fpagg_tab_p3 pagg_tab)
+               Relations: Aggregate on (fpagg_tab_p3 pagg_tab_2)
 (9 rows)
 
 SELECT a, sum(b), min(b), count(*) FROM pagg_tab GROUP BY a HAVING avg(b) < 22 ORDER BY 1;
@@ -8760,25 +8790,123 @@ SELECT a, count(t1) FROM pagg_tab t1 GROUP BY a HAVING avg(b) < 22 ORDER BY 1;
 -- When GROUP BY clause does not match with PARTITION KEY.
 EXPLAIN (COSTS OFF)
 SELECT b, avg(a), max(a), count(*) FROM pagg_tab GROUP BY b HAVING sum(a) < 700 ORDER BY 1;
-                      QUERY PLAN                      
-------------------------------------------------------
+                           QUERY PLAN                            
+-----------------------------------------------------------------
  Sort
-   Sort Key: fpagg_tab_p1.b
+   Sort Key: pagg_tab.b
    ->  Finalize HashAggregate
-         Group Key: fpagg_tab_p1.b
-         Filter: (sum(fpagg_tab_p1.a) < 700)
+         Group Key: pagg_tab.b
+         Filter: (sum(pagg_tab.a) < 700)
          ->  Append
                ->  Partial HashAggregate
-                     Group Key: fpagg_tab_p1.b
-                     ->  Foreign Scan on fpagg_tab_p1
+                     Group Key: pagg_tab.b
+                     ->  Foreign Scan on fpagg_tab_p1 pagg_tab
                ->  Partial HashAggregate
-                     Group Key: fpagg_tab_p2.b
-                     ->  Foreign Scan on fpagg_tab_p2
+                     Group Key: pagg_tab_1.b
+                     ->  Foreign Scan on fpagg_tab_p2 pagg_tab_1
                ->  Partial HashAggregate
-                     Group Key: fpagg_tab_p3.b
-                     ->  Foreign Scan on fpagg_tab_p3
+                     Group Key: pagg_tab_2.b
+                     ->  Foreign Scan on fpagg_tab_p3 pagg_tab_2
 (15 rows)
 
+-- ===================================================================
+-- access rights and superuser
+-- ===================================================================
+-- Non-superuser cannot create a FDW without a password in the connstr
+CREATE ROLE regress_nosuper NOSUPERUSER;
+GRANT USAGE ON FOREIGN DATA WRAPPER postgres_fdw TO regress_nosuper;
+SET ROLE regress_nosuper;
+SHOW is_superuser;
+ is_superuser 
+--------------
+ off
+(1 row)
+
+-- This will be OK, we can create the FDW
+DO $d$
+    BEGIN
+        EXECUTE $$CREATE SERVER loopback_nopw FOREIGN DATA WRAPPER postgres_fdw
+            OPTIONS (dbname '$$||current_database()||$$',
+                     port '$$||current_setting('port')||$$'
+            )$$;
+    END;
+$d$;
+-- But creation of user mappings for non-superusers should fail
+CREATE USER MAPPING FOR public SERVER loopback_nopw;
+CREATE USER MAPPING FOR CURRENT_USER SERVER loopback_nopw;
+CREATE FOREIGN TABLE ft1_nopw (
+	c1 int NOT NULL,
+	c2 int NOT NULL,
+	c3 text,
+	c4 timestamptz,
+	c5 timestamp,
+	c6 varchar(10),
+	c7 char(10) default 'ft1',
+	c8 user_enum
+) SERVER loopback_nopw OPTIONS (schema_name 'public', table_name 'ft1');
+SELECT * FROM ft1_nopw LIMIT 1;
+ERROR:  password is required
+DETAIL:  Non-superusers must provide a password in the user mapping.
+-- If we add a password to the connstr it'll fail, because we don't allow passwords
+-- in connstrs only in user mappings.
+DO $d$
+    BEGIN
+        EXECUTE $$ALTER SERVER loopback_nopw OPTIONS (ADD password 'dummypw')$$;
+    END;
+$d$;
+ERROR:  invalid option "password"
+HINT:  Valid options in this context are: service, passfile, channel_binding, connect_timeout, dbname, host, hostaddr, port, options, application_name, keepalives, keepalives_idle, keepalives_interval, keepalives_count, tcp_user_timeout, sslmode, sslcompression, sslcert, sslkey, sslrootcert, sslcrl, requirepeer, gssencmode, krbsrvname, gsslib, target_session_attrs, use_remote_estimate, fdw_startup_cost, fdw_tuple_cost, extensions, updatable, fetch_size
+CONTEXT:  SQL statement "ALTER SERVER loopback_nopw OPTIONS (ADD password 'dummypw')"
+PL/pgSQL function inline_code_block line 3 at EXECUTE
+-- If we add a password for our user mapping instead, we should get a different
+-- error because the password wasn't actually *used* when we run with trust auth.
+--
+-- This won't work with installcheck, but neither will most of the FDW checks.
+ALTER USER MAPPING FOR CURRENT_USER SERVER loopback_nopw OPTIONS (ADD password 'dummypw');
+SELECT * FROM ft1_nopw LIMIT 1;
+ERROR:  password is required
+DETAIL:  Non-superuser cannot connect if the server does not request a password.
+HINT:  Target server's authentication method must be changed or password_required=false set in the user mapping attributes.
+-- Unpriv user cannot make the mapping passwordless
+ALTER USER MAPPING FOR CURRENT_USER SERVER loopback_nopw OPTIONS (ADD password_required 'false');
+ERROR:  password_required=false is superuser-only
+HINT:  User mappings with the password_required option set to false may only be created or modified by the superuser
+SELECT * FROM ft1_nopw LIMIT 1;
+ERROR:  password is required
+DETAIL:  Non-superuser cannot connect if the server does not request a password.
+HINT:  Target server's authentication method must be changed or password_required=false set in the user mapping attributes.
+RESET ROLE;
+-- But the superuser can
+ALTER USER MAPPING FOR regress_nosuper SERVER loopback_nopw OPTIONS (ADD password_required 'false');
+SET ROLE regress_nosuper;
+-- Should finally work now
+SELECT * FROM ft1_nopw LIMIT 1;
+  c1  | c2 | c3 | c4 | c5 | c6 |     c7     | c8 
+------+----+----+----+----+----+------------+----
+ 1111 |  2 |    |    |    |    | ft1        | 
+(1 row)
+
+-- We're done with the role named after a specific user and need to check the
+-- changes to the public mapping.
+DROP USER MAPPING FOR CURRENT_USER SERVER loopback_nopw;
+-- This will fail again as it'll resolve the user mapping for public, which
+-- lacks password_required=false
+SELECT * FROM ft1_nopw LIMIT 1;
+ERROR:  password is required
+DETAIL:  Non-superusers must provide a password in the user mapping.
+RESET ROLE;
+-- The user mapping for public is passwordless and lacks the password_required=false
+-- mapping option, but will work because the current user is a superuser.
+SELECT * FROM ft1_nopw LIMIT 1;
+  c1  | c2 | c3 | c4 | c5 | c6 |     c7     | c8 
+------+----+----+----+----+----+------------+----
+ 1111 |  2 |    |    |    |    | ft1        | 
+(1 row)
+
+-- cleanup
+DROP USER MAPPING FOR public SERVER loopback_nopw;
+DROP OWNED BY regress_nosuper;
+DROP ROLE regress_nosuper;
 -- Clean-up
 RESET enable_partitionwise_aggregate;
 -- Two-phase transactions are not supported.

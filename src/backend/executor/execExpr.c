@@ -2502,7 +2502,7 @@ ExecComputeSlotInfo(ExprState *state, ExprEvalStep *op)
 	{
 		desc = parent->scandesc;
 
-		if (parent && parent->scanops)
+		if (parent->scanops)
 			tts_ops = parent->scanops;
 
 		if (parent->scanopsset)

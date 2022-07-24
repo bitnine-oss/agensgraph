@@ -618,6 +618,14 @@ extern int	pg_char_to_encoding(const char *name);
 extern const char *pg_encoding_to_char(int encoding);
 extern int	pg_valid_server_encoding_id(int encoding);
 
+/* == in fe-secure-openssl.c === */
+
+/* Support for overriding sslpassword handling with a callback. */
+typedef int (*PQsslKeyPassHook_type)(char *buf, int size, PGconn *conn);
+extern PQsslKeyPassHook_type PQgetSSLKeyPassHook(void);
+extern void PQsetSSLKeyPassHook(PQsslKeyPassHook_type hook);
+extern int PQdefaultSSLKeyPassHook(char *buf, int size, PGconn *conn);
+
 #ifdef __cplusplus
 }
 #endif

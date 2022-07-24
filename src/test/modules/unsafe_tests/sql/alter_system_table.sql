@@ -79,7 +79,15 @@ ALTER TRIGGER t1 ON pg_description RENAME TO t2;
 -- rules
 CREATE RULE r1 AS ON INSERT TO pg_description DO INSTEAD NOTHING;
 ALTER RULE r1 ON pg_description RENAME TO r2;
---DROP RULE r2 ON pg_description;
+-- now make one to test dropping:
+SET allow_system_table_mods TO on;
+CREATE RULE r2 AS ON INSERT TO pg_description DO INSTEAD NOTHING;
+RESET allow_system_table_mods;
+DROP RULE r2 ON pg_description;
+-- cleanup:
+SET allow_system_table_mods TO on;
+DROP RULE r2 ON pg_description;
+RESET allow_system_table_mods;
 
 
 SET allow_system_table_mods = on;
@@ -166,7 +174,9 @@ ALTER TABLE pg_description SET SCHEMA public;
 ROLLBACK;
 
 -- reserved tablespace name
+SET client_min_messages = error;  -- disable ENFORCE_REGRESSION_TEST_NAME_RESTRICTIONS warning
 CREATE TABLESPACE pg_foo LOCATION '/no/such/location';
+RESET client_min_messages;
 
 -- triggers
 CREATE TRIGGER t1 BEFORE INSERT ON pg_description EXECUTE FUNCTION tf1();

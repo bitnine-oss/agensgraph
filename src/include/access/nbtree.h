@@ -14,7 +14,7 @@
 #ifndef NBTREE_H
 #define NBTREE_H
 
-#include "access/amapi.h"
+#include "access/indexam.h"
 #include "access/itup.h"
 #include "access/sdir.h"
 #include "access/xlogreader.h"
@@ -298,10 +298,10 @@ typedef struct BTMetaPageData
 #define BT_N_KEYS_OFFSET_MASK		0x0FFF
 #define BT_HEAP_TID_ATTR			0x1000
 
-/* Get/set downlink block number */
-#define BTreeInnerTupleGetDownLink(itup) \
+/* Get/set downlink block number in pivot tuple */
+#define BTreeTupleGetDownLink(itup) \
 	ItemPointerGetBlockNumberNoCheck(&((itup)->t_tid))
-#define BTreeInnerTupleSetDownLink(itup, blkno) \
+#define BTreeTupleSetDownLink(itup, blkno) \
 	ItemPointerSetBlockNumber(&((itup)->t_tid), (blkno))
 
 /*
@@ -748,7 +748,7 @@ extern void _bt_parallel_advance_array_keys(IndexScanDesc scan);
  */
 extern bool _bt_doinsert(Relation rel, IndexTuple itup,
 						 IndexUniqueCheck checkUnique, Relation heapRel);
-extern void _bt_finish_split(Relation rel, Buffer bbuf, BTStack stack);
+extern void _bt_finish_split(Relation rel, Buffer lbuf, BTStack stack);
 extern Buffer _bt_getstackbuf(Relation rel, BTStack stack, BlockNumber child);
 
 /*
@@ -779,8 +779,7 @@ extern bool _bt_page_recyclable(Page page);
 extern void _bt_delitems_delete(Relation rel, Buffer buf,
 								OffsetNumber *itemnos, int nitems, Relation heapRel);
 extern void _bt_delitems_vacuum(Relation rel, Buffer buf,
-								OffsetNumber *itemnos, int nitems,
-								BlockNumber lastBlockVacuumed);
+								OffsetNumber *deletable, int ndeletable);
 extern int	_bt_pagedel(Relation rel, Buffer buf);
 
 /*

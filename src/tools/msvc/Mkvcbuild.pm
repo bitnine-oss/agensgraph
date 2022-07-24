@@ -94,7 +94,7 @@ sub mkvcbuild
 	$solution = CreateSolution($vsVersion, $config);
 
 	our @pgportfiles = qw(
-	  chklocale.c explicit_bzero.c fls.c fseeko.c getrusage.c inet_aton.c random.c
+	  chklocale.c explicit_bzero.c fls.c fseeko.c getpeereid.c getrusage.c inet_aton.c random.c
 	  srandom.c getaddrinfo.c gettimeofday.c inet_net_ntop.c kill.c open.c
 	  erand48.c snprintf.c strlcat.c strlcpy.c dirmod.c noblock.c path.c
 	  dirent.c dlopen.c getopt.c getopt_long.c
@@ -142,7 +142,7 @@ sub mkvcbuild
 	our @pgcommonbkndfiles = @pgcommonallfiles;
 
 	our @pgfeutilsfiles = qw(
-	  conditional.c mbprint.c print.c psqlscan.l psqlscan.c
+	  cancel.c conditional.c mbprint.c print.c psqlscan.l psqlscan.c
 	  simple_list.c string_utils.c recovery_gen.c);
 
 	$libpgport = $solution->AddProject('libpgport', 'lib', 'misc');
@@ -302,7 +302,7 @@ sub mkvcbuild
 	$libecpgcompat->AddIncludeDir('src/interfaces/ecpg/include');
 	$libecpgcompat->AddIncludeDir('src/interfaces/libpq');
 	$libecpgcompat->UseDef('src/interfaces/ecpg/compatlib/compatlib.def');
-	$libecpgcompat->AddReference($pgtypes, $libecpg, $libpgport);
+	$libecpgcompat->AddReference($pgtypes, $libecpg, $libpgport, $libpgcommon);
 
 	my $ecpg = $solution->AddProject('ecpg', 'exe', 'interfaces',
 		'src/interfaces/ecpg/preproc');

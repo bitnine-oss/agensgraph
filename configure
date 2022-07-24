@@ -2967,7 +2967,7 @@ else
 
 case $host_os in
      aix*) template=aix ;;
-  cygwin*) template=cygwin ;;
+  cygwin*|msys*) template=cygwin ;;
   darwin*) template=darwin ;;
 dragonfly*) template=netbsd ;;
  freebsd*) template=freebsd ;;
@@ -12115,13 +12115,13 @@ else
 fi
 
   fi
-  for ac_func in SSL_clear_options SSL_get_current_compression X509_get_signature_nid
+  # Function introduced in OpenSSL 1.0.2.
+  for ac_func in X509_get_signature_nid
 do :
-  as_ac_var=`$as_echo "ac_cv_func_$ac_func" | $as_tr_sh`
-ac_fn_c_check_func "$LINENO" "$ac_func" "$as_ac_var"
-if eval test \"x\$"$as_ac_var"\" = x"yes"; then :
+  ac_fn_c_check_func "$LINENO" "X509_get_signature_nid" "ac_cv_func_X509_get_signature_nid"
+if test "x$ac_cv_func_X509_get_signature_nid" = xyes; then :
   cat >>confdefs.h <<_ACEOF
-#define `$as_echo "HAVE_$ac_func" | $as_tr_cpp` 1
+#define HAVE_X509_GET_SIGNATURE_NID 1
 _ACEOF
 
 fi
@@ -15706,6 +15706,19 @@ esac
 
 fi
 
+ac_fn_c_check_func "$LINENO" "getpeereid" "ac_cv_func_getpeereid"
+if test "x$ac_cv_func_getpeereid" = xyes; then :
+  $as_echo "#define HAVE_GETPEEREID 1" >>confdefs.h
+
+else
+  case " $LIBOBJS " in
+  *" getpeereid.$ac_objext "* ) ;;
+  *) LIBOBJS="$LIBOBJS getpeereid.$ac_objext"
+ ;;
+esac
+
+fi
+
 ac_fn_c_check_func "$LINENO" "getrusage" "ac_cv_func_getrusage"
 if test "x$ac_cv_func_getrusage" = xyes; then :
   $as_echo "#define HAVE_GETRUSAGE 1" >>confdefs.h
@@ -15864,39 +15877,31 @@ fi
 
 
 
-case $host_os in
+if test "$PORTNAME" = "win32" -o "$PORTNAME" = "cygwin"; then
 	# Cygwin and (apparently, based on test results) Mingw both
 	# have a broken strtof(), so substitute the same replacement
 	# code we use with VS2013. That's not a perfect fix, since
 	# (unlike with VS2013) it doesn't avoid double-rounding, but
 	# we have no better options. To get that, though, we have to
 	# force the file to be compiled despite HAVE_STRTOF.
-	mingw*|cygwin*)
-		case " $LIBOBJS " in
+	case " $LIBOBJS " in
   *" strtof.$ac_objext "* ) ;;
   *) LIBOBJS="$LIBOBJS strtof.$ac_objext"
  ;;
 esac
 
-		{ $as_echo "$as_me:${as_lineno-$LINENO}: On $host_os we will use our strtof wrapper." >&5
+	{ $as_echo "$as_me:${as_lineno-$LINENO}: On $host_os we will use our strtof wrapper." >&5
 $as_echo "$as_me: On $host_os we will use our strtof wrapper." >&6;}
-	;;
-esac
+fi
 
 case $host_os in
-
         # Windows uses a specialised env handler
-        # and doesn't need a replacement getpeereid because it doesn't use
-        # Unix sockets.
         mingw*)
 
 $as_echo "#define HAVE_UNSETENV 1" >>confdefs.h
 
-
-$as_echo "#define HAVE_GETPEEREID 1" >>confdefs.h
-
                 ac_cv_func_unsetenv=yes
-                ac_cv_func_getpeereid=yes;;
+                ;;
         *)
                 ac_fn_c_check_func "$LINENO" "unsetenv" "ac_cv_func_unsetenv"
 if test "x$ac_cv_func_unsetenv" = xyes; then :
@@ -15911,21 +15916,8 @@ esac
 
 fi
 
-ac_fn_c_check_func "$LINENO" "getpeereid" "ac_cv_func_getpeereid"
-if test "x$ac_cv_func_getpeereid" = xyes; then :
-  $as_echo "#define HAVE_GETPEEREID 1" >>confdefs.h
 
-else
-  case " $LIBOBJS " in
-  *" getpeereid.$ac_objext "* ) ;;
-  *) LIBOBJS="$LIBOBJS getpeereid.$ac_objext"
- ;;
-esac
-
-fi
-
-
-		;;
+                ;;
 esac
 
 # System's version of getaddrinfo(), if any, may be used only if we found

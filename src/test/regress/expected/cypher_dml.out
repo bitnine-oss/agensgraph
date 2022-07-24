@@ -1403,21 +1403,21 @@ WITH x[0] AS x1, x[1] AS x2 ORDER BY x2 RETURN x1;
                                                    ->  Seq Scan on t.friendships
                                                          Output: friendships.start, friendships."end", friendships.id, friendships.properties, friendships.ctid
                                                          Filter: (a.id = friendships.start)
-                                                   ->  Index Scan using familyship_start_idx on t.familyship
-                                                         Output: familyship.start, familyship."end", familyship.id, familyship.properties, familyship.ctid
-                                                         Index Cond: (familyship.start = a.id)
+                                                   ->  Index Scan using familyship_start_idx on t.familyship friendships_1
+                                                         Output: friendships_1.start, friendships_1."end", friendships_1.id, friendships_1.properties, friendships_1.ctid
+                                                         Index Cond: (friendships_1.start = a.id)
                                        ->  Result
                                              Output: knows_1."end", knows_1.id, ROW(knows_1.id, knows_1.start, knows_1."end", knows_1.properties, knows_1.ctid)::edge
                                              ->  Append
                                                    ->  Seq Scan on t.knows knows_1
                                                          Output: knows_1."end", knows_1.id, knows_1.start, knows_1.properties, knows_1.ctid
                                                          Filter: ($1 = knows_1.start)
-                                                   ->  Seq Scan on t.friendships friendships_1
-                                                         Output: friendships_1."end", friendships_1.id, friendships_1.start, friendships_1.properties, friendships_1.ctid
-                                                         Filter: ($1 = friendships_1.start)
-                                                   ->  Index Scan using familyship_start_idx on t.familyship familyship_1
-                                                         Output: familyship_1."end", familyship_1.id, familyship_1.start, familyship_1.properties, familyship_1.ctid
-                                                         Index Cond: (familyship_1.start = $1)
+                                                   ->  Seq Scan on t.friendships friendships_2
+                                                         Output: friendships_2."end", friendships_2.id, friendships_2.start, friendships_2.properties, friendships_2.ctid
+                                                         Filter: ($1 = friendships_2.start)
+                                                   ->  Index Scan using familyship_start_idx on t.familyship friendships_3
+                                                         Output: friendships_3."end", friendships_3.id, friendships_3.start, friendships_3.properties, friendships_3.ctid
+                                                         Index Cond: (friendships_3.start = $1)
 (45 rows)
 
 EXPLAIN (VERBOSE, COSTS OFF)
@@ -1458,21 +1458,21 @@ WITH max(b.id::"numeric") AS id, x[0] AS x RETURN *;
                                                          ->  Seq Scan on t.friendships
                                                                Output: friendships.start, friendships."end", friendships.id, friendships.properties, friendships.ctid
                                                                Filter: (a.id = friendships.start)
-                                                         ->  Index Scan using familyship_start_idx on t.familyship
-                                                               Output: familyship.start, familyship."end", familyship.id, familyship.properties, familyship.ctid
-                                                               Index Cond: (familyship.start = a.id)
+                                                         ->  Index Scan using familyship_start_idx on t.familyship friendships_1
+                                                               Output: friendships_1.start, friendships_1."end", friendships_1.id, friendships_1.properties, friendships_1.ctid
+                                                               Index Cond: (friendships_1.start = a.id)
                                              ->  Result
                                                    Output: knows_1."end", knows_1.id, ROW(knows_1.id, knows_1.start, knows_1."end", knows_1.properties, knows_1.ctid)::edge
                                                    ->  Append
                                                          ->  Seq Scan on t.knows knows_1
                                                                Output: knows_1."end", knows_1.id, knows_1.start, knows_1.properties, knows_1.ctid
                                                                Filter: ($1 = knows_1.start)
-                                                         ->  Seq Scan on t.friendships friendships_1
-                                                               Output: friendships_1."end", friendships_1.id, friendships_1.start, friendships_1.properties, friendships_1.ctid
-                                                               Filter: ($1 = friendships_1.start)
-                                                         ->  Index Scan using familyship_start_idx on t.familyship familyship_1
-                                                               Output: familyship_1."end", familyship_1.id, familyship_1.start, familyship_1.properties, familyship_1.ctid
-                                                               Index Cond: (familyship_1.start = $1)
+                                                         ->  Seq Scan on t.friendships friendships_2
+                                                               Output: friendships_2."end", friendships_2.id, friendships_2.start, friendships_2.properties, friendships_2.ctid
+                                                               Filter: ($1 = friendships_2.start)
+                                                         ->  Index Scan using familyship_start_idx on t.familyship friendships_3
+                                                               Output: friendships_3."end", friendships_3.id, friendships_3.start, friendships_3.properties, friendships_3.ctid
+                                                               Index Cond: (friendships_3.start = $1)
 (48 rows)
 
 EXPLAIN (VERBOSE, COSTS OFF)
@@ -1510,21 +1510,21 @@ WITH DISTINCT x AS path RETURN *;
                                                    ->  Seq Scan on t.friendships
                                                          Output: friendships.start, friendships."end", friendships.id, friendships.properties, friendships.ctid
                                                          Filter: (a.id = friendships.start)
-                                                   ->  Index Scan using familyship_start_idx on t.familyship
-                                                         Output: familyship.start, familyship."end", familyship.id, familyship.properties, familyship.ctid
-                                                         Index Cond: (familyship.start = a.id)
+                                                   ->  Index Scan using familyship_start_idx on t.familyship friendships_1
+                                                         Output: friendships_1.start, friendships_1."end", friendships_1.id, friendships_1.properties, friendships_1.ctid
+                                                         Index Cond: (friendships_1.start = a.id)
                                        ->  Result
                                              Output: knows_1."end", knows_1.id, ROW(knows_1.id, knows_1.start, knows_1."end", knows_1.properties, knows_1.ctid)::edge
                                              ->  Append
                                                    ->  Seq Scan on t.knows knows_1
                                                          Output: knows_1."end", knows_1.id, knows_1.start, knows_1.properties, knows_1.ctid
                                                          Filter: ($1 = knows_1.start)
-                                                   ->  Seq Scan on t.friendships friendships_1
-                                                         Output: friendships_1."end", friendships_1.id, friendships_1.start, friendships_1.properties, friendships_1.ctid
-                                                         Filter: ($1 = friendships_1.start)
-                                                   ->  Index Scan using familyship_start_idx on t.familyship familyship_1
-                                                         Output: familyship_1."end", familyship_1.id, familyship_1.start, familyship_1.properties, familyship_1.ctid
-                                                         Index Cond: (familyship_1.start = $1)
+                                                   ->  Seq Scan on t.friendships friendships_2
+                                                         Output: friendships_2."end", friendships_2.id, friendships_2.start, friendships_2.properties, friendships_2.ctid
+                                                         Filter: ($1 = friendships_2.start)
+                                                   ->  Index Scan using familyship_start_idx on t.familyship friendships_3
+                                                         Output: friendships_3."end", friendships_3.id, friendships_3.start, friendships_3.properties, friendships_3.ctid
+                                                         Index Cond: (friendships_3.start = $1)
 (45 rows)
 
 EXPLAIN (VERBOSE, COSTS OFF)
@@ -1565,21 +1565,21 @@ WITH max(b.id::"numeric") AS id, x AS x RETURN *;
                                                          ->  Seq Scan on t.friendships
                                                                Output: friendships.start, friendships."end", friendships.id, friendships.properties, friendships.ctid
                                                                Filter: (a.id = friendships.start)
-                                                         ->  Index Scan using familyship_start_idx on t.familyship
-                                                               Output: familyship.start, familyship."end", familyship.id, familyship.properties, familyship.ctid
-                                                               Index Cond: (familyship.start = a.id)
+                                                         ->  Index Scan using familyship_start_idx on t.familyship friendships_1
+                                                               Output: friendships_1.start, friendships_1."end", friendships_1.id, friendships_1.properties, friendships_1.ctid
+                                                               Index Cond: (friendships_1.start = a.id)
                                              ->  Result
                                                    Output: knows_1."end", knows_1.id, ROW(knows_1.id, knows_1.start, knows_1."end", knows_1.properties, knows_1.ctid)::edge
                                                    ->  Append
                                                          ->  Seq Scan on t.knows knows_1
                                                                Output: knows_1."end", knows_1.id, knows_1.start, knows_1.properties, knows_1.ctid
                                                                Filter: ($1 = knows_1.start)
-                                                         ->  Seq Scan on t.friendships friendships_1
-                                                               Output: friendships_1."end", friendships_1.id, friendships_1.start, friendships_1.properties, friendships_1.ctid
-                                                               Filter: ($1 = friendships_1.start)
-                                                         ->  Index Scan using familyship_start_idx on t.familyship familyship_1
-                                                               Output: familyship_1."end", familyship_1.id, familyship_1.start, familyship_1.properties, familyship_1.ctid
-                                                               Index Cond: (familyship_1.start = $1)
+                                                         ->  Seq Scan on t.friendships friendships_2
+                                                               Output: friendships_2."end", friendships_2.id, friendships_2.start, friendships_2.properties, friendships_2.ctid
+                                                               Filter: ($1 = friendships_2.start)
+                                                         ->  Index Scan using familyship_start_idx on t.familyship friendships_3
+                                                               Output: friendships_3."end", friendships_3.id, friendships_3.start, friendships_3.properties, friendships_3.ctid
+                                                               Index Cond: (friendships_3.start = $1)
 (48 rows)
 
 EXPLAIN (VERBOSE, COSTS OFF)
@@ -1617,21 +1617,21 @@ WITH max(length(x)::"numeric") AS x, b.id AS id RETURN *;
                                                    ->  Seq Scan on t.friendships
                                                          Output: friendships.start, friendships."end", friendships.id, friendships.properties, friendships.ctid
                                                          Filter: (a.id = friendships.start)
-                                                   ->  Index Scan using familyship_start_idx on t.familyship
-                                                         Output: familyship.start, familyship."end", familyship.id, familyship.properties, familyship.ctid
-                                                         Index Cond: (familyship.start = a.id)
+                                                   ->  Index Scan using familyship_start_idx on t.familyship friendships_1
+                                                         Output: friendships_1.start, friendships_1."end", friendships_1.id, friendships_1.properties, friendships_1.ctid
+                                                         Index Cond: (friendships_1.start = a.id)
                                        ->  Result
                                              Output: knows_1."end", knows_1.id, ROW(knows_1.id, knows_1.start, knows_1."end", knows_1.properties, knows_1.ctid)::edge
                                              ->  Append
                                                    ->  Seq Scan on t.knows knows_1
                                                          Output: knows_1."end", knows_1.id, knows_1.start, knows_1.properties, knows_1.ctid
                                                          Filter: ($1 = knows_1.start)
-                                                   ->  Seq Scan on t.friendships friendships_1
-                                                         Output: friendships_1."end", friendships_1.id, friendships_1.start, friendships_1.properties, friendships_1.ctid
-                                                         Filter: ($1 = friendships_1.start)
-                                                   ->  Index Scan using familyship_start_idx on t.familyship familyship_1
-                                                         Output: familyship_1."end", familyship_1.id, familyship_1.start, familyship_1.properties, familyship_1.ctid
-                                                         Index Cond: (familyship_1.start = $1)
+                                                   ->  Seq Scan on t.friendships friendships_2
+                                                         Output: friendships_2."end", friendships_2.id, friendships_2.start, friendships_2.properties, friendships_2.ctid
+                                                         Filter: ($1 = friendships_2.start)
+                                                   ->  Index Scan using familyship_start_idx on t.familyship friendships_3
+                                                         Output: friendships_3."end", friendships_3.id, friendships_3.start, friendships_3.properties, friendships_3.ctid
+                                                         Index Cond: (friendships_3.start = $1)
 (45 rows)
 
 EXPLAIN (VERBOSE, COSTS OFF)
@@ -1664,21 +1664,21 @@ RETURN x, x IS NOT NULL, x[0] IS NULL;
                                        ->  Seq Scan on t.friendships
                                              Output: friendships.start, friendships."end", friendships.id, friendships.properties, friendships.ctid
                                              Filter: (a.id = friendships.start)
-                                       ->  Index Scan using familyship_start_idx on t.familyship
-                                             Output: familyship.start, familyship."end", familyship.id, familyship.properties, familyship.ctid
-                                             Index Cond: (familyship.start = a.id)
+                                       ->  Index Scan using familyship_start_idx on t.familyship friendships_1
+                                             Output: friendships_1.start, friendships_1."end", friendships_1.id, friendships_1.properties, friendships_1.ctid
+                                             Index Cond: (friendships_1.start = a.id)
                            ->  Result
                                  Output: knows_1."end", knows_1.id, ROW(knows_1.id, knows_1.start, knows_1."end", knows_1.properties, knows_1.ctid)::edge
                                  ->  Append
                                        ->  Seq Scan on t.knows knows_1
                                              Output: knows_1."end", knows_1.id, knows_1.start, knows_1.properties, knows_1.ctid
                                              Filter: ($1 = knows_1.start)
-                                       ->  Seq Scan on t.friendships friendships_1
-                                             Output: friendships_1."end", friendships_1.id, friendships_1.start, friendships_1.properties, friendships_1.ctid
-                                             Filter: ($1 = friendships_1.start)
-                                       ->  Index Scan using familyship_start_idx on t.familyship familyship_1
-                                             Output: familyship_1."end", familyship_1.id, familyship_1.start, familyship_1.properties, familyship_1.ctid
-                                             Index Cond: (familyship_1.start = $1)
+                                       ->  Seq Scan on t.friendships friendships_2
+                                             Output: friendships_2."end", friendships_2.id, friendships_2.start, friendships_2.properties, friendships_2.ctid
+                                             Filter: ($1 = friendships_2.start)
+                                       ->  Index Scan using familyship_start_idx on t.familyship friendships_3
+                                             Output: friendships_3."end", friendships_3.id, friendships_3.start, friendships_3.properties, friendships_3.ctid
+                                             Index Cond: (friendships_3.start = $1)
 (40 rows)
 
 EXPLAIN (VERBOSE, COSTS OFF)
@@ -1712,21 +1712,21 @@ WHERE x[0] IS NOT NULL RETURN x[0];
                                        ->  Seq Scan on t.friendships
                                              Output: friendships.start, friendships."end", friendships.id, friendships.properties, friendships.ctid
                                              Filter: (a.id = friendships.start)
-                                       ->  Index Scan using familyship_start_idx on t.familyship
-                                             Output: familyship.start, familyship."end", familyship.id, familyship.properties, familyship.ctid
-                                             Index Cond: (familyship.start = a.id)
+                                       ->  Index Scan using familyship_start_idx on t.familyship friendships_1
+                                             Output: friendships_1.start, friendships_1."end", friendships_1.id, friendships_1.properties, friendships_1.ctid
+                                             Index Cond: (friendships_1.start = a.id)
                            ->  Result
                                  Output: knows_1."end", knows_1.id, ROW(knows_1.id, knows_1.start, knows_1."end", knows_1.properties, knows_1.ctid)::edge
                                  ->  Append
                                        ->  Seq Scan on t.knows knows_1
                                              Output: knows_1."end", knows_1.id, knows_1.start, knows_1.properties, knows_1.ctid
                                              Filter: ($1 = knows_1.start)
-                                       ->  Seq Scan on t.friendships friendships_1
-                                             Output: friendships_1."end", friendships_1.id, friendships_1.start, friendships_1.properties, friendships_1.ctid
-                                             Filter: ($1 = friendships_1.start)
-                                       ->  Index Scan using familyship_start_idx on t.familyship familyship_1
-                                             Output: familyship_1."end", familyship_1.id, familyship_1.start, familyship_1.properties, familyship_1.ctid
-                                             Index Cond: (familyship_1.start = $1)
+                                       ->  Seq Scan on t.friendships friendships_2
+                                             Output: friendships_2."end", friendships_2.id, friendships_2.start, friendships_2.properties, friendships_2.ctid
+                                             Filter: ($1 = friendships_2.start)
+                                       ->  Index Scan using familyship_start_idx on t.familyship friendships_3
+                                             Output: friendships_3."end", friendships_3.id, friendships_3.start, friendships_3.properties, friendships_3.ctid
+                                             Index Cond: (friendships_3.start = $1)
 (41 rows)
 
 EXPLAIN (VERBOSE, COSTS OFF)
@@ -1766,21 +1766,21 @@ SELECT * FROM (
                                              ->  Seq Scan on t.friendships
                                                    Output: friendships.start, friendships."end", friendships.id, friendships.properties, friendships.ctid
                                                    Filter: (a.id = friendships.start)
-                                             ->  Index Scan using familyship_start_idx on t.familyship
-                                                   Output: familyship.start, familyship."end", familyship.id, familyship.properties, familyship.ctid
-                                                   Index Cond: (familyship.start = a.id)
+                                             ->  Index Scan using familyship_start_idx on t.familyship friendships_1
+                                                   Output: friendships_1.start, friendships_1."end", friendships_1.id, friendships_1.properties, friendships_1.ctid
+                                                   Index Cond: (friendships_1.start = a.id)
                                  ->  Result
                                        Output: knows_1."end", knows_1.id, ROW(knows_1.id, knows_1.start, knows_1."end", knows_1.properties, knows_1.ctid)::edge
                                        ->  Append
                                              ->  Seq Scan on t.knows knows_1
                                                    Output: knows_1."end", knows_1.id, knows_1.start, knows_1.properties, knows_1.ctid
                                                    Filter: ($1 = knows_1.start)
-                                             ->  Seq Scan on t.friendships friendships_1
-                                                   Output: friendships_1."end", friendships_1.id, friendships_1.start, friendships_1.properties, friendships_1.ctid
-                                                   Filter: ($1 = friendships_1.start)
-                                             ->  Index Scan using familyship_start_idx on t.familyship familyship_1
-                                                   Output: familyship_1."end", familyship_1.id, familyship_1.start, familyship_1.properties, familyship_1.ctid
-                                                   Index Cond: (familyship_1.start = $1)
+                                             ->  Seq Scan on t.friendships friendships_2
+                                                   Output: friendships_2."end", friendships_2.id, friendships_2.start, friendships_2.properties, friendships_2.ctid
+                                                   Filter: ($1 = friendships_2.start)
+                                             ->  Index Scan using familyship_start_idx on t.familyship friendships_3
+                                                   Output: friendships_3."end", friendships_3.id, friendships_3.start, friendships_3.properties, friendships_3.ctid
+                                                   Index Cond: (friendships_3.start = $1)
    ->  Nested Loop
          Output: x_1.edges[2]
          ->  Seq Scan on t.person a_1
@@ -1803,24 +1803,24 @@ SELECT * FROM (
                                              ->  Seq Scan on t.knows knows_2
                                                    Output: knows_2.start, knows_2."end", knows_2.id, knows_2.properties, knows_2.ctid
                                                    Filter: (a_1.id = knows_2.start)
-                                             ->  Seq Scan on t.friendships friendships_2
-                                                   Output: friendships_2.start, friendships_2."end", friendships_2.id, friendships_2.properties, friendships_2.ctid
-                                                   Filter: (a_1.id = friendships_2.start)
-                                             ->  Index Scan using familyship_start_idx on t.familyship familyship_2
-                                                   Output: familyship_2.start, familyship_2."end", familyship_2.id, familyship_2.properties, familyship_2.ctid
-                                                   Index Cond: (familyship_2.start = a_1.id)
+                                             ->  Seq Scan on t.friendships friendships_4
+                                                   Output: friendships_4.start, friendships_4."end", friendships_4.id, friendships_4.properties, friendships_4.ctid
+                                                   Filter: (a_1.id = friendships_4.start)
+                                             ->  Index Scan using familyship_start_idx on t.familyship friendships_5
+                                                   Output: friendships_5.start, friendships_5."end", friendships_5.id, friendships_5.properties, friendships_5.ctid
+                                                   Index Cond: (friendships_5.start = a_1.id)
                                  ->  Result
                                        Output: knows_3."end", knows_3.id, ROW(knows_3.id, knows_3.start, knows_3."end", knows_3.properties, knows_3.ctid)::edge
                                        ->  Append
                                              ->  Seq Scan on t.knows knows_3
                                                    Output: knows_3."end", knows_3.id, knows_3.start, knows_3.properties, knows_3.ctid
                                                    Filter: ($3 = knows_3.start)
-                                             ->  Seq Scan on t.friendships friendships_3
-                                                   Output: friendships_3."end", friendships_3.id, friendships_3.start, friendships_3.properties, friendships_3.ctid
-                                                   Filter: ($3 = friendships_3.start)
-                                             ->  Index Scan using familyship_start_idx on t.familyship familyship_3
-                                                   Output: familyship_3."end", familyship_3.id, familyship_3.start, familyship_3.properties, familyship_3.ctid
-                                                   Index Cond: (familyship_3.start = $3)
+                                             ->  Seq Scan on t.friendships friendships_6
+                                                   Output: friendships_6."end", friendships_6.id, friendships_6.start, friendships_6.properties, friendships_6.ctid
+                                                   Filter: ($3 = friendships_6.start)
+                                             ->  Index Scan using familyship_start_idx on t.familyship friendships_7
+                                                   Output: friendships_7."end", friendships_7.id, friendships_7.start, friendships_7.properties, friendships_7.ctid
+                                                   Index Cond: (friendships_7.start = $3)
 (82 rows)
 
 -- AG-154, CS-34 - VLE returns incoreect result with sequential scan
@@ -3197,24 +3197,24 @@ CREATE (:v3 {no:3});
 ALTER DATABASE regression SET GRAPH_PATH TO ag161;
 SET PARALLEL_SETUP_COST = 0;
 EXPLAIN (VERBOSE, COSTS OFF) MATCH (a) RETURN count(a);
-                                     QUERY PLAN                                     
-------------------------------------------------------------------------------------
+                                  QUERY PLAN                                  
+------------------------------------------------------------------------------
  Finalize Aggregate
-   Output: cypher_to_jsonb(count(ROW(a_1.id, a_1.properties, a_1.ctid)::vertex))
+   Output: cypher_to_jsonb(count(ROW(a.id, a.properties, a.ctid)::vertex))
    ->  Gather
-         Output: (PARTIAL count(ROW(a_1.id, a_1.properties, a_1.ctid)::vertex))
+         Output: (PARTIAL count(ROW(a.id, a.properties, a.ctid)::vertex))
          Workers Planned: 2
          ->  Partial Aggregate
-               Output: PARTIAL count(ROW(a_1.id, a_1.properties, a_1.ctid)::vertex)
+               Output: PARTIAL count(ROW(a.id, a.properties, a.ctid)::vertex)
                ->  Parallel Append
-                     ->  Parallel Seq Scan on ag161.v1 a_1
-                           Output: a_1.id, a_1.properties, a_1.ctid
-                     ->  Parallel Seq Scan on ag161.v2 a_2
+                     ->  Parallel Seq Scan on ag161.v1 a_2
                            Output: a_2.id, a_2.properties, a_2.ctid
-                     ->  Parallel Seq Scan on ag161.v3 a_3
+                     ->  Parallel Seq Scan on ag161.v2 a_3
                            Output: a_3.id, a_3.properties, a_3.ctid
-                     ->  Parallel Seq Scan on ag161.ag_vertex a
-                           Output: a.id, a.properties, a.ctid
+                     ->  Parallel Seq Scan on ag161.v3 a_4
+                           Output: a_4.id, a_4.properties, a_4.ctid
+                     ->  Parallel Seq Scan on ag161.ag_vertex a_1
+                           Output: a_1.id, a_1.properties, a_1.ctid
 (16 rows)
 
 MATCH (a) RETURN count(a);

@@ -37,7 +37,30 @@
 #include "utils/syscache.h"
 
 
+static void RelationBuildPartitionKey(Relation relation);
 static List *generate_partition_qual(Relation rel);
+
+/*
+ * RelationGetPartitionKey -- get partition key, if relation is partitioned
+ *
+ * Note: partition keys are not allowed to change after the partitioned rel
+ * is created.  RelationClearRelation knows this and preserves rd_partkey
+ * across relcache rebuilds, as long as the relation is open.  Therefore,
+ * even though we hand back a direct pointer into the relcache entry, it's
+ * safe for callers to continue to use that pointer as long as they hold
+ * the relation open.
+ */
+PartitionKey
+RelationGetPartitionKey(Relation rel)
+{
+	if (rel->rd_rel->relkind != RELKIND_PARTITIONED_TABLE)
+		return NULL;
+
+	if (unlikely(rel->rd_partkey == NULL))
+		RelationBuildPartitionKey(rel);
+
+	return rel->rd_partkey;
+}
 
 /*
  * RelationBuildPartitionKey
@@ -54,7 +77,7 @@ static List *generate_partition_qual(Relation rel);
  * that some of our callees allocate memory on their own which would be leaked
  * permanently.
  */
-void
+static void
 RelationBuildPartitionKey(Relation relation)
 {
 	Form_pg_partitioned_table form;
@@ -74,12 +97,9 @@ RelationBuildPartitionKey(Relation relation)
 	tuple = SearchSysCache1(PARTRELID,
 							ObjectIdGetDatum(RelationGetRelid(relation)));
 
-	/*
-	 * The following happens when we have created our pg_class entry but not
-	 * the pg_partitioned_table entry yet.
-	 */
 	if (!HeapTupleIsValid(tuple))
-		return;
+		elog(ERROR, "cache lookup failed for partition key of relation %u",
+			 RelationGetRelid(relation));
 
 	partkeycxt = AllocSetContextCreate(CurTransactionContext,
 									   "partition key",
@@ -322,7 +342,6 @@ generate_partition_qual(Relation rel)
 	List	   *my_qual = NIL,
 			   *result = NIL;
 	Relation	parent;
-	bool		found_whole_row;
 
 	/* Guard against stack overflow due to overly deep partition tree */
 	check_stack_depth();
@@ -368,11 +387,7 @@ generate_partition_qual(Relation rel)
 	 * in it to bear this relation's attnos. It's safe to assume varno = 1
 	 * here.
 	 */
-	result = map_partition_varattnos(result, 1, rel, parent,
-									 &found_whole_row);
-	/* There can never be a whole-row reference here */
-	if (found_whole_row)
-		elog(ERROR, "unexpected whole-row reference found in partition key");
+	result = map_partition_varattnos(result, 1, rel, parent);
 
 	/* Assert that we're not leaking any old data during assignments below */
 	Assert(rel->rd_partcheckcxt == NULL);

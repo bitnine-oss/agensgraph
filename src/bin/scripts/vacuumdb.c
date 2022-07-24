@@ -16,6 +16,7 @@
 
 #include "common.h"
 #include "common/logging.h"
+#include "fe_utils/cancel.h"
 #include "fe_utils/connect.h"
 #include "fe_utils/simple_list.h"
 #include "fe_utils/string_utils.h"
@@ -257,7 +258,7 @@ main(int argc, char *argv[])
 		/* allow 'and_analyze' with 'analyze_only' */
 	}
 
-	setup_cancel_handler();
+	setup_cancel_handler(NULL);
 
 	/* Avoid opening extra connections. */
 	if (tbl_count && (concurrentCons > tbl_count))

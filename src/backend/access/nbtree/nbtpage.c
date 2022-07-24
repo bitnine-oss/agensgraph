@@ -968,32 +968,28 @@ _bt_page_recyclable(Page page)
  * deleting the page it points to.
  *
  * This routine assumes that the caller has pinned and locked the buffer.
- * Also, the given itemnos *must* appear in increasing order in the array.
+ * Also, the given deletable array *must* be sorted in ascending order.
  *
- * We record VACUUMs and b-tree deletes differently in WAL. InHotStandby
- * we need to be able to pin all of the blocks in the btree in physical
- * order when replaying the effects of a VACUUM, just as we do for the
- * original VACUUM itself. lastBlockVacuumed allows us to tell whether an
- * intermediate range of blocks has had no changes at all by VACUUM,
- * and so must be scanned anyway during replay. We always write a WAL record
- * for the last block in the index, whether or not it contained any items
- * to be removed. This allows us to scan right up to end of index to
- * ensure correct locking.
+ * We record VACUUMs and b-tree deletes differently in WAL.  Deletes must
+ * generate recovery conflicts by accessing the heap inline, whereas VACUUMs
+ * can rely on the initial heap scan taking care of the problem (pruning would
+ * have generated the conflicts needed for hot standby already).
  */
 void
 _bt_delitems_vacuum(Relation rel, Buffer buf,
-					OffsetNumber *itemnos, int nitems,
-					BlockNumber lastBlockVacuumed)
+					OffsetNumber *deletable, int ndeletable)
 {
 	Page		page = BufferGetPage(buf);
 	BTPageOpaque opaque;
+
+	/* Shouldn't be called unless there's something to do */
+	Assert(ndeletable > 0);
 
 	/* No ereport(ERROR) until changes are logged */
 	START_CRIT_SECTION();
 
 	/* Fix the page */
-	if (nitems > 0)
-		PageIndexMultiDelete(page, itemnos, nitems);
+	PageIndexMultiDelete(page, deletable, ndeletable);
 
 	/*
 	 * We can clear the vacuum cycle ID since this page has certainly been
@@ -1019,7 +1015,7 @@ _bt_delitems_vacuum(Relation rel, Buffer buf,
 		XLogRecPtr	recptr;
 		xl_btree_vacuum xlrec_vacuum;
 
-		xlrec_vacuum.lastBlockVacuumed = lastBlockVacuumed;
+		xlrec_vacuum.ndeleted = ndeletable;
 
 		XLogBeginInsert();
 		XLogRegisterBuffer(0, buf, REGBUF_STANDARD);
@@ -1030,8 +1026,8 @@ _bt_delitems_vacuum(Relation rel, Buffer buf,
 		 * is.  When XLogInsert stores the whole buffer, the offsets array
 		 * need not be stored too.
 		 */
-		if (nitems > 0)
-			XLogRegisterBufData(0, (char *) itemnos, nitems * sizeof(OffsetNumber));
+		XLogRegisterBufData(0, (char *) deletable,
+							ndeletable * sizeof(OffsetNumber));
 
 		recptr = XLogInsert(RM_BTREE_ID, XLOG_BTREE_VACUUM);
 
@@ -1050,8 +1046,8 @@ _bt_delitems_vacuum(Relation rel, Buffer buf,
  * Also, the given itemnos *must* appear in increasing order in the array.
  *
  * This is nearly the same as _bt_delitems_vacuum as far as what it does to
- * the page, but the WAL logging considerations are quite different.  See
- * comments for _bt_delitems_vacuum.
+ * the page, but it needs to generate its own recovery conflicts by accessing
+ * the heap.  See comments for _bt_delitems_vacuum.
  */
 void
 _bt_delitems_delete(Relation rel, Buffer buf,
@@ -1078,15 +1074,8 @@ _bt_delitems_delete(Relation rel, Buffer buf,
 
 	/*
 	 * Unlike _bt_delitems_vacuum, we *must not* clear the vacuum cycle ID,
-	 * because this is not called by VACUUM.
-	 */
-
-	/*
-	 * Mark the page as not containing any LP_DEAD items.  This is not
-	 * certainly true (there might be some that have recently been marked, but
-	 * weren't included in our target-item list), but it will almost always be
-	 * true and it doesn't seem worth an additional page scan to check it.
-	 * Remember that BTP_HAS_GARBAGE is only a hint anyway.
+	 * because this is not called by VACUUM.  Just clear the BTP_HAS_GARBAGE
+	 * page flag, since we deleted all items with their LP_DEAD bit set.
 	 */
 	opaque = (BTPageOpaque) PageGetSpecialPointer(page);
 	opaque->btpo_flags &= ~BTP_HAS_GARBAGE;
@@ -1605,17 +1594,17 @@ _bt_mark_page_halfdead(Relation rel, Buffer leafbuf, BTStack stack)
 #ifdef USE_ASSERT_CHECKING
 	itemid = PageGetItemId(page, topoff);
 	itup = (IndexTuple) PageGetItem(page, itemid);
-	Assert(BTreeInnerTupleGetDownLink(itup) == target);
+	Assert(BTreeTupleGetDownLink(itup) == target);
 #endif
 
 	nextoffset = OffsetNumberNext(topoff);
 	itemid = PageGetItemId(page, nextoffset);
 	itup = (IndexTuple) PageGetItem(page, itemid);
-	if (BTreeInnerTupleGetDownLink(itup) != rightsib)
+	if (BTreeTupleGetDownLink(itup) != rightsib)
 		ereport(ERROR,
 					(errcode(ERRCODE_INDEX_CORRUPTED),
 					 errmsg_internal("right sibling %u of block %u is not next child %u of block %u in index \"%s\"",
-									 rightsib, target, BTreeInnerTupleGetDownLink(itup),
+									 rightsib, target, BTreeTupleGetDownLink(itup),
 					 BufferGetBlockNumber(topparent), RelationGetRelationName(rel))));
 
 	/*
@@ -1638,7 +1627,7 @@ _bt_mark_page_halfdead(Relation rel, Buffer leafbuf, BTStack stack)
 
 	itemid = PageGetItemId(page, topoff);
 	itup = (IndexTuple) PageGetItem(page, itemid);
-	BTreeInnerTupleSetDownLink(itup, rightsib);
+	BTreeTupleSetDownLink(itup, rightsib);
 
 	nextoffset = OffsetNumberNext(topoff);
 	PageIndexTupleDelete(page, nextoffset);
@@ -1902,7 +1891,7 @@ _bt_unlink_halfdead_page(Relation rel, Buffer leafbuf, bool *rightsib_empty)
 
 		/* remember the next non-leaf child down in the branch. */
 		itemid = PageGetItemId(page, P_FIRSTDATAKEY(opaque));
-		nextchild = BTreeInnerTupleGetDownLink((IndexTuple) PageGetItem(page, itemid));
+		nextchild = BTreeTupleGetDownLink((IndexTuple) PageGetItem(page, itemid));
 		if (nextchild == leafblkno)
 			nextchild = InvalidBlockNumber;
 	}

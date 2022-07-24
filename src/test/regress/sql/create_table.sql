@@ -361,7 +361,7 @@ CREATE TABLE partitioned (
 
 CREATE TABLE partitioned (
 	a int
-) PARTITION BY RANGE (('a'));
+) PARTITION BY RANGE ((42));
 
 CREATE FUNCTION const_func () RETURNS int AS $$ SELECT 1; $$ LANGUAGE SQL IMMUTABLE;
 CREATE TABLE partitioned (
@@ -384,17 +384,22 @@ CREATE TABLE partitioned (
 	a int
 ) PARTITION BY RANGE (xmin);
 
+-- cannot use pseudotypes
+CREATE TABLE partitioned (
+	a int,
+	b int
+) PARTITION BY RANGE (((a, b)));
+CREATE TABLE partitioned (
+	a int,
+	b int
+) PARTITION BY RANGE (a, ('unknown'));
+
 -- functions in key must be immutable
 CREATE FUNCTION immut_func (a int) RETURNS int AS $$ SELECT a + random()::int; $$ LANGUAGE SQL;
 CREATE TABLE partitioned (
 	a int
 ) PARTITION BY RANGE (immut_func(a));
 DROP FUNCTION immut_func(int);
-
--- cannot contain whole-row references
-CREATE TABLE partitioned (
-	a	int
-) PARTITION BY RANGE ((partitioned));
 
 -- prevent using columns of unsupported types in key (type must have a btree operator class)
 CREATE TABLE partitioned (
@@ -448,6 +453,29 @@ CREATE TABLE part2_1 PARTITION OF partitioned2 FOR VALUES FROM (-1, 'aaaaa') TO 
 \d+ part2_1
 
 DROP TABLE partitioned, partitioned2;
+
+-- check reference to partitioned table's rowtype in partition descriptor
+create table partitioned (a int, b int)
+  partition by list ((row(a, b)::partitioned));
+create table partitioned1
+  partition of partitioned for values in ('(1,2)'::partitioned);
+create table partitioned2
+  partition of partitioned for values in ('(2,4)'::partitioned);
+explain (costs off)
+select * from partitioned where row(a,b)::partitioned = '(1,2)'::partitioned;
+drop table partitioned;
+
+-- whole-row Var in partition key works too
+create table partitioned (a int, b int)
+  partition by list ((partitioned));
+create table partitioned1
+  partition of partitioned for values in ('(1,2)');
+create table partitioned2
+  partition of partitioned for values in ('(2,4)');
+explain (costs off)
+select * from partitioned where partitioned = '(1,2)'::partitioned;
+\d+ partitioned1
+drop table partitioned;
 
 -- check that dependencies of partition columns are handled correctly
 create domain intdom1 as int;

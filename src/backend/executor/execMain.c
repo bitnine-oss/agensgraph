@@ -1861,14 +1861,14 @@ ExecPartitionCheckEmitError(ResultRelInfo *resultRelInfo,
 	if (resultRelInfo->ri_PartitionRoot)
 	{
 		TupleDesc	old_tupdesc;
-		AttrNumber *map;
+		AttrMap    *map;
 
 		root_relid = RelationGetRelid(resultRelInfo->ri_PartitionRoot);
 		tupdesc = RelationGetDescr(resultRelInfo->ri_PartitionRoot);
 
 		old_tupdesc = RelationGetDescr(resultRelInfo->ri_RelationDesc);
 		/* a reverse map */
-		map = convert_tuples_by_name_map_if_req(old_tupdesc, tupdesc);
+		map = build_attrmap_by_name_if_req(old_tupdesc, tupdesc);
 
 		/*
 		 * Partition-specific slot's tupdesc can't be changed, so allocate a
@@ -1947,13 +1947,13 @@ ExecConstraints(ResultRelInfo *resultRelInfo,
 				 */
 				if (resultRelInfo->ri_PartitionRoot)
 				{
-					AttrNumber *map;
+					AttrMap    *map;
 
 					rel = resultRelInfo->ri_PartitionRoot;
 					tupdesc = RelationGetDescr(rel);
 					/* a reverse map */
-					map = convert_tuples_by_name_map_if_req(orig_tupdesc,
-															tupdesc);
+					map = build_attrmap_by_name_if_req(orig_tupdesc,
+													   tupdesc);
 
 					/*
 					 * Partition-specific slot's tupdesc can't be changed, so
@@ -1996,13 +1996,13 @@ ExecConstraints(ResultRelInfo *resultRelInfo,
 			if (resultRelInfo->ri_PartitionRoot)
 			{
 				TupleDesc	old_tupdesc = RelationGetDescr(rel);
-				AttrNumber *map;
+				AttrMap    *map;
 
 				rel = resultRelInfo->ri_PartitionRoot;
 				tupdesc = RelationGetDescr(rel);
 				/* a reverse map */
-				map = convert_tuples_by_name_map_if_req(old_tupdesc,
-														tupdesc);
+				map = build_attrmap_by_name_if_req(old_tupdesc,
+												   tupdesc);
 
 				/*
 				 * Partition-specific slot's tupdesc can't be changed, so
@@ -2103,13 +2103,13 @@ ExecWithCheckOptions(WCOKind kind, ResultRelInfo *resultRelInfo,
 					if (resultRelInfo->ri_PartitionRoot)
 					{
 						TupleDesc	old_tupdesc = RelationGetDescr(rel);
-						AttrNumber *map;
+						AttrMap    *map;
 
 						rel = resultRelInfo->ri_PartitionRoot;
 						tupdesc = RelationGetDescr(rel);
 						/* a reverse map */
-						map = convert_tuples_by_name_map_if_req(old_tupdesc,
-																tupdesc);
+						map = build_attrmap_by_name_if_req(old_tupdesc,
+														   tupdesc);
 
 						/*
 						 * Partition-specific slot's tupdesc can't be changed,
