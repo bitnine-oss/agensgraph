@@ -12,9 +12,24 @@
 
 #include "parser/parse_node.h"
 
-Node *makeJsonbFuncAccessor(ParseState *pstate, Node *expr, List *path);
-bool IsJsonbAccessor(Node *expr);
-void getAccessorArguments(Node *node, Node **expr, List **path);
-bool ConvertReservedColumnRefForIndex(Node *node, Oid relid);
+extern Node *makeJsonbFuncAccessor(ParseState *pstate, Node *expr, List *path);
+extern bool IsJsonbAccessor(Node *expr);
+extern void getAccessorArguments(Node *node, Node **expr, List **path);
+extern bool ConvertReservedColumnRefForIndex(Node *node, Oid relid);
+
+extern Alias *makeAliasNoDup(char *aliasname, List *colnames);
+extern Alias *makeAliasOptUnique(char *aliasname);
+extern char *genUniqueName(void);
+
+extern  void makeExtraFromRTE(ParseState *pstate, RangeTblEntry *rte,
+							 RangeTblRef **rtr, ParseNamespaceItem **nsitem,
+							 bool visible);
+extern void addRTEtoJoinlist(ParseState *pstate, RangeTblEntry *rte,
+							 bool visible);
+
+extern Var *make_var(ParseState *pstate, RangeTblEntry *rte, int attrno,
+					 int location);
+extern int RTERangeTablePosn(ParseState *pstate, RangeTblEntry *rte,
+							 int *sublevels_up);
 
 #endif

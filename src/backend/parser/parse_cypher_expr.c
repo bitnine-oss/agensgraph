@@ -2630,8 +2630,6 @@ transformA_Star(ParseState *pstate, int location)
 	foreach(lni, pstate->p_namespace)
 	{
 		ParseNamespaceItem *nsitem = lfirst(lni);
-		RangeTblEntry *rte = nsitem->p_rte;
-		int			rtindex;
 
 		/* ignore RTEs that are inaccessible by unqualified names */
 		if (!nsitem->p_cols_visible)
@@ -2641,11 +2639,11 @@ transformA_Star(ParseState *pstate, int location)
 		/* should not have any lateral-only items when parsing items */
 		Assert(!nsitem->p_lateral_only);
 
-		rtindex = RTERangeTablePosn(pstate, rte, NULL);
-
 		targets = list_concat(targets,
-							  expandRelAttrs(pstate, rte, rtindex, 0,
-											 location));
+							  expandNSItemAttrs(pstate,
+												nsitem,
+												0,
+												location));
 	}
 
 	if (!visible)

@@ -115,8 +115,8 @@ static void setSlotValueByName(TupleTableSlot *slot, Datum value, char *name);
 static void setSlotValueByAttnum(TupleTableSlot *slot, Datum value, int attnum);
 static Datum *makeDatumArray(ExprContext *econtext, int len);
 
-static void removeRangeTable(EState* estate, int n);
-static void fitRangeTableSpace(EState *estate, int newsize);
+static void fitEStateRangeTable(EState* estate, int n);
+static void fitEStateRelations(EState *estate, int newsize);
 
 /* global variable - see postgres.c */
 extern GraphWriteStats graphWriteStats;
@@ -210,7 +210,7 @@ ExecInitModifyGraph(ModifyGraph *mgplan, EState *estate, int eflags)
 			mgplan->ert_rtes_added != -1 &&
 			mgplan->ert_base_index > 0)
 		{
-			removeRangeTable(estate, (int) mgplan->ert_base_index);
+			fitEStateRangeTable(estate, (int) mgplan->ert_base_index);
 		}
 
 		/* save the es_range_table index where we start adding our RTEs */
@@ -222,7 +222,8 @@ ExecInitModifyGraph(ModifyGraph *mgplan, EState *estate, int eflags)
 
 		if (build_new_range_table)
 		{
-			fitRangeTableSpace(estate, (int) estate->es_range_table_size + targets_length);
+			fitEStateRelations(estate, (int) estate->es_range_table_size +
+									   targets_length);
 		}
 
 		rtindex = 0;
@@ -2091,35 +2092,32 @@ makeDatumArray(ExprContext *econtext, int len)
 /*
  * Remove elements from range table.
  */
-static void removeRangeTable(EState* estate, int n)
+static void
+fitEStateRangeTable(EState* estate, int n)
 {
-	int i = -1;
 	ListCell *lc;
 
-	for (lc = list_head(estate->es_range_table); lc != NULL;) {
+	foreach(lc, estate->es_range_table)
+	{
 		RangeTblEntry *es_rte = lfirst(lc);
-		ListCell *next = lnext(estate->es_range_table, lc);
+		int idx = foreach_current_index(lc);
 
-		i++;
-
-		if (i < n)
+		if (idx < n)
 			continue;
+		foreach_delete_current(estate->es_range_table, lc);
 		pfree(es_rte);
-		pfree(lc);
-		lc = next;
-		table_close(estate->es_relations[i], NoLock);
+		table_close(estate->es_relations[idx], NoLock);
 	}
-
-	estate->es_range_table = list_truncate(estate->es_range_table, n);
 	estate->es_range_table_size = n;
 }
 
-static void fitRangeTableSpace(EState *estate, int newsize)
+static void
+fitEStateRelations(EState *estate, int newsize)
 {
 	Relation *saved_relations = estate->es_relations;
 
 	estate->es_range_table_size = newsize;
-\
+
 	estate->es_relations = (Relation *)
 			palloc0(estate->es_range_table_size * sizeof(Relation));
 

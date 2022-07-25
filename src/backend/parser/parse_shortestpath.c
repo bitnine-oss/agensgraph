@@ -26,6 +26,7 @@
 #include "parser/parse_shortestpath.h"
 #include "parser/parse_target.h"
 #include "utils/builtins.h"
+#include "parser/parse_cypher_utils.h"
 
 #define SP_COLNAME_VIDS		"vids"
 #define SP_COLNAME_EIDS		"eids"
@@ -73,7 +74,6 @@ static Node *makeDijkstraEdgeUnion(char *elabel_name, char *row_name);
 static Node *makeDijkstraEdge(char *elabel_name, char *row_name);
 
 /* parse node */
-static Alias *makeAliasNoDup(char *aliasname, List *colnames);
 static Node *makeColumnRef1(char *colname);
 static Node *makeColumnRef(List *fields);
 static ResTarget *makeSimpleResTarget(char *field, char *name);
@@ -81,12 +81,6 @@ static ResTarget *makeResTarget(Node *val, char *name);
 static Node *makeAArrayExpr(List *elements, char *typeName);
 static Node *makeRowExpr(List *args, char *typeName);
 static Node *makeSubLink(SelectStmt *sel);
-
-/* utils */
-static void addRTEtoJoinlist(ParseState *pstate, RangeTblEntry *rte,
-							 bool visible);
-static Alias *makeAliasOptUnique(char *aliasname);
-static char *genUniqueName(void);
 
 Query *
 transformShortestPath(ParseState *pstate, CypherPath *cpath)
@@ -1018,18 +1012,6 @@ makeVertexIdExpr(Node *vertex)
 								 -1);
 }
 
-static Alias *
-makeAliasNoDup(char *aliasname, List *colnames)
-{
-	Alias *alias;
-
-	alias = makeNode(Alias);
-	alias->aliasname = aliasname;
-	alias->colnames = colnames;
-
-	return alias;
-}
-
 static Node *
 makeColumnRef1(char *colname)
 {
@@ -1610,108 +1592,4 @@ makeDijkstraEdge(char *elabel_name, char *row_name)
 	}
 
 	return (Node *) sel;
-}
-
-/* TODO: Remove */
-
-static void
-makeExtraFromRTE(ParseState *pstate, RangeTblEntry *rte, RangeTblRef **rtr,
-				 ParseNamespaceItem **nsitem, bool visible)
-{
-	if (rtr != NULL)
-	{
-		RangeTblRef *_rtr;
-
-		_rtr = makeNode(RangeTblRef);
-		_rtr->rtindex = RTERangeTablePosn(pstate, rte, NULL);
-
-		*rtr = _rtr;
-	}
-
-	if (nsitem != NULL)
-	{
-		ParseNamespaceItem *_nsitem;
-
-		_nsitem = (ParseNamespaceItem *) palloc(sizeof(ParseNamespaceItem));
-		_nsitem->p_rte = rte;
-		_nsitem->p_rel_visible = visible;
-		_nsitem->p_cols_visible = visible;
-		_nsitem->p_lateral_only = false;
-		_nsitem->p_lateral_ok = true;
-
-		*nsitem = _nsitem;
-	}
-}
-
-/* just find RTE of `refname` in the current namespace */
-static RangeTblEntry *
-findRTEfromNamespace(ParseState *pstate, char *refname)
-{
-	ListCell *lni;
-
-	if (refname == NULL)
-		return NULL;
-
-	foreach(lni, pstate->p_namespace)
-	{
-		ParseNamespaceItem *nsitem = lfirst(lni);
-		RangeTblEntry *rte = nsitem->p_rte;
-
-		/* NOTE: skip all checks on `nsitem` */
-
-		if (strcmp(rte->eref->aliasname, refname) == 0)
-			return rte;
-	}
-
-	return NULL;
-}
-
-static void
-addRTEtoJoinlist(ParseState *pstate, RangeTblEntry *rte, bool visible)
-{
-	RangeTblEntry *tmp;
-	RangeTblRef *rtr;
-	ParseNamespaceItem *nsitem;
-
-	/*
-	 * There should be no namespace conflicts because we check a variable
-	 * (which becomes an alias) is duplicated. This check remains to prevent
-	 * future programming error.
-	 */
-	tmp = findRTEfromNamespace(pstate, rte->eref->aliasname);
-	if (tmp != NULL)
-	{
-		if (!(rte->rtekind == RTE_RELATION && rte->alias == NULL &&
-			  tmp->rtekind == RTE_RELATION && tmp->alias == NULL &&
-			  rte->relid != tmp->relid))
-			ereport(ERROR,
-					(errcode(ERRCODE_DUPLICATE_ALIAS),
-					 errmsg("variable \"%s\" specified more than once",
-							rte->eref->aliasname)));
-	}
-
-	makeExtraFromRTE(pstate, rte, &rtr, &nsitem, visible);
-	pstate->p_joinlist = lappend(pstate->p_joinlist, rtr);
-	pstate->p_namespace = lappend(pstate->p_namespace, nsitem);
-}
-
-static Alias *
-makeAliasOptUnique(char *aliasname)
-{
-	aliasname = (aliasname == NULL ? genUniqueName() : pstrdup(aliasname));
-	return makeAliasNoDup(aliasname, NIL);
-}
-
-/* generate unique name */
-static char *
-genUniqueName(void)
-{
-	/* NOTE: safe unless there are more than 2^32 anonymous names at once */
-	static uint32 seq = 0;
-
-	char data[NAMEDATALEN];
-
-	snprintf(data, sizeof(data), "<%010u>", seq++);
-
-	return pstrdup(data);
 }

@@ -326,12 +326,6 @@ static RangeTblEntry *incrementalJoinRTEs(ParseState *pstate, JoinType jointype,
 static void makeJoinResCols(ParseState *pstate,
 							RangeTblEntry *l_rte, RangeTblEntry *r_rte,
 							List **res_colnames, List **res_colvars);
-static void addRTEtoJoinlist(ParseState *pstate, RangeTblEntry *rte,
-							 bool visible);
-static void makeExtraFromRTE(ParseState *pstate, RangeTblEntry *rte,
-							 RangeTblRef **rtr, ParseNamespaceItem **nsitem,
-							 bool visible);
-static RangeTblEntry *findRTEfromNamespace(ParseState *pstate, char *refname);
 static ParseNamespaceItem *findNamespaceItemForRTE(ParseState *pstate,
 												   RangeTblEntry *rte);
 static List *makeTargetListFromRTE(ParseState *pstate, RangeTblEntry *rte);
@@ -351,8 +345,6 @@ static Node *getColumnVar(ParseState *pstate, RangeTblEntry *rte,
 static Node *getSysColumnVar(ParseState *pstate, RangeTblEntry *rte,
 							 int attnum);
 static Node *getExprField(Expr *expr, char *fname);
-static Alias *makeAliasNoDup(char *aliasname, List *colnames);
-static Alias *makeAliasOptUnique(char *aliasname);
 static Node *makeArrayExpr(Oid typarray, Oid typoid, List *elems);
 static Node *makeTypedRowExpr(List *args, Oid typoid, int location);
 static Node *qualAndExpr(Node *qual, Node *expr);
@@ -364,7 +356,6 @@ static A_Const *makeNullAConst(void);
 static bool IsNullAConst(Node *arg);
 
 /* utils */
-static char *genUniqueName(void);
 static List *repairTargetListCollations(List *targetList);
 
 Query *
@@ -1804,7 +1795,7 @@ transformMatchNode(ParseState *pstate, CypherNode *cnode, bool force,
 	te = findTarget(*targetList, varname);
 	if (te != NULL)
 	{
-		RangeTblEntry *rte;
+		ParseNamespaceItem *nsitem;
 
 		if (exprType((Node *) te->expr) != VERTEXOID)
 			ereport(ERROR,
@@ -1814,8 +1805,8 @@ transformMatchNode(ParseState *pstate, CypherNode *cnode, bool force,
 
 		addElemQual(pstate, te->resno, cnode->prop_map);
 
-		rte = findRTEfromNamespace(pstate, varname);
-		if (rte == NULL)
+		nsitem = scanNameSpaceForRefname(pstate, varname, varloc);
+		if (nsitem == NULL)
 		{
 			/*
 			 * `te` can be from the previous clause or the pattern.
@@ -1839,7 +1830,7 @@ transformMatchNode(ParseState *pstate, CypherNode *cnode, bool force,
 		else
 		{
 			/* previously returned RTE_RELATION by this function */
-			return (Node *) rte;
+			return (Node *) nsitem;
 		}
 	}
 
@@ -6016,87 +6007,6 @@ makeJoinResCols(ParseState *pstate, RangeTblEntry *l_rte, RangeTblEntry *r_rte,
 	*res_colvars = list_concat(*res_colvars, colvars);
 }
 
-static void
-addRTEtoJoinlist(ParseState *pstate, RangeTblEntry *rte, bool visible)
-{
-	RangeTblEntry *tmp;
-	RangeTblRef *rtr;
-	ParseNamespaceItem *nsitem;
-
-	/*
-	 * There should be no namespace conflicts because we check a variable
-	 * (which becomes an alias) is duplicated. This check remains to prevent
-	 * future programming error.
-	 */
-	tmp = findRTEfromNamespace(pstate, rte->eref->aliasname);
-	if (tmp != NULL)
-	{
-		if (!(rte->rtekind == RTE_RELATION && rte->alias == NULL &&
-			  tmp->rtekind == RTE_RELATION && tmp->alias == NULL &&
-			  rte->relid != tmp->relid))
-			ereport(ERROR,
-					(errcode(ERRCODE_DUPLICATE_ALIAS),
-					 errmsg("variable \"%s\" specified more than once",
-							rte->eref->aliasname)));
-	}
-
-	makeExtraFromRTE(pstate, rte, &rtr, &nsitem, visible);
-	pstate->p_joinlist = lappend(pstate->p_joinlist, rtr);
-	pstate->p_namespace = lappend(pstate->p_namespace, nsitem);
-}
-
-static void
-makeExtraFromRTE(ParseState *pstate, RangeTblEntry *rte, RangeTblRef **rtr,
-				 ParseNamespaceItem **nsitem, bool visible)
-{
-	if (rtr != NULL)
-	{
-		RangeTblRef *_rtr;
-
-		_rtr = makeNode(RangeTblRef);
-		_rtr->rtindex = RTERangeTablePosn(pstate, rte, NULL);
-
-		*rtr = _rtr;
-	}
-
-	if (nsitem != NULL)
-	{
-		ParseNamespaceItem *_nsitem;
-
-		_nsitem = (ParseNamespaceItem *) palloc(sizeof(ParseNamespaceItem));
-		_nsitem->p_rte = rte;
-		_nsitem->p_rel_visible = visible;
-		_nsitem->p_cols_visible = visible;
-		_nsitem->p_lateral_only = false;
-		_nsitem->p_lateral_ok = true;
-
-		*nsitem = _nsitem;
-	}
-}
-
-/* just find RTE of `refname` in the current namespace */
-static RangeTblEntry *
-findRTEfromNamespace(ParseState *pstate, char *refname)
-{
-	ListCell *lni;
-
-	if (refname == NULL)
-		return NULL;
-
-	foreach(lni, pstate->p_namespace)
-	{
-		ParseNamespaceItem *nsitem = lfirst(lni);
-		RangeTblEntry *rte = nsitem->p_rte;
-
-		/* NOTE: skip all checks on `nsitem` */
-
-		if (strcmp(rte->eref->aliasname, refname) == 0)
-			return rte;
-	}
-
-	return NULL;
-}
-
 static ParseNamespaceItem *
 findNamespaceItemForRTE(ParseState *pstate, RangeTblEntry *rte)
 {
@@ -6364,26 +6274,6 @@ getExprField(Expr *expr, char *fname)
 	return (Node *) fselect;
 }
 
-/* same as makeAlias() but no pstrdup(aliasname) */
-static Alias *
-makeAliasNoDup(char *aliasname, List *colnames)
-{
-	Alias *alias;
-
-	alias = makeNode(Alias);
-	alias->aliasname = aliasname;
-	alias->colnames = colnames;
-
-	return alias;
-}
-
-static Alias *
-makeAliasOptUnique(char *aliasname)
-{
-	aliasname = (aliasname == NULL ? genUniqueName() : pstrdup(aliasname));
-	return makeAliasNoDup(aliasname, NIL);
-}
-
 static Node *
 makeArrayExpr(Oid typarray, Oid typoid, List *elems)
 {
@@ -6495,18 +6385,4 @@ IsNullAConst(Node *arg)
 			return true;
 	}
 	return false;
-}
-
-/* generate unique name */
-static char *
-genUniqueName(void)
-{
-	/* NOTE: safe unless there are more than 2^32 anonymous names at once */
-	static uint32 seq = 0;
-
-	char data[NAMEDATALEN];
-
-	snprintf(data, sizeof(data), "<%010u>", seq++);
-
-	return pstrdup(data);
 }
