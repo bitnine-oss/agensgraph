@@ -3,7 +3,7 @@
  * indexam.c
  *	  general index access method routines
  *
- * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2020, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -43,8 +43,8 @@
 
 #include "postgres.h"
 
+#include "access/amapi.h"
 #include "access/heapam.h"
-#include "access/indexam.h"
 #include "access/relscan.h"
 #include "access/tableam.h"
 #include "access/transam.h"

@@ -4,7 +4,7 @@
  *	  header file for postgres btree access method implementation.
  *
  *
- * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2020, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/access/nbtree.h
@@ -14,7 +14,7 @@
 #ifndef NBTREE_H
 #define NBTREE_H
 
-#include "access/indexam.h"
+#include "access/amapi.h"
 #include "access/itup.h"
 #include "access/sdir.h"
 #include "access/xlogreader.h"

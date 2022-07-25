@@ -11,7 +11,7 @@
  *			- Add a pgstat config column to pg_database, so this
  *			  entire thing can be enabled/disabled on a per db basis.
  *
- *	Copyright (c) 2001-2019, PostgreSQL Global Development Group
+ *	Copyright (c) 2001-2020, PostgreSQL Global Development Group
  *
  *	src/backend/postmaster/pgstat.c
  * ----------
@@ -75,7 +75,7 @@
 #include "catalog/indexing.h"
 #include "utils/fmgroids.h"
 #include "utils/syscache.h"
-#include "access/indexgenam.h"
+#include "access/genam.h"
 
 /* ----------
  * Timer definitions.

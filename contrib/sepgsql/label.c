@@ -4,7 +4,7 @@
  *
  * Routines to support SELinux labels (security context)
  *
- * Copyright (c) 2010-2019, PostgreSQL Global Development Group
+ * Copyright (c) 2010-2020, PostgreSQL Global Development Group
  *
  * -------------------------------------------------------------------------
  */
@@ -12,8 +12,8 @@
 
 #include <selinux/label.h>
 
+#include "access/genam.h"
 #include "access/htup_details.h"
-#include "access/indexgenam.h"
 #include "access/table.h"
 #include "access/xact.h"
 #include "catalog/catalog.h"

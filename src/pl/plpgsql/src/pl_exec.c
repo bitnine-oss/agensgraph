@@ -3,7 +3,7 @@
  * pl_exec.c		- Executor for the PL/pgSQL
  *			  procedural language
  *
- * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2020, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -6862,7 +6862,16 @@ revalidate_rectypeid(PLpgSQL_rec *rec)
 	Assert(typ != NULL);
 	if (typ->tcache &&
 		typ->tcache->tupDesc_identifier == typ->tupdesc_id)
-		return;					/* known up-to-date */
+	{
+		/*
+		 * Although *typ is known up-to-date, it's possible that rectypeid
+		 * isn't, because *rec is cloned during each function startup from a
+		 * copy that we don't have a good way to update.  Hence, forcibly fix
+		 * rectypeid before returning.
+		 */
+		rec->rectypeid = typ->typoid;
+		return;
+	}
 
 	/*
 	 * typcache entry has suffered invalidation, so re-look-up the type name

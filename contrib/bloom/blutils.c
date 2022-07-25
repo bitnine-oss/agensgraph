@@ -3,7 +3,7 @@
  * blutils.c
  *		Bloom index utilities.
  *
- * Portions Copyright (c) 2016-2019, PostgreSQL Global Development Group
+ * Portions Copyright (c) 2016-2020, PostgreSQL Global Development Group
  * Portions Copyright (c) 1990-1993, Regents of the University of California
  *
  * IDENTIFICATION
@@ -13,8 +13,8 @@
  */
 #include "postgres.h"
 
+#include "access/amapi.h"
 #include "access/generic_xlog.h"
-#include "access/indexam.h"
 #include "access/reloptions.h"
 #include "bloom.h"
 #include "catalog/index.h"

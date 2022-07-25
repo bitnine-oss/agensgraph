@@ -9,7 +9,7 @@
  * into a lot of low-level code.
  *
  *
- * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2020, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/access/reloptions.h
@@ -19,8 +19,8 @@
 #ifndef RELOPTIONS_H
 #define RELOPTIONS_H
 
+#include "access/amapi.h"
 #include "access/htup.h"
-#include "access/indexam.h"
 #include "access/tupdesc.h"
 #include "nodes/pg_list.h"
 #include "storage/lock.h"

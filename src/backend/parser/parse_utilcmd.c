@@ -16,7 +16,7 @@
  * a quick copyObject() call before manipulating the query tree.
  *
  *
- * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2020, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *	src/backend/parser/parse_utilcmd.c
@@ -27,8 +27,8 @@
 #include "postgres.h"
 
 #include "ag_const.h"
+#include "access/amapi.h"
 #include "access/htup_details.h"
-#include "access/indexam.h"
 #include "access/relation.h"
 #include "access/reloptions.h"
 #include "access/table.h"

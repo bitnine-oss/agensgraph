@@ -4,14 +4,14 @@
  *
  * Routines corresponding to database objects
  *
- * Copyright (c) 2010-2019, PostgreSQL Global Development Group
+ * Copyright (c) 2010-2020, PostgreSQL Global Development Group
  *
  * -------------------------------------------------------------------------
  */
 #include "postgres.h"
 
+#include "access/genam.h"
 #include "access/htup_details.h"
-#include "access/indexgenam.h"
 #include "access/sysattr.h"
 #include "access/table.h"
 #include "catalog/dependency.h"

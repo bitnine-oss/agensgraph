@@ -3,7 +3,7 @@
  * detoast.c
  *	  Retrieve compressed or external variable size attributes.
  *
- * Copyright (c) 2000-2019, PostgreSQL Global Development Group
+ * Copyright (c) 2000-2020, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
  *	  src/backend/access/common/detoast.c
@@ -14,7 +14,7 @@
 #include "postgres.h"
 
 #include "access/detoast.h"
-#include "access/indexgenam.h"
+#include "access/genam.h"
 #include "access/heaptoast.h"
 #include "access/table.h"
 #include "access/toast_internals.h"

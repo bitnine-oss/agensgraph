@@ -2,7 +2,7 @@
  * gin_private.h
  *	  header file for postgres inverted index access method implementation.
  *
- *	Copyright (c) 2006-2019, PostgreSQL Global Development Group
+ *	Copyright (c) 2006-2020, PostgreSQL Global Development Group
  *
  *	src/include/access/gin_private.h
  *--------------------------------------------------------------------------
@@ -10,9 +10,9 @@
 #ifndef GIN_PRIVATE_H
 #define GIN_PRIVATE_H
 
+#include "access/amapi.h"
 #include "access/gin.h"
 #include "access/ginblock.h"
-#include "access/indexam.h"
 #include "access/itup.h"
 #include "catalog/pg_am_d.h"
 #include "fmgr.h"

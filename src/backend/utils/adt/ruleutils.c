@@ -4,7 +4,7 @@
  *	  Functions to convert stored expressions/querytrees back to
  *	  source text
  *
- * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2020, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -20,8 +20,8 @@
 #include <fcntl.h>
 
 #include "ag_const.h"
+#include "access/amapi.h"
 #include "access/htup_details.h"
-#include "access/indexam.h"
 #include "access/relation.h"
 #include "access/sysattr.h"
 #include "access/table.h"

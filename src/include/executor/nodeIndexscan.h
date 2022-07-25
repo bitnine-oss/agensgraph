@@ -4,7 +4,7 @@
  *
  *
  *
- * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2020, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/executor/nodeIndexscan.h
@@ -14,7 +14,7 @@
 #ifndef NODEINDEXSCAN_H
 #define NODEINDEXSCAN_H
 
-#include "access/indexgenam.h"
+#include "access/genam.h"
 #include "access/parallel.h"
 #include "nodes/execnodes.h"
 

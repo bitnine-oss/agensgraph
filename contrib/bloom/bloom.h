@@ -3,7 +3,7 @@
  * bloom.h
  *	  Header for bloom index.
  *
- * Copyright (c) 2016-2019, PostgreSQL Global Development Group
+ * Copyright (c) 2016-2020, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
  *	  contrib/bloom/bloom.h
@@ -13,8 +13,8 @@
 #ifndef _BLOOM_H_
 #define _BLOOM_H_
 
+#include "access/amapi.h"
 #include "access/generic_xlog.h"
-#include "access/indexam.h"
 #include "access/itup.h"
 #include "access/xlog.h"
 #include "fmgr.h"

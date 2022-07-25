@@ -3,7 +3,7 @@
  * analyze.c
  *	  the Postgres statistics generator
  *
- * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2020, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -17,7 +17,7 @@
 #include <math.h>
 
 #include "access/detoast.h"
-#include "access/indexgenam.h"
+#include "access/genam.h"
 #include "access/multixact.h"
 #include "access/relation.h"
 #include "access/sysattr.h"

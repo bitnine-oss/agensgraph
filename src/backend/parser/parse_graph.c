@@ -54,7 +54,7 @@
 #include "utils/typcache.h"
 #include "catalog/pg_inherits.h"
 #include "access/table.h"
-#include "access/indexgenam.h"
+#include "access/genam.h"
 
 #define CYPHER_SUBQUERY_ALIAS	"_"
 #define CYPHER_OPTMATCH_ALIAS	"_o"

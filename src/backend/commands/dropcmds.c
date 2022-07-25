@@ -3,7 +3,7 @@
  * dropcmds.c
  *	  handle various "DROP" operations
  *
- * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2020, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -153,6 +153,21 @@ RemoveObjects(DropStmt *stmt)
 			if (stmt->behavior == DROP_CASCADE)
 				agstat_drop_graph(strVal((Value *) object));
 		}
+
+		/*
+		 * Prevent the drop of a temporary schema, be it owned by the current
+		 * session or another backend as this would mess up with the callback
+		 * registered to clean up temporary objects at the end of a session.
+		 * Note also that the creation of any follow-up temporary object would
+		 * result in inconsistencies within the session whose temporary schema
+		 * has been dropped.
+		 */
+		if (stmt->removeType == OBJECT_SCHEMA &&
+			isAnyTempNamespace(address.objectId))
+			ereport(ERROR,
+					(errcode(ERRCODE_WRONG_OBJECT_TYPE),
+					 errmsg("cannot drop temporary schema \"%s\"",
+							get_namespace_name(address.objectId))));
 
 		/* Check permissions. */
 		namespaceId = get_object_namespace(&address);

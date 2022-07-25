@@ -2,7 +2,7 @@
  * brin_minmax.c
  *		Implementation of Min/Max opclass for BRIN
  *
- * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2020, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -12,7 +12,7 @@
 
 #include "access/brin_internal.h"
 #include "access/brin_tuple.h"
-#include "access/indexgenam.h"
+#include "access/genam.h"
 #include "access/stratnum.h"
 #include "catalog/pg_amop.h"
 #include "catalog/pg_type.h"

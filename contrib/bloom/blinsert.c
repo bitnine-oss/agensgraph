@@ -3,7 +3,7 @@
  * blinsert.c
  *		Bloom index build and insert functions.
  *
- * Copyright (c) 2016-2019, PostgreSQL Global Development Group
+ * Copyright (c) 2016-2020, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
  *	  contrib/bloom/blinsert.c
@@ -12,8 +12,8 @@
  */
 #include "postgres.h"
 
+#include "access/genam.h"
 #include "access/generic_xlog.h"
-#include "access/indexgenam.h"
 #include "access/tableam.h"
 #include "bloom.h"
 #include "catalog/index.h"

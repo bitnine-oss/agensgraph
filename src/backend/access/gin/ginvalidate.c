@@ -3,7 +3,7 @@
  * ginvalidate.c
  *	  Opclass validator for GIN.
  *
- * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2020, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -13,9 +13,9 @@
  */
 #include "postgres.h"
 
+#include "access/amvalidate.h"
 #include "access/gin_private.h"
 #include "access/htup_details.h"
-#include "access/indexamvalidate.h"
 #include "catalog/pg_amop.h"
 #include "catalog/pg_amproc.h"
 #include "catalog/pg_opclass.h"
