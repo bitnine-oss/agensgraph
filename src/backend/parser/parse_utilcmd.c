@@ -4944,7 +4944,7 @@ transformCreatePropertyIndexStmt(Oid relid, CreatePropertyIndexStmt *stmt,
 	ParseState *pstate;
 	ListCell   *l;
 	Relation	rel;
-	RangeTblEntry *rte;
+	ParseNamespaceItem *nsitem;
 	bool is_reserved_property;
 
 	Assert(!stmt->transformed);
@@ -4962,10 +4962,12 @@ transformCreatePropertyIndexStmt(Oid relid, CreatePropertyIndexStmt *stmt,
 	 * relation, but we still need to open it.
 	 */
 	rel = relation_open(relid, NoLock);
-	rte = addRangeTableEntryForRelation(pstate, rel, AccessShareLock, NULL, false, true);
+	nsitem = addRangeTableEntryForRelation(pstate, rel,
+										   AccessShareLock,
+										   NULL, false, true);
 
 	/* no to join list, yes to namespaces */
-	addRTEtoQuery(pstate, rte, false, true, true);
+	addNSItemToQuery(pstate, nsitem, false, true, true);
 
 	/* take care of the where clause */
 	if (idxstmt->whereClause)

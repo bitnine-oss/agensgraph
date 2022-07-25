@@ -140,8 +140,8 @@ typedef struct
 static void checkNameInItems(ParseState *pstate, List *items, List *targetList);
 
 /* MATCH - OPTIONAL */
-static RangeTblEntry *transformMatchOptional(ParseState *pstate,
-											 CypherClause *clause);
+static ParseNamespaceItem *transformMatchOptional(ParseState *pstate,
+												  CypherClause *clause);
 /* MATCH - preprocessing */
 static bool hasPropConstr(List *pattern);
 static List *getFindPaths(List *pattern);
@@ -158,20 +158,24 @@ static bool arePathsConnected(CypherPath *path1, CypherPath *path2);
 static Node *transformComponents(ParseState *pstate, List *components,
 								 List **targetList);
 static Node *transformMatchNode(ParseState *pstate, CypherNode *cnode,
-								bool force, List **targetList, List **eqoList);
-static RangeTblEntry *transformMatchRel(ParseState *pstate, CypherRel *crel,
-										List **targetList, List **eqoList,
-										bool pathout);
-static RangeTblEntry *transformMatchSR(ParseState *pstate, CypherRel *crel,
-									   List **targetList, List **eqoList);
-static RangeTblEntry *addEdgeUnion(ParseState *pstate, char *edge_label,
-								   bool only, int location, Alias *alias);
+								bool force, List **targetList, List **eqoList,
+								bool *isNSItem);
+static ParseNamespaceItem *transformMatchRel(ParseState *pstate,
+											 CypherRel *crel,
+											 List **targetList, List **eqoList,
+											 bool pathout);
+static ParseNamespaceItem *transformMatchSR(ParseState *pstate, CypherRel *crel,
+											List **targetList, List **eqoList);
+static ParseNamespaceItem *addEdgeUnion(ParseState *pstate, char *edge_label,
+										bool only, int location, Alias *alias);
 static Node *genEdgeUnion(char *edge_label, bool only, int location);
 static void setInitialVidForVLE(ParseState *pstate, CypherRel *crel,
-								Node *vertex, CypherRel *prev_crel,
-								RangeTblEntry *prev_edge);
-static RangeTblEntry *transformMatchVLE(ParseState *pstate, CypherRel *crel,
-										List **targetList, bool pathout);
+								Node *vertex, bool vertexIsNSItem,
+								CypherRel *prev_crel,
+								ParseNamespaceItem *prev_edge);
+static ParseNamespaceItem *transformMatchVLE(ParseState *pstate,
+											 CypherRel *crel,
+											 List **targetList, bool pathout);
 static SelectStmt *genVLESubselect(ParseState *pstate, CypherRel *crel,
 								   bool out, bool pathout);
 static Node *genVLELeftChild(ParseState *pstate, CypherRel *crel,
@@ -186,20 +190,22 @@ static RangeSubselect *genInhEdge(RangeVar *r, Oid parentoid);
 static Node *genVLEJoinExpr(CypherRel *crel, Node *larg, Node *rarg);
 static List *genQualifiedName(char *name1, char *name2);
 static Node *genVLEQual(char *alias, Node *propMap);
-static RangeTblEntry *transformVLEtoRTE(ParseState *pstate, SelectStmt *vle,
-										Alias *alias);
+static ParseNamespaceItem *transformVLEtoNSItem(ParseState *pstate,
+												SelectStmt *vle, Alias *alias);
 static bool isZeroLengthVLE(CypherRel *crel);
 static void getCypherRelType(CypherRel *crel, char **typname, int *typloc);
 static Node *addQualRelPath(ParseState *pstate, Node *qual,
-							CypherRel *prev_crel, RangeTblEntry *prev_edge,
-							CypherRel *crel, RangeTblEntry *edge);
+							CypherRel *prev_crel, ParseNamespaceItem *prev_edge,
+							CypherRel *crel, ParseNamespaceItem *edge);
 static Node *addQualNodeIn(ParseState *pstate, Node *qual, Node *vertex,
-						   CypherRel *crel, RangeTblEntry *edge, bool prev);
+						   bool vertexIsNSItem, CypherRel *crel,
+						   ParseNamespaceItem *edge,
+						   bool prev);
 static char *getEdgeColname(CypherRel *crel, bool prev);
 static bool isFutureVertexExpr(Node *vertex);
 static void setFutureVertexExprId(ParseState *pstate, Node *vertex,
-								 CypherRel *crel, RangeTblEntry *edge,
-								 bool prev);
+								  CypherRel *crel, ParseNamespaceItem *edge,
+								  bool prev);
 static Node *addQualUniqueEdges(ParseState *pstate, Node *qual, List *ueids,
 								List *ueidarrs);
 /* MATCH - VLE */
@@ -208,7 +214,7 @@ static Node *edgeArrConcat(ParseState *pstate, Node *array, Node *elem);
 /* MATCH - quals */
 static void addElemQual(ParseState *pstate, AttrNumber varattno,
 						Node *prop_constr);
-static void adjustElemQuals(List *elem_quals, RangeTblEntry *rte, int rtindex);
+static void adjustElemQuals(List *elem_quals, ParseNamespaceItem *nsitem);
 static Node *transformElemQuals(ParseState *pstate, Node *qual);
 static Node *transform_prop_constr(ParseState *pstate, Node *qual,
 								   Node *prop_map, Node *prop_constr);
@@ -221,15 +227,15 @@ static void addFutureVertex(ParseState *pstate, AttrNumber varattno,
 							char *labname);
 static FutureVertex *findFutureVertex(ParseState *pstate, Index varno,
 									  AttrNumber varattno, int sublevels_up);
-static List *adjustFutureVertices(List *future_vertices, RangeTblEntry *rte,
-								  int rtindex);
+static List *adjustFutureVertices(List *future_vertices,
+								  ParseNamespaceItem *nsitem);
 static Node *resolve_future_vertex(ParseState *pstate, Node *node, int flags);
 static Node *resolve_future_vertex_mutator(Node *node,
 										   resolve_future_vertex_context *ctx);
 static void resolveFutureVertex(ParseState *pstate, FutureVertex *fv,
 								bool ignore_nullable);
-static RangeTblEntry *makeVertexRTE(ParseState *parentParseState, char *varname,
-									char *labname);
+static ParseNamespaceItem *makeVertexNSItem(ParseState *parentParseState,
+											char *varname, char *labname);
 static List *removeResolvedFutureVertices(List *future_vertices);
 
 /* CREATE */
@@ -245,17 +251,17 @@ static Node *makeNewEdge(ParseState *pstate, Relation relation, Node *prop_map);
 static Relation openTargetLabel(ParseState *pstate, char *labname);
 
 /* SET/REMOVE */
-static List *transformSetPropList(ParseState *pstate, RangeTblEntry *rte,
-								  bool is_remove, CSetKind kind, List *items);
-static GraphSetProp *transformSetProp(ParseState *pstate, RangeTblEntry *rte,
-									  CypherSetProp *sp, bool is_remove,
+static List *transformSetPropList(ParseState *pstate, bool is_remove,
+								  CSetKind kind, List *items);
+static GraphSetProp *transformSetProp(ParseState *pstate, CypherSetProp *sp,
+									  bool is_remove,
 									  CSetKind kind);
 
 /* MERGE */
 static Query *transformMergeMatch(ParseState *pstate, Node *parseTree);
-static RangeTblEntry *transformMergeMatchJoin(ParseState *pstate,
-											  CypherClause *clause);
-static RangeTblEntry *transformNullSelect(ParseState *pstate);
+static ParseNamespaceItem *transformMergeMatchJoin(ParseState *pstate,
+												   CypherClause *clause);
+static ParseNamespaceItem *transformNullSelect(ParseState *pstate);
 static Node *makeMatchForMerge(List *pattern);
 static List *transformMergeCreate(ParseState *pstate, List *pattern,
 								  RangeTblEntry *prevrte, List *resultList);
@@ -264,14 +270,13 @@ static GraphVertex *transformMergeNode(ParseState *pstate, CypherNode *cnode,
 									   List *resultList);
 static GraphEdge *transformMergeRel(ParseState *pstate, CypherRel *crel,
 									List **targetList, List *resultList);
-static List *transformMergeOnSet(ParseState *pstate, List *sets,
-								 RangeTblEntry *rte);
+static List *transformMergeOnSet(ParseState *pstate, List *sets);
 
 /* DELETE */
 static Query *transformDeleteJoin(ParseState *pstate, Node *parseTree);
 static Query *transformDeleteEdges(ParseState *pstate, Node *parseTree);
-static RangeTblEntry *transformDeleteJoinRTE(ParseState *pstate,
-											 CypherClause *clause);
+static ParseNamespaceItem *transformDeleteJoinNSItem(ParseState *pstate,
+													 CypherClause *clause);
 static A_ArrayExpr *verticesAppend(A_ArrayExpr *vertices, Node *expr);
 static Node *verticesConcat(Node *vertices, Node *expr);
 static Node *makeSelectEdgesVertices(Node *vertices,
@@ -313,37 +318,44 @@ static void assign_query_eager(Query *query);
 
 /* transform */
 typedef Query *(*TransformMethod) (ParseState *pstate, Node *parseTree);
-static RangeTblEntry *transformClause(ParseState *pstate, Node *clause);
-static RangeTblEntry *transformClauseBy(ParseState *pstate, Node *clause,
-										TransformMethod transform);
-static RangeTblEntry *transformClauseImpl(ParseState *pstate, Node *clause,
-										  TransformMethod transform,
-										  Alias *alias);
-static RangeTblEntry *incrementalJoinRTEs(ParseState *pstate, JoinType jointype,
-										  RangeTblEntry *l_rte,
-										  RangeTblEntry *r_rte,
-										  Node *qual, Alias *alias);
-static void makeJoinResCols(ParseState *pstate,
-							RangeTblEntry *l_rte, RangeTblEntry *r_rte,
-							List **res_colnames, List **res_colvars);
+static ParseNamespaceItem *transformClause(ParseState *pstate, Node *clause);
+static ParseNamespaceItem *transformClauseBy(ParseState *pstate, Node *clause,
+											 TransformMethod transform);
+static ParseNamespaceItem *transformClauseImpl(ParseState *pstate,
+											   Node *clause,
+											   TransformMethod transform,
+											   Alias *alias);
+static ParseNamespaceItem *incrementalJoinRTEs(ParseState *pstate,
+											   JoinType jointype,
+											   ParseNamespaceItem *l_nsitem,
+											   ParseNamespaceItem *r_nsitem,
+											   Node *qual, Alias *alias);
+static void makeJoinResCols(ParseState *pstate, ParseNamespaceItem *l_rte,
+							ParseNamespaceItem *r_rte,
+							List **l_colvars, List **r_colvars,
+							List **res_colnames,
+							List **res_colvars);
 static ParseNamespaceItem *findNamespaceItemForRTE(ParseState *pstate,
 												   RangeTblEntry *rte);
-static List *makeTargetListFromRTE(ParseState *pstate, RangeTblEntry *rte);
-static List *makeTargetListFromJoin(ParseState *pstate, RangeTblEntry *rte);
-static TargetEntry *makeWholeRowTarget(ParseState *pstate, RangeTblEntry *rte);
+static List *makeTargetListFromNSItem(ParseState *pstate,
+									  ParseNamespaceItem *nsitem);
+static List *makeTargetListFromJoin(ParseState *pstate,
+									ParseNamespaceItem *nsitem);
+static TargetEntry *makeWholeRowTarget(ParseState *pstate,
+									   ParseNamespaceItem *nsitem);
 static TargetEntry *findTarget(List *targetList, char *resname);
 
 /* expression - type */
-static Node *makeVertexExpr(ParseState *pstate, RangeTblEntry *rte,
+static Node *makeVertexExpr(ParseState *pstate, ParseNamespaceItem *nsitem,
 							int location);
 static Node *makeEdgeExpr(ParseState *pstate, CypherRel *crel,
-						  RangeTblEntry *rte, int location);
-static Node *makePathVertexExpr(ParseState *pstate, Node *obj);
+						  ParseNamespaceItem *nsitem, int location);
+static Node *makePathVertexExpr(ParseState *pstate, Node *obj, bool isNSItem);
 /* expression - common */
-static Node *getColumnVar(ParseState *pstate, RangeTblEntry *rte,
+static Node *getColumnVar(ParseState *pstate, ParseNamespaceItem *nsitem,
 						  char *colname);
-static Node *getSysColumnVar(ParseState *pstate, RangeTblEntry *rte,
-							 int attnum);
+static Node *getSysColumnVar(ParseState *pstate, ParseNamespaceItem *nsitem,
+							 AttrNumber attnum);
 static Node *getExprField(Expr *expr, char *fname);
 static Node *makeArrayExpr(Oid typarray, Oid typoid, List *elems);
 static Node *makeTypedRowExpr(List *args, Oid typoid, int location);
@@ -364,7 +376,7 @@ transformCypherSubPattern(ParseState *pstate, CypherSubPattern *subpat)
 	CypherMatchClause *match;
 	CypherClause *clause;
 	Query *qry;
-	RangeTblEntry *rte;
+	ParseNamespaceItem *nsitem;
 
 	if (subpat->kind == CSP_FINDPATH)
 	{
@@ -390,9 +402,9 @@ transformCypherSubPattern(ParseState *pstate, CypherSubPattern *subpat)
 	qry = makeNode(Query);
 	qry->commandType = CMD_SELECT;
 
-	rte = transformClause(pstate, (Node *) clause);
+	nsitem = transformClause(pstate, (Node *) clause);
 
-	qry->targetList = makeTargetListFromRTE(pstate, rte);
+	qry->targetList = makeTargetListFromNSItem(pstate, nsitem);
 	if (subpat->kind == CSP_SIZE)
 	{
 		FuncCall *count;
@@ -430,7 +442,7 @@ transformCypherProjection(ParseState *pstate, CypherClause *clause)
 {
 	CypherProjection *detail = (CypherProjection *) clause->detail;
 	Query	   *qry;
-	RangeTblEntry *rte;
+	ParseNamespaceItem *nsitem;
 	Node	   *qual = NULL;
 	int			flags;
 
@@ -444,10 +456,10 @@ transformCypherProjection(ParseState *pstate, CypherClause *clause)
 		AssertArg(detail->kind == CP_WITH);
 
 		detail->where = NULL;
-		rte = transformClause(pstate, (Node *) clause);
+		nsitem = transformClause(pstate, (Node *) clause);
 		detail->where = where;
 
-		qry->targetList = makeTargetListFromRTE(pstate, rte);
+		qry->targetList = makeTargetListFromNSItem(pstate, nsitem);
 
 		qual = transformCypherWhere(pstate, where, EXPR_KIND_WHERE);
 		qual = resolve_future_vertex(pstate, qual, 0);
@@ -468,13 +480,13 @@ transformCypherProjection(ParseState *pstate, CypherClause *clause)
 		detail->order = NIL;
 		detail->skip = NULL;
 		detail->limit = NULL;
-		rte = transformClause(pstate, (Node *) clause);
+		nsitem = transformClause(pstate, (Node *) clause);
 		detail->distinct = distinct;
 		detail->order = order;
 		detail->skip = skip;
 		detail->limit = limit;
 
-		qry->targetList = makeTargetListFromRTE(pstate, rte);
+		qry->targetList = makeTargetListFromNSItem(pstate, nsitem);
 
 		qry->sortClause = transformCypherOrderBy(pstate, order,
 												 &qry->targetList);
@@ -618,7 +630,7 @@ transformCypherMatchClause(ParseState *pstate, CypherClause *clause)
 {
 	CypherMatchClause *detail = (CypherMatchClause *) clause->detail;
 	Query	   *qry;
-	RangeTblEntry *rte;
+	ParseNamespaceItem *nsitem;
 	Node	   *qual = NULL;
 
 	qry = makeNode(Query);
@@ -630,9 +642,9 @@ transformCypherMatchClause(ParseState *pstate, CypherClause *clause)
 	 */
 	if (detail->optional)
 	{
-		rte = transformMatchOptional(pstate, clause);
+		nsitem = transformMatchOptional(pstate, clause);
 
-		qry->targetList = makeTargetListFromJoin(pstate, rte);
+		qry->targetList = makeTargetListFromJoin(pstate, nsitem);
 	}
 	else
 	{
@@ -649,8 +661,8 @@ transformCypherMatchClause(ParseState *pstate, CypherClause *clause)
 				if (prev_detail->optional)
 					ereport(ERROR,
 							(errcode(ERRCODE_SYNTAX_ERROR),
-							 errmsg("MATCH right after OPTIONAL MATCH is not allowed"),
-							 errhint("Use a WITH clause between them")));
+									errmsg("MATCH right after OPTIONAL MATCH is not allowed"),
+									errhint("Use a WITH clause between them")));
 			}
 		}
 
@@ -660,9 +672,9 @@ transformCypherMatchClause(ParseState *pstate, CypherClause *clause)
 			int flags = (pstate->p_is_optional_match ? FVR_IGNORE_NULLABLE: 0);
 
 			pstate->p_is_match_quals = true;
-			rte = transformClause(pstate, (Node *) clause);
+			nsitem = transformClause(pstate, (Node *) clause);
 
-			qry->targetList = makeTargetListFromRTE(pstate, rte);
+			qry->targetList = makeTargetListFromNSItem(pstate, nsitem);
 
 			qual = transformCypherWhere(pstate, detail->where,
 										EXPR_KIND_WHERE);
@@ -677,9 +689,9 @@ transformCypherMatchClause(ParseState *pstate, CypherClause *clause)
 			if (!pstate->p_is_fp_processed && fplist != NULL)
 			{
 				pstate->p_is_fp_processed = true;
-				rte = transformClause(pstate, (Node *) clause);
+				nsitem = transformClause(pstate, (Node *) clause);
 
-				qry->targetList = makeTargetListFromRTE(pstate, rte);
+				qry->targetList = makeTargetListFromNSItem(pstate, nsitem);
 				appendFindPathsResult(pstate, fplist, &qry->targetList);
 			}
 			else
@@ -695,9 +707,9 @@ transformCypherMatchClause(ParseState *pstate, CypherClause *clause)
 				 */
 				if (clause->prev != NULL)
 				{
-					rte = transformClause(pstate, clause->prev);
+					nsitem = transformClause(pstate, clause->prev);
 
-					qry->targetList = makeTargetListFromRTE(pstate, rte);
+					qry->targetList = makeTargetListFromNSItem(pstate, nsitem);
 				}
 
 				collectNodeInfo(pstate, detail->pattern);
@@ -710,8 +722,8 @@ transformCypherMatchClause(ParseState *pstate, CypherClause *clause)
 		}
 
 		qry->targetList = (List *) resolve_future_vertex(pstate,
-													(Node *) qry->targetList,
-													FVR_DONT_RESOLVE);
+														 (Node *) qry->targetList,
+														 FVR_DONT_RESOLVE);
 	}
 	markTargetListOrigins(pstate, qry->targetList);
 
@@ -763,11 +775,9 @@ transformCypherCreateClause(ParseState *pstate, CypherClause *clause)
 
 	if (clause->prev != NULL)
 	{
-		RangeTblEntry *rte;
-
-		rte = transformClause(pstate, (Node *) clause->prev);
-
-		qry->targetList = makeTargetListFromRTE(pstate, rte);
+		ParseNamespaceItem *nsitem;
+		nsitem = transformClause(pstate, (Node *) clause->prev);
+		qry->targetList = makeTargetListFromNSItem(pstate, nsitem);
 	}
 
 	qry->graph.pattern = transformCreatePattern(pstate, cpath,
@@ -799,7 +809,7 @@ Query *
 transformCypherDeleteClause(ParseState *pstate, CypherClause *clause)
 {
 	CypherDeleteClause *detail = (CypherDeleteClause *) clause->detail;
-	RangeTblEntry *rte;
+	ParseNamespaceItem *nsitem;
 	ListCell   *le;
 	Query	   *qry;
 
@@ -824,9 +834,9 @@ transformCypherDeleteClause(ParseState *pstate, CypherClause *clause)
 	qry->graph.last = (pstate->parentParseState == NULL);
 	qry->graph.detach = detail->detach;
 
-	rte = transformClauseBy(pstate, (Node *) clause, transformDeleteJoin);
+	nsitem = transformClauseBy(pstate, (Node *) clause, transformDeleteJoin);
 
-	qry->targetList = makeTargetListFromRTE(pstate, rte);
+	qry->targetList = makeTargetListFromNSItem(pstate, nsitem);
 	qry->graph.exprs = extractVerticesExpr(pstate, detail->exprs,
 										   EXPR_KIND_OTHER);
 	qry->graph.nr_modify = pstate->p_nr_modify_clause++;
@@ -891,7 +901,7 @@ transformCypherSetClause(ParseState *pstate, CypherClause *clause)
 {
 	CypherSetClause *detail = (CypherSetClause *) clause->detail;
 	Query	   *qry;
-	RangeTblEntry *rte;
+	ParseNamespaceItem *nsitem;
 	ListCell   *le;
 
 	/* SET/REMOVE cannot be the first clause */
@@ -903,11 +913,11 @@ transformCypherSetClause(ParseState *pstate, CypherClause *clause)
 	qry->graph.writeOp = GWROP_SET;
 	qry->graph.last = (pstate->parentParseState == NULL);
 
-	rte = transformClause(pstate, clause->prev);
+	nsitem = transformClause(pstate, clause->prev);
 
-	qry->targetList = makeTargetListFromRTE(pstate, rte);
+	qry->targetList = makeTargetListFromNSItem(pstate, nsitem);
 
-	qry->graph.sets = transformSetPropList(pstate, rte, detail->is_remove,
+	qry->graph.sets = transformSetPropList(pstate, detail->is_remove,
 										   detail->kind, detail->items);
 	foreach(le, qry->graph.sets)
 	{
@@ -953,33 +963,34 @@ transformCypherMergeClause(ParseState *pstate, CypherClause *clause)
 {
 	CypherMergeClause *detail = (CypherMergeClause *) clause->detail;
 	Query	   *qry;
-	RangeTblEntry *rte;
+	ParseNamespaceItem *nsitem;
+	RangeTblEntry *prev_rte;
 
 	if (list_length(detail->pattern) != 1)
 		ereport(ERROR,
 				(errcode(ERRCODE_SYNTAX_ERROR),
-				 errmsg("MERGE can have only one path")));
+						errmsg("MERGE can have only one path")));
 
 	qry = makeNode(Query);
 	qry->commandType = CMD_GRAPHWRITE;
 	qry->graph.writeOp = GWROP_MERGE;
 	qry->graph.last = (pstate->parentParseState == NULL);
 
-	rte = transformClauseBy(pstate, (Node *) clause, transformMergeMatch);
-	Assert(rte->rtekind == RTE_SUBQUERY);
+	nsitem = transformClauseBy(pstate, (Node *) clause, transformMergeMatch);
+	Assert(nsitem->p_rte->rtekind == RTE_SUBQUERY);
 
-	qry->targetList = makeTargetListFromRTE(pstate, rte);
+	qry->targetList = makeTargetListFromNSItem(pstate, nsitem);
 
 	/*
 	 * Make an expression list to create the MERGE path.
 	 * We assume that the previous clause is the first RTE of MERGE MATCH.
 	 */
+	prev_rte = rt_fetch(1, nsitem->p_rte->subquery->rtable);
 	qry->graph.pattern = transformMergeCreate(pstate, detail->pattern,
-									rt_fetch(1, rte->subquery->rtable),
-									qry->targetList);
+											  prev_rte, qry->targetList);
 	qry->graph.targets = pstate->p_target_labels;
 
-	qry->graph.sets = transformMergeOnSet(pstate, detail->sets, rte);
+	qry->graph.sets = transformMergeOnSet(pstate, detail->sets);
 	qry->graph.nr_modify = pstate->p_nr_modify_clause++;
 
 	qry->targetList = (List *) resolve_future_vertex(pstate,
@@ -1010,7 +1021,7 @@ transformCypherLoadClause(ParseState *pstate, CypherClause *clause)
 	CypherLoadClause *detail = (CypherLoadClause *) clause->detail;
 	RangeVar   *rv = detail->relation;
 	Query	   *qry;
-	RangeTblEntry *rte;
+	ParseNamespaceItem *nsitem;
 	TargetEntry *te;
 
 	qry = makeNode(Query);
@@ -1018,20 +1029,20 @@ transformCypherLoadClause(ParseState *pstate, CypherClause *clause)
 
 	if (clause->prev != NULL)
 	{
-		rte = transformClause(pstate, clause->prev);
+		nsitem = transformClause(pstate, clause->prev);
 
-		qry->targetList = makeTargetListFromRTE(pstate, rte);
+		qry->targetList = makeTargetListFromNSItem(pstate, nsitem);
 	}
 
 	if (findTarget(qry->targetList, rv->alias->aliasname) != NULL)
 		ereport(ERROR,
 				(errcode(ERRCODE_DUPLICATE_ALIAS),
-				 errmsg("duplicate variable \"%s\"", rv->alias->aliasname)));
+						errmsg("duplicate variable \"%s\"", rv->alias->aliasname)));
 
-	rte = addRangeTableEntry(pstate, rv, rv->alias, rv->inh, true);
-	addRTEtoJoinlist(pstate, rte, false);
+	nsitem = addRangeTableEntry(pstate, rv, rv->alias, rv->inh, true);
+	addNSItemToJoinlist(pstate, nsitem, false);
 
-	te = makeWholeRowTarget(pstate, rte);
+	te = makeWholeRowTarget(pstate, nsitem);
 	qry->targetList = lappend(qry->targetList, te);
 
 	qry->rtable = pstate->p_rtable;
@@ -1069,11 +1080,9 @@ transformCypherUnwindClause(ParseState *pstate, CypherClause *clause)
 	 */
 	if (clause->prev != NULL)
 	{
-		RangeTblEntry *rte;
-
-		rte = transformClause(pstate, clause->prev);
-
-		qry->targetList = makeTargetListFromRTE(pstate, rte);
+		ParseNamespaceItem *nsitem;
+		nsitem = transformClause(pstate, clause->prev);
+		qry->targetList = makeTargetListFromNSItem(pstate, nsitem);
 	}
 
 	target = detail->target;
@@ -1089,8 +1098,8 @@ transformCypherUnwindClause(ParseState *pstate, CypherClause *clause)
 	if (findTarget(qry->targetList, target->name) != NULL)
 		ereport(ERROR,
 				(errcode(ERRCODE_DUPLICATE_ALIAS),
-				 errmsg("duplicate variable \"%s\"", target->name),
-				 parser_errposition(pstate, targetloc)));
+						errmsg("duplicate variable \"%s\"", target->name),
+						parser_errposition(pstate, targetloc)));
 
 	expr = transformCypherExpr(pstate, target->val, EXPR_KIND_SELECT_TARGET);
 	type = exprType(expr);
@@ -1111,9 +1120,9 @@ transformCypherUnwindClause(ParseState *pstate, CypherClause *clause)
 	{
 		ereport(ERROR,
 				(errcode(ERRCODE_DATATYPE_MISMATCH),
-				 errmsg("expression must be jsonb or array, but %s",
-						format_type_be(type)),
-				 parser_errposition(pstate, targetloc)));
+						errmsg("expression must be jsonb or array, but %s",
+							   format_type_be(type)),
+						parser_errposition(pstate, targetloc)));
 	}
 	unwind = makeFuncCall(list_make1(makeString(funcname)), NIL, -1);
 
@@ -1164,22 +1173,21 @@ checkNameInItems(ParseState *pstate, List *items, List *targetList)
 		if (!IsA(te->expr, Var))
 			ereport(ERROR,
 					(errcode(ERRCODE_SYNTAX_ERROR),
-					 errmsg("expression in WITH must be aliased (use AS)"),
-					 parser_errposition(pstate, exprLocation(res->val))));
+							errmsg("expression in WITH must be aliased (use AS)"),
+							parser_errposition(pstate, exprLocation(res->val))));
 	}
 }
 
 /* See transformFromClauseItem() */
-static RangeTblEntry *
+static ParseNamespaceItem *
 transformMatchOptional(ParseState *pstate, CypherClause *clause)
 {
 	CypherMatchClause *detail = (CypherMatchClause *) clause->detail;
-	RangeTblEntry *l_rte;
+	ParseNamespaceItem *l_nsitem, *r_nsitem;
 	Alias	   *r_alias;
-	RangeTblEntry *r_rte;
+	Alias	   *alias;
 	Node	   *prevclause;
 	Node	   *qual;
-	Alias	   *alias;
 
 	if (clause->prev == NULL)
 	{
@@ -1197,15 +1205,14 @@ transformMatchOptional(ParseState *pstate, CypherClause *clause)
 		qry->jointree = makeFromExpr(NIL, NULL);
 
 		l_alias = makeAliasNoDup(CYPHER_SUBQUERY_ALIAS, NIL);
-		l_rte = addRangeTableEntryForSubquery(pstate, qry, l_alias,
-											  pstate->p_lateral_active, true);
+		l_nsitem = addRangeTableEntryForSubquery(pstate, qry, l_alias,
+												 pstate->p_lateral_active, true);
 
-		RTERangeTablePosn(pstate, l_rte, NULL);
-		addRTEtoJoinlist(pstate, l_rte, true);
+		addNSItemToJoinlist(pstate, l_nsitem, true);
 	}
 	else
 	{
-		l_rte = transformClause(pstate, clause->prev);
+		l_nsitem = transformClause(pstate, clause->prev);
 	}
 
 	/*
@@ -1222,8 +1229,8 @@ transformMatchOptional(ParseState *pstate, CypherClause *clause)
 	pstate->p_is_optional_match = true;
 
 	r_alias = makeAliasNoDup(CYPHER_OPTMATCH_ALIAS, NIL);
-	r_rte = transformClauseImpl(pstate, (Node *) clause, transformStmt,
-								r_alias);
+	r_nsitem = transformClauseImpl(pstate, (Node *) clause, transformStmt,
+								   r_alias);
 
 	pstate->p_is_optional_match = false;
 	pstate->p_lateral_active = false;
@@ -1234,7 +1241,8 @@ transformMatchOptional(ParseState *pstate, CypherClause *clause)
 	qual = makeBoolConst(true, false);
 	alias = makeAliasNoDup(CYPHER_SUBQUERY_ALIAS, NIL);
 
-	return incrementalJoinRTEs(pstate, JOIN_LEFT, l_rte, r_rte, qual, alias);
+	return incrementalJoinRTEs(pstate, JOIN_LEFT, l_nsitem, r_nsitem, qual,
+							   alias);
 }
 
 static bool
@@ -1304,7 +1312,7 @@ appendFindPathsResult(ParseState *pstate, List *fplist, List **targetList)
 		char	   *weightvar;
 		Query	   *fp;
 		Alias	   *alias;
-		RangeTblEntry *rte;
+		ParseNamespaceItem *nsitem;
 		TargetEntry *te;
 
 		if (p->kind == CPATH_DIJKSTRA)
@@ -1313,13 +1321,14 @@ appendFindPathsResult(ParseState *pstate, List *fplist, List **targetList)
 			fp = transformShortestPathInMatch(pstate, p);
 
 		alias = makeAliasOptUnique(NULL);
-		rte = addRangeTableEntryForSubquery(pstate, fp, alias, true, true);
-		addRTEtoJoinlist(pstate, rte, true);
+		nsitem = addRangeTableEntryForSubquery(pstate, fp, alias, true, true);
+		addNSItemToJoinlist(pstate, nsitem, true);
 
 		pathname = getCypherName(p->variable);
 		if (pathname != NULL)
 		{
-			te = makeTargetEntry((Expr *) getColumnVar(pstate, rte, pathname),
+			te = makeTargetEntry((Expr *) getColumnVar(pstate, nsitem,
+													   pathname),
 								 (AttrNumber) pstate->p_next_resno++,
 								 pathname,
 								 false);
@@ -1331,7 +1340,9 @@ appendFindPathsResult(ParseState *pstate, List *fplist, List **targetList)
 			weightvar = getCypherName(p->weight_var);
 			if (weightvar != NULL)
 			{
-				te = makeTargetEntry((Expr *) getColumnVar(pstate, rte, weightvar),
+				te = makeTargetEntry((Expr *) getColumnVar(pstate,
+														   nsitem,
+														   weightvar),
 									 (AttrNumber) pstate->p_next_resno++,
 									 weightvar,
 									 false);
@@ -1344,7 +1355,9 @@ appendFindPathsResult(ParseState *pstate, List *fplist, List **targetList)
 			if (crel->variable != NULL)
 			{
 				edgename = getCypherName(crel->variable);
-				te = makeTargetEntry((Expr *) getColumnVar(pstate, rte, edgename),
+				te = makeTargetEntry((Expr *) getColumnVar(pstate,
+														   nsitem,
+														   edgename),
 									 (AttrNumber) pstate->p_next_resno++,
 									 edgename,
 									 false);
@@ -1408,8 +1421,8 @@ addNodeInfo(ParseState *pstate, CypherNode *cnode)
 
 			ereport(ERROR,
 					(errcode(ERRCODE_SYNTAX_ERROR),
-					 errmsg("label conflict on node \"%s\"", varname),
-					 parser_errposition(pstate, varloc)));
+							errmsg("label conflict on node \"%s\"", varname),
+							parser_errposition(pstate, varloc)));
 		}
 	}
 	ni->prop_constr = (ni->prop_constr || (cnode->prop_map != NULL));
@@ -1585,8 +1598,9 @@ transformComponents(ParseState *pstate, List *components, List **targetList)
 			ListCell   *le;
 			CypherNode *cnode;
 			Node	   *vertex;
+			bool		vertex_is_nsitem;
 			CypherRel  *prev_crel = NULL;
-			RangeTblEntry *prev_edge = NULL;
+			ParseNamespaceItem *prev_edge = NULL;
 			Node	   *pvs = makeArrayExpr(VERTEXARRAYOID, VERTEXOID, NIL);
 			Node	   *pes = makeArrayExpr(EDGEARRAYOID, EDGEOID, NIL);
 
@@ -1598,23 +1612,23 @@ transformComponents(ParseState *pstate, List *components, List **targetList)
 			if (te != NULL)
 				ereport(ERROR,
 						(errcode(ERRCODE_DUPLICATE_ALIAS),
-						 errmsg("duplicate variable \"%s\"", pathname),
-						 parser_errposition(pstate, pathloc)));
+								errmsg("duplicate variable \"%s\"", pathname),
+								parser_errposition(pstate, pathloc)));
 
 			if (te == NULL && pathname != NULL)
 			{
 				if (colNameToVar(pstate, pathname, false, pathloc) != NULL)
 					ereport(ERROR,
 							(errcode(ERRCODE_DUPLICATE_ALIAS),
-							 errmsg("duplicate variable \"%s\"", pathname),
-							 parser_errposition(pstate, pathloc)));
+									errmsg("duplicate variable \"%s\"", pathname),
+									parser_errposition(pstate, pathloc)));
 			}
 
 			le = list_head(p->chain);
 			for (;;)
 			{
 				CypherRel *crel;
-				RangeTblEntry *edge;
+				ParseNamespaceItem *edge_nsitem;
 
 				cnode = lfirst(le);
 
@@ -1629,7 +1643,8 @@ transformComponents(ParseState *pstate, List *components, List **targetList)
 					if (le == NULL)
 					{
 						vertex = transformMatchNode(pstate, cnode, true,
-													targetList, &eqoList);
+													targetList, &eqoList,
+													&vertex_is_nsitem);
 						break;
 					}
 
@@ -1642,7 +1657,7 @@ transformComponents(ParseState *pstate, List *components, List **targetList)
 					zero = isZeroLengthVLE(crel);
 					vertex = transformMatchNode(pstate, cnode,
 												(zero || out), targetList,
-												&eqoList);
+												&eqoList, &vertex_is_nsitem);
 
 					if (p->kind != CPATH_NORMAL)
 					{
@@ -1650,19 +1665,22 @@ transformComponents(ParseState *pstate, List *components, List **targetList)
 						continue;
 					}
 
-					setInitialVidForVLE(pstate, crel, vertex, NULL, NULL);
-					edge = transformMatchRel(pstate, crel, targetList,
-											 &eqoList, out);
+					setInitialVidForVLE(pstate, crel, vertex,
+										vertex_is_nsitem, NULL, NULL);
+					edge_nsitem = transformMatchRel(pstate, crel, targetList,
+													&eqoList, out);
 
-					qual = addQualNodeIn(pstate, qual, vertex, crel, edge,
+					qual = addQualNodeIn(pstate, qual, vertex,
+										 vertex_is_nsitem, crel, edge_nsitem,
 										 false);
 				}
 				else
 				{
 					vertex = transformMatchNode(pstate, cnode, out, targetList,
-												&eqoList);
+												&eqoList, &vertex_is_nsitem);
 					qual = addQualNodeIn(pstate, qual, vertex,
-										 prev_crel, prev_edge, true);
+										 vertex_is_nsitem, prev_crel,
+										 prev_edge, true);
 
 					le = lnext(p->chain, le);
 					/* end of the path */
@@ -1670,12 +1688,12 @@ transformComponents(ParseState *pstate, List *components, List **targetList)
 						break;
 
 					crel = lfirst(le);
-					setInitialVidForVLE(pstate, crel, vertex,
+					setInitialVidForVLE(pstate, crel, vertex, vertex_is_nsitem,
 										prev_crel, prev_edge);
-					edge = transformMatchRel(pstate, crel, targetList,
-											 &eqoList, out);
-					qual = addQualRelPath(pstate, qual,
-										  prev_crel, prev_edge, crel, edge);
+					edge_nsitem = transformMatchRel(pstate, crel, targetList,
+													&eqoList, out);
+					qual = addQualRelPath(pstate, qual, prev_crel, prev_edge,
+										  crel, edge_nsitem);
 				}
 
 				/* uniqueness */
@@ -1683,14 +1701,16 @@ transformComponents(ParseState *pstate, List *components, List **targetList)
 				{
 					Node	   *eid;
 
-					eid = getColumnVar(pstate, edge, AG_ELEM_LOCAL_ID);
+					eid = getColumnVar(pstate, edge_nsitem,
+									   AG_ELEM_LOCAL_ID);
 					ueids = list_append_unique(ueids, eid);
 				}
 				else
 				{
 					Node	   *eidarr;
 
-					eidarr = getColumnVar(pstate, edge, VLE_COLNAME_IDS);
+					eidarr = getColumnVar(pstate, edge_nsitem,
+										  VLE_COLNAME_IDS);
 					ueidarrs = list_append_unique(ueidarrs, eidarr);
 				}
 
@@ -1705,27 +1725,31 @@ transformComponents(ParseState *pstate, List *components, List **targetList)
 					if (!isZeroLengthVLE(crel))
 					{
 						pvs = vtxArrConcat(pstate, pvs,
-										   makePathVertexExpr(pstate, vertex));
+										   makePathVertexExpr(pstate, vertex,
+															  vertex_is_nsitem));
 					}
 
 					if (crel->varlen == NULL)
 					{
 						pes = edgeArrConcat(pstate, pes,
-										makeEdgeExpr(pstate, crel, edge, -1));
+											makeEdgeExpr(pstate, crel,
+														 edge_nsitem, -1));
 					}
 					else
 					{
 						pvs = vtxArrConcat(pstate, pvs,
-										   getColumnVar(pstate, edge,
+										   getColumnVar(pstate,
+														edge_nsitem,
 														VLE_COLNAME_VERTICES));
 						pes = edgeArrConcat(pstate, pes,
-											getColumnVar(pstate, edge,
+											getColumnVar(pstate,
+														 edge_nsitem,
 														 VLE_COLNAME_EDGES));
 					}
 				}
 
 				prev_crel = crel;
-				prev_edge = edge;
+				prev_edge = edge_nsitem;
 
 				le = lnext(p->chain, le);
 			}
@@ -1733,20 +1757,20 @@ transformComponents(ParseState *pstate, List *components, List **targetList)
 			if (out && p->kind == CPATH_NORMAL)
 			{
 				Node *graphpath;
-				TargetEntry *te;
 
 				Assert(vertex != NULL);
 				pvs = vtxArrConcat(pstate, pvs,
-								   makePathVertexExpr(pstate, vertex));
+								   makePathVertexExpr(pstate, vertex,
+													  vertex_is_nsitem));
 
 				graphpath = makeTypedRowExpr(list_make2(pvs, pes),
 											 GRAPHPATHOID, pathloc);
-				te = makeTargetEntry((Expr *) graphpath,
-									 (AttrNumber) pstate->p_next_resno++,
-									 pathname,
-									 false);
 
-				*targetList = lappend(*targetList, te);
+				*targetList = lappend(*targetList,
+									  makeTargetEntry((Expr *) graphpath,
+													  (AttrNumber) pstate->p_next_resno++,
+													  pathname,
+													  false));
 			}
 		}
 
@@ -1772,7 +1796,7 @@ transformComponents(ParseState *pstate, List *components, List **targetList)
 
 static Node *
 transformMatchNode(ParseState *pstate, CypherNode *cnode, bool force,
-				   List **targetList, List **eqoList)
+				   List **targetList, List **eqoList, bool *isNSItem)
 {
 	char	   *varname = getCypherName(cnode->variable);
 	int			varloc = getCypherNameLoc(cnode->variable);
@@ -1786,6 +1810,7 @@ transformMatchNode(ParseState *pstate, CypherNode *cnode, bool force,
 	Const	   *tid;
 	Node	   *vertex;
 
+	*isNSItem = false;
 	/*
 	 * If a vertex with the same variable is already in the target list,
 	 * - the vertex is from the previous clause or
@@ -1800,8 +1825,8 @@ transformMatchNode(ParseState *pstate, CypherNode *cnode, bool force,
 		if (exprType((Node *) te->expr) != VERTEXOID)
 			ereport(ERROR,
 					(errcode(ERRCODE_DUPLICATE_ALIAS),
-					 errmsg("duplicate variable \"%s\"", varname),
-					 parser_errposition(pstate, varloc)));
+							errmsg("duplicate variable \"%s\"", varname),
+							parser_errposition(pstate, varloc)));
 
 		addElemQual(pstate, te->resno, cnode->prop_map);
 
@@ -1821,15 +1846,16 @@ transformMatchNode(ParseState *pstate, CypherNode *cnode, bool force,
 			if (getCypherName(cnode->label) != NULL && IsA(te->expr, Var))
 				ereport(ERROR,
 						(errcode(ERRCODE_SYNTAX_ERROR),
-						 errmsg("label on variable from previous clauses is not allowed"),
-						 parser_errposition(pstate,
-											getCypherNameLoc(cnode->label))));
+								errmsg("label on variable from previous clauses is not allowed"),
+								parser_errposition(pstate,
+												   getCypherNameLoc(cnode->label))));
 
 			return (Node *) te;
 		}
 		else
 		{
 			/* previously returned RTE_RELATION by this function */
+			*isNSItem = true;
 			return (Node *) nsitem;
 		}
 	}
@@ -1850,8 +1876,8 @@ transformMatchNode(ParseState *pstate, CypherNode *cnode, bool force,
 			if (cnode->label != NULL || exprType((Node *) col) != VERTEXOID)
 				ereport(ERROR,
 						(errcode(ERRCODE_DUPLICATE_ALIAS),
-						 errmsg("duplicate variable \"%s\"", varname),
-						 parser_errposition(pstate, varloc)));
+								errmsg("duplicate variable \"%s\"", varname),
+								parser_errposition(pstate, varloc)));
 
 			te = makeTargetEntry((Expr *) col,
 								 (AttrNumber) pstate->p_next_resno++,
@@ -1905,15 +1931,17 @@ transformMatchNode(ParseState *pstate, CypherNode *cnode, bool force,
 	{
 		RangeVar   *r;
 		Alias	   *alias;
-		RangeTblEntry *rte;
+		ParseNamespaceItem *nsitem;
 
-		r = makeRangeVar(get_graph_path(true), labname, labloc);
+		r = makeRangeVar(get_graph_path(true),
+						 labname,
+						 labloc);
 		r->inh = !cnode->only;
 		alias = makeAliasOptUnique(varname);
 
 		/* set `ihn` to true because we should scan all derived tables */
-		rte = addRangeTableEntry(pstate, r, alias, r->inh, true);
-		addRTEtoJoinlist(pstate, rte, false);
+		nsitem = addRangeTableEntry(pstate, r, alias, r->inh, true);
+		addNSItemToJoinlist(pstate, nsitem, false);
 
 		if (varname != NULL || prop_constr)
 		{
@@ -1927,7 +1955,9 @@ transformMatchNode(ParseState *pstate, CypherNode *cnode, bool force,
 			resjunk = (varname == NULL);
 			resno = (resjunk ? InvalidAttrNumber : pstate->p_next_resno++);
 
-			te = makeTargetEntry((Expr *) makeVertexExpr(pstate, rte, varloc),
+			te = makeTargetEntry((Expr *) makeVertexExpr(pstate,
+														 nsitem,
+														 varloc),
 								 (AttrNumber) resno,
 								 alias->aliasname,
 								 resjunk);
@@ -1950,7 +1980,8 @@ transformMatchNode(ParseState *pstate, CypherNode *cnode, bool force,
 		}
 
 		/* return RTE to help the caller can access columns directly */
-		return (Node *) rte;
+		*isNSItem = true;
+		return (Node *) nsitem;
 	}
 
 	/* this node is just a placeholder for relationships */
@@ -1980,7 +2011,7 @@ transformMatchNode(ParseState *pstate, CypherNode *cnode, bool force,
 	return (Node *) te;
 }
 
-static RangeTblEntry *
+static ParseNamespaceItem *
 transformMatchRel(ParseState *pstate, CypherRel *crel, List **targetList,
 				  List **eqoList, bool pathout)
 {
@@ -1995,16 +2026,16 @@ transformMatchRel(ParseState *pstate, CypherRel *crel, List **targetList,
 	if (te != NULL)
 		ereport(ERROR,
 				(errcode(ERRCODE_DUPLICATE_ALIAS),
-				 errmsg("duplicate variable \"%s\"", varname),
-				 parser_errposition(pstate, varloc)));
+						errmsg("duplicate variable \"%s\"", varname),
+						parser_errposition(pstate, varloc)));
 
 	if (te == NULL && varname != NULL)
 	{
 		if (colNameToVar(pstate, varname, false, varloc) != NULL)
 			ereport(ERROR,
 					(errcode(ERRCODE_DUPLICATE_ALIAS),
-					 errmsg("duplicate variable \"%s\"", varname),
-					 parser_errposition(pstate, varloc)));
+							errmsg("duplicate variable \"%s\"", varname),
+							parser_errposition(pstate, varloc)));
 	}
 
 	getCypherRelType(crel, &typname, &typloc);
@@ -2017,7 +2048,7 @@ transformMatchRel(ParseState *pstate, CypherRel *crel, List **targetList,
 		return transformMatchVLE(pstate, crel, targetList, pathout);
 }
 
-static RangeTblEntry *
+static ParseNamespaceItem *
 transformMatchSR(ParseState *pstate, CypherRel *crel, List **targetList,
 				 List **eqoList)
 {
@@ -2026,7 +2057,7 @@ transformMatchSR(ParseState *pstate, CypherRel *crel, List **targetList,
 	char	   *typname;
 	int			typloc;
 	Alias	   *alias;
-	RangeTblEntry *rte;
+	ParseNamespaceItem *nsitem;
 
 	getCypherRelType(crel, &typname, &typloc);
 
@@ -2034,7 +2065,7 @@ transformMatchSR(ParseState *pstate, CypherRel *crel, List **targetList,
 
 	if (crel->direction == CYPHER_REL_DIR_NONE)
 	{
-		rte = addEdgeUnion(pstate, typname, crel->only, typloc, alias);
+		nsitem = addEdgeUnion(pstate, typname, crel->only, typloc, alias);
 	}
 	else
 	{
@@ -2043,9 +2074,9 @@ transformMatchSR(ParseState *pstate, CypherRel *crel, List **targetList,
 		r = makeRangeVar(get_graph_path(true), typname, typloc);
 		r->inh = !crel->only;
 
-		rte = addRangeTableEntry(pstate, r, alias, r->inh, true);
+		nsitem = addRangeTableEntry(pstate, r, alias, r->inh, true);
 	}
-	addRTEtoJoinlist(pstate, rte, false);
+	addNSItemToJoinlist(pstate, nsitem, false);
 
 	if (varname != NULL || crel->prop_map != NULL)
 	{
@@ -2056,7 +2087,8 @@ transformMatchSR(ParseState *pstate, CypherRel *crel, List **targetList,
 		resjunk = (varname == NULL);
 		resno = (resjunk ? InvalidAttrNumber : pstate->p_next_resno++);
 
-		te = makeTargetEntry((Expr *) makeEdgeExpr(pstate, crel, rte, varloc),
+		te = makeTargetEntry((Expr *) makeEdgeExpr(pstate, crel, nsitem,
+												   varloc),
 							 (AttrNumber) resno,
 							 alias->aliasname,
 							 resjunk);
@@ -2078,16 +2110,15 @@ transformMatchSR(ParseState *pstate, CypherRel *crel, List **targetList,
 		}
 	}
 
-	return rte;
+	return nsitem;
 }
 
-static RangeTblEntry *
+static ParseNamespaceItem *
 addEdgeUnion(ParseState *pstate, char *edge_label, bool only, int location,
 			 Alias *alias)
 {
 	Node	   *u;
 	Query	   *qry;
-	RangeTblEntry *rte;
 
 	AssertArg(alias != NULL);
 
@@ -2100,9 +2131,7 @@ addEdgeUnion(ParseState *pstate, char *edge_label, bool only, int location,
 
 	pstate->p_expr_kind = EXPR_KIND_NONE;
 
-	rte = addRangeTableEntryForSubquery(pstate, qry, alias, false, true);
-
-	return rte;
+	return addRangeTableEntryForSubquery(pstate, qry, alias, false, true);
 }
 
 /*
@@ -2165,7 +2194,8 @@ genEdgeUnion(char *edge_label, bool only, int location)
 
 static void
 setInitialVidForVLE(ParseState *pstate, CypherRel *crel, Node *vertex,
-					CypherRel *prev_crel, RangeTblEntry *prev_edge)
+					bool vertexIsNSItem, CypherRel *prev_crel,
+					ParseNamespaceItem *prev_edge)
 {
 	ColumnRef  *cref;
 
@@ -2178,7 +2208,7 @@ setInitialVidForVLE(ParseState *pstate, CypherRel *crel, Node *vertex,
 		if (prev_crel == NULL)
 		{
 			pstate->p_vle_initial_vid = NULL;
-			pstate->p_vle_initial_rte = NULL;
+			pstate->p_vle_initial_nsitem = NULL;
 		}
 		else
 		{
@@ -2187,30 +2217,32 @@ setInitialVidForVLE(ParseState *pstate, CypherRel *crel, Node *vertex,
 			colname = getEdgeColname(prev_crel, true);
 
 			cref = makeNode(ColumnRef);
-			cref->fields = list_make2(makeString(prev_edge->eref->aliasname),
-									  makeString(colname));
+			cref->fields = list_make2(
+					makeString(prev_edge->p_rte->eref->aliasname),
+					makeString(colname));
 			cref->location = -1;
 
 			pstate->p_vle_initial_vid = (Node *) cref;
-			pstate->p_vle_initial_rte = prev_edge;
+			pstate->p_vle_initial_nsitem = prev_edge;
 		}
 
 		return;
 	}
 
-	if (IsA(vertex, RangeTblEntry))
+	if (vertexIsNSItem)
 	{
-		RangeTblEntry *rte = (RangeTblEntry *) vertex;
+		ParseNamespaceItem *nsitem = (ParseNamespaceItem *) vertex;
 
-		Assert(rte->rtekind == RTE_RELATION);
+		Assert(nsitem->p_rte->rtekind == RTE_RELATION);
 
 		cref = makeNode(ColumnRef);
-		cref->fields = list_make2(makeString(rte->eref->aliasname),
-								  makeString(AG_ELEM_LOCAL_ID));
+		cref->fields = list_make2(
+				makeString(nsitem->p_rte->eref->aliasname),
+				makeString(AG_ELEM_LOCAL_ID));
 		cref->location = -1;
 
 		pstate->p_vle_initial_vid = (Node *) cref;
-		pstate->p_vle_initial_rte = rte;
+		pstate->p_vle_initial_nsitem = nsitem;
 	}
 	else
 	{
@@ -2229,11 +2261,11 @@ setInitialVidForVLE(ParseState *pstate, CypherRel *crel, Node *vertex,
 									list_make1(cref), -1);
 
 		pstate->p_vle_initial_vid = vid;
-		pstate->p_vle_initial_rte = NULL;
+		pstate->p_vle_initial_nsitem = NULL;
 	}
 }
 
-static RangeTblEntry *
+static ParseNamespaceItem *
 transformMatchVLE(ParseState *pstate, CypherRel *crel, List **targetList,
 				  bool pathout)
 {
@@ -2241,12 +2273,12 @@ transformMatchVLE(ParseState *pstate, CypherRel *crel, List **targetList,
 	bool		out = (varname != NULL || pathout);
 	SelectStmt *sel;
 	Alias	   *alias;
-	RangeTblEntry *rte;
+	ParseNamespaceItem *nsitem;
 
 	sel = genVLESubselect(pstate, crel, out, pathout);
 
 	alias = makeAliasOptUnique(varname);
-	rte = transformVLEtoRTE(pstate, sel, alias);
+	nsitem = transformVLEtoNSItem(pstate, sel, alias);
 
 	if (out)
 	{
@@ -2258,7 +2290,7 @@ transformMatchVLE(ParseState *pstate, CypherRel *crel, List **targetList,
 		resjunk = (varname == NULL);
 		resno = (resjunk ? InvalidAttrNumber : pstate->p_next_resno++);
 
-		var = getColumnVar(pstate, rte, VLE_COLNAME_EDGES);
+		var = getColumnVar(pstate, nsitem, VLE_COLNAME_EDGES);
 		te = makeTargetEntry((Expr *) var,
 							 (AttrNumber) resno,
 							 alias->aliasname,
@@ -2272,7 +2304,7 @@ transformMatchVLE(ParseState *pstate, CypherRel *crel, List **targetList,
 		TargetEntry *te;
 		Node	   *var;
 
-		var = getColumnVar(pstate, rte, VLE_COLNAME_VERTICES);
+		var = getColumnVar(pstate, nsitem, VLE_COLNAME_VERTICES);
 		te = makeTargetEntry((Expr *) var,
 							 InvalidAttrNumber,
 							 genUniqueName(),
@@ -2281,7 +2313,7 @@ transformMatchVLE(ParseState *pstate, CypherRel *crel, List **targetList,
 		*targetList = lappend(*targetList, te);
 	}
 
-	return rte;
+	return nsitem;
 }
 
 /*
@@ -2979,23 +3011,21 @@ genInhEdge(RangeVar *r, Oid parentoid)
 	return sub;
 }
 
-static RangeTblEntry *
-transformVLEtoRTE(ParseState *pstate, SelectStmt *vle, Alias *alias)
+static ParseNamespaceItem *
+transformVLEtoNSItem(ParseState *pstate, SelectStmt *vle, Alias *alias)
 {
-	ParseNamespaceItem *nsitem = NULL;
+	ParseNamespaceItem *nsitem;
+	ParseNamespaceItem *vle_initial_nsitem = NULL;
 	Query	   *qry;
-	RangeTblEntry *rte;
 
 	Assert(!pstate->p_lateral_active);
 	Assert(pstate->p_expr_kind == EXPR_KIND_NONE);
 
 	/* make the RTE temporarily visible */
-	if (pstate->p_vle_initial_rte != NULL)
+	if (pstate->p_vle_initial_nsitem != NULL)
 	{
-		nsitem = findNamespaceItemForRTE(pstate, pstate->p_vle_initial_rte);
-		Assert(nsitem != NULL);
-
-		nsitem->p_rel_visible = true;
+		vle_initial_nsitem = pstate->p_vle_initial_nsitem;
+		vle_initial_nsitem->p_rel_visible = true;
 	}
 
 	pstate->p_lateral_active = true;
@@ -3008,14 +3038,14 @@ transformVLEtoRTE(ParseState *pstate, SelectStmt *vle, Alias *alias)
 	pstate->p_lateral_active = false;
 	pstate->p_expr_kind = EXPR_KIND_NONE;
 
-	if (nsitem != NULL)
-		nsitem->p_rel_visible = false;
+	if (vle_initial_nsitem != NULL)
+		vle_initial_nsitem->p_rel_visible = false;
 
-	rte = addRangeTableEntryForSubquery(pstate, qry, alias, true, true);
-	rte->isVLE = true;
-	addRTEtoJoinlist(pstate, rte, false);
+	nsitem = addRangeTableEntryForSubquery(pstate, qry, alias, true, true);
+	nsitem->p_rte->isVLE = true;
+	addNSItemToJoinlist(pstate, nsitem, false);
 
-	return rte;
+	return nsitem;
 }
 
 static bool
@@ -3051,7 +3081,7 @@ getCypherRelType(CypherRel *crel, char **typname, int *typloc)
 		if (list_length(crel->types) > 1)
 			ereport(ERROR,
 					(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-					 errmsg("multiple types for relationship not supported")));
+							errmsg("multiple types for relationship not supported")));
 
 		type = linitial(crel->types);
 
@@ -3063,7 +3093,8 @@ getCypherRelType(CypherRel *crel, char **typname, int *typloc)
 
 static Node *
 addQualRelPath(ParseState *pstate, Node *qual, CypherRel *prev_crel,
-			   RangeTblEntry *prev_edge, CypherRel *crel, RangeTblEntry *edge)
+			   ParseNamespaceItem *prev_edge, CypherRel *crel,
+			   ParseNamespaceItem *edge)
 {
 	Node	   *prev_vid;
 	Node	   *vid;
@@ -3086,8 +3117,9 @@ addQualRelPath(ParseState *pstate, Node *qual, CypherRel *prev_crel,
 }
 
 static Node *
-addQualNodeIn(ParseState *pstate, Node *qual, Node *vertex, CypherRel *crel,
-			  RangeTblEntry *edge, bool prev)
+addQualNodeIn(ParseState *pstate, Node *qual, Node *vertex,
+			  bool vertexIsNSItem, CypherRel *crel, ParseNamespaceItem *edge,
+			  bool prev)
 {
 	Node	   *id;
 	Node	   *vid;
@@ -3106,13 +3138,13 @@ addQualNodeIn(ParseState *pstate, Node *qual, Node *vertex, CypherRel *crel,
 	if (crel->varlen != NULL && !prev)
 		return qual;
 
-	if (IsA(vertex, RangeTblEntry))
+	if (vertexIsNSItem)
 	{
-		RangeTblEntry *rte = (RangeTblEntry *) vertex;
+		ParseNamespaceItem *nsitem = (ParseNamespaceItem *) vertex;
 
-		Assert(rte->rtekind == RTE_RELATION);
+		Assert(nsitem->p_rte->rtekind == RTE_RELATION);
 
-		id = getColumnVar(pstate, rte, AG_ELEM_LOCAL_ID);
+		id = getColumnVar(pstate, nsitem, AG_ELEM_LOCAL_ID);
 	}
 	else
 	{
@@ -3177,7 +3209,7 @@ isFutureVertexExpr(Node *vertex)
 
 static void
 setFutureVertexExprId(ParseState *pstate, Node *vertex, CypherRel *crel,
-					  RangeTblEntry *edge, bool prev)
+					  ParseNamespaceItem *edge, bool prev)
 {
 	TargetEntry *te = (TargetEntry *) vertex;
 	RowExpr	   *row;
@@ -3197,8 +3229,8 @@ vtxArrConcat(ParseState *pstate, Node *array, Node *elem)
 	{
 		ereport(ERROR,
 				(errcode(ERRCODE_DATATYPE_MISMATCH),
-				 errmsg("expression must be a vertex, but %s",
-						format_type_be(elemtype))));
+						errmsg("expression must be a vertex, but %s",
+							   format_type_be(elemtype))));
 	}
 
 	if (array == NULL)
@@ -3208,8 +3240,8 @@ vtxArrConcat(ParseState *pstate, Node *array, Node *elem)
 	{
 		ereport(ERROR,
 				(errcode(ERRCODE_DATATYPE_MISMATCH),
-				 errmsg("expression must be an array of vertex, but %s",
-						format_type_be(exprType(array)))));
+						errmsg("expression must be an array of vertex, but %s",
+							   format_type_be(exprType(array)))));
 	}
 
 	return (Node *) make_op(pstate, list_make1(makeString("||")), array,
@@ -3226,8 +3258,8 @@ edgeArrConcat(ParseState *pstate, Node *array, Node *elem)
 	{
 		ereport(ERROR,
 				(errcode(ERRCODE_DATATYPE_MISMATCH),
-				 errmsg("expression must be an edge, but %s",
-						format_type_be(elemtype))));
+						errmsg("expression must be an edge, but %s",
+							   format_type_be(elemtype))));
 	}
 
 	if (array == NULL)
@@ -3237,8 +3269,8 @@ edgeArrConcat(ParseState *pstate, Node *array, Node *elem)
 	{
 		ereport(ERROR,
 				(errcode(ERRCODE_DATATYPE_MISMATCH),
-				 errmsg("expression must be an array of edge, but %s",
-						format_type_be(exprType(array)))));
+						errmsg("expression must be an array of edge, but %s",
+							   format_type_be(exprType(array)))));
 	}
 
 	return (Node *) make_op(pstate, list_make1(makeString("||")), array,
@@ -3334,17 +3366,17 @@ addElemQual(ParseState *pstate, AttrNumber varattno, Node *prop_constr)
 }
 
 static void
-adjustElemQuals(List *elem_quals, RangeTblEntry *rte, int rtindex)
+adjustElemQuals(List *elem_quals, ParseNamespaceItem *nsitem)
 {
 	ListCell *le;
 
-	AssertArg(rte->rtekind == RTE_SUBQUERY);
+	AssertArg(nsitem->p_rte->rtekind == RTE_SUBQUERY);
 
 	foreach(le, elem_quals)
 	{
 		ElemQual *eq = lfirst(le);
 
-		eq->varno = rtindex;
+		eq->varno = nsitem->p_rtindex;
 	}
 }
 
@@ -3464,9 +3496,9 @@ transform_prop_constr_worker(Node *node, prop_constr_context *ctx)
 			if (rval == NULL)
 				ereport(ERROR,
 						(errcode(ERRCODE_DATATYPE_MISMATCH),
-						 errmsg("expression must be of type jsonb but %s",
-								format_type_be(rvaltype)),
-						 parser_errposition(ctx->pstate, rvalloc)));
+								errmsg("expression must be of type jsonb but %s",
+									   format_type_be(rvaltype)),
+								parser_errposition(ctx->pstate, rvalloc)));
 
 			expr = make_op(ctx->pstate, list_make1(makeString("=")),
 						   lval, rval, ctx->pstate->p_last_srf, -1);
@@ -3536,43 +3568,43 @@ getSourceRelid(ParseState *pstate, Index varno, AttrNumber varattno)
 				/* already locked */
 				return rte->relid;
 			case RTE_SUBQUERY:
-				{
-					TargetEntry *te;
-					Oid type;
+			{
+				TargetEntry *te;
+				Oid type;
 
-					te = get_tle_by_resno(rte->subquery->targetList, varattno);
+				te = get_tle_by_resno(rte->subquery->targetList, varattno);
 
-					type = exprType((Node *) te->expr);
-					if (type != VERTEXOID && type != EDGEOID)
-						return InvalidOid;
+				type = exprType((Node *) te->expr);
+				if (type != VERTEXOID && type != EDGEOID)
+					return InvalidOid;
 
-					/* In RowExpr case, `(id, ...)` is assumed */
-					if (IsA(te->expr, Var))
-						var = (Var *) te->expr;
-					else if (IsA(te->expr, RowExpr))
-						var = linitial(((RowExpr *) te->expr)->args);
-					else
-						return InvalidOid;
+				/* In RowExpr case, `(id, ...)` is assumed */
+				if (IsA(te->expr, Var))
+					var = (Var *) te->expr;
+				else if (IsA(te->expr, RowExpr))
+					var = linitial(((RowExpr *) te->expr)->args);
+				else
+					return InvalidOid;
 
-					rtable = rte->subquery->rtable;
-					varno = var->varno;
-					varattno = var->varattno;
-				}
+				rtable = rte->subquery->rtable;
+				varno = var->varno;
+				varattno = var->varattno;
+			}
 				break;
 			case RTE_JOIN:
-				{
-					Expr *expr;
+			{
+				Expr *expr;
 
-					expr = list_nth(rte->joinaliasvars, varattno - 1);
-					if (!IsA(expr, Var))
-						return InvalidOid;
+				expr = list_nth(rte->joinaliasvars, varattno - 1);
+				if (!IsA(expr, Var))
+					return InvalidOid;
 
-					var = (Var *) expr;
-					// XXX: Do we need type check?
+				var = (Var *) expr;
+				// XXX: Do we need type check?
 
-					varno = var->varno;
-					varattno = var->varattno;
-				}
+				varno = var->varno;
+				varattno = var->varattno;
+			}
 				break;
 			case RTE_FUNCTION:
 			case RTE_VALUES:
@@ -3698,11 +3730,11 @@ findFutureVertex(ParseState *pstate, Index varno, AttrNumber varattno,
 }
 
 static List *
-adjustFutureVertices(List *future_vertices, RangeTblEntry *rte, int rtindex)
+adjustFutureVertices(List *future_vertices, ParseNamespaceItem *nsitem)
 {
 	ListCell   *le;
 
-	AssertArg(rte->rtekind == RTE_SUBQUERY);
+	AssertArg(nsitem->p_rte->rtekind == RTE_SUBQUERY);
 
 	foreach(le, future_vertices)
 	{
@@ -3713,12 +3745,12 @@ adjustFutureVertices(List *future_vertices, RangeTblEntry *rte, int rtindex)
 		/* set `varno` of new future vertex to its `rtindex` */
 		if (fv->varno == InvalidAttrNumber)
 		{
-			fv->varno = rtindex;
+			fv->varno = nsitem->p_rtindex;
 			continue;
 		}
 
 		found = false;
-		foreach(lt, rte->subquery->targetList)
+		foreach(lt, nsitem->p_rte->subquery->targetList)
 		{
 			TargetEntry *te = lfirst(lt);
 			Var *var;
@@ -3737,7 +3769,7 @@ adjustFutureVertices(List *future_vertices, RangeTblEntry *rte, int rtindex)
 			if (var->varno == fv->varno && var->varattno == fv->varattno &&
 				var->varlevelsup == 0)
 			{
-				fv->varno = rtindex;
+				fv->varno = nsitem->p_rtindex;
 
 				/*
 				 * `te->resno` should always be equal to the item's
@@ -3786,8 +3818,8 @@ resolve_future_vertex_mutator(Node *node, resolve_future_vertex_context *ctx)
 			ListCell *la;
 
 			agg->aggdirectargs = (List *) resolve_future_vertex_mutator(
-												(Node *) agg->aggdirectargs,
-												ctx);
+					(Node *) agg->aggdirectargs,
+					ctx);
 
 			foreach(la, agg->args)
 			{
@@ -3795,8 +3827,8 @@ resolve_future_vertex_mutator(Node *node, resolve_future_vertex_context *ctx)
 
 				if (!IsA(arg->expr, Var))
 					arg->expr = (Expr *) resolve_future_vertex_mutator(
-															(Node *) arg->expr,
-															ctx);
+							(Node *) arg->expr,
+							ctx);
 			}
 
 			return node;
@@ -3902,11 +3934,11 @@ resolve_future_vertex_mutator(Node *node, resolve_future_vertex_context *ctx)
 static void
 resolveFutureVertex(ParseState *pstate, FutureVertex *fv, bool ignore_nullable)
 {
-	RangeTblEntry *fv_rte;
+	ParseNamespaceItem *fv_nsitem;
 	TargetEntry *fv_te;
 	Var		   *fv_var;
 	Node	   *fv_id;
-	RangeTblEntry *rte;
+	ParseNamespaceItem *nsitem;
 	Node	   *vertex;
 	FuncCall   *sel_id;
 	Node	   *id;
@@ -3914,22 +3946,23 @@ resolveFutureVertex(ParseState *pstate, FutureVertex *fv, bool ignore_nullable)
 
 	AssertArg(fv->expr == NULL);
 
-	fv_rte = GetRTEByRangeTablePosn(pstate, fv->varno, 0);
-	Assert(fv_rte->rtekind == RTE_SUBQUERY);
+	fv_nsitem = GetNSItemByRangeTablePosn(pstate, fv->varno, 0);
+	Assert(fv_nsitem->p_rte->rtekind == RTE_SUBQUERY);
 
-	fv_te = get_tle_by_resno(fv_rte->subquery->targetList, fv->varattno);
+	fv_te = get_tle_by_resno(fv_nsitem->p_rte->subquery->targetList,
+							 fv->varattno);
 	Assert(fv_te != NULL);
 
-	fv_var = make_var(pstate, fv_rte, fv->varattno, -1);
+	fv_var = make_var(pstate, fv_nsitem, fv->varattno, -1);
 	fv_id = getExprField((Expr *) fv_var, AG_ELEM_ID);
 
 	/*
 	 * `p_cols_visible` of previous RTE must be set to allow `rte` to see
 	 * columns of the previous RTE by their name
 	 */
-	rte = makeVertexRTE(pstate, fv_te->resname, fv->labname);
+	nsitem = makeVertexNSItem(pstate, fv_te->resname, fv->labname);
 
-	vertex = getColumnVar(pstate, rte, rte->eref->aliasname);
+	vertex = getColumnVar(pstate, nsitem, nsitem->p_rte->eref->aliasname);
 
 	sel_id = makeFuncCall(list_make1(makeString(AG_ELEM_ID)), NIL, -1);
 	id = ParseFuncOrColumn(pstate, sel_id->funcname, list_make1(vertex),
@@ -3940,7 +3973,7 @@ resolveFutureVertex(ParseState *pstate, FutureVertex *fv, bool ignore_nullable)
 
 	if (ignore_nullable)
 	{
-		addRTEtoJoinlist(pstate, rte, false);
+		addNSItemToJoinlist(pstate, nsitem, false);
 
 		pstate->p_resolved_qual = qualAndExpr(pstate->p_resolved_qual, qual);
 	}
@@ -3950,6 +3983,7 @@ resolveFutureVertex(ParseState *pstate, FutureVertex *fv, bool ignore_nullable)
 		Node	   *l_jt;
 		int			l_rtindex;
 		RangeTblEntry *l_rte;
+		ParseNamespaceItem *l_nsitem;
 		Alias	   *alias;
 
 		l_jt = llast(pstate->p_joinlist);
@@ -3965,21 +3999,23 @@ resolveFutureVertex(ParseState *pstate, FutureVertex *fv, bool ignore_nullable)
 		l_rte = rt_fetch(l_rtindex, pstate->p_rtable);
 
 		alias = makeAliasNoDup(CYPHER_SUBQUERY_ALIAS, NIL);
-		incrementalJoinRTEs(pstate, jointype, l_rte, rte, qual, alias);
+
+		l_nsitem = findNamespaceItemForRTE(pstate, l_rte);
+		incrementalJoinRTEs(pstate, jointype, l_nsitem, nsitem, qual, alias);
 	}
 
 	/* modify `fv->expr` to the actual vertex */
 	fv->expr = (Expr *) vertex;
 }
 
-static RangeTblEntry *
-makeVertexRTE(ParseState *parentParseState, char *varname, char *labname)
+static ParseNamespaceItem *
+makeVertexNSItem(ParseState *parentParseState, char *varname, char *labname)
 {
 	Alias	   *alias;
 	ParseState *pstate;
 	Query	   *qry;
 	RangeVar   *r;
-	RangeTblEntry *rte;
+	ParseNamespaceItem *nsitem;
 	TargetEntry *te;
 
 	Assert(parentParseState->p_expr_kind == EXPR_KIND_NONE);
@@ -3995,10 +4031,12 @@ makeVertexRTE(ParseState *parentParseState, char *varname, char *labname)
 
 	r = makeRangeVar(get_graph_path(true), labname, -1);
 
-	rte = addRangeTableEntry(pstate, r, alias, true, true);
-	addRTEtoJoinlist(pstate, rte, false);
+	nsitem = addRangeTableEntry(pstate, r, alias, true, true);
+	addNSItemToJoinlist(pstate, nsitem, false);
 
-	te = makeTargetEntry((Expr *) makeVertexExpr(pstate, rte, -1),
+	te = makeTargetEntry((Expr *) makeVertexExpr(pstate,
+												 nsitem,
+												 -1),
 						 (AttrNumber) pstate->p_next_resno++,
 						 alias->aliasname,
 						 false);
@@ -4047,8 +4085,8 @@ transformCreatePattern(ParseState *pstate, CypherPath *cpath, List **targetList)
 	if (findTarget(*targetList, pathname) != NULL)
 		ereport(ERROR,
 				(errcode(ERRCODE_DUPLICATE_ALIAS),
-				 errmsg("duplicate variable \"%s\"", pathname),
-				 parser_errposition(pstate, pathloc)));
+						errmsg("duplicate variable \"%s\"", pathname),
+						parser_errposition(pstate, pathloc)));
 
 	foreach(le, cpath->chain)
 	{
@@ -4064,9 +4102,9 @@ transformCreatePattern(ParseState *pstate, CypherPath *cpath, List **targetList)
 			if (!gvertex->create && list_length(cpath->chain) <= 1)
 				ereport(ERROR,
 						(errcode(ERRCODE_SYNTAX_ERROR),
-						 errmsg("there must be at least one relationship"),
-						 parser_errposition(pstate,
-									getCypherNameLoc(cnode->variable))));
+								errmsg("there must be at least one relationship"),
+								parser_errposition(pstate,
+												   getCypherNameLoc(cnode->variable))));
 
 			gchain = lappend(gchain, gvertex);
 		}
@@ -4122,8 +4160,8 @@ transformCreateNode(ParseState *pstate, CypherNode *cnode, List **targetList)
 		(exprType((Node *) te->expr) != VERTEXOID || !isNodeForRef(cnode)))
 		ereport(ERROR,
 				(errcode(ERRCODE_DUPLICATE_ALIAS),
-				 errmsg("duplicate variable \"%s\"", varname),
-				 parser_errposition(pstate, varloc)));
+						errmsg("duplicate variable \"%s\"", varname),
+						parser_errposition(pstate, varloc)));
 
 	create = (te == NULL);
 
@@ -4144,8 +4182,8 @@ transformCreateNode(ParseState *pstate, CypherNode *cnode, List **targetList)
 			if (strcmp(labname, AG_VERTEX) == 0)
 				ereport(ERROR,
 						(errcode(ERRCODE_SYNTAX_ERROR),
-						 errmsg("specifying default label is not allowed"),
-						 parser_errposition(pstate, labloc)));
+								errmsg("specifying default label is not allowed"),
+								parser_errposition(pstate, labloc)));
 
 			createVertexLabelIfNotExist(pstate, labname, labloc);
 		}
@@ -4194,17 +4232,17 @@ transformCreateRel(ParseState *pstate, CypherRel *crel, List **targetList)
 	if (crel->direction == CYPHER_REL_DIR_NONE)
 		ereport(ERROR,
 				(errcode(ERRCODE_SYNTAX_ERROR),
-				 errmsg("only directed relationships are allowed in CREATE")));
+						errmsg("only directed relationships are allowed in CREATE")));
 
 	if (list_length(crel->types) != 1)
 		ereport(ERROR,
 				(errcode(ERRCODE_SYNTAX_ERROR),
-				 errmsg("only one relationship type is allowed for CREATE")));
+						errmsg("only one relationship type is allowed for CREATE")));
 
 	if (crel->varlen != NULL)
 		ereport(ERROR,
 				(errcode(ERRCODE_SYNTAX_ERROR),
-				 errmsg("variable length relationship is not allowed for CREATE")));
+						errmsg("variable length relationship is not allowed for CREATE")));
 
 	varname = getCypherName(crel->variable);
 
@@ -4215,8 +4253,8 @@ transformCreateRel(ParseState *pstate, CypherRel *crel, List **targetList)
 	if (findTarget(*targetList, varname) != NULL)
 		ereport(ERROR,
 				(errcode(ERRCODE_DUPLICATE_ALIAS),
-				 errmsg("duplicate variable \"%s\"", varname),
-				 parser_errposition(pstate, getCypherNameLoc(crel->variable))));
+						errmsg("duplicate variable \"%s\"", varname),
+						parser_errposition(pstate, getCypherNameLoc(crel->variable))));
 
 	type = linitial(crel->types);
 	typname = getCypherName(type);
@@ -4224,8 +4262,8 @@ transformCreateRel(ParseState *pstate, CypherRel *crel, List **targetList)
 	if (strcmp(typname, AG_EDGE) == 0)
 		ereport(ERROR,
 				(errcode(ERRCODE_SYNTAX_ERROR),
-				 errmsg("cannot create edge on default label"),
-				 parser_errposition(pstate, getCypherNameLoc(type))));
+						errmsg("cannot create edge on default label"),
+						parser_errposition(pstate, getCypherNameLoc(type))));
 
 	createEdgeLabelIfNotExist(pstate, typname, getCypherNameLoc(type));
 
@@ -4365,8 +4403,8 @@ openTargetLabel(ParseState *pstate, char *labname)
 }
 
 static List *
-transformSetPropList(ParseState *pstate, RangeTblEntry *rte, bool is_remove,
-					 CSetKind kind, List *items)
+transformSetPropList(ParseState *pstate, bool is_remove, CSetKind kind,
+					 List *items)
 {
 	List	   *gsplist = NIL;
 	ListCell   *li;
@@ -4375,16 +4413,16 @@ transformSetPropList(ParseState *pstate, RangeTblEntry *rte, bool is_remove,
 	{
 		CypherSetProp *sp = lfirst(li);
 
-		gsplist = lappend(gsplist,
-						  transformSetProp(pstate, rte, sp, is_remove, kind));
+		gsplist = lappend(gsplist, transformSetProp(pstate, sp, is_remove,
+													kind));
 	}
 
 	return gsplist;
 }
 
 static GraphSetProp *
-transformSetProp(ParseState *pstate, RangeTblEntry *rte, CypherSetProp *sp,
-				 bool is_remove, CSetKind kind)
+transformSetProp(ParseState *pstate, CypherSetProp *sp, bool is_remove,
+				 CSetKind kind)
 {
 	Node	   *elem;
 	List	   *pathelems;
@@ -4419,9 +4457,9 @@ transformSetProp(ParseState *pstate, RangeTblEntry *rte, CypherSetProp *sp,
 	if (expr == NULL)
 		ereport(ERROR,
 				(errcode(ERRCODE_DATATYPE_MISMATCH),
-				 errmsg("expression must be of type jsonb but %s",
-						format_type_be(exprtype)),
-				 parser_errposition(pstate, exprLocation(expr))));
+						errmsg("expression must be of type jsonb but %s",
+							   format_type_be(exprtype)),
+						parser_errposition(pstate, exprLocation(expr))));
 
 	/*
 	 * make the modified property map
@@ -4431,9 +4469,9 @@ transformSetProp(ParseState *pstate, RangeTblEntry *rte, CypherSetProp *sp,
 		if (IsNullAConst(sp->expr))
 			ereport(ERROR,
 					(errcode(ERRCODE_SYNTAX_ERROR),
-					 errmsg("cannot set property map to NULL"),
-					 errhint("use {} instead of NULL to remove all properties"),
-					 parser_errposition(pstate, exprLocation(expr))));
+							errmsg("cannot set property map to NULL"),
+							errhint("use {} instead of NULL to remove all properties"),
+							parser_errposition(pstate, exprLocation(expr))));
 
 		if (sp->add)
 		{
@@ -4459,8 +4497,8 @@ transformSetProp(ParseState *pstate, RangeTblEntry *rte, CypherSetProp *sp,
 		if (sp->add)
 			ereport(ERROR,
 					(errcode(ERRCODE_SYNTAX_ERROR),
-					 errmsg("+= operator on a property is not allowed"),
-					 parser_errposition(pstate, exprLocation(elem))));
+							errmsg("+= operator on a property is not allowed"),
+							parser_errposition(pstate, exprLocation(elem))));
 
 		delete = makeFuncCall(list_make1(makeString("jsonb_delete_path")),
 							  NIL, -1);
@@ -4485,7 +4523,7 @@ transformSetProp(ParseState *pstate, RangeTblEntry *rte, CypherSetProp *sp,
 			 */
 			if (IsNullAConst(sp->expr))
 				expr = (Node *) makeConst(UNKNOWNOID, -1, InvalidOid, -2,
-						  CStringGetDatum("null"), false, false);
+										  CStringGetDatum("null"), false, false);
 
 			set = makeFuncCall(list_make1(makeString("jsonb_set")), NIL, -1);
 			set_prop = ParseFuncOrColumn(pstate, set->funcname,
@@ -4541,14 +4579,14 @@ transformMergeMatch(ParseState *pstate, Node *parseTree)
 {
 	CypherClause *clause = (CypherClause *) parseTree;
 	Query	   *qry;
-	RangeTblEntry *rte;
+	ParseNamespaceItem *nsitem;
 
 	qry = makeNode(Query);
 	qry->commandType = CMD_SELECT;
 
-	rte = transformMergeMatchJoin(pstate, clause);
+	nsitem = transformMergeMatchJoin(pstate, clause);
 
-	qry->targetList = makeTargetListFromJoin(pstate, rte);
+	qry->targetList = makeTargetListFromJoin(pstate, nsitem);
 	markTargetListOrigins(pstate, qry->targetList);
 
 	qry->rtable = pstate->p_rtable;
@@ -4564,45 +4602,44 @@ transformMergeMatch(ParseState *pstate, Node *parseTree)
 }
 
 /* See transformMatchOptional() */
-static RangeTblEntry *
+static ParseNamespaceItem *
 transformMergeMatchJoin(ParseState *pstate, CypherClause *clause)
 {
 	CypherMergeClause *detail = (CypherMergeClause *) clause->detail;
 	Node	   *prevclause = clause->prev;
-	RangeTblEntry *l_rte;
+	ParseNamespaceItem *l_nsitem, *r_nsitem;
 	Alias	   *r_alias;
-	RangeTblEntry *r_rte;
 	Node	   *qual;
 	Alias	   *alias;
 
 	if (prevclause == NULL)
-		l_rte = transformNullSelect(pstate);
+		l_nsitem = transformNullSelect(pstate);
 	else
-		l_rte = transformClause(pstate, prevclause);
+		l_nsitem = transformClause(pstate, prevclause);
 
 	pstate->p_lateral_active = true;
 
 	r_alias = makeAliasNoDup(CYPHER_MERGEMATCH_ALIAS, NIL);
-	r_rte = transformClauseImpl(pstate, makeMatchForMerge(detail->pattern),
-								transformStmt, r_alias);
+	r_nsitem = transformClauseImpl(pstate, makeMatchForMerge(detail->pattern),
+								   transformStmt, r_alias);
 
 	pstate->p_lateral_active = false;
 
 	qual = makeBoolConst(true, false);
 	alias = makeAliasNoDup(CYPHER_SUBQUERY_ALIAS, NIL);
 
-	return incrementalJoinRTEs(pstate, JOIN_CYPHER_MERGE, l_rte, r_rte, qual,
-							   alias);
+	return incrementalJoinRTEs(pstate, JOIN_CYPHER_MERGE, l_nsitem, r_nsitem,
+							   qual, alias);
 }
 
-static RangeTblEntry *
+static ParseNamespaceItem *
 transformNullSelect(ParseState *pstate)
 {
 	ResTarget  *nullres;
 	SelectStmt *sel;
 	Alias	   *alias;
 	Query	   *qry;
-	RangeTblEntry *rte;
+	ParseNamespaceItem *nsitem;
 
 	nullres = makeResTarget((Node *) makeNullAConst(), NULL);
 
@@ -4619,10 +4656,10 @@ transformNullSelect(ParseState *pstate)
 
 	pstate->p_expr_kind = EXPR_KIND_NONE;
 
-	rte = addRangeTableEntryForSubquery(pstate, qry, alias, false, true);
-	addRTEtoJoinlist(pstate, rte, false);
+	nsitem = addRangeTableEntryForSubquery(pstate, qry, alias, false, true);
+	addNSItemToJoinlist(pstate, nsitem, false);
 
-	return rte;
+	return nsitem;
 }
 
 static Node *
@@ -4719,8 +4756,8 @@ transformMergeNode(ParseState *pstate, CypherNode *cnode, bool singlenode,
 		 singlenode))
 		ereport(ERROR,
 				(errcode(ERRCODE_DUPLICATE_ALIAS),
-				 errmsg("duplicate variable \"%s\"", varname),
-				 parser_errposition(pstate, varloc)));
+						errmsg("duplicate variable \"%s\"", varname),
+						parser_errposition(pstate, varloc)));
 
 	if (labname == NULL)
 	{
@@ -4733,8 +4770,8 @@ transformMergeNode(ParseState *pstate, CypherNode *cnode, bool singlenode,
 		if (strcmp(labname, AG_VERTEX) == 0)
 			ereport(ERROR,
 					(errcode(ERRCODE_SYNTAX_ERROR),
-					 errmsg("specifying default label is not allowed"),
-					 parser_errposition(pstate, labloc)));
+							errmsg("specifying default label is not allowed"),
+							parser_errposition(pstate, labloc)));
 
 		createVertexLabelIfNotExist(pstate, labname, labloc);
 	}
@@ -4787,20 +4824,20 @@ transformMergeRel(ParseState *pstate, CypherRel *crel, List **targetList,
 	if (list_length(crel->types) != 1)
 		ereport(ERROR,
 				(errcode(ERRCODE_SYNTAX_ERROR),
-				 errmsg("only one relationship type is allowed for MERGE")));
+						errmsg("only one relationship type is allowed for MERGE")));
 
 	if (crel->varlen != NULL)
 		ereport(ERROR,
 				(errcode(ERRCODE_SYNTAX_ERROR),
-				 errmsg("variable length relationship is not allowed for MERGE")));
+						errmsg("variable length relationship is not allowed for MERGE")));
 
 	varname = getCypherName(crel->variable);
 
 	if (findTarget(*targetList, varname) != NULL)
 		ereport(ERROR,
 				(errcode(ERRCODE_DUPLICATE_ALIAS),
-				 errmsg("duplicate variable \"%s\"", varname),
-				 parser_errposition(pstate, getCypherNameLoc(crel->variable))));
+						errmsg("duplicate variable \"%s\"", varname),
+						parser_errposition(pstate, getCypherNameLoc(crel->variable))));
 
 	type = linitial(crel->types);
 	typname = getCypherName(type);
@@ -4808,8 +4845,8 @@ transformMergeRel(ParseState *pstate, CypherRel *crel, List **targetList,
 	if (strcmp(typname, AG_EDGE) == 0)
 		ereport(ERROR,
 				(errcode(ERRCODE_SYNTAX_ERROR),
-				 errmsg("cannot create edge on default label"),
-				 parser_errposition(pstate, getCypherNameLoc(type))));
+						errmsg("cannot create edge on default label"),
+						parser_errposition(pstate, getCypherNameLoc(type))));
 
 	createEdgeLabelIfNotExist(pstate, typname, getCypherNameLoc(type));
 
@@ -4859,7 +4896,7 @@ transformMergeRel(ParseState *pstate, CypherRel *crel, List **targetList,
 }
 
 static List *
-transformMergeOnSet(ParseState *pstate, List *sets, RangeTblEntry *rte)
+transformMergeOnSet(ParseState *pstate, List *sets)
 {
 	ListCell   *lc;
 	List	   *l_oncreate = NIL;
@@ -4883,9 +4920,9 @@ transformMergeOnSet(ParseState *pstate, List *sets, RangeTblEntry *rte)
 		}
 	}
 
-	l_oncreate = transformSetPropList(pstate, rte, false, CSET_ON_CREATE,
+	l_oncreate = transformSetPropList(pstate, false, CSET_ON_CREATE,
 									  l_oncreate);
-	l_onmatch = transformSetPropList(pstate, rte, false, CSET_ON_MATCH,
+	l_onmatch = transformSetPropList(pstate, false, CSET_ON_MATCH,
 									 l_onmatch);
 
 	return list_concat(l_onmatch, l_oncreate);
@@ -4896,18 +4933,18 @@ transformDeleteJoin(ParseState *pstate, Node *parseTree)
 {
 	CypherClause *clause = (CypherClause *) parseTree;
 	Query	   *qry;
-	RangeTblEntry *rte;
+	ParseNamespaceItem *nsitem;
 
 	qry = makeNode(Query);
 	qry->commandType = CMD_SELECT;
 
-	rte = transformDeleteJoinRTE(pstate, clause);
-	if (rte->rtekind == RTE_JOIN)
-		qry->targetList = makeTargetListFromJoin(pstate, rte);
-	else if (rte->rtekind == RTE_SUBQUERY)
-		qry->targetList = makeTargetListFromRTE(pstate, rte);
+	nsitem = transformDeleteJoinNSItem(pstate, clause);
+	if (nsitem->p_rte->rtekind == RTE_JOIN)
+		qry->targetList = makeTargetListFromJoin(pstate, nsitem);
+	else if (nsitem->p_rte->rtekind == RTE_SUBQUERY)
+		qry->targetList = makeTargetListFromNSItem(pstate, nsitem);
 	else
-		elog(ERROR, "unexpected rtekind(%d) in DELETE", rte->rtekind);
+		elog(ERROR, "unexpected rtekind(%d) in DELETE", nsitem->p_rte->rtekind);
 
 	markTargetListOrigins(pstate, qry->targetList);
 
@@ -4926,11 +4963,11 @@ transformDeleteEdges(ParseState *pstate, Node *parseTree)
 {
 	CypherClause	   *clause = (CypherClause *) parseTree;
 	CypherDeleteClause *detail = (CypherDeleteClause *) clause->detail;
-	RangeTblEntry  *rte;
+	ParseNamespaceItem *nsitem;
 	Query	   *qry;
 	List	   *edges = NIL;
 
-	rte = transformClause(pstate, clause->prev);
+	nsitem = transformClause(pstate, clause->prev);
 
 	edges = extractEdgesExpr(pstate, detail->exprs, EXPR_KIND_OTHER);
 
@@ -4939,12 +4976,12 @@ transformDeleteEdges(ParseState *pstate, Node *parseTree)
 		qry = makeNode(Query);
 		qry->commandType = CMD_SELECT;
 
-		qry->targetList = makeTargetListFromRTE(pstate, rte);
+		qry->targetList = makeTargetListFromNSItem(pstate, nsitem);
 		markTargetListOrigins(pstate, qry->targetList);
 
 		qry->rtable = pstate->p_rtable;
 		qry->jointree = makeFromExpr(pstate->p_joinlist,
-									pstate->p_resolved_qual);
+									 pstate->p_resolved_qual);
 
 		qry->hasSubLinks = pstate->p_hasSubLinks;
 
@@ -4960,7 +4997,7 @@ transformDeleteEdges(ParseState *pstate, Node *parseTree)
 	qry->graph.detach = false;
 	qry->graph.eager = true;
 
-	qry->targetList = makeTargetListFromRTE(pstate, rte);
+	qry->targetList = makeTargetListFromNSItem(pstate, nsitem);
 
 	qry->graph.exprs = edges;
 	qry->graph.nr_modify = pstate->p_nr_modify_clause++;
@@ -4986,11 +5023,11 @@ transformDeleteEdges(ParseState *pstate, Node *parseTree)
 }
 
 /* See transformMatchOptional() */
-static RangeTblEntry *
-transformDeleteJoinRTE(ParseState *pstate, CypherClause *clause)
+static ParseNamespaceItem *
+transformDeleteJoinNSItem(ParseState *pstate, CypherClause *clause)
 {
 	CypherDeleteClause *detail = (CypherDeleteClause *) clause->detail;
-	RangeTblEntry *l_rte;
+	ParseNamespaceItem *l_nsitem;
 	A_ArrayExpr *vertices_var = NULL;
 	Node	   *vertices_nodes = NULL;
 	Node	   *vertices;
@@ -5001,15 +5038,15 @@ transformDeleteJoinRTE(ParseState *pstate, CypherClause *clause)
 	Node	   *sel_ag_edge;
 	Alias	   *r_alias;
 	Query	   *r_qry;
-	RangeTblEntry *r_rte;
+	ParseNamespaceItem *r_nsitem;
 	Node	   *qual;
-	RangeTblEntry *jrte;
+	ParseNamespaceItem *join_nsitem;
 
 	/*
 	 * Since targets of a DELETE clause refers the result of the previous
 	 * clause, it must be transformed first.
 	 */
-	l_rte = transformClauseBy(pstate, (Node *) clause, transformDeleteEdges);
+	l_nsitem = transformClauseBy(pstate, (Node *) clause, transformDeleteEdges);
 
 	/* FIXME: `detail->exprs` is transformed twice */
 	exprs = transformCypherExprList(pstate, detail->exprs, EXPR_KIND_OTHER);
@@ -5022,8 +5059,8 @@ transformDeleteJoinRTE(ParseState *pstate, CypherClause *clause)
 		if (!IsA(pexpr, ColumnRef))
 			ereport(ERROR,
 					(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-					 errmsg("only direct variable reference is supported"),
-					 parser_errposition(pstate, exprLocation(expr))));
+							errmsg("only direct variable reference is supported"),
+							parser_errposition(pstate, exprLocation(expr))));
 
 		vartype = exprType(expr);
 		if (vartype == VERTEXOID)
@@ -5047,8 +5084,8 @@ transformDeleteJoinRTE(ParseState *pstate, CypherClause *clause)
 		{
 			ereport(ERROR,
 					(errcode(ERRCODE_DATATYPE_MISMATCH),
-					 errmsg("node, relationship, or path is expected"),
-					 parser_errposition(pstate, exprLocation(expr))));
+							errmsg("node, relationship, or path is expected"),
+							parser_errposition(pstate, exprLocation(expr))));
 		}
 
 		/*
@@ -5059,7 +5096,7 @@ transformDeleteJoinRTE(ParseState *pstate, CypherClause *clause)
 
 	vertices = verticesConcat((Node *) vertices_var, vertices_nodes);
 	if (vertices == NULL)
-		return l_rte;
+		return l_nsitem;
 
 	sel_ag_edge = makeSelectEdgesVertices(vertices, detail, &edges_resname);
 	r_alias = makeAliasNoDup(CYPHER_DELETEJOIN_ALIAS, NIL);
@@ -5089,15 +5126,16 @@ transformDeleteJoinRTE(ParseState *pstate, CypherClause *clause)
 	pstate->p_lateral_active = false;
 	pstate->p_expr_kind = EXPR_KIND_NONE;
 
-	r_rte = addRangeTableEntryForSubquery(pstate, r_qry, r_alias, true, true);
+	r_nsitem = addRangeTableEntryForSubquery(pstate, r_qry, r_alias, true, true);
 
 	qual = makeBoolConst(true, false);
 
-	jrte = incrementalJoinRTEs(pstate, JOIN_CYPHER_DELETE, l_rte, r_rte, qual,
-							   makeAliasNoDup(CYPHER_SUBQUERY_ALIAS, NIL));
+	join_nsitem = incrementalJoinRTEs(pstate, JOIN_CYPHER_DELETE, l_nsitem, r_nsitem,
+									  qual,
+									  makeAliasNoDup(CYPHER_SUBQUERY_ALIAS, NIL));
 
 	pstate->p_delete_edges_resname = edges_resname;
-	return jrte;
+	return join_nsitem;
 }
 
 static A_ArrayExpr *
@@ -5303,20 +5341,20 @@ extractVerticesExpr(ParseState *pstate, List *exprlist, ParseExprKind exprKind)
 				elem = getExprField((Expr *) elem, AG_PATH_VERTICES);
 				/* no break */
 			case VERTEXOID:
-				{
-					GraphDelElem *gde = makeNode(GraphDelElem);
+			{
+				GraphDelElem *gde = makeNode(GraphDelElem);
 
-					gde->variable = getDeleteTargetName(pstate, expr);
-					gde->elem = elem;
+				gde->variable = getDeleteTargetName(pstate, expr);
+				gde->elem = elem;
 
-					result = lappend(result, gde);
-				}
+				result = lappend(result, gde);
+			}
 				break;
 			default:
 				ereport(ERROR,
 						(errcode(ERRCODE_DATATYPE_MISMATCH),
-						errmsg("node, relationship, or path is expected"),
-						parser_errposition(pstate, exprLocation(elem))));
+								errmsg("node, relationship, or path is expected"),
+								parser_errposition(pstate, exprLocation(elem))));
 		}
 	}
 
@@ -5343,20 +5381,20 @@ extractEdgesExpr(ParseState *pstate, List *exprlist, ParseExprKind exprKind)
 				elem = getExprField((Expr *) elem, AG_PATH_EDGES);
 				/* no break */
 			case EDGEOID:
-				{
-					GraphDelElem *gde = makeNode(GraphDelElem);
+			{
+				GraphDelElem *gde = makeNode(GraphDelElem);
 
-					gde->variable = getDeleteTargetName(pstate, expr);
-					gde->elem = elem;
+				gde->variable = getDeleteTargetName(pstate, expr);
+				gde->elem = elem;
 
-					result = lappend(result, gde);
-				}
+				result = lappend(result, gde);
+			}
 				break;
 			default:
 				ereport(ERROR,
 						(errcode(ERRCODE_DATATYPE_MISMATCH),
-						errmsg("node, relationship, or path is expected"),
-						parser_errposition(pstate, exprLocation(elem))));
+								errmsg("node, relationship, or path is expected"),
+								parser_errposition(pstate, exprLocation(elem))));
 		}
 	}
 
@@ -5371,16 +5409,16 @@ getDeleteTargetName(ParseState *pstate, Node *expr)
 	if (!IsA(expr, ColumnRef))
 		ereport(ERROR,
 				(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-				 errmsg("only direct variable reference is supported"),
-				 parser_errposition(pstate, exprLocation(expr))));
+						errmsg("only direct variable reference is supported"),
+						parser_errposition(pstate, exprLocation(expr))));
 
 	cr = (ColumnRef *) expr;
 	if (list_length(cr->fields) != 1 ||
 		!IsA(linitial(cr->fields), String))
 		ereport(ERROR,
 				(errcode(ERRCODE_INVALID_NAME),
-				 errmsg("invalid delete target name"),
-				 parser_errposition(pstate, exprLocation(expr))));
+						errmsg("invalid delete target name"),
+						parser_errposition(pstate, exprLocation(expr))));
 
 	return pstrdup(strVal(linitial(cr->fields)));
 }
@@ -5605,9 +5643,9 @@ find_target_label_walker(Node *node, find_target_label_context *ctx)
 			else
 				ereport(ERROR,
 						(errcode(ERRCODE_DATATYPE_MISMATCH),
-						 errmsg("invalid fieldnum %s : %hd",
-								format_type_be(exprType((Node *) fs->arg)),
-								fs->fieldnum)));
+								errmsg("invalid fieldnum %s : %hd",
+									   format_type_be(exprType((Node *) fs->arg)),
+									   fs->fieldnum)));
 		}
 	}
 
@@ -5641,8 +5679,8 @@ labelExist(ParseState *pstate, char *labname, int labloc, char labkind,
 
 			ereport(ERROR,
 					(errcode(ERRCODE_UNDEFINED_OBJECT),
-					 errmsg("%s label \"%s\" does not exist", elemstr, labname),
-					 parser_errposition(pstate, labloc)));
+							errmsg("%s label \"%s\" does not exist", elemstr, labname),
+							parser_errposition(pstate, labloc)));
 		}
 		else
 		{
@@ -5660,8 +5698,8 @@ labelExist(ParseState *pstate, char *labname, int labloc, char labkind,
 
 		ereport(ERROR,
 				(errcode(ERRCODE_UNDEFINED_OBJECT),
-				 errmsg("label \"%s\" is %s label", labname, elemstr),
-				 parser_errposition(pstate, labloc)));
+						errmsg("label \"%s\" is %s label", labname, elemstr),
+						parser_errposition(pstate, labloc)));
 	}
 
 	ReleaseSysCache(tuple);
@@ -5752,8 +5790,8 @@ assign_query_eager_walker(Node *node, Query *nxtQry)
 				qry->graph.writeOp == GWROP_MERGE)
 				qry->graph.eager = true;
 			else if (nxtQry->graph.writeOp == GWROP_MERGE &&
-					(qry->graph.writeOp == GWROP_CREATE ||
-					 qry->graph.writeOp == GWROP_MERGE))
+					 (qry->graph.writeOp == GWROP_CREATE ||
+					  qry->graph.writeOp == GWROP_MERGE))
 				qry->graph.eager = true;
 			else
 				qry->graph.eager = false;
@@ -5791,34 +5829,33 @@ assign_query_eager(Query *query)
 		elog(ERROR, "eagerness plan is not allowed.");
 }
 
-static RangeTblEntry *
+static ParseNamespaceItem *
 transformClause(ParseState *pstate, Node *clause)
 {
 	return transformClauseBy(pstate, clause, transformStmt);
 }
 
-static RangeTblEntry *
+static ParseNamespaceItem *
 transformClauseBy(ParseState *pstate, Node *clause, TransformMethod transform)
 {
 	Alias	   *alias;
-	RangeTblEntry *rte;
+	ParseNamespaceItem *nsitem;
 
 	alias = makeAliasNoDup(CYPHER_SUBQUERY_ALIAS, NIL);
-	rte = transformClauseImpl(pstate, clause, transform, alias);
-	addRTEtoJoinlist(pstate, rte, true);
+	nsitem = transformClauseImpl(pstate, clause, transform, alias);
+	addNSItemToJoinlist(pstate, nsitem, true);
 
-	return rte;
+	return nsitem;
 }
 
-static RangeTblEntry *
+static ParseNamespaceItem *
 transformClauseImpl(ParseState *pstate, Node *clause,
 					TransformMethod transform, Alias *alias)
 {
 	ParseState *childParseState;
 	Query	   *qry;
 	List	   *future_vertices;
-	RangeTblEntry *rte;
-	int			rtindex;
+	ParseNamespaceItem *nsitem;
 
 	AssertArg(IsA(clause, CypherClause));
 
@@ -5849,44 +5886,37 @@ transformClauseImpl(ParseState *pstate, Node *clause,
 		qry->utilityStmt != NULL)
 		elog(ERROR, "unexpected command in previous clause");
 
-	rte = addRangeTableEntryForSubquery(pstate, qry, alias,
-										pstate->p_lateral_active, true);
+	nsitem = addRangeTableEntryForSubquery(pstate, qry, alias,
+										   pstate->p_lateral_active, true);
 
-	rtindex = RTERangeTablePosn(pstate, rte, NULL);
-
-	adjustElemQuals(pstate->p_elem_quals, rte, rtindex);
+	adjustElemQuals(pstate->p_elem_quals, nsitem);
 
 	future_vertices = removeResolvedFutureVertices(future_vertices);
-	future_vertices = adjustFutureVertices(future_vertices, rte, rtindex);
+	future_vertices = adjustFutureVertices(future_vertices, nsitem);
 	pstate->p_future_vertices = list_concat(pstate->p_future_vertices,
 											future_vertices);
 
-	return rte;
+	return nsitem;
 }
 
-static RangeTblEntry *
+static ParseNamespaceItem *
 incrementalJoinRTEs(ParseState *pstate, JoinType jointype,
-					RangeTblEntry *l_rte, RangeTblEntry *r_rte, Node *qual,
-					Alias *alias)
+					ParseNamespaceItem *l_nsitem, ParseNamespaceItem *r_nsitem,
+					Node *qual, Alias *alias)
 {
-	ParseNamespaceItem *l_nsitem;
-	int			l_rtindex;
 	ListCell   *le;
 	Node	   *l_jt = NULL;
 	RangeTblRef *r_rtr;
-	ParseNamespaceItem *r_nsitem;
-	List	   *res_colnames = NIL;
-	List	   *res_colvars = NIL;
+	ParseNamespaceColumn *res_nscolumns;
+	List	   *res_colnames = NIL, *res_colvars = NIL;
+	List	   *l_colnos, *r_colnos;
 	JoinExpr   *j;
-	RangeTblEntry *rte;
 	int			i;
 	ParseNamespaceItem *nsitem;
 
-	l_nsitem = findNamespaceItemForRTE(pstate, l_rte);
 	l_nsitem->p_cols_visible = false;
 
 	/* find JOIN-subtree of `l_rte` */
-	l_rtindex = RTERangeTablePosn(pstate, l_rte, NULL);
 	foreach(le, pstate->p_joinlist)
 	{
 		Node	   *jt = lfirst(le);
@@ -5902,12 +5932,12 @@ incrementalJoinRTEs(ParseState *pstate, JoinType jointype,
 			rtindex = ((JoinExpr *) jt)->rtindex;
 		}
 
-		if (rtindex == l_rtindex)
+		if (rtindex == l_nsitem->p_rtindex)
 			l_jt = jt;
 	}
 	Assert(l_jt != NULL);
 
-	makeExtraFromRTE(pstate, r_rte, &r_rtr, &r_nsitem, false);
+	makeExtraFromNSItem(r_nsitem, &r_rtr, false);
 
 	j = makeNode(JoinExpr);
 	j->jointype = jointype;
@@ -5916,10 +5946,14 @@ incrementalJoinRTEs(ParseState *pstate, JoinType jointype,
 	j->quals = qual;
 	j->alias = alias;
 
-	makeJoinResCols(pstate, l_rte, r_rte, &res_colnames, &res_colvars);
-	rte = addRangeTableEntryForJoin(pstate, res_colnames, j->jointype,
-									res_colvars, j->alias, true);
-	j->rtindex = RTERangeTablePosn(pstate, rte, NULL);
+	makeJoinResCols(pstate, l_nsitem, r_nsitem, &l_colnos, &r_colnos, &res_colnames,
+					&res_colvars);
+	res_nscolumns = (ParseNamespaceColumn *) palloc0((list_length(l_colnos) +
+													  list_length(r_colnos)) *
+													 sizeof(ParseNamespaceColumn));
+	nsitem = addRangeTableEntryForJoin(pstate, res_colnames, res_nscolumns,
+									   j->jointype, res_colvars, j->alias, true);
+	j->rtindex = nsitem->p_rtindex;
 
 	for (i = list_length(pstate->p_joinexprs) + 1; i < j->rtindex; i++)
 		pstate->p_joinexprs = lappend(pstate->p_joinexprs, NULL);
@@ -5929,35 +5963,35 @@ incrementalJoinRTEs(ParseState *pstate, JoinType jointype,
 	pstate->p_joinlist = list_delete_ptr(pstate->p_joinlist, l_jt);
 	pstate->p_joinlist = lappend(pstate->p_joinlist, j);
 
-	makeExtraFromRTE(pstate, rte, NULL, &nsitem, true);
+	makeExtraFromNSItem(nsitem, NULL, true);
 	pstate->p_namespace = lappend(pstate->p_namespace, r_nsitem);
 	pstate->p_namespace = lappend(pstate->p_namespace, nsitem);
 
-	return rte;
+	return nsitem;
 }
 
 static void
-makeJoinResCols(ParseState *pstate, RangeTblEntry *l_rte, RangeTblEntry *r_rte,
-				List **res_colnames, List **res_colvars)
+makeJoinResCols(ParseState *pstate, ParseNamespaceItem *l_rte,
+				ParseNamespaceItem *r_rte,
+				List **l_colvars, List **r_colvars,
+				List **res_colnames,
+				List **res_colvars)
 {
-	List	   *l_colnames;
-	List	   *l_colvars;
-	List	   *r_colnames;
-	List	   *r_colvars;
-	ListCell   *r_lname;
-	ListCell   *r_lvar;
-	List	   *colnames = NIL;
-	List	   *colvars = NIL;
+	List		*l_colnames, *r_colnames;
+	ListCell	*r_lname, *r_lvar;
+	List		*colnames = NIL, *colvars = NIL;
 
-	expandRTE(l_rte, RTERangeTablePosn(pstate, l_rte, NULL), 0, -1, false,
-			  &l_colnames, &l_colvars);
-	expandRTE(r_rte, RTERangeTablePosn(pstate, r_rte, NULL), 0, -1, false,
-			  &r_colnames, &r_colvars);
+	expandRTE(l_rte->p_rte, l_rte->p_rtindex, 0, -1, false, &l_colnames,
+			  l_colvars);
+	expandRTE(r_rte->p_rte, r_rte->p_rtindex, 0, -1, false, &r_colnames,
+			  r_colvars);
+//	*l_colvars = expandNSItemVars(l_rte, 0, -1, &l_colnames);
+//	*r_colvars = expandNSItemVars(r_rte, 0, -1, &r_colnames);
 
 	*res_colnames = list_concat(*res_colnames, l_colnames);
-	*res_colvars = list_concat(*res_colvars, l_colvars);
+	*res_colvars = list_concat(*res_colvars, *l_colvars);
 
-	forboth(r_lname, r_colnames, r_lvar, r_colvars)
+	forboth(r_lname, r_colnames, r_lvar, *r_colvars)
 	{
 		char	   *r_colname = strVal(lfirst(r_lname));
 		ListCell   *lname;
@@ -5992,13 +6026,13 @@ makeJoinResCols(ParseState *pstate, RangeTblEntry *l_rte, RangeTblEntry *r_rte,
 			{
 				ereport(ERROR,
 						(errcode(ERRCODE_DATATYPE_MISMATCH),
-						 errmsg("variable type mismatch")));
+								errmsg("variable type mismatch")));
 			}
 			if (vartype != VERTEXOID && vartype != EDGEOID)
 			{
 				ereport(ERROR,
 						(errcode(ERRCODE_DATATYPE_MISMATCH),
-						 errmsg("node or relationship is expected")));
+								errmsg("node or relationship is expected")));
 			}
 		}
 	}
@@ -6024,21 +6058,18 @@ findNamespaceItemForRTE(ParseState *pstate, RangeTblEntry *rte)
 }
 
 static List *
-makeTargetListFromRTE(ParseState *pstate, RangeTblEntry *rte)
+makeTargetListFromNSItem(ParseState *pstate, ParseNamespaceItem *nsitem)
 {
 	List	   *targetlist = NIL;
-	int			rtindex;
 	int			varattno;
 	ListCell   *ln;
 	ListCell   *lt;
 
-	AssertArg(rte->rtekind == RTE_SUBQUERY);
-
-	rtindex = RTERangeTablePosn(pstate, rte, NULL);
+	AssertArg(nsitem->p_rte->rtekind == RTE_SUBQUERY);
 
 	varattno = 1;
-	ln = list_head(rte->eref->colnames);
-	foreach(lt, rte->subquery->targetList)
+	ln = list_head(nsitem->p_rte->eref->colnames);
+	foreach(lt, nsitem->p_rte->subquery->targetList)
 	{
 		TargetEntry *te = lfirst(lt);
 		Var		   *varnode;
@@ -6051,7 +6082,7 @@ makeTargetListFromRTE(ParseState *pstate, RangeTblEntry *rte)
 		Assert(varattno == te->resno);
 
 		/* no transform here, just use `te->expr` */
-		varnode = makeVar(rtindex, varattno,
+		varnode = makeVar(nsitem->p_rtindex, varattno,
 						  exprType((Node *) te->expr),
 						  exprTypmod((Node *) te->expr),
 						  exprCollation((Node *) te->expr),
@@ -6066,18 +6097,19 @@ makeTargetListFromRTE(ParseState *pstate, RangeTblEntry *rte)
 		targetlist = lappend(targetlist, tmp);
 
 		varattno++;
-		ln = lnext(rte->eref->colnames, ln);
+		ln = lnext(nsitem->p_rte->eref->colnames, ln);
 	}
 
 	return targetlist;
 }
 
 static List *
-makeTargetListFromJoin(ParseState *pstate, RangeTblEntry *rte)
+makeTargetListFromJoin(ParseState *pstate, ParseNamespaceItem *nsitem)
 {
 	List	   *targetlist = NIL;
 	ListCell   *lt;
 	ListCell   *ln;
+	RangeTblEntry *rte = nsitem->p_rte;
 
 	AssertArg(rte->rtekind == RTE_JOIN);
 
@@ -6098,21 +6130,18 @@ makeTargetListFromJoin(ParseState *pstate, RangeTblEntry *rte)
 }
 
 static TargetEntry *
-makeWholeRowTarget(ParseState *pstate, RangeTblEntry *rte)
+makeWholeRowTarget(ParseState *pstate, ParseNamespaceItem *nsitem)
 {
-	int			rtindex;
 	Var		   *varnode;
 
-	rtindex = RTERangeTablePosn(pstate, rte, NULL);
-
-	varnode = makeWholeRowVar(rte, rtindex, 0, false);
+	varnode = makeWholeRowVar(nsitem->p_rte, nsitem->p_rtindex, 0, false);
 	varnode->location = -1;
 
-	markVarForSelectPriv(pstate, varnode, rte);
+	markVarForSelectPriv(pstate, varnode, nsitem->p_rte);
 
 	return makeTargetEntry((Expr *) varnode,
 						   (AttrNumber) pstate->p_next_resno++,
-						   rte->eref->aliasname,
+						   nsitem->p_rte->eref->aliasname,
 						   false);
 }
 
@@ -6140,21 +6169,21 @@ findTarget(List *targetList, char *resname)
 }
 
 static Node *
-makeVertexExpr(ParseState *pstate, RangeTblEntry *rte, int location)
+makeVertexExpr(ParseState *pstate, ParseNamespaceItem *nsitem, int location)
 {
 	Node	   *id;
 	Node	   *prop_map;
 	Node	   *tid;
 
-	id = getColumnVar(pstate, rte, AG_ELEM_LOCAL_ID);
-	prop_map = getColumnVar(pstate, rte, AG_ELEM_PROP_MAP);
-	tid = getSysColumnVar(pstate, rte, SelfItemPointerAttributeNumber);
+	id = getColumnVar(pstate, nsitem, AG_ELEM_LOCAL_ID);
+	prop_map = getColumnVar(pstate, nsitem, AG_ELEM_PROP_MAP);
+	tid = getSysColumnVar(pstate, nsitem, SelfItemPointerAttributeNumber);
 
 	return makeTypedRowExpr(list_make3(id, prop_map, tid), VERTEXOID, location);
 }
 
 static Node *
-makeEdgeExpr(ParseState *pstate, CypherRel *crel, RangeTblEntry *rte,
+makeEdgeExpr(ParseState *pstate, CypherRel *crel, ParseNamespaceItem *nsitem,
 			 int location)
 {
 	Node	   *id;
@@ -6163,25 +6192,25 @@ makeEdgeExpr(ParseState *pstate, CypherRel *crel, RangeTblEntry *rte,
 	Node	   *prop_map;
 	Node	   *tid;
 
-	id = getColumnVar(pstate, rte, AG_ELEM_LOCAL_ID);
-	start = getColumnVar(pstate, rte, AG_START_ID);
-	end = getColumnVar(pstate, rte, AG_END_ID);
-	prop_map = getColumnVar(pstate, rte, AG_ELEM_PROP_MAP);
+	id = getColumnVar(pstate, nsitem, AG_ELEM_LOCAL_ID);
+	start = getColumnVar(pstate, nsitem, AG_START_ID);
+	end = getColumnVar(pstate, nsitem, AG_END_ID);
+	prop_map = getColumnVar(pstate, nsitem, AG_ELEM_PROP_MAP);
 	if (crel->direction == CYPHER_REL_DIR_NONE)
-		tid = getColumnVar(pstate, rte, "ctid");
+		tid = getColumnVar(pstate, nsitem, "ctid");
 	else
-		tid = getSysColumnVar(pstate, rte, SelfItemPointerAttributeNumber);
+		tid = getSysColumnVar(pstate, nsitem, SelfItemPointerAttributeNumber);
 
 	return makeTypedRowExpr(list_make5(id, start, end, prop_map, tid),
 							EDGEOID, location);
 }
 
 static Node *
-makePathVertexExpr(ParseState *pstate, Node *obj)
+makePathVertexExpr(ParseState *pstate, Node *obj, bool isNSItem)
 {
-	if (IsA(obj, RangeTblEntry))
+	if (isNSItem)
 	{
-		return makeVertexExpr(pstate, (RangeTblEntry *) obj, -1);
+		return makeVertexExpr(pstate, (ParseNamespaceItem *) obj, -1);
 	}
 	else
 	{
@@ -6195,11 +6224,12 @@ makePathVertexExpr(ParseState *pstate, Node *obj)
 }
 
 static Node *
-getColumnVar(ParseState *pstate, RangeTblEntry *rte, char *colname)
+getColumnVar(ParseState *pstate, ParseNamespaceItem *nsitem, char *colname)
 {
 	ListCell   *lcn;
-	int			attrno;
+	AttrNumber attrno;
 	Var		   *var;
+	RangeTblEntry *rte = nsitem->p_rte;
 
 	attrno = 1;
 	foreach(lcn, rte->eref->colnames)
@@ -6213,7 +6243,7 @@ getColumnVar(ParseState *pstate, RangeTblEntry *rte, char *colname)
 			 *       since all column names in `rte` are unique
 			 */
 
-			var = make_var(pstate, rte, attrno, -1);
+			var = make_var(pstate, nsitem, attrno, -1);
 
 			/* require read access to the column */
 			markVarForSelectPriv(pstate, var, rte);
@@ -6229,16 +6259,17 @@ getColumnVar(ParseState *pstate, RangeTblEntry *rte, char *colname)
 }
 
 static Node *
-getSysColumnVar(ParseState *pstate, RangeTblEntry *rte, int attnum)
+getSysColumnVar(ParseState *pstate, ParseNamespaceItem *nsitem,
+				AttrNumber attnum)
 {
 	Var *var;
 
 	AssertArg(attnum <= SelfItemPointerAttributeNumber &&
 			  attnum >= FirstLowInvalidHeapAttributeNumber);
 
-	var = make_var(pstate, rte, attnum, -1);
+	var = make_var(pstate, nsitem, attnum, -1);
 
-	markVarForSelectPriv(pstate, var, rte);
+	markVarForSelectPriv(pstate, var, nsitem->p_rte);
 
 	return (Node *) var;
 }

@@ -21,15 +21,12 @@ extern Alias *makeAliasNoDup(char *aliasname, List *colnames);
 extern Alias *makeAliasOptUnique(char *aliasname);
 extern char *genUniqueName(void);
 
-extern  void makeExtraFromRTE(ParseState *pstate, RangeTblEntry *rte,
-							 RangeTblRef **rtr, ParseNamespaceItem **nsitem,
-							 bool visible);
-extern void addRTEtoJoinlist(ParseState *pstate, RangeTblEntry *rte,
-							 bool visible);
+extern  void makeExtraFromNSItem(ParseNamespaceItem *nsitem, RangeTblRef **rtr,
+								 bool visible);
+extern void addNSItemToJoinlist(ParseState *pstate, ParseNamespaceItem *nsitem,
+								bool visible);
 
-extern Var *make_var(ParseState *pstate, RangeTblEntry *rte, int attrno,
-					 int location);
-extern int RTERangeTablePosn(ParseState *pstate, RangeTblEntry *rte,
-							 int *sublevels_up);
+extern Var *make_var(ParseState *pstate, ParseNamespaceItem *nsitem,
+					 AttrNumber attnum, int location);
 
 #endif

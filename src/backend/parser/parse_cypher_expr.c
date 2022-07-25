@@ -51,8 +51,8 @@ static Node *transformCypherExprRecurse(ParseState *pstate, Node *expr);
 static Node *transformColumnRef(ParseState *pstate, ColumnRef *cref);
 static Node *transformListCompColumnRef(ParseState *pstate, ColumnRef *cref,
 										char *varname);
-static Node *scanRTEForVar(ParseState *pstate, Node *var, RangeTblEntry *rte,
-						   char *colname, int location);
+static Node *scanNSItemForVar(ParseState *pstate, ParseNamespaceItem *nsitem,
+							  char *colname, int location);
 static Node *transformFields(ParseState *pstate, Node *basenode, List *fields,
 							 int location);
 static Node *filterAccessArg(ParseState *pstate, Node *expr, int location,
@@ -72,12 +72,15 @@ static int func_match_argtypes_jsonb(int nargs, Oid argtypes[FUNC_MAX_ARGS],
 									 FuncCandidateList raw_candidates,
 									 FuncCandidateList *candidates);
 static FuncCandidateList func_select_candidate_jsonb(int nargs,
-		Oid argtypes[FUNC_MAX_ARGS], FuncCandidateList candidates);
+													 Oid argtypes[FUNC_MAX_ARGS],
+													 FuncCandidateList candidates);
 static int cypher_match_function(int matchDepth, int nargs,
-		Oid *input_base_typeids, TYPCATEGORY *slot_category,
-		FuncCandidateList *candidates);
+								 Oid *input_base_typeids,
+								 TYPCATEGORY *slot_category,
+								 FuncCandidateList *candidates);
 static bool cypher_match_function_criteria(int matchDepth, Oid inputBaseType,
-		Oid currentType, TYPCATEGORY slotCategory);
+										   Oid currentType,
+										   TYPCATEGORY slotCategory);
 static List *func_get_best_args(ParseState *pstate, List *args,
 								Oid argtypes[FUNC_MAX_ARGS],
 								FuncCandidateList candidate);
@@ -306,8 +309,8 @@ transformColumnRef(ParseState *pstate, ColumnRef *cref)
 			 */
 			if (nsitem->p_cols_visible)
 			{
-				node = scanRTEForVar(pstate, node, rte, strVal(field1),
-									 location);
+				node = scanNSItemForVar(pstate, nsitem, strVal(field1),
+										location);
 				nmatched = 1;
 			}
 
@@ -322,8 +325,8 @@ transformColumnRef(ParseState *pstate, ColumnRef *cref)
 			if (field2 != NULL &&
 				strcmp(rte->eref->aliasname, strVal(field1)) == 0)
 			{
-				node = scanRTEForVar(pstate, node, rte, strVal(field2),
-									 location);
+				node = scanNSItemForVar(pstate, nsitem, strVal(field2),
+										location);
 				nmatched = 2;
 			}
 
@@ -338,8 +341,8 @@ transformColumnRef(ParseState *pstate, ColumnRef *cref)
 					rte->alias == NULL)
 				{
 
-					node = scanRTEForVar(pstate, node, rte, strVal(field3),
-										 location);
+					node = scanNSItemForVar(pstate, nsitem, strVal(field3),
+											location);
 					nmatched = 3;
 				}
 			}
@@ -354,11 +357,14 @@ transformColumnRef(ParseState *pstate, ColumnRef *cref)
 					rte->relid == relid3 &&
 					rte->alias == NULL)
 				{
-					node = scanRTEForVar(pstate, node, rte, strVal(field4),
-										 location);
+					node = scanNSItemForVar(pstate, nsitem,
+											strVal(field4), location);
 					nmatched = 4;
 				}
 			}
+
+			if (node != NULL)
+				break;
 		}
 
 		if (node != NULL)
@@ -381,9 +387,9 @@ transformColumnRef(ParseState *pstate, ColumnRef *cref)
 		{
 			ereport(ERROR,
 					(errcode(ERRCODE_AMBIGUOUS_COLUMN),
-					 errmsg("column reference \"%s\" is ambiguous",
-							NameListToString(cref->fields)),
-					 parser_errposition(pstate, cref->location)));
+							errmsg("column reference \"%s\" is ambiguous",
+								   NameListToString(cref->fields)),
+							parser_errposition(pstate, cref->location)));
 			return NULL;
 		}
 	}
@@ -392,8 +398,8 @@ transformColumnRef(ParseState *pstate, ColumnRef *cref)
 	{
 		ereport(ERROR,
 				(errcode(ERRCODE_UNDEFINED_COLUMN),
-				 errmsg("variable does not exist"),
-				 parser_errposition(pstate, location)));
+						errmsg("variable does not exist"),
+						parser_errposition(pstate, location)));
 		return NULL;
 	}
 
@@ -423,7 +429,7 @@ transformListCompColumnRef(ParseState *pstate, ColumnRef *cref, char *varname)
 	 * i.e, properties->A => A
 	 */
 	if (pstate->p_expr_kind == EXPR_KIND_INDEX_EXPRESSION &&
-	    list_length(cref->fields) == 2)
+		list_length(cref->fields) == 2)
 	{
 		field1 = llast(cref->fields);
 	}
@@ -455,11 +461,13 @@ transformListCompColumnRef(ParseState *pstate, ColumnRef *cref, char *varname)
 }
 
 static Node *
-scanRTEForVar(ParseState *pstate, Node *var, RangeTblEntry *rte, char *colname,
-			  int location)
+scanNSItemForVar(ParseState *pstate, ParseNamespaceItem *nsitem, char *colname,
+				 int location)
 {
+	RangeTblEntry *rte = nsitem->p_rte;
 	int			attrno;
 	ListCell   *lc;
+	Var* var = NULL;
 
 	attrno = 0;
 	foreach(lc, rte->eref->colnames)
@@ -471,20 +479,11 @@ scanRTEForVar(ParseState *pstate, Node *var, RangeTblEntry *rte, char *colname,
 		if (strcmp(colalias, colname) != 0)
 			continue;
 
-		if (var != NULL)
-		{
-			ereport(ERROR,
-					(errcode(ERRCODE_AMBIGUOUS_COLUMN),
-					 errmsg("variable reference \"%s\" is ambiguous", colname),
-					 parser_errposition(pstate, location)));
-			return NULL;
-		}
-
-		var = (Node *) make_var(pstate, rte, attrno, location);
+		var = make_var(pstate, nsitem, attrno, location);
 		markVarForSelectPriv(pstate, (Var *) var, rte);
 	}
 
-	return var;
+	return (Node *) var;
 }
 
 static Node *
@@ -529,9 +528,9 @@ transformFields(ParseState *pstate, Node *basenode, List *fields, int location)
 		{
 			ereport(ERROR,
 					(errcode(ERRCODE_UNDEFINED_COLUMN),
-					 errmsg("attribute \"%s\" not found in type %s",
-							strVal(field), format_type_be(restype)),
-					 parser_errposition(pstate, location)));
+							errmsg("attribute \"%s\" not found in type %s",
+								   strVal(field), format_type_be(restype)),
+							parser_errposition(pstate, location)));
 			return NULL;
 		}
 		restype = exprType(res);
@@ -585,9 +584,9 @@ filterAccessArg(ParseState *pstate, Node *expr, int location,
 		default:
 			ereport(ERROR,
 					(errcode(ERRCODE_DATATYPE_MISMATCH),
-					 errmsg("%s is expected but %s",
-							types, format_type_be(exprtype)),
-					 parser_errposition(pstate, location)));
+							errmsg("%s is expected but %s",
+								   types, format_type_be(exprtype)),
+							parser_errposition(pstate, location)));
 			return NULL;
 	}
 }
@@ -605,8 +604,8 @@ transformParamRef(ParseState *pstate, ParamRef *pref)
 	if (result == NULL)
 		ereport(ERROR,
 				(errcode(ERRCODE_UNDEFINED_PARAMETER),
-				 errmsg("there is no parameter $%d", pref->number),
-				 parser_errposition(pstate, pref->location)));
+						errmsg("there is no parameter $%d", pref->number),
+						parser_errposition(pstate, pref->location)));
 
 	return result;
 }
@@ -638,10 +637,10 @@ transformTypeCast(ParseState *pstate, TypeCast *tc)
 	if (node == NULL)
 		ereport(ERROR,
 				(errcode(ERRCODE_CANNOT_COERCE),
-				 errmsg("cannot cast type %s to %s",
-						format_type_be(ityp),
-						format_type_be(otyp)),
-				 parser_coercion_errposition(pstate, loc, expr)));
+						errmsg("cannot cast type %s to %s",
+							   format_type_be(ityp),
+							   format_type_be(otyp)),
+						parser_coercion_errposition(pstate, loc, expr)));
 
 	return node;
 }
@@ -880,7 +879,7 @@ transformFuncCall(ParseState *pstate, FuncCall *fn)
 			fn->funcname = list_make1(makeString("stddev_samp"));
 		else if (strcmp(funcname, "stdevp") == 0)
 			fn->funcname = list_make1(makeString("stddev_pop"));
-		/* translate log() into ln() for cypher queries */
+			/* translate log() into ln() for cypher queries */
 		else if (strcmp(funcname, "log") == 0)
 			fn->funcname = list_make1(makeString("ln"));
 	}
@@ -910,9 +909,9 @@ preprocess_func_args(ParseState *pstate, FuncCall *fn)
 	if (list_length(fn->args) > FUNC_MAX_ARGS)
 		ereport(ERROR,
 				(errcode(ERRCODE_TOO_MANY_ARGUMENTS),
-				 errmsg("cannot pass more than %d arguments to a function",
-						FUNC_MAX_ARGS),
-				 parser_errposition(pstate, fn->location)));
+						errmsg("cannot pass more than %d arguments to a function",
+							   FUNC_MAX_ARGS),
+						parser_errposition(pstate, fn->location)));
 
 	Assert(fn->agg_filter == NULL && !fn->agg_within_group);
 
@@ -986,12 +985,12 @@ preprocess_func_args(ParseState *pstate, FuncCall *fn)
 	{
 		ereport(ERROR,
 				(errcode(ERRCODE_UNDEFINED_FUNCTION),
-				 errmsg("function %s does not exist",
-						func_signature_string(fn->funcname, nargs, NIL,
-											  argtypes)),
-				 errhint("No function matches the given name and argument types. "
-						 "You might need to add explicit type casts."),
-				 parser_errposition(pstate, fn->location)));
+						errmsg("function %s does not exist",
+							   func_signature_string(fn->funcname, nargs, NIL,
+													 argtypes)),
+						errhint("No function matches the given name and argument types. "
+								"You might need to add explicit type casts."),
+						parser_errposition(pstate, fn->location)));
 		return NIL;
 	}
 
@@ -1066,12 +1065,12 @@ func_get_best_candidate(ParseState *pstate, FuncCall *fn, int nargs,
 		{
 			ereport(ERROR,
 					(errcode(ERRCODE_AMBIGUOUS_FUNCTION),
-					 errmsg("function %s is not unique",
-							func_signature_string(fn->funcname, nargs, NIL,
-												  argtypes)),
-					 errhint("Could not choose a best candidate function. "
-							 "You might need to add explicit type casts."),
-					 parser_errposition(pstate, fn->location)));
+							errmsg("function %s is not unique",
+								   func_signature_string(fn->funcname, nargs, NIL,
+														 argtypes)),
+							errhint("Could not choose a best candidate function. "
+									"You might need to add explicit type casts."),
+							parser_errposition(pstate, fn->location)));
 			return NULL;
 		}
 	}
@@ -1586,9 +1585,9 @@ transformIndirection(ParseState *pstate, A_Indirection *indir)
 			{
 				ereport(ERROR,
 						(errcode(ERRCODE_UNDEFINED_COLUMN),
-						 errmsg("column \"%s\" not found in data type %s",
-								strVal(i), format_type_be(restype)),
-						 parser_errposition(pstate, location)));
+								errmsg("column \"%s\" not found in data type %s",
+									   strVal(i), format_type_be(restype)),
+								parser_errposition(pstate, location)));
 				return NULL;
 			}
 		}
@@ -1706,8 +1705,8 @@ makeArrayIndex(ParseState *pstate, Node *idx, bool exclusive)
 	{
 		ereport(ERROR,
 				(errcode(ERRCODE_DATATYPE_MISMATCH),
-				 errmsg("array subscript must have type integer"),
-				 parser_errposition(pstate, exprLocation(idxexpr))));
+						errmsg("array subscript must have type integer"),
+						parser_errposition(pstate, exprLocation(idxexpr))));
 		return NULL;
 	}
 
@@ -1779,7 +1778,7 @@ transformAExprOp(ParseState *pstate, A_Expr *a)
 		{
 			if (ltype == JSONBOID || rtype == JSONBOID ||
 				!OidIsValid(LookupOperName(pstate, a->name, ltype, rtype,
-							true, a->location)))
+										   true, a->location)))
 			{
 				char	   *newopname;
 
@@ -1794,11 +1793,11 @@ transformAExprOp(ParseState *pstate, A_Expr *a)
 			}
 		}
 		else if (strcmp(opname, "=") == 0 ||
-			strcmp(opname, "<>") == 0 ||
-			strcmp(opname, "<") == 0 ||
-			strcmp(opname, ">") == 0 ||
-			strcmp(opname, "<=") == 0 ||
-			strcmp(opname, ">=") == 0)
+				 strcmp(opname, "<>") == 0 ||
+				 strcmp(opname, "<") == 0 ||
+				 strcmp(opname, ">") == 0 ||
+				 strcmp(opname, "<=") == 0 ||
+				 strcmp(opname, ">=") == 0)
 		{
 			if (ltype != InvalidOid && rtype == UNKNOWNOID)
 				rtype = ltype;
@@ -1811,7 +1810,7 @@ transformAExprOp(ParseState *pstate, A_Expr *a)
 
 			if (ltype == JSONBOID || rtype == JSONBOID ||
 				!OidIsValid(LookupOperName(pstate, a->name, ltype, rtype,
-							true, a->location)))
+										   true, a->location)))
 			{
 				l = coerce_to_jsonb(pstate, l, "jsonb");
 				r = coerce_to_jsonb(pstate, r, "jsonb");
@@ -1866,9 +1865,9 @@ transformAExprIn(ParseState *pstate, A_Expr *a)
 		default:
 			ereport(ERROR,
 					(errcode(ERRCODE_DATATYPE_MISMATCH),
-					 errmsg("CypherList is expected but %s",
-							format_type_be(exprType(rexpr))),
-					 parser_errposition(pstate, exprLocation(a->rexpr))));
+							errmsg("CypherList is expected but %s",
+								   format_type_be(exprType(rexpr))),
+							parser_errposition(pstate, exprLocation(a->rexpr))));
 			break;
 	}
 
@@ -2062,8 +2061,8 @@ coerce_expr(ParseState *pstate, Node *expr, Oid ityp, Oid otyp, int32 otypmod,
 			{
 				ereport(ERROR,
 						(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-						 errmsg("cannot cast type jsonb to %s",
-						 format_type_be(otyp))));
+								errmsg("cannot cast type jsonb to %s",
+									   format_type_be(otyp))));
 				return NULL;
 			}
 
@@ -2223,8 +2222,8 @@ coerce_to_jsonb(ParseState *pstate, Node *expr, const char *targetname)
 	{
 		ereport(ERROR,
 				(errcode(ERRCODE_DATATYPE_MISMATCH),
-				 errmsg("graph object cannot be %s", targetname),
-				 parser_errposition(pstate, exprLocation(expr))));
+						errmsg("graph object cannot be %s", targetname),
+						parser_errposition(pstate, exprLocation(expr))));
 		return NULL;
 	}
 
@@ -2311,9 +2310,9 @@ transformCypherMapForSet(ParseState *pstate, Node *expr, List **pathelems,
 	{
 		ereport(ERROR,
 				(errcode(ERRCODE_DATATYPE_MISMATCH),
-				 errmsg("vertex or edge is expected but %s",
-						format_type_be(elemtype)),
-				 parser_errposition(pstate, exprLocation(aelem))));
+						errmsg("vertex or edge is expected but %s",
+							   format_type_be(elemtype)),
+						parser_errposition(pstate, exprLocation(aelem))));
 		return NULL;
 	}
 
@@ -2340,8 +2339,8 @@ transformCypherMapForSet(ParseState *pstate, Node *expr, List **pathelems,
 	{
 		ereport(ERROR,
 				(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-				 errmsg("Only direct variable reference is supported"),
-				 parser_errposition(pstate, exprLocation(aelem))));
+						errmsg("Only direct variable reference is supported"),
+						parser_errposition(pstate, exprLocation(aelem))));
 		return NULL;
 	}
 
@@ -2373,7 +2372,7 @@ transformCypherMapForSet(ParseState *pstate, Node *expr, List **pathelems,
 			{
 				ereport(ERROR,
 						(errcode(ERRCODE_SYNTAX_ERROR),
-						 errmsg("list slicing on LHS of SET is invalid")));
+								errmsg("list slicing on LHS of SET is invalid")));
 				return NULL;
 			}
 
@@ -2385,9 +2384,9 @@ transformCypherMapForSet(ParseState *pstate, Node *expr, List **pathelems,
 			{
 				ereport(ERROR,
 						(errcode(ERRCODE_DATATYPE_MISMATCH),
-						 errmsg("path element must be text"),
-						 parser_errposition(pstate,
-										exprLocation((Node *) cind->uidx))));
+								errmsg("path element must be text"),
+								parser_errposition(pstate,
+												   exprLocation((Node *) cind->uidx))));
 				return NULL;
 			}
 
@@ -2426,10 +2425,10 @@ coerce_cypher_arg_to_boolean(ParseState *pstate, Node *node,
 		{
 			ereport(ERROR,
 					(errcode(ERRCODE_DATATYPE_MISMATCH),
-			/* translator: first %s is name of a SQL construct, eg WHERE */
-					 errmsg("argument of %s must be type %s, not type %s",
-							constructName, "boolean",
-							format_type_be(inputTypeId)),
+							/* translator: first %s is name of a SQL construct, eg WHERE */
+							errmsg("argument of %s must be type %s, not type %s",
+								   constructName, "boolean",
+								   format_type_be(inputTypeId)),
 							parser_errposition(pstate, exprLocation(node))));
 		}
 		node = newnode;
@@ -2439,9 +2438,9 @@ coerce_cypher_arg_to_boolean(ParseState *pstate, Node *node,
 	{
 		ereport(ERROR,
 				(errcode(ERRCODE_DATATYPE_MISMATCH),
-		/* translator: %s is name of a SQL construct, eg WHERE */
-				 errmsg("argument of %s must not return a set",
-						constructName),
+						/* translator: %s is name of a SQL construct, eg WHERE */
+						errmsg("argument of %s must not return a set",
+							   constructName),
 						parser_errposition(pstate, exprLocation(node))));
 	}
 
@@ -2485,9 +2484,9 @@ transformCypherLimit(ParseState *pstate, Node *clause,
 	{
 		ereport(ERROR,
 				(errcode(ERRCODE_INVALID_COLUMN_REFERENCE),
-				 errmsg("argument of %s must not contain variables",
-						constructName),
-				 parser_errposition(pstate, locate_var_of_level(qual, 0))));
+						errmsg("argument of %s must not contain variables",
+							   constructName),
+						parser_errposition(pstate, locate_var_of_level(qual, 0))));
 	}
 
 	return qual;
@@ -2649,8 +2648,8 @@ transformA_Star(ParseState *pstate, int location)
 	if (!visible)
 		ereport(ERROR,
 				(errcode(ERRCODE_SYNTAX_ERROR),
-				 errmsg("RETURN * with no accessible variables is invalid"),
-				 parser_errposition(pstate, location)));
+						errmsg("RETURN * with no accessible variables is invalid"),
+						parser_errposition(pstate, location)));
 
 	return targets;
 }

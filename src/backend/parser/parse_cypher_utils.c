@@ -17,6 +17,10 @@
 #include "utils/lsyscache.h"
 #include "utils/syscache.h"
 #include "parser/parsetree.h"
+#include "catalog/heap.h"
+
+static int GetSubLevelsUpByNSItem(ParseState *pstate,
+								  ParseNamespaceItem *nsitem);
 
 Node *makeJsonbFuncAccessor(ParseState *pstate, Node *expr, List *path)
 {
@@ -138,64 +142,45 @@ genUniqueName(void)
 }
 
 void
-makeExtraFromRTE(ParseState *pstate, RangeTblEntry *rte, RangeTblRef **rtr,
-				 ParseNamespaceItem **nsitem, bool visible)
+makeExtraFromNSItem(ParseNamespaceItem *nsitem, RangeTblRef **rtr,
+					bool visible)
 {
-	int			rtindex;
-
-	/*
-	 * Most callers have just added the RTE to the rangetable, so it's likely
-	 * to be the last entry.  Hence, it's a good idea to search the rangetable
-	 * back-to-front.
-	 */
-	for (rtindex = list_length(pstate->p_rtable); rtindex > 0; rtindex--)
-	{
-		if (rte == rt_fetch(rtindex, pstate->p_rtable))
-			break;
-	}
-	if (rtindex <= 0)
-		elog(ERROR, "RTE not found (internal error)");
-
 	if (rtr != NULL)
 	{
 		RangeTblRef *_rtr;
 
 		_rtr = makeNode(RangeTblRef);
-		_rtr->rtindex = rtindex;
+		_rtr->rtindex = nsitem->p_rtindex;
 
 		*rtr = _rtr;
 	}
 
 	if (nsitem != NULL)
 	{
-		ParseNamespaceItem *_nsitem;
-
-		_nsitem = (ParseNamespaceItem *) palloc(sizeof(ParseNamespaceItem));
-		_nsitem->p_rtindex = rtindex;
-		_nsitem->p_rte = rte;
-		_nsitem->p_rel_visible = visible;
-		_nsitem->p_cols_visible = visible;
-		_nsitem->p_lateral_only = false;
-		_nsitem->p_lateral_ok = true;
-
-		*nsitem = _nsitem;
+		nsitem->p_rel_visible = visible;
+		nsitem->p_cols_visible = visible;
+		nsitem->p_lateral_only = false;
+		nsitem->p_lateral_ok = true;
 	}
 }
 
 void
-addRTEtoJoinlist(ParseState *pstate, RangeTblEntry *rte, bool visible)
+addNSItemToJoinlist(ParseState *pstate, ParseNamespaceItem *nsitem,
+					bool visible)
 {
 	ParseNamespaceItem *conflict_nsitem;
 	RangeTblRef *rtr;
-	ParseNamespaceItem *nsitem;
 	/*
 	 * There should be no namespace conflicts because we check a variable
 	 * (which becomes an alias) is duplicated. This check remains to prevent
 	 * future programming error.
 	 */
-	conflict_nsitem = scanNameSpaceForRefname(pstate, rte->eref->aliasname, -1);
+	conflict_nsitem = scanNameSpaceForRefname(pstate,
+											  nsitem->p_rte->eref->aliasname,
+											  -1);
 	if (conflict_nsitem != NULL)
 	{
+		RangeTblEntry *rte = nsitem->p_rte;
 		RangeTblEntry *tmp = conflict_nsitem->p_rte;
 		if (!(rte->rtekind == RTE_RELATION && rte->alias == NULL &&
 			  tmp->rtekind == RTE_RELATION && tmp->alias == NULL &&
@@ -206,7 +191,7 @@ addRTEtoJoinlist(ParseState *pstate, RangeTblEntry *rte, bool visible)
 								   rte->eref->aliasname)));
 	}
 
-	makeExtraFromRTE(pstate, rte, &rtr, &nsitem, visible);
+	makeExtraFromNSItem(nsitem, &rtr, visible);
 	pstate->p_joinlist = lappend(pstate->p_joinlist, rtr);
 	pstate->p_namespace = lappend(pstate->p_namespace, nsitem);
 }
@@ -217,52 +202,65 @@ addRTEtoJoinlist(ParseState *pstate, RangeTblEntry *rte, bool visible)
  *		Build a Var node for an attribute identified by RTE and attrno
  */
 Var *
-make_var(ParseState *pstate, RangeTblEntry *rte, int attrno, int location)
+make_var(ParseState *pstate, ParseNamespaceItem *nsitem, AttrNumber attnum,
+		 int location)
 {
 	Var		   *result;
-	int			vnum,
-			sublevels_up;
-	Oid			vartypeid;
-	int32		type_mod;
-	Oid			varcollid;
+	int			sublevels_up = GetSubLevelsUpByNSItem(pstate, nsitem);
 
-	vnum = RTERangeTablePosn(pstate, rte, &sublevels_up);
-	get_rte_attribute_type(rte, attrno, &vartypeid, &type_mod, &varcollid);
-	result = makeVar(vnum, attrno, vartypeid, type_mod, varcollid, sublevels_up);
+	if (attnum > InvalidAttrNumber)
+	{
+		/* Get attribute data from the ParseNamespaceColumn array */
+		ParseNamespaceColumn *nscol = &nsitem->p_nscolumns[attnum - 1];
+
+		/* Complain if dropped column.  See notes in scanRTEForColumn. */
+		if (nscol->p_varno == 0)
+			ereport(ERROR,
+					(errcode(ERRCODE_UNDEFINED_COLUMN),
+							errmsg("column of relation \"%s\" does not exist",
+								   nsitem->p_rte->eref->aliasname)));
+
+		result = makeVar(nsitem->p_rtindex,
+						 attnum,
+						 nscol->p_vartype,
+						 nscol->p_vartypmod,
+						 nscol->p_varcollid,
+						 sublevels_up);
+	}
+	else
+	{
+		/* System column, so use predetermined type data */
+		const FormData_pg_attribute *sysatt;
+
+		sysatt = SystemAttributeDefinition(attnum);
+		result = makeVar(nsitem->p_rtindex,
+						 attnum,
+						 sysatt->atttypid,
+						 sysatt->atttypmod,
+						 sysatt->attcollation,
+						 sublevels_up);
+	}
 	result->location = location;
 	return result;
 }
 
-/*
- * RTERangeTablePosn - Copy from a previous version of PG.
- *		given an RTE, return RT index (starting with 1) of the entry,
- *		and optionally get its nesting depth (0 = current).  If sublevels_up
- *		is NULL, only consider rels at the current nesting level.
- *		Raises error if RTE not found.
- */
-int
-RTERangeTablePosn(ParseState *pstate, RangeTblEntry *rte, int *sublevels_up)
+static int
+GetSubLevelsUpByNSItem(ParseState *pstate, ParseNamespaceItem *nsitem)
 {
-	int			index;
-	ListCell   *l;
-
-	if (sublevels_up)
-		*sublevels_up = 0;
+	int sublevels_up = 0;
 
 	while (pstate != NULL)
 	{
-		index = 1;
-		foreach(l, pstate->p_rtable)
+		int rtable_length = list_length(pstate->p_rtable);
+
+		if (rtable_length >= nsitem->p_rtindex)
 		{
-			if (rte == (RangeTblEntry *) lfirst(l))
-				return index;
-			index++;
+			if (nsitem->p_rte == rt_fetch(nsitem->p_rtindex, pstate->p_rtable))
+				return sublevels_up;
 		}
+
 		pstate = pstate->parentParseState;
-		if (sublevels_up)
-			(*sublevels_up)++;
-		else
-			break;
+		sublevels_up++;
 	}
 
 	elog(ERROR, "RTE not found (internal error)");

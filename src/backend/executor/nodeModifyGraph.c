@@ -245,12 +245,14 @@ ExecInitModifyGraph(ModifyGraph *mgplan, EState *estate, int eflags)
 			 */
 			if (build_new_range_table)
 			{
-				RangeTblEntry *our_rte = addRangeTableEntryForRelation(pstate,
-																	   relation,
-																	   AccessShareLock,
-																	   NULL,
-																	   false,
-																	   false);
+				ParseNamespaceItem *our_nsitem = addRangeTableEntryForRelation
+						(pstate,
+						 relation,
+						 AccessShareLock,
+						 NULL,
+						 false,
+						 false);
+				RangeTblEntry *our_rte = our_nsitem->p_rte;
 
 				/*
 				 * remove the cell containing the RTE from pstate and reset
@@ -274,6 +276,7 @@ ExecInitModifyGraph(ModifyGraph *mgplan, EState *estate, int eflags)
 					mgplan->ert_rtes_added = 1;
 				else
 					mgplan->ert_rtes_added++;
+				pfree(our_nsitem);
 			}
 
 			/*
