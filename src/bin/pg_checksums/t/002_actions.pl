@@ -5,7 +5,7 @@ use strict;
 use warnings;
 use PostgresNode;
 use TestLib;
-use Test::More tests => 62;
+use Test::More tests => 63;
 
 
 # Utility routine to create and check a table with corrupted checksums
@@ -111,7 +111,9 @@ append_to_file "$pgdata/global/99999_vm.123",   "";
 # should be ignored by the scan.
 append_to_file "$pgdata/global/pgsql_tmp_123", "foo";
 mkdir "$pgdata/global/pgsql_tmp";
-append_to_file "$pgdata/global/pgsql_tmp/1.1", "foo";
+append_to_file "$pgdata/global/pgsql_tmp/1.1",        "foo";
+append_to_file "$pgdata/global/pg_internal.init",     "foo";
+append_to_file "$pgdata/global/pg_internal.init.123", "foo";
 
 # Enable checksums.
 command_ok([ 'pg_checksums', '--enable', '--no-sync', '-D', $pgdata ],
@@ -214,6 +216,13 @@ sub fail_corrupt
 
 # Stop instance for the follow-up checks.
 $node->stop;
+
+# Create a fake tablespace location that should not be scanned
+# when verifying checksums.
+mkdir "$tablespace_dir/PG_99_999999991/";
+append_to_file "$tablespace_dir/PG_99_999999991/foo", "123";
+command_ok([ 'pg_checksums', '--check', '-D', $pgdata ],
+	"succeeds with foreign tablespace");
 
 # Authorized relation files filled with corrupted data cause the
 # checksum checks to fail.  Make sure to use file names different

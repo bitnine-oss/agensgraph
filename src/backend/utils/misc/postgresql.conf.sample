@@ -154,7 +154,7 @@
 
 # - Kernel Resources -
 
-#max_files_per_process = 1000		# min 25
+#max_files_per_process = 1000		# min 64
 					# (change requires restart)
 
 # - Cost-Based Vacuum Delay -

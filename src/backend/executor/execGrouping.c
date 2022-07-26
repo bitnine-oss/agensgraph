@@ -3,10 +3,6 @@
  * execGrouping.c
  *	  executor utility routines for grouping, hashing, and aggregation
  *
- * Note: we currently assume that equality and hashing functions are not
- * collation-sensitive, so the code in this file has no support for passing
- * collation settings through from callers.  That may have to change someday.
- *
  * Portions Copyright (c) 1996-2020, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
@@ -19,17 +15,18 @@
 #include "postgres.h"
 
 #include "access/parallel.h"
+#include "common/hashfn.h"
 #include "executor/executor.h"
 #include "miscadmin.h"
-#include "utils/hashutils.h"
 #include "utils/lsyscache.h"
 #include "utils/memutils.h"
 
 static int	TupleHashTableMatch(struct tuplehash_hash *tb, const MinimalTuple tuple1, const MinimalTuple tuple2);
 static uint32 TupleHashTableHash_internal(struct tuplehash_hash *tb,
 										  const MinimalTuple tuple);
-static TupleHashEntry LookupTupleHashEntry_internal(
-	TupleHashTable hashtable, TupleTableSlot *slot, bool *isnew, uint32 hash);
+static TupleHashEntry LookupTupleHashEntry_internal(TupleHashTable hashtable,
+													TupleTableSlot *slot,
+													bool *isnew, uint32 hash);
 
 /*
  * Define parameters for tuple hash table code generation. The interface is

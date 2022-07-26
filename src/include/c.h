@@ -64,9 +64,7 @@
 #ifdef HAVE_STRINGS_H
 #include <strings.h>
 #endif
-#ifdef HAVE_STDINT_H
 #include <stdint.h>
-#endif
 #include <sys/types.h>
 #include <errno.h>
 #if defined(WIN32) || defined(__CYGWIN__)
@@ -267,6 +265,16 @@
 #define dummyret	char
 #endif
 
+/*
+ * We require C99, hence the compiler should understand flexible array
+ * members.  However, for documentation purposes we still consider it to be
+ * project style to write "field[FLEXIBLE_ARRAY_MEMBER]" not just "field[]".
+ * When computing the size of such an object, use "offsetof(struct s, f)"
+ * for portability.  Don't use "offsetof(struct s, f[0])", as this doesn't
+ * work with MSVC and with C++ compilers.
+ */
+#define FLEXIBLE_ARRAY_MEMBER	/* empty */
+
 /* Which __func__ symbol do we have, if any? */
 #ifdef HAVE_FUNCNAME__FUNC
 #define PG_FUNCNAME_MACRO	__func__
@@ -429,8 +437,8 @@ typedef unsigned PG_INT128_TYPE uint128
 #endif
 
 /*
- * stdint.h limits aren't guaranteed to be present and aren't guaranteed to
- * have compatible types with our fixed width types. So just define our own.
+ * stdint.h limits aren't guaranteed to have compatible types with our fixed
+ * width types. So just define our own.
  */
 #define PG_INT8_MIN		(-0x7F-1)
 #define PG_INT8_MAX		(0x7F)
@@ -444,15 +452,6 @@ typedef unsigned PG_INT128_TYPE uint128
 #define PG_INT64_MIN	(-INT64CONST(0x7FFFFFFFFFFFFFFF) - 1)
 #define PG_INT64_MAX	INT64CONST(0x7FFFFFFFFFFFFFFF)
 #define PG_UINT64_MAX	UINT64CONST(0xFFFFFFFFFFFFFFFF)
-
-/* Max value of size_t might also be missing if we don't have stdint.h */
-#ifndef SIZE_MAX
-#if SIZEOF_SIZE_T == 8
-#define SIZE_MAX PG_UINT64_MAX
-#else
-#define SIZE_MAX PG_UINT32_MAX
-#endif
-#endif
 
 /*
  * We now always use int64 timestamps, but keep this symbol defined for the
@@ -1270,10 +1269,6 @@ extern long long strtoll(const char *str, char **endptr, int base);
 
 #if defined(HAVE_STRTOULL) && !HAVE_DECL_STRTOULL
 extern unsigned long long strtoull(const char *str, char **endptr, int base);
-#endif
-
-#if !defined(HAVE_MEMMOVE) && !defined(memmove)
-#define memmove(d, s, c)		bcopy(s, d, c)
 #endif
 
 /* no special DLL markers on most ports */

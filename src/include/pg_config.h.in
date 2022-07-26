@@ -73,15 +73,6 @@
    (--enable-thread-safety) */
 #undef ENABLE_THREAD_SAFETY
 
-/* Define to nothing if C supports flexible array members, and to 1 if it does
-   not. That way, with a declaration like `struct s { int n; double
-   d[FLEXIBLE_ARRAY_MEMBER]; };', the struct hack can be used with pre-C99
-   compilers. When computing the size of such an object, don't use 'sizeof
-   (struct s)' as it overestimates the size. Use 'offsetof (struct s, d)'
-   instead. Don't use 'offsetof (struct s, d[0])', as this doesn't work with
-   MSVC and with C++ compilers. */
-#undef FLEXIBLE_ARRAY_MEMBER
-
 /* Define to 1 if gettimeofday() takes only 1 argument. */
 #undef GETTIMEOFDAY_1ARG
 
@@ -109,12 +100,6 @@
 
 /* Define to 1 if you have the `BIO_meth_new' function. */
 #undef HAVE_BIO_METH_NEW
-
-/* Define to 1 if you have the `cbrt' function. */
-#undef HAVE_CBRT
-
-/* Define to 1 if you have the `class' function. */
-#undef HAVE_CLASS
 
 /* Define to 1 if you have the `clock_gettime' function. */
 #undef HAVE_CLOCK_GETTIME
@@ -215,18 +200,6 @@
 /* Define to 1 if you have the `fls' function. */
 #undef HAVE_FLS
 
-/* Define to 1 if you have the `fpclass' function. */
-#undef HAVE_FPCLASS
-
-/* Define to 1 if you have the `fp_class' function. */
-#undef HAVE_FP_CLASS
-
-/* Define to 1 if you have the `fp_class_d' function. */
-#undef HAVE_FP_CLASS_D
-
-/* Define to 1 if you have the <fp_class.h> header file. */
-#undef HAVE_FP_CLASS_H
-
 /* Define to 1 if fseeko (and presumably ftello) exists and is declared. */
 #undef HAVE_FSEEKO
 
@@ -304,9 +277,6 @@
 /* Define to 1 if you have the `history_truncate_file' function. */
 #undef HAVE_HISTORY_TRUNCATE_FILE
 
-/* Define to 1 if you have the <ieeefp.h> header file. */
-#undef HAVE_IEEEFP_H
-
 /* Define to 1 if you have the <ifaddrs.h> header file. */
 #undef HAVE_IFADDRS_H
 
@@ -318,9 +288,6 @@
 
 /* Define to 1 if the system has the type `int8'. */
 #undef HAVE_INT8
-
-/* Define to 1 if the system has the type `intptr_t'. */
-#undef HAVE_INTPTR_T
 
 /* Define to 1 if you have the <inttypes.h> header file. */
 #undef HAVE_INTTYPES_H
@@ -336,9 +303,6 @@
 
 /* Define to 1 if you have support for IPv6. */
 #undef HAVE_IPV6
-
-/* Define to 1 if you have isinf(). */
-#undef HAVE_ISINF
 
 /* Define to 1 if __builtin_constant_p(x) implies "i"(x) acceptance. */
 #undef HAVE_I_CONSTRAINT__BUILTIN_CONSTANT_P
@@ -405,9 +369,6 @@
 
 /* Define to 1 if you have the `mbstowcs_l' function. */
 #undef HAVE_MBSTOWCS_L
-
-/* Define to 1 if you have the `memmove' function. */
-#undef HAVE_MEMMOVE
 
 /* Define to 1 if you have the <memory.h> header file. */
 #undef HAVE_MEMORY_H
@@ -489,9 +450,6 @@
 
 /* Define to 1 if you have the `readlink' function. */
 #undef HAVE_READLINK
-
-/* Define to 1 if you have the `rint' function. */
-#undef HAVE_RINT
 
 /* Define to 1 if you have the global variable
    'rl_completion_append_character'. */
@@ -689,9 +647,6 @@
 /* Define to 1 if the system has the type `uint8'. */
 #undef HAVE_UINT8
 
-/* Define to 1 if the system has the type `uintptr_t'. */
-#undef HAVE_UINTPTR_T
-
 /* Define to 1 if the system has the type `union semun'. */
 #undef HAVE_UNION_SEMUN
 
@@ -707,15 +662,6 @@
 /* Define to 1 if you have the `uselocale' function. */
 #undef HAVE_USELOCALE
 
-/* Define to 1 if you have the `utime' function. */
-#undef HAVE_UTIME
-
-/* Define to 1 if you have the `utimes' function. */
-#undef HAVE_UTIMES
-
-/* Define to 1 if you have the <utime.h> header file. */
-#undef HAVE_UTIME_H
-
 /* Define to 1 if you have BSD UUID support. */
 #undef HAVE_UUID_BSD
 
@@ -730,9 +676,6 @@
 
 /* Define to 1 if you have the <uuid/uuid.h> header file. */
 #undef HAVE_UUID_UUID_H
-
-/* Define to 1 if you have the <wchar.h> header file. */
-#undef HAVE_WCHAR_H
 
 /* Define to 1 if you have the `wcstombs_l' function. */
 #undef HAVE_WCSTOMBS_L
@@ -1015,10 +958,6 @@
 #undef inline
 #endif
 
-/* Define to the type of a signed integer type wide enough to hold a pointer,
-   if such a type exists, and if the system does not define it. */
-#undef intptr_t
-
 /* Define to keyword to use for C99 restrict support, or to nothing if not
    supported */
 #undef pg_restrict
@@ -1037,12 +976,5 @@
 # define __restrict__
 #endif
 
-/* Define to empty if the C compiler does not understand signed types. */
-#undef signed
-
 /* Define to how the compiler spells `typeof'. */
 #undef typeof
-
-/* Define to the type of an unsigned integer type wide enough to hold a
-   pointer, if such a type exists, and if the system does not define it. */
-#undef uintptr_t

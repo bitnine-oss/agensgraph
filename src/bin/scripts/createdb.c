@@ -176,6 +176,13 @@ main(int argc, char *argv[])
 			dbname = get_user_name_or_exit(progname);
 	}
 
+	/* No point in trying to use postgres db when creating postgres db. */
+	if (maintenance_db == NULL && strcmp(dbname, "postgres") == 0)
+		maintenance_db = "template1";
+
+	conn = connectMaintenanceDatabase(maintenance_db, host, port, username,
+									  prompt_password, progname, echo);
+
 	initPQExpBuffer(&sql);
 
 	appendPQExpBuffer(&sql, "CREATE DATABASE %s",
@@ -186,22 +193,24 @@ main(int argc, char *argv[])
 	if (tablespace)
 		appendPQExpBuffer(&sql, " TABLESPACE %s", fmtId(tablespace));
 	if (encoding)
-		appendPQExpBuffer(&sql, " ENCODING '%s'", encoding);
+	{
+		appendPQExpBufferStr(&sql, " ENCODING ");
+		appendStringLiteralConn(&sql, encoding, conn);
+	}
 	if (template)
 		appendPQExpBuffer(&sql, " TEMPLATE %s", fmtId(template));
 	if (lc_collate)
-		appendPQExpBuffer(&sql, " LC_COLLATE '%s'", lc_collate);
+	{
+		appendPQExpBufferStr(&sql, " LC_COLLATE ");
+		appendStringLiteralConn(&sql, lc_collate, conn);
+	}
 	if (lc_ctype)
-		appendPQExpBuffer(&sql, " LC_CTYPE '%s'", lc_ctype);
+	{
+		appendPQExpBufferStr(&sql, " LC_CTYPE ");
+		appendStringLiteralConn(&sql, lc_ctype, conn);
+	}
 
 	appendPQExpBufferChar(&sql, ';');
-
-	/* No point in trying to use postgres db when creating postgres db. */
-	if (maintenance_db == NULL && strcmp(dbname, "postgres") == 0)
-		maintenance_db = "template1";
-
-	conn = connectMaintenanceDatabase(maintenance_db, host, port, username,
-									  prompt_password, progname, echo);
 
 	if (echo)
 		printf("%s\n", sql.data);
@@ -268,5 +277,6 @@ help(const char *progname)
 	printf(_("  -W, --password               force password prompt\n"));
 	printf(_("  --maintenance-db=DBNAME      alternate maintenance database\n"));
 	printf(_("\nBy default, a database with the same name as the current user is created.\n"));
-	printf(_("\nReport bugs to <pgsql-bugs@lists.postgresql.org>.\n"));
+	printf(_("\nReport bugs to <%s>.\n"), PACKAGE_BUGREPORT);
+	printf(_("%s home page: <%s>\n"), PACKAGE_NAME, PACKAGE_URL);
 }

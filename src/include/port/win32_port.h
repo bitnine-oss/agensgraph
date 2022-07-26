@@ -50,7 +50,6 @@
 #include <process.h>
 #include <signal.h>
 #include <direct.h>
-#include <sys/utime.h>			/* for non-unicode version */
 #undef near
 #include <sys/stat.h>			/* needed before sys/stat hacking below */
 
@@ -193,6 +192,7 @@ int			setitimer(int which, const struct itimerval *value, struct itimerval *oval
  * with 64-bit offsets.
  */
 #define pgoff_t __int64
+
 #ifdef _MSC_VER
 #define fseeko(stream, offset, origin) _fseeki64(stream, offset, origin)
 #define ftello(stream) _ftelli64(stream)

@@ -331,13 +331,9 @@ extern int	gettimeofday(struct timeval *tp, struct timezone *tzp);
  * When necessary, these routines are provided by files in src/port/.
  */
 
-/* WIN32 handled in port/win32_port.h */
-#ifndef WIN32
+/* Type to use with fseeko/ftello */
+#ifndef WIN32					/* WIN32 is handled in port/win32_port.h */
 #define pgoff_t off_t
-#ifdef __NetBSD__
-extern int	fseeko(FILE *stream, off_t offset, int whence);
-extern off_t ftello(FILE *stream);
-#endif
 #endif
 
 extern double pg_erand48(unsigned short xseed[3]);
@@ -349,11 +345,6 @@ extern void pg_srand48(long seed);
 extern int	fls(int mask);
 #endif
 
-#ifndef HAVE_FSEEKO
-#define fseeko(a, b, c) fseek(a, b, c)
-#define ftello(a)		ftell(a)
-#endif
-
 #ifndef HAVE_GETPEEREID
 /* On Windows, Perl might have incompatible definitions of uid_t and gid_t. */
 #ifndef PLPERL_HAVE_UID_GID
@@ -361,9 +352,6 @@ extern int	getpeereid(int sock, uid_t *uid, gid_t *gid);
 #endif
 #endif
 
-#ifndef HAVE_ISINF
-extern int	isinf(double x);
-#else
 /*
  * Glibc doesn't use the builtin for clang due to a *gcc* bug in a version
  * newer than the gcc compatibility clang claims to have. This would cause a
@@ -379,7 +367,6 @@ extern int	isinf(double x);
 #define isinf __builtin_isinf
 #endif							/* __has_builtin(isinf) */
 #endif							/* __clang__ && !__cplusplus */
-#endif							/* !HAVE_ISINF */
 
 #ifndef HAVE_EXPLICIT_BZERO
 extern void explicit_bzero(void *buf, size_t len);
@@ -396,10 +383,6 @@ extern float pg_strtof(const char *nptr, char **endptr);
 
 #ifndef HAVE_MKDTEMP
 extern char *mkdtemp(char *path);
-#endif
-
-#ifndef HAVE_RINT
-extern double rint(double x);
 #endif
 
 #ifndef HAVE_INET_ATON

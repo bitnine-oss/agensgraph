@@ -21,6 +21,7 @@
 #include "catalog/pg_inherits.h"
 #include "catalog/pg_type.h"
 #include "commands/tablecmds.h"
+#include "common/hashfn.h"
 #include "executor/executor.h"
 #include "miscadmin.h"
 #include "nodes/makefuncs.h"
@@ -32,7 +33,6 @@
 #include "utils/builtins.h"
 #include "utils/datum.h"
 #include "utils/fmgroids.h"
-#include "utils/hashutils.h"
 #include "utils/lsyscache.h"
 #include "utils/partcache.h"
 #include "utils/ruleutils.h"
@@ -789,6 +789,8 @@ partition_bounds_copy(PartitionBoundInfo src,
 	int			ndatums;
 	int			partnatts;
 	int			num_indexes;
+	bool		hash_part;
+	int			natts;
 
 	dest = (PartitionBoundInfo) palloc(sizeof(PartitionBoundInfoData));
 
@@ -819,16 +821,16 @@ partition_bounds_copy(PartitionBoundInfo src,
 	else
 		dest->kind = NULL;
 
+	/*
+	 * For hash partitioning, datums array will have two elements - modulus and
+	 * remainder.
+	 */
+	hash_part = (key->strategy == PARTITION_STRATEGY_HASH);
+	natts = hash_part ? 2 : partnatts;
+
 	for (i = 0; i < ndatums; i++)
 	{
 		int			j;
-
-		/*
-		 * For a corresponding to hash partition, datums array will have two
-		 * elements - modulus and remainder.
-		 */
-		bool		hash_part = (key->strategy == PARTITION_STRATEGY_HASH);
-		int			natts = hash_part ? 2 : partnatts;
 
 		dest->datums[i] = (Datum *) palloc(sizeof(Datum) * natts);
 

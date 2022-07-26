@@ -1013,6 +1013,9 @@
 { oid => '3255', descr => 'sort support',
   proname => 'bttextsortsupport', prorettype => 'void',
   proargtypes => 'internal', prosrc => 'bttextsortsupport' },
+{ oid => '8505', descr => 'equal image',
+  proname => 'btvarstrequalimage', prorettype => 'bool', proargtypes => 'oid',
+  prosrc => 'btvarstrequalimage' },
 { oid => '377', descr => 'less-equal-greater',
   proname => 'cash_cmp', proleakproof => 't', prorettype => 'int4',
   proargtypes => 'money money', prosrc => 'cash_cmp' },
@@ -8421,8 +8424,8 @@
   proname => 'uuid_hash_extended', prorettype => 'int8',
   proargtypes => 'uuid int8', prosrc => 'uuid_hash_extended' },
 { oid => '3432', descr => 'generate random UUID',
-  proname => 'gen_random_uuid', proleakproof => 't', prorettype => 'uuid',
-  proargtypes => '', prosrc => 'gen_random_uuid' },
+  proname => 'gen_random_uuid', proleakproof => 't', provolatile => 'v',
+  prorettype => 'uuid', proargtypes => '', prosrc => 'gen_random_uuid' },
 
 # pg_lsn
 { oid => '3229', descr => 'I/O',
@@ -9483,6 +9486,9 @@
 { oid => '3187', descr => 'less-equal-greater based on byte images',
   proname => 'btrecordimagecmp', prorettype => 'int4',
   proargtypes => 'record record', prosrc => 'btrecordimagecmp' },
+{ oid => '8506', descr => 'equal image',
+  proname => 'btequalimage', prorettype => 'bool', proargtypes => 'oid',
+  prosrc => 'btequalimage' },
 
 # Extensions
 { oid => '3082', descr => 'list available extensions',

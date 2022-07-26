@@ -585,7 +585,7 @@ PACKAGE_TARNAME='postgresql'
 PACKAGE_VERSION='13devel'
 PACKAGE_STRING='PostgreSQL 13devel'
 PACKAGE_BUGREPORT='pgsql-bugs@lists.postgresql.org'
-PACKAGE_URL=''
+PACKAGE_URL='https://www.postgresql.org/'
 
 ac_unique_file="src/backend/access/common/heaptuple.c"
 ac_default_prefix=/usr/local/pgsql
@@ -1600,6 +1600,7 @@ Use these variables to override the choices made by `configure' or to help
 it to find libraries and programs with nonstandard names/locations.
 
 Report bugs to <pgsql-bugs@lists.postgresql.org>.
+PostgreSQL home page: <https://www.postgresql.org/>.
 _ACEOF
 ac_status=$?
 fi
@@ -12783,7 +12784,7 @@ $as_echo "#define HAVE_STDBOOL_H 1" >>confdefs.h
 fi
 
 
-for ac_header in atomic.h copyfile.h execinfo.h fp_class.h getopt.h ieeefp.h ifaddrs.h langinfo.h mbarrier.h poll.h sys/epoll.h sys/event.h sys/ipc.h sys/prctl.h sys/procctl.h sys/pstat.h sys/resource.h sys/select.h sys/sem.h sys/shm.h sys/sockio.h sys/tas.h sys/un.h termios.h ucred.h utime.h wchar.h wctype.h
+for ac_header in atomic.h copyfile.h execinfo.h getopt.h ifaddrs.h langinfo.h mbarrier.h poll.h sys/epoll.h sys/event.h sys/ipc.h sys/prctl.h sys/procctl.h sys/pstat.h sys/resource.h sys/select.h sys/sem.h sys/shm.h sys/sockio.h sys/tas.h sys/un.h termios.h ucred.h wctype.h
 do :
   as_ac_Header=`$as_echo "ac_cv_header_$ac_header" | $as_tr_sh`
 ac_fn_c_check_header_mongrel "$LINENO" "$ac_header" "$as_ac_Header" "$ac_includes_default"
@@ -13715,78 +13716,6 @@ cat >>confdefs.h <<_ACEOF
 _ACEOF
 
 
-
-  { $as_echo "$as_me:${as_lineno-$LINENO}: checking for flexible array members" >&5
-$as_echo_n "checking for flexible array members... " >&6; }
-if ${ac_cv_c_flexmember+:} false; then :
-  $as_echo_n "(cached) " >&6
-else
-  cat confdefs.h - <<_ACEOF >conftest.$ac_ext
-/* end confdefs.h.  */
-#include <stdlib.h>
-	    #include <stdio.h>
-	    #include <stddef.h>
-	    struct s { int n; double d[]; };
-int
-main ()
-{
-int m = getchar ();
-	    struct s *p = malloc (offsetof (struct s, d)
-				  + m * sizeof (double));
-	    p->d[0] = 0.0;
-	    return p->d != (double *) NULL;
-  ;
-  return 0;
-}
-_ACEOF
-if ac_fn_c_try_compile "$LINENO"; then :
-  ac_cv_c_flexmember=yes
-else
-  ac_cv_c_flexmember=no
-fi
-rm -f core conftest.err conftest.$ac_objext conftest.$ac_ext
-fi
-{ $as_echo "$as_me:${as_lineno-$LINENO}: result: $ac_cv_c_flexmember" >&5
-$as_echo "$ac_cv_c_flexmember" >&6; }
-  if test $ac_cv_c_flexmember = yes; then
-
-$as_echo "#define FLEXIBLE_ARRAY_MEMBER /**/" >>confdefs.h
-
-  else
-    $as_echo "#define FLEXIBLE_ARRAY_MEMBER 1" >>confdefs.h
-
-  fi
-
-{ $as_echo "$as_me:${as_lineno-$LINENO}: checking for signed types" >&5
-$as_echo_n "checking for signed types... " >&6; }
-if ${pgac_cv_c_signed+:} false; then :
-  $as_echo_n "(cached) " >&6
-else
-  cat confdefs.h - <<_ACEOF >conftest.$ac_ext
-/* end confdefs.h.  */
-
-int
-main ()
-{
-signed char c; signed short s; signed int i;
-  ;
-  return 0;
-}
-_ACEOF
-if ac_fn_c_try_compile "$LINENO"; then :
-  pgac_cv_c_signed=yes
-else
-  pgac_cv_c_signed=no
-fi
-rm -f core conftest.err conftest.$ac_objext conftest.$ac_ext
-fi
-{ $as_echo "$as_me:${as_lineno-$LINENO}: result: $pgac_cv_c_signed" >&5
-$as_echo "$pgac_cv_c_signed" >&6; }
-if test x"$pgac_cv_c_signed" = xno ; then
-
-$as_echo "#define signed /**/" >>confdefs.h
-
-fi
 { $as_echo "$as_me:${as_lineno-$LINENO}: checking for __func__" >&5
 $as_echo_n "checking for __func__... " >&6; }
 if ${pgac_cv_funcname_func_support+:} false; then :
@@ -14173,79 +14102,6 @@ _ACEOF
 
 
 fi
-
-
-  ac_fn_c_check_type "$LINENO" "intptr_t" "ac_cv_type_intptr_t" "$ac_includes_default"
-if test "x$ac_cv_type_intptr_t" = xyes; then :
-
-$as_echo "#define HAVE_INTPTR_T 1" >>confdefs.h
-
-else
-  for ac_type in 'int' 'long int' 'long long int'; do
-       cat confdefs.h - <<_ACEOF >conftest.$ac_ext
-/* end confdefs.h.  */
-$ac_includes_default
-int
-main ()
-{
-static int test_array [1 - 2 * !(sizeof (void *) <= sizeof ($ac_type))];
-test_array [0] = 0;
-return test_array [0];
-
-  ;
-  return 0;
-}
-_ACEOF
-if ac_fn_c_try_compile "$LINENO"; then :
-
-cat >>confdefs.h <<_ACEOF
-#define intptr_t $ac_type
-_ACEOF
-
-	  ac_type=
-fi
-rm -f core conftest.err conftest.$ac_objext conftest.$ac_ext
-       test -z "$ac_type" && break
-     done
-fi
-
-
-
-  ac_fn_c_check_type "$LINENO" "uintptr_t" "ac_cv_type_uintptr_t" "$ac_includes_default"
-if test "x$ac_cv_type_uintptr_t" = xyes; then :
-
-$as_echo "#define HAVE_UINTPTR_T 1" >>confdefs.h
-
-else
-  for ac_type in 'unsigned int' 'unsigned long int' \
-	'unsigned long long int'; do
-       cat confdefs.h - <<_ACEOF >conftest.$ac_ext
-/* end confdefs.h.  */
-$ac_includes_default
-int
-main ()
-{
-static int test_array [1 - 2 * !(sizeof (void *) <= sizeof ($ac_type))];
-test_array [0] = 0;
-return test_array [0];
-
-  ;
-  return 0;
-}
-_ACEOF
-if ac_fn_c_try_compile "$LINENO"; then :
-
-cat >>confdefs.h <<_ACEOF
-#define uintptr_t $ac_type
-_ACEOF
-
-	  ac_type=
-fi
-rm -f core conftest.err conftest.$ac_objext conftest.$ac_ext
-       test -z "$ac_type" && break
-     done
-fi
-
 
 
 { $as_echo "$as_me:${as_lineno-$LINENO}: checking for locale_t" >&5
@@ -15019,7 +14875,7 @@ fi
 LIBS_including_readline="$LIBS"
 LIBS=`echo "$LIBS" | sed -e 's/-ledit//g' -e 's/-lreadline//g'`
 
-for ac_func in backtrace_symbols cbrt clock_gettime copyfile fdatasync getifaddrs getpeerucred getrlimit kqueue mbstowcs_l memset_s memmove poll posix_fallocate ppoll pstat pthread_is_threaded_np readlink setproctitle setproctitle_fast setsid shm_open strchrnul strsignal symlink sync_file_range uselocale utime utimes wcstombs_l
+for ac_func in backtrace_symbols clock_gettime copyfile fdatasync getifaddrs getpeerucred getrlimit kqueue mbstowcs_l memset_s poll posix_fallocate ppoll pstat pthread_is_threaded_np readlink setproctitle setproctitle_fast setsid shm_open strchrnul strsignal symlink sync_file_range uselocale wcstombs_l
 do :
   as_ac_var=`$as_echo "ac_cv_func_$ac_func" | $as_tr_sh`
 ac_fn_c_check_func "$LINENO" "$ac_func" "$as_ac_var"
@@ -15263,30 +15119,9 @@ _ACEOF
 
 fi
 
-ac_fn_c_check_func "$LINENO" "fseeko" "ac_cv_func_fseeko"
-if test "x$ac_cv_func_fseeko" = xyes; then :
-  $as_echo "#define HAVE_FSEEKO 1" >>confdefs.h
-
-else
-  case " $LIBOBJS " in
-  *" fseeko.$ac_objext "* ) ;;
-  *) LIBOBJS="$LIBOBJS fseeko.$ac_objext"
- ;;
-esac
-
-fi
-
-
-case $host_os in
-	# NetBSD uses a custom fseeko/ftello built on fsetpos/fgetpos
-	# Mingw uses macros to access Win32 API calls
-	netbsd*|mingw*)
-
-$as_echo "#define HAVE_FSEEKO 1" >>confdefs.h
-
-		ac_cv_func_fseeko=yes;;
-	*)
-		{ $as_echo "$as_me:${as_lineno-$LINENO}: checking for _LARGEFILE_SOURCE value needed for large files" >&5
+# We require 64-bit fseeko() to be available, but run this check anyway
+# in case it finds that _LARGEFILE_SOURCE has to be #define'd for that.
+{ $as_echo "$as_me:${as_lineno-$LINENO}: checking for _LARGEFILE_SOURCE value needed for large files" >&5
 $as_echo_n "checking for _LARGEFILE_SOURCE value needed for large files... " >&6; }
 if ${ac_cv_sys_largefile_source+:} false; then :
   $as_echo_n "(cached) " >&6
@@ -15353,8 +15188,7 @@ if test $ac_cv_sys_largefile_source != unknown; then
 $as_echo "#define HAVE_FSEEKO 1" >>confdefs.h
 
 fi
-;;
-esac
+
 
 # posix_fadvise() is a no-op on Solaris, so don't incur function overhead
 # by calling it, 2009-04-02
@@ -15601,63 +15435,6 @@ $as_echo "#define HAVE_PS_STRINGS 1" >>confdefs.h
 
 fi
 
-
-{ $as_echo "$as_me:${as_lineno-$LINENO}: checking for isinf" >&5
-$as_echo_n "checking for isinf... " >&6; }
-if ${ac_cv_func_isinf+:} false; then :
-  $as_echo_n "(cached) " >&6
-else
-  cat confdefs.h - <<_ACEOF >conftest.$ac_ext
-/* end confdefs.h.  */
-
-#include <math.h>
-double glob_double;
-
-int
-main ()
-{
-return isinf(glob_double) ? 0 : 1;
-  ;
-  return 0;
-}
-_ACEOF
-if ac_fn_c_try_link "$LINENO"; then :
-  ac_cv_func_isinf=yes
-else
-  ac_cv_func_isinf=no
-fi
-rm -f core conftest.err conftest.$ac_objext \
-    conftest$ac_exeext conftest.$ac_ext
-fi
-{ $as_echo "$as_me:${as_lineno-$LINENO}: result: $ac_cv_func_isinf" >&5
-$as_echo "$ac_cv_func_isinf" >&6; }
-
-if test $ac_cv_func_isinf = yes ; then
-
-$as_echo "#define HAVE_ISINF 1" >>confdefs.h
-
-else
-  case " $LIBOBJS " in
-  *" isinf.$ac_objext "* ) ;;
-  *) LIBOBJS="$LIBOBJS isinf.$ac_objext"
- ;;
-esac
-
-  # Look for a way to implement a substitute for isinf()
-  for ac_func in fpclass fp_class fp_class_d class
-do :
-  as_ac_var=`$as_echo "ac_cv_func_$ac_func" | $as_tr_sh`
-ac_fn_c_check_func "$LINENO" "$ac_func" "$as_ac_var"
-if eval test \"x\$"$as_ac_var"\" = x"yes"; then :
-  cat >>confdefs.h <<_ACEOF
-#define `$as_echo "HAVE_$ac_func" | $as_tr_cpp` 1
-_ACEOF
- break
-fi
-done
-
-fi
-
 ac_fn_c_check_func "$LINENO" "dlopen" "ac_cv_func_dlopen"
 if test "x$ac_cv_func_dlopen" = xyes; then :
   $as_echo "#define HAVE_DLOPEN 1" >>confdefs.h
@@ -15796,19 +15573,6 @@ else
   case " $LIBOBJS " in
   *" random.$ac_objext "* ) ;;
   *) LIBOBJS="$LIBOBJS random.$ac_objext"
- ;;
-esac
-
-fi
-
-ac_fn_c_check_func "$LINENO" "rint" "ac_cv_func_rint"
-if test "x$ac_cv_func_rint" = xyes; then :
-  $as_echo "#define HAVE_RINT 1" >>confdefs.h
-
-else
-  case " $LIBOBJS " in
-  *" rint.$ac_objext "* ) ;;
-  *) LIBOBJS="$LIBOBJS rint.$ac_objext"
  ;;
 esac
 
@@ -19774,7 +19538,8 @@ $config_links
 Configuration commands:
 $config_commands
 
-Report bugs to <pgsql-bugs@lists.postgresql.org>."
+Report bugs to <pgsql-bugs@lists.postgresql.org>.
+PostgreSQL home page: <https://www.postgresql.org/>."
 
 _ACEOF
 cat >>$CONFIG_STATUS <<_ACEOF || ac_write_fail=1

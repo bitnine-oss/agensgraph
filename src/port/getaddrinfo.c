@@ -69,28 +69,10 @@ haveNativeWindowsIPv6routines(void)
 		return (getaddrinfo_ptr != NULL);
 
 	/*
-	 * For Windows XP and Windows 2003 (and longhorn/vista), the IPv6 routines
-	 * are present in the WinSock 2 library (ws2_32.dll). Try that first
+	 * For Windows XP and later versions, the IPv6 routines are present in the
+	 * WinSock 2 library (ws2_32.dll).
 	 */
-
 	hLibrary = LoadLibraryA("ws2_32");
-
-	if (hLibrary == NULL || GetProcAddress(hLibrary, "getaddrinfo") == NULL)
-	{
-		/*
-		 * Well, ws2_32 doesn't exist, or more likely doesn't have
-		 * getaddrinfo.
-		 */
-		if (hLibrary != NULL)
-			FreeLibrary(hLibrary);
-
-		/*
-		 * In Windows 2000, there was only the IPv6 Technology Preview look in
-		 * the IPv6 WinSock library (wship6.dll).
-		 */
-
-		hLibrary = LoadLibraryA("wship6");
-	}
 
 	/* If hLibrary is null, we couldn't find a dll with functions */
 	if (hLibrary != NULL)

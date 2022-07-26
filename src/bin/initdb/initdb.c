@@ -2031,7 +2031,7 @@ make_postgres(FILE *cmdfd)
  * signal handler in case we are interrupted.
  *
  * The Windows runtime docs at
- * http://msdn.microsoft.com/library/en-us/vclib/html/_crt_signal.asp
+ * https://docs.microsoft.com/en-us/cpp/c-runtime-library/reference/signal
  * specifically forbid a number of things being done from a signal handler,
  * including IO, memory allocation and system calls, and only allow jmpbuf
  * if you are handling SIGFPE.
@@ -2040,11 +2040,10 @@ make_postgres(FILE *cmdfd)
  * exit() directly.
  *
  * Also note the behaviour of Windows with SIGINT, which says this:
- *	 Note	SIGINT is not supported for any Win32 application, including
- *	 Windows 98/Me and Windows NT/2000/XP. When a CTRL+C interrupt occurs,
- *	 Win32 operating systems generate a new thread to specifically handle
- *	 that interrupt. This can cause a single-thread application such as UNIX,
- *	 to become multithreaded, resulting in unexpected behavior.
+ *  SIGINT is not supported for any Win32 application. When a CTRL+C interrupt
+ *  occurs, Win32 operating systems generate a new thread to specifically
+ *  handle that interrupt. This can cause a single-thread application, such as
+ *  one in UNIX, to become multithreaded and cause unexpected behavior.
  *
  * I have no idea how to handle this. (Strange they call UNIX an application!)
  * So this will need some testing on Windows.
@@ -2347,7 +2346,8 @@ usage(const char *progname)
 	printf(_("  -?, --help                show this help, then exit\n"));
 	printf(_("\nIf the data directory is not specified, the environment variable PGDATA\n"
 			 "is used.\n"));
-	printf(_("\nReport bugs to <pgsql-bugs@lists.postgresql.org>.\n"));
+	printf(_("\nReport bugs to <%s>.\n"), PACKAGE_BUGREPORT);
+	printf(_("%s home page: <%s>\n"), PACKAGE_NAME, PACKAGE_URL);
 }
 
 static void

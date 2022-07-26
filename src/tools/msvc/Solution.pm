@@ -60,10 +60,17 @@ sub DeterminePlatform
 {
 	my $self = shift;
 
-	# Examine CL help output to determine if we are in 32 or 64-bit mode.
-	my $output = `cl /? 2>&1`;
-	$? >> 8 == 0 or die "cl command not found";
-	$self->{platform} = ($output =~ /^\/favor:<.+AMD64/m) ? 'x64' : 'Win32';
+	if ($^O eq "MSWin32")
+	{
+		# Examine CL help output to determine if we are in 32 or 64-bit mode.
+		my $output = `cl /? 2>&1`;
+		$? >> 8 == 0 or die "cl command not found";
+		$self->{platform} = ($output =~ /^\/favor:<.+AMD64/m) ? 'x64' : 'Win32';
+	}
+	else
+	{
+		$self->{platform} = 'FAKE';
+	}
 	print "Detected hardware platform: $self->{platform}\n";
 	return;
 }
@@ -139,20 +146,26 @@ sub GenerateFiles
 {
 	my $self = shift;
 	my $bits = $self->{platform} eq 'Win32' ? 32 : 64;
+	my $ac_init_found = 0;
 	my $package_name;
 	my $package_version;
 	my $package_bugreport;
+	my $package_url;
 
 	# Parse configure.in to get version numbers
 	open(my $c, '<', "configure.in")
 	  || confess("Could not open configure.in for reading\n");
 	while (<$c>)
 	{
-		if (/^AC_INIT\(\[([^\]]+)\], \[([^\]]+)\], \[([^\]]+)\]/)
+		if (/^AC_INIT\(\[([^\]]+)\], \[([^\]]+)\], \[([^\]]+)\], \[([^\]]*)\], \[([^\]]+)\]/)
 		{
+			$ac_init_found = 1;
+
 			$package_name      = $1;
 			$package_version   = $2;
 			$package_bugreport = $3;
+			#$package_tarname   = $4;
+			$package_url       = $5;
 
 			if ($package_version !~ /^(\d+)(?:\.(\d+))?/)
 			{
@@ -164,10 +177,7 @@ sub GenerateFiles
 	}
 	close($c);
 	confess "Unable to parse configure.in for all variables!"
-	  if ( $package_name eq ''
-		|| $package_version eq ''
-		|| $self->{numver} eq ''
-		|| $package_bugreport eq '');
+	  unless $ac_init_found;
 
 	if (IsNewer("src/include/pg_config_os.h", "src/include/port/win32.h"))
 	{
@@ -201,7 +211,6 @@ sub GenerateFiles
 		ENABLE_GSS                 => $self->{options}->{gss} ? 1 : undef,
 		ENABLE_NLS                 => $self->{options}->{nls} ? 1 : undef,
 		ENABLE_THREAD_SAFETY       => 1,
-		FLEXIBLE_ARRAY_MEMBER      => '/**/',
 		GETTIMEOFDAY_1ARG          => undef,
 		HAVE_APPEND_HISTORY        => undef,
 		HAVE_ASN1_STRING_GET0_DATA => undef,
@@ -210,8 +219,6 @@ sub GenerateFiles
 		HAVE_BACKTRACE_SYMBOLS     => undef,
 		HAVE_BIO_GET_DATA          => undef,
 		HAVE_BIO_METH_NEW          => undef,
-		HAVE_CBRT                  => undef,
-		HAVE_CLASS                 => undef,
 		HAVE_CLOCK_GETTIME         => undef,
 		HAVE_COMPUTED_GOTO         => undef,
 		HAVE_COPYFILE              => undef,
@@ -240,10 +247,6 @@ sub GenerateFiles
 		HAVE_EXPLICIT_BZERO                         => undef,
 		HAVE_FDATASYNC                              => undef,
 		HAVE_FLS                                    => undef,
-		HAVE_FPCLASS                                => undef,
-		HAVE_FP_CLASS                               => undef,
-		HAVE_FP_CLASS_D                             => undef,
-		HAVE_FP_CLASS_H                             => undef,
 		HAVE_FSEEKO                                 => 1,
 		HAVE_FUNCNAME__FUNC                         => undef,
 		HAVE_FUNCNAME__FUNCTION                     => 1,
@@ -269,18 +272,15 @@ sub GenerateFiles
 		HAVE_GSSAPI_H                               => undef,
 		HAVE_HISTORY_H                              => undef,
 		HAVE_HISTORY_TRUNCATE_FILE                  => undef,
-		HAVE_IEEEFP_H                               => undef,
 		HAVE_IFADDRS_H                              => undef,
 		HAVE_INET_ATON                              => undef,
 		HAVE_INT_TIMEZONE                           => 1,
 		HAVE_INT64                                  => undef,
 		HAVE_INT8                                   => undef,
-		HAVE_INTPTR_T                               => undef,
 		HAVE_INTTYPES_H                             => undef,
 		HAVE_INT_OPTERR                             => undef,
 		HAVE_INT_OPTRESET                           => undef,
 		HAVE_IPV6                                   => 1,
-		HAVE_ISINF                                  => 1,
 		HAVE_I_CONSTRAINT__BUILTIN_CONSTANT_P       => undef,
 		HAVE_KQUEUE                                 => undef,
 		HAVE_LANGINFO_H                             => undef,
@@ -303,7 +303,6 @@ sub GenerateFiles
 		HAVE_LONG_LONG_INT_64       => 1,
 		HAVE_MBARRIER_H             => undef,
 		HAVE_MBSTOWCS_L             => 1,
-		HAVE_MEMMOVE                => 1,
 		HAVE_MEMORY_H               => 1,
 		HAVE_MEMSET_S               => undef,
 		HAVE_MINIDUMP_TYPE          => 1,
@@ -331,7 +330,6 @@ sub GenerateFiles
 		HAVE_READLINE_HISTORY_H     => undef,
 		HAVE_READLINE_READLINE_H    => undef,
 		HAVE_READLINK               => undef,
-		HAVE_RINT                   => 1,
 		HAVE_RL_COMPLETION_APPEND_CHARACTER      => undef,
 		HAVE_RL_COMPLETION_MATCHES               => undef,
 		HAVE_RL_COMPLETION_SUPPRESS_QUOTE        => undef,
@@ -347,7 +345,7 @@ sub GenerateFiles
 		HAVE_SPINLOCKS                           => 1,
 		HAVE_SRANDOM                             => undef,
 		HAVE_STDBOOL_H                           => 1,
-		HAVE_STDINT_H                            => undef,
+		HAVE_STDINT_H                            => 1,
 		HAVE_STDLIB_H                            => 1,
 		HAVE_STRCHRNUL                           => undef,
 		HAVE_STRERROR_R                          => undef,
@@ -396,22 +394,17 @@ sub GenerateFiles
 		HAVE_UCRED_H                             => undef,
 		HAVE_UINT64                              => undef,
 		HAVE_UINT8                               => undef,
-		HAVE_UINTPTR_T                           => undef,
 		HAVE_UNION_SEMUN                         => undef,
 		HAVE_UNISTD_H                            => 1,
 		HAVE_UNIX_SOCKETS                        => undef,
 		HAVE_UNSETENV                            => undef,
 		HAVE_USELOCALE                           => undef,
-		HAVE_UTIME                               => 1,
-		HAVE_UTIMES                              => undef,
-		HAVE_UTIME_H                             => 1,
 		HAVE_UUID_BSD                            => undef,
 		HAVE_UUID_E2FS                           => undef,
 		HAVE_UUID_OSSP                           => undef,
 		HAVE_UUID_H                              => undef,
 		HAVE_UUID_UUID_H                         => undef,
 		HAVE_WINLDAP_H                           => undef,
-		HAVE_WCHAR_H                             => 1,
 		HAVE_WCSTOMBS_L                          => 1,
 		HAVE_WCTYPE_H                            => 1,
 		HAVE_X509_GET_SIGNATURE_NID              => 1,
@@ -441,7 +434,7 @@ sub GenerateFiles
 		PACKAGE_NAME                             => qq{"$package_name"},
 		PACKAGE_STRING      => qq{"$package_name $package_version"},
 		PACKAGE_TARNAME     => lc qq{"$package_name"},
-		PACKAGE_URL         => undef,
+		PACKAGE_URL         => qq{"$package_url"},
 		PACKAGE_VERSION     => qq{"$package_version"},
 		PG_INT128_TYPE      => undef,
 		PG_INT64_TYPE       => 'long long int',
@@ -496,13 +489,10 @@ sub GenerateFiles
 		_LARGEFILE_SOURCE => undef,
 		_LARGE_FILES      => undef,
 		inline            => '__inline',
-		intptr_t          => undef,
 		pg_restrict       => '__restrict',
 		# not defined, because it'd conflict with __declspec(restrict)
 		restrict  => undef,
-		signed    => undef,
-		typeof    => undef,
-		uintptr_t => undef,);
+		typeof    => undef,);
 
 	if ($self->{options}->{uuid})
 	{
@@ -839,13 +829,14 @@ EOF
 sub GenerateConfigHeader
 {
 	my ($self, $config_header, $defines, $required) = @_;
-	my %defines_copy = %$defines;
 
 	my $config_header_in = $config_header . '.in';
 
 	if (IsNewer($config_header, $config_header_in) ||
 		IsNewer($config_header, __FILE__))
 	{
+		my %defines_copy = %$defines;
+
 		open(my $i, '<', $config_header_in)
 		  || confess "Could not open $config_header_in\n";
 		open(my $o, '>', $config_header)
@@ -884,10 +875,11 @@ sub GenerateConfigHeader
 		}
 		close($o);
 		close($i);
-	}
-	if ($required && scalar(keys %defines_copy) > 0)
-	{
-		croak "unused defines: " . join(' ', keys %defines_copy);
+
+		if ($required && scalar(keys %defines_copy) > 0)
+		{
+			croak "unused defines: " . join(' ', keys %defines_copy);
+		}
 	}
 }
 
@@ -1081,7 +1073,7 @@ EOF
 		}
 		if ($fld ne "")
 		{
-			$flduid{$fld} = Win32::GuidGen();
+			$flduid{$fld} = $^O eq "MSWin32" ? Win32::GuidGen() : 'FAKE';
 			print $sln <<EOF;
 Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "$fld", "$fld", "$flduid{$fld}"
 EndProject

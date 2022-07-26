@@ -144,7 +144,8 @@ usage(unsigned short int pager)
 	fprintf(output, _("\nFor more information, type \"\\?\" (for internal commands) or \"\\help\" (for SQL\n"
 					  "commands) from within psql, or consult the psql section in the PostgreSQL\n"
 					  "documentation.\n\n"));
-	fprintf(output, _("Report bugs to <pgsql-bugs@lists.postgresql.org>.\n"));
+	fprintf(output, _("Report bugs to <%s>.\n"), PACKAGE_BUGREPORT);
+	fprintf(output, _("%s home page: <%s>\n"), PACKAGE_NAME, PACKAGE_URL);
 
 	ClosePager(output);
 }
