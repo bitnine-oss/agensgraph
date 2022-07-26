@@ -672,7 +672,8 @@ CheckAttributeType(const char *attname,
 		/*
 		 * If it's a range, recurse to check its subtype.
 		 */
-		CheckAttributeType(attname, get_range_subtype(atttypid), attcollation,
+		CheckAttributeType(attname, get_range_subtype(atttypid),
+						   get_range_collation(atttypid),
 						   containing_rowtypes,
 						   flags);
 	}
@@ -2256,8 +2257,7 @@ StoreAttrDefault(Relation rel, AttrNumber attnum,
 			else
 			{
 				/* otherwise make a one-element array of the value */
-				missingval = PointerGetDatum(
-											 construct_array(&missingval,
+				missingval = PointerGetDatum(construct_array(&missingval,
 															 1,
 															 defAttStruct->atttypid,
 															 defAttStruct->attlen,

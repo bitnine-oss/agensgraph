@@ -1297,6 +1297,7 @@ AC_CHECK_HEADERS(m4_normalize([
 	mbarrier.h
 	poll.h
 	sys/epoll.h
+	sys/event.h
 	sys/ipc.h
 	sys/prctl.h
 	sys/procctl.h
@@ -1637,6 +1638,7 @@ AC_CHECK_FUNCS(m4_normalize([
 	getifaddrs
 	getpeerucred
 	getrlimit
+	kqueue
 	mbstowcs_l
 	memset_s
 	memmove

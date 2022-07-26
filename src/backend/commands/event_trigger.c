@@ -2178,8 +2178,7 @@ pg_event_trigger_ddl_commands(PG_FUNCTION_ARGS)
 				/* command tag */
 				values[i++] = CStringGetTextDatum(CreateCommandTag(cmd->parsetree));
 				/* object_type */
-				values[i++] = CStringGetTextDatum(stringify_adefprivs_objtype(
-																			  cmd->d.defprivs.objtype));
+				values[i++] = CStringGetTextDatum(stringify_adefprivs_objtype(cmd->d.defprivs.objtype));
 				/* schema */
 				nulls[i++] = true;
 				/* identity */
@@ -2201,8 +2200,7 @@ pg_event_trigger_ddl_commands(PG_FUNCTION_ARGS)
 				values[i++] = CStringGetTextDatum(cmd->d.grant.istmt->is_grant ?
 												  "GRANT" : "REVOKE");
 				/* object_type */
-				values[i++] = CStringGetTextDatum(stringify_grant_objtype(
-																		  cmd->d.grant.istmt->objtype));
+				values[i++] = CStringGetTextDatum(stringify_grant_objtype(cmd->d.grant.istmt->objtype));
 				/* schema */
 				nulls[i++] = true;
 				/* identity */

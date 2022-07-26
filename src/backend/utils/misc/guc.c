@@ -209,10 +209,6 @@ static const char *show_log_file_mode(void);
 static const char *show_data_directory_mode(void);
 static bool check_backtrace_functions(char **newval, void **extra, GucSource source);
 static void assign_backtrace_functions(const char *newval, void *extra);
-static bool check_ssl_min_protocol_version(int *newval, void **extra,
-										   GucSource source);
-static bool check_ssl_max_protocol_version(int *newval, void **extra,
-										   GucSource source);
 static bool check_recovery_target_timeline(char **newval, void **extra, GucSource source);
 static void assign_recovery_target_timeline(const char *newval, void *extra);
 static bool check_recovery_target(char **newval, void **extra, GucSource source);
@@ -244,6 +240,9 @@ static const struct config_enum_entry bytea_output_options[] = {
 	{"hex", BYTEA_OUTPUT_HEX, false},
 	{NULL, 0, false}
 };
+
+StaticAssertDecl(lengthof(bytea_output_options) == (BYTEA_OUTPUT_HEX + 2),
+				 "array length mismatch");
 
 /*
  * We have different sets for client and server message level options because
@@ -290,12 +289,18 @@ static const struct config_enum_entry intervalstyle_options[] = {
 	{NULL, 0, false}
 };
 
+StaticAssertDecl(lengthof(intervalstyle_options) == (INTSTYLE_ISO_8601 + 2),
+				 "array length mismatch");
+
 static const struct config_enum_entry log_error_verbosity_options[] = {
 	{"terse", PGERROR_TERSE, false},
 	{"default", PGERROR_DEFAULT, false},
 	{"verbose", PGERROR_VERBOSE, false},
 	{NULL, 0, false}
 };
+
+StaticAssertDecl(lengthof(log_error_verbosity_options) == (PGERROR_VERBOSE + 2),
+				 "array length mismatch");
 
 static const struct config_enum_entry log_statement_options[] = {
 	{"none", LOGSTMT_NONE, false},
@@ -304,6 +309,9 @@ static const struct config_enum_entry log_statement_options[] = {
 	{"all", LOGSTMT_ALL, false},
 	{NULL, 0, false}
 };
+
+StaticAssertDecl(lengthof(log_statement_options) == (LOGSTMT_ALL + 2),
+				 "array length mismatch");
 
 static const struct config_enum_entry isolation_level_options[] = {
 	{"serializable", XACT_SERIALIZABLE, false},
@@ -319,6 +327,9 @@ static const struct config_enum_entry session_replication_role_options[] = {
 	{"local", SESSION_REPLICATION_ROLE_LOCAL, false},
 	{NULL, 0, false}
 };
+
+StaticAssertDecl(lengthof(session_replication_role_options) == (SESSION_REPLICATION_ROLE_LOCAL + 2),
+				 "array length mismatch");
 
 static const struct config_enum_entry syslog_facility_options[] = {
 #ifdef HAVE_SYSLOG
@@ -343,17 +354,26 @@ static const struct config_enum_entry track_function_options[] = {
 	{NULL, 0, false}
 };
 
+StaticAssertDecl(lengthof(track_function_options) == (TRACK_FUNC_ALL + 2),
+				 "array length mismatch");
+
 static const struct config_enum_entry xmlbinary_options[] = {
 	{"base64", XMLBINARY_BASE64, false},
 	{"hex", XMLBINARY_HEX, false},
 	{NULL, 0, false}
 };
 
+StaticAssertDecl(lengthof(xmlbinary_options) == (XMLBINARY_HEX + 2),
+				 "array length mismatch");
+
 static const struct config_enum_entry xmloption_options[] = {
 	{"content", XMLOPTION_CONTENT, false},
 	{"document", XMLOPTION_DOCUMENT, false},
 	{NULL, 0, false}
 };
+
+StaticAssertDecl(lengthof(xmloption_options) == (XMLOPTION_CONTENT + 2),
+				 "array length mismatch");
 
 /*
  * Although only "on", "off", and "safe_encoding" are documented, we
@@ -468,6 +488,9 @@ const struct config_enum_entry ssl_protocol_versions_info[] = {
 	{"TLSv1.3", PG_TLS1_3_VERSION, false},
 	{NULL, 0, false}
 };
+
+StaticAssertDecl(lengthof(ssl_protocol_versions_info) == (PG_TLS1_3_VERSION + 2),
+				 "array length mismatch");
 
 static struct config_enum_entry shared_memory_options[] = {
 #ifndef WIN32
@@ -620,6 +643,9 @@ const char *const GucContext_Names[] =
 	 /* PGC_USERSET */ "user"
 };
 
+StaticAssertDecl(lengthof(GucContext_Names) == (PGC_USERSET + 1),
+				 "array length mismatch");
+
 /*
  * Displayable names for source types (enum GucSource)
  *
@@ -642,6 +668,9 @@ const char *const GucSource_Names[] =
 	 /* PGC_S_TEST */ "test",
 	 /* PGC_S_SESSION */ "session"
 };
+
+StaticAssertDecl(lengthof(GucSource_Names) == (PGC_S_SESSION + 1),
+				 "array length mismatch");
 
 /*
  * Displayable names for the groupings defined in enum config_group
@@ -754,6 +783,9 @@ const char *const config_group_names[] =
 	NULL
 };
 
+StaticAssertDecl(lengthof(config_group_names) == (DEVELOPER_OPTIONS + 2),
+				 "array length mismatch");
+
 /*
  * Displayable names for GUC variable types (enum config_type)
  *
@@ -767,6 +799,9 @@ const char *const config_type_names[] =
 	 /* PGC_STRING */ "string",
 	 /* PGC_ENUM */ "enum"
 };
+
+StaticAssertDecl(lengthof(config_type_names) == (PGC_ENUM + 1),
+				 "array length mismatch");
 
 /*
  * Unit conversion tables.
@@ -4694,7 +4729,7 @@ static struct config_enum ConfigureNamesEnum[] =
 		&ssl_min_protocol_version,
 		PG_TLS1_2_VERSION,
 		ssl_protocol_versions_info + 1, /* don't allow PG_TLS_ANY */
-		check_ssl_min_protocol_version, NULL, NULL
+		NULL, NULL, NULL
 	},
 
 	{
@@ -4706,7 +4741,7 @@ static struct config_enum ConfigureNamesEnum[] =
 		&ssl_max_protocol_version,
 		PG_TLS_ANY,
 		ssl_protocol_versions_info,
-		check_ssl_max_protocol_version, NULL, NULL
+		NULL, NULL, NULL
 	},
 
 	/* End-of-list marker */
@@ -11677,49 +11712,6 @@ static void
 assign_backtrace_functions(const char *newval, void *extra)
 {
 	backtrace_symbol_list = (char *) extra;
-}
-
-static bool
-check_ssl_min_protocol_version(int *newval, void **extra, GucSource source)
-{
-	int			new_ssl_min_protocol_version = *newval;
-
-	/* PG_TLS_ANY is not supported for the minimum bound */
-	Assert(new_ssl_min_protocol_version > PG_TLS_ANY);
-
-	if (ssl_max_protocol_version &&
-		new_ssl_min_protocol_version > ssl_max_protocol_version)
-	{
-		GUC_check_errhint("\"%s\" cannot be higher than \"%s\".",
-						  "ssl_min_protocol_version",
-						  "ssl_max_protocol_version");
-		GUC_check_errcode(ERRCODE_INVALID_PARAMETER_VALUE);
-		return false;
-	}
-
-	return true;
-}
-
-static bool
-check_ssl_max_protocol_version(int *newval, void **extra, GucSource source)
-{
-	int			new_ssl_max_protocol_version = *newval;
-
-	/* if PG_TLS_ANY, there is no need to check the bounds */
-	if (new_ssl_max_protocol_version == PG_TLS_ANY)
-		return true;
-
-	if (ssl_min_protocol_version &&
-		ssl_min_protocol_version > new_ssl_max_protocol_version)
-	{
-		GUC_check_errhint("\"%s\" cannot be lower than \"%s\".",
-						  "ssl_max_protocol_version",
-						  "ssl_min_protocol_version");
-		GUC_check_errcode(ERRCODE_INVALID_PARAMETER_VALUE);
-		return false;
-	}
-
-	return true;
 }
 
 static bool
