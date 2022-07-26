@@ -46,8 +46,6 @@ OBJS = \
 	ag_graph.o \
 	ag_label.o
 
-BKIFILES = postgres.bki postgres.description postgres.shdescription
-
 include $(top_srcdir)/src/backend/common.mk
 
 # Note: the order of this list determines the order in which the catalog
@@ -62,7 +60,7 @@ CATALOG_HEADERS := \
 	pg_statistic_ext.h pg_statistic_ext_data.h \
 	pg_statistic.h pg_rewrite.h pg_trigger.h pg_event_trigger.h pg_description.h \
 	pg_cast.h pg_enum.h pg_namespace.h pg_conversion.h pg_depend.h \
-	pg_database.h pg_db_role_setting.h pg_tablespace.h pg_pltemplate.h \
+	pg_database.h pg_db_role_setting.h pg_tablespace.h \
 	pg_authid.h pg_auth_members.h pg_shdepend.h pg_shdescription.h \
 	pg_ts_config.h pg_ts_config_map.h pg_ts_dict.h \
 	pg_ts_parser.h pg_ts_template.h pg_extension.h \
@@ -89,7 +87,7 @@ POSTGRES_BKI_DATA = $(addprefix $(top_srcdir)/src/include/catalog/,\
 	pg_cast.dat pg_class.dat pg_collation.dat pg_conversion.dat \
 	pg_database.dat pg_language.dat \
 	pg_namespace.dat pg_opclass.dat pg_operator.dat pg_opfamily.dat \
-	pg_pltemplate.dat pg_proc.dat pg_range.dat pg_tablespace.dat \
+	pg_proc.dat pg_range.dat pg_tablespace.dat \
 	pg_ts_config.dat pg_ts_config_map.dat pg_ts_dict.dat pg_ts_parser.dat \
 	pg_ts_template.dat pg_type.dat \
 	)
@@ -130,8 +128,6 @@ $(top_builddir)/src/include/catalog/header-stamp: bki-stamp
 .PHONY: install-data
 install-data: bki-stamp installdirs
 	$(INSTALL_DATA) $(call vpathsearch,postgres.bki) '$(DESTDIR)$(datadir)/postgres.bki'
-	$(INSTALL_DATA) $(call vpathsearch,postgres.description) '$(DESTDIR)$(datadir)/postgres.description'
-	$(INSTALL_DATA) $(call vpathsearch,postgres.shdescription) '$(DESTDIR)$(datadir)/postgres.shdescription'
 	$(INSTALL_DATA) $(srcdir)/system_views.sql '$(DESTDIR)$(datadir)/system_views.sql'
 	$(INSTALL_DATA) $(srcdir)/information_schema.sql '$(DESTDIR)$(datadir)/information_schema.sql'
 	$(INSTALL_DATA) $(srcdir)/sql_features.txt '$(DESTDIR)$(datadir)/sql_features.txt'
@@ -141,12 +137,11 @@ installdirs:
 
 .PHONY: uninstall-data
 uninstall-data:
-	rm -f $(addprefix '$(DESTDIR)$(datadir)'/, $(BKIFILES) system_views.sql information_schema.sql sql_features.txt)
+	rm -f $(addprefix '$(DESTDIR)$(datadir)'/, postgres.bki system_views.sql information_schema.sql sql_features.txt)
 
-# postgres.bki, postgres.description, postgres.shdescription,
-# and the generated headers are in the distribution tarball,
+# postgres.bki and the generated headers are in the distribution tarball,
 # so they are not cleaned here.
 clean:
 
 maintainer-clean: clean
-	rm -f bki-stamp $(BKIFILES) $(GENERATED_HEADERS)
+	rm -f bki-stamp postgres.bki $(GENERATED_HEADERS)

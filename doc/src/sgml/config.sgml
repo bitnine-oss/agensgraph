@@ -2308,13 +2308,13 @@ include_dir 'conf.d'
        <listitem>
         <para>
          Sets the maximum number of parallel workers that can be
-         started by a single utility command.  Currently, the only
-         parallel utility command that supports the use of parallel
-         workers is <command>CREATE INDEX</command>, and only when
-         building a B-tree index.  Parallel workers are taken from the
-         pool of processes established by <xref
-         linkend="guc-max-worker-processes"/>, limited by <xref
-         linkend="guc-max-parallel-workers"/>.  Note that the requested
+         started by a single utility command.  Currently, the parallel
+         utility commands that support the use of parallel workers are
+         <command>CREATE INDEX</command> only when building a B-tree index,
+         and <command>VACUUM</command> without <literal>FULL</literal>
+         option.  Parallel workers are taken from the pool of processes
+         established by <xref linkend="guc-max-worker-processes"/>, limited
+         by <xref linkend="guc-max-parallel-workers"/>.  Note that the requested
          number of workers may not actually be available at run time.
          If this occurs, the utility operation will run with fewer
          workers than expected.  The default value is 2.  Setting this
@@ -3571,6 +3571,11 @@ restore_command = 'copy "C:\\server\\archivedir\\%f" "%p"'  # Windows
         If <xref linkend="guc-hot-standby"/> is not enabled, a setting of
         <literal>pause</literal> will act the same as <literal>shutdown</literal>.
        </para>
+       <para>
+        In any case, if a recovery target is configured but the archive
+        recovery ends before the target is reached, the server will shut down
+        with a fatal error.
+       </para>
       </listitem>
      </varlistentry>
 
@@ -4120,6 +4125,26 @@ ANY <replaceable class="parameter">num_sync</replaceable> ( <replaceable class="
         resulted in significant delay, subsequent conflicting queries will
         have much less grace time until the standby server has caught up
         again.
+       </para>
+      </listitem>
+     </varlistentry>
+
+     <varlistentry id="guc-wal-receiver-create-temp-slot" xreflabel="wal_receiver_create_temp_slot">
+      <term><varname>wal_receiver_create_temp_slot</varname> (<type>boolean</type>)
+      <indexterm>
+       <primary><varname>wal_receiver_create_temp_slot</varname> configuration parameter</primary>
+      </indexterm>
+      </term>
+      <listitem>
+       <para>
+        Specifies whether a WAL receiver should create a temporary replication
+        slot on the remote instance when no permanent replication slot to use
+        has been configured (using <xref linkend="guc-primary-slot-name"/>).
+        The default is on.  The only reason to turn this off would be if the
+        remote instance is currently out of available replication slots.  This
+        parameter can only be set in the <filename>postgresql.conf</filename>
+        file or on the server command line.  Changes only take effect when the
+        WAL receiver process starts a new connection.
        </para>
       </listitem>
      </varlistentry>
@@ -4895,7 +4920,9 @@ ANY <replaceable class="parameter">num_sync</replaceable> ( <replaceable class="
         for a parallel scan to be considered.  Note that a parallel index scan
         typically won't touch the entire index; it is the number of pages
         which the planner believes will actually be touched by the scan which
-        is relevant.
+        is relevant.  This parameter is also used to decide whether a
+        particular index can participate in a parallel vacuum.  See
+        <xref linkend="sql-vacuum"/>.
         If this value is specified without units, it is taken as blocks,
         that is <symbol>BLCKSZ</symbol> bytes, typically 8kB.
         The default is 512 kilobytes (<literal>512kB</literal>).
@@ -9924,6 +9951,31 @@ LOG:  CleanUpLock: deleting: lock(0xb7acd844) id(24688,24696,0,0,0,1)
         the index before turning this parameter off again.  The
         default setting is <literal>off</literal>, and it can only be changed
         by a superuser.
+       </para>
+      </listitem>
+     </varlistentry>
+
+     <varlistentry id="guc-ignore-invalid-pages" xreflabel="ignore_invalid_pages">
+      <term><varname>ignore_invalid_pages</varname> (<type>boolean</type>)
+      <indexterm>
+       <primary><varname>ignore_invalid_pages</varname> configuration parameter</primary>
+      </indexterm>
+      </term>
+      <listitem>
+       <para>
+        If set to <literal>off</literal> (the default), detection of
+        WAL records having references to invalid pages during
+        recovery causes <productname>PostgreSQL</productname> to
+        raise a PANIC-level error, aborting the recovery. Setting
+        <varname>ignore_invalid_pages</varname> to <literal>on</literal>
+        causes the system to ignore invalid page references in WAL records
+        (but still report a warning), and continue the recovery.
+        This behavior may <emphasis>cause crashes, data loss,
+        propagate or hide corruption, or other serious problems</emphasis>.
+        However, it may allow you to get past the PANIC-level error,
+        to finish the recovery, and to cause the server to start up.
+        The parameter can only be set at server start. It only has effect
+        during recovery or in standby mode.
        </para>
       </listitem>
      </varlistentry>

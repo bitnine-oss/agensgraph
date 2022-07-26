@@ -332,7 +332,10 @@ sub GenerateFiles
 		HAVE_RINT                   => 1,
 		HAVE_RL_COMPLETION_APPEND_CHARACTER      => undef,
 		HAVE_RL_COMPLETION_MATCHES               => undef,
+		HAVE_RL_COMPLETION_SUPPRESS_QUOTE        => undef,
 		HAVE_RL_FILENAME_COMPLETION_FUNCTION     => undef,
+		HAVE_RL_FILENAME_QUOTE_CHARACTERS        => undef,
+		HAVE_RL_FILENAME_QUOTING_FUNCTION        => undef,
 		HAVE_RL_RESET_SCREEN_SIZE                => undef,
 		HAVE_SECURITY_PAM_APPL_H                 => undef,
 		HAVE_SETPROCTITLE                        => undef,
@@ -666,27 +669,6 @@ sub GenerateFiles
 		system(
 			'perl src/backend/utils/sort/gen_qsort_tuple.pl > src/backend/utils/sort/qsort_tuple.c'
 		);
-	}
-
-	if (IsNewer(
-			'src/interfaces/libpq/libpq.rc',
-			'src/interfaces/libpq/libpq.rc.in'))
-	{
-		print "Generating libpq.rc...\n";
-		my ($sec, $min, $hour, $mday, $mon, $year, $wday, $yday, $isdst) =
-		  localtime(time);
-		my $d = ($year - 100) . "$yday";
-		open(my $i, '<', 'src/interfaces/libpq/libpq.rc.in')
-		  || confess "Could not open libpq.rc.in";
-		open(my $o, '>', 'src/interfaces/libpq/libpq.rc')
-		  || confess "Could not open libpq.rc";
-		while (<$i>)
-		{
-			s/(VERSION.*),0/$1,$d/;
-			print $o $_;
-		}
-		close($i);
-		close($o);
 	}
 
 	if (IsNewer('src/bin/psql/sql_help.h', 'src/bin/psql/create_help.pl'))

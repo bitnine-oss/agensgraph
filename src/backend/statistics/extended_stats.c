@@ -24,10 +24,12 @@
 #include "catalog/pg_collation.h"
 #include "catalog/pg_statistic_ext.h"
 #include "catalog/pg_statistic_ext_data.h"
+#include "commands/progress.h"
 #include "miscadmin.h"
 #include "nodes/nodeFuncs.h"
 #include "optimizer/clauses.h"
 #include "optimizer/optimizer.h"
+#include "pgstat.h"
 #include "postmaster/autovacuum.h"
 #include "statistics/extended_stats_internal.h"
 #include "statistics/statistics.h"
@@ -92,6 +94,7 @@ BuildRelationExtStatistics(Relation onerel, double totalrows,
 	List	   *stats;
 	MemoryContext cxt;
 	MemoryContext oldcxt;
+	int64		ext_cnt;
 
 	cxt = AllocSetContextCreate(CurrentMemoryContext,
 								"BuildRelationExtStatistics",
@@ -101,6 +104,22 @@ BuildRelationExtStatistics(Relation onerel, double totalrows,
 	pg_stext = table_open(StatisticExtRelationId, RowExclusiveLock);
 	stats = fetch_statentries_for_relation(pg_stext, RelationGetRelid(onerel));
 
+	/* report this phase */
+	if (stats != NIL)
+	{
+		const int	index[] = {
+			PROGRESS_ANALYZE_PHASE,
+			PROGRESS_ANALYZE_EXT_STATS_TOTAL
+		};
+		const int64 val[] = {
+			PROGRESS_ANALYZE_PHASE_COMPUTE_EXT_STATS,
+			list_length(stats)
+		};
+
+		pgstat_progress_update_multi_param(2, index, val);
+	}
+
+	ext_cnt = 0;
 	foreach(lc, stats)
 	{
 		StatExtEntry *stat = (StatExtEntry *) lfirst(lc);
@@ -165,6 +184,10 @@ BuildRelationExtStatistics(Relation onerel, double totalrows,
 
 		/* store the statistics in the catalog */
 		statext_store(stat->statOid, ndistinct, dependencies, mcv, stats);
+
+		/* for reporting progress */
+		pgstat_progress_update_param(PROGRESS_ANALYZE_EXT_STATS_COMPUTED,
+									 ++ext_cnt);
 	}
 
 	table_close(pg_stext, RowExclusiveLock);
@@ -1148,9 +1171,13 @@ statext_is_compatible_clause(PlannerInfo *root, Node *clause, Index relid,
  * statext_mcv_clauselist_selectivity
  *		Estimate clauses using the best multi-column statistics.
  *
- * Selects the best extended (multi-column) statistic on a table (measured by
- * the number of attributes extracted from the clauses and covered by it), and
- * computes the selectivity for the supplied clauses.
+ * Applies available extended (multi-column) statistics on a table. There may
+ * be multiple applicable statistics (with respect to the clauses), in which
+ * case we use greedy approach. In each round we select the best statistic on
+ * a table (measured by the number of attributes extracted from the clauses
+ * and covered by it), and compute the selectivity for the supplied clauses.
+ * We repeat this process with the remaining clauses (if any), until none of
+ * the available statistics can be used.
  *
  * One of the main challenges with using MCV lists is how to extrapolate the
  * estimate to the data not covered by the MCV list. To do that, we compute
@@ -1194,11 +1221,6 @@ statext_is_compatible_clause(PlannerInfo *root, Node *clause, Index relid,
  * 'estimatedclauses' is an input/output parameter.  We set bits for the
  * 0-based 'clauses' indexes we estimate for and also skip clause items that
  * already have a bit set.
- *
- * XXX If we were to use multiple statistics, this is where it would happen.
- * We would simply repeat this on a loop on the "remaining" clauses, possibly
- * using the already estimated clauses as conditions (and combining the values
- * using conditional probability formula).
  */
 static Selectivity
 statext_mcv_clauselist_selectivity(PlannerInfo *root, List *clauses, int varRelid,
@@ -1208,14 +1230,7 @@ statext_mcv_clauselist_selectivity(PlannerInfo *root, List *clauses, int varReli
 	ListCell   *l;
 	Bitmapset **list_attnums;
 	int			listidx;
-	StatisticExtInfo *stat;
-	List	   *stat_clauses;
-	Selectivity simple_sel,
-				mcv_sel,
-				mcv_basesel,
-				mcv_totalsel,
-				other_sel,
-				sel;
+	Selectivity	sel = 1.0;
 
 	/* check if there's any stats that might be useful for us. */
 	if (!has_stats_of_kind(rel->statlist, STATS_EXT_MCV))
@@ -1250,65 +1265,84 @@ statext_mcv_clauselist_selectivity(PlannerInfo *root, List *clauses, int varReli
 		listidx++;
 	}
 
-	/* find the best suited statistics object for these attnums */
-	stat = choose_best_statistics(rel->statlist, STATS_EXT_MCV,
-								  list_attnums, list_length(clauses));
-
-	/* if no matching stats could be found then we've nothing to do */
-	if (!stat)
-		return 1.0;
-
-	/* Ensure choose_best_statistics produced an expected stats type. */
-	Assert(stat->kind == STATS_EXT_MCV);
-
-	/* now filter the clauses to be estimated using the selected MCV */
-	stat_clauses = NIL;
-
-	listidx = 0;
-	foreach(l, clauses)
+	/* apply as many extended statistics as possible */
+	while (true)
 	{
-		/*
-		 * If the clause is compatible with the selected statistics, mark it
-		 * as estimated and add it to the list to estimate.
-		 */
-		if (list_attnums[listidx] != NULL &&
-			bms_is_subset(list_attnums[listidx], stat->keys))
+		StatisticExtInfo *stat;
+		List	   *stat_clauses;
+		Selectivity simple_sel,
+					mcv_sel,
+					mcv_basesel,
+					mcv_totalsel,
+					other_sel,
+					stat_sel;
+
+		/* find the best suited statistics object for these attnums */
+		stat = choose_best_statistics(rel->statlist, STATS_EXT_MCV,
+									  list_attnums, list_length(clauses));
+
+		/* if no (additional) matching stats could be found then we've nothing to do */
+		if (!stat)
+			break;
+
+		/* Ensure choose_best_statistics produced an expected stats type. */
+		Assert(stat->kind == STATS_EXT_MCV);
+
+		/* now filter the clauses to be estimated using the selected MCV */
+		stat_clauses = NIL;
+
+		listidx = 0;
+		foreach(l, clauses)
 		{
-			stat_clauses = lappend(stat_clauses, (Node *) lfirst(l));
-			*estimatedclauses = bms_add_member(*estimatedclauses, listidx);
+			/*
+			 * If the clause is compatible with the selected statistics, mark it
+			 * as estimated and add it to the list to estimate.
+			 */
+			if (list_attnums[listidx] != NULL &&
+				bms_is_subset(list_attnums[listidx], stat->keys))
+			{
+				stat_clauses = lappend(stat_clauses, (Node *) lfirst(l));
+				*estimatedclauses = bms_add_member(*estimatedclauses, listidx);
+
+				bms_free(list_attnums[listidx]);
+				list_attnums[listidx] = NULL;
+			}
+
+			listidx++;
 		}
 
-		listidx++;
+		/*
+		 * First compute "simple" selectivity, i.e. without the extended
+		 * statistics, and essentially assuming independence of the
+		 * columns/clauses. We'll then use the various selectivities computed from
+		 * MCV list to improve it.
+		 */
+		simple_sel = clauselist_selectivity_simple(root, stat_clauses, varRelid,
+												jointype, sjinfo, NULL);
+
+		/*
+		 * Now compute the multi-column estimate from the MCV list, along with the
+		 * other selectivities (base & total selectivity).
+		 */
+		mcv_sel = mcv_clauselist_selectivity(root, stat, stat_clauses, varRelid,
+											 jointype, sjinfo, rel,
+											 &mcv_basesel, &mcv_totalsel);
+
+		/* Estimated selectivity of values not covered by MCV matches */
+		other_sel = simple_sel - mcv_basesel;
+		CLAMP_PROBABILITY(other_sel);
+
+		/* The non-MCV selectivity can't exceed the 1 - mcv_totalsel. */
+		if (other_sel > 1.0 - mcv_totalsel)
+			other_sel = 1.0 - mcv_totalsel;
+
+		/* Overall selectivity is the combination of MCV and non-MCV estimates. */
+		stat_sel = mcv_sel + other_sel;
+		CLAMP_PROBABILITY(stat_sel);
+
+		/* Factor the estimate from this MCV to the oveall estimate. */
+		sel *= stat_sel;
 	}
-
-	/*
-	 * First compute "simple" selectivity, i.e. without the extended
-	 * statistics, and essentially assuming independence of the
-	 * columns/clauses. We'll then use the various selectivities computed from
-	 * MCV list to improve it.
-	 */
-	simple_sel = clauselist_selectivity_simple(root, stat_clauses, varRelid,
-											   jointype, sjinfo, NULL);
-
-	/*
-	 * Now compute the multi-column estimate from the MCV list, along with the
-	 * other selectivities (base & total selectivity).
-	 */
-	mcv_sel = mcv_clauselist_selectivity(root, stat, stat_clauses, varRelid,
-										 jointype, sjinfo, rel,
-										 &mcv_basesel, &mcv_totalsel);
-
-	/* Estimated selectivity of values not covered by MCV matches */
-	other_sel = simple_sel - mcv_basesel;
-	CLAMP_PROBABILITY(other_sel);
-
-	/* The non-MCV selectivity can't exceed the 1 - mcv_totalsel. */
-	if (other_sel > 1.0 - mcv_totalsel)
-		other_sel = 1.0 - mcv_totalsel;
-
-	/* Overall selectivity is the combination of MCV and non-MCV estimates. */
-	sel = mcv_sel + other_sel;
-	CLAMP_PROBABILITY(sel);
 
 	return sel;
 }

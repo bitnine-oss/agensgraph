@@ -41,7 +41,7 @@ sub wanted
 
 	# skip file names with binary extensions
 	# How are these updated?  bjm 2012-01-02
-	return if ($_ =~ m/\.(ico|bin|po)$/);
+	return if ($_ =~ m/\.(ico|bin|po|key)$/);
 
 	my @lines;
 	tie @lines, "Tie::File", $File::Find::name;
@@ -66,6 +66,5 @@ sub wanted
 }
 
 print "Manually update:\n";
-print "  ./src/interfaces/libpq/libpq.rc.in in head\n";
 print "  ./doc/src/sgml/legal.sgml in head and back branches\n";
 print "  ./COPYRIGHT in back branches\n";

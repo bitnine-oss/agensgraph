@@ -14,6 +14,8 @@ top_builddir = ../../..
 include $(top_builddir)/src/Makefile.global
 
 
+PGFILEDESC = "PostgreSQL Access Library"
+
 # shared library parameters
 NAME= pq
 SO_MAJOR_VERSION= 5
@@ -28,6 +30,7 @@ endif
 # the conditional additions of files to OBJS, update Mkvcbuild.pm to match.
 
 OBJS = \
+	$(WIN32RES) \
 	fe-auth-scram.o \
 	fe-connect.o \
 	fe-exec.o \
@@ -41,11 +44,6 @@ OBJS = \
 	libpq-events.o \
 	pqexpbuffer.o \
 	fe-auth.o
-
-# src/backend/utils/mb
-OBJS += \
-	encnames.o \
-	wchar.o
 
 ifeq ($(with_openssl),yes)
 OBJS += \
@@ -65,11 +63,7 @@ endif
 
 ifeq ($(PORTNAME), win32)
 OBJS += \
-	libpqrc.o \
 	win32.o
-
-libpqrc.o: libpq.rc
-	$(WINDRES) -i $< -o $@
 
 ifeq ($(enable_thread_safety), yes)
 OBJS += pthread-win32.o
@@ -103,23 +97,7 @@ include $(top_srcdir)/src/Makefile.shlib
 backend_src = $(top_srcdir)/src/backend
 
 
-# We use a few backend modules verbatim, but since we need
-# to compile with appropriate options to build a shared lib, we can't
-# use the same object files built for the backend.
-# Instead, symlink the source files in here and build our own object files.
-# When you add a file here, remember to add it in the "clean" target below.
-
-encnames.c wchar.c: % : $(backend_src)/utils/mb/%
-	rm -f $@ && $(LN_S) $< .
-
-
-libpq.rc: libpq.rc.in
-	sed -e 's/\(VERSION.*\),0 *$$/\1,'`date '+%y%j' | sed 's/^0*//'`'/' $< >$@
-
-# Depend on Makefile.global to force rebuild on re-run of configure.
-libpq.rc: $(top_builddir)/src/Makefile.global
-
-# Make dependencies on pg_config_paths.h visible, too.
+# Make dependencies on pg_config_paths.h visible in all builds.
 fe-connect.o: fe-connect.c $(top_builddir)/src/port/pg_config_paths.h
 fe-misc.o: fe-misc.c $(top_builddir)/src/port/pg_config_paths.h
 
@@ -148,11 +126,9 @@ uninstall: uninstall-lib
 
 clean distclean: clean-lib
 	$(MAKE) -C test $@
-	rm -f $(OBJS) pthread.h libpq.rc
+	rm -f $(OBJS) pthread.h
 # Might be left over from a Win32 client-only build
 	rm -f pg_config_paths.h
-# Remove files we (may have) symlinked in from other places
-	rm -f encnames.c wchar.c
 
 maintainer-clean: distclean
 	$(MAKE) -C test $@

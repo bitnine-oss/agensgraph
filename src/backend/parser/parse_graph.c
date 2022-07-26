@@ -5951,8 +5951,16 @@ incrementalJoinRTEs(ParseState *pstate, JoinType jointype,
 	res_nscolumns = (ParseNamespaceColumn *) palloc0((list_length(l_colnos) +
 													  list_length(r_colnos)) *
 													 sizeof(ParseNamespaceColumn));
-	nsitem = addRangeTableEntryForJoin(pstate, res_colnames, res_nscolumns,
-									   j->jointype, res_colvars, j->alias, true);
+	nsitem = addRangeTableEntryForJoin(pstate,
+									   res_colnames,
+									   res_nscolumns,
+									   j->jointype,
+									   list_length(j->usingClause),
+									   res_colvars,
+									   l_colnos,
+									   r_colnos,
+									   j->alias,
+									   true);
 	j->rtindex = nsitem->p_rtindex;
 
 	for (i = list_length(pstate->p_joinexprs) + 1; i < j->rtindex; i++)

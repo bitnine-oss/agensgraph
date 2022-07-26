@@ -43,6 +43,7 @@ PG_MODULE_MAGIC;
 
 PG_FUNCTION_INFO_V1(pg_file_write);
 PG_FUNCTION_INFO_V1(pg_file_write_v1_1);
+PG_FUNCTION_INFO_V1(pg_file_sync);
 PG_FUNCTION_INFO_V1(pg_file_rename);
 PG_FUNCTION_INFO_V1(pg_file_rename_v1_1);
 PG_FUNCTION_INFO_V1(pg_file_unlink);
@@ -92,7 +93,7 @@ convert_and_check_filename(text *arg, bool logAllowed)
 		if (path_contains_parent_reference(filename))
 			ereport(ERROR,
 					(errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
-					 (errmsg("reference to parent directory (\"..\") not allowed"))));
+					 errmsg("reference to parent directory (\"..\") not allowed")));
 
 		/*
 		 * Allow absolute paths if within DataDir or Log_directory, even
@@ -103,12 +104,12 @@ convert_and_check_filename(text *arg, bool logAllowed)
 			 !path_is_prefix_of_path(Log_directory, filename)))
 			ereport(ERROR,
 					(errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
-					 (errmsg("absolute path not allowed"))));
+					 errmsg("absolute path not allowed")));
 	}
 	else if (!path_is_relative_and_below_cwd(filename))
 		ereport(ERROR,
 				(errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
-				 (errmsg("path must be in or below the current directory"))));
+				 errmsg("path must be in or below the current directory")));
 
 	return filename;
 }
@@ -123,7 +124,7 @@ requireSuperuser(void)
 	if (!superuser())
 		ereport(ERROR,
 				(errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
-				 (errmsg("only superuser may access generic file functions"))));
+				 errmsg("only superuser may access generic file functions")));
 }
 
 
@@ -213,6 +214,30 @@ pg_file_write_internal(text *file, text *data, bool replace)
 				 errmsg("could not write file \"%s\": %m", filename)));
 
 	return (count);
+}
+
+/* ------------------------------------
+ * pg_file_sync
+ *
+ * We REVOKE EXECUTE on the function from PUBLIC.
+ * Users can then grant access to it based on their policies.
+ */
+Datum
+pg_file_sync(PG_FUNCTION_ARGS)
+{
+	char	   *filename;
+	struct stat	fst;
+
+	filename = convert_and_check_filename(PG_GETARG_TEXT_PP(0), false);
+
+	if (stat(filename, &fst) < 0)
+		ereport(ERROR,
+				(errcode_for_file_access(),
+				 errmsg("could not stat file \"%s\": %m", filename)));
+
+	fsync_fname_ext(filename, S_ISDIR(fst.st_mode), false, ERROR);
+
+	PG_RETURN_VOID();
 }
 
 /* ------------------------------------
@@ -460,7 +485,7 @@ pg_logdir_ls(PG_FUNCTION_ARGS)
 	if (!superuser())
 		ereport(ERROR,
 				(errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
-				 (errmsg("only superuser can list the log directory"))));
+				 errmsg("only superuser can list the log directory")));
 
 	return (pg_logdir_ls_internal(fcinfo));
 }
@@ -490,7 +515,7 @@ pg_logdir_ls_internal(FunctionCallInfo fcinfo)
 	if (strcmp(Log_filename, "postgresql-%Y-%m-%d_%H%M%S.log") != 0)
 		ereport(ERROR,
 				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				 (errmsg("the log_filename parameter must equal 'postgresql-%%Y-%%m-%%d_%%H%%M%%S.log'"))));
+				 errmsg("the log_filename parameter must equal 'postgresql-%%Y-%%m-%%d_%%H%%M%%S.log'")));
 
 	if (SRF_IS_FIRSTCALL())
 	{

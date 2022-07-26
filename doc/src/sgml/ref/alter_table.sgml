@@ -46,6 +46,7 @@ ALTER TABLE [ IF EXISTS ] <replaceable class="parameter">name</replaceable>
     ALTER [ COLUMN ] <replaceable class="parameter">column_name</replaceable> SET DEFAULT <replaceable class="parameter">expression</replaceable>
     ALTER [ COLUMN ] <replaceable class="parameter">column_name</replaceable> DROP DEFAULT
     ALTER [ COLUMN ] <replaceable class="parameter">column_name</replaceable> { SET | DROP } NOT NULL
+    ALTER [ COLUMN ] <replaceable class="parameter">column_name</replaceable> DROP EXPRESSION [ IF EXISTS ]
     ALTER [ COLUMN ] <replaceable class="parameter">column_name</replaceable> ADD GENERATED { ALWAYS | BY DEFAULT } AS IDENTITY [ ( <replaceable>sequence_options</replaceable> ) ]
     ALTER [ COLUMN ] <replaceable class="parameter">column_name</replaceable> { SET GENERATED { ALWAYS | BY DEFAULT } | SET <replaceable>sequence_option</replaceable> | RESTART [ [ WITH ] <replaceable class="parameter">restart</replaceable> ] } [...]
     ALTER [ COLUMN ] <replaceable class="parameter">column_name</replaceable> DROP IDENTITY [ IF EXISTS ]
@@ -202,10 +203,11 @@ WITH ( MODULUS <replaceable class="parameter">numeric_literal</replaceable>, REM
     <term><literal>SET</literal>/<literal>DROP DEFAULT</literal></term>
     <listitem>
      <para>
-      These forms set or remove the default value for a column.
-      Default values only apply in subsequent <command>INSERT</command>
-      or <command>UPDATE</command> commands; they do not cause rows already in the
-      table to change.
+      These forms set or remove the default value for a column (where
+      removal is equivalent to setting the default value to NULL).  The new
+      default value will only apply in subsequent <command>INSERT</command>
+      or <command>UPDATE</command> commands; it does not cause rows already
+      in the table to change.
      </para>
     </listitem>
    </varlistentry>
@@ -242,6 +244,23 @@ WITH ( MODULUS <replaceable class="parameter">numeric_literal</replaceable>, REM
    </varlistentry>
 
    <varlistentry>
+    <term><literal>DROP EXPRESSION [ IF EXISTS ]</literal></term>
+    <listitem>
+     <para>
+      This form turns a stored generated column into a normal base column.
+      Existing data in the columns is retained, but future changes will no
+      longer apply the generation expression.
+     </para>
+
+     <para>
+      If <literal>DROP EXPRESSION IF EXISTS</literal> is specified and the
+      column is not a stored generated column, no error is thrown.  In this
+      case a notice is issued instead.
+     </para>
+    </listitem>
+   </varlistentry>
+
+   <varlistentry>
     <term><literal>ADD GENERATED { ALWAYS | BY DEFAULT } AS IDENTITY</literal></term>
     <term><literal>SET GENERATED { ALWAYS | BY DEFAULT }</literal></term>
     <term><literal>DROP IDENTITY [ IF EXISTS ]</literal></term>
@@ -250,6 +269,10 @@ WITH ( MODULUS <replaceable class="parameter">numeric_literal</replaceable>, REM
       These forms change whether a column is an identity column or change the
       generation attribute of an existing identity column.
       See <xref linkend="sql-createtable"/> for details.
+      Like <literal>SET DEFAULT</literal>, these forms only affect the
+      behavior of subsequent <command>INSERT</command>
+      and <command>UPDATE</command> commands; they do not cause rows
+      already in the table to change.
      </para>
 
      <para>
@@ -696,9 +719,7 @@ WITH ( MODULUS <replaceable class="parameter">numeric_literal</replaceable>, REM
      <para>
       <literal>SHARE UPDATE EXCLUSIVE</literal> lock will be taken for
       fillfactor, toast and autovacuum storage parameters, as well as the
-      following planner related parameters:
-      <varname>effective_io_concurrency</varname>, <varname>parallel_workers</varname>, <varname>seq_page_cost</varname>,
-      <varname>random_page_cost</varname>, <varname>n_distinct</varname> and <varname>n_distinct_inherited</varname>.
+      planner parameter <varname>parallel_workers</varname>.
      </para>
     </listitem>
    </varlistentry>
@@ -1352,6 +1373,32 @@ WITH ( MODULUS <replaceable class="parameter">numeric_literal</replaceable>, REM
 <programlisting>
 ALTER TABLE distributors ADD COLUMN address varchar(30);
 </programlisting>
+   That will cause all existing rows in the table to be filled with null
+   values for the new column.
+  </para>
+
+  <para>
+   To add a column with a non-null default:
+<programlisting>
+ALTER TABLE measurements
+  ADD COLUMN mtime timestamp with time zone DEFAULT now();
+</programlisting>
+   Existing rows will be filled with the current time as the value of the
+   new column, and then new rows will receive the time of their insertion.
+  </para>
+
+  <para>
+   To add a column and fill it with a value different from the default to
+   be used later:
+<programlisting>
+ALTER TABLE transactions
+  ADD COLUMN status varchar(30) DEFAULT 'old',
+  ALTER COLUMN status SET default 'current';
+</programlisting>
+   Existing rows will be filled with <literal>old</literal>, but then
+   the default for subsequent commands will be <literal>current</literal>.
+   The effects are the same as if the two sub-commands had been issued
+   in separate <command>ALTER TABLE</command> commands.
   </para>
 
   <para>

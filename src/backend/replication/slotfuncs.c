@@ -31,7 +31,7 @@ check_permissions(void)
 	if (!superuser() && !has_rolreplication(GetUserId()))
 		ereport(ERROR,
 				(errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
-				 (errmsg("must be superuser or replication role to use replication slots"))));
+				 errmsg("must be superuser or replication role to use replication slots")));
 }
 
 /*
@@ -370,6 +370,14 @@ pg_physical_replication_slot_advance(XLogRecPtr moveto)
 		MyReplicationSlot->data.restart_lsn = moveto;
 		SpinLockRelease(&MyReplicationSlot->mutex);
 		retlsn = moveto;
+
+		/*
+		 * Dirty the slot so as it is written out at the next checkpoint.
+		 * Note that the LSN position advanced may still be lost in the
+		 * event of a crash, but this makes the data consistent after a
+		 * clean shutdown.
+		 */
+		ReplicationSlotMarkDirty();
 	}
 
 	return retlsn;
@@ -391,7 +399,6 @@ pg_logical_replication_slot_advance(XLogRecPtr moveto)
 {
 	LogicalDecodingContext *ctx;
 	ResourceOwner old_resowner = CurrentResourceOwner;
-	XLogRecPtr	startlsn;
 	XLogRecPtr	retlsn;
 
 	PG_TRY();
@@ -411,7 +418,7 @@ pg_logical_replication_slot_advance(XLogRecPtr moveto)
 		 * Start reading at the slot's restart_lsn, which we know to point to
 		 * a valid record.
 		 */
-		startlsn = MyReplicationSlot->data.restart_lsn;
+		XLogBeginRead(ctx->reader, MyReplicationSlot->data.restart_lsn);
 
 		/* Initialize our return value in case we don't do anything */
 		retlsn = MyReplicationSlot->data.confirmed_flush;
@@ -420,10 +427,7 @@ pg_logical_replication_slot_advance(XLogRecPtr moveto)
 		InvalidateSystemCaches();
 
 		/* Decode at least one record, until we run out of records */
-		while ((!XLogRecPtrIsInvalid(startlsn) &&
-				startlsn < moveto) ||
-			   (!XLogRecPtrIsInvalid(ctx->reader->EndRecPtr) &&
-				ctx->reader->EndRecPtr < moveto))
+		while (ctx->reader->EndRecPtr < moveto)
 		{
 			char	   *errm = NULL;
 			XLogRecord *record;
@@ -432,12 +436,9 @@ pg_logical_replication_slot_advance(XLogRecPtr moveto)
 			 * Read records.  No changes are generated in fast_forward mode,
 			 * but snapbuilder/slot statuses are updated properly.
 			 */
-			record = XLogReadRecord(ctx->reader, startlsn, &errm);
+			record = XLogReadRecord(ctx->reader, &errm);
 			if (errm)
 				elog(ERROR, "%s", errm);
-
-			/* Read sequentially from now on */
-			startlsn = InvalidXLogRecPtr;
 
 			/*
 			 * Process the record.  Storage-level changes are ignored in
@@ -474,9 +475,9 @@ pg_logical_replication_slot_advance(XLogRecPtr moveto)
 			 * keep track of their progress, so we should make more of an
 			 * effort to save it for them.
 			 *
-			 * Dirty the slot so it's written out at the next checkpoint.
-			 * We'll still lose its position on crash, as documented, but it's
-			 * better than always losing the position even on clean restart.
+			 * Dirty the slot so it is written out at the next checkpoint.
+			 * The LSN position advanced to may still be lost on a crash
+			 * but this makes the data consistent after a clean shutdown.
 			 */
 			ReplicationSlotMarkDirty();
 		}
@@ -573,15 +574,6 @@ pg_replication_slot_advance(PG_FUNCTION_ARGS)
 	values[0] = NameGetDatum(&MyReplicationSlot->data.name);
 	nulls[0] = false;
 
-	/* Update the on disk state when lsn was updated. */
-	if (XLogRecPtrIsInvalid(endlsn))
-	{
-		ReplicationSlotMarkDirty();
-		ReplicationSlotsComputeRequiredXmin(false);
-		ReplicationSlotsComputeRequiredLSN();
-		ReplicationSlotSave();
-	}
-
 	ReplicationSlotRelease();
 
 	/* Return the reached position. */
@@ -677,7 +669,7 @@ copy_replication_slot(FunctionCallInfo fcinfo, bool logical_slot)
 		Assert(!logical_slot);
 		ereport(ERROR,
 				(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-				 (errmsg("cannot copy a replication slot that doesn't reserve WAL"))));
+				 errmsg("cannot copy a replication slot that doesn't reserve WAL")));
 	}
 
 	/* Overwrite params from optional arguments */

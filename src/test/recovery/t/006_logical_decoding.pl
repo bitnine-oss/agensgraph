@@ -7,7 +7,7 @@ use strict;
 use warnings;
 use PostgresNode;
 use TestLib;
-use Test::More tests => 11;
+use Test::More tests => 12;
 use Config;
 
 # Initialize master node
@@ -135,43 +135,29 @@ is($node_master->psql('postgres', 'DROP DATABASE otherdb'),
 is($node_master->slot('otherdb_slot')->{'slot_name'},
 	undef, 'logical slot was actually dropped with DB');
 
-# Test to ensure that we don't run out of file descriptors even if there
-# are more spill files than maxAllocatedDescs.
-
-# Set max_files_per_process to a small value to make it more likely to run out
-# of max open file descriptors.
+# Test logical slot advancing and its durability.
+my $logical_slot = 'logical_slot';
 $node_master->safe_psql('postgres',
-	'ALTER SYSTEM SET max_files_per_process = 26;');
+	"SELECT pg_create_logical_replication_slot('$logical_slot', 'test_decoding', false);");
+$node_master->psql('postgres', "
+	CREATE TABLE tab_logical_slot (a int);
+	INSERT INTO tab_logical_slot VALUES (generate_series(1,10));");
+my $current_lsn = $node_master->safe_psql('postgres',
+	"SELECT pg_current_wal_lsn();");
+chomp($current_lsn);
+my $psql_rc = $node_master->psql('postgres',
+	"SELECT pg_replication_slot_advance('$logical_slot', '$current_lsn'::pg_lsn);");
+is($psql_rc, '0', 'slot advancing with logical slot');
+my $logical_restart_lsn_pre = $node_master->safe_psql('postgres',
+	"SELECT restart_lsn from pg_replication_slots WHERE slot_name = '$logical_slot';");
+chomp($logical_restart_lsn_pre);
+# Slot advance should persists across clean restarts.
 $node_master->restart;
-
-$node_master->safe_psql(
-	'postgres', q{
-do $$
-BEGIN
-    FOR i IN 1..10 LOOP
-        BEGIN
-            INSERT INTO decoding_test(x) SELECT generate_series(1,5000);
-        EXCEPTION
-            when division_by_zero then perform 'dummy';
-        END;
-    END LOOP;
-END $$;
-});
-
-$result = $node_master->safe_psql('postgres',
-	qq[
-set logical_decoding_work_mem to 64; -- generate plenty of .spill files
-SELECT data from pg_logical_slot_get_changes('test_slot', NULL, NULL)
-    WHERE data LIKE '%INSERT%' ORDER BY lsn LIMIT 1;
-]);
-
-$expected = q{table public.decoding_test: INSERT: x[integer]:1 y[text]:null};
-is($result, $expected, 'got expected output from spilling subxacts session');
-
-# Reset back max_files_per_process
-$node_master->safe_psql('postgres',
-	'ALTER SYSTEM SET max_files_per_process = DEFAULT;');
-$node_master->restart;
+my $logical_restart_lsn_post = $node_master->safe_psql('postgres',
+	"SELECT restart_lsn from pg_replication_slots WHERE slot_name = '$logical_slot';");
+chomp($logical_restart_lsn_post);
+ok(($logical_restart_lsn_pre cmp $logical_restart_lsn_post) == 0,
+	"logical slot advance persists across restarts");
 
 # done with the node
 $node_master->stop;

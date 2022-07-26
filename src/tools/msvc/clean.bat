@@ -72,8 +72,6 @@ if %DIST%==1 if exist src\interfaces\ecpg\preproc\c_kwlist_d.h del /q src\interf
 if %DIST%==1 if exist src\interfaces\ecpg\preproc\ecpg_kwlist_d.h del /q src\interfaces\ecpg\preproc\ecpg_kwlist_d.h
 if %DIST%==1 if exist src\interfaces\ecpg\preproc\preproc.y del /q src\interfaces\ecpg\preproc\preproc.y
 if %DIST%==1 if exist src\backend\catalog\postgres.bki del /q src\backend\catalog\postgres.bki
-if %DIST%==1 if exist src\backend\catalog\postgres.description del /q src\backend\catalog\postgres.description
-if %DIST%==1 if exist src\backend\catalog\postgres.shdescription del /q src\backend\catalog\postgres.shdescription
 if %DIST%==1 if exist src\backend\catalog\schemapg.h del /q src\backend\catalog\schemapg.h
 if %DIST%==1 if exist src\backend\catalog\pg_*_d.h del /q src\backend\catalog\pg_*_d.h
 if %DIST%==1 if exist src\backend\catalog\bki-stamp del /q src\backend\catalog\bki-stamp
@@ -90,7 +88,6 @@ if %DIST%==1 if exist src\backend\replication\syncrep_scanner.c del /q src\backe
 if %DIST%==1 if exist src\backend\replication\syncrep_gram.c del /q src\backend\replication\syncrep_gram.c
 
 
-if exist src\interfaces\libpq\libpq.rc del /q src\interfaces\libpq\libpq.rc
 if exist src\interfaces\libpq\libpqdll.def del /q src\interfaces\libpq\libpqdll.def
 if exist src\interfaces\ecpg\compatlib\compatlib.def del /q src\interfaces\ecpg\compatlib\compatlib.def
 if exist src\interfaces\ecpg\ecpglib\ecpglib.def del /q src\interfaces\ecpg\ecpglib\ecpglib.def
