@@ -2150,14 +2150,16 @@ ORDER BY 1, 2, 3;
                     | array_ops        | array_ops        | anyarray
                     | float_ops        | float4_ops       | real
                     | float_ops        | float8_ops       | double precision
+                    | graphid_ops      | graphid_ops      | graphid
                     | jsonb_ops        | jsonb_ops        | jsonb
                     | numeric_ops      | numeric_ops      | numeric
                     | range_ops        | range_ops        | anyrange
                     | record_image_ops | record_image_ops | record
                     | record_ops       | record_ops       | record
+                    | rowid_ops        | rowid_ops        | rowid
                     | tsquery_ops      | tsquery_ops      | tsquery
                     | tsvector_ops     | tsvector_ops     | tsvector
-(14 rows)
+(16 rows)
 
 -- **************** pg_index ****************
 -- Look for illegal values in pg_index fields.
