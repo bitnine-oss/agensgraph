@@ -13,9 +13,12 @@ SELECT relname, relhasindex
    ORDER BY relname;
 a|f
 a_star|f
+ag_edge|f
 ag_graph|t
 ag_graphmeta|t
+ag_graphpath|f
 ag_label|t
+ag_vertex|f
 aggtest|f
 array_index_op_test|t
 array_op_test|f
@@ -237,10 +240,7 @@ SELECT relname, relkind
   FROM pg_class
  WHERE relkind IN ('v', 'c', 'f', 'p', 'I')
        AND relfilenode <> 0;
-  relname  | relkind 
------------+---------
- vertex    | c
- edge      | c
- graphpath | c
-(3 rows)
+ relname | relkind 
+---------+---------
+(0 rows)
 

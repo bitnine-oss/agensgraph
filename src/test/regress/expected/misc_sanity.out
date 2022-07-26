@@ -96,6 +96,10 @@ WHERE c.oid < 16384 AND
 ORDER BY 1, 2;
          relname         |    attname    |   atttypid   
 -------------------------+---------------+--------------
+ ag_edge                 | properties    | jsonb
+ ag_graphpath            | edges         | edge[]
+ ag_graphpath            | vertices      | vertex[]
+ ag_vertex               | properties    | jsonb
  pg_attribute            | attacl        | aclitem[]
  pg_attribute            | attfdwoptions | text[]
  pg_attribute            | attmissingval | anyarray
@@ -107,5 +111,5 @@ ORDER BY 1, 2;
  pg_index                | indpred       | pg_node_tree
  pg_largeobject          | data          | bytea
  pg_largeobject_metadata | lomacl        | aclitem[]
-(11 rows)
+(15 rows)
 

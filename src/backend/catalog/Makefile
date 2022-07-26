@@ -70,7 +70,8 @@ CATALOG_HEADERS := \
 	pg_collation.h pg_partitioned_table.h pg_range.h pg_transform.h \
 	pg_sequence.h pg_publication.h pg_publication_rel.h pg_subscription.h \
 	pg_subscription_rel.h \
-	ag_graph.h ag_label.h ag_graphmeta.h
+	ag_graph.h ag_label.h ag_graphmeta.h \
+	ag_vertex.h ag_edge.h ag_graphpath.h
 
 GENERATED_HEADERS := $(CATALOG_HEADERS:%.h=%_d.h) schemapg.h
 

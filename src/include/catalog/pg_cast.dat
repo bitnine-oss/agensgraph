@@ -515,12 +515,12 @@
 # agensgraph
 # vertex/edge to jsonb
 { castsource => 'vertex', casttarget => 'jsonb', castfunc => 'to_jsonb(vertex)',
-castcontext => 'i', castmethod => 'f' },
+  castcontext => 'i', castmethod => 'f' },
 { castsource => 'edge', casttarget => 'jsonb', castfunc => 'to_jsonb(edge)',
-castcontext => 'i', castmethod => 'f' },
+  castcontext => 'i', castmethod => 'f' },
 
 # implicit coercion from numeric to graphid
 { castsource => 'numeric', casttarget => 'graphid',
-castfunc => 'graphid(numeric)', castcontext => 'i', castmethod => 'f' },
+  castfunc => 'graphid(numeric)', castcontext => 'i', castmethod => 'f' },
 
 ]

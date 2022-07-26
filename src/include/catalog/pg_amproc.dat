@@ -1246,47 +1246,47 @@
 # graphid_ops
 # BTree
 { amprocfamily => 'btree/graphid_ops', amproclefttype => 'graphid',
-amprocrighttype => 'graphid', amprocnum => '1', amproc => 'btgraphidcmp' },
+  amprocrighttype => 'graphid', amprocnum => '1', amproc => 'btgraphidcmp' },
 # Hash
 { amprocfamily => 'hash/graphid_ops', amproclefttype => 'graphid',
-amprocrighttype => 'graphid', amprocnum => '1', amproc => 'graphid_hash' },
+  amprocrighttype => 'graphid', amprocnum => '1', amproc => 'graphid_hash' },
 # GIN (as BTree)
 { amprocfamily => 'gin/graphid_ops', amproclefttype => 'graphid',
-amprocrighttype => 'graphid', amprocnum => '1', amproc => 'btgraphidcmp' },
+  amprocrighttype => 'graphid', amprocnum => '1', amproc => 'btgraphidcmp' },
 { amprocfamily => 'gin/graphid_ops', amproclefttype => 'graphid',
-amprocrighttype => 'graphid', amprocnum => '2',
-amproc => 'gin_extract_value_graphid' },
+  amprocrighttype => 'graphid', amprocnum => '2',
+  amproc => 'gin_extract_value_graphid' },
 { amprocfamily => 'gin/graphid_ops', amproclefttype => 'graphid',
-amprocrighttype => 'graphid', amprocnum => '3',
-amproc => 'gin_extract_query_graphid' },
+  amprocrighttype => 'graphid', amprocnum => '3',
+  amproc => 'gin_extract_query_graphid' },
 { amprocfamily => 'gin/graphid_ops', amproclefttype => 'graphid',
-amprocrighttype => 'graphid', amprocnum => '4',
-amproc => 'gin_consistent_graphid' },
+  amprocrighttype => 'graphid', amprocnum => '4',
+  amproc => 'gin_consistent_graphid' },
 { amprocfamily => 'gin/graphid_ops', amproclefttype => 'graphid',
-amprocrighttype => 'graphid', amprocnum => '5',
-amproc => 'gin_compare_partial_graphid' },
+  amprocrighttype => 'graphid', amprocnum => '5',
+  amproc => 'gin_compare_partial_graphid' },
 
 # BRIN (minmax)
 { amprocfamily => 'brin/graphid_minmax_ops', amproclefttype => 'graphid',
-amprocrighttype => 'graphid', amprocnum => '1',
-amproc => 'brin_minmax_opcinfo' },
+  amprocrighttype => 'graphid', amprocnum => '1',
+  amproc => 'brin_minmax_opcinfo' },
 { amprocfamily => 'brin/graphid_minmax_ops', amproclefttype => 'graphid',
-amprocrighttype => 'graphid', amprocnum => '2',
-amproc => 'brin_minmax_add_value' },
+  amprocrighttype => 'graphid', amprocnum => '2',
+  amproc => 'brin_minmax_add_value' },
 { amprocfamily => 'brin/graphid_minmax_ops', amproclefttype => 'graphid',
-amprocrighttype => 'graphid', amprocnum => '3',
-amproc => 'brin_minmax_consistent' },
+  amprocrighttype => 'graphid', amprocnum => '3',
+  amproc => 'brin_minmax_consistent' },
 { amprocfamily => 'brin/graphid_minmax_ops', amproclefttype => 'graphid',
-amprocrighttype => 'graphid', amprocnum => '4',
-amproc => 'brin_minmax_union' },
+  amprocrighttype => 'graphid', amprocnum => '4',
+  amproc => 'brin_minmax_union' },
 
 # graphid_ops
 # Hash
 { amprocfamily => 'hash/vertex_ops', amproclefttype => 'vertex',
-amprocrighttype => 'vertex', amprocnum => '1', amproc => 'vertex_hash' },
+  amprocrighttype => 'vertex', amprocnum => '1', amproc => 'vertex_hash' },
 
 # rowid_ops
 # BTree
 { amprocfamily => 'btree/rowid_ops', amproclefttype => 'rowid',
-amprocrighttype => 'rowid', amprocnum => '1', amproc => 'btrowidcmp' },
+  amprocrighttype => 'rowid', amprocnum => '1', amproc => 'btrowidcmp' },
 ]

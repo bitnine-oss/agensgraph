@@ -345,18 +345,18 @@
 
 # agensgraph
 { opcmethod => 'btree', opcname => 'graphid_ops',
-opcfamily => 'btree/graphid_ops', opcintype => 'graphid' },
+  opcfamily => 'btree/graphid_ops', opcintype => 'graphid' },
 { opcmethod => 'hash', opcname => 'graphid_ops',
-opcfamily => 'hash/graphid_ops', opcintype => 'graphid' },
+  opcfamily => 'hash/graphid_ops', opcintype => 'graphid' },
 { opcmethod => 'gin', opcname => 'graphid_ops', opcfamily => 'gin/graphid_ops',
-opcintype => 'graphid' },
+  opcintype => 'graphid' },
 { opcmethod => 'brin', opcname => 'graphid_minmax_ops',
-opcfamily => 'brin/graphid_minmax_ops', opcintype => 'graphid' },
+  opcfamily => 'brin/graphid_minmax_ops', opcintype => 'graphid' },
 
 { opcmethod => 'hash', opcname => 'vertex_ops', opcfamily => 'hash/vertex_ops',
-opcintype => 'vertex' },
+  opcintype => 'vertex' },
 
 { opcmethod => 'btree', opcname => 'rowid_ops', opcfamily => 'btree/rowid_ops',
-opcintype => 'rowid' },
+  opcintype => 'rowid' },
 
 ]

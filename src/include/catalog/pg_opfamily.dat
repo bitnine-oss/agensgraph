@@ -229,16 +229,16 @@
 
 # agensgraph
 { oid => '7093', oid_symbol => 'GRAPHID_BTREE_FAM_OID',
-opfmethod => 'btree', opfname => 'graphid_ops' },
+  opfmethod => 'btree', opfname => 'graphid_ops' },
 { oid => '7096',
-opfmethod => 'hash', opfname => 'graphid_ops' },
+  opfmethod => 'hash', opfname => 'graphid_ops' },
 { oid => '7098',
-opfmethod => 'gin', opfname => 'graphid_ops' },
+  opfmethod => 'gin', opfname => 'graphid_ops' },
 { oid => '7105',
-opfmethod => 'brin', opfname => 'graphid_minmax_ops' },
+  opfmethod => 'brin', opfname => 'graphid_minmax_ops' },
 { oid => '7106',
-opfmethod => 'hash', opfname => 'vertex_ops' },
+  opfmethod => 'hash', opfname => 'vertex_ops' },
 { oid => '7167',
-opfmethod => 'btree', opfname => 'rowid_ops' },
+  opfmethod => 'btree', opfname => 'rowid_ops' },
 
 ]

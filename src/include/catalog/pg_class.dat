@@ -25,43 +25,12 @@
 { oid => '1259',
   relname => 'pg_class', reltype => 'pg_class' },
 
-# agensgraph
-
-# composite types
+# agensgraph - composite types
 { oid => '7010',
-relname => 'vertex', relnamespace => 'PGNSP', reltype => 'vertex',
-reloftype => '0', relowner => 'PGUID', relam => '0', relfilenode => '7010',
-reltablespace => '0', relpages => '0', reltuples => '0', relallvisible => '0',
-reltoastrelid => '0', relhasindex => 'f', relisshared => 'f',
-relpersistence => 'p', relkind => 'c', relnatts => '3', relchecks => '0',
-relhasrules => 'f', relhastriggers => 'f',
-relhassubclass => 'f', relrowsecurity => 'f', relforcerowsecurity => 'f',
-relispopulated => 't', relreplident => 'n', relispartition => 'f',
-relrewrite => '0', relfrozenxid => '0', relminmxid => '0', relacl => '_null_',
-reloptions => '_null_', relpartbound => '_null_' },
-
+  relname => 'ag_vertex', reltype => 'vertex' },
 { oid => '7020',
-relname => 'edge', relnamespace => 'PGNSP', reltype => 'edge',
-reloftype => '0', relowner => 'PGUID', relam => '0', relfilenode => '7020',
-reltablespace => '0', relpages => '0', reltuples => '0', relallvisible => '0',
-reltoastrelid => '0', relhasindex => 'f', relisshared => 'f',
-relpersistence => 'p', relkind => 'c', relnatts => '5', relchecks => '0',
-relhasrules => 'f', relhastriggers => 'f',
-relhassubclass => 'f', relrowsecurity => 'f', relforcerowsecurity => 'f',
-relispopulated => 't', relreplident => 'n', relispartition => 'f',
-relrewrite => '0', relfrozenxid => '0', relminmxid => '0', relacl => '_null_',
-reloptions => '_null_', relpartbound => '_null_' },
-
+  relname => 'ag_edge', reltype => 'edge' },
 { oid => '7030',
-relname => 'graphpath', relnamespace => 'PGNSP', reltype => 'graphpath',
-reloftype => '0', relowner => 'PGUID', relam => '0', relfilenode => '7030',
-reltablespace => '0', relpages => '0', reltuples => '0', relallvisible => '0',
-reltoastrelid => '0', relhasindex => 'f', relisshared => 'f',
-relpersistence => 'p', relkind => 'c', relnatts => '2', relchecks => '0',
-relhasrules => 'f', relhastriggers => 'f',
-relhassubclass => 'f', relrowsecurity => 'f', relforcerowsecurity => 'f',
-relispopulated => 't', relreplident => 'n', relispartition => 'f',
-relrewrite => '0', relfrozenxid => '0', relminmxid => '0', relacl => '_null_',
-reloptions => '_null_', relpartbound => '_null_' },
+  relname => 'ag_graphpath', reltype => 'graphpath' },
 
 ]
