@@ -193,13 +193,15 @@ typedef struct NewConstraint
  * Phase 3 copy (this could be either a new column with a non-null default, or
  * a column that we're changing the type of).  Columns without such an entry
  * are just copied from the old table during ATRewriteTable.  Note that the
- * expr is an expression over *old* table values.
+ * expr is an expression over *old* table values, except when is_generated
+ * is true; then it is an expression over columns of the *new* tuple.
  */
 typedef struct NewColumnValue
 {
 	AttrNumber	attnum;			/* which column */
 	Expr	   *expr;			/* expression to compute */
 	ExprState  *exprstate;		/* execution state */
+	bool		is_generated;	/* is it a GENERATED expression? */
 } NewColumnValue;
 
 /*
@@ -5045,13 +5047,18 @@ ATRewriteTable(AlteredTableInfo *tab, Oid OIDNewHeap, LOCKMODE lockmode)
 
 				/*
 				 * Process supplied expressions to replace selected columns.
-				 * Expression inputs come from the old tuple.
+				 *
+				 * First, evaluate expressions whose inputs come from the old
+				 * tuple.
 				 */
 				econtext->ecxt_scantuple = oldslot;
 
 				foreach(l, tab->newvals)
 				{
 					NewColumnValue *ex = lfirst(l);
+
+					if (ex->is_generated)
+						continue;
 
 					newslot->tts_values[ex->attnum - 1]
 						= ExecEvalExpr(ex->exprstate,
@@ -5060,6 +5067,26 @@ ATRewriteTable(AlteredTableInfo *tab, Oid OIDNewHeap, LOCKMODE lockmode)
 				}
 
 				ExecStoreVirtualTuple(newslot);
+
+				/*
+				 * Now, evaluate any expressions whose inputs come from the
+				 * new tuple.  We assume these columns won't reference each
+				 * other, so that there's no ordering dependency.
+				 */
+				econtext->ecxt_scantuple = newslot;
+
+				foreach(l, tab->newvals)
+				{
+					NewColumnValue *ex = lfirst(l);
+
+					if (!ex->is_generated)
+						continue;
+
+					newslot->tts_values[ex->attnum - 1]
+						= ExecEvalExpr(ex->exprstate,
+									   econtext,
+									   &newslot->tts_isnull[ex->attnum - 1]);
+				}
 
 				/*
 				 * Constraints might reference the tableoid column, so
@@ -5976,6 +6003,7 @@ ATExecAddColumn(List **wqueue, AlteredTableInfo *tab, Relation rel,
 			newval = (NewColumnValue *) palloc0(sizeof(NewColumnValue));
 			newval->attnum = attribute.attnum;
 			newval->expr = expression_planner(defval);
+			newval->is_generated = (colDef->generated != '\0');
 
 			tab->newvals = lappend(tab->newvals, newval);
 		}
@@ -10463,6 +10491,7 @@ ATPrepAlterColumnType(List **wqueue,
 		newval = (NewColumnValue *) palloc0(sizeof(NewColumnValue));
 		newval->attnum = attnum;
 		newval->expr = (Expr *) transform;
+		newval->is_generated = false;
 
 		tab->newvals = lappend(tab->newvals, newval);
 		if (ATColumnChangeRequiresRewrite(transform, attnum))
@@ -16024,6 +16053,54 @@ out:
 }
 
 /*
+ * isPartitionTrigger
+ *		Subroutine for CloneRowTriggersToPartition: determine whether
+ *		the given trigger has been cloned from another one.
+ *
+ * We use pg_depend as a proxy for this, since we don't have any direct
+ * evidence.  This is an ugly hack to cope with a catalog deficiency.
+ * Keep away from children.  Do not stare with naked eyes.  Do not propagate.
+ */
+static bool
+isPartitionTrigger(Oid trigger_oid)
+{
+	Relation	pg_depend;
+	ScanKeyData key[2];
+	SysScanDesc	scan;
+	HeapTuple	tup;
+	bool		found = false;
+
+	pg_depend = table_open(DependRelationId, AccessShareLock);
+
+	ScanKeyInit(&key[0], Anum_pg_depend_classid,
+				BTEqualStrategyNumber,
+				F_OIDEQ,
+				ObjectIdGetDatum(TriggerRelationId));
+	ScanKeyInit(&key[1], Anum_pg_depend_objid,
+				BTEqualStrategyNumber,
+				F_OIDEQ,
+				ObjectIdGetDatum(trigger_oid));
+
+	scan = systable_beginscan(pg_depend, DependDependerIndexId,
+							  true, NULL, 2, key);
+	while ((tup = systable_getnext(scan)) != NULL)
+	{
+		Form_pg_depend	dep = (Form_pg_depend) GETSTRUCT(tup);
+
+		if (dep->refclassid == TriggerRelationId)
+		{
+			found = true;
+			break;
+		}
+	}
+
+	systable_endscan(scan);
+	table_close(pg_depend, AccessShareLock);
+
+	return found;
+}
+
+/*
  * CloneRowTriggersToPartition
  *		subroutine for ATExecAttachPartition/DefineRelation to create row
  *		triggers on partitions
@@ -16063,8 +16140,21 @@ CloneRowTriggersToPartition(Relation parent, Relation partition)
 		if (!TRIGGER_FOR_ROW(trigForm->tgtype))
 			continue;
 
-		/* We don't clone internal triggers, either */
-		if (trigForm->tgisinternal)
+		/*
+		 * Internal triggers require careful examination.  Ideally, we don't
+		 * clone them.
+		 *
+		 * However, if our parent is a partitioned relation, there might be
+		 * internal triggers that need cloning.  In that case, we must
+		 * skip clone it if the trigger on parent depends on another trigger.
+		 *
+		 * Note we dare not verify that the other trigger belongs to an
+		 * ancestor relation of our parent, because that creates deadlock
+		 * opportunities.
+		 */
+		if (trigForm->tgisinternal &&
+			(!parent->rd_rel->relispartition ||
+			 !isPartitionTrigger(trigForm->oid)))
 			continue;
 
 		/*

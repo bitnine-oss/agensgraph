@@ -404,6 +404,7 @@ standard_ProcessUtility(PlannedStmt *pstmt,
 
 	pstate = make_parsestate(NULL);
 	pstate->p_sourcetext = queryString;
+	pstate->p_queryEnv = queryEnv;
 
 	switch (nodeTag(parsetree))
 	{
@@ -508,8 +509,8 @@ standard_ProcessUtility(PlannedStmt *pstmt,
 			 * Portal (cursor) manipulation
 			 */
 		case T_DeclareCursorStmt:
-			PerformCursorOpen((DeclareCursorStmt *) parsetree, params,
-							  queryString, isTopLevel);
+			PerformCursorOpen(pstate, (DeclareCursorStmt *) parsetree, params,
+							  isTopLevel);
 			break;
 
 		case T_ClosePortalStmt:
@@ -566,13 +567,14 @@ standard_ProcessUtility(PlannedStmt *pstmt,
 
 		case T_PrepareStmt:
 			CheckRestrictedOperation("PREPARE");
-			PrepareQuery((PrepareStmt *) parsetree, queryString,
+			PrepareQuery(pstate, (PrepareStmt *) parsetree,
 						 pstmt->stmt_location, pstmt->stmt_len);
 			break;
 
 		case T_ExecuteStmt:
-			ExecuteQuery((ExecuteStmt *) parsetree, NULL,
-						 queryString, params,
+			ExecuteQuery(pstate,
+						 (ExecuteStmt *) parsetree, NULL,
+						 params,
 						 dest, completionTag);
 			break;
 
@@ -675,8 +677,7 @@ standard_ProcessUtility(PlannedStmt *pstmt,
 			break;
 
 		case T_ExplainStmt:
-			ExplainQuery(pstate, (ExplainStmt *) parsetree, queryString, params,
-						 queryEnv, dest);
+			ExplainQuery(pstate, (ExplainStmt *) parsetree, params, dest);
 			break;
 
 		case T_AlterSystemStmt:
@@ -1522,9 +1523,8 @@ ProcessUtilitySlow(ParseState *pstate,
 				break;
 
 			case T_CreateTableAsStmt:
-				address = ExecCreateTableAs((CreateTableAsStmt *) parsetree,
-											queryString, params, queryEnv,
-											completionTag);
+				address = ExecCreateTableAs(pstate, (CreateTableAsStmt *) parsetree,
+											params, queryEnv, completionTag);
 				break;
 
 			case T_RefreshMatViewStmt:

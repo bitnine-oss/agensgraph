@@ -1763,7 +1763,10 @@ transformSetOperationStmt(ParseState *pstate, SelectStmt *stmt)
 										targetnames,
 										sortnscolumns,
 										JOIN_INNER,
+										0,
 										targetvars,
+										NIL,
+										NIL,
 										NULL,
 										false);
 

@@ -706,6 +706,7 @@ with_libxml
 XML2_CONFIG
 UUID_EXTRA_OBJS
 with_uuid
+with_readline
 with_systemd
 with_selinux
 with_openssl
@@ -8021,6 +8022,7 @@ $as_echo "$as_me: WARNING: *** Readline does not work on MinGW --- disabling" >&
 fi
 
 
+
 #
 # Prefer libedit
 #
@@ -9635,8 +9637,8 @@ python_majorversion=`echo "$python_fullversion" | sed 's/^\([0-9]*\).*/\1/'`
 python_minorversion=`echo "$python_fullversion" | sed 's/^[0-9]*\.\([0-9]*\).*/\1/'`
 python_version=`echo "$python_fullversion" | sed 's/^\([0-9]*\.[0-9]*\).*/\1/'`
 # Reject unsupported Python versions as soon as practical.
-if test "$python_majorversion" -lt 3 -a "$python_minorversion" -lt 4; then
-  as_fn_error $? "Python version $python_version is too old (version 2.4 or later is required)" "$LINENO" 5
+if test "$python_majorversion" -lt 3 -a "$python_minorversion" -lt 6; then
+  as_fn_error $? "Python version $python_version is too old (version 2.6 or later is required)" "$LINENO" 5
 fi
 
 { $as_echo "$as_me:${as_lineno-$LINENO}: checking for Python distutils module" >&5

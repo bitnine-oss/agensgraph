@@ -281,7 +281,11 @@ btree_xlog_split(bool onleft, XLogReaderState *record)
 			datalen -= newitemsz;
 		}
 
-		/* Extract left hikey and its size (assuming 16-bit alignment) */
+		/*
+		 * Extract left hikey and its size.  We assume that 16-bit alignment
+		 * is enough to apply IndexTupleSize (since it's fetching from a
+		 * uint16 field).
+		 */
 		left_hikey = (IndexTuple) datapos;
 		left_hikeysz = MAXALIGN(IndexTupleSize(left_hikey));
 		datapos += left_hikeysz;
@@ -445,16 +449,11 @@ btree_xlog_delete(XLogReaderState *record)
 	 */
 	if (XLogReadBufferForRedo(record, 0, &buffer) == BLK_NEEDS_REDO)
 	{
+		char	   *ptr = XLogRecGetBlockData(record, 0, NULL);
+
 		page = (Page) BufferGetPage(buffer);
 
-		if (XLogRecGetDataLen(record) > SizeOfBtreeDelete)
-		{
-			OffsetNumber *unused;
-
-			unused = (OffsetNumber *) ((char *) xlrec + SizeOfBtreeDelete);
-
-			PageIndexMultiDelete(page, unused, xlrec->nitems);
-		}
+		PageIndexMultiDelete(page, (OffsetNumber *) ptr, xlrec->ndeleted);
 
 		/* Mark the page as not containing any LP_DEAD items */
 		opaque = (BTPageOpaque) PageGetSpecialPointer(page);

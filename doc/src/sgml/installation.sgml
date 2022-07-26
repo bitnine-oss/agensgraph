@@ -196,7 +196,7 @@ su - postgres
       language, you need a <productname>Python</productname>
       installation with the header files and
       the <application>distutils</application> module.  The minimum
-      required version is <productname>Python</productname> 2.4.
+      required version is <productname>Python</productname> 2.6.
       <productname>Python 3</productname> is supported if it's
       version 3.1 or later; but see
       <xref linkend="plpython-python23"/>
@@ -254,7 +254,7 @@ su - postgres
       encrypted client connections.  <productname>OpenSSL</productname> is
       also required for random number generation on platforms that do not
       have <filename>/dev/urandom</filename> (except Windows).  The minimum
-      version required is 0.9.8.
+      version required is 1.0.1.
      </para>
     </listitem>
 
