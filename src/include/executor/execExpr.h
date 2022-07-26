@@ -851,5 +851,12 @@ extern void ExecEvalCypherTypeCast(ExprState *state, ExprEvalStep *op);
 extern void ExecEvalCypherMapExpr(ExprState *state, ExprEvalStep *op);
 extern void ExecEvalCypherListExpr(ExprState *state, ExprEvalStep *op);
 extern void ExecEvalCypherAccessExpr(ExprState *state, ExprEvalStep *op);
+extern void ExecEvalCypherListCompBegin(ExprState *state, ExprEvalStep *op);
+extern void ExecEvalCypherListCompElem(ExprState *state, ExprEvalStep *op);
+extern void ExecEvalCypherListCompEnd(ExprState *state, ExprEvalStep *op);
+extern void ExecEvalCypherListCompIterInit(ExprState *state, ExprEvalStep *op);
+extern void ExecEvalCypherListCompIterInitNext(ExprState *state,
+											   ExprEvalStep *op);
+extern void ExecEvalCypherListCompVar(ExprState *state, ExprEvalStep *op);
 
 #endif							/* EXEC_EXPR_H */
