@@ -827,7 +827,6 @@ ExecInitExprRec(Expr *node, ExprState *state,
 					elog(ERROR, "GroupingFunc found in non-Agg plan node");
 
 				scratch.opcode = EEOP_GROUPING_FUNC;
-				scratch.d.grouping_func.parent = (AggState *) state->parent;
 
 				agg = (Agg *) (state->parent->plan);
 
@@ -2847,12 +2846,7 @@ static void
 ExecInitCoerceToDomain(ExprEvalStep *scratch, CoerceToDomain *ctest,
 					   ExprState *state, Datum *resv, bool *resnull)
 {
-	ExprEvalStep scratch2 = {0};
 	DomainConstraintRef *constraint_ref;
-	Datum	   *domainval = NULL;
-	bool	   *domainnull = NULL;
-	Datum	   *save_innermost_domainval;
-	bool	   *save_innermost_domainnull;
 	ListCell   *l;
 
 	scratch->d.domaincheck.resulttype = ctest->resulttype;
@@ -2899,6 +2893,10 @@ ExecInitCoerceToDomain(ExprEvalStep *scratch, CoerceToDomain *ctest,
 	foreach(l, constraint_ref->constraints)
 	{
 		DomainConstraintState *con = (DomainConstraintState *) lfirst(l);
+		Datum	   *domainval = NULL;
+		bool	   *domainnull = NULL;
+		Datum	   *save_innermost_domainval;
+		bool	   *save_innermost_domainnull;
 
 		scratch->d.domaincheck.constraintname = con->name;
 
@@ -2930,6 +2928,8 @@ ExecInitCoerceToDomain(ExprEvalStep *scratch, CoerceToDomain *ctest,
 					 */
 					if (get_typlen(ctest->resulttype) == -1)
 					{
+						ExprEvalStep scratch2 = {0};
+
 						/* Yes, so make output workspace for MAKE_READONLY */
 						domainval = (Datum *) palloc(sizeof(Datum));
 						domainnull = (bool *) palloc(sizeof(bool));
@@ -3000,8 +3000,6 @@ ExecBuildAggTrans(AggState *aggstate, AggStatePerPhase phase,
 	ExprState  *state = makeNode(ExprState);
 	PlanState  *parent = &aggstate->ss.ps;
 	ExprEvalStep scratch = {0};
-	int			transno = 0;
-	int			setoff = 0;
 	bool		isCombine = DO_AGGSPLIT_COMBINE(aggstate->aggsplit);
 	LastAttnumInfo deform = {0, 0, 0};
 
@@ -3015,7 +3013,7 @@ ExecBuildAggTrans(AggState *aggstate, AggStatePerPhase phase,
 	 * First figure out which slots, and how many columns from each, we're
 	 * going to need.
 	 */
-	for (transno = 0; transno < aggstate->numtrans; transno++)
+	for (int transno = 0; transno < aggstate->numtrans; transno++)
 	{
 		AggStatePerTrans pertrans = &aggstate->pertrans[transno];
 
@@ -3035,17 +3033,15 @@ ExecBuildAggTrans(AggState *aggstate, AggStatePerPhase phase,
 	/*
 	 * Emit instructions for each transition value / grouping set combination.
 	 */
-	for (transno = 0; transno < aggstate->numtrans; transno++)
+	for (int transno = 0; transno < aggstate->numtrans; transno++)
 	{
 		AggStatePerTrans pertrans = &aggstate->pertrans[transno];
-		int			argno;
-		int			setno;
 		FunctionCallInfo trans_fcinfo = pertrans->transfn_fcinfo;
-		ListCell   *arg;
-		ListCell   *bail;
 		List	   *adjust_bailout = NIL;
 		NullableDatum *strictargs = NULL;
 		bool	   *strictnulls = NULL;
+		int			argno;
+		ListCell   *bail;
 
 		/*
 		 * If filter present, emit. Do so before evaluating the input, to
@@ -3121,7 +3117,6 @@ ExecBuildAggTrans(AggState *aggstate, AggStatePerPhase phase,
 				else
 					scratch.opcode = EEOP_AGG_DESERIALIZE;
 
-				scratch.d.agg_deserialize.aggstate = aggstate;
 				scratch.d.agg_deserialize.fcinfo_data = ds_fcinfo;
 				scratch.d.agg_deserialize.jumpnull = -1;	/* adjust later */
 				scratch.resvalue = &trans_fcinfo->args[argno + 1].value;
@@ -3139,6 +3134,8 @@ ExecBuildAggTrans(AggState *aggstate, AggStatePerPhase phase,
 		}
 		else if (pertrans->numSortCols == 0)
 		{
+			ListCell   *arg;
+
 			/*
 			 * Normal transition function without ORDER BY / DISTINCT.
 			 */
@@ -3181,6 +3178,7 @@ ExecBuildAggTrans(AggState *aggstate, AggStatePerPhase phase,
 			 */
 			Datum	   *values = pertrans->sortslot->tts_values;
 			bool	   *nulls = pertrans->sortslot->tts_isnull;
+			ListCell   *arg;
 
 			strictnulls = nulls;
 
@@ -3220,12 +3218,12 @@ ExecBuildAggTrans(AggState *aggstate, AggStatePerPhase phase,
 		 * grouping set). Do so for both sort and hash based computations, as
 		 * applicable.
 		 */
-		setoff = 0;
 		if (doSort)
 		{
 			int			processGroupingSets = Max(phase->numsets, 1);
+			int			setoff = 0;
 
-			for (setno = 0; setno < processGroupingSets; setno++)
+			for (int setno = 0; setno < processGroupingSets; setno++)
 			{
 				ExecBuildAggTransCall(state, aggstate, &scratch, trans_fcinfo,
 									  pertrans, transno, setno, setoff, false);
@@ -3236,6 +3234,7 @@ ExecBuildAggTrans(AggState *aggstate, AggStatePerPhase phase,
 		if (doHash)
 		{
 			int			numHashes = aggstate->num_hashes;
+			int			setoff;
 
 			/* in MIXED mode, there'll be preceding transition values */
 			if (aggstate->aggstrategy != AGG_HASHED)
@@ -3243,7 +3242,7 @@ ExecBuildAggTrans(AggState *aggstate, AggStatePerPhase phase,
 			else
 				setoff = 0;
 
-			for (setno = 0; setno < numHashes; setno++)
+			for (int setno = 0; setno < numHashes; setno++)
 			{
 				ExecBuildAggTransCall(state, aggstate, &scratch, trans_fcinfo,
 									  pertrans, transno, setno, setoff, true);
@@ -3272,6 +3271,8 @@ ExecBuildAggTrans(AggState *aggstate, AggStatePerPhase phase,
 				Assert(as->d.agg_deserialize.jumpnull == -1);
 				as->d.agg_deserialize.jumpnull = state->steps_len;
 			}
+			else
+				Assert(false);
 		}
 	}
 
@@ -3317,7 +3318,6 @@ ExecBuildAggTransCall(ExprState *state, AggState *aggstate,
 		pertrans->initValueIsNull)
 	{
 		scratch->opcode = EEOP_AGG_INIT_TRANS;
-		scratch->d.agg_init_trans.aggstate = aggstate;
 		scratch->d.agg_init_trans.pertrans = pertrans;
 		scratch->d.agg_init_trans.setno = setno;
 		scratch->d.agg_init_trans.setoff = setoff;
@@ -3334,7 +3334,6 @@ ExecBuildAggTransCall(ExprState *state, AggState *aggstate,
 		fcinfo->flinfo->fn_strict)
 	{
 		scratch->opcode = EEOP_AGG_STRICT_TRANS_CHECK;
-		scratch->d.agg_strict_trans_check.aggstate = aggstate;
 		scratch->d.agg_strict_trans_check.setno = setno;
 		scratch->d.agg_strict_trans_check.setoff = setoff;
 		scratch->d.agg_strict_trans_check.transno = transno;
@@ -3359,7 +3358,6 @@ ExecBuildAggTransCall(ExprState *state, AggState *aggstate,
 	else
 		scratch->opcode = EEOP_AGG_ORDERED_TRANS_TUPLE;
 
-	scratch->d.agg_trans.aggstate = aggstate;
 	scratch->d.agg_trans.pertrans = pertrans;
 	scratch->d.agg_trans.setno = setno;
 	scratch->d.agg_trans.setoff = setoff;
@@ -3406,7 +3404,6 @@ ExecBuildGroupingEqual(TupleDesc ldesc, TupleDesc rdesc,
 {
 	ExprState  *state = makeNode(ExprState);
 	ExprEvalStep scratch = {0};
-	int			natt;
 	int			maxatt = -1;
 	List	   *adjust_jumps = NIL;
 	ListCell   *lc;
@@ -3426,7 +3423,7 @@ ExecBuildGroupingEqual(TupleDesc ldesc, TupleDesc rdesc,
 	scratch.resnull = &state->resnull;
 
 	/* compute max needed attribute */
-	for (natt = 0; natt < numCols; natt++)
+	for (int natt = 0; natt < numCols; natt++)
 	{
 		int			attno = keyColIdx[natt];
 
@@ -3456,7 +3453,7 @@ ExecBuildGroupingEqual(TupleDesc ldesc, TupleDesc rdesc,
 	 * Start comparing at the last field (least significant sort key). That's
 	 * the most likely to be different if we are dealing with sorted input.
 	 */
-	for (natt = numCols; --natt >= 0;)
+	for (int natt = numCols; --natt >= 0;)
 	{
 		int			attno = keyColIdx[natt];
 		Form_pg_attribute latt = TupleDescAttr(ldesc, attno - 1);

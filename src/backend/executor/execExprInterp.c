@@ -320,18 +320,14 @@ ExecReadyInterpretedExpr(ExprState *state)
 	 * In the direct-threaded implementation, replace each opcode with the
 	 * address to jump to.  (Use ExecEvalStepOp() to get back the opcode.)
 	 */
+	for (int off = 0; off < state->steps_len; off++)
 	{
-		int			off;
+		ExprEvalStep *op = &state->steps[off];
 
-		for (off = 0; off < state->steps_len; off++)
-		{
-			ExprEvalStep *op = &state->steps[off];
-
-			op->opcode = EEO_OPCODE(op->opcode);
-		}
-
-		state->flags |= EEO_FLAG_DIRECT_THREADED;
+		op->opcode = EEO_OPCODE(op->opcode);
 	}
+
+	state->flags |= EEO_FLAG_DIRECT_THREADED;
 #endif							/* EEO_USE_COMPUTED_GOTO */
 
 	state->evalfunc_private = (void *) ExecInterpExpr;
@@ -696,11 +692,11 @@ ExecInterpExpr(ExprState *state, ExprContext *econtext, bool *isnull)
 		{
 			FunctionCallInfo fcinfo = op->d.func.fcinfo_data;
 			NullableDatum *args = fcinfo->args;
-			int			argno;
+			int			nargs = op->d.func.nargs;
 			Datum		d;
 
 			/* strict function, so check for NULL args */
-			for (argno = 0; argno < op->d.func.nargs; argno++)
+			for (int argno = 0; argno < nargs; argno++)
 			{
 				if (args[argno].isnull)
 				{
@@ -1571,7 +1567,7 @@ ExecInterpExpr(ExprState *state, ExprContext *econtext, bool *isnull)
 		EEO_CASE(EEOP_AGG_DESERIALIZE)
 		{
 			FunctionCallInfo fcinfo = op->d.agg_deserialize.fcinfo_data;
-			AggState   *aggstate = op->d.agg_deserialize.aggstate;
+			AggState   *aggstate = castNode(AggState, state->parent);
 			MemoryContext oldContext;
 
 			/*
@@ -1591,29 +1587,28 @@ ExecInterpExpr(ExprState *state, ExprContext *econtext, bool *isnull)
 		 * Check that a strict aggregate transition / combination function's
 		 * input is not NULL.
 		 */
-		EEO_CASE(EEOP_AGG_STRICT_INPUT_CHECK_NULLS)
+
+		EEO_CASE(EEOP_AGG_STRICT_INPUT_CHECK_ARGS)
 		{
-			int			argno;
-			bool	   *nulls = op->d.agg_strict_input_check.nulls;
+			NullableDatum *args = op->d.agg_strict_input_check.args;
 			int			nargs = op->d.agg_strict_input_check.nargs;
 
-			for (argno = 0; argno < nargs; argno++)
+			for (int argno = 0; argno < nargs; argno++)
 			{
-				if (nulls[argno])
+				if (args[argno].isnull)
 					EEO_JUMP(op->d.agg_strict_input_check.jumpnull);
 			}
 			EEO_NEXT();
 		}
 
-		EEO_CASE(EEOP_AGG_STRICT_INPUT_CHECK_ARGS)
+		EEO_CASE(EEOP_AGG_STRICT_INPUT_CHECK_NULLS)
 		{
-			int			argno;
-			NullableDatum *args = op->d.agg_strict_input_check.args;
+			bool	   *nulls = op->d.agg_strict_input_check.nulls;
 			int			nargs = op->d.agg_strict_input_check.nargs;
 
-			for (argno = 0; argno < nargs; argno++)
+			for (int argno = 0; argno < nargs; argno++)
 			{
-				if (args[argno].isnull)
+				if (nulls[argno])
 					EEO_JUMP(op->d.agg_strict_input_check.jumpnull);
 			}
 			EEO_NEXT();
@@ -1624,10 +1619,9 @@ ExecInterpExpr(ExprState *state, ExprContext *econtext, bool *isnull)
 		 */
 		EEO_CASE(EEOP_AGG_INIT_TRANS)
 		{
-			AggState   *aggstate;
+			AggState   *aggstate = castNode(AggState, state->parent);
 			AggStatePerGroup pergroup;
 
-			aggstate = op->d.agg_init_trans.aggstate;
 			pergroup = &aggstate->all_pergroups
 				[op->d.agg_init_trans.setoff]
 				[op->d.agg_init_trans.transno];
@@ -1652,10 +1646,9 @@ ExecInterpExpr(ExprState *state, ExprContext *econtext, bool *isnull)
 		/* check that a strict aggregate's input isn't NULL */
 		EEO_CASE(EEOP_AGG_STRICT_TRANS_CHECK)
 		{
-			AggState   *aggstate;
+			AggState   *aggstate = castNode(AggState, state->parent);
 			AggStatePerGroup pergroup;
 
-			aggstate = op->d.agg_strict_trans_check.aggstate;
 			pergroup = &aggstate->all_pergroups
 				[op->d.agg_strict_trans_check.setoff]
 				[op->d.agg_strict_trans_check.transno];
@@ -1673,14 +1666,13 @@ ExecInterpExpr(ExprState *state, ExprContext *econtext, bool *isnull)
 		 */
 		EEO_CASE(EEOP_AGG_PLAIN_TRANS_BYVAL)
 		{
-			AggState   *aggstate;
+			AggState   *aggstate = castNode(AggState, state->parent);
 			AggStatePerTrans pertrans;
 			AggStatePerGroup pergroup;
 			FunctionCallInfo fcinfo;
 			MemoryContext oldContext;
 			Datum		newVal;
 
-			aggstate = op->d.agg_trans.aggstate;
 			pertrans = op->d.agg_trans.pertrans;
 
 			pergroup = &aggstate->all_pergroups
@@ -1724,14 +1716,13 @@ ExecInterpExpr(ExprState *state, ExprContext *econtext, bool *isnull)
 		 */
 		EEO_CASE(EEOP_AGG_PLAIN_TRANS)
 		{
-			AggState   *aggstate;
+			AggState   *aggstate = castNode(AggState, state->parent);
 			AggStatePerTrans pertrans;
 			AggStatePerGroup pergroup;
 			FunctionCallInfo fcinfo;
 			MemoryContext oldContext;
 			Datum		newVal;
 
-			aggstate = op->d.agg_trans.aggstate;
 			pertrans = op->d.agg_trans.pertrans;
 
 			pergroup = &aggstate->all_pergroups
@@ -1918,7 +1909,6 @@ ExecInterpExprStillValid(ExprState *state, ExprContext *econtext, bool *isNull)
 void
 CheckExprStillValid(ExprState *state, ExprContext *econtext)
 {
-	int			i = 0;
 	TupleTableSlot *innerslot;
 	TupleTableSlot *outerslot;
 	TupleTableSlot *scanslot;
@@ -1927,7 +1917,7 @@ CheckExprStillValid(ExprState *state, ExprContext *econtext)
 	outerslot = econtext->ecxt_outertuple;
 	scanslot = econtext->ecxt_scantuple;
 
-	for (i = 0; i < state->steps_len; i++)
+	for (int i = 0; i < state->steps_len; i++)
 	{
 		ExprEvalStep *op = &state->steps[i];
 
@@ -2197,7 +2187,7 @@ ExecJustApplyFuncToCase(ExprState *state, ExprContext *econtext, bool *isnull)
 	ExprEvalStep *op = &state->steps[0];
 	FunctionCallInfo fcinfo;
 	NullableDatum *args;
-	int			argno;
+	int			nargs;
 	Datum		d;
 
 	/*
@@ -2209,11 +2199,12 @@ ExecJustApplyFuncToCase(ExprState *state, ExprContext *econtext, bool *isnull)
 
 	op++;
 
+	nargs = op->d.func.nargs;
 	fcinfo = op->d.func.fcinfo_data;
 	args = fcinfo->args;
 
 	/* strict function, so check for NULL args */
-	for (argno = 0; argno < op->d.func.nargs; argno++)
+	for (int argno = 0; argno < nargs; argno++)
 	{
 		if (args[argno].isnull)
 		{
@@ -2351,13 +2342,11 @@ ExecInitInterpreter(void)
 	/* Set up externally-visible pointer to dispatch table */
 	if (dispatch_table == NULL)
 	{
-		int			i;
-
 		dispatch_table = (const void **)
 			DatumGetPointer(ExecInterpExpr(NULL, NULL, NULL));
 
 		/* build reverse lookup table */
-		for (i = 0; i < EEOP_LAST; i++)
+		for (int i = 0; i < EEOP_LAST; i++)
 		{
 			reverse_dispatch_table[i].opcode = dispatch_table[i];
 			reverse_dispatch_table[i].op = (ExprEvalOp) i;
@@ -2437,11 +2426,11 @@ ExecEvalFuncExprStrictFusage(ExprState *state, ExprEvalStep *op,
 	FunctionCallInfo fcinfo = op->d.func.fcinfo_data;
 	PgStat_FunctionCallUsage fcusage;
 	NullableDatum *args = fcinfo->args;
-	int			argno;
+	int			nargs = op->d.func.nargs;
 	Datum		d;
 
 	/* strict function, so check for NULL args */
-	for (argno = 0; argno < op->d.func.nargs; argno++)
+	for (int argno = 0; argno < nargs; argno++)
 	{
 		if (args[argno].isnull)
 		{
@@ -2661,7 +2650,6 @@ ExecEvalRowNullInt(ExprState *state, ExprEvalStep *op,
 	int32		tupTypmod;
 	TupleDesc	tupDesc;
 	HeapTupleData tmptup;
-	int			att;
 
 	*op->resnull = false;
 
@@ -2704,7 +2692,7 @@ ExecEvalRowNullInt(ExprState *state, ExprEvalStep *op,
 	tmptup.t_len = HeapTupleHeaderGetDatumLength(tuple);
 	tmptup.t_data = tuple;
 
-	for (att = 1; att <= tupDesc->natts; att++)
+	for (int att = 1; att <= tupDesc->natts; att++)
 	{
 		/* ignore dropped columns */
 		if (TupleDescAttr(tupDesc, att - 1)->attisdropped)
@@ -2787,8 +2775,6 @@ ExecEvalArrayExpr(ExprState *state, ExprEvalStep *op)
 		int32		dataoffset;
 		char	   *dat;
 		int			iitem;
-		int			elemoff;
-		int			i;
 
 		subdata = (char **) palloc(nelems * sizeof(char *));
 		subbitmaps = (bits8 **) palloc(nelems * sizeof(bits8 *));
@@ -2796,7 +2782,7 @@ ExecEvalArrayExpr(ExprState *state, ExprEvalStep *op)
 		subnitems = (int *) palloc(nelems * sizeof(int));
 
 		/* loop through and get data area from each element */
-		for (elemoff = 0; elemoff < nelems; elemoff++)
+		for (int elemoff = 0; elemoff < nelems; elemoff++)
 		{
 			Datum		arraydatum;
 			bool		eisnull;
@@ -2898,7 +2884,7 @@ ExecEvalArrayExpr(ExprState *state, ExprEvalStep *op)
 		/* setup for multi-D array */
 		dims[0] = outer_nelems;
 		lbs[0] = 1;
-		for (i = 1; i < ndims; i++)
+		for (int i = 1; i < ndims; i++)
 		{
 			dims[i] = elem_dims[i - 1];
 			lbs[i] = elem_lbs[i - 1];
@@ -2925,7 +2911,7 @@ ExecEvalArrayExpr(ExprState *state, ExprEvalStep *op)
 
 		dat = ARR_DATA_PTR(result);
 		iitem = 0;
-		for (i = 0; i < outer_nelems; i++)
+		for (int i = 0; i < outer_nelems; i++)
 		{
 			memcpy(dat, subdata[i], subbytes[i]);
 			dat += subbytes[i];
@@ -3013,7 +2999,6 @@ ExecEvalMinMax(ExprState *state, ExprEvalStep *op)
 	bool	   *nulls = op->d.minmax.nulls;
 	FunctionCallInfo fcinfo = op->d.minmax.fcinfo_data;
 	MinMaxOp	operator = op->d.minmax.op;
-	int			off;
 
 	/* set at initialization */
 	Assert(fcinfo->args[0].isnull == false);
@@ -3022,7 +3007,7 @@ ExecEvalMinMax(ExprState *state, ExprEvalStep *op)
 	/* default to null result */
 	*op->resnull = true;
 
-	for (off = 0; off < op->d.minmax.nelems; off++)
+	for (int off = 0; off < op->d.minmax.nelems; off++)
 	{
 		/* ignore NULL inputs */
 		if (nulls[off])
@@ -3554,7 +3539,6 @@ ExecEvalScalarArrayOp(ExprState *state, ExprEvalStep *op)
 	int			nitems;
 	Datum		result;
 	bool		resultnull;
-	int			i;
 	int16		typlen;
 	bool		typbyval;
 	char		typalign;
@@ -3622,7 +3606,7 @@ ExecEvalScalarArrayOp(ExprState *state, ExprEvalStep *op)
 	bitmap = ARR_NULLBITMAP(arr);
 	bitmask = 1;
 
-	for (i = 0; i < nitems; i++)
+	for (int i = 0; i < nitems; i++)
 	{
 		Datum		elt;
 		Datum		thisresult;
@@ -3734,7 +3718,6 @@ ExecEvalXmlExpr(ExprState *state, ExprEvalStep *op)
 {
 	XmlExpr    *xexpr = op->d.xmlexpr.xexpr;
 	Datum		value;
-	int			i;
 
 	*op->resnull = true;		/* until we get a result */
 	*op->resvalue = (Datum) 0;
@@ -3747,7 +3730,7 @@ ExecEvalXmlExpr(ExprState *state, ExprEvalStep *op)
 				bool	   *argnull = op->d.xmlexpr.argnull;
 				List	   *values = NIL;
 
-				for (i = 0; i < list_length(xexpr->args); i++)
+				for (int i = 0; i < list_length(xexpr->args); i++)
 				{
 					if (!argnull[i])
 						values = lappend(values, DatumGetPointer(argvalue[i]));
@@ -3768,6 +3751,7 @@ ExecEvalXmlExpr(ExprState *state, ExprEvalStep *op)
 				StringInfoData buf;
 				ListCell   *lc;
 				ListCell   *lc2;
+				int			i;
 
 				initStringInfo(&buf);
 
@@ -3951,8 +3935,9 @@ ExecEvalXmlExpr(ExprState *state, ExprEvalStep *op)
 void
 ExecEvalGroupingFunc(ExprState *state, ExprEvalStep *op)
 {
+	AggState   *aggstate = castNode(AggState, state->parent);
 	int			result = 0;
-	Bitmapset  *grouped_cols = op->d.grouping_func.parent->grouped_cols;
+	Bitmapset  *grouped_cols = aggstate->grouped_cols;
 	ListCell   *lc;
 
 	foreach(lc, op->d.grouping_func.clauses)
@@ -4061,7 +4046,6 @@ ExecEvalWholeRowVar(ExprState *state, ExprEvalStep *op, ExprContext *econtext)
 		{
 			TupleDesc	var_tupdesc;
 			TupleDesc	slot_tupdesc;
-			int			i;
 
 			/*
 			 * We really only care about numbers of attributes and data types.
@@ -4093,7 +4077,7 @@ ExecEvalWholeRowVar(ExprState *state, ExprEvalStep *op, ExprContext *econtext)
 										  slot_tupdesc->natts,
 										  var_tupdesc->natts)));
 
-			for (i = 0; i < var_tupdesc->natts; i++)
+			for (int i = 0; i < var_tupdesc->natts; i++)
 			{
 				Form_pg_attribute vattr = TupleDescAttr(var_tupdesc, i);
 				Form_pg_attribute sattr = TupleDescAttr(slot_tupdesc, i);
@@ -4188,11 +4172,10 @@ ExecEvalWholeRowVar(ExprState *state, ExprEvalStep *op, ExprContext *econtext)
 		/* Check to see if any dropped attributes are non-null */
 		TupleDesc	tupleDesc = slot->tts_tupleDescriptor;
 		TupleDesc	var_tupdesc = op->d.wholerow.tupdesc;
-		int			i;
 
 		Assert(var_tupdesc->natts == tupleDesc->natts);
 
-		for (i = 0; i < var_tupdesc->natts; i++)
+		for (int i = 0; i < var_tupdesc->natts; i++)
 		{
 			Form_pg_attribute vattr = TupleDescAttr(var_tupdesc, i);
 			Form_pg_attribute sattr = TupleDescAttr(tupleDesc, i);
