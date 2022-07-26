@@ -1,0 +1,30 @@
+name: AgensGraph Regression
+
+on:
+  push:
+    branches: [ '*' ]
+  pull_request:
+    branches: [ '*' ]
+
+jobs:
+  build:
+    runs-on: ubuntu-20.04
+    steps:
+      - uses: actions/checkout@v2
+      - name: Configure
+        env:
+          CC: 'clang'
+          CXX: 'clang++'
+        run: ./configure --enable-cassert --enable-debug
+
+      - name: Build
+        run: make -j$(nproc) -s > /dev/null
+
+      - name: Regression
+        id: regress
+        continue-on-error: true
+        run: make check -j$(nproc) -C src/bin LC_ALL="C"
+
+      - name: Check on failures
+        if: steps.regress.outcome != 'success'
+        run: cat regress/regression.diffs && exit 1
