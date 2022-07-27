@@ -326,7 +326,7 @@ ExecHash2SideTableCreate(Hash2SideState *node, List *hashOperators,
 	hashtable->spaceAllowed = work_mem * 1024L;
 	hashtable->spaceUsedSkew = 0;
 	hashtable->spaceAllowedSkew =
-			hashtable->spaceAllowed * SKEW_WORK_MEM_PERCENT / 100;
+			hashtable->spaceAllowed * SKEW_HASH_MEM_PERCENT / 100;
 	hashtable->chunks = NULL;
 	node->totalPaths = 0;
 
@@ -448,7 +448,7 @@ ExecHash2SideTableClone(Hash2SideState *node, List *hashOperators,
 	hashtable->spaceAllowed = work_mem * 1024L;
 	hashtable->spaceUsedSkew = 0;
 	hashtable->spaceAllowedSkew =
-			hashtable->spaceAllowed * SKEW_WORK_MEM_PERCENT / 100;
+			hashtable->spaceAllowed * SKEW_HASH_MEM_PERCENT / 100;
 	hashtable->chunks = NULL;
 	node->totalPaths = 0;
 
