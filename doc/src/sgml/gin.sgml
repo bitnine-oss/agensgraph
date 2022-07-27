@@ -1,6 +1,6 @@
 <!-- doc/src/sgml/gin.sgml -->
 
-<chapter id="gin" xreflabel="gin">
+<chapter id="gin">
 <title>GIN Indexes</title>
 
    <indexterm>
@@ -380,7 +380,7 @@
 
  <para>
   Optionally, an operator class for <acronym>GIN</acronym> can supply the
-  following method:
+  following methods:
 
   <variablelist>
     <varlistentry>
@@ -399,6 +399,30 @@
        <literal>extra_data</literal> is the corresponding element of the extra-data
        array made by <function>extractQuery</function>, or <symbol>NULL</symbol> if none.
        Null keys are never passed to this function.
+      </para>
+     </listitem>
+    </varlistentry>
+    <varlistentry>
+     <term><function>void options(local_relopts *relopts)</function></term>
+     <listitem>
+      <para>
+       Defines set of user-visible parameters that control operator class
+       behavior.
+      </para>
+
+      <para>
+       The <function>options</function> function is passed a pointer to a
+       <replaceable>local_relopts</replaceable> struct, which needs to be
+       filled with a set of operator class specific options.  The options
+       can be accessed from other support functions using the
+       <literal>PG_HAS_OPCLASS_OPTIONS()</literal> and
+       <literal>PG_GET_OPCLASS_OPTIONS()</literal> macros.
+      </para>
+
+      <para>
+       Since both key extraction of indexed values and representation of the
+       key in <acronym>GIN</acronym> are flexible, they may depend on
+       user-specified parameters.
       </para>
      </listitem>
     </varlistentry>

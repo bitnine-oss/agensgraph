@@ -739,6 +739,7 @@ typedef struct BTDedupStateData
 {
 	/* Deduplication status info for entire pass over page */
 	bool		deduplicate;	/* Still deduplicating page? */
+	int			nmaxitems;		/* Number of max-sized tuples so far */
 	Size		maxpostingsize; /* Limit on size of final tuple */
 
 	/* Metadata about base tuple of current pending posting list */
@@ -758,7 +759,7 @@ typedef struct BTDedupStateData
 	 * will not become posting list tuples do not appear in the array (they
 	 * are implicitly unchanged by deduplication pass).
 	 */
-	int			nintervals;		/* current size of intervals array */
+	int			nintervals;		/* current number of intervals in array */
 	BTDedupInterval intervals[MaxIndexTuplesPerPage];
 } BTDedupStateData;
 

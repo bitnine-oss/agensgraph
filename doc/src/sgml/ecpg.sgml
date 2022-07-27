@@ -1,6 +1,6 @@
 <!-- doc/src/sgml/ecpg.sgml -->
 
-<chapter id="ecpg" xreflabel="ecpg">
+<chapter id="ecpg">
  <title><application>ECPG</application> &mdash; Embedded <acronym>SQL</acronym> in C</title>
 
  <indexterm zone="ecpg"><primary>embedded SQL</primary><secondary>in C</secondary></indexterm>
@@ -3372,7 +3372,7 @@ interval *PGTYPESinterval_new(void);
        <para>
         Release the memory of a previously allocated interval variable.
 <synopsis>
-void PGTYPESinterval_new(interval *intvl);
+void PGTYPESinterval_free(interval *intvl);
 </synopsis>
        </para>
       </listitem>

@@ -127,7 +127,79 @@ SELECT var_samp(b::numeric) FROM aggtest;
 
 -- population variance is defined for a single tuple, sample variance
 -- is not
-SELECT var_pop(1.0), var_samp(2.0);
+SELECT var_pop(1.0::float8), var_samp(2.0::float8);
+ var_pop | var_samp 
+---------+----------
+       0 |         
+(1 row)
+
+SELECT stddev_pop(3.0::float8), stddev_samp(4.0::float8);
+ stddev_pop | stddev_samp 
+------------+-------------
+          0 |            
+(1 row)
+
+SELECT var_pop('inf'::float8), var_samp('inf'::float8);
+ var_pop | var_samp 
+---------+----------
+     NaN |         
+(1 row)
+
+SELECT stddev_pop('inf'::float8), stddev_samp('inf'::float8);
+ stddev_pop | stddev_samp 
+------------+-------------
+        NaN |            
+(1 row)
+
+SELECT var_pop('nan'::float8), var_samp('nan'::float8);
+ var_pop | var_samp 
+---------+----------
+     NaN |         
+(1 row)
+
+SELECT stddev_pop('nan'::float8), stddev_samp('nan'::float8);
+ stddev_pop | stddev_samp 
+------------+-------------
+        NaN |            
+(1 row)
+
+SELECT var_pop(1.0::float4), var_samp(2.0::float4);
+ var_pop | var_samp 
+---------+----------
+       0 |         
+(1 row)
+
+SELECT stddev_pop(3.0::float4), stddev_samp(4.0::float4);
+ stddev_pop | stddev_samp 
+------------+-------------
+          0 |            
+(1 row)
+
+SELECT var_pop('inf'::float4), var_samp('inf'::float4);
+ var_pop | var_samp 
+---------+----------
+     NaN |         
+(1 row)
+
+SELECT stddev_pop('inf'::float4), stddev_samp('inf'::float4);
+ stddev_pop | stddev_samp 
+------------+-------------
+        NaN |            
+(1 row)
+
+SELECT var_pop('nan'::float4), var_samp('nan'::float4);
+ var_pop | var_samp 
+---------+----------
+     NaN |         
+(1 row)
+
+SELECT stddev_pop('nan'::float4), stddev_samp('nan'::float4);
+ stddev_pop | stddev_samp 
+------------+-------------
+        NaN |            
+(1 row)
+
+SELECT var_pop(1.0::numeric), var_samp(2.0::numeric);
  var_pop | var_samp 
 ---------+----------
        0 |         
@@ -137,6 +209,18 @@ SELECT stddev_pop(3.0::numeric), stddev_samp(4.0::numeric);
  stddev_pop | stddev_samp 
 ------------+-------------
           0 |            
+(1 row)
+
+SELECT var_pop('nan'::numeric), var_samp('nan'::numeric);
+ var_pop | var_samp 
+---------+----------
+     NaN |      NaN
+(1 row)
+
+SELECT stddev_pop('nan'::numeric), stddev_samp('nan'::numeric);
+ stddev_pop | stddev_samp 
+------------+-------------
+        NaN |         NaN
 (1 row)
 
 -- verify correct results for null and NaN inputs
@@ -297,6 +381,25 @@ SELECT corr(b, a) FROM aggtest;
        corr        
 -------------------
  0.139634516517873
+(1 row)
+
+-- check single-tuple behavior
+SELECT covar_pop(1::float8,2::float8), covar_samp(3::float8,4::float8);
+ covar_pop | covar_samp 
+-----------+------------
+         0 |           
+(1 row)
+
+SELECT covar_pop(1::float8,'inf'::float8), covar_samp(3::float8,'inf'::float8);
+ covar_pop | covar_samp 
+-----------+------------
+       NaN |           
+(1 row)
+
+SELECT covar_pop(1::float8,'nan'::float8), covar_samp(3::float8,'nan'::float8);
+ covar_pop | covar_samp 
+-----------+------------
+       NaN |           
 (1 row)
 
 -- test accum and combine functions directly
@@ -2294,29 +2397,83 @@ SET parallel_setup_cost = 0;
 SET parallel_tuple_cost = 0;
 SET min_parallel_table_scan_size = 0;
 SET max_parallel_workers_per_gather = 4;
+SET parallel_leader_participation = off;
 SET enable_indexonlyscan = off;
 -- variance(int4) covers numeric_poly_combine
 -- sum(int8) covers int8_avg_combine
 -- regr_count(float8, float8) covers int8inc_float8_float8 and aggregates with > 1 arg
 EXPLAIN (COSTS OFF, VERBOSE)
-  SELECT variance(unique1::int4), sum(unique1::int8), regr_count(unique1::float8, unique1::float8) FROM tenk1;
-                                                                            QUERY PLAN                                                                             
--------------------------------------------------------------------------------------------------------------------------------------------------------------------
+SELECT variance(unique1::int4), sum(unique1::int8), regr_count(unique1::float8, unique1::float8)
+FROM (SELECT * FROM tenk1
+      UNION ALL SELECT * FROM tenk1
+      UNION ALL SELECT * FROM tenk1
+      UNION ALL SELECT * FROM tenk1) u;
+                                                                                      QUERY PLAN                                                                                       
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Finalize Aggregate
-   Output: variance(unique1), sum((unique1)::bigint), regr_count((unique1)::double precision, (unique1)::double precision)
+   Output: variance(tenk1.unique1), sum((tenk1.unique1)::bigint), regr_count((tenk1.unique1)::double precision, (tenk1.unique1)::double precision)
    ->  Gather
-         Output: (PARTIAL variance(unique1)), (PARTIAL sum((unique1)::bigint)), (PARTIAL regr_count((unique1)::double precision, (unique1)::double precision))
+         Output: (PARTIAL variance(tenk1.unique1)), (PARTIAL sum((tenk1.unique1)::bigint)), (PARTIAL regr_count((tenk1.unique1)::double precision, (tenk1.unique1)::double precision))
          Workers Planned: 4
          ->  Partial Aggregate
-               Output: PARTIAL variance(unique1), PARTIAL sum((unique1)::bigint), PARTIAL regr_count((unique1)::double precision, (unique1)::double precision)
-               ->  Parallel Seq Scan on public.tenk1
-                     Output: unique1, unique2, two, four, ten, twenty, hundred, thousand, twothousand, fivethous, tenthous, odd, even, stringu1, stringu2, string4
-(9 rows)
+               Output: PARTIAL variance(tenk1.unique1), PARTIAL sum((tenk1.unique1)::bigint), PARTIAL regr_count((tenk1.unique1)::double precision, (tenk1.unique1)::double precision)
+               ->  Parallel Append
+                     ->  Parallel Seq Scan on public.tenk1
+                           Output: tenk1.unique1
+                     ->  Parallel Seq Scan on public.tenk1 tenk1_1
+                           Output: tenk1_1.unique1
+                     ->  Parallel Seq Scan on public.tenk1 tenk1_2
+                           Output: tenk1_2.unique1
+                     ->  Parallel Seq Scan on public.tenk1 tenk1_3
+                           Output: tenk1_3.unique1
+(16 rows)
 
-SELECT variance(unique1::int4), sum(unique1::int8), regr_count(unique1::float8, unique1::float8) FROM tenk1;
-       variance       |   sum    | regr_count 
-----------------------+----------+------------
- 8334166.666666666667 | 49995000 |      10000
+SELECT variance(unique1::int4), sum(unique1::int8), regr_count(unique1::float8, unique1::float8)
+FROM (SELECT * FROM tenk1
+      UNION ALL SELECT * FROM tenk1
+      UNION ALL SELECT * FROM tenk1
+      UNION ALL SELECT * FROM tenk1) u;
+       variance       |    sum    | regr_count 
+----------------------+-----------+------------
+ 8333541.588539713493 | 199980000 |      40000
+(1 row)
+
+-- variance(int8) covers numeric_combine
+-- avg(numeric) covers numeric_avg_combine
+EXPLAIN (COSTS OFF, VERBOSE)
+SELECT variance(unique1::int8), avg(unique1::numeric)
+FROM (SELECT * FROM tenk1
+      UNION ALL SELECT * FROM tenk1
+      UNION ALL SELECT * FROM tenk1
+      UNION ALL SELECT * FROM tenk1) u;
+                                               QUERY PLAN                                               
+--------------------------------------------------------------------------------------------------------
+ Finalize Aggregate
+   Output: variance((tenk1.unique1)::bigint), avg((tenk1.unique1)::numeric)
+   ->  Gather
+         Output: (PARTIAL variance((tenk1.unique1)::bigint)), (PARTIAL avg((tenk1.unique1)::numeric))
+         Workers Planned: 4
+         ->  Partial Aggregate
+               Output: PARTIAL variance((tenk1.unique1)::bigint), PARTIAL avg((tenk1.unique1)::numeric)
+               ->  Parallel Append
+                     ->  Parallel Seq Scan on public.tenk1
+                           Output: tenk1.unique1
+                     ->  Parallel Seq Scan on public.tenk1 tenk1_1
+                           Output: tenk1_1.unique1
+                     ->  Parallel Seq Scan on public.tenk1 tenk1_2
+                           Output: tenk1_2.unique1
+                     ->  Parallel Seq Scan on public.tenk1 tenk1_3
+                           Output: tenk1_3.unique1
+(16 rows)
+
+SELECT variance(unique1::int8), avg(unique1::numeric)
+FROM (SELECT * FROM tenk1
+      UNION ALL SELECT * FROM tenk1
+      UNION ALL SELECT * FROM tenk1
+      UNION ALL SELECT * FROM tenk1) u;
+       variance       |          avg          
+----------------------+-----------------------
+ 8333541.588539713493 | 4999.5000000000000000
 (1 row)
 
 ROLLBACK;
@@ -2449,26 +2606,30 @@ set enable_sort to default;
 -- aggregation. Force spilling in both cases by setting work_mem low.
 --
 set work_mem='64kB';
+create table agg_data_2k as
+select g from generate_series(0, 1999) g;
+analyze agg_data_2k;
+create table agg_data_20k as
+select g from generate_series(0, 19999) g;
+analyze agg_data_20k;
 -- Produce results with sorting.
 set enable_hashagg = false;
 set jit_above_cost = 0;
 explain (costs off)
 select g%10000 as c1, sum(g::numeric) as c2, count(*) as c3
-  from generate_series(0, 19999) g
-  group by g%10000;
-                   QUERY PLAN                   
-------------------------------------------------
+  from agg_data_20k group by g%10000;
+              QUERY PLAN              
+--------------------------------------
  GroupAggregate
    Group Key: ((g % 10000))
    ->  Sort
          Sort Key: ((g % 10000))
-         ->  Function Scan on generate_series g
+         ->  Seq Scan on agg_data_20k
 (5 rows)
 
 create table agg_group_1 as
 select g%10000 as c1, sum(g::numeric) as c2, count(*) as c3
-  from generate_series(0, 19999) g
-  group by g%10000;
+  from agg_data_20k group by g%10000;
 create table agg_group_2 as
 select * from
   (values (100), (300), (500)) as r(a),
@@ -2476,37 +2637,33 @@ select * from
     select (g/2)::numeric as c1,
            array_agg(g::numeric) as c2,
 	   count(*) as c3
-    from generate_series(0, 1999) g
+    from agg_data_2k
     where g < r.a
     group by g/2) as s;
 set jit_above_cost to default;
 create table agg_group_3 as
 select (g/2)::numeric as c1, sum(7::int4) as c2, count(*) as c3
-  from generate_series(0, 1999) g
-  group by g/2;
+  from agg_data_2k group by g/2;
 create table agg_group_4 as
 select (g/2)::numeric as c1, array_agg(g::numeric) as c2, count(*) as c3
-  from generate_series(0, 1999) g
-  group by g/2;
+  from agg_data_2k group by g/2;
 -- Produce results with hash aggregation
 set enable_hashagg = true;
 set enable_sort = false;
 set jit_above_cost = 0;
 explain (costs off)
 select g%10000 as c1, sum(g::numeric) as c2, count(*) as c3
-  from generate_series(0, 19999) g
-  group by g%10000;
-                QUERY PLAN                
-------------------------------------------
+  from agg_data_20k group by g%10000;
+           QUERY PLAN           
+--------------------------------
  HashAggregate
    Group Key: (g % 10000)
-   ->  Function Scan on generate_series g
+   ->  Seq Scan on agg_data_20k
 (3 rows)
 
 create table agg_hash_1 as
 select g%10000 as c1, sum(g::numeric) as c2, count(*) as c3
-  from generate_series(0, 19999) g
-  group by g%10000;
+  from agg_data_20k group by g%10000;
 create table agg_hash_2 as
 select * from
   (values (100), (300), (500)) as r(a),
@@ -2514,18 +2671,16 @@ select * from
     select (g/2)::numeric as c1,
            array_agg(g::numeric) as c2,
 	   count(*) as c3
-    from generate_series(0, 1999) g
+    from agg_data_2k
     where g < r.a
     group by g/2) as s;
 set jit_above_cost to default;
 create table agg_hash_3 as
 select (g/2)::numeric as c1, sum(7::int4) as c2, count(*) as c3
-  from generate_series(0, 1999) g
-  group by g/2;
+  from agg_data_2k group by g/2;
 create table agg_hash_4 as
 select (g/2)::numeric as c1, array_agg(g::numeric) as c2, count(*) as c3
-  from generate_series(0, 1999) g
-  group by g/2;
+  from agg_data_2k group by g/2;
 set enable_sort = true;
 set work_mem to default;
 -- Compare group aggregation results to hash aggregation results
