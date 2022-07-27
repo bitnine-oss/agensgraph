@@ -1011,7 +1011,7 @@ deleteElem(ModifyGraphState *mgstate, Datum gid, ItemPointer tid, Oid type)
 	ResultRelInfo *savedResultRelInfo;
 	Relation	resultRelationDesc;
 	TM_Result	result;
-	TM_FailureData hufd;
+	TM_FailureData tmfd;
 
 	relid = get_labid_relid(mgstate->graphid,
 							GraphidGetLabid(DatumGetGraphid(gid)));
@@ -1024,7 +1024,8 @@ deleteElem(ModifyGraphState *mgstate, Datum gid, ItemPointer tid, Oid type)
 	/* see ExecDelete() */
 	result = heap_delete(resultRelationDesc, tid,
 						 mgstate->modify_cid + MODIFY_CID_OUTPUT,
-						 estate->es_crosscheck_snapshot, true, &hufd, false);
+						 estate->es_crosscheck_snapshot, true, &tmfd, false);
+
 	switch (result)
 	{
 		case TM_SelfModified:
@@ -1182,6 +1183,7 @@ copyVirtualTupleTableSlot(TupleTableSlot *dstslot, TupleTableSlot *srcslot)
 {
 	int natts = srcslot->tts_tupleDescriptor->natts;
 
+	ExecClearTuple(dstslot);
 	ExecSetSlotDescriptor(dstslot, srcslot->tts_tupleDescriptor);
 
 	/* shallow copy */
@@ -1254,13 +1256,13 @@ updateElemProp(ModifyGraphState *mgstate, Oid elemtype, Datum gid,
 	TupleTableSlot *elemTupleSlot = mgstate->elemTupleSlot;
 	Oid			relid;
 	ItemPointer	ctid;
-	HeapTuple	tuple;
 	ResultRelInfo *resultRelInfo;
 	ResultRelInfo *savedResultRelInfo;
 	Relation	resultRelationDesc;
 	LockTupleMode lockmode;
 	TM_Result	result;
-	TM_FailureData hufd;
+	TM_FailureData tmfd;
+	bool		update_indexes;
 
 	relid = get_labid_relid(mgstate->graphid,
 							GraphidGetLabid(DatumGetGraphid(gid)));
@@ -1299,16 +1301,19 @@ updateElemProp(ModifyGraphState *mgstate, Oid elemtype, Datum gid,
 		   elemTupleSlot->tts_tupleDescriptor->natts * sizeof(bool));
 	ExecStoreVirtualTuple(elemTupleSlot);
 
-	tuple = ExecFetchSlotHeapTuple(elemTupleSlot, true, NULL);
-	tuple->t_tableOid = RelationGetRelid(resultRelationDesc);
+	ExecMaterializeSlot(elemTupleSlot);
+	elemTupleSlot->tts_tableOid = RelationGetRelid(resultRelationDesc);
 
 	if (resultRelationDesc->rd_att->constr)
 		ExecConstraints(resultRelInfo, elemTupleSlot, estate);
 
-	result = heap_update(resultRelationDesc, ctid, tuple,
-						 mgstate->modify_cid + MODIFY_CID_SET,
-						 estate->es_crosscheck_snapshot,
-						 true, &hufd, &lockmode);
+	result = table_tuple_update(resultRelationDesc, ctid, elemTupleSlot,
+								mgstate->modify_cid + MODIFY_CID_SET,
+								estate->es_snapshot,
+								estate->es_crosscheck_snapshot,
+								true /* wait for commit */ ,
+								&tmfd, &lockmode, &update_indexes);
+
 	switch (result)
 	{
 		case TM_SelfModified:
@@ -1330,14 +1335,14 @@ updateElemProp(ModifyGraphState *mgstate, Oid elemtype, Datum gid,
 			elog(ERROR, "unrecognized heap_update status: %u", result);
 	}
 
-	if (resultRelInfo->ri_NumIndices > 0 && !HeapTupleIsHeapOnly(tuple))
+	if (resultRelInfo->ri_NumIndices > 0 && update_indexes)
 		ExecInsertIndexTuples(elemTupleSlot, estate, false, NULL, NIL);
 
 	graphWriteStats.updateProperty++;
 
 	estate->es_result_relation_info = savedResultRelInfo;
 
-	return &tuple->t_self;
+	return &elemTupleSlot->tts_tid;
 }
 
 static Datum
