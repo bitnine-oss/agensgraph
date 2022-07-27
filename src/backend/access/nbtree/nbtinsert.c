@@ -1289,6 +1289,7 @@ _bt_insertonpg(Relation rel,
 			xl_btree_metadata xlmeta;
 			uint8		xlinfo;
 			XLogRecPtr	recptr;
+			uint16		upostingoff;
 
 			xlrec.offnum = newitemoff;
 
@@ -1354,7 +1355,7 @@ _bt_insertonpg(Relation rel,
 				 * must reconstruct final itup (as well as nposting) using
 				 * _bt_swap_posting().
 				 */
-				uint16		upostingoff = postingoff;
+				upostingoff = postingoff;
 
 				XLogRegisterBufData(0, (char *) &upostingoff, sizeof(uint16));
 				XLogRegisterBufData(0, (char *) origitup,
@@ -1702,6 +1703,9 @@ _bt_split(Relation rel, BTScanInsert itup_key, Buffer buf, Buffer cbuf,
 	 * Finish off remaining leftpage special area fields.  They cannot be set
 	 * before both origpage (leftpage) and rightpage buffers are acquired and
 	 * locked.
+	 *
+	 * btpo_cycleid is only used with leaf pages, though we set it here in all
+	 * cases just to be consistent.
 	 */
 	lopaque->btpo_next = rightpagenumber;
 	lopaque->btpo_cycleid = _bt_vacuum_cycleid(rel);
@@ -2274,7 +2278,8 @@ _bt_finish_split(Relation rel, Buffer lbuf, BTStack stack)
  *		stack.  For example, the checkingunique _bt_doinsert() case may
  *		have to step right when there are many physical duplicates, and its
  *		scantid forces an insertion to the right of the "first page the
- *		value could be on".
+ *		value could be on".  (This is also relied on by all of our callers
+ *		when dealing with !heapkeyspace indexes.)
  *
  *		Returns write-locked parent page buffer, or InvalidBuffer if pivot
  *		tuple not found (should not happen).  Adjusts bts_blkno &

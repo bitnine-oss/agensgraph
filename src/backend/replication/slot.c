@@ -126,7 +126,7 @@ ReplicationSlotsShmemSize(void)
 }
 
 /*
- * Allocate and initialize walsender-related shared memory.
+ * Allocate and initialize shared memory for replication slots.
  */
 void
 ReplicationSlotsShmemInit(void)
@@ -139,9 +139,6 @@ ReplicationSlotsShmemInit(void)
 	ReplicationSlotCtl = (ReplicationSlotCtlData *)
 		ShmemInitStruct("ReplicationSlot Ctl", ReplicationSlotsShmemSize(),
 						&found);
-
-	LWLockRegisterTranche(LWTRANCHE_REPLICATION_SLOT_IO_IN_PROGRESS,
-						  "replication_slot_io");
 
 	if (!found)
 	{
@@ -156,7 +153,8 @@ ReplicationSlotsShmemInit(void)
 
 			/* everything else is zeroed by the memset above */
 			SpinLockInit(&slot->mutex);
-			LWLockInitialize(&slot->io_in_progress_lock, LWTRANCHE_REPLICATION_SLOT_IO_IN_PROGRESS);
+			LWLockInitialize(&slot->io_in_progress_lock,
+							 LWTRANCHE_REPLICATION_SLOT_IO);
 			ConditionVariableInit(&slot->active_cv);
 		}
 	}

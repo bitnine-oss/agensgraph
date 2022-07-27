@@ -97,17 +97,24 @@
  * - groupName: the token fullsort or prefixsort
  */
 #define INSTRUMENT_SORT_GROUP(node, groupName) \
-	if (node->ss.ps.instrument != NULL) \
-	{ \
-		if (node->shared_info && node->am_worker) \
+	do { \
+		if ((node)->ss.ps.instrument != NULL) \
 		{ \
-			Assert(IsParallelWorker()); \
-			Assert(ParallelWorkerNumber <= node->shared_info->num_workers); \
-			instrumentSortedGroup(&node->shared_info->sinfo[ParallelWorkerNumber].groupName##GroupInfo, node->groupName##_state); \
-		} else { \
-			instrumentSortedGroup(&node->incsort_info.groupName##GroupInfo, node->groupName##_state); \
+			if ((node)->shared_info && (node)->am_worker) \
+			{ \
+				Assert(IsParallelWorker()); \
+				Assert(ParallelWorkerNumber <= (node)->shared_info->num_workers); \
+				instrumentSortedGroup(&(node)->shared_info->sinfo[ParallelWorkerNumber].groupName##GroupInfo, \
+									  (node)->groupName##_state); \
+			} \
+			else \
+			{ \
+				instrumentSortedGroup(&(node)->incsort_info.groupName##GroupInfo, \
+									  (node)->groupName##_state); \
+			} \
 		} \
-	}
+	} while (0)
+
 
 /* ----------------------------------------------------------------
  * instrumentSortedGroup
@@ -122,6 +129,7 @@ instrumentSortedGroup(IncrementalSortGroupInfo *groupInfo,
 					  Tuplesortstate *sortState)
 {
 	TuplesortInstrumentation sort_instr;
+
 	groupInfo->groupCount++;
 
 	tuplesort_get_stats(sortState, &sort_instr);
@@ -444,7 +452,7 @@ switchToPresortedPrefixMode(PlanState *pstate)
 		SO1_printf("Sorting presorted prefix tuplesort with %ld tuples\n", nTuples);
 		tuplesort_performsort(node->prefixsort_state);
 
-		INSTRUMENT_SORT_GROUP(node, prefixsort)
+		INSTRUMENT_SORT_GROUP(node, prefixsort);
 
 		if (node->bounded)
 		{
@@ -702,7 +710,7 @@ ExecIncrementalSort(PlanState *pstate)
 				SO1_printf("Sorting fullsort with %ld tuples\n", nTuples);
 				tuplesort_performsort(fullsort_state);
 
-				INSTRUMENT_SORT_GROUP(node, fullsort)
+				INSTRUMENT_SORT_GROUP(node, fullsort);
 
 				SO_printf("Setting execution_status to INCSORT_READFULLSORT (final tuple)\n");
 				node->execution_status = INCSORT_READFULLSORT;
@@ -783,7 +791,7 @@ ExecIncrementalSort(PlanState *pstate)
 							   nTuples);
 					tuplesort_performsort(fullsort_state);
 
-					INSTRUMENT_SORT_GROUP(node, fullsort)
+					INSTRUMENT_SORT_GROUP(node, fullsort);
 
 					SO_printf("Setting execution_status to INCSORT_READFULLSORT (found end of group)\n");
 					node->execution_status = INCSORT_READFULLSORT;
@@ -792,8 +800,8 @@ ExecIncrementalSort(PlanState *pstate)
 			}
 
 			/*
-			 * Unless we've already transitioned modes to reading from the full
-			 * sort state, then we assume that having read at least
+			 * Unless we've already transitioned modes to reading from the
+			 * full sort state, then we assume that having read at least
 			 * DEFAULT_MAX_FULL_SORT_GROUP_SIZE tuples means it's likely we're
 			 * processing a large group of tuples all having equal prefix keys
 			 * (but haven't yet found the final tuple in that prefix key
@@ -823,7 +831,7 @@ ExecIncrementalSort(PlanState *pstate)
 				SO1_printf("Sorting fullsort tuplesort with %ld tuples\n", nTuples);
 				tuplesort_performsort(fullsort_state);
 
-				INSTRUMENT_SORT_GROUP(node, fullsort)
+				INSTRUMENT_SORT_GROUP(node, fullsort);
 
 				/*
 				 * If the full sort tuplesort happened to switch into top-n
@@ -849,8 +857,9 @@ ExecIncrementalSort(PlanState *pstate)
 
 				/*
 				 * We might have multiple prefix key groups in the full sort
-				 * state, so the mode transition function needs to know that it
-				 * needs to move from the fullsort to presorted prefix sort.
+				 * state, so the mode transition function needs to know that
+				 * it needs to move from the fullsort to presorted prefix
+				 * sort.
 				 */
 				node->n_fullsort_remaining = nTuples;
 
@@ -936,7 +945,7 @@ ExecIncrementalSort(PlanState *pstate)
 		SO1_printf("Sorting presorted prefix tuplesort with >= %ld tuples\n", nTuples);
 		tuplesort_performsort(node->prefixsort_state);
 
-		INSTRUMENT_SORT_GROUP(node, prefixsort)
+		INSTRUMENT_SORT_GROUP(node, prefixsort);
 
 		SO_printf("Setting execution_status to INCSORT_READPREFIXSORT (found end of group)\n");
 		node->execution_status = INCSORT_READPREFIXSORT;
@@ -986,12 +995,11 @@ ExecInitIncrementalSort(IncrementalSort *node, EState *estate, int eflags)
 	SO_printf("ExecInitIncrementalSort: initializing sort node\n");
 
 	/*
-	 * Incremental sort can't be used with either EXEC_FLAG_REWIND,
-	 * EXEC_FLAG_BACKWARD or EXEC_FLAG_MARK, because we only one of many sort
-	 * batches in the current sort state.
+	 * Incremental sort can't be used with EXEC_FLAG_BACKWARD or
+	 * EXEC_FLAG_MARK, because the current sort state contains only one sort
+	 * batch rather than the full result set.
 	 */
-	Assert((eflags & (EXEC_FLAG_BACKWARD |
-					  EXEC_FLAG_MARK)) == 0);
+	Assert((eflags & (EXEC_FLAG_BACKWARD | EXEC_FLAG_MARK)) == 0);
 
 	/* Initialize state structure. */
 	incrsortstate = makeNode(IncrementalSortState);
@@ -1041,11 +1049,11 @@ ExecInitIncrementalSort(IncrementalSort *node, EState *estate, int eflags)
 	/*
 	 * Initialize child nodes.
 	 *
-	 * We shield the child node from the need to support REWIND, BACKWARD, or
-	 * MARK/RESTORE.
+	 * Incremental sort does not support backwards scans and mark/restore, so
+	 * we don't bother removing the flags from eflags here. We allow passing a
+	 * REWIND flag, because although incremental sort can't use it, the child
+	 * nodes may be able to do something more useful.
 	 */
-	eflags &= ~(EXEC_FLAG_REWIND | EXEC_FLAG_BACKWARD | EXEC_FLAG_MARK);
-
 	outerPlanState(incrsortstate) = ExecInitNode(outerPlan(node), estate, eflags);
 
 	/*
@@ -1126,12 +1134,13 @@ ExecReScanIncrementalSort(IncrementalSortState *node)
 	 * store all tuples at once for the full sort.
 	 *
 	 * So even if EXEC_FLAG_REWIND is set we just reset all of our state and
-	 * reexecute the sort along with the child node below us.
+	 * re-execute the sort along with the child node. Incremental sort itself
+	 * can't do anything smarter, but maybe the child nodes can.
 	 *
-	 * In theory if we've only filled the full sort with one batch (and haven't
-	 * reset it for a new batch yet) then we could efficiently rewind, but
-	 * that seems a narrow enough case that it's not worth handling specially
-	 * at this time.
+	 * In theory if we've only filled the full sort with one batch (and
+	 * haven't reset it for a new batch yet) then we could efficiently rewind,
+	 * but that seems a narrow enough case that it's not worth handling
+	 * specially at this time.
 	 */
 
 	/* must drop pointer to sort result tuple */
@@ -1142,7 +1151,6 @@ ExecReScanIncrementalSort(IncrementalSortState *node)
 	if (node->transfer_tuple != NULL)
 		ExecClearTuple(node->transfer_tuple);
 
-	node->bounded = false;
 	node->outerNodeDone = false;
 	node->n_fullsort_remaining = 0;
 	node->bound_Done = 0;
@@ -1153,8 +1161,10 @@ ExecReScanIncrementalSort(IncrementalSortState *node)
 	/*
 	 * If we've set up either of the sort states yet, we need to reset them.
 	 * We could end them and null out the pointers, but there's no reason to
-	 * repay the setup cost, and because guard setting up pivot comparator
-	 * state similarly, doing so might actually cause a leak.
+	 * repay the setup cost, and because ExecIncrementalSort guards presorted
+	 * column functions by checking to see if the full sort state has been
+	 * initialized yet, setting the sort states to null here might actually
+	 * cause a leak.
 	 */
 	if (node->fullsort_state != NULL)
 	{

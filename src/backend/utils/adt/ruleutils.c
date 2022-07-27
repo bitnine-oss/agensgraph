@@ -5855,8 +5855,8 @@ get_rule_sortgroupclause(Index ref, List *tlist, bool force_colno,
 		 */
 		bool		need_paren = (PRETTY_PAREN(context)
 								  || IsA(expr, FuncExpr)
-								  ||IsA(expr, Aggref)
-								  ||IsA(expr, WindowFunc));
+								  || IsA(expr, Aggref)
+								  || IsA(expr, WindowFunc));
 
 		if (need_paren)
 			appendStringInfoChar(context->buf, '(');
@@ -10732,7 +10732,7 @@ get_from_clause_item(Node *jtnode, Query *query, deparse_context *context)
 
 		need_paren_on_right = PRETTY_PAREN(context) &&
 			!IsA(j->rarg, RangeTblRef) &&
-			!(IsA(j->rarg, JoinExpr) &&((JoinExpr *) j->rarg)->alias != NULL);
+			!(IsA(j->rarg, JoinExpr) && ((JoinExpr *) j->rarg)->alias != NULL);
 
 		if (!PRETTY_PAREN(context) || j->alias != NULL)
 			appendStringInfoChar(buf, '(');
@@ -11038,7 +11038,7 @@ generate_opclass_name(Oid opclass)
 	initStringInfo(&buf);
 	get_opclass_name(opclass, InvalidOid, &buf);
 
-	return &buf.data[1];	/* get_opclass_name() prepends space */
+	return &buf.data[1];		/* get_opclass_name() prepends space */
 }
 
 /*
@@ -11740,8 +11740,8 @@ get_reloptions(StringInfo buf, Datum reloptions)
 		char	   *value;
 
 		/*
-		 * Each array element should have the form name=value.  If the "="
-		 * is missing for some reason, treat it like an empty value.
+		 * Each array element should have the form name=value.  If the "=" is
+		 * missing for some reason, treat it like an empty value.
 		 */
 		name = option;
 		separator = strchr(option, '=');
@@ -11759,11 +11759,11 @@ get_reloptions(StringInfo buf, Datum reloptions)
 
 		/*
 		 * In general we need to quote the value; but to avoid unnecessary
-		 * clutter, do not quote if it is an identifier that would not
-		 * need quoting.  (We could also allow numbers, but that is a bit
-		 * trickier than it looks --- for example, are leading zeroes
-		 * significant?  We don't want to assume very much here about what
-		 * custom reloptions might mean.)
+		 * clutter, do not quote if it is an identifier that would not need
+		 * quoting.  (We could also allow numbers, but that is a bit trickier
+		 * than it looks --- for example, are leading zeroes significant?  We
+		 * don't want to assume very much here about what custom reloptions
+		 * might mean.)
 		 */
 		if (quote_identifier(value) == value)
 			appendStringInfoString(buf, value);

@@ -315,7 +315,7 @@ set up for recursive handling of subqueries
   preprocess target list for non-SELECT queries
   handle UNION/INTERSECT/EXCEPT, GROUP BY, HAVING, aggregates,
 	ORDER BY, DISTINCT, LIMIT
---query_planner()
+---query_planner()
    make list of base relations used in query
    split up the qual into restrictions (a=1) and joins (b=c)
    find qual clauses that enable merge and hash joins
@@ -325,7 +325,7 @@ set up for recursive handling of subqueries
       find selectivity of columns used in joins
      make_rel_from_joinlist()
       hand off join subproblems to a plugin, GEQO, or standard_join_search()
------standard_join_search()
+------standard_join_search()
       call join_search_one_level() for each level of join tree needed
       join_search_one_level():
         For each joinrel of the prior level, do make_rels_by_clause_joins()
@@ -1109,10 +1109,10 @@ compatibly partitioned tables.
 Even if the joining relations don't have exactly the same partition bounds,
 partitionwise join can still be applied by using an advanced
 partition-matching algorithm.  For both the joining relations, the algorithm
-checks wether every partition of one joining relation only matches one
+checks whether every partition of one joining relation only matches one
 partition of the other joining relation at most.  In such a case the join
 between the joining relations can be broken down into joins between the
-matching partitions.  The join relation can then be considerd partitioned.
+matching partitions.  The join relation can then be considered partitioned.
 The algorithm produces the pairs of the matching partitions, plus the
 partition bounds for the join relation, to allow partitionwise join for
 computing the join.  The algorithm is implemented in partition_bounds_merge().

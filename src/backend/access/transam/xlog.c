@@ -221,8 +221,9 @@ static TimeLineID receiveTLI = 0;
 static bool lastFullPageWrites;
 
 /*
- * Local copy of SharedRecoveryInProgress variable. True actually means "not
- * known, need to check the shared state".
+ * Local copy of the state tracked by SharedRecoveryState in shared memory,
+ * It is false if SharedRecoveryState is RECOVERY_STATE_DONE.  True actually
+ * means "not known, need to check the shared state".
  */
 static bool LocalRecoveryInProgress = true;
 
@@ -653,10 +654,10 @@ typedef struct XLogCtlData
 	TimeLineID	PrevTimeLineID;
 
 	/*
-	 * SharedRecoveryInProgress indicates if we're still in crash or archive
+	 * SharedRecoveryState indicates if we're still in crash or archive
 	 * recovery.  Protected by info_lck.
 	 */
-	bool		SharedRecoveryInProgress;
+	RecoveryState SharedRecoveryState;
 
 	/*
 	 * SharedHotStandbyActive indicates if we allow hot standby queries to be
@@ -997,7 +998,7 @@ XLogRecPtr
 XLogInsertRecord(XLogRecData *rdata,
 				 XLogRecPtr fpw_lsn,
 				 uint8 flags,
-				 int num_fpw)
+				 int num_fpi)
 {
 	XLogCtlInsert *Insert = &XLogCtl->Insert;
 	pg_crc32c	rdata_crc;
@@ -1222,7 +1223,7 @@ XLogInsertRecord(XLogRecData *rdata,
 
 		if (!debug_reader)
 			debug_reader = XLogReaderAllocate(wal_segment_size, NULL,
-											  NULL, NULL);
+											  XL_ROUTINE(), NULL);
 
 		if (!debug_reader)
 		{
@@ -1258,7 +1259,7 @@ XLogInsertRecord(XLogRecData *rdata,
 	{
 		pgWalUsage.wal_bytes += rechdr->xl_tot_len;
 		pgWalUsage.wal_records++;
-		pgWalUsage.wal_fpw += num_fpw;
+		pgWalUsage.wal_fpi += num_fpi;
 	}
 
 	return EndPos;
@@ -4434,6 +4435,16 @@ ReadRecord(XLogReaderState *xlogreader, int emode,
 				updateMinRecoveryPoint = true;
 
 				UpdateControlFile();
+
+				/*
+				 * We update SharedRecoveryState while holding the lock on
+				 * ControlFileLock so both states are consistent in shared
+				 * memory.
+				 */
+				SpinLockAcquire(&XLogCtl->info_lck);
+				XLogCtl->SharedRecoveryState = RECOVERY_STATE_ARCHIVE;
+				SpinLockRelease(&XLogCtl->info_lck);
+
 				LWLockRelease(ControlFileLock);
 
 				CheckRecoveryConsistency();
@@ -5105,10 +5116,8 @@ XLOGShmemInit(void)
 		/* both should be present or neither */
 		Assert(foundCFile && foundXLog);
 
-		/* Initialize local copy of WALInsertLocks and register the tranche */
+		/* Initialize local copy of WALInsertLocks */
 		WALInsertLocks = XLogCtl->Insert.WALInsertLocks;
-		LWLockRegisterTranche(LWTRANCHE_WAL_INSERT,
-							  "wal_insert");
 
 		if (localControlFile)
 			pfree(localControlFile);
@@ -5144,7 +5153,6 @@ XLOGShmemInit(void)
 		(WALInsertLockPadded *) allocptr;
 	allocptr += sizeof(WALInsertLockPadded) * NUM_XLOGINSERT_LOCKS;
 
-	LWLockRegisterTranche(LWTRANCHE_WAL_INSERT, "wal_insert");
 	for (i = 0; i < NUM_XLOGINSERT_LOCKS; i++)
 	{
 		LWLockInitialize(&WALInsertLocks[i].l.lock, LWTRANCHE_WAL_INSERT);
@@ -5166,7 +5174,7 @@ XLOGShmemInit(void)
 	 * in additional info.)
 	 */
 	XLogCtl->XLogCacheBlck = XLOGbuffers - 1;
-	XLogCtl->SharedRecoveryInProgress = true;
+	XLogCtl->SharedRecoveryState = RECOVERY_STATE_CRASH;
 	XLogCtl->SharedHotStandbyActive = false;
 	XLogCtl->SharedPromoteIsTriggered = false;
 	XLogCtl->WalWriterSleeping = false;
@@ -6063,7 +6071,7 @@ recoveryApplyDelay(XLogReaderState *record)
 {
 	uint8		xact_info;
 	TimestampTz xtime;
-	TimestampTz	delayUntil;
+	TimestampTz delayUntil;
 	long		secs;
 	int			microsecs;
 
@@ -6333,7 +6341,11 @@ StartupXLOG(void)
 	switch (ControlFile->state)
 	{
 		case DB_SHUTDOWNED:
-			/* This is the expected case, so don't be chatty in standalone mode */
+
+			/*
+			 * This is the expected case, so don't be chatty in standalone
+			 * mode
+			 */
 			ereport(IsPostmasterEnvironment ? LOG : NOTICE,
 					(errmsg("database system was shut down at %s",
 							str_time(ControlFile->time))));
@@ -6467,8 +6479,12 @@ StartupXLOG(void)
 
 	/* Set up XLOG reader facility */
 	MemSet(&private, 0, sizeof(XLogPageReadPrivate));
-	xlogreader = XLogReaderAllocate(wal_segment_size, NULL,
-									&XLogPageRead, &private);
+	xlogreader =
+		XLogReaderAllocate(wal_segment_size, NULL,
+						   XL_ROUTINE(.page_read = &XLogPageRead,
+									  .segment_open = NULL,
+									  .segment_close = wal_segment_close),
+						   &private);
 	if (!xlogreader)
 		ereport(ERROR,
 				(errcode(ERRCODE_OUT_OF_MEMORY),
@@ -6871,7 +6887,13 @@ StartupXLOG(void)
 		 */
 		dbstate_at_startup = ControlFile->state;
 		if (InArchiveRecovery)
+		{
 			ControlFile->state = DB_IN_ARCHIVE_RECOVERY;
+
+			SpinLockAcquire(&XLogCtl->info_lck);
+			XLogCtl->SharedRecoveryState = RECOVERY_STATE_ARCHIVE;
+			SpinLockRelease(&XLogCtl->info_lck);
+		}
 		else
 		{
 			ereport(LOG,
@@ -6884,6 +6906,10 @@ StartupXLOG(void)
 								ControlFile->checkPointCopy.ThisTimeLineID,
 								recoveryTargetTLI)));
 			ControlFile->state = DB_IN_CRASH_RECOVERY;
+
+			SpinLockAcquire(&XLogCtl->info_lck);
+			XLogCtl->SharedRecoveryState = RECOVERY_STATE_CRASH;
+			SpinLockRelease(&XLogCtl->info_lck);
 		}
 		ControlFile->checkPoint = checkPointLoc;
 		ControlFile->checkPointCopy = checkPoint;
@@ -7911,7 +7937,7 @@ StartupXLOG(void)
 	ControlFile->time = (pg_time_t) time(NULL);
 
 	SpinLockAcquire(&XLogCtl->info_lck);
-	XLogCtl->SharedRecoveryInProgress = false;
+	XLogCtl->SharedRecoveryState = RECOVERY_STATE_DONE;
 	SpinLockRelease(&XLogCtl->info_lck);
 
 	UpdateControlFile();
@@ -8057,7 +8083,7 @@ RecoveryInProgress(void)
 		 */
 		volatile XLogCtlData *xlogctl = XLogCtl;
 
-		LocalRecoveryInProgress = xlogctl->SharedRecoveryInProgress;
+		LocalRecoveryInProgress = (xlogctl->SharedRecoveryState != RECOVERY_STATE_DONE);
 
 		/*
 		 * Initialize TimeLineID and RedoRecPtr when we discover that recovery
@@ -8069,8 +8095,8 @@ RecoveryInProgress(void)
 		{
 			/*
 			 * If we just exited recovery, make sure we read TimeLineID and
-			 * RedoRecPtr after SharedRecoveryInProgress (for machines with
-			 * weak memory ordering).
+			 * RedoRecPtr after SharedRecoveryState (for machines with weak
+			 * memory ordering).
 			 */
 			pg_memory_barrier();
 			InitXLOGAccess();
@@ -8084,6 +8110,24 @@ RecoveryInProgress(void)
 
 		return LocalRecoveryInProgress;
 	}
+}
+
+/*
+ * Returns current recovery state from shared memory.
+ *
+ * This returned state is kept consistent with the contents of the control
+ * file.  See details about the possible values of RecoveryState in xlog.h.
+ */
+RecoveryState
+GetRecoveryState(void)
+{
+	RecoveryState retval;
+
+	SpinLockAcquire(&XLogCtl->info_lck);
+	retval = XLogCtl->SharedRecoveryState;
+	SpinLockRelease(&XLogCtl->info_lck);
+
+	return retval;
 }
 
 /*
@@ -10651,8 +10695,8 @@ do_pg_start_backup(const char *backupidstr, bool fast, TimeLineID *starttli_p,
 		datadirpathlen = strlen(DataDir);
 
 		/*
-		 * Report that we are now estimating the total backup size
-		 * if we're streaming base backup as requested by pg_basebackup
+		 * Report that we are now estimating the total backup size if we're
+		 * streaming base backup as requested by pg_basebackup
 		 */
 		if (tablespaces)
 			pgstat_progress_update_param(PROGRESS_BASEBACKUP_PHASE,
@@ -11370,7 +11414,7 @@ do_pg_stop_backup(char *labelfile, bool waitforarchive, TimeLineID *stoptli_p)
 void
 do_pg_abort_backup(int code, Datum arg)
 {
-	bool	emit_warning = DatumGetBool(arg);
+	bool		emit_warning = DatumGetBool(arg);
 
 	/*
 	 * Quick exit if session is not keeping around a non-exclusive backup
@@ -11392,7 +11436,7 @@ do_pg_abort_backup(int code, Datum arg)
 
 	if (emit_warning)
 		ereport(WARNING,
-				(errmsg("aborting backup due to backend exiting before pg_stop_back up was called")));
+				(errmsg("aborting backup due to backend exiting before pg_stop_backup was called")));
 }
 
 /*
@@ -12114,8 +12158,8 @@ WaitForWALToBecomeAvailable(XLogRecPtr RecPtr, bool randAccess,
 					 */
 
 					/*
-					 * We should be able to move to XLOG_FROM_STREAM
-					 * only in standby mode.
+					 * We should be able to move to XLOG_FROM_STREAM only in
+					 * standby mode.
 					 */
 					Assert(StandbyMode);
 
@@ -12202,6 +12246,7 @@ WaitForWALToBecomeAvailable(XLogRecPtr RecPtr, bool randAccess,
 		{
 			case XLOG_FROM_ARCHIVE:
 			case XLOG_FROM_PG_WAL:
+
 				/*
 				 * WAL receiver must not be running when reading WAL from
 				 * archive or pg_wal.
@@ -12239,8 +12284,8 @@ WaitForWALToBecomeAvailable(XLogRecPtr RecPtr, bool randAccess,
 					bool		havedata;
 
 					/*
-					 * We should be able to move to XLOG_FROM_STREAM
-					 * only in standby mode.
+					 * We should be able to move to XLOG_FROM_STREAM only in
+					 * standby mode.
 					 */
 					Assert(StandbyMode);
 

@@ -82,7 +82,7 @@ declare
   space_key text;
 begin
   for node in select * from jsonb_array_elements(explain_analyze_inc_sort_nodes(query)) t loop
-    for group_key in select unnest(array['Full-sort Groups', 'Presorted Groups']::text[]) t loop
+    for group_key in select unnest(array['Full-sort Groups', 'Pre-sorted Groups']::text[]) t loop
       for space_key in select unnest(array['Sort Space Memory', 'Sort Space Disk']::text[]) t loop
         node := jsonb_set(node, array[group_key, space_key, 'Average Sort Space Used'], '"NN"', false);
         node := jsonb_set(node, array[group_key, space_key, 'Peak Sort Space Used'], '"NN"', false);
@@ -105,7 +105,7 @@ declare
   space_key text;
 begin
   for node in select * from jsonb_array_elements(explain_analyze_inc_sort_nodes(query)) t loop
-    for group_key in select unnest(array['Full-sort Groups', 'Presorted Groups']::text[]) t loop
+    for group_key in select unnest(array['Full-sort Groups', 'Pre-sorted Groups']::text[]) t loop
       group_stats := node->group_key;
       for space_key in select unnest(array['Sort Space Memory', 'Sort Space Disk']::text[]) t loop
         if (group_stats->space_key->'Peak Sort Space Used')::bigint < (group_stats->space_key->'Peak Sort Space Used')::bigint then
@@ -215,5 +215,9 @@ explain (costs off) select a,b,sum(c) from t group by 1,2 order by 1,2,3 limit 1
 
 set enable_incrementalsort = on;
 explain (costs off) select a,b,sum(c) from t group by 1,2 order by 1,2,3 limit 1;
+
+-- Incremental sort vs. set operations with varno 0
+set enable_hashagg to off;
+explain (costs off) select * from t union select * from t order by 1,3;
 
 drop table t;

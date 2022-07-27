@@ -23,7 +23,7 @@
 #include "pg_rewind.h"
 #include "port/pg_bswap.h"
 
-PGconn *conn = NULL;
+PGconn	   *conn = NULL;
 
 /*
  * Files are fetched max CHUNKSIZE bytes at a time.
@@ -108,7 +108,7 @@ run_simple_query(const char *sql)
 	res = PQexec(conn, sql);
 
 	if (PQresultStatus(res) != PGRES_TUPLES_OK)
-		pg_fatal("error running query (%s) in source server: %s",
+		pg_fatal("error running query (%s) on source server: %s",
 				 sql, PQresultErrorMessage(res));
 
 	/* sanity check the result set */

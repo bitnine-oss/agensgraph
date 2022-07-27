@@ -100,9 +100,12 @@ VACUUM (PARALLEL -1) pvactst; -- error
 VACUUM (PARALLEL 2, INDEX_CLEANUP FALSE) pvactst;
 VACUUM (PARALLEL 2, FULL TRUE) pvactst; -- error, cannot use both PARALLEL and FULL
 VACUUM (PARALLEL) pvactst; -- error, cannot use PARALLEL option without parallel degree
+
+-- Test different combinations of parallel and full options for temporary tables
 CREATE TEMPORARY TABLE tmp (a int PRIMARY KEY);
 CREATE INDEX tmp_idx1 ON tmp (a);
-VACUUM (PARALLEL 1) tmp; -- disables parallel vacuum option
+VACUUM (PARALLEL 1, FULL FALSE) tmp; -- parallel vacuum disabled for temp tables
+VACUUM (PARALLEL 0, FULL TRUE) tmp; -- can specify parallel disabled (even though that's implied by FULL)
 RESET min_parallel_index_scan_size;
 DROP TABLE pvactst;
 
@@ -112,7 +115,7 @@ CREATE TABLE no_index_cleanup (i INT PRIMARY KEY, t TEXT);
 CREATE INDEX no_index_cleanup_idx ON no_index_cleanup(t);
 ALTER TABLE no_index_cleanup ALTER COLUMN t SET STORAGE EXTERNAL;
 INSERT INTO no_index_cleanup(i, t) VALUES (generate_series(1,30),
-    repeat('1234567890',300));
+    repeat('1234567890',269));
 -- index cleanup option is ignored if VACUUM FULL
 VACUUM (INDEX_CLEANUP TRUE, FULL TRUE) no_index_cleanup;
 VACUUM (FULL TRUE) no_index_cleanup;
@@ -126,7 +129,7 @@ ALTER TABLE no_index_cleanup SET (vacuum_index_cleanup = true);
 VACUUM no_index_cleanup;
 -- Parameter is set for both the parent table and its toast relation.
 INSERT INTO no_index_cleanup(i, t) VALUES (generate_series(31,60),
-    repeat('1234567890',300));
+    repeat('1234567890',269));
 DELETE FROM no_index_cleanup WHERE i < 45;
 -- Only toast index is cleaned up.
 ALTER TABLE no_index_cleanup SET (vacuum_index_cleanup = false,

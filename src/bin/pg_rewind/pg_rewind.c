@@ -78,19 +78,19 @@ usage(const char *progname)
 	printf(_("%s resynchronizes a PostgreSQL cluster with another copy of the cluster.\n\n"), progname);
 	printf(_("Usage:\n  %s [OPTION]...\n\n"), progname);
 	printf(_("Options:\n"));
-	printf(_("  -c, --restore-target-wal       use restore_command in target config\n"
-			 "                                 to retrieve WAL files from archives\n"));
+	printf(_("  -c, --restore-target-wal       use restore_command in target configuration to\n"
+			 "                                 retrieve WAL files from archives\n"));
 	printf(_("  -D, --target-pgdata=DIRECTORY  existing data directory to modify\n"));
 	printf(_("      --source-pgdata=DIRECTORY  source data directory to synchronize with\n"));
 	printf(_("      --source-server=CONNSTR    source server to synchronize with\n"));
-	printf(_("  -R, --write-recovery-conf      write configuration for replication\n"
-			 "                                 (requires --source-server)\n"));
 	printf(_("  -n, --dry-run                  stop before modifying anything\n"));
 	printf(_("  -N, --no-sync                  do not wait for changes to be written\n"
 			 "                                 safely to disk\n"));
 	printf(_("  -P, --progress                 write progress messages\n"));
-	printf(_("      --no-ensure-shutdown       do not automatically fix unclean shutdown\n"));
+	printf(_("  -R, --write-recovery-conf      write configuration for replication\n"
+			 "                                 (requires --source-server)\n"));
 	printf(_("      --debug                    write a lot of debug messages\n"));
+	printf(_("      --no-ensure-shutdown       do not automatically fix unclean shutdown\n"));
 	printf(_("  -V, --version                  output version information, then exit\n"));
 	printf(_("  -?, --help                     show this help, then exit\n"));
 	printf(_("\nReport bugs to <%s>.\n"), PACKAGE_BUGREPORT);
@@ -225,7 +225,7 @@ main(int argc, char **argv)
 
 	if (writerecoveryconf && connstr_source == NULL)
 	{
-		pg_log_error("no source server information (--source--server) specified for --write-recovery-conf");
+		pg_log_error("no source server information (--source-server) specified for --write-recovery-conf");
 		fprintf(stderr, _("Try \"%s --help\" for more information.\n"), progname);
 		exit(1);
 	}
@@ -339,7 +339,8 @@ main(int argc, char **argv)
 			/* Read the checkpoint record on the target to see where it ends. */
 			chkptendrec = readOneRecord(datadir_target,
 										ControlFile_target.checkPoint,
-										targetNentries - 1);
+										targetNentries - 1,
+										restore_command);
 
 			/*
 			 * If the histories diverged exactly at the end of the shutdown
@@ -846,15 +847,15 @@ getRestoreCommand(const char *argv0)
 			strlcpy(full_path, progname, sizeof(full_path));
 
 		if (rc == -1)
-			pg_log_error("The program \"postgres\" is needed by %s but was not found in the\n"
+			pg_log_error("The program \"%s\" is needed by %s but was not found in the\n"
 						 "same directory as \"%s\".\n"
 						 "Check your installation.",
-						 progname, full_path);
+						 "postgres", progname, full_path);
 		else
-			pg_log_error("The program \"postgres\" was found by \"%s\"\n"
+			pg_log_error("The program \"%s\" was found by \"%s\"\n"
 						 "but was not the same version as %s.\n"
 						 "Check your installation.",
-						 full_path, progname);
+						 "postgres", full_path, progname);
 		exit(1);
 	}
 
@@ -872,7 +873,7 @@ getRestoreCommand(const char *argv0)
 	(void) pg_strip_crlf(cmd_output);
 
 	if (strcmp(cmd_output, "") == 0)
-		pg_fatal("restore_command is not set on the target cluster");
+		pg_fatal("restore_command is not set in the target cluster");
 
 	restore_command = pg_strdup(cmd_output);
 
@@ -904,13 +905,13 @@ ensureCleanShutdown(const char *argv0)
 			strlcpy(full_path, progname, sizeof(full_path));
 
 		if (ret == -1)
-			pg_fatal("The program \"%s\" is needed by %s but was\n"
-					 "not found in the same directory as \"%s\".\n"
+			pg_fatal("The program \"%s\" is needed by %s but was not found in the\n"
+					 "same directory as \"%s\".\n"
 					 "Check your installation.",
 					 "postgres", progname, full_path);
 		else
-			pg_fatal("The program \"%s\" was found by \"%s\" but was\n"
-					 "not the same version as %s.\n"
+			pg_fatal("The program \"%s\" was found by \"%s\"\n"
+					 "but was not the same version as %s.\n"
 					 "Check your installation.",
 					 "postgres", full_path, progname);
 	}
@@ -935,7 +936,7 @@ ensureCleanShutdown(const char *argv0)
 
 	if (system(cmd) != 0)
 	{
-		pg_log_error("postgres single-user mode of target instance failed");
+		pg_log_error("postgres single-user mode in target cluster failed");
 		pg_fatal("Command was: %s", cmd);
 	}
 }

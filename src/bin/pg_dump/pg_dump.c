@@ -122,11 +122,6 @@ static SimpleOidList tabledata_exclude_oids = {NULL, NULL};
 static SimpleStringList foreign_servers_include_patterns = {NULL, NULL};
 static SimpleOidList foreign_servers_include_oids = {NULL, NULL};
 
-
-/* placeholders for the delimiters for comments */
-char		g_comment_start[10];
-char		g_comment_end[10];
-
 static const CatalogId nilCatalogId = {0, 0};
 
 /* override for standard extra_float_digits setting */
@@ -404,9 +399,6 @@ main(int argc, char **argv)
 	 * support on Windows.
 	 */
 	init_parallel_dump_utils();
-
-	strcpy(g_comment_start, "-- ");
-	g_comment_end[0] = '\0';
 
 	progname = get_progname(argv[0]);
 
@@ -1032,8 +1024,8 @@ help(const char *progname)
 	printf(_("  --extra-float-digits=NUM     override default setting for extra_float_digits\n"));
 	printf(_("  --if-exists                  use IF EXISTS when dropping objects\n"));
 	printf(_("  --include-foreign-data=PATTERN\n"
-			 "                               include data of foreign tables in\n"
-			 "                               foreign servers matching PATTERN\n"));
+			 "                               include data of foreign tables on foreign\n"
+			 "                               servers matching PATTERN\n"));
 	printf(_("  --inserts                    dump data as INSERT commands, rather than COPY\n"));
 	printf(_("  --load-via-partition-root    load partitions via the root table\n"));
 	printf(_("  --no-comments                do not dump comments\n"));
@@ -2412,8 +2404,8 @@ makeTableDataInfo(DumpOptions *dopt, TableInfo *tbinfo)
 	/* Skip FOREIGN TABLEs (no data to dump) unless requested explicitly */
 	if (tbinfo->relkind == RELKIND_FOREIGN_TABLE &&
 		(foreign_servers_include_oids.head == NULL ||
-		!simple_oid_list_member(&foreign_servers_include_oids,
-								tbinfo->foreign_server)))
+		 !simple_oid_list_member(&foreign_servers_include_oids,
+								 tbinfo->foreign_server)))
 		return;
 	/* Skip partitioned tables (data in partitions) */
 	if (tbinfo->relkind == RELKIND_PARTITIONED_TABLE)
@@ -4074,8 +4066,7 @@ getPublicationTables(Archive *fout, TableInfo tblinfo[], int numTables)
 		TableInfo  *tbinfo = &tblinfo[i];
 
 		/*
-		 * Only regular and partitioned tables can be added to
-		 * publications.
+		 * Only regular and partitioned tables can be added to publications.
 		 */
 		if (tbinfo->relkind != RELKIND_RELATION &&
 			tbinfo->relkind != RELKIND_PARTITIONED_TABLE)
@@ -4397,12 +4388,12 @@ append_depends_on_extension(Archive *fout,
 {
 	if (dobj->depends_on_ext)
 	{
-		char   *nm;
+		char	   *nm;
 		PGresult   *res;
-		PQExpBuffer	query;
-		int		ntups;
-		int		i_extname;
-		int		i;
+		PQExpBuffer query;
+		int			ntups;
+		int			i_extname;
+		int			i;
 
 		/* dodge fmtId() non-reentrancy */
 		nm = pg_strdup(objname);
@@ -7294,7 +7285,10 @@ getIndexes(Archive *fout, TableInfo tblinfo[], int numTables)
 			indxinfo[j].indisclustered = (PQgetvalue(res, j, i_indisclustered)[0] == 't');
 			indxinfo[j].indisreplident = (PQgetvalue(res, j, i_indisreplident)[0] == 't');
 			indxinfo[j].parentidx = atooid(PQgetvalue(res, j, i_parentidx));
-			indxinfo[j].partattaches = (SimplePtrList) { NULL, NULL };
+			indxinfo[j].partattaches = (SimplePtrList)
+			{
+				NULL, NULL
+			};
 			contype = *(PQgetvalue(res, j, i_contype));
 
 			if (contype == 'p' || contype == 'u' || contype == 'x')
@@ -7492,7 +7486,7 @@ getConstraints(Archive *fout, TableInfo tblinfo[], int numTables)
 
 		for (j = 0; j < ntups; j++)
 		{
-			TableInfo *reftable;
+			TableInfo  *reftable;
 
 			constrinfo[j].dobj.objType = DO_FK_CONSTRAINT;
 			constrinfo[j].dobj.catId.tableoid = atooid(PQgetvalue(res, j, i_contableoid));
@@ -16352,7 +16346,7 @@ dumpTableSchema(Archive *fout, TableInfo *tbinfo)
 				tbinfo->attfdwoptions[j][0] != '\0')
 				appendPQExpBuffer(q,
 								  "ALTER FOREIGN TABLE %s ALTER COLUMN %s OPTIONS (\n"
-								  "	  %s\n"
+								  "    %s\n"
 								  ");\n",
 								  qualrelname,
 								  fmtId(tbinfo->attnames[j]),
@@ -16802,7 +16796,7 @@ dumpConstraint(Archive *fout, ConstraintInfo *coninfo)
 	delq = createPQExpBuffer();
 
 	foreign = tbinfo &&
-		tbinfo->relkind == RELKIND_FOREIGN_TABLE ?  "FOREIGN " : "";
+		tbinfo->relkind == RELKIND_FOREIGN_TABLE ? "FOREIGN " : "";
 
 	if (coninfo->contype == 'p' ||
 		coninfo->contype == 'u' ||

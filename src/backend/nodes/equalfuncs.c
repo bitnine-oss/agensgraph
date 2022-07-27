@@ -1071,7 +1071,7 @@ _equalQuery(const Query *a, const Query *b)
 	COMPARE_NODE_FIELD(constraintDeps);
 	COMPARE_NODE_FIELD(withCheckOptions);
 	COMPARE_LOCATION_FIELD(stmt_location);
-	COMPARE_LOCATION_FIELD(stmt_len);
+	COMPARE_SCALAR_FIELD(stmt_len);
 
 	/* todo: for AgensGraph, needs cleanup */
 	COMPARE_SCALAR_FIELD(dijkstraWeight);
@@ -1109,7 +1109,7 @@ _equalRawStmt(const RawStmt *a, const RawStmt *b)
 {
 	COMPARE_NODE_FIELD(stmt);
 	COMPARE_LOCATION_FIELD(stmt_location);
-	COMPARE_LOCATION_FIELD(stmt_len);
+	COMPARE_SCALAR_FIELD(stmt_len);
 
 	return true;
 }
@@ -1563,6 +1563,7 @@ _equalAlterObjectDependsStmt(const AlterObjectDependsStmt *a, const AlterObjectD
 	COMPARE_NODE_FIELD(relation);
 	COMPARE_NODE_FIELD(object);
 	COMPARE_NODE_FIELD(extname);
+	COMPARE_SCALAR_FIELD(remove);
 
 	return true;
 }

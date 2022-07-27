@@ -152,8 +152,10 @@ create_logical_replication_slot(char *name, char *plugin,
 	ctx = CreateInitDecodingContext(plugin, NIL,
 									false,	/* just catalogs is OK */
 									restart_lsn,
-									read_local_xlog_page, NULL, NULL,
-									NULL);
+									XL_ROUTINE(.page_read = read_local_xlog_page,
+											   .segment_open = wal_segment_open,
+											   .segment_close = wal_segment_close),
+									NULL, NULL, NULL);
 
 	/*
 	 * If caller needs us to determine the decoding start point, do so now.
@@ -423,10 +425,9 @@ pg_physical_replication_slot_advance(XLogRecPtr moveto)
 		retlsn = moveto;
 
 		/*
-		 * Dirty the slot so as it is written out at the next checkpoint.
-		 * Note that the LSN position advanced may still be lost in the
-		 * event of a crash, but this makes the data consistent after a
-		 * clean shutdown.
+		 * Dirty the slot so as it is written out at the next checkpoint. Note
+		 * that the LSN position advanced may still be lost in the event of a
+		 * crash, but this makes the data consistent after a clean shutdown.
 		 */
 		ReplicationSlotMarkDirty();
 	}
@@ -464,7 +465,9 @@ pg_logical_replication_slot_advance(XLogRecPtr moveto)
 		ctx = CreateDecodingContext(InvalidXLogRecPtr,
 									NIL,
 									true,	/* fast_forward */
-									read_local_xlog_page,
+									XL_ROUTINE(.page_read = read_local_xlog_page,
+											   .segment_open = wal_segment_open,
+											   .segment_close = wal_segment_close),
 									NULL, NULL, NULL);
 
 		/*
@@ -528,9 +531,9 @@ pg_logical_replication_slot_advance(XLogRecPtr moveto)
 			 * keep track of their progress, so we should make more of an
 			 * effort to save it for them.
 			 *
-			 * Dirty the slot so it is written out at the next checkpoint.
-			 * The LSN position advanced to may still be lost on a crash
-			 * but this makes the data consistent after a clean shutdown.
+			 * Dirty the slot so it is written out at the next checkpoint. The
+			 * LSN position advanced to may still be lost on a crash but this
+			 * makes the data consistent after a clean shutdown.
 			 */
 			ReplicationSlotMarkDirty();
 		}
@@ -598,7 +601,9 @@ pg_replication_slot_advance(PG_FUNCTION_ARGS)
 	if (XLogRecPtrIsInvalid(MyReplicationSlot->data.restart_lsn))
 		ereport(ERROR,
 				(errcode(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
-				 errmsg("cannot advance replication slot that has not previously reserved WAL")));
+				 errmsg("replication slot \"%s\" cannot be advanced",
+						NameStr(*slotname)),
+				 errdetail("This slot has never previously reserved WAL, or has been invalidated.")));
 
 	/*
 	 * Check if the slot is not moving backwards.  Physical slots rely simply

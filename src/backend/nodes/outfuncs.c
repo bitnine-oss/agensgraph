@@ -320,7 +320,8 @@ _outPlannedStmt(StringInfo str, const PlannedStmt *node)
 	WRITE_NODE_FIELD(paramExecTypes);
 	WRITE_NODE_FIELD(utilityStmt);
 	WRITE_LOCATION_FIELD(stmt_location);
-	WRITE_LOCATION_FIELD(stmt_len);
+	WRITE_INT_FIELD(stmt_len);
+
 	WRITE_BOOL_FIELD(hasGraphwriteClause);
 }
 
@@ -470,6 +471,7 @@ _outRecursiveUnion(StringInfo str, const RecursiveUnion *node)
 	WRITE_OID_ARRAY(dupOperators, node->numCols);
 	WRITE_OID_ARRAY(dupCollations, node->numCols);
 	WRITE_LONG_FIELD(numGroups);
+
 	WRITE_INT_FIELD(maxDepth);
 }
 
@@ -664,6 +666,7 @@ _outCteScan(StringInfo str, const CteScan *node)
 
 	WRITE_INT_FIELD(ctePlanId);
 	WRITE_INT_FIELD(cteParam);
+
 	WRITE_INT_FIELD(cteStop);
 }
 
@@ -1925,6 +1928,7 @@ _outJoinPathInfo(StringInfo str, const JoinPath *node)
 	WRITE_NODE_FIELD(outerjoinpath);
 	WRITE_NODE_FIELD(innerjoinpath);
 	WRITE_NODE_FIELD(joinrestrictinfo);
+
 	WRITE_INT_FIELD(minhops);
 	WRITE_INT_FIELD(maxhops);
 }
@@ -2256,6 +2260,7 @@ _outRecursiveUnionPath(StringInfo str, const RecursiveUnionPath *node)
 	WRITE_NODE_FIELD(distinctList);
 	WRITE_INT_FIELD(wtParam);
 	WRITE_FLOAT_FIELD(numGroups, "%.0f");
+
 	WRITE_INT_FIELD(maxDepth);
 }
 
@@ -2303,6 +2308,7 @@ _outLimitPath(StringInfo str, const LimitPath *node)
 	WRITE_NODE_FIELD(subpath);
 	WRITE_NODE_FIELD(limitOffset);
 	WRITE_NODE_FIELD(limitCount);
+	WRITE_ENUM_FIELD(limitOption, LimitOption);
 }
 
 static void
@@ -3177,7 +3183,7 @@ _outQuery(StringInfo str, const Query *node)
 	WRITE_NODE_FIELD(constraintDeps);
 	WRITE_NODE_FIELD(withCheckOptions);
 	WRITE_LOCATION_FIELD(stmt_location);
-	WRITE_LOCATION_FIELD(stmt_len);
+	WRITE_INT_FIELD(stmt_len);
 
 	WRITE_INT_FIELD(dijkstraWeight);
 	WRITE_BOOL_FIELD(dijkstraWeightOut);
@@ -4211,7 +4217,7 @@ outNode(StringInfo str, const void *obj)
 
 	if (obj == NULL)
 		appendStringInfoString(str, "<>");
-	else if (IsA(obj, List) ||IsA(obj, IntList) || IsA(obj, OidList))
+	else if (IsA(obj, List) || IsA(obj, IntList) || IsA(obj, OidList))
 		_outList(str, obj);
 	else if (IsA(obj, Integer) ||
 			 IsA(obj, Float) ||

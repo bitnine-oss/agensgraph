@@ -64,8 +64,8 @@ RestoreArchivedFile(char *path, const char *xlogfname,
 	TimeLineID	restartTli;
 
 	/*
-	 * Ignore restore_command when not in archive recovery (meaning
-	 * we are in crash recovery).
+	 * Ignore restore_command when not in archive recovery (meaning we are in
+	 * crash recovery).
 	 */
 	if (!ArchiveRecoveryRequested)
 		goto not_available;
@@ -572,17 +572,24 @@ XLogArchiveCheckDone(const char *xlog)
 {
 	char		archiveStatusPath[MAXPGPATH];
 	struct stat stat_buf;
-	bool		inRecovery = RecoveryInProgress();
+
+	/* The file is always deletable if archive_mode is "off". */
+	if (!XLogArchivingActive())
+		return true;
 
 	/*
-	 * The file is always deletable if archive_mode is "off".  On standbys
-	 * archiving is disabled if archive_mode is "on", and enabled with
-	 * "always".  On a primary, archiving is enabled if archive_mode is "on"
-	 * or "always".
+	 * During archive recovery, the file is deletable if archive_mode is not
+	 * "always".
 	 */
-	if (!((XLogArchivingActive() && !inRecovery) ||
-		  (XLogArchivingAlways() && inRecovery)))
+	if (!XLogArchivingAlways() &&
+		GetRecoveryState() == RECOVERY_STATE_ARCHIVE)
 		return true;
+
+	/*
+	 * At this point of the logic, note that we are either a primary with
+	 * archive_mode set to "on" or "always", or a standby with archive_mode
+	 * set to "always".
+	 */
 
 	/* First check for .done --- this means archiver is done with it */
 	StatusFilePath(archiveStatusPath, xlog, ".done");

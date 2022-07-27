@@ -233,9 +233,24 @@ pg_logical_slot_get_changes_guts(FunctionCallInfo fcinfo, bool confirm, bool bin
 		ctx = CreateDecodingContext(InvalidXLogRecPtr,
 									options,
 									false,
-									read_local_xlog_page,
+									XL_ROUTINE(.page_read = read_local_xlog_page,
+											   .segment_open = wal_segment_open,
+											   .segment_close = wal_segment_close),
 									LogicalOutputPrepareWrite,
 									LogicalOutputWrite, NULL);
+
+		/*
+		 * After the sanity checks in CreateDecodingContext, make sure the
+		 * restart_lsn is valid.  Avoid "cannot get changes" wording in this
+		 * errmsg because that'd be confusingly ambiguous about no changes
+		 * being available.
+		 */
+		if (XLogRecPtrIsInvalid(MyReplicationSlot->data.restart_lsn))
+			ereport(ERROR,
+					(errcode(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
+					 errmsg("can no longer get changes from replication slot \"%s\"",
+							NameStr(*name)),
+					 errdetail("This slot has never previously reserved WAL, or has been invalidated.")));
 
 		MemoryContextSwitchTo(oldcontext);
 

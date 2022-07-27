@@ -124,7 +124,7 @@ static void record_manifest_details_for_wal_range(JsonManifestParseContext *cont
 												  XLogRecPtr start_lsn,
 												  XLogRecPtr end_lsn);
 static void report_manifest_error(JsonManifestParseContext *context,
-								  char *fmt,...)
+								  const char *fmt,...)
 			pg_attribute_printf(2, 3) pg_attribute_noreturn();
 
 static void verify_backup_directory(verifier_context *context,
@@ -162,7 +162,6 @@ main(int argc, char **argv)
 		{"ignore", required_argument, NULL, 'i'},
 		{"manifest-path", required_argument, NULL, 'm'},
 		{"no-parse-wal", no_argument, NULL, 'n'},
-		{"print-parse-wal", no_argument, NULL, 'p'},
 		{"quiet", no_argument, NULL, 'q'},
 		{"skip-checksums", no_argument, NULL, 's'},
 		{"wal-directory", required_argument, NULL, 'w'},
@@ -296,13 +295,13 @@ main(int argc, char **argv)
 			if (find_my_exec(argv[0], full_path) < 0)
 				strlcpy(full_path, progname, sizeof(full_path));
 			if (ret == -1)
-				pg_log_fatal("The program \"%s\" is needed by %s but was\n"
-							 "not found in the same directory as \"%s\".\n"
+				pg_log_fatal("The program \"%s\" is needed by %s but was not found in the\n"
+							 "same directory as \"%s\".\n"
 							 "Check your installation.",
 							 "pg_waldump", "pg_verifybackup", full_path);
 			else
-				pg_log_fatal("The program \"%s\" was found by \"%s\" but was\n"
-							 "not the same version as %s.\n"
+				pg_log_fatal("The program \"%s\" was found by \"%s\"\n"
+							 "but was not the same version as %s.\n"
 							 "Check your installation.",
 							 "pg_waldump", full_path, "pg_verifybackup");
 		}
@@ -359,7 +358,7 @@ main(int argc, char **argv)
 	 * work quietly.
 	 */
 	if (!context.saw_any_error && !quiet)
-		printf("backup successfully verified\n");
+		printf(_("backup successfully verified\n"));
 
 	return context.saw_any_error ? 1 : 0;
 }
@@ -444,12 +443,12 @@ parse_manifest_file(char *manifest_path, manifest_files_hash **ht_p,
  * expects this function not to return.
  */
 static void
-report_manifest_error(JsonManifestParseContext *context, char *fmt,...)
+report_manifest_error(JsonManifestParseContext *context, const char *fmt,...)
 {
 	va_list		ap;
 
 	va_start(ap, fmt);
-	pg_log_generic_v(PG_LOG_FATAL, fmt, ap);
+	pg_log_generic_v(PG_LOG_FATAL, gettext(fmt), ap);
 	va_end(ap);
 
 	exit(1);
@@ -645,11 +644,10 @@ verify_backup_file(verifier_context *context, char *relpath, char *fullpath)
 	}
 
 	/*
-	 * We don't verify checksums at this stage. We first finish verifying
-	 * that we have the expected set of files with the expected sizes, and
-	 * only afterwards verify the checksums. That's because computing
-	 * checksums may take a while, and we'd like to report more obvious
-	 * problems quickly.
+	 * We don't verify checksums at this stage. We first finish verifying that
+	 * we have the expected set of files with the expected sizes, and only
+	 * afterwards verify the checksums. That's because computing checksums may
+	 * take a while, and we'd like to report more obvious problems quickly.
 	 */
 }
 
@@ -708,7 +706,7 @@ verify_backup_checksums(verifier_context *context)
  */
 static void
 verify_file_checksum(verifier_context *context, manifest_file *m,
-					   char *fullpath)
+					 char *fullpath)
 {
 	pg_checksum_context checksum_ctx;
 	char	   *relpath = m->pathname;
@@ -822,7 +820,7 @@ report_backup_error(verifier_context *context, const char *pg_restrict fmt,...)
 	va_list		ap;
 
 	va_start(ap, fmt);
-	pg_log_generic_v(PG_LOG_ERROR, fmt, ap);
+	pg_log_generic_v(PG_LOG_ERROR, gettext(fmt), ap);
 	va_end(ap);
 
 	context->saw_any_error = true;
@@ -839,7 +837,7 @@ report_fatal_error(const char *pg_restrict fmt,...)
 	va_list		ap;
 
 	va_start(ap, fmt);
-	pg_log_generic_v(PG_LOG_FATAL, fmt, ap);
+	pg_log_generic_v(PG_LOG_FATAL, gettext(fmt), ap);
 	va_end(ap);
 
 	exit(1);
@@ -894,8 +892,9 @@ usage(void)
 	printf(_("Options:\n"));
 	printf(_("  -e, --exit-on-error         exit immediately on error\n"));
 	printf(_("  -i, --ignore=RELATIVE_PATH  ignore indicated path\n"));
-	printf(_("  -m, --manifest=PATH         use specified path for manifest\n"));
+	printf(_("  -m, --manifest-path=PATH    use specified path for manifest\n"));
 	printf(_("  -n, --no-parse-wal          do not try to parse WAL files\n"));
+	printf(_("  -q, --quiet                 do not print any output, except for errors\n"));
 	printf(_("  -s, --skip-checksums        skip checksum verification\n"));
 	printf(_("  -w, --wal-directory=PATH    use specified path for WAL files\n"));
 	printf(_("  -V, --version               output version information, then exit\n"));

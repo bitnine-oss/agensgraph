@@ -2643,7 +2643,7 @@ apply_projection_to_path(PlannerInfo *root,
 	 * workers can help project.  But if there is something that is not
 	 * parallel-safe in the target expressions, then we can't.
 	 */
-	if ((IsA(path, GatherPath) ||IsA(path, GatherMergePath)) &&
+	if ((IsA(path, GatherPath) || IsA(path, GatherMergePath)) &&
 		is_parallel_safe(root, (Node *) target->exprs))
 	{
 		/*
@@ -3900,7 +3900,7 @@ do { \
 	(path) = reparameterize_path_by_child(root, (path), child_rel); \
 	if ((path) == NULL) \
 		return NULL; \
-} while(0);
+} while(0)
 
 #define REPARAMETERIZE_CHILD_PATH_LIST(pathlist) \
 do { \
@@ -3911,7 +3911,7 @@ do { \
 		if ((pathlist) == NIL) \
 			return NULL; \
 	} \
-} while(0);
+} while(0)
 
 	Path	   *new_path;
 	ParamPathInfo *new_ppi;

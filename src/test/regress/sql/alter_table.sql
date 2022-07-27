@@ -1472,6 +1472,12 @@ select reltoastrelid <> 0 as has_toast_table
 from pg_class
 where oid = 'test_storage'::regclass;
 
+-- test that SET STORAGE propagates to index correctly
+create index test_storage_idx on test_storage (b, a);
+alter table test_storage alter column a set storage external;
+\d+ test_storage
+\d+ test_storage_idx
+
 -- ALTER COLUMN TYPE with a check constraint and a child table (bug #13779)
 CREATE TABLE test_inh_check (a float check (a > 10.2), b float);
 CREATE TABLE test_inh_check_child() INHERITS(test_inh_check);
@@ -2552,7 +2558,7 @@ DROP TABLE quuux;
 -- check validation when attaching hash partitions
 
 -- Use hand-rolled hash functions and operator class to get predictable result
--- on different matchines. part_test_int4_ops is defined in insert.sql.
+-- on different machines. part_test_int4_ops is defined in insert.sql.
 
 -- check that the new partition won't overlap with an existing partition
 CREATE TABLE hash_parted (

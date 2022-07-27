@@ -11794,7 +11794,7 @@ check_backtrace_functions(char **newval, void **extra, GucSource source)
 		else if ((*newval)[i] == ' ' ||
 				 (*newval)[i] == '\n' ||
 				 (*newval)[i] == '\t')
-			;	/* ignore these */
+			;					/* ignore these */
 		else
 			someval[j++] = (*newval)[i];	/* copy anything else */
 	}

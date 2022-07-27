@@ -1484,7 +1484,7 @@ setup_auth(FILE *cmdfd)
 
 	if (superuser_password)
 		PG_CMD_PRINTF("ALTER USER \"%s\" WITH PASSWORD E'%s';\n\n",
-					   username, escape_quotes(superuser_password));
+					  username, escape_quotes(superuser_password));
 }
 
 /*
@@ -1698,8 +1698,8 @@ setup_collation(FILE *cmdfd)
 	 * that it wins if libc defines a locale named ucs_basic.
 	 */
 	PG_CMD_PRINTF("INSERT INTO pg_collation (oid, collname, collnamespace, collowner, collprovider, collisdeterministic, collencoding, collcollate, collctype)"
-				   "VALUES (pg_nextoid('pg_catalog.pg_collation', 'oid', 'pg_catalog.pg_collation_oid_index'), 'ucs_basic', 'pg_catalog'::regnamespace, %u, '%c', true, %d, 'C', 'C');\n\n",
-				   BOOTSTRAP_SUPERUSERID, COLLPROVIDER_LIBC, PG_UTF8);
+				  "VALUES (pg_nextoid('pg_catalog.pg_collation', 'oid', 'pg_catalog.pg_collation_oid_index'), 'ucs_basic', 'pg_catalog'::regnamespace, %u, '%c', true, %d, 'C', 'C');\n\n",
+				  BOOTSTRAP_SUPERUSERID, COLLPROVIDER_LIBC, PG_UTF8);
 
 	/* Now import all collations we can find in the operating system */
 	PG_CMD_PUTS("SELECT pg_import_system_collations('pg_catalog');\n\n");
@@ -1837,7 +1837,7 @@ setup_privileges(FILE *cmdfd)
 		"    SELECT"
 		"        oid,"
 		"        (SELECT oid FROM pg_class WHERE "
-		"		  relname = 'pg_largeobject_metadata'),"
+		"         relname = 'pg_largeobject_metadata'),"
 		"        0,"
 		"        lomacl,"
 		"        'i'"
@@ -1862,7 +1862,7 @@ setup_privileges(FILE *cmdfd)
 		"    SELECT"
 		"        oid,"
 		"        (SELECT oid FROM pg_class WHERE "
-		"		  relname = 'pg_foreign_data_wrapper'),"
+		"         relname = 'pg_foreign_data_wrapper'),"
 		"        0,"
 		"        fdwacl,"
 		"        'i'"
@@ -1875,7 +1875,7 @@ setup_privileges(FILE *cmdfd)
 		"    SELECT"
 		"        oid,"
 		"        (SELECT oid FROM pg_class "
-		"		  WHERE relname = 'pg_foreign_server'),"
+		"         WHERE relname = 'pg_foreign_server'),"
 		"        0,"
 		"        srvacl,"
 		"        'i'"
@@ -1942,15 +1942,15 @@ setup_schema(FILE *cmdfd)
 	free(lines);
 
 	PG_CMD_PRINTF("UPDATE information_schema.sql_implementation_info "
-				   "  SET character_value = '%s' "
-				   "  WHERE implementation_info_name = 'DBMS VERSION';\n\n",
-				   infoversion);
+				  "  SET character_value = '%s' "
+				  "  WHERE implementation_info_name = 'DBMS VERSION';\n\n",
+				  infoversion);
 
 	PG_CMD_PRINTF("COPY information_schema.sql_features "
-				   "  (feature_id, feature_name, sub_feature_id, "
-				   "  sub_feature_name, is_supported, comments) "
-				   " FROM E'%s';\n\n",
-				   escape_quotes(features_file));
+				  "  (feature_id, feature_name, sub_feature_id, "
+				  "  sub_feature_name, is_supported, comments) "
+				  " FROM E'%s';\n\n",
+				  escape_quotes(features_file));
 }
 
 /*
@@ -2459,15 +2459,15 @@ setup_bin_paths(const char *argv0)
 			strlcpy(full_path, progname, sizeof(full_path));
 
 		if (ret == -1)
-			pg_log_error("The program \"postgres\" is needed by %s but was not found in the\n"
+			pg_log_error("The program \"%s\" is needed by %s but was not found in the\n"
 						 "same directory as \"%s\".\n"
 						 "Check your installation.",
-						 progname, full_path);
+						 "postgres", progname, full_path);
 		else
-			pg_log_error("The program \"postgres\" was found by \"%s\"\n"
+			pg_log_error("The program \"%s\" was found by \"%s\"\n"
 						 "but was not the same version as %s.\n"
 						 "Check your installation.",
-						 full_path, progname);
+						 "postgres", full_path, progname);
 		exit(1);
 	}
 

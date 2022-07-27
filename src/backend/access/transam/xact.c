@@ -30,6 +30,7 @@
 #include "access/xlog.h"
 #include "access/xloginsert.h"
 #include "access/xlogutils.h"
+#include "catalog/index.h"
 #include "catalog/namespace.h"
 #include "catalog/pg_enum.h"
 #include "catalog/storage.h"
@@ -2668,6 +2669,9 @@ AbortTransaction(void)
 	 */
 	SetUserIdAndSecContext(s->prevUser, s->prevSecContext);
 
+	/* Forget about any active REINDEX. */
+	ResetReindexState(s->nestingLevel);
+
 	/* If in parallel mode, clean up workers and exit parallel mode. */
 	if (IsInParallelMode())
 	{
@@ -3754,7 +3758,7 @@ EndTransactionBlock(bool chain)
 			if (chain)
 				ereport(ERROR,
 						(errcode(ERRCODE_NO_ACTIVE_SQL_TRANSACTION),
-						 /* translator: %s represents an SQL statement name */
+				/* translator: %s represents an SQL statement name */
 						 errmsg("%s can only be used in transaction blocks",
 								"COMMIT AND CHAIN")));
 			else
@@ -3833,7 +3837,7 @@ EndTransactionBlock(bool chain)
 			if (chain)
 				ereport(ERROR,
 						(errcode(ERRCODE_NO_ACTIVE_SQL_TRANSACTION),
-						 /* translator: %s represents an SQL statement name */
+				/* translator: %s represents an SQL statement name */
 						 errmsg("%s can only be used in transaction blocks",
 								"COMMIT AND CHAIN")));
 			else
@@ -3956,7 +3960,7 @@ UserAbortTransactionBlock(bool chain)
 			if (chain)
 				ereport(ERROR,
 						(errcode(ERRCODE_NO_ACTIVE_SQL_TRANSACTION),
-						 /* translator: %s represents an SQL statement name */
+				/* translator: %s represents an SQL statement name */
 						 errmsg("%s can only be used in transaction blocks",
 								"ROLLBACK AND CHAIN")));
 			else
@@ -4969,6 +4973,9 @@ AbortSubTransaction(void)
 	 * AbortTransaction.)
 	 */
 	SetUserIdAndSecContext(s->prevUser, s->prevSecContext);
+
+	/* Forget about any active REINDEX. */
+	ResetReindexState(s->nestingLevel);
 
 	/* Exit from parallel mode, if necessary. */
 	if (IsInParallelMode())

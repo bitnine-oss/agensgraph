@@ -109,6 +109,11 @@ typedef void (*WriteDataCallback) (size_t nbytes, char *buf,
 #define MINIMUM_VERSION_FOR_TEMP_SLOTS 100000
 
 /*
+ * Backup manifests are supported from version 13.
+ */
+#define MINIMUM_VERSION_FOR_MANIFESTS	130000
+
+/*
  * Different ways to include WAL
  */
 typedef enum
@@ -399,15 +404,15 @@ usage(void)
 	printf(_("  -S, --slot=SLOTNAME    replication slot to use\n"));
 	printf(_("  -v, --verbose          output verbose messages\n"));
 	printf(_("  -V, --version          output version information, then exit\n"));
+	printf(_("      --manifest-checksums=SHA{224,256,384,512}|CRC32C|NONE\n"
+			 "                         use algorithm for manifest checksums\n"));
+	printf(_("      --manifest-force-encode\n"
+			 "                         hex encode all file names in manifest\n"));
+	printf(_("      --no-estimate-size do not estimate backup size in server side\n"));
+	printf(_("      --no-manifest      suppress generation of backup manifest\n"));
 	printf(_("      --no-slot          prevent creation of temporary replication slot\n"));
 	printf(_("      --no-verify-checksums\n"
 			 "                         do not verify checksums\n"));
-	printf(_("      --no-estimate-size do not estimate backup size in server side\n"));
-	printf(_("      --no-manifest      suppress generation of backup manifest\n"));
-	printf(_("      --manifest-force-encode\n"
-			 "                         hex encode all filenames in manifest\n"));
-	printf(_("      --manifest-checksums=SHA{224,256,384,512}|CRC32C|NONE\n"
-			 "                         use algorithm for manifest checksums\n"));
 	printf(_("  -?, --help             show this help, then exit\n"));
 	printf(_("\nConnection options:\n"));
 	printf(_("  -d, --dbname=CONNSTR   connection string\n"));
@@ -1045,7 +1050,8 @@ ReceiveTarFile(PGconn *conn, PGresult *res, int rownum)
 #ifdef HAVE_LIBZ
 			if (compresslevel != 0)
 			{
-				int		fd = dup(fileno(stdout));
+				int			fd = dup(fileno(stdout));
+
 				if (fd < 0)
 				{
 					pg_log_error("could not duplicate stdout: %m");
@@ -1202,7 +1208,12 @@ ReceiveTarFile(PGconn *conn, PGresult *res, int rownum)
 							time(NULL));
 
 			writeTarData(&state, header, sizeof(header));
-			writeTarData(&state, zerobuf, 511);
+
+			/*
+			 * we don't need to pad out to a multiple of the tar block size
+			 * here, because the file is zero length, which is a multiple of
+			 * any block size.
+			 */
 		}
 	}
 
@@ -1214,7 +1225,7 @@ ReceiveTarFile(PGconn *conn, PGresult *res, int rownum)
 	if (strcmp(basedir, "-") == 0 && manifest)
 	{
 		char		header[512];
-		PQExpBufferData	buf;
+		PQExpBufferData buf;
 
 		initPQExpBuffer(&buf);
 		ReceiveBackupManifestInMemory(conn, &buf);
@@ -1770,7 +1781,7 @@ BaseBackup(void)
 	char	   *basebkp;
 	char		escaped_label[MAXPGPATH];
 	char	   *maxrate_clause = NULL;
-	char	   *manifest_clause;
+	char	   *manifest_clause = NULL;
 	char	   *manifest_checksums_clause = "";
 	int			i;
 	char		xlogstart[64];
@@ -1836,15 +1847,6 @@ BaseBackup(void)
 
 	if (manifest)
 	{
-		if (serverMajor < 1300)
-		{
-			const char *serverver = PQparameterStatus(conn, "server_version");
-
-			pg_log_error("backup manifests are not supported by server version %s",
-						 serverver ? serverver : "'unknown'");
-			exit(1);
-		}
-
 		if (manifest_force_encode)
 			manifest_clause = "MANIFEST 'force-encode'";
 		else
@@ -1852,13 +1854,6 @@ BaseBackup(void)
 		if (manifest_checksums != NULL)
 			manifest_checksums_clause = psprintf("MANIFEST_CHECKSUMS '%s'",
 												 manifest_checksums);
-	}
-	else
-	{
-		if (serverMajor < 1300)
-			manifest_clause = "";
-		else
-			manifest_clause = "MANIFEST 'no'";
 	}
 
 	if (verbose)
@@ -1883,7 +1878,7 @@ BaseBackup(void)
 				 maxrate_clause ? maxrate_clause : "",
 				 format == 't' ? "TABLESPACE_MAP" : "",
 				 verify_checksums ? "" : "NOVERIFY_CHECKSUMS",
-				 manifest_clause,
+				 manifest_clause ? manifest_clause : "",
 				 manifest_checksums_clause);
 
 	if (PQsendQuery(conn, basebkp) == 0)
@@ -2588,6 +2583,10 @@ main(int argc, char **argv)
 	 * RetrieveDataDirCreatePerm() and then call SetDataDirectoryCreatePerm().
 	 */
 	umask(pg_mode_mask);
+
+	/* Backup manifests are supported in 13 and newer versions */
+	if (PQserverVersion(conn) < MINIMUM_VERSION_FOR_MANIFESTS)
+		manifest = false;
 
 	/*
 	 * Verify that the target directory exists, or create it. For plaintext

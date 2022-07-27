@@ -102,7 +102,7 @@ _copyPlannedStmt(const PlannedStmt *from)
 	COPY_NODE_FIELD(paramExecTypes);
 	COPY_NODE_FIELD(utilityStmt);
 	COPY_LOCATION_FIELD(stmt_location);
-	COPY_LOCATION_FIELD(stmt_len);
+	COPY_SCALAR_FIELD(stmt_len);
 	COPY_SCALAR_FIELD(hasGraphwriteClause);
 
 	return newnode;
@@ -2337,6 +2337,7 @@ _copyJoinExpr(const JoinExpr *from)
 	COPY_NODE_FIELD(quals);
 	COPY_NODE_FIELD(alias);
 	COPY_SCALAR_FIELD(rtindex);
+
 	COPY_SCALAR_FIELD(minHops);
 	COPY_SCALAR_FIELD(maxHops);
 
@@ -2567,6 +2568,7 @@ _copySpecialJoinInfo(const SpecialJoinInfo *from)
 	COPY_SCALAR_FIELD(semi_can_hash);
 	COPY_NODE_FIELD(semi_operators);
 	COPY_NODE_FIELD(semi_rhs_exprs);
+
 	COPY_SCALAR_FIELD(min_hops);
 	COPY_SCALAR_FIELD(max_hops);
 
@@ -2821,6 +2823,7 @@ _copyCommonTableExpr(const CommonTableExpr *from)
 	COPY_NODE_FIELD(ctecoltypes);
 	COPY_NODE_FIELD(ctecoltypmods);
 	COPY_NODE_FIELD(ctecolcollations);
+
 	COPY_SCALAR_FIELD(maxdepth);
 	COPY_SCALAR_FIELD(ctestop);
 
@@ -3310,7 +3313,7 @@ _copyQuery(const Query *from)
 	COPY_NODE_FIELD(constraintDeps);
 	COPY_NODE_FIELD(withCheckOptions);
 	COPY_LOCATION_FIELD(stmt_location);
-	COPY_LOCATION_FIELD(stmt_len);
+	COPY_SCALAR_FIELD(stmt_len);
 
 	COPY_SCALAR_FIELD(dijkstraWeight);
 	COPY_SCALAR_FIELD(dijkstraWeightOut);
@@ -3349,7 +3352,7 @@ _copyRawStmt(const RawStmt *from)
 
 	COPY_NODE_FIELD(stmt);
 	COPY_LOCATION_FIELD(stmt_location);
-	COPY_LOCATION_FIELD(stmt_len);
+	COPY_SCALAR_FIELD(stmt_len);
 
 	return newnode;
 }
@@ -3440,6 +3443,7 @@ _copySetOperationStmt(const SetOperationStmt *from)
 	COPY_NODE_FIELD(colTypmods);
 	COPY_NODE_FIELD(colCollations);
 	COPY_NODE_FIELD(groupClauses);
+
 	COPY_SCALAR_FIELD(maxDepth);
 	COPY_SCALAR_FIELD(shortestpath);
 
@@ -3887,6 +3891,7 @@ _copyAlterObjectDependsStmt(const AlterObjectDependsStmt *from)
 	COPY_NODE_FIELD(relation);
 	COPY_NODE_FIELD(object);
 	COPY_NODE_FIELD(extname);
+	COPY_SCALAR_FIELD(remove);
 
 	return newnode;
 }

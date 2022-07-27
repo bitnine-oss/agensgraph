@@ -681,10 +681,10 @@ XLogTruncateRelation(RelFileNode rnode, ForkNumber forkNum,
  * copied to a new timeline.
  *
  * The caller must also make sure it doesn't read past the current replay
- * position (using GetWalRcvWriteRecPtr) if executing in recovery, so it
+ * position (using GetXLogReplayRecPtr) if executing in recovery, so it
  * doesn't fail to notice that the current timeline became historical. The
  * caller must also update ThisTimeLineID with the result of
- * GetWalRcvWriteRecPtr and must check RecoveryInProgress().
+ * GetXLogReplayRecPtr and must check RecoveryInProgress().
  */
 void
 XLogReadDetermineTimeline(XLogReaderState *state, XLogRecPtr wantPage, uint32 wantLength)
@@ -783,19 +783,18 @@ XLogReadDetermineTimeline(XLogReaderState *state, XLogRecPtr wantPage, uint32 wa
 	}
 }
 
-/* openSegment callback for WALRead */
-static int
-wal_segment_open(XLogSegNo nextSegNo, WALSegmentContext * segcxt,
+/* XLogReaderRoutine->segment_open callback for local pg_wal files */
+void
+wal_segment_open(XLogReaderState *state, XLogSegNo nextSegNo,
 				 TimeLineID *tli_p)
 {
 	TimeLineID	tli = *tli_p;
 	char		path[MAXPGPATH];
-	int			fd;
 
-	XLogFilePath(path, tli, nextSegNo, segcxt->ws_segsize);
-	fd = BasicOpenFile(path, O_RDONLY | PG_BINARY);
-	if (fd >= 0)
-		return fd;
+	XLogFilePath(path, tli, nextSegNo, state->segcxt.ws_segsize);
+	state->seg.ws_file = BasicOpenFile(path, O_RDONLY | PG_BINARY);
+	if (state->seg.ws_file >= 0)
+		return;
 
 	if (errno == ENOENT)
 		ereport(ERROR,
@@ -807,12 +806,19 @@ wal_segment_open(XLogSegNo nextSegNo, WALSegmentContext * segcxt,
 				(errcode_for_file_access(),
 				 errmsg("could not open file \"%s\": %m",
 						path)));
+}
 
-	return -1;					/* keep compiler quiet */
+/* stock XLogReaderRoutine->segment_close callback */
+void
+wal_segment_close(XLogReaderState *state)
+{
+	close(state->seg.ws_file);
+	/* need to check errno? */
+	state->seg.ws_file = -1;
 }
 
 /*
- * read_page callback for reading local xlog files
+ * XLogReaderRoutine->page_read callback for reading local xlog files
  *
  * Public because it would likely be very helpful for someone writing another
  * output method outside walsender, e.g. in a bgworker.
@@ -937,8 +943,8 @@ read_local_xlog_page(XLogReaderState *state, XLogRecPtr targetPagePtr,
 	 * as 'count', read the whole page anyway. It's guaranteed to be
 	 * zero-padded up to the page boundary if it's incomplete.
 	 */
-	if (!WALRead(cur_page, targetPagePtr, XLOG_BLCKSZ, tli, &state->seg,
-				 &state->segcxt, wal_segment_open, &errinfo))
+	if (!WALRead(state, cur_page, targetPagePtr, XLOG_BLCKSZ, tli,
+				 &errinfo))
 		WALReadRaiseError(&errinfo);
 
 	/* number of valid bytes in the buffer */

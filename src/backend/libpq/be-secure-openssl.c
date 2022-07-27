@@ -46,7 +46,7 @@
 #include "utils/memutils.h"
 
 /* default init hook can be overridden by a shared library */
-static void  default_openssl_tls_init(SSL_CTX *context, bool isServerStart);
+static void default_openssl_tls_init(SSL_CTX *context, bool isServerStart);
 openssl_tls_init_hook_typ openssl_tls_init_hook = default_openssl_tls_init;
 
 static int	my_sock_read(BIO *h, char *buf, int size);
@@ -80,7 +80,7 @@ static int	ssl_protocol_version_to_openssl(int v);
 int
 be_tls_init(bool isServerStart)
 {
-	STACK_OF(X509_NAME) *root_cert_list = NULL;
+	STACK_OF(X509_NAME) * root_cert_list = NULL;
 	SSL_CTX    *context;
 	int			ssl_ver_min = -1;
 	int			ssl_ver_max = -1;
@@ -122,7 +122,7 @@ be_tls_init(bool isServerStart)
 	/*
 	 * Call init hook (usually to set password callback)
 	 */
-	(* openssl_tls_init_hook)(context, isServerStart);
+	(*openssl_tls_init_hook) (context, isServerStart);
 
 	/* used by the callback */
 	ssl_is_server_start = isServerStart;
@@ -226,12 +226,14 @@ be_tls_init(bool isServerStart)
 		 * as the code above would have already generated an error.
 		 */
 		if (ssl_ver_min > ssl_ver_max)
+		{
 			ereport(isServerStart ? FATAL : LOG,
 					(errmsg("could not set SSL protocol version range"),
 					 errdetail("\"%s\" cannot be higher than \"%s\"",
 							   "ssl_min_protocol_version",
 							   "ssl_max_protocol_version")));
-		goto error;
+			goto error;
+		}
 	}
 
 	/* disallow SSL session tickets */
@@ -1339,6 +1341,7 @@ default_openssl_tls_init(SSL_CTX *context, bool isServerStart)
 		if (ssl_passphrase_command[0] && ssl_passphrase_command_supports_reload)
 			SSL_CTX_set_default_passwd_cb(context, ssl_external_passwd_cb);
 		else
+
 			/*
 			 * If reloading and no external command is configured, override
 			 * OpenSSL's default handling of passphrase-protected files,

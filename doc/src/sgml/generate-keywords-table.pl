@@ -56,6 +56,11 @@ print <<END;
  <title><acronym>SQL</acronym> Key Words</title>
 
  <tgroup cols="5">
+  <colspec colname="col1" colwidth="5*"/>
+  <colspec colname="col2" colwidth="3*"/>
+  <colspec colname="col3" colwidth="2*"/>
+  <colspec colname="col4" colwidth="2*"/>
+  <colspec colname="col5" colwidth="2*"/>
   <thead>
    <row>
     <entry>Key Word</entry>
@@ -77,8 +82,13 @@ END
 
 foreach my $word (sort keys %keywords)
 {
+	# Insert zwsp's into very long keywords, so that they can be broken
+	# into multiple lines in PDF format (or narrow HTML windows).
+	my $printword = $word;
+	$printword =~ s/_/_&zwsp;/g if (length($printword) > 20);
+
 	print "   <row>\n";
-	print "    <entry><token>$word</token></entry>\n";
+	print "    <entry><token>$printword</token></entry>\n";
 
 	print "    <entry>";
 	if ($keywords{$word}{pg}{'unreserved'})

@@ -323,7 +323,7 @@ static Node *wrapCypherWithSelect(Node *stmt);
 %type <list>	vac_analyze_option_list
 %type <node>	vac_analyze_option_arg
 %type <defelt>	drop_option
-%type <boolean>	opt_or_replace
+%type <boolean>	opt_or_replace opt_no
 				opt_grant_grant_option opt_grant_admin_option
 				opt_nowait opt_if_exists opt_with_data
 				opt_transaction_chain
@@ -598,7 +598,6 @@ static Node *wrapCypherWithSelect(Node *stmt);
 %type <boolean> opt_if_not_exists
 %type <ival>	generated_when override_kind
 %type <partspec>	PartitionSpec OptPartitionSpec
-%type <str>			part_strategy
 %type <partelem>	part_elem
 %type <list>		part_params
 %type <partboundspec> PartitionBoundSpec
@@ -3995,7 +3994,7 @@ OptPartitionSpec: PartitionSpec	{ $$ = $1; }
 			| /*EMPTY*/			{ $$ = NULL; }
 		;
 
-PartitionSpec: PARTITION BY part_strategy '(' part_params ')'
+PartitionSpec: PARTITION BY ColId '(' part_params ')'
 				{
 					PartitionSpec *n = makeNode(PartitionSpec);
 
@@ -4005,10 +4004,6 @@ PartitionSpec: PARTITION BY part_strategy '(' part_params ')'
 
 					$$ = n;
 				}
-		;
-
-part_strategy:	IDENT					{ $$ = $1; }
-				| unreserved_keyword	{ $$ = pstrdup($1); }
 		;
 
 part_params:	part_elem						{ $$ = list_make1($1); }
@@ -9232,55 +9227,65 @@ opt_set_data: SET DATA_P							{ $$ = 1; }
  *****************************************************************************/
 
 AlterObjectDependsStmt:
-			ALTER FUNCTION function_with_argtypes DEPENDS ON EXTENSION name
+			ALTER FUNCTION function_with_argtypes opt_no DEPENDS ON EXTENSION name
 				{
 					AlterObjectDependsStmt *n = makeNode(AlterObjectDependsStmt);
 					n->objectType = OBJECT_FUNCTION;
 					n->object = (Node *) $3;
-					n->extname = makeString($7);
+					n->extname = makeString($8);
+					n->remove = $4;
 					$$ = (Node *)n;
 				}
-			| ALTER PROCEDURE function_with_argtypes DEPENDS ON EXTENSION name
+			| ALTER PROCEDURE function_with_argtypes opt_no DEPENDS ON EXTENSION name
 				{
 					AlterObjectDependsStmt *n = makeNode(AlterObjectDependsStmt);
 					n->objectType = OBJECT_PROCEDURE;
 					n->object = (Node *) $3;
-					n->extname = makeString($7);
+					n->extname = makeString($8);
+					n->remove = $4;
 					$$ = (Node *)n;
 				}
-			| ALTER ROUTINE function_with_argtypes DEPENDS ON EXTENSION name
+			| ALTER ROUTINE function_with_argtypes opt_no DEPENDS ON EXTENSION name
 				{
 					AlterObjectDependsStmt *n = makeNode(AlterObjectDependsStmt);
 					n->objectType = OBJECT_ROUTINE;
 					n->object = (Node *) $3;
-					n->extname = makeString($7);
+					n->extname = makeString($8);
+					n->remove = $4;
 					$$ = (Node *)n;
 				}
-			| ALTER TRIGGER name ON qualified_name DEPENDS ON EXTENSION name
+			| ALTER TRIGGER name ON qualified_name opt_no DEPENDS ON EXTENSION name
 				{
 					AlterObjectDependsStmt *n = makeNode(AlterObjectDependsStmt);
 					n->objectType = OBJECT_TRIGGER;
 					n->relation = $5;
 					n->object = (Node *) list_make1(makeString($3));
-					n->extname = makeString($9);
+					n->extname = makeString($10);
+					n->remove = $6;
 					$$ = (Node *)n;
 				}
-			| ALTER MATERIALIZED VIEW qualified_name DEPENDS ON EXTENSION name
+			| ALTER MATERIALIZED VIEW qualified_name opt_no DEPENDS ON EXTENSION name
 				{
 					AlterObjectDependsStmt *n = makeNode(AlterObjectDependsStmt);
 					n->objectType = OBJECT_MATVIEW;
 					n->relation = $4;
-					n->extname = makeString($8);
+					n->extname = makeString($9);
+					n->remove = $5;
 					$$ = (Node *)n;
 				}
-			| ALTER INDEX qualified_name DEPENDS ON EXTENSION name
+			| ALTER INDEX qualified_name opt_no DEPENDS ON EXTENSION name
 				{
 					AlterObjectDependsStmt *n = makeNode(AlterObjectDependsStmt);
 					n->objectType = OBJECT_INDEX;
 					n->relation = $3;
-					n->extname = makeString($7);
+					n->extname = makeString($8);
+					n->remove = $4;
 					$$ = (Node *)n;
 				}
+		;
+
+opt_no:		NO				{ $$ = true; }
+			| /* EMPTY */	{ $$ = false;	}
 		;
 
 /*****************************************************************************
@@ -11993,6 +11998,14 @@ limit_clause:
 					n->limitOffset = NULL;
 					n->limitCount = makeIntConst(1, -1);
 					n->limitOption = LIMIT_OPTION_COUNT;
+					$$ = n;
+				}
+			| FETCH first_or_next row_or_rows WITH TIES
+				{
+					SelectLimit *n = (SelectLimit *) palloc(sizeof(SelectLimit));
+					n->limitOffset = NULL;
+					n->limitCount = makeIntConst(1, -1);
+					n->limitOption = LIMIT_OPTION_WITH_TIES;
 					$$ = n;
 				}
 		;

@@ -1709,7 +1709,7 @@ psql_completion(const char *text, int start, int end)
 	/* ALTER INDEX <name> */
 	else if (Matches("ALTER", "INDEX", MatchAny))
 		COMPLETE_WITH("ALTER COLUMN", "OWNER TO", "RENAME TO", "SET",
-					  "RESET", "ATTACH PARTITION");
+					  "RESET", "ATTACH PARTITION", "DEPENDS", "NO DEPENDS");
 	else if (Matches("ALTER", "INDEX", MatchAny, "ATTACH"))
 		COMPLETE_WITH("PARTITION");
 	else if (Matches("ALTER", "INDEX", MatchAny, "ATTACH", "PARTITION"))
@@ -1743,18 +1743,22 @@ psql_completion(const char *text, int start, int end)
 	/* ALTER INDEX <foo> SET|RESET ( */
 	else if (Matches("ALTER", "INDEX", MatchAny, "RESET", "("))
 		COMPLETE_WITH("fillfactor",
-					  "vacuum_cleanup_index_scale_factor", "deduplicate_items",	/* BTREE */
+					  "vacuum_cleanup_index_scale_factor", "deduplicate_items", /* BTREE */
 					  "fastupdate", "gin_pending_list_limit",	/* GIN */
 					  "buffering",	/* GiST */
 					  "pages_per_range", "autosummarize"	/* BRIN */
 			);
 	else if (Matches("ALTER", "INDEX", MatchAny, "SET", "("))
 		COMPLETE_WITH("fillfactor =",
-					  "vacuum_cleanup_index_scale_factor =", "deduplicate_items =",	/* BTREE */
+					  "vacuum_cleanup_index_scale_factor =", "deduplicate_items =", /* BTREE */
 					  "fastupdate =", "gin_pending_list_limit =",	/* GIN */
 					  "buffering =",	/* GiST */
 					  "pages_per_range =", "autosummarize ="	/* BRIN */
 			);
+	else if (Matches("ALTER", "INDEX", MatchAny, "NO", "DEPENDS"))
+		COMPLETE_WITH("ON EXTENSION");
+	else if (Matches("ALTER", "INDEX", MatchAny, "DEPENDS"))
+		COMPLETE_WITH("ON EXTENSION");
 
 	/* ALTER LANGUAGE <name> */
 	else if (Matches("ALTER", "LANGUAGE", MatchAny))
@@ -4187,7 +4191,7 @@ _complete_from_query(const char *simple_query,
 			 */
 			if (strcmp(schema_query->catname,
 					   "pg_catalog.pg_class c") == 0 &&
-				strncmp(text, "pg_", 3) !=0)
+				strncmp(text, "pg_", 3) != 0)
 			{
 				appendPQExpBufferStr(&query_buffer,
 									 " AND c.relnamespace <> (SELECT oid FROM"

@@ -1263,7 +1263,7 @@ interval_support(PG_FUNCTION_ARGS)
 
 		typmod = (Node *) lsecond(expr->args);
 
-		if (IsA(typmod, Const) &&!((Const *) typmod)->constisnull)
+		if (IsA(typmod, Const) && !((Const *) typmod)->constisnull)
 		{
 			Node	   *source = (Node *) linitial(expr->args);
 			int32		new_typmod = DatumGetInt32(((Const *) typmod)->constvalue);
@@ -1738,6 +1738,8 @@ timestamptz_to_time_t(TimestampTz t)
  * This is mostly for use in emitting messages.  The primary difference
  * from timestamptz_out is that we force the output format to ISO.  Note
  * also that the result is in a static buffer, not pstrdup'd.
+ *
+ * See also pg_strftime.
  */
 const char *
 timestamptz_to_str(TimestampTz t)

@@ -463,9 +463,6 @@ bt_check_every_level(Relation rel, Relation heaprel, bool heapkeyspace,
 		 * happen before index fingerprinting begins, so we can later be
 		 * certain that index fingerprinting should have reached all tuples
 		 * returned by table_index_build_scan().
-		 *
-		 * In readonly case, we also check for problems with missing
-		 * downlinks. A second Bloom filter is used for this.
 		 */
 		if (!state->readonly)
 		{
@@ -2867,7 +2864,11 @@ palloc_btree_page(BtreeCheckState *state, BlockNumber blocknum)
 	 * As noted at the beginning of _bt_binsrch(), an internal page must have
 	 * children, since there must always be a negative infinity downlink
 	 * (there may also be a highkey).  In the case of non-rightmost leaf
-	 * pages, there must be at least a highkey.
+	 * pages, there must be at least a highkey.  Deleted pages on replica
+	 * might contain no items, because page unlink re-initializes
+	 * page-to-be-deleted.  Deleted pages with no items might be on primary
+	 * too due to preceding recovery, but on primary new deletions can't
+	 * happen concurrently to amcheck.
 	 *
 	 * This is correct when pages are half-dead, since internal pages are
 	 * never half-dead, and leaf pages must have a high key when half-dead
@@ -2887,13 +2888,13 @@ palloc_btree_page(BtreeCheckState *state, BlockNumber blocknum)
 						blocknum, RelationGetRelationName(state->rel),
 						MaxIndexTuplesPerPage)));
 
-	if (!P_ISLEAF(opaque) && maxoffset < P_FIRSTDATAKEY(opaque))
+	if (!P_ISLEAF(opaque) && !P_ISDELETED(opaque) && maxoffset < P_FIRSTDATAKEY(opaque))
 		ereport(ERROR,
 				(errcode(ERRCODE_INDEX_CORRUPTED),
 				 errmsg("internal block %u in index \"%s\" lacks high key and/or at least one downlink",
 						blocknum, RelationGetRelationName(state->rel))));
 
-	if (P_ISLEAF(opaque) && !P_RIGHTMOST(opaque) && maxoffset < P_HIKEY)
+	if (P_ISLEAF(opaque) && !P_ISDELETED(opaque) && !P_RIGHTMOST(opaque) && maxoffset < P_HIKEY)
 		ereport(ERROR,
 				(errcode(ERRCODE_INDEX_CORRUPTED),
 				 errmsg("non-rightmost leaf block %u in index \"%s\" lacks high key item",

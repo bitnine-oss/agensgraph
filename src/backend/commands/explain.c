@@ -756,7 +756,7 @@ ExplainPrintPlan(ExplainState *es, QueryDesc *queryDesc)
 	 * further down in the plan tree.
 	 */
 	ps = queryDesc->planstate;
-	if (IsA(ps, GatherState) &&((Gather *) ps->plan)->invisible)
+	if (IsA(ps, GatherState) && ((Gather *) ps->plan)->invisible)
 	{
 		ps = outerPlanState(ps);
 		es->hide_workers = true;
@@ -2378,7 +2378,7 @@ show_scan_qual(List *qual, const char *qlabel,
 {
 	bool		useprefix;
 
-	useprefix = (IsA(planstate->plan, SubqueryScan) ||es->verbose);
+	useprefix = (IsA(planstate->plan, SubqueryScan) || es->verbose);
 	show_qual(qual, qlabel, planstate, ancestors, useprefix, es);
 }
 
@@ -2900,7 +2900,7 @@ show_incremental_sort_group_info(IncrementalSortGroupInfo *groupInfo,
 	{
 		if (indent)
 			appendStringInfoSpaces(es->str, es->indent * 2);
-		appendStringInfo(es->str, "%s Groups: " INT64_FORMAT " Sort Method", groupLabel,
+		appendStringInfo(es->str, "%s Groups: " INT64_FORMAT "  Sort Method", groupLabel,
 						 groupInfo->groupCount);
 		/* plural/singular based on methodNames size */
 		if (list_length(methodNames) > 1)
@@ -2920,9 +2920,9 @@ show_incremental_sort_group_info(IncrementalSortGroupInfo *groupInfo,
 			const char *spaceTypeName;
 
 			spaceTypeName = tuplesort_space_type_name(SORT_SPACE_TYPE_MEMORY);
-			appendStringInfo(es->str, " %s: avg=%ldkB peak=%ldkB",
+			appendStringInfo(es->str, "  Average %s: %ldkB  Peak %s: %ldkB",
 							 spaceTypeName, avgSpace,
-							 groupInfo->maxMemorySpaceUsed);
+							 spaceTypeName, groupInfo->maxMemorySpaceUsed);
 		}
 
 		if (groupInfo->maxDiskSpaceUsed > 0)
@@ -2932,12 +2932,9 @@ show_incremental_sort_group_info(IncrementalSortGroupInfo *groupInfo,
 			const char *spaceTypeName;
 
 			spaceTypeName = tuplesort_space_type_name(SORT_SPACE_TYPE_DISK);
-			/* Add a semicolon separator only if memory stats were printed. */
-			if (groupInfo->maxMemorySpaceUsed > 0)
-				appendStringInfo(es->str, ";");
-			appendStringInfo(es->str, " %s: avg=%ldkB peak=%ldkB",
+			appendStringInfo(es->str, "  Average %s: %ldkB  Peak %s: %ldkB",
 							 spaceTypeName, avgSpace,
-							 groupInfo->maxDiskSpaceUsed);
+							 spaceTypeName, groupInfo->maxDiskSpaceUsed);
 		}
 	}
 	else
@@ -2991,7 +2988,7 @@ show_incremental_sort_group_info(IncrementalSortGroupInfo *groupInfo,
 }
 
 /*
- * If it's EXPLAIN ANALYZE, show tuplesort stats for a incremental sort node
+ * If it's EXPLAIN ANALYZE, show tuplesort stats for an incremental sort node
  */
 static void
 show_incremental_sort_info(IncrementalSortState *incrsortstate,
@@ -3011,8 +3008,8 @@ show_incremental_sort_info(IncrementalSortState *incrsortstate,
 	 * we don't need to do anything if there were 0 full groups.
 	 *
 	 * We still have to continue after this block if there are no full groups,
-	 * though, since it's possible that we have workers that did real work even
-	 * if the leader didn't participate.
+	 * though, since it's possible that we have workers that did real work
+	 * even if the leader didn't participate.
 	 */
 	if (fullsortGroupInfo->groupCount > 0)
 	{
@@ -3021,8 +3018,8 @@ show_incremental_sort_info(IncrementalSortState *incrsortstate,
 		if (prefixsortGroupInfo->groupCount > 0)
 		{
 			if (es->format == EXPLAIN_FORMAT_TEXT)
-				appendStringInfo(es->str, " ");
-			show_incremental_sort_group_info(prefixsortGroupInfo, "Presorted", false, es);
+				appendStringInfo(es->str, "\n");
+			show_incremental_sort_group_info(prefixsortGroupInfo, "Pre-sorted", true, es);
 		}
 		if (es->format == EXPLAIN_FORMAT_TEXT)
 			appendStringInfo(es->str, "\n");
@@ -3039,21 +3036,19 @@ show_incremental_sort_info(IncrementalSortState *incrsortstate,
 			&incrsortstate->shared_info->sinfo[n];
 
 			/*
-			 * If a worker hasn't process any sort groups at all, then exclude
-			 * it from output since it either didn't launch or didn't
+			 * If a worker hasn't processed any sort groups at all, then
+			 * exclude it from output since it either didn't launch or didn't
 			 * contribute anything meaningful.
 			 */
 			fullsortGroupInfo = &incsort_info->fullsortGroupInfo;
-			prefixsortGroupInfo = &incsort_info->prefixsortGroupInfo;
 
 			/*
 			 * Since we never have any prefix groups unless we've first sorted
 			 * a full groups and transitioned modes (copying the tuples into a
-			 * prefix group), we don't need to do anything if there were 0 full
-			 * groups.
+			 * prefix group), we don't need to do anything if there were 0
+			 * full groups.
 			 */
-			if (fullsortGroupInfo->groupCount == 0 &&
-				prefixsortGroupInfo->groupCount == 0)
+			if (fullsortGroupInfo->groupCount == 0)
 				continue;
 
 			if (es->workers_state)
@@ -3062,11 +3057,12 @@ show_incremental_sort_info(IncrementalSortState *incrsortstate,
 			indent_first_line = es->workers_state == NULL || es->verbose;
 			show_incremental_sort_group_info(fullsortGroupInfo, "Full-sort",
 											 indent_first_line, es);
+			prefixsortGroupInfo = &incsort_info->prefixsortGroupInfo;
 			if (prefixsortGroupInfo->groupCount > 0)
 			{
 				if (es->format == EXPLAIN_FORMAT_TEXT)
-					appendStringInfo(es->str, " ");
-				show_incremental_sort_group_info(prefixsortGroupInfo, "Presorted", false, es);
+					appendStringInfo(es->str, "\n");
+				show_incremental_sort_group_info(prefixsortGroupInfo, "Pre-sorted", true, es);
 			}
 			if (es->format == EXPLAIN_FORMAT_TEXT)
 				appendStringInfo(es->str, "\n");
@@ -3233,8 +3229,8 @@ show_hash2side_info(Hash2SideState *hashstate, ExplainState *es)
 static void
 show_hashagg_info(AggState *aggstate, ExplainState *es)
 {
-	Agg		*agg	   = (Agg *)aggstate->ss.ps.plan;
-	int64	 memPeakKb = (aggstate->hash_mem_peak + 1023) / 1024;
+	Agg		   *agg = (Agg *) aggstate->ss.ps.plan;
+	int64		memPeakKb = (aggstate->hash_mem_peak + 1023) / 1024;
 
 	Assert(IsA(aggstate, AggState));
 
@@ -3524,31 +3520,31 @@ show_wal_usage(ExplainState *es, const WalUsage *usage)
 	if (es->format == EXPLAIN_FORMAT_TEXT)
 	{
 		/* Show only positive counter values. */
-		if ((usage->wal_records > 0) || (usage->wal_fpw > 0) ||
+		if ((usage->wal_records > 0) || (usage->wal_fpi > 0) ||
 			(usage->wal_bytes > 0))
 		{
 			ExplainIndentText(es);
 			appendStringInfoString(es->str, "WAL:");
 
 			if (usage->wal_records > 0)
-				appendStringInfo(es->str, "  records=%ld",
+				appendStringInfo(es->str, " records=%ld",
 								 usage->wal_records);
-			if (usage->wal_fpw > 0)
-				appendStringInfo(es->str, "  full page writes=%ld",
-								 usage->wal_fpw);
+			if (usage->wal_fpi > 0)
+				appendStringInfo(es->str, " fpi=%ld",
+								 usage->wal_fpi);
 			if (usage->wal_bytes > 0)
-				appendStringInfo(es->str, "  bytes=" UINT64_FORMAT,
+				appendStringInfo(es->str, " bytes=" UINT64_FORMAT,
 								 usage->wal_bytes);
 			appendStringInfoChar(es->str, '\n');
 		}
 	}
 	else
 	{
-		ExplainPropertyInteger("WAL records", NULL,
+		ExplainPropertyInteger("WAL Records", NULL,
 							   usage->wal_records, es);
-		ExplainPropertyInteger("WAL full page writes", NULL,
-							   usage->wal_fpw, es);
-		ExplainPropertyUInteger("WAL bytes", NULL,
+		ExplainPropertyInteger("WAL FPI", NULL,
+							   usage->wal_fpi, es);
+		ExplainPropertyUInteger("WAL Bytes", NULL,
 								usage->wal_bytes, es);
 	}
 }

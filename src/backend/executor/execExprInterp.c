@@ -170,15 +170,16 @@ static Datum ExecJustAssignOuterVarVirt(ExprState *state, ExprContext *econtext,
 static Datum ExecJustAssignScanVarVirt(ExprState *state, ExprContext *econtext, bool *isnull);
 
 /* execution helper functions */
-static pg_attribute_always_inline void
-ExecAggPlainTransByVal(AggState *aggstate, AggStatePerTrans pertrans,
-					   AggStatePerGroup pergroup,
-					   ExprContext *aggcontext, int setno);
-
-static pg_attribute_always_inline void
-ExecAggPlainTransByRef(AggState *aggstate, AggStatePerTrans pertrans,
-					   AggStatePerGroup pergroup,
-					   ExprContext *aggcontext, int setno);
+static pg_attribute_always_inline void ExecAggPlainTransByVal(AggState *aggstate,
+															  AggStatePerTrans pertrans,
+															  AggStatePerGroup pergroup,
+															  ExprContext *aggcontext,
+															  int setno);
+static pg_attribute_always_inline void ExecAggPlainTransByRef(AggState *aggstate,
+															  AggStatePerTrans pertrans,
+															  AggStatePerGroup pergroup,
+															  ExprContext *aggcontext,
+															  int setno);
 
 static JsonbValue *cypher_access_object(JsonbContainer *container,
 										CypherAccessPathElem *pathelem);
@@ -1635,8 +1636,8 @@ ExecInterpExpr(ExprState *state, ExprContext *econtext, bool *isnull)
 		EEO_CASE(EEOP_AGG_PLAIN_PERGROUP_NULLCHECK)
 		{
 			AggState   *aggstate = castNode(AggState, state->parent);
-			AggStatePerGroup pergroup_allaggs = aggstate->all_pergroups
-				[op->d.agg_plain_pergroup_nullcheck.setoff];
+			AggStatePerGroup pergroup_allaggs =
+			aggstate->all_pergroups[op->d.agg_plain_pergroup_nullcheck.setoff];
 
 			if (pergroup_allaggs == NULL)
 				EEO_JUMP(op->d.agg_plain_pergroup_nullcheck.jumpnull);
@@ -1660,9 +1661,8 @@ ExecInterpExpr(ExprState *state, ExprContext *econtext, bool *isnull)
 		{
 			AggState   *aggstate = castNode(AggState, state->parent);
 			AggStatePerTrans pertrans = op->d.agg_trans.pertrans;
-			AggStatePerGroup pergroup = &aggstate->all_pergroups
-				[op->d.agg_trans.setoff]
-				[op->d.agg_trans.transno];
+			AggStatePerGroup pergroup =
+			&aggstate->all_pergroups[op->d.agg_trans.setoff][op->d.agg_trans.transno];
 
 			Assert(pertrans->transtypeByVal);
 
@@ -1689,9 +1689,8 @@ ExecInterpExpr(ExprState *state, ExprContext *econtext, bool *isnull)
 		{
 			AggState   *aggstate = castNode(AggState, state->parent);
 			AggStatePerTrans pertrans = op->d.agg_trans.pertrans;
-			AggStatePerGroup pergroup = &aggstate->all_pergroups
-				[op->d.agg_trans.setoff]
-				[op->d.agg_trans.transno];
+			AggStatePerGroup pergroup =
+			&aggstate->all_pergroups[op->d.agg_trans.setoff][op->d.agg_trans.transno];
 
 			Assert(pertrans->transtypeByVal);
 
@@ -1708,9 +1707,8 @@ ExecInterpExpr(ExprState *state, ExprContext *econtext, bool *isnull)
 		{
 			AggState   *aggstate = castNode(AggState, state->parent);
 			AggStatePerTrans pertrans = op->d.agg_trans.pertrans;
-			AggStatePerGroup pergroup = &aggstate->all_pergroups
-				[op->d.agg_trans.setoff]
-				[op->d.agg_trans.transno];
+			AggStatePerGroup pergroup =
+			&aggstate->all_pergroups[op->d.agg_trans.setoff][op->d.agg_trans.transno];
 
 			Assert(pertrans->transtypeByVal);
 
@@ -1726,9 +1724,8 @@ ExecInterpExpr(ExprState *state, ExprContext *econtext, bool *isnull)
 		{
 			AggState   *aggstate = castNode(AggState, state->parent);
 			AggStatePerTrans pertrans = op->d.agg_trans.pertrans;
-			AggStatePerGroup pergroup = &aggstate->all_pergroups
-				[op->d.agg_trans.setoff]
-				[op->d.agg_trans.transno];
+			AggStatePerGroup pergroup =
+			&aggstate->all_pergroups[op->d.agg_trans.setoff][op->d.agg_trans.transno];
 
 			Assert(!pertrans->transtypeByVal);
 
@@ -1748,9 +1745,8 @@ ExecInterpExpr(ExprState *state, ExprContext *econtext, bool *isnull)
 		{
 			AggState   *aggstate = castNode(AggState, state->parent);
 			AggStatePerTrans pertrans = op->d.agg_trans.pertrans;
-			AggStatePerGroup pergroup = &aggstate->all_pergroups
-				[op->d.agg_trans.setoff]
-				[op->d.agg_trans.transno];
+			AggStatePerGroup pergroup =
+			&aggstate->all_pergroups[op->d.agg_trans.setoff][op->d.agg_trans.transno];
 
 			Assert(!pertrans->transtypeByVal);
 
@@ -1766,9 +1762,8 @@ ExecInterpExpr(ExprState *state, ExprContext *econtext, bool *isnull)
 		{
 			AggState   *aggstate = castNode(AggState, state->parent);
 			AggStatePerTrans pertrans = op->d.agg_trans.pertrans;
-			AggStatePerGroup pergroup = &aggstate->all_pergroups
-				[op->d.agg_trans.setoff]
-				[op->d.agg_trans.transno];
+			AggStatePerGroup pergroup =
+			&aggstate->all_pergroups[op->d.agg_trans.setoff][op->d.agg_trans.transno];
 
 			Assert(!pertrans->transtypeByVal);
 
@@ -4569,21 +4564,20 @@ ExecAggPlainTransByRef(AggState *aggstate, AggStatePerTrans pertrans,
 	newVal = FunctionCallInvoke(fcinfo);
 
 	/*
-	 * For pass-by-ref datatype, must copy the new value into
-	 * aggcontext and free the prior transValue.  But if transfn
-	 * returned a pointer to its first input, we don't need to do
-	 * anything.  Also, if transfn returned a pointer to a R/W
-	 * expanded object that is already a child of the aggcontext,
-	 * assume we can adopt that value without copying it.
+	 * For pass-by-ref datatype, must copy the new value into aggcontext and
+	 * free the prior transValue.  But if transfn returned a pointer to its
+	 * first input, we don't need to do anything.  Also, if transfn returned a
+	 * pointer to a R/W expanded object that is already a child of the
+	 * aggcontext, assume we can adopt that value without copying it.
 	 *
-	 * It's safe to compare newVal with pergroup->transValue without
-	 * regard for either being NULL, because ExecAggTransReparent()
-	 * takes care to set transValue to 0 when NULL. Otherwise we could
-	 * end up accidentally not reparenting, when the transValue has
-	 * the same numerical value as newValue, despite being NULL.  This
-	 * is a somewhat hot path, making it undesirable to instead solve
-	 * this with another branch for the common case of the transition
-	 * function returning its (modified) input argument.
+	 * It's safe to compare newVal with pergroup->transValue without regard
+	 * for either being NULL, because ExecAggTransReparent() takes care to set
+	 * transValue to 0 when NULL. Otherwise we could end up accidentally not
+	 * reparenting, when the transValue has the same numerical value as
+	 * newValue, despite being NULL.  This is a somewhat hot path, making it
+	 * undesirable to instead solve this with another branch for the common
+	 * case of the transition function returning its (modified) input
+	 * argument.
 	 */
 	if (DatumGetPointer(newVal) != DatumGetPointer(pergroup->transValue))
 		newVal = ExecAggTransReparent(aggstate, pertrans,

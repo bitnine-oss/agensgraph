@@ -279,17 +279,16 @@ identify_target_directory(char *directory, char *fname)
 	return NULL;				/* not reached */
 }
 
-/* pg_waldump's openSegment callback for WALRead */
-static int
-WALDumpOpenSegment(XLogSegNo nextSegNo, WALSegmentContext *segcxt,
+/* pg_waldump's XLogReaderRoutine->segment_open callback */
+static void
+WALDumpOpenSegment(XLogReaderState *state, XLogSegNo nextSegNo,
 				   TimeLineID *tli_p)
 {
 	TimeLineID	tli = *tli_p;
 	char		fname[MAXPGPATH];
-	int			fd;
 	int			tries;
 
-	XLogFileName(fname, tli, nextSegNo, segcxt->ws_segsize);
+	XLogFileName(fname, tli, nextSegNo, state->segcxt.ws_segsize);
 
 	/*
 	 * In follow mode there is a short period of time after the server has
@@ -299,9 +298,9 @@ WALDumpOpenSegment(XLogSegNo nextSegNo, WALSegmentContext *segcxt,
 	 */
 	for (tries = 0; tries < 10; tries++)
 	{
-		fd = open_file_in_directory(segcxt->ws_dir, fname);
-		if (fd >= 0)
-			return fd;
+		state->seg.ws_file = open_file_in_directory(state->segcxt.ws_dir, fname);
+		if (state->seg.ws_file >= 0)
+			return;
 		if (errno == ENOENT)
 		{
 			int			save_errno = errno;
@@ -317,12 +316,21 @@ WALDumpOpenSegment(XLogSegNo nextSegNo, WALSegmentContext *segcxt,
 	}
 
 	fatal_error("could not find file \"%s\": %m", fname);
-	return -1;					/* keep compiler quiet */
 }
 
 /*
- * XLogReader read_page callback
+ * pg_waldump's XLogReaderRoutine->segment_close callback.  Same as
+ * wal_segment_close
  */
+static void
+WALDumpCloseSegment(XLogReaderState *state)
+{
+	close(state->seg.ws_file);
+	/* need to check errno? */
+	state->seg.ws_file = -1;
+}
+
+/* pg_waldump's XLogReaderRoutine->page_read callback */
 static int
 WALDumpReadPage(XLogReaderState *state, XLogRecPtr targetPagePtr, int reqLen,
 				XLogRecPtr targetPtr, char *readBuff)
@@ -344,8 +352,8 @@ WALDumpReadPage(XLogReaderState *state, XLogRecPtr targetPagePtr, int reqLen,
 		}
 	}
 
-	if (!WALRead(readBuff, targetPagePtr, count, private->timeline,
-				 &state->seg, &state->segcxt, WALDumpOpenSegment, &errinfo))
+	if (!WALRead(state, readBuff, targetPagePtr, count, private->timeline,
+				 &errinfo))
 	{
 		WALOpenSegment *seg = &errinfo.wre_seg;
 		char		fname[MAXPGPATH];
@@ -1031,8 +1039,12 @@ main(int argc, char **argv)
 	/* done with argument parsing, do the actual work */
 
 	/* we have everything we need, start reading */
-	xlogreader_state = XLogReaderAllocate(WalSegSz, waldir, WALDumpReadPage,
-										  &private);
+	xlogreader_state =
+		XLogReaderAllocate(WalSegSz, waldir,
+						   XL_ROUTINE(.page_read = WALDumpReadPage,
+									  .segment_open = WALDumpOpenSegment,
+									  .segment_close = WALDumpCloseSegment),
+						   &private);
 	if (!xlogreader_state)
 		fatal_error("out of memory");
 

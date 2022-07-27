@@ -155,22 +155,22 @@
 /* Read an attribute number array */
 #define READ_ATTRNUMBER_ARRAY(fldname, len) \
 	token = pg_strtok(&length);		/* skip :fldname */ \
-	local_node->fldname = readAttrNumberCols(len);
+	local_node->fldname = readAttrNumberCols(len)
 
 /* Read an oid array */
 #define READ_OID_ARRAY(fldname, len) \
 	token = pg_strtok(&length);		/* skip :fldname */ \
-	local_node->fldname = readOidCols(len);
+	local_node->fldname = readOidCols(len)
 
 /* Read an int array */
 #define READ_INT_ARRAY(fldname, len) \
 	token = pg_strtok(&length);		/* skip :fldname */ \
-	local_node->fldname = readIntCols(len);
+	local_node->fldname = readIntCols(len)
 
 /* Read a bool array */
 #define READ_BOOL_ARRAY(fldname, len) \
 	token = pg_strtok(&length);		/* skip :fldname */ \
-	local_node->fldname = readBoolCols(len);
+	local_node->fldname = readBoolCols(len)
 
 /* Routine exit */
 #define READ_DONE() \
@@ -286,7 +286,7 @@ _readQuery(void)
 	READ_NODE_FIELD(constraintDeps);
 	READ_NODE_FIELD(withCheckOptions);
 	READ_LOCATION_FIELD(stmt_location);
-	READ_LOCATION_FIELD(stmt_len);
+	READ_INT_FIELD(stmt_len);
 
 	READ_INT_FIELD(dijkstraWeight);
 	READ_BOOL_FIELD(dijkstraWeightOut);
@@ -457,6 +457,7 @@ _readCommonTableExpr(void)
 	READ_NODE_FIELD(ctecoltypes);
 	READ_NODE_FIELD(ctecoltypmods);
 	READ_NODE_FIELD(ctecolcollations);
+
 	READ_INT_FIELD(maxdepth);
 	READ_BOOL_FIELD(ctestop);
 
@@ -479,6 +480,7 @@ _readSetOperationStmt(void)
 	READ_NODE_FIELD(colTypmods);
 	READ_NODE_FIELD(colCollations);
 	READ_NODE_FIELD(groupClauses);
+
 	READ_INT_FIELD(maxDepth);
 	READ_BOOL_FIELD(shortestpath);
 
@@ -1338,6 +1340,7 @@ _readJoinExpr(void)
 	READ_NODE_FIELD(quals);
 	READ_NODE_FIELD(alias);
 	READ_INT_FIELD(rtindex);
+
 	READ_INT_FIELD(minHops);
 	READ_INT_FIELD(maxHops);
 
@@ -1433,6 +1436,7 @@ _readRangeTblEntry(void)
 		case RTE_SUBQUERY:
 			READ_NODE_FIELD(subquery);
 			READ_BOOL_FIELD(security_barrier);
+
 			READ_BOOL_FIELD(isVLE);
 			break;
 		case RTE_JOIN:
@@ -1588,7 +1592,8 @@ _readPlannedStmt(void)
 	READ_NODE_FIELD(paramExecTypes);
 	READ_NODE_FIELD(utilityStmt);
 	READ_LOCATION_FIELD(stmt_location);
-	READ_LOCATION_FIELD(stmt_len);
+	READ_INT_FIELD(stmt_len);
+
 	READ_BOOL_FIELD(hasGraphwriteClause);
 
 	READ_DONE();
@@ -2003,6 +2008,7 @@ _readCteScan(void)
 
 	READ_INT_FIELD(ctePlanId);
 	READ_INT_FIELD(cteParam);
+
 	READ_BOOL_FIELD(cteStop);
 
 	READ_DONE();

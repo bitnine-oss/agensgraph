@@ -198,11 +198,11 @@ protocol to make nodes agree on a serializable transactional order.
   </varlistentry>
 
   <varlistentry>
-   <term>Statement-Based Replication Middleware</term>
+   <term>SQL-Based Replication Middleware</term>
    <listitem>
 
     <para>
-     With statement-based replication middleware, a program intercepts
+     With SQL-based replication middleware, a program intercepts
      every SQL query and sends it to one or all servers.  Each server
      operates independently.  Read-write queries must be sent to all servers,
      so that every server receives any changes.  But read-only queries can be
@@ -279,19 +279,6 @@ protocol to make nodes agree on a serializable transactional order.
    </listitem>
   </varlistentry>
 
-  <varlistentry>
-   <term>Commercial Solutions</term>
-   <listitem>
-
-    <para>
-     Because <productname>PostgreSQL</productname> is open source and easily
-     extended, a number of companies have taken <productname>PostgreSQL</productname>
-     and created commercial closed-source solutions with unique
-     failover, replication, and load balancing capabilities.
-    </para>
-   </listitem>
-  </varlistentry>
-
  </variablelist>
 
  <para>
@@ -302,28 +289,37 @@ protocol to make nodes agree on a serializable transactional order.
  <table id="high-availability-matrix">
   <title>High Availability, Load Balancing, and Replication Feature Matrix</title>
   <tgroup cols="9">
+   <colspec colname="col1" colwidth="1.1*"/>
+   <colspec colname="col2" colwidth="1*"/>
+   <colspec colname="col3" colwidth="1*"/>
+   <colspec colname="col4" colwidth="1*"/>
+   <colspec colname="col5" colwidth="1*"/>
+   <colspec colname="col6" colwidth="1*"/>
+   <colspec colname="col7" colwidth="1*"/>
+   <colspec colname="col8" colwidth="1*"/>
+   <colspec colname="col9" colwidth="1*"/>
    <thead>
     <row>
      <entry>Feature</entry>
-     <entry>Shared Disk Failover</entry>
-     <entry>File System Replication</entry>
+     <entry>Shared Disk</entry>
+     <entry>File System Repl.</entry>
      <entry>Write-Ahead Log Shipping</entry>
-     <entry>Logical Replication</entry>
-     <entry>Trigger-Based Master-Standby Replication</entry>
-     <entry>Statement-Based Replication Middleware</entry>
-     <entry>Asynchronous Multimaster Replication</entry>
-     <entry>Synchronous Multimaster Replication</entry>
+     <entry>Logical Repl.</entry>
+     <entry>Trigger-Based Repl.</entry>
+     <entry>SQL Repl. Middle-ware</entry>
+     <entry>Async. MM Repl.</entry>
+     <entry>Sync. MM Repl.</entry>
     </row>
    </thead>
 
    <tbody>
 
     <row>
-     <entry>Most common implementations</entry>
+     <entry>Popular examples</entry>
      <entry align="center">NAS</entry>
      <entry align="center">DRBD</entry>
-     <entry align="center">built-in streaming replication</entry>
-     <entry align="center">built-in logical replication, pglogical</entry>
+     <entry align="center">built-in streaming repl.</entry>
+     <entry align="center">built-in logical repl., pglogical</entry>
      <entry align="center">Londiste, Slony</entry>
      <entry align="center">pgpool-II</entry>
      <entry align="center">Bucardo</entry>
@@ -331,7 +327,7 @@ protocol to make nodes agree on a serializable transactional order.
     </row>
 
     <row>
-     <entry>Communication method</entry>
+     <entry>Comm. method</entry>
      <entry align="center">shared disk</entry>
      <entry align="center">disk blocks</entry>
      <entry align="center">WAL</entry>
@@ -484,6 +480,14 @@ protocol to make nodes agree on a serializable transactional order.
   </varlistentry>
 
  </variablelist>
+
+  <para>
+   It should also be noted that because <productname>PostgreSQL</productname>
+   is open source and easily extended, a number of companies have
+   taken <productname>PostgreSQL</productname> and created commercial
+   closed-source solutions with unique failover, replication, and load
+   balancing capabilities.  These are not discussed here.
+  </para>
 
  </sect1>
 
@@ -644,7 +648,8 @@ protocol to make nodes agree on a serializable transactional order.
 
    <para>
     Standby mode is exited and the server switches to normal operation
-    when <command>pg_ctl promote</command> is run or a trigger file is found
+    when <command>pg_ctl promote</command> is run,
+    <function>pg_promote()</function> is called, or a trigger file is found
     (<varname>promote_trigger_file</varname>). Before failover,
     any WAL immediately available in the archive or in <filename>pg_wal</filename> will be
     restored, but no attempt is made to connect to the master.
@@ -826,12 +831,14 @@ archive_cleanup_command = 'pg_archivecleanup /path/to/archive %r'
      It is very important that the access privileges for replication be set up
      so that only trusted users can read the WAL stream, because it is
      easy to extract privileged information from it.  Standby servers must
-     authenticate to the primary as a superuser or an account that has the
-     <literal>REPLICATION</literal> privilege. It is recommended to create a
-     dedicated user account with <literal>REPLICATION</literal> and <literal>LOGIN</literal>
-     privileges for replication. While <literal>REPLICATION</literal> privilege gives
-     very high permissions, it does not allow the user to modify any data on
-     the primary system, which the <literal>SUPERUSER</literal> privilege does.
+     authenticate to the primary as an account that has the
+     <literal>REPLICATION</literal> privilege or a superuser. It is
+     recommended to create a dedicated user account with
+     <literal>REPLICATION</literal> and <literal>LOGIN</literal>
+     privileges for replication. While <literal>REPLICATION</literal>
+     privilege gives very high permissions, it does not allow the user to
+     modify any data on the primary system, which the
+     <literal>SUPERUSER</literal> privilege does.
     </para>
 
     <para>
@@ -888,7 +895,8 @@ primary_conninfo = 'host=192.168.1.50 port=5432 user=foo password=foopass'
     </para>
     <para>
      You can retrieve a list of WAL sender processes via the
-     <xref linkend="pg-stat-replication-view"/> view. Large differences between
+     <link linkend="monitoring-pg-stat-replication-view"><structname>
+     pg_stat_replication</structname></link> view. Large differences between
      <function>pg_current_wal_lsn</function> and the view's <literal>sent_lsn</literal> field
      might indicate that the master server is under heavy load, while
      differences between <literal>sent_lsn</literal> and
@@ -897,9 +905,10 @@ primary_conninfo = 'host=192.168.1.50 port=5432 user=foo password=foopass'
     </para>
     <para>
      On a hot standby, the status of the WAL receiver process can be retrieved
-     via the <xref linkend="pg-stat-wal-receiver-view"/> view.  A large
+     via the <link linkend="monitoring-pg-stat-wal-receiver-view">
+     <structname>pg_stat_wal_receiver</structname></link> view.  A large
      difference between <function>pg_last_wal_replay_lsn</function> and the
-     view's <literal>received_lsn</literal> indicates that WAL is being
+     view's <literal>flushed_lsn</literal> indicates that WAL is being
      received faster than it can be replayed.
     </para>
    </sect3>
@@ -1470,11 +1479,11 @@ synchronous_standby_names = 'ANY 2 (s1, s2, s3)'
 
    <para>
     To trigger failover of a log-shipping standby server, run
-    <command>pg_ctl promote</command>, call <function>pg_promote</function>,
+    <command>pg_ctl promote</command>, call <function>pg_promote()</function>,
     or create a trigger file with the file name and path specified by the
     <varname>promote_trigger_file</varname>. If you're planning to use
     <command>pg_ctl promote</command> or to call
-    <function>pg_promote</function> to fail over,
+    <function>pg_promote()</function> to fail over,
     <varname>promote_trigger_file</varname> is not required. If you're
     setting up the reporting servers that are only used to offload read-only
     queries from the primary, not for high availability purposes, you don't
