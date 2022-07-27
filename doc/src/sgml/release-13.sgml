@@ -6,7 +6,7 @@
 
   <formalpara>
    <title>Release date:</title>
-   <para>2020-XX-XX, CURRENT AS OF 2020-05-03</para>
+   <para>2020-XX-XX, CURRENT AS OF 2020-08-09</para>
   </formalpara>
 
   <sect2>
@@ -21,7 +21,7 @@
    <itemizedlist>
 
     <listitem>
-    <para></para>
+    <para>TBD</para>
     </listitem>
 
    </itemizedlist>
@@ -141,33 +141,18 @@ Author: Alvaro Herrera <alvherre@alvh.no-ip.org>
 
     <listitem>
 <!--
-Author: Peter Geoghegan <pg@bowt.ie>
-2020-03-07 [691e8b2e1] pageinspect: Fix types used for bt_metap() columns.
--->
-
-     <para>
-      Fix <xref linkend="pageinspect"/>'s <function>bt_metap()</function>
-      to return more appropriate data types that are less likely to overflow
-      (Peter Geoghegan)
-     </para>
-    </listitem>
-
-    <listitem>
-<!--
 Author: Fujii Masao <fujii@postgresql.org>
 2020-03-19 [1d253bae5] Rename the recovery-related wait events.
+Author: Tom Lane <tgl@sss.pgh.pa.us>
+2020-05-15 [36ac359d3] Rename assorted LWLock tranches.
+2020-05-15 [474e7da64] Change locktype "speculative token" to "spectoken".
+2020-05-15 [14a910109] Drop the redundant "Lock" suffix from LWLock wait event
+2020-05-16 [3048898e7] Mop-up for wait event naming issues.
 -->
 
      <para>
-      Rename some recovery-related <link linkend="wait-event-table">wait
-      events</link> (Fujii Masao)
-     </para>
-
-     <para>
-      Rename <literal>RecoveryWalAll</literal>
-      to <literal>RecoveryWalStream</literal>
-      and <literal>RecoveryWalStream</literal> to
-      <literal>RecoveryRetrieveRetryInterval</literal>.
+      Rename various <link linkend="wait-event-table">wait
+      events</link> to improve consistency (Fujii Masao, Tom Lane)
      </para>
     </listitem>
 
@@ -209,6 +194,28 @@ Author: Fujii Masao <fujii@postgresql.org>
 
     <listitem>
 <!--
+Author: Fujii Masao <fujii@postgresql.org>
+2020-07-20 [f5dff45962] Rename wal_keep_segments to wal_keep_size.
+-->
+
+     <para>
+      Rename configuration parameter <varname>wal_keep_segments</varname>
+      to <xref linkend="guc-wal-keep-size"/> (Fujii Masao)
+     </para>
+
+     <para>
+      This determines how much WAL to retain for the standby server,
+      specified in megabytes rather than number of files. If you
+      previously used <varname>wal_keep_segments</varname>,
+      the following formula will give you an approximately equivalent setting:
+<programlisting>
+wal_keep_size = wal_keep_segments * wal_segment_size (typically 16MB)
+</programlisting>
+     </para>
+    </listitem>
+
+    <listitem>
+<!--
 Author: Tom Lane <tgl@sss.pgh.pa.us>
 2020-03-05 [84eca14bc] Remove ancient hacks to ignore certain opclass names in
 -->
@@ -244,6 +251,46 @@ Author: Tom Lane <tgl@sss.pgh.pa.us>
       linkend="sql-createtype">pseudo-types</link> used by
       pre-<productname>PostgreSQL</productname> 7.3 servers (Daniel
       Gustafsson)
+     </para>
+    </listitem>
+
+    <listitem>
+<!--
+Author: Tom Lane <tgl@sss.pgh.pa.us>
+2020-06-29 [21aac2ff9] Remove support for timezone "posixrules" file.
+-->
+
+     <para>
+      Remove support for <filename>posixrules</filename> files in the
+      timezone database (Tom Lane)
+     </para>
+
+     <para>
+      IANA's timezone group has deprecated this feature, meaning that it
+      will gradually disappear from systems' timezone databases over the
+      next few years.  Rather than have a behavioral change appear
+      unexpectedly with a timezone data update, we have
+      removed <productname>PostgreSQL</productname>'s support for this
+      feature as of version 13.  This affects only the behavior
+      of <link linkend="datetime-posix-timezone-specs">POSIX-style time
+      zone specifications</link> that lack an explicit daylight savings
+      transition rule; formerly the transition rule could be determined
+      by installing a custom <filename>posixrules</filename> file, but
+      now it is hard-wired.  The recommended fix for any affected
+      installations is to start using a geographical time zone name.
+     </para>
+    </listitem>
+
+    <listitem>
+<!--
+Author: Peter Geoghegan <pg@bowt.ie>
+2020-03-07 [691e8b2e1] pageinspect: Fix types used for bt_metap() columns.
+-->
+
+     <para>
+      Fix <xref linkend="pageinspect"/>'s <function>bt_metap()</function>
+      to return more appropriate data types that are less likely to overflow
+      (Peter Geoghegan)
      </para>
     </listitem>
 
@@ -585,10 +632,12 @@ Author: Tom Lane <tgl@sss.pgh.pa.us>
 <!--
 Author: Tomas Vondra <tomas.vondra@postgresql.org>
 2020-04-06 [d2d8a229b] Implement Incremental Sort
+Author: Peter Eisentraut <peter@eisentraut.org>
+2020-07-05 [94e454cdd] Rename enable_incrementalsort for clarity
 -->
 
        <para>
-        Implement <link linkend="guc-enable-incrementalsort">incremental
+        Implement <link linkend="guc-enable-incremental-sort">incremental
         sorting</link> (James Coleman, Alexander Korotkov, Tomas Vondra)
        </para>
 
@@ -596,7 +645,7 @@ Author: Tomas Vondra <tomas.vondra@postgresql.org>
         If a result is already sorted by several leading keys, this
         allows for batch sorting of additional trailing keys because the
         previous keys are already equal.  This is controlled by <xref
-        linkend="guc-enable-incrementalsort"/>.
+        linkend="guc-enable-incremental-sort"/>.
        </para>
       </listitem>
 
@@ -618,30 +667,29 @@ Author: Jeff Davis <jdavis@postgresql.org>
 2020-03-18 [1f39bce02] Disk-based Hash Aggregation.
 Author: Jeff Davis <jdavis@postgresql.org>
 2020-03-24 [dd8e19132] Consider disk-based hash aggregation to implement DISTIN
+Author: Peter Geoghegan <pg@bowt.ie>
+2020-07-29 [78530c8e7] Add hash_mem_multiplier GUC.
 -->
 
        <para>
         Allow <link linkend="guc-enable-hashagg">hash aggregation</link>
+        and <link linkend="queries-grouping-sets">grouping sets</link>
         to use disk storage for large aggregation result sets (Jeff Davis)
        </para>
 
        <para>
         Previously, hash aggregation was avoided if it was expected to use
-        more than <xref linkend="guc-work-mem"/> memory.  This is controlled
-        by <xref linkend="guc-hashagg-avoid-disk-plan"/>.
+        more than <xref linkend="guc-work-mem"/> memory.  Now, a hash
+        aggregation plan can be chosen despite that.  The hash table will
+        be spilled to disk if it exceeds <varname>work_mem</varname> times
+        <xref linkend="guc-hash-mem-multiplier"/>.
        </para>
-      </listitem>
-
-      <listitem>
-<!--
-Author: Jeff Davis <jdavis@postgresql.org>
-2020-03-18 [1f39bce02] Disk-based Hash Aggregation.
--->
 
        <para>
-        Allow <link linkend="queries-grouping-sets">grouping sets</link> to
-        use hash aggregation with disk storage for large grouping set results
-        (Jeff Davis)
+        This behavior is normally preferable to the old behavior.  But if
+        it is inferior for a particular query, behavior similar to
+        previous Postgres releases can be obtained by
+        increasing <varname>hash_mem_multiplier</varname>.
        </para>
       </listitem>
 
@@ -901,6 +949,8 @@ Author: Alvaro Herrera <alvherre@alvh.no-ip.org>
 <!--
 Author: Alvaro Herrera <alvherre@alvh.no-ip.org>
 2019-11-08 [71a8a4f6e] Add backtrace support for error reporting
+Author: Peter Eisentraut <peter@eisentraut.org>
+2020-07-10 [8ff4d1277] Log the location field before any backtrace
 -->
 
        <para>
@@ -978,20 +1028,6 @@ Author: Alvaro Herrera <alvherre@alvh.no-ip.org>
         linkend="monitoring-stats-dynamic-views-table"><structname>pg_stat_progress_analyze</structname></link>
         to report <link linkend="sql-analyze">analyze</link> progress
         (&Aacute;lvaro Herrera, Tatsuro Yamada, Vinayak Pokale)
-       </para>
-      </listitem>
-
-      <listitem>
-<!--
-Author: Amit Kapila <akapila@postgresql.org>
-2019-11-21 [9290ad198] Track statistics for spilling of changes from ReorderBuf
--->
-
-       <para>
-        Add columns to the <link
-        linkend="monitoring-stats-dynamic-views-table"><structname>pg_stat_replication</structname></link>
-        system view to report how much logical decoding information has been
-        spilled to disk (Tomas Vondra)
        </para>
       </listitem>
 
@@ -1144,8 +1180,8 @@ Author: Peter Eisentraut <peter@eisentraut.org>
 -->
 
        <para>
-        Change the default minimum <acronym>TLS</acronym> version from 1.0
-        to 1.2 (Peter Eisentraut)
+        Change the server's default minimum <acronym>TLS</acronym> version
+        for encrypted connections from 1.0 to 1.2 (Peter Eisentraut)
        </para>
 
        <para>
@@ -1531,22 +1567,6 @@ Author: Peter Eisentraut <peter@eisentraut.org>
        Add C structure member <link
        linkend="trigger-interface"><structfield>tg_updatedcols</structfield></link>
        to record updated columns to C triggers (Peter Eisentraut)
-      </para>
-     </listitem>
-
-     <listitem>
-<!--
-Author: Alvaro Herrera <alvherre@alvh.no-ip.org>
-2020-03-20 [4e6209134] pg_dump: Add FOREIGN to ALTER statements, if appropriate
--->
-
-      <para>
-       Add <literal>FOREIGN</literal> to <command>ALTER</command> statements,
-       if appropriate (Luis Carril)
-      </para>
-
-      <para>
-       WHAT IS THIS ABOUT?
       </para>
      </listitem>
 
@@ -1990,7 +2010,8 @@ Author: Jeff Davis <jdavis@postgresql.org>
 -->
 
       <para>
-       Allow libpq clients to require channel binding (Jeff Davis)
+       Allow libpq clients to require channel binding for encrypted
+       connections (Jeff Davis)
       </para>
 
       <para>
@@ -2007,17 +2028,22 @@ Author: Michael Paquier <michael@paquier.xyz>
 2020-01-28 [ff8ca5fad] Add connection parameters to control SSL protocol min/ma
 Author: Michael Paquier <michael@paquier.xyz>
 2020-04-30 [401aad670] Rename connection parameters to control min/max SSL prot
+Author: Tom Lane <tgl@sss.pgh.pa.us>
+2020-06-27 [16412c784] Change libpq's default ssl_min_protocol_version to TLSv1
 -->
 
       <para>
        Add libpq connection parameters to control the min/max
-       <acronym>TLS</acronym> version (Daniel Gustafsson)
+       <acronym>TLS</acronym> version for encrypted connections
+       (Daniel Gustafsson)
       </para>
 
       <para>
        The settings are <xref
        linkend="libpq-connect-ssl-min-protocol-version"/> and <xref
        linkend="libpq-connect-ssl-max-protocol-version"/>.
+       By default, the minimum <acronym>TLS</acronym> version is 1.2
+       (this represents a behavioral change from previous releases).
       </para>
      </listitem>
 
@@ -2028,7 +2054,7 @@ Author: Fujii Masao <fujii@postgresql.org>
 -->
 
       <para>
-       Tighten line length and comment detection in <link
+       Tighten libpq's overlength-line handling and comment detection for <link
        linkend="libpq-pgpass">.pgpass</link> files (Fujii Masao)
       </para>
      </listitem>
@@ -2059,6 +2085,26 @@ Author: Andrew Dunstan <andrew@dunslane.net>
       <para>
        Allow <acronym>DER</acronym>-encoded client certificates (Craig Ringer,
        Andrew Dunstan)
+      </para>
+     </listitem>
+
+     <listitem>
+<!--
+Author: Tom Lane <tgl@sss.pgh.pa.us>
+2020-08-03 [44cd434ec] Fix behavior of ecpg's "EXEC SQL elif name".
+-->
+
+      <para>
+       Fix <application>ecpg</application>'s <literal>EXEC SQL
+       elif</literal> directive to work correctly (Tom Lane)
+      </para>
+
+      <para>
+       Previously it behaved the same as <literal>endif</literal> followed
+       by <literal>ifdef</literal>, so that a successful previous branch
+       of the same <literal>if</literal> construct did not prevent
+       expansion of the <literal>elif</literal> branch or following
+       branches.
       </para>
      </listitem>
 
@@ -2301,7 +2347,7 @@ Author: Robert Haas <rhaas@postgresql.org>
 
       <para>
        A new tool <link
-       linkend="app-pgverifybackup"><application>pg_verifybackup</application>"</link>
+       linkend="app-pgverifybackup"><application>pg_verifybackup</application></link>
        can verify backups.
       </para>
      </listitem>
@@ -2414,10 +2460,10 @@ Author: Alvaro Herrera <alvherre@alvh.no-ip.org>
 -->
 
       <para>
-       Allow <link
+       Add <link
        linkend="app-pgdump"><application>pg_dump</application></link>
-       <option>--include-foreign-data</option> to dump data from foreign
-       servers (Luis Carril)
+       option <option>--include-foreign-data</option> to dump data from
+       foreign servers (Luis Carril)
       </para>
      </listitem>
 
@@ -2804,6 +2850,25 @@ Author: Michael Paquier <michael@paquier.xyz>
       </para>
      </listitem>
 
+     <listitem>
+<!--
+Author: Tom Lane <tgl@sss.pgh.pa.us>
+2020-07-24 [92fe6895d] Fix assorted bugs by changing TS_execute's callback API
+2020-07-24 [70eca6a9a] Replace TS_execute's TS_EXEC_CALC_NOT flag with TS_EXEC_
+-->
+
+      <para>
+       Change the API for <function>TS_execute()</function> (Tom Lane,
+       Pavel Borisov)
+      </para>
+
+      <para>
+       <function>TS_execute</function> callbacks must now provide ternary
+       (yes/no/maybe) logic.  Calculating NOT queries accurately is now
+       the default.
+      </para>
+     </listitem>
+
     </itemizedlist>
 
    </sect3>
@@ -2921,6 +2986,7 @@ Author: Andrew Gierth <rhodiumtoad@postgresql.org>
 <!--
 Author: Fujii Masao <fujii@postgresql.org>
 2020-04-02 [17e032822] Allow pg_stat_statements to track planning statistics.
+2020-07-03 [8d459762b] Change default of pg_stat_statements.track_planning to o
 -->
 
       <para>
@@ -3027,14 +3093,379 @@ Author: Peter Geoghegan <pg@bowt.ie>
   <sect2 id="release-13-acknowledgements">
    <title>Acknowledgments</title>
 
-    <para>
-     The following individuals (in alphabetical order) have contributed to this
-     release as patch authors, committers, reviewers, testers, or reporters of
-     issues.
-    </para>
+   <para>
+    The following individuals (in alphabetical order) have contributed to this
+    release as patch authors, committers, reviewers, testers, or reporters of
+    issues.
+   </para>
 
    <simplelist>
-    <member></member>
+    <member>Adam Lee</member>
+    <member>Adam Scott</member>
+    <member>Adé Heyward</member>
+    <member>Adrien Nayrat</member>
+    <member>Ahsan Hadi</member>
+    <member>Alastair McKinley</member>
+    <member>Aleksandr Parfenov</member>
+    <member>Alex Aktsipetrov</member>
+    <member>Alex Macy</member>
+    <member>Alex Shulgin</member>
+    <member>Alexander Korotkov</member>
+    <member>Alexander Kukushkin</member>
+    <member>Alexander Kuzmenkov</member>
+    <member>Alexander Lakhin</member>
+    <member>Alexey Bashtanov</member>
+    <member>Alexey Kondratov</member>
+    <member>Álvaro Herrera</member>
+    <member>Amit Kapila</member>
+    <member>Amit Khandekar</member>
+    <member>Amit Langote</member>
+    <member>Amul Sul</member>
+    <member>Anastasia Lubennikova</member>
+    <member>Andreas Joseph Krogh</member>
+    <member>Andreas Karlsson</member>
+    <member>Andreas Kunert</member>
+    <member>Andreas Seltenreich</member>
+    <member>Andrei Zubkov</member>
+    <member>Andres Freund</member>
+    <member>Andrew Dunstan</member>
+    <member>Andrew Gierth</member>
+    <member>Andrey Borodin</member>
+    <member>Andrey Klychkov</member>
+    <member>Andrey Lepikhov</member>
+    <member>Anna Akenteva</member>
+    <member>Anna Endo</member>
+    <member>Anthony Nowocien</member>
+    <member>Anton Vlasov</member>
+    <member>Antonin Houska</member>
+    <member>Ants Aasma</member>
+    <member>Arne Roland</member>
+    <member>Arnold Müller</member>
+    <member>Arseny Sher</member>
+    <member>Arthur Nascimento</member>
+    <member>Arthur Zakirov</member>
+    <member>Asaba Takanori</member>
+    <member>Ashutosh Bapat</member>
+    <member>Ashutosh Sharma</member>
+    <member>Ashwin Agrawal</member>
+    <member>Asif Rehman</member>
+    <member>Asim Praveen</member>
+    <member>Atsushi Torikoshi</member>
+    <member>Augustinas Jokubauskas</member>
+    <member>Austin Drenski</member>
+    <member>Basil Bourque</member>
+    <member>Beena Emerson</member>
+    <member>Ben Cornett</member>
+    <member>Benjie Gillam</member>
+    <member>Benoît Lobréau</member>
+    <member>Bernd Helmle</member>
+    <member>Bharath Rupireddy</member>
+    <member>Bhargav Kamineni</member>
+    <member>Binguo Bao</member>
+    <member>Brad DeJong</member>
+    <member>Brandur Leach</member>
+    <member>Brent Bates</member>
+    <member>Brian Williams</member>
+    <member>Bruce Momjian</member>
+    <member>Cameron Ezell</member>
+    <member>Cary Huang</member>
+    <member>Chapman Flack</member>
+    <member>Charles Offenbacher</member>
+    <member>Chen Huajun</member>
+    <member>Chenyang Lu</member>
+    <member>Chris Bandy</member>
+    <member>Chris Travers</member>
+    <member>Christoph Berg</member>
+    <member>Christophe Courtois</member>
+    <member>Corey Huinker</member>
+    <member>Craig Ringer</member>
+    <member>Cuiping Lin</member>
+    <member>Dagfinn Ilmari Mannsåker</member>
+    <member>Daniel Fiori</member>
+    <member>Daniel Gustafsson</member>
+    <member>Daniel Vérité</member>
+    <member>Daniel Westermann</member>
+    <member>Darafei Praliaskouski</member>
+    <member>Daryl Waycott</member>
+    <member>Dave Cramer</member>
+    <member>David Christensen</member>
+    <member>David Fetter</member>
+    <member>David G. Johnston</member>
+    <member>David Gilman</member>
+    <member>David Harper</member>
+    <member>David Rowley</member>
+    <member>David Steele</member>
+    <member>David Zhang</member>
+    <member>Davinder Singh</member>
+    <member>Dean Rasheed</member>
+    <member>Denis Stuchalin</member>
+    <member>Dent John</member>
+    <member>Didier Gautheron</member>
+    <member>Dilip Kumar</member>
+    <member>Dmitry Belyavsky</member>
+    <member>Dmitry Dolgov</member>
+    <member>Dmitry Ivanov</member>
+    <member>Dmitry Telpt</member>
+    <member>Dmitry Uspenskiy</member>
+    <member>Dominik Czarnota</member>
+    <member>Dongming Liu</member>
+    <member>Ed Morley</member>
+    <member>Edmund Horner</member>
+    <member>Emre Hasegeli</member>
+    <member>Eric Gillum</member>
+    <member>Erik Rijkers</member>
+    <member>Erwin Brandstetter</member>
+    <member>Ethan Waldo</member>
+    <member>Etsuro Fujita</member>
+    <member>Eugen Konkov</member>
+    <member>Euler Taveira</member>
+    <member>Fabien Coelho</member>
+    <member>Fabrízio de Royes Mello</member>
+    <member>Felix Lechner</member>
+    <member>Filip Janus</member>
+    <member>Filip Rembialkowski</member>
+    <member>Frank Gagnepain</member>
+    <member>Georgios Kokolatos</member>
+    <member>Gilles Darold</member>
+    <member>Greg Nancarrow</member>
+    <member>Grigory Smolkin</member>
+    <member>Guancheng Luo</member>
+    <member>Guillaume Lelarge</member>
+    <member>Hadi Moshayedi</member>
+    <member>Haiying Tang</member>
+    <member>Hamid Akhtar</member>
+    <member>Hans Buschmann</member>
+    <member>Haribabu Kommi</member>
+    <member>Heath Lord</member>
+    <member>Heikki Linnakangas</member>
+    <member>Hironobu Suzuki</member>
+    <member>Hugh McMaster</member>
+    <member>Hugh Ranalli</member>
+    <member>Hugh Wang</member>
+    <member>Ian Barwick</member>
+    <member>Ibrar Ahmed</member>
+    <member>Ildar Musin</member>
+    <member>Insung Moon</member>
+    <member>Ireneusz Pluta</member>
+    <member>Isaac Morland</member>
+    <member>Ivan Kartyshov</member>
+    <member>Ivan Panchenko</member>
+    <member>Ivan Sergio Borgonovo</member>
+    <member>Jaime Casanova</member>
+    <member>James Coleman</member>
+    <member>James Gray</member>
+    <member>James Inform</member>
+    <member>James Lucas</member>
+    <member>Jaroslav Sivy</member>
+    <member>Jeevan Chalke</member>
+    <member>Jeevan Ladhe</member>
+    <member>Jeff Davis</member>
+    <member>Jeff Janes</member>
+    <member>Jehan-Guillaume de Rorthais</member>
+    <member>Jeremy Schneider</member>
+    <member>Jeremy Smith</member>
+    <member>Jerry Sievers</member>
+    <member>Jesper Pedersen</member>
+    <member>Jesse Zhang</member>
+    <member>Jian Zhang</member>
+    <member>Jie Zhang</member>
+    <member>Jim Nasby</member>
+    <member>Jimmy Yih</member>
+    <member>Jobin Augustine</member>
+    <member>Joe Conway</member>
+    <member>John Hsu</member>
+    <member>John Naylor</member>
+    <member>Jon Jensen</member>
+    <member>Jonathan Katz</member>
+    <member>Jorge Gustavo Rocha</member>
+    <member>Josef Šimánek</member>
+    <member>Joseph Nahmias</member>
+    <member>Juan José Santamaría Flecha</member>
+    <member>Julian Backes</member>
+    <member>Julien Rouhaud</member>
+    <member>Jürgen Purtz</member>
+    <member>Justin King</member>
+    <member>Justin Pryzby</member>
+    <member>Karl O. Pinc</member>
+    <member>Keisuke Kuroda</member>
+    <member>Keith Fiske</member>
+    <member>Ken Tanzer</member>
+    <member>Kirill Bychik</member>
+    <member>Kirk Jamison</member>
+    <member>Konstantin Knizhnik</member>
+    <member>Kuntal Ghosh</member>
+    <member>Kyle Kingsbury</member>
+    <member>Kyotaro Horiguchi</member>
+    <member>Lars Kanis</member>
+    <member>Laurenz Albe</member>
+    <member>Leif Gunnar Erlandsen</member>
+    <member>Li Japin</member>
+    <member>Liudmila Mantrova</member>
+    <member>Lucas Viecelli</member>
+    <member>Luis M. Carril</member>
+    <member>Lukáš Sobotka</member>
+    <member>Maciek Sakrejda</member>
+    <member>Magnus Hagander</member>
+    <member>Mahadevan Ramachandran</member>
+    <member>Mahendra Singh Thalor</member>
+    <member>Manuel Rigger</member>
+    <member>Marc Munro</member>
+    <member>Marcos David</member>
+    <member>Marina Polyakova</member>
+    <member>Mark Dilger</member>
+    <member>Mark Wong</member>
+    <member>Marko Tiikkaja</member>
+    <member>Markus Winand</member>
+    <member>Marti Raudsepp</member>
+    <member>Martijn van Oosterhout</member>
+    <member>Masahiko Sawada</member>
+    <member>Masahiro Ikeda</member>
+    <member>Masao Fujii</member>
+    <member>Mateusz Guzik</member>
+    <member>Matt Jibson</member>
+    <member>Matteo Beccati</member>
+    <member>Maxence Ahlouche</member>
+    <member>Melanie Plageman</member>
+    <member>Michael Banck</member>
+    <member>Michael Luo</member>
+    <member>Michael Meskes</member>
+    <member>Michael Paquier</member>
+    <member>Michail Nikolaev</member>
+    <member>Mike Palmiotto</member>
+    <member>Mithun Cy</member>
+    <member>Movead Li</member>
+    <member>Nathan Bossart</member>
+    <member>Nazli Ugur Koyluoglu</member>
+    <member>Neha Sharma</member>
+    <member>Nicola Contu</member>
+    <member>Nicolás Alvarez</member>
+    <member>Nikhil Sontakke</member>
+    <member>Nikita Glukhov</member>
+    <member>Nikolay Shaplov</member>
+    <member>Nino Floris</member>
+    <member>Noah Misch</member>
+    <member>Noriyoshi Shinoda</member>
+    <member>Oleg Bartunov</member>
+    <member>Oleksii Kliukin</member>
+    <member>Ondrej Jirman</member>
+    <member>Panagiotis Mavrogiorgos</member>
+    <member>Pascal Legrand</member>
+    <member>Patrick McHardy</member>
+    <member>Paul Guo</member>
+    <member>Paul Jungwirth</member>
+    <member>Paul Ramsey</member>
+    <member>Paul Spencer</member>
+    <member>Pavan Deolasee</member>
+    <member>Pavel Borisov</member>
+    <member>Pavel Luzanov</member>
+    <member>Pavel Stehule</member>
+    <member>Pavel Suderevsky</member>
+    <member>Peifeng Qiu</member>
+    <member>Pengzhou Tang</member>
+    <member>Peter Billen</member>
+    <member>Peter Eisentraut</member>
+    <member>Peter Geoghegan</member>
+    <member>Peter Smith</member>
+    <member>Petr Fedorov</member>
+    <member>Petr Jelínek</member>
+    <member>Phil Bayer</member>
+    <member>Philip Semanchuk</member>
+    <member>Pierre Ducroquet</member>
+    <member>Pierre Giraud</member>
+    <member>Piotr Gabriel Kosinski</member>
+    <member>Piotr Wlodarczyk</member>
+    <member>Prabhat Sahu</member>
+    <member>Quan Zongliang</member>
+    <member>Quentin Rameau</member>
+    <member>Rafael Castro</member>
+    <member>Rafia Sabih</member>
+    <member>Raj Mohite</member>
+    <member>Rajkumar Raghuwanshi</member>
+    <member>Ramanarayana M</member>
+    <member>Ranier Vilela</member>
+    <member>Rares Salcudean</member>
+    <member>Raúl Marín Rodríguez</member>
+    <member>Raymond Martin</member>
+    <member>Reijo Suhonen</member>
+    <member>Richard Guo</member>
+    <member>Robert Ford</member>
+    <member>Robert Haas</member>
+    <member>Robert Treat</member>
+    <member>Robins Tharakan</member>
+    <member>Roger Harkavy</member>
+    <member>Roman Peshkurov</member>
+    <member>Rui DeSousa</member>
+    <member>Rui Hai Jiang</member>
+    <member>Rushabh Lathia</member>
+    <member>Ryan Lambert</member>
+    <member>Ryohei Takahashi</member>
+    <member>Scott Ribe</member>
+    <member>Sean Farrell</member>
+    <member>Sehrope Sarkuni</member>
+    <member>Sergei Agalakov</member>
+    <member>Sergei Kornilov</member>
+    <member>Sergey Cherkashin</member>
+    <member>Shawn Debnath</member>
+    <member>Shawn Wang</member>
+    <member>Shay Rojansky</member>
+    <member>Shenhao Wang</member>
+    <member>Simon Riggs</member>
+    <member>Slawomir Chodnicki</member>
+    <member>Soumyadeep Chakraborty</member>
+    <member>Stéphane Lorek</member>
+    <member>Stephen Frost</member>
+    <member>Steve Rogerson</member>
+    <member>Steven Winfield</member>
+    <member>Surafel Temesgen</member>
+    <member>Suraj Kharage</member>
+    <member>Takao Fujii</member>
+    <member>Takatsuka Haruka</member>
+    <member>Takayuki Tsunakawa</member>
+    <member>Takuma Hoshiai</member>
+    <member>Tatsuhito Kasahara</member>
+    <member>Tatsuo Ishii</member>
+    <member>Tatsuro Yamada</member>
+    <member>Taylor Vesely</member>
+    <member>Teodor Sigaev</member>
+    <member>Tham Nguyen</member>
+    <member>Thibaut Madelaine</member>
+    <member>Thom Brown</member>
+    <member>Thomas Kellerer</member>
+    <member>Thomas Munro</member>
+    <member>Tiago Anastacio</member>
+    <member>Tim Clarke</member>
+    <member>Tim Möhlmann</member>
+    <member>Tom Ellis</member>
+    <member>Tom Gottfried</member>
+    <member>Tom Lane</member>
+    <member>Tomas Vondra</member>
+    <member>Tuomas Leikola</member>
+    <member>Tushar Ahuja</member>
+    <member>Victor Wagner</member>
+    <member>Victor Yegorov</member>
+    <member>Vignesh C</member>
+    <member>Vik Fearing</member>
+    <member>Vinay Banakar</member>
+    <member>Vladimir Leskov</member>
+    <member>Vladimir Sitnikov</member>
+    <member>Vyacheslav Makarov</member>
+    <member>Vyacheslav Shablistyy</member>
+    <member>Will Leinweber</member>
+    <member>William Crowell</member>
+    <member>Wyatt Alt</member>
+    <member>Yang Xiao</member>
+    <member>Yaroslav Schekin</member>
+    <member>Yi Huang</member>
+    <member>Yigong Hu</member>
+    <member>Yoann La Cancellera</member>
+    <member>Yoshikazu Imai</member>
+    <member>Yu Kimura</member>
+    <member>Yugo Nagata</member>
+    <member>Yuli Khodorkovskiy</member>
+    <member>Yusuke Egashira</member>
+    <member>Yuya Watari</member>
+    <member>Yuzuko Hosoya</member>
+    <member>ZhenHua Cai</member>
    </simplelist>
   </sect2>
 

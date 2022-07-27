@@ -1745,9 +1745,9 @@ postgresql://%2Fvar%2Flib%2Fpostgresql/dbname
         <literal>TLSv1.1</literal>, <literal>TLSv1.2</literal> and
         <literal>TLSv1.3</literal>. The supported protocols depend on the
         version of <productname>OpenSSL</productname> used, older versions
-        not supporting the most modern protocol versions. If not set, this
-        parameter is ignored and the connection will use the minimum bound
-        defined by the backend.
+        not supporting the most modern protocol versions. If not specified,
+        the default is <literal>TLSv1.2</literal>, which satisfies industry
+        best practices as of this writing.
        </para>
       </listitem>
      </varlistentry>
@@ -7916,9 +7916,6 @@ ldap://ldap.acme.com/cn=dbserver,cn=hosts?pgconnectinfo?base?(objectclass=*)
    that the <literal>libssl</literal> and/or <literal>libcrypto</literal> libraries
    have been initialized by your application, so that
    <application>libpq</application> will not also initialize those libraries.
-   See <ulink
-   url="http://h41379.www4.hpe.com/doc/83final/ba554_90007/ch04.html"></ulink>
-   for details on the SSL API.
   </para>
 
   <para>

@@ -765,9 +765,16 @@ apply_handle_update(StringInfo s)
 	target_rte = list_nth(estate->es_range_table, 0);
 	for (int i = 0; i < remoteslot->tts_tupleDescriptor->natts; i++)
 	{
-		if (newtup.changed[i])
-			target_rte->updatedCols = bms_add_member(target_rte->updatedCols,
-													 i + 1 - FirstLowInvalidHeapAttributeNumber);
+		Form_pg_attribute att = TupleDescAttr(remoteslot->tts_tupleDescriptor, i);
+		int			remoteattnum = rel->attrmap->attnums[i];
+
+		if (!att->attisdropped && remoteattnum >= 0)
+		{
+			if (newtup.changed[remoteattnum])
+				target_rte->updatedCols =
+					bms_add_member(target_rte->updatedCols,
+								   i + 1 - FirstLowInvalidHeapAttributeNumber);
+		}
 	}
 
 	fill_extraUpdatedCols(target_rte, RelationGetDescr(rel->localrel));
@@ -1980,6 +1987,12 @@ ApplyWorkerMain(Datum main_arg)
 	BackgroundWorkerInitializeConnectionByOid(MyLogicalRepWorker->dbid,
 											  MyLogicalRepWorker->userid,
 											  0);
+
+	/*
+	 * Set always-secure search path, so malicious users can't redirect user
+	 * code (e.g. pg_index.indexprs).
+	 */
+	SetConfigOption("search_path", "", PGC_SUSET, PGC_S_OVERRIDE);
 
 	/* Load the subscription into persistent memory context. */
 	ApplyContext = AllocSetContextCreate(TopMemoryContext,

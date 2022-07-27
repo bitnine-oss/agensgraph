@@ -989,7 +989,9 @@ table_index_fetch_end(struct IndexFetchTableData *scan)
 /*
  * Fetches, as part of an index scan, tuple at `tid` into `slot`, after doing
  * a visibility test according to `snapshot`. If a tuple was found and passed
- * the visibility test, returns true, false otherwise.
+ * the visibility test, returns true, false otherwise. Note that *tid may be
+ * modified when we return true (see later remarks on multiple row versions
+ * reachable via a single index entry).
  *
  * *call_again needs to be false on the first call to table_index_fetch_tuple() for
  * a tid. If there potentially is another tuple matching the tid, *call_again
@@ -1001,12 +1003,12 @@ table_index_fetch_end(struct IndexFetchTableData *scan)
  * that tuple. Index AMs can use that to avoid returning that tid in future
  * searches.
  *
- * The difference between this function and table_fetch_row_version is that
- * this function returns the currently visible version of a row if the AM
- * supports storing multiple row versions reachable via a single index entry
- * (like heap's HOT). Whereas table_fetch_row_version only evaluates the
- * tuple exactly at `tid`. Outside of index entry ->table tuple lookups,
- * table_tuple_fetch_row_version is what's usually needed.
+ * The difference between this function and table_tuple_fetch_row_version()
+ * is that this function returns the currently visible version of a row if
+ * the AM supports storing multiple row versions reachable via a single index
+ * entry (like heap's HOT). Whereas table_tuple_fetch_row_version() only
+ * evaluates the tuple exactly at `tid`. Outside of index entry ->table tuple
+ * lookups, table_tuple_fetch_row_version() is what's usually needed.
  */
 static inline bool
 table_index_fetch_tuple(struct IndexFetchTableData *scan,
@@ -1060,8 +1062,9 @@ table_tuple_fetch_row_version(Relation rel,
 /*
  * Verify that `tid` is a potentially valid tuple identifier. That doesn't
  * mean that the pointed to row needs to exist or be visible, but that
- * attempting to fetch the row (e.g. with table_get_latest_tid() or
- * table_fetch_row_version()) should not error out if called with that tid.
+ * attempting to fetch the row (e.g. with table_tuple_get_latest_tid() or
+ * table_tuple_fetch_row_version()) should not error out if called with that
+ * tid.
  *
  * `scan` needs to have been started via table_beginscan().
  */
@@ -1190,8 +1193,8 @@ table_tuple_complete_speculative(Relation rel, TupleTableSlot *slot,
 /*
  * Insert multiple tuples into a table.
  *
- * This is like table_insert(), but inserts multiple tuples in one
- * operation. That's often faster than calling table_insert() in a loop,
+ * This is like table_tuple_insert(), but inserts multiple tuples in one
+ * operation. That's often faster than calling table_tuple_insert() in a loop,
  * because e.g. the AM can reduce WAL logging and page locking overhead.
  *
  * Except for taking `nslots` tuples as input, and an array of TupleTableSlots

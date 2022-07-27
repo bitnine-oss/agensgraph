@@ -128,6 +128,7 @@
 # Caution: it is not advisable to set max_prepared_transactions nonzero unless
 # you actively intend to use prepared transactions.
 #work_mem = 4MB				# min 64kB
+#hash_mem_multiplier = 1.0		# 1-1000.0 multiplier on hash table work_mem
 #maintenance_work_mem = 64MB		# min 1MB
 #autovacuum_work_mem = -1		# min 1MB, or -1 to use maintenance_work_mem
 #logical_decoding_work_mem = 64MB	# min 64kB
@@ -289,7 +290,7 @@
 
 #max_wal_senders = 10		# max number of walsender processes
 				# (change requires restart)
-#wal_keep_segments = 0		# in logfile segments; 0 disables
+#wal_keep_size = 0		# in megabytes; 0 disables
 #max_slot_wal_keep_size = -1	# in megabytes; -1 disables
 #wal_sender_timeout = 60s	# in milliseconds; 0 disables
 
@@ -362,7 +363,7 @@
 #enable_parallel_append = on
 #enable_seqscan = on
 #enable_sort = on
-#enable_incrementalsort = on
+#enable_incremental_sort = on
 #enable_tidscan = on
 #enable_partitionwise_join = off
 #enable_partitionwise_aggregate = off

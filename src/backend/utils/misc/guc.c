@@ -997,11 +997,11 @@ static struct config_bool ConfigureNamesBool[] =
 		NULL, NULL, NULL
 	},
 	{
-		{"enable_incrementalsort", PGC_USERSET, QUERY_TUNING_METHOD,
+		{"enable_incremental_sort", PGC_USERSET, QUERY_TUNING_METHOD,
 			gettext_noop("Enables the planner's use of incremental sort steps."),
 			NULL
 		},
-		&enable_incrementalsort,
+		&enable_incremental_sort,
 		true,
 		NULL, NULL, NULL
 	},
@@ -1013,16 +1013,6 @@ static struct config_bool ConfigureNamesBool[] =
 		},
 		&enable_hashagg,
 		true,
-		NULL, NULL, NULL
-	},
-	{
-		{"hashagg_avoid_disk_plan", PGC_USERSET, QUERY_TUNING_METHOD,
-			gettext_noop("Causes the planner to avoid hashed aggregation plans that are expected to use the disk."),
-			NULL,
-			GUC_EXPLAIN
-		},
-		&hashagg_avoid_disk_plan,
-		false,
 		NULL, NULL, NULL
 	},
 	{
@@ -2693,12 +2683,13 @@ static struct config_int ConfigureNamesInt[] =
 	},
 
 	{
-		{"wal_keep_segments", PGC_SIGHUP, REPLICATION_SENDING,
-			gettext_noop("Sets the number of WAL files held for standby servers."),
-			NULL
+		{"wal_keep_size", PGC_SIGHUP, REPLICATION_SENDING,
+			gettext_noop("Sets the size of WAL files held for standby servers."),
+			NULL,
+			GUC_UNIT_MB
 		},
-		&wal_keep_segments,
-		0, 0, INT_MAX,
+		&wal_keep_size_mb,
+		0, 0, MAX_KILOBYTES,
 		NULL, NULL, NULL
 	},
 
@@ -3594,6 +3585,17 @@ static struct config_real ConfigureNamesReal[] =
 		},
 		&Geqo_seed,
 		0.0, 0.0, 1.0,
+		NULL, NULL, NULL
+	},
+
+	{
+		{"hash_mem_multiplier", PGC_USERSET, RESOURCES_MEM,
+			gettext_noop("Multiple of work_mem to use for hash tables."),
+			NULL,
+			GUC_EXPLAIN
+		},
+		&hash_mem_multiplier,
+		1.0, 1.0, 1000.0,
 		NULL, NULL, NULL
 	},
 

@@ -4,7 +4,7 @@
  *		Track statement planning and execution times as well as resource
  *		usage across a whole database cluster.
  *
- * Execution costs are totalled for each distinct source query, and kept in
+ * Execution costs are totaled for each distinct source query, and kept in
  * a shared hashtable.  (We track only as many distinct queries as will fit
  * in the designated amount of shared memory.)
  *
@@ -442,7 +442,7 @@ _PG_init(void)
 							 "Selects whether planning duration is tracked by pg_stat_statements.",
 							 NULL,
 							 &pgss_track_planning,
-							 true,
+							 false,
 							 PGC_SUSET,
 							 0,
 							 NULL,

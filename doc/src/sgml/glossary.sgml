@@ -108,7 +108,7 @@
   </glossentry>
 
   <glossentry id="glossary-autovacuum">
-   <glossterm>Autovacuum</glossterm>
+   <glossterm>Autovacuum (process)</glossterm>
    <glossdef>
     <para>
      A set of background processes that routinely perform
@@ -432,7 +432,7 @@
    <glossterm>Data directory</glossterm>
    <glossdef>
     <para>
-     The base directory on the filesystem of a
+     The base directory on the file system of a
      <glossterm linkend="glossary-server">server</glossterm> that contains all
      data files and subdirectories associated with a
      <glossterm linkend="glossary-db-cluster">database cluster</glossterm>
@@ -855,8 +855,7 @@
    <glossterm>Logger (process)</glossterm>
    <glossdef>
     <para>
-     If activated, the
-     <glossterm linkend="glossary-logger">Logger</glossterm> process
+     If activated, the process
      writes information about database events into the current
      <glossterm linkend="glossary-log-file">log file</glossterm>.
      When reaching certain time- or
@@ -1486,7 +1485,7 @@
   </glossentry>
 
   <glossentry id="glossary-stats-collector">
-   <glossterm>Stats collector</glossterm>
+   <glossterm>Stats collector (process)</glossterm>
    <glossdef>
     <para>
      This process collects statistical information about the
@@ -1548,7 +1547,7 @@
    <glossterm>Tablespace</glossterm>
    <glossdef>
     <para>
-     A named location on the server filesystem.
+     A named location on the server file system.
      All <glossterm linkend="glossary-sql-object">SQL objects</glossterm>
      which require storage beyond their definition in the
      <glossterm linkend="glossary-system-catalog">system catalog</glossterm>
@@ -1646,7 +1645,7 @@
    <glossdef>
     <para>
      Average number of transactions that are executed per second,
-     totalled across all sessions active for a measured run.
+     totaled across all sessions active for a measured run.
      This is used as a measure of the performance characteristics of
      an instance.
     </para>

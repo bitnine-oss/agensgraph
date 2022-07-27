@@ -151,7 +151,7 @@ static XLogRecPtr sendTimeLineValidUpto = InvalidXLogRecPtr;
  * How far have we sent WAL already? This is also advertised in
  * MyWalSnd->sentPtr.  (Actually, this is the next WAL location to send.)
  */
-static XLogRecPtr sentPtr = 0;
+static XLogRecPtr sentPtr = InvalidXLogRecPtr;
 
 /* Buffers for constructing outgoing messages and processing reply messages. */
 static StringInfoData output_message;
@@ -254,7 +254,6 @@ static bool TransactionIdInRecentPast(TransactionId xid, uint32 epoch);
 
 static void WalSndSegmentOpen(XLogReaderState *state, XLogSegNo nextSegNo,
 							  TimeLineID *tli_p);
-static void UpdateSpillStats(LogicalDecodingContext *ctx);
 
 
 /* Initialize walsender process before entering the main command loop */
@@ -1348,8 +1347,7 @@ WalSndWriteData(LogicalDecodingContext *ctx, XLogRecPtr lsn, TransactionId xid,
 /*
  * LogicalDecodingContext 'update_progress' callback.
  *
- * Write the current position to the lag tracker (see XLogSendPhysical),
- * and update the spill statistics.
+ * Write the current position to the lag tracker (see XLogSendPhysical).
  */
 static void
 WalSndUpdateProgress(LogicalDecodingContext *ctx, XLogRecPtr lsn, TransactionId xid)
@@ -1368,11 +1366,6 @@ WalSndUpdateProgress(LogicalDecodingContext *ctx, XLogRecPtr lsn, TransactionId 
 
 	LagTrackerWrite(lsn, now);
 	sendTime = now;
-
-	/*
-	 * Update statistics about transactions that spilled to disk.
-	 */
-	UpdateSpillStats(ctx);
 }
 
 /*
@@ -1458,10 +1451,7 @@ WalSndWaitForWal(XLogRecPtr loc)
 		if (MyWalSnd->flush < sentPtr &&
 			MyWalSnd->write < sentPtr &&
 			!waiting_for_ping_response)
-		{
 			WalSndKeepalive(false);
-			waiting_for_ping_response = true;
-		}
 
 		/* check whether we're done */
 		if (loc <= RecentFlushPtr)
@@ -2418,9 +2408,6 @@ InitWalSenderSlot(void)
 			walsnd->sync_standby_priority = 0;
 			walsnd->latch = &MyProc->procLatch;
 			walsnd->replyTime = 0;
-			walsnd->spillTxns = 0;
-			walsnd->spillCount = 0;
-			walsnd->spillBytes = 0;
 			SpinLockRelease(&walsnd->mutex);
 			/* don't need the lock anymore */
 			MyWalSnd = (WalSnd *) walsnd;
@@ -2942,10 +2929,7 @@ WalSndDone(WalSndSendDataCallback send_data)
 		proc_exit(0);
 	}
 	if (!waiting_for_ping_response)
-	{
 		WalSndKeepalive(true);
-		waiting_for_ping_response = true;
-	}
 }
 
 /*
@@ -3256,7 +3240,7 @@ offset_to_interval(TimeOffset offset)
 Datum
 pg_stat_get_wal_senders(PG_FUNCTION_ARGS)
 {
-#define PG_STAT_GET_WAL_SENDERS_COLS	15
+#define PG_STAT_GET_WAL_SENDERS_COLS	12
 	ReturnSetInfo *rsinfo = (ReturnSetInfo *) fcinfo->resultinfo;
 	TupleDesc	tupdesc;
 	Tuplestorestate *tupstore;
@@ -3310,9 +3294,6 @@ pg_stat_get_wal_senders(PG_FUNCTION_ARGS)
 		int			pid;
 		WalSndState state;
 		TimestampTz replyTime;
-		int64		spillTxns;
-		int64		spillCount;
-		int64		spillBytes;
 		bool		is_sync_standby;
 		Datum		values[PG_STAT_GET_WAL_SENDERS_COLS];
 		bool		nulls[PG_STAT_GET_WAL_SENDERS_COLS];
@@ -3336,9 +3317,6 @@ pg_stat_get_wal_senders(PG_FUNCTION_ARGS)
 		applyLag = walsnd->applyLag;
 		priority = walsnd->sync_standby_priority;
 		replyTime = walsnd->replyTime;
-		spillTxns = walsnd->spillTxns;
-		spillCount = walsnd->spillCount;
-		spillBytes = walsnd->spillBytes;
 		SpinLockRelease(&walsnd->mutex);
 
 		/*
@@ -3436,11 +3414,6 @@ pg_stat_get_wal_senders(PG_FUNCTION_ARGS)
 				nulls[11] = true;
 			else
 				values[11] = TimestampTzGetDatum(replyTime);
-
-			/* spill to disk */
-			values[12] = Int64GetDatum(spillTxns);
-			values[13] = Int64GetDatum(spillCount);
-			values[14] = Int64GetDatum(spillBytes);
 		}
 
 		tuplestore_putvalues(tupstore, tupdesc, values, nulls);
@@ -3453,10 +3426,13 @@ pg_stat_get_wal_senders(PG_FUNCTION_ARGS)
 }
 
 /*
-  * This function is used to send a keepalive message to standby.
-  * If requestReply is set, sets a flag in the message requesting the standby
-  * to send a message back to us, for heartbeat purposes.
-  */
+ * Send a keepalive message to standby.
+ *
+ * If requestReply is set, the message requests the other party to send
+ * a message back to us, for heartbeat purposes.  We also set a flag to
+ * let nearby code that we're waiting for that response, to avoid
+ * repeated requests.
+ */
 static void
 WalSndKeepalive(bool requestReply)
 {
@@ -3471,6 +3447,10 @@ WalSndKeepalive(bool requestReply)
 
 	/* ... and send it wrapped in CopyData */
 	pq_putmessage_noblock('d', output_message.data, output_message.len);
+
+	/* Set local flag */
+	if (requestReply)
+		waiting_for_ping_response = true;
 }
 
 /*
@@ -3501,7 +3481,6 @@ WalSndKeepaliveIfNecessary(void)
 	if (last_processing >= ping_time)
 	{
 		WalSndKeepalive(true);
-		waiting_for_ping_response = true;
 
 		/* Try to flush pending output to the client */
 		if (pq_flush_if_writable() != 0)
@@ -3676,22 +3655,4 @@ LagTrackerRead(int head, XLogRecPtr lsn, TimestampTz now)
 	/* Return the elapsed time since local flush time in microseconds. */
 	Assert(time != 0);
 	return now - time;
-}
-
-static void
-UpdateSpillStats(LogicalDecodingContext *ctx)
-{
-	ReorderBuffer *rb = ctx->reorder;
-
-	elog(DEBUG2, "UpdateSpillStats: updating stats %p %lld %lld %lld",
-		 rb,
-		 (long long) rb->spillTxns,
-		 (long long) rb->spillCount,
-		 (long long) rb->spillBytes);
-
-	SpinLockAcquire(&MyWalSnd->mutex);
-	MyWalSnd->spillTxns = rb->spillTxns;
-	MyWalSnd->spillCount = rb->spillCount;
-	MyWalSnd->spillBytes = rb->spillBytes;
-	SpinLockRelease(&MyWalSnd->mutex);
 }

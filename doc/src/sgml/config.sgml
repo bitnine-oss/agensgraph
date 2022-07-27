@@ -1216,16 +1216,22 @@ include_dir 'conf.d'
       </term>
       <listitem>
        <para>
-        Specifies a list of <acronym>SSL</acronym> cipher suites that are allowed to be
-        used on secure connections.  See
-        the <citerefentry><refentrytitle>ciphers</refentrytitle></citerefentry> manual page
-        in the <application>OpenSSL</application> package for the syntax of this setting
-        and a list of supported values.
-        This parameter can only be set in the <filename>postgresql.conf</filename>
-        file or on the server command line.
-        The default value is <literal>HIGH:MEDIUM:+3DES:!aNULL</literal>.  The
-        default is usually a reasonable choice unless you have specific
-        security requirements.
+        Specifies a list of <acronym>SSL</acronym> cipher suites that are
+        allowed to be used by SSL connections.  See the
+        <citerefentry><refentrytitle>ciphers</refentrytitle></citerefentry>
+        manual page in the <application>OpenSSL</application> package for the
+        syntax of this setting and a list of supported values.  Only
+        connections using TLS version 1.2 and lower are affected.  There is
+        currently no setting that controls the cipher choices used by TLS
+        version 1.3 connections.  The default value is
+        <literal>HIGH:MEDIUM:+3DES:!aNULL</literal>.  The default is usually a
+        reasonable choice unless you have specific security requirements.
+       </para>
+
+       <para>
+        This parameter can only be set in the
+        <filename>postgresql.conf</filename> file or on the server command
+        line.
        </para>
 
        <para>
@@ -1657,21 +1663,63 @@ include_dir 'conf.d'
       </term>
       <listitem>
        <para>
-        Sets the maximum amount of memory to be used by a query operation
+        Sets the base maximum amount of memory to be used by a query operation
         (such as a sort or hash table) before writing to temporary disk files.
         If this value is specified without units, it is taken as kilobytes.
         The default value is four megabytes (<literal>4MB</literal>).
         Note that for a complex query, several sort or hash operations might be
-        running in parallel; each operation will be allowed to use as much memory
-        as this value specifies before it starts to write data into temporary
-        files. Also, several running sessions could be doing such operations
-        concurrently.  Therefore, the total memory used could be many
-        times the value of <varname>work_mem</varname>; it is necessary to
-        keep this fact in mind when choosing the value. Sort operations are
-        used for <literal>ORDER BY</literal>, <literal>DISTINCT</literal>, and
-        merge joins.
+        running in parallel; each operation will generally be allowed
+        to use as much memory as this value specifies before it starts
+        to write data into temporary files.  Also, several running
+        sessions could be doing such operations concurrently.
+        Therefore, the total memory used could be many times the value
+        of <varname>work_mem</varname>; it is necessary to keep this
+        fact in mind when choosing the value.  Sort operations are used
+        for <literal>ORDER BY</literal>, <literal>DISTINCT</literal>,
+        and merge joins.
         Hash tables are used in hash joins, hash-based aggregation, and
         hash-based processing of <literal>IN</literal> subqueries.
+       </para>
+       <para>
+        Hash-based operations are generally more sensitive to memory
+        availability than equivalent sort-based operations.  The
+        memory available for hash tables is computed by multiplying
+        <varname>work_mem</varname> by
+        <varname>hash_mem_multiplier</varname>.  This makes it
+        possible for hash-based operations to use an amount of memory
+        that exceeds the usual <varname>work_mem</varname> base
+        amount.
+       </para>
+      </listitem>
+     </varlistentry>
+
+     <varlistentry id="guc-hash-mem-multiplier" xreflabel="hash_mem_multiplier">
+      <term><varname>hash_mem_multiplier</varname> (<type>floating point</type>)
+      <indexterm>
+       <primary><varname>hash_mem_multiplier</varname> configuration parameter</primary>
+      </indexterm>
+      </term>
+      <listitem>
+       <para>
+        Used to compute the maximum amount of memory that hash-based
+        operations can use.  The final limit is determined by
+        multiplying <varname>work_mem</varname> by
+        <varname>hash_mem_multiplier</varname>.  The default value is
+        1.0, which makes hash-based operations subject to the same
+        simple <varname>work_mem</varname> maximum as sort-based
+        operations.
+       </para>
+       <para>
+        Consider increasing <varname>hash_mem_multiplier</varname> in
+        environments where spilling by query operations is a regular
+        occurrence, especially when simply increasing
+        <varname>work_mem</varname> results in memory pressure (memory
+        pressure typically takes the form of intermittent out of
+        memory errors).  A setting of 1.5 or 2.0 may be effective with
+        mixed workloads.  Higher settings in the range of 2.0 - 8.0 or
+        more may be effective in environments where
+        <varname>work_mem</varname> has already been increased to 40MB
+        or more.
        </para>
       </listitem>
      </varlistentry>
@@ -3124,7 +3172,7 @@ include_dir 'conf.d'
         checkpoints. This is a soft limit; WAL size can exceed
         <varname>max_wal_size</varname> under special circumstances, such as
         heavy load, a failing <varname>archive_command</varname>, or a high
-        <varname>wal_keep_segments</varname> setting.
+        <varname>wal_keep_size</varname> setting.
         If this value is specified without units, it is taken as megabytes.
         The default is 1 GB.
         Increasing this parameter can increase the amount of time needed for
@@ -3751,21 +3799,21 @@ restore_command = 'copy "C:\\server\\archivedir\\%f" "%p"'  # Windows
        </listitem>
       </varlistentry>
 
-      <varlistentry id="guc-wal-keep-segments" xreflabel="wal_keep_segments">
-       <term><varname>wal_keep_segments</varname> (<type>integer</type>)
+      <varlistentry id="guc-wal-keep-size" xreflabel="wal_keep_size">
+       <term><varname>wal_keep_size</varname> (<type>integer</type>)
        <indexterm>
-        <primary><varname>wal_keep_segments</varname> configuration parameter</primary>
+        <primary><varname>wal_keep_size</varname> configuration parameter</primary>
        </indexterm>
        </term>
        <listitem>
        <para>
-        Specifies the minimum number of past log file segments kept in the
+        Specifies the minimum size of past log file segments kept in the
         <filename>pg_wal</filename>
         directory, in case a standby server needs to fetch them for streaming
-        replication. Each segment is normally 16 megabytes. If a standby
+        replication. If a standby
         server connected to the sending server falls behind by more than
-        <varname>wal_keep_segments</varname> segments, the sending server might remove
-        a WAL segment still needed by the standby, in which case the
+        <varname>wal_keep_size</varname> megabytes, the sending server might
+        remove a WAL segment still needed by the standby, in which case the
         replication connection will be terminated.  Downstream connections
         will also eventually fail as a result.  (However, the standby
         server can recover by fetching the segment from archive, if WAL
@@ -3773,14 +3821,15 @@ restore_command = 'copy "C:\\server\\archivedir\\%f" "%p"'  # Windows
        </para>
 
        <para>
-        This sets only the minimum number of segments retained in
+        This sets only the minimum size of segments retained in
         <filename>pg_wal</filename>; the system might need to retain more segments
         for WAL archival or to recover from a checkpoint. If
-        <varname>wal_keep_segments</varname> is zero (the default), the system
+        <varname>wal_keep_size</varname> is zero (the default), the system
         doesn't keep any extra segments for standby purposes, so the number
         of old WAL segments available to standby servers is a function of
         the location of the previous checkpoint and status of WAL
         archiving.
+        If this value is specified without units, it is taken as megabytes.
         This parameter can only be set in the
         <filename>postgresql.conf</filename> file or on the server command line.
        </para>
@@ -4574,10 +4623,10 @@ ANY <replaceable class="parameter">num_sync</replaceable> ( <replaceable class="
       </listitem>
      </varlistentry>
 
-     <varlistentry id="guc-enable-incrementalsort" xreflabel="enable_incrementalsort">
-      <term><varname>enable_incrementalsort</varname> (<type>boolean</type>)
+     <varlistentry id="guc-enable-incremental-sort" xreflabel="enable_incremental_sort">
+      <term><varname>enable_incremental_sort</varname> (<type>boolean</type>)
       <indexterm>
-       <primary><varname>enable_incrementalsort</varname> configuration parameter</primary>
+       <primary><varname>enable_incremental_sort</varname> configuration parameter</primary>
       </indexterm>
       </term>
       <listitem>
@@ -4802,23 +4851,6 @@ ANY <replaceable class="parameter">num_sync</replaceable> ( <replaceable class="
        <para>
         Enables or disables the query planner's use of <acronym>TID</acronym>
         scan plan types. The default is <literal>on</literal>.
-       </para>
-      </listitem>
-     </varlistentry>
-
-     <varlistentry id="guc-hashagg-avoid-disk-plan" xreflabel="hashagg_avoid_disk_plan">
-      <term><varname>hashagg_avoid_disk_plan</varname> (<type>boolean</type>)
-      <indexterm>
-       <primary><varname>hashagg_avoid_disk_plan</varname> configuration parameter</primary>
-      </indexterm>
-      </term>
-      <listitem>
-       <para>
-        If set to <literal>on</literal>, causes the planner to avoid choosing
-        hashed aggregation plans that are expected to use the disk. If hashed
-        aggregation is chosen, it may still require the use of disk at
-        execution time, even if this parameter is enabled. The default is
-        <literal>off</literal>.
        </para>
       </listitem>
      </varlistentry>
@@ -5761,7 +5793,7 @@ local0.*    /var/log/postgresql
         by <xref linkend="guc-log-timezone"/>.)
         The supported <literal>%</literal>-escapes are similar to those
         listed in the Open Group's <ulink
-        url="http://pubs.opengroup.org/onlinepubs/009695399/functions/strftime.html">strftime
+        url="https://pubs.opengroup.org/onlinepubs/009695399/functions/strftime.html">strftime
         </ulink> specification.
         Note that the system's <function>strftime</function> is not used
         directly, so platform-specific (nonstandard) extensions do not work.

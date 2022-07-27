@@ -6052,7 +6052,7 @@ printACLColumn(PQExpBuffer buf, const char *colname)
  * \dAc
  * Lists operator classes
  *
- * Takes an optional regexps to filter by index access method and type.
+ * Takes optional regexps to filter by index access method and input data type.
  */
 bool
 listOperatorClasses(const char *access_method_pattern,
@@ -6067,17 +6067,18 @@ listOperatorClasses(const char *access_method_pattern,
 	initPQExpBuffer(&buf);
 
 	printfPQExpBuffer(&buf,
-					  "SELECT DISTINCT"
+					  "SELECT\n"
 					  "  am.amname AS \"%s\",\n"
-					  "  c.opcintype::pg_catalog.regtype AS \"%s\",\n"
-					  "  (CASE WHEN c.opckeytype <> 0 AND c.opckeytype <> c.opcintype\n"
-					  "    THEN c.opckeytype\n"
-					  "    ELSE NULL -- c.opcintype\n"
-					  "  END)::pg_catalog.regtype AS \"%s\",\n"
+					  "  pg_catalog.format_type(c.opcintype, NULL) AS \"%s\",\n"
+					  "  CASE\n"
+					  "    WHEN c.opckeytype <> 0 AND c.opckeytype <> c.opcintype\n"
+					  "    THEN pg_catalog.format_type(c.opckeytype, NULL)\n"
+					  "    ELSE NULL\n"
+					  "  END AS \"%s\",\n"
 					  "  CASE\n"
 					  "    WHEN pg_catalog.pg_opclass_is_visible(c.oid)\n"
-					  "    THEN format('%%I', c.opcname)\n"
-					  "    ELSE format('%%I.%%I', n.nspname, c.opcname)\n"
+					  "    THEN pg_catalog.format('%%I', c.opcname)\n"
+					  "    ELSE pg_catalog.format('%%I.%%I', n.nspname, c.opcname)\n"
 					  "  END AS \"%s\",\n"
 					  "  (CASE WHEN c.opcdefault\n"
 					  "    THEN '%s'\n"
@@ -6094,8 +6095,8 @@ listOperatorClasses(const char *access_method_pattern,
 		appendPQExpBuffer(&buf,
 						  ",\n  CASE\n"
 						  "    WHEN pg_catalog.pg_opfamily_is_visible(of.oid)\n"
-						  "    THEN format('%%I', of.opfname)\n"
-						  "    ELSE format('%%I.%%I', ofn.nspname, of.opfname)\n"
+						  "    THEN pg_catalog.format('%%I', of.opfname)\n"
+						  "    ELSE pg_catalog.format('%%I.%%I', ofn.nspname, of.opfname)\n"
 						  "  END AS \"%s\",\n"
 						  " pg_catalog.pg_get_userbyid(c.opcowner) AS \"%s\"\n",
 						  gettext_noop("Operator family"),
@@ -6105,6 +6106,7 @@ listOperatorClasses(const char *access_method_pattern,
 					  "  LEFT JOIN pg_catalog.pg_am am on am.oid = c.opcmethod\n"
 					  "  LEFT JOIN pg_catalog.pg_namespace n ON n.oid = c.opcnamespace\n"
 					  "  LEFT JOIN pg_catalog.pg_type t ON t.oid = c.opcintype\n"
+					  "  LEFT JOIN pg_catalog.pg_namespace tn ON tn.oid = t.typnamespace\n"
 		);
 	if (verbose)
 		appendPQExpBuffer(&buf,
@@ -6115,8 +6117,13 @@ listOperatorClasses(const char *access_method_pattern,
 		have_where = processSQLNamePattern(pset.db, &buf, access_method_pattern,
 										   false, false, NULL, "am.amname", NULL, NULL);
 	if (type_pattern)
+	{
+		/* Match type name pattern against either internal or external name */
 		processSQLNamePattern(pset.db, &buf, type_pattern, have_where, false,
-							  NULL, "t.typname", NULL, NULL);
+							  "tn.nspname", "t.typname",
+							  "pg_catalog.format_type(t.oid, NULL)",
+							  "pg_catalog.pg_type_is_visible(t.oid)");
+	}
 
 	appendPQExpBufferStr(&buf, "ORDER BY 1, 2, 4;");
 	res = PSQLexec(buf.data);
@@ -6140,7 +6147,7 @@ listOperatorClasses(const char *access_method_pattern,
  * \dAf
  * Lists operator families
  *
- * Takes an optional regexps to filter by index access method and type.
+ * Takes optional regexps to filter by index access method and input data type.
  */
 bool
 listOperatorFamilies(const char *access_method_pattern,
@@ -6155,16 +6162,16 @@ listOperatorFamilies(const char *access_method_pattern,
 	initPQExpBuffer(&buf);
 
 	printfPQExpBuffer(&buf,
-					  "SELECT DISTINCT"
+					  "SELECT\n"
 					  "  am.amname AS \"%s\",\n"
 					  "  CASE\n"
 					  "    WHEN pg_catalog.pg_opfamily_is_visible(f.oid)\n"
-					  "    THEN format('%%I', f.opfname)\n"
-					  "    ELSE format('%%I.%%I', n.nspname, f.opfname)\n"
+					  "    THEN pg_catalog.format('%%I', f.opfname)\n"
+					  "    ELSE pg_catalog.format('%%I.%%I', n.nspname, f.opfname)\n"
 					  "  END AS \"%s\",\n"
 					  "  (SELECT\n"
-					  "     string_agg(format_type(oc.opcintype, -1), ', ')\n"
-					  "   FROM pg_opclass oc\n"
+					  "     pg_catalog.string_agg(pg_catalog.format_type(oc.opcintype, NULL), ', ')\n"
+					  "   FROM pg_catalog.pg_opclass oc\n"
 					  "   WHERE oc.opcfamily = f.oid) \"%s\"",
 					  gettext_noop("AM"),
 					  gettext_noop("Operator family"),
@@ -6185,15 +6192,19 @@ listOperatorFamilies(const char *access_method_pattern,
 	if (type_pattern)
 	{
 		appendPQExpBuffer(&buf,
-						  "\n  %s EXISTS (\n"
+						  "  %s EXISTS (\n"
 						  "    SELECT 1\n"
-						  "    FROM pg_type t\n"
-						  "    JOIN pg_opclass oc ON oc.opcintype = t.oid\n"
-						  "    WHERE oc.opcfamily = f.oid",
+						  "    FROM pg_catalog.pg_type t\n"
+						  "    JOIN pg_catalog.pg_opclass oc ON oc.opcintype = t.oid\n"
+						  "    LEFT JOIN pg_catalog.pg_namespace tn ON tn.oid = t.typnamespace\n"
+						  "    WHERE oc.opcfamily = f.oid\n",
 						  have_where ? "AND" : "WHERE");
+		/* Match type name pattern against either internal or external name */
 		processSQLNamePattern(pset.db, &buf, type_pattern, true, false,
-							  NULL, "t.typname", NULL, NULL);
-		appendPQExpBuffer(&buf, ")");
+							  "tn.nspname", "t.typname",
+							  "pg_catalog.format_type(t.oid, NULL)",
+							  "pg_catalog.pg_type_is_visible(t.oid)");
+		appendPQExpBuffer(&buf, "  )\n");
 	}
 
 	appendPQExpBufferStr(&buf, "ORDER BY 1, 2;");
@@ -6218,7 +6229,7 @@ listOperatorFamilies(const char *access_method_pattern,
  * \dAo
  * Lists operators of operator families
  *
- * Takes an optional regexps to filter by index access method and operator
+ * Takes optional regexps to filter by index access method and operator
  * family.
  */
 bool
@@ -6239,38 +6250,29 @@ listOpFamilyOperators(const char *access_method_pattern,
 					  "  am.amname AS \"%s\",\n"
 					  "  CASE\n"
 					  "    WHEN pg_catalog.pg_opfamily_is_visible(of.oid)\n"
-					  "    THEN format('%%I', of.opfname)\n"
-					  "    ELSE format('%%I.%%I', nsf.nspname, of.opfname)\n"
+					  "    THEN pg_catalog.format('%%I', of.opfname)\n"
+					  "    ELSE pg_catalog.format('%%I.%%I', nsf.nspname, of.opfname)\n"
 					  "  END AS \"%s\",\n"
-					  "  format ('%%s (%%s, %%s)',\n"
-					  "    CASE\n"
-					  "      WHEN pg_catalog.pg_operator_is_visible(op.oid) \n"
-					  "      THEN op.oprname::pg_catalog.text \n"
-					  "      ELSE o.amopopr::pg_catalog.regoper::pg_catalog.text \n"
-					  "    END,\n"
-					  "    pg_catalog.format_type(o.amoplefttype, NULL),\n"
-					  "    pg_catalog.format_type(o.amoprighttype, NULL)\n"
-					  "  ) AS \"%s\"\n",
+					  "  o.amopopr::pg_catalog.regoperator AS \"%s\"\n,"
+					  "  o.amopstrategy AS \"%s\",\n"
+					  "  CASE o.amoppurpose\n"
+					  "    WHEN 'o' THEN '%s'\n"
+					  "    WHEN 's' THEN '%s'\n"
+					  "  END AS \"%s\"\n",
 					  gettext_noop("AM"),
 					  gettext_noop("Operator family"),
-					  gettext_noop("Operator"));
+					  gettext_noop("Operator"),
+					  gettext_noop("Strategy"),
+					  gettext_noop("ordering"),
+					  gettext_noop("search"),
+					  gettext_noop("Purpose"));
 
 	if (verbose)
 		appendPQExpBuffer(&buf,
-						  ", o.amopstrategy AS \"%s\",\n"
-						  "  CASE o.amoppurpose\n"
-						  "    WHEN 'o' THEN '%s'\n"
-						  "    WHEN 's' THEN '%s'\n"
-						  "  END AS \"%s\",\n"
-						  "  ofs.opfname AS \"%s\"\n",
-						  gettext_noop("Strategy"),
-						  gettext_noop("ordering"),
-						  gettext_noop("search"),
-						  gettext_noop("Purpose"),
+						  ", ofs.opfname AS \"%s\"\n",
 						  gettext_noop("Sort opfamily"));
 	appendPQExpBuffer(&buf,
 					  "FROM pg_catalog.pg_amop o\n"
-					  "  LEFT JOIN pg_catalog.pg_operator op ON op.oid = o.amopopr\n"
 					  "  LEFT JOIN pg_catalog.pg_opfamily of ON of.oid = o.amopfamily\n"
 					  "  LEFT JOIN pg_catalog.pg_am am ON am.oid = of.opfmethod AND am.oid = o.amopmethod\n"
 					  "  LEFT JOIN pg_catalog.pg_namespace nsf ON of.opfnamespace = nsf.oid\n");
@@ -6314,12 +6316,12 @@ listOpFamilyOperators(const char *access_method_pattern,
  * \dAp
  * Lists support functions of operator families
  *
- * Takes an optional regexps to filter by index access method and operator
+ * Takes optional regexps to filter by index access method and operator
  * family.
  */
 bool
 listOpFamilyFunctions(const char *access_method_pattern,
-					  const char *family_pattern)
+					  const char *family_pattern, bool verbose)
 {
 	PQExpBufferData buf;
 	PGresult   *res;
@@ -6334,19 +6336,26 @@ listOpFamilyFunctions(const char *access_method_pattern,
 					  "  am.amname AS \"%s\",\n"
 					  "  CASE\n"
 					  "    WHEN pg_catalog.pg_opfamily_is_visible(of.oid)\n"
-					  "    THEN format('%%I', of.opfname)\n"
-					  "    ELSE format('%%I.%%I', ns.nspname, of.opfname)\n"
+					  "    THEN pg_catalog.format('%%I', of.opfname)\n"
+					  "    ELSE pg_catalog.format('%%I.%%I', ns.nspname, of.opfname)\n"
 					  "  END AS \"%s\",\n"
 					  "  pg_catalog.format_type(ap.amproclefttype, NULL) AS \"%s\",\n"
 					  "  pg_catalog.format_type(ap.amprocrighttype, NULL) AS \"%s\",\n"
-					  "  ap.amprocnum AS \"%s\"\n,"
-					  "  p.proname AS \"%s\"\n",
+					  "  ap.amprocnum AS \"%s\"\n",
 					  gettext_noop("AM"),
 					  gettext_noop("Operator family"),
-					  gettext_noop("Left arg type"),
-					  gettext_noop("Right arg type"),
-					  gettext_noop("Number"),
-					  gettext_noop("Function"));
+					  gettext_noop("Registered left type"),
+					  gettext_noop("Registered right type"),
+					  gettext_noop("Number"));
+
+	if (!verbose)
+		appendPQExpBuffer(&buf,
+						  ", p.proname AS \"%s\"\n",
+						  gettext_noop("Function"));
+	else
+		appendPQExpBuffer(&buf,
+						  ", ap.amproc::pg_catalog.regprocedure AS \"%s\"\n",
+						  gettext_noop("Function"));
 
 	appendPQExpBuffer(&buf,
 					  "FROM pg_catalog.pg_amproc ap\n"

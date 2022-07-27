@@ -958,11 +958,10 @@ make_union_unique(SetOperationStmt *op, Path *path, List *tlist,
 
 	/*
 	 * XXX for the moment, take the number of distinct groups as equal to the
-	 * total input size, ie, the worst case.  This is too conservative, but we
-	 * don't want to risk having the hashtable overrun memory; also, it's not
-	 * clear how to get a decent estimate of the true size.  One should note
-	 * as well the propensity of novices to write UNION rather than UNION ALL
-	 * even when they don't expect any duplicates...
+	 * total input size, ie, the worst case.  This is too conservative, but
+	 * it's not clear how to get a decent estimate of the true size.  One
+	 * should note as well the propensity of novices to write UNION rather
+	 * than UNION ALL even when they don't expect any duplicates...
 	 */
 	dNumGroups = path->rows;
 
@@ -1033,6 +1032,7 @@ choose_hashed_setop(PlannerInfo *root, List *groupClauses,
 					const char *construct)
 {
 	int			numGroupCols = list_length(groupClauses);
+	int			hash_mem = get_hash_mem();
 	bool		can_sort;
 	bool		can_hash;
 	Size		hashentrysize;
@@ -1064,15 +1064,17 @@ choose_hashed_setop(PlannerInfo *root, List *groupClauses,
 
 	/*
 	 * Don't do it if it doesn't look like the hashtable will fit into
-	 * work_mem.
+	 * hash_mem.
 	 */
 	hashentrysize = MAXALIGN(input_path->pathtarget->width) + MAXALIGN(SizeofMinimalTupleHeader);
 
-	if (hashentrysize * dNumGroups > work_mem * 1024L)
+	if (hashentrysize * dNumGroups > hash_mem * 1024L)
 		return false;
 
 	/*
-	 * See if the estimated cost is no more than doing it the other way.
+	 * See if the estimated cost is no more than doing it the other way.  We
+	 * deliberately give the hash case more memory when hash_mem exceeds
+	 * standard work mem (i.e. when hash_mem_multiplier exceeds 1.0).
 	 *
 	 * We need to consider input_plan + hashagg versus input_plan + sort +
 	 * group.  Note that the actual result plan might involve a SetOp or

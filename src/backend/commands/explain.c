@@ -2798,7 +2798,7 @@ show_sort_info(SortState *sortstate, ExplainState *es)
 		TuplesortInstrumentation stats;
 		const char *sortMethod;
 		const char *spaceType;
-		long		spaceUsed;
+		int64		spaceUsed;
 
 		tuplesort_get_stats(state, &stats);
 		sortMethod = tuplesort_method_name(stats.sortMethod);
@@ -2808,7 +2808,7 @@ show_sort_info(SortState *sortstate, ExplainState *es)
 		if (es->format == EXPLAIN_FORMAT_TEXT)
 		{
 			ExplainIndentText(es);
-			appendStringInfo(es->str, "Sort Method: %s  %s: %ldkB\n",
+			appendStringInfo(es->str, "Sort Method: %s  %s: " INT64_FORMAT "kB\n",
 							 sortMethod, spaceType, spaceUsed);
 		}
 		else
@@ -2837,7 +2837,7 @@ show_sort_info(SortState *sortstate, ExplainState *es)
 			TuplesortInstrumentation *sinstrument;
 			const char *sortMethod;
 			const char *spaceType;
-			long		spaceUsed;
+			int64		spaceUsed;
 
 			sinstrument = &sortstate->shared_info->sinstrument[n];
 			if (sinstrument->sortMethod == SORT_TYPE_STILL_IN_PROGRESS)
@@ -2853,7 +2853,7 @@ show_sort_info(SortState *sortstate, ExplainState *es)
 			{
 				ExplainIndentText(es);
 				appendStringInfo(es->str,
-								 "Sort Method: %s  %s: %ldkB\n",
+								 "Sort Method: %s  %s: " INT64_FORMAT "kB\n",
 								 sortMethod, spaceType, spaceUsed);
 			}
 			else
@@ -2917,23 +2917,23 @@ show_incremental_sort_group_info(IncrementalSortGroupInfo *groupInfo,
 
 		if (groupInfo->maxMemorySpaceUsed > 0)
 		{
-			long		avgSpace = groupInfo->totalMemorySpaceUsed / groupInfo->groupCount;
+			int64		avgSpace = groupInfo->totalMemorySpaceUsed / groupInfo->groupCount;
 			const char *spaceTypeName;
 
 			spaceTypeName = tuplesort_space_type_name(SORT_SPACE_TYPE_MEMORY);
-			appendStringInfo(es->str, "  Average %s: %ldkB  Peak %s: %ldkB",
+			appendStringInfo(es->str, "  Average %s: " INT64_FORMAT "kB  Peak %s: " INT64_FORMAT "kB",
 							 spaceTypeName, avgSpace,
 							 spaceTypeName, groupInfo->maxMemorySpaceUsed);
 		}
 
 		if (groupInfo->maxDiskSpaceUsed > 0)
 		{
-			long		avgSpace = groupInfo->totalDiskSpaceUsed / groupInfo->groupCount;
+			int64		avgSpace = groupInfo->totalDiskSpaceUsed / groupInfo->groupCount;
 
 			const char *spaceTypeName;
 
 			spaceTypeName = tuplesort_space_type_name(SORT_SPACE_TYPE_DISK);
-			appendStringInfo(es->str, "  Average %s: %ldkB  Peak %s: %ldkB",
+			appendStringInfo(es->str, "  Average %s: " INT64_FORMAT "kB  Peak %s: " INT64_FORMAT "kB",
 							 spaceTypeName, avgSpace,
 							 spaceTypeName, groupInfo->maxDiskSpaceUsed);
 		}
@@ -2951,7 +2951,7 @@ show_incremental_sort_group_info(IncrementalSortGroupInfo *groupInfo,
 
 		if (groupInfo->maxMemorySpaceUsed > 0)
 		{
-			long		avgSpace = groupInfo->totalMemorySpaceUsed / groupInfo->groupCount;
+			int64		avgSpace = groupInfo->totalMemorySpaceUsed / groupInfo->groupCount;
 			const char *spaceTypeName;
 			StringInfoData memoryName;
 
@@ -2968,7 +2968,7 @@ show_incremental_sort_group_info(IncrementalSortGroupInfo *groupInfo,
 		}
 		if (groupInfo->maxDiskSpaceUsed > 0)
 		{
-			long		avgSpace = groupInfo->totalDiskSpaceUsed / groupInfo->groupCount;
+			int64		avgSpace = groupInfo->totalDiskSpaceUsed / groupInfo->groupCount;
 			const char *spaceTypeName;
 			StringInfoData diskName;
 
@@ -3240,23 +3240,22 @@ show_hashagg_info(AggState *aggstate, ExplainState *es)
 	if (es->format != EXPLAIN_FORMAT_TEXT)
 	{
 
-		if (es->costs && aggstate->hash_planned_partitions > 0)
-		{
+		if (es->costs)
 			ExplainPropertyInteger("Planned Partitions", NULL,
 								   aggstate->hash_planned_partitions, es);
-		}
 
-		if (!es->analyze)
-			return;
-
-		/* EXPLAIN ANALYZE */
-		ExplainPropertyInteger("Peak Memory Usage", "kB", memPeakKb, es);
-		if (aggstate->hash_batches_used > 0)
+		/*
+		 * During parallel query the leader may have not helped out.  We
+		 * detect this by checking how much memory it used.  If we find it
+		 * didn't do any work then we don't show its properties.
+		 */
+		if (es->analyze && aggstate->hash_mem_peak > 0)
 		{
-			ExplainPropertyInteger("Disk Usage", "kB",
-								   aggstate->hash_disk_used, es);
 			ExplainPropertyInteger("HashAgg Batches", NULL,
 								   aggstate->hash_batches_used, es);
+			ExplainPropertyInteger("Peak Memory Usage", "kB", memPeakKb, es);
+			ExplainPropertyInteger("Disk Usage", "kB",
+								   aggstate->hash_disk_used, es);
 		}
 	}
 	else
@@ -3271,26 +3270,32 @@ show_hashagg_info(AggState *aggstate, ExplainState *es)
 			gotone = true;
 		}
 
-		if (!es->analyze)
+		/*
+		 * During parallel query the leader may have not helped out.  We
+		 * detect this by checking how much memory it used.  If we find it
+		 * didn't do any work then we don't show its properties.
+		 */
+		if (es->analyze && aggstate->hash_mem_peak > 0)
 		{
-			if (gotone)
-				appendStringInfoChar(es->str, '\n');
-			return;
+			if (!gotone)
+				ExplainIndentText(es);
+			else
+				appendStringInfoString(es->str, "  ");
+
+			appendStringInfo(es->str, "Batches: %d  Memory Usage: " INT64_FORMAT "kB",
+							 aggstate->hash_batches_used, memPeakKb);
+			gotone = true;
+
+			/* Only display disk usage if we spilled to disk */
+			if (aggstate->hash_batches_used > 1)
+			{
+				appendStringInfo(es->str, "  Disk Usage: " UINT64_FORMAT "kB",
+					aggstate->hash_disk_used);
+			}
 		}
 
-		if (!gotone)
-			ExplainIndentText(es);
-		else
-			appendStringInfoString(es->str, "  ");
-
-		appendStringInfo(es->str, "Peak Memory Usage: " INT64_FORMAT " kB",
-						 memPeakKb);
-
-		if (aggstate->hash_batches_used > 0)
-			appendStringInfo(es->str, "  Disk Usage: " UINT64_FORMAT " kB  HashAgg Batches: %d",
-							 aggstate->hash_disk_used,
-							 aggstate->hash_batches_used);
-		appendStringInfoChar(es->str, '\n');
+		if (gotone)
+			appendStringInfoChar(es->str, '\n');
 	}
 
 	/* Display stats for each parallel worker */
@@ -3303,6 +3308,9 @@ show_hashagg_info(AggState *aggstate, ExplainState *es)
 			int			hash_batches_used;
 
 			sinstrument = &aggstate->shared_info->sinstrument[n];
+			/* Skip workers that didn't do anything */
+			if (sinstrument->hash_mem_peak == 0)
+				continue;
 			hash_disk_used = sinstrument->hash_disk_used;
 			hash_batches_used = sinstrument->hash_batches_used;
 			memPeakKb = (sinstrument->hash_mem_peak + 1023) / 1024;
@@ -3314,25 +3322,22 @@ show_hashagg_info(AggState *aggstate, ExplainState *es)
 			{
 				ExplainIndentText(es);
 
-				appendStringInfo(es->str, "Peak Memory Usage: " INT64_FORMAT " kB",
-								 memPeakKb);
+				appendStringInfo(es->str, "Batches: %d  Memory Usage: " INT64_FORMAT "kB",
+								 hash_batches_used, memPeakKb);
 
-				if (hash_batches_used > 0)
-					appendStringInfo(es->str, "  Disk Usage: " UINT64_FORMAT " kB  HashAgg Batches: %d",
-									 hash_disk_used, hash_batches_used);
+				/* Only display disk usage if we spilled to disk */
+				if (hash_batches_used > 1)
+					appendStringInfo(es->str, "  Disk Usage: " UINT64_FORMAT "kB",
+									 hash_disk_used);
 				appendStringInfoChar(es->str, '\n');
 			}
 			else
 			{
+				ExplainPropertyInteger("HashAgg Batches", NULL,
+									   hash_batches_used, es);
 				ExplainPropertyInteger("Peak Memory Usage", "kB", memPeakKb,
 									   es);
-				if (hash_batches_used > 0)
-				{
-					ExplainPropertyInteger("Disk Usage", "kB", hash_disk_used,
-										   es);
-					ExplainPropertyInteger("HashAgg Batches", NULL,
-										   hash_batches_used, es);
-				}
+				ExplainPropertyInteger("Disk Usage", "kB", hash_disk_used, es);
 			}
 
 			if (es->workers_state)
