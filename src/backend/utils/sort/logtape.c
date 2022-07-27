@@ -170,7 +170,7 @@ typedef struct LogicalTape
 	 * numbers first).
 	 */
 	long	   *prealloc;
-	int		 	nprealloc;		/* number of elements in list */
+	int			nprealloc;		/* number of elements in list */
 	int			prealloc_size;	/* number of elements list can hold */
 } LogicalTape;
 
@@ -782,7 +782,7 @@ LogicalTapeWrite(LogicalTapeSet *lts, int tapenum,
 	Assert(lt->buffer_size == BLCKSZ);
 	while (size > 0)
 	{
-		if (lt->pos >= TapeBlockPayloadSize)
+		if (lt->pos >= (int) TapeBlockPayloadSize)
 		{
 			/* Buffer full, dump it out */
 			long		nextBlockNumber;

@@ -28,9 +28,7 @@ PostgreSQL documentation
  </refsynopsisdiv>
 
  <refsect1>
-  <title>
-   Description
-  </title>
+  <title>Description</title>
   <para>
    <application>pg_verifybackup</application> is used to check the
    integrity of a database cluster backup taken using
@@ -75,7 +73,7 @@ PostgreSQL documentation
    files won't be listed in the backup manifest. Only files are checked;
    the presence or absence of directories is not verified, except
    indirectly: if a directory is missing, any files it should have contained
-   will necessarily also be missing. 
+   will necessarily also be missing.
   </para>
 
   <para>
@@ -275,8 +273,7 @@ PostgreSQL documentation
 <prompt>$</prompt> <userinput>pg_basebackup -h mydbserver -D /usr/local/pgsql/data</userinput>
 <prompt>$</prompt> <userinput>edit /usr/local/pgsql/data/note.to.self</userinput>
 <prompt>$</prompt> <userinput>pg_verifybackup --ignore=note.to.self --skip-checksums /usr/local/pgsql/data</userinput>
-</screen>
-  </para>
+</screen></para>
 
  </refsect1>
 
