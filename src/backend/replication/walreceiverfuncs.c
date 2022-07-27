@@ -215,13 +215,19 @@ ShutdownWalRcv(void)
 /*
  * Request postmaster to start walreceiver.
  *
- * recptr indicates the position where streaming should begin, conninfo
- * is a libpq connection string to use, and slotname is, optionally, the name
- * of a replication slot to acquire.
+ * "recptr" indicates the position where streaming should begin.  "conninfo"
+ * is a libpq connection string to use.  "slotname" is, optionally, the name
+ * of a replication slot to acquire.  "create_temp_slot" indicates to create
+ * a temporary slot when no "slotname" is given.
+ *
+ * WAL receivers do not directly load GUC parameters used for the connection
+ * to the primary, and rely on the values passed down by the caller of this
+ * routine instead.  Hence, the addition of any new parameters should happen
+ * through this code path.
  */
 void
 RequestXLogStreaming(TimeLineID tli, XLogRecPtr recptr, const char *conninfo,
-					 const char *slotname)
+					 const char *slotname, bool create_temp_slot)
 {
 	WalRcvData *walrcv = WalRcv;
 	bool		launch = false;
@@ -248,10 +254,22 @@ RequestXLogStreaming(TimeLineID tli, XLogRecPtr recptr, const char *conninfo,
 	else
 		walrcv->conninfo[0] = '\0';
 
-	if (slotname != NULL)
+	/*
+	 * Use configured replication slot if present, and ignore the value
+	 * of create_temp_slot as the slot name should be persistent.  Otherwise,
+	 * use create_temp_slot to determine whether this WAL receiver should
+	 * create a temporary slot by itself and use it, or not.
+	 */
+	if (slotname != NULL && slotname[0] != '\0')
+	{
 		strlcpy((char *) walrcv->slotname, slotname, NAMEDATALEN);
+		walrcv->is_temp_slot = false;
+	}
 	else
+	{
 		walrcv->slotname[0] = '\0';
+		walrcv->is_temp_slot = create_temp_slot;
+	}
 
 	if (walrcv->walRcvState == WALRCV_STOPPED)
 	{
@@ -264,11 +282,11 @@ RequestXLogStreaming(TimeLineID tli, XLogRecPtr recptr, const char *conninfo,
 
 	/*
 	 * If this is the first startup of walreceiver (on this timeline),
-	 * initialize receivedUpto and latestChunkStart to the starting point.
+	 * initialize flushedUpto and latestChunkStart to the starting point.
 	 */
 	if (walrcv->receiveStart == 0 || walrcv->receivedTLI != tli)
 	{
-		walrcv->receivedUpto = recptr;
+		walrcv->flushedUpto = recptr;
 		walrcv->receivedTLI = tli;
 		walrcv->latestChunkStart = recptr;
 	}
@@ -286,7 +304,7 @@ RequestXLogStreaming(TimeLineID tli, XLogRecPtr recptr, const char *conninfo,
 }
 
 /*
- * Returns the last+1 byte position that walreceiver has written.
+ * Returns the last+1 byte position that walreceiver has flushed.
  *
  * Optionally, returns the previous chunk start, that is the first byte
  * written in the most recent walreceiver flush cycle.  Callers not
@@ -294,13 +312,13 @@ RequestXLogStreaming(TimeLineID tli, XLogRecPtr recptr, const char *conninfo,
  * receiveTLI.
  */
 XLogRecPtr
-GetWalRcvWriteRecPtr(XLogRecPtr *latestChunkStart, TimeLineID *receiveTLI)
+GetWalRcvFlushRecPtr(XLogRecPtr *latestChunkStart, TimeLineID *receiveTLI)
 {
 	WalRcvData *walrcv = WalRcv;
 	XLogRecPtr	recptr;
 
 	SpinLockAcquire(&walrcv->mutex);
-	recptr = walrcv->receivedUpto;
+	recptr = walrcv->flushedUpto;
 	if (latestChunkStart)
 		*latestChunkStart = walrcv->latestChunkStart;
 	if (receiveTLI)
@@ -308,6 +326,18 @@ GetWalRcvWriteRecPtr(XLogRecPtr *latestChunkStart, TimeLineID *receiveTLI)
 	SpinLockRelease(&walrcv->mutex);
 
 	return recptr;
+}
+
+/*
+ * Returns the last+1 byte position that walreceiver has written.
+ * This returns a recently written value without taking a lock.
+ */
+XLogRecPtr
+GetWalRcvWriteRecPtr(void)
+{
+	WalRcvData *walrcv = WalRcv;
+
+	return pg_atomic_read_u64(&walrcv->writtenUpto);
 }
 
 /*
@@ -327,7 +357,7 @@ GetReplicationApplyDelay(void)
 	TimestampTz chunkReplayStartTime;
 
 	SpinLockAcquire(&walrcv->mutex);
-	receivePtr = walrcv->receivedUpto;
+	receivePtr = walrcv->flushedUpto;
 	SpinLockRelease(&walrcv->mutex);
 
 	replayPtr = GetXLogReplayRecPtr(NULL);

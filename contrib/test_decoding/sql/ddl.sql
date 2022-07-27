@@ -220,7 +220,7 @@ SELECT data FROM pg_logical_slot_get_changes('regression_slot', NULL, NULL, 'inc
 -- test whether a known, but not yet logged toplevel xact, followed by a
 -- subxact commit is handled correctly
 BEGIN;
-SELECT txid_current() != 0; -- so no fixed xid apears in the outfile
+SELECT pg_current_xact_id() != '0'; -- so no fixed xid apears in the outfile
 SAVEPOINT a;
 INSERT INTO tr_sub(path) VALUES ('4-top-1-#1');
 RELEASE SAVEPOINT a;
@@ -387,4 +387,6 @@ SELECT data FROM pg_logical_slot_get_changes('regression_slot', NULL, NULL, 'inc
 SELECT pg_drop_replication_slot('regression_slot');
 
 /* check that the slot is gone */
+\x
 SELECT * FROM pg_replication_slots;
+\x

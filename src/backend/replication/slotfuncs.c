@@ -14,11 +14,11 @@
 
 #include "access/htup_details.h"
 #include "access/xlog_internal.h"
+#include "access/xlogutils.h"
 #include "funcapi.h"
 #include "miscadmin.h"
 #include "replication/decode.h"
 #include "replication/logical.h"
-#include "replication/logicalfuncs.h"
 #include "replication/slot.h"
 #include "utils/builtins.h"
 #include "utils/inval.h"
@@ -118,10 +118,14 @@ pg_create_physical_replication_slot(PG_FUNCTION_ARGS)
  * Helper function for creating a new logical replication slot with
  * given arguments. Note that this function doesn't release the created
  * slot.
+ *
+ * When find_startpoint is false, the slot's confirmed_flush is not set; it's
+ * caller's responsibility to ensure it's set to something sensible.
  */
 static void
 create_logical_replication_slot(char *name, char *plugin,
-								bool temporary, XLogRecPtr restart_lsn)
+								bool temporary, XLogRecPtr restart_lsn,
+								bool find_startpoint)
 {
 	LogicalDecodingContext *ctx = NULL;
 
@@ -139,16 +143,24 @@ create_logical_replication_slot(char *name, char *plugin,
 						  temporary ? RS_TEMPORARY : RS_EPHEMERAL);
 
 	/*
-	 * Create logical decoding context, to build the initial snapshot.
+	 * Create logical decoding context to find start point or, if we don't
+	 * need it, to 1) bump slot's restart_lsn and xmin 2) check plugin sanity.
+	 *
+	 * Note: when !find_startpoint this is still important, because it's at
+	 * this point that the output plugin is validated.
 	 */
 	ctx = CreateInitDecodingContext(plugin, NIL,
-									false,	/* do not build snapshot */
+									false,	/* just catalogs is OK */
 									restart_lsn,
-									logical_read_local_xlog_page, NULL, NULL,
+									read_local_xlog_page, NULL, NULL,
 									NULL);
 
-	/* build initial snapshot, might take a while */
-	DecodingContextFindStartpoint(ctx);
+	/*
+	 * If caller needs us to determine the decoding start point, do so now.
+	 * This might take a while.
+	 */
+	if (find_startpoint)
+		DecodingContextFindStartpoint(ctx);
 
 	/* don't need the decoding context anymore */
 	FreeDecodingContext(ctx);
@@ -179,7 +191,8 @@ pg_create_logical_replication_slot(PG_FUNCTION_ARGS)
 	create_logical_replication_slot(NameStr(*name),
 									NameStr(*plugin),
 									temporary,
-									InvalidXLogRecPtr);
+									InvalidXLogRecPtr,
+									true);
 
 	values[0] = NameGetDatum(&MyReplicationSlot->data.name);
 	values[1] = LSNGetDatum(MyReplicationSlot->data.confirmed_flush);
@@ -221,7 +234,7 @@ pg_drop_replication_slot(PG_FUNCTION_ARGS)
 Datum
 pg_get_replication_slots(PG_FUNCTION_ARGS)
 {
-#define PG_GET_REPLICATION_SLOTS_COLS 11
+#define PG_GET_REPLICATION_SLOTS_COLS 13
 	ReturnSetInfo *rsinfo = (ReturnSetInfo *) fcinfo->resultinfo;
 	TupleDesc	tupdesc;
 	Tuplestorestate *tupstore;
@@ -275,6 +288,8 @@ pg_get_replication_slots(PG_FUNCTION_ARGS)
 		Oid			database;
 		NameData	slot_name;
 		NameData	plugin;
+		WALAvailability walstate;
+		XLogSegNo	last_removed_seg;
 		int			i;
 
 		if (!slot->in_use)
@@ -342,6 +357,40 @@ pg_get_replication_slots(PG_FUNCTION_ARGS)
 		else
 			nulls[i++] = true;
 
+		walstate = GetWALAvailability(restart_lsn);
+
+		switch (walstate)
+		{
+			case WALAVAIL_INVALID_LSN:
+				nulls[i++] = true;
+				break;
+
+			case WALAVAIL_NORMAL:
+				values[i++] = CStringGetTextDatum("normal");
+				break;
+
+			case WALAVAIL_RESERVED:
+				values[i++] = CStringGetTextDatum("reserved");
+				break;
+
+			case WALAVAIL_REMOVED:
+				values[i++] = CStringGetTextDatum("lost");
+				break;
+		}
+
+		if (max_slot_wal_keep_size_mb >= 0 &&
+			(walstate == WALAVAIL_NORMAL || walstate == WALAVAIL_RESERVED) &&
+			((last_removed_seg = XLogGetLastRemovedSegno()) != 0))
+		{
+			XLogRecPtr	min_safe_lsn;
+
+			XLogSegNoOffsetToRecPtr(last_removed_seg + 1, 0,
+									wal_segment_size, min_safe_lsn);
+			values[i++] = Int64GetDatum(min_safe_lsn);
+		}
+		else
+			nulls[i++] = true;
+
 		tuplestore_putvalues(tupstore, tupdesc, values, nulls);
 	}
 	LWLockRelease(ReplicationSlotControlLock);
@@ -363,6 +412,8 @@ pg_physical_replication_slot_advance(XLogRecPtr moveto)
 {
 	XLogRecPtr	startlsn = MyReplicationSlot->data.restart_lsn;
 	XLogRecPtr	retlsn = startlsn;
+
+	Assert(moveto != InvalidXLogRecPtr);
 
 	if (startlsn < moveto)
 	{
@@ -401,6 +452,8 @@ pg_logical_replication_slot_advance(XLogRecPtr moveto)
 	ResourceOwner old_resowner = CurrentResourceOwner;
 	XLogRecPtr	retlsn;
 
+	Assert(moveto != InvalidXLogRecPtr);
+
 	PG_TRY();
 	{
 		/*
@@ -411,7 +464,7 @@ pg_logical_replication_slot_advance(XLogRecPtr moveto)
 		ctx = CreateDecodingContext(InvalidXLogRecPtr,
 									NIL,
 									true,	/* fast_forward */
-									logical_read_local_xlog_page,
+									read_local_xlog_page,
 									NULL, NULL, NULL);
 
 		/*
@@ -539,7 +592,7 @@ pg_replication_slot_advance(PG_FUNCTION_ARGS)
 		moveto = Min(moveto, GetXLogReplayRecPtr(&ThisTimeLineID));
 
 	/* Acquire the slot so we "own" it */
-	ReplicationSlotAcquire(NameStr(*slotname), true);
+	(void) ReplicationSlotAcquire(NameStr(*slotname), SAB_Error);
 
 	/* A slot whose restart_lsn has never been reserved cannot be advanced */
 	if (XLogRecPtrIsInvalid(MyReplicationSlot->data.restart_lsn))
@@ -683,10 +736,18 @@ copy_replication_slot(FunctionCallInfo fcinfo, bool logical_slot)
 
 	/* Create new slot and acquire it */
 	if (logical_slot)
+	{
+		/*
+		 * We must not try to read WAL, since we haven't reserved it yet --
+		 * hence pass find_startpoint false.  confirmed_flush will be set
+		 * below, by copying from the source slot.
+		 */
 		create_logical_replication_slot(NameStr(*dst_name),
 										plugin,
 										temporary,
-										src_restart_lsn);
+										src_restart_lsn,
+										false);
+	}
 	else
 		create_physical_replication_slot(NameStr(*dst_name),
 										 true,
@@ -703,6 +764,7 @@ copy_replication_slot(FunctionCallInfo fcinfo, bool logical_slot)
 		TransactionId copy_xmin;
 		TransactionId copy_catalog_xmin;
 		XLogRecPtr	copy_restart_lsn;
+		XLogRecPtr	copy_confirmed_flush;
 		bool		copy_islogical;
 		char	   *copy_name;
 
@@ -714,6 +776,7 @@ copy_replication_slot(FunctionCallInfo fcinfo, bool logical_slot)
 		copy_xmin = src->data.xmin;
 		copy_catalog_xmin = src->data.catalog_xmin;
 		copy_restart_lsn = src->data.restart_lsn;
+		copy_confirmed_flush = src->data.confirmed_flush;
 
 		/* for existence check */
 		copy_name = pstrdup(NameStr(src->data.name));
@@ -738,6 +801,14 @@ copy_replication_slot(FunctionCallInfo fcinfo, bool logical_slot)
 							NameStr(*src_name)),
 					 errdetail("The source replication slot was modified incompatibly during the copy operation.")));
 
+		/* The source slot must have a consistent snapshot */
+		if (src_islogical && XLogRecPtrIsInvalid(copy_confirmed_flush))
+			ereport(ERROR,
+					(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+					 errmsg("cannot copy unfinished logical replication slot \"%s\"",
+							NameStr(*src_name)),
+					 errhint("Retry when the source replication slot's confirmed_flush_lsn is valid.")));
+
 		/* Install copied values again */
 		SpinLockAcquire(&MyReplicationSlot->mutex);
 		MyReplicationSlot->effective_xmin = copy_effective_xmin;
@@ -746,6 +817,7 @@ copy_replication_slot(FunctionCallInfo fcinfo, bool logical_slot)
 		MyReplicationSlot->data.xmin = copy_xmin;
 		MyReplicationSlot->data.catalog_xmin = copy_catalog_xmin;
 		MyReplicationSlot->data.restart_lsn = copy_restart_lsn;
+		MyReplicationSlot->data.confirmed_flush = copy_confirmed_flush;
 		SpinLockRelease(&MyReplicationSlot->mutex);
 
 		ReplicationSlotMarkDirty();

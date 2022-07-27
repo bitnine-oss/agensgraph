@@ -238,10 +238,8 @@ PgArchiverMain(int argc, char *argv[])
 	pqsignal(SIGCHLD, SIG_DFL);
 	PG_SETMASK(&UnBlockSig);
 
-	/*
-	 * Identify myself via ps
-	 */
-	init_ps_display("archiver", "", "", "");
+	MyBackendType = B_ARCHIVER;
+	init_ps_display(NULL);
 
 	pgarch_MainLoop();
 
@@ -584,7 +582,7 @@ pgarch_archiveXlog(char *xlog)
 
 	/* Report archive activity in PS display */
 	snprintf(activitymsg, sizeof(activitymsg), "archiving %s", xlog);
-	set_ps_display(activitymsg, false);
+	set_ps_display(activitymsg);
 
 	rc = system(xlogarchcmd);
 	if (rc != 0)
@@ -634,14 +632,14 @@ pgarch_archiveXlog(char *xlog)
 		}
 
 		snprintf(activitymsg, sizeof(activitymsg), "failed on %s", xlog);
-		set_ps_display(activitymsg, false);
+		set_ps_display(activitymsg);
 
 		return false;
 	}
 	elog(DEBUG1, "archived write-ahead log file \"%s\"", xlog);
 
 	snprintf(activitymsg, sizeof(activitymsg), "last was %s", xlog);
-	set_ps_display(activitymsg, false);
+	set_ps_display(activitymsg);
 
 	return true;
 }

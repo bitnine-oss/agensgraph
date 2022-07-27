@@ -12,8 +12,14 @@
  * in the primary server), and then keeps receiving XLOG records and
  * writing them to the disk as long as the connection is alive. As XLOG
  * records are received and flushed to disk, it updates the
- * WalRcv->receivedUpto variable in shared memory, to inform the startup
+ * WalRcv->flushedUpto variable in shared memory, to inform the startup
  * process of how far it can proceed with XLOG replay.
+ *
+ * A WAL receiver cannot directly load GUC parameters used when establishing
+ * its connection to the primary. Instead it relies on parameter values
+ * that are passed down by the startup process when streaming is requested.
+ * This applies, for example, to the replication slot and the connection
+ * string to be used for the connection with the primary.
  *
  * If the primary server ends streaming, but doesn't disconnect, walreceiver
  * goes into "waiting" mode, and waits for the startup process to give new
@@ -49,6 +55,7 @@
 #include "access/timeline.h"
 #include "access/transam.h"
 #include "access/xlog_internal.h"
+#include "access/xlogarchive.h"
 #include "catalog/pg_authid.h"
 #include "catalog/pg_type.h"
 #include "common/ip.h"
@@ -73,8 +80,11 @@
 #include "utils/timestamp.h"
 
 
-/* GUC variables */
-bool		wal_receiver_create_temp_slot;
+/*
+ * GUC variables.  (Other variables that affect walreceiver are in xlog.c
+ * because they're passed down from the startup process, for better
+ * synchronization.)
+ */
 int			wal_receiver_status_interval;
 int			wal_receiver_timeout;
 bool		hot_standby_feedback;
@@ -236,6 +246,12 @@ WalReceiverMain(void)
 	startpoint = walrcv->receiveStart;
 	startpointTLI = walrcv->receiveStartTLI;
 
+	/*
+	 * At most one of is_temp_slot and slotname can be set; otherwise,
+	 * RequestXLogStreaming messed up.
+	 */
+	Assert(!is_temp_slot || (slotname[0] == '\0'));
+
 	/* Initialise to a sanish value */
 	walrcv->lastMsgSendTime =
 		walrcv->lastMsgReceiptTime = walrcv->latestWalEndTime = now;
@@ -244,6 +260,8 @@ WalReceiverMain(void)
 	walrcv->latch = &MyProc->procLatch;
 
 	SpinLockRelease(&walrcv->mutex);
+
+	pg_atomic_init_u64(&WalRcv->writtenUpto, 0);
 
 	/* Arrange to clean up at walreceiver exit */
 	on_shmem_exit(WalRcvDie, 0);
@@ -349,42 +367,21 @@ WalReceiverMain(void)
 		WalRcvFetchTimeLineHistoryFiles(startpointTLI, primaryTLI);
 
 		/*
-		 * Create temporary replication slot if no slot name is configured or
-		 * the slot from the previous run was temporary, unless
-		 * wal_receiver_create_temp_slot is disabled.  We also need to handle
-		 * the case where the previous run used a temporary slot but
-		 * wal_receiver_create_temp_slot was changed in the meantime.  In that
-		 * case, we delete the old slot name in shared memory.  (This would
-		 * all be a bit easier if we just didn't copy the slot name into
-		 * shared memory, since we won't need it again later, but then we
-		 * can't see the slot name in the stats views.)
+		 * Create temporary replication slot if requested, and update slot
+		 * name in shared memory.  (Note the slot name cannot already be set
+		 * in this case.)
 		 */
-		if (slotname[0] == '\0' || is_temp_slot)
+		if (is_temp_slot)
 		{
-			bool		changed = false;
+			snprintf(slotname, sizeof(slotname),
+					 "pg_walreceiver_%lld",
+					 (long long int) walrcv_get_backend_pid(wrconn));
 
-			if (wal_receiver_create_temp_slot)
-			{
-				snprintf(slotname, sizeof(slotname),
-						 "pg_walreceiver_%lld",
-						 (long long int) walrcv_get_backend_pid(wrconn));
+			walrcv_create_slot(wrconn, slotname, true, 0, NULL);
 
-				walrcv_create_slot(wrconn, slotname, true, 0, NULL);
-				changed = true;
-			}
-			else if (slotname[0] != '\0')
-			{
-				slotname[0] = '\0';
-				changed = true;
-			}
-
-			if (changed)
-			{
-				SpinLockAcquire(&walrcv->mutex);
-				strlcpy(walrcv->slotname, slotname, NAMEDATALEN);
-				walrcv->is_temp_slot = wal_receiver_create_temp_slot;
-				SpinLockRelease(&walrcv->mutex);
-			}
+			SpinLockAcquire(&walrcv->mutex);
+			strlcpy(walrcv->slotname, slotname, NAMEDATALEN);
+			SpinLockRelease(&walrcv->mutex);
 		}
 
 		/*
@@ -666,8 +663,7 @@ WalRcvWaitForStartPosition(XLogRecPtr *startpoint, TimeLineID *startpointTLI)
 	walrcv->receiveStartTLI = 0;
 	SpinLockRelease(&walrcv->mutex);
 
-	if (update_process_title)
-		set_ps_display("idle", false);
+	set_ps_display("idle");
 
 	/*
 	 * nudge startup process to notice that we've stopped streaming and are
@@ -686,7 +682,11 @@ WalRcvWaitForStartPosition(XLogRecPtr *startpoint, TimeLineID *startpointTLI)
 			   walrcv->walRcvState == WALRCV_STOPPING);
 		if (walrcv->walRcvState == WALRCV_RESTARTING)
 		{
-			/* we don't expect primary_conninfo to change */
+			/*
+			 * No need to handle changes in primary_conninfo or
+			 * primary_slotname here. Startup process will signal us to
+			 * terminate in case those change.
+			 */
 			*startpoint = walrcv->receiveStart;
 			*startpointTLI = walrcv->receiveStartTLI;
 			walrcv->walRcvState = WALRCV_STREAMING;
@@ -715,7 +715,7 @@ WalRcvWaitForStartPosition(XLogRecPtr *startpoint, TimeLineID *startpointTLI)
 		snprintf(activitymsg, sizeof(activitymsg), "restarting at %X/%X",
 				 (uint32) (*startpoint >> 32),
 				 (uint32) *startpoint);
-		set_ps_display(activitymsg, false);
+		set_ps_display(activitymsg);
 	}
 }
 
@@ -986,6 +986,9 @@ XLogWalRcvWrite(char *buf, Size nbytes, XLogRecPtr recptr)
 
 		LogstreamResult.Write = recptr;
 	}
+
+	/* Update shared-memory status */
+	pg_atomic_write_u64(&WalRcv->writtenUpto, LogstreamResult.Write);
 }
 
 /*
@@ -1007,10 +1010,10 @@ XLogWalRcvFlush(bool dying)
 
 		/* Update shared-memory status */
 		SpinLockAcquire(&walrcv->mutex);
-		if (walrcv->receivedUpto < LogstreamResult.Flush)
+		if (walrcv->flushedUpto < LogstreamResult.Flush)
 		{
-			walrcv->latestChunkStart = walrcv->receivedUpto;
-			walrcv->receivedUpto = LogstreamResult.Flush;
+			walrcv->latestChunkStart = walrcv->flushedUpto;
+			walrcv->flushedUpto = LogstreamResult.Flush;
 			walrcv->receivedTLI = ThisTimeLineID;
 		}
 		SpinLockRelease(&walrcv->mutex);
@@ -1028,7 +1031,7 @@ XLogWalRcvFlush(bool dying)
 			snprintf(activitymsg, sizeof(activitymsg), "streaming %X/%X",
 					 (uint32) (LogstreamResult.Write >> 32),
 					 (uint32) LogstreamResult.Write);
-			set_ps_display(activitymsg, false);
+			set_ps_display(activitymsg);
 		}
 
 		/* Also let the master know that we made some progress */
@@ -1363,7 +1366,7 @@ pg_stat_get_wal_receiver(PG_FUNCTION_ARGS)
 	state = WalRcv->walRcvState;
 	receive_start_lsn = WalRcv->receiveStart;
 	receive_start_tli = WalRcv->receiveStartTLI;
-	received_lsn = WalRcv->receivedUpto;
+	received_lsn = WalRcv->flushedUpto;
 	received_tli = WalRcv->receivedTLI;
 	last_send_time = WalRcv->lastMsgSendTime;
 	last_receipt_time = WalRcv->lastMsgReceiptTime;

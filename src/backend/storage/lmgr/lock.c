@@ -170,6 +170,33 @@ typedef struct TwoPhaseLockRecord
  */
 static int	FastPathLocalUseCount = 0;
 
+/*
+ * Flag to indicate if the relation extension lock is held by this backend.
+ * This flag is used to ensure that while holding the relation extension lock
+ * we don't try to acquire a heavyweight lock on any other object.  This
+ * restriction implies that the relation extension lock won't ever participate
+ * in the deadlock cycle because we can never wait for any other heavyweight
+ * lock after acquiring this lock.
+ *
+ * Such a restriction is okay for relation extension locks as unlike other
+ * heavyweight locks these are not held till the transaction end.  These are
+ * taken for a short duration to extend a particular relation and then
+ * released.
+ */
+static bool IsRelationExtensionLockHeld PG_USED_FOR_ASSERTS_ONLY = false;
+
+/*
+ * Flag to indicate if the page lock is held by this backend.  We don't
+ * acquire any other heavyweight lock while holding the page lock except for
+ * relation extension.  However, these locks are never taken in reverse order
+ * which implies that page locks will also never participate in the deadlock
+ * cycle.
+ *
+ * Similar to relation extension, page locks are also held for a short
+ * duration, so imposing such a restriction won't hurt.
+ */
+static bool IsPageLockHeld PG_USED_FOR_ASSERTS_ONLY = false;
+
 /* Macros for manipulating proc->fpLockBits */
 #define FAST_PATH_BITS_PER_SLOT			3
 #define FAST_PATH_LOCKNUMBER_OFFSET		1
@@ -587,6 +614,18 @@ LockHeldByMe(const LOCKTAG *locktag, LOCKMODE lockmode)
 	return (locallock && locallock->nLocks > 0);
 }
 
+#ifdef USE_ASSERT_CHECKING
+/*
+ * GetLockMethodLocalHash -- return the hash of local locks, for modules that
+ *		evaluate assertions based on all locks held.
+ */
+HTAB *
+GetLockMethodLocalHash(void)
+{
+	return LockMethodLocalHash;
+}
+#endif
+
 /*
  * LockHasWaiters -- look up 'locktag' and check if releasing this
  *		lock would wake up other processes waiting for it.
@@ -839,6 +878,20 @@ LockAcquireExtended(const LOCKTAG *locktag,
 		else
 			return LOCKACQUIRE_ALREADY_HELD;
 	}
+
+	/*
+	 * We don't acquire any other heavyweight lock while holding the relation
+	 * extension lock.  We do allow to acquire the same relation extension
+	 * lock more than once but that case won't reach here.
+	 */
+	Assert(!IsRelationExtensionLockHeld);
+
+	/*
+	 * We don't acquire any other heavyweight lock while holding the page lock
+	 * except for relation extension.
+	 */
+	Assert(!IsPageLockHeld ||
+		   (locktag->locktag_type == LOCKTAG_RELATION_EXTEND));
 
 	/*
 	 * Prepare to emit a WAL record if acquisition of this lock needs to be
@@ -1288,6 +1341,26 @@ SetupLockInTable(LockMethod lockMethodTable, PGPROC *proc,
 }
 
 /*
+ * Check and set/reset the flag that we hold the relation extension/page lock.
+ *
+ * It is callers responsibility that this function is called after
+ * acquiring/releasing the relation extension/page lock.
+ *
+ * Pass acquired as true if lock is acquired, false otherwise.
+ */
+static inline void
+CheckAndSetLockHeld(LOCALLOCK *locallock, bool acquired)
+{
+#ifdef USE_ASSERT_CHECKING
+	if (LOCALLOCK_LOCKTAG(*locallock) == LOCKTAG_RELATION_EXTEND)
+		IsRelationExtensionLockHeld = acquired;
+	else if (LOCALLOCK_LOCKTAG(*locallock) == LOCKTAG_PAGE)
+		IsPageLockHeld = acquired;
+
+#endif
+}
+
+/*
  * Subroutine to free a locallock entry
  */
 static void
@@ -1322,6 +1395,11 @@ RemoveLocalLock(LOCALLOCK *locallock)
 					 (void *) &(locallock->tag),
 					 HASH_REMOVE, NULL))
 		elog(WARNING, "locallock table corrupted");
+
+	/*
+	 * Indicate that the lock is released for certain types of locks
+	 */
+	CheckAndSetLockHeld(locallock, false);
 }
 
 /*
@@ -1399,6 +1477,18 @@ LockCheckConflicts(LockMethod lockMethodTable,
 	{
 		Assert(proclock->tag.myProc == MyProc);
 		PROCLOCK_PRINT("LockCheckConflicts: conflicting (simple)",
+					   proclock);
+		return true;
+	}
+
+	/*
+	 * The relation extension or page lock conflict even between the group
+	 * members.
+	 */
+	if (LOCK_LOCKTAG(*lock) == LOCKTAG_RELATION_EXTEND ||
+		(LOCK_LOCKTAG(*lock) == LOCKTAG_PAGE))
+	{
+		PROCLOCK_PRINT("LockCheckConflicts: conflicting (group)",
 					   proclock);
 		return true;
 	}
@@ -1618,6 +1708,9 @@ GrantLockLocal(LOCALLOCK *locallock, ResourceOwner owner)
 	locallock->numLockOwners++;
 	if (owner != NULL)
 		ResourceOwnerRememberLock(owner, locallock);
+
+	/* Indicate that the lock is acquired for certain types of locks. */
+	CheckAndSetLockHeld(locallock, true);
 }
 
 /*
@@ -1737,7 +1830,7 @@ WaitOnLock(LOCALLOCK *locallock, ResourceOwner owner)
 		new_status = (char *) palloc(len + 8 + 1);
 		memcpy(new_status, old_status, len);
 		strcpy(new_status + len, " waiting");
-		set_ps_display(new_status, false);
+		set_ps_display(new_status);
 		new_status[len] = '\0'; /* truncate off " waiting" */
 	}
 
@@ -1789,7 +1882,7 @@ WaitOnLock(LOCALLOCK *locallock, ResourceOwner owner)
 		/* Report change to non-waiting status */
 		if (update_process_title)
 		{
-			set_ps_display(new_status, false);
+			set_ps_display(new_status);
 			pfree(new_status);
 		}
 
@@ -1803,7 +1896,7 @@ WaitOnLock(LOCALLOCK *locallock, ResourceOwner owner)
 	/* Report change to non-waiting status */
 	if (update_process_title)
 	{
-		set_ps_display(new_status, false);
+		set_ps_display(new_status);
 		pfree(new_status);
 	}
 

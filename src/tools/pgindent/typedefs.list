@@ -537,6 +537,7 @@ DropSubscriptionStmt
 DropTableSpaceStmt
 DropUserMappingStmt
 DropdbStmt
+DummyAmEnum
 DummyIndexOptions
 DumpComponents
 DumpId
@@ -840,6 +841,8 @@ GISTBuildState
 GISTENTRY
 GISTInsertStack
 GISTInsertState
+GISTIntArrayBigOptions
+GISTIntArrayOptions
 GISTNodeBuffer
 GISTNodeBufferPage
 GISTPageOpaque
@@ -907,10 +910,13 @@ GinVacuumState
 GistBufferingMode
 GistBulkDeleteResult
 GistEntryVector
+GistHstoreOptions
 GistInetKey
 GistNSN
+GistOptBufferingMode
 GistSplitUnion
 GistSplitVector
+GistTsVectorOptions
 GistVacState
 GlobalTransaction
 GrantRoleStmt
@@ -1301,6 +1307,8 @@ LogicalRepWorkerId
 LogicalRewriteMappingData
 LogicalTape
 LogicalTapeSet
+LtreeGistOptions
+LtreeSignature
 MAGIC
 MBuf
 MCVItem
@@ -2359,8 +2367,6 @@ TBlockState
 TIDBitmap
 TM_FailureData
 TM_Result
-ToastAttrInfo
-ToastTupleContext
 TOKEN_DEFAULT_DACL
 TOKEN_INFORMATION_CLASS
 TOKEN_PRIVILEGES
@@ -2456,6 +2462,8 @@ Timestamp
 TimestampTz
 TmFromChar
 TmToChar
+ToastAttrInfo
+ToastTupleContext
 TocEntry
 TokenAuxData
 TokenizedLine
@@ -2475,6 +2483,7 @@ TrgmArcInfo
 TrgmBound
 TrgmColor
 TrgmColorInfo
+TrgmGistOptions
 TrgmNFA
 TrgmPackArcInfo
 TrgmPackedArc
@@ -2563,6 +2572,7 @@ UserMapping
 UserOpts
 VacAttrStats
 VacAttrStatsP
+VacErrPhase
 VacOptTernaryValue
 VacuumParams
 VacuumRelation
@@ -2590,6 +2600,7 @@ VariableSubstituteHook
 VersionedQuery
 Vfd
 ViewCheckOption
+ViewOptCheckOption
 ViewOptions
 ViewStmt
 VirtualTransactionId
@@ -2632,6 +2643,7 @@ WalSndCtlData
 WalSndSendDataCallback
 WalSndState
 WalTimeSample
+WalUsage
 WalWriteMethod
 Walfile
 WindowAgg
@@ -2871,6 +2883,7 @@ file_action_t
 file_entry_t
 file_type_t
 filemap_t
+fill_string_relopt
 finalize_primnode_context
 find_dependent_phvs_context
 find_expr_references_context
@@ -2994,6 +3007,8 @@ leaf_item
 line_t
 lineno_t
 list_qsort_comparator
+local_relopt
+local_relopts
 locale_t
 locate_agg_of_level_context
 locate_var_of_level_context
@@ -3084,6 +3099,7 @@ pg_sha224_ctx
 pg_sha256_ctx
 pg_sha384_ctx
 pg_sha512_ctx
+pg_snapshot
 pg_stack_base_t
 pg_time_t
 pg_tz
@@ -3104,6 +3120,7 @@ pgssHashKey
 pgssJumbleState
 pgssLocationLen
 pgssSharedState
+pgssStoreKind
 pgssVersion
 pgstat_page
 pgstattuple_type
@@ -3182,6 +3199,8 @@ regmatch_t
 regoff_t
 regproc
 relopt_bool
+relopt_enum
+relopt_enum_elt_def
 relopt_gen
 relopt_int
 relopt_kind
@@ -3190,6 +3209,7 @@ relopt_real
 relopt_string
 relopt_type
 relopt_value
+relopts_validator
 remoteConn
 remoteConnHashEnt
 remoteDep

@@ -1,7 +1,8 @@
 /*-------------------------------------------------------------------------
  *
  * pg_stat_statements.c
- *		Track statement execution times across a whole database cluster.
+ *		Track statement planning and execution times as well as resource
+ *		usage across a whole database cluster.
  *
  * Execution costs are totalled for each distinct source query, and kept in
  * a shared hashtable.  (We track only as many distinct queries as will fit
@@ -67,6 +68,7 @@
 #include "funcapi.h"
 #include "mb/pg_wchar.h"
 #include "miscadmin.h"
+#include "optimizer/planner.h"
 #include "parser/analyze.h"
 #include "parser/parsetree.h"
 #include "parser/scanner.h"
@@ -109,6 +111,7 @@ static const uint32 PGSS_PG_MAJOR_VERSION = PG_VERSION_NUM / 100;
 #define USAGE_DECREASE_FACTOR	(0.99)	/* decreased every entry_dealloc */
 #define STICKY_DECREASE_FACTOR	(0.50)	/* factor for sticky entries */
 #define USAGE_DEALLOC_PERCENT	5	/* free this % of entries at once */
+#define IS_STICKY(c)	((c.calls[PGSS_PLAN] + c.calls[PGSS_EXEC]) == 0)
 
 #define JUMBLE_SIZE				1024	/* query serialization buffer size */
 
@@ -120,8 +123,24 @@ typedef enum pgssVersion
 	PGSS_V1_0 = 0,
 	PGSS_V1_1,
 	PGSS_V1_2,
-	PGSS_V1_3
+	PGSS_V1_3,
+	PGSS_V1_8
 } pgssVersion;
+
+typedef enum pgssStoreKind
+{
+	PGSS_INVALID = -1,
+
+	/*
+	 * PGSS_PLAN and PGSS_EXEC must be respectively 0 and 1 as they're used to
+	 * reference the underlying values in the arrays in the Counters struct,
+	 * and this order is required in pg_stat_statements_internal().
+	 */
+	PGSS_PLAN = 0,
+	PGSS_EXEC,
+
+	PGSS_NUMKIND				/* Must be last value of this enum */
+} pgssStoreKind;
 
 /*
  * Hashtable key that defines the identity of a hashtable entry.  We separate
@@ -144,12 +163,17 @@ typedef struct pgssHashKey
  */
 typedef struct Counters
 {
-	int64		calls;			/* # of times executed */
-	double		total_time;		/* total execution time, in msec */
-	double		min_time;		/* minimum execution time in msec */
-	double		max_time;		/* maximum execution time in msec */
-	double		mean_time;		/* mean execution time in msec */
-	double		sum_var_time;	/* sum of variances in execution time in msec */
+	int64		calls[PGSS_NUMKIND];	/* # of times planned/executed */
+	double		total_time[PGSS_NUMKIND];	/* total planning/execution time,
+											 * in msec */
+	double		min_time[PGSS_NUMKIND]; /* minimum planning/execution time in
+										 * msec */
+	double		max_time[PGSS_NUMKIND]; /* maximum planning/execution time in
+										 * msec */
+	double		mean_time[PGSS_NUMKIND];	/* mean planning/execution time in
+											 * msec */
+	double		sum_var_time[PGSS_NUMKIND]; /* sum of variances in
+											 * planning/execution time in msec */
 	int64		rows;			/* total # of retrieved or affected rows */
 	int64		shared_blks_hit;	/* # of shared buffer hits */
 	int64		shared_blks_read;	/* # of shared disk blocks read */
@@ -164,6 +188,9 @@ typedef struct Counters
 	double		blk_read_time;	/* time spent reading, in msec */
 	double		blk_write_time; /* time spent writing, in msec */
 	double		usage;			/* usage factor */
+	int64		wal_records;	/* # of WAL records generated */
+	int64		wal_fpw;	/* # of WAL full page writes generated */
+	uint64		wal_bytes;		/* total amount of WAL bytes generated */
 } Counters;
 
 /*
@@ -234,11 +261,15 @@ typedef struct pgssJumbleState
 /*---- Local variables ----*/
 
 /* Current nesting depth of ExecutorRun+ProcessUtility calls */
-static int	nested_level = 0;
+static int	exec_nested_level = 0;
+
+/* Current nesting depth of planner calls */
+static int	plan_nested_level = 0;
 
 /* Saved hook values in case of unload */
 static shmem_startup_hook_type prev_shmem_startup_hook = NULL;
 static post_parse_analyze_hook_type prev_post_parse_analyze_hook = NULL;
+static planner_hook_type prev_planner_hook = NULL;
 static ExecutorStart_hook_type prev_ExecutorStart = NULL;
 static ExecutorRun_hook_type prev_ExecutorRun = NULL;
 static ExecutorFinish_hook_type prev_ExecutorFinish = NULL;
@@ -269,12 +300,13 @@ static const struct config_enum_entry track_options[] =
 static int	pgss_max;			/* max # statements to track */
 static int	pgss_track;			/* tracking level */
 static bool pgss_track_utility; /* whether to track utility commands */
+static bool pgss_track_planning;	/* whether to track planning duration */
 static bool pgss_save;			/* whether to save stats across shutdown */
 
 
-#define pgss_enabled() \
+#define pgss_enabled(level) \
 	(pgss_track == PGSS_TRACK_ALL || \
-	(pgss_track == PGSS_TRACK_TOP && nested_level == 0))
+	(pgss_track == PGSS_TRACK_TOP && (level) == 0))
 
 #define record_gc_qtexts() \
 	do { \
@@ -293,11 +325,16 @@ PG_FUNCTION_INFO_V1(pg_stat_statements_reset);
 PG_FUNCTION_INFO_V1(pg_stat_statements_reset_1_7);
 PG_FUNCTION_INFO_V1(pg_stat_statements_1_2);
 PG_FUNCTION_INFO_V1(pg_stat_statements_1_3);
+PG_FUNCTION_INFO_V1(pg_stat_statements_1_8);
 PG_FUNCTION_INFO_V1(pg_stat_statements);
 
 static void pgss_shmem_startup(void);
 static void pgss_shmem_shutdown(int code, Datum arg);
 static void pgss_post_parse_analyze(ParseState *pstate, Query *query);
+static PlannedStmt *pgss_planner(Query *parse,
+								 const char *query_string,
+								 int cursorOptions,
+								 ParamListInfo boundParams);
 static void pgss_ExecutorStart(QueryDesc *queryDesc, int eflags);
 static void pgss_ExecutorRun(QueryDesc *queryDesc,
 							 ScanDirection direction,
@@ -311,8 +348,10 @@ static void pgss_ProcessUtility(PlannedStmt *pstmt, const char *queryString,
 static uint64 pgss_hash_string(const char *str, int len);
 static void pgss_store(const char *query, uint64 queryId,
 					   int query_location, int query_len,
+					   pgssStoreKind kind,
 					   double total_time, uint64 rows,
 					   const BufferUsage *bufusage,
+					   const WalUsage *walusage,
 					   pgssJumbleState *jstate);
 static void pg_stat_statements_internal(FunctionCallInfo fcinfo,
 										pgssVersion api_version,
@@ -399,6 +438,17 @@ _PG_init(void)
 							 NULL,
 							 NULL);
 
+	DefineCustomBoolVariable("pg_stat_statements.track_planning",
+							 "Selects whether planning duration is tracked by pg_stat_statements.",
+							 NULL,
+							 &pgss_track_planning,
+							 true,
+							 PGC_SUSET,
+							 0,
+							 NULL,
+							 NULL,
+							 NULL);
+
 	DefineCustomBoolVariable("pg_stat_statements.save",
 							 "Save pg_stat_statements statistics across server shutdowns.",
 							 NULL,
@@ -427,6 +477,8 @@ _PG_init(void)
 	shmem_startup_hook = pgss_shmem_startup;
 	prev_post_parse_analyze_hook = post_parse_analyze_hook;
 	post_parse_analyze_hook = pgss_post_parse_analyze;
+	prev_planner_hook = planner_hook;
+	planner_hook = pgss_planner;
 	prev_ExecutorStart = ExecutorStart_hook;
 	ExecutorStart_hook = pgss_ExecutorStart;
 	prev_ExecutorRun = ExecutorRun_hook;
@@ -448,6 +500,7 @@ _PG_fini(void)
 	/* Uninstall hooks. */
 	shmem_startup_hook = prev_shmem_startup_hook;
 	post_parse_analyze_hook = prev_post_parse_analyze_hook;
+	planner_hook = prev_planner_hook;
 	ExecutorStart_hook = prev_ExecutorStart;
 	ExecutorRun_hook = prev_ExecutorRun;
 	ExecutorFinish_hook = prev_ExecutorFinish;
@@ -602,7 +655,7 @@ pgss_shmem_startup(void)
 		buffer[temp.query_len] = '\0';
 
 		/* Skip loading "sticky" entries */
-		if (temp.counters.calls == 0)
+		if (IS_STICKY(temp.counters))
 			continue;
 
 		/* Store the query text */
@@ -788,7 +841,7 @@ pgss_post_parse_analyze(ParseState *pstate, Query *query)
 	Assert(query->queryId == UINT64CONST(0));
 
 	/* Safety check... */
-	if (!pgss || !pgss_hash || !pgss_enabled())
+	if (!pgss || !pgss_hash || !pgss_enabled(exec_nested_level))
 		return;
 
 	/*
@@ -838,10 +891,108 @@ pgss_post_parse_analyze(ParseState *pstate, Query *query)
 				   query->queryId,
 				   query->stmt_location,
 				   query->stmt_len,
+				   PGSS_INVALID,
 				   0,
 				   0,
 				   NULL,
+				   NULL,
 				   &jstate);
+}
+
+/*
+ * Planner hook: forward to regular planner, but measure planning time
+ * if needed.
+ */
+static PlannedStmt *
+pgss_planner(Query *parse,
+			 const char *query_string,
+			 int cursorOptions,
+			 ParamListInfo boundParams)
+{
+	PlannedStmt *result;
+
+	/*
+	 * We can't process the query if no query_string is provided, as
+	 * pgss_store needs it.  We also ignore query without queryid, as it would
+	 * be treated as a utility statement, which may not be the case.
+	 *
+	 * Note that planner_hook can be called from the planner itself, so we
+	 * have a specific nesting level for the planner.  However, utility
+	 * commands containing optimizable statements can also call the planner,
+	 * same for regular DML (for instance for underlying foreign key queries).
+	 * So testing the planner nesting level only is not enough to detect real
+	 * top level planner call.
+	 */
+	if (pgss_enabled(plan_nested_level + exec_nested_level)
+		&& pgss_track_planning && query_string
+		&& parse->queryId != UINT64CONST(0))
+	{
+		instr_time	start;
+		instr_time	duration;
+		BufferUsage bufusage_start,
+					bufusage;
+		WalUsage	walusage_start,
+					walusage;
+
+		/* We need to track buffer usage as the planner can access them. */
+		bufusage_start = pgBufferUsage;
+
+		/*
+		 * Similarly the planner could write some WAL records in some cases
+		 * (e.g. setting a hint bit with those being WAL-logged)
+		 */
+		walusage_start = pgWalUsage;
+		INSTR_TIME_SET_CURRENT(start);
+
+		plan_nested_level++;
+		PG_TRY();
+		{
+			if (prev_planner_hook)
+				result = prev_planner_hook(parse, query_string, cursorOptions,
+										   boundParams);
+			else
+				result = standard_planner(parse, query_string, cursorOptions,
+										  boundParams);
+		}
+		PG_FINALLY();
+		{
+			plan_nested_level--;
+		}
+		PG_END_TRY();
+
+		INSTR_TIME_SET_CURRENT(duration);
+		INSTR_TIME_SUBTRACT(duration, start);
+
+		/* calc differences of buffer counters. */
+		memset(&bufusage, 0, sizeof(BufferUsage));
+		BufferUsageAccumDiff(&bufusage, &pgBufferUsage, &bufusage_start);
+
+		/* calc differences of WAL counters. */
+		memset(&walusage, 0, sizeof(WalUsage));
+		WalUsageAccumDiff(&walusage, &pgWalUsage, &walusage_start);
+
+		pgss_store(query_string,
+				   parse->queryId,
+				   parse->stmt_location,
+				   parse->stmt_len,
+				   PGSS_PLAN,
+				   INSTR_TIME_GET_MILLISEC(duration),
+				   0,
+				   &bufusage,
+				   &walusage,
+				   NULL);
+	}
+	else
+	{
+		if (prev_planner_hook)
+			result = prev_planner_hook(parse, query_string, cursorOptions,
+									   boundParams);
+		else
+			result = standard_planner(parse, query_string, cursorOptions,
+									  boundParams);
+	}
+
+	return result;
 }
 
 /*
@@ -860,7 +1011,7 @@ pgss_ExecutorStart(QueryDesc *queryDesc, int eflags)
 	 * counting of optimizable statements that are directly contained in
 	 * utility statements.
 	 */
-	if (pgss_enabled() && queryDesc->plannedstmt->queryId != UINT64CONST(0))
+	if (pgss_enabled(exec_nested_level) && queryDesc->plannedstmt->queryId != UINT64CONST(0))
 	{
 		/*
 		 * Set up to track total elapsed time in ExecutorRun.  Make sure the
@@ -885,7 +1036,7 @@ static void
 pgss_ExecutorRun(QueryDesc *queryDesc, ScanDirection direction, uint64 count,
 				 bool execute_once)
 {
-	nested_level++;
+	exec_nested_level++;
 	PG_TRY();
 	{
 		if (prev_ExecutorRun)
@@ -895,7 +1046,7 @@ pgss_ExecutorRun(QueryDesc *queryDesc, ScanDirection direction, uint64 count,
 	}
 	PG_FINALLY();
 	{
-		nested_level--;
+		exec_nested_level--;
 	}
 	PG_END_TRY();
 }
@@ -906,7 +1057,7 @@ pgss_ExecutorRun(QueryDesc *queryDesc, ScanDirection direction, uint64 count,
 static void
 pgss_ExecutorFinish(QueryDesc *queryDesc)
 {
-	nested_level++;
+	exec_nested_level++;
 	PG_TRY();
 	{
 		if (prev_ExecutorFinish)
@@ -916,7 +1067,7 @@ pgss_ExecutorFinish(QueryDesc *queryDesc)
 	}
 	PG_FINALLY();
 	{
-		nested_level--;
+		exec_nested_level--;
 	}
 	PG_END_TRY();
 }
@@ -929,7 +1080,8 @@ pgss_ExecutorEnd(QueryDesc *queryDesc)
 {
 	uint64		queryId = queryDesc->plannedstmt->queryId;
 
-	if (queryId != UINT64CONST(0) && queryDesc->totaltime && pgss_enabled())
+	if (queryId != UINT64CONST(0) && queryDesc->totaltime &&
+		pgss_enabled(exec_nested_level))
 	{
 		/*
 		 * Make sure stats accumulation is done.  (Note: it's okay if several
@@ -941,9 +1093,11 @@ pgss_ExecutorEnd(QueryDesc *queryDesc)
 				   queryId,
 				   queryDesc->plannedstmt->stmt_location,
 				   queryDesc->plannedstmt->stmt_len,
+				   PGSS_EXEC,
 				   queryDesc->totaltime->total * 1000.0,	/* convert to msec */
 				   queryDesc->estate->es_processed,
 				   &queryDesc->totaltime->bufusage,
+				   &queryDesc->totaltime->walusage,
 				   NULL);
 	}
 
@@ -978,7 +1132,7 @@ pgss_ProcessUtility(PlannedStmt *pstmt, const char *queryString,
 	 *
 	 * Likewise, we don't track execution of DEALLOCATE.
 	 */
-	if (pgss_track_utility && pgss_enabled() &&
+	if (pgss_track_utility && pgss_enabled(exec_nested_level) &&
 		!IsA(parsetree, ExecuteStmt) &&
 		!IsA(parsetree, PrepareStmt) &&
 		!IsA(parsetree, DeallocateStmt))
@@ -988,11 +1142,14 @@ pgss_ProcessUtility(PlannedStmt *pstmt, const char *queryString,
 		uint64		rows;
 		BufferUsage bufusage_start,
 					bufusage;
+		WalUsage	walusage_start,
+					walusage;
 
 		bufusage_start = pgBufferUsage;
+		walusage_start = pgWalUsage;
 		INSTR_TIME_SET_CURRENT(start);
 
-		nested_level++;
+		exec_nested_level++;
 		PG_TRY();
 		{
 			if (prev_ProcessUtility)
@@ -1006,7 +1163,7 @@ pgss_ProcessUtility(PlannedStmt *pstmt, const char *queryString,
 		}
 		PG_FINALLY();
 		{
-			nested_level--;
+			exec_nested_level--;
 		}
 		PG_END_TRY();
 
@@ -1016,38 +1173,22 @@ pgss_ProcessUtility(PlannedStmt *pstmt, const char *queryString,
 		rows = (qc && qc->commandTag == CMDTAG_COPY) ? qc->nprocessed : 0;
 
 		/* calc differences of buffer counters. */
-		bufusage.shared_blks_hit =
-			pgBufferUsage.shared_blks_hit - bufusage_start.shared_blks_hit;
-		bufusage.shared_blks_read =
-			pgBufferUsage.shared_blks_read - bufusage_start.shared_blks_read;
-		bufusage.shared_blks_dirtied =
-			pgBufferUsage.shared_blks_dirtied - bufusage_start.shared_blks_dirtied;
-		bufusage.shared_blks_written =
-			pgBufferUsage.shared_blks_written - bufusage_start.shared_blks_written;
-		bufusage.local_blks_hit =
-			pgBufferUsage.local_blks_hit - bufusage_start.local_blks_hit;
-		bufusage.local_blks_read =
-			pgBufferUsage.local_blks_read - bufusage_start.local_blks_read;
-		bufusage.local_blks_dirtied =
-			pgBufferUsage.local_blks_dirtied - bufusage_start.local_blks_dirtied;
-		bufusage.local_blks_written =
-			pgBufferUsage.local_blks_written - bufusage_start.local_blks_written;
-		bufusage.temp_blks_read =
-			pgBufferUsage.temp_blks_read - bufusage_start.temp_blks_read;
-		bufusage.temp_blks_written =
-			pgBufferUsage.temp_blks_written - bufusage_start.temp_blks_written;
-		bufusage.blk_read_time = pgBufferUsage.blk_read_time;
-		INSTR_TIME_SUBTRACT(bufusage.blk_read_time, bufusage_start.blk_read_time);
-		bufusage.blk_write_time = pgBufferUsage.blk_write_time;
-		INSTR_TIME_SUBTRACT(bufusage.blk_write_time, bufusage_start.blk_write_time);
+		memset(&bufusage, 0, sizeof(BufferUsage));
+		BufferUsageAccumDiff(&bufusage, &pgBufferUsage, &bufusage_start);
+
+		/* calc differences of WAL counters. */
+		memset(&walusage, 0, sizeof(WalUsage));
+		WalUsageAccumDiff(&walusage, &pgWalUsage, &walusage_start);
 
 		pgss_store(queryString,
 				   0,			/* signal that it's a utility stmt */
 				   pstmt->stmt_location,
 				   pstmt->stmt_len,
+				   PGSS_EXEC,
 				   INSTR_TIME_GET_MILLISEC(duration),
 				   rows,
 				   &bufusage,
+				   &walusage,
 				   NULL);
 	}
 	else
@@ -1083,13 +1224,19 @@ pgss_hash_string(const char *str, int len)
  *
  * If jstate is not NULL then we're trying to create an entry for which
  * we have no statistics as yet; we just want to record the normalized
- * query string.  total_time, rows, bufusage are ignored in this case.
+ * query string.  total_time, rows, bufusage and walusage are ignored in this
+ * case.
+ *
+ * If kind is PGSS_PLAN or PGSS_EXEC, its value is used as the array position
+ * for the arrays in the Counters field.
  */
 static void
 pgss_store(const char *query, uint64 queryId,
 		   int query_location, int query_len,
+		   pgssStoreKind kind,
 		   double total_time, uint64 rows,
 		   const BufferUsage *bufusage,
+		   const WalUsage *walusage,
 		   pgssJumbleState *jstate)
 {
 	pgssHashKey key;
@@ -1234,19 +1381,22 @@ pgss_store(const char *query, uint64 queryId,
 		 */
 		volatile pgssEntry *e = (volatile pgssEntry *) entry;
 
+		Assert(kind == PGSS_PLAN || kind == PGSS_EXEC);
+
 		SpinLockAcquire(&e->mutex);
 
 		/* "Unstick" entry if it was previously sticky */
-		if (e->counters.calls == 0)
+		if (IS_STICKY(e->counters))
 			e->counters.usage = USAGE_INIT;
 
-		e->counters.calls += 1;
-		e->counters.total_time += total_time;
-		if (e->counters.calls == 1)
+		e->counters.calls[kind] += 1;
+		e->counters.total_time[kind] += total_time;
+
+		if (e->counters.calls[kind] == 1)
 		{
-			e->counters.min_time = total_time;
-			e->counters.max_time = total_time;
-			e->counters.mean_time = total_time;
+			e->counters.min_time[kind] = total_time;
+			e->counters.max_time[kind] = total_time;
+			e->counters.mean_time[kind] = total_time;
 		}
 		else
 		{
@@ -1254,18 +1404,18 @@ pgss_store(const char *query, uint64 queryId,
 			 * Welford's method for accurately computing variance. See
 			 * <http://www.johndcook.com/blog/standard_deviation/>
 			 */
-			double		old_mean = e->counters.mean_time;
+			double		old_mean = e->counters.mean_time[kind];
 
-			e->counters.mean_time +=
-				(total_time - old_mean) / e->counters.calls;
-			e->counters.sum_var_time +=
-				(total_time - old_mean) * (total_time - e->counters.mean_time);
+			e->counters.mean_time[kind] +=
+				(total_time - old_mean) / e->counters.calls[kind];
+			e->counters.sum_var_time[kind] +=
+				(total_time - old_mean) * (total_time - e->counters.mean_time[kind]);
 
 			/* calculate min and max time */
-			if (e->counters.min_time > total_time)
-				e->counters.min_time = total_time;
-			if (e->counters.max_time < total_time)
-				e->counters.max_time = total_time;
+			if (e->counters.min_time[kind] > total_time)
+				e->counters.min_time[kind] = total_time;
+			if (e->counters.max_time[kind] < total_time)
+				e->counters.max_time[kind] = total_time;
 		}
 		e->counters.rows += rows;
 		e->counters.shared_blks_hit += bufusage->shared_blks_hit;
@@ -1281,6 +1431,9 @@ pgss_store(const char *query, uint64 queryId,
 		e->counters.blk_read_time += INSTR_TIME_GET_MILLISEC(bufusage->blk_read_time);
 		e->counters.blk_write_time += INSTR_TIME_GET_MILLISEC(bufusage->blk_write_time);
 		e->counters.usage += USAGE_EXEC(total_time);
+		e->counters.wal_records += walusage->wal_records;
+		e->counters.wal_fpw += walusage->wal_fpw;
+		e->counters.wal_bytes += walusage->wal_bytes;
 
 		SpinLockRelease(&e->mutex);
 	}
@@ -1328,7 +1481,8 @@ pg_stat_statements_reset(PG_FUNCTION_ARGS)
 #define PG_STAT_STATEMENTS_COLS_V1_1	18
 #define PG_STAT_STATEMENTS_COLS_V1_2	19
 #define PG_STAT_STATEMENTS_COLS_V1_3	23
-#define PG_STAT_STATEMENTS_COLS			23	/* maximum of above */
+#define PG_STAT_STATEMENTS_COLS_V1_8	32
+#define PG_STAT_STATEMENTS_COLS			32	/* maximum of above */
 
 /*
  * Retrieve statement statistics.
@@ -1340,6 +1494,16 @@ pg_stat_statements_reset(PG_FUNCTION_ARGS)
  * expected API version is identified by embedding it in the C name of the
  * function.  Unfortunately we weren't bright enough to do that for 1.1.
  */
+Datum
+pg_stat_statements_1_8(PG_FUNCTION_ARGS)
+{
+	bool		showtext = PG_GETARG_BOOL(0);
+
+	pg_stat_statements_internal(fcinfo, PGSS_V1_8, showtext);
+
+	return (Datum) 0;
+}
+
 Datum
 pg_stat_statements_1_3(PG_FUNCTION_ARGS)
 {
@@ -1443,6 +1607,10 @@ pg_stat_statements_internal(FunctionCallInfo fcinfo,
 			break;
 		case PG_STAT_STATEMENTS_COLS_V1_3:
 			if (api_version != PGSS_V1_3)
+				elog(ERROR, "incorrect number of output arguments");
+			break;
+		case PG_STAT_STATEMENTS_COLS_V1_8:
+			if (api_version != PGSS_V1_8)
 				elog(ERROR, "incorrect number of output arguments");
 			break;
 		default:
@@ -1600,28 +1768,37 @@ pg_stat_statements_internal(FunctionCallInfo fcinfo,
 		}
 
 		/* Skip entry if unexecuted (ie, it's a pending "sticky" entry) */
-		if (tmp.calls == 0)
+		if (IS_STICKY(tmp))
 			continue;
 
-		values[i++] = Int64GetDatumFast(tmp.calls);
-		values[i++] = Float8GetDatumFast(tmp.total_time);
-		if (api_version >= PGSS_V1_3)
+		/* Note that we rely on PGSS_PLAN being 0 and PGSS_EXEC being 1. */
+		for (int kind = 0; kind < PGSS_NUMKIND; kind++)
 		{
-			values[i++] = Float8GetDatumFast(tmp.min_time);
-			values[i++] = Float8GetDatumFast(tmp.max_time);
-			values[i++] = Float8GetDatumFast(tmp.mean_time);
+			if (kind == PGSS_EXEC || api_version >= PGSS_V1_8)
+			{
+				values[i++] = Int64GetDatumFast(tmp.calls[kind]);
+				values[i++] = Float8GetDatumFast(tmp.total_time[kind]);
+			}
 
-			/*
-			 * Note we are calculating the population variance here, not the
-			 * sample variance, as we have data for the whole population, so
-			 * Bessel's correction is not used, and we don't divide by
-			 * tmp.calls - 1.
-			 */
-			if (tmp.calls > 1)
-				stddev = sqrt(tmp.sum_var_time / tmp.calls);
-			else
-				stddev = 0.0;
-			values[i++] = Float8GetDatumFast(stddev);
+			if ((kind == PGSS_EXEC && api_version >= PGSS_V1_3) ||
+				api_version >= PGSS_V1_8)
+			{
+				values[i++] = Float8GetDatumFast(tmp.min_time[kind]);
+				values[i++] = Float8GetDatumFast(tmp.max_time[kind]);
+				values[i++] = Float8GetDatumFast(tmp.mean_time[kind]);
+
+				/*
+				 * Note we are calculating the population variance here, not
+				 * the sample variance, as we have data for the whole
+				 * population, so Bessel's correction is not used, and we
+				 * don't divide by tmp.calls - 1.
+				 */
+				if (tmp.calls[kind] > 1)
+					stddev = sqrt(tmp.sum_var_time[kind] / tmp.calls[kind]);
+				else
+					stddev = 0.0;
+				values[i++] = Float8GetDatumFast(stddev);
+			}
 		}
 		values[i++] = Int64GetDatumFast(tmp.rows);
 		values[i++] = Int64GetDatumFast(tmp.shared_blks_hit);
@@ -1641,11 +1818,29 @@ pg_stat_statements_internal(FunctionCallInfo fcinfo,
 			values[i++] = Float8GetDatumFast(tmp.blk_read_time);
 			values[i++] = Float8GetDatumFast(tmp.blk_write_time);
 		}
+		if (api_version >= PGSS_V1_8)
+		{
+			char		buf[256];
+			Datum		wal_bytes;
+
+			values[i++] = Int64GetDatumFast(tmp.wal_records);
+			values[i++] = Int64GetDatumFast(tmp.wal_fpw);
+
+			snprintf(buf, sizeof buf, UINT64_FORMAT, tmp.wal_bytes);
+
+			/* Convert to numeric. */
+			wal_bytes = DirectFunctionCall3(numeric_in,
+											CStringGetDatum(buf),
+											ObjectIdGetDatum(0),
+											Int32GetDatum(-1));
+			values[i++] = wal_bytes;
+		}
 
 		Assert(i == (api_version == PGSS_V1_0 ? PG_STAT_STATEMENTS_COLS_V1_0 :
 					 api_version == PGSS_V1_1 ? PG_STAT_STATEMENTS_COLS_V1_1 :
 					 api_version == PGSS_V1_2 ? PG_STAT_STATEMENTS_COLS_V1_2 :
 					 api_version == PGSS_V1_3 ? PG_STAT_STATEMENTS_COLS_V1_3 :
+					 api_version == PGSS_V1_8 ? PG_STAT_STATEMENTS_COLS_V1_8 :
 					 -1 /* fail if you forget to update this assert */ ));
 
 		tuplestore_putvalues(tupstore, tupdesc, values, nulls);
@@ -1781,7 +1976,7 @@ entry_dealloc(void)
 	{
 		entries[i++] = entry;
 		/* "Sticky" entries get a different usage decay rate. */
-		if (entry->counters.calls == 0)
+		if (IS_STICKY(entry->counters))
 			entry->counters.usage *= STICKY_DECREASE_FACTOR;
 		else
 			entry->counters.usage *= USAGE_DECREASE_FACTOR;

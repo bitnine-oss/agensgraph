@@ -575,6 +575,13 @@ postgres   27093  0.0  0.0  30096  2752 ?        Ss   11:34   0:00 postgres: ser
       yet included in <structname>pg_stat_user_functions</structname>).</entry>
      </row>
 
+     <row>
+      <entry><structname>pg_stat_slru</structname><indexterm><primary>pg_stat_slru</primary></indexterm></entry>
+      <entry>One row per SLRU, showing statistics of operations. See
+       <xref linkend="pg-stat-slru-view"/> for details.
+      </entry>
+     </row>
+
     </tbody>
    </tgroup>
   </table>
@@ -1105,7 +1112,7 @@ postgres   27093  0.0  0.0  30096  2752 ?        Ss   11:34   0:00 postgres: ser
         </row>
         <row>
          <entry><literal>CLogTruncationLock</literal></entry>
-         <entry>Waiting to execute <function>txid_status</function> or update
+         <entry>Waiting to execute <function>pg_xact_status</function> or update
          the oldest transaction id available to it.</entry>
         </row>
         <row>
@@ -1244,7 +1251,7 @@ postgres   27093  0.0  0.0  30096  2752 ?        Ss   11:34   0:00 postgres: ser
          <entry>Waiting to acquire a pin on a buffer.</entry>
         </row>
         <row>
-         <entry morerows="13"><literal>Activity</literal></entry>
+         <entry morerows="12"><literal>Activity</literal></entry>
          <entry><literal>ArchiverMain</literal></entry>
          <entry>Waiting in main loop of the archiver process.</entry>
         </row>
@@ -1275,10 +1282,6 @@ postgres   27093  0.0  0.0  30096  2752 ?        Ss   11:34   0:00 postgres: ser
         <row>
          <entry><literal>PgStatMain</literal></entry>
          <entry>Waiting in main loop of the statistics collector process.</entry>
-        </row>
-        <row>
-         <entry><literal>RecoveryWalAll</literal></entry>
-         <entry>Waiting for WAL from any kind of source (local, archive or stream) at recovery.</entry>
         </row>
         <row>
          <entry><literal>RecoveryWalStream</literal></entry>
@@ -1343,7 +1346,11 @@ postgres   27093  0.0  0.0  30096  2752 ?        Ss   11:34   0:00 postgres: ser
          <entry>Waiting in an extension.</entry>
         </row>
         <row>
-         <entry morerows="36"><literal>IPC</literal></entry>
+         <entry morerows="40"><literal>IPC</literal></entry>
+         <entry><literal>BackupWaitWalArchive</literal></entry>
+         <entry>Waiting for WAL files required for the backup to be successfully archived.</entry>
+        </row>
+        <row>
          <entry><literal>BgWorkerShutdown</literal></entry>
          <entry>Waiting for background worker to shut down.</entry>
         </row>
@@ -1476,6 +1483,18 @@ postgres   27093  0.0  0.0  30096  2752 ?        Ss   11:34   0:00 postgres: ser
          <entry>Waiting for standby promotion.</entry>
         </row>
         <row>
+         <entry><literal>RecoveryConflictSnapshot</literal></entry>
+         <entry>Waiting for recovery conflict resolution on a vacuum cleanup.</entry>
+        </row>
+        <row>
+         <entry><literal>RecoveryConflictTablespace</literal></entry>
+         <entry>Waiting for recovery conflict resolution on dropping tablespace.</entry>
+        </row>
+        <row>
+         <entry><literal>RecoveryPause</literal></entry>
+         <entry>Waiting for recovery to be resumed.</entry>
+        </row>
+        <row>
          <entry><literal>ReplicationOriginDrop</literal></entry>
          <entry>Waiting for a replication origin to become inactive to be dropped.</entry>
         </row>
@@ -1492,7 +1511,7 @@ postgres   27093  0.0  0.0  30096  2752 ?        Ss   11:34   0:00 postgres: ser
          <entry>Waiting for confirmation from remote server during synchronous replication.</entry>
         </row>
         <row>
-         <entry morerows="2"><literal>Timeout</literal></entry>
+         <entry morerows="4"><literal>Timeout</literal></entry>
          <entry><literal>BaseBackupThrottle</literal></entry>
          <entry>Waiting during base backup when throttling activity.</entry>
         </row>
@@ -1503,6 +1522,18 @@ postgres   27093  0.0  0.0  30096  2752 ?        Ss   11:34   0:00 postgres: ser
         <row>
          <entry><literal>RecoveryApplyDelay</literal></entry>
          <entry>Waiting to apply WAL at recovery because it is delayed.</entry>
+        </row>
+        <row>
+         <entry><literal>RecoveryRetrieveRetryInterval</literal></entry>
+         <entry>
+          Waiting when WAL data is not available from any kind of sources
+          (<filename>pg_wal</filename>, archive or stream) before trying
+          again to retrieve WAL data, at recovery.
+         </entry>
+        </row>
+        <row>
+         <entry><literal>VacuumDelay</literal></entry>
+         <entry>Waiting in a cost-based vacuum delay point.</entry>
         </row>
         <row>
          <entry morerows="68"><literal>IO</literal></entry>
@@ -2565,14 +2596,14 @@ SELECT pid, wait_event_type, wait_event FROM pg_stat_activity WHERE wait_event i
     <row>
      <entry><structfield>datname</structfield></entry>
      <entry><type>name</type></entry>
-     <entry>Name of this database, or <literal>NULL</literal> for the shared
+     <entry>Name of this database, or <literal>NULL</literal> for shared
      objects.</entry>
     </row>
     <row>
      <entry><structfield>numbackends</structfield></entry>
      <entry><type>integer</type></entry>
      <entry>Number of backends currently connected to this database, or
-     <literal>NULL</literal> for the shared objects.  This is the only column
+     <literal>NULL</literal> for shared objects.  This is the only column
      in this view that returns a value reflecting current state; all other
      columns return the accumulated values since the last reset.</entry>
     </row>
@@ -2694,7 +2725,7 @@ SELECT pid, wait_event_type, wait_event FROM pg_stat_activity WHERE wait_event i
 
   <para>
    The <structname>pg_stat_database</structname> view will contain one row
-   for each database in the cluster, plus one for the shared objects, showing
+   for each database in the cluster, plus one for shared objects, showing
    database-wide statistics.
   </para>
 
@@ -2844,6 +2875,11 @@ SELECT pid, wait_event_type, wait_event FROM pg_stat_activity WHERE wait_event i
      <entry><structfield>n_mod_since_analyze</structfield></entry>
      <entry><type>bigint</type></entry>
      <entry>Estimated number of rows modified since this table was last analyzed</entry>
+    </row>
+    <row>
+     <entry><structfield>n_ins_since_vacuum</structfield></entry>
+     <entry><type>bigint</type></entry>
+     <entry>Estimated number of rows inserted since this table was last vacuumed</entry>
     </row>
     <row>
      <entry><structfield>last_vacuum</structfield></entry>
@@ -3239,6 +3275,76 @@ SELECT pid, wait_event_type, wait_event FROM pg_stat_activity WHERE wait_event i
   </table>
 
   <para>
+   The <structname>pg_stat_slru</structname> view will contain
+   one row for each tracked SLRU cache, showing statistics about access
+   to cached pages.
+  </para>
+
+  <table id="pg-stat-slru-view" xreflabel="pg_stat_slru">
+   <title><structname>pg_stat_slru</structname> View</title>
+   <tgroup cols="3">
+    <thead>
+    <row>
+      <entry>Column</entry>
+      <entry>Type</entry>
+      <entry>Description</entry>
+     </row>
+    </thead>
+
+   <tbody>
+    <row>
+     <entry><structfield>name</structfield></entry>
+     <entry><type>name</type></entry>
+     <entry>name of the SLRU</entry>
+    </row>
+    <row>
+     <entry><structfield>blks_zeroed</structfield></entry>
+     <entry><type>bigint</type></entry>
+     <entry>Number of blocks zeroed during initializations</entry>
+    </row>
+    <row>
+     <entry><structfield>blks_hit</structfield></entry>
+     <entry><type>bigint</type></entry>
+     <entry>Number of times disk blocks were found already in the SLRU,
+      so that a read was not necessary (this only includes hits in the
+      SLRU, not the operating system's file system cache)
+     </entry>
+    </row>
+    <row>
+     <entry><structfield>blks_read</structfield></entry>
+     <entry><type>bigint</type></entry>
+     <entry>Number of disk blocks read for this SLRU</entry>
+    </row>
+    <row>
+     <entry><structfield>blks_written</structfield></entry>
+     <entry><type>bigint</type></entry>
+     <entry>Number of disk blocks written for this SLRU</entry>
+    </row>
+    <row>
+     <entry><structfield>blks_exists</structfield></entry>
+     <entry><type>bigint</type></entry>
+     <entry>Number of blocks checked for existence for this SLRU</entry>
+    </row>
+    <row>
+     <entry><structfield>flushes</structfield></entry>
+     <entry><type>bigint</type></entry>
+     <entry>Number of flushes of dirty data for this SLRU</entry>
+    </row>
+    <row>
+     <entry><structfield>truncates</structfield></entry>
+     <entry><type>bigint</type></entry>
+     <entry>Number of truncates for this SLRU</entry>
+    </row>
+    <row>
+     <entry><structfield>stats_reset</structfield></entry>
+     <entry><type>timestamp with time zone</type></entry>
+     <entry>Time at which these statistics were last reset</entry>
+    </row>
+   </tbody>
+   </tgroup>
+  </table>
+
+  <para>
    The <structname>pg_stat_user_functions</structname> view will contain
    one row for each tracked function, showing statistics about executions of
    that function.  The <xref linkend="guc-track-functions"/> parameter
@@ -3360,6 +3466,26 @@ SELECT pid, wait_event_type, wait_event FROM pg_stat_activity WHERE wait_event i
        Reset statistics for a single function in the current database to
        zero (requires superuser privileges by default, but EXECUTE for this
        function can be granted to others)
+      </entry>
+     </row>
+
+     <row>
+      <entry><literal><function>pg_stat_reset_slru</function>(text)</literal><indexterm><primary>pg_stat_reset_slru</primary></indexterm></entry>
+      <entry><type>void</type></entry>
+      <entry>
+       Reset statistics either for a single SLRU or all SLRUs in the cluster
+       to zero (requires superuser privileges by default, but EXECUTE for this
+       function can be granted to others).
+       Calling <literal>pg_stat_reset_slru(NULL)</literal> will zero all the
+       counters shown in the <structname>pg_stat_slru</structname> view for
+       all SLRU caches.
+       Calling <literal>pg_stat_reset_slru(name)</literal> with names from a
+       predefined list (<literal>async</literal>, <literal>clog</literal>,
+       <literal>commit_timestamp</literal>, <literal>multixact_offset</literal>,
+       <literal>multixact_member</literal>, <literal>oldserxid</literal>,
+       <literal>pg_xact</literal>, <literal>subtrans</literal> and
+       <literal>other</literal>) resets counters for only that entry.
+       Names not included in this list are treated as <literal>other</literal>.
       </entry>
      </row>
     </tbody>
@@ -4357,7 +4483,7 @@ SELECT pg_stat_get_backend_pid(s.backendid) AS pid,
    is taking a base backup, the
    <structname>pg_stat_progress_basebackup</structname>
    view will contain a row for each WAL sender process that is currently
-   running <command>BASE_BACKUP</command> replication command
+   running the <command>BASE_BACKUP</command> replication command
    and streaming the backup. The tables below describe the information
    that will be reported and provide information about how to interpret it.
   </para>
@@ -4388,10 +4514,7 @@ SELECT pg_stat_get_backend_pid(s.backendid) AS pid,
      <entry><structfield>backup_total</structfield></entry>
      <entry><type>bigint</type></entry>
      <entry>
-      Total amount of data that will be streamed. If progress reporting
-      is not enabled in <application>pg_basebackup</application>
-      (i.e., <literal>--progress</literal> option is not specified),
-      this is <literal>0</literal>. Otherwise, this is estimated and
+      Total amount of data that will be streamed. This is estimated and
       reported as of the beginning of
       <literal>streaming database files</literal> phase. Note that
       this is only an approximation since the database
@@ -4399,7 +4522,10 @@ SELECT pg_stat_get_backend_pid(s.backendid) AS pid,
       and WAL log may be included in the backup later. This is always
       the same value as <structfield>backup_streamed</structfield>
       once the amount of data streamed exceeds the estimated
-      total size.
+      total size. If the estimation is disabled in
+      <application>pg_basebackup</application>
+      (i.e., <literal>--no-estimate-size</literal> option is specified),
+      this is <literal>NULL</literal>.
      </entry>
     </row>
     <row>

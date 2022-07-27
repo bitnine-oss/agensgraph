@@ -1505,10 +1505,6 @@ pg_newlocale_from_collation(Oid collid)
 /*
  * Get provider-specific collation version string for the given collation from
  * the operating system/library.
- *
- * A particular provider must always either return a non-NULL string or return
- * NULL (if it doesn't support versions).  It must not return NULL for some
- * collcollate and not NULL for others.
  */
 char *
 get_collation_actual_version(char collprovider, const char *collcollate)
@@ -1540,8 +1536,52 @@ get_collation_actual_version(char collprovider, const char *collcollate)
 	if (collprovider == COLLPROVIDER_LIBC)
 	{
 #if defined(__GLIBC__)
+		char	   *copy = pstrdup(collcollate);
+		char	   *copy_suffix = strstr(copy, ".");
+		bool		need_version = true;
+
+		/*
+		 * Check for names like C.UTF-8 by chopping off the encoding suffix on
+		 * our temporary copy, so we can skip the version.
+		 */
+		if (copy_suffix)
+			*copy_suffix = '\0';
+		if (pg_strcasecmp("c", copy) == 0 ||
+			pg_strcasecmp("posix", copy) == 0)
+			need_version = false;
+		pfree(copy);
+		if (!need_version)
+			return NULL;
+
 		/* Use the glibc version because we don't have anything better. */
 		collversion = pstrdup(gnu_get_libc_version());
+#elif defined(WIN32) && _WIN32_WINNT >= 0x0600
+		/*
+		 * If we are targeting Windows Vista and above, we can ask for a name
+		 * given a collation name (earlier versions required a location code
+		 * that we don't have).
+		 */
+		NLSVERSIONINFOEX version = {sizeof(NLSVERSIONINFOEX)};
+		WCHAR		wide_collcollate[LOCALE_NAME_MAX_LENGTH];
+
+		/* These would be invalid arguments, but have no version. */
+		if (pg_strcasecmp("c", collcollate) == 0 ||
+			pg_strcasecmp("posix", collcollate) == 0)
+			return NULL;
+
+		/* For all other names, ask the OS. */
+		MultiByteToWideChar(CP_ACP, 0, collcollate, -1, wide_collcollate,
+							LOCALE_NAME_MAX_LENGTH);
+		if (!GetNLSVersionEx(COMPARE_STRING, wide_collcollate, &version))
+			ereport(ERROR,
+					(errmsg("could not get collation version for locale \"%s\": error code %lu",
+							collcollate,
+							GetLastError())));
+		collversion = psprintf("%d.%d,%d.%d",
+							   (version.dwNLSVersion >> 8) & 0xFFFF,
+							   version.dwNLSVersion & 0xFF,
+							   (version.dwDefinedVersion >> 8) & 0xFFFF,
+							   version.dwDefinedVersion & 0xFF);
 #endif
 	}
 

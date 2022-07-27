@@ -3058,8 +3058,8 @@ TruncateMultiXact(MultiXactId newOldestMulti, Oid newOldestMultiDB)
 	 * crash/basebackup, even though the state of the data directory would
 	 * require it.
 	 */
-	Assert(!MyPgXact->delayChkpt);
-	MyPgXact->delayChkpt = true;
+	Assert(!MyProc->delayChkpt);
+	MyProc->delayChkpt = true;
 
 	/* WAL log truncation */
 	WriteMTruncateXlogRec(newOldestMultiDB,
@@ -3085,7 +3085,7 @@ TruncateMultiXact(MultiXactId newOldestMulti, Oid newOldestMultiDB)
 	/* Then offsets */
 	PerformOffsetsTruncation(oldestMulti, newOldestMulti);
 
-	MyPgXact->delayChkpt = false;
+	MyProc->delayChkpt = false;
 
 	END_CRIT_SECTION();
 	LWLockRelease(MultiXactTruncationLock);
@@ -3387,10 +3387,6 @@ pg_get_multixact_members(PG_FUNCTION_ARGS)
 		pfree(values[0]);
 		SRF_RETURN_NEXT(funccxt, HeapTupleGetDatum(tuple));
 	}
-
-	if (multi->nmembers > 0)
-		pfree(multi->members);
-	pfree(multi);
 
 	SRF_RETURN_DONE(funccxt);
 }

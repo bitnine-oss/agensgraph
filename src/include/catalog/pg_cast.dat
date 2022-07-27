@@ -93,6 +93,10 @@
 { castsource => 'bool', casttarget => 'int4', castfunc => 'int4(bool)',
   castcontext => 'e', castmethod => 'f' },
 
+# Allow explicit coercions between xid8 and xid
+{ castsource => 'xid8', casttarget => 'xid', castfunc => 'xid(xid8)',
+  castcontext => 'e', castmethod => 'f' },
+
 # OID category: allow implicit conversion from any integral type (including
 # int8, to support OID literals > 2G) to OID, as well as assignment coercion
 # from OID to int4 or int8.  Similarly for each OID-alias type.  Also allow
@@ -188,6 +192,20 @@
 { castsource => 'regclass', casttarget => 'int8', castfunc => 'int8(oid)',
   castcontext => 'a', castmethod => 'f' },
 { castsource => 'regclass', casttarget => 'int4', castfunc => '0',
+  castcontext => 'a', castmethod => 'b' },
+{ castsource => 'oid', casttarget => 'regcollation', castfunc => '0',
+  castcontext => 'i', castmethod => 'b' },
+{ castsource => 'regcollation', casttarget => 'oid', castfunc => '0',
+  castcontext => 'i', castmethod => 'b' },
+{ castsource => 'int8', casttarget => 'regcollation', castfunc => 'oid',
+  castcontext => 'i', castmethod => 'f' },
+{ castsource => 'int2', casttarget => 'regcollation', castfunc => 'int4(int2)',
+  castcontext => 'i', castmethod => 'f' },
+{ castsource => 'int4', casttarget => 'regcollation', castfunc => '0',
+  castcontext => 'i', castmethod => 'b' },
+{ castsource => 'regcollation', casttarget => 'int8', castfunc => 'int8(oid)',
+  castcontext => 'a', castmethod => 'f' },
+{ castsource => 'regcollation', casttarget => 'int4', castfunc => '0',
   castcontext => 'a', castmethod => 'b' },
 { castsource => 'oid', casttarget => 'regtype', castfunc => '0',
   castcontext => 'i', castmethod => 'b' },

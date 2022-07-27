@@ -751,7 +751,7 @@ psql --username=postgres --file=script.sql postgres
    can use the <option>-s</option> option to put the socket files in some
    directory with a shorter path name.  For security, be sure that that
    directory is not readable or writable by any other users.
-   (This is not relevant on Windows.)
+   (This is not supported on Windows.)
   </para>
 
   <para>
@@ -773,9 +773,17 @@ psql --username=postgres --file=script.sql postgres
   <para>
    <application>pg_upgrade</application> does not support upgrading of databases
    containing table columns using these <type>reg*</type> OID-referencing system data types:
-   <type>regproc</type>, <type>regprocedure</type>, <type>regoper</type>,
-   <type>regoperator</type>, <type>regconfig</type>, and
-   <type>regdictionary</type>.  (<type>regtype</type> can be upgraded.)
+   <simplelist>
+    <member><type>regcollation</type></member>
+    <member><type>regconfig</type></member>
+    <member><type>regdictionary</type></member>
+    <member><type>regnamespace</type></member>
+    <member><type>regoper</type></member>
+    <member><type>regoperator</type></member>
+    <member><type>regproc</type></member>
+    <member><type>regprocedure</type></member>
+   </simplelist>
+   (<type>regclass</type>, <type>regrole</type>, and <type>regtype</type> can be upgraded.)
   </para>
 
   <para>

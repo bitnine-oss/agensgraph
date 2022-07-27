@@ -391,6 +391,23 @@ CREATE INDEX trgm_idx ON test_trgm USING GIN (t gin_trgm_ops);
   </para>
 
   <para>
+   <literal>gist_trgm_ops</literal> GiST opclass approximates a set of
+   trigrams as a bitmap signature.  Its optional integer parameter
+   <literal>siglen</literal> determines the
+   signature length in bytes.  The default length is 12 bytes.
+   Valid values of signature length are between 1 and 2024 bytes.  Longer
+   signatures lead to a more precise search (scanning a smaller fraction of the index and
+   fewer heap pages), at the cost of a larger index.
+  </para>
+
+  <para>
+   Example of creating such an index with a signature length of 32 bytes:
+  </para>
+<programlisting>
+CREATE INDEX trgm_idx ON test_trgm USING GIST (t gist_trgm_ops(siglen=32));
+</programlisting>
+
+  <para>
    At this point, you will have an index on the <structfield>t</structfield> column that
    you can use for similarity searching.  A typical query is
 <programlisting>

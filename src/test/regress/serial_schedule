@@ -10,6 +10,7 @@ test: int2
 test: int4
 test: int8
 test: oid
+test: xid
 test: float4
 test: float8
 test: bit
@@ -49,6 +50,7 @@ test: opr_sanity
 test: misc_sanity
 test: comments
 test: expressions
+test: unicode
 test: create_function_1
 test: create_type
 test: create_table
@@ -88,6 +90,7 @@ test: select_distinct_on
 test: select_implicit
 test: select_having
 test: subselect
+test: incremental_sort
 test: union
 test: case
 test: join

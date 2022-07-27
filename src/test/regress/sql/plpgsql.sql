@@ -1559,6 +1559,122 @@ SELECT * FROM test_ret_rec_dyn(1500) AS (a int, b int, c int);
 SELECT * FROM test_ret_rec_dyn(5) AS (a int, b numeric, c text);
 
 --
+-- Test some simple polymorphism cases.
+--
+
+create function f1(x anyelement) returns anyelement as $$
+begin
+  return x + 1;
+end$$ language plpgsql;
+
+select f1(42) as int, f1(4.5) as num;
+select f1(point(3,4));  -- fail for lack of + operator
+
+drop function f1(x anyelement);
+
+create function f1(x anyelement) returns anyarray as $$
+begin
+  return array[x + 1, x + 2];
+end$$ language plpgsql;
+
+select f1(42) as int, f1(4.5) as num;
+
+drop function f1(x anyelement);
+
+create function f1(x anyarray) returns anyelement as $$
+begin
+  return x[1];
+end$$ language plpgsql;
+
+select f1(array[2,4]) as int, f1(array[4.5, 7.7]) as num;
+
+select f1(stavalues1) from pg_statistic;  -- fail, can't infer element type
+
+drop function f1(x anyarray);
+
+create function f1(x anyarray) returns anyarray as $$
+begin
+  return x;
+end$$ language plpgsql;
+
+select f1(array[2,4]) as int, f1(array[4.5, 7.7]) as num;
+
+select f1(stavalues1) from pg_statistic;  -- fail, can't infer element type
+
+drop function f1(x anyarray);
+
+-- fail, can't infer type:
+create function f1(x anyelement) returns anyrange as $$
+begin
+  return array[x + 1, x + 2];
+end$$ language plpgsql;
+
+create function f1(x anyrange) returns anyarray as $$
+begin
+  return array[lower(x), upper(x)];
+end$$ language plpgsql;
+
+select f1(int4range(42, 49)) as int, f1(float8range(4.5, 7.8)) as num;
+
+drop function f1(x anyrange);
+
+create function f1(x anycompatible, y anycompatible) returns anycompatiblearray as $$
+begin
+  return array[x, y];
+end$$ language plpgsql;
+
+select f1(2, 4) as int, f1(2, 4.5) as num;
+
+drop function f1(x anycompatible, y anycompatible);
+
+create function f1(x anycompatiblerange, y anycompatible, z anycompatible) returns anycompatiblearray as $$
+begin
+  return array[lower(x), upper(x), y, z];
+end$$ language plpgsql;
+
+select f1(int4range(42, 49), 11, 2::smallint) as int, f1(float8range(4.5, 7.8), 7.8, 11::real) as num;
+
+select f1(int4range(42, 49), 11, 4.5) as fail;  -- range type doesn't fit
+
+drop function f1(x anycompatiblerange, y anycompatible, z anycompatible);
+
+-- fail, can't infer type:
+create function f1(x anycompatible) returns anycompatiblerange as $$
+begin
+  return array[x + 1, x + 2];
+end$$ language plpgsql;
+
+create function f1(x anycompatiblerange, y anycompatiblearray) returns anycompatiblerange as $$
+begin
+  return x;
+end$$ language plpgsql;
+
+select f1(int4range(42, 49), array[11]) as int, f1(float8range(4.5, 7.8), array[7]) as num;
+
+drop function f1(x anycompatiblerange, y anycompatiblearray);
+
+create function f1(a anyelement, b anyarray,
+                   c anycompatible, d anycompatible,
+                   OUT x anyarray, OUT y anycompatiblearray)
+as $$
+begin
+  x := a || b;
+  y := array[c, d];
+end$$ language plpgsql;
+
+select x, pg_typeof(x), y, pg_typeof(y)
+  from f1(11, array[1, 2], 42, 34.5);
+select x, pg_typeof(x), y, pg_typeof(y)
+  from f1(11, array[1, 2], point(1,2), point(3,4));
+select x, pg_typeof(x), y, pg_typeof(y)
+  from f1(11, '{1,2}', point(1,2), '(3,4)');
+select x, pg_typeof(x), y, pg_typeof(y)
+  from f1(11, array[1, 2.2], 42, 34.5);  -- fail
+
+drop function f1(a anyelement, b anyarray,
+                 c anycompatible, d anycompatible);
+
+--
 -- Test handling of OUT parameters, including polymorphic cases.
 -- Note that RETURN is optional with OUT params; we try both ways.
 --
@@ -1638,6 +1754,18 @@ select * from duplic(42);
 select * from duplic('foo'::text);
 
 drop function duplic(anyelement);
+
+create function duplic(in i anycompatiblerange, out j anycompatible, out k anycompatiblearray) as $$
+begin
+  j := lower(i);
+  k := array[lower(i),upper(i)];
+  return;
+end$$ language plpgsql;
+
+select * from duplic(int4range(42,49));
+select * from duplic(textrange('aaa', 'bbb'));
+
+drop function duplic(anycompatiblerange);
 
 --
 -- test PERFORM

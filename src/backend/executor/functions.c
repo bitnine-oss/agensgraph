@@ -24,6 +24,7 @@
 #include "nodes/makefuncs.h"
 #include "nodes/nodeFuncs.h"
 #include "parser/parse_coerce.h"
+#include "parser/parse_collate.h"
 #include "parser/parse_func.h"
 #include "storage/proc.h"
 #include "tcop/utility.h"
@@ -511,6 +512,7 @@ init_execution_state(List *queryTree_list,
 			}
 			else
 				stmt = pg_plan_query(queryTree,
+									 fcache->src,
 									 CURSOR_OPT_PARALLEL_OK,
 									 NULL);
 
@@ -1568,13 +1570,16 @@ check_sql_fn_statements(List *queryTreeList)
  * false even when the declared function return type is a rowtype.
  *
  * For a polymorphic function the passed rettype must be the actual resolved
- * output type of the function; we should never see a polymorphic pseudotype
- * such as ANYELEMENT as rettype.  (This means we can't check the type during
- * function definition of a polymorphic function.)  If the function returns
- * composite, the passed rettupdesc should describe the expected output.
- * If rettupdesc is NULL, we can't verify that the output matches; that
- * should only happen in fmgr_sql_validator(), or when the function returns
- * RECORD and the caller doesn't actually care which composite type it is.
+ * output type of the function.  (This means we can't check the type during
+ * function definition of a polymorphic function.)  If we do see a polymorphic
+ * rettype we'll throw an error, saying it is not a supported rettype.
+ *
+ * If the function returns composite, the passed rettupdesc should describe
+ * the expected output.  If rettupdesc is NULL, we can't verify that the
+ * output matches; that should only happen in fmgr_sql_validator(), or when
+ * the function returns RECORD and the caller doesn't actually care which
+ * composite type it is.
+ *
  * (Typically, rettype and rettupdesc are computed by get_call_result_type
  * or a sibling function.)
  *
@@ -1602,9 +1607,6 @@ check_sql_fn_retval(List *queryTreeList,
 	List	   *upper_tlist = NIL;
 	bool		upper_tlist_nontrivial = false;
 	ListCell   *lc;
-
-	/* Caller must have resolved any polymorphism */
-	AssertArg(!IsPolymorphicType(rettype));
 
 	if (resultTargetList)
 		*resultTargetList = NIL;	/* initialize in case of VOID result */
@@ -1989,6 +1991,7 @@ coerce_fn_result_column(TargetEntry *src_tle,
 											-1);
 		if (cast_result == NULL)
 			return false;
+		assign_expr_collations(NULL, cast_result);
 		src_tle->expr = (Expr *) cast_result;
 		/* Make a Var referencing the possibly-modified TLE */
 		new_tle_expr = (Expr *) makeVarFromTargetEntry(1, src_tle);
@@ -2007,6 +2010,7 @@ coerce_fn_result_column(TargetEntry *src_tle,
 											-1);
 		if (cast_result == NULL)
 			return false;
+		assign_expr_collations(NULL, cast_result);
 		/* Did the coercion actually do anything? */
 		if (cast_result != (Node *) var)
 			*upper_tlist_nontrivial = true;

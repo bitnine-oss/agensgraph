@@ -46,8 +46,20 @@ typedef enum
 								 * replay; otherwise same as RBM_NORMAL */
 } ReadBufferMode;
 
+/*
+ * Type returned by PrefetchBuffer().
+ */
+typedef struct PrefetchBufferResult
+{
+	Buffer		recent_buffer;	/* If valid, a hit (recheck needed!) */
+	bool		initiated_io;	/* If true, a miss resulting in async I/O */
+} PrefetchBufferResult;
+
 /* forward declared, to avoid having to expose buf_internals.h here */
 struct WritebackContext;
+
+/* forward declared, to avoid including smgr.h here */
+struct SMgrRelationData;
 
 /* in globals.c ... this duplicates miscadmin.h */
 extern PGDLLIMPORT int NBuffers;
@@ -57,7 +69,8 @@ extern bool zero_damaged_pages;
 extern int	bgwriter_lru_maxpages;
 extern double bgwriter_lru_multiplier;
 extern bool track_io_timing;
-extern int	target_prefetch_pages;
+extern int	effective_io_concurrency;
+extern int	maintenance_io_concurrency;
 
 extern int	checkpoint_flush_after;
 extern int	backend_flush_after;
@@ -65,9 +78,6 @@ extern int	bgwriter_flush_after;
 
 /* in buf_init.c */
 extern PGDLLIMPORT char *BufferBlocks;
-
-/* in guc.c */
-extern int	effective_io_concurrency;
 
 /* in localbuf.c */
 extern PGDLLIMPORT int NLocBuffer;
@@ -161,9 +171,11 @@ extern PGDLLIMPORT int32 *LocalRefCount;
 /*
  * prototypes for functions in bufmgr.c
  */
-extern bool ComputeIoConcurrency(int io_concurrency, double *target);
-extern void PrefetchBuffer(Relation reln, ForkNumber forkNum,
-						   BlockNumber blockNum);
+extern PrefetchBufferResult PrefetchSharedBuffer(struct SMgrRelationData *smgr_reln,
+												 ForkNumber forkNum,
+												 BlockNumber blockNum);
+extern PrefetchBufferResult PrefetchBuffer(Relation reln, ForkNumber forkNum,
+										   BlockNumber blockNum);
 extern Buffer ReadBuffer(Relation reln, BlockNumber blockNum);
 extern Buffer ReadBufferExtended(Relation reln, ForkNumber forkNum,
 								 BlockNumber blockNum, ReadBufferMode mode,
@@ -189,6 +201,7 @@ extern BlockNumber RelationGetNumberOfBlocksInFork(Relation relation,
 												   ForkNumber forkNum);
 extern void FlushOneBuffer(Buffer buffer);
 extern void FlushRelationBuffers(Relation rel);
+extern void FlushRelationsAllBuffers(struct SMgrRelationData **smgrs, int nrels);
 extern void FlushDatabaseBuffers(Oid dbid);
 extern void DropRelFileNodeBuffers(RelFileNodeBackend rnode, ForkNumber *forkNum,
 								   int nforks, BlockNumber *firstDelBlock);

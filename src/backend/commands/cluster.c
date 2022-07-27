@@ -139,21 +139,9 @@ cluster(ClusterStmt *stmt, bool isTopLevel)
 			/* We need to find the index that has indisclustered set. */
 			foreach(index, RelationGetIndexList(rel))
 			{
-				HeapTuple	idxtuple;
-				Form_pg_index indexForm;
-
 				indexOid = lfirst_oid(index);
-				idxtuple = SearchSysCache1(INDEXRELID,
-										   ObjectIdGetDatum(indexOid));
-				if (!HeapTupleIsValid(idxtuple))
-					elog(ERROR, "cache lookup failed for index %u", indexOid);
-				indexForm = (Form_pg_index) GETSTRUCT(idxtuple);
-				if (indexForm->indisclustered)
-				{
-					ReleaseSysCache(idxtuple);
+				if (get_index_isclustered(indexOid))
 					break;
-				}
-				ReleaseSysCache(idxtuple);
 				indexOid = InvalidOid;
 			}
 
@@ -304,9 +292,6 @@ cluster_rel(Oid tableOid, Oid indexOid, int options)
 	 */
 	if (recheck)
 	{
-		HeapTuple	tuple;
-		Form_pg_index indexForm;
-
 		/* Check that the user still owns the relation */
 		if (!pg_class_ownercheck(tableOid, GetUserId()))
 		{
@@ -345,22 +330,12 @@ cluster_rel(Oid tableOid, Oid indexOid, int options)
 			/*
 			 * Check that the index is still the one with indisclustered set.
 			 */
-			tuple = SearchSysCache1(INDEXRELID, ObjectIdGetDatum(indexOid));
-			if (!HeapTupleIsValid(tuple))	/* probably can't happen */
+			if (!get_index_isclustered(indexOid))
 			{
 				relation_close(OldHeap, AccessExclusiveLock);
 				pgstat_progress_end_command();
 				return;
 			}
-			indexForm = (Form_pg_index) GETSTRUCT(tuple);
-			if (!indexForm->indisclustered)
-			{
-				ReleaseSysCache(tuple);
-				relation_close(OldHeap, AccessExclusiveLock);
-				pgstat_progress_end_command();
-				return;
-			}
-			ReleaseSysCache(tuple);
 		}
 	}
 
@@ -519,18 +494,8 @@ mark_index_clustered(Relation rel, Oid indexOid, bool is_internal)
 	 */
 	if (OidIsValid(indexOid))
 	{
-		indexTuple = SearchSysCache1(INDEXRELID, ObjectIdGetDatum(indexOid));
-		if (!HeapTupleIsValid(indexTuple))
-			elog(ERROR, "cache lookup failed for index %u", indexOid);
-		indexForm = (Form_pg_index) GETSTRUCT(indexTuple);
-
-		if (indexForm->indisclustered)
-		{
-			ReleaseSysCache(indexTuple);
+		if (get_index_isclustered(indexOid))
 			return;
-		}
-
-		ReleaseSysCache(indexTuple);
 	}
 
 	/*
@@ -1111,6 +1076,25 @@ swap_relation_files(Oid r1, Oid r2, bool target_is_pg_class,
 	}
 
 	/*
+	 * Recognize that rel1's relfilenode (swapped from rel2) is new in this
+	 * subtransaction. The rel2 storage (swapped from rel1) may or may not be
+	 * new.
+	 */
+	{
+		Relation	rel1,
+					rel2;
+
+		rel1 = relation_open(r1, NoLock);
+		rel2 = relation_open(r2, NoLock);
+		rel2->rd_createSubid = rel1->rd_createSubid;
+		rel2->rd_newRelfilenodeSubid = rel1->rd_newRelfilenodeSubid;
+		rel2->rd_firstRelfilenodeSubid = rel1->rd_firstRelfilenodeSubid;
+		RelationAssumeNewRelfilenode(rel1);
+		relation_close(rel1, NoLock);
+		relation_close(rel2, NoLock);
+	}
+
+	/*
 	 * In the case of a shared catalog, these next few steps will only affect
 	 * our own database's pg_class row; but that's okay, because they are all
 	 * noncritical updates.  That's also an important fact for the case of a
@@ -1489,7 +1473,7 @@ finish_heap_swap(Oid OIDOldHeap, Oid OIDNewHeap,
 
 			/* Get the associated valid index to be renamed */
 			toastidx = toast_get_valid_index(newrel->rd_rel->reltoastrelid,
-											 AccessShareLock);
+											 NoLock);
 
 			/* rename the toast table ... */
 			snprintf(NewToastName, NAMEDATALEN, "pg_toast_%u",

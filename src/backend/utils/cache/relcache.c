@@ -33,6 +33,7 @@
 #include "access/htup_details.h"
 #include "access/multixact.h"
 #include "access/nbtree.h"
+#include "access/parallel.h"
 #include "access/reloptions.h"
 #include "access/sysattr.h"
 #include "access/table.h"
@@ -43,6 +44,7 @@
 #include "catalog/catalog.h"
 #include "catalog/indexing.h"
 #include "catalog/namespace.h"
+#include "catalog/partition.h"
 #include "catalog/pg_am.h"
 #include "catalog/pg_amproc.h"
 #include "catalog/pg_attrdef.h"
@@ -257,6 +259,9 @@ static void RelationReloadIndexInfo(Relation relation);
 static void RelationReloadNailed(Relation relation);
 static void RelationFlushRelation(Relation relation);
 static void RememberToFreeTupleDescAtEOX(TupleDesc td);
+#ifdef USE_ASSERT_CHECKING
+static void AssertPendingSyncConsistency(Relation relation);
+#endif
 static void AtEOXact_cleanup(Relation relation, bool isCommit);
 static void AtEOSubXact_cleanup(Relation relation, bool isCommit,
 								SubTransactionId mySubid, SubTransactionId parentSubid);
@@ -313,7 +318,7 @@ ScanPgRelation(Oid targetRelId, bool indexOK, bool force_non_historic)
 	Relation	pg_class_desc;
 	SysScanDesc pg_class_scan;
 	ScanKeyData key[1];
-	Snapshot	snapshot;
+	Snapshot	snapshot = NULL;
 
 	/*
 	 * If something goes wrong during backend startup, we might find ourselves
@@ -343,12 +348,12 @@ ScanPgRelation(Oid targetRelId, bool indexOK, bool force_non_historic)
 	/*
 	 * The caller might need a tuple that's newer than the one the historic
 	 * snapshot; currently the only case requiring to do so is looking up the
-	 * relfilenode of non mapped system relations during decoding.
+	 * relfilenode of non mapped system relations during decoding. That
+	 * snapshot can't change in the midst of a relcache build, so there's no
+	 * need to register the snapshot.
 	 */
 	if (force_non_historic)
 		snapshot = GetNonHistoricCatalogSnapshot(RelationRelationId);
-	else
-		snapshot = GetCatalogSnapshot(RelationRelationId);
 
 	pg_class_scan = systable_beginscan(pg_class_desc, ClassOidIndexId,
 									   indexOK && criticalRelcachesBuilt,
@@ -1085,14 +1090,15 @@ RelationBuildDesc(Oid targetRelId, bool insertIt)
 	RelationGetRelid(relation) = relid;
 
 	/*
-	 * normal relations are not nailed into the cache; nor can a pre-existing
-	 * relation be new.  It could be temp though.  (Actually, it could be new
-	 * too, but it's okay to forget that fact if forced to flush the entry.)
+	 * Normal relations are not nailed into the cache.  Since we don't flush
+	 * new relations, it won't be new.  It could be temp though.
 	 */
 	relation->rd_refcnt = 0;
 	relation->rd_isnailed = false;
 	relation->rd_createSubid = InvalidSubTransactionId;
 	relation->rd_newRelfilenodeSubid = InvalidSubTransactionId;
+	relation->rd_firstRelfilenodeSubid = InvalidSubTransactionId;
+	relation->rd_droppedSubid = InvalidSubTransactionId;
 	switch (relation->rd_rel->relpersistence)
 	{
 		case RELPERSISTENCE_UNLOGGED:
@@ -1235,6 +1241,14 @@ RelationBuildDesc(Oid targetRelId, bool insertIt)
 	 */
 	if (insertIt)
 		RelationCacheInsert(relation, true);
+
+	/*
+	 * For RelationNeedsWAL() to answer correctly on parallel workers, restore
+	 * rd_firstRelfilenodeSubid.  No subtransactions start or end while in
+	 * parallel mode, so the specific SubTransactionId does not matter.
+	 */
+	if (IsParallelWorker() && RelFileNodeSkippingWAL(relation->rd_node))
+		relation->rd_firstRelfilenodeSubid = TopSubTransactionId;
 
 	/* It's fully valid */
 	relation->rd_isvalid = true;
@@ -1490,6 +1504,8 @@ RelationInitIndexAccessInfo(Relation relation)
 	indoption = (int2vector *) DatumGetPointer(indoptionDatum);
 	memcpy(relation->rd_indoption, indoption->values, indnkeyatts * sizeof(int16));
 
+	(void) RelationGetIndexAttOptions(relation, false);
+
 	/*
 	 * expressions, predicate, exclusion caches will be filled later
 	 */
@@ -1606,7 +1622,7 @@ LookupOpclassInfo(Oid operatorClassOid,
 		if (numSupport > 0)
 			opcentry->supportProcs = (RegProcedure *)
 				MemoryContextAllocZero(CacheMemoryContext,
-									   numSupport * sizeof(RegProcedure));
+									   (numSupport + 1) * sizeof(RegProcedure));
 		else
 			opcentry->supportProcs = NULL;
 	}
@@ -1817,6 +1833,8 @@ formrdesc(const char *relationName, Oid relationReltype,
 	relation->rd_isnailed = true;
 	relation->rd_createSubid = InvalidSubTransactionId;
 	relation->rd_newRelfilenodeSubid = InvalidSubTransactionId;
+	relation->rd_firstRelfilenodeSubid = InvalidSubTransactionId;
+	relation->rd_droppedSubid = InvalidSubTransactionId;
 	relation->rd_backend = InvalidBackendId;
 	relation->rd_islocaltemp = false;
 
@@ -1989,6 +2007,13 @@ RelationIdGetRelation(Oid relationId)
 
 	if (RelationIsValid(rd))
 	{
+		/* return NULL for dropped relations */
+		if (rd->rd_droppedSubid != InvalidSubTransactionId)
+		{
+			Assert(!rd->rd_isvalid);
+			return NULL;
+		}
+
 		RelationIncrementReferenceCount(rd);
 		/* revalidate cache entry if necessary */
 		if (!rd->rd_isvalid)
@@ -2092,7 +2117,7 @@ RelationClose(Relation relation)
 #ifdef RELCACHE_FORCE_RELEASE
 	if (RelationHasReferenceCountZero(relation) &&
 		relation->rd_createSubid == InvalidSubTransactionId &&
-		relation->rd_newRelfilenodeSubid == InvalidSubTransactionId)
+		relation->rd_firstRelfilenodeSubid == InvalidSubTransactionId)
 		RelationClearRelation(relation, false);
 #endif
 }
@@ -2131,10 +2156,11 @@ RelationReloadIndexInfo(Relation relation)
 	HeapTuple	pg_class_tuple;
 	Form_pg_class relp;
 
-	/* Should be called only for invalidated indexes */
+	/* Should be called only for invalidated, live indexes */
 	Assert((relation->rd_rel->relkind == RELKIND_INDEX ||
 			relation->rd_rel->relkind == RELKIND_PARTITIONED_INDEX) &&
-		   !relation->rd_isvalid);
+		   !relation->rd_isvalid &&
+		   relation->rd_droppedSubid == InvalidSubTransactionId);
 
 	/* Ensure it's closed at smgr level */
 	RelationCloseSmgr(relation);
@@ -2430,6 +2456,13 @@ RelationClearRelation(Relation relation, bool rebuild)
 		return;
 	}
 
+	/* Mark it invalid until we've finished rebuild */
+	relation->rd_isvalid = false;
+
+	/* See RelationForgetRelation(). */
+	if (relation->rd_droppedSubid != InvalidSubTransactionId)
+		return;
+
 	/*
 	 * Even non-system indexes should not be blown away if they are open and
 	 * have valid index support information.  This avoids problems with active
@@ -2442,14 +2475,10 @@ RelationClearRelation(Relation relation, bool rebuild)
 		relation->rd_refcnt > 0 &&
 		relation->rd_indexcxt != NULL)
 	{
-		relation->rd_isvalid = false;	/* needs to be revalidated */
 		if (IsTransactionState())
 			RelationReloadIndexInfo(relation);
 		return;
 	}
-
-	/* Mark it invalid until we've finished rebuild */
-	relation->rd_isvalid = false;
 
 	/*
 	 * If we're really done with the relcache entry, blow it away. But if
@@ -2508,13 +2537,13 @@ RelationClearRelation(Relation relation, bool rebuild)
 		 * problem.
 		 *
 		 * When rebuilding an open relcache entry, we must preserve ref count,
-		 * rd_createSubid/rd_newRelfilenodeSubid, and rd_toastoid state.  Also
-		 * attempt to preserve the pg_class entry (rd_rel), tupledesc,
-		 * rewrite-rule, partition key, and partition descriptor substructures
-		 * in place, because various places assume that these structures won't
-		 * move while they are working with an open relcache entry.  (Note:
-		 * the refcount mechanism for tupledescs might someday allow us to
-		 * remove this hack for the tupledesc.)
+		 * rd_*Subid, and rd_toastoid state.  Also attempt to preserve the
+		 * pg_class entry (rd_rel), tupledesc, rewrite-rule, partition key,
+		 * and partition descriptor substructures in place, because various
+		 * places assume that these structures won't move while they are
+		 * working with an open relcache entry.  (Note:  the refcount
+		 * mechanism for tupledescs might someday allow us to remove this hack
+		 * for the tupledesc.)
 		 *
 		 * Note that this process does not touch CurrentResourceOwner; which
 		 * is good because whatever ref counts the entry may have do not
@@ -2594,6 +2623,8 @@ RelationClearRelation(Relation relation, bool rebuild)
 		/* creation sub-XIDs must be preserved */
 		SWAPFIELD(SubTransactionId, rd_createSubid);
 		SWAPFIELD(SubTransactionId, rd_newRelfilenodeSubid);
+		SWAPFIELD(SubTransactionId, rd_firstRelfilenodeSubid);
+		SWAPFIELD(SubTransactionId, rd_droppedSubid);
 		/* un-swap rd_rel pointers, swap contents instead */
 		SWAPFIELD(Form_pg_class, rd_rel);
 		/* ... but actually, we don't have to update newrel->rd_rel */
@@ -2672,12 +2703,12 @@ static void
 RelationFlushRelation(Relation relation)
 {
 	if (relation->rd_createSubid != InvalidSubTransactionId ||
-		relation->rd_newRelfilenodeSubid != InvalidSubTransactionId)
+		relation->rd_firstRelfilenodeSubid != InvalidSubTransactionId)
 	{
 		/*
 		 * New relcache entries are always rebuilt, not flushed; else we'd
-		 * forget the "new" status of the relation, which is a useful
-		 * optimization to have.  Ditto for the new-relfilenode status.
+		 * forget the "new" status of the relation.  Ditto for the
+		 * new-relfilenode status.
 		 *
 		 * The rel could have zero refcnt here, so temporarily increment the
 		 * refcnt to ensure it's safe to rebuild it.  We can assume that the
@@ -2699,10 +2730,7 @@ RelationFlushRelation(Relation relation)
 }
 
 /*
- * RelationForgetRelation - unconditionally remove a relcache entry
- *
- *		   External interface for destroying a relcache entry when we
- *		   drop the relation.
+ * RelationForgetRelation - caller reports that it dropped the relation
  */
 void
 RelationForgetRelation(Oid rid)
@@ -2717,7 +2745,19 @@ RelationForgetRelation(Oid rid)
 	if (!RelationHasReferenceCountZero(relation))
 		elog(ERROR, "relation %u is still open", rid);
 
-	/* Unconditionally destroy the relcache entry */
+	Assert(relation->rd_droppedSubid == InvalidSubTransactionId);
+	if (relation->rd_createSubid != InvalidSubTransactionId ||
+		relation->rd_firstRelfilenodeSubid != InvalidSubTransactionId)
+	{
+		/*
+		 * In the event of subtransaction rollback, we must not forget
+		 * rd_*Subid.  Mark the entry "dropped" so RelationClearRelation()
+		 * invalidates it in lieu of destroying it.  (If we're in a top
+		 * transaction, we could opt to destroy the entry.)
+		 */
+		relation->rd_droppedSubid = GetCurrentSubTransactionId();
+	}
+
 	RelationClearRelation(relation, false);
 }
 
@@ -2757,11 +2797,10 @@ RelationCacheInvalidateEntry(Oid relationId)
  *	 relation cache and re-read relation mapping data.
  *
  *	 This is currently used only to recover from SI message buffer overflow,
- *	 so we do not touch new-in-transaction relations; they cannot be targets
- *	 of cross-backend SI updates (and our own updates now go through a
- *	 separate linked list that isn't limited by the SI message buffer size).
- *	 Likewise, we need not discard new-relfilenode-in-transaction hints,
- *	 since any invalidation of those would be a local event.
+ *	 so we do not touch relations having new-in-transaction relfilenodes; they
+ *	 cannot be targets of cross-backend SI updates (and our own updates now go
+ *	 through a separate linked list that isn't limited by the SI message
+ *	 buffer size).
  *
  *	 We do this in two phases: the first pass deletes deletable items, and
  *	 the second one rebuilds the rebuildable items.  This is essential for
@@ -2812,7 +2851,7 @@ RelationCacheInvalidate(void)
 		 * pending invalidations.
 		 */
 		if (relation->rd_createSubid != InvalidSubTransactionId ||
-			relation->rd_newRelfilenodeSubid != InvalidSubTransactionId)
+			relation->rd_firstRelfilenodeSubid != InvalidSubTransactionId)
 			continue;
 
 		relcacheInvalsReceived++;
@@ -2924,6 +2963,84 @@ RememberToFreeTupleDescAtEOX(TupleDesc td)
 	EOXactTupleDescArray[NextEOXactTupleDescNum++] = td;
 }
 
+#ifdef USE_ASSERT_CHECKING
+static void
+AssertPendingSyncConsistency(Relation relation)
+{
+	bool		relcache_verdict =
+	relation->rd_rel->relpersistence == RELPERSISTENCE_PERMANENT &&
+	((relation->rd_createSubid != InvalidSubTransactionId &&
+	  RELKIND_HAS_STORAGE(relation->rd_rel->relkind)) ||
+	 relation->rd_firstRelfilenodeSubid != InvalidSubTransactionId);
+
+	Assert(relcache_verdict == RelFileNodeSkippingWAL(relation->rd_node));
+
+	if (relation->rd_droppedSubid != InvalidSubTransactionId)
+		Assert(!relation->rd_isvalid &&
+			   (relation->rd_createSubid != InvalidSubTransactionId ||
+				relation->rd_firstRelfilenodeSubid != InvalidSubTransactionId));
+}
+
+/*
+ * AssertPendingSyncs_RelationCache
+ *
+ *	Assert that relcache.c and storage.c agree on whether to skip WAL.
+ */
+void
+AssertPendingSyncs_RelationCache(void)
+{
+	HASH_SEQ_STATUS status;
+	LOCALLOCK  *locallock;
+	Relation   *rels;
+	int			maxrels;
+	int			nrels;
+	RelIdCacheEnt *idhentry;
+	int			i;
+
+	/*
+	 * Open every relation that this transaction has locked.  If, for some
+	 * relation, storage.c is skipping WAL and relcache.c is not skipping WAL,
+	 * a CommandCounterIncrement() typically yields a local invalidation
+	 * message that destroys the relcache entry.  By recreating such entries
+	 * here, we detect the problem.
+	 */
+	PushActiveSnapshot(GetTransactionSnapshot());
+	maxrels = 1;
+	rels = palloc(maxrels * sizeof(*rels));
+	nrels = 0;
+	hash_seq_init(&status, GetLockMethodLocalHash());
+	while ((locallock = (LOCALLOCK *) hash_seq_search(&status)) != NULL)
+	{
+		Oid			relid;
+		Relation	r;
+
+		if (locallock->nLocks <= 0)
+			continue;
+		if ((LockTagType) locallock->tag.lock.locktag_type !=
+			LOCKTAG_RELATION)
+			continue;
+		relid = ObjectIdGetDatum(locallock->tag.lock.locktag_field2);
+		r = RelationIdGetRelation(relid);
+		if (!RelationIsValid(r))
+			continue;
+		if (nrels >= maxrels)
+		{
+			maxrels *= 2;
+			rels = repalloc(rels, maxrels * sizeof(*rels));
+		}
+		rels[nrels++] = r;
+	}
+
+	hash_seq_init(&status, RelationIdCache);
+	while ((idhentry = (RelIdCacheEnt *) hash_seq_search(&status)) != NULL)
+		AssertPendingSyncConsistency(idhentry->reldesc);
+
+	for (i = 0; i < nrels; i++)
+		RelationClose(rels[i]);
+	PopActiveSnapshot();
+}
+#endif
+
 /*
  * AtEOXact_RelationCache
  *
@@ -3006,6 +3123,8 @@ AtEOXact_RelationCache(bool isCommit)
 static void
 AtEOXact_cleanup(Relation relation, bool isCommit)
 {
+	bool		clear_relcache = false;
+
 	/*
 	 * The relcache entry's ref count should be back to its normal
 	 * not-in-a-transaction state: 0 unless it's nailed in cache.
@@ -3031,20 +3150,31 @@ AtEOXact_cleanup(Relation relation, bool isCommit)
 #endif
 
 	/*
-	 * Is it a relation created in the current transaction?
+	 * Is the relation live after this transaction ends?
 	 *
-	 * During commit, reset the flag to zero, since we are now out of the
-	 * creating transaction.  During abort, simply delete the relcache entry
-	 * --- it isn't interesting any longer.  (NOTE: if we have forgotten the
-	 * new-ness of a new relation due to a forced cache flush, the entry will
-	 * get deleted anyway by shared-cache-inval processing of the aborted
-	 * pg_class insertion.)
+	 * During commit, clear the relcache entry if it is preserved after
+	 * relation drop, in order not to orphan the entry.  During rollback,
+	 * clear the relcache entry if the relation is created in the current
+	 * transaction since it isn't interesting any longer once we are out of
+	 * the transaction.
 	 */
-	if (relation->rd_createSubid != InvalidSubTransactionId)
+	clear_relcache =
+		(isCommit ?
+		 relation->rd_droppedSubid != InvalidSubTransactionId :
+		 relation->rd_createSubid != InvalidSubTransactionId);
+
+	/*
+	 * Since we are now out of the transaction, reset the subids to zero. That
+	 * also lets RelationClearRelation() drop the relcache entry.
+	 */
+	relation->rd_createSubid = InvalidSubTransactionId;
+	relation->rd_newRelfilenodeSubid = InvalidSubTransactionId;
+	relation->rd_firstRelfilenodeSubid = InvalidSubTransactionId;
+	relation->rd_droppedSubid = InvalidSubTransactionId;
+
+	if (clear_relcache)
 	{
-		if (isCommit)
-			relation->rd_createSubid = InvalidSubTransactionId;
-		else if (RelationHasReferenceCountZero(relation))
+		if (RelationHasReferenceCountZero(relation))
 		{
 			RelationClearRelation(relation, false);
 			return;
@@ -3059,16 +3189,10 @@ AtEOXact_cleanup(Relation relation, bool isCommit)
 			 * eventually.  This must be just a WARNING to avoid
 			 * error-during-error-recovery loops.
 			 */
-			relation->rd_createSubid = InvalidSubTransactionId;
 			elog(WARNING, "cannot remove relcache entry for \"%s\" because it has nonzero refcount",
 				 RelationGetRelationName(relation));
 		}
 	}
-
-	/*
-	 * Likewise, reset the hint about the relfilenode being new.
-	 */
-	relation->rd_newRelfilenodeSubid = InvalidSubTransactionId;
 }
 
 /*
@@ -3132,15 +3256,28 @@ AtEOSubXact_cleanup(Relation relation, bool isCommit,
 	/*
 	 * Is it a relation created in the current subtransaction?
 	 *
-	 * During subcommit, mark it as belonging to the parent, instead. During
-	 * subabort, simply delete the relcache entry.
+	 * During subcommit, mark it as belonging to the parent, instead, as long
+	 * as it has not been dropped. Otherwise simply delete the relcache entry.
+	 * --- it isn't interesting any longer.
 	 */
 	if (relation->rd_createSubid == mySubid)
 	{
-		if (isCommit)
+		/*
+		 * Valid rd_droppedSubid means the corresponding relation is dropped
+		 * but the relcache entry is preserved for at-commit pending sync. We
+		 * need to drop it explicitly here not to make the entry orphan.
+		 */
+		Assert(relation->rd_droppedSubid == mySubid ||
+			   relation->rd_droppedSubid == InvalidSubTransactionId);
+		if (isCommit && relation->rd_droppedSubid == InvalidSubTransactionId)
 			relation->rd_createSubid = parentSubid;
 		else if (RelationHasReferenceCountZero(relation))
 		{
+			/* allow the entry to be removed */
+			relation->rd_createSubid = InvalidSubTransactionId;
+			relation->rd_newRelfilenodeSubid = InvalidSubTransactionId;
+			relation->rd_firstRelfilenodeSubid = InvalidSubTransactionId;
+			relation->rd_droppedSubid = InvalidSubTransactionId;
 			RelationClearRelation(relation, false);
 			return;
 		}
@@ -3160,7 +3297,8 @@ AtEOSubXact_cleanup(Relation relation, bool isCommit,
 	}
 
 	/*
-	 * Likewise, update or drop any new-relfilenode-in-subtransaction hint.
+	 * Likewise, update or drop any new-relfilenode-in-subtransaction record
+	 * or drop record.
 	 */
 	if (relation->rd_newRelfilenodeSubid == mySubid)
 	{
@@ -3168,6 +3306,22 @@ AtEOSubXact_cleanup(Relation relation, bool isCommit,
 			relation->rd_newRelfilenodeSubid = parentSubid;
 		else
 			relation->rd_newRelfilenodeSubid = InvalidSubTransactionId;
+	}
+
+	if (relation->rd_firstRelfilenodeSubid == mySubid)
+	{
+		if (isCommit)
+			relation->rd_firstRelfilenodeSubid = parentSubid;
+		else
+			relation->rd_firstRelfilenodeSubid = InvalidSubTransactionId;
+	}
+
+	if (relation->rd_droppedSubid == mySubid)
+	{
+		if (isCommit)
+			relation->rd_droppedSubid = parentSubid;
+		else
+			relation->rd_droppedSubid = InvalidSubTransactionId;
 	}
 }
 
@@ -3258,6 +3412,8 @@ RelationBuildLocalRelation(const char *relname,
 	/* it's being created in this transaction */
 	rel->rd_createSubid = GetCurrentSubTransactionId();
 	rel->rd_newRelfilenodeSubid = InvalidSubTransactionId;
+	rel->rd_firstRelfilenodeSubid = InvalidSubTransactionId;
+	rel->rd_droppedSubid = InvalidSubTransactionId;
 
 	/*
 	 * create a new tuple descriptor from the one passed in.  We do this
@@ -3555,14 +3711,29 @@ RelationSetNewRelfilenode(Relation relation, char persistence)
 	 */
 	CommandCounterIncrement();
 
-	/*
-	 * Mark the rel as having been given a new relfilenode in the current
-	 * (sub) transaction.  This is a hint that can be used to optimize later
-	 * operations on the rel in the same transaction.
-	 */
-	relation->rd_newRelfilenodeSubid = GetCurrentSubTransactionId();
+	RelationAssumeNewRelfilenode(relation);
+}
 
-	/* Flag relation as needing eoxact cleanup (to remove the hint) */
+/*
+ * RelationAssumeNewRelfilenode
+ *
+ * Code that modifies pg_class.reltablespace or pg_class.relfilenode must call
+ * this.  The call shall precede any code that might insert WAL records whose
+ * replay would modify bytes in the new RelFileNode, and the call shall follow
+ * any WAL modifying bytes in the prior RelFileNode.  See struct RelationData.
+ * Ideally, call this as near as possible to the CommandCounterIncrement()
+ * that makes the pg_class change visible (before it or after it); that
+ * minimizes the chance of future development adding a forbidden WAL insertion
+ * between RelationAssumeNewRelfilenode() and CommandCounterIncrement().
+ */
+void
+RelationAssumeNewRelfilenode(Relation relation)
+{
+	relation->rd_newRelfilenodeSubid = GetCurrentSubTransactionId();
+	if (relation->rd_firstRelfilenodeSubid == InvalidSubTransactionId)
+		relation->rd_firstRelfilenodeSubid = relation->rd_newRelfilenodeSubid;
+
+	/* Flag relation as needing eoxact cleanup (to clear these fields) */
 	EOXactListAdd(relation);
 }
 
@@ -3983,6 +4154,8 @@ load_critical_index(Oid indexoid, Oid heapoid)
 	ird->rd_refcnt = 1;
 	UnlockRelationOid(indexoid, AccessShareLock);
 	UnlockRelationOid(heapoid, AccessShareLock);
+
+	(void) RelationGetIndexAttOptions(ird, false);
 }
 
 /*
@@ -5142,6 +5315,20 @@ GetRelationPublicationActions(Relation relation)
 
 	/* Fetch the publication membership info. */
 	puboids = GetRelationPublications(RelationGetRelid(relation));
+	if (relation->rd_rel->relispartition)
+	{
+		/* Add publications that the ancestors are in too. */
+		List   *ancestors = get_partition_ancestors(RelationGetRelid(relation));
+		ListCell *lc;
+
+		foreach(lc, ancestors)
+		{
+			Oid		ancestor = lfirst_oid(lc);
+
+			puboids = list_concat_unique_oid(puboids,
+											 GetRelationPublications(ancestor));
+		}
+	}
 	puboids = list_concat_unique_oid(puboids, GetAllTablesPublications());
 
 	foreach(lc, puboids)
@@ -5186,6 +5373,103 @@ GetRelationPublicationActions(Relation relation)
 	MemoryContextSwitchTo(oldcxt);
 
 	return pubactions;
+}
+
+/*
+ * RelationGetIndexRawAttOptions -- get AM/opclass-specific options for the index
+ */
+Datum *
+RelationGetIndexRawAttOptions(Relation indexrel)
+{
+	Oid			indexrelid = RelationGetRelid(indexrel);
+	int16		natts = RelationGetNumberOfAttributes(indexrel);
+	Datum	   *options = NULL;
+	int16		attnum;
+
+	for (attnum = 1; attnum <= natts; attnum++)
+	{
+		if (indexrel->rd_indam->amoptsprocnum == 0)
+			continue;
+
+		if (!OidIsValid(index_getprocid(indexrel, attnum,
+										indexrel->rd_indam->amoptsprocnum)))
+			continue;
+
+		if (!options)
+			options = palloc0(sizeof(Datum) * natts);
+
+		options[attnum - 1] = get_attoptions(indexrelid, attnum);
+	}
+
+	return options;
+}
+
+static bytea **
+CopyIndexAttOptions(bytea **srcopts, int natts)
+{
+	bytea	  **opts = palloc(sizeof(*opts) * natts);
+
+	for (int i = 0; i < natts; i++)
+	{
+		bytea	   *opt = srcopts[i];
+
+		opts[i] = !opt ? NULL : (bytea *)
+			DatumGetPointer(datumCopy(PointerGetDatum(opt), false, -1));
+	}
+
+	return opts;
+}
+
+/*
+ * RelationGetIndexAttOptions
+ *		get AM/opclass-specific options for an index parsed into a binary form
+ */
+bytea **
+RelationGetIndexAttOptions(Relation relation, bool copy)
+{
+	MemoryContext oldcxt;
+	bytea	  **opts = relation->rd_opcoptions;
+	Oid			relid = RelationGetRelid(relation);
+	int			natts = RelationGetNumberOfAttributes(relation);	/* XXX IndexRelationGetNumberOfKeyAttributes */
+	int			i;
+
+	/* Try to copy cached options. */
+	if (opts)
+		return copy ? CopyIndexAttOptions(opts, natts) : opts;
+
+	/* Get and parse opclass options. */
+	opts = palloc0(sizeof(*opts) * natts);
+
+	for (i = 0; i < natts; i++)
+	{
+		if (criticalRelcachesBuilt && relid != AttributeRelidNumIndexId)
+		{
+			Datum		attoptions = get_attoptions(relid, i + 1);
+
+			opts[i] = index_opclass_options(relation, i + 1, attoptions, false);
+
+			if (attoptions != (Datum) 0)
+				pfree(DatumGetPointer(attoptions));
+		}
+	}
+
+	/* Copy parsed options to the cache. */
+	oldcxt = MemoryContextSwitchTo(relation->rd_indexcxt);
+	relation->rd_opcoptions = CopyIndexAttOptions(opts, natts);
+	MemoryContextSwitchTo(oldcxt);
+
+	if (copy)
+		return opts;
+
+	for (i = 0; i < natts; i++)
+	{
+		if (opts[i])
+			pfree(opts[i]);
+	}
+
+	pfree(opts);
+
+	return relation->rd_opcoptions;
 }
 
 /*
@@ -5549,6 +5833,23 @@ load_relcache_init_file(bool shared)
 
 			rel->rd_indoption = indoption;
 
+			/* finally, read the vector of opcoptions values */
+			rel->rd_opcoptions = (bytea **)
+				MemoryContextAllocZero(indexcxt, sizeof(*rel->rd_opcoptions) * relform->relnatts);
+
+			for (i = 0; i < relform->relnatts; i++)
+			{
+				if (fread(&len, 1, sizeof(len), fp) != sizeof(len))
+					goto read_failed;
+
+				if (len > 0)
+				{
+					rel->rd_opcoptions[i] = (bytea *) MemoryContextAlloc(indexcxt, len);
+					if (fread(rel->rd_opcoptions[i], 1, len, fp) != len)
+						goto read_failed;
+				}
+			}
+
 			/* set up zeroed fmgr-info vector */
 			nsupport = relform->relnatts * rel->rd_indam->amsupport;
 			rel->rd_supportinfo = (FmgrInfo *)
@@ -5577,6 +5878,7 @@ load_relcache_init_file(bool shared)
 			Assert(rel->rd_supportinfo == NULL);
 			Assert(rel->rd_indoption == NULL);
 			Assert(rel->rd_indcollation == NULL);
+			Assert(rel->rd_opcoptions == NULL);
 		}
 
 		/*
@@ -5628,6 +5930,8 @@ load_relcache_init_file(bool shared)
 		rel->rd_fkeylist = NIL;
 		rel->rd_createSubid = InvalidSubTransactionId;
 		rel->rd_newRelfilenodeSubid = InvalidSubTransactionId;
+		rel->rd_firstRelfilenodeSubid = InvalidSubTransactionId;
+		rel->rd_droppedSubid = InvalidSubTransactionId;
 		rel->rd_amcache = NULL;
 		MemSet(&rel->pgstat_info, 0, sizeof(rel->pgstat_info));
 
@@ -5862,6 +6166,16 @@ write_relcache_init_file(bool shared)
 			write_item(rel->rd_indoption,
 					   relform->relnatts * sizeof(int16),
 					   fp);
+
+			Assert(rel->rd_opcoptions);
+
+			/* finally, write the vector of opcoptions values */
+			for (i = 0; i < relform->relnatts; i++)
+			{
+				bytea	   *opt = rel->rd_opcoptions[i];
+
+				write_item(opt, opt ? VARSIZE(opt) : 0, fp);
+			}
 		}
 	}
 

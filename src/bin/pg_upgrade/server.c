@@ -168,7 +168,7 @@ get_major_server_version(ClusterInfo *cluster)
 
 	if (fscanf(version_fd, "%63s", cluster->major_version_str) == 0 ||
 		sscanf(cluster->major_version_str, "%d.%d", &v1, &v2) < 1)
-		pg_fatal("could not parse PG_VERSION file from \"%s\"\n", cluster->pgdata);
+		pg_fatal("could not parse version file \"%s\"\n", ver_filename);
 
 	fclose(version_fd);
 
@@ -210,7 +210,7 @@ start_postmaster(ClusterInfo *cluster, bool report_and_exit_on_error)
 
 	socket_string[0] = '\0';
 
-#ifdef HAVE_UNIX_SOCKETS
+#if defined(HAVE_UNIX_SOCKETS) && !defined(WIN32)
 	/* prevent TCP/IP connections, restrict socket access */
 	strcat(socket_string,
 		   " -c listen_addresses='' -c unix_socket_permissions=0700");

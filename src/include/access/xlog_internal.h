@@ -31,7 +31,7 @@
 /*
  * Each page of XLOG file has a header like this:
  */
-#define XLOG_PAGE_MAGIC 0xD105	/* can be used as WAL version indicator */
+#define XLOG_PAGE_MAGIC 0xD106	/* can be used as WAL version indicator */
 
 typedef struct XLogPageHeaderData
 {
@@ -319,23 +319,5 @@ extern bool ArchiveRecoveryRequested;
 extern bool InArchiveRecovery;
 extern bool StandbyMode;
 extern char *recoveryRestoreCommand;
-
-/*
- * Prototypes for functions in xlogarchive.c
- */
-extern bool RestoreArchivedFile(char *path, const char *xlogfname,
-								const char *recovername, off_t expectedSize,
-								bool cleanupEnabled);
-extern void ExecuteRecoveryCommand(const char *command, const char *commandName,
-								   bool failOnSignal);
-extern void KeepFileRestoredFromArchive(const char *path, const char *xlogfname);
-extern void XLogArchiveNotify(const char *xlog);
-extern void XLogArchiveNotifySeg(XLogSegNo segno);
-extern void XLogArchiveForceDone(const char *xlog);
-extern bool XLogArchiveCheckDone(const char *xlog);
-extern bool XLogArchiveIsBusy(const char *xlog);
-extern bool XLogArchiveIsReady(const char *xlog);
-extern bool XLogArchiveIsReadyOrDone(const char *xlog);
-extern void XLogArchiveCleanup(const char *xlog);
 
 #endif							/* XLOG_INTERNAL_H */

@@ -45,6 +45,9 @@
 #include "tcop/tcopprot.h"
 #include "utils/memutils.h"
 
+/* default init hook can be overridden by a shared library */
+static void  default_openssl_tls_init(SSL_CTX *context, bool isServerStart);
+openssl_tls_init_hook_typ openssl_tls_init_hook = default_openssl_tls_init;
 
 static int	my_sock_read(BIO *h, char *buf, int size);
 static int	my_sock_write(BIO *h, const char *buf, int size);
@@ -68,8 +71,7 @@ static bool SSL_initialized = false;
 static bool dummy_ssl_passwd_cb_called = false;
 static bool ssl_is_server_start;
 
-static int	ssl_protocol_version_to_openssl(int v, const char *guc_name,
-											int loglevel);
+static int	ssl_protocol_version_to_openssl(int v);
 
 /* ------------------------------------------------------------ */
 /*						 Public interface						*/
@@ -80,6 +82,8 @@ be_tls_init(bool isServerStart)
 {
 	STACK_OF(X509_NAME) *root_cert_list = NULL;
 	SSL_CTX    *context;
+	int			ssl_ver_min = -1;
+	int			ssl_ver_max = -1;
 
 	/* This stuff need be done only once. */
 	if (!SSL_initialized)
@@ -116,27 +120,10 @@ be_tls_init(bool isServerStart)
 	SSL_CTX_set_mode(context, SSL_MODE_ACCEPT_MOVING_WRITE_BUFFER);
 
 	/*
-	 * Set password callback
+	 * Call init hook (usually to set password callback)
 	 */
-	if (isServerStart)
-	{
-		if (ssl_passphrase_command[0])
-			SSL_CTX_set_default_passwd_cb(context, ssl_external_passwd_cb);
-	}
-	else
-	{
-		if (ssl_passphrase_command[0] && ssl_passphrase_command_supports_reload)
-			SSL_CTX_set_default_passwd_cb(context, ssl_external_passwd_cb);
-		else
+	(* openssl_tls_init_hook)(context, isServerStart);
 
-			/*
-			 * If reloading and no external command is configured, override
-			 * OpenSSL's default handling of passphrase-protected files,
-			 * because we don't want to prompt for a passphrase in an
-			 * already-running server.
-			 */
-			SSL_CTX_set_default_passwd_cb(context, dummy_ssl_passwd_cb);
-	}
 	/* used by the callback */
 	ssl_is_server_start = isServerStart;
 
@@ -188,13 +175,19 @@ be_tls_init(bool isServerStart)
 
 	if (ssl_min_protocol_version)
 	{
-		int			ssl_ver = ssl_protocol_version_to_openssl(ssl_min_protocol_version,
-															  "ssl_min_protocol_version",
-															  isServerStart ? FATAL : LOG);
+		ssl_ver_min = ssl_protocol_version_to_openssl(ssl_min_protocol_version);
 
-		if (ssl_ver == -1)
+		if (ssl_ver_min == -1)
+		{
+			ereport(isServerStart ? FATAL : LOG,
+					(errmsg("\"%s\" setting \"%s\" not supported by this build",
+							"ssl_min_protocol_version",
+							GetConfigOption("ssl_min_protocol_version",
+											false, false))));
 			goto error;
-		if (!SSL_CTX_set_min_proto_version(context, ssl_ver))
+		}
+
+		if (!SSL_CTX_set_min_proto_version(context, ssl_ver_min))
 		{
 			ereport(isServerStart ? FATAL : LOG,
 					(errmsg("could not set minimum SSL protocol version")));
@@ -204,18 +197,41 @@ be_tls_init(bool isServerStart)
 
 	if (ssl_max_protocol_version)
 	{
-		int			ssl_ver = ssl_protocol_version_to_openssl(ssl_max_protocol_version,
-															  "ssl_max_protocol_version",
-															  isServerStart ? FATAL : LOG);
+		ssl_ver_max = ssl_protocol_version_to_openssl(ssl_max_protocol_version);
 
-		if (ssl_ver == -1)
+		if (ssl_ver_max == -1)
+		{
+			ereport(isServerStart ? FATAL : LOG,
+					(errmsg("\"%s\" setting \"%s\" not supported by this build",
+							"ssl_max_protocol_version",
+							GetConfigOption("ssl_max_protocol_version",
+											false, false))));
 			goto error;
-		if (!SSL_CTX_set_max_proto_version(context, ssl_ver))
+		}
+
+		if (!SSL_CTX_set_max_proto_version(context, ssl_ver_max))
 		{
 			ereport(isServerStart ? FATAL : LOG,
 					(errmsg("could not set maximum SSL protocol version")));
 			goto error;
 		}
+	}
+
+	/* Check compatibility of min/max protocols */
+	if (ssl_min_protocol_version &&
+		ssl_max_protocol_version)
+	{
+		/*
+		 * No need to check for invalid values (-1) for each protocol number
+		 * as the code above would have already generated an error.
+		 */
+		if (ssl_ver_min > ssl_ver_max)
+			ereport(isServerStart ? FATAL : LOG,
+					(errmsg("could not set SSL protocol version range"),
+					 errdetail("\"%s\" cannot be higher than \"%s\"",
+							   "ssl_min_protocol_version",
+							   "ssl_max_protocol_version")));
+		goto error;
 	}
 
 	/* disallow SSL session tickets */
@@ -1271,15 +1287,14 @@ X509_NAME_to_cstring(X509_NAME *name)
  * guc.c independent of OpenSSL availability and version.
  *
  * If a version is passed that is not supported by the current OpenSSL
- * version, then we log with the given loglevel and return (if we return) -1.
- * If a nonnegative value is returned, subsequent code can assume it's working
- * with a supported version.
+ * version, then we return -1.  If a nonnegative value is returned,
+ * subsequent code can assume it's working with a supported version.
  *
  * Note: this is rather similar to libpq's routine in fe-secure-openssl.c,
  * so make sure to update both routines if changing this one.
  */
 static int
-ssl_protocol_version_to_openssl(int v, const char *guc_name, int loglevel)
+ssl_protocol_version_to_openssl(int v)
 {
 	switch (v)
 	{
@@ -1307,9 +1322,29 @@ ssl_protocol_version_to_openssl(int v, const char *guc_name, int loglevel)
 #endif
 	}
 
-	ereport(loglevel,
-			(errmsg("%s setting %s not supported by this build",
-					guc_name,
-					GetConfigOption(guc_name, false, false))));
 	return -1;
+}
+
+
+static void
+default_openssl_tls_init(SSL_CTX *context, bool isServerStart)
+{
+	if (isServerStart)
+	{
+		if (ssl_passphrase_command[0])
+			SSL_CTX_set_default_passwd_cb(context, ssl_external_passwd_cb);
+	}
+	else
+	{
+		if (ssl_passphrase_command[0] && ssl_passphrase_command_supports_reload)
+			SSL_CTX_set_default_passwd_cb(context, ssl_external_passwd_cb);
+		else
+			/*
+			 * If reloading and no external command is configured, override
+			 * OpenSSL's default handling of passphrase-protected files,
+			 * because we don't want to prompt for a passphrase in an
+			 * already-running server.
+			 */
+			SSL_CTX_set_default_passwd_cb(context, dummy_ssl_passwd_cb);
+	}
 }

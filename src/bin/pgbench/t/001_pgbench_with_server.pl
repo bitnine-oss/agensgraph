@@ -270,8 +270,39 @@ COMMIT;
 }
 	});
 
-# Verify server logging of parameters.
-$node->append_conf('postgresql.conf', "log_parameters_on_error = true");
+# Verify server logging of query parameters.
+# (This doesn't really belong here, but pgbench is a convenient way
+# to issue commands using extended query mode with parameters.)
+
+# 1. Logging neither with errors nor with statements
+$node->append_conf('postgresql.conf',
+				   "log_min_duration_statement = 0\n" .
+				   "log_parameter_max_length = 0\n" .
+				   "log_parameter_max_length_on_error = 0");
+$node->reload;
+pgbench(
+		'-n -t1 -c1 -M prepared',
+		2,
+		[],
+		[
+		qr{ERROR:  invalid input syntax for type json},
+		qr{(?!extended query with parameters)}
+		],
+		'server parameter logging',
+		{
+			'001_param_1' => q[select '{ invalid ' as value \gset
+select $$'Valame Dios!' dijo Sancho; 'no le dije yo a vuestra merced que mirase bien lo que hacia?'$$ as long \gset
+select column1::jsonb from (values (:value), (:long)) as q;
+]
+	});
+my $log = TestLib::slurp_file($node->logfile);
+unlike($log, qr[DETAIL:  parameters: \$1 = '\{ invalid ',], "no parameters logged");
+$log = undef;
+
+# 2. Logging truncated parameters on error, full with statements
+$node->append_conf('postgresql.conf',
+				   "log_parameter_max_length = -1\n" .
+				   "log_parameter_max_length_on_error = 64");
 $node->reload;
 pgbench(
 		'-n -t1 -c1 -M prepared',
@@ -283,7 +314,47 @@ pgbench(
 		],
 		'server parameter logging',
 		{
-			'001_param_1' => q{select '1' as one \gset
+			'001_param_2' => q{select '1' as one \gset
+SELECT 1 / (random() / 2)::int, :one::int, :two::int;
+}
+	});
+pgbench(
+		'-n -t1 -c1 -M prepared',
+		2,
+		[],
+		[
+		qr{ERROR:  invalid input syntax for type json},
+		qr[CONTEXT:  JSON data, line 1: \{ invalid\.\.\.[\r\n]+extended query with parameters: \$1 = '\{ invalid ', \$2 = '''Valame Dios!'' dijo Sancho; ''no le dije yo a vuestra merced que \.\.\.']m
+		],
+		'server parameter logging',
+		{
+			'001_param_3' => q[select '{ invalid ' as value \gset
+select $$'Valame Dios!' dijo Sancho; 'no le dije yo a vuestra merced que mirase bien lo que hacia?'$$ as long \gset
+select column1::jsonb from (values (:value), (:long)) as q;
+]
+	});
+$log = TestLib::slurp_file($node->logfile);
+like($log, qr[DETAIL:  parameters: \$1 = '\{ invalid ', \$2 = '''Valame Dios!'' dijo Sancho; ''no le dije yo a vuestra merced que mirase bien lo que hacia\?'''],
+	 "parameter report does not truncate");
+$log = undef;
+
+# 3. Logging full parameters on error, truncated with statements
+$node->append_conf('postgresql.conf',
+				   "log_min_duration_statement = -1\n" .
+				   "log_parameter_max_length = 7\n" .
+				   "log_parameter_max_length_on_error = -1");
+$node->reload;
+pgbench(
+		'-n -t1 -c1 -M prepared',
+		2,
+		[],
+		[
+		qr{ERROR:  division by zero},
+		qr{CONTEXT:  extended query with parameters: \$1 = '1', \$2 = NULL}
+		],
+		'server parameter logging',
+		{
+			'001_param_4' => q{select '1' as one \gset
 SELECT 1 / (random() / 2)::int, :one::int, :two::int;
 }
 	});
@@ -296,21 +367,25 @@ pgbench(
 		[],
 		[
 		qr{ERROR:  invalid input syntax for type json},
-		qr[CONTEXT:  JSON data, line 1: \{ invalid\.\.\.[\r\n]+extended query with parameters: \$1 = '\{ invalid ', \$2 = '''Valame Dios!'' dijo Sancho; ''no le dije yo a vuestra merced que \.\.\.']m
+		qr[CONTEXT:  JSON data, line 1: \{ invalid\.\.\.[\r\n]+extended query with parameters: \$1 = '\{ invalid ', \$2 = '''Valame Dios!'' dijo Sancho; ''no le dije yo a vuestra merced que mirase bien lo que hacia\?']m
 		],
 		'server parameter logging',
 		{
-			'001_param_2' => q[select '{ invalid ' as value \gset
+			'001_param_5' => q[select '{ invalid ' as value \gset
 select $$'Valame Dios!' dijo Sancho; 'no le dije yo a vuestra merced que mirase bien lo que hacia?'$$ as long \gset
 select column1::jsonb from (values (:value), (:long)) as q;
 ]
 	});
-my $log = TestLib::slurp_file($node->logfile);
-like($log, qr[DETAIL:  parameters: \$1 = '\{ invalid ', \$2 = '''Valame Dios!'' dijo Sancho; ''no le dije yo a vuestra merced que mirase bien lo que hacia\?'''],
-	 "parameter report does not truncate");
+$log = TestLib::slurp_file($node->logfile);
+like($log, qr[DETAIL:  parameters: \$1 = '\{ inval\.\.\.', \$2 = '''Valame\.\.\.'],
+	 "parameter report truncates");
 $log = undef;
 
-$node->append_conf('postgresql.conf', "log_min_duration_statement = -1");
+# Restore default logging config
+$node->append_conf('postgresql.conf',
+				   "log_min_duration_statement = -1\n" .
+				   "log_parameter_max_length_on_error = 0\n" .
+				   "log_parameter_max_length = -1");
 $node->reload;
 
 # test expressions
@@ -624,6 +699,51 @@ SELECT 0 AS i4, 4 AS i4 \gset
 -- work on the last SQL command under \;
 \; \; SELECT 0 AS i5 \; SELECT 5 AS i5 \; \; \gset
 \set i debug(:i5)
+}
+	});
+# \gset cannot accept more than one row, causing command to fail.
+pgbench(
+	'-t 1', 2,
+	[ qr{type: .*/001_pgbench_gset_two_rows}, qr{processed: 0/1} ],
+	[qr{expected one row, got 2\b}],
+	'pgbench gset command with two rows',
+	{
+		'001_pgbench_gset_two_rows' => q{
+SELECT 5432 AS fail UNION SELECT 5433 ORDER BY 1 \gset
+}
+	});
+
+# working \aset
+# Valid cases.
+pgbench(
+	'-t 1', 0,
+	[ qr{type: .*/001_pgbench_aset}, qr{processed: 1/1} ],
+	[ qr{command=3.: int 8\b},       qr{command=4.: int 7\b} ],
+	'pgbench aset command',
+	{
+		'001_pgbench_aset' => q{
+-- test aset, which applies to a combined query
+\; SELECT 6 AS i6 \; SELECT 7 AS i7 \; \aset
+-- unless it returns more than one row, last is kept
+SELECT 8 AS i6 UNION SELECT 9 ORDER BY 1 DESC \aset
+\set i debug(:i6)
+\set i debug(:i7)
+}
+	});
+# Empty result set with \aset, causing command to fail.
+pgbench(
+	'-t 1', 2,
+	[ qr{type: .*/001_pgbench_aset_empty}, qr{processed: 0/1} ],
+	[
+		qr{undefined variable \"i8\"},
+		qr{evaluation of meta-command failed\b}
+	],
+	'pgbench aset command with empty result',
+	{
+		'001_pgbench_aset_empty' => q{
+-- empty result
+\; SELECT 5432 AS i8 WHERE FALSE \; \aset
+\set i debug(:i8)
 }
 	});
 

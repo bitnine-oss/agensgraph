@@ -1,8 +1,112 @@
--- Currently this tests polymorphic aggregates and indirectly does some
--- testing of polymorphic SQL functions.  It ought to be extended.
+--
+-- Tests for polymorphic SQL functions and aggregates based on them.
 -- Tests for other features related to function-calling have snuck in, too.
+--
+
+create function polyf(x anyelement) returns anyelement as $$
+  select x + 1
+$$ language sql;
+
+select polyf(42) as int, polyf(4.5) as num;
+select polyf(point(3,4));  -- fail for lack of + operator
+
+drop function polyf(x anyelement);
+
+create function polyf(x anyelement) returns anyarray as $$
+  select array[x + 1, x + 2]
+$$ language sql;
+
+select polyf(42) as int, polyf(4.5) as num;
+
+drop function polyf(x anyelement);
+
+create function polyf(x anyarray) returns anyelement as $$
+  select x[1]
+$$ language sql;
+
+select polyf(array[2,4]) as int, polyf(array[4.5, 7.7]) as num;
+
+select polyf(stavalues1) from pg_statistic;  -- fail, can't infer element type
+
+drop function polyf(x anyarray);
+
+create function polyf(x anyarray) returns anyarray as $$
+  select x
+$$ language sql;
+
+select polyf(array[2,4]) as int, polyf(array[4.5, 7.7]) as num;
+
+select polyf(stavalues1) from pg_statistic;  -- fail, can't infer element type
+
+drop function polyf(x anyarray);
+
+-- fail, can't infer type:
+create function polyf(x anyelement) returns anyrange as $$
+  select array[x + 1, x + 2]
+$$ language sql;
+
+create function polyf(x anyrange) returns anyarray as $$
+  select array[lower(x), upper(x)]
+$$ language sql;
+
+select polyf(int4range(42, 49)) as int, polyf(float8range(4.5, 7.8)) as num;
+
+drop function polyf(x anyrange);
+
+create function polyf(x anycompatible, y anycompatible) returns anycompatiblearray as $$
+  select array[x, y]
+$$ language sql;
+
+select polyf(2, 4) as int, polyf(2, 4.5) as num;
+
+drop function polyf(x anycompatible, y anycompatible);
+
+create function polyf(x anycompatiblerange, y anycompatible, z anycompatible) returns anycompatiblearray as $$
+  select array[lower(x), upper(x), y, z]
+$$ language sql;
+
+select polyf(int4range(42, 49), 11, 2::smallint) as int, polyf(float8range(4.5, 7.8), 7.8, 11::real) as num;
+
+select polyf(int4range(42, 49), 11, 4.5) as fail;  -- range type doesn't fit
+
+drop function polyf(x anycompatiblerange, y anycompatible, z anycompatible);
+
+-- fail, can't infer type:
+create function polyf(x anycompatible) returns anycompatiblerange as $$
+  select array[x + 1, x + 2]
+$$ language sql;
+
+create function polyf(x anycompatiblerange, y anycompatiblearray) returns anycompatiblerange as $$
+  select x
+$$ language sql;
+
+select polyf(int4range(42, 49), array[11]) as int, polyf(float8range(4.5, 7.8), array[7]) as num;
+
+drop function polyf(x anycompatiblerange, y anycompatiblearray);
+
+create function polyf(a anyelement, b anyarray,
+                      c anycompatible, d anycompatible,
+                      OUT x anyarray, OUT y anycompatiblearray)
+as $$
+  select a || b, array[c, d]
+$$ language sql;
+
+select x, pg_typeof(x), y, pg_typeof(y)
+  from polyf(11, array[1, 2], 42, 34.5);
+select x, pg_typeof(x), y, pg_typeof(y)
+  from polyf(11, array[1, 2], point(1,2), point(3,4));
+select x, pg_typeof(x), y, pg_typeof(y)
+  from polyf(11, '{1,2}', point(1,2), '(3,4)');
+select x, pg_typeof(x), y, pg_typeof(y)
+  from polyf(11, array[1, 2.2], 42, 34.5);  -- fail
+
+drop function polyf(a anyelement, b anyarray,
+                    c anycompatible, d anycompatible);
 
 
+--
+-- Polymorphic aggregate tests
+--
 -- Legend:
 -----------
 -- A = type is ANY
@@ -473,6 +577,11 @@ where histogram_bounds is not null;
 -- (WHERE clause here is to avoid possibly getting a collation error instead)
 select max(histogram_bounds) from pg_stats where tablename = 'pg_am';
 
+-- another corner case is the input functions for polymorphic pseudotypes
+select array_in('{1,2,3}','int4'::regtype,-1);  -- this has historically worked
+select * from array_in('{1,2,3}','int4'::regtype,-1);  -- this not
+select anyrange_in('[10,20)','int4range'::regtype,-1);
+
 -- test variadic polymorphic functions
 
 create function myleast(variadic anyarray) returns anyelement as $$
@@ -814,3 +923,112 @@ select * from dfview;
 
 drop view dfview;
 drop function dfunc(anyelement, anyelement, bool);
+
+--
+-- Tests for ANYCOMPATIBLE polymorphism family
+--
+
+create function anyctest(anycompatible, anycompatible)
+returns anycompatible as $$
+  select greatest($1, $2)
+$$ language sql;
+
+select x, pg_typeof(x) from anyctest(11, 12) x;
+select x, pg_typeof(x) from anyctest(11, 12.3) x;
+select x, pg_typeof(x) from anyctest(11, point(1,2)) x;  -- fail
+select x, pg_typeof(x) from anyctest('11', '12.3') x;  -- defaults to text
+
+drop function anyctest(anycompatible, anycompatible);
+
+create function anyctest(anycompatible, anycompatible)
+returns anycompatiblearray as $$
+  select array[$1, $2]
+$$ language sql;
+
+select x, pg_typeof(x) from anyctest(11, 12) x;
+select x, pg_typeof(x) from anyctest(11, 12.3) x;
+select x, pg_typeof(x) from anyctest(11, array[1,2]) x;  -- fail
+
+drop function anyctest(anycompatible, anycompatible);
+
+create function anyctest(anycompatible, anycompatiblearray)
+returns anycompatiblearray as $$
+  select array[$1] || $2
+$$ language sql;
+
+select x, pg_typeof(x) from anyctest(11, array[12]) x;
+select x, pg_typeof(x) from anyctest(11, array[12.3]) x;
+select x, pg_typeof(x) from anyctest(12.3, array[13]) x;
+select x, pg_typeof(x) from anyctest(12.3, '{13,14.4}') x;
+select x, pg_typeof(x) from anyctest(11, array[point(1,2)]) x;  -- fail
+select x, pg_typeof(x) from anyctest(11, 12) x;  -- fail
+
+drop function anyctest(anycompatible, anycompatiblearray);
+
+create function anyctest(anycompatible, anycompatiblerange)
+returns anycompatiblerange as $$
+  select $2
+$$ language sql;
+
+select x, pg_typeof(x) from anyctest(11, int4range(4,7)) x;
+select x, pg_typeof(x) from anyctest(11, numrange(4,7)) x;
+select x, pg_typeof(x) from anyctest(11, 12) x;  -- fail
+select x, pg_typeof(x) from anyctest(11.2, int4range(4,7)) x;  -- fail
+select x, pg_typeof(x) from anyctest(11.2, '[4,7)') x;  -- fail
+
+drop function anyctest(anycompatible, anycompatiblerange);
+
+create function anyctest(anycompatiblerange, anycompatiblerange)
+returns anycompatible as $$
+  select lower($1) + upper($2)
+$$ language sql;
+
+select x, pg_typeof(x) from anyctest(int4range(11,12), int4range(4,7)) x;
+select x, pg_typeof(x) from anyctest(int4range(11,12), numrange(4,7)) x; -- fail
+
+drop function anyctest(anycompatiblerange, anycompatiblerange);
+
+-- fail, can't infer result type:
+create function anyctest(anycompatible)
+returns anycompatiblerange as $$
+  select $1
+$$ language sql;
+
+create function anyctest(anycompatiblenonarray, anycompatiblenonarray)
+returns anycompatiblearray as $$
+  select array[$1, $2]
+$$ language sql;
+
+select x, pg_typeof(x) from anyctest(11, 12) x;
+select x, pg_typeof(x) from anyctest(11, 12.3) x;
+select x, pg_typeof(x) from anyctest(array[11], array[1,2]) x;  -- fail
+
+drop function anyctest(anycompatiblenonarray, anycompatiblenonarray);
+
+create function anyctest(a anyelement, b anyarray,
+                         c anycompatible, d anycompatible)
+returns anycompatiblearray as $$
+  select array[c, d]
+$$ language sql;
+
+select x, pg_typeof(x) from anyctest(11, array[1, 2], 42, 34.5) x;
+select x, pg_typeof(x) from anyctest(11, array[1, 2], point(1,2), point(3,4)) x;
+select x, pg_typeof(x) from anyctest(11, '{1,2}', point(1,2), '(3,4)') x;
+select x, pg_typeof(x) from anyctest(11, array[1, 2.2], 42, 34.5) x;  -- fail
+
+drop function anyctest(a anyelement, b anyarray,
+                       c anycompatible, d anycompatible);
+
+create function anyctest(variadic anycompatiblearray)
+returns anycompatiblearray as $$
+  select $1
+$$ language sql;
+
+select x, pg_typeof(x) from anyctest(11, 12) x;
+select x, pg_typeof(x) from anyctest(11, 12.2) x;
+select x, pg_typeof(x) from anyctest(11, '12') x;
+select x, pg_typeof(x) from anyctest(11, '12.2') x;  -- fail
+select x, pg_typeof(x) from anyctest(variadic array[11, 12]) x;
+select x, pg_typeof(x) from anyctest(variadic array[11, 12.2]) x;
+
+drop function anyctest(variadic anycompatiblearray);

@@ -291,7 +291,47 @@ EXPLAIN SELECT * FROM tenk1 WHERE unique1 = 42;
     often see this plan type for queries that fetch just a single row.  It's
     also often used for queries that have an <literal>ORDER BY</literal> condition
     that matches the index order, because then no extra sorting step is needed
-    to satisfy the <literal>ORDER BY</literal>.
+    to satisfy the <literal>ORDER BY</literal>.  In this example, adding
+    <literal>ORDER BY unique1</literal> would use the same plan because the
+    index already implicitly provides the requested ordering.
+   </para>
+
+   <para>
+     The planner may implement an <literal>ORDER BY</literal> clause in several
+     ways.  The above example shows that such an ordering clause may be
+     implemented implicitly.  The planner may also add an explicit
+     <literal>sort</literal> step:
+
+<screen>
+EXPLAIN SELECT * FROM tenk1 ORDER BY unique1;
+                            QUERY PLAN
+-------------------------------------------------------------------
+ Sort  (cost=1109.39..1134.39 rows=10000 width=244)
+   Sort Key: unique1
+   ->  Seq Scan on tenk1  (cost=0.00..445.00 rows=10000 width=244)
+</screen>
+
+    If a part of the plan guarantees an ordering on a prefix of the
+    required sort keys, then the planner may instead decide to use an
+    <literal>incremental sort</literal> step:
+
+<screen>
+EXPLAIN SELECT * FROM tenk1 ORDER BY four, ten LIMIT 100;
+                                              QUERY PLAN
+------------------------------------------------------------------------------------------------------
+ Limit  (cost=521.06..538.05 rows=100 width=244)
+   ->  Incremental Sort  (cost=521.06..2220.95 rows=10000 width=244)
+         Sort Key: four, ten
+         Presorted Key: four
+         ->  Index Scan using index_tenk1_on_four on tenk1  (cost=0.29..1510.08 rows=10000 width=244)
+</screen>
+
+    Compared to regular sorts, sorting incrementally allows returning tuples
+    before the entire result set has been sorted, which particularly enables
+    optimizations with <literal>LIMIT</literal> queries.  It may also reduce
+    memory usage and the likelihood of spilling sorts to disk, but it comes at
+    the cost of the increased overhead of splitting the result set into multiple
+    sorting batches.
    </para>
 
    <para>
@@ -1203,7 +1243,8 @@ SELECT stxname, stxkeys, stxddependencies
 
      <para>
       Functional dependencies are currently only applied when considering
-      simple equality conditions that compare columns to constant values.
+      simple equality conditions that compare columns to constant values,
+      and <literal>IN</literal> clauses with constant values.
       They are not used to improve estimates for equality conditions
       comparing two columns or comparing a column to an expression, nor for
       range clauses, <literal>LIKE</literal> or any other type of condition.
@@ -1606,8 +1647,8 @@ SELECT * FROM x, y, a, b, c WHERE something AND somethingelse;
     needs to be written, because in case of an error, the files
     containing the newly loaded data will be removed anyway.
     However, this consideration only applies when
-    <xref linkend="guc-wal-level"/> is <literal>minimal</literal> for
-    non-partitioned tables as all commands must write WAL otherwise.
+    <xref linkend="guc-wal-level"/> is <literal>minimal</literal>
+    as all commands must write WAL otherwise.
    </para>
 
   </sect2>
@@ -1707,42 +1748,13 @@ SELECT * FROM x, y, a, b, c WHERE something AND somethingelse;
    </para>
 
    <para>
-    Aside from avoiding the time for the archiver or WAL sender to
-    process the WAL data,
-    doing this will actually make certain commands faster, because they
-    are designed not to write WAL at all if <varname>wal_level</varname>
-    is <literal>minimal</literal>.  (They can guarantee crash safety more cheaply
-    by doing an <function>fsync</function> at the end than by writing WAL.)
-    This applies to the following commands:
-    <itemizedlist>
-     <listitem>
-      <para>
-       <command>CREATE TABLE AS SELECT</command>
-      </para>
-     </listitem>
-     <listitem>
-      <para>
-       <command>CREATE INDEX</command> (and variants such as
-       <command>ALTER TABLE ADD PRIMARY KEY</command>)
-      </para>
-     </listitem>
-     <listitem>
-      <para>
-       <command>ALTER TABLE SET TABLESPACE</command>
-      </para>
-     </listitem>
-     <listitem>
-      <para>
-       <command>CLUSTER</command>
-      </para>
-     </listitem>
-     <listitem>
-      <para>
-       <command>COPY FROM</command>, when the target table has been
-       created or truncated earlier in the same transaction
-      </para>
-     </listitem>
-    </itemizedlist>
+    Aside from avoiding the time for the archiver or WAL sender to process the
+    WAL data, doing this will actually make certain commands faster, because
+    they do not to write WAL at all if <varname>wal_level</varname>
+    is <literal>minimal</literal> and the current subtransaction (or top-level
+    transaction) created or truncated the table or index they change.  (They
+    can guarantee crash safety more cheaply by doing
+    an <function>fsync</function> at the end than by writing WAL.)
    </para>
   </sect2>
 

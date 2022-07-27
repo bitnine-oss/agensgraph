@@ -29,11 +29,14 @@
 #include "access/xlog_internal.h"
 #include "catalog/catalog.h"
 #include "catalog/namespace.h"
+#include "catalog/partition.h"
+#include "catalog/pg_inherits.h"
 #include "catalog/pg_subscription.h"
 #include "catalog/pg_subscription_rel.h"
 #include "commands/tablecmds.h"
 #include "commands/trigger.h"
 #include "executor/executor.h"
+#include "executor/execPartition.h"
 #include "executor/nodeModifyTable.h"
 #include "funcapi.h"
 #include "libpq/pqformat.h"
@@ -112,6 +115,26 @@ static void send_feedback(XLogRecPtr recvpos, bool force, bool requestReply);
 static void store_flush_position(XLogRecPtr remote_lsn);
 
 static void maybe_reread_subscription(void);
+
+static void apply_handle_insert_internal(ResultRelInfo *relinfo,
+										 EState *estate, TupleTableSlot *remoteslot);
+static void apply_handle_update_internal(ResultRelInfo *relinfo,
+										 EState *estate, TupleTableSlot *remoteslot,
+										 LogicalRepTupleData *newtup,
+										 LogicalRepRelMapEntry *relmapentry);
+static void apply_handle_delete_internal(ResultRelInfo *relinfo, EState *estate,
+										 TupleTableSlot *remoteslot,
+										 LogicalRepRelation *remoterel);
+static bool FindReplTupleInLocalRel(EState *estate, Relation localrel,
+									LogicalRepRelation *remoterel,
+									TupleTableSlot *remoteslot,
+									TupleTableSlot **localslot);
+static void apply_handle_tuple_routing(ResultRelInfo *relinfo,
+									   EState *estate,
+									   TupleTableSlot *remoteslot,
+									   LogicalRepTupleData *newtup,
+									   LogicalRepRelMapEntry *relmapentry,
+									   CmdType operation);
 
 /*
  * Should this worker apply changes for given relation.
@@ -582,6 +605,7 @@ GetRelationIdentityOrPK(Relation rel)
 /*
  * Handle INSERT message.
  */
+
 static void
 apply_handle_insert(StringInfo s)
 {
@@ -621,13 +645,14 @@ apply_handle_insert(StringInfo s)
 	slot_fill_defaults(rel, estate, remoteslot);
 	MemoryContextSwitchTo(oldctx);
 
-	ExecOpenIndices(estate->es_result_relation_info, false);
+	/* For a partitioned table, insert the tuple into a partition. */
+	if (rel->localrel->rd_rel->relkind == RELKIND_PARTITIONED_TABLE)
+		apply_handle_tuple_routing(estate->es_result_relation_info, estate,
+								   remoteslot, NULL, rel, CMD_INSERT);
+	else
+		apply_handle_insert_internal(estate->es_result_relation_info, estate,
+									 remoteslot);
 
-	/* Do the insert. */
-	ExecSimpleRelationInsert(estate, remoteslot);
-
-	/* Cleanup. */
-	ExecCloseIndices(estate->es_result_relation_info);
 	PopActiveSnapshot();
 
 	/* Handle queued AFTER triggers. */
@@ -639,6 +664,20 @@ apply_handle_insert(StringInfo s)
 	logicalrep_rel_close(rel, NoLock);
 
 	CommandCounterIncrement();
+}
+
+/* Workhorse for apply_handle_insert() */
+static void
+apply_handle_insert_internal(ResultRelInfo *relinfo,
+							 EState *estate, TupleTableSlot *remoteslot)
+{
+	ExecOpenIndices(relinfo, false);
+
+	/* Do the insert. */
+	ExecSimpleRelationInsert(estate, remoteslot);
+
+	/* Cleanup. */
+	ExecCloseIndices(relinfo);
 }
 
 /*
@@ -684,16 +723,12 @@ apply_handle_update(StringInfo s)
 {
 	LogicalRepRelMapEntry *rel;
 	LogicalRepRelId relid;
-	Oid			idxoid;
 	EState	   *estate;
-	EPQState	epqstate;
 	LogicalRepTupleData oldtup;
 	LogicalRepTupleData newtup;
 	bool		has_oldtup;
-	TupleTableSlot *localslot;
 	TupleTableSlot *remoteslot;
 	RangeTblEntry *target_rte;
-	bool		found;
 	MemoryContext oldctx;
 
 	ensure_transaction();
@@ -719,9 +754,6 @@ apply_handle_update(StringInfo s)
 	remoteslot = ExecInitExtraTupleSlot(estate,
 										RelationGetDescr(rel->localrel),
 										&TTSOpsVirtual);
-	localslot = table_slot_create(rel->localrel,
-								  &estate->es_tupleTable);
-	EvalPlanQualInit(&epqstate, estate, NULL, NIL, -1);
 
 	/*
 	 * Populate updatedCols so that per-column triggers can fire.  This could
@@ -741,7 +773,6 @@ apply_handle_update(StringInfo s)
 	fill_extraUpdatedCols(target_rte, RelationGetDescr(rel->localrel));
 
 	PushActiveSnapshot(GetTransactionSnapshot());
-	ExecOpenIndices(estate->es_result_relation_info, false);
 
 	/* Build the search tuple. */
 	oldctx = MemoryContextSwitchTo(GetPerTupleMemoryContext(estate));
@@ -749,22 +780,46 @@ apply_handle_update(StringInfo s)
 						has_oldtup ? oldtup.values : newtup.values);
 	MemoryContextSwitchTo(oldctx);
 
-	/*
-	 * Try to find tuple using either replica identity index, primary key or
-	 * if needed, sequential scan.
-	 */
-	idxoid = GetRelationIdentityOrPK(rel->localrel);
-	Assert(OidIsValid(idxoid) ||
-		   (rel->remoterel.replident == REPLICA_IDENTITY_FULL && has_oldtup));
-
-	if (OidIsValid(idxoid))
-		found = RelationFindReplTupleByIndex(rel->localrel, idxoid,
-											 LockTupleExclusive,
-											 remoteslot, localslot);
+	/* For a partitioned table, apply update to correct partition. */
+	if (rel->localrel->rd_rel->relkind == RELKIND_PARTITIONED_TABLE)
+		apply_handle_tuple_routing(estate->es_result_relation_info, estate,
+								   remoteslot, &newtup, rel, CMD_UPDATE);
 	else
-		found = RelationFindReplTupleSeq(rel->localrel, LockTupleExclusive,
-										 remoteslot, localslot);
+		apply_handle_update_internal(estate->es_result_relation_info, estate,
+									 remoteslot, &newtup, rel);
 
+	PopActiveSnapshot();
+
+	/* Handle queued AFTER triggers. */
+	AfterTriggerEndQuery(estate);
+
+	ExecResetTupleTable(estate->es_tupleTable, false);
+	FreeExecutorState(estate);
+
+	logicalrep_rel_close(rel, NoLock);
+
+	CommandCounterIncrement();
+}
+
+/* Workhorse for apply_handle_update() */
+static void
+apply_handle_update_internal(ResultRelInfo *relinfo,
+							 EState *estate, TupleTableSlot *remoteslot,
+							 LogicalRepTupleData *newtup,
+							 LogicalRepRelMapEntry *relmapentry)
+{
+	Relation	localrel = relinfo->ri_RelationDesc;
+	EPQState	epqstate;
+	TupleTableSlot *localslot;
+	bool		found;
+	MemoryContext oldctx;
+
+	EvalPlanQualInit(&epqstate, estate, NULL, NIL, -1);
+	ExecOpenIndices(relinfo, false);
+
+	found = FindReplTupleInLocalRel(estate, localrel,
+									&relmapentry->remoterel,
+									remoteslot, &localslot);
 	ExecClearTuple(remoteslot);
 
 	/*
@@ -776,8 +831,8 @@ apply_handle_update(StringInfo s)
 	{
 		/* Process and store remote tuple in the slot */
 		oldctx = MemoryContextSwitchTo(GetPerTupleMemoryContext(estate));
-		slot_modify_cstrings(remoteslot, localslot, rel,
-							 newtup.values, newtup.changed);
+		slot_modify_cstrings(remoteslot, localslot, relmapentry,
+							 newtup->values, newtup->changed);
 		MemoryContextSwitchTo(oldctx);
 
 		EvalPlanQualSetSlot(&epqstate, remoteslot);
@@ -795,23 +850,12 @@ apply_handle_update(StringInfo s)
 		elog(DEBUG1,
 			 "logical replication did not find row for update "
 			 "in replication target relation \"%s\"",
-			 RelationGetRelationName(rel->localrel));
+			 RelationGetRelationName(localrel));
 	}
 
 	/* Cleanup. */
-	ExecCloseIndices(estate->es_result_relation_info);
-	PopActiveSnapshot();
-
-	/* Handle queued AFTER triggers. */
-	AfterTriggerEndQuery(estate);
-
+	ExecCloseIndices(relinfo);
 	EvalPlanQualEnd(&epqstate);
-	ExecResetTupleTable(estate->es_tupleTable, false);
-	FreeExecutorState(estate);
-
-	logicalrep_rel_close(rel, NoLock);
-
-	CommandCounterIncrement();
 }
 
 /*
@@ -825,12 +869,8 @@ apply_handle_delete(StringInfo s)
 	LogicalRepRelMapEntry *rel;
 	LogicalRepTupleData oldtup;
 	LogicalRepRelId relid;
-	Oid			idxoid;
 	EState	   *estate;
-	EPQState	epqstate;
 	TupleTableSlot *remoteslot;
-	TupleTableSlot *localslot;
-	bool		found;
 	MemoryContext oldctx;
 
 	ensure_transaction();
@@ -855,33 +895,52 @@ apply_handle_delete(StringInfo s)
 	remoteslot = ExecInitExtraTupleSlot(estate,
 										RelationGetDescr(rel->localrel),
 										&TTSOpsVirtual);
-	localslot = table_slot_create(rel->localrel,
-								  &estate->es_tupleTable);
-	EvalPlanQualInit(&epqstate, estate, NULL, NIL, -1);
 
 	PushActiveSnapshot(GetTransactionSnapshot());
-	ExecOpenIndices(estate->es_result_relation_info, false);
 
-	/* Find the tuple using the replica identity index. */
+	/* Build the search tuple. */
 	oldctx = MemoryContextSwitchTo(GetPerTupleMemoryContext(estate));
 	slot_store_cstrings(remoteslot, rel, oldtup.values);
 	MemoryContextSwitchTo(oldctx);
 
-	/*
-	 * Try to find tuple using either replica identity index, primary key or
-	 * if needed, sequential scan.
-	 */
-	idxoid = GetRelationIdentityOrPK(rel->localrel);
-	Assert(OidIsValid(idxoid) ||
-		   (rel->remoterel.replident == REPLICA_IDENTITY_FULL));
-
-	if (OidIsValid(idxoid))
-		found = RelationFindReplTupleByIndex(rel->localrel, idxoid,
-											 LockTupleExclusive,
-											 remoteslot, localslot);
+	/* For a partitioned table, apply delete to correct partition. */
+	if (rel->localrel->rd_rel->relkind == RELKIND_PARTITIONED_TABLE)
+		apply_handle_tuple_routing(estate->es_result_relation_info, estate,
+								   remoteslot, NULL, rel, CMD_DELETE);
 	else
-		found = RelationFindReplTupleSeq(rel->localrel, LockTupleExclusive,
-										 remoteslot, localslot);
+		apply_handle_delete_internal(estate->es_result_relation_info, estate,
+									 remoteslot, &rel->remoterel);
+
+	PopActiveSnapshot();
+
+	/* Handle queued AFTER triggers. */
+	AfterTriggerEndQuery(estate);
+
+	ExecResetTupleTable(estate->es_tupleTable, false);
+	FreeExecutorState(estate);
+
+	logicalrep_rel_close(rel, NoLock);
+
+	CommandCounterIncrement();
+}
+
+/* Workhorse for apply_handle_delete() */
+static void
+apply_handle_delete_internal(ResultRelInfo *relinfo, EState *estate,
+							 TupleTableSlot *remoteslot,
+							 LogicalRepRelation *remoterel)
+{
+	Relation	localrel = relinfo->ri_RelationDesc;
+	EPQState	epqstate;
+	TupleTableSlot *localslot;
+	bool		found;
+
+	EvalPlanQualInit(&epqstate, estate, NULL, NIL, -1);
+	ExecOpenIndices(relinfo, false);
+
+	found = FindReplTupleInLocalRel(estate, localrel, remoterel,
+									remoteslot, &localslot);
+
 	/* If found delete it. */
 	if (found)
 	{
@@ -896,23 +955,274 @@ apply_handle_delete(StringInfo s)
 		elog(DEBUG1,
 			 "logical replication could not find row for delete "
 			 "in replication target relation \"%s\"",
-			 RelationGetRelationName(rel->localrel));
+			 RelationGetRelationName(localrel));
 	}
 
 	/* Cleanup. */
-	ExecCloseIndices(estate->es_result_relation_info);
-	PopActiveSnapshot();
-
-	/* Handle queued AFTER triggers. */
-	AfterTriggerEndQuery(estate);
-
+	ExecCloseIndices(relinfo);
 	EvalPlanQualEnd(&epqstate);
-	ExecResetTupleTable(estate->es_tupleTable, false);
-	FreeExecutorState(estate);
+}
 
-	logicalrep_rel_close(rel, NoLock);
+/*
+ * Try to find a tuple received from the publication side (in 'remoteslot') in
+ * the corresponding local relation using either replica identity index,
+ * primary key or if needed, sequential scan.
+ *
+ * Local tuple, if found, is returned in '*localslot'.
+ */
+static bool
+FindReplTupleInLocalRel(EState *estate, Relation localrel,
+						LogicalRepRelation *remoterel,
+						TupleTableSlot *remoteslot,
+						TupleTableSlot **localslot)
+{
+	Oid			idxoid;
+	bool		found;
 
-	CommandCounterIncrement();
+	*localslot = table_slot_create(localrel, &estate->es_tupleTable);
+
+	idxoid = GetRelationIdentityOrPK(localrel);
+	Assert(OidIsValid(idxoid) ||
+		   (remoterel->replident == REPLICA_IDENTITY_FULL));
+
+	if (OidIsValid(idxoid))
+		found = RelationFindReplTupleByIndex(localrel, idxoid,
+											 LockTupleExclusive,
+											 remoteslot, *localslot);
+	else
+		found = RelationFindReplTupleSeq(localrel, LockTupleExclusive,
+										 remoteslot, *localslot);
+
+	return found;
+}
+
+/*
+ * This handles insert, update, delete on a partitioned table.
+ */
+static void
+apply_handle_tuple_routing(ResultRelInfo *relinfo,
+						   EState *estate,
+						   TupleTableSlot *remoteslot,
+						   LogicalRepTupleData *newtup,
+						   LogicalRepRelMapEntry *relmapentry,
+						   CmdType operation)
+{
+	Relation	parentrel = relinfo->ri_RelationDesc;
+	ModifyTableState *mtstate = NULL;
+	PartitionTupleRouting *proute = NULL;
+	ResultRelInfo *partrelinfo;
+	Relation	partrel;
+	TupleTableSlot *remoteslot_part;
+	PartitionRoutingInfo *partinfo;
+	TupleConversionMap *map;
+	MemoryContext oldctx;
+
+	/* ModifyTableState is needed for ExecFindPartition(). */
+	mtstate = makeNode(ModifyTableState);
+	mtstate->ps.plan = NULL;
+	mtstate->ps.state = estate;
+	mtstate->operation = operation;
+	mtstate->resultRelInfo = relinfo;
+	proute = ExecSetupPartitionTupleRouting(estate, mtstate, parentrel);
+
+	/*
+	 * Find the partition to which the "search tuple" belongs.
+	 */
+	Assert(remoteslot != NULL);
+	oldctx = MemoryContextSwitchTo(GetPerTupleMemoryContext(estate));
+	partrelinfo = ExecFindPartition(mtstate, relinfo, proute,
+									remoteslot, estate);
+	Assert(partrelinfo != NULL);
+	partrel = partrelinfo->ri_RelationDesc;
+
+	/*
+	 * To perform any of the operations below, the tuple must match the
+	 * partition's rowtype. Convert if needed or just copy, using a dedicated
+	 * slot to store the tuple in any case.
+	 */
+	partinfo = partrelinfo->ri_PartitionInfo;
+	remoteslot_part = partinfo->pi_PartitionTupleSlot;
+	if (remoteslot_part == NULL)
+		remoteslot_part = table_slot_create(partrel, &estate->es_tupleTable);
+	map = partinfo->pi_RootToPartitionMap;
+	if (map != NULL)
+		remoteslot_part = execute_attr_map_slot(map->attrMap, remoteslot,
+												remoteslot_part);
+	else
+	{
+		remoteslot_part = ExecCopySlot(remoteslot_part, remoteslot);
+		slot_getallattrs(remoteslot_part);
+	}
+	MemoryContextSwitchTo(oldctx);
+
+	estate->es_result_relation_info = partrelinfo;
+	switch (operation)
+	{
+		case CMD_INSERT:
+			apply_handle_insert_internal(partrelinfo, estate,
+										 remoteslot_part);
+			break;
+
+		case CMD_DELETE:
+			apply_handle_delete_internal(partrelinfo, estate,
+										 remoteslot_part,
+										 &relmapentry->remoterel);
+			break;
+
+		case CMD_UPDATE:
+
+			/*
+			 * For UPDATE, depending on whether or not the updated tuple
+			 * satisfies the partition's constraint, perform a simple UPDATE
+			 * of the partition or move the updated tuple into a different
+			 * suitable partition.
+			 */
+			{
+				AttrMap    *attrmap = map ? map->attrMap : NULL;
+				LogicalRepRelMapEntry *part_entry;
+				TupleTableSlot *localslot;
+				ResultRelInfo *partrelinfo_new;
+				bool		found;
+
+				part_entry = logicalrep_partition_open(relmapentry, partrel,
+													   attrmap);
+
+				/* Get the matching local tuple from the partition. */
+				found = FindReplTupleInLocalRel(estate, partrel,
+												&part_entry->remoterel,
+												remoteslot_part, &localslot);
+
+				oldctx = MemoryContextSwitchTo(GetPerTupleMemoryContext(estate));
+				if (found)
+				{
+					/* Apply the update.  */
+					slot_modify_cstrings(remoteslot_part, localslot,
+										 part_entry,
+										 newtup->values, newtup->changed);
+					MemoryContextSwitchTo(oldctx);
+				}
+				else
+				{
+					/*
+					 * The tuple to be updated could not be found.
+					 *
+					 * TODO what to do here, change the log level to LOG
+					 * perhaps?
+					 */
+					elog(DEBUG1,
+						 "logical replication did not find row for update "
+						 "in replication target relation \"%s\"",
+						 RelationGetRelationName(partrel));
+				}
+
+				/*
+				 * Does the updated tuple still satisfy the current
+				 * partition's constraint?
+				 */
+				if (partrelinfo->ri_PartitionCheck == NULL ||
+					ExecPartitionCheck(partrelinfo, remoteslot_part, estate,
+									   false))
+				{
+					/*
+					 * Yes, so simply UPDATE the partition.  We don't call
+					 * apply_handle_update_internal() here, which would
+					 * normally do the following work, to avoid repeating some
+					 * work already done above to find the local tuple in the
+					 * partition.
+					 */
+					EPQState	epqstate;
+
+					EvalPlanQualInit(&epqstate, estate, NULL, NIL, -1);
+					ExecOpenIndices(partrelinfo, false);
+
+					EvalPlanQualSetSlot(&epqstate, remoteslot_part);
+					ExecSimpleRelationUpdate(estate, &epqstate, localslot,
+											 remoteslot_part);
+					ExecCloseIndices(partrelinfo);
+					EvalPlanQualEnd(&epqstate);
+				}
+				else
+				{
+					/* Move the tuple into the new partition. */
+
+					/*
+					 * New partition will be found using tuple routing, which
+					 * can only occur via the parent table.  We might need to
+					 * convert the tuple to the parent's rowtype.  Note that
+					 * this is the tuple found in the partition, not the
+					 * original search tuple received by this function.
+					 */
+					if (map)
+					{
+						TupleConversionMap *PartitionToRootMap =
+						convert_tuples_by_name(RelationGetDescr(partrel),
+											   RelationGetDescr(parentrel));
+
+						remoteslot =
+							execute_attr_map_slot(PartitionToRootMap->attrMap,
+												  remoteslot_part, remoteslot);
+					}
+					else
+					{
+						remoteslot = ExecCopySlot(remoteslot, remoteslot_part);
+						slot_getallattrs(remoteslot);
+					}
+
+
+					/* Find the new partition. */
+					oldctx = MemoryContextSwitchTo(GetPerTupleMemoryContext(estate));
+					partrelinfo_new = ExecFindPartition(mtstate, relinfo,
+														proute, remoteslot,
+														estate);
+					MemoryContextSwitchTo(oldctx);
+					Assert(partrelinfo_new != partrelinfo);
+
+					/* DELETE old tuple found in the old partition. */
+					estate->es_result_relation_info = partrelinfo;
+					apply_handle_delete_internal(partrelinfo, estate,
+												 localslot,
+												 &relmapentry->remoterel);
+
+					/* INSERT new tuple into the new partition. */
+
+					/*
+					 * Convert the replacement tuple to match the destination
+					 * partition rowtype.
+					 */
+					oldctx = MemoryContextSwitchTo(GetPerTupleMemoryContext(estate));
+					partrel = partrelinfo_new->ri_RelationDesc;
+					partinfo = partrelinfo_new->ri_PartitionInfo;
+					remoteslot_part = partinfo->pi_PartitionTupleSlot;
+					if (remoteslot_part == NULL)
+						remoteslot_part = table_slot_create(partrel,
+															&estate->es_tupleTable);
+					map = partinfo->pi_RootToPartitionMap;
+					if (map != NULL)
+					{
+						remoteslot_part = execute_attr_map_slot(map->attrMap,
+																remoteslot,
+																remoteslot_part);
+					}
+					else
+					{
+						remoteslot_part = ExecCopySlot(remoteslot_part,
+													   remoteslot);
+						slot_getallattrs(remoteslot);
+					}
+					MemoryContextSwitchTo(oldctx);
+					estate->es_result_relation_info = partrelinfo_new;
+					apply_handle_insert_internal(partrelinfo_new, estate,
+												 remoteslot_part);
+				}
+			}
+			break;
+
+		default:
+			elog(ERROR, "unrecognized CmdType: %d", (int) operation);
+			break;
+	}
+
+	ExecCleanupTupleRouting(mtstate, proute);
 }
 
 /*
@@ -928,6 +1238,7 @@ apply_handle_truncate(StringInfo s)
 	List	   *remote_relids = NIL;
 	List	   *remote_rels = NIL;
 	List	   *rels = NIL;
+	List	   *part_rels = NIL;
 	List	   *relids = NIL;
 	List	   *relids_logged = NIL;
 	ListCell   *lc;
@@ -957,6 +1268,47 @@ apply_handle_truncate(StringInfo s)
 		relids = lappend_oid(relids, rel->localreloid);
 		if (RelationIsLogicallyLogged(rel->localrel))
 			relids_logged = lappend_oid(relids_logged, rel->localreloid);
+
+		/*
+		 * Truncate partitions if we got a message to truncate a partitioned
+		 * table.
+		 */
+		if (rel->localrel->rd_rel->relkind == RELKIND_PARTITIONED_TABLE)
+		{
+			ListCell   *child;
+			List	   *children = find_all_inheritors(rel->localreloid,
+													   RowExclusiveLock,
+													   NULL);
+
+			foreach(child, children)
+			{
+				Oid			childrelid = lfirst_oid(child);
+				Relation	childrel;
+
+				if (list_member_oid(relids, childrelid))
+					continue;
+
+				/* find_all_inheritors already got lock */
+				childrel = table_open(childrelid, NoLock);
+
+				/*
+				 * Ignore temp tables of other backends.  See similar code in
+				 * ExecuteTruncate().
+				 */
+				if (RELATION_IS_OTHER_TEMP(childrel))
+				{
+					table_close(childrel, RowExclusiveLock);
+					continue;
+				}
+
+				rels = lappend(rels, childrel);
+				part_rels = lappend(part_rels, childrel);
+				relids = lappend_oid(relids, childrelid);
+				/* Log this relation only if needed for logical decoding */
+				if (RelationIsLogicallyLogged(childrel))
+					relids_logged = lappend_oid(relids_logged, childrelid);
+			}
+		}
 	}
 
 	/*
@@ -971,6 +1323,12 @@ apply_handle_truncate(StringInfo s)
 		LogicalRepRelMapEntry *rel = lfirst(lc);
 
 		logicalrep_rel_close(rel, NoLock);
+	}
+	foreach(lc, part_rels)
+	{
+		Relation	rel = lfirst(lc);
+
+		table_close(rel, NoLock);
 	}
 
 	CommandCounterIncrement();

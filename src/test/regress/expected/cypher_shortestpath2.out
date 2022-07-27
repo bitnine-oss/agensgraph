@@ -15438,16 +15438,17 @@ match (s1:s), (s2:s) return s1.id as s1id, s2.id as s2id, ids(nodes(shortestpath
 
 explain ( analyze false, verbose true, costs false, buffers false, timing false )
 match (c1:c), (c2:c) where c1.id >= 11 and c1.id <= 19 and c2.id >= 11 and c2.id <= 19 return c1.id as c1id, c2.id as c2id, allshortestpaths((c1)-[:e*]->(c2)) order by c1id, c2id;
-                                                   QUERY PLAN                                                    
------------------------------------------------------------------------------------------------------------------
- Sort
+                                                     QUERY PLAN                                                      
+---------------------------------------------------------------------------------------------------------------------
+ Incremental Sort
    Output: (c1.properties.'id'::text), (c2.properties.'id'::text), ((SubPlan 5))
    Sort Key: (c1.properties.'id'::text), (c2.properties.'id'::text)
+   Presorted Key: (c1.properties.'id'::text)
    ->  Nested Loop
          Output: c1.properties.'id'::text, c2.properties.'id'::text, (SubPlan 5)
-         ->  Seq Scan on shortestpath.c c1
+         ->  Index Scan using c_id_idx on shortestpath.c c1
                Output: c1.id, c1.properties
-               Filter: ((c1.properties.'id'::text >= '11'::jsonb) AND (c1.properties.'id'::text <= '19'::jsonb))
+               Index Cond: ((c1.properties.'id'::text >= '11'::jsonb) AND (c1.properties.'id'::text <= '19'::jsonb))
          ->  Seq Scan on shortestpath.c c2
                Output: c2.id, c2.properties
                Filter: ((c2.properties.'id'::text >= '11'::jsonb) AND (c2.properties.'id'::text <= '19'::jsonb))
@@ -15512,7 +15513,7 @@ match (c1:c), (c2:c) where c1.id >= 11 and c1.id <= 19 and c2.id >= 11 and c2.id
                                  Output: ROW(e.id, e.start, e."end", e.properties, e.ctid)::edge
                                  TID Cond: (e.ctid = rowid_ctid(eid.eid))
                                  Filter: (e.tableoid = rowid_tableoid(eid.eid))
-(72 rows)
+(73 rows)
 
 explain ( analyze false, verbose true, costs false, buffers false, timing false )
 match (l1:l), (l2:l) where l1.id = 1 and l2.id = 111111 return l1.id as l1id, l2.id as l2id, allshortestpaths((l1)-[:e*]->(l2)) order by l1id, l2id;

@@ -648,9 +648,7 @@ ExecChooseHash2SideTableSize(double ntuples,
 		dbatch = ceil(inner_rel_bytes / (hash_table_bytes - bucket_bytes));
 		dbatch = Min(dbatch, max_pointers);
 		minbatch = (int) dbatch;
-		nbatch = 2;
-		while (nbatch < minbatch)
-			nbatch <<= 1;
+		nbatch = pg_nextpower2_32(Max(2, minbatch));
 	}
 
 	Assert(nbuckets > 0);
@@ -1396,4 +1394,19 @@ dense_alloc(HashJoinTable hashtable, Size size)
 
 	/* return pointer to the start of the tuple memory */
 	return ptr;
+}
+
+/*
+ * Copy the instrumentation data from 'hashtable' into a HashInstrumentation
+ * struct.
+ */
+void
+ExecHash2SideGetInstrumentation(HashInstrumentation *instrument,
+								HashJoinTable hashtable)
+{
+	instrument->nbuckets = hashtable->nbuckets;
+	instrument->nbuckets_original = hashtable->nbuckets_original;
+	instrument->nbatch = hashtable->nbatch;
+	instrument->nbatch_original = hashtable->nbatch_original;
+	instrument->space_peak = hashtable->spacePeak;
 }

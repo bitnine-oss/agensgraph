@@ -3,10 +3,10 @@
 # src/tools/msvc/build.pl
 
 use strict;
+use warnings;
 
-use File::Basename;
-use File::Spec;
-BEGIN { use lib File::Spec->rel2abs(dirname(__FILE__)); }
+use FindBin;
+use lib $FindBin::RealBin;
 
 use Cwd;
 

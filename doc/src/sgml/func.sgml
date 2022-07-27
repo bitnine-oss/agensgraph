@@ -732,9 +732,8 @@
    </table>
 
    <para>
-    The bitwise operators work only on integral data types, whereas
-    the others are available for all numeric data types.  The bitwise
-    operators are also available for the bit
+    The bitwise operators work only on integral data types and are also
+    available for the bit
     string types <type>bit</type> and <type>bit varying</type>, as
     shown in <xref linkend="functions-bit-string-op-table"/>.
    </para>
@@ -1564,6 +1563,30 @@
       <row>
        <entry>
         <indexterm>
+         <primary>normalized</primary>
+        </indexterm>
+        <indexterm>
+         <primary>Unicode normalization</primary>
+        </indexterm>
+        <literal><parameter>string</parameter> is <optional>not</optional> <optional><parameter>form</parameter></optional> normalized</literal>
+       </entry>
+       <entry><type>boolean</type></entry>
+       <entry>
+        Checks whether the string is in the specified Unicode normalization
+        form.  The optional parameter specifies the form:
+        <literal>NFC</literal> (default), <literal>NFD</literal>,
+        <literal>NFKC</literal>, <literal>NFKD</literal>.  This expression can
+        only be used if the server encoding is <literal>UTF8</literal>.  Note
+        that checking for normalization using this expression is often faster
+        than normalizing possibly already normalized strings.
+       </entry>
+       <entry><literal>U&amp;'\0061\0308bc' IS NFD NORMALIZED</literal></entry>
+       <entry><literal>true</literal></entry>
+      </row>
+
+      <row>
+       <entry>
+        <indexterm>
          <primary>bit_length</primary>
         </indexterm>
         <literal><function>bit_length(<parameter>string</parameter>)</function></literal>
@@ -1609,6 +1632,30 @@
        <entry>Convert string to lower case</entry>
        <entry><literal>lower('TOM')</literal></entry>
        <entry><literal>tom</literal></entry>
+      </row>
+
+      <row>
+       <entry>
+        <indexterm>
+         <primary>normalize</primary>
+        </indexterm>
+        <indexterm>
+         <primary>Unicode normalization</primary>
+        </indexterm>
+        <literal><function>normalize(<parameter>string</parameter> <type>text</type>
+        <optional>, <parameter>form</parameter> </optional>)</function></literal>
+       </entry>
+       <entry><type>text</type></entry>
+       <entry>
+        Converts the string in the first argument to the specified Unicode
+        normalization form.  The optional second argument specifies the form
+        as an identifier: <literal>NFC</literal> (default),
+        <literal>NFD</literal>, <literal>NFKC</literal>,
+        <literal>NFKD</literal>.  This function can only be used if the server
+        encoding is <literal>UTF8</literal>.
+       </entry>
+       <entry><literal>normalize(U&amp;'\0061\0308bc', NFC)</literal></entry>
+       <entry><literal>U&amp;'\00E4bc'</literal></entry>
       </row>
 
       <row>
@@ -2858,7 +2905,7 @@ SELECT format('Testing %3$s, %2$s, %s', 'one', 'two', 'three');
         <indexterm>
          <primary>get_bit</primary>
         </indexterm>
-        <literal><function>get_bit(<parameter>bytes</parameter> <type>bytea</type>, <parameter>offset</parameter> <type>int</type>)</function></literal>
+        <literal><function>get_bit(<parameter>bytes</parameter> <type>bytea</type>, <parameter>offset</parameter> <type>bigint</type>)</function></literal>
        </entry>
        <entry><type>int</type></entry>
        <entry>
@@ -2934,7 +2981,7 @@ SELECT format('Testing %3$s, %2$s, %s', 'one', 'two', 'three');
         the result written in hexadecimal
        </entry>
        <entry><literal>md5('Th\000omas'::bytea)</literal></entry>
-       <entry><literal>8ab2d3c9689aaf18&#x200B;b4958c334c82d8b1</literal></entry>
+       <entry><literal>8ab2d3c9689aaf18&zwsp;b4958c334c82d8b1</literal></entry>
       </row>
 
       <row>
@@ -2943,7 +2990,7 @@ SELECT format('Testing %3$s, %2$s, %s', 'one', 'two', 'three');
          <primary>set_bit</primary>
         </indexterm>
         <literal><function>set_bit(<parameter>bytes</parameter> <type>bytea</type>,
-        <parameter>offset</parameter> <type>int</type>,
+        <parameter>offset</parameter> <type>bigint</type>,
         <parameter>newvalue</parameter> <type>int</type>)</function></literal>
        </entry>
        <entry><type>bytea</type></entry>
@@ -2985,7 +3032,7 @@ SELECT format('Testing %3$s, %2$s, %s', 'one', 'two', 'three');
         SHA-224 <link linkend="functions-hash-note">hash</link>
        </entry>
        <entry><literal>sha224('abc'::bytea)</literal></entry>
-       <entry><literal>\x23097d223405d8228642a477bda2&#x200B;55b32aadbce4bda0b3f7e36c9da7</literal></entry>
+       <entry><literal>\x23097d223405d8228642a477bda2&zwsp;55b32aadbce4bda0b3f7e36c9da7</literal></entry>
       </row>
 
       <row>
@@ -3000,7 +3047,7 @@ SELECT format('Testing %3$s, %2$s, %s', 'one', 'two', 'three');
         SHA-256 <link linkend="functions-hash-note">hash</link>
        </entry>
        <entry><literal>sha256('abc'::bytea)</literal></entry>
-       <entry><literal>\xba7816bf8f01cfea414140de5dae2223&#x200B;b00361a396177a9cb410ff61f20015ad</literal></entry>
+       <entry><literal>\xba7816bf8f01cfea414140de5dae2223&zwsp;b00361a396177a9cb410ff61f20015ad</literal></entry>
       </row>
 
       <row>
@@ -3015,7 +3062,7 @@ SELECT format('Testing %3$s, %2$s, %s', 'one', 'two', 'three');
         SHA-384 <link linkend="functions-hash-note">hash</link>
        </entry>
        <entry><literal>sha384('abc'::bytea)</literal></entry>
-       <entry><literal>\xcb00753f45a35e8bb5a03d699ac65007&#x200B;272c32ab0eded1631a8b605a43ff5bed&#x200B;8086072ba1e7cc2358baeca134c825a7</literal></entry>
+       <entry><literal>\xcb00753f45a35e8bb5a03d699ac65007&zwsp;272c32ab0eded1631a8b605a43ff5bed&zwsp;8086072ba1e7cc2358baeca134c825a7</literal></entry>
       </row>
 
       <row>
@@ -3030,7 +3077,7 @@ SELECT format('Testing %3$s, %2$s, %s', 'one', 'two', 'three');
          SHA-512 <link linkend="functions-hash-note">hash</link>
        </entry>
        <entry><literal>sha512('abc'::bytea)</literal></entry>
-       <entry><literal>\xddaf35a193617abacc417349ae204131&#x200B;12e6fa4e89a97ea20a9eeee64b55d39a&#x200B;2192992a274fc1a836ba3c23a3feebbd&#x200B;454d4423643ce80e2a9ac94fa54ca49f</literal></entry>
+       <entry><literal>\xddaf35a193617abacc417349ae204131&zwsp;12e6fa4e89a97ea20a9eeee64b55d39a&zwsp;2192992a274fc1a836ba3c23a3feebbd&zwsp;454d4423643ce80e2a9ac94fa54ca49f</literal></entry>
       </row>
 
       <row>
@@ -3565,7 +3612,23 @@ cast(-44 as bit(12))           <lineannotation>111111010100</lineannotation>
     <literal>!~~</literal> and <literal>!~~*</literal> operators that
     represent <function>NOT LIKE</function> and <function>NOT
     ILIKE</function>, respectively.  All of these operators are
-    <productname>PostgreSQL</productname>-specific.
+    <productname>PostgreSQL</productname>-specific.  You may see these
+    operator names in <command>EXPLAIN</command> output and similar
+    places, since the parser actually translates <function>LIKE</function>
+    et al. to these operators.
+   </para>
+
+   <para>
+    The phrases <function>LIKE</function>, <function>ILIKE</function>,
+    <function>NOT LIKE</function>, and <function>NOT ILIKE</function> are
+    generally treated as operators
+    in <productname>PostgreSQL</productname> syntax; for example they can
+    be used in <replaceable>expression</replaceable>
+    <replaceable>operator</replaceable> ANY
+    (<replaceable>subquery</replaceable>) constructs, although
+    an <literal>ESCAPE</literal> clause cannot be included there.  In some
+    obscure cases it may be necessary to use the underlying operator names
+    instead.
    </para>
 
    <para>
@@ -6681,127 +6744,256 @@ SELECT regexp_match('abc01234xyz', '(?:(.*?)(\d+)(.*)){1,1}');
      <title>Date/Time Operators</title>
 
      <tgroup cols="3">
+      <colspec colname="col1" colwidth="0.25*"/>
+      <colspec colname="col2" colwidth="1*"/>
+      <colspec colname="col3" colwidth="1*"/>
+      <spanspec spanname="name" namest="col1" nameend="col1" align="left"/>
+      <spanspec spanname="sig" namest="col2" nameend="col3" align="left"/>
+      <spanspec spanname="desc" namest="col2" nameend="col3" align="left"/>
+      <spanspec spanname="example" namest="col2" nameend="col2" align="left"/>
+      <spanspec spanname="exresult" namest="col3" nameend="col3" align="left"/>
       <thead>
        <row>
-        <entry>Operator</entry>
-        <entry>Example</entry>
-        <entry>Result</entry>
+        <entry spanname="name" align="center" valign="middle" morerows="2">Operator</entry>
+        <entry spanname="sig" align="center">Signature</entry>
+       </row>
+       <row>
+        <entry spanname="desc" align="center">Description</entry>
+       </row>
+       <row>
+        <entry spanname="example" align="center">Example</entry>
+        <entry spanname="exresult" align="center">Example Result</entry>
        </row>
       </thead>
 
       <tbody>
        <row>
-        <entry> <literal>+</literal> </entry>
-        <entry><literal>date '2001-09-28' + integer '7'</literal></entry>
-        <entry><literal>date '2001-10-05'</literal></entry>
+        <entry spanname="name" morerows="2"> <literal>+</literal> </entry>
+        <entry spanname="sig"><type>date</type> <literal>+</literal> <type>integer</type>
+         <returnvalue>date</returnvalue></entry>
+       </row>
+       <row>
+        <entry spanname="desc">Add a number of days to a date</entry>
+       </row>
+       <row>
+        <entry spanname="example"><literal>date '2001-09-28' + 7</literal></entry>
+        <entry spanname="exresult"><literal>2001-10-05</literal></entry>
        </row>
 
        <row>
-        <entry> <literal>+</literal> </entry>
-        <entry><literal>date '2001-09-28' + interval '1 hour'</literal></entry>
-        <entry><literal>timestamp '2001-09-28 01:00:00'</literal></entry>
+        <entry spanname="name" morerows="2"> <literal>+</literal> </entry>
+        <entry spanname="sig"><type>date</type> <literal>+</literal> <type>interval</type>
+         <returnvalue>timestamp</returnvalue></entry>
+       </row>
+       <row>
+        <entry spanname="desc">Add an interval to a date</entry>
+       </row>
+       <row>
+        <entry spanname="example"><literal>date '2001-09-28' + interval '1 hour'</literal></entry>
+        <entry spanname="exresult"><literal>2001-09-28 01:00:00</literal></entry>
        </row>
 
        <row>
-        <entry> <literal>+</literal> </entry>
-        <entry><literal>date '2001-09-28' + time '03:00'</literal></entry>
-        <entry><literal>timestamp '2001-09-28 03:00:00'</literal></entry>
+        <entry spanname="name" morerows="2"> <literal>+</literal> </entry>
+        <entry spanname="sig"><type>date</type> <literal>+</literal> <type>time</type>
+         <returnvalue>timestamp</returnvalue></entry>
+       </row>
+       <row>
+        <entry spanname="desc">Add a time-of-day to a date</entry>
+       </row>
+       <row>
+        <entry spanname="example"><literal>date '2001-09-28' + time '03:00'</literal></entry>
+        <entry spanname="exresult"><literal>2001-09-28 03:00:00</literal></entry>
        </row>
 
        <row>
-        <entry> <literal>+</literal> </entry>
-        <entry><literal>interval '1 day' + interval '1 hour'</literal></entry>
-        <entry><literal>interval '1 day 01:00:00'</literal></entry>
+        <entry spanname="name" morerows="2"> <literal>+</literal> </entry>
+        <entry spanname="sig"><type>interval</type> <literal>+</literal> <type>interval</type>
+         <returnvalue>interval</returnvalue></entry>
+       </row>
+       <row>
+        <entry spanname="desc">Add intervals</entry>
+       </row>
+       <row>
+        <entry spanname="example"><literal>interval '1 day' + interval '1 hour'</literal></entry>
+        <entry spanname="exresult"><literal>1 day 01:00:00</literal></entry>
        </row>
 
        <row>
-        <entry> <literal>+</literal> </entry>
-        <entry><literal>timestamp '2001-09-28 01:00' + interval '23 hours'</literal></entry>
-        <entry><literal>timestamp '2001-09-29 00:00:00'</literal></entry>
+        <entry spanname="name" morerows="2"> <literal>+</literal> </entry>
+        <entry spanname="sig"><type>timestamp</type> <literal>+</literal> <type>interval</type>
+         <returnvalue>timestamp</returnvalue></entry>
+       </row>
+       <row>
+        <entry spanname="desc">Add an interval to a timestamp</entry>
+       </row>
+       <row>
+        <entry spanname="example"><literal>timestamp '2001-09-28 01:00' + interval '23 hours'</literal></entry>
+        <entry spanname="exresult"><literal>2001-09-29 00:00:00</literal></entry>
        </row>
 
        <row>
-        <entry> <literal>+</literal> </entry>
-        <entry><literal>time '01:00' + interval '3 hours'</literal></entry>
-        <entry><literal>time '04:00:00'</literal></entry>
+        <entry spanname="name" morerows="2"> <literal>+</literal> </entry>
+        <entry spanname="sig"><type>time</type> <literal>+</literal> <type>interval</type>
+         <returnvalue>time</returnvalue></entry>
+       </row>
+       <row>
+        <entry spanname="desc">Add an interval to a time</entry>
+       </row>
+       <row>
+        <entry spanname="example"><literal>time '01:00' + interval '3 hours'</literal></entry>
+        <entry spanname="exresult"><literal>04:00:00</literal></entry>
        </row>
 
        <row>
-        <entry> <literal>-</literal> </entry>
-        <entry><literal>- interval '23 hours'</literal></entry>
-        <entry><literal>interval '-23:00:00'</literal></entry>
+        <entry spanname="name" morerows="2"> <literal>-</literal> </entry>
+        <entry spanname="sig"><literal>-</literal> <type>interval</type>
+         <returnvalue>interval</returnvalue></entry>
+       </row>
+       <row>
+        <entry spanname="desc">Negate an interval</entry>
+       </row>
+       <row>
+        <entry spanname="example"><literal>- interval '23 hours'</literal></entry>
+        <entry spanname="exresult"><literal>-23:00:00</literal></entry>
        </row>
 
        <row>
-        <entry> <literal>-</literal> </entry>
-        <entry><literal>date '2001-10-01' - date '2001-09-28'</literal></entry>
-        <entry><literal>integer '3'</literal> (days)</entry>
+        <entry spanname="name" morerows="2"> <literal>-</literal> </entry>
+        <entry spanname="sig"><type>date</type> <literal>-</literal> <type>date</type>
+         <returnvalue>integer</returnvalue></entry>
+       </row>
+       <row>
+        <entry spanname="desc">Subtract dates</entry>
+       </row>
+       <row>
+        <entry spanname="example"><literal>date '2001-10-01' - date '2001-09-28'</literal></entry>
+        <entry spanname="exresult"><literal>3</literal></entry>
        </row>
 
        <row>
-        <entry> <literal>-</literal> </entry>
-        <entry><literal>date '2001-10-01' - integer '7'</literal></entry>
-        <entry><literal>date '2001-09-24'</literal></entry>
+        <entry spanname="name" morerows="2"> <literal>-</literal> </entry>
+        <entry spanname="sig"><type>date</type> <literal>-</literal> <type>integer</type>
+         <returnvalue>date</returnvalue></entry>
+       </row>
+       <row>
+        <entry spanname="desc">Subtract a number of days from a date</entry>
+       </row>
+       <row>
+        <entry spanname="example"><literal>date '2001-10-01' - 7</literal></entry>
+        <entry spanname="exresult"><literal>2001-09-24</literal></entry>
        </row>
 
        <row>
-        <entry> <literal>-</literal> </entry>
-        <entry><literal>date '2001-09-28' - interval '1 hour'</literal></entry>
-        <entry><literal>timestamp '2001-09-27 23:00:00'</literal></entry>
+        <entry spanname="name" morerows="2"> <literal>-</literal> </entry>
+        <entry spanname="sig"><type>date</type> <literal>-</literal> <type>interval</type>
+         <returnvalue>timestamp</returnvalue></entry>
+       </row>
+       <row>
+        <entry spanname="desc">Subtract an interval from a date</entry>
+       </row>
+       <row>
+        <entry spanname="example"><literal>date '2001-09-28' - interval '1 hour'</literal></entry>
+        <entry spanname="exresult"><literal>2001-09-27 23:00:00</literal></entry>
        </row>
 
        <row>
-        <entry> <literal>-</literal> </entry>
-        <entry><literal>time '05:00' - time '03:00'</literal></entry>
-        <entry><literal>interval '02:00:00'</literal></entry>
+        <entry spanname="name" morerows="2"> <literal>-</literal> </entry>
+        <entry spanname="sig"><type>time</type> <literal>-</literal> <type>time</type>
+         <returnvalue>interval</returnvalue></entry>
+       </row>
+       <row>
+        <entry spanname="desc">Subtract times</entry>
+       </row>
+       <row>
+        <entry spanname="example"><literal>time '05:00' - time '03:00'</literal></entry>
+        <entry spanname="exresult"><literal>02:00:00</literal></entry>
        </row>
 
        <row>
-        <entry> <literal>-</literal> </entry>
-        <entry><literal>time '05:00' - interval '2 hours'</literal></entry>
-        <entry><literal>time '03:00:00'</literal></entry>
+        <entry spanname="name" morerows="2"> <literal>-</literal> </entry>
+        <entry spanname="sig"><type>time</type> <literal>-</literal> <type>interval</type>
+         <returnvalue>time</returnvalue></entry>
+       </row>
+       <row>
+        <entry spanname="desc">Subtract an interval from a time</entry>
+       </row>
+       <row>
+        <entry spanname="example"><literal>time '05:00' - interval '2 hours'</literal></entry>
+        <entry spanname="exresult"><literal>03:00:00</literal></entry>
        </row>
 
        <row>
-        <entry> <literal>-</literal> </entry>
-        <entry><literal>timestamp '2001-09-28 23:00' - interval '23 hours'</literal></entry>
-        <entry><literal>timestamp '2001-09-28 00:00:00'</literal></entry>
+        <entry spanname="name" morerows="2"> <literal>-</literal> </entry>
+        <entry spanname="sig"><type>timestamp</type> <literal>-</literal> <type>interval</type>
+         <returnvalue>timestamp</returnvalue></entry>
+       </row>
+       <row>
+        <entry spanname="desc">Subtract an interval from a timestamp</entry>
+       </row>
+       <row>
+        <entry spanname="example"><literal>timestamp '2001-09-28 23:00' - interval '23 hours'</literal></entry>
+        <entry spanname="exresult"><literal>2001-09-28 00:00:00</literal></entry>
        </row>
 
        <row>
-        <entry> <literal>-</literal> </entry>
-        <entry><literal>interval '1 day' - interval '1 hour'</literal></entry>
-        <entry><literal>interval '1 day -01:00:00'</literal></entry>
+        <entry spanname="name" morerows="2"> <literal>-</literal> </entry>
+        <entry spanname="sig"><type>interval</type> <literal>-</literal> <type>interval</type>
+         <returnvalue>interval</returnvalue></entry>
+       </row>
+       <row>
+        <entry spanname="desc">Subtract intervals</entry>
+       </row>
+       <row>
+        <entry spanname="example"><literal>interval '1 day' - interval '1 hour'</literal></entry>
+        <entry spanname="exresult"><literal>1 day -01:00:00</literal></entry>
        </row>
 
        <row>
-        <entry> <literal>-</literal> </entry>
-        <entry><literal>timestamp '2001-09-29 03:00' - timestamp '2001-09-27 12:00'</literal></entry>
-        <entry><literal>interval '1 day 15:00:00'</literal></entry>
+        <entry spanname="name" morerows="2"> <literal>-</literal> </entry>
+        <entry spanname="sig"><type>timestamp</type> <literal>-</literal> <type>timestamp</type>
+         <returnvalue>interval</returnvalue></entry>
+       </row>
+       <row>
+        <entry spanname="desc">Subtract timestamps</entry>
+       </row>
+       <row>
+        <entry spanname="example"><literal>timestamp '2001-09-29 03:00' - timestamp '2001-09-27 12:00'</literal></entry>
+        <entry spanname="exresult"><literal>1 day 15:00:00</literal></entry>
        </row>
 
        <row>
-        <entry> <literal>*</literal> </entry>
-        <entry><literal>900 * interval '1 second'</literal></entry>
-        <entry><literal>interval '00:15:00'</literal></entry>
+        <entry spanname="name" morerows="4"> <literal>*</literal> </entry>
+        <entry spanname="sig"><type>double precision</type> <literal>*</literal> <type>interval</type>
+         <returnvalue>interval</returnvalue></entry>
+       </row>
+       <row>
+        <entry spanname="desc">Multiply an interval by a scalar</entry>
+       </row>
+       <row>
+        <entry spanname="example"><literal>900 * interval '1 second'</literal></entry>
+        <entry spanname="exresult"><literal>00:15:00</literal></entry>
+       </row>
+       <row>
+        <entry spanname="example"><literal>21 * interval '1 day'</literal></entry>
+        <entry spanname="exresult"><literal>21 days</literal></entry>
+       </row>
+       <row>
+        <entry spanname="example"><literal>3.5 * interval '1 hour'</literal></entry>
+        <entry spanname="exresult"><literal>03:30:00</literal></entry>
        </row>
 
        <row>
-        <entry> <literal>*</literal> </entry>
-        <entry><literal>21 * interval '1 day'</literal></entry>
-        <entry><literal>interval '21 days'</literal></entry>
+        <entry spanname="name" morerows="2"> <literal>/</literal> </entry>
+        <entry spanname="sig"><type>interval</type> <literal>/</literal> <type>double precision</type>
+         <returnvalue>interval</returnvalue></entry>
        </row>
-
        <row>
-        <entry> <literal>*</literal> </entry>
-        <entry><literal>double precision '3.5' * interval '1 hour'</literal></entry>
-        <entry><literal>interval '03:30:00'</literal></entry>
+        <entry spanname="desc">Divide an interval by a scalar</entry>
        </row>
-
        <row>
-        <entry> <literal>/</literal> </entry>
-        <entry><literal>interval '1 hour' / double precision '1.5'</literal></entry>
-        <entry><literal>interval '00:40:00'</literal></entry>
+        <entry spanname="example"><literal>interval '1 hour' / 1.5</literal></entry>
+        <entry spanname="exresult"><literal>00:40:00</literal></entry>
        </row>
       </tbody>
      </tgroup>
@@ -6809,471 +7001,677 @@ SELECT regexp_match('abc01234xyz', '(?:(.*?)(\d+)(.*)){1,1}');
 
     <table id="functions-datetime-table">
      <title>Date/Time Functions</title>
-     <tgroup cols="5">
+     <tgroup cols="3">
+      <colspec colname="col1" colwidth="1*"/>
+      <colspec colname="col2" colwidth="1*"/>
+      <colspec colname="col3" colwidth="1*"/>
+      <spanspec spanname="name" namest="col1" nameend="col1" align="left"/>
+      <spanspec spanname="sig" namest="col2" nameend="col3" align="left"/>
+      <spanspec spanname="desc" namest="col2" nameend="col3" align="left"/>
+      <spanspec spanname="example" namest="col2" nameend="col2" align="left"/>
+      <spanspec spanname="exresult" namest="col3" nameend="col3" align="left"/>
       <thead>
        <row>
-        <entry>Function</entry>
-        <entry>Return Type</entry>
-        <entry>Description</entry>
-        <entry>Example</entry>
-        <entry>Result</entry>
+        <entry spanname="name" align="center" valign="middle" morerows="2">Function</entry>
+        <entry spanname="sig" align="center">Signature</entry>
+       </row>
+       <row>
+        <entry spanname="desc" align="center">Description</entry>
+       </row>
+       <row>
+        <entry spanname="example" align="center">Example</entry>
+        <entry spanname="exresult" align="center">Example Result</entry>
        </row>
       </thead>
 
       <tbody>
        <row>
-        <entry>
+        <entry spanname="name" morerows="2">
          <indexterm>
           <primary>age</primary>
          </indexterm>
-         <literal><function>age(<type>timestamp</type>, <type>timestamp</type>)</function></literal>
+         <function>age</function>
         </entry>
-        <entry><type>interval</type></entry>
-        <entry>Subtract arguments, producing a <quote>symbolic</quote> result that
+        <entry spanname="sig"><function>age</function>(<type>timestamp</type>, <type>timestamp</type>)
+         <returnvalue>interval</returnvalue></entry>
+       </row>
+       <row>
+        <entry spanname="desc">Subtract arguments, producing a <quote>symbolic</quote> result that
         uses years and months, rather than just days</entry>
-        <entry><literal>age(timestamp '2001-04-10', timestamp '1957-06-13')</literal></entry>
-        <entry><literal>43 years 9 mons 27 days</literal></entry>
+       </row>
+       <row>
+        <entry spanname="example"><literal>age(timestamp '2001-04-10', timestamp '1957-06-13')</literal></entry>
+        <entry spanname="exresult"><literal>43 years 9 mons 27 days</literal></entry>
        </row>
 
        <row>
-        <entry><literal><function>age(<type>timestamp</type>)</function></literal></entry>
-        <entry><type>interval</type></entry>
-        <entry>Subtract from <function>current_date</function> (at midnight)</entry>
-        <entry><literal>age(timestamp '1957-06-13')</literal></entry>
-        <entry><literal>43 years 8 mons 3 days</literal></entry>
+        <entry spanname="name" morerows="2"><function>age</function></entry>
+        <entry spanname="sig"><function>age</function>(<type>timestamp</type>)
+         <returnvalue>interval</returnvalue></entry>
+       </row>
+       <row>
+        <entry spanname="desc">Subtract from <function>current_date</function> (at midnight)</entry>
+       </row>
+       <row>
+        <entry spanname="example"><literal>age(timestamp '1957-06-13')</literal></entry>
+        <entry spanname="exresult"><replaceable>variable</replaceable></entry>
        </row>
 
        <row>
-        <entry>
+        <entry spanname="name" morerows="2">
          <indexterm>
           <primary>clock_timestamp</primary>
          </indexterm>
-         <literal><function>clock_timestamp()</function></literal>
+         <function>clock_timestamp</function>
         </entry>
-        <entry><type>timestamp with time zone</type></entry>
-        <entry>Current date and time (changes during statement execution);
+        <entry spanname="sig"><function>clock_timestamp</function>()
+         <returnvalue>timestamp with time zone</returnvalue></entry>
+       </row>
+       <row>
+        <entry spanname="desc">Current date and time (changes during statement execution);
          see <xref linkend="functions-datetime-current"/>
         </entry>
-        <entry></entry>
-        <entry></entry>
+       </row>
+       <row>
+        <entry spanname="example"><literal>clock_timestamp()</literal></entry>
+        <entry spanname="exresult"><replaceable>variable</replaceable></entry>
        </row>
 
        <row>
-        <entry>
+        <entry spanname="name" morerows="2">
          <indexterm>
           <primary>current_date</primary>
          </indexterm>
-         <literal><function>current_date</function></literal>
+         <function>current_date</function>
         </entry>
-        <entry><type>date</type></entry>
-        <entry>Current date;
+        <entry spanname="sig"><function>current_date</function>
+         <returnvalue>date</returnvalue></entry>
+       </row>
+       <row>
+         <entry spanname="desc">Current date;
          see <xref linkend="functions-datetime-current"/>
         </entry>
-        <entry></entry>
-        <entry></entry>
+       </row>
+       <row>
+        <entry spanname="example"><literal>current_date</literal></entry>
+        <entry spanname="exresult"><replaceable>variable</replaceable></entry>
        </row>
 
        <row>
-        <entry>
+        <entry spanname="name" morerows="2">
          <indexterm>
           <primary>current_time</primary>
          </indexterm>
-         <literal><function>current_time</function></literal>
+         <function>current_time</function>
         </entry>
-        <entry><type>time with time zone</type></entry>
-        <entry>Current time of day;
+        <entry spanname="sig"><function>current_time</function>
+         <returnvalue>time with time zone</returnvalue></entry>
+       </row>
+       <row>
+        <entry spanname="desc">Current time of day;
          see <xref linkend="functions-datetime-current"/>
         </entry>
-        <entry></entry>
-        <entry></entry>
+       </row>
+       <row>
+        <entry spanname="example"><literal>current_time</literal></entry>
+        <entry spanname="exresult"><replaceable>variable</replaceable></entry>
        </row>
 
        <row>
-        <entry>
+        <entry spanname="name" morerows="2"><function>current_time</function></entry>
+        <entry spanname="sig"><function>current_time</function>(<type>integer</type>)
+         <returnvalue>time with time zone</returnvalue></entry>
+       </row>
+       <row>
+        <entry spanname="desc">Current time of day, with limited precision;
+         see <xref linkend="functions-datetime-current"/>
+        </entry>
+       </row>
+       <row>
+        <entry spanname="example"><literal>current_time(2)</literal></entry>
+        <entry spanname="exresult"><replaceable>variable</replaceable></entry>
+       </row>
+
+       <row>
+        <entry spanname="name" morerows="2">
          <indexterm>
           <primary>current_timestamp</primary>
          </indexterm>
-         <literal><function>current_timestamp</function></literal>
+         <function>current_timestamp</function>
         </entry>
-        <entry><type>timestamp with time zone</type></entry>
-        <entry>Current date and time (start of current transaction);
+        <entry spanname="sig"><function>current_timestamp</function>
+         <returnvalue>timestamp with time zone</returnvalue></entry>
+       </row>
+       <row>
+        <entry spanname="desc">Current date and time (start of current transaction);
          see <xref linkend="functions-datetime-current"/>
         </entry>
-        <entry></entry>
-        <entry></entry>
+       </row>
+       <row>
+        <entry spanname="example"><literal>current_timestamp</literal></entry>
+        <entry spanname="exresult"><replaceable>variable</replaceable></entry>
        </row>
 
        <row>
-        <entry>
+        <entry spanname="name" morerows="2"><function>current_timestamp</function></entry>
+        <entry spanname="sig"><function>current_timestamp</function>(<type>integer</type>)
+         <returnvalue>timestamp with time zone</returnvalue></entry>
+       </row>
+       <row>
+        <entry spanname="desc">Current date and time (start of current transaction), with limited precision;
+         see <xref linkend="functions-datetime-current"/>
+        </entry>
+       </row>
+       <row>
+        <entry spanname="example"><literal>current_timestamp(0)</literal></entry>
+        <entry spanname="exresult"><replaceable>variable</replaceable></entry>
+       </row>
+
+       <row>
+        <entry spanname="name" morerows="2">
          <indexterm>
           <primary>date_part</primary>
          </indexterm>
-         <literal><function>date_part(<type>text</type>, <type>timestamp</type>)</function></literal>
+         <function>date_part</function>
         </entry>
-        <entry><type>double precision</type></entry>
-        <entry>Get subfield (equivalent to <function>extract</function>);
+        <entry spanname="sig"><function>date_part</function>(<type>text</type>, <type>timestamp</type>)
+         <returnvalue>double precision</returnvalue></entry>
+       </row>
+       <row>
+        <entry spanname="desc">Get timestamp subfield (equivalent to <function>extract</function>);
          see <xref linkend="functions-datetime-extract"/>
         </entry>
-        <entry><literal>date_part('hour', timestamp '2001-02-16 20:38:40')</literal></entry>
-        <entry><literal>20</literal></entry>
+       </row>
+       <row>
+        <entry spanname="example"><literal>date_part('hour', timestamp '2001-02-16 20:38:40')</literal></entry>
+        <entry spanname="exresult"><literal>20</literal></entry>
        </row>
 
        <row>
-        <entry><literal><function>date_part(<type>text</type>, <type>interval</type>)</function></literal></entry>
-        <entry><type>double precision</type></entry>
-        <entry>Get subfield (equivalent to
+        <entry spanname="name" morerows="2"><function>date_part</function></entry>
+        <entry spanname="sig"><function>date_part</function>(<type>text</type>, <type>interval</type>)
+         <returnvalue>double precision</returnvalue></entry>
+       </row>
+       <row>
+        <entry spanname="desc">Get interval subfield (equivalent to
          <function>extract</function>); see <xref linkend="functions-datetime-extract"/>
         </entry>
-        <entry><literal>date_part('month', interval '2 years 3 months')</literal></entry>
-        <entry><literal>3</literal></entry>
+       </row>
+       <row>
+        <entry spanname="example"><literal>date_part('month', interval '2 years 3 months')</literal></entry>
+        <entry spanname="exresult"><literal>3</literal></entry>
        </row>
 
        <row>
-        <entry>
+        <entry spanname="name" morerows="2">
          <indexterm>
           <primary>date_trunc</primary>
          </indexterm>
-         <literal><function>date_trunc(<type>text</type>, <type>timestamp</type>)</function></literal>
+         <function>date_trunc</function>
         </entry>
-        <entry><type>timestamp</type></entry>
-        <entry>Truncate to specified precision; see <xref linkend="functions-datetime-trunc"/>
+        <entry spanname="sig"><function>date_trunc</function>(<type>text</type>, <type>timestamp</type>)
+         <returnvalue>timestamp</returnvalue></entry>
+       </row>
+       <row>
+        <entry spanname="desc">Truncate to specified precision; see <xref linkend="functions-datetime-trunc"/>
         </entry>
-        <entry><literal>date_trunc('hour', timestamp '2001-02-16 20:38:40')</literal></entry>
-        <entry><literal>2001-02-16 20:00:00</literal></entry>
+       </row>
+       <row>
+        <entry spanname="example"><literal>date_trunc('hour', timestamp '2001-02-16 20:38:40')</literal></entry>
+        <entry spanname="exresult"><literal>2001-02-16 20:00:00</literal></entry>
        </row>
 
        <row>
-        <entry><literal><function>date_trunc(<type>text</type>, <type>timestamp with time zone</type>, <type>text</type>)</function></literal></entry>
-        <entry><type>timestamp with time zone</type></entry>
-        <entry>Truncate to specified precision in the specified time zone; see <xref linkend="functions-datetime-trunc"/>
+        <entry spanname="name" morerows="2"><function>date_trunc</function></entry>
+        <entry spanname="sig"><function>date_trunc</function>(<type>text</type>, <type>timestamp with time zone</type>, <type>text</type>)
+         <returnvalue>timestamp with time zone</returnvalue></entry>
+       </row>
+       <row>
+        <entry spanname="desc">Truncate to specified precision in the specified time zone; see <xref linkend="functions-datetime-trunc"/>
         </entry>
-        <entry><literal>date_trunc('day', timestamptz '2001-02-16 20:38:40+00', 'Australia/Sydney')</literal></entry>
-        <entry><literal>2001-02-16 13:00:00+00</literal></entry>
+       </row>
+       <row>
+        <entry spanname="example"><literal>date_trunc('day', timestamptz '2001-02-16 20:38:40+00', 'Australia/Sydney')</literal></entry>
+        <entry spanname="exresult"><literal>2001-02-16 13:00:00+00</literal></entry>
        </row>
 
        <row>
-        <entry><literal><function>date_trunc(<type>text</type>, <type>interval</type>)</function></literal></entry>
-        <entry><type>interval</type></entry>
-        <entry>Truncate to specified precision; see <xref linkend="functions-datetime-trunc"/>
+        <entry spanname="name" morerows="2"><function>date_trunc</function></entry>
+        <entry spanname="sig"><function>date_trunc</function>(<type>text</type>, <type>interval</type>)
+         <returnvalue>interval</returnvalue></entry>
+       </row>
+       <row>
+        <entry spanname="desc">Truncate to specified precision; see <xref linkend="functions-datetime-trunc"/>
         </entry>
-        <entry><literal>date_trunc('hour', interval '2 days 3 hours 40 minutes')</literal></entry>
-        <entry><literal>2 days 03:00:00</literal></entry>
+       </row>
+       <row>
+        <entry spanname="example"><literal>date_trunc('hour', interval '2 days 3 hours 40 minutes')</literal></entry>
+        <entry spanname="exresult"><literal>2 days 03:00:00</literal></entry>
        </row>
 
        <row>
-        <entry>
+        <entry spanname="name" morerows="2">
          <indexterm>
           <primary>extract</primary>
          </indexterm>
-         <literal><function>extract</function>(<parameter>field</parameter> from
-         <type>timestamp</type>)</literal>
+         <function>extract</function>
         </entry>
-        <entry><type>double precision</type></entry>
-        <entry>Get subfield; see <xref linkend="functions-datetime-extract"/>
+        <entry spanname="sig"><function>extract</function>(<parameter>field</parameter> <literal>from</literal> <type>timestamp</type>)
+         <returnvalue>double precision</returnvalue></entry>
+       </row>
+       <row>
+        <entry spanname="desc">Get timestamp subfield; see <xref linkend="functions-datetime-extract"/>
         </entry>
-        <entry><literal>extract(hour from timestamp '2001-02-16 20:38:40')</literal></entry>
-        <entry><literal>20</literal></entry>
+       </row>
+       <row>
+        <entry spanname="example"><literal>extract(hour from timestamp '2001-02-16 20:38:40')</literal></entry>
+        <entry spanname="exresult"><literal>20</literal></entry>
        </row>
 
        <row>
-        <entry><literal><function>extract</function>(<parameter>field</parameter> from
-         <type>interval</type>)</literal></entry>
-        <entry><type>double precision</type></entry>
-        <entry>Get subfield; see <xref linkend="functions-datetime-extract"/>
+        <entry spanname="name" morerows="2"><function>extract</function></entry>
+        <entry spanname="sig"><function>extract</function>(<parameter>field</parameter> <literal>from</literal> <type>interval</type>)
+         <returnvalue>double precision</returnvalue></entry>
+       </row>
+       <row>
+        <entry spanname="desc">Get interval subfield; see <xref linkend="functions-datetime-extract"/>
         </entry>
-        <entry><literal>extract(month from interval '2 years 3 months')</literal></entry>
-        <entry><literal>3</literal></entry>
+       </row>
+       <row>
+        <entry spanname="example"><literal>extract(month from interval '2 years 3 months')</literal></entry>
+        <entry spanname="exresult"><literal>3</literal></entry>
        </row>
 
        <row>
-        <entry>
+        <entry spanname="name" morerows="2">
          <indexterm>
           <primary>isfinite</primary>
          </indexterm>
-         <literal><function>isfinite(<type>date</type>)</function></literal>
+         <function>isfinite</function>
         </entry>
-        <entry><type>boolean</type></entry>
-        <entry>Test for finite date (not +/-infinity)</entry>
-        <entry><literal>isfinite(date '2001-02-16')</literal></entry>
-        <entry><literal>true</literal></entry>
+        <entry spanname="sig"><function>isfinite</function>(<type>date</type>)
+         <returnvalue>boolean</returnvalue></entry>
+       </row>
+       <row>
+        <entry spanname="desc">Test for finite date (not +/-infinity)</entry>
+       </row>
+       <row>
+        <entry spanname="example"><literal>isfinite(date '2001-02-16')</literal></entry>
+        <entry spanname="exresult"><literal>true</literal></entry>
        </row>
 
        <row>
-        <entry><literal><function>isfinite(<type>timestamp</type>)</function></literal></entry>
-        <entry><type>boolean</type></entry>
-        <entry>Test for finite time stamp (not +/-infinity)</entry>
-        <entry><literal>isfinite(timestamp '2001-02-16 21:28:30')</literal></entry>
-        <entry><literal>true</literal></entry>
+        <entry spanname="name" morerows="2"><function>isfinite</function></entry>
+        <entry spanname="sig"><function>isfinite</function>(<type>timestamp</type>)
+         <returnvalue>boolean</returnvalue></entry>
+       </row>
+       <row>
+        <entry spanname="desc">Test for finite timestamp (not +/-infinity)</entry>
+       </row>
+       <row>
+        <entry spanname="example"><literal>isfinite(timestamp 'infinity')</literal></entry>
+        <entry spanname="exresult"><literal>false</literal></entry>
        </row>
 
        <row>
-        <entry><literal><function>isfinite(<type>interval</type>)</function></literal></entry>
-        <entry><type>boolean</type></entry>
-        <entry>Test for finite interval</entry>
-        <entry><literal>isfinite(interval '4 hours')</literal></entry>
-        <entry><literal>true</literal></entry>
+        <entry spanname="name" morerows="2"><function>isfinite</function></entry>
+        <entry spanname="sig"><function>isfinite</function>(<type>interval</type>)
+         <returnvalue>boolean</returnvalue></entry>
+       </row>
+       <row>
+        <entry spanname="desc">Test for finite interval (currently always true)</entry>
+       </row>
+       <row>
+        <entry spanname="example"><literal>isfinite(interval '4 hours')</literal></entry>
+        <entry spanname="exresult"><literal>true</literal></entry>
        </row>
 
        <row>
-        <entry>
+        <entry spanname="name" morerows="2">
          <indexterm>
           <primary>justify_days</primary>
          </indexterm>
-         <literal><function>justify_days(<type>interval</type>)</function></literal>
+         <function>justify_days</function>
         </entry>
-        <entry><type>interval</type></entry>
-        <entry>Adjust interval so 30-day time periods are represented as months</entry>
-        <entry><literal>justify_days(interval '35 days')</literal></entry>
-        <entry><literal>1 mon 5 days</literal></entry>
+        <entry spanname="sig"><function>justify_days</function>(<type>interval</type>)
+         <returnvalue>interval</returnvalue></entry>
+       </row>
+       <row>
+        <entry spanname="desc">Adjust interval so 30-day time periods are represented as months</entry>
+       </row>
+       <row>
+        <entry spanname="example"><literal>justify_days(interval '35 days')</literal></entry>
+        <entry spanname="exresult"><literal>1 mon 5 days</literal></entry>
        </row>
 
        <row>
-        <entry>
+        <entry spanname="name" morerows="2">
          <indexterm>
           <primary>justify_hours</primary>
          </indexterm>
-         <literal><function>justify_hours(<type>interval</type>)</function></literal>
+         <function>justify_hours</function>
         </entry>
-        <entry><type>interval</type></entry>
-        <entry>Adjust interval so 24-hour time periods are represented as days</entry>
-        <entry><literal>justify_hours(interval '27 hours')</literal></entry>
-        <entry><literal>1 day 03:00:00</literal></entry>
+        <entry spanname="sig"><function>justify_hours</function>(<type>interval</type>)
+         <returnvalue>interval</returnvalue></entry>
+       </row>
+       <row>
+        <entry spanname="desc">Adjust interval so 24-hour time periods are represented as days</entry>
+       </row>
+       <row>
+        <entry spanname="example"><literal>justify_hours(&zwsp;interval '27 hours')</literal></entry>
+        <entry spanname="exresult"><literal>1 day 03:00:00</literal></entry>
        </row>
 
        <row>
-        <entry>
+        <entry spanname="name" morerows="2">
          <indexterm>
           <primary>justify_interval</primary>
          </indexterm>
-         <literal><function>justify_interval(<type>interval</type>)</function></literal>
+         <function>justify_interval</function>
         </entry>
-        <entry><type>interval</type></entry>
-        <entry>Adjust interval using <function>justify_days</function> and <function>justify_hours</function>, with additional sign adjustments</entry>
-        <entry><literal>justify_interval(interval '1 mon -1 hour')</literal></entry>
-        <entry><literal>29 days 23:00:00</literal></entry>
+        <entry spanname="sig"><function>justify_interval</function>(<type>interval</type>)
+         <returnvalue>interval</returnvalue></entry>
+       </row>
+       <row>
+        <entry spanname="desc">Adjust interval using <function>justify_days</function> and <function>justify_hours</function>, with additional sign adjustments</entry>
+       </row>
+       <row>
+        <entry spanname="example"><literal>justify_interval(&zwsp;interval '1 mon -1 hour')</literal></entry>
+        <entry spanname="exresult"><literal>29 days 23:00:00</literal></entry>
        </row>
 
        <row>
-        <entry>
+        <entry spanname="name" morerows="2">
          <indexterm>
           <primary>localtime</primary>
          </indexterm>
-         <literal><function>localtime</function></literal>
+         <function>localtime</function>
         </entry>
-        <entry><type>time</type></entry>
-        <entry>Current time of day;
+        <entry spanname="sig"><function>localtime</function>
+         <returnvalue>time</returnvalue></entry>
+       </row>
+       <row>
+        <entry spanname="desc">Current time of day;
          see <xref linkend="functions-datetime-current"/>
         </entry>
-        <entry></entry>
-        <entry></entry>
+       </row>
+       <row>
+        <entry spanname="example"><literal>localtime</literal></entry>
+        <entry spanname="exresult"><replaceable>variable</replaceable></entry>
        </row>
 
        <row>
-        <entry>
+        <entry spanname="name" morerows="2"><function>localtime</function></entry>
+        <entry spanname="sig"><function>localtime</function>(<type>integer</type>)
+         <returnvalue>time</returnvalue></entry>
+       </row>
+       <row>
+        <entry spanname="desc">Current time of day, with limited precision;
+         see <xref linkend="functions-datetime-current"/>
+        </entry>
+       </row>
+       <row>
+        <entry spanname="example"><literal>localtime(0)</literal></entry>
+        <entry spanname="exresult"><replaceable>variable</replaceable></entry>
+       </row>
+
+       <row>
+        <entry spanname="name" morerows="2">
          <indexterm>
           <primary>localtimestamp</primary>
          </indexterm>
-         <literal><function>localtimestamp</function></literal>
+         <function>localtimestamp</function>
         </entry>
-        <entry><type>timestamp</type></entry>
-        <entry>Current date and time (start of current transaction);
+        <entry spanname="sig"><function>localtimestamp</function>
+         <returnvalue>timestamp</returnvalue></entry>
+       </row>
+       <row>
+        <entry spanname="desc">Current date and time (start of current transaction);
          see <xref linkend="functions-datetime-current"/>
         </entry>
-        <entry></entry>
-        <entry></entry>
+       </row>
+       <row>
+        <entry spanname="example"><literal>localtimestamp</literal></entry>
+        <entry spanname="exresult"><replaceable>variable</replaceable></entry>
        </row>
 
        <row>
-        <entry>
+        <entry spanname="name" morerows="2"><function>localtimestamp</function></entry>
+        <entry spanname="sig"><function>localtimestamp</function>(<type>integer</type>)
+         <returnvalue>timestamp</returnvalue></entry>
+       </row>
+       <row>
+        <entry spanname="desc">Current date and time (start of current
+         transaction), with limited precision;
+         see <xref linkend="functions-datetime-current"/>
+        </entry>
+       </row>
+       <row>
+        <entry spanname="example"><literal>localtimestamp(2)</literal></entry>
+        <entry spanname="exresult"><replaceable>variable</replaceable></entry>
+       </row>
+
+       <row>
+        <entry spanname="name" morerows="2">
          <indexterm>
           <primary>make_date</primary>
          </indexterm>
-         <literal>
-            <function>
-             make_date(<parameter>year</parameter> <type>int</type>,
-             <parameter>month</parameter> <type>int</type>,
-             <parameter>day</parameter> <type>int</type>)
-            </function>
-         </literal>
+         <function>make_date</function>
         </entry>
-        <entry><type>date</type></entry>
-        <entry>
+        <entry spanname="sig"><function>make_date</function>(<parameter>year</parameter> <type>int</type>,
+         <parameter>month</parameter> <type>int</type>,
+         <parameter>day</parameter> <type>int</type>)
+         <returnvalue>date</returnvalue></entry>
+       </row>
+       <row>
+        <entry spanname="desc">
          Create date from year, month and day fields
         </entry>
-        <entry><literal>make_date(2013, 7, 15)</literal></entry>
-        <entry><literal>2013-07-15</literal></entry>
+       </row>
+       <row>
+        <entry spanname="example"><literal>make_date(2013, 7, 15)</literal></entry>
+        <entry spanname="exresult"><literal>2013-07-15</literal></entry>
        </row>
 
        <row>
-        <entry>
-         <indexterm>
+        <entry spanname="name" morerows="2"><indexterm>
           <primary>make_interval</primary>
          </indexterm>
-         <literal>
-          <function>
-           make_interval(<parameter>years</parameter> <type>int</type> DEFAULT 0,
-           <parameter>months</parameter> <type>int</type> DEFAULT 0,
-           <parameter>weeks</parameter> <type>int</type> DEFAULT 0,
-           <parameter>days</parameter> <type>int</type> DEFAULT 0,
-           <parameter>hours</parameter> <type>int</type> DEFAULT 0,
-           <parameter>mins</parameter> <type>int</type> DEFAULT 0,
-           <parameter>secs</parameter> <type>double precision</type> DEFAULT 0.0)
-          </function>
-         </literal>
+         <function>make_interval</function>
         </entry>
-        <entry><type>interval</type></entry>
-        <entry>
+        <entry spanname="sig"><function>make_interval</function>(<optional> <parameter>year</parameter> <type>int</type>
+         <optional>, <parameter>month</parameter> <type>int</type>
+         <optional>, <parameter>week</parameter> <type>int</type>
+         <optional>, <parameter>day</parameter> <type>int</type>
+         <optional>, <parameter>hour</parameter> <type>int</type>
+         <optional>, <parameter>min</parameter> <type>int</type>
+         <optional>, <parameter>sec</parameter> <type>double precision</type>
+         </optional></optional></optional></optional></optional></optional></optional>)
+         <returnvalue>interval</returnvalue></entry>
+       </row>
+       <row>
+        <entry spanname="desc">
          Create interval from years, months, weeks, days, hours, minutes and
-         seconds fields
+         seconds fields, each of which can default to zero
         </entry>
-        <entry><literal>make_interval(days =&gt; 10)</literal></entry>
-        <entry><literal>10 days</literal></entry>
+       </row>
+       <row>
+        <entry spanname="example"><literal>make_interval(days =&gt; 10)</literal></entry>
+        <entry spanname="exresult"><literal>10 days</literal></entry>
        </row>
 
        <row>
-        <entry>
+        <entry spanname="name" morerows="2">
          <indexterm>
           <primary>make_time</primary>
          </indexterm>
-         <literal>
-          <function>
-           make_time(<parameter>hour</parameter> <type>int</type>,
-           <parameter>min</parameter> <type>int</type>,
-           <parameter>sec</parameter> <type>double precision</type>)
-          </function>
-         </literal>
+         <function>make_time</function>
         </entry>
-        <entry><type>time</type></entry>
-        <entry>
+        <entry spanname="sig"><function>make_time</function>(<parameter>hour</parameter> <type>int</type>,
+         <parameter>min</parameter> <type>int</type>,
+         <parameter>sec</parameter> <type>double precision</type>)
+         <returnvalue>time</returnvalue></entry>
+       </row>
+       <row>
+        <entry spanname="desc">
          Create time from hour, minute and seconds fields
         </entry>
-        <entry><literal>make_time(8, 15, 23.5)</literal></entry>
-        <entry><literal>08:15:23.5</literal></entry>
+       </row>
+       <row>
+        <entry spanname="example"><literal>make_time(8, 15, 23.5)</literal></entry>
+        <entry spanname="exresult"><literal>08:15:23.5</literal></entry>
        </row>
 
        <row>
-        <entry>
+        <entry spanname="name" morerows="2">
          <indexterm>
           <primary>make_timestamp</primary>
          </indexterm>
-         <literal>
-          <function>
-           make_timestamp(<parameter>year</parameter> <type>int</type>,
-           <parameter>month</parameter> <type>int</type>,
-           <parameter>day</parameter> <type>int</type>,
-           <parameter>hour</parameter> <type>int</type>,
-           <parameter>min</parameter> <type>int</type>,
-           <parameter>sec</parameter> <type>double precision</type>)
-          </function>
-         </literal>
+         <function>make_timestamp</function>
         </entry>
-        <entry><type>timestamp</type></entry>
-        <entry>
+        <entry spanname="sig"><function>make_timestamp</function>(<parameter>year</parameter> <type>int</type>,
+         <parameter>month</parameter> <type>int</type>,
+         <parameter>day</parameter> <type>int</type>,
+         <parameter>hour</parameter> <type>int</type>,
+         <parameter>min</parameter> <type>int</type>,
+         <parameter>sec</parameter> <type>double precision</type>)
+         <returnvalue>timestamp</returnvalue></entry>
+       </row>
+       <row>
+        <entry spanname="desc">
          Create timestamp from year, month, day, hour, minute and seconds fields
         </entry>
-        <entry><literal>make_timestamp(2013, 7, 15, 8, 15, 23.5)</literal></entry>
-        <entry><literal>2013-07-15 08:15:23.5</literal></entry>
+       </row>
+       <row>
+        <entry spanname="example"><literal>make_timestamp(&zwsp;2013, 7, 15, 8, 15, 23.5)</literal></entry>
+        <entry spanname="exresult"><literal>2013-07-15 08:15:23.5</literal></entry>
        </row>
 
        <row>
-        <entry>
+        <entry spanname="name" morerows="2">
          <indexterm>
           <primary>make_timestamptz</primary>
          </indexterm>
-         <literal>
-          <function>
-           make_timestamptz(<parameter>year</parameter> <type>int</type>,
-           <parameter>month</parameter> <type>int</type>,
-           <parameter>day</parameter> <type>int</type>,
-           <parameter>hour</parameter> <type>int</type>,
-           <parameter>min</parameter> <type>int</type>,
-           <parameter>sec</parameter> <type>double precision</type>,
-           <optional> <parameter>timezone</parameter> <type>text</type> </optional>)
-          </function>
-         </literal>
+         <function>make_timestamptz</function>
         </entry>
-        <entry><type>timestamp with time zone</type></entry>
-        <entry>
+        <entry spanname="sig"><function>make_timestamptz</function>(<parameter>year</parameter> <type>int</type>,
+         <parameter>month</parameter> <type>int</type>,
+         <parameter>day</parameter> <type>int</type>,
+         <parameter>hour</parameter> <type>int</type>,
+         <parameter>min</parameter> <type>int</type>,
+         <parameter>sec</parameter> <type>double precision</type>
+         <optional>, <parameter>timezone</parameter> <type>text</type> </optional>)
+         <returnvalue>timestamp with time zone</returnvalue></entry>
+       </row>
+       <row>
+        <entry spanname="desc">
          Create timestamp with time zone from year, month, day, hour, minute
          and seconds fields; if <parameter>timezone</parameter> is not
          specified, the current time zone is used
         </entry>
-        <entry><literal>make_timestamptz(2013, 7, 15, 8, 15, 23.5)</literal></entry>
-        <entry><literal>2013-07-15 08:15:23.5+01</literal></entry>
+       </row>
+       <row>
+        <entry spanname="example"><literal>make_timestamptz(&zwsp;2013, 7, 15, 8, 15, 23.5)</literal></entry>
+        <entry spanname="exresult"><literal>2013-07-15 08:15:23.5+01</literal></entry>
        </row>
 
        <row>
-        <entry>
+        <entry spanname="name" morerows="2">
          <indexterm>
           <primary>now</primary>
          </indexterm>
-         <literal><function>now()</function></literal>
+         <function>now</function>
         </entry>
-        <entry><type>timestamp with time zone</type></entry>
-        <entry>Current date and time (start of current transaction);
+        <entry spanname="sig"><function>now</function>()
+         <returnvalue>timestamp with time zone</returnvalue></entry>
+       </row>
+       <row>
+        <entry spanname="desc">Current date and time (start of current transaction);
          see <xref linkend="functions-datetime-current"/>
         </entry>
-        <entry></entry>
-        <entry></entry>
+       </row>
+       <row>
+        <entry spanname="example"><literal>now()</literal></entry>
+        <entry spanname="exresult"><replaceable>variable</replaceable></entry>
        </row>
 
        <row>
-        <entry>
+        <entry spanname="name" morerows="2">
          <indexterm>
           <primary>statement_timestamp</primary>
          </indexterm>
-         <literal><function>statement_timestamp()</function></literal>
+         <function>statement_timestamp</function>
         </entry>
-        <entry><type>timestamp with time zone</type></entry>
-        <entry>Current date and time (start of current statement);
+        <entry spanname="sig"><function>statement_timestamp</function>()
+         <returnvalue>timestamp with time zone</returnvalue></entry>
+       </row>
+       <row>
+        <entry spanname="desc">Current date and time (start of current statement);
          see <xref linkend="functions-datetime-current"/>
         </entry>
-        <entry></entry>
-        <entry></entry>
+       </row>
+       <row>
+        <entry spanname="example"><literal>statement_timestamp()</literal></entry>
+        <entry spanname="exresult"><replaceable>variable</replaceable></entry>
        </row>
 
        <row>
-        <entry>
+        <entry spanname="name" morerows="2">
          <indexterm>
           <primary>timeofday</primary>
          </indexterm>
-         <literal><function>timeofday()</function></literal>
+         <function>timeofday</function>
         </entry>
-        <entry><type>text</type></entry>
-        <entry>Current date and time
+        <entry spanname="sig"><function>timeofday</function>()
+         <returnvalue>text</returnvalue></entry>
+       </row>
+       <row>
+        <entry spanname="desc">Current date and time
          (like <function>clock_timestamp</function>, but as a <type>text</type> string);
          see <xref linkend="functions-datetime-current"/>
         </entry>
-        <entry></entry>
-        <entry></entry>
+       </row>
+       <row>
+        <entry spanname="example"><literal>timeofday()</literal></entry>
+        <entry spanname="exresult"><replaceable>variable</replaceable></entry>
        </row>
 
        <row>
-        <entry>
+        <entry spanname="name" morerows="2">
          <indexterm>
           <primary>transaction_timestamp</primary>
          </indexterm>
-         <literal><function>transaction_timestamp()</function></literal>
+         <function>transaction_timestamp</function>
         </entry>
-        <entry><type>timestamp with time zone</type></entry>
-        <entry>Current date and time (start of current transaction);
-         see <xref linkend="functions-datetime-current"/>
-        </entry>
-        <entry></entry>
-        <entry></entry>
+        <entry spanname="sig"><function>transaction_timestamp</function>()
+         <returnvalue>timestamp with time zone</returnvalue></entry>
        </row>
        <row>
-        <entry>
+        <entry spanname="desc">Current date and time (start of current transaction);
+         see <xref linkend="functions-datetime-current"/>
+        </entry>
+       </row>
+       <row>
+        <entry spanname="example"><literal>transaction_&zwsp;timestamp()</literal></entry>
+        <entry spanname="exresult"><replaceable>variable</replaceable></entry>
+       </row>
+       <row>
+        <entry spanname="name" morerows="2">
          <indexterm>
           <primary>to_timestamp</primary>
          </indexterm>
-         <literal><function>to_timestamp(<type>double precision</type>)</function></literal>
+         <function>to_timestamp</function>
         </entry>
-        <entry><type>timestamp with time zone</type></entry>
-        <entry>Convert Unix epoch (seconds since 1970-01-01 00:00:00+00) to
+        <entry spanname="sig"><function>to_timestamp</function>(<type>double precision</type>)
+         <returnvalue>timestamp with time zone</returnvalue></entry>
+       </row>
+       <row>
+        <entry spanname="desc">Convert Unix epoch (seconds since 1970-01-01 00:00:00+00) to
          timestamp</entry>
-        <entry><literal>to_timestamp(1284352323)</literal></entry>
-        <entry><literal>2010-09-13 04:32:03+00</literal></entry>
+       </row>
+       <row>
+        <entry spanname="example"><literal>to_timestamp(&zwsp;1284352323)</literal></entry>
+        <entry spanname="exresult"><literal>2010-09-13 04:32:03+00</literal></entry>
        </row>
       </tbody>
      </tgroup>
@@ -8247,52 +8645,83 @@ CREATE TYPE rainbow AS ENUM ('red', 'orange', 'yellow', 'green', 'blue', 'purple
 
   <table id="functions-enum-table">
     <title>Enum Support Functions</title>
-    <tgroup cols="4">
+    <tgroup cols="3">
+     <colspec colname="col1" colwidth="0.5*"/>
+     <colspec colname="col2" colwidth="1*"/>
+     <colspec colname="col3" colwidth="1*"/>
+     <spanspec spanname="name" namest="col1" nameend="col1" align="left"/>
+     <spanspec spanname="sig" namest="col2" nameend="col3" align="left"/>
+     <spanspec spanname="desc" namest="col2" nameend="col3" align="left"/>
+     <spanspec spanname="example" namest="col2" nameend="col2" align="left"/>
+     <spanspec spanname="exresult" namest="col3" nameend="col3" align="left"/>
      <thead>
       <row>
-       <entry>Function</entry>
-       <entry>Description</entry>
-       <entry>Example</entry>
-       <entry>Example Result</entry>
+       <entry spanname="name" align="center" valign="middle" morerows="2">Function</entry>
+       <entry spanname="sig" align="center">Signature</entry>
+      </row>
+      <row>
+       <entry spanname="desc" align="center">Description</entry>
+      </row>
+      <row>
+       <entry spanname="example" align="center">Example</entry>
+       <entry spanname="exresult" align="center">Example Result</entry>
       </row>
      </thead>
      <tbody>
       <row>
-       <entry>
-         <indexterm>
-          <primary>enum_first</primary>
-         </indexterm>
-         <literal>enum_first(anyenum)</literal>
+       <entry spanname="name" morerows="2">
+        <indexterm>
+         <primary>enum_first</primary>
+        </indexterm>
+        <function>enum_first</function>
        </entry>
-       <entry>Returns the first value of the input enum type</entry>
-       <entry><literal>enum_first(null::rainbow)</literal></entry>
-       <entry><literal>red</literal></entry>
+       <entry spanname="sig"><function>enum_first</function>(<type>anyenum</type>) <returnvalue>anyenum</returnvalue></entry>
       </row>
       <row>
-       <entry>
-         <indexterm>
-          <primary>enum_last</primary>
-         </indexterm>
-         <literal>enum_last(anyenum)</literal>
-       </entry>
-       <entry>Returns the last value of the input enum type</entry>
-       <entry><literal>enum_last(null::rainbow)</literal></entry>
-       <entry><literal>purple</literal></entry>
+       <entry spanname="desc">Returns the first value of the input enum type</entry>
       </row>
       <row>
-       <entry>
-         <indexterm>
-          <primary>enum_range</primary>
-         </indexterm>
-         <literal>enum_range(anyenum)</literal>
-       </entry>
-       <entry>Returns all values of the input enum type in an ordered array</entry>
-       <entry><literal>enum_range(null::rainbow)</literal></entry>
-       <entry><literal>{red,orange,yellow,green,blue,purple}</literal></entry>
+       <entry spanname="example"><literal>enum_first(&zwsp;null::rainbow)</literal></entry>
+       <entry spanname="exresult"><literal>red</literal></entry>
       </row>
       <row>
-       <entry morerows="2"><literal>enum_range(anyenum, anyenum)</literal></entry>
-       <entry morerows="2">
+       <entry spanname="name" morerows="2">
+        <indexterm>
+         <primary>enum_last</primary>
+        </indexterm>
+        <function>enum_last</function>
+       </entry>
+       <entry spanname="sig"><function>enum_last</function>(<type>anyenum</type>) <returnvalue>anyenum</returnvalue></entry>
+      </row>
+      <row>
+       <entry spanname="desc">Returns the last value of the input enum type</entry>
+      </row>
+      <row>
+       <entry spanname="example"><literal>enum_last(&zwsp;null::rainbow)</literal></entry>
+       <entry spanname="exresult"><literal>purple</literal></entry>
+      </row>
+      <row>
+       <entry spanname="name" morerows="2">
+        <indexterm>
+         <primary>enum_range</primary>
+        </indexterm>
+        <function>enum_range</function>
+       </entry>
+       <entry spanname="sig"><function>enum_range</function>(<type>anyenum</type>) <returnvalue>anyarray</returnvalue></entry>
+      </row>
+      <row>
+       <entry spanname="desc">Returns all values of the input enum type in an ordered array</entry>
+      </row>
+      <row>
+       <entry spanname="example"><literal>enum_range(&zwsp;null::rainbow)</literal></entry>
+       <entry spanname="exresult"><literal>{red,orange,yellow,&zwsp;green,blue,purple}</literal></entry>
+      </row>
+      <row>
+       <entry spanname="name" morerows="4"><function>enum_range</function></entry>
+       <entry spanname="sig"><function>enum_range</function>(<type>anyenum</type>, <type>anyenum</type>) <returnvalue>anyarray</returnvalue></entry>
+      </row>
+      <row>
+       <entry spanname="desc">
         Returns the range between the two given enum values, as an ordered
         array. The values must be from the same enum type. If the first
         parameter is null, the result will start with the first value of
@@ -8300,16 +8729,18 @@ CREATE TYPE rainbow AS ENUM ('red', 'orange', 'yellow', 'green', 'blue', 'purple
         If the second parameter is null, the result will end with the last
         value of the enum type.
        </entry>
-       <entry><literal>enum_range('orange'::rainbow, 'green'::rainbow)</literal></entry>
-       <entry><literal>{orange,yellow,green}</literal></entry>
       </row>
       <row>
-       <entry><literal>enum_range(NULL, 'green'::rainbow)</literal></entry>
-       <entry><literal>{red,orange,yellow,green}</literal></entry>
+       <entry spanname="example"><literal>enum_range(&zwsp;'orange'::rainbow, 'green'::rainbow)</literal></entry>
+       <entry spanname="exresult"><literal>{orange,yellow,green}</literal></entry>
       </row>
       <row>
-       <entry><literal>enum_range('orange'::rainbow, NULL)</literal></entry>
-       <entry><literal>{orange,yellow,green,blue,purple}</literal></entry>
+       <entry spanname="example"><literal>enum_range(NULL, 'green'::rainbow)</literal></entry>
+       <entry spanname="exresult"><literal>{red,orange,yellow,&zwsp;green}</literal></entry>
+      </row>
+      <row>
+       <entry spanname="example"><literal>enum_range(&zwsp;'orange'::rainbow, NULL)</literal></entry>
+       <entry spanname="exresult"><literal>{orange,yellow,green,&zwsp;blue,purple}</literal></entry>
       </row>
      </tbody>
     </tgroup>
@@ -8321,7 +8752,7 @@ CREATE TYPE rainbow AS ENUM ('red', 'orange', 'yellow', 'green', 'blue', 'purple
     only about its declared data type.  Either null or a specific value of
     the type can be passed, with the same result.  It is more common to
     apply these functions to a table column or function argument than to
-    a hardwired type name as suggested by the examples.
+    a hardwired type name as used in the examples.
    </para>
  </sect1>
 
@@ -9943,7 +10374,7 @@ gen_random_uuid() returns uuid
    <title>Producing XML Content</title>
 
    <para>
-    A set of functions and function-like expressions are available for
+    A set of functions and function-like expressions is available for
     producing XML content from SQL data.  As such, they are
     particularly suitable for formatting query results into XML
     documents for processing in client applications.
@@ -12297,7 +12728,7 @@ table2-mapping
 
   <note>
    <para>
-    Some of the <literal>jsonb_path_*</literal> functions have the
+    Some of the <literal>jsonb_path_*</literal> functions have a
     <literal>_tz</literal> suffix. These functions have been implemented to
     support comparison of date/time values that involves implicit
     timezone-aware casts. Since operations with time zones are not immutable,
@@ -18178,11 +18609,15 @@ SELECT pg_type_is_visible('myschema.widget'::regtype);
    </indexterm>
 
    <indexterm>
-    <primary>to_regproc</primary>
+    <primary>to_regcollation</primary>
    </indexterm>
 
    <indexterm>
-    <primary>to_regprocedure</primary>
+    <primary>to_regnamespace</primary>
+   </indexterm>
+
+   <indexterm>
+    <primary>to_regrole</primary>
    </indexterm>
 
    <indexterm>
@@ -18194,15 +18629,15 @@ SELECT pg_type_is_visible('myschema.widget'::regtype);
    </indexterm>
 
    <indexterm>
+    <primary>to_regproc</primary>
+   </indexterm>
+
+   <indexterm>
+    <primary>to_regprocedure</primary>
+   </indexterm>
+
+   <indexterm>
     <primary>to_regtype</primary>
-   </indexterm>
-
-   <indexterm>
-    <primary>to_regnamespace</primary>
-   </indexterm>
-
-   <indexterm>
-    <primary>to_regrole</primary>
    </indexterm>
 
   <para>
@@ -18390,14 +18825,14 @@ SELECT pg_type_is_visible('myschema.widget'::regtype);
        <entry>get the OID of the named relation</entry>
       </row>
       <row>
-       <entry><literal><function>to_regproc(<parameter>func_name</parameter>)</function></literal></entry>
-       <entry><type>regproc</type></entry>
-       <entry>get the OID of the named function</entry>
+       <entry><literal><function>to_regcollation(<parameter>coll_name</parameter>)</function></literal></entry>
+       <entry><type>regcollation</type></entry>
+       <entry>get the OID of the named collation</entry>
       </row>
       <row>
-       <entry><literal><function>to_regprocedure(<parameter>func_name</parameter>)</function></literal></entry>
-       <entry><type>regprocedure</type></entry>
-       <entry>get the OID of the named function</entry>
+       <entry><literal><function>to_regnamespace(<parameter>schema_name</parameter>)</function></literal></entry>
+       <entry><type>regnamespace</type></entry>
+       <entry>get the OID of the named schema</entry>
       </row>
       <row>
        <entry><literal><function>to_regoper(<parameter>operator_name</parameter>)</function></literal></entry>
@@ -18410,19 +18845,24 @@ SELECT pg_type_is_visible('myschema.widget'::regtype);
        <entry>get the OID of the named operator</entry>
       </row>
       <row>
-       <entry><literal><function>to_regtype(<parameter>type_name</parameter>)</function></literal></entry>
-       <entry><type>regtype</type></entry>
-       <entry>get the OID of the named type</entry>
-      </row>
-      <row>
-       <entry><literal><function>to_regnamespace(<parameter>schema_name</parameter>)</function></literal></entry>
-       <entry><type>regnamespace</type></entry>
-       <entry>get the OID of the named schema</entry>
-      </row>
-      <row>
        <entry><literal><function>to_regrole(<parameter>role_name</parameter>)</function></literal></entry>
        <entry><type>regrole</type></entry>
        <entry>get the OID of the named role</entry>
+      </row>
+      <row>
+       <entry><literal><function>to_regproc(<parameter>func_name</parameter>)</function></literal></entry>
+       <entry><type>regproc</type></entry>
+       <entry>get the OID of the named function</entry>
+      </row>
+      <row>
+       <entry><literal><function>to_regprocedure(<parameter>func_name</parameter>)</function></literal></entry>
+       <entry><type>regprocedure</type></entry>
+       <entry>get the OID of the named function</entry>
+      </row>
+      <row>
+       <entry><literal><function>to_regtype(<parameter>type_name</parameter>)</function></literal></entry>
+       <entry><type>regtype</type></entry>
+       <entry>get the OID of the named type</entry>
       </row>
      </tbody>
     </tgroup>
@@ -18720,20 +19160,18 @@ SELECT collation for ('foo' COLLATE "de_DE");
   </para>
 
   <para>
-   The <function>to_regclass</function>, <function>to_regproc</function>,
-   <function>to_regprocedure</function>, <function>to_regoper</function>,
-   <function>to_regoperator</function>, <function>to_regtype</function>,
-   <function>to_regnamespace</function>, and <function>to_regrole</function>
-   functions translate relation, function, operator, type, schema, and role
-   names (given as <type>text</type>) to objects of
-   type <type>regclass</type>, <type>regproc</type>, <type>regprocedure</type>,
-   <type>regoper</type>, <type>regoperator</type>, <type>regtype</type>,
-   <type>regnamespace</type>, and <type>regrole</type>
-   respectively.  These functions differ from a cast from
-   text in that they don't accept a numeric OID, and that they return null
-   rather than throwing an error if the name is not found (or, for
-   <function>to_regproc</function> and <function>to_regoper</function>, if
-   the given name matches multiple objects).
+   The functions <function>to_regclass</function>, <function>to_regcollation</function>,
+   <function>to_regnamespace</function>, <function>to_regoper</function>,
+   <function>to_regoperator</function>, <function>to_regrole</function>,
+   <function>to_regproc</function>, <function>to_regprocedure</function> and
+   <function>to_regtype</function> translate relation, collation, schema,
+   operator, role, function, and type names (given as <type>text</type>) to
+   objects of the corresponding <type>reg*</type> type (see <xref
+   linkend="datatype-oid"/> about the types).  These functions differ from a
+   cast from text in that they don't accept a numeric OID, and that they
+   return null rather than throwing an error if the name is not found (or, for
+   <function>to_regproc</function> and <function>to_regoper</function>, if the
+   given name matches multiple objects).
   </para>
 
    <indexterm>
@@ -18929,6 +19367,38 @@ SELECT collation for ('foo' COLLATE "de_DE");
    </para>
 
    <indexterm>
+    <primary>pg_current_xact_id</primary>
+   </indexterm>
+
+   <indexterm>
+    <primary>pg_current_xact_id_if_assigned</primary>
+   </indexterm>
+
+   <indexterm>
+    <primary>pg_current_snapshot</primary>
+   </indexterm>
+
+   <indexterm>
+    <primary>pg_snapshot_xip</primary>
+   </indexterm>
+
+   <indexterm>
+    <primary>pg_snapshot_xmax</primary>
+   </indexterm>
+
+   <indexterm>
+    <primary>pg_snapshot_xmin</primary>
+   </indexterm>
+
+   <indexterm>
+    <primary>pg_visible_in_snapshot</primary>
+   </indexterm>
+
+   <indexterm>
+    <primary>pg_xact_status</primary>
+   </indexterm>
+
+   <indexterm>
     <primary>txid_current</primary>
    </indexterm>
 
@@ -18961,14 +19431,85 @@ SELECT collation for ('foo' COLLATE "de_DE");
    </indexterm>
 
    <para>
-    The functions shown in <xref linkend="functions-txid-snapshot"/>
+    The functions shown in <xref linkend="functions-pg-snapshot"/>
     provide server transaction information in an exportable form.  The main
     use of these functions is to determine which transactions were committed
     between two snapshots.
    </para>
 
-   <table id="functions-txid-snapshot">
+   <table id="functions-pg-snapshot">
     <title>Transaction IDs and Snapshots</title>
+    <tgroup cols="3">
+     <thead>
+      <row><entry>Name</entry> <entry>Return Type</entry> <entry>Description</entry></row>
+     </thead>
+
+     <tbody>
+      <row>
+       <entry><literal><function>pg_current_xact_id()</function></literal></entry>
+       <entry><type>xid8</type></entry>
+       <entry>get current transaction ID, assigning a new one if the current transaction does not have one</entry>
+      </row>
+      <row>
+       <entry><literal><function>pg_current_xact_id_if_assigned()</function></literal></entry>
+       <entry><type>xid8</type></entry>
+       <entry>same as <function>pg_current_xact_id()</function> but returns null instead of assigning a new transaction ID if none is already assigned</entry>
+      </row>
+      <row>
+       <entry><literal><function>pg_xact_status(<parameter>xid8</parameter>)</function></literal></entry>
+       <entry><type>text</type></entry>
+       <entry>report the status of the given transaction: <literal>committed</literal>, <literal>aborted</literal>, <literal>in progress</literal>, or null if the transaction ID is too old</entry>
+      </row>
+      <row>
+       <entry><literal><function>pg_current_snapshot()</function></literal></entry>
+       <entry><type>pg_snapshot</type></entry>
+       <entry>get current snapshot</entry>
+      </row>
+      <row>
+       <entry><literal><function>pg_snapshot_xip(<parameter>pg_snapshot</parameter>)</function></literal></entry>
+       <entry><type>setof xid8</type></entry>
+       <entry>get in-progress transaction IDs in snapshot</entry>
+      </row>
+      <row>
+       <entry><literal><function>pg_snapshot_xmax(<parameter>pg_snapshot</parameter>)</function></literal></entry>
+       <entry><type>xid8</type></entry>
+       <entry>get <literal>xmax</literal> of snapshot</entry>
+      </row>
+      <row>
+       <entry><literal><function>pg_snapshot_xmin(<parameter>pg_snapshot</parameter>)</function></literal></entry>
+       <entry><type>xid8</type></entry>
+       <entry>get <literal>xmin</literal> of snapshot</entry>
+      </row>
+      <row>
+       <entry><literal><function>pg_visible_in_snapshot(<parameter>xid8</parameter>, <parameter>pg_snapshot</parameter>)</function></literal></entry>
+       <entry><type>boolean</type></entry>
+       <entry>is transaction ID visible in snapshot? (do not use with subtransaction IDs)</entry>
+      </row>
+     </tbody>
+    </tgroup>
+   </table>
+
+   <para>
+    The internal transaction ID type <type>xid</type> is 32 bits wide and
+    wraps around every 4 billion transactions.  However, these functions use a
+    64-bit variant <type>xid8</type> that does not wrap around during the life
+    of an installation, and can be converted to <type>xid</type> by casting if
+    required.  The data type <type>pg_snapshot</type> stores information about
+    transaction ID visibility at a particular moment in time.  Its components
+    are described in <xref linkend="functions-pg-snapshot-parts"/>.
+   </para>
+
+   <para>
+    In releases of <productname>PostgreSQL</productname> before 13 there was
+    no <type>xid8</type> type, so variants of these functions were provided
+    that used <type>bigint</type>.  These older functions with
+    <literal>txid</literal> in their names are still supported for backward
+    compatibility, but may be removed from a future
+    release. See <xref linkend="functions-txid-snapshot"/>.
+   </para>
+
+   <table id="functions-txid-snapshot">
+    <title>Transaction IDs and Snapshots (Deprecated Functions)</title>
     <tgroup cols="3">
      <thead>
       <row><entry>Name</entry> <entry>Return Type</entry> <entry>Description</entry></row>
@@ -18978,59 +19519,48 @@ SELECT collation for ('foo' COLLATE "de_DE");
       <row>
        <entry><literal><function>txid_current()</function></literal></entry>
        <entry><type>bigint</type></entry>
-       <entry>get current transaction ID, assigning a new one if the current transaction does not have one</entry>
+       <entry>see <function>pg_current_xact_id()</function></entry>
       </row>
       <row>
        <entry><literal><function>txid_current_if_assigned()</function></literal></entry>
        <entry><type>bigint</type></entry>
-       <entry>same as <function>txid_current()</function> but returns null instead of assigning a new transaction ID if none is already assigned</entry>
+       <entry>see <function>pg_current_xact_id_if_assigned()</function></entry>
       </row>
       <row>
        <entry><literal><function>txid_current_snapshot()</function></literal></entry>
        <entry><type>txid_snapshot</type></entry>
-       <entry>get current snapshot</entry>
+       <entry>see <function>pg_current_snapshot()</function></entry>
       </row>
       <row>
        <entry><literal><function>txid_snapshot_xip(<parameter>txid_snapshot</parameter>)</function></literal></entry>
        <entry><type>setof bigint</type></entry>
-       <entry>get in-progress transaction IDs in snapshot</entry>
+       <entry>see <function>pg_snapshot_xip()</function></entry>
       </row>
       <row>
        <entry><literal><function>txid_snapshot_xmax(<parameter>txid_snapshot</parameter>)</function></literal></entry>
        <entry><type>bigint</type></entry>
-       <entry>get <literal>xmax</literal> of snapshot</entry>
+       <entry>see <function>pg_snapshot_xmax()</function></entry>
       </row>
       <row>
        <entry><literal><function>txid_snapshot_xmin(<parameter>txid_snapshot</parameter>)</function></literal></entry>
        <entry><type>bigint</type></entry>
-       <entry>get <literal>xmin</literal> of snapshot</entry>
+       <entry>see <function>pg_snapshot_xmin()</function></entry>
       </row>
       <row>
        <entry><literal><function>txid_visible_in_snapshot(<parameter>bigint</parameter>, <parameter>txid_snapshot</parameter>)</function></literal></entry>
        <entry><type>boolean</type></entry>
-       <entry>is transaction ID visible in snapshot? (do not use with subtransaction ids)</entry>
+       <entry>see <function>pg_visible_in_snapshot()</function></entry>
       </row>
       <row>
        <entry><literal><function>txid_status(<parameter>bigint</parameter>)</function></literal></entry>
        <entry><type>text</type></entry>
-       <entry>report the status of the given transaction: <literal>committed</literal>, <literal>aborted</literal>, <literal>in progress</literal>, or null if the transaction ID is too old</entry>
+       <entry>see <function>pg_xact_status()</function></entry>
       </row>
      </tbody>
     </tgroup>
    </table>
 
-   <para>
-    The internal transaction ID type (<type>xid</type>) is 32 bits wide and
-    wraps around every 4 billion transactions.  However, these functions
-    export a 64-bit format that is extended with an <quote>epoch</quote> counter
-    so it will not wrap around during the life of an installation.
-    The data type used by these functions, <type>txid_snapshot</type>,
-    stores information about transaction ID
-    visibility at a particular moment in time.  Its components are
-    described in <xref linkend="functions-txid-snapshot-parts"/>.
-   </para>
-
-   <table id="functions-txid-snapshot-parts">
+   <table id="functions-pg-snapshot-parts">
     <title>Snapshot Components</title>
     <tgroup cols="2">
      <thead>
@@ -19045,31 +19575,29 @@ SELECT collation for ('foo' COLLATE "de_DE");
       <row>
        <entry><type>xmin</type></entry>
        <entry>
-         Earliest transaction ID (txid) that is still active.  All earlier
-         transactions will either be committed and visible, or rolled
-         back and dead.
+         Lowest transaction ID that was still active.  All transaction IDs
+         less than <literal>xmin</literal> are either committed and visible,
+         or rolled back and dead.
        </entry>
       </row>
 
       <row>
        <entry><type>xmax</type></entry>
        <entry>
-        First as-yet-unassigned txid.  All txids greater than or equal to this
-        are not yet started as of the time of the snapshot, and thus invisible.
+         One past the highest completed transaction ID.  All transaction IDs
+         greater than or equal to <literal>xmax</literal> had not yet
+         completed as of the time of the snapshot, and thus are invisible.
        </entry>
       </row>
 
       <row>
        <entry><type>xip_list</type></entry>
        <entry>
-        Active txids at the time of the snapshot.  The list
-        includes only those active txids between <literal>xmin</literal>
-        and <literal>xmax</literal>; there might be active txids higher
-        than <literal>xmax</literal>.  A txid that is <literal>xmin &lt;= txid &lt;
-        xmax</literal> and not in this list was already completed
-        at the time of the snapshot, and thus either visible or
-        dead according to its commit status.  The list does not
-        include txids of subtransactions.
+        Transactions in progress at the time of the snapshot.  A transaction
+        ID that is <literal>xmin &lt;= X &lt; xmax</literal> and not in this
+        list was already completed at the time of the snapshot, and is thus
+        either visible or dead according to its commit status.  The list does
+        not include the transaction IDs of subtransactions.
        </entry>
       </row>
 
@@ -19078,14 +19606,14 @@ SELECT collation for ('foo' COLLATE "de_DE");
    </table>
 
    <para>
-    <type>txid_snapshot</type>'s textual representation is
+    <type>pg_snapshot</type>'s textual representation is
     <literal><replaceable>xmin</replaceable>:<replaceable>xmax</replaceable>:<replaceable>xip_list</replaceable></literal>.
     For example <literal>10:20:10,14,15</literal> means
     <literal>xmin=10, xmax=20, xip_list=10, 14, 15</literal>.
    </para>
 
    <para>
-    <function>txid_status(bigint)</function> reports the commit status of a recent
+    <function>pg_xact_status(xid8)</function> reports the commit status of a recent
     transaction.  Applications may use it to determine whether a transaction
     committed or aborted when the application and database server become
     disconnected while a <literal>COMMIT</literal> is in progress.
@@ -19099,7 +19627,7 @@ SELECT collation for ('foo' COLLATE "de_DE");
     transactions are reported as <literal>in progress</literal>; applications must
     check <link
     linkend="view-pg-prepared-xacts"><literal>pg_prepared_xacts</literal></link> if they
-    need to determine whether the txid is a prepared transaction.
+    need to determine whether the transaction ID belongs to a prepared transaction.
    </para>
 
    <para>
@@ -20152,6 +20680,13 @@ postgres=# SELECT * FROM pg_walfile_name_offset(pg_stop_backup());
     If in hot standby, all new queries will see the same consistent snapshot
     of the database, and no further query conflicts will be generated until
     recovery is resumed.
+   </para>
+
+   <para>
+    <function>pg_wal_replay_pause</function> and
+    <function>pg_wal_replay_resume</function> cannot be executed while
+    a promotion is ongoing. If a promotion is triggered while recovery
+    is paused, the paused state ends and a promotion continues.
    </para>
 
    <para>
@@ -21450,6 +21985,7 @@ postgres=# SELECT * FROM pg_walfile_name_offset(pg_stop_backup());
     (mtime) of each file in the log directory. By default, only superusers
     and members of the <literal>pg_monitor</literal> role can use this function.
     Access may be granted to others using <command>GRANT</command>.
+    Filenames beginning with a dot, directories, and other special files are not shown.
    </para>
 
    <indexterm>
@@ -21461,6 +21997,7 @@ postgres=# SELECT * FROM pg_walfile_name_offset(pg_stop_backup());
     default only superusers and members of the <literal>pg_monitor</literal> role
     can use this function. Access may be granted to others using
     <command>GRANT</command>.
+    Filenames beginning with a dot, directories, and other special files are not shown.
    </para>
 
    <indexterm>
@@ -21473,6 +22010,7 @@ postgres=# SELECT * FROM pg_walfile_name_offset(pg_stop_backup());
     superusers and members of the <literal>pg_monitor</literal> role can
     use this function. Access may be granted to others using
     <command>GRANT</command>.
+    Filenames beginning with a dot, directories, and other special files are not shown.
    </para>
 
    <indexterm>
@@ -21486,6 +22024,7 @@ postgres=# SELECT * FROM pg_walfile_name_offset(pg_stop_backup());
     default only superusers and members of the <literal>pg_monitor</literal>
     role can use this function.  Access may be granted to others using
     <command>GRANT</command>.
+    Filenames beginning with a dot, directories, and other special files are not shown.
    </para>
 
    <indexterm>

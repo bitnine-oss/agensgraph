@@ -25,8 +25,8 @@
   <para>
    A <firstterm>label</firstterm> is a sequence of alphanumeric characters
    and underscores (for example, in C locale the characters
-   <literal>A-Za-z0-9_</literal> are allowed).  Labels must be less than 256 bytes
-   long.
+   <literal>A-Za-z0-9_</literal> are allowed).
+   Labels must be less than 256 characters long.
   </para>
 
   <para>
@@ -37,8 +37,7 @@
    A <firstterm>label path</firstterm> is a sequence of zero or more
    labels separated by dots, for example <literal>L1.L2.L3</literal>, representing
    a path from the root of a hierarchical tree to a particular node.  The
-   length of a label path must be less than 65kB, but keeping it under 2kB is
-   preferable.
+   length of a label path cannot exceed 65535 labels.
   </para>
 
   <para>
@@ -61,7 +60,8 @@
      <type>lquery</type> represents a regular-expression-like pattern
      for matching <type>ltree</type> values.  A simple word matches that
      label within a path.  A star symbol (<literal>*</literal>) matches zero
-     or more labels.  For example:
+     or more labels.  These can be joined with dots to form a pattern that
+     must match the whole label path.  For example:
 <synopsis>
 foo         <lineannotation>Match the exact label path <literal>foo</literal></lineannotation>
 *.foo.*     <lineannotation>Match any label path containing the label <literal>foo</literal></lineannotation>
@@ -70,19 +70,25 @@ foo         <lineannotation>Match the exact label path <literal>foo</literal></l
     </para>
 
     <para>
-     Star symbols can also be quantified to restrict how many labels
-     they can match:
+     Both star symbols and simple words can be quantified to restrict how many
+     labels they can match:
 <synopsis>
 *{<replaceable>n</replaceable>}        <lineannotation>Match exactly <replaceable>n</replaceable> labels</lineannotation>
 *{<replaceable>n</replaceable>,}       <lineannotation>Match at least <replaceable>n</replaceable> labels</lineannotation>
 *{<replaceable>n</replaceable>,<replaceable>m</replaceable>}      <lineannotation>Match at least <replaceable>n</replaceable> but not more than <replaceable>m</replaceable> labels</lineannotation>
-*{,<replaceable>m</replaceable>}       <lineannotation>Match at most <replaceable>m</replaceable> labels &mdash; same as </lineannotation> *{0,<replaceable>m</replaceable>}
+*{,<replaceable>m</replaceable>}       <lineannotation>Match at most <replaceable>m</replaceable> labels &mdash; same as </lineannotation>*{0,<replaceable>m</replaceable>}
+foo{<replaceable>n</replaceable>,<replaceable>m</replaceable>}    <lineannotation>Match at least <replaceable>n</replaceable> but not more than <replaceable>m</replaceable> occurrences of <literal>foo</literal></lineannotation>
+foo{,}      <lineannotation>Match any number of occurrences of <literal>foo</literal>, including zero</lineannotation>
 </synopsis>
+     In the absence of any explicit quantifier, the default for a star symbol
+     is to match any number of labels (that is, <literal>{,}</literal>) while
+     the default for a non-star item is to match exactly once (that
+     is, <literal>{1}</literal>).
     </para>
 
     <para>
      There are several modifiers that can be put at the end of a non-star
-     label in <type>lquery</type> to make it match more than just the exact match:
+     <type>lquery</type> item to make it match more than just the exact match:
 <synopsis>
 @           <lineannotation>Match case-insensitively, for example <literal>a@</literal> matches <literal>A</literal></lineannotation>
 *           <lineannotation>Match any label with this prefix, for example <literal>foo*</literal> matches <literal>foobar</literal></lineannotation>
@@ -98,17 +104,20 @@ foo         <lineannotation>Match the exact label path <literal>foo</literal></l
     </para>
 
     <para>
-     Also, you can write several possibly-modified labels separated with
-     <literal>|</literal> (OR) to match any of those labels, and you can put
-     <literal>!</literal> (NOT) at the start to match any label that doesn't
-     match any of the alternatives.
+     Also, you can write several possibly-modified non-star items separated with
+     <literal>|</literal> (OR) to match any of those items, and you can put
+     <literal>!</literal> (NOT) at the start of a non-star group to match any
+     label that doesn't match any of the alternatives.  A quantifier, if any,
+     goes at the end of the group; it means some number of matches for the
+     group as a whole (that is, some number of labels matching or not matching
+     any of the alternatives).
     </para>
 
     <para>
      Here's an annotated example of <type>lquery</type>:
 <programlisting>
-Top.*{0,2}.sport*@.!football|tennis.Russ*|Spain
-a.  b.     c.      d.               e.
+Top.*{0,2}.sport*@.!football|tennis{1,}.Russ*|Spain
+a.  b.     c.      d.                   e.
 </programlisting>
      This query will match any label path that:
     </para>
@@ -130,8 +139,8 @@ a.  b.     c.      d.               e.
      </listitem>
      <listitem>
       <para>
-       then a label not matching <literal>football</literal> nor
-       <literal>tennis</literal>
+       then has one or more labels, none of which
+       match <literal>football</literal> nor <literal>tennis</literal>
       </para>
      </listitem>
      <listitem>
@@ -499,30 +508,59 @@ Europe &amp; Russia*@ &amp; !Transportation
    </listitem>
    <listitem>
     <para>
-     GiST index over <type>ltree</type>:
+     GiST index over <type>ltree</type> (<literal>gist_ltree_ops</literal>
+     opclass):
      <literal>&lt;</literal>, <literal>&lt;=</literal>, <literal>=</literal>,
      <literal>&gt;=</literal>, <literal>&gt;</literal>,
      <literal>@&gt;</literal>, <literal>&lt;@</literal>,
      <literal>@</literal>, <literal>~</literal>, <literal>?</literal>
     </para>
     <para>
-     Example of creating such an index:
+     <literal>gist_ltree_ops</literal> GiST opclass approximates a set of
+     path labels as a bitmap signature.  Its optional integer parameter
+     <literal>siglen</literal> determines the
+     signature length in bytes.  The default signature length is 8 bytes.
+     Valid values of signature length are between 1 and 2024 bytes.  Longer
+     signatures lead to a more precise search (scanning a smaller fraction of the index and
+     fewer heap pages), at the cost of a larger index.
+    </para>
+    <para>
+     Example of creating such an index with the default signature length of 8 bytes:
     </para>
 <programlisting>
 CREATE INDEX path_gist_idx ON test USING GIST (path);
 </programlisting>
+    <para>
+     Example of creating such an index with a signature length of 100 bytes:
+    </para>
+<programlisting>
+CREATE INDEX path_gist_idx ON test USING GIST (path gist_ltree_ops(siglen=100));
+</programlisting>
    </listitem>
    <listitem>
     <para>
-     GiST index over <type>ltree[]</type>:
+     GiST index over <type>ltree[]</type> (<literal>gist__ltree_ops</literal>
+     opclass):
      <literal>ltree[] &lt;@ ltree</literal>, <literal>ltree @&gt; ltree[]</literal>,
      <literal>@</literal>, <literal>~</literal>, <literal>?</literal>
     </para>
     <para>
-     Example of creating such an index:
+     <literal>gist__ltree_ops</literal> GiST opclass works similarly to
+     <literal>gist_ltree_ops</literal> and also takes signature length as
+     a parameter.  The default value of <literal>siglen</literal> in
+      <literal>gist__ltree_ops</literal> is 28 bytes.
+    </para>
+    <para>
+     Example of creating such an index with the default signature length of 28 bytes:
     </para>
 <programlisting>
 CREATE INDEX path_gist_idx ON test USING GIST (array_path);
+</programlisting>
+    <para>
+     Example of creating such an index with a signature length of 100 bytes:
+    </para>
+<programlisting>
+CREATE INDEX path_gist_idx ON test USING GIST (array_path gist__ltree_ops(siglen=100));
 </programlisting>
     <para>
      Note: This index type is lossy.
@@ -604,7 +642,7 @@ ltreetest=&gt; SELECT path FROM test WHERE path ~ '*.Astronomy.*';
  Top.Collections.Pictures.Astronomy.Astronauts
 (7 rows)
 
-ltreetest=&gt; SELECT path FROM test WHERE path ~ '*.!pictures@.*.Astronomy.*';
+ltreetest=&gt; SELECT path FROM test WHERE path ~ '*.!pictures@.Astronomy.*';
                 path
 ------------------------------------
  Top.Science.Astronomy

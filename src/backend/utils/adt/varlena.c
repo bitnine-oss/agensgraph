@@ -22,6 +22,7 @@
 #include "catalog/pg_type.h"
 #include "common/hashfn.h"
 #include "common/int.h"
+#include "common/unicode_norm.h"
 #include "lib/hyperloglog.h"
 #include "libpq/pqformat.h"
 #include "miscadmin.h"
@@ -388,7 +389,7 @@ byteaout(PG_FUNCTION_ARGS)
 	{
 		/* Print traditional escaped format */
 		char	   *vp;
-		int			len;
+		uint64		len;
 		int			i;
 
 		len = 1;				/* empty string has 1 char */
@@ -402,7 +403,18 @@ byteaout(PG_FUNCTION_ARGS)
 			else
 				len++;
 		}
+
+		/*
+		 * In principle len can't overflow uint32 if the input fit in 1GB, but
+		 * for safety let's check rather than relying on palloc's internal
+		 * check.
+		 */
+		if (len > MaxAllocSize)
+			ereport(ERROR,
+					(errcode(ERRCODE_PROGRAM_LIMIT_EXCEEDED),
+					 errmsg_internal("result of bytea output conversion is too large")));
 		rp = result = (char *) palloc(len);
+
 		vp = VARDATA_ANY(vlena);
 		for (i = VARSIZE_ANY_EXHDR(vlena); i != 0; i--, vp++)
 		{
@@ -3455,7 +3467,7 @@ Datum
 byteaGetBit(PG_FUNCTION_ARGS)
 {
 	bytea	   *v = PG_GETARG_BYTEA_PP(0);
-	int32		n = PG_GETARG_INT32(1);
+	int64		n = PG_GETARG_INT64(1);
 	int			byteNo,
 				bitNo;
 	int			len;
@@ -3463,14 +3475,15 @@ byteaGetBit(PG_FUNCTION_ARGS)
 
 	len = VARSIZE_ANY_EXHDR(v);
 
-	if (n < 0 || n >= len * 8)
+	if (n < 0 || n >= (int64) len * 8)
 		ereport(ERROR,
 				(errcode(ERRCODE_ARRAY_SUBSCRIPT_ERROR),
-				 errmsg("index %d out of valid range, 0..%d",
-						n, len * 8 - 1)));
+				 errmsg("index %lld out of valid range, 0..%lld",
+						(long long) n, (long long) len * 8 - 1)));
 
-	byteNo = n / 8;
-	bitNo = n % 8;
+	/* n/8 is now known < len, so safe to cast to int */
+	byteNo = (int) (n / 8);
+	bitNo = (int) (n % 8);
 
 	byte = ((unsigned char *) VARDATA_ANY(v))[byteNo];
 
@@ -3524,7 +3537,7 @@ Datum
 byteaSetBit(PG_FUNCTION_ARGS)
 {
 	bytea	   *res = PG_GETARG_BYTEA_P_COPY(0);
-	int32		n = PG_GETARG_INT32(1);
+	int64		n = PG_GETARG_INT64(1);
 	int32		newBit = PG_GETARG_INT32(2);
 	int			len;
 	int			oldByte,
@@ -3534,14 +3547,15 @@ byteaSetBit(PG_FUNCTION_ARGS)
 
 	len = VARSIZE(res) - VARHDRSZ;
 
-	if (n < 0 || n >= len * 8)
+	if (n < 0 || n >= (int64) len * 8)
 		ereport(ERROR,
 				(errcode(ERRCODE_ARRAY_SUBSCRIPT_ERROR),
-				 errmsg("index %d out of valid range, 0..%d",
-						n, len * 8 - 1)));
+				 errmsg("index %lld out of valid range, 0..%lld",
+						(long long) n, (long long) len * 8 - 1)));
 
-	byteNo = n / 8;
-	bitNo = n % 8;
+	/* n/8 is now known < len, so safe to cast to int */
+	byteNo = (int) (n / 8);
+	bitNo = (int) (n % 8);
 
 	/*
 	 * sanity check!
@@ -5976,3 +5990,152 @@ rest_of_char_same(const char *s1, const char *s2, int len)
 #include "levenshtein.c"
 #define LEVENSHTEIN_LESS_EQUAL
 #include "levenshtein.c"
+
+
+/*
+ * Unicode support
+ */
+
+static UnicodeNormalizationForm
+unicode_norm_form_from_string(const char *formstr)
+{
+	UnicodeNormalizationForm form = -1;
+
+	/*
+	 * Might as well check this while we're here.
+	 */
+	if (GetDatabaseEncoding() != PG_UTF8)
+		ereport(ERROR,
+				(errcode(ERRCODE_SYNTAX_ERROR),
+				 errmsg("Unicode normalization can only be performed if server encoding is UTF8")));
+
+	if (pg_strcasecmp(formstr, "NFC") == 0)
+		form = UNICODE_NFC;
+	else if (pg_strcasecmp(formstr, "NFD") == 0)
+		form = UNICODE_NFD;
+	else if (pg_strcasecmp(formstr, "NFKC") == 0)
+		form = UNICODE_NFKC;
+	else if (pg_strcasecmp(formstr, "NFKD") == 0)
+		form = UNICODE_NFKD;
+	else
+		ereport(ERROR,
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("invalid normalization form: %s", formstr)));
+
+	return form;
+}
+
+Datum
+unicode_normalize_func(PG_FUNCTION_ARGS)
+{
+	text	   *input = PG_GETARG_TEXT_PP(0);
+	char	   *formstr = text_to_cstring(PG_GETARG_TEXT_PP(1));
+	UnicodeNormalizationForm form;
+	int			size;
+	pg_wchar   *input_chars;
+	pg_wchar   *output_chars;
+	unsigned char *p;
+	text	   *result;
+	int			i;
+
+	form = unicode_norm_form_from_string(formstr);
+
+	/* convert to pg_wchar */
+	size = pg_mbstrlen_with_len(VARDATA_ANY(input), VARSIZE_ANY_EXHDR(input));
+	input_chars = palloc((size + 1) * sizeof(pg_wchar));
+	p = (unsigned char *) VARDATA_ANY(input);
+	for (i = 0; i < size; i++)
+	{
+		input_chars[i] = utf8_to_unicode(p);
+		p += pg_utf_mblen(p);
+	}
+	input_chars[i] = (pg_wchar) '\0';
+	Assert((char *) p == VARDATA_ANY(input) + VARSIZE_ANY_EXHDR(input));
+
+	/* action */
+	output_chars = unicode_normalize(form, input_chars);
+
+	/* convert back to UTF-8 string */
+	size = 0;
+	for (pg_wchar *wp = output_chars; *wp; wp++)
+	{
+		unsigned char buf[4];
+
+		unicode_to_utf8(*wp, buf);
+		size += pg_utf_mblen(buf);
+	}
+
+	result = palloc(size + VARHDRSZ);
+	SET_VARSIZE(result, size + VARHDRSZ);
+
+	p = (unsigned char *) VARDATA_ANY(result);
+	for (pg_wchar *wp = output_chars; *wp; wp++)
+	{
+		unicode_to_utf8(*wp, p);
+		p += pg_utf_mblen(p);
+	}
+	Assert((char *) p == (char *) result + size + VARHDRSZ);
+
+	PG_RETURN_TEXT_P(result);
+}
+
+/*
+ * Check whether the string is in the specified Unicode normalization form.
+ *
+ * This is done by convering the string to the specified normal form and then
+ * comparing that to the original string.  To speed that up, we also apply the
+ * "quick check" algorithm specified in UAX #15, which can give a yes or no
+ * answer for many strings by just scanning the string once.
+ *
+ * This function should generally be optimized for the case where the string
+ * is in fact normalized.  In that case, we'll end up looking at the entire
+ * string, so it's probably not worth doing any incremental conversion etc.
+ */
+Datum
+unicode_is_normalized(PG_FUNCTION_ARGS)
+{
+	text	   *input = PG_GETARG_TEXT_PP(0);
+	char	   *formstr = text_to_cstring(PG_GETARG_TEXT_PP(1));
+	UnicodeNormalizationForm form;
+	int			size;
+	pg_wchar   *input_chars;
+	pg_wchar   *output_chars;
+	unsigned char *p;
+	int			i;
+	UnicodeNormalizationQC quickcheck;
+	int			output_size;
+	bool		result;
+
+	form = unicode_norm_form_from_string(formstr);
+
+	/* convert to pg_wchar */
+	size = pg_mbstrlen_with_len(VARDATA_ANY(input), VARSIZE_ANY_EXHDR(input));
+	input_chars = palloc((size + 1) * sizeof(pg_wchar));
+	p = (unsigned char *) VARDATA_ANY(input);
+	for (i = 0; i < size; i++)
+	{
+		input_chars[i] = utf8_to_unicode(p);
+		p += pg_utf_mblen(p);
+	}
+	input_chars[i] = (pg_wchar) '\0';
+	Assert((char *) p == VARDATA_ANY(input) + VARSIZE_ANY_EXHDR(input));
+
+	/* quick check (see UAX #15) */
+	quickcheck = unicode_is_normalized_quickcheck(form, input_chars);
+	if (quickcheck == UNICODE_NORM_QC_YES)
+		PG_RETURN_BOOL(true);
+	else if (quickcheck == UNICODE_NORM_QC_NO)
+		PG_RETURN_BOOL(false);
+
+	/* normalize and compare with original */
+	output_chars = unicode_normalize(form, input_chars);
+
+	output_size = 0;
+	for (pg_wchar *wp = output_chars; *wp; wp++)
+		output_size++;
+
+	result = (size == output_size) &&
+		(memcmp(input_chars, output_chars, size * sizeof(pg_wchar)) == 0);
+
+	PG_RETURN_BOOL(result);
+}

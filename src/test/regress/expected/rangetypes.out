@@ -1371,12 +1371,12 @@ drop function anyarray_anyrange_func(anyarray, anyrange);
 create function bogus_func(anyelement)
   returns anyrange as 'select int4range(1,10)' language sql;
 ERROR:  cannot determine result data type
-DETAIL:  A function returning "anyrange" must have at least one "anyrange" argument.
+DETAIL:  A result of type anyrange requires at least one input of type anyrange.
 -- should fail
 create function bogus_func(int)
   returns anyrange as 'select int4range(1,10)' language sql;
 ERROR:  cannot determine result data type
-DETAIL:  A function returning a polymorphic type must have at least one polymorphic argument.
+DETAIL:  A result of type anyrange requires at least one input of type anyrange.
 create function range_add_bounds(anyrange)
   returns anyelement as 'select lower($1) + upper($1)' language sql;
 select range_add_bounds(int4range(1, 17));
@@ -1405,6 +1405,32 @@ ERROR:  function rangetypes_sql(numrange, integer[]) does not exist
 LINE 1: select rangetypes_sql(numrange(1,10), ARRAY[2,20]);
                ^
 HINT:  No function matches the given name and argument types. You might need to add explicit type casts.
+create function anycompatiblearray_anycompatiblerange_func(a anycompatiblearray, r anycompatiblerange)
+  returns anycompatible as 'select $1[1] + lower($2);' language sql;
+select anycompatiblearray_anycompatiblerange_func(ARRAY[1,2], int4range(10,20));
+ anycompatiblearray_anycompatiblerange_func 
+--------------------------------------------
+                                         11
+(1 row)
+
+select anycompatiblearray_anycompatiblerange_func(ARRAY[1,2], numrange(10,20));
+ anycompatiblearray_anycompatiblerange_func 
+--------------------------------------------
+                                         11
+(1 row)
+
+-- should fail
+select anycompatiblearray_anycompatiblerange_func(ARRAY[1.1,2], int4range(10,20));
+ERROR:  function anycompatiblearray_anycompatiblerange_func(numeric[], int4range) does not exist
+LINE 1: select anycompatiblearray_anycompatiblerange_func(ARRAY[1.1,...
+               ^
+HINT:  No function matches the given name and argument types. You might need to add explicit type casts.
+drop function anycompatiblearray_anycompatiblerange_func(anycompatiblearray, anycompatiblerange);
+-- should fail
+create function bogus_func(anycompatible)
+  returns anycompatiblerange as 'select int4range(1,10)' language sql;
+ERROR:  cannot determine result data type
+DETAIL:  A result of type anycompatiblerange requires at least one input of type anycompatiblerange.
 --
 -- Arrays of ranges
 --
@@ -1490,6 +1516,15 @@ select * from outparam_succeed(int4range(1,2));
  [1,2) | foo
 (1 row)
 
+create function outparam2_succeed(r anyrange, out lu anyarray, out ul anyarray)
+  as $$ select array[lower($1), upper($1)], array[upper($1), lower($1)] $$
+  language sql;
+select * from outparam2_succeed(int4range(1,11));
+   lu   |   ul   
+--------+--------
+ {1,11} | {11,1}
+(1 row)
+
 create function inoutparam_succeed(out i anyelement, inout r anyrange)
   as $$ select upper($1), $1 $$ language sql;
 select * from inoutparam_succeed(int4range(1,2));
@@ -1498,26 +1533,28 @@ select * from inoutparam_succeed(int4range(1,2));
  2 | [1,2)
 (1 row)
 
-create function table_succeed(i anyelement, r anyrange) returns table(i anyelement, r anyrange)
-  as $$ select $1, $2 $$ language sql;
-select * from table_succeed(123, int4range(1,11));
-  i  |   r    
------+--------
- 123 | [1,11)
+create function table_succeed(r anyrange)
+  returns table(l anyelement, u anyelement)
+  as $$ select lower($1), upper($1) $$
+  language sql;
+select * from table_succeed(int4range(1,11));
+ l | u  
+---+----
+ 1 | 11
 (1 row)
 
 -- should fail
 create function outparam_fail(i anyelement, out r anyrange, out t text)
   as $$ select '[1,10]', 'foo' $$ language sql;
 ERROR:  cannot determine result data type
-DETAIL:  A function returning "anyrange" must have at least one "anyrange" argument.
+DETAIL:  A result of type anyrange requires at least one input of type anyrange.
 --should fail
 create function inoutparam_fail(inout i anyelement, out r anyrange)
   as $$ select $1, '[1,10]' $$ language sql;
 ERROR:  cannot determine result data type
-DETAIL:  A function returning "anyrange" must have at least one "anyrange" argument.
+DETAIL:  A result of type anyrange requires at least one input of type anyrange.
 --should fail
 create function table_fail(i anyelement) returns table(i anyelement, r anyrange)
   as $$ select $1, '[1,10]' $$ language sql;
 ERROR:  cannot determine result data type
-DETAIL:  A function returning "anyrange" must have at least one "anyrange" argument.
+DETAIL:  A result of type anyrange requires at least one input of type anyrange.

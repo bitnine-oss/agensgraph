@@ -5437,6 +5437,16 @@ SCRAM-SHA-256$<replaceable>&lt;iteration count&gt;</replaceable>:<replaceable>&l
       <entry>If true, <command>TRUNCATE</command> operations are replicated for
        tables in the publication.</entry>
      </row>
+
+     <row>
+      <entry><structfield>pubviaroot</structfield></entry>
+      <entry><type>bool</type></entry>
+      <entry></entry>
+      <entry>If true, operations on a leaf partition are replicated using the
+       identity and schema of its topmost partitioned ancestor mentioned in the
+       publication instead of its own.
+      </entry>
+     </row>
     </tbody>
    </tgroup>
   </table>
@@ -6450,6 +6460,22 @@ SCRAM-SHA-256$<replaceable>&lt;iteration count&gt;</replaceable>:<replaceable>&l
       <entry><type>oid</type></entry>
       <entry><literal><link linkend="catalog-pg-authid"><structname>pg_authid</structname></link>.oid</literal></entry>
       <entry>Owner of the statistics object</entry>
+     </row>
+
+     <row>
+      <entry><structfield>stxstattarget</structfield></entry>
+      <entry><type>int4</type></entry>
+      <entry></entry>
+      <entry>
+       <structfield>stxstattarget</structfield> controls the level of detail
+       of statistics accumulated for this statistics object by
+       <xref linkend="sql-analyze"/>.
+       A zero value indicates that no statistics should be collected.
+       A negative value says to use the system default statistics target.
+       Positive values of <structfield>stxstattarget</structfield>
+       determine the target number of <quote>most common values</quote>
+       to collect.
+      </entry>
      </row>
 
      <row>
@@ -9888,6 +9914,44 @@ SELECT * FROM pg_locks pl LEFT JOIN pg_prepared_xacts ppx
       <entry>The address (<literal>LSN</literal>) up to which the logical
       slot's consumer has confirmed receiving data. Data older than this is
       not available anymore. <literal>NULL</literal> for physical slots.
+      </entry>
+     </row>
+
+     <row>
+      <entry><structfield>wal_status</structfield></entry>
+      <entry><type>text</type></entry>
+      <entry></entry>
+
+      <entry>Availability of WAL files claimed by this slot.
+      Possible values are:
+       <simplelist>
+        <member>
+         <literal>normal</literal> means that the claimed files
+         are within <varname>max_wal_size</varname>
+        </member>
+        <member>
+         <literal>reserved</literal> means that <varname>max_wal_size</varname>
+         is exceeded but the files are still held, either by some replication
+         slot or by <varname>wal_keep_segments</varname>
+        </member>
+        <member>
+         <literal>lost</literal> means that some WAL files are definitely lost
+         and this slot cannot be used to resume replication anymore.
+        </member>
+       </simplelist>
+      The last two states are seen only when
+      <xref linkend="guc-max-slot-wal-keep-size"/> is
+      non-negative. If <structfield>restart_lsn</structfield> is NULL, this
+      field is null.
+      </entry>
+     </row>
+
+     <row>
+      <entry><structfield>min_safe_lsn</structfield></entry>
+      <entry><type>pg_lsn</type></entry>
+      <entry></entry>
+      <entry>
+       The minimum LSN currently available for walsenders.
       </entry>
      </row>
 

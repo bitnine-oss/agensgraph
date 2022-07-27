@@ -688,8 +688,8 @@ StartBackgroundWorker(void)
 
 	IsBackgroundWorker = true;
 
-	/* Identify myself via ps */
-	init_ps_display(worker->bgw_name, "", "", "");
+	MyBackendType = B_BG_WORKER;
+	init_ps_display(worker->bgw_name);
 
 	/*
 	 * If we're not supposed to have shared memory access, then detach from
@@ -1149,7 +1149,7 @@ WaitForBackgroundWorkerShutdown(BackgroundWorkerHandle *handle)
  * Instruct the postmaster to terminate a background worker.
  *
  * Note that it's safe to do this without regard to whether the worker is
- * still running, or even if the worker may already have existed and been
+ * still running, or even if the worker may already have exited and been
  * unregistered.
  */
 void

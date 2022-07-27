@@ -707,11 +707,7 @@ PrintNotifications(void)
 static bool
 PrintQueryTuples(const PGresult *results)
 {
-	printQueryOpt my_popt = pset.popt;
-
-	/* one-shot expanded output requested via \gx */
-	if (pset.g_expanded)
-		my_popt.topt.expanded = 1;
+	bool result = true;
 
 	/* write output to \g argument, if any */
 	if (pset.gfname)
@@ -724,7 +720,12 @@ PrintQueryTuples(const PGresult *results)
 		if (is_pipe)
 			disable_sigpipe_trap();
 
-		printQuery(results, &my_popt, fout, false, pset.logfile);
+		printQuery(results, &pset.popt, fout, false, pset.logfile);
+		if (ferror(fout))
+		{
+			pg_log_error("could not print result table: %m");
+			result = false;
+		}
 
 		if (is_pipe)
 		{
@@ -735,9 +736,16 @@ PrintQueryTuples(const PGresult *results)
 			fclose(fout);
 	}
 	else
-		printQuery(results, &my_popt, pset.queryFout, false, pset.logfile);
+	{
+		printQuery(results, &pset.popt, pset.queryFout, false, pset.logfile);
+		if (ferror(pset.queryFout))
+		{
+			pg_log_error("could not print result table: %m");
+			result = false;
+		}
+	}
 
-	return true;
+	return result;
 }
 
 
@@ -1405,8 +1413,12 @@ sendquery_cleanup:
 		pset.gfname = NULL;
 	}
 
-	/* reset \gx's expanded-mode flag */
-	pset.g_expanded = false;
+	/* restore print settings if \g changed them */
+	if (pset.gsavepopt)
+	{
+		restorePsetInfo(&pset.popt, pset.gsavepopt);
+		pset.gsavepopt = NULL;
+	}
 
 	/* reset \gset trigger */
 	if (pset.gset_prefix)
@@ -1632,10 +1644,6 @@ ExecQueryUsingCursor(const char *query, double *elapsed_msec)
 	snprintf(fetch_cmd, sizeof(fetch_cmd),
 			 "FETCH FORWARD %d FROM _psql_cursor",
 			 fetch_count);
-
-	/* one-shot expanded output requested via \gx */
-	if (pset.g_expanded)
-		my_popt.topt.expanded = 1;
 
 	/* prepare to write output to \g argument, if any */
 	if (pset.gfname)
