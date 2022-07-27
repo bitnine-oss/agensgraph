@@ -3004,9 +3004,8 @@ typedef struct AlterOwnerStmt
 	RoleSpec   *newowner;		/* the new owner */
 } AlterOwnerStmt;
 
-
 /* ----------------------
- *		Alter Operator Set Restrict, Join
+ *		Alter Operator Set ( this-n-that )
  * ----------------------
  */
 typedef struct AlterOperatorStmt
@@ -3016,6 +3015,16 @@ typedef struct AlterOperatorStmt
 	List	   *options;		/* List of DefElem nodes */
 } AlterOperatorStmt;
 
+/* ------------------------
+ *		Alter Type Set ( this-n-that )
+ * ------------------------
+ */
+typedef struct AlterTypeStmt
+{
+	NodeTag		type;
+	List	   *typeName;		/* type name (possibly qualified) */
+	List	   *options;		/* List of DefElem nodes */
+} AlterTypeStmt;
 
 /* ----------------------
  *		Create Rule Statement

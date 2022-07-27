@@ -1838,7 +1838,7 @@ ComputeIndexAttrs(IndexInfo *indexInfo,
 /*
  * Resolve possibly-defaulted operator class specification
  *
- * Note: This is used to resolve operator class specification in index and
+ * Note: This is used to resolve operator class specifications in index and
  * partition key definitions.
  */
 Oid
@@ -1851,34 +1851,6 @@ ResolveOpClass(List *opclass, Oid attrType,
 	Form_pg_opclass opform;
 	Oid			opClassId,
 				opInputType;
-
-	/*
-	 * Release 7.0 removed network_ops, timespan_ops, and datetime_ops, so we
-	 * ignore those opclass names so the default *_ops is used.  This can be
-	 * removed in some later release.  bjm 2000/02/07
-	 *
-	 * Release 7.1 removes lztext_ops, so suppress that too for a while.  tgl
-	 * 2000/07/30
-	 *
-	 * Release 7.2 renames timestamp_ops to timestamptz_ops, so suppress that
-	 * too for awhile.  I'm starting to think we need a better approach. tgl
-	 * 2000/10/01
-	 *
-	 * Release 8.0 removes bigbox_ops (which was dead code for a long while
-	 * anyway).  tgl 2003/11/11
-	 */
-	if (list_length(opclass) == 1)
-	{
-		char	   *claname = strVal(linitial(opclass));
-
-		if (strcmp(claname, "network_ops") == 0 ||
-			strcmp(claname, "timespan_ops") == 0 ||
-			strcmp(claname, "datetime_ops") == 0 ||
-			strcmp(claname, "lztext_ops") == 0 ||
-			strcmp(claname, "timestamp_ops") == 0 ||
-			strcmp(claname, "bigbox_ops") == 0)
-			opclass = NIL;
-	}
 
 	if (opclass == NIL)
 	{
@@ -2924,6 +2896,16 @@ ReindexRelationConcurrently(Oid relationOid, int options)
 					ereport(ERROR,
 							(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
 							 errmsg("cannot reindex system catalogs concurrently")));
+
+				/*
+				 * Don't allow reindex for an invalid index on TOAST table, as
+				 * if rebuild it would not be possible to drop it.
+				 */
+				if (IsToastNamespace(get_rel_namespace(relationOid)) &&
+					!get_index_isvalid(relationOid))
+					ereport(ERROR,
+							(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+							 errmsg("cannot reindex invalid index on TOAST table concurrently")));
 
 				/* Save the list of relation OIDs in private context */
 				oldcontext = MemoryContextSwitchTo(private_context);

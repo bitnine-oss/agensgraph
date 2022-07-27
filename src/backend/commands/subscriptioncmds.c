@@ -38,6 +38,7 @@
 #include "replication/walsender.h"
 #include "replication/worker_internal.h"
 #include "storage/lmgr.h"
+#include "utils/acl.h"
 #include "utils/builtins.h"
 #include "utils/guc.h"
 #include "utils/lsyscache.h"
@@ -293,7 +294,7 @@ publicationListToArray(List *publist)
 	MemoryContextSwitchTo(oldcxt);
 
 	arr = construct_array(datums, list_length(publist),
-						  TEXTOID, -1, false, 'i');
+						  TEXTOID, -1, false, TYPALIGN_INT);
 
 	MemoryContextDelete(memcxt);
 

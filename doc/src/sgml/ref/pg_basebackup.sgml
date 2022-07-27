@@ -104,6 +104,13 @@ PostgreSQL documentation
     </listitem>
    </itemizedlist>
   </para>
+
+  <para>
+   Whenever <application>pg_basebackup</application> is taking a base
+   backup, the <structname>pg_stat_progress_basebackup</structname>
+   view will report the progress of the backup.
+   See <xref linkend="basebackup-progress-reporting"/> for details.
+  </para>
  </refsect1>
 
  <refsect1>
@@ -459,6 +466,15 @@ PostgreSQL documentation
         This may make the backup take slightly longer, and in particular it
         will take longer before the first data is sent.
        </para>
+       <para>
+        Whether this is enabled or not, the
+        <structname>pg_stat_progress_basebackup</structname> view
+        report the progress of the backup in the server side. But note
+        that the total amount of data that will be streamed is estimated
+        and reported only when this option is enabled. In other words,
+        <literal>backup_total</literal> column in the view always
+        indicates <literal>0</literal> if this option is disabled.
+       </para>
       </listitem>
      </varlistentry>
 
@@ -690,8 +706,8 @@ PostgreSQL documentation
 
   <para>
    The environment variable <envar>PG_COLOR</envar> specifies whether to use
-   color in diagnostics messages.  Possible values are
-   <literal>always</literal>, <literal>auto</literal>,
+   color in diagnostic messages. Possible values are
+   <literal>always</literal>, <literal>auto</literal> and
    <literal>never</literal>.
   </para>
  </refsect1>

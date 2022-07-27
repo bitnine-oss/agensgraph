@@ -1156,12 +1156,14 @@ transformTableLikeClause(CreateStmtContext *cxt, TableLikeClause *table_like_cla
 	if ((table_like_clause->options & CREATE_TABLE_LIKE_CONSTRAINTS) &&
 		tupleDesc->constr)
 	{
+		TupleConstr *constr = tupleDesc->constr;
 		int			ccnum;
 
-		for (ccnum = 0; ccnum < tupleDesc->constr->num_check; ccnum++)
+		for (ccnum = 0; ccnum < constr->num_check; ccnum++)
 		{
-			char	   *ccname = tupleDesc->constr->check[ccnum].ccname;
-			char	   *ccbin = tupleDesc->constr->check[ccnum].ccbin;
+			char	   *ccname = constr->check[ccnum].ccname;
+			char	   *ccbin = constr->check[ccnum].ccbin;
+			bool		ccnoinherit = constr->check[ccnum].ccnoinherit;
 			Constraint *n = makeNode(Constraint);
 			Node	   *ccbin_node;
 			bool		found_whole_row;
@@ -1186,8 +1188,9 @@ transformTableLikeClause(CreateStmtContext *cxt, TableLikeClause *table_like_cla
 								   RelationGetRelationName(relation))));
 
 			n->contype = CONSTR_CHECK;
-			n->location = -1;
 			n->conname = pstrdup(ccname);
+			n->location = -1;
+			n->is_no_inherit = ccnoinherit;
 			n->raw_expr = NULL;
 			n->cooked_expr = nodeToString(ccbin_node);
 			cxt->ckconstraints = lappend(cxt->ckconstraints, n);
@@ -1496,7 +1499,7 @@ generateClonedIndexStmt(RangeVar *heapRel, Relation source_idx,
 						 constraintId);
 
 				deconstruct_array(DatumGetArrayTypeP(datum),
-								  OIDOID, sizeof(Oid), true, 'i',
+								  OIDOID, sizeof(Oid), true, TYPALIGN_INT,
 								  &elems, NULL, &nElems);
 
 				for (i = 0; i < nElems; i++)
@@ -3729,8 +3732,16 @@ transformPartitionCmd(CreateStmtContext *cxt, PartitionCmd *cmd)
 														 cmd->bound);
 			break;
 		case RELKIND_PARTITIONED_INDEX:
-			/* nothing to check */
-			Assert(cmd->bound == NULL);
+
+			/*
+			 * A partitioned index cannot have a partition bound set.  ALTER
+			 * INDEX prevents that with its grammar, but not ALTER TABLE.
+			 */
+			if (cmd->bound != NULL)
+				ereport(ERROR,
+						(errcode(ERRCODE_INVALID_OBJECT_DEFINITION),
+						 errmsg("\"%s\" is not a partitioned table",
+								RelationGetRelationName(parentRel))));
 			break;
 		case RELKIND_RELATION:
 			/* the table must be partitioned */

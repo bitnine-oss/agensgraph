@@ -19,12 +19,11 @@
 #include "access/htup_details.h"
 #include "access/nbtree.h"
 #include "bootstrap/bootstrap.h"
-#include "catalog/ag_graph.h"
-#include "catalog/ag_label.h"
 #include "catalog/namespace.h"
 #include "catalog/pg_am.h"
 #include "catalog/pg_amop.h"
 #include "catalog/pg_amproc.h"
+#include "catalog/pg_cast.h"
 #include "catalog/pg_collation.h"
 #include "catalog/pg_constraint.h"
 #include "catalog/pg_language.h"
@@ -47,6 +46,8 @@
 #include "utils/rel.h"
 #include "utils/syscache.h"
 #include "utils/typcache.h"
+#include "catalog/ag_graph.h"
+#include "catalog/ag_label.h"
 
 /* Hook for plugins to get control in get_attavgwidth() */
 get_attavgwidth_hook_type get_attavgwidth_hook = NULL;
@@ -908,6 +909,31 @@ get_atttypetypmodcoll(Oid relid, AttrNumber attnum,
 	*typmod = att_tup->atttypmod;
 	*collid = att_tup->attcollation;
 	ReleaseSysCache(tp);
+}
+
+/*				---------- PG_CAST CACHE ----------					 */
+
+/*
+ * get_cast_oid - given two type OIDs, look up a cast OID
+ *
+ * If missing_ok is false, throw an error if the cast is not found.  If
+ * true, just return InvalidOid.
+ */
+Oid
+get_cast_oid(Oid sourcetypeid, Oid targettypeid, bool missing_ok)
+{
+	Oid			oid;
+
+	oid = GetSysCacheOid2(CASTSOURCETARGET, Anum_pg_cast_oid,
+						  ObjectIdGetDatum(sourcetypeid),
+						  ObjectIdGetDatum(targettypeid));
+	if (!OidIsValid(oid) && !missing_ok)
+		ereport(ERROR,
+				(errcode(ERRCODE_UNDEFINED_OBJECT),
+				 errmsg("cast from type %s to type %s does not exist",
+						format_type_be(sourcetypeid),
+						format_type_be(targettypeid))));
+	return oid;
 }
 
 /*				---------- COLLATION CACHE ----------					 */
@@ -2191,7 +2217,7 @@ get_typalign(Oid typid)
 		return result;
 	}
 	else
-		return 'i';
+		return TYPALIGN_INT;
 }
 #endif
 
@@ -2211,7 +2237,7 @@ get_typstorage(Oid typid)
 		return result;
 	}
 	else
-		return 'p';
+		return TYPSTORAGE_PLAIN;
 }
 
 /*
@@ -3228,6 +3254,29 @@ get_index_column_opclass(Oid index_oid, int attno)
 	ReleaseSysCache(tuple);
 
 	return opclass;
+}
+
+/*
+ * get_index_isvalid
+ *
+ *		Given the index OID, return pg_index.indisvalid.
+ */
+bool
+get_index_isvalid(Oid index_oid)
+{
+	bool		isvalid;
+	HeapTuple	tuple;
+	Form_pg_index rd_index;
+
+	tuple = SearchSysCache1(INDEXRELID, ObjectIdGetDatum(index_oid));
+	if (!HeapTupleIsValid(tuple))
+		elog(ERROR, "cache lookup failed for index %u", index_oid);
+
+	rd_index = (Form_pg_index) GETSTRUCT(tuple);
+	isvalid = rd_index->indisvalid;
+	ReleaseSysCache(tuple);
+
+	return isvalid;
 }
 
 /*				---------- AG_GRAPH CACHE ----------				 */

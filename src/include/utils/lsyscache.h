@@ -90,6 +90,7 @@ extern char get_attgenerated(Oid relid, AttrNumber attnum);
 extern Oid	get_atttype(Oid relid, AttrNumber attnum);
 extern void get_atttypetypmodcoll(Oid relid, AttrNumber attnum,
 								  Oid *typid, int32 *typmod, Oid *collid);
+extern Oid	get_cast_oid(Oid sourcetypeid, Oid targettypeid, bool missing_ok);
 extern char *get_collation_name(Oid colloid);
 extern bool get_collation_isdeterministic(Oid colloid);
 extern char *get_constraint_name(Oid conoid);
@@ -181,6 +182,7 @@ extern char *get_namespace_name_or_temp(Oid nspid);
 extern Oid	get_range_subtype(Oid rangeOid);
 extern Oid	get_range_collation(Oid rangeOid);
 extern Oid	get_index_column_opclass(Oid index_oid, int attno);
+extern bool get_index_isvalid(Oid index_oid);
 
 extern char *get_graphid_graphname(Oid graphid);
 extern Oid	get_graphname_oid(const char *graphname);
@@ -197,6 +199,6 @@ extern Oid	get_labid_typeoid(Oid graphid, uint16 labid);
 /* type_is_array_domain accepts both plain arrays and domains over arrays */
 #define type_is_array_domain(typid)  (get_base_element_type(typid) != InvalidOid)
 
-#define TypeIsToastable(typid)	(get_typstorage(typid) != 'p')
+#define TypeIsToastable(typid)	(get_typstorage(typid) != TYPSTORAGE_PLAIN)
 
 #endif							/* LSYSCACHE_H */

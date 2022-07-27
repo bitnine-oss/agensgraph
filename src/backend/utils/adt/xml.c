@@ -2086,26 +2086,6 @@ map_sql_identifier_to_xml_name(const char *ident, bool fully_escaped,
 
 
 /*
- * Map a Unicode codepoint into the current server encoding.
- */
-static char *
-unicode_to_sqlchar(pg_wchar c)
-{
-	char		utf8string[8];	/* need room for trailing zero */
-	char	   *result;
-
-	memset(utf8string, 0, sizeof(utf8string));
-	unicode_to_utf8(c, (unsigned char *) utf8string);
-
-	result = pg_any_to_server(utf8string, strlen(utf8string), PG_UTF8);
-	/* if pg_any_to_server didn't strdup, we must */
-	if (result == utf8string)
-		result = pstrdup(result);
-	return result;
-}
-
-
-/*
  * Map XML name to SQL identifier; see SQL/XML:2008 section 9.3.
  */
 char *
@@ -2125,10 +2105,12 @@ map_xml_name_to_sql_identifier(const char *name)
 			&& isxdigit((unsigned char) *(p + 5))
 			&& *(p + 6) == '_')
 		{
+			char		cbuf[MAX_UNICODE_EQUIVALENT_STRING + 1];
 			unsigned int u;
 
 			sscanf(p + 2, "%X", &u);
-			appendStringInfoString(&buf, unicode_to_sqlchar(u));
+			pg_unicode_to_server(u, (unsigned char *) cbuf);
+			appendStringInfoString(&buf, cbuf);
 			p += 6;
 		}
 		else
@@ -4036,7 +4018,7 @@ xpath_internal(text *xpath_expr_text, xmltype *data, ArrayType *namespaces,
 
 		Assert(ARR_ELEMTYPE(namespaces) == TEXTOID);
 
-		deconstruct_array(namespaces, TEXTOID, -1, false, 'i',
+		deconstruct_array(namespaces, TEXTOID, -1, false, TYPALIGN_INT,
 						  &ns_names_uris, &ns_names_uris_nulls,
 						  &ns_count);
 

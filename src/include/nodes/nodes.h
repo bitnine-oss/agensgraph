@@ -403,6 +403,7 @@ typedef enum NodeTag
 	T_AlterObjectSchemaStmt,
 	T_AlterOwnerStmt,
 	T_AlterOperatorStmt,
+	T_AlterTypeStmt,
 	T_DropOwnedStmt,
 	T_ReassignOwnedStmt,
 	T_CompositeTypeStmt,

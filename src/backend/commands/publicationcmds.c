@@ -33,6 +33,7 @@
 #include "commands/publicationcmds.h"
 #include "funcapi.h"
 #include "miscadmin.h"
+#include "utils/acl.h"
 #include "utils/array.h"
 #include "utils/builtins.h"
 #include "utils/catcache.h"
@@ -299,7 +300,13 @@ AlterPublicationOptions(AlterPublicationStmt *stmt, Relation rel,
 	}
 	else
 	{
-		List	   *relids = GetPublicationRelations(pubform->oid);
+		/*
+		 * For any partitioned tables contained in the publication, we must
+		 * invalidate all partitions contained in the respective partition
+		 * trees, not just those explicitly mentioned in the publication.
+		 */
+		List   *relids = GetPublicationRelations(pubform->oid,
+												 PUBLICATION_PART_ALL);
 
 		/*
 		 * We don't want to send too many individual messages, at some point
@@ -356,7 +363,8 @@ AlterPublicationTables(AlterPublicationStmt *stmt, Relation rel,
 		PublicationDropTables(pubid, rels, false);
 	else						/* DEFELEM_SET */
 	{
-		List	   *oldrelids = GetPublicationRelations(pubid);
+		List   *oldrelids = GetPublicationRelations(pubid,
+													PUBLICATION_PART_ROOT);
 		List	   *delrels = NIL;
 		ListCell   *oldlc;
 
@@ -498,7 +506,8 @@ RemovePublicationRelById(Oid proid)
 
 /*
  * Open relations specified by a RangeVar list.
- * The returned tables are locked in ShareUpdateExclusiveLock mode.
+ * The returned tables are locked in ShareUpdateExclusiveLock mode in order to
+ * add them to a publication.
  */
 static List *
 OpenTableList(List *tables)
@@ -539,8 +548,13 @@ OpenTableList(List *tables)
 		rels = lappend(rels, rel);
 		relids = lappend_oid(relids, myrelid);
 
-		/* Add children of this rel, if requested */
-		if (recurse)
+		/*
+		 * Add children of this rel, if requested, so that they too are added
+		 * to the publication.  A partitioned table can't have any inheritance
+		 * children other than its partitions, which need not be explicitly
+		 * added to the publication.
+		 */
+		if (recurse && rel->rd_rel->relkind != RELKIND_PARTITIONED_TABLE)
 		{
 			List	   *children;
 			ListCell   *child;

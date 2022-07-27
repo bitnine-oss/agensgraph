@@ -114,6 +114,25 @@ bool		describePublications(const char *pattern);
 /* \dRs */
 bool		describeSubscriptions(const char *pattern, bool verbose);
 
+/* \dAc */
+extern bool listOperatorClasses(const char *access_method_pattern,
+								const char *opclass_pattern,
+								bool verbose);
+
+/* \dAf */
+extern bool listOperatorFamilies(const char *access_method_pattern,
+								 const char *opclass_pattern,
+								 bool verbose);
+
+/* \dAo */
+extern bool listOpFamilyOperators(const char *accessMethod_pattern,
+								  const char *family_pattern, bool verbose);
+
+/* \dAp */
+extern bool listOpFamilyProcedures(const char *access_method_pattern,
+								   const char *family_pattern);
+
+/* AgensGraph Commands */
 /* \dG */
 extern bool listGraphs(const char *pattern, bool verbose);
 
