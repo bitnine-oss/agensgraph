@@ -8886,11 +8886,19 @@ exp_var(const NumericVar *arg, NumericVar *result, int rscale)
  *
  * Essentially, we're approximating log10(abs(ln(var))).  This is used to
  * determine the appropriate rscale when computing natural logarithms.
+ *
+ * Note: many callers call this before range-checking the input.  Therefore,
+ * we must be robust against values that are invalid to apply ln() to.
+ * We don't wish to throw an error here, so just return zero in such cases.
  */
 static int
 estimate_ln_dweight(const NumericVar *var)
 {
 	int			ln_dweight;
+
+	/* Caller should fail on ln(negative), but for the moment return zero */
+	if (var->sign != NUMERIC_POS)
+		return 0;
 
 	if (cmp_var(var, &const_zero_point_nine) >= 0 &&
 		cmp_var(var, &const_one_point_one) <= 0)
@@ -9245,9 +9253,13 @@ power_var(const NumericVar *base, const NumericVar *exp, NumericVar *result)
 	 */
 	ln_dweight = estimate_ln_dweight(base);
 
+	/*
+	 * Set the scale for the low-precision calculation, computing ln(base) to
+	 * around 8 significant digits.  Note that ln_dweight may be as small as
+	 * -SHRT_MAX, so the scale may exceed NUMERIC_MAX_DISPLAY_SCALE here.
+	 */
 	local_rscale = 8 - ln_dweight;
 	local_rscale = Max(local_rscale, NUMERIC_MIN_DISPLAY_SCALE);
-	local_rscale = Min(local_rscale, NUMERIC_MAX_DISPLAY_SCALE);
 
 	ln_var(base, &ln_base, local_rscale);
 

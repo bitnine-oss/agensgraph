@@ -533,6 +533,7 @@ do_analyze_rel(Relation onerel, VacuumParams *params,
 	{
 		MemoryContext col_context,
 					old_context;
+		bool		build_ext_stats;
 
 		pgstat_progress_update_param(PROGRESS_ANALYZE_PHASE,
 									 PROGRESS_ANALYZE_PHASE_COMPUTE_STATS);
@@ -597,12 +598,27 @@ do_analyze_rel(Relation onerel, VacuumParams *params,
 		}
 
 		/*
+		 * Should we build extended statistics for this relation?
+		 *
+		 * The extended statistics catalog does not include an inheritance
+		 * flag, so we can't store statistics built both with and without
+		 * data from child relations. We can store just one set of statistics
+		 * per relation. For plain relations that's fine, but for inheritance
+		 * trees we have to pick whether to store statistics for just the
+		 * one relation or the whole tree. For plain inheritance we store
+		 * the (!inh) version, mostly for backwards compatibility reasons.
+		 * For partitioned tables that's pointless (the non-leaf tables are
+		 * always empty), so we store stats representing the whole tree.
+		 */
+		build_ext_stats = (onerel->rd_rel->relkind == RELKIND_PARTITIONED_TABLE) ? inh : (!inh);
+
+		/*
 		 * Build extended statistics (if there are any).
 		 *
 		 * For now we only build extended statistics on individual relations,
 		 * not for relations representing inheritance trees.
 		 */
-		if (!inh)
+		if (build_ext_stats)
 			BuildRelationExtStatistics(onerel, totalrows, numrows, rows,
 									   attr_cnt, vacattrstats);
 	}
@@ -866,9 +882,6 @@ compute_index_stats(Relation onerel, double totalrows,
 			for (i = 0; i < attr_cnt; i++)
 			{
 				VacAttrStats *stats = thisdata->vacattrstats[i];
-				AttributeOpts *aopt =
-				get_attribute_options(stats->attr->attrelid,
-									  stats->attr->attnum);
 
 				stats->exprvals = exprvals + i;
 				stats->exprnulls = exprnulls + i;
@@ -877,14 +890,6 @@ compute_index_stats(Relation onerel, double totalrows,
 									 ind_fetch_func,
 									 numindexrows,
 									 totalindexrows);
-
-				/*
-				 * If the n_distinct option is specified, it overrides the
-				 * above computation.  For indices, we always use just
-				 * n_distinct, not n_distinct_inherited.
-				 */
-				if (aopt != NULL && aopt->n_distinct != 0.0)
-					stats->stadistinct = aopt->n_distinct;
 
 				MemoryContextResetAndDeleteChildren(col_context);
 			}

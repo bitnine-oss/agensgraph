@@ -23,7 +23,8 @@ standard_initdb() {
 	# To increase coverage of non-standard segment size and group access
 	# without increasing test runtime, run these tests with a custom setting.
 	# Also, specify "-A trust" explicitly to suppress initdb's warning.
-	"$1" -N --wal-segsize 1 -g -A trust
+	# --allow-group-access and --wal-segsize have been added in v11.
+	"$1" -N --wal-segsize 1 --allow-group-access -A trust
 	if [ -n "$TEMP_CONFIG" -a -r "$TEMP_CONFIG" ]
 	then
 		cat "$TEMP_CONFIG" >> "$PGDATA/postgresql.conf"
@@ -167,27 +168,33 @@ createdb "regression$dbname1" || createdb_status=$?
 createdb "regression$dbname2" || createdb_status=$?
 createdb "regression$dbname3" || createdb_status=$?
 
+# Extra options to apply to the dump.  This may be changed later.
+extra_dump_options=""
+
 if "$MAKE" -C "$oldsrc" installcheck-parallel; then
 	oldpgversion=`psql -X -A -t -d regression -c "SHOW server_version_num"`
 
-	# before dumping, get rid of objects not feasible in later versions
+	# Before dumping, tweak the database of the old instance depending
+	# on its version.
 	if [ "$newsrc" != "$oldsrc" ]; then
-		fix_sql=""
-		case $oldpgversion in
-			804??)
-				fix_sql="DROP FUNCTION public.myfunc(integer);"
-				;;
-		esac
-		fix_sql="$fix_sql
-				 DROP FUNCTION IF EXISTS
-					public.oldstyle_length(integer, text);	-- last in 9.6";
-		psql -X -d regression -c "$fix_sql;" || psql_fix_sql_status=$?
+		# This SQL script has its own idea of the cleanup that needs to be
+		# done on the cluster to-be-upgraded, and includes version checks.
+		# Note that this uses the script stored on the new branch.
+		psql -X -d regression -f "$newsrc/src/bin/pg_upgrade/upgrade_adapt.sql" \
+			|| psql_fix_sql_status=$?
+
+		# Handling of --extra-float-digits gets messy after v12.
+		# Note that this changes the dumps from the old and new
+		# instances if involving an old cluster of v11 or older.
+		if [ $oldpgversion -lt 120000 ]; then
+			extra_dump_options="--extra-float-digits=0"
+		fi
 	fi
 
-	psql -d regression -c "SELECT regather_graphmeta()"
+	pg_dumpall $extra_dump_options --no-sync \
+		-f "$temp_root"/dump1.sql || pg_dumpall1_status=$?
+  psql -d regression -c "SELECT regather_graphmeta()"
 	psql -d regression -c "SELECT * FROM ag_graphmeta_view" -o "$temp_root"/meta1.out
-	pg_dumpall --no-sync -f "$temp_root"/dump1.sql || pg_dumpall1_status=$?
-
 	if [ "$newsrc" != "$oldsrc" ]; then
 		# update references to old source tree's regress.so etc
 		fix_sql=""
@@ -257,8 +264,9 @@ case $testhost in
 	*)		sh ./analyze_new_cluster.sh ;;
 esac
 
-pg_dumpall --no-sync -f "$temp_root"/dump2.sql || pg_dumpall2_status=$?
-psql -d regression -c "SELECT * FROM ag_graphmeta_view" -o "$temp_root"/meta2.out
+pg_dumpall $extra_dump_options --no-sync \
+	-f "$temp_root"/dump2.sql || pg_dumpall2_status=$?
+	psql -d regression -c "SELECT * FROM ag_graphmeta_view" -o "$temp_root"/meta2.out
 pg_ctl -m fast stop
 
 if [ -n "$pg_dumpall2_status" ]; then
@@ -280,7 +288,7 @@ else
 fi
 
 if diff "$temp_root"/dump1.sql "$temp_root"/dump2.sql >/dev/null; then
-	echo "DUMP PASSED"
+	echo PASSED
 	exit 0
 else
 	echo "Files $temp_root/dump1.sql and $temp_root/dump2.sql differ"

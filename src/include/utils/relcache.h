@@ -14,7 +14,6 @@
 #ifndef RELCACHE_H
 #define RELCACHE_H
 
-#include "postgres.h"
 #include "access/tupdesc.h"
 #include "nodes/bitmapset.h"
 
@@ -121,7 +120,7 @@ extern void RelationForgetRelation(Oid rid);
 
 extern void RelationCacheInvalidateEntry(Oid relationId);
 
-extern void RelationCacheInvalidate(void);
+extern void RelationCacheInvalidate(bool debug_discard);
 
 extern void RelationCloseSmgrByOid(Oid relationId);
 

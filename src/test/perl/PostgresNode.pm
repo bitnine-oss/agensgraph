@@ -31,7 +31,8 @@ PostgresNode - class representing PostgreSQL server instance
   my ($stdout, $stderr, $timed_out);
   my $cmdret = $node->psql('postgres', 'SELECT pg_sleep(600)',
 	  stdout => \$stdout, stderr => \$stderr,
-	  timeout => 180, timed_out => \$timed_out,
+	  timeout => $TestLib::timeout_default,
+	  timed_out => \$timed_out,
 	  extra_params => ['--single-transaction'],
 	  on_error_die => 1)
   print "Sleep timed out" if $timed_out;
@@ -783,6 +784,11 @@ sub start
 	{
 		print "# pg_ctl start failed; logfile:\n";
 		print TestLib::slurp_file($self->logfile);
+
+		# pg_ctl could have timed out, so check to see if there's a pid file;
+		# otherwise our END block will fail to shut down the new postmaster.
+		$self->_update_pid(-1);
+
 		BAIL_OUT("pg_ctl start failed") unless $params{fail_ok};
 		return 0;
 	}
@@ -809,9 +815,7 @@ sub kill9
 	my $name = $self->name;
 	return unless defined $self->{_pid};
 	print "### Killing node \"$name\" using signal 9\n";
-	# kill(9, ...) fails under msys Perl 5.8.8, so fall back on pg_ctl.
-	kill(9, $self->{_pid})
-	  or TestLib::system_or_bail('pg_ctl', 'kill', 'KILL', $self->{_pid});
+	kill(9, $self->{_pid});
 	$self->{_pid} = undef;
 	return;
 }
@@ -826,20 +830,37 @@ Note: if the node is already known stopped, this does nothing.
 However, if we think it's running and it's not, it's important for
 this to fail.  Otherwise, tests might fail to detect server crashes.
 
+With optional extra param fail_ok => 1, returns 0 for failure
+instead of bailing out.
+
 =cut
 
 sub stop
 {
-	my ($self, $mode) = @_;
-	my $port   = $self->port;
+	my ($self, $mode, %params) = @_;
 	my $pgdata = $self->data_dir;
 	my $name   = $self->name;
+	my $ret;
 	$mode = 'fast' unless defined $mode;
-	return unless defined $self->{_pid};
+	return 1 unless defined $self->{_pid};
+
 	print "### Stopping node \"$name\" using mode $mode\n";
-	TestLib::system_or_bail('pg_ctl', '-D', $pgdata, '-m', $mode, 'stop');
+	$ret = TestLib::system_log('pg_ctl', '-D', $pgdata,
+		'-m', $mode, 'stop');
+
+	if ($ret != 0)
+	{
+		print "# pg_ctl stop failed: $ret\n";
+
+		# Check to see if we still have a postmaster or not.
+		$self->_update_pid(-1);
+
+		BAIL_OUT("pg_ctl stop failed") unless $params{fail_ok};
+		return 0;
+	}
+
 	$self->_update_pid(0);
-	return;
+	return 1;
 }
 
 =pod
@@ -953,7 +974,7 @@ primary_conninfo='$root_connstr'
 sub enable_restoring
 {
 	my ($self, $root_node, $standby) = @_;
-	my $path = TestLib::perl2host($root_node->archive_dir);
+	my $path = $root_node->archive_dir;
 	my $name = $self->name;
 
 	print "### Enabling WAL restore for node \"$name\"\n";
@@ -1021,7 +1042,7 @@ sub set_standby_mode
 sub enable_archiving
 {
 	my ($self) = @_;
-	my $path   = TestLib::perl2host($self->archive_dir);
+	my $path   = $self->archive_dir;
 	my $name   = $self->name;
 
 	print "### Enabling WAL archiving for node \"$name\"\n";
@@ -1047,7 +1068,10 @@ archive_command = '$copy_command'
 	return;
 }
 
-# Internal method
+# Internal method to update $self->{_pid}
+# $is_running = 1: pid file should be there
+# $is_running = 0: pid file should NOT be there
+# $is_running = -1: we aren't sure
 sub _update_pid
 {
 	my ($self, $is_running) = @_;
@@ -1058,11 +1082,22 @@ sub _update_pid
 	if (open my $pidfile, '<', $self->data_dir . "/postmaster.pid")
 	{
 		chomp($self->{_pid} = <$pidfile>);
-		print "# Postmaster PID for node \"$name\" is $self->{_pid}\n";
 		close $pidfile;
 
+		# If we aren't sure what to expect, validate the PID using kill().
+		# This protects against stale PID files left by crashed postmasters.
+		if ($is_running == -1 && kill(0, $self->{_pid}) == 0)
+		{
+			print
+			  "# Stale postmaster.pid file for node \"$name\": PID $self->{_pid} no longer exists\n";
+			$self->{_pid} = undef;
+			return;
+		}
+
+		print "# Postmaster PID for node \"$name\" is $self->{_pid}\n";
+
 		# If we found a pidfile when there shouldn't be one, complain.
-		BAIL_OUT("postmaster.pid unexpectedly present") unless $is_running;
+		BAIL_OUT("postmaster.pid unexpectedly present") if $is_running == 0;
 		return;
 	}
 
@@ -1070,7 +1105,7 @@ sub _update_pid
 	print "# No postmaster PID for node \"$name\"\n";
 
 	# Complain if we expected to find a pidfile.
-	BAIL_OUT("postmaster.pid unexpectedly not present") if $is_running;
+	BAIL_OUT("postmaster.pid unexpectedly not present") if $is_running == 1;
 	return;
 }
 
@@ -1412,7 +1447,8 @@ e.g.
 	my ($stdout, $stderr, $timed_out);
 	my $cmdret = $node->psql('postgres', 'SELECT pg_sleep(600)',
 		stdout => \$stdout, stderr => \$stderr,
-		timeout => 180, timed_out => \$timed_out,
+		timeout => $TestLib::timeout_default,
+		timed_out => \$timed_out,
 		extra_params => ['--single-transaction'])
 
 will set $cmdret to undef and $timed_out to a true value.
@@ -1522,19 +1558,13 @@ sub psql
 		}
 	};
 
-	# Note: on Windows, IPC::Run seems to convert \r\n to \n in program output
-	# if we're using native Perl, but not if we're using MSys Perl.  So do it
-	# by hand in the latter case, here and elsewhere.
-
 	if (defined $$stdout)
 	{
-		$$stdout =~ s/\r\n/\n/g if $Config{osname} eq 'msys';
 		chomp $$stdout;
 	}
 
 	if (defined $$stderr)
 	{
-		$$stderr =~ s/\r\n/\n/g if $Config{osname} eq 'msys';
 		chomp $$stderr;
 	}
 
@@ -1573,6 +1603,97 @@ sub psql
 
 =pod
 
+=item $node->background_psql($dbname, \$stdin, \$stdout, $timer, %params) => harness
+
+Invoke B<psql> on B<$dbname> and return an IPC::Run harness object, which the
+caller may use to send input to B<psql>.  The process's stdin is sourced from
+the $stdin scalar reference, and its stdout and stderr go to the $stdout
+scalar reference.  This allows the caller to act on other parts of the system
+while idling this backend.
+
+The specified timer object is attached to the harness, as well.  It's caller's
+responsibility to set the timeout length (usually
+$TestLib::timeout_default), and to restart the timer after
+each command if the timeout is per-command.
+
+psql is invoked in tuples-only unaligned mode with reading of B<.psqlrc>
+disabled.  That may be overridden by passing extra psql parameters.
+
+Dies on failure to invoke psql, or if psql fails to connect.  Errors occurring
+later are the caller's problem.  psql runs with on_error_stop by default so
+that it will stop running sql and return 3 if passed SQL results in an error.
+
+Be sure to "finish" the harness when done with it.
+
+=over
+
+=item on_error_stop => 1
+
+By default, the B<psql> method invokes the B<psql> program with ON_ERROR_STOP=1
+set, so SQL execution is stopped at the first error and exit code 3 is
+returned.  Set B<on_error_stop> to 0 to ignore errors instead.
+
+=item replication => B<value>
+
+If set, add B<replication=value> to the conninfo string.
+Passing the literal value C<database> results in a logical replication
+connection.
+
+=item extra_params => ['--single-transaction']
+
+If given, it must be an array reference containing additional parameters to B<psql>.
+
+=back
+
+=cut
+
+sub background_psql
+{
+	my ($self, $dbname, $stdin, $stdout, $timer, %params) = @_;
+
+	local $ENV{PGHOST} = $self->host;
+	local $ENV{PGPORT} = $self->port;
+
+	my $replication = $params{replication};
+
+	my @psql_params = (
+		'psql',
+		'-XAtq',
+		'-d',
+		$self->connstr($dbname)
+		  . (defined $replication ? " replication=$replication" : ""),
+		'-f',
+		'-');
+
+	$params{on_error_stop} = 1 unless defined $params{on_error_stop};
+
+	push @psql_params, '-v', 'ON_ERROR_STOP=1' if $params{on_error_stop};
+	push @psql_params, @{ $params{extra_params} }
+	  if defined $params{extra_params};
+
+	# Ensure there is no data waiting to be sent:
+	$$stdin = "" if ref($stdin);
+	# IPC::Run would otherwise append to existing contents:
+	$$stdout = "" if ref($stdout);
+
+	my $harness = IPC::Run::start \@psql_params,
+	  '<', $stdin, '>', $stdout, $timer;
+
+	# Request some output, and pump until we see it.  This means that psql
+	# connection failures are caught here, relieving callers of the need to
+	# handle those.  (Right now, we have no particularly good handling for
+	# errors anyway, but that might be added later.)
+	my $banner = "background_psql: ready";
+	$$stdin = "\\echo $banner\n";
+	pump $harness until $$stdout =~ /$banner/ || $timer->is_expired;
+
+	die "psql startup timed out" if $timer->is_expired;
+
+	return $harness;
+}
+
+=pod
+
 =item $node->interactive_psql($dbname, \$stdin, \$stdout, $timer, %params) => harness
 
 Invoke B<psql> on B<$dbname> and return an IPC::Run harness object,
@@ -1581,9 +1702,10 @@ The process's stdin is sourced from the $stdin scalar reference,
 and its stdout and stderr go to the $stdout scalar reference.
 ptys are used so that psql thinks it's being called interactively.
 
-The specified timer object is attached to the harness, as well.
-It's caller's responsibility to select the timeout length, and to
-restart the timer after each command if the timeout is per-command.
+The specified timer object is attached to the harness, as well.  It's caller's
+responsibility to set the timeout length (usually
+$TestLib::timeout_default), and to restart the timer after
+each command if the timeout is per-command.
 
 psql is invoked in tuples-only unaligned mode with reading of B<.psqlrc>
 disabled.  That may be overridden by passing extra psql parameters.
@@ -1638,6 +1760,92 @@ sub interactive_psql
 	return $harness;
 }
 
+# Common sub of pgbench-invoking interfaces.  Makes any requested script files
+# and returns pgbench command-line options causing use of those files.
+sub _pgbench_make_files
+{
+	my ($self, $files) = @_;
+	my @file_opts;
+
+	if (defined $files)
+	{
+
+		# note: files are ordered for determinism
+		for my $fn (sort keys %$files)
+		{
+			my $filename = $self->basedir . '/' . $fn;
+			push @file_opts, '-f', $filename;
+
+			# cleanup file weight
+			$filename =~ s/\@\d+$//;
+
+			#push @filenames, $filename;
+			# filenames are expected to be unique on a test
+			if (-e $filename)
+			{
+				ok(0, "$filename must not already exist");
+				unlink $filename or die "cannot unlink $filename: $!";
+			}
+			TestLib::append_to_file($filename, $$files{$fn});
+		}
+	}
+
+	return @file_opts;
+}
+
+=pod
+
+=item $node->pgbench($opts, $stat, $out, $err, $name, $files, @args)
+
+Invoke B<pgbench>, with parameters and files.
+
+=over
+
+=item $opts
+
+Options as a string to be split on spaces.
+
+=item $stat
+
+Expected exit status.
+
+=item $out
+
+Reference to a regexp list that must match stdout.
+
+=item $err
+
+Reference to a regexp list that must match stderr.
+
+=item $name
+
+Name of test for error messages.
+
+=item $files
+
+Reference to filename/contents dictionary.
+
+=item @args
+
+Further raw options or arguments.
+
+=back
+
+=cut
+
+sub pgbench
+{
+	local $Test::Builder::Level = $Test::Builder::Level + 1;
+
+	my ($self, $opts, $stat, $out, $err, $name, $files, @args) = @_;
+	my @cmd = (
+		'pgbench',
+		split(/\s+/, $opts),
+		$self->_pgbench_make_files($files), @args);
+
+	$self->command_checks_all(\@cmd, $stat, $out, $err, $name);
+}
+
 =pod
 
 =item $node->poll_query_until($dbname, $query [, $expected ])
@@ -1645,7 +1853,7 @@ sub interactive_psql
 Run B<$query> repeatedly, until it returns the B<$expected> result
 ('t', or SQL boolean true, by default).
 Continues polling if B<psql> returns an error result.
-Times out after 180 seconds.
+Times out after $TestLib::timeout_default seconds.
 Returns 1 if successful, 0 if timed out.
 
 =cut
@@ -1658,7 +1866,7 @@ sub poll_query_until
 
 	my $cmd = [ 'psql', '-XAt', '-d', $self->connstr($dbname) ];
 	my ($stdout, $stderr);
-	my $max_attempts = 180 * 10;
+	my $max_attempts = 10 * $TestLib::timeout_default;
 	my $attempts     = 0;
 
 	while ($attempts < $max_attempts)
@@ -1666,9 +1874,7 @@ sub poll_query_until
 		my $result = IPC::Run::run $cmd, '<', \$query,
 		  '>', \$stdout, '2>', \$stderr;
 
-		$stdout =~ s/\r\n/\n/g if $Config{osname} eq 'msys';
 		chomp($stdout);
-		$stderr =~ s/\r\n/\n/g if $Config{osname} eq 'msys';
 		chomp($stderr);
 
 		if ($stdout eq $expected && $stderr eq '')
@@ -1682,8 +1888,8 @@ sub poll_query_until
 		$attempts++;
 	}
 
-	# The query result didn't change in 180 seconds. Give up. Print the
-	# output from the last attempt, hopefully that's useful for debugging.
+	# Give up. Print the output from the last attempt, hopefully that's useful
+	# for debugging.
 	diag qq(poll_query_until timed out executing this query:
 $query
 expecting this output:
@@ -1978,6 +2184,41 @@ sub wait_for_slot_catchup
 
 =pod
 
+=item $node->wait_for_log(regexp, offset)
+
+Waits for the contents of the server log file, starting at the given offset, to
+match the supplied regular expression.  Checks the entire log if no offset is
+given.  Times out after $TestLib::timeout_default seconds.
+
+If successful, returns the length of the entire log file, in bytes.
+
+=cut
+
+sub wait_for_log
+{
+	my ($self, $regexp, $offset) = @_;
+	$offset = 0 unless defined $offset;
+
+	my $max_attempts = 10 * $TestLib::timeout_default;
+	my $attempts     = 0;
+
+	while ($attempts < $max_attempts)
+	{
+		my $log = TestLib::slurp_file($self->logfile, $offset);
+
+		return $offset+length($log) if ($log =~ m/$regexp/);
+
+		# Wait 0.1 second before retrying.
+		usleep(100_000);
+
+		$attempts++;
+	}
+
+	croak "timed out waiting for match: $regexp";
+}
+
+=pod
+
 =item $node->query_hash($dbname, $query, @columns)
 
 Execute $query on $dbname, replacing any appearance of the string __COLUMNS__
@@ -2125,9 +2366,6 @@ sub pg_recvlogical_upto
 		}
 	};
 
-	$stdout =~ s/\r\n/\n/g if $Config{osname} eq 'msys';
-	$stderr =~ s/\r\n/\n/g if $Config{osname} eq 'msys';
-
 	if (wantarray)
 	{
 		return ($ret, $stdout, $stderr, $timeout);
@@ -2143,8 +2381,53 @@ sub pg_recvlogical_upto
 
 =pod
 
+=item $node->corrupt_page_checksum(self, file, page_offset)
+
+Intentionally corrupt the checksum field of one page in a file.
+The server must be stopped for this to work reliably.
+
+The file name should be specified relative to the cluster datadir.
+page_offset had better be a multiple of the cluster's block size.
+
+=cut
+
+sub corrupt_page_checksum
+{
+	my ($self, $file, $page_offset) = @_;
+	my $pgdata = $self->data_dir;
+	my $pageheader;
+
+	open my $fh, '+<', "$pgdata/$file" or die "open($file) failed: $!";
+	binmode $fh;
+	sysseek($fh, $page_offset, 0) or die "sysseek failed: $!";
+	sysread($fh, $pageheader, 24) or die "sysread failed: $!";
+	# This inverts the pd_checksum field (only); see struct PageHeaderData
+	$pageheader ^= "\0\0\0\0\0\0\0\0\xff\xff";
+	sysseek($fh, $page_offset, 0) or die "sysseek failed: $!";
+	syswrite($fh, $pageheader) or die "syswrite failed: $!";
+	close $fh;
+
+	return;
+}
+
+=pod
+
 =back
 
 =cut
+
+# support release 15+ perl module namespace
+
+package PostgreSQL::Test::Cluster; ## no critic (ProhibitMultiplePackages)
+
+sub new
+{
+	shift; # remove class param from args
+	return PostgresNode->get_new_node(@_);
+}
+
+no warnings 'once';
+
+*get_free_port = *PostgresNode::get_free_port;
 
 1;

@@ -24,12 +24,14 @@
 #include "nodes/pathnodes.h"
 #include "optimizer/clauses.h"
 #include "optimizer/optimizer.h"
+#include "parser/parsetree.h"
 #include "statistics/extended_stats_internal.h"
 #include "statistics/statistics.h"
 #include "utils/bytea.h"
 #include "utils/fmgroids.h"
 #include "utils/fmgrprotos.h"
 #include "utils/lsyscache.h"
+#include "utils/memutils.h"
 #include "utils/selfuncs.h"
 #include "utils/syscache.h"
 #include "utils/typcache.h"
@@ -332,13 +334,6 @@ dependency_degree(int numrows, HeapTuple *rows, int k, AttrNumber *dependency,
 		group_size++;
 	}
 
-	if (items)
-		pfree(items);
-
-	pfree(mss);
-	pfree(attnums);
-	pfree(attnums_dep);
-
 	/* Compute the 'degree of validity' as (supporting/total). */
 	return (n_supporting_rows * 1.0 / numrows);
 }
@@ -370,6 +365,7 @@ statext_dependencies_build(int numrows, HeapTuple *rows, Bitmapset *attrs,
 
 	/* result */
 	MVDependencies *dependencies = NULL;
+	MemoryContext	cxt;
 
 	/*
 	 * Transform the bms into an array, to make accessing i-th member easier.
@@ -377,6 +373,11 @@ statext_dependencies_build(int numrows, HeapTuple *rows, Bitmapset *attrs,
 	attnums = build_attnums_array(attrs, &numattrs);
 
 	Assert(numattrs >= 2);
+
+	/* tracks memory allocated by dependency_degree calls */
+	cxt = AllocSetContextCreate(CurrentMemoryContext,
+								"dependency_degree cxt",
+								ALLOCSET_DEFAULT_SIZES);
 
 	/*
 	 * We'll try build functional dependencies starting from the smallest ones
@@ -396,9 +397,16 @@ statext_dependencies_build(int numrows, HeapTuple *rows, Bitmapset *attrs,
 		{
 			double		degree;
 			MVDependency *d;
+			MemoryContext oldcxt;
+
+			/* release memory used by dependency degree calculation */
+			oldcxt = MemoryContextSwitchTo(cxt);
 
 			/* compute how valid the dependency seems */
 			degree = dependency_degree(numrows, rows, k, dependency, stats, attrs);
+
+			MemoryContextSwitchTo(oldcxt);
+			MemoryContextReset(cxt);
 
 			/*
 			 * if the dependency seems entirely invalid, don't store it
@@ -440,6 +448,8 @@ statext_dependencies_build(int numrows, HeapTuple *rows, Bitmapset *attrs,
 		 */
 		DependencyGenerator_free(DependencyGenerator);
 	}
+
+	MemoryContextDelete(cxt);
 
 	return dependencies;
 }
@@ -1204,6 +1214,17 @@ dependencies_clauselist_selectivity(PlannerInfo *root,
 	MVDependency **dependencies;
 	int			ndependencies;
 	int			i;
+	RangeTblEntry *rte = planner_rt_fetch(rel->relid, root);
+
+	/*
+	 * When dealing with regular inheritance trees, ignore extended stats
+	 * (which were built without data from child rels, and thus do not
+	 * represent them). For partitioned tables data there's no data in the
+	 * non-leaf relations, so we build stats only for the inheritance tree.
+	 * So for partitioned tables we do consider extended stats.
+	 */
+	if (rte->inh && rte->relkind != RELKIND_PARTITIONED_TABLE)
+		return 1.0;
 
 	/* check if there's any stats that might be useful for us. */
 	if (!has_stats_of_kind(rel->statlist, STATS_EXT_DEPENDENCIES))

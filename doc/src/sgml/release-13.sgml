@@ -1,6 +1,3795 @@
 <!-- doc/src/sgml/release-13.sgml -->
 <!-- See header comment in release.sgml about typical markup -->
 
+ <sect1 id="release-13-7">
+  <title>Release 13.7</title>
+
+  <formalpara>
+  <title>Release date:</title>
+  <para>2022-05-12</para>
+  </formalpara>
+
+  <para>
+   This release contains a variety of fixes from 13.6.
+   For information about new features in major release 13, see
+   <xref linkend="release-13"/>.
+  </para>
+
+  <sect2>
+   <title>Migration to Version 13.7</title>
+
+   <para>
+    A dump/restore is not required for those running 13.X.
+   </para>
+
+   <para>
+    However, if you have any GiST indexes on columns of type
+    <type>ltree</type> (supplied by the <filename>contrib/ltree</filename>
+    extension), you should re-index them after updating.
+    See the second changelog entry below.
+   </para>
+
+   <para>
+    Also, if you are upgrading from a version earlier than 13.6,
+    see <xref linkend="release-13-6"/>.
+   </para>
+  </sect2>
+
+  <sect2>
+   <title>Changes</title>
+
+   <itemizedlist>
+
+    <listitem>
+<!--
+Author: Noah Misch <noah@leadboat.com>
+Branch: master [a117cebd6] 2022-05-09 08:35:08 -0700
+Branch: REL_14_STABLE [ab49ce7c3] 2022-05-09 08:35:12 -0700
+Branch: REL_13_STABLE [35edcc0ce] 2022-05-09 08:35:12 -0700
+Branch: REL_12_STABLE [7f098f7b5] 2022-05-09 08:35:12 -0700
+Branch: REL_11_STABLE [48ca2904c] 2022-05-09 08:35:13 -0700
+Branch: REL_10_STABLE [ef792f785] 2022-05-09 08:35:13 -0700
+Author: Noah Misch <noah@leadboat.com>
+Branch: master [0abc1a059] 2022-05-09 08:35:08 -0700
+Branch: REL_14_STABLE [677a49478] 2022-05-09 08:35:12 -0700
+Branch: REL_13_STABLE [88743d581] 2022-05-09 08:35:12 -0700
+Branch: REL_12_STABLE [880511cb0] 2022-05-09 08:35:12 -0700
+Branch: REL_11_STABLE [34ff15660] 2022-05-09 08:35:13 -0700
+Branch: REL_10_STABLE [f26d57028] 2022-05-09 08:35:13 -0700
+-->
+     <para>
+      Confine additional operations within <quote>security restricted
+      operation</quote> sandboxes (Sergey Shinderuk, Noah Misch)
+     </para>
+
+     <para>
+      Autovacuum, <command>CLUSTER</command>, <command>CREATE
+      INDEX</command>, <command>REINDEX</command>, <command>REFRESH
+      MATERIALIZED VIEW</command>,
+      and <application>pg_amcheck</application> activated
+      the <quote>security restricted operation</quote> protection
+      mechanism too late, or even not at all in some code paths.
+      A user having permission to create non-temporary objects within a
+      database could define an object that would execute arbitrary SQL
+      code with superuser permissions the next time that autovacuum
+      processed the object, or that some superuser ran one of the affected
+      commands against it.
+     </para>
+
+     <para>
+      The <productname>PostgreSQL</productname> Project thanks
+      Alexander Lakhin for reporting this problem.
+      (CVE-2022-1552)
+     </para>
+    </listitem>
+
+    <listitem>
+<!--
+Author: Alexander Korotkov <akorotkov@postgresql.org>
+Branch: master [7e74aafc4] 2022-03-16 11:41:18 +0300
+Branch: REL_14_STABLE [7d30f59da] 2022-03-16 11:41:30 +0300
+Branch: REL_13_STABLE [bad202c61] 2022-03-16 11:41:34 +0300
+-->
+     <para>
+      Fix default signature length for <literal>gist_ltree_ops</literal>
+      indexes (Tomas Vondra, Alexander Korotkov)
+     </para>
+
+     <para>
+      The default signature length (hash size) for GiST indexes
+      on <type>ltree</type> columns was accidentally changed while
+      upgrading that operator class to support operator class parameters.
+      If any operations had been done on such an index without first
+      upgrading the <literal>ltree</literal> extension to version 1.2,
+      they were done assuming that the signature length was 28 bytes
+      rather than the intended 8.  This means it is very likely that such
+      indexes are now corrupt.  For safety we recommend re-indexing all
+      GiST indexes on <type>ltree</type> columns after installing this
+      update.  (Note that GiST indexes on <type>ltree[]</type>
+      columns, that is arrays of <type>ltree</type>, are not affected.)
+     </para>
+    </listitem>
+
+    <listitem>
+<!--
+Author: Tom Lane <tgl@sss.pgh.pa.us>
+Branch: master [ec62cb0aa] 2022-03-17 18:18:05 -0400
+Branch: REL_14_STABLE [1d072bd20] 2022-03-17 18:18:05 -0400
+Branch: REL_13_STABLE [5e144cc89] 2022-03-17 18:18:05 -0400
+Branch: REL_12_STABLE [1f5ef5ae0] 2022-03-17 18:18:05 -0400
+Branch: REL_11_STABLE [13b54d1e0] 2022-03-17 18:18:05 -0400
+Branch: REL_10_STABLE [205214c8b] 2022-03-17 18:18:05 -0400
+-->
+     <para>
+      Stop using query-provided column aliases for the columns of
+      whole-row variables that refer to plain tables (Tom Lane)
+     </para>
+
+     <para>
+      The column names in tuples produced by a whole-row variable (such
+      as <literal>tbl.*</literal> in contexts other than the top level of
+      a <literal>SELECT</literal> list) are now always those of the
+      associated named composite type, if there is one.  We'd previously
+      attempted to make them track any column aliases that had been
+      applied to the <literal>FROM</literal> entry the variable refers to.
+      But that's semantically dubious, because really then the output of
+      the variable is not at all of the composite type it claims to be.
+      Previous attempts to deal with that inconsistency had bad results up
+      to and including storing unreadable data on disk, so just give up on
+      the whole idea.
+     </para>
+
+     <para>
+      In cases where it's important to be able to relabel such columns,
+      a workaround is to introduce an extra level of
+      sub-<literal>SELECT</literal>, so that the whole-row variable is
+      referring to the sub-<literal>SELECT</literal>'s output and not to a
+      plain table.  Then the variable is of type <type>record</type>
+      to begin with and there's no issue.
+     </para>
+    </listitem>
+
+    <listitem>
+<!--
+Author: Tom Lane <tgl@sss.pgh.pa.us>
+Branch: master [068739fb4] 2022-03-18 16:01:42 -0400
+Branch: REL_14_STABLE [ae8ec7feb] 2022-03-18 16:01:42 -0400
+Branch: REL_13_STABLE [88ae77588] 2022-03-18 16:01:42 -0400
+Branch: REL_12_STABLE [840729fd1] 2022-03-18 16:01:42 -0400
+Branch: REL_11_STABLE [84f3ecdaa] 2022-03-18 16:01:42 -0400
+Branch: REL_10_STABLE [e6fd4a3da] 2022-03-18 16:01:42 -0400
+-->
+     <para>
+      Fix incorrect output for types <type>timestamptz</type>
+      and <type>timetz</type> in <function>table_to_xmlschema()</function>
+      and allied functions (Renan Soares Lopes)
+     </para>
+
+     <para>
+      The xmlschema output for these types included a malformed regular
+      expression.
+     </para>
+    </listitem>
+
+    <listitem>
+<!--
+Author: Tom Lane <tgl@sss.pgh.pa.us>
+Branch: master [fe20afaee] 2022-05-09 14:15:37 -0400
+Branch: REL_14_STABLE [ab2f78392] 2022-05-09 14:15:37 -0400
+Branch: REL_13_STABLE [91a3a74c6] 2022-05-09 14:15:37 -0400
+Branch: REL_12_STABLE [90e52884e] 2022-05-09 14:15:37 -0400
+Branch: REL_11_STABLE [539f8c563] 2022-05-09 14:15:37 -0400
+Branch: REL_10_STABLE [4eabaffca] 2022-05-09 14:15:37 -0400
+-->
+     <para>
+      Avoid core dump in parser for a <literal>VALUES</literal> clause with
+      zero columns (Tom Lane)
+     </para>
+    </listitem>
+
+    <listitem>
+<!--
+Author: Tom Lane <tgl@sss.pgh.pa.us>
+Branch: master [2591ee8ec] 2022-03-21 17:44:29 -0400
+Branch: REL_14_STABLE [48b6035f0] 2022-03-21 17:44:29 -0400
+Branch: REL_13_STABLE [dfefe38fb] 2022-03-21 17:44:29 -0400
+Branch: REL_12_STABLE [69c88e2fb] 2022-03-21 17:44:29 -0400
+Branch: REL_11_STABLE [5de244196] 2022-03-21 17:44:29 -0400
+Branch: REL_10_STABLE [2afa031ac] 2022-03-21 17:44:29 -0400
+-->
+     <para>
+      Fix planner errors for <function>GROUPING()</function> constructs
+      that reference outer query levels (Richard Guo, Tom Lane)
+     </para>
+    </listitem>
+
+    <listitem>
+<!--
+Author: Tom Lane <tgl@sss.pgh.pa.us>
+Branch: master [e5691cc91] 2022-02-11 15:24:02 -0500
+Branch: REL_14_STABLE [277e744ae] 2022-02-11 15:23:52 -0500
+Branch: REL_13_STABLE [0778b24ce] 2022-02-11 15:23:52 -0500
+Branch: REL_12_STABLE [32e801676] 2022-02-11 15:23:52 -0500
+Branch: REL_11_STABLE [14ee565f3] 2022-02-11 15:23:52 -0500
+Branch: REL_10_STABLE [b6f869bee] 2022-02-11 15:23:52 -0500
+-->
+     <para>
+      Fix plan generation for index-only scans on indexes with
+      both returnable and non-returnable columns (Tom Lane)
+     </para>
+
+     <para>
+      The previous coding could try to read non-returnable columns
+      in addition to the returnable ones.  This was fairly harmless
+      because it didn't actually do anything with the bogus values,
+      but it fell foul of a recently-added error check that rejected
+      such a plan.
+     </para>
+    </listitem>
+
+    <listitem>
+<!--
+Author: Tom Lane <tgl@sss.pgh.pa.us>
+Branch: master [7b7ed046c] 2022-04-13 13:35:07 -0400
+Branch: REL_14_STABLE [c590e514a] 2022-04-13 13:35:02 -0400
+Branch: REL_13_STABLE [44096c31e] 2022-04-13 13:35:02 -0400
+Branch: REL_12_STABLE [e0ed20d0b] 2022-04-13 13:35:02 -0400
+-->
+     <para>
+      Avoid accessing a no-longer-pinned shared buffer while attempting
+      to lock an outdated tuple during EvalPlanQual (Tom Lane)
+     </para>
+
+     <para>
+      The code would touch the buffer a couple more times after releasing
+      its pin.  In theory another process could recycle the buffer (or
+      more likely, try to defragment its free space) as soon as the pin is
+      gone, probably leading to failure to find the newer version of the
+      tuple.
+     </para>
+    </listitem>
+
+    <listitem>
+<!--
+Author: Alexander Korotkov <akorotkov@postgresql.org>
+Branch: master [3f74daa8d] 2022-02-14 04:17:04 +0300
+Branch: REL_14_STABLE [c76665edc] 2022-02-14 03:32:31 +0300
+Branch: REL_13_STABLE [ac2303aa0] 2022-02-14 03:32:34 +0300
+Branch: REL_12_STABLE [7a12a9e3c] 2022-02-14 03:32:39 +0300
+Branch: REL_11_STABLE [0d554775b] 2022-02-14 04:04:19 +0300
+Branch: REL_10_STABLE [2e9033a54] 2022-02-14 04:04:28 +0300
+-->
+     <para>
+      Fix query-lifespan memory leak in an IndexScan node that is
+      performing reordering (Aliaksandr Kalenik)
+     </para>
+    </listitem>
+
+    <listitem>
+<!--
+Author: Tom Lane <tgl@sss.pgh.pa.us>
+Branch: master [344a225cb] 2022-04-19 23:03:59 -0400
+Branch: REL_14_STABLE [08a9e7a8c] 2022-04-19 23:03:59 -0400
+Branch: REL_13_STABLE [f583633bc] 2022-04-19 23:03:59 -0400
+Branch: REL_12_STABLE [481a99811] 2022-04-19 23:03:59 -0400
+Branch: REL_11_STABLE [9130f8cbb] 2022-04-19 23:03:59 -0400
+Branch: REL_10_STABLE [409bcfda6] 2022-04-19 23:03:59 -0400
+-->
+     <para>
+      Fix <command>ALTER FUNCTION</command> to support changing a
+      function's parallelism property and
+      its <literal>SET</literal>-variable list in the same command (Tom
+      Lane)
+     </para>
+
+     <para>
+      The parallelism property change was lost if the same command also
+      updated the function's <literal>SET</literal> clause.
+     </para>
+    </listitem>
+
+    <listitem>
+<!--
+Author: Tom Lane <tgl@sss.pgh.pa.us>
+Branch: master [36d4efe77] 2022-04-18 12:16:45 -0400
+Branch: REL_14_STABLE [e805735a8] 2022-04-18 12:16:45 -0400
+Branch: REL_13_STABLE [69cefb3fb] 2022-04-18 12:16:45 -0400
+Branch: REL_12_STABLE [0795da869] 2022-04-18 12:16:45 -0400
+-->
+     <para>
+      Fix bogus errors from attempts to alter system columns of tables
+      (Tom Lane)
+     </para>
+
+     <para>
+      The system should just tell you that you can't do it, but sometimes
+      it would report <quote>no owned sequence found</quote> instead.
+     </para>
+    </listitem>
+
+    <listitem>
+<!--
+Author: Peter Geoghegan <pg@bowt.ie>
+Branch: master [8ab0ebb9a] 2022-04-20 17:17:43 -0700
+Branch: REL_14_STABLE [e4521841a] 2022-04-20 17:17:41 -0700
+Branch: REL_13_STABLE [1272630a2] 2022-04-20 17:17:39 -0700
+Branch: REL_12_STABLE [5487585e3] 2022-04-20 17:17:37 -0700
+Branch: REL_11_STABLE [adb2d84fc] 2022-04-20 17:17:35 -0700
+Branch: REL_10_STABLE [a903895b3] 2022-04-20 17:17:33 -0700
+-->
+     <para>
+      Fix mis-sorting of table rows when <command>CLUSTER</command>ing
+      using an index whose leading key is an expression (Peter Geoghegan,
+      Thomas Munro)
+     </para>
+
+     <para>
+      The table would be rebuilt with the correct data, but in an order
+      having little to do with the index order.
+     </para>
+    </listitem>
+
+    <listitem>
+<!--
+Author: Tom Lane <tgl@sss.pgh.pa.us>
+Branch: master [7b6ec8653] 2022-03-21 12:22:13 -0400
+Branch: REL_14_STABLE [05ccf974c] 2022-03-21 12:22:13 -0400
+Branch: REL_13_STABLE [2241e5ced] 2022-03-21 12:22:13 -0400
+Branch: REL_12_STABLE [d8d378d51] 2022-03-21 12:22:13 -0400
+Branch: REL_11_STABLE [b8ae17fd9] 2022-03-21 12:22:13 -0400
+-->
+     <para>
+      Fix risk of deadlock failures while dropping a partitioned index
+      (Jimmy Yih, Gaurab Dey, Tom Lane)
+     </para>
+
+     <para>
+      Ensure that the required table and index locks are taken in the
+      standard order (parents before children, tables before indexes).
+      The previous coding for <command>DROP INDEX</command> did it
+      differently, and so could deadlock against concurrent queries taking
+      these locks in the standard order.
+     </para>
+    </listitem>
+
+    <listitem>
+<!--
+Author: Thomas Munro <tmunro@postgresql.org>
+Branch: master [46d9bfb0a] 2022-03-16 17:20:24 +1300
+Branch: REL_14_STABLE [26e007939] 2022-03-16 17:20:50 +1300
+Branch: REL_13_STABLE [51e760e5a] 2022-03-16 17:21:19 +1300
+Branch: REL_12_STABLE [c918f07dd] 2022-03-16 17:21:46 +1300
+Branch: REL_11_STABLE [ca522c60a] 2022-03-16 17:38:55 +1300
+Branch: REL_10_STABLE [fe197872c] 2022-03-16 17:41:31 +1300
+-->
+     <para>
+      Fix race condition between <command>DROP TABLESPACE</command> and
+      checkpointing (Nathan Bossart)
+     </para>
+
+     <para>
+      The checkpoint forced by <command>DROP TABLESPACE</command> could
+      sometimes fail to remove all dead files from the tablespace's
+      directory, leading to a bogus <quote>tablespace is not empty</quote>
+      error.
+     </para>
+    </listitem>
+
+    <listitem>
+<!--
+Author: Robert Haas <rhaas@postgresql.org>
+Branch: master [412ad7a55] 2022-03-24 14:52:28 -0400
+Branch: REL_14_STABLE [bbace5697] 2022-03-24 14:32:48 -0400
+Branch: REL_13_STABLE [1ce14b6b2] 2022-03-24 14:36:06 -0400
+Branch: REL_12_STABLE [3821d66a7] 2022-03-24 14:38:51 -0400
+Branch: REL_11_STABLE [118f1a332] 2022-03-24 14:49:08 -0400
+Branch: REL_10_STABLE [57f618310] 2022-03-24 14:50:06 -0400
+Author: Robert Haas <rhaas@postgresql.org>
+Branch: REL_14_STABLE [10520f434] 2022-04-14 11:10:07 -0400
+Branch: REL_13_STABLE [d18c913b7] 2022-04-14 11:10:11 -0400
+Branch: REL_12_STABLE [68e605b9e] 2022-04-14 11:10:13 -0400
+Branch: REL_11_STABLE [6270ee445] 2022-04-14 11:10:16 -0400
+Branch: REL_10_STABLE [48b398943] 2022-04-14 11:10:18 -0400
+-->
+     <para>
+      Fix possible trouble in crash recovery after
+      a <command>TRUNCATE</command> command that overlaps a checkpoint
+      (Kyotaro Horiguchi, Heikki Linnakangas, Robert Haas)
+     </para>
+
+     <para>
+      <command>TRUNCATE</command> must ensure that the table's disk file
+      is truncated before the checkpoint is allowed to complete.
+      Otherwise, replay starting from that checkpoint might find
+      unexpected data in the supposedly-removed pages, possibly causing
+      replay failure.
+     </para>
+    </listitem>
+
+    <listitem>
+<!--
+Author: Andres Freund <andres@anarazel.de>
+Branch: master [7c38ef2a5] 2022-02-21 08:57:34 -0800
+Branch: REL_14_STABLE [7bbfe5994] 2022-02-21 09:57:05 -0800
+Branch: REL_13_STABLE [c2551483e] 2022-02-21 08:59:30 -0800
+Branch: REL_12_STABLE [0033fc63f] 2022-02-21 08:59:32 -0800
+Branch: REL_11_STABLE [3faa21bb7] 2022-02-21 08:59:34 -0800
+Branch: REL_10_STABLE [cebc54b90] 2022-02-21 08:59:36 -0800
+-->
+     <para>
+      Fix unsafe toast-data accesses during temporary object cleanup
+      (Andres Freund)
+     </para>
+
+     <para>
+      Temporary-object deletion during server process exit could fail
+      with <quote>FATAL: cannot fetch toast data without an active
+      snapshot</quote>.  This was usually harmless since the next use of
+      that temporary schema would clean up successfully.
+     </para>
+    </listitem>
+
+    <listitem>
+<!--
+Author: Thomas Munro <tmunro@postgresql.org>
+Branch: master [3390ef1b7] 2022-03-16 15:35:16 +1300
+Branch: REL_14_STABLE [1396b5c6e] 2022-03-16 15:35:42 +1300
+Branch: REL_13_STABLE [cfdb303be] 2022-03-16 15:37:15 +1300
+Branch: REL_12_STABLE [368ffdeee] 2022-03-16 15:38:13 +1300
+-->
+     <para>
+      Improve wait logic in RegisterSyncRequest (Thomas Munro)
+     </para>
+
+     <para>
+      If we run out of space in the checkpointer sync request queue (which
+      is hopefully rare on real systems, but is common when testing with a
+      very small buffer pool), we wait for it to drain.  While waiting, we
+      should report that as a wait event so that users know what is going
+      on, and also watch for postmaster death, since otherwise the loop might
+      never terminate if the checkpointer has already exited.
+     </para>
+    </listitem>
+
+    <listitem>
+<!--
+Author: Alvaro Herrera <alvherre@alvh.no-ip.org>
+Branch: master [9d92582ab] 2022-03-23 18:22:10 +0100
+Branch: REL_14_STABLE [caaeb88ff] 2022-03-23 18:22:10 +0100
+Branch: REL_13_STABLE [98eb3e06c] 2022-03-23 18:22:10 +0100
+Branch: REL_12_STABLE [c714ebd0e] 2022-03-23 18:22:10 +0100
+Branch: REL_11_STABLE [199cd7b59] 2022-03-23 18:22:10 +0100
+Branch: REL_10_STABLE [9ade3c09a] 2022-03-23 18:22:10 +0100
+-->
+     <para>
+      Fix <quote>PANIC: xlog flush request is not satisfied</quote>
+      failure during standby promotion when there is a missing WAL
+      continuation record (Sami Imseih)
+     </para>
+    </listitem>
+
+    <listitem>
+<!--
+Author: Andres Freund <andres@anarazel.de>
+Branch: master [8f1537d10] 2022-05-02 18:25:00 -0700
+Branch: REL_14_STABLE [9ab3b2bdb] 2022-05-02 18:25:59 -0700
+Branch: REL_13_STABLE [57c5ad168] 2022-05-02 18:28:10 -0700
+Branch: REL_12_STABLE [edfc03ec9] 2022-05-02 18:29:52 -0700
+Branch: REL_11_STABLE [9cda785b4] 2022-05-02 18:30:15 -0700
+Branch: REL_10_STABLE [cbc47ad7e] 2022-05-02 18:30:38 -0700
+Author: Andres Freund <andres@anarazel.de>
+Branch: REL_14_STABLE [f74496dd6] 2022-05-02 18:26:09 -0700
+Branch: REL_13_STABLE [0446d3bf3] 2022-05-02 18:29:35 -0700
+Branch: REL_12_STABLE [a5ede1391] 2022-05-02 18:29:52 -0700
+Branch: REL_11_STABLE [25d5494e2] 2022-05-02 18:30:15 -0700
+Branch: REL_10_STABLE [b1f35a36e] 2022-05-02 18:30:38 -0700
+Author: Andres Freund <andres@anarazel.de>
+Branch: REL_14_STABLE [5ab8e8014] 2022-05-02 18:09:42 -0700
+Branch: REL_13_STABLE [90abe1e17] 2022-05-02 18:09:43 -0700
+Branch: REL_12_STABLE [5c8b14a71] 2022-05-02 18:09:43 -0700
+Branch: REL_11_STABLE [2adb8debe] 2022-05-02 18:09:44 -0700
+Branch: REL_10_STABLE [e8a0cf9b2] 2022-05-02 18:09:44 -0700
+-->
+     <para>
+      Fix possibility of self-deadlock in hot standby conflict handling
+      (Andres Freund)
+     </para>
+
+     <para>
+      With unlucky timing, the WAL-applying process could get stuck
+      while waiting for some other process to release a buffer lock.
+     </para>
+    </listitem>
+
+    <listitem>
+<!--
+Author: Tomas Vondra <tomas.vondra@postgresql.org>
+Branch: master [c91f71b9d] 2022-03-16 18:05:58 +0100
+Branch: REL_14_STABLE [677a1dc0c] 2022-03-16 18:06:27 +0100
+Branch: REL_13_STABLE [27fafee72] 2022-03-16 18:14:33 +0100
+-->
+     <para>
+      Fix possible mis-identification of the correct ancestor relation
+      to publish logical replication changes through (Tomas Vondra, Hou
+      zj, Amit Kapila)
+     </para>
+
+     <para>
+      If <varname>publish_via_partition_root</varname> is enabled, and
+      there are multiple publications naming different ancestors of the
+      currently-modified relation, the wrong ancestor might be chosen for
+      reporting the change.
+     </para>
+    </listitem>
+
+    <listitem>
+<!--
+Author: Amit Kapila <akapila@postgresql.org>
+Branch: master [dd4ab6fd6] 2022-04-19 08:49:49 +0530
+Branch: REL_14_STABLE [c9dea58e2] 2022-04-19 08:54:37 +0530
+Branch: REL_13_STABLE [82d4a17a1] 2022-04-19 09:08:05 +0530
+Branch: REL_12_STABLE [59348fbde] 2022-04-19 09:18:44 +0530
+Branch: REL_11_STABLE [a90de822e] 2022-04-19 09:29:34 +0530
+Branch: REL_10_STABLE [be46985be] 2022-04-19 09:38:25 +0530
+-->
+     <para>
+      Ensure that logical replication apply workers can be restarted even
+      when we're up against
+      the <varname>max_sync_workers_per_subscription</varname> limit
+      (Amit Kapila)
+     </para>
+
+     <para>
+      Faulty coding of the limit check caused a restarted worker to exit
+      immediately, leaving fewer workers than there should be.
+     </para>
+    </listitem>
+
+    <listitem>
+<!--
+Author: Amit Kapila <akapila@postgresql.org>
+Branch: master [5e01001ff] 2022-02-14 08:55:58 +0530
+Branch: REL_14_STABLE [04645bbca] 2022-02-14 08:07:46 +0530
+Branch: REL_13_STABLE [caa231be9] 2022-02-14 08:24:44 +0530
+Branch: REL_12_STABLE [ce349cf17] 2022-02-14 08:27:56 +0530
+Branch: REL_11_STABLE [1cd5802ac] 2022-02-14 08:37:23 +0530
+Branch: REL_10_STABLE [b5e060473] 2022-02-14 08:45:54 +0530
+-->
+     <para>
+      Include unchanged replica identity key columns in the WAL log for an
+      update, if they are stored out-of-line (Dilip Kumar, Amit Kapila)
+     </para>
+
+     <para>
+      Otherwise subscribers cannot see the values and will fail to
+      replicate the update.
+     </para>
+    </listitem>
+
+    <listitem>
+<!--
+Author: Tom Lane <tgl@sss.pgh.pa.us>
+Branch: master [0fb6954aa] 2022-03-27 12:57:46 -0400
+Branch: REL_14_STABLE [3f7a59c59] 2022-03-27 12:57:52 -0400
+Branch: REL_13_STABLE [9016a2a3d] 2022-03-27 12:57:57 -0400
+-->
+     <para>
+      Cope correctly with platforms that have no support for altering the
+      server process's display in <application>ps(1)</application> (Andrew
+      Dunstan)
+     </para>
+
+     <para>
+      Few platforms are like this (the only supported one is Cygwin), so
+      we'd managed not to notice that refactoring introduced a potential
+      memory clobber.
+     </para>
+    </listitem>
+
+    <listitem>
+<!--
+Author: Tom Lane <tgl@sss.pgh.pa.us>
+Branch: master [638300fef] 2022-02-25 17:40:43 -0500
+Branch: REL_14_STABLE [ac910bb23] 2022-02-25 17:40:43 -0500
+Branch: REL_13_STABLE [9b2d762a2] 2022-02-25 17:40:44 -0500
+Branch: REL_12_STABLE [0f7b62f29] 2022-02-25 17:40:45 -0500
+Branch: REL_11_STABLE [31befa6be] 2022-02-25 17:40:45 -0500
+Branch: REL_10_STABLE [4936747c4] 2022-02-25 17:40:21 -0500
+-->
+     <para>
+      Disallow execution of SPI functions during PL/Perl function
+      compilation (Tom Lane)
+     </para>
+
+     <para>
+      Perl can be convinced to execute user-defined code during compilation
+      of a PL/Perl function.  However, it's not okay for such code to try
+      to invoke SQL operations via SPI.  That results in a crash, and if
+      it didn't crash it would be a security hazard, because we really
+      don't want code execution during function validation.  Put in a
+      check to give a friendlier error message instead.
+     </para>
+    </listitem>
+
+    <listitem>
+<!--
+Author: Tom Lane <tgl@sss.pgh.pa.us>
+Branch: master [a59c79564] 2022-02-28 14:12:52 -0500
+Author: Tom Lane <tgl@sss.pgh.pa.us>
+Branch: master [50f03473e] 2022-03-02 11:29:11 -0500
+Author: Tom Lane <tgl@sss.pgh.pa.us>
+Branch: REL_14_STABLE [2a1f84636] 2022-03-02 11:57:02 -0500
+Branch: REL_13_STABLE [6599d8f12] 2022-03-02 11:57:02 -0500
+Branch: REL_12_STABLE [72918ea86] 2022-03-02 11:57:02 -0500
+Branch: REL_11_STABLE [5bb3d91ea] 2022-03-02 11:57:02 -0500
+Branch: REL_10_STABLE [9050999ef] 2022-03-02 11:57:02 -0500
+Author: Tom Lane <tgl@sss.pgh.pa.us>
+Branch: master [878e64d0f] 2022-03-31 11:24:26 -0400
+Branch: REL_14_STABLE [402279afe] 2022-03-31 11:24:26 -0400
+Branch: REL_13_STABLE [fb1d7f451] 2022-03-31 11:24:26 -0400
+Branch: REL_12_STABLE [fcaf7d725] 2022-03-31 11:24:26 -0400
+Branch: REL_11_STABLE [143043191] 2022-03-31 11:24:26 -0400
+Branch: REL_10_STABLE [a6bd1f0ee] 2022-03-31 11:24:26 -0400
+-->
+     <para>
+      Make <application>libpq</application> accept root-owned SSL private
+      key files (David Steele)
+     </para>
+
+     <para>
+      This change synchronizes <application>libpq</application>'s rules
+      for safe ownership and permissions of SSL key files with the rules
+      the server has used since release 9.6.  Namely, in addition to the
+      current rules, allow the case where the key file is owned by root
+      and has permissions <literal>rw-r-----</literal> or less.  This is
+      helpful for system-wide management of key files.
+     </para>
+    </listitem>
+
+    <listitem>
+<!--
+Author: Tom Lane <tgl@sss.pgh.pa.us>
+Branch: master [335fa5a26] 2022-02-12 13:23:20 -0500
+Branch: REL_14_STABLE [ae27b1acc] 2022-02-12 13:23:20 -0500
+Branch: REL_13_STABLE [51ee561f5] 2022-02-12 13:23:20 -0500
+Branch: REL_12_STABLE [c9d35dc7f] 2022-02-12 13:23:20 -0500
+-->
+     <para>
+      Fix behavior of <application>libpq</application>'s
+      <function>PQisBusy()</function> function after a connection failure
+      (Tom Lane)
+     </para>
+
+     <para>
+      If we'd detected a write failure, <function>PQisBusy()</function>
+      would always return true, which is the wrong thing: we want input
+      processing to carry on normally until we've read whatever is
+      available from the server.  The practical effect of this error is
+      that applications using <application>libpq</application>'s
+      async-query API would typically detect connection loss only
+      when <function>PQconsumeInput()</function> returns a hard failure.
+      With this fix, a connection loss will normally be reported via an
+      error <structname>PGresult</structname> object, which is a much
+      cleaner behavior for most applications.
+     </para>
+    </listitem>
+
+    <listitem>
+<!--
+Author: Tom Lane <tgl@sss.pgh.pa.us>
+Branch: master [a745b9365] 2022-02-10 16:49:39 -0500
+Branch: REL_14_STABLE [1e8c5cf7c] 2022-02-10 16:49:39 -0500
+Branch: REL_13_STABLE [d0e1fd958] 2022-02-10 16:49:39 -0500
+Branch: REL_12_STABLE [61c20a5ea] 2022-02-10 16:49:39 -0500
+Branch: REL_11_STABLE [69cc15c31] 2022-02-10 16:49:39 -0500
+Branch: REL_10_STABLE [34523933b] 2022-02-10 16:49:39 -0500
+-->
+     <para>
+      Make <application>pg_ctl</application> recheck postmaster aliveness
+      while waiting for stop/restart/promote actions (Tom Lane)
+     </para>
+
+     <para>
+      <application>pg_ctl</application> would verify that the postmaster
+      is alive as a side-effect of sending the stop or promote signal, but
+      then it just naively waited to see the on-disk state change.  If the
+      postmaster died uncleanly without having removed its PID file or
+      updated the control file, <application>pg_ctl</application> would
+      wait until timeout.  Instead make it recheck every so often that the
+      postmaster process is still there.
+     </para>
+    </listitem>
+
+    <listitem>
+<!--
+Author: Andres Freund <andres@anarazel.de>
+Branch: master [cd83cb953] 2022-02-25 10:30:05 -0800
+Branch: REL_14_STABLE [9ff7fd906] 2022-02-25 10:31:16 -0800
+Branch: REL_13_STABLE [0b1020a96] 2022-02-25 10:32:38 -0800
+Branch: REL_12_STABLE [5407241a8] 2022-02-25 10:34:38 -0800
+Branch: REL_11_STABLE [51c341656] 2022-02-25 10:40:32 -0800
+Author: Andres Freund <andres@anarazel.de>
+Branch: master [264d28492] 2022-03-27 18:13:50 -0700
+Branch: REL_14_STABLE [6839aa7a6] 2022-03-27 18:15:10 -0700
+Branch: REL_13_STABLE [344d89abf] 2022-03-27 18:15:14 -0700
+Branch: REL_12_STABLE [5ebd262dc] 2022-03-27 18:15:15 -0700
+Branch: REL_11_STABLE [7d935bdf7] 2022-03-27 18:15:17 -0700
+-->
+     <para>
+      Fix error handling in <application>pg_waldump</application> (Kyotaro
+      Horiguchi, Andres Freund)
+     </para>
+
+     <para>
+      While trying to read a WAL file to determine the WAL segment size,
+      <application>pg_waldump</application> would report an incorrect
+      error for the case of a too-short file.  In addition, the file name
+      reported in this and related error messages could be garbage.
+     </para>
+    </listitem>
+
+    <listitem>
+<!--
+Author: Michael Paquier <michael@paquier.xyz>
+Branch: master [cd4868a57] 2022-04-14 15:08:03 +0900
+Branch: REL_14_STABLE [df6bbe73b] 2022-04-14 15:09:26 +0900
+Branch: REL_13_STABLE [2275d044d] 2022-04-14 15:09:36 +0900
+Branch: REL_12_STABLE [5378d55cb] 2022-04-14 15:09:39 +0900
+Branch: REL_11_STABLE [79fed072b] 2022-04-14 15:09:42 +0900
+Branch: REL_10_STABLE [12d32b7bc] 2022-04-14 15:09:46 +0900
+-->
+     <para>
+      Ensure that <filename>contrib/pageinspect</filename> functions cope
+      with all-zero pages (Michael Paquier)
+     </para>
+
+     <para>
+      This is a legitimate edge case, but the module was mostly unprepared
+      for it.  Arrange to return nulls, or no rows, as appropriate; that
+      seems more useful than raising an error.
+     </para>
+    </listitem>
+
+    <listitem>
+<!--
+Author: Michael Paquier <michael@paquier.xyz>
+Branch: master [291e517a4] 2022-03-27 17:53:40 +0900
+Branch: REL_14_STABLE [27d384441] 2022-03-27 17:53:51 +0900
+Branch: REL_13_STABLE [3d4d6dee0] 2022-03-27 17:53:55 +0900
+Branch: REL_12_STABLE [5ca2aa2f2] 2022-03-27 17:53:59 +0900
+Branch: REL_11_STABLE [1a2fdf86a] 2022-03-27 17:54:03 +0900
+Branch: REL_10_STABLE [ab80b0fbb] 2022-03-27 17:54:08 +0900
+Author: Michael Paquier <michael@paquier.xyz>
+Branch: master [076f4d953] 2022-03-16 11:19:39 +0900
+Branch: REL_14_STABLE [b61e6214c] 2022-03-16 11:20:47 +0900
+Branch: REL_13_STABLE [d3a9b83c3] 2022-03-16 11:20:51 +0900
+Branch: REL_12_STABLE [af8a8eb54] 2022-03-16 11:20:54 +0900
+Branch: REL_11_STABLE [2389ee8dd] 2022-03-16 11:20:57 +0900
+Branch: REL_10_STABLE [c42b88932] 2022-03-16 11:21:00 +0900
+Author: Michael Paquier <michael@paquier.xyz>
+Branch: master [4477dcb20] 2022-03-16 12:29:39 +0900
+Branch: REL_14_STABLE [dc5b3bdae] 2022-03-16 12:29:47 +0900
+Branch: REL_13_STABLE [028a3c6b1] 2022-03-16 12:29:55 +0900
+Branch: REL_12_STABLE [5cb770210] 2022-03-16 12:29:59 +0900
+Branch: REL_11_STABLE [09c97746d] 2022-03-16 12:30:02 +0900
+Branch: REL_10_STABLE [07e343513] 2022-03-16 12:30:07 +0900
+-->
+     <para>
+      In <filename>contrib/pageinspect</filename>, add defenses against
+      incorrect page <quote>special space</quote> contents, tighten checks
+      for correct page size, and add some missing checks that an index is
+      of the expected type (Michael Paquier, Justin Pryzby, Julien
+      Rouhaud)
+     </para>
+
+     <para>
+      These changes make it less likely that the module will crash on bad
+      data.
+     </para>
+    </listitem>
+
+    <listitem>
+<!--
+Author: Tom Lane <tgl@sss.pgh.pa.us>
+Branch: master [f3dd9fe1d] 2022-03-31 14:29:48 -0400
+Branch: REL_14_STABLE [9f9489aa2] 2022-03-31 14:29:24 -0400
+Branch: REL_13_STABLE [79df1d20c] 2022-03-31 14:29:24 -0400
+Branch: REL_12_STABLE [989d3e4a2] 2022-03-31 14:29:24 -0400
+Branch: REL_11_STABLE [b9eb0412f] 2022-03-31 14:29:24 -0400
+Branch: REL_10_STABLE [728fc0f9a] 2022-03-31 14:29:24 -0400
+-->
+     <para>
+      In <filename>contrib/postgres_fdw</filename>, verify
+      that <literal>ORDER BY</literal> clauses are safe to ship before
+      requesting a remotely-ordered query, and include
+      a <literal>USING</literal> clause if necessary (Ronan Dunklau)
+     </para>
+
+     <para>
+      This fix prevents situations where the remote server might sort in a
+      different order than we intend.  While sometimes that would be only
+      cosmetic, it could produce thoroughly wrong results if the remote
+      data is used as input for a locally-performed merge join.
+     </para>
+    </listitem>
+
+    <listitem>
+<!--
+Author: Thomas Munro <tmunro@postgresql.org>
+Branch: master [e6a760020] 2021-09-27 10:53:20 +1300
+Author: Thomas Munro <tmunro@postgresql.org>
+Branch: master [807fee1a3] 2022-02-04 16:16:10 +1300
+Author: Thomas Munro <tmunro@postgresql.org>
+Branch: master [a56e7b660] 2022-03-16 10:30:55 +1300
+Author: Thomas Munro <tmunro@postgresql.org>
+Branch: REL_14_STABLE [d9f7ad54e] 2022-03-16 11:42:00 +1300
+Branch: REL_13_STABLE [5610411ac] 2022-03-16 11:41:13 +1300
+Branch: REL_12_STABLE [45a469eb2] 2022-03-16 11:40:43 +1300
+Branch: REL_11_STABLE [986d24042] 2022-03-16 11:35:00 +1300
+-->
+     <para>
+      Update <acronym>JIT</acronym> code to work with LLVM 14
+      (Thomas Munro)
+     </para>
+    </listitem>
+
+    <listitem>
+<!--
+Author: Tom Lane <tgl@sss.pgh.pa.us>
+Branch: master [46ab07ffd] 2022-03-03 18:13:24 -0500
+Branch: REL_14_STABLE [b0bc196e5] 2022-03-03 18:13:24 -0500
+Branch: REL_13_STABLE [1a027e6b7] 2022-03-03 18:13:24 -0500
+Branch: REL_12_STABLE [f727b6ea8] 2022-03-03 18:13:24 -0500
+Branch: REL_11_STABLE [f2087e26e] 2022-03-03 18:13:24 -0500
+Branch: REL_10_STABLE [cfbe87bd6] 2022-03-03 18:13:24 -0500
+Author: Tom Lane <tgl@sss.pgh.pa.us>
+Branch: master [0fbdfaf79] 2022-03-03 19:03:17 -0500
+Branch: REL_14_STABLE [5c9d17e94] 2022-03-03 19:03:35 -0500
+Branch: REL_13_STABLE [97031f440] 2022-03-03 19:03:42 -0500
+Branch: REL_12_STABLE [4b0696b36] 2022-03-03 19:03:46 -0500
+Branch: REL_11_STABLE [566e1c04d] 2022-03-03 19:03:50 -0500
+Branch: REL_10_STABLE [18c04d157] 2022-03-03 19:03:55 -0500
+Author: Andres Freund <andres@anarazel.de>
+Branch: master [3ac7d0241] 2022-03-23 13:05:59 -0700
+Branch: REL_14_STABLE [81045e1e1] 2022-03-23 13:18:02 -0700
+Branch: REL_13_STABLE [c0f99bb52] 2022-03-23 13:18:00 -0700
+Branch: REL_12_STABLE [61a007fee] 2022-03-23 13:17:59 -0700
+Author: Andres Freund <andres@anarazel.de>
+Branch: master [1c6bb380e] 2022-03-23 13:05:25 -0700
+Branch: REL_14_STABLE [89a94c24a] 2022-03-23 13:13:18 -0700
+Branch: REL_13_STABLE [8014c61eb] 2022-03-23 13:13:20 -0700
+Branch: REL_12_STABLE [c5b60a68c] 2022-03-23 13:13:33 -0700
+Branch: REL_11_STABLE [2121d5809] 2022-03-23 13:13:40 -0700
+Branch: REL_10_STABLE [5f4615b9d] 2022-03-23 13:13:49 -0700
+Author: Andres Freund <andres@anarazel.de>
+Branch: master [e71c76fca] 2022-03-23 12:43:14 -0700
+Branch: REL_14_STABLE [e52e9bd57] 2022-03-23 12:43:41 -0700
+Branch: REL_13_STABLE [7c163aa93] 2022-03-23 12:43:40 -0700
+Branch: REL_12_STABLE [6a767bc2e] 2022-03-23 12:43:38 -0700
+Branch: REL_11_STABLE [a77dddb42] 2022-03-23 12:43:36 -0700
+Branch: REL_10_STABLE [2a9193726] 2022-03-23 12:43:33 -0700
+-->
+     <para>
+      Clean up assorted failures under <productname>clang</productname>'s
+      <literal>-fsanitize=undefined</literal> checks (Tom Lane, Andres
+      Freund, Zhihong Yu)
+     </para>
+
+     <para>
+      Most of these changes are just for pro-forma compliance with the
+      letter of the C and POSIX standards, and are unlikely to have any
+      effect on production builds.
+     </para>
+    </listitem>
+
+    <listitem>
+<!--
+Author: Tom Lane <tgl@sss.pgh.pa.us>
+Branch: master [d5c2a91e5] 2022-02-08 19:25:56 -0500
+Branch: REL_14_STABLE [e327291e4] 2022-02-08 19:26:09 -0500
+Branch: REL_13_STABLE [5ea3b99de] 2022-02-08 19:26:17 -0500
+Branch: REL_12_STABLE [eba0f095c] 2022-02-08 19:26:22 -0500
+Branch: REL_11_STABLE [3a6e3a890] 2022-02-08 19:26:26 -0500
+Branch: REL_10_STABLE [1a8b6f055] 2022-02-08 19:26:30 -0500
+-->
+     <para>
+      Fix PL/Perl so it builds on C compilers that don't support statements
+      nested within expressions (Tom Lane)
+     </para>
+
+     <para>
+     </para>
+    </listitem>
+
+    <listitem>
+<!--
+Author: Andres Freund <andres@anarazel.de>
+Branch: master [097786fbb] 2022-03-22 08:22:02 -0700
+Branch: REL_14_STABLE [2d608c960] 2022-03-22 08:28:51 -0700
+Branch: REL_13_STABLE [f183e23cc] 2022-03-22 08:28:52 -0700
+Branch: REL_12_STABLE [4553b960f] 2022-03-22 08:28:53 -0700
+Branch: REL_11_STABLE [cd1951ba0] 2022-03-22 08:28:54 -0700
+Branch: REL_10_STABLE [083031aa9] 2022-03-22 08:28:55 -0700
+-->
+     <para>
+      Fix possible build failure of <application>pg_dumpall</application>
+      on Windows, when not using MSVC to build (Andres Freund)
+     </para>
+    </listitem>
+
+    <listitem>
+<!--
+Author: Andrew Dunstan <andrew@dunslane.net>
+Branch: master [ea09a75e1] 2022-02-10 13:44:05 -0500
+Branch: REL_14_STABLE [92f60f536] 2022-02-10 13:51:19 -0500
+Branch: REL_13_STABLE [eec7c640f] 2022-02-10 13:51:40 -0500
+Branch: REL_12_STABLE [64dd64807] 2022-02-10 13:51:49 -0500
+Branch: REL_11_STABLE [e2d104e19] 2022-02-10 13:51:59 -0500
+Branch: REL_10_STABLE [a5eef80c2] 2022-02-10 13:52:05 -0500
+Branch: REL9_6_STABLE [622ab6a34] 2022-02-10 13:52:37 -0500
+Branch: REL9_5_STABLE [3a5034b5e] 2022-02-10 13:53:56 -0500
+Branch: REL9_4_STABLE [c76164ea0] 2022-02-10 13:56:55 -0500
+-->
+     <para>
+      In Windows builds, use <application>gendef</application> instead
+      of <application>pexports</application> to build DEF files (Andrew
+      Dunstan)
+     </para>
+
+     <para>
+      This adapts the build process to work on recent MSys tool chains.
+     </para>
+    </listitem>
+
+    <listitem>
+<!--
+Author: Andrew Dunstan <andrew@dunslane.net>
+Branch: master [b787c554c] 2022-04-25 15:47:55 -0400
+Branch: REL_14_STABLE [71f394667] 2022-04-25 15:49:35 -0400
+Branch: REL_13_STABLE [d9cede2c3] 2022-04-25 15:50:01 -0400
+Branch: REL_12_STABLE [01f2bc5af] 2022-04-25 15:50:07 -0400
+Branch: REL_11_STABLE [b90ce0dd7] 2022-04-25 15:51:27 -0400
+Branch: REL_10_STABLE [58887d58c] 2022-04-25 15:51:58 -0400
+-->
+     <para>
+      Prevent extra expansion of shell wildcard patterns in programs built
+      under MinGW (Andrew Dunstan)
+     </para>
+
+     <para>
+      For some reason the C library provided by MinGW will expand shell
+      wildcard characters in a program's command-line arguments by
+      default.  This is confusing, not least because it doesn't happen
+      under MSVC, so turn it off.
+     </para>
+    </listitem>
+
+    <listitem>
+<!--
+Author: Tom Lane <tgl@sss.pgh.pa.us>
+Branch: master [ab3479bf5] 2022-05-05 14:54:53 -0400
+Branch: REL_14_STABLE [77ee14ed9] 2022-05-05 14:55:03 -0400
+Branch: REL_13_STABLE [e9735d1af] 2022-05-05 14:55:10 -0400
+Branch: REL_12_STABLE [2bb9f7501] 2022-05-05 14:55:17 -0400
+Branch: REL_11_STABLE [da72ff09b] 2022-05-05 14:55:22 -0400
+Branch: REL_10_STABLE [bc334ec9f] 2022-05-05 14:55:30 -0400
+-->
+     <para>
+      Update time zone data files to <application>tzdata</application>
+      release 2022a for DST law changes in Palestine, plus historical
+      corrections for Chile and Ukraine.
+     </para>
+    </listitem>
+
+   </itemizedlist>
+
+  </sect2>
+ </sect1>
+
+ <sect1 id="release-13-6">
+  <title>Release 13.6</title>
+
+  <formalpara>
+  <title>Release date:</title>
+  <para>2022-02-10</para>
+  </formalpara>
+
+  <para>
+   This release contains a variety of fixes from 13.5.
+   For information about new features in major release 13, see
+   <xref linkend="release-13"/>.
+  </para>
+
+  <sect2>
+   <title>Migration to Version 13.6</title>
+
+   <para>
+    A dump/restore is not required for those running 13.X.
+   </para>
+
+   <para>
+    However, if you have applied <command>REINDEX CONCURRENTLY</command>
+    to a TOAST table's index, or observe failures to access TOAST datums,
+    see the first changelog entry below.
+   </para>
+
+   <para>
+    Also, if you are upgrading from a version earlier than 13.5,
+    see <xref linkend="release-13-5"/>.
+   </para>
+  </sect2>
+
+  <sect2>
+   <title>Changes</title>
+
+   <itemizedlist>
+
+    <listitem>
+<!--
+Author: Michael Paquier <michael@paquier.xyz>
+Branch: master [f99870dd8] 2021-12-08 11:01:08 +0900
+Branch: REL_14_STABLE [64ab21f0e] 2021-12-08 11:01:14 +0900
+Branch: REL_13_STABLE [9acea52ea] 2021-12-08 11:01:19 +0900
+Branch: REL_12_STABLE [5ed74d874] 2021-12-08 11:01:23 +0900
+-->
+     <para>
+      Enforce standard locking protocol for TOAST table updates, to prevent
+      problems with <command>REINDEX CONCURRENTLY</command> (Michael Paquier)
+     </para>
+
+     <para>
+      If applied to a TOAST table or TOAST table's index, <command>REINDEX
+      CONCURRENTLY</command> tended to produce a corrupted index.  This
+      happened because sessions updating TOAST entries released
+      their <literal>ROW EXCLUSIVE</literal> locks immediately, rather
+      than holding them until transaction commit as all other updates do.
+      The fix is to make TOAST updates hold the table lock according to the
+      normal rule.  Any existing corrupted indexes can be repaired by
+      reindexing again.
+     </para>
+    </listitem>
+
+    <listitem>
+<!--
+Author: Tomas Vondra <tomas.vondra@postgresql.org>
+Branch: master [6d554e3fc] 2022-01-23 03:16:31 +0100
+Branch: REL_14_STABLE [a192243c7] 2022-01-23 03:18:02 +0100
+Branch: REL_13_STABLE [267ccc38b] 2022-01-23 03:20:32 +0100
+-->
+     <para>
+      Avoid null-pointer crash in <command>ALTER STATISTICS</command>
+      when the statistics object is dropped concurrently (Tomas Vondra)
+     </para>
+    </listitem>
+
+    <listitem>
+<!--
+Author: David Rowley <drowley@postgresql.org>
+Branch: master [f9a74c149] 2022-01-25 21:10:03 +1300
+Branch: REL_14_STABLE [357ff6615] 2022-01-25 21:14:27 +1300
+Branch: REL_13_STABLE [f8807e774] 2022-01-25 21:15:00 +1300
+Branch: REL_12_STABLE [2ccd8fb29] 2022-01-25 21:15:40 +1300
+-->
+     <para>
+      Fix incorrect plan creation for parallel single-child Append nodes
+      (David Rowley)
+     </para>
+
+     <para>
+      In some cases the Append would be simplified away when it should not
+      be, leading to wrong query results (duplicated rows).
+     </para>
+    </listitem>
+
+    <listitem>
+<!--
+Author: Tom Lane <tgl@sss.pgh.pa.us>
+Branch: master [4ace45677] 2022-01-01 16:12:03 -0500
+Branch: REL_14_STABLE [cabea571d] 2022-01-01 16:12:03 -0500
+Branch: REL_13_STABLE [45ae42714] 2022-01-01 16:12:03 -0500
+Branch: REL_12_STABLE [f789b7732] 2022-01-01 16:12:03 -0500
+Branch: REL_11_STABLE [e3a4c7981] 2022-01-01 16:12:03 -0500
+Branch: REL_10_STABLE [70a31a0e3] 2022-01-01 16:12:03 -0500
+Branch: master [9a3ddeb51] 2022-01-03 15:42:27 -0500
+Branch: REL_14_STABLE [d228af79d] 2022-01-03 15:42:27 -0500
+Branch: REL_13_STABLE [20d08b2c6] 2022-01-03 15:42:27 -0500
+Branch: REL_12_STABLE [9c4f38908] 2022-01-03 15:42:27 -0500
+Branch: REL_11_STABLE [ec3674521] 2022-01-03 15:42:27 -0500
+Branch: REL_10_STABLE [7d344f004] 2022-01-03 15:42:27 -0500
+-->
+     <para>
+      Fix index-only scan plans for cases where not all index columns can
+      be returned (Tom Lane)
+     </para>
+
+     <para>
+      If an index has both returnable and non-returnable columns, and one
+      of the non-returnable columns is an expression using a table column
+      that appears in a returnable index column, then a query using that
+      expression could result in an index-only scan plan that attempts to
+      read the non-returnable column, instead of recomputing the
+      expression from the returnable column as intended.  The
+      non-returnable column would read as NULL, resulting in wrong query
+      results.
+     </para>
+    </listitem>
+
+    <listitem>
+<!--
+Author: Tom Lane <tgl@sss.pgh.pa.us>
+Branch: master [9c356f4b2] 2021-12-16 15:36:02 -0500
+Branch: REL_14_STABLE [f9a8bc9f2] 2021-12-16 15:36:02 -0500
+Branch: REL_13_STABLE [da0d8a454] 2021-12-16 15:36:02 -0500
+Branch: REL_12_STABLE [e1fd61c8c] 2021-12-16 15:36:02 -0500
+Branch: REL_11_STABLE [c43d72b24] 2021-12-16 15:36:02 -0500
+Branch: REL_10_STABLE [1acf34586] 2021-12-16 15:36:02 -0500
+-->
+     <para>
+      Ensure that casting to an unspecified typmod generates a RelabelType
+      node rather than a length-coercion function call (Tom Lane)
+     </para>
+
+     <para>
+      While the coercion function should do the right thing (nothing),
+      this translation is undesirably inefficient.
+     </para>
+    </listitem>
+
+    <listitem>
+<!--
+Author: Tom Lane <tgl@sss.pgh.pa.us>
+Branch: master [8e2e0f758] 2022-01-29 11:41:18 -0500
+Branch: REL_14_STABLE [c025067f6] 2022-01-29 11:41:18 -0500
+Branch: REL_13_STABLE [5ad70564f] 2022-01-29 11:41:12 -0500
+-->
+     <para>
+      Fix checking of <type>anycompatible</type>-family data type matches
+      (Tom Lane)
+     </para>
+
+     <para>
+      In some cases the parser would think that a function or operator
+      with <type>anycompatible</type>-family polymorphic parameters
+      matches a set of arguments that it really shouldn't match.  In
+      reported cases, that led to matching more than one operator to a
+      call, leading to ambiguous-operator errors; but a failure later on
+      is also possible.
+     </para>
+    </listitem>
+
+    <listitem>
+<!--
+Author: Alvaro Herrera <alvherre@alvh.no-ip.org>
+Branch: master [44bd3ed33] 2021-11-26 11:14:27 -0300
+Branch: REL_14_STABLE [d24dac954] 2021-11-26 11:14:27 -0300
+Branch: REL_13_STABLE [ef41c3fd6] 2021-11-26 11:14:27 -0300
+Branch: REL_12_STABLE [9c6ab1ef3] 2021-11-26 11:14:27 -0300
+Branch: REL_11_STABLE [2c3fddcbb] 2021-11-26 11:14:27 -0300
+Branch: REL_10_STABLE [72cf39d51] 2021-11-26 11:14:27 -0300
+-->
+     <para>
+      Fix WAL replay failure when database consistency is reached exactly
+      at a WAL page boundary (&Aacute;lvaro Herrera)
+     </para>
+    </listitem>
+
+    <listitem>
+<!--
+Author: Tomas Vondra <tomas.vondra@postgresql.org>
+Branch: master [f192e1bdf] 2022-01-27 20:13:55 +0100
+Branch: REL_14_STABLE [fb2f8e534] 2022-01-27 20:15:37 +0100
+Branch: REL_13_STABLE [e90f258ac] 2022-01-27 20:16:39 +0100
+Branch: REL_12_STABLE [4b8af2bf8] 2022-01-27 20:17:36 +0100
+Branch: REL_11_STABLE [5cb88648e] 2022-01-27 20:18:22 +0100
+Branch: REL_10_STABLE [4ef38fbe8] 2022-01-27 20:19:39 +0100
+-->
+     <para>
+      Fix startup of a physical replica to tolerate transaction ID
+      wraparound (Abhijit Menon-Sen, Tomas Vondra)
+     </para>
+
+     <para>
+      If a replica server is started while the set of active transactions
+      on the primary crosses a wraparound boundary (so that there are some
+      newer transactions with smaller XIDs than older ones), the replica
+      would fail with <quote>out-of-order XID insertion in
+      KnownAssignedXids</quote>.  The replica would retry, but could never
+      get past that error.
+     </para>
+    </listitem>
+
+    <listitem>
+<!--
+Author: Amit Kapila <akapila@postgresql.org>
+Branch: master [5e97905a2] 2021-12-09 08:36:59 +0530
+Branch: REL_14_STABLE [614b77d65] 2021-12-09 08:49:50 +0530
+Branch: REL_13_STABLE [3f06c00cf] 2021-12-09 09:00:35 +0530
+-->
+     <para>
+      In logical replication, avoid double transmission of a child table's
+      data (Hou Zhijie)
+     </para>
+
+     <para>
+      If a publication includes both child and parent tables, and has
+      the <literal>publish_via_partition_root</literal> option set,
+      subscribers uselessly initiated synchronization on both child and
+      parent tables.  Ensure that only the parent table is synchronized in
+      such cases.
+     </para>
+    </listitem>
+
+    <listitem>
+<!--
+Author: Tom Lane <tgl@sss.pgh.pa.us>
+Branch: master [6aa518614] 2022-01-24 15:33:38 -0500
+Branch: REL_14_STABLE [1efcc5946] 2022-01-24 15:33:34 -0500
+Branch: REL_13_STABLE [d67354d87] 2022-01-24 15:33:34 -0500
+Branch: REL_12_STABLE [689f75d6e] 2022-01-24 15:33:34 -0500
+Branch: REL_11_STABLE [4ec54498c] 2022-01-24 15:33:34 -0500
+Branch: REL_10_STABLE [9af6d4b5a] 2022-01-24 15:33:34 -0500
+Branch: master [3c06ec6d1] 2022-01-24 12:09:46 -0500
+Branch: REL_14_STABLE [ef9706bbc] 2022-01-24 12:09:46 -0500
+Branch: REL_13_STABLE [c94c6612d] 2022-01-24 12:09:46 -0500
+Branch: REL_12_STABLE [a8ce5c8d7] 2022-01-24 12:09:46 -0500
+Branch: REL_11_STABLE [449a69623] 2022-01-24 12:09:46 -0500
+Branch: REL_10_STABLE [daf658982] 2022-01-24 12:09:46 -0500
+-->
+     <para>
+      Remove lexical limitations for SQL commands issued on a logical
+      replication connection (Tom Lane)
+     </para>
+
+     <para>
+      The walsender process would fail for a SQL command containing an
+      unquoted semicolon, or with dollar-quoted literals containing odd
+      numbers of single or double quote marks, or when the SQL command
+      starts with a comment.  Moreover, faulty error recovery could lead
+      to unexpected errors in later commands too.
+     </para>
+    </listitem>
+
+    <listitem>
+<!--
+Author: Michael Paquier <michael@paquier.xyz>
+Branch: master [237d1f317] 2022-01-21 14:54:04 +0900
+Branch: REL_14_STABLE [84db5169d] 2022-01-21 14:54:47 +0900
+Branch: REL_13_STABLE [b5f634116] 2022-01-21 14:54:51 +0900
+Branch: REL_12_STABLE [1c0452c48] 2022-01-21 14:54:55 +0900
+Branch: REL_11_STABLE [0ffe2975c] 2022-01-21 14:54:59 +0900
+Branch: REL_10_STABLE [919be95c6] 2022-01-21 14:55:04 +0900
+-->
+     <para>
+      Fix possible loss of the commit timestamp for the last
+      subtransaction of a transaction (Alex Kingsborough, Kyotaro Horiguchi)
+     </para>
+    </listitem>
+
+    <listitem>
+<!--
+Author: Andres Freund <andres@anarazel.de>
+Branch: master [1fabec7d7] 2022-01-21 11:22:55 -0800
+Branch: REL_14_STABLE [2b7dbe4bd] 2022-01-21 11:24:12 -0800
+Branch: REL_13_STABLE [fd48e5f5d] 2022-01-21 11:24:12 -0800
+Branch: REL_12_STABLE [1c6d055ba] 2022-01-21 11:24:12 -0800
+Branch: REL_11_STABLE [2c15b29f7] 2022-01-21 11:24:12 -0800
+Branch: REL_10_STABLE [f862cc09f] 2022-01-21 11:24:12 -0800
+-->
+     <para>
+      Be sure to <function>fsync</function>
+      the <filename>pg_logical/mappings</filename> subdirectory during
+      checkpoints (Nathan Bossart)
+     </para>
+
+     <para>
+      On some filesystems this oversight could lead to losing logical
+      rewrite status files after a system crash.
+     </para>
+    </listitem>
+
+    <listitem>
+<!--
+Author: Tomas Vondra <tomas.vondra@postgresql.org>
+Branch: master [20b9fa308] 2022-01-15 19:06:48 +0100
+Branch: REL_14_STABLE [ea212bd95] 2022-01-15 19:05:22 +0100
+Branch: REL_13_STABLE [d6817032d] 2022-01-15 19:14:00 +0100
+Branch: REL_12_STABLE [9d1bcf5dc] 2022-01-15 19:02:58 +0100
+Branch: REL_11_STABLE [491182e52] 2022-01-15 18:32:20 +0100
+Branch: REL_10_STABLE [9211c2e38] 2022-01-15 18:30:45 +0100
+-->
+     <para>
+      Build extended statistics for partitioned tables (Justin Pryzby)
+     </para>
+
+     <para>
+      A previous bug fix disabled building of extended statistics for
+      old-style inheritance trees, but it also prevented building them for
+      partitioned tables, which was an unnecessary restriction.
+      This change allows <command>ANALYZE</command> to compute values for
+      statistics objects for partitioned tables.  (But note that
+      autovacuum does not process partitioned tables as such, so you must
+      periodically issue manual <command>ANALYZE</command> on the
+      partitioned table if you want to maintain such statistics.)
+     </para>
+    </listitem>
+
+    <listitem>
+<!--
+Author: Tomas Vondra <tomas.vondra@postgresql.org>
+Branch: master [36c4bc6e7] 2022-01-15 02:20:54 +0100
+Branch: REL_14_STABLE [2cc007fd0] 2022-01-15 02:26:26 +0100
+Branch: REL_13_STABLE [acfde7c58] 2022-01-15 02:30:06 +0100
+Branch: REL_12_STABLE [76569ad6f] 2022-01-15 03:14:55 +0100
+Branch: REL_11_STABLE [b3cac25f4] 2022-01-15 02:40:40 +0100
+Branch: REL_10_STABLE [ff0e7c7e8] 2022-01-15 03:05:06 +0100
+-->
+     <para>
+      Ignore extended statistics for inheritance trees (Justin Pryzby)
+     </para>
+
+     <para>
+      Currently, extended statistics values are only computed locally for
+      each table, not for entire inheritance trees.  However the values
+      were mistakenly consulted when planning queries across inheritance
+      trees, possibly resulting in worse-than-default estimates.
+     </para>
+    </listitem>
+
+    <listitem>
+<!--
+Author: Tom Lane <tgl@sss.pgh.pa.us>
+Branch: master [7ead9925f] 2022-01-06 16:46:46 -0500
+Branch: REL_14_STABLE [f285d9583] 2022-01-06 16:46:46 -0500
+Branch: REL_13_STABLE [86d4bbb56] 2022-01-06 16:46:46 -0500
+Branch: REL_12_STABLE [ccc7c3ad8] 2022-01-06 16:46:46 -0500
+Branch: REL_11_STABLE [2ce113a4f] 2022-01-06 16:46:46 -0500
+Branch: REL_10_STABLE [e5b044c84] 2022-01-06 16:46:46 -0500
+-->
+     <para>
+      Disallow altering data type of a partitioned table's columns when
+      the partitioned table's row type is used as a composite type
+      elsewhere (Tom Lane)
+     </para>
+
+     <para>
+      This restriction has long existed for regular tables, but through an
+      oversight it was not checked for partitioned tables.
+     </para>
+    </listitem>
+
+    <listitem>
+<!--
+Author: Michael Paquier <michael@paquier.xyz>
+Branch: master [f0d43947a] 2021-11-25 15:04:56 +0900
+Branch: REL_14_STABLE [e415916e2] 2021-11-25 15:05:24 +0900
+Branch: REL_13_STABLE [37827de43] 2021-11-25 15:05:28 +0900
+Branch: REL_12_STABLE [216156fec] 2021-11-25 15:05:31 +0900
+Branch: REL_11_STABLE [dffe80e55] 2021-11-25 15:05:34 +0900
+Branch: REL_10_STABLE [817c469c2] 2021-11-25 15:05:37 +0900
+-->
+     <para>
+      Disallow <literal>ALTER TABLE ... DROP NOT NULL</literal> for a
+      column that is part of a replica identity index (Haiying Tang, Hou
+      Zhijie)
+     </para>
+
+     <para>
+      The same prohibition already existed for primary key indexes.
+     </para>
+    </listitem>
+
+    <listitem>
+<!--
+Author: Tom Lane <tgl@sss.pgh.pa.us>
+Branch: master [d8fbbb925] 2022-01-22 13:32:40 -0500
+Branch: REL_14_STABLE [3839e29c5] 2022-01-22 13:32:40 -0500
+Branch: REL_13_STABLE [31b7b4d26] 2022-01-22 13:32:40 -0500
+Branch: REL_12_STABLE [e2d53c876] 2022-01-22 13:32:40 -0500
+Branch: REL_11_STABLE [26c841ed1] 2022-01-22 13:32:40 -0500
+-->
+     <para>
+      Correctly update cached table state during <command>ALTER TABLE ADD
+      PRIMARY KEY USING INDEX</command> (Hou Zhijie)
+     </para>
+
+     <para>
+      Concurrent sessions failed to update their opinion of whether the
+      table has a primary key, possibly causing incorrect logical
+      replication behavior.
+     </para>
+    </listitem>
+
+    <listitem>
+<!--
+Author: Amit Kapila <akapila@postgresql.org>
+Branch: master [354a1f8d2] 2021-11-16 08:10:13 +0530
+Branch: REL_14_STABLE [232fd72a5] 2021-11-16 08:34:24 +0530
+Branch: REL_13_STABLE [63c3eeddc] 2021-11-16 08:46:12 +0530
+Branch: REL_12_STABLE [9816e2d31] 2021-11-16 09:05:51 +0530
+Branch: REL_11_STABLE [40fb634b1] 2021-11-16 09:25:04 +0530
+Branch: REL_10_STABLE [2c0443c59] 2021-11-16 09:44:00 +0530
+-->
+     <para>
+      Correctly update cached table state when switching <literal>REPLICA
+      IDENTITY</literal> index (Tang Haiying, Hou Zhijie)
+     </para>
+
+     <para>
+      Concurrent sessions failed to update their opinion of which index is
+      the replica identity one, possibly causing incorrect logical
+      replication behavior.
+     </para>
+    </listitem>
+
+    <listitem>
+<!--
+Author: Amit Kapila <akapila@postgresql.org>
+Branch: master [0f0cfb494] 2021-11-19 09:04:40 +0530
+Branch: REL_14_STABLE [ead49ebc0] 2021-11-19 09:14:09 +0530
+Branch: REL_13_STABLE [33b6dd83e] 2021-11-19 09:24:00 +0530
+-->
+     <para>
+      Allow parallel vacuuming and concurrent index building to be ignored
+      while computing oldest xmin (Masahiko Sawada)
+     </para>
+
+     <para>
+      Non-parallelized instances of these operations were already ignored,
+      but the logic did not work for parallelized cases.  Holding back the
+      xmin horizon has undesirable effects such as delaying vacuum
+      cleanup.
+     </para>
+    </listitem>
+
+    <listitem>
+<!--
+Author: Tom Lane <tgl@sss.pgh.pa.us>
+Branch: master [babe545ca] 2021-12-01 13:44:46 -0500
+Branch: REL_14_STABLE [8f4b0200e] 2021-12-01 13:44:47 -0500
+Branch: REL_13_STABLE [7413caabe] 2021-12-01 13:44:47 -0500
+Branch: REL_12_STABLE [5cf08b4db] 2021-12-01 13:44:47 -0500
+Branch: REL_11_STABLE [82d354411] 2021-12-01 13:44:47 -0500
+Branch: REL_10_STABLE [fec187dc3] 2021-12-01 13:44:47 -0500
+-->
+     <para>
+      Avoid leaking memory during <command>REASSIGN OWNED BY</command>
+      operations that reassign ownership of many objects (Justin Pryzby)
+     </para>
+    </listitem>
+
+    <listitem>
+<!--
+Author: Michael Paquier <michael@paquier.xyz>
+Branch: master [6ce16088b] 2022-01-05 10:27:07 +0900
+Branch: REL_14_STABLE [5ddfebded] 2022-01-05 10:27:47 +0900
+Branch: REL_13_STABLE [3f8062bcf] 2022-01-05 10:27:53 +0900
+-->
+     <para>
+      Improve performance of walsenders sending logical changes by
+      avoiding unnecessary cache accesses (Hou Zhijie)
+     </para>
+    </listitem>
+
+    <listitem>
+<!--
+Author: Magnus Hagander <magnus@hagander.net>
+Branch: master [2dbb7b9b2] 2022-01-26 09:58:59 +0100
+Branch: REL_14_STABLE [4afae689e] 2022-01-26 09:59:14 +0100
+Branch: REL_13_STABLE [81596645c] 2022-01-26 09:59:19 +0100
+Branch: REL_12_STABLE [aa58f5c53] 2022-01-26 09:59:23 +0100
+-->
+     <para>
+      Fix display of <literal>cert</literal> authentication method's
+      options in <structname>pg_hba_file_rules</structname> view (Magnus
+      Hagander)
+     </para>
+
+     <para>
+      The <literal>cert</literal> authentication method implies
+      <literal>clientcert=verify-full</literal>, but the
+      <structname>pg_hba_file_rules</structname> view incorrectly reported
+      <literal>clientcert=verify-ca</literal>.
+     </para>
+    </listitem>
+
+    <listitem>
+<!--
+Author: Tom Lane <tgl@sss.pgh.pa.us>
+Branch: master [43c217512] 2022-01-13 17:49:46 -0500
+Branch: REL_14_STABLE [4aee39ddb] 2022-01-13 17:49:26 -0500
+Branch: REL_13_STABLE [ca14c4184] 2022-01-13 17:49:26 -0500
+Branch: REL_12_STABLE [45a3cefad] 2022-01-13 17:49:26 -0500
+Branch: REL_11_STABLE [3a1bfe256] 2022-01-13 17:49:26 -0500
+Branch: REL_10_STABLE [3433a1fc7] 2022-01-13 17:49:26 -0500
+-->
+     <para>
+      Fix display of whole-row variables appearing
+      in <literal>INSERT ... VALUES</literal> rules (Tom Lane)
+     </para>
+
+     <para>
+      A whole-row variable would be printed as <quote>var.*</quote>,
+      but that allows it to be expanded to individual columns when
+      the rule is reloaded, resulting in different semantics.
+      Attach an explicit cast to prevent that, as we do elsewhere.
+     </para>
+    </listitem>
+
+    <listitem>
+<!--
+Author: Michael Paquier <michael@paquier.xyz>
+Branch: master [098c13455] 2021-11-11 15:00:59 +0900
+Branch: REL_14_STABLE [b609db715] 2021-11-11 15:01:45 +0900
+Branch: REL_13_STABLE [13c8adf90] 2021-11-11 15:01:54 +0900
+-->
+     <para>
+      Fix one-byte buffer overrun when applying Unicode string
+      normalization to an empty string (Michael Paquier)
+     </para>
+
+     <para>
+      The practical impact of this is limited thanks to alignment
+      considerations; but in debug builds, a warning was raised.
+     </para>
+    </listitem>
+
+    <listitem>
+<!--
+Author: Alvaro Herrera <alvherre@alvh.no-ip.org>
+Branch: master [f66885bec] 2022-01-04 13:01:05 -0300
+Branch: REL_14_STABLE [f185f35a8] 2022-01-04 13:01:05 -0300
+Branch: REL_13_STABLE [29f9fb8fe] 2022-01-04 13:01:05 -0300
+Branch: REL_12_STABLE [6b681cd05] 2022-01-04 13:01:05 -0300
+Branch: REL_11_STABLE [28cd57416] 2022-01-04 13:01:05 -0300
+Branch: REL_10_STABLE [026a93727] 2022-01-04 13:01:05 -0300
+Author: Alvaro Herrera <alvherre@alvh.no-ip.org>
+Branch: master [67a8cb5cb] 2022-01-04 13:21:23 -0300
+Branch: REL_14_STABLE [f9db153c2] 2022-01-04 13:21:23 -0300
+Branch: REL_13_STABLE [33fdd9f85] 2022-01-04 13:21:23 -0300
+Branch: REL_12_STABLE [397b43948] 2022-01-04 13:21:23 -0300
+Branch: REL_11_STABLE [b63851a45] 2022-01-04 13:21:23 -0300
+Branch: REL_10_STABLE [4a8282425] 2022-01-04 13:21:23 -0300
+Author: Michael Paquier <michael@paquier.xyz>
+Branch: master [2e577c944] 2021-12-22 15:38:00 +0900
+Branch: REL_14_STABLE [8a22a40b2] 2021-12-22 15:38:05 +0900
+Author: Michael Paquier <michael@paquier.xyz>
+Branch: master [ece8c7619] 2021-12-14 10:58:15 +0900
+Branch: REL_14_STABLE [4be3e005e] 2021-12-14 10:58:25 +0900
+Branch: REL_13_STABLE [3f710fc2b] 2021-12-14 10:58:29 +0900
+Branch: REL_12_STABLE [65af1e842] 2021-12-14 10:58:33 +0900
+Branch: REL_11_STABLE [8abb6c27e] 2021-12-14 10:58:37 +0900
+-->
+     <para>
+      Fix or remove some incorrect assertions (Simon Riggs, Michael
+      Paquier, Alexander Lakhin)
+     </para>
+
+     <para>
+      These errors should affect only debug builds, not production.
+     </para>
+    </listitem>
+
+    <listitem>
+<!--
+Author: Tom Lane <tgl@sss.pgh.pa.us>
+Branch: master [1f655fdc3] 2022-01-21 15:36:27 -0500
+Branch: REL_14_STABLE [f4ebf0dbe] 2022-01-21 15:36:28 -0500
+Branch: REL_13_STABLE [64ebb43df] 2022-01-21 15:36:28 -0500
+Branch: REL_12_STABLE [5521d8139] 2022-01-21 15:36:29 -0500
+Branch: REL_11_STABLE [37f5dc8b8] 2022-01-21 15:36:29 -0500
+Branch: REL_10_STABLE [0c7c94f90] 2022-01-21 15:36:30 -0500
+-->
+     <para>
+      Fix race condition that could lead to failure to localize error
+      messages that are reported early in multi-threaded use
+      of <application>libpq</application>
+      or <application>ecpglib</application> (Tom Lane)
+     </para>
+    </listitem>
+
+    <listitem>
+<!--
+Author: Tom Lane <tgl@sss.pgh.pa.us>
+Branch: master [f3f467b8f] 2022-01-17 12:52:44 -0500
+Branch: REL_14_STABLE [050949877] 2022-01-17 12:52:44 -0500
+Branch: REL_13_STABLE [f27af7b88] 2022-01-17 12:52:44 -0500
+Branch: REL_12_STABLE [38f099ef9] 2022-01-17 12:52:44 -0500
+Branch: REL_11_STABLE [8b107467c] 2022-01-17 12:52:44 -0500
+Branch: REL_10_STABLE [9d66c43eb] 2022-01-17 12:52:45 -0500
+-->
+     <para>
+      Avoid calling <function>strerror</function>
+      from <application>libpq</application>'s <function>PQcancel</function>
+      function (Tom Lane)
+     </para>
+
+     <para>
+      <function>PQcancel</function> is supposed to be safe to call from a
+      signal handler, but <function>strerror</function> is not safe.  The
+      faulty usage only occurred in the unlikely event of failure to
+      send the cancel message to the server, perhaps explaining the lack
+      of reports.
+     </para>
+    </listitem>
+
+    <listitem>
+<!--
+Author: Tom Lane <tgl@sss.pgh.pa.us>
+Branch: master [d6eb5a0c2] 2021-11-12 14:55:32 -0500
+Branch: REL_14_STABLE [99389cb66] 2021-11-12 14:55:32 -0500
+Branch: REL_13_STABLE [843925fad] 2021-11-12 14:55:32 -0500
+Branch: REL_12_STABLE [523adcc12] 2021-11-12 14:55:32 -0500
+Branch: REL_11_STABLE [b062ca508] 2021-11-12 14:55:32 -0500
+Branch: REL_10_STABLE [3bc46e4e9] 2021-11-12 14:55:32 -0500
+-->
+     <para>
+      Make <application>psql</application>'s <command>\password</command>
+      command default to setting the password
+      for <literal>CURRENT_USER</literal>, not the connection's original
+      user name (Tom Lane)
+     </para>
+
+     <para>
+      This agrees with the documented behavior, and avoids probable
+      permissions failure if <command>SET ROLE</command> or <command>SET
+      SESSION AUTHORIZATION</command> has been done since the session began.
+      To prevent confusion, the role name to be acted on is now
+      included in the password prompt.
+     </para>
+    </listitem>
+
+    <listitem>
+<!--
+Author: Tom Lane <tgl@sss.pgh.pa.us>
+Branch: master [9007d4ea7] 2022-01-17 21:19:02 -0500
+Branch: REL_14_STABLE [3886785b4] 2022-01-17 21:18:49 -0500
+Branch: REL_13_STABLE [90e0f9fd8] 2022-01-17 21:18:49 -0500
+-->
+     <para>
+      Fix <application>psql</application> <literal>\d</literal> command's
+      query for identifying parent triggers (Justin Pryzby)
+     </para>
+
+     <para>
+      The previous coding failed with <quote>more than one row returned by
+      a subquery used as an expression</quote> if a partition had triggers
+      and there were unrelated statement-level triggers of the same name
+      on some parent partitioned table.
+     </para>
+    </listitem>
+
+    <listitem>
+<!--
+Author: Tom Lane <tgl@sss.pgh.pa.us>
+Branch: master [fe7551744] 2022-01-16 14:59:20 -0500
+Branch: REL_14_STABLE [d91d4338e] 2022-01-16 14:59:20 -0500
+Branch: REL_13_STABLE [90a847e6d] 2022-01-16 14:59:20 -0500
+-->
+     <para>
+      Fix <application>psql</application>'s tab-completion of label values
+      for enum types (Tom Lane)
+     </para>
+    </listitem>
+
+    <listitem>
+<!--
+Author: Tom Lane <tgl@sss.pgh.pa.us>
+Branch: master [2131c049d] 2022-01-17 13:30:04 -0500
+Branch: REL_14_STABLE [4e8726566] 2022-01-17 13:30:04 -0500
+Branch: REL_13_STABLE [d18ec312f] 2022-01-17 13:30:04 -0500
+Branch: REL_12_STABLE [6d1a854c1] 2022-01-17 13:30:04 -0500
+Branch: REL_11_STABLE [92e6c1c9b] 2022-01-17 13:30:04 -0500
+Branch: REL_10_STABLE [62bfa554b] 2022-01-17 13:30:04 -0500
+-->
+     <para>
+      In <application>psql</application> and some other client programs,
+      avoid trying to invoke <function>gettext()</function> from a
+      control-C signal handler (Tom Lane)
+     </para>
+
+     <para>
+      While no reported failures have been traced to this mistake, it seems
+      highly unlikely to be a safe thing to do.
+     </para>
+    </listitem>
+
+    <listitem>
+<!--
+Author: Tom Lane <tgl@sss.pgh.pa.us>
+Branch: master [282b6d00a] 2021-11-21 14:13:35 -0500
+Branch: REL_14_STABLE [3bd7556bb] 2021-11-21 14:13:35 -0500
+Branch: REL_13_STABLE [33edf4a3c] 2021-11-21 14:13:35 -0500
+Branch: REL_12_STABLE [93295932d] 2021-11-21 14:13:35 -0500
+Branch: REL_11_STABLE [c2242d364] 2021-11-21 14:13:35 -0500
+Branch: REL_10_STABLE [3ce5d0884] 2021-11-21 14:13:35 -0500
+-->
+     <para>
+      Allow canceling the initial password prompt
+      in <application>pg_receivewal</application>
+      and <application>pg_recvlogical</application> (Tom Lane, Nathan
+      Bossart)
+     </para>
+
+     <para>
+      Previously it was impossible to terminate these programs via control-C
+      while they were prompting for a password.
+     </para>
+    </listitem>
+
+    <listitem>
+<!--
+Author: Tom Lane <tgl@sss.pgh.pa.us>
+Branch: master [b55f2b692] 2021-11-22 17:16:29 -0500
+Branch: REL_14_STABLE [0fdf67476] 2021-11-22 17:16:29 -0500
+Branch: REL_13_STABLE [d4f6a36d8] 2021-11-22 17:16:29 -0500
+Branch: REL_12_STABLE [69949ea68] 2021-11-22 17:16:29 -0500
+Branch: REL_11_STABLE [54619a25d] 2021-11-22 17:16:29 -0500
+Branch: REL_10_STABLE [2b36973d9] 2021-11-22 17:16:29 -0500
+-->
+     <para>
+      Fix <application>pg_dump</application>'s dump ordering for
+      user-defined casts (Tom Lane)
+     </para>
+
+     <para>
+      In rare cases, the output script might refer to a user-defined cast
+      before it had been created.
+     </para>
+    </listitem>
+
+    <listitem>
+<!--
+Author: Tom Lane <tgl@sss.pgh.pa.us>
+Branch: master [0b126c6a4] 2021-11-22 15:25:48 -0500
+Branch: REL_14_STABLE [aedc4600d] 2021-11-22 15:25:48 -0500
+Branch: REL_13_STABLE [6fc8b145e] 2021-11-22 15:25:48 -0500
+Branch: REL_12_STABLE [1e7f588ad] 2021-11-22 15:25:48 -0500
+Branch: master [db3a660c6] 2021-11-22 15:57:31 -0500
+Branch: REL_14_STABLE [72842a575] 2021-11-22 15:57:43 -0500
+Branch: REL_13_STABLE [b542e4596] 2021-11-22 15:57:52 -0500
+Branch: REL_12_STABLE [72582531b] 2021-11-22 15:57:59 -0500
+Branch: REL_11_STABLE [22d2b6611] 2021-11-22 15:58:05 -0500
+Branch: REL_10_STABLE [b599b8f39] 2021-11-22 15:58:12 -0500
+-->
+     <para>
+      Fix <application>pg_dump</application>'s <option>--inserts</option>
+      and  <option>--column-inserts</option> modes to handle tables
+      containing both generated columns and dropped columns (Tom Lane)
+     </para>
+    </listitem>
+
+    <listitem>
+<!--
+Author: Tom Lane <tgl@sss.pgh.pa.us>
+Branch: master [248c3a937] 2021-11-17 14:16:34 -0500
+Branch: REL_14_STABLE [53c4a580e] 2021-11-17 14:16:34 -0500
+Branch: REL_13_STABLE [c8b5221b5] 2021-11-17 14:16:34 -0500
+Branch: REL_12_STABLE [8378dad4c] 2021-11-17 14:16:34 -0500
+Branch: REL_11_STABLE [a414eb850] 2021-11-17 14:16:34 -0500
+Branch: REL_10_STABLE [13799bb93] 2021-11-17 14:16:34 -0500
+Branch: master [3cac2c8ca] 2021-11-17 13:08:25 -0500
+Branch: REL_14_STABLE [6b413b41b] 2021-11-17 13:08:25 -0500
+Branch: REL_13_STABLE [bbda88c33] 2021-11-17 13:08:25 -0500
+Branch: REL_12_STABLE [12bf11889] 2021-11-17 13:08:25 -0500
+-->
+     <para>
+      Fix possible mis-reporting of errors
+      in <application>pg_dump</application>
+      and <application>pg_basebackup</application> (Tom Lane)
+     </para>
+
+     <para>
+      The previous code failed to check for errors from some kernel calls,
+      and could report the wrong errno values in other cases.
+     </para>
+    </listitem>
+
+    <listitem>
+<!--
+Author: Tom Lane <tgl@sss.pgh.pa.us>
+Branch: master [54b1cb7eb] 2022-01-08 14:54:39 -0500
+Branch: REL_14_STABLE [043c1e1a7] 2022-01-08 14:54:39 -0500
+Branch: REL_13_STABLE [823d4c7e2] 2022-01-08 14:54:39 -0500
+Branch: REL_12_STABLE [3a69d45af] 2022-01-08 14:54:39 -0500
+Branch: REL_11_STABLE [38cbdd22d] 2022-01-08 14:54:39 -0500
+Branch: REL_10_STABLE [b21986908] 2022-01-08 14:54:39 -0500
+-->
+     <para>
+      Fix results of index-only scans
+      on <filename>contrib/btree_gist</filename> indexes
+      on <type>char(<replaceable>N</replaceable>)</type> columns (Tom Lane)
+     </para>
+
+     <para>
+      Index-only scans returned column values with trailing spaces
+      removed, which is not the expected behavior.  That happened because
+      that's how the data was stored in the index.  This fix changes the
+      code to store <type>char(<replaceable>N</replaceable>)</type> values
+      with the expected amount of space padding.
+      The behavior of such an index will not change immediately unless
+      you <command>REINDEX</command> it; otherwise space-stripped values
+      will be gradually replaced over time during updates.  Queries that
+      do not use index-only scan plans will be unaffected in any case.
+     </para>
+    </listitem>
+
+    <listitem>
+<!--
+Author: Tom Lane <tgl@sss.pgh.pa.us>
+Branch: master [bd233bdd8] 2022-01-25 18:52:44 -0500
+Branch: REL_14_STABLE [803f0b173] 2022-02-01 19:03:41 -0500
+Branch: REL_13_STABLE [4d7d196ff] 2022-02-01 19:03:41 -0500
+Branch: REL_12_STABLE [aa2215d6b] 2022-02-01 19:03:41 -0500
+Branch: REL_11_STABLE [e41176bd6] 2022-02-01 19:03:41 -0500
+Branch: REL_10_STABLE [a72c43012] 2022-02-01 19:03:41 -0500
+-->
+     <para>
+      Change <application>configure</application> to use
+      Python's <application>sysconfig</application> module, rather than
+      the deprecated <application>distutils</application> module, to
+      determine how to build PL/Python (Peter Eisentraut, Tom Lane, Andres
+      Freund)
+     </para>
+
+     <para>
+      With Python 3.10, this
+      avoids <application>configure</application>-time warnings
+      about <application>distutils</application> being deprecated and
+      scheduled for removal in Python 3.12.  Presumably, once 3.12 is
+      out, <literal>configure --with-python</literal> would fail
+      altogether.  This future-proofing does come at a
+      cost: <application>sysconfig</application> did not exist before
+      Python 2.7, nor before 3.2 in the Python 3 branch, so it is no
+      longer possible to build PL/Python against long-dead Python
+      versions.
+     </para>
+    </listitem>
+
+    <listitem>
+<!--
+Author: Andres Freund <andres@anarazel.de>
+Branch: master [c89f40974] 2022-01-30 16:42:14 -0800
+Branch: REL_14_STABLE [8484e3812] 2022-01-30 16:42:42 -0800
+Branch: REL_13_STABLE [0dc0fe7b6] 2022-01-30 16:42:45 -0800
+Branch: REL_12_STABLE [f173738d5] 2022-01-30 16:42:47 -0800
+Branch: REL_11_STABLE [ad95a639a] 2022-01-30 16:42:49 -0800
+Branch: REL_10_STABLE [2557a03f8] 2022-01-30 16:43:07 -0800
+-->
+     <para>
+      Fix PL/Perl compile failure on Windows with Perl 5.28 and later
+      (Victor Wagner)
+     </para>
+    </listitem>
+
+    <listitem>
+<!--
+Author: Peter Eisentraut <peter@eisentraut.org>
+Branch: master [99e4d24a9] 2021-11-25 14:19:22 +0100
+Branch: REL_14_STABLE [1cc13b83e] 2021-11-25 14:30:12 +0100
+Branch: REL_13_STABLE [04875ae92] 2021-11-25 14:30:46 +0100
+Branch: REL_12_STABLE [0d335cbd5] 2021-11-25 14:31:01 +0100
+Branch: REL_11_STABLE [a83b1bab0] 2021-11-25 14:32:26 +0100
+Branch: REL_10_STABLE [4339e10f0] 2021-11-25 14:32:43 +0100
+-->
+     <para>
+      Fix PL/Python compile failure with Python 3.11 and later (Peter
+      Eisentraut)
+     </para>
+    </listitem>
+
+    <listitem>
+<!--
+Author: Michael Paquier <michael@paquier.xyz>
+Branch: master [b2265d305] 2021-11-24 13:03:23 +0900
+Branch: REL_14_STABLE [0e681fa45] 2021-11-24 13:03:55 +0900
+Branch: REL_13_STABLE [baef657d3] 2021-11-24 13:03:59 +0900
+Branch: REL_12_STABLE [420d5e40b] 2021-11-24 13:04:03 +0900
+Branch: REL_11_STABLE [1061e41ff] 2021-11-24 13:04:07 +0900
+Branch: REL_10_STABLE [82881a9b9] 2021-11-24 13:04:12 +0900
+-->
+     <para>
+      Add support for building with Visual Studio 2022 (Hans Buschmann)
+     </para>
+    </listitem>
+
+    <listitem>
+<!--
+Author: Andrew Dunstan <andrew@dunslane.net>
+Branch: master [c3879a7b4] 2022-01-07 16:07:45 -0500
+Branch: REL_14_STABLE [a7772e874] 2022-01-07 16:14:04 -0500
+Branch: REL_13_STABLE [f3ded9c46] 2022-01-07 16:14:16 -0500
+Branch: REL_12_STABLE [a4cde9153] 2022-01-07 16:14:23 -0500
+Branch: REL_11_STABLE [c7fa0f55d] 2022-01-07 16:14:32 -0500
+Branch: REL_10_STABLE [d897361c7] 2022-01-07 16:14:40 -0500
+Branch: master [f80900be0] 2022-01-20 10:13:18 -0500
+Branch: REL_14_STABLE [156a846d9] 2022-01-20 10:20:40 -0500
+Branch: REL_13_STABLE [31680730e] 2022-01-20 10:20:51 -0500
+Branch: REL_12_STABLE [22d8c2570] 2022-01-20 10:21:02 -0500
+Branch: REL_11_STABLE [0a79feeca] 2022-01-20 10:21:12 -0500
+Branch: REL_10_STABLE [a5bd14d93] 2022-01-20 10:21:28 -0500
+-->
+     <para>
+      Allow the <filename>.bat</filename> wrapper scripts in our MSVC
+      build system to be called without first changing into their
+      directory (Anton Voloshin, Andrew Dunstan)
+     </para>
+    </listitem>
+
+   </itemizedlist>
+
+  </sect2>
+ </sect1>
+
+ <sect1 id="release-13-5">
+  <title>Release 13.5</title>
+
+  <formalpara>
+  <title>Release date:</title>
+  <para>2021-11-11</para>
+  </formalpara>
+
+  <para>
+   This release contains a variety of fixes from 13.4.
+   For information about new features in major release 13, see
+   <xref linkend="release-13"/>.
+  </para>
+
+  <sect2>
+   <title>Migration to Version 13.5</title>
+
+   <para>
+    A dump/restore is not required for those running 13.X.
+   </para>
+
+   <para>
+    However, note that installations using physical replication should
+    update standby servers before the primary server, as explained in
+    the third changelog entry below.
+   </para>
+
+   <para>
+    Also, several bugs have been found that may have resulted in corrupted
+    indexes, as explained in the next several changelog entries.  If any
+    of those cases apply to you, it's recommended to reindex
+    possibly-affected indexes after updating.
+   </para>
+
+   <para>
+    Also, if you are upgrading from a version earlier than 13.2,
+    see <xref linkend="release-13-2"/>.
+   </para>
+  </sect2>
+
+  <sect2>
+   <title>Changes</title>
+
+   <itemizedlist>
+
+    <listitem>
+<!--
+Author: Tom Lane <tgl@sss.pgh.pa.us>
+Branch: master [28e241255] 2021-11-08 11:01:43 -0500
+Branch: REL_14_STABLE [9d5a76b8d] 2021-11-08 11:01:43 -0500
+Branch: REL_13_STABLE [e92ed93e8] 2021-11-08 11:01:43 -0500
+Branch: REL_12_STABLE [d1bd26740] 2021-11-08 11:01:43 -0500
+Branch: REL_11_STABLE [9394fb828] 2021-11-08 11:01:43 -0500
+Branch: REL_10_STABLE [9ae0f1112] 2021-11-08 11:01:43 -0500
+Branch: REL9_6_STABLE [046c2c846] 2021-11-08 11:01:43 -0500
+-->
+     <para>
+      Make the server reject extraneous data after an SSL or GSS
+      encryption handshake (Tom Lane)
+     </para>
+
+     <para>
+      A man-in-the-middle with the ability to inject data into the TCP
+      connection could stuff some cleartext data into the start of a
+      supposedly encryption-protected database session.
+      This could be abused to send faked SQL commands to the server,
+      although that would only work if the server did not demand any
+      authentication data.  (However, a server relying on SSL certificate
+      authentication might well not do so.)
+     </para>
+
+     <para>
+      The <productname>PostgreSQL</productname> Project thanks
+      Jacob Champion for reporting this problem.
+      (CVE-2021-23214)
+     </para>
+    </listitem>
+
+    <listitem>
+<!--
+Author: Tom Lane <tgl@sss.pgh.pa.us>
+Branch: master [160c02588] 2021-11-08 11:14:56 -0500
+Branch: REL_14_STABLE [30547d791] 2021-11-08 11:14:56 -0500
+Branch: REL_13_STABLE [844b31692] 2021-11-08 11:14:56 -0500
+Branch: REL_12_STABLE [36bb95ef2] 2021-11-08 11:14:56 -0500
+Branch: REL_11_STABLE [a021a1d2a] 2021-11-08 11:14:56 -0500
+Branch: REL_10_STABLE [e65d9c8cd] 2021-11-08 11:14:56 -0500
+Branch: REL9_6_STABLE [d83cdfdca] 2021-11-08 11:14:57 -0500
+-->
+     <para>
+      Make <application>libpq</application> reject extraneous data after
+      an SSL or GSS encryption handshake (Tom Lane)
+     </para>
+
+     <para>
+      A man-in-the-middle with the ability to inject data into the TCP
+      connection could stuff some cleartext data into the start of a
+      supposedly encryption-protected database session.
+      This could probably be abused to inject faked responses to the
+      client's first few queries, although other details of libpq's
+      behavior make that harder than it sounds.  A different line of
+      attack is to exfiltrate the client's password, or other sensitive
+      data that might be sent early in the session.  That has been shown
+      to be possible with a server vulnerable to CVE-2021-23214.
+     </para>
+
+     <para>
+      The <productname>PostgreSQL</productname> Project thanks
+      Jacob Champion for reporting this problem.
+      (CVE-2021-23222)
+     </para>
+    </listitem>
+
+    <listitem>
+<!--
+Author: Alvaro Herrera <alvherre@alvh.no-ip.org>
+Branch: master [ff9f111bc] 2021-09-29 11:21:51 -0300
+Branch: REL_14_STABLE [64a8687a6] 2021-09-29 11:41:01 -0300
+Branch: REL_13_STABLE [1d97d3d08] 2021-09-29 11:21:51 -0300
+Branch: REL_12_STABLE [1df0a914d] 2021-09-29 11:21:51 -0300
+Branch: REL_11_STABLE [cfedb279a] 2021-09-29 11:21:51 -0300
+Branch: REL_10_STABLE [d9fe2cc7d] 2021-09-29 11:21:51 -0300
+Branch: REL9_6_STABLE [148c6ee3b] 2021-09-29 11:21:51 -0300
+Branch: master [d03bca4d7] 2021-09-30 10:01:03 -0300
+Branch: REL_14_STABLE [e3731bac5] 2021-09-30 10:01:03 -0300
+Branch: master [d186d233d] 2021-10-01 18:03:11 -0300
+Branch: REL_14_STABLE [0ce67bce0] 2021-10-01 18:03:11 -0300
+Branch: master [010e52337] 2021-10-13 18:49:27 -0300
+Branch: REL_14_STABLE [79c7fe1af] 2021-10-13 18:49:27 -0300
+Branch: REL_13_STABLE [2cdf97fd1] 2021-10-13 18:49:27 -0300
+Branch: REL_12_STABLE [4b7abbe48] 2021-10-13 18:49:27 -0300
+Branch: REL_11_STABLE [6287b8e19] 2021-10-13 18:49:27 -0300
+Branch: REL_10_STABLE [41cce2326] 2021-10-13 18:49:27 -0300
+Branch: REL9_6_STABLE [5ec87619b] 2021-10-13 18:49:27 -0300
+Branch: REL_14_STABLE [494ec0037] 2021-11-01 13:07:23 -0300
+Branch: REL_13_STABLE [17227825c] 2021-11-01 13:07:23 -0300
+Branch: REL_12_STABLE [da782bc93] 2021-11-01 13:07:23 -0300
+Branch: REL_11_STABLE [5ef210047] 2021-11-01 13:07:23 -0300
+Branch: REL_10_STABLE [656312c2a] 2021-11-01 13:07:23 -0300
+Branch: REL9_6_STABLE [99197701e] 2021-11-01 13:07:23 -0300
+-->
+     <para>
+      Fix physical replication for cases where the primary crashes
+      after shipping a WAL segment that ends with a partial WAL record
+      (&Aacute;lvaro Herrera)
+     </para>
+
+     <para>
+      If the primary did not survive long enough to finish writing the
+      rest of the incomplete WAL record, then the previous crash-recovery
+      logic had it back up and overwrite WAL starting from the beginning
+      of the incomplete WAL record.  This is problematic since standby
+      servers may already have copies of that WAL segment.  They will then
+      see an inconsistent next segment, and will not be able to recover
+      without manual intervention.  To fix, do not back up over a WAL
+      segment boundary when restarting after a crash.  Instead write a new
+      type of WAL record at the start of the next WAL segment, informing
+      readers that the incomplete WAL record will never be finished and
+      must be disregarded.
+     </para>
+
+     <para>
+      When applying this update, it's best to update standby servers
+      before the primary, so that they will be ready to handle this new
+      WAL record type if the primary happens to crash.
+     </para>
+    </listitem>
+
+    <listitem>
+<!--
+Author: Noah Misch <noah@leadboat.com>
+Branch: master [3cd9c3b92] 2021-10-23 18:36:38 -0700
+Branch: REL_14_STABLE [a5b9a0000] 2021-10-23 18:36:42 -0700
+Branch: REL_13_STABLE [a9d0a5409] 2021-10-23 18:36:42 -0700
+Branch: REL_12_STABLE [fe5d44a1d] 2021-10-23 18:36:42 -0700
+Branch: REL_11_STABLE [df6158139] 2021-10-23 18:36:43 -0700
+Branch: REL_10_STABLE [560124a37] 2021-10-23 18:36:43 -0700
+Branch: REL9_6_STABLE [518493243] 2021-10-23 18:36:43 -0700
+-->
+     <para>
+      Fix <command>CREATE INDEX CONCURRENTLY</command> to wait for
+      the latest prepared transactions (Andrey Borodin)
+     </para>
+
+     <para>
+      Rows inserted by just-prepared transactions might be omitted from
+      the new index, causing queries relying on the index to miss such
+      rows.  The previous fix for this type of problem failed to account
+      for <command>PREPARE TRANSACTION</command> commands that were still
+      in progress when <command>CREATE INDEX CONCURRENTLY</command>
+      checked for them.  As before, in installations that have enabled
+      prepared transactions (<varname>max_prepared_transactions</varname>
+      &gt; 0), it's recommended to reindex any concurrently-built indexes
+      in case this problem occurred when they were built.
+     </para>
+    </listitem>
+
+    <listitem>
+<!--
+Author: Noah Misch <noah@leadboat.com>
+Branch: master [fdd965d07] 2021-10-23 18:36:38 -0700
+Branch: REL_14_STABLE [dde966efb] 2021-10-23 18:36:42 -0700
+Branch: REL_13_STABLE [2e33b4359] 2021-10-23 18:36:42 -0700
+Branch: REL_12_STABLE [0869e53d3] 2021-10-23 18:36:42 -0700
+Branch: REL_11_STABLE [5141e471b] 2021-10-23 18:36:43 -0700
+Branch: REL_10_STABLE [db86746fd] 2021-10-23 18:36:43 -0700
+Branch: REL9_6_STABLE [e428699cb] 2021-10-23 18:36:43 -0700
+-->
+     <para>
+      Avoid race condition that can cause backends to fail to add entries
+      for new rows to an index being built concurrently (Noah Misch,
+      Andrey Borodin)
+     </para>
+
+     <para>
+      While it's apparently rare in the field, this case could potentially
+      affect any index built or reindexed with
+      the <literal>CONCURRENTLY</literal> option.  It is recommended to
+      reindex any such indexes to make sure they are correct.
+     </para>
+    </listitem>
+
+    <listitem>
+<!--
+Author: Tom Lane <tgl@sss.pgh.pa.us>
+Branch: master [ce773f230] 2021-09-02 17:24:41 -0400
+Branch: REL_14_STABLE Release: REL_14_0 [23c6bc581] 2021-09-02 17:24:42 -0400
+Branch: REL_13_STABLE [be2beadaf] 2021-09-02 17:24:42 -0400
+Branch: REL_12_STABLE [a3bf13673] 2021-09-02 17:24:42 -0400
+Branch: REL_11_STABLE [ad66373ea] 2021-09-02 17:24:42 -0400
+Branch: REL_10_STABLE [2bb20e34c] 2021-09-02 17:24:42 -0400
+Branch: REL9_6_STABLE [dea212e24] 2021-09-02 17:24:42 -0400
+Branch: master [fd549145d] 2021-09-03 10:01:02 -0400
+Branch: REL_14_STABLE Release: REL_14_0 [08b96a2b5] 2021-09-03 10:01:02 -0400
+Branch: REL_13_STABLE [9089f1543] 2021-09-03 10:01:02 -0400
+Branch: REL_12_STABLE [1fab33c0b] 2021-09-03 10:01:02 -0400
+Branch: REL_11_STABLE [2836d57e4] 2021-09-03 10:01:02 -0400
+Branch: master [b30cc0fd6] 2021-09-04 16:29:08 -0400
+Branch: REL_14_STABLE Release: REL_14_0 [718978d9d] 2021-09-04 16:29:08 -0400
+Branch: REL_13_STABLE [2c0dd669c] 2021-09-04 16:29:08 -0400
+Branch: REL_12_STABLE [fd295d0c6] 2021-09-04 16:29:08 -0400
+Branch: REL_11_STABLE [8782a8452] 2021-09-04 16:29:08 -0400
+Branch: REL_10_STABLE [70354dd56] 2021-09-04 16:29:08 -0400
+Branch: REL9_6_STABLE [a5e8f7b37] 2021-09-04 16:29:08 -0400
+-->
+     <para>
+      Fix <type>float4</type> and <type>float8</type> hash functions to
+      produce uniform results for NaNs (Tom Lane)
+     </para>
+
+     <para>
+      Since <productname>PostgreSQL</productname>'s floating-point types
+      deem all NaNs to be equal, it's important for the hash functions to
+      produce the same hash code for all bit-patterns that are NaNs
+      according to the IEEE 754 standard.  This failed to happen before,
+      meaning that hash indexes and hash-based query plans might produce
+      incorrect results for non-canonical NaN values.
+      (<literal>'-NaN'::float8</literal> is one way to produce such a
+      value on most machines.)  It is advisable to reindex hash indexes
+      on floating-point columns, if there is any possibility that they
+      might contain such values.
+     </para>
+    </listitem>
+
+    <listitem>
+<!--
+Author: Michael Paquier <michael@paquier.xyz>
+Branch: master [add5cf28d] 2021-11-01 11:38:23 +0900
+Branch: REL_14_STABLE [f255de9a4] 2021-11-01 11:40:22 +0900
+Branch: REL_13_STABLE [77f7909a4] 2021-11-01 11:40:29 +0900
+-->
+     <para>
+      Fix <command>REINDEX CONCURRENTLY</command> to preserve operator
+      class parameters that were attached to the target index
+      (Michael Paquier)
+     </para>
+    </listitem>
+
+    <listitem>
+<!--
+Author: Noah Misch <noah@leadboat.com>
+Branch: master [97ddda8a8] 2021-08-27 23:33:23 -0700
+Branch: REL_14_STABLE Release: REL_14_0 [5513c09c8] 2021-08-27 23:33:27 -0700
+Branch: REL_13_STABLE [b18669f5e] 2021-08-27 23:33:27 -0700
+Branch: REL_12_STABLE [a494f1023] 2021-08-27 23:34:03 -0700
+Branch: REL_11_STABLE [6ebd2426b] 2021-08-27 23:34:22 -0700
+Branch: REL_10_STABLE [f11c1bb17] 2021-08-27 23:42:53 -0700
+Branch: REL9_6_STABLE [978998dbd] 2021-08-27 23:44:55 -0700
+-->
+     <para>
+      Prevent data loss during crash recovery of <command>CREATE
+      TABLESPACE</command>, when <varname>wal_level</varname>
+      = <literal>minimal</literal> (Noah Misch)
+     </para>
+
+     <para>
+      If the server crashed between <command>CREATE TABLESPACE</command>
+      and the next checkpoint, replay would fully remove the contents of
+      the new tablespace's directory, relying on subsequent WAL replay
+      to restore everything within that directory.  This interacts badly
+      with optimizations that skip writing WAL (one example
+      is <command>COPY</command> into a just-created table).  Such
+      optimizations are applied only when <varname>wal_level</varname>
+      is <literal>minimal</literal>, which is not the default in v10 and
+      later.
+     </para>
+    </listitem>
+
+    <listitem>
+<!--
+Author: Alvaro Herrera <alvherre@alvh.no-ip.org>
+Branch: master [d6f1e16c8] 2021-10-18 19:08:25 -0300
+Branch: REL_14_STABLE [72d064217] 2021-10-18 19:08:25 -0300
+Branch: REL_13_STABLE [fe35528a5] 2021-10-18 19:08:25 -0300
+Branch: REL_12_STABLE [8b26be8a3] 2021-10-18 19:08:25 -0300
+Branch: REL_11_STABLE [b703b7d31] 2021-10-18 19:08:25 -0300
+Branch: REL_10_STABLE [d36bdc4e9] 2021-10-18 19:08:25 -0300
+-->
+     <para>
+      Ensure that the relation cache is invalidated for a table being
+      attached to or detached from a partitioned table (Amit Langote,
+      &Aacute;lvaro Herrera)
+     </para>
+
+     <para>
+      This oversight could allow misbehavior of subsequent inserts/updates
+      addressed directly to the partition, but only in currently-existing
+      sessions.
+     </para>
+    </listitem>
+
+    <listitem>
+<!--
+Author: Amit Kapila <akapila@postgresql.org>
+Branch: master [4548c7673] 2021-09-22 08:00:54 +0530
+Branch: REL_14_STABLE Release: REL_14_0 [9eff85932] 2021-09-22 08:13:37 +0530
+Branch: REL_13_STABLE [f09a81f1c] 2021-09-22 08:24:20 +0530
+-->
+     <para>
+      Ensure that the relation cache is invalidated for all partitions
+      of a partitioned table that is being added to or removed from a
+      publication (Hou Zhijie, Vignesh C)
+     </para>
+
+     <para>
+      This oversight could lead to improper replication behavior until all
+      currently-existing sessions have exited.
+     </para>
+    </listitem>
+
+    <listitem>
+<!--
+Author: Amit Kapila <akapila@postgresql.org>
+Branch: master [8bd534274] 2021-09-08 11:50:37 +0530
+Branch: REL_14_STABLE Release: REL_14_0 [8db27fbc1] 2021-09-08 12:08:29 +0530
+Branch: REL_13_STABLE [ddfc7299d] 2021-09-08 12:14:59 +0530
+Branch: REL_12_STABLE [2eb09f27d] 2021-09-08 12:16:15 +0530
+Branch: REL_11_STABLE [96e38fa5e] 2021-09-08 11:20:42 +0530
+Branch: REL_10_STABLE [28cde380c] 2021-09-08 11:23:01 +0530
+-->
+     <para>
+      Ensure that the relation cache is invalidated when creating or
+      dropping a <literal>FOR ALL TABLES</literal> publication
+      (Hou Zhijie, Vignesh C)
+     </para>
+
+     <para>
+      This oversight could lead to improper replication behavior until all
+      currently-existing sessions have exited.
+     </para>
+    </listitem>
+
+    <listitem>
+<!--
+Author: Tom Lane <tgl@sss.pgh.pa.us>
+Branch: master [5c056b0c2] 2021-08-06 17:32:54 -0400
+Branch: REL_14_STABLE Release: REL_14_0 [e5f6493e3] 2021-08-06 17:32:54 -0400
+Branch: REL_13_STABLE [dede14399] 2021-09-20 11:48:52 -0400
+Branch: REL_12_STABLE [f230614da] 2021-09-20 11:48:52 -0400
+Branch: REL_11_STABLE [914e54501] 2021-09-20 11:48:52 -0400
+Branch: REL_10_STABLE [923b7efc2] 2021-09-20 11:48:52 -0400
+Branch: REL9_6_STABLE [183b3aced] 2021-09-20 11:48:52 -0400
+-->
+     <para>
+      Don't discard a cast to the same type with unspecified type modifier
+      (Tom Lane)
+     </para>
+
+     <para>
+      For example, if column <literal>f1</literal> is of
+      type <literal>numeric(18,3)</literal>, the parser used to simply
+      discard a cast like <literal>f1::numeric</literal>, on the grounds
+      that it would have no run-time effect.  That's true, but the exposed
+      type of the expression should still be considered to be
+      plain <literal>numeric</literal>,
+      not <literal>numeric(18,3)</literal>.  This is important for
+      correctly resolving the type of larger constructs, such
+      as recursive <literal>UNION</literal>s.
+     </para>
+    </listitem>
+
+    <listitem>
+<!--
+Author: Tom Lane <tgl@sss.pgh.pa.us>
+Branch: master [3e310d837] 2021-10-19 13:54:45 -0400
+Branch: REL_14_STABLE [04dae19f4] 2021-10-19 13:54:45 -0400
+Branch: REL_13_STABLE [30e61a8cd] 2021-10-19 13:54:46 -0400
+Branch: REL_12_STABLE [ae7b1dd59] 2021-10-19 13:54:46 -0400
+Branch: REL_11_STABLE [0d08c279b] 2021-10-19 13:54:46 -0400
+-->
+     <para>
+      Fix updates of element fields in arrays of domain over composite
+      (Tom Lane)
+     </para>
+
+     <para>
+      A command such as <literal>UPDATE tab SET fld[1].subfld =
+      val</literal> failed if the array's elements were domains rather
+      than plain composites.
+     </para>
+    </listitem>
+
+    <listitem>
+<!--
+Author: Alvaro Herrera <alvherre@alvh.no-ip.org>
+Branch: master [c6bc655ee] 2021-10-01 18:29:18 -0300
+Branch: REL_14_STABLE [20047609d] 2021-10-01 18:29:18 -0300
+Branch: REL_13_STABLE [170206e45] 2021-10-01 18:29:18 -0300
+-->
+     <para>
+      Disallow the combination of <literal>FETCH FIRST WITH TIES</literal>
+      and <literal>FOR UPDATE SKIP LOCKED</literal> (David Christensen)
+     </para>
+
+     <para>
+      <literal>FETCH FIRST WITH TIES</literal> necessarily fetches one
+      more row than requested, since it cannot stop until it finds a row
+      that is not a tie.  In our current implementation,
+      if <literal>FOR UPDATE</literal> is used then that row will also get
+      locked even though it is not returned.  That results in undesirable
+      behavior if the <literal>SKIP LOCKED</literal> option is specified.
+      It's difficult to change this without introducing a different set of
+      undesirable behaviors, so for now, forbid the combination.
+     </para>
+    </listitem>
+
+    <listitem>
+<!--
+Author: Tom Lane <tgl@sss.pgh.pa.us>
+Branch: master [db2760a84] 2021-09-03 16:39:03 -0400
+Branch: REL_14_STABLE Release: REL_14_0 [2cc018ba8] 2021-09-03 16:39:04 -0400
+Branch: REL_13_STABLE [132be6000] 2021-09-03 16:38:55 -0400
+Branch: REL_12_STABLE [9046a0536] 2021-09-03 16:38:55 -0400
+Branch: REL_11_STABLE [9ebe2852e] 2021-09-03 16:38:55 -0400
+Branch: REL_10_STABLE [5d7c6b6c8] 2021-09-03 16:38:55 -0400
+-->
+     <para>
+      Disallow creating an ICU collation if the current database's
+      encoding won't support it (Tom Lane)
+     </para>
+
+     <para>
+      Previously this was allowed, but then the collation could not be
+      referenced because of the way collation lookup works; you could not
+      use the collation, nor even drop it.
+     </para>
+    </listitem>
+
+    <listitem>
+<!--
+Author: Michael Paquier <michael@paquier.xyz>
+Branch: master [fdd885714] 2021-10-19 11:03:52 +0900
+Branch: REL_14_STABLE [b1b797ec7] 2021-10-19 11:04:00 +0900
+Branch: REL_13_STABLE [85dc4292a] 2021-10-19 11:04:04 +0900
+-->
+     <para>
+      Disallow <literal>ALTER INDEX index ALTER COLUMN col SET
+      (options)</literal> (Nathan Bossart, Michael Paquier)
+     </para>
+
+     <para>
+      While the parser accepted this, it's undocumented and doesn't
+      actually work.
+     </para>
+    </listitem>
+
+    <listitem>
+<!--
+Author: Dean Rasheed <dean.a.rasheed@gmail.com>
+Branch: master [e54a758d2] 2021-10-06 13:16:51 +0100
+Branch: REL_14_STABLE [8e26b868d] 2021-10-06 13:19:25 +0100
+Branch: REL_13_STABLE [9ab94ccb1] 2021-10-06 13:20:23 +0100
+Branch: REL_12_STABLE [676218034] 2021-10-06 13:21:27 +0100
+Branch: REL_11_STABLE [b2a0f1673] 2021-10-06 13:22:33 +0100
+Branch: REL_10_STABLE [4853baaac] 2021-10-06 13:23:13 +0100
+Branch: REL9_6_STABLE [0de8f9bc8] 2021-10-06 13:24:22 +0100
+-->
+     <para>
+      Fix corner-case loss of precision in
+      numeric <function>power()</function> (Dean Rasheed)
+     </para>
+
+     <para>
+      The result could be inaccurate when the first argument is very close
+      to 1.
+     </para>
+    </listitem>
+
+    <listitem>
+<!--
+Author: Tom Lane <tgl@sss.pgh.pa.us>
+Branch: master [65dc30ced] 2021-08-24 16:37:26 -0400
+Branch: REL_14_STABLE Release: REL_14_0 [244dd7992] 2021-08-24 16:37:27 -0400
+Branch: REL_13_STABLE [071146184] 2021-08-24 16:37:27 -0400
+Branch: REL_12_STABLE [92620e82f] 2021-08-24 16:37:27 -0400
+Branch: REL_11_STABLE [3ebd32e70] 2021-08-24 16:37:27 -0400
+Branch: REL_10_STABLE [062c4c791] 2021-08-24 16:37:27 -0400
+Branch: REL9_6_STABLE [7e75fe390] 2021-08-24 16:37:27 -0400
+-->
+     <para>
+      Avoid regular expression errors with capturing parentheses
+      inside <literal>{0}</literal> (Tom Lane)
+     </para>
+
+     <para>
+      Regular expressions like <literal>(.){0}...\1</literal> drew
+      <quote>invalid backreference number</quote>.  Other regexp engines
+      such as Perl don't complain, though, and for that matter ours
+      doesn't either in some closely related cases.  Worse, it could throw
+      an assertion failure instead.  Fix it so that no error is thrown and
+      instead the back-reference is silently deemed to never match.
+     </para>
+    </listitem>
+
+    <listitem>
+<!--
+Author: Tom Lane <tgl@sss.pgh.pa.us>
+Branch: master [9bbf6f734] 2021-08-23 17:41:07 -0400
+Branch: REL_14_STABLE Release: REL_14_0 [779557bd2] 2021-08-23 17:41:07 -0400
+Branch: REL_13_STABLE [9a327179c] 2021-08-23 17:41:07 -0400
+Branch: REL_12_STABLE [b9521a1f9] 2021-08-23 17:41:07 -0400
+Branch: REL_11_STABLE [08e080756] 2021-08-23 17:41:07 -0400
+Branch: REL_10_STABLE [df87b7c44] 2021-08-23 17:41:07 -0400
+Branch: REL9_6_STABLE [d90e14414] 2021-08-23 17:41:07 -0400
+-->
+     <para>
+      Prevent regular expression back-references from sometimes matching
+      when they shouldn't (Tom Lane)
+     </para>
+
+     <para>
+      The regexp engine was careless about clearing match data
+      for capturing parentheses after rejecting a partial match.  This
+      could allow a later back-reference to match in places where it
+      should fail for lack of a defined referent.
+     </para>
+    </listitem>
+
+    <listitem>
+<!--
+Author: Tom Lane <tgl@sss.pgh.pa.us>
+Branch: master [facce1da9] 2021-08-20 14:19:04 -0400
+Branch: REL_14_STABLE Release: REL_14_0 [57a2d4a1b] 2021-08-20 14:19:04 -0400
+Branch: REL_13_STABLE [b30f7f399] 2021-08-20 14:19:04 -0400
+Branch: REL_12_STABLE [adbfde3db] 2021-08-20 14:19:04 -0400
+Branch: REL_11_STABLE [9610852ab] 2021-08-20 14:19:04 -0400
+Branch: REL_10_STABLE [e0f2acf26] 2021-08-20 14:19:04 -0400
+Branch: REL9_6_STABLE [cafebd663] 2021-08-20 14:19:04 -0400
+-->
+     <para>
+      Fix regular expression performance bug with back-references inside
+      iteration nodes (Tom Lane)
+     </para>
+
+     <para>
+      Incorrect back-tracking logic could result in exponential time spent
+      looking for a match.  Fortunately the problem is masked in most
+      cases by other optimizations.
+     </para>
+    </listitem>
+
+    <listitem>
+<!--
+Author: Tom Lane <tgl@sss.pgh.pa.us>
+Branch: REL_14_STABLE Release: REL_14_0 [599c73a91] 2021-09-06 11:29:52 -0400
+Branch: REL_13_STABLE [d8a266c5e] 2021-09-06 11:29:52 -0400
+Branch: REL_12_STABLE [eb3c8d248] 2021-09-06 11:29:52 -0400
+Branch: REL_11_STABLE [90b4647f6] 2021-09-06 11:29:52 -0400
+Branch: REL_10_STABLE [b28c862a6] 2021-09-06 11:29:52 -0400
+Branch: REL9_6_STABLE [5907c3818] 2021-09-06 11:29:52 -0400
+-->
+     <para>
+      Fix incorrect results from <literal>AT TIME ZONE</literal> applied
+      to a <type>time with time zone</type> value (Tom Lane)
+     </para>
+
+     <para>
+      The results were incorrect if the target time zone was specified by
+      a dynamic timezone abbreviation (that is, one that is defined as
+      equivalent to a full time zone name, rather than a fixed UTC offset).
+     </para>
+    </listitem>
+
+    <listitem>
+<!--
+Author: Tom Lane <tgl@sss.pgh.pa.us>
+Branch: master [4d5f651f1] 2021-10-14 12:43:55 -0400
+Branch: REL_14_STABLE [fd059ac2e] 2021-10-14 12:43:43 -0400
+Branch: REL_13_STABLE [fdd6a4d8d] 2021-10-14 12:43:43 -0400
+-->
+     <para>
+      Fix planner error with pulling up subquery expressions into function
+      rangetable entries (Tom Lane)
+     </para>
+
+     <para>
+      If a function in <literal>FROM</literal> laterally references the
+      output of some sub-<literal>SELECT</literal> earlier in
+      the <literal>FROM</literal> clause, and we are able to flatten that
+      sub-<literal>SELECT</literal> into the outer query, the
+      expression(s) copied into the function expression were not fully
+      processed.  This could lead to crashes at execution.
+     </para>
+    </listitem>
+
+    <listitem>
+<!--
+Author: Tom Lane <tgl@sss.pgh.pa.us>
+Branch: master [a21049fd3] 2021-09-17 15:41:16 -0400
+Branch: REL_14_STABLE Release: REL_14_0 [4d5b4483d] 2021-09-17 15:41:16 -0400
+Branch: REL_13_STABLE [e0b0d1eab] 2021-09-17 15:41:16 -0400
+Branch: REL_12_STABLE [febe013ca] 2021-09-17 15:41:16 -0400
+-->
+     <para>
+      Fix mistranslation of PlaceHolderVars to inheritance child relations
+      (Tom Lane)
+     </para>
+
+     <para>
+      This error could result in assertion failures, or in mis-planning of
+      queries having partitioned or inherited tables on the nullable side
+      of an outer join.
+     </para>
+    </listitem>
+
+    <listitem>
+<!--
+Author: Tom Lane <tgl@sss.pgh.pa.us>
+Branch: master [8c1144ba7] 2021-10-01 14:59:35 -0400
+Branch: REL_14_STABLE [a54509bfd] 2021-10-01 14:59:35 -0400
+Branch: REL_13_STABLE [7adbe186f] 2021-10-01 14:59:35 -0400
+Branch: REL_12_STABLE [334fb8c3d] 2021-10-01 14:59:35 -0400
+Branch: REL_11_STABLE [5863d348a] 2021-10-01 14:59:35 -0400
+Branch: REL_10_STABLE [f951ea3a2] 2021-10-01 14:59:35 -0400
+-->
+     <para>
+      Avoid using MCV-only statistics to estimate the range of a column
+      (Tom Lane)
+     </para>
+
+     <para>
+      There are corner cases in which <command>ANALYZE</command> will
+      build a most-common-values (MCV) list but not a histogram, even
+      though the MCV list does not account for all the observed values.
+      In such cases, keep the planner from using the MCV list alone to
+      estimate the range of column values.
+     </para>
+    </listitem>
+
+    <listitem>
+<!--
+Author: Tom Lane <tgl@sss.pgh.pa.us>
+Branch: master [7b5d4c29e] 2021-10-01 11:10:12 -0400
+Branch: REL_14_STABLE [e6adaa179] 2021-10-01 11:10:12 -0400
+Branch: REL_13_STABLE [04ef2021e] 2021-10-01 11:10:12 -0400
+Branch: REL_12_STABLE [cded2c460] 2021-10-01 11:10:12 -0400
+Branch: REL_11_STABLE [5abbda985] 2021-10-01 11:10:12 -0400
+-->
+     <para>
+      Fix restoration of a Portal's snapshot inside a subtransaction
+      (Bertrand Drouvot)
+     </para>
+
+     <para>
+      If a procedure commits or rolls back a transaction, and then its
+      next significant action is inside a new subtransaction, snapshot
+      management went wrong, leading to a dangling pointer and probable
+      crash.  A typical example in PL/pgSQL is a <literal>COMMIT</literal>
+      immediately followed by a <literal>BEGIN ... EXCEPTION</literal>
+      block that performs a query.
+     </para>
+    </listitem>
+
+    <listitem>
+<!--
+Author: Michael Paquier <michael@paquier.xyz>
+Branch: master [409f9ca44] 2021-10-18 11:55:42 +0900
+Branch: REL_14_STABLE [5b353aaff] 2021-10-18 11:56:48 +0900
+Branch: REL_13_STABLE [8f4fe8d7f] 2021-10-18 11:56:52 +0900
+Branch: REL_12_STABLE [a207b8521] 2021-10-18 11:56:54 +0900
+Branch: REL_11_STABLE [506aa1f71] 2021-10-18 11:56:57 +0900
+Branch: REL_10_STABLE [d1a6a08df] 2021-10-18 11:57:02 +0900
+Branch: REL9_6_STABLE [f49bf8263] 2021-10-18 11:57:07 +0900
+-->
+     <para>
+      Clean up correctly if a transaction fails after exporting its
+      snapshot (Dilip Kumar)
+     </para>
+
+     <para>
+      This oversight would only cause a problem if the same session
+      attempted to export a snapshot again.  The most likely scenario for
+      that is creation of a replication slot (followed by rollback)
+      and then creation of another replication slot.
+     </para>
+    </listitem>
+
+    <listitem>
+<!--
+Author: Alexander Korotkov <akorotkov@postgresql.org>
+Branch: master [05e6e78c1] 2021-11-06 19:13:58 +0300
+Branch: REL_14_STABLE [b0f6bd48f] 2021-11-06 19:13:53 +0300
+Branch: REL_13_STABLE [e1fee28a0] 2021-11-06 18:34:19 +0300
+Branch: REL_12_STABLE [8f779a1a3] 2021-11-06 18:34:21 +0300
+Branch: REL_11_STABLE [691c0df73] 2021-11-06 18:34:23 +0300
+Branch: REL_10_STABLE [774d00573] 2021-11-06 18:34:26 +0300
+Branch: REL9_6_STABLE [7381b79ad] 2021-11-06 18:34:31 +0300
+-->
+     <para>
+      Prevent wraparound of overflowed-subtransaction tracking on standby
+      servers (Kyotaro Horiguchi, Alexander Korotkov)
+     </para>
+
+     <para>
+      This oversight could cause significant performance degradation
+      (manifesting as excessive SubtransSLRU traffic) on standby servers.
+     </para>
+    </listitem>
+
+    <listitem>
+<!--
+Author: Michael Paquier <michael@paquier.xyz>
+Branch: master [8a4237908] 2021-10-04 14:05:20 +0900
+Branch: REL_14_STABLE [828f7f000] 2021-10-04 14:05:48 +0900
+Branch: REL_13_STABLE [194e535a0] 2021-10-04 14:05:52 +0900
+Branch: REL_12_STABLE [3c3f118d5] 2021-10-04 14:05:55 +0900
+Branch: REL_11_STABLE [0a561d4d0] 2021-10-04 14:05:59 +0900
+Branch: REL_10_STABLE [8a6a1fe07] 2021-10-04 14:06:03 +0900
+Branch: REL9_6_STABLE [e2b2a9e1c] 2021-10-04 14:06:09 +0900
+-->
+     <para>
+      Ensure that prepared transactions are properly accounted for during
+      promotion of a standby server (Michael Paquier, Andres Freund)
+     </para>
+
+     <para>
+      There was a narrow window where a prepared transaction could be
+      omitted from a snapshot taken by a concurrently-running session.
+      If that session then used the snapshot to perform data updates,
+      erroneous results or data corruption could occur.
+     </para>
+    </listitem>
+
+    <listitem>
+<!--
+Author: Tom Lane <tgl@sss.pgh.pa.us>
+Branch: master [1316be286] 2021-09-15 12:31:56 -0400
+Branch: REL_14_STABLE Release: REL_14_0 [d84d62b62] 2021-09-15 12:31:56 -0400
+Branch: REL_13_STABLE [e06cc024b] 2021-09-15 12:31:56 -0400
+-->
+     <para>
+      Disallow <literal>LISTEN</literal> in background workers (Tom Lane)
+     </para>
+
+     <para>
+      There's no infrastructure to support this, so if someone did
+      it, it would only result in preventing cleanup of
+      the <literal>NOTIFY</literal> queue.
+     </para>
+    </listitem>
+
+    <listitem>
+<!--
+Author: Tom Lane <tgl@sss.pgh.pa.us>
+Branch: master [2e4eae87d] 2021-09-14 17:18:25 -0400
+Branch: REL_14_STABLE Release: REL_14_0 [0eff10a00] 2021-09-14 17:18:25 -0400
+Branch: REL_13_STABLE [63f28776c] 2021-09-14 17:18:25 -0400
+-->
+     <para>
+      Send <literal>NOTIFY</literal> signals to other backends during
+      transaction commit, not in the server's idle loop (Artur Zakirov,
+      Tom Lane)
+     </para>
+
+     <para>
+      This change allows notifications to be delivered immediately after
+      an intra-procedure <literal>COMMIT</literal>.  It also allows
+      logical replication workers to send notifications.
+     </para>
+    </listitem>
+
+    <listitem>
+<!--
+Author: Tom Lane <tgl@sss.pgh.pa.us>
+Branch: master [c1b7a6c27] 2021-09-10 13:18:32 -0400
+Branch: REL_14_STABLE Release: REL_14_0 [d844cd75a] 2021-09-10 13:18:32 -0400
+Branch: REL_13_STABLE [fa5d0415f] 2021-09-10 13:18:32 -0400
+Branch: REL_12_STABLE [ba408fc96] 2021-09-10 13:18:32 -0400
+Branch: REL_11_STABLE [9ea8d3d24] 2021-09-10 13:18:32 -0400
+-->
+     <para>
+      Refuse to rewind a cursor marked <literal>NO SCROLL</literal>
+      if it has been held over from a previous transaction due
+      to the <literal>WITH HOLD</literal> option (Tom Lane)
+     </para>
+
+     <para>
+      We have long forbidden fetching backwards from a <literal>NO
+      SCROLL</literal> cursor, but for historical reasons the prohibition
+      didn't extend to cases in which we rewind the query altogether and
+      then re-fetch forwards.  That exception leads to inconsistencies,
+      particularly for held-over cursors which may not have stored all the
+      data necessary to rewind.  Disallow rewinding for non-scrollable
+      held-over cursors to block the worst inconsistencies.  (v15 will
+      remove the exception altogether.)
+     </para>
+    </listitem>
+
+    <listitem>
+<!--
+Author: Tom Lane <tgl@sss.pgh.pa.us>
+Branch: master [cba79a163] 2021-09-09 13:36:44 -0400
+Branch: REL_14_STABLE Release: REL_14_0 [b7056c0a2] 2021-09-09 13:36:44 -0400
+Branch: REL_13_STABLE [d8d93bc8b] 2021-09-09 13:36:31 -0400
+Branch: REL_12_STABLE [2e75e969c] 2021-09-09 13:36:31 -0400
+Branch: REL_11_STABLE [7813451c2] 2021-09-09 13:36:31 -0400
+-->
+     <para>
+      Fix possible failure while saving a <literal>WITH HOLD</literal>
+      cursor at transaction end, if it had already been read to completion
+      (Tom Lane)
+     </para>
+    </listitem>
+
+    <listitem>
+<!--
+Author: Tom Lane <tgl@sss.pgh.pa.us>
+Branch: master [8481f9989] 2021-09-09 11:45:48 -0400
+Branch: REL_14_STABLE Release: REL_14_0 [7430c7742] 2021-09-09 11:45:48 -0400
+Branch: REL_13_STABLE [04118de78] 2021-09-09 11:45:48 -0400
+Branch: REL_12_STABLE [a7a73ce30] 2021-09-09 11:45:48 -0400
+Branch: REL_11_STABLE [1a23b669d] 2021-09-09 11:45:48 -0400
+Branch: REL_10_STABLE [ca1dd6234] 2021-09-09 11:45:48 -0400
+Branch: REL9_6_STABLE [cc4de2bba] 2021-09-09 11:45:48 -0400
+-->
+     <para>
+      Fix detection of a relation that has grown to the maximum allowed
+      length (Tom Lane)
+     </para>
+
+     <para>
+      An attempt to extend a table or index past the limit of 2^32-1
+      blocks was rejected, but not soon enough to prevent inconsistent
+      internal state from being created.
+     </para>
+    </listitem>
+
+    <listitem>
+<!--
+Author: Tom Lane <tgl@sss.pgh.pa.us>
+Branch: master [362e2dcc4] 2021-09-08 12:05:47 -0400
+Branch: REL_14_STABLE Release: REL_14_0 [03d01d746] 2021-09-08 12:05:43 -0400
+Branch: REL_13_STABLE [cbba6ba3a] 2021-09-08 12:05:43 -0400
+Branch: REL_12_STABLE [1fedbcc7a] 2021-09-08 12:05:43 -0400
+Branch: REL_11_STABLE [882b7e728] 2021-09-08 12:05:43 -0400
+Branch: REL_10_STABLE [9de082399] 2021-09-08 12:05:43 -0400
+Branch: REL9_6_STABLE [595ab8a54] 2021-09-08 12:05:43 -0400
+-->
+     <para>
+      Correctly track the presence of data-modifying CTEs when expanding
+      a <literal>DO INSTEAD</literal> rule (Greg Nancarrow, Tom Lane)
+     </para>
+
+     <para>
+      The previous failure to do this could lead to problems such as
+      unsafely choosing a parallel plan.
+     </para>
+    </listitem>
+
+    <listitem>
+<!--
+Author: Tomas Vondra <tomas.vondra@postgresql.org>
+Branch: master [5be8ce82e] 2021-08-31 18:33:38 +0200
+Branch: REL_14_STABLE Release: REL_14_0 [a371a5ba3] 2021-08-31 18:36:06 +0200
+Branch: REL_13_STABLE [1fe1a04af] 2021-08-31 18:38:11 +0200
+Branch: REL_12_STABLE [6c8b98669] 2021-08-31 18:40:09 +0200
+Branch: REL_11_STABLE [b46ff4b50] 2021-08-31 18:42:11 +0200
+Branch: REL_10_STABLE [bfb732c0e] 2021-08-31 18:44:36 +0200
+Branch: master [628bc9d13] 2021-08-31 19:31:10 +0200
+Branch: REL_14_STABLE Release: REL_14_0 [4090ff2a9] 2021-08-31 19:32:32 +0200
+Branch: REL_13_STABLE [c8213aa94] 2021-08-31 19:36:03 +0200
+Branch: REL_12_STABLE [5f8dd5dc1] 2021-08-31 19:41:58 +0200
+Branch: REL_11_STABLE [bce24d1ed] 2021-08-31 19:42:14 +0200
+Branch: REL_10_STABLE [6963e723f] 2021-08-31 19:44:30 +0200
+-->
+     <para>
+      Fix incorrect reporting of permissions failures on extended
+      statistics objects (Tomas Vondra)
+     </para>
+
+     <para>
+      The code typically produced <quote>cache lookup error</quote> rather
+      than the intended message.
+     </para>
+    </listitem>
+
+    <listitem>
+<!--
+Author: Robert Haas <rhaas@postgresql.org>
+Branch: master [a780b2fcc] 2021-08-25 08:32:04 -0400
+Branch: REL_14_STABLE Release: REL_14_0 [11c123988] 2021-08-25 08:33:53 -0400
+Branch: REL_13_STABLE [bc062cb93] 2021-08-25 08:40:52 -0400
+Branch: REL_12_STABLE [f4b77e82e] 2021-08-25 08:45:00 -0400
+Branch: REL_11_STABLE [198cf81e2] 2021-08-25 08:48:01 -0400
+Branch: REL_10_STABLE [96f6ef9fe] 2021-08-25 08:55:52 -0400
+-->
+     <para>
+      Fix incorrect snapshot handling in parallel workers (Greg Nancarrow)
+     </para>
+
+     <para>
+      This oversight could lead to misbehavior in parallel queries if the
+      transaction isolation level is less than <literal>REPEATABLE
+      READ</literal>.
+     </para>
+    </listitem>
+
+    <listitem>
+<!--
+Author: Amit Kapila <akapila@postgresql.org>
+Branch: master [29b590547] 2021-08-25 09:53:07 +0530
+Branch: REL_14_STABLE Release: REL_14_0 [9d7a80ce0] 2021-08-25 10:10:50 +0530
+Branch: REL_13_STABLE [794025eff] 2021-08-25 09:23:27 +0530
+Branch: REL_12_STABLE [e35705f54] 2021-08-25 09:32:56 +0530
+Branch: REL_11_STABLE [bfdbda24b] 2021-08-25 09:43:33 +0530
+-->
+     <para>
+      Fix logical decoding to correctly ignore toast-table changes for
+      transient tables (Bertrand Drouvot)
+     </para>
+
+     <para>
+      Logical decoding normally ignores changes in transient tables such
+      as those created during an <command>ALTER TABLE</command> heap
+      rewrite.  But that filtering wasn't applied to the associated toast
+      table if any, leading to possible errors when rewriting a table
+      that's being published.
+     </para>
+    </listitem>
+
+    <listitem>
+<!--
+Author: Amit Kapila <akapila@postgresql.org>
+Branch: master [df3640e52] 2021-09-13 10:24:00 +0530
+Branch: REL_14_STABLE Release: REL_14_0 [f5e0ff463] 2021-09-13 10:35:00 +0530
+Branch: REL_13_STABLE [58cf794ca] 2021-09-13 10:46:58 +0530
+-->
+     <para>
+      Fix logical decoding's memory usage accounting to handle TOAST data
+      correctly (Bertrand Drouvot)
+     </para>
+    </listitem>
+
+    <listitem>
+<!--
+Author: Fujii Masao <fujii@postgresql.org>
+Branch: master [596ba75cb] 2021-09-09 23:56:57 +0900
+Branch: REL_14_STABLE Release: REL_14_0 [b5ec22bf5] 2021-09-09 23:58:05 +0900
+Branch: REL_13_STABLE [dd9b3fced] 2021-09-09 23:58:26 +0900
+Branch: REL_12_STABLE [466535254] 2021-09-09 23:58:54 +0900
+Branch: REL_11_STABLE [aacb3cfaf] 2021-09-09 23:59:19 +0900
+Branch: REL_10_STABLE [f77489046] 2021-09-09 23:59:40 +0900
+Branch: REL9_6_STABLE [61e2aa2db] 2021-09-10 00:00:06 +0900
+-->
+     <para>
+      Ensure that walreceiver processes create all required archive
+      notification files before exiting (Fujii Masao)
+     </para>
+
+     <para>
+      If a walreceiver exited exactly at a WAL segment boundary, it failed
+      to make a notification file for the last-received segment, thus
+      delaying archiving of that segment on the standby.
+     </para>
+    </listitem>
+
+    <listitem>
+<!--
+Author: Michael Paquier <michael@paquier.xyz>
+Branch: master [a3fcbcda7] 2021-08-23 11:09:33 +0900
+Branch: REL_14_STABLE Release: REL_14_0 [65b649fec] 2021-08-23 11:09:54 +0900
+Branch: REL_13_STABLE [29f942325] 2021-08-23 11:09:57 +0900
+Branch: master [ec2133a44] 2021-10-06 13:28:23 +0900
+Branch: REL_14_STABLE [ae254356f] 2021-10-06 13:28:30 +0900
+Branch: REL_13_STABLE [d6d68e223] 2021-10-06 13:28:35 +0900
+-->
+     <para>
+      Fix computation of the WAL range to include in a backup manifest
+      when a timeline change is involved (Kyotaro Horiguchi)
+     </para>
+    </listitem>
+
+    <listitem>
+<!--
+Author: Tom Lane <tgl@sss.pgh.pa.us>
+Branch: master [8d2d6ec77] 2021-08-19 12:12:35 -0400
+Branch: REL_14_STABLE Release: REL_14_0 [464900393] 2021-08-19 12:12:35 -0400
+Branch: REL_13_STABLE [7fa367d96] 2021-08-19 12:12:35 -0400
+Branch: REL_12_STABLE [0c13ee198] 2021-08-19 12:12:35 -0400
+Branch: REL_11_STABLE [fbc1eed8a] 2021-08-19 12:12:35 -0400
+Branch: REL_10_STABLE [2739a2810] 2021-08-19 12:12:36 -0400
+Branch: REL9_6_STABLE [cc7fae5c2] 2021-08-19 12:12:36 -0400
+-->
+     <para>
+      Avoid trying to lock the <literal>OLD</literal>
+      and <literal>NEW</literal> pseudo-relations in a rule
+      that uses <literal>SELECT FOR UPDATE</literal>
+      (Masahiko Sawada, Tom Lane)
+     </para>
+    </listitem>
+
+    <listitem>
+<!--
+Author: Tom Lane <tgl@sss.pgh.pa.us>
+Branch: master [2313dda9d] 2021-08-18 18:12:51 -0400
+Branch: REL_14_STABLE Release: REL_14_0 [61f9dae2c] 2021-08-18 18:12:51 -0400
+Branch: REL_13_STABLE [ecd4dd9f1] 2021-08-18 18:12:51 -0400
+Branch: REL_12_STABLE [eb2f59b34] 2021-08-18 18:12:51 -0400
+Branch: REL_11_STABLE [a65319f09] 2021-08-18 18:12:51 -0400
+Branch: REL_10_STABLE [82ad7ecb4] 2021-08-18 18:12:51 -0400
+Branch: REL9_6_STABLE [c09f56fed] 2021-08-18 18:12:51 -0400
+-->
+     <para>
+      Fix parser's processing of aggregate <literal>FILTER</literal>
+      clauses (Tom Lane)
+     </para>
+
+     <para>
+      If the <literal>FILTER</literal> expression is a plain boolean column,
+      the semantic level of the aggregate could be mis-determined, leading
+      to not-per-spec behavior.  If the <literal>FILTER</literal>
+      expression is itself a boolean-returning aggregate, an error should
+      be thrown but was not, likely resulting in a crash at execution.
+     </para>
+    </listitem>
+
+    <listitem>
+<!--
+Author: Alvaro Herrera <alvherre@alvh.no-ip.org>
+Branch: master [c2c618ff1] 2021-10-19 19:08:45 -0300
+Branch: REL_14_STABLE [3ce3fb2f7] 2021-10-19 19:08:45 -0300
+Branch: REL_13_STABLE [842fe6123] 2021-10-19 19:08:45 -0300
+Branch: REL_12_STABLE [6c8d1c197] 2021-10-19 19:08:45 -0300
+Branch: master [cd124d205] 2021-10-20 13:05:42 -0300
+Branch: REL_14_STABLE [718278855] 2021-10-20 13:05:42 -0300
+Branch: REL_13_STABLE [a73a3671d] 2021-10-20 13:05:42 -0300
+Branch: REL_12_STABLE [3c8c49945] 2021-10-20 13:05:42 -0300
+-->
+     <para>
+      Ensure that the correct lock level is used when renaming a table
+      (Nathan Bossart, &Aacute;lvaro Herrera)
+     </para>
+
+     <para>
+      For historical reasons, <command>ALTER INDEX ... RENAME</command>
+      can be applied to any sort of relation.  The lock level required to
+      rename an index is lower than that required to rename a table or
+      other kind of relation, but the code got this wrong and would use
+      the weaker lock level whenever the command is spelled <command>ALTER
+      INDEX</command>.
+     </para>
+    </listitem>
+
+    <listitem>
+<!--
+Author: Tom Lane <tgl@sss.pgh.pa.us>
+Branch: master [6b71c925c] 2021-08-17 14:29:22 -0400
+Branch: REL_14_STABLE Release: REL_14_0 [8f51ee63d] 2021-08-17 14:29:22 -0400
+Branch: REL_13_STABLE [7b01246e1] 2021-08-17 14:29:22 -0400
+-->
+     <para>
+      Prevent <literal>ALTER TYPE/DOMAIN/OPERATOR ... SET</literal>
+      from changing extension membership (Tom Lane)
+     </para>
+
+     <para>
+      <literal>ALTER ... SET</literal> executed by an extension script
+      would cause the target object to become a member of the extension if
+      it was not already.  In itself this isn't too troubling, since
+      there's little reason for an extension script to touch an object not
+      belonging to the extension.  But <literal>ALTER TYPE SET</literal>
+      will recurse to dependent domains, thus causing them to also become
+      extension members.  This causes unwanted side-effects from
+      extension upgrade scripts that use that command to adjust the
+      properties of a base type belonging to the extension.  Fix by
+      redefining these <literal>ALTER</literal> cases to never change
+      extension membership.
+     </para>
+    </listitem>
+
+    <listitem>
+<!--
+Author: Andres Freund <andres@anarazel.de>
+Branch: master [edb4d95dd] 2021-09-13 18:26:15 -0700
+Branch: REL_14_STABLE Release: REL_14_0 [4e86887e0] 2021-09-13 18:15:28 -0700
+Branch: REL_13_STABLE [c49e6f9d9] 2021-09-13 18:26:18 -0700
+Branch: REL_12_STABLE [43849b65f] 2021-09-13 18:26:18 -0700
+Branch: REL_11_STABLE [dccffd9a2] 2021-09-13 18:26:18 -0700
+-->
+     <para>
+      Avoid trying to clean up LLVM state after an error within LLVM
+      (Andres Freund, Justin Pryzby)
+     </para>
+
+     <para>
+      This prevents a likely crash during backend exit after a fatal LLVM
+      error.
+     </para>
+    </listitem>
+
+    <listitem>
+<!--
+Author: Alvaro Herrera <alvherre@alvh.no-ip.org>
+Branch: master [d74b54b3d] 2021-11-05 12:29:35 -0300
+Branch: REL_14_STABLE [02e20bb2d] 2021-11-05 12:29:35 -0300
+Branch: REL_13_STABLE [bf5cdcfd5] 2021-11-05 12:29:34 -0300
+Branch: REL_12_STABLE [3eff168a2] 2021-11-05 12:29:34 -0300
+Branch: REL_11_STABLE [92224e470] 2021-11-05 12:29:34 -0300
+Branch: REL_10_STABLE [58b600f64] 2021-11-05 12:29:34 -0300
+Branch: REL9_6_STABLE [e0eaeafd6] 2021-11-05 12:29:35 -0300
+-->
+     <para>
+      Avoid null-pointer-dereference crash when dropping a role that owns
+      objects being dropped concurrently (&Aacute;lvaro Herrera)
+     </para>
+    </listitem>
+
+    <listitem>
+<!--
+Author: Heikki Linnakangas <heikki.linnakangas@iki.fi>
+Branch: master [6b1b405eb] 2021-11-03 10:52:38 +0200
+Branch: REL_14_STABLE [4ebd740cd] 2021-11-03 10:54:33 +0200
+Branch: REL_13_STABLE [07070c008] 2021-11-03 10:54:36 +0200
+Branch: REL_12_STABLE [11a399f9c] 2021-11-03 10:54:39 +0200
+Branch: REL_11_STABLE [6bf00da11] 2021-11-03 10:54:42 +0200
+Branch: REL_10_STABLE [7b55bb892] 2021-11-03 11:09:08 +0200
+Branch: REL9_6_STABLE [8f32afee0] 2021-11-03 11:15:02 +0200
+Branch: master [d5ab0681b] 2021-11-03 19:38:17 +0200
+Branch: REL_14_STABLE [f4e3b6271] 2021-11-03 19:41:35 +0200
+Branch: REL_13_STABLE [b7299b664] 2021-11-03 19:41:38 +0200
+Branch: REL_12_STABLE [7dc9a310e] 2021-11-03 19:41:41 +0200
+Branch: REL_11_STABLE [b110af5f7] 2021-11-03 19:41:44 +0200
+Branch: REL_10_STABLE [245799d39] 2021-11-03 19:41:46 +0200
+Branch: REL9_6_STABLE [71aeaf245] 2021-11-03 19:41:49 +0200
+-->
+     <para>
+      Prevent <quote>snapshot reference leak</quote> warning
+      when <function>lo_export()</function> or a related function fails
+      (Heikki Linnakangas)
+     </para>
+    </listitem>
+
+    <listitem>
+<!--
+Author: Tom Lane <tgl@sss.pgh.pa.us>
+Branch: master [3778bcb39] 2021-08-27 19:53:05 -0400
+Branch: REL_14_STABLE Release: REL_14_0 [e84d4810c] 2021-08-27 19:53:06 -0400
+Branch: REL_13_STABLE [dbb239d51] 2021-08-27 19:42:42 -0400
+Branch: REL_12_STABLE [187b5fea9] 2021-08-27 19:42:42 -0400
+Branch: REL_11_STABLE [7c1b0f4c3] 2021-08-27 19:42:42 -0400
+Branch: REL_10_STABLE [6a787c83c] 2021-08-27 19:42:42 -0400
+Branch: REL9_6_STABLE [9e959f7ed] 2021-08-27 19:42:42 -0400
+-->
+     <para>
+      Ensure that scans of SP-GiST indexes are counted in the statistics
+      views (Tom Lane)
+     </para>
+
+     <para>
+      Incrementing the number-of-index-scans counter was overlooked in the
+      SP-GiST code, although per-tuple counters were advanced correctly.
+     </para>
+    </listitem>
+
+    <listitem>
+<!--
+Author: Tom Lane <tgl@sss.pgh.pa.us>
+Branch: master [01fc65270] 2021-11-02 13:36:47 -0400
+Branch: REL_14_STABLE [16a56774f] 2021-11-02 13:36:53 -0400
+Branch: REL_13_STABLE [ada667b45] 2021-11-02 13:36:57 -0400
+-->
+     <para>
+      Fix inefficient code generation for CoerceToDomain expression nodes
+      (Ranier Vilela)
+     </para>
+    </listitem>
+
+    <listitem>
+<!--
+Author: Michael Paquier <michael@paquier.xyz>
+Branch: master [e4ba1005c] 2021-08-16 12:10:22 +0900
+Branch: REL_14_STABLE Release: REL_14_0 [f83d80ea1] 2021-08-16 12:11:49 +0900
+Branch: REL_13_STABLE [7f0873f32] 2021-08-16 12:11:53 +0900
+Branch: REL_12_STABLE [84c1bac57] 2021-08-16 12:11:56 +0900
+Branch: REL_11_STABLE [d392e86fa] 2021-08-16 12:11:59 +0900
+Branch: REL_10_STABLE [024fd44e0] 2021-08-16 12:12:02 +0900
+Branch: REL9_6_STABLE [942416f4b] 2021-08-16 12:12:09 +0900
+-->
+     <para>
+      Recalculate relevant wait intervals
+      if <varname>recovery_min_apply_delay</varname> is changed during
+      recovery (Soumyadeep Chakraborty, Ashwin Agrawal)
+     </para>
+    </listitem>
+
+    <listitem>
+<!--
+Author: David Rowley <drowley@postgresql.org>
+Branch: master [37450f2ca] 2021-08-13 16:41:26 +1200
+Branch: REL_14_STABLE Release: REL_14_0 [dc23c77d0] 2021-08-13 16:41:56 +1200
+Branch: REL_13_STABLE [4873da79d] 2021-08-13 16:42:35 +1200
+Branch: REL_12_STABLE [75d8fe818] 2021-08-13 16:43:13 +1200
+Branch: REL_11_STABLE [5a6b0f21e] 2021-08-13 16:43:46 +1200
+Branch: REL_10_STABLE [4874886b4] 2021-08-13 16:44:18 +1200
+-->
+     <para>
+      Fix infinite loop if a <filename>simplehash.h</filename> hash table
+      reaches 2^32 elements (Yura Sokolov)
+     </para>
+
+     <para>
+      It seems unlikely that this bug has been hit in practice, as it
+      would require <varname>work_mem</varname> settings of hundreds of
+      gigabytes for existing uses of <filename>simplehash.h</filename>.
+     </para>
+    </listitem>
+
+    <listitem>
+<!--
+Author: Tom Lane <tgl@sss.pgh.pa.us>
+Branch: master [6301c3ada] 2021-10-31 15:31:29 -0400
+Branch: REL_14_STABLE [8424dfced] 2021-10-31 15:31:38 -0400
+Branch: REL_13_STABLE [df238aed1] 2021-10-31 15:31:44 -0400
+Branch: master [e9d9ba2a4] 2021-11-01 16:24:39 -0400
+Branch: REL_14_STABLE [ad87bf355] 2021-11-01 16:24:40 -0400
+Branch: REL_13_STABLE [e477642a1] 2021-11-01 16:24:40 -0400
+Branch: master [65c6cab13] 2021-11-02 11:31:54 -0400
+Branch: REL_14_STABLE [08cfa5981] 2021-11-02 11:31:54 -0400
+Branch: REL_13_STABLE [0151af40c] 2021-11-02 11:31:54 -0400
+-->
+     <para>
+      Avoid O(N^2) behavior in some list-manipulation operations
+      (Nathan Bossart, Tom Lane)
+     </para>
+
+     <para>
+      These changes fix slow processing in several scenarios, including:
+      when a standby replays a transaction that held many exclusive locks
+      on the primary; when many files are due to be unlinked after a
+      checkpoint; when hash aggregation involves many batches; and when
+      <filename>pg_trgm</filename> extracts indexable conditions from a
+      complex regular expression.  Only the first of these scenarios has
+      actually been reported from the field, but they all seem like
+      plausible consequences of inefficient list deletions.
+     </para>
+    </listitem>
+
+    <listitem>
+<!--
+Author: Tomas Vondra <tomas.vondra@postgresql.org>
+Branch: master [83772cc78] 2021-09-23 18:05:10 +0200
+Branch: REL_14_STABLE Release: REL_14_0 [bb7628e55] 2021-09-23 18:22:29 +0200
+Branch: REL_13_STABLE [b564eb018] 2021-09-23 18:33:59 +0200
+Branch: REL_12_STABLE [16d394c05] 2021-09-23 18:41:55 +0200
+Branch: REL_11_STABLE [ac7290a20] 2021-09-23 18:48:03 +0200
+Branch: REL_10_STABLE [3aac99068] 2021-09-23 18:54:30 +0200
+Branch: master [ad8a166ca] 2021-09-23 18:13:36 +0200
+Branch: REL_14_STABLE Release: REL_14_0 [abb2f9144] 2021-09-23 18:25:37 +0200
+Branch: REL_13_STABLE [c0386f403] 2021-09-23 18:34:01 +0200
+Branch: REL_12_STABLE [4185632e9] 2021-09-23 18:43:05 +0200
+Branch: REL_11_STABLE [4487a7def] 2021-09-23 18:48:58 +0200
+Branch: REL_10_STABLE [d77e085af] 2021-09-23 18:55:22 +0200
+-->
+     <para>
+      Reduce memory consumption during calculation of extended statistics
+      (Justin Pryzby, Tomas Vondra)
+     </para>
+    </listitem>
+
+    <listitem>
+<!--
+Author: Peter Geoghegan <pg@bowt.ie>
+Branch: master [a5213adf3] 2021-10-27 12:10:47 -0700
+Branch: REL_14_STABLE [d078fe83d] 2021-10-27 12:10:45 -0700
+Branch: REL_13_STABLE [f8cce4a3d] 2021-10-27 12:10:43 -0700
+Branch: master [c2381b510] 2021-10-27 13:09:24 -0700
+Branch: REL_14_STABLE [6cac34339] 2021-10-27 13:09:01 -0700
+Branch: REL_13_STABLE [d5a2ffbce] 2021-10-27 13:09:00 -0700
+-->
+     <para>
+      Add more defensive checks around B-tree posting list splits
+      (Peter Geoghegan)
+     </para>
+
+     <para>
+      This change should help detect index corruption involving duplicate
+      table TIDs.
+     </para>
+    </listitem>
+
+    <listitem>
+<!--
+Author: Thomas Munro <tmunro@postgresql.org>
+Branch: master [8781b0ce2] 2021-10-26 12:54:55 +1300
+Branch: REL_14_STABLE [181361a0c] 2021-10-26 13:09:00 +1300
+Branch: REL_13_STABLE [24b7cf8a5] 2021-10-26 13:04:40 +1300
+Branch: REL_12_STABLE [8fef901e3] 2021-10-26 13:01:52 +1300
+-->
+     <para>
+      Disallow setting <varname>huge_pages</varname>
+      to <literal>on</literal> when <varname>shared_memory_type</varname>
+      is <literal>sysv</literal> (Thomas Munro)
+     </para>
+
+     <para>
+      Previously, this setting was accepted, but it did nothing for lack
+      of any implementation.
+     </para>
+    </listitem>
+
+    <listitem>
+<!--
+Author: Noah Misch <noah@leadboat.com>
+Branch: master [8670b9b99] 2021-09-06 11:27:59 -0700
+Branch: REL_14_STABLE Release: REL_14_0 [47d54b6ba] 2021-09-06 11:28:02 -0700
+Branch: REL_13_STABLE [aae398a87] 2021-09-06 11:28:02 -0700
+-->
+     <para>
+      Fix missing <application>libpq</application> functions on AIX
+      (Tony Reix)
+     </para>
+
+     <para>
+      Code reorganization led to the following documented functions not
+      being exported from <application>libpq</application> on AIX:
+      <function>pg_encoding_to_char()</function>,
+      <function>pg_utf_mblen()</function>,
+      <function>pg_char_to_encoding()</function>,
+      <function>pg_valid_server_encoding()</function>, and
+      <function>pg_valid_server_encoding_id()</function>.
+      Restore them to visibility.
+     </para>
+    </listitem>
+
+    <listitem>
+<!--
+Author: Michael Paquier <michael@paquier.xyz>
+Branch: master [fa703b317] 2021-09-13 13:23:50 +0900
+Branch: REL_14_STABLE Release: REL_14_0 [cc057fb31] 2021-09-13 13:24:04 +0900
+Branch: REL_13_STABLE [b589d212f] 2021-09-13 13:24:20 +0900
+Branch: REL_12_STABLE [b34dcf87f] 2021-09-13 13:24:27 +0900
+Branch: REL_11_STABLE [b6a10ff4a] 2021-09-13 13:24:35 +0900
+Branch: REL_10_STABLE [83a3737a6] 2021-09-13 13:24:47 +0900
+Branch: REL9_6_STABLE [3768c468d] 2021-09-13 13:24:56 +0900
+-->
+     <para>
+      Fix <application>ecpg</application> to recover correctly
+      after <function>malloc()</function> failure while establishing a
+      connection (Michael Paquier)
+     </para>
+    </listitem>
+
+    <listitem>
+<!--
+Author: Tom Lane <tgl@sss.pgh.pa.us>
+Branch: master [4476bcb87] 2021-09-21 19:06:53 -0400
+Branch: REL_14_STABLE Release: REL_14_0 [2ad5f963e] 2021-09-21 19:06:54 -0400
+Branch: REL_13_STABLE [5f0a073cb] 2021-09-21 19:06:33 -0400
+Branch: REL_12_STABLE [e8b0bcae6] 2021-09-21 19:06:33 -0400
+Branch: REL_11_STABLE [13921c511] 2021-09-21 19:06:33 -0400
+-->
+     <para>
+      Fix misevaluation of stable functions called in the arguments of a
+      PL/pgSQL <command>CALL</command> statement (Tom Lane)
+     </para>
+
+     <para>
+      They were being called with an out-of-date snapshot, so that they
+      would not see any database changes made since the start of the
+      session's top-level command.
+     </para>
+    </listitem>
+
+    <listitem>
+<!--
+Author: Tom Lane <tgl@sss.pgh.pa.us>
+Branch: master [1bf2518dd] 2021-09-13 12:42:03 -0400
+Branch: REL_14_STABLE Release: REL_14_0 [4ffd3fe4d] 2021-09-13 12:42:28 -0400
+Branch: REL_13_STABLE [745abdd95] 2021-09-13 12:42:03 -0400
+Branch: REL_12_STABLE [b1de90699] 2021-09-13 12:42:03 -0400
+Branch: REL_11_STABLE [bdd6ce48d] 2021-09-13 12:42:03 -0400
+Branch: REL_10_STABLE [fe70ec907] 2021-09-13 12:42:04 -0400
+Branch: REL9_6_STABLE [a460f7eb3] 2021-09-13 12:42:04 -0400
+-->
+     <para>
+      Allow <literal>EXIT</literal> out of the outermost block in a
+      PL/pgSQL routine (Tom Lane)
+     </para>
+
+     <para>
+      If the routine does not require an explicit <literal>RETURN</literal>,
+      this usage should be valid, but it was rejected.
+     </para>
+    </listitem>
+
+    <listitem>
+<!--
+Author: Tom Lane <tgl@sss.pgh.pa.us>
+Branch: master [87ad49147] 2021-09-03 21:04:44 -0400
+Branch: REL_14_STABLE Release: REL_14_0 [69d670e68] 2021-09-03 21:04:44 -0400
+Branch: REL_13_STABLE [742b30cae] 2021-09-03 21:04:44 -0400
+Branch: REL_12_STABLE [3b302eb1e] 2021-09-03 21:04:44 -0400
+Branch: REL_11_STABLE [beb404d3b] 2021-09-03 21:04:44 -0400
+Branch: REL_10_STABLE [6e2f45817] 2021-09-03 21:04:45 -0400
+Branch: REL9_6_STABLE [9a070c658] 2021-09-03 21:04:45 -0400
+-->
+     <para>
+      Remove <application>pg_ctl</application>'s hard-coded limits on the
+      total length of generated commands (Phil Krylov)
+     </para>
+
+     <para>
+      For example, this removes a restriction on how many command-line
+      options can be passed through to the postmaster.  Individual path
+      names that <application>pg_ctl</application> deals with, such as the
+      postmaster executable's name or the data directory name, are still
+      limited to <literal>MAXPGPATH</literal> bytes in most cases.
+     </para>
+    </listitem>
+
+    <listitem>
+<!--
+Author: Tom Lane <tgl@sss.pgh.pa.us>
+Branch: master [2acc84c6f] 2021-10-22 15:22:25 -0400
+Branch: REL_14_STABLE [3ad2c2455] 2021-10-22 15:22:25 -0400
+Branch: REL_13_STABLE [476006023] 2021-10-22 15:22:26 -0400
+Branch: REL_12_STABLE [52b927a73] 2021-10-22 15:22:26 -0400
+Branch: REL_11_STABLE [871dfe4b7] 2021-10-22 15:22:26 -0400
+Branch: REL_10_STABLE [10f9faf6d] 2021-10-22 15:22:26 -0400
+Branch: REL9_6_STABLE [b1df061f7] 2021-10-22 15:22:26 -0400
+-->
+     <para>
+      Fix <application>pg_dump</application> to dump non-global default
+      privileges correctly (Neil Chen, Masahiko Sawada)
+     </para>
+
+     <para>
+      If a global (unrestricted) <command>ALTER DEFAULT
+      PRIVILEGES</command> command revoked some present-by-default
+      privilege, for example <literal>EXECUTE</literal> for functions, and
+      then a restricted <command>ALTER DEFAULT PRIVILEGES</command>
+      command granted that privilege again for a selected role or
+      schema, <application>pg_dump</application> failed to dump the
+      restricted privilege grant correctly.
+     </para>
+    </listitem>
+
+    <listitem>
+<!--
+Author: Tom Lane <tgl@sss.pgh.pa.us>
+Branch: master [e2ff7d9a8] 2021-10-16 12:23:57 -0400
+Branch: REL_14_STABLE [b5152e3ba] 2021-10-16 12:24:11 -0400
+Branch: REL_13_STABLE [6a262ba8c] 2021-10-16 12:24:17 -0400
+Branch: REL_12_STABLE [fd182a92a] 2021-10-16 12:24:24 -0400
+Branch: REL_11_STABLE [ca7a4ce58] 2021-10-16 12:24:33 -0400
+Branch: REL_10_STABLE [2e2a23283] 2021-10-16 12:24:40 -0400
+-->
+     <para>
+      Make <application>pg_dump</application> acquire shared lock on
+      partitioned tables that are to be dumped (Tom Lane)
+     </para>
+
+     <para>
+      This oversight was usually pretty harmless, since
+      once <application>pg_dump</application> has locked any of the leaf
+      partitions, that would suffice to prevent significant DDL on the
+      partitioned table itself.  However problems could ensue when dumping
+      a childless partitioned table, since no relevant lock would be held.
+     </para>
+    </listitem>
+
+    <listitem>
+<!--
+Author: Tom Lane <tgl@sss.pgh.pa.us>
+Branch: master [bd3611db5] 2021-08-31 15:04:05 -0400
+Branch: REL_14_STABLE Release: REL_14_0 [a20a9f26c] 2021-08-31 15:04:05 -0400
+Branch: REL_13_STABLE [db11b4a3d] 2021-08-31 15:04:05 -0400
+Branch: REL_12_STABLE [6b9667392] 2021-08-31 15:04:05 -0400
+Branch: REL_11_STABLE [a60860ff3] 2021-08-31 15:04:05 -0400
+Branch: REL_10_STABLE [ba8f1a0be] 2021-08-31 15:04:05 -0400
+Branch: REL9_6_STABLE [dd3105286] 2021-08-31 15:04:05 -0400
+Branch: master [6c450a861] 2021-08-31 13:53:49 -0400
+Branch: REL_14_STABLE Release: REL_14_0 [9407dbbcb] 2021-08-31 13:53:49 -0400
+Branch: REL_13_STABLE [904ce45bf] 2021-08-31 13:53:50 -0400
+Branch: REL_12_STABLE [2f1ed9d98] 2021-08-31 13:53:50 -0400
+Branch: REL_11_STABLE [c4b298ee1] 2021-08-31 13:53:51 -0400
+Branch: REL_10_STABLE [0e7bdc722] 2021-08-31 13:53:51 -0400
+Branch: REL9_6_STABLE [4645997c8] 2021-08-31 13:53:33 -0400
+-->
+     <para>
+      Improve <application>pg_dump</application>'s performance by avoiding
+      making per-table queries for RLS policies, and by avoiding repetitive
+      calls to <function>format_type()</function> (Tom Lane)
+     </para>
+
+     <para>
+      These changes provide only marginal improvement when dumping from a
+      local server, but a dump from a remote server can benefit
+      substantially due to fewer network round-trips.
+     </para>
+    </listitem>
+
+    <listitem>
+<!--
+Author: Tom Lane <tgl@sss.pgh.pa.us>
+Branch: master [40dfac4fc] 2021-10-16 15:02:55 -0400
+Branch: REL_14_STABLE [3e4c8db93] 2021-10-16 15:03:05 -0400
+Branch: REL_13_STABLE [0b5f557b7] 2021-10-16 15:03:10 -0400
+Branch: REL_12_STABLE [5b0b2983a] 2021-10-16 15:03:15 -0400
+Branch: REL_11_STABLE [58955c84f] 2021-10-16 15:03:21 -0400
+-->
+     <para>
+      Fix crash in <application>pg_dump</application> when attempting to
+      dump trigger definitions from a pre-8.3 server (Tom Lane)
+     </para>
+    </listitem>
+
+    <listitem>
+<!--
+Author: Daniel Gustafsson <dgustafsson@postgresql.org>
+Branch: master [998d060f3] 2021-10-19 12:59:54 +0200
+Branch: REL_14_STABLE [3e2f32b01] 2021-10-19 12:59:54 +0200
+Branch: REL_13_STABLE [687fe8a9d] 2021-10-19 12:59:54 +0200
+Branch: REL_12_STABLE [e788883de] 2021-10-19 12:59:54 +0200
+Branch: REL_11_STABLE [038892c81] 2021-10-19 12:59:54 +0200
+Branch: REL_10_STABLE [4fda03b67] 2021-10-19 12:59:54 +0200
+Branch: REL9_6_STABLE [ef1f15819] 2021-10-19 12:59:54 +0200
+-->
+     <para>
+      Fix incorrect filename in <application>pg_restore</application>'s
+      error message about an invalid large object TOC file (Daniel
+      Gustafsson)
+     </para>
+    </listitem>
+
+    <listitem>
+<!--
+Author: Fujii Masao <fujii@postgresql.org>
+Branch: master [d33674708] 2021-09-29 21:46:56 +0900
+Branch: REL_14_STABLE [8021334d3] 2021-09-29 21:47:25 +0900
+Branch: REL_13_STABLE [3cc85d7d5] 2021-09-29 21:47:31 +0900
+Branch: master [2acb7cc6b] 2021-09-29 21:48:52 +0900
+Branch: REL_14_STABLE [8231c500e] 2021-09-29 21:49:29 +0900
+Branch: REL_13_STABLE [8cf4f7118] 2021-09-29 21:49:36 +0900
+Branch: REL_12_STABLE [c5f7e702d] 2021-09-29 21:49:40 +0900
+-->
+     <para>
+      Ensure that <application>pgbench</application> exits with non-zero
+      status after a socket-level failure (Yugo Nagata, Fabien Coelho)
+     </para>
+
+     <para>
+      The desired behavior is to finish out the run but then exit with
+      status 2.  Also, fix the reporting of such errors.
+     </para>
+    </listitem>
+
+    <listitem>
+<!--
+Author: Tom Lane <tgl@sss.pgh.pa.us>
+Branch: master [a6bd28beb] 2021-08-10 18:10:29 -0400
+Branch: REL_14_STABLE Release: REL_14_0 [a4957b5a7] 2021-08-10 18:10:30 -0400
+Branch: REL_13_STABLE [7ba487cf9] 2021-08-10 18:10:30 -0400
+Branch: REL_12_STABLE [cd7d9b6b6] 2021-08-10 18:10:30 -0400
+Branch: REL_11_STABLE [eefa4c2b5] 2021-08-10 18:10:30 -0400
+Branch: REL_10_STABLE [843d2879a] 2021-08-10 18:10:30 -0400
+Branch: REL9_6_STABLE [5a9df5d50] 2021-08-10 18:10:30 -0400
+-->
+     <para>
+      Fix failure of <filename>contrib/btree_gin</filename> indexes
+      on <type>"char"</type>
+      (not <type>char(<replaceable>n</replaceable>)</type>) columns,
+      when an indexscan using the <literal>&lt;</literal>
+      or <literal>&lt;=</literal> operator is performed (Tom Lane)
+     </para>
+
+     <para>
+      Such an indexscan failed to return all the entries it should.
+     </para>
+    </listitem>
+
+    <listitem>
+<!--
+Author: Tom Lane <tgl@sss.pgh.pa.us>
+Branch: master [a667b0668] 2021-10-31 19:13:48 -0400
+Branch: REL_14_STABLE [7104e0b24] 2021-10-31 19:13:48 -0400
+Branch: REL_13_STABLE [3a5b313ce] 2021-10-31 19:13:48 -0400
+Branch: REL_12_STABLE [16d0da5c8] 2021-10-31 19:13:48 -0400
+Branch: REL_11_STABLE [5dd067430] 2021-10-31 19:13:48 -0400
+Branch: REL_10_STABLE [d87d5f8d8] 2021-10-31 19:13:48 -0400
+Branch: REL9_6_STABLE [fdb60ca83] 2021-10-31 19:13:48 -0400
+-->
+     <para>
+      Change <filename>contrib/pg_stat_statements</filename> to read
+      its <quote>query texts</quote> file in units of at most 1GB
+      (Tom Lane)
+     </para>
+
+     <para>
+      Such large query text files are very unusual, but if they do occur,
+      the previous coding would fail on Windows 64 (which rejects
+      individual read requests of more than 2GB).
+     </para>
+    </listitem>
+
+    <listitem>
+<!--
+Author: Tom Lane <tgl@sss.pgh.pa.us>
+Branch: master [3071bbfe4] 2021-10-06 15:50:24 -0400
+Branch: REL_14_STABLE [12ff678e1] 2021-10-06 15:50:24 -0400
+Branch: REL_13_STABLE [aee83f39a] 2021-10-06 15:50:24 -0400
+Branch: REL_12_STABLE [228897374] 2021-10-06 15:50:24 -0400
+Branch: REL_11_STABLE [88807757d] 2021-10-06 15:50:24 -0400
+Branch: REL_10_STABLE [2e33fbda1] 2021-10-06 15:50:24 -0400
+Branch: REL9_6_STABLE [36c9f7d96] 2021-10-06 15:50:24 -0400
+-->
+     <para>
+      Fix null-pointer crash
+      when <filename>contrib/postgres_fdw</filename> tries to report a
+      data conversion error (Tom Lane)
+     </para>
+    </listitem>
+
+    <listitem>
+<!--
+Author: Tom Lane <tgl@sss.pgh.pa.us>
+Branch: master [c32fcac56] 2021-08-13 13:59:43 -0400
+Branch: REL_14_STABLE Release: REL_14_0 [4ffbd55d9] 2021-08-13 13:59:44 -0400
+Branch: REL_13_STABLE [48695decc] 2021-08-13 13:59:06 -0400
+Branch: REL_12_STABLE [cdda2b247] 2021-08-13 13:59:13 -0400
+Branch: REL_11_STABLE [8024ff478] 2021-08-13 13:59:18 -0400
+Branch: REL_10_STABLE [7915a9515] 2021-08-13 13:59:25 -0400
+Branch: REL9_6_STABLE [582a2affa] 2021-08-13 13:59:33 -0400
+-->
+     <para>
+      Add spinlock support for the RISC-V architecture (Marek Szuba)
+     </para>
+
+     <para>
+      This is essential for reasonable performance on that platform.
+     </para>
+    </listitem>
+
+    <listitem>
+<!--
+Author: Peter Eisentraut <peter@eisentraut.org>
+Branch: master Release: REL_14_BR [22e1943f1] 2021-03-23 11:48:37 +0100
+Branch: REL_13_STABLE [a69e1506f] 2021-09-25 11:25:48 +0200
+Branch: REL_12_STABLE [90cfd269f] 2021-09-25 11:25:48 +0200
+Branch: REL_11_STABLE [0f28d267c] 2021-09-25 11:25:48 +0200
+Branch: REL_10_STABLE [841075a65] 2021-09-25 11:25:48 +0200
+Author: Daniel Gustafsson <dgustafsson@postgresql.org>
+Branch: master [318df8023] 2021-08-10 15:01:52 +0200
+Branch: REL_14_STABLE Release: REL_14_0 [4fa2b15e1] 2021-09-25 11:27:20 +0200
+Branch: REL_13_STABLE [135d8687a] 2021-09-25 11:27:20 +0200
+Branch: REL_12_STABLE [00c72da4a] 2021-09-25 11:27:20 +0200
+Branch: REL_11_STABLE [11901cd96] 2021-09-25 11:27:20 +0200
+Branch: REL_10_STABLE [e802b594e] 2021-09-25 11:27:20 +0200
+Author: Daniel Gustafsson <dgustafsson@postgresql.org>
+Branch: master [72bbff4cd] 2021-08-10 15:08:46 +0200
+Branch: REL_14_STABLE Release: REL_14_0 [6d0001aab] 2021-09-25 11:27:28 +0200
+Branch: REL_13_STABLE [8e7199453] 2021-09-25 11:27:28 +0200
+Branch: REL_12_STABLE [7b6ce36fb] 2021-09-25 11:27:28 +0200
+Branch: REL_11_STABLE [19e91a40b] 2021-09-25 11:27:28 +0200
+Branch: REL_10_STABLE [eb643536b] 2021-09-25 11:27:28 +0200
+Author: Michael Paquier <michael@paquier.xyz>
+Branch: master [41f30ecc2] 2021-10-20 16:48:24 +0900
+Branch: REL_14_STABLE [81aefaea8] 2021-10-20 16:48:57 +0900
+Branch: REL_13_STABLE [abb9ee92c] 2021-10-20 16:49:00 +0900
+Branch: REL_12_STABLE [1539e0ecd] 2021-10-20 16:49:03 +0900
+Branch: REL_11_STABLE [e00d45fea] 2021-10-20 16:49:06 +0900
+Branch: REL_10_STABLE [922e3c3b7] 2021-10-20 16:49:10 +0900
+Branch: REL9_6_STABLE [d581960df] 2021-10-20 16:49:14 +0900
+-->
+     <para>
+      Support OpenSSL 3.0.0
+      (Peter Eisentraut, Daniel Gustafsson, Michael Paquier)
+     </para>
+    </listitem>
+
+    <listitem>
+<!--
+Author: Daniel Gustafsson <dgustafsson@postgresql.org>
+Branch: master [31f860a52] 2021-08-17 14:30:01 +0200
+Branch: REL_14_STABLE Release: REL_14_0 [b88377ad6] 2021-08-17 14:30:25 +0200
+Branch: REL_13_STABLE [e15f32f0e] 2021-08-17 14:31:00 +0200
+Branch: REL_12_STABLE [ed209db77] 2021-08-17 14:31:08 +0200
+Branch: REL_11_STABLE [f1d5a94fc] 2021-08-17 14:30:39 +0200
+Branch: REL_10_STABLE [ef7e24ff7] 2021-08-17 14:30:51 +0200
+Branch: REL9_6_STABLE [0a88d4ece] 2021-08-17 14:31:22 +0200
+-->
+     <para>
+      Set correct type identifier on OpenSSL BIO (I/O abstraction)
+      objects created by <productname>PostgreSQL</productname>
+      (Itamar Gafni)
+     </para>
+
+     <para>
+      This oversight probably only matters for code that is doing
+      tasks like auditing the OpenSSL installation.  But it's
+      nominally a violation of the OpenSSL API, so fix it.
+     </para>
+    </listitem>
+
+    <listitem>
+<!--
+Author: Peter Eisentraut <peter@eisentraut.org>
+Branch: master [4c2eab3a0] 2021-09-03 10:52:11 +0200
+Branch: master [55392bc5b] 2021-09-06 09:12:34 +0200
+Branch: REL_14_STABLE Release: REL_14_0 [1e9afc868] 2021-09-06 09:41:03 +0200
+Branch: REL_13_STABLE [9f9ae019d] 2021-09-06 09:43:05 +0200
+Branch: REL_12_STABLE [60bf7e69b] 2021-09-06 09:43:18 +0200
+-->
+     <para>
+      Fix our <filename>pkg-config</filename> files to again support static
+      linking of <application>libpq</application> (Peter Eisentraut)
+     </para>
+    </listitem>
+
+    <listitem>
+<!--
+Author: Tom Lane <tgl@sss.pgh.pa.us>
+Branch: master [e757080e0] 2021-09-11 15:19:31 -0400
+Branch: REL_14_STABLE Release: REL_14_0 [b33283cbd] 2021-09-11 15:19:43 -0400
+Branch: REL_13_STABLE [7e420072e] 2021-09-11 15:19:49 -0400
+Branch: REL_12_STABLE [3adde7eb6] 2021-09-11 15:19:54 -0400
+Branch: REL_11_STABLE [3be381a90] 2021-09-11 15:19:58 -0400
+Branch: REL_10_STABLE [daac97eb0] 2021-09-11 15:20:04 -0400
+Branch: REL9_6_STABLE [ec89d7ace] 2021-09-11 15:20:12 -0400
+-->
+     <para>
+      Make <function>pg_regexec()</function> robust against an
+      out-of-range <replaceable>search_start</replaceable> parameter
+      (Tom Lane)
+     </para>
+
+     <para>
+      Return <literal>REG_NOMATCH</literal>, instead of possibly crashing,
+      when <replaceable>search_start</replaceable> is past the end of the
+      string.  This case is probably unreachable within
+      core <productname>PostgreSQL</productname>, but extensions might be
+      more careless about the parameter value.
+     </para>
+    </listitem>
+
+    <listitem>
+<!--
+Author: Jeff Davis <jdavis@postgresql.org>
+Branch: master [7821a0bf2] 2021-10-14 12:24:00 -0700
+Branch: REL_14_STABLE [0b90f1c4c] 2021-10-14 12:24:22 -0700
+Branch: REL_13_STABLE [20f785732] 2021-10-14 12:24:47 -0700
+Branch: REL_12_STABLE [ab11f6e46] 2021-10-14 12:25:07 -0700
+Branch: REL_11_STABLE [3f5d481ef] 2021-10-14 12:25:30 -0700
+Branch: REL_10_STABLE [9364f64a2] 2021-10-14 12:25:48 -0700
+Branch: REL9_6_STABLE [ae6abeb88] 2021-10-14 12:26:26 -0700
+-->
+     <para>
+      Ensure that <function>GetSharedSecurityLabel()</function> can be
+      used in a newly-started session that has not yet built its critical
+      relation cache entries (Jeff Davis)
+     </para>
+    </listitem>
+
+    <listitem>
+<!--
+Author: Tom Lane <tgl@sss.pgh.pa.us>
+Branch: master [9b8d68cc6] 2021-10-02 16:05:42 -0400
+Branch: REL_14_STABLE [fa8db4879] 2021-10-02 16:06:09 -0400
+Branch: REL_13_STABLE [9c76689de] 2021-10-02 16:06:23 -0400
+Branch: REL_12_STABLE [e5b25f19b] 2021-10-02 16:06:45 -0400
+Branch: REL_11_STABLE [9cc919b51] 2021-10-02 16:06:55 -0400
+Branch: REL_10_STABLE [e323630cd] 2021-10-02 16:07:16 -0400
+Branch: REL9_6_STABLE [dbec5a2fe] 2021-10-02 16:07:37 -0400
+Branch: master [ad740067a] 2021-10-02 16:05:10 -0400
+Branch: REL_14_STABLE [81464999b] 2021-10-02 16:06:09 -0400
+Branch: REL_13_STABLE [7ba8eb81f] 2021-10-02 16:06:23 -0400
+Branch: REL_12_STABLE [4721e8aa6] 2021-10-02 16:06:45 -0400
+Branch: REL_11_STABLE [bb6d42669] 2021-10-02 16:06:55 -0400
+Branch: REL_10_STABLE [cb0799db0] 2021-10-02 16:07:16 -0400
+Branch: REL9_6_STABLE [37cbe0f79] 2021-10-02 16:07:36 -0400
+Branch: master [c1aa3b3c0] 2021-10-04 14:52:39 -0400
+Branch: REL_14_STABLE [919c08d90] 2021-10-04 14:52:17 -0400
+Branch: REL_13_STABLE [c53ff69e1] 2021-10-04 14:52:17 -0400
+Branch: REL_12_STABLE [07873a5dc] 2021-10-04 14:52:17 -0400
+Branch: REL_11_STABLE [d0b0b70dc] 2021-10-04 14:52:17 -0400
+Branch: REL_10_STABLE [cd2479142] 2021-10-04 14:52:17 -0400
+Branch: REL9_6_STABLE [b5f34ae08] 2021-10-04 14:52:17 -0400
+-->
+     <para>
+      Use the CLDR project's data to map Windows time zone names to IANA
+      time zones (Tom Lane)
+     </para>
+
+     <para>
+      When running on Windows, <application>initdb</application> attempts
+      to set the new cluster's <varname>timezone</varname> parameter to
+      the IANA time zone matching the system's prevailing time zone.
+      We were using a mapping table that we'd generated years ago and
+      updated only fitfully; unsurprisingly, it contained a number of
+      errors as well as omissions of recently-added zones.  It turns out
+      that CLDR has been tracking the most appropriate mappings, so start
+      using their data.  This change will not affect any existing
+      installation, only newly-initialized clusters.
+     </para>
+    </listitem>
+
+    <listitem>
+<!--
+Author: Tom Lane <tgl@sss.pgh.pa.us>
+Branch: master [937aafd6d] 2021-10-29 11:38:18 -0400
+Branch: REL_14_STABLE [0c8a40b39] 2021-10-29 11:38:32 -0400
+Branch: REL_13_STABLE [4cd72add0] 2021-10-29 11:38:38 -0400
+Branch: REL_12_STABLE [14b8d25d6] 2021-10-29 11:38:47 -0400
+Branch: REL_11_STABLE [91455f7c6] 2021-10-29 11:38:53 -0400
+Branch: REL_10_STABLE [d0fe211ce] 2021-10-29 11:38:58 -0400
+Branch: REL9_6_STABLE [22a498b9b] 2021-10-29 11:39:05 -0400
+-->
+     <para>
+      Update time zone data files to <application>tzdata</application>
+      release 2021e for DST law changes in Fiji, Jordan, Palestine, and
+      Samoa, plus historical corrections for Barbados, Cook Islands,
+      Guyana, Niue, Portugal, and Tonga.
+     </para>
+
+     <para>
+      Also, the Pacific/Enderbury zone has been renamed to Pacific/Kanton.
+      Also, the following zones have been merged into nearby, more-populous
+      zones whose clocks have agreed with them since 1970: Africa/Accra,
+      America/Atikokan, America/Blanc-Sablon, America/Creston,
+      America/Curacao, America/Nassau, America/Port_of_Spain,
+      Antarctica/DumontDUrville, and Antarctica/Syowa.
+      In all these cases, the previous zone name remains as an alias.
+     </para>
+    </listitem>
+
+   </itemizedlist>
+
+  </sect2>
+ </sect1>
+
  <sect1 id="release-13-4">
   <title>Release 13.4</title>
 

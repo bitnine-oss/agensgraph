@@ -255,6 +255,10 @@ EXPLAIN (COSTS OFF)
 SELECT circle_center(f1), round(radius(f1)) as radius FROM gcircle_tbl ORDER BY f1 <-> '(200,300)'::point LIMIT 10;
 SELECT circle_center(f1), round(radius(f1)) as radius FROM gcircle_tbl ORDER BY f1 <-> '(200,300)'::point LIMIT 10;
 
+EXPLAIN (COSTS OFF)
+SELECT point(x,x), (SELECT f1 FROM gpolygon_tbl ORDER BY f1 <-> point(x,x) LIMIT 1) as c FROM generate_series(0,10,1) x;
+SELECT point(x,x), (SELECT f1 FROM gpolygon_tbl ORDER BY f1 <-> point(x,x) LIMIT 1) as c FROM generate_series(0,10,1) x;
+
 -- Now check the results from bitmap indexscan
 SET enable_seqscan = OFF;
 SET enable_indexscan = OFF;
@@ -888,6 +892,15 @@ REINDEX TABLE CONCURRENTLY concur_replident;
 SELECT indexrelid::regclass, indisreplident FROM pg_index
   WHERE indrelid = 'concur_replident'::regclass;
 DROP TABLE concur_replident;
+-- Check that opclass parameters are preserved
+CREATE TABLE concur_appclass_tab(i tsvector, j tsvector, k tsvector);
+CREATE INDEX concur_appclass_ind on concur_appclass_tab
+  USING gist (i tsvector_ops (siglen='1000'), j tsvector_ops (siglen='500'));
+CREATE INDEX concur_appclass_ind_2 on concur_appclass_tab
+  USING gist (k tsvector_ops (siglen='300'), j tsvector_ops);
+REINDEX TABLE CONCURRENTLY concur_appclass_tab;
+\d concur_appclass_tab
+DROP TABLE concur_appclass_tab;
 
 -- Partitions
 -- Create some partitioned tables

@@ -22,7 +22,6 @@ TestLib - helper module for writing PostgreSQL's C<prove> tests.
 
   # Miscellanea
   print "on Windows" if $TestLib::windows_os;
-  my $path = TestLib::perl2host($backup_dir);
   ok(check_mode_recursive($stream_dir, 0700, 0600),
     "check stream dir permissions");
   TestLib::system_log('pg_ctl', 'kill', 'QUIT', $slow_pid);
@@ -71,6 +70,7 @@ our @EXPORT = qw(
   system_log
   run_log
   run_command
+  pump_until
 
   command_ok
   command_fails
@@ -87,7 +87,8 @@ our @EXPORT = qw(
   $use_unix_sockets
 );
 
-our ($windows_os, $use_unix_sockets, $tmp_check, $log_path, $test_logfile);
+our ($windows_os, $use_unix_sockets, $timeout_default,
+	 $tmp_check, $log_path, $test_logfile);
 
 BEGIN
 {
@@ -137,7 +138,7 @@ BEGIN
 	if ($windows_os)
 	{
 		require Win32API::File;
-		Win32API::File->import(qw(createFile OsFHandleOpen CloseHandle setFilePointer));
+		Win32API::File->import(qw(createFile OsFHandleOpen CloseHandle));
 	}
 
 	# Specifies whether to use Unix sockets for test setups.  On
@@ -145,6 +146,10 @@ BEGIN
 	# supported, but it can be overridden if desired.
 	$use_unix_sockets =
 	  (!$windows_os || defined $ENV{PG_TEST_USE_UNIX_SOCKETS});
+
+	$timeout_default = $ENV{PG_TEST_TIMEOUT_DEFAULT};
+	$timeout_default = 180
+	  if not defined $timeout_default or $timeout_default eq '';
 }
 
 =pod
@@ -281,36 +286,25 @@ sub tempdir_short
 
 =pod
 
-=item perl2host()
+=item has_wal_read_bug()
 
-Translate a Perl file name to a host file name.  Currently, this is a no-op
-except for the case of Perl=msys and host=mingw32.  The subject need not
-exist, but its parent directory must exist.
+Returns true if $tmp_check is subject to a sparc64+ext4 bug that causes WAL
+readers to see zeros if another process simultaneously wrote the same offsets.
+Consult this in tests that fail frequently on affected configurations.  The
+bug has made streaming standbys fail to advance, reporting corrupt WAL.  It
+has made COMMIT PREPARED fail with "could not read two-phase state from WAL".
+Non-WAL PostgreSQL reads haven't been affected, likely because those readers
+and writers have buffering systems in common.  See
+https://postgr.es/m/20220116210241.GC756210@rfd.leadboat.com for details.
 
 =cut
 
-sub perl2host
+sub has_wal_read_bug
 {
-	my ($subject) = @_;
-	return $subject unless $Config{osname} eq 'msys';
-	my $here = cwd;
-	my $leaf;
-	if (chdir $subject)
-	{
-		$leaf = '';
-	}
-	else
-	{
-		$leaf = '/' . basename $subject;
-		my $parent = dirname $subject;
-		chdir $parent or die "could not chdir \"$parent\": $!";
-	}
-
-	# this odd way of calling 'pwd -W' is the only way that seems to work.
-	my $dir = qx{sh -c "pwd -W"};
-	chomp $dir;
-	chdir $here;
-	return $dir . $leaf;
+	return
+	     $Config{osname} eq 'linux'
+	  && $Config{archname} =~ /^sparc/
+	  && !run_log([ qw(df -x ext4), $tmp_check ], '>', '/dev/null', '2>&1');
 }
 
 =pod
@@ -384,6 +378,36 @@ sub run_command
 
 =pod
 
+=item pump_until(proc, timeout, stream, until)
+
+Pump until string is matched on the specified stream, or timeout occurs.
+
+=cut
+
+sub pump_until
+{
+	my ($proc, $timeout, $stream, $until) = @_;
+	$proc->pump_nb();
+	while (1)
+	{
+		last if $$stream =~ /$until/;
+		if ($timeout->is_expired)
+		{
+			diag("pump_until: timeout expired when searching for \"$until\" with stream: \"$$stream\"");
+			return 0;
+		}
+		if (not $proc->pumpable())
+		{
+			diag("pump_until: process terminated unexpectedly when searching for \"$until\" with stream: \"$$stream\"");
+			return 0;
+		}
+		$proc->pump();
+	}
+	return 1;
+}
+
+=pod
+
 =item generate_ascii_string(from_char, to_char)
 
 Generate a string made of the given range of ASCII characters.
@@ -434,34 +458,33 @@ sub slurp_file
 	my ($filename, $offset) = @_;
 	local $/;
 	my $contents;
+	my $fh;
+
+	# On windows open file using win32 APIs, to allow us to set the
+	# FILE_SHARE_DELETE flag ("d" below), otherwise other accesses to the file
+	# may fail.
 	if ($Config{osname} ne 'MSWin32')
 	{
-		open(my $in, '<', $filename)
+		open($fh, '<', $filename)
 		  or die "could not read \"$filename\": $!";
-		if (defined($offset))
-		{
-			seek($in, $offset, SEEK_SET)
-			  or die "could not seek \"$filename\": $!";
-		}
-		$contents = <$in>;
-		close $in;
 	}
 	else
 	{
 		my $fHandle = createFile($filename, "r", "rwd")
 		  or die "could not open \"$filename\": $^E";
-		OsFHandleOpen(my $fh = IO::Handle->new(), $fHandle, 'r')
+		OsFHandleOpen($fh = IO::Handle->new(), $fHandle, 'r')
 		  or die "could not read \"$filename\": $^E\n";
-		if (defined($offset))
-		{
-			setFilePointer($fh, $offset, qw(FILE_BEGIN))
-			  or die "could not seek \"$filename\": $^E\n";
-		}
-		$contents = <$fh>;
-		CloseHandle($fHandle)
-		  or die "could not close \"$filename\": $^E\n";
 	}
-	$contents =~ s/\r\n/\n/g if $Config{osname} eq 'msys';
+
+	if (defined($offset))
+	{
+		seek($fh, $offset, SEEK_SET)
+		  or die "could not seek \"$filename\": $!";
+	}
+
+	$contents = <$fh>;
+	close $fh;
+
 	return $contents;
 }
 
@@ -907,5 +930,45 @@ sub command_checks_all
 =back
 
 =cut
+
+# support release 15+ perl module namespace
+
+package PostgreSQL::Test::Utils; ## no critic (ProhibitMultiplePackages)
+
+# we don't want to export anything here, but we want to support things called
+# via this package name explicitly.
+
+# use typeglobs to alias these functions and variables
+
+no warnings qw(once);
+
+*generate_ascii_string = *TestLib::generate_ascii_string;
+*slurp_dir = *TestLib::slurp_dir;
+*slurp_file = *TestLib::slurp_file;
+*append_to_file = *TestLib::append_to_file;
+*check_mode_recursive = *TestLib::check_mode_recursive;
+*chmod_recursive = *TestLib::chmod_recursive;
+*check_pg_config = *TestLib::check_pg_config;
+*system_or_bail = *TestLib::system_or_bail;
+*system_log = *TestLib::system_log;
+*run_log = *TestLib::run_log;
+*run_command = *TestLib::run_command;
+*command_ok = *TestLib::command_ok;
+*command_fails = *TestLib::command_fails;
+*command_exit_is = *TestLib::command_exit_is;
+*program_help_ok = *TestLib::program_help_ok;
+*program_version_ok = *TestLib::program_version_ok;
+*program_options_handling_ok = *TestLib::program_options_handling_ok;
+*command_like = *TestLib::command_like;
+*command_like_safe = *TestLib::command_like_safe;
+*command_fails_like = *TestLib::command_fails_like;
+*command_checks_all = *TestLib::command_checks_all;
+
+*windows_os = *TestLib::windows_os;
+*use_unix_sockets = *TestLib::use_unix_sockets;
+*timeout_default = *TestLib::timeout_default;
+*tmp_check = *TestLib::tmp_check;
+*log_path = *TestLib::log_path;
+*test_logfile = *TestLib::test_log_file;
 
 1;

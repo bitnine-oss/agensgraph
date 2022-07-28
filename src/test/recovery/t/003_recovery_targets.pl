@@ -11,6 +11,8 @@ use Time::HiRes qw(usleep);
 # count to reach $num_rows, yet not later than the recovery target.
 sub test_recovery_standby
 {
+	local $Test::Builder::Level = $Test::Builder::Level + 1;
+
 	my $test_name       = shift;
 	my $node_name       = shift;
 	my $node_master     = shift;
@@ -167,8 +169,8 @@ run_log(
 		$node_standby->logfile, 'start'
 	]);
 
-# wait up to 180s for postgres to terminate
-foreach my $i (0 .. 1800)
+# wait for postgres to terminate
+foreach my $i (0 .. 10 * $TestLib::timeout_default)
 {
 	last if !-f $node_standby->data_dir . '/postmaster.pid';
 	usleep(100_000);

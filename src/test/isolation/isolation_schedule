@@ -34,6 +34,7 @@ test: eval-plan-qual-trigger
 test: lock-update-delete
 test: lock-update-traversal
 test: inherit-temp
+test: temp-schema-cleanup
 test: insert-conflict-do-nothing
 test: insert-conflict-do-nothing-2
 test: insert-conflict-do-update
@@ -49,6 +50,7 @@ test: lock-committed-update
 test: lock-committed-keyupdate
 test: update-locked-tuple
 test: reindex-concurrently
+test: reindex-concurrently-toast
 test: propagate-lock-delete
 test: tuplelock-conflict
 test: tuplelock-update
@@ -82,6 +84,7 @@ test: predicate-hash
 test: predicate-gist
 test: predicate-gin
 test: partition-concurrent-attach
+test: partition-drop-index-locking
 test: partition-key-update-1
 test: partition-key-update-2
 test: partition-key-update-3

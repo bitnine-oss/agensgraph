@@ -31,6 +31,7 @@
 #include "catalog/pg_publication.h"
 #include "catalog/pg_publication_rel.h"
 #include "catalog/pg_type.h"
+#include "commands/publicationcmds.h"
 #include "funcapi.h"
 #include "miscadmin.h"
 #include "utils/array.h"
@@ -105,6 +106,45 @@ is_publishable_class(Oid relid, Form_pg_class reltuple)
 }
 
 /*
+ * Filter out the partitions whose parent tables were also specified in
+ * the publication.
+ */
+static List *
+filter_partitions(List *relids)
+{
+	List	   *result = NIL;
+	ListCell   *lc;
+	ListCell   *lc2;
+
+	foreach(lc, relids)
+	{
+		bool		skip = false;
+		List	   *ancestors = NIL;
+		Oid			relid = lfirst_oid(lc);
+
+		if (get_rel_relispartition(relid))
+			ancestors = get_partition_ancestors(relid);
+
+		foreach(lc2, ancestors)
+		{
+			Oid			ancestor = lfirst_oid(lc2);
+
+			/* Check if the parent table exists in the published table list. */
+			if (list_member_oid(relids, ancestor))
+			{
+				skip = true;
+				break;
+			}
+		}
+
+		if (!skip)
+			result = lappend_oid(result, relid);
+	}
+
+	return result;
+}
+
+/*
  * Another variant of this, taking a Relation.
  */
 bool
@@ -136,6 +176,42 @@ pg_relation_is_publishable(PG_FUNCTION_ARGS)
 	PG_RETURN_BOOL(result);
 }
 
+/*
+ * Gets the relations based on the publication partition option for a specified
+ * relation.
+ */
+List *
+GetPubPartitionOptionRelations(List *result, PublicationPartOpt pub_partopt,
+							   Oid relid)
+{
+	if (get_rel_relkind(relid) == RELKIND_PARTITIONED_TABLE &&
+		pub_partopt != PUBLICATION_PART_ROOT)
+	{
+		List	   *all_parts = find_all_inheritors(relid, NoLock,
+													NULL);
+
+		if (pub_partopt == PUBLICATION_PART_ALL)
+			result = list_concat(result, all_parts);
+		else if (pub_partopt == PUBLICATION_PART_LEAF)
+		{
+			ListCell   *lc;
+
+			foreach(lc, all_parts)
+			{
+				Oid			partOid = lfirst_oid(lc);
+
+				if (get_rel_relkind(partOid) != RELKIND_PARTITIONED_TABLE)
+					result = lappend_oid(result, partOid);
+			}
+		}
+		else
+			Assert(false);
+	}
+	else
+		result = lappend_oid(result, relid);
+
+	return result;
+}
 
 /*
  * Insert new publication / relation mapping.
@@ -153,6 +229,7 @@ publication_add_relation(Oid pubid, Relation targetrel,
 	Publication *pub = GetPublication(pubid);
 	ObjectAddress myself,
 				referenced;
+	List	   *relids = NIL;
 
 	rel = table_open(PublicationRelRelationId, RowExclusiveLock);
 
@@ -208,8 +285,18 @@ publication_add_relation(Oid pubid, Relation targetrel,
 	/* Close the table. */
 	table_close(rel, RowExclusiveLock);
 
-	/* Invalidate relcache so that publication info is rebuilt. */
-	CacheInvalidateRelcache(targetrel);
+	/*
+	 * Invalidate relcache so that publication info is rebuilt.
+	 *
+	 * For the partitioned tables, we must invalidate all partitions contained
+	 * in the respective partition hierarchies, not just the one explicitly
+	 * mentioned in the publication. This is required because we implicitly
+	 * publish the child tables when the parent table is published.
+	 */
+	relids = GetPubPartitionOptionRelations(relids, PUBLICATION_PART_ALL,
+											relid);
+
+	InvalidatePublicationRels(relids);
 
 	return myself;
 }
@@ -241,7 +328,7 @@ GetRelationPublications(Oid relid)
 /*
  * Gets list of relation oids for a publication.
  *
- * This should only be used for normal publications, the FOR ALL TABLES
+ * This should only be used FOR TABLE publications, the FOR ALL TABLES
  * should use GetAllTablesPublicationRelations().
  */
 List *
@@ -270,32 +357,8 @@ GetPublicationRelations(Oid pubid, PublicationPartOpt pub_partopt)
 		Form_pg_publication_rel pubrel;
 
 		pubrel = (Form_pg_publication_rel) GETSTRUCT(tup);
-
-		if (get_rel_relkind(pubrel->prrelid) == RELKIND_PARTITIONED_TABLE &&
-			pub_partopt != PUBLICATION_PART_ROOT)
-		{
-			List	   *all_parts = find_all_inheritors(pubrel->prrelid, NoLock,
-														NULL);
-
-			if (pub_partopt == PUBLICATION_PART_ALL)
-				result = list_concat(result, all_parts);
-			else if (pub_partopt == PUBLICATION_PART_LEAF)
-			{
-				ListCell   *lc;
-
-				foreach(lc, all_parts)
-				{
-					Oid			partOid = lfirst_oid(lc);
-
-					if (get_rel_relkind(partOid) != RELKIND_PARTITIONED_TABLE)
-						result = lappend_oid(result, partOid);
-				}
-			}
-			else
-				Assert(false);
-		}
-		else
-			result = lappend_oid(result, pubrel->prrelid);
+		result = GetPubPartitionOptionRelations(result, pub_partopt,
+												pubrel->prrelid);
 	}
 
 	systable_endscan(scan);
@@ -533,10 +596,23 @@ pg_get_publication_tables(PG_FUNCTION_ARGS)
 		if (publication->alltables)
 			tables = GetAllTablesPublicationRelations(publication->pubviaroot);
 		else
+		{
 			tables = GetPublicationRelations(publication->oid,
 											 publication->pubviaroot ?
 											 PUBLICATION_PART_ROOT :
 											 PUBLICATION_PART_LEAF);
+
+			/*
+			 * If the publication publishes partition changes via their
+			 * respective root partitioned tables, we must exclude partitions
+			 * in favor of including the root partitioned tables. Otherwise,
+			 * the function could return both the child and parent tables
+			 * which could cause data of the child table to be
+			 * double-published on the subscriber side.
+			 */
+			if (publication->pubviaroot)
+				tables = filter_partitions(tables);
+		}
 		funcctx->user_fctx = (void *) tables;
 
 		MemoryContextSwitchTo(oldcontext);

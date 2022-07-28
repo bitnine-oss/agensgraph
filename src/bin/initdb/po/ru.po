@@ -6,13 +6,13 @@
 # Sergey Burladyan <eshkinkot@gmail.com>, 2009.
 # Andrey Sudnik <sudnikand@yandex.ru>, 2010.
 # Dmitriy Olshevskiy <olshevskiy87@bk.ru>, 2014.
-# Alexander Lakhin <exclusion@gmail.com>, 2012-2017, 2018, 2019, 2020.
+# Alexander Lakhin <exclusion@gmail.com>, 2012-2017, 2018, 2019, 2020, 2021.
 msgid ""
 msgstr ""
 "Project-Id-Version: initdb (PostgreSQL current)\n"
 "Report-Msgid-Bugs-To: pgsql-bugs@lists.postgresql.org\n"
-"POT-Creation-Date: 2020-09-03 11:22+0300\n"
-"PO-Revision-Date: 2020-10-29 15:03+0300\n"
+"POT-Creation-Date: 2022-04-26 13:44+0300\n"
+"PO-Revision-Date: 2021-08-14 07:49+0300\n"
 "Last-Translator: Alexander Lakhin <exclusion@gmail.com>\n"
 "Language-Team: Russian <pgsql-ru-general@postgresql.org>\n"
 "Language: ru\n"
@@ -37,42 +37,42 @@ msgstr "ошибка: "
 msgid "warning: "
 msgstr "предупреждение: "
 
-#: ../../common/exec.c:137 ../../common/exec.c:254 ../../common/exec.c:300
+#: ../../common/exec.c:142 ../../common/exec.c:259 ../../common/exec.c:305
 #, c-format
 msgid "could not identify current directory: %m"
 msgstr "не удалось определить текущий каталог: %m"
 
-#: ../../common/exec.c:156
+#: ../../common/exec.c:161
 #, c-format
 msgid "invalid binary \"%s\""
 msgstr "неверный исполняемый файл \"%s\""
 
-#: ../../common/exec.c:206
+#: ../../common/exec.c:211
 #, c-format
 msgid "could not read binary \"%s\""
 msgstr "не удалось прочитать исполняемый файл \"%s\""
 
-#: ../../common/exec.c:214
+#: ../../common/exec.c:219
 #, c-format
 msgid "could not find a \"%s\" to execute"
 msgstr "не удалось найти запускаемый файл \"%s\""
 
-#: ../../common/exec.c:270 ../../common/exec.c:309
+#: ../../common/exec.c:275 ../../common/exec.c:314
 #, c-format
 msgid "could not change directory to \"%s\": %m"
 msgstr "не удалось перейти в каталог \"%s\": %m"
 
-#: ../../common/exec.c:287
+#: ../../common/exec.c:292
 #, c-format
 msgid "could not read symbolic link \"%s\": %m"
 msgstr "не удалось прочитать символическую ссылку \"%s\": %m"
 
-#: ../../common/exec.c:410
+#: ../../common/exec.c:415
 #, c-format
 msgid "pclose failed: %m"
 msgstr "ошибка pclose: %m"
 
-#: ../../common/exec.c:539 ../../common/exec.c:584 ../../common/exec.c:676
+#: ../../common/exec.c:544 ../../common/exec.c:589 ../../common/exec.c:681
 #: initdb.c:325
 #, c-format
 msgid "out of memory"
@@ -880,7 +880,7 @@ msgstr ""
 #: initdb.c:2712 initdb.c:2794 initdb.c:3163
 #, c-format
 msgid "could not access directory \"%s\": %m"
-msgstr "нет доступа к каталогу \"%s\": %m"
+msgstr "ошибка доступа к каталогу \"%s\": %m"
 
 #: initdb.c:2735
 #, c-format
@@ -1031,11 +1031,11 @@ msgstr ""
 "--auth-local или --auth-host при следующем выполнении initdb.\n"
 
 #. translator: This is a placeholder in a shell command.
-#: initdb.c:3293
+#: initdb.c:3296
 msgid "logfile"
 msgstr "файл_журнала"
 
-#: initdb.c:3295
+#: initdb.c:3298
 #, c-format
 msgid ""
 "\n"
