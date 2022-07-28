@@ -8,7 +8,7 @@ use TestLib;
 use PostgresNode;
 
 use File::Path qw(rmtree);
-use Test::More tests => 14;
+use Test::More tests => 16;
 use Time::HiRes qw(usleep);
 
 $ENV{PGDATABASE} = 'postgres';
@@ -170,24 +170,70 @@ ok( !find_in_log(
 		"requested WAL segment [0-9A-F]+ has already been removed"),
 	'check that required WAL segments are still available');
 
-# Advance WAL again, the slot loses the oldest segment.
-my $logstart = get_log_size($node_master);
-advance_wal($node_master, 7);
+# Create one checkpoint, to improve stability of the next steps
 $node_master->safe_psql('postgres', "CHECKPOINT;");
 
-# WARNING should be issued
-ok( find_in_log(
-		$node_master,
-		"invalidating slot \"rep1\" because its restart_lsn [0-9A-F/]+ exceeds max_slot_wal_keep_size",
-		$logstart),
-	'check that the warning is logged');
+# Prevent other checkpoints from occurring while advancing WAL segments
+$node_master->safe_psql('postgres',
+	"ALTER SYSTEM SET max_wal_size='40MB'; SELECT pg_reload_conf()");
 
-# This slot should be broken
-$result = $node_master->safe_psql('postgres',
-	"SELECT slot_name, active, restart_lsn IS NULL, wal_status, safe_wal_size FROM pg_replication_slots WHERE slot_name = 'rep1'"
-);
+# Advance WAL again. The slot loses the oldest segment by the next checkpoint
+my $logstart = get_log_size($node_master);
+advance_wal($node_master, 7);
+
+# Now create another checkpoint and wait until the WARNING is issued
+$node_master->safe_psql('postgres',
+	'ALTER SYSTEM RESET max_wal_size; SELECT pg_reload_conf()');
+$node_master->safe_psql('postgres', "CHECKPOINT;");
+my $invalidated = 0;
+for (my $i = 0; $i < 10000; $i++)
+{
+	if (find_in_log(
+			$node_master,
+			"invalidating slot \"rep1\" because its restart_lsn [0-9A-F/]+ exceeds max_slot_wal_keep_size",
+			$logstart))
+	{
+		$invalidated = 1;
+		last;
+	}
+	usleep(100_000);
+}
+ok($invalidated, 'check that slot invalidation has been logged');
+
+$result = $node_master->safe_psql(
+	'postgres',
+	qq[
+	SELECT slot_name, active, restart_lsn IS NULL, wal_status, safe_wal_size
+	FROM pg_replication_slots WHERE slot_name = 'rep1']);
 is($result, "rep1|f|t|lost|",
 	'check that the slot became inactive and the state "lost" persists');
+
+# Wait until current checkpoint ends
+my $checkpoint_ended = 0;
+for (my $i = 0; $i < 10000; $i++)
+{
+	if (find_in_log($node_master, "checkpoint complete: ", $logstart))
+	{
+		$checkpoint_ended = 1;
+		last;
+	}
+	usleep(100_000);
+}
+ok($checkpoint_ended, 'waited for checkpoint to end');
+
+# The invalidated slot shouldn't keep the old-segment horizon back;
+# see bug #17103: https://postgr.es/m/17103-004130e8f27782c9@postgresql.org
+# Test for this by creating a new slot and comparing its restart LSN
+# to the oldest existing file.
+my $redoseg = $node_master->safe_psql('postgres',
+	"SELECT pg_walfile_name(lsn) FROM pg_create_physical_replication_slot('s2', true)"
+);
+my $oldestseg = $node_master->safe_psql('postgres',
+	"SELECT pg_ls_dir AS f FROM pg_ls_dir('pg_wal') WHERE pg_ls_dir ~ '^[0-9A-F]{24}\$' ORDER BY 1 LIMIT 1"
+);
+$node_master->safe_psql('postgres',
+	qq[SELECT pg_drop_replication_slot('s2')]);
+is($oldestseg, $redoseg, "check that segments have been removed");
 
 # The standby no longer can connect to the master
 $logstart = get_log_size($node_standby);

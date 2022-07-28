@@ -17,7 +17,6 @@
 #include "postgres.h"
 
 #include "access/relation.h"
-#include "access/sysattr.h"
 #include "access/table.h"
 #include "catalog/namespace.h"
 #include "catalog/pg_subscription_rel.h"
@@ -25,16 +24,12 @@
 #include "nodes/makefuncs.h"
 #include "replication/logicalrelation.h"
 #include "replication/worker_internal.h"
-#include "utils/builtins.h"
 #include "utils/inval.h"
-#include "utils/lsyscache.h"
-#include "utils/memutils.h"
-#include "utils/syscache.h"
+
 
 static MemoryContext LogicalRepRelMapContext = NULL;
 
 static HTAB *LogicalRepRelMap = NULL;
-static HTAB *LogicalRepTypMap = NULL;
 
 /*
  * Partition map (LogicalRepPartMap)
@@ -117,16 +112,6 @@ logicalrep_relmap_init(void)
 	ctl.hcxt = LogicalRepRelMapContext;
 
 	LogicalRepRelMap = hash_create("logicalrep relation map cache", 128, &ctl,
-								   HASH_ELEM | HASH_BLOBS | HASH_CONTEXT);
-
-	/* Initialize the type hash table. */
-	MemSet(&ctl, 0, sizeof(ctl));
-	ctl.keysize = sizeof(Oid);
-	ctl.entrysize = sizeof(LogicalRepTyp);
-	ctl.hcxt = LogicalRepRelMapContext;
-
-	/* This will usually be small. */
-	LogicalRepTypMap = hash_create("logicalrep type map cache", 2, &ctl,
 								   HASH_ELEM | HASH_BLOBS | HASH_CONTEXT);
 
 	/* Watch for invalidation events. */
@@ -419,95 +404,6 @@ logicalrep_rel_close(LogicalRepRelMapEntry *rel, LOCKMODE lockmode)
 }
 
 /*
- * Free the type map cache entry data.
- */
-static void
-logicalrep_typmap_free_entry(LogicalRepTyp *entry)
-{
-	pfree(entry->nspname);
-	pfree(entry->typname);
-}
-
-/*
- * Add new entry or update existing entry in the type map cache.
- */
-void
-logicalrep_typmap_update(LogicalRepTyp *remotetyp)
-{
-	MemoryContext oldctx;
-	LogicalRepTyp *entry;
-	bool		found;
-
-	if (LogicalRepTypMap == NULL)
-		logicalrep_relmap_init();
-
-	/*
-	 * HASH_ENTER returns the existing entry if present or creates a new one.
-	 */
-	entry = hash_search(LogicalRepTypMap, (void *) &remotetyp->remoteid,
-						HASH_ENTER, &found);
-
-	if (found)
-		logicalrep_typmap_free_entry(entry);
-
-	/* Make cached copy of the data */
-	entry->remoteid = remotetyp->remoteid;
-	oldctx = MemoryContextSwitchTo(LogicalRepRelMapContext);
-	entry->nspname = pstrdup(remotetyp->nspname);
-	entry->typname = pstrdup(remotetyp->typname);
-	MemoryContextSwitchTo(oldctx);
-}
-
-/*
- * Fetch type name from the cache by remote type OID.
- *
- * Return a substitute value if we cannot find the data type; no message is
- * sent to the log in that case, because this is used by error callback
- * already.
- */
-char *
-logicalrep_typmap_gettypname(Oid remoteid)
-{
-	LogicalRepTyp *entry;
-	bool		found;
-
-	/* Internal types are mapped directly. */
-	if (remoteid < FirstGenbkiObjectId)
-	{
-		if (!get_typisdefined(remoteid))
-		{
-			/*
-			 * This can be caused by having a publisher with a higher
-			 * PostgreSQL major version than the subscriber.
-			 */
-			return psprintf("unrecognized %u", remoteid);
-		}
-
-		return format_type_be(remoteid);
-	}
-
-	if (LogicalRepTypMap == NULL)
-	{
-		/*
-		 * If the typemap is not initialized yet, we cannot possibly attempt
-		 * to search the hash table; but there's no way we know the type
-		 * locally yet, since we haven't received a message about this type,
-		 * so this is the best we can do.
-		 */
-		return psprintf("unrecognized %u", remoteid);
-	}
-
-	/* search the mapping */
-	entry = hash_search(LogicalRepTypMap, (void *) &remoteid,
-						HASH_FIND, &found);
-	if (!found)
-		return psprintf("unrecognized %u", remoteid);
-
-	Assert(OidIsValid(entry->remoteid));
-	return psprintf("%s.%s", entry->nspname, entry->typname);
-}
-
-/*
  * Partition cache: look up partition LogicalRepRelMapEntry's
  *
  * Unlike relation map cache, this is keyed by partition OID, not remote
@@ -589,7 +485,9 @@ logicalrep_partmap_init(void)
  * logicalrep_partition_open
  *
  * Returned entry reuses most of the values of the root table's entry, save
- * the attribute map, which can be different for the partition.
+ * the attribute map, which can be different for the partition.  However,
+ * we must physically copy all the data, in case the root table's entry
+ * gets freed/rebuilt.
  *
  * Note there's no logicalrep_partition_close, because the caller closes the
  * the component relation.
@@ -625,7 +523,7 @@ logicalrep_partition_open(LogicalRepRelMapEntry *root,
 
 	part_entry->partoid = partOid;
 
-	/* Remote relation is used as-is from the root entry. */
+	/* Remote relation is copied as-is from the root entry. */
 	entry = &part_entry->relmapentry;
 	entry->remoterel.remoteid = remoterel->remoteid;
 	entry->remoterel.nspname = pstrdup(remoterel->nspname);
@@ -668,7 +566,12 @@ logicalrep_partition_open(LogicalRepRelMapEntry *root,
 		}
 	}
 	else
-		entry->attrmap = attrmap;
+	{
+		/* Lacking copy_attmap, do this the hard way. */
+		entry->attrmap = make_attrmap(attrmap->maplen);
+		memcpy(entry->attrmap->attnums, attrmap->attnums,
+			   attrmap->maplen * sizeof(AttrNumber));
+	}
 
 	entry->updatable = root->updatable;
 

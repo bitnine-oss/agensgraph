@@ -10,6 +10,7 @@
 #include <ctype.h>
 #include <time.h>
 #include <pwd.h>
+#include <utime.h>
 #ifndef WIN32
 #include <sys/stat.h>			/* for stat() */
 #include <fcntl.h>				/* open() flags */
@@ -3056,6 +3057,7 @@ do_connect(enum trivalue reuse_previous_specification,
 	int			nconnopts = 0;
 	bool		same_host = false;
 	char	   *password = NULL;
+	char	   *client_encoding;
 	bool		success = true;
 	bool		keep_password = true;
 	bool		has_connection_string;
@@ -3126,6 +3128,7 @@ do_connect(enum trivalue reuse_previous_specification,
 			{
 				PQconninfoOption *ci;
 				PQconninfoOption *replci;
+				bool		have_password = false;
 
 				for (ci = cinfo, replci = replcinfo;
 					 ci->keyword && replci->keyword;
@@ -3144,6 +3147,45 @@ do_connect(enum trivalue reuse_previous_specification,
 
 						replci->val = ci->val;
 						ci->val = swap;
+
+						/*
+						 * Check whether connstring provides options affecting
+						 * password re-use.  While any change in user, host,
+						 * hostaddr, or port causes us to ignore the old
+						 * connection's password, we don't force that for
+						 * dbname, since passwords aren't database-specific.
+						 */
+						if (replci->val == NULL ||
+							strcmp(ci->val, replci->val) != 0)
+						{
+							if (strcmp(replci->keyword, "user") == 0 ||
+								strcmp(replci->keyword, "host") == 0 ||
+								strcmp(replci->keyword, "hostaddr") == 0 ||
+								strcmp(replci->keyword, "port") == 0)
+								keep_password = false;
+						}
+						/* Also note whether connstring contains a password. */
+						if (strcmp(replci->keyword, "password") == 0)
+							have_password = true;
+					}
+					else if (!reuse_previous)
+					{
+						/*
+						 * When we have a connstring and are not re-using
+						 * parameters, swap *all* entries, even those not set
+						 * by the connstring.  This avoids absorbing
+						 * environment-dependent defaults from the result of
+						 * PQconndefaults().  We don't want to do that because
+						 * they'd override service-file entries if the
+						 * connstring specifies a service parameter, whereas
+						 * the priority should be the other way around.  libpq
+						 * can certainly recompute any defaults we don't pass
+						 * here.  (In this situation, it's a bit wasteful to
+						 * have called PQconndefaults() at all, but not doing
+						 * so would require yet another major code path here.)
+						 */
+						replci->val = ci->val;
+						ci->val = NULL;
 					}
 				}
 				Assert(ci->keyword == NULL && replci->keyword == NULL);
@@ -3153,8 +3195,13 @@ do_connect(enum trivalue reuse_previous_specification,
 
 				PQconninfoFree(replcinfo);
 
-				/* We never re-use a password with a conninfo string. */
-				keep_password = false;
+				/*
+				 * If the connstring contains a password, tell the loop below
+				 * that we may use it, regardless of other settings (i.e.,
+				 * cinfo's password is no longer an "old" password).
+				 */
+				if (have_password)
+					keep_password = true;
 
 				/* Don't let code below try to inject dbname into params. */
 				dbname = NULL;
@@ -3242,14 +3289,16 @@ do_connect(enum trivalue reuse_previous_specification,
 		 */
 		password = prompt_for_password(has_connection_string ? NULL : user);
 	}
-	else if (o_conn && keep_password)
-	{
-		password = PQpass(o_conn);
-		if (password && *password)
-			password = pg_strdup(password);
-		else
-			password = NULL;
-	}
+
+	/*
+	 * Consider whether to force client_encoding to "auto" (overriding
+	 * anything in the connection string).  We do so if we have a terminal
+	 * connection and there is no PGCLIENTENCODING environment setting.
+	 */
+	if (pset.notty || getenv("PGCLIENTENCODING"))
+		client_encoding = NULL;
+	else
+		client_encoding = "auto";
 
 	/* Loop till we have a connection or fail, which we might've already */
 	while (success)
@@ -3261,12 +3310,12 @@ do_connect(enum trivalue reuse_previous_specification,
 
 		/*
 		 * Copy non-default settings into the PQconnectdbParams parameter
-		 * arrays; but override any values specified old-style, as well as the
-		 * password and a couple of fields we want to set forcibly.
+		 * arrays; but inject any values specified old-style, as well as any
+		 * interactively-obtained password, and a couple of fields we want to
+		 * set forcibly.
 		 *
 		 * If you change this code, see also the initial-connection code in
-		 * main().  For no good reason, a connection string password= takes
-		 * precedence in main() but not here.
+		 * main().
 		 */
 		for (ci = cinfo; ci->keyword; ci++)
 		{
@@ -3285,12 +3334,15 @@ do_connect(enum trivalue reuse_previous_specification,
 			}
 			else if (port && strcmp(ci->keyword, "port") == 0)
 				values[paramnum++] = port;
-			else if (strcmp(ci->keyword, "password") == 0)
+			/* If !keep_password, we unconditionally drop old password */
+			else if ((password || !keep_password) &&
+					 strcmp(ci->keyword, "password") == 0)
 				values[paramnum++] = password;
 			else if (strcmp(ci->keyword, "fallback_application_name") == 0)
 				values[paramnum++] = pset.progname;
-			else if (strcmp(ci->keyword, "client_encoding") == 0)
-				values[paramnum++] = (pset.notty || getenv("PGCLIENTENCODING")) ? NULL : "auto";
+			else if (client_encoding &&
+					 strcmp(ci->keyword, "client_encoding") == 0)
+				values[paramnum++] = client_encoding;
 			else if (ci->val)
 				values[paramnum++] = ci->val;
 			/* else, don't bother making libpq parse this keyword */
@@ -3697,7 +3749,6 @@ do_edit(const char *filename_arg, PQExpBuffer query_buf,
 	const char *fname;
 	bool		error = false;
 	int			fd;
-
 	struct stat before,
 				after;
 
@@ -3722,13 +3773,13 @@ do_edit(const char *filename_arg, PQExpBuffer query_buf,
 						 !ret ? strerror(errno) : "");
 			return false;
 		}
+#endif
 
 		/*
 		 * No canonicalize_path() here. EDIT.EXE run from CMD.EXE prepends the
 		 * current directory to the supplied path unless we use only
 		 * backslashes, so we do that.
 		 */
-#endif
 #ifndef WIN32
 		snprintf(fnametmp, sizeof(fnametmp), "%s%spsql.edit.%d.sql", tmpdir,
 				 "/", (int) getpid());
@@ -3778,6 +3829,24 @@ do_edit(const char *filename_arg, PQExpBuffer query_buf,
 					pg_log_error("%s: %m", fname);
 				error = true;
 			}
+			else
+			{
+				struct utimbuf ut;
+
+				/*
+				 * Try to set the file modification time of the temporary file
+				 * a few seconds in the past.  Otherwise, the low granularity
+				 * (one second, or even worse on some filesystems) that we can
+				 * portably measure with stat(2) could lead us to not
+				 * recognize a modification, if the user typed very quickly.
+				 *
+				 * This is a rather unlikely race condition, so don't error
+				 * out if the utime(2) call fails --- that would make the cure
+				 * worse than the disease.
+				 */
+				ut.modtime = ut.actime = time(NULL) - 2;
+				(void) utime(fname, &ut);
+			}
 		}
 	}
 
@@ -3797,7 +3866,10 @@ do_edit(const char *filename_arg, PQExpBuffer query_buf,
 		error = true;
 	}
 
-	if (!error && before.st_mtime != after.st_mtime)
+	/* file was edited if the size or modification time has changed */
+	if (!error &&
+		(before.st_size != after.st_size ||
+		 before.st_mtime != after.st_mtime))
 	{
 		stream = fopen(fname, PG_BINARY_R);
 		if (!stream)

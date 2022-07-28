@@ -38,6 +38,7 @@
 #include "plpgsql.h"
 #include "storage/proc.h"
 #include "tcop/cmdtag.h"
+#include "tcop/pquery.h"
 #include "tcop/tcopprot.h"
 #include "tcop/utility.h"
 #include "utils/array.h"
@@ -2146,7 +2147,6 @@ exec_stmt_call(PLpgSQL_execstate *estate, PLpgSQL_stmt_call *stmt)
 	PLpgSQL_variable *volatile cur_target = stmt->target;
 	volatile LocalTransactionId before_lxid;
 	LocalTransactionId after_lxid;
-	volatile bool pushed_active_snap = false;
 	volatile int rc;
 
 	/*
@@ -2172,31 +2172,30 @@ exec_stmt_call(PLpgSQL_execstate *estate, PLpgSQL_stmt_call *stmt)
 		 */
 		if (plan == NULL || local_plan)
 		{
-			/* Don't let SPI save the plan if it's going to be local */
-			exec_prepare_plan(estate, expr, 0, !local_plan);
-			plan = expr->plan;
-
-			/*
-			 * A CALL or DO can never be a simple expression.  (If it could
-			 * be, we'd have to worry about saving/restoring the previous
-			 * values of the related expr fields, not just expr->plan.)
-			 */
-			Assert(!expr->expr_simple_expr);
-
-			/*
-			 * The procedure call could end transactions, which would upset
-			 * the snapshot management in SPI_execute*, so don't let it do it.
-			 * Instead, we set the snapshots ourselves below.
-			 */
-			plan->no_snapshots = true;
-
 			/*
 			 * Force target to be recalculated whenever the plan changes, in
 			 * case the procedure's argument list has changed.
 			 */
 			stmt->target = NULL;
 			cur_target = NULL;
+
+			/* Don't let SPI save the plan if it's going to be local */
+			exec_prepare_plan(estate, expr, 0, !local_plan);
+			plan = expr->plan;
 		}
+
+		/*
+		 * A CALL or DO can never be a simple expression.  (If it could be,
+		 * we'd have to worry about saving/restoring the previous values of
+		 * the related expr fields, not just expr->plan.)
+		 */
+		Assert(!expr->expr_simple_expr);
+
+		/*
+		 * Tell SPI to allow non-atomic execution.  (The field name is a
+		 * legacy choice.)
+		 */
+		plan->no_snapshots = true;
 
 		/*
 		 * We construct a DTYPE_ROW datum representing the plpgsql variables
@@ -2224,8 +2223,8 @@ exec_stmt_call(PLpgSQL_execstate *estate, PLpgSQL_stmt_call *stmt)
 			int			i;
 			ListCell   *lc;
 
-			/* Use eval_mcontext for any cruft accumulated here */
-			oldcontext = MemoryContextSwitchTo(get_eval_mcontext(estate));
+			/* Use stmt_mcontext for any cruft accumulated here */
+			oldcontext = MemoryContextSwitchTo(get_stmt_mcontext(estate));
 
 			/*
 			 * Get the parsed CallStmt, and look up the called procedure
@@ -2271,7 +2270,7 @@ exec_stmt_call(PLpgSQL_execstate *estate, PLpgSQL_stmt_call *stmt)
 			row->varnos = (int *) palloc(sizeof(int) * list_length(funcargs));
 
 			if (!local_plan)
-				MemoryContextSwitchTo(get_eval_mcontext(estate));
+				MemoryContextSwitchTo(get_stmt_mcontext(estate));
 
 			/*
 			 * Examine procedure's argument list.  Each output arg position
@@ -2328,16 +2327,6 @@ exec_stmt_call(PLpgSQL_execstate *estate, PLpgSQL_stmt_call *stmt)
 
 		before_lxid = MyProc->lxid;
 
-		/*
-		 * Set snapshot only for non-read-only procedures, similar to SPI
-		 * behavior.
-		 */
-		if (!estate->readonly_func)
-		{
-			PushActiveSnapshot(GetTransactionSnapshot());
-			pushed_active_snap = true;
-		}
-
 		rc = SPI_execute_plan_with_paramlist(expr->plan, paramLI,
 											 estate->readonly_func, 0);
 	}
@@ -2372,17 +2361,7 @@ exec_stmt_call(PLpgSQL_execstate *estate, PLpgSQL_stmt_call *stmt)
 
 	after_lxid = MyProc->lxid;
 
-	if (before_lxid == after_lxid)
-	{
-		/*
-		 * If we are still in the same transaction after the call, pop the
-		 * snapshot that we might have pushed.  (If it's a new transaction,
-		 * then all the snapshots are gone already.)
-		 */
-		if (pushed_active_snap)
-			PopActiveSnapshot();
-	}
-	else
+	if (before_lxid != after_lxid)
 	{
 		/*
 		 * If we are in a new transaction after the call, we need to build new
@@ -4110,6 +4089,22 @@ exec_eval_cleanup(PLpgSQL_execstate *estate)
 
 /* ----------
  * Generate a prepared plan
+ *
+ * CAUTION: it is possible for this function to throw an error after it has
+ * built a SPIPlan and saved it in expr->plan.  Therefore, be wary of doing
+ * additional things contingent on expr->plan being NULL.  That is, given
+ * code like
+ *
+ *	if (query->plan == NULL)
+ *	{
+ *		// okay to put setup code here
+ *		exec_prepare_plan(estate, query, ...);
+ *		// NOT okay to put more logic here
+ *	}
+ *
+ * extra steps at the end are unsafe because they will not be executed when
+ * re-executing the calling statement, if exec_prepare_plan failed the first
+ * time.  This is annoyingly error-prone, but the alternatives are worse.
  * ----------
  */
 static void
@@ -4139,15 +4134,15 @@ exec_prepare_plan(PLpgSQL_execstate *estate,
 		SPI_keepplan(plan);
 	expr->plan = plan;
 
-	/* Check to see if it's a simple expression */
-	exec_simple_check_plan(estate, expr);
-
 	/*
 	 * Mark expression as not using a read-write param.  exec_assign_value has
 	 * to take steps to override this if appropriate; that seems cleaner than
 	 * adding parameters to all other callers.
 	 */
 	expr->rwparam = -1;
+
+	/* Check to see if it's a simple expression */
+	exec_simple_check_plan(estate, expr);
 }
 
 
@@ -4178,10 +4173,12 @@ exec_stmt_execsql(PLpgSQL_execstate *estate,
 	 * whether the statement is INSERT/UPDATE/DELETE
 	 */
 	if (expr->plan == NULL)
+		exec_prepare_plan(estate, expr, CURSOR_OPT_PARALLEL_OK, true);
+
+	if (!stmt->mod_stmt_set)
 	{
 		ListCell   *l;
 
-		exec_prepare_plan(estate, expr, CURSOR_OPT_PARALLEL_OK, true);
 		stmt->mod_stmt = false;
 		foreach(l, SPI_plan_get_plan_sources(expr->plan))
 		{
@@ -4201,6 +4198,7 @@ exec_stmt_execsql(PLpgSQL_execstate *estate,
 				break;
 			}
 		}
+		stmt->mod_stmt_set = true;
 	}
 
 	/*
@@ -4584,7 +4582,7 @@ exec_stmt_dynfors(PLpgSQL_execstate *estate, PLpgSQL_stmt_dynfors *stmt)
 	int			rc;
 
 	portal = exec_dynquery_with_params(estate, stmt->query, stmt->params,
-									   NULL, 0);
+									   NULL, CURSOR_OPT_NO_SCROLL);
 
 	/*
 	 * Execute the loop
@@ -4950,6 +4948,7 @@ exec_stmt_rollback(PLpgSQL_execstate *estate, PLpgSQL_stmt_rollback *stmt)
  *
  * We just parse and execute the statement normally, but we have to do it
  * without setting a snapshot, for things like SET TRANSACTION.
+ * XXX spi.c now handles this correctly, so we no longer need a special case.
  */
 static int
 exec_stmt_set(PLpgSQL_execstate *estate, PLpgSQL_stmt_set *stmt)
@@ -4958,10 +4957,7 @@ exec_stmt_set(PLpgSQL_execstate *estate, PLpgSQL_stmt_set *stmt)
 	int			rc;
 
 	if (expr->plan == NULL)
-	{
 		exec_prepare_plan(estate, expr, 0, true);
-		expr->plan->no_snapshots = true;
-	}
 
 	rc = SPI_execute_plan(expr->plan, NULL, NULL, estate->readonly_func, 0);
 
@@ -4990,6 +4986,14 @@ exec_assign_expr(PLpgSQL_execstate *estate, PLpgSQL_datum *target,
 	 * if we can pass the target variable as a read-write parameter to the
 	 * expression.  (This is a bit messy, but it seems cleaner than modifying
 	 * the API of exec_eval_expr for the purpose.)
+	 *
+	 * NOTE: this coding ignores the advice given in exec_prepare_plan's
+	 * comments, that one should not do additional setup contingent on
+	 * expr->plan being NULL.  This means that if we get an error while trying
+	 * to check for the expression being simple, we won't check for a
+	 * read-write parameter either, so that neither optimization will be
+	 * applied in future executions.  Nothing will fail though, so we live
+	 * with that bit of messiness too.
 	 */
 	if (expr->plan == NULL)
 	{
@@ -5931,14 +5935,21 @@ exec_run_select(PLpgSQL_execstate *estate,
 	 * On the first call for this expression generate the plan.
 	 *
 	 * If we don't need to return a portal, then we're just going to execute
-	 * the query once, which means it's OK to use a parallel plan, even if the
-	 * number of rows being fetched is limited.  If we do need to return a
-	 * portal, the caller might do cursor operations, which parallel query
-	 * can't support.
+	 * the query immediately, which means it's OK to use a parallel plan, even
+	 * if the number of rows being fetched is limited.  If we do need to
+	 * return a portal (i.e., this is for a FOR loop), the user's code might
+	 * invoke additional operations inside the FOR loop, making parallel query
+	 * unsafe.  In any case, we don't expect any cursor operations to be done,
+	 * so specify NO_SCROLL for efficiency and semantic safety.
 	 */
 	if (expr->plan == NULL)
-		exec_prepare_plan(estate, expr,
-						  portalP == NULL ? CURSOR_OPT_PARALLEL_OK : 0, true);
+	{
+		int			cursorOptions = CURSOR_OPT_NO_SCROLL;
+
+		if (portalP == NULL)
+			cursorOptions |= CURSOR_OPT_PARALLEL_OK;
+		exec_prepare_plan(estate, expr, cursorOptions, true);
+	}
 
 	/*
 	 * Set up ParamListInfo to pass to executor
@@ -6004,6 +6015,17 @@ exec_for_query(PLpgSQL_execstate *estate, PLpgSQL_stmt_forq *stmt,
 	 * execute.
 	 */
 	PinPortal(portal);
+
+	/*
+	 * In a non-atomic context, we dare not prefetch, even if it would
+	 * otherwise be safe.  Aside from any semantic hazards that that might
+	 * create, if we prefetch toasted data and then the user commits the
+	 * transaction, the toast references could turn into dangling pointers.
+	 * (Rows we haven't yet fetched from the cursor are safe, because the
+	 * PersistHoldablePortal mechanism handles this scenario.)
+	 */
+	if (!estate->atomic)
+		prefetch_ok = false;
 
 	/*
 	 * Fetch the initial tuple(s).  If prefetching is allowed then we grab a
@@ -6182,6 +6204,15 @@ exec_eval_simple_expr(PLpgSQL_execstate *estate,
 	if (unlikely(expr->expr_simple_in_use) &&
 		expr->expr_simple_lxid == curlxid)
 		return false;
+
+	/*
+	 * Ensure that there's a portal-level snapshot, in case this simple
+	 * expression is the first thing evaluated after a COMMIT or ROLLBACK.
+	 * We'd have to do this anyway before executing the expression, so we
+	 * might as well do it now to ensure that any possible replanning doesn't
+	 * need to take a new snapshot.
+	 */
+	EnsurePortalSnapshotExists();
 
 	/*
 	 * Check to see if the cached plan has been invalidated.  If not, and this
@@ -8047,6 +8078,10 @@ get_cast_hashentry(PLpgSQL_execstate *estate,
  * exec_simple_check_plan -		Check if a plan is simple enough to
  *								be evaluated by ExecEvalExpr() instead
  *								of SPI.
+ *
+ * Note: the refcount manipulations in this function assume that expr->plan
+ * is a "saved" SPI plan.  That's a bit annoying from the caller's standpoint,
+ * but it's otherwise difficult to avoid leaking the plan on failure.
  * ----------
  */
 static void
@@ -8129,7 +8164,8 @@ exec_simple_check_plan(PLpgSQL_execstate *estate, PLpgSQL_expr *expr)
 	 * OK, we can treat it as a simple plan.
 	 *
 	 * Get the generic plan for the query.  If replanning is needed, do that
-	 * work in the eval_mcontext.
+	 * work in the eval_mcontext.  (Note that replanning could throw an error,
+	 * in which case the expr is left marked "not simple", which is fine.)
 	 */
 	oldcontext = MemoryContextSwitchTo(get_eval_mcontext(estate));
 	cplan = SPI_plan_get_cached_plan(expr->plan);

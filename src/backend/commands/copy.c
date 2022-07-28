@@ -2804,6 +2804,7 @@ CopyFrom(CopyState cstate)
 	mtstate->ps.state = estate;
 	mtstate->operation = CMD_INSERT;
 	mtstate->resultRelInfo = estate->es_result_relations;
+	mtstate->rootResultRelInfo = estate->es_result_relations;
 
 	if (resultRelInfo->ri_FdwRoutine != NULL &&
 		resultRelInfo->ri_FdwRoutine->BeginForeignInsert != NULL)
@@ -3629,7 +3630,6 @@ NextCopyFromRawFields(CopyState cstate, char ***fields, int *nfields)
  *
  * 'values' and 'nulls' arrays must be the same length as columns of the
  * relation passed to BeginCopyFrom. This function fills the arrays.
- * Oid of the tuple is returned with 'tupleOid' separately.
  */
 bool
 NextCopyFrom(CopyState cstate, ExprContext *econtext,
@@ -4228,7 +4228,7 @@ CopyReadLineText(CopyState cstate)
 				break;
 			}
 			else if (!cstate->csv_mode)
-
+			{
 				/*
 				 * If we are here, it means we found a backslash followed by
 				 * something other than a period.  In non-CSV mode, anything
@@ -4239,8 +4239,16 @@ CopyReadLineText(CopyState cstate)
 				 * backslashes are not special, so we want to process the
 				 * character after the backslash just like a normal character,
 				 * so we don't increment in those cases.
+				 *
+				 * Set 'c' to skip whole character correctly in multi-byte
+				 * encodings.  If we don't have the whole character in the
+				 * buffer yet, we might loop back to process it, after all,
+				 * but that's OK because multi-byte characters cannot have any
+				 * special meaning.
 				 */
 				raw_buf_ptr++;
+				c = c2;
+			}
 		}
 
 		/*

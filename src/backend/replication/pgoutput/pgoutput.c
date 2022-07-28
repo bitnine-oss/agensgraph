@@ -57,6 +57,10 @@ static void send_relation_and_attrs(Relation relation, LogicalDecodingContext *c
 /*
  * Entry in the map used to remember which relation schemas we sent.
  *
+ * The schema_sent flag determines if the current schema record for the
+ * relation (and for its ancestor if publish_as_relid is set) was already sent
+ * to the subscriber (in which case we don't need to send it again).
+ *
  * For partitions, 'pubactions' considers not only the table's own
  * publications, but also those of all of its ancestors.
  */
@@ -64,10 +68,6 @@ typedef struct RelationSyncEntry
 {
 	Oid			relid;			/* relation oid */
 
-	/*
-	 * Did we send the schema?  If ancestor relid is set, its schema must also
-	 * have been sent for this to be true.
-	 */
 	bool		schema_sent;
 
 	bool		replicate_valid;
@@ -292,10 +292,17 @@ static void
 maybe_send_schema(LogicalDecodingContext *ctx,
 				  Relation relation, RelationSyncEntry *relentry)
 {
+	/* Nothing to do if we already sent the schema. */
 	if (relentry->schema_sent)
 		return;
 
-	/* If needed, send the ancestor's schema first. */
+	/*
+	 * Nope, so send the schema.  If the changes will be published using an
+	 * ancestor's schema, not the relation's own, send that ancestor's schema
+	 * before sending relation's own (XXX - maybe sending only the former
+	 * suffices?).  This is also a good place to set the map that will be used
+	 * to convert the relation's tuples into the ancestor's format, if needed.
+	 */
 	if (relentry->publish_as_relid != RelationGetRelid(relation))
 	{
 		Relation	ancestor = RelationIdGetRelation(relentry->publish_as_relid);
@@ -305,8 +312,21 @@ maybe_send_schema(LogicalDecodingContext *ctx,
 
 		/* Map must live as long as the session does. */
 		oldctx = MemoryContextSwitchTo(CacheMemoryContext);
-		relentry->map = convert_tuples_by_name(CreateTupleDescCopy(indesc),
-											   CreateTupleDescCopy(outdesc));
+
+		/*
+		 * Make copies of the TupleDescs that will live as long as the map
+		 * does before putting into the map.
+		 */
+		indesc = CreateTupleDescCopy(indesc);
+		outdesc = CreateTupleDescCopy(outdesc);
+		relentry->map = convert_tuples_by_name(indesc, outdesc);
+		if (relentry->map == NULL)
+		{
+			/* Map not necessary, so free the TupleDescs too. */
+			FreeTupleDesc(indesc);
+			FreeTupleDesc(outdesc);
+		}
+
 		MemoryContextSwitchTo(oldctx);
 		send_relation_and_attrs(ancestor, ctx);
 		RelationClose(ancestor);
@@ -363,6 +383,7 @@ pgoutput_change(LogicalDecodingContext *ctx, ReorderBufferTXN *txn,
 	PGOutputData *data = (PGOutputData *) ctx->output_plugin_private;
 	MemoryContext old;
 	RelationSyncEntry *relentry;
+	Relation	ancestor = NULL;
 
 	if (!is_publishable_relation(relation))
 		return;
@@ -404,7 +425,8 @@ pgoutput_change(LogicalDecodingContext *ctx, ReorderBufferTXN *txn,
 				if (relentry->publish_as_relid != RelationGetRelid(relation))
 				{
 					Assert(relation->rd_rel->relispartition);
-					relation = RelationIdGetRelation(relentry->publish_as_relid);
+					ancestor = RelationIdGetRelation(relentry->publish_as_relid);
+					relation = ancestor;
 					/* Convert tuple if needed. */
 					if (relentry->map)
 						tuple = execute_attr_map_tuple(tuple, relentry->map);
@@ -425,12 +447,16 @@ pgoutput_change(LogicalDecodingContext *ctx, ReorderBufferTXN *txn,
 				if (relentry->publish_as_relid != RelationGetRelid(relation))
 				{
 					Assert(relation->rd_rel->relispartition);
-					relation = RelationIdGetRelation(relentry->publish_as_relid);
+					ancestor = RelationIdGetRelation(relentry->publish_as_relid);
+					relation = ancestor;
 					/* Convert tuples if needed. */
 					if (relentry->map)
 					{
-						oldtuple = execute_attr_map_tuple(oldtuple, relentry->map);
-						newtuple = execute_attr_map_tuple(newtuple, relentry->map);
+						if (oldtuple)
+							oldtuple = execute_attr_map_tuple(oldtuple,
+															  relentry->map);
+						newtuple = execute_attr_map_tuple(newtuple,
+														  relentry->map);
 					}
 				}
 
@@ -448,7 +474,8 @@ pgoutput_change(LogicalDecodingContext *ctx, ReorderBufferTXN *txn,
 				if (relentry->publish_as_relid != RelationGetRelid(relation))
 				{
 					Assert(relation->rd_rel->relispartition);
-					relation = RelationIdGetRelation(relentry->publish_as_relid);
+					ancestor = RelationIdGetRelation(relentry->publish_as_relid);
+					relation = ancestor;
 					/* Convert tuple if needed. */
 					if (relentry->map)
 						oldtuple = execute_attr_map_tuple(oldtuple, relentry->map);
@@ -463,6 +490,12 @@ pgoutput_change(LogicalDecodingContext *ctx, ReorderBufferTXN *txn,
 			break;
 		default:
 			Assert(false);
+	}
+
+	if (RelationIsValid(ancestor))
+	{
+		RelationClose(ancestor);
+		ancestor = NULL;
 	}
 
 	/* Cleanup */
@@ -652,7 +685,20 @@ get_rel_sync_entry(PGOutputData *data, Oid relid)
 	Assert(entry != NULL);
 
 	/* Not found means schema wasn't sent */
-	if (!found || !entry->replicate_valid)
+	if (!found)
+	{
+		/*
+		 * immediately make a new entry valid enough to satisfy callbacks
+		 */
+		entry->schema_sent = false;
+		entry->replicate_valid = false;
+		entry->pubactions.pubinsert = entry->pubactions.pubupdate =
+			entry->pubactions.pubdelete = entry->pubactions.pubtruncate = false;
+		entry->publish_as_relid = InvalidOid;
+		entry->map = NULL;	/* will be set by maybe_send_schema() if needed */
+	}
+
+	if (!entry->replicate_valid)
 	{
 		List	   *pubids = GetRelationPublications(relid);
 		ListCell   *lc;
@@ -752,9 +798,6 @@ get_rel_sync_entry(PGOutputData *data, Oid relid)
 		entry->replicate_valid = true;
 	}
 
-	if (!found)
-		entry->schema_sent = false;
-
 	return entry;
 }
 
@@ -791,9 +834,23 @@ rel_sync_cache_relation_cb(Datum arg, Oid relid)
 
 	/*
 	 * Reset schema sent status as the relation definition may have changed.
+	 * Also, free any objects that depended on the earlier definition.
 	 */
 	if (entry != NULL)
+	{
 		entry->schema_sent = false;
+		if (entry->map)
+		{
+			/*
+			 * Must free the TupleDescs contained in the map explicitly,
+			 * because free_conversion_map() doesn't.
+			 */
+			FreeTupleDesc(entry->map->indesc);
+			FreeTupleDesc(entry->map->outdesc);
+			free_conversion_map(entry->map);
+		}
+		entry->map = NULL;
+	}
 }
 
 /*

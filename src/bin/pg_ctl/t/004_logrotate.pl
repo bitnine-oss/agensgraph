@@ -12,6 +12,8 @@ $node->init();
 $node->append_conf(
 	'postgresql.conf', qq(
 logging_collector = on
+# these ensure stability of test results:
+log_rotation_age = 0
 lc_messages = 'C'
 ));
 
@@ -21,7 +23,19 @@ $node->start();
 
 $node->psql('postgres', 'SELECT 1/0');
 
-my $current_logfiles = slurp_file($node->data_dir . '/current_logfiles');
+# might need to retry if logging collector process is slow...
+my $max_attempts = 180 * 10;
+
+my $current_logfiles;
+for (my $attempts = 0; $attempts < $max_attempts; $attempts++)
+{
+	eval {
+		$current_logfiles = slurp_file($node->data_dir . '/current_logfiles');
+	};
+	last unless $@;
+	usleep(100_000);
+}
+die $@ if $@;
 
 note "current_logfiles = $current_logfiles";
 
@@ -33,9 +47,6 @@ like(
 my $lfname = $current_logfiles;
 $lfname =~ s/^stderr //;
 chomp $lfname;
-
-# might need to retry if logging collector process is slow...
-my $max_attempts = 180 * 10;
 
 my $first_logfile;
 for (my $attempts = 0; $attempts < $max_attempts; $attempts++)

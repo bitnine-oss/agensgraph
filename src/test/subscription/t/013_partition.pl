@@ -3,7 +3,7 @@ use strict;
 use warnings;
 use PostgresNode;
 use TestLib;
-use Test::More tests => 51;
+use Test::More tests => 62;
 
 # setup
 
@@ -67,6 +67,40 @@ $node_subscriber1->safe_psql('postgres',
 	"CREATE SUBSCRIPTION sub1 CONNECTION '$publisher_connstr' PUBLICATION pub1"
 );
 
+# Add set of AFTER replica triggers for testing that they are fired
+# correctly.  This uses a table that records details of all trigger
+# activities.  Triggers are marked as enabled for a subset of the
+# partition tree.
+$node_subscriber1->safe_psql(
+	'postgres', qq{
+CREATE TABLE sub1_trigger_activity (tgtab text, tgop text,
+  tgwhen text, tglevel text, olda int, newa int);
+CREATE FUNCTION sub1_trigger_activity_func() RETURNS TRIGGER AS \$\$
+BEGIN
+  IF (TG_OP = 'INSERT') THEN
+    INSERT INTO public.sub1_trigger_activity
+      SELECT TG_RELNAME, TG_OP, TG_WHEN, TG_LEVEL, NULL, NEW.a;
+  ELSIF (TG_OP = 'UPDATE') THEN
+    INSERT INTO public.sub1_trigger_activity
+      SELECT TG_RELNAME, TG_OP, TG_WHEN, TG_LEVEL, OLD.a, NEW.a;
+  END IF;
+  RETURN NULL;
+END;
+\$\$ LANGUAGE plpgsql;
+CREATE TRIGGER sub1_tab1_log_op_trigger
+  AFTER INSERT OR UPDATE ON tab1
+  FOR EACH ROW EXECUTE PROCEDURE sub1_trigger_activity_func();
+ALTER TABLE ONLY tab1 ENABLE REPLICA TRIGGER sub1_tab1_log_op_trigger;
+CREATE TRIGGER sub1_tab1_2_log_op_trigger
+  AFTER INSERT OR UPDATE ON tab1_2
+  FOR EACH ROW EXECUTE PROCEDURE sub1_trigger_activity_func();
+ALTER TABLE ONLY tab1_2 ENABLE REPLICA TRIGGER sub1_tab1_2_log_op_trigger;
+CREATE TRIGGER sub1_tab1_2_2_log_op_trigger
+  AFTER INSERT OR UPDATE ON tab1_2_2
+  FOR EACH ROW EXECUTE PROCEDURE sub1_trigger_activity_func();
+ALTER TABLE ONLY tab1_2_2 ENABLE REPLICA TRIGGER sub1_tab1_2_2_log_op_trigger;
+});
+
 # subscriber 2
 #
 # This does not use partitioning.  The tables match the leaf tables on
@@ -86,6 +120,34 @@ $node_subscriber2->safe_psql('postgres',
 $node_subscriber2->safe_psql('postgres',
 	"CREATE SUBSCRIPTION sub2 CONNECTION '$publisher_connstr' PUBLICATION pub_all"
 );
+
+# Add set of AFTER replica triggers for testing that they are fired
+# correctly, using the same method as the first subscriber.
+$node_subscriber2->safe_psql(
+	'postgres', qq{
+CREATE TABLE sub2_trigger_activity (tgtab text,
+  tgop text, tgwhen text, tglevel text, olda int, newa int);
+CREATE FUNCTION sub2_trigger_activity_func() RETURNS TRIGGER AS \$\$
+BEGIN
+  IF (TG_OP = 'INSERT') THEN
+    INSERT INTO public.sub2_trigger_activity
+      SELECT TG_RELNAME, TG_OP, TG_WHEN, TG_LEVEL, NULL, NEW.a;
+  ELSIF (TG_OP = 'UPDATE') THEN
+    INSERT INTO public.sub2_trigger_activity
+      SELECT TG_RELNAME, TG_OP, TG_WHEN, TG_LEVEL, OLD.a, NEW.a;
+  END IF;
+  RETURN NULL;
+END;
+\$\$ LANGUAGE plpgsql;
+CREATE TRIGGER sub2_tab1_log_op_trigger
+  AFTER INSERT OR UPDATE ON tab1
+  FOR EACH ROW EXECUTE PROCEDURE sub2_trigger_activity_func();
+ALTER TABLE ONLY tab1 ENABLE REPLICA TRIGGER sub2_tab1_log_op_trigger;
+CREATE TRIGGER sub2_tab1_2_log_op_trigger
+  AFTER INSERT OR UPDATE ON tab1_2
+  FOR EACH ROW EXECUTE PROCEDURE sub2_trigger_activity_func();
+ALTER TABLE ONLY tab1_2 ENABLE REPLICA TRIGGER sub2_tab1_2_log_op_trigger;
+});
 
 # Wait for initial sync of all subscriptions
 my $synced_query =
@@ -130,6 +192,14 @@ $result = $node_subscriber2->safe_psql('postgres',
 	"SELECT c, a FROM tab1_2 ORDER BY 1, 2");
 is($result, qq(sub2_tab1_2|5), 'inserts into tab1_2 replicated');
 
+# The AFTER trigger of tab1_2 should have recorded one INSERT.
+$result = $node_subscriber2->safe_psql('postgres',
+	"SELECT * FROM sub2_trigger_activity ORDER BY tgtab, tgop, tgwhen, olda, newa;"
+);
+is( $result,
+	qq(tab1_2|INSERT|AFTER|ROW||5),
+	'check replica insert after trigger applied on subscriber');
+
 $result = $node_subscriber2->safe_psql('postgres',
 	"SELECT c, a FROM tab1_def ORDER BY 1, 2");
 is($result, qq(sub2_tab1_def|0), 'inserts into tab1_def replicated');
@@ -161,6 +231,15 @@ $result = $node_subscriber1->safe_psql('postgres',
 	"SELECT a FROM tab1_2_2 ORDER BY 1");
 is($result, qq(6), 'updates of tab1_2 replicated into tab1_2_2 correctly');
 
+# The AFTER trigger should have recorded the UPDATEs of tab1_2_2.
+$result = $node_subscriber1->safe_psql('postgres',
+	"SELECT * FROM sub1_trigger_activity ORDER BY tgtab, tgop, tgwhen, olda, newa;"
+);
+is( $result, qq(tab1_2_2|INSERT|AFTER|ROW||6
+tab1_2_2|UPDATE|AFTER|ROW|4|6
+tab1_2_2|UPDATE|AFTER|ROW|6|4),
+	'check replica update after trigger applied on subscriber');
+
 $result = $node_subscriber2->safe_psql('postgres',
 	"SELECT c, a FROM tab1_1 ORDER BY 1, 2");
 is( $result, qq(sub2_tab1_1|2
@@ -169,6 +248,16 @@ sub2_tab1_1|3), 'update of tab1_1 replicated');
 $result = $node_subscriber2->safe_psql('postgres',
 	"SELECT c, a FROM tab1_2 ORDER BY 1, 2");
 is($result, qq(sub2_tab1_2|6), 'tab1_2 updated');
+
+# The AFTER trigger should have recorded the updates of tab1_2.
+$result = $node_subscriber2->safe_psql('postgres',
+	"SELECT * FROM sub2_trigger_activity ORDER BY tgtab, tgop, tgwhen, olda, newa;"
+);
+is( $result, qq(tab1_2|INSERT|AFTER|ROW||5
+tab1_2|UPDATE|AFTER|ROW|4|6
+tab1_2|UPDATE|AFTER|ROW|5|6
+tab1_2|UPDATE|AFTER|ROW|6|4),
+	'check replica update after trigger applied on subscriber');
 
 $result = $node_subscriber2->safe_psql('postgres',
 	"SELECT c, a FROM tab1_def ORDER BY 1");
@@ -254,6 +343,51 @@ is($result, qq(), 'truncate of tab1_1 replicated');
 $result =
   $node_subscriber2->safe_psql('postgres', "SELECT a FROM tab1 ORDER BY 1");
 is($result, qq(), 'truncate of tab1 replicated');
+
+# Check that subscriber handles cases where update/delete target tuple
+# is missing.  We have to look for the DEBUG1 log messages about that,
+# so temporarily bump up the log verbosity.
+$node_subscriber1->append_conf('postgresql.conf',
+	"log_min_messages = debug1");
+$node_subscriber1->reload;
+
+$node_publisher->safe_psql('postgres',
+	"INSERT INTO tab1 VALUES (1, 'foo'), (4, 'bar'), (10, 'baz')");
+
+$node_publisher->wait_for_catchup('sub1');
+$node_publisher->wait_for_catchup('sub2');
+
+$node_subscriber1->safe_psql('postgres', "DELETE FROM tab1");
+
+# Note that the current location of the log file is not grabbed immediately
+# after reloading the configuration, but after sending one SQL command to
+# the node so as we are sure that the reloading has taken effect.
+my $log_location = -s $node_subscriber1->logfile;
+
+$node_publisher->safe_psql('postgres',
+	"UPDATE tab1 SET b = 'quux' WHERE a = 4");
+$node_publisher->safe_psql('postgres', "DELETE FROM tab1");
+
+$node_publisher->wait_for_catchup('sub1');
+$node_publisher->wait_for_catchup('sub2');
+
+my $logfile = slurp_file($node_subscriber1->logfile(), $log_location);
+ok( $logfile =~
+	  qr/logical replication did not find row to be updated in replication target relation's partition "tab1_2_2"/,
+	'update target row is missing in tab1_2_2');
+ok( $logfile =~
+	  qr/logical replication did not find row to be deleted in replication target relation "tab1_1"/,
+	'delete target row is missing in tab1_1');
+ok( $logfile =~
+	  qr/logical replication did not find row to be deleted in replication target relation "tab1_2_2"/,
+	'delete target row is missing in tab1_2_2');
+ok( $logfile =~
+	  qr/logical replication did not find row to be deleted in replication target relation "tab1_def"/,
+	'delete target row is missing in tab1_def');
+
+$node_subscriber1->append_conf('postgresql.conf',
+	"log_min_messages = warning");
+$node_subscriber1->reload;
 
 # Tests for replication using root table identity and schema
 
@@ -532,3 +666,63 @@ is($result, qq(), 'truncate of tab3 replicated');
 
 $result = $node_subscriber2->safe_psql('postgres', "SELECT a FROM tab3_1");
 is($result, qq(), 'truncate of tab3_1 replicated');
+
+# check that the map to convert tuples from leaf partition to the root
+# table is correctly rebuilt when a new column is added
+$node_publisher->safe_psql('postgres',
+	"ALTER TABLE tab2 DROP b, ADD COLUMN c text DEFAULT 'pub_tab2', ADD b text");
+$node_publisher->safe_psql('postgres',
+	"INSERT INTO tab2 (a, b) VALUES (1, 'xxx'), (3, 'yyy'), (5, 'zzz')");
+$node_publisher->safe_psql('postgres',
+	"INSERT INTO tab2 (a, b, c) VALUES (6, 'aaa', 'xxx_c')");
+
+$node_publisher->wait_for_catchup('sub_viaroot');
+$node_publisher->wait_for_catchup('sub2');
+
+$result = $node_subscriber1->safe_psql('postgres',
+	"SELECT c, a, b FROM tab2 ORDER BY 1, 2");
+is( $result, qq(pub_tab2|1|xxx
+pub_tab2|3|yyy
+pub_tab2|5|zzz
+xxx_c|6|aaa), 'inserts into tab2 replicated');
+
+$result = $node_subscriber2->safe_psql('postgres',
+	"SELECT c, a, b FROM tab2 ORDER BY 1, 2");
+is( $result, qq(pub_tab2|1|xxx
+pub_tab2|3|yyy
+pub_tab2|5|zzz
+xxx_c|6|aaa), 'inserts into tab2 replicated');
+
+# Check that subscriber handles cases where update/delete target tuple
+# is missing.  We have to look for the DEBUG1 log messages about that,
+# so temporarily bump up the log verbosity.
+$node_subscriber1->append_conf('postgresql.conf',
+	"log_min_messages = debug1");
+$node_subscriber1->reload;
+
+$node_subscriber1->safe_psql('postgres', "DELETE FROM tab2");
+
+# Note that the current location of the log file is not grabbed immediately
+# after reloading the configuration, but after sending one SQL command to
+# the node so as we are sure that the reloading has taken effect.
+$log_location = -s $node_subscriber1->logfile;
+
+$node_publisher->safe_psql('postgres',
+	"UPDATE tab2 SET b = 'quux' WHERE a = 5");
+$node_publisher->safe_psql('postgres', "DELETE FROM tab2 WHERE a = 1");
+
+$node_publisher->wait_for_catchup('sub_viaroot');
+$node_publisher->wait_for_catchup('sub2');
+
+$logfile = slurp_file($node_subscriber1->logfile(), $log_location);
+ok( $logfile =~
+	  qr/logical replication did not find row to be updated in replication target relation's partition "tab2_1"/,
+	'update target row is missing in tab2_1');
+ok( $logfile =~
+	  qr/logical replication did not find row to be deleted in replication target relation "tab2_1"/,
+	'delete target row is missing in tab2_1');
+
+# No need for this until more tests are added.
+# $node_subscriber1->append_conf('postgresql.conf',
+# 	"log_min_messages = warning");
+# $node_subscriber1->reload;

@@ -50,6 +50,10 @@ sub test_recovery_standby
 my $node_master = get_new_node('master');
 $node_master->init(has_archiving => 1, allows_streaming => 1);
 
+# Bump the transaction ID epoch.  This is useful to stress the portability
+# of recovery_target_xid parsing.
+system_or_bail('pg_resetwal', '--epoch', '1', $node_master->data_dir);
+
 # Start it
 $node_master->start;
 
@@ -171,5 +175,5 @@ foreach my $i (0 .. 1800)
 }
 $logfile = slurp_file($node_standby->logfile());
 ok( $logfile =~
-	  qr/FATAL:  recovery ended before configured recovery target was reached/,
+	  qr/FATAL: .* recovery ended before configured recovery target was reached/,
 	'recovery end before target reached is a fatal error');

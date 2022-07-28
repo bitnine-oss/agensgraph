@@ -33,6 +33,11 @@ ALTER GROUP regress_priv_group2 ADD USER regress_priv_user2;	-- duplicate
 NOTICE:  role "regress_priv_user2" is already a member of role "regress_priv_group2"
 ALTER GROUP regress_priv_group2 DROP USER regress_priv_user2;
 GRANT regress_priv_group2 TO regress_priv_user4 WITH ADMIN OPTION;
+-- prepare non-leakproof function for later
+CREATE FUNCTION leak(integer,integer) RETURNS boolean
+  AS 'int4lt'
+  LANGUAGE internal IMMUTABLE STRICT;  -- but deliberately not LEAKPROOF
+ALTER FUNCTION leak(integer,integer) OWNER TO regress_priv_user1;
 -- test owner privileges
 SET SESSION AUTHORIZATION regress_priv_user1;
 SELECT session_user, current_user;
@@ -196,9 +201,6 @@ ALTER TABLE atest12 SET (autovacuum_enabled = off);
 SET default_statistics_target = 10000;
 VACUUM ANALYZE atest12;
 RESET default_statistics_target;
-CREATE FUNCTION leak(integer,integer) RETURNS boolean
-  AS $$begin return $1 < $2; end$$
-  LANGUAGE plpgsql immutable;
 CREATE OPERATOR <<< (procedure = leak, leftarg = integer, rightarg = integer,
                      restrict = scalarltsel);
 -- views with leaky operator
@@ -350,6 +352,13 @@ SET SESSION AUTHORIZATION regress_priv_user1;
 SELECT * FROM atest3; -- fail
 ERROR:  permission denied for table atest3
 DELETE FROM atest3; -- ok
+BEGIN;
+RESET SESSION AUTHORIZATION;
+ALTER ROLE regress_priv_user1 NOINHERIT;
+SET SESSION AUTHORIZATION regress_priv_user1;
+DELETE FROM atest3;
+ERROR:  permission denied for table atest3
+ROLLBACK;
 -- views
 SET SESSION AUTHORIZATION regress_priv_user3;
 CREATE VIEW atestv1 AS SELECT * FROM atest1; -- ok
@@ -467,7 +476,53 @@ SELECT 1 FROM atest5 a JOIN atest5 b USING (two); -- fail
 ERROR:  permission denied for table atest5
 SELECT 1 FROM atest5 a NATURAL JOIN atest5 b; -- fail
 ERROR:  permission denied for table atest5
+SELECT * FROM (atest5 a JOIN atest5 b USING (one)) j; -- fail
+ERROR:  permission denied for table atest5
+SELECT j.* FROM (atest5 a JOIN atest5 b USING (one)) j; -- fail
+ERROR:  permission denied for table atest5
 SELECT (j.*) IS NULL FROM (atest5 a JOIN atest5 b USING (one)) j; -- fail
+ERROR:  permission denied for table atest5
+SELECT one FROM (atest5 a JOIN atest5 b(one,x,y,z) USING (one)) j; -- ok
+ one 
+-----
+   1
+(1 row)
+
+SELECT j.one FROM (atest5 a JOIN atest5 b(one,x,y,z) USING (one)) j; -- ok
+ one 
+-----
+   1
+(1 row)
+
+SELECT two FROM (atest5 a JOIN atest5 b(one,x,y,z) USING (one)) j; -- fail
+ERROR:  permission denied for table atest5
+SELECT j.two FROM (atest5 a JOIN atest5 b(one,x,y,z) USING (one)) j; -- fail
+ERROR:  permission denied for table atest5
+SELECT y FROM (atest5 a JOIN atest5 b(one,x,y,z) USING (one)) j; -- fail
+ERROR:  permission denied for table atest5
+SELECT j.y FROM (atest5 a JOIN atest5 b(one,x,y,z) USING (one)) j; -- fail
+ERROR:  permission denied for table atest5
+SELECT * FROM (atest5 a JOIN atest5 b USING (one)); -- fail
+ERROR:  permission denied for table atest5
+SELECT a.* FROM (atest5 a JOIN atest5 b USING (one)); -- fail
+ERROR:  permission denied for table atest5
+SELECT (a.*) IS NULL FROM (atest5 a JOIN atest5 b USING (one)); -- fail
+ERROR:  permission denied for table atest5
+SELECT two FROM (atest5 a JOIN atest5 b(one,x,y,z) USING (one)); -- fail
+ERROR:  permission denied for table atest5
+SELECT a.two FROM (atest5 a JOIN atest5 b(one,x,y,z) USING (one)); -- fail
+ERROR:  permission denied for table atest5
+SELECT y FROM (atest5 a JOIN atest5 b(one,x,y,z) USING (one)); -- fail
+ERROR:  permission denied for table atest5
+SELECT b.y FROM (atest5 a JOIN atest5 b(one,x,y,z) USING (one)); -- fail
+ERROR:  permission denied for table atest5
+SELECT y FROM (atest5 a LEFT JOIN atest5 b(one,x,y,z) USING (one)); -- fail
+ERROR:  permission denied for table atest5
+SELECT b.y FROM (atest5 a LEFT JOIN atest5 b(one,x,y,z) USING (one)); -- fail
+ERROR:  permission denied for table atest5
+SELECT y FROM (atest5 a FULL JOIN atest5 b(one,x,y,z) USING (one)); -- fail
+ERROR:  permission denied for table atest5
+SELECT b.y FROM (atest5 a FULL JOIN atest5 b(one,x,y,z) USING (one)); -- fail
 ERROR:  permission denied for table atest5
 SELECT 1 FROM atest5 WHERE two = 2; -- fail
 ERROR:  permission denied for table atest5
@@ -609,6 +664,45 @@ ERROR:  new row for relation "t1" violates check constraint "t1_c3_check"
 DETAIL:  Failing row contains (c1, c3) = (1, 10).
 SET SESSION AUTHORIZATION regress_priv_user1;
 DROP TABLE t1;
+-- check error reporting with column privs on a partitioned table
+CREATE TABLE errtst(a text, b text NOT NULL, c text, secret1 text, secret2 text) PARTITION BY LIST (a);
+CREATE TABLE errtst_part_1(secret2 text, c text, a text, b text NOT NULL, secret1 text);
+CREATE TABLE errtst_part_2(secret1 text, secret2 text, a text, c text, b text NOT NULL);
+ALTER TABLE errtst ATTACH PARTITION errtst_part_1 FOR VALUES IN ('aaa');
+ALTER TABLE errtst ATTACH PARTITION errtst_part_2 FOR VALUES IN ('aaaa');
+GRANT SELECT (a, b, c) ON TABLE errtst TO regress_priv_user2;
+GRANT UPDATE (a, b, c) ON TABLE errtst TO regress_priv_user2;
+GRANT INSERT (a, b, c) ON TABLE errtst TO regress_priv_user2;
+INSERT INTO errtst_part_1 (a, b, c, secret1, secret2)
+VALUES ('aaa', 'bbb', 'ccc', 'the body', 'is in the attic');
+SET SESSION AUTHORIZATION regress_priv_user2;
+-- Perform a few updates that violate the NOT NULL constraint. Make sure
+-- the error messages don't leak the secret fields.
+-- simple insert.
+INSERT INTO errtst (a, b) VALUES ('aaa', NULL);
+ERROR:  null value in column "b" of relation "errtst_part_1" violates not-null constraint
+DETAIL:  Failing row contains (a, b, c) = (aaa, null, null).
+-- simple update.
+UPDATE errtst SET b = NULL;
+ERROR:  null value in column "b" of relation "errtst_part_1" violates not-null constraint
+DETAIL:  Failing row contains (b) = (null).
+-- partitioning key is updated, doesn't move the row.
+UPDATE errtst SET a = 'aaa', b = NULL;
+ERROR:  null value in column "b" of relation "errtst_part_1" violates not-null constraint
+DETAIL:  Failing row contains (a, b, c) = (aaa, null, ccc).
+-- row is moved to another partition.
+UPDATE errtst SET a = 'aaaa', b = NULL;
+ERROR:  null value in column "b" of relation "errtst_part_2" violates not-null constraint
+DETAIL:  Failing row contains (a, b, c) = (aaaa, null, ccc).
+-- row is moved to another partition. This differs from the previous case in
+-- that the new partition is excluded by constraint exclusion, so its
+-- ResultRelInfo is not created at ExecInitModifyTable, but needs to be
+-- constructed on the fly when the updated tuple is routed to it.
+UPDATE errtst SET a = 'aaaa', b = NULL WHERE a = 'aaa';
+ERROR:  null value in column "b" of relation "errtst_part_2" violates not-null constraint
+DETAIL:  Failing row contains (a, b, c) = (aaaa, null, ccc).
+SET SESSION AUTHORIZATION regress_priv_user1;
+DROP TABLE errtst;
 -- test column-level privileges when involved with DELETE
 SET SESSION AUTHORIZATION regress_priv_user1;
 ALTER TABLE atest6 ADD COLUMN three integer;
@@ -1642,7 +1736,8 @@ SELECT has_table_privilege('regress_priv_user1', 'testns.acltest1', 'INSERT'); -
  f
 (1 row)
 
-ALTER DEFAULT PRIVILEGES IN SCHEMA testns GRANT SELECT ON TABLES TO public;
+-- placeholder for test with duplicated schema and role names
+ALTER DEFAULT PRIVILEGES IN SCHEMA testns,testns GRANT SELECT ON TABLES TO public,public;
 SELECT has_table_privilege('regress_priv_user1', 'testns.acltest1', 'SELECT'); -- no
  has_table_privilege 
 ---------------------

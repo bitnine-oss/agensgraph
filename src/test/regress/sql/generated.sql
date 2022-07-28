@@ -17,6 +17,9 @@ CREATE TABLE gtest_err_1 (a int PRIMARY KEY, b int GENERATED ALWAYS AS (a * 2) S
 -- references to other generated columns, including self-references
 CREATE TABLE gtest_err_2a (a int PRIMARY KEY, b int GENERATED ALWAYS AS (b * 2) STORED);
 CREATE TABLE gtest_err_2b (a int PRIMARY KEY, b int GENERATED ALWAYS AS (a * 2) STORED, c int GENERATED ALWAYS AS (b * 3) STORED);
+-- a whole-row var is a self-reference on steroids, so disallow that too
+CREATE TABLE gtest_err_2c (a int PRIMARY KEY,
+    b int GENERATED ALWAYS AS (num_nulls(gtest_err_2c)) STORED);
 
 -- invalid reference
 CREATE TABLE gtest_err_3 (a int PRIMARY KEY, b int GENERATED ALWAYS AS (c * 2) STORED);
@@ -29,6 +32,7 @@ CREATE TABLE gtest_err_5a (a int PRIMARY KEY, b int DEFAULT 5 GENERATED ALWAYS A
 CREATE TABLE gtest_err_5b (a int PRIMARY KEY, b int GENERATED ALWAYS AS identity GENERATED ALWAYS AS (a * 2) STORED);
 
 -- reference to system column not allowed in generated column
+-- (except tableoid, which we test below)
 CREATE TABLE gtest_err_6a (a int PRIMARY KEY, b bool GENERATED ALWAYS AS (xmin <> 37) STORED);
 
 -- various prohibited constructs
@@ -96,10 +100,24 @@ INSERT INTO gtest_normal (a) VALUES (1);
 INSERT INTO gtest_normal_child (a) VALUES (2);
 SELECT * FROM gtest_normal;
 
+CREATE TABLE gtest_normal_child2 (a int, b int GENERATED ALWAYS AS (a * 3) STORED);
+ALTER TABLE gtest_normal_child2 INHERIT gtest_normal;
+INSERT INTO gtest_normal_child2 (a) VALUES (3);
+SELECT * FROM gtest_normal;
+
 -- test inheritance mismatches between parent and child
 CREATE TABLE gtestx (x int, b int GENERATED ALWAYS AS (a * 22) STORED) INHERITS (gtest1);  -- error
 CREATE TABLE gtestx (x int, b int DEFAULT 10) INHERITS (gtest1);  -- error
 CREATE TABLE gtestx (x int, b int GENERATED ALWAYS AS IDENTITY) INHERITS (gtest1);  -- error
+
+CREATE TABLE gtestxx_1 (a int NOT NULL, b int);
+ALTER TABLE gtestxx_1 INHERIT gtest1;  -- error
+CREATE TABLE gtestxx_2 (a int NOT NULL, b int GENERATED ALWAYS AS (a * 22) STORED);
+ALTER TABLE gtestxx_2 INHERIT gtest1;  -- error
+CREATE TABLE gtestxx_3 (a int NOT NULL, b int GENERATED ALWAYS AS (a * 2) STORED);
+ALTER TABLE gtestxx_3 INHERIT gtest1;  -- ok
+CREATE TABLE gtestxx_4 (b int GENERATED ALWAYS AS (a * 2) STORED, a int NOT NULL);
+ALTER TABLE gtestxx_4 INHERIT gtest1;  -- ok
 
 -- test multiple inheritance mismatches
 CREATE TABLE gtesty (x int, b int);
@@ -187,9 +205,11 @@ DROP TYPE double_int;
 -- using tableoid is allowed
 CREATE TABLE gtest_tableoid (
   a int PRIMARY KEY,
-  b bool GENERATED ALWAYS AS (tableoid <> 0) STORED
+  b bool GENERATED ALWAYS AS (tableoid = 'gtest_tableoid'::regclass) STORED
 );
 INSERT INTO gtest_tableoid VALUES (1), (2);
+ALTER TABLE gtest_tableoid ADD COLUMN
+  c regclass GENERATED ALWAYS AS (tableoid) STORED;
 SELECT * FROM gtest_tableoid;
 
 -- drop column behavior

@@ -403,7 +403,7 @@ CREATE [ UNIQUE ] INDEX [ CONCURRENTLY ] [ [ IF NOT EXISTS ] <replaceable class=
    </variablelist>
 
    <para>
-    B-tree indexes also accept these parameters:
+    B-tree indexes additionally accept this parameter:
    </para>
 
    <variablelist>
@@ -432,20 +432,6 @@ CREATE [ UNIQUE ] INDEX [ CONCURRENTLY ] [ [ IF NOT EXISTS ] <replaceable class=
       posting list tuples use the standard tuple representation.
      </para>
     </note>
-    </listitem>
-   </varlistentry>
-
-   <varlistentry id="index-reloption-vacuum-cleanup-index-scale-factor" xreflabel="vacuum_cleanup_index_scale_factor">
-    <term><literal>vacuum_cleanup_index_scale_factor</literal> (<type>floating point</type>)
-     <indexterm>
-      <primary><varname>vacuum_cleanup_index_scale_factor</varname></primary>
-      <secondary>storage parameter</secondary>
-     </indexterm>
-    </term>
-    <listitem>
-    <para>
-      Per-index value for <xref linkend="guc-vacuum-cleanup-index-scale-factor"/>.
-    </para>
     </listitem>
    </varlistentry>
    </variablelist>
@@ -600,7 +586,8 @@ CREATE [ UNIQUE ] INDEX [ CONCURRENTLY ] [ [ IF NOT EXISTS ] <replaceable class=
     wait for existing transactions that have modified the table to terminate.
     After the second scan, the index build must wait for any transactions
     that have a snapshot (see <xref linkend="mvcc"/>) predating the second
-    scan to terminate.  Then finally the index can be marked ready for use,
+    scan to terminate, including transactions used by any phase of concurrent
+    index builds on other tables.  Then finally the index can be marked ready for use,
     and the <command>CREATE INDEX</command> command terminates.
     Even then, however, the index may not be immediately usable for queries:
     in the worst case, it cannot be used as long as transactions exist that
@@ -742,6 +729,16 @@ Indexes:
   </para>
 
   <para>
+   The system regularly collects statistics on all of a table's
+   columns.  Newly-created non-expression indexes can immediately
+   use these statistics to determine an index's usefulness.
+   For new expression indexes, it is necessary to run <link
+   linkend="sql-analyze"><command>ANALYZE</command></link> or wait for
+   the <link linkend="autovacuum">autovacuum daemon</link> to analyze
+   the table to generate statistics for these indexes.
+  </para>
+
+  <para>
    For most index methods, the speed of creating an index is
    dependent on the setting of <xref linkend="guc-maintenance-work-mem"/>.
    Larger values will reduce the time needed for index creation, so long
@@ -810,6 +807,12 @@ Indexes:
   <para>
    Use <xref linkend="sql-dropindex"/>
    to remove an index.
+  </para>
+
+  <para>
+   Like any long-running transaction, <command>CREATE INDEX</command> on a
+   table can affect which tuples can be removed by concurrent
+   <command>VACUUM</command> on any other table.
   </para>
 
   <para>

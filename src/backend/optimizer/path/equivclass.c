@@ -32,9 +32,14 @@
 #include "utils/lsyscache.h"
 
 
+/* source-code-compatibility hacks for pull_varnos() API change */
+#define pull_varnos(a,b) pull_varnos_new(a,b)
+#define make_restrictinfo(a,b,c,d,e,f,g,h,i) make_restrictinfo_new(a,b,c,d,e,f,g,h,i)
+
 static EquivalenceMember *add_eq_member(EquivalenceClass *ec,
 										Expr *expr, Relids relids, Relids nullable_relids,
 										bool is_child, Oid datatype);
+static bool is_exprlist_member(Expr *node, List *exprs);
 static void generate_base_implied_equalities_const(PlannerInfo *root,
 												   EquivalenceClass *ec);
 static void generate_base_implied_equalities_no_const(PlannerInfo *root,
@@ -195,7 +200,8 @@ process_equivalence(PlannerInfo *root,
 			ntest->location = -1;
 
 			*p_restrictinfo =
-				make_restrictinfo((Expr *) ntest,
+				make_restrictinfo(root,
+								  (Expr *) ntest,
 								  restrictinfo->is_pushed_down,
 								  restrictinfo->outerjoin_delayed,
 								  restrictinfo->pseudoconstant,
@@ -713,7 +719,7 @@ get_eclass_for_sort_expr(PlannerInfo *root,
 	/*
 	 * Get the precise set of nullable relids appearing in the expression.
 	 */
-	expr_relids = pull_varnos((Node *) expr);
+	expr_relids = pull_varnos(root, (Node *) expr);
 	nullable_relids = bms_intersect(nullable_relids, expr_relids);
 
 	newem = add_eq_member(newec, copyObject(expr), expr_relids,
@@ -766,6 +772,167 @@ get_eclass_for_sort_expr(PlannerInfo *root,
 }
 
 /*
+ * find_ec_member_matching_expr
+ *		Locate an EquivalenceClass member matching the given expr, if any;
+ *		return NULL if no match.
+ *
+ * "Matching" is defined as "equal after stripping RelabelTypes".
+ * This is used for identifying sort expressions, and we need to allow
+ * binary-compatible relabeling for some cases involving binary-compatible
+ * sort operators.
+ *
+ * Child EC members are ignored unless they belong to given 'relids'.
+ */
+EquivalenceMember *
+find_ec_member_matching_expr(EquivalenceClass *ec,
+							 Expr *expr,
+							 Relids relids)
+{
+	ListCell   *lc;
+
+	/* We ignore binary-compatible relabeling on both ends */
+	while (expr && IsA(expr, RelabelType))
+		expr = ((RelabelType *) expr)->arg;
+
+	foreach(lc, ec->ec_members)
+	{
+		EquivalenceMember *em = (EquivalenceMember *) lfirst(lc);
+		Expr	   *emexpr;
+
+		/*
+		 * We shouldn't be trying to sort by an equivalence class that
+		 * contains a constant, so no need to consider such cases any further.
+		 */
+		if (em->em_is_const)
+			continue;
+
+		/*
+		 * Ignore child members unless they belong to the requested rel.
+		 */
+		if (em->em_is_child &&
+			!bms_is_subset(em->em_relids, relids))
+			continue;
+
+		/*
+		 * Match if same expression (after stripping relabel).
+		 */
+		emexpr = em->em_expr;
+		while (emexpr && IsA(emexpr, RelabelType))
+			emexpr = ((RelabelType *) emexpr)->arg;
+
+		if (equal(emexpr, expr))
+			return em;
+	}
+
+	return NULL;
+}
+
+/*
+ * find_computable_ec_member
+ *		Locate an EquivalenceClass member that can be computed from the
+ *		expressions appearing in "exprs"; return NULL if no match.
+ *
+ * "exprs" can be either a list of bare expression trees, or a list of
+ * TargetEntry nodes.  Either way, it should contain Vars and possibly
+ * Aggrefs and WindowFuncs, which are matched to the corresponding elements
+ * of the EquivalenceClass's expressions.
+ *
+ * Unlike find_ec_member_matching_expr, there's no special provision here
+ * for binary-compatible relabeling.  This is intentional: if we have to
+ * compute an expression in this way, setrefs.c is going to insist on exact
+ * matches of Vars to the source tlist.
+ *
+ * Child EC members are ignored unless they belong to given 'relids'.
+ * Also, non-parallel-safe expressions are ignored if 'require_parallel_safe'.
+ *
+ * Note: some callers pass root == NULL for notational reasons.  This is OK
+ * when require_parallel_safe is false.
+ */
+EquivalenceMember *
+find_computable_ec_member(PlannerInfo *root,
+						  EquivalenceClass *ec,
+						  List *exprs,
+						  Relids relids,
+						  bool require_parallel_safe)
+{
+	ListCell   *lc;
+
+	foreach(lc, ec->ec_members)
+	{
+		EquivalenceMember *em = (EquivalenceMember *) lfirst(lc);
+		List	   *exprvars;
+		ListCell   *lc2;
+
+		/*
+		 * We shouldn't be trying to sort by an equivalence class that
+		 * contains a constant, so no need to consider such cases any further.
+		 */
+		if (em->em_is_const)
+			continue;
+
+		/*
+		 * Ignore child members unless they belong to the requested rel.
+		 */
+		if (em->em_is_child &&
+			!bms_is_subset(em->em_relids, relids))
+			continue;
+
+		/*
+		 * Match if all Vars and quasi-Vars are available in "exprs".
+		 */
+		exprvars = pull_var_clause((Node *) em->em_expr,
+								   PVC_INCLUDE_AGGREGATES |
+								   PVC_INCLUDE_WINDOWFUNCS |
+								   PVC_INCLUDE_PLACEHOLDERS);
+		foreach(lc2, exprvars)
+		{
+			if (!is_exprlist_member(lfirst(lc2), exprs))
+				break;
+		}
+		list_free(exprvars);
+		if (lc2)
+			continue;			/* we hit a non-available Var */
+
+		/*
+		 * If requested, reject expressions that are not parallel-safe.  We
+		 * check this last because it's a rather expensive test.
+		 */
+		if (require_parallel_safe &&
+			!is_parallel_safe(root, (Node *) em->em_expr))
+			continue;
+
+		return em;				/* found usable expression */
+	}
+
+	return NULL;
+}
+
+/*
+ * is_exprlist_member
+ *	  Subroutine for find_computable_ec_member: is "node" in "exprs"?
+ *
+ * Per the requirements of that function, "exprs" might or might not have
+ * TargetEntry superstructure.
+ */
+static bool
+is_exprlist_member(Expr *node, List *exprs)
+{
+	ListCell   *lc;
+
+	foreach(lc, exprs)
+	{
+		Expr	   *expr = (Expr *) lfirst(lc);
+
+		if (expr && IsA(expr, TargetEntry))
+			expr = ((TargetEntry *) expr)->expr;
+
+		if (equal(node, expr))
+			return true;
+	}
+	return false;
+}
+
+/*
  * Find an equivalence class member expression, all of whose Vars, come from
  * the indicated relation.
  */
@@ -795,73 +962,78 @@ find_em_expr_for_rel(EquivalenceClass *ec, RelOptInfo *rel)
 }
 
 /*
- * Find an equivalence class member expression that can be safely used by a
- * sort node on top of the provided relation. The rules here must match those
- * applied in prepare_sort_from_pathkeys.
+ * Find an equivalence class member expression that can be used to build
+ * a sort node using the provided relation; return NULL if no candidate.
+ *
+ * To succeed, we must find an EC member that prepare_sort_from_pathkeys knows
+ * how to sort on, given the rel's reltarget as input.  There are also a few
+ * additional constraints based on the fact that the desired sort will be done
+ * within the scan/join part of the plan.  Also, non-parallel-safe expressions
+ * are ignored if 'require_parallel_safe'.
  */
 Expr *
-find_em_expr_usable_for_sorting_rel(EquivalenceClass *ec, RelOptInfo *rel)
+find_em_expr_usable_for_sorting_rel(PlannerInfo *root, EquivalenceClass *ec,
+									RelOptInfo *rel, bool require_parallel_safe)
 {
-	ListCell   *lc_em;
+	PathTarget *target = rel->reltarget;
+	EquivalenceMember *em;
+	ListCell   *lc;
 
 	/*
-	 * If there is more than one equivalence member matching these
-	 * requirements we'll be content to choose any one of them.
+	 * Reject volatile ECs immediately; such sorts must always be postponed.
 	 */
-	foreach(lc_em, ec->ec_members)
+	if (ec->ec_has_volatile)
+		return NULL;
+
+	/*
+	 * Try to find an EM directly matching some reltarget member.
+	 */
+	foreach(lc, target->exprs)
 	{
-		EquivalenceMember *em = lfirst(lc_em);
-		Expr	   *em_expr = em->em_expr;
-		PathTarget *target = rel->reltarget;
-		ListCell   *lc_target_expr;
+		Expr	   *targetexpr = (Expr *) lfirst(lc);
 
-		/*
-		 * We shouldn't be trying to sort by an equivalence class that
-		 * contains a constant, so no need to consider such cases any further.
-		 */
-		if (em->em_is_const)
+		em = find_ec_member_matching_expr(ec, targetexpr, rel->relids);
+		if (!em)
 			continue;
 
 		/*
-		 * Any Vars in the equivalence class member need to come from this
-		 * relation. This is a superset of prepare_sort_from_pathkeys ignoring
-		 * child members unless they belong to the rel being sorted.
+		 * Reject expressions involving set-returning functions, as those
+		 * can't be computed early either.  (Note: this test and the following
+		 * one are effectively checking properties of targetexpr, so there's
+		 * no point in asking whether some other EC member would be better.)
 		 */
-		if (!bms_is_subset(em->em_relids, rel->relids))
+		if (IS_SRF_CALL((Node *) em->em_expr))
 			continue;
 
 		/*
-		 * As long as the expression isn't volatile then
-		 * prepare_sort_from_pathkeys is able to generate a new target entry,
-		 * so there's no need to verify that one already exists.
+		 * If requested, reject expressions that are not parallel-safe.  We
+		 * check this last because it's a rather expensive test.
 		 */
-		if (!ec->ec_has_volatile)
-			return em->em_expr;
+		if (require_parallel_safe &&
+			!is_parallel_safe(root, (Node *) em->em_expr))
+			continue;
 
-		/*
-		 * If, however, it's volatile, we have to verify that the
-		 * equivalence member's expr is already generated in the
-		 * relation's target (we do strip relabels first from both
-		 * expressions, which is cheap and might allow us to match
-		 * more expressions).
-		 */
-		while (em_expr && IsA(em_expr, RelabelType))
-			em_expr = ((RelabelType *) em_expr)->arg;
-
-		foreach(lc_target_expr, target->exprs)
-		{
-			Expr	   *target_expr = lfirst(lc_target_expr);
-
-			while (target_expr && IsA(target_expr, RelabelType))
-				target_expr = ((RelabelType *) target_expr)->arg;
-
-			if (equal(target_expr, em_expr))
-				return em->em_expr;
-		}
+		return em->em_expr;
 	}
 
-	/* We didn't find any suitable equivalence class expression */
-	return NULL;
+	/*
+	 * Try to find a expression computable from the reltarget.
+	 */
+	em = find_computable_ec_member(root, ec, target->exprs, rel->relids,
+								   require_parallel_safe);
+	if (!em)
+		return NULL;
+
+	/*
+	 * Reject expressions involving set-returning functions, as those can't be
+	 * computed early either.  (There's no point in looking for another EC
+	 * member in this case; since SRFs can't appear in WHERE, they cannot
+	 * belong to multi-member ECs.)
+	 */
+	if (IS_SRF_CALL((Node *) em->em_expr))
+		return NULL;
+
+	return em->em_expr;
 }
 
 /*
@@ -1663,7 +1835,8 @@ create_join_clause(PlannerInfo *root,
 	 */
 	oldcontext = MemoryContextSwitchTo(root->planner_cxt);
 
-	rinfo = build_implied_join_equality(opno,
+	rinfo = build_implied_join_equality(root,
+										opno,
 										ec->ec_collation,
 										leftem->em_expr,
 										rightem->em_expr,
@@ -1963,7 +2136,8 @@ reconsider_outer_join_clause(PlannerInfo *root, RestrictInfo *rinfo,
 											 cur_em->em_datatype);
 			if (!OidIsValid(eq_op))
 				continue;		/* can't generate equality */
-			newrinfo = build_implied_join_equality(eq_op,
+			newrinfo = build_implied_join_equality(root,
+												   eq_op,
 												   cur_ec->ec_collation,
 												   innervar,
 												   cur_em->em_expr,
@@ -2106,7 +2280,8 @@ reconsider_full_join_clause(PlannerInfo *root, RestrictInfo *rinfo)
 											 cur_em->em_datatype);
 			if (OidIsValid(eq_op))
 			{
-				newrinfo = build_implied_join_equality(eq_op,
+				newrinfo = build_implied_join_equality(root,
+													   eq_op,
 													   cur_ec->ec_collation,
 													   leftvar,
 													   cur_em->em_expr,
@@ -2121,7 +2296,8 @@ reconsider_full_join_clause(PlannerInfo *root, RestrictInfo *rinfo)
 											 cur_em->em_datatype);
 			if (OidIsValid(eq_op))
 			{
-				newrinfo = build_implied_join_equality(eq_op,
+				newrinfo = build_implied_join_equality(root,
+													   eq_op,
 													   cur_ec->ec_collation,
 													   rightvar,
 													   cur_em->em_expr,

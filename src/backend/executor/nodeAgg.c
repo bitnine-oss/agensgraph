@@ -1399,7 +1399,7 @@ project_aggregates(AggState *aggstate)
 }
 
 /*
- * Walk tlist and qual to find referenced colnos, dividing them into
+ * Find input-tuple columns that are needed, dividing them into
  * aggregated and unaggregated sets.
  */
 static void
@@ -1412,8 +1412,14 @@ find_cols(AggState *aggstate, Bitmapset **aggregated, Bitmapset **unaggregated)
 	context.aggregated = NULL;
 	context.unaggregated = NULL;
 
+	/* Examine tlist and quals */
 	(void) find_cols_walker((Node *) agg->plan.targetlist, &context);
 	(void) find_cols_walker((Node *) agg->plan.qual, &context);
+
+	/* In some cases, grouping columns will not appear in the tlist */
+	for (int i = 0; i < agg->numCols; i++)
+		context.unaggregated = bms_add_member(context.unaggregated,
+											  agg->grpColIdx[i]);
 
 	*aggregated = context.aggregated;
 	*unaggregated = context.unaggregated;
@@ -1758,9 +1764,15 @@ hashagg_recompile_expressions(AggState *aggstate, bool minslot, bool nullcheck)
 		const TupleTableSlotOps *outerops = aggstate->ss.ps.outerops;
 		bool		outerfixed = aggstate->ss.ps.outeropsfixed;
 		bool		dohash = true;
-		bool		dosort;
+		bool		dosort = false;
 
-		dosort = aggstate->aggstrategy == AGG_MIXED ? true : false;
+		/*
+		 * If minslot is true, that means we are processing a spilled batch
+		 * (inside agg_refill_hash_table()), and we must not advance the
+		 * sorted grouping sets.
+		 */
+		if (aggstate->aggstrategy == AGG_MIXED && !minslot)
+			dosort = true;
 
 		/* temporarily change the outerops while compiling the expression */
 		if (minslot)
@@ -1796,15 +1808,15 @@ hash_agg_set_limits(double hashentrysize, double input_groups, int used_bits,
 {
 	int			npartitions;
 	Size		partition_mem;
-	int			hash_mem = get_hash_mem();
+	Size		hash_mem_limit = get_hash_memory_limit();
 
 	/* if not expected to spill, use all of hash_mem */
-	if (input_groups * hashentrysize < hash_mem * 1024L)
+	if (input_groups * hashentrysize <= hash_mem_limit)
 	{
 		if (num_partitions != NULL)
 			*num_partitions = 0;
-		*mem_limit = hash_mem * 1024L;
-		*ngroups_limit = *mem_limit / hashentrysize;
+		*mem_limit = hash_mem_limit;
+		*ngroups_limit = hash_mem_limit / hashentrysize;
 		return;
 	}
 
@@ -1829,10 +1841,10 @@ hash_agg_set_limits(double hashentrysize, double input_groups, int used_bits,
 	 * minimum number of partitions, so we aren't going to dramatically exceed
 	 * work mem anyway.
 	 */
-	if (hash_mem * 1024L > 4 * partition_mem)
-		*mem_limit = hash_mem * 1024L - partition_mem;
+	if (hash_mem_limit > 4 * partition_mem)
+		*mem_limit = hash_mem_limit - partition_mem;
 	else
-		*mem_limit = hash_mem * 1024L * 0.75;
+		*mem_limit = hash_mem_limit * 0.75;
 
 	if (*mem_limit > hashentrysize)
 		*ngroups_limit = *mem_limit / hashentrysize;
@@ -1986,32 +1998,36 @@ static int
 hash_choose_num_partitions(double input_groups, double hashentrysize,
 						   int used_bits, int *log2_npartitions)
 {
-	Size		mem_wanted;
-	int			partition_limit;
+	Size		hash_mem_limit = get_hash_memory_limit();
+	double		partition_limit;
+	double		mem_wanted;
+	double		dpartitions;
 	int			npartitions;
 	int			partition_bits;
-	int			hash_mem = get_hash_mem();
 
 	/*
 	 * Avoid creating so many partitions that the memory requirements of the
 	 * open partition files are greater than 1/4 of hash_mem.
 	 */
 	partition_limit =
-		(hash_mem * 1024L * 0.25 - HASHAGG_READ_BUFFER_SIZE) /
+		(hash_mem_limit * 0.25 - HASHAGG_READ_BUFFER_SIZE) /
 		HASHAGG_WRITE_BUFFER_SIZE;
 
 	mem_wanted = HASHAGG_PARTITION_FACTOR * input_groups * hashentrysize;
 
 	/* make enough partitions so that each one is likely to fit in memory */
-	npartitions = 1 + (mem_wanted / (hash_mem * 1024L));
+	dpartitions = 1 + (mem_wanted / hash_mem_limit);
 
-	if (npartitions > partition_limit)
-		npartitions = partition_limit;
+	if (dpartitions > partition_limit)
+		dpartitions = partition_limit;
 
-	if (npartitions < HASHAGG_MIN_PARTITIONS)
-		npartitions = HASHAGG_MIN_PARTITIONS;
-	if (npartitions > HASHAGG_MAX_PARTITIONS)
-		npartitions = HASHAGG_MAX_PARTITIONS;
+	if (dpartitions < HASHAGG_MIN_PARTITIONS)
+		dpartitions = HASHAGG_MIN_PARTITIONS;
+	if (dpartitions > HASHAGG_MAX_PARTITIONS)
+		dpartitions = HASHAGG_MAX_PARTITIONS;
+
+	/* HASHAGG_MAX_PARTITIONS limit makes this safe */
+	npartitions = (int) dpartitions;
 
 	/* ceil(log2(npartitions)) */
 	partition_bits = my_log2(npartitions);
@@ -2024,7 +2040,7 @@ hash_choose_num_partitions(double input_groups, double hashentrysize,
 		*log2_npartitions = partition_bits;
 
 	/* number of partitions will be a power of two */
-	npartitions = 1L << partition_bits;
+	npartitions = 1 << partition_bits;
 
 	return npartitions;
 }
@@ -2601,11 +2617,15 @@ agg_refill_hash_table(AggState *aggstate)
 						batch->used_bits, &aggstate->hash_mem_limit,
 						&aggstate->hash_ngroups_limit, NULL);
 
-	/* there could be residual pergroup pointers; clear them */
-	for (int setoff = 0;
-		 setoff < aggstate->maxsets + aggstate->num_hashes;
-		 setoff++)
-		aggstate->all_pergroups[setoff] = NULL;
+	/*
+	 * Each batch only processes one grouping set; set the rest to NULL so
+	 * that advance_aggregates() knows to ignore them. We don't touch
+	 * pergroups for sorted grouping sets here, because they will be needed if
+	 * we rescan later. The expressions for sorted grouping sets will not be
+	 * evaluated after we recompile anyway.
+	 */
+	MemSet(aggstate->hash_pergroup, 0,
+		   sizeof(AggStatePerGroup) * aggstate->num_hashes);
 
 	/* free memory and reset hash tables */
 	ReScanExprContext(aggstate->hashcontext);
@@ -3665,7 +3685,11 @@ ExecInitAgg(Agg *node, EState *estate, int eflags)
 							&aggstate->hash_ngroups_limit,
 							&aggstate->hash_planned_partitions);
 		find_hash_columns(aggstate);
-		build_hash_tables(aggstate);
+
+		/* Skip massive memory allocation if we are just doing EXPLAIN */
+		if (!(eflags & EXEC_FLAG_EXPLAIN_ONLY))
+			build_hash_tables(aggstate);
+
 		aggstate->table_filled = false;
 
 		/* Initialize this to 1, meaning nothing spilled, yet */

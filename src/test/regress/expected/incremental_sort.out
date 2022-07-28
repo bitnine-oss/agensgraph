@@ -675,6 +675,32 @@ select * from (select * from t order by a) s order by a, b limit 70;
  9 | 70
 (70 rows)
 
+-- Checks case where we hit a group boundary at the last tuple of a batch.
+-- Because the full sort state is bounded, we scan 64 tuples (the mode
+-- transition point) but only retain 5. Thus when we transition modes, all
+-- tuples in the full sort state have different prefix keys.
+explain (costs off) select * from (select * from t order by a) s order by a, b limit 5;
+           QUERY PLAN            
+---------------------------------
+ Limit
+   ->  Incremental Sort
+         Sort Key: t.a, t.b
+         Presorted Key: t.a
+         ->  Sort
+               Sort Key: t.a
+               ->  Seq Scan on t
+(7 rows)
+
+select * from (select * from t order by a) s order by a, b limit 5;
+ a | b 
+---+---
+ 1 | 1
+ 2 | 2
+ 3 | 3
+ 4 | 4
+ 9 | 5
+(5 rows)
+
 -- Test rescan.
 begin;
 -- We force the planner to choose a plan with incremental sort on the right side
@@ -1468,6 +1494,19 @@ explain (costs off) select * from t union select * from t order by 1,3;
                            ->  Parallel Seq Scan on t t_1
 (13 rows)
 
+-- Full sort, not just incremental sort can be pushed below a gather merge path
+-- by generate_useful_gather_paths.
+explain (costs off) select distinct a,b from t;
+                QUERY PLAN                
+------------------------------------------
+ Unique
+   ->  Gather Merge
+         Workers Planned: 2
+         ->  Sort
+               Sort Key: a, b
+               ->  Parallel Seq Scan on t
+(6 rows)
+
 drop table t;
 -- Sort pushdown can't go below where expressions are part of the rel target.
 -- In particular this is interesting for volatile expressions which have to
@@ -1538,6 +1577,72 @@ order by 1, 2;
    ->  Function Scan on generate_series
 (7 rows)
 
+-- Parallel sort with an aggregate that can be safely generated in parallel,
+-- but we can't sort by partial aggregate values.
+explain (costs off) select count(*)
+from tenk1 t1
+join tenk1 t2 on t1.unique1 = t2.unique2
+join tenk1 t3 on t2.unique1 = t3.unique1
+order by count(*);
+                                          QUERY PLAN                                           
+-----------------------------------------------------------------------------------------------
+ Sort
+   Sort Key: (count(*))
+   ->  Finalize Aggregate
+         ->  Gather
+               Workers Planned: 2
+               ->  Partial Aggregate
+                     ->  Parallel Hash Join
+                           Hash Cond: (t2.unique1 = t3.unique1)
+                           ->  Parallel Hash Join
+                                 Hash Cond: (t1.unique1 = t2.unique2)
+                                 ->  Parallel Index Only Scan using tenk1_unique1 on tenk1 t1
+                                 ->  Parallel Hash
+                                       ->  Parallel Index Scan using tenk1_unique2 on tenk1 t2
+                           ->  Parallel Hash
+                                 ->  Parallel Index Only Scan using tenk1_unique1 on tenk1 t3
+(15 rows)
+
+-- Parallel sort but with expression (correlated subquery) that
+-- is prohibited in parallel plans.
+explain (costs off) select distinct
+  unique1,
+  (select t.unique1 from tenk1 where tenk1.unique1 = t.unique1)
+from tenk1 t, generate_series(1, 1000);
+                                   QUERY PLAN                                    
+---------------------------------------------------------------------------------
+ Unique
+   ->  Sort
+         Sort Key: t.unique1, ((SubPlan 1))
+         ->  Gather
+               Workers Planned: 2
+               ->  Nested Loop
+                     ->  Parallel Index Only Scan using tenk1_unique1 on tenk1 t
+                     ->  Function Scan on generate_series
+               SubPlan 1
+                 ->  Index Only Scan using tenk1_unique1 on tenk1
+                       Index Cond: (unique1 = t.unique1)
+(11 rows)
+
+explain (costs off) select
+  unique1,
+  (select t.unique1 from tenk1 where tenk1.unique1 = t.unique1)
+from tenk1 t, generate_series(1, 1000)
+order by 1, 2;
+                                QUERY PLAN                                 
+---------------------------------------------------------------------------
+ Sort
+   Sort Key: t.unique1, ((SubPlan 1))
+   ->  Gather
+         Workers Planned: 2
+         ->  Nested Loop
+               ->  Parallel Index Only Scan using tenk1_unique1 on tenk1 t
+               ->  Function Scan on generate_series
+         SubPlan 1
+           ->  Index Only Scan using tenk1_unique1 on tenk1
+                 Index Cond: (unique1 = t.unique1)
+(10 rows)
+
 -- Parallel sort but with expression not available until the upper rel.
 explain (costs off) select distinct sub.unique1, stringu1 || random()::text
 from tenk1, lateral (select tenk1.unique1 from generate_series(1, 1000)) as sub;
@@ -1566,4 +1671,16 @@ order by 1, 2;
                ->  Parallel Index Scan using tenk1_unique1 on tenk1
                ->  Function Scan on generate_series
 (7 rows)
+
+-- Disallow pushing down sort when pathkey is an SRF.
+explain (costs off) select unique1 from tenk1 order by unnest('{1,2}'::int[]);
+                               QUERY PLAN                                
+-------------------------------------------------------------------------
+ Sort
+   Sort Key: (unnest('{1,2}'::integer[]))
+   ->  Gather
+         Workers Planned: 2
+         ->  ProjectSet
+               ->  Parallel Index Only Scan using tenk1_unique1 on tenk1
+(6 rows)
 

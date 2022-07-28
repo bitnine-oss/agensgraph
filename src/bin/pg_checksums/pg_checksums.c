@@ -229,12 +229,19 @@ scan_file(const char *fn, BlockNumber segmentno)
 		}
 		blocks++;
 
+		/*
+		 * Since the file size is counted as total_size for progress status
+		 * information, the sizes of all pages including new ones in the file
+		 * should be counted as current_size. Otherwise the progress reporting
+		 * calculated using those counters may not reach 100%.
+		 */
+		current_size += r;
+
 		/* New pages have no checksum yet */
 		if (PageIsNew(header))
 			continue;
 
 		csum = pg_checksum_page(buf.data, blockno + segmentno * RELSEG_SIZE);
-		current_size += r;
 		if (mode == PG_MODE_CHECK)
 		{
 			if (csum != header->pd_checksum)
@@ -635,7 +642,7 @@ main(int argc, char *argv[])
 		if (mode == PG_MODE_CHECK)
 		{
 			printf(_("Bad checksums:  %s\n"), psprintf(INT64_FORMAT, badblocks));
-			printf(_("Data checksum version: %d\n"), ControlFile->data_checksum_version);
+			printf(_("Data checksum version: %u\n"), ControlFile->data_checksum_version);
 
 			if (badblocks > 0)
 				exit(1);
@@ -662,7 +669,7 @@ main(int argc, char *argv[])
 		update_controlfile(DataDir, ControlFile, do_sync);
 
 		if (verbose)
-			printf(_("Data checksum version: %d\n"), ControlFile->data_checksum_version);
+			printf(_("Data checksum version: %u\n"), ControlFile->data_checksum_version);
 		if (mode == PG_MODE_ENABLE)
 			printf(_("Checksums enabled in cluster\n"));
 		else

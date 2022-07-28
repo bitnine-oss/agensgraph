@@ -1007,16 +1007,23 @@ repeat('Pg', 4) <returnvalue>PgPgPgPg</returnvalue>
         <returnvalue>double precision</returnvalue>
        </para>
        <para>
-        Exponentiation (unlike typical mathematical practice, multiple uses of
-        <literal>^</literal> will associate left to right)
+        Exponentiation
        </para>
        <para>
         <literal>2 ^ 3</literal>
         <returnvalue>8</returnvalue>
        </para>
        <para>
+        Unlike typical mathematical practice, multiple uses of
+        <literal>^</literal> will associate left to right by default:
+       </para>
+       <para>
         <literal>2 ^ 3 ^ 3</literal>
         <returnvalue>512</returnvalue>
+       </para>
+       <para>
+        <literal>2 ^ (3 ^ 3)</literal>
+        <returnvalue>134217728</returnvalue>
        </para></entry>
       </row>
 
@@ -1617,7 +1624,10 @@ repeat('Pg', 4) <returnvalue>PgPgPgPg</returnvalue>
         <returnvalue>double precision</returnvalue>
        </para>
        <para>
-        Rounds to nearest integer
+        Rounds to nearest integer.  For <type>numeric</type>, ties are
+        broken by rounding away from zero.  For <type>double precision</type>,
+        the tie-breaking behavior is platform dependent, but
+        <quote>round to nearest even</quote> is the most common rule.
        </para>
        <para>
         <literal>round(42.4)</literal>
@@ -1632,7 +1642,7 @@ repeat('Pg', 4) <returnvalue>PgPgPgPg</returnvalue>
        </para>
        <para>
         Rounds <parameter>v</parameter> to <parameter>s</parameter> decimal
-        places
+        places.  Ties are broken by rounding away from zero.
        </para>
        <para>
         <literal>round(42.4382, 2)</literal>
@@ -2616,8 +2626,9 @@ repeat('Pg', 4) <returnvalue>PgPgPgPg</returnvalue>
         <returnvalue>integer</returnvalue>
        </para>
        <para>
-        Returns starting index of specified <parameter>substring</parameter>
-        within <parameter>string</parameter>, or zero if it's not present.
+        Returns first starting index of the specified
+        <parameter>substring</parameter> within
+        <parameter>string</parameter>, or zero if it's not present.
        </para>
        <para>
         <literal>position('om' in 'Thomas')</literal>
@@ -2660,7 +2671,7 @@ repeat('Pg', 4) <returnvalue>PgPgPgPg</returnvalue>
         <returnvalue>text</returnvalue>
        </para>
        <para>
-        Extracts substring matching POSIX regular expression; see
+        Extracts the first substring matching POSIX regular expression; see
         <xref linkend="functions-posix-regexp"/>.
        </para>
        <para>
@@ -2675,7 +2686,7 @@ repeat('Pg', 4) <returnvalue>PgPgPgPg</returnvalue>
         <returnvalue>text</returnvalue>
        </para>
        <para>
-        Extracts substring matching <acronym>SQL</acronym> regular expression;
+        Extracts the first substring matching <acronym>SQL</acronym> regular expression;
         see <xref linkend="functions-similarto-regexp"/>.
        </para>
        <para>
@@ -3153,7 +3164,7 @@ repeat('Pg', 4) <returnvalue>PgPgPgPg</returnvalue>
         <returnvalue>text[]</returnvalue>
        </para>
        <para>
-        Returns captured substring(s) resulting from the first match of a POSIX
+        Returns captured substrings resulting from the first match of a POSIX
         regular expression to the <parameter>string</parameter>; see
         <xref linkend="functions-posix-regexp"/>.
        </para>
@@ -3172,9 +3183,10 @@ repeat('Pg', 4) <returnvalue>PgPgPgPg</returnvalue>
         <returnvalue>setof text[]</returnvalue>
        </para>
        <para>
-        Returns captured substring(s) resulting from matching a POSIX regular
-        expression to the <parameter>string</parameter>; see
-        <xref linkend="functions-posix-regexp"/>.
+        Returns captured substrings resulting from the first match of a
+        POSIX regular expression to the <parameter>string</parameter>,
+        or multiple matches if the <literal>g</literal> flag is used;
+        see <xref linkend="functions-posix-regexp"/>.
        </para>
        <para>
         <literal>regexp_matches('foobarbequebaz', 'ba.', 'g')</literal>
@@ -3195,8 +3207,10 @@ repeat('Pg', 4) <returnvalue>PgPgPgPg</returnvalue>
         <returnvalue>text</returnvalue>
        </para>
        <para>
-        Replaces substring(s) matching a POSIX regular expression; see
-        <xref linkend="functions-posix-regexp"/>.
+        Replaces substrings resulting from the first match of a
+        POSIX regular expression, or multiple substring matches
+        if the <literal>g</literal> flag is used; see <xref
+        linkend="functions-posix-regexp"/>.
        </para>
        <para>
         <literal>regexp_replace('Thomas', '.[mN]a.', 'M')</literal>
@@ -3309,7 +3323,6 @@ repeat('Pg', 4) <returnvalue>PgPgPgPg</returnvalue>
         </indexterm>
         <function>right</function> ( <parameter>string</parameter> <type>text</type>,
          <parameter>n</parameter> <type>integer</type> )
-<type></type> )
         <returnvalue>text</returnvalue>
        </para>
        <para>
@@ -3331,7 +3344,6 @@ repeat('Pg', 4) <returnvalue>PgPgPgPg</returnvalue>
         <function>rpad</function> ( <parameter>string</parameter> <type>text</type>,
         <parameter>length</parameter> <type>integer</type>
         <optional>, <parameter>fill</parameter> <type>text</type> </optional> )
-<type></type> )
         <returnvalue>text</returnvalue>
        </para>
        <para>
@@ -3397,7 +3409,7 @@ repeat('Pg', 4) <returnvalue>PgPgPgPg</returnvalue>
         <returnvalue>integer</returnvalue>
        </para>
        <para>
-        Returns starting index of specified <parameter>substring</parameter>
+        Returns first starting index of the specified <parameter>substring</parameter>
         within <parameter>string</parameter>, or zero if it's not present.
         (Same as <literal>position(<parameter>substring</parameter> in
         <parameter>string</parameter>)</literal>, but note the reversed
@@ -3897,8 +3909,9 @@ SELECT format('Testing %3$s, %2$s, %s', 'one', 'two', 'three');
         <returnvalue>integer</returnvalue>
        </para>
        <para>
-        Returns starting index of specified <parameter>substring</parameter>
-        within <parameter>bytes</parameter>, or zero if it's not present.
+        Returns first starting index of the specified
+        <parameter>substring</parameter> within
+        <parameter>bytes</parameter>, or zero if it's not present.
        </para>
        <para>
         <literal>position('\x5678'::bytea in '\x1234567890'::bytea)</literal>
@@ -4743,7 +4756,7 @@ SELECT format('Testing %3$s, %2$s, %s', 'one', 'two', 'three');
         <returnvalue>integer</returnvalue>
        </para>
        <para>
-        Returns starting index of specified <parameter>substring</parameter>
+        Returns first starting index of the specified <parameter>substring</parameter>
         within <parameter>bits</parameter>, or zero if it's not present.
        </para>
        <para>
@@ -5268,7 +5281,7 @@ substring('foobar' from '#"o_b#"%' for '#')    <lineannotation>NULL</lineannotat
         String matches regular expression, case sensitively
        </para>
        <para>
-        <literal>'thomas' ~ '.*thom.*'</literal>
+        <literal>'thomas' ~ 't.*ma'</literal>
         <returnvalue>t</returnvalue>
        </para></entry>
        </row>
@@ -5282,7 +5295,7 @@ substring('foobar' from '#"o_b#"%' for '#')    <lineannotation>NULL</lineannotat
         String matches regular expression, case insensitively
        </para>
        <para>
-        <literal>'thomas' ~* '.*Thom.*'</literal>
+        <literal>'thomas' ~* 'T.*ma'</literal>
         <returnvalue>t</returnvalue>
        </para></entry>
        </row>
@@ -5296,8 +5309,8 @@ substring('foobar' from '#"o_b#"%' for '#')    <lineannotation>NULL</lineannotat
         String does not match regular expression, case sensitively
        </para>
        <para>
-        <literal>'thomas' !~ '.*thomas.*'</literal>
-        <returnvalue>f</returnvalue>
+        <literal>'thomas' !~ 't.*max'</literal>
+        <returnvalue>t</returnvalue>
        </para></entry>
        </row>
 
@@ -5310,8 +5323,8 @@ substring('foobar' from '#"o_b#"%' for '#')    <lineannotation>NULL</lineannotat
         String does not match regular expression, case insensitively
        </para>
        <para>
-        <literal>'thomas' !~* '.*vadim.*'</literal>
-        <returnvalue>t</returnvalue>
+        <literal>'thomas' !~* 'T.*ma'</literal>
+        <returnvalue>f</returnvalue>
        </para></entry>
        </row>
       </tbody>
@@ -5345,10 +5358,12 @@ substring('foobar' from '#"o_b#"%' for '#')    <lineannotation>NULL</lineannotat
     <para>
      Some examples:
 <programlisting>
-'abc' ~ 'abc'    <lineannotation>true</lineannotation>
-'abc' ~ '^a'     <lineannotation>true</lineannotation>
-'abc' ~ '(b|d)'  <lineannotation>true</lineannotation>
-'abc' ~ '^(b|c)' <lineannotation>false</lineannotation>
+'abcd' ~ 'bc'     <lineannotation>true</lineannotation>
+'abcd' ~ 'a.c'    <lineannotation>true &mdash; dot matches any character</lineannotation>
+'abcd' ~ 'a.*d'   <lineannotation>true &mdash; <literal>*</literal> repeats the preceding pattern item</lineannotation>
+'abcd' ~ '(b|x)'  <lineannotation>true &mdash; <literal>|</literal> means OR, parentheses group</lineannotation>
+'abcd' ~ '^a'     <lineannotation>true &mdash; <literal>^</literal> anchors to start of string</lineannotation>
+'abcd' ~ '^(b|c)' <lineannotation>false &mdash; would match except for anchoring</lineannotation>
 </programlisting>
     </para>
 
@@ -5363,7 +5378,7 @@ substring('foobar' from '#"o_b#"%' for '#')    <lineannotation>NULL</lineannotat
      <replaceable>pattern</replaceable>)</function>, provides extraction of a
      substring
      that matches a POSIX regular expression pattern.  It returns null if
-     there is no match, otherwise the portion of the text that matched the
+     there is no match, otherwise the first portion of the text that matched the
      pattern.  But if the pattern contains any parentheses, the portion
      of the text that matched the first parenthesized subexpression (the
      one whose left parenthesis comes first) is
@@ -7401,7 +7416,8 @@ SELECT regexp_match('abc01234xyz', '(?:(.*?)(\d+)(.*)){1,1}');
        </row>
        <row>
         <entry><literal>J</literal></entry>
-        <entry>Julian Day (integer days since November 24, 4714 BC at midnight UTC)</entry>
+        <entry>Julian Date (integer days since November 24, 4714 BC at local
+        midnight; see <xref linkend="datetime-julian-dates"/>)</entry>
        </row>
        <row>
         <entry><literal>Q</literal></entry>
@@ -8193,13 +8209,29 @@ SELECT regexp_match('abc01234xyz', '(?:(.*?)(\d+)(.*)){1,1}');
   </para>
 
   <para>
+   In addition, the usual comparison operators shown in
+   <xref linkend="functions-comparison-op-table"/> are available for the
+   date/time types.  Dates and timestamps (with or without time zone) are
+   all comparable, while times (with or without time zone) and intervals
+   can only be compared to other values of the same data type.  When
+   comparing a timestamp without time zone to a timestamp with time zone,
+   the former value is assumed to be given in the time zone specified by
+   the <xref linkend="guc-timezone"/> configuration parameter, and is
+   rotated to UTC for comparison to the latter value (which is already
+   in UTC internally).  Similarly, a date value is assumed to represent
+   midnight in the <varname>TimeZone</varname> zone when comparing it
+   to a timestamp.
+  </para>
+
+  <para>
    All the functions and operators described below that take <type>time</type> or <type>timestamp</type>
    inputs actually come in two variants: one that takes <type>time with time zone</type> or <type>timestamp
    with time zone</type>, and one that takes <type>time without time zone</type> or <type>timestamp without time zone</type>.
    For brevity, these variants are not shown separately.  Also, the
    <literal>+</literal> and <literal>*</literal> operators come in commutative pairs (for
-   example both date + integer and integer + date); we show only one of each
-   such pair.
+   example both <type>date</type> <literal>+</literal> <type>integer</type>
+   and <type>integer</type> <literal>+</literal> <type>date</type>); we show
+   only one of each such pair.
   </para>
 
     <table id="operators-datetime-table">
@@ -9332,9 +9364,11 @@ SELECT EXTRACT(DOY FROM TIMESTAMP '2001-02-16 20:38:40');
       <listitem>
        <para>
         For <type>timestamp with time zone</type> values, the
-        number of seconds since 1970-01-01 00:00:00 UTC (can be negative);
+        number of seconds since 1970-01-01 00:00:00 UTC (negative for
+        timestamps before that);
         for <type>date</type> and <type>timestamp</type> values, the
-        number of seconds since 1970-01-01 00:00:00 local time;
+        nominal number of seconds since 1970-01-01 00:00:00,
+        without regard to timezone or daylight-savings rules;
         for <type>interval</type> values, the total number
         of seconds in the interval
        </para>
@@ -9343,18 +9377,29 @@ SELECT EXTRACT(DOY FROM TIMESTAMP '2001-02-16 20:38:40');
 SELECT EXTRACT(EPOCH FROM TIMESTAMP WITH TIME ZONE '2001-02-16 20:38:40.12-08');
 <lineannotation>Result: </lineannotation><computeroutput>982384720.12</computeroutput>
 
+SELECT EXTRACT(EPOCH FROM TIMESTAMP '2001-02-16 20:38:40.12');
+<lineannotation>Result: </lineannotation><computeroutput>982355920.12</computeroutput>
+
 SELECT EXTRACT(EPOCH FROM INTERVAL '5 days 3 hours');
 <lineannotation>Result: </lineannotation><computeroutput>442800</computeroutput>
 </screen>
 
        <para>
-        You can convert an epoch value back to a time stamp
+        You can convert an epoch value back to a <type>timestamp with time zone</type>
         with <function>to_timestamp</function>:
        </para>
 <screen>
 SELECT to_timestamp(982384720.12);
 <lineannotation>Result: </lineannotation><computeroutput>2001-02-17 04:38:40.12+00</computeroutput>
 </screen>
+
+       <para>
+        Beware that applying <function>to_timestamp</function> to an epoch
+        extracted from a <type>date</type> or <type>timestamp</type> value
+        could produce a misleading result: the result will effectively
+        assume that the original value had been given in UTC, which might
+        not be the case.
+       </para>
       </listitem>
      </varlistentry>
 
@@ -9417,6 +9462,25 @@ SELECT EXTRACT(ISOYEAR FROM DATE '2006-01-02');
        <para>
         This field is not available in PostgreSQL releases prior to 8.3.
        </para>
+      </listitem>
+     </varlistentry>
+
+     <varlistentry>
+      <term><literal>julian</literal></term>
+      <listitem>
+       <para>
+        The <firstterm>Julian Date</firstterm> corresponding to the
+        date or timestamp (not applicable to intervals).  Timestamps
+        that are not local midnight result in a fractional value.  See
+        <xref linkend="datetime-julian-dates"/> for more information.
+       </para>
+
+<screen>
+SELECT EXTRACT(JULIAN FROM DATE '2006-01-01');
+<lineannotation>Result: </lineannotation><computeroutput>2453737</computeroutput>
+SELECT EXTRACT(JULIAN FROM TIMESTAMP '2006-01-01 12:00');
+<lineannotation>Result: </lineannotation><computeroutput>2453737.5</computeroutput>
+</screen>
       </listitem>
      </varlistentry>
 
@@ -14736,8 +14800,12 @@ table2-mapping
        </para>
        <para>
         Concatenates two <type>jsonb</type> values.
-        Concatenating two objects generates an object with the union of their
+        Concatenating two arrays generates an array containing all the
+        elements of each input.  Concatenating two objects generates an
+        object containing the union of their
         keys, taking the second object's value when there are duplicate keys.
+        All other cases are treated by converting a non-array input into a
+        single-element array, and then proceeding as for two arrays.
         Does not operate recursively: only the top-level array or object
         structure is merged.
        </para>
@@ -14748,6 +14816,22 @@ table2-mapping
        <para>
         <literal>'{"a": "b"}'::jsonb || '{"c": "d"}'::jsonb</literal>
         <returnvalue>{"a": "b", "c": "d"}</returnvalue>
+       </para>
+       <para>
+        <literal>'[1, 2]'::jsonb || '3'::jsonb</literal>
+        <returnvalue>[1, 2, 3]</returnvalue>
+       </para>
+       <para>
+        <literal>'{"a": "b"}'::jsonb || '42'::jsonb</literal>
+        <returnvalue>[{"a": "b"}, 42]</returnvalue>
+       </para>
+       <para>
+        To append an array to another array as a single entry, wrap it
+        in an additional layer of array, for example:
+       </para>
+       <para>
+        <literal>'[1, 2]'::jsonb || jsonb_build_array('[3, 4]'::jsonb)</literal>
+        <returnvalue>[1, 2, [3, 4]]</returnvalue>
        </para></entry>
       </row>
 
@@ -16210,6 +16294,24 @@ strict $.track.segments[*].location
 </programlisting>
    </para>
 
+   <para>
+    The <literal>.**</literal> accessor can lead to surprising results
+    when using the lax mode. For instance, the following query selects every
+    <literal>HR</literal> value twice:
+<programlisting>
+lax $.**.HR
+</programlisting>
+    This happens because the <literal>.**</literal> accessor selects both
+    the <literal>segments</literal> array and each of its elements, while
+    the <literal>.HR</literal> accessor automatically unwraps arrays when
+    using the lax mode. To avoid surprising results, we recommend using
+    the <literal>.**</literal> accessor only in the strict mode. The
+    following query selects each <literal>HR</literal> value just once:
+<programlisting>
+strict $.**.HR
+</programlisting>
+   </para>
+
    </sect3>
 
    <sect3 id="functions-sqljson-path-operators">
@@ -16851,9 +16953,10 @@ $[*] ? (@ like_regex "^[aeiou]" flag "i")
      is a JSON path string literal, written according to the rules given in
      <xref linkend="datatype-jsonpath"/>.  This means in particular that any
      backslashes you want to use in the regular expression must be doubled.
-     For example, to match strings that contain only digits:
+     For example, to match string values of the root document that contain
+     only digits:
 <programlisting>
-$ ? (@ like_regex "^\\d+$")
+$.* ? (@ like_regex "^\\d+$")
 </programlisting>
     </para>
    </sect3>
@@ -17879,7 +17982,8 @@ SELECT NULLIF(value, '(none)') ...
         <returnvalue>setof anyelement</returnvalue>
        </para>
        <para>
-        Expands an array to a set of rows.
+        Expands an array into a set of rows.
+        The array's elements are read out in storage order.
        </para>
        <para>
         <literal>unnest(ARRAY[1,2])</literal>
@@ -17887,6 +17991,16 @@ SELECT NULLIF(value, '(none)') ...
 <programlisting>
  1
  2
+</programlisting>
+       </para>
+       <para>
+        <literal>unnest(ARRAY[['foo','bar'],['baz','quux']])</literal>
+        <returnvalue></returnvalue>
+<programlisting>
+ foo
+ bar
+ baz
+ quux
 </programlisting>
        </para></entry>
       </row>
@@ -17897,10 +18011,10 @@ SELECT NULLIF(value, '(none)') ...
         <returnvalue>setof anyelement, anyelement [, ... ]</returnvalue>
        </para>
        <para>
-        Expands multiple arrays (possibly of different data types) to a set of
+        Expands multiple arrays (possibly of different data types) into a set of
         rows.  If the arrays are not all the same length then the shorter ones
-        are padded with <literal>NULL</literal>s.  This is only allowed in a
-        query's FROM clause; see <xref linkend="queries-tablefunctions"/>.
+        are padded with <literal>NULL</literal>s.  This form is only allowed
+        in a query's FROM clause; see <xref linkend="queries-tablefunctions"/>.
        </para>
        <para>
         <literal>select * from unnest(ARRAY[1,2], ARRAY['foo','bar','baz']) as x(a,b)</literal>
@@ -23854,8 +23968,9 @@ SELECT collation for ('foo' COLLATE "de_DE");
         setting <parameter>setting_name</parameter>.  If there is no such
         setting, <function>current_setting</function> throws an error
         unless <parameter>missing_ok</parameter> is supplied and
-        is <literal>true</literal>.  This function corresponds to
-        the <acronym>SQL</acronym> command <command>SHOW</command>.
+        is <literal>true</literal> (in which case NULL is returned).
+        This function corresponds to
+        the <acronym>SQL</acronym> command <xref linkend="sql-show"/>.
        </para>
        <para>
         <literal>current_setting('datestyle')</literal>
@@ -23878,10 +23993,10 @@ SELECT collation for ('foo' COLLATE "de_DE");
         Sets the parameter <parameter>setting_name</parameter>
         to <parameter>new_value</parameter>, and returns that value.
         If <parameter>is_local</parameter> is <literal>true</literal>, the new
-        value will only apply for the current transaction. If you want the new
-        value to apply for the current session, use <literal>false</literal>
-        instead. This function corresponds to the SQL
-        command <command>SET</command>.
+        value will only apply during the current transaction. If you want the
+        new value to apply for the rest of the current session,
+        use <literal>false</literal> instead. This function corresponds to
+        the SQL command <xref linkend="sql-set"/>.
        </para>
        <para>
         <literal>set_config('log_statement_stats', 'off', false)</literal>
@@ -24324,11 +24439,11 @@ SELECT collation for ('foo' COLLATE "de_DE");
         <indexterm>
          <primary>pg_wal_lsn_diff</primary>
         </indexterm>
-        <function>pg_wal_lsn_diff</function> ( <parameter>lsn</parameter> <type>pg_lsn</type>, <parameter>lsn</parameter> <type>pg_lsn</type> )
+        <function>pg_wal_lsn_diff</function> ( <parameter>lsn1</parameter> <type>pg_lsn</type>, <parameter>lsn2</parameter> <type>pg_lsn</type> )
         <returnvalue>numeric</returnvalue>
        </para>
        <para>
-        Calculates the difference in bytes between two write-ahead log
+        Calculates the difference in bytes (<parameter>lsn1</parameter> - <parameter>lsn2</parameter>) between two write-ahead log
         locations.  This can be used
         with <structname>pg_stat_replication</structname> or some of the
         functions shown in <xref linkend="functions-admin-backup-table"/> to
@@ -25486,6 +25601,7 @@ postgres=# SELECT * FROM pg_walfile_name_offset(pg_stop_backup());
         be <literal>pg_catalog</literal>, but that is not a requirement; the
         collations could be installed into some other schema as well.  The
         function returns the number of new collation objects it created.
+        Use of this function is restricted to superusers.
        </para></entry>
       </row>
      </tbody>

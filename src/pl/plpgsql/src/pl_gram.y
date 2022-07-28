@@ -1304,7 +1304,6 @@ stmt_for		: opt_loop_label K_FOR for_control loop_body
 
 							new = (PLpgSQL_stmt_fori *) $3;
 							new->lineno   = plpgsql_location_to_lineno(@2);
-							new->stmtid	  = ++plpgsql_curr_compile->nstatements;
 							new->label	  = $1;
 							new->body	  = $4.stmts;
 							$$ = (PLpgSQL_stmt *) new;
@@ -1319,7 +1318,6 @@ stmt_for		: opt_loop_label K_FOR for_control loop_body
 							/* forq is the common supertype of all three */
 							new = (PLpgSQL_stmt_forq *) $3;
 							new->lineno   = plpgsql_location_to_lineno(@2);
-							new->stmtid	  = ++plpgsql_curr_compile->nstatements;
 							new->label	  = $1;
 							new->body	  = $4.stmts;
 							$$ = (PLpgSQL_stmt *) new;
@@ -3042,7 +3040,7 @@ make_execsql_stmt(int firsttoken, int location)
 
 	check_sql_expr(expr->query, location, 0);
 
-	execsql = palloc(sizeof(PLpgSQL_stmt_execsql));
+	execsql = palloc0(sizeof(PLpgSQL_stmt_execsql));
 	execsql->cmd_type = PLPGSQL_STMT_EXECSQL;
 	execsql->lineno  = plpgsql_location_to_lineno(location);
 	execsql->stmtid  = ++plpgsql_curr_compile->nstatements;

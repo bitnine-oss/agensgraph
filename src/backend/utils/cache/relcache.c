@@ -550,6 +550,7 @@ RelationBuildTupleDesc(Relation relation)
 	{
 		Form_pg_attribute attp;
 		int			attnum;
+		bool        atthasmissing;
 
 		attp = (Form_pg_attribute) GETSTRUCT(pg_attribute_tuple);
 
@@ -562,6 +563,22 @@ RelationBuildTupleDesc(Relation relation)
 		memcpy(TupleDescAttr(relation->rd_att, attnum - 1),
 			   attp,
 			   ATTRIBUTE_FIXED_PART_SIZE);
+
+		/*
+		 * Fix atthasmissing flag - it's only for plain tables. Others
+		 * should not have missing values set, but there may be some left from
+		 * before when we placed that check, so this code defensively ignores
+		 * such values.
+		 */
+		atthasmissing = attp->atthasmissing;
+		if (relation->rd_rel->relkind != RELKIND_RELATION && atthasmissing)
+		{
+			Form_pg_attribute nattp;
+
+			atthasmissing = false;
+			nattp = TupleDescAttr(relation->rd_att, attnum - 1);
+			nattp->atthasmissing = false;
+		}
 
 		/* Update constraint/default info */
 		if (attp->attnotnull)
@@ -584,7 +601,7 @@ RelationBuildTupleDesc(Relation relation)
 		}
 
 		/* Likewise for a missing value */
-		if (attp->atthasmissing)
+		if (atthasmissing)
 		{
 			Datum		missingval;
 			bool		missingNull;
@@ -1605,15 +1622,15 @@ LookupOpclassInfo(Oid operatorClassOid,
 		/* First time through: initialize the opclass cache */
 		HASHCTL		ctl;
 
+		/* Also make sure CacheMemoryContext exists */
+		if (!CacheMemoryContext)
+			CreateCacheMemoryContext();
+
 		MemSet(&ctl, 0, sizeof(ctl));
 		ctl.keysize = sizeof(Oid);
 		ctl.entrysize = sizeof(OpClassCacheEnt);
 		OpClassCache = hash_create("Operator class cache", 64,
 								   &ctl, HASH_ELEM | HASH_BLOBS);
-
-		/* Also make sure CacheMemoryContext exists */
-		if (!CacheMemoryContext)
-			CreateCacheMemoryContext();
 	}
 
 	opcentry = (OpClassCacheEnt *) hash_search(OpClassCache,
@@ -1622,16 +1639,10 @@ LookupOpclassInfo(Oid operatorClassOid,
 
 	if (!found)
 	{
-		/* Need to allocate memory for new entry */
+		/* Initialize new entry */
 		opcentry->valid = false;	/* until known OK */
 		opcentry->numSupport = numSupport;
-
-		if (numSupport > 0)
-			opcentry->supportProcs = (RegProcedure *)
-				MemoryContextAllocZero(CacheMemoryContext,
-									   (numSupport + 1) * sizeof(RegProcedure));
-		else
-			opcentry->supportProcs = NULL;
+		opcentry->supportProcs = NULL;	/* filled below */
 	}
 	else
 	{
@@ -1639,13 +1650,15 @@ LookupOpclassInfo(Oid operatorClassOid,
 	}
 
 	/*
-	 * When testing for cache-flush hazards, we intentionally disable the
-	 * operator class cache and force reloading of the info on each call. This
-	 * is helpful because we want to test the case where a cache flush occurs
-	 * while we are loading the info, and it's very hard to provoke that if
-	 * this happens only once per opclass per backend.
+	 * When aggressively testing cache-flush hazards, we disable the operator
+	 * class cache and force reloading of the info on each call.  This models
+	 * no real-world behavior, since the cache entries are never invalidated
+	 * otherwise.  However it can be helpful for detecting bugs in the cache
+	 * loading logic itself, such as reliance on a non-nailed index.  Given
+	 * the limited use-case and the fact that this adds a great deal of
+	 * expense, we enable it only in CLOBBER_CACHE_RECURSIVELY mode.
 	 */
-#if defined(CLOBBER_CACHE_ALWAYS)
+#if defined(CLOBBER_CACHE_RECURSIVELY)
 	opcentry->valid = false;
 #endif
 
@@ -1653,8 +1666,15 @@ LookupOpclassInfo(Oid operatorClassOid,
 		return opcentry;
 
 	/*
-	 * Need to fill in new entry.
-	 *
+	 * Need to fill in new entry.  First allocate space, unless we already did
+	 * so in some previous attempt.
+	 */
+	if (opcentry->supportProcs == NULL && numSupport > 0)
+		opcentry->supportProcs = (RegProcedure *)
+			MemoryContextAllocZero(CacheMemoryContext,
+								   numSupport * sizeof(RegProcedure));
+
+	/*
 	 * To avoid infinite recursion during startup, force heap scans if we're
 	 * looking up info for the opclasses used by the indexes we would like to
 	 * reference here.
@@ -2378,6 +2398,7 @@ RelationDestroyRelation(Relation relation, bool remember_tupdesc)
 	FreeTriggerDesc(relation->trigdesc);
 	list_free_deep(relation->rd_fkeylist);
 	list_free(relation->rd_indexlist);
+	list_free(relation->rd_statlist);
 	bms_free(relation->rd_indexattr);
 	bms_free(relation->rd_keyattr);
 	bms_free(relation->rd_pkattr);
@@ -3528,6 +3549,13 @@ RelationBuildLocalRelation(const char *relname,
 
 	rel->rd_rel->relam = accessmtd;
 
+	/*
+	 * RelationInitTableAccessMethod will do syscache lookups, so we mustn't
+	 * run it in CacheMemoryContext.  Fortunately, the remaining steps don't
+	 * require a long-lived current context.
+	 */
+	MemoryContextSwitchTo(oldcxt);
+
 	if (relkind == RELKIND_RELATION ||
 		relkind == RELKIND_SEQUENCE ||
 		relkind == RELKIND_TOASTVALUE ||
@@ -3550,11 +3578,6 @@ RelationBuildLocalRelation(const char *relname,
 	 * can't do this before storing relid in it.
 	 */
 	EOXactListAdd(rel);
-
-	/*
-	 * done building relcache entry.
-	 */
-	MemoryContextSwitchTo(oldcxt);
 
 	/* It's fully valid */
 	rel->rd_isvalid = true;

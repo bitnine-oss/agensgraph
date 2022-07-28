@@ -52,6 +52,7 @@ static DumpableObject **oprinfoindex;
 static DumpableObject **collinfoindex;
 static DumpableObject **nspinfoindex;
 static DumpableObject **extinfoindex;
+static DumpableObject **pubinfoindex;
 static int	numTables;
 static int	numTypes;
 static int	numFuncs;
@@ -59,6 +60,7 @@ static int	numOperators;
 static int	numCollations;
 static int	numNamespaces;
 static int	numExtensions;
+static int	numPublications;
 
 /* This is an array of object identities, not actual DumpableObjects */
 static ExtensionMemberId *extmembers;
@@ -93,6 +95,7 @@ getSchemaData(Archive *fout, int *numTablesPtr)
 	CollInfo   *collinfo;
 	NamespaceInfo *nspinfo;
 	ExtensionInfo *extinfo;
+	PublicationInfo *pubinfo;
 	InhInfo    *inhinfo;
 	int			numAggregates;
 	int			numInherits;
@@ -247,7 +250,9 @@ getSchemaData(Archive *fout, int *numTablesPtr)
 	getPolicies(fout, tblinfo, numTables);
 
 	pg_log_info("reading publications");
-	getPublications(fout);
+	pubinfo = getPublications(fout, &numPublications);
+	pubinfoindex = buildIndexArray(pubinfo, numPublications,
+								   sizeof(PublicationInfo));
 
 	pg_log_info("reading publication membership");
 	getPublicationTables(fout, tblinfo, numTables);
@@ -426,12 +431,24 @@ flagInhIndexes(Archive *fout, TableInfo tblinfo[], int numTables)
 /* flagInhAttrs -
  *	 for each dumpable table in tblinfo, flag its inherited attributes
  *
- * What we need to do here is detect child columns that inherit NOT NULL
- * bits from their parents (so that we needn't specify that again for the
- * child) and child columns that have DEFAULT NULL when their parents had
- * some non-null default.  In the latter case, we make up a dummy AttrDefInfo
- * object so that we'll correctly emit the necessary DEFAULT NULL clause;
- * otherwise the backend will apply an inherited default to the column.
+ * What we need to do here is:
+ *
+ * - Detect child columns that inherit NOT NULL bits from their parents, so
+ *   that we needn't specify that again for the child.
+ *
+ * - Detect child columns that have DEFAULT NULL when their parents had some
+ *   non-null default.  In this case, we make up a dummy AttrDefInfo object so
+ *   that we'll correctly emit the necessary DEFAULT NULL clause; otherwise
+ *   the backend will apply an inherited default to the column.
+ *
+ * - Detect child columns that have a generation expression when their parents
+ *   also have one.  Generation expressions are always inherited, so there is
+ *   no need to set them again in child tables, and there is no syntax for it
+ *   either.  Exceptions: If it's a partition or we are in binary upgrade
+ *   mode, we dump them because in those cases inherited tables are recreated
+ *   standalone first and then reattached to the parent.  (See also the logic
+ *   in dumpTableSchema().)  In that situation, the generation expressions
+ *   must match the parent, enforced by ALTER TABLE.
  *
  * modifies tblinfo
  */
@@ -469,6 +486,7 @@ flagInhAttrs(DumpOptions *dopt, TableInfo *tblinfo, int numTables)
 		{
 			bool		foundNotNull;	/* Attr was NOT NULL in a parent */
 			bool		foundDefault;	/* Found a default in a parent */
+			bool		foundGenerated;	/* Found a generated in a parent */
 
 			/* no point in examining dropped columns */
 			if (tbinfo->attisdropped[j])
@@ -476,6 +494,7 @@ flagInhAttrs(DumpOptions *dopt, TableInfo *tblinfo, int numTables)
 
 			foundNotNull = false;
 			foundDefault = false;
+			foundGenerated = false;
 			for (k = 0; k < numParents; k++)
 			{
 				TableInfo  *parent = parents[k];
@@ -487,7 +506,8 @@ flagInhAttrs(DumpOptions *dopt, TableInfo *tblinfo, int numTables)
 				if (inhAttrInd >= 0)
 				{
 					foundNotNull |= parent->notnull[inhAttrInd];
-					foundDefault |= (parent->attrdefs[inhAttrInd] != NULL);
+					foundDefault |= (parent->attrdefs[inhAttrInd] != NULL && !parent->attgenerated[inhAttrInd]);
+					foundGenerated |= parent->attgenerated[inhAttrInd];
 				}
 			}
 
@@ -529,6 +549,10 @@ flagInhAttrs(DumpOptions *dopt, TableInfo *tblinfo, int numTables)
 
 				tbinfo->attrdefs[j] = attrDef;
 			}
+
+			/* Remove generation expression from child */
+			if (foundGenerated && !tbinfo->ispartition && !dopt->binary_upgrade)
+				tbinfo->attrdefs[j] = NULL;
 		}
 	}
 }
@@ -895,6 +919,17 @@ ExtensionInfo *
 findExtensionByOid(Oid oid)
 {
 	return (ExtensionInfo *) findObjectByOid(oid, extinfoindex, numExtensions);
+}
+
+/*
+ * findPublicationByOid
+ *	  finds the entry (in pubinfo) of the publication with the given oid
+ *	  returns NULL if not found
+ */
+PublicationInfo *
+findPublicationByOid(Oid oid)
+{
+	return (PublicationInfo *) findObjectByOid(oid, pubinfoindex, numPublications);
 }
 
 /*

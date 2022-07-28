@@ -1633,12 +1633,38 @@ insert into parted values (1, 1, 'uno uno v4');    -- fail
 update parted set c = c || 'v5';                   -- fail
 create or replace function parted_trigfunc() returns trigger language plpgsql as $$
 begin
-  new.c = new.c || ' and so';
+  new.c = new.c || ' did '|| TG_OP;
   return new;
 end;
 $$;
 insert into parted values (1, 1, 'uno uno');       -- works
 update parted set c = c || ' v6';                   -- works
+select tableoid::regclass, * from parted;
+
+-- update itself moves tuple to new partition; trigger still works
+truncate table parted;
+create table parted_2 partition of parted for values in (2);
+insert into parted values (1, 1, 'uno uno v5');
+update parted set a = 2;
+select tableoid::regclass, * from parted;
+
+-- both trigger and update change the partition
+create or replace function parted_trigfunc2() returns trigger language plpgsql as $$
+begin
+  new.a = new.a + 1;
+  return new;
+end;
+$$;
+create trigger t2 before update on parted
+  for each row execute function parted_trigfunc2();
+truncate table parted;
+insert into parted values (1, 1, 'uno uno v6');
+create table parted_3 partition of parted for values in (3);
+update parted set a = a + 1;
+select tableoid::regclass, * from parted;
+-- there's no partition for a=0, but this update works anyway because
+-- the trigger causes the tuple to be routed to another partition
+update parted set a = 0;
 select tableoid::regclass, * from parted;
 
 drop table parted;
@@ -1810,6 +1836,38 @@ select tgrelid::regclass, tgname, tgenabled from pg_trigger
   order by tgrelid::regclass::text;
 drop table parent, child1;
 
+-- Verify that firing state propagates correctly on creation, too
+CREATE TABLE trgfire (i int) PARTITION BY RANGE (i);
+CREATE TABLE trgfire1 PARTITION OF trgfire FOR VALUES FROM (1) TO (10);
+CREATE OR REPLACE FUNCTION tgf() RETURNS trigger LANGUAGE plpgsql
+  AS $$ begin raise exception 'except'; end $$;
+CREATE TRIGGER tg AFTER INSERT ON trgfire FOR EACH ROW EXECUTE FUNCTION tgf();
+INSERT INTO trgfire VALUES (1);
+ALTER TABLE trgfire DISABLE TRIGGER tg;
+INSERT INTO trgfire VALUES (1);
+CREATE TABLE trgfire2 PARTITION OF trgfire FOR VALUES FROM (10) TO (20);
+INSERT INTO trgfire VALUES (11);
+CREATE TABLE trgfire3 (LIKE trgfire);
+ALTER TABLE trgfire ATTACH PARTITION trgfire3 FOR VALUES FROM (20) TO (30);
+INSERT INTO trgfire VALUES (21);
+CREATE TABLE trgfire4 PARTITION OF trgfire FOR VALUES FROM (30) TO (40) PARTITION BY LIST (i);
+CREATE TABLE trgfire4_30 PARTITION OF trgfire4 FOR VALUES IN (30);
+INSERT INTO trgfire VALUES (30);
+CREATE TABLE trgfire5 (LIKE trgfire) PARTITION BY LIST (i);
+CREATE TABLE trgfire5_40 PARTITION OF trgfire5 FOR VALUES IN (40);
+ALTER TABLE trgfire ATTACH PARTITION trgfire5 FOR VALUES FROM (40) TO (50);
+INSERT INTO trgfire VALUES (40);
+SELECT tgrelid::regclass, tgenabled FROM pg_trigger
+  WHERE tgrelid::regclass IN (SELECT oid from pg_class where relname LIKE 'trgfire%')
+  ORDER BY tgrelid::regclass::text;
+ALTER TABLE trgfire ENABLE TRIGGER tg;
+INSERT INTO trgfire VALUES (1);
+INSERT INTO trgfire VALUES (11);
+INSERT INTO trgfire VALUES (21);
+INSERT INTO trgfire VALUES (30);
+INSERT INTO trgfire VALUES (40);
+DROP TABLE trgfire;
+DROP FUNCTION tgf();
 
 --
 -- Test the interaction between transition tables and both kinds of
@@ -2357,3 +2415,73 @@ create trigger aft_row after insert or update on trigger_parted
 create table trigger_parted_p1 partition of trigger_parted for values in (1)
   partition by list (a);
 create table trigger_parted_p1_1 partition of trigger_parted_p1 for values in (1);
+create table trigger_parted_p2 partition of trigger_parted for values in (2)
+  partition by list (a);
+create table trigger_parted_p2_2 partition of trigger_parted_p2 for values in (2);
+alter table only trigger_parted_p2 disable trigger aft_row;
+alter table trigger_parted_p2_2 enable always trigger aft_row;
+
+-- verify transition table conversion slot's lifetime
+-- https://postgr.es/m/39a71864-b120-5a5c-8cc5-c632b6f16761@amazon.com
+create table convslot_test_parent (col1 text primary key);
+create table convslot_test_child (col1 text primary key,
+	foreign key (col1) references convslot_test_parent(col1) on delete cascade on update cascade
+);
+
+alter table convslot_test_child add column col2 text not null default 'tutu';
+insert into convslot_test_parent(col1) values ('1');
+insert into convslot_test_child(col1) values ('1');
+insert into convslot_test_parent(col1) values ('3');
+insert into convslot_test_child(col1) values ('3');
+
+create or replace function trigger_function1()
+returns trigger
+language plpgsql
+AS $$
+begin
+raise notice 'trigger = %, old_table = %',
+          TG_NAME,
+          (select string_agg(old_table::text, ', ' order by col1) from old_table);
+return null;
+end; $$;
+
+create or replace function trigger_function2()
+returns trigger
+language plpgsql
+AS $$
+begin
+raise notice 'trigger = %, new table = %',
+          TG_NAME,
+          (select string_agg(new_table::text, ', ' order by col1) from new_table);
+return null;
+end; $$;
+
+create trigger but_trigger after update on convslot_test_child
+referencing new table as new_table
+for each statement execute function trigger_function2();
+
+update convslot_test_parent set col1 = col1 || '1';
+
+create or replace function trigger_function3()
+returns trigger
+language plpgsql
+AS $$
+begin
+raise notice 'trigger = %, old_table = %, new table = %',
+          TG_NAME,
+          (select string_agg(old_table::text, ', ' order by col1) from old_table),
+          (select string_agg(new_table::text, ', ' order by col1) from new_table);
+return null;
+end; $$;
+
+create trigger but_trigger2 after update on convslot_test_child
+referencing old table as old_table new table as new_table
+for each statement execute function trigger_function3();
+update convslot_test_parent set col1 = col1 || '1';
+
+create trigger bdt_trigger after delete on convslot_test_child
+referencing old table as old_table
+for each statement execute function trigger_function1();
+delete from convslot_test_parent;
+
+drop table convslot_test_child, convslot_test_parent;

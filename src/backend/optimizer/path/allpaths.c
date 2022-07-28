@@ -2748,6 +2748,9 @@ generate_gather_paths(PlannerInfo *root, RelOptInfo *rel, bool override_rows)
  * This allows us to do incremental sort on top of an index scan under a gather
  * merge node, i.e. parallelized.
  *
+ * If the require_parallel_safe is true, we also require the expressions to
+ * be parallel safe (which allows pushing the sort below Gather Merge).
+ *
  * XXX At the moment this can only ever return a list with a single element,
  * because it looks at query_pathkeys only. So we might return the pathkeys
  * directly, but it seems plausible we'll want to consider other orderings
@@ -2755,7 +2758,8 @@ generate_gather_paths(PlannerInfo *root, RelOptInfo *rel, bool override_rows)
  * merge joins.
  */
 static List *
-get_useful_pathkeys_for_relation(PlannerInfo *root, RelOptInfo *rel)
+get_useful_pathkeys_for_relation(PlannerInfo *root, RelOptInfo *rel,
+								 bool require_parallel_safe)
 {
 	List	   *useful_pathkeys_list = NIL;
 
@@ -2785,8 +2789,11 @@ get_useful_pathkeys_for_relation(PlannerInfo *root, RelOptInfo *rel)
 			 * meet criteria of EC membership in the current relation, we
 			 * enable not just an incremental sort on the entirety of
 			 * query_pathkeys but also incremental sort below a JOIN.
+			 *
+			 * If requested, ensure the expression is parallel safe too.
 			 */
-			if (!find_em_expr_usable_for_sorting_rel(pathkey_ec, rel))
+			if (!find_em_expr_usable_for_sorting_rel(root, pathkey_ec, rel,
+													 require_parallel_safe))
 				break;
 
 			npathkeys++;
@@ -2840,13 +2847,14 @@ generate_useful_gather_paths(PlannerInfo *root, RelOptInfo *rel, bool override_r
 	generate_gather_paths(root, rel, override_rows);
 
 	/* consider incremental sort for interesting orderings */
-	useful_pathkeys_list = get_useful_pathkeys_for_relation(root, rel);
+	useful_pathkeys_list = get_useful_pathkeys_for_relation(root, rel, true);
 
 	/* used for explicit (full) sort paths */
 	cheapest_partial_path = linitial(rel->partial_pathlist);
 
 	/*
-	 * Consider incremental sort paths for each interesting ordering.
+	 * Consider sorted paths for each interesting ordering. We generate both
+	 * incremental and full sort.
 	 */
 	foreach(lc, useful_pathkeys_list)
 	{
@@ -2859,14 +2867,6 @@ generate_useful_gather_paths(PlannerInfo *root, RelOptInfo *rel, bool override_r
 		{
 			Path	   *subpath = (Path *) lfirst(lc2);
 			GatherMergePath *path;
-
-			/*
-			 * If the path has no ordering at all, then we can't use either
-			 * incremental sort or rely on implict sorting with a gather
-			 * merge.
-			 */
-			if (subpath->pathkeys == NIL)
-				continue;
 
 			is_sorted = pathkeys_count_contained_in(useful_pathkeys,
 													subpath->pathkeys,

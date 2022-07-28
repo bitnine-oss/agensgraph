@@ -40,6 +40,9 @@
 #include "utils/syscache.h"
 
 
+/* source-code-compatibility hacks for pull_varnos() API change */
+#define pull_varnos(a,b) pull_varnos_new(a,b)
+
 typedef struct convert_testexpr_context
 {
 	PlannerInfo *root;
@@ -720,7 +723,6 @@ static bool
 subplan_is_hashable(Plan *plan)
 {
 	double		subquery_size;
-	int			hash_mem = get_hash_mem();
 
 	/*
 	 * The estimated size of the subquery result must fit in hash_mem. (Note:
@@ -730,7 +732,7 @@ subplan_is_hashable(Plan *plan)
 	 */
 	subquery_size = plan->plan_rows *
 		(MAXALIGN(plan->plan_width) + MAXALIGN(SizeofHeapTupleHeader));
-	if (subquery_size > hash_mem * 1024L)
+	if (subquery_size > get_hash_memory_limit())
 		return false;
 
 	return true;
@@ -1273,7 +1275,7 @@ convert_ANY_sublink_to_join(PlannerInfo *root, SubLink *sublink,
 	 * it's not gonna be a join.  (Note that it won't have Vars referring to
 	 * the subquery, rather Params.)
 	 */
-	upper_varnos = pull_varnos(sublink->testexpr);
+	upper_varnos = pull_varnos(root, sublink->testexpr);
 	if (bms_is_empty(upper_varnos))
 		return NULL;
 
@@ -1457,7 +1459,7 @@ convert_EXISTS_sublink_to_join(PlannerInfo *root, SubLink *sublink,
 	 * The ones <= rtoffset belong to the upper query; the ones > rtoffset do
 	 * not.
 	 */
-	clause_varnos = pull_varnos(whereClause);
+	clause_varnos = pull_varnos(root, whereClause);
 	upper_varnos = NULL;
 	while ((varno = bms_first_member(clause_varnos)) >= 0)
 	{

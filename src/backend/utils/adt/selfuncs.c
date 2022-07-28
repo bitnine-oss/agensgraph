@@ -140,6 +140,10 @@
 #include "utils/typcache.h"
 
 
+/* source-code-compatibility hacks for pull_varnos() API change */
+#define pull_varnos(a,b) pull_varnos_new(a,b)
+#define NumRelids(a,b) NumRelids_new(a,b)
+
 /* Hooks for plugins to get control when we ask for stats */
 get_relation_stats_hook_type get_relation_stats_hook = NULL;
 get_index_stats_hook_type get_index_stats_hook = NULL;
@@ -2206,7 +2210,7 @@ rowcomparesel(PlannerInfo *root,
 		/*
 		 * Otherwise, it's a join if there's more than one relation used.
 		 */
-		is_join_clause = (NumRelids((Node *) opargs) > 1);
+		is_join_clause = (NumRelids(root, (Node *) opargs) > 1);
 	}
 
 	if (is_join_clause)
@@ -3988,11 +3992,11 @@ estimate_multivariate_ndistinct(PlannerInfo *root, RelOptInfo *rel,
 
 			attnum = ((Var *) varinfo->var)->varattno;
 
-			if (!AttrNumberIsForUserDefinedAttr(attnum))
+			if (AttrNumberIsForUserDefinedAttr(attnum) &&
+				bms_is_member(attnum, matched))
 				continue;
 
-			if (!bms_is_member(attnum, matched))
-				newlist = lappend(newlist, varinfo);
+			newlist = lappend(newlist, varinfo);
 		}
 
 		*varinfos = newlist;
@@ -4772,7 +4776,7 @@ examine_variable(PlannerInfo *root, Node *node, int varRelid,
 	 * membership.  Note that when varRelid isn't zero, only vars of that
 	 * relation are considered "real" vars.
 	 */
-	varnos = pull_varnos(basenode);
+	varnos = pull_varnos(root, basenode);
 
 	onerel = NULL;
 
@@ -5149,7 +5153,8 @@ examine_simple_variable(PlannerInfo *root, Var *var,
 		 * of learning something even with it.
 		 */
 		if (subquery->setOperations ||
-			subquery->groupClause)
+			subquery->groupClause ||
+			subquery->groupingSets)
 			return;
 
 		/*
