@@ -1535,27 +1535,6 @@ EnableDisableTrigger(Relation rel, const char *tgname,
 
 			heap_freetuple(newtup);
 
-			/*
-			 * When altering FOR EACH ROW triggers on a partitioned table, do
-			 * the same on the partitions as well.
-			 */
-			if (rel->rd_rel->relkind == RELKIND_PARTITIONED_TABLE &&
-				(TRIGGER_FOR_ROW(oldtrig->tgtype)))
-			{
-				PartitionDesc partdesc = RelationGetPartitionDesc(rel);
-				int			i;
-
-				for (i = 0; i < partdesc->nparts; i++)
-				{
-					Relation	part;
-
-					part = relation_open(partdesc->oids[i], lockmode);
-					EnableDisableTrigger(part, NameStr(oldtrig->tgname),
-										 fires_when, skip_system, lockmode);
-					table_close(part, NoLock);	/* keep lock till commit */
-				}
-			}
-
 			changed = true;
 		}
 
@@ -2950,6 +2929,9 @@ ExecASTruncateTriggers(EState *estate, ResultRelInfo *relinfo)
 }
 
 
+/*
+ * Fetch tuple into "oldslot", dealing with locking and EPQ if necessary
+ */
 static bool
 GetTupleForTrigger(EState *estate,
 				   EPQState *epqstate,
@@ -4043,6 +4025,7 @@ afterTriggerMarkEvents(AfterTriggerEventList *events,
 					   bool immediate_only)
 {
 	bool		found = false;
+	bool		deferred_found = false;
 	AfterTriggerEvent event;
 	AfterTriggerEventChunk *chunk;
 
@@ -4078,12 +4061,23 @@ afterTriggerMarkEvents(AfterTriggerEventList *events,
 		 */
 		if (defer_it && move_list != NULL)
 		{
+			deferred_found = true;
 			/* add it to move_list */
 			afterTriggerAddEvent(move_list, event, evtshared);
 			/* mark original copy "done" so we don't do it again */
 			event->ate_flags |= AFTER_TRIGGER_DONE;
 		}
 	}
+
+	/*
+	 * We could allow deferred triggers if, before the end of the
+	 * security-restricted operation, we were to verify that a SET CONSTRAINTS
+	 * ... IMMEDIATE has fired all such triggers.  For now, don't bother.
+	 */
+	if (deferred_found && InSecurityRestrictedOperation())
+		ereport(ERROR,
+				(errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
+				 errmsg("cannot fire deferred trigger within security-restricted operation")));
 
 	return found;
 }

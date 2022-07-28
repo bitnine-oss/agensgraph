@@ -1381,10 +1381,12 @@ parse_format(FormatNode *node, const char *str, const KeyWord *kw,
 		{
 			int			chlen;
 
-			if (flags & STD_FLAG)
+			if ((flags & STD_FLAG) && *str != '"')
 			{
 				/*
-				 * Standard mode, allow only following separators: "-./,':; "
+				 * Standard mode, allow only following separators: "-./,':; ".
+				 * However, we support double quotes even in standard mode
+				 * (see below).  This is our extension of standard mode.
 				 */
 				if (strchr("-./,':; ", *str) == NULL)
 					ereport(ERROR,
@@ -3347,7 +3349,19 @@ DCH_from_char(FormatNode *node, const char *in, TmFromChar *out,
 			}
 			else
 			{
-				s += pg_mblen(s);
+				int			chlen = pg_mblen(s);
+
+				/*
+				 * Standard mode requires strict match of format characters.
+				 */
+				if (std && n->type == NODE_TYPE_CHAR &&
+					strncmp(s, n->character, chlen) != 0)
+					RETURN_ERROR(ereport(ERROR,
+										 (errcode(ERRCODE_INVALID_DATETIME_FORMAT),
+										  errmsg("unmatched format character \"%s\"",
+												 n->character))));
+
+				s += chlen;
 			}
 			continue;
 		}
@@ -4556,8 +4570,11 @@ do_to_timestamp(text *date_txt, text *fmt, Oid collid, bool std,
 		{
 			/* If a 4-digit year is provided, we use that and ignore CC. */
 			tm->tm_year = tmfc.year;
-			if (tmfc.bc && tm->tm_year > 0)
-				tm->tm_year = -(tm->tm_year - 1);
+			if (tmfc.bc)
+				tm->tm_year = -tm->tm_year;
+			/* correct for our representation of BC years */
+			if (tm->tm_year < 0)
+				tm->tm_year++;
 		}
 		fmask |= DTK_M(YEAR);
 	}

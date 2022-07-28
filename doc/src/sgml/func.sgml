@@ -7642,6 +7642,15 @@ SELECT regexp_match('abc01234xyz', '(?:(.*?)(\d+)(.*)){1,1}');
      <listitem>
       <para>
        In <function>to_timestamp</function> and <function>to_date</function>,
+       negative years are treated as signifying BC.  If you write both a
+       negative year and an explicit <literal>BC</literal> field, you get AD
+       again.  An input of year zero is treated as 1 BC.
+      </para>
+     </listitem>
+
+     <listitem>
+      <para>
+       In <function>to_timestamp</function> and <function>to_date</function>,
        the <literal>YYYY</literal> conversion has a restriction when
        processing years with more than 4 digits. You must
        use some non-digit character or template after <literal>YYYY</literal>,
@@ -8911,13 +8920,13 @@ SELECT regexp_match('abc01234xyz', '(?:(.*?)(\d+)(.*)){1,1}');
         <entry role="func_table_entry"><para role="func_signature"><indexterm>
           <primary>make_interval</primary>
          </indexterm>
-         <function>make_interval</function> ( <optional> <parameter>year</parameter> <type>int</type>
-         <optional>, <parameter>month</parameter> <type>int</type>
-         <optional>, <parameter>week</parameter> <type>int</type>
-         <optional>, <parameter>day</parameter> <type>int</type>
-         <optional>, <parameter>hour</parameter> <type>int</type>
-         <optional>, <parameter>min</parameter> <type>int</type>
-         <optional>, <parameter>sec</parameter> <type>double precision</type>
+         <function>make_interval</function> ( <optional> <parameter>years</parameter> <type>int</type>
+         <optional>, <parameter>months</parameter> <type>int</type>
+         <optional>, <parameter>weeks</parameter> <type>int</type>
+         <optional>, <parameter>days</parameter> <type>int</type>
+         <optional>, <parameter>hours</parameter> <type>int</type>
+         <optional>, <parameter>mins</parameter> <type>int</type>
+         <optional>, <parameter>secs</parameter> <type>double precision</type>
          </optional></optional></optional></optional></optional></optional></optional> )
          <returnvalue>interval</returnvalue>
         </para>
@@ -9988,20 +9997,22 @@ now()
 <programlisting>
 SELECT CURRENT_TIMESTAMP;
 SELECT now();
-SELECT TIMESTAMP 'now';  -- incorrect for use with DEFAULT
+SELECT TIMESTAMP 'now';  -- but see tip below
 </programlisting>
    </para>
 
     <tip>
      <para>
-      You do not want to use the third form when specifying a <literal>DEFAULT</literal>
-      clause while creating a table.  The system will convert <literal>now</literal>
+      Do not use the third form when specifying a value to be evaluated later,
+      for example in a <literal>DEFAULT</literal> clause for a table column.
+      The system will convert <literal>now</literal>
       to a <type>timestamp</type> as soon as the constant is parsed, so that when
       the default value is needed,
       the time of the table creation would be used!  The first two
       forms will not be evaluated until the default value is used,
       because they are function calls.  Thus they will give the desired
       behavior of defaulting to the time of row insertion.
+      (See also <xref linkend="datatype-datetime-special-values"/>.)
      </para>
     </tip>
   </sect2>
@@ -14976,7 +14987,7 @@ table2-mapping
         per <function>to_json</function> or <function>to_jsonb</function>.
        </para>
        <para>
-        <literal>json_build_array(1,2,'foo',4,5)</literal>
+        <literal>json_build_array(1, 2, 'foo', 4, 5)</literal>
         <returnvalue>[1, 2, "foo", 4, 5]</returnvalue>
        </para></entry>
       </row>
@@ -15003,7 +15014,7 @@ table2-mapping
         per <function>to_json</function> or <function>to_jsonb</function>.
        </para>
        <para>
-        <literal>json_build_object('foo',1,2,row(3,'bar'))</literal>
+        <literal>json_build_object('foo', 1, 2, row(3,'bar'))</literal>
         <returnvalue>{"foo" : 1, "2" : {"f1":3,"f2":"bar"}}</returnvalue>
        </para></entry>
       </row>
@@ -15035,7 +15046,7 @@ table2-mapping
         <literal>json_object('{a, 1, b, "def", c, 3.5}')</literal>
         <returnvalue>{"a" : "1", "b" : "def", "c" : "3.5"}</returnvalue>
        </para>
-        <para><literal>json_object('{{a, 1},{b, "def"},{c, 3.5}}')</literal>
+        <para><literal>json_object('{{a, 1}, {b, "def"}, {c, 3.5}}')</literal>
         <returnvalue>{"a" : "1", "b" : "def", "c" : "3.5"}</returnvalue>
        </para></entry>
       </row>
@@ -15055,7 +15066,7 @@ table2-mapping
         the one-argument form.
        </para>
        <para>
-        <literal>json_object('{a, b}', '{1,2}')</literal>
+        <literal>json_object('{a,b}', '{1,2}')</literal>
         <returnvalue>{"a": "1", "b": "2"}</returnvalue>
        </para></entry>
       </row>
@@ -15446,7 +15457,7 @@ table2-mapping
         <literal>create type twoints as (a int, b int);</literal>
        </para>
        <para>
-        <literal>select * from json_populate_recordset(null::twoints, '[{"a":1,"b":2},{"a":3,"b":4}]')</literal>
+        <literal>select * from json_populate_recordset(null::twoints, '[{"a":1,"b":2}, {"a":3,"b":4}]')</literal>
         <returnvalue></returnvalue>
 <programlisting>
  a | b
@@ -15521,7 +15532,7 @@ table2-mapping
         for <function>json[b]_populate_record</function>.
        </para>
        <para>
-        <literal>select * from json_to_recordset('[{"a":1,"b":"foo"},{"a":"2","c":"bar"}]') as x(a int, b text)</literal>
+        <literal>select * from json_to_recordset('[{"a":1,"b":"foo"}, {"a":"2","c":"bar"}]') as x(a int, b text)</literal>
         <returnvalue></returnvalue>
 <programlisting>
  a |  b
@@ -15559,11 +15570,11 @@ table2-mapping
         or at the end of the array if it is positive.
        </para>
        <para>
-        <literal>jsonb_set('[{"f1":1,"f2":null},2,null,3]', '{0,f1}','[2,3,4]', false)</literal>
+        <literal>jsonb_set('[{"f1":1,"f2":null},2,null,3]', '{0,f1}', '[2,3,4]', false)</literal>
         <returnvalue>[{"f1": [2, 3, 4], "f2": null}, 2, null, 3]</returnvalue>
        </para>
        <para>
-        <literal>jsonb_set('[{"f1":1,"f2":null},2]', '{0,f3}','[2,3,4]')</literal>
+        <literal>jsonb_set('[{"f1":1,"f2":null},2]', '{0,f3}', '[2,3,4]')</literal>
         <returnvalue>[{"f1": 1, "f2": null, "f3": [2, 3, 4]}, 2]</returnvalue>
        </para></entry>
       </row>
@@ -15655,7 +15666,7 @@ table2-mapping
         untouched.
        </para>
        <para>
-        <literal>json_strip_nulls('[{"f1":1,"f2":null},2,null,3]')</literal>
+        <literal>json_strip_nulls('[{"f1":1, "f2":null}, 2, null, 3]')</literal>
         <returnvalue>[{"f1":1},2,null,3]</returnvalue>
        </para></entry>
       </row>
@@ -15679,7 +15690,7 @@ table2-mapping
         as the <literal>@?</literal> and <literal>@@</literal> operators do.
        </para>
        <para>
-        <literal>jsonb_path_exists('{"a":[1,2,3,4,5]}', '$.a[*] ? (@ >= $min &amp;&amp; @ &lt;= $max)', '{"min":2,"max":4}')</literal>
+        <literal>jsonb_path_exists('{"a":[1,2,3,4,5]}', '$.a[*] ? (@ >= $min &amp;&amp; @ &lt;= $max)', '{"min":2, "max":4}')</literal>
         <returnvalue>t</returnvalue>
        </para></entry>
       </row>
@@ -15701,7 +15712,7 @@ table2-mapping
         for <function>jsonb_path_exists</function>.
        </para>
        <para>
-        <literal>jsonb_path_match('{"a":[1,2,3,4,5]}', 'exists($.a[*] ? (@ >= $min &amp;&amp; @ &lt;= $max))', '{"min":2,"max":4}')</literal>
+        <literal>jsonb_path_match('{"a":[1,2,3,4,5]}', 'exists($.a[*] ? (@ >= $min &amp;&amp; @ &lt;= $max))', '{"min":2, "max":4}')</literal>
         <returnvalue>t</returnvalue>
        </para></entry>
       </row>
@@ -15722,7 +15733,7 @@ table2-mapping
         for <function>jsonb_path_exists</function>.
        </para>
        <para>
-        <literal>select * from jsonb_path_query('{"a":[1,2,3,4,5]}', '$.a[*] ? (@ >= $min &amp;&amp; @ &lt;= $max)', '{"min":2,"max":4}')</literal>
+        <literal>select * from jsonb_path_query('{"a":[1,2,3,4,5]}', '$.a[*] ? (@ >= $min &amp;&amp; @ &lt;= $max)', '{"min":2, "max":4}')</literal>
         <returnvalue></returnvalue>
 <programlisting>
  jsonb_path_query
@@ -15750,7 +15761,7 @@ table2-mapping
         for <function>jsonb_path_exists</function>.
        </para>
        <para>
-        <literal>jsonb_path_query_array('{"a":[1,2,3,4,5]}', '$.a[*] ? (@ >= $min &amp;&amp; @ &lt;= $max)', '{"min":2,"max":4}')</literal>
+        <literal>jsonb_path_query_array('{"a":[1,2,3,4,5]}', '$.a[*] ? (@ >= $min &amp;&amp; @ &lt;= $max)', '{"min":2, "max":4}')</literal>
         <returnvalue>[2, 3, 4]</returnvalue>
        </para></entry>
       </row>
@@ -15772,7 +15783,7 @@ table2-mapping
         for <function>jsonb_path_exists</function>.
        </para>
        <para>
-        <literal>jsonb_path_query_first('{"a":[1,2,3,4,5]}', '$.a[*] ? (@ >= $min &amp;&amp; @ &lt;= $max)', '{"min":2,"max":4}')</literal>
+        <literal>jsonb_path_query_first('{"a":[1,2,3,4,5]}', '$.a[*] ? (@ >= $min &amp;&amp; @ &lt;= $max)', '{"min":2, "max":4}')</literal>
         <returnvalue>2</returnvalue>
        </para></entry>
       </row>
@@ -15844,7 +15855,7 @@ table2-mapping
         Converts the given JSON value to pretty-printed, indented text.
        </para>
        <para>
-        <literal>jsonb_pretty('[{"f1":1,"f2":null},2]')</literal>
+        <literal>jsonb_pretty('[{"f1":1,"f2":null}, 2]')</literal>
         <returnvalue></returnvalue>
 <programlisting>
 [
@@ -17275,6 +17286,12 @@ SELECT COALESCE(description, short_description, '(none)') ...
   </para>
 
    <para>
+    The arguments must all be convertible to a common data type, which
+    will be the type of the result (see
+    <xref linkend="typeconv-union-case"/> for details).
+   </para>
+
+   <para>
     Like a <token>CASE</token> expression, <function>COALESCE</function> only
     evaluates the arguments that are needed to determine the result;
     that is, arguments to the right of the first non-null argument are
@@ -17304,11 +17321,28 @@ SELECT COALESCE(description, short_description, '(none)') ...
 <programlisting>
 SELECT NULLIF(value, '(none)') ...
 </programlisting>
-  </para>
-  <para>
    In this example, if <literal>value</literal> is <literal>(none)</literal>,
    null is returned, otherwise the value of <literal>value</literal>
    is returned.
+  </para>
+
+  <para>
+   The two arguments must be of comparable types.
+   To be specific, they are compared exactly as if you had
+   written <literal><replaceable>value1</replaceable>
+   = <replaceable>value2</replaceable></literal>, so there must be a
+   suitable <literal>=</literal> operator available.
+  </para>
+
+  <para>
+   The result has the same type as the first argument &mdash; but there is
+   a subtlety.  What is actually returned is the first argument of the
+   implied <literal>=</literal> operator, and in some cases that will have
+   been promoted to match the second argument's type.  For
+   example, <literal>NULLIF(1, 2.2)</literal> yields <type>numeric</type>,
+   because there is no <type>integer</type> <literal>=</literal>
+   <type>numeric</type> operator,
+   only <type>numeric</type> <literal>=</literal> <type>numeric</type>.
   </para>
 
   </sect2>
@@ -22378,7 +22412,7 @@ SELECT currval(pg_get_serial_sequence('sometable', 'id'));
         <indexterm>
          <primary>pg_options_to_table</primary>
         </indexterm>
-        <function>pg_options_to_table</function> ( <parameter>reloptions</parameter> <type>text[]</type> )
+        <function>pg_options_to_table</function> ( <parameter>options_array</parameter> <type>text[]</type> )
         <returnvalue>setof record</returnvalue>
         ( <parameter>option_name</parameter> <type>text</type>,
         <parameter>option_value</parameter> <type>text</type> )
@@ -26538,7 +26572,7 @@ BEGIN
                      obj.object_name,
                      obj.object_identity;
     END LOOP;
-END
+END;
 $$;
 CREATE EVENT TRIGGER test_event_trigger_for_drops
    ON sql_drop

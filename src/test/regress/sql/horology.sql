@@ -3,6 +3,8 @@
 --
 SET DateStyle = 'Postgres, MDY';
 
+SHOW TimeZone;  -- Many of these tests depend on the prevailing setting
+
 --
 -- Test various input formats
 --
@@ -280,6 +282,31 @@ SELECT '' AS "16", f1 AS "timestamp", date(f1) AS date
 DROP TABLE TEMP_TIMESTAMP;
 
 --
+-- Comparisons between datetime types, especially overflow cases
+---
+
+SELECT '2202020-10-05'::date::timestamp;  -- fail
+SELECT '2202020-10-05'::date > '2020-10-05'::timestamp as t;
+SELECT '2020-10-05'::timestamp > '2202020-10-05'::date as f;
+
+SELECT '2202020-10-05'::date::timestamptz;  -- fail
+SELECT '2202020-10-05'::date > '2020-10-05'::timestamptz as t;
+SELECT '2020-10-05'::timestamptz > '2202020-10-05'::date as f;
+
+-- This conversion may work depending on timezone
+SELECT '4714-11-24 BC'::date::timestamptz;
+SET TimeZone = 'UTC-2';
+SELECT '4714-11-24 BC'::date::timestamptz;  -- fail
+
+SELECT '4714-11-24 BC'::date < '2020-10-05'::timestamptz as t;
+SELECT '2020-10-05'::timestamptz >= '4714-11-24 BC'::date as t;
+
+SELECT '4714-11-24 BC'::timestamp < '2020-10-05'::timestamptz as t;
+SELECT '2020-10-05'::timestamptz >= '4714-11-24 BC'::timestamp as t;
+
+RESET TimeZone;
+
+--
 -- Formats
 --
 
@@ -427,6 +454,17 @@ SELECT to_date('3 4 21 01', 'W MM CC YY');
 SELECT to_date('2458872', 'J');
 
 --
+-- Check handling of BC dates
+--
+
+SELECT to_date('44-02-01 BC','YYYY-MM-DD BC');
+SELECT to_date('-44-02-01','YYYY-MM-DD');
+SELECT to_date('-44-02-01 BC','YYYY-MM-DD BC');
+SELECT to_timestamp('44-02-01 11:12:13 BC','YYYY-MM-DD HH24:MI:SS BC');
+SELECT to_timestamp('-44-02-01 11:12:13','YYYY-MM-DD HH24:MI:SS');
+SELECT to_timestamp('-44-02-01 11:12:13 BC','YYYY-MM-DD HH24:MI:SS BC');
+
+--
 -- Check handling of multiple spaces in format and/or input
 --
 
@@ -511,6 +549,7 @@ SELECT to_date('2015 366', 'YYYY DDD');
 SELECT to_date('2016 365', 'YYYY DDD');  -- ok
 SELECT to_date('2016 366', 'YYYY DDD');  -- ok
 SELECT to_date('2016 367', 'YYYY DDD');
+SELECT to_date('0000-02-01','YYYY-MM-DD');  -- allowed, though it shouldn't be
 
 --
 -- Check behavior with SQL-style fixed-GMT-offset time zone (cf bug #8572)

@@ -154,6 +154,33 @@ select * from trigtest;
 
 drop table trigtest;
 
+-- Check behavior with an implicit column default, too (bug #16644)
+create table trigtest (
+  a integer,
+  b bool default true not null,
+  c text default 'xyzzy' not null);
+
+create trigger trigger_return_old
+	before insert or delete or update on trigtest
+	for each row execute procedure trigger_return_old();
+
+insert into trigtest values(1);
+select * from trigtest;
+
+alter table trigtest add column d integer default 42 not null;
+
+select * from trigtest;
+update trigtest set a = 2 where a = 1 returning *;
+select * from trigtest;
+
+alter table trigtest drop column b;
+
+select * from trigtest;
+update trigtest set a = 2 where a = 1 returning *;
+select * from trigtest;
+
+drop table trigtest;
+
 create sequence ttdummy_seq increment 10 start 0 minvalue 0;
 
 create table tttest (
@@ -1748,6 +1775,41 @@ select tgrelid::regclass, count(*) from pg_trigger
 	'trg_clone3', 'trg_clone_3_3')
   group by tgrelid::regclass order by tgrelid::regclass;
 drop table trg_clone;
+
+-- Test the interaction between ALTER TABLE .. DISABLE TRIGGER and
+-- both kinds of inheritance.  Historically, legacy inheritance has
+-- not recursed to children, so that behavior is preserved.
+create table parent (a int);
+create table child1 () inherits (parent);
+create function trig_nothing() returns trigger language plpgsql
+  as $$ begin return null; end $$;
+create trigger tg after insert on parent
+  for each row execute function trig_nothing();
+create trigger tg after insert on child1
+  for each row execute function trig_nothing();
+alter table parent disable trigger tg;
+select tgrelid::regclass, tgname, tgenabled from pg_trigger
+  where tgrelid in ('parent'::regclass, 'child1'::regclass)
+  order by tgrelid::regclass::text;
+alter table only parent enable always trigger tg;
+select tgrelid::regclass, tgname, tgenabled from pg_trigger
+  where tgrelid in ('parent'::regclass, 'child1'::regclass)
+  order by tgrelid::regclass::text;
+drop table parent, child1;
+
+create table parent (a int) partition by list (a);
+create table child1 partition of parent for values in (1);
+create trigger tg after insert on parent
+  for each row execute procedure trig_nothing();
+select tgrelid::regclass, tgname, tgenabled from pg_trigger
+  where tgrelid in ('parent'::regclass, 'child1'::regclass)
+  order by tgrelid::regclass::text;
+alter table only parent enable always trigger tg;
+select tgrelid::regclass, tgname, tgenabled from pg_trigger
+  where tgrelid in ('parent'::regclass, 'child1'::regclass)
+  order by tgrelid::regclass::text;
+drop table parent, child1;
+
 
 --
 -- Test the interaction between transition tables and both kinds of

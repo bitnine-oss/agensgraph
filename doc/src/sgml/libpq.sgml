@@ -91,21 +91,6 @@
     </para>
    </warning>
 
-   <note>
-    <para>
-     On Windows, there is a way to improve performance if a single
-     database connection is repeatedly started and shutdown.  Internally,
-     libpq calls <function>WSAStartup()</function> and <function>WSACleanup()</function> for connection startup
-     and shutdown, respectively.  <function>WSAStartup()</function> increments an internal
-     Windows library reference count which is decremented by <function>WSACleanup()</function>.
-     When the reference count is just one, calling <function>WSACleanup()</function> frees
-     all resources and all DLLs are unloaded.  This is an expensive
-     operation.  To avoid this, an application can manually call
-     <function>WSAStartup()</function> so resources will not be freed when the last database
-     connection is closed.
-    </para>
-   </note>
-
    <variablelist>
     <varlistentry id="libpq-PQconnectdbParams">
      <term><function>PQconnectdbParams</function><indexterm><primary>PQconnectdbParams</primary></indexterm></term>
@@ -8059,14 +8044,6 @@ int PQisthreadsafe();
    function <function>PQregisterThreadLock</function> in the
    <application>libpq</application> source code for a way to do cooperative
    locking between <application>libpq</application> and your application.
-  </para>
-
-  <para>
-   If you experience problems with threaded applications, run the program
-   in <filename>src/tools/thread</filename> to see if your platform has
-   thread-unsafe functions.  This program is run by
-   <filename>configure</filename>, but for binary distributions your
-   library might not match the library used to build the binaries.
   </para>
  </sect1>
 

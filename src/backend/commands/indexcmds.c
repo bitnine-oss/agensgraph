@@ -991,8 +991,7 @@ DefineIndex(Oid relationId,
 									key->partattrs[i] - 1);
 				ereport(ERROR,
 						(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-						 errmsg("insufficient columns in %s constraint definition",
-								constraint_type),
+						 errmsg("unique constraint on partitioned table must include all partitioning columns"),
 						 errdetail("%s constraint on table \"%s\" lacks column \"%s\" which is part of the partition key.",
 								   constraint_type, RelationGetRelationName(rel),
 								   NameStr(att->attname))));
@@ -2866,6 +2865,13 @@ ReindexRelationConcurrently(Oid relationOid, int options)
 	char	   *relationName = NULL;
 	char	   *relationNamespace = NULL;
 	PGRUsage	ru0;
+	const int	progress_index[] = {
+		PROGRESS_CREATEIDX_COMMAND,
+		PROGRESS_CREATEIDX_PHASE,
+		PROGRESS_CREATEIDX_INDEX_OID,
+		PROGRESS_CREATEIDX_ACCESS_METHOD_OID
+	};
+	int64		progress_vals[4];
 
 	/*
 	 * Create a memory context that will survive forced transaction commits we
@@ -3016,13 +3022,14 @@ ReindexRelationConcurrently(Oid relationOid, int options)
 
 				/*
 				 * Don't allow reindex for an invalid index on TOAST table, as
-				 * if rebuilt it would not be possible to drop it.
+				 * if rebuilt it would not be possible to drop it.  Match
+				 * error message in reindex_index().
 				 */
 				if (IsToastNamespace(get_rel_namespace(relationOid)) &&
 					!get_index_isvalid(relationOid))
 					ereport(ERROR,
 							(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-							 errmsg("cannot reindex invalid index on TOAST table concurrently")));
+							 errmsg("cannot reindex invalid index on TOAST table")));
 
 				/* Save the list of relation OIDs in private context */
 				oldcontext = MemoryContextSwitchTo(private_context);
@@ -3108,12 +3115,11 @@ ReindexRelationConcurrently(Oid relationOid, int options)
 
 		pgstat_progress_start_command(PROGRESS_COMMAND_CREATE_INDEX,
 									  RelationGetRelid(heapRel));
-		pgstat_progress_update_param(PROGRESS_CREATEIDX_COMMAND,
-									 PROGRESS_CREATEIDX_COMMAND_REINDEX_CONCURRENTLY);
-		pgstat_progress_update_param(PROGRESS_CREATEIDX_INDEX_OID,
-									 indexId);
-		pgstat_progress_update_param(PROGRESS_CREATEIDX_ACCESS_METHOD_OID,
-									 indexRel->rd_rel->relam);
+		progress_vals[0] = PROGRESS_CREATEIDX_COMMAND_REINDEX_CONCURRENTLY;
+		progress_vals[1] = 0;	/* initializing */
+		progress_vals[2] = indexId;
+		progress_vals[3] = indexRel->rd_rel->relam;
+		pgstat_progress_update_multi_param(4, progress_index, progress_vals);
 
 		/* Choose a temporary relation name for the new index */
 		concurrentName = ChooseRelationName(get_rel_name(indexId),
@@ -3217,12 +3223,12 @@ ReindexRelationConcurrently(Oid relationOid, int options)
 	WaitForLockersMultiple(lockTags, ShareLock, true);
 	CommitTransactionCommand();
 
-	forboth(lc, indexIds, lc2, newIndexIds)
+	foreach(lc, newIndexIds)
 	{
-		Relation	indexRel;
-		Oid			oldIndexId = lfirst_oid(lc);
-		Oid			newIndexId = lfirst_oid(lc2);
+		Relation	newIndexRel;
+		Oid			newIndexId = lfirst_oid(lc);
 		Oid			heapId;
+		Oid			indexam;
 
 		/* Start new transaction for this index's concurrent build */
 		StartTransactionCommand();
@@ -3241,9 +3247,21 @@ ReindexRelationConcurrently(Oid relationOid, int options)
 		 * Index relation has been closed by previous commit, so reopen it to
 		 * get its information.
 		 */
-		indexRel = index_open(oldIndexId, ShareUpdateExclusiveLock);
-		heapId = indexRel->rd_index->indrelid;
-		index_close(indexRel, NoLock);
+		newIndexRel = index_open(newIndexId, ShareUpdateExclusiveLock);
+		heapId = newIndexRel->rd_index->indrelid;
+		indexam = newIndexRel->rd_rel->relam;
+		index_close(newIndexRel, NoLock);
+
+		/*
+		 * Update progress for the index to build, with the correct parent
+		 * table involved.
+		 */
+		pgstat_progress_start_command(PROGRESS_COMMAND_CREATE_INDEX, heapId);
+		progress_vals[0] = PROGRESS_CREATEIDX_COMMAND_REINDEX_CONCURRENTLY;
+		progress_vals[1] = PROGRESS_CREATEIDX_PHASE_BUILD;
+		progress_vals[2] = newIndexId;
+		progress_vals[3] = indexam;
+		pgstat_progress_update_multi_param(4, progress_index, progress_vals);
 
 		/* Perform concurrent build of new index */
 		index_concurrently_build(heapId, newIndexId);
@@ -3272,6 +3290,8 @@ ReindexRelationConcurrently(Oid relationOid, int options)
 		Oid			heapId;
 		TransactionId limitXmin;
 		Snapshot	snapshot;
+		Relation	newIndexRel;
+		Oid			indexam;
 
 		StartTransactionCommand();
 
@@ -3282,14 +3302,32 @@ ReindexRelationConcurrently(Oid relationOid, int options)
 		 */
 		CHECK_FOR_INTERRUPTS();
 
-		heapId = IndexGetRelation(newIndexId, false);
-
 		/*
 		 * Take the "reference snapshot" that will be used by validate_index()
 		 * to filter candidate tuples.
 		 */
 		snapshot = RegisterSnapshot(GetTransactionSnapshot());
 		PushActiveSnapshot(snapshot);
+
+		/*
+		 * Index relation has been closed by previous commit, so reopen it to
+		 * get its information.
+		 */
+		newIndexRel = index_open(newIndexId, ShareUpdateExclusiveLock);
+		heapId = newIndexRel->rd_index->indrelid;
+		indexam = newIndexRel->rd_rel->relam;
+		index_close(newIndexRel, NoLock);
+
+		/*
+		 * Update progress for the index to build, with the correct parent
+		 * table involved.
+		 */
+		pgstat_progress_start_command(PROGRESS_COMMAND_CREATE_INDEX, heapId);
+		progress_vals[0] = PROGRESS_CREATEIDX_COMMAND_REINDEX_CONCURRENTLY;
+		progress_vals[1] = PROGRESS_CREATEIDX_PHASE_VALIDATE_IDXSCAN;
+		progress_vals[2] = newIndexId;
+		progress_vals[3] = indexam;
+		pgstat_progress_update_multi_param(4, progress_index, progress_vals);
 
 		validate_index(heapId, newIndexId, snapshot);
 
@@ -3425,7 +3463,7 @@ ReindexRelationConcurrently(Oid relationOid, int options)
 	 */
 
 	pgstat_progress_update_param(PROGRESS_CREATEIDX_PHASE,
-								 PROGRESS_CREATEIDX_PHASE_WAIT_4);
+								 PROGRESS_CREATEIDX_PHASE_WAIT_5);
 	WaitForLockersMultiple(lockTags, AccessExclusiveLock, true);
 
 	PushActiveSnapshot(GetTransactionSnapshot());

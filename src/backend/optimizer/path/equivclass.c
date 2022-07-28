@@ -635,12 +635,6 @@ get_eclass_for_sort_expr(PlannerInfo *root,
 	expr = canonicalize_ec_expression(expr, opcintype, collation);
 
 	/*
-	 * Get the precise set of nullable relids appearing in the expression.
-	 */
-	expr_relids = pull_varnos((Node *) expr);
-	nullable_relids = bms_intersect(nullable_relids, expr_relids);
-
-	/*
 	 * Scan through the existing EquivalenceClasses for a match
 	 */
 	foreach(lc1, root->eq_classes)
@@ -716,6 +710,12 @@ get_eclass_for_sort_expr(PlannerInfo *root,
 	if (newec->ec_has_volatile && sortref == 0) /* should not happen */
 		elog(ERROR, "volatile EquivalenceClass has no sortref");
 
+	/*
+	 * Get the precise set of nullable relids appearing in the expression.
+	 */
+	expr_relids = pull_varnos((Node *) expr);
+	nullable_relids = bms_intersect(nullable_relids, expr_relids);
+
 	newem = add_eq_member(newec, copyObject(expr), expr_relids,
 						  nullable_relids, false, opcintype);
 
@@ -787,6 +787,76 @@ find_em_expr_for_rel(EquivalenceClass *ec, RelOptInfo *rel)
 			 * any one of those.
 			 */
 			return em->em_expr;
+		}
+	}
+
+	/* We didn't find any suitable equivalence class expression */
+	return NULL;
+}
+
+/*
+ * Find an equivalence class member expression that can be safely used by a
+ * sort node on top of the provided relation. The rules here must match those
+ * applied in prepare_sort_from_pathkeys.
+ */
+Expr *
+find_em_expr_usable_for_sorting_rel(EquivalenceClass *ec, RelOptInfo *rel)
+{
+	ListCell   *lc_em;
+
+	/*
+	 * If there is more than one equivalence member matching these
+	 * requirements we'll be content to choose any one of them.
+	 */
+	foreach(lc_em, ec->ec_members)
+	{
+		EquivalenceMember *em = lfirst(lc_em);
+		Expr	   *em_expr = em->em_expr;
+		PathTarget *target = rel->reltarget;
+		ListCell   *lc_target_expr;
+
+		/*
+		 * We shouldn't be trying to sort by an equivalence class that
+		 * contains a constant, so no need to consider such cases any further.
+		 */
+		if (em->em_is_const)
+			continue;
+
+		/*
+		 * Any Vars in the equivalence class member need to come from this
+		 * relation. This is a superset of prepare_sort_from_pathkeys ignoring
+		 * child members unless they belong to the rel being sorted.
+		 */
+		if (!bms_is_subset(em->em_relids, rel->relids))
+			continue;
+
+		/*
+		 * As long as the expression isn't volatile then
+		 * prepare_sort_from_pathkeys is able to generate a new target entry,
+		 * so there's no need to verify that one already exists.
+		 */
+		if (!ec->ec_has_volatile)
+			return em->em_expr;
+
+		/*
+		 * If, however, it's volatile, we have to verify that the
+		 * equivalence member's expr is already generated in the
+		 * relation's target (we do strip relabels first from both
+		 * expressions, which is cheap and might allow us to match
+		 * more expressions).
+		 */
+		while (em_expr && IsA(em_expr, RelabelType))
+			em_expr = ((RelabelType *) em_expr)->arg;
+
+		foreach(lc_target_expr, target->exprs)
+		{
+			Expr	   *target_expr = lfirst(lc_target_expr);
+
+			while (target_expr && IsA(target_expr, RelabelType))
+				target_expr = ((RelabelType *) target_expr)->arg;
+
+			if (equal(target_expr, em_expr))
+				return em->em_expr;
 		}
 	}
 
@@ -1171,9 +1241,9 @@ generate_join_implied_equalities(PlannerInfo *root,
 	}
 
 	/*
-	 * Get all eclasses in common between inner_rel's relids and outer_relids
+	 * Get all eclasses that mention both inner and outer sides of the join
 	 */
-	matching_ecs = get_common_eclass_indexes(root, inner_rel->relids,
+	matching_ecs = get_common_eclass_indexes(root, nominal_inner_relids,
 											 outer_relids);
 
 	i = -1;
@@ -2380,12 +2450,23 @@ add_child_join_rel_equivalences(PlannerInfo *root,
 	Relids		top_parent_relids = child_joinrel->top_parent_relids;
 	Relids		child_relids = child_joinrel->relids;
 	Bitmapset  *matching_ecs;
+	MemoryContext oldcontext;
 	int			i;
 
 	Assert(IS_JOIN_REL(child_joinrel) && IS_JOIN_REL(parent_joinrel));
 
 	/* We need consider only ECs that mention the parent joinrel */
 	matching_ecs = get_eclass_indexes_for_relids(root, top_parent_relids);
+
+	/*
+	 * If we're being called during GEQO join planning, we still have to
+	 * create any new EC members in the main planner context, to avoid having
+	 * a corrupt EC data structure after the GEQO context is reset.  This is
+	 * problematic since we'll leak memory across repeated GEQO cycles.  For
+	 * now, though, bloat is better than crash.  If it becomes a real issue
+	 * we'll have to do something to avoid generating duplicate EC members.
+	 */
+	oldcontext = MemoryContextSwitchTo(root->planner_cxt);
 
 	i = -1;
 	while ((i = bms_next_member(matching_ecs, i)) >= 0)
@@ -2486,6 +2567,8 @@ add_child_join_rel_equivalences(PlannerInfo *root,
 			}
 		}
 	}
+
+	MemoryContextSwitchTo(oldcontext);
 }
 
 
