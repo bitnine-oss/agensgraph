@@ -1055,6 +1055,7 @@ repeat('Pg', 4) <returnvalue>PgPgPgPg</returnvalue>
        </para>
        <para>
         Factorial
+        (deprecated, use <link linkend="function-factorial"><function>factorial()</function></link> instead)
        </para>
        <para>
         <literal>5 !</literal>
@@ -1068,7 +1069,8 @@ repeat('Pg', 4) <returnvalue>PgPgPgPg</returnvalue>
         <returnvalue>numeric</returnvalue>
        </para>
        <para>
-        Factorial (as a prefix operator)
+        Factorial as a prefix operator
+        (deprecated, use <link linkend="function-factorial"><function>factorial()</function></link> instead)
        </para>
        <para>
         <literal>!! 5</literal>
@@ -1344,6 +1346,23 @@ repeat('Pg', 4) <returnvalue>PgPgPgPg</returnvalue>
        <para>
         <literal>exp(1.0)</literal>
         <returnvalue>2.7182818284590452</returnvalue>
+       </para></entry>
+      </row>
+
+      <row>
+       <entry role="func_table_entry"><para role="func_signature">
+        <indexterm id="function-factorial">
+         <primary>factorial</primary>
+        </indexterm>
+        <function>factorial</function> ( <type>bigint</type> )
+        <returnvalue>numeric</returnvalue>
+       </para>
+       <para>
+        Factorial
+       </para>
+       <para>
+        <literal>factorial(5)</literal>
+        <returnvalue>120</returnvalue>
        </para></entry>
       </row>
 
@@ -6849,7 +6868,7 @@ SELECT regexp_match('abc01234xyz', '(?:(.*?)(\d+)(.*)){1,1}');
 <!-- end re_syntax.n man page -->
 
    <sect3 id="posix-vs-xquery">
-   <title>Differences From XQuery (<literal>LIKE_REGEX</literal>)</title>
+   <title>Differences from XQuery (<literal>LIKE_REGEX</literal>)</title>
 
    <indexterm zone="posix-vs-xquery">
     <primary><literal>LIKE_REGEX</literal></primary>
@@ -7613,9 +7632,9 @@ SELECT regexp_match('abc01234xyz', '(?:(.*?)(\d+)(.*)){1,1}');
      <listitem>
       <para>
        In <function>to_timestamp</function> and <function>to_date</function>,
-       if the year format specification is less than four digits, e.g.
+       if the year format specification is less than four digits, e.g.,
        <literal>YYY</literal>, and the supplied year is less than four digits,
-       the year will be adjusted to be nearest to the year 2020, e.g.
+       the year will be adjusted to be nearest to the year 2020, e.g.,
        <literal>95</literal> becomes 1995.
       </para>
      </listitem>
@@ -14074,7 +14093,7 @@ SELECT xmltable.*
                         size_sq_km float PATH 'SIZE[@unit = "sq_km"]',
                         size_other text PATH
                              'concat(SIZE[@unit!="sq_km"], " ", SIZE[@unit!="sq_km"]/@unit)',
-                        premier_name text PATH 'PREMIER_NAME' DEFAULT 'not specified') ;
+                        premier_name text PATH 'PREMIER_NAME' DEFAULT 'not specified');
 
  id | ordinality | COUNTRY_NAME | country_id | size_sq_km |  size_other  | premier_name  
 ----+------------+--------------+------------+------------+--------------+---------------
@@ -15387,7 +15406,12 @@ table2-mapping
         calls.
        </para>
        <para>
-        <literal>select * from json_populate_record(null::myrowtype, '{"a": 1, "b": ["2", "a b"], "c": {"d": 4, "e": "a  b c"}}')</literal>
+        <literal>create type subrowtype as (d int, e text);</literal>
+        <literal>create type myrowtype as (a int, b text[], c subrowtype);</literal>
+       </para>
+       <para>
+        <literal>select * from json_populate_record(null::myrowtype,
+         '{"a": 1, "b": ["2", "a b"], "c": {"d": 4, "e": "a  b c"}, "x": "foo"}')</literal>
         <returnvalue></returnvalue>
 <programlisting>
  a |   b       |      c
@@ -15419,7 +15443,10 @@ table2-mapping
         for <function>json[b]_populate_record</function>.
        </para>
        <para>
-        <literal>select * from json_populate_recordset(null::myrowtype, '[{"a":1,"b":2},{"a":3,"b":4}]')</literal>
+        <literal>create type twoints as (a int, b int);</literal>
+       </para>
+       <para>
+        <literal>select * from json_populate_recordset(null::twoints, '[{"a":1,"b":2},{"a":3,"b":4}]')</literal>
         <returnvalue></returnvalue>
 <programlisting>
  a | b
@@ -15456,7 +15483,10 @@ table2-mapping
         input record value, unmatched columns are always filled with nulls.
        </para>
        <para>
-        <literal>select * from json_to_record('{"a":1,"b":[1,2,3],"c":[1,2,3],"e":"bar","r": {"a": 123, "b": "a b c"}}') as x(a int, b text, c int[], d text, r myrowtype) </literal>
+        <literal>create type myrowtype as (a int, b text);</literal>
+       </para>
+       <para>
+        <literal>select * from json_to_record('{"a":1,"b":[1,2,3],"c":[1,2,3],"e":"bar","r": {"a": 123, "b": "a b c"}}') as x(a int, b text, c int[], d text, r myrowtype)</literal>
         <returnvalue></returnvalue>
 <programlisting>
  a |    b    |    c    | d |       r
@@ -26325,7 +26355,7 @@ FOR EACH ROW EXECUTE FUNCTION suppress_redundant_updates_trigger();
        <row>
         <entry><literal>objsubid</literal></entry>
         <entry><type>integer</type></entry>
-        <entry>Sub-object ID (e.g. attribute number for a column)</entry>
+        <entry>Sub-object ID (e.g., attribute number for a column)</entry>
        </row>
        <row>
         <entry><literal>command_tag</literal></entry>
@@ -26415,7 +26445,7 @@ FOR EACH ROW EXECUTE FUNCTION suppress_redundant_updates_trigger();
        <row>
         <entry><literal>objsubid</literal></entry>
         <entry><type>integer</type></entry>
-        <entry>Sub-object ID (e.g. attribute number for a column)</entry>
+        <entry>Sub-object ID (e.g., attribute number for a column)</entry>
        </row>
        <row>
         <entry><literal>original</literal></entry>

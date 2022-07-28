@@ -681,11 +681,10 @@ heap_vacuum_rel(Relation onerel, VacuumParams *params,
 							 read_rate, write_rate);
 			appendStringInfo(&buf, _("system usage: %s\n"), pg_rusage_show(&ru0));
 			appendStringInfo(&buf,
-							 _("WAL usage: %ld records, %ld full page images, "
-							   UINT64_FORMAT " bytes"),
+							 _("WAL usage: %ld records, %ld full page images, %llu bytes"),
 							 walusage.wal_records,
 							 walusage.wal_fpi,
-							 walusage.wal_bytes);
+							 (unsigned long long) walusage.wal_bytes);
 
 			ereport(LOG,
 					(errmsg_internal("%s", buf.data)));
@@ -1656,6 +1655,9 @@ lazy_scan_heap(Relation onerel, VacuumParams *params, LVRelStats *vacrelstats,
 	/* report that everything is scanned and vacuumed */
 	pgstat_progress_update_param(PROGRESS_VACUUM_HEAP_BLKS_SCANNED, blkno);
 
+	/* Clear the block number information */
+	vacrelstats->blkno = InvalidBlockNumber;
+
 	pfree(frozen);
 
 	/* save stats for use later */
@@ -1872,6 +1874,9 @@ lazy_vacuum_heap(Relation onerel, LVRelStats *vacrelstats)
 		RecordPageWithFreeSpace(onerel, tblk, freespace);
 		npages++;
 	}
+
+	/* Clear the block number information */
+	vacrelstats->blkno = InvalidBlockNumber;
 
 	if (BufferIsValid(vmbuffer))
 	{
@@ -2490,30 +2495,30 @@ lazy_cleanup_index(Relation indrel,
 
 	*stats = index_vacuum_cleanup(&ivinfo, *stats);
 
+	if (*stats)
+	{
+		if (IsParallelWorker())
+			msg = gettext_noop("index \"%s\" now contains %.0f row versions in %u pages as reported by parallel vacuum worker");
+		else
+			msg = gettext_noop("index \"%s\" now contains %.0f row versions in %u pages");
+
+		ereport(elevel,
+				(errmsg(msg,
+						RelationGetRelationName(indrel),
+						(*stats)->num_index_tuples,
+						(*stats)->num_pages),
+				 errdetail("%.0f index row versions were removed.\n"
+						   "%u index pages have been deleted, %u are currently reusable.\n"
+						   "%s.",
+						   (*stats)->tuples_removed,
+						   (*stats)->pages_deleted, (*stats)->pages_free,
+						   pg_rusage_show(&ru0))));
+	}
+
 	/* Revert back to the old phase information for error traceback */
 	restore_vacuum_error_info(vacrelstats, &saved_err_info);
 	pfree(vacrelstats->indname);
 	vacrelstats->indname = NULL;
-
-	if (!(*stats))
-		return;
-
-	if (IsParallelWorker())
-		msg = gettext_noop("index \"%s\" now contains %.0f row versions in %u pages as reported by parallel vacuum worker");
-	else
-		msg = gettext_noop("index \"%s\" now contains %.0f row versions in %u pages");
-
-	ereport(elevel,
-			(errmsg(msg,
-					RelationGetRelationName(indrel),
-					(*stats)->num_index_tuples,
-					(*stats)->num_pages),
-			 errdetail("%.0f index row versions were removed.\n"
-					   "%u index pages have been deleted, %u are currently reusable.\n"
-					   "%s.",
-					   (*stats)->tuples_removed,
-					   (*stats)->pages_deleted, (*stats)->pages_free,
-					   pg_rusage_show(&ru0))));
 }
 
 /*
@@ -3482,9 +3487,10 @@ parallel_vacuum_main(dsm_segment *seg, shm_toc *toc)
 										   false);
 	elevel = lvshared->elevel;
 
-	ereport(DEBUG1,
-			(errmsg("starting parallel vacuum worker for %s",
-					lvshared->for_cleanup ? "cleanup" : "bulk delete")));
+	if (lvshared->for_cleanup)
+		elog(DEBUG1, "starting parallel vacuum worker for cleanup");
+	else
+		elog(DEBUG1, "starting parallel vacuum worker for bulk delete");
 
 	/* Set debug_query_string for individual workers */
 	sharedquery = shm_toc_lookup(toc, PARALLEL_VACUUM_KEY_QUERY_TEXT, false);
@@ -3576,12 +3582,18 @@ vacuum_error_callback(void *arg)
 			if (BlockNumberIsValid(errinfo->blkno))
 				errcontext("while scanning block %u of relation \"%s.%s\"",
 						   errinfo->blkno, errinfo->relnamespace, errinfo->relname);
+			else
+				errcontext("while scanning relation \"%s.%s\"",
+						   errinfo->relnamespace, errinfo->relname);
 			break;
 
 		case VACUUM_ERRCB_PHASE_VACUUM_HEAP:
 			if (BlockNumberIsValid(errinfo->blkno))
 				errcontext("while vacuuming block %u of relation \"%s.%s\"",
 						   errinfo->blkno, errinfo->relnamespace, errinfo->relname);
+			else
+				errcontext("while vacuuming relation \"%s.%s\"",
+						   errinfo->relnamespace, errinfo->relname);
 			break;
 
 		case VACUUM_ERRCB_PHASE_VACUUM_INDEX:

@@ -28,7 +28,8 @@
 
    <listitem>
     <para>
-     Specifies the file to be read.  Must be an absolute path name.
+     Specifies the file to be read.  Relative paths are relative to the
+     data directory.
      Either <literal>filename</literal> or <literal>program</literal> must be
      specified, but not both.
     </para>
@@ -215,7 +216,9 @@
   <para>
    One of the obvious uses for <literal>file_fdw</literal> is to make
    the PostgreSQL activity log available as a table for querying.  To
-   do this, first you must be logging to a CSV file, which here we
+   do this, first you must be <link
+   linkend="runtime-config-logging-csvlog">logging to a CSV file,</link>
+   which here we
    will call <literal>pglog.csv</literal>.  First, install <literal>file_fdw</literal>
    as an extension:
   </para>
@@ -264,7 +267,7 @@ CREATE FOREIGN TABLE pglog (
   application_name text,
   backend_type text
 ) SERVER pglog
-OPTIONS ( filename '/home/josh/data/log/pglog.csv', format 'csv' );
+OPTIONS ( filename 'log/pglog.csv', format 'csv' );
 </programlisting>
   </para>
 
