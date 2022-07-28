@@ -37,7 +37,7 @@
     </listitem>
     <listitem>
      <para>
-      Parallelized vacuuming of B-tree indexes
+      Parallelized vacuuming of indexes
      </para>
     </listitem>
     <listitem>
@@ -269,6 +269,25 @@ Author: Tom Lane <tgl@sss.pgh.pa.us>
       Gustafsson)
      </para>
     </listitem>
+
+     <listitem>
+<!--
+Author: Tom Lane <tgl@sss.pgh.pa.us>
+2020-02-19 [70a773200] Remove support for upgrading extensions from "unpackaged
+-->
+
+      <para>
+       Remove support for upgrading unpackaged (pre-9.1) extensions (Tom Lane)
+      </para>
+
+      <para>
+       The <literal>FROM</literal> option
+       of <link linkend="sql-createextension"><command>CREATE
+       EXTENSION</command></link> is no longer supported.  Any installations
+       still using unpackaged extensions should upgrade them to a packaged
+       version before updating to <productname>PostgreSQL</productname> 13.
+      </para>
+     </listitem>
 
     <listitem>
 <!--
@@ -743,16 +762,28 @@ Author: David Rowley <drowley@postgresql.org>
 -->
 
        <para>
-        Allow inserts, not only updates and deletes, to
-        trigger <link linkend="autovacuum">autovacuum</link> activity
+        Allow inserts, not only updates and deletes, to trigger vacuuming
+        activity in <link linkend="autovacuum">autovacuum</link>
         (Laurenz Albe, Darafei Praliaskouski)
        </para>
 
        <para>
-        This new behavior reduces the work that will be necessary later
-        when the table needs to be frozen, and it allows pages to be
-        marked as all-visible sooner.  All-visible pages allow index-only
-        scans to access fewer heap rows.
+        Previously, insert-only activity would trigger auto-analyze but
+        not auto-vacuum, on the grounds that there could not be any dead
+        tuples to remove.  However, a vacuum scan has other useful
+        side-effects such as setting page-all-visible bits, which improves
+        the efficiency of index-only scans.  Also, allowing an insert-only
+        table to receive periodic vacuuming helps to spread out the work
+        of <quote>freezing</quote> old tuples, so that there is not
+        suddenly a large amount of freezing work to do when the entire
+        table reaches the anti-wraparound threshold all at once.
+       </para>
+
+       <para>
+        If necessary, this behavior can be adjusted with the new
+        parameters <xref linkend="guc-autovacuum-vacuum-insert-threshold"/>
+        and <xref linkend="guc-autovacuum-vacuum-insert-scale-factor"/>, or
+        the equivalent table storage options.
        </para>
       </listitem>
 
@@ -763,8 +794,8 @@ Author: Thomas Munro <tmunro@postgresql.org>
 -->
 
        <para>
-        Add <xref linkend="guc-maintenance-io-concurrency"/> to control I/O
-        concurrency for maintenance operations (Thomas Munro)
+        Add <xref linkend="guc-maintenance-io-concurrency"/> parameter to
+        control I/O concurrency for maintenance operations (Thomas Munro)
        </para>
       </listitem>
 
@@ -1417,7 +1448,7 @@ Author: Amit Kapila <akapila@postgresql.org>
 
       <para>
        Allow <link linkend="sql-vacuum"><command>VACUUM</command></link>
-       to process indexes in parallel (Masahiko Sawada, Amit Kapila)
+       to process a table's indexes in parallel (Masahiko Sawada, Amit Kapila)
       </para>
 
       <para>
@@ -2934,17 +2965,6 @@ Author: Tom Lane <tgl@sss.pgh.pa.us>
 
      <listitem>
 <!--
-Author: Tom Lane <tgl@sss.pgh.pa.us>
-2020-02-19 [70a773200] Remove support for upgrading extensions from "unpackaged
--->
-
-      <para>
-       Remove support for upgrading unpackaged (pre-9.1) extensions (Tom Lane)
-      </para>
-     </listitem>
-
-     <listitem>
-<!--
 Author: Andrew Dunstan <andrew@dunslane.net>
 2019-12-20 [6136e94dc] Superuser can permit passwordless connections on postgre
 -->
@@ -3165,6 +3185,7 @@ Author: Peter Geoghegan <pg@bowt.ie>
     <member>Andreas Seltenreich</member>
     <member>Andrei Zubkov</member>
     <member>Andres Freund</member>
+    <member>Andrew Bille</member>
     <member>Andrew Dunstan</member>
     <member>Andrew Gierth</member>
     <member>Andrey Borodin</member>
@@ -3271,10 +3292,12 @@ Author: Peter Geoghegan <pg@bowt.ie>
     <member>Haiying Tang</member>
     <member>Hamid Akhtar</member>
     <member>Hans Buschmann</member>
+    <member>Hao Wu</member>
     <member>Haribabu Kommi</member>
     <member>Haruka Takatsuka</member>
     <member>Heath Lord</member>
     <member>Heikki Linnakangas</member>
+    <member>Himanshu Upadhyaya</member>
     <member>Hironobu Suzuki</member>
     <member>Hugh McMaster</member>
     <member>Hugh Ranalli</member>
@@ -3291,6 +3314,7 @@ Author: Peter Geoghegan <pg@bowt.ie>
     <member>Jaime Casanova</member>
     <member>James Coleman</member>
     <member>James Gray</member>
+    <member>James Hunter</member>
     <member>James Inform</member>
     <member>James Lucas</member>
     <member>Jan Mussler</member>
@@ -3413,6 +3437,7 @@ Author: Peter Geoghegan <pg@bowt.ie>
     <member>Petr Jelínek</member>
     <member>Phil Bayer</member>
     <member>Philip Semanchuk</member>
+    <member>Philippe Beaudoin</member>
     <member>Pierre Ducroquet</member>
     <member>Pierre Giraud</member>
     <member>Piotr Gabriel Kosinski</member>
@@ -3433,6 +3458,7 @@ Author: Peter Geoghegan <pg@bowt.ie>
     <member>Richard Guo</member>
     <member>Robert Ford</member>
     <member>Robert Haas</member>
+    <member>Robert Kahlert</member>
     <member>Robert Treat</member>
     <member>Robin Abbi</member>
     <member>Robins Tharakan</member>
