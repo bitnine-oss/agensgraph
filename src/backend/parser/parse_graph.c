@@ -39,7 +39,6 @@
 #include "parser/parse_graph.h"
 #include "parser/parse_oper.h"
 #include "parser/parse_relation.h"
-#include "parser/parse_shortestpath.h"
 #include "parser/parse_target.h"
 #include "parser/parser.h"
 #include "parser/parsetree.h"
@@ -55,6 +54,7 @@
 #include "catalog/pg_inherits.h"
 #include "access/table.h"
 #include "access/genam.h"
+#include "parser/parse_shortestpath.h"
 
 #define CYPHER_SUBQUERY_ALIAS	"_"
 #define CYPHER_OPTMATCH_ALIAS	"_o"
@@ -346,24 +346,10 @@ static TargetEntry *makeWholeRowTarget(ParseState *pstate,
 static TargetEntry *findTarget(List *targetList, char *resname);
 
 /* expression - type */
-static Node *makeVertexExpr(ParseState *pstate, ParseNamespaceItem *nsitem,
-							int location);
-static Node *makeEdgeExpr(ParseState *pstate, CypherRel *crel,
-						  ParseNamespaceItem *nsitem, int location);
 static Node *makePathVertexExpr(ParseState *pstate, Node *obj, bool isNSItem);
-/* expression - common */
-static Node *getColumnVar(ParseState *pstate, ParseNamespaceItem *nsitem,
-						  char *colname);
-static Node *getSysColumnVar(ParseState *pstate, ParseNamespaceItem *nsitem,
-							 AttrNumber attnum);
 static Node *getExprField(Expr *expr, char *fname);
-static Node *makeArrayExpr(Oid typarray, Oid typoid, List *elems);
-static Node *makeTypedRowExpr(List *args, Oid typoid, int location);
 static Node *qualAndExpr(Node *qual, Node *expr);
 /* parse node */
-static ResTarget *makeSimpleResTarget(char *field, char *name);
-static ResTarget *makeResTarget(Node *val, char *name);
-static Node *makeColumnRef(List *fields);
 static A_Const *makeNullAConst(void);
 static bool IsNullAConst(Node *arg);
 
@@ -2493,8 +2479,6 @@ static Node *
 genVLELeftChild(ParseState *pstate, CypherRel *crel, bool out, bool pathout)
 {
 	Node	   *vid;
-	A_ArrayExpr *idarr;
-	A_ArrayExpr *edgearr;
 	List	   *colnames = NIL;
 	SelectStmt *sel;
 	RangeSubselect *sub;
@@ -2509,17 +2493,12 @@ genVLELeftChild(ParseState *pstate, CypherRel *crel, bool out, bool pathout)
 
 	if (isZeroLengthVLE(crel))
 	{
-		TypeCast   *ids;
+		Node	   *ids;
 		List	   *values;
 
 		Assert(vid != NULL);
 
-		idarr = makeNode(A_ArrayExpr);
-		idarr->location = -1;
-		ids = makeNode(TypeCast);
-		ids->arg = (Node *) idarr;
-		ids->typeName = makeTypeName("_graphid");
-		ids->location = -1;
+		ids = makeAArrayExpr(NIL, GRAPHIDARRAYOID);
 
 		values = list_make3(vid, vid, ids);
 		colnames = list_make3(makeString(getEdgeColname(crel, false)),
@@ -2528,32 +2507,15 @@ genVLELeftChild(ParseState *pstate, CypherRel *crel, bool out, bool pathout)
 
 		if (out)
 		{
-			TypeCast *edges;
-
-			edgearr = makeNode(A_ArrayExpr);
-			edgearr->location = -1;
-			edges = makeNode(TypeCast);
-			edges->arg = (Node *) edgearr;
-			edges->typeName = makeTypeName("_edge");
-			edges->location = -1;
-
-			values = lappend(values, edges);
+			Node   *edge_arr = makeAArrayExpr(NIL, EDGEARRAYOID);
+			values = lappend(values, edge_arr);
 			colnames = lappend(colnames, makeString(VLE_COLNAME_EDGES));
 		}
 
 		if (pathout)
 		{
-			TypeCast  *vertices;
-			A_ArrayExpr *vtxarr;
-
-			vtxarr = makeNode(A_ArrayExpr);
-			vtxarr->location = -1;
-			vertices = makeNode(TypeCast);
-			vertices->arg = (Node*) vtxarr;
-			vertices->typeName = makeTypeName("_vertex");
-			vertices->location = -1;
-
-			values = lappend(values, vertices);
+			Node   *vtxarr = makeAArrayExpr(NIL, VERTEXARRAYOID);
+			values = lappend(values, vtxarr);
 			colnames = lappend(colnames, makeString(VLE_COLNAME_VERTICES));
 		}
 
@@ -2567,7 +2529,7 @@ genVLELeftChild(ParseState *pstate, CypherRel *crel, bool out, bool pathout)
 		ResTarget  *prev;
 		ResTarget  *curr;
 		Node	   *id;
-		TypeCast   *cast;
+		Node	   *id_array;
 		ResTarget  *ids;
 		List	   *tlist = NIL;
 		Node	   *from;
@@ -2579,14 +2541,9 @@ genVLELeftChild(ParseState *pstate, CypherRel *crel, bool out, bool pathout)
 		curr = makeSimpleResTarget(getEdgeColname(crel, true), NULL);
 
 		id = makeColumnRef(genQualifiedName(NULL, AG_ELEM_LOCAL_ID));
-		idarr = makeNode(A_ArrayExpr);
-		idarr->elements = list_make1(id);
-		idarr->location = -1;
-		cast = makeNode(TypeCast);
-		cast->arg = (Node *) idarr;
-		cast->typeName = makeTypeName("_graphid");
-		cast->location = -1;
-		ids = makeResTarget((Node *) cast, VLE_COLNAME_IDS);
+
+		id_array = makeAArrayExpr(list_make1(id), GRAPHIDARRAYOID);
+		ids = makeResTarget((Node *) id_array, VLE_COLNAME_IDS);
 
 		tlist = list_make3(prev, curr, ids);
 
@@ -2594,27 +2551,18 @@ genVLELeftChild(ParseState *pstate, CypherRel *crel, bool out, bool pathout)
 
 		if (out)
 		{
-			ResTarget  *edges;
-
-			edgearr = makeNode(A_ArrayExpr);
-			edgearr->elements = list_make1(genEdgeSimple(VLE_LEFT_ALIAS));
-			edgearr->location = -1;
-			cast = makeNode(TypeCast);
-			cast->arg = (Node *) edgearr;
-			cast->typeName = makeTypeName("_edge");
-			cast->location = -1;
-			edges = makeResTarget((Node *) cast, VLE_COLNAME_EDGES);
-
+			Node	   *edge_arr = makeAArrayExpr(
+					list_make1(genEdgeSimple(VLE_LEFT_ALIAS)), EDGEARRAYOID);
+			ResTarget  *edges = makeResTarget(edge_arr, VLE_COLNAME_EDGES);
 			tlist = lappend(tlist, edges);
 		}
 
 		if (pathout)
 		{
 			ResTarget  *vertices;
-
-			cast = makeNode(TypeCast);
+			TypeCast *cast = makeNode(TypeCast);
 			cast->arg = (Node*) makeNullAConst();
-			cast->typeName = makeTypeName("_vertex");
+			cast->typeName = makeTypeNameFromOid(VERTEXARRAYOID, -1);
 			cast->location = -1;
 			vertices = makeResTarget((Node *) cast, VLE_COLNAME_VERTICES);
 
@@ -2766,24 +2714,12 @@ genVertexSimple(char *aliasname)
 	Node	   *id;
 	Node	   *prop_map;
 	Node	   *tid;
-	RowExpr	   *row;
-	TypeCast   *vertex;
 
 	id = makeColumnRef(genQualifiedName(aliasname, AG_ELEM_LOCAL_ID));
 	prop_map = makeColumnRef(genQualifiedName(aliasname, AG_ELEM_PROP_MAP));
 	tid = makeColumnRef(genQualifiedName(aliasname, "ctid"));
 
-	row = makeNode(RowExpr);
-	row->args = list_make3(id, prop_map, tid);
-	row->row_format = COERCE_IMPLICIT_CAST;
-	row->location = -1;
-
-	vertex = makeNode(TypeCast);
-	vertex->arg = (Node *) row;
-	vertex->typeName = makeTypeName("vertex");
-	vertex->location = -1;
-
-	return (Node *) vertex;
+	return makeRowExprWithTypeCast(list_make3(id, prop_map, tid), VERTEXOID, -1);
 }
 
 static Node *
@@ -2794,8 +2730,6 @@ genEdgeSimple(char *aliasname)
 	Node	   *end;
 	Node	   *prop_map;
 	Node	   *tid;
-	RowExpr	   *row;
-	TypeCast   *edge;
 
 	id = makeColumnRef(genQualifiedName(aliasname, AG_ELEM_LOCAL_ID));
 	start = makeColumnRef(genQualifiedName(aliasname, AG_START_ID));
@@ -2803,17 +2737,8 @@ genEdgeSimple(char *aliasname)
 	prop_map = makeColumnRef(genQualifiedName(aliasname, AG_ELEM_PROP_MAP));
 	tid = makeColumnRef(genQualifiedName(aliasname, "ctid"));
 
-	row = makeNode(RowExpr);
-	row->args = list_make5(id, start, end, prop_map, tid);
-	row->row_format = COERCE_IMPLICIT_CAST;
-	row->location = -1;
-
-	edge = makeNode(TypeCast);
-	edge->arg = (Node *) row;
-	edge->typeName = makeTypeName("edge");
-	edge->location = -1;
-
-	return (Node *) edge;
+	return (Node *) makeRowExprWithTypeCast(
+			list_make5(id, start, end, prop_map, tid), EDGEOID, -1);
 }
 
 static Node *
@@ -2890,8 +2815,7 @@ genVLEJoinExpr(CypherRel *crel, Node *larg, Node *rarg)
 	trueconst->location = -1;
 	truecond = makeNode(TypeCast);
 	truecond->arg = (Node *) trueconst;
-	truecond->typeName = makeTypeNameFromNameList(
-			genQualifiedName("pg_catalog", "bool"));
+	truecond->typeName = makeTypeNameFromOid(BOOLOID, -1);
 	truecond->location = -1;
 
 	indices = (A_Indices *) crel->varlen;
@@ -5217,10 +5141,11 @@ makeSelectEdgesVertices(Node *vertices, CypherDeleteClause *delete,
 
 		nulledge = makeNode(TypeCast);
 		nulledge->arg = (Node *) makeNullAConst();
-		nulledge->typeName = makeTypeName("edge");
+		nulledge->typeName = makeTypeNameFromOid(EDGEOID, -1);
 		nulledge->location = -1;
 
-		targetlist = list_make1(makeResTarget((Node *) nulledge, NULL));
+		targetlist = list_make1(
+				makeResTarget((Node *) nulledge, NULL));
 	}
 
 	ag_edge = makeRangeVar(get_graph_path(true), AG_EDGE, -1);
@@ -5246,9 +5171,7 @@ makeEdgesForDetach(void)
 	Node	   *end;
 	A_Const	   *prop_map;
 	Node	   *tid;
-	RowExpr	   *edgerow;
-	TypeCast   *edge;
-	FuncCall   *edges;
+	Node	   *edge;
 
 	id = makeColumnRef(genQualifiedName(DELETE_EDGE_ALIAS, AG_ELEM_ID));
 	start = makeColumnRef(genQualifiedName(DELETE_EDGE_ALIAS, AG_START_ID));
@@ -5256,22 +5179,10 @@ makeEdgesForDetach(void)
 	prop_map = makeNullAConst();
 	tid = makeColumnRef(genQualifiedName(DELETE_EDGE_ALIAS, "ctid"));
 
-	edgerow = makeNode(RowExpr);
-	edgerow->args = list_make5(id, start, end, prop_map, tid);
-	edgerow->row_typeid = InvalidOid;
-	edgerow->colnames = NIL;
-	edgerow->row_format = COERCE_IMPLICIT_CAST;
-	edgerow->location = -1;
+	edge = makeRowExprWithTypeCast(list_make5(id, start, end, prop_map, tid),
+								   EDGEOID, -1);
 
-	edge = makeNode(TypeCast);
-	edge->arg = (Node *) edgerow;
-	edge->typeName = makeTypeName("edge");
-	edge->location = -1;
-
-	edges = makeFuncCall(list_make1(makeString("array_agg")), list_make1(edge),
-						 -1);
-
-	return (Node *) edges;
+	return (Node *) makeArrayAggFuncCall(list_make1(edge), -1);
 }
 
 static RangeFunction *
@@ -6177,43 +6088,6 @@ findTarget(List *targetList, char *resname)
 }
 
 static Node *
-makeVertexExpr(ParseState *pstate, ParseNamespaceItem *nsitem, int location)
-{
-	Node	   *id;
-	Node	   *prop_map;
-	Node	   *tid;
-
-	id = getColumnVar(pstate, nsitem, AG_ELEM_LOCAL_ID);
-	prop_map = getColumnVar(pstate, nsitem, AG_ELEM_PROP_MAP);
-	tid = getSysColumnVar(pstate, nsitem, SelfItemPointerAttributeNumber);
-
-	return makeTypedRowExpr(list_make3(id, prop_map, tid), VERTEXOID, location);
-}
-
-static Node *
-makeEdgeExpr(ParseState *pstate, CypherRel *crel, ParseNamespaceItem *nsitem,
-			 int location)
-{
-	Node	   *id;
-	Node	   *start;
-	Node	   *end;
-	Node	   *prop_map;
-	Node	   *tid;
-
-	id = getColumnVar(pstate, nsitem, AG_ELEM_LOCAL_ID);
-	start = getColumnVar(pstate, nsitem, AG_START_ID);
-	end = getColumnVar(pstate, nsitem, AG_END_ID);
-	prop_map = getColumnVar(pstate, nsitem, AG_ELEM_PROP_MAP);
-	if (crel->direction == CYPHER_REL_DIR_NONE)
-		tid = getColumnVar(pstate, nsitem, "ctid");
-	else
-		tid = getSysColumnVar(pstate, nsitem, SelfItemPointerAttributeNumber);
-
-	return makeTypedRowExpr(list_make5(id, start, end, prop_map, tid),
-							EDGEOID, location);
-}
-
-static Node *
 makePathVertexExpr(ParseState *pstate, Node *obj, bool isNSItem)
 {
 	if (isNSItem)
@@ -6229,57 +6103,6 @@ makePathVertexExpr(ParseState *pstate, Node *obj, bool isNSItem)
 
 		return (Node *) te->expr;
 	}
-}
-
-static Node *
-getColumnVar(ParseState *pstate, ParseNamespaceItem *nsitem, char *colname)
-{
-	ListCell   *lcn;
-	AttrNumber attrno;
-	Var		   *var;
-	RangeTblEntry *rte = nsitem->p_rte;
-
-	attrno = 1;
-	foreach(lcn, rte->eref->colnames)
-	{
-		const char *tmp = strVal(lfirst(lcn));
-
-		if (strcmp(tmp, colname) == 0)
-		{
-			/*
-			 * NOTE: no ambiguous reference check here
-			 *       since all column names in `rte` are unique
-			 */
-
-			var = make_var(pstate, nsitem, attrno, -1);
-
-			/* require read access to the column */
-			markVarForSelectPriv(pstate, var, rte);
-
-			return (Node *) var;
-		}
-
-		attrno++;
-	}
-
-	elog(ERROR, "column \"%s\" not found (internal error)", colname);
-	return NULL;
-}
-
-static Node *
-getSysColumnVar(ParseState *pstate, ParseNamespaceItem *nsitem,
-				AttrNumber attnum)
-{
-	Var *var;
-
-	AssertArg(attnum <= SelfItemPointerAttributeNumber &&
-			  attnum >= FirstLowInvalidHeapAttributeNumber);
-
-	var = make_var(pstate, nsitem, attnum, -1);
-
-	markVarForSelectPriv(pstate, var, nsitem->p_rte);
-
-	return (Node *) var;
 }
 
 static Node *
@@ -6314,33 +6137,6 @@ getExprField(Expr *expr, char *fname)
 }
 
 static Node *
-makeArrayExpr(Oid typarray, Oid typoid, List *elems)
-{
-	ArrayExpr *arr = makeNode(ArrayExpr);
-
-	arr->array_typeid = typarray;
-	arr->element_typeid = typoid;
-	arr->elements = elems;
-	arr->multidims = false;
-	arr->location = -1;
-
-	return (Node *) arr;
-}
-
-static Node *
-makeTypedRowExpr(List *args, Oid typoid, int location)
-{
-	RowExpr *row = makeNode(RowExpr);
-
-	row->args = args;
-	row->row_typeid = typoid;
-	row->row_format = COERCE_EXPLICIT_CAST;
-	row->location = location;
-
-	return (Node *) row;
-}
-
-static Node *
 qualAndExpr(Node *qual, Node *expr)
 {
 	if (qual == NULL)
@@ -6361,42 +6157,6 @@ qualAndExpr(Node *qual, Node *expr)
 	}
 
 	return (Node *) makeBoolExpr(AND_EXPR, list_make2(qual, expr), -1);
-}
-
-static ResTarget *
-makeSimpleResTarget(char *field, char *name)
-{
-	ColumnRef *cref;
-
-	cref = makeNode(ColumnRef);
-	cref->fields = list_make1(makeString(pstrdup(field)));
-	cref->location = -1;
-
-	return makeResTarget((Node *) cref, name);
-}
-
-static ResTarget *
-makeResTarget(Node *val, char *name)
-{
-	ResTarget *res;
-
-	res = makeNode(ResTarget);
-	if (name != NULL)
-		res->name = pstrdup(name);
-	res->val = val;
-	res->location = -1;
-
-	return res;
-}
-
-static Node *
-makeColumnRef(List *fields)
-{
-	ColumnRef *n = makeNode(ColumnRef);
-
-	n->fields = fields;
-	n->location = -1;
-	return (Node *)n;
 }
 
 static A_Const *

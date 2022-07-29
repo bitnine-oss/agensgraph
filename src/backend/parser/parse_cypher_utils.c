@@ -18,6 +18,8 @@
 #include "utils/syscache.h"
 #include "parser/parsetree.h"
 #include "catalog/heap.h"
+#include "ag_const.h"
+#include "catalog/namespace.h"
 
 static int GetSubLevelsUpByNSItem(ParseState *pstate,
 								  ParseNamespaceItem *nsitem);
@@ -265,4 +267,216 @@ GetSubLevelsUpByNSItem(ParseState *pstate, ParseNamespaceItem *nsitem)
 
 	elog(ERROR, "RTE not found (internal error)");
 	return 0;					/* keep compiler quiet */
+}
+
+FuncCall *
+makeArrayAggFuncCall(List *args, int location)
+{
+	return makeFuncCall(list_make1(makeString("array_agg")),
+						args, location);
+}
+
+
+Node *
+makeRowExprWithTypeCast(List *args, Oid typeOid, int location)
+{
+	RowExpr	   *row;
+	TypeCast   *cast;
+
+	row = makeNode(RowExpr);
+	row->args = args;
+	row->row_typeid = typeOid;
+	row->colnames = NIL;
+	row->row_format = COERCE_EXPLICIT_CAST;
+	row->location = location;
+
+	cast = makeNode(TypeCast);
+	cast->arg = (Node *) row;
+	cast->typeName = makeTypeNameFromOid(typeOid, -1);
+	cast->location = location;
+
+	return (Node *) cast;
+}
+
+Node *
+makeTypedRowExpr(List *args, Oid typoid, int location)
+{
+	RowExpr *row = makeNode(RowExpr);
+
+	row->args = args;
+	row->row_typeid = typoid;
+	row->row_format = COERCE_EXPLICIT_CAST;
+	row->location = location;
+
+	return (Node *) row;
+}
+
+Node *
+makeAArrayExpr(List *elements, Oid typeOid)
+{
+	A_ArrayExpr *arr;
+	TypeCast   *cast;
+
+	arr = makeNode(A_ArrayExpr);
+	arr->elements = elements;
+	arr->location = -1;
+
+	cast = makeNode(TypeCast);
+	cast->arg = (Node *) arr;
+	cast->typeName = makeTypeNameFromOid(typeOid, -1);
+	cast->location = -1;
+
+	return (Node *) cast;
+}
+
+Node *
+makeArrayExpr(Oid typarray, Oid typoid, List *elems)
+{
+	ArrayExpr *arr = makeNode(ArrayExpr);
+
+	arr->array_typeid = typarray;
+	arr->element_typeid = typoid;
+	arr->elements = elems;
+	arr->multidims = false;
+	arr->location = -1;
+
+	return (Node *) arr;
+}
+
+Node *
+makeVertexExpr(ParseState *pstate, ParseNamespaceItem *nsitem, int location)
+{
+	Node	   *id;
+	Node	   *prop_map;
+	Node	   *tid;
+
+	id = getColumnVar(pstate, nsitem, AG_ELEM_LOCAL_ID);
+	prop_map = getColumnVar(pstate, nsitem, AG_ELEM_PROP_MAP);
+	tid = getSysColumnVar(pstate, nsitem, SelfItemPointerAttributeNumber);
+
+	return makeTypedRowExpr(list_make3(id, prop_map, tid), VERTEXOID, location);
+}
+
+Node *
+makeEdgeExpr(ParseState *pstate, CypherRel *crel, ParseNamespaceItem *nsitem,
+			 int location)
+{
+	Node	   *id;
+	Node	   *start;
+	Node	   *end;
+	Node	   *prop_map;
+	Node	   *tid;
+
+	id = getColumnVar(pstate, nsitem, AG_ELEM_LOCAL_ID);
+	start = getColumnVar(pstate, nsitem, AG_START_ID);
+	end = getColumnVar(pstate, nsitem, AG_END_ID);
+	prop_map = getColumnVar(pstate, nsitem, AG_ELEM_PROP_MAP);
+	if (crel->direction == CYPHER_REL_DIR_NONE)
+		tid = getColumnVar(pstate, nsitem, "ctid");
+	else
+		tid = getSysColumnVar(pstate, nsitem, SelfItemPointerAttributeNumber);
+
+	return makeTypedRowExpr(list_make5(id, start, end, prop_map, tid),
+							EDGEOID, location);
+}
+
+Node *
+getColumnVar(ParseState *pstate, ParseNamespaceItem *nsitem, char *colname)
+{
+	ListCell   *lcn;
+	AttrNumber attrno;
+	Var		   *var;
+	RangeTblEntry *rte = nsitem->p_rte;
+
+	attrno = 1;
+	foreach(lcn, rte->eref->colnames)
+	{
+		const char *tmp = strVal(lfirst(lcn));
+
+		if (strcmp(tmp, colname) == 0)
+		{
+			/*
+			 * NOTE: no ambiguous reference check here
+			 *       since all column names in `rte` are unique
+			 */
+
+			var = make_var(pstate, nsitem, attrno, -1);
+
+			/* require read access to the column */
+			markVarForSelectPriv(pstate, var, rte);
+
+			return (Node *) var;
+		}
+
+		attrno++;
+	}
+
+	elog(ERROR, "column \"%s\" not found (internal error)", colname);
+}
+
+Node *
+getSysColumnVar(ParseState *pstate, ParseNamespaceItem *nsitem,
+				AttrNumber attnum)
+{
+	Var *var;
+
+	AssertArg(attnum <= SelfItemPointerAttributeNumber &&
+			  attnum >= FirstLowInvalidHeapAttributeNumber);
+
+	var = make_var(pstate, nsitem, attnum, -1);
+
+	markVarForSelectPriv(pstate, var, nsitem->p_rte);
+
+	return (Node *) var;
+}
+
+Node *
+makeColumnRef(List *fields)
+{
+	ColumnRef *n = makeNode(ColumnRef);
+
+	n->fields = fields;
+	n->location = -1;
+	return (Node *)n;
+}
+
+ResTarget *
+makeSimpleResTarget(const char *field, const char *name)
+{
+	Node *cref;
+
+	cref = makeColumnRef(list_make1(makeString(pstrdup(field))));
+
+	if(name == NULL)
+	{
+		/* if name is null, filled from FigureColname */
+		name = field;
+	}
+
+	return makeResTarget(cref, name);
+}
+
+ResTarget *
+makeResTarget(Node *val, const char *name)
+{
+	ResTarget *res = makeNode(ResTarget);
+
+	if (name != NULL)
+	{
+		res->name = pstrdup(name);
+	}
+	else if (IsA(val, ColumnRef))
+	{
+		ColumnRef *ref = (ColumnRef *) val;
+		res->name = NameListToString(ref->fields);
+	}
+	else
+	{
+		res->name = NULL_COLUMN_NAME;
+	}
+
+	res->val = val;
+	res->location = -1;
+
+	return res;
 }

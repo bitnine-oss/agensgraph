@@ -12,6 +12,8 @@
 
 #include "parser/parse_node.h"
 
+#define NULL_COLUMN_NAME		"_N_"
+
 extern Node *makeJsonbFuncAccessor(ParseState *pstate, Node *expr, List *path);
 extern bool IsJsonbAccessor(Node *expr);
 extern void getAccessorArguments(Node *node, Node **expr, List **path);
@@ -28,5 +30,27 @@ extern void addNSItemToJoinlist(ParseState *pstate, ParseNamespaceItem *nsitem,
 
 extern Var *make_var(ParseState *pstate, ParseNamespaceItem *nsitem,
 					 AttrNumber attnum, int location);
+
+
+extern Node *makeRowExprWithTypeCast(List *args, Oid typeOid, int location);
+extern Node *makeTypedRowExpr(List *args, Oid typoid, int location);
+extern Node *makeAArrayExpr(List *elements, Oid typeOid);
+extern Node *makeArrayExpr(Oid typarray, Oid typoid, List *elems);
+extern Node *getColumnVar(ParseState *pstate, ParseNamespaceItem *nsitem,
+						  char *colname);
+extern Node *getSysColumnVar(ParseState *pstate, ParseNamespaceItem *nsitem,
+							 AttrNumber attnum);
+
+extern Node *makeColumnRef(List *fields);
+
+extern Node *makeVertexExpr(ParseState *pstate, ParseNamespaceItem *nsitem,
+							int location);
+extern Node *makeEdgeExpr(ParseState *pstate, CypherRel *crel,
+						  ParseNamespaceItem *nsitem, int location);
+
+extern ResTarget *makeSimpleResTarget(const char *field, const char *name);
+extern ResTarget *makeResTarget(Node *val, const char *name);
+
+extern FuncCall *makeArrayAggFuncCall(List *args, int location);
 
 #endif

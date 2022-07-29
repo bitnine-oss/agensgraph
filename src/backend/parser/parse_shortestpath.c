@@ -27,6 +27,7 @@
 #include "parser/parse_target.h"
 #include "utils/builtins.h"
 #include "parser/parse_cypher_utils.h"
+#include "utils/fmgroids.h"
 
 #define SP_COLNAME_VIDS		"vids"
 #define SP_COLNAME_EIDS		"eids"
@@ -78,11 +79,6 @@ static Node *makeDijkstraEdge(char *elabel_name, char *row_name);
 
 /* parse node */
 static Node *makeColumnRef1(char *colname);
-static Node *makeColumnRef(List *fields);
-static ResTarget *makeSimpleResTarget(char *field, char *name);
-static ResTarget *makeResTarget(Node *val, char *name);
-static Node *makeAArrayExpr(List *elements, char *typeName);
-static Node *makeRowExpr(List *args, char *typeName);
 static Node *makeSubLink(SelectStmt *sel);
 
 Query *
@@ -325,21 +321,21 @@ makeShortestPathQuery(ParseState *pstate, CypherPath *cpath, bool isexpr)
 	addNSItemToJoinlist(pstate, nsitem, true);
 
 	pathname = getCypherName(cpath->variable);
-	if ( pathname != NULL || isexpr)
+	if (pathname != NULL || isexpr)
 	{
 		vertices = makeVerticesSubLink();
 		edges = makeEdgesSubLink(cpath, false);
-		empty_edges = makeAArrayExpr(NIL, "_edge");
+		empty_edges = makeAArrayExpr(NIL, EDGEARRAYOID);
 		coalesced = makeNode(CoalesceExpr);
 		coalesced->args = list_make2(edges, empty_edges);
 		coalesced->location = -1;
-		path = makeRowExpr(list_make2(vertices, coalesced), "graphpath");
+		path = makeRowExprWithTypeCast(list_make2(vertices, coalesced),
+									   GRAPHPATHOID, -1);
 		if (cpath->kind == CPATH_SHORTEST_ALL && isexpr)
 		{
 			FuncCall *arragg;
 
-			arragg = makeFuncCall(list_make1(makeString("array_agg")),
-								  list_make1(path), -1);
+			arragg = makeArrayAggFuncCall(list_make1(path), -1);
 			path = (Node *) arragg;
 		}
 		expr = transformExpr(pstate, path, EXPR_KIND_SELECT_TARGET);
@@ -388,21 +384,21 @@ makeShortestPathQuery(ParseState *pstate, CypherPath *cpath, bool isexpr)
 static ParseNamespaceItem *
 makeShortestPathFrom(ParseState *parentParseState, CypherPath *cpath)
 {
-	Alias	      *alias;
-	ParseState    *pstate;
-	Query	      *qry;
-	Node	      *target;
-	TargetEntry   *te;
-	FuncCall      *fc;
-	CypherRel     *crel;
-	Node  	      *start;
-	Node  	      *end;
-	CypherNode    *vertex;
-	Node	      *param;
-	Node	      *vertex_id;
-	List	      *where = NIL;
-	Node	      *qual;
-	ParseNamespaceItem *nsitem;
+	Alias		   *alias;
+	ParseState	   *pstate;
+	Node		   *target;
+	Query		   *qry;
+	TargetEntry	   *te;
+	FuncExpr	   *fc;
+	CypherRel	   *crel;
+	Node		   *start;
+	Node		   *end;
+	CypherNode	   *vertex;
+	Node		   *param;
+	Node		   *vertex_id;
+	List		   *where = NIL;
+	Node		   *qual;
+	ParseNamespaceItem	*nsitem;
 
 	Assert(parentParseState->p_expr_kind == EXPR_KIND_NONE);
 	parentParseState->p_expr_kind = EXPR_KIND_FROM_SUBSELECT;
@@ -421,21 +417,18 @@ makeShortestPathFrom(ParseState *parentParseState, CypherPath *cpath)
 	addNSItemToJoinlist(pstate, nsitem, true);
 
 	/* vids */
-	fc = makeFuncCall(list_make1(makeString("shortestpath_graphids")), NIL, -1);
-	target = ParseFuncOrColumn(pstate, fc->funcname, NIL, pstate->p_last_srf,
-							   fc, false, -1);
-	te = makeTargetEntry((Expr *) target,
-						 (AttrNumber) pstate->p_next_resno++,
-						 "vids", false);
+	fc = makeFuncExpr(F_SHORTESTPATH_GRAPHIDS, GRAPHIDARRAYOID,
+					  NIL, InvalidOid, InvalidOid,
+					  COERCE_EXPLICIT_CALL);
+	te = makeTargetEntry((Expr *) fc, (AttrNumber) pstate->p_next_resno++,
+						 SP_COLNAME_VIDS, false);
 	qry->targetList = list_make1(te);
 
 	/* eids */
-	fc = makeFuncCall(list_make1(makeString("shortestpath_rowids")), NIL, -1);
-	target = ParseFuncOrColumn(pstate, fc->funcname, NIL, pstate->p_last_srf,
-							   fc, false, -1);
-	te = makeTargetEntry((Expr *) target,
-						 (AttrNumber) pstate->p_next_resno++,
-						 "eids", false);
+	fc = makeFuncExpr(F_SHORTESTPATH_ROWIDS, ROWIDARRAYOID, NIL, InvalidOid,
+					  InvalidOid, COERCE_EXPLICIT_CALL);
+	te = makeTargetEntry((Expr *) fc, (AttrNumber) pstate->p_next_resno++,
+						 SP_COLNAME_EIDS, false);
 	qry->targetList = lappend(qry->targetList, te);
 
 	/* end ID */
@@ -829,10 +822,11 @@ makeVerticesSubLink(void)
 
 	selsub = makeNode(SelectStmt);
 
-	vertex = makeRowExpr(list_make3(id,
-									makeColumnRef1(AG_ELEM_PROP_MAP),
-									makeColumnRef1("ctid")),
-						 "vertex");
+	vertex = makeRowExprWithTypeCast(list_make3(id,
+												makeColumnRef1(
+														AG_ELEM_PROP_MAP),
+												makeColumnRef1("ctid")),
+									 VERTEXOID, -1);
 	selsub->targetList = list_make1(makeResTarget(vertex, NULL));
 
 	ag_vertex = makeRangeVar(get_graph_path(true), AG_VERTEX, -1);
@@ -850,8 +844,7 @@ makeVerticesSubLink(void)
 
 	sel = makeNode(SelectStmt);
 
-	arragg = makeFuncCall(list_make1(makeString("array_agg")),
-						  list_make1(vertices), -1);
+	arragg = makeArrayAggFuncCall(list_make1(vertices), -1);
 	sel->targetList = list_make1(makeResTarget((Node *) arragg, NULL));
 
 	unnest = makeFuncCall(list_make1(makeString("unnest")),
@@ -908,12 +901,12 @@ makeEdgesSubLink(CypherPath *cpath, bool is_dijkstra)
 
 	selsub = makeNode(SelectStmt);
 
-	edge = makeRowExpr(list_make5(id,
-								  makeColumnRef1(AG_START_ID),
-								  makeColumnRef1(AG_END_ID),
-								  makeColumnRef1(AG_ELEM_PROP_MAP),
-								  makeColumnRef1("ctid")),
-					   "edge");
+	edge = makeRowExprWithTypeCast(list_make5(id,
+											  makeColumnRef1(AG_START_ID),
+											  makeColumnRef1(AG_END_ID),
+											  makeColumnRef1(AG_ELEM_PROP_MAP),
+											  makeColumnRef1("ctid")),
+								   EDGEOID, -1);
 	selsub->targetList = list_make1(makeResTarget(edge, NULL));
 
 	crel = lsecond(cpath->chain);
@@ -957,8 +950,7 @@ makeEdgesSubLink(CypherPath *cpath, bool is_dijkstra)
 
 	sel = makeNode(SelectStmt);
 
-	arragg = makeFuncCall(list_make1(makeString("array_agg")),
-						  list_make1(edges), -1);
+	arragg = makeArrayAggFuncCall(list_make1(edges), -1);
 	sel->targetList = list_make1(makeResTarget((Node *) arragg, NULL));
 
 	unnest = makeFuncCall(list_make1(makeString("unnest")),
@@ -1014,84 +1006,9 @@ makeColumnRef1(char *colname)
 {
 	List *fields;
 
-	fields = list_make1(makeString(pstrdup(colname)));
+	fields = list_make1(makeString(colname));
 
 	return makeColumnRef(fields);
-}
-
-static Node *
-makeColumnRef(List *fields)
-{
-	ColumnRef *cref;
-
-	cref = makeNode(ColumnRef);
-	cref->fields = fields;
-	cref->location = -1;
-
-	return (Node *) cref;
-}
-
-static ResTarget *
-makeSimpleResTarget(char *field, char *name)
-{
-	Node *cref;
-
-	cref = makeColumnRef(list_make1(makeString(pstrdup(field))));
-
-	return makeResTarget(cref, name);
-}
-
-static ResTarget *
-makeResTarget(Node *val, char *name)
-{
-	ResTarget *res;
-
-	res = makeNode(ResTarget);
-	if (name != NULL)
-		res->name = pstrdup(name);
-	res->val = val;
-	res->location = -1;
-
-	return res;
-}
-
-static Node *
-makeAArrayExpr(List *elements, char *typeName)
-{
-	A_ArrayExpr *arr;
-	TypeCast   *cast;
-
-	arr = makeNode(A_ArrayExpr);
-	arr->elements = elements;
-	arr->location = -1;
-
-	cast = makeNode(TypeCast);
-	cast->arg = (Node *) arr;
-	cast->typeName = makeTypeName(typeName);
-	cast->location = -1;
-
-	return (Node *) cast;
-}
-
-static Node *
-makeRowExpr(List *args, char *typeName)
-{
-	RowExpr	   *row;
-	TypeCast   *cast;
-
-	row = makeNode(RowExpr);
-	row->args = args;
-	row->row_typeid = InvalidOid;
-	row->colnames = NIL;
-	row->row_format = COERCE_EXPLICIT_CAST;
-	row->location = -1;
-
-	cast = makeNode(TypeCast);
-	cast->arg = (Node *) row;
-	cast->typeName = makeTypeName(typeName);
-	cast->location = -1;
-
-	return (Node *) cast;
 }
 
 static Node *
@@ -1223,17 +1140,17 @@ makeDijkstraQuery(ParseState *pstate, CypherPath *cpath, bool is_expr)
 
 	vertices = makeVerticesSubLink();
 	edges = makeEdgesSubLink(cpath, true);
-	empty_edges = makeAArrayExpr(NIL, "_edge");
+	empty_edges = makeAArrayExpr(NIL, EDGEARRAYOID);
 	coalesced = makeNode(CoalesceExpr);
 	coalesced->args = list_make2(edges, empty_edges);
 	coalesced->location = -1;
-	path = makeRowExpr(list_make2(vertices, coalesced), "graphpath");
+	path = makeRowExprWithTypeCast(list_make2(vertices, coalesced),
+								   GRAPHPATHOID, -1);
 	if (is_expr)
 	{
 		FuncCall *arragg;
 
-		arragg = makeFuncCall(list_make1(makeString("array_agg")),
-							  list_make1(path), -1);
+		arragg = makeArrayAggFuncCall(list_make1(path), -1);
 		path = (Node *) arragg;
 	}
 	expr = transformExpr(pstate, path, EXPR_KIND_SELECT_TARGET);
@@ -1538,12 +1455,13 @@ makeDijkstraEdgeUnion(char *elabel_name, char *row_name)
 								 makeSimpleResTarget("ctid", NULL));
 	if (row_name != NULL)
 	{
-		row = makeRowExpr(list_make5(makeColumnRef1(AG_ELEM_LOCAL_ID),
-									 makeColumnRef1("_start"),
-									 makeColumnRef1("_end"),
-									 makeColumnRef1(AG_ELEM_PROP_MAP),
-									 makeColumnRef1("ctid")),
-						  "edge");
+		row = makeRowExprWithTypeCast(
+				list_make5(makeColumnRef1(AG_ELEM_LOCAL_ID),
+						   makeColumnRef1("_start"),
+						   makeColumnRef1("_end"),
+						   makeColumnRef1(AG_ELEM_PROP_MAP),
+						   makeColumnRef1("ctid")),
+				EDGEOID, -1);
 		sel->targetList = lappend(sel->targetList,
 								  makeResTarget(row, row_name));
 	}
@@ -1575,12 +1493,13 @@ makeDijkstraEdge(char *elabel_name, char *row_name)
 	{
 		Node	   *row;
 
-		row = makeRowExpr(list_make5(makeColumnRef1(AG_ELEM_LOCAL_ID),
-									 makeColumnRef1(AG_START_ID),
-									 makeColumnRef1(AG_END_ID),
-									 makeColumnRef1(AG_ELEM_PROP_MAP),
-									 makeColumnRef1("ctid")),
-						  "edge");
+		row = makeRowExprWithTypeCast(
+				list_make5(makeColumnRef1(AG_ELEM_LOCAL_ID),
+						   makeColumnRef1(AG_START_ID),
+						   makeColumnRef1(AG_END_ID),
+						   makeColumnRef1(AG_ELEM_PROP_MAP),
+						   makeColumnRef1("ctid")),
+				EDGEOID, -1);
 		sel->targetList = lappend(sel->targetList,
 								  makeResTarget(row, row_name));
 	}
