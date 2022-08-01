@@ -3958,6 +3958,8 @@ _outCreateLabelStmt(StringInfo str, const CreateLabelStmt *node)
 	WRITE_NODE_FIELD(options);
 	WRITE_STRING_FIELD(tablespacename);
 	WRITE_BOOL_FIELD(if_not_exists);
+	WRITE_BOOL_FIELD(only_base);
+	WRITE_INT_FIELD(fixed_id);
 }
 
 static void

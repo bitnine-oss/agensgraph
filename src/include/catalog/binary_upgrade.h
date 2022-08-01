@@ -27,4 +27,7 @@ extern PGDLLIMPORT Oid binary_upgrade_next_pg_authid_oid;
 
 extern PGDLLIMPORT bool binary_upgrade_record_init_privs;
 
+extern PGDLLIMPORT Oid binary_upgrade_next_ag_graph_oid;
+extern PGDLLIMPORT Oid binary_upgrade_next_ag_label_oid;
+
 #endif							/* BINARY_UPGRADE_H */

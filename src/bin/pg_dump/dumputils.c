@@ -516,7 +516,8 @@ do { \
 	resetPQExpBuffer(privswgo);
 
 	if (strcmp(type, "TABLE") == 0 || strcmp(type, "SEQUENCE") == 0 ||
-		strcmp(type, "TABLES") == 0 || strcmp(type, "SEQUENCES") == 0)
+		strcmp(type, "TABLES") == 0 || strcmp(type, "SEQUENCES") == 0 ||
+		strcmp(type, "ELABEL") == 0 || strcmp(type, "VLABEL") == 0)
 	{
 		CONVERT_PRIV('r', "SELECT");
 
@@ -551,7 +552,8 @@ do { \
 	else if (strcmp(type, "LANGUAGE") == 0)
 		CONVERT_PRIV('U', "USAGE");
 	else if (strcmp(type, "SCHEMA") == 0 ||
-			 strcmp(type, "SCHEMAS") == 0)
+			 strcmp(type, "SCHEMAS") == 0 ||
+			 strcmp(type, "GRAPH") == 0)
 	{
 		CONVERT_PRIV('C', "CREATE");
 		CONVERT_PRIV('U', "USAGE");
@@ -1041,61 +1043,4 @@ makeAlterConfigCommand(PGconn *conn, const char *configitem,
 	appendPQExpBufferStr(buf, ";\n");
 
 	pg_free(mine);
-}
-
-/*
- * Checks the passed configuration option, to determine if it is the graph_path
- * configuration option. format: graph_path=path, possibly string quoted.
- */
-bool
-isGraphPathConfig(const char *config)
-{
-	char *pos;
-	char *mine;
-	bool isGraphPath;
-
-	mine = pg_strdup(config);
-	pos = strchr(mine, '=');
-	if (pos == NULL)
-	{
-		free(mine);
-		return false;
-	}
-
-	if (*mine == '"' || *mine == '\'')
-		mine++;
-
-	*pos = 0;
-	isGraphPath = strcmp(mine, "graph_path") == 0;
-	free(mine);
-	return isGraphPath;
-}
-
-/*
- * Extracts the value of a configuration options
- * Format: config_value=config_value, possibly string quoted
- */
-char *
-extractConfigValue(const char *config)
-{
-	char *pos;
-	char *mine;
-	char *return_value;
-
-	mine = pg_strdup(config);
-	pos = strchr(mine, '=');
-	if (pos == NULL)
-	{
-		free(mine);
-		return NULL;
-	}
-
-	if (pos[strlen(pos) - 1] == '"' || pos[strlen(pos) - 1] == '\'')
-		pos[strlen(pos) - 1] = '\0';
-
-	*pos = 0;
-	return_value = pg_strdup(pos + 1);
-	free(mine);
-
-	return return_value;
 }
