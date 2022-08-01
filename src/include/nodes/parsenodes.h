@@ -3543,6 +3543,15 @@ typedef struct DropSubscriptionStmt
  * Agens Graph related node structures
  ****************************************************************************/
 
+typedef enum CreateGraphStmtKind
+{
+	CGSK_ALL = 0x1 + 0x2 + 0x4 + 0x8,
+	CGSK_SCHEMA = 0x1,
+	CGSK_ELABEL = 0x2,
+	CGSK_VLABEL = 0x4,
+	CGSK_SEQUENCE = 0x8
+} CreateGraphStmtKind;
+
 /* CREATE GRAPH ... */
 typedef struct CreateGraphStmt
 {
@@ -3550,6 +3559,7 @@ typedef struct CreateGraphStmt
 	char	   *graphname;		/* the name of the graph to create */
 	RoleSpec   *authrole;		/* the owner of the created graph */
 	bool		if_not_exists;	/* just do nothing if graph already exists? */
+	CreateGraphStmtKind	kind;
 } CreateGraphStmt;
 
 typedef enum LabelKind
@@ -3569,6 +3579,10 @@ typedef struct CreateLabelStmt
 	char	   *tablespacename; /* table space to use, or NULL */
 	bool		if_not_exists;	/* just do nothing if it already exists? */
 	bool		disable_index;	/* create invalid and not ready index if true */
+
+	/* Supports for binary upgrade */
+	bool		only_base;
+	int			fixed_id;
 } CreateLabelStmt;
 
 /* ALTER VLABEL/ELABEL ... */
