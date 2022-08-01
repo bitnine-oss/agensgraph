@@ -666,8 +666,8 @@
 #define SIZEOF_BOOL 1
 
 /* AgensGraph version as a string */
-#define AG_VERSION "2.1.3"
-#define AG_COMP_VERSION "2.1"
+#define AG_VERSION "2.5.1-devel"
+#define AG_COMP_VERSION "2.5"
 
 /* The size of `long', as computed by sizeof. */
 #define SIZEOF_LONG 4
