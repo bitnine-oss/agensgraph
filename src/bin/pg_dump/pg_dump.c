@@ -19046,7 +19046,7 @@ dumpGraph(Archive *fout, NamespaceInfo *graphinfo)
 					 graphinfo->dobj.catId, 0, graphinfo->dobj.dumpId);
 
 	if (graphinfo->dobj.dump & DUMP_COMPONENT_ACL)
-		dumpACL(fout, graphinfo->dobj.catId, graphinfo->dobj.dumpId, "GRAPH",
+		dumpACL(fout, graphinfo->dobj.dumpId, InvalidDumpId, "GRAPH",
 				qnspname, NULL, NULL,
 				graphinfo->rolname, graphinfo->nspacl, graphinfo->rnspacl,
 				graphinfo->initnspacl, graphinfo->initrnspacl);
@@ -19071,7 +19071,6 @@ dumpLabelSchema(Archive *fout, TableInfo *tblinfo)
 	char	   *qualrelname;
 	int			numParents;
 	TableInfo **parents;
-	int			actual_atts;	/* number of attrs in this CREATE statement */
 	const char *reltypename;
 	char	   *storage;
 	int			j, k;
