@@ -38,17 +38,22 @@ OBJS = \
 	prompt.o \
 	psqlscanslash.o \
 	sql_help.o \
-	startup.o \
 	stringutils.o \
 	tab-complete.o \
 	variables.o \
 	cypher_describe.o
 
 
-all: psql
+all: psql agens
 
-psql: $(OBJS) | submake-libpq submake-libpgport submake-libpgfeutils
-	$(CC) $(CFLAGS) $(OBJS) $(LDFLAGS) $(LDFLAGS_EX) $(LIBS) -o $@$(X)
+ag_startup.c: startup.c
+	sed 's/AGS_REBRANDED 0/AGS_REBRANDED 1/g' $< >$@
+
+agens: $(OBJS) ag_startup.o | submake-libpq submake-libpgport submake-libpgfeutils
+	$(CC) $(CFLAGS) $(OBJS) ag_startup.o $(LDFLAGS) $(LDFLAGS_EX) $(LIBS) -o $@$(X)
+
+psql: $(OBJS) startup.o | submake-libpq submake-libpgport submake-libpgfeutils
+	$(CC) $(CFLAGS) $(OBJS) startup.o $(LDFLAGS) $(LDFLAGS_EX) $(LIBS) -o $@$(X)
 
 help.o: sql_help.h
 
@@ -67,6 +72,7 @@ distprep: sql_help.h sql_help.c psqlscanslash.c
 
 install: all installdirs
 	$(INSTALL_PROGRAM) psql$(X) '$(DESTDIR)$(bindir)/psql$(X)'
+	$(INSTALL_PROGRAM) agens$(X) '$(DESTDIR)$(bindir)/agens$(X)'
 	$(INSTALL_DATA) $(srcdir)/psqlrc.sample '$(DESTDIR)$(datadir)/psqlrc.sample'
 
 installdirs:
@@ -74,11 +80,12 @@ installdirs:
 
 uninstall:
 	rm -f '$(DESTDIR)$(bindir)/psql$(X)' '$(DESTDIR)$(datadir)/psqlrc.sample'
+	rm -f '$(DESTDIR)$(bindir)/agens$(X)'
 
 clean distclean:
 	rm -f psql$(X) $(OBJS) lex.backup
 	rm -rf tmp_check
-
+	rm -f asql$(X) startup.o ag_startup.c ag_startup.o
 # files removed here are supposed to be in the distribution tarball,
 # so do not clean them in the clean/distclean rules
 maintainer-clean: distclean

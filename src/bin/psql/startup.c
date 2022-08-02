@@ -38,6 +38,9 @@ PsqlSettings pset;
 #define PSQLRC		"psqlrc.conf"
 #endif
 
+/* Flags for AgensGraph utils. */
+#define AGS_REBRANDED 0
+
 /*
  * Structures to pass information between the option parsing routine
  * and the main function
@@ -820,7 +823,11 @@ process_psqlrc_file(char *filename)
 static void
 showVersion(void)
 {
+#if AGS_REBRANED == 1
+	puts("agens (AgensGraph) " AG_VERSION);
+#else
 	puts("psql (PostgreSQL) " PG_VERSION);
+#endif
 }
 
 
