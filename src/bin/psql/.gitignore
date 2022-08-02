@@ -3,3 +3,5 @@
 /sql_help.c
 
 /psql
+/agens
+/ag_startup.c
