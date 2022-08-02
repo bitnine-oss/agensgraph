@@ -26,16 +26,22 @@
 #include "utils/rel.h"
 #include "utils/syscache.h"
 #include "catalog/catalog.h"
+#include "miscadmin.h"
 
 /* a global variable for the GUC variable */
 char *graph_path = NULL;
 bool enableGraphDML = false;
+bool cypher_allow_unsafe_ddl = false;
+
+/* Potentially set by pg_upgrade_support functions */
+Oid binary_upgrade_next_ag_graph_oid = InvalidOid;
 
 /* check_hook: validate new graph_path value */
 bool
 check_graph_path(char **newval, void **extra, GucSource source)
 {
-	if (IsTransactionState() && !InitializingParallelWorker)
+	if (!cypher_allow_unsafe_ddl && IsTransactionState() &&
+		!InitializingParallelWorker)
 	{
 		if (!OidIsValid(get_graphname_oid(*newval)))
 		{
@@ -95,7 +101,7 @@ GraphCreate(CreateGraphStmt *stmt, const char *queryString,
 	CreateSchemaStmt *schemaStmt;
 	Oid			schemaoid;
 	Datum		values[Natts_ag_graph];
-	bool		isnull[Natts_ag_graph];
+	bool		isnull[Natts_ag_graph] = { false, };
 	NameData	gname;
 	Relation	graphdesc;
 	TupleDesc	tupDesc;
@@ -103,7 +109,6 @@ GraphCreate(CreateGraphStmt *stmt, const char *queryString,
 	Oid			graphoid;
 	ObjectAddress graphobj;
 	ObjectAddress schemaobj;
-	int			i;
 
 	AssertArg(graphName != NULL);
 
@@ -137,23 +142,30 @@ GraphCreate(CreateGraphStmt *stmt, const char *queryString,
 	schemaoid = CreateSchemaCommand(schemaStmt, queryString,
 									stmt_location, stmt_len);
 
-	/* initialize nulls and values */
-	for (i = 0; i < Natts_ag_graph; i++)
-	{
-		values[i] = (Datum) NULL;
-		isnull[i] = false;
-	}
 	namestrcpy(&gname, graphName);
 
 	graphdesc = heap_open(GraphRelationId, RowExclusiveLock);
 	tupDesc = graphdesc->rd_att;
 
-	graphoid = values[Anum_ag_graph_oid - 1] = GetNewOidWithIndex(graphdesc,
-																  GraphOidIndexId,
-																  Anum_ag_graph_oid);
+	if (IsBinaryUpgrade)
+	{
+		if (!OidIsValid(binary_upgrade_next_ag_graph_oid))
+			ereport(ERROR,
+					(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+							errmsg("ag_graph OID value not set when in binary upgrade mode")));
+		graphoid = binary_upgrade_next_ag_graph_oid;
+		binary_upgrade_next_ag_graph_oid = InvalidOid;
+	}
+	else
+	{
+		graphoid = GetNewOidWithIndex(graphdesc,
+									  GraphOidIndexId,
+									  Anum_ag_graph_oid);
+	}
+
+	values[Anum_ag_graph_oid - 1] = graphoid;
 	values[Anum_ag_graph_graphname - 1] = NameGetDatum(&gname);
 	values[Anum_ag_graph_nspid - 1] = ObjectIdGetDatum(schemaoid);
-
 
 	tup = heap_form_tuple(tupDesc, values, isnull);
 
