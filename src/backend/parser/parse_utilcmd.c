@@ -76,6 +76,7 @@
 #include "utils/ruleutils.h"
 #include "utils/syscache.h"
 #include "utils/typcache.h"
+#include "tcop/utility.h"
 
 
 /* State shared by transformCreateStmt and its subroutines */
@@ -162,6 +163,7 @@ static CommentStmt *makeComment(ObjectType type, RangeVar *name, char *desc);
 static Node *prop_ref_mutator(Node *node);
 static ObjectType getLabelObjectType(char *labname, Oid graphid);
 static bool figure_prop_index_colname_walker(Node *node, char **colname);
+static void removeConstraintsFromColumnDefs(List *columnDefs);
 
 /*
  * transformCreateStmt -
@@ -4284,38 +4286,33 @@ transformPartitionBoundValue(ParseState *pstate, Node *val,
 	return (Const *) value;
 }
 
-/*
- * transformCreateGraphStmt - analyzes the CREATE GRAPH statement
- *
- * See transformCreateSchemaStmt
- */
-List *
-transformCreateGraphStmt(CreateGraphStmt *stmt)
+CreateSeqStmt *
+makeDefaultCreateAGLabelSeqStmt(char *graph_name, int location)
 {
-	CreateSeqStmt *labseq;
-	CreateLabelStmt	*vertex;
-	CreateLabelStmt	*edge;
-
-	labseq = makeNode(CreateSeqStmt);
-	labseq->sequence = makeRangeVar(stmt->graphname, AG_LABEL_SEQ, -1);
-	labseq->options =
-			list_make2(makeDefElem("maxvalue", (Node *)
-								   makeInteger(GRAPHID_LABID_MAX), -1),
-					   makeDefElem("cycle", (Node *) makeInteger(true), -1));
+	CreateSeqStmt *labseq = makeNode(CreateSeqStmt);
+	labseq->sequence = makeRangeVar(graph_name, AG_LABEL_SEQ, location);
+	labseq->options = list_make2(makeDefElem("maxvalue",
+											 (Node *) makeInteger(GRAPHID_LABID_MAX),
+											 -1),
+								 makeDefElem("cycle",
+											 (Node *) makeInteger(true),
+											 -1));
 	labseq->ownerId = InvalidOid;
 	labseq->if_not_exists = false;
+	return labseq;
+}
 
-	vertex = makeNode(CreateLabelStmt);
-	vertex->labelKind = LABEL_VERTEX;
-	vertex->relation = makeRangeVar(stmt->graphname, AG_VERTEX, -1);
-	vertex->inhRelations = NIL;
-
-	edge = makeNode(CreateLabelStmt);
-	edge->labelKind = LABEL_EDGE;
-	edge->relation = makeRangeVar(stmt->graphname, AG_EDGE, -1);
-	edge->inhRelations = NIL;
-
-	return list_make3(labseq, vertex, edge);
+CreateLabelStmt *
+makeDefaultCreateAGLabelStmt(char *graph_name, LabelKind labKind, int location)
+{
+	CreateLabelStmt	*createLabelStmt = makeNode(CreateLabelStmt);
+	createLabelStmt->labelKind = labKind;
+	createLabelStmt->relation = makeRangeVar(graph_name,
+											 labKind == LABEL_VERTEX ? AG_VERTEX : AG_EDGE,
+											 location);
+	createLabelStmt->inhRelations = NIL;
+	createLabelStmt->only_base = false;
+	return createLabelStmt;
 }
 
 /*
@@ -4412,11 +4409,17 @@ transformCreateLabelStmt(CreateLabelStmt *labelStmt, const char *queryString)
 		elog(ERROR, "unknown label type: %d", labelStmt->labelKind);
 	}
 
+	if (labelStmt->only_base)
+	{
+		removeConstraintsFromColumnDefs(stmt->tableElts);
+		indexlist = NIL;
+	}
+
 	if (strcmp(labelStmt->relation->relname, AG_VERTEX) != 0 &&
 		strcmp(labelStmt->relation->relname, AG_EDGE) != 0)
 	{
 		/* inherit base vertex/edge */
-		if (labelStmt->inhRelations == NIL)
+		if (labelStmt->inhRelations == NIL && !labelStmt->only_base)
 		{
 			char *name;
 
@@ -4490,13 +4493,12 @@ transformCreateLabelStmt(CreateLabelStmt *labelStmt, const char *queryString)
 	cxt.inhRelations = stmt->inhRelations;
 	cxt.isforeign = false;
 	cxt.isalter = false;
-	///cxt.hasoids = false;
 	cxt.columns = NIL;
 	cxt.ckconstraints = NIL;
 	cxt.fkconstraints = NIL;
 	cxt.ixconstraints = NIL;
-	//cxt.inh_indexes = NIL;
 	cxt.blist = NIL;
+	cxt.extstats = NIL;
 	cxt.alist = NIL;
 	cxt.pkey = NULL;
 	cxt.ispartitioned = stmt->partspec != NULL;
@@ -4510,7 +4512,8 @@ transformCreateLabelStmt(CreateLabelStmt *labelStmt, const char *queryString)
 		switch (nodeTag(element))
 		{
 			case T_ColumnDef:
-				transformLabelIdDefinition(&cxt, (ColumnDef *) element);
+				if (!labelStmt->only_base)
+					transformLabelIdDefinition(&cxt, (ColumnDef *) element);
 				transformColumnDefinition(&cxt, (ColumnDef *) element);
 				break;
 			case T_Constraint:
@@ -4546,12 +4549,23 @@ transformCreateLabelStmt(CreateLabelStmt *labelStmt, const char *queryString)
 	comment = makeComment(OBJECT_TABLE, stmt->relation, tabdesc);
 	cxt.alist = lappend(cxt.alist, comment);
 
-	/* save original alist for indexes and constraints */
+	/*
+	 * Transfer anything we already have in cxt.alist into save_alist, to keep
+	 * it separate from the output of transformIndexConstraints.  (This may
+	 * not be necessary anymore, but we'll keep doing it to preserve the
+	 * historical order of execution of the alist commands.)
+	 */
 	save_alist = cxt.alist;
-	cxt.alist = NULL;
+	cxt.alist = NIL;
 
+	/*
+	 * Postprocess constraints that give rise to index definitions.
+	 */
 	transformIndexConstraints(&cxt);
 	cxt.alist = list_concat(cxt.alist, indexlist);
+	/*
+	 * Postprocess foreign-key constraints.
+	 */
 	transformFKConstraints(&cxt, true, false);
 
 	/*
@@ -4567,6 +4581,14 @@ transformCreateLabelStmt(CreateLabelStmt *labelStmt, const char *queryString)
 		cxt.alist = lappend(cxt.alist, disable_idx_stmt);
 	}
 
+	/*
+	 * Postprocess extended statistics.
+	 */
+	transformExtendedStatistics(&cxt);
+
+	/*
+	 * Output results.
+	 */
 	stmt->tableElts = cxt.columns;
 	stmt->constraints = cxt.ckconstraints;
 
@@ -5268,4 +5290,15 @@ figure_prop_index_colname_walker(Node *node, char **colname)
 
 	return raw_expression_tree_walker(node, figure_prop_index_colname_walker,
 									  colname);
+}
+
+static void
+removeConstraintsFromColumnDefs(List *columnDefs)
+{
+	ListCell   *li;
+	foreach(li, columnDefs)
+	{
+		ColumnDef	   *i = lfirst(li);
+		i->constraints = NIL;
+	}
 }

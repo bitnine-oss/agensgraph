@@ -3024,6 +3024,7 @@ _equalCreateGraphStmt(const CreateGraphStmt *a, const CreateGraphStmt *b)
 	COMPARE_STRING_FIELD(graphname);
 	COMPARE_NODE_FIELD(authrole);
 	COMPARE_SCALAR_FIELD(if_not_exists);
+	COMPARE_SCALAR_FIELD(kind);
 
 	return true;
 }
@@ -3037,6 +3038,8 @@ _equalCreateLabelStmt(const CreateLabelStmt *a, const CreateLabelStmt *b)
 	COMPARE_NODE_FIELD(options);
 	COMPARE_STRING_FIELD(tablespacename);
 	COMPARE_SCALAR_FIELD(if_not_exists);
+	COMPARE_SCALAR_FIELD(only_base);
+	COMPARE_SCALAR_FIELD(fixed_id);
 
 	return true;
 }

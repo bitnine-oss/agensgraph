@@ -793,7 +793,9 @@ restore_toc_entry(ArchiveHandle *AH, TocEntry *te, bool is_parallel)
 		_printTocEntry(AH, te, false);
 		defnDumped = true;
 
-		if (strcmp(te->desc, "TABLE") == 0)
+		if (strcmp(te->desc, "TABLE") == 0 ||
+			strcmp(te->desc, "ELABEL") == 0 ||
+			strcmp(te->desc, "VLABEL") == 0)
 		{
 			if (AH->lastErrorTE == te)
 			{
@@ -2902,7 +2904,9 @@ _tocEntryRequired(TocEntry *te, teSection curSection, ArchiveHandle *AH)
 				strcmp(te->desc, "MATERIALIZED VIEW") == 0 ||
 				strcmp(te->desc, "MATERIALIZED VIEW DATA") == 0 ||
 				strcmp(te->desc, "SEQUENCE") == 0 ||
-				strcmp(te->desc, "SEQUENCE SET") == 0)
+				strcmp(te->desc, "SEQUENCE SET") == 0 ||
+				strcmp(te->desc, "ELABEL") == 0 ||
+				strcmp(te->desc, "VLABEL") == 0)
 			{
 				if (!ropt->selTable)
 					return 0;
@@ -3107,6 +3111,8 @@ _doSetFixedOutputState(ArchiveHandle *AH)
 		ahprintf(AH, "SET row_security = on;\n");
 	else
 		ahprintf(AH, "SET row_security = off;\n");
+
+	ahprintf(AH, "SET cypher_allow_unsafe_ddl = on;\n");
 
 	ahprintf(AH, "\n");
 }
@@ -3426,11 +3432,19 @@ _getObjectDescription(PQExpBuffer buf, TocEntry *te, ArchiveHandle *AH)
 		strcmp(type, "SERVER") == 0 ||
 		strcmp(type, "PUBLICATION") == 0 ||
 		strcmp(type, "SUBSCRIPTION") == 0 ||
-		strcmp(type, "USER MAPPING") == 0)
+		strcmp(type, "USER MAPPING") == 0 ||
+		strcmp(type, "GRAPH") == 0)
 	{
 		appendPQExpBuffer(buf, "%s ", type);
 		if (te->namespace && *te->namespace)
 			appendPQExpBuffer(buf, "%s.", fmtId(te->namespace));
+		appendPQExpBufferStr(buf, fmtId(te->tag));
+		return;
+	}
+
+	if (strcmp(type, "ELABEL") == 0 || strcmp(type, "VLABEL") == 0)
+	{
+		appendPQExpBuffer(buf, "%s ", type);
 		appendPQExpBufferStr(buf, fmtId(te->tag));
 		return;
 	}
@@ -3560,6 +3574,10 @@ _printTocEntry(ArchiveHandle *AH, TocEntry *te, bool isData)
 	{
 		ahprintf(AH, "CREATE SCHEMA %s;\n\n\n", fmtId(te->tag));
 	}
+	else if (ropt->noOwner && strcmp(te->desc, "GRAPH") == 0)
+	{
+		ahprintf(AH, "CREATE GRAPH ONLY %s;\n\n\n", fmtId(te->tag));
+	}
 	else
 	{
 		if (te->defn && strlen(te->defn) > 0)
@@ -3602,7 +3620,10 @@ _printTocEntry(ArchiveHandle *AH, TocEntry *te, bool isData)
 			strcmp(te->desc, "SERVER") == 0 ||
 			strcmp(te->desc, "STATISTICS") == 0 ||
 			strcmp(te->desc, "PUBLICATION") == 0 ||
-			strcmp(te->desc, "SUBSCRIPTION") == 0)
+			strcmp(te->desc, "SUBSCRIPTION") == 0 ||
+			strcmp(te->desc, "GRAPH") == 0 ||
+			strcmp(te->desc, "ELABEL") == 0 ||
+			strcmp(te->desc, "VLABEL") == 0)
 		{
 			PQExpBuffer temp = createPQExpBuffer();
 
@@ -4674,7 +4695,9 @@ identify_locking_dependencies(ArchiveHandle *AH, TocEntry *te)
 
 		if (depid <= AH->maxDumpId && AH->tocsByDumpId[depid] != NULL &&
 			((strcmp(AH->tocsByDumpId[depid]->desc, "TABLE DATA") == 0) ||
-			 strcmp(AH->tocsByDumpId[depid]->desc, "TABLE") == 0))
+			  strcmp(AH->tocsByDumpId[depid]->desc, "TABLE") == 0 ||
+			  strcmp(AH->tocsByDumpId[depid]->desc, "ELABEL") == 0 ||
+			  strcmp(AH->tocsByDumpId[depid]->desc, "VLABEL") == 0 ))
 			lockids[nlockids++] = depid;
 	}
 

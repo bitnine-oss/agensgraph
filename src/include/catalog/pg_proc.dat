@@ -10858,4 +10858,14 @@
 { oid => '7243', descr => 'true if LHS contains RHS'          , proname => 'string_contains', prorettype => 'bool', proargtypes => 'jsonb jsonb', prosrc => 'jsonb_string_contains' },
 { oid => '7246', proname => 'get_last_graph_write_stats', procost => '10', prorows => '400', proretset => 't', provolatile => 's', prorettype => 'record', proargtypes => '', proallargtypes => '{int8,int8,int8,int8,int8}', proargmodes => '{o,o,o,o,o}', proargnames => '{insertedvertices,insertededges,deletedvertices,deletededges,updatedproperties}', prosrc => 'get_last_graph_write_stats', descr => 'last graph write statistics' },
 
+# supports for agensgraph binary upgrade
+{ oid => '8001', descr => 'for use by pg_upgrade',
+  proname => 'binary_upgrade_set_next_ag_graph_oid', provolatile => 'v',
+  proparallel => 'r', prorettype => 'void', proargtypes => 'oid',
+  prosrc => 'binary_upgrade_set_next_ag_graph_oid' },
+{ oid => '8002', descr => 'for use by pg_upgrade',
+  proname => 'binary_upgrade_set_next_ag_label_oid', provolatile => 'v',
+  proparallel => 'r', prorettype => 'void', proargtypes => 'oid',
+  prosrc => 'binary_upgrade_set_next_ag_label_oid' },
+
 ]

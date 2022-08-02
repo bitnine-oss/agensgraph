@@ -516,7 +516,8 @@ do { \
 	resetPQExpBuffer(privswgo);
 
 	if (strcmp(type, "TABLE") == 0 || strcmp(type, "SEQUENCE") == 0 ||
-		strcmp(type, "TABLES") == 0 || strcmp(type, "SEQUENCES") == 0)
+		strcmp(type, "TABLES") == 0 || strcmp(type, "SEQUENCES") == 0 ||
+		strcmp(type, "ELABEL") == 0 || strcmp(type, "VLABEL") == 0)
 	{
 		CONVERT_PRIV('r', "SELECT");
 
@@ -551,7 +552,8 @@ do { \
 	else if (strcmp(type, "LANGUAGE") == 0)
 		CONVERT_PRIV('U', "USAGE");
 	else if (strcmp(type, "SCHEMA") == 0 ||
-			 strcmp(type, "SCHEMAS") == 0)
+			 strcmp(type, "SCHEMAS") == 0 ||
+			 strcmp(type, "GRAPH") == 0)
 	{
 		CONVERT_PRIV('C', "CREATE");
 		CONVERT_PRIV('U', "USAGE");

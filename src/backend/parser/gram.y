@@ -305,6 +305,7 @@ static List *preserve_downcasing_type_func_namelist(List *namelist);
 %type <ielem>	prop_idx_elem
 %type <boolean> opt_disable_index
 %type <ival>	reindex_target_label
+%type <ival>	elabel_or_vlabel
 
 %type <node>	select_no_parens select_with_parens select_clause
 				simple_select values_clause
@@ -5751,6 +5752,7 @@ CreateGraphStmt:
 					n->graphname = $3;
 					n->authrole = $5;
 					n->if_not_exists = false;
+					n->kind = CGSK_ALL;
 					$$ = (Node *) n;
 				}
 			| CREATE GRAPH ColId
@@ -5759,6 +5761,7 @@ CreateGraphStmt:
 					n->graphname = $3;
 					n->authrole = NULL;
 					n->if_not_exists = false;
+					n->kind = CGSK_ALL;
 					$$ = (Node *) n;
 				}
 			| CREATE GRAPH IF_P NOT EXISTS ColId AUTHORIZATION RoleSpec
@@ -5767,6 +5770,7 @@ CreateGraphStmt:
 					n->graphname = $6;
 					n->authrole = $8;
 					n->if_not_exists = true;
+					n->kind = CGSK_ALL;
 					$$ = (Node *) n;
 				}
 			| CREATE GRAPH IF_P NOT EXISTS ColId
@@ -5775,16 +5779,26 @@ CreateGraphStmt:
 					n->graphname = $6;
 					n->authrole = NULL;
 					n->if_not_exists = true;
+					n->kind = CGSK_ALL;
+					$$ = (Node *) n;
+				}
+			| CREATE GRAPH ONLY ColId
+				{
+					CreateGraphStmt *n = makeNode(CreateGraphStmt);
+					n->graphname = $4;
+					n->authrole = NULL;
+					n->if_not_exists = false;
+					n->kind = CGSK_SCHEMA;
 					$$ = (Node *) n;
 				}
 		;
 
 CreateLabelStmt:
-			CREATE OptNoLog VLABEL name opt_disable_index
+			CREATE OptNoLog elabel_or_vlabel name opt_disable_index
 			OptInherit opt_reloptions OptTableSpace
 				{
 					CreateLabelStmt *n = makeNode(CreateLabelStmt);
-					n->labelKind = LABEL_VERTEX;
+					n->labelKind = $3;
 					n->relation = makeRangeVar(NULL, $4, -1);
 					n->relation->relpersistence = $2;
 					n->inhRelations = $6;
@@ -5792,48 +5806,38 @@ CreateLabelStmt:
 					n->tablespacename = $8;
 					n->if_not_exists = false;
 					n->disable_index = $5;
+					n->only_base = false;
 					$$ = (Node *)n;
 				}
-			| CREATE OptNoLog VLABEL IF_P NOT EXISTS name opt_disable_index
+			| CREATE OptNoLog elabel_or_vlabel IF_P NOT EXISTS name opt_disable_index
 			OptInherit opt_reloptions OptTableSpace
 				{
 					CreateLabelStmt *n = makeNode(CreateLabelStmt);
-					n->labelKind = LABEL_VERTEX;
+					n->labelKind = $3;
 					n->relation = makeRangeVar(NULL, $7, -1);
 					n->relation->relpersistence = $2;
 					n->inhRelations = $9;
 					n->options = $10;
 					n->tablespacename = $11;
-					n->if_not_exists = true;
+					n->if_not_exists = $4;
 					n->disable_index = $8;
+					n->only_base = false;
 					$$ = (Node *)n;
 				}
-			| CREATE OptNoLog ELABEL name opt_disable_index
+			| CREATE OptNoLog elabel_or_vlabel ONLY name '(' Iconst ')' opt_disable_index
 			OptInherit opt_reloptions OptTableSpace
 				{
 					CreateLabelStmt *n = makeNode(CreateLabelStmt);
-					n->labelKind = LABEL_EDGE;
-					n->relation = makeRangeVar(NULL, $4, -1);
+					n->labelKind = $3;
+					n->relation = makeRangeVar(NULL, $5, -1);
 					n->relation->relpersistence = $2;
-					n->inhRelations = $6;
-					n->options = $7;
-					n->tablespacename = $8;
+					n->inhRelations = $10;
+					n->options = $11;
+					n->tablespacename = $12;
 					n->if_not_exists = false;
-					n->disable_index = $5;
-					$$ = (Node *)n;
-				}
-			| CREATE OptNoLog ELABEL IF_P NOT EXISTS name opt_disable_index
-			OptInherit opt_reloptions OptTableSpace
-				{
-					CreateLabelStmt *n = makeNode(CreateLabelStmt);
-					n->labelKind = LABEL_EDGE;
-					n->relation = makeRangeVar(NULL, $7, -1);
-					n->relation->relpersistence = $2;
-					n->inhRelations = $9;
-					n->options = $10;
-					n->tablespacename = $11;
-					n->if_not_exists = true;
-					n->disable_index = $8;
+					n->disable_index = $9;
+					n->only_base = true;
+					n->fixed_id = $7;
 					$$ = (Node *)n;
 				}
 		;
@@ -5842,6 +5846,11 @@ opt_disable_index:
 			DISABLE_P INDEX							{ $$ = true; }
 			| /*EMPTY*/								{ $$ = false; }
 		;
+
+elabel_or_vlabel:
+			ELABEL									{ $$ = LABEL_EDGE; }
+			| VLABEL								{ $$ = LABEL_VERTEX; }
+        ;
 
 AlterLabelStmt:
 			ALTER VLABEL name alter_label_cmds

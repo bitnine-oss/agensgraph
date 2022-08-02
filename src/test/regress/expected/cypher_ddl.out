@@ -855,8 +855,6 @@ ERROR:  there is no parameter $1
 --
 -- DROP GRAPH
 --
-DROP GRAPH ddl CASCADE;
-NOTICE:  drop cascades to 18 other objects
 DROP GRAPH unknown;
 ERROR:  graph "unknown" does not exist
 DROP GRAPH IF EXISTS unknown;
@@ -864,3 +862,4 @@ NOTICE:  graph "unknown" does not exist, skipping
 -- teardown
 RESET ROLE;
 DROP ROLE IF EXISTS graph_role;
+ERROR:  role "graph_role" cannot be dropped because some objects depend on it

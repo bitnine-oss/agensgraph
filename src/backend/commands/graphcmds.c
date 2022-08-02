@@ -43,49 +43,73 @@
 #include "utils/syscache.h"
 
 static ObjectAddress DefineLabel(CreateStmt *stmt, char labkind,
-								 const char *queryString);
+								 const char *queryString, bool is_fixed_id,
+								 int32 fixed_id);
 static void GetSuperOids(List *supers, char labkind, List **supOids);
 static void AgInheritanceDependancy(Oid laboid, List *supers);
 static void SetMaxStatisticsTarget(Oid laboid);
+
+static void SimpleProcessUtility(Node *node, const char *queryString,
+								 int stmt_location, int stmt_len);
 
 /* See ProcessUtilitySlow() case T_CreateSchemaStmt */
 void
 CreateGraphCommand(CreateGraphStmt *stmt, const char *queryString,
 				   int stmt_location, int stmt_len)
 {
-	Oid			graphid;
-	List	   *parsetree_list;
-	ListCell   *parsetree_item;
+	CreateSeqStmt *createSeqStmt;
+	CreateLabelStmt *createVLabelStmt, *createELabelStmt;
 
-	graphid = GraphCreate(stmt, queryString, stmt_location, stmt_len);
-	if (!OidIsValid(graphid))
-		return;
-
-	CommandCounterIncrement();
-
-	parsetree_list = transformCreateGraphStmt(stmt);
-
-	foreach(parsetree_item, parsetree_list)
+	if (stmt->kind & CGSK_SCHEMA)
 	{
-		Node	   *stmt = lfirst(parsetree_item);
-		PlannedStmt *wrapper;
-
-		wrapper = makeNode(PlannedStmt);
-		wrapper->commandType = CMD_UTILITY;
-		wrapper->canSetTag = false;
-		wrapper->utilityStmt = stmt;
-		wrapper->stmt_location = stmt_location;
-		wrapper->stmt_len = stmt_len;
-
-		ProcessUtility(wrapper, queryString, PROCESS_UTILITY_SUBCOMMAND,
-					   NULL, NULL, None_Receiver, NULL);
-
+		Oid graphid;
+		graphid = GraphCreate(stmt, queryString, stmt_location, stmt_len);
+		if (!OidIsValid(graphid))
+		{
+			/* If it already exists, it does not return the correct Oid. */
+			return;
+		}
 		CommandCounterIncrement();
 	}
 
-	if (graph_path == NULL || strcmp(graph_path, "") == 0)
+	if (stmt->kind & CGSK_SEQUENCE)
+	{
+		/* Create ag_label_seq */
+		createSeqStmt = makeDefaultCreateAGLabelSeqStmt(stmt->graphname,
+														stmt_location);
+		SimpleProcessUtility((Node *) createSeqStmt, queryString, stmt_location,
+							 stmt_len);
+		CommandCounterIncrement();
+	}
+
+	if (stmt->kind & CGSK_VLABEL)
+	{
+		/* Create ag_vertex table */
+		createVLabelStmt = makeDefaultCreateAGLabelStmt(stmt->graphname,
+														LABEL_VERTEX, stmt_location);
+		createVLabelStmt->only_base = (stmt->kind == CGSK_VLABEL);
+		SimpleProcessUtility((Node *) createVLabelStmt, queryString, stmt_location,
+							 stmt_len);
+		CommandCounterIncrement();
+	}
+
+	if (stmt->kind & CGSK_ELABEL)
+	{
+		/* Create ag_ege table */
+		createELabelStmt = makeDefaultCreateAGLabelStmt(stmt->graphname,
+														LABEL_EDGE, stmt_location);
+		createVLabelStmt->only_base = (stmt->kind == CGSK_ELABEL);
+		SimpleProcessUtility((Node *) createELabelStmt, queryString, stmt_location,
+							 stmt_len);
+		CommandCounterIncrement();
+	}
+
+	if (stmt->kind == CGSK_ALL &&
+		(graph_path == NULL || strcmp(graph_path, "") == 0))
+	{
 		SetConfigOption("graph_path", stmt->graphname,
 						PGC_USERSET, PGC_S_SESSION);
+	}
 }
 
 void
@@ -180,7 +204,8 @@ CreateLabelCommand(CreateLabelStmt *labelStmt, const char *queryString,
 
 		if (IsA(stmt, CreateStmt))
 		{
-			DefineLabel((CreateStmt *) stmt, labkind, queryString);
+			DefineLabel((CreateStmt *) stmt, labkind, queryString,
+						labelStmt->only_base, labelStmt->fixed_id);
 		}
 		else
 		{
@@ -208,7 +233,8 @@ CreateLabelCommand(CreateLabelStmt *labelStmt, const char *queryString,
 
 /* creates a new graph label */
 static ObjectAddress
-DefineLabel(CreateStmt *stmt, char labkind, const char *queryString)
+DefineLabel(CreateStmt *stmt, char labkind, const char *queryString,
+			bool is_fixed_id, int32 fixed_id)
 {
 	static char *validnsps[] = HEAP_RELOPT_NAMESPACES;
 	ObjectAddress reladdr;
@@ -251,7 +277,8 @@ DefineLabel(CreateStmt *stmt, char labkind, const char *queryString)
 	tablespaceId = GetDefaultTablespace(stmt->relation->relpersistence, false);
 
 	laboid = label_create_with_catalog(stmt->relation, reladdr.objectId,
-									   labkind, tablespaceId);
+									   labkind, tablespaceId, is_fixed_id,
+									   fixed_id);
 
 	GetSuperOids(stmt->inhRelations, labkind, &inheritOids);
 	AgInheritanceDependancy(laboid, inheritOids);
@@ -435,6 +462,9 @@ CheckLabelType(ObjectType type, Oid laboid, const char *command)
 {
 	HeapTuple tuple;
 	Form_ag_label labtup;
+
+	if (cypher_allow_unsafe_ddl)
+		return;
 
 	tuple = SearchSysCache1(LABELOID, ObjectIdGetDatum(laboid));
 	if (!HeapTupleIsValid(tuple))
@@ -686,4 +716,21 @@ deleteRelatedEdges(const char *vlab)
 
 		relation_close(rel, ShareLock);
 	}
+}
+
+static void
+SimpleProcessUtility(Node *node, const char *queryString, int stmt_location,
+					 int stmt_len)
+{
+	PlannedStmt *wrapper;
+
+	wrapper = makeNode(PlannedStmt);
+	wrapper->commandType = CMD_UTILITY;
+	wrapper->canSetTag = false;
+	wrapper->utilityStmt = node;
+	wrapper->stmt_location = stmt_location;
+	wrapper->stmt_len = stmt_len;
+
+	ProcessUtility(wrapper, queryString, PROCESS_UTILITY_SUBCOMMAND,
+				   NULL, NULL, None_Receiver, NULL);
 }
