@@ -44,4 +44,6 @@ extern void expand_tilde(char **filename);
 
 extern bool recognized_connection_string(const char *connstr);
 
+extern bool is_ag_prefix_binary(void);
+
 #endif							/* COMMON_H */

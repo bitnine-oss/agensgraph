@@ -37,6 +37,9 @@ static bool ExecQueryUsingCursor(const char *query, double *elapsed_msec);
 static bool command_no_begin(const char *query);
 static bool is_select_command(const char *query);
 
+/* Flags for AgensGraph utils. */
+#define AGS_REBRANDED 0
+
 
 /*
  * openQueryOutputFile --- attempt to open a query output file
@@ -2454,4 +2457,10 @@ bool
 recognized_connection_string(const char *connstr)
 {
 	return uri_prefix_length(connstr) != 0 || strchr(connstr, '=') != NULL;
+}
+
+bool
+is_ag_prefix_binary(void)
+{
+	return AGS_REBRANDED == 1;
 }

@@ -23,6 +23,7 @@
 #include <sys/resource.h>
 #endif
 
+#include "ag_const.h"
 #include "catalog/pg_control.h"
 #include "common/controldata_utils.h"
 #include "common/file_perm.h"
@@ -33,6 +34,8 @@
 #ifdef WIN32					/* on Unix, we don't need libpq */
 #include "pqexpbuffer.h"
 #endif
+
+#define AGS_REBRANDED 0
 
 /* PID can be negative for standalone backend */
 typedef long pgpid_t;
@@ -2088,7 +2091,11 @@ do_advice(void)
 static void
 do_help(void)
 {
+#if AGS_REBRANDED == 1
+	printf(_("%s is a utility to initialize, start, stop, or control a AgensGraph server.\n\n"), progname);
+#else
 	printf(_("%s is a utility to initialize, start, stop, or control a PostgreSQL server.\n\n"), progname);
+#endif
 	printf(_("Usage:\n"));
 	printf(_("  %s init[db]   [-D DATADIR] [-s] [-o OPTIONS]\n"), progname);
 	printf(_("  %s start      [-D DATADIR] [-l FILENAME] [-W] [-t SECS] [-s]\n"
@@ -2153,7 +2160,12 @@ do_help(void)
 	printf(_("  demand     start service on demand\n"));
 #endif
 
+#if AGS_REBRANDED == 1
+	printf(_("\nReport bugs to <%s>.\n"), AG_PACKAGE_BUGREPORT);
+	printf(_("%s home page: <%s>\n"), AG_PACKAGE_NAME, AG_PACKAGE_URL);
+#else
 	printf(_("\nReport bugs to <pgsql-bugs@lists.postgresql.org>.\n"));
+#endif
 }
 
 
@@ -2361,7 +2373,11 @@ main(int argc, char **argv)
 		}
 		else if (strcmp(argv[1], "--version") == 0 || strcmp(argv[1], "-V") == 0)
 		{
+#if AGS_REBRANDED == 1
+			puts("ag_ctl (AgensGraph) " AG_VERSION);
+#else
 			puts("pg_ctl (PostgreSQL) " PG_VERSION);
+#endif
 			exit(0);
 		}
 	}
