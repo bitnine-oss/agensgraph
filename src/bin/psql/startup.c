@@ -38,9 +38,6 @@ PsqlSettings pset;
 #define PSQLRC		"psqlrc.conf"
 #endif
 
-/* Flags for AgensGraph utils. */
-#define AGS_REBRANDED 0
-
 /*
  * Structures to pass information between the option parsing routine
  * and the main function
