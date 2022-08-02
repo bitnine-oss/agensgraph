@@ -26,22 +26,31 @@ endif
 
 OBJS=	pg_ctl.o $(WIN32RES)
 
-all: pg_ctl
+all: pg_ctl ag_ctl
+
+ag_ctl.c: pg_ctl.c
+	sed 's/AGS_REBRANDED 0/AGS_REBRANDED 1/g' $< >$@
 
 pg_ctl: $(OBJS) | submake-libpgport $(SUBMAKE_LIBPQ)
 	$(CC) $(CFLAGS) $(OBJS) $(LDFLAGS) $(LDFLAGS_EX) $(LIBS) -o $@$(X)
 
+ag_ctl: $(OBJS) ag_ctl.o | submake-libpgport $(SUBMAKE_LIBPQ)
+	$(CC) $(CFLAGS) ag_ctl.o $(WIN32RES) $(LDFLAGS) $(LDFLAGS_EX) $(LIBS) -o $@$(X)
+
 install: all installdirs
 	$(INSTALL_PROGRAM) pg_ctl$(X) '$(DESTDIR)$(bindir)/pg_ctl$(X)'
+	$(INSTALL_PROGRAM) ag_ctl$(X) '$(DESTDIR)$(bindir)/ag_ctl$(X)'
 
 installdirs:
 	$(MKDIR_P) '$(DESTDIR)$(bindir)'
 
 uninstall:
 	rm -f '$(DESTDIR)$(bindir)/pg_ctl$(X)'
+	rm -f '$(DESTDIR)$(bindir)/ag_ctl$(X)'
 
 clean distclean maintainer-clean:
 	rm -f pg_ctl$(X) $(OBJS)
+	rm -f ag_ctl$(X) ag_ctl.c ag_ctl.o
 	rm -rf tmp_check
 
 check:

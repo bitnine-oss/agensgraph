@@ -21,6 +21,7 @@
 #include <termios.h>
 #endif
 
+#include "ag_const.h"
 #include "common/logging.h"
 #include "common/username.h"
 
@@ -145,7 +146,15 @@ usage(unsigned short int pager)
 	fprintf(output, _("\nFor more information, type \"\\?\" (for internal commands) or \"\\help\" (for SQL\n"
 					  "commands) from within psql, or consult the psql section in the PostgreSQL\n"
 					  "documentation.\n\n"));
-	fprintf(output, _("Report bugs to <pgsql-bugs@lists.postgresql.org>.\n"));
+	if (is_ag_prefix_binary())
+	{
+		fprintf(output, _("Report bugs to <%s>.\n"), AG_PACKAGE_BUGREPORT);
+		fprintf(output, _("%s home page: <%s>\n"), AG_PACKAGE_NAME, AG_PACKAGE_URL);
+	}
+	else
+	{
+		fprintf(output, _("Report bugs to <pgsql-bugs@lists.postgresql.org>.\n"));
+	}
 
 	ClosePager(output);
 }
