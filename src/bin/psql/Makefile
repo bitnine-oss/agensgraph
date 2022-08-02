@@ -27,7 +27,6 @@ LDFLAGS_INTERNAL += -L$(top_builddir)/src/fe_utils -lpgfeutils $(libpq_pgport)
 OBJS = \
 	$(WIN32RES) \
 	command.o \
-	common.o \
 	copy.o \
 	crosstabview.o \
 	describe.o \
@@ -38,6 +37,7 @@ OBJS = \
 	prompt.o \
 	psqlscanslash.o \
 	sql_help.o \
+	startup.o \
 	stringutils.o \
 	tab-complete.o \
 	variables.o \
@@ -46,14 +46,14 @@ OBJS = \
 
 all: psql agens
 
-ag_startup.c: startup.c
+ag_common.c: common.c
 	sed 's/AGS_REBRANDED 0/AGS_REBRANDED 1/g' $< >$@
 
-agens: $(OBJS) ag_startup.o | submake-libpq submake-libpgport submake-libpgfeutils
-	$(CC) $(CFLAGS) $(OBJS) ag_startup.o $(LDFLAGS) $(LDFLAGS_EX) $(LIBS) -o $@$(X)
+agens: $(OBJS) ag_common.o | submake-libpq submake-libpgport submake-libpgfeutils
+	$(CC) $(CFLAGS) $(OBJS) ag_common.o $(LDFLAGS) $(LDFLAGS_EX) $(LIBS) -o $@$(X)
 
-psql: $(OBJS) startup.o | submake-libpq submake-libpgport submake-libpgfeutils
-	$(CC) $(CFLAGS) $(OBJS) startup.o $(LDFLAGS) $(LDFLAGS_EX) $(LIBS) -o $@$(X)
+psql: $(OBJS) common.o | submake-libpq submake-libpgport submake-libpgfeutils
+	$(CC) $(CFLAGS) $(OBJS) common.o $(LDFLAGS) $(LDFLAGS_EX) $(LIBS) -o $@$(X)
 
 help.o: sql_help.h
 
@@ -85,7 +85,8 @@ uninstall:
 clean distclean:
 	rm -f psql$(X) $(OBJS) lex.backup
 	rm -rf tmp_check
-	rm -f asql$(X) startup.o ag_startup.c ag_startup.o
+	rm -f agens$(X) common.o ag_common.c ag_common.o
+
 # files removed here are supposed to be in the distribution tarball,
 # so do not clean them in the clean/distclean rules
 maintainer-clean: distclean

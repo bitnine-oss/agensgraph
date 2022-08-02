@@ -4,4 +4,4 @@
 /psql
 /tmp_check/
 /agens
-/ag_startup.c
+/ag_common.c
