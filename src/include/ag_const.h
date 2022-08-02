@@ -21,4 +21,8 @@
 #define AG_PATH_VERTICES	"vertices"
 #define AG_PATH_EDGES		"edges"
 
+#define AG_PACKAGE_NAME "AgensGraph"
+#define AG_PACKAGE_BUGREPORT "agens@bitnine.net"
+#define AG_PACKAGE_URL "https://bitnine.net/"
+
 #endif	/* AG_CONST_H */

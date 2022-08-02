@@ -823,11 +823,14 @@ process_psqlrc_file(char *filename)
 static void
 showVersion(void)
 {
-#if AGS_REBRANED == 1
-	puts("agens (AgensGraph) " AG_VERSION);
-#else
-	puts("psql (PostgreSQL) " PG_VERSION);
-#endif
+	if (is_ag_prefix_binary())
+	{
+		puts("agens (AgensGraph) " AG_VERSION);
+	}
+	else
+	{
+		puts("psql (PostgreSQL) " PG_VERSION);
+	}
 }
 
 
