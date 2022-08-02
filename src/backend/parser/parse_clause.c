@@ -3733,7 +3733,7 @@ find_agg_walker(Node *node, find_agg_context *ctx)
 }
 
 /* used from agensgraph */
-bool
+static bool
 add_expr_to_group_exprs(Expr *expr, List **group_exprs)
 {
 	ListCell *le;

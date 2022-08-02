@@ -11072,4 +11072,14 @@
 { oid => '7247', descr => 'map input to jsonb (cypher)',
   proname => 'cypher_to_jsonb', provolatile => 'i', prorettype => 'jsonb',
   proargtypes => 'anyelement', prosrc => 'cypher_to_jsonb' },
+
+# supports for agensgraph binary upgrade
+{ oid => '8001', descr => 'for use by pg_upgrade',
+  proname => 'binary_upgrade_set_next_ag_graph_oid', provolatile => 'v',
+  proparallel => 'r', prorettype => 'void', proargtypes => 'oid',
+  prosrc => 'binary_upgrade_set_next_ag_graph_oid' },
+{ oid => '8002', descr => 'for use by pg_upgrade',
+  proname => 'binary_upgrade_set_next_ag_label_oid', provolatile => 'v',
+  proparallel => 'r', prorettype => 'void', proargtypes => 'oid',
+  prosrc => 'binary_upgrade_set_next_ag_label_oid' },
 ]
