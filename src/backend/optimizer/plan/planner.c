@@ -2481,14 +2481,15 @@ grouping_planner(PlannerInfo *root, bool inheritance_update,
 			path = (Path *) create_modifygraph_path(root, final_rel,
 													parse->graph.writeOp,
 													parse->graph.last,
-													parse->graph.targets,
 													path,
 													parse->graph.nr_modify,
 													parse->graph.detach,
 													parse->graph.eager,
 													parse->graph.pattern,
 													parse->graph.exprs,
-													parse->graph.sets);
+													parse->graph.sets,
+													parse->graph.resultRelations,
+													assign_special_exec_param(root));
 		}
 		/*
 		 * If this is an INSERT/UPDATE/DELETE, and we're not being called from

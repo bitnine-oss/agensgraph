@@ -75,6 +75,10 @@ OBJS = \
 	spi.o \
 	tqueue.o \
 	tstoreReceiver.o \
+	execCypherCreate.o \
+	execCypherDelete.o \
+	execCypherSet.o \
+	execCypherMerge.o \
 	nodeModifyGraph.o \
 	nodeNestloopVle.o \
 	nodeHash2Side.o \

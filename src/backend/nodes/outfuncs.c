@@ -963,7 +963,6 @@ _outModifyGraph(StringInfo str, const ModifyGraph *node)
 
 	WRITE_ENUM_FIELD(operation, GraphWriteOp);
 	WRITE_BOOL_FIELD(last);
-	WRITE_NODE_FIELD(targets);
 	WRITE_NODE_FIELD(subplan);
 	WRITE_UINT_FIELD(nr_modify);
 	WRITE_BOOL_FIELD(detach);
@@ -971,8 +970,9 @@ _outModifyGraph(StringInfo str, const ModifyGraph *node)
 	WRITE_NODE_FIELD(pattern);
 	WRITE_NODE_FIELD(exprs);
 	WRITE_NODE_FIELD(sets);
-	WRITE_INT_FIELD(ert_base_index);
-	WRITE_INT_FIELD(ert_rtes_added);
+	WRITE_INT_FIELD(epqParam);
+	WRITE_NODE_FIELD(resultRelations);
+	WRITE_INT_FIELD(resultRelIndex);
 }
 
 static void
@@ -3198,13 +3198,13 @@ _outQuery(StringInfo str, const Query *node)
 
 	WRITE_ENUM_FIELD(graph.writeOp, GraphWriteOp);
 	WRITE_BOOL_FIELD(graph.last);
-	WRITE_NODE_FIELD(graph.targets);
 	WRITE_UINT_FIELD(graph.nr_modify);
 	WRITE_BOOL_FIELD(graph.detach);
 	WRITE_BOOL_FIELD(graph.eager);
 	WRITE_NODE_FIELD(graph.pattern);
 	WRITE_NODE_FIELD(graph.exprs);
 	WRITE_NODE_FIELD(graph.sets);
+	WRITE_NODE_FIELD(graph.resultRelations);
 }
 
 static void
