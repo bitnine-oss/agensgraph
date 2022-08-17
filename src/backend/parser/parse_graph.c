@@ -12,7 +12,6 @@
 
 #include "access/htup_details.h"
 #include "ag_const.h"
-#include "catalog/ag_vertex_d.h"
 #include "catalog/ag_graph_fn.h"
 #include "catalog/ag_label.h"
 #include "catalog/pg_am.h"
@@ -47,6 +46,8 @@
 #include "access/table.h"
 #include "access/genam.h"
 #include "parser/parse_shortestpath.h"
+#include "catalog/ag_vertex_d.h"
+#include "catalog/ag_edge_d.h"
 
 #define CYPHER_SUBQUERY_ALIAS	"_"
 #define CYPHER_OPTMATCH_ALIAS	"_o"
@@ -127,6 +128,21 @@ typedef struct
 	AttrNumber	resno;
 	Oid			relid;
 } find_target_label_context;
+
+typedef struct
+{
+	TargetEntry *tle;
+	Index		varno;
+	AttrNumber	varattno;
+	Oid			type;
+} ExtTLE;
+
+typedef struct
+{
+	Node	   *prev_node;
+	Query	   *query;
+	List	   *tle_lists;
+} resolve_var_from_targetlist_context;
 
 /* projection (RETURN and WITH) */
 static void checkNameInItems(ParseState *pstate, List *items, List *targetList);
@@ -253,6 +269,11 @@ static List *transformSetPropList(ParseState *pstate, bool is_remove,
 static GraphSetProp *transformSetProp(ParseState *pstate, CypherSetProp *sp,
 									  bool is_remove,
 									  CSetKind kind);
+static bool resolve_var_from_targetlist_walker(Node *node,
+											   resolve_var_from_targetlist_context *ctx);
+static void substitute_set_props_as_targetentry(ParseState *pstate,
+												Query *query,
+												List *graphSetProps);
 
 /* MERGE */
 static Query *transformMergeMatch(ParseState *pstate, Node *parseTree);
@@ -901,6 +922,23 @@ transformCypherSetClause(ParseState *pstate, CypherClause *clause)
 	qry->graph.writeOp = GWROP_SET;
 	qry->graph.last = (pstate->parentParseState == NULL);
 
+	while (cypherClauseTag(clause->prev) == T_CypherSetClause)
+	{
+		CypherClause *prev = (CypherClause *) clause->prev;
+		CypherSetClause *prev_clause = (CypherSetClause *) prev->detail;
+
+		if (prev_clause->is_remove == detail->is_remove &&
+			prev_clause->kind == detail->kind)
+		{
+			detail->items = list_concat(prev_clause->items, detail->items);
+			clause->prev = prev->prev;
+		}
+		else
+		{
+			break;
+		}
+	}
+
 	nsitem = transformClause(pstate, clause->prev);
 
 	qry->targetList = makeTargetListFromNSItem(pstate, nsitem);
@@ -911,17 +949,15 @@ transformCypherSetClause(ParseState *pstate, CypherClause *clause)
 	{
 		GraphSetProp *gsp = lfirst(le);
 
-		gsp->elem = resolve_future_vertex(pstate, gsp->elem,
-										  FVR_PRESERVE_VAR_REF);
-		gsp->expr = resolve_future_vertex(pstate, gsp->expr,
-										  FVR_PRESERVE_VAR_REF);
+		gsp->elem = resolve_future_vertex(pstate, gsp->elem, 0);
+		gsp->expr = resolve_future_vertex(pstate, gsp->expr, 0);
 	}
 
 	qry->graph.nr_modify = pstate->p_nr_modify_clause++;
 
 	qry->targetList = (List *) resolve_future_vertex(pstate,
 													 (Node *) qry->targetList,
-													 FVR_DONT_RESOLVE);
+													 0);
 
 	qry->rtable = pstate->p_rtable;
 	qry->jointree = makeFromExpr(pstate->p_joinlist, pstate->p_resolved_qual);
@@ -930,6 +966,8 @@ transformCypherSetClause(ParseState *pstate, CypherClause *clause)
 
 	pstate->p_hasGraphwriteClause = true;
 	qry->hasGraphwriteClause = pstate->p_hasGraphwriteClause;
+
+	substitute_set_props_as_targetentry(pstate, qry, qry->graph.sets);
 
 	assign_query_collations(pstate, qry);
 	foreach(le, qry->graph.sets)
@@ -4387,8 +4425,35 @@ transformSetProp(ParseState *pstate, CypherSetProp *sp, bool is_remove,
 	 */
 	expr = transformCypherExpr(pstate, sp->expr, EXPR_KIND_UPDATE_SOURCE);
 	exprtype = exprType(expr);
-	expr = coerce_expr(pstate, expr, exprtype, JSONBOID, -1,
-					   COERCION_ASSIGNMENT, COERCE_IMPLICIT_CAST, -1);
+
+	if (IsA(expr, Var) && exprtype == VERTEXOID)
+	{
+		FieldSelect *fselect = makeNode(FieldSelect);
+
+		fselect->arg = (Expr *) expr;
+		fselect->fieldnum = Anum_ag_vertex_properties;
+		fselect->resulttype = JSONBOID;
+		fselect->resulttypmod = -1;
+		fselect->resultcollid = InvalidOid;
+		expr = (Node *) fselect;
+	}
+	else if (IsA(expr, Var) && exprtype == EDGEOID)
+	{
+		FieldSelect *fselect = makeNode(FieldSelect);
+
+		fselect->arg = (Expr *) expr;
+		fselect->fieldnum = Anum_ag_edge_properties;
+		fselect->resulttype = JSONBOID;
+		fselect->resulttypmod = -1;
+		fselect->resultcollid = InvalidOid;
+		expr = (Node *) fselect;
+	}
+	else
+	{
+		expr = coerce_expr(pstate, expr, exprtype, JSONBOID, -1,
+						   COERCION_ASSIGNMENT, COERCE_IMPLICIT_CAST, -1);
+	}
+
 	if (expr == NULL)
 		ereport(ERROR,
 				(errcode(ERRCODE_DATATYPE_MISMATCH),
@@ -4507,6 +4572,162 @@ transformSetProp(ParseState *pstate, CypherSetProp *sp, bool is_remove,
 	gsp->expr = prop_map;
 
 	return gsp;
+}
+
+/*
+ * resolve_var_from_targetlist_walker
+ *
+ * This walker substitutes Targetlist's expr from var expression.
+ */
+static bool
+resolve_var_from_targetlist_walker(Node *node,
+								   resolve_var_from_targetlist_context *ctx)
+{
+	if (node == NULL)
+		return false;
+
+
+	if (ctx->prev_node != NULL && IsA(ctx->prev_node, FieldSelect) &&
+		IsA(node, Var))
+	{
+		Var		   *var = (Var *) node;
+		FieldSelect *fieldSelect = (FieldSelect *) ctx->prev_node;
+		ExtTLE	   *te_ext = NULL;
+		ListCell   *lc;
+
+		foreach(lc, ctx->tle_lists)
+		{
+			ExtTLE	   *temp = lfirst(lc);
+
+			if (temp->varattno == var->varattno && temp->varno == var->varno)
+			{
+				te_ext = temp;
+				break;
+			}
+		}
+
+		if (te_ext != NULL)
+		{
+			fieldSelect->arg = (Expr *) ((RowExpr *) te_ext->tle->expr);
+		}
+	}
+
+	ctx->prev_node = node;
+	return expression_tree_walker(node, resolve_var_from_targetlist_walker, ctx);
+}
+
+/*
+ * substitute_set_props_as_targetentry
+ */
+static void
+substitute_set_props_as_targetentry(ParseState *pstate, Query *query,
+									List *graphSetProps)
+{
+	ListCell   *cell;
+	List	   *ext_tle_lists = NIL;
+
+	foreach(cell, query->targetList)
+	{
+		TargetEntry *te = lfirst(cell);
+
+		if (!te->resjunk)
+		{
+			ExtTLE	   *ext_tle = palloc(sizeof(ExtTLE));
+
+			ext_tle->tle = te;
+			ext_tle->varattno = ((Var *) te->expr)->varattno;
+			ext_tle->varno = ((Var *) te->expr)->varno;
+			ext_tle->type = exprType((Node *) te->expr);
+			if (ext_tle->type == VERTEXOID)
+			{
+				/* todo: Need to  */
+				Expr	   *new_expr = (Expr *) makeTypedRowExpr(
+																 list_make3(
+																			getExprField(te->expr, AG_ELEM_LOCAL_ID),
+																			getExprField(te->expr, AG_ELEM_PROP_MAP),
+																			getExprField(te->expr, "tid")),
+																 VERTEXOID, -1);
+
+				te->expr = new_expr;
+			}
+			else if (ext_tle->type == EDGEOID)
+			{
+				Expr	   *new_expr = (Expr *) makeTypedRowExpr(
+																 list_make5(
+																			getExprField(te->expr, AG_ELEM_LOCAL_ID),
+																			getExprField(te->expr, AG_START_ID),
+																			getExprField(te->expr, AG_END_ID),
+																			getExprField(te->expr, AG_ELEM_PROP_MAP),
+																			getExprField(te->expr, "tid")),
+																 EDGEOID, -1);
+
+				te->expr = new_expr;
+			}
+			ext_tle_lists = lappend(ext_tle_lists, ext_tle);
+		}
+	}
+
+	foreach(cell, graphSetProps)
+	{
+		ListCell   *lc2;
+		GraphSetProp *gsp = lfirst(cell);
+		resolve_var_from_targetlist_context ctx;
+		ExtTLE	   *cur_ext_tle = NULL;
+
+		/* Initialize walker context */
+		ctx.tle_lists = ext_tle_lists;
+		ctx.query = query;
+		ctx.prev_node = NULL;
+		foreach(lc2, ext_tle_lists)
+		{
+			ExtTLE	   *tmp_ext_tle = lfirst(lc2);
+
+			if (strcmp(gsp->variable,
+					   tmp_ext_tle->tle->resname) == 0)
+			{
+				cur_ext_tle = tmp_ext_tle;
+				resolve_var_from_targetlist_walker(gsp->expr, &ctx);
+				break;
+			}
+		}
+
+		if (cur_ext_tle != NULL)
+		{
+			TargetEntry *targetEntry = cur_ext_tle->tle;
+			Expr	   *prev_expr = targetEntry->expr;
+
+			/* todo: do not make new RowExpr. */
+			if (cur_ext_tle->type == VERTEXOID)
+			{
+				Expr	   *new_expr = (Expr *) makeTypedRowExpr(
+																 list_make3(
+																			getExprField(prev_expr, AG_ELEM_LOCAL_ID),
+																			gsp->expr,
+																			getExprField(prev_expr, "tid")),
+																 VERTEXOID, -1);
+
+				targetEntry->expr = new_expr;
+			}
+			else if (cur_ext_tle->type == EDGEOID)
+			{
+				Expr	   *new_expr = (Expr *) makeTypedRowExpr(
+																 list_make5(
+																			getExprField(prev_expr, AG_ELEM_LOCAL_ID),
+																			getExprField(prev_expr, AG_START_ID),
+																			getExprField(prev_expr, AG_END_ID),
+																			gsp->expr,
+																			getExprField(prev_expr, "tid")),
+																 EDGEOID, -1);
+
+				targetEntry->expr = new_expr;
+			}
+		}
+	}
+
+	foreach(cell, ext_tle_lists)
+	{
+		pfree(lfirst(cell));
+	}
 }
 
 static Query *
@@ -5396,7 +5617,7 @@ addRangeTableAllModifiedLabels(ParseState *pstate, Query *qry, List *targets)
 static void
 addRangeTableLabels(ParseState *pstate, List *targets, Query *qry)
 {
-	List 	   *resultRelations = NIL;
+	List	   *resultRelations = NIL;
 	ListCell   *lc;
 
 	foreach(lc, targets)
@@ -5405,11 +5626,12 @@ addRangeTableLabels(ParseState *pstate, List *targets, Query *qry)
 		Relation	relation = table_open(relid, AccessShareLock);
 
 		ParseNamespaceItem *nsitem = addRangeTableEntryForRelation(pstate,
-									  relation,
-									  AccessShareLock,
-									  NULL,
-									  false,
-									  false);
+																   relation,
+																   AccessShareLock,
+																   NULL,
+																   false,
+																   false);
+
 		table_close(relation, NoLock);
 		resultRelations = lappend_int(resultRelations, nsitem->p_rtindex);
 	}

@@ -44,7 +44,7 @@ ExecMergeGraph(ModifyGraphState *mgstate, TupleTableSlot *slot)
 	{
 		if (mgstate->sets != NIL)
 		{
-			slot = ExecSetGraphExt(mgstate, slot, GSP_ON_MATCH);
+			slot = LegacyExecSetGraph(mgstate, slot, GSP_ON_MATCH);
 		}
 	}
 	else
@@ -59,7 +59,7 @@ ExecMergeGraph(ModifyGraphState *mgstate, TupleTableSlot *slot)
 
 		if (mgstate->sets != NIL)
 		{
-			slot = ExecSetGraphExt(mgstate, slot, GSP_ON_CREATE);
+			slot = LegacyExecSetGraph(mgstate, slot, GSP_ON_CREATE);
 		}
 	}
 

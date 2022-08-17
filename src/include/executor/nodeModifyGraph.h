@@ -33,7 +33,7 @@ typedef enum ModifyCid
 /* hash entry */
 typedef struct ModifiedElemEntry
 {
-	Graphid		key;
+	Graphid		key;			/* key */
 	Datum		elem;			/* modified graph element ( For set operator ) */
 } ModifiedElemEntry;
 
@@ -45,8 +45,8 @@ extern void setSlotValueByName(TupleTableSlot *slot, Datum value, char *name);
 extern void setSlotValueByAttnum(TupleTableSlot *slot, Datum value, int attnum);
 extern Datum *makeDatumArray(int len);
 
-extern Datum getElementFromEleTable(ModifyGraphState *mgstate, Datum gid,
-									bool *found);
+extern Datum getElementFromEleTable(ModifyGraphState *mgstate, Oid type_oid,
+									Datum orig_elem, Datum gid, bool *found);
 extern Datum getPathFinal(ModifyGraphState *mgstate, Datum origin);
 
 #endif

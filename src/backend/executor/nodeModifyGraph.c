@@ -33,6 +33,8 @@
 bool		enable_multiple_update = true;
 bool		auto_gather_graphmeta = false;
 
+#define DatumGetItemPointer(X)	 ((ItemPointer) DatumGetPointer(X))
+
 static TupleTableSlot *ExecModifyGraph(PlanState *pstate);
 static void initGraphWRStats(ModifyGraphState *mgstate, GraphWriteOp op);
 static List *ExecInitGraphPattern(List *pattern, ModifyGraphState *mgstate);
@@ -88,12 +90,17 @@ ExecInitModifyGraph(ModifyGraph *mgplan, EState *estate, int eflags)
 	mgstate->graphid = get_graph_path_oid();
 	mgstate->pattern = ExecInitGraphPattern(mgplan->pattern, mgstate);
 	mgstate->exprs = ExecInitGraphDelExprs(mgplan->exprs, mgstate);
-	mgstate->sets = ExecInitGraphSets(mgplan->sets, mgstate);
 
+	/* Initialize from InitPlan. we just uses created resultRelInfo. */
 	mgstate->resultRelInfo = estate->es_result_relations + mgplan->resultRelIndex;
 	mgstate->numResultRelInfo = list_length(mgplan->resultRelations);
 	openResultRelInfosIndices(mgstate);
 
+	/* For Set Operation. */
+	mgstate->sets = ExecInitGraphSets(mgplan->sets, mgstate);
+	mgstate->update_cols = NULL;
+
+	/* Initialize for EPQ. */
 	EvalPlanQualInit(&mgstate->mt_epqstate, estate, NULL, NIL,
 					 mgplan->epqParam);
 	mgstate->mt_arowmarks = (List **) palloc0(sizeof(List *) * 1);
@@ -145,6 +152,85 @@ ExecInitModifyGraph(ModifyGraph *mgplan, EState *estate, int eflags)
 	return mgstate;
 }
 
+static void
+reflectTupleChanges(PlanState *pstate, TupleTableSlot *result)
+{
+	ModifyGraphState *mgstate = castNode(ModifyGraphState, pstate);
+	ModifyGraph *plan = (ModifyGraph *) mgstate->ps.plan;
+	TupleDesc	tupDesc = result->tts_tupleDescriptor;
+	int			natts = tupDesc->natts;
+	int			i;
+
+	for (i = 0; i < natts; i++)
+	{
+		Oid			type;
+		Datum		orig_elem;
+		Datum		elem;
+
+		if (result->tts_isnull[i])
+			continue;
+
+		orig_elem = result->tts_values[i];
+		type = TupleDescAttr(tupDesc, i)->atttypid;
+		if (type == VERTEXOID)
+		{
+			Datum		graphid;
+			bool		found;
+
+			graphid = getVertexIdDatum(orig_elem);
+			elem = getElementFromEleTable(mgstate, type, orig_elem, graphid,
+										  &found);
+			if (!found)
+			{
+				continue;
+			}
+		}
+		else if (type == EDGEOID)
+		{
+			Datum		graphid;
+			bool		found;
+
+			graphid = getEdgeIdDatum(orig_elem);
+			elem = getElementFromEleTable(mgstate, type, orig_elem, graphid,
+										  &found);
+			if (!found)
+			{
+				continue;
+			}
+		}
+		else if (type == GRAPHPATHOID)
+		{
+			/*
+			 * When deleting the graphpath, edge array of graphpath is deleted
+			 * first and vertex array is deleted in the next plan. So, the
+			 * graphpath must be passed to the next plan for deleting vertex
+			 * array of the graphpath.
+			 */
+			if (isEdgeArrayOfPath(mgstate->exprs,
+								  NameStr(TupleDescAttr(tupDesc, i)->attname)))
+				continue;
+
+			elem = getPathFinal(mgstate, orig_elem);
+		}
+		else if (type == EDGEARRAYOID && plan->operation == GWROP_DELETE)
+		{
+			/*
+			 * The edges are used only for removal, not for result output.
+			 *
+			 * This assumes that there are only variable references in the
+			 * target list.
+			 */
+			continue;
+		}
+		else
+		{
+			continue;
+		}
+
+		setSlotValueByAttnum(result, elem, i + 1);
+	}
+}
+
 static TupleTableSlot *
 ExecModifyGraph(PlanState *pstate)
 {
@@ -187,11 +273,6 @@ ExecModifyGraph(PlanState *pstate)
 			if (TupIsNull(slot))
 				break;
 
-			if (plan->operation == GWROP_SET)
-			{
-				AssignSetKinds(mgstate, GSP_NORMAL, slot);
-			}
-
 			slot = mgstate->execProc(mgstate, slot);
 
 			if (mgstate->eagerness)
@@ -212,16 +293,15 @@ ExecModifyGraph(PlanState *pstate)
 
 		mgstate->child_done = true;
 
-		if (mgstate->elemTable != NULL && plan->operation != GWROP_DELETE)
+		if (mgstate->elemTable != NULL
+			&& plan->operation != GWROP_DELETE
+			&& plan->operation != GWROP_SET)
 			reflectModifiedProp(mgstate);
 	}
 
 	if (mgstate->eagerness)
 	{
 		TupleTableSlot *result;
-		TupleDesc	tupDesc;
-		int			natts;
-		int			i;
 
 		/* don't care about scan direction */
 		result = mgstate->ps.ps_ResultTupleSlot;
@@ -236,72 +316,7 @@ ExecModifyGraph(PlanState *pstate)
 			hash_get_num_entries(mgstate->elemTable) < 1)
 			return result;
 
-		tupDesc = result->tts_tupleDescriptor;
-		natts = tupDesc->natts;
-		for (i = 0; i < natts; i++)
-		{
-			Oid			type;
-			Datum		elem;
-
-			if (result->tts_isnull[i])
-				continue;
-
-			type = TupleDescAttr(tupDesc, i)->atttypid;
-			if (type == VERTEXOID)
-			{
-				Datum		graphid;
-				bool		found;
-
-				graphid = getVertexIdDatum(result->tts_values[i]);
-				elem = getElementFromEleTable(mgstate, graphid, &found);
-				if (!found)
-				{
-					continue;
-				}
-			}
-			else if (type == EDGEOID)
-			{
-				Datum		graphid;
-				bool		found;
-
-				graphid = getEdgeIdDatum(result->tts_values[i]);
-				elem = getElementFromEleTable(mgstate, graphid, &found);
-				if (!found)
-				{
-					continue;
-				}
-			}
-			else if (type == GRAPHPATHOID)
-			{
-				/*
-				 * When deleting the graphpath, edge array of graphpath is
-				 * deleted first and vertex array is deleted in the next plan.
-				 * So, the graphpath must be passed to the next plan for
-				 * deleting vertex array of the graphpath.
-				 */
-				if (isEdgeArrayOfPath(mgstate->exprs,
-									  NameStr(TupleDescAttr(tupDesc, i)->attname)))
-					continue;
-
-				elem = getPathFinal(mgstate, result->tts_values[i]);
-			}
-			else if (type == EDGEARRAYOID && plan->operation == GWROP_DELETE)
-			{
-				/*
-				 * The edges are used only for removal, not for result output.
-				 *
-				 * This assumes that there are only variable references in the
-				 * target list.
-				 */
-				continue;
-			}
-			else
-			{
-				continue;
-			}
-
-			setSlotValueByAttnum(result, elem, i + 1);
-		}
+		reflectTupleChanges(pstate, result);
 
 		return result;
 	}
@@ -316,9 +331,12 @@ ExecEndModifyGraph(ModifyGraphState *mgstate)
 {
 	CommandId	used_cid;
 
-	if (mgstate->tuplestorestate != NULL)
-		tuplestore_end(mgstate->tuplestorestate);
-	mgstate->tuplestorestate = NULL;
+	if (mgstate->update_cols != NULL)
+	{
+		pfree(mgstate->update_cols);
+	}
+
+	tuplestore_end(mgstate->tuplestorestate);
 
 	if (mgstate->elemTable != NULL)
 		hash_destroy(mgstate->elemTable);
@@ -439,7 +457,8 @@ ExecInitGraphDelExprs(List *exprs, ModifyGraphState *mgstate)
 }
 
 Datum
-getElementFromEleTable(ModifyGraphState *mgstate, Datum gid, bool *found)
+getElementFromEleTable(ModifyGraphState *mgstate, Oid type_oid, Datum orig_elem,
+					   Datum gid, bool *found)
 {
 	ModifyGraph *plan = (ModifyGraph *) mgstate->ps.plan;
 	ModifiedElemEntry *entry;
@@ -500,7 +519,8 @@ getPathFinal(ModifyGraphState *mgstate, Datum origin)
 		Assert(!isnull);
 
 		graphid = getVertexIdDatum(value);
-		vertex = getElementFromEleTable(mgstate, graphid, &found);
+		vertex = getElementFromEleTable(mgstate, VERTEXOID, value, graphid,
+										&found);
 
 		if (!found)
 		{
@@ -539,7 +559,7 @@ getPathFinal(ModifyGraphState *mgstate, Datum origin)
 		Assert(!isnull);
 
 		graphid = getEdgeIdDatum(value);
-		edge = getElementFromEleTable(mgstate, graphid, &found);
+		edge = getElementFromEleTable(mgstate, EDGEOID, value, graphid, &found);
 
 		if (!found)
 		{
@@ -593,7 +613,7 @@ reflectModifiedProp(ModifyGraphState *mgstate)
 		type = get_labid_typeoid(mgstate->graphid,
 								 GraphidGetLabid(DatumGetGraphid(gid)));
 
-		ctid = updateElemProp(mgstate, type, gid, entry->elem);
+		ctid = LegacyUpdateElemProp(mgstate, type, gid, entry->elem);
 
 		if (mgstate->eagerness)
 		{

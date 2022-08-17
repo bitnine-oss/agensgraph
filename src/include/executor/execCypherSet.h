@@ -13,14 +13,12 @@
 #include "nodes/execnodes.h"
 #include "nodes/parsenodes.h"
 
-extern void AssignSetKinds(ModifyGraphState *mgstate, GSPKind kind,
-						   TupleTableSlot *slot);
-extern TupleTableSlot *ExecSetGraphExt(ModifyGraphState *mgstate,
-									   TupleTableSlot *slot, GSPKind kind);
+extern TupleTableSlot *LegacyExecSetGraph(ModifyGraphState *mgstate,
+										  TupleTableSlot *slot, GSPKind kind);
 extern TupleTableSlot *ExecSetGraph(ModifyGraphState *mgstate,
 									TupleTableSlot *slot);
-extern ItemPointer updateElemProp(ModifyGraphState *mgstate, Oid elemtype,
-								  Datum gid, Datum elem_datum);
+extern ItemPointer LegacyUpdateElemProp(ModifyGraphState *mgstate, Oid elemtype,
+										Datum gid, Datum elem_datum);
 extern Datum makeModifiedElem(Datum elem, Oid elemtype,
 							  Datum id, Datum prop_map, Datum tid);
 
