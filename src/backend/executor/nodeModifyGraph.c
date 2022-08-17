@@ -346,6 +346,11 @@ ExecEndModifyGraph(ModifyGraphState *mgstate)
 	 */
 	ExecClearTuple(mgstate->ps.ps_ResultTupleSlot);
 
+	/*
+	 * Terminate EPQ execution if active
+	 */
+	EvalPlanQualEnd(&mgstate->mt_epqstate);
+
 	ExecEndNode(mgstate->subplan);
 	ExecFreeExprContext(&mgstate->ps);
 

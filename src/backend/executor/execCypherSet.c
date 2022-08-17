@@ -30,7 +30,8 @@ static void findAndReflectNewestValue(ModifyGraphState *mgstate,
 static void updateElementTable(ModifyGraphState *mgstate, Datum gid,
 							   Datum newelem);
 static Datum GraphTableTupleUpdate(ModifyGraphState *mgstate,
-								   Oid tts_value_type, Datum tts_value);
+								   Oid tts_value_type, Datum tts_value,
+								   int attidx);
 
 /*
  * LegacyExecSetGraph
@@ -174,7 +175,8 @@ ExecSetGraph(ModifyGraphState *mgstate, TupleTableSlot *slot)
 			Oid			element_type = slot->tts_tupleDescriptor->attrs[i].atttypid;
 			Datum		affected_datum = GraphTableTupleUpdate(mgstate,
 															   element_type,
-															   cur_datum);
+															   cur_datum,
+															   i);
 
 			if (affected_datum != (Datum) 0)
 			{
@@ -275,9 +277,10 @@ findAndReflectNewestValue(ModifyGraphState *mgstate, TupleTableSlot *slot)
  */
 static Datum
 GraphTableTupleUpdate(ModifyGraphState *mgstate, Oid tts_value_type,
-					  Datum tts_value)
+					  Datum tts_value, int attidx)
 {
 	EState	   *estate = mgstate->ps.state;
+	EPQState   *epqstate = &mgstate->mt_epqstate;
 	TupleTableSlot *elemTupleSlot = mgstate->elemTupleSlot;
 	Datum	   *tts_values;
 	ResultRelInfo *resultRelInfo;
@@ -297,9 +300,11 @@ GraphTableTupleUpdate(ModifyGraphState *mgstate, Oid tts_value_type,
 	if (tts_value_type == VERTEXOID)
 	{
 		gid = getVertexIdDatum(tts_value);
+		ctid = DatumGetItemPointer(getVertexTidDatum(tts_value));
 	}
 	else
 	{
+		ctid = DatumGetItemPointer(getEdgeTidDatum(tts_value));
 		gid = getEdgeIdDatum(tts_value);
 	}
 
@@ -330,14 +335,15 @@ GraphTableTupleUpdate(ModifyGraphState *mgstate, Oid tts_value_type,
 	 * Create a tuple to store. Attributes of vertex/edge label are not the
 	 * same with those of vertex/edge.
 	 */
+lreplace:
 	ExecClearTuple(elemTupleSlot);
 	ExecSetSlotDescriptor(elemTupleSlot,
 						  RelationGetDescr(resultRelInfo->ri_RelationDesc));
+
 	tts_values = elemTupleSlot->tts_values;
 
 	if (tts_value_type == VERTEXOID)
 	{
-		ctid = DatumGetItemPointer(getVertexTidDatum(tts_value));
 
 		tts_values[Anum_ag_vertex_id - 1] = gid;
 		tts_values[Anum_ag_vertex_properties - 1] = getVertexPropDatum(tts_value);
@@ -345,8 +351,6 @@ GraphTableTupleUpdate(ModifyGraphState *mgstate, Oid tts_value_type,
 	else
 	{
 		Assert(tts_value_type == EDGEOID);
-
-		ctid = DatumGetItemPointer(getEdgeTidDatum(tts_value));
 
 		tts_values[Anum_ag_edge_id - 1] = gid;
 		tts_values[Anum_ag_edge_start - 1] = getEdgeStartDatum(tts_value);
@@ -375,10 +379,94 @@ GraphTableTupleUpdate(ModifyGraphState *mgstate, Oid tts_value_type,
 		case TM_Ok:
 			break;
 		case TM_Updated:
-			/* TODO: A solution to concurrent update is needed. */
-			ereport(ERROR,
-					(errcode(ERRCODE_T_R_SERIALIZATION_FAILURE),
-					 errmsg("could not serialize access due to concurrent update")));
+			{
+				TupleTableSlot *epqslot;
+				TupleTableSlot *inputslot;
+				ModifyGraph *plan = (ModifyGraph *) mgstate->ps.plan;
+
+				if (plan->nr_modify > 0)
+				{
+					ereport(ERROR,
+							(errcode(ERRCODE_T_R_SERIALIZATION_FAILURE),
+							 errmsg("could not serialize access due to concurrent update")));
+				}
+
+				if (IsolationUsesXactSnapshot())
+					ereport(ERROR,
+							(errcode(ERRCODE_T_R_SERIALIZATION_FAILURE),
+							 errmsg("could not serialize access due to concurrent update")));
+
+				/*
+				 * Already know that we're going to need to do EPQ, so fetch
+				 * tuple directly into the right slot.
+				 */
+				inputslot = EvalPlanQualSlot(epqstate, resultRelationDesc,
+											 resultRelInfo->ri_RangeTableIndex);
+
+				result = table_tuple_lock(resultRelationDesc, ctid,
+										  estate->es_snapshot,
+										  inputslot, GetCurrentCommandId(true),
+										  lockmode, LockWaitBlock,
+										  TUPLE_LOCK_FLAG_FIND_LAST_VERSION,
+										  &tmfd);
+
+				switch (result)
+				{
+					case TM_Ok:
+						Assert(tmfd.traversed);
+
+						epqslot = EvalPlanQual(epqstate,
+											   resultRelationDesc,
+											   resultRelInfo->ri_RangeTableIndex,
+											   inputslot);
+
+						if (TupIsNull(epqslot))
+							/* Tuple not passing quals anymore, exiting... */
+							return (Datum) 0;
+
+						slot_getallattrs(epqslot);
+						Assert(!epqslot->tts_isnull[attidx]);
+						tts_value = epqslot->tts_values[attidx];
+
+						if (tts_value_type == VERTEXOID)
+						{
+							gid = getVertexIdDatum(tts_value);
+						}
+						else
+						{
+							gid = getEdgeIdDatum(tts_value);
+						}
+
+						goto lreplace;
+					case TM_Deleted:
+						/* tuple already deleted; nothing to do */
+						return (Datum) 0;
+
+					case TM_SelfModified:
+
+						/*
+						 * This can be reached when following an update chain
+						 * from a tuple updated by another session, reaching a
+						 * tuple that was already updated in this transaction.
+						 * If previously modified by this command, ignore the
+						 * redundant update, otherwise error out.
+						 *
+						 * See also TM_SelfModified response to
+						 * table_tuple_update() above.
+						 */
+						if (tmfd.cmax != estate->es_output_cid)
+							ereport(ERROR,
+									(errcode(ERRCODE_TRIGGERED_DATA_CHANGE_VIOLATION),
+									 errmsg("tuple to be updated was already modified by an operation triggered by the current command"),
+									 errhint("Consider using an AFTER trigger instead of a BEFORE trigger to propagate changes to other rows.")));
+						return (Datum) 0;
+					default:
+						/* see table_tuple_lock call in ExecDelete() */
+						elog(ERROR, "unexpected table_tuple_lock status: %u",
+							 result);
+				}
+				break;
+			}
 		default:
 			elog(ERROR, "unrecognized heap_update status: %u", result);
 	}
