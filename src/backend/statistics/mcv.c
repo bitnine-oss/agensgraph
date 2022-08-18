@@ -1679,9 +1679,14 @@ mcv_get_match_bitmap(PlannerInfo *root, List *clauses,
 				Datum	   *elem_values;
 				bool	   *elem_nulls;
 
-				/* ScalarArrayOpExpr has the Var always on the left */
-				Assert(varonleft);
+				/* We expect Var on left */
+				if (!varonleft)
+					elog(ERROR, "incompatible clause");
 
+				/*
+				 * Deconstruct the array constant, unless it's NULL (we'll
+				 * cover that case below)
+				 */
 				if (!cst->constisnull)
 				{
 					arrayval = DatumGetArrayTypeP(cst->constvalue);

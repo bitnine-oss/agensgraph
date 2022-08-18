@@ -105,6 +105,11 @@ static PGPROC *allProcs;
 static PGXACT *allPgXact;
 
 /*
+ * Cache to reduce overhead of repeated calls to TransactionIdIsInProgress()
+ */
+static TransactionId cachedXidIsNotInProgress = InvalidTransactionId;
+
+/*
  * Bookkeeping for tracking emulated transactions in recovery
  */
 static TransactionId *KnownAssignedXids;
@@ -1027,7 +1032,7 @@ TransactionIdIsInProgress(TransactionId xid)
 	 * already known to be completed, we can fall out without any access to
 	 * shared memory.
 	 */
-	if (TransactionIdIsKnownCompleted(xid))
+	if (TransactionIdEquals(cachedXidIsNotInProgress, xid))
 	{
 		xc_by_known_xact_inc();
 		return false;
@@ -1177,6 +1182,7 @@ TransactionIdIsInProgress(TransactionId xid)
 	if (nxids == 0)
 	{
 		xc_no_overflow_inc();
+		cachedXidIsNotInProgress = xid;
 		return false;
 	}
 
@@ -1191,7 +1197,10 @@ TransactionIdIsInProgress(TransactionId xid)
 	xc_slow_answer_inc();
 
 	if (TransactionIdDidAbort(xid))
+	{
+		cachedXidIsNotInProgress = xid;
 		return false;
+	}
 
 	/*
 	 * It isn't aborted, so check whether the transaction tree it belongs to
@@ -1209,6 +1218,7 @@ TransactionIdIsInProgress(TransactionId xid)
 		}
 	}
 
+	cachedXidIsNotInProgress = xid;
 	return false;
 }
 
@@ -1916,12 +1926,13 @@ ProcArrayInstallRestoredXmin(TransactionId xmin, PGPROC *proc)
 		TransactionIdIsNormal(xid) &&
 		TransactionIdPrecedesOrEquals(xid, xmin))
 	{
-		/* Install xmin */
+		/*
+		 * Install xmin and propagate the vacuumFlags that affect how the
+		 * value is interpreted by vacuum.
+		 */
 		MyPgXact->xmin = TransactionXmin = xmin;
-
-		/* Flags being copied must be valid copy-able flags. */
-		Assert((pgxact->vacuumFlags & (~PROC_COPYABLE_FLAGS)) == 0);
-		MyPgXact->vacuumFlags = pgxact->vacuumFlags;
+		MyPgXact->vacuumFlags = (MyPgXact->vacuumFlags & ~PROC_XMIN_FLAGS) |
+			(pgxact->vacuumFlags & PROC_XMIN_FLAGS);
 
 		result = true;
 	}
