@@ -509,6 +509,12 @@ select * from t1 left join t2 on (t1.a = t2.a);
 
 select t1.x from t1 join t3 on (t1.a = t3.x);
 
+-- Test matching of locking clause with wrong alias
+
+select t1.*, t2.*, unnamed_join.* from
+  t1 join t2 on (t1.a = t2.a), t3 as unnamed_join
+  for update of unnamed_join;
+
 --
 -- regression test for 8.1 merge right join bug
 --
@@ -1891,6 +1897,9 @@ select * from
    union all
    (select q1.v)
   ) as q2;
+
+-- check the number of columns specified
+SELECT * FROM (int8_tbl i cross join int4_tbl j) ss(a,b,c,d);
 
 -- check we don't try to do a unique-ified semijoin with LATERAL
 explain (verbose, costs off)
