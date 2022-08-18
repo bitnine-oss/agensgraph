@@ -18697,7 +18697,6 @@ dumpLabelSchema(Archive *fout, TableInfo *tblinfo)
 	char	   *qualrelname;
 	int			numParents;
 	TableInfo **parents;
-	int			actual_atts;	/* number of attrs in this CREATE statement */
 	const char *reltypename;
 	char	   *storage;
 	int			j, k;

@@ -50,7 +50,6 @@ static void GetSuperOids(List *supers, char labkind, List **supOids);
 static void AgInheritanceDependancy(Oid laboid, List *supers);
 static void SetMaxStatisticsTarget(Oid laboid);
 
-static bool IsLabel(const char *label_name, Oid namespaceId);
 static void SimpleProcessUtility(Node *node, const char *queryString,
 								 int stmt_location, int stmt_len);
 
