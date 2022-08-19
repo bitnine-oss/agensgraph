@@ -305,8 +305,6 @@ typedef struct RecursiveUnion
 	Oid		   *dupOperators;	/* equality operators to compare with */
 	Oid		   *dupCollations;
 	long		numGroups;		/* estimated number of groups in input */
-
-	int			maxDepth;		/* level of recursion */
 } RecursiveUnion;
 
 /* ----------------
@@ -559,7 +557,6 @@ typedef struct CteScan
 	Scan		scan;
 	int			ctePlanId;		/* ID of init SubPlan for CTE */
 	int			cteParam;		/* ID of Param representing CTE output */
-	bool		cteStop;
 } CteScan;
 
 /* ----------------

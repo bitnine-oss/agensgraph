@@ -33,6 +33,9 @@
 #include "utils/syscache.h"
 #include "utils/typcache.h"
 #include "catalog/pg_inherits.h"
+#include "catalog/ag_vertex_d.h"
+#include "catalog/ag_edge_d.h"
+#include "catalog/ag_graphpath_d.h"
 
 #define GRAPHID_FMTSTR			"%hu." UINT64_FORMAT
 #define GRAPHID_BUFLEN			32	/* "65535.281474976710655" */
@@ -409,8 +412,8 @@ Datum
 vertex_out(PG_FUNCTION_ARGS)
 {
 	HeapTupleHeader vertex = PG_GETARG_HEAPTUPLEHEADER(0);
-	Datum		values[Natts_vertex];
-	bool		isnull[Natts_vertex];
+	Datum		values[Natts_ag_vertex];
+	bool		isnull[Natts_ag_vertex];
 	Graphid		id;
 	Jsonb	   *prop_map;
 	LabelOutData *my_extra;
@@ -418,17 +421,17 @@ vertex_out(PG_FUNCTION_ARGS)
 
 	deform_tuple(vertex, values, isnull);
 
-	if (isnull[Anum_vertex_id - 1])
+	if (isnull[Anum_ag_vertex_id - 1])
 		ereport(ERROR,
 				(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
 				 errmsg("id in vertex cannot be NULL")));
-	if (isnull[Anum_vertex_properties - 1])
+	if (isnull[Anum_ag_vertex_properties - 1])
 		ereport(ERROR,
 				(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
 				 errmsg("properties in vertex cannot be NULL")));
 
-	id = DatumGetGraphid(values[Anum_vertex_id - 1]);
-	prop_map = DatumGetJsonbP(values[Anum_vertex_properties - 1]);
+	id = DatumGetGraphid(values[Anum_ag_vertex_id - 1]);
+	prop_map = DatumGetJsonbP(values[Anum_ag_vertex_properties - 1]);
 
 	my_extra = cache_label(fcinfo->flinfo, GraphidGetLabid(id));
 
@@ -504,7 +507,7 @@ vtojb(PG_FUNCTION_ARGS)
 {
 	HeapTupleHeader vertex = PG_GETARG_HEAPTUPLEHEADER(0);
 
-	PG_RETURN_DATUM(tuple_getattr(vertex, Anum_vertex_properties));
+	PG_RETURN_DATUM(tuple_getattr(vertex, Anum_ag_vertex_properties));
 }
 
 Datum
@@ -565,8 +568,8 @@ Datum
 edge_out(PG_FUNCTION_ARGS)
 {
 	HeapTupleHeader edge = PG_GETARG_HEAPTUPLEHEADER(0);
-	Datum		values[Natts_edge];
-	bool		isnull[Natts_edge];
+	Datum		values[Natts_ag_edge];
+	bool		isnull[Natts_ag_edge];
 	Graphid		id;
 	Jsonb	   *prop_map;
 	LabelOutData *my_extra;
@@ -574,25 +577,25 @@ edge_out(PG_FUNCTION_ARGS)
 
 	deform_tuple(edge, values, isnull);
 
-	if (isnull[Anum_edge_id - 1])
+	if (isnull[Anum_ag_edge_id - 1])
 		ereport(ERROR,
 				(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
 				 errmsg("id in edge cannot be NULL")));
-	if (isnull[Anum_edge_start - 1])
+	if (isnull[Anum_ag_edge_start - 1])
 		ereport(ERROR,
 				(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
 				 errmsg("start in edge cannot be NULL")));
-	if (isnull[Anum_edge_end - 1])
+	if (isnull[Anum_ag_edge_end - 1])
 		ereport(ERROR,
 				(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
 				 errmsg("end in edge cannot be NULL")));
-	if (isnull[Anum_edge_properties - 1])
+	if (isnull[Anum_ag_edge_properties - 1])
 		ereport(ERROR,
 				(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
 				 errmsg("properties in edge cannot be NULL")));
 
-	id = DatumGetGraphid(values[Anum_edge_id - 1]);
-	prop_map = DatumGetJsonbP(values[Anum_edge_properties - 1]);
+	id = DatumGetGraphid(values[Anum_ag_edge_id - 1]);
+	prop_map = DatumGetJsonbP(values[Anum_ag_edge_properties - 1]);
 
 	my_extra = cache_label(fcinfo->flinfo, GraphidGetLabid(id));
 
@@ -600,9 +603,9 @@ edge_out(PG_FUNCTION_ARGS)
 	appendStringInfo(&si, "%s[" GRAPHID_FMTSTR "][",
 					 NameStr(my_extra->label),
 					 GraphidGetLabid(id), GraphidGetLocid(id));
-	graphid_out_si(&si, values[Anum_edge_start - 1]);
+	graphid_out_si(&si, values[Anum_ag_edge_start - 1]);
 	appendStringInfoChar(&si, ',');
-	graphid_out_si(&si, values[Anum_edge_end - 1]);
+	graphid_out_si(&si, values[Anum_ag_edge_end - 1]);
 	appendStringInfoChar(&si, ']');
 	JsonbToCString(&si, &prop_map->root, VARSIZE(prop_map));
 
@@ -658,7 +661,7 @@ etojb(PG_FUNCTION_ARGS)
 {
 	HeapTupleHeader edge = PG_GETARG_HEAPTUPLEHEADER(0);
 
-	PG_RETURN_DATUM(tuple_getattr(edge, Anum_edge_properties));
+	PG_RETURN_DATUM(tuple_getattr(edge, Anum_ag_edge_properties));
 }
 
 Datum
@@ -1002,7 +1005,7 @@ getEdgeVertex(HeapTupleHeader edge, EdgeVertexKind evk)
 			"SELECT (" AG_ELEM_LOCAL_ID ", " AG_ELEM_PROP_MAP ", NULL)::vertex "
 			"FROM \"%s\"." AG_VERTEX " WHERE " AG_ELEM_LOCAL_ID " = $1";
 	char		sqlcmd[256];
-	int			attnum = (evk == EVK_START ? Anum_edge_start : Anum_edge_end);
+	int			attnum = (evk == EVK_START ? Anum_ag_edge_start : Anum_ag_edge_end);
 	Datum		values[1];
 	Oid			argTypes[1] = {GRAPHIDOID};
 	int			ret;
@@ -1145,7 +1148,7 @@ getVertexIdDatum(Datum datum)
 {
 	HeapTupleHeader	tuphdr = DatumGetHeapTupleHeader(datum);
 
-	return tuple_getattr(tuphdr, Anum_vertex_id);
+	return tuple_getattr(tuphdr, Anum_ag_vertex_id);
 }
 
 Datum
@@ -1153,7 +1156,7 @@ getVertexPropDatum(Datum datum)
 {
 	HeapTupleHeader	tuphdr = DatumGetHeapTupleHeader(datum);
 
-	return tuple_getattr(tuphdr, Anum_vertex_properties);
+	return tuple_getattr(tuphdr, Anum_ag_vertex_properties);
 }
 
 Datum
@@ -1161,7 +1164,7 @@ getVertexTidDatum(Datum datum)
 {
 	HeapTupleHeader	tuphdr = DatumGetHeapTupleHeader(datum);
 
-	return tuple_getattr(tuphdr, Anum_vertex_tid);
+	return tuple_getattr(tuphdr, Anum_ag_vertex_tid);
 }
 
 Datum
@@ -1169,7 +1172,7 @@ getEdgeIdDatum(Datum datum)
 {
 	HeapTupleHeader	tuphdr = DatumGetHeapTupleHeader(datum);
 
-	return tuple_getattr(tuphdr, Anum_edge_id);
+	return tuple_getattr(tuphdr, Anum_ag_edge_id);
 }
 
 Datum
@@ -1177,7 +1180,7 @@ getEdgeStartDatum(Datum datum)
 {
 	HeapTupleHeader	tuphdr = DatumGetHeapTupleHeader(datum);
 
-	return tuple_getattr(tuphdr, Anum_edge_start);
+	return tuple_getattr(tuphdr, Anum_ag_edge_start);
 }
 
 Datum
@@ -1185,7 +1188,7 @@ getEdgeEndDatum(Datum datum)
 {
 	HeapTupleHeader	tuphdr = DatumGetHeapTupleHeader(datum);
 
-	return tuple_getattr(tuphdr, Anum_edge_end);
+	return tuple_getattr(tuphdr, Anum_ag_edge_end);
 }
 
 Datum
@@ -1193,7 +1196,7 @@ getEdgePropDatum(Datum datum)
 {
 	HeapTupleHeader	tuphdr = DatumGetHeapTupleHeader(datum);
 
-	return tuple_getattr(tuphdr, Anum_edge_properties);
+	return tuple_getattr(tuphdr, Anum_ag_edge_properties);
 }
 
 Datum
@@ -1201,7 +1204,7 @@ getEdgeTidDatum(Datum datum)
 {
 	HeapTupleHeader	tuphdr = DatumGetHeapTupleHeader(datum);
 
-	return tuple_getattr(tuphdr, Anum_edge_tid);
+	return tuple_getattr(tuphdr, Anum_ag_edge_tid);
 }
 
 void
@@ -1211,8 +1214,8 @@ getGraphpathArrays(Datum graphpath, Datum *vertices, Datum *edges)
 	Oid			tupType;
 	TupleDesc	tupDesc;
 	HeapTupleData tuple;
-	Datum		values[Natts_graphpath];
-	bool		isnull[Natts_graphpath];
+	Datum		values[Natts_ag_graphpath];
+	bool		isnull[Natts_ag_graphpath];
 
 	tuphdr = DatumGetHeapTupleHeader(graphpath);
 
@@ -1220,7 +1223,7 @@ getGraphpathArrays(Datum graphpath, Datum *vertices, Datum *edges)
 	Assert(tupType == GRAPHPATHOID);
 
 	tupDesc = lookup_rowtype_tupdesc(tupType, -1);
-	Assert(tupDesc->natts == Natts_graphpath);
+	Assert(tupDesc->natts == Natts_ag_graphpath);
 
 	tuple.t_len = HeapTupleHeaderGetDatumLength(tuphdr);
 	ItemPointerSetInvalid(&tuple.t_self);
@@ -1229,30 +1232,30 @@ getGraphpathArrays(Datum graphpath, Datum *vertices, Datum *edges)
 
 	heap_deform_tuple(&tuple, tupDesc, values, isnull);
 	ReleaseTupleDesc(tupDesc);
-	Assert(!isnull[Anum_graphpath_vertices - 1]);
-	Assert(!isnull[Anum_graphpath_edges - 1]);
+	Assert(!isnull[Anum_ag_graphpath_vertices - 1]);
+	Assert(!isnull[Anum_ag_graphpath_edges - 1]);
 
 	if (vertices != NULL)
-		*vertices = values[Anum_graphpath_vertices - 1];
+		*vertices = values[Anum_ag_graphpath_vertices - 1];
 	if (edges != NULL)
-		*edges = values[Anum_graphpath_edges - 1];
+		*edges = values[Anum_ag_graphpath_edges - 1];
 }
 
 Datum
 makeGraphpathDatum(Datum *vertices, int nvertices, Datum *edges, int nedges)
 {
-	Datum		values[Natts_graphpath];
-	bool		isnull[Natts_graphpath] = {false, false};
+	Datum		values[Natts_ag_graphpath];
+	bool		isnull[Natts_ag_graphpath] = {false, false};
 	TupleDesc	tupDesc;
 	HeapTuple	graphpath;
 
-	values[Anum_graphpath_vertices - 1]
+	values[Anum_ag_graphpath_vertices - 1]
 					= makeArrayTypeDatum(vertices, nvertices, VERTEXOID);
-	values[Anum_graphpath_edges - 1]
+	values[Anum_ag_graphpath_edges - 1]
 					= makeArrayTypeDatum(edges, nedges, EDGEOID);
 
 	tupDesc = lookup_rowtype_tupdesc(GRAPHPATHOID, -1);
-	Assert(tupDesc->natts == Natts_graphpath);
+	Assert(tupDesc->natts == Natts_ag_graphpath);
 
 	graphpath = heap_form_tuple(tupDesc, values, isnull);
 
@@ -1264,17 +1267,17 @@ makeGraphpathDatum(Datum *vertices, int nvertices, Datum *edges, int nedges)
 Datum
 makeGraphVertexDatum(Datum id, Datum prop_map, Datum tid)
 {
-	Datum		values[Natts_vertex];
-	bool		isnull[Natts_vertex] = {false, false, false};
+	Datum		values[Natts_ag_vertex];
+	bool		isnull[Natts_ag_vertex] = {false, false, false};
 	TupleDesc	tupDesc;
 	HeapTuple	vertex;
 
-	values[Anum_vertex_id - 1] = id;
-	values[Anum_vertex_properties - 1] = prop_map;
-	values[Anum_vertex_tid - 1] = tid;
+	values[Anum_ag_vertex_id - 1] = id;
+	values[Anum_ag_vertex_properties - 1] = prop_map;
+	values[Anum_ag_vertex_tid - 1] = tid;
 
 	tupDesc = lookup_rowtype_tupdesc(VERTEXOID, -1);
-	Assert(tupDesc->natts == Natts_vertex);
+	Assert(tupDesc->natts == Natts_ag_vertex);
 
 	vertex = heap_form_tuple(tupDesc, values, isnull);
 
@@ -1286,19 +1289,19 @@ makeGraphVertexDatum(Datum id, Datum prop_map, Datum tid)
 Datum
 makeGraphEdgeDatum(Datum id, Datum start, Datum end, Datum prop_map, Datum tid)
 {
-	Datum		values[Natts_edge];
-	bool		isnull[Natts_edge] = {false, false, false, false, false};
+	Datum		values[Natts_ag_edge];
+	bool		isnull[Natts_ag_edge] = {false, false, false, false, false};
 	TupleDesc	tupDesc;
 	HeapTuple	edge;
 
-	values[Anum_edge_id - 1] = id;
-	values[Anum_edge_start - 1] = start;
-	values[Anum_edge_end - 1] = end;
-	values[Anum_edge_properties - 1] = prop_map;
-	values[Anum_edge_tid - 1] = tid;
+	values[Anum_ag_edge_id - 1] = id;
+	values[Anum_ag_edge_start - 1] = start;
+	values[Anum_ag_edge_end - 1] = end;
+	values[Anum_ag_edge_properties - 1] = prop_map;
+	values[Anum_ag_edge_tid - 1] = tid;
 
 	tupDesc = lookup_rowtype_tupdesc(EDGEOID, -1);
-	Assert(tupDesc->natts == Natts_edge);
+	Assert(tupDesc->natts == Natts_ag_edge);
 
 	edge = heap_form_tuple(tupDesc, values, isnull);
 
