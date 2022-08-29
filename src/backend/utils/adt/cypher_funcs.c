@@ -45,12 +45,12 @@ typedef struct FunctionCallJsonbInfo
 	Jsonb	   *args[FUNC_JSONB_MAX_ARGS];
 	Oid			argtypes[FUNC_JSONB_MAX_ARGS];
 	Oid			rettype;
-}			FunctionCallJsonbInfo;
+} FunctionCallJsonbInfo;
 
-static Jsonb *FunctionCallJsonb(FunctionCallJsonbInfo * fcjinfo);
+static Jsonb *FunctionCallJsonb(FunctionCallJsonbInfo *fcjinfo);
 static Datum jsonb_to_datum(Jsonb *j, Oid type);
 static bool is_numeric_integer(Numeric n);
-static void ereport_invalid_jsonb_param(FunctionCallJsonbInfo * fcjinfo);
+static void ereport_invalid_jsonb_param(FunctionCallJsonbInfo *fcjinfo);
 static char *type_to_jsonb_type_str(Oid type);
 static Jsonb *datum_to_jsonb(Datum d, Oid type);
 
@@ -839,7 +839,7 @@ jsonb_trim(PG_FUNCTION_ARGS)
 }
 
 static Jsonb *
-FunctionCallJsonb(FunctionCallJsonbInfo * fcjinfo)
+FunctionCallJsonb(FunctionCallJsonbInfo *fcjinfo)
 {
 	FunctionCallInfo fcinfo;
 	int			i;
@@ -924,7 +924,7 @@ is_numeric_integer(Numeric n)
 }
 
 static void
-ereport_invalid_jsonb_param(FunctionCallJsonbInfo * fcjinfo)
+ereport_invalid_jsonb_param(FunctionCallJsonbInfo *fcjinfo)
 {
 	switch (fcjinfo->nargs)
 	{
@@ -1256,9 +1256,7 @@ array_head(PG_FUNCTION_ARGS)
 	bool		typbyval;
 	char		typalign;
 	Datum		rtnelt;
-	bool		isnull;
-
-	array_iter	it;
+	int		   *count = 1;
 
 	typentry = (TypeCacheEntry *) fcinfo->flinfo->fn_extra;
 
@@ -1279,9 +1277,14 @@ array_head(PG_FUNCTION_ARGS)
 	typbyval = typentry->typbyval;
 	typalign = typentry->typalign;
 
-	array_iter_setup(&it, arr);
-
-	rtnelt = array_iter_next(&it, &isnull, 0, typlen, typbyval, typalign);
+	rtnelt = array_get_element(PointerGetDatum(arr),
+							   1,
+							   &count,
+							   -1,
+							   typlen,
+							   typbyval,
+							   typalign,
+							   &typbyval);
 
 	PG_RETURN_DATUM(rtnelt);
 }
@@ -1299,10 +1302,7 @@ array_last(PG_FUNCTION_ARGS)
 	int			typlen;
 	bool		typbyval;
 	char		typalign;
-	int			i;
 	Datum		rtnelt;
-
-	array_iter	it;
 
 	typentry = (TypeCacheEntry *) fcinfo->flinfo->fn_extra;
 
@@ -1323,20 +1323,14 @@ array_last(PG_FUNCTION_ARGS)
 	typbyval = typentry->typbyval;
 	typalign = typentry->typalign;
 
-	array_iter_setup(&it, arr);
-
-
-	i = nitems;
-
 	rtnelt = array_get_element(PointerGetDatum(arr),
 							   1,
-							   &i,
+							   &nitems,
 							   -1,
 							   typlen,
 							   typbyval,
 							   typalign,
 							   &typbyval);
-
 
 	PG_RETURN_DATUM(rtnelt);
 }
@@ -1358,8 +1352,6 @@ array_tail(PG_FUNCTION_ARGS)
 	int			i;
 	Datum		rtnelt;
 
-	array_iter	it;
-
 	ArrayBuildState *astate = NULL;
 
 	typentry = (TypeCacheEntry *) fcinfo->flinfo->fn_extra;
@@ -1380,8 +1372,6 @@ array_tail(PG_FUNCTION_ARGS)
 	typlen = typentry->typlen;
 	typbyval = typentry->typbyval;
 	typalign = typentry->typalign;
-
-	array_iter_setup(&it, arr);
 
 	astate = initArrayResult(element_type, CurrentMemoryContext, false);
 
