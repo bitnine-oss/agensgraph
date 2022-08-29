@@ -59,8 +59,8 @@ static Node *filterAccessArg(ParseState *pstate, Node *expr, int location,
 							 const char *types);
 static Node *transformParamRef(ParseState *pstate, ParamRef *pref);
 static Node *transformTypeCast(ParseState *pstate, TypeCast *tc);
-static Node *transformCypherMapExpr(ParseState *pstate, CypherMapExpr *m);
-static Node *transformCypherListExpr(ParseState *pstate, CypherListExpr *cl);
+static Node *transformCypherMapExpr(ParseState *pstate, CypherMapExpr * m);
+static Node *transformCypherListExpr(ParseState *pstate, CypherListExpr * cl);
 static Node *transformCypherListComp(ParseState *pstate, CypherListComp * clc);
 static Node *transformCaseExpr(ParseState *pstate, CaseExpr *c);
 static Node *transformFuncCall(ParseState *pstate, FuncCall *fn);
@@ -68,16 +68,16 @@ static List *preprocess_func_args(ParseState *pstate, FuncCall *fn);
 static FuncCandidateList func_get_best_candidate(ParseState *pstate,
 												 FuncCall *fn, int nargs,
 												 Oid argtypes[FUNC_MAX_ARGS]);
-static int func_match_argtypes_jsonb(int nargs, Oid argtypes[FUNC_MAX_ARGS],
-									 FuncCandidateList raw_candidates,
-									 FuncCandidateList *candidates);
+static int	func_match_argtypes_jsonb(int nargs, Oid argtypes[FUNC_MAX_ARGS],
+									  FuncCandidateList raw_candidates,
+									  FuncCandidateList *candidates);
 static FuncCandidateList func_select_candidate_jsonb(int nargs,
-		Oid argtypes[FUNC_MAX_ARGS], FuncCandidateList candidates);
-static int cypher_match_function(int matchDepth, int nargs,
-		Oid *input_base_typeids, TYPCATEGORY *slot_category,
-		FuncCandidateList *candidates);
+													 Oid argtypes[FUNC_MAX_ARGS], FuncCandidateList candidates);
+static int	cypher_match_function(int matchDepth, int nargs,
+								  Oid *input_base_typeids, TYPCATEGORY *slot_category,
+								  FuncCandidateList *candidates);
 static bool cypher_match_function_criteria(int matchDepth, Oid inputBaseType,
-		Oid currentType, TYPCATEGORY slotCategory);
+										   Oid currentType, TYPCATEGORY slotCategory);
 static List *func_get_best_args(ParseState *pstate, List *args,
 								Oid argtypes[FUNC_MAX_ARGS],
 								FuncCandidateList candidate);
@@ -139,7 +139,7 @@ transformCypherExprRecurse(ParseState *pstate, Node *expr)
 			return transformParamRef(pstate, (ParamRef *) expr);
 		case T_A_Const:
 			{
-				A_Const	   *a_con = (A_Const *) expr;
+				A_Const    *a_con = (A_Const *) expr;
 				Value	   *value = &a_con->val;
 
 				return (Node *) make_const(pstate, value, a_con->location);
@@ -162,7 +162,7 @@ transformCypherExprRecurse(ParseState *pstate, Node *expr)
 			return transformCoalesceExpr(pstate, (CoalesceExpr *) expr);
 		case T_SubLink:
 			{
-				SubLink	   *sublink = (SubLink *) expr;
+				SubLink    *sublink = (SubLink *) expr;
 				CypherGenericExpr *cexpr;
 
 				cexpr = makeNode(CypherGenericExpr);
@@ -267,18 +267,19 @@ transformColumnRef(ParseState *pstate, ColumnRef *cref)
 		ListCell   *lni;
 
 		/*
-		 * Find the Var at the current level of ParseState in a greedy fashion,
-		 * i.e., match as many identifiers as possible. This means that, when
-		 * a qualified name is given, resolving it as Var has higher priority
-		 * than resolving it as property access.
+		 * Find the Var at the current level of ParseState in a greedy
+		 * fashion, i.e., match as many identifiers as possible. This means
+		 * that, when a qualified name is given, resolving it as Var has
+		 * higher priority than resolving it as property access.
 		 *
 		 * For example, when `x.y` is given, and if `x.y` can be resolved as
 		 * <Column x, Property y> and <RTE x, Column y>, it will be resolved
 		 * as the later.
 		 *
 		 * This is because, in the above case, there is no way to refer to
-		 * <Column y> if it stops to resolve the name when <Column x> is found.
-		 * However, by using `x['y']`, <Property y> is still accessible.
+		 * <Column y> if it stops to resolve the name when <Column x> is
+		 * found. However, by using `x['y']`, <Property y> is still
+		 * accessible.
 		 */
 
 		foreach(lni, pstate_up->p_namespace)
@@ -301,8 +302,8 @@ transformColumnRef(ParseState *pstate, ColumnRef *cref)
 			}
 
 			/*
-			 * If this RTE is accessible by unqualified names,
-			 * examine `field1`.
+			 * If this RTE is accessible by unqualified names, examine
+			 * `field1`.
 			 */
 			if (nsitem->p_cols_visible)
 			{
@@ -312,8 +313,7 @@ transformColumnRef(ParseState *pstate, ColumnRef *cref)
 			}
 
 			/*
-			 * If this RTE is inaccessible by qualified names,
-			 * skip the rest.
+			 * If this RTE is inaccessible by qualified names, skip the rest.
 			 */
 			if (!nsitem->p_rel_visible)
 				continue;
@@ -423,7 +423,7 @@ transformListCompColumnRef(ParseState *pstate, ColumnRef *cref, char *varname)
 	 * i.e, properties->A => A
 	 */
 	if (pstate->p_expr_kind == EXPR_KIND_INDEX_EXPRESSION &&
-	    list_length(cref->fields) == 2)
+		list_length(cref->fields) == 2)
 	{
 		field1 = llast(cref->fields);
 	}
@@ -647,7 +647,7 @@ transformTypeCast(ParseState *pstate, TypeCast *tc)
 }
 
 static Node *
-transformCypherMapExpr(ParseState *pstate, CypherMapExpr *m)
+transformCypherMapExpr(ParseState *pstate, CypherMapExpr * m)
 {
 	List	   *newkeyvals = NIL;
 	ListCell   *le;
@@ -686,7 +686,7 @@ transformCypherMapExpr(ParseState *pstate, CypherMapExpr *m)
 }
 
 static Node *
-transformCypherListExpr(ParseState *pstate, CypherListExpr *cl)
+transformCypherListExpr(ParseState *pstate, CypherListExpr * cl)
 {
 	List	   *newelems = NIL;
 	ListCell   *le;
@@ -711,7 +711,7 @@ transformCypherListExpr(ParseState *pstate, CypherListExpr *cl)
 }
 
 static Node *
-transformCypherListComp(ParseState *pstate, CypherListComp *clc)
+transformCypherListComp(ParseState *pstate, CypherListComp * clc)
 {
 	Node	   *list;
 	Oid			type;
@@ -808,7 +808,7 @@ transformCaseExpr(ParseState *pstate, CaseExpr *c)
 	rdefresult = (Node *) c->defresult;
 	if (rdefresult == NULL)
 	{
-		A_Const	   *n;
+		A_Const    *n;
 
 		n = makeNode(A_Const);
 		n->val.type = T_Null;
@@ -870,9 +870,13 @@ transformFuncCall(ParseState *pstate, FuncCall *fn)
 	if (list_length(fn->funcname) == 1)
 	{
 		char	   *funcname;
+
 		funcname = strVal(linitial(fn->funcname));
 
-		/* todo: Later, the sin function will be defined as the basic function of PG. */
+		/*
+		 * todo: Later, the sin function will be defined as the basic function
+		 * of PG.
+		 */
 
 		if (strcmp(funcname, "collect") == 0)
 			fn->funcname = list_make1(makeString("jsonb_agg"));
@@ -927,19 +931,19 @@ preprocess_func_args(ParseState *pstate, FuncCall *fn)
 		Node	   *arg;
 
 		/*
-		 * If this is second argument of the substring function, adjust it
-		 * by adding 1 to it because
+		 * If this is second argument of the substring function, adjust it by
+		 * adding 1 to it because
 		 *
-		 * 1) Cypher substring uses 0-based index.
-		 * 2) text version of substring uses 1-based index.
-		 * 3) we will always use text version of substring function.
+		 * 1) Cypher substring uses 0-based index. 2) text version of
+		 * substring uses 1-based index. 3) we will always use text version of
+		 * substring function.
 		 *
 		 * NOTE: Remove this code when we define a rule for selecting a
-		 *       function with given arguments.
+		 * function with given arguments.
 		 */
 		if (isSubstr && nargs == 1)
 		{
-			A_Const	   *aconst = makeNode(A_Const);
+			A_Const    *aconst = makeNode(A_Const);
 
 			/* constant value 1 */
 			aconst->val.type = T_Integer;
@@ -957,7 +961,7 @@ preprocess_func_args(ParseState *pstate, FuncCall *fn)
 
 		argtype = exprType(arg);
 
-		Assert(!(IsA(arg, Param) && argtype == VOIDOID));
+		Assert(!(IsA(arg, Param) &&argtype == VOIDOID));
 
 		args = lappend(args, arg);
 		argtypes[nargs++] = exprType(arg);
@@ -1013,11 +1017,11 @@ func_get_best_candidate(ParseState *pstate, FuncCall *fn, int nargs,
 										   false, false, false);
 
 	/*
-	 * Added to remove jsonb version of substring (jsonb_substr*) from the list
-	 * of candidates if the function is substring.
+	 * Added to remove jsonb version of substring (jsonb_substr*) from the
+	 * list of candidates if the function is substring.
 	 *
 	 * NOTE: Remove this code when we define a rule for selecting a function
-	 *       with given arguments.
+	 * with given arguments.
 	 */
 	if (strcmp(strVal(llast(fn->funcname)), "substring") == 0)
 	{
@@ -1120,9 +1124,9 @@ func_match_argtypes_jsonb(int nargs, Oid argtypes[FUNC_MAX_ARGS],
 		current_candidate->next = *candidates;
 		*candidates = current_candidate;
 		ncandidates++;
-                
-                if(current_candidate->oid == F_ARRAY_HEAD || current_candidate->oid == F_ARRAY_LAST || current_candidate->oid == F_ARRAY_TAIL) 
-                  return 1; 
+
+		if (current_candidate->oid == F_ARRAY_HEAD || current_candidate->oid == F_ARRAY_LAST || current_candidate->oid == F_ARRAY_TAIL)
+			return 1;
 	}
 
 	return ncandidates;
@@ -1144,7 +1148,7 @@ func_select_candidate_jsonb(int nargs, Oid argtypes[FUNC_MAX_ARGS],
 	TYPCATEGORY slot_category[FUNC_MAX_ARGS];
 	bool		resolved_unknowns;
 	bool		slot_has_preferred_type[FUNC_MAX_ARGS];
-	TYPCATEGORY	current_category;
+	TYPCATEGORY current_category;
 	bool		current_is_preferred;
 	FuncCandidateList first_candidate;
 
@@ -1444,16 +1448,16 @@ cypher_match_function_criteria(int matchDepth, Oid inputBaseType,
 		return true;
 
 	/*
-	 * we prioritized NUMERICOID over TEXTOID and BOOLOID due to ambiguity
-	 * in matching aggregate functions for jsonb types.
+	 * we prioritized NUMERICOID over TEXTOID and BOOLOID due to ambiguity in
+	 * matching aggregate functions for jsonb types.
 	 */
 	if (matchDepth >= 3 &&
 		(inputBaseType == JSONBOID && currentType == NUMERICOID))
 		return true;
 
 	/*
-	 * we prioritize BOOLOID, TEXOID, and JSONBOID over the rest as JSONB
-	 * has those types as primitive types
+	 * we prioritize BOOLOID, TEXOID, and JSONBOID over the rest as JSONB has
+	 * those types as primitive types
 	 */
 	if (matchDepth >= 4 &&
 		((inputBaseType == JSONBOID &&
@@ -1462,10 +1466,10 @@ cypher_match_function_criteria(int matchDepth, Oid inputBaseType,
 		return true;
 
 	/*
-	 * the following types are also number in JSON but they have lower priority
-	 * than above types because jsonb stores number using numeric type
-	 * internally and this means that we need to type-cast numeric type to
-	 * those types.
+	 * the following types are also number in JSON but they have lower
+	 * priority than above types because jsonb stores number using numeric
+	 * type internally and this means that we need to type-cast numeric type
+	 * to those types.
 	 */
 	if (matchDepth >= 5 &&
 		(inputBaseType == JSONBOID &&
@@ -1597,13 +1601,13 @@ transformIndirection(ParseState *pstate, A_Indirection *indir)
 		}
 		else
 		{
-			A_Indices		*ind;
-			Node			*lidx = NULL;
-			Node			*uidx = NULL;
-			Oid				arrtype;
-			int32			arrtypmod;
-			Oid				elemtype;
-			SubscriptingRef	*aref;
+			A_Indices  *ind;
+			Node	   *lidx = NULL;
+			Node	   *uidx = NULL;
+			Oid			arrtype;
+			int32		arrtypmod;
+			Oid			elemtype;
+			SubscriptingRef *aref;
 
 			Assert(IsA(i, A_Indices));
 
@@ -1669,8 +1673,8 @@ transformIndirection(ParseState *pstate, A_Indirection *indir)
 			ind = (A_Indices *) i;
 
 			/*
-			 * ExecEvalCypherAccess() will handle lidx and uidx properly
-			 * based on their types.
+			 * ExecEvalCypherAccess() will handle lidx and uidx properly based
+			 * on their types.
 			 */
 
 			lidx = transformCypherExprRecurse(pstate, ind->lidx);
@@ -1782,7 +1786,7 @@ transformAExprOp(ParseState *pstate, A_Expr *a)
 		{
 			if (ltype == JSONBOID || rtype == JSONBOID ||
 				!OidIsValid(LookupOperName(pstate, a->name, ltype, rtype,
-							true, a->location)))
+										   true, a->location)))
 			{
 				char	   *newopname;
 
@@ -1797,11 +1801,11 @@ transformAExprOp(ParseState *pstate, A_Expr *a)
 			}
 		}
 		else if (strcmp(opname, "=") == 0 ||
-			strcmp(opname, "<>") == 0 ||
-			strcmp(opname, "<") == 0 ||
-			strcmp(opname, ">") == 0 ||
-			strcmp(opname, "<=") == 0 ||
-			strcmp(opname, ">=") == 0)
+				 strcmp(opname, "<>") == 0 ||
+				 strcmp(opname, "<") == 0 ||
+				 strcmp(opname, ">") == 0 ||
+				 strcmp(opname, "<=") == 0 ||
+				 strcmp(opname, ">=") == 0)
 		{
 			if (ltype != InvalidOid && rtype == UNKNOWNOID)
 				rtype = ltype;
@@ -1814,7 +1818,7 @@ transformAExprOp(ParseState *pstate, A_Expr *a)
 
 			if (ltype == JSONBOID || rtype == JSONBOID ||
 				!OidIsValid(LookupOperName(pstate, a->name, ltype, rtype,
-							true, a->location)))
+										   true, a->location)))
 			{
 				l = coerce_to_jsonb(pstate, l, "jsonb");
 				r = coerce_to_jsonb(pstate, r, "jsonb");
@@ -2042,14 +2046,10 @@ coerce_expr(ParseState *pstate, Node *expr, Oid ityp, Oid otyp, int32 otypmod,
 		return node;
 
 	/*
-	 * Process JSONBOID input and output types here EXCLUDING:
-	 * JSONOID    -> JSONBOID
-	 * JSONBOID   -> JSONOID
-	 * VERTEXOID  -> JSONBOID
-	 * EDGEOID    -> JSONBOID
-	 * UNKNOWNOID -> JSONBOID
-	 * JSONBOID   -> ANY*OID  ANYOID & (IsPolymorphicType)
-	 * We need to let postgres process these.
+	 * Process JSONBOID input and output types here EXCLUDING: JSONOID    ->
+	 * JSONBOID JSONBOID   -> JSONOID VERTEXOID  -> JSONBOID EDGEOID    ->
+	 * JSONBOID UNKNOWNOID -> JSONBOID JSONBOID   -> ANY*OID  ANYOID &
+	 * (IsPolymorphicType) We need to let postgres process these.
 	 */
 	if (ityp != JSONOID && otyp != JSONOID &&
 		ityp != VERTEXOID && ityp != EDGEOID &&
@@ -2066,7 +2066,7 @@ coerce_expr(ParseState *pstate, Node *expr, Oid ityp, Oid otyp, int32 otypmod,
 				ereport(ERROR,
 						(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
 						 errmsg("cannot cast type jsonb to %s",
-						 format_type_be(otyp))));
+								format_type_be(otyp))));
 				return NULL;
 			}
 
@@ -2090,10 +2090,10 @@ coerce_expr(ParseState *pstate, Node *expr, Oid ityp, Oid otyp, int32 otypmod,
 	}
 
 	/*
-	 * UNKNOWNOID parameters will be handled by p_coerce_param_hook
-	 * Note: We need coerce_to_target_type done last to make sure that
-	 * cypher JSONBOID casts happen before any postgres JSONBOID casts.
-	 * In the event any get added to postgres in the future.
+	 * UNKNOWNOID parameters will be handled by p_coerce_param_hook Note: We
+	 * need coerce_to_target_type done last to make sure that cypher JSONBOID
+	 * casts happen before any postgres JSONBOID casts. In the event any get
+	 * added to postgres in the future.
 	 */
 	node = coerce_to_target_type(pstate, expr, ityp, otyp, otypmod, cctx,
 								 cform, loc);
@@ -2390,7 +2390,7 @@ transformCypherMapForSet(ParseState *pstate, Node *expr, List **pathelems,
 						(errcode(ERRCODE_DATATYPE_MISMATCH),
 						 errmsg("path element must be text"),
 						 parser_errposition(pstate,
-										exprLocation((Node *) cind->uidx))));
+											exprLocation((Node *) cind->uidx))));
 				return NULL;
 			}
 
@@ -2421,7 +2421,7 @@ coerce_cypher_arg_to_boolean(ParseState *pstate, Node *node,
 
 	if (inputTypeId != BOOLOID)
 	{
-		Node		*newnode;
+		Node	   *newnode;
 
 		newnode = coerce_expr(pstate, node, inputTypeId, BOOLOID, -1,
 							  COERCION_ASSIGNMENT, COERCE_IMPLICIT_CAST, -1);
@@ -2433,7 +2433,7 @@ coerce_cypher_arg_to_boolean(ParseState *pstate, Node *node,
 					 errmsg("argument of %s must be type %s, not type %s",
 							constructName, "boolean",
 							format_type_be(inputTypeId)),
-							parser_errposition(pstate, exprLocation(node))));
+					 parser_errposition(pstate, exprLocation(node))));
 		}
 		node = newnode;
 	}
@@ -2445,7 +2445,7 @@ coerce_cypher_arg_to_boolean(ParseState *pstate, Node *node,
 		/* translator: %s is name of a SQL construct, eg WHERE */
 				 errmsg("argument of %s must not return a set",
 						constructName),
-						parser_errposition(pstate, exprLocation(node))));
+				 parser_errposition(pstate, exprLocation(node))));
 	}
 
 	return node;

@@ -45,32 +45,33 @@ typedef struct FunctionCallJsonbInfo
 	Jsonb	   *args[FUNC_JSONB_MAX_ARGS];
 	Oid			argtypes[FUNC_JSONB_MAX_ARGS];
 	Oid			rettype;
-} FunctionCallJsonbInfo;
+}			FunctionCallJsonbInfo;
 
-static Jsonb *FunctionCallJsonb(FunctionCallJsonbInfo *fcjinfo);
+static Jsonb *FunctionCallJsonb(FunctionCallJsonbInfo * fcjinfo);
 static Datum jsonb_to_datum(Jsonb *j, Oid type);
 static bool is_numeric_integer(Numeric n);
-static void ereport_invalid_jsonb_param(FunctionCallJsonbInfo *fcjinfo);
+static void ereport_invalid_jsonb_param(FunctionCallJsonbInfo * fcjinfo);
 static char *type_to_jsonb_type_str(Oid type);
 static Jsonb *datum_to_jsonb(Datum d, Oid type);
 
 Datum
-jsonb_head(PG_FUNCTION_ARGS){
+jsonb_head(PG_FUNCTION_ARGS)
+{
 	Jsonb	   *j = PG_GETARG_JSONB_P(0);
 	JsonbValue *jv;
-	        
+
 	if (!JB_ROOT_IS_ARRAY(j) || JB_ROOT_IS_SCALAR(j))
-	  	ereport(ERROR,
-                                (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-                                errmsg("head(): list is expected but %s",
-                                              JsonbToCString(NULL, &j->root, VARSIZE(j)))));
+		ereport(ERROR,
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("head(): list is expected but %s",
+						JsonbToCString(NULL, &j->root, VARSIZE(j)))));
 
 	jv = getIthJsonbValueFromContainer(&j->root, 0);
-        
-        if (jv == NULL)
-            PG_RETURN_NULL();
 
-        PG_RETURN_JSONB_P(JsonbValueToJsonb(jv));
+	if (jv == NULL)
+		PG_RETURN_NULL();
+
+	PG_RETURN_JSONB_P(JsonbValueToJsonb(jv));
 }
 
 Datum
@@ -838,12 +839,12 @@ jsonb_trim(PG_FUNCTION_ARGS)
 }
 
 static Jsonb *
-FunctionCallJsonb(FunctionCallJsonbInfo *fcjinfo)
+FunctionCallJsonb(FunctionCallJsonbInfo * fcjinfo)
 {
 	FunctionCallInfo fcinfo;
 	int			i;
 	Datum		datum;
-	Jsonb		*result;
+	Jsonb	   *result;
 
 	if (fcjinfo->nargs > FUNC_JSONB_MAX_ARGS)
 	{
@@ -883,7 +884,7 @@ jsonb_to_datum(Jsonb *j, Oid type)
 		case INT4OID:
 			if (jv->type == jbvNumeric && is_numeric_integer(jv->val.numeric))
 				retval = DirectFunctionCall1(numeric_int4,
-										   NumericGetDatum(jv->val.numeric));
+											 NumericGetDatum(jv->val.numeric));
 			break;
 		case TEXTOID:
 			if (jv->type == jbvString)
@@ -898,7 +899,7 @@ jsonb_to_datum(Jsonb *j, Oid type)
 		case FLOAT8OID:
 			if (jv->type == jbvNumeric)
 				retval = DirectFunctionCall1(numeric_float8,
-										   NumericGetDatum(jv->val.numeric));
+											 NumericGetDatum(jv->val.numeric));
 			break;
 		case NUMERICOID:
 			if (jv->type == jbvNumeric)
@@ -923,7 +924,7 @@ is_numeric_integer(Numeric n)
 }
 
 static void
-ereport_invalid_jsonb_param(FunctionCallJsonbInfo *fcjinfo)
+ereport_invalid_jsonb_param(FunctionCallJsonbInfo * fcjinfo)
 {
 	switch (fcjinfo->nargs)
 	{
@@ -1216,8 +1217,8 @@ get_last_graph_write_stats(PG_FUNCTION_ARGS)
 
 	if (funcctx->call_cntr < 1)
 	{
-		Datum		*dvalues;
-		bool		*nulls;
+		Datum	   *dvalues;
+		bool	   *nulls;
 		HeapTuple	tuple;
 		TupleDesc	tupdesc = funcctx->attinmeta->tupdesc;
 
@@ -1245,157 +1246,161 @@ get_last_graph_write_stats(PG_FUNCTION_ARGS)
 }
 
 Datum
-array_head(PG_FUNCTION_ARGS){
-  
-    AnyArrayType        *arr = PG_GETARG_ANY_ARRAY_P(0);
-    Oid                 element_type = AARR_ELEMTYPE(arr);
-    TypeCacheEntry      *typentry;
-    int                 typlen;
-    bool                typbyval;
-    char		typalign;
-    Datum		rtnelt;
-    bool		isnull;
-    
-    array_iter	it;
-    
-    typentry = (TypeCacheEntry *) fcinfo->flinfo->fn_extra;
-    
-    if (typentry == NULL ||
-        typentry->type_id != element_type)
-    {
-      typentry = lookup_type_cache(element_type,
-                                   TYPECACHE_CMP_PROC_FINFO);
-      if (!OidIsValid(typentry->cmp_proc_finfo.fn_oid))
-        ereport(ERROR,
-                (errcode(ERRCODE_UNDEFINED_FUNCTION),
-                 errmsg("could not identify a comparison function for type %s",
-                        format_type_be(element_type))));
-      fcinfo->flinfo->fn_extra = (void *) typentry;
-    }
-    
-    typlen = typentry->typlen;
-    typbyval = typentry->typbyval;
-    typalign = typentry->typalign;
-    
-    array_iter_setup(&it, arr);
-    
-    rtnelt = array_iter_next(&it, &isnull, 0, typlen, typbyval, typalign);
-    
-    PG_RETURN_DATUM(rtnelt);
+array_head(PG_FUNCTION_ARGS)
+{
+
+	AnyArrayType *arr = PG_GETARG_ANY_ARRAY_P(0);
+	Oid			element_type = AARR_ELEMTYPE(arr);
+	TypeCacheEntry *typentry;
+	int			typlen;
+	bool		typbyval;
+	char		typalign;
+	Datum		rtnelt;
+	bool		isnull;
+
+	array_iter	it;
+
+	typentry = (TypeCacheEntry *) fcinfo->flinfo->fn_extra;
+
+	if (typentry == NULL ||
+		typentry->type_id != element_type)
+	{
+		typentry = lookup_type_cache(element_type,
+									 TYPECACHE_CMP_PROC_FINFO);
+		if (!OidIsValid(typentry->cmp_proc_finfo.fn_oid))
+			ereport(ERROR,
+					(errcode(ERRCODE_UNDEFINED_FUNCTION),
+					 errmsg("could not identify a comparison function for type %s",
+							format_type_be(element_type))));
+		fcinfo->flinfo->fn_extra = (void *) typentry;
+	}
+
+	typlen = typentry->typlen;
+	typbyval = typentry->typbyval;
+	typalign = typentry->typalign;
+
+	array_iter_setup(&it, arr);
+
+	rtnelt = array_iter_next(&it, &isnull, 0, typlen, typbyval, typalign);
+
+	PG_RETURN_DATUM(rtnelt);
 }
 
 Datum
-array_last(PG_FUNCTION_ARGS){
+array_last(PG_FUNCTION_ARGS)
+{
 
-  AnyArrayType          *arr = PG_GETARG_ANY_ARRAY_P(0);
-  int			ndims = AARR_NDIM(arr);
-  int                   *dims = AARR_DIMS(arr);
-  int			nitems = ArrayGetNItems(ndims, dims);
-  Oid			element_type = AARR_ELEMTYPE(arr);
-  TypeCacheEntry        *typentry;
-  int                   typlen;
-  bool                  typbyval;
-  char                  typalign;
-  int                   i;
-  Datum                 rtnelt;
-  
-  array_iter            it;
-    
-  typentry = (TypeCacheEntry *) fcinfo->flinfo->fn_extra;
-    
-  if (typentry == NULL ||
-      typentry->type_id != element_type)
-  {
-    typentry = lookup_type_cache(element_type,
-                                 TYPECACHE_CMP_PROC_FINFO);
-    if (!OidIsValid(typentry->cmp_proc_finfo.fn_oid))
-      ereport(ERROR,
-              (errcode(ERRCODE_UNDEFINED_FUNCTION),
-               errmsg("could not identify a comparison function for type %s",
-                      format_type_be(element_type))));
-    fcinfo->flinfo->fn_extra = (void *) typentry;
-  }
-    
-  typlen = typentry->typlen;
-  typbyval = typentry->typbyval;
-  typalign = typentry->typalign;
-    
-  array_iter_setup(&it, arr);
- 
-    
-  i = nitems;
-  
-  rtnelt = array_get_element(PointerGetDatum(arr), 
-                          1,
-                          &i, 
-                          -1, 
-                          typlen,
-                          typbyval, 
-                          typalign,
-                          &typbyval);
-  
-  
-  PG_RETURN_DATUM(rtnelt);
+	AnyArrayType *arr = PG_GETARG_ANY_ARRAY_P(0);
+	int			ndims = AARR_NDIM(arr);
+	int		   *dims = AARR_DIMS(arr);
+	int			nitems = ArrayGetNItems(ndims, dims);
+	Oid			element_type = AARR_ELEMTYPE(arr);
+	TypeCacheEntry *typentry;
+	int			typlen;
+	bool		typbyval;
+	char		typalign;
+	int			i;
+	Datum		rtnelt;
+
+	array_iter	it;
+
+	typentry = (TypeCacheEntry *) fcinfo->flinfo->fn_extra;
+
+	if (typentry == NULL ||
+		typentry->type_id != element_type)
+	{
+		typentry = lookup_type_cache(element_type,
+									 TYPECACHE_CMP_PROC_FINFO);
+		if (!OidIsValid(typentry->cmp_proc_finfo.fn_oid))
+			ereport(ERROR,
+					(errcode(ERRCODE_UNDEFINED_FUNCTION),
+					 errmsg("could not identify a comparison function for type %s",
+							format_type_be(element_type))));
+		fcinfo->flinfo->fn_extra = (void *) typentry;
+	}
+
+	typlen = typentry->typlen;
+	typbyval = typentry->typbyval;
+	typalign = typentry->typalign;
+
+	array_iter_setup(&it, arr);
+
+
+	i = nitems;
+
+	rtnelt = array_get_element(PointerGetDatum(arr),
+							   1,
+							   &i,
+							   -1,
+							   typlen,
+							   typbyval,
+							   typalign,
+							   &typbyval);
+
+
+	PG_RETURN_DATUM(rtnelt);
 }
 
 
 Datum
-array_tail(PG_FUNCTION_ARGS){
-  
-  AnyArrayType *arr = PG_GETARG_ANY_ARRAY_P(0);
-  int			ndims = AARR_NDIM(arr);
-  int		       *dims = AARR_DIMS(arr);
-  int			nitems = ArrayGetNItems(ndims, dims);
-  Oid			element_type = AARR_ELEMTYPE(arr);
-  TypeCacheEntry        *typentry;
-  int			typlen;
-  bool		        typbyval;
-  char		        typalign;
-  int                   i;
-  Datum                 rtnelt;
-  
-  array_iter	        it;
-  
-  ArrayBuildState *astate = NULL;
-  
-  typentry = (TypeCacheEntry *) fcinfo->flinfo->fn_extra;
-    
-  if (typentry == NULL ||
-      typentry->type_id != element_type)
-  {
-    typentry = lookup_type_cache(element_type,
-                                 TYPECACHE_CMP_PROC_FINFO);
-    if (!OidIsValid(typentry->cmp_proc_finfo.fn_oid))
-      ereport(ERROR,
-              (errcode(ERRCODE_UNDEFINED_FUNCTION),
-               errmsg("could not identify a comparison function for type %s",
-                      format_type_be(element_type))));
-    fcinfo->flinfo->fn_extra = (void *) typentry;
-  }
-    
-  typlen = typentry->typlen;
-  typbyval = typentry->typbyval;
-  typalign = typentry->typalign;
-    
-  array_iter_setup(&it, arr);
-  
-  astate = initArrayResult(element_type, CurrentMemoryContext, false);
-  
-  for(i = 2 ; i <= nitems; i++){
-    
-    rtnelt = array_get_element(PointerGetDatum(arr), 
-                               1,
-                               &i, 
-                               -1, 
-                               typlen,
-                               typbyval, 
-                               typalign,
-                               &typbyval);
-    astate =
-        accumArrayResult(astate, rtnelt, false,
-                         element_type, CurrentMemoryContext);
-  
-  }
-  
-  PG_RETURN_ARRAYTYPE_P(makeArrayResult(astate, CurrentMemoryContext));
+array_tail(PG_FUNCTION_ARGS)
+{
+
+	AnyArrayType *arr = PG_GETARG_ANY_ARRAY_P(0);
+	int			ndims = AARR_NDIM(arr);
+	int		   *dims = AARR_DIMS(arr);
+	int			nitems = ArrayGetNItems(ndims, dims);
+	Oid			element_type = AARR_ELEMTYPE(arr);
+	TypeCacheEntry *typentry;
+	int			typlen;
+	bool		typbyval;
+	char		typalign;
+	int			i;
+	Datum		rtnelt;
+
+	array_iter	it;
+
+	ArrayBuildState *astate = NULL;
+
+	typentry = (TypeCacheEntry *) fcinfo->flinfo->fn_extra;
+
+	if (typentry == NULL ||
+		typentry->type_id != element_type)
+	{
+		typentry = lookup_type_cache(element_type,
+									 TYPECACHE_CMP_PROC_FINFO);
+		if (!OidIsValid(typentry->cmp_proc_finfo.fn_oid))
+			ereport(ERROR,
+					(errcode(ERRCODE_UNDEFINED_FUNCTION),
+					 errmsg("could not identify a comparison function for type %s",
+							format_type_be(element_type))));
+		fcinfo->flinfo->fn_extra = (void *) typentry;
+	}
+
+	typlen = typentry->typlen;
+	typbyval = typentry->typbyval;
+	typalign = typentry->typalign;
+
+	array_iter_setup(&it, arr);
+
+	astate = initArrayResult(element_type, CurrentMemoryContext, false);
+
+	for (i = 2; i <= nitems; i++)
+	{
+
+		rtnelt = array_get_element(PointerGetDatum(arr),
+								   1,
+								   &i,
+								   -1,
+								   typlen,
+								   typbyval,
+								   typalign,
+								   &typbyval);
+		astate =
+			accumArrayResult(astate, rtnelt, false,
+							 element_type, CurrentMemoryContext);
+
+	}
+
+	PG_RETURN_ARRAYTYPE_P(makeArrayResult(astate, CurrentMemoryContext));
 }
