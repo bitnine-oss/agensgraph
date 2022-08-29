@@ -1747,6 +1747,12 @@ ProcessUtilitySlow(ParseState *pstate,
 
 			case T_CreateOpFamilyStmt:
 				address = DefineOpFamily((CreateOpFamilyStmt *) parsetree);
+
+				/*
+				 * DefineOpFamily calls EventTriggerCollectSimpleCommand
+				 * directly.
+				 */
+				commandCollected = true;
 				break;
 
 			case T_CreateTransformStmt:

@@ -1,16 +1,13 @@
 
 # Copyright (c) 2022, PostgreSQL Global Development Group
 
-# allow use of release 15+ perl namespace in older branches
-# just 'use' the older module name.
-# See PostgresNode.pm for function implementations
-
-package PostgreSQL::Test::Cluster;
+# Allow use of release 15+ Perl package name in older branches, by giving that
+# package the same symbol table as the older package.  See PostgresNode::new
+# for supporting heuristics.
 
 use strict;
 use warnings;
-
-use PostgresNode;
+BEGIN { *PostgreSQL::Test::Cluster:: = \*PostgresNode::; }
+use PostgresNode ();
 
 1;
-
