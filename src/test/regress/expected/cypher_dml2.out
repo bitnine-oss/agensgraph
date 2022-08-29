@@ -29,10 +29,51 @@ RETURN count(p);
  0
 (1 row)
 
+-- AGV2-26, head/tail/last returns array
+CREATE(:v_user{name:'userA'});
+CREATE(:v_title{name:'TitleA'});
+CREATE(:v_type{name:'TypeA'});
+CREATE(:v_sub{name:'SubA'});
+MATCH(v1:v_user{name:'userA'}), (v2:v_title{name:'TitleA'})
+CREATE (v1)-[:e_user_title{name:'(1)', val:1}]->(v2);
+MATCH(v1:v_title{name:'TitleA'}), (v2:v_type{name:'TypeA'})
+CREATE (v1)-[:e_title_type{name:'(2)', val:2}]->(v2);
+MATCH(v1:v_type{name:'TypeA'}), (v2:v_sub{name:'SubA'})
+CREATE (v1)-[:e_title_type{name:'(3)', val:3}]->(v2);
+MATCH(n)-[e*3]->(n3) RETURN e;
+                                                                                e                                                                                
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------
+ [e_user_title[9.1][5.1,6.1]{"val": 1, "name": "(1)"},e_title_type[10.1][6.1,7.1]{"val": 2, "name": "(2)"},e_title_type[10.2][7.1,8.1]{"val": 3, "name": "(3)"}]
+(1 row)
+
+MATCH(n)-[e*3]->(n3) RETURN head(e);
+                        head                         
+-----------------------------------------------------
+ e_user_title[9.1][5.1,6.1]{"val": 1, "name": "(1)"}
+(1 row)
+
+MATCH(n)-[e*3]->(n3) RETURN tail(e);
+                                                    tail                                                     
+-------------------------------------------------------------------------------------------------------------
+ [e_title_type[10.1][6.1,7.1]{"val": 2, "name": "(2)"},e_title_type[10.2][7.1,8.1]{"val": 3, "name": "(3)"}]
+(1 row)
+
+MATCH(n)-[e*3]->(n3) RETURN last(e);
+                         last                         
+------------------------------------------------------
+ e_title_type[10.2][7.1,8.1]{"val": 3, "name": "(3)"}
+(1 row)
+
 DROP GRAPH cypher_dml2 CASCADE;
-NOTICE:  drop cascades to 5 other objects
+NOTICE:  drop cascades to 11 other objects
 DETAIL:  drop cascades to sequence cypher_dml2.ag_label_seq
 drop cascades to vlabel ag_vertex
 drop cascades to elabel ag_edge
 drop cascades to vlabel v1
 drop cascades to elabel e1
+drop cascades to vlabel v_user
+drop cascades to vlabel v_title
+drop cascades to vlabel v_type
+drop cascades to vlabel v_sub
+drop cascades to elabel e_user_title
+drop cascades to elabel e_title_type

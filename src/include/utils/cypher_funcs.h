@@ -66,6 +66,11 @@ extern Datum jsonb_string_ends_with(PG_FUNCTION_ARGS);
 extern Datum jsonb_string_contains(PG_FUNCTION_ARGS);
 extern Datum jsonb_string_regex(PG_FUNCTION_ARGS);
 
+/* for array supports */
+extern Datum array_head(PG_FUNCTION_ARGS);
+extern Datum array_last(PG_FUNCTION_ARGS);
+extern Datum array_tail(PG_FUNCTION_ARGS);
+
 /* utility */
 extern Datum get_last_graph_write_stats(PG_FUNCTION_ARGS);
 
