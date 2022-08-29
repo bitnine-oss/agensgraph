@@ -11343,4 +11343,15 @@
   proname => 'binary_upgrade_set_next_ag_label_oid', provolatile => 'v',
   proparallel => 'r', prorettype => 'void', proargtypes => 'oid',
   prosrc => 'binary_upgrade_set_next_ag_label_oid' },
+
+
+{ oid => '8003', descr => 'the first element in a list',
+proname => 'head', prorettype => 'anyelement', proargtypes => 'anyarray',
+  prosrc => 'array_head' },
+{ oid => '8004', descr => 'the last element in a list',
+proname => 'last', prorettype => 'anyelement', proargtypes => 'anyarray',
+  prosrc => 'array_last' },
+{ oid => '8005', descr => 'a list except the first element',
+proname => 'tail', prorettype => 'anyarray', proargtypes => 'anyarray',
+  prosrc => 'array_tail' },        
 ]
