@@ -18799,7 +18799,13 @@ dumpLabelSchema(Archive *fout, TableInfo *tblinfo)
 	setGraphPath(q, tblinfo->dobj.namespace);
 	setGraphPath(delq, tblinfo->dobj.namespace);
 
-	appendPQExpBuffer(delq, "DROP %s %s;\n", reltypename, qrelname);
+	/* =====================================================
+	 * If it is not cascade, then error occurs.
+	 * "cannot drop <LABEL_NAME> because it is not empty."
+	 * See RemoveObjects()
+	 * =====================================================
+	 */
+	appendPQExpBuffer(delq, "DROP %s %s CASCADE;\n", reltypename, qrelname);
 
 	if (dopt->binary_upgrade)
 	{
