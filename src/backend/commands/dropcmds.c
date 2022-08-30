@@ -104,34 +104,10 @@ RemoveObjects(DropStmt *stmt)
 						 errhint("Use DROP AGGREGATE to drop aggregate functions.")));
 		}
 
-		if (stmt->removeType == OBJECT_VLABEL)
+		if (stmt->removeType == OBJECT_VLABEL ||
+			stmt->removeType == OBJECT_ELABEL)
 		{
-			CheckLabelType(OBJECT_VLABEL, address.objectId, "DROP");
-
-			if (stmt->behavior == DROP_CASCADE)
-			{
-				RangeVar	*lab = makeRangeVarFromNameList(castNode(List, object));
-
-				deleteRelatedEdges(lab->relname);
-
-				agstat_drop_vlabel(lab->relname);
-			}
-			else
-			{
-				Assert(stmt->behavior == DROP_RESTRICT);
-
-				if (!isEmptyLabel(NameListToString(castNode(List, object))))
-				{
-					ereport(ERROR,
-							(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-							 errmsg("cannot drop %s because it is not empty.",
-									NameListToString(castNode(List, object)))));
-				}
-			}
-		}
-		else if (stmt->removeType == OBJECT_ELABEL)
-		{
-			CheckLabelType(OBJECT_ELABEL, address.objectId, "DROP");
+			CheckLabelType(stmt->removeType, address.objectId, "DROP");
 
 			if (stmt->behavior == DROP_RESTRICT &&
 				!isEmptyLabel(NameListToString(castNode(List, object))))
@@ -145,7 +121,15 @@ RemoveObjects(DropStmt *stmt)
 			{
 				RangeVar	*lab = makeRangeVarFromNameList(castNode(List, object));
 
-				agstat_drop_elabel(lab->relname);
+				if (stmt->removeType == OBJECT_VLABEL)
+				{
+					deleteRelatedEdges(lab->relname);
+					agstat_drop_vlabel(lab->relname);
+				}
+				else
+				{
+					agstat_drop_elabel(lab->relname);
+				}
 			}
 		}
 		else if (stmt->removeType == OBJECT_GRAPH)
