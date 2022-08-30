@@ -231,7 +231,8 @@ standard_ExecutorStart(QueryDesc *queryDesc, int eflags)
 			 * hack, since AfterTriggerBeginQuery/AfterTriggerEndQuery aren't
 			 * all that expensive, but we might as well do it.
 			 */
-			if (!queryDesc->plannedstmt->hasModifyingCTE)
+			if (!queryDesc->plannedstmt->hasModifyingCTE &&
+				!queryDesc->plannedstmt->hasGraphwriteClause)
 				eflags |= EXEC_FLAG_SKIP_TRIGGERS;
 			break;
 

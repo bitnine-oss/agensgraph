@@ -18,6 +18,7 @@
 #include "access/tableam.h"
 #include "pgstat.h"
 #include "access/xact.h"
+#include "commands/trigger.h"
 
 static TupleTableSlot *createPath(ModifyGraphState *mgstate, GraphPath *path,
 								  TupleTableSlot *slot);
@@ -159,6 +160,7 @@ createVertex(ModifyGraphState *mgstate, GraphVertex *gvertex, Graphid *vid,
 	ResultRelInfo *savedResultRelInfo;
 	Datum		vertex;
 	Datum		vertexProp;
+	List	   *recheckIndexes = NIL;
 
 	resultRelInfo = getResultRelInfo(mgstate, gvertex->relid);
 	savedResultRelInfo = estate->es_result_relation_info;
@@ -185,6 +187,18 @@ createVertex(ModifyGraphState *mgstate, GraphVertex *gvertex, Graphid *vid,
 	ExecMaterializeSlot(elemTupleSlot);
 
 	/*
+	 * BEFORE ROW INSERT Triggers.
+	 */
+	if (resultRelInfo->ri_TrigDesc &&
+		resultRelInfo->ri_TrigDesc->trig_insert_before_row)
+	{
+		if (!ExecBRInsertTriggers(estate, resultRelInfo, elemTupleSlot))
+		{
+			elog(ERROR, "Trigger must not be NULL on Cypher Clause.");
+		}
+	}
+
+	/*
 	 * Constraints might reference the tableoid column, so initialize
 	 * t_tableOid before evaluating them.
 	 */
@@ -205,8 +219,13 @@ createVertex(ModifyGraphState *mgstate, GraphVertex *gvertex, Graphid *vid,
 
 	/* insert index entries for the tuple */
 	if (resultRelInfo->ri_NumIndices > 0)
-		ExecInsertIndexTuples(elemTupleSlot, estate, false,
-							  NULL, NIL);
+		recheckIndexes = ExecInsertIndexTuples(elemTupleSlot, estate, false,
+											   NULL, NIL);
+
+	/* AFTER ROW INSERT Triggers */
+	ExecARInsertTriggers(estate, resultRelInfo, elemTupleSlot, recheckIndexes,
+						 NULL);
+	list_free(recheckIndexes);
 
 	vertex = makeGraphVertexDatum(elemTupleSlot->tts_values[0],
 								  elemTupleSlot->tts_values[1],
@@ -233,6 +252,7 @@ createEdge(ModifyGraphState *mgstate, GraphEdge *gedge, Graphid start,
 	Graphid		id = 0;
 	Datum		edge;
 	Datum		edgeProp;
+	List	   *recheckIndexes = NIL;
 
 	resultRelInfo = getResultRelInfo(mgstate, gedge->relid);
 	savedResultRelInfo = estate->es_result_relation_info;
@@ -260,6 +280,19 @@ createEdge(ModifyGraphState *mgstate, GraphEdge *gedge, Graphid start,
 	ExecStoreVirtualTuple(elemTupleSlot);
 
 	ExecMaterializeSlot(elemTupleSlot);
+
+	/*
+	 * BEFORE ROW INSERT Triggers.
+	 */
+	if (resultRelInfo->ri_TrigDesc &&
+		resultRelInfo->ri_TrigDesc->trig_insert_before_row)
+	{
+		if (!ExecBRInsertTriggers(estate, resultRelInfo, elemTupleSlot))
+		{
+			elog(ERROR, "Trigger must not be NULL on Cypher Clause.");
+		}
+	}
+
 	elemTupleSlot->tts_tableOid = RelationGetRelid(resultRelInfo->ri_RelationDesc);
 
 	if (resultRelInfo->ri_RelationDesc->rd_att->constr != NULL)
@@ -270,8 +303,13 @@ createEdge(ModifyGraphState *mgstate, GraphEdge *gedge, Graphid start,
 					   0, NULL);
 
 	if (resultRelInfo->ri_NumIndices > 0)
-		ExecInsertIndexTuples(elemTupleSlot, estate, false,
-							  NULL, NIL);
+		recheckIndexes = ExecInsertIndexTuples(elemTupleSlot, estate, false,
+											   NULL, NIL);
+
+	/* AFTER ROW INSERT Triggers */
+	ExecARInsertTriggers(estate, resultRelInfo, elemTupleSlot, recheckIndexes,
+						 NULL);
+	list_free(recheckIndexes);
 
 	edge = makeGraphEdgeDatum(elemTupleSlot->tts_values[0],
 							  elemTupleSlot->tts_values[1],
