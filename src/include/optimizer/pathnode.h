@@ -252,8 +252,7 @@ extern RecursiveUnionPath *create_recursiveunion_path(PlannerInfo *root,
 													  PathTarget *target,
 													  List *distinctList,
 													  int wtParam,
-													  double numGroups,
-													  int maxDepth);
+													  double numGroups);
 extern LockRowsPath *create_lockrows_path(PlannerInfo *root, RelOptInfo *rel,
 										  Path *subpath, List *rowMarks, int epqParam);
 extern ModifyTablePath *create_modifytable_path(PlannerInfo *root,

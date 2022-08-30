@@ -25,6 +25,11 @@
 #include "utils/lsyscache.h"
 #include "nodes/graphnodes.h"
 
+/* Ignore deprecated-non-prototype warnings. */
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-non-prototype"
+
+
 static bool expression_returns_set_walker(Node *node, void *context);
 static int	leftmostLoc(int loc1, int loc2);
 static bool fix_opfuncids_walker(Node *node, void *context);
@@ -5006,3 +5011,5 @@ raw_expression_tree_mutator(Node *node,
 	/* can't get here, but keep compiler happy */
 	return NULL;
 }
+
+#pragma clang diagnostic pop

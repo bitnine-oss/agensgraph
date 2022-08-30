@@ -3453,8 +3453,7 @@ create_recursiveunion_path(PlannerInfo *root,
 						   PathTarget *target,
 						   List *distinctList,
 						   int wtParam,
-						   double numGroups,
-						   int maxDepth)
+						   double numGroups)
 {
 	RecursiveUnionPath *pathnode = makeNode(RecursiveUnionPath);
 
@@ -3476,8 +3475,6 @@ create_recursiveunion_path(PlannerInfo *root,
 	pathnode->distinctList = distinctList;
 	pathnode->wtParam = wtParam;
 	pathnode->numGroups = numGroups;
-
-	pathnode->maxDepth = maxDepth;
 
 	cost_recursive_union(&pathnode->path, leftpath, rightpath);
 
