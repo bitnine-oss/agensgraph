@@ -14,8 +14,8 @@
 #include "access/htup_details.h"
 #include "catalog/ag_graphmeta.h"
 #include "catalog/ag_label.h"
+#include "catalog/ag_edge_d.h"
 #include "catalog/indexing.h"
-#include "utils/graph.h"
 #include "utils/rel.h"
 #include "utils/snapmgr.h"
 
@@ -86,15 +86,15 @@ scan_label(Oid relid, Oid graphid)
 		bool	found;
 		bool	isnull;
 
-		dat = heap_getattr(tup, Anum_edge_id,
+		dat = heap_getattr(tup, Anum_ag_edge_id,
 						   RelationGetDescr(rel), &isnull);
 		edge = GraphidGetLabid(DatumGetGraphid(dat));
 
-		dat = heap_getattr(tup, Anum_edge_start,
+		dat = heap_getattr(tup, Anum_ag_edge_start,
 						   RelationGetDescr(rel), &isnull);
 		start = GraphidGetLabid(DatumGetGraphid(dat));
 
-		dat = heap_getattr(tup, Anum_edge_end,
+		dat = heap_getattr(tup, Anum_ag_edge_end,
 						   RelationGetDescr(rel), &isnull);
 		end = GraphidGetLabid(DatumGetGraphid(dat));
 
