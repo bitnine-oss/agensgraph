@@ -1615,7 +1615,6 @@ cost_recursive_union(Path *runion, Path *nrterm, Path *rterm)
 	Cost		startup_cost;
 	Cost		total_cost;
 	double		total_rows;
-	RecursiveUnionPath *rupath;
 
 	/* We probably have decent estimates for the non-recursive term */
 	startup_cost = nrterm->startup_cost;
@@ -1628,19 +1627,8 @@ cost_recursive_union(Path *runion, Path *nrterm, Path *rterm)
 	 * size of each one of them.  These are mighty shaky assumptions but it's
 	 * hard to see how to do better.
 	 */
-	rupath = (RecursiveUnionPath *) runion;
-	if (rupath->maxDepth > 0)
-	{
-		int loop = rupath->maxDepth - 1;
-
-		total_cost += loop * rterm->total_cost;
-		total_rows += loop * rterm->rows;
-	}
-	else
-	{
-		total_cost += AG_DEFAULT_RECURSIVEUNION_RTERM_ITER_CNT * rterm->total_cost;
-		total_rows += AG_DEFAULT_RECURSIVEUNION_RTERM_ITER_CNT * rterm->rows;
-	}
+	total_cost += 10 * rterm->total_cost;
+	total_rows += 10 * rterm->rows;
 
 	/*
 	 * Also charge cpu_tuple_cost per row to account for the costs of
@@ -5146,8 +5134,7 @@ set_values_size_estimates(PlannerInfo *root, RelOptInfo *rel)
  * We set the same fields as set_baserel_size_estimates.
  */
 void
-set_cte_size_estimates(PlannerInfo *root, RelOptInfo *rel, double cte_rows,
-					   int iter_cnt)
+set_cte_size_estimates(PlannerInfo *root, RelOptInfo *rel, double cte_rows)
 {
 	RangeTblEntry *rte;
 
@@ -5162,7 +5149,7 @@ set_cte_size_estimates(PlannerInfo *root, RelOptInfo *rel, double cte_rows,
 		 * In a self-reference, arbitrarily assume the average worktable size
 		 * is about 10 times the nonrecursive term's size.
 		 */
-		rel->tuples = iter_cnt * cte_rows;
+		rel->tuples = 10 * cte_rows;
 	}
 	else
 	{

@@ -21,6 +21,7 @@
 #include "postgres.h"
 
 #include "access/htup_details.h"
+#include "catalog/ag_vertex_d.h"
 #include "catalog/pg_type.h"
 #include "executor/executor.h"
 #include "executor/nodeDijkstra.h"
@@ -30,7 +31,6 @@
 #include "nodes/execnodes.h"
 #include "nodes/memnodes.h"
 #include "utils/array.h"
-#include "utils/graph.h"
 #include "utils/lsyscache.h"
 #include "utils/memutils.h"
 #include "utils/typcache.h"
@@ -317,7 +317,7 @@ replace_vertexRow_graphid(TupleDesc tupleDesc, HeapTuple vertexRow,
 	Assert(tupleDesc != NULL);
 	Assert(vertexRow != NULL);
 
-	attribute = TupleDescAttr(tupleDesc, Anum_vertex_id-1);
+	attribute = TupleDescAttr(tupleDesc, Anum_ag_vertex_id - 1);
 
 	/* This function only works for element 1, graphid, by value */
 	Assert(attribute->attbyval);
@@ -545,11 +545,11 @@ ExecInitDijkstra(Dijkstra *node, EState *estate, int eflags)
 	 */
 	if (IsA(node->source, FieldSelect))
 	{
-		Datum       values[Natts_vertex] = {0, 0, 0};
-		bool        isnull[Natts_vertex] = {false, true, true};
+		Datum       values[Natts_ag_vertex] = {0, 0, 0};
+		bool        isnull[Natts_ag_vertex] = {false, true, true};
 		TupleDesc	tupleDesc = lookup_rowtype_tupdesc(VERTEXOID, -1);
 
-		Assert(tupleDesc->natts == Natts_vertex);
+		Assert(tupleDesc->natts == Natts_ag_vertex);
 
 		dstate->tupleDesc = tupleDesc;
 		dstate->vertexRow = heap_form_tuple(tupleDesc, values, isnull);

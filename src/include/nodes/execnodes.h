@@ -1312,9 +1312,6 @@ typedef struct RecursiveUnionState
 	MemoryContext tempContext;	/* short-term context for comparisons */
 	TupleHashTable hashtable;	/* hash table for tuples already seen */
 	MemoryContext tableContext; /* memory context containing hash table */
-
-	int			depth;			/* current level of recursion */
-	bool		end;
 } RecursiveUnionState;
 
 /* ----------------
@@ -1364,13 +1361,6 @@ typedef struct ScanState
 	Relation	ss_currentRelation;
 	struct TableScanDescData *ss_currentScanDesc;
 	TupleTableSlot *ss_ScanTupleSlot;
-
-	/* to skip unneccessary graph label scan */
-	bool		ss_isLabel;			/* vertex? */
-	uint16		ss_labid;			/* label ID in a graph */
-	ExprState  *ss_labelSkipExpr;	/* SeqScan */
-	int			ss_labelSkipIdx;	/* IndexScan */
-	bool		ss_skipLabelScan;
 } ScanState;
 
 /* ----------------

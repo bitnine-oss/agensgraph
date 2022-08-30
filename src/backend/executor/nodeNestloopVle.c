@@ -789,14 +789,10 @@ arrayResultHas(ArrayBuildState *astate, Datum elem)
 
 	for (i = 0; i < astate->nelems; i++)
 	{
-		Datum		d;
+		Graphid		cur_array_gid = DatumGetGraphid(astate->dvalues[i]);
+		Graphid		elem_gid = DatumGetGraphid(elem);
 
-		/*
-		 * Here, we assume that graphid_eq() does not allocate memory, and
-		 * those two values are not NULL.
-		 */
-		d = DirectFunctionCall2(graphid_eq, astate->dvalues[i], elem);
-		if (DatumGetBool(d))
+		if (cur_array_gid == elem_gid)
 			return true;
 	}
 

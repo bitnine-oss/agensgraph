@@ -456,8 +456,6 @@ _readCommonTableExpr(void)
 	READ_NODE_FIELD(ctecoltypes);
 	READ_NODE_FIELD(ctecoltypmods);
 	READ_NODE_FIELD(ctecolcollations);
-	READ_INT_FIELD(maxdepth);
-	READ_BOOL_FIELD(ctestop);
 
 	READ_DONE();
 }
@@ -478,8 +476,6 @@ _readSetOperationStmt(void)
 	READ_NODE_FIELD(colTypmods);
 	READ_NODE_FIELD(colCollations);
 	READ_NODE_FIELD(groupClauses);
-	READ_INT_FIELD(maxDepth);
-	READ_BOOL_FIELD(shortestpath);
 
 	READ_DONE();
 }
@@ -1717,7 +1713,6 @@ _readRecursiveUnion(void)
 	READ_OID_ARRAY(dupOperators, local_node->numCols);
 	READ_OID_ARRAY(dupCollations, local_node->numCols);
 	READ_LONG_FIELD(numGroups);
-	READ_INT_FIELD(maxDepth);
 
 	READ_DONE();
 }
@@ -1970,7 +1965,6 @@ _readCteScan(void)
 
 	READ_INT_FIELD(ctePlanId);
 	READ_INT_FIELD(cteParam);
-	READ_BOOL_FIELD(cteStop);
 
 	READ_DONE();
 }
