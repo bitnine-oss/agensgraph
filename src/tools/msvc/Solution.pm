@@ -151,6 +151,8 @@ sub GenerateFiles
 {
 	my $self = shift;
 	my $bits = $self->{platform} eq 'Win32' ? 32 : 64;
+	my $ag_version;
+	my $ag_comp_version;
 
 	# Parse configure.in to get version numbers
 	open(my $c, '<', "configure.in")
@@ -166,6 +168,18 @@ sub GenerateFiles
 			}
 			$self->{numver} = sprintf("%d%04d", $1, $2 ? $2 : 0);
 			$self->{majorver} = sprintf("%d", $1);
+		}
+
+		# AG_VERSION
+		if (/\[AG_VERSION=([^\]]+)\]/)
+		{
+			$ag_version = $1;
+		}
+
+		# AG_COMP_VERSION
+		if (/\[AG_COMP_VERSION=([^\]]+)\]/)
+		{
+			$ag_comp_version = $1;
 		}
 	}
 	close($c);
@@ -231,6 +245,11 @@ sub GenerateFiles
 		{
 			print $o "#define FLOAT8PASSBYVAL false\n";
 		}
+
+		# AgensGraph
+		print $o "#define AG_COMP_VERSION \"$ag_comp_version\"";
+		print $o "#define AG_VERSION \"$ag_version\"";
+		print $o "#define AG_GIT_REVISION \"win_no_rev\"";
 
 		if ($self->{options}->{uuid})
 		{
