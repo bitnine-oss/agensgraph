@@ -2428,13 +2428,22 @@ CREATE (:multiple_update {no:1}), (:multiple_update {no:1});
 MATCH (a:multiple_update), (b:multiple_update)
 SET a.no = a.no + 1
 RETURN a.no;
-ERROR:  graph element(5,1) has been SET multiple times
+WARNING:  graph element(5,1) has been SET multiple times
+WARNING:  graph element(5,2) has been SET multiple times
+ no 
+----
+ 2
+ 2
+ 2
+ 2
+(4 rows)
+
 MATCH (a:multiple_update)
 RETURN a.no;
  no 
 ----
- 1
- 1
+ 2
+ 2
 (2 rows)
 
 MATCH (a:multiple_update)
@@ -2463,18 +2472,18 @@ SET a.no = a.no + 1
 RETURN a.no;
  no 
 ----
- 10
- 10
- 10
- 10
+ 9
+ 9
+ 9
+ 9
 (4 rows)
 
 MATCH (a:multiple_update)
 RETURN a.no;
  no 
 ----
- 10
- 10
+ 9
+ 9
 (2 rows)
 
 MATCH (a) DETACH DELETE (a);

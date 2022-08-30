@@ -95,7 +95,7 @@ typedef struct PlannedStmt
 	int			stmt_location;	/* start location, or -1 if unknown */
 	int			stmt_len;		/* length in bytes; 0 means "rest of string" */
 
-	bool		hasGraphwriteClause; /* has modify graph type? */
+	bool		hasGraphwriteClause;	/* has modify graph type? */
 } PlannedStmt;
 
 /* macro for fetching the Plan associated with a SubPlan node */
@@ -1267,34 +1267,35 @@ typedef struct ModifyGraph
 	Plan		plan;
 	GraphWriteOp operation;
 	bool		last;			/* is this for the last clause? */
-	List	   *targets;		/* relation OID's of target labels */
 	Plan	   *subplan;		/* plan producing source data */
 	uint32		nr_modify;		/* number of clauses that modifies graph
-								   before this */
+								 * before this */
 	bool		detach;			/* DETACH DELETE */
 	bool		eagerness;		/* need eager mode? */
 	List	   *pattern;		/* graph pattern (list of paths) for CREATE */
 	List	   *exprs;			/* expression list for DELETE */
 	List	   *sets;			/* list of GraphSetProp's for SET/REMOVE */
-	Index		ert_base_index;	/* base index into the es_range_table */
-	int			ert_rtes_added;	/* number of RTEs added to es_range_table */
+	int			epqParam;		/* ID of Param for EvalPlanQual re-eval */
+	List	   *resultRelations;	/* relation rtindex's of target labels */
+	int			resultRelIndex; /* start index of es_result_relations for
+								 * current plan */
 } ModifyGraph;
 
 typedef struct Shortestpath
 {
 	Join		join;
 	List	   *hashclauses;
-	AttrNumber  end_id_left;
-	AttrNumber  end_id_right;
-	AttrNumber  tableoid_left;
-	AttrNumber  tableoid_right;
-	AttrNumber  ctid_left;
-	AttrNumber  ctid_right;
+	AttrNumber	end_id_left;
+	AttrNumber	end_id_right;
+	AttrNumber	tableoid_left;
+	AttrNumber	tableoid_right;
+	AttrNumber	ctid_left;
+	AttrNumber	ctid_right;
 	Node	   *source;
 	Node	   *target;
-	long        minhops;
-	long        maxhops;
-	long        limit;
+	long		minhops;
+	long		maxhops;
+	long		limit;
 } Shortestpath;
 
 typedef struct Hash2Side
@@ -1311,10 +1312,10 @@ typedef struct Hash2Side
 typedef struct Dijkstra
 {
 	Plan		plan;
-	AttrNumber  weight;
+	AttrNumber	weight;
 	bool		weight_out;
-	AttrNumber  end_id;
-	AttrNumber  edge_id;
+	AttrNumber	end_id;
+	AttrNumber	edge_id;
 	Node	   *source;
 	Node	   *target;
 	Node	   *limit;

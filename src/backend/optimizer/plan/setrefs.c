@@ -993,8 +993,15 @@ set_plan_refs(PlannerInfo *root, Plan *plan, int rtoffset)
 		case T_ModifyGraph:
 			{
 				ModifyGraph *splan = (ModifyGraph *) plan;
-
+				foreach(l, splan->resultRelations)
+				{
+					lfirst_int(l) += rtoffset;
+				}
 				splan->subplan = set_plan_refs(root, splan->subplan, rtoffset);
+				splan->resultRelIndex = list_length(root->glob->resultRelations);
+				root->glob->resultRelations =
+						list_concat(root->glob->resultRelations,
+									splan->resultRelations);
 			}
 			break;
 		case T_Dijkstra:

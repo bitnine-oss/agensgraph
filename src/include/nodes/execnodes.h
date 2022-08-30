@@ -1245,7 +1245,7 @@ struct AppendState
 	Bitmapset  *as_valid_subplans;
 	bool		(*choose_next_subplan) (AppendState *);
 
-	dlist_head  ctxs_head;		/* list of AppendContext */
+	dlist_head	ctxs_head;		/* list of AppendContext */
 	dlist_node *prev_ctx_node;
 };
 
@@ -1895,7 +1895,6 @@ typedef struct NestLoopState
 
 	dlist_head	ctxs_head;		/* list of NestLoopContext */
 	dlist_node *prev_ctx_node;
-	CommandId	nl_graphwrite_cid;
 } NestLoopState;
 
 typedef struct NestLoopVLEState
@@ -2150,28 +2149,6 @@ typedef struct GroupState
 	ExprState  *eqfunction;		/* equality function */
 	bool		grp_done;		/* indicates completion of Group scan */
 } GroupState;
-
-/* ----------------------------------------------------------------
- *				 Eager State Information
- * ----------------------------------------------------------------
- */
-
-/* ----------------
- *	 EagerState information
- *
- *		ss.ss_ScanTupleSlot refers to output of underlying plan.
- * ----------------
- */
-typedef struct EagerState
-{
-	ScanState	ss;				/* its first field is NodeTag */
-	bool		child_done;		/* reached end of child plan? */
-	HTAB	   *modifiedObject;	/* SET/DELETEd graph elements table */
-	List	   *modifiedList;	/* index list of modified slot */
-	GraphWriteOp gwop;
-	Tuplestorestate *tuplestorestate;
-} EagerState;
-
 
 /* ---------------------
  *	AggState information
@@ -2561,43 +2538,50 @@ typedef struct LimitState
  * Graph nodes
  */
 
+#include "nodes/graphnodes.h"
+
 typedef struct ModifyGraphState
 {
 	PlanState	ps;
 	bool		done;
 	bool		child_done;
 	bool		eagerness;
+	CommandId	modify_cid;
 	PlanState  *subplan;
 	TupleTableSlot *elemTupleSlot;	/* to insert vertex/edge */
 	Oid			graphid;
-	ResultRelInfo *resultRelations;
-	int			numResultRelations;
-	CommandId	modify_cid;
+	ResultRelInfo *resultRelInfo;
+	int			numResultRelInfo;
 	List	   *pattern;		/* graph pattern (list of paths) for CREATE
-								   with `es_prop_map` */
+								 * with `es_prop_map` */
 	List	   *exprs;			/* expression state list for DELETE */
 	List	   *sets;			/* list of GraphSetProp's for SET/REMOVE */
+	bool	   *update_cols;	/* array of columns to update */
 	HTAB	   *elemTable;
 	Tuplestorestate *tuplestorestate;
+	TupleTableSlot *(*execProc) (struct ModifyGraphState *pstate,
+								 TupleTableSlot *slot);
+	EPQState	mt_epqstate;	/* for evaluating EvalPlanQual rechecks */
+	List	  **mt_arowmarks;
 } ModifyGraphState;
 
 typedef struct Hash2SideState
 {
-	PlanState	    ps;        /* its first field is NodeTag */
-	HashJoinTable   keytable;  /* hash table for the recursion */
-	HashJoinTable   hashtable; /* hash table for the hashjoin */
-	List	       *hashkeys;  /* list of ExprState nodes */
+	PlanState	ps;				/* its first field is NodeTag */
+	HashJoinTable keytable;		/* hash table for the recursion */
+	HashJoinTable hashtable;	/* hash table for the hashjoin */
+	List	   *hashkeys;		/* list of ExprState nodes */
 	/* hashkeys is same as parent's hj_InnerHashKeys */
 	TupleTableSlot *slot;
-	ExprState      *key;
-	PlanState      *spstate;
-	double          totalPaths;
-	long            hops;
-	Size            spacePeak;
-	bool			isFieldSelect;	/* Track FieldSelect exprs */
-	Param		   *correctedParam;	/* Needed to correct FieldSelect exprs */
-	HeapTuple		vertexRow;		/* For reusing the vertexRow */
-	TupleDesc		tupleDesc;		/* Tuple descriptor for above vertexRow */
+	ExprState  *key;
+	PlanState  *spstate;
+	double		totalPaths;
+	long		hops;
+	Size		spacePeak;
+	bool		isFieldSelect;	/* Track FieldSelect exprs */
+	Param	   *correctedParam; /* Needed to correct FieldSelect exprs */
+	HeapTuple	vertexRow;		/* For reusing the vertexRow */
+	TupleDesc	tupleDesc;		/* Tuple descriptor for above vertexRow */
 
 	/*
 	 * If we are collecting hash stats, this points to an initially-zeroed
@@ -2609,60 +2593,60 @@ typedef struct Hash2SideState
 
 typedef struct ShortestpathState
 {
-	JoinState        js;               /* its first field is NodeTag */
-	ExprState       *hashclauses;      /* list of ExprState nodes */
-	List            *sp_OuterHashKeys; /* list of ExprState nodes */
-	List            *sp_InnerHashKeys; /* list of ExprState nodes */
-	List            *sp_HashOperators; /* list of operator OIDs */
-	HashJoinTable    sp_KeyTable;
-	HashJoinTable    sp_OuterTable;
-	HashJoinTable    sp_HashTable;
-	uint32           sp_CurHashValue;
-	int              sp_CurBucketNo;
-	int              sp_CurSkewBucketNo;
-	HashJoinTuple    sp_CurTuple;
-	int              sp_CurKeyBatch;
-	int              sp_CurKeyIdx;
-	void            *sp_CurOuterChunks; /* HashMemoryChunk */
-	int              sp_CurOuterIdx;
-	TupleTableSlot  *sp_OuterTupleSlot;
-	TupleTableSlot  *sp_HashTupleSlot;
-	long             sp_Hops;
-	int              sp_RowidSize;
-	MinimalTuple     sp_GraphidTuple;
-	MinimalTuple     sp_OuterTuple;
-	unsigned char   *sp_Vertexids;
-	unsigned char   *sp_Edgeids;
-	int              sp_JoinState;
-	ExprState       *source;
-	ExprState       *target;
-	long             minhops;
-	long             maxhops;
-	long             limit;
-	Graphid          startVid;
-	Graphid          endVid;
-	long             hops;
-	long             numResults;
-	Hash2SideState  *outerNode;
-	Hash2SideState  *innerNode;
+	JoinState	js;				/* its first field is NodeTag */
+	ExprState  *hashclauses;	/* list of ExprState nodes */
+	List	   *sp_OuterHashKeys;	/* list of ExprState nodes */
+	List	   *sp_InnerHashKeys;	/* list of ExprState nodes */
+	List	   *sp_HashOperators;	/* list of operator OIDs */
+	HashJoinTable sp_KeyTable;
+	HashJoinTable sp_OuterTable;
+	HashJoinTable sp_HashTable;
+	uint32		sp_CurHashValue;
+	int			sp_CurBucketNo;
+	int			sp_CurSkewBucketNo;
+	HashJoinTuple sp_CurTuple;
+	int			sp_CurKeyBatch;
+	int			sp_CurKeyIdx;
+	void	   *sp_CurOuterChunks;	/* HashMemoryChunk */
+	int			sp_CurOuterIdx;
+	TupleTableSlot *sp_OuterTupleSlot;
+	TupleTableSlot *sp_HashTupleSlot;
+	long		sp_Hops;
+	int			sp_RowidSize;
+	MinimalTuple sp_GraphidTuple;
+	MinimalTuple sp_OuterTuple;
+	unsigned char *sp_Vertexids;
+	unsigned char *sp_Edgeids;
+	int			sp_JoinState;
+	ExprState  *source;
+	ExprState  *target;
+	long		minhops;
+	long		maxhops;
+	long		limit;
+	Graphid		startVid;
+	Graphid		endVid;
+	long		hops;
+	long		numResults;
+	Hash2SideState *outerNode;
+	Hash2SideState *innerNode;
 } ShortestpathState;
 
 typedef struct DijkstraState
 {
-	PlanState 		ps;
-	HTAB		   *visited_nodes;
-	pairingheap	   *pq;
-	MemoryContext 	pq_mcxt;
-	ExprState  	   *source;
-	ExprState  	   *target;
-	ExprState  	   *limit;
-	int				n;
-	int				max_n;
-	Graphid 		target_id;
-	bool			is_executed;
+	PlanState	ps;
+	HTAB	   *visited_nodes;
+	pairingheap *pq;
+	MemoryContext pq_mcxt;
+	ExprState  *source;
+	ExprState  *target;
+	ExprState  *limit;
+	int			n;
+	int			max_n;
+	Graphid		target_id;
+	bool		is_executed;
 	TupleTableSlot *selfTupleSlot;
-	HeapTuple		vertexRow;		/* pointer to hold reusable vertex row */
-	TupleDesc		tupleDesc;		/* pointer to vertex row's tuple descr */
+	HeapTuple	vertexRow;		/* pointer to hold reusable vertex row */
+	TupleDesc	tupleDesc;		/* pointer to vertex row's tuple descr */
 } DijkstraState;
 
 #endif							/* EXECNODES_H */

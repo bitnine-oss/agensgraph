@@ -27,4 +27,4 @@ jobs:
 
       - name: Check on failures
         if: steps.regress.outcome != 'success'
-        run: cat regress/regression.diffs && exit 1
+        run: cat src/bin/pg_upgrade/tmp_check/regress/regression.diffs && exit 1

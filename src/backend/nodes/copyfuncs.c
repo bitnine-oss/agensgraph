@@ -1229,7 +1229,6 @@ _copyModifyGraph(const ModifyGraph *from)
 
 	COPY_SCALAR_FIELD(operation);
 	COPY_SCALAR_FIELD(last);
-	COPY_NODE_FIELD(targets);
 	COPY_NODE_FIELD(subplan);
 	COPY_SCALAR_FIELD(nr_modify);
 	COPY_SCALAR_FIELD(detach);
@@ -1237,8 +1236,10 @@ _copyModifyGraph(const ModifyGraph *from)
 	COPY_NODE_FIELD(pattern);
 	COPY_NODE_FIELD(exprs);
 	COPY_NODE_FIELD(sets);
-	COPY_SCALAR_FIELD(ert_base_index);
-	COPY_SCALAR_FIELD(ert_rtes_added);
+	COPY_SCALAR_FIELD(epqParam);
+	COPY_NODE_FIELD(resultRelations);
+	COPY_SCALAR_FIELD(resultRelIndex);
+
 	return newnode;
 }
 
@@ -3329,13 +3330,13 @@ _copyQuery(const Query *from)
 
 	COPY_SCALAR_FIELD(graph.writeOp);
 	COPY_SCALAR_FIELD(graph.last);
-	COPY_NODE_FIELD(graph.targets);
 	COPY_SCALAR_FIELD(graph.nr_modify);
 	COPY_SCALAR_FIELD(graph.detach);
 	COPY_SCALAR_FIELD(graph.eager);
 	COPY_NODE_FIELD(graph.pattern);
 	COPY_NODE_FIELD(graph.exprs);
 	COPY_NODE_FIELD(graph.sets);
+	COPY_NODE_FIELD(graph.resultRelations);
 
 	return newnode;
 }
