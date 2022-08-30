@@ -54,7 +54,7 @@ my @contrib_excludes = (
 
 # Set of variables for frontend modules
 my $frontend_defines = { 'initdb' => 'FRONTEND' };
-my @frontend_uselibpq = ('pg_ctl', 'ag_ctl', 'pg_upgrade', 'pgbench', 'psql', 'initdb');
+my @frontend_uselibpq = ('pg_ctl', 'pg_upgrade', 'pgbench', 'psql', 'initdb');
 my @frontend_uselibpgport = (
 	'pg_archivecleanup', 'pg_test_fsync',
 	'pg_test_timing',    'pg_upgrade',
@@ -74,7 +74,7 @@ my $frontend_extraincludes = {
 	'psql'   => ['src/backend']
 };
 my $frontend_extrasource = {
-	'psql' => ['src/bin/psql/psqlscanslash.l'],
+	'psql' => ['src/bin/psql/psqlscanslash.l', 'src/bin/psql/common.c'],
 	'pgbench' =>
 	  [ 'src/bin/pgbench/exprscan.l', 'src/bin/pgbench/exprparse.y' ]
 };
@@ -422,6 +422,12 @@ sub mkvcbuild
 	$zic->AddFiles('src/timezone', 'zic.c');
 	$zic->AddDirResourceFile('src/timezone');
 	$zic->AddReference($libpgcommon, $libpgport);
+
+	my $agens = AddSimpleFrontend('psql', 1);
+	$agens->{name} = 'agens';
+
+	my $ag_ctl = AddSimpleFrontend('pg_ctl', 1);
+	$ag_ctl->{name} = 'ag_ctl';
 
 	if (!$solution->{options}->{xml})
 	{
