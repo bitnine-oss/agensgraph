@@ -19,7 +19,6 @@
 
 #include "access/hash.h"
 #include "access/htup_details.h"
-#include "catalog/ag_vertex_d.h"
 #include "catalog/pg_type.h"
 #include "executor/executor.h"
 #include "executor/hashjoin.h"
@@ -28,6 +27,7 @@
 #include "miscadmin.h"
 #include "utils/lsyscache.h"
 #include "utils/memutils.h"
+#include "utils/graph.h"
 #include "access/tupdesc.h"
 
 #include "utils/typcache.h"
@@ -804,11 +804,11 @@ ExecInitShortestpath(Shortestpath *node, EState *estate, int eflags)
 	if (IsA(outerH2SNode->key->expr, FieldSelect) ||
 		IsA(innerH2SNode->key->expr, FieldSelect))
 	{
-		Datum		values[Natts_ag_vertex] = {0, 0, 0};
-		bool		isnull[Natts_ag_vertex] = {false, true, true};
+		Datum		values[Natts_vertex] = {0, 0, 0};
+		bool		isnull[Natts_vertex] = {false, true, true};
 
 		tupleDesc = lookup_rowtype_tupdesc(VERTEXOID, -1);
-		Assert(tupleDesc->natts == Natts_ag_vertex);
+		Assert(tupleDesc->natts == Natts_vertex);
 
 		vertexRow = heap_form_tuple(tupleDesc, values, isnull);
 	}
@@ -982,7 +982,7 @@ replace_vertexRow_graphid(TupleDesc tupleDesc, HeapTuple vertexRow,
 	Assert(tupleDesc != NULL);
 	Assert(vertexRow != NULL);
 
-	attribute = TupleDescAttr(tupleDesc, Anum_ag_vertex_id - 1);
+	attribute = TupleDescAttr(tupleDesc, Anum_vertex_id-1);
 
 	/* This function only works for element 1, graphid, by value */
 	Assert(attribute->attbyval);

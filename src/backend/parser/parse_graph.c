@@ -11,34 +11,42 @@
 #include "postgres.h"
 
 #include "access/htup_details.h"
+#include "access/sysattr.h"
 #include "ag_const.h"
-#include "catalog/ag_vertex_d.h"
 #include "catalog/ag_graph_fn.h"
 #include "catalog/ag_label.h"
 #include "catalog/pg_am.h"
 #include "catalog/pg_class.h"
 #include "catalog/pg_collation.h"
 #include "catalog/pg_operator.h"
+#include "catalog/pg_type.h"
 #include "executor/spi.h"
+#include "lib/stringinfo.h"
 #include "nodes/graphnodes.h"
 #include "nodes/makefuncs.h"
 #include "nodes/nodeFuncs.h"
+#include "nodes/pg_list.h"
 #include "parser/analyze.h"
 #include "parser/parse_agg.h"
 #include "parser/parse_clause.h"
+#include "parser/parse_coerce.h"
 #include "parser/parse_collate.h"
+#include "parser/parse_cte.h"
 #include "parser/parse_cypher_expr.h"
 #include "parser/parse_cypher_utils.h"
+#include "parser/parse_expr.h"
 #include "parser/parse_func.h"
 #include "parser/parse_graph.h"
 #include "parser/parse_oper.h"
 #include "parser/parse_relation.h"
 #include "parser/parse_shortestpath.h"
 #include "parser/parse_target.h"
+#include "parser/parser.h"
 #include "parser/parsetree.h"
 #include "rewrite/rewriteHandler.h"
 #include "utils/builtins.h"
 #include "utils/fmgroids.h"
+#include "utils/graph.h"
 #include "utils/lsyscache.h"
 #include "utils/rel.h"
 #include "utils/snapmgr.h"
@@ -3859,7 +3867,7 @@ resolve_future_vertex_mutator(Node *node, resolve_future_vertex_context *ctx)
 
 			if ((int) var->varlevelsup == ctx->sublevels_up &&
 				exprType((Node *) var) == VERTEXOID &&
-				fselect->fieldnum == Anum_ag_vertex_id)
+				fselect->fieldnum == Anum_vertex_id)
 				return node;
 		}
 
