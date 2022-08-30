@@ -628,6 +628,7 @@ ac_includes_default="\
 ac_subst_vars='LTLIBOBJS
 vpath_build
 PG_SYSROOT
+ORIOLEDB_PATCHSET_VERSION
 PG_VERSION_NUM
 PROVE
 DBTOEPUB
@@ -19804,6 +19805,10 @@ cat >>confdefs.h <<_ACEOF
 #define PG_VERSION_NUM $PG_VERSION_NUM
 _ACEOF
 
+
+
+# Needed to check postgresql patches git tag during orioledb extension build
+ORIOLEDB_PATCHSET_VERSION=`git describe --tags | cut -d'_' -f2`
 
 
 # If we are inserting PG_SYSROOT into CPPFLAGS, do so symbolically not

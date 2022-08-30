@@ -2436,6 +2436,10 @@ $AWK '{printf "%d%04d", $1, $2}'`"]
 AC_DEFINE_UNQUOTED(PG_VERSION_NUM, $PG_VERSION_NUM, [PostgreSQL version as a number])
 AC_SUBST(PG_VERSION_NUM)
 
+# Needed to check postgresql patches git tag during orioledb extension build
+[ORIOLEDB_PATCHSET_VERSION=`git describe --tags | cut -d'_' -f2`]
+AC_SUBST(ORIOLEDB_PATCHSET_VERSION)
+
 # If we are inserting PG_SYSROOT into CPPFLAGS, do so symbolically not
 # literally, so that it's possible to override it at build time using
 # a command like "make ... PG_SYSROOT=path".  This has to be done after

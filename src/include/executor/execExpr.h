@@ -874,12 +874,4 @@ extern void ExecEvalCypherListCompIterInitNext(ExprState *state,
 											   ExprEvalStep *op);
 extern void ExecEvalCypherListCompVar(ExprState *state, ExprEvalStep *op);
 
-typedef bool (*ExecInitFuncHookType)(ExprEvalStep *scratch, Expr *node,
-									 List *args, Oid funcid,
-									 Oid inputcollid, ExprState *state);
-extern ExecInitFuncHookType ExecInitFuncHook;
-
-extern void ExecInitExprRec(Expr *node, ExprState *state, Datum *resv,
-							bool *resnull);
-
 #endif							/* EXEC_EXPR_H */

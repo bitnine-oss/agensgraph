@@ -42,6 +42,9 @@ VERSION_NUM = @PG_VERSION_NUM@
 
 PACKAGE_URL = @PACKAGE_URL@
 
+# OrioleDB patchset git tag number
+ORIOLEDB_PATCHSET_VERSION = @ORIOLEDB_PATCHSET_VERSION@
+
 # Set top_srcdir, srcdir, and VPATH.
 ifdef PGXS
 top_srcdir = $(top_builddir)

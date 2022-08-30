@@ -956,6 +956,7 @@ record_cmp(FunctionCallInfo fcinfo)
 		if (typentry == NULL ||
 			typentry->type_id != att1->atttypid)
 		{
+			typentry = NULL;
 			if (type_elements_cmp_hook)
 				typentry = type_elements_cmp_hook(att1->atttypid,
 												  fcinfo->flinfo->fn_mcxt);

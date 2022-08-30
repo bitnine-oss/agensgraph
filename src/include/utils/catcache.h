@@ -228,4 +228,20 @@ extern void PrepareToInvalidateCacheTuple(Relation relation,
 extern void PrintCatCacheLeakWarning(HeapTuple tuple);
 extern void PrintCatCacheListLeakWarning(CatCList *list);
 
+typedef CatCTup *(*SearchCatCacheInternal_hook_type)(CatCache *cache,
+													 int nkeys,
+													 Datum v1, Datum v2,
+													 Datum v3, Datum v4);
+extern SearchCatCacheInternal_hook_type SearchCatCacheInternal_hook;
+
+typedef CatCList *(*SearchCatCacheList_hook_type)(CatCache *cache,
+												  int nkeys,
+												  Datum v1,
+												  Datum v2,
+												  Datum v3);
+extern SearchCatCacheList_hook_type SearchCatCacheList_hook;
+
+typedef TupleDesc (*SysCacheGetAttr_hook_type)(CatCache *SysCache);
+extern SysCacheGetAttr_hook_type SysCacheGetAttr_hook;
+
 #endif							/* CATCACHE_H */

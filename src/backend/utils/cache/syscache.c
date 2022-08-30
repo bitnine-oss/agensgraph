@@ -1088,6 +1088,7 @@ static int	SysCacheSupportingRelOidSize;
 
 static int	oid_compare(const void *a, const void *b);
 
+SysCacheGetAttr_hook_type SysCacheGetAttr_hook = NULL;
 
 /*
  * InitCatalogCache - initialize the caches
@@ -1469,6 +1470,7 @@ SysCacheGetAttr(int cacheId, HeapTuple tup,
 				AttrNumber attributeNumber,
 				bool *isNull)
 {
+	TupleDesc cc_tupdesc = SysCache[cacheId]->cc_tupdesc;
 	/*
 	 * We just need to get the TupleDesc out of the cache entry, and then we
 	 * can apply heap_getattr().  Normally the cache control data is already
@@ -1478,14 +1480,18 @@ SysCacheGetAttr(int cacheId, HeapTuple tup,
 	if (cacheId < 0 || cacheId >= SysCacheSize ||
 		!PointerIsValid(SysCache[cacheId]))
 		elog(ERROR, "invalid cache ID: %d", cacheId);
-	if (!PointerIsValid(SysCache[cacheId]->cc_tupdesc))
+
+	if (!PointerIsValid(cc_tupdesc) && SysCacheGetAttr_hook)
+		cc_tupdesc = SysCacheGetAttr_hook(SysCache[cacheId]);
+	if (!PointerIsValid(cc_tupdesc))
 	{
 		InitCatCachePhase2(SysCache[cacheId], false);
 		Assert(PointerIsValid(SysCache[cacheId]->cc_tupdesc));
+		cc_tupdesc = SysCache[cacheId]->cc_tupdesc;
 	}
 
 	return heap_getattr(tup, attributeNumber,
-						SysCache[cacheId]->cc_tupdesc,
+						cc_tupdesc,
 						isNull);
 }
 

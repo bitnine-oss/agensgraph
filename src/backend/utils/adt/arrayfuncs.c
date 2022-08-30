@@ -3812,6 +3812,7 @@ array_cmp(FunctionCallInfo fcinfo)
 	if (typentry == NULL ||
 		typentry->type_id != element_type)
 	{
+		typentry = NULL;
 		if (type_elements_cmp_hook)
 			typentry = type_elements_cmp_hook(element_type,
 											  fcinfo->flinfo->fn_mcxt);

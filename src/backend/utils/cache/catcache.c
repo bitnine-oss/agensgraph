@@ -63,6 +63,9 @@
 /* Cache management header --- pointer is NULL until created */
 static CatCacheHeader *CacheHdr = NULL;
 
+SearchCatCacheInternal_hook_type SearchCatCacheInternal_hook = NULL;
+SearchCatCacheList_hook_type SearchCatCacheList_hook = NULL;
+
 static inline HeapTuple SearchCatCacheInternal(CatCache *cache,
 											   int nkeys,
 											   Datum v1, Datum v2,
@@ -1211,6 +1214,14 @@ SearchCatCacheInternal(CatCache *cache,
 	dlist_head *bucket;
 	CatCTup    *ct;
 
+	if (SearchCatCacheInternal_hook)
+	{
+		ct = SearchCatCacheInternal_hook(cache, nkeys, v1, v2, v3, v4);
+
+		if (ct)
+			return &ct->tuple;
+	}
+
 	/* Make sure we're in an xact, even if this ends up being a cache hit */
 	Assert(IsTransactionState());
 
@@ -1524,6 +1535,14 @@ SearchCatCacheList(CatCache *cache,
 	HeapTuple	ntp;
 	MemoryContext oldcxt;
 	int			i;
+
+	if (SearchCatCacheList_hook)
+	{
+		cl = SearchCatCacheList_hook(cache, nkeys, v1, v2, v3);
+
+		if (cl)
+			return cl;
+	}
 
 	/*
 	 * one-time startup overhead for each cache
