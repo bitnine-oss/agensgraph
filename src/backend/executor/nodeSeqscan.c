@@ -122,12 +122,6 @@ ExecSeqScan(PlanState *pstate)
 {
 	SeqScanState *node = castNode(SeqScanState, pstate);
 
-	if (node->ss.ss_skipLabelScan)
-	{
-		node->ss.ss_skipLabelScan = false;
-		return NULL;
-	}
-
 	return ExecScan(&node->ss,
 					(ExecScanAccessMtd) SeqNext,
 					(ExecScanRecheckMtd) SeqRecheck);
@@ -271,38 +265,9 @@ ExecReScanSeqScan(SeqScanState *node)
 {
 	TableScanDesc scan;
 
-	/* determine whether we can skip this label scan or not */
-	if (node->ss.ss_isLabel && node->ss.ss_labelSkipExpr != NULL)
-	{
-		ExprContext *econtext = node->ss.ps.ps_ExprContext;
-		MemoryContext oldmctx;
-		bool		isnull;
-		Datum		graphid;
-
-		oldmctx = MemoryContextSwitchTo(econtext->ecxt_per_tuple_memory);
-
-		graphid = ExecEvalExpr(node->ss.ss_labelSkipExpr, econtext, &isnull);
-		if (isnull)
-		{
-			node->ss.ss_skipLabelScan = true;
-		}
-		else
-		{
-			uint16 labid;
-
-			labid = DatumGetUInt16(DirectFunctionCall1(graphid_labid, graphid));
-			if (node->ss.ss_labid != labid)
-				node->ss.ss_skipLabelScan = true;
-		}
-
-		ResetExprContext(econtext);
-
-		MemoryContextSwitchTo(oldmctx);
-	}
-
 	scan = node->ss.ss_currentScanDesc;
 
-	if (scan != NULL && !node->ss.ss_skipLabelScan)
+	if (scan != NULL)
 		table_rescan(scan,		/* scan desc */
 					 NULL);		/* new scan keys */
 

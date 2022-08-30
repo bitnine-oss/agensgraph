@@ -216,8 +216,7 @@ static RecursiveUnion *make_recursive_union(List *tlist,
 											Plan *righttree,
 											int wtParam,
 											List *distinctList,
-											long numGroups,
-											int maxDepth);
+											long numGroups);
 static BitmapAnd *make_bitmap_and(List *bitmapplans);
 static BitmapOr *make_bitmap_or(List *bitmapplans);
 static NestLoop *make_nestloop(List *tlist,
@@ -2654,8 +2653,7 @@ create_recursiveunion_plan(PlannerInfo *root, RecursiveUnionPath *best_path)
 								rightplan,
 								best_path->wtParam,
 								best_path->distinctList,
-								numGroups,
-								best_path->maxDepth);
+								numGroups);
 
 	copy_generic_path_info(&plan->plan, (Path *) best_path);
 
@@ -3704,7 +3702,6 @@ create_ctescan_plan(PlannerInfo *root, Path *best_path,
 	Index		levelsup;
 	int			ndx;
 	ListCell   *lc;
-	bool		ctestop = false;
 
 	Assert(scan_relid > 0);
 	rte = planner_rt_fetch(scan_relid, root);
@@ -3734,10 +3731,7 @@ create_ctescan_plan(PlannerInfo *root, Path *best_path,
 		CommonTableExpr *cte = (CommonTableExpr *) lfirst(lc);
 
 		if (strcmp(cte->ctename, rte->ctename) == 0)
-		{
-			ctestop = cte->ctestop;
 			break;
-		}
 		ndx++;
 	}
 	if (lc == NULL)				/* shouldn't happen */
@@ -3776,7 +3770,6 @@ create_ctescan_plan(PlannerInfo *root, Path *best_path,
 
 	scan_plan = make_ctescan(tlist, scan_clauses, scan_relid,
 							 plan_id, cte_param_id);
-	scan_plan->cteStop = ctestop;
 
 	copy_generic_path_info(&scan_plan->scan.plan, best_path);
 
@@ -5866,8 +5859,7 @@ make_recursive_union(List *tlist,
 					 Plan *righttree,
 					 int wtParam,
 					 List *distinctList,
-					 long numGroups,
-					 int maxDepth)
+					 long numGroups)
 {
 	RecursiveUnion *node = makeNode(RecursiveUnion);
 	Plan	   *plan = &node->plan;
@@ -5913,7 +5905,6 @@ make_recursive_union(List *tlist,
 		node->dupCollations = dupCollations;
 	}
 	node->numGroups = numGroups;
-	node->maxDepth = maxDepth;
 
 	return node;
 }

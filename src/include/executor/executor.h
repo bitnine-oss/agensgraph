@@ -606,6 +606,5 @@ extern void CheckSubscriptionRelkind(char relkind, const char *nspname,
 /* for agensgraph */
 extern void ExecNextContext(PlanState *node);
 extern void ExecPrevContext(PlanState *node);
-extern void InitScanLabelInfo(ScanState *node);
 
 #endif							/* EXECUTOR_H  */

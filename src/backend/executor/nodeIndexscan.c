@@ -41,7 +41,6 @@
 #include "nodes/nodeFuncs.h"
 #include "utils/array.h"
 #include "utils/datum.h"
-#include "utils/graph.h"
 #include "utils/lsyscache.h"
 #include "utils/memutils.h"
 #include "utils/rel.h"
@@ -73,8 +72,6 @@ static HeapTuple reorderqueue_pop(IndexScanState *node);
 
 /* for agensgraph */
 static IndexScanContext *getCurrentContext(IndexScanState *node, bool create);
-static void initScanLabelSkipIdx(IndexScanState *node);
-
 
 /* ----------------------------------------------------------------
  *		IndexNext
@@ -529,13 +526,6 @@ ExecIndexScan(PlanState *pstate)
 {
 	IndexScanState *node = castNode(IndexScanState, pstate);
 
-	/* for agensgraph */
-	if (node->ss.ss_skipLabelScan)
-	{
-		node->ss.ss_skipLabelScan = false;
-		return NULL;
-	}
-
 	/*
 	 * If we have runtime keys and they've not already been set up, do it now.
 	 */
@@ -584,26 +574,6 @@ ExecReScanIndexScan(IndexScanState *node)
 	}
 	node->iss_RuntimeKeysReady = true;
 
-	/* agensgraph: determine whether we can skip this label scan or not */
-	if (node->ss.ss_isLabel && node->ss.ss_labelSkipIdx >= 0)
-	{
-		ScanKey skey = &node->iss_ScanKeys[node->ss.ss_labelSkipIdx];
-
-		if (skey->sk_flags & SK_ISNULL)
-		{
-			node->ss.ss_skipLabelScan = true;
-		}
-		else
-		{
-			uint16 labid;
-
-			labid = DatumGetUInt16(DirectFunctionCall1(graphid_labid,
-													   skey->sk_argument));
-			if (node->ss.ss_labid != labid)
-				node->ss.ss_skipLabelScan = true;
-		}
-	}
-
 	/* flush the reorder queue */
 	if (node->iss_ReorderQueue)
 	{
@@ -612,7 +582,7 @@ ExecReScanIndexScan(IndexScanState *node)
 	}
 
 	/* reset index scan */
-	if (node->iss_ScanDesc && !node->ss.ss_skipLabelScan)
+	if (node->iss_ScanDesc)
 		index_rescan(node->iss_ScanDesc,
 					 node->iss_ScanKeys, node->iss_NumScanKeys,
 					 node->iss_OrderByKeys, node->iss_NumOrderByKeys);
@@ -1036,42 +1006,6 @@ ExecIndexRestrPos(IndexScanState *node)
 	index_restrpos(node->iss_ScanDesc);
 }
 
-static void
-initScanLabelSkipIdx(IndexScanState *node)
-{
-	Relation	index = node->iss_RelationDesc;
-	int			i;
-
-	AssertArg(node->ss.ss_isLabel);
-
-	node->ss.ss_labelSkipIdx = -1;
-
-	for (i = 0; i < node->iss_NumScanKeys; i++)
-	{
-		ScanKey		skey = &node->iss_ScanKeys[i];
-		Oid			opfamily;
-
-		if (skey->sk_attno != Anum_vertex_id)
-			continue;
-
-		/* index on `id` column has no expression */
-		if (index->rd_indexprs != NULL)
-			continue;
-
-		/* assume `id` column of graph vertex label is indexed by BTree */
-		opfamily = index->rd_opfamily[skey->sk_attno - 1];
-		if (opfamily != GRAPHID_BTREE_FAM_OID)
-			continue;
-
-		/* `=` operator is our only concern */
-		if (skey->sk_strategy != BTEqualStrategyNumber)
-			continue;
-
-		node->ss.ss_labelSkipIdx = i;
-		break;
-	}
-}
-
 /* ----------------------------------------------------------------
  *		ExecInitIndexScan
  *
@@ -1112,8 +1046,6 @@ ExecInitIndexScan(IndexScan *node, EState *estate, int eflags)
 
 	indexstate->ss.ss_currentRelation = currentRelation;
 	indexstate->ss.ss_currentScanDesc = NULL;	/* no heap scan here */
-
-	InitScanLabelInfo((ScanState *) indexstate);
 
 	/*
 	 * get the scan type from the relation descriptor.
@@ -1177,9 +1109,6 @@ ExecInitIndexScan(IndexScan *node, EState *estate, int eflags)
 						   &indexstate->iss_NumRuntimeKeys,
 						   NULL,	/* no ArrayKeys */
 						   NULL);
-
-	if (indexstate->ss.ss_isLabel)
-		initScanLabelSkipIdx(indexstate);
 
 	/*
 	 * any ORDER BY exprs have to be turned into scankeys in the same way

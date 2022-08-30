@@ -160,18 +160,10 @@ static TupleTableSlot *
 ExecCteScan(PlanState *pstate)
 {
 	CteScanState *node = castNode(CteScanState, pstate);
-	TupleTableSlot *slot;
-	CteScan	   *plan;
 
-	slot = ExecScan(&node->ss,
+	return ExecScan(&node->ss,
 					(ExecScanAccessMtd) CteScanNext,
 					(ExecScanRecheckMtd) CteScanRecheck);
-
-	plan = (CteScan *) node->ss.ps.plan;
-	if (!TupIsNull(slot) && plan->cteStop)
-		((RecursiveUnionState *) node->cteplanstate)->end = true;
-
-	return slot;
 }
 
 
