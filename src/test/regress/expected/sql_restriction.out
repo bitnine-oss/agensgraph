@@ -46,7 +46,7 @@ ERROR:  cannot truncate label in graph schema
 --
 CREATE TRIGGER tt AFTER INSERT ON g.v
 FOR EACH STATEMENT EXECUTE PROCEDURE ff();
-ERROR:  cannot create trigger on graph label
+ERROR:  function ff() does not exist
 --
 -- RULE
 --
