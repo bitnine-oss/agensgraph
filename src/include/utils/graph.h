@@ -47,6 +47,15 @@ typedef struct {
 #define PG_GETARG_ROWID(n)	((Rowid *) DatumGetPointer(PG_GETARG_DATUM(n)))
 #define PG_RETURN_ROWID(x)	return RowidGetDatum(x)
 
+/* for labels. i.e, ag_vertex, ag_edge ... */
+#define Anum_table_vertex_id		1
+#define Anum_table_vertex_prop_map	2
+
+#define Anum_table_edge_id			1
+#define Anum_table_edge_start		2
+#define Anum_table_edge_end			3
+#define Anum_table_edge_prop_map	4
+
 /* graphid */
 extern Datum graphid(PG_FUNCTION_ARGS);
 extern Datum graphid_in(PG_FUNCTION_ARGS);

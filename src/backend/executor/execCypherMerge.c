@@ -345,7 +345,13 @@ createMergeEdge(ModifyGraphState *mgstate, GraphEdge *gedge, Graphid start,
 	estate->es_result_relation_info = savedResultRelInfo;
 
 	if (auto_gather_graphmeta)
-		agstat_count_edge_create(GraphidGetDatum(getEdgeIdDatum(edge)), start, end);
+	{
+		agstat_count_edge_create(
+								 GraphidGetLabid(GraphidGetDatum(getEdgeIdDatum(edge))),
+								 GraphidGetLabid(start),
+								 GraphidGetLabid(end)
+			);
+	}
 
 	return edge;
 }

@@ -6851,14 +6851,10 @@ get_agstat_stack_level(int nest_level)
 }
 
 void
-agstat_count_edge_create(Graphid edge, Graphid start, Graphid end)
+agstat_count_edge_create(Labid edge, Labid start, Labid end)
 {
-
 	int		nest_level;
 	bool	found;
-	Labid	edgelab;
-	Labid	startlab;
-	Labid	endlab;
 
 	AgStat_key				key;
 	AgStat_GraphMeta	   *graphmeta;
@@ -6867,18 +6863,14 @@ agstat_count_edge_create(Graphid edge, Graphid start, Graphid end)
 	nest_level = GetCurrentTransactionNestLevel();
 	xact_state = get_agstat_stack_level(nest_level);
 
-	edgelab = GraphidGetLabid(edge);
-	startlab = GraphidGetLabid(start);
-	endlab = GraphidGetLabid(end);
-
 	/* AgStat_key is 10 byte but aligned to 12 byte.
 	 * So last 2 byte can have garbage value.
 	 * It must be cleaned before use.*/
 	memset(&key, 0, sizeof(key));
 	key.graph = get_graph_path_oid();
-	key.edge = edgelab;
-	key.start = startlab;
-	key.end = endlab;
+	key.edge = edge;
+	key.start = start;
+	key.end = end;
 
 	graphmeta = (AgStat_GraphMeta *) hash_search(xact_state->htab,
 												 (void *) &key,
@@ -6894,7 +6886,7 @@ agstat_count_edge_create(Graphid edge, Graphid start, Graphid end)
 }
 
 void
-agstat_count_edge_delete(Graphid edge, Graphid start, Graphid end)
+agstat_count_edge_delete(Labid edge, Labid start, Labid end)
 {
 	int		nest_level;
 	bool	found;

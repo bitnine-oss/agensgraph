@@ -40,5 +40,36 @@ MATCH(n)-[e*3]->(n3) RETURN head(e);
 MATCH(n)-[e*3]->(n3) RETURN tail(e);
 MATCH(n)-[e*3]->(n3) RETURN last(e);
 
+-- Trigger
+CREATE TEMPORARY TABLE tmp (a graphid PRIMARY KEY);
+
+CREATE OR REPLACE FUNCTION v1_test_trigger_func()
+returns trigger
+AS $$
+DECLARE
+BEGIN
+    CASE WHEN new.id IS NULL
+    THEN
+        DELETE FROM tmp WHERE tmp.a = old.id;
+        RETURN new;
+    ELSE
+        INSERT INTO tmp VALUES (new.id);
+        RETURN new;
+    END CASE;
+END; $$
+LANGUAGE 'plpgsql';
+
+create trigger v1_test_trigger
+    after insert or delete or update on cypher_dml2.v1
+	for each row
+    execute procedure v1_test_trigger_func();
+
+CREATE (v1:v1 {name: 'trigger_item'}) RETURN v1;
+
+SELECT a, pg_typeof(a) FROM tmp;
+
+MATCH (n) DETACH DELETE n;
+
+SELECT a, pg_typeof(a) FROM tmp;
 
 DROP GRAPH cypher_dml2 CASCADE;

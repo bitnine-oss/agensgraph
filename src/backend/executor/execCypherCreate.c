@@ -324,7 +324,13 @@ createEdge(ModifyGraphState *mgstate, GraphEdge *gedge, Graphid start,
 	estate->es_result_relation_info = savedResultRelInfo;
 
 	if (auto_gather_graphmeta)
-		agstat_count_edge_create(id, start, end);
+	{
+		agstat_count_edge_create(
+								 GraphidGetLabid(id),
+								 GraphidGetLabid(start),
+								 GraphidGetLabid(end)
+			);
+	}
 
 	return edge;
 }

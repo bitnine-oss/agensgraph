@@ -13,7 +13,5 @@
 
 extern TupleTableSlot *ExecDeleteGraph(ModifyGraphState *mgstate,
 									   TupleTableSlot *slot);
-extern bool deleteElement(ModifyGraphState *mgstate, Datum gid, ItemPointer tid,
-						  Oid type);
 
 #endif							/* AGENSGRAPH_EXECCYPHERDELETE_H */

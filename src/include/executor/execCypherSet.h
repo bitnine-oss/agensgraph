@@ -12,6 +12,7 @@
 #include "tuptable.h"
 #include "nodes/execnodes.h"
 #include "nodes/parsenodes.h"
+#include "nodes/graphnodes.h"
 
 extern TupleTableSlot *LegacyExecSetGraph(ModifyGraphState *mgstate,
 										  TupleTableSlot *slot, GSPKind kind);

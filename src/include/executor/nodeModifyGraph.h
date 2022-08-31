@@ -10,6 +10,7 @@
 #define NODEMODIFYGRAPH_H
 
 #include "nodes/execnodes.h"
+#include "nodes/graphnodes.h"
 
 extern bool enable_multiple_update;
 

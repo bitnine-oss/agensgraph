@@ -1486,8 +1486,8 @@ extern const char *pgstat_slru_name(int slru_idx);
 extern int	pgstat_slru_index(const char *name);
 
 /* Functions to set up ag_graphmeta for metric */
-extern void agstat_count_edge_create(Graphid edge, Graphid start, Graphid end);
-extern void agstat_count_edge_delete(Graphid edge, Graphid start, Graphid end);
+extern void agstat_count_edge_create(Labid edge, Labid start, Labid end);
+extern void agstat_count_edge_delete(Labid edge, Labid start, Labid end);
 extern void agstat_drop_vlabel(const char *vlab);
 extern void agstat_drop_elabel(const char *elab);
 extern void agstat_drop_graph(const char *graph);
