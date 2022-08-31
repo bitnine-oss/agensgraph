@@ -187,6 +187,12 @@ createVertex(ModifyGraphState *mgstate, GraphVertex *gvertex, Graphid *vid,
 	ExecMaterializeSlot(elemTupleSlot);
 
 	/*
+	 * Constraints might reference the tableoid column, so initialize
+	 * t_tableOid before evaluating them.
+	 */
+	elemTupleSlot->tts_tableOid = RelationGetRelid(resultRelInfo->ri_RelationDesc);
+
+	/*
 	 * BEFORE ROW INSERT Triggers.
 	 */
 	if (resultRelInfo->ri_TrigDesc &&
@@ -197,12 +203,6 @@ createVertex(ModifyGraphState *mgstate, GraphVertex *gvertex, Graphid *vid,
 			elog(ERROR, "Trigger must not be NULL on Cypher Clause.");
 		}
 	}
-
-	/*
-	 * Constraints might reference the tableoid column, so initialize
-	 * t_tableOid before evaluating them.
-	 */
-	elemTupleSlot->tts_tableOid = RelationGetRelid(resultRelInfo->ri_RelationDesc);
 
 	/*
 	 * Check the constraints of the tuple
@@ -280,6 +280,7 @@ createEdge(ModifyGraphState *mgstate, GraphEdge *gedge, Graphid start,
 	ExecStoreVirtualTuple(elemTupleSlot);
 
 	ExecMaterializeSlot(elemTupleSlot);
+	elemTupleSlot->tts_tableOid = RelationGetRelid(resultRelInfo->ri_RelationDesc);
 
 	/*
 	 * BEFORE ROW INSERT Triggers.
@@ -292,8 +293,6 @@ createEdge(ModifyGraphState *mgstate, GraphEdge *gedge, Graphid start,
 			elog(ERROR, "Trigger must not be NULL on Cypher Clause.");
 		}
 	}
-
-	elemTupleSlot->tts_tableOid = RelationGetRelid(resultRelInfo->ri_RelationDesc);
 
 	if (resultRelInfo->ri_RelationDesc->rd_att->constr != NULL)
 		ExecConstraints(resultRelInfo, elemTupleSlot, estate);

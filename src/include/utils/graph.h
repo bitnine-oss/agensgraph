@@ -20,12 +20,12 @@ typedef uint16 Labid;
 
 #define InvalidLabid			0
 
-#define DatumGetGraphid(d)		DatumGetUInt64(d)
+#define DatumGetGraphid(d)		((Graphid) (DatumGetUInt64(d)))
 #define GraphidGetDatum(p)		UInt64GetDatum(p)
 #define PG_GETARG_GRAPHID(x)	DatumGetGraphid(PG_GETARG_DATUM(x))
 #define PG_RETURN_GRAPHID(x)	return UInt64GetDatum(x)
 
-#define GraphidGetLabid(id)		((uint16) (((uint64) (id)) >> (32 + 16)))
+#define GraphidGetLabid(id)		((Labid) (((uint64) (id)) >> (32 + 16)))
 #define GraphidGetLocid(id)		(((uint64) (id)) & 0x0000ffffffffffff)
 
 #define GraphidSet(_id, _labid, _locid) \
