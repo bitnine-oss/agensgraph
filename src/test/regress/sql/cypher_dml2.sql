@@ -41,35 +41,71 @@ MATCH(n)-[e*3]->(n3) RETURN tail(e);
 MATCH(n)-[e*3]->(n3) RETURN last(e);
 
 -- Trigger
-CREATE TEMPORARY TABLE tmp (a graphid PRIMARY KEY);
+CREATE TEMPORARY TABLE _trigger_history(
+    id graphid,
+    is_before boolean,
+    CONSTRAINT pk_history PRIMARY KEY (id, is_before)
+);
 
-CREATE OR REPLACE FUNCTION v1_test_trigger_func()
+CREATE OR REPLACE FUNCTION v1_test_trigger_func_be()
 returns trigger
 AS $$
 DECLARE
 BEGIN
+    raise notice 'Bf: % %', new, old;
     CASE WHEN new.id IS NULL
     THEN
-        DELETE FROM tmp WHERE tmp.a = old.id;
-        RETURN new;
+        DELETE FROM _trigger_history WHERE _trigger_history.id = old.id AND
+            _trigger_history.is_before = true;
+        RETURN old;
     ELSE
-        INSERT INTO tmp VALUES (new.id);
+        INSERT INTO _trigger_history(id, is_before) VALUES (new.id, true);
         RETURN new;
     END CASE;
 END; $$
 LANGUAGE 'plpgsql';
 
-create trigger v1_test_trigger
+create trigger v1_test_trigger_be
+    before insert or delete or update on cypher_dml2.v1
+	for each row
+    execute procedure v1_test_trigger_func_be();
+
+CREATE OR REPLACE FUNCTION v1_test_trigger_func_af()
+returns trigger
+AS $$
+DECLARE
+BEGIN
+    raise notice 'Af: % %', new, old;
+    CASE WHEN new.id IS NULL THEN
+        DELETE FROM _trigger_history WHERE _trigger_history.id = old.id AND
+            _trigger_history.is_before = false;
+        RETURN old;
+    ELSE
+        INSERT INTO _trigger_history(id, is_before) VALUES (new.id, false);
+        RETURN new;
+    END CASE;
+END; $$
+LANGUAGE 'plpgsql';
+
+create trigger v1_test_trigger_af
     after insert or delete or update on cypher_dml2.v1
 	for each row
-    execute procedure v1_test_trigger_func();
+    execute procedure v1_test_trigger_func_af();
 
 CREATE (v1:v1 {name: 'trigger_item'}) RETURN v1;
+SELECT * FROM _trigger_history;
 
-SELECT a, pg_typeof(a) FROM tmp;
+-- Must fail
+MATCH (n) SET n.name = 'trigger_item_updated' RETURN n;
+SELECT * FROM _trigger_history;
 
+-- Should pass
+DELETE FROM _trigger_history;
+MATCH (n) SET n.name = 'trigger_item_updated' RETURN n;
+SELECT * FROM _trigger_history;
+
+-- Must empty
 MATCH (n) DETACH DELETE n;
-
-SELECT a, pg_typeof(a) FROM tmp;
+SELECT * FROM _trigger_history;
 
 DROP GRAPH cypher_dml2 CASCADE;

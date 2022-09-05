@@ -139,8 +139,7 @@ ExecDeleteEdgeOrVertex(ModifyGraphState *mgstate, ResultRelInfo *resultRelInfo,
 		bool		dodelete;
 
 		dodelete = ExecBRDeleteTriggers(estate, epqstate, resultRelInfo,
-										tupleid, tuple, NULL);
-
+										tupleid, NULL, NULL);
 		if (!dodelete)
 		{
 			if (required)

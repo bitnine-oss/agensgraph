@@ -65,42 +65,109 @@ MATCH(n)-[e*3]->(n3) RETURN last(e);
 (1 row)
 
 -- Trigger
-CREATE TEMPORARY TABLE tmp (a graphid PRIMARY KEY);
-CREATE OR REPLACE FUNCTION v1_test_trigger_func()
+CREATE TEMPORARY TABLE _trigger_history(
+    id graphid,
+    is_before boolean,
+    CONSTRAINT pk_history PRIMARY KEY (id, is_before)
+);
+CREATE OR REPLACE FUNCTION v1_test_trigger_func_be()
 returns trigger
 AS $$
 DECLARE
 BEGIN
+    raise notice 'Bf: % %', new, old;
     CASE WHEN new.id IS NULL
     THEN
-        DELETE FROM tmp WHERE tmp.a = old.id;
-        RETURN new;
+        DELETE FROM _trigger_history WHERE _trigger_history.id = old.id AND
+            _trigger_history.is_before = true;
+        RETURN old;
     ELSE
-        INSERT INTO tmp VALUES (new.id);
+        INSERT INTO _trigger_history(id, is_before) VALUES (new.id, true);
         RETURN new;
     END CASE;
 END; $$
 LANGUAGE 'plpgsql';
-create trigger v1_test_trigger
+create trigger v1_test_trigger_be
+    before insert or delete or update on cypher_dml2.v1
+	for each row
+    execute procedure v1_test_trigger_func_be();
+CREATE OR REPLACE FUNCTION v1_test_trigger_func_af()
+returns trigger
+AS $$
+DECLARE
+BEGIN
+    raise notice 'Af: % %', new, old;
+    CASE WHEN new.id IS NULL THEN
+        DELETE FROM _trigger_history WHERE _trigger_history.id = old.id AND
+            _trigger_history.is_before = false;
+        RETURN old;
+    ELSE
+        INSERT INTO _trigger_history(id, is_before) VALUES (new.id, false);
+        RETURN new;
+    END CASE;
+END; $$
+LANGUAGE 'plpgsql';
+create trigger v1_test_trigger_af
     after insert or delete or update on cypher_dml2.v1
 	for each row
-    execute procedure v1_test_trigger_func();
+    execute procedure v1_test_trigger_func_af();
 CREATE (v1:v1 {name: 'trigger_item'}) RETURN v1;
+NOTICE:  Bf: (3.1,"{""name"": ""trigger_item""}") <NULL>
+NOTICE:  Af: (3.1,"{""name"": ""trigger_item""}") <NULL>
                v1                
 ---------------------------------
  v1[3.1]{"name": "trigger_item"}
 (1 row)
 
-SELECT a, pg_typeof(a) FROM tmp;
-  a  | pg_typeof 
+SELECT * FROM _trigger_history;
+ id  | is_before 
 -----+-----------
- 3.1 | graphid
-(1 row)
+ 3.1 | t
+ 3.1 | f
+(2 rows)
 
+-- Must fail
+MATCH (n) SET n.name = 'trigger_item_updated' RETURN n;
+NOTICE:  Bf: (3.1,"{""name"": ""trigger_item_updated""}") (3.1,"{""name"": ""trigger_item""}")
+ERROR:  duplicate key value violates unique constraint "pk_history"
+DETAIL:  Key (id, is_before)=(3.1, t) already exists.
+CONTEXT:  SQL statement "INSERT INTO _trigger_history(id, is_before) VALUES (new.id, true)"
+PL/pgSQL function v1_test_trigger_func_be() line 11 at SQL statement
+SELECT * FROM _trigger_history;
+ id  | is_before 
+-----+-----------
+ 3.1 | t
+ 3.1 | f
+(2 rows)
+
+-- Should pass
+DELETE FROM _trigger_history;
+MATCH (n) SET n.name = 'trigger_item_updated' RETURN n;
+NOTICE:  Bf: (3.1,"{""name"": ""trigger_item_updated""}") (3.1,"{""name"": ""trigger_item""}")
+NOTICE:  Af: (3.1,"{""name"": ""trigger_item_updated""}") (3.1,"{""name"": ""trigger_item""}")
+                      n                       
+----------------------------------------------
+ v1[3.1]{"name": "trigger_item_updated"}
+ v_user[5.1]{"name": "trigger_item_updated"}
+ v_title[6.1]{"name": "trigger_item_updated"}
+ v_type[7.1]{"name": "trigger_item_updated"}
+ v_sub[8.1]{"name": "trigger_item_updated"}
+(5 rows)
+
+SELECT * FROM _trigger_history;
+ id  | is_before 
+-----+-----------
+ 3.1 | t
+ 3.1 | f
+(2 rows)
+
+-- Must empty
 MATCH (n) DETACH DELETE n;
-SELECT a, pg_typeof(a) FROM tmp;
- a | pg_typeof 
----+-----------
+NOTICE:  Bf: <NULL> (3.1,"{""name"": ""trigger_item_updated""}")
+NOTICE:  Af: <NULL> (3.1,"{""name"": ""trigger_item_updated""}")
+SELECT * FROM _trigger_history;
+ id | is_before 
+----+-----------
 (0 rows)
 
 DROP GRAPH cypher_dml2 CASCADE;

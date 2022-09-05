@@ -20,6 +20,7 @@
 #include "access/xact.h"
 #include "catalog/ag_vertex_d.h"
 #include "catalog/ag_edge_d.h"
+#include "commands/trigger.h"
 
 #define DatumGetItemPointer(X)	 ((ItemPointer) DatumGetPointer(X))
 
@@ -296,6 +297,7 @@ GraphTableTupleUpdate(ModifyGraphState *mgstate, Oid tts_value_type,
 	bool		hash_found;
 	ModifiedElemEntry *entry;
 	Datum		inserted_datum;
+	List	   *recheckIndexes = NIL;
 
 	if (tts_value_type == VERTEXOID)
 	{
@@ -335,7 +337,6 @@ GraphTableTupleUpdate(ModifyGraphState *mgstate, Oid tts_value_type,
 	 * Create a tuple to store. Attributes of vertex/edge label are not the
 	 * same with those of vertex/edge.
 	 */
-lreplace:
 	ExecClearTuple(elemTupleSlot);
 	ExecSetSlotDescriptor(elemTupleSlot,
 						  RelationGetDescr(resultRelInfo->ri_RelationDesc));
@@ -344,7 +345,6 @@ lreplace:
 
 	if (tts_value_type == VERTEXOID)
 	{
-
 		tts_values[Anum_ag_vertex_id - 1] = gid;
 		tts_values[Anum_ag_vertex_properties - 1] = getVertexPropDatum(tts_value);
 	}
@@ -361,6 +361,16 @@ lreplace:
 		   elemTupleSlot->tts_tupleDescriptor->natts * sizeof(bool));
 	ExecStoreVirtualTuple(elemTupleSlot);
 
+	/* BEFORE ROW UPDATE Triggers */
+	if (resultRelInfo->ri_TrigDesc &&
+		resultRelInfo->ri_TrigDesc->trig_update_before_row)
+	{
+		if (!ExecBRUpdateTriggers(estate, epqstate, resultRelInfo,
+								  ctid, NULL, elemTupleSlot))
+			return (Datum) 0;
+	}
+
+lreplace:
 	ExecMaterializeSlot(elemTupleSlot);
 	elemTupleSlot->tts_tableOid = RelationGetRelid(resultRelationDesc);
 
@@ -430,11 +440,13 @@ lreplace:
 
 						if (tts_value_type == VERTEXOID)
 						{
-							gid = getVertexIdDatum(tts_value);
+							tts_values[Anum_ag_vertex_properties - 1] = getVertexPropDatum(tts_value);
 						}
 						else
 						{
-							gid = getEdgeIdDatum(tts_value);
+							tts_values[Anum_ag_edge_start - 1] = getEdgeStartDatum(tts_value);
+							tts_values[Anum_ag_edge_end - 1] = getEdgeEndDatum(tts_value);
+							tts_values[Anum_ag_edge_properties - 1] = getEdgePropDatum(tts_value);
 						}
 
 						goto lreplace;
@@ -472,9 +484,19 @@ lreplace:
 	}
 
 	if (resultRelInfo->ri_NumIndices > 0 && update_indexes)
-		ExecInsertIndexTuples(elemTupleSlot, estate, false, NULL, NIL);
+		recheckIndexes = ExecInsertIndexTuples(elemTupleSlot,
+											   estate,
+											   false,
+											   NULL,
+											   NIL);
 
 	graphWriteStats.updateProperty++;
+
+	/* AFTER ROW UPDATE Triggers */
+	ExecARUpdateTriggers(estate, resultRelInfo, ctid, NULL, elemTupleSlot,
+						 recheckIndexes, NULL);
+
+	list_free(recheckIndexes);
 
 	estate->es_result_relation_info = savedResultRelInfo;
 
@@ -504,6 +526,7 @@ LegacyUpdateElemProp(ModifyGraphState *mgstate, Oid elemtype, Datum gid,
 					 Datum elem_datum)
 {
 	EState	   *estate = mgstate->ps.state;
+	EPQState   *epqstate = &mgstate->mt_epqstate;
 	TupleTableSlot *elemTupleSlot = mgstate->elemTupleSlot;
 	Oid			relid;
 	ItemPointer ctid;
@@ -514,6 +537,7 @@ LegacyUpdateElemProp(ModifyGraphState *mgstate, Oid elemtype, Datum gid,
 	TM_Result	result;
 	TM_FailureData tmfd;
 	bool		update_indexes;
+	List	   *recheckIndexes = NIL;
 
 	relid = get_labid_relid(mgstate->graphid,
 							GraphidGetLabid(DatumGetGraphid(gid)));
@@ -552,6 +576,18 @@ LegacyUpdateElemProp(ModifyGraphState *mgstate, Oid elemtype, Datum gid,
 		   elemTupleSlot->tts_tupleDescriptor->natts * sizeof(bool));
 	ExecStoreVirtualTuple(elemTupleSlot);
 
+	/* BEFORE ROW UPDATE Triggers */
+	if (resultRelInfo->ri_TrigDesc &&
+		resultRelInfo->ri_TrigDesc->trig_update_before_row)
+	{
+		if (!ExecBRUpdateTriggers(estate, epqstate, resultRelInfo,
+								  ctid, NULL, elemTupleSlot))
+		{
+			elog(ERROR, "Trigger must not be NULL on Cypher Clause.");
+			return NULL;
+		}
+	}
+
 	ExecMaterializeSlot(elemTupleSlot);
 	elemTupleSlot->tts_tableOid = RelationGetRelid(resultRelationDesc);
 
@@ -585,9 +621,19 @@ LegacyUpdateElemProp(ModifyGraphState *mgstate, Oid elemtype, Datum gid,
 	}
 
 	if (resultRelInfo->ri_NumIndices > 0 && update_indexes)
-		ExecInsertIndexTuples(elemTupleSlot, estate, false, NULL, NIL);
+		recheckIndexes = ExecInsertIndexTuples(elemTupleSlot,
+											   estate,
+											   false,
+											   NULL,
+											   NIL);
 
 	graphWriteStats.updateProperty++;
+
+	/* AFTER ROW UPDATE Triggers */
+	ExecARUpdateTriggers(estate, resultRelInfo, ctid, NULL, elemTupleSlot,
+						 recheckIndexes, NULL);
+
+	list_free(recheckIndexes);
 
 	estate->es_result_relation_info = savedResultRelInfo;
 
