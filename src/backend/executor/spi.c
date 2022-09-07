@@ -1726,8 +1726,6 @@ SPI_result_code_string(int code)
 			return "SPI_ERROR_REL_DUPLICATE";
 		case SPI_ERROR_REL_NOT_FOUND:
 			return "SPI_ERROR_REL_NOT_FOUND";
-		case SPI_ERROR_GRAPHWRITE:
-			return "SPI_ERROR_GRAPHWRITE";
 		case SPI_OK_CONNECT:
 			return "SPI_OK_CONNECT";
 		case SPI_OK_FINISH:
@@ -1760,6 +1758,8 @@ SPI_result_code_string(int code)
 			return "SPI_OK_REL_REGISTER";
 		case SPI_OK_REL_UNREGISTER:
 			return "SPI_OK_REL_UNREGISTER";
+		case SPI_OK_GRAPHWRITE:
+			return "SPI_OK_GRAPHWRITE";
 	}
 	/* Unrecognized code ... return something useful ... */
 	sprintf(buf, "Unrecognized SPI code %d", code);
@@ -2252,12 +2252,6 @@ _SPI_execute_plan(SPIPlanPtr plan, ParamListInfo paramLI,
 				}
 			}
 
-			if (stmt->hasGraphwriteClause == true)
-			{
-				my_res = SPI_ERROR_GRAPHWRITE;
-				goto fail;
-			}
-
 			if (read_only && !CommandIsReadOnly(stmt))
 				ereport(ERROR,
 						(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
@@ -2498,6 +2492,9 @@ _SPI_pquery(QueryDesc *queryDesc, bool fire_triggers, uint64 tcount)
 				res = SPI_OK_UPDATE_RETURNING;
 			else
 				res = SPI_OK_UPDATE;
+			break;
+		case CMD_GRAPHWRITE:
+			res = SPI_OK_GRAPHWRITE;
 			break;
 		default:
 			return SPI_ERROR_OPUNKNOWN;

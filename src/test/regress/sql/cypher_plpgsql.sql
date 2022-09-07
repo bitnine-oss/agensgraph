@@ -97,6 +97,40 @@ $$ LANGUAGE plpgsql;
 
 SELECT udf_if_not_exists();
 
+CREATE OR REPLACE FUNCTION udf_graphwrite() RETURNS text AS $$
+DECLARE
+    var1 text;
+BEGIN
+    CREATE (a:person{name : 'Anders'})-[:knows {name:'friend1'}]->(b:person{name : 'Dilshad'}),
+    (a)-[:knows {name:'friend2'}]->(c:person{name : 'Cesar'}),
+    (a)-[:knows {name:'friend3'}]->(d:person{name : 'Becky'}),
+    (b)-[:knows {name:'friend4'}]->(:person{name : 'Filipa'}),
+    (c)-[:knows {name:'friend5'}]->(e:person{name : 'Emil'});
+
+    MATCH (a:person{name : 'Becky'}) , (b:person{name : 'Emil'})
+    MERGE (a)-[r:knows {name:'friend6'}]-(b)
+    ON CREATE SET r.created = true, r.matched = null
+    ON MATCH SET r.matched = true, r.created = null
+    RETURN r.name INTO var1;
+
+    RETURN var1;
+END;
+$$ LANGUAGE plpgsql;
+
+SELECT udf_graphwrite();
+
+MATCH (n) RETURN n.name;
+
+CREATE GRAPH udf_temp;
+SET GRAPH_PATH to udf_temp;
+
+SELECT udf_graphwrite();
+
+MATCH (n) RETURN n.name;
+
+SET GRAPH_PATH to udf2;
+DROP GRAPH udf_temp CASCADE;
+
 
 -- teardown
 
