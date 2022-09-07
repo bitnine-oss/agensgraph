@@ -49,7 +49,6 @@ typedef struct _SPI_plan *SPIPlanPtr;
 #define SPI_ERROR_TYPUNKNOWN	(-11)
 #define SPI_ERROR_REL_DUPLICATE (-12)
 #define SPI_ERROR_REL_NOT_FOUND (-13)
-#define SPI_ERROR_GRAPHWRITE	(-14)
 
 #define SPI_OK_CONNECT			1
 #define SPI_OK_FINISH			2
@@ -68,6 +67,7 @@ typedef struct _SPI_plan *SPIPlanPtr;
 #define SPI_OK_REL_REGISTER		15
 #define SPI_OK_REL_UNREGISTER	16
 #define SPI_OK_TD_REGISTER		17
+#define SPI_OK_GRAPHWRITE		18
 
 #define SPI_OPT_NONATOMIC		(1 << 0)
 
