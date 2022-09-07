@@ -102,6 +102,71 @@ SELECT udf_if_not_exists();
  f
 (1 row)
 
+CREATE OR REPLACE FUNCTION udf_graphwrite() RETURNS text AS $$
+DECLARE
+    var1 text;
+BEGIN
+    CREATE (a:person{name : 'Anders'})-[:knows {name:'friend1'}]->(b:person{name : 'Dilshad'}),
+    (a)-[:knows {name:'friend2'}]->(c:person{name : 'Cesar'}),
+    (a)-[:knows {name:'friend3'}]->(d:person{name : 'Becky'}),
+    (b)-[:knows {name:'friend4'}]->(:person{name : 'Filipa'}),
+    (c)-[:knows {name:'friend5'}]->(e:person{name : 'Emil'});
+
+    MATCH (a:person{name : 'Becky'}) , (b:person{name : 'Emil'})
+    MERGE (a)-[r:knows {name:'friend6'}]-(b)
+    ON CREATE SET r.created = true, r.matched = null
+    ON MATCH SET r.matched = true, r.created = null
+    RETURN r.name INTO var1;
+
+    RETURN var1;
+END;
+$$ LANGUAGE plpgsql;
+SELECT udf_graphwrite();
+ udf_graphwrite 
+----------------
+ "friend6"
+(1 row)
+
+MATCH (n) RETURN n.name;
+   name    
+-----------
+ "Anders"
+ "Bossman"
+ "Anders"
+ "Dilshad"
+ "Cesar"
+ "Becky"
+ "Filipa"
+ "Emil"
+(8 rows)
+
+CREATE GRAPH udf_temp;
+SET GRAPH_PATH to udf_temp;
+SELECT udf_graphwrite();
+ udf_graphwrite 
+----------------
+ "friend6"
+(1 row)
+
+MATCH (n) RETURN n.name;
+   name    
+-----------
+ "Anders"
+ "Dilshad"
+ "Cesar"
+ "Becky"
+ "Filipa"
+ "Emil"
+(6 rows)
+
+SET GRAPH_PATH to udf2;
+DROP GRAPH udf_temp CASCADE;
+NOTICE:  drop cascades to 5 other objects
+DETAIL:  drop cascades to sequence udf_temp.ag_label_seq
+drop cascades to vlabel ag_vertex
+drop cascades to elabel ag_edge
+drop cascades to vlabel person
+drop cascades to elabel knows
 -- teardown
 DROP FUNCTION udf_var(jsonb);
 DROP FUNCTION udf_param(jsonb);
@@ -115,9 +180,10 @@ drop cascades to vlabel ag_vertex
 drop cascades to elabel ag_edge
 drop cascades to vlabel v
 DROP GRAPH udf2 CASCADE;
-NOTICE:  drop cascades to 5 other objects
+NOTICE:  drop cascades to 6 other objects
 DETAIL:  drop cascades to sequence udf2.ag_label_seq
 drop cascades to vlabel ag_vertex
 drop cascades to elabel ag_edge
 drop cascades to vlabel people
 drop cascades to elabel knows
+drop cascades to vlabel person
