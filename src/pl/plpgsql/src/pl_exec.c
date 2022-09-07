@@ -4238,6 +4238,15 @@ exec_stmt_execsql(PLpgSQL_execstate *estate,
 			exec_set_found(estate, (SPI_processed != 0));
 			break;
 
+		case SPI_OK_GRAPHWRITE:
+			/*
+			 * The command is to execute graphwrite type from pl module.
+			 * 
+			 * But, this command is only executed when allow_graphwrite_type
+			 * (GUC variable) is true.
+			 */
+			break;
+
 		case SPI_OK_SELINTO:
 		case SPI_OK_UTILITY:
 			Assert(!stmt->mod_stmt);
@@ -4266,10 +4275,6 @@ exec_stmt_execsql(PLpgSQL_execstate *estate,
 					(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
 					 errmsg("unsupported transaction command in PL/pgSQL")));
 			break;
-		case SPI_ERROR_GRAPHWRITE:
-			ereport(ERROR,
-					(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-							errmsg("cannot modify graph in PL/pgSQL")));
 
 		default:
 			elog(ERROR, "SPI_execute_plan_with_paramlist failed executing query \"%s\": %s",
@@ -4423,6 +4428,7 @@ exec_stmt_dynexecute(PLpgSQL_execstate *estate,
 		case SPI_OK_DELETE_RETURNING:
 		case SPI_OK_UTILITY:
 		case SPI_OK_REWRITTEN:
+		case SPI_OK_GRAPHWRITE:
 			break;
 
 		case 0:
