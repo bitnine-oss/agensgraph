@@ -950,6 +950,7 @@ _outModifyGraph(StringInfo str, const ModifyGraph *node)
 	WRITE_NODE_FIELD(sets);
 	WRITE_INT_FIELD(ert_base_index);
 	WRITE_INT_FIELD(ert_rtes_added);
+	WRITE_INT_FIELD(epqParam);
 }
 
 static void

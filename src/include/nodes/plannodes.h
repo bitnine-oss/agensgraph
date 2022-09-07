@@ -1276,6 +1276,7 @@ typedef struct ModifyGraph
 	List	   *sets;			/* list of GraphSetProp's for SET/REMOVE */
 	Index		ert_base_index;	/* base index into the es_range_table */
 	int			ert_rtes_added;	/* number of RTEs added to es_range_table */
+	int 		epqParam;
 } ModifyGraph;
 
 typedef struct Shortestpath
