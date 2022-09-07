@@ -20,12 +20,12 @@ typedef uint16 Labid;
 
 #define InvalidLabid			0
 
-#define DatumGetGraphid(d)		DatumGetUInt64(d)
+#define DatumGetGraphid(d)		((Graphid) (DatumGetUInt64(d)))
 #define GraphidGetDatum(p)		UInt64GetDatum(p)
 #define PG_GETARG_GRAPHID(x)	DatumGetGraphid(PG_GETARG_DATUM(x))
 #define PG_RETURN_GRAPHID(x)	return UInt64GetDatum(x)
 
-#define GraphidGetLabid(id)		((uint16) (((uint64) (id)) >> (32 + 16)))
+#define GraphidGetLabid(id)		((Labid) (((uint64) (id)) >> (32 + 16)))
 #define GraphidGetLocid(id)		(((uint64) (id)) & 0x0000ffffffffffff)
 
 #define GraphidSet(_id, _labid, _locid) \
@@ -46,6 +46,15 @@ typedef struct {
 #define RowidGetDatum(X)	PointerGetDatum(X)
 #define PG_GETARG_ROWID(n)	((Rowid *) DatumGetPointer(PG_GETARG_DATUM(n)))
 #define PG_RETURN_ROWID(x)	return RowidGetDatum(x)
+
+/* for labels. i.e, ag_vertex, ag_edge ... */
+#define Anum_table_vertex_id		1
+#define Anum_table_vertex_prop_map	2
+
+#define Anum_table_edge_id			1
+#define Anum_table_edge_start		2
+#define Anum_table_edge_end			3
+#define Anum_table_edge_prop_map	4
 
 /* graphid */
 extern Datum graphid(PG_FUNCTION_ARGS);

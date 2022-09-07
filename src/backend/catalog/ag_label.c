@@ -25,6 +25,7 @@
 #include "utils/lsyscache.h"
 #include "utils/syscache.h"
 #include "miscadmin.h"
+#include "utils/fmgroids.h"
 
 static void InsertAgLabelTuple(Relation ag_label_desc, Oid laboid,
 							   RangeVar *label, Oid relid, char labkind,
@@ -160,4 +161,50 @@ GetNewLabelId(char *graphname, Oid graphid)
 	}
 
 	return labid;
+}
+
+/*
+ * Retrieves a list of all the names of a graph.
+ */
+List *get_all_edge_labels_per_graph(Snapshot snapshot, Oid graph_oid)
+{
+	List *labels = NIL;
+	ScanKeyData scan_keys[2];
+	Relation ag_label;
+	TableScanDesc scan_desc;
+	HeapTuple tuple;
+
+	ScanKeyInit(&scan_keys[0],
+				Anum_ag_label_graphid,
+				BTEqualStrategyNumber,
+				F_OIDEQ,
+				ObjectIdGetDatum(graph_oid));
+	ScanKeyInit(&scan_keys[1],
+				Anum_ag_label_labkind,
+				BTEqualStrategyNumber,
+				F_CHAREQ,
+				CharGetDatum(LABEL_KIND_EDGE));
+
+	ag_label = table_open(LabelRelationId, RowExclusiveLock);
+	scan_desc = table_beginscan(ag_label, snapshot, 2, scan_keys);
+
+	while ((tuple = heap_getnext(scan_desc, ForwardScanDirection)) != NULL)
+	{
+		Oid label_rel_oid;
+		bool isnull;
+		Datum datum;
+
+		datum = heap_getattr(tuple,
+							 Anum_ag_label_relid,
+							 RelationGetDescr(ag_label),
+							 &isnull);
+		label_rel_oid = DatumGetObjectId(datum);
+
+		labels = lappend_oid(labels, label_rel_oid);
+	}
+
+	table_endscan(scan_desc);
+	table_close(ag_label, RowExclusiveLock);
+
+	return labels;
 }

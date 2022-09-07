@@ -19,6 +19,7 @@
 #include "access/tableam.h"
 #include "pgstat.h"
 #include "access/xact.h"
+#include "commands/trigger.h"
 
 static bool isMatchedMergePattern(PlanState *planstate);
 static TupleTableSlot *createMergePath(ModifyGraphState *mgstate,
@@ -180,6 +181,7 @@ createMergeVertex(ModifyGraphState *mgstate, GraphVertex *gvertex,
 	Datum		vertexId;
 	Datum		vertexProp;
 	TupleTableSlot *insertSlot = mgstate->elemTupleSlot;
+	List	   *recheckIndexes = NIL;
 
 	resultRelInfo = getResultRelInfo(mgstate, gvertex->relid);
 	savedResultRelInfo = estate->es_result_relation_info;
@@ -213,6 +215,18 @@ createMergeVertex(ModifyGraphState *mgstate, GraphVertex *gvertex,
 	ExecMaterializeSlot(insertSlot);
 	insertSlot->tts_tableOid = RelationGetRelid(resultRelInfo->ri_RelationDesc);
 
+	/*
+	 * BEFORE ROW INSERT Triggers.
+	 */
+	if (resultRelInfo->ri_TrigDesc &&
+		resultRelInfo->ri_TrigDesc->trig_insert_before_row)
+	{
+		if (!ExecBRInsertTriggers(estate, resultRelInfo, insertSlot))
+		{
+			elog(ERROR, "Trigger must not be NULL on Cypher Clause.");
+		}
+	}
+
 	if (resultRelInfo->ri_RelationDesc->rd_att->constr != NULL)
 		ExecConstraints(resultRelInfo, insertSlot, estate);
 
@@ -221,7 +235,13 @@ createMergeVertex(ModifyGraphState *mgstate, GraphVertex *gvertex,
 					   0, NULL);
 
 	if (resultRelInfo->ri_NumIndices > 0)
-		ExecInsertIndexTuples(insertSlot, estate, false, NULL, NIL);
+		recheckIndexes = ExecInsertIndexTuples(insertSlot, estate, false, NULL,
+											   NIL);
+
+	/* AFTER ROW INSERT Triggers */
+	ExecARInsertTriggers(estate, resultRelInfo, insertSlot, recheckIndexes,
+						 NULL);
+	list_free(recheckIndexes);
 
 	vertex = makeGraphVertexDatum(insertSlot->tts_values[0],
 								  insertSlot->tts_values[1],
@@ -249,6 +269,7 @@ createMergeEdge(ModifyGraphState *mgstate, GraphEdge *gedge, Graphid start,
 	Datum		edge;
 	Datum		edgeProp;
 	TupleTableSlot *insertSlot = mgstate->elemTupleSlot;
+	List	   *recheckIndexes = NIL;
 
 	resultRelInfo = getResultRelInfo(mgstate, gedge->relid);
 	savedResultRelInfo = estate->es_result_relation_info;
@@ -282,6 +303,18 @@ createMergeEdge(ModifyGraphState *mgstate, GraphEdge *gedge, Graphid start,
 
 	insertSlot->tts_tableOid = RelationGetRelid(resultRelInfo->ri_RelationDesc);
 
+	/*
+	 * BEFORE ROW INSERT Triggers.
+	 */
+	if (resultRelInfo->ri_TrigDesc &&
+		resultRelInfo->ri_TrigDesc->trig_insert_before_row)
+	{
+		if (!ExecBRInsertTriggers(estate, resultRelInfo, insertSlot))
+		{
+			elog(ERROR, "Trigger must not be NULL on Cypher Clause.");
+		}
+	}
+
 	if (resultRelInfo->ri_RelationDesc->rd_att->constr != NULL)
 		ExecConstraints(resultRelInfo, insertSlot, estate);
 
@@ -290,7 +323,13 @@ createMergeEdge(ModifyGraphState *mgstate, GraphEdge *gedge, Graphid start,
 					   0, NULL);
 
 	if (resultRelInfo->ri_NumIndices > 0)
-		ExecInsertIndexTuples(insertSlot, estate, false, NULL, NIL);
+		recheckIndexes = ExecInsertIndexTuples(insertSlot, estate, false, NULL,
+											   NIL);
+
+	/* AFTER ROW INSERT Triggers */
+	ExecARInsertTriggers(estate, resultRelInfo, insertSlot, recheckIndexes,
+						 NULL);
+	list_free(recheckIndexes);
 
 	edge = makeGraphEdgeDatum(insertSlot->tts_values[0],
 							  insertSlot->tts_values[1],
@@ -306,7 +345,13 @@ createMergeEdge(ModifyGraphState *mgstate, GraphEdge *gedge, Graphid start,
 	estate->es_result_relation_info = savedResultRelInfo;
 
 	if (auto_gather_graphmeta)
-		agstat_count_edge_create(GraphidGetDatum(getEdgeIdDatum(edge)), start, end);
+	{
+		agstat_count_edge_create(
+								 GraphidGetLabid(GraphidGetDatum(getEdgeIdDatum(edge))),
+								 GraphidGetLabid(start),
+								 GraphidGetLabid(end)
+			);
+	}
 
 	return edge;
 }

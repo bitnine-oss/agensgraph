@@ -29,6 +29,7 @@
 #include "executor/execCypherSet.h"
 #include "executor/execCypherDelete.h"
 #include "executor/execCypherMerge.h"
+#include "catalog/ag_label_fn.h"
 
 bool		enable_multiple_update = true;
 bool		auto_gather_graphmeta = false;
@@ -130,14 +131,61 @@ ExecInitModifyGraph(ModifyGraph *mgplan, EState *estate, int eflags)
 	}
 	mgstate->tuplestorestate = tuplestore_begin_heap(false, false, eager_mem);
 
+	mgstate->delete_graph_state = NULL;
+
 	switch (mgplan->operation)
 	{
 		case GWROP_CREATE:
 			mgstate->execProc = ExecCreateGraph;
 			break;
 		case GWROP_DELETE:
-			mgstate->execProc = ExecDeleteGraph;
-			break;
+			{
+				DeleteGraphState *deleteGraphState =
+				palloc(sizeof(DeleteGraphState));
+				List	   *edge_label_oids = get_all_edge_labels_per_graph(
+																			estate->es_snapshot, mgstate->graphid);
+				int			num_edge_labels = list_length(edge_label_oids);
+
+				if (num_edge_labels > 0)
+				{
+					ResultRelInfo *edge_label_resultRelInfos =
+					(ResultRelInfo *) palloc(
+											 num_edge_labels * sizeof(ResultRelInfo));
+					ResultRelInfo *resultRelInfo = edge_label_resultRelInfos;
+					ListCell   *lc;
+
+					foreach(lc, edge_label_oids)
+					{
+						Oid			label_oid = lfirst_oid(lc);
+						Relation	relation = table_open(label_oid, RowExclusiveLock);
+
+						InitResultRelInfo(resultRelInfo,
+										  relation,
+										  0,	/* dummy rangetable index */
+										  NULL,
+										  0);
+						ExecOpenIndices(resultRelInfo, false);
+						resultRelInfo++;
+					}
+
+					deleteGraphState->edge_labels = edge_label_resultRelInfos;
+				}
+				else
+				{
+					deleteGraphState->edge_labels = NULL;
+				}
+				deleteGraphState->num_edge_labels = num_edge_labels;
+				list_free(edge_label_oids);
+
+				deleteGraphState->cached_values =
+					palloc0(sizeof(Datum) * Anum_table_edge_prop_map);
+				deleteGraphState->cached_isnull =
+					palloc0(sizeof(bool) * Anum_table_edge_prop_map);
+
+				mgstate->delete_graph_state = deleteGraphState;
+				mgstate->execProc = ExecDeleteGraph;
+				break;
+			}
 		case GWROP_SET:
 			mgstate->execProc = ExecSetGraph;
 			break;
@@ -330,6 +378,28 @@ void
 ExecEndModifyGraph(ModifyGraphState *mgstate)
 {
 	CommandId	used_cid;
+
+	if (mgstate->delete_graph_state != NULL)
+	{
+		DeleteGraphState *delete_graph_state = mgstate->delete_graph_state;
+		ResultRelInfo *resultRelInfo = delete_graph_state->edge_labels;
+
+		if (resultRelInfo != NULL)
+		{
+			int			i;
+
+			for (i = 0; i < delete_graph_state->num_edge_labels; i++)
+			{
+				ExecCloseIndices(resultRelInfo);
+				table_close(resultRelInfo->ri_RelationDesc, RowExclusiveLock);
+				resultRelInfo++;
+			}
+			pfree(delete_graph_state->edge_labels);
+		}
+		pfree(delete_graph_state->cached_values);
+		pfree(delete_graph_state->cached_isnull);
+		pfree(delete_graph_state);
+	}
 
 	if (mgstate->update_cols != NULL)
 	{
