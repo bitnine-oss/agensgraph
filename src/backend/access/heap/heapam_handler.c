@@ -24,6 +24,7 @@
 #include "access/heaptoast.h"
 #include "access/multixact.h"
 #include "access/rewriteheap.h"
+#include "access/syncscan.h"
 #include "access/tableam.h"
 #include "access/tsmapi.h"
 #include "access/xact.h"
@@ -368,9 +369,10 @@ tuple_lock_retry:
 	if (result == TM_Updated &&
 		(flags & TUPLE_LOCK_FLAG_FIND_LAST_VERSION))
 	{
-		ReleaseBuffer(buffer);
 		/* Should not encounter speculative tuple on recheck */
 		Assert(!HeapTupleHeaderIsSpeculative(tuple->t_data));
+
+		ReleaseBuffer(buffer);
 
 		if (!ItemPointerEquals(&tmfd->ctid, &tuple->t_self))
 		{

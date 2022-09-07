@@ -1120,7 +1120,7 @@ project.max-msg-ids=(priv,4096,deny)
 
    <para>
     If <productname>systemd</productname> is in use, some care must be taken
-    that IPC resources (shared memory and semaphores) are not prematurely
+    that IPC resources (including shared memory) are not prematurely
     removed by the operating system.  This is especially of concern when
     installing PostgreSQL from source.  Users of distribution packages of
     PostgreSQL are less likely to be affected, as
@@ -1137,11 +1137,12 @@ project.max-msg-ids=(priv,4096,deny)
    </para>
 
    <para>
-    A typical observed effect when this setting is on is that the semaphore
-    objects used by a PostgreSQL server are removed at apparently random
-    times, leading to the server crashing with log messages like
+    A typical observed effect when this setting is on is that shared memory
+    objects used for parallel query execution are removed at apparently random
+    times, leading to errors and warnings while attempting to open and remove
+    them, like
 <screen>
-LOG: semctl(1234567890, 0, IPC_RMID, ...) failed: Invalid argument
+WARNING:  could not remove shared memory segment "/PostgreSQL.1450751626": No such file or directory
 </screen>
     Different types of IPC objects (shared memory vs. semaphores, System V
     vs. POSIX) are treated slightly differently
@@ -1291,7 +1292,7 @@ default:\
     optimal for <productname>PostgreSQL</productname>. Because of the
     way that the kernel implements memory overcommit, the kernel might
     terminate the <productname>PostgreSQL</productname> postmaster (the
-    master server process) if the memory demands of either
+    supervisor server process) if the memory demands of either
     <productname>PostgreSQL</productname> or another process cause the
     system to run out of virtual memory.
    </para>
@@ -1325,10 +1326,12 @@ Out of Memory: Killed process 12345 (postgres).
     system running out of memory, you can avoid the problem by changing
     your configuration.  In some cases, it may help to lower memory-related
     configuration parameters, particularly
-    <link linkend="guc-shared-buffers"><varname>shared_buffers</varname></link>
-    and <link linkend="guc-work-mem"><varname>work_mem</varname></link>.  In
-    other cases, the problem may be caused by allowing too many connections
-    to the database server itself.  In many cases, it may be better to reduce
+    <link linkend="guc-shared-buffers"><varname>shared_buffers</varname></link>,
+    <link linkend="guc-work-mem"><varname>work_mem</varname></link>, and
+    <link linkend="guc-hash-mem-multiplier"><varname>hash_mem_multiplier</varname></link>.
+    In other cases, the problem may be caused by allowing too many
+    connections to the database server itself.  In many cases, it may
+    be better to reduce
     <link linkend="guc-max-connections"><varname>max_connections</varname></link>
     and instead make use of external connection-pooling software.
    </para>
@@ -1390,13 +1393,14 @@ export PG_OOM_ADJUST_VALUE=0
     using large values of <xref linkend="guc-shared-buffers"/>.  To use this
     feature in <productname>PostgreSQL</productname> you need a kernel
     with <varname>CONFIG_HUGETLBFS=y</varname> and
-    <varname>CONFIG_HUGETLB_PAGE=y</varname>. You will also have to adjust
-    the kernel setting <varname>vm.nr_hugepages</varname>. To estimate the
-    number of huge pages needed, start <productname>PostgreSQL</productname>
-    without huge pages enabled and check the
-    postmaster's anonymous shared memory segment size, as well as the system's
-    huge page size, using the <filename>/proc</filename> file system.  This might
-    look like:
+    <varname>CONFIG_HUGETLB_PAGE=y</varname>. You will also have to configure
+    the operating system to provide enough huge pages of the desired size.
+    To estimate the number of huge pages needed, start
+    <productname>PostgreSQL</productname> without huge pages enabled and check
+    the postmaster's anonymous shared memory segment size, as well as the
+    system's default and supported huge page sizes, using the
+    <filename>/proc</filename> and <filename>/sys</filename> file systems.
+    This might look like:
 <programlisting>
 $ <userinput>head -1 $PGDATA/postmaster.pid</userinput>
 4170
@@ -1404,27 +1408,40 @@ $ <userinput>pmap 4170 | awk '/rw-s/ &amp;&amp; /zero/ {print $2}'</userinput>
 6490428K
 $ <userinput>grep ^Hugepagesize /proc/meminfo</userinput>
 Hugepagesize:       2048 kB
+$ <userinput>ls /sys/kernel/mm/hugepages</userinput>
+hugepages-1048576kB  hugepages-2048kB
 </programlisting>
+
+     In this example the default is 2MB, but you can also explicitly request
+     either 2MB or 1GB with <xref linkend="guc-huge-page-size"/>.
+
+     Assuming <literal>2MB</literal> huge pages,
      <literal>6490428</literal> / <literal>2048</literal> gives approximately
      <literal>3169.154</literal>, so in this example we need at
-     least <literal>3170</literal> huge pages, which we can set with:
+     least <literal>3170</literal> huge pages.  A larger setting would be
+     appropriate if other programs on the machine also need huge pages.
+     We can set this with:
 <programlisting>
-$ <userinput>sysctl -w vm.nr_hugepages=3170</userinput>
+# <userinput>sysctl -w vm.nr_hugepages=3170</userinput>
 </programlisting>
-    A larger setting would be appropriate if other programs on the machine
-    also need huge pages.  Don't forget to add this setting
-    to <filename>/etc/sysctl.conf</filename> so that it will be reapplied
-    after reboots.
+     Don't forget to add this setting to <filename>/etc/sysctl.conf</filename>
+     so that it is reapplied after reboots.  For non-default huge page sizes,
+     we can instead use:
+<programlisting>
+# <userinput>echo 3170 > /sys/kernel/mm/hugepages/hugepages-2048kB/nr_hugepages</userinput>
+</programlisting>
+    It is also possible to provide these settings at boot time using
+    kernel parameters such as <literal>hugepagesz=2M hugepages=3170</literal>.
    </para>
 
    <para>
     Sometimes the kernel is not able to allocate the desired number of huge
-    pages immediately, so it might be necessary to repeat the command or to
-    reboot.  (Immediately after a reboot, most of the machine's memory
-    should be available to convert into huge pages.)  To verify the huge
-    page allocation situation, use:
+    pages immediately due to fragmentation, so it might be necessary
+    to repeat the command or to reboot.  (Immediately after a reboot, most of
+    the machine's memory should be available to convert into huge pages.)
+    To verify the huge page allocation situation for a given size, use:
 <programlisting>
-$ <userinput>grep Huge /proc/meminfo</userinput>
+$ <userinput>cat /sys/kernel/mm/hugepages/hugepages-2048kB/nr_hugepages</userinput>
 </programlisting>
    </para>
 
@@ -1437,8 +1454,9 @@ $ <userinput>grep Huge /proc/meminfo</userinput>
 
    <para>
     The default behavior for huge pages in
-    <productname>PostgreSQL</productname> is to use them when possible and
-    to fall back to normal pages when failing. To enforce the use of huge
+    <productname>PostgreSQL</productname> is to use them when possible, with
+    the system's default huge page size, and
+    to fall back to normal pages on failure. To enforce the use of huge
     pages, you can set <xref linkend="guc-huge-pages"/>
     to <literal>on</literal> in <filename>postgresql.conf</filename>.
     Note that with this setting <productname>PostgreSQL</productname> will fail to
@@ -1464,7 +1482,7 @@ $ <userinput>grep Huge /proc/meminfo</userinput>
 
   <para>
    There are several ways to shut down the database server. You control
-   the type of shutdown by sending different signals to the master
+   the type of shutdown by sending different signals to the supervisor
    <command>postgres</command> process.
 
    <variablelist>
@@ -1510,7 +1528,7 @@ $ <userinput>grep Huge /proc/meminfo</userinput>
       The server will send <systemitem>SIGQUIT</systemitem> to all child
       processes and wait for them to terminate.  If any do not terminate
       within 5 seconds, they will be sent <systemitem>SIGKILL</systemitem>.
-      The master server process exits as soon as all child processes have
+      The supervisor server process exits as soon as all child processes have
       exited, without doing normal database shutdown processing.
       This will lead to recovery (by
       replaying the WAL log) upon next start-up. This is recommended
@@ -1863,9 +1881,9 @@ pg_dumpall -p 5432 | psql -d postgres -p 5433
     This is possible because logical replication supports
     replication between different major versions of
     <productname>PostgreSQL</productname>.  The standby can be on the same computer or
-    a different computer.  Once it has synced up with the master server
+    a different computer.  Once it has synced up with the primary server
     (running the older version of <productname>PostgreSQL</productname>), you can
-    switch masters and make the standby the master and shut down the older
+    switch primaries and make the standby the primary and shut down the older
     database instance.  Such a switch-over results in only several seconds
     of downtime for an upgrade.
    </para>
@@ -2256,9 +2274,6 @@ pg_dumpall -p 5432 | psql -d postgres -p 5433
    intermediate certificates were created with <literal>v3_ca</literal>
    extensions).  Certificate Revocation List (CRL) entries are also
    checked if the parameter <xref linkend="guc-ssl-crl-file"/> is set.
-   (See <ulink
-   url="http://h41379.www4.hpe.com/doc/83final/ba554_90007/ch04s02.html"></ulink>
-   for diagrams showing SSL certificate usage.)
   </para>
 
   <para>

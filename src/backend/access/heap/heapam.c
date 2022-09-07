@@ -41,6 +41,7 @@
 #include "access/parallel.h"
 #include "access/relscan.h"
 #include "access/subtrans.h"
+#include "access/syncscan.h"
 #include "access/sysattr.h"
 #include "access/tableam.h"
 #include "access/transam.h"
@@ -410,10 +411,10 @@ heapgetpage(TableScanDesc sscan, BlockNumber page)
 	 * visible to everyone, we can skip the per-tuple visibility tests.
 	 *
 	 * Note: In hot standby, a tuple that's already visible to all
-	 * transactions in the master might still be invisible to a read-only
+	 * transactions on the primary might still be invisible to a read-only
 	 * transaction in the standby. We partly handle this problem by tracking
 	 * the minimum xmin of visible tuples as the cut-off XID while marking a
-	 * page all-visible on master and WAL log that along with the visibility
+	 * page all-visible on the primary and WAL log that along with the visibility
 	 * map SET operation. In hot standby, we wait for (or abort) all
 	 * transactions that can potentially may not see one or more tuples on the
 	 * page. That's how index-only scans work fine in hot standby. A crucial
@@ -520,12 +521,14 @@ heapgettup(HeapScanDesc scan,
 			{
 				ParallelBlockTableScanDesc pbscan =
 				(ParallelBlockTableScanDesc) scan->rs_base.rs_parallel;
+				ParallelBlockTableScanWorker pbscanwork =
+				(ParallelBlockTableScanWorker) scan->rs_base.rs_private;
 
 				table_block_parallelscan_startblock_init(scan->rs_base.rs_rd,
-														 pbscan);
+														 pbscanwork, pbscan);
 
 				page = table_block_parallelscan_nextpage(scan->rs_base.rs_rd,
-														 pbscan);
+														 pbscanwork, pbscan);
 
 				/* Other processes might have already finished the scan. */
 				if (page == InvalidBlockNumber)
@@ -720,9 +723,11 @@ heapgettup(HeapScanDesc scan,
 		{
 			ParallelBlockTableScanDesc pbscan =
 			(ParallelBlockTableScanDesc) scan->rs_base.rs_parallel;
+			ParallelBlockTableScanWorker pbscanwork =
+			(ParallelBlockTableScanWorker) scan->rs_base.rs_private;
 
 			page = table_block_parallelscan_nextpage(scan->rs_base.rs_rd,
-													 pbscan);
+													 pbscanwork, pbscan);
 			finished = (page == InvalidBlockNumber);
 		}
 		else
@@ -834,12 +839,14 @@ heapgettup_pagemode(HeapScanDesc scan,
 			{
 				ParallelBlockTableScanDesc pbscan =
 				(ParallelBlockTableScanDesc) scan->rs_base.rs_parallel;
+				ParallelBlockTableScanWorker pbscanwork =
+				(ParallelBlockTableScanWorker) scan->rs_base.rs_private;
 
 				table_block_parallelscan_startblock_init(scan->rs_base.rs_rd,
-														 pbscan);
+														 pbscanwork, pbscan);
 
 				page = table_block_parallelscan_nextpage(scan->rs_base.rs_rd,
-														 pbscan);
+														 pbscanwork, pbscan);
 
 				/* Other processes might have already finished the scan. */
 				if (page == InvalidBlockNumber)
@@ -1019,9 +1026,11 @@ heapgettup_pagemode(HeapScanDesc scan,
 		{
 			ParallelBlockTableScanDesc pbscan =
 			(ParallelBlockTableScanDesc) scan->rs_base.rs_parallel;
+			ParallelBlockTableScanWorker pbscanwork =
+			(ParallelBlockTableScanWorker) scan->rs_base.rs_private;
 
 			page = table_block_parallelscan_nextpage(scan->rs_base.rs_rd,
-													 pbscan);
+													 pbscanwork, pbscan);
 			finished = (page == InvalidBlockNumber);
 		}
 		else
@@ -1155,6 +1164,8 @@ heap_beginscan(Relation relation, Snapshot snapshot,
 	scan->rs_base.rs_nkeys = nkeys;
 	scan->rs_base.rs_flags = flags;
 	scan->rs_base.rs_parallel = parallel_scan;
+	scan->rs_base.rs_private =
+		palloc(sizeof(ParallelBlockTableScanWorkerData));
 	scan->rs_strategy = NULL;	/* set in initscan */
 
 	/*
@@ -1639,9 +1650,9 @@ heap_get_latest_tid(TableScanDesc sscan,
 	TransactionId priorXmax;
 
 	/*
-	 * table_get_latest_tid verified that the passed in tid is valid.  Assume
-	 * that t_ctid links are valid however - there shouldn't be invalid ones
-	 * in the table.
+	 * table_tuple_get_latest_tid() verified that the passed in tid is valid.
+	 * Assume that t_ctid links are valid however - there shouldn't be invalid
+	 * ones in the table.
 	 */
 	Assert(ItemPointerIsValid(tid));
 
@@ -2153,8 +2164,8 @@ heap_multi_insert(Relation relation, TupleTableSlot **slots, int ntuples,
 		RelationPutHeapTuple(relation, buffer, heaptuples[ndone], false);
 
 		/*
-		 * Note that heap_multi_insert is not used for catalog tuples yet, but
-		 * this will cover the gap once that is the case.
+		 * For logical decoding we need combocids to properly decode the
+		 * catalog.
 		 */
 		if (needwal && need_cids)
 			log_heap_new_cid(relation, heaptuples[ndone]);
@@ -2169,8 +2180,8 @@ heap_multi_insert(Relation relation, TupleTableSlot **slots, int ntuples,
 			RelationPutHeapTuple(relation, buffer, heaptup, false);
 
 			/*
-			 * We don't use heap_multi_insert for catalog tuples yet, but
-			 * better be prepared...
+			 * For logical decoding we need combocids to properly decode the
+			 * catalog.
 			 */
 			if (needwal && need_cids)
 				log_heap_new_cid(relation, heaptup);
@@ -6889,7 +6900,7 @@ HeapTupleHeaderAdvanceLatestRemovedXid(HeapTupleHeader tuple,
 	 * updated/deleted by the inserting transaction.
 	 *
 	 * Look for a committed hint bit, or if no xmin bit is set, check clog.
-	 * This needs to work on both master and standby, where it is used to
+	 * This needs to work on both primary and standby, where it is used to
 	 * assess btree delete records.
 	 */
 	if (HeapTupleHeaderXminCommitted(tuple) ||
@@ -6951,9 +6962,9 @@ xid_horizon_prefetch_buffer(Relation rel,
  * tuples being deleted.
  *
  * We used to do this during recovery rather than on the primary, but that
- * approach now appears inferior.  It meant that the master could generate
+ * approach now appears inferior.  It meant that the primary could generate
  * a lot of work for the standby without any back-pressure to slow down the
- * master, and it required the standby to have reached consistency, whereas
+ * primary, and it required the standby to have reached consistency, whereas
  * we want to have correct information available even before that point.
  *
  * It's possible for this to generate a fair amount of I/O, since we may be
@@ -8943,7 +8954,7 @@ heap_mask(char *pagedata, BlockNumber blkno)
 			 *
 			 * During redo, heap_xlog_insert() sets t_ctid to current block
 			 * number and self offset number. It doesn't care about any
-			 * speculative insertions in master. Hence, we set t_ctid to
+			 * speculative insertions on the primary. Hence, we set t_ctid to
 			 * current block number and self offset number to ignore any
 			 * inconsistency.
 			 */
@@ -8975,15 +8986,13 @@ heap_mask(char *pagedata, BlockNumber blkno)
 
 /*
  * HeapCheckForSerializableConflictOut
- *		We are reading a tuple which has been modified.  If it is visible to
- *		us but has been deleted, that indicates a rw-conflict out.  If it's
- *		not visible and was created by a concurrent (overlapping)
- *		serializable transaction, that is also a rw-conflict out,
+ *		We are reading a tuple.  If it's not visible, there may be a
+ *		rw-conflict out with the inserter.  Otherwise, if it is visible to us
+ *		but has been deleted, there may be a rw-conflict out with the deleter.
  *
  * We will determine the top level xid of the writing transaction with which
- * we may be in conflict, and check for overlap with our own transaction.
- * If the transactions overlap (i.e., they cannot see each other's writes),
- * then we have a conflict out.
+ * we may be in conflict, and ask CheckForSerializableConflictOut() to check
+ * for overlap with our own transaction.
  *
  * This function should be called just about anywhere in heapam.c where a
  * tuple has been read. The caller must hold at least a shared lock on the
@@ -9007,6 +9016,10 @@ HeapCheckForSerializableConflictOut(bool visible, Relation relation,
 	 * while it is visible to us.  The "visible" bool indicates whether the
 	 * tuple is visible to us, while HeapTupleSatisfiesVacuum checks what else
 	 * is going on with it.
+	 *
+	 * In the event of a concurrently inserted tuple that also happens to have
+	 * been concurrently updated (by a separate transaction), the xmin of the
+	 * tuple will be used -- not the updater's xid.
 	 */
 	htsvResult = HeapTupleSatisfiesVacuum(tuple, TransactionXmin, buffer);
 	switch (htsvResult)
@@ -9017,17 +9030,24 @@ HeapCheckForSerializableConflictOut(bool visible, Relation relation,
 			xid = HeapTupleHeaderGetXmin(tuple->t_data);
 			break;
 		case HEAPTUPLE_RECENTLY_DEAD:
-			if (!visible)
-				return;
-			xid = HeapTupleHeaderGetUpdateXid(tuple->t_data);
-			break;
 		case HEAPTUPLE_DELETE_IN_PROGRESS:
-			xid = HeapTupleHeaderGetUpdateXid(tuple->t_data);
+			if (visible)
+				xid = HeapTupleHeaderGetUpdateXid(tuple->t_data);
+			else
+				xid = HeapTupleHeaderGetXmin(tuple->t_data);
+
+			if (TransactionIdPrecedes(xid, TransactionXmin))
+			{
+				/* This is like the HEAPTUPLE_DEAD case */
+				Assert(!visible);
+				return;
+			}
 			break;
 		case HEAPTUPLE_INSERT_IN_PROGRESS:
 			xid = HeapTupleHeaderGetXmin(tuple->t_data);
 			break;
 		case HEAPTUPLE_DEAD:
+			Assert(!visible);
 			return;
 		default:
 

@@ -182,11 +182,6 @@ static ReplicationState *session_replication_state = NULL;
 static void
 replorigin_check_prerequisites(bool check_slots, bool recoveryOK)
 {
-	if (!superuser())
-		ereport(ERROR,
-				(errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
-				 errmsg("only superusers can query or manipulate replication origins")));
-
 	if (check_slots && max_replication_slots == 0)
 		ereport(ERROR,
 				(errcode(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
@@ -427,7 +422,7 @@ restart:
 
 
 /*
- * Lookup replication origin via it's oid and return the name.
+ * Lookup replication origin via its oid and return the name.
  *
  * The external name is palloc'd in the calling context.
  *

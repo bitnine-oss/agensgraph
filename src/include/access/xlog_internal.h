@@ -31,7 +31,7 @@
 /*
  * Each page of XLOG file has a header like this:
  */
-#define XLOG_PAGE_MAGIC 0xD106	/* can be used as WAL version indicator */
+#define XLOG_PAGE_MAGIC 0xD108	/* can be used as WAL version indicator */
 
 typedef struct XLogPageHeaderData
 {
@@ -120,6 +120,13 @@ typedef XLogLongPageHeaderData *XLogLongPageHeader;
 
 #define XLByteToPrevSeg(xlrp, logSegNo, wal_segsz_bytes) \
 	logSegNo = ((xlrp) - 1) / (wal_segsz_bytes)
+
+/*
+ * Convert values of GUCs measured in megabytes to equiv. segment count.
+ * Rounds down.
+ */
+#define XLogMBVarToSegs(mbvar, wal_segsz_bytes) \
+	((mbvar) / ((wal_segsz_bytes) / (1024 * 1024)))
 
 /*
  * Is an XLogRecPtr within a particular XLOG segment?

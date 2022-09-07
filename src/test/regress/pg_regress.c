@@ -465,8 +465,7 @@ convert_sourcefiles_in(const char *source_subdir, const char *dest_dir, const ch
 {
 	char		testtablespace[MAXPGPATH];
 	char		indir[MAXPGPATH];
-	struct stat st;
-	int			ret;
+	char		outdir_sub[MAXPGPATH];
 	char	  **name;
 	char	  **names;
 	int			count = 0;
@@ -474,8 +473,7 @@ convert_sourcefiles_in(const char *source_subdir, const char *dest_dir, const ch
 	snprintf(indir, MAXPGPATH, "%s/%s", inputdir, source_subdir);
 
 	/* Check that indir actually exists and is a directory */
-	ret = stat(indir, &st);
-	if (ret != 0 || !S_ISDIR(st.st_mode))
+	if (!directory_exists(indir))
 	{
 		/*
 		 * No warning, to avoid noise in tests that do not have these
@@ -489,19 +487,21 @@ convert_sourcefiles_in(const char *source_subdir, const char *dest_dir, const ch
 		/* Error logged in pgfnames */
 		exit(2);
 
+	/* Create the "dest" subdirectory if not present */
+	snprintf(outdir_sub, MAXPGPATH, "%s/%s", dest_dir, dest_subdir);
+	if (!directory_exists(outdir_sub))
+		make_directory(outdir_sub);
+
 	snprintf(testtablespace, MAXPGPATH, "%s/testtablespace", outputdir);
 
 #ifdef WIN32
 
 	/*
 	 * On Windows only, clean out the test tablespace dir, or create it if it
-	 * doesn't exist.  On other platforms we expect the Makefile to take care
-	 * of that.  (We don't migrate that functionality in here because it'd be
-	 * harder to cope with platform-specific issues such as SELinux.)
-	 *
-	 * XXX it would be better if pg_regress.c had nothing at all to do with
-	 * testtablespace, and this were handled by a .BAT file or similar on
-	 * Windows.  See pgsql-hackers discussion of 2008-01-18.
+	 * doesn't exist so as it is possible to run the regression tests as a
+	 * Windows administrative user account with the restricted token obtained
+	 * when starting pg_regress.  On other platforms we expect the Makefile to
+	 * take care of that.
 	 */
 	if (directory_exists(testtablespace))
 		if (!rmtree(testtablespace, true))

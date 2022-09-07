@@ -562,6 +562,36 @@ typedef struct BrinOpcInfo
    </varlistentry>
   </variablelist>
 
+  An operator class for <acronym>BRIN</acronym> can optionally specify the
+  following method:
+
+  <variablelist>
+    <varlistentry>
+     <term><function>void options(local_relopts *relopts)</function></term>
+     <listitem>
+      <para>
+       Defines a set of user-visible parameters that control operator class
+       behavior.
+      </para>
+
+      <para>
+       The <function>options</function> function is passed a pointer to a
+       <replaceable>local_relopts</replaceable> struct, which needs to be
+       filled with a set of operator class specific options.  The options
+       can be accessed from other support functions using the
+       <literal>PG_HAS_OPCLASS_OPTIONS()</literal> and
+       <literal>PG_GET_OPCLASS_OPTIONS()</literal> macros.
+      </para>
+
+      <para>
+       Since both key extraction of indexed values and representation of the
+       key in <acronym>BRIN</acronym> are flexible, they may depend on
+       user-specified parameters.
+      </para>
+     </listitem>
+    </varlistentry>
+  </variablelist>
+
   The core distribution includes support for two types of operator classes:
   minmax and inclusion.  Operator class definitions using them are shipped for
   in-core data types as appropriate.  Additional operator classes can be

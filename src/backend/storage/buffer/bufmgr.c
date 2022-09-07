@@ -49,6 +49,7 @@
 #include "storage/proc.h"
 #include "storage/smgr.h"
 #include "storage/standby.h"
+#include "utils/memdebug.h"
 #include "utils/ps_status.h"
 #include "utils/rel.h"
 #include "utils/resowner_private.h"
@@ -1633,13 +1634,31 @@ PinBuffer(BufferDesc *buf, BufferAccessStrategy strategy)
 											   buf_state))
 			{
 				result = (buf_state & BM_VALID) != 0;
+
+				/*
+				 * Assume that we acquired a buffer pin for the purposes of
+				 * Valgrind buffer client checks (even in !result case) to
+				 * keep things simple.  Buffers that are unsafe to access are
+				 * not generally guaranteed to be marked undefined or
+				 * non-accessible in any case.
+				 */
+				VALGRIND_MAKE_MEM_DEFINED(BufHdrGetBlock(buf), BLCKSZ);
 				break;
 			}
 		}
 	}
 	else
 	{
-		/* If we previously pinned the buffer, it must surely be valid */
+		/*
+		 * If we previously pinned the buffer, it must surely be valid.
+		 *
+		 * Note: We deliberately avoid a Valgrind client request here.
+		 * Individual access methods can optionally superimpose buffer page
+		 * client requests on top of our client requests to enforce that
+		 * buffers are only accessed while locked (and pinned).  It's possible
+		 * that the buffer page is legitimately non-accessible here.  We
+		 * cannot meddle with that.
+		 */
 		result = true;
 	}
 
@@ -1682,6 +1701,13 @@ PinBuffer_Locked(BufferDesc *buf)
 	 * manipulate the PrivateRefCount after releasing the spinlock
 	 */
 	Assert(GetPrivateRefCountEntry(BufferDescriptorGetBuffer(buf), false) == NULL);
+
+	/*
+	 * Buffer can't have a preexisting pin, so mark its page as defined to
+	 * Valgrind (this is similar to the PinBuffer() case where the backend
+	 * doesn't already have a buffer pin)
+	 */
+	VALGRIND_MAKE_MEM_DEFINED(BufHdrGetBlock(buf), BLCKSZ);
 
 	/*
 	 * Since we hold the buffer spinlock, we can update the buffer state and
@@ -1727,6 +1753,15 @@ UnpinBuffer(BufferDesc *buf, bool fixOwner)
 	{
 		uint32		buf_state;
 		uint32		old_buf_state;
+
+		/*
+		 * Mark buffer non-accessible to Valgrind.
+		 *
+		 * Note that the buffer may have already been marked non-accessible
+		 * within access method code that enforces that buffers are only
+		 * accessed while a buffer lock is held.
+		 */
+		VALGRIND_MAKE_MEM_NOACCESS(BufHdrGetBlock(buf), BLCKSZ);
 
 		/* I'd better not still hold any locks on the buffer */
 		Assert(!LWLockHeldByMe(BufferDescriptorGetContentLock(buf)));
@@ -3723,7 +3758,7 @@ LockBuffer(Buffer buffer, int mode)
 {
 	BufferDesc *buf;
 
-	Assert(BufferIsValid(buffer));
+	Assert(BufferIsPinned(buffer));
 	if (BufferIsLocal(buffer))
 		return;					/* local buffers need no lock */
 
@@ -3749,7 +3784,7 @@ ConditionalLockBuffer(Buffer buffer)
 {
 	BufferDesc *buf;
 
-	Assert(BufferIsValid(buffer));
+	Assert(BufferIsPinned(buffer));
 	if (BufferIsLocal(buffer))
 		return true;			/* act as though we got it */
 
@@ -3781,7 +3816,7 @@ LockBufferForCleanup(Buffer buffer)
 	BufferDesc *bufHdr;
 	char	   *new_status = NULL;
 
-	Assert(BufferIsValid(buffer));
+	Assert(BufferIsPinned(buffer));
 	Assert(PinCountWaitBuf == NULL);
 
 	if (BufferIsLocal(buffer))

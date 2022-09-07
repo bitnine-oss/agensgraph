@@ -320,7 +320,7 @@ static const internalPQconninfoOption PQconninfoOptions[] = {
 		"Require-Peer", "", 10,
 	offsetof(struct pg_conn, requirepeer)},
 
-	{"ssl_min_protocol_version", "PGSSLMINPROTOCOLVERSION", NULL, NULL,
+	{"ssl_min_protocol_version", "PGSSLMINPROTOCOLVERSION", "TLSv1.2", NULL,
 		"SSL-Minimum-Protocol-Version", "", 8,	/* sizeof("TLSv1.x") == 8 */
 	offsetof(struct pg_conn, ssl_min_protocol_version)},
 
@@ -477,6 +477,11 @@ pqDropConnection(PGconn *conn, bool flushInput)
 	{
 		OM_uint32	min_s;
 
+		if (conn->gcred != GSS_C_NO_CREDENTIAL)
+		{
+			gss_release_cred(&min_s, &conn->gcred);
+			conn->gcred = GSS_C_NO_CREDENTIAL;
+		}
 		if (conn->gctx)
 			gss_delete_sec_context(&min_s, &conn->gctx, GSS_C_NO_BUFFER);
 		if (conn->gtarg_nam)
@@ -496,6 +501,7 @@ pqDropConnection(PGconn *conn, bool flushInput)
 			free(conn->gss_ResultBuffer);
 			conn->gss_ResultBuffer = NULL;
 		}
+		conn->gssenc = false;
 	}
 #endif
 #ifdef ENABLE_SSPI
@@ -1240,8 +1246,8 @@ connectOptions2(PGconn *conn)
 		{
 			conn->status = CONNECTION_BAD;
 			printfPQExpBuffer(&conn->errorMessage,
-							  libpq_gettext("invalid channel_binding value: \"%s\"\n"),
-							  conn->channel_binding);
+							  libpq_gettext("invalid %s value: \"%s\"\n"),
+							  "channel_binding", conn->channel_binding);
 			return false;
 		}
 	}
@@ -1266,8 +1272,8 @@ connectOptions2(PGconn *conn)
 		{
 			conn->status = CONNECTION_BAD;
 			printfPQExpBuffer(&conn->errorMessage,
-							  libpq_gettext("invalid sslmode value: \"%s\"\n"),
-							  conn->sslmode);
+							  libpq_gettext("invalid %s value: \"%s\"\n"),
+							  "sslmode", conn->sslmode);
 			return false;
 		}
 
@@ -1308,7 +1314,8 @@ connectOptions2(PGconn *conn)
 	{
 		conn->status = CONNECTION_BAD;
 		printfPQExpBuffer(&conn->errorMessage,
-						  libpq_gettext("invalid ssl_min_protocol_version value: \"%s\"\n"),
+						  libpq_gettext("invalid %s value: \"%s\"\n"),
+						  "ssl_min_protocol_version",
 						  conn->ssl_min_protocol_version);
 		return false;
 	}
@@ -1316,7 +1323,8 @@ connectOptions2(PGconn *conn)
 	{
 		conn->status = CONNECTION_BAD;
 		printfPQExpBuffer(&conn->errorMessage,
-						  libpq_gettext("invalid ssl_max_protocol_version value: \"%s\"\n"),
+						  libpq_gettext("invalid %s value: \"%s\"\n"),
+						  "ssl_max_protocol_version",
 						  conn->ssl_max_protocol_version);
 		return false;
 	}
@@ -1348,7 +1356,8 @@ connectOptions2(PGconn *conn)
 		{
 			conn->status = CONNECTION_BAD;
 			printfPQExpBuffer(&conn->errorMessage,
-							  libpq_gettext("invalid gssencmode value: \"%s\"\n"),
+							  libpq_gettext("invalid %s value: \"%s\"\n"),
+							  "gssencmode",
 							  conn->gssencmode);
 			return false;
 		}
@@ -1392,7 +1401,8 @@ connectOptions2(PGconn *conn)
 		{
 			conn->status = CONNECTION_BAD;
 			printfPQExpBuffer(&conn->errorMessage,
-							  libpq_gettext("invalid target_session_attrs value: \"%s\"\n"),
+							  libpq_gettext("invalid %s value: \"%s\"\n"),
+							  "target_settion_attrs",
 							  conn->target_session_attrs);
 			return false;
 		}
@@ -2023,11 +2033,6 @@ connectDBStart(PGconn *conn)
 	 */
 	resetPQExpBuffer(&conn->errorMessage);
 
-#ifdef ENABLE_GSS
-	if (conn->gssencmode[0] == 'd') /* "disable" */
-		conn->try_gss = false;
-#endif
-
 	/*
 	 * Set up to try to connect to the first host.  (Setting whichhost = -1 is
 	 * a bit of a cheat, but PQconnectPoll will advance it to 0 before
@@ -2463,6 +2468,9 @@ keep_going:						/* We will come back to here until there is
 		/* initialize these values based on SSL mode */
 		conn->allow_ssl_try = (conn->sslmode[0] != 'd');	/* "disable" */
 		conn->wait_ssl_try = (conn->sslmode[0] == 'a'); /* "allow" */
+#endif
+#ifdef ENABLE_GSS
+		conn->try_gss = (conn->gssencmode[0] != 'd');	/* "disable" */
 #endif
 
 		reset_connection_state_machine = false;
@@ -3345,12 +3353,8 @@ keep_going:						/* We will come back to here until there is
 					 */
 					if (conn->gssenc && conn->gssencmode[0] == 'p')
 					{
-						OM_uint32	minor;
-
 						/* postmaster expects us to drop the connection */
 						conn->try_gss = false;
-						conn->gssenc = false;
-						gss_delete_sec_context(&minor, &conn->gctx, NULL);
 						pqDropConnection(conn, true);
 						conn->status = CONNECTION_NEEDED;
 						goto keep_going;
@@ -3902,9 +3906,6 @@ makeEmptyPGconn(void)
 	conn->verbosity = PQERRORS_DEFAULT;
 	conn->show_context = PQSHOW_CONTEXT_ERRORS;
 	conn->sock = PGINVALID_SOCKET;
-#ifdef ENABLE_GSS
-	conn->try_gss = true;
-#endif
 
 	/*
 	 * We try to send at least 8K at a time, which is the usual size of pipe
@@ -4061,22 +4062,6 @@ freePGconn(PGconn *conn)
 		free(conn->gsslib);
 	if (conn->connip)
 		free(conn->connip);
-#ifdef ENABLE_GSS
-	if (conn->gcred != GSS_C_NO_CREDENTIAL)
-	{
-		OM_uint32	minor;
-
-		gss_release_cred(&minor, &conn->gcred);
-		conn->gcred = GSS_C_NO_CREDENTIAL;
-	}
-	if (conn->gctx)
-	{
-		OM_uint32	minor;
-
-		gss_delete_sec_context(&minor, &conn->gctx, GSS_C_NO_BUFFER);
-		conn->gctx = NULL;
-	}
-#endif
 	/* Note that conn->Pfdebug is not ours to close or free */
 	if (conn->last_query)
 		free(conn->last_query);

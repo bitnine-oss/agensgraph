@@ -220,6 +220,9 @@ typedef struct ReorderBufferTXN
 	 */
 	XLogRecPtr	end_lsn;
 
+	/* Toplevel transaction for this subxact (NULL for top-level). */
+	struct ReorderBufferTXN *toptxn;
+
 	/*
 	 * LSN of the last lsn at which snapshot information reside, so we can
 	 * restart decoding from there and fully recover this transaction from
@@ -345,6 +348,54 @@ typedef void (*ReorderBufferMessageCB) (ReorderBuffer *rb,
 										const char *prefix, Size sz,
 										const char *message);
 
+/* start streaming transaction callback signature */
+typedef void (*ReorderBufferStreamStartCB) (
+											ReorderBuffer *rb,
+											ReorderBufferTXN *txn,
+											XLogRecPtr first_lsn);
+
+/* stop streaming transaction callback signature */
+typedef void (*ReorderBufferStreamStopCB) (
+										   ReorderBuffer *rb,
+										   ReorderBufferTXN *txn,
+										   XLogRecPtr last_lsn);
+
+/* discard streamed transaction callback signature */
+typedef void (*ReorderBufferStreamAbortCB) (
+											ReorderBuffer *rb,
+											ReorderBufferTXN *txn,
+											XLogRecPtr abort_lsn);
+
+/* commit streamed transaction callback signature */
+typedef void (*ReorderBufferStreamCommitCB) (
+											 ReorderBuffer *rb,
+											 ReorderBufferTXN *txn,
+											 XLogRecPtr commit_lsn);
+
+/* stream change callback signature */
+typedef void (*ReorderBufferStreamChangeCB) (
+											 ReorderBuffer *rb,
+											 ReorderBufferTXN *txn,
+											 Relation relation,
+											 ReorderBufferChange *change);
+
+/* stream message callback signature */
+typedef void (*ReorderBufferStreamMessageCB) (
+											  ReorderBuffer *rb,
+											  ReorderBufferTXN *txn,
+											  XLogRecPtr message_lsn,
+											  bool transactional,
+											  const char *prefix, Size sz,
+											  const char *message);
+
+/* stream truncate callback signature */
+typedef void (*ReorderBufferStreamTruncateCB) (
+											   ReorderBuffer *rb,
+											   ReorderBufferTXN *txn,
+											   int nrelations,
+											   Relation relations[],
+											   ReorderBufferChange *change);
+
 struct ReorderBuffer
 {
 	/*
@@ -384,6 +435,17 @@ struct ReorderBuffer
 	ReorderBufferMessageCB message;
 
 	/*
+	 * Callbacks to be called when streaming a transaction.
+	 */
+	ReorderBufferStreamStartCB stream_start;
+	ReorderBufferStreamStopCB stream_stop;
+	ReorderBufferStreamAbortCB stream_abort;
+	ReorderBufferStreamCommitCB stream_commit;
+	ReorderBufferStreamChangeCB stream_change;
+	ReorderBufferStreamMessageCB stream_message;
+	ReorderBufferStreamTruncateCB stream_truncate;
+
+	/*
 	 * Pointer that will be passed untouched to the callbacks.
 	 */
 	void	   *private_data;
@@ -413,17 +475,6 @@ struct ReorderBuffer
 
 	/* memory accounting */
 	Size		size;
-
-	/*
-	 * Statistics about transactions spilled to disk.
-	 *
-	 * A single transaction may be spilled repeatedly, which is why we keep
-	 * two different counters. For spilling, the transaction counter includes
-	 * both toplevel transactions and subtransactions.
-	 */
-	int64		spillCount;		/* spill-to-disk invocation counter */
-	int64		spillTxns;		/* number of transactions spilled to disk  */
-	int64		spillBytes;		/* amount of data spilled to disk */
 };
 
 

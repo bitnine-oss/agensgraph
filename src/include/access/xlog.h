@@ -50,7 +50,7 @@ extern bool InRecovery;
  *
  * In INITIALIZED state, we've run InitRecoveryTransactionEnvironment, but
  * we haven't yet processed a RUNNING_XACTS or shutdown-checkpoint WAL record
- * to initialize our master-transaction tracking system.
+ * to initialize our primary-transaction tracking system.
  *
  * When the transaction tracking is initialized, we enter the SNAPSHOT_PENDING
  * state. The tracked information might still be incomplete, so we can't allow
@@ -58,7 +58,7 @@ extern bool InRecovery;
  * appropriate.
  *
  * In SNAPSHOT_READY mode, we have full knowledge of transactions that are
- * (or were) running in the master at the current WAL location. Snapshots
+ * (or were) running on the primary at the current WAL location. Snapshots
  * can be taken, and read-only queries can be run.
  */
 typedef enum
@@ -107,7 +107,7 @@ extern bool reachedConsistency;
 extern int	wal_segment_size;
 extern int	min_wal_size_mb;
 extern int	max_wal_size_mb;
-extern int	wal_keep_segments;
+extern int	wal_keep_size_mb;
 extern int	max_slot_wal_keep_size_mb;
 extern int	XLOGbuffers;
 extern int	XLogArchiveTimeout;
@@ -237,6 +237,7 @@ extern bool XLOG_DEBUG;
  */
 #define XLOG_INCLUDE_ORIGIN		0x01	/* include the replication origin */
 #define XLOG_MARK_UNIMPORTANT	0x02	/* record not important for durability */
+#define XLOG_INCLUDE_XID		0x04	/* include XID of top-level xact */
 
 
 /* Checkpoint statistics */
@@ -270,8 +271,10 @@ extern CheckpointStatsData CheckpointStats;
 typedef enum WALAvailability
 {
 	WALAVAIL_INVALID_LSN,		/* parameter error */
-	WALAVAIL_NORMAL,			/* WAL segment is within max_wal_size */
-	WALAVAIL_RESERVED,			/* WAL segment is reserved by a slot */
+	WALAVAIL_RESERVED,			/* WAL segment is within max_wal_size */
+	WALAVAIL_EXTENDED,			/* WAL segment is reserved by a slot or
+								 * wal_keep_size */
+	WALAVAIL_UNRESERVED,		/* no longer reserved, but not removed yet */
 	WALAVAIL_REMOVED			/* WAL segment has been removed */
 } WALAvailability;
 
@@ -326,7 +329,7 @@ extern void ShutdownXLOG(int code, Datum arg);
 extern void InitXLOGAccess(void);
 extern void CreateCheckPoint(int flags);
 extern bool CreateRestartPoint(int flags);
-extern WALAvailability GetWALAvailability(XLogRecPtr restart_lsn);
+extern WALAvailability GetWALAvailability(XLogRecPtr targetLSN);
 extern XLogRecPtr CalculateMaxmumSafeLSN(void);
 extern void XLogPutNextOid(Oid nextOid);
 extern XLogRecPtr XLogRestorePoint(const char *rpName);
@@ -372,7 +375,7 @@ typedef enum SessionBackupState
 
 extern XLogRecPtr do_pg_start_backup(const char *backupidstr, bool fast,
 									 TimeLineID *starttli_p, StringInfo labelfile,
-									 List **tablespaces, StringInfo tblspcmapfile, bool infotbssize,
+									 List **tablespaces, StringInfo tblspcmapfile,
 									 bool needtblspcmapfile);
 extern XLogRecPtr do_pg_stop_backup(char *labelfile, bool waitforarchive,
 									TimeLineID *stoptli_p);
@@ -391,6 +394,5 @@ extern SessionBackupState get_backup_status(void);
 
 /* files to signal promotion to primary */
 #define PROMOTE_SIGNAL_FILE		"promote"
-#define FALLBACK_PROMOTE_SIGNAL_FILE  "fallback_promote"
 
 #endif							/* XLOG_H */

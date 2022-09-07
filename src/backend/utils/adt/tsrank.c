@@ -556,14 +556,18 @@ typedef struct
 #define QR_GET_OPERAND_DATA(q, v) \
 	( (q)->operandData + (((QueryItem*)(v)) - GETQUERY((q)->query)) )
 
-static bool
-checkcondition_QueryOperand(void *checkval, QueryOperand *val, ExecPhraseData *data)
+/*
+ * TS_execute callback for matching a tsquery operand to QueryRepresentation
+ */
+static TSTernaryValue
+checkcondition_QueryOperand(void *checkval, QueryOperand *val,
+							ExecPhraseData *data)
 {
 	QueryRepresentation *qr = (QueryRepresentation *) checkval;
 	QueryRepresentationOperand *opData = QR_GET_OPERAND_DATA(qr, val);
 
 	if (!opData->operandexists)
-		return false;
+		return TS_NO;
 
 	if (data)
 	{
@@ -573,7 +577,7 @@ checkcondition_QueryOperand(void *checkval, QueryOperand *val, ExecPhraseData *d
 			data->pos += MAXQROPOS - opData->npos;
 	}
 
-	return true;
+	return TS_YES;
 }
 
 typedef struct
@@ -693,7 +697,7 @@ Cover(DocRepresentation *doc, int len, QueryRepresentation *qr, CoverExt *ext)
 		fillQueryRepresentationData(qr, ptr);
 
 		if (TS_execute(GETQUERY(qr->query), (void *) qr,
-					   TS_EXEC_CALC_NOT, checkcondition_QueryOperand))
+					   TS_EXEC_EMPTY, checkcondition_QueryOperand))
 		{
 			if (WEP_GETPOS(ptr->pos) < ext->p)
 			{

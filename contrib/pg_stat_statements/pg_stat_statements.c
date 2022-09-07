@@ -4,7 +4,7 @@
  *		Track statement planning and execution times as well as resource
  *		usage across a whole database cluster.
  *
- * Execution costs are totalled for each distinct source query, and kept in
+ * Execution costs are totaled for each distinct source query, and kept in
  * a shared hashtable.  (We track only as many distinct queries as will fit
  * in the designated amount of shared memory.)
  *
@@ -442,7 +442,7 @@ _PG_init(void)
 							 "Selects whether planning duration is tracked by pg_stat_statements.",
 							 NULL,
 							 &pgss_track_planning,
-							 true,
+							 false,
 							 PGC_SUSET,
 							 0,
 							 NULL,
@@ -1170,7 +1170,15 @@ pgss_ProcessUtility(PlannedStmt *pstmt, const char *queryString,
 		INSTR_TIME_SET_CURRENT(duration);
 		INSTR_TIME_SUBTRACT(duration, start);
 
-		rows = (qc && qc->commandTag == CMDTAG_COPY) ? qc->nprocessed : 0;
+		/*
+		 * Track the total number of rows retrieved or affected by
+		 * the utility statements of COPY, FETCH, CREATE TABLE AS,
+		 * CREATE MATERIALIZED VIEW and SELECT INTO.
+		 */
+		rows = (qc && (qc->commandTag == CMDTAG_COPY ||
+					   qc->commandTag == CMDTAG_FETCH ||
+					   qc->commandTag == CMDTAG_SELECT)) ?
+			qc->nprocessed : 0;
 
 		/* calc differences of buffer counters. */
 		memset(&bufusage, 0, sizeof(BufferUsage));

@@ -1324,7 +1324,6 @@ sub safe_psql
 		print "\n#### End standard error\n";
 	}
 
-	$stdout =~ s/\r//g if $TestLib::windows_os;
 	return $stdout;
 }
 
@@ -1513,16 +1512,20 @@ sub psql
 		}
 	};
 
+	# Note: on Windows, IPC::Run seems to convert \r\n to \n in program output
+	# if we're using native Perl, but not if we're using MSys Perl.  So do it
+	# by hand in the latter case, here and elsewhere.
+
 	if (defined $$stdout)
 	{
+		$$stdout =~ s/\r\n/\n/g if $Config{osname} eq 'msys';
 		chomp $$stdout;
-		$$stdout =~ s/\r//g if $TestLib::windows_os;
 	}
 
 	if (defined $$stderr)
 	{
+		$$stderr =~ s/\r\n/\n/g if $Config{osname} eq 'msys';
 		chomp $$stderr;
-		$$stderr =~ s/\r//g if $TestLib::windows_os;
 	}
 
 	# See http://perldoc.perl.org/perlvar.html#%24CHILD_ERROR
@@ -1652,8 +1655,8 @@ sub poll_query_until
 	{
 		my $result = IPC::Run::run $cmd, '>', \$stdout, '2>', \$stderr;
 
+		$stdout =~ s/\r\n/\n/g if $Config{osname} eq 'msys';
 		chomp($stdout);
-		$stdout =~ s/\r//g if $TestLib::windows_os;
 
 		if ($stdout eq $expected)
 		{
@@ -1668,8 +1671,8 @@ sub poll_query_until
 
 	# The query result didn't change in 180 seconds. Give up. Print the
 	# output from the last attempt, hopefully that's useful for debugging.
+	$stderr =~ s/\r\n/\n/g if $Config{osname} eq 'msys';
 	chomp($stderr);
-	$stderr =~ s/\r//g if $TestLib::windows_os;
 	diag qq(poll_query_until timed out executing this query:
 $query
 expecting this output:
@@ -1822,11 +1825,11 @@ sub run_log
 
 Look up WAL locations on the server:
 
- * insert location (master only, error on replica)
- * write location (master only, error on replica)
- * flush location (master only, error on replica)
- * receive location (always undef on master)
- * replay location (always undef on master)
+ * insert location (primary only, error on replica)
+ * write location (primary only, error on replica)
+ * flush location (primary only, error on replica)
+ * receive location (always undef on primary)
+ * replay location (always undef on primary)
 
 mode must be specified.
 
@@ -1876,7 +1879,7 @@ poll_query_until timeout.
 
 Requires that the 'postgres' db exists and is accessible.
 
-target_lsn may be any arbitrary lsn, but is typically $master_node->lsn('insert').
+target_lsn may be any arbitrary lsn, but is typically $primary_node->lsn('insert').
 If omitted, pg_current_wal_lsn() is used.
 
 This is not a test. It die()s on failure.
@@ -1935,7 +1938,7 @@ This is not a test. It die()s on failure.
 
 If the slot is not active, will time out after poll_query_until's timeout.
 
-target_lsn may be any arbitrary lsn, but is typically $master_node->lsn('insert').
+target_lsn may be any arbitrary lsn, but is typically $primary_node->lsn('insert').
 
 Note that for logical slots, restart_lsn is held down by the oldest in-progress tx.
 
@@ -2113,8 +2116,8 @@ sub pg_recvlogical_upto
 		}
 	};
 
-	$stdout =~ s/\r//g if $TestLib::windows_os;
-	$stderr =~ s/\r//g if $TestLib::windows_os;
+	$stdout =~ s/\r\n/\n/g if $Config{osname} eq 'msys';
+	$stderr =~ s/\r\n/\n/g if $Config{osname} eq 'msys';
 
 	if (wantarray)
 	{

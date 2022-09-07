@@ -2560,7 +2560,7 @@ CreateCommandTag(Node *parsetree)
 
 		case T_AlterLabelStmt:
 			{
-				switch (((AlterLabelStmt*) parsetree)->relkind)
+				switch (((AlterLabelStmt*) parsetree)->objtype)
 				{
 					case OBJECT_VLABEL:
 						tag = CMDTAG_ALTER_VLABEL;
@@ -2808,7 +2808,7 @@ CreateCommandTag(Node *parsetree)
 			break;
 
 		case T_AlterTableStmt:
-			tag = AlterObjectTypeCommandTag(((AlterTableStmt *) parsetree)->relkind);
+			tag = AlterObjectTypeCommandTag(((AlterTableStmt *) parsetree)->objtype);
 			break;
 
 		case T_AlterDomainStmt:
@@ -2986,7 +2986,7 @@ CreateCommandTag(Node *parsetree)
 			break;
 
 		case T_CreateTableAsStmt:
-			switch (((CreateTableAsStmt *) parsetree)->relkind)
+			switch (((CreateTableAsStmt *) parsetree)->objtype)
 			{
 				case OBJECT_TABLE:
 					if (((CreateTableAsStmt *) parsetree)->is_select_into)

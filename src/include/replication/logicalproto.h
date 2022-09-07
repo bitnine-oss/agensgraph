@@ -27,14 +27,26 @@
 #define LOGICALREP_PROTO_MIN_VERSION_NUM 1
 #define LOGICALREP_PROTO_VERSION_NUM 1
 
-/* Tuple coming via logical replication. */
+/*
+ * This struct stores a tuple received via logical replication.
+ * Keep in mind that the columns correspond to the *remote* table.
+ */
 typedef struct LogicalRepTupleData
 {
-	/* column values in text format, or NULL for a null value: */
-	char	   *values[MaxTupleAttributeNumber];
-	/* markers for changed/unchanged column values: */
-	bool		changed[MaxTupleAttributeNumber];
+	/* Array of StringInfos, one per column; some may be unused */
+	StringInfoData *colvalues;
+	/* Array of markers for null/unchanged/text/binary, one per column */
+	char	   *colstatus;
+	/* Length of above arrays */
+	int			ncols;
 } LogicalRepTupleData;
+
+/* Possible values for LogicalRepTupleData.colstatus[colnum] */
+/* These values are also used in the on-the-wire protocol */
+#define LOGICALREP_COLUMN_NULL		'n'
+#define LOGICALREP_COLUMN_UNCHANGED	'u'
+#define LOGICALREP_COLUMN_TEXT		't'
+#define LOGICALREP_COLUMN_BINARY	'b' /* added in PG14 */
 
 typedef uint32 LogicalRepRelId;
 
@@ -87,15 +99,15 @@ extern void logicalrep_write_origin(StringInfo out, const char *origin,
 									XLogRecPtr origin_lsn);
 extern char *logicalrep_read_origin(StringInfo in, XLogRecPtr *origin_lsn);
 extern void logicalrep_write_insert(StringInfo out, Relation rel,
-									HeapTuple newtuple);
+									HeapTuple newtuple, bool binary);
 extern LogicalRepRelId logicalrep_read_insert(StringInfo in, LogicalRepTupleData *newtup);
 extern void logicalrep_write_update(StringInfo out, Relation rel, HeapTuple oldtuple,
-									HeapTuple newtuple);
+									HeapTuple newtuple, bool binary);
 extern LogicalRepRelId logicalrep_read_update(StringInfo in,
 											  bool *has_oldtuple, LogicalRepTupleData *oldtup,
 											  LogicalRepTupleData *newtup);
 extern void logicalrep_write_delete(StringInfo out, Relation rel,
-									HeapTuple oldtuple);
+									HeapTuple oldtuple, bool binary);
 extern LogicalRepRelId logicalrep_read_delete(StringInfo in,
 											  LogicalRepTupleData *oldtup);
 extern void logicalrep_write_truncate(StringInfo out, int nrelids, Oid relids[],

@@ -43,6 +43,7 @@ SELECT ' INFINITY    x'::float8;
 SELECT 'Infinity'::float8 + 100.0;
 SELECT 'Infinity'::float8 / 'Infinity'::float8;
 SELECT 'nan'::float8 / 'nan'::float8;
+SELECT 'nan'::float8 / '0'::float8;
 SELECT 'nan'::numeric::float8;
 
 SELECT '' AS five, * FROM FLOAT8_TBL;
@@ -120,11 +121,43 @@ SELECT power(float8 'NaN', float8 'NaN');
 SELECT power(float8 '-1', float8 'NaN');
 SELECT power(float8 '1', float8 'NaN');
 SELECT power(float8 'NaN', float8 '0');
+SELECT power(float8 'inf', float8 '0');
+SELECT power(float8 '-inf', float8 '0');
+SELECT power(float8 '0', float8 'inf');
+SELECT power(float8 '0', float8 '-inf');
+SELECT power(float8 '1', float8 'inf');
+SELECT power(float8 '1', float8 '-inf');
+SELECT power(float8 '-1', float8 'inf');
+SELECT power(float8 '-1', float8 '-inf');
+SELECT power(float8 '0.1', float8 'inf');
+SELECT power(float8 '-0.1', float8 'inf');
+SELECT power(float8 '1.1', float8 'inf');
+SELECT power(float8 '-1.1', float8 'inf');
+SELECT power(float8 '0.1', float8 '-inf');
+SELECT power(float8 '-0.1', float8 '-inf');
+SELECT power(float8 '1.1', float8 '-inf');
+SELECT power(float8 '-1.1', float8 '-inf');
+SELECT power(float8 'inf', float8 '-2');
+SELECT power(float8 'inf', float8 '2');
+SELECT power(float8 'inf', float8 'inf');
+SELECT power(float8 'inf', float8 '-inf');
+-- Intel's icc misoptimizes the code that controls the sign of this result,
+-- even with -mp1.  Pending a fix for that, only test for "is it zero".
+SELECT power(float8 '-inf', float8 '-2') = '0';
+SELECT power(float8 '-inf', float8 '-3');
+SELECT power(float8 '-inf', float8 '2');
+SELECT power(float8 '-inf', float8 '3');
+SELECT power(float8 '-inf', float8 '3.5');
+SELECT power(float8 '-inf', float8 'inf');
+SELECT power(float8 '-inf', float8 '-inf');
 
 -- take exp of ln(f.f1)
 SELECT '' AS three, f.f1, exp(ln(f.f1)) AS exp_ln_f1
    FROM FLOAT8_TBL f
    WHERE f.f1 > '0.0';
+
+-- check edge cases for exp
+SELECT exp('inf'::float8), exp('-inf'::float8), exp('nan'::float8);
 
 -- cube root
 SELECT ||/ float8 '27' AS three;

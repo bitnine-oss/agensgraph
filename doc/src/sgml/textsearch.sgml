@@ -3107,7 +3107,7 @@ largehearted
     The <application>Snowball</application> dictionary template is based on a project
     by Martin Porter, inventor of the popular Porter's stemming algorithm
     for the English language.  Snowball now provides stemming algorithms for
-    many languages (see the <ulink url="http://snowballstem.org/">Snowball
+    many languages (see the <ulink url="https://snowballstem.org/">Snowball
     site</ulink> for more information).  Each algorithm understands how to
     reduce common variant forms of words to a base, or stem, spelling within
     its language.  A Snowball dictionary requires a <literal>language</literal>
@@ -3837,6 +3837,8 @@ Parser: "pg_catalog.default"
    Schema   |      Name       |                        Description
 ------------+-----------------+-----------------------------------------------------------
  pg_catalog | arabic_stem     | snowball stemmer for arabic language
+ pg_catalog | basque_stem     | snowball stemmer for basque language
+ pg_catalog | catalan_stem    | snowball stemmer for catalan language
  pg_catalog | danish_stem     | snowball stemmer for danish language
  pg_catalog | dutch_stem      | snowball stemmer for dutch language
  pg_catalog | english_stem    | snowball stemmer for english language
@@ -3844,6 +3846,7 @@ Parser: "pg_catalog.default"
  pg_catalog | french_stem     | snowball stemmer for french language
  pg_catalog | german_stem     | snowball stemmer for german language
  pg_catalog | greek_stem      | snowball stemmer for greek language
+ pg_catalog | hindi_stem      | snowball stemmer for hindi language
  pg_catalog | hungarian_stem  | snowball stemmer for hungarian language
  pg_catalog | indonesian_stem | snowball stemmer for indonesian language
  pg_catalog | irish_stem      | snowball stemmer for irish language

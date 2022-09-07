@@ -130,13 +130,11 @@ bool		log_replication_commands = false;
 bool		wake_wal_senders = false;
 
 /*
- * Physical walsender does not use xlogreader to read WAL, but it does use a
- * fake one to keep state.  Logical walsender uses a proper xlogreader.  Both
- * keep the 'xlogreader' pointer to the right one, for the sake of common
- * routines.
+ * xlogreader used for replication.  Note that a WAL sender doing physical
+ * replication does not need xlogreader to read WAL, but it needs one to
+ * keep a state of its work.
  */
-static XLogReaderState fake_xlogreader;
-static XLogReaderState *xlogreader;
+static XLogReaderState *xlogreader = NULL;
 
 /*
  * These variables keep track of the state of the timeline we're currently
@@ -256,7 +254,6 @@ static bool TransactionIdInRecentPast(TransactionId xid, uint32 epoch);
 
 static void WalSndSegmentOpen(XLogReaderState *state, XLogSegNo nextSegNo,
 							  TimeLineID *tli_p);
-static void UpdateSpillStats(LogicalDecodingContext *ctx);
 
 
 /* Initialize walsender process before entering the main command loop */
@@ -285,20 +282,6 @@ InitWalSender(void)
 
 	/* Initialize empty timestamp buffer for lag tracking. */
 	lag_tracker = MemoryContextAllocZero(TopMemoryContext, sizeof(LagTracker));
-
-	/*
-	 * Prepare physical walsender's fake xlogreader struct.  Logical walsender
-	 * does this later.
-	 */
-	if (!am_db_walsender)
-	{
-		xlogreader = &fake_xlogreader;
-		xlogreader->routine =
-			*XL_ROUTINE(.segment_open = WalSndSegmentOpen,
-						.segment_close = wal_segment_close);
-		WALOpenSegmentInit(&xlogreader->seg, &xlogreader->segcxt,
-						   wal_segment_size, NULL);
-	}
 }
 
 /*
@@ -593,6 +576,18 @@ StartReplication(StartReplicationCmd *cmd)
 		ereport(ERROR,
 				(errcode(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
 				 errmsg("IDENTIFY_SYSTEM has not been run before START_REPLICATION")));
+
+	/* create xlogreader for physical replication */
+	xlogreader =
+		XLogReaderAllocate(wal_segment_size, NULL,
+						   XL_ROUTINE(.segment_open = WalSndSegmentOpen,
+									  .segment_close = wal_segment_close),
+						   NULL);
+
+	if (!xlogreader)
+		ereport(ERROR,
+				(errcode(ERRCODE_OUT_OF_MEMORY),
+				 errmsg("out of memory")));
 
 	/*
 	 * We assume here that we're logging enough information in the WAL for
@@ -1352,8 +1347,7 @@ WalSndWriteData(LogicalDecodingContext *ctx, XLogRecPtr lsn, TransactionId xid,
 /*
  * LogicalDecodingContext 'update_progress' callback.
  *
- * Write the current position to the lag tracker (see XLogSendPhysical),
- * and update the spill statistics.
+ * Write the current position to the lag tracker (see XLogSendPhysical).
  */
 static void
 WalSndUpdateProgress(LogicalDecodingContext *ctx, XLogRecPtr lsn, TransactionId xid)
@@ -1372,11 +1366,6 @@ WalSndUpdateProgress(LogicalDecodingContext *ctx, XLogRecPtr lsn, TransactionId 
 
 	LagTrackerWrite(lsn, now);
 	sendTime = now;
-
-	/*
-	 * Update statistics about transactions that spilled to disk.
-	 */
-	UpdateSpillStats(ctx);
 }
 
 /*
@@ -1643,6 +1632,8 @@ exec_replication_command(const char *cmd_string)
 					StartReplication(cmd);
 				else
 					StartLogicalReplication(cmd);
+
+				Assert(xlogreader != NULL);
 				break;
 			}
 
@@ -2420,9 +2411,6 @@ InitWalSenderSlot(void)
 			walsnd->sync_standby_priority = 0;
 			walsnd->latch = &MyProc->procLatch;
 			walsnd->replyTime = 0;
-			walsnd->spillTxns = 0;
-			walsnd->spillCount = 0;
-			walsnd->spillBytes = 0;
 			SpinLockRelease(&walsnd->mutex);
 			/* don't need the lock anymore */
 			MyWalSnd = (WalSnd *) walsnd;
@@ -2630,14 +2618,14 @@ XLogSendPhysical(void)
 	else
 	{
 		/*
-		 * Streaming the current timeline on a master.
+		 * Streaming the current timeline on a primary.
 		 *
 		 * Attempt to send all data that's already been written out and
 		 * fsync'd to disk.  We cannot go further than what's been written out
 		 * given the current implementation of WALRead().  And in any case
 		 * it's unsafe to send WAL that is not securely down to disk on the
-		 * master: if the master subsequently crashes and restarts, standbys
-		 * must not have applied any WAL that got lost on the master.
+		 * primary: if the primary subsequently crashes and restarts, standbys
+		 * must not have applied any WAL that got lost on the primary.
 		 */
 		SendRqstPtr = GetFlushRecPtr();
 	}
@@ -2674,7 +2662,7 @@ XLogSendPhysical(void)
 	 *
 	 * Note: We might already have sent WAL > sendTimeLineValidUpto. The
 	 * startup process will normally replay all WAL that has been received
-	 * from the master, before promoting, but if the WAL streaming is
+	 * from the primary, before promoting, but if the WAL streaming is
 	 * terminated at a WAL page boundary, the valid portion of the timeline
 	 * might end in the middle of a WAL record. We might've already sent the
 	 * first half of that partial WAL record to the cascading standby, so that
@@ -3258,7 +3246,7 @@ offset_to_interval(TimeOffset offset)
 Datum
 pg_stat_get_wal_senders(PG_FUNCTION_ARGS)
 {
-#define PG_STAT_GET_WAL_SENDERS_COLS	15
+#define PG_STAT_GET_WAL_SENDERS_COLS	12
 	ReturnSetInfo *rsinfo = (ReturnSetInfo *) fcinfo->resultinfo;
 	TupleDesc	tupdesc;
 	Tuplestorestate *tupstore;
@@ -3312,9 +3300,6 @@ pg_stat_get_wal_senders(PG_FUNCTION_ARGS)
 		int			pid;
 		WalSndState state;
 		TimestampTz replyTime;
-		int64		spillTxns;
-		int64		spillCount;
-		int64		spillBytes;
 		bool		is_sync_standby;
 		Datum		values[PG_STAT_GET_WAL_SENDERS_COLS];
 		bool		nulls[PG_STAT_GET_WAL_SENDERS_COLS];
@@ -3338,9 +3323,6 @@ pg_stat_get_wal_senders(PG_FUNCTION_ARGS)
 		applyLag = walsnd->applyLag;
 		priority = walsnd->sync_standby_priority;
 		replyTime = walsnd->replyTime;
-		spillTxns = walsnd->spillTxns;
-		spillCount = walsnd->spillCount;
-		spillBytes = walsnd->spillBytes;
 		SpinLockRelease(&walsnd->mutex);
 
 		/*
@@ -3438,11 +3420,6 @@ pg_stat_get_wal_senders(PG_FUNCTION_ARGS)
 				nulls[11] = true;
 			else
 				values[11] = TimestampTzGetDatum(replyTime);
-
-			/* spill to disk */
-			values[12] = Int64GetDatum(spillTxns);
-			values[13] = Int64GetDatum(spillCount);
-			values[14] = Int64GetDatum(spillBytes);
 		}
 
 		tuplestore_putvalues(tupstore, tupdesc, values, nulls);
@@ -3678,22 +3655,4 @@ LagTrackerRead(int head, XLogRecPtr lsn, TimestampTz now)
 	/* Return the elapsed time since local flush time in microseconds. */
 	Assert(time != 0);
 	return now - time;
-}
-
-static void
-UpdateSpillStats(LogicalDecodingContext *ctx)
-{
-	ReorderBuffer *rb = ctx->reorder;
-
-	elog(DEBUG2, "UpdateSpillStats: updating stats %p %lld %lld %lld",
-		 rb,
-		 (long long) rb->spillTxns,
-		 (long long) rb->spillCount,
-		 (long long) rb->spillBytes);
-
-	SpinLockAcquire(&MyWalSnd->mutex);
-	MyWalSnd->spillTxns = rb->spillTxns;
-	MyWalSnd->spillCount = rb->spillCount;
-	MyWalSnd->spillBytes = rb->spillBytes;
-	SpinLockRelease(&MyWalSnd->mutex);
 }

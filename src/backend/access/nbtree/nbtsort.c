@@ -267,7 +267,7 @@ static void _bt_build_callback(Relation index, ItemPointer tid, Datum *values,
 							   bool *isnull, bool tupleIsAlive, void *state);
 static Page _bt_blnewpage(uint32 level);
 static BTPageState *_bt_pagestate(BTWriteState *wstate, uint32 level);
-static void _bt_slideleft(Page page);
+static void _bt_slideleft(Page rightmostpage);
 static void _bt_sortaddtup(Page page, Size itemsize,
 						   IndexTuple itup, OffsetNumber itup_off,
 						   bool newfirstdataitem);
@@ -721,31 +721,32 @@ _bt_pagestate(BTWriteState *wstate, uint32 level)
 }
 
 /*
- * slide an array of ItemIds back one slot (from P_FIRSTKEY to
- * P_HIKEY, overwriting P_HIKEY).  we need to do this when we discover
- * that we have built an ItemId array in what has turned out to be a
- * P_RIGHTMOST page.
+ * Slide the array of ItemIds from the page back one slot (from P_FIRSTKEY to
+ * P_HIKEY, overwriting P_HIKEY).
+ *
+ * _bt_blnewpage() makes the P_HIKEY line pointer appear allocated, but the
+ * rightmost page on its level is not supposed to get a high key.  Now that
+ * it's clear that this page is a rightmost page, remove the unneeded empty
+ * P_HIKEY line pointer space.
  */
 static void
-_bt_slideleft(Page page)
+_bt_slideleft(Page rightmostpage)
 {
 	OffsetNumber off;
 	OffsetNumber maxoff;
 	ItemId		previi;
-	ItemId		thisii;
 
-	if (!PageIsEmpty(page))
+	maxoff = PageGetMaxOffsetNumber(rightmostpage);
+	Assert(maxoff >= P_FIRSTKEY);
+	previi = PageGetItemId(rightmostpage, P_HIKEY);
+	for (off = P_FIRSTKEY; off <= maxoff; off = OffsetNumberNext(off))
 	{
-		maxoff = PageGetMaxOffsetNumber(page);
-		previi = PageGetItemId(page, P_HIKEY);
-		for (off = P_FIRSTKEY; off <= maxoff; off = OffsetNumberNext(off))
-		{
-			thisii = PageGetItemId(page, off);
-			*previi = *thisii;
-			previi = thisii;
-		}
-		((PageHeader) page)->pd_lower -= sizeof(ItemIdData);
+		ItemId		thisii = PageGetItemId(rightmostpage, off);
+
+		*previi = *thisii;
+		previi = thisii;
 	}
+	((PageHeader) rightmostpage)->pd_lower -= sizeof(ItemIdData);
 }
 
 /*
@@ -1095,6 +1096,7 @@ _bt_sort_dedup_finish_pending(BTWriteState *wstate, BTPageState *state,
 		pfree(postingtuple);
 	}
 
+	dstate->nmaxitems = 0;
 	dstate->nhtids = 0;
 	dstate->nitems = 0;
 	dstate->phystupsize = 0;
@@ -1190,7 +1192,7 @@ _bt_load(BTWriteState *wstate, BTSpool *btspool, BTSpool *btspool2)
 	int64		tuples_done = 0;
 	bool		deduplicate;
 
-	deduplicate = wstate->inskey->allequalimage &&
+	deduplicate = wstate->inskey->allequalimage && !btspool->isunique &&
 		BTGetDeduplicateItems(wstate->index);
 
 	if (merge)
@@ -1310,6 +1312,7 @@ _bt_load(BTWriteState *wstate, BTSpool *btspool, BTSpool *btspool2)
 
 		dstate = (BTDedupState) palloc(sizeof(BTDedupStateData));
 		dstate->deduplicate = true; /* unused */
+		dstate->nmaxitems = 0;	/* unused */
 		dstate->maxpostingsize = 0; /* set later */
 		/* Metadata about base tuple of current pending posting list */
 		dstate->base = NULL;

@@ -330,6 +330,9 @@ do { \
 
 /*
  * Assembly instructions for schema queries
+ *
+ * Note that toast tables are not included in those queries to avoid
+ * unnecessary bloat in the completions generated.
  */
 
 static const SchemaQuery Query_for_list_of_aggregates[] = {
@@ -573,8 +576,14 @@ static const SchemaQuery Query_for_list_of_indexables = {
 	.result = "pg_catalog.quote_ident(c.relname)",
 };
 
-/* Relations supporting VACUUM */
-static const SchemaQuery Query_for_list_of_vacuumables = {
+/*
+ * Relations supporting VACUUM are currently same as those supporting
+ * indexing.
+ */
+#define Query_for_list_of_vacuumables Query_for_list_of_indexables
+
+/* Relations supporting CLUSTER */
+static const SchemaQuery Query_for_list_of_clusterables = {
 	.catname = "pg_catalog.pg_class c",
 	.selcondition =
 	"c.relkind IN (" CppAsString2(RELKIND_RELATION) ", "
@@ -583,9 +592,6 @@ static const SchemaQuery Query_for_list_of_vacuumables = {
 	.namespace = "c.relnamespace",
 	.result = "pg_catalog.quote_ident(c.relname)",
 };
-
-/* Relations supporting CLUSTER are currently same as those supporting VACUUM */
-#define Query_for_list_of_clusterables Query_for_list_of_vacuumables
 
 static const SchemaQuery Query_for_list_of_constraints_with_schema = {
 	.catname = "pg_catalog.pg_constraint c",
@@ -2316,19 +2322,14 @@ psql_completion(const char *text, int start, int end)
 	else if (Matches("COPY|\\copy"))
 		COMPLETE_WITH_SCHEMA_QUERY(Query_for_list_of_tables,
 								   " UNION ALL SELECT '('");
-	/* If we have COPY BINARY, complete with list of tables */
-	else if (Matches("COPY", "BINARY"))
-		COMPLETE_WITH_SCHEMA_QUERY(Query_for_list_of_tables, NULL);
-	/* If we have COPY (, complete it with legal commands */
+	/* Complete COPY ( with legal query commands */
 	else if (Matches("COPY|\\copy", "("))
 		COMPLETE_WITH("SELECT", "TABLE", "VALUES", "INSERT", "UPDATE", "DELETE", "WITH");
-	/* If we have COPY [BINARY] <sth>, complete it with "TO" or "FROM" */
-	else if (Matches("COPY|\\copy", MatchAny) ||
-			 Matches("COPY", "BINARY", MatchAny))
+	/* Complete COPY <sth> */
+	else if (Matches("COPY|\\copy", MatchAny))
 		COMPLETE_WITH("FROM", "TO");
-	/* If we have COPY [BINARY] <sth> FROM|TO, complete with filename */
-	else if (Matches("COPY", MatchAny, "FROM|TO") ||
-			 Matches("COPY", "BINARY", MatchAny, "FROM|TO"))
+	/* Complete COPY <sth> FROM|TO with filename */
+	else if (Matches("COPY", MatchAny, "FROM|TO"))
 	{
 		completion_charp = "";
 		completion_force_quote = true;	/* COPY requires quoted filename */
@@ -2340,17 +2341,28 @@ psql_completion(const char *text, int start, int end)
 		completion_force_quote = false;
 		matches = rl_completion_matches(text, complete_from_files);
 	}
-	/* Offer options after COPY [BINARY] <sth> FROM|TO filename */
-	else if (Matches("COPY|\\copy", MatchAny, "FROM|TO", MatchAny) ||
-			 Matches("COPY", "BINARY", MatchAny, "FROM|TO", MatchAny))
-		COMPLETE_WITH("BINARY", "DELIMITER", "NULL", "CSV",
-					  "ENCODING");
 
-	/* Offer options after COPY [BINARY] <sth> FROM|TO filename CSV */
-	else if (Matches("COPY|\\copy", MatchAny, "FROM|TO", MatchAny, "CSV") ||
-			 Matches("COPY", "BINARY", MatchAny, "FROM|TO", MatchAny, "CSV"))
-		COMPLETE_WITH("HEADER", "QUOTE", "ESCAPE", "FORCE QUOTE",
-					  "FORCE NOT NULL");
+	/* Complete COPY <sth> TO <sth> */
+	else if (Matches("COPY|\\copy", MatchAny, "TO", MatchAny))
+		COMPLETE_WITH("WITH (");
+
+	/* Complete COPY <sth> FROM <sth> */
+	else if (Matches("COPY|\\copy", MatchAny, "FROM", MatchAny))
+		COMPLETE_WITH("WITH (", "WHERE");
+
+	/* Complete COPY <sth> FROM|TO filename WITH ( */
+	else if (Matches("COPY|\\copy", MatchAny, "FROM|TO", MatchAny, "WITH", "("))
+		COMPLETE_WITH("FORMAT", "FREEZE", "DELIMITER", "NULL",
+					  "HEADER", "QUOTE", "ESCAPE", "FORCE_QUOTE",
+					  "FORCE_NOT_NULL", "FORCE_NULL", "ENCODING");
+
+	/* Complete COPY <sth> FROM|TO filename WITH (FORMAT */
+	else if (Matches("COPY|\\copy", MatchAny, "FROM|TO", MatchAny, "WITH", "(", "FORMAT"))
+		COMPLETE_WITH("binary", "csv", "text");
+
+	/* Complete COPY <sth> FROM <sth> WITH (<options>) */
+	else if (Matches("COPY|\\copy", MatchAny, "FROM", MatchAny, "WITH", MatchAny))
+		COMPLETE_WITH("WHERE");
 
 	/* CREATE ACCESS METHOD */
 	/* Complete "CREATE ACCESS METHOD <name>" */

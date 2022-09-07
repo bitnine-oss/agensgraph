@@ -152,12 +152,14 @@ sub GenerateFiles
 	my $package_bugreport;
 	my $package_url;
 	my ($majorver, $minorver);
+	my $ac_define_openssl_api_compat_found = 0;
+	my $openssl_api_compat;
 	my $ag_version;
 	my $ag_comp_version;
 
-	# Parse configure.in to get version numbers
-	open(my $c, '<', "configure.in")
-	  || confess("Could not open configure.in for reading\n");
+	# Parse configure.ac to get version numbers
+	open(my $c, '<', "configure.ac")
+	  || confess("Could not open configure.ac for reading\n");
 	while (<$c>)
 	{
 		if (/^AC_INIT\(\[([^\]]+)\], \[([^\]]+)\], \[([^\]]+)\], \[([^\]]*)\], \[([^\]]+)\]/
@@ -178,22 +180,27 @@ sub GenerateFiles
 			$majorver = sprintf("%d", $1);
 			$minorver = sprintf("%d", $2 ? $2 : 0);
 		}
+		elsif (/\bAC_DEFINE\(OPENSSL_API_COMPAT, \[([0-9xL]+)\]/)
+		{
+			$ac_define_openssl_api_compat_found = 1;
+			$openssl_api_compat = $1;
+		}
 
 		# AG_VERSION
-		if (/\[AG_VERSION=([^\]]+)\]/)
+		elsif (/\[AG_VERSION=([^\]]+)\]/)
 		{
 			$ag_version = $1;
 		}
 
 		# AG_COMP_VERSION
-		if (/\[AG_COMP_VERSION=([^\]]+)\]/)
+		elsif (/\[AG_COMP_VERSION=([^\]]+)\]/)
 		{
 			$ag_comp_version = $1;
 		}
 	}
 	close($c);
-	confess "Unable to parse configure.in for all variables!"
-	  unless $ac_init_found;
+	confess "Unable to parse configure.ac for all variables!"
+	  unless $ac_init_found && $ac_define_openssl_api_compat_found;
 
 	if (IsNewer("src/include/pg_config_os.h", "src/include/port/win32.h"))
 	{
@@ -447,6 +454,7 @@ sub GenerateFiles
 		LOCALE_T_IN_XLOCALE                      => undef,
 		MAXIMUM_ALIGNOF                          => 8,
 		MEMSET_LOOP_LIMIT                        => 1024,
+		OPENSSL_API_COMPAT                       => $openssl_api_compat,
 		PACKAGE_BUGREPORT                        => qq{"$package_bugreport"},
 		PACKAGE_NAME                             => qq{"$package_name"},
 		PACKAGE_STRING      => qq{"$package_name $package_version"},
@@ -845,7 +853,7 @@ EOF
 
 # Read lines from input file and substitute symbols using the same
 # logic that config.status uses.  There should be one call of this for
-# each AC_CONFIG_HEADERS call in configure.in.
+# each AC_CONFIG_HEADERS call in configure.ac.
 #
 # If the "required" argument is true, we also keep track which of our
 # defines have been found and error out if any are left unused at the

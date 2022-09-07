@@ -47,7 +47,7 @@
  *	  ReorderBuffer uses two special memory context types - SlabContext for
  *	  allocations of fixed-length structures (changes and transactions), and
  *	  GenerationContext for the variable-length transaction data (allocated
- *	  and freed in groups with similar lifespan).
+ *	  and freed in groups with similar lifespans).
  *
  *	  To limit the amount of memory used by decoded changes, we track memory
  *	  used at the reorder buffer level (i.e. total amount of memory), and for
@@ -58,7 +58,7 @@
  *	  Only decoded changes are evicted from memory (spilled to disk), not the
  *	  transaction records. The number of toplevel transactions is limited,
  *	  but a transaction with many subtransactions may still consume significant
- *	  amounts of memory. The transaction records are fairly small, though, and
+ *	  amounts of memory. However, the transaction records are fairly small and
  *	  are not included in the memory limit.
  *
  *	  The current eviction algorithm is very simple - the transaction is
@@ -69,13 +69,13 @@
  *
  *	  We still rely on max_changes_in_memory when loading serialized changes
  *	  back into memory. At that point we can't use the memory limit directly
- *	  as we load the subxacts independently. One option do deal with this
+ *	  as we load the subxacts independently. One option to deal with this
  *	  would be to count the subxacts, and allow each to allocate 1/N of the
  *	  memory limit. That however does not seem very appealing, because with
- *	  many subtransactions it may easily cause trashing (short cycles of
+ *	  many subtransactions it may easily cause thrashing (short cycles of
  *	  deserializing and applying very few changes). We probably should give
  *	  a bit more memory to the oldest subtransactions, because it's likely
- *	  the source for the next sequence of changes.
+ *	  they are the source for the next sequence of changes.
  *
  * -------------------------------------------------------------------------
  */
@@ -316,10 +316,6 @@ ReorderBufferAllocate(void)
 	buffer->outbuf = NULL;
 	buffer->outbufsize = 0;
 	buffer->size = 0;
-
-	buffer->spillCount = 0;
-	buffer->spillTxns = 0;
-	buffer->spillBytes = 0;
 
 	buffer->current_restart_decoding_lsn = InvalidXLogRecPtr;
 
@@ -859,6 +855,9 @@ ReorderBufferAssignChild(ReorderBuffer *rb, TransactionId xid,
 	subtxn->txn_flags |= RBTXN_IS_SUBXACT;
 	subtxn->toplevel_xid = xid;
 	Assert(subtxn->nsubtxns == 0);
+
+	/* set the reference to top-level transaction */
+	subtxn->toptxn = txn;
 
 	/* add to subtransaction list */
 	dlist_push_tail(&txn->subtxns, &subtxn->node);
@@ -2205,7 +2204,11 @@ ReorderBufferAddNewTupleCids(ReorderBuffer *rb, TransactionId xid,
 /*
  * Setup the invalidation of the toplevel transaction.
  *
- * This needs to be done before ReorderBufferCommit is called!
+ * This needs to be called for each XLOG_XACT_INVALIDATIONS message and
+ * accumulates all the invalidation messages in the toplevel transaction.
+ * This is required because in some cases where we skip processing the
+ * transaction (see ReorderBufferForget), we need to execute all the
+ * invalidations together.
  */
 void
 ReorderBufferAddInvalidations(ReorderBuffer *rb, TransactionId xid,
@@ -2216,17 +2219,35 @@ ReorderBufferAddInvalidations(ReorderBuffer *rb, TransactionId xid,
 
 	txn = ReorderBufferTXNByXid(rb, xid, true, NULL, lsn, true);
 
-	if (txn->ninvalidations != 0)
-		elog(ERROR, "only ever add one set of invalidations");
+	/*
+	 * We collect all the invalidations under the top transaction so that we
+	 * can execute them all together.
+	 */
+	if (txn->toptxn)
+		txn = txn->toptxn;
 
 	Assert(nmsgs > 0);
 
-	txn->ninvalidations = nmsgs;
-	txn->invalidations = (SharedInvalidationMessage *)
-		MemoryContextAlloc(rb->context,
-						   sizeof(SharedInvalidationMessage) * nmsgs);
-	memcpy(txn->invalidations, msgs,
-		   sizeof(SharedInvalidationMessage) * nmsgs);
+	/* Accumulate invalidations. */
+	if (txn->ninvalidations == 0)
+	{
+		txn->ninvalidations = nmsgs;
+		txn->invalidations = (SharedInvalidationMessage *)
+			MemoryContextAlloc(rb->context,
+							   sizeof(SharedInvalidationMessage) * nmsgs);
+		memcpy(txn->invalidations, msgs,
+			   sizeof(SharedInvalidationMessage) * nmsgs);
+	}
+	else
+	{
+		txn->invalidations = (SharedInvalidationMessage *)
+			repalloc(txn->invalidations, sizeof(SharedInvalidationMessage) *
+					 (txn->ninvalidations + nmsgs));
+
+		memcpy(txn->invalidations + txn->ninvalidations, msgs,
+			   nmsgs * sizeof(SharedInvalidationMessage));
+		txn->ninvalidations += nmsgs;
+	}
 }
 
 /*
@@ -2254,6 +2275,15 @@ ReorderBufferXidSetCatalogChanges(ReorderBuffer *rb, TransactionId xid,
 	txn = ReorderBufferTXNByXid(rb, xid, true, NULL, lsn, true);
 
 	txn->txn_flags |= RBTXN_HAS_CATALOG_CHANGES;
+
+	/*
+	 * Mark top-level transaction as having catalog changes too if one of its
+	 * children has so that the ReorderBufferBuildTupleCidHash can
+	 * conveniently check just top-level transaction and decide whether to
+	 * build the hash table or not.
+	 */
+	if (txn->toptxn != NULL)
+		txn->toptxn->txn_flags |= RBTXN_HAS_CATALOG_CHANGES;
 }
 
 /*
@@ -2359,12 +2389,13 @@ ReorderBufferLargestTXN(ReorderBuffer *rb)
 
 /*
  * Check whether the logical_decoding_work_mem limit was reached, and if yes
- * pick the transaction to evict and spill the changes to disk.
+ * pick the largest (sub)transaction at-a-time to evict and spill its changes to
+ * disk until we reach under the memory limit.
  *
- * XXX At this point we select just a single (largest) transaction, but
- * we might also adapt a more elaborate eviction strategy - for example
- * evicting enough transactions to free certain fraction (e.g. 50%) of
- * the memory limit.
+ * XXX At this point we select the transactions until we reach under the memory
+ * limit, but we might also adapt a more elaborate eviction strategy - for example
+ * evicting enough transactions to free certain fraction (e.g. 50%) of the memory
+ * limit.
  */
 static void
 ReorderBufferCheckMemoryLimit(ReorderBuffer *rb)
@@ -2376,30 +2407,33 @@ ReorderBufferCheckMemoryLimit(ReorderBuffer *rb)
 		return;
 
 	/*
-	 * Pick the largest transaction (or subtransaction) and evict it from
-	 * memory by serializing it to disk.
+	 * Loop until we reach under the memory limit.  One might think that just
+	 * by evicting the largest (sub)transaction we will come under the memory
+	 * limit based on assumption that the selected transaction is at least as
+	 * large as the most recent change (which caused us to go over the memory
+	 * limit). However, that is not true because a user can reduce the
+	 * logical_decoding_work_mem to a smaller value before the most recent
+	 * change.
 	 */
-	txn = ReorderBufferLargestTXN(rb);
+	while (rb->size >= logical_decoding_work_mem * 1024L)
+	{
+		/*
+		 * Pick the largest transaction (or subtransaction) and evict it from
+		 * memory by serializing it to disk.
+		 */
+		txn = ReorderBufferLargestTXN(rb);
 
-	ReorderBufferSerializeTXN(rb, txn);
+		ReorderBufferSerializeTXN(rb, txn);
 
-	/*
-	 * After eviction, the transaction should have no entries in memory, and
-	 * should use 0 bytes for changes.
-	 */
-	Assert(txn->size == 0);
-	Assert(txn->nentries_mem == 0);
+		/*
+		 * After eviction, the transaction should have no entries in memory,
+		 * and should use 0 bytes for changes.
+		 */
+		Assert(txn->size == 0);
+		Assert(txn->nentries_mem == 0);
+	}
 
-	/*
-	 * And furthermore, evicting the transaction should get us below the
-	 * memory limit again - it is not possible that we're still exceeding the
-	 * memory limit after evicting the transaction.
-	 *
-	 * This follows from the simple fact that the selected transaction is at
-	 * least as large as the most recent change (which caused us to go over
-	 * the memory limit). So by evicting it we're definitely back below the
-	 * memory limit.
-	 */
+	/* We must be under the memory limit now. */
 	Assert(rb->size < logical_decoding_work_mem * 1024L);
 }
 
@@ -2414,7 +2448,6 @@ ReorderBufferSerializeTXN(ReorderBuffer *rb, ReorderBufferTXN *txn)
 	int			fd = -1;
 	XLogSegNo	curOpenSegNo = 0;
 	Size		spilled = 0;
-	Size		size = txn->size;
 
 	elog(DEBUG2, "spill %u changes in XID %u to disk",
 		 (uint32) txn->nentries_mem, txn->xid);
@@ -2472,13 +2505,6 @@ ReorderBufferSerializeTXN(ReorderBuffer *rb, ReorderBufferTXN *txn)
 
 		spilled++;
 	}
-
-	/* update the statistics */
-	rb->spillCount += 1;
-	rb->spillBytes += size;
-
-	/* Don't consider already serialized transactions. */
-	rb->spillTxns += rbtxn_is_serialized(txn) ? 0 : 1;
 
 	Assert(spilled == txn->nentries_mem);
 	Assert(dlist_is_empty(&txn->changes));

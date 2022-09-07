@@ -80,7 +80,7 @@ char		postgres_exec_path[MAXPGPATH];	/* full path to backend */
 
 BackendId	MyBackendId = InvalidBackendId;
 
-BackendId	ParallelMasterBackendId = InvalidBackendId;
+BackendId	ParallelLeaderBackendId = InvalidBackendId;
 
 Oid			MyDatabaseId = InvalidOid;
 
@@ -118,8 +118,9 @@ int			IntervalStyle = INTSTYLE_POSTGRES;
 
 bool		enableFsync = true;
 bool		allowSystemTableMods = false;
-int			work_mem = 1024;
-int			maintenance_work_mem = 16384;
+int			work_mem = 4096;
+double		hash_mem_multiplier = 1.0;
+int			maintenance_work_mem = 65536;
 int			max_parallel_maintenance_workers = 2;
 
 int			eager_mem = 4096;

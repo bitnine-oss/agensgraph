@@ -785,10 +785,7 @@ CREATE VIEW pg_stat_replication AS
             W.replay_lag,
             W.sync_priority,
             W.sync_state,
-            W.reply_time,
-            W.spill_txns,
-            W.spill_count,
-            W.spill_bytes
+            W.reply_time
     FROM pg_stat_get_activity(NULL) AS S
         JOIN pg_stat_get_wal_senders() AS W ON (S.pid = W.pid)
         LEFT JOIN pg_authid AS U ON (S.usesysid = U.oid);
@@ -879,7 +876,7 @@ CREATE VIEW pg_replication_slots AS
             L.restart_lsn,
             L.confirmed_flush_lsn,
             L.wal_status,
-            L.min_safe_lsn
+            L.safe_wal_size
     FROM pg_get_replication_slots() AS L
             LEFT JOIN pg_database D ON (L.datoid = D.oid);
 
@@ -1087,10 +1084,10 @@ CREATE VIEW pg_stat_progress_basebackup AS
                       WHEN 4 THEN 'waiting for wal archiving to finish'
                       WHEN 5 THEN 'transferring wal files'
                       END AS phase,
-	CASE S.param2 WHEN -1 THEN NULL ELSE S.param2 END AS backup_total,
-	S.param3 AS backup_streamed,
-	S.param4 AS tablespaces_total,
-	S.param5 AS tablespaces_streamed
+        CASE S.param2 WHEN -1 THEN NULL ELSE S.param2 END AS backup_total,
+        S.param3 AS backup_streamed,
+        S.param4 AS tablespaces_total,
+        S.param5 AS tablespaces_streamed
     FROM pg_stat_get_progress_info('BASEBACKUP') AS S;
 
 CREATE VIEW pg_user_mappings AS
@@ -1151,7 +1148,7 @@ REVOKE ALL ON pg_replication_origin_status FROM public;
 
 -- All columns of pg_subscription except subconninfo are readable.
 REVOKE ALL ON pg_subscription FROM public;
-GRANT SELECT (subdbid, subname, subowner, subenabled, subslotname, subpublications)
+GRANT SELECT (subdbid, subname, subowner, subenabled, subbinary, subslotname, subpublications)
     ON pg_subscription TO public;
 
 
@@ -1488,6 +1485,19 @@ REVOKE EXECUTE ON FUNCTION pg_read_file(text,bigint,bigint,boolean) FROM public;
 REVOKE EXECUTE ON FUNCTION pg_read_binary_file(text) FROM public;
 REVOKE EXECUTE ON FUNCTION pg_read_binary_file(text,bigint,bigint) FROM public;
 REVOKE EXECUTE ON FUNCTION pg_read_binary_file(text,bigint,bigint,boolean) FROM public;
+
+REVOKE EXECUTE ON FUNCTION pg_replication_origin_advance(text, pg_lsn) FROM public;
+REVOKE EXECUTE ON FUNCTION pg_replication_origin_create(text) FROM public;
+REVOKE EXECUTE ON FUNCTION pg_replication_origin_drop(text) FROM public;
+REVOKE EXECUTE ON FUNCTION pg_replication_origin_oid(text) FROM public;
+REVOKE EXECUTE ON FUNCTION pg_replication_origin_progress(text, boolean) FROM public;
+REVOKE EXECUTE ON FUNCTION pg_replication_origin_session_is_setup() FROM public;
+REVOKE EXECUTE ON FUNCTION pg_replication_origin_session_progress(boolean) FROM public;
+REVOKE EXECUTE ON FUNCTION pg_replication_origin_session_reset() FROM public;
+REVOKE EXECUTE ON FUNCTION pg_replication_origin_session_setup(text) FROM public;
+REVOKE EXECUTE ON FUNCTION pg_replication_origin_xact_reset() FROM public;
+REVOKE EXECUTE ON FUNCTION pg_replication_origin_xact_setup(pg_lsn, timestamp with time zone) FROM public;
+REVOKE EXECUTE ON FUNCTION pg_show_replication_origin_status() FROM public;
 
 REVOKE EXECUTE ON FUNCTION pg_stat_file(text) FROM public;
 REVOKE EXECUTE ON FUNCTION pg_stat_file(text,boolean) FROM public;

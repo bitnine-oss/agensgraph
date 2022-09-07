@@ -198,7 +198,7 @@ sub tap_check
 	  unless $config->{tap_tests};
 
 	my @flags;
-	foreach my $arg (0 .. scalar(@_))
+	foreach my $arg (0 .. scalar(@_) - 1)
 	{
 		next unless $_[$arg] =~ /^PROVE_FLAGS=(.*)/;
 		@flags = split(/\s+/, $1);
@@ -571,8 +571,6 @@ sub upgradecheck
 	my $outputdir          = "$tmp_root/regress";
 	my @EXTRA_REGRESS_OPTS = ("--outputdir=$outputdir");
 	mkdir "$outputdir"                || die $!;
-	mkdir "$outputdir/sql"            || die $!;
-	mkdir "$outputdir/expected"       || die $!;
 	mkdir "$outputdir/testtablespace" || die $!;
 
 	my $logdir = "$topdir/src/bin/pg_upgrade/log";

@@ -1350,6 +1350,23 @@ repeat('Pg', 4) <returnvalue>PgPgPgPg</returnvalue>
       <row>
        <entry role="func_table_entry"><para role="func_signature">
         <indexterm>
+         <primary>factorial</primary>
+        </indexterm>
+        <function>factorial</function> ( <type>bigint</type> )
+        <returnvalue>numeric</returnvalue>
+       </para>
+       <para>
+        Factorial
+       </para>
+       <para>
+        <literal>factorial(5)</literal>
+        <returnvalue>120</returnvalue>
+       </para></entry>
+      </row>
+
+      <row>
+       <entry role="func_table_entry"><para role="func_signature">
+        <indexterm>
          <primary>floor</primary>
         </indexterm>
         <function>floor</function> ( <type>numeric</type> )
@@ -2652,15 +2669,21 @@ repeat('Pg', 4) <returnvalue>PgPgPgPg</returnvalue>
 
       <row>
        <entry role="func_table_entry"><para role="func_signature">
+        <function>substring</function> ( <parameter>string</parameter> <type>text</type> <literal>SIMILAR</literal> <parameter>pattern</parameter> <type>text</type> <literal>ESCAPE</literal> <parameter>escape</parameter> <type>text</type> )
+        <returnvalue>text</returnvalue>
+       </para>
+       <para role="func_signature">
         <function>substring</function> ( <parameter>string</parameter> <type>text</type> <literal>FROM</literal> <parameter>pattern</parameter> <type>text</type> <literal>FOR</literal> <parameter>escape</parameter> <type>text</type> )
         <returnvalue>text</returnvalue>
        </para>
        <para>
         Extracts substring matching <acronym>SQL</acronym> regular expression;
-        see <xref linkend="functions-similarto-regexp"/>.
+        see <xref linkend="functions-similarto-regexp"/>.  The first form has
+        been specified since SQL:2003; the second form was only in SQL:1999
+        and should be considered obsolete.
        </para>
        <para>
-        <literal>substring('Thomas' from '%#"o_a#"_' for '#')</literal>
+        <literal>substring('Thomas' similar '%#"o_a#"_' escape '#')</literal>
         <returnvalue>oma</returnvalue>
        </para></entry>
       </row>
@@ -5143,7 +5166,11 @@ cast(-44 as bit(12))           <lineannotation>111111010100</lineannotation>
     The <function>substring</function> function with three parameters
     provides extraction of a substring that matches an SQL
     regular expression pattern.  The function can be written according
-    to SQL99 syntax:
+    to standard SQL syntax:
+<synopsis>
+substring(<replaceable>string</replaceable> similar <replaceable>pattern</replaceable> escape <replaceable>escape-character</replaceable>)
+</synopsis>
+    or using the now obsolete SQL:1999 syntax:
 <synopsis>
 substring(<replaceable>string</replaceable> from <replaceable>pattern</replaceable> for <replaceable>escape-character</replaceable>)
 </synopsis>
@@ -5184,8 +5211,8 @@ substring(<replaceable>string</replaceable>, <replaceable>pattern</replaceable>,
    <para>
     Some examples, with <literal>#&quot;</literal> delimiting the return string:
 <programlisting>
-substring('foobar' from '%#"o_b#"%' for '#')   <lineannotation>oob</lineannotation>
-substring('foobar' from '#"o_b#"%' for '#')    <lineannotation>NULL</lineannotation>
+substring('foobar' similar '%#"o_b#"%' escape '#')   <lineannotation>oob</lineannotation>
+substring('foobar' similar '#"o_b#"%' escape '#')    <lineannotation>NULL</lineannotation>
 </programlisting>
    </para>
   </sect2>
@@ -8395,11 +8422,12 @@ SELECT regexp_match('abc01234xyz', '(?:(.*?)(\d+)(.*)){1,1}');
          <returnvalue>interval</returnvalue>
         </para>
         <para>
-         Subtract timestamps
+         Subtract timestamps (converting 24-hour intervals into days,
+         similarly to <function>justify_hours()</function>)
         </para>
         <para>
-         <literal>timestamp '2001-09-29 03:00' - timestamp '2001-09-27 12:00'</literal>
-         <returnvalue>1 day 15:00:00</returnvalue>
+         <literal>timestamp '2001-09-29 03:00' - timestamp '2001-07-27 12:00'</literal>
+         <returnvalue>63 days 15:00:00</returnvalue>
         </para></entry>
        </row>
 
@@ -9114,18 +9142,22 @@ SELECT (DATE '2001-10-30', DATE '2001-10-30') OVERLAPS
    When adding an <type>interval</type> value to (or subtracting an
    <type>interval</type> value from) a <type>timestamp with time zone</type>
    value, the days component advances or decrements the date of the
-   <type>timestamp with time zone</type> by the indicated number of days.
+   <type>timestamp with time zone</type> by the indicated number of days,
+   keeping the time of day the same.
    Across daylight saving time changes (when the session time zone is set to a
    time zone that recognizes DST), this means <literal>interval '1 day'</literal>
    does not necessarily equal <literal>interval '24 hours'</literal>.
-   For example, with the session time zone set to <literal>CST7CDT</literal>,
-   <literal>timestamp with time zone '2005-04-02 12:00-07' + interval '1 day'</literal>
-   will produce <literal>timestamp with time zone '2005-04-03 12:00-06'</literal>,
-   while adding <literal>interval '24 hours'</literal> to the same initial
-   <type>timestamp with time zone</type> produces
-   <literal>timestamp with time zone '2005-04-03 13:00-06'</literal>, as there is
-   a change in daylight saving time at <literal>2005-04-03 02:00</literal> in time zone
-   <literal>CST7CDT</literal>.
+   For example, with the session time zone set
+   to <literal>America/Denver</literal>:
+<screen>
+SELECT timestamp with time zone '2005-04-02 12:00:00-07' + interval '1 day';
+<lineannotation>Result: </lineannotation><computeroutput>2005-04-03 12:00:00-06</computeroutput>
+SELECT timestamp with time zone '2005-04-02 12:00:00-07' + interval '24 hours';
+<lineannotation>Result: </lineannotation><computeroutput>2005-04-03 13:00:00-06</computeroutput>
+</screen>
+   This happens because an hour was skipped due to a change in daylight saving
+   time at <literal>2005-04-03 02:00:00</literal> in time zone
+   <literal>America/Denver</literal>.
   </para>
 
   <para>
@@ -21055,10 +21087,10 @@ SELECT * FROM pg_ls_dir('.') WITH ORDINALITY AS t(ls,n);
         <returnvalue>boolean</returnvalue>
        </para>
        <para>
-        Returns true if <acronym>JIT</acronym> compilation is available in
-        this session (see <xref linkend="jit"/>).
-        Returns false if <xref linkend="guc-jit"/> is set to false, or if the
-        feature was not enabled at compile time.
+        Returns true if a <acronym>JIT</acronym> compiler extension is
+        available (see <xref linkend="jit"/>) and the
+        <xref linkend="guc-jit"/> configuration parameter is set to
+        <literal>on</literal>.
        </para></entry>
       </row>
 
@@ -22794,7 +22826,8 @@ SELECT collation for ('foo' COLLATE "de_DE");
         object).  This description is intended to be human-readable, and might
         be translated, depending on server configuration.  This is especially
         useful to determine the identity of an object referenced in the
-        <structname>pg_depend</structname> catalog.
+        <structname>pg_depend</structname> catalog. This function returns
+        <literal>NULL</literal> values for undefined objects.
        </para></entry>
       </row>
 
@@ -22826,7 +22859,8 @@ SELECT collation for ('foo' COLLATE "de_DE");
         otherwise <literal>NULL</literal>;
         <parameter>identity</parameter> is the complete object identity, with
         the precise format depending on object type, and each name within the
-        format being schema-qualified and quoted as necessary.
+        format being schema-qualified and quoted as necessary. Undefined
+        objects are identified with <literal>NULL</literal> values.
        </para></entry>
       </row>
 
@@ -22883,6 +22917,7 @@ SELECT collation for ('foo' COLLATE "de_DE");
         <parameter>objsubid</parameter> is the sub-object ID, or zero if none.
         This function is the inverse
         of <function>pg_identify_object_as_address</function>.
+        Undefined objects are identified with <literal>NULL</literal> values.
        </para></entry>
       </row>
      </tbody>
@@ -23368,16 +23403,32 @@ SELECT collation for ('foo' COLLATE "de_DE");
       <row>
        <entry role="func_table_entry"><para role="func_signature">
         <indexterm>
+         <primary>pg_xact_commit_timestamp_origin</primary>
+        </indexterm>
+        <function>pg_xact_commit_timestamp_origin</function> ( <type>xid</type> )
+        <returnvalue>record</returnvalue>
+        ( <parameter>timestamp</parameter> <type>timestamp with time zone</type>,
+         <parameter>roident</parameter> <type>oid</type>)
+       </para>
+       <para>
+         Returns the commit timestamp and replication origin of a transaction.
+       </para></entry>
+      </row>
+
+      <row>
+       <entry role="func_table_entry"><para role="func_signature">
+        <indexterm>
          <primary>pg_last_committed_xact</primary>
         </indexterm>
         <function>pg_last_committed_xact</function> ()
         <returnvalue>record</returnvalue>
         ( <parameter>xid</parameter> <type>xid</type>,
-        <parameter>timestamp</parameter> <type>timestamp with time zone</type> )
+        <parameter>timestamp</parameter> <type>timestamp with time zone</type>,
+        <parameter>roident</parameter> <type>oid</type> )
        </para>
        <para>
-        Returns the transaction ID and commit timestamp of the latest
-        committed transaction.
+        Returns the transaction ID, commit timestamp and replication origin
+        of the latest committed transaction.
        </para></entry>
       </row>
      </tbody>
@@ -24614,7 +24665,9 @@ postgres=# SELECT * FROM pg_walfile_name_offset(pg_stop_backup());
     <xref linkend="streaming-replication-slots"/>, and
     <xref linkend="replication-origins"/>
     for information about the underlying features.
-    Use of functions for replication origin is restricted to superusers.
+    Use of functions for replication origin is only allowed to the
+    superuser by default, but may be allowed to other users by using the
+    <literal>GRANT</literal> command.
     Use of functions for replication slots is restricted to superusers
     and users having <literal>REPLICATION</literal> privilege.
    </para>

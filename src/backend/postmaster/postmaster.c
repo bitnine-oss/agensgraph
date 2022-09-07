@@ -1059,8 +1059,8 @@ PostmasterMain(int argc, char *argv[])
 	 * only during a few moments during a standby promotion. However there is
 	 * a race condition: if pg_ctl promote is executed and creates the files
 	 * during a promotion, the files can stay around even after the server is
-	 * brought up to new master. Then, if new standby starts by using the
-	 * backup taken from that master, the files can exist at the server
+	 * brought up to be the primary. Then, if a new standby starts by using the
+	 * backup taken from the new primary, the files can exist at the server
 	 * startup and should be removed in order to avoid an unexpected
 	 * promotion.
 	 *
@@ -4896,9 +4896,6 @@ SubPostmasterMain(int argc, char *argv[])
 	IsPostmasterEnvironment = true;
 	whereToSendOutput = DestNone;
 
-	/* Setup as postmaster child */
-	InitPostmasterChild();
-
 	/* Setup essential subsystems (to ensure elog() behaves sanely) */
 	InitializeGUCOptions();
 
@@ -4912,6 +4909,18 @@ SubPostmasterMain(int argc, char *argv[])
 
 	/* Close the postmaster's sockets (as soon as we know them) */
 	ClosePostmasterPorts(strcmp(argv[1], "--forklog") == 0);
+
+	/*
+	 * Start our win32 signal implementation. This has to be done after we
+	 * read the backend variables, because we need to pick up the signal pipe
+	 * from the parent process.
+	 */
+#ifdef WIN32
+	pgwin32_signal_initialize();
+#endif
+
+	/* Setup as postmaster child */
+	InitPostmasterChild();
 
 	/*
 	 * Set up memory area for GSS information. Mirrors the code in ConnCreate
@@ -4955,15 +4964,6 @@ SubPostmasterMain(int argc, char *argv[])
 		AutovacuumLauncherIAm();
 	if (strcmp(argv[1], "--forkavworker") == 0)
 		AutovacuumWorkerIAm();
-
-	/*
-	 * Start our win32 signal implementation. This has to be done after we
-	 * read the backend variables, because we need to pick up the signal pipe
-	 * from the parent process.
-	 */
-#ifdef WIN32
-	pgwin32_signal_initialize();
-#endif
 
 	/* In EXEC_BACKEND case we will not have inherited these settings */
 	pqinitmask();
@@ -5333,7 +5333,12 @@ sigusr1_handler(SIGNAL_ARGS)
 		 pmState == PM_HOT_STANDBY || pmState == PM_WAIT_READONLY) &&
 		CheckPromoteSignal())
 	{
-		/* Tell startup process to finish recovery */
+		/*
+		 * Tell startup process to finish recovery.
+		 *
+		 * Leave the promote signal file in place and let the Startup
+		 * process do the unlink.
+		 */
 		signal_child(StartupPID, SIGUSR2);
 	}
 

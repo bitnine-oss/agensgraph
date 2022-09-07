@@ -854,7 +854,7 @@ transformColumnDefinition(CreateStmtContext *cxt, ColumnDef *column)
 		stmt = makeNode(AlterTableStmt);
 		stmt->relation = cxt->relation;
 		stmt->cmds = NIL;
-		stmt->relkind = OBJECT_FOREIGN_TABLE;
+		stmt->objtype = OBJECT_FOREIGN_TABLE;
 		stmt->cmds = lappend(stmt->cmds, cmd);
 
 		cxt->alist = lappend(cxt->alist, stmt);
@@ -2533,7 +2533,7 @@ transformIndexConstraint(Constraint *constraint, CreateStmtContext *cxt)
 
 		alterstmt->relation = copyObject(cxt->relation);
 		alterstmt->cmds = notnullcmds;
-		alterstmt->relkind = OBJECT_TABLE;
+		alterstmt->objtype = OBJECT_TABLE;
 		alterstmt->missing_ok = false;
 
 		cxt->alist = lappend(cxt->alist, alterstmt);
@@ -2635,7 +2635,7 @@ transformFKConstraints(CreateStmtContext *cxt,
 
 		alterstmt->relation = cxt->relation;
 		alterstmt->cmds = NIL;
-		alterstmt->relkind = OBJECT_TABLE;
+		alterstmt->objtype = OBJECT_TABLE;
 
 		foreach(fkclist, cxt->fkconstraints)
 		{
@@ -3104,7 +3104,7 @@ transformAlterTableStmt(Oid relid, AlterTableStmt *stmt,
 
 	if (OidIsValid(get_relid_laboid(relid)) &&
 		!superuser_arg(GetUserId()) &&
-		stmt->relkind == OBJECT_TABLE)
+		stmt->objtype == OBJECT_TABLE)
 		elog(ERROR, "only superuser can ALTER TABLE on graph label");
 
 	/*
@@ -4804,7 +4804,7 @@ transformAlterLabelStmt(AlterTableStmt *stmt)
 	result = makeNode(AlterTableStmt);
 	result->relation = makeRangeVar(get_graph_path(false),
 									stmt->relation->relname, 0);
-	result->relkind = stmt->relkind;
+	result->objtype = stmt->objtype;
 	result->missing_ok = stmt->missing_ok;
 
 	laboid = get_labname_laboid(stmt->relation->relname, get_graph_path_oid());
@@ -4824,7 +4824,7 @@ transformAlterLabelStmt(AlterTableStmt *stmt)
 		return NULL;
 	}
 
-	CheckLabelType(stmt->relkind, laboid, "ALTER");
+	CheckLabelType(stmt->objtype, laboid, "ALTER");
 
 	foreach(lcmd, stmt->cmds)
 	{
@@ -4950,7 +4950,7 @@ transformCreateConstraintStmt(ParseState *pstate,
 	atstmt = makeNode(AlterTableStmt);
 	atstmt->relation = label;
 	atstmt->cmds = list_make1(atcmd);
-	atstmt->relkind = objtype;
+	atstmt->objtype = objtype;
 
 	return (Node *) atstmt;
 }
@@ -4983,7 +4983,7 @@ transformDropConstraintStmt(ParseState *pstate,
 	atstmt = makeNode(AlterTableStmt);
 	atstmt->relation = label;
 	atstmt->cmds = list_make1(atcmd);
-	atstmt->relkind = objtype;
+	atstmt->objtype = objtype;
 
 	return (Node *) atstmt;
 }

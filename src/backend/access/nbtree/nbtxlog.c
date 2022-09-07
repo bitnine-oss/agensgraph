@@ -483,6 +483,7 @@ btree_xlog_dedup(XLogReaderState *record)
 
 		state = (BTDedupState) palloc(sizeof(BTDedupStateData));
 		state->deduplicate = true;	/* unused */
+		state->nmaxitems = 0;	/* unused */
 		/* Conservatively use larger maxpostingsize than primary */
 		state->maxpostingsize = BTMaxItemSize(page);
 		state->base = NULL;
@@ -931,7 +932,7 @@ btree_xlog_reuse_page(XLogReaderState *record)
 	 * RecentGlobalXmin test in _bt_page_recyclable() conceptually mirrors the
 	 * pgxact->xmin > limitXmin test in GetConflictingVirtualXIDs().
 	 * Consequently, one XID value achieves the same exclusion effect on
-	 * master and standby.
+	 * primary and standby.
 	 */
 	if (InHotStandby)
 	{

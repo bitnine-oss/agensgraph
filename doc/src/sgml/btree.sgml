@@ -207,7 +207,7 @@
 
  <para>
   As shown in <xref linkend="xindex-btree-support-table"/>, btree defines
-  one required and three optional support functions.  The four
+  one required and four optional support functions.  The five
   user-defined methods are:
  </para>
  <variablelist>
@@ -550,6 +550,39 @@ equalimage(<replaceable>opcintype</replaceable> <type>oid</type>) returns bool
     </para>
    </listitem>
   </varlistentry>
+  <varlistentry>
+   <term><function>options</function></term>
+   <listitem>
+    <para>
+     Optionally, a B-tree operator family may provide
+     <function>options</function> (<quote>operator class specific
+     options</quote>) support functions, registered under support
+     function number 5.  These functions define a set of user-visible
+     parameters that control operator class behavior.
+    </para>
+    <para>
+     An <function>options</function> support function must have the
+     signature
+<synopsis>
+options(<replaceable>relopts</replaceable> <type>local_relopts *</type>) returns void
+</synopsis>
+     The function is passed a pointer to a <replaceable>local_relopts</replaceable>
+     struct, which needs to be filled with a set of operator class
+     specific options.  The options can be accessed from other support
+     functions using the <literal>PG_HAS_OPCLASS_OPTIONS()</literal> and
+     <literal>PG_GET_OPCLASS_OPTIONS()</literal> macros.
+    </para>
+    <para>
+     Currently, no B-Tree operator class has an <function>options</function>
+     support function.  B-tree doesn't allow flexible representation of keys
+     like GiST, SP-GiST, GIN and BRIN do.  So, <function>options</function>
+     probably doesn't have much application in the current B-tree index
+     access method.  Nevertheless, this support function was added to B-tree
+     for uniformity, and will probably find uses during further
+     evolution of B-tree in <productname>PostgreSQL</productname>.
+    </para>
+   </listitem>
+  </varlistentry>
  </variablelist>
 
 </sect1>
@@ -602,10 +635,10 @@ equalimage(<replaceable>opcintype</replaceable> <type>oid</type>) returns bool
    A duplicate is a leaf page tuple (a tuple that points to a table
    row) where <emphasis>all</emphasis> indexed key columns have values
    that match corresponding column values from at least one other leaf
-   page tuple that's close by in the same index.  Duplicate tuples are
-   quite common in practice.  B-Tree indexes can use a special,
-   space-efficient representation for duplicates when an optional
-   technique is enabled: <firstterm>deduplication</firstterm>.
+   page tuple in the same index.  Duplicate tuples are quite common in
+   practice.  B-Tree indexes can use a special, space-efficient
+   representation for duplicates when an optional technique is
+   enabled: <firstterm>deduplication</firstterm>.
   </para>
   <para>
    Deduplication works by periodically merging groups of duplicate

@@ -303,7 +303,7 @@ _bt_search_insert(Relation rel, BTInsertState insertstate)
 	{
 		/* Simulate a _bt_getbuf() call with conditional locking */
 		insertstate->buf = ReadBuffer(rel, RelationGetTargetBlock(rel));
-		if (ConditionalLockBuffer(insertstate->buf))
+		if (_bt_conditionallockbuf(rel, insertstate->buf))
 		{
 			Page		page;
 			BTPageOpaque lpageop;
@@ -389,7 +389,7 @@ _bt_check_unique(Relation rel, BTInsertState insertstate, Relation heapRel,
 				 uint32 *speculativeToken)
 {
 	IndexTuple	itup = insertstate->itup;
-	IndexTuple	curitup;
+	IndexTuple	curitup = NULL;
 	ItemId		curitemid;
 	BTScanInsert itup_key = insertstate->itup_key;
 	SnapshotData SnapshotDirty;
@@ -597,7 +597,8 @@ _bt_check_unique(Relation rel, BTInsertState insertstate, Relation heapRel,
 					 * not part of this chain because it had a different index
 					 * entry.
 					 */
-					if (table_index_fetch_tuple_check(heapRel, &itup->t_tid,
+					htid = itup->t_tid;
+					if (table_index_fetch_tuple_check(heapRel, &htid,
 													  SnapshotSelf, NULL))
 					{
 						/* Normal case --- it's still live */

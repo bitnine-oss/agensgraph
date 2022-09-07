@@ -1,6 +1,6 @@
 <!-- doc/src/sgml/plperl.sgml -->
 
- <chapter id="plperl" xreflabel="PL/Perl">
+ <chapter id="plperl">
   <title>PL/Perl &mdash; Perl Procedural Language</title>
 
   <indexterm zone="plperl">
@@ -14,7 +14,7 @@
   <para>
    PL/Perl is a loadable procedural language that enables you to write
    <productname>PostgreSQL</productname> functions in the
-   <ulink url="http://www.perl.org">Perl programming language</ulink>.
+   <ulink url="https://www.perl.org">Perl programming language</ulink>.
   </para>
 
   <para>

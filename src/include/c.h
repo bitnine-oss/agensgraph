@@ -266,6 +266,13 @@
 #endif
 
 /*
+ * Generic function pointer.  This can be used in the rare cases where it's
+ * necessary to cast a function pointer to a seemingly incompatible function
+ * pointer type while avoiding gcc's -Wcast-function-type warnings.
+ */
+typedef void (*pg_funcptr_t) (void);
+
+/*
  * We require C99, hence the compiler should understand flexible array
  * members.  However, for documentation purposes we still consider it to be
  * project style to write "field[FLEXIBLE_ARRAY_MEMBER]" not just "field[]".
@@ -1133,7 +1140,6 @@ typedef union PGAlignedXLogBlock
 #define STATUS_OK				(0)
 #define STATUS_ERROR			(-1)
 #define STATUS_EOF				(-2)
-#define STATUS_WAITING			(2)
 
 /*
  * gettext support

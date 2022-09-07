@@ -739,6 +739,7 @@ typedef struct BTDedupStateData
 {
 	/* Deduplication status info for entire pass over page */
 	bool		deduplicate;	/* Still deduplicating page? */
+	int			nmaxitems;		/* Number of max-sized tuples so far */
 	Size		maxpostingsize; /* Limit on size of final tuple */
 
 	/* Metadata about base tuple of current pending posting list */
@@ -758,7 +759,7 @@ typedef struct BTDedupStateData
 	 * will not become posting list tuples do not appear in the array (they
 	 * are implicitly unchanged by deduplication pass).
 	 */
-	int			nintervals;		/* current size of intervals array */
+	int			nintervals;		/* current number of intervals in array */
 	BTDedupInterval intervals[MaxIndexTuplesPerPage];
 } BTDedupStateData;
 
@@ -1072,6 +1073,10 @@ extern Buffer _bt_getbuf(Relation rel, BlockNumber blkno, int access);
 extern Buffer _bt_relandgetbuf(Relation rel, Buffer obuf,
 							   BlockNumber blkno, int access);
 extern void _bt_relbuf(Relation rel, Buffer buf);
+extern void _bt_lockbuf(Relation rel, Buffer buf, int access);
+extern void _bt_unlockbuf(Relation rel, Buffer buf);
+extern bool _bt_conditionallockbuf(Relation rel, Buffer buf);
+extern void _bt_upgradelockbufcleanup(Relation rel, Buffer buf);
 extern void _bt_pageinit(Page page, Size size);
 extern bool _bt_page_recyclable(Page page);
 extern void _bt_delitems_vacuum(Relation rel, Buffer buf,

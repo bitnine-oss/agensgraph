@@ -1834,11 +1834,7 @@ pgstat_initstats(Relation rel)
 	char		relkind = rel->rd_rel->relkind;
 
 	/* We only count stats for things that have storage */
-	if (!(relkind == RELKIND_RELATION ||
-		  relkind == RELKIND_MATVIEW ||
-		  relkind == RELKIND_INDEX ||
-		  relkind == RELKIND_TOASTVALUE ||
-		  relkind == RELKIND_SEQUENCE))
+	if (!RELKIND_HAS_STORAGE(relkind))
 	{
 		rel->pgstat_info = NULL;
 		return;
@@ -3020,7 +3016,7 @@ pgstat_bestart(void)
 		MemSet(&lbeentry.st_clientaddr, 0, sizeof(lbeentry.st_clientaddr));
 
 #ifdef USE_SSL
-	if (MyProcPort && MyProcPort->ssl != NULL)
+	if (MyProcPort && MyProcPort->ssl_in_use)
 	{
 		lbeentry.st_ssl = true;
 		lsslstatus.ssl_bits = be_tls_get_cipher_bits(MyProcPort);
@@ -3962,6 +3958,9 @@ pgstat_get_wait_io(WaitEventIO w)
 
 	switch (w)
 	{
+		case WAIT_EVENT_BASEBACKUP_READ:
+			event_name = "BaseBackupRead";
+			break;
 		case WAIT_EVENT_BUFFILE_READ:
 			event_name = "BufFileRead";
 			break;
@@ -4486,6 +4485,8 @@ PgstatCollectorMain(int argc, char *argv[])
 	int			len;
 	PgStat_Msg	msg;
 	int			wr;
+	WaitEvent	event;
+	WaitEventSet *wes;
 
 	/*
 	 * Ignore all signals usually bound to some action in the postmaster,
@@ -4512,6 +4513,12 @@ PgstatCollectorMain(int argc, char *argv[])
 	 */
 	pgStatRunningInCollector = true;
 	pgStatDBHash = pgstat_read_statsfiles(InvalidOid, true, true);
+
+	/* Prepare to wait for our latch or data in our socket. */
+	wes = CreateWaitEventSet(CurrentMemoryContext, 3);
+	AddWaitEventToSet(wes, WL_LATCH_SET, PGINVALID_SOCKET, MyLatch, NULL);
+	AddWaitEventToSet(wes, WL_POSTMASTER_DEATH, PGINVALID_SOCKET, NULL, NULL);
+	AddWaitEventToSet(wes, WL_SOCKET_READABLE, pgStatSock, NULL, NULL);
 
 	/*
 	 * Loop to process messages until we get SIGQUIT or detect ungraceful
@@ -4700,10 +4707,7 @@ PgstatCollectorMain(int argc, char *argv[])
 
 		/* Sleep until there's something to do */
 #ifndef WIN32
-		wr = WaitLatchOrSocket(MyLatch,
-							   WL_LATCH_SET | WL_POSTMASTER_DEATH | WL_SOCKET_READABLE,
-							   pgStatSock, -1L,
-							   WAIT_EVENT_PGSTAT_MAIN);
+		wr = WaitEventSetWait(wes, -1L, &event, 1, WAIT_EVENT_PGSTAT_MAIN);
 #else
 
 		/*
@@ -4716,18 +4720,15 @@ PgstatCollectorMain(int argc, char *argv[])
 		 * to not provoke "using stale statistics" complaints from
 		 * backend_read_statsfile.
 		 */
-		wr = WaitLatchOrSocket(MyLatch,
-							   WL_LATCH_SET | WL_POSTMASTER_DEATH | WL_SOCKET_READABLE | WL_TIMEOUT,
-							   pgStatSock,
-							   2 * 1000L /* msec */ ,
-							   WAIT_EVENT_PGSTAT_MAIN);
+		wr = WaitEventSetWait(wes, 2 * 1000L /* msec */ , &event, 1,
+							  WAIT_EVENT_PGSTAT_MAIN);
 #endif
 
 		/*
 		 * Emergency bailout if postmaster has died.  This is to avoid the
 		 * necessity for manual cleanup of all postmaster children.
 		 */
-		if (wr & WL_POSTMASTER_DEATH)
+		if (wr == 1 && event.events == WL_POSTMASTER_DEATH)
 			break;
 	}							/* end of outer loop */
 
@@ -4735,6 +4736,8 @@ PgstatCollectorMain(int argc, char *argv[])
 	 * Save the final stats to reuse at next startup.
 	 */
 	pgstat_write_statsfiles(true, true);
+
+	FreeWaitEventSet(wes);
 
 	exit(0);
 }
@@ -6710,7 +6713,7 @@ pgstat_clip_activity(const char *raw_activity)
  *
  * Determine index of entry for a SLRU with a given name. If there's no exact
  * match, returns index of the last "other" entry used for SLRUs defined in
- * external proejcts.
+ * external projects.
  */
 int
 pgstat_slru_index(const char *name)

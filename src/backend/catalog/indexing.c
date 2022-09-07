@@ -18,6 +18,7 @@
 #include "access/genam.h"
 #include "access/heapam.h"
 #include "access/htup_details.h"
+#include "access/xact.h"
 #include "catalog/index.h"
 #include "catalog/indexing.h"
 #include "executor/executor.h"
@@ -168,6 +169,43 @@ CatalogIndexInsert(CatalogIndexState indstate, HeapTuple heapTuple)
 }
 
 /*
+ * Subroutine to verify that catalog constraints are honored.
+ *
+ * Tuples inserted via CatalogTupleInsert/CatalogTupleUpdate are generally
+ * "hand made", so that it's possible that they fail to satisfy constraints
+ * that would be checked if they were being inserted by the executor.  That's
+ * a coding error, so we only bother to check for it in assert-enabled builds.
+ */
+#ifdef USE_ASSERT_CHECKING
+
+static void
+CatalogTupleCheckConstraints(Relation heapRel, HeapTuple tup)
+{
+	/*
+	 * Currently, the only constraints implemented for system catalogs are
+	 * attnotnull constraints.
+	 */
+	if (HeapTupleHasNulls(tup))
+	{
+		TupleDesc	tupdesc = RelationGetDescr(heapRel);
+		bits8	   *bp = tup->t_data->t_bits;
+
+		for (int attnum = 0; attnum < tupdesc->natts; attnum++)
+		{
+			Form_pg_attribute thisatt = TupleDescAttr(tupdesc, attnum);
+
+			Assert(!(thisatt->attnotnull && att_isnull(attnum, bp)));
+		}
+	}
+}
+
+#else							/* !USE_ASSERT_CHECKING */
+
+#define CatalogTupleCheckConstraints(heapRel, tup)  ((void) 0)
+
+#endif							/* USE_ASSERT_CHECKING */
+
+/*
  * CatalogTupleInsert - do heap and indexing work for a new catalog tuple
  *
  * Insert the tuple data in "tup" into the specified catalog relation.
@@ -183,6 +221,8 @@ void
 CatalogTupleInsert(Relation heapRel, HeapTuple tup)
 {
 	CatalogIndexState indstate;
+
+	CatalogTupleCheckConstraints(heapRel, tup);
 
 	indstate = CatalogOpenIndexes(heapRel);
 
@@ -204,9 +244,46 @@ void
 CatalogTupleInsertWithInfo(Relation heapRel, HeapTuple tup,
 						   CatalogIndexState indstate)
 {
+	CatalogTupleCheckConstraints(heapRel, tup);
+
 	simple_heap_insert(heapRel, tup);
 
 	CatalogIndexInsert(indstate, tup);
+}
+
+/*
+ * CatalogTuplesMultiInsertWithInfo - as above, but for multiple tuples
+ *
+ * Insert multiple tuples into the given catalog relation at once, with an
+ * amortized cost of CatalogOpenIndexes.
+ */
+void
+CatalogTuplesMultiInsertWithInfo(Relation heapRel, TupleTableSlot **slot,
+								 int ntuples, CatalogIndexState indstate)
+{
+	/* Nothing to do */
+	if (ntuples <= 0)
+		return;
+
+	heap_multi_insert(heapRel, slot, ntuples,
+					  GetCurrentCommandId(true), 0, NULL);
+
+	/*
+	 * There is no equivalent to heap_multi_insert for the catalog indexes, so
+	 * we must loop over and insert individually.
+	 */
+	for (int i = 0; i < ntuples; i++)
+	{
+		bool		should_free;
+		HeapTuple	tuple;
+
+		tuple = ExecFetchSlotHeapTuple(slot[i], true, &should_free);
+		tuple->t_tableOid = slot[i]->tts_tableOid;
+		CatalogIndexInsert(indstate, tuple);
+
+		if (should_free)
+			heap_freetuple(tuple);
+	}
 }
 
 /*
@@ -224,6 +301,8 @@ void
 CatalogTupleUpdate(Relation heapRel, ItemPointer otid, HeapTuple tup)
 {
 	CatalogIndexState indstate;
+
+	CatalogTupleCheckConstraints(heapRel, tup);
 
 	indstate = CatalogOpenIndexes(heapRel);
 
@@ -245,6 +324,8 @@ void
 CatalogTupleUpdateWithInfo(Relation heapRel, ItemPointer otid, HeapTuple tup,
 						   CatalogIndexState indstate)
 {
+	CatalogTupleCheckConstraints(heapRel, tup);
+
 	simple_heap_update(heapRel, otid, tup);
 
 	CatalogIndexInsert(indstate, tup);

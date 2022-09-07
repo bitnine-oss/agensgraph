@@ -18,7 +18,7 @@ CREATE OR REPLACE FUNCTION chksetconfig()
  RETURNS TABLE (db name, "role" name, rolkeyword text, setconfig text[])
  AS $$
 SELECT COALESCE(d.datname, 'ALL'), COALESCE(r.rolname, 'ALL'),
-	   COALESCE(v.keyword, '-'), s.setconfig
+       COALESCE(v.keyword, '-'), s.setconfig
  FROM pg_db_role_setting s
  LEFT JOIN pg_roles r ON (r.oid = s.setrole)
  LEFT JOIN pg_database d ON (d.oid = s.setdatabase)
@@ -180,7 +180,7 @@ ALTER USER ALL RESET application_name;
 SELECT * FROM chksetconfig();
 
 
-ALTER USER CURRENT_USER SET application_name to 'BAZ'; -- error
+ALTER USER CURRENT_ROLE SET application_name to 'BAZ'; -- error
 ALTER USER USER SET application_name to 'BOOM'; -- error
 ALTER USER PUBLIC SET application_name to 'BOMB'; -- error
 ALTER USER NONE SET application_name to 'BOMB'; -- error
@@ -263,7 +263,6 @@ CREATE AGGREGATE testagg2(int2) (SFUNC = int2_sum, STYPE = int8);
 CREATE AGGREGATE testagg3(int2) (SFUNC = int2_sum, STYPE = int8);
 CREATE AGGREGATE testagg4(int2) (SFUNC = int2_sum, STYPE = int8);
 CREATE AGGREGATE testagg5(int2) (SFUNC = int2_sum, STYPE = int8);
-CREATE AGGREGATE testagg5(int2) (SFUNC = int2_sum, STYPE = int8);
 CREATE AGGREGATE testagg6(int2) (SFUNC = int2_sum, STYPE = int8);
 CREATE AGGREGATE testagg7(int2) (SFUNC = int2_sum, STYPE = int8);
 CREATE AGGREGATE testagg8(int2) (SFUNC = int2_sum, STYPE = int8);
@@ -312,9 +311,9 @@ CREATE USER MAPPING FOR "Public" SERVER sv7 OPTIONS (user '"Public"');
 CREATE USER MAPPING FOR regress_testrolx SERVER sv8 OPTIONS (user 'regress_testrolx');
 
 CREATE USER MAPPING FOR CURRENT_ROLE SERVER sv9
-	    OPTIONS (user 'CURRENT_ROLE'); -- error
+ OPTIONS (user 'CURRENT_ROLE'); -- error
 CREATE USER MAPPING FOR nonexistent SERVER sv9
-	    OPTIONS (user 'nonexistent'); -- error;
+ OPTIONS (user 'nonexistent'); -- error;
 
 SELECT * FROM chkumapping();
 
@@ -416,7 +415,7 @@ GRANT ALL PRIVILEGES ON FUNCTION testagg5(int2) TO "Public";
 GRANT ALL PRIVILEGES ON FUNCTION testagg6(int2) TO regress_testrolx;
 GRANT ALL PRIVILEGES ON FUNCTION testagg7(int2) TO "public";
 GRANT ALL PRIVILEGES ON FUNCTION testagg8(int2)
-	   TO current_user, public, regress_testrolx;
+ TO current_user, public, regress_testrolx;
 
 SELECT proname, proacl FROM pg_proc WHERE proname LIKE 'testagg_';
 
@@ -435,7 +434,7 @@ REVOKE ALL PRIVILEGES ON FUNCTION testagg5(int2) FROM "Public";
 REVOKE ALL PRIVILEGES ON FUNCTION testagg6(int2) FROM regress_testrolx;
 REVOKE ALL PRIVILEGES ON FUNCTION testagg7(int2) FROM "public";
 REVOKE ALL PRIVILEGES ON FUNCTION testagg8(int2)
-	   FROM current_user, public, regress_testrolx;
+ FROM current_user, public, regress_testrolx;
 
 SELECT proname, proacl FROM pg_proc WHERE proname LIKE 'testagg_';
 
