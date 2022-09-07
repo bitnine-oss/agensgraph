@@ -130,7 +130,31 @@ MATCH (n) RETURN n.name;
 
 SET GRAPH_PATH to udf2;
 DROP GRAPH udf_temp CASCADE;
+MATCH (n) DETACH DELETE n;
 
+-- github issue #507
+CREATE (x:v1 {id: 'v1'})<-[r:rel]-();
+MATCH (x:v1)
+CREATE (x)-[r2:rel]->(x2);
+
+CREATE FUNCTION udf_cypher_results() RETURNS RECORD AS $$
+DECLARE
+    ret RECORD;
+BEGIN
+    MATCH (x:v1 {id: 'v1'})<-[r:rel]-()
+    OPTIONAL MATCH (x)-[r2:rel]->(x2)
+    return x, r, x2, r2 INTO ret;
+    RETURN ret;
+END;
+$$ LANGUAGE plpgsql;
+
+SELECT udf_cypher_results();
+
+CREATE GRAPH udf_temp;
+SET GRAPH_PATH to udf_temp;
+
+SELECT udf_cypher_results();
+DROP GRAPH udf_temp CASCADE;
 
 -- teardown
 
@@ -139,5 +163,7 @@ DROP FUNCTION udf_param(jsonb);
 DROP FUNCTION udf_if();
 DROP FUNCTION udf_if_exists();
 DROP FUNCTION udf_if_not_exists();
+DROP FUNCTION udf_graphwrite();
+DROP FUNCTION udf_cypher_results();
 DROP GRAPH udf CASCADE;
 DROP GRAPH udf2 CASCADE;

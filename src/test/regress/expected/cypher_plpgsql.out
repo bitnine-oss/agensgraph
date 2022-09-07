@@ -167,12 +167,48 @@ drop cascades to vlabel ag_vertex
 drop cascades to elabel ag_edge
 drop cascades to vlabel person
 drop cascades to elabel knows
+MATCH (n) DETACH DELETE n;
+-- github issue #507
+CREATE (x:v1 {id: 'v1'})<-[r:rel]-();
+MATCH (x:v1)
+CREATE (x)-[r2:rel]->(x2);
+CREATE FUNCTION udf_cypher_results() RETURNS RECORD AS $$
+DECLARE
+    ret RECORD;
+BEGIN
+    MATCH (x:v1 {id: 'v1'})<-[r:rel]-()
+    OPTIONAL MATCH (x)-[r2:rel]->(x2)
+    return x, r, x2, r2 INTO ret;
+    RETURN ret;
+END;
+$$ LANGUAGE plpgsql;
+SELECT udf_cypher_results();
+                                    udf_cypher_results                                    
+------------------------------------------------------------------------------------------
+ ("v1[6.1]{""id"": ""v1""}","rel[7.1][1.1,6.1]{}",ag_vertex[1.2]{},"rel[7.2][6.1,1.2]{}")
+(1 row)
+
+CREATE GRAPH udf_temp;
+SET GRAPH_PATH to udf_temp;
+SELECT udf_cypher_results();
+ERROR:  vertex label "v1" does not exist
+CONTEXT:  SQL statement "MATCH (x:v1 {id: 'v1'})<-[r:rel]-()
+    OPTIONAL MATCH (x)-[r2:rel]->(x2)
+    return x, r, x2, r2"
+PL/pgSQL function udf_cypher_results() line 5 at SQL statement
+DROP GRAPH udf_temp CASCADE;
+NOTICE:  drop cascades to 3 other objects
+DETAIL:  drop cascades to sequence udf_temp.ag_label_seq
+drop cascades to vlabel ag_vertex
+drop cascades to elabel ag_edge
 -- teardown
 DROP FUNCTION udf_var(jsonb);
 DROP FUNCTION udf_param(jsonb);
 DROP FUNCTION udf_if();
 DROP FUNCTION udf_if_exists();
 DROP FUNCTION udf_if_not_exists();
+DROP FUNCTION udf_graphwrite();
+DROP FUNCTION udf_cypher_results();
 DROP GRAPH udf CASCADE;
 NOTICE:  drop cascades to 4 other objects
 DETAIL:  drop cascades to sequence udf.ag_label_seq
@@ -180,10 +216,12 @@ drop cascades to vlabel ag_vertex
 drop cascades to elabel ag_edge
 drop cascades to vlabel v
 DROP GRAPH udf2 CASCADE;
-NOTICE:  drop cascades to 6 other objects
+NOTICE:  drop cascades to 8 other objects
 DETAIL:  drop cascades to sequence udf2.ag_label_seq
 drop cascades to vlabel ag_vertex
 drop cascades to elabel ag_edge
 drop cascades to vlabel people
 drop cascades to elabel knows
 drop cascades to vlabel person
+drop cascades to vlabel v1
+drop cascades to elabel rel
