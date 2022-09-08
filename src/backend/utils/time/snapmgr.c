@@ -195,6 +195,9 @@ typedef struct SerializedSnapshotData
 	CommandId	curcid;
 	TimestampTz whenTaken;
 	XLogRecPtr	lsn;
+	CommitSeqNo	snapshotcsn;
+	uint64		undoLocation;
+	uint64		undoXmin;
 } SerializedSnapshotData;
 
 Size
@@ -2161,6 +2164,9 @@ SerializeSnapshot(Snapshot snapshot, char *start_address)
 	serialized_snapshot.curcid = snapshot->curcid;
 	serialized_snapshot.whenTaken = snapshot->whenTaken;
 	serialized_snapshot.lsn = snapshot->lsn;
+	serialized_snapshot.snapshotcsn = snapshot->snapshotcsn;
+	serialized_snapshot.undoXmin = snapshot->undoLocationPhNode.xmin;
+	serialized_snapshot.undoLocation = snapshot->undoLocationPhNode.undoLocation;
 
 	/*
 	 * Ignore the SubXID array if it has overflowed, unless the snapshot was
@@ -2236,6 +2242,9 @@ RestoreSnapshot(char *start_address)
 	snapshot->whenTaken = serialized_snapshot.whenTaken;
 	snapshot->lsn = serialized_snapshot.lsn;
 	snapshot->snapXactCompletionCount = 0;
+	snapshot->snapshotcsn = serialized_snapshot.snapshotcsn;
+	snapshot->undoLocationPhNode.xmin = serialized_snapshot.undoXmin;
+	snapshot->undoLocationPhNode.undoLocation = serialized_snapshot.undoLocation;
 
 	/* Copy XIDs, if present. */
 	if (serialized_snapshot.xcnt > 0)
