@@ -196,8 +196,6 @@ typedef struct Archive
 	int			remoteVersion;	/* same in numeric form */
 	bool		isStandby;		/* is server a standby node */
 
-	int			agVersion;		/* AgensGraph server's version numeric */
-
 	int			minRemoteVersion;	/* allowable range */
 	int			maxRemoteVersion;
 

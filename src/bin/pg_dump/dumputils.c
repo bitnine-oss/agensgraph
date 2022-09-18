@@ -987,10 +987,6 @@ makeAlterConfigCommand(PGconn *conn, const char *configitem,
 	char	   *mine;
 	char	   *pos;
 
-	/* skip the graph path until the graph information has been imported */
-	if(isGraphPathConfig(configitem))
-		return;
-
 	/* Parse the configitem.  If we can't find an "=", silently do nothing. */
 	mine = pg_strdup(configitem);
 	pos = strchr(mine, '=');
@@ -1045,61 +1041,4 @@ makeAlterConfigCommand(PGconn *conn, const char *configitem,
 	appendPQExpBufferStr(buf, ";\n");
 
 	pg_free(mine);
-}
-
-/*
- * Checks the passed configuration option, to determine if it is the graph_path
- * configuration option. format: graph_path=path, possibly string quoted.
- */
-bool
-isGraphPathConfig(const char *config)
-{
-	char *pos;
-	char *mine;
-	bool isGraphPath;
-
-	mine = pg_strdup(config);
-	pos = strchr(mine, '=');
-	if (pos == NULL)
-	{
-		free(mine);
-		return false;
-	}
-
-	if (*mine == '"' || *mine == '\'')
-		mine++;
-
-	*pos = 0;
-	isGraphPath = strcmp(mine, "graph_path") == 0;
-	free(mine);
-	return isGraphPath;
-}
-
-/*
- * Extracts the value of a configuration options
- * Format: config_value=config_value, possibly string quoted
- */
-char *
-extractConfigValue(const char *config)
-{
-	char *pos;
-	char *mine;
-	char *return_value;
-
-	mine = pg_strdup(config);
-	pos = strchr(mine, '=');
-	if (pos == NULL)
-	{
-		free(mine);
-		return NULL;
-	}
-
-	if (pos[strlen(pos) - 1] == '"' || pos[strlen(pos) - 1] == '\'')
-		pos[strlen(pos) - 1] = '\0';
-
-	*pos = 0;
-	return_value = pg_strdup(pos + 1);
-	free(mine);
-
-	return return_value;
 }
