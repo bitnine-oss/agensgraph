@@ -1203,7 +1203,7 @@ heapam_index_build_range_scan(Relation heapRelation,
 
 	/* okay to ignore lazy VACUUMs here */
 	if (!IsBootstrapProcessingMode() && !indexInfo->ii_Concurrent)
-		OldestXmin = GetOldestXmin(heapRelation, PROCARRAY_FLAGS_VACUUM);
+		OldestXmin = GetOldestNonRemovableTransactionId(heapRelation);
 
 	if (!scan)
 	{
@@ -1244,6 +1244,17 @@ heapam_index_build_range_scan(Relation heapRelation,
 
 	hscan = (HeapScanDesc) scan;
 
+	/*
+	 * Must have called GetOldestNonRemovableTransactionId() if using
+	 * SnapshotAny.  Shouldn't have for an MVCC snapshot. (It's especially
+	 * worth checking this for parallel builds, since ambuild routines that
+	 * support parallel builds must work these details out for themselves.)
+	 */
+	Assert(snapshot == SnapshotAny || IsMVCCSnapshot(snapshot));
+	Assert(snapshot == SnapshotAny ? TransactionIdIsValid(OldestXmin) :
+		   !TransactionIdIsValid(OldestXmin));
+	Assert(snapshot == SnapshotAny || !anyvisible);
+
 	/* Publish number of blocks to scan */
 	if (progress)
 	{
@@ -1262,17 +1273,6 @@ heapam_index_build_range_scan(Relation heapRelation,
 		pgstat_progress_update_param(PROGRESS_SCAN_BLOCKS_TOTAL,
 									 nblocks);
 	}
-
-	/*
-	 * Must call GetOldestXmin() with SnapshotAny.  Should never call
-	 * GetOldestXmin() with MVCC snapshot. (It's especially worth checking
-	 * this for parallel builds, since ambuild routines that support parallel
-	 * builds must work these details out for themselves.)
-	 */
-	Assert(snapshot == SnapshotAny || IsMVCCSnapshot(snapshot));
-	Assert(snapshot == SnapshotAny ? TransactionIdIsValid(OldestXmin) :
-		   !TransactionIdIsValid(OldestXmin));
-	Assert(snapshot == SnapshotAny || !anyvisible);
 
 	/* set our scan endpoints */
 	if (!allow_sync)
@@ -1323,6 +1323,12 @@ heapam_index_build_range_scan(Relation heapRelation,
 		 * ordinary insert/update/delete should occur; and we hold pin on the
 		 * buffer continuously while visiting the page, so no pruning
 		 * operation can occur either.
+		 *
+		 * In cases with only ShareUpdateExclusiveLock on the table, it's
+		 * possible for some HOT tuples to appear that we didn't know about
+		 * when we first read the page.  To handle that case, we re-obtain the
+		 * list of root offsets when a HOT tuple points to a root item that we
+		 * don't know about.
 		 *
 		 * Also, although our opinions about tuple liveness could change while
 		 * we scan the page (due to concurrent transaction commits/aborts),
@@ -1624,6 +1630,20 @@ heapam_index_build_range_scan(Relation heapRelation,
 			OffsetNumber offnum;
 
 			offnum = ItemPointerGetOffsetNumber(&heapTuple->t_self);
+
+			/*
+			 * If a HOT tuple points to a root that we don't know
+			 * about, obtain root items afresh.  If that still fails,
+			 * report it as corruption.
+			 */
+			if (root_offsets[offnum - 1] == InvalidOffsetNumber)
+			{
+				Page	page = BufferGetPage(hscan->rs_cbuf);
+
+				LockBuffer(hscan->rs_cbuf, BUFFER_LOCK_SHARE);
+				heap_get_root_tuples(page, root_offsets);
+				LockBuffer(hscan->rs_cbuf, BUFFER_LOCK_UNLOCK);
+			}
 
 			if (!OffsetNumberIsValid(root_offsets[offnum - 1]))
 				ereport(ERROR,

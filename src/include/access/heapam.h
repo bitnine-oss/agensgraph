@@ -172,10 +172,14 @@ extern TransactionId heap_compute_xid_horizon_for_tuples(Relation rel,
 														 int nitems);
 
 /* in heap/pruneheap.c */
+struct GlobalVisState;
 extern void heap_page_prune_opt(Relation relation, Buffer buffer);
 extern int	heap_page_prune(Relation relation, Buffer buffer,
-							TransactionId OldestXmin,
-							bool report_stats, TransactionId *latestRemovedXid);
+							struct GlobalVisState *vistest,
+							TransactionId limited_oldest_xmin,
+							TimestampTz limited_oldest_ts,
+							bool report_stats, TransactionId *latestRemovedXid,
+							OffsetNumber *off_loc);
 extern void heap_page_prune_execute(Buffer buffer,
 									OffsetNumber *redirected, int nredirected,
 									OffsetNumber *nowdead, int ndead,
@@ -195,11 +199,14 @@ extern TM_Result HeapTupleSatisfiesUpdate(HeapTuple stup, CommandId curcid,
 										  Buffer buffer);
 extern HTSV_Result HeapTupleSatisfiesVacuum(HeapTuple stup, TransactionId OldestXmin,
 											Buffer buffer);
+extern HTSV_Result HeapTupleSatisfiesVacuumHorizon(HeapTuple stup, Buffer buffer,
+												   TransactionId *dead_after);
 extern void HeapTupleSetHintBits(HeapTupleHeader tuple, Buffer buffer,
 								 uint16 infomask, TransactionId xid);
 extern bool HeapTupleHeaderIsOnlyLocked(HeapTupleHeader tuple);
 extern bool XidInMVCCSnapshot(TransactionId xid, Snapshot snapshot);
-extern bool HeapTupleIsSurelyDead(HeapTuple htup, TransactionId OldestXmin);
+extern bool HeapTupleIsSurelyDead(HeapTuple htup,
+								  struct GlobalVisState *vistest);
 
 /*
  * To avoid leaking too much knowledge about reorderbuffer implementation

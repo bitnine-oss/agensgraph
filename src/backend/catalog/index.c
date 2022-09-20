@@ -77,6 +77,7 @@
 #include "utils/lsyscache.h"
 #include "utils/memutils.h"
 #include "utils/pg_rusage.h"
+#include "utils/rel.h"
 #include "utils/snapmgr.h"
 #include "utils/syscache.h"
 #include "utils/tuplesort.h"
@@ -1021,6 +1022,7 @@ index_create(Relation heapRelation,
 	{
 		ObjectAddress myself,
 					referenced;
+		ObjectAddresses *addrs;
 
 		ObjectAddressSet(myself, RelationRelationId, indexRelationId);
 
@@ -1057,6 +1059,8 @@ index_create(Relation heapRelation,
 		{
 			bool		have_simple_col = false;
 
+			addrs = new_object_addresses();
+
 			/* Create auto dependencies on simply-referenced columns */
 			for (i = 0; i < indexInfo->ii_NumIndexAttrs; i++)
 			{
@@ -1065,7 +1069,7 @@ index_create(Relation heapRelation,
 					ObjectAddressSubSet(referenced, RelationRelationId,
 										heapRelationId,
 										indexInfo->ii_IndexAttrNumbers[i]);
-					recordDependencyOn(&myself, &referenced, DEPENDENCY_AUTO);
+					add_exact_object_address(&referenced, addrs);
 					have_simple_col = true;
 				}
 			}
@@ -1080,8 +1084,11 @@ index_create(Relation heapRelation,
 			{
 				ObjectAddressSet(referenced, RelationRelationId,
 								 heapRelationId);
-				recordDependencyOn(&myself, &referenced, DEPENDENCY_AUTO);
+				add_exact_object_address(&referenced, addrs);
 			}
+
+			record_object_address_dependencies(&myself, addrs, DEPENDENCY_AUTO);
+			free_object_addresses(addrs);
 		}
 
 		/*
@@ -1099,7 +1106,11 @@ index_create(Relation heapRelation,
 			recordDependencyOn(&myself, &referenced, DEPENDENCY_PARTITION_SEC);
 		}
 
+		/* placeholder for normal dependencies */
+		addrs = new_object_addresses();
+
 		/* Store dependency on collations */
+
 		/* The default collation is pinned, so don't bother recording it */
 		for (i = 0; i < indexInfo->ii_NumIndexKeyAttrs; i++)
 		{
@@ -1108,7 +1119,7 @@ index_create(Relation heapRelation,
 			{
 				ObjectAddressSet(referenced, CollationRelationId,
 								 collationObjectId[i]);
-				recordDependencyOn(&myself, &referenced, DEPENDENCY_NORMAL);
+				add_exact_object_address(&referenced, addrs);
 			}
 		}
 
@@ -1116,8 +1127,11 @@ index_create(Relation heapRelation,
 		for (i = 0; i < indexInfo->ii_NumIndexKeyAttrs; i++)
 		{
 			ObjectAddressSet(referenced, OperatorClassRelationId, classObjectId[i]);
-			recordDependencyOn(&myself, &referenced, DEPENDENCY_NORMAL);
+			add_exact_object_address(&referenced, addrs);
 		}
+
+		record_object_address_dependencies(&myself, addrs, DEPENDENCY_NORMAL);
+		free_object_addresses(addrs);
 
 		/* Store dependencies on anything mentioned in index expressions */
 		if (indexInfo->ii_Expressions)
@@ -1515,7 +1529,6 @@ index_concurrently_swap(Oid newIndexId, Oid oldIndexId, const char *oldName)
 
 	/* Preserve indisreplident in the new index */
 	newIndexForm->indisreplident = oldIndexForm->indisreplident;
-	oldIndexForm->indisreplident = false;
 
 	/* Preserve indisclustered in the new index */
 	newIndexForm->indisclustered = oldIndexForm->indisclustered;
@@ -1527,6 +1540,7 @@ index_concurrently_swap(Oid newIndexId, Oid oldIndexId, const char *oldName)
 	newIndexForm->indisvalid = true;
 	oldIndexForm->indisvalid = false;
 	oldIndexForm->indisclustered = false;
+	oldIndexForm->indisreplident = false;
 
 	CatalogTupleUpdate(pg_index, &oldIndexTuple->t_self, oldIndexTuple);
 	CatalogTupleUpdate(pg_index, &newIndexTuple->t_self, newIndexTuple);
@@ -2725,6 +2739,15 @@ index_update_stats(Relation rel,
 	/* Should this be a more comprehensive test? */
 	Assert(rd_rel->relkind != RELKIND_PARTITIONED_INDEX);
 
+	/*
+	 * As a special hack, if we are dealing with an empty table and the
+	 * existing reltuples is -1, we leave that alone.  This ensures that
+	 * creating an index as part of CREATE TABLE doesn't cause the table to
+	 * prematurely look like it's been vacuumed.
+	 */
+	if (reltuples == 0 && rd_rel->reltuples < 0)
+		reltuples = -1;
+
 	/* Apply required updates, if any, to copied tuple */
 
 	dirty = false;
@@ -3291,18 +3314,10 @@ validate_index_callback(ItemPointer itemptr, void *opaque)
  * index_set_state_flags - adjust pg_index state flags
  *
  * This is used during CREATE/DROP INDEX CONCURRENTLY to adjust the pg_index
- * flags that denote the index's state.  Because the update is not
- * transactional and will not roll back on error, this must only be used as
- * the last step in a transaction that has not made any transactional catalog
- * updates!
+ * flags that denote the index's state.
  *
- * Note that heap_inplace_update does send a cache inval message for the
+ * Note that CatalogTupleUpdate() sends a cache invalidation message for the
  * tuple, so other sessions will hear about the update as soon as we commit.
- *
- * NB: In releases prior to PostgreSQL 9.4, the use of a non-transactional
- * update here would have been unsafe; now that MVCC rules apply even for
- * system catalog scans, we could potentially use a transactional update here
- * instead.
  */
 void
 index_set_state_flags(Oid indexId, IndexStateFlagsAction action)
@@ -3310,9 +3325,6 @@ index_set_state_flags(Oid indexId, IndexStateFlagsAction action)
 	Relation	pg_index;
 	HeapTuple	indexTuple;
 	Form_pg_index indexForm;
-
-	/* Assert that current xact hasn't done any transactional updates */
-	Assert(GetTopTransactionIdIfAny() == InvalidTransactionId);
 
 	/* Open pg_index and fetch a writable copy of the index's tuple */
 	pg_index = table_open(IndexRelationId, RowExclusiveLock);
@@ -3352,10 +3364,13 @@ index_set_state_flags(Oid indexId, IndexStateFlagsAction action)
 			 * CONCURRENTLY that failed partway through.)
 			 *
 			 * Note: the CLUSTER logic assumes that indisclustered cannot be
-			 * set on any invalid index, so clear that flag too.
+			 * set on any invalid index, so clear that flag too.  Similarly,
+			 * ALTER TABLE assumes that indisreplident cannot be set for
+			 * invalid indexes.
 			 */
 			indexForm->indisvalid = false;
 			indexForm->indisclustered = false;
+			indexForm->indisreplident = false;
 			break;
 		case INDEX_DROP_SET_DEAD:
 
@@ -3367,13 +3382,15 @@ index_set_state_flags(Oid indexId, IndexStateFlagsAction action)
 			 * the index at all.
 			 */
 			Assert(!indexForm->indisvalid);
+			Assert(!indexForm->indisclustered);
+			Assert(!indexForm->indisreplident);
 			indexForm->indisready = false;
 			indexForm->indislive = false;
 			break;
 	}
 
-	/* ... and write it back in-place */
-	heap_inplace_update(pg_index, indexTuple);
+	/* ... and update it */
+	CatalogTupleUpdate(pg_index, &indexTuple->t_self, indexTuple);
 
 	table_close(pg_index, RowExclusiveLock);
 }
@@ -3426,8 +3443,20 @@ reindex_index(Oid indexId, bool skip_constraint_checks, char persistence,
 	 * Open and lock the parent heap relation.  ShareLock is sufficient since
 	 * we only need to be sure no schema or data changes are going on.
 	 */
-	heapId = IndexGetRelation(indexId, false);
-	heapRelation = table_open(heapId, ShareLock);
+	heapId = IndexGetRelation(indexId,
+							  (options & REINDEXOPT_MISSING_OK) != 0);
+	/* if relation is missing, leave */
+	if (!OidIsValid(heapId))
+		return;
+
+	if ((options & REINDEXOPT_MISSING_OK) != 0)
+		heapRelation = try_table_open(heapId, ShareLock);
+	else
+		heapRelation = table_open(heapId, ShareLock);
+
+	/* if relation is gone, leave */
+	if (!heapRelation)
+		return;
 
 	if (progress)
 	{
@@ -3450,11 +3479,12 @@ reindex_index(Oid indexId, bool skip_constraint_checks, char persistence,
 									 iRel->rd_rel->relam);
 
 	/*
-	 * The case of reindexing partitioned tables and indexes is handled
-	 * differently by upper layers, so this case shouldn't arise.
+	 * Partitioned indexes should never get processed here, as they have no
+	 * physical storage.
 	 */
 	if (iRel->rd_rel->relkind == RELKIND_PARTITIONED_INDEX)
-		elog(ERROR, "unsupported relation kind for index \"%s\"",
+		elog(ERROR, "cannot reindex partitioned index \"%s.%s\"",
+			 get_namespace_name(RelationGetNamespace(iRel)),
 			 RelationGetRelationName(iRel));
 
 	/*
@@ -3661,23 +3691,23 @@ reindex_relation(Oid relid, int flags, int options)
 	 * to prevent schema and data changes in it.  The lock level used here
 	 * should match ReindexTable().
 	 */
-	rel = table_open(relid, ShareLock);
+	if ((options & REINDEXOPT_MISSING_OK) != 0)
+		rel = try_table_open(relid, ShareLock);
+	else
+		rel = table_open(relid, ShareLock);
+
+	/* if relation is gone, leave */
+	if (!rel)
+		return false;
 
 	/*
-	 * This may be useful when implemented someday; but that day is not today.
-	 * For now, avoid erroring out when called in a multi-table context
-	 * (REINDEX SCHEMA) and happen to come across a partitioned table.  The
-	 * partitions may be reindexed on their own anyway.
+	 * Partitioned tables should never get processed here, as they have no
+	 * physical storage.
 	 */
 	if (rel->rd_rel->relkind == RELKIND_PARTITIONED_TABLE)
-	{
-		ereport(WARNING,
-				(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-				 errmsg("REINDEX of partitioned tables is not yet implemented, skipping \"%s\"",
-						RelationGetRelationName(rel))));
-		table_close(rel, ShareLock);
-		return false;
-	}
+		elog(ERROR, "cannot reindex partitioned table \"%s.%s\"",
+			 get_namespace_name(RelationGetNamespace(rel)),
+			 RelationGetRelationName(rel));
 
 	toast_relid = rel->rd_rel->reltoastrelid;
 
@@ -3760,7 +3790,14 @@ reindex_relation(Oid relid, int flags, int options)
 	 * still hold the lock on the main table.
 	 */
 	if ((flags & REINDEX_REL_PROCESS_TOAST) && OidIsValid(toast_relid))
-		result |= reindex_relation(toast_relid, flags, options);
+	{
+		/*
+		 * Note that this should fail if the toast relation is missing, so
+		 * reset REINDEXOPT_MISSING_OK.
+		 */
+		result |= reindex_relation(toast_relid, flags,
+								   options & ~(REINDEXOPT_MISSING_OK));
+	}
 
 	return result;
 }

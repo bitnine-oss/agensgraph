@@ -1,6 +1,6 @@
 /*-------------------------------------------------------------------------
  * relation.c
- *	   PostgreSQL logical replication
+ *	   PostgreSQL logical replication relation mapping cache
  *
  * Copyright (c) 2016-2020, PostgreSQL Global Development Group
  *
@@ -8,8 +8,9 @@
  *	  src/backend/replication/logical/relation.c
  *
  * NOTES
- *	  This file contains helper functions for logical replication relation
- *	  mapping cache.
+ *	  Routines in this file mainly have to do with mapping the properties
+ *	  of local replication target relations to the properties of their
+ *	  remote counterpart.
  *
  *-------------------------------------------------------------------------
  */
@@ -77,7 +78,7 @@ logicalrep_relmap_invalidate_cb(Datum arg, Oid reloid)
 		{
 			if (entry->localreloid == reloid)
 			{
-				entry->localreloid = InvalidOid;
+				entry->localrelvalid = false;
 				hash_seq_term(&status);
 				break;
 			}
@@ -91,7 +92,7 @@ logicalrep_relmap_invalidate_cb(Datum arg, Oid reloid)
 		hash_seq_init(&status, LogicalRepRelMap);
 
 		while ((entry = (LogicalRepRelMapEntry *) hash_seq_search(&status)) != NULL)
-			entry->localreloid = InvalidOid;
+			entry->localrelvalid = false;
 	}
 }
 
@@ -230,15 +231,13 @@ logicalrep_rel_att_by_name(LogicalRepRelation *remoterel, const char *attname)
 /*
  * Open the local relation associated with the remote one.
  *
- * Optionally rebuilds the Relcache mapping if it was invalidated
- * by local DDL.
+ * Rebuilds the Relcache mapping if it was invalidated by local DDL.
  */
 LogicalRepRelMapEntry *
 logicalrep_rel_open(LogicalRepRelId remoteid, LOCKMODE lockmode)
 {
 	LogicalRepRelMapEntry *entry;
 	bool		found;
-	Oid			relid = InvalidOid;
 	LogicalRepRelation *remoterel;
 
 	if (LogicalRepRelMap == NULL)
@@ -254,14 +253,45 @@ logicalrep_rel_open(LogicalRepRelId remoteid, LOCKMODE lockmode)
 
 	remoterel = &entry->remoterel;
 
+	/* Ensure we don't leak a relcache refcount. */
+	if (entry->localrel)
+		elog(ERROR, "remote relation ID %u is already open", remoteid);
+
 	/*
 	 * When opening and locking a relation, pending invalidation messages are
-	 * processed which can invalidate the relation.  We need to update the
-	 * local cache both when we are first time accessing the relation and when
-	 * the relation is invalidated (aka entry->localreloid is set InvalidOid).
+	 * processed which can invalidate the relation.  Hence, if the entry is
+	 * currently considered valid, try to open the local relation by OID and
+	 * see if invalidation ensues.
 	 */
-	if (!OidIsValid(entry->localreloid))
+	if (entry->localrelvalid)
 	{
+		entry->localrel = try_table_open(entry->localreloid, lockmode);
+		if (!entry->localrel)
+		{
+			/* Table was renamed or dropped. */
+			entry->localrelvalid = false;
+		}
+		else if (!entry->localrelvalid)
+		{
+			/* Note we release the no-longer-useful lock here. */
+			table_close(entry->localrel, lockmode);
+			entry->localrel = NULL;
+		}
+	}
+
+	/*
+	 * If the entry has been marked invalid since we last had lock on it,
+	 * re-open the local relation by name and rebuild all derived data.
+	 */
+	if (!entry->localrelvalid)
+	{
+		Oid			relid;
+		int			found;
+		Bitmapset  *idkey;
+		TupleDesc	desc;
+		MemoryContext oldctx;
+		int			i;
+
 		/* Try to find and lock the relation by name. */
 		relid = RangeVarGetRelid(makeRangeVar(remoterel->nspname,
 											  remoterel->relname, -1),
@@ -272,21 +302,7 @@ logicalrep_rel_open(LogicalRepRelId remoteid, LOCKMODE lockmode)
 					 errmsg("logical replication target relation \"%s.%s\" does not exist",
 							remoterel->nspname, remoterel->relname)));
 		entry->localrel = table_open(relid, NoLock);
-
-	}
-	else
-	{
-		relid = entry->localreloid;
-		entry->localrel = table_open(entry->localreloid, lockmode);
-	}
-
-	if (!OidIsValid(entry->localreloid))
-	{
-		int			found;
-		Bitmapset  *idkey;
-		TupleDesc	desc;
-		MemoryContext oldctx;
-		int			i;
+		entry->localreloid = relid;
 
 		/* Check for supported relkind. */
 		CheckSubscriptionRelkind(entry->localrel->rd_rel->relkind,
@@ -380,7 +396,7 @@ logicalrep_rel_open(LogicalRepRelId remoteid, LOCKMODE lockmode)
 			}
 		}
 
-		entry->localreloid = relid;
+		entry->localrelvalid = true;
 	}
 
 	if (entry->state != SUBREL_STATE_READY)
@@ -523,7 +539,7 @@ logicalrep_partmap_invalidate_cb(Datum arg, Oid reloid)
 		{
 			if (entry->localreloid == reloid)
 			{
-				entry->localreloid = InvalidOid;
+				entry->localrelvalid = false;
 				hash_seq_term(&status);
 				break;
 			}
@@ -537,7 +553,7 @@ logicalrep_partmap_invalidate_cb(Datum arg, Oid reloid)
 		hash_seq_init(&status, LogicalRepPartMap);
 
 		while ((entry = (LogicalRepRelMapEntry *) hash_seq_search(&status)) != NULL)
-			entry->localreloid = InvalidOid;
+			entry->localrelvalid = false;
 	}
 }
 
@@ -631,8 +647,8 @@ logicalrep_partition_open(LogicalRepRelMapEntry *root,
 	/*
 	 * If the partition's attributes don't match the root relation's, we'll
 	 * need to make a new attrmap which maps partition attribute numbers to
-	 * remoterel's, instead the original which maps root relation's attribute
-	 * numbers to remoterel's.
+	 * remoterel's, instead of the original which maps root relation's
+	 * attribute numbers to remoterel's.
 	 *
 	 * Note that 'map' which comes from the tuple routing data structure
 	 * contains 1-based attribute numbers (of the parent relation).  However,
@@ -655,6 +671,8 @@ logicalrep_partition_open(LogicalRepRelMapEntry *root,
 		entry->attrmap = attrmap;
 
 	entry->updatable = root->updatable;
+
+	entry->localrelvalid = true;
 
 	/* state and statelsn are left set to 0. */
 	MemoryContextSwitchTo(oldctx);

@@ -653,14 +653,6 @@ EXPLAIN (VERBOSE, COSTS OFF) SELECT * FROM ft1 t1 WHERE c1 = -c1;          -- Op
    Remote SQL: SELECT "C 1", c2, c3, c4, c5, c6, c7, c8 FROM "S 1"."T 1" WHERE (("C 1" = (- "C 1")))
 (3 rows)
 
-EXPLAIN (VERBOSE, COSTS OFF) SELECT * FROM ft1 t1 WHERE 1 = c1!;           -- OpExpr(r)
-                                                QUERY PLAN                                                
-----------------------------------------------------------------------------------------------------------
- Foreign Scan on public.ft1 t1
-   Output: c1, c2, c3, c4, c5, c6, c7, c8
-   Remote SQL: SELECT "C 1", c2, c3, c4, c5, c6, c7, c8 FROM "S 1"."T 1" WHERE ((1::numeric = ("C 1" !)))
-(3 rows)
-
 EXPLAIN (VERBOSE, COSTS OFF) SELECT * FROM ft1 t1 WHERE (c1 IS NOT NULL) IS DISTINCT FROM (c1 IS NOT NULL); -- DistinctExpr
                                                                  QUERY PLAN                                                                 
 --------------------------------------------------------------------------------------------------------------------------------------------
@@ -4043,6 +4035,27 @@ SELECT f_test(100);
 (1 row)
 
 DROP FUNCTION f_test(int);
+-- ===================================================================
+-- REINDEX
+-- ===================================================================
+-- remote table is not created here
+CREATE FOREIGN TABLE reindex_foreign (c1 int, c2 int)
+  SERVER loopback2 OPTIONS (table_name 'reindex_local');
+REINDEX TABLE reindex_foreign; -- error
+ERROR:  "reindex_foreign" is not a table or materialized view
+REINDEX TABLE CONCURRENTLY reindex_foreign; -- error
+ERROR:  "reindex_foreign" is not a table or materialized view
+DROP FOREIGN TABLE reindex_foreign;
+-- partitions and foreign tables
+CREATE TABLE reind_fdw_parent (c1 int) PARTITION BY RANGE (c1);
+CREATE TABLE reind_fdw_0_10 PARTITION OF reind_fdw_parent
+  FOR VALUES FROM (0) TO (10);
+CREATE FOREIGN TABLE reind_fdw_10_20 PARTITION OF reind_fdw_parent
+  FOR VALUES FROM (10) TO (20)
+  SERVER loopback OPTIONS (table_name 'reind_local_10_20');
+REINDEX TABLE reind_fdw_parent; -- ok
+REINDEX TABLE CONCURRENTLY reind_fdw_parent; -- ok
+DROP TABLE reind_fdw_parent;
 -- ===================================================================
 -- conversion error
 -- ===================================================================

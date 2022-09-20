@@ -89,6 +89,7 @@
 #include "access/xlog.h"
 #include "catalog/pg_tablespace.h"
 #include "common/file_perm.h"
+#include "common/file_utils.h"
 #include "miscadmin.h"
 #include "pgstat.h"
 #include "portability/mem.h"
@@ -1743,18 +1744,17 @@ PathNameCreateTemporaryFile(const char *path, bool error_on_failure)
 /*
  * Open a file that was created with PathNameCreateTemporaryFile, possibly in
  * another backend.  Files opened this way don't count against the
- * temp_file_limit of the caller, are read-only and are automatically closed
- * at the end of the transaction but are not deleted on close.
+ * temp_file_limit of the caller, are automatically closed at the end of the
+ * transaction but are not deleted on close.
  */
 File
-PathNameOpenTemporaryFile(const char *path)
+PathNameOpenTemporaryFile(const char *path, int mode)
 {
 	File		file;
 
 	ResourceOwnerEnlargeFiles(CurrentResourceOwner);
 
-	/* We open the file read-only. */
-	file = PathNameOpenFile(path, O_RDONLY | PG_BINARY);
+	file = PathNameOpenFile(path, mode | PG_BINARY);
 
 	/* If no such file, then we don't raise an error. */
 	if (file <= 0 && errno != ENOENT)
@@ -3341,8 +3341,6 @@ walkdir(const char *path,
 	while ((de = ReadDirExtended(dir, path, elevel)) != NULL)
 	{
 		char		subpath[MAXPGPATH * 2];
-		struct stat fst;
-		int			sret;
 
 		CHECK_FOR_INTERRUPTS();
 
@@ -3352,23 +3350,23 @@ walkdir(const char *path,
 
 		snprintf(subpath, sizeof(subpath), "%s/%s", path, de->d_name);
 
-		if (process_symlinks)
-			sret = stat(subpath, &fst);
-		else
-			sret = lstat(subpath, &fst);
-
-		if (sret < 0)
+		switch (get_dirent_type(subpath, de, process_symlinks, elevel))
 		{
-			ereport(elevel,
-					(errcode_for_file_access(),
-					 errmsg("could not stat file \"%s\": %m", subpath)));
-			continue;
-		}
+			case PGFILETYPE_REG:
+				(*action) (subpath, false, elevel);
+				break;
+			case PGFILETYPE_DIR:
+				walkdir(subpath, action, false, elevel);
+				break;
+			default:
 
-		if (S_ISREG(fst.st_mode))
-			(*action) (subpath, false, elevel);
-		else if (S_ISDIR(fst.st_mode))
-			walkdir(subpath, action, false, elevel);
+				/*
+				 * Errors are already reported directly by get_dirent_type(),
+				 * and any remaining symlinks and unknown file types are
+				 * ignored.
+				 */
+				break;
+		}
 	}
 
 	FreeDir(dir);				/* we ignore any error here */

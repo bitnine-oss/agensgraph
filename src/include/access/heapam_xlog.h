@@ -67,6 +67,7 @@
 #define XLH_INSERT_LAST_IN_MULTI				(1<<1)
 #define XLH_INSERT_IS_SPECULATIVE				(1<<2)
 #define XLH_INSERT_CONTAINS_NEW_TUPLE			(1<<3)
+#define XLH_INSERT_ON_TOAST_RELATION			(1<<4)
 
 /*
  * xl_heap_update flag values, 8 bits are available.
@@ -136,8 +137,6 @@ typedef struct xl_heap_truncate
  * or updated tuple in WAL; we can save a few bytes by reconstructing the
  * fields that are available elsewhere in the WAL record, or perhaps just
  * plain needn't be reconstructed.  These are the fields we must store.
- * NOTE: t_hoff could be recomputed, but we may as well store it because
- * it will come for free due to alignment considerations.
  */
 typedef struct xl_heap_header
 {

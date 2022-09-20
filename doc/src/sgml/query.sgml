@@ -548,9 +548,9 @@ SELECT *
     it here to help you understand the following topics.
    </para>
 
-   <para>
-    <indexterm><primary>join</primary><secondary>outer</secondary></indexterm>
+   <indexterm><primary>join</primary><secondary>outer</secondary></indexterm>
 
+   <para>
     Now we will figure out how we can get the Hayward records back in.
     What we want the query to do is to scan the
     <structname>weather</structname> table and for each row to find the
@@ -564,14 +564,16 @@ SELECT *
 <programlisting>
 SELECT *
     FROM weather LEFT OUTER JOIN cities ON (weather.city = cities.name);
+</programlisting>
 
+<screen>
      city      | temp_lo | temp_hi | prcp |    date    |     name      | location
 ---------------+---------+---------+------+------------+---------------+-----------
  Hayward       |      37 |      54 |      | 1994-11-29 |               |
  San Francisco |      46 |      50 | 0.25 | 1994-11-27 | San Francisco | (-194,53)
  San Francisco |      43 |      57 |    0 | 1994-11-29 | San Francisco | (-194,53)
 (3 rows)
-</programlisting>
+</screen>
 
     This query is called a <firstterm>left outer
     join</firstterm> because the table mentioned on the left of the
@@ -607,21 +609,23 @@ SELECT *
     following query:
 
 <programlisting>
-SELECT W1.city, W1.temp_lo AS low, W1.temp_hi AS high,
-    W2.city, W2.temp_lo AS low, W2.temp_hi AS high
-    FROM weather W1, weather W2
-    WHERE W1.temp_lo &lt; W2.temp_lo
-    AND W1.temp_hi &gt; W2.temp_hi;
+SELECT w1.city, w1.temp_lo AS low, w1.temp_hi AS high,
+    w2.city, w2.temp_lo AS low, w2.temp_hi AS high
+    FROM weather w1, weather w2
+    WHERE w1.temp_lo &lt; w2.temp_lo
+    AND w1.temp_hi &gt; w2.temp_hi;
+</programlisting>
 
+<screen>
      city      | low | high |     city      | low | high
 ---------------+-----+------+---------------+-----+------
  San Francisco |  43 |   57 | San Francisco |  46 |   50
  Hayward       |  37 |   54 | San Francisco |  46 |   50
 (2 rows)
-</programlisting>
+</screen>
 
-    Here we have relabeled the weather table as <literal>W1</literal> and
-    <literal>W2</literal> to be able to distinguish the left and right side
+    Here we have relabeled the weather table as <literal>w1</literal> and
+    <literal>w2</literal> to be able to distinguish the left and right side
     of the join.  You can also use these kinds of aliases in other
     queries to save some typing, e.g.:
 <programlisting>

@@ -594,6 +594,8 @@ PostgreSQL documentation
         <application>pg_dump</application> to output detailed object
         comments and start/stop times to the dump file, and progress
         messages to standard error.
+        Repeating the option causes additional debug-level messages
+        to appear on standard error.
        </para>
       </listitem>
      </varlistentry>
@@ -759,7 +761,7 @@ PostgreSQL documentation
       <term><option>--if-exists</option></term>
       <listitem>
        <para>
-        Use conditional commands (i.e. add an <literal>IF EXISTS</literal>
+        Use conditional commands (i.e., add an <literal>IF EXISTS</literal>
         clause) when cleaning database objects.  This option is not valid
         unless <option>--clean</option> is also specified.
        </para>

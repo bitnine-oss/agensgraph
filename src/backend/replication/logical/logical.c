@@ -39,6 +39,7 @@
 #include "replication/snapbuild.h"
 #include "storage/proc.h"
 #include "storage/procarray.h"
+#include "utils/builtins.h"
 #include "utils/memutils.h"
 
 /* data for errcontext callback */
@@ -82,7 +83,7 @@ static void stream_message_cb_wrapper(ReorderBuffer *cache, ReorderBufferTXN *tx
 static void stream_truncate_cb_wrapper(ReorderBuffer *cache, ReorderBufferTXN *txn,
 									   int nrelations, Relation relations[], ReorderBufferChange *change);
 
-static void LoadOutputPlugin(OutputPluginCallbacks *callbacks, char *plugin);
+static void LoadOutputPlugin(OutputPluginCallbacks *callbacks, const char *plugin);
 
 /*
  * Make sure the current settings & environment are capable of doing logical
@@ -180,7 +181,8 @@ StartupDecodingContext(List *output_plugin_options,
 	if (!IsTransactionOrTransactionBlock())
 	{
 		LWLockAcquire(ProcArrayLock, LW_EXCLUSIVE);
-		MyPgXact->vacuumFlags |= PROC_IN_LOGICAL_DECODING;
+		MyProc->vacuumFlags |= PROC_IN_LOGICAL_DECODING;
+		ProcGlobal->vacuumFlags[MyProc->pgxactoff] = MyProc->vacuumFlags;
 		LWLockRelease(ProcArrayLock);
 	}
 
@@ -277,7 +279,7 @@ StartupDecodingContext(List *output_plugin_options,
  * startup function.
  */
 LogicalDecodingContext *
-CreateInitDecodingContext(char *plugin,
+CreateInitDecodingContext(const char *plugin,
 						  List *output_plugin_options,
 						  bool need_full_snapshot,
 						  XLogRecPtr restart_lsn,
@@ -288,6 +290,7 @@ CreateInitDecodingContext(char *plugin,
 {
 	TransactionId xmin_horizon = InvalidTransactionId;
 	ReplicationSlot *slot;
+	NameData	plugin_name;
 	LogicalDecodingContext *ctx;
 	MemoryContext old_context;
 
@@ -319,9 +322,14 @@ CreateInitDecodingContext(char *plugin,
 				(errcode(ERRCODE_ACTIVE_SQL_TRANSACTION),
 				 errmsg("cannot create logical replication slot in transaction that has performed writes")));
 
-	/* register output plugin name with slot */
+	/*
+	 * Register output plugin name with slot.  We need the mutex to avoid
+	 * concurrent reading of a partially copied string.  But we don't want any
+	 * complicated code while holding a spinlock, so do namestrcpy() outside.
+	 */
+	namestrcpy(&plugin_name, plugin);
 	SpinLockAcquire(&slot->mutex);
-	StrNCpy(NameStr(slot->data.plugin), plugin, NAMEDATALEN);
+	slot->data.plugin = plugin_name;
 	SpinLockRelease(&slot->mutex);
 
 	if (XLogRecPtrIsInvalid(restart_lsn))
@@ -612,7 +620,7 @@ OutputPluginUpdateProgress(struct LogicalDecodingContext *ctx)
  * that it provides the required callbacks.
  */
 static void
-LoadOutputPlugin(OutputPluginCallbacks *callbacks, char *plugin)
+LoadOutputPlugin(OutputPluginCallbacks *callbacks, const char *plugin)
 {
 	LogicalOutputPluginInit plugin_init;
 
@@ -1441,4 +1449,14 @@ LogicalConfirmReceivedLocation(XLogRecPtr lsn)
 		MyReplicationSlot->data.confirmed_flush = lsn;
 		SpinLockRelease(&MyReplicationSlot->mutex);
 	}
+}
+
+/*
+ * Clear logical streaming state during (sub)transaction abort.
+ */
+void
+ResetLogicalStreamingState(void)
+{
+	CheckXidAlive = InvalidTransactionId;
+	bsysscan = false;
 }

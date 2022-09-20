@@ -424,7 +424,7 @@ include_dir 'directory'
       start with the <literal>.</literal> character are also ignored, to
       prevent mistakes since such files are hidden on some platforms.  Multiple
       files within an include directory are processed in file name order
-      (according to C locale rules, i.e. numbers before letters, and
+      (according to C locale rules, i.e., numbers before letters, and
       uppercase letters before lowercase ones).
      </para>
 
@@ -1085,7 +1085,7 @@ include_dir 'conf.d'
        <para>
         With this parameter enabled, you can still create ordinary global
         users.  Simply append <literal>@</literal> when specifying the user
-        name in the client, e.g. <literal>joe@</literal>.  The <literal>@</literal>
+        name in the client, e.g., <literal>joe@</literal>.  The <literal>@</literal>
         will be stripped off before the user name is looked up by the
         server.
        </para>
@@ -1261,10 +1261,11 @@ include_dir 'conf.d'
           <term><literal>+3DES</literal></term>
           <listitem>
            <para>
-            The OpenSSL default order for <literal>HIGH</literal> is problematic
-            because it orders 3DES higher than AES128.  This is wrong because
-            3DES offers less security than AES128, and it is also much
-            slower.  <literal>+3DES</literal> reorders it after all other
+            The <productname>OpenSSL</productname> default order for
+            <literal>HIGH</literal> is problematic because it orders 3DES
+            higher than AES128.  This is wrong because 3DES offers less
+            security than AES128, and it is also much slower.
+            <literal>+3DES</literal> reorders it after all other
             <literal>HIGH</literal> and <literal>MEDIUM</literal> ciphers.
            </para>
           </listitem>
@@ -1284,8 +1285,8 @@ include_dir 'conf.d'
        </para>
 
        <para>
-        Available cipher suite details will vary across OpenSSL versions.  Use
-        the command
+        Available cipher suite details will vary across
+        <productname>OpenSSL</productname> versions.  Use the command
         <literal>openssl ciphers -v 'HIGH:MEDIUM:+3DES:!aNULL'</literal> to
         see actual details for the currently installed <application>OpenSSL</application>
         version.  Note that this list is filtered at run time based on the
@@ -1337,7 +1338,8 @@ include_dir 'conf.d'
        </para>
 
        <para>
-        OpenSSL names for the most common curves are:
+        <productname>OpenSSL</productname> names for the most common curves
+        are:
         <literal>prime256v1</literal> (NIST P-256),
         <literal>secp384r1</literal> (NIST P-384),
         <literal>secp521r1</literal> (NIST P-521).
@@ -2740,7 +2742,7 @@ include_dir 'conf.d'
         ensure data preservation even if a standby instance of
         <productname>PostgreSQL</productname> were to crash, but not if the standby
         suffers an operating-system-level crash, since the data has not
-        necessarily reached stable storage on the standby.
+        necessarily reached durable storage on the standby.
         Finally, the setting <literal>local</literal> causes commits to wait for
         local flush to disk, but not for replication.  This is not usually
         desirable when synchronous replication is in use, but is provided for
@@ -3219,7 +3221,7 @@ include_dir 'conf.d'
       </term>
       <listitem>
        <para>
-        Maximum size to let the WAL grow to between automatic WAL
+        Maximum size to let the WAL grow during automatic
         checkpoints. This is a soft limit; WAL size can exceed
         <varname>max_wal_size</varname> under special circumstances, such as
         heavy load, a failing <varname>archive_command</varname>, or a high
@@ -3319,7 +3321,7 @@ include_dir 'conf.d'
         disabled, but the server continues to accumulate WAL segment files in
         the expectation that a command will soon be provided.  Setting
         <varname>archive_command</varname> to a command that does nothing but
-        return true, e.g. <literal>/bin/true</literal> (<literal>REM</literal> on
+        return true, e.g., <literal>/bin/true</literal> (<literal>REM</literal> on
         Windows), effectively disables
         archiving, but also breaks the chain of WAL files needed for
         archive recovery, so it should only be used in unusual circumstances.
@@ -3564,7 +3566,7 @@ restore_command = 'copy "C:\\server\\archivedir\\%f" "%p"'  # Windows
       <listitem>
        <para>
         This parameter specifies that recovery should end as soon as a
-        consistent state is reached, i.e. as early as possible. When restoring
+        consistent state is reached, i.e., as early as possible. When restoring
         from an online backup, this means the point where taking the backup
         ended.
        </para>
@@ -3610,7 +3612,7 @@ restore_command = 'copy "C:\\server\\archivedir\\%f" "%p"'  # Windows
         <xref linkend="guc-timezone-abbreviations"/> variable has been set
         earlier in the configuration file).  Preferred style is to use a
         numeric offset from UTC, or you can write a full time zone name,
-        e.g. <literal>Europe/Helsinki</literal> not <literal>EEST</literal>.
+        e.g., <literal>Europe/Helsinki</literal> not <literal>EEST</literal>.
        </para>
       </listitem>
      </varlistentry>
@@ -4992,7 +4994,7 @@ ANY <replaceable class="parameter">num_sync</replaceable> ( <replaceable class="
         if your data is likely to be completely in cache, such as when
         the database is smaller than the total server memory, decreasing
         random_page_cost can be appropriate.  Storage that has a low random
-        read cost relative to sequential, e.g. solid-state drives, might
+        read cost relative to sequential, e.g., solid-state drives, might
         also be better modeled with a lower value for random_page_cost,
         e.g., <literal>1.1</literal>.
        </para>
@@ -6695,6 +6697,12 @@ local0.*    /var/log/postgresql
              <entry>no</entry>
             </row>
             <row>
+             <entry><literal>%P</literal></entry>
+             <entry>Process ID of the parallel group leader, if this process
+              is a parallel query worker</entry>
+             <entry>no</entry>
+            </row>
+            <row>
              <entry><literal>%t</literal></entry>
              <entry>Time stamp without milliseconds</entry>
              <entry>no</entry>
@@ -7026,7 +7034,7 @@ log_line_prefix = '%m [%p] %q%u@%d/%a '
         character count of the error position therein,
         location of the error in the PostgreSQL source code
         (if <varname>log_error_verbosity</varname> is set to <literal>verbose</literal>),
-        application name, and backend type.
+        application name, backend type, and process ID of parallel group leader.
         Here is a sample table definition for storing CSV-format log output:
 
 <programlisting>
@@ -7056,6 +7064,7 @@ CREATE TABLE postgres_log
   location text,
   application_name text,
   backend_type text,
+  leader_pid integer,
   PRIMARY KEY (session_id, session_line_num)
 );
 </programlisting>
@@ -7068,6 +7077,8 @@ CREATE TABLE postgres_log
 <programlisting>
 COPY postgres_log FROM '/full/path/to/logfile.csv' WITH csv;
 </programlisting>
+        It is also possible to access the file as a foreign table, using
+        the supplied <xref linkend="file-fdw"/> module.
        </para>
 
        <para>
@@ -9075,7 +9086,7 @@ dynamic_library_path = 'C:\tools\postgresql;H:\my_project\lib;$libdir'
         rows that can be locked; that value is unlimited.  The default,
         64, has historically proven sufficient, but you might need to
         raise this value if you have queries that touch many different
-        tables in a single transaction, e.g. query of a parent table with
+        tables in a single transaction, e.g., query of a parent table with
         many children.  This parameter can only be set at server start.
        </para>
 
@@ -9571,7 +9582,7 @@ dynamic_library_path = 'C:\tools\postgresql;H:\my_project\lib;$libdir'
         with assertions enabled. That is the case if the
         macro <symbol>USE_ASSERT_CHECKING</symbol> is defined
         when <productname>PostgreSQL</productname> is built (accomplished
-        e.g. by the <command>configure</command> option
+        e.g., by the <command>configure</command> option
         <option>--enable-cassert</option>). By
         default <productname>PostgreSQL</productname> is built without
         assertions.

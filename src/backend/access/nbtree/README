@@ -342,9 +342,9 @@ snapshots and registered snapshots as of the deletion are gone; which is
 overly strong, but is simple to implement within Postgres.  When marked
 dead, a deleted page is labeled with the next-transaction counter value.
 VACUUM can reclaim the page for re-use when this transaction number is
-older than RecentGlobalXmin.  As collateral damage, this implementation
-also waits for running XIDs with no snapshots and for snapshots taken
-until the next transaction to allocate an XID commits.
+guaranteed to be "visible to everyone".  As collateral damage, this
+implementation also waits for running XIDs with no snapshots and for
+snapshots taken until the next transaction to allocate an XID commits.
 
 Reclaiming a page doesn't actually change its state on disk --- we simply
 record it in the shared-memory free space map, from which it will be
@@ -411,8 +411,8 @@ page and also the correct place to hold the current value. We can avoid
 the cost of walking down the tree in such common cases.
 
 The optimization works on the assumption that there can only be one
-non-ignorable leaf rightmost page, and so even a RecentGlobalXmin style
-interlock isn't required.  We cannot fail to detect that our hint was
+non-ignorable leaf rightmost page, and so not even a visible-to-everyone
+style interlock is required.  We cannot fail to detect that our hint was
 invalidated, because there can only be one such page in the B-Tree at
 any time. It's possible that the page will be deleted and recycled
 without a backend's cached page also being detected as invalidated, but
@@ -571,6 +571,13 @@ complete the unfinished split, corrupting the parent page.  (Similarly,
 replay of page deletion records does not hold a write lock on the target
 leaf page throughout; only the primary needs to block out concurrent
 writers that insert on to the page being deleted.)
+
+WAL replay holds same-level locks in a way that matches the approach
+taken during original execution, though. This prevent readers from
+observing same-level inconsistencies. It's probably possible to be more
+lax about how same-level locks are acquired during recovery (most kinds
+of readers could still move right to recover if we didn't couple
+same-level locks), but we prefer to be conservative here.
 
 During recovery all index scans start with ignore_killed_tuples = false
 and we never set kill_prior_tuple. We do this because the oldest xmin

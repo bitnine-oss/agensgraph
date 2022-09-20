@@ -244,19 +244,22 @@ typedef struct QueueBackendStatus
 /*
  * Shared memory state for LISTEN/NOTIFY (excluding its SLRU stuff)
  *
- * The AsyncQueueControl structure is protected by the NotifyQueueLock.
+ * The AsyncQueueControl structure is protected by the NotifyQueueLock and
+ * NotifyQueueTailLock.
  *
- * When holding the lock in SHARED mode, backends may only inspect their own
- * entries as well as the head and tail pointers. Consequently we can allow a
- * backend to update its own record while holding only SHARED lock (since no
- * other backend will inspect it).
+ * When holding NotifyQueueLock in SHARED mode, backends may only inspect
+ * their own entries as well as the head and tail pointers. Consequently we
+ * can allow a backend to update its own record while holding only SHARED lock
+ * (since no other backend will inspect it).
  *
- * When holding the lock in EXCLUSIVE mode, backends can inspect the entries
- * of other backends and also change the head and tail pointers.
+ * When holding NotifyQueueLock in EXCLUSIVE mode, backends can inspect the
+ * entries of other backends and also change the head pointer. When holding
+ * both NotifyQueueLock and NotifyQueueTailLock in EXCLUSIVE mode, backends
+ * can change the tail pointer.
  *
  * NotifySLRULock is used as the control lock for the pg_notify SLRU buffers.
- * In order to avoid deadlocks, whenever we need both locks, we always first
- * get NotifyQueueLock and then NotifySLRULock.
+ * In order to avoid deadlocks, whenever we need multiple locks, we first get
+ * NotifyQueueTailLock, then NotifyQueueLock, and lastly NotifySLRULock.
  *
  * Each backend uses the backend[] array entry with index equal to its
  * BackendId (which can range from 1 to MaxBackends).  We rely on this to make
@@ -299,13 +302,10 @@ static SlruCtlData NotifyCtlData;
 #define QUEUE_FULL_WARN_INTERVAL	5000	/* warn at most once every 5s */
 
 /*
- * slru.c currently assumes that all filenames are four characters of hex
- * digits. That means that we can use segments 0000 through FFFF.
- * Each segment contains SLRU_PAGES_PER_SEGMENT pages which gives us
- * the pages from 0 to SLRU_PAGES_PER_SEGMENT * 0x10000 - 1.
- *
- * It's of course possible to enhance slru.c, but this gives us so much
- * space already that it doesn't seem worth the trouble.
+ * Use segments 0000 through FFFF.  Each contains SLRU_PAGES_PER_SEGMENT pages
+ * which gives us the pages from 0 to SLRU_PAGES_PER_SEGMENT * 0x10000 - 1.
+ * We could use as many segments as SlruScanDirectory() allows, but this gives
+ * us so much space already that it doesn't seem worth the trouble.
  *
  * The most data we can have in the queue at a time is QUEUE_MAX_PAGE/2
  * pages, because more than that would confuse slru.c into thinking there
@@ -1918,7 +1918,6 @@ static void
 asyncQueueReadAllNotifications(void)
 {
 	volatile QueuePosition pos;
-	QueuePosition oldpos;
 	QueuePosition head;
 	Snapshot	snapshot;
 
@@ -1933,7 +1932,7 @@ asyncQueueReadAllNotifications(void)
 	LWLockAcquire(NotifyQueueLock, LW_SHARED);
 	/* Assert checks that we have a valid state entry */
 	Assert(MyProcPid == QUEUE_BACKEND_PID(MyBackendId));
-	pos = oldpos = QUEUE_BACKEND_POS(MyBackendId);
+	pos = QUEUE_BACKEND_POS(MyBackendId);
 	head = QUEUE_HEAD;
 	LWLockRelease(NotifyQueueLock);
 
@@ -2177,6 +2176,10 @@ asyncQueueAdvanceTail(void)
 	int			newtailpage;
 	int			boundary;
 
+	/* Restrict task to one backend per cluster; see SimpleLruTruncate(). */
+	LWLockAcquire(NotifyQueueTailLock, LW_EXCLUSIVE);
+
+	/* Compute the new tail. */
 	LWLockAcquire(NotifyQueueLock, LW_EXCLUSIVE);
 	min = QUEUE_HEAD;
 	for (BackendId i = QUEUE_FIRST_LISTENER; i > 0; i = QUEUE_NEXT_LISTENER(i))
@@ -2185,7 +2188,6 @@ asyncQueueAdvanceTail(void)
 		min = QUEUE_POS_MIN(min, QUEUE_BACKEND_POS(i));
 	}
 	oldtailpage = QUEUE_POS_PAGE(QUEUE_TAIL);
-	QUEUE_TAIL = min;
 	LWLockRelease(NotifyQueueLock);
 
 	/*
@@ -2205,6 +2207,17 @@ asyncQueueAdvanceTail(void)
 		 */
 		SimpleLruTruncate(NotifyCtl, newtailpage);
 	}
+
+	/*
+	 * Advertise the new tail.  This changes asyncQueueIsFull()'s verdict for
+	 * the segment immediately prior to the new tail, allowing fresh data into
+	 * that segment.
+	 */
+	LWLockAcquire(NotifyQueueLock, LW_EXCLUSIVE);
+	QUEUE_TAIL = min;
+	LWLockRelease(NotifyQueueLock);
+
+	LWLockRelease(NotifyQueueTailLock);
 }
 
 /*

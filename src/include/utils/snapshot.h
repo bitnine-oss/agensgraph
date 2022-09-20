@@ -193,6 +193,12 @@ typedef struct SnapshotData
 	uint32		speculativeToken;
 
 	/*
+	 * For SNAPSHOT_NON_VACUUMABLE (and hopefully more in the future) this is
+	 * used to determine whether row could be vacuumed.
+	 */
+	struct GlobalVisState *vistest;
+
+	/*
 	 * Book-keeping information, used by the snapshot manager
 	 */
 	uint32		active_count;	/* refcount on ActiveSnapshot stack */
@@ -201,6 +207,13 @@ typedef struct SnapshotData
 
 	TimestampTz whenTaken;		/* timestamp when snapshot was taken */
 	XLogRecPtr	lsn;			/* position in the WAL stream when taken */
+
+	/*
+	 * The transaction completion count at the time GetSnapshotData() built
+	 * this snapshot. Allows to avoid re-computing static snapshots when no
+	 * transactions completed since the last GetSnapshotData().
+	 */
+	uint64		snapXactCompletionCount;
 } SnapshotData;
 
 #endif							/* SNAPSHOT_H */

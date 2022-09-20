@@ -300,7 +300,6 @@ static Node *verticesConcat(Node *vertices, Node *expr);
 static Node *makeSelectEdgesVertices(Node *vertices,
 									 CypherDeleteClause *delete,
 									 char **edges_resname);
-static Node *makeEdgesForDetach(void);
 static RangeFunction *makeUnnestVertices(Node *vertices);
 static BoolExpr *makeEdgesVertexQual(void);
 static List *extractVerticesExpr(ParseState *pstate, List *exprlist,
@@ -5339,29 +5338,6 @@ makeSelectEdgesVertices(Node *vertices, CypherDeleteClause *delete,
 	sel->whereClause = (Node *) makeEdgesVertexQual();
 
 	return (Node *) sel;
-}
-
-/* array_agg((id, start, end, NULL, ctid)::edge) */
-static Node *
-makeEdgesForDetach(void)
-{
-	Node	   *id;
-	Node	   *start;
-	Node	   *end;
-	A_Const    *prop_map;
-	Node	   *tid;
-	Node	   *edge;
-
-	id = makeColumnRef(genQualifiedName(DELETE_EDGE_ALIAS, AG_ELEM_ID));
-	start = makeColumnRef(genQualifiedName(DELETE_EDGE_ALIAS, AG_START_ID));
-	end = makeColumnRef(genQualifiedName(DELETE_EDGE_ALIAS, AG_END_ID));
-	prop_map = makeNullAConst();
-	tid = makeColumnRef(genQualifiedName(DELETE_EDGE_ALIAS, "ctid"));
-
-	edge = makeRowExprWithTypeCast(list_make5(id, start, end, prop_map, tid),
-								   EDGEOID, -1);
-
-	return (Node *) makeArrayAggFuncCall(list_make1(edge), -1);
 }
 
 static RangeFunction *

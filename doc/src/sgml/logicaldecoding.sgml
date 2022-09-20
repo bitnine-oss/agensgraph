@@ -24,7 +24,7 @@
    by <command>INSERT</command> and the new row version created
    by <command>UPDATE</command>.  Availability of old row versions for
    <command>UPDATE</command> and <command>DELETE</command> depends on
-   the configured replica identity (see <xref linkend="sql-createtable-replica-identity"/>).
+   the configured replica identity (see <xref linkend="sql-altertable-replica-identity"/>).
   </para>
 
   <para>
@@ -223,7 +223,7 @@ $ pg_recvlogical -d postgres --slot=test --drop-slot
      A logical slot will emit each change just once in normal operation.
      The current position of each slot is persisted only at checkpoint, so in
      the case of a crash the slot may return to an earlier LSN, which will
-     then cause recent changes to be resent when the server restarts.
+     then cause recent changes to be sent again when the server restarts.
      Logical decoding clients are responsible for avoiding ill effects from
      handling the same message more than once.  Clients may wish to record
      the last LSN they saw when decoding and skip over any repeated data or
@@ -433,9 +433,12 @@ typedef void (*LogicalOutputPluginInit) (struct OutputPluginCallbacks *cb);
 ALTER TABLE user_catalog_table SET (user_catalog_table = true);
 CREATE TABLE another_catalog_table(data text) WITH (user_catalog_table = true);
 </programlisting>
-     Any actions leading to transaction ID assignment are prohibited. That, among others,
-     includes writing to tables, performing DDL changes, and
-     calling <literal>pg_current_xact_id()</literal>.
+     Note that access to user catalog tables or regular system catalog tables
+     in the output plugins has to be done via the <literal>systable_*</literal>
+     scan APIs only. Access via the <literal>heap_*</literal> scan APIs will
+     error out. Additionally, any actions leading to transaction ID assignment
+     are prohibited. That, among others, includes writing to tables, performing
+     DDL changes, and calling <literal>pg_current_xact_id()</literal>.
     </para>
    </sect2>
 
@@ -879,7 +882,7 @@ OutputPluginWrite(ctx, true);
    <title>Streaming of Large Transactions for Logical Decoding</title>
 
    <para>
-    The basic output plugin callbacks (e.g. <function>begin_cb</function>,
+    The basic output plugin callbacks (e.g., <function>begin_cb</function>,
     <function>change_cb</function>, <function>commit_cb</function> and
     <function>message_cb</function>) are only invoked when the transaction
     actually commits. The changes are still decoded from the transaction
@@ -955,7 +958,7 @@ stream_commit_cb(...);  &lt;-- commit of the streamed transaction
     currently used for decoded changes) is selected and streamed.  However, in
     some cases we still have to spill to the disk even if streaming is enabled
     because if we cross the memory limit but we still have not decoded the
-    complete tuple e.g. only decoded toast table insert but not the main table
+    complete tuple e.g., only decoded toast table insert but not the main table
     insert.
    </para>
 

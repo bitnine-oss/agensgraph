@@ -25,6 +25,9 @@ begin
         -- Ignore text-mode buffers output because it varies depending
         -- on the system state
         CONTINUE WHEN (ln ~ ' +Buffers: .*');
+        -- Ignore text-mode "Planning:" line because whether it's output
+        -- varies depending on the system state
+        CONTINUE WHEN (ln = 'Planning:');
         return next ln;
     end loop;
 end;
@@ -57,6 +60,8 @@ select explain_filter('explain (analyze, buffers, format text) select * from int
 select explain_filter('explain (analyze, buffers, format json) select * from int8_tbl i8');
 select explain_filter('explain (analyze, buffers, format xml) select * from int8_tbl i8');
 select explain_filter('explain (analyze, buffers, format yaml) select * from int8_tbl i8');
+select explain_filter('explain (buffers, format text) select * from int8_tbl i8');
+select explain_filter('explain (buffers, format json) select * from int8_tbl i8');
 
 -- SETTINGS option
 -- We have to ignore other settings that might be imposed by the environment,

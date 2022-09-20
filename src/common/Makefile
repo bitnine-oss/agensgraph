@@ -56,6 +56,7 @@ OBJS_COMMON = \
 	exec.o \
 	f2s.o \
 	file_perm.o \
+	file_utils.o \
 	hashfn.o \
 	ip.o \
 	jsonapi.o \
@@ -63,6 +64,7 @@ OBJS_COMMON = \
 	kwlookup.o \
 	link-canary.o \
 	md5.o \
+	pg_get_line.o \
 	pg_lzcompress.o \
 	pgfnames.o \
 	psprintf.o \
@@ -90,9 +92,9 @@ endif
 OBJS_FRONTEND = \
 	$(OBJS_COMMON) \
 	fe_memutils.o \
-	file_utils.o \
 	logging.o \
-	restricted_token.o
+	restricted_token.o \
+	sprompt.o
 
 # foo.o, foo_shlib.o, and foo_srv.o are all built from foo.c
 OBJS_SHLIB = $(OBJS_FRONTEND:%.o=%_shlib.o)

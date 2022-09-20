@@ -722,6 +722,10 @@ InitPostgres(const char *in_dbname, Oid dboid, const char *username,
 	 * is critical for anything that reads heap pages, because HOT may decide
 	 * to prune them even if the process doesn't attempt to modify any
 	 * tuples.)
+	 *
+	 * FIXME: This comment is inaccurate / the code buggy. A snapshot that is
+	 * not pushed/active does not reliably prevent HOT pruning (->xmin could
+	 * e.g. be cleared when cache invalidations are processed).
 	 */
 	if (!bootstrap)
 	{
@@ -791,7 +795,7 @@ InitPostgres(const char *in_dbname, Oid dboid, const char *username,
 	 */
 	if ((!am_superuser || am_walsender) &&
 		MyProcPort != NULL &&
-		MyProcPort->canAcceptConnections == CAC_WAITBACKUP)
+		MyProcPort->canAcceptConnections == CAC_SUPERUSER)
 	{
 		if (am_walsender)
 			ereport(FATAL,

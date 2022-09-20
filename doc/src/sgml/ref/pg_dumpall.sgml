@@ -202,7 +202,9 @@ PostgreSQL documentation
         Specifies verbose mode.  This will cause
         <application>pg_dumpall</application> to output start/stop
         times to the dump file, and progress messages to standard error.
-        It will also enable verbose output in <application>pg_dump</application>.
+        Repeating the option causes additional debug-level messages
+        to appear on standard error.
+        The option is also passed down to <application>pg_dump</application>.
        </para>
       </listitem>
      </varlistentry>
@@ -321,7 +323,7 @@ PostgreSQL documentation
       <term><option>--if-exists</option></term>
       <listitem>
        <para>
-        Use conditional commands (i.e. add an <literal>IF EXISTS</literal>
+        Use conditional commands (i.e., add an <literal>IF EXISTS</literal>
         clause) to drop databases and other objects.  This option is not valid
         unless <option>--clean</option> is also specified.
        </para>

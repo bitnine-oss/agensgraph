@@ -275,7 +275,7 @@ ReplicationSlotCreate(const char *name, bool db_specific,
 
 	/* first initialize persistent data */
 	memset(&slot->data, 0, sizeof(ReplicationSlotPersistentData));
-	StrNCpy(NameStr(slot->data.name), name, NAMEDATALEN);
+	namestrcpy(&slot->data.name, name);
 	slot->data.database = db_specific ? MyDatabaseId : InvalidOid;
 	slot->data.persistency = persistency;
 
@@ -520,7 +520,8 @@ ReplicationSlotRelease(void)
 
 	/* might not have been set when we've been a plain slot */
 	LWLockAcquire(ProcArrayLock, LW_EXCLUSIVE);
-	MyPgXact->vacuumFlags &= ~PROC_IN_LOGICAL_DECODING;
+	MyProc->vacuumFlags &= ~PROC_IN_LOGICAL_DECODING;
+	ProcGlobal->vacuumFlags[MyProc->pgxactoff] = MyProc->vacuumFlags;
 	LWLockRelease(ProcArrayLock);
 }
 

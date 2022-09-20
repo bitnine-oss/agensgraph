@@ -16,6 +16,7 @@
 #include "postgres.h"
 
 #include "access/xact.h"
+#include "fmgr.h"
 #include "mb/stringinfo_mb.h"
 #include "nodes/params.h"
 #include "parser/parse_node.h"
@@ -413,9 +414,9 @@ ParamsErrorCallback(void *arg)
 		return;
 
 	if (data->portalName && data->portalName[0] != '\0')
-		errcontext("extended query \"%s\" with parameters: %s",
+		errcontext("portal \"%s\" with parameters: %s",
 				   data->portalName, data->params->paramValuesStr);
 	else
-		errcontext("extended query with parameters: %s",
+		errcontext("unnamed portal with parameters: %s",
 				   data->params->paramValuesStr);
 }

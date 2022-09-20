@@ -90,7 +90,7 @@ typedef struct TuplesortInstrumentation
 {
 	TuplesortMethod sortMethod; /* sort algorithm used */
 	TuplesortSpaceType spaceType;	/* type of space spaceUsed represents */
-	long		spaceUsed;		/* space consumption, in kB */
+	int64		spaceUsed;		/* space consumption, in kB */
 } TuplesortInstrumentation;
 
 
@@ -215,6 +215,10 @@ extern Tuplesortstate *tuplesort_begin_index_hash(Relation heapRel,
 												  uint32 high_mask,
 												  uint32 low_mask,
 												  uint32 max_buckets,
+												  int workMem, SortCoordinate coordinate,
+												  bool randomAccess);
+extern Tuplesortstate *tuplesort_begin_index_gist(Relation heapRel,
+												  Relation indexRel,
 												  int workMem, SortCoordinate coordinate,
 												  bool randomAccess);
 extern Tuplesortstate *tuplesort_begin_datum(Oid datumType,

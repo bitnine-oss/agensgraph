@@ -160,7 +160,7 @@ CREATE SUBSCRIPTION <replaceable class="parameter">subscription_name</replaceabl
          <para>
           It is safe to use <literal>off</literal> for logical replication:
           If the subscriber loses transactions because of missing
-          synchronization, the data will be resent from the publisher.
+          synchronization, the data will be sent again from the publisher.
          </para>
 
          <para>
@@ -225,6 +225,17 @@ CREATE SUBSCRIPTION <replaceable class="parameter">subscription_name</replaceabl
           It is required to run
           <literal>ALTER SUBSCRIPTION ... REFRESH PUBLICATION</literal> in order
           for tables to be subscribed.
+         </para>
+        </listitem>
+       </varlistentry>
+       <varlistentry>
+        <term><literal>streaming</literal> (<type>boolean</type>)</term>
+        <listitem>
+         <para>
+          Specifies whether streaming of in-progress transactions should
+          be enabled for this subscription.  By default, all transactions
+          are fully decoded on the publisher, and only then sent to the
+          subscriber as a whole.
          </para>
         </listitem>
        </varlistentry>

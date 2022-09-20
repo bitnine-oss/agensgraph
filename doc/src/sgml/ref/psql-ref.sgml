@@ -635,7 +635,7 @@ EOF
 
   <para>
    <application>psql</application> returns 0 to the shell if it
-   finished normally, 1 if a fatal error of its own occurs (e.g. out of memory,
+   finished normally, 1 if a fatal error of its own occurs (e.g., out of memory,
    file not found), 2 if the connection to the server went bad
    and the session was not interactive, and 3 if an error occurred in a
    script and the variable <varname>ON_ERROR_STOP</varname> was set.
@@ -1182,8 +1182,10 @@ testdb=&gt;
         more information is displayed: any comments associated with the
         columns of the table are shown, as is the presence of OIDs in the
         table, the view definition if the relation is a view, a non-default
-        <link linkend="sql-createtable-replica-identity">replica
-        identity</link> setting.
+        <link linkend="sql-altertable-replica-identity">replica
+         identity</link> setting and the
+        <link linkend="sql-create-access-method">access method</link> name
+        if the relation has an access method.
         </para>
 
         <para>
@@ -1245,13 +1247,13 @@ testdb=&gt;
         <listitem>
         <para>
         Lists operator classes
-        (see <xref linkend="catalog-pg-opclass"/>).
+        (see <xref linkend="xindex-opclass"/>).
         If <replaceable class="parameter">access-method-pattern</replaceable>
         is specified, only operator classes associated with access methods whose
-        names match the pattern are listed.
+        names match that pattern are listed.
         If <replaceable class="parameter">input-type-pattern</replaceable>
         is specified, only operator classes associated with input types whose
-        names match the pattern are listed.
+        names match that pattern are listed.
         If <literal>+</literal> is appended to the command name, each operator
         class is listed with its associated operator family and owner.
         </para>
@@ -1268,13 +1270,13 @@ testdb=&gt;
         <listitem>
         <para>
         Lists operator families
-        (see <xref linkend="catalog-pg-opfamily"/>).
+        (see <xref linkend="xindex-opfamily"/>).
         If <replaceable class="parameter">access-method-pattern</replaceable>
         is specified, only operator families associated with access methods whose
-        names match the pattern are listed.
+        names match that pattern are listed.
         If <replaceable class="parameter">input-type-pattern</replaceable>
         is specified, only operator families associated with input types whose
-        names match the pattern are listed.
+        names match that pattern are listed.
         If <literal>+</literal> is appended to the command name, each operator
         family is listed with its owner.
         </para>
@@ -1292,15 +1294,15 @@ testdb=&gt;
         <listitem>
         <para>
         Lists operators associated with operator families
-        (<xref linkend="catalog-pg-amop"/>).
+        (see <xref linkend="xindex-strategies"/>).
         If <replaceable class="parameter">access-method-pattern</replaceable>
         is specified, only members of operator families associated with access
-        methods whose names match the pattern are listed.
-        If <replaceable class="parameter">input-type-pattern</replaceable>
-        is specified, only members of operator families whose names match the
+        methods whose names match that pattern are listed.
+        If <replaceable class="parameter">operator-family-pattern</replaceable>
+        is specified, only members of operator families whose names match that
         pattern are listed.
         If <literal>+</literal> is appended to the command name, each operator
-        is listed with its strategy number, purpose and sort operator family.
+        is listed with its sort operator family (if it is an ordering operator).
         </para>
         </listitem>
       </varlistentry>
@@ -1314,14 +1316,16 @@ testdb=&gt;
         </term>
         <listitem>
         <para>
-        Lists functions associated with operator families
-        (<xref linkend="catalog-pg-amproc"/>).
+        Lists support functions associated with operator families
+        (see <xref linkend="xindex-support"/>).
         If <replaceable class="parameter">access-method-pattern</replaceable>
-        is specified, only members of operator families associated with access
-        methods whose names match the pattern are listed.
-        If <replaceable class="parameter">input-type-pattern</replaceable>
-        is specified, only members of operator families whose names match the
-        pattern are listed.
+        is specified, only functions of operator families associated with
+        access methods whose names match that pattern are listed.
+        If <replaceable class="parameter">operator-family-pattern</replaceable>
+        is specified, only functions of operator families whose names match
+        that pattern are listed.
+        If <literal>+</literal> is appended to the command name, functions are
+        displayed verbosely, with their actual parameter lists.
         </para>
         </listitem>
       </varlistentry>
@@ -3009,7 +3013,7 @@ lo_import 152801
           In <literal>latex-longtable</literal> format, this controls
           the proportional width of each column containing a left-aligned
           data type.  It is specified as a whitespace-separated list of values,
-          e.g. <literal>'0.2 0.2 0.6'</literal>.  Unspecified output columns
+          e.g., <literal>'0.2 0.2 0.6'</literal>.  Unspecified output columns
           use the last specified value.
           </para>
           </listitem>
@@ -4467,7 +4471,7 @@ testdb=&gt; \set PROMPT1 '%[%033[1;33;40m%]%n@%/%R%[%033[0m%]%# '
     <application>psql</application> starts up. Tab-completion is also
     supported, although the completion logic makes no claim to be an
     <acronym>SQL</acronym> parser.  The queries generated by tab-completion
-    can also interfere with other SQL commands, e.g. <literal>SET
+    can also interfere with other SQL commands, e.g., <literal>SET
     TRANSACTION ISOLATION LEVEL</literal>.
     If for some reason you do not like the tab completion, you
     can turn it off by putting this in a file named

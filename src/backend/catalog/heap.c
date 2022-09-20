@@ -710,12 +710,6 @@ CheckAttributeType(const char *attname,
 }
 
 /*
- * Cap the maximum amount of bytes allocated for InsertPgAttributeTuples()
- * slots.
- */
-#define MAX_PGATTRIBUTE_INSERT_BYTES 65535
-
-/*
  * InsertPgAttributeTuples
  *		Construct and insert a set of tuples in pg_attribute.
  *
@@ -750,7 +744,7 @@ InsertPgAttributeTuples(Relation pg_attribute_rel,
 
 	/* Initialize the number of slots to use */
 	nslots = Min(tupdesc->natts,
-				 (MAX_PGATTRIBUTE_INSERT_BYTES / sizeof(FormData_pg_attribute)));
+				 (MAX_CATALOG_MULTI_INSERT_BYTES / sizeof(FormData_pg_attribute)));
 	slot = palloc(sizeof(TupleTableSlot *) * nslots);
 	for (int i = 0; i < nslots; i++)
 		slot[i] = MakeSingleTupleTableSlot(td, &TTSOpsHeapTuple);
@@ -1015,7 +1009,7 @@ AddNewRelationTuple(Relation pg_class_desc,
 		case RELKIND_TOASTVALUE:
 			/* The relation is real, but as yet empty */
 			new_rel_reltup->relpages = 0;
-			new_rel_reltup->reltuples = 0;
+			new_rel_reltup->reltuples = -1;
 			new_rel_reltup->relallvisible = 0;
 			break;
 		case RELKIND_SEQUENCE:
@@ -1027,7 +1021,7 @@ AddNewRelationTuple(Relation pg_class_desc,
 		default:
 			/* Views, etc, have no disk storage */
 			new_rel_reltup->relpages = 0;
-			new_rel_reltup->reltuples = 0;
+			new_rel_reltup->reltuples = -1;
 			new_rel_reltup->relallvisible = 0;
 			break;
 	}
@@ -1434,15 +1428,9 @@ heap_create_with_catalog(const char *relname,
 	{
 		ObjectAddress myself,
 					referenced;
+		ObjectAddresses *addrs;
 
-		myself.classId = RelationRelationId;
-		myself.objectId = relid;
-		myself.objectSubId = 0;
-
-		referenced.classId = NamespaceRelationId;
-		referenced.objectId = relnamespace;
-		referenced.objectSubId = 0;
-		recordDependencyOn(&myself, &referenced, DEPENDENCY_NORMAL);
+		ObjectAddressSet(myself, RelationRelationId, relid);
 
 		recordDependencyOnOwner(RelationRelationId, relid, ownerid);
 
@@ -1450,12 +1438,15 @@ heap_create_with_catalog(const char *relname,
 
 		recordDependencyOnCurrentExtension(&myself, false);
 
+		addrs = new_object_addresses();
+
+		ObjectAddressSet(referenced, NamespaceRelationId, relnamespace);
+		add_exact_object_address(&referenced, addrs);
+
 		if (reloftypeid)
 		{
-			referenced.classId = TypeRelationId;
-			referenced.objectId = reloftypeid;
-			referenced.objectSubId = 0;
-			recordDependencyOn(&myself, &referenced, DEPENDENCY_NORMAL);
+			ObjectAddressSet(referenced, TypeRelationId, reloftypeid);
+			add_exact_object_address(&referenced, addrs);
 		}
 
 		/*
@@ -1468,11 +1459,12 @@ heap_create_with_catalog(const char *relname,
 		if (relkind == RELKIND_RELATION ||
 			relkind == RELKIND_MATVIEW)
 		{
-			referenced.classId = AccessMethodRelationId;
-			referenced.objectId = accessmtd;
-			referenced.objectSubId = 0;
-			recordDependencyOn(&myself, &referenced, DEPENDENCY_NORMAL);
+			ObjectAddressSet(referenced, AccessMethodRelationId, accessmtd);
+			add_exact_object_address(&referenced, addrs);
 		}
+
+		record_object_address_dependencies(&myself, addrs, DEPENDENCY_NORMAL);
+		free_object_addresses(addrs);
 	}
 
 	/* Post creation hook for new relation */
@@ -3436,7 +3428,7 @@ List *
 heap_truncate_find_FKs(List *relationIds)
 {
 	List	   *result = NIL;
-	List	   *oids = list_copy(relationIds);
+	List	   *oids;
 	List	   *parent_cons;
 	ListCell   *cell;
 	ScanKeyData key;
@@ -3580,6 +3572,7 @@ StorePartitionKey(Relation rel,
 	bool		nulls[Natts_pg_partitioned_table];
 	ObjectAddress myself;
 	ObjectAddress referenced;
+	ObjectAddresses *addrs;
 
 	Assert(rel->rd_rel->relkind == RELKIND_PARTITIONED_TABLE);
 
@@ -3623,30 +3616,26 @@ StorePartitionKey(Relation rel,
 	table_close(pg_partitioned_table, RowExclusiveLock);
 
 	/* Mark this relation as dependent on a few things as follows */
-	myself.classId = RelationRelationId;
-	myself.objectId = RelationGetRelid(rel);
-	myself.objectSubId = 0;
+	addrs = new_object_addresses();
+	ObjectAddressSet(myself, RelationRelationId, RelationGetRelid(rel));
 
 	/* Operator class and collation per key column */
 	for (i = 0; i < partnatts; i++)
 	{
-		referenced.classId = OperatorClassRelationId;
-		referenced.objectId = partopclass[i];
-		referenced.objectSubId = 0;
-
-		recordDependencyOn(&myself, &referenced, DEPENDENCY_NORMAL);
+		ObjectAddressSet(referenced, OperatorClassRelationId, partopclass[i]);
+		add_exact_object_address(&referenced, addrs);
 
 		/* The default collation is pinned, so don't bother recording it */
 		if (OidIsValid(partcollation[i]) &&
 			partcollation[i] != DEFAULT_COLLATION_OID)
 		{
-			referenced.classId = CollationRelationId;
-			referenced.objectId = partcollation[i];
-			referenced.objectSubId = 0;
-
-			recordDependencyOn(&myself, &referenced, DEPENDENCY_NORMAL);
+			ObjectAddressSet(referenced, CollationRelationId, partcollation[i]);
+			add_exact_object_address(&referenced, addrs);
 		}
 	}
+
+	record_object_address_dependencies(&myself, addrs, DEPENDENCY_NORMAL);
+	free_object_addresses(addrs);
 
 	/*
 	 * The partitioning columns are made internally dependent on the table,
@@ -3659,10 +3648,8 @@ StorePartitionKey(Relation rel,
 		if (partattrs[i] == 0)
 			continue;			/* ignore expressions here */
 
-		referenced.classId = RelationRelationId;
-		referenced.objectId = RelationGetRelid(rel);
-		referenced.objectSubId = partattrs[i];
-
+		ObjectAddressSubSet(referenced, RelationRelationId,
+							RelationGetRelid(rel), partattrs[i]);
 		recordDependencyOn(&referenced, &myself, DEPENDENCY_INTERNAL);
 	}
 

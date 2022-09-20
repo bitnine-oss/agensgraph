@@ -727,7 +727,7 @@ ginvacuumcleanup(IndexVacuumInfo *info, IndexBulkDeleteResult *stats)
 	 * entries.  This is bogus if the index is partial, but it's real hard to
 	 * tell how many distinct heap entries are referenced by a GIN index.
 	 */
-	stats->num_index_tuples = info->num_heap_tuples;
+	stats->num_index_tuples = Max(info->num_heap_tuples, 0);
 	stats->estimated_count = info->estimated_count;
 
 	/*
@@ -792,4 +792,30 @@ ginvacuumcleanup(IndexVacuumInfo *info, IndexBulkDeleteResult *stats)
 		UnlockRelationForExtension(index, ExclusiveLock);
 
 	return stats;
+}
+
+/*
+ * Return whether Page can safely be recycled.
+ */
+bool
+GinPageIsRecyclable(Page page)
+{
+	TransactionId delete_xid;
+
+	if (PageIsNew(page))
+		return true;
+
+	if (!GinPageIsDeleted(page))
+		return false;
+
+	delete_xid = GinPageGetDeleteXid(page);
+
+	if (!TransactionIdIsValid(delete_xid))
+		return true;
+
+	/*
+	 * If no backend still could view delete_xid as in running, all scans
+	 * concurrent with ginDeletePage() must have finished.
+	 */
+	return GlobalVisCheckRemovableXid(NULL, delete_xid);
 }

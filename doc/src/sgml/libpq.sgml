@@ -355,7 +355,7 @@ PostgresPollingStatusType PQconnectPoll(PGconn *conn);
        Conversely, if <function>PQconnectPoll(conn)</function> last returned
        <symbol>PGRES_POLLING_WRITING</symbol>, wait until the socket is ready
        to write, then call <function>PQconnectPoll(conn)</function> again.
-       On the first iteration, i.e. if you have yet to call
+       On the first iteration, i.e., if you have yet to call
        <function>PQconnectPoll</function>, behave as if it last returned
        <symbol>PGRES_POLLING_WRITING</symbol>.  Continue this loop until
        <function>PQconnectPoll(conn)</function> returns
@@ -781,7 +781,7 @@ PGPing PQping(const char *conninfo);
      <listitem>
       <para>
        <function>PQsetSSLKeyPassHook_OpenSSL</function> lets an application override
-       <literal>libpq</literal>'s <link linkend="libpq-ssl-clientcert">default
+       <application>libpq</application>'s <link linkend="libpq-ssl-clientcert">default
        handling of encrypted client certificate key files</link> using
        <xref linkend="libpq-connect-sslpassword"/> or interactive prompting.
 
@@ -793,23 +793,27 @@ void PQsetSSLKeyPassHook_OpenSSL(PQsslKeyPassHook_OpenSSL_type hook);
 <programlisting>
 int callback_fn(char *buf, int size, PGconn *conn);
 </programlisting>
-       which <literal>libpq</literal> will then call <emphasis>instead of</emphasis>
-       its default <function>PQdefaultSSLKeyPassHook_OpenSSL</function> handler. The callback
-       should determine the password for the key and copy it to result-buffer
-       <literal>buf</literal> of size <literal>size</literal>. The string in <literal>
-       buf</literal> must be null-terminated. The callback must return the length of
-       the password stored in <literal>buf</literal> excluding the null terminator.
-       On failure, the callback should set <literal>buf[0] = '\0'</literal> and return 0.
-       See <function>PQdefaultSSLKeyPassHook_OpenSSL</function> in <literal>libpq</literal>'s
-       source code for an example.
+       which <application>libpq</application> will then call
+       <emphasis>instead of</emphasis> its default
+       <function>PQdefaultSSLKeyPassHook_OpenSSL</function> handler. The
+       callback should determine the password for the key and copy it to
+       result-buffer <parameter>buf</parameter> of size
+       <parameter>size</parameter>. The string in <parameter>buf</parameter>
+       must be null-terminated. The callback must return the length of the
+       password stored in <parameter>buf</parameter> excluding the null
+       terminator. On failure, the callback should set
+       <literal>buf[0] = '\0'</literal> and return 0. See
+       <function>PQdefaultSSLKeyPassHook_OpenSSL</function> in
+       <application>libpq</application>'s source code for an example.
       </para>
-       
+
       <para>
        If the user specified an explicit key location,
-       its path will be in <literal>conn->pgsslkey</literal> when the callback
+       its path will be in <literal>conn->sslkey</literal> when the callback
        is invoked. This will be empty if the default key path is being used.
        For keys that are engine specifiers, it is up to engine implementations
-       whether they use the OpenSSL password callback or define their own handling.
+       whether they use the <productname>OpenSSL</productname> password
+       callback or define their own handling.
       </para>
 
       <para>
@@ -991,7 +995,7 @@ postgresql://%2Fvar%2Flib%2Fpostgresql/dbname
        <literal>hostaddr</literal>, and <literal>port</literal> options accept a comma-separated
        list of values. The same number of elements must be given in each
        option that is specified, such
-       that e.g. the first <literal>hostaddr</literal> corresponds to the first host name,
+       that e.g., the first <literal>hostaddr</literal> corresponds to the first host name,
        the second <literal>hostaddr</literal> corresponds to the second host name, and so
        forth. As an exception, if only one <literal>port</literal> is specified, it
        applies to all the hosts.
@@ -1019,7 +1023,7 @@ postgresql://%2Fvar%2Flib%2Fpostgresql/dbname
      <para>
        If a password file is used, you can have different passwords for
        different hosts. All the other connection options are the same for every
-       host in the list; it is not possible to e.g. specify different
+       host in the list; it is not possible to e.g., specify different
        usernames for different hosts.
      </para>
    </sect3>
@@ -1224,7 +1228,7 @@ postgresql://%2Fvar%2Flib%2Fpostgresql/dbname
       <listitem>
       <para>
        Maximum wait for connection, in seconds (write as a decimal integer,
-       e.g. <literal>10</literal>).  Zero, negative, or not specified means
+       e.g., <literal>10</literal>).  Zero, negative, or not specified means
        wait indefinitely.  The minimum allowed timeout is 2 seconds, therefore
        a value of <literal>1</literal> is interpreted as <literal>2</literal>.
        This timeout applies separately to each host name or IP address.
@@ -1669,13 +1673,15 @@ postgresql://%2Fvar%2Flib%2Fpostgresql/dbname
        <para>
         Specifying this parameter with any non-empty value suppresses the
         <literal>Enter PEM pass phrase:</literal>
-        prompt that OpenSSL will emit by default when an encrypted client
-        certificate key is provided to <literal>libpq</literal>.
+        prompt that <productname>OpenSSL</productname> will emit by default
+        when an encrypted client certificate key is provided to
+        <literal>libpq</literal>.
        </para>
        <para>
-        If the key is not encrypted this parameter is ignored. The parameter has no
-        effect on keys specified by OpenSSL engines unless the engine uses the
-        OpenSSL password callback mechanism for prompts.
+        If the key is not encrypted this parameter is ignored. The parameter
+        has no effect on keys specified by <productname>OpenSSL</productname>
+        engines unless the engine uses the <productname>OpenSSL</productname>
+        password callback mechanism for prompts.
        </para>
        <para>
         There is no environment variable equivalent to this option, and no
@@ -2423,7 +2429,7 @@ const char *PQsslAttribute(const PGconn *conn, const char *attribute_name);
          <term><literal>cipher</literal></term>
           <listitem>
            <para>
-            A short name of the ciphersuite used, e.g.
+            A short name of the ciphersuite used, e.g.,
             <literal>"DHE-RSA-DES-CBC3-SHA"</literal>. The names are specific
             to each SSL implementation.
            </para>
@@ -2468,8 +2474,9 @@ void *PQsslStruct(const PGconn *conn, const char *struct_name);
       </para>
       <para>
        The struct(s) available depend on the SSL implementation in use.
-       For OpenSSL, there is one struct, available under the name "OpenSSL",
-       and it returns a pointer to the OpenSSL <literal>SSL</literal> struct.
+       For <productname>OpenSSL</productname>, there is one struct,
+       available under the name "OpenSSL", and it returns a pointer to the
+       <productname>OpenSSL</productname> <literal>SSL</literal> struct.
        To use this function, code along the following lines could be used:
 <programlisting><![CDATA[
 #include <libpq-fe.h>
@@ -2513,8 +2520,9 @@ void *PQgetssl(const PGconn *conn);
       <para>
        This function is equivalent to <literal>PQsslStruct(conn, "OpenSSL")</literal>. It should
        not be used in new applications, because the returned struct is
-       specific to OpenSSL and will not be available if another SSL
-       implementation is used. To check if a connection uses SSL, call
+       specific to <productname>OpenSSL</productname> and will not be
+       available if another <acronym>SSL</acronym> implementation is used.
+       To check if a connection uses SSL, call
        <xref linkend="libpq-PQsslInUse"/> instead, and for more details about the
        connection, use <xref linkend="libpq-PQsslAttribute"/>.
       </para>
@@ -4818,7 +4826,7 @@ int PQflush(PGconn *conn);
    <xref linkend="libpq-PQflush"/> again.  Repeat until
    <xref linkend="libpq-PQflush"/> returns 0.  (It is necessary to check for
    read-ready and drain the input with <xref linkend="libpq-PQconsumeInput"/>,
-   because the server can block trying to send us data, e.g. NOTICE
+   because the server can block trying to send us data, e.g., NOTICE
    messages, and won't read our data until we read its.)  Once
    <xref linkend="libpq-PQflush"/> returns 0, wait for the socket to be
    read-ready and then read the response as described above.
@@ -7662,15 +7670,17 @@ ldap://ldap.acme.com/cn=dbserver,cn=hosts?pgconnectinfo?base?(objectclass=*)
 
   <para>
    The key may be
-   stored in cleartext or encrypted with a passphrase using any algorithm supported
-   by OpenSSL, like AES-128. If the key is stored encrypted, then the passphrase
-   may be provided in the <xref linkend="libpq-connect-sslpassword"/> connection
-   option. If an encrypted key is supplied and the <literal>sslpassword</literal>
-   option is absent or blank, a password will be prompted for interactively by
-   OpenSSL with a <literal>Enter PEM pass phrase:</literal>
-   prompt if a TTY is available. Applications can override the client certificate
-   prompt and the handling of the <literal>sslpassword</literal> parameter by supplying
-   their own key password callback; see
+   stored in cleartext or encrypted with a passphrase using any algorithm
+   supported by <productname>OpenSSL</productname>, like AES-128. If the key
+   is stored encrypted, then the passphrase may be provided in the
+   <xref linkend="libpq-connect-sslpassword"/> connection option. If an
+   encrypted key is supplied and the <literal>sslpassword</literal> option
+   is absent or blank, a password will be prompted for interactively by
+   <productname>OpenSSL</productname> with a
+   <literal>Enter PEM pass phrase:</literal> prompt if a TTY is available.
+   Applications can override the client certificate prompt and the handling
+   of the <literal>sslpassword</literal> parameter by supplying their own
+   key password callback; see
    <xref linkend="libpq-pqsetsslkeypasshook-openssl"/>.
   </para>
 
@@ -7734,7 +7744,7 @@ ldap://ldap.acme.com/cn=dbserver,cn=hosts?pgconnectinfo?base?(objectclass=*)
    For a connection to be known SSL-secured, SSL usage must be configured
    on <emphasis>both the client and the server</emphasis> before the connection
    is made. If it is only configured on the server, the client may end up
-   sending sensitive information (e.g. passwords) before
+   sending sensitive information (e.g., passwords) before
    it knows that the server requires high security. In libpq, secure
    connections can be ensured
    by setting the <literal>sslmode</literal> parameter to <literal>verify-full</literal> or
@@ -7877,7 +7887,7 @@ ldap://ldap.acme.com/cn=dbserver,cn=hosts?pgconnectinfo?base?(objectclass=*)
      <row>
       <entry><filename>~/.postgresql/postgresql.crt</filename></entry>
       <entry>client certificate</entry>
-      <entry>requested by server</entry>
+      <entry>sent to server</entry>
      </row>
 
      <row>
@@ -7933,7 +7943,7 @@ void PQinitOpenSSL(int do_ssl, int do_crypto);
 
       <para>
        When <parameter>do_ssl</parameter> is non-zero, <application>libpq</application>
-       will initialize the <application>OpenSSL</application> library before first
+       will initialize the <productname>OpenSSL</productname> library before first
        opening a database connection.  When <parameter>do_crypto</parameter> is
        non-zero, the <literal>libcrypto</literal> library will be initialized.  By
        default (if <xref linkend="libpq-PQinitOpenSSL"/> is not called), both libraries
@@ -7942,7 +7952,7 @@ void PQinitOpenSSL(int do_ssl, int do_crypto);
       </para>
 
       <para>
-       If your application uses and initializes either <application>OpenSSL</application>
+       If your application uses and initializes either <productname>OpenSSL</productname>
        or its underlying <literal>libcrypto</literal> library, you <emphasis>must</emphasis>
        call this function with zeroes for the appropriate parameter(s)
        before first opening a database connection.  Also be sure that you
@@ -7964,7 +7974,7 @@ void PQinitSSL(int do_ssl);
        This function is equivalent to
        <literal>PQinitOpenSSL(do_ssl, do_ssl)</literal>.
        It is sufficient for applications that initialize both or neither
-       of <application>OpenSSL</application> and <literal>libcrypto</literal>.
+       of <productname>OpenSSL</productname> and <literal>libcrypto</literal>.
       </para>
 
       <para>

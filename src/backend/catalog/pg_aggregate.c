@@ -105,6 +105,7 @@ AggregateCreate(const char *aggName,
 	int			i;
 	ObjectAddress myself,
 				referenced;
+	ObjectAddresses *addrs;
 	AclResult	aclresult;
 
 	/* sanity checks (caller should have caught these) */
@@ -564,8 +565,8 @@ AggregateCreate(const char *aggName,
 			ereport(ERROR,
 					(errcode(ERRCODE_INVALID_FUNCTION_DEFINITION),
 					 errmsg("moving-aggregate implementation returns type %s, but plain implementation returns type %s",
-							format_type_be(aggmTransType),
-							format_type_be(aggTransType))));
+							format_type_be(rettype),
+							format_type_be(finaltype))));
 	}
 
 	/* handle sortop, if supplied */
@@ -741,66 +742,70 @@ AggregateCreate(const char *aggName,
 	 * way.
 	 */
 
+	addrs = new_object_addresses();
+
 	/* Depends on transition function */
 	ObjectAddressSet(referenced, ProcedureRelationId, transfn);
-	recordDependencyOn(&myself, &referenced, DEPENDENCY_NORMAL);
+	add_exact_object_address(&referenced, addrs);
 
 	/* Depends on final function, if any */
 	if (OidIsValid(finalfn))
 	{
 		ObjectAddressSet(referenced, ProcedureRelationId, finalfn);
-		recordDependencyOn(&myself, &referenced, DEPENDENCY_NORMAL);
+		add_exact_object_address(&referenced, addrs);
 	}
 
 	/* Depends on combine function, if any */
 	if (OidIsValid(combinefn))
 	{
 		ObjectAddressSet(referenced, ProcedureRelationId, combinefn);
-		recordDependencyOn(&myself, &referenced, DEPENDENCY_NORMAL);
+		add_exact_object_address(&referenced, addrs);
 	}
 
 	/* Depends on serialization function, if any */
 	if (OidIsValid(serialfn))
 	{
 		ObjectAddressSet(referenced, ProcedureRelationId, serialfn);
-		recordDependencyOn(&myself, &referenced, DEPENDENCY_NORMAL);
+		add_exact_object_address(&referenced, addrs);
 	}
 
 	/* Depends on deserialization function, if any */
 	if (OidIsValid(deserialfn))
 	{
 		ObjectAddressSet(referenced, ProcedureRelationId, deserialfn);
-		recordDependencyOn(&myself, &referenced, DEPENDENCY_NORMAL);
+		add_exact_object_address(&referenced, addrs);
 	}
 
 	/* Depends on forward transition function, if any */
 	if (OidIsValid(mtransfn))
 	{
 		ObjectAddressSet(referenced, ProcedureRelationId, mtransfn);
-		recordDependencyOn(&myself, &referenced, DEPENDENCY_NORMAL);
+		add_exact_object_address(&referenced, addrs);
 	}
 
 	/* Depends on inverse transition function, if any */
 	if (OidIsValid(minvtransfn))
 	{
 		ObjectAddressSet(referenced, ProcedureRelationId, minvtransfn);
-		recordDependencyOn(&myself, &referenced, DEPENDENCY_NORMAL);
+		add_exact_object_address(&referenced, addrs);
 	}
 
 	/* Depends on final function, if any */
 	if (OidIsValid(mfinalfn))
 	{
 		ObjectAddressSet(referenced, ProcedureRelationId, mfinalfn);
-		recordDependencyOn(&myself, &referenced, DEPENDENCY_NORMAL);
+		add_exact_object_address(&referenced, addrs);
 	}
 
 	/* Depends on sort operator, if any */
 	if (OidIsValid(sortop))
 	{
 		ObjectAddressSet(referenced, OperatorRelationId, sortop);
-		recordDependencyOn(&myself, &referenced, DEPENDENCY_NORMAL);
+		add_exact_object_address(&referenced, addrs);
 	}
 
+	record_object_address_dependencies(&myself, addrs, DEPENDENCY_NORMAL);
+	free_object_addresses(addrs);
 	return myself;
 }
 

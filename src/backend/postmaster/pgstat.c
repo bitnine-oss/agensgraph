@@ -3967,6 +3967,9 @@ pgstat_get_wait_io(WaitEventIO w)
 		case WAIT_EVENT_BUFFILE_WRITE:
 			event_name = "BufFileWrite";
 			break;
+		case WAIT_EVENT_BUFFILE_TRUNCATE:
+			event_name = "BufFileTruncate";
+			break;
 		case WAIT_EVENT_CONTROL_FILE_READ:
 			event_name = "ControlFileRead";
 			break;
@@ -4164,6 +4167,18 @@ pgstat_get_wait_io(WaitEventIO w)
 			break;
 		case WAIT_EVENT_WAL_WRITE:
 			event_name = "WALWrite";
+			break;
+		case WAIT_EVENT_LOGICAL_CHANGES_READ:
+			event_name = "LogicalChangesRead";
+			break;
+		case WAIT_EVENT_LOGICAL_CHANGES_WRITE:
+			event_name = "LogicalChangesWrite";
+			break;
+		case WAIT_EVENT_LOGICAL_SUBXACT_READ:
+			event_name = "LogicalSubxactRead";
+			break;
+		case WAIT_EVENT_LOGICAL_SUBXACT_WRITE:
+			event_name = "LogicalSubxactWrite";
 			break;
 
 			/* no default case, so that compiler will warn */
@@ -4394,7 +4409,7 @@ pgstat_send_archiver(const char *xlog, bool failed)
 	 */
 	pgstat_setheader(&msg.m_hdr, PGSTAT_MTYPE_ARCHIVER);
 	msg.m_failed = failed;
-	StrNCpy(msg.m_xlog, xlog, sizeof(msg.m_xlog));
+	strlcpy(msg.m_xlog, xlog, sizeof(msg.m_xlog));
 	msg.m_timestamp = GetCurrentTimestamp();
 	pgstat_send(&msg, sizeof(msg));
 }
@@ -5569,7 +5584,8 @@ done:
  * pgstat_read_db_statsfile_timestamp() -
  *
  *	Attempt to determine the timestamp of the last db statfile write.
- *	Returns true if successful; the timestamp is stored in *ts.
+ *	Returns true if successful; the timestamp is stored in *ts. The caller must
+ *	rely on timestamp stored in *ts iff the function returns true.
  *
  *	This needs to be careful about handling databases for which no stats file
  *	exists, such as databases without a stat entry or those not yet written:
@@ -5677,7 +5693,8 @@ pgstat_read_db_statsfile_timestamp(Oid databaseid, bool permanent,
 					ereport(pgStatRunningInCollector ? LOG : WARNING,
 							(errmsg("corrupted statistics file \"%s\"",
 									statfile)));
-					goto done;
+					FreeFile(fpin);
+					return false;
 				}
 
 				/*
@@ -5696,10 +5713,13 @@ pgstat_read_db_statsfile_timestamp(Oid databaseid, bool permanent,
 				goto done;
 
 			default:
-				ereport(pgStatRunningInCollector ? LOG : WARNING,
-						(errmsg("corrupted statistics file \"%s\"",
-								statfile)));
-				goto done;
+				{
+					ereport(pgStatRunningInCollector ? LOG : WARNING,
+							(errmsg("corrupted statistics file \"%s\"",
+									statfile)));
+					FreeFile(fpin);
+					return false;
+				}
 		}
 	}
 

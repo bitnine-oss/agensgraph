@@ -102,7 +102,7 @@ sub mkvcbuild
 	  pread.c pwrite.c pg_bitutils.c
 	  pg_strong_random.c pgcheckdir.c pgmkdirp.c pgsleep.c pgstrcasecmp.c
 	  pqsignal.c mkdtemp.c qsort.c qsort_arg.c quotes.c system.c
-	  sprompt.c strerror.c tar.c thread.c
+	  strerror.c tar.c thread.c
 	  win32env.c win32error.c win32security.c win32setlocale.c);
 
 	push(@pgportfiles, 'strtof.c') if ($vsVersion < '14.00');
@@ -121,9 +121,9 @@ sub mkvcbuild
 	our @pgcommonallfiles = qw(
 	  archive.c base64.c checksum_helper.c
 	  config_info.c controldata_utils.c d2s.c encnames.c exec.c
-	  f2s.c file_perm.c hashfn.c ip.c jsonapi.c
+	  f2s.c file_perm.c file_utils.c hashfn.c ip.c jsonapi.c
 	  keywords.c kwlookup.c link-canary.c md5.c
-	  pg_lzcompress.c pgfnames.c psprintf.c relpath.c rmtree.c
+	  pg_get_line.c pg_lzcompress.c pgfnames.c psprintf.c relpath.c rmtree.c
 	  saslprep.c scram-common.c string.c stringinfo.c unicode_norm.c username.c
 	  wait_error.c wchar.c);
 
@@ -138,8 +138,8 @@ sub mkvcbuild
 	}
 
 	our @pgcommonfrontendfiles = (
-		@pgcommonallfiles, qw(fe_memutils.c file_utils.c
-		  logging.c restricted_token.c));
+		@pgcommonallfiles, qw(fe_memutils.c
+		  logging.c restricted_token.c sprompt.c));
 
 	our @pgcommonbkndfiles = @pgcommonallfiles;
 

@@ -249,6 +249,14 @@ table_tuple_get_latest_tid(TableScanDesc scan, ItemPointer tid)
 	const TableAmRoutine *tableam = rel->rd_tableam;
 
 	/*
+	 * We don't expect direct calls to table_tuple_get_latest_tid with valid
+	 * CheckXidAlive for catalog or regular tables.  See detailed comments in
+	 * xact.c where these variables are declared.
+	 */
+	if (unlikely(TransactionIdIsValid(CheckXidAlive) && !bsysscan))
+		elog(ERROR, "unexpected table_tuple_get_latest_tid call during logical decoding");
+
+	/*
 	 * Since this can be called with user-supplied TID, don't trust the input
 	 * too much.
 	 */
@@ -693,18 +701,14 @@ table_block_relation_estimate_size(Relation rel, int32 *attr_widths,
 	 * doesn't happen instantaneously, and it won't happen at all for cases
 	 * such as temporary tables.)
 	 *
-	 * We approximate "never vacuumed" by "has relpages = 0", which means this
-	 * will also fire on genuinely empty relations.  Not great, but
-	 * fortunately that's a seldom-seen case in the real world, and it
-	 * shouldn't degrade the quality of the plan too much anyway to err in
-	 * this direction.
+	 * We test "never vacuumed" by seeing whether reltuples < 0.
 	 *
 	 * If the table has inheritance children, we don't apply this heuristic.
 	 * Totally empty parent tables are quite common, so we should be willing
 	 * to believe that they are empty.
 	 */
 	if (curpages < 10 &&
-		relpages == 0 &&
+		reltuples < 0 &&
 		!rel->rd_rel->relhassubclass)
 		curpages = 10;
 
@@ -719,17 +723,17 @@ table_block_relation_estimate_size(Relation rel, int32 *attr_widths,
 	}
 
 	/* estimate number of tuples from previous tuple density */
-	if (relpages > 0)
+	if (reltuples >= 0 && relpages > 0)
 		density = reltuples / (double) relpages;
 	else
 	{
 		/*
-		 * When we have no data because the relation was truncated, estimate
-		 * tuple width from attribute datatypes.  We assume here that the
-		 * pages are completely full, which is OK for tables (since they've
-		 * presumably not been VACUUMed yet) but is probably an overestimate
-		 * for indexes.  Fortunately get_relation_info() can clamp the
-		 * overestimate to the parent table's size.
+		 * When we have no data because the relation was never yet vacuumed,
+		 * estimate tuple width from attribute datatypes.  We assume here that
+		 * the pages are completely full, which is OK for tables but is
+		 * probably an overestimate for indexes.  Fortunately
+		 * get_relation_info() can clamp the overestimate to the parent
+		 * table's size.
 		 *
 		 * Note: this code intentionally disregards alignment considerations,
 		 * because (a) that would be gilding the lily considering how crude

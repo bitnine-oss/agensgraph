@@ -1299,6 +1299,16 @@ heap_getnext(TableScanDesc sscan, ScanDirection direction)
 				(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
 				 errmsg_internal("only heap AM is supported")));
 
+	/*
+	 * We don't expect direct calls to heap_getnext with valid CheckXidAlive
+	 * for catalog or regular tables.  See detailed comments in xact.c where
+	 * these variables are declared.  Normally we have such a check at tableam
+	 * level API but this is called from many places so we need to ensure it
+	 * here.
+	 */
+	if (unlikely(TransactionIdIsValid(CheckXidAlive) && !bsysscan))
+		elog(ERROR, "unexpected heap_getnext call during logical decoding");
+
 	/* Note: no locking manipulations needed */
 
 	if (scan->rs_base.rs_flags & SO_ALLOW_PAGEMODE)
@@ -1507,6 +1517,7 @@ heap_hot_search_buffer(ItemPointer tid, Relation relation, Buffer buffer,
 	bool		at_chain_start;
 	bool		valid;
 	bool		skip;
+	GlobalVisState *vistest = NULL;
 
 	/* If this is not the first call, previous call returned a (live!) tuple */
 	if (all_dead)
@@ -1517,7 +1528,8 @@ heap_hot_search_buffer(ItemPointer tid, Relation relation, Buffer buffer,
 	at_chain_start = first_call;
 	skip = !first_call;
 
-	Assert(TransactionIdIsValid(RecentGlobalXmin));
+	/* XXX: we should assert that a snapshot is pushed or registered */
+	Assert(TransactionIdIsValid(RecentXmin));
 	Assert(BufferGetBlockNumber(buffer) == blkno);
 
 	/* Scan through possible multiple members of HOT-chain */
@@ -1606,9 +1618,14 @@ heap_hot_search_buffer(ItemPointer tid, Relation relation, Buffer buffer,
 		 * Note: if you change the criterion here for what is "dead", fix the
 		 * planner's get_actual_variable_range() function to match.
 		 */
-		if (all_dead && *all_dead &&
-			!HeapTupleIsSurelyDead(heapTuple, RecentGlobalXmin))
-			*all_dead = false;
+		if (all_dead && *all_dead)
+		{
+			if (!vistest)
+				vistest = GlobalVisTestFor(relation);
+
+			if (!HeapTupleIsSurelyDead(heapTuple, vistest))
+				*all_dead = false;
+		}
 
 		/*
 		 * Check to see if HOT chain continues past this tuple; if so fetch
@@ -1956,6 +1973,9 @@ heap_insert(Relation relation, HeapTuple tup, CommandId cid,
 		{
 			xlrec.flags |= XLH_INSERT_CONTAINS_NEW_TUPLE;
 			bufflags |= REGBUF_KEEP_DATA;
+
+			if (IsToastRelation(relation))
+				xlrec.flags |= XLH_INSERT_ON_TOAST_RELATION;
 		}
 
 		XLogBeginInsert();
@@ -2024,12 +2044,10 @@ heap_prepare_insert(Relation relation, HeapTuple tup, TransactionId xid,
 					CommandId cid, int options)
 {
 	/*
-	 * Parallel operations are required to be strictly read-only in a parallel
-	 * worker.  Parallel inserts are not safe even in the leader in the
-	 * general case, because group locking means that heavyweight locks for
-	 * relation extension or GIN page locks will not conflict between members
-	 * of a lock group, but we don't prohibit that case here because there are
-	 * useful special cases that we can safely allow, such as CREATE TABLE AS.
+	 * To allow parallel inserts, we need to ensure that they are safe to be
+	 * performed in workers. We have the infrastructure to allow parallel
+	 * inserts in general except for the cases where inserts generate a new
+	 * CommandId (eg. inserts into a table having a foreign key column).
 	 */
 	if (IsParallelWorker())
 		ereport(ERROR,
@@ -5705,10 +5723,10 @@ heap_inplace_update(Relation relation, HeapTuple tuple)
 	uint32		newlen;
 
 	/*
-	 * For now, parallel operations are required to be strictly read-only.
-	 * Unlike a regular update, this should never create a combo CID, so it
-	 * might be possible to relax this restriction, but not without more
-	 * thought and testing.  It's not clear that it would be useful, anyway.
+	 * For now, we don't allow parallel updates.  Unlike a regular update,
+	 * this should never create a combo CID, so it might be possible to relax
+	 * this restriction, but not without more thought and testing.  It's not
+	 * clear that it would be useful, anyway.
 	 */
 	if (IsInParallelMode())
 		ereport(ERROR,
@@ -6900,8 +6918,6 @@ HeapTupleHeaderAdvanceLatestRemovedXid(HeapTupleHeader tuple,
 	 * updated/deleted by the inserting transaction.
 	 *
 	 * Look for a committed hint bit, or if no xmin bit is set, check clog.
-	 * This needs to work on both primary and standby, where it is used to
-	 * assess btree delete records.
 	 */
 	if (HeapTupleHeaderXminCommitted(tuple) ||
 		(!HeapTupleHeaderXminInvalid(tuple) && TransactionIdDidCommit(xmin)))

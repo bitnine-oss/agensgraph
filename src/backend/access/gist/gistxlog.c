@@ -387,16 +387,16 @@ gistRedoPageReuse(XLogReaderState *record)
 	 * PAGE_REUSE records exist to provide a conflict point when we reuse
 	 * pages in the index via the FSM.  That's all they do though.
 	 *
-	 * latestRemovedXid was the page's deleteXid.  The deleteXid <
-	 * RecentGlobalXmin test in gistPageRecyclable() conceptually mirrors the
-	 * pgxact->xmin > limitXmin test in GetConflictingVirtualXIDs().
-	 * Consequently, one XID value achieves the same exclusion effect on
-	 * primary and standby.
+	 * latestRemovedXid was the page's deleteXid.  The
+	 * GlobalVisIsRemovableFullXid(deleteXid) test in gistPageRecyclable()
+	 * conceptually mirrors the PGPROC->xmin > limitXmin test in
+	 * GetConflictingVirtualXIDs().  Consequently, one XID value achieves the
+	 * same exclusion effect on primary and standby.
 	 */
 	if (InHotStandby)
 	{
 		FullTransactionId latestRemovedFullXid = xlrec->latestRemovedFullXid;
-		FullTransactionId nextFullXid = ReadNextFullTransactionId();
+		FullTransactionId nextXid = ReadNextFullTransactionId();
 		uint64		diff;
 
 		/*
@@ -405,8 +405,7 @@ gistRedoPageReuse(XLogReaderState *record)
 		 * logged value is very old, so that XID wrap-around already happened
 		 * on it, there can't be any snapshots that still see it.
 		 */
-		nextFullXid = ReadNextFullTransactionId();
-		diff = U64FromFullTransactionId(nextFullXid) -
+		diff = U64FromFullTransactionId(nextXid) -
 			U64FromFullTransactionId(latestRemovedFullXid);
 		if (diff < MaxTransactionId / 2)
 		{

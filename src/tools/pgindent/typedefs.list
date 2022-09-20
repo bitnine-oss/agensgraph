@@ -111,6 +111,7 @@ Append
 AppendPath
 AppendRelInfo
 AppendState
+ApplySubXactData
 Archive
 ArchiveEntryPtrType
 ArchiveFormat
@@ -395,6 +396,7 @@ CompositeTypeStmt
 CompoundAffixFlag
 CompressionAlgorithm
 CompressorState
+ComputeXidHorizonsResult
 ConditionVariable
 ConditionalStack
 ConfigData
@@ -930,6 +932,7 @@ GistSplitVector
 GistTsVectorOptions
 GistVacState
 GlobalTransaction
+GlobalVisState
 GrantRoleStmt
 GrantStmt
 GrantTargetType
@@ -1512,6 +1515,7 @@ PGEventResultCopy
 PGEventResultCreate
 PGEventResultDestroy
 PGFInfoFunction
+PGFileType
 PGFunction
 PGLZ_HistEntry
 PGLZ_Strategy
@@ -1534,7 +1538,6 @@ PGSetenvStatusType
 PGShmemHeader
 PGTransactionStatusType
 PGVerbosity
-PGXACT
 PG_Locale_Strategy
 PG_Lock_Status
 PG_init_t
@@ -2035,6 +2038,7 @@ RegProcedure
 Regis
 RegisNode
 RegisteredBgWorker
+ReindexErrorInfo
 ReindexObjectType
 ReindexStmt
 ReindexType
@@ -2369,6 +2373,7 @@ StopList
 StopWorkersData
 StrategyNumber
 StreamCtl
+StreamXidHash
 StringInfo
 StringInfoData
 StripnullState
@@ -2379,6 +2384,7 @@ SubPlanState
 SubTransactionId
 SubXactCallback
 SubXactCallbackItem
+SubXactInfo
 SubXactEvent
 SubplanResultRelHashElem
 SubqueryScan
@@ -3572,6 +3578,7 @@ yyscan_t
 z_stream
 z_streamp
 zic_t
+HeapTupleForceOption
 ModifyGraph
 ModifyGraphPath
 ModifyGraphState

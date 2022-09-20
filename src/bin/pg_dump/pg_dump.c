@@ -52,8 +52,8 @@
 #include "catalog/pg_proc_d.h"
 #include "catalog/pg_trigger_d.h"
 #include "catalog/pg_type_d.h"
+#include "common/connect.h"
 #include "dumputils.h"
-#include "fe_utils/connect.h"
 #include "fe_utils/string_utils.h"
 #include "getopt_long.h"
 #include "libpq/libpq-fs.h"
@@ -237,6 +237,7 @@ static DumpableObject *createBoundaryObjects(void);
 static void addBoundaryDependencies(DumpableObject **dobjs, int numObjs,
 									DumpableObject *boundaryObjs);
 
+static void addConstrChildIdxDeps(DumpableObject *dobj, IndxInfo *refidx);
 static void getDomainConstraints(Archive *fout, TypeInfo *tyinfo);
 static void getTableData(DumpOptions *dopt, TableInfo *tblinfo, int numTables, char relkind);
 static void makeTableDataInfo(DumpOptions *dopt, TableInfo *tbinfo);
@@ -525,7 +526,7 @@ main(int argc, char **argv)
 
 			case 'v':			/* verbose */
 				g_verbose = true;
-				pg_logging_set_level(PG_LOG_INFO);
+				pg_logging_increase_verbosity();
 				break;
 
 			case 'w':
@@ -2107,6 +2108,8 @@ dumpTableData_insert(Archive *fout, void *dcontext)
 			 */
 			if (nfields == 0)
 				continue;
+
+			Assert(tbinfo->attgenerated);
 
 			/* Emit a row heading */
 			if (rows_per_statement == 1)
@@ -4215,6 +4218,7 @@ getSubscriptions(Archive *fout)
 	int			i_oid;
 	int			i_subname;
 	int			i_rolname;
+	int			i_substream;
 	int			i_subconninfo;
 	int			i_subslotname;
 	int			i_subsynccommit;
@@ -4254,10 +4258,17 @@ getSubscriptions(Archive *fout)
 
 	if (fout->remoteVersion >= 140000)
 		appendPQExpBuffer(query,
-						  " s.subbinary\n");
+						  " s.subbinary,\n");
 	else
 		appendPQExpBuffer(query,
-						  " false AS subbinary\n");
+						  " false AS subbinary,\n");
+
+	if (fout->remoteVersion >= 140000)
+		appendPQExpBuffer(query,
+						  " s.substream\n");
+	else
+		appendPQExpBuffer(query,
+						  " false AS substream\n");
 
 	appendPQExpBuffer(query,
 					  "FROM pg_subscription s\n"
@@ -4277,6 +4288,7 @@ getSubscriptions(Archive *fout)
 	i_subsynccommit = PQfnumber(res, "subsynccommit");
 	i_subpublications = PQfnumber(res, "subpublications");
 	i_subbinary = PQfnumber(res, "subbinary");
+	i_substream = PQfnumber(res, "substream");
 
 	subinfo = pg_malloc(ntups * sizeof(SubscriptionInfo));
 
@@ -4300,6 +4312,8 @@ getSubscriptions(Archive *fout)
 			pg_strdup(PQgetvalue(res, i, i_subpublications));
 		subinfo[i].subbinary =
 			pg_strdup(PQgetvalue(res, i, i_subbinary));
+		subinfo[i].substream =
+			pg_strdup(PQgetvalue(res, i, i_substream));
 
 		if (strlen(subinfo[i].rolname) == 0)
 			pg_log_warning("owner of subscription \"%s\" appears to be invalid",
@@ -4370,6 +4384,9 @@ dumpSubscription(Archive *fout, SubscriptionInfo *subinfo)
 
 	if (strcmp(subinfo->subbinary, "t") == 0)
 		appendPQExpBuffer(query, ", binary = true");
+
+	if (strcmp(subinfo->substream, "f") != 0)
+		appendPQExpBuffer(query, ", streaming = on");
 
 	if (strcmp(subinfo->subsynccommit, "off") != 0)
 		appendPQExpBuffer(query, ", synchronous_commit = %s", fmtId(subinfo->subsynccommit));
@@ -7609,25 +7626,20 @@ getConstraints(Archive *fout, TableInfo tblinfo[], int numTables)
 			reftable = findTableByOid(constrinfo[j].confrelid);
 			if (reftable && reftable->relkind == RELKIND_PARTITIONED_TABLE)
 			{
-				IndxInfo   *refidx;
 				Oid			indexOid = atooid(PQgetvalue(res, j, i_conindid));
 
 				if (indexOid != InvalidOid)
 				{
 					for (int k = 0; k < reftable->numIndexes; k++)
 					{
-						SimplePtrListCell *cell;
+						IndxInfo   *refidx;
 
 						/* not our index? */
 						if (reftable->indexes[k].dobj.catId.oid != indexOid)
 							continue;
 
 						refidx = &reftable->indexes[k];
-						for (cell = refidx->partattaches.head; cell;
-							 cell = cell->next)
-							addObjectDependency(&constrinfo[j].dobj,
-												((DumpableObject *)
-												 cell->ptr)->dumpId);
+						addConstrChildIdxDeps(&constrinfo[j].dobj, refidx);
 						break;
 					}
 				}
@@ -7638,6 +7650,35 @@ getConstraints(Archive *fout, TableInfo tblinfo[], int numTables)
 	}
 
 	destroyPQExpBuffer(query);
+}
+
+/*
+ * addConstrChildIdxDeps
+ *
+ * Recursive subroutine for getConstraints
+ *
+ * Given an object representing a foreign key constraint and an index on the
+ * partitioned table it references, mark the constraint object as dependent
+ * on the DO_INDEX_ATTACH object of each index partition, recursively
+ * drilling down to their partitions if any.  This ensures that the FK is not
+ * restored until the index is fully marked valid.
+ */
+static void
+addConstrChildIdxDeps(DumpableObject *dobj, IndxInfo *refidx)
+{
+	SimplePtrListCell *cell;
+
+	Assert(dobj->objType == DO_FK_CONSTRAINT);
+
+	for (cell = refidx->partattaches.head; cell; cell = cell->next)
+	{
+		IndexAttachInfo *attach = (IndexAttachInfo *) cell->ptr;
+
+		addObjectDependency(dobj, attach->dobj.dumpId);
+
+		if (attach->partitionIdx->partattaches.head != NULL)
+			addConstrChildIdxDeps(dobj, attach->partitionIdx);
+	}
 }
 
 /*
@@ -8695,9 +8736,10 @@ getTableAttrs(Archive *fout, TableInfo *tblinfo, int numTables)
 		PQclear(res);
 
 		/*
-		 * Get info about column defaults
+		 * Get info about column defaults.  This is skipped for a data-only
+		 * dump, as it is only needed for table schemas.
 		 */
-		if (hasdefaults)
+		if (!dopt->dataOnly && hasdefaults)
 		{
 			AttrDefInfo *attrdefs;
 			int			numDefaults;
@@ -8782,9 +8824,10 @@ getTableAttrs(Archive *fout, TableInfo *tblinfo, int numTables)
 		}
 
 		/*
-		 * Get info about table CHECK constraints
+		 * Get info about table CHECK constraints.  This is skipped for a
+		 * data-only dump, as it is only needed for table schemas.
 		 */
-		if (tbinfo->ncheck > 0)
+		if (!dopt->dataOnly && tbinfo->ncheck > 0)
 		{
 			ConstraintInfo *constrs;
 			int			numConstrs;
@@ -12705,6 +12748,11 @@ dumpOpr(Archive *fout, OprInfo *oprinfo)
 	oprcanmerge = PQgetvalue(res, 0, i_oprcanmerge);
 	oprcanhash = PQgetvalue(res, 0, i_oprcanhash);
 
+	/* In PG14 upwards postfix operator support does not exist anymore. */
+	if (strcmp(oprkind, "r") == 0)
+		pg_log_warning("postfix operators are not supported anymore (operator \"%s\")",
+					   oprcode);
+
 	oprregproc = convertRegProcReference(fout, oprcode);
 	if (oprregproc)
 	{
@@ -12717,7 +12765,8 @@ dumpOpr(Archive *fout, OprInfo *oprinfo)
 
 	/*
 	 * right unary means there's a left arg and left unary means there's a
-	 * right arg
+	 * right arg.  (Although the "r" case is dead code for PG14 and later,
+	 * continue to support it in case we're dumping from an old server.)
 	 */
 	if (strcmp(oprkind, "r") == 0 ||
 		strcmp(oprkind, "b") == 0)
@@ -17998,6 +18047,8 @@ processExtensionTables(Archive *fout, ExtensionInfo extinfo[],
 							configtbl->dataObj->filtercond = pg_strdup(extconditionarray[j]);
 					}
 				}
+
+				configtbl->interesting = dumpobj;
 			}
 		}
 		if (extconfigarray)

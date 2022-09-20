@@ -1096,6 +1096,18 @@ SELECT AVG(val) FROM num_data;
  -13430913.592242320700
 (1 row)
 
+SELECT MAX(val) FROM num_data;
+        max         
+--------------------
+ 7799461.4119000000
+(1 row)
+
+SELECT MIN(val) FROM num_data;
+         min          
+----------------------
+ -83028485.0000000000
+(1 row)
+
 SELECT STDDEV(val) FROM num_data;
             stddev             
 -------------------------------
@@ -2960,16 +2972,10 @@ ERROR:  value overflows numeric format
 --
 -- Tests for factorial
 --
-SELECT 4!;
- ?column? 
-----------
-       24
-(1 row)
-
-SELECT !!3;
- ?column? 
-----------
-        6
+SELECT factorial(4);
+ factorial 
+-----------
+        24
 (1 row)
 
 SELECT factorial(15);
@@ -2978,16 +2984,14 @@ SELECT factorial(15);
  1307674368000
 (1 row)
 
-SELECT 100000!;
+SELECT factorial(100000);
 ERROR:  value overflows numeric format
-SELECT 0!;
- ?column? 
-----------
-        1
+SELECT factorial(0);
+ factorial 
+-----------
+         1
 (1 row)
 
-SELECT -4!;
-ERROR:  factorial of a negative number is undefined
 SELECT factorial(-4);
 ERROR:  factorial of a negative number is undefined
 --

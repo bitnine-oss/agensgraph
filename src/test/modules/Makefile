@@ -7,8 +7,10 @@ include $(top_builddir)/src/Makefile.global
 SUBDIRS = \
 		  brin \
 		  commit_ts \
+		  delay_execution \
 		  dummy_index_am \
 		  dummy_seclabel \
+		  plsample \
 		  snapshot_too_old \
 		  test_bloomfilter \
 		  test_ddl_deparse \

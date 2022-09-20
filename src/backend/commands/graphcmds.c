@@ -120,7 +120,6 @@ RemoveGraphById(Oid graphid)
 	Relation	ag_graph_desc;
 	HeapTuple	tup;
 	Form_ag_graph graphtup;
-	NameData	graphname;
 
 	ag_graph_desc = table_open(GraphRelationId, RowExclusiveLock);
 
@@ -129,16 +128,16 @@ RemoveGraphById(Oid graphid)
 		elog(ERROR, "cache lookup failed for graph %u", graphid);
 
 	graphtup = (Form_ag_graph) GETSTRUCT(tup);
-	namecpy(&graphname, &graphtup->graphname);
+
+	if (graph_path != NULL &&
+		strcmp(NameStr(graphtup->graphname), graph_path) == 0)
+		SetConfigOption("graph_path", NULL, PGC_USERSET, PGC_S_SESSION);
 
 	simple_heap_delete(ag_graph_desc, &tup->t_self);
 
 	ReleaseSysCache(tup);
 
 	table_close(ag_graph_desc, RowExclusiveLock);
-
-	if (graph_path != NULL && namestrcmp(&graphname, graph_path) == 0)
-		SetConfigOption("graph_path", NULL, PGC_USERSET, PGC_S_SESSION);
 }
 
 ObjectAddress

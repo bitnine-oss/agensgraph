@@ -145,6 +145,9 @@ static void bt_check_every_level(Relation rel, Relation heaprel,
 								 bool rootdescend);
 static BtreeLevel bt_check_level_from_leftmost(BtreeCheckState *state,
 											   BtreeLevel level);
+static void bt_recheck_sibling_links(BtreeCheckState *state,
+									 BlockNumber btpo_prev_from_target,
+									 BlockNumber leftcurrent);
 static void bt_target_page_check(BtreeCheckState *state);
 static BTScanInsert bt_right_page_check_scankey(BtreeCheckState *state);
 static void bt_child_check(BtreeCheckState *state, BTScanInsert targetkey,
@@ -305,8 +308,20 @@ bt_index_check_internal(Oid indrelid, bool parentcheck, bool heapallindexed,
 					 errmsg("index \"%s\" lacks a main relation fork",
 							RelationGetRelationName(indrel))));
 
-		/* Check index, possibly against table it is an index on */
+		/* Extract metadata from metapage, and sanitize it in passing */
 		_bt_metaversion(indrel, &heapkeyspace, &allequalimage);
+		if (allequalimage && !heapkeyspace)
+			ereport(ERROR,
+					(errcode(ERRCODE_INDEX_CORRUPTED),
+					 errmsg("index \"%s\" metapage has equalimage field set on unsupported nbtree version",
+							RelationGetRelationName(indrel))));
+		if (allequalimage && !_bt_allequalimage(indrel, false))
+			ereport(ERROR,
+					(errcode(ERRCODE_INDEX_CORRUPTED),
+					 errmsg("index \"%s\" metapage incorrectly indicates that deduplication is safe",
+							RelationGetRelationName(indrel))));
+
+		/* Check index, possibly against table it is an index on */
 		bt_check_every_level(indrel, heaprel, heapkeyspace, parentcheck,
 							 heapallindexed, rootdescend);
 	}
@@ -419,10 +434,10 @@ bt_check_every_level(Relation rel, Relation heaprel, bool heapkeyspace,
 			 RelationGetRelationName(rel));
 
 	/*
-	 * RecentGlobalXmin assertion matches index_getnext_tid().  See note on
-	 * RecentGlobalXmin/B-Tree page deletion.
+	 * This assertion matches the one in index_getnext_tid().  See page
+	 * recycling/"visible to everyone" notes in nbtree README.
 	 */
-	Assert(TransactionIdIsValid(RecentGlobalXmin));
+	Assert(TransactionIdIsValid(RecentXmin));
 
 	/*
 	 * Initialize state for entire verification operation
@@ -775,17 +790,9 @@ bt_check_level_from_leftmost(BtreeCheckState *state, BtreeLevel level)
 			 */
 		}
 
-		/*
-		 * readonly mode can only ever land on live pages and half-dead pages,
-		 * so sibling pointers should always be in mutual agreement
-		 */
-		if (state->readonly && opaque->btpo_prev != leftcurrent)
-			ereport(ERROR,
-					(errcode(ERRCODE_INDEX_CORRUPTED),
-					 errmsg("left link/right link pair in index \"%s\" not in agreement",
-							RelationGetRelationName(state->rel)),
-					 errdetail_internal("Block=%u left block=%u left link from block=%u.",
-										current, leftcurrent, opaque->btpo_prev)));
+		/* Sibling links should be in mutual agreement */
+		if (opaque->btpo_prev != leftcurrent)
+			bt_recheck_sibling_links(state, opaque->btpo_prev, leftcurrent);
 
 		/* Check level, which must be valid for non-ignorable page */
 		if (level.level != opaque->btpo.level)
@@ -866,6 +873,140 @@ nextpage:
 }
 
 /*
+ * Raise an error when target page's left link does not point back to the
+ * previous target page, called leftcurrent here.  The leftcurrent page's
+ * right link was followed to get to the current target page, and we expect
+ * mutual agreement among leftcurrent and the current target page.  Make sure
+ * that this condition has definitely been violated in the !readonly case,
+ * where concurrent page splits are something that we need to deal with.
+ *
+ * Cross-page inconsistencies involving pages that don't agree about being
+ * siblings are known to be a particularly good indicator of corruption
+ * involving partial writes/lost updates.  The bt_right_page_check_scankey
+ * check also provides a way of detecting cross-page inconsistencies for
+ * !readonly callers, but it can only detect sibling pages that have an
+ * out-of-order keyspace, which can't catch many of the problems that we
+ * expect to catch here.
+ *
+ * The classic example of the kind of inconsistency that we can only catch
+ * with this check (when in !readonly mode) involves three sibling pages that
+ * were affected by a faulty page split at some point in the past.  The
+ * effects of the split are reflected in the original page and its new right
+ * sibling page, with a lack of any accompanying changes for the _original_
+ * right sibling page.  The original right sibling page's left link fails to
+ * point to the new right sibling page (its left link still points to the
+ * original page), even though the first phase of a page split is supposed to
+ * work as a single atomic action.  This subtle inconsistency will probably
+ * only break backwards scans in practice.
+ *
+ * Note that this is the only place where amcheck will "couple" buffer locks
+ * (and only for !readonly callers).  In general we prefer to avoid more
+ * thorough cross-page checks in !readonly mode, but it seems worth the
+ * complexity here.  Also, the performance overhead of performing lock
+ * coupling here is negligible in practice.  Control only reaches here with a
+ * non-corrupt index when there is a concurrent page split at the instant
+ * caller crossed over to target page from leftcurrent page.
+ */
+static void
+bt_recheck_sibling_links(BtreeCheckState *state,
+						 BlockNumber btpo_prev_from_target,
+						 BlockNumber leftcurrent)
+{
+	if (!state->readonly)
+	{
+		Buffer		lbuf;
+		Buffer		newtargetbuf;
+		Page		page;
+		BTPageOpaque opaque;
+		BlockNumber	newtargetblock;
+
+		/* Couple locks in the usual order for nbtree:  Left to right */
+		lbuf = ReadBufferExtended(state->rel, MAIN_FORKNUM, leftcurrent,
+								  RBM_NORMAL, state->checkstrategy);
+		LockBuffer(lbuf, BT_READ);
+		_bt_checkpage(state->rel, lbuf);
+		page = BufferGetPage(lbuf);
+		opaque = (BTPageOpaque) PageGetSpecialPointer(page);
+		if (P_ISDELETED(opaque))
+		{
+			/*
+			 * Cannot reason about concurrently deleted page -- the left link
+			 * in the page to the right is expected to point to some other
+			 * page to the left (not leftcurrent page).
+			 *
+			 * Note that we deliberately don't give up with a half-dead page.
+			 */
+			UnlockReleaseBuffer(lbuf);
+			return;
+		}
+
+		newtargetblock = opaque->btpo_next;
+		/* Avoid self-deadlock when newtargetblock == leftcurrent */
+		if (newtargetblock != leftcurrent)
+		{
+			newtargetbuf = ReadBufferExtended(state->rel, MAIN_FORKNUM,
+											  newtargetblock, RBM_NORMAL,
+											  state->checkstrategy);
+			LockBuffer(newtargetbuf, BT_READ);
+			_bt_checkpage(state->rel, newtargetbuf);
+			page = BufferGetPage(newtargetbuf);
+			opaque = (BTPageOpaque) PageGetSpecialPointer(page);
+			/* btpo_prev_from_target may have changed; update it */
+			btpo_prev_from_target = opaque->btpo_prev;
+		}
+		else
+		{
+			/*
+			 * leftcurrent right sibling points back to leftcurrent block.
+			 * Index is corrupt.  Easiest way to handle this is to pretend
+			 * that we actually read from a distinct page that has an invalid
+			 * block number in its btpo_prev.
+			 */
+			newtargetbuf = InvalidBuffer;
+			btpo_prev_from_target = InvalidBlockNumber;
+		}
+
+		/*
+		 * No need to check P_ISDELETED here, since new target block cannot be
+		 * marked deleted as long as we hold a lock on lbuf
+		 */
+		if (BufferIsValid(newtargetbuf))
+			UnlockReleaseBuffer(newtargetbuf);
+		UnlockReleaseBuffer(lbuf);
+
+		if (btpo_prev_from_target == leftcurrent)
+		{
+			/* Report split in left sibling, not target (or new target) */
+			ereport(DEBUG1,
+					(errcode(ERRCODE_INTERNAL_ERROR),
+					 errmsg("harmless concurrent page split detected in index \"%s\"",
+							RelationGetRelationName(state->rel)),
+					 errdetail_internal("Block=%u new right sibling=%u original right sibling=%u.",
+										leftcurrent, newtargetblock,
+										state->targetblock)));
+			return;
+		}
+
+		/*
+		 * Index is corrupt.  Make sure that we report correct target page.
+		 *
+		 * This could have changed in cases where there was a concurrent page
+		 * split, as well as index corruption (at least in theory).  Note that
+		 * btpo_prev_from_target was already updated above.
+		 */
+		state->targetblock = newtargetblock;
+	}
+
+	ereport(ERROR,
+			(errcode(ERRCODE_INDEX_CORRUPTED),
+			 errmsg("left link/right link pair in index \"%s\" not in agreement",
+					RelationGetRelationName(state->rel)),
+			 errdetail_internal("Block=%u left block=%u left link from block=%u.",
+								state->targetblock, leftcurrent,
+								btpo_prev_from_target)));
+}
+
+/*
  * Function performs the following checks on target page, or pages ancillary to
  * target page:
  *
@@ -891,7 +1032,6 @@ nextpage:
  *	 tuple.
  *
  * - That downlink to block was encountered in parent where that's expected.
- *	 (Limited to readonly callers.)
  *
  * - That high keys of child pages matches corresponding pivot keys in parent.
  *
@@ -1441,7 +1581,7 @@ bt_right_page_check_scankey(BtreeCheckState *state)
 	 * does not occur until no possible index scan could land on the page.
 	 * Index scans can follow links with nothing more than their snapshot as
 	 * an interlock and be sure of at least that much.  (See page
-	 * recycling/RecentGlobalXmin notes in nbtree README.)
+	 * recycling/"visible to everyone" notes in nbtree README.)
 	 *
 	 * Furthermore, it's okay if we follow a rightlink and find a half-dead or
 	 * dead (ignorable) page one or more times.  There will either be a
@@ -1612,14 +1752,36 @@ bt_right_page_check_scankey(BtreeCheckState *state)
  * this function is capable to compare pivot keys on different levels.
  */
 static bool
-bt_pivot_tuple_identical(IndexTuple itup1, IndexTuple itup2)
+bt_pivot_tuple_identical(bool heapkeyspace, IndexTuple itup1, IndexTuple itup2)
 {
 	if (IndexTupleSize(itup1) != IndexTupleSize(itup2))
 		return false;
 
-	if (memcmp(&itup1->t_tid.ip_posid, &itup2->t_tid.ip_posid,
-			   IndexTupleSize(itup1) - offsetof(ItemPointerData, ip_posid)) != 0)
-		return false;
+	if (heapkeyspace)
+	{
+		/*
+		 * Offset number will contain important information in heapkeyspace
+		 * indexes: the number of attributes left in the pivot tuple following
+		 * suffix truncation.  Don't skip over it (compare it too).
+		 */
+		if (memcmp(&itup1->t_tid.ip_posid, &itup2->t_tid.ip_posid,
+				   IndexTupleSize(itup1) -
+				   offsetof(ItemPointerData, ip_posid)) != 0)
+			return false;
+	}
+	else
+	{
+		/*
+		 * Cannot rely on offset number field having consistent value across
+		 * levels on pg_upgrade'd !heapkeyspace indexes.  Compare contents of
+		 * tuple starting from just after item pointer (i.e. after block
+		 * number and offset number).
+		 */
+		if (memcmp(&itup1->t_info, &itup2->t_info,
+				   IndexTupleSize(itup1) -
+				   offsetof(IndexTupleData, t_info)) != 0)
+			return false;
+	}
 
 	return true;
 }
@@ -1773,7 +1935,7 @@ bt_child_highkey_check(BtreeCheckState *state,
 		rightsplit = P_INCOMPLETE_SPLIT(opaque);
 
 		/*
-		 * If we visit page with high key, check that it is be equal to the
+		 * If we visit page with high key, check that it is equal to the
 		 * target key next to corresponding downlink.
 		 */
 		if (!rightsplit && !P_RIGHTMOST(opaque))
@@ -1867,7 +2029,7 @@ bt_child_highkey_check(BtreeCheckState *state,
 				itup = state->lowkey;
 			}
 
-			if (!bt_pivot_tuple_identical(highkey, itup))
+			if (!bt_pivot_tuple_identical(state->heapkeyspace, highkey, itup))
 			{
 				ereport(ERROR,
 						(errcode(ERRCODE_INDEX_CORRUPTED),
@@ -1954,18 +2116,14 @@ bt_child_check(BtreeCheckState *state, BTScanInsert targetkey,
 	 * downlink, which was concurrently physically removed in target/parent as
 	 * part of deletion's first phase.)
 	 *
-	 * Note that while the cross-page-same-level last item check uses a trick
-	 * that allows it to perform verification for !readonly callers, a similar
-	 * trick seems difficult here.  The trick that that other check uses is,
-	 * in essence, to lock down race conditions to those that occur due to
-	 * concurrent page deletion of the target; that's a race that can be
-	 * reliably detected before actually reporting corruption.
-	 *
-	 * On the other hand, we'd need to lock down race conditions involving
-	 * deletion of child's left page, for long enough to read the child page
-	 * into memory (in other words, a scheme with concurrently held buffer
-	 * locks on both child and left-of-child pages).  That's unacceptable for
-	 * amcheck functions on general principle, though.
+	 * While we use various techniques elsewhere to perform cross-page
+	 * verification for !readonly callers, a similar trick seems difficult
+	 * here.  The tricks used by bt_recheck_sibling_links and by
+	 * bt_right_page_check_scankey both involve verification of a same-level,
+	 * cross-sibling invariant.  Cross-level invariants are far more squishy,
+	 * though.  The nbtree REDO routines do not actually couple buffer locks
+	 * across levels during page splits, so making any cross-level check work
+	 * reliably in !readonly mode may be impossible.
 	 */
 	Assert(state->readonly);
 
@@ -2774,6 +2932,8 @@ invariant_l_nontarget_offset(BtreeCheckState *state, BTScanInsert key,
  * There is never an attempt to get a consistent view of multiple pages using
  * multiple concurrent buffer locks; in general, we only acquire a single pin
  * and buffer lock at a time, which is often all that the nbtree code requires.
+ * (Actually, bt_recheck_sibling_links couples buffer locks, which is the only
+ * exception to this general rule.)
  *
  * Operating on a copy of the page is useful because it prevents control
  * getting stuck in an uninterruptible state when an underlying operator class
@@ -2864,11 +3024,8 @@ palloc_btree_page(BtreeCheckState *state, BlockNumber blocknum)
 	 * As noted at the beginning of _bt_binsrch(), an internal page must have
 	 * children, since there must always be a negative infinity downlink
 	 * (there may also be a highkey).  In the case of non-rightmost leaf
-	 * pages, there must be at least a highkey.  Deleted pages on replica
-	 * might contain no items, because page unlink re-initializes
-	 * page-to-be-deleted.  Deleted pages with no items might be on primary
-	 * too due to preceding recovery, but on primary new deletions can't
-	 * happen concurrently to amcheck.
+	 * pages, there must be at least a highkey.  The exceptions are deleted
+	 * pages, which contain no items.
 	 *
 	 * This is correct when pages are half-dead, since internal pages are
 	 * never half-dead, and leaf pages must have a high key when half-dead

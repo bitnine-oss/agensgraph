@@ -57,6 +57,7 @@ OBJS = \
 	lockfuncs.o \
 	mac.o \
 	mac8.o \
+	mcxtfuncs.o \
 	misc.o \
 	name.o \
 	network.o \
@@ -129,6 +130,9 @@ clean distclean maintainer-clean:
 	rm -f lex.backup
 
 like.o: like.c like_match.c
+
+# Some code in numeric.c benefits from auto-vectorization
+numeric.o: CFLAGS += ${CFLAGS_VECTORIZE}
 
 varlena.o: varlena.c levenshtein.c
 

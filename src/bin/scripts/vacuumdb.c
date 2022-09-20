@@ -15,9 +15,9 @@
 #include "catalog/pg_class_d.h"
 
 #include "common.h"
+#include "common/connect.h"
 #include "common/logging.h"
 #include "fe_utils/cancel.h"
-#include "fe_utils/connect.h"
 #include "fe_utils/simple_list.h"
 #include "fe_utils/string_utils.h"
 #include "scripts_parallel.h"
@@ -305,7 +305,7 @@ main(int argc, char *argv[])
 		}
 		if (vacopts.full)
 		{
-			pg_log_error("cannot use the \"%s\" option when performing full",
+			pg_log_error("cannot use the \"%s\" option when performing full vacuum",
 						 "parallel");
 			exit(1);
 		}
@@ -408,7 +408,6 @@ vacuum_one_database(const char *dbname, vacuumingOptions *vacopts,
 	int			i;
 	int			ntups;
 	bool		failed = false;
-	bool		parallel = concurrentCons > 1;
 	bool		tables_listed = false;
 	bool		has_where = false;
 	const char *stage_commands[] = {
@@ -651,25 +650,19 @@ vacuum_one_database(const char *dbname, vacuumingOptions *vacopts,
 	PQclear(res);
 
 	/*
-	 * If there are more connections than vacuumable relations, we don't need
-	 * to use them all.
+	 * Ensure concurrentCons is sane.  If there are more connections than
+	 * vacuumable relations, we don't need to use them all.
 	 */
-	if (parallel)
-	{
-		if (concurrentCons > ntups)
-			concurrentCons = ntups;
-		if (concurrentCons <= 1)
-			parallel = false;
-	}
+	if (concurrentCons > ntups)
+		concurrentCons = ntups;
+	if (concurrentCons <= 0)
+		concurrentCons = 1;
 
 	/*
 	 * Setup the database connections. We reuse the connection we already have
 	 * for the first slot.  If not in parallel mode, the first slot in the
 	 * array contains the connection.
 	 */
-	if (concurrentCons <= 0)
-		concurrentCons = 1;
-
 	slots = ParallelSlotsSetup(dbname, host, port, username, prompt_password,
 							   progname, echo, conn, concurrentCons);
 
