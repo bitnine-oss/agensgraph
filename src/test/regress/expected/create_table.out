@@ -652,8 +652,6 @@ CREATE TABLE part_bogus_expr_fail PARTITION OF list_parted FOR VALUES IN (genera
 ERROR:  set-returning functions are not allowed in partition bound
 LINE 1: ...expr_fail PARTITION OF list_parted FOR VALUES IN (generate_s...
                                                              ^
-CREATE TABLE part_bogus_expr_fail PARTITION OF list_parted FOR VALUES IN ('1' collate "POSIX");
-ERROR:  collations are not supported by type integer
 CREATE TABLE part_bogus_expr_fail PARTITION OF list_parted FOR VALUES IN ((1+1) collate "POSIX");
 ERROR:  collations are not supported by type integer
 LINE 1: ...ail PARTITION OF list_parted FOR VALUES IN ((1+1) collate "P...
@@ -677,6 +675,8 @@ LINE 1: ...BLE fail_part PARTITION OF list_parted FOR VALUES WITH (MODU...
 CREATE TABLE part_default PARTITION OF list_parted DEFAULT;
 CREATE TABLE fail_default_part PARTITION OF list_parted DEFAULT;
 ERROR:  partition "fail_default_part" conflicts with existing default partition "part_default"
+LINE 1: ...TE TABLE fail_default_part PARTITION OF list_parted DEFAULT;
+                                                               ^
 -- specified literal can't be cast to the partition column data type
 CREATE TABLE bools (
 	a bool
@@ -702,6 +702,8 @@ CREATE TABLE bigintp_10 PARTITION OF bigintp FOR VALUES IN (10);
 -- fails due to overlap:
 CREATE TABLE bigintp_10_2 PARTITION OF bigintp FOR VALUES IN ('10');
 ERROR:  partition "bigintp_10_2" would overlap partition "bigintp_10"
+LINE 1: ...ABLE bigintp_10_2 PARTITION OF bigintp FOR VALUES IN ('10');
+                                                                 ^
 DROP TABLE bigintp;
 CREATE TABLE range_parted (
 	a date
@@ -823,8 +825,12 @@ CREATE TABLE part_ab PARTITION OF list_parted2 FOR VALUES IN ('a', 'b');
 CREATE TABLE list_parted2_def PARTITION OF list_parted2 DEFAULT;
 CREATE TABLE fail_part PARTITION OF list_parted2 FOR VALUES IN (null);
 ERROR:  partition "fail_part" would overlap partition "part_null_z"
+LINE 1: ...LE fail_part PARTITION OF list_parted2 FOR VALUES IN (null);
+                                                                 ^
 CREATE TABLE fail_part PARTITION OF list_parted2 FOR VALUES IN ('b', 'c');
 ERROR:  partition "fail_part" would overlap partition "part_ab"
+LINE 1: ...ail_part PARTITION OF list_parted2 FOR VALUES IN ('b', 'c');
+                                                             ^
 -- check default partition overlap
 INSERT INTO list_parted2 VALUES('X');
 CREATE TABLE fail_part PARTITION OF list_parted2 FOR VALUES IN ('W', 'X', 'Y');
@@ -835,28 +841,42 @@ CREATE TABLE range_parted2 (
 -- trying to create range partition with empty range
 CREATE TABLE fail_part PARTITION OF range_parted2 FOR VALUES FROM (1) TO (0);
 ERROR:  empty range bound specified for partition "fail_part"
+LINE 1: ..._part PARTITION OF range_parted2 FOR VALUES FROM (1) TO (0);
+                                                             ^
 DETAIL:  Specified lower bound (1) is greater than or equal to upper bound (0).
 -- note that the range '[1, 1)' has no elements
 CREATE TABLE fail_part PARTITION OF range_parted2 FOR VALUES FROM (1) TO (1);
 ERROR:  empty range bound specified for partition "fail_part"
+LINE 1: ..._part PARTITION OF range_parted2 FOR VALUES FROM (1) TO (1);
+                                                             ^
 DETAIL:  Specified lower bound (1) is greater than or equal to upper bound (1).
 CREATE TABLE part0 PARTITION OF range_parted2 FOR VALUES FROM (minvalue) TO (1);
 CREATE TABLE fail_part PARTITION OF range_parted2 FOR VALUES FROM (minvalue) TO (2);
 ERROR:  partition "fail_part" would overlap partition "part0"
+LINE 1: ..._part PARTITION OF range_parted2 FOR VALUES FROM (minvalue) ...
+                                                             ^
 CREATE TABLE part1 PARTITION OF range_parted2 FOR VALUES FROM (1) TO (10);
 CREATE TABLE fail_part PARTITION OF range_parted2 FOR VALUES FROM (9) TO (maxvalue);
 ERROR:  partition "fail_part" would overlap partition "part1"
+LINE 1: ..._part PARTITION OF range_parted2 FOR VALUES FROM (9) TO (max...
+                                                             ^
 CREATE TABLE part2 PARTITION OF range_parted2 FOR VALUES FROM (20) TO (30);
 CREATE TABLE part3 PARTITION OF range_parted2 FOR VALUES FROM (30) TO (40);
 CREATE TABLE fail_part PARTITION OF range_parted2 FOR VALUES FROM (10) TO (30);
 ERROR:  partition "fail_part" would overlap partition "part2"
+LINE 1: ...art PARTITION OF range_parted2 FOR VALUES FROM (10) TO (30);
+                                                                   ^
 CREATE TABLE fail_part PARTITION OF range_parted2 FOR VALUES FROM (10) TO (50);
 ERROR:  partition "fail_part" would overlap partition "part2"
+LINE 1: ...art PARTITION OF range_parted2 FOR VALUES FROM (10) TO (50);
+                                                                   ^
 -- Create a default partition for range partitioned table
 CREATE TABLE range2_default PARTITION OF range_parted2 DEFAULT;
 -- More than one default partition is not allowed, so this should give error
 CREATE TABLE fail_default_part PARTITION OF range_parted2 DEFAULT;
 ERROR:  partition "fail_default_part" conflicts with existing default partition "range2_default"
+LINE 1: ... TABLE fail_default_part PARTITION OF range_parted2 DEFAULT;
+                                                               ^
 -- Check if the range for default partitions overlap
 INSERT INTO range_parted2 VALUES (85);
 CREATE TABLE fail_part PARTITION OF range_parted2 FOR VALUES FROM (80) TO (90);
@@ -870,17 +890,23 @@ CREATE TABLE range_parted3 (
 CREATE TABLE part00 PARTITION OF range_parted3 FOR VALUES FROM (0, minvalue) TO (0, maxvalue);
 CREATE TABLE fail_part PARTITION OF range_parted3 FOR VALUES FROM (0, minvalue) TO (0, 1);
 ERROR:  partition "fail_part" would overlap partition "part00"
+LINE 1: ..._part PARTITION OF range_parted3 FOR VALUES FROM (0, minvalu...
+                                                             ^
 CREATE TABLE part10 PARTITION OF range_parted3 FOR VALUES FROM (1, minvalue) TO (1, 1);
 CREATE TABLE part11 PARTITION OF range_parted3 FOR VALUES FROM (1, 1) TO (1, 10);
 CREATE TABLE part12 PARTITION OF range_parted3 FOR VALUES FROM (1, 10) TO (1, maxvalue);
 CREATE TABLE fail_part PARTITION OF range_parted3 FOR VALUES FROM (1, 10) TO (1, 20);
 ERROR:  partition "fail_part" would overlap partition "part12"
+LINE 1: ...rt PARTITION OF range_parted3 FOR VALUES FROM (1, 10) TO (1,...
+                                                             ^
 CREATE TABLE range3_default PARTITION OF range_parted3 DEFAULT;
 -- cannot create a partition that says column b is allowed to range
 -- from -infinity to +infinity, while there exist partitions that have
 -- more specific ranges
 CREATE TABLE fail_part PARTITION OF range_parted3 FOR VALUES FROM (1, minvalue) TO (1, maxvalue);
 ERROR:  partition "fail_part" would overlap partition "part10"
+LINE 1: ..._part PARTITION OF range_parted3 FOR VALUES FROM (1, minvalu...
+                                                             ^
 -- check for partition bound overlap and other invalid specifications for the hash partition
 CREATE TABLE hash_parted2 (
 	a varchar
@@ -892,6 +918,8 @@ CREATE TABLE h2part_4 PARTITION OF hash_parted2 FOR VALUES WITH (MODULUS 8, REMA
 -- overlap with part_4
 CREATE TABLE fail_part PARTITION OF hash_parted2 FOR VALUES WITH (MODULUS 2, REMAINDER 1);
 ERROR:  partition "fail_part" would overlap partition "h2part_4"
+LINE 1: ...LE fail_part PARTITION OF hash_parted2 FOR VALUES WITH (MODU...
+                                                             ^
 -- modulus must be greater than zero
 CREATE TABLE fail_part PARTITION OF hash_parted2 FOR VALUES WITH (MODULUS 0, REMAINDER 1);
 ERROR:  modulus for hash partition must be a positive integer
@@ -986,6 +1014,13 @@ DETAIL:  Failing row contains (1, null).
 Partition of: parted_notnull_inh_test FOR VALUES IN (1)
 
 drop table parted_notnull_inh_test;
+-- check that collations are assigned in partition bound expressions
+create table parted_boolean_col (a bool, b text) partition by list(a);
+create table parted_boolean_less partition of parted_boolean_col
+  for values in ('foo' < 'bar');
+create table parted_boolean_greater partition of parted_boolean_col
+  for values in ('foo' > 'bar');
+drop table parted_boolean_col;
 -- check for a conflicting COLLATE clause
 create table parted_collate_must_match (a text collate "C", b text collate "C")
   partition by range (a);
@@ -996,26 +1031,15 @@ create table parted_collate_must_match1 partition of parted_collate_must_match
 create table parted_collate_must_match2 partition of parted_collate_must_match
   (b collate "POSIX") for values from ('m') to ('z');
 drop table parted_collate_must_match;
--- check that specifying incompatible collations for partition bound
--- expressions fails promptly
+-- check that non-matching collations for partition bound
+-- expressions are coerced to the right collation
 create table test_part_coll_posix (a text) partition by range (a collate "POSIX");
--- fail
+-- ok, collation is implicitly coerced
 create table test_part_coll partition of test_part_coll_posix for values from ('a' collate "C") to ('g');
-ERROR:  collation of partition bound value for column "a" does not match partition key collation "POSIX"
-LINE 1: ...artition of test_part_coll_posix for values from ('a' collat...
-                                                             ^
--- ok
-create table test_part_coll partition of test_part_coll_posix for values from ('a' collate "POSIX") to ('g');
 -- ok
 create table test_part_coll2 partition of test_part_coll_posix for values from ('g') to ('m');
--- using a cast expression uses the target type's default collation
--- fail
+-- ok, collation is implicitly coerced
 create table test_part_coll_cast partition of test_part_coll_posix for values from (name 'm' collate "C") to ('s');
-ERROR:  collation of partition bound value for column "a" does not match partition key collation "POSIX"
-LINE 1: ...ion of test_part_coll_posix for values from (name 'm' collat...
-                                                             ^
--- ok
-create table test_part_coll_cast partition of test_part_coll_posix for values from (name 'm' collate "POSIX") to ('s');
 -- ok; partition collation silently overrides the default collation of type 'name'
 create table test_part_coll_cast2 partition of test_part_coll_posix for values from (name 's') to ('z');
 drop table test_part_coll_posix;

@@ -7681,6 +7681,15 @@ SELECT regexp_match('abc01234xyz', '(?:(.*?)(\d+)(.*)){1,1}');
      <listitem>
       <para>
        In <function>to_timestamp</function> and <function>to_date</function>,
+       negative years are treated as signifying BC.  If you write both a
+       negative year and an explicit <literal>BC</literal> field, you get AD
+       again.  An input of year zero is treated as 1 BC.
+      </para>
+     </listitem>
+
+     <listitem>
+      <para>
+       In <function>to_timestamp</function> and <function>to_date</function>,
        the <literal>YYYY</literal> conversion has a restriction when
        processing years with more than 4 digits. You must
        use some non-digit character or template after <literal>YYYY</literal>,
@@ -8939,6 +8948,7 @@ SELECT regexp_match('abc01234xyz', '(?:(.*?)(\d+)(.*)){1,1}');
         </para>
         <para>
          Create date from year, month and day fields
+         (negative years signify BC)
         </para>
         <para>
          <literal>make_date(2013, 7, 15)</literal>
@@ -8950,13 +8960,13 @@ SELECT regexp_match('abc01234xyz', '(?:(.*?)(\d+)(.*)){1,1}');
         <entry role="func_table_entry"><para role="func_signature"><indexterm>
           <primary>make_interval</primary>
          </indexterm>
-         <function>make_interval</function> ( <optional> <parameter>year</parameter> <type>int</type>
-         <optional>, <parameter>month</parameter> <type>int</type>
-         <optional>, <parameter>week</parameter> <type>int</type>
-         <optional>, <parameter>day</parameter> <type>int</type>
-         <optional>, <parameter>hour</parameter> <type>int</type>
-         <optional>, <parameter>min</parameter> <type>int</type>
-         <optional>, <parameter>sec</parameter> <type>double precision</type>
+         <function>make_interval</function> ( <optional> <parameter>years</parameter> <type>int</type>
+         <optional>, <parameter>months</parameter> <type>int</type>
+         <optional>, <parameter>weeks</parameter> <type>int</type>
+         <optional>, <parameter>days</parameter> <type>int</type>
+         <optional>, <parameter>hours</parameter> <type>int</type>
+         <optional>, <parameter>mins</parameter> <type>int</type>
+         <optional>, <parameter>secs</parameter> <type>double precision</type>
          </optional></optional></optional></optional></optional></optional></optional> )
          <returnvalue>interval</returnvalue>
         </para>
@@ -9004,6 +9014,7 @@ SELECT regexp_match('abc01234xyz', '(?:(.*?)(\d+)(.*)){1,1}');
         </para>
         <para>
          Create timestamp from year, month, day, hour, minute and seconds fields
+         (negative years signify BC)
         </para>
         <para>
          <literal>make_timestamp(2013, 7, 15, 8, 15, 23.5)</literal>
@@ -9027,12 +9038,18 @@ SELECT regexp_match('abc01234xyz', '(?:(.*?)(\d+)(.*)){1,1}');
         </para>
         <para>
          Create timestamp with time zone from year, month, day, hour, minute
-         and seconds fields; if <parameter>timezone</parameter> is not
-         specified, the current time zone is used
+         and seconds fields (negative years signify BC).
+         If <parameter>timezone</parameter> is not
+         specified, the current time zone is used; the examples assume the
+         session time zone is <literal>Europe/London</literal>
         </para>
         <para>
          <literal>make_timestamptz(2013, 7, 15, 8, 15, 23.5)</literal>
          <returnvalue>2013-07-15 08:15:23.5+01</returnvalue>
+        </para>
+        <para>
+         <literal>make_timestamptz(2013, 7, 15, 8, 15, 23.5, 'America/New_York')</literal>
+         <returnvalue>2013-07-15 13:15:23.5+01</returnvalue>
         </para></entry>
        </row>
 
@@ -15626,11 +15643,11 @@ table2-mapping
         <literal>'use_json_null'</literal>.
        </para>
        <para>
-        <literal>jsonb_set_lax('[{"f1":1,"f2":null},2,null,3]', '{0,f1}',null)</literal>
+        <literal>jsonb_set_lax('[{"f1":1,"f2":null},2,null,3]', '{0,f1}', null)</literal>
         <returnvalue>[{"f1":null,"f2":null},2,null,3]</returnvalue>
        </para>
        <para>
-        <literal>jsonb_set_lax('[{"f1":99,"f2":null},2]', '{0,f3}',null, true, 'return_target')</literal>
+        <literal>jsonb_set_lax('[{"f1":99,"f2":null},2]', '{0,f3}', null, true, 'return_target')</literal>
         <returnvalue>[{"f1": 99, "f2": null}, 2]</returnvalue>
        </para></entry>
       </row>
@@ -22399,7 +22416,7 @@ SELECT currval(pg_get_serial_sequence('sometable', 'id'));
         <indexterm>
          <primary>pg_options_to_table</primary>
         </indexterm>
-        <function>pg_options_to_table</function> ( <parameter>reloptions</parameter> <type>text[]</type> )
+        <function>pg_options_to_table</function> ( <parameter>options_array</parameter> <type>text[]</type> )
         <returnvalue>setof record</returnvalue>
         ( <parameter>option_name</parameter> <type>text</type>,
         <parameter>option_value</parameter> <type>text</type> )

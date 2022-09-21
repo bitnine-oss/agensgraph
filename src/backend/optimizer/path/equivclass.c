@@ -635,12 +635,6 @@ get_eclass_for_sort_expr(PlannerInfo *root,
 	expr = canonicalize_ec_expression(expr, opcintype, collation);
 
 	/*
-	 * Get the precise set of nullable relids appearing in the expression.
-	 */
-	expr_relids = pull_varnos((Node *) expr);
-	nullable_relids = bms_intersect(nullable_relids, expr_relids);
-
-	/*
 	 * Scan through the existing EquivalenceClasses for a match
 	 */
 	foreach(lc1, root->eq_classes)
@@ -715,6 +709,12 @@ get_eclass_for_sort_expr(PlannerInfo *root,
 
 	if (newec->ec_has_volatile && sortref == 0) /* should not happen */
 		elog(ERROR, "volatile EquivalenceClass has no sortref");
+
+	/*
+	 * Get the precise set of nullable relids appearing in the expression.
+	 */
+	expr_relids = pull_varnos((Node *) expr);
+	nullable_relids = bms_intersect(nullable_relids, expr_relids);
 
 	newem = add_eq_member(newec, copyObject(expr), expr_relids,
 						  nullable_relids, false, opcintype);
@@ -1171,9 +1171,9 @@ generate_join_implied_equalities(PlannerInfo *root,
 	}
 
 	/*
-	 * Get all eclasses in common between inner_rel's relids and outer_relids
+	 * Get all eclasses that mention both inner and outer sides of the join
 	 */
-	matching_ecs = get_common_eclass_indexes(root, inner_rel->relids,
+	matching_ecs = get_common_eclass_indexes(root, nominal_inner_relids,
 											 outer_relids);
 
 	i = -1;
@@ -2380,12 +2380,23 @@ add_child_join_rel_equivalences(PlannerInfo *root,
 	Relids		top_parent_relids = child_joinrel->top_parent_relids;
 	Relids		child_relids = child_joinrel->relids;
 	Bitmapset  *matching_ecs;
+	MemoryContext oldcontext;
 	int			i;
 
 	Assert(IS_JOIN_REL(child_joinrel) && IS_JOIN_REL(parent_joinrel));
 
 	/* We need consider only ECs that mention the parent joinrel */
 	matching_ecs = get_eclass_indexes_for_relids(root, top_parent_relids);
+
+	/*
+	 * If we're being called during GEQO join planning, we still have to
+	 * create any new EC members in the main planner context, to avoid having
+	 * a corrupt EC data structure after the GEQO context is reset.  This is
+	 * problematic since we'll leak memory across repeated GEQO cycles.  For
+	 * now, though, bloat is better than crash.  If it becomes a real issue
+	 * we'll have to do something to avoid generating duplicate EC members.
+	 */
+	oldcontext = MemoryContextSwitchTo(root->planner_cxt);
 
 	i = -1;
 	while ((i = bms_next_member(matching_ecs, i)) >= 0)
@@ -2486,6 +2497,8 @@ add_child_join_rel_equivalences(PlannerInfo *root,
 			}
 		}
 	}
+
+	MemoryContextSwitchTo(oldcontext);
 }
 
 

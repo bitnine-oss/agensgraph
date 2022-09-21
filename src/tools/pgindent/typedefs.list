@@ -1832,7 +1832,9 @@ PgStat_MsgFuncstat
 PgStat_MsgHdr
 PgStat_MsgInquiry
 PgStat_MsgRecoveryConflict
+PgStat_MsgReplSlot
 PgStat_MsgResetcounter
+PgStat_MsgResetreplslotcounter
 PgStat_MsgResetsharedcounter
 PgStat_MsgResetsinglecounter
 PgStat_MsgResetslrucounter
@@ -1841,6 +1843,8 @@ PgStat_MsgTabpurge
 PgStat_MsgTabstat
 PgStat_MsgTempFile
 PgStat_MsgVacuum
+PgStat_MsgWal
+PgStat_ReplSlotStats
 PgStat_SLRUStats
 PgStat_Shared_Reset_Target
 PgStat_Single_Reset_Type
@@ -1852,6 +1856,7 @@ PgStat_TableCounts
 PgStat_TableEntry
 PgStat_TableStatus
 PgStat_TableXactStatus
+PgStat_WalStats
 PgXmlErrorContext
 PgXmlStrictness
 Pg_finfo_record
@@ -2295,12 +2300,12 @@ SlotNumber
 SlruCtl
 SlruCtlData
 SlruErrorCause
-SlruFlush
-SlruFlushData
 SlruPageStatus
 SlruScanCallback
 SlruShared
 SlruSharedData
+SlruWriteAll
+SlruWriteAllData
 SnapBuild
 SnapBuildOnDisk
 SnapBuildState
@@ -2404,6 +2409,7 @@ Syn
 SyncOps
 SyncRepConfigData
 SyncRepStandbyData
+SyncRequestHandler
 SyncRequestType
 SysScanDesc
 SyscacheCallbackFunction
@@ -3185,6 +3191,7 @@ pg_tz
 pg_tz_cache
 pg_tzenum
 pg_unicode_decomposition
+pg_unicode_norminfo
 pg_unicode_normprops
 pg_utf_to_local_combined
 pg_uuid_t

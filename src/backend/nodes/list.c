@@ -342,7 +342,7 @@ lappend(List *list, void *datum)
 	else
 		new_tail_cell(list);
 
-	lfirst(list_tail(list)) = datum;
+	llast(list) = datum;
 	check_list_invariants(list);
 	return list;
 }
@@ -360,7 +360,7 @@ lappend_int(List *list, int datum)
 	else
 		new_tail_cell(list);
 
-	lfirst_int(list_tail(list)) = datum;
+	llast_int(list) = datum;
 	check_list_invariants(list);
 	return list;
 }
@@ -378,7 +378,7 @@ lappend_oid(List *list, Oid datum)
 	else
 		new_tail_cell(list);
 
-	lfirst_oid(list_tail(list)) = datum;
+	llast_oid(list) = datum;
 	check_list_invariants(list);
 	return list;
 }
@@ -474,7 +474,7 @@ lcons(void *datum, List *list)
 	else
 		new_head_cell(list);
 
-	lfirst(list_head(list)) = datum;
+	linitial(list) = datum;
 	check_list_invariants(list);
 	return list;
 }
@@ -492,7 +492,7 @@ lcons_int(int datum, List *list)
 	else
 		new_head_cell(list);
 
-	lfirst_int(list_head(list)) = datum;
+	linitial_int(list) = datum;
 	check_list_invariants(list);
 	return list;
 }
@@ -510,7 +510,7 @@ lcons_oid(Oid datum, List *list)
 	else
 		new_head_cell(list);
 
-	lfirst_oid(list_head(list)) = datum;
+	linitial_oid(list) = datum;
 	check_list_invariants(list);
 	return list;
 }

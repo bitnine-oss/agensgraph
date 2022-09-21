@@ -22,8 +22,15 @@ install: all installdirs
 installdirs:
 	$(MKDIR_P) '$(DESTDIR)$(bindir)'
 
+check:
+	$(prove_check)
+
+installcheck:
+	$(prove_installcheck)
+
 uninstall:
 	rm -f '$(DESTDIR)$(bindir)/pg_test_timing$(X)'
 
 clean distclean maintainer-clean:
 	rm -f pg_test_timing$(X) $(OBJS)
+	rm -rf tmp_check

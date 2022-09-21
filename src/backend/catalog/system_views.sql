@@ -796,6 +796,15 @@ CREATE VIEW pg_stat_replication AS
         JOIN pg_stat_get_wal_senders() AS W ON (S.pid = W.pid)
         LEFT JOIN pg_authid AS U ON (S.usesysid = U.oid);
 
+CREATE VIEW pg_stat_replication_slots AS
+    SELECT
+            s.name,
+            s.spill_txns,
+            s.spill_count,
+            s.spill_bytes,
+            s.stats_reset
+    FROM pg_stat_get_replication_slots() AS s;
+
 CREATE VIEW pg_stat_slru AS
     SELECT
             s.name,
@@ -978,6 +987,12 @@ CREATE VIEW pg_stat_bgwriter AS
         pg_stat_get_buf_fsync_backend() AS buffers_backend_fsync,
         pg_stat_get_buf_alloc() AS buffers_alloc,
         pg_stat_get_bgwriter_stat_reset_time() AS stats_reset;
+
+CREATE VIEW pg_stat_wal AS
+    SELECT
+        w.wal_buffers_full,
+        w.stats_reset
+    FROM pg_stat_get_wal() w;
 
 CREATE VIEW pg_stat_progress_analyze AS
     SELECT
@@ -1473,6 +1488,7 @@ REVOKE EXECUTE ON FUNCTION pg_stat_reset_shared(text) FROM public;
 REVOKE EXECUTE ON FUNCTION pg_stat_reset_slru(text) FROM public;
 REVOKE EXECUTE ON FUNCTION pg_stat_reset_single_table_counters(oid) FROM public;
 REVOKE EXECUTE ON FUNCTION pg_stat_reset_single_function_counters(oid) FROM public;
+REVOKE EXECUTE ON FUNCTION pg_stat_reset_replication_slot(text) FROM public;
 
 REVOKE EXECUTE ON FUNCTION lo_import(text) FROM public;
 REVOKE EXECUTE ON FUNCTION lo_import(text, oid) FROM public;

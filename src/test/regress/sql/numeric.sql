@@ -831,7 +831,6 @@ SELECT width_bucket(5.0::float8, 3.0::float8, 4.0::float8, -5);
 SELECT width_bucket(3.5::float8, 3.0::float8, 3.0::float8, 888);
 SELECT width_bucket('NaN', 3.0, 4.0, 888);
 SELECT width_bucket(0::float8, 'NaN', 4.0::float8, 888);
-SELECT width_bucket('inf', 3.0, 4.0, 888);
 SELECT width_bucket(2.0, 3.0, '-inf', 888);
 SELECT width_bucket(0::float8, '-inf', 4.0::float8, 888);
 
@@ -876,8 +875,12 @@ SELECT
     width_bucket(operand_f8, -25, 25, 10) AS wb_5f
     FROM width_bucket_test;
 
--- for float8 only, check positive and negative infinity: we require
+-- Check positive and negative infinity: we require
 -- finite bucket bounds, but allow an infinite operand
+SELECT width_bucket(0.0::numeric, 'Infinity'::numeric, 5, 10); -- error
+SELECT width_bucket(0.0::numeric, 5, '-Infinity'::numeric, 20); -- error
+SELECT width_bucket('Infinity'::numeric, 1, 10, 10),
+       width_bucket('-Infinity'::numeric, 1, 10, 10);
 SELECT width_bucket(0.0::float8, 'Infinity'::float8, 5, 10); -- error
 SELECT width_bucket(0.0::float8, 5, '-Infinity'::float8, 20); -- error
 SELECT width_bucket('Infinity'::float8, 1, 10, 10),
@@ -885,6 +888,15 @@ SELECT width_bucket('Infinity'::float8, 1, 10, 10),
 
 DROP TABLE width_bucket_test;
 
+-- Simple test for roundoff error when results should be exact
+SELECT x, width_bucket(x::float8, 10, 100, 9) as flt,
+       width_bucket(x::numeric, 10, 100, 9) as num
+FROM generate_series(0, 110, 10) x;
+SELECT x, width_bucket(x::float8, 100, 10, 9) as flt,
+       width_bucket(x::numeric, 100, 10, 9) as num
+FROM generate_series(0, 110, 10) x;
+
+--
 -- TO_CHAR()
 --
 SELECT '' AS to_char_1, to_char(val, '9G999G999G999G999G999')

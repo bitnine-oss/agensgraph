@@ -27,7 +27,7 @@
    <command>ps</command>, <command>top</command>, <command>iostat</command>, and <command>vmstat</command>.
    Also, once one has identified a
    poorly-performing query, further investigation might be needed using
-   <productname>PostgreSQL</productname>'s <xref linkend="sql-explain"/> command.
+   <productname>PostgreSQL</productname>'s <link linkend="sql-explain"><command>EXPLAIN</command></link> command.
    <xref linkend="using-explain"/> discusses <command>EXPLAIN</command>
    and other methods for understanding the behavior of an individual
    query.
@@ -315,6 +315,15 @@ postgres   27093  0.0  0.0  30096  2752 ?        Ss   11:34   0:00 postgres: ser
      </row>
 
      <row>
+      <entry><structname>pg_stat_replication_slots</structname><indexterm><primary>pg_stat_replication_slots</primary></indexterm></entry>
+      <entry>One row per replication slot, showing statistics about
+       replication slot usage.
+       See <link linkend="monitoring-pg-stat-replication-slots-view">
+       <structname>pg_stat_replication_slots</structname></link> for details.
+      </entry>
+     </row>
+
+     <row>
       <entry><structname>pg_stat_wal_receiver</structname><indexterm><primary>pg_stat_wal_receiver</primary></indexterm></entry>
       <entry>Only one row, showing statistics about the WAL receiver from
        that receiver's connected server.
@@ -422,6 +431,14 @@ postgres   27093  0.0  0.0  30096  2752 ?        Ss   11:34   0:00 postgres: ser
        <link linkend="monitoring-pg-stat-bgwriter-view">
        <structname>pg_stat_bgwriter</structname></link> for details.
      </entry>
+     </row>
+
+     <row>
+      <entry><structname>pg_stat_wal</structname><indexterm><primary>pg_stat_wal</primary></indexterm></entry>
+      <entry>One row only, showing statistics about WAL activity. See
+       <link linkend="monitoring-pg-stat-wal-view">
+       <structname>pg_stat_wal</structname></link> for details.
+      </entry>
      </row>
 
      <row>
@@ -2544,6 +2561,88 @@ SELECT pid, wait_event_type, wait_event FROM pg_stat_activity WHERE wait_event i
 
  </sect2>
 
+ <sect2 id="monitoring-pg-stat-replication-slots-view">
+  <title><structname>pg_stat_replication_slots</structname></title>
+
+  <indexterm>
+   <primary>pg_stat_replication_slots</primary>
+  </indexterm>
+
+  <para>
+   The <structname>pg_stat_replication_slots</structname> view will contain
+   one row per logical replication slot, showing statistics about its usage.
+  </para>
+
+  <table id="pg-stat-replication-slots-view" xreflabel="pg_stat_replication_slots">
+   <title><structname>pg_stat_replication_slots</structname> View</title>
+   <tgroup cols="1">
+    <thead>
+     <row>
+      <entry role="catalog_table_entry"><para role="column_definition">
+        Column Type
+       </para>
+       <para>
+        Description
+      </para></entry>
+     </row>
+    </thead>
+
+    <tbody>
+     <row>
+      <entry role="catalog_table_entry"><para role="column_definition">
+        <structfield>name</structfield> <type>text</type>
+       </para>
+       <para>
+        A unique, cluster-wide identifier for the replication slot
+      </para></entry>
+     </row>
+
+     <row>
+      <entry role="catalog_table_entry"><para role="column_definition">
+        <structfield>spill_txns</structfield> <type>bigint</type>
+       </para>
+       <para>
+        Number of transactions spilled to disk after the memory used by
+        logical decoding exceeds <literal>logical_decoding_work_mem</literal>. The
+        counter gets incremented both for toplevel transactions and
+        subtransactions.
+      </para></entry>
+     </row>
+
+     <row>
+      <entry role="catalog_table_entry"><para role="column_definition">
+        <structfield>spill_count</structfield> <type>bigint</type>
+       </para>
+       <para>
+        Number of times transactions were spilled to disk. Transactions
+        may get spilled repeatedly, and this counter gets incremented on every
+        such invocation.
+      </para></entry>
+     </row>
+
+     <row>
+      <entry role="catalog_table_entry"><para role="column_definition">
+        <structfield>spill_bytes</structfield> <type>bigint</type>
+       </para>
+       <para>
+        Amount of decoded transaction data spilled to disk.
+      </para></entry>
+     </row>
+
+     <row>
+      <entry role="catalog_table_entry"><para role="column_definition">
+        <structfield>stats_reset</structfield> <type>timestamp with time zone</type>
+       </para>
+       <para>
+        Time at which these statistics were last reset
+       </para></entry>
+     </row>
+    </tbody>
+   </tgroup>
+  </table>
+
+ </sect2>
+
  <sect2 id="monitoring-pg-stat-wal-receiver-view">
   <title><structname>pg_stat_wal_receiver</structname></title>
 
@@ -3279,6 +3378,56 @@ SELECT pid, wait_event_type, wait_event FROM pg_stat_activity WHERE wait_event i
   </table>
 
  </sect2>
+
+ <sect2 id="monitoring-pg-stat-wal-view">
+   <title><structname>pg_stat_wal</structname></title>
+
+  <indexterm>
+   <primary>pg_stat_wal</primary>
+  </indexterm>
+
+  <para>
+   The <structname>pg_stat_wal</structname> view will always have a
+   single row, containing data about WAL activity of the cluster.
+  </para>
+
+  <table id="pg-stat-wal-view" xreflabel="pg_stat_wal">
+   <title><structname>pg_stat_wal</structname> View</title>
+   <tgroup cols="1">
+    <thead>
+     <row>
+      <entry role="catalog_table_entry"><para role="column_definition">
+       Column Type
+      </para>
+      <para>
+       Description
+      </para></entry>
+     </row>
+    </thead>
+
+    <tbody>
+     <row>
+      <entry role="catalog_table_entry"><para role="column_definition">
+       <structfield>wal_buffers_full</structfield> <type>bigint</type>
+      </para>
+      <para>
+       Number of times WAL data was written to the disk because WAL buffers got full
+      </para></entry>
+     </row>
+
+     <row>
+      <entry role="catalog_table_entry"><para role="column_definition">
+       <structfield>stats_reset</structfield> <type>timestamp with time zone</type>
+      </para>
+      <para>
+       Time at which these statistics were last reset
+      </para></entry>
+     </row>
+     </tbody>
+   </tgroup>
+  </table>
+
+</sect2>
 
  <sect2 id="monitoring-pg-stat-database-view">
   <title><structname>pg_stat_database</structname></title>
@@ -4668,8 +4817,9 @@ SELECT pid, wait_event_type, wait_event FROM pg_stat_activity WHERE wait_event i
         argument.  The argument can be <literal>bgwriter</literal> to reset
         all the counters shown in
         the <structname>pg_stat_bgwriter</structname>
-        view, or <literal>archiver</literal> to reset all the counters shown in
-        the <structname>pg_stat_archiver</structname> view.
+        view, <literal>archiver</literal> to reset all the counters shown in
+        the <structname>pg_stat_archiver</structname> view or <literal>wal</literal>
+        to reset all the counters shown in the <structname>pg_stat_wal</structname> view.
        </para>
        <para>
         This function is restricted to superusers by default, but other users
@@ -4741,6 +4891,27 @@ SELECT pid, wait_event_type, wait_event FROM pg_stat_activity WHERE wait_event i
        <para>
         This function is restricted to superusers by default, but other users
         can be granted EXECUTE to run the function.
+       </para></entry>
+      </row>
+
+      <row>
+        <entry role="func_table_entry"><para role="func_signature">
+        <indexterm>
+          <primary>pg_stat_reset_replication_slot</primary>
+        </indexterm>
+        <function>pg_stat_reset_replication_slot</function> ( <type>text</type> )
+        <returnvalue>void</returnvalue>
+       </para>
+       <para>
+         Resets statistics to zero for a single replication slot, or for all
+         replication slots in the cluster.  The argument can be either the name
+         of the slot to reset the stats or NULL.  If the argument is NULL, all
+         counters shown in the <structname>pg_stat_replication_slots</structname>
+         view for all replication slots are reset.
+       </para>
+       <para>
+         This function is restricted to superusers by default, but other users
+         can be granted EXECUTE to run the function.
        </para></entry>
       </row>
      </tbody>
@@ -5219,8 +5390,8 @@ SELECT pg_stat_get_backend_pid(s.backendid) AS pid,
   <note>
    <para>
     Note that when <command>ANALYZE</command> is run on a partitioned table,
-    all of its partitions are also recursively analyzed as also mentioned in
-    <xref linkend="sql-analyze"/>.  In that case, <command>ANALYZE</command>
+    all of its partitions are also recursively analyzed.
+    In that case, <command>ANALYZE</command>
     progress is reported first for the parent table, whereby its inheritance
     statistics are collected, followed by that for each partition.
    </para>
@@ -6089,8 +6260,8 @@ SELECT pg_stat_get_backend_pid(s.backendid) AS pid,
       <entry><literal>waiting for checkpoint to finish</literal></entry>
       <entry>
        The WAL sender process is currently performing
-       <function>pg_start_backup</function> to set up for
-       taking a base backup, and waiting for backup start
+       <function>pg_start_backup</function> to prepare to
+       take a base backup, and waiting for the start-of-backup
        checkpoint to finish.
       </entry>
      </row>

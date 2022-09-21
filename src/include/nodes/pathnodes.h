@@ -122,8 +122,6 @@ typedef struct PlannerGlobal
 
 	List	   *resultRelations;	/* "flat" list of integer RT indexes */
 
-	List	   *rootResultRelations;	/* "flat" list of integer RT indexes */
-
 	List	   *appendRelations;	/* "flat" list of AppendRelInfos */
 
 	List	   *relationOids;	/* OIDs of relations the plan depends on */
@@ -349,6 +347,7 @@ struct PlannerInfo
 	bool		hasHavingQual;	/* true if havingQual was non-null */
 	bool		hasPseudoConstantQuals; /* true if any RestrictInfo has
 										 * pseudoconstant = true */
+	bool		hasAlternativeSubPlans; /* true if we've made any of those */
 	bool		hasRecursion;	/* true if planning a recursive WITH item */
 	bool		hasVLEJoinRTE;  /* has VLE join or a child node of VLE join */
 

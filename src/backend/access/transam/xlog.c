@@ -940,6 +940,7 @@ static bool CheckForStandbyTrigger(void);
 #ifdef WAL_DEBUG
 static void xlog_outrec(StringInfo buf, XLogReaderState *record);
 #endif
+static void xlog_block_info(StringInfo buf, XLogReaderState *record);
 static void xlog_outdesc(StringInfo buf, XLogReaderState *record);
 static void pg_start_backup_callback(int code, Datum arg);
 static void pg_stop_backup_callback(int code, Datum arg);
@@ -2195,6 +2196,7 @@ AdvanceXLInsertBuffer(XLogRecPtr upto, bool opportunistic)
 					WriteRqst.Flush = 0;
 					XLogWrite(WriteRqst, false);
 					LWLockRelease(WALWriteLock);
+					WalStats.m_wal_buffers_full++;
 					TRACE_POSTGRESQL_WAL_BUFFER_WRITE_DIRTY_DONE();
 				}
 				/* Re-acquire WALBufMappingLock and retry */
@@ -8528,10 +8530,6 @@ ShutdownXLOG(int code, Datum arg)
 
 		CreateCheckPoint(CHECKPOINT_IS_SHUTDOWN | CHECKPOINT_IMMEDIATE);
 	}
-	ShutdownCLOG();
-	ShutdownCommitTs();
-	ShutdownSUBTRANS();
-	ShutdownMultiXact();
 }
 
 /*
@@ -9176,17 +9174,29 @@ CreateEndOfRecoveryRecord(void)
 static void
 CheckPointGuts(XLogRecPtr checkPointRedo, int flags)
 {
+	CheckPointRelationMap();
+	CheckPointReplicationSlots();
+	CheckPointSnapBuild();
+	CheckPointLogicalRewriteHeap();
+	CheckPointReplicationOrigin();
+
+	/* Write out all dirty data in SLRUs and the main buffer pool */
+	TRACE_POSTGRESQL_BUFFER_CHECKPOINT_START(flags);
+	CheckpointStats.ckpt_write_t = GetCurrentTimestamp();
 	CheckPointCLOG();
 	CheckPointCommitTs();
 	CheckPointSUBTRANS();
 	CheckPointMultiXact();
 	CheckPointPredicate();
-	CheckPointRelationMap();
-	CheckPointReplicationSlots();
-	CheckPointSnapBuild();
-	CheckPointLogicalRewriteHeap();
-	CheckPointBuffers(flags);	/* performs all required fsyncs */
-	CheckPointReplicationOrigin();
+	CheckPointBuffers(flags);
+
+	/* Perform all queued up fsyncs */
+	TRACE_POSTGRESQL_BUFFER_CHECKPOINT_SYNC_START();
+	CheckpointStats.ckpt_sync_t = GetCurrentTimestamp();
+	ProcessSyncRequests();
+	CheckpointStats.ckpt_sync_end_t = GetCurrentTimestamp();
+	TRACE_POSTGRESQL_BUFFER_CHECKPOINT_DONE();
+
 	/* We deliberately delay 2PC checkpointing as long as possible */
 	CheckPointTwoPhase(checkPointRedo);
 }
@@ -10240,8 +10250,6 @@ xlog_redo(XLogReaderState *record)
 static void
 xlog_outrec(StringInfo buf, XLogReaderState *record)
 {
-	int			block_id;
-
 	appendStringInfo(buf, "prev %X/%X; xid %u",
 					 (uint32) (XLogRecGetPrev(record) >> 32),
 					 (uint32) XLogRecGetPrev(record),
@@ -10249,6 +10257,19 @@ xlog_outrec(StringInfo buf, XLogReaderState *record)
 
 	appendStringInfo(buf, "; len %u",
 					 XLogRecGetDataLen(record));
+
+	xlog_block_info(buf, record);
+}
+#endif							/* WAL_DEBUG */
+
+/*
+ * Returns a string giving information about all the blocks in an
+ * XLogRecord.
+ */
+static void
+xlog_block_info(StringInfo buf, XLogReaderState *record)
+{
+	int			block_id;
 
 	/* decode block references */
 	for (block_id = 0; block_id <= record->max_block_id; block_id++)
@@ -10276,7 +10297,6 @@ xlog_outrec(StringInfo buf, XLogReaderState *record)
 			appendStringInfoString(buf, " FPW");
 	}
 }
-#endif							/* WAL_DEBUG */
 
 /*
  * Returns a string describing an XLogRecord, consisting of its identity
@@ -11757,6 +11777,7 @@ rm_redo_error_callback(void *arg)
 
 	initStringInfo(&buf);
 	xlog_outdesc(&buf, record);
+	xlog_block_info(&buf, record);
 
 	/* translator: %s is a WAL record description */
 	errcontext("WAL redo at %X/%X for %s",

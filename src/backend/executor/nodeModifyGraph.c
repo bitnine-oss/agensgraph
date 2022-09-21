@@ -55,6 +55,8 @@ ExecInitModifyGraph(ModifyGraph *mgplan, EState *estate, int eflags)
 {
 	TupleTableSlot *slot;
 	ModifyGraphState *mgstate;
+	ResultRelInfo *resultRelInfo;
+	ListCell *l;
 
 	Assert(!(eflags & (EXEC_FLAG_BACKWARD | EXEC_FLAG_MARK)));
 
@@ -92,9 +94,18 @@ ExecInitModifyGraph(ModifyGraph *mgplan, EState *estate, int eflags)
 	mgstate->pattern = ExecInitGraphPattern(mgplan->pattern, mgstate);
 	mgstate->exprs = ExecInitGraphDelExprs(mgplan->exprs, mgstate);
 
-	/* Initialize from InitPlan. we just uses created resultRelInfo. */
-	mgstate->resultRelInfo = estate->es_result_relations + mgplan->resultRelIndex;
 	mgstate->numResultRelInfo = list_length(mgplan->resultRelations);
+	mgstate->resultRelInfo = (ResultRelInfo *)
+			palloc(mgstate->numResultRelInfo * sizeof(ResultRelInfo));
+
+	resultRelInfo = mgstate->resultRelInfo;
+	foreach(l, mgplan->resultRelations)
+	{
+		Index		resultRelation = lfirst_int(l);
+		ExecInitResultRelation(estate, resultRelInfo, resultRelation);
+		resultRelInfo++;
+	}
+
 	openResultRelInfosIndices(mgstate);
 
 	/* For Set Operation. */
@@ -151,7 +162,8 @@ ExecInitModifyGraph(ModifyGraph *mgplan, EState *estate, int eflags)
 					ResultRelInfo *edge_label_resultRelInfos =
 					(ResultRelInfo *) palloc(
 											 num_edge_labels * sizeof(ResultRelInfo));
-					ResultRelInfo *resultRelInfo = edge_label_resultRelInfos;
+					ResultRelInfo *resultRelInfoForDel =
+							edge_label_resultRelInfos;
 					ListCell   *lc;
 
 					foreach(lc, edge_label_oids)
@@ -159,13 +171,13 @@ ExecInitModifyGraph(ModifyGraph *mgplan, EState *estate, int eflags)
 						Oid			label_oid = lfirst_oid(lc);
 						Relation	relation = table_open(label_oid, RowExclusiveLock);
 
-						InitResultRelInfo(resultRelInfo,
+						InitResultRelInfo(resultRelInfoForDel,
 										  relation,
 										  0,	/* dummy rangetable index */
 										  NULL,
 										  0);
-						ExecOpenIndices(resultRelInfo, false);
-						resultRelInfo++;
+						ExecOpenIndices(resultRelInfoForDel, false);
+						resultRelInfoForDel++;
 					}
 
 					deleteGraphState->edge_labels = edge_label_resultRelInfos;

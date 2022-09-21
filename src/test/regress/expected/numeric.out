@@ -1316,10 +1316,8 @@ SELECT width_bucket('NaN', 3.0, 4.0, 888);
 ERROR:  operand, lower bound, and upper bound cannot be NaN
 SELECT width_bucket(0::float8, 'NaN', 4.0::float8, 888);
 ERROR:  operand, lower bound, and upper bound cannot be NaN
-SELECT width_bucket('inf', 3.0, 4.0, 888);
-ERROR:  operand, lower bound, and upper bound cannot be infinity
 SELECT width_bucket(2.0, 3.0, '-inf', 888);
-ERROR:  operand, lower bound, and upper bound cannot be infinity
+ERROR:  lower and upper bounds must be finite
 SELECT width_bucket(0::float8, '-inf', 4.0::float8, 888);
 ERROR:  lower and upper bounds must be finite
 -- normal operation
@@ -1362,8 +1360,19 @@ SELECT
  10.0000000000001 |    6 |     6 |    0 |     0 |    5 |     5 |   21 |    21 |    8 |     8
 (19 rows)
 
--- for float8 only, check positive and negative infinity: we require
+-- Check positive and negative infinity: we require
 -- finite bucket bounds, but allow an infinite operand
+SELECT width_bucket(0.0::numeric, 'Infinity'::numeric, 5, 10); -- error
+ERROR:  lower and upper bounds must be finite
+SELECT width_bucket(0.0::numeric, 5, '-Infinity'::numeric, 20); -- error
+ERROR:  lower and upper bounds must be finite
+SELECT width_bucket('Infinity'::numeric, 1, 10, 10),
+       width_bucket('-Infinity'::numeric, 1, 10, 10);
+ width_bucket | width_bucket 
+--------------+--------------
+           11 |            0
+(1 row)
+
 SELECT width_bucket(0.0::float8, 'Infinity'::float8, 5, 10); -- error
 ERROR:  lower and upper bounds must be finite
 SELECT width_bucket(0.0::float8, 5, '-Infinity'::float8, 20); -- error
@@ -1376,6 +1385,46 @@ SELECT width_bucket('Infinity'::float8, 1, 10, 10),
 (1 row)
 
 DROP TABLE width_bucket_test;
+-- Simple test for roundoff error when results should be exact
+SELECT x, width_bucket(x::float8, 10, 100, 9) as flt,
+       width_bucket(x::numeric, 10, 100, 9) as num
+FROM generate_series(0, 110, 10) x;
+  x  | flt | num 
+-----+-----+-----
+   0 |   0 |   0
+  10 |   1 |   1
+  20 |   2 |   2
+  30 |   3 |   3
+  40 |   4 |   4
+  50 |   5 |   5
+  60 |   6 |   6
+  70 |   7 |   7
+  80 |   8 |   8
+  90 |   9 |   9
+ 100 |  10 |  10
+ 110 |  10 |  10
+(12 rows)
+
+SELECT x, width_bucket(x::float8, 100, 10, 9) as flt,
+       width_bucket(x::numeric, 100, 10, 9) as num
+FROM generate_series(0, 110, 10) x;
+  x  | flt | num 
+-----+-----+-----
+   0 |  10 |  10
+  10 |  10 |  10
+  20 |   9 |   9
+  30 |   8 |   8
+  40 |   7 |   7
+  50 |   6 |   6
+  60 |   5 |   5
+  70 |   4 |   4
+  80 |   3 |   3
+  90 |   2 |   2
+ 100 |   1 |   1
+ 110 |   0 |   0
+(12 rows)
+
+--
 -- TO_CHAR()
 --
 SELECT '' AS to_char_1, to_char(val, '9G999G999G999G999G999')

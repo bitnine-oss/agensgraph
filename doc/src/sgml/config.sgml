@@ -189,7 +189,7 @@ shared_buffers = 128MB
      <filename>postgresql.auto.conf</filename><indexterm><primary>postgresql.auto.conf</primary></indexterm>,
      which has the same format as <filename>postgresql.conf</filename> but
      is intended to be edited automatically, not manually.  This file holds
-     settings provided through the <xref linkend="sql-altersystem"/> command.
+     settings provided through the <link linkend="sql-altersystem"><command>ALTER SYSTEM</command></link> command.
      This file is read whenever <filename>postgresql.conf</filename> is,
      and its settings take effect in the same way.  Settings
      in <filename>postgresql.auto.conf</filename> override those
@@ -221,7 +221,7 @@ shared_buffers = 128MB
      <para>
       <productname>PostgreSQL</productname> provides three SQL
       commands to establish configuration defaults.
-      The already-mentioned <xref linkend="sql-altersystem"/> command
+      The already-mentioned <command>ALTER SYSTEM</command> command
       provides a SQL-accessible means of changing global defaults; it is
       functionally equivalent to editing <filename>postgresql.conf</filename>.
       In addition, there are two commands that allow setting of defaults
@@ -231,14 +231,14 @@ shared_buffers = 128MB
      <itemizedlist>
      <listitem>
       <para>
-       The <xref linkend="sql-alterdatabase"/> command allows global
+       The <link linkend="sql-alterdatabase"><command>ALTER DATABASE</command></link> command allows global
        settings to be overridden on a per-database basis.
       </para>
      </listitem>
 
      <listitem>
       <para>
-       The <xref linkend="sql-alterrole"/> command allows both global and
+       The <link linkend="sql-alterrole"><command>ALTER ROLE</command></link> command allows both global and
        per-database settings to be overridden with user-specific values.
       </para>
      </listitem>
@@ -262,7 +262,7 @@ shared_buffers = 128MB
     <itemizedlist>
      <listitem>
      <para>
-      The <xref linkend="sql-show"/> command allows inspection of the
+      The <link linkend="sql-show"><command>SHOW</command></link> command allows inspection of the
       current value of all parameters.  The corresponding function is
       <function>current_setting(setting_name text)</function>.
      </para>
@@ -270,7 +270,7 @@ shared_buffers = 128MB
 
      <listitem>
       <para>
-       The <xref linkend="sql-set"/> command allows modification of the
+       The <link linkend="sql-set"><command>SET</command></link> command allows modification of the
        current value of those parameters that can be set locally to a
        session; it has no effect on other sessions.
        The corresponding function is
@@ -296,7 +296,7 @@ shared_buffers = 128MB
 
      <listitem>
       <para>
-       Using <xref linkend="sql-update"/> on this view, specifically
+       Using <command>UPDATE</command> on this view, specifically
        updating the <structname>setting</structname> column, is the equivalent
        of issuing <command>SET</command> commands.  For example, the equivalent of
 <programlisting>
@@ -2367,7 +2367,7 @@ include_dir 'conf.d'
         <para>
          When changing this value, consider also adjusting
          <xref linkend="guc-max-parallel-workers"/>,
-         <xref linkend="guc-max-parallel-workers-maintenance"/>, and
+         <xref linkend="guc-max-parallel-maintenance-workers"/>, and
          <xref linkend="guc-max-parallel-workers-per-gather"/>.
         </para>
        </listitem>
@@ -2415,7 +2415,7 @@ include_dir 'conf.d'
        </listitem>
       </varlistentry>
 
-      <varlistentry id="guc-max-parallel-workers-maintenance" xreflabel="max_parallel_maintenance_workers">
+      <varlistentry id="guc-max-parallel-maintenance-workers" xreflabel="max_parallel_maintenance_workers">
        <term><varname>max_parallel_maintenance_workers</varname> (<type>integer</type>)
        <indexterm>
         <primary><varname>max_parallel_maintenance_workers</varname> configuration parameter</primary>
@@ -2464,7 +2464,7 @@ include_dir 'conf.d'
          Sets the maximum number of workers that the system can support for
          parallel operations.  The default value is 8.  When increasing or
          decreasing this value, consider also adjusting
-         <xref linkend="guc-max-parallel-workers-maintenance"/> and
+         <xref linkend="guc-max-parallel-maintenance-workers"/> and
          <xref linkend="guc-max-parallel-workers-per-gather"/>.
          Also, note that a setting for this value which is higher than
          <xref linkend="guc-max-worker-processes"/> will have no effect,
@@ -3813,7 +3813,7 @@ restore_command = 'copy "C:\\server\\archivedir\\%f" "%p"'  # Windows
         servers or streaming base backup clients (i.e., the maximum number of
         simultaneously running WAL sender processes). The default is
         <literal>10</literal>.  The value <literal>0</literal> means
-        replication is disabled.  Abrupt streaming client disconnection might
+        replication is disabled.  Abrupt disconnection of a streaming client might
         leave an orphaned connection slot behind until a timeout is reached,
         so this parameter should be set slightly higher than the maximum
         number of expected clients so disconnected clients can immediately
@@ -3902,9 +3902,9 @@ restore_command = 'copy "C:\\server\\archivedir\\%f" "%p"'  # Windows
         slots</link> are allowed to retain in the <filename>pg_wal</filename>
         directory at checkpoint time.
         If <varname>max_slot_wal_keep_size</varname> is -1 (the default),
-        replication slots retain unlimited amount of WAL files.  If
-        restart_lsn of a replication slot gets behind more than that megabytes
-        from the current LSN, the standby using the slot may no longer be able
+        replication slots may retain an unlimited amount of WAL files.  Otherwise, if
+        restart_lsn of a replication slot falls behind the current LSN by more
+        than the given size, the standby using the slot may no longer be able
         to continue replication due to removal of required WAL files. You
         can see the WAL availability of replication slots
         in <link linkend="view-pg-replication-slots">pg_replication_slots</link>.
@@ -4608,7 +4608,7 @@ ANY <replaceable class="parameter">num_sync</replaceable> ( <replaceable class="
        Better ways to improve the quality of the
        plans chosen by the optimizer include adjusting the planner cost
        constants (see <xref linkend="runtime-config-query-constants"/>),
-       running <xref linkend="sql-analyze"/> manually, increasing
+       running <link linkend="sql-analyze"><command>ANALYZE</command></link> manually, increasing
        the value of the <xref
        linkend="guc-default-statistics-target"/> configuration parameter,
        and increasing the amount of statistics collected for
@@ -6847,9 +6847,9 @@ log_line_prefix = '%m [%p] %q%u@%d/%a '
       </term>
       <listitem>
        <para>
-        If greater than zero, each bind parameter value reported in
-        non-error statement-logging messages is trimmed to this many bytes.
-        Zero disables logging bind parameters with statements.
+        If greater than zero, each bind parameter value logged with a
+        non-error statement-logging message is trimmed to this many bytes.
+        Zero disables logging of bind parameters for non-error statement logs.
         <literal>-1</literal> (the default) allows bind parameters to be
         logged in full.
         If this value is specified without units, it is taken as bytes.
@@ -8095,7 +8095,7 @@ COPY postgres_log FROM '/full/path/to/logfile.csv' WITH csv;
         set it to <literal>replica</literal> when they are applying replicated
         changes.  The effect of that will be that triggers and rules (that
         have not been altered from their default configuration) will not fire
-        on the replica.  See the <xref linkend="sql-altertable"/> clauses
+        on the replica.  See the <link linkend="sql-altertable"><command>ALTER TABLE</command></link> clauses
         <literal>ENABLE TRIGGER</literal> and <literal>ENABLE RULE</literal>
         for more information.
        </para>
@@ -8224,10 +8224,10 @@ COPY postgres_log FROM '/full/path/to/logfile.csv' WITH csv;
         a regular <command>VACUUM</command> in that it visits every page that might
         contain unfrozen XIDs or MXIDs, not just those that might contain dead
         tuples.  The default is 150 million transactions.  Although users can
-        set this value anywhere from zero to two billions, <command>VACUUM</command>
+        set this value anywhere from zero to two billion, <command>VACUUM</command>
         will silently limit the effective value to 95% of
         <xref linkend="guc-autovacuum-freeze-max-age"/>, so that a
-        periodical manual <command>VACUUM</command> has a chance to run before an
+        periodic manual <command>VACUUM</command> has a chance to run before an
         anti-wraparound autovacuum is launched for the table. For more
         information see
         <xref linkend="vacuum-for-wraparound"/>.
@@ -8271,10 +8271,10 @@ COPY postgres_log FROM '/full/path/to/logfile.csv' WITH csv;
         a regular <command>VACUUM</command> in that it visits every page that might
         contain unfrozen XIDs or MXIDs, not just those that might contain dead
         tuples.  The default is 150 million multixacts.
-        Although users can set this value anywhere from zero to two billions,
+        Although users can set this value anywhere from zero to two billion,
         <command>VACUUM</command> will silently limit the effective value to 95% of
         <xref linkend="guc-autovacuum-multixact-freeze-max-age"/>, so that a
-        periodical manual <command>VACUUM</command> has a chance to run before an
+        periodic manual <command>VACUUM</command> has a chance to run before an
         anti-wraparound is launched for the table.
         For more information see <xref linkend="vacuum-for-multixact-wraparound"/>.
        </para>
@@ -8781,7 +8781,7 @@ SET XML OPTION { DOCUMENT | CONTENT };
         This variable specifies one or more shared libraries that are to be
         preloaded at connection start.
         It contains a comma-separated list of library names, where each name
-        is interpreted as for the <xref linkend="sql-load"/> command.
+        is interpreted as for the <link linkend="sql-load"><command>LOAD</command></link> command.
         Whitespace between entries is ignored; surround a library name with
         double quotes if you need to include whitespace or commas in the name.
         The parameter value only takes effect at the start of the connection.
@@ -8832,7 +8832,7 @@ SET XML OPTION { DOCUMENT | CONTENT };
         This variable specifies one or more shared libraries that are to be
         preloaded at connection start.
         It contains a comma-separated list of library names, where each name
-        is interpreted as for the <xref linkend="sql-load"/> command.
+        is interpreted as for the <link linkend="sql-load"><command>LOAD</command></link> command.
         Whitespace between entries is ignored; surround a library name with
         double quotes if you need to include whitespace or commas in the name.
         The parameter value only takes effect at the start of the connection.
@@ -8874,7 +8874,7 @@ SET XML OPTION { DOCUMENT | CONTENT };
         This variable specifies one or more shared libraries to be preloaded at
         server start.
         It contains a comma-separated list of library names, where each name
-        is interpreted as for the <xref linkend="sql-load"/> command.
+        is interpreted as for the <link linkend="sql-load"><command>LOAD</command></link> command.
         Whitespace between entries is ignored; surround a library name with
         double quotes if you need to include whitespace or commas in the name.
         This parameter can only be set at server start.  If a specified
