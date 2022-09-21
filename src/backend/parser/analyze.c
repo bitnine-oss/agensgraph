@@ -1463,9 +1463,8 @@ transformValuesClause(ParseState *pstate, SelectStmt *stmt)
 	for (i = 0; i < sublist_length; i++)
 	{
 		Oid			coltype;
-		int32		coltypmod = -1;
+		int32		coltypmod;
 		Oid			colcoll;
-		bool		first = true;
 
 		coltype = select_common_type(pstate, colexprs[i], "VALUES", NULL);
 
@@ -1475,19 +1474,9 @@ transformValuesClause(ParseState *pstate, SelectStmt *stmt)
 
 			col = coerce_to_common_type(pstate, col, coltype, "VALUES");
 			lfirst(lc) = (void *) col;
-			if (first)
-			{
-				coltypmod = exprTypmod(col);
-				first = false;
-			}
-			else
-			{
-				/* As soon as we see a non-matching typmod, fall back to -1 */
-				if (coltypmod >= 0 && coltypmod != exprTypmod(col))
-					coltypmod = -1;
-			}
 		}
 
+		coltypmod = select_common_typmod(pstate, colexprs[i], coltype);
 		colcoll = select_common_collation(pstate, colexprs[i], true);
 
 		coltypes = lappend_oid(coltypes, coltype);
@@ -2049,8 +2038,6 @@ transformSetOperationTree(ParseState *pstate, SelectStmt *stmt,
 			Node	   *rcolnode = (Node *) rtle->expr;
 			Oid			lcoltype = exprType(lcolnode);
 			Oid			rcoltype = exprType(rcolnode);
-			int32		lcoltypmod = exprTypmod(lcolnode);
-			int32		rcoltypmod = exprTypmod(rcolnode);
 			Node	   *bestexpr;
 			int			bestlocation;
 			Oid			rescoltype;
@@ -2063,11 +2050,6 @@ transformSetOperationTree(ParseState *pstate, SelectStmt *stmt,
 											context,
 											&bestexpr);
 			bestlocation = exprLocation(bestexpr);
-			/* if same type and same typmod, use typmod; else default */
-			if (lcoltype == rcoltype && lcoltypmod == rcoltypmod)
-				rescoltypmod = lcoltypmod;
-			else
-				rescoltypmod = -1;
 
 			/*
 			 * Verify the coercions are actually possible.  If not, we'd fail
@@ -2117,6 +2099,10 @@ transformSetOperationTree(ParseState *pstate, SelectStmt *stmt,
 												 rescoltype, context);
 				rtle->expr = (Expr *) rcolnode;
 			}
+
+			rescoltypmod = select_common_typmod(pstate,
+												list_make2(lcolnode, rcolnode),
+												rescoltype);
 
 			/*
 			 * Select common collation.  A common collation is required for
@@ -2328,7 +2314,6 @@ transformUpdateTargetList(ParseState *pstate, List *origTlist)
 	RangeTblEntry *target_rte;
 	ListCell   *orig_tl;
 	ListCell   *tl;
-	TupleDesc	tupdesc = pstate->p_target_relation->rd_att;
 
 	tlist = transformTargetList(pstate, origTlist,
 								EXPR_KIND_UPDATE_SOURCE);
@@ -2387,39 +2372,7 @@ transformUpdateTargetList(ParseState *pstate, List *origTlist)
 	if (orig_tl != NULL)
 		elog(ERROR, "UPDATE target count mismatch --- internal error");
 
-	fill_extraUpdatedCols(target_rte, tupdesc);
-
 	return tlist;
-}
-
-/*
- * Record in extraUpdatedCols generated columns referencing updated base
- * columns.
- */
-void
-fill_extraUpdatedCols(RangeTblEntry *target_rte, TupleDesc tupdesc)
-{
-	if (tupdesc->constr &&
-		tupdesc->constr->has_generated_stored)
-	{
-		for (int i = 0; i < tupdesc->constr->num_defval; i++)
-		{
-			AttrDefault defval = tupdesc->constr->defval[i];
-			Node	   *expr;
-			Bitmapset  *attrs_used = NULL;
-
-			/* skip if not generated column */
-			if (!TupleDescAttr(tupdesc, defval.adnum - 1)->attgenerated)
-				continue;
-
-			expr = stringToNode(defval.adbin);
-			pull_varattnos(expr, 1, &attrs_used);
-
-			if (bms_overlap(target_rte->updatedCols, attrs_used))
-				target_rte->extraUpdatedCols = bms_add_member(target_rte->extraUpdatedCols,
-															  defval.adnum - FirstLowInvalidHeapAttributeNumber);
-		}
-	}
 }
 
 /*

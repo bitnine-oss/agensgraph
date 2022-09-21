@@ -416,7 +416,8 @@ transformCypherSubPattern(ParseState *pstate, CypherSubPattern *subpat)
 		FuncCall   *count;
 		TargetEntry *te;
 
-		count = makeFuncCall(list_make1(makeString("count")), NIL, -1);
+		count = makeFuncCall(list_make1(makeString("count")), NIL,
+							 COERCE_EXPLICIT_CALL, -1);
 		count->agg_star = true;
 
 		pstate->p_next_resno = 1;
@@ -1124,7 +1125,8 @@ transformCypherUnwindClause(ParseState *pstate, CypherClause *clause)
 						format_type_be(type)),
 				 parser_errposition(pstate, targetloc)));
 	}
-	unwind = makeFuncCall(list_make1(makeString(funcname)), NIL, -1);
+	unwind = makeFuncCall(list_make1(makeString(funcname)), NIL,
+						  COERCE_EXPLICIT_CALL, -1);
 
 	/*
 	 * The logic here is the same with the one in transformTargetEntry(). We
@@ -2262,7 +2264,8 @@ setInitialVidForVLE(ParseState *pstate, CypherRel *crel, Node *vertex,
 		cref->location = -1;
 
 		vid = (Node *) makeFuncCall(list_make1(makeString(AG_ELEM_ID)),
-									list_make1(cref), -1);
+									list_make1(cref),
+									COERCE_EXPLICIT_CALL, -1);
 
 		pstate->p_vle_initial_vid = vid;
 		pstate->p_vle_initial_nsitem = NULL;
@@ -3230,7 +3233,8 @@ addQualUniqueEdges(ParseState *pstate, Node *qual, List *ueids, List *ueidarrs)
 	ListCell   *lea1;
 	FuncCall   *arroverlap;
 
-	arrpos = makeFuncCall(list_make1(makeString("array_position")), NIL, -1);
+	arrpos = makeFuncCall(list_make1(makeString("array_position")), NIL,
+						  COERCE_EXPLICIT_CALL, -1);
 
 	foreach(le1, ueids)
 	{
@@ -3268,7 +3272,8 @@ addQualUniqueEdges(ParseState *pstate, Node *qual, List *ueids, List *ueidarrs)
 		}
 	}
 
-	arroverlap = makeFuncCall(list_make1(makeString("arrayoverlap")), NIL, -1);
+	arroverlap = makeFuncCall(list_make1(makeString("arrayoverlap")), NIL,
+							  COERCE_EXPLICIT_CALL, -1);
 
 	foreach(lea1, ueidarrs)
 	{
@@ -3909,7 +3914,8 @@ resolveFutureVertex(ParseState *pstate, FutureVertex *fv, bool ignore_nullable)
 
 	vertex = getColumnVar(pstate, nsitem, nsitem->p_rte->eref->aliasname);
 
-	sel_id = makeFuncCall(list_make1(makeString(AG_ELEM_ID)), NIL, -1);
+	sel_id = makeFuncCall(list_make1(makeString(AG_ELEM_ID)), NIL,
+						  COERCE_EXPLICIT_CALL, -1);
 	id = ParseFuncOrColumn(pstate, sel_id->funcname, list_make1(vertex),
 						   pstate->p_last_srf, sel_id, false, -1);
 
@@ -4451,6 +4457,7 @@ transformSetProp(ParseState *pstate, CypherSetProp *sp, bool is_remove,
 			FuncCall   *concat;
 
 			concat = makeFuncCall(list_make1(makeString("jsonb_concat")), NIL,
+								  COERCE_EXPLICIT_CALL,
 								  -1);
 			prop_map = ParseFuncOrColumn(pstate, concat->funcname,
 										 list_make2(prop_map, expr),
@@ -4474,7 +4481,7 @@ transformSetProp(ParseState *pstate, CypherSetProp *sp, bool is_remove,
 					 parser_errposition(pstate, exprLocation(elem))));
 
 		delete = makeFuncCall(list_make1(makeString("jsonb_delete_path")),
-							  NIL, -1);
+							  NIL, COERCE_EXPLICIT_CALL, -1);
 		del_prop = ParseFuncOrColumn(pstate, delete->funcname,
 									 list_make2(prop_map, path),
 									 pstate->p_last_srf, delete, false, -1);
@@ -4498,7 +4505,8 @@ transformSetProp(ParseState *pstate, CypherSetProp *sp, bool is_remove,
 				expr = (Node *) makeConst(UNKNOWNOID, -1, InvalidOid, -2,
 										  CStringGetDatum("null"), false, false);
 
-			set = makeFuncCall(list_make1(makeString("jsonb_set")), NIL, -1);
+			set = makeFuncCall(list_make1(makeString("jsonb_set")), NIL,
+							   COERCE_EXPLICIT_CALL, -1);
 			set_prop = ParseFuncOrColumn(pstate, set->funcname,
 										 list_make3(prop_map, path, expr),
 										 pstate->p_last_srf, set, false, -1);
@@ -5208,7 +5216,8 @@ transformDeleteJoinNSItem(ParseState *pstate, CypherClause *clause)
 			FuncCall   *nodes;
 
 			nodes = makeFuncCall(list_make1(makeString("nodes")),
-								 list_make1(pexpr), -1);
+								 list_make1(pexpr),
+								 COERCE_EXPLICIT_CALL, -1);
 
 			vertices_nodes = verticesConcat(vertices_nodes, (Node *) nodes);
 		}
@@ -5288,7 +5297,8 @@ verticesConcat(Node *vertices, Node *expr)
 		return vertices;
 
 	arrcat = makeFuncCall(list_make1(makeString("array_cat")),
-						  list_make2(vertices, expr), -1);
+						  list_make2(vertices, expr),
+						  COERCE_EXPLICIT_CALL, -1);
 
 	return (Node *) arrcat;
 }
@@ -5347,7 +5357,8 @@ makeUnnestVertices(Node *vertices)
 	RangeFunction *rf;
 
 	unnest = makeFuncCall(list_make1(makeString("unnest")),
-						  list_make1(vertices), -1);
+						  list_make1(vertices),
+						  COERCE_EXPLICIT_CALL, -1);
 
 	rf = makeNode(RangeFunction);
 	rf->lateral = false;
@@ -5856,7 +5867,8 @@ stripNullKeys(ParseState *pstate, Node *properties)
 	FuncCall   *strip;
 
 	/* keys with NULL value is not allowed */
-	strip = makeFuncCall(list_make1(makeString("jsonb_strip_nulls")), NIL, -1);
+	strip = makeFuncCall(list_make1(makeString("jsonb_strip_nulls")), NIL,
+						 COERCE_EXPLICIT_CALL, -1);
 
 	return ParseFuncOrColumn(pstate, strip->funcname, list_make1(properties),
 							 pstate->p_last_srf, strip, false, -1);

@@ -846,9 +846,6 @@ InitPlan(QueryDesc *queryDesc, int eflags)
 
 	estate->es_plannedstmt = plannedstmt;
 
-	/* es_result_relation_info is NULL except when within ModifyTable */
-	estate->es_result_relation_info = NULL;
-
 	/*
 	 * Next, build the ExecRowMark array from the PlanRowMark(s), if any.
 	 */
@@ -1265,7 +1262,10 @@ InitResultRelInfo(ResultRelInfo *resultRelInfo,
 	resultRelInfo->ri_TrigOldSlot = NULL;
 	resultRelInfo->ri_TrigNewSlot = NULL;
 	resultRelInfo->ri_PartitionRoot = partition_root;
-	resultRelInfo->ri_PartitionInfo = NULL; /* may be set later */
+	resultRelInfo->ri_RootToPartitionMap = NULL;	/* set by
+													 * ExecInitRoutingInfo */
+	resultRelInfo->ri_PartitionTupleSlot = NULL;	/* ditto */
+	resultRelInfo->ri_ChildToRootMap = NULL;
 	resultRelInfo->ri_CopyMultiInsertBuffer = NULL;
 }
 
@@ -2712,8 +2712,7 @@ EvalPlanQualStart(EPQState *epqstate, Plan *planTree)
 	 * ResultRelInfos needed by subplans are initialized from scratch when the
 	 * subplans themselves are initialized.
 	 */
-	parentestate->es_result_relations = NULL;
-	/* es_result_relation_info must NOT be copied */
+	rcestate->es_result_relations = NULL;
 	/* es_trig_target_relations must NOT be copied */
 	rcestate->es_top_eflags = parentestate->es_top_eflags;
 	rcestate->es_instrument = parentestate->es_instrument;

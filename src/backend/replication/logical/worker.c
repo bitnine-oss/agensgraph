@@ -81,8 +81,6 @@
 #include "miscadmin.h"
 #include "nodes/makefuncs.h"
 #include "optimizer/optimizer.h"
-#include "parser/analyze.h"
-#include "parser/parse_relation.h"
 #include "pgstat.h"
 #include "postmaster/bgworker.h"
 #include "postmaster/interrupt.h"
@@ -1174,7 +1172,6 @@ apply_handle_insert(StringInfo s)
 										&TTSOpsVirtual);
 	resultRelInfo = makeNode(ResultRelInfo);
 	InitResultRelInfo(resultRelInfo, rel->localrel, 1, NULL, 0);
-	estate->es_result_relation_info = resultRelInfo;
 
 	/* Input functions may need an active snapshot, so get one */
 	PushActiveSnapshot(GetTransactionSnapshot());
@@ -1214,7 +1211,7 @@ apply_handle_insert_internal(ResultRelInfo *relinfo,
 	ExecOpenIndices(relinfo, false);
 
 	/* Do the insert. */
-	ExecSimpleRelationInsert(estate, remoteslot);
+	ExecSimpleRelationInsert(relinfo, estate, remoteslot);
 
 	/* Cleanup. */
 	ExecCloseIndices(relinfo);
@@ -1300,7 +1297,6 @@ apply_handle_update(StringInfo s)
 										&TTSOpsVirtual);
 	resultRelInfo = makeNode(ResultRelInfo);
 	InitResultRelInfo(resultRelInfo, rel->localrel, 1, NULL, 0);
-	estate->es_result_relation_info = resultRelInfo;
 
 	/*
 	 * Populate updatedCols so that per-column triggers can fire.  This could
@@ -1325,7 +1321,8 @@ apply_handle_update(StringInfo s)
 		}
 	}
 
-	fill_extraUpdatedCols(target_rte, RelationGetDescr(rel->localrel));
+	/* Also populate extraUpdatedCols, in case we have generated columns */
+	fill_extraUpdatedCols(target_rte, rel->localrel);
 
 	PushActiveSnapshot(GetTransactionSnapshot());
 
@@ -1392,7 +1389,8 @@ apply_handle_update_internal(ResultRelInfo *relinfo,
 		EvalPlanQualSetSlot(&epqstate, remoteslot);
 
 		/* Do the actual update. */
-		ExecSimpleRelationUpdate(estate, &epqstate, localslot, remoteslot);
+		ExecSimpleRelationUpdate(relinfo, estate, &epqstate, localslot,
+								 remoteslot);
 	}
 	else
 	{
@@ -1455,7 +1453,6 @@ apply_handle_delete(StringInfo s)
 										&TTSOpsVirtual);
 	resultRelInfo = makeNode(ResultRelInfo);
 	InitResultRelInfo(resultRelInfo, rel->localrel, 1, NULL, 0);
-	estate->es_result_relation_info = resultRelInfo;
 
 	PushActiveSnapshot(GetTransactionSnapshot());
 
@@ -1508,7 +1505,7 @@ apply_handle_delete_internal(ResultRelInfo *relinfo, EState *estate,
 		EvalPlanQualSetSlot(&epqstate, localslot);
 
 		/* Do the actual delete. */
-		ExecSimpleRelationDelete(estate, &epqstate, localslot);
+		ExecSimpleRelationDelete(relinfo, estate, &epqstate, localslot);
 	}
 	else
 	{
@@ -1574,7 +1571,6 @@ apply_handle_tuple_routing(ResultRelInfo *relinfo,
 	ResultRelInfo *partrelinfo;
 	Relation	partrel;
 	TupleTableSlot *remoteslot_part;
-	PartitionRoutingInfo *partinfo;
 	TupleConversionMap *map;
 	MemoryContext oldctx;
 
@@ -1601,11 +1597,10 @@ apply_handle_tuple_routing(ResultRelInfo *relinfo,
 	 * partition's rowtype. Convert if needed or just copy, using a dedicated
 	 * slot to store the tuple in any case.
 	 */
-	partinfo = partrelinfo->ri_PartitionInfo;
-	remoteslot_part = partinfo->pi_PartitionTupleSlot;
+	remoteslot_part = partrelinfo->ri_PartitionTupleSlot;
 	if (remoteslot_part == NULL)
 		remoteslot_part = table_slot_create(partrel, &estate->es_tupleTable);
-	map = partinfo->pi_RootToPartitionMap;
+	map = partrelinfo->ri_RootToPartitionMap;
 	if (map != NULL)
 		remoteslot_part = execute_attr_map_slot(map->attrMap, remoteslot,
 												remoteslot_part);
@@ -1616,7 +1611,6 @@ apply_handle_tuple_routing(ResultRelInfo *relinfo,
 	}
 	MemoryContextSwitchTo(oldctx);
 
-	estate->es_result_relation_info = partrelinfo;
 	switch (operation)
 	{
 		case CMD_INSERT:
@@ -1697,8 +1691,8 @@ apply_handle_tuple_routing(ResultRelInfo *relinfo,
 					ExecOpenIndices(partrelinfo, false);
 
 					EvalPlanQualSetSlot(&epqstate, remoteslot_part);
-					ExecSimpleRelationUpdate(estate, &epqstate, localslot,
-											 remoteslot_part);
+					ExecSimpleRelationUpdate(partrelinfo, estate, &epqstate,
+											 localslot, remoteslot_part);
 					ExecCloseIndices(partrelinfo);
 					EvalPlanQualEnd(&epqstate);
 				}
@@ -1739,7 +1733,6 @@ apply_handle_tuple_routing(ResultRelInfo *relinfo,
 					Assert(partrelinfo_new != partrelinfo);
 
 					/* DELETE old tuple found in the old partition. */
-					estate->es_result_relation_info = partrelinfo;
 					apply_handle_delete_internal(partrelinfo, estate,
 												 localslot,
 												 &relmapentry->remoterel);
@@ -1752,12 +1745,11 @@ apply_handle_tuple_routing(ResultRelInfo *relinfo,
 					 */
 					oldctx = MemoryContextSwitchTo(GetPerTupleMemoryContext(estate));
 					partrel = partrelinfo_new->ri_RelationDesc;
-					partinfo = partrelinfo_new->ri_PartitionInfo;
-					remoteslot_part = partinfo->pi_PartitionTupleSlot;
+					remoteslot_part = partrelinfo_new->ri_PartitionTupleSlot;
 					if (remoteslot_part == NULL)
 						remoteslot_part = table_slot_create(partrel,
 															&estate->es_tupleTable);
-					map = partinfo->pi_RootToPartitionMap;
+					map = partrelinfo_new->ri_RootToPartitionMap;
 					if (map != NULL)
 					{
 						remoteslot_part = execute_attr_map_slot(map->attrMap,
@@ -1771,7 +1763,6 @@ apply_handle_tuple_routing(ResultRelInfo *relinfo,
 						slot_getallattrs(remoteslot);
 					}
 					MemoryContextSwitchTo(oldctx);
-					estate->es_result_relation_info = partrelinfo_new;
 					apply_handle_insert_internal(partrelinfo_new, estate,
 												 remoteslot_part);
 				}
@@ -1905,67 +1896,66 @@ apply_handle_truncate(StringInfo s)
 static void
 apply_dispatch(StringInfo s)
 {
-	char		action = pq_getmsgbyte(s);
+	LogicalRepMsgType action = pq_getmsgbyte(s);
 
 	switch (action)
 	{
-			/* BEGIN */
-		case 'B':
+		case LOGICAL_REP_MSG_BEGIN:
 			apply_handle_begin(s);
-			break;
-			/* COMMIT */
-		case 'C':
+			return;
+
+		case LOGICAL_REP_MSG_COMMIT:
 			apply_handle_commit(s);
-			break;
-			/* INSERT */
-		case 'I':
+			return;
+
+		case LOGICAL_REP_MSG_INSERT:
 			apply_handle_insert(s);
-			break;
-			/* UPDATE */
-		case 'U':
+			return;
+
+		case LOGICAL_REP_MSG_UPDATE:
 			apply_handle_update(s);
-			break;
-			/* DELETE */
-		case 'D':
+			return;
+
+		case LOGICAL_REP_MSG_DELETE:
 			apply_handle_delete(s);
-			break;
-			/* TRUNCATE */
-		case 'T':
+			return;
+
+		case LOGICAL_REP_MSG_TRUNCATE:
 			apply_handle_truncate(s);
-			break;
-			/* RELATION */
-		case 'R':
+			return;
+
+		case LOGICAL_REP_MSG_RELATION:
 			apply_handle_relation(s);
-			break;
-			/* TYPE */
-		case 'Y':
+			return;
+
+		case LOGICAL_REP_MSG_TYPE:
 			apply_handle_type(s);
-			break;
-			/* ORIGIN */
-		case 'O':
+			return;
+
+		case LOGICAL_REP_MSG_ORIGIN:
 			apply_handle_origin(s);
-			break;
-			/* STREAM START */
-		case 'S':
+			return;
+
+		case LOGICAL_REP_MSG_STREAM_START:
 			apply_handle_stream_start(s);
-			break;
-			/* STREAM END */
-		case 'E':
+			return;
+
+		case LOGICAL_REP_MSG_STREAM_END:
 			apply_handle_stream_stop(s);
-			break;
-			/* STREAM ABORT */
-		case 'A':
+			return;
+
+		case LOGICAL_REP_MSG_STREAM_ABORT:
 			apply_handle_stream_abort(s);
-			break;
-			/* STREAM COMMIT */
-		case 'c':
+			return;
+
+		case LOGICAL_REP_MSG_STREAM_COMMIT:
 			apply_handle_stream_commit(s);
-			break;
-		default:
-			ereport(ERROR,
-					(errcode(ERRCODE_PROTOCOL_VIOLATION),
-					 errmsg("invalid logical replication message type \"%c\"", action)));
+			return;
 	}
+
+	ereport(ERROR,
+			(errcode(ERRCODE_PROTOCOL_VIOLATION),
+			 errmsg("invalid logical replication message type \"%c\"", action)));
 }
 
 /*
@@ -2065,6 +2055,7 @@ LogicalRepApplyLoop(XLogRecPtr last_received)
 {
 	TimestampTz last_recv_timestamp = GetCurrentTimestamp();
 	bool		ping_sent = false;
+	TimeLineID	tli;
 
 	/*
 	 * Init the ApplyMessageContext which we clean up after each replication
@@ -2206,12 +2197,7 @@ LogicalRepApplyLoop(XLogRecPtr last_received)
 
 		/* Check if we need to exit the streaming loop. */
 		if (endofstream)
-		{
-			TimeLineID	tli;
-
-			walrcv_endstreaming(wrconn, &tli);
 			break;
-		}
 
 		/*
 		 * Wait for more data or latch.  If we have unflushed transactions,
@@ -2288,6 +2274,9 @@ LogicalRepApplyLoop(XLogRecPtr last_received)
 			send_feedback(last_received, requestReply, requestReply);
 		}
 	}
+
+	/* All done */
+	walrcv_endstreaming(wrconn, &tli);
 }
 
 /*
@@ -3029,10 +3018,8 @@ ApplyWorkerMain(Datum main_arg)
 		/* This is table synchronization worker, call initial sync. */
 		syncslotname = LogicalRepSyncTableStart(&origin_startpos);
 
-		/* The slot name needs to be allocated in permanent memory context. */
-		oldctx = MemoryContextSwitchTo(ApplyContext);
-		myslotname = pstrdup(syncslotname);
-		MemoryContextSwitchTo(oldctx);
+		/* allocate slot name in long-lived context */
+		myslotname = MemoryContextStrdup(ApplyContext, syncslotname);
 
 		pfree(syncslotname);
 	}
@@ -3076,7 +3063,6 @@ ApplyWorkerMain(Datum main_arg)
 		 * does some initializations on the upstream so let's still call it.
 		 */
 		(void) walrcv_identify_system(wrconn, &startpointTLI);
-
 	}
 
 	/*

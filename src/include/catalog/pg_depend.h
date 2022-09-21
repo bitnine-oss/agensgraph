@@ -61,6 +61,9 @@ CATALOG(pg_depend,2608,DependRelationId)
 	 * field.  See DependencyType in catalog/dependency.h.
 	 */
 	char		deptype;		/* see codes in dependency.h */
+#ifdef CATALOG_VARLEN
+	text		refobjversion;	/* version of referenced object */
+#endif
 } FormData_pg_depend;
 
 /* ----------------

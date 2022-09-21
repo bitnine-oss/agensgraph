@@ -42,6 +42,7 @@
 #include "access/xact.h"
 #include "access/xlog.h"
 #include "catalog/catalog.h"
+#include "catalog/index.h"
 #include "catalog/indexing.h"
 #include "catalog/namespace.h"
 #include "catalog/partition.h"
@@ -1761,7 +1762,7 @@ RelationInitTableAccessMethod(Relation relation)
 		 * seem prudent to show that in the catalog. So just overwrite it
 		 * here.
 		 */
-		relation->rd_amhandler = HEAP_TABLE_AM_HANDLER_OID;
+		relation->rd_amhandler = F_HEAP_TABLEAM_HANDLER;
 	}
 	else if (IsCatalogRelation(relation))
 	{
@@ -1769,7 +1770,7 @@ RelationInitTableAccessMethod(Relation relation)
 		 * Avoid doing a syscache lookup for catalog tables.
 		 */
 		Assert(relation->rd_rel->relam == HEAP_TABLE_AM_OID);
-		relation->rd_amhandler = HEAP_TABLE_AM_HANDLER_OID;
+		relation->rd_amhandler = F_HEAP_TABLEAM_HANDLER;
 	}
 	else
 	{
@@ -5934,6 +5935,7 @@ load_relcache_init_file(bool shared)
 		rel->rd_idattr = NULL;
 		rel->rd_pubactions = NULL;
 		rel->rd_statvalid = false;
+		rel->rd_version_checked = false;
 		rel->rd_statlist = NIL;
 		rel->rd_fkeyvalid = false;
 		rel->rd_fkeylist = NIL;

@@ -152,6 +152,7 @@ extern EquivalenceClass *get_eclass_for_sort_expr(PlannerInfo *root,
 												  Relids rel,
 												  bool create_it);
 extern Expr *find_em_expr_for_rel(EquivalenceClass *ec, RelOptInfo *rel);
+extern Expr *find_em_expr_usable_for_sorting_rel(EquivalenceClass *ec, RelOptInfo *rel);
 extern void generate_base_implied_equalities(PlannerInfo *root);
 extern List *generate_join_implied_equalities(PlannerInfo *root,
 											  Relids join_relids,
@@ -166,6 +167,8 @@ extern bool exprs_known_equal(PlannerInfo *root, Node *item1, Node *item2);
 extern EquivalenceClass *match_eclasses_to_foreign_key_col(PlannerInfo *root,
 														   ForeignKeyOptInfo *fkinfo,
 														   int colno);
+extern RestrictInfo *find_derived_clause_for_ec_member(EquivalenceClass *ec,
+													   EquivalenceMember *em);
 extern void add_child_rel_equivalences(PlannerInfo *root,
 									   AppendRelInfo *appinfo,
 									   RelOptInfo *parent_rel,

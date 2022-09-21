@@ -137,6 +137,7 @@ process_equivalence(PlannerInfo *root,
 	EquivalenceMember *em1,
 			   *em2;
 	ListCell   *lc1;
+	int			ec2_idx;
 
 	/* Should not already be marked as having generated an eclass */
 	Assert(restrictinfo->left_ec == NULL);
@@ -258,6 +259,7 @@ process_equivalence(PlannerInfo *root,
 	 */
 	ec1 = ec2 = NULL;
 	em1 = em2 = NULL;
+	ec2_idx = -1;
 	foreach(lc1, root->eq_classes)
 	{
 		EquivalenceClass *cur_ec = (EquivalenceClass *) lfirst(lc1);
@@ -311,6 +313,7 @@ process_equivalence(PlannerInfo *root,
 				equal(item2, cur_em->em_expr))
 			{
 				ec2 = cur_ec;
+				ec2_idx = foreach_current_index(lc1);
 				em2 = cur_em;
 				if (ec1)
 					break;
@@ -371,7 +374,7 @@ process_equivalence(PlannerInfo *root,
 		ec1->ec_max_security = Max(ec1->ec_max_security,
 								   ec2->ec_max_security);
 		ec2->ec_merged = ec1;
-		root->eq_classes = list_delete_ptr(root->eq_classes, ec2);
+		root->eq_classes = list_delete_nth_cell(root->eq_classes, ec2_idx);
 		/* just to avoid debugging confusion w/ dangling pointers: */
 		ec2->ec_members = NIL;
 		ec2->ec_sources = NIL;
@@ -795,6 +798,76 @@ find_em_expr_for_rel(EquivalenceClass *ec, RelOptInfo *rel)
 }
 
 /*
+ * Find an equivalence class member expression that can be safely used by a
+ * sort node on top of the provided relation. The rules here must match those
+ * applied in prepare_sort_from_pathkeys.
+ */
+Expr *
+find_em_expr_usable_for_sorting_rel(EquivalenceClass *ec, RelOptInfo *rel)
+{
+	ListCell   *lc_em;
+
+	/*
+	 * If there is more than one equivalence member matching these
+	 * requirements we'll be content to choose any one of them.
+	 */
+	foreach(lc_em, ec->ec_members)
+	{
+		EquivalenceMember *em = lfirst(lc_em);
+		Expr	   *em_expr = em->em_expr;
+		PathTarget *target = rel->reltarget;
+		ListCell   *lc_target_expr;
+
+		/*
+		 * We shouldn't be trying to sort by an equivalence class that
+		 * contains a constant, so no need to consider such cases any further.
+		 */
+		if (em->em_is_const)
+			continue;
+
+		/*
+		 * Any Vars in the equivalence class member need to come from this
+		 * relation. This is a superset of prepare_sort_from_pathkeys ignoring
+		 * child members unless they belong to the rel being sorted.
+		 */
+		if (!bms_is_subset(em->em_relids, rel->relids))
+			continue;
+
+		/*
+		 * As long as the expression isn't volatile then
+		 * prepare_sort_from_pathkeys is able to generate a new target entry,
+		 * so there's no need to verify that one already exists.
+		 */
+		if (!ec->ec_has_volatile)
+			return em->em_expr;
+
+		/*
+		 * If, however, it's volatile, we have to verify that the
+		 * equivalence member's expr is already generated in the
+		 * relation's target (we do strip relabels first from both
+		 * expressions, which is cheap and might allow us to match
+		 * more expressions).
+		 */
+		while (em_expr && IsA(em_expr, RelabelType))
+			em_expr = ((RelabelType *) em_expr)->arg;
+
+		foreach(lc_target_expr, target->exprs)
+		{
+			Expr	   *target_expr = lfirst(lc_target_expr);
+
+			while (target_expr && IsA(target_expr, RelabelType))
+				target_expr = ((RelabelType *) target_expr)->arg;
+
+			if (equal(target_expr, em_expr))
+				return em->em_expr;
+		}
+	}
+
+	/* We didn't find any suitable equivalence class expression */
+	return NULL;
+}
+
+/*
  * generate_base_implied_equalities
  *	  Generate any restriction clauses that we can deduce from equivalence
  *	  classes.
@@ -837,10 +910,8 @@ find_em_expr_for_rel(EquivalenceClass *ec, RelOptInfo *rel)
  * scanning of the quals and before Path construction begins.
  *
  * We make no attempt to avoid generating duplicate RestrictInfos here: we
- * don't search ec_sources for matches, nor put the created RestrictInfos
- * into ec_derives.  Doing so would require some slightly ugly changes in
- * initsplan.c's API, and there's no real advantage, because the clauses
- * generated here can't duplicate anything we will generate for joins anyway.
+ * don't search ec_sources or ec_derives for matches.  It doesn't really
+ * seem worth the trouble to do so.
  */
 void
 generate_base_implied_equalities(PlannerInfo *root)
@@ -966,6 +1037,7 @@ generate_base_implied_equalities_const(PlannerInfo *root,
 	{
 		EquivalenceMember *cur_em = (EquivalenceMember *) lfirst(lc);
 		Oid			eq_op;
+		RestrictInfo *rinfo;
 
 		Assert(!cur_em->em_is_child);	/* no children yet */
 		if (cur_em == const_em)
@@ -979,14 +1051,31 @@ generate_base_implied_equalities_const(PlannerInfo *root,
 			ec->ec_broken = true;
 			break;
 		}
-		process_implied_equality(root, eq_op, ec->ec_collation,
-								 cur_em->em_expr, const_em->em_expr,
-								 bms_copy(ec->ec_relids),
-								 bms_union(cur_em->em_nullable_relids,
-										   const_em->em_nullable_relids),
-								 ec->ec_min_security,
-								 ec->ec_below_outer_join,
-								 cur_em->em_is_const);
+		rinfo = process_implied_equality(root, eq_op, ec->ec_collation,
+										 cur_em->em_expr, const_em->em_expr,
+										 bms_copy(ec->ec_relids),
+										 bms_union(cur_em->em_nullable_relids,
+												   const_em->em_nullable_relids),
+										 ec->ec_min_security,
+										 ec->ec_below_outer_join,
+										 cur_em->em_is_const);
+
+		/*
+		 * If the clause didn't degenerate to a constant, fill in the correct
+		 * markings for a mergejoinable clause, and save it in ec_derives. (We
+		 * will not re-use such clauses directly, but selectivity estimation
+		 * may consult the list later.  Note that this use of ec_derives does
+		 * not overlap with its use for join clauses, since we never generate
+		 * join clauses from an ec_has_const eclass.)
+		 */
+		if (rinfo && rinfo->mergeopfamilies)
+		{
+			/* it's not redundant, so don't set parent_ec */
+			rinfo->left_ec = rinfo->right_ec = ec;
+			rinfo->left_em = cur_em;
+			rinfo->right_em = const_em;
+			ec->ec_derives = lappend(ec->ec_derives, rinfo);
+		}
 	}
 }
 
@@ -1025,6 +1114,7 @@ generate_base_implied_equalities_no_const(PlannerInfo *root,
 		{
 			EquivalenceMember *prev_em = prev_ems[relid];
 			Oid			eq_op;
+			RestrictInfo *rinfo;
 
 			eq_op = select_equality_operator(ec,
 											 prev_em->em_datatype,
@@ -1035,14 +1125,29 @@ generate_base_implied_equalities_no_const(PlannerInfo *root,
 				ec->ec_broken = true;
 				break;
 			}
-			process_implied_equality(root, eq_op, ec->ec_collation,
-									 prev_em->em_expr, cur_em->em_expr,
-									 bms_copy(ec->ec_relids),
-									 bms_union(prev_em->em_nullable_relids,
-											   cur_em->em_nullable_relids),
-									 ec->ec_min_security,
-									 ec->ec_below_outer_join,
-									 false);
+			rinfo = process_implied_equality(root, eq_op, ec->ec_collation,
+											 prev_em->em_expr, cur_em->em_expr,
+											 bms_copy(ec->ec_relids),
+											 bms_union(prev_em->em_nullable_relids,
+													   cur_em->em_nullable_relids),
+											 ec->ec_min_security,
+											 ec->ec_below_outer_join,
+											 false);
+
+			/*
+			 * If the clause didn't degenerate to a constant, fill in the
+			 * correct markings for a mergejoinable clause.  We don't put it
+			 * in ec_derives however; we don't currently need to re-find such
+			 * clauses, and we don't want to clutter that list with non-join
+			 * clauses.
+			 */
+			if (rinfo && rinfo->mergeopfamilies)
+			{
+				/* it's not redundant, so don't set parent_ec */
+				rinfo->left_ec = rinfo->right_ec = ec;
+				rinfo->left_em = prev_em;
+				rinfo->right_em = cur_em;
+			}
 		}
 		prev_ems[relid] = cur_em;
 	}
@@ -1964,6 +2069,7 @@ reconsider_full_join_clause(PlannerInfo *root, RestrictInfo *rinfo)
 		bool		matchleft;
 		bool		matchright;
 		ListCell   *lc2;
+		int			coal_idx = -1;
 
 		/* Ignore EC unless it contains pseudoconstants */
 		if (!cur_ec->ec_has_const)
@@ -2008,6 +2114,7 @@ reconsider_full_join_clause(PlannerInfo *root, RestrictInfo *rinfo)
 
 				if (equal(leftvar, cfirst) && equal(rightvar, csecond))
 				{
+					coal_idx = foreach_current_index(lc2);
 					match = true;
 					break;
 				}
@@ -2072,7 +2179,7 @@ reconsider_full_join_clause(PlannerInfo *root, RestrictInfo *rinfo)
 		 */
 		if (matchleft && matchright)
 		{
-			cur_ec->ec_members = list_delete_ptr(cur_ec->ec_members, coal_em);
+			cur_ec->ec_members = list_delete_nth_cell(cur_ec->ec_members, coal_idx);
 			return true;
 		}
 
@@ -2146,6 +2253,10 @@ exprs_known_equal(PlannerInfo *root, Node *item1, Node *item2)
  * we ignore that fine point here.)  This is much like exprs_known_equal,
  * except that we insist on the comparison operator matching the eclass, so
  * that the result is definite not approximate.
+ *
+ * On success, we also set fkinfo->eclass[colno] to the matching eclass,
+ * and set fkinfo->fk_eclass_member[colno] to the eclass member for the
+ * referencing Var.
  */
 EquivalenceClass *
 match_eclasses_to_foreign_key_col(PlannerInfo *root,
@@ -2175,8 +2286,8 @@ match_eclasses_to_foreign_key_col(PlannerInfo *root,
 	{
 		EquivalenceClass *ec = (EquivalenceClass *) list_nth(root->eq_classes,
 															 i);
-		bool		item1member = false;
-		bool		item2member = false;
+		EquivalenceMember *item1_em = NULL;
+		EquivalenceMember *item2_em = NULL;
 		ListCell   *lc2;
 
 		/* Never match to a volatile EC */
@@ -2201,12 +2312,12 @@ match_eclasses_to_foreign_key_col(PlannerInfo *root,
 
 			/* Match? */
 			if (var->varno == var1varno && var->varattno == var1attno)
-				item1member = true;
+				item1_em = em;
 			else if (var->varno == var2varno && var->varattno == var2attno)
-				item2member = true;
+				item2_em = em;
 
 			/* Have we found both PK and FK column in this EC? */
-			if (item1member && item2member)
+			if (item1_em && item2_em)
 			{
 				/*
 				 * Succeed if eqop matches EC's opfamilies.  We could test
@@ -2216,11 +2327,46 @@ match_eclasses_to_foreign_key_col(PlannerInfo *root,
 				if (opfamilies == NIL)	/* compute if we didn't already */
 					opfamilies = get_mergejoin_opfamilies(eqop);
 				if (equal(opfamilies, ec->ec_opfamilies))
+				{
+					fkinfo->eclass[colno] = ec;
+					fkinfo->fk_eclass_member[colno] = item2_em;
 					return ec;
+				}
 				/* Otherwise, done with this EC, move on to the next */
 				break;
 			}
 		}
+	}
+	return NULL;
+}
+
+/*
+ * find_derived_clause_for_ec_member
+ *	  Search for a previously-derived clause mentioning the given EM.
+ *
+ * The eclass should be an ec_has_const EC, of which the EM is a non-const
+ * member.  This should ensure there is just one derived clause mentioning
+ * the EM (and equating it to a constant).
+ * Returns NULL if no such clause can be found.
+ */
+RestrictInfo *
+find_derived_clause_for_ec_member(EquivalenceClass *ec,
+								  EquivalenceMember *em)
+{
+	ListCell   *lc;
+
+	Assert(ec->ec_has_const);
+	Assert(!em->em_is_const);
+	foreach(lc, ec->ec_derives)
+	{
+		RestrictInfo *rinfo = (RestrictInfo *) lfirst(lc);
+
+		/*
+		 * generate_base_implied_equalities_const will have put non-const
+		 * members on the left side of derived clauses.
+		 */
+		if (rinfo->left_em == em)
+			return rinfo;
 	}
 	return NULL;
 }

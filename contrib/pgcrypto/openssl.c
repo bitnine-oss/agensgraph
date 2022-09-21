@@ -202,6 +202,7 @@ px_find_digest(const char *name, PX_MD **res)
 	}
 	if (EVP_DigestInit_ex(ctx, md, NULL) == 0)
 	{
+		EVP_MD_CTX_destroy(ctx);
 		pfree(digest);
 		return -1;
 	}
@@ -399,7 +400,7 @@ gen_ossl_encrypt(PX_Cipher *c, const uint8 *data, unsigned dlen,
 	}
 
 	if (!EVP_EncryptUpdate(od->evp_ctx, res, &outlen, data, dlen))
-		return PXE_ERR_GENERIC;
+		return PXE_ENCRYPT_FAILED;
 
 	return 0;
 }

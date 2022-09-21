@@ -1273,7 +1273,6 @@ create_append_plan(PlannerInfo *root, AppendPath *best_path, int flags)
 	 * do partition pruning.
 	 */
 	if (enable_partition_pruning &&
-		rel->reloptkind == RELOPT_BASEREL &&
 		best_path->partitioned_rels != NIL)
 	{
 		List	   *prunequal;
@@ -1440,7 +1439,6 @@ create_merge_append_plan(PlannerInfo *root, MergeAppendPath *best_path,
 	 * do partition pruning.
 	 */
 	if (enable_partition_pruning &&
-		rel->reloptkind == RELOPT_BASEREL &&
 		best_path->partitioned_rels != NIL)
 	{
 		List	   *prunequal;
@@ -5820,7 +5818,11 @@ make_foreignscan(List *qptlist,
 	plan->lefttree = outer_plan;
 	plan->righttree = NULL;
 	node->scan.scanrelid = scanrelid;
+
+	/* these may be overridden by the FDW's PlanDirectModify callback. */
 	node->operation = CMD_SELECT;
+	node->resultRelation = 0;
+
 	/* fs_server will be filled in by create_foreignscan_plan */
 	node->fs_server = InvalidOid;
 	node->fdw_exprs = fdw_exprs;

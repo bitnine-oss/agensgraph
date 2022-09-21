@@ -115,7 +115,6 @@ ExecDeleteEdgeOrVertex(ModifyGraphState *mgstate, ResultRelInfo *resultRelInfo,
 {
 	EPQState   *epqstate = &mgstate->mt_epqstate;
 	EState	   *estate = mgstate->ps.state;
-	ResultRelInfo *savedResultRelInfo;
 	Relation	resultRelationDesc;
 	TM_Result	result;
 	TM_FailureData tmfd;
@@ -128,8 +127,6 @@ ExecDeleteEdgeOrVertex(ModifyGraphState *mgstate, ResultRelInfo *resultRelInfo,
 	if (hash_found)
 		return false;
 
-	savedResultRelInfo = estate->es_result_relation_info;
-	estate->es_result_relation_info = resultRelInfo;
 	resultRelationDesc = resultRelInfo->ri_RelationDesc;
 
 	/* BEFORE ROW DELETE Triggers */
@@ -217,7 +214,6 @@ ExecDeleteEdgeOrVertex(ModifyGraphState *mgstate, ResultRelInfo *resultRelInfo,
 		graphWriteStats.deleteVertex++;
 	}
 
-	estate->es_result_relation_info = savedResultRelInfo;
 	hash_search(mgstate->elemTable, &graphid, HASH_ENTER, &hash_found);
 
 	return true;

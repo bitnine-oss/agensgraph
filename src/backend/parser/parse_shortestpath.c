@@ -15,7 +15,6 @@
 #include "catalog/pg_type.h"
 #include "nodes/makefuncs.h"
 #include "nodes/nodeFuncs.h"
-#include "nodes/pg_list.h"
 #include "parser/analyze.h"
 #include "parser/parse_agg.h"
 #include "parser/parse_collate.h"
@@ -848,7 +847,8 @@ makeVerticesSubLink(void)
 	sel->targetList = list_make1(makeResTarget((Node *) arragg, NULL));
 
 	unnest = makeFuncCall(list_make1(makeString("unnest")),
-						  list_make1(makeColumnRef1(SP_COLNAME_VIDS)), -1);
+						  list_make1(makeColumnRef1(SP_COLNAME_VIDS)),
+						  COERCE_EXPLICIT_CALL, -1);
 	vid = makeNode(RangeFunction);
 	vid->lateral = false;
 	vid->ordinality = false;
@@ -929,13 +929,15 @@ makeEdgesSubLink(CypherPath *cpath, bool is_dijkstra)
 
 		tableoid = makeColumnRef1("tableoid");
 		getid = makeFuncCall(list_make1(makeString("rowid_tableoid")),
-							 list_make1(makeColumnRef1("eid")), -1);
+							 list_make1(makeColumnRef1("eid")),
+							 COERCE_EXPLICIT_CALL, -1);
 		qual = makeSimpleA_Expr(AEXPR_OP, "=", tableoid, (Node *) getid, -1);
 		where_args = list_make1(qual);
 
 		ctid = makeColumnRef1("ctid");
 		getid = makeFuncCall(list_make1(makeString("rowid_ctid")),
-							 list_make1(makeColumnRef1("eid")), -1);
+							 list_make1(makeColumnRef1("eid")),
+							 COERCE_EXPLICIT_CALL, -1);
 		qual = makeSimpleA_Expr(AEXPR_OP, "=", ctid, (Node *) getid, -1);
 		where_args = lappend(where_args, qual);
 	}
@@ -954,7 +956,8 @@ makeEdgesSubLink(CypherPath *cpath, bool is_dijkstra)
 	sel->targetList = list_make1(makeResTarget((Node *) arragg, NULL));
 
 	unnest = makeFuncCall(list_make1(makeString("unnest")),
-						  list_make1(makeColumnRef1(SP_COLNAME_EIDS)), -1);
+						  list_make1(makeColumnRef1(SP_COLNAME_EIDS)),
+						  COERCE_EXPLICIT_CALL, -1);
 	eid = makeNode(RangeFunction);
 	eid->lateral = false;
 	eid->ordinality = false;
@@ -998,6 +1001,7 @@ makeVertexIdExpr(Node *vertex)
 {
 	return (Node *) makeFuncCall(list_make1(makeString(AG_ELEM_ID)),
 								 list_make1(vertex),
+								 COERCE_EXPLICIT_CALL,
 								 -1);
 }
 
@@ -1230,7 +1234,8 @@ makeDijkstraFrom(ParseState *parentParseState, CypherPath *cpath)
 	addNSItemToJoinlist(pstate, nsitem, true);
 
 	/* vids */
-	fc = makeFuncCall(list_make1(makeString("dijkstra_vids")), NIL, -1);
+	fc = makeFuncCall(list_make1(makeString("dijkstra_vids")), NIL,
+					  COERCE_EXPLICIT_CALL, -1);
 	target = ParseFuncOrColumn(pstate, fc->funcname, NIL, pstate->p_last_srf,
 							   fc, false, -1);
 	te = makeTargetEntry((Expr *) target,
@@ -1239,7 +1244,8 @@ makeDijkstraFrom(ParseState *parentParseState, CypherPath *cpath)
 	qry->targetList = list_make1(te);
 
 	/* eids */
-	fc = makeFuncCall(list_make1(makeString("dijkstra_eids")), NIL, -1);
+	fc = makeFuncCall(list_make1(makeString("dijkstra_eids")), NIL,
+					  COERCE_EXPLICIT_CALL, -1);
 	target = ParseFuncOrColumn(pstate, fc->funcname, NIL, pstate->p_last_srf,
 							   fc, false, -1);
 	te = makeTargetEntry((Expr *) target,

@@ -57,6 +57,7 @@ enum ReorderBufferChangeType
 	REORDER_BUFFER_CHANGE_UPDATE,
 	REORDER_BUFFER_CHANGE_DELETE,
 	REORDER_BUFFER_CHANGE_MESSAGE,
+	REORDER_BUFFER_CHANGE_INVALIDATION,
 	REORDER_BUFFER_CHANGE_INTERNAL_SNAPSHOT,
 	REORDER_BUFFER_CHANGE_INTERNAL_COMMAND_ID,
 	REORDER_BUFFER_CHANGE_INTERNAL_TUPLECID,
@@ -149,6 +150,13 @@ typedef struct ReorderBufferChange
 			CommandId	cmax;
 			CommandId	combocid;
 		}			tuplecid;
+
+		/* Invalidation. */
+		struct
+		{
+			uint32		ninvalidations; /* Number of messages */
+			SharedInvalidationMessage *invalidations;	/* invalidation message */
+		}			inval;
 	}			data;
 
 	/*
@@ -313,8 +321,8 @@ typedef struct ReorderBufferTXN
 	uint64		nentries_mem;
 
 	/*
-	 * List of ReorderBufferChange structs, including new Snapshots and new
-	 * CommandIds
+	 * List of ReorderBufferChange structs, including new Snapshots, new
+	 * CommandIds and command invalidation messages.
 	 */
 	dlist_head	changes;
 
@@ -543,6 +551,11 @@ struct ReorderBuffer
 	int64		spillTxns;		/* number of transactions spilled to disk */
 	int64		spillCount;		/* spill-to-disk invocation counter */
 	int64		spillBytes;		/* amount of data spilled to disk */
+
+	/* Statistics about transactions streamed to the decoding output plugin */
+	int64		streamTxns;		/* number of transactions streamed */
+	int64		streamCount;	/* streaming invocation counter */
+	int64		streamBytes;	/* amount of data streamed */
 };
 
 

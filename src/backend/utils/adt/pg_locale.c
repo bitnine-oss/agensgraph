@@ -57,7 +57,9 @@
 #include "access/htup_details.h"
 #include "catalog/pg_collation.h"
 #include "catalog/pg_control.h"
+#include "catalog/pg_database.h"
 #include "mb/pg_wchar.h"
+#include "miscadmin.h"
 #include "utils/builtins.h"
 #include "utils/formatting.h"
 #include "utils/hsearch.h"
@@ -138,6 +140,9 @@ static char *IsoLocaleName(const char *);	/* MSVC specific */
 #ifdef USE_ICU
 static void icu_set_collation_attributes(UCollator *collator, const char *loc);
 #endif
+
+static char *get_collation_actual_version(char collprovider,
+										  const char *collcollate);
 
 /*
  * pg_perm_setlocale
@@ -1513,8 +1518,6 @@ pg_newlocale_from_collation(Oid collid)
 		const char *collctype pg_attribute_unused();
 		struct pg_locale_struct result;
 		pg_locale_t resultp;
-		Datum		collversion;
-		bool		isnull;
 
 		tp = SearchSysCache1(COLLOID, ObjectIdGetDatum(collid));
 		if (!HeapTupleIsValid(tp))
@@ -1616,41 +1619,6 @@ pg_newlocale_from_collation(Oid collid)
 #endif							/* not USE_ICU */
 		}
 
-		collversion = SysCacheGetAttr(COLLOID, tp, Anum_pg_collation_collversion,
-									  &isnull);
-		if (!isnull)
-		{
-			char	   *actual_versionstr;
-			char	   *collversionstr;
-
-			actual_versionstr = get_collation_actual_version(collform->collprovider, collcollate);
-			if (!actual_versionstr)
-			{
-				/*
-				 * This could happen when specifying a version in CREATE
-				 * COLLATION for a libc locale, or manually creating a mess in
-				 * the catalogs.
-				 */
-				ereport(ERROR,
-						(errmsg("collation \"%s\" has no actual version, but a version was specified",
-								NameStr(collform->collname))));
-			}
-			collversionstr = TextDatumGetCString(collversion);
-
-			if (strcmp(actual_versionstr, collversionstr) != 0)
-				ereport(WARNING,
-						(errmsg("collation \"%s\" has version mismatch",
-								NameStr(collform->collname)),
-						 errdetail("The collation in the database was created using version %s, "
-								   "but the operating system provides version %s.",
-								   collversionstr, actual_versionstr),
-						 errhint("Rebuild all objects affected by this collation and run "
-								 "ALTER COLLATION %s REFRESH VERSION, "
-								 "or build PostgreSQL with the right library version.",
-								 quote_qualified_identifier(get_namespace_name(collform->collnamespace),
-															NameStr(collform->collname)))));
-		}
-
 		ReleaseSysCache(tp);
 
 		/* We'll keep the pg_locale_t structures in TopMemoryContext */
@@ -1667,7 +1635,7 @@ pg_newlocale_from_collation(Oid collid)
  * Get provider-specific collation version string for the given collation from
  * the operating system/library.
  */
-char *
+static char *
 get_collation_actual_version(char collprovider, const char *collcollate)
 {
 	char	   *collversion = NULL;
@@ -1734,10 +1702,22 @@ get_collation_actual_version(char collprovider, const char *collcollate)
 		MultiByteToWideChar(CP_ACP, 0, collcollate, -1, wide_collcollate,
 							LOCALE_NAME_MAX_LENGTH);
 		if (!GetNLSVersionEx(COMPARE_STRING, wide_collcollate, &version))
+		{
+			/*
+			 * GetNLSVersionEx() wants a language tag such as "en-US", not a
+			 * locale name like "English_United States.1252".  Until those
+			 * values can be prevented from entering the system, or 100%
+			 * reliably converted to the more useful tag format, tolerate the
+			 * resulting error and report that we have no version data.
+			 */
+			if (GetLastError() == ERROR_INVALID_PARAMETER)
+				return NULL;
+
 			ereport(ERROR,
 					(errmsg("could not get collation version for locale \"%s\": error code %lu",
 							collcollate,
 							GetLastError())));
+		}
 		collversion = psprintf("%d.%d,%d.%d",
 							   (version.dwNLSVersion >> 8) & 0xFFFF,
 							   version.dwNLSVersion & 0xFF,
@@ -1749,6 +1729,45 @@ get_collation_actual_version(char collprovider, const char *collcollate)
 	return collversion;
 }
 
+/*
+ * Get provider-specific collation version string for a given collation OID.
+ * Return NULL if the provider doesn't support versions.
+ */
+char *
+get_collation_version_for_oid(Oid oid)
+{
+	HeapTuple	tp;
+	char	   *version = NULL;
+
+	Assert(oid != C_COLLATION_OID && oid != POSIX_COLLATION_OID);
+
+	if (oid == DEFAULT_COLLATION_OID)
+	{
+		Form_pg_database dbform;
+
+		tp = SearchSysCache1(DATABASEOID, ObjectIdGetDatum(MyDatabaseId));
+		if (!HeapTupleIsValid(tp))
+			elog(ERROR, "cache lookup failed for database %u", MyDatabaseId);
+		dbform = (Form_pg_database) GETSTRUCT(tp);
+		version = get_collation_actual_version(COLLPROVIDER_LIBC,
+											   NameStr(dbform->datcollate));
+	}
+	else
+	{
+		Form_pg_collation collform;
+
+		tp = SearchSysCache1(COLLOID, ObjectIdGetDatum(oid));
+		if (!HeapTupleIsValid(tp))
+			elog(ERROR, "cache lookup failed for collation %u", oid);
+		collform = (Form_pg_collation) GETSTRUCT(tp);
+		version = get_collation_actual_version(collform->collprovider,
+											   NameStr(collform->collcollate));
+	}
+
+	ReleaseSysCache(tp);
+
+	return version;
+}
 
 #ifdef USE_ICU
 /*

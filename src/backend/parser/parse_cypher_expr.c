@@ -1120,9 +1120,9 @@ func_match_argtypes_jsonb(int nargs, Oid argtypes[FUNC_MAX_ARGS],
 		*candidates = current_candidate;
 		ncandidates++;
 
-		if (current_candidate->oid == F_ARRAY_HEAD ||
-			current_candidate->oid == F_ARRAY_LAST ||
-			current_candidate->oid == F_ARRAY_TAIL)
+		if (current_candidate->oid == F_HEAD_ANYARRAY ||
+			current_candidate->oid == F_LAST_ANYARRAY ||
+			current_candidate->oid == F_TAIL_ANYARRAY)
 			return 1;
 	}
 

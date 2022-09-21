@@ -2050,6 +2050,7 @@ _readForeignScan(void)
 	READ_NODE_FIELD(fdw_recheck_quals);
 	READ_BITMAPSET_FIELD(fs_relids);
 	READ_BOOL_FIELD(fsSystemCol);
+	READ_INT_FIELD(resultRelation);
 
 	READ_DONE();
 }

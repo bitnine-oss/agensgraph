@@ -273,7 +273,7 @@ FuncCall *
 makeArrayAggFuncCall(List *args, int location)
 {
 	return makeFuncCall(list_make1(makeString("array_agg")),
-						args, location);
+						args, COERCE_EXPLICIT_CALL, location);
 }
 
 

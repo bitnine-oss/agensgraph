@@ -2059,8 +2059,9 @@ The commands accepted in replication mode are:
       the switch position is the end of the WAL that was streamed, but there
       are corner cases where the server can send some WAL from the old
       timeline that it has not itself replayed before promoting. Finally, the
-      server sends CommandComplete message, and is ready to accept a new
-      command.
+      server sends two CommandComplete messages (one that ends the CopyData
+      and the other ends the <literal>START_REPLICATION</literal> itself), and
+      is ready to accept a new command.
      </para>
 
      <para>
@@ -2382,7 +2383,8 @@ The commands accepted in replication mode are:
 
      <para>
       The messages inside the CopyBothResponse messages are of the same format
-      documented for <literal>START_REPLICATION ... PHYSICAL</literal>.
+      documented for <literal>START_REPLICATION ... PHYSICAL</literal>, including
+      two CommandComplete messages.
      </para>
 
      <para>
@@ -2837,7 +2839,7 @@ The commands accepted in replication mode are:
   <para>
    Every sent transaction contains zero or more DML messages (Insert,
    Update, Delete). In case of a cascaded setup it can also contain Origin
-   messages. The origin message indicated that the transaction originated on
+   messages. The origin message indicates that the transaction originated on
    different replication node. Since a replication node in the scope of logical
    replication protocol can be pretty much anything, the only identifier
    is the origin name. It's downstream's responsibility to handle this as
@@ -3236,51 +3238,6 @@ AuthenticationGSS (B)
 
 <varlistentry>
 <term>
-AuthenticationSSPI (B)
-</term>
-<listitem>
-<para>
-
-<variablelist>
-<varlistentry>
-<term>
-        Byte1('R')
-</term>
-<listitem>
-<para>
-                Identifies the message as an authentication request.
-</para>
-</listitem>
-</varlistentry>
-<varlistentry>
-<term>
-        Int32(8)
-</term>
-<listitem>
-<para>
-                Length of message contents in bytes, including self.
-</para>
-</listitem>
-</varlistentry>
-<varlistentry>
-<term>
-        Int32(9)
-</term>
-<listitem>
-<para>
-                Specifies that SSPI authentication is required.
-</para>
-</listitem>
-</varlistentry>
-</variablelist>
-
-</para>
-</listitem>
-</varlistentry>
-
-
-<varlistentry>
-<term>
 AuthenticationGSSContinue (B)
 </term>
 <listitem>
@@ -3324,6 +3281,51 @@ AuthenticationGSSContinue (B)
 <listitem>
 <para>
                 GSSAPI or SSPI authentication data.
+</para>
+</listitem>
+</varlistentry>
+</variablelist>
+
+</para>
+</listitem>
+</varlistentry>
+
+
+<varlistentry>
+<term>
+AuthenticationSSPI (B)
+</term>
+<listitem>
+<para>
+
+<variablelist>
+<varlistentry>
+<term>
+        Byte1('R')
+</term>
+<listitem>
+<para>
+                Identifies the message as an authentication request.
+</para>
+</listitem>
+</varlistentry>
+<varlistentry>
+<term>
+        Int32(8)
+</term>
+<listitem>
+<para>
+                Length of message contents in bytes, including self.
+</para>
+</listitem>
+</varlistentry>
+<varlistentry>
+<term>
+        Int32(9)
+</term>
+<listitem>
+<para>
+                Specifies that SSPI authentication is required.
 </para>
 </listitem>
 </varlistentry>
@@ -4858,6 +4860,44 @@ FunctionCallResponse (B)
 
 <varlistentry>
 <term>
+GSSENCRequest (F)
+</term>
+<listitem>
+<para>
+
+<variablelist>
+<varlistentry>
+<term>
+        Int32(8)
+</term>
+<listitem>
+<para>
+                Length of message contents in bytes, including self.
+</para>
+</listitem>
+</varlistentry>
+<varlistentry>
+<term>
+        Int32(80877104)
+</term>
+<listitem>
+<para>
+                The <acronym>GSSAPI</acronym> Encryption request code.  The value is chosen to contain
+                <literal>1234</literal> in the most significant 16 bits, and <literal>5680</literal> in the
+                least significant 16 bits.  (To avoid confusion, this code
+                must not be the same as any protocol version number.)
+</para>
+</listitem>
+</varlistentry>
+</variablelist>
+
+</para>
+</listitem>
+</varlistentry>
+
+
+<varlistentry>
+<term>
 GSSResponse (F)
 </term>
 <listitem>
@@ -5810,43 +5850,6 @@ SSLRequest (F)
 <para>
                 The <acronym>SSL</acronym> request code.  The value is chosen to contain
                 <literal>1234</literal> in the most significant 16 bits, and <literal>5679</literal> in the
-                least significant 16 bits.  (To avoid confusion, this code
-                must not be the same as any protocol version number.)
-</para>
-</listitem>
-</varlistentry>
-</variablelist>
-
-</para>
-</listitem>
-</varlistentry>
-
-<varlistentry>
-<term>
-GSSENCRequest (F)
-</term>
-<listitem>
-<para>
-
-<variablelist>
-<varlistentry>
-<term>
-        Int32(8)
-</term>
-<listitem>
-<para>
-                Length of message contents in bytes, including self.
-</para>
-</listitem>
-</varlistentry>
-<varlistentry>
-<term>
-        Int32(80877104)
-</term>
-<listitem>
-<para>
-                The <acronym>GSSAPI</acronym> Encryption request code.  The value is chosen to contain
-                <literal>1234</literal> in the most significant 16 bits, and <literal>5680</literal> in the
                 least significant 16 bits.  (To avoid confusion, this code
                 must not be the same as any protocol version number.)
 </para>

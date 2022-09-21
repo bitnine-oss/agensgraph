@@ -1525,7 +1525,7 @@
       </para>
       <para>
        Role can log in. That is, this role can be given as the initial
-       session authorization identifier
+       session authorization identifier.
       </para></entry>
      </row>
 
@@ -2361,17 +2361,6 @@ SCRAM-SHA-256$<replaceable>&lt;iteration count&gt;</replaceable>:<replaceable>&l
        <symbol>LC_CTYPE</symbol> for this collation object
       </para></entry>
      </row>
-
-     <row>
-      <entry role="catalog_table_entry"><para role="column_definition">
-       <structfield>collversion</structfield> <type>text</type>
-      </para>
-      <para>
-       Provider-specific version of the collation.  This is recorded when the
-       collation is created and then checked when it is used, to detect
-       changes in the collation definition that could lead to data corruption.
-      </para></entry>
-     </row>
     </tbody>
    </tgroup>
   </table>
@@ -2508,7 +2497,7 @@ SCRAM-SHA-256$<replaceable>&lt;iteration count&gt;</replaceable>:<replaceable>&l
       </para>
       <para>
        Has the constraint been validated?
-       Currently, can only be false for foreign keys and CHECK constraints
+       Currently, can be false only for foreign keys and CHECK constraints
       </para></entry>
      </row>
 
@@ -3313,6 +3302,18 @@ SCRAM-SHA-256$<replaceable>&lt;iteration count&gt;</replaceable>:<replaceable>&l
        A code defining the specific semantics of this dependency relationship; see text
       </para></entry>
      </row>
+
+     <row>
+      <entry role="catalog_table_entry"><para role="column_definition">
+       <structfield>refobjversion</structfield> <type>text</type>
+       </para>
+       <para>
+        An optional version for the referenced object.  Currently used for
+        indexes' collations (see <xref linkend="collation-versions"/>).
+       </para>
+      </entry>
+     </row>
+
     </tbody>
    </tgroup>
   </table>

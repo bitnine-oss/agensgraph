@@ -12,7 +12,8 @@ subdir = src/test
 top_builddir = ../..
 include $(top_builddir)/src/Makefile.global
 
-SUBDIRS = perl regress isolation modules authentication recovery subscription
+SUBDIRS = perl regress isolation modules authentication recovery subscription \
+	  locale
 
 # Test suites that are not safe by default but can be run if selected
 # by the user via the whitespace-separated list in variable
@@ -37,7 +38,7 @@ endif
 # clean" etc to recurse into them.  (We must filter out those that we
 # have conditionally included into SUBDIRS above, else there will be
 # make confusion.)
-ALWAYS_SUBDIRS = $(filter-out $(SUBDIRS),examples kerberos ldap locale thread ssl)
+ALWAYS_SUBDIRS = $(filter-out $(SUBDIRS),examples kerberos ldap locale ssl)
 
 # We want to recurse to all subdirs for all standard targets, except that
 # installcheck and install should not recurse into the subdirectory "modules".

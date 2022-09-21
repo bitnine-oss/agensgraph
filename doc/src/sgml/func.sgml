@@ -6848,30 +6848,6 @@ SELECT regexp_match('abc01234xyz', '(?:(.*?)(\d+)(.*)){1,1}');
     constraints, and the longest/shortest-match (rather than first-match)
     matching semantics.
    </para>
-
-   <para>
-    Two significant incompatibilities exist between AREs and the ERE syntax
-    recognized by pre-7.4 releases of <productname>PostgreSQL</productname>:
-
-    <itemizedlist>
-     <listitem>
-      <para>
-       In AREs, <literal>\</literal> followed by an alphanumeric character is either
-       an escape or an error, while in previous releases, it was just another
-       way of writing the alphanumeric.
-       This should not be much of a problem because there was no reason to
-       write such a sequence in earlier releases.
-      </para>
-     </listitem>
-     <listitem>
-      <para>
-       In AREs, <literal>\</literal> remains a special character within
-       <literal>[]</literal>, so a literal <literal>\</literal> within a bracket
-       expression must be written <literal>\\</literal>.
-      </para>
-     </listitem>
-    </itemizedlist>
-   </para>
    </sect3>
 
    <sect3 id="posix-basic-regexes">
@@ -10044,20 +10020,22 @@ now()
 <programlisting>
 SELECT CURRENT_TIMESTAMP;
 SELECT now();
-SELECT TIMESTAMP 'now';  -- incorrect for use with DEFAULT
+SELECT TIMESTAMP 'now';  -- but see tip below
 </programlisting>
    </para>
 
     <tip>
      <para>
-      You do not want to use the third form when specifying a <literal>DEFAULT</literal>
-      clause while creating a table.  The system will convert <literal>now</literal>
+      Do not use the third form when specifying a value to be evaluated later,
+      for example in a <literal>DEFAULT</literal> clause for a table column.
+      The system will convert <literal>now</literal>
       to a <type>timestamp</type> as soon as the constant is parsed, so that when
       the default value is needed,
       the time of the table creation would be used!  The first two
       forms will not be evaluated until the default value is used,
       because they are function calls.  Thus they will give the desired
       behavior of defaulting to the time of row insertion.
+      (See also <xref linkend="datatype-datetime-special-values"/>.)
      </para>
     </tip>
   </sect2>
@@ -10911,15 +10889,6 @@ CREATE TYPE rainbow AS ENUM ('red', 'orange', 'yellow', 'green', 'blue', 'purple
      on), where available for these types, likewise compare areas.
     </para>
    </caution>
-
-   <note>
-    <para>
-     Before <productname>PostgreSQL</productname> 8.2, the containment
-     operators <literal>@&gt;</literal> and <literal>&lt;@</literal> were respectively
-     called <literal>~</literal> and <literal>@</literal>.  These names are still
-     available, but are deprecated and will eventually be removed.
-    </para>
-   </note>
 
    <table id="functions-geometry-func-table">
     <title>Geometric Functions</title>
@@ -15032,7 +15001,7 @@ table2-mapping
         per <function>to_json</function> or <function>to_jsonb</function>.
        </para>
        <para>
-        <literal>json_build_array(1,2,'foo',4,5)</literal>
+        <literal>json_build_array(1, 2, 'foo', 4, 5)</literal>
         <returnvalue>[1, 2, "foo", 4, 5]</returnvalue>
        </para></entry>
       </row>
@@ -15059,7 +15028,7 @@ table2-mapping
         per <function>to_json</function> or <function>to_jsonb</function>.
        </para>
        <para>
-        <literal>json_build_object('foo',1,2,row(3,'bar'))</literal>
+        <literal>json_build_object('foo', 1, 2, row(3,'bar'))</literal>
         <returnvalue>{"foo" : 1, "2" : {"f1":3,"f2":"bar"}}</returnvalue>
        </para></entry>
       </row>
@@ -15091,7 +15060,7 @@ table2-mapping
         <literal>json_object('{a, 1, b, "def", c, 3.5}')</literal>
         <returnvalue>{"a" : "1", "b" : "def", "c" : "3.5"}</returnvalue>
        </para>
-        <para><literal>json_object('{{a, 1},{b, "def"},{c, 3.5}}')</literal>
+        <para><literal>json_object('{{a, 1}, {b, "def"}, {c, 3.5}}')</literal>
         <returnvalue>{"a" : "1", "b" : "def", "c" : "3.5"}</returnvalue>
        </para></entry>
       </row>
@@ -15111,7 +15080,7 @@ table2-mapping
         the one-argument form.
        </para>
        <para>
-        <literal>json_object('{a, b}', '{1,2}')</literal>
+        <literal>json_object('{a,b}', '{1,2}')</literal>
         <returnvalue>{"a": "1", "b": "2"}</returnvalue>
        </para></entry>
       </row>
@@ -15502,7 +15471,7 @@ table2-mapping
         <literal>create type twoints as (a int, b int);</literal>
        </para>
        <para>
-        <literal>select * from json_populate_recordset(null::twoints, '[{"a":1,"b":2},{"a":3,"b":4}]')</literal>
+        <literal>select * from json_populate_recordset(null::twoints, '[{"a":1,"b":2}, {"a":3,"b":4}]')</literal>
         <returnvalue></returnvalue>
 <programlisting>
  a | b
@@ -15577,7 +15546,7 @@ table2-mapping
         for <function>json[b]_populate_record</function>.
        </para>
        <para>
-        <literal>select * from json_to_recordset('[{"a":1,"b":"foo"},{"a":"2","c":"bar"}]') as x(a int, b text)</literal>
+        <literal>select * from json_to_recordset('[{"a":1,"b":"foo"}, {"a":"2","c":"bar"}]') as x(a int, b text)</literal>
         <returnvalue></returnvalue>
 <programlisting>
  a |  b
@@ -15615,11 +15584,11 @@ table2-mapping
         or at the end of the array if it is positive.
        </para>
        <para>
-        <literal>jsonb_set('[{"f1":1,"f2":null},2,null,3]', '{0,f1}','[2,3,4]', false)</literal>
+        <literal>jsonb_set('[{"f1":1,"f2":null},2,null,3]', '{0,f1}', '[2,3,4]', false)</literal>
         <returnvalue>[{"f1": [2, 3, 4], "f2": null}, 2, null, 3]</returnvalue>
        </para>
        <para>
-        <literal>jsonb_set('[{"f1":1,"f2":null},2]', '{0,f3}','[2,3,4]')</literal>
+        <literal>jsonb_set('[{"f1":1,"f2":null},2]', '{0,f3}', '[2,3,4]')</literal>
         <returnvalue>[{"f1": 1, "f2": null, "f3": [2, 3, 4]}, 2]</returnvalue>
        </para></entry>
       </row>
@@ -15711,7 +15680,7 @@ table2-mapping
         untouched.
        </para>
        <para>
-        <literal>json_strip_nulls('[{"f1":1,"f2":null},2,null,3]')</literal>
+        <literal>json_strip_nulls('[{"f1":1, "f2":null}, 2, null, 3]')</literal>
         <returnvalue>[{"f1":1},2,null,3]</returnvalue>
        </para></entry>
       </row>
@@ -15735,7 +15704,7 @@ table2-mapping
         as the <literal>@?</literal> and <literal>@@</literal> operators do.
        </para>
        <para>
-        <literal>jsonb_path_exists('{"a":[1,2,3,4,5]}', '$.a[*] ? (@ >= $min &amp;&amp; @ &lt;= $max)', '{"min":2,"max":4}')</literal>
+        <literal>jsonb_path_exists('{"a":[1,2,3,4,5]}', '$.a[*] ? (@ >= $min &amp;&amp; @ &lt;= $max)', '{"min":2, "max":4}')</literal>
         <returnvalue>t</returnvalue>
        </para></entry>
       </row>
@@ -15757,7 +15726,7 @@ table2-mapping
         for <function>jsonb_path_exists</function>.
        </para>
        <para>
-        <literal>jsonb_path_match('{"a":[1,2,3,4,5]}', 'exists($.a[*] ? (@ >= $min &amp;&amp; @ &lt;= $max))', '{"min":2,"max":4}')</literal>
+        <literal>jsonb_path_match('{"a":[1,2,3,4,5]}', 'exists($.a[*] ? (@ >= $min &amp;&amp; @ &lt;= $max))', '{"min":2, "max":4}')</literal>
         <returnvalue>t</returnvalue>
        </para></entry>
       </row>
@@ -15778,7 +15747,7 @@ table2-mapping
         for <function>jsonb_path_exists</function>.
        </para>
        <para>
-        <literal>select * from jsonb_path_query('{"a":[1,2,3,4,5]}', '$.a[*] ? (@ >= $min &amp;&amp; @ &lt;= $max)', '{"min":2,"max":4}')</literal>
+        <literal>select * from jsonb_path_query('{"a":[1,2,3,4,5]}', '$.a[*] ? (@ >= $min &amp;&amp; @ &lt;= $max)', '{"min":2, "max":4}')</literal>
         <returnvalue></returnvalue>
 <programlisting>
  jsonb_path_query
@@ -15806,7 +15775,7 @@ table2-mapping
         for <function>jsonb_path_exists</function>.
        </para>
        <para>
-        <literal>jsonb_path_query_array('{"a":[1,2,3,4,5]}', '$.a[*] ? (@ >= $min &amp;&amp; @ &lt;= $max)', '{"min":2,"max":4}')</literal>
+        <literal>jsonb_path_query_array('{"a":[1,2,3,4,5]}', '$.a[*] ? (@ >= $min &amp;&amp; @ &lt;= $max)', '{"min":2, "max":4}')</literal>
         <returnvalue>[2, 3, 4]</returnvalue>
        </para></entry>
       </row>
@@ -15828,7 +15797,7 @@ table2-mapping
         for <function>jsonb_path_exists</function>.
        </para>
        <para>
-        <literal>jsonb_path_query_first('{"a":[1,2,3,4,5]}', '$.a[*] ? (@ >= $min &amp;&amp; @ &lt;= $max)', '{"min":2,"max":4}')</literal>
+        <literal>jsonb_path_query_first('{"a":[1,2,3,4,5]}', '$.a[*] ? (@ >= $min &amp;&amp; @ &lt;= $max)', '{"min":2, "max":4}')</literal>
         <returnvalue>2</returnvalue>
        </para></entry>
       </row>
@@ -15900,7 +15869,7 @@ table2-mapping
         Converts the given JSON value to pretty-printed, indented text.
        </para>
        <para>
-        <literal>jsonb_pretty('[{"f1":1,"f2":null},2]')</literal>
+        <literal>jsonb_pretty('[{"f1":1,"f2":null}, 2]')</literal>
         <returnvalue></returnvalue>
 <programlisting>
 [
@@ -17105,16 +17074,6 @@ nextval('foo')              <lineannotation>searches search path for <literal>fo
 
   <note>
    <para>
-    Before <productname>PostgreSQL</productname> 8.1, the arguments of the
-    sequence functions were of type <type>text</type>, not <type>regclass</type>, and
-    the above-described conversion from a text string to an OID value would
-    happen at run time during each call.  For backward compatibility, this
-    facility still exists, but internally it is now handled as an implicit
-    coercion from <type>text</type> to <type>regclass</type> before the function is
-    invoked.
-   </para>
-
-   <para>
     When you write the argument of a sequence function as an unadorned
     literal string, it becomes a constant of type <type>regclass</type>.
     Since this is really just an OID, it will track the originally
@@ -17127,9 +17086,6 @@ nextval('foo')              <lineannotation>searches search path for <literal>fo
 <programlisting>
 nextval('foo'::text)      <lineannotation><literal>foo</literal> is looked up at runtime</lineannotation>
 </programlisting>
-    Note that late binding was the only behavior supported in
-    <productname>PostgreSQL</productname> releases before 8.1, so you
-    might need to do this to preserve the semantics of old applications.
    </para>
 
    <para>
@@ -25479,11 +25435,9 @@ postgres=# SELECT * FROM pg_walfile_name_offset(pg_stop_backup());
        </para>
        <para>
         Returns the actual version of the collation object as it is currently
-        installed in the operating system.  If this is different from the
-        value in
-        <structname>pg_collation</structname>.<structfield>collversion</structfield>,
-        then objects depending on the collation might need to be rebuilt.  See
-        also <xref linkend="sql-altercollation"/>.
+        installed in the operating system.  <literal>null</literal> is returned
+        on operating systems where <productname>PostgreSQL</productname>
+        doesn't have support for versions.
        </para></entry>
       </row>
 
@@ -26597,7 +26551,7 @@ BEGIN
                      obj.object_name,
                      obj.object_identity;
     END LOOP;
-END
+END;
 $$;
 CREATE EVENT TRIGGER test_event_trigger_for_drops
    ON sql_drop

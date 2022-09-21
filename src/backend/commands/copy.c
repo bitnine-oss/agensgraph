@@ -2489,9 +2489,6 @@ CopyMultiInsertBufferFlush(CopyMultiInsertInfo *miinfo,
 	ResultRelInfo *resultRelInfo = buffer->resultRelInfo;
 	TupleTableSlot **slots = buffer->slots;
 
-	/* Set es_result_relation_info to the ResultRelInfo we're flushing. */
-	estate->es_result_relation_info = resultRelInfo;
-
 	/*
 	 * Print error context information correctly, if one of the operations
 	 * below fail.
@@ -2524,7 +2521,8 @@ CopyMultiInsertBufferFlush(CopyMultiInsertInfo *miinfo,
 
 			cstate->cur_lineno = buffer->linenos[i];
 			recheckIndexes =
-				ExecInsertIndexTuples(buffer->slots[i], estate, false, NULL,
+				ExecInsertIndexTuples(resultRelInfo,
+									  buffer->slots[i], estate, false, NULL,
 									  NIL);
 			ExecARInsertTriggers(estate, resultRelInfo,
 								 slots[i], recheckIndexes,
@@ -2612,9 +2610,9 @@ CopyMultiInsertInfoFlush(CopyMultiInsertInfo *miinfo, ResultRelInfo *curr_rri)
 
 	/*
 	 * Trim the list of tracked buffers down if it exceeds the limit.  Here we
-	 * remove buffers starting with the ones we created first.  It seems more
-	 * likely that these older ones are less likely to be needed than ones
-	 * that were just created.
+	 * remove buffers starting with the ones we created first.  It seems less
+	 * likely that these older ones will be needed than the ones that were
+	 * just created.
 	 */
 	while (list_length(miinfo->multiInsertBuffers) > MAX_PARTITION_BUFFERS)
 	{
@@ -2838,8 +2836,6 @@ CopyFrom(CopyState cstate)
 	CheckValidResultRel(resultRelInfo, CMD_INSERT);
 
 	ExecOpenIndices(resultRelInfo, false);
-
-	estate->es_result_relation_info = resultRelInfo;
 
 	/*
 	 * Set up a ModifyTableState so we can let FDW(s) init themselves for
@@ -3109,43 +3105,21 @@ CopyFrom(CopyState cstate)
 			}
 
 			/*
-			 * For ExecInsertIndexTuples() to work on the partition's indexes
-			 */
-			estate->es_result_relation_info = resultRelInfo;
-
-			/*
 			 * If we're capturing transition tuples, we might need to convert
-			 * from the partition rowtype to root rowtype.
+			 * from the partition rowtype to root rowtype. But if there are no
+			 * BEFORE triggers on the partition that could change the tuple,
+			 * we can just remember the original unconverted tuple to avoid a
+			 * needless round trip conversion.
 			 */
 			if (cstate->transition_capture != NULL)
-			{
-				if (has_before_insert_row_trig)
-				{
-					/*
-					 * If there are any BEFORE triggers on the partition,
-					 * we'll have to be ready to convert their result back to
-					 * tuplestore format.
-					 */
-					cstate->transition_capture->tcs_original_insert_tuple = NULL;
-					cstate->transition_capture->tcs_map =
-						resultRelInfo->ri_PartitionInfo->pi_PartitionToRootMap;
-				}
-				else
-				{
-					/*
-					 * Otherwise, just remember the original unconverted
-					 * tuple, to avoid a needless round trip conversion.
-					 */
-					cstate->transition_capture->tcs_original_insert_tuple = myslot;
-					cstate->transition_capture->tcs_map = NULL;
-				}
-			}
+				cstate->transition_capture->tcs_original_insert_tuple =
+					!has_before_insert_row_trig ? myslot : NULL;
 
 			/*
 			 * We might need to convert from the root rowtype to the partition
 			 * rowtype.
 			 */
-			map = resultRelInfo->ri_PartitionInfo->pi_RootToPartitionMap;
+			map = resultRelInfo->ri_RootToPartitionMap;
 			if (insertMethod == CIM_SINGLE || !leafpart_use_multi_insert)
 			{
 				/* non batch insert */
@@ -3153,7 +3127,7 @@ CopyFrom(CopyState cstate)
 				{
 					TupleTableSlot *new_slot;
 
-					new_slot = resultRelInfo->ri_PartitionInfo->pi_PartitionTupleSlot;
+					new_slot = resultRelInfo->ri_PartitionTupleSlot;
 					myslot = execute_attr_map_slot(map->attrMap, myslot, new_slot);
 				}
 			}
@@ -3217,7 +3191,8 @@ CopyFrom(CopyState cstate)
 				/* Compute stored generated columns */
 				if (resultRelInfo->ri_RelationDesc->rd_att->constr &&
 					resultRelInfo->ri_RelationDesc->rd_att->constr->has_generated_stored)
-					ExecComputeStoredGenerated(estate, myslot, CMD_INSERT);
+					ExecComputeStoredGenerated(resultRelInfo, estate, myslot,
+											   CMD_INSERT);
 
 				/*
 				 * If the target is a plain table, check the constraints of
@@ -3288,7 +3263,8 @@ CopyFrom(CopyState cstate)
 										   myslot, mycid, ti_options, bistate);
 
 						if (resultRelInfo->ri_NumIndices > 0)
-							recheckIndexes = ExecInsertIndexTuples(myslot,
+							recheckIndexes = ExecInsertIndexTuples(resultRelInfo,
+																   myslot,
 																   estate,
 																   false,
 																   NULL,

@@ -17,7 +17,6 @@
 #include "utils/rel.h"
 #include "access/tableam.h"
 #include "pgstat.h"
-#include "access/xact.h"
 #include "commands/trigger.h"
 
 static TupleTableSlot *createPath(ModifyGraphState *mgstate, GraphPath *path,
@@ -157,14 +156,11 @@ createVertex(ModifyGraphState *mgstate, GraphVertex *gvertex, Graphid *vid,
 	EState	   *estate = mgstate->ps.state;
 	TupleTableSlot *elemTupleSlot = mgstate->elemTupleSlot;
 	ResultRelInfo *resultRelInfo;
-	ResultRelInfo *savedResultRelInfo;
 	Datum		vertex;
 	Datum		vertexProp;
 	List	   *recheckIndexes = NIL;
 
 	resultRelInfo = getResultRelInfo(mgstate, gvertex->relid);
-	savedResultRelInfo = estate->es_result_relation_info;
-	estate->es_result_relation_info = resultRelInfo;
 
 	vertex = findVertex(slot, gvertex, vid);
 
@@ -219,7 +215,8 @@ createVertex(ModifyGraphState *mgstate, GraphVertex *gvertex, Graphid *vid,
 
 	/* insert index entries for the tuple */
 	if (resultRelInfo->ri_NumIndices > 0)
-		recheckIndexes = ExecInsertIndexTuples(elemTupleSlot, estate, false,
+		recheckIndexes = ExecInsertIndexTuples(resultRelInfo, elemTupleSlot,
+											   estate, false,
 											   NULL, NIL);
 
 	/* AFTER ROW INSERT Triggers */
@@ -236,8 +233,6 @@ createVertex(ModifyGraphState *mgstate, GraphVertex *gvertex, Graphid *vid,
 
 	graphWriteStats.insertVertex++;
 
-	estate->es_result_relation_info = savedResultRelInfo;
-
 	return vertex;
 }
 
@@ -248,15 +243,12 @@ createEdge(ModifyGraphState *mgstate, GraphEdge *gedge, Graphid start,
 	EState	   *estate = mgstate->ps.state;
 	TupleTableSlot *elemTupleSlot = mgstate->elemTupleSlot;
 	ResultRelInfo *resultRelInfo;
-	ResultRelInfo *savedResultRelInfo;
 	Graphid		id = 0;
 	Datum		edge;
 	Datum		edgeProp;
 	List	   *recheckIndexes = NIL;
 
 	resultRelInfo = getResultRelInfo(mgstate, gedge->relid);
-	savedResultRelInfo = estate->es_result_relation_info;
-	estate->es_result_relation_info = resultRelInfo;
 
 	edge = findEdge(slot, gedge, &id);
 	Assert(edge != (Datum) 0);
@@ -302,7 +294,8 @@ createEdge(ModifyGraphState *mgstate, GraphEdge *gedge, Graphid start,
 					   0, NULL);
 
 	if (resultRelInfo->ri_NumIndices > 0)
-		recheckIndexes = ExecInsertIndexTuples(elemTupleSlot, estate, false,
+		recheckIndexes = ExecInsertIndexTuples(resultRelInfo, elemTupleSlot,
+											   estate, false,
 											   NULL, NIL);
 
 	/* AFTER ROW INSERT Triggers */
@@ -320,8 +313,6 @@ createEdge(ModifyGraphState *mgstate, GraphEdge *gedge, Graphid start,
 		setSlotValueByAttnum(slot, edge, gedge->resno);
 
 	graphWriteStats.insertEdge++;
-
-	estate->es_result_relation_info = savedResultRelInfo;
 
 	if (auto_gather_graphmeta)
 	{

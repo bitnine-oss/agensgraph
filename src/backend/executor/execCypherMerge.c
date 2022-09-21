@@ -175,7 +175,6 @@ createMergeVertex(ModifyGraphState *mgstate, GraphVertex *gvertex,
 	EState	   *estate = mgstate->ps.state;
 	ExprContext *econtext = mgstate->ps.ps_ExprContext;
 	ResultRelInfo *resultRelInfo;
-	ResultRelInfo *savedResultRelInfo;
 	bool		isNull;
 	Datum		vertex;
 	Datum		vertexId;
@@ -184,8 +183,6 @@ createMergeVertex(ModifyGraphState *mgstate, GraphVertex *gvertex,
 	List	   *recheckIndexes = NIL;
 
 	resultRelInfo = getResultRelInfo(mgstate, gvertex->relid);
-	savedResultRelInfo = estate->es_result_relation_info;
-	estate->es_result_relation_info = resultRelInfo;
 
 	vertex = ExecEvalExpr(gvertex->es_expr, econtext, &isNull);
 	if (isNull)
@@ -235,8 +232,8 @@ createMergeVertex(ModifyGraphState *mgstate, GraphVertex *gvertex,
 					   0, NULL);
 
 	if (resultRelInfo->ri_NumIndices > 0)
-		recheckIndexes = ExecInsertIndexTuples(insertSlot, estate, false, NULL,
-											   NIL);
+		recheckIndexes = ExecInsertIndexTuples(resultRelInfo, insertSlot,
+											   estate, false, NULL, NIL);
 
 	/* AFTER ROW INSERT Triggers */
 	ExecARInsertTriggers(estate, resultRelInfo, insertSlot, recheckIndexes,
@@ -252,8 +249,6 @@ createMergeVertex(ModifyGraphState *mgstate, GraphVertex *gvertex,
 
 	graphWriteStats.insertVertex++;
 
-	estate->es_result_relation_info = savedResultRelInfo;
-
 	return vertex;
 }
 
@@ -264,7 +259,6 @@ createMergeEdge(ModifyGraphState *mgstate, GraphEdge *gedge, Graphid start,
 	EState	   *estate = mgstate->ps.state;
 	ExprContext *econtext = mgstate->ps.ps_ExprContext;
 	ResultRelInfo *resultRelInfo;
-	ResultRelInfo *savedResultRelInfo;
 	bool		isNull;
 	Datum		edge;
 	Datum		edgeProp;
@@ -272,8 +266,6 @@ createMergeEdge(ModifyGraphState *mgstate, GraphEdge *gedge, Graphid start,
 	List	   *recheckIndexes = NIL;
 
 	resultRelInfo = getResultRelInfo(mgstate, gedge->relid);
-	savedResultRelInfo = estate->es_result_relation_info;
-	estate->es_result_relation_info = resultRelInfo;
 
 	edge = ExecEvalExpr(gedge->es_expr, econtext, &isNull);
 	if (isNull)
@@ -323,8 +315,8 @@ createMergeEdge(ModifyGraphState *mgstate, GraphEdge *gedge, Graphid start,
 					   0, NULL);
 
 	if (resultRelInfo->ri_NumIndices > 0)
-		recheckIndexes = ExecInsertIndexTuples(insertSlot, estate, false, NULL,
-											   NIL);
+		recheckIndexes = ExecInsertIndexTuples(resultRelInfo, insertSlot,
+											   estate, false, NULL, NIL);
 
 	/* AFTER ROW INSERT Triggers */
 	ExecARInsertTriggers(estate, resultRelInfo, insertSlot, recheckIndexes,
@@ -341,8 +333,6 @@ createMergeEdge(ModifyGraphState *mgstate, GraphEdge *gedge, Graphid start,
 		setSlotValueByAttnum(slot, edge, gedge->resno);
 
 	graphWriteStats.insertEdge++;
-
-	estate->es_result_relation_info = savedResultRelInfo;
 
 	if (auto_gather_graphmeta)
 	{

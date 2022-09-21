@@ -1181,7 +1181,7 @@ BEGIN
     SELECT users.userid INTO STRICT userid
         FROM users WHERE users.username = get_userid.username;
     RETURN userid;
-END
+END;
 $$ LANGUAGE plpgsql;
 </programlisting>
      On failure, this function might produce an error message such as
@@ -1854,7 +1854,7 @@ BEGIN
         RETURN NEXT r; -- return current row of SELECT
     END LOOP;
     RETURN;
-END
+END;
 $BODY$
 LANGUAGE plpgsql;
 
@@ -1882,7 +1882,7 @@ BEGIN
     END IF;
 
     RETURN;
- END
+ END;
 $BODY$
 LANGUAGE plpgsql;
 
@@ -1956,7 +1956,7 @@ DECLARE myvar int := 5;
 BEGIN
   CALL triple(myvar);
   RAISE NOTICE 'myvar = %', myvar;  -- prints 15
-END
+END;
 $$;
 </programlisting>
     </para>
@@ -2670,8 +2670,8 @@ NOTICE:  row = {10,11,12}
 
     <para>
      By default, any error occurring in a <application>PL/pgSQL</application>
-     function aborts execution of the function, and indeed of the
-     surrounding transaction as well.  You can trap errors and recover
+     function aborts execution of the function and the
+     surrounding transaction.  You can trap errors and recover
      from them by using a <command>BEGIN</command> block with an
      <literal>EXCEPTION</literal> clause.  The syntax is an extension of the
      normal syntax for a <command>BEGIN</command> block:
@@ -3559,7 +3559,7 @@ BEGIN
             ROLLBACK;
         END IF;
     END LOOP;
-END
+END;
 $$;
 
 CALL transaction_test1();
@@ -5213,7 +5213,7 @@ DECLARE
 f1 int;
 BEGIN
 RETURN f1;
-END
+END;
 $$ LANGUAGE plpgsql;
 WARNING:  variable "f1" shadows a previously defined variable
 LINE 3: f1 int;

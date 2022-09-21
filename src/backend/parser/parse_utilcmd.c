@@ -69,8 +69,6 @@
 #include "rewrite/rewriteManip.h"
 #include "utils/acl.h"
 #include "utils/builtins.h"
-#include "utils/graph.h"
-#include "utils/guc.h"
 #include "utils/lsyscache.h"
 #include "utils/partcache.h"
 #include "utils/rel.h"
@@ -78,7 +76,6 @@
 #include "utils/syscache.h"
 #include "utils/typcache.h"
 #include "parser/parse_cypher_utils.h"
-#include "tcop/utility.h"
 
 
 /* State shared by transformCreateStmt and its subroutines */
@@ -385,6 +382,7 @@ generateSerialExtraStmts(CreateStmtContext *cxt, ColumnDef *column,
 	CreateSeqStmt *seqstmt;
 	AlterSeqStmt *altseqstmt;
 	List	   *attnamelist;
+	int			nameEl_idx = -1;
 
 	/*
 	 * Determine namespace and name to use for the sequence.
@@ -411,6 +409,7 @@ generateSerialExtraStmts(CreateStmtContext *cxt, ColumnDef *column,
 						(errcode(ERRCODE_SYNTAX_ERROR),
 						 errmsg("conflicting or redundant options")));
 			nameEl = defel;
+			nameEl_idx = foreach_current_index(option);
 		}
 	}
 
@@ -430,7 +429,7 @@ generateSerialExtraStmts(CreateStmtContext *cxt, ColumnDef *column,
 		}
 		sname = rv->relname;
 		/* Remove the SEQUENCE NAME item from seqoptions */
-		seqoptions = list_delete_ptr(seqoptions, nameEl);
+		seqoptions = list_delete_nth_cell(seqoptions, nameEl_idx);
 	}
 	else
 	{
@@ -627,6 +626,7 @@ transformColumnDefinition(CreateStmtContext *cxt, ColumnDef *column)
 		castnode->location = -1;
 		funccallnode = makeFuncCall(SystemFuncName("nextval"),
 									list_make1(castnode),
+									COERCE_EXPLICIT_CALL,
 									-1);
 		constraint = makeNode(Constraint);
 		constraint->contype = CONSTR_DEFAULT;
@@ -4608,7 +4608,8 @@ makeVertexElements(void)
 
 	jsonb_empty_obj->contype = CONSTR_DEFAULT;
 	jsonb_empty_obj->raw_expr = (Node *)
-			makeFuncCall(list_make1(makeString("jsonb_build_object")), NIL, -1);
+			makeFuncCall(list_make1(makeString("jsonb_build_object")), NIL,
+						 COERCE_EXPLICIT_CALL, -1);
 	jsonb_empty_obj->location = -1;
 
 	constrs = list_make2(notnull, jsonb_empty_obj);
@@ -4659,7 +4660,8 @@ makeEdgeElements(void)
 
 	jsonb_empty_obj->contype = CONSTR_DEFAULT;
 	jsonb_empty_obj->raw_expr = (Node *)
-			makeFuncCall(list_make1(makeString("jsonb_build_object")), NIL, -1);
+			makeFuncCall(list_make1(makeString("jsonb_build_object")), NIL,
+						 COERCE_EXPLICIT_CALL, -1);
 	jsonb_empty_obj->location = -1;
 
 	constrs = lappend(constrs, jsonb_empty_obj);
@@ -4820,7 +4822,7 @@ transformLabelIdDefinition(CreateStmtContext *cxt, ColumnDef *col)
 	relname->val.val.str = qname;
 	relname->location = -1;
 	fclabid = makeFuncCall(SystemFuncName("graph_labid"),
-						   list_make1(relname), -1);
+						   list_make1(relname), COERCE_EXPLICIT_CALL, -1);
 	qname = quote_qualified_identifier(snamespace, sname);
 	seqname = makeNode(A_Const);
 	seqname->val.type = T_String;
@@ -4831,9 +4833,10 @@ transformLabelIdDefinition(CreateStmtContext *cxt, ColumnDef *col)
 	castseq->arg = (Node *) seqname;
 	castseq->location = -1;
 	fcnextval = makeFuncCall(SystemFuncName("nextval"),
-							 list_make1(castseq), -1);
+							 list_make1(castseq), COERCE_EXPLICIT_CALL, -1);
 	fcgraphid = makeFuncCall(SystemFuncName("graphid"),
-							 list_make2(fclabid, fcnextval), -1);
+							 list_make2(fclabid, fcnextval),
+							 COERCE_EXPLICIT_CALL, -1);
 	defid = makeNode(Constraint);
 	defid->contype = CONSTR_DEFAULT;
 	defid->location = -1;

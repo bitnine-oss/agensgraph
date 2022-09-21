@@ -798,10 +798,13 @@ CREATE VIEW pg_stat_replication AS
 
 CREATE VIEW pg_stat_replication_slots AS
     SELECT
-            s.name,
+            s.slot_name,
             s.spill_txns,
             s.spill_count,
             s.spill_bytes,
+            s.stream_txns,
+            s.stream_count,
+            s.stream_bytes,
             s.stats_reset
     FROM pg_stat_get_replication_slots() AS s;
 

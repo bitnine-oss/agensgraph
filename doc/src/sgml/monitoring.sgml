@@ -2590,7 +2590,7 @@ SELECT pid, wait_event_type, wait_event FROM pg_stat_activity WHERE wait_event i
     <tbody>
      <row>
       <entry role="catalog_table_entry"><para role="column_definition">
-        <structfield>name</structfield> <type>text</type>
+        <structfield>slot_name</structfield> <type>text</type>
        </para>
        <para>
         A unique, cluster-wide identifier for the replication slot
@@ -2603,9 +2603,9 @@ SELECT pid, wait_event_type, wait_event FROM pg_stat_activity WHERE wait_event i
        </para>
        <para>
         Number of transactions spilled to disk after the memory used by
-        logical decoding exceeds <literal>logical_decoding_work_mem</literal>. The
-        counter gets incremented both for toplevel transactions and
-        subtransactions.
+        logical decoding of changes from WAL for this slot exceeds
+        <literal>logical_decoding_work_mem</literal>. The counter gets
+        incremented both for toplevel transactions and subtransactions.
       </para></entry>
      </row>
 
@@ -2614,9 +2614,9 @@ SELECT pid, wait_event_type, wait_event FROM pg_stat_activity WHERE wait_event i
         <structfield>spill_count</structfield> <type>bigint</type>
        </para>
        <para>
-        Number of times transactions were spilled to disk. Transactions
-        may get spilled repeatedly, and this counter gets incremented on every
-        such invocation.
+        Number of times transactions were spilled to disk while decoding changes
+        from WAL for this slot. Transactions may get spilled repeatedly, and
+        this counter gets incremented on every such invocation.
       </para></entry>
      </row>
 
@@ -2625,8 +2625,49 @@ SELECT pid, wait_event_type, wait_event FROM pg_stat_activity WHERE wait_event i
         <structfield>spill_bytes</structfield> <type>bigint</type>
        </para>
        <para>
-        Amount of decoded transaction data spilled to disk.
+        Amount of decoded transaction data spilled to disk while performing
+        decoding of changes from WAL for this slot. This and other spill
+        counters can be used to gauge the I/O which occurred during logical
+        decoding and allow tuning <literal>logical_decoding_work_mem</literal>.
       </para></entry>
+     </row>
+
+     <row>
+      <entry role="catalog_table_entry"><para role="column_definition">
+        <structfield>stream_txns</structfield> <type>bigint</type>
+       </para>
+       <para>
+        Number of in-progress transactions streamed to the decoding output plugin
+        after the memory used by logical decoding of changes from WAL for this
+        slot exceeds <literal>logical_decoding_work_mem</literal>. Streaming only
+        works with toplevel transactions (subtransactions can't be streamed
+        independently), so the counter does not get incremented for subtransactions.
+       </para></entry>
+     </row>
+
+     <row>
+      <entry role="catalog_table_entry"><para role="column_definition">
+        <structfield>stream_count</structfield><type>bigint</type>
+       </para>
+       <para>
+        Number of times in-progress transactions were streamed to the decoding
+        output plugin while decoding changes from WAL for this slot. Transactions
+        may get streamed repeatedly, and this counter gets incremented on every
+        such invocation.
+      </para></entry>
+     </row>
+
+     <row>
+      <entry role="catalog_table_entry"><para role="column_definition">
+        <structfield>stream_bytes</structfield><type>bigint</type>
+       </para>
+       <para>
+        Amount of decoded in-progress transaction data streamed to the decoding
+        output plugin while decoding changes from WAL for this slot. This and other
+        streaming counters for this slot can be used to gauge the network I/O which
+        occurred during logical decoding and allow tuning <literal>logical_decoding_work_mem</literal>.
+       </para>
+      </entry>
      </row>
 
      <row>

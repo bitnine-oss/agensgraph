@@ -28,8 +28,6 @@ CREATE OPERATOR CLASS box_ops DEFAULT
 	OPERATOR 10	<<|,
 	OPERATOR 11	|>>,
 	OPERATOR 12	|&>,
-	OPERATOR 13	~,
-	OPERATOR 14	@,
 	FUNCTION 1	gist_box_consistent(internal, box, smallint, oid, internal),
 	FUNCTION 2	gist_box_union(internal, internal),
 	-- don't need compress, decompress, or fetch functions
@@ -50,10 +48,10 @@ SET enable_bitmapscan = OFF;
 
 EXPLAIN (COSTS OFF)
 SELECT * FROM fast_emp4000
-    WHERE home_base @ '(200,200),(2000,1000)'::box
+    WHERE home_base <@ '(200,200),(2000,1000)'::box
     ORDER BY (home_base[0])[0];
 SELECT * FROM fast_emp4000
-    WHERE home_base @ '(200,200),(2000,1000)'::box
+    WHERE home_base <@ '(200,200),(2000,1000)'::box
     ORDER BY (home_base[0])[0];
 
 EXPLAIN (COSTS OFF)

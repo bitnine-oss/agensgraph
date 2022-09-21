@@ -19,13 +19,16 @@
 #include "access/table.h"
 #include "catalog/dependency.h"
 #include "catalog/indexing.h"
+#include "catalog/pg_collation.h"
 #include "catalog/pg_constraint.h"
 #include "catalog/pg_depend.h"
 #include "catalog/pg_extension.h"
 #include "commands/extension.h"
 #include "miscadmin.h"
+#include "utils/builtins.h"
 #include "utils/fmgroids.h"
 #include "utils/lsyscache.h"
+#include "utils/pg_locale.h"
 #include "utils/rel.h"
 
 
@@ -44,18 +47,24 @@ recordDependencyOn(const ObjectAddress *depender,
 				   const ObjectAddress *referenced,
 				   DependencyType behavior)
 {
-	recordMultipleDependencies(depender, referenced, 1, behavior);
+	recordMultipleDependencies(depender, referenced, 1, behavior, false);
 }
 
 /*
  * Record multiple dependencies (of the same kind) for a single dependent
  * object.  This has a little less overhead than recording each separately.
+ *
+ * If record_version is true, then a record is added even if the referenced
+ * object is pinned, and the dependency version will be retrieved according to
+ * the referenced object kind.  For now, only collation version is
+ * supported.
  */
 void
 recordMultipleDependencies(const ObjectAddress *depender,
 						   const ObjectAddress *referenced,
 						   int nreferenced,
-						   DependencyType behavior)
+						   DependencyType behavior,
+						   bool record_version)
 {
 	Relation	dependDesc;
 	CatalogIndexState indstate;
@@ -64,6 +73,7 @@ recordMultipleDependencies(const ObjectAddress *depender,
 				max_slots,
 				slot_init_count,
 				slot_stored_count;
+	char	   *version = NULL;
 
 	if (nreferenced <= 0)
 		return;					/* nothing to do */
@@ -94,12 +104,38 @@ recordMultipleDependencies(const ObjectAddress *depender,
 	slot_init_count = 0;
 	for (i = 0; i < nreferenced; i++, referenced++)
 	{
+		bool		ignore_systempin = false;
+
+		if (record_version)
+		{
+			/* For now we only know how to deal with collations. */
+			if (referenced->classId == CollationRelationId)
+			{
+				/* C and POSIX don't need version tracking. */
+				if (referenced->objectId == C_COLLATION_OID ||
+					referenced->objectId == POSIX_COLLATION_OID)
+					continue;
+
+				version = get_collation_version_for_oid(referenced->objectId);
+
+				/*
+				 * Default collation is pinned, so we need to force recording
+				 * the dependency to store the version.
+				 */
+				if (referenced->objectId == DEFAULT_COLLATION_OID)
+					ignore_systempin = true;
+			}
+		}
+		else
+			Assert(!version);
+
 		/*
 		 * If the referenced object is pinned by the system, there's no real
-		 * need to record dependencies on it.  This saves lots of space in
-		 * pg_depend, so it's worth the time taken to check.
+		 * need to record dependencies on it, unless we need to record a
+		 * version.  This saves lots of space in pg_depend, so it's worth the
+		 * time taken to check.
 		 */
-		if (isObjectPinned(referenced, dependDesc))
+		if (!ignore_systempin && isObjectPinned(referenced, dependDesc))
 			continue;
 
 		if (slot_init_count < max_slots)
@@ -115,6 +151,9 @@ recordMultipleDependencies(const ObjectAddress *depender,
 		 * Record the dependency.  Note we don't bother to check for duplicate
 		 * dependencies; there's no harm in them.
 		 */
+		memset(slot[slot_stored_count]->tts_isnull, false,
+			   slot[slot_stored_count]->tts_tupleDescriptor->natts * sizeof(bool));
+
 		slot[slot_stored_count]->tts_values[Anum_pg_depend_refclassid - 1] = ObjectIdGetDatum(referenced->classId);
 		slot[slot_stored_count]->tts_values[Anum_pg_depend_refobjid - 1] = ObjectIdGetDatum(referenced->objectId);
 		slot[slot_stored_count]->tts_values[Anum_pg_depend_refobjsubid - 1] = Int32GetDatum(referenced->objectSubId);
@@ -122,9 +161,10 @@ recordMultipleDependencies(const ObjectAddress *depender,
 		slot[slot_stored_count]->tts_values[Anum_pg_depend_classid - 1] = ObjectIdGetDatum(depender->classId);
 		slot[slot_stored_count]->tts_values[Anum_pg_depend_objid - 1] = ObjectIdGetDatum(depender->objectId);
 		slot[slot_stored_count]->tts_values[Anum_pg_depend_objsubid - 1] = Int32GetDatum(depender->objectSubId);
-
-		memset(slot[slot_stored_count]->tts_isnull, false,
-			   slot[slot_stored_count]->tts_tupleDescriptor->natts * sizeof(bool));
+		if (version)
+			slot[slot_stored_count]->tts_values[Anum_pg_depend_refobjversion - 1] = CStringGetTextDatum(version);
+		else
+			slot[slot_stored_count]->tts_isnull[Anum_pg_depend_refobjversion - 1] = true;
 
 		ExecStoreVirtualTuple(slot[slot_stored_count]);
 		slot_stored_count++;

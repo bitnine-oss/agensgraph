@@ -779,7 +779,7 @@ contain_volatile_functions_not_nextval(Node *clause)
 static bool
 contain_volatile_functions_not_nextval_checker(Oid func_id, void *context)
 {
-	return (func_id != F_NEXTVAL_OID &&
+	return (func_id != F_NEXTVAL &&
 			func_volatile(func_id) == PROVOLATILE_VOLATILE);
 }
 
@@ -4679,7 +4679,8 @@ inline_function(Oid funcid, Oid result_type, Oid result_collid,
 	 * needed; that's probably not important, but let's be careful.
 	 */
 	querytree_list = list_make1(querytree);
-	if (check_sql_fn_retval(querytree_list, result_type, rettupdesc,
+	if (check_sql_fn_retval(list_make1(querytree_list),
+							result_type, rettupdesc,
 							false, NULL))
 		goto fail;				/* reject whole-tuple-result cases */
 
@@ -5197,7 +5198,7 @@ inline_set_returning_function(PlannerInfo *root, RangeTblEntry *rte)
 	 * shows it's returning a whole tuple result; otherwise what it's
 	 * returning is a single composite column which is not what we need.
 	 */
-	if (!check_sql_fn_retval(querytree_list,
+	if (!check_sql_fn_retval(list_make1(querytree_list),
 							 fexpr->funcresulttype, rettupdesc,
 							 true, NULL) &&
 		(functypclass == TYPEFUNC_COMPOSITE ||
@@ -5209,7 +5210,7 @@ inline_set_returning_function(PlannerInfo *root, RangeTblEntry *rte)
 	 * check_sql_fn_retval might've inserted a projection step, but that's
 	 * fine; just make sure we use the upper Query.
 	 */
-	querytree = linitial(querytree_list);
+	querytree = linitial_node(Query, querytree_list);
 
 	/*
 	 * Looks good --- substitute parameters into the query.

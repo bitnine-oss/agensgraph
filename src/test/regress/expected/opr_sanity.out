@@ -1164,7 +1164,6 @@ ORDER BY 1, 2;
  ?-|  | ?-|
  ?|   | ?|
  ?||  | ?||
- @    | ~
  @@   | @@
  @@@  | @@@
  `*`  | `*`
@@ -1173,7 +1172,7 @@ ORDER BY 1, 2;
  ~<=~ | ~>=~
  ~<~  | ~>~
  ~=   | ~=
-(32 rows)
+(31 rows)
 
 -- Likewise for negator pairs.
 SELECT DISTINCT o1.oprname AS op1, o2.oprname AS op2
@@ -1997,8 +1996,6 @@ ORDER BY 1, 2, 3;
         783 |           11 | >^
         783 |           11 | |>>
         783 |           12 | |&>
-        783 |           13 | ~
-        783 |           14 | @
         783 |           15 | <->
         783 |           16 | @>
         783 |           18 | =
@@ -2096,7 +2093,7 @@ ORDER BY 1, 2, 3;
        4000 |           26 | >>
        4000 |           27 | >>=
        4000 |           28 | ^@
-(130 rows)
+(128 rows)
 
 -- Check that all opclass search operators have selectivity estimators.
 -- This is not absolutely required, but it seems a reasonable thing
