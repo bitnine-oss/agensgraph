@@ -105,7 +105,7 @@ typedef struct FileFdwExecutionState
 	bool		is_program;		/* true if filename represents an OS command */
 	List	   *options;		/* merged COPY options, excluding filename and
 								 * is_program */
-	CopyState	cstate;			/* COPY execution state */
+	CopyFromState cstate;		/* COPY execution state */
 } FileFdwExecutionState;
 
 /*
@@ -655,7 +655,7 @@ fileBeginForeignScan(ForeignScanState *node, int eflags)
 	char	   *filename;
 	bool		is_program;
 	List	   *options;
-	CopyState	cstate;
+	CopyFromState cstate;
 	FileFdwExecutionState *festate;
 
 	/*
@@ -677,6 +677,7 @@ fileBeginForeignScan(ForeignScanState *node, int eflags)
 	 */
 	cstate = BeginCopyFrom(NULL,
 						   node->ss.ss_currentRelation,
+						   NULL,
 						   filename,
 						   is_program,
 						   NULL,
@@ -723,9 +724,6 @@ fileIterateForeignScan(ForeignScanState *node)
 	 *
 	 * We can pass ExprContext = NULL because we read all columns from the
 	 * file, so no need to evaluate default expressions.
-	 *
-	 * We can also pass tupleOid = NULL because we don't allow oids for
-	 * foreign tables.
 	 */
 	ExecClearTuple(slot);
 	found = NextCopyFrom(festate->cstate, NULL,
@@ -752,6 +750,7 @@ fileReScanForeignScan(ForeignScanState *node)
 
 	festate->cstate = BeginCopyFrom(NULL,
 									node->ss.ss_currentRelation,
+									NULL,
 									festate->filename,
 									festate->is_program,
 									NULL,
@@ -1107,7 +1106,7 @@ file_acquire_sample_rows(Relation onerel, int elevel,
 	char	   *filename;
 	bool		is_program;
 	List	   *options;
-	CopyState	cstate;
+	CopyFromState cstate;
 	ErrorContextCallback errcallback;
 	MemoryContext oldcontext = CurrentMemoryContext;
 	MemoryContext tupcontext;
@@ -1125,7 +1124,7 @@ file_acquire_sample_rows(Relation onerel, int elevel,
 	/*
 	 * Create CopyState from FDW options.
 	 */
-	cstate = BeginCopyFrom(NULL, onerel, filename, is_program, NULL, NIL,
+	cstate = BeginCopyFrom(NULL, onerel, NULL, filename, is_program, NULL, NIL,
 						   options);
 
 	/*

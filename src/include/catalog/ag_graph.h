@@ -35,4 +35,9 @@ CATALOG(ag_graph,7040,GraphRelationId) BKI_SCHEMA_MACRO
  */
 typedef FormData_ag_graph *Form_ag_graph;
 
+DECLARE_UNIQUE_INDEX(ag_graph_oid_index, 7041, on ag_graph using btree(oid oid_ops));
+#define GraphOidIndexId 7041
+DECLARE_UNIQUE_INDEX(ag_graph_graphname_index, 7042, on ag_graph using btree(graphname name_ops));
+#define GraphNameIndexId 7042
+
 #endif   /* AG_GRAPH_H */

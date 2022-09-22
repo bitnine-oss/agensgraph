@@ -32,7 +32,8 @@ static void LockTableRecurse(Oid reloid, LOCKMODE lockmode, bool nowait);
 static AclResult LockTableAclCheck(Oid relid, LOCKMODE lockmode, Oid userid);
 static void RangeVarCallbackForLockTable(const RangeVar *rv, Oid relid,
 										 Oid oldrelid, void *arg);
-static void LockViewRecurse(Oid reloid, LOCKMODE lockmode, bool nowait, List *ancestor_views);
+static void LockViewRecurse(Oid reloid, LOCKMODE lockmode, bool nowait,
+							List *ancestor_views);
 
 /*
  * LOCK TABLE
@@ -82,6 +83,14 @@ RangeVarCallbackForLockTable(const RangeVar *rv, Oid relid, Oid oldrelid,
 	if (!relkind)
 		return;					/* woops, concurrently dropped; no permissions
 								 * check */
+
+	/* Currently, we only allow plain tables or views to be locked */
+	if (relkind != RELKIND_RELATION && relkind != RELKIND_PARTITIONED_TABLE &&
+		relkind != RELKIND_VIEW)
+		ereport(ERROR,
+				(errcode(ERRCODE_WRONG_OBJECT_TYPE),
+				 errmsg("\"%s\" is not a table or view",
+						rv->relname)));
 
 	/*
 	 * Make note if a temporary relation has been accessed in this
@@ -178,13 +187,11 @@ LockViewRecurse_walker(Node *node, LockViewRecurse_context *context)
 		foreach(rtable, query->rtable)
 		{
 			RangeTblEntry *rte = lfirst(rtable);
-			Oid			relid;
 			AclResult	aclresult;
 
-			/* ignore all non-relation RTEs */
-			if (rte->rtekind != RTE_RELATION)
-				continue;
-			relid = rte->relid;
+			Oid			relid = rte->relid;
+			char		relkind = rte->relkind;
+			char	   *relname = get_rel_name(relid);
 
 			/*
 			 * The OLD and NEW placeholder entries in the view's rtable are
@@ -195,18 +202,22 @@ LockViewRecurse_walker(Node *node, LockViewRecurse_context *context)
 				 strcmp(rte->eref->aliasname, "new") == 0))
 				continue;
 
-			/* Check infinite recursion in the view definition. */
+			/* Currently, we only allow plain tables or views to be locked. */
+			if (relkind != RELKIND_RELATION && relkind != RELKIND_PARTITIONED_TABLE &&
+				relkind != RELKIND_VIEW)
+				continue;
+
+			/*
+			 * We might be dealing with a self-referential view.  If so, we
+			 * can just stop recursing, since we already locked it.
+			 */
 			if (list_member_oid(context->ancestor_views, relid))
-				ereport(ERROR,
-						(errcode(ERRCODE_INVALID_OBJECT_DEFINITION),
-						 errmsg("infinite recursion detected in rules for relation \"%s\"",
-								get_rel_name(relid))));
+				continue;
 
 			/* Check permissions with the view owner's privilege. */
 			aclresult = LockTableAclCheck(relid, context->lockmode, context->viewowner);
 			if (aclresult != ACLCHECK_OK)
-				aclcheck_error(aclresult, get_relkind_objtype(rte->relkind),
-							   get_rel_name(relid));
+				aclcheck_error(aclresult, get_relkind_objtype(relkind), relname);
 
 			/* We have enough rights to lock the relation; do so. */
 			if (!context->nowait)
@@ -215,10 +226,11 @@ LockViewRecurse_walker(Node *node, LockViewRecurse_context *context)
 				ereport(ERROR,
 						(errcode(ERRCODE_LOCK_NOT_AVAILABLE),
 						 errmsg("could not obtain lock on relation \"%s\"",
-								get_rel_name(relid))));
+								relname)));
 
-			if (rte->relkind == RELKIND_VIEW)
-				LockViewRecurse(relid, context->lockmode, context->nowait, context->ancestor_views);
+			if (relkind == RELKIND_VIEW)
+				LockViewRecurse(relid, context->lockmode, context->nowait,
+								context->ancestor_views);
 			else if (rte->inh)
 				LockTableRecurse(relid, context->lockmode, context->nowait);
 		}
@@ -235,13 +247,14 @@ LockViewRecurse_walker(Node *node, LockViewRecurse_context *context)
 }
 
 static void
-LockViewRecurse(Oid reloid, LOCKMODE lockmode, bool nowait, List *ancestor_views)
+LockViewRecurse(Oid reloid, LOCKMODE lockmode, bool nowait,
+				List *ancestor_views)
 {
 	LockViewRecurse_context context;
-
 	Relation	view;
 	Query	   *viewquery;
 
+	/* caller has already locked the view */
 	view = table_open(reloid, NoLock);
 	viewquery = get_view_query(view);
 
@@ -253,7 +266,7 @@ LockViewRecurse(Oid reloid, LOCKMODE lockmode, bool nowait, List *ancestor_views
 
 	LockViewRecurse_walker((Node *) viewquery, &context);
 
-	(void) list_delete_last(context.ancestor_views);
+	context.ancestor_views = list_delete_last(context.ancestor_views);
 
 	table_close(view, NoLock);
 }

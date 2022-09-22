@@ -104,11 +104,32 @@
  * XLC: https://www.ibm.com/support/knowledgecenter/SSGH2K_13.1.2/com.ibm.xlc131.aix.doc/language_ref/type_attrib.html
  */
 
+/*
+ * For compilers which don't support __has_attribute, we just define
+ * __has_attribute(x) to 0 so that we can define macros for various
+ * __attribute__s more easily below.
+ */
+#ifndef __has_attribute
+#define __has_attribute(attribute) 0
+#endif
+
 /* only GCC supports the unused attribute */
 #ifdef __GNUC__
 #define pg_attribute_unused() __attribute__((unused))
 #else
 #define pg_attribute_unused()
+#endif
+
+/*
+ * pg_nodiscard means the compiler should warn if the result of a function
+ * call is ignored.  The name "nodiscard" is chosen in alignment with
+ * (possibly future) C and C++ standards.  For maximum compatibility, use it
+ * as a function declaration specifier, so it goes before the return type.
+ */
+#ifdef __GNUC__
+#define pg_nodiscard __attribute__((warn_unused_result))
+#else
+#define pg_nodiscard
 #endif
 
 /*
@@ -179,6 +200,39 @@
 #define pg_noinline
 #endif
 
+/*
+ * For now, just define pg_attribute_cold and pg_attribute_hot to be empty
+ * macros on minGW 8.1.  There appears to be a compiler bug that results in
+ * compilation failure.  At this time, we still have at least one buildfarm
+ * animal running that compiler, so this should make that green again. It's
+ * likely this compiler is not popular enough to warrant keeping this code
+ * around forever, so let's just remove it once the last buildfarm animal
+ * upgrades.
+ */
+#if defined(__MINGW64__) && __GNUC__ == 8 && __GNUC_MINOR__ == 1
+
+#define pg_attribute_cold
+#define pg_attribute_hot
+
+#else
+/*
+ * Marking certain functions as "hot" or "cold" can be useful to assist the
+ * compiler in arranging the assembly code in a more efficient way.
+ */
+#if __has_attribute (cold)
+#define pg_attribute_cold __attribute__((cold))
+#else
+#define pg_attribute_cold
+#endif
+
+#if __has_attribute (hot)
+#define pg_attribute_hot __attribute__((hot))
+#else
+#define pg_attribute_hot
+#endif
+
+#endif							/* defined(__MINGW64__) && __GNUC__ == 8 &&
+								 * __GNUC_MINOR__ == 1 */
 /*
  * Mark a point as unreachable in a portable fashion.  This should preferably
  * be something that the compiler understands, to aid code generation.

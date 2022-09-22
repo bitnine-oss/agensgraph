@@ -116,8 +116,7 @@ static void initCypherIndex(Expr *node, ExprState *state, CypherIndexResult *cid
  * the same as the per-query context of the associated ExprContext.
  *
  * Any Aggref, WindowFunc, or SubPlan nodes found in the tree are added to
- * the lists of such nodes held by the parent PlanState (or more accurately,
- * the AggrefExprState etc. nodes created for them are added).
+ * the lists of such nodes held by the parent PlanState.
  *
  * Note: there is no ExecEndExpr function; we assume that any resource
  * cleanup needed will be handled by just releasing the memory context
@@ -796,18 +795,15 @@ ExecInitExprRec(Expr *node, ExprState *state,
 		case T_Aggref:
 			{
 				Aggref	   *aggref = (Aggref *) node;
-				AggrefExprState *astate = makeNode(AggrefExprState);
 
 				scratch.opcode = EEOP_AGGREF;
-				scratch.d.aggref.astate = astate;
-				astate->aggref = aggref;
+				scratch.d.aggref.aggno = aggref->aggno;
 
 				if (state->parent && IsA(state->parent, AggState))
 				{
 					AggState   *aggstate = (AggState *) state->parent;
 
-					aggstate->aggs = lappend(aggstate->aggs, astate);
-					aggstate->numaggs++;
+					aggstate->aggs = lappend(aggstate->aggs, aggref);
 				}
 				else
 				{

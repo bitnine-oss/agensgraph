@@ -749,6 +749,21 @@ include_dir 'conf.d'
         An empty value
         specifies not listening on any Unix-domain sockets, in which case
         only TCP/IP sockets can be used to connect to the server.
+       </para>
+
+       <para>
+        A value that starts with <literal>@</literal> specifies that a
+        Unix-domain socket in the abstract namespace should be created
+        (currently supported on Linux and Windows).  In that case, this value
+        does not specify a <quote>directory</quote> but a prefix from which
+        the actual socket name is computed in the same manner as for the
+        file-system namespace.  While the abstract socket name prefix can be
+        chosen freely, since it is not a file-system location, the convention
+        is to nonetheless use file-system-like values such as
+        <literal>@/tmp</literal>.
+       </para>
+
+       <para>
         The default value is normally
         <filename>/tmp</filename>, but that can be changed at build time.
         On Windows, the default is empty, which means no Unix-domain socket is
@@ -763,6 +778,7 @@ include_dir 'conf.d'
         named <literal>.s.PGSQL.<replaceable>nnnn</replaceable>.lock</literal> will be
         created in each of the <varname>unix_socket_directories</varname> directories.
         Neither file should ever be removed manually.
+        For sockets in the abstract namespace, no lock file is created.
        </para>
       </listitem>
      </varlistentry>
@@ -787,7 +803,8 @@ include_dir 'conf.d'
 
        <para>
         This parameter is not supported on Windows.  Any setting will be
-        ignored.
+        ignored.  Also, sockets in the abstract namespace have no file owner,
+        so this setting is also ignored in that case.
        </para>
       </listitem>
      </varlistentry>
@@ -833,6 +850,11 @@ include_dir 'conf.d'
         10, that ignore socket permissions entirely.  There, one can achieve a
         similar effect by pointing <varname>unix_socket_directories</varname> to a
         directory having search permission limited to the desired audience.
+       </para>
+
+       <para>
+        Sockets in the abstract namespace have no file permissions, so this
+        setting is also ignored in that case.
        </para>
       </listitem>
      </varlistentry>
@@ -2146,8 +2168,11 @@ include_dir 'conf.d'
       There is a separate server
       process called the <firstterm>background writer</firstterm>, whose function
       is to issue writes of <quote>dirty</quote> (new or modified) shared
-      buffers.  It writes shared buffers so server processes handling
-      user queries seldom or never need to wait for a write to occur.
+      buffers.  When the number of clean shared buffers appears to be
+      insufficient, the background writer writes some dirty buffers to the
+      file system and marks them as clean.  This reduces the likelihood
+      that server processes handling user queries will be unable to find
+      clean buffers and have to write dirty buffers themselves.
       However, the background writer does cause a net overall
       increase in I/O load, because while a repeatedly-dirtied page might
       otherwise be written only once per checkpoint interval, the
@@ -3542,7 +3567,8 @@ restore_command = 'copy "C:\\server\\archivedir\\%f" "%p"'  # Windows
        </para>
 
        <para>
-        This parameter can only be set at server start.
+        This parameter can only be set in the <filename>postgresql.conf</filename>
+        file or on the server command line.
        </para>
       </listitem>
      </varlistentry>
@@ -5647,10 +5673,7 @@ SELECT * FROM parent WHERE key = 2400;
       <term>
        <varname>parallel_leader_participation</varname> (<type>boolean</type>)
        <indexterm>
-        <primary>
-         <varname>parallel_leader_participation</varname> configuration
-         parameter
-        </primary>
+        <primary><varname>parallel_leader_participation</varname> configuration parameter</primary>
        </indexterm>
       </term>
       <listitem>
@@ -9362,29 +9385,6 @@ dynamic_library_path = 'C:\tools\postgresql;H:\my_project\lib;$libdir'
         Setting this variable does not disable all security checks related to
         large objects &mdash; only those for which the default behavior has
         changed in <productname>PostgreSQL</productname> 9.0.
-       </para>
-      </listitem>
-     </varlistentry>
-
-     <varlistentry id="guc-operator-precedence-warning" xreflabel="operator_precedence_warning">
-      <term><varname>operator_precedence_warning</varname> (<type>boolean</type>)
-      <indexterm>
-       <primary><varname>operator_precedence_warning</varname> configuration parameter</primary>
-      </indexterm>
-      </term>
-      <listitem>
-       <para>
-        When on, the parser will emit a warning for any construct that might
-        have changed meanings since <productname>PostgreSQL</productname> 9.4 as a result
-        of changes in operator precedence.  This is useful for auditing
-        applications to see if precedence changes have broken anything; but it
-        is not meant to be kept turned on in production, since it will warn
-        about some perfectly valid, standard-compliant SQL code.
-        The default is <literal>off</literal>.
-       </para>
-
-       <para>
-        See <xref linkend="sql-precedence"/> for more information.
        </para>
       </listitem>
      </varlistentry>

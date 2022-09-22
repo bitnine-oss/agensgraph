@@ -64,4 +64,9 @@ CATALOG(pg_partitioned_table,3350,PartitionedRelationId)
  */
 typedef FormData_pg_partitioned_table *Form_pg_partitioned_table;
 
+DECLARE_TOAST(pg_partitioned_table, 4165, 4166);
+
+DECLARE_UNIQUE_INDEX(pg_partitioned_table_partrelid_index, 3351, on pg_partitioned_table using btree(partrelid oid_ops));
+#define PartitionedRelidIndexId			 3351
+
 #endif							/* PG_PARTITIONED_TABLE_H */

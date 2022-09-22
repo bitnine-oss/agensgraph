@@ -24,7 +24,6 @@
 #include "catalog/ag_graph_fn.h"
 #include "catalog/ag_label.h"
 #include "catalog/catalog.h"
-#include "catalog/indexing.h"
 #include "catalog/objectaddress.h"
 #include "catalog/pg_am.h"
 #include "catalog/pg_amop.h"
@@ -592,7 +591,7 @@ static const ObjectPropertyType ObjectProperty[] =
 		true
 	},
 	{
-		"extented statistics",
+		"extended statistics",
 		StatisticExtRelationId,
 		StatisticExtOidIndexId,
 		STATEXTOID,

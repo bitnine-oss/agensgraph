@@ -157,19 +157,19 @@ SELECT count(*) FROM point_tbl p WHERE p.f1 << '(0.0, 0.0)';
 SELECT count(*) FROM point_tbl p WHERE p.f1 >> '(0.0, 0.0)';
  count 
 -------
-     3
+     4
 (1 row)
 
-SELECT count(*) FROM point_tbl p WHERE p.f1 <^ '(0.0, 0.0)';
+SELECT count(*) FROM point_tbl p WHERE p.f1 <<| '(0.0, 0.0)';
  count 
 -------
      1
 (1 row)
 
-SELECT count(*) FROM point_tbl p WHERE p.f1 >^ '(0.0, 0.0)';
+SELECT count(*) FROM point_tbl p WHERE p.f1 |>> '(0.0, 0.0)';
  count 
 -------
-     4
+     5
 (1 row)
 
 SELECT count(*) FROM point_tbl p WHERE p.f1 ~= '(-5, -12)';
@@ -188,10 +188,11 @@ SELECT * FROM point_tbl ORDER BY f1 <-> '0,1';
  (10,10)
  (-5,-12)
  (5.1,34.5)
+ (Infinity,1e+300)
  (1e+300,Infinity)
  (NaN,NaN)
  
-(10 rows)
+(11 rows)
 
 SELECT * FROM point_tbl WHERE f1 IS NULL;
  f1 
@@ -202,16 +203,17 @@ SELECT * FROM point_tbl WHERE f1 IS NULL;
 SELECT * FROM point_tbl WHERE f1 IS NOT NULL ORDER BY f1 <-> '0,1';
         f1         
 -------------------
- (1e-300,-1e-300)
  (0,0)
+ (1e-300,-1e-300)
  (-3,4)
  (-10,0)
  (10,10)
  (-5,-12)
  (5.1,34.5)
  (1e+300,Infinity)
+ (Infinity,1e+300)
  (NaN,NaN)
-(9 rows)
+(10 rows)
 
 SELECT * FROM point_tbl WHERE f1 <@ '(-10,-10),(10,10)':: box ORDER BY f1 <-> '0,1';
         f1        
@@ -464,37 +466,37 @@ SELECT count(*) FROM point_tbl p WHERE p.f1 >> '(0.0, 0.0)';
 SELECT count(*) FROM point_tbl p WHERE p.f1 >> '(0.0, 0.0)';
  count 
 -------
-     3
+     4
 (1 row)
 
 EXPLAIN (COSTS OFF)
-SELECT count(*) FROM point_tbl p WHERE p.f1 <^ '(0.0, 0.0)';
+SELECT count(*) FROM point_tbl p WHERE p.f1 <<| '(0.0, 0.0)';
                       QUERY PLAN                      
 ------------------------------------------------------
  Aggregate
    ->  Index Only Scan using gpointind on point_tbl p
-         Index Cond: (f1 <^ '(0,0)'::point)
+         Index Cond: (f1 <<| '(0,0)'::point)
 (3 rows)
 
-SELECT count(*) FROM point_tbl p WHERE p.f1 <^ '(0.0, 0.0)';
+SELECT count(*) FROM point_tbl p WHERE p.f1 <<| '(0.0, 0.0)';
  count 
 -------
      1
 (1 row)
 
 EXPLAIN (COSTS OFF)
-SELECT count(*) FROM point_tbl p WHERE p.f1 >^ '(0.0, 0.0)';
+SELECT count(*) FROM point_tbl p WHERE p.f1 |>> '(0.0, 0.0)';
                       QUERY PLAN                      
 ------------------------------------------------------
  Aggregate
    ->  Index Only Scan using gpointind on point_tbl p
-         Index Cond: (f1 >^ '(0,0)'::point)
+         Index Cond: (f1 |>> '(0,0)'::point)
 (3 rows)
 
-SELECT count(*) FROM point_tbl p WHERE p.f1 >^ '(0.0, 0.0)';
+SELECT count(*) FROM point_tbl p WHERE p.f1 |>> '(0.0, 0.0)';
  count 
 -------
-     4
+     5
 (1 row)
 
 EXPLAIN (COSTS OFF)
@@ -530,10 +532,11 @@ SELECT * FROM point_tbl ORDER BY f1 <-> '0,1';
  (10,10)
  (-5,-12)
  (5.1,34.5)
+ (Infinity,1e+300)
  (1e+300,Infinity)
  (NaN,NaN)
  
-(10 rows)
+(11 rows)
 
 EXPLAIN (COSTS OFF)
 SELECT * FROM point_tbl WHERE f1 IS NULL;
@@ -568,9 +571,10 @@ SELECT * FROM point_tbl WHERE f1 IS NOT NULL ORDER BY f1 <-> '0,1';
  (10,10)
  (-5,-12)
  (5.1,34.5)
+ (Infinity,1e+300)
  (1e+300,Infinity)
  (NaN,NaN)
-(9 rows)
+(10 rows)
 
 EXPLAIN (COSTS OFF)
 SELECT * FROM point_tbl WHERE f1 <@ '(-10,-10),(10,10)':: box ORDER BY f1 <-> '0,1';
@@ -2020,7 +2024,7 @@ CREATE TABLE concur_reindex_tab (c1 int);
 -- REINDEX
 REINDEX TABLE concur_reindex_tab; -- notice
 NOTICE:  table "concur_reindex_tab" has no indexes to reindex
-REINDEX TABLE CONCURRENTLY concur_reindex_tab; -- notice
+REINDEX (CONCURRENTLY) TABLE concur_reindex_tab; -- notice
 NOTICE:  table "concur_reindex_tab" has no indexes that can be reindexed concurrently
 ALTER TABLE concur_reindex_tab ADD COLUMN c2 text; -- add toast index
 -- Normal index with integer column

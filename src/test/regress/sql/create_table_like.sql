@@ -114,6 +114,11 @@ INSERT INTO inhg (xx, yy, x) VALUES ('foo', 10, 15); -- should fail
 DROP TABLE inhg;
 DROP TABLE inhz;
 
+/* Use primary key imported by LIKE for self-referential FK constraint */
+CREATE TABLE inhz (x text REFERENCES inhz, LIKE inhx INCLUDING INDEXES);
+\d inhz
+DROP TABLE inhz;
+
 -- including storage and comments
 CREATE TABLE ctlt1 (a text CHECK (length(a) > 2) PRIMARY KEY, b text);
 CREATE INDEX ctlt1_b_key ON ctlt1 (b);
@@ -167,6 +172,14 @@ CREATE TABLE inh_error2 (LIKE ctlt4 INCLUDING STORAGE) INHERITS (ctlt1);
 CREATE TABLE pg_attrdef (LIKE ctlt1 INCLUDING ALL);
 \d+ public.pg_attrdef
 DROP TABLE public.pg_attrdef;
+
+-- Check that LIKE isn't confused when new table masks the old, either
+BEGIN;
+CREATE SCHEMA ctl_schema;
+SET LOCAL search_path = ctl_schema, public;
+CREATE TABLE ctlt1 (LIKE ctlt1 INCLUDING ALL);
+\d+ ctlt1
+ROLLBACK;
 
 DROP TABLE ctlt1, ctlt2, ctlt3, ctlt4, ctlt12_storage, ctlt12_comments, ctlt1_inh, ctlt13_inh, ctlt13_like, ctlt_all, ctla, ctlb CASCADE;
 

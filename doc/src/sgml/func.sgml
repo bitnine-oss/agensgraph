@@ -762,25 +762,6 @@ repeat('Pg', 4) <returnvalue>PgPgPgPg</returnvalue>
     expression must be of Boolean type.
    </para>
 
-<!-- IS OF does not conform to the ISO SQL behavior, so it is undocumented here
-   <para>
-    <indexterm>
-     <primary>IS OF</primary>
-    </indexterm>
-    <indexterm>
-     <primary>IS NOT OF</primary>
-    </indexterm>
-    It is possible to check the data type of an expression using the
-    predicates
-<synopsis>
-<replaceable>expression</replaceable> IS OF (typename, ...)
-<replaceable>expression</replaceable> IS NOT OF (typename, ...)
-</synopsis>
-    They return a boolean value based on whether the expression's data
-    type is one of the listed data types.
-   </para>
--->
-
    <para>
     Some comparison-related functions are also available, as shown in <xref
     linkend="functions-comparison-func-table"/>.
@@ -1756,7 +1737,7 @@ repeat('Pg', 4) <returnvalue>PgPgPgPg</returnvalue>
 
       <row>
        <entry role="func_table_entry"><para role="func_signature">
-        <function>width_bucket</function> ( <parameter>operand</parameter> <type>anyelement</type>, <parameter>thresholds</parameter> <type>anyarray</type> )
+        <function>width_bucket</function> ( <parameter>operand</parameter> <type>anycompatible</type>, <parameter>thresholds</parameter> <type>anycompatiblearray</type> )
        <returnvalue>integer</returnvalue>
        </para>
        <para>
@@ -2328,15 +2309,11 @@ repeat('Pg', 4) <returnvalue>PgPgPgPg</returnvalue>
 
    <note>
     <para>
-     Before <productname>PostgreSQL</productname> 8.3, these functions would
-     silently accept values of several non-string data types as well, due to
-     the presence of implicit coercions from those data types to
-     <type>text</type>.  Those coercions have been removed because they frequently
-     caused surprising behaviors.  However, the string concatenation operator
-     (<literal>||</literal>) still accepts non-string input, so long as at least one
-     input is of a string type, as shown in <xref
-     linkend="functions-string-sql"/>.  For other cases, insert an explicit
-     coercion to <type>text</type> if you need to duplicate the previous behavior.
+     The string concatenation operator (<literal>||</literal>) will accept
+     non-string input, so long as at least one input is of string type, as shown
+     in <xref linkend="functions-string-sql"/>.  For other cases, inserting an
+     explicit coercion to <type>text</type> can be used to have non-string input
+     accepted.
     </para>
    </note>
 
@@ -3356,11 +3333,17 @@ repeat('Pg', 4) <returnvalue>PgPgPgPg</returnvalue>
        <para>
         Splits <parameter>string</parameter> at occurrences
         of <parameter>delimiter</parameter> and returns
-        the <parameter>n</parameter>'th field (counting from one).
+        the <parameter>n</parameter>'th field (counting from one),
+        or when <parameter>n</parameter> is negative, returns
+        the |<parameter>n</parameter>|'th-from-last field.
        </para>
        <para>
         <literal>split_part('abc~@~def~@~ghi', '~@~', 2)</literal>
         <returnvalue>def</returnvalue>
+       </para>
+       <para>
+        <literal>split_part('abc,def,ghi,jkl', ',', -2)</literal>
+        <returnvalue>ghi</returnvalue>
        </para></entry>
       </row>
 
@@ -4466,7 +4449,7 @@ SELECT format('Testing %3$s, %2$s, %s', 'one', 'two', 'three');
       <para>
        The <literal>base64</literal> format is that
        of <ulink url="https://tools.ietf.org/html/rfc2045#section-6.8">RFC
-       2045 Section 6.8</ulink>.  As per the RFC, encoded lines are
+       2045 Section 6.8</ulink>.  As per the <acronym>RFC</acronym>, encoded lines are
        broken at 76 characters.  However instead of the MIME CRLF
        end-of-line marker, only a newline is used for end-of-line.
        The <function>decode</function> function ignores carriage-return,
@@ -10622,7 +10605,7 @@ CREATE TYPE rainbow AS ENUM ('red', 'orange', 'yellow', 'green', 'blue', 'purple
        </para>
        <para>
         Is first object strictly below second?
-        Available for <type>box</type>, <type>polygon</type>,
+        Available for <type>point</type>, <type>box</type>, <type>polygon</type>,
         <type>circle</type>.
        </para>
        <para>
@@ -10638,7 +10621,7 @@ CREATE TYPE rainbow AS ENUM ('red', 'orange', 'yellow', 'green', 'blue', 'purple
        </para>
        <para>
         Is first object strictly above second?
-        Available for <type>box</type>, <type>polygon</type>,
+        Available for <type>point</type>, <type>box</type>, <type>polygon</type>,
         <type>circle</type>.
        </para>
        <para>
@@ -10695,21 +10678,6 @@ CREATE TYPE rainbow AS ENUM ('red', 'orange', 'yellow', 'green', 'blue', 'purple
 
       <row>
        <entry role="func_table_entry"><para role="func_signature">
-        <type>point</type> <literal>&lt;^</literal> <type>point</type>
-        <returnvalue>boolean</returnvalue>
-       </para>
-       <para>
-        Is first object strictly below second?
-        (This operator is misnamed; it should be <literal>&lt;&lt;|</literal>.)
-       </para>
-       <para>
-        <literal>point '(1,0)' &lt;^ point '(1,1)'</literal>
-        <returnvalue>t</returnvalue>
-       </para></entry>
-      </row>
-
-      <row>
-       <entry role="func_table_entry"><para role="func_signature">
         <type>box</type> <literal>&gt;^</literal> <type>box</type>
         <returnvalue>boolean</returnvalue>
        </para>
@@ -10718,21 +10686,6 @@ CREATE TYPE rainbow AS ENUM ('red', 'orange', 'yellow', 'green', 'blue', 'purple
        </para>
        <para>
         <literal>box '((2,2),(1,1))' &gt;^ box '((1,1),(0,0))'</literal>
-        <returnvalue>t</returnvalue>
-       </para></entry>
-      </row>
-
-      <row>
-       <entry role="func_table_entry"><para role="func_signature">
-        <type>point</type> <literal>&gt;^</literal> <type>point</type>
-        <returnvalue>boolean</returnvalue>
-       </para>
-       <para>
-        Is first object strictly above second?
-        (This operator is misnamed; it should be <literal>|&gt;&gt;</literal>.)
-       </para>
-       <para>
-        <literal>point '(1,1)' &gt;^ point '(1,0)'</literal>
         <returnvalue>t</returnvalue>
        </para></entry>
       </row>
@@ -10889,6 +10842,18 @@ CREATE TYPE rainbow AS ENUM ('red', 'orange', 'yellow', 'green', 'blue', 'purple
      on), where available for these types, likewise compare areas.
     </para>
    </caution>
+
+   <note>
+    <para>
+     Before <productname>PostgreSQL</productname> 14, the point
+     is strictly below/above comparison operators <type>point</type>
+     <literal>&lt;&lt;|</literal> <type>point</type> and <type>point</type>
+     <literal>|&gt;&gt;</literal> <type>point</type> were respectively
+     called <literal>&lt;^</literal> and <literal>&gt;^</literal>.  These
+     names are still available, but are deprecated and will eventually be
+     removed.
+    </para>
+   </note>
 
    <table id="functions-geometry-func-table">
     <title>Geometric Functions</title>
@@ -17287,6 +17252,12 @@ SELECT COALESCE(description, short_description, '(none)') ...
   </para>
 
    <para>
+    The arguments must all be convertible to a common data type, which
+    will be the type of the result (see
+    <xref linkend="typeconv-union-case"/> for details).
+   </para>
+
+   <para>
     Like a <token>CASE</token> expression, <function>COALESCE</function> only
     evaluates the arguments that are needed to determine the result;
     that is, arguments to the right of the first non-null argument are
@@ -17316,11 +17287,28 @@ SELECT COALESCE(description, short_description, '(none)') ...
 <programlisting>
 SELECT NULLIF(value, '(none)') ...
 </programlisting>
-  </para>
-  <para>
    In this example, if <literal>value</literal> is <literal>(none)</literal>,
    null is returned, otherwise the value of <literal>value</literal>
    is returned.
+  </para>
+
+  <para>
+   The two arguments must be of comparable types.
+   To be specific, they are compared exactly as if you had
+   written <literal><replaceable>value1</replaceable>
+   = <replaceable>value2</replaceable></literal>, so there must be a
+   suitable <literal>=</literal> operator available.
+  </para>
+
+  <para>
+   The result has the same type as the first argument &mdash; but there is
+   a subtlety.  What is actually returned is the first argument of the
+   implied <literal>=</literal> operator, and in some cases that will have
+   been promoted to match the second argument's type.  For
+   example, <literal>NULLIF(1, 2.2)</literal> yields <type>numeric</type>,
+   because there is no <type>integer</type> <literal>=</literal>
+   <type>numeric</type> operator,
+   only <type>numeric</type> <literal>=</literal> <type>numeric</type>.
   </para>
 
   </sect2>
@@ -17376,10 +17364,7 @@ SELECT NULLIF(value, '(none)') ...
    (last subscript varies most rapidly).
    If the contents of two arrays are equal but the dimensionality is
    different, the first difference in the dimensionality information
-   determines the sort order.  (This is a change from versions of
-   <productname>PostgreSQL</productname> prior to 8.2: older versions would claim
-   that two arrays with the same contents were equal, even if the
-   number of dimensions or subscript ranges were different.)
+   determines the sort order.
   </para>
 
    <table id="array-operators-table">
@@ -17448,29 +17433,31 @@ SELECT NULLIF(value, '(none)') ...
 
       <row>
        <entry role="func_table_entry"><para role="func_signature">
-        <type>anyarray</type> <literal>||</literal> <type>anyarray</type>
-        <returnvalue>anyarray</returnvalue>
+        <type>anycompatiblearray</type> <literal>||</literal> <type>anycompatiblearray</type>
+        <returnvalue>anycompatiblearray</returnvalue>
        </para>
        <para>
         Concatenates the two arrays.  Concatenating a null or empty array is a
         no-op; otherwise the arrays must have the same number of dimensions
         (as illustrated by the first example) or differ in number of
         dimensions by one (as illustrated by the second).
+        If the arrays are not of identical element types, they will be coerced
+        to a common type (see <xref linkend="typeconv-union-case"/>).
        </para>
        <para>
         <literal>ARRAY[1,2,3] || ARRAY[4,5,6,7]</literal>
         <returnvalue>{1,2,3,4,5,6,7}</returnvalue>
        </para>
        <para>
-        <literal>ARRAY[1,2,3] || ARRAY[[4,5,6],[7,8,9]]</literal>
-        <returnvalue>{{1,2,3},{4,5,6},{7,8,9}}</returnvalue>
+        <literal>ARRAY[1,2,3] || ARRAY[[4,5,6],[7,8,9.9]]</literal>
+        <returnvalue>{{1,2,3},{4,5,6},{7,8,9.9}}</returnvalue>
        </para></entry>
       </row>
 
       <row>
        <entry role="func_table_entry"><para role="func_signature">
-        <type>anyelement</type> <literal>||</literal> <type>anyarray</type>
-        <returnvalue>anyarray</returnvalue>
+        <type>anycompatible</type> <literal>||</literal> <type>anycompatiblearray</type>
+        <returnvalue>anycompatiblearray</returnvalue>
        </para>
        <para>
         Concatenates an element onto the front of an array (which must be
@@ -17484,8 +17471,8 @@ SELECT NULLIF(value, '(none)') ...
 
       <row>
        <entry role="func_table_entry"><para role="func_signature">
-        <type>anyarray</type> <literal>||</literal> <type>anyelement</type>
-        <returnvalue>anyarray</returnvalue>
+        <type>anycompatiblearray</type> <literal>||</literal> <type>anycompatible</type>
+        <returnvalue>anycompatiblearray</returnvalue>
        </para>
        <para>
         Concatenates an element onto the end of an array (which must be
@@ -17535,12 +17522,12 @@ SELECT NULLIF(value, '(none)') ...
         <indexterm>
          <primary>array_append</primary>
         </indexterm>
-        <function>array_append</function> ( <type>anyarray</type>, <type>anyelement</type> )
-        <returnvalue>anyarray</returnvalue>
+        <function>array_append</function> ( <type>anycompatiblearray</type>, <type>anycompatible</type> )
+        <returnvalue>anycompatiblearray</returnvalue>
        </para>
        <para>
         Appends an element to the end of an array (same as
-        the <type>anyarray</type> <literal>||</literal> <type>anyelement</type>
+        the <type>anycompatiblearray</type> <literal>||</literal> <type>anycompatible</type>
         operator).
        </para>
        <para>
@@ -17554,12 +17541,12 @@ SELECT NULLIF(value, '(none)') ...
         <indexterm>
          <primary>array_cat</primary>
         </indexterm>
-        <function>array_cat</function> ( <type>anyarray</type>, <type>anyarray</type> )
-        <returnvalue>anyarray</returnvalue>
+        <function>array_cat</function> ( <type>anycompatiblearray</type>, <type>anycompatiblearray</type> )
+        <returnvalue>anycompatiblearray</returnvalue>
        </para>
        <para>
         Concatenates two arrays (same as
-        the <type>anyarray</type> <literal>||</literal> <type>anyarray</type>
+        the <type>anycompatiblearray</type> <literal>||</literal> <type>anycompatiblearray</type>
         operator).
        </para>
        <para>
@@ -17666,7 +17653,7 @@ SELECT NULLIF(value, '(none)') ...
         <indexterm>
          <primary>array_position</primary>
         </indexterm>
-        <function>array_position</function> ( <type>anyarray</type>, <type>anyelement</type> <optional>, <type>integer</type> </optional> )
+        <function>array_position</function> ( <type>anycompatiblearray</type>, <type>anycompatible</type> <optional>, <type>integer</type> </optional> )
         <returnvalue>integer</returnvalue>
        </para>
        <para>
@@ -17688,7 +17675,7 @@ SELECT NULLIF(value, '(none)') ...
         <indexterm>
          <primary>array_positions</primary>
         </indexterm>
-        <function>array_positions</function> ( <type>anyarray</type>, <type>anyelement</type> )
+        <function>array_positions</function> ( <type>anycompatiblearray</type>, <type>anycompatible</type> )
         <returnvalue>integer[]</returnvalue>
        </para>
        <para>
@@ -17712,12 +17699,12 @@ SELECT NULLIF(value, '(none)') ...
         <indexterm>
          <primary>array_prepend</primary>
         </indexterm>
-        <function>array_prepend</function> ( <type>anyelement</type>, <type>anyarray</type> )
-        <returnvalue>anyarray</returnvalue>
+        <function>array_prepend</function> ( <type>anycompatible</type>, <type>anycompatiblearray</type> )
+        <returnvalue>anycompatiblearray</returnvalue>
        </para>
        <para>
         Prepends an element to the beginning of an array (same as
-        the <type>anyelement</type> <literal>||</literal> <type>anyarray</type>
+        the <type>anycompatible</type> <literal>||</literal> <type>anycompatiblearray</type>
         operator).
        </para>
        <para>
@@ -17731,8 +17718,8 @@ SELECT NULLIF(value, '(none)') ...
         <indexterm>
          <primary>array_remove</primary>
         </indexterm>
-        <function>array_remove</function> ( <type>anyarray</type>, <type>anyelement</type> )
-        <returnvalue>anyarray</returnvalue>
+        <function>array_remove</function> ( <type>anycompatiblearray</type>, <type>anycompatible</type> )
+        <returnvalue>anycompatiblearray</returnvalue>
        </para>
        <para>
         Removes all elements equal to the given value from the array.
@@ -17751,8 +17738,8 @@ SELECT NULLIF(value, '(none)') ...
         <indexterm>
          <primary>array_replace</primary>
         </indexterm>
-        <function>array_replace</function> ( <type>anyarray</type>, <type>anyelement</type>, <type>anyelement</type> )
-        <returnvalue>anyarray</returnvalue>
+        <function>array_replace</function> ( <type>anycompatiblearray</type>, <type>anycompatible</type>, <type>anycompatible</type> )
+        <returnvalue>anycompatiblearray</returnvalue>
        </para>
        <para>
         Replaces each array element equal to the second argument with the
@@ -19594,17 +19581,17 @@ SELECT count(*) FROM sometable;
         <indexterm>
          <primary>lag</primary>
         </indexterm>
-        <function>lag</function> ( <parameter>value</parameter> <type>anyelement</type>
+        <function>lag</function> ( <parameter>value</parameter> <type>anycompatible</type>
           <optional>, <parameter>offset</parameter> <type>integer</type>
-          <optional>, <parameter>default</parameter> <type>anyelement</type> </optional></optional> )
-        <returnvalue>anyelement</returnvalue>
+          <optional>, <parameter>default</parameter> <type>anycompatible</type> </optional></optional> )
+        <returnvalue>anycompatible</returnvalue>
        </para>
        <para>
         Returns <parameter>value</parameter> evaluated at
         the row that is <parameter>offset</parameter>
         rows before the current row within the partition; if there is no such
         row, instead returns <parameter>default</parameter>
-        (which must be of the same type as
+        (which must be of a type compatible with
         <parameter>value</parameter>).
         Both <parameter>offset</parameter> and
         <parameter>default</parameter> are evaluated
@@ -19619,17 +19606,17 @@ SELECT count(*) FROM sometable;
         <indexterm>
          <primary>lead</primary>
         </indexterm>
-        <function>lead</function> ( <parameter>value</parameter> <type>anyelement</type>
+        <function>lead</function> ( <parameter>value</parameter> <type>anycompatible</type>
           <optional>, <parameter>offset</parameter> <type>integer</type>
-          <optional>, <parameter>default</parameter> <type>anyelement</type> </optional></optional> )
-        <returnvalue>anyelement</returnvalue>
+          <optional>, <parameter>default</parameter> <type>anycompatible</type> </optional></optional> )
+        <returnvalue>anycompatible</returnvalue>
        </para>
        <para>
         Returns <parameter>value</parameter> evaluated at
         the row that is <parameter>offset</parameter>
         rows after the current row within the partition; if there is no such
         row, instead returns <parameter>default</parameter>
-        (which must be of the same type as
+        (which must be of a type compatible with
         <parameter>value</parameter>).
         Both <parameter>offset</parameter> and
         <parameter>default</parameter> are evaluated
@@ -23891,7 +23878,8 @@ SELECT collation for ('foo' COLLATE "de_DE");
 
    <para>
     Each of these functions returns <literal>true</literal> if
-    successful and <literal>false</literal> otherwise.
+    the signal was successfully sent and <literal>false</literal>
+    if sending the signal failed.
    </para>
 
    <table id="functions-admin-signal-table">
@@ -23939,7 +23927,10 @@ SELECT collation for ('foo' COLLATE "de_DE");
         server to reload their configuration files.  (This is initiated by
         sending a <systemitem>SIGHUP</systemitem> signal to the postmaster
         process, which in turn sends <systemitem>SIGHUP</systemitem> to each
-        of its children.)
+        of its children.) You can use the
+        <link linkend="view-pg-file-settings">pg_file_settings</link> and
+        <link linkend="view-pg-hba-file-rules">pg_hba_file_rules</link> views
+        to check the configuration files for possible errors, before reloading.
        </para></entry>
       </row>
 

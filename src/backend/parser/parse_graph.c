@@ -1506,7 +1506,7 @@ makeComponents(List *pattern)
 
 			if (isPathConnectedTo(p, c))
 			{
-				list_concat(repr, c);
+				repr = list_concat(repr, c);
 
 				components = foreach_delete_current(components, lc);
 			}

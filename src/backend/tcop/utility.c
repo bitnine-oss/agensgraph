@@ -22,6 +22,7 @@
 #include "access/xact.h"
 #include "access/xlog.h"
 #include "catalog/catalog.h"
+#include "catalog/index.h"
 #include "catalog/namespace.h"
 #include "catalog/pg_inherits.h"
 #include "catalog/toasting.h"
@@ -828,7 +829,7 @@ standard_ProcessUtility(PlannedStmt *pstmt,
 			break;
 
 		case T_ClusterStmt:
-			cluster((ClusterStmt *) parsetree, isTopLevel);
+			cluster(pstate, (ClusterStmt *) parsetree, isTopLevel);
 			break;
 
 		case T_VacuumStmt:
@@ -928,20 +929,20 @@ standard_ProcessUtility(PlannedStmt *pstmt,
 		case T_ReindexStmt:
 			{
 				ReindexStmt *stmt = (ReindexStmt *) parsetree;
+				int			options;
 
-				if ((stmt->options & REINDEXOPT_CONCURRENTLY) != 0)
+				options = ReindexParseOptions(pstate, stmt);
+				if ((options & REINDEXOPT_CONCURRENTLY) != 0)
 					PreventInTransactionBlock(isTopLevel,
 											  "REINDEX CONCURRENTLY");
 
 				switch (stmt->kind)
 				{
 					case REINDEX_OBJECT_INDEX:
-						ReindexIndex(stmt->relation, stmt->options,
-									 isTopLevel);
+						ReindexIndex(stmt->relation, options, isTopLevel);
 						break;
 					case REINDEX_OBJECT_TABLE:
-						ReindexTable(stmt->relation, stmt->options,
-									 isTopLevel);
+						ReindexTable(stmt->relation, options, isTopLevel);
 						break;
 					case REINDEX_OBJECT_SCHEMA:
 					case REINDEX_OBJECT_SYSTEM:
@@ -957,13 +958,13 @@ standard_ProcessUtility(PlannedStmt *pstmt,
 												  (stmt->kind == REINDEX_OBJECT_SCHEMA) ? "REINDEX SCHEMA" :
 												  (stmt->kind == REINDEX_OBJECT_SYSTEM) ? "REINDEX SYSTEM" :
 												  "REINDEX DATABASE");
-						ReindexMultipleTables(stmt->name, stmt->kind, stmt->options);
+						ReindexMultipleTables(stmt->name, stmt->kind, options);
 						break;
 					case REINDEX_OBJECT_VLABEL:
-						ReindexLabel(stmt->relation, stmt->options, OBJECT_VLABEL);
+						ReindexLabel(stmt->relation, options, OBJECT_VLABEL);
 						break;
 					case REINDEX_OBJECT_ELABEL:
-						ReindexLabel(stmt->relation, stmt->options, OBJECT_ELABEL);
+						ReindexLabel(stmt->relation, options, OBJECT_ELABEL);
 						break;
 					default:
 						elog(ERROR, "unrecognized object type: %d",
@@ -1161,17 +1162,22 @@ ProcessUtilitySlow(ParseState *pstate,
 			case T_CreateForeignTableStmt:
 				{
 					List	   *stmts;
-					ListCell   *l;
 					RangeVar   *table_rv = NULL;
 
 					/* Run parse analysis ... */
 					stmts = transformCreateStmt((CreateStmt *) parsetree,
 												queryString);
 
-					/* ... and do it */
-					foreach(l, stmts)
+					/*
+					 * ... and do it.  We can't use foreach() because we may
+					 * modify the list midway through, so pick off the
+					 * elements one at a time, the hard way.
+					 */
+					while (stmts != NIL)
 					{
-						Node	   *stmt = (Node *) lfirst(l);
+						Node	   *stmt = (Node *) linitial(stmts);
+
+						stmts = list_delete_first(stmts);
 
 						if (IsA(stmt, CreateStmt))
 						{
@@ -1239,8 +1245,8 @@ ProcessUtilitySlow(ParseState *pstate,
 							/*
 							 * Do delayed processing of LIKE options.  This
 							 * will result in additional sub-statements for us
-							 * to process.  We can just tack those onto the
-							 * to-do list.
+							 * to process.  Those should get done before any
+							 * remaining actions, so prepend them to "stmts".
 							 */
 							TableLikeClause *like = (TableLikeClause *) stmt;
 							List	   *morestmts;
@@ -1248,14 +1254,7 @@ ProcessUtilitySlow(ParseState *pstate,
 							Assert(table_rv != NULL);
 
 							morestmts = expandTableLikeClause(table_rv, like);
-							stmts = list_concat(stmts, morestmts);
-
-							/*
-							 * We don't need a CCI now, besides which the "l"
-							 * list pointer is now possibly invalid, so just
-							 * skip the CCI test below.
-							 */
-							continue;
+							stmts = list_concat(morestmts, stmts);
 						}
 						else
 						{
@@ -1283,7 +1282,7 @@ ProcessUtilitySlow(ParseState *pstate,
 						}
 
 						/* Need CCI between commands */
-						if (lnext(stmts, l) != NULL)
+						if (stmts != NIL)
 							CommandCounterIncrement();
 					}
 

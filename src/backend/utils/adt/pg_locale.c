@@ -1514,7 +1514,7 @@ pg_newlocale_from_collation(Oid collid)
 		/* We haven't computed this yet in this session, so do it */
 		HeapTuple	tp;
 		Form_pg_collation collform;
-		const char *collcollate;
+		const char *collcollate pg_attribute_unused();
 		const char *collctype pg_attribute_unused();
 		struct pg_locale_struct result;
 		pg_locale_t resultp;
@@ -1684,6 +1684,26 @@ get_collation_actual_version(char collprovider, const char *collcollate)
 
 		/* Use the glibc version because we don't have anything better. */
 		collversion = pstrdup(gnu_get_libc_version());
+#elif defined(LC_VERSION_MASK)
+		locale_t    loc;
+
+		/* C[.encoding] and POSIX never change. */
+		if (strcmp("C", collcollate) == 0 ||
+			strncmp("C.", collcollate, 2) == 0 ||
+			strcmp("POSIX", collcollate) == 0)
+			return NULL;
+
+		/* Look up FreeBSD collation version. */
+		loc = newlocale(LC_COLLATE, collcollate, NULL);
+		if (loc)
+		{
+			collversion =
+				pstrdup(querylocale(LC_COLLATE_MASK | LC_VERSION_MASK, loc));
+			freelocale(loc);
+		}
+		else
+			ereport(ERROR,
+					(errmsg("could not load locale \"%s\"", collcollate)));
 #elif defined(WIN32) && _WIN32_WINNT >= 0x0600
 		/*
 		 * If we are targeting Windows Vista and above, we can ask for a name
@@ -1731,15 +1751,14 @@ get_collation_actual_version(char collprovider, const char *collcollate)
 
 /*
  * Get provider-specific collation version string for a given collation OID.
- * Return NULL if the provider doesn't support versions.
+ * Return NULL if the provider doesn't support versions, or the collation is
+ * unversioned (for example "C").
  */
 char *
 get_collation_version_for_oid(Oid oid)
 {
 	HeapTuple	tp;
-	char	   *version = NULL;
-
-	Assert(oid != C_COLLATION_OID && oid != POSIX_COLLATION_OID);
+	char	   *version;
 
 	if (oid == DEFAULT_COLLATION_OID)
 	{

@@ -111,7 +111,7 @@ ProcGlobalShmemSize(void)
 
 	size = add_size(size, mul_size(TotalProcs, sizeof(*ProcGlobal->xids)));
 	size = add_size(size, mul_size(TotalProcs, sizeof(*ProcGlobal->subxidStates)));
-	size = add_size(size, mul_size(TotalProcs, sizeof(*ProcGlobal->vacuumFlags)));
+	size = add_size(size, mul_size(TotalProcs, sizeof(*ProcGlobal->statusFlags)));
 
 	return size;
 }
@@ -210,8 +210,8 @@ InitProcGlobal(void)
 	MemSet(ProcGlobal->xids, 0, TotalProcs * sizeof(*ProcGlobal->xids));
 	ProcGlobal->subxidStates = (XidCacheStatus *) ShmemAlloc(TotalProcs * sizeof(*ProcGlobal->subxidStates));
 	MemSet(ProcGlobal->subxidStates, 0, TotalProcs * sizeof(*ProcGlobal->subxidStates));
-	ProcGlobal->vacuumFlags = (uint8 *) ShmemAlloc(TotalProcs * sizeof(*ProcGlobal->vacuumFlags));
-	MemSet(ProcGlobal->vacuumFlags, 0, TotalProcs * sizeof(*ProcGlobal->vacuumFlags));
+	ProcGlobal->statusFlags = (uint8 *) ShmemAlloc(TotalProcs * sizeof(*ProcGlobal->statusFlags));
+	MemSet(ProcGlobal->statusFlags, 0, TotalProcs * sizeof(*ProcGlobal->statusFlags));
 
 	for (i = 0; i < TotalProcs; i++)
 	{
@@ -393,10 +393,10 @@ InitProcess(void)
 	MyProc->tempNamespaceId = InvalidOid;
 	MyProc->isBackgroundWorker = IsBackgroundWorker;
 	MyProc->delayChkpt = false;
-	MyProc->vacuumFlags = 0;
+	MyProc->statusFlags = 0;
 	/* NB -- autovac launcher intentionally does not set IS_AUTOVACUUM */
 	if (IsAutoVacuumWorkerProcess())
-		MyProc->vacuumFlags |= PROC_IS_AUTOVACUUM;
+		MyProc->statusFlags |= PROC_IS_AUTOVACUUM;
 	MyProc->lwWaiting = false;
 	MyProc->lwWaitMode = 0;
 	MyProc->waitLock = NULL;
@@ -574,7 +574,7 @@ InitAuxiliaryProcess(void)
 	MyProc->tempNamespaceId = InvalidOid;
 	MyProc->isBackgroundWorker = IsBackgroundWorker;
 	MyProc->delayChkpt = false;
-	MyProc->vacuumFlags = 0;
+	MyProc->statusFlags = 0;
 	MyProc->lwWaiting = false;
 	MyProc->lwWaitMode = 0;
 	MyProc->waitLock = NULL;
@@ -1310,41 +1310,59 @@ ProcSleep(LOCALLOCK *locallock, LockMethod lockMethodTable)
 		if (deadlock_state == DS_BLOCKED_BY_AUTOVACUUM && allow_autovacuum_cancel)
 		{
 			PGPROC	   *autovac = GetBlockingAutoVacuumPgproc();
-			uint8		vacuumFlags;
+			uint8		statusFlags;
+			uint8		lockmethod_copy;
+			LOCKTAG		locktag_copy;
 
+			/*
+			 * Grab info we need, then release lock immediately.  Note this
+			 * coding means that there is a tiny chance that the process
+			 * terminates its current transaction and starts a different one
+			 * before we have a change to send the signal; the worst possible
+			 * consequence is that a for-wraparound vacuum is cancelled.  But
+			 * that could happen in any case unless we were to do kill() with
+			 * the lock held, which is much more undesirable.
+			 */
 			LWLockAcquire(ProcArrayLock, LW_EXCLUSIVE);
+			statusFlags = ProcGlobal->statusFlags[autovac->pgxactoff];
+			lockmethod_copy = lock->tag.locktag_lockmethodid;
+			locktag_copy = lock->tag;
+			LWLockRelease(ProcArrayLock);
 
 			/*
 			 * Only do it if the worker is not working to protect against Xid
 			 * wraparound.
 			 */
-			vacuumFlags = ProcGlobal->vacuumFlags[autovac->pgxactoff];
-			if ((vacuumFlags & PROC_IS_AUTOVACUUM) &&
-				!(vacuumFlags & PROC_VACUUM_FOR_WRAPAROUND))
+			if ((statusFlags & PROC_IS_AUTOVACUUM) &&
+				!(statusFlags & PROC_VACUUM_FOR_WRAPAROUND))
 			{
 				int			pid = autovac->pid;
-				StringInfoData locktagbuf;
-				StringInfoData logbuf;	/* errdetail for server log */
 
-				initStringInfo(&locktagbuf);
-				initStringInfo(&logbuf);
-				DescribeLockTag(&locktagbuf, &lock->tag);
-				appendStringInfo(&logbuf,
-								 _("Process %d waits for %s on %s."),
-								 MyProcPid,
-								 GetLockmodeName(lock->tag.locktag_lockmethodid,
-												 lockmode),
-								 locktagbuf.data);
+				/* report the case, if configured to do so */
+				if (message_level_is_interesting(DEBUG1))
+				{
+					StringInfoData locktagbuf;
+					StringInfoData logbuf;	/* errdetail for server log */
 
-				/* release lock as quickly as possible */
-				LWLockRelease(ProcArrayLock);
+					initStringInfo(&locktagbuf);
+					initStringInfo(&logbuf);
+					DescribeLockTag(&locktagbuf, &locktag_copy);
+					appendStringInfo(&logbuf,
+									 _("Process %d waits for %s on %s."),
+									 MyProcPid,
+									 GetLockmodeName(lockmethod_copy, lockmode),
+									 locktagbuf.data);
+
+					ereport(DEBUG1,
+							(errmsg("sending cancel to blocking autovacuum PID %d",
+									pid),
+							 errdetail_log("%s", logbuf.data)));
+
+					pfree(locktagbuf.data);
+					pfree(logbuf.data);
+				}
 
 				/* send the autovacuum worker Back to Old Kent Road */
-				ereport(DEBUG1,
-						(errmsg("sending cancel to blocking autovacuum PID %d",
-								pid),
-						 errdetail_log("%s", logbuf.data)));
-
 				if (kill(pid, SIGINT) < 0)
 				{
 					/*
@@ -1362,12 +1380,7 @@ ProcSleep(LOCALLOCK *locallock, LockMethod lockMethodTable)
 								(errmsg("could not send signal to process %d: %m",
 										pid)));
 				}
-
-				pfree(logbuf.data);
-				pfree(locktagbuf.data);
 			}
-			else
-				LWLockRelease(ProcArrayLock);
 
 			/* prevent signal from being sent again more than once */
 			allow_autovacuum_cancel = false;

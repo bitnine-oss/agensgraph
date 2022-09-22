@@ -70,6 +70,7 @@
 
 
 /* non-export function prototypes */
+static bool CompareOpclassOptions(Datum *opts1, Datum *opts2, int natts);
 static void CheckPredicate(Expr *predicate);
 static void ComputeIndexAttrs(IndexInfo *indexInfo,
 							  Oid *typeOidP,
@@ -89,13 +90,12 @@ static char *ChooseIndexNameAddition(List *colnames);
 static List *ChooseIndexColumnNames(List *indexElems);
 static void RangeVarCallbackForReindexIndex(const RangeVar *relation,
 											Oid relId, Oid oldRelId, void *arg);
-static bool ReindexRelationConcurrently(Oid relationOid, int options);
-
+static void reindex_error_callback(void *args);
 static void ReindexPartitions(Oid relid, int options, bool isTopLevel);
 static void ReindexMultipleInternal(List *relids, int options);
-static void reindex_error_callback(void *args);
+static bool ReindexRelationConcurrently(Oid relationOid, int options);
 static void update_relispartition(Oid relationId, bool newval);
-static bool CompareOpclassOptions(Datum *opts1, Datum *opts2, int natts);
+static inline void set_indexsafe_procflags(void);
 
 /*
  * callback argument type for RangeVarCallbackForReindexIndex()
@@ -387,7 +387,10 @@ CompareOpclassOptions(Datum *opts1, Datum *opts2, int natts)
  * lazy VACUUMs, because they won't be fazed by missing index entries
  * either.  (Manual ANALYZEs, however, can't be excluded because they
  * might be within transactions that are going to do arbitrary operations
- * later.)
+ * later.)  Processes running CREATE INDEX CONCURRENTLY
+ * on indexes that are neither expressional nor partial are also safe to
+ * ignore, since we know that those processes won't examine any data
+ * outside the table they're indexing.
  *
  * Also, GetCurrentVirtualXIDs never reports our own vxid, so we need not
  * check for that.
@@ -408,7 +411,8 @@ WaitForOlderSnapshots(TransactionId limitXmin, bool progress)
 	VirtualTransactionId *old_snapshots;
 
 	old_snapshots = GetCurrentVirtualXIDs(limitXmin, true, false,
-										  PROC_IS_AUTOVACUUM | PROC_IN_VACUUM,
+										  PROC_IS_AUTOVACUUM | PROC_IN_VACUUM
+										  | PROC_IN_SAFE_IC,
 										  &n_old_snapshots);
 	if (progress)
 		pgstat_progress_update_param(PROGRESS_WAITFOR_TOTAL, n_old_snapshots);
@@ -428,7 +432,8 @@ WaitForOlderSnapshots(TransactionId limitXmin, bool progress)
 
 			newer_snapshots = GetCurrentVirtualXIDs(limitXmin,
 													true, false,
-													PROC_IS_AUTOVACUUM | PROC_IN_VACUUM,
+													PROC_IS_AUTOVACUUM | PROC_IN_VACUUM
+													| PROC_IN_SAFE_IC,
 													&n_newer_snapshots);
 			for (j = i; j < n_old_snapshots; j++)
 			{
@@ -521,6 +526,7 @@ DefineIndex(Oid relationId,
 	bool		amcanorder;
 	amoptions_function amoptions;
 	bool		partitioned;
+	bool		safe_index;
 	Datum		reloptions;
 	int16	   *coloptions;
 	IndexInfo  *indexInfo;
@@ -599,7 +605,7 @@ DefineIndex(Oid relationId,
 									  stmt->indexIncludingParams);
 	numberOfAttributes = list_length(allIndexParams);
 
-	if (numberOfAttributes <= 0)
+	if (numberOfKeyAttributes <= 0)
 		ereport(ERROR,
 				(errcode(ERRCODE_INVALID_OBJECT_DEFINITION),
 				 errmsg("must specify at least one column")));
@@ -822,7 +828,7 @@ DefineIndex(Oid relationId,
 				(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
 				 errmsg("access method \"%s\" does not support included columns",
 						accessMethodName)));
-	if (numberOfAttributes > 1 && !amRoutine->amcanmulticol)
+	if (numberOfKeyAttributes > 1 && !amRoutine->amcanmulticol)
 		ereport(ERROR,
 				(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
 				 errmsg("access method \"%s\" does not support multicolumn indexes",
@@ -1047,6 +1053,10 @@ DefineIndex(Oid relationId,
 		}
 	}
 
+	/* Is index safe for others to ignore?  See set_indexsafe_procflags() */
+	safe_index = indexInfo->ii_Expressions == NIL &&
+		indexInfo->ii_Predicate == NIL;
+
 	/*
 	 * Report index creation if appropriate (delay this till after most of the
 	 * error checks)
@@ -1155,15 +1165,17 @@ DefineIndex(Oid relationId,
 
 	if (partitioned)
 	{
+		PartitionDesc partdesc;
+
 		/*
 		 * Unless caller specified to skip this step (via ONLY), process each
 		 * partition to make sure they all contain a corresponding index.
 		 *
 		 * If we're called internally (no stmt->relation), recurse always.
 		 */
-		if (!stmt->relation || stmt->relation->inh)
+		partdesc = RelationGetPartitionDesc(rel);
+		if ((!stmt->relation || stmt->relation->inh) && partdesc->nparts > 0)
 		{
-			PartitionDesc partdesc = RelationGetPartitionDesc(rel);
 			int			nparts = partdesc->nparts;
 			Oid		   *part_oids = palloc(sizeof(Oid) * nparts);
 			bool		invalidate_parent = false;
@@ -1433,6 +1445,10 @@ DefineIndex(Oid relationId,
 	CommitTransactionCommand();
 	StartTransactionCommand();
 
+	/* Tell concurrent index builds to ignore us, if index qualifies */
+	if (safe_index)
+		set_indexsafe_procflags();
+
 	/*
 	 * The index is now visible, so we can report the OID.
 	 */
@@ -1492,6 +1508,10 @@ DefineIndex(Oid relationId,
 	CommitTransactionCommand();
 	StartTransactionCommand();
 
+	/* Tell concurrent index builds to ignore us, if index qualifies */
+	if (safe_index)
+		set_indexsafe_procflags();
+
 	/*
 	 * Phase 3 of concurrent index build
 	 *
@@ -1547,6 +1567,10 @@ DefineIndex(Oid relationId,
 	 */
 	CommitTransactionCommand();
 	StartTransactionCommand();
+
+	/* Tell concurrent index builds to ignore us, if index qualifies */
+	if (safe_index)
+		set_indexsafe_procflags();
 
 	/* We should now definitely not be advertising any xmin. */
 	Assert(MyProc->xmin == InvalidTransactionId);
@@ -2430,6 +2454,42 @@ ChooseIndexColumnNames(List *indexElems)
 }
 
 /*
+ * ReindexParseOptions
+ *		Parse list of REINDEX options, returning a bitmask of ReindexOption.
+ */
+int
+ReindexParseOptions(ParseState *pstate, ReindexStmt *stmt)
+{
+	ListCell   *lc;
+	int			options = 0;
+	bool		concurrently = false;
+	bool		verbose = false;
+
+	/* Parse option list */
+	foreach(lc, stmt->params)
+	{
+		DefElem    *opt = (DefElem *) lfirst(lc);
+
+		if (strcmp(opt->defname, "verbose") == 0)
+			verbose = defGetBoolean(opt);
+		else if (strcmp(opt->defname, "concurrently") == 0)
+			concurrently = defGetBoolean(opt);
+		else
+			ereport(ERROR,
+					(errcode(ERRCODE_SYNTAX_ERROR),
+					 errmsg("unrecognized REINDEX option \"%s\"",
+							opt->defname),
+					 parser_errposition(pstate, opt->location)));
+	}
+
+	options =
+		(verbose ? REINDEXOPT_VERBOSE : 0) |
+		(concurrently ? REINDEXOPT_CONCURRENTLY : 0);
+
+	return options;
+}
+
+/*
  * ReindexIndex
  *		Recreate a specific index.
  */
@@ -3216,13 +3276,14 @@ ReindexRelationConcurrently(Oid relationOid, int options)
 
 				/*
 				 * Don't allow reindex for an invalid index on TOAST table, as
-				 * if rebuilt it would not be possible to drop it.
+				 * if rebuilt it would not be possible to drop it.  Match
+				 * error message in reindex_index().
 				 */
 				if (IsToastNamespace(get_rel_namespace(relationOid)) &&
 					!get_index_isvalid(relationOid))
 					ereport(ERROR,
 							(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-							 errmsg("cannot reindex invalid index on TOAST table concurrently")));
+							 errmsg("cannot reindex invalid index on TOAST table")));
 
 				/*
 				 * Check if parent relation can be locked and if it exists,
@@ -3924,4 +3985,38 @@ update_relispartition(Oid relationId, bool newval)
 	CatalogTupleUpdate(classRel, &tup->t_self, tup);
 	heap_freetuple(tup);
 	table_close(classRel, RowExclusiveLock);
+}
+
+/*
+ * Set the PROC_IN_SAFE_IC flag in MyProc->statusFlags.
+ *
+ * When doing concurrent index builds, we can set this flag
+ * to tell other processes concurrently running CREATE
+ * INDEX CONCURRENTLY or REINDEX CONCURRENTLY to ignore us when
+ * doing their waits for concurrent snapshots.  On one hand it
+ * avoids pointlessly waiting for a process that's not interesting
+ * anyway; but more importantly it avoids deadlocks in some cases.
+ *
+ * This can be done safely only for indexes that don't execute any
+ * expressions that could access other tables, so index must not be
+ * expressional nor partial.  Caller is responsible for only calling
+ * this routine when that assumption holds true.
+ *
+ * (The flag is reset automatically at transaction end, so it must be
+ * set for each transaction.)
+ */
+static inline void
+set_indexsafe_procflags(void)
+{
+	/*
+	 * This should only be called before installing xid or xmin in MyProc;
+	 * otherwise, concurrent processes could see an Xmin that moves backwards.
+	 */
+	Assert(MyProc->xid == InvalidTransactionId &&
+		   MyProc->xmin == InvalidTransactionId);
+
+	LWLockAcquire(ProcArrayLock, LW_EXCLUSIVE);
+	MyProc->statusFlags |= PROC_IN_SAFE_IC;
+	ProcGlobal->statusFlags[MyProc->pgxactoff] = MyProc->statusFlags;
+	LWLockRelease(ProcArrayLock);
 }

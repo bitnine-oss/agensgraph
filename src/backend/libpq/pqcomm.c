@@ -530,18 +530,20 @@ StreamServerPort(int family, const char *hostName, unsigned short portNumber,
 		err = bind(fd, addr->ai_addr, addr->ai_addrlen);
 		if (err < 0)
 		{
+			int			saved_errno = errno;
+
 			ereport(LOG,
 					(errcode_for_socket_access(),
 			/* translator: first %s is IPv4, IPv6, or Unix */
 					 errmsg("could not bind %s address \"%s\": %m",
 							familyDesc, addrDesc),
-					 (IS_AF_UNIX(addr->ai_family)) ?
-					 errhint("Is another postmaster already running on port %d?"
-							 " If not, remove socket file \"%s\" and retry.",
-							 (int) portNumber, service) :
-					 errhint("Is another postmaster already running on port %d?"
-							 " If not, wait a few seconds and retry.",
-							 (int) portNumber)));
+					 saved_errno == EADDRINUSE ?
+					 (IS_AF_UNIX(addr->ai_family) ?
+					  errhint("Is another postmaster already running on port %d?",
+							  (int) portNumber) :
+					  errhint("Is another postmaster already running on port %d?"
+							  " If not, wait a few seconds and retry.",
+							  (int) portNumber)) : 0));
 			closesocket(fd);
 			continue;
 		}
@@ -611,6 +613,10 @@ StreamServerPort(int family, const char *hostName, unsigned short portNumber,
 static int
 Lock_AF_UNIX(const char *unixSocketDir, const char *unixSocketPath)
 {
+	/* no lock file for abstract sockets */
+	if (unixSocketPath[0] == '@')
+		return STATUS_OK;
+
 	/*
 	 * Grab an interlock file associated with the socket file.
 	 *
@@ -642,6 +648,10 @@ Lock_AF_UNIX(const char *unixSocketDir, const char *unixSocketPath)
 static int
 Setup_AF_UNIX(const char *sock_path)
 {
+	/* no file system permissions for abstract sockets */
+	if (sock_path[0] == '@')
+		return STATUS_OK;
+
 	/*
 	 * Fix socket ownership/permission if requested.  Note we must do this
 	 * before we listen() to avoid a window where unwanted connections could
@@ -740,7 +750,8 @@ StreamConnection(pgsocket server_fd, Port *port)
 					(struct sockaddr *) &port->laddr.addr,
 					&port->laddr.salen) < 0)
 	{
-		elog(LOG, "getsockname() failed: %m");
+		ereport(LOG,
+				(errmsg("getsockname() failed: %m")));
 		return STATUS_ERROR;
 	}
 
@@ -759,7 +770,8 @@ StreamConnection(pgsocket server_fd, Port *port)
 		if (setsockopt(port->sock, IPPROTO_TCP, TCP_NODELAY,
 					   (char *) &on, sizeof(on)) < 0)
 		{
-			elog(LOG, "setsockopt(%s) failed: %m", "TCP_NODELAY");
+			ereport(LOG,
+					(errmsg("setsockopt(%s) failed: %m", "TCP_NODELAY")));
 			return STATUS_ERROR;
 		}
 #endif
@@ -767,7 +779,8 @@ StreamConnection(pgsocket server_fd, Port *port)
 		if (setsockopt(port->sock, SOL_SOCKET, SO_KEEPALIVE,
 					   (char *) &on, sizeof(on)) < 0)
 		{
-			elog(LOG, "setsockopt(%s) failed: %m", "SO_KEEPALIVE");
+			ereport(LOG,
+					(errmsg("setsockopt(%s) failed: %m", "SO_KEEPALIVE")));
 			return STATUS_ERROR;
 		}
 
@@ -798,7 +811,8 @@ StreamConnection(pgsocket server_fd, Port *port)
 		if (getsockopt(port->sock, SOL_SOCKET, SO_SNDBUF, (char *) &oldopt,
 					   &optlen) < 0)
 		{
-			elog(LOG, "getsockopt(%s) failed: %m", "SO_SNDBUF");
+			ereport(LOG,
+					(errmsg("getsockopt(%s) failed: %m", "SO_SNDBUF")));
 			return STATUS_ERROR;
 		}
 		newopt = PQ_SEND_BUFFER_SIZE * 4;
@@ -807,7 +821,8 @@ StreamConnection(pgsocket server_fd, Port *port)
 			if (setsockopt(port->sock, SOL_SOCKET, SO_SNDBUF, (char *) &newopt,
 						   sizeof(newopt)) < 0)
 			{
-				elog(LOG, "setsockopt(%s) failed: %m", "SO_SNDBUF");
+				ereport(LOG,
+						(errmsg("setsockopt(%s) failed: %m", "SO_SNDBUF")));
 				return STATUS_ERROR;
 			}
 		}
@@ -1626,7 +1641,7 @@ socket_endcopyout(bool errorAbort)
 		return;
 	if (errorAbort)
 		pq_putbytes("\n\n\\.\n", 5);
-	/* in non-error case, copy.c will have emitted the terminator line */
+	/* in non-error case, copyto.c will have emitted the terminator line */
 	DoingCopyOut = false;
 }
 
@@ -1667,8 +1682,9 @@ pq_setkeepaliveswin32(Port *port, int idle, int interval)
 				 NULL)
 		!= 0)
 	{
-		elog(LOG, "WSAIoctl(SIO_KEEPALIVE_VALS) failed: %ui",
-			 WSAGetLastError());
+		ereport(LOG,
+				(errmsg("WSAIoctl(%s) failed: %ui",
+						"SIO_KEEPALIVE_VALS", WSAGetLastError())));
 		return STATUS_ERROR;
 	}
 	if (port->keepalives_idle != idle)
@@ -1698,7 +1714,8 @@ pq_getkeepalivesidle(Port *port)
 					   (char *) &port->default_keepalives_idle,
 					   &size) < 0)
 		{
-			elog(LOG, "getsockopt(%s) failed: %m", PG_TCP_KEEPALIVE_IDLE_STR);
+			ereport(LOG,
+					(errmsg("getsockopt(%s) failed: %m", PG_TCP_KEEPALIVE_IDLE_STR)));
 			port->default_keepalives_idle = -1; /* don't know */
 		}
 #else							/* WIN32 */
@@ -1742,7 +1759,8 @@ pq_setkeepalivesidle(int idle, Port *port)
 	if (setsockopt(port->sock, IPPROTO_TCP, PG_TCP_KEEPALIVE_IDLE,
 				   (char *) &idle, sizeof(idle)) < 0)
 	{
-		elog(LOG, "setsockopt(%s) failed: %m", PG_TCP_KEEPALIVE_IDLE_STR);
+		ereport(LOG,
+				(errmsg("setsockopt(%s) failed: %m", PG_TCP_KEEPALIVE_IDLE_STR)));
 		return STATUS_ERROR;
 	}
 
@@ -1753,7 +1771,8 @@ pq_setkeepalivesidle(int idle, Port *port)
 #else
 	if (idle != 0)
 	{
-		elog(LOG, "setting the keepalive idle time is not supported");
+		ereport(LOG,
+				(errmsg("setting the keepalive idle time is not supported")));
 		return STATUS_ERROR;
 	}
 #endif
@@ -1780,7 +1799,8 @@ pq_getkeepalivesinterval(Port *port)
 					   (char *) &port->default_keepalives_interval,
 					   &size) < 0)
 		{
-			elog(LOG, "getsockopt(%s) failed: %m", "TCP_KEEPINTVL");
+			ereport(LOG,
+					(errmsg("getsockopt(%s) failed: %m", "TCP_KEEPINTVL")));
 			port->default_keepalives_interval = -1; /* don't know */
 		}
 #else
@@ -1823,7 +1843,8 @@ pq_setkeepalivesinterval(int interval, Port *port)
 	if (setsockopt(port->sock, IPPROTO_TCP, TCP_KEEPINTVL,
 				   (char *) &interval, sizeof(interval)) < 0)
 	{
-		elog(LOG, "setsockopt(%s) failed: %m", "TCP_KEEPINTVL");
+		ereport(LOG,
+				(errmsg("setsockopt(%s) failed: %m", "TCP_KEEPINTVL")));
 		return STATUS_ERROR;
 	}
 
@@ -1834,7 +1855,8 @@ pq_setkeepalivesinterval(int interval, Port *port)
 #else
 	if (interval != 0)
 	{
-		elog(LOG, "setsockopt(%s) not supported", "TCP_KEEPINTVL");
+		ereport(LOG,
+				(errmsg("setsockopt(%s) not supported", "TCP_KEEPINTVL")));
 		return STATUS_ERROR;
 	}
 #endif
@@ -1860,7 +1882,8 @@ pq_getkeepalivescount(Port *port)
 					   (char *) &port->default_keepalives_count,
 					   &size) < 0)
 		{
-			elog(LOG, "getsockopt(%s) failed: %m", "TCP_KEEPCNT");
+			ereport(LOG,
+					(errmsg("getsockopt(%s) failed: %m", "TCP_KEEPCNT")));
 			port->default_keepalives_count = -1;	/* don't know */
 		}
 	}
@@ -1898,7 +1921,8 @@ pq_setkeepalivescount(int count, Port *port)
 	if (setsockopt(port->sock, IPPROTO_TCP, TCP_KEEPCNT,
 				   (char *) &count, sizeof(count)) < 0)
 	{
-		elog(LOG, "setsockopt(%s) failed: %m", "TCP_KEEPCNT");
+		ereport(LOG,
+				(errmsg("setsockopt(%s) failed: %m", "TCP_KEEPCNT")));
 		return STATUS_ERROR;
 	}
 
@@ -1906,7 +1930,8 @@ pq_setkeepalivescount(int count, Port *port)
 #else
 	if (count != 0)
 	{
-		elog(LOG, "setsockopt(%s) not supported", "TCP_KEEPCNT");
+		ereport(LOG,
+				(errmsg("setsockopt(%s) not supported", "TCP_KEEPCNT")));
 		return STATUS_ERROR;
 	}
 #endif
@@ -1932,7 +1957,8 @@ pq_gettcpusertimeout(Port *port)
 					   (char *) &port->default_tcp_user_timeout,
 					   &size) < 0)
 		{
-			elog(LOG, "getsockopt(%s) failed: %m", "TCP_USER_TIMEOUT");
+			ereport(LOG,
+					(errmsg("getsockopt(%s) failed: %m", "TCP_USER_TIMEOUT")));
 			port->default_tcp_user_timeout = -1;	/* don't know */
 		}
 	}
@@ -1970,7 +1996,8 @@ pq_settcpusertimeout(int timeout, Port *port)
 	if (setsockopt(port->sock, IPPROTO_TCP, TCP_USER_TIMEOUT,
 				   (char *) &timeout, sizeof(timeout)) < 0)
 	{
-		elog(LOG, "setsockopt(%s) failed: %m", "TCP_USER_TIMEOUT");
+		ereport(LOG,
+				(errmsg("setsockopt(%s) failed: %m", "TCP_USER_TIMEOUT")));
 		return STATUS_ERROR;
 	}
 
@@ -1978,7 +2005,8 @@ pq_settcpusertimeout(int timeout, Port *port)
 #else
 	if (timeout != 0)
 	{
-		elog(LOG, "setsockopt(%s) not supported", "TCP_USER_TIMEOUT");
+		ereport(LOG,
+				(errmsg("setsockopt(%s) not supported", "TCP_USER_TIMEOUT")));
 		return STATUS_ERROR;
 	}
 #endif

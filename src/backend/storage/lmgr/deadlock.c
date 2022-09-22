@@ -618,17 +618,17 @@ FindLockCycleRecurseMember(PGPROC *checkProc,
 					 * that an autovacuum won't be canceled with less than
 					 * deadlock_timeout grace period.
 					 *
-					 * Note we read vacuumFlags without any locking.  This is
+					 * Note we read statusFlags without any locking.  This is
 					 * OK only for checking the PROC_IS_AUTOVACUUM flag,
 					 * because that flag is set at process start and never
 					 * reset.  There is logic elsewhere to avoid canceling an
 					 * autovacuum that is working to prevent XID wraparound
-					 * problems (which needs to read a different vacuumFlag
+					 * problems (which needs to read a different statusFlags
 					 * bit), but we don't do that here to avoid grabbing
 					 * ProcArrayLock.
 					 */
 					if (checkProc == MyProc &&
-						proc->vacuumFlags & PROC_IS_AUTOVACUUM)
+						proc->statusFlags & PROC_IS_AUTOVACUUM)
 						blocking_autovacuum_proc = proc;
 
 					/* We're done looking at this proclock */

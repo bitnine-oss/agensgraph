@@ -489,7 +489,6 @@ sub GenerateFiles
 		USE_ASSERT_CHECKING => $self->{options}->{asserts} ? 1 : undef,
 		USE_BONJOUR         => undef,
 		USE_BSD_AUTH        => undef,
-		USE_DEV_URANDOM     => undef,
 		USE_ICU => $self->{options}->{icu} ? 1 : undef,
 		USE_LIBXML                 => undef,
 		USE_LIBXSLT                => undef,
@@ -497,7 +496,6 @@ sub GenerateFiles
 		USE_LLVM                   => undef,
 		USE_NAMED_POSIX_SEMAPHORES => undef,
 		USE_OPENSSL                => undef,
-		USE_OPENSSL_RANDOM         => undef,
 		USE_PAM                    => undef,
 		USE_SLICING_BY_8_CRC32C    => undef,
 		USE_SSE42_CRC32C           => undef,
@@ -506,7 +504,6 @@ sub GenerateFiles
 		USE_SYSV_SEMAPHORES                 => undef,
 		USE_SYSV_SHARED_MEMORY              => undef,
 		USE_UNNAMED_POSIX_SEMAPHORES        => undef,
-		USE_WIN32_RANDOM                    => 1,
 		USE_WIN32_SEMAPHORES                => 1,
 		USE_WIN32_SHARED_MEMORY             => 1,
 		WCSTOMBS_L_IN_XLOCALE               => undef,
@@ -781,8 +778,6 @@ EOF
 	$mf =~ /^CATALOG_HEADERS\s*:?=(.*)$/gm
 	  || croak "Could not find CATALOG_HEADERS in Makefile\n";
 	my @bki_srcs = split /\s+/, $1;
-	push @bki_srcs, 'toasting.h';
-	push @bki_srcs, 'indexing.h';
 	$mf =~ /^POSTGRES_BKI_DATA\s*:?=[^,]+,(.*)\)$/gm
 	  || croak "Could not find POSTGRES_BKI_DATA in Makefile\n";
 	my @bki_data = split /\s+/, $1;

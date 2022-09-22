@@ -49,17 +49,20 @@ struct XidCache
 };
 
 /*
- * Flags for ProcGlobal->vacuumFlags[]
+ * Flags for PGPROC->statusFlags and PROC_HDR->statusFlags[]
  */
 #define		PROC_IS_AUTOVACUUM	0x01	/* is it an autovac worker? */
 #define		PROC_IN_VACUUM		0x02	/* currently running lazy vacuum */
+#define		PROC_IN_SAFE_IC		0x04	/* currently running CREATE INDEX
+										 * CONCURRENTLY on non-expressional,
+										 * non-partial index */
 #define		PROC_VACUUM_FOR_WRAPAROUND	0x08	/* set by autovac only */
 #define		PROC_IN_LOGICAL_DECODING	0x10	/* currently doing logical
 												 * decoding outside xact */
 
 /* flags reset at EOXact */
 #define		PROC_VACUUM_STATE_MASK \
-	(PROC_IN_VACUUM | PROC_VACUUM_FOR_WRAPAROUND)
+	(PROC_IN_VACUUM | PROC_IN_SAFE_IC | PROC_VACUUM_FOR_WRAPAROUND)
 
 /*
  * We allow a small number of "weak" relation locks (AccessShareLock,
@@ -97,6 +100,11 @@ typedef enum
  * distinguished from a real one at need by the fact that it has pid == 0.
  * The semaphore and lock-activity fields in a prepared-xact PGPROC are unused,
  * but its myProcLocks[] lists are valid.
+ *
+ * We allow many fields of this struct to be accessed without locks, such as
+ * delayChkpt and isBackgroundWorker. However, keep in mind that writing
+ * mirrored ones (see below) requires holding ProcArrayLock or XidGenLock in
+ * at least shared mode, so that pgxactoff does not change concurrently.
  *
  * Mirrored fields:
  *
@@ -175,9 +183,10 @@ struct PGPROC
 
 	bool		delayChkpt;		/* true if this proc delays checkpoint start */
 
-	uint8		vacuumFlags;    /* this backend's vacuum flags, see PROC_*
+	uint8		statusFlags;	/* this backend's status flags, see PROC_*
 								 * above. mirrored in
-								 * ProcGlobal->vacuumFlags[pgxactoff] */
+								 * ProcGlobal->statusFlags[pgxactoff] */
+
 	/*
 	 * Info to allow us to wait for synchronous replication, if needed.
 	 * waitLSN is InvalidXLogRecPtr if not waiting; set only by user backend.
@@ -273,7 +282,7 @@ extern PGDLLIMPORT PGPROC *MyProc;
  * allow for as tight loops accessing the data as possible. Second, to prevent
  * updates of frequently changing data (e.g. xmin) from invalidating
  * cachelines also containing less frequently changing data (e.g. xid,
- * vacuumFlags). Third to condense frequently accessed data into as few
+ * statusFlags). Third to condense frequently accessed data into as few
  * cachelines as possible.
  *
  * There are two main reasons to have the data mirrored between these dense
@@ -315,10 +324,10 @@ typedef struct PROC_HDR
 	XidCacheStatus *subxidStates;
 
 	/*
-	 * Array mirroring PGPROC.vacuumFlags for each PGPROC currently in the
+	 * Array mirroring PGPROC.statusFlags for each PGPROC currently in the
 	 * procarray.
 	 */
-	uint8	   *vacuumFlags;
+	uint8	   *statusFlags;
 
 	/* Length of allProcs array */
 	uint32		allProcCount;

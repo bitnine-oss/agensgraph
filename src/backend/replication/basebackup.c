@@ -729,6 +729,13 @@ perform_base_backup(basebackup_options *opt)
 				 errmsg("checksum verification failure during base backup")));
 	}
 
+	/*
+	 * Make sure to free the manifest before the resource owners as manifests
+	 * use cryptohash contexts that may depend on resource owners (like
+	 * OpenSSL).
+	 */
+	FreeBackupManifest(&manifest);
+
 	/* clean up the resource owner we created */
 	WalSndResourceCleanup(true);
 
@@ -1094,7 +1101,9 @@ sendFileWithContent(const char *filename, const char *content,
 				len;
 	pg_checksum_context checksum_ctx;
 
-	pg_checksum_init(&checksum_ctx, manifest->checksum_type);
+	if (pg_checksum_init(&checksum_ctx, manifest->checksum_type) < 0)
+		elog(ERROR, "could not initialize checksum of file \"%s\"",
+			 filename);
 
 	len = strlen(content);
 
@@ -1130,7 +1139,10 @@ sendFileWithContent(const char *filename, const char *content,
 		update_basebackup_progress(pad);
 	}
 
-	pg_checksum_update(&checksum_ctx, (uint8 *) content, len);
+	if (pg_checksum_update(&checksum_ctx, (uint8 *) content, len) < 0)
+		elog(ERROR, "could not update checksum of file \"%s\"",
+			 filename);
+
 	AddFileToBackupManifest(manifest, NULL, filename, len,
 							(pg_time_t) statbuf.st_mtime, &checksum_ctx);
 }
@@ -1584,7 +1596,9 @@ sendFile(const char *readfilename, const char *tarfilename,
 	bool		verify_checksum = false;
 	pg_checksum_context checksum_ctx;
 
-	pg_checksum_init(&checksum_ctx, manifest->checksum_type);
+	if (pg_checksum_init(&checksum_ctx, manifest->checksum_type) < 0)
+		elog(ERROR, "could not initialize checksum of file \"%s\"",
+			 readfilename);
 
 	fd = OpenTransientFile(readfilename, O_RDONLY | PG_BINARY);
 	if (fd < 0)
@@ -1758,7 +1772,8 @@ sendFile(const char *readfilename, const char *tarfilename,
 		update_basebackup_progress(cnt);
 
 		/* Also feed it to the checksum machinery. */
-		pg_checksum_update(&checksum_ctx, (uint8 *) buf, cnt);
+		if (pg_checksum_update(&checksum_ctx, (uint8 *) buf, cnt) < 0)
+			elog(ERROR, "could not update checksum of base backup");
 
 		len += cnt;
 		throttle(cnt);
@@ -1772,7 +1787,8 @@ sendFile(const char *readfilename, const char *tarfilename,
 		{
 			cnt = Min(sizeof(buf), statbuf->st_size - len);
 			pq_putmessage('d', buf, cnt);
-			pg_checksum_update(&checksum_ctx, (uint8 *) buf, cnt);
+			if (pg_checksum_update(&checksum_ctx, (uint8 *) buf, cnt) < 0)
+				elog(ERROR, "could not update checksum of base backup");
 			update_basebackup_progress(cnt);
 			len += cnt;
 			throttle(cnt);
@@ -1780,8 +1796,8 @@ sendFile(const char *readfilename, const char *tarfilename,
 	}
 
 	/*
-	 * Pad to a block boundary, per tar format requirements. (This small
-	 * piece of data is probably not worth throttling, and is not checksummed
+	 * Pad to a block boundary, per tar format requirements. (This small piece
+	 * of data is probably not worth throttling, and is not checksummed
 	 * because it's not actually part of the file.)
 	 */
 	pad = tarPaddingBytesRequired(len);

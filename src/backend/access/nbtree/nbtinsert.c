@@ -54,11 +54,14 @@ static Buffer _bt_split(Relation rel, BTScanInsert itup_key, Buffer buf,
 						IndexTuple newitem, IndexTuple orignewitem,
 						IndexTuple nposting, uint16 postingoff);
 static void _bt_insert_parent(Relation rel, Buffer buf, Buffer rbuf,
-							  BTStack stack, bool is_root, bool is_only);
+							  BTStack stack, bool isroot, bool isonly);
 static Buffer _bt_newroot(Relation rel, Buffer lbuf, Buffer rbuf);
 static inline bool _bt_pgaddtup(Page page, Size itemsize, IndexTuple itup,
 								OffsetNumber itup_off, bool newfirstdataitem);
-static void _bt_vacuum_one_page(Relation rel, Buffer buffer, Relation heapRel);
+static void _bt_delete_or_dedup_one_page(Relation rel, Relation heapRel,
+										 BTInsertState insertstate,
+										 bool lpdeadonly, bool checkingunique,
+										 bool uniquedup);
 
 /*
  *	_bt_doinsert() -- Handle insertion of a single index tuple in the tree.
@@ -306,11 +309,11 @@ _bt_search_insert(Relation rel, BTInsertState insertstate)
 		if (_bt_conditionallockbuf(rel, insertstate->buf))
 		{
 			Page		page;
-			BTPageOpaque lpageop;
+			BTPageOpaque opaque;
 
 			_bt_checkpage(rel, insertstate->buf);
 			page = BufferGetPage(insertstate->buf);
-			lpageop = (BTPageOpaque) PageGetSpecialPointer(page);
+			opaque = (BTPageOpaque) PageGetSpecialPointer(page);
 
 			/*
 			 * Check if the page is still the rightmost leaf page and has
@@ -320,9 +323,9 @@ _bt_search_insert(Relation rel, BTInsertState insertstate)
 			 * scantid to be unset when our caller is a checkingunique
 			 * inserter.)
 			 */
-			if (P_RIGHTMOST(lpageop) &&
-				P_ISLEAF(lpageop) &&
-				!P_IGNORE(lpageop) &&
+			if (P_RIGHTMOST(opaque) &&
+				P_ISLEAF(opaque) &&
+				!P_IGNORE(opaque) &&
 				PageGetFreeSpace(page) > insertstate->itemsz &&
 				PageGetMaxOffsetNumber(page) >= P_HIKEY &&
 				_bt_compare(rel, insertstate->itup_key, page, P_HIKEY) > 0)
@@ -795,17 +798,17 @@ _bt_findinsertloc(Relation rel,
 {
 	BTScanInsert itup_key = insertstate->itup_key;
 	Page		page = BufferGetPage(insertstate->buf);
-	BTPageOpaque lpageop;
+	BTPageOpaque opaque;
 	OffsetNumber newitemoff;
 
-	lpageop = (BTPageOpaque) PageGetSpecialPointer(page);
+	opaque = (BTPageOpaque) PageGetSpecialPointer(page);
 
 	/* Check 1/3 of a page restriction */
 	if (unlikely(insertstate->itemsz > BTMaxItemSize(page)))
 		_bt_check_third_page(rel, heapRel, itup_key->heapkeyspace, page,
 							 insertstate->itup);
 
-	Assert(P_ISLEAF(lpageop) && !P_INCOMPLETE_SPLIT(lpageop));
+	Assert(P_ISLEAF(opaque) && !P_INCOMPLETE_SPLIT(opaque));
 	Assert(!insertstate->bounds_valid || checkingunique);
 	Assert(!itup_key->heapkeyspace || itup_key->scantid != NULL);
 	Assert(itup_key->heapkeyspace || itup_key->scantid == NULL);
@@ -857,52 +860,28 @@ _bt_findinsertloc(Relation rel,
 					break;
 
 				/* Test '<=', not '!=', since scantid is set now */
-				if (P_RIGHTMOST(lpageop) ||
+				if (P_RIGHTMOST(opaque) ||
 					_bt_compare(rel, itup_key, page, P_HIKEY) <= 0)
 					break;
 
 				_bt_stepright(rel, insertstate, stack);
 				/* Update local state after stepping right */
 				page = BufferGetPage(insertstate->buf);
-				lpageop = (BTPageOpaque) PageGetSpecialPointer(page);
+				opaque = (BTPageOpaque) PageGetSpecialPointer(page);
 				/* Assume duplicates (if checkingunique) */
 				uniquedup = true;
 			}
 		}
 
 		/*
-		 * If the target page is full, see if we can obtain enough space by
-		 * erasing LP_DEAD items.  If that fails to free enough space, see if
-		 * we can avoid a page split by performing a deduplication pass over
-		 * the page.
-		 *
-		 * We only perform a deduplication pass for a checkingunique caller
-		 * when the incoming item is a duplicate of an existing item on the
-		 * leaf page.  This heuristic avoids wasting cycles -- we only expect
-		 * to benefit from deduplicating a unique index page when most or all
-		 * recently added items are duplicates.  See nbtree/README.
+		 * If the target page is full, see if we can obtain enough space using
+		 * one or more strategies (e.g. erasing LP_DEAD items, deduplication).
+		 * Page splits are expensive, and should only go ahead when truly
+		 * necessary.
 		 */
 		if (PageGetFreeSpace(page) < insertstate->itemsz)
-		{
-			if (P_HAS_GARBAGE(lpageop))
-			{
-				_bt_vacuum_one_page(rel, insertstate->buf, heapRel);
-				insertstate->bounds_valid = false;
-
-				/* Might as well assume duplicates (if checkingunique) */
-				uniquedup = true;
-			}
-
-			if (itup_key->allequalimage && BTGetDeduplicateItems(rel) &&
-				(!checkingunique || uniquedup) &&
-				PageGetFreeSpace(page) < insertstate->itemsz)
-			{
-				_bt_dedup_one_page(rel, insertstate->buf, heapRel,
-								   insertstate->itup, insertstate->itemsz,
-								   checkingunique);
-				insertstate->bounds_valid = false;
-			}
-		}
+			_bt_delete_or_dedup_one_page(rel, heapRel, insertstate, false,
+										 checkingunique, uniquedup);
 	}
 	else
 	{
@@ -940,10 +919,11 @@ _bt_findinsertloc(Relation rel,
 			 * Before considering moving right, see if we can obtain enough
 			 * space by erasing LP_DEAD items
 			 */
-			if (P_HAS_GARBAGE(lpageop))
+			if (P_HAS_GARBAGE(opaque))
 			{
-				_bt_vacuum_one_page(rel, insertstate->buf, heapRel);
-				insertstate->bounds_valid = false;
+				/* Erase LP_DEAD items (won't deduplicate) */
+				_bt_delete_or_dedup_one_page(rel, heapRel, insertstate, true,
+											 checkingunique, false);
 
 				if (PageGetFreeSpace(page) >= insertstate->itemsz)
 					break;		/* OK, now we have enough space */
@@ -964,7 +944,7 @@ _bt_findinsertloc(Relation rel,
 				insertstate->stricthigh <= PageGetMaxOffsetNumber(page))
 				break;
 
-			if (P_RIGHTMOST(lpageop) ||
+			if (P_RIGHTMOST(opaque) ||
 				_bt_compare(rel, itup_key, page, P_HIKEY) != 0 ||
 				random() <= (MAX_RANDOM_VALUE / 100))
 				break;
@@ -972,7 +952,7 @@ _bt_findinsertloc(Relation rel,
 			_bt_stepright(rel, insertstate, stack);
 			/* Update local state after stepping right */
 			page = BufferGetPage(insertstate->buf);
-			lpageop = (BTPageOpaque) PageGetSpecialPointer(page);
+			opaque = (BTPageOpaque) PageGetSpecialPointer(page);
 		}
 	}
 
@@ -980,7 +960,7 @@ _bt_findinsertloc(Relation rel,
 	 * We should now be on the correct page.  Find the offset within the page
 	 * for the new tuple. (Possibly reusing earlier search bounds.)
 	 */
-	Assert(P_RIGHTMOST(lpageop) ||
+	Assert(P_RIGHTMOST(opaque) ||
 		   _bt_compare(rel, itup_key, page, P_HIKEY) <= 0);
 
 	newitemoff = _bt_binsrch_insert(rel, insertstate);
@@ -993,14 +973,17 @@ _bt_findinsertloc(Relation rel,
 		 * performing a posting list split, so delete all LP_DEAD items early.
 		 * This is the only case where LP_DEAD deletes happen even though
 		 * there is space for newitem on the page.
+		 *
+		 * This can only erase LP_DEAD items (it won't deduplicate).
 		 */
-		_bt_vacuum_one_page(rel, insertstate->buf, heapRel);
+		_bt_delete_or_dedup_one_page(rel, heapRel, insertstate, true,
+									 checkingunique, false);
 
 		/*
 		 * Do new binary search.  New insert location cannot overlap with any
 		 * posting list now.
 		 */
-		insertstate->bounds_valid = false;
+		Assert(!insertstate->bounds_valid);
 		insertstate->postingoff = 0;
 		newitemoff = _bt_binsrch_insert(rel, insertstate);
 		Assert(insertstate->postingoff == 0);
@@ -1025,20 +1008,20 @@ static void
 _bt_stepright(Relation rel, BTInsertState insertstate, BTStack stack)
 {
 	Page		page;
-	BTPageOpaque lpageop;
+	BTPageOpaque opaque;
 	Buffer		rbuf;
 	BlockNumber rblkno;
 
 	page = BufferGetPage(insertstate->buf);
-	lpageop = (BTPageOpaque) PageGetSpecialPointer(page);
+	opaque = (BTPageOpaque) PageGetSpecialPointer(page);
 
 	rbuf = InvalidBuffer;
-	rblkno = lpageop->btpo_next;
+	rblkno = opaque->btpo_next;
 	for (;;)
 	{
 		rbuf = _bt_relandgetbuf(rel, rbuf, rblkno, BT_WRITE);
 		page = BufferGetPage(rbuf);
-		lpageop = (BTPageOpaque) PageGetSpecialPointer(page);
+		opaque = (BTPageOpaque) PageGetSpecialPointer(page);
 
 		/*
 		 * If this page was incompletely split, finish the split now.  We do
@@ -1046,20 +1029,20 @@ _bt_stepright(Relation rel, BTInsertState insertstate, BTStack stack)
 		 * because finishing the split could be a fairly lengthy operation.
 		 * But this should happen very seldom.
 		 */
-		if (P_INCOMPLETE_SPLIT(lpageop))
+		if (P_INCOMPLETE_SPLIT(opaque))
 		{
 			_bt_finish_split(rel, rbuf, stack);
 			rbuf = InvalidBuffer;
 			continue;
 		}
 
-		if (!P_IGNORE(lpageop))
+		if (!P_IGNORE(opaque))
 			break;
-		if (P_RIGHTMOST(lpageop))
+		if (P_RIGHTMOST(opaque))
 			elog(ERROR, "fell off the end of index \"%s\"",
 				 RelationGetRelationName(rel));
 
-		rblkno = lpageop->btpo_next;
+		rblkno = opaque->btpo_next;
 	}
 	/* rbuf locked; unlock buf, update state for caller */
 	_bt_relbuf(rel, insertstate->buf);
@@ -1110,25 +1093,35 @@ _bt_insertonpg(Relation rel,
 			   bool split_only_page)
 {
 	Page		page;
-	BTPageOpaque lpageop;
+	BTPageOpaque opaque;
+	bool		isleaf,
+				isroot,
+				isrightmost,
+				isonly;
 	IndexTuple	oposting = NULL;
 	IndexTuple	origitup = NULL;
 	IndexTuple	nposting = NULL;
 
 	page = BufferGetPage(buf);
-	lpageop = (BTPageOpaque) PageGetSpecialPointer(page);
+	opaque = (BTPageOpaque) PageGetSpecialPointer(page);
+	isleaf = P_ISLEAF(opaque);
+	isroot = P_ISROOT(opaque);
+	isrightmost = P_RIGHTMOST(opaque);
+	isonly = P_LEFTMOST(opaque) && P_RIGHTMOST(opaque);
 
 	/* child buffer must be given iff inserting on an internal page */
-	Assert(P_ISLEAF(lpageop) == !BufferIsValid(cbuf));
+	Assert(isleaf == !BufferIsValid(cbuf));
 	/* tuple must have appropriate number of attributes */
-	Assert(!P_ISLEAF(lpageop) ||
+	Assert(!isleaf ||
 		   BTreeTupleGetNAtts(itup, rel) ==
 		   IndexRelationGetNumberOfAttributes(rel));
-	Assert(P_ISLEAF(lpageop) ||
+	Assert(isleaf ||
 		   BTreeTupleGetNAtts(itup, rel) <=
 		   IndexRelationGetNumberOfKeyAttributes(rel));
 	Assert(!BTreeTupleIsPosting(itup));
 	Assert(MAXALIGN(IndexTupleSize(itup)) == itemsz);
+	/* Caller must always finish incomplete split for us */
+	Assert(!P_INCOMPLETE_SPLIT(opaque));
 
 	/*
 	 * Every internal page should have exactly one negative infinity item at
@@ -1136,12 +1129,7 @@ _bt_insertonpg(Relation rel,
 	 * become negative infinity items through truncation, since they're the
 	 * only routines that allocate new internal pages.
 	 */
-	Assert(P_ISLEAF(lpageop) || newitemoff > P_FIRSTDATAKEY(lpageop));
-
-	/* The caller should've finished any incomplete splits already. */
-	if (P_INCOMPLETE_SPLIT(lpageop))
-		elog(ERROR, "cannot insert to incompletely split page %u",
-			 BufferGetBlockNumber(buf));
+	Assert(isleaf || newitemoff > P_FIRSTDATAKEY(opaque));
 
 	/*
 	 * Do we need to split an existing posting list item?
@@ -1157,7 +1145,7 @@ _bt_insertonpg(Relation rel,
 		 * its post-split version is treated as an extra step in either the
 		 * insert or page split critical section.
 		 */
-		Assert(P_ISLEAF(lpageop) && !ItemIdIsDead(itemid));
+		Assert(isleaf && !ItemIdIsDead(itemid));
 		Assert(itup_key->heapkeyspace && itup_key->allequalimage);
 		oposting = (IndexTuple) PageGetItem(page, itemid);
 
@@ -1180,8 +1168,6 @@ _bt_insertonpg(Relation rel,
 	 */
 	if (PageGetFreeSpace(page) < itemsz)
 	{
-		bool		is_root = P_ISROOT(lpageop);
-		bool		is_only = P_LEFTMOST(lpageop) && P_RIGHTMOST(lpageop);
 		Buffer		rbuf;
 
 		Assert(!split_only_page);
@@ -1211,12 +1197,10 @@ _bt_insertonpg(Relation rel,
 		 * page.
 		 *----------
 		 */
-		_bt_insert_parent(rel, buf, rbuf, stack, is_root, is_only);
+		_bt_insert_parent(rel, buf, rbuf, stack, isroot, isonly);
 	}
 	else
 	{
-		bool		isleaf = P_ISLEAF(lpageop);
-		bool		isrightmost = P_RIGHTMOST(lpageop);
 		Buffer		metabuf = InvalidBuffer;
 		Page		metapg = NULL;
 		BTMetaPageData *metad = NULL;
@@ -1229,7 +1213,7 @@ _bt_insertonpg(Relation rel,
 		 * at or above the current page.  We can safely acquire a lock on the
 		 * metapage here --- see comments for _bt_newroot().
 		 */
-		if (split_only_page)
+		if (unlikely(split_only_page))
 		{
 			Assert(!isleaf);
 			Assert(BufferIsValid(cbuf));
@@ -1238,7 +1222,7 @@ _bt_insertonpg(Relation rel,
 			metapg = BufferGetPage(metabuf);
 			metad = BTPageGetMeta(metapg);
 
-			if (metad->btm_fastlevel >= lpageop->btpo.level)
+			if (metad->btm_fastlevel >= opaque->btpo.level)
 			{
 				/* no update wanted */
 				_bt_relbuf(rel, metabuf);
@@ -1265,7 +1249,7 @@ _bt_insertonpg(Relation rel,
 			if (metad->btm_version < BTREE_NOVAC_VERSION)
 				_bt_upgrademetapage(metapg);
 			metad->btm_fastroot = BufferGetBlockNumber(buf);
-			metad->btm_fastlevel = lpageop->btpo.level;
+			metad->btm_fastlevel = opaque->btpo.level;
 			MarkBufferDirty(metabuf);
 		}
 
@@ -1386,7 +1370,7 @@ _bt_insertonpg(Relation rel,
 		 * may be used by a future inserter within _bt_search_insert().
 		 */
 		blockcache = InvalidBlockNumber;
-		if (isrightmost && isleaf && !P_ISROOT(lpageop))
+		if (isrightmost && isleaf && !isroot)
 			blockcache = BufferGetBlockNumber(buf);
 
 		/* Release buffer for insertion target block */
@@ -2069,16 +2053,16 @@ _bt_split(Relation rel, BTScanInsert itup_key, Buffer buf, Buffer cbuf,
  *
  * stack - stack showing how we got here.  Will be NULL when splitting true
  *			root, or during concurrent root split, where we can be inefficient
- * is_root - we split the true root
- * is_only - we split a page alone on its level (might have been fast root)
+ * isroot - we split the true root
+ * isonly - we split a page alone on its level (might have been fast root)
  */
 static void
 _bt_insert_parent(Relation rel,
 				  Buffer buf,
 				  Buffer rbuf,
 				  BTStack stack,
-				  bool is_root,
-				  bool is_only)
+				  bool isroot,
+				  bool isonly)
 {
 	/*
 	 * Here we have to do something Lehman and Yao don't talk about: deal with
@@ -2093,12 +2077,12 @@ _bt_insert_parent(Relation rel,
 	 * from the root.  This is not super-efficient, but it's rare enough not
 	 * to matter.
 	 */
-	if (is_root)
+	if (isroot)
 	{
 		Buffer		rootbuf;
 
 		Assert(stack == NULL);
-		Assert(is_only);
+		Assert(isonly);
 		/* create a new root node and update the metapage */
 		rootbuf = _bt_newroot(rel, buf, rbuf);
 		/* release the split buffers */
@@ -2118,10 +2102,10 @@ _bt_insert_parent(Relation rel,
 
 		if (stack == NULL)
 		{
-			BTPageOpaque lpageop;
+			BTPageOpaque opaque;
 
 			elog(DEBUG2, "concurrent ROOT page split");
-			lpageop = (BTPageOpaque) PageGetSpecialPointer(page);
+			opaque = (BTPageOpaque) PageGetSpecialPointer(page);
 
 			/*
 			 * We should never reach here when a leaf page split takes place
@@ -2135,12 +2119,11 @@ _bt_insert_parent(Relation rel,
 			 * page will split, since it's faster to go through _bt_search()
 			 * and get a stack in the usual way.
 			 */
-			Assert(!(P_ISLEAF(lpageop) &&
+			Assert(!(P_ISLEAF(opaque) &&
 					 BlockNumberIsValid(RelationGetTargetBlock(rel))));
 
 			/* Find the leftmost page at the next level up */
-			pbuf = _bt_get_endpoint(rel, lpageop->btpo.level + 1, false,
-									NULL);
+			pbuf = _bt_get_endpoint(rel, opaque->btpo.level + 1, false, NULL);
 			/* Set up a phony stack entry pointing there */
 			stack = &fakestack;
 			stack->bts_blkno = BufferGetBlockNumber(pbuf);
@@ -2192,7 +2175,7 @@ _bt_insert_parent(Relation rel,
 		/* Recursively insert into the parent */
 		_bt_insertonpg(rel, NULL, pbuf, buf, stack->bts_parent,
 					   new_item, MAXALIGN(IndexTupleSize(new_item)),
-					   stack->bts_offset + 1, 0, is_only);
+					   stack->bts_offset + 1, 0, isonly);
 
 		/* be tidy */
 		pfree(new_item);
@@ -2217,8 +2200,8 @@ _bt_finish_split(Relation rel, Buffer lbuf, BTStack stack)
 	Buffer		rbuf;
 	Page		rpage;
 	BTPageOpaque rpageop;
-	bool		was_root;
-	bool		was_only;
+	bool		wasroot;
+	bool		wasonly;
 
 	Assert(P_INCOMPLETE_SPLIT(lpageop));
 
@@ -2239,20 +2222,20 @@ _bt_finish_split(Relation rel, Buffer lbuf, BTStack stack)
 		metapg = BufferGetPage(metabuf);
 		metad = BTPageGetMeta(metapg);
 
-		was_root = (metad->btm_root == BufferGetBlockNumber(lbuf));
+		wasroot = (metad->btm_root == BufferGetBlockNumber(lbuf));
 
 		_bt_relbuf(rel, metabuf);
 	}
 	else
-		was_root = false;
+		wasroot = false;
 
 	/* Was this the only page on the level before split? */
-	was_only = (P_LEFTMOST(lpageop) && P_RIGHTMOST(rpageop));
+	wasonly = (P_LEFTMOST(lpageop) && P_RIGHTMOST(rpageop));
 
 	elog(DEBUG1, "finishing incomplete split of %u/%u",
 		 BufferGetBlockNumber(lbuf), BufferGetBlockNumber(rbuf));
 
-	_bt_insert_parent(rel, lbuf, rbuf, stack, was_root, was_only);
+	_bt_insert_parent(rel, lbuf, rbuf, stack, wasroot, wasonly);
 }
 
 /*
@@ -2623,32 +2606,59 @@ _bt_pgaddtup(Page page,
 }
 
 /*
- * _bt_vacuum_one_page - vacuum just one index page.
+ * _bt_delete_or_dedup_one_page - Try to avoid a leaf page split by attempting
+ * a variety of operations.
  *
- * Try to remove LP_DEAD items from the given page.  The passed buffer
- * must be exclusive-locked, but unlike a real VACUUM, we don't need a
- * super-exclusive "cleanup" lock (see nbtree/README).
+ * There are two operations performed here: deleting items already marked
+ * LP_DEAD, and deduplication.  If both operations fail to free enough space
+ * for the incoming item then caller will go on to split the page.  We always
+ * attempt our preferred strategy (which is to delete items whose LP_DEAD bit
+ * are set) first.  If that doesn't work out we move on to deduplication.
+ *
+ * Caller's checkingunique and uniquedup arguments help us decide if we should
+ * perform deduplication, which is primarily useful with low cardinality data,
+ * but can sometimes absorb version churn.
+ *
+ * Callers that only want us to look for/delete LP_DEAD items can ask for that
+ * directly by passing true 'lpdeadonly' argument.
+ *
+ * Note: We used to only delete LP_DEAD items when the BTP_HAS_GARBAGE page
+ * level flag was found set.  The flag was useful back when there wasn't
+ * necessarily one single page for a duplicate tuple to go on (before heap TID
+ * became a part of the key space in version 4 indexes).  But we don't
+ * actually look at the flag anymore (it's not a gating condition for our
+ * caller).  That would cause us to miss tuples that are safe to delete,
+ * without getting any benefit in return.  We know that the alternative is to
+ * split the page; scanning the line pointer array in passing won't have
+ * noticeable overhead.  (We still maintain the BTP_HAS_GARBAGE flag despite
+ * all this because !heapkeyspace indexes must still do a "getting tired"
+ * linear search, and so are likely to get some benefit from using it as a
+ * gating condition.)
  */
 static void
-_bt_vacuum_one_page(Relation rel, Buffer buffer, Relation heapRel)
+_bt_delete_or_dedup_one_page(Relation rel, Relation heapRel,
+							 BTInsertState insertstate,
+							 bool lpdeadonly, bool checkingunique,
+							 bool uniquedup)
 {
 	OffsetNumber deletable[MaxIndexTuplesPerPage];
 	int			ndeletable = 0;
 	OffsetNumber offnum,
-				minoff,
 				maxoff;
+	Buffer		buffer = insertstate->buf;
+	BTScanInsert itup_key = insertstate->itup_key;
 	Page		page = BufferGetPage(buffer);
 	BTPageOpaque opaque = (BTPageOpaque) PageGetSpecialPointer(page);
 
 	Assert(P_ISLEAF(opaque));
+	Assert(lpdeadonly || itup_key->heapkeyspace);
 
 	/*
 	 * Scan over all items to see which ones need to be deleted according to
 	 * LP_DEAD flags.
 	 */
-	minoff = P_FIRSTDATAKEY(opaque);
 	maxoff = PageGetMaxOffsetNumber(page);
-	for (offnum = minoff;
+	for (offnum = P_FIRSTDATAKEY(opaque);
 		 offnum <= maxoff;
 		 offnum = OffsetNumberNext(offnum))
 	{
@@ -2659,12 +2669,50 @@ _bt_vacuum_one_page(Relation rel, Buffer buffer, Relation heapRel)
 	}
 
 	if (ndeletable > 0)
+	{
 		_bt_delitems_delete(rel, buffer, deletable, ndeletable, heapRel);
+		insertstate->bounds_valid = false;
+
+		/* Return when a page split has already been avoided */
+		if (PageGetFreeSpace(page) >= insertstate->itemsz)
+			return;
+
+		/* Might as well assume duplicates (if checkingunique) */
+		uniquedup = true;
+	}
 
 	/*
-	 * Note: if we didn't find any LP_DEAD items, then the page's
-	 * BTP_HAS_GARBAGE hint bit is falsely set.  We do not bother expending a
-	 * separate write to clear it, however.  We will clear it when we split
-	 * the page, or when deduplication runs.
+	 * Some callers only want to delete LP_DEAD items.  Return early for these
+	 * callers.
+	 *
+	 * Note: The page's BTP_HAS_GARBAGE hint flag may still be set when we
+	 * return at this point (or when we go on the try either or both of our
+	 * other strategies and they also fail).  We do not bother expending a
+	 * separate write to clear it, however.  Caller will definitely clear it
+	 * when it goes on to split the page (plus deduplication knows to clear
+	 * the flag when it actually modifies the page).
 	 */
+	if (lpdeadonly)
+		return;
+
+	/*
+	 * We can get called in the checkingunique case when there is no reason to
+	 * believe that there are any duplicates on the page; we should at least
+	 * still check for LP_DEAD items.  If that didn't work out, give up and
+	 * let caller split the page.  Deduplication cannot be justified given
+	 * there is no reason to think that there are duplicates.
+	 */
+	if (checkingunique && !uniquedup)
+		return;
+
+	/* Assume bounds about to be invalidated (this is almost certain now) */
+	insertstate->bounds_valid = false;
+
+	/*
+	 * Perform deduplication pass, though only when it is enabled for the
+	 * index and known to be safe (it must be an allequalimage index).
+	 */
+	if (BTGetDeduplicateItems(rel) && itup_key->allequalimage)
+		_bt_dedup_pass(rel, buffer, heapRel, insertstate->itup,
+					   insertstate->itemsz, checkingunique);
 }

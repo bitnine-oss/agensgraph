@@ -1199,9 +1199,6 @@ setup_connection(Archive *AH, const char *dumpencoding,
 			ExecuteSqlStatement(AH, "SET row_security = off");
 	}
 
-	/* Detect whether LOCK TABLE can handle non-table relations */
-	AH->hasGenericLockTable = IsLockTableGeneric(AH);
-
 	/*
 	 * Start transaction-snapshot mode transaction to dump consistent data.
 	 */
@@ -4374,13 +4371,7 @@ dumpSubscription(Archive *fout, SubscriptionInfo *subinfo)
 
 	/* Build list of quoted publications and append them to query. */
 	if (!parsePGArray(subinfo->subpublications, &pubnames, &npubnames))
-	{
-		pg_log_warning("could not parse subpublications array");
-		if (pubnames)
-			free(pubnames);
-		pubnames = NULL;
-		npubnames = 0;
-	}
+		fatal("could not parse subpublications array");
 
 	publications = createPQExpBuffer();
 	for (i = 0; i < npubnames; i++)
@@ -6919,16 +6910,16 @@ getTables(Archive *fout, int *numTables)
 		 * assume our lock on the child is enough to prevent schema
 		 * alterations to parent tables.
 		 *
-		 * We only need to lock the relation for certain components; see
-		 * pg_dump.h
+		 * NOTE: it'd be kinda nice to lock other relations too, not only
+		 * plain or partitioned tables, but the backend doesn't presently
+		 * allow that.
 		 *
-		 * On server versions that support it, we lock all relations not just
-		 * plain tables.
+		 * We only need to lock the table for certain components; see
+		 * pg_dump.h
 		 */
 		if (tblinfo[i].dobj.dump &&
-			(fout->hasGenericLockTable ||
-			 tblinfo[i].relkind == RELKIND_PARTITIONED_TABLE ||
-			 tblinfo[i].relkind == RELKIND_RELATION) &&
+			(tblinfo[i].relkind == RELKIND_RELATION ||
+			 tblinfo->relkind == RELKIND_PARTITIONED_TABLE) &&
 			(tblinfo[i].dobj.dump & DUMP_COMPONENTS_REQUIRING_LOCK))
 		{
 			resetPQExpBuffer(query);
@@ -10917,79 +10908,47 @@ dumpBaseType(Archive *fout, TypeInfo *tyinfo)
 	bool		typdefault_is_literal = false;
 
 	/* Fetch type-specific details */
-	if (fout->remoteVersion >= 90100)
-	{
-		appendPQExpBuffer(query, "SELECT typlen, "
-						  "typinput, typoutput, typreceive, typsend, "
-						  "typmodin, typmodout, typanalyze, "
-						  "typreceive::pg_catalog.oid AS typreceiveoid, "
-						  "typsend::pg_catalog.oid AS typsendoid, "
-						  "typmodin::pg_catalog.oid AS typmodinoid, "
-						  "typmodout::pg_catalog.oid AS typmodoutoid, "
-						  "typanalyze::pg_catalog.oid AS typanalyzeoid, "
-						  "typcategory, typispreferred, "
-						  "typdelim, typbyval, typalign, typstorage, "
-						  "(typcollation <> 0) AS typcollatable, "
-						  "pg_catalog.pg_get_expr(typdefaultbin, 0) AS typdefaultbin, typdefault "
-						  "FROM pg_catalog.pg_type "
-						  "WHERE oid = '%u'::pg_catalog.oid",
-						  tyinfo->dobj.catId.oid);
-	}
-	else if (fout->remoteVersion >= 80400)
-	{
-		appendPQExpBuffer(query, "SELECT typlen, "
-						  "typinput, typoutput, typreceive, typsend, "
-						  "typmodin, typmodout, typanalyze, "
-						  "typreceive::pg_catalog.oid AS typreceiveoid, "
-						  "typsend::pg_catalog.oid AS typsendoid, "
-						  "typmodin::pg_catalog.oid AS typmodinoid, "
-						  "typmodout::pg_catalog.oid AS typmodoutoid, "
-						  "typanalyze::pg_catalog.oid AS typanalyzeoid, "
-						  "typcategory, typispreferred, "
-						  "typdelim, typbyval, typalign, typstorage, "
-						  "false AS typcollatable, "
-						  "pg_catalog.pg_get_expr(typdefaultbin, 0) AS typdefaultbin, typdefault "
-						  "FROM pg_catalog.pg_type "
-						  "WHERE oid = '%u'::pg_catalog.oid",
-						  tyinfo->dobj.catId.oid);
-	}
-	else if (fout->remoteVersion >= 80300)
-	{
-		/* Before 8.4, pg_get_expr does not allow 0 for its second arg */
-		appendPQExpBuffer(query, "SELECT typlen, "
-						  "typinput, typoutput, typreceive, typsend, "
-						  "typmodin, typmodout, typanalyze, "
-						  "typreceive::pg_catalog.oid AS typreceiveoid, "
-						  "typsend::pg_catalog.oid AS typsendoid, "
-						  "typmodin::pg_catalog.oid AS typmodinoid, "
-						  "typmodout::pg_catalog.oid AS typmodoutoid, "
-						  "typanalyze::pg_catalog.oid AS typanalyzeoid, "
-						  "'U' AS typcategory, false AS typispreferred, "
-						  "typdelim, typbyval, typalign, typstorage, "
-						  "false AS typcollatable, "
-						  "pg_catalog.pg_get_expr(typdefaultbin, 'pg_catalog.pg_type'::pg_catalog.regclass) AS typdefaultbin, typdefault "
-						  "FROM pg_catalog.pg_type "
-						  "WHERE oid = '%u'::pg_catalog.oid",
-						  tyinfo->dobj.catId.oid);
-	}
+	appendPQExpBufferStr(query, "SELECT typlen, "
+						 "typinput, typoutput, typreceive, typsend, "
+						 "typreceive::pg_catalog.oid AS typreceiveoid, "
+						 "typsend::pg_catalog.oid AS typsendoid, "
+						 "typanalyze, "
+						 "typanalyze::pg_catalog.oid AS typanalyzeoid, "
+						 "typdelim, typbyval, typalign, typstorage, ");
+
+	if (fout->remoteVersion >= 80300)
+		appendPQExpBufferStr(query,
+							 "typmodin, typmodout, "
+							 "typmodin::pg_catalog.oid AS typmodinoid, "
+							 "typmodout::pg_catalog.oid AS typmodoutoid, ");
 	else
-	{
-		appendPQExpBuffer(query, "SELECT typlen, "
-						  "typinput, typoutput, typreceive, typsend, "
-						  "'-' AS typmodin, '-' AS typmodout, "
-						  "typanalyze, "
-						  "typreceive::pg_catalog.oid AS typreceiveoid, "
-						  "typsend::pg_catalog.oid AS typsendoid, "
-						  "0 AS typmodinoid, 0 AS typmodoutoid, "
-						  "typanalyze::pg_catalog.oid AS typanalyzeoid, "
-						  "'U' AS typcategory, false AS typispreferred, "
-						  "typdelim, typbyval, typalign, typstorage, "
-						  "false AS typcollatable, "
-						  "pg_catalog.pg_get_expr(typdefaultbin, 'pg_catalog.pg_type'::pg_catalog.regclass) AS typdefaultbin, typdefault "
-						  "FROM pg_catalog.pg_type "
-						  "WHERE oid = '%u'::pg_catalog.oid",
-						  tyinfo->dobj.catId.oid);
-	}
+		appendPQExpBufferStr(query,
+							 "'-' AS typmodin, '-' AS typmodout, "
+							 "0 AS typmodinoid, 0 AS typmodoutoid, ");
+
+	if (fout->remoteVersion >= 80400)
+		appendPQExpBufferStr(query,
+							 "typcategory, typispreferred, ");
+	else
+		appendPQExpBufferStr(query,
+							 "'U' AS typcategory, false AS typispreferred, ");
+
+	if (fout->remoteVersion >= 90100)
+		appendPQExpBufferStr(query, "(typcollation <> 0) AS typcollatable, ");
+	else
+		appendPQExpBufferStr(query, "false AS typcollatable, ");
+
+	/* Before 8.4, pg_get_expr does not allow 0 for its second arg */
+	if (fout->remoteVersion >= 80400)
+		appendPQExpBufferStr(query,
+							 "pg_catalog.pg_get_expr(typdefaultbin, 0) AS typdefaultbin, typdefault ");
+	else
+		appendPQExpBufferStr(query,
+							 "pg_catalog.pg_get_expr(typdefaultbin, 'pg_catalog.pg_type'::pg_catalog.regclass) AS typdefaultbin, typdefault ");
+
+	appendPQExpBuffer(query, "FROM pg_catalog.pg_type "
+					  "WHERE oid = '%u'::pg_catalog.oid",
+					  tyinfo->dobj.catId.oid);
 
 	res = ExecuteSqlQueryForSingleRow(fout, query->data);
 
@@ -12229,13 +12188,12 @@ dumpFunc(Archive *fout, FuncInfo *finfo)
 	if (proconfig && *proconfig)
 	{
 		if (!parsePGArray(proconfig, &configitems, &nconfigitems))
-		{
-			pg_log_warning("could not parse proconfig array");
-			if (configitems)
-				free(configitems);
-			configitems = NULL;
-			nconfigitems = 0;
-		}
+			fatal("could not parse proconfig array");
+	}
+	else
+	{
+		configitems = NULL;
+		nconfigitems = 0;
 	}
 
 	if (funcargs)
@@ -16556,8 +16514,8 @@ dumpIndex(Archive *fout, IndxInfo *indxinfo)
 		char	   *indstatvals = indxinfo->indstatvals;
 		char	  **indstatcolsarray = NULL;
 		char	  **indstatvalsarray = NULL;
-		int			nstatcols;
-		int			nstatvals;
+		int			nstatcols = 0;
+		int			nstatvals = 0;
 
 		if (dopt->binary_upgrade)
 			binary_upgrade_set_pg_class_oids(fout, q,
@@ -16592,11 +16550,16 @@ dumpIndex(Archive *fout, IndxInfo *indxinfo)
 		 * If the index has any statistics on some of its columns, generate
 		 * the associated ALTER INDEX queries.
 		 */
-		if (parsePGArray(indstatcols, &indstatcolsarray, &nstatcols) &&
-			parsePGArray(indstatvals, &indstatvalsarray, &nstatvals) &&
-			nstatcols == nstatvals)
+		if (strlen(indstatcols) != 0 || strlen(indstatvals) != 0)
 		{
 			int			j;
+
+			if (!parsePGArray(indstatcols, &indstatcolsarray, &nstatcols))
+				fatal("could not parse index statistic columns");
+			if (!parsePGArray(indstatvals, &indstatvalsarray, &nstatvals))
+				fatal("could not parse index statistic values");
+			if (nstatcols != nstatvals)
+				fatal("mismatched number of columns and values for index stats");
 
 			for (j = 0; j < nstatcols; j++)
 			{
@@ -18065,14 +18028,19 @@ processExtensionTables(Archive *fout, ExtensionInfo extinfo[],
 		char	   *extcondition = curext->extcondition;
 		char	  **extconfigarray = NULL;
 		char	  **extconditionarray = NULL;
-		int			nconfigitems;
-		int			nconditionitems;
+		int			nconfigitems = 0;
+		int			nconditionitems = 0;
 
-		if (parsePGArray(extconfig, &extconfigarray, &nconfigitems) &&
-			parsePGArray(extcondition, &extconditionarray, &nconditionitems) &&
-			nconfigitems == nconditionitems)
+		if (strlen(extconfig) != 0 || strlen(extcondition) != 0)
 		{
 			int			j;
+
+			if (!parsePGArray(extconfig, &extconfigarray, &nconfigitems))
+				fatal("could not parse extension configuration array");
+			if (!parsePGArray(extcondition, &extconditionarray, &nconditionitems))
+				fatal("could not parse extension condition array");
+			if (nconfigitems != nconditionitems)
+				fatal("mismatched number of configurations and conditions for extension");
 
 			for (j = 0; j < nconfigitems; j++)
 			{
@@ -18700,13 +18668,25 @@ appendIndexCollationVersion(PQExpBuffer buffer, IndxInfo *indxinfo, int enc,
 	}
 
 	/* Restore the versions that were recorded by the old cluster (if any). */
-	parsePGArray(inddependcollnames,
-				 &inddependcollnamesarray,
-				 &ninddependcollnames);
-	parsePGArray(inddependcollversions,
-				 &inddependcollversionsarray,
-				 &ninddependcollversions);
-	Assert(ninddependcollnames == ninddependcollversions);
+	if (strlen(inddependcollnames) == 0 && strlen(inddependcollversions) == 0)
+	{
+		ninddependcollnames = ninddependcollversions = 0;
+		inddependcollnamesarray = inddependcollversionsarray = NULL;
+	}
+	else
+	{
+		if (!parsePGArray(inddependcollnames,
+						  &inddependcollnamesarray,
+						  &ninddependcollnames))
+			fatal("could not parse index collation name array");
+		if (!parsePGArray(inddependcollversions,
+						  &inddependcollversionsarray,
+						  &ninddependcollversions))
+			fatal("could not parse index collation version array");
+	}
+
+	if (ninddependcollnames != ninddependcollversions)
+		fatal("mismatched number of collation names and versions for index");
 
 	if (ninddependcollnames > 0)
 		appendPQExpBufferStr(buffer,
@@ -18721,7 +18701,7 @@ appendIndexCollationVersion(PQExpBuffer buffer, IndxInfo *indxinfo, int enc,
 						  "UPDATE pg_catalog.pg_depend SET refobjversion = %s WHERE objid = '%u'::pg_catalog.oid AND refclassid = 'pg_catalog.pg_collation'::regclass AND refobjversion IS NOT NULL AND refobjid = ",
 						  inddependcollversionsarray[i],
 						  indxinfo->dobj.catId.oid);
-		appendStringLiteralAH(buffer,inddependcollnamesarray[i], fout);
+		appendStringLiteralAH(buffer, inddependcollnamesarray[i], fout);
 		appendPQExpBuffer(buffer, "::regcollation;\n");
 	}
 

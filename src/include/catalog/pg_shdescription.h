@@ -55,4 +55,11 @@ CATALOG(pg_shdescription,2396,SharedDescriptionRelationId) BKI_SHARED_RELATION
  */
 typedef FormData_pg_shdescription * Form_pg_shdescription;
 
+DECLARE_TOAST(pg_shdescription, 2846, 2847);
+#define PgShdescriptionToastTable 2846
+#define PgShdescriptionToastIndex 2847
+
+DECLARE_UNIQUE_INDEX(pg_shdescription_o_c_index, 2397, on pg_shdescription using btree(objoid oid_ops, classoid oid_ops));
+#define SharedDescriptionObjIndexId 2397
+
 #endif							/* PG_SHDESCRIPTION_H */

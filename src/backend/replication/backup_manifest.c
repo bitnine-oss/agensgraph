@@ -57,12 +57,19 @@ InitializeBackupManifest(backup_manifest_info *manifest,
 						 backup_manifest_option want_manifest,
 						 pg_checksum_type manifest_checksum_type)
 {
+	memset(manifest, 0, sizeof(backup_manifest_info));
+	manifest->checksum_type = manifest_checksum_type;
+
 	if (want_manifest == MANIFEST_OPTION_NO)
 		manifest->buffile = NULL;
 	else
+	{
 		manifest->buffile = BufFileCreateTemp(false);
-	manifest->checksum_type = manifest_checksum_type;
-	pg_sha256_init(&manifest->manifest_ctx);
+		manifest->manifest_ctx = pg_cryptohash_create(PG_SHA256);
+		if (pg_cryptohash_init(manifest->manifest_ctx) < 0)
+			elog(ERROR, "failed to initialize checksum of backup manifest");
+	}
+
 	manifest->manifest_size = UINT64CONST(0);
 	manifest->force_encode = (want_manifest == MANIFEST_OPTION_FORCE_ENCODE);
 	manifest->first_file = true;
@@ -72,6 +79,16 @@ InitializeBackupManifest(backup_manifest_info *manifest,
 		AppendToManifest(manifest,
 						 "{ \"PostgreSQL-Backup-Manifest-Version\": 1,\n"
 						 "\"Files\": [");
+}
+
+/*
+ * Free resources assigned to a backup manifest constructed.
+ */
+void
+FreeBackupManifest(backup_manifest_info *manifest)
+{
+	pg_cryptohash_free(manifest->manifest_ctx);
+	manifest->manifest_ctx = NULL;
 }
 
 /*
@@ -161,6 +178,9 @@ AddFileToBackupManifest(backup_manifest_info *manifest, const char *spcoid,
 		int			checksumlen;
 
 		checksumlen = pg_checksum_final(checksum_ctx, checksumbuf);
+		if (checksumlen < 0)
+			elog(ERROR, "could not finalize checksum of file \"%s\"",
+				 pathname);
 
 		appendStringInfo(&buf,
 						 ", \"Checksum-Algorithm\": \"%s\", \"Checksum\": \"",
@@ -305,7 +325,8 @@ SendBackupManifest(backup_manifest_info *manifest)
 	 * twice.
 	 */
 	manifest->still_checksumming = false;
-	pg_sha256_final(&manifest->manifest_ctx, checksumbuf);
+	if (pg_cryptohash_final(manifest->manifest_ctx, checksumbuf) < 0)
+		elog(ERROR, "failed to finalize checksum of backup manifest");
 	AppendStringToManifest(manifest, "\"Manifest-Checksum\": \"");
 	hex_encode((char *) checksumbuf, sizeof checksumbuf, checksumstringbuf);
 	checksumstringbuf[PG_SHA256_DIGEST_STRING_LENGTH - 1] = '\0';
@@ -368,7 +389,10 @@ AppendStringToManifest(backup_manifest_info *manifest, char *s)
 
 	Assert(manifest != NULL);
 	if (manifest->still_checksumming)
-		pg_sha256_update(&manifest->manifest_ctx, (uint8 *) s, len);
+	{
+		if (pg_cryptohash_update(manifest->manifest_ctx, (uint8 *) s, len) < 0)
+			elog(ERROR, "failed to update checksum of backup manifest");
+	}
 	BufFileWrite(manifest->buffile, s, len);
 	manifest->manifest_size += len;
 }

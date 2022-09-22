@@ -233,6 +233,8 @@ _equalAggref(const Aggref *a, const Aggref *b)
 	COMPARE_SCALAR_FIELD(aggkind);
 	COMPARE_SCALAR_FIELD(agglevelsup);
 	COMPARE_SCALAR_FIELD(aggsplit);
+	COMPARE_SCALAR_FIELD(aggno);
+	COMPARE_SCALAR_FIELD(aggtransno);
 	COMPARE_LOCATION_FIELD(location);
 
 	return true;
@@ -1320,7 +1322,7 @@ _equalClusterStmt(const ClusterStmt *a, const ClusterStmt *b)
 {
 	COMPARE_NODE_FIELD(relation);
 	COMPARE_STRING_FIELD(indexname);
-	COMPARE_SCALAR_FIELD(options);
+	COMPARE_NODE_FIELD(params);
 
 	return true;
 }
@@ -1364,6 +1366,7 @@ _equalTableLikeClause(const TableLikeClause *a, const TableLikeClause *b)
 {
 	COMPARE_NODE_FIELD(relation);
 	COMPARE_SCALAR_FIELD(options);
+	COMPARE_SCALAR_FIELD(relationOid);
 
 	return true;
 }
@@ -2123,6 +2126,8 @@ _equalCreateAmStmt(const CreateAmStmt *a, const CreateAmStmt *b)
 static bool
 _equalCreateTrigStmt(const CreateTrigStmt *a, const CreateTrigStmt *b)
 {
+	COMPARE_SCALAR_FIELD(replace);
+	COMPARE_SCALAR_FIELD(isconstraint);
 	COMPARE_STRING_FIELD(trigname);
 	COMPARE_NODE_FIELD(relation);
 	COMPARE_NODE_FIELD(funcname);
@@ -2132,7 +2137,6 @@ _equalCreateTrigStmt(const CreateTrigStmt *a, const CreateTrigStmt *b)
 	COMPARE_SCALAR_FIELD(events);
 	COMPARE_NODE_FIELD(columns);
 	COMPARE_NODE_FIELD(whenClause);
-	COMPARE_SCALAR_FIELD(isconstraint);
 	COMPARE_NODE_FIELD(transitionRels);
 	COMPARE_SCALAR_FIELD(deferrable);
 	COMPARE_SCALAR_FIELD(initdeferred);
@@ -2238,7 +2242,7 @@ _equalReindexStmt(const ReindexStmt *a, const ReindexStmt *b)
 	COMPARE_SCALAR_FIELD(kind);
 	COMPARE_NODE_FIELD(relation);
 	COMPARE_STRING_FIELD(name);
-	COMPARE_SCALAR_FIELD(options);
+	COMPARE_NODE_FIELD(params);
 
 	return true;
 }

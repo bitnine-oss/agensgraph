@@ -3074,6 +3074,11 @@ ProcessInterrupts(void)
 					 errmsg("terminating connection due to conflict with recovery"),
 					 errdetail_recovery_conflict()));
 		}
+		else if (IsBackgroundWorker)
+			ereport(FATAL,
+					(errcode(ERRCODE_ADMIN_SHUTDOWN),
+					 errmsg("terminating background worker \"%s\" due to administrator command",
+							MyBgworkerEntry->bgw_type)));
 		else
 			ereport(FATAL,
 					(errcode(ERRCODE_ADMIN_SHUTDOWN),
@@ -3556,7 +3561,7 @@ process_postgres_switches(int argc, char *argv[], GucContext ctx,
 	 * postmaster/postmaster.c (the option sets should not conflict) and with
 	 * the common help() function in main/main.c.
 	 */
-	while ((flag = getopt(argc, argv, "B:bc:C:D:d:EeFf:h:ijk:lN:nOo:Pp:r:S:sTt:v:W:-:")) != -1)
+	while ((flag = getopt(argc, argv, "B:bc:C:D:d:EeFf:h:ijk:lN:nOPp:r:S:sTt:v:W:-:")) != -1)
 	{
 		switch (flag)
 		{
@@ -3632,10 +3637,6 @@ process_postgres_switches(int argc, char *argv[], GucContext ctx,
 
 			case 'O':
 				SetConfigOption("allow_system_table_mods", "true", ctx, gucsource);
-				break;
-
-			case 'o':
-				errs++;
 				break;
 
 			case 'P':
@@ -4234,6 +4235,9 @@ PostgresMain(int argc, char *argv[],
 				set_ps_display("idle");
 				pgstat_report_activity(STATE_IDLE, NULL);
 			}
+
+			/* Report any recently-changed GUC options */
+			ReportChangedGUCOptions();
 
 			ReadyForQuery(whereToSendOutput);
 			send_ready_for_query = false;

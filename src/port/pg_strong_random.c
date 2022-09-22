@@ -24,62 +24,14 @@
 #include <unistd.h>
 #include <sys/time.h>
 
-#ifdef USE_OPENSSL
-#include <openssl/rand.h>
-#endif
-#ifdef USE_WIN32_RANDOM
-#include <wincrypt.h>
-#endif
-
-#ifdef USE_WIN32_RANDOM
 /*
- * Cache a global crypto provider that only gets freed when the process
- * exits, in case we need random numbers more than once.
- */
-static HCRYPTPROV hProvider = 0;
-#endif
-
-#if defined(USE_DEV_URANDOM)
-/*
- * Read (random) bytes from a file.
- */
-static bool
-random_from_file(const char *filename, void *buf, size_t len)
-{
-	int			f;
-	char	   *p = buf;
-	ssize_t		res;
-
-	f = open(filename, O_RDONLY, 0);
-	if (f == -1)
-		return false;
-
-	while (len)
-	{
-		res = read(f, p, len);
-		if (res <= 0)
-		{
-			if (errno == EINTR)
-				continue;		/* interrupted by signal, just retry */
-
-			close(f);
-			return false;
-		}
-
-		p += res;
-		len -= res;
-	}
-
-	close(f);
-	return true;
-}
-#endif
-
-/*
- * pg_strong_random
+ * pg_strong_random & pg_strong_random_init
  *
  * Generate requested number of random bytes. The returned bytes are
  * cryptographically secure, suitable for use e.g. in authentication.
+ *
+ * Before pg_strong_random is called in any process, the generator must first
+ * be initialized by calling pg_strong_random_init().
  *
  * We rely on system facilities for actually generating the numbers.
  * We support a number of sources:
@@ -88,21 +40,32 @@ random_from_file(const char *filename, void *buf, size_t len)
  * 2. Windows' CryptGenRandom() function
  * 3. /dev/urandom
  *
- * The configure script will choose which one to use, and set
- * a USE_*_RANDOM flag accordingly.
- *
  * Returns true on success, and false if none of the sources
  * were available. NB: It is important to check the return value!
  * Proceeding with key generation when no random data was available
  * would lead to predictable keys and security issues.
  */
+
+
+
+#ifdef USE_OPENSSL
+
+#include <openssl/rand.h>
+
+void
+pg_strong_random_init(void)
+{
+	/*
+	 * Make sure processes do not share OpenSSL randomness state.  This is no
+	 * longer required in OpenSSL 1.1.1 and later versions, but until we drop
+	 * support for version < 1.1.1 we need to do this.
+	 */
+	RAND_poll();
+}
+
 bool
 pg_strong_random(void *buf, size_t len)
 {
-	/*
-	 * When built with OpenSSL, use OpenSSL's RAND_bytes function.
-	 */
-#if defined(USE_OPENSSL_RANDOM)
 	int			i;
 
 	/*
@@ -130,11 +93,26 @@ pg_strong_random(void *buf, size_t len)
 	if (RAND_bytes(buf, len) == 1)
 		return true;
 	return false;
+}
 
-	/*
-	 * Windows has CryptoAPI for strong cryptographic numbers.
-	 */
-#elif defined(USE_WIN32_RANDOM)
+#elif WIN32
+
+#include <wincrypt.h>
+/*
+ * Cache a global crypto provider that only gets freed when the process
+ * exits, in case we need random numbers more than once.
+ */
+static HCRYPTPROV hProvider = 0;
+
+void
+pg_strong_random_init(void)
+{
+	/* No initialization needed on WIN32 */
+}
+
+bool
+pg_strong_random(void *buf, size_t len)
+{
 	if (hProvider == 0)
 	{
 		if (!CryptAcquireContext(&hProvider,
@@ -157,17 +135,48 @@ pg_strong_random(void *buf, size_t len)
 			return true;
 	}
 	return false;
-
-	/*
-	 * Read /dev/urandom ourselves.
-	 */
-#elif defined(USE_DEV_URANDOM)
-	if (random_from_file("/dev/urandom", buf, len))
-		return true;
-	return false;
-
-#else
-	/* The autoconf script should not have allowed this */
-#error no source of random numbers configured
-#endif
 }
+
+#else							/* not USE_OPENSSL or WIN32 */
+
+/*
+ * Without OpenSSL or Win32 support, just read /dev/urandom ourselves.
+ */
+
+void
+pg_strong_random_init(void)
+{
+	/* No initialization needed */
+}
+
+bool
+pg_strong_random(void *buf, size_t len)
+{
+	int			f;
+	char	   *p = buf;
+	ssize_t		res;
+
+	f = open("/dev/urandom", O_RDONLY, 0);
+	if (f == -1)
+		return false;
+
+	while (len)
+	{
+		res = read(f, p, len);
+		if (res <= 0)
+		{
+			if (errno == EINTR)
+				continue;		/* interrupted by signal, just retry */
+
+			close(f);
+			return false;
+		}
+
+		p += res;
+		len -= res;
+	}
+
+	close(f);
+	return true;
+}
+#endif

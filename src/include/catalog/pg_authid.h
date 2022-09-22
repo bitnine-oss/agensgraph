@@ -55,4 +55,13 @@ CATALOG(pg_authid,1260,AuthIdRelationId) BKI_SHARED_RELATION BKI_ROWTYPE_OID(284
  */
 typedef FormData_pg_authid *Form_pg_authid;
 
+DECLARE_TOAST(pg_authid, 4175, 4176);
+#define PgAuthidToastTable 4175
+#define PgAuthidToastIndex 4176
+
+DECLARE_UNIQUE_INDEX(pg_authid_rolname_index, 2676, on pg_authid using btree(rolname name_ops));
+#define AuthIdRolnameIndexId	2676
+DECLARE_UNIQUE_INDEX(pg_authid_oid_index, 2677, on pg_authid using btree(oid oid_ops));
+#define AuthIdOidIndexId	2677
+
 #endif							/* PG_AUTHID_H */

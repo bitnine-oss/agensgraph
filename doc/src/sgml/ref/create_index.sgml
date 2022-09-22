@@ -604,7 +604,10 @@ CREATE [ UNIQUE ] INDEX [ CONCURRENTLY ] [ [ IF NOT EXISTS ] <replaceable class=
     wait for existing transactions that have modified the table to terminate.
     After the second scan, the index build must wait for any transactions
     that have a snapshot (see <xref linkend="mvcc"/>) predating the second
-    scan to terminate.  Then finally the index can be marked ready for use,
+    scan to terminate, including transactions used by any phase of concurrent
+    index builds on other tables, if the indexes involved are partial or have
+    columns that are not simple column references.
+    Then finally the index can be marked ready for use,
     and the <command>CREATE INDEX</command> command terminates.
     Even then, however, the index may not be immediately usable for queries:
     in the worst case, it cannot be used as long as transactions exist that
@@ -743,6 +746,16 @@ Indexes:
    DESC</literal>.  The <literal>NULLS</literal> options are useful if you need to support
    <quote>nulls sort low</quote> behavior, rather than the default <quote>nulls
    sort high</quote>, in queries that depend on indexes to avoid sorting steps.
+  </para>
+
+  <para>
+   The system regularly collects statistics on all of a table's
+   columns.  Newly-created non-expression indexes can immediately
+   use these statistics to determine an index's usefulness.
+   For new expression indexes, it is necessary to run <link
+   linkend="sql-analyze"><command>ANALYZE</command></link> or wait for
+   the <link linkend="autovacuum">autovacuum daemon</link> to analyze
+   the table to generate statistics for these indexes.
   </para>
 
   <para>

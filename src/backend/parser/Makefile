@@ -55,7 +55,7 @@ include $(top_srcdir)/src/backend/common.mk
 gram.h: gram.c
 	touch $@
 
-gram.c: BISONFLAGS += -d
+gram.c: BISONFLAGS += -d -Wcounterexamples
 gram.c: BISON_CHECK_CMD = $(PERL) $(srcdir)/check_keywords.pl $< $(top_srcdir)/src/include/parser/kwlist.h
 
 
