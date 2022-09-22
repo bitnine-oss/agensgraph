@@ -24,6 +24,7 @@
 #include "nodes/extensible.h"
 #include "nodes/makefuncs.h"
 #include "nodes/nodeFuncs.h"
+#include "parser/analyze.h"
 #include "parser/parsetree.h"
 #include "rewrite/rewriteHandler.h"
 #include "storage/bufmgr.h"
@@ -109,6 +110,8 @@ static void show_sort_info(SortState *sortstate, ExplainState *es);
 static void show_incremental_sort_info(IncrementalSortState *incrsortstate,
 									   ExplainState *es);
 static void show_hash_info(HashState *hashstate, ExplainState *es);
+static void show_resultcache_info(ResultCacheState *rcstate, List *ancestors,
+								  ExplainState *es);
 static void show_hashagg_info(AggState *hashstate, ExplainState *es);
 static void show_tidbitmap_info(BitmapHeapScanState *planstate,
 								ExplainState *es);
@@ -166,6 +169,8 @@ ExplainQuery(ParseState *pstate, ExplainStmt *stmt,
 {
 	ExplainState *es = NewExplainState();
 	TupOutputState *tstate;
+	JumbleState *jstate = NULL;
+	Query		*query;
 	List	   *rewritten;
 	ListCell   *lc;
 	bool		timing_set = false;
@@ -241,6 +246,13 @@ ExplainQuery(ParseState *pstate, ExplainStmt *stmt,
 
 	/* if the summary was not set explicitly, set default value */
 	es->summary = (summary_set) ? es->summary : es->analyze;
+
+	query = castNode(Query, stmt->query);
+	if (compute_query_id)
+		jstate = JumbleQuery(query, pstate->p_sourcetext);
+
+	if (post_parse_analyze_hook)
+		(*post_parse_analyze_hook) (pstate, query, jstate);
 
 	/*
 	 * Parse analysis was done already, but we still have to run the rule
@@ -600,6 +612,14 @@ ExplainOnePlan(PlannedStmt *plannedstmt, IntoClause *into, ExplainState *es,
 
 	/* Create textual dump of plan tree */
 	ExplainPrintPlan(es, queryDesc);
+
+	if (es->verbose && plannedstmt->queryId != UINT64CONST(0))
+	{
+		char	buf[MAXINT8LEN+1];
+
+		pg_lltoa(plannedstmt->queryId, buf);
+		ExplainPropertyText("Query Identifier", buf, es);
+	}
 
 	/* Show buffer usage in planning */
 	if (bufusage)
@@ -1287,6 +1307,9 @@ ExplainNode(PlanState *planstate, List *ancestors,
 			break;
 		case T_Material:
 			pname = sname = "Materialize";
+			break;
+		case T_ResultCache:
+			pname = sname = "Result Cache";
 			break;
 		case T_Sort:
 			pname = sname = "Sort";
@@ -2110,6 +2133,10 @@ ExplainNode(PlanState *planstate, List *ancestors,
 		case T_Hash:
 			show_hash_info(castNode(HashState, planstate), es);
 			break;
+		case T_ResultCache:
+			show_resultcache_info(castNode(ResultCacheState, planstate),
+								  ancestors, es);
+			break;
 		case T_Hash2Side:
 			show_hash2side_info((Hash2SideState *) planstate, es);
 			break;
@@ -2198,7 +2225,6 @@ ExplainNode(PlanState *planstate, List *ancestors,
 	haschildren = planstate->initPlan ||
 		outerPlanState(planstate) ||
 		innerPlanState(planstate) ||
-		IsA(plan, ModifyTable) ||
 		IsA(plan, Append) ||
 		IsA(plan, MergeAppend) ||
 		IsA(plan, BitmapAnd) ||
@@ -2232,11 +2258,6 @@ ExplainNode(PlanState *planstate, List *ancestors,
 	/* special child plans */
 	switch (nodeTag(plan))
 	{
-		case T_ModifyTable:
-			ExplainMemberNodes(((ModifyTableState *) planstate)->mt_plans,
-							   ((ModifyTableState *) planstate)->mt_nplans,
-							   ancestors, es);
-			break;
 		case T_Append:
 			ExplainMemberNodes(((AppendState *) planstate)->appendplans,
 							   ((AppendState *) planstate)->as_nplans,
@@ -3251,6 +3272,141 @@ show_hash2side_info(Hash2SideState *hashstate, ExplainState *es)
 }
 
 /*
+ * Show information on result cache hits/misses/evictions and memory usage.
+ */
+static void
+show_resultcache_info(ResultCacheState *rcstate, List *ancestors,
+					  ExplainState *es)
+{
+	Plan	   *plan = ((PlanState *) rcstate)->plan;
+	ListCell   *lc;
+	List	   *context;
+	StringInfoData keystr;
+	char	   *seperator = "";
+	bool		useprefix;
+	int64		memPeakKb;
+
+	initStringInfo(&keystr);
+
+	/*
+	 * It's hard to imagine having a result cache with fewer than 2 RTEs, but
+	 * let's just keep the same useprefix logic as elsewhere in this file.
+	 */
+	useprefix = list_length(es->rtable) > 1 || es->verbose;
+
+	/* Set up deparsing context */
+	context = set_deparse_context_plan(es->deparse_cxt,
+									   plan,
+									   ancestors);
+
+	foreach(lc, ((ResultCache *) plan)->param_exprs)
+	{
+		Node	   *expr = (Node *) lfirst(lc);
+
+		appendStringInfoString(&keystr, seperator);
+
+		appendStringInfoString(&keystr, deparse_expression(expr, context,
+														   useprefix, false));
+		seperator = ", ";
+	}
+
+	if (es->format != EXPLAIN_FORMAT_TEXT)
+	{
+		ExplainPropertyText("Cache Key", keystr.data, es);
+	}
+	else
+	{
+		ExplainIndentText(es);
+		appendStringInfo(es->str, "Cache Key: %s\n", keystr.data);
+	}
+
+	pfree(keystr.data);
+
+	if (!es->analyze)
+		return;
+
+	/*
+	 * mem_peak is only set when we freed memory, so we must use mem_used when
+	 * mem_peak is 0.
+	 */
+	if (rcstate->stats.mem_peak > 0)
+		memPeakKb = (rcstate->stats.mem_peak + 1023) / 1024;
+	else
+		memPeakKb = (rcstate->mem_used + 1023) / 1024;
+
+	if (rcstate->stats.cache_misses > 0)
+	{
+		if (es->format != EXPLAIN_FORMAT_TEXT)
+		{
+			ExplainPropertyInteger("Cache Hits", NULL, rcstate->stats.cache_hits, es);
+			ExplainPropertyInteger("Cache Misses", NULL, rcstate->stats.cache_misses, es);
+			ExplainPropertyInteger("Cache Evictions", NULL, rcstate->stats.cache_evictions, es);
+			ExplainPropertyInteger("Cache Overflows", NULL, rcstate->stats.cache_overflows, es);
+			ExplainPropertyInteger("Peak Memory Usage", "kB", memPeakKb, es);
+		}
+		else
+		{
+			ExplainIndentText(es);
+			appendStringInfo(es->str,
+							 "Hits: " UINT64_FORMAT "  Misses: " UINT64_FORMAT "  Evictions: " UINT64_FORMAT "  Overflows: " UINT64_FORMAT "  Memory Usage: " INT64_FORMAT "kB\n",
+							 rcstate->stats.cache_hits,
+							 rcstate->stats.cache_misses,
+							 rcstate->stats.cache_evictions,
+							 rcstate->stats.cache_overflows,
+							 memPeakKb);
+		}
+	}
+
+	if (rcstate->shared_info == NULL)
+		return;
+
+	/* Show details from parallel workers */
+	for (int n = 0; n < rcstate->shared_info->num_workers; n++)
+	{
+		ResultCacheInstrumentation *si;
+
+		si = &rcstate->shared_info->sinstrument[n];
+
+		if (es->workers_state)
+			ExplainOpenWorker(n, es);
+
+		/*
+		 * Since the worker's ResultCacheState.mem_used field is unavailable
+		 * to us, ExecEndResultCache will have set the
+		 * ResultCacheInstrumentation.mem_peak field for us.  No need to do
+		 * the zero checks like we did for the serial case above.
+		 */
+		memPeakKb = (si->mem_peak + 1023) / 1024;
+
+		if (es->format == EXPLAIN_FORMAT_TEXT)
+		{
+			ExplainIndentText(es);
+			appendStringInfo(es->str,
+							 "Hits: " UINT64_FORMAT "  Misses: " UINT64_FORMAT "  Evictions: " UINT64_FORMAT "  Overflows: " UINT64_FORMAT "  Memory Usage: " INT64_FORMAT "kB\n",
+							 si->cache_hits, si->cache_misses,
+							 si->cache_evictions, si->cache_overflows,
+							 memPeakKb);
+		}
+		else
+		{
+			ExplainPropertyInteger("Cache Hits", NULL,
+								   si->cache_hits, es);
+			ExplainPropertyInteger("Cache Misses", NULL,
+								   si->cache_misses, es);
+			ExplainPropertyInteger("Cache Evictions", NULL,
+								   si->cache_evictions, es);
+			ExplainPropertyInteger("Cache Overflows", NULL,
+								   si->cache_overflows, es);
+			ExplainPropertyInteger("Peak Memory Usage", "kB", memPeakKb,
+								   es);
+		}
+
+		if (es->workers_state)
+			ExplainCloseWorker(n, es);
+	}
+}
+
+/*
  * Show information on hash aggregate memory usage and batches.
  */
 static void
@@ -3899,14 +4055,14 @@ show_modifytable_info(ModifyTableState *mtstate, List *ancestors,
 	}
 
 	/* Should we explicitly label target relations? */
-	labeltargets = (mtstate->mt_nplans > 1 ||
-					(mtstate->mt_nplans == 1 &&
+	labeltargets = (mtstate->mt_nrels > 1 ||
+					(mtstate->mt_nrels == 1 &&
 					 mtstate->resultRelInfo[0].ri_RangeTableIndex != node->nominalRelation));
 
 	if (labeltargets)
 		ExplainOpenGroup("Target Tables", "Target Tables", false, es);
 
-	for (j = 0; j < mtstate->mt_nplans; j++)
+	for (j = 0; j < mtstate->mt_nrels; j++)
 	{
 		ResultRelInfo *resultRelInfo = mtstate->resultRelInfo + j;
 		FdwRoutine *fdwroutine = resultRelInfo->ri_FdwRoutine;
@@ -4001,10 +4157,10 @@ show_modifytable_info(ModifyTableState *mtstate, List *ancestors,
 			double		insert_path;
 			double		other_path;
 
-			InstrEndLoop(mtstate->mt_plans[0]->instrument);
+			InstrEndLoop(outerPlanState(mtstate)->instrument);
 
 			/* count the number of source rows */
-			total = mtstate->mt_plans[0]->instrument->ntuples;
+			total = outerPlanState(mtstate)->instrument->ntuples;
 			other_path = mtstate->ps.instrument->ntuples2;
 			insert_path = total - other_path;
 
@@ -4020,7 +4176,7 @@ show_modifytable_info(ModifyTableState *mtstate, List *ancestors,
 }
 
 /*
- * Explain the constituent plans of a ModifyTable, Append, MergeAppend,
+ * Explain the constituent plans of an Append, MergeAppend,
  * BitmapAnd, or BitmapOr node.
  *
  * The ancestors list should already contain the immediate parent of these

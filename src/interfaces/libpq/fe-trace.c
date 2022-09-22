@@ -14,6 +14,7 @@
 
 #include "postgres_fe.h"
 
+#include <ctype.h>
 #include <limits.h>
 #include <time.h>
 
@@ -26,8 +27,8 @@
 
 #include "libpq-fe.h"
 #include "libpq-int.h"
-#include "pgtime.h"
 #include "port/pg_bswap.h"
+
 
 /* Enable tracing */
 void
@@ -39,8 +40,6 @@ PQtrace(PGconn *conn, FILE *debug_port)
 	if (debug_port == NULL)
 		return;
 
-	/* Make the trace stream line-buffered */
-	setvbuf(debug_port, NULL, _IOLBF, 0);
 	conn->Pfdebug = debug_port;
 	conn->traceFlags = 0;
 }
@@ -81,16 +80,23 @@ static void
 pqTraceFormatTimestamp(char *timestr, size_t ts_len)
 {
 	struct timeval tval;
-	pg_time_t	stamp_time;
+	time_t		now;
 
 	gettimeofday(&tval, NULL);
-	stamp_time = (pg_time_t) tval.tv_sec;
 
+	/*
+	 * MSVC's implementation of timeval uses a long for tv_sec, however,
+	 * localtime() expects a time_t pointer.  Here we'll assign tv_sec to a
+	 * local time_t variable so that we pass localtime() the correct pointer
+	 * type.
+	 */
+	now = tval.tv_sec;
 	strftime(timestr, ts_len,
 			 "%Y-%m-%d %H:%M:%S",
-			 localtime(&stamp_time));
+			 localtime(&now));
 	/* append microseconds */
-	sprintf(timestr + strlen(timestr), ".%06d", (int) (tval.tv_usec));
+	snprintf(timestr + strlen(timestr), ts_len - strlen(timestr),
+			 ".%06u", (unsigned int) (tval.tv_usec));
 }
 
 /*
@@ -105,7 +111,7 @@ pqTraceOutputByte1(FILE *pfdebug, const char *data, int *cursor)
 	 * Show non-printable data in hex format, including the terminating \0
 	 * that completes ErrorResponse and NoticeResponse messages.
 	 */
-	if (!isprint(*v))
+	if (!isprint((unsigned char) *v))
 		fprintf(pfdebug, " \\x%02x", *v);
 	else
 		fprintf(pfdebug, " %c", *v);
@@ -189,7 +195,7 @@ pqTraceOutputNchar(FILE *pfdebug, int len, const char *data, int *cursor)
 
 	for (next = i = 0; i < len; ++i)
 	{
-		if (isprint(v[i]))
+		if (isprint((unsigned char) v[i]))
 			continue;
 		else
 		{

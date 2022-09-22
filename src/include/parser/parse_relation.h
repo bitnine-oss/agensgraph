@@ -87,6 +87,7 @@ extern ParseNamespaceItem *addRangeTableEntryForJoin(ParseState *pstate,
 													 List *aliasvars,
 													 List *leftcols,
 													 List *rightcols,
+													 Alias *joinalias,
 													 Alias *alias,
 													 bool inFromCl);
 extern ParseNamespaceItem *addRangeTableEntryForCTE(ParseState *pstate,

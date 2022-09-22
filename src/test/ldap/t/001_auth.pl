@@ -6,7 +6,7 @@ use Test::More;
 
 if ($ENV{with_ldap} eq 'yes')
 {
-	plan tests => 22;
+	plan tests => 28;
 }
 else
 {
@@ -152,6 +152,7 @@ note "setting up PostgreSQL instance";
 
 my $node = get_new_node('node');
 $node->init;
+$node->append_conf('postgresql.conf', "log_connections = on\n");
 $node->start;
 
 $node->safe_psql('postgres', 'CREATE USER test0;');
@@ -162,13 +163,18 @@ note "running tests";
 
 sub test_access
 {
-	my ($node, $role, $expected_res, $test_name) = @_;
+	my ($node, $role, $expected_res, $test_name, %params) = @_;
+	my $connstr = "user=$role";
 
-	my $res =
-	  $node->psql('postgres', undef,
-				  extra_params => [ '-U', $role, '-c', 'SELECT 1' ]);
-	is($res, $expected_res, $test_name);
-	return;
+	if ($expected_res eq 0)
+	{
+		$node->connect_ok($connstr, $test_name, %params);
+	}
+	else
+	{
+		# No checks of the error message, only the status code.
+		$node->connect_fails($connstr, $test_name, %params);
+	}
 }
 
 note "simple bind";
@@ -180,12 +186,22 @@ $node->append_conf('pg_hba.conf',
 $node->restart;
 
 $ENV{"PGPASSWORD"} = 'wrong';
-test_access($node, 'test0', 2,
-	'simple bind authentication fails if user not found in LDAP');
-test_access($node, 'test1', 2,
-	'simple bind authentication fails with wrong password');
+test_access(
+	$node, 'test0', 2,
+	'simple bind authentication fails if user not found in LDAP',
+	log_unlike => [qr/connection authenticated:/]);
+test_access(
+	$node, 'test1', 2,
+	'simple bind authentication fails with wrong password',
+	log_unlike => [qr/connection authenticated:/]);
+
 $ENV{"PGPASSWORD"} = 'secret1';
-test_access($node, 'test1', 0, 'simple bind authentication succeeds');
+test_access(
+	$node, 'test1', 0,
+	'simple bind authentication succeeds',
+	log_like => [
+		qr/connection authenticated: identity="uid=test1,dc=example,dc=net" method=ldap/
+	],);
 
 note "search+bind";
 
@@ -201,7 +217,12 @@ test_access($node, 'test0', 2,
 test_access($node, 'test1', 2,
 	'search+bind authentication fails with wrong password');
 $ENV{"PGPASSWORD"} = 'secret1';
-test_access($node, 'test1', 0, 'search+bind authentication succeeds');
+test_access(
+	$node, 'test1', 0,
+	'search+bind authentication succeeds',
+	log_like => [
+		qr/connection authenticated: identity="uid=test1,dc=example,dc=net" method=ldap/
+	],);
 
 note "multiple servers";
 
@@ -245,9 +266,21 @@ $node->append_conf('pg_hba.conf',
 $node->restart;
 
 $ENV{"PGPASSWORD"} = 'secret1';
-test_access($node, 'test1', 0, 'search filter finds by uid');
+test_access(
+	$node, 'test1', 0,
+	'search filter finds by uid',
+	log_like => [
+		qr/connection authenticated: identity="uid=test1,dc=example,dc=net" method=ldap/
+	],);
 $ENV{"PGPASSWORD"} = 'secret2';
-test_access($node, 'test2@example.net', 0, 'search filter finds by mail');
+test_access(
+	$node,
+	'test2@example.net',
+	0,
+	'search filter finds by mail',
+	log_like => [
+		qr/connection authenticated: identity="uid=test2,dc=example,dc=net" method=ldap/
+	],);
 
 note "search filters in LDAP URLs";
 

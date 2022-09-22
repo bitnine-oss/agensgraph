@@ -1103,6 +1103,13 @@ typedef struct RangeTblEntry
 	List	   *joinrightcols;	/* right-side input column numbers */
 
 	/*
+	 * join_using_alias is an alias clause attached directly to JOIN/USING. It
+	 * is different from the alias field (below) in that it does not hide the
+	 * range variables of the tables being joined.
+	 */
+	Alias	   *join_using_alias;
+
+	/*
 	 * Fields valid for a function RTE (else NIL/zero):
 	 *
 	 * When funcordinality is true, the eref->colnames list includes an alias
@@ -2806,12 +2813,13 @@ typedef struct SecLabelStmt
 #define CURSOR_OPT_SCROLL		0x0002	/* SCROLL explicitly given */
 #define CURSOR_OPT_NO_SCROLL	0x0004	/* NO SCROLL explicitly given */
 #define CURSOR_OPT_INSENSITIVE	0x0008	/* INSENSITIVE */
-#define CURSOR_OPT_HOLD			0x0010	/* WITH HOLD */
+#define CURSOR_OPT_ASENSITIVE	0x0010	/* ASENSITIVE */
+#define CURSOR_OPT_HOLD			0x0020	/* WITH HOLD */
 /* these planner-control flags do not correspond to any SQL grammar: */
-#define CURSOR_OPT_FAST_PLAN	0x0020	/* prefer fast-start plan */
-#define CURSOR_OPT_GENERIC_PLAN 0x0040	/* force use of generic plan */
-#define CURSOR_OPT_CUSTOM_PLAN	0x0080	/* force use of custom plan */
-#define CURSOR_OPT_PARALLEL_OK	0x0100	/* parallel mode OK */
+#define CURSOR_OPT_FAST_PLAN	0x0100	/* prefer fast-start plan */
+#define CURSOR_OPT_GENERIC_PLAN 0x0200	/* force use of generic plan */
+#define CURSOR_OPT_CUSTOM_PLAN	0x0400	/* force use of custom plan */
+#define CURSOR_OPT_PARALLEL_OK	0x0800	/* parallel mode OK */
 
 typedef struct DeclareCursorStmt
 {
@@ -3652,7 +3660,9 @@ typedef enum AlterSubscriptionType
 {
 	ALTER_SUBSCRIPTION_OPTIONS,
 	ALTER_SUBSCRIPTION_CONNECTION,
-	ALTER_SUBSCRIPTION_PUBLICATION,
+	ALTER_SUBSCRIPTION_SET_PUBLICATION,
+	ALTER_SUBSCRIPTION_ADD_PUBLICATION,
+	ALTER_SUBSCRIPTION_DROP_PUBLICATION,
 	ALTER_SUBSCRIPTION_REFRESH,
 	ALTER_SUBSCRIPTION_ENABLED
 } AlterSubscriptionType;

@@ -512,7 +512,7 @@ static Node *wrapCypherWithSelect(Node *stmt);
 %type <ival>	sub_type opt_materialized
 %type <value>	NumericOnly
 %type <list>	NumericOnly_list
-%type <alias>	alias_clause opt_alias_clause
+%type <alias>	alias_clause opt_alias_clause opt_alias_clause_for_join_using
 %type <list>	func_alias_clause
 %type <sortby>	sortby
 %type <ielem>	index_elem index_elem_options
@@ -725,7 +725,7 @@ static Node *wrapCypherWithSelect(Node *stmt);
 /* ordinary key words in alphabetical order */
 %token <keyword> ABORT_P ABSOLUTE_P ACCESS ACTION ADD_P ADMIN AFTER
 	AGGREGATE ALL ALLSHORTESTPATHS ALSO ALTER ALWAYS ANALYSE ANALYZE AND ANY ARRAY AS ASC ASSERT
-	ASSERTION ASSIGNMENT ASYMMETRIC AT ATTACH ATTRIBUTE AUTHORIZATION
+	ASENSITIVE ASSERTION ASSIGNMENT ASYMMETRIC AT ATTACH ATTRIBUTE AUTHORIZATION
 
 	BACKWARD BEFORE BEGIN_P BETWEEN BIGINT BINARY BIT
 	BOOLEAN_P BOTH BREADTH BY
@@ -9872,11 +9872,31 @@ AlterSubscriptionStmt:
 					n->options = $6;
 					$$ = (Node *)n;
 				}
+			| ALTER SUBSCRIPTION name ADD_P PUBLICATION name_list opt_definition
+				{
+					AlterSubscriptionStmt *n =
+						makeNode(AlterSubscriptionStmt);
+					n->kind = ALTER_SUBSCRIPTION_ADD_PUBLICATION;
+					n->subname = $3;
+					n->publication = $6;
+					n->options = $7;
+					$$ = (Node *)n;
+				}
+			| ALTER SUBSCRIPTION name DROP PUBLICATION name_list opt_definition
+				{
+					AlterSubscriptionStmt *n =
+						makeNode(AlterSubscriptionStmt);
+					n->kind = ALTER_SUBSCRIPTION_DROP_PUBLICATION;
+					n->subname = $3;
+					n->publication = $6;
+					n->options = $7;
+					$$ = (Node *)n;
+				}
 			| ALTER SUBSCRIPTION name SET PUBLICATION name_list opt_definition
 				{
 					AlterSubscriptionStmt *n =
 						makeNode(AlterSubscriptionStmt);
-					n->kind = ALTER_SUBSCRIPTION_PUBLICATION;
+					n->kind = ALTER_SUBSCRIPTION_SET_PUBLICATION;
 					n->subname = $3;
 					n->publication = $6;
 					n->options = $7;
@@ -11384,6 +11404,7 @@ cursor_options: /*EMPTY*/					{ $$ = 0; }
 			| cursor_options NO SCROLL		{ $$ = $1 | CURSOR_OPT_NO_SCROLL; }
 			| cursor_options SCROLL			{ $$ = $1 | CURSOR_OPT_SCROLL; }
 			| cursor_options BINARY			{ $$ = $1 | CURSOR_OPT_BINARY; }
+			| cursor_options ASENSITIVE		{ $$ = $1 | CURSOR_OPT_ASENSITIVE; }
 			| cursor_options INSENSITIVE	{ $$ = $1 | CURSOR_OPT_INSENSITIVE; }
 		;
 
@@ -12363,6 +12384,7 @@ joined_table:
 					n->larg = $1;
 					n->rarg = $4;
 					n->usingClause = NIL;
+					n->join_using_alias = NULL;
 					n->quals = NULL;
 					$$ = n;
 				}
@@ -12374,9 +12396,16 @@ joined_table:
 					n->larg = $1;
 					n->rarg = $4;
 					if ($5 != NULL && IsA($5, List))
-						n->usingClause = (List *) $5; /* USING clause */
+					{
+						 /* USING clause */
+						n->usingClause = linitial_node(List, castNode(List, $5));
+						n->join_using_alias = lsecond_node(Alias, castNode(List, $5));
+					}
 					else
-						n->quals = $5; /* ON clause */
+					{
+						/* ON clause */
+						n->quals = $5;
+					}
 					$$ = n;
 				}
 			| table_ref JOIN table_ref join_qual
@@ -12388,9 +12417,16 @@ joined_table:
 					n->larg = $1;
 					n->rarg = $3;
 					if ($4 != NULL && IsA($4, List))
-						n->usingClause = (List *) $4; /* USING clause */
+					{
+						/* USING clause */
+						n->usingClause = linitial_node(List, castNode(List, $4));
+						n->join_using_alias = lsecond_node(Alias, castNode(List, $4));
+					}
 					else
-						n->quals = $4; /* ON clause */
+					{
+						/* ON clause */
+						n->quals = $4;
+					}
 					$$ = n;
 				}
 			| table_ref NATURAL join_type JOIN table_ref
@@ -12401,6 +12437,7 @@ joined_table:
 					n->larg = $1;
 					n->rarg = $5;
 					n->usingClause = NIL; /* figure out which columns later... */
+					n->join_using_alias = NULL;
 					n->quals = NULL; /* fill later */
 					$$ = n;
 				}
@@ -12413,6 +12450,7 @@ joined_table:
 					n->larg = $1;
 					n->rarg = $4;
 					n->usingClause = NIL; /* figure out which columns later... */
+					n->join_using_alias = NULL;
 					n->quals = NULL; /* fill later */
 					$$ = n;
 				}
@@ -12444,6 +12482,22 @@ alias_clause:
 		;
 
 opt_alias_clause: alias_clause						{ $$ = $1; }
+			| /*EMPTY*/								{ $$ = NULL; }
+		;
+
+/*
+ * The alias clause after JOIN ... USING only accepts the AS ColId spelling,
+ * per SQL standard.  (The grammar could parse the other variants, but they
+ * don't seem to be useful, and it might lead to parser problems in the
+ * future.)
+ */
+opt_alias_clause_for_join_using:
+			AS ColId
+				{
+					$$ = makeNode(Alias);
+					$$->aliasname = $2;
+					/* the column name list will be inserted later */
+				}
 			| /*EMPTY*/								{ $$ = NULL; }
 		;
 
@@ -12491,15 +12545,24 @@ opt_outer: OUTER_P
 
 /* JOIN qualification clauses
  * Possibilities are:
- *	USING ( column list ) allows only unqualified column names,
+ *	USING ( column list ) [ AS alias ]
+ *						  allows only unqualified column names,
  *						  which must match between tables.
  *	ON expr allows more general qualifications.
  *
- * We return USING as a List node, while an ON-expr will not be a List.
+ * We return USING as a two-element List (the first item being a sub-List
+ * of the common column names, and the second either an Alias item or NULL).
+ * An ON-expr will not be a List, so it can be told apart that way.
  */
 
-join_qual:	USING '(' name_list ')'					{ $$ = (Node *) $3; }
-			| ON a_expr								{ $$ = $2; }
+join_qual: USING '(' name_list ')' opt_alias_clause_for_join_using
+				{
+					$$ = (Node *) list_make2($3, $5);
+				}
+			| ON a_expr
+				{
+					$$ = $2;
+				}
 		;
 
 
@@ -14219,7 +14282,7 @@ func_expr_common_subexpr:
 				{ $$ = makeTypeCast($3, $5, @1); }
 			| EXTRACT '(' extract_list ')'
 				{
-					$$ = (Node *) makeFuncCall(SystemFuncName("date_part"),
+					$$ = (Node *) makeFuncCall(SystemFuncName("extract"),
 											   $3,
 											   COERCE_SQL_SYNTAX,
 											   @1);
@@ -15604,6 +15667,7 @@ unreserved_keyword:
 			| ALSO
 			| ALTER
 			| ALWAYS
+			| ASENSITIVE
 			| ASSERT
 			| ASSERTION
 			| ASSIGNMENT
@@ -16129,6 +16193,7 @@ bare_label_keyword:
 			| AND
 			| ANY
 			| ASC
+			| ASENSITIVE
 			| ASSERT
 			| ASSERTION
 			| ASSIGNMENT

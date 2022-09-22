@@ -264,7 +264,7 @@ F401	Extended joined table	02	FULL OUTER JOIN	YES
 F401	Extended joined table	04	CROSS JOIN	YES	
 F402	Named column joins for LOBs, arrays, and multisets			YES	
 F403	Partitioned joined tables			NO	
-F404	Range variable for common column names			NO	
+F404	Range variable for common column names			YES	
 F411	Time zone specification			YES	differences regarding literal interpretation
 F421	National character			YES	
 F431	Read-only scrollable cursors			YES	
@@ -452,7 +452,7 @@ T211	Basic trigger capability	07	TRIGGER privilege	YES
 T211	Basic trigger capability	08	Multiple triggers for the same event are executed in the order in which they were created in the catalog	NO	intentionally omitted
 T212	Enhanced trigger capability			YES	
 T213	INSTEAD OF triggers			YES	
-T231	Sensitive cursors			YES	
+T231	Sensitive cursors			NO	
 T241	START TRANSACTION statement			YES	
 T251	SET TRANSACTION statement: LOCAL option			NO	
 T261	Chained transactions			YES	

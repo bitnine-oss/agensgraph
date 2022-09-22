@@ -1511,6 +1511,11 @@ the B<timed_out> parameter is also given.
 If B<timeout> is set and this parameter is given, the scalar it references
 is set to true if the psql call times out.
 
+=item connstr => B<value>
+
+If set, use this as the connection string for the connection to the
+backend.
+
 =item replication => B<value>
 
 If set, add B<replication=value> to the conninfo string.
@@ -1550,14 +1555,20 @@ sub psql
 	my $replication       = $params{replication};
 	my $timeout           = undef;
 	my $timeout_exception = 'psql timed out';
-	my @psql_params       = (
-		'psql',
-		'-XAtq',
-		'-d',
-		$self->connstr($dbname)
-		  . (defined $replication ? " replication=$replication" : ""),
-		'-f',
-		'-');
+
+	# Build the connection string.
+	my $psql_connstr;
+	if (defined $params{connstr})
+	{
+		$psql_connstr = $params{connstr};
+	}
+	else
+	{
+		$psql_connstr = $self->connstr($dbname);
+	}
+	$psql_connstr .= defined $replication ? " replication=$replication" : "";
+
+	my @psql_params = ('psql', '-XAtq', '-d', $psql_connstr, '-f', '-');
 
 	# If the caller wants an array and hasn't passed stdout/stderr
 	# references, allocate temporary ones to capture them so we
@@ -1845,6 +1856,175 @@ sub interactive_psql
 	die "psql startup timed out" if $timer->is_expired;
 
 	return $harness;
+}
+
+=pod
+
+=item $node->connect_ok($connstr, $test_name, %params)
+
+Attempt a connection with a custom connection string.  This is expected
+to succeed.
+
+=over
+
+=item sql => B<value>
+
+If this parameter is set, this query is used for the connection attempt
+instead of the default.
+
+=item expected_stdout => B<value>
+
+If this regular expression is set, matches it with the output generated.
+
+=item log_like => [ qr/required message/ ]
+
+If given, it must be an array reference containing a list of regular
+expressions that must match against the server log, using
+C<Test::More::like()>.
+
+=item log_unlike => [ qr/prohibited message/ ]
+
+If given, it must be an array reference containing a list of regular
+expressions that must NOT match against the server log.  They will be
+passed to C<Test::More::unlike()>.
+
+=back
+
+=cut
+
+sub connect_ok
+{
+	local $Test::Builder::Level = $Test::Builder::Level + 1;
+	my ($self, $connstr, $test_name, %params) = @_;
+
+	my $sql;
+	if (defined($params{sql}))
+	{
+		$sql = $params{sql};
+	}
+	else
+	{
+		$sql = "SELECT \$\$connected with $connstr\$\$";
+	}
+
+	my (@log_like, @log_unlike);
+	if (defined($params{log_like}))
+	{
+		@log_like = @{ $params{log_like} };
+	}
+	if (defined($params{log_unlike}))
+	{
+		@log_unlike = @{ $params{log_unlike} };
+	}
+
+	if (@log_like or @log_unlike)
+	{
+		# Don't let previous log entries match for this connection.
+		truncate $self->logfile, 0;
+	}
+
+	# Never prompt for a password, any callers of this routine should
+	# have set up things properly, and this should not block.
+	my ($ret, $stdout, $stderr) = $self->psql(
+		'postgres',
+		$sql,
+		extra_params  => ['-w'],
+		connstr       => "$connstr",
+		on_error_stop => 0);
+
+	is($ret, 0, $test_name);
+
+	if (defined($params{expected_stdout}))
+	{
+		like($stdout, $params{expected_stdout}, "$test_name: matches");
+	}
+	if (@log_like or @log_unlike)
+	{
+		my $log_contents = TestLib::slurp_file($self->logfile);
+
+		while (my $regex = shift @log_like)
+		{
+			like($log_contents, $regex, "$test_name: log matches");
+		}
+		while (my $regex = shift @log_unlike)
+		{
+			unlike($log_contents, $regex, "$test_name: log does not match");
+		}
+	}
+}
+
+=pod
+
+=item $node->connect_fails($connstr, $test_name, %params)
+
+Attempt a connection with a custom connection string.  This is expected
+to fail.
+
+=over
+
+=item expected_stderr => B<value>
+
+If this regular expression is set, matches it with the output generated.
+
+=item log_like => [ qr/required message/ ]
+
+=item log_unlike => [ qr/prohibited message/ ]
+
+See C<connect_ok(...)>, above.
+
+=back
+
+=cut
+
+sub connect_fails
+{
+	local $Test::Builder::Level = $Test::Builder::Level + 1;
+	my ($self, $connstr, $test_name, %params) = @_;
+
+	my (@log_like, @log_unlike);
+	if (defined($params{log_like}))
+	{
+		@log_like = @{ $params{log_like} };
+	}
+	if (defined($params{log_unlike}))
+	{
+		@log_unlike = @{ $params{log_unlike} };
+	}
+
+	if (@log_like or @log_unlike)
+	{
+		# Don't let previous log entries match for this connection.
+		truncate $self->logfile, 0;
+	}
+
+	# Never prompt for a password, any callers of this routine should
+	# have set up things properly, and this should not block.
+	my ($ret, $stdout, $stderr) = $self->psql(
+		'postgres',
+		undef,
+		extra_params => ['-w'],
+		connstr      => "$connstr");
+
+	isnt($ret, 0, $test_name);
+
+	if (defined($params{expected_stderr}))
+	{
+		like($stderr, $params{expected_stderr}, "$test_name: matches");
+	}
+
+	if (@log_like or @log_unlike)
+	{
+		my $log_contents = TestLib::slurp_file($self->logfile);
+
+		while (my $regex = shift @log_like)
+		{
+			like($log_contents, $regex, "$test_name: log matches");
+		}
+		while (my $regex = shift @log_unlike)
+		{
+			unlike($log_contents, $regex, "$test_name: log does not match");
+		}
+	}
 }
 
 =pod

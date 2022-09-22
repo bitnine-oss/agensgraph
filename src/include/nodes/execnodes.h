@@ -362,10 +362,6 @@ typedef struct ProjectionInfo
  *						attribute numbers of the "original" tuple and the
  *						attribute numbers of the "clean" tuple.
  *	  resultSlot:		tuple slot used to hold cleaned tuple.
- *	  junkAttNo:		not used by junkfilter code.  Can be used by caller
- *						to remember the attno of a specific junk attribute
- *						(nodeModifyTable.c keeps the "ctid" or "wholerow"
- *						attno here).
  * ----------------
  */
 typedef struct JunkFilter
@@ -375,7 +371,6 @@ typedef struct JunkFilter
 	TupleDesc	jf_cleanTupType;
 	AttrNumber *jf_cleanMap;
 	TupleTableSlot *jf_resultSlot;
-	AttrNumber	jf_junkAttNo;
 } JunkFilter;
 
 /*
@@ -429,6 +424,21 @@ typedef struct ResultRelInfo
 	/* array of key/attr info for indices */
 	IndexInfo **ri_IndexRelationInfo;
 
+	/*
+	 * For UPDATE/DELETE result relations, the attribute number of the row
+	 * identity junk attribute in the source plan's output tuples
+	 */
+	AttrNumber	ri_RowIdAttNo;
+
+	/* Projection to generate new tuple in an INSERT/UPDATE */
+	ProjectionInfo *ri_projectNew;
+	/* Slot to hold that tuple */
+	TupleTableSlot *ri_newTupleSlot;
+	/* Slot to hold the old tuple being updated */
+	TupleTableSlot *ri_oldTupleSlot;
+	/* Have the projection and the slots above been initialized? */
+	bool		ri_projectNewInfoValid;
+
 	/* triggers to be fired, if any */
 	TriggerDesc *ri_TrigDesc;
 
@@ -476,9 +486,6 @@ typedef struct ResultRelInfo
 	/* number of stored generated columns we need to compute */
 	int			ri_NumGeneratedNeeded;
 
-	/* for removing junk attributes from tuples */
-	JunkFilter *ri_junkFilter;
-
 	/* list of RETURNING expressions */
 	List	   *ri_returningList;
 
@@ -512,10 +519,12 @@ typedef struct ResultRelInfo
 
 	/*
 	 * Map to convert child result relation tuples to the format of the table
-	 * actually mentioned in the query (called "root").  Set only if
-	 * transition tuple capture or update partition row movement is active.
+	 * actually mentioned in the query (called "root").  Computed only if
+	 * needed.  A NULL map value indicates that no conversion is needed, so we
+	 * must have a separate flag to show if the map has been computed.
 	 */
 	TupleConversionMap *ri_ChildToRootMap;
+	bool		ri_ChildToRootMapValid;
 
 	/* for use by copyfrom.c when performing multi-inserts */
 	struct CopyMultiInsertBuffer *ri_CopyMultiInsertBuffer;
@@ -692,10 +701,7 @@ typedef struct ExecRowMark
  * Each LockRows and ModifyTable node keeps a list of the rowmarks it needs to
  * deal with.  In addition to a pointer to the related entry in es_rowmarks,
  * this struct carries the column number(s) of the resjunk columns associated
- * with the rowmark (see comments for PlanRowMark for more detail).  In the
- * case of ModifyTable, there has to be a separate ExecAuxRowMark list for
- * each child plan, because the resjunk columns could be at different physical
- * column positions in different subplans.
+ * with the rowmark (see comments for PlanRowMark for more detail).
  */
 typedef struct ExecAuxRowMark
 {
@@ -1097,9 +1103,8 @@ typedef struct PlanState
  * EvalPlanQualSlot), and/or found using the rowmark mechanism (non-locking
  * rowmarks by the EPQ machinery itself, locking ones by the caller).
  *
- * While the plan to be checked may be changed using EvalPlanQualSetPlan() -
- * e.g. so all source plans for a ModifyTable node can be processed - all such
- * plans need to share the same EState.
+ * While the plan to be checked may be changed using EvalPlanQualSetPlan(),
+ * all such plans need to share the same EState.
  */
 typedef struct EPQState
 {
@@ -1193,22 +1198,30 @@ typedef struct ModifyTableState
 	CmdType		operation;		/* INSERT, UPDATE, or DELETE */
 	bool		canSetTag;		/* do we set the command tag/es_processed? */
 	bool		mt_done;		/* are we done? */
-	PlanState **mt_plans;		/* subplans (one per target rel) */
-	int			mt_nplans;		/* number of plans in the array */
-	int			mt_whichplan;	/* which one is being executed (0..n-1) */
-	TupleTableSlot **mt_scans;	/* input tuple corresponding to underlying
-								 * plans */
-	ResultRelInfo *resultRelInfo;	/* per-subplan target relations */
+	int			mt_nrels;		/* number of entries in resultRelInfo[] */
+	ResultRelInfo *resultRelInfo;	/* info about target relation(s) */
 
 	/*
 	 * Target relation mentioned in the original statement, used to fire
-	 * statement-level triggers and as the root for tuple routing.
+	 * statement-level triggers and as the root for tuple routing.  (This
+	 * might point to one of the resultRelInfo[] entries, but it can also be a
+	 * distinct struct.)
 	 */
 	ResultRelInfo *rootResultRelInfo;
 
-	List	  **mt_arowmarks;	/* per-subplan ExecAuxRowMark lists */
 	EPQState	mt_epqstate;	/* for evaluating EvalPlanQual rechecks */
 	bool		fireBSTriggers; /* do we need to fire stmt triggers? */
+
+	/*
+	 * These fields are used for inherited UPDATE and DELETE, to track which
+	 * target relation a given tuple is from.  If there are a lot of target
+	 * relations, we use a hash table to translate table OIDs to
+	 * resultRelInfo[] indexes; otherwise mt_resultOidHash is NULL.
+	 */
+	int			mt_resultOidAttno;	/* resno of "tableoid" junk attr */
+	Oid			mt_lastResultOid;	/* last-seen value of tableoid */
+	int			mt_lastResultIndex; /* corresponding index in resultRelInfo[] */
+	HTAB	   *mt_resultOidHash;	/* optional hash table to speed lookups */
 
 	/*
 	 * Slot for storing tuples in the root partitioned table's rowtype during
@@ -2077,6 +2090,71 @@ typedef struct MaterialState
 	Tuplestorestate *tuplestorestate;
 } MaterialState;
 
+struct ResultCacheEntry;
+struct ResultCacheTuple;
+struct ResultCacheKey;
+
+typedef struct ResultCacheInstrumentation
+{
+	uint64		cache_hits;		/* number of rescans where we've found the
+								 * scan parameter values to be cached */
+	uint64		cache_misses;	/* number of rescans where we've not found the
+								 * scan parameter values to be cached. */
+	uint64		cache_evictions;	/* number of cache entries removed due to
+									 * the need to free memory */
+	uint64		cache_overflows;	/* number of times we've had to bypass the
+									 * cache when filling it due to not being
+									 * able to free enough space to store the
+									 * current scan's tuples. */
+	uint64		mem_peak;		/* peak memory usage in bytes */
+} ResultCacheInstrumentation;
+
+/* ----------------
+ *	 Shared memory container for per-worker resultcache information
+ * ----------------
+ */
+typedef struct SharedResultCacheInfo
+{
+	int			num_workers;
+	ResultCacheInstrumentation sinstrument[FLEXIBLE_ARRAY_MEMBER];
+} SharedResultCacheInfo;
+
+/* ----------------
+ *	 ResultCacheState information
+ *
+ *		resultcache nodes are used to cache recent and commonly seen results
+ *		from a parameterized scan.
+ * ----------------
+ */
+typedef struct ResultCacheState
+{
+	ScanState	ss;				/* its first field is NodeTag */
+	int			rc_status;		/* value of ExecResultCache state machine */
+	int			nkeys;			/* number of cache keys */
+	struct resultcache_hash *hashtable; /* hash table for cache entries */
+	TupleDesc	hashkeydesc;	/* tuple descriptor for cache keys */
+	TupleTableSlot *tableslot;	/* min tuple slot for existing cache entries */
+	TupleTableSlot *probeslot;	/* virtual slot used for hash lookups */
+	ExprState  *cache_eq_expr;	/* Compare exec params to hash key */
+	ExprState **param_exprs;	/* exprs containing the parameters to this
+								 * node */
+	FmgrInfo   *hashfunctions;	/* lookup data for hash funcs nkeys in size */
+	Oid		   *collations;		/* collation for comparisons nkeys in size */
+	uint64		mem_used;		/* bytes of memory used by cache */
+	uint64		mem_limit;		/* memory limit in bytes for the cache */
+	MemoryContext tableContext; /* memory context to store cache data */
+	dlist_head	lru_list;		/* least recently used entry list */
+	struct ResultCacheTuple *last_tuple;	/* Used to point to the last tuple
+											 * returned during a cache hit and
+											 * the tuple we last stored when
+											 * populating the cache. */
+	struct ResultCacheEntry *entry; /* the entry that 'last_tuple' belongs to
+									 * or NULL if 'last_tuple' is NULL. */
+	bool		singlerow;		/* true if the cache entry is to be marked as
+								 * complete after caching the first tuple. */
+	ResultCacheInstrumentation stats;	/* execution statistics */
+	SharedResultCacheInfo *shared_info; /* statistics for parallel workers */
+} ResultCacheState;
 
 /* ----------------
  *	 When performing sorting by multiple keys, it's possible that the input

@@ -2558,6 +2558,7 @@ TmFromChar
 TmToChar
 ToastAttrInfo
 ToastTupleContext
+ToastedAttribute
 TocEntry
 TokenAuxData
 TokenizedLine
@@ -3215,6 +3216,7 @@ pg_enc2gettext
 pg_enc2name
 pg_encname
 pg_gssinfo
+pg_hmac_ctx
 pg_int64
 pg_local_to_utf_combined
 pg_locale_t
@@ -3361,7 +3363,6 @@ role_auth_extra
 row_security_policy_hook_type
 rsv_callback
 save_buffer
-scram_HMAC_ctx
 scram_state
 scram_state_enum
 sem_t
@@ -3554,8 +3555,6 @@ xl_hash_split_complete
 xl_hash_squeeze_page
 xl_hash_update_meta_page
 xl_hash_vacuum_one_page
-xl_heap_clean
-xl_heap_cleanup_info
 xl_heap_confirm
 xl_heap_delete
 xl_heap_freeze_page
@@ -3567,9 +3566,11 @@ xl_heap_lock
 xl_heap_lock_updated
 xl_heap_multi_insert
 xl_heap_new_cid
+xl_heap_prune
 xl_heap_rewrite_mapping
 xl_heap_truncate
 xl_heap_update
+xl_heap_vacuum
 xl_heap_visible
 xl_invalid_page
 xl_invalid_page_key

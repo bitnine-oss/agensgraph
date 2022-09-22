@@ -2607,14 +2607,8 @@ fill_hba_line(Tuplestorestate *tuple_store, TupleDesc tupdesc,
 		else
 			nulls[index++] = true;
 
-		/*
-		 * Make sure UserAuthName[] tracks additions to the UserAuth enum
-		 */
-		StaticAssertStmt(lengthof(UserAuthName) == USER_AUTH_LAST + 1,
-						 "UserAuthName[] must match the UserAuth enum");
-
 		/* auth_method */
-		values[index++] = CStringGetTextDatum(UserAuthName[hba->auth_method]);
+		values[index++] = CStringGetTextDatum(hba_authname(hba->auth_method));
 
 		/* options */
 		options = gethba_options(hba);
@@ -3140,4 +3134,23 @@ void
 hba_getauthmethod(hbaPort *port)
 {
 	check_hba(port);
+}
+
+
+/*
+ * Return the name of the auth method in use ("gss", "md5", "trust", etc.).
+ *
+ * The return value is statically allocated (see the UserAuthName array) and
+ * should not be freed.
+ */
+const char *
+hba_authname(UserAuth auth_method)
+{
+	/*
+	 * Make sure UserAuthName[] tracks additions to the UserAuth enum
+	 */
+	StaticAssertStmt(lengthof(UserAuthName) == USER_AUTH_LAST + 1,
+					 "UserAuthName[] must match the UserAuth enum");
+
+	return UserAuthName[auth_method];
 }

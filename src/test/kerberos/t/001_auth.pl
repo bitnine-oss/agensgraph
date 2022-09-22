@@ -20,7 +20,7 @@ use Time::HiRes qw(usleep);
 
 if ($ENV{with_gssapi} eq 'yes')
 {
-	plan tests => 26;
+	plan tests => 44;
 }
 else
 {
@@ -182,43 +182,37 @@ note "running tests";
 # Test connection success or failure, and if success, that query returns true.
 sub test_access
 {
-	my ($node, $role, $query, $expected_res, $gssencmode, $test_name, $expect_log_msg) = @_;
+	my ($node, $role, $query, $expected_res, $gssencmode, $test_name,
+		@expect_log_msgs)
+	  = @_;
 
 	# need to connect over TCP/IP for Kerberos
-	my ($res, $stdoutres, $stderrres) = $node->psql(
-		'postgres',
-		"$query",
-		extra_params => [
-			'-XAtd',
-			$node->connstr('postgres')
-			  . " host=$host hostaddr=$hostaddr $gssencmode",
-			'-U',
-			$role
-		]);
+	my $connstr = $node->connstr('postgres')
+	  . " user=$role host=$host hostaddr=$hostaddr $gssencmode";
 
-	# If we get a query result back, it should be true.
-	if ($res == $expected_res and $res eq 0)
+	my %params = (
+		sql => $query,
+	);
+
+	if (@expect_log_msgs)
 	{
-		is($stdoutres, "t", $test_name);
+		# Match every message literally.
+		my @regexes = map { qr/\Q$_\E/ } @expect_log_msgs;
+
+		$params{log_like} = \@regexes;
+	}
+
+	if ($expected_res eq 0)
+	{
+		# The result is assumed to match "true", or "t", here.
+		$params{expected_stdout} = qr/^t$/;
+
+		$node->connect_ok($connstr, $test_name, %params);
 	}
 	else
 	{
-		is($res, $expected_res, $test_name);
+		$node->connect_fails($connstr, $test_name, %params);
 	}
-
-	# Verify specified log message is logged in the log file.
-	if ($expect_log_msg ne '')
-	{
-		my $first_logfile = slurp_file($node->logfile);
-
-		like($first_logfile, qr/\Q$expect_log_msg\E/,
-			 'found expected log file content');
-	}
-
-	# Clean up any existing contents in the node's log file so as
-	# future tests don't step on each other's generated contents.
-	truncate $node->logfile, 0;
-	return;
 }
 
 # As above, but test for an arbitrary query result.
@@ -227,20 +221,13 @@ sub test_query
 	my ($node, $role, $query, $expected, $gssencmode, $test_name) = @_;
 
 	# need to connect over TCP/IP for Kerberos
-	my ($res, $stdoutres, $stderrres) = $node->psql(
-		'postgres',
-		"$query",
-		extra_params => [
-			'-XAtd',
-			$node->connstr('postgres')
-			  . " host=$host hostaddr=$hostaddr $gssencmode",
-			'-U',
-			$role
-		]);
+	my $connstr = $node->connstr('postgres')
+	  . " user=$role host=$host hostaddr=$hostaddr $gssencmode";
 
-	is($res, 0, $test_name);
-	like($stdoutres, $expected, $test_name);
-	is($stderrres, "", $test_name);
+	$node->connect_ok(
+		$connstr, $test_name,
+		sql             => $query,
+		expected_stdout => $expected);
 	return;
 }
 
@@ -249,11 +236,19 @@ $node->append_conf('pg_hba.conf',
 	qq{host all all $hostaddr/32 gss map=mymap});
 $node->restart;
 
-test_access($node, 'test1', 'SELECT true', 2, '', 'fails without ticket', '');
+test_access($node, 'test1', 'SELECT true', 2, '', 'fails without ticket');
 
 run_log [ $kinit, 'test1' ], \$test1_password or BAIL_OUT($?);
 
-test_access($node, 'test1', 'SELECT true', 2, '', 'fails without mapping', '');
+test_access(
+	$node,
+	'test1',
+	'SELECT true',
+	2,
+	'',
+	'fails without mapping',
+	"connection authenticated: identity=\"test1\@$realm\" method=gss",
+	"no match in usermap \"mymap\" for user \"test1\"");
 
 $node->append_conf('pg_ident.conf', qq{mymap  /^(.*)\@$realm\$  \\1});
 $node->restart;
@@ -265,6 +260,7 @@ test_access(
 	0,
 	'',
 	'succeeds with mapping with default gssencmode and host hba',
+	"connection authenticated: identity=\"test1\@$realm\" method=gss",
 	"connection authorized: user=$username database=$dbname application_name=$application GSS (authenticated=yes, encrypted=yes, principal=test1\@$realm)"
 );
 
@@ -275,6 +271,7 @@ test_access(
 	0,
 	'gssencmode=prefer',
 	'succeeds with GSS-encrypted access preferred with host hba',
+	"connection authenticated: identity=\"test1\@$realm\" method=gss",
 	"connection authorized: user=$username database=$dbname application_name=$application GSS (authenticated=yes, encrypted=yes, principal=test1\@$realm)"
 );
 test_access(
@@ -284,6 +281,7 @@ test_access(
 	0,
 	'gssencmode=require',
 	'succeeds with GSS-encrypted access required with host hba',
+	"connection authenticated: identity=\"test1\@$realm\" method=gss",
 	"connection authorized: user=$username database=$dbname application_name=$application GSS (authenticated=yes, encrypted=yes, principal=test1\@$realm)"
 );
 
@@ -320,6 +318,7 @@ test_access(
 	0,
 	'gssencmode=prefer',
 	'succeeds with GSS-encrypted access preferred and hostgssenc hba',
+	"connection authenticated: identity=\"test1\@$realm\" method=gss",
 	"connection authorized: user=$username database=$dbname application_name=$application GSS (authenticated=yes, encrypted=yes, principal=test1\@$realm)"
 );
 test_access(
@@ -329,10 +328,11 @@ test_access(
 	0,
 	'gssencmode=require',
 	'succeeds with GSS-encrypted access required and hostgssenc hba',
+	"connection authenticated: identity=\"test1\@$realm\" method=gss",
 	"connection authorized: user=$username database=$dbname application_name=$application GSS (authenticated=yes, encrypted=yes, principal=test1\@$realm)"
 );
 test_access($node, 'test1', 'SELECT true', 2, 'gssencmode=disable',
-	'fails with GSS encryption disabled and hostgssenc hba', '');
+	'fails with GSS encryption disabled and hostgssenc hba');
 
 unlink($node->data_dir . '/pg_hba.conf');
 $node->append_conf('pg_hba.conf',
@@ -346,10 +346,11 @@ test_access(
 	0,
 	'gssencmode=prefer',
 	'succeeds with GSS-encrypted access preferred and hostnogssenc hba, but no encryption',
+	"connection authenticated: identity=\"test1\@$realm\" method=gss",
 	"connection authorized: user=$username database=$dbname application_name=$application GSS (authenticated=yes, encrypted=no, principal=test1\@$realm)"
 );
 test_access($node, 'test1', 'SELECT true', 2, 'gssencmode=require',
-	'fails with GSS-encrypted access required and hostnogssenc hba', '');
+	'fails with GSS-encrypted access required and hostnogssenc hba');
 test_access(
 	$node,
 	'test1',
@@ -357,6 +358,7 @@ test_access(
 	0,
 	'gssencmode=disable',
 	'succeeds with GSS encryption disabled and hostnogssenc hba',
+	"connection authenticated: identity=\"test1\@$realm\" method=gss",
 	"connection authorized: user=$username database=$dbname application_name=$application GSS (authenticated=yes, encrypted=no, principal=test1\@$realm)"
 );
 
@@ -373,5 +375,22 @@ test_access(
 	0,
 	'',
 	'succeeds with include_realm=0 and defaults',
+	"connection authenticated: identity=\"test1\@$realm\" method=gss",
 	"connection authorized: user=$username database=$dbname application_name=$application GSS (authenticated=yes, encrypted=yes, principal=test1\@$realm)"
 );
+
+# Reset pg_hba.conf, and cause a usermap failure with an authentication
+# that has passed.
+unlink($node->data_dir . '/pg_hba.conf');
+$node->append_conf('pg_hba.conf',
+	qq{host all all $hostaddr/32 gss include_realm=0 krb_realm=EXAMPLE.ORG});
+$node->restart;
+
+test_access(
+	$node,
+	'test1',
+	'SELECT true',
+	2,
+	'',
+	'fails with wrong krb_realm, but still authenticates',
+	"connection authenticated: identity=\"test1\@$realm\" method=gss");

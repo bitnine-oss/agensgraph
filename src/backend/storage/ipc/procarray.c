@@ -1210,6 +1210,11 @@ ProcArrayApplyRecoveryInfo(RunningTransactions running)
 	 */
 	MaintainLatestCompletedXidRecovery(running->latestCompletedXid);
 
+	/*
+	 * NB: No need to increment ShmemVariableCache->xactCompletionCount here,
+	 * nobody can see it yet.
+	 */
+
 	LWLockRelease(ProcArrayLock);
 
 	/* ShmemVariableCache->nextXid must be beyond any observed xid. */
@@ -3752,7 +3757,7 @@ TerminateOtherDBBackends(Oid databaseId)
 
 				/* Users can signal backends they have role membership in. */
 				if (!has_privs_of_role(GetUserId(), proc->roleId) &&
-					!has_privs_of_role(GetUserId(), DEFAULT_ROLE_SIGNAL_BACKENDID))
+					!has_privs_of_role(GetUserId(), ROLE_PG_SIGNAL_BACKEND))
 					ereport(ERROR,
 							(errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
 							 errmsg("must be a member of the role whose process is being terminated or member of pg_signal_backend")));
@@ -3914,6 +3919,9 @@ XidCacheRemoveRunningXids(TransactionId xid,
 
 	/* Also advance global latestCompletedXid while holding the lock */
 	MaintainLatestCompletedXid(latestXid);
+
+	/* ... and xactCompletionCount */
+	ShmemVariableCache->xactCompletionCount++;
 
 	LWLockRelease(ProcArrayLock);
 }

@@ -157,6 +157,10 @@ typedef struct Expr
  * than a heap column.  (In ForeignScan and CustomScan plan nodes, INDEX_VAR
  * is abused to signify references to columns of a custom scan tuple type.)
  *
+ * ROWID_VAR is used in the planner to identify nonce variables that carry
+ * row identity information during UPDATE/DELETE.  This value should never
+ * be seen outside the planner.
+ *
  * In the parser, varnosyn and varattnosyn are either identical to
  * varno/varattno, or they specify the column's position in an aliased JOIN
  * RTE that hides the semantic referent RTE's refname.  This is a syntactic
@@ -170,6 +174,7 @@ typedef struct Expr
 #define    INNER_VAR		65000	/* reference to inner subplan */
 #define    OUTER_VAR		65001	/* reference to outer subplan */
 #define    INDEX_VAR		65002	/* reference to index column */
+#define    ROWID_VAR		65003	/* row identity column during planning */
 
 #define IS_SPECIAL_VARNO(varno)		((varno) >= INNER_VAR)
 
@@ -1385,13 +1390,14 @@ typedef struct InferenceElem
  * column for the item; so there may be missing or out-of-order resnos.
  * It is even legal to have duplicated resnos; consider
  *		UPDATE table SET arraycol[1] = ..., arraycol[2] = ..., ...
- * The two meanings come together in the executor, because the planner
- * transforms INSERT/UPDATE tlists into a normalized form with exactly
- * one entry for each column of the destination table.  Before that's
- * happened, however, it is risky to assume that resno == position.
- * Generally get_tle_by_resno() should be used rather than list_nth()
- * to fetch tlist entries by resno, and only in SELECT should you assume
- * that resno is a unique identifier.
+ * In an INSERT, the rewriter and planner will normalize the tlist by
+ * reordering it into physical column order and filling in default values
+ * for any columns not assigned values by the original query.  In an UPDATE,
+ * after the rewriter merges multiple assignments for the same column, the
+ * planner extracts the target-column numbers into a separate "update_colnos"
+ * list, and then renumbers the tlist elements serially.  Thus, tlist resnos
+ * match ordinal position in all tlists seen by the executor; but it is wrong
+ * to assume that before planning has happened.
  *
  * resname is required to represent the correct column name in non-resjunk
  * entries of top-level SELECT targetlists, since it will be used as the
@@ -1498,6 +1504,11 @@ typedef struct RangeTblRef
  * alias has a critical impact on semantics, because a join with an alias
  * restricts visibility of the tables/columns inside it.
  *
+ * join_using_alias is an Alias node representing the join correlation
+ * name that SQL:2016 and later allow to be attached to JOIN/USING.
+ * Its column alias list includes only the common column names from USING,
+ * and it does not restrict visibility of the join's input tables.
+ *
  * During parse analysis, an RTE is created for the Join, and its index
  * is filled into rtindex.  This RTE is present mainly so that Vars can
  * be created that refer to the outputs of the join.  The planner sometimes
@@ -1513,6 +1524,7 @@ typedef struct JoinExpr
 	Node	   *larg;			/* left subtree */
 	Node	   *rarg;			/* right subtree */
 	List	   *usingClause;	/* USING clause, if any (list of String) */
+	Alias	   *join_using_alias;	/* alias attached to USING clause, if any */
 	Node	   *quals;			/* qualifiers on join, if any */
 	Alias	   *alias;			/* user-written alias clause, if any */
 	int			rtindex;		/* RT index assigned for join, or 0 */

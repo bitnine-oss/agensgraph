@@ -367,6 +367,7 @@
 #enable_seqscan = on
 #enable_sort = on
 #enable_incremental_sort = on
+#enable_resultcache = on
 #enable_tidscan = on
 #enable_partitionwise_join = off
 #enable_partitionwise_aggregate = off
@@ -544,6 +545,7 @@
 					#   %t = timestamp without milliseconds
 					#   %m = timestamp with milliseconds
 					#   %n = timestamp with milliseconds (as a Unix epoch)
+					#   %Q = query ID (0 if none or not computed)
 					#   %i = command tag
 					#   %e = SQL state
 					#   %c = session ID
@@ -597,6 +599,7 @@
 
 # - Monitoring -
 
+#compute_query_id = off
 #log_parser_stats = off
 #log_planner_stats = off
 #log_executor_stats = off
@@ -676,6 +679,8 @@
 #vacuum_freeze_table_age = 150000000
 #vacuum_multixact_freeze_min_age = 5000000
 #vacuum_multixact_freeze_table_age = 150000000
+#vacuum_failsafe_age = 1600000000
+#vacuum_multixact_failsafe_age = 1600000000
 #bytea_output = 'hex'			# hex, escape
 #xmlbinary = 'base64'
 #xmloption = 'content'
@@ -720,6 +725,9 @@
 
 #dynamic_library_path = '$libdir'
 
+#client_connection_check_interval = 0	# time between checks for client
+					# disconnection while running queries;
+					# 0 for never
 
 #------------------------------------------------------------------------------
 # LOCK MANAGEMENT

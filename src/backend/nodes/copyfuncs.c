@@ -209,7 +209,7 @@ _copyModifyTable(const ModifyTable *from)
 	COPY_SCALAR_FIELD(rootRelation);
 	COPY_SCALAR_FIELD(partColsUpdated);
 	COPY_NODE_FIELD(resultRelations);
-	COPY_NODE_FIELD(plans);
+	COPY_NODE_FIELD(updateColnosLists);
 	COPY_NODE_FIELD(withCheckOptionLists);
 	COPY_NODE_FIELD(returningLists);
 	COPY_NODE_FIELD(fdwPrivLists);
@@ -969,6 +969,33 @@ _copyMaterial(const Material *from)
 	 * copy node superclass fields
 	 */
 	CopyPlanFields((const Plan *) from, (Plan *) newnode);
+
+	return newnode;
+}
+
+
+/*
+ * _copyResultCache
+ */
+static ResultCache *
+_copyResultCache(const ResultCache *from)
+{
+	ResultCache *newnode = makeNode(ResultCache);
+
+	/*
+	 * copy node superclass fields
+	 */
+	CopyPlanFields((const Plan *) from, (Plan *) newnode);
+
+	/*
+	 * copy remainder of node
+	 */
+	COPY_SCALAR_FIELD(numKeys);
+	COPY_POINTER_FIELD(hashOperators, sizeof(Oid) * from->numKeys);
+	COPY_POINTER_FIELD(collations, sizeof(Oid) * from->numKeys);
+	COPY_NODE_FIELD(param_exprs);
+	COPY_SCALAR_FIELD(singlerow);
+	COPY_SCALAR_FIELD(est_entries);
 
 	return newnode;
 }
@@ -2357,6 +2384,7 @@ _copyJoinExpr(const JoinExpr *from)
 	COPY_NODE_FIELD(larg);
 	COPY_NODE_FIELD(rarg);
 	COPY_NODE_FIELD(usingClause);
+	COPY_NODE_FIELD(join_using_alias);
 	COPY_NODE_FIELD(quals);
 	COPY_NODE_FIELD(alias);
 	COPY_SCALAR_FIELD(rtindex);
@@ -2553,6 +2581,7 @@ _copyRestrictInfo(const RestrictInfo *from)
 	COPY_SCALAR_FIELD(right_bucketsize);
 	COPY_SCALAR_FIELD(left_mcvfreq);
 	COPY_SCALAR_FIELD(right_mcvfreq);
+	COPY_SCALAR_FIELD(hasheqoperator);
 
 	return newnode;
 }
@@ -2660,6 +2689,7 @@ _copyRangeTblEntry(const RangeTblEntry *from)
 	COPY_NODE_FIELD(joinaliasvars);
 	COPY_NODE_FIELD(joinleftcols);
 	COPY_NODE_FIELD(joinrightcols);
+	COPY_NODE_FIELD(join_using_alias);
 	COPY_NODE_FIELD(functions);
 	COPY_SCALAR_FIELD(funcordinality);
 	COPY_NODE_FIELD(tablefunc);
@@ -5636,6 +5666,9 @@ copyObjectImpl(const void *from)
 			break;
 		case T_Material:
 			retval = _copyMaterial(from);
+			break;
+		case T_ResultCache:
+			retval = _copyResultCache(from);
 			break;
 		case T_Sort:
 			retval = _copySort(from);

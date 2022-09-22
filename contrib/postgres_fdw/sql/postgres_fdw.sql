@@ -502,10 +502,12 @@ SELECT t1.c1, t2.c2, t3.c3 FROM ft2 t1 FULL JOIN ft2 t2 ON (t1.c1 = t2.c1) LEFT 
 EXPLAIN (VERBOSE, COSTS OFF)
 SELECT t1.c1, t2.c2, t3.c3 FROM ft2 t1 LEFT JOIN ft2 t2 ON (t1.c1 = t2.c1) FULL JOIN ft4 t3 ON (t2.c1 = t3.c1) OFFSET 10 LIMIT 10;
 SELECT t1.c1, t2.c2, t3.c3 FROM ft2 t1 LEFT JOIN ft2 t2 ON (t1.c1 = t2.c1) FULL JOIN ft4 t3 ON (t2.c1 = t3.c1) OFFSET 10 LIMIT 10;
+SET enable_resultcache TO off;
 -- right outer join + left outer join
 EXPLAIN (VERBOSE, COSTS OFF)
 SELECT t1.c1, t2.c2, t3.c3 FROM ft2 t1 RIGHT JOIN ft2 t2 ON (t1.c1 = t2.c1) LEFT JOIN ft4 t3 ON (t2.c1 = t3.c1) OFFSET 10 LIMIT 10;
 SELECT t1.c1, t2.c2, t3.c3 FROM ft2 t1 RIGHT JOIN ft2 t2 ON (t1.c1 = t2.c1) LEFT JOIN ft4 t3 ON (t2.c1 = t3.c1) OFFSET 10 LIMIT 10;
+RESET enable_resultcache;
 -- left outer join + right outer join
 EXPLAIN (VERBOSE, COSTS OFF)
 SELECT t1.c1, t2.c2, t3.c3 FROM ft2 t1 LEFT JOIN ft2 t2 ON (t1.c1 = t2.c1) RIGHT JOIN ft4 t3 ON (t2.c1 = t3.c1) OFFSET 10 LIMIT 10;
@@ -2364,6 +2366,8 @@ ALTER TABLE import_source."x 5" DROP COLUMN c1;
 CREATE TABLE import_source.t4 (c1 int) PARTITION BY RANGE (c1);
 CREATE TABLE import_source.t4_part PARTITION OF import_source.t4
   FOR VALUES FROM (1) TO (100);
+CREATE TABLE import_source.t4_part2 PARTITION OF import_source.t4
+  FOR VALUES FROM (100) TO (200);
 
 CREATE SCHEMA import_dest1;
 IMPORT FOREIGN SCHEMA import_source FROM SERVER loopback INTO import_dest1;
@@ -2384,10 +2388,10 @@ IMPORT FOREIGN SCHEMA import_source FROM SERVER loopback INTO import_dest3
 
 -- Check LIMIT TO and EXCEPT
 CREATE SCHEMA import_dest4;
-IMPORT FOREIGN SCHEMA import_source LIMIT TO (t1, nonesuch)
+IMPORT FOREIGN SCHEMA import_source LIMIT TO (t1, nonesuch, t4_part)
   FROM SERVER loopback INTO import_dest4;
 \det+ import_dest4.*
-IMPORT FOREIGN SCHEMA import_source EXCEPT (t1, "x 4", nonesuch)
+IMPORT FOREIGN SCHEMA import_source EXCEPT (t1, "x 4", nonesuch, t4_part)
   FROM SERVER loopback INTO import_dest4;
 \det+ import_dest4.*
 
@@ -2818,6 +2822,19 @@ DROP USER MAPPING FOR regress_multi_conn_user1 SERVER loopback;
 DROP USER MAPPING FOR regress_multi_conn_user2 SERVER loopback;
 DROP ROLE regress_multi_conn_user1;
 DROP ROLE regress_multi_conn_user2;
+
+-- ===================================================================
+-- Test foreign server level option keep_connections
+-- ===================================================================
+-- By default, the connections associated with foreign server are cached i.e.
+-- keep_connections option is on. Set it to off.
+ALTER SERVER loopback OPTIONS (keep_connections 'off');
+-- connection to loopback server is closed at the end of xact
+-- as keep_connections was set to off.
+SELECT 1 FROM ft1 LIMIT 1;
+-- No cached connections, so no records should be output.
+SELECT server_name FROM postgres_fdw_get_connections() ORDER BY 1;
+ALTER SERVER loopback OPTIONS (SET keep_connections 'on');
 
 -- ===================================================================
 -- batch insert

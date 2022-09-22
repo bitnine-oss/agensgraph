@@ -156,9 +156,6 @@ extern void ResetTupleHashTable(TupleHashTable hashtable);
  */
 extern JunkFilter *ExecInitJunkFilter(List *targetList,
 									  TupleTableSlot *slot);
-extern JunkFilter *ExecInitJunkFilterInsertion(List *targetList,
-											   TupleDesc cleanTupType,
-											   TupleTableSlot *slot);
 extern JunkFilter *ExecInitJunkFilterConversion(List *targetList,
 												TupleDesc cleanTupType,
 												TupleTableSlot *slot);
@@ -166,11 +163,24 @@ extern AttrNumber ExecFindJunkAttribute(JunkFilter *junkfilter,
 										const char *attrName);
 extern AttrNumber ExecFindJunkAttributeInTlist(List *targetlist,
 											   const char *attrName);
-extern Datum ExecGetJunkAttribute(TupleTableSlot *slot, AttrNumber attno,
-								  bool *isNull);
 extern TupleTableSlot *ExecFilterJunk(JunkFilter *junkfilter,
 									  TupleTableSlot *slot);
 
+/*
+ * ExecGetJunkAttribute
+ *
+ * Given a junk filter's input tuple (slot) and a junk attribute's number
+ * previously found by ExecFindJunkAttribute, extract & return the value and
+ * isNull flag of the attribute.
+ */
+#ifndef FRONTEND
+static inline Datum
+ExecGetJunkAttribute(TupleTableSlot *slot, AttrNumber attno, bool *isNull)
+{
+	Assert(attno > 0);
+	return slot_getattr(slot, attno, isNull);
+}
+#endif
 
 /*
  * prototypes from functions in execMain.c
@@ -265,11 +275,24 @@ extern ExprState *ExecBuildGroupingEqual(TupleDesc ldesc, TupleDesc rdesc,
 										 const Oid *eqfunctions,
 										 const Oid *collations,
 										 PlanState *parent);
+extern ExprState *ExecBuildParamSetEqual(TupleDesc desc,
+										 const TupleTableSlotOps *lops,
+										 const TupleTableSlotOps *rops,
+										 const Oid *eqfunctions,
+										 const Oid *collations,
+										 const List *param_exprs,
+										 PlanState *parent);
 extern ProjectionInfo *ExecBuildProjectionInfo(List *targetList,
 											   ExprContext *econtext,
 											   TupleTableSlot *slot,
 											   PlanState *parent,
 											   TupleDesc inputDesc);
+extern ProjectionInfo *ExecBuildUpdateProjection(List *subTargetList,
+												 List *targetColnos,
+												 TupleDesc relDesc,
+												 ExprContext *econtext,
+												 TupleTableSlot *slot,
+												 PlanState *parent);
 extern ExprState *ExecPrepareExpr(Expr *node, EState *estate);
 extern ExprState *ExecPrepareQual(List *qual, EState *estate);
 extern ExprState *ExecPrepareCheck(List *qual, EState *estate);
@@ -573,6 +596,7 @@ extern int	ExecCleanTargetListLength(List *targetlist);
 extern TupleTableSlot *ExecGetTriggerOldSlot(EState *estate, ResultRelInfo *relInfo);
 extern TupleTableSlot *ExecGetTriggerNewSlot(EState *estate, ResultRelInfo *relInfo);
 extern TupleTableSlot *ExecGetReturningSlot(EState *estate, ResultRelInfo *relInfo);
+extern TupleConversionMap *ExecGetChildToRootMap(ResultRelInfo *resultRelInfo);
 
 extern Bitmapset *ExecGetInsertedCols(ResultRelInfo *relinfo, EState *estate);
 extern Bitmapset *ExecGetUpdatedCols(ResultRelInfo *relinfo, EState *estate);
@@ -621,6 +645,17 @@ extern void CheckCmdReplicaIdentity(Relation rel, CmdType cmd);
 
 extern void CheckSubscriptionRelkind(char relkind, const char *nspname,
 									 const char *relname);
+
+/*
+ * prototypes from functions in nodeModifyTable.c
+ */
+extern TupleTableSlot *ExecGetUpdateNewTuple(ResultRelInfo *relinfo,
+											 TupleTableSlot *planSlot,
+											 TupleTableSlot *oldSlot);
+extern ResultRelInfo *ExecLookupResultRelByOid(ModifyTableState *node,
+											   Oid resultoid,
+											   bool missing_ok,
+											   bool update_cache);
 
 /* for agensgraph */
 extern void ExecNextContext(PlanState *node);

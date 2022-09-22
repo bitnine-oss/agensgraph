@@ -50,7 +50,10 @@
 #include "parser/parse_type.h"
 #include "parser/parsetree.h"
 #include "rewrite/rewriteManip.h"
+#include "utils/backend_status.h"
 #include "utils/builtins.h"
+#include "utils/guc.h"
+#include "utils/queryjumble.h"
 #include "utils/rel.h"
 
 
@@ -114,6 +117,7 @@ parse_analyze(RawStmt *parseTree, const char *sourceText,
 {
 	ParseState *pstate = make_parsestate(NULL);
 	Query	   *query;
+	JumbleState *jstate = NULL;
 
 	Assert(sourceText != NULL); /* required as of 8.4 */
 
@@ -126,10 +130,15 @@ parse_analyze(RawStmt *parseTree, const char *sourceText,
 
 	query = transformTopLevelStmt(pstate, parseTree);
 
+	if (compute_query_id)
+		jstate = JumbleQuery(query, sourceText);
+
 	if (post_parse_analyze_hook)
-		(*post_parse_analyze_hook) (pstate, query);
+		(*post_parse_analyze_hook) (pstate, query, jstate);
 
 	free_parsestate(pstate);
+
+	pgstat_report_queryid(query->queryId, false);
 
 	return query;
 }
@@ -147,6 +156,7 @@ parse_analyze_varparams(RawStmt *parseTree, const char *sourceText,
 {
 	ParseState *pstate = make_parsestate(NULL);
 	Query	   *query;
+	JumbleState *jstate = NULL;
 
 	Assert(sourceText != NULL); /* required as of 8.4 */
 
@@ -159,10 +169,15 @@ parse_analyze_varparams(RawStmt *parseTree, const char *sourceText,
 	/* make sure all is well with parameter types */
 	check_variable_parameters(pstate, query);
 
+	if (compute_query_id)
+		jstate = JumbleQuery(query, sourceText);
+
 	if (post_parse_analyze_hook)
-		(*post_parse_analyze_hook) (pstate, query);
+		(*post_parse_analyze_hook) (pstate, query, jstate);
 
 	free_parsestate(pstate);
+
+	pgstat_report_queryid(query->queryId, false);
 
 	return query;
 }
@@ -1773,6 +1788,7 @@ transformSetOperationStmt(ParseState *pstate, SelectStmt *stmt)
 										NIL,
 										NIL,
 										NULL,
+										NULL,
 										false);
 
 	sv_namespace = pstate->p_namespace;
@@ -2712,14 +2728,21 @@ transformDeclareCursorStmt(ParseState *pstate, DeclareCursorStmt *stmt)
 	Query	   *result;
 	Query	   *query;
 
-	/*
-	 * Don't allow both SCROLL and NO SCROLL to be specified
-	 */
 	if ((stmt->options & CURSOR_OPT_SCROLL) &&
 		(stmt->options & CURSOR_OPT_NO_SCROLL))
 		ereport(ERROR,
 				(errcode(ERRCODE_INVALID_CURSOR_DEFINITION),
-				 errmsg("cannot specify both SCROLL and NO SCROLL")));
+				 /* translator: %s is a SQL keyword */
+				 errmsg("cannot specify both %s and %s",
+						"SCROLL", "NO SCROLL")));
+
+	if ((stmt->options & CURSOR_OPT_ASENSITIVE) &&
+		(stmt->options & CURSOR_OPT_INSENSITIVE))
+		ereport(ERROR,
+				(errcode(ERRCODE_INVALID_CURSOR_DEFINITION),
+				 /* translator: %s is a SQL keyword */
+				 errmsg("cannot specify both %s and %s",
+						"ASENSITIVE", "INSENSITIVE")));
 
 	/* Transform contained query, not allowing SELECT INTO */
 	query = transformStmt(pstate, stmt->query);
@@ -2765,10 +2788,10 @@ transformDeclareCursorStmt(ParseState *pstate, DeclareCursorStmt *stmt)
 	/* FOR UPDATE and INSENSITIVE are not compatible */
 	if (query->rowMarks != NIL && (stmt->options & CURSOR_OPT_INSENSITIVE))
 		ereport(ERROR,
-				(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+				(errcode(ERRCODE_INVALID_CURSOR_DEFINITION),
 		/*------
 		  translator: %s is a SQL row locking clause such as FOR UPDATE */
-				 errmsg("DECLARE INSENSITIVE CURSOR ... %s is not supported",
+				 errmsg("DECLARE INSENSITIVE CURSOR ... %s is not valid",
 						LCS_asString(((RowMarkClause *)
 									  linitial(query->rowMarks))->strength)),
 				 errdetail("Insensitive cursors must be READ ONLY.")));

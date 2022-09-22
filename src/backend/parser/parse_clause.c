@@ -1268,6 +1268,13 @@ transformFromClauseItem(ParseState *pstate, Node *n,
 		}
 
 		/*
+		 * If a USING clause alias was specified, save the USING columns as
+		 * its column list.
+		 */
+		if (j->join_using_alias)
+			j->join_using_alias->colnames = j->usingClause;
+
+		/*
 		 * Now transform the join qualifications, if any.
 		 */
 		l_colnos = NIL;
@@ -1462,6 +1469,7 @@ transformFromClauseItem(ParseState *pstate, Node *n,
 										   res_colvars,
 										   l_colnos,
 										   r_colnos,
+										   j->join_using_alias,
 										   j->alias,
 										   true);
 
@@ -1494,6 +1502,30 @@ transformFromClauseItem(ParseState *pstate, Node *n,
 			pstate->p_joinexprs = lappend(pstate->p_joinexprs, NULL);
 		pstate->p_joinexprs = lappend(pstate->p_joinexprs, j);
 		Assert(list_length(pstate->p_joinexprs) == j->rtindex);
+
+		/*
+		 * If the join has a USING alias, build a ParseNamespaceItem for that
+		 * and add it to the list of nsitems in the join's input.
+		 */
+		if (j->join_using_alias)
+		{
+			ParseNamespaceItem *jnsitem;
+
+			jnsitem = (ParseNamespaceItem *) palloc(sizeof(ParseNamespaceItem));
+			jnsitem->p_names = j->join_using_alias;
+			jnsitem->p_rte = nsitem->p_rte;
+			jnsitem->p_rtindex = nsitem->p_rtindex;
+			/* no need to copy the first N columns, just use res_nscolumns */
+			jnsitem->p_nscolumns = res_nscolumns;
+			/* set default visibility flags; might get changed later */
+			jnsitem->p_rel_visible = true;
+			jnsitem->p_cols_visible = true;
+			jnsitem->p_lateral_only = false;
+			jnsitem->p_lateral_ok = true;
+			/* Per SQL, we must check for alias conflicts */
+			checkNameSpaceConflicts(pstate, list_make1(jnsitem), my_namespace);
+			my_namespace = lappend(my_namespace, jnsitem);
+		}
 
 		/*
 		 * Prepare returned namespace list.  If the JOIN has an alias then it

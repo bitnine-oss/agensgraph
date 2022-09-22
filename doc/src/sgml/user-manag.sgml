@@ -483,15 +483,15 @@ DROP ROLE doomed_role;
   </para>
  </sect1>
 
- <sect1 id="default-roles">
-  <title>Default Roles</title>
+ <sect1 id="predefined-roles">
+  <title>Predefined Roles</title>
 
-  <indexterm zone="default-roles">
+  <indexterm zone="predefined-roles">
    <primary>role</primary>
   </indexterm>
 
   <para>
-   <productname>PostgreSQL</productname> provides a set of default roles
+   <productname>PostgreSQL</productname> provides a set of predefined roles
    that provide access to certain, commonly needed, privileged capabilities
    and information.  Administrators (including roles that have the
    <literal>CREATEROLE</literal> privilege) can <command>GRANT</command> these
@@ -500,14 +500,14 @@ DROP ROLE doomed_role;
   </para>
 
   <para>
-   The default roles are described in <xref linkend="default-roles-table"/>.
-   Note that the specific permissions for each of the default roles may
-   change in the future as additional capabilities are added.  Administrators
+   The predefined roles are described in <xref linkend="predefined-roles-table"/>.
+   Note that the specific permissions for each of the roles may change in
+   the future as additional capabilities are added.  Administrators
    should monitor the release notes for changes.
   </para>
 
-   <table tocentry="1" id="default-roles-table">
-    <title>Default Roles</title>
+   <table tocentry="1" id="predefined-roles-table">
+    <title>Predefined Roles</title>
     <tgroup cols="2">
      <colspec colname="col1" colwidth="1*"/>
      <colspec colname="col2" colwidth="2*"/>
@@ -518,6 +518,24 @@ DROP ROLE doomed_role;
       </row>
      </thead>
      <tbody>
+      <row>
+       <entry>pg_read_all_data</entry>
+       <entry>Read all data (tables, views, sequences), as if having SELECT
+       rights on those objects, and USAGE rights on all schemas, even without
+       having it explicitly.  This role does not have the role attribute
+       <literal>BYPASSRLS</literal> set.  If RLS is being used, an administrator
+       may wish to set <literal>BYPASSRLS</literal> on roles which this role is
+       GRANTed to.</entry>
+      </row>
+      <row>
+       <entry>pg_write_all_data</entry>
+       <entry>Write all data (tables, views, sequences), as if having INSERT,
+       UPDATE, and DELETE rights on those objects, and USAGE rights on all
+       schemas, even without having it explicitly.  This role does not have the
+       role attribute <literal>BYPASSRLS</literal> set.  If RLS is being used,
+       an administrator may wish to set <literal>BYPASSRLS</literal> on roles
+       which this role is GRANTed to.</entry>
+      </row>
       <row>
        <entry>pg_read_all_settings</entry>
        <entry>Read all configuration variables, even those normally visible only to

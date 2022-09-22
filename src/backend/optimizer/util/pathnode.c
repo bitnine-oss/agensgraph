@@ -1578,6 +1578,56 @@ create_material_path(RelOptInfo *rel, Path *subpath)
 }
 
 /*
+ * create_resultcache_path
+ *	  Creates a path corresponding to a ResultCache plan, returning the
+ *	  pathnode.
+ */
+ResultCachePath *
+create_resultcache_path(PlannerInfo *root, RelOptInfo *rel, Path *subpath,
+						List *param_exprs, List *hash_operators,
+						bool singlerow, double calls)
+{
+	ResultCachePath *pathnode = makeNode(ResultCachePath);
+
+	Assert(subpath->parent == rel);
+
+	pathnode->path.pathtype = T_ResultCache;
+	pathnode->path.parent = rel;
+	pathnode->path.pathtarget = rel->reltarget;
+	pathnode->path.param_info = subpath->param_info;
+	pathnode->path.parallel_aware = false;
+	pathnode->path.parallel_safe = rel->consider_parallel &&
+		subpath->parallel_safe;
+	pathnode->path.parallel_workers = subpath->parallel_workers;
+	pathnode->path.pathkeys = subpath->pathkeys;
+
+	pathnode->subpath = subpath;
+	pathnode->hash_operators = hash_operators;
+	pathnode->param_exprs = param_exprs;
+	pathnode->singlerow = singlerow;
+	pathnode->calls = calls;
+
+	/*
+	 * For now we set est_entries to 0.  cost_resultcache_rescan() does all
+	 * the hard work to determine how many cache entries there are likely to
+	 * be, so it seems best to leave it up to that function to fill this field
+	 * in.  If left at 0, the executor will make a guess at a good value.
+	 */
+	pathnode->est_entries = 0;
+
+	/*
+	 * Add a small additional charge for caching the first entry.  All the
+	 * harder calculations for rescans are performed in
+	 * cost_resultcache_rescan().
+	 */
+	pathnode->path.startup_cost = subpath->startup_cost + cpu_tuple_cost;
+	pathnode->path.total_cost = subpath->total_cost + cpu_tuple_cost;
+	pathnode->path.rows = subpath->rows;
+
+	return pathnode;
+}
+
+/*
  * create_unique_path
  *	  Creates a path representing elimination of distinct rows from the
  *	  input data.  Distinct-ness is defined according to the needs of the
@@ -3544,6 +3594,7 @@ create_lockrows_path(PlannerInfo *root, RelOptInfo *rel,
  *	  Creates a pathnode that represents performing INSERT/UPDATE/DELETE mods
  *
  * 'rel' is the parent relation associated with the result
+ * 'subpath' is a Path producing source data
  * 'operation' is the operation type
  * 'canSetTag' is true if we set the command tag/es_processed
  * 'nominalRelation' is the parent RT index for use of EXPLAIN
@@ -3551,8 +3602,8 @@ create_lockrows_path(PlannerInfo *root, RelOptInfo *rel,
  * 'partColsUpdated' is true if any partitioning columns are being updated,
  *		either from the target relation or a descendent partitioned table.
  * 'resultRelations' is an integer list of actual RT indexes of target rel(s)
- * 'subpaths' is a list of Path(s) producing source data (one per rel)
- * 'subroots' is a list of PlannerInfo structs (one per rel)
+ * 'updateColnosLists' is a list of UPDATE target column number lists
+ *		(one sublist per rel); or NIL if not an UPDATE
  * 'withCheckOptionLists' is a list of WCO lists (one per rel)
  * 'returningLists' is a list of RETURNING tlists (one per rel)
  * 'rowMarks' is a list of PlanRowMarks (non-locking only)
@@ -3561,21 +3612,21 @@ create_lockrows_path(PlannerInfo *root, RelOptInfo *rel,
  */
 ModifyTablePath *
 create_modifytable_path(PlannerInfo *root, RelOptInfo *rel,
+						Path *subpath,
 						CmdType operation, bool canSetTag,
 						Index nominalRelation, Index rootRelation,
 						bool partColsUpdated,
-						List *resultRelations, List *subpaths,
-						List *subroots,
+						List *resultRelations,
+						List *updateColnosLists,
 						List *withCheckOptionLists, List *returningLists,
 						List *rowMarks, OnConflictExpr *onconflict,
 						int epqParam)
 {
 	ModifyTablePath *pathnode = makeNode(ModifyTablePath);
-	double		total_size;
-	ListCell   *lc;
 
-	Assert(list_length(resultRelations) == list_length(subpaths));
-	Assert(list_length(resultRelations) == list_length(subroots));
+	Assert(operation == CMD_UPDATE ?
+		   list_length(resultRelations) == list_length(updateColnosLists) :
+		   updateColnosLists == NIL);
 	Assert(withCheckOptionLists == NIL ||
 		   list_length(resultRelations) == list_length(withCheckOptionLists));
 	Assert(returningLists == NIL ||
@@ -3593,7 +3644,7 @@ create_modifytable_path(PlannerInfo *root, RelOptInfo *rel,
 	pathnode->path.pathkeys = NIL;
 
 	/*
-	 * Compute cost & rowcount as sum of subpath costs & rowcounts.
+	 * Compute cost & rowcount as subpath cost & rowcount (if RETURNING)
 	 *
 	 * Currently, we don't charge anything extra for the actual table
 	 * modification work, nor for the WITH CHECK OPTIONS or RETURNING
@@ -3602,42 +3653,34 @@ create_modifytable_path(PlannerInfo *root, RelOptInfo *rel,
 	 * costs to change any higher-level planning choices.  But we might want
 	 * to make it look better sometime.
 	 */
-	pathnode->path.startup_cost = 0;
-	pathnode->path.total_cost = 0;
-	pathnode->path.rows = 0;
-	total_size = 0;
-	foreach(lc, subpaths)
+	pathnode->path.startup_cost = subpath->startup_cost;
+	pathnode->path.total_cost = subpath->total_cost;
+	if (returningLists != NIL)
 	{
-		Path	   *subpath = (Path *) lfirst(lc);
+		pathnode->path.rows = subpath->rows;
 
-		if (lc == list_head(subpaths))	/* first node? */
-			pathnode->path.startup_cost = subpath->startup_cost;
-		pathnode->path.total_cost += subpath->total_cost;
-		if (returningLists != NIL)
-		{
-			pathnode->path.rows += subpath->rows;
-			total_size += subpath->pathtarget->width * subpath->rows;
-		}
+		/*
+		 * Set width to match the subpath output.  XXX this is totally wrong:
+		 * we should return an average of the RETURNING tlist widths.  But
+		 * it's what happened historically, and improving it is a task for
+		 * another day.  (Again, it's mostly window dressing.)
+		 */
+		pathnode->path.pathtarget->width = subpath->pathtarget->width;
+	}
+	else
+	{
+		pathnode->path.rows = 0;
+		pathnode->path.pathtarget->width = 0;
 	}
 
-	/*
-	 * Set width to the average width of the subpath outputs.  XXX this is
-	 * totally wrong: we should return an average of the RETURNING tlist
-	 * widths.  But it's what happened historically, and improving it is a task
-	 * for another day.
-	 */
-	if (pathnode->path.rows > 0)
-		total_size /= pathnode->path.rows;
-	pathnode->path.pathtarget->width = rint(total_size);
-
+	pathnode->subpath = subpath;
 	pathnode->operation = operation;
 	pathnode->canSetTag = canSetTag;
 	pathnode->nominalRelation = nominalRelation;
 	pathnode->rootRelation = rootRelation;
 	pathnode->partColsUpdated = partColsUpdated;
 	pathnode->resultRelations = resultRelations;
-	pathnode->subpaths = subpaths;
-	pathnode->subroots = subroots;
+	pathnode->updateColnosLists = updateColnosLists;
 	pathnode->withCheckOptionLists = withCheckOptionLists;
 	pathnode->returningLists = returningLists;
 	pathnode->rowMarks = rowMarks;
@@ -3916,6 +3959,17 @@ reparameterize_path(PlannerInfo *root, Path *path,
 									   apath->path.parallel_aware,
 									   -1);
 			}
+		case T_ResultCache:
+			{
+				ResultCachePath *rcpath = (ResultCachePath *) path;
+
+				return (Path *) create_resultcache_path(root, rel,
+														rcpath->subpath,
+														rcpath->param_exprs,
+														rcpath->hash_operators,
+														rcpath->singlerow,
+														rcpath->calls);
+			}
 		default:
 			break;
 	}
@@ -4131,6 +4185,16 @@ do { \
 				FLAT_COPY_PATH(apath, path, AppendPath);
 				REPARAMETERIZE_CHILD_PATH_LIST(apath->subpaths);
 				new_path = (Path *) apath;
+			}
+			break;
+
+		case T_ResultCachePath:
+			{
+				ResultCachePath *rcpath;
+
+				FLAT_COPY_PATH(rcpath, path, ResultCachePath);
+				REPARAMETERIZE_CHILD_PATH(rcpath->subpath);
+				new_path = (Path *) rcpath;
 			}
 			break;
 

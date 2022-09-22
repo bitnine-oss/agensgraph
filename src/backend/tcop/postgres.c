@@ -102,6 +102,9 @@ int			max_stack_depth = 100;
 /* wait N seconds to allow attach from a debugger */
 int			PostAuthDelay = 0;
 
+/* Time between checks that the client is still connected. */
+int			client_connection_check_interval = 0;
+
 /* Global variable to hold the graph write statistics */
 GraphWriteStats graphWriteStats;
 
@@ -668,6 +671,7 @@ pg_analyze_and_rewrite_params(RawStmt *parsetree,
 	ParseState *pstate;
 	Query	   *query;
 	List	   *querytree_list;
+	JumbleState *jstate = NULL;
 
 	Assert(query_string != NULL);	/* required as of 8.4 */
 
@@ -686,10 +690,15 @@ pg_analyze_and_rewrite_params(RawStmt *parsetree,
 
 	query = transformTopLevelStmt(pstate, parsetree);
 
+	if (compute_query_id)
+		jstate = JumbleQuery(query, query_string);
+
 	if (post_parse_analyze_hook)
-		(*post_parse_analyze_hook) (pstate, query);
+		(*post_parse_analyze_hook) (pstate, query, jstate);
 
 	free_parsestate(pstate);
+
+	pgstat_report_queryid(query->queryId, false);
 
 	if (log_parser_stats)
 		ShowUsage("PARSE ANALYSIS STATISTICS");
@@ -909,6 +918,7 @@ pg_plan_queries(List *querytrees, const char *query_string, int cursorOptions,
 			stmt->utilityStmt = query->utilityStmt;
 			stmt->stmt_location = query->stmt_location;
 			stmt->stmt_len = query->stmt_len;
+			stmt->queryId = query->queryId;
 			stmt->hasGraphwriteClause = false;
 		}
 		else
@@ -1025,6 +1035,8 @@ exec_simple_query(const char *query_string)
 		Portal		portal;
 		DestReceiver *receiver;
 		int16		format;
+
+		pgstat_report_queryid(0, true);
 
 		/*
 		 * Get the command name for use in status display (it also becomes the
@@ -2675,6 +2687,14 @@ start_xact_command(void)
 	 * not desired, the timeout has to be disabled explicitly.
 	 */
 	enable_statement_timeout();
+
+	/* Start timeout for checking if the client has gone away if necessary. */
+	if (client_connection_check_interval > 0 &&
+		IsUnderPostmaster &&
+		MyProcPort &&
+		!get_timeout_active(CLIENT_CONNECTION_CHECK_TIMEOUT))
+		enable_timeout_after(CLIENT_CONNECTION_CHECK_TIMEOUT,
+							 client_connection_check_interval);
 }
 
 static void
@@ -3153,6 +3173,27 @@ ProcessInterrupts(void)
 					(errcode(ERRCODE_ADMIN_SHUTDOWN),
 					 errmsg("terminating connection due to administrator command")));
 	}
+
+	if (CheckClientConnectionPending)
+	{
+		CheckClientConnectionPending = false;
+
+		/*
+		 * Check for lost connection and re-arm, if still configured, but not
+		 * if we've arrived back at DoingCommandRead state.  We don't want to
+		 * wake up idle sessions, and they already know how to detect lost
+		 * connections.
+		 */
+		if (!DoingCommandRead && client_connection_check_interval > 0)
+		{
+			if (!pq_check_connection())
+				ClientConnectionLost = true;
+			else
+				enable_timeout_after(CLIENT_CONNECTION_CHECK_TIMEOUT,
+									 client_connection_check_interval);
+		}
+	}
+
 	if (ClientConnectionLost)
 	{
 		QueryCancelPending = false; /* lost connection trumps QueryCancel */
@@ -3299,6 +3340,9 @@ ProcessInterrupts(void)
 
 	if (ParallelMessagePending)
 		HandleParallelMessages();
+
+	if (LogMemoryContextPending)
+		ProcessLogMemoryContextInterrupt();
 }
 
 

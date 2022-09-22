@@ -126,6 +126,17 @@ SELECT *
   FROM J1_TBL t1 (a, b, c) JOIN J2_TBL t2 (a, b) USING (b)
   ORDER BY b, t1.a;
 
+-- test join using aliases
+SELECT * FROM J1_TBL JOIN J2_TBL USING (i) WHERE J1_TBL.t = 'one';  -- ok
+SELECT * FROM J1_TBL JOIN J2_TBL USING (i) AS x WHERE J1_TBL.t = 'one';  -- ok
+SELECT * FROM (J1_TBL JOIN J2_TBL USING (i)) AS x WHERE J1_TBL.t = 'one';  -- error
+SELECT * FROM J1_TBL JOIN J2_TBL USING (i) AS x WHERE x.i = 1;  -- ok
+SELECT * FROM J1_TBL JOIN J2_TBL USING (i) AS x WHERE x.t = 'one';  -- error
+SELECT * FROM (J1_TBL JOIN J2_TBL USING (i) AS x) AS xx WHERE x.i = 1;  -- error (XXX could use better hint)
+SELECT * FROM J1_TBL a1 JOIN J2_TBL a2 USING (i) AS a1;  -- error
+SELECT x.* FROM J1_TBL JOIN J2_TBL USING (i) AS x WHERE J1_TBL.t = 'one';
+SELECT ROW(x.*) FROM J1_TBL JOIN J2_TBL USING (i) AS x WHERE J1_TBL.t = 'one';
+SELECT row_to_json(x.*) FROM J1_TBL JOIN J2_TBL USING (i) AS x WHERE J1_TBL.t = 'one';
 
 --
 -- NATURAL JOIN
@@ -539,6 +550,7 @@ reset enable_nestloop;
 
 set work_mem to '64kB';
 set enable_mergejoin to off;
+set enable_resultcache to off;
 
 explain (costs off)
 select count(*) from tenk1 a, tenk1 b
@@ -548,6 +560,7 @@ select count(*) from tenk1 a, tenk1 b
 
 reset work_mem;
 reset enable_mergejoin;
+reset enable_resultcache;
 
 --
 -- regression test for 8.2 bug with improper re-ordering of left joins

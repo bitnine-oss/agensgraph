@@ -8,24 +8,9 @@
  * a shared hashtable.  (We track only as many distinct queries as will fit
  * in the designated amount of shared memory.)
  *
- * As of Postgres 9.2, this module normalizes query entries.  Normalization
- * is a process whereby similar queries, typically differing only in their
- * constants (though the exact rules are somewhat more subtle than that) are
- * recognized as equivalent, and are tracked as a single entry.  This is
- * particularly useful for non-prepared queries.
- *
- * Normalization is implemented by fingerprinting queries, selectively
- * serializing those fields of each query tree's nodes that are judged to be
- * essential to the query.  This is referred to as a query jumble.  This is
- * distinct from a regular serialization in that various extraneous
- * information is ignored as irrelevant or not essential to the query, such
- * as the collations of Vars and, most notably, the values of constants.
- *
- * This jumble is acquired at the end of parse analysis of each query, and
- * a 64-bit hash of it is stored into the query's Query.queryId field.
- * The server then copies this value around, making it available in plan
- * tree(s) generated from the query.  The executor can then use this value
- * to blame query costs on the proper queryId.
+ * Starting in Postgres 9.2, this module normalized query entries.  As of
+ * Postgres 14, the normalization is done by the core if compute_query_id is
+ * enabled, or optionally by third-party modules.
  *
  * To facilitate presenting entries to users, we create "representative" query
  * strings in which constants are replaced with parameter symbols ($n), to
@@ -76,10 +61,13 @@
 #include "pgstat.h"
 #include "storage/fd.h"
 #include "storage/ipc.h"
+#include "storage/lwlock.h"
+#include "storage/shmem.h"
 #include "storage/spin.h"
 #include "tcop/utility.h"
 #include "utils/acl.h"
 #include "utils/builtins.h"
+#include "utils/queryjumble.h"
 #include "utils/memutils.h"
 #include "utils/timestamp.h"
 
@@ -114,7 +102,13 @@ static const uint32 PGSS_PG_MAJOR_VERSION = PG_VERSION_NUM / 100;
 #define USAGE_DEALLOC_PERCENT	5	/* free this % of entries at once */
 #define IS_STICKY(c)	((c.calls[PGSS_PLAN] + c.calls[PGSS_EXEC]) == 0)
 
-#define JUMBLE_SIZE				1024	/* query serialization buffer size */
+/*
+ * Utility statements that pgss_ProcessUtility and pgss_post_parse_analyze
+ * ignores.
+ */
+#define PGSS_HANDLED_UTILITY(n)		(!IsA(n, ExecuteStmt) && \
+									!IsA(n, PrepareStmt) && \
+									!IsA(n, DeallocateStmt))
 
 /*
  * Extension version number, for supporting older extension versions' objects
@@ -235,40 +229,6 @@ typedef struct pgssSharedState
 	pgssGlobalStats stats;		/* global statistics for pgss */
 } pgssSharedState;
 
-/*
- * Struct for tracking locations/lengths of constants during normalization
- */
-typedef struct pgssLocationLen
-{
-	int			location;		/* start offset in query text */
-	int			length;			/* length in bytes, or -1 to ignore */
-} pgssLocationLen;
-
-/*
- * Working state for computing a query jumble and producing a normalized
- * query string
- */
-typedef struct pgssJumbleState
-{
-	/* Jumble of current query tree */
-	unsigned char *jumble;
-
-	/* Number of bytes used in jumble[] */
-	Size		jumble_len;
-
-	/* Array of locations of constants that should be removed */
-	pgssLocationLen *clocations;
-
-	/* Allocated length of clocations array */
-	int			clocations_buf_size;
-
-	/* Current number of valid entries in clocations array */
-	int			clocations_count;
-
-	/* highest Param id we've seen, in order to start normalization correctly */
-	int			highest_extern_param_id;
-} pgssJumbleState;
-
 /*---- Local variables ----*/
 
 /* Current nesting depth of ExecutorRun+ProcessUtility calls */
@@ -342,7 +302,8 @@ PG_FUNCTION_INFO_V1(pg_stat_statements_info);
 
 static void pgss_shmem_startup(void);
 static void pgss_shmem_shutdown(int code, Datum arg);
-static void pgss_post_parse_analyze(ParseState *pstate, Query *query);
+static void pgss_post_parse_analyze(ParseState *pstate, Query *query,
+									JumbleState *jstate);
 static PlannedStmt *pgss_planner(Query *parse,
 								 const char *query_string,
 								 int cursorOptions,
@@ -357,14 +318,13 @@ static void pgss_ProcessUtility(PlannedStmt *pstmt, const char *queryString,
 								ProcessUtilityContext context, ParamListInfo params,
 								QueryEnvironment *queryEnv,
 								DestReceiver *dest, QueryCompletion *qc);
-static uint64 pgss_hash_string(const char *str, int len);
 static void pgss_store(const char *query, uint64 queryId,
 					   int query_location, int query_len,
 					   pgssStoreKind kind,
 					   double total_time, uint64 rows,
 					   const BufferUsage *bufusage,
 					   const WalUsage *walusage,
-					   pgssJumbleState *jstate);
+					   JumbleState *jstate);
 static void pg_stat_statements_internal(FunctionCallInfo fcinfo,
 										pgssVersion api_version,
 										bool showtext);
@@ -380,16 +340,9 @@ static char *qtext_fetch(Size query_offset, int query_len,
 static bool need_gc_qtexts(void);
 static void gc_qtexts(void);
 static void entry_reset(Oid userid, Oid dbid, uint64 queryid);
-static void AppendJumble(pgssJumbleState *jstate,
-						 const unsigned char *item, Size size);
-static void JumbleQuery(pgssJumbleState *jstate, Query *query);
-static void JumbleRangeTable(pgssJumbleState *jstate, List *rtable);
-static void JumbleRowMarks(pgssJumbleState *jstate, List *rowMarks);
-static void JumbleExpr(pgssJumbleState *jstate, Node *node);
-static void RecordConstLocation(pgssJumbleState *jstate, int location);
-static char *generate_normalized_query(pgssJumbleState *jstate, const char *query,
+static char *generate_normalized_query(JumbleState *jstate, const char *query,
 									   int query_loc, int *query_len_p);
-static void fill_in_constant_lengths(pgssJumbleState *jstate, const char *query,
+static void fill_in_constant_lengths(JumbleState *jstate, const char *query,
 									 int query_loc);
 static int	comp_location(const void *a, const void *b);
 
@@ -851,63 +804,35 @@ error:
  * Post-parse-analysis hook: mark query with a queryId
  */
 static void
-pgss_post_parse_analyze(ParseState *pstate, Query *query)
+pgss_post_parse_analyze(ParseState *pstate, Query *query, JumbleState *jstate)
 {
-	pgssJumbleState jstate;
-
 	if (prev_post_parse_analyze_hook)
-		prev_post_parse_analyze_hook(pstate, query);
-
-	/* Assert we didn't do this already */
-	Assert(query->queryId == UINT64CONST(0));
+		prev_post_parse_analyze_hook(pstate, query, jstate);
 
 	/* Safety check... */
 	if (!pgss || !pgss_hash || !pgss_enabled(exec_nested_level))
 		return;
 
 	/*
-	 * Utility statements get queryId zero.  We do this even in cases where
-	 * the statement contains an optimizable statement for which a queryId
-	 * could be derived (such as EXPLAIN or DECLARE CURSOR).  For such cases,
-	 * runtime control will first go through ProcessUtility and then the
-	 * executor, and we don't want the executor hooks to do anything, since we
-	 * are already measuring the statement's costs at the utility level.
+	 * Clear queryId for prepared statements related utility, as those will
+	 * inherit from the underlying statement's one (except DEALLOCATE which is
+	 * entirely untracked).
 	 */
 	if (query->utilityStmt)
 	{
-		query->queryId = UINT64CONST(0);
+		if (pgss_track_utility && !PGSS_HANDLED_UTILITY(query->utilityStmt))
+			query->queryId = UINT64CONST(0);
 		return;
 	}
 
-	/* Set up workspace for query jumbling */
-	jstate.jumble = (unsigned char *) palloc(JUMBLE_SIZE);
-	jstate.jumble_len = 0;
-	jstate.clocations_buf_size = 32;
-	jstate.clocations = (pgssLocationLen *)
-		palloc(jstate.clocations_buf_size * sizeof(pgssLocationLen));
-	jstate.clocations_count = 0;
-	jstate.highest_extern_param_id = 0;
-
-	/* Compute query ID and mark the Query node with it */
-	JumbleQuery(&jstate, query);
-	query->queryId =
-		DatumGetUInt64(hash_any_extended(jstate.jumble, jstate.jumble_len, 0));
-
 	/*
-	 * If we are unlucky enough to get a hash of zero, use 1 instead, to
-	 * prevent confusion with the utility-statement case.
+	 * If query jumbling were able to identify any ignorable constants, we
+	 * immediately create a hash table entry for the query, so that we can
+	 * record the normalized form of the query string.  If there were no such
+	 * constants, the normalized string would be the same as the query text
+	 * anyway, so there's no need for an early entry.
 	 */
-	if (query->queryId == UINT64CONST(0))
-		query->queryId = UINT64CONST(1);
-
-	/*
-	 * If we were able to identify any ignorable constants, we immediately
-	 * create a hash table entry for the query, so that we can record the
-	 * normalized form of the query string.  If there were no such constants,
-	 * the normalized string would be the same as the query text anyway, so
-	 * there's no need for an early entry.
-	 */
-	if (jstate.clocations_count > 0)
+	if (jstate && jstate->clocations_count > 0)
 		pgss_store(pstate->p_sourcetext,
 				   query->queryId,
 				   query->stmt_location,
@@ -917,7 +842,7 @@ pgss_post_parse_analyze(ParseState *pstate, Query *query)
 				   0,
 				   NULL,
 				   NULL,
-				   &jstate);
+				   jstate);
 }
 
 /*
@@ -1138,6 +1063,23 @@ pgss_ProcessUtility(PlannedStmt *pstmt, const char *queryString,
 					DestReceiver *dest, QueryCompletion *qc)
 {
 	Node	   *parsetree = pstmt->utilityStmt;
+	uint64		saved_queryId = pstmt->queryId;
+
+	/*
+	 * Force utility statements to get queryId zero.  We do this even in cases
+	 * where the statement contains an optimizable statement for which a
+	 * queryId could be derived (such as EXPLAIN or DECLARE CURSOR).  For such
+	 * cases, runtime control will first go through ProcessUtility and then the
+	 * executor, and we don't want the executor hooks to do anything, since we
+	 * are already measuring the statement's costs at the utility level.
+	 *
+	 * Note that this is only done if pg_stat_statements is enabled and
+	 * configured to track utility statements, in the unlikely possibility
+	 * that user configured another extension to handle utility statements
+	 * only.
+	 */
+	if (pgss_enabled(exec_nested_level) && pgss_track_utility)
+		pstmt->queryId = UINT64CONST(0);
 
 	/*
 	 * If it's an EXECUTE statement, we don't track it and don't increment the
@@ -1154,9 +1096,7 @@ pgss_ProcessUtility(PlannedStmt *pstmt, const char *queryString,
 	 * Likewise, we don't track execution of DEALLOCATE.
 	 */
 	if (pgss_track_utility && pgss_enabled(exec_nested_level) &&
-		!IsA(parsetree, ExecuteStmt) &&
-		!IsA(parsetree, PrepareStmt) &&
-		!IsA(parsetree, DeallocateStmt))
+		PGSS_HANDLED_UTILITY(parsetree))
 	{
 		instr_time	start;
 		instr_time	duration;
@@ -1211,7 +1151,7 @@ pgss_ProcessUtility(PlannedStmt *pstmt, const char *queryString,
 		WalUsageAccumDiff(&walusage, &pgWalUsage, &walusage_start);
 
 		pgss_store(queryString,
-				   0,			/* signal that it's a utility stmt */
+				   saved_queryId,
 				   pstmt->stmt_location,
 				   pstmt->stmt_len,
 				   PGSS_EXEC,
@@ -1235,22 +1175,11 @@ pgss_ProcessUtility(PlannedStmt *pstmt, const char *queryString,
 }
 
 /*
- * Given an arbitrarily long query string, produce a hash for the purposes of
- * identifying the query, without normalizing constants.  Used when hashing
- * utility statements.
- */
-static uint64
-pgss_hash_string(const char *str, int len)
-{
-	return DatumGetUInt64(hash_any_extended((const unsigned char *) str,
-											len, 0));
-}
-
-/*
  * Store some statistics for a statement.
  *
- * If queryId is 0 then this is a utility statement and we should compute
- * a suitable queryId internally.
+ * If queryId is 0 then this is a utility statement for which we couldn't
+ * compute a queryId during parse analysis, and we should compute a suitable
+ * queryId internally.
  *
  * If jstate is not NULL then we're trying to create an entry for which
  * we have no statistics as yet; we just want to record the normalized
@@ -1267,7 +1196,7 @@ pgss_store(const char *query, uint64 queryId,
 		   double total_time, uint64 rows,
 		   const BufferUsage *bufusage,
 		   const WalUsage *walusage,
-		   pgssJumbleState *jstate)
+		   JumbleState *jstate)
 {
 	pgssHashKey key;
 	pgssEntry  *entry;
@@ -1281,52 +1210,18 @@ pgss_store(const char *query, uint64 queryId,
 		return;
 
 	/*
-	 * Confine our attention to the relevant part of the string, if the query
-	 * is a portion of a multi-statement source string.
-	 *
-	 * First apply starting offset, unless it's -1 (unknown).
-	 */
-	if (query_location >= 0)
-	{
-		Assert(query_location <= strlen(query));
-		query += query_location;
-		/* Length of 0 (or -1) means "rest of string" */
-		if (query_len <= 0)
-			query_len = strlen(query);
-		else
-			Assert(query_len <= strlen(query));
-	}
-	else
-	{
-		/* If query location is unknown, distrust query_len as well */
-		query_location = 0;
-		query_len = strlen(query);
-	}
-
-	/*
-	 * Discard leading and trailing whitespace, too.  Use scanner_isspace()
-	 * not libc's isspace(), because we want to match the lexer's behavior.
-	 */
-	while (query_len > 0 && scanner_isspace(query[0]))
-		query++, query_location++, query_len--;
-	while (query_len > 0 && scanner_isspace(query[query_len - 1]))
-		query_len--;
-
-	/*
-	 * For utility statements, we just hash the query string to get an ID.
+	 * Nothing to do if compute_query_id isn't enabled and no other module
+	 * computed a query identifier.
 	 */
 	if (queryId == UINT64CONST(0))
-	{
-		queryId = pgss_hash_string(query, query_len);
+		return;
 
-		/*
-		 * If we are unlucky enough to get a hash of zero(invalid), use
-		 * queryID as 2 instead, queryID 1 is already in use for normal
-		 * statements.
-		 */
-		if (queryId == UINT64CONST(0))
-			queryId = UINT64CONST(2);
-	}
+	/*
+	 * Confine our attention to the relevant part of the string, if the query
+	 * is a portion of a multi-statement source string, and update query
+	 * location and length if needed.
+	 */
+	query = CleanQuerytext(query, &query_location, &query_len);
 
 	/* Set up key for hashtable search */
 	key.userid = GetUserId();
@@ -1587,7 +1482,7 @@ pg_stat_statements_internal(FunctionCallInfo fcinfo,
 	pgssEntry  *entry;
 
 	/* Superusers or members of pg_read_all_stats members are allowed */
-	is_allowed_role = is_member_of_role(GetUserId(), DEFAULT_ROLE_READ_ALL_STATS);
+	is_allowed_role = is_member_of_role(GetUserId(), ROLE_PG_READ_ALL_STATS);
 
 	/* hash table must exist already */
 	if (!pgss || !pgss_hash)
@@ -2628,731 +2523,6 @@ release_lock:
 }
 
 /*
- * AppendJumble: Append a value that is substantive in a given query to
- * the current jumble.
- */
-static void
-AppendJumble(pgssJumbleState *jstate, const unsigned char *item, Size size)
-{
-	unsigned char *jumble = jstate->jumble;
-	Size		jumble_len = jstate->jumble_len;
-
-	/*
-	 * Whenever the jumble buffer is full, we hash the current contents and
-	 * reset the buffer to contain just that hash value, thus relying on the
-	 * hash to summarize everything so far.
-	 */
-	while (size > 0)
-	{
-		Size		part_size;
-
-		if (jumble_len >= JUMBLE_SIZE)
-		{
-			uint64		start_hash;
-
-			start_hash = DatumGetUInt64(hash_any_extended(jumble,
-														  JUMBLE_SIZE, 0));
-			memcpy(jumble, &start_hash, sizeof(start_hash));
-			jumble_len = sizeof(start_hash);
-		}
-		part_size = Min(size, JUMBLE_SIZE - jumble_len);
-		memcpy(jumble + jumble_len, item, part_size);
-		jumble_len += part_size;
-		item += part_size;
-		size -= part_size;
-	}
-	jstate->jumble_len = jumble_len;
-}
-
-/*
- * Wrappers around AppendJumble to encapsulate details of serialization
- * of individual local variable elements.
- */
-#define APP_JUMB(item) \
-	AppendJumble(jstate, (const unsigned char *) &(item), sizeof(item))
-#define APP_JUMB_STRING(str) \
-	AppendJumble(jstate, (const unsigned char *) (str), strlen(str) + 1)
-
-/*
- * JumbleQuery: Selectively serialize the query tree, appending significant
- * data to the "query jumble" while ignoring nonsignificant data.
- *
- * Rule of thumb for what to include is that we should ignore anything not
- * semantically significant (such as alias names) as well as anything that can
- * be deduced from child nodes (else we'd just be double-hashing that piece
- * of information).
- */
-static void
-JumbleQuery(pgssJumbleState *jstate, Query *query)
-{
-	Assert(IsA(query, Query));
-	Assert(query->utilityStmt == NULL);
-
-	APP_JUMB(query->commandType);
-	/* resultRelation is usually predictable from commandType */
-	JumbleExpr(jstate, (Node *) query->cteList);
-	JumbleRangeTable(jstate, query->rtable);
-	JumbleExpr(jstate, (Node *) query->jointree);
-	JumbleExpr(jstate, (Node *) query->targetList);
-	JumbleExpr(jstate, (Node *) query->onConflict);
-	JumbleExpr(jstate, (Node *) query->returningList);
-	JumbleExpr(jstate, (Node *) query->groupClause);
-	JumbleExpr(jstate, (Node *) query->groupingSets);
-	JumbleExpr(jstate, query->havingQual);
-	JumbleExpr(jstate, (Node *) query->windowClause);
-	JumbleExpr(jstate, (Node *) query->distinctClause);
-	JumbleExpr(jstate, (Node *) query->sortClause);
-	JumbleExpr(jstate, query->limitOffset);
-	JumbleExpr(jstate, query->limitCount);
-	JumbleRowMarks(jstate, query->rowMarks);
-	JumbleExpr(jstate, query->setOperations);
-}
-
-/*
- * Jumble a range table
- */
-static void
-JumbleRangeTable(pgssJumbleState *jstate, List *rtable)
-{
-	ListCell   *lc;
-
-	foreach(lc, rtable)
-	{
-		RangeTblEntry *rte = lfirst_node(RangeTblEntry, lc);
-
-		APP_JUMB(rte->rtekind);
-		switch (rte->rtekind)
-		{
-			case RTE_RELATION:
-				APP_JUMB(rte->relid);
-				JumbleExpr(jstate, (Node *) rte->tablesample);
-				break;
-			case RTE_SUBQUERY:
-				JumbleQuery(jstate, rte->subquery);
-				break;
-			case RTE_JOIN:
-				APP_JUMB(rte->jointype);
-				break;
-			case RTE_FUNCTION:
-				JumbleExpr(jstate, (Node *) rte->functions);
-				break;
-			case RTE_TABLEFUNC:
-				JumbleExpr(jstate, (Node *) rte->tablefunc);
-				break;
-			case RTE_VALUES:
-				JumbleExpr(jstate, (Node *) rte->values_lists);
-				break;
-			case RTE_CTE:
-
-				/*
-				 * Depending on the CTE name here isn't ideal, but it's the
-				 * only info we have to identify the referenced WITH item.
-				 */
-				APP_JUMB_STRING(rte->ctename);
-				APP_JUMB(rte->ctelevelsup);
-				break;
-			case RTE_NAMEDTUPLESTORE:
-				APP_JUMB_STRING(rte->enrname);
-				break;
-			case RTE_RESULT:
-				break;
-			default:
-				elog(ERROR, "unrecognized RTE kind: %d", (int) rte->rtekind);
-				break;
-		}
-	}
-}
-
-/*
- * Jumble a rowMarks list
- */
-static void
-JumbleRowMarks(pgssJumbleState *jstate, List *rowMarks)
-{
-	ListCell   *lc;
-
-	foreach(lc, rowMarks)
-	{
-		RowMarkClause *rowmark = lfirst_node(RowMarkClause, lc);
-
-		if (!rowmark->pushedDown)
-		{
-			APP_JUMB(rowmark->rti);
-			APP_JUMB(rowmark->strength);
-			APP_JUMB(rowmark->waitPolicy);
-		}
-	}
-}
-
-/*
- * Jumble an expression tree
- *
- * In general this function should handle all the same node types that
- * expression_tree_walker() does, and therefore it's coded to be as parallel
- * to that function as possible.  However, since we are only invoked on
- * queries immediately post-parse-analysis, we need not handle node types
- * that only appear in planning.
- *
- * Note: the reason we don't simply use expression_tree_walker() is that the
- * point of that function is to support tree walkers that don't care about
- * most tree node types, but here we care about all types.  We should complain
- * about any unrecognized node type.
- */
-static void
-JumbleExpr(pgssJumbleState *jstate, Node *node)
-{
-	ListCell   *temp;
-
-	if (node == NULL)
-		return;
-
-	/* Guard against stack overflow due to overly complex expressions */
-	check_stack_depth();
-
-	/*
-	 * We always emit the node's NodeTag, then any additional fields that are
-	 * considered significant, and then we recurse to any child nodes.
-	 */
-	APP_JUMB(node->type);
-
-	switch (nodeTag(node))
-	{
-		case T_Var:
-			{
-				Var		   *var = (Var *) node;
-
-				APP_JUMB(var->varno);
-				APP_JUMB(var->varattno);
-				APP_JUMB(var->varlevelsup);
-			}
-			break;
-		case T_Const:
-			{
-				Const	   *c = (Const *) node;
-
-				/* We jumble only the constant's type, not its value */
-				APP_JUMB(c->consttype);
-				/* Also, record its parse location for query normalization */
-				RecordConstLocation(jstate, c->location);
-			}
-			break;
-		case T_Param:
-			{
-				Param	   *p = (Param *) node;
-
-				APP_JUMB(p->paramkind);
-				APP_JUMB(p->paramid);
-				APP_JUMB(p->paramtype);
-				/* Also, track the highest external Param id */
-				if (p->paramkind == PARAM_EXTERN &&
-					p->paramid > jstate->highest_extern_param_id)
-					jstate->highest_extern_param_id = p->paramid;
-			}
-			break;
-		case T_Aggref:
-			{
-				Aggref	   *expr = (Aggref *) node;
-
-				APP_JUMB(expr->aggfnoid);
-				JumbleExpr(jstate, (Node *) expr->aggdirectargs);
-				JumbleExpr(jstate, (Node *) expr->args);
-				JumbleExpr(jstate, (Node *) expr->aggorder);
-				JumbleExpr(jstate, (Node *) expr->aggdistinct);
-				JumbleExpr(jstate, (Node *) expr->aggfilter);
-			}
-			break;
-		case T_GroupingFunc:
-			{
-				GroupingFunc *grpnode = (GroupingFunc *) node;
-
-				JumbleExpr(jstate, (Node *) grpnode->refs);
-			}
-			break;
-		case T_WindowFunc:
-			{
-				WindowFunc *expr = (WindowFunc *) node;
-
-				APP_JUMB(expr->winfnoid);
-				APP_JUMB(expr->winref);
-				JumbleExpr(jstate, (Node *) expr->args);
-				JumbleExpr(jstate, (Node *) expr->aggfilter);
-			}
-			break;
-		case T_SubscriptingRef:
-			{
-				SubscriptingRef *sbsref = (SubscriptingRef *) node;
-
-				JumbleExpr(jstate, (Node *) sbsref->refupperindexpr);
-				JumbleExpr(jstate, (Node *) sbsref->reflowerindexpr);
-				JumbleExpr(jstate, (Node *) sbsref->refexpr);
-				JumbleExpr(jstate, (Node *) sbsref->refassgnexpr);
-			}
-			break;
-		case T_FuncExpr:
-			{
-				FuncExpr   *expr = (FuncExpr *) node;
-
-				APP_JUMB(expr->funcid);
-				JumbleExpr(jstate, (Node *) expr->args);
-			}
-			break;
-		case T_NamedArgExpr:
-			{
-				NamedArgExpr *nae = (NamedArgExpr *) node;
-
-				APP_JUMB(nae->argnumber);
-				JumbleExpr(jstate, (Node *) nae->arg);
-			}
-			break;
-		case T_OpExpr:
-		case T_DistinctExpr:	/* struct-equivalent to OpExpr */
-		case T_NullIfExpr:		/* struct-equivalent to OpExpr */
-			{
-				OpExpr	   *expr = (OpExpr *) node;
-
-				APP_JUMB(expr->opno);
-				JumbleExpr(jstate, (Node *) expr->args);
-			}
-			break;
-		case T_ScalarArrayOpExpr:
-			{
-				ScalarArrayOpExpr *expr = (ScalarArrayOpExpr *) node;
-
-				APP_JUMB(expr->opno);
-				APP_JUMB(expr->useOr);
-				JumbleExpr(jstate, (Node *) expr->args);
-			}
-			break;
-		case T_BoolExpr:
-			{
-				BoolExpr   *expr = (BoolExpr *) node;
-
-				APP_JUMB(expr->boolop);
-				JumbleExpr(jstate, (Node *) expr->args);
-			}
-			break;
-		case T_SubLink:
-			{
-				SubLink    *sublink = (SubLink *) node;
-
-				APP_JUMB(sublink->subLinkType);
-				APP_JUMB(sublink->subLinkId);
-				JumbleExpr(jstate, (Node *) sublink->testexpr);
-				JumbleQuery(jstate, castNode(Query, sublink->subselect));
-			}
-			break;
-		case T_FieldSelect:
-			{
-				FieldSelect *fs = (FieldSelect *) node;
-
-				APP_JUMB(fs->fieldnum);
-				JumbleExpr(jstate, (Node *) fs->arg);
-			}
-			break;
-		case T_FieldStore:
-			{
-				FieldStore *fstore = (FieldStore *) node;
-
-				JumbleExpr(jstate, (Node *) fstore->arg);
-				JumbleExpr(jstate, (Node *) fstore->newvals);
-			}
-			break;
-		case T_RelabelType:
-			{
-				RelabelType *rt = (RelabelType *) node;
-
-				APP_JUMB(rt->resulttype);
-				JumbleExpr(jstate, (Node *) rt->arg);
-			}
-			break;
-		case T_CoerceViaIO:
-			{
-				CoerceViaIO *cio = (CoerceViaIO *) node;
-
-				APP_JUMB(cio->resulttype);
-				JumbleExpr(jstate, (Node *) cio->arg);
-			}
-			break;
-		case T_ArrayCoerceExpr:
-			{
-				ArrayCoerceExpr *acexpr = (ArrayCoerceExpr *) node;
-
-				APP_JUMB(acexpr->resulttype);
-				JumbleExpr(jstate, (Node *) acexpr->arg);
-				JumbleExpr(jstate, (Node *) acexpr->elemexpr);
-			}
-			break;
-		case T_ConvertRowtypeExpr:
-			{
-				ConvertRowtypeExpr *crexpr = (ConvertRowtypeExpr *) node;
-
-				APP_JUMB(crexpr->resulttype);
-				JumbleExpr(jstate, (Node *) crexpr->arg);
-			}
-			break;
-		case T_CollateExpr:
-			{
-				CollateExpr *ce = (CollateExpr *) node;
-
-				APP_JUMB(ce->collOid);
-				JumbleExpr(jstate, (Node *) ce->arg);
-			}
-			break;
-		case T_CaseExpr:
-			{
-				CaseExpr   *caseexpr = (CaseExpr *) node;
-
-				JumbleExpr(jstate, (Node *) caseexpr->arg);
-				foreach(temp, caseexpr->args)
-				{
-					CaseWhen   *when = lfirst_node(CaseWhen, temp);
-
-					JumbleExpr(jstate, (Node *) when->expr);
-					JumbleExpr(jstate, (Node *) when->result);
-				}
-				JumbleExpr(jstate, (Node *) caseexpr->defresult);
-			}
-			break;
-		case T_CaseTestExpr:
-			{
-				CaseTestExpr *ct = (CaseTestExpr *) node;
-
-				APP_JUMB(ct->typeId);
-			}
-			break;
-		case T_ArrayExpr:
-			JumbleExpr(jstate, (Node *) ((ArrayExpr *) node)->elements);
-			break;
-		case T_RowExpr:
-			JumbleExpr(jstate, (Node *) ((RowExpr *) node)->args);
-			break;
-		case T_RowCompareExpr:
-			{
-				RowCompareExpr *rcexpr = (RowCompareExpr *) node;
-
-				APP_JUMB(rcexpr->rctype);
-				JumbleExpr(jstate, (Node *) rcexpr->largs);
-				JumbleExpr(jstate, (Node *) rcexpr->rargs);
-			}
-			break;
-		case T_CoalesceExpr:
-			JumbleExpr(jstate, (Node *) ((CoalesceExpr *) node)->args);
-			break;
-		case T_MinMaxExpr:
-			{
-				MinMaxExpr *mmexpr = (MinMaxExpr *) node;
-
-				APP_JUMB(mmexpr->op);
-				JumbleExpr(jstate, (Node *) mmexpr->args);
-			}
-			break;
-		case T_SQLValueFunction:
-			{
-				SQLValueFunction *svf = (SQLValueFunction *) node;
-
-				APP_JUMB(svf->op);
-				/* type is fully determined by op */
-				APP_JUMB(svf->typmod);
-			}
-			break;
-		case T_XmlExpr:
-			{
-				XmlExpr    *xexpr = (XmlExpr *) node;
-
-				APP_JUMB(xexpr->op);
-				JumbleExpr(jstate, (Node *) xexpr->named_args);
-				JumbleExpr(jstate, (Node *) xexpr->args);
-			}
-			break;
-		case T_NullTest:
-			{
-				NullTest   *nt = (NullTest *) node;
-
-				APP_JUMB(nt->nulltesttype);
-				JumbleExpr(jstate, (Node *) nt->arg);
-			}
-			break;
-		case T_BooleanTest:
-			{
-				BooleanTest *bt = (BooleanTest *) node;
-
-				APP_JUMB(bt->booltesttype);
-				JumbleExpr(jstate, (Node *) bt->arg);
-			}
-			break;
-		case T_CoerceToDomain:
-			{
-				CoerceToDomain *cd = (CoerceToDomain *) node;
-
-				APP_JUMB(cd->resulttype);
-				JumbleExpr(jstate, (Node *) cd->arg);
-			}
-			break;
-		case T_CoerceToDomainValue:
-			{
-				CoerceToDomainValue *cdv = (CoerceToDomainValue *) node;
-
-				APP_JUMB(cdv->typeId);
-			}
-			break;
-		case T_SetToDefault:
-			{
-				SetToDefault *sd = (SetToDefault *) node;
-
-				APP_JUMB(sd->typeId);
-			}
-			break;
-		case T_CurrentOfExpr:
-			{
-				CurrentOfExpr *ce = (CurrentOfExpr *) node;
-
-				APP_JUMB(ce->cvarno);
-				if (ce->cursor_name)
-					APP_JUMB_STRING(ce->cursor_name);
-				APP_JUMB(ce->cursor_param);
-			}
-			break;
-		case T_NextValueExpr:
-			{
-				NextValueExpr *nve = (NextValueExpr *) node;
-
-				APP_JUMB(nve->seqid);
-				APP_JUMB(nve->typeId);
-			}
-			break;
-		case T_InferenceElem:
-			{
-				InferenceElem *ie = (InferenceElem *) node;
-
-				APP_JUMB(ie->infercollid);
-				APP_JUMB(ie->inferopclass);
-				JumbleExpr(jstate, ie->expr);
-			}
-			break;
-		case T_TargetEntry:
-			{
-				TargetEntry *tle = (TargetEntry *) node;
-
-				APP_JUMB(tle->resno);
-				APP_JUMB(tle->ressortgroupref);
-				JumbleExpr(jstate, (Node *) tle->expr);
-			}
-			break;
-		case T_RangeTblRef:
-			{
-				RangeTblRef *rtr = (RangeTblRef *) node;
-
-				APP_JUMB(rtr->rtindex);
-			}
-			break;
-		case T_JoinExpr:
-			{
-				JoinExpr   *join = (JoinExpr *) node;
-
-				APP_JUMB(join->jointype);
-				APP_JUMB(join->isNatural);
-				APP_JUMB(join->rtindex);
-				JumbleExpr(jstate, join->larg);
-				JumbleExpr(jstate, join->rarg);
-				JumbleExpr(jstate, join->quals);
-			}
-			break;
-		case T_FromExpr:
-			{
-				FromExpr   *from = (FromExpr *) node;
-
-				JumbleExpr(jstate, (Node *) from->fromlist);
-				JumbleExpr(jstate, from->quals);
-			}
-			break;
-		case T_OnConflictExpr:
-			{
-				OnConflictExpr *conf = (OnConflictExpr *) node;
-
-				APP_JUMB(conf->action);
-				JumbleExpr(jstate, (Node *) conf->arbiterElems);
-				JumbleExpr(jstate, conf->arbiterWhere);
-				JumbleExpr(jstate, (Node *) conf->onConflictSet);
-				JumbleExpr(jstate, conf->onConflictWhere);
-				APP_JUMB(conf->constraint);
-				APP_JUMB(conf->exclRelIndex);
-				JumbleExpr(jstate, (Node *) conf->exclRelTlist);
-			}
-			break;
-		case T_List:
-			foreach(temp, (List *) node)
-			{
-				JumbleExpr(jstate, (Node *) lfirst(temp));
-			}
-			break;
-		case T_IntList:
-			foreach(temp, (List *) node)
-			{
-				APP_JUMB(lfirst_int(temp));
-			}
-			break;
-		case T_SortGroupClause:
-			{
-				SortGroupClause *sgc = (SortGroupClause *) node;
-
-				APP_JUMB(sgc->tleSortGroupRef);
-				APP_JUMB(sgc->eqop);
-				APP_JUMB(sgc->sortop);
-				APP_JUMB(sgc->nulls_first);
-			}
-			break;
-		case T_GroupingSet:
-			{
-				GroupingSet *gsnode = (GroupingSet *) node;
-
-				JumbleExpr(jstate, (Node *) gsnode->content);
-			}
-			break;
-		case T_WindowClause:
-			{
-				WindowClause *wc = (WindowClause *) node;
-
-				APP_JUMB(wc->winref);
-				APP_JUMB(wc->frameOptions);
-				JumbleExpr(jstate, (Node *) wc->partitionClause);
-				JumbleExpr(jstate, (Node *) wc->orderClause);
-				JumbleExpr(jstate, wc->startOffset);
-				JumbleExpr(jstate, wc->endOffset);
-			}
-			break;
-		case T_CommonTableExpr:
-			{
-				CommonTableExpr *cte = (CommonTableExpr *) node;
-
-				/* we store the string name because RTE_CTE RTEs need it */
-				APP_JUMB_STRING(cte->ctename);
-				APP_JUMB(cte->ctematerialized);
-				JumbleQuery(jstate, castNode(Query, cte->ctequery));
-			}
-			break;
-		case T_SetOperationStmt:
-			{
-				SetOperationStmt *setop = (SetOperationStmt *) node;
-
-				APP_JUMB(setop->op);
-				APP_JUMB(setop->all);
-				JumbleExpr(jstate, setop->larg);
-				JumbleExpr(jstate, setop->rarg);
-			}
-			break;
-		case T_RangeTblFunction:
-			{
-				RangeTblFunction *rtfunc = (RangeTblFunction *) node;
-
-				JumbleExpr(jstate, rtfunc->funcexpr);
-			}
-			break;
-		case T_TableFunc:
-			{
-				TableFunc  *tablefunc = (TableFunc *) node;
-
-				JumbleExpr(jstate, tablefunc->docexpr);
-				JumbleExpr(jstate, tablefunc->rowexpr);
-				JumbleExpr(jstate, (Node *) tablefunc->colexprs);
-			}
-			break;
-		case T_TableSampleClause:
-			{
-				TableSampleClause *tsc = (TableSampleClause *) node;
-
-				APP_JUMB(tsc->tsmhandler);
-				JumbleExpr(jstate, (Node *) tsc->args);
-				JumbleExpr(jstate, (Node *) tsc->repeatable);
-			}
-			break;
-		case T_CypherMapExpr:
-			{
-				CypherMapExpr *m = (CypherMapExpr *) node;
-
-				JumbleExpr(jstate, (Node *) m->keyvals);
-			}
-			break;
-		case T_CypherListExpr:
-			{
-				CypherListExpr *cl = (CypherListExpr *) node;
-
-				JumbleExpr(jstate, (Node *) cl->elems);
-			}
-			break;
-		case T_CypherListCompExpr:
-			{
-				CypherListCompExpr *clc = (CypherListCompExpr *) node;
-
-				JumbleExpr(jstate, (Node *) clc->list);
-				JumbleExpr(jstate, (Node *) clc->cond);
-				JumbleExpr(jstate, (Node *) clc->elem);
-			}
-			break;
-		case T_CypherListCompVar:
-			{
-				CypherListCompVar *clv = (CypherListCompVar *) node;
-
-				APP_JUMB_STRING(clv->varname);
-			}
-			break;
-		case T_CypherAccessExpr:
-			{
-				CypherAccessExpr *a = (CypherAccessExpr *) node;
-
-				JumbleExpr(jstate, (Node *) a->arg);
-				foreach(temp, a->path)
-				{
-					Node	   *elem = lfirst(temp);
-
-					if (IsA(elem, CypherIndices))
-					{
-						CypherIndices *cind = (CypherIndices *) elem;
-
-						JumbleExpr(jstate, (Node *) cind->lidx);
-						JumbleExpr(jstate, (Node *) cind->uidx);
-					}
-					else
-					{
-						JumbleExpr(jstate, elem);
-					}
-				}
-			}
-			break;
-		default:
-			/* Only a warning, since we can stumble along anyway */
-			elog(WARNING, "unrecognized node type: %d",
-				 (int) nodeTag(node));
-			break;
-	}
-}
-
-/*
- * Record location of constant within query string of query tree
- * that is currently being walked.
- */
-static void
-RecordConstLocation(pgssJumbleState *jstate, int location)
-{
-	/* -1 indicates unknown or undefined location */
-	if (location >= 0)
-	{
-		/* enlarge array if needed */
-		if (jstate->clocations_count >= jstate->clocations_buf_size)
-		{
-			jstate->clocations_buf_size *= 2;
-			jstate->clocations = (pgssLocationLen *)
-				repalloc(jstate->clocations,
-						 jstate->clocations_buf_size *
-						 sizeof(pgssLocationLen));
-		}
-		jstate->clocations[jstate->clocations_count].location = location;
-		/* initialize lengths to -1 to simplify fill_in_constant_lengths */
-		jstate->clocations[jstate->clocations_count].length = -1;
-		jstate->clocations_count++;
-	}
-}
-
-/*
  * Generate a normalized version of the query string that will be used to
  * represent all similar queries.
  *
@@ -3372,7 +2542,7 @@ RecordConstLocation(pgssJumbleState *jstate, int location)
  * Returns a palloc'd string.
  */
 static char *
-generate_normalized_query(pgssJumbleState *jstate, const char *query,
+generate_normalized_query(JumbleState *jstate, const char *query,
 						  int query_loc, int *query_len_p)
 {
 	char	   *norm_query;
@@ -3479,10 +2649,10 @@ generate_normalized_query(pgssJumbleState *jstate, const char *query,
  * reason for a constant to start with a '-'.
  */
 static void
-fill_in_constant_lengths(pgssJumbleState *jstate, const char *query,
+fill_in_constant_lengths(JumbleState *jstate, const char *query,
 						 int query_loc)
 {
-	pgssLocationLen *locs;
+	LocationLen *locs;
 	core_yyscan_t yyscanner;
 	core_yy_extra_type yyextra;
 	core_YYSTYPE yylval;
@@ -3496,7 +2666,7 @@ fill_in_constant_lengths(pgssJumbleState *jstate, const char *query,
 	 */
 	if (jstate->clocations_count > 1)
 		qsort(jstate->clocations, jstate->clocations_count,
-			  sizeof(pgssLocationLen), comp_location);
+			  sizeof(LocationLen), comp_location);
 	locs = jstate->clocations;
 
 	/* initialize the flex scanner --- should match raw_parser() */
@@ -3576,13 +2746,13 @@ fill_in_constant_lengths(pgssJumbleState *jstate, const char *query,
 }
 
 /*
- * comp_location: comparator for qsorting pgssLocationLen structs by location
+ * comp_location: comparator for qsorting LocationLen structs by location
  */
 static int
 comp_location(const void *a, const void *b)
 {
-	int			l = ((const pgssLocationLen *) a)->location;
-	int			r = ((const pgssLocationLen *) b)->location;
+	int			l = ((const LocationLen *) a)->location;
+	int			r = ((const LocationLen *) b)->location;
 
 	if (l < r)
 		return -1;

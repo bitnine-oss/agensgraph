@@ -186,7 +186,7 @@ extern int	heap_page_prune(Relation relation, Buffer buffer,
 							struct GlobalVisState *vistest,
 							TransactionId old_snap_xmin,
 							TimestampTz old_snap_ts_ts,
-							bool report_stats, TransactionId *latestRemovedXid,
+							bool report_stats,
 							OffsetNumber *off_loc);
 extern void heap_page_prune_execute(Buffer buffer,
 									OffsetNumber *redirected, int nredirected,
@@ -196,7 +196,7 @@ extern void heap_get_root_tuples(Page page, OffsetNumber *root_offsets);
 
 /* in heap/vacuumlazy.c */
 struct VacuumParams;
-extern void heap_vacuum_rel(Relation onerel,
+extern void heap_vacuum_rel(Relation rel,
 							struct VacuumParams *params, BufferAccessStrategy bstrategy);
 extern void parallel_vacuum_main(dsm_segment *seg, shm_toc *toc);
 

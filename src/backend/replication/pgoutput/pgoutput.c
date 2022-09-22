@@ -45,6 +45,10 @@ static void pgoutput_change(LogicalDecodingContext *ctx,
 static void pgoutput_truncate(LogicalDecodingContext *ctx,
 							  ReorderBufferTXN *txn, int nrelations, Relation relations[],
 							  ReorderBufferChange *change);
+static void pgoutput_message(LogicalDecodingContext *ctx,
+							 ReorderBufferTXN *txn, XLogRecPtr message_lsn,
+							 bool transactional, const char *prefix,
+							 Size sz, const char *message);
 static bool pgoutput_origin_filter(LogicalDecodingContext *ctx,
 								   RepOriginId origin_id);
 static void pgoutput_stream_start(struct LogicalDecodingContext *ctx,
@@ -142,6 +146,7 @@ _PG_output_plugin_init(OutputPluginCallbacks *cb)
 	cb->begin_cb = pgoutput_begin_txn;
 	cb->change_cb = pgoutput_change;
 	cb->truncate_cb = pgoutput_truncate;
+	cb->message_cb = pgoutput_message;
 	cb->commit_cb = pgoutput_commit_txn;
 	cb->filter_by_origin_cb = pgoutput_origin_filter;
 	cb->shutdown_cb = pgoutput_shutdown;
@@ -152,21 +157,23 @@ _PG_output_plugin_init(OutputPluginCallbacks *cb)
 	cb->stream_abort_cb = pgoutput_stream_abort;
 	cb->stream_commit_cb = pgoutput_stream_commit;
 	cb->stream_change_cb = pgoutput_change;
+	cb->stream_message_cb = pgoutput_message;
 	cb->stream_truncate_cb = pgoutput_truncate;
 }
 
 static void
-parse_output_parameters(List *options, uint32 *protocol_version,
-						List **publication_names, bool *binary,
-						bool *enable_streaming)
+parse_output_parameters(List *options, PGOutputData *data)
 {
 	ListCell   *lc;
 	bool		protocol_version_given = false;
 	bool		publication_names_given = false;
 	bool		binary_option_given = false;
+	bool		messages_option_given = false;
 	bool		streaming_given = false;
 
-	*binary = false;
+	data->binary = false;
+	data->streaming = false;
+	data->messages = false;
 
 	foreach(lc, options)
 	{
@@ -196,7 +203,7 @@ parse_output_parameters(List *options, uint32 *protocol_version,
 						 errmsg("proto_version \"%s\" out of range",
 								strVal(defel->arg))));
 
-			*protocol_version = (uint32) parsed;
+			data->protocol_version = (uint32) parsed;
 		}
 		else if (strcmp(defel->defname, "publication_names") == 0)
 		{
@@ -207,7 +214,7 @@ parse_output_parameters(List *options, uint32 *protocol_version,
 			publication_names_given = true;
 
 			if (!SplitIdentifierString(strVal(defel->arg), ',',
-									   publication_names))
+									   &data->publication_names))
 				ereport(ERROR,
 						(errcode(ERRCODE_INVALID_NAME),
 						 errmsg("invalid publication_names syntax")));
@@ -220,7 +227,17 @@ parse_output_parameters(List *options, uint32 *protocol_version,
 						 errmsg("conflicting or redundant options")));
 			binary_option_given = true;
 
-			*binary = defGetBoolean(defel);
+			data->binary = defGetBoolean(defel);
+		}
+		else if (strcmp(defel->defname, "messages") == 0)
+		{
+			if (messages_option_given)
+				ereport(ERROR,
+						(errcode(ERRCODE_SYNTAX_ERROR),
+						 errmsg("conflicting or redundant options")));
+			messages_option_given = true;
+
+			data->messages = defGetBoolean(defel);
 		}
 		else if (strcmp(defel->defname, "streaming") == 0)
 		{
@@ -230,7 +247,7 @@ parse_output_parameters(List *options, uint32 *protocol_version,
 						 errmsg("conflicting or redundant options")));
 			streaming_given = true;
 
-			*enable_streaming = defGetBoolean(defel);
+			data->streaming = defGetBoolean(defel);
 		}
 		else
 			elog(ERROR, "unrecognized pgoutput option: %s", defel->defname);
@@ -244,7 +261,6 @@ static void
 pgoutput_startup(LogicalDecodingContext *ctx, OutputPluginOptions *opt,
 				 bool is_init)
 {
-	bool		enable_streaming = false;
 	PGOutputData *data = palloc0(sizeof(PGOutputData));
 
 	/* Create our memory context for private allocations. */
@@ -265,11 +281,7 @@ pgoutput_startup(LogicalDecodingContext *ctx, OutputPluginOptions *opt,
 	if (!is_init)
 	{
 		/* Parse the params and ERROR if we see any we don't recognize */
-		parse_output_parameters(ctx->output_plugin_options,
-								&data->protocol_version,
-								&data->publication_names,
-								&data->binary,
-								&enable_streaming);
+		parse_output_parameters(ctx->output_plugin_options, data);
 
 		/* Check if we support requested protocol */
 		if (data->protocol_version > LOGICALREP_PROTO_MAX_VERSION_NUM)
@@ -295,7 +307,7 @@ pgoutput_startup(LogicalDecodingContext *ctx, OutputPluginOptions *opt,
 		 * we only allow it with sufficient version of the protocol, and when
 		 * the output plugin supports it.
 		 */
-		if (!enable_streaming)
+		if (!data->streaming)
 			ctx->streaming = false;
 		else if (data->protocol_version < LOGICALREP_PROTO_STREAM_VERSION_NUM)
 			ereport(ERROR,
@@ -693,6 +705,35 @@ pgoutput_truncate(LogicalDecodingContext *ctx, ReorderBufferTXN *txn,
 
 	MemoryContextSwitchTo(old);
 	MemoryContextReset(data->context);
+}
+
+static void
+pgoutput_message(LogicalDecodingContext *ctx, ReorderBufferTXN *txn,
+				 XLogRecPtr message_lsn, bool transactional, const char *prefix, Size sz,
+				 const char *message)
+{
+	PGOutputData *data = (PGOutputData *) ctx->output_plugin_private;
+	TransactionId xid = InvalidTransactionId;
+
+	if (!data->messages)
+		return;
+
+	/*
+	 * Remember the xid for the message in streaming mode. See
+	 * pgoutput_change.
+	 */
+	if (in_streaming)
+		xid = txn->xid;
+
+	OutputPluginPrepareWrite(ctx, true);
+	logicalrep_write_message(ctx->out,
+							 xid,
+							 message_lsn,
+							 transactional,
+							 prefix,
+							 sz,
+							 message);
+	OutputPluginWrite(ctx, true);
 }
 
 /*

@@ -1583,7 +1583,7 @@ apply_handle_tuple_routing(ResultRelInfo *relinfo,
 	mtstate->ps.state = estate;
 	mtstate->operation = operation;
 	mtstate->resultRelInfo = relinfo;
-	proute = ExecSetupPartitionTupleRouting(estate, mtstate, parentrel);
+	proute = ExecSetupPartitionTupleRouting(estate, parentrel);
 
 	/*
 	 * Find the partition to which the "search tuple" belongs.
@@ -1937,6 +1937,15 @@ apply_dispatch(StringInfo s)
 
 		case LOGICAL_REP_MSG_ORIGIN:
 			apply_handle_origin(s);
+			return;
+
+		case LOGICAL_REP_MSG_MESSAGE:
+
+			/*
+			 * Logical replication does not use generic logical messages yet.
+			 * Although, it could be used by other applications that use this
+			 * output plugin.
+			 */
 			return;
 
 		case LOGICAL_REP_MSG_STREAM_START:

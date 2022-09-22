@@ -203,7 +203,7 @@ typedef struct ProjectSet
 
 /* ----------------
  *	 ModifyTable node -
- *		Apply rows produced by subplan(s) to result table(s),
+ *		Apply rows produced by outer plan to result table(s),
  *		by inserting, updating, or deleting.
  *
  * If the originally named target table is a partitioned table, both
@@ -213,7 +213,7 @@ typedef struct ProjectSet
  * EXPLAIN should claim is the INSERT/UPDATE/DELETE target.
  *
  * Note that rowMarks and epqParam are presumed to be valid for all the
- * subplan(s); they can't contain any info that varies across subplans.
+ * table(s); they can't contain any info that varies across tables.
  * ----------------
  */
 typedef struct ModifyTable
@@ -223,9 +223,9 @@ typedef struct ModifyTable
 	bool		canSetTag;		/* do we set the command tag/es_processed? */
 	Index		nominalRelation;	/* Parent RT index for use of EXPLAIN */
 	Index		rootRelation;	/* Root RT index, if target is partitioned */
-	bool		partColsUpdated;	/* some part key in hierarchy updated */
+	bool		partColsUpdated;	/* some part key in hierarchy updated? */
 	List	   *resultRelations;	/* integer list of RT indexes */
-	List	   *plans;			/* plan(s) producing source data */
+	List	   *updateColnosLists;	/* per-target-table update_colnos lists */
 	List	   *withCheckOptionLists;	/* per-target-table WCO lists */
 	List	   *returningLists; /* per-target-table RETURNING tlists */
 	List	   *fdwPrivLists;	/* per-target-table FDW private data lists */
@@ -787,6 +787,27 @@ typedef struct Material
 {
 	Plan		plan;
 } Material;
+
+/* ----------------
+ *		result cache node
+ * ----------------
+ */
+typedef struct ResultCache
+{
+	Plan		plan;
+
+	int			numKeys;		/* size of the two arrays below */
+
+	Oid		   *hashOperators;	/* hash operators for each key */
+	Oid		   *collations;		/* cache keys */
+	List	   *param_exprs;	/* exprs containing parameters */
+	bool		singlerow;		/* true if the cache entry should be marked as
+								 * complete after we store the first tuple in
+								 * it. */
+	uint32		est_entries;	/* The maximum number of entries that the
+								 * planner expects will fit in the cache, or 0
+								 * if unknown */
+} ResultCache;
 
 /* ----------------
  *		sort node

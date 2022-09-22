@@ -4765,16 +4765,12 @@ set_deparse_plan(deparse_namespace *dpns, Plan *plan)
 	 * We special-case Append and MergeAppend to pretend that the first child
 	 * plan is the OUTER referent; we have to interpret OUTER Vars in their
 	 * tlists according to one of the children, and the first one is the most
-	 * natural choice.  Likewise special-case ModifyTable to pretend that the
-	 * first child plan is the OUTER referent; this is to support RETURNING
-	 * lists containing references to non-target relations.
+	 * natural choice.
 	 */
 	if (IsA(plan, Append))
 		dpns->outer_plan = linitial(((Append *) plan)->appendplans);
 	else if (IsA(plan, MergeAppend))
 		dpns->outer_plan = linitial(((MergeAppend *) plan)->mergeplans);
-	else if (IsA(plan, ModifyTable))
-		dpns->outer_plan = linitial(((ModifyTable *) plan)->plans);
 	else
 		dpns->outer_plan = outerPlan(plan);
 
@@ -10079,6 +10075,27 @@ get_func_sql_syntax(FuncExpr *expr, deparse_context *context)
 			appendStringInfoString(buf, "))");
 			return true;
 
+		case F_EXTRACT_TEXT_DATE:
+		case F_EXTRACT_TEXT_TIME:
+		case F_EXTRACT_TEXT_TIMETZ:
+		case F_EXTRACT_TEXT_TIMESTAMP:
+		case F_EXTRACT_TEXT_TIMESTAMPTZ:
+		case F_EXTRACT_TEXT_INTERVAL:
+			/* EXTRACT (x FROM y) */
+			appendStringInfoString(buf, "EXTRACT(");
+			{
+				Const	   *con = (Const *) linitial(expr->args);
+
+				Assert(IsA(con, Const) &&
+					   con->consttype == TEXTOID &&
+					   !con->constisnull);
+				appendStringInfoString(buf, TextDatumGetCString(con->constvalue));
+			}
+			appendStringInfoString(buf, " FROM ");
+			get_rule_expr((Node *) lsecond(expr->args), context, false);
+			appendStringInfoChar(buf, ')');
+			return true;
+
 		case F_IS_NORMALIZED:
 			/* IS xxx NORMALIZED */
 			appendStringInfoString(buf, "((");
@@ -11240,6 +11257,10 @@ get_from_clause_item(Node *jtnode, Query *query, deparse_context *context)
 				appendStringInfoString(buf, quote_identifier(colname));
 			}
 			appendStringInfoChar(buf, ')');
+
+			if (j->join_using_alias)
+				appendStringInfo(buf, " AS %s",
+								 quote_identifier(j->join_using_alias->aliasname));
 		}
 		else if (j->quals)
 		{

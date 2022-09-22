@@ -529,6 +529,10 @@ errfinish(const char *filename, int lineno, const char *funcname)
 		slash = strrchr(filename, '/');
 		if (slash)
 			filename = slash + 1;
+		/* Some Windows compilers use backslashes in __FILE__ strings */
+		slash = strrchr(filename, '\\');
+		if (slash)
+			filename = slash + 1;
 	}
 
 	edata->filename = filename;
@@ -2271,6 +2275,8 @@ write_console(const char *line, int len)
 	 * Conversion on non-win32 platforms is not implemented yet. It requires
 	 * non-throw version of pg_do_encoding_conversion(), that converts
 	 * unconvertable characters to '?' without errors.
+	 *
+	 * XXX: We have a no-throw version now. It doesn't convert to '?' though.
 	 */
 #endif
 
@@ -2707,6 +2713,14 @@ log_line_prefix(StringInfo buf, ErrorData *edata)
 					appendStringInfo(buf, "%*s", padding, unpack_sql_state(edata->sqlerrcode));
 				else
 					appendStringInfoString(buf, unpack_sql_state(edata->sqlerrcode));
+				break;
+			case 'Q':
+				if (padding != 0)
+					appendStringInfo(buf, "%*ld", padding,
+							pgstat_get_my_queryid());
+				else
+					appendStringInfo(buf, "%ld",
+							pgstat_get_my_queryid());
 				break;
 			default:
 				/* format error - ignore it */

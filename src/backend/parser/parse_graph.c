@@ -6067,6 +6067,7 @@ incrementalJoinRTEs(ParseState *pstate, JoinType jointype,
 									   res_colvars,
 									   l_colnos,
 									   r_colnos,
+									   j->join_using_alias,
 									   j->alias,
 									   true);
 	j->rtindex = nsitem->p_rtindex;

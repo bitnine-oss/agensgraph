@@ -11,22 +11,24 @@ my $node = get_new_node('main');
 $node->init;
 $node->start;
 
-my $numrows = 10000;
+my $numrows = 700;
 $ENV{PATH} = "$ENV{PATH}:" . getcwd();
 
 my ($out, $err) = run_command([ 'libpq_pipeline', 'tests' ]);
 die "oops: $err" unless $err eq '';
 my @tests = split(/\s+/, $out);
 
+mkdir "$TestLib::tmp_check/traces";
+
 for my $testname (@tests)
 {
-	my @extraargs = ();
+	my @extraargs = ('-r', $numrows);
 	my $cmptrace  = grep(/^$testname$/,
 		qw(simple_pipeline multi_pipelines prepared singlerow
 		  pipeline_abort transaction disallowed_in_pipeline)) > 0;
 
 	# For a bunch of tests, generate a libpq trace file too.
-	my $traceout = "$TestLib::log_path/$testname.trace";
+	my $traceout = "$TestLib::tmp_check/traces/$testname.trace";
 	if ($cmptrace)
 	{
 		push @extraargs, "-t", $traceout;
@@ -36,8 +38,7 @@ for my $testname (@tests)
 	$node->command_ok(
 		[
 			'libpq_pipeline', @extraargs,
-			$testname,        $node->connstr('postgres'),
-			$numrows
+			$testname,        $node->connstr('postgres')
 		],
 		"libpq_pipeline $testname");
 
@@ -52,7 +53,7 @@ for my $testname (@tests)
 		$result = slurp_file_eval($traceout);
 		next unless $result ne "";
 
-		is($expected, $result, "$testname trace match");
+		is($result, $expected, "$testname trace match");
 	}
 }
 

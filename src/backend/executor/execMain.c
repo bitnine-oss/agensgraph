@@ -58,6 +58,7 @@
 #include "storage/lmgr.h"
 #include "tcop/utility.h"
 #include "utils/acl.h"
+#include "utils/backend_status.h"
 #include "utils/lsyscache.h"
 #include "utils/memutils.h"
 #include "utils/partcache.h"
@@ -131,6 +132,14 @@ extern GraphWriteStats graphWriteStats;
 void
 ExecutorStart(QueryDesc *queryDesc, int eflags)
 {
+	/*
+	 * In some cases (e.g. an EXECUTE statement) a query execution will skip
+	 * parse analysis, which means that the queryid won't be reported.  Note
+	 * that it's harmless to report the queryid multiple time, as the call will
+	 * be ignored if the top level queryid has already been reported.
+	 */
+	pgstat_report_queryid(queryDesc->plannedstmt->queryId, false);
+
 	if (ExecutorStart_hook)
 		(*ExecutorStart_hook) (queryDesc, eflags);
 	else
@@ -1236,22 +1245,34 @@ InitResultRelInfo(ResultRelInfo *resultRelInfo,
 		resultRelInfo->ri_FdwRoutine = NULL;
 
 	/* The following fields are set later if needed */
+	resultRelInfo->ri_RowIdAttNo = 0;
+	resultRelInfo->ri_projectNew = NULL;
+	resultRelInfo->ri_newTupleSlot = NULL;
+	resultRelInfo->ri_oldTupleSlot = NULL;
+	resultRelInfo->ri_projectNewInfoValid = false;
 	resultRelInfo->ri_FdwState = NULL;
 	resultRelInfo->ri_usesFdwDirectModify = false;
 	resultRelInfo->ri_ConstraintExprs = NULL;
 	resultRelInfo->ri_GeneratedExprs = NULL;
-	resultRelInfo->ri_junkFilter = NULL;
 	resultRelInfo->ri_projectReturning = NULL;
 	resultRelInfo->ri_onConflictArbiterIndexes = NIL;
 	resultRelInfo->ri_onConflict = NULL;
 	resultRelInfo->ri_ReturningSlot = NULL;
 	resultRelInfo->ri_TrigOldSlot = NULL;
 	resultRelInfo->ri_TrigNewSlot = NULL;
+
+	/*
+	 * Only ExecInitPartitionInfo() and ExecInitPartitionDispatchInfo() pass
+	 * non-NULL partition_root_rri.  For child relations that are part of the
+	 * initial query rather than being dynamically added by tuple routing,
+	 * this field is filled in ExecInitModifyTable().
+	 */
 	resultRelInfo->ri_RootResultRelInfo = partition_root_rri;
 	resultRelInfo->ri_RootToPartitionMap = NULL;	/* set by
 													 * ExecInitRoutingInfo */
 	resultRelInfo->ri_PartitionTupleSlot = NULL;	/* ditto */
 	resultRelInfo->ri_ChildToRootMap = NULL;
+	resultRelInfo->ri_ChildToRootMapValid = false;
 	resultRelInfo->ri_CopyMultiInsertBuffer = NULL;
 }
 
@@ -1626,6 +1647,15 @@ ExecRelCheck(ResultRelInfo *resultRelInfo,
 	int			i;
 
 	/*
+	 * CheckConstraintFetch let this pass with only a warning, but now we
+	 * should fail rather than possibly failing to enforce an important
+	 * constraint.
+	 */
+	if (ncheck != rel->rd_rel->relchecks)
+		elog(ERROR, "%d pg_constraint record(s) missing for relation \"%s\"",
+			 rel->rd_rel->relchecks - ncheck, RelationGetRelationName(rel));
+
+	/*
 	 * If first time through for this result relation, build expression
 	 * nodetrees for rel's constraint expressions.  Keep them in the per-query
 	 * memory context so they'll survive throughout the query.
@@ -1878,7 +1908,7 @@ ExecConstraints(ResultRelInfo *resultRelInfo,
 		}
 	}
 
-	if (constr->num_check > 0)
+	if (rel->rd_rel->relchecks > 0)
 	{
 		const char *failed;
 
@@ -2432,7 +2462,8 @@ EvalPlanQualInit(EPQState *epqstate, EState *parentestate,
 /*
  * EvalPlanQualSetPlan -- set or change subplan of an EPQState.
  *
- * We need this so that ModifyTable can deal with multiple subplans.
+ * We used to need this so that ModifyTable could deal with multiple subplans.
+ * It could now be refactored out of existence.
  */
 void
 EvalPlanQualSetPlan(EPQState *epqstate, Plan *subplan, List *auxrowmarks)

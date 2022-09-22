@@ -303,6 +303,10 @@ static const internalPQconninfoOption PQconninfoOptions[] = {
 		"SSL-Revocation-List-Dir", "", 64,
 	offsetof(struct pg_conn, sslcrldir)},
 
+	{"sslsni", "PGSSLSNI", "1", NULL,
+		"SSL-SNI", "", 1,
+	offsetof(struct pg_conn, sslsni)},
+
 	{"requirepeer", "PGREQUIREPEER", NULL, NULL,
 		"Require-Peer", "", 10,
 	offsetof(struct pg_conn, requirepeer)},
@@ -3952,6 +3956,7 @@ makeEmptyPGconn(void)
 	conn->verbosity = PQERRORS_DEFAULT;
 	conn->show_context = PQSHOW_CONTEXT_ERRORS;
 	conn->sock = PGINVALID_SOCKET;
+	conn->Pfdebug = NULL;
 
 	/*
 	 * We try to send at least 8K at a time, which is the usual size of pipe
@@ -4094,6 +4099,8 @@ freePGconn(PGconn *conn)
 		free(conn->sslcrldir);
 	if (conn->sslcompression)
 		free(conn->sslcompression);
+	if (conn->sslsni)
+		free(conn->sslsni);
 	if (conn->requirepeer)
 		free(conn->requirepeer);
 	if (conn->ssl_min_protocol_version)

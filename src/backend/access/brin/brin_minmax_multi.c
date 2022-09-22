@@ -2090,7 +2090,7 @@ brin_minmax_multi_distance_timetz(PG_FUNCTION_ARGS)
 	TimeTzADT  *ta = PG_GETARG_TIMETZADT_P(0);
 	TimeTzADT  *tb = PG_GETARG_TIMETZADT_P(1);
 
-	delta = tb->time - ta->time;
+	delta = (tb->time - ta->time) + (tb->zone - ta->zone) * USECS_PER_SEC;
 
 	Assert(delta >= 0);
 
@@ -2127,6 +2127,9 @@ brin_minmax_multi_distance_interval(PG_FUNCTION_ARGS)
 	Interval   *ib = PG_GETARG_INTERVAL_P(1);
 	Interval   *result;
 
+	int64		dayfraction;
+	int64		days;
+
 	result = (Interval *) palloc(sizeof(Interval));
 
 	result->month = ib->month - ia->month;
@@ -2152,16 +2155,18 @@ brin_minmax_multi_distance_interval(PG_FUNCTION_ARGS)
 				 errmsg("interval out of range")));
 
 	/*
-	 * We assume months have 31 days - we don't need to be precise, in the
-	 * worst case we'll build somewhat less efficient ranges.
+	 * Delta is (fractional) number of days between the intervals. Assume
+	 * months have 30 days for consistency with interval_cmp_internal.
+	 * We don't need to be exact, in the worst case we'll build a bit less
+	 * efficient ranges. But we should not contradict interval_cmp.
 	 */
-	delta = (float8) (result->month * 31 + result->day);
+	dayfraction = result->time % USECS_PER_DAY;
+	days = result->time / USECS_PER_DAY;
+	days += result->month * INT64CONST(30);
+	days += result->day;
 
-	/* convert to microseconds (just like the time part) */
-	delta = 24L * 3600L * delta;
-
-	/* and add the time part */
-	delta += result->time / (float8) 1000000.0;
+	/* convert to double precision */
+	delta = (double) days + dayfraction / (double) USECS_PER_DAY;
 
 	Assert(delta >= 0);
 
@@ -2292,6 +2297,9 @@ brin_minmax_multi_distance_inet(PG_FUNCTION_ARGS)
 	inet	   *ipa = PG_GETARG_INET_PP(0);
 	inet	   *ipb = PG_GETARG_INET_PP(1);
 
+	int			lena,
+				lenb;
+
 	/*
 	 * If the addresses are from different families, consider them to be in
 	 * maximal possible distance (which is 1.0).
@@ -2299,23 +2307,63 @@ brin_minmax_multi_distance_inet(PG_FUNCTION_ARGS)
 	if (ip_family(ipa) != ip_family(ipb))
 		PG_RETURN_FLOAT8(1.0);
 
-	/* ipv4 or ipv6 */
-	if (ip_family(ipa) == PGSQL_AF_INET)
-		len = 4;
-	else
-		len = 16;				/* NS_IN6ADDRSZ */
+	addra = (unsigned char *) palloc(ip_addrsize(ipa));
+	memcpy(addra, ip_addr(ipa), ip_addrsize(ipa));
 
-	addra = ip_addr(ipa);
-	addrb = ip_addr(ipb);
+	addrb = (unsigned char *) palloc(ip_addrsize(ipb));
+	memcpy(addrb, ip_addr(ipb), ip_addrsize(ipb));
 
+	/*
+	 * The length is calculated from the mask length, because we sort the
+	 * addresses by first address in the range, so A.B.C.D/24 < A.B.C.1
+	 * (the first range starts at A.B.C.0, which is before A.B.C.1). We
+	 * don't want to produce negative delta in this case, so we just cut
+	 * the extra bytes.
+	 *
+	 * XXX Maybe this should be a bit more careful and cut the bits, not
+	 * just whole bytes.
+	 */
+	lena = ip_bits(ipa);
+	lenb = ip_bits(ipb);
+
+	len = ip_addrsize(ipa);
+
+	/* apply the network mask to both addresses */
+	for (i = 0; i < len; i++)
+	{
+		unsigned char	mask;
+		int				nbits;
+
+		nbits = lena - (i * 8);
+		if (nbits < 8)
+		{
+			mask = (0xFF << (8 - nbits));
+			addra[i] = (addra[i] & mask);
+		}
+
+		nbits = lenb - (i * 8);
+		if (nbits < 8)
+		{
+			mask = (0xFF << (8 - nbits));
+			addrb[i] = (addrb[i] & mask);
+		}
+	}
+
+	/* Calculate the difference between the addresses. */
 	delta = 0;
 	for (i = len - 1; i >= 0; i--)
 	{
-		delta += (float8) addrb[i] - (float8) addra[i];
+		unsigned char a = addra[i];
+		unsigned char b = addrb[i];
+
+		delta += (float8) b - (float8) a;
 		delta /= 256;
 	}
 
 	Assert((delta >= 0) && (delta <= 1));
+
+	pfree(addra);
+	pfree(addrb);
 
 	PG_RETURN_FLOAT8(delta);
 }
@@ -2558,16 +2606,16 @@ brin_minmax_multi_consistent(PG_FUNCTION_ARGS)
 						 * value in the array.
 						 */
 						cmpFn = minmax_multi_get_strategy_procinfo(bdesc, attno, subtype,
-																   BTLessStrategyNumber);
-						compar = FunctionCall2Coll(cmpFn, colloid, value, minval);
+																   BTGreaterStrategyNumber);
+						compar = FunctionCall2Coll(cmpFn, colloid, minval, value);
 
 						/* smaller than the smallest value in this range */
 						if (DatumGetBool(compar))
 							break;
 
 						cmpFn = minmax_multi_get_strategy_procinfo(bdesc, attno, subtype,
-																   BTGreaterStrategyNumber);
-						compar = FunctionCall2Coll(cmpFn, colloid, value, maxval);
+																   BTLessStrategyNumber);
+						compar = FunctionCall2Coll(cmpFn, colloid, maxval, value);
 
 						/* larger than the largest value in this range */
 						if (DatumGetBool(compar))
@@ -2746,7 +2794,7 @@ brin_minmax_multi_union(PG_FUNCTION_ARGS)
 											   BTLessStrategyNumber);
 
 	/* sort the expanded ranges */
-	sort_expanded_ranges(cmpFn, colloid, eranges, neranges);
+	neranges = sort_expanded_ranges(cmpFn, colloid, eranges, neranges);
 
 	/*
 	 * We've loaded two different lists of expanded ranges, so some of them

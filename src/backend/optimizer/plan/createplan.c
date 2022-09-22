@@ -93,6 +93,9 @@ static Result *create_group_result_plan(PlannerInfo *root,
 static ProjectSet *create_project_set_plan(PlannerInfo *root, ProjectSetPath *best_path);
 static Material *create_material_plan(PlannerInfo *root, MaterialPath *best_path,
 									  int flags);
+static ResultCache *create_resultcache_plan(PlannerInfo *root,
+											ResultCachePath *best_path,
+											int flags);
 static Plan *create_unique_plan(PlannerInfo *root, UniquePath *best_path,
 								int flags);
 static Gather *create_gather_plan(PlannerInfo *root, GatherPath *best_path);
@@ -280,6 +283,11 @@ static Sort *make_sort_from_groupcols(List *groupcls,
 									  AttrNumber *grpColIdx,
 									  Plan *lefttree);
 static Material *make_material(Plan *lefttree);
+static ResultCache *make_resultcache(Plan *lefttree, Oid *hashoperators,
+									 Oid *collations,
+									 List *param_exprs,
+									 bool singlerow,
+									 uint32 est_entries);
 static WindowAgg *make_windowagg(List *tlist, Index winref,
 								 int partNumCols, AttrNumber *partColIdx, Oid *partOperators, Oid *partCollations,
 								 int ordNumCols, AttrNumber *ordColIdx, Oid *ordOperators, Oid *ordCollations,
@@ -301,11 +309,12 @@ static SetOp *make_setop(SetOpCmd cmd, SetOpStrategy strategy, Plan *lefttree,
 static LockRows *make_lockrows(Plan *lefttree, List *rowMarks, int epqParam);
 static Result *make_result(List *tlist, Node *resconstantqual, Plan *subplan);
 static ProjectSet *make_project_set(List *tlist, Plan *subplan);
-static ModifyTable *make_modifytable(PlannerInfo *root,
+static ModifyTable *make_modifytable(PlannerInfo *root, Plan *subplan,
 									 CmdType operation, bool canSetTag,
 									 Index nominalRelation, Index rootRelation,
 									 bool partColsUpdated,
-									 List *resultRelations, List *subplans, List *subroots,
+									 List *resultRelations,
+									 List *updateColnosLists,
 									 List *withCheckOptionLists, List *returningLists,
 									 List *rowMarks, OnConflictExpr *onconflict, int epqParam);
 static GatherMerge *create_gather_merge_plan(PlannerInfo *root,
@@ -484,6 +493,11 @@ create_plan_recurse(PlannerInfo *root, Path *best_path, int flags)
 			plan = (Plan *) create_material_plan(root,
 												 (MaterialPath *) best_path,
 												 flags);
+			break;
+		case T_ResultCache:
+			plan = (Plan *) create_resultcache_plan(root,
+													(ResultCachePath *) best_path,
+													flags);
 			break;
 		case T_Unique:
 			if (IsA(best_path, UpperUniquePath))
@@ -1611,6 +1625,56 @@ create_material_plan(PlannerInfo *root, MaterialPath *best_path, int flags)
 }
 
 /*
+ * create_resultcache_plan
+ *	  Create a ResultCache plan for 'best_path' and (recursively) plans
+ *	  for its subpaths.
+ *
+ *	  Returns a Plan node.
+ */
+static ResultCache *
+create_resultcache_plan(PlannerInfo *root, ResultCachePath *best_path, int flags)
+{
+	ResultCache *plan;
+	Plan	   *subplan;
+	Oid		   *operators;
+	Oid		   *collations;
+	List	   *param_exprs = NIL;
+	ListCell   *lc;
+	ListCell   *lc2;
+	int			nkeys;
+	int			i;
+
+	subplan = create_plan_recurse(root, best_path->subpath,
+								  flags | CP_SMALL_TLIST);
+
+	param_exprs = (List *) replace_nestloop_params(root, (Node *)
+												   best_path->param_exprs);
+
+	nkeys = list_length(param_exprs);
+	Assert(nkeys > 0);
+	operators = palloc(nkeys * sizeof(Oid));
+	collations = palloc(nkeys * sizeof(Oid));
+
+	i = 0;
+	forboth(lc, param_exprs, lc2, best_path->hash_operators)
+	{
+		Expr	   *param_expr = (Expr *) lfirst(lc);
+		Oid			opno = lfirst_oid(lc2);
+
+		operators[i] = opno;
+		collations[i] = exprCollation((Node *) param_expr);
+		i++;
+	}
+
+	plan = make_resultcache(subplan, operators, collations, param_exprs,
+							best_path->singlerow, best_path->est_entries);
+
+	copy_generic_path_info(&plan->plan, (Path *) best_path);
+
+	return plan;
+}
+
+/*
  * create_unique_plan
  *	  Create a Unique plan for 'best_path' and (recursively) plans
  *	  for its subpaths.
@@ -2337,12 +2401,7 @@ create_groupingsets_plan(PlannerInfo *root, GroupingSetsPath *best_path)
 	/*
 	 * During setrefs.c, we'll need the grouping_map to fix up the cols lists
 	 * in GroupingFunc nodes.  Save it for setrefs.c to use.
-	 *
-	 * This doesn't work if we're in an inheritance subtree (see notes in
-	 * create_modifytable_plan).  Fortunately we can't be because there would
-	 * never be grouping in an UPDATE/DELETE; but let's Assert that.
 	 */
-	Assert(root->inhTargetKind == INHKIND_NONE);
 	Assert(root->grouping_map == NULL);
 	root->grouping_map = grouping_map;
 
@@ -2504,12 +2563,7 @@ create_minmaxagg_plan(PlannerInfo *root, MinMaxAggPath *best_path)
 	 * with InitPlan output params.  (We can't just do that locally in the
 	 * MinMaxAgg node, because path nodes above here may have Agg references
 	 * as well.)  Save the mmaggregates list to tell setrefs.c to do that.
-	 *
-	 * This doesn't work if we're in an inheritance subtree (see notes in
-	 * create_modifytable_plan).  Fortunately we can't be because there would
-	 * never be aggregates in an UPDATE/DELETE; but let's Assert that.
 	 */
-	Assert(root->inhTargetKind == INHKIND_NONE);
 	Assert(root->minmax_aggs == NIL);
 	root->minmax_aggs = best_path->mmaggregates;
 
@@ -2726,46 +2780,24 @@ static ModifyTable *
 create_modifytable_plan(PlannerInfo *root, ModifyTablePath *best_path)
 {
 	ModifyTable *plan;
-	List	   *subplans = NIL;
-	ListCell   *subpaths,
-			   *subroots;
+	Path	   *subpath = best_path->subpath;
+	Plan	   *subplan;
 
-	/* Build the plan for each input path */
-	forboth(subpaths, best_path->subpaths,
-			subroots, best_path->subroots)
-	{
-		Path	   *subpath = (Path *) lfirst(subpaths);
-		PlannerInfo *subroot = (PlannerInfo *) lfirst(subroots);
-		Plan	   *subplan;
+	/* Subplan must produce exactly the specified tlist */
+	subplan = create_plan_recurse(root, subpath, CP_EXACT_TLIST);
 
-		/*
-		 * In an inherited UPDATE/DELETE, reference the per-child modified
-		 * subroot while creating Plans from Paths for the child rel.  This is
-		 * a kluge, but otherwise it's too hard to ensure that Plan creation
-		 * functions (particularly in FDWs) don't depend on the contents of
-		 * "root" matching what they saw at Path creation time.  The main
-		 * downside is that creation functions for Plans that might appear
-		 * below a ModifyTable cannot expect to modify the contents of "root"
-		 * and have it "stick" for subsequent processing such as setrefs.c.
-		 * That's not great, but it seems better than the alternative.
-		 */
-		subplan = create_plan_recurse(subroot, subpath, CP_EXACT_TLIST);
-
-		/* Transfer resname/resjunk labeling, too, to keep executor happy */
-		apply_tlist_labeling(subplan->targetlist, subroot->processed_tlist);
-
-		subplans = lappend(subplans, subplan);
-	}
+	/* Transfer resname/resjunk labeling, too, to keep executor happy */
+	apply_tlist_labeling(subplan->targetlist, root->processed_tlist);
 
 	plan = make_modifytable(root,
+							subplan,
 							best_path->operation,
 							best_path->canSetTag,
 							best_path->nominalRelation,
 							best_path->rootRelation,
 							best_path->partColsUpdated,
 							best_path->resultRelations,
-							subplans,
-							best_path->subroots,
+							best_path->updateColnosLists,
 							best_path->withCheckOptionLists,
 							best_path->returningLists,
 							best_path->rowMarks,
@@ -6789,6 +6821,28 @@ materialize_finished_plan(Plan *subplan)
 	return matplan;
 }
 
+static ResultCache *
+make_resultcache(Plan *lefttree, Oid *hashoperators, Oid *collations,
+				 List *param_exprs, bool singlerow, uint32 est_entries)
+{
+	ResultCache *node = makeNode(ResultCache);
+	Plan	   *plan = &node->plan;
+
+	plan->targetlist = lefttree->targetlist;
+	plan->qual = NIL;
+	plan->lefttree = lefttree;
+	plan->righttree = NULL;
+
+	node->numKeys = list_length(param_exprs);
+	node->hashOperators = hashoperators;
+	node->collations = collations;
+	node->param_exprs = param_exprs;
+	node->singlerow = singlerow;
+	node->est_entries = est_entries;
+
+	return node;
+}
+
 Agg *
 make_agg(List *tlist, List *qual,
 		 AggStrategy aggstrategy, AggSplit aggsplit,
@@ -7222,11 +7276,12 @@ make_project_set(List *tlist,
  *	  Build a ModifyTable plan node
  */
 static ModifyTable *
-make_modifytable(PlannerInfo *root,
+make_modifytable(PlannerInfo *root, Plan *subplan,
 				 CmdType operation, bool canSetTag,
 				 Index nominalRelation, Index rootRelation,
 				 bool partColsUpdated,
-				 List *resultRelations, List *subplans, List *subroots,
+				 List *resultRelations,
+				 List *updateColnosLists,
 				 List *withCheckOptionLists, List *returningLists,
 				 List *rowMarks, OnConflictExpr *onconflict, int epqParam)
 {
@@ -7234,17 +7289,17 @@ make_modifytable(PlannerInfo *root,
 	List	   *fdw_private_list;
 	Bitmapset  *direct_modify_plans;
 	ListCell   *lc;
-	ListCell   *lc2;
 	int			i;
 
-	Assert(list_length(resultRelations) == list_length(subplans));
-	Assert(list_length(resultRelations) == list_length(subroots));
+	Assert(operation == CMD_UPDATE ?
+		   list_length(resultRelations) == list_length(updateColnosLists) :
+		   updateColnosLists == NIL);
 	Assert(withCheckOptionLists == NIL ||
 		   list_length(resultRelations) == list_length(withCheckOptionLists));
 	Assert(returningLists == NIL ||
 		   list_length(resultRelations) == list_length(returningLists));
 
-	node->plan.lefttree = NULL;
+	node->plan.lefttree = subplan;
 	node->plan.righttree = NULL;
 	node->plan.qual = NIL;
 	/* setrefs.c will fill in the targetlist, if needed */
@@ -7256,7 +7311,6 @@ make_modifytable(PlannerInfo *root,
 	node->rootRelation = rootRelation;
 	node->partColsUpdated = partColsUpdated;
 	node->resultRelations = resultRelations;
-	node->plans = subplans;
 	if (!onconflict)
 	{
 		node->onConflictAction = ONCONFLICT_NONE;
@@ -7283,6 +7337,7 @@ make_modifytable(PlannerInfo *root,
 		node->exclRelRTI = onconflict->exclRelIndex;
 		node->exclRelTlist = onconflict->exclRelTlist;
 	}
+	node->updateColnosLists = updateColnosLists;
 	node->withCheckOptionLists = withCheckOptionLists;
 	node->returningLists = returningLists;
 	node->rowMarks = rowMarks;
@@ -7295,10 +7350,9 @@ make_modifytable(PlannerInfo *root,
 	fdw_private_list = NIL;
 	direct_modify_plans = NULL;
 	i = 0;
-	forboth(lc, resultRelations, lc2, subroots)
+	foreach(lc, resultRelations)
 	{
 		Index		rti = lfirst_int(lc);
-		PlannerInfo *subroot = lfirst_node(PlannerInfo, lc2);
 		FdwRoutine *fdwroutine;
 		List	   *fdw_private;
 		bool		direct_modify;
@@ -7310,16 +7364,16 @@ make_modifytable(PlannerInfo *root,
 		 * so it's not a baserel; and there are also corner cases for
 		 * updatable views where the target rel isn't a baserel.)
 		 */
-		if (rti < subroot->simple_rel_array_size &&
-			subroot->simple_rel_array[rti] != NULL)
+		if (rti < root->simple_rel_array_size &&
+			root->simple_rel_array[rti] != NULL)
 		{
-			RelOptInfo *resultRel = subroot->simple_rel_array[rti];
+			RelOptInfo *resultRel = root->simple_rel_array[rti];
 
 			fdwroutine = resultRel->fdwroutine;
 		}
 		else
 		{
-			RangeTblEntry *rte = planner_rt_fetch(rti, subroot);
+			RangeTblEntry *rte = planner_rt_fetch(rti, root);
 
 			Assert(rte->rtekind == RTE_RELATION);
 			if (rte->relkind == RELKIND_FOREIGN_TABLE)
@@ -7342,16 +7396,16 @@ make_modifytable(PlannerInfo *root,
 			fdwroutine->IterateDirectModify != NULL &&
 			fdwroutine->EndDirectModify != NULL &&
 			withCheckOptionLists == NIL &&
-			!has_row_triggers(subroot, rti, operation) &&
-			!has_stored_generated_columns(subroot, rti))
-			direct_modify = fdwroutine->PlanDirectModify(subroot, node, rti, i);
+			!has_row_triggers(root, rti, operation) &&
+			!has_stored_generated_columns(root, rti))
+			direct_modify = fdwroutine->PlanDirectModify(root, node, rti, i);
 		if (direct_modify)
 			direct_modify_plans = bms_add_member(direct_modify_plans, i);
 
 		if (!direct_modify &&
 			fdwroutine != NULL &&
 			fdwroutine->PlanForeignModify != NULL)
-			fdw_private = fdwroutine->PlanForeignModify(subroot, node, rti, i);
+			fdw_private = fdwroutine->PlanForeignModify(root, node, rti, i);
 		else
 			fdw_private = NIL;
 		fdw_private_list = lappend(fdw_private_list, fdw_private);
@@ -7375,6 +7429,7 @@ is_projection_capable_path(Path *path)
 	{
 		case T_Hash:
 		case T_Material:
+		case T_ResultCache:
 		case T_Sort:
 		case T_IncrementalSort:
 		case T_Unique:
@@ -7420,6 +7475,7 @@ is_projection_capable_plan(Plan *plan)
 	{
 		case T_Hash:
 		case T_Material:
+		case T_ResultCache:
 		case T_Sort:
 		case T_Unique:
 		case T_SetOp:
