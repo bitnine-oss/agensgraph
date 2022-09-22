@@ -34,11 +34,7 @@ extern ObjectAddress DefineIndex(Oid relationId,
 								 bool check_not_in_use,
 								 bool skip_build,
 								 bool quiet);
-extern int	ReindexParseOptions(ParseState *pstate, ReindexStmt *stmt);
-extern void ReindexIndex(RangeVar *indexRelation, int options, bool isTopLevel);
-extern Oid	ReindexTable(RangeVar *relation, int options, bool isTopLevel);
-extern void ReindexMultipleTables(const char *objectName, ReindexObjectType objectKind,
-								  int options);
+extern void ExecReindex(ParseState *pstate, ReindexStmt *stmt, bool isTopLevel);
 extern char *makeObjectName(const char *name1, const char *name2,
 							const char *label);
 extern char *ChooseRelationName(const char *name1, const char *name2,
@@ -157,8 +153,5 @@ extern List *defGetQualifiedName(DefElem *def);
 extern TypeName *defGetTypeName(DefElem *def);
 extern int	defGetTypeLength(DefElem *def);
 extern List *defGetStringList(DefElem *def);
-
-/* for agensgraph */
-extern Oid	ReindexLabel(RangeVar *relation, int options, ObjectType type);
 
 #endif							/* DEFREM_H */

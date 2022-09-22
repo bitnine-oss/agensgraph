@@ -19,7 +19,7 @@
   <variablelist>
    <varlistentry>
     <term>
-     <function>get_raw_page(relname text, fork text, blkno int) returns bytea</function>
+     <function>get_raw_page(relname text, fork text, blkno bigint) returns bytea</function>
      <indexterm>
       <primary>get_raw_page</primary>
      </indexterm>
@@ -40,7 +40,7 @@
 
    <varlistentry>
     <term>
-     <function>get_raw_page(relname text, blkno int) returns bytea</function>
+     <function>get_raw_page(relname text, blkno bigint) returns bytea</function>
     </term>
 
     <listitem>
@@ -91,7 +91,7 @@ test=# SELECT * FROM page_header(get_raw_page('pg_class', 0));
 
    <varlistentry>
     <term>
-     <function>page_checksum(page bytea, blkno int4) returns smallint</function>
+     <function>page_checksum(page bytea, blkno bigint) returns smallint</function>
      <indexterm>
       <primary>page_checksum</primary>
      </indexterm>
@@ -315,7 +315,7 @@ allequalimage           | f
 
    <varlistentry>
     <term>
-     <function>bt_page_stats(relname text, blkno int) returns record</function>
+     <function>bt_page_stats(relname text, blkno bigint) returns record</function>
      <indexterm>
       <primary>bt_page_stats</primary>
      </indexterm>
@@ -346,7 +346,7 @@ btpo_flags    | 3
 
    <varlistentry>
     <term>
-     <function>bt_page_items(relname text, blkno int) returns setof record</function>
+     <function>bt_page_items(relname text, blkno bigint) returns setof record</function>
      <indexterm>
       <primary>bt_page_items</primary>
      </indexterm>
@@ -672,6 +672,97 @@ test=# SELECT first_tid, nbytes, tids[0:5] AS some_tids
  </sect2>
 
  <sect2>
+  <title>GiST Functions</title>
+
+  <variablelist>
+   <varlistentry>
+    <term>
+     <function>gist_page_opaque_info(page bytea) returns record</function>
+     <indexterm>
+      <primary>gist_page_opaque_info</primary>
+     </indexterm>
+    </term>
+
+    <listitem>
+     <para>
+      <function>gist_page_opaque_info</function> returns information from
+      a <acronym>GiST</acronym> index page's opaque area, such as the NSN,
+      rightlink and page type.
+      For example:
+<screen>
+test=# SELECT * FROM gist_page_opaque_info(get_raw_page('test_gist_idx', 2));
+ lsn | nsn | rightlink | flags  
+-----+-----+-----------+--------
+ 0/1 | 0/0 |         1 | {leaf}
+(1 row)
+</screen>
+     </para>
+    </listitem>
+   </varlistentry>
+
+   <varlistentry>
+    <term>
+     <function>gist_page_items(page bytea, index_oid regclass) returns setof record</function>
+     <indexterm>
+      <primary>gist_page_items</primary>
+     </indexterm>
+    </term>
+
+    <listitem>
+     <para>
+      <function>gist_page_items</function> returns information about
+      the data stored in a page of a <acronym>GiST</acronym> index.  For example:
+<screen>
+test=# SELECT * FROM gist_page_items(get_raw_page('test_gist_idx', 0), 'test_gist_idx');
+ itemoffset |   ctid    | itemlen |       keys        
+------------+-----------+---------+-------------------
+          1 | (1,65535) |      40 | (p)=((166,166))
+          2 | (2,65535) |      40 | (p)=((332,332))
+          3 | (3,65535) |      40 | (p)=((498,498))
+          4 | (4,65535) |      40 | (p)=((664,664))
+          5 | (5,65535) |      40 | (p)=((830,830))
+          6 | (6,65535) |      40 | (p)=((996,996))
+          7 | (7,65535) |      40 | (p)=((1000,1000))
+(7 rows)
+</screen>
+     </para>
+    </listitem>
+   </varlistentry>
+
+   <varlistentry>
+    <term>
+     <function>gist_page_items_bytea(page bytea) returns setof record</function>
+     <indexterm>
+      <primary>gist_page_items_bytea</primary>
+     </indexterm>
+    </term>
+
+    <listitem>
+     <para>
+      Same as <function>gist_page_items</function>, but returns the key data
+      as a raw <type>bytea</type> blob.  Since it does not attempt to decode
+      the key, it does not need to know which index is involved.  For
+      example:
+<screen>
+test=# SELECT * FROM gist_page_items_bytea(get_raw_page('test_gist_idx', 0));
+ itemoffset |   ctid    | itemlen |                                      key_data                                      
+------------+-----------+---------+-------------------------------------------&zwsp;-----------------------------------------
+          1 | (1,65535) |      40 | \x00000100ffff28000000000000c0644000000000&zwsp;00c06440000000000000f03f000000000000f03f
+          2 | (2,65535) |      40 | \x00000200ffff28000000000000c0744000000000&zwsp;00c074400000000000e064400000000000e06440
+          3 | (3,65535) |      40 | \x00000300ffff28000000000000207f4000000000&zwsp;00207f400000000000d074400000000000d07440
+          4 | (4,65535) |      40 | \x00000400ffff28000000000000c0844000000000&zwsp;00c084400000000000307f400000000000307f40
+          5 | (5,65535) |      40 | \x00000500ffff28000000000000f0894000000000&zwsp;00f089400000000000c884400000000000c88440
+          6 | (6,65535) |      40 | \x00000600ffff28000000000000208f4000000000&zwsp;00208f400000000000f889400000000000f88940
+          7 | (7,65535) |      40 | \x00000700ffff28000000000000408f4000000000&zwsp;00408f400000000000288f400000000000288f40
+(7 rows)
+</screen>
+     </para>
+    </listitem>
+   </varlistentry>
+  </variablelist>
+ </sect2>
+
+ <sect2>
   <title>Hash Functions</title>
 
   <variablelist>
@@ -756,7 +847,7 @@ test=# SELECT * FROM hash_page_items(get_raw_page('con_hash_index', 1)) LIMIT 5;
 
    <varlistentry>
     <term>
-     <function>hash_bitmap_info(index oid, blkno int) returns record</function>
+     <function>hash_bitmap_info(index oid, blkno bigint) returns record</function>
      <indexterm>
       <primary>hash_bitmap_info</primary>
      </indexterm>

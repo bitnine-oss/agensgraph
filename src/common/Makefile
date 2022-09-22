@@ -58,7 +58,7 @@ OBJS_COMMON = \
 	file_perm.o \
 	file_utils.o \
 	hashfn.o \
-	hex_decode.o \
+	hex.o \
 	ip.o \
 	jsonapi.o \
 	keywords.o \
@@ -88,6 +88,7 @@ else
 OBJS_COMMON += \
 	cryptohash.o \
 	md5.o \
+	sha1.o \
 	sha2.o
 endif
 

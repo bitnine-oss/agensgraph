@@ -354,6 +354,19 @@ OPTIONS (ADD password_required 'false');
      </listitem>
     </varlistentry>
 
+    <varlistentry>
+     <term><literal>batch_size</literal></term>
+     <listitem>
+      <para>
+       This option specifies the number of rows <filename>postgres_fdw</filename>
+       should insert in each insert operation. It can be specified for a
+       foreign table or a foreign server. The option specified on a table
+       overrides an option specified for the server.
+       The default is <literal>1</literal>.
+      </para>
+     </listitem>
+    </varlistentry>
+
    </variablelist>
 
   </sect3>
@@ -479,6 +492,85 @@ OPTIONS (ADD password_required 'false');
   </sect3>
  </sect2>
 
+<sect2>
+  <title>Functions</title>
+
+  <variablelist>
+   <varlistentry>
+    <term><function>postgres_fdw_get_connections(OUT server_name text, OUT valid boolean) returns setof record</function></term>
+    <listitem>
+     <para>
+      This function returns the foreign server names of all the open
+      connections that <filename>postgres_fdw</filename> established from
+      the local session to the foreign servers. It also returns whether
+      each connection is valid or not. <literal>false</literal> is returned
+      if the foreign server connection is used in the current local
+      transaction but its foreign server or user mapping is changed or
+      dropped (Note that server name of an invalid connection will be
+      <literal>NULL</literal> if the server is dropped),
+      and then such invalid connection will be closed at
+      the end of that transaction. <literal>true</literal> is returned
+      otherwise. If there are no open connections, no record is returned.
+      Example usage of the function:
+<screen>
+postgres=# SELECT * FROM postgres_fdw_get_connections() ORDER BY 1;
+ server_name | valid 
+-------------+-------
+ loopback1   | t
+ loopback2   | f
+</screen>
+     </para>
+    </listitem>
+   </varlistentry>
+
+   <varlistentry>
+    <term><function>postgres_fdw_disconnect(server_name text) returns boolean</function></term>
+    <listitem>
+     <para>
+      This function discards the open connections that are established by
+      <filename>postgres_fdw</filename> from the local session to
+      the foreign server with the given name.  Note that there can be
+      multiple connections to the given server using different user mappings.
+      If the connections are used in the current local transaction,
+      they are not disconnected and warning messages are reported.
+      This function returns <literal>true</literal> if it disconnects
+      at least one connection, otherwise <literal>false</literal>.
+      If no foreign server with the given name is found, an error is reported.
+      Example usage of the function:
+<screen>
+postgres=# SELECT postgres_fdw_disconnect('loopback1');
+ postgres_fdw_disconnect 
+-------------------------
+ t
+</screen>
+     </para>
+    </listitem>
+   </varlistentry>
+
+   <varlistentry>
+    <term><function>postgres_fdw_disconnect_all() returns boolean</function></term>
+    <listitem>
+     <para>
+      This function discards all the open connections that are established by
+      <filename>postgres_fdw</filename> from the local session to
+      the foreign servers.  If the connections are used in the current local
+      transaction, they are not disconnected and warning messages are reported.
+      This function returns <literal>true</literal> if it disconnects
+      at least one connection, otherwise <literal>false</literal>.
+      Example usage of the function:
+<screen>
+postgres=# SELECT postgres_fdw_disconnect_all();
+ postgres_fdw_disconnect_all 
+-----------------------------
+ t
+</screen>
+     </para>
+    </listitem>
+   </varlistentry>
+   </variablelist>
+
+</sect2>
+
  <sect2>
   <title>Connection Management</title>
 
@@ -489,6 +581,26 @@ OPTIONS (ADD password_required 'false');
    re-used for subsequent queries in the same session.  However, if
    multiple user identities (user mappings) are used to access the foreign
    server, a connection is established for each user mapping.
+  </para>
+
+  <para>
+   When changing the definition of or removing a foreign server or
+   a user mapping, the corresponding connections are closed.
+   But note that if the connections are used in the current local transaction
+   at that moment, they are kept until the end of the transaction.
+   Closed connections will be established again when they are necessary
+   by subsequent queries using a foreign table.
+  </para>
+
+  <para>
+   Once a connection to a foreign server has been established,
+   it's usually kept until the local or the corresponding remote
+   session exits.  To disconnect a connection explicitly,
+   <function>postgres_fdw_disconnect</function> and
+   <function>postgres_fdw_disconnect_all</function> functions
+   need to be used.  For example, these are useful when closing
+   the connections that are no longer necessary and then preventing them
+   from consuming the foreign server connections capacity too much.
   </para>
  </sect2>
 

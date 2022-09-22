@@ -917,6 +917,24 @@ PREPARE <replaceable>statement_name</replaceable>(integer, integer) AS SELECT $1
      they are useful to know when trying to diagnose a problem.
      More information appears in <xref linkend="plpgsql-plan-caching"/>.
     </para>
+
+    <para>
+     Since an <replaceable>expression</replaceable> is converted to a
+     <literal>SELECT</literal> command, it can contain the same clauses
+     that an ordinary <literal>SELECT</literal> would, except that it
+     cannot include a top-level <literal>UNION</literal>,
+     <literal>INTERSECT</literal>, or <literal>EXCEPT</literal> clause.
+     Thus for example one could test whether a table is non-empty with
+<programlisting>
+IF count(*) &gt; 0 FROM my_table THEN ...
+</programlisting>
+     since the <replaceable>expression</replaceable>
+     between <literal>IF</literal> and <literal>THEN</literal> is parsed as
+     though it were <literal>SELECT count(*) &gt; 0 FROM my_table</literal>.
+     The <literal>SELECT</literal> must produce a single column, and not
+     more than one row.  (If it produces no rows, the result is taken as
+     NULL.)
+    </para>
   </sect1>
 
   <sect1 id="plpgsql-statements">
@@ -946,8 +964,8 @@ PREPARE <replaceable>statement_name</replaceable>(integer, integer) AS SELECT $1
      database engine.  The expression must yield a single value (possibly
      a row value, if the variable is a row or record variable).  The target
      variable can be a simple variable (optionally qualified with a block
-     name), a field of a row or record variable, or an element of an array
-     that is a simple variable or field.  Equal (<literal>=</literal>) can be
+     name), a field of a row or record target, or an element or slice of
+     an array target.  Equal (<literal>=</literal>) can be
      used instead of PL/SQL-compliant <literal>:=</literal>.
     </para>
 
@@ -968,6 +986,9 @@ PREPARE <replaceable>statement_name</replaceable>(integer, integer) AS SELECT $1
 <programlisting>
 tax := subtotal * 0.06;
 my_record.user_id := 20;
+my_array[j] := 20;
+my_array[1:3] := array[1,2,3];
+complex_array[n].realpart = 12.3;
 </programlisting>
     </para>
    </sect2>

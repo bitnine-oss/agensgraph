@@ -233,7 +233,7 @@ createMergeVertex(ModifyGraphState *mgstate, GraphVertex *gvertex,
 
 	if (resultRelInfo->ri_NumIndices > 0)
 		recheckIndexes = ExecInsertIndexTuples(resultRelInfo, insertSlot,
-											   estate, false, NULL, NIL);
+											   estate, false, false, NULL, NIL);
 
 	/* AFTER ROW INSERT Triggers */
 	ExecARInsertTriggers(estate, resultRelInfo, insertSlot, recheckIndexes,
@@ -316,7 +316,7 @@ createMergeEdge(ModifyGraphState *mgstate, GraphEdge *gedge, Graphid start,
 
 	if (resultRelInfo->ri_NumIndices > 0)
 		recheckIndexes = ExecInsertIndexTuples(resultRelInfo, insertSlot,
-											   estate, false, NULL, NIL);
+											   estate, false, false, NULL, NIL);
 
 	/* AFTER ROW INSERT Triggers */
 	ExecARInsertTriggers(estate, resultRelInfo, insertSlot, recheckIndexes,

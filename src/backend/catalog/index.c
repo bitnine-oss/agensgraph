@@ -3597,7 +3597,7 @@ IndexGetRelation(Oid indexId, bool missing_ok)
  */
 void
 reindex_index(Oid indexId, bool skip_constraint_checks, char persistence,
-			  int options)
+			  ReindexParams *params)
 {
 	Relation	iRel,
 				heapRelation;
@@ -3605,7 +3605,7 @@ reindex_index(Oid indexId, bool skip_constraint_checks, char persistence,
 	IndexInfo  *indexInfo;
 	volatile bool skipped_constraint = false;
 	PGRUsage	ru0;
-	bool		progress = (options & REINDEXOPT_REPORT_PROGRESS) != 0;
+	bool		progress = ((params->options & REINDEXOPT_REPORT_PROGRESS) != 0);
 
 	pg_rusage_init(&ru0);
 
@@ -3614,12 +3614,12 @@ reindex_index(Oid indexId, bool skip_constraint_checks, char persistence,
 	 * we only need to be sure no schema or data changes are going on.
 	 */
 	heapId = IndexGetRelation(indexId,
-							  (options & REINDEXOPT_MISSING_OK) != 0);
+							  (params->options & REINDEXOPT_MISSING_OK) != 0);
 	/* if relation is missing, leave */
 	if (!OidIsValid(heapId))
 		return;
 
-	if ((options & REINDEXOPT_MISSING_OK) != 0)
+	if ((params->options & REINDEXOPT_MISSING_OK) != 0)
 		heapRelation = try_table_open(heapId, ShareLock);
 	else
 		heapRelation = table_open(heapId, ShareLock);
@@ -3795,7 +3795,7 @@ reindex_index(Oid indexId, bool skip_constraint_checks, char persistence,
 	}
 
 	/* Log what we did */
-	if (options & REINDEXOPT_VERBOSE)
+	if ((params->options & REINDEXOPT_VERBOSE) != 0)
 		ereport(INFO,
 				(errmsg("index \"%s\" was reindexed",
 						get_rel_name(indexId)),
@@ -3849,7 +3849,7 @@ reindex_index(Oid indexId, bool skip_constraint_checks, char persistence,
  * index rebuild.
  */
 bool
-reindex_relation(Oid relid, int flags, int options)
+reindex_relation(Oid relid, int flags, ReindexParams *params)
 {
 	Relation	rel;
 	Oid			toast_relid;
@@ -3864,7 +3864,7 @@ reindex_relation(Oid relid, int flags, int options)
 	 * to prevent schema and data changes in it.  The lock level used here
 	 * should match ReindexTable().
 	 */
-	if ((options & REINDEXOPT_MISSING_OK) != 0)
+	if ((params->options & REINDEXOPT_MISSING_OK) != 0)
 		rel = try_table_open(relid, ShareLock);
 	else
 		rel = table_open(relid, ShareLock);
@@ -3938,7 +3938,7 @@ reindex_relation(Oid relid, int flags, int options)
 		}
 
 		reindex_index(indexOid, !(flags & REINDEX_REL_CHECK_CONSTRAINTS),
-					  persistence, options);
+					  persistence, params);
 
 		CommandCounterIncrement();
 
@@ -3968,8 +3968,10 @@ reindex_relation(Oid relid, int flags, int options)
 		 * Note that this should fail if the toast relation is missing, so
 		 * reset REINDEXOPT_MISSING_OK.
 		 */
-		result |= reindex_relation(toast_relid, flags,
-								   options & ~(REINDEXOPT_MISSING_OK));
+		ReindexParams newparams = *params;
+
+		newparams.options &= ~(REINDEXOPT_MISSING_OK);
+		result |= reindex_relation(toast_relid, flags, &newparams);
 	}
 
 	return result;

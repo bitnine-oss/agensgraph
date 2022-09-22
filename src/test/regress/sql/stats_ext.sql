@@ -28,15 +28,17 @@ end;
 $$;
 
 -- Verify failures
+CREATE TABLE ext_stats_test (x int, y int, z int);
 CREATE STATISTICS tst;
 CREATE STATISTICS tst ON a, b;
 CREATE STATISTICS tst FROM sometab;
 CREATE STATISTICS tst ON a, b FROM nonexistent;
-CREATE STATISTICS tst ON a, b FROM pg_class;
-CREATE STATISTICS tst ON relname, relname, relnatts FROM pg_class;
-CREATE STATISTICS tst ON relnatts + relpages FROM pg_class;
-CREATE STATISTICS tst ON (relpages, reltuples) FROM pg_class;
-CREATE STATISTICS tst (unrecognized) ON relname, relnatts FROM pg_class;
+CREATE STATISTICS tst ON a, b FROM ext_stats_test;
+CREATE STATISTICS tst ON x, x, y FROM ext_stats_test;
+CREATE STATISTICS tst ON x + y FROM ext_stats_test;
+CREATE STATISTICS tst ON (x, y) FROM ext_stats_test;
+CREATE STATISTICS tst (unrecognized) ON x, y FROM ext_stats_test;
+DROP TABLE ext_stats_test;
 
 -- Ensure stats are dropped sanely, and test IF NOT EXISTS while at it
 CREATE TABLE ab1 (a INTEGER, b INTEGER, c INTEGER);
@@ -911,6 +913,43 @@ CREATE STATISTICS tststats.priv_test_stats (mcv) ON a, b
   FROM tststats.priv_test_tbl;
 
 ANALYZE tststats.priv_test_tbl;
+
+-- Check printing info about extended statistics by \dX
+create table stts_t1 (a int, b int);
+create statistics stts_1 (ndistinct) on a, b from stts_t1;
+create statistics stts_2 (ndistinct, dependencies) on a, b from stts_t1;
+create statistics stts_3 (ndistinct, dependencies, mcv) on a, b from stts_t1;
+
+create table stts_t2 (a int, b int, c int);
+create statistics stts_4 on b, c from stts_t2;
+
+create table stts_t3 (col1 int, col2 int, col3 int);
+create statistics stts_hoge on col1, col2, col3 from stts_t3;
+
+create schema stts_s1;
+create schema stts_s2;
+create statistics stts_s1.stts_foo on col1, col2 from stts_t3;
+create statistics stts_s2.stts_yama (dependencies, mcv) on col1, col3 from stts_t3;
+
+insert into stts_t1 select i,i from generate_series(1,100) i;
+analyze stts_t1;
+
+\dX
+\dX stts_?
+\dX *stts_hoge
+\dX+
+\dX+ stts_?
+\dX+ *stts_hoge
+\dX+ stts_s2.stts_yama
+
+create role regress_stats_ext nosuperuser;
+set role regress_stats_ext;
+\dX
+reset role;
+
+drop table stts_t1, stts_t2, stts_t3;
+drop schema stts_s1, stts_s2 cascade;
+drop user regress_stats_ext;
 
 -- User with no access
 CREATE USER regress_stats_user1;

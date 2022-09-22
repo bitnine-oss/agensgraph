@@ -1083,15 +1083,6 @@ filter_prepare_cb_wrapper(LogicalDecodingContext *ctx, const char *gid)
 
 	Assert(!ctx->fast_forward);
 
-	/*
-	 * Skip if decoding of two-phase transactions at PREPARE time is not
-	 * enabled. In that case, all two-phase transactions are considered
-	 * filtered out and will be applied as regular transactions at COMMIT
-	 * PREPARED.
-	 */
-	if (!ctx->twophase)
-		return true;
-
 	/* Push callback + info on the error context stack */
 	state.ctx = ctx;
 	state.callback_name = "filter_prepare";
@@ -1380,7 +1371,7 @@ stream_commit_cb_wrapper(ReorderBuffer *cache, ReorderBufferTXN *txn,
 	ctx->write_xid = txn->xid;
 	ctx->write_location = txn->end_lsn;
 
-	/* in streaming mode, stream_abort_cb is required */
+	/* in streaming mode, stream_commit_cb is required */
 	if (ctx->callbacks.stream_commit_cb == NULL)
 		ereport(ERROR,
 				(errcode(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),

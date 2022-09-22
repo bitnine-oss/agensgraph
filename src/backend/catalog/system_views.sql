@@ -924,6 +924,13 @@ CREATE VIEW pg_stat_database AS
             pg_stat_get_db_checksum_last_failure(D.oid) AS checksum_last_failure,
             pg_stat_get_db_blk_read_time(D.oid) AS blk_read_time,
             pg_stat_get_db_blk_write_time(D.oid) AS blk_write_time,
+            pg_stat_get_db_session_time(D.oid) AS session_time,
+            pg_stat_get_db_active_time(D.oid) AS active_time,
+            pg_stat_get_db_idle_in_transaction_time(D.oid) AS idle_in_transaction_time,
+            pg_stat_get_db_sessions(D.oid) AS sessions,
+            pg_stat_get_db_sessions_abandoned(D.oid) AS sessions_abandoned,
+            pg_stat_get_db_sessions_fatal(D.oid) AS sessions_fatal,
+            pg_stat_get_db_sessions_killed(D.oid) AS sessions_killed,
             pg_stat_get_db_stat_reset_time(D.oid) AS stats_reset
     FROM (
         SELECT 0 AS oid, NULL::name AS datname
@@ -1116,6 +1123,17 @@ CREATE VIEW pg_stat_progress_basebackup AS
         S.param4 AS tablespaces_total,
         S.param5 AS tablespaces_streamed
     FROM pg_stat_get_progress_info('BASEBACKUP') AS S;
+
+
+CREATE VIEW pg_stat_progress_copy AS
+    SELECT
+        S.pid AS pid, S.datid AS datid, D.datname AS datname,
+        S.relid AS relid,
+        S.param1 AS bytes_processed,
+        S.param2 AS bytes_total,
+        S.param3 AS lines_processed
+    FROM pg_stat_get_progress_info('COPY') AS S
+        LEFT JOIN pg_database D ON S.datid = D.oid;
 
 CREATE VIEW pg_user_mappings AS
     SELECT

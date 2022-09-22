@@ -103,6 +103,7 @@
 #include "utils/rls.h"
 #include "utils/snapmgr.h"
 #include "utils/tzparser.h"
+#include "utils/inval.h"
 #include "utils/varlena.h"
 #include "utils/xml.h"
 
@@ -213,6 +214,7 @@ static bool check_cluster_name(char **newval, void **extra, GucSource source);
 static const char *show_unix_socket_permissions(void);
 static const char *show_log_file_mode(void);
 static const char *show_data_directory_mode(void);
+static const char *show_in_hot_standby(void);
 static bool check_backtrace_functions(char **newval, void **extra, GucSource source);
 static void assign_backtrace_functions(const char *newval, void *extra);
 static bool check_recovery_target_timeline(char **newval, void **extra, GucSource source);
@@ -614,6 +616,7 @@ static int	wal_block_size;
 static bool data_checksums;
 static bool integer_datetimes;
 static bool assert_enabled;
+static bool in_hot_standby;
 static char *recovery_target_timeline_string;
 static char *recovery_target_string;
 static char *recovery_target_xid_string;
@@ -1602,7 +1605,15 @@ static struct config_bool ConfigureNamesBool[] =
 		false,
 		NULL, NULL, NULL
 	},
-
+	{
+		{"log_recovery_conflict_waits", PGC_SIGHUP, LOGGING_WHAT,
+			gettext_noop("Logs standby recovery conflict waits."),
+			NULL
+		},
+		&log_recovery_conflict_waits,
+		false,
+		NULL, NULL, NULL
+	},
 	{
 		{"log_hostname", PGC_SIGHUP, LOGGING_WHAT,
 			gettext_noop("Logs the host name in the connection logs."),
@@ -1874,6 +1885,17 @@ static struct config_bool ConfigureNamesBool[] =
 		&hot_standby_feedback,
 		false,
 		NULL, NULL, NULL
+	},
+
+	{
+		{"in_hot_standby", PGC_INTERNAL, PRESET_OPTIONS,
+			gettext_noop("Shows whether hot standby is currently active."),
+			NULL,
+			GUC_REPORT | GUC_NOT_IN_SAMPLE | GUC_DISALLOW_IN_FILE
+		},
+		&in_hot_standby,
+		false,
+		NULL, NULL, show_in_hot_standby
 	},
 
 	{
@@ -2455,7 +2477,7 @@ static struct config_int ConfigureNamesInt[] =
 			NULL
 		},
 		&VacuumCostPageMiss,
-		10, 0, 10000,
+		2, 0, 10000,
 		NULL, NULL, NULL
 	},
 
@@ -2559,11 +2581,22 @@ static struct config_int ConfigureNamesInt[] =
 
 	{
 		{"idle_in_transaction_session_timeout", PGC_USERSET, CLIENT_CONN_STATEMENT,
-			gettext_noop("Sets the maximum allowed duration of any idling transaction."),
+			gettext_noop("Sets the maximum allowed idle time between queries, when in a transaction."),
 			gettext_noop("A value of 0 turns off the timeout."),
 			GUC_UNIT_MS
 		},
 		&IdleInTransactionSessionTimeout,
+		0, 0, INT_MAX,
+		NULL, NULL, NULL
+	},
+
+	{
+		{"idle_session_timeout", PGC_USERSET, CLIENT_CONN_STATEMENT,
+			gettext_noop("Sets the maximum allowed idle time between queries, when not in a transaction."),
+			gettext_noop("A value of 0 turns off the timeout."),
+			GUC_UNIT_MS
+		},
+		&IdleSessionTimeout,
 		0, 0, INT_MAX,
 		NULL, NULL, NULL
 	},
@@ -3451,6 +3484,29 @@ static struct config_int ConfigureNamesInt[] =
 		&huge_page_size,
 		0, 0, INT_MAX,
 		check_huge_page_size, NULL, NULL
+	},
+
+	{
+		{"debug_invalidate_system_caches_always", PGC_SUSET, DEVELOPER_OPTIONS,
+			gettext_noop("Aggressively invalidate system caches for debugging purposes."),
+			NULL,
+			GUC_NOT_IN_SAMPLE
+		},
+		&debug_invalidate_system_caches_always,
+#ifdef CLOBBER_CACHE_ENABLED
+		/* Set default based on older compile-time-only cache clobber macros */
+#if defined(CLOBBER_CACHE_RECURSIVELY)
+		3,
+#elif defined(CLOBBER_CACHE_ALWAYS)
+		1,
+#else
+		0,
+#endif
+		0, 5,
+#else	/* not CLOBBER_CACHE_ENABLED */
+		0, 0, 0,
+#endif	/* not CLOBBER_CACHE_ENABLED */
+		NULL, NULL, NULL
 	},
 
 	/* End-of-list marker */
@@ -6335,6 +6391,14 @@ BeginReportingGUCOptions(void)
 
 	reporting_enabled = true;
 
+	/*
+	 * Hack for in_hot_standby: initialize with the value we're about to send.
+	 * (This could be out of date by the time we actually send it, in which
+	 * case the next ReportChangedGUCOptions call will send a duplicate
+	 * report.)
+	 */
+	in_hot_standby = RecoveryInProgress();
+
 	/* Transmit initial values of interesting variables */
 	for (i = 0; i < num_guc_variables; i++)
 	{
@@ -6366,6 +6430,23 @@ ReportChangedGUCOptions(void)
 	/* Quick exit if not (yet) enabled */
 	if (!reporting_enabled)
 		return;
+
+	/*
+	 * Since in_hot_standby isn't actually changed by normal GUC actions, we
+	 * need a hack to check whether a new value needs to be reported to the
+	 * client.  For speed, we rely on the assumption that it can never
+	 * transition from false to true.
+	 */
+	if (in_hot_standby && !RecoveryInProgress())
+	{
+		struct config_generic *record;
+
+		record = find_option("in_hot_standby", false, ERROR);
+		Assert(record != NULL);
+		record->status |= GUC_NEEDS_REPORT;
+		report_needed = true;
+		in_hot_standby = false;
+	}
 
 	/* Quick exit if no values have been changed */
 	if (!report_needed)
@@ -11858,6 +11939,18 @@ show_data_directory_mode(void)
 
 	snprintf(buf, sizeof(buf), "%04o", data_directory_mode);
 	return buf;
+}
+
+static const char *
+show_in_hot_standby(void)
+{
+	/*
+	 * We display the actual state based on shared memory, so that this GUC
+	 * reports up-to-date state if examined intra-query.  The underlying
+	 * variable in_hot_standby changes only when we transmit a new value to
+	 * the client.
+	 */
+	return RecoveryInProgress() ? "on" : "off";
 }
 
 /*

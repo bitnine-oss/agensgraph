@@ -484,6 +484,7 @@ lreplace:
 		recheckIndexes = ExecInsertIndexTuples(resultRelInfo,
 											   elemTupleSlot,
 											   estate,
+											   true,
 											   false,
 											   NULL,
 											   NIL);
@@ -616,6 +617,7 @@ LegacyUpdateElemProp(ModifyGraphState *mgstate, Oid elemtype, Datum gid,
 		recheckIndexes = ExecInsertIndexTuples(resultRelInfo,
 											   elemTupleSlot,
 											   estate,
+											   true,
 											   false,
 											   NULL,
 											   NIL);

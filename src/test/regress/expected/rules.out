@@ -1878,6 +1878,13 @@ pg_stat_database| SELECT d.oid AS datid,
     pg_stat_get_db_checksum_last_failure(d.oid) AS checksum_last_failure,
     pg_stat_get_db_blk_read_time(d.oid) AS blk_read_time,
     pg_stat_get_db_blk_write_time(d.oid) AS blk_write_time,
+    pg_stat_get_db_session_time(d.oid) AS session_time,
+    pg_stat_get_db_active_time(d.oid) AS active_time,
+    pg_stat_get_db_idle_in_transaction_time(d.oid) AS idle_in_transaction_time,
+    pg_stat_get_db_sessions(d.oid) AS sessions,
+    pg_stat_get_db_sessions_abandoned(d.oid) AS sessions_abandoned,
+    pg_stat_get_db_sessions_fatal(d.oid) AS sessions_fatal,
+    pg_stat_get_db_sessions_killed(d.oid) AS sessions_killed,
     pg_stat_get_db_stat_reset_time(d.oid) AS stats_reset
    FROM ( SELECT 0 AS oid,
             NULL::name AS datname
@@ -1966,6 +1973,15 @@ pg_stat_progress_cluster| SELECT s.pid,
     s.param7 AS heap_blks_scanned,
     s.param8 AS index_rebuild_count
    FROM (pg_stat_get_progress_info('CLUSTER'::text) s(pid, datid, relid, param1, param2, param3, param4, param5, param6, param7, param8, param9, param10, param11, param12, param13, param14, param15, param16, param17, param18, param19, param20)
+     LEFT JOIN pg_database d ON ((s.datid = d.oid)));
+pg_stat_progress_copy| SELECT s.pid,
+    s.datid,
+    d.datname,
+    s.relid,
+    s.param1 AS bytes_processed,
+    s.param2 AS bytes_total,
+    s.param3 AS lines_processed
+   FROM (pg_stat_get_progress_info('COPY'::text) s(pid, datid, relid, param1, param2, param3, param4, param5, param6, param7, param8, param9, param10, param11, param12, param13, param14, param15, param16, param17, param18, param19, param20)
      LEFT JOIN pg_database d ON ((s.datid = d.oid)));
 pg_stat_progress_create_index| SELECT s.pid,
     s.datid,

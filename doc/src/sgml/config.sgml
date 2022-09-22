@@ -263,8 +263,9 @@ shared_buffers = 128MB
      <listitem>
      <para>
       The <link linkend="sql-show"><command>SHOW</command></link> command allows inspection of the
-      current value of all parameters.  The corresponding function is
-      <function>current_setting(setting_name text)</function>.
+      current value of any parameter.  The corresponding SQL function is
+      <function>current_setting(setting_name text)</function>
+      (see <xref linkend="functions-admin-set"/>).
      </para>
      </listitem>
 
@@ -273,8 +274,9 @@ shared_buffers = 128MB
        The <link linkend="sql-set"><command>SET</command></link> command allows modification of the
        current value of those parameters that can be set locally to a
        session; it has no effect on other sessions.
-       The corresponding function is
-       <function>set_config(setting_name, new_value, is_local)</function>.
+       The corresponding SQL function is
+       <function>set_config(setting_name, new_value, is_local)</function>
+       (see <xref linkend="functions-admin-set"/>).
       </para>
      </listitem>
     </itemizedlist>
@@ -2116,7 +2118,7 @@ include_dir 'conf.d'
          The estimated cost for vacuuming a buffer that has to be read from
          disk.  This represents the effort to lock the buffer pool,
          lookup the shared hash table, read the desired block in from
-         the disk and scan its content. The default value is 10.
+         the disk and scan its content. The default value is 2.
         </para>
        </listitem>
       </varlistentry>
@@ -6952,6 +6954,28 @@ log_line_prefix = '%m [%p] %q%u@%d/%a '
       </listitem>
      </varlistentry>
 
+     <varlistentry id="guc-log-recovery-conflict-waits" xreflabel="log_recovery_conflict_waits">
+      <term><varname>log_recovery_conflict_waits</varname> (<type>boolean</type>)
+      <indexterm>
+       <primary><varname>log_recovery_conflict_waits</varname> configuration parameter</primary>
+      </indexterm>
+      </term>
+      <listitem>
+       <para>
+        Controls whether a log message is produced when the startup process
+        waits longer than <varname>deadlock_timeout</varname>
+        for recovery conflicts.  This is useful in determining if recovery
+        conflicts prevent the recovery from applying WAL.
+       </para>
+
+       <para>
+        The default is <literal>off</literal>.  This parameter can only be set
+        in the <filename>postgresql.conf</filename> file or on the server
+        command line.
+       </para>
+      </listitem>
+     </varlistentry>
+
      <varlistentry id="guc-log-parameter-max-length" xreflabel="log_parameter_max_length">
       <term><varname>log_parameter_max_length</varname> (<type>integer</type>)
       <indexterm>
@@ -8310,15 +8334,52 @@ COPY postgres_log FROM '/full/path/to/logfile.csv' WITH csv;
       </term>
       <listitem>
        <para>
-       Terminate any session with an open transaction that has been idle for
-       longer than the specified amount of time. This allows any
-       locks held by that session to be released and the connection slot to be reused;
-       it also allows tuples visible only to this transaction to be vacuumed.  See
-       <xref linkend="routine-vacuuming"/> for more details about this.
+        Terminate any session that has been idle (that is, waiting for a
+        client query) within an open transaction for longer than the
+        specified amount of time.
+        If this value is specified without units, it is taken as milliseconds.
+        A value of zero (the default) disables the timeout.
        </para>
+
        <para>
-       If this value is specified without units, it is taken as milliseconds.
-       A value of zero (the default) disables the timeout.
+        This option can be used to ensure that idle sessions do not hold
+        locks for an unreasonable amount of time.  Even when no significant
+        locks are held, an open transaction prevents vacuuming away
+        recently-dead tuples that may be visible only to this transaction;
+        so remaining idle for a long time can contribute to table bloat.
+        See <xref linkend="routine-vacuuming"/> for more details.
+       </para>
+      </listitem>
+     </varlistentry>
+
+     <varlistentry id="guc-idle-session-timeout" xreflabel="idle_session_timeout">
+      <term><varname>idle_session_timeout</varname> (<type>integer</type>)
+      <indexterm>
+       <primary><varname>idle_session_timeout</varname> configuration parameter</primary>
+      </indexterm>
+      </term>
+      <listitem>
+       <para>
+        Terminate any session that has been idle (that is, waiting for a
+        client query), but not within an open transaction, for longer than
+        the specified amount of time.
+        If this value is specified without units, it is taken as milliseconds.
+        A value of zero (the default) disables the timeout.
+       </para>
+
+       <para>
+        Unlike the case with an open transaction, an idle session without a
+        transaction imposes no large costs on the server, so there is less
+        need to enable this timeout
+        than <varname>idle_in_transaction_session_timeout</varname>.
+       </para>
+
+       <para>
+        Be wary of enforcing this timeout on connections made through
+        connection-pooling software or other middleware, as such a layer
+        may not react well to unexpected connection closure.  It may be
+        helpful to enable this timeout only for interactive sessions,
+        perhaps by applying it only to particular users.
        </para>
       </listitem>
      </varlistentry>
@@ -9600,13 +9661,14 @@ dynamic_library_path = 'C:\tools\postgresql;H:\my_project\lib;$libdir'
     <title>Preset Options</title>
 
     <para>
-     The following <quote>parameters</quote> are read-only, and are determined
-     when <productname>PostgreSQL</productname> is compiled or when it is
-     installed. As such, they have been excluded from the sample
+     The following <quote>parameters</quote> are read-only.
+     As such, they have been excluded from the sample
      <filename>postgresql.conf</filename> file.  These options report
      various aspects of <productname>PostgreSQL</productname> behavior
      that might be of interest to certain applications, particularly
      administrative front-ends.
+     Most of them are determined when <productname>PostgreSQL</productname>
+     is compiled or when it is installed.
     </para>
 
     <variablelist>
@@ -9651,10 +9713,11 @@ dynamic_library_path = 'C:\tools\postgresql;H:\my_project\lib;$libdir'
       </term>
       <listitem>
        <para>
-        On Unix systems this parameter reports the permissions of the data
-        directory defined by (<xref linkend="guc-data-directory"/>) at startup.
+        On Unix systems this parameter reports the permissions the data
+        directory (defined by <xref linkend="guc-data-directory"/>)
+        had at server startup.
         (On Microsoft Windows this parameter will always display
-        <literal>0700</literal>). See
+        <literal>0700</literal>.) See
         <xref linkend="app-initdb-allow-group-access"/> for more information.
        </para>
       </listitem>
@@ -9691,6 +9754,23 @@ dynamic_library_path = 'C:\tools\postgresql;H:\my_project\lib;$libdir'
         Reports whether <productname>PostgreSQL</productname> was built with support for
         64-bit-integer dates and times.  As of <productname>PostgreSQL</productname> 10,
         this is always <literal>on</literal>.
+       </para>
+      </listitem>
+     </varlistentry>
+
+     <varlistentry id="guc-in-hot-standby" xreflabel="in_hot_standby">
+      <term><varname>in_hot_standby</varname> (<type>boolean</type>)
+      <indexterm>
+       <primary><varname>in_hot_standby</varname> configuration parameter</primary>
+      </indexterm>
+      </term>
+      <listitem>
+       <para>
+        Reports whether the server is currently in hot standby mode.  When
+        this is <literal>on</literal>, all transactions are forced to be
+        read-only.  Within a session, this can change only if the server is
+        promoted to be primary.  See <xref linkend="hot-standby"/> for more
+        information.
        </para>
       </listitem>
      </varlistentry>
@@ -9966,6 +10046,43 @@ dynamic_library_path = 'C:\tools\postgresql;H:\my_project\lib;$libdir'
 
        <para>
         This parameter can only be set by superusers.
+       </para>
+      </listitem>
+     </varlistentry>
+
+     <varlistentry id="guc-debug-invalidate-system-caches-always" xreflabel="debug_invalidate_system_caches_always">
+      <term><varname>debug_invalidate_system_caches_always</varname> (<type>integer</type>)
+      <indexterm>
+       <primary><varname>debug_invalidate_system_caches_always</varname> configuration parameter</primary>
+      </indexterm>
+      </term>
+      <listitem>
+       <para>
+        When set to 1, each cache lookup for a system catalog entry is
+        invalidated at the first possible opportunity, irrespective of whether
+        anything that would render it invalid really occurred.  Caching of
+        system catalogs is effectively disabled as a result, so the server
+        will run extremely slowly.  Higher values run the cache invalidation
+        recursively, which is even slower and useful only useful for testing
+        in very specific scenarios.
+       </para>
+
+       <para>
+        This option can be very helpful when trying to trigger
+        hard-to-reproduce bugs involving concurrency and catalog changes but
+        is otherwise rarely needed.  See the source code files
+        <filename>inval.c</filename> and
+        <filename>pg_config_manual.h</filename> for details.
+       </para>
+
+       <para>
+        This setting is supported but off by default (0) when
+        <symbol>CLOBBER_CACHE_ENABLED</symbol> is defined at compile time
+        (which happens automatically when using the
+        <literal>configure</literal> option
+        <option>--enable-cassert</option>).  In production builds, its value
+        will always be <literal>0</literal> and attempts to set it to another
+        value will raise an error.
        </para>
       </listitem>
      </varlistentry>

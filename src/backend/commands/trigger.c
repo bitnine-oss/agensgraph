@@ -71,10 +71,8 @@ int			SessionReplicationRole = SESSION_REPLICATION_ROLE_ORIGIN;
 static int	MyTriggerDepth = 0;
 
 /*
- * Note that similar macros also exist in executor/execMain.c.  There does not
- * appear to be any good header to put them into, given the structures that
- * they use, so we let them be duplicated.  Be sure to update all if one needs
- * to be changed, however.
+ * The authoritative version of this macro is in executor/execMain.c.  Be sure
+ * to keep everything in sync.
  */
 #define GetAllUpdatedColumns(relinfo, estate) \
 	(bms_union(exec_rt_fetch((relinfo)->ri_RangeTableIndex, estate)->updatedCols, \
@@ -2800,16 +2798,6 @@ ExecBRUpdateTriggers(EState *estate, EPQState *epqstate,
 		else if (newtuple != oldtuple)
 		{
 			ExecForceStoreHeapTuple(newtuple, newslot, false);
-
-			if (trigger->tgisclone &&
-				!ExecPartitionCheck(relinfo, newslot, estate, false))
-				ereport(ERROR,
-						(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-						 errmsg("moving row to another partition during a BEFORE trigger is not supported"),
-						 errdetail("Before executing trigger \"%s\", the row was to be in partition \"%s.%s\".",
-								   trigger->tgname,
-								   get_namespace_name(RelationGetNamespace(relinfo->ri_RelationDesc)),
-								   RelationGetRelationName(relinfo->ri_RelationDesc))));
 
 			/*
 			 * If the tuple returned by the trigger / being stored, is the old

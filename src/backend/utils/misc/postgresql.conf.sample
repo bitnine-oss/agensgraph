@@ -165,7 +165,7 @@
 
 #vacuum_cost_delay = 0			# 0-100 milliseconds (0 disables)
 #vacuum_cost_page_hit = 1		# 0-10000 credits
-#vacuum_cost_page_miss = 10		# 0-10000 credits
+#vacuum_cost_page_miss = 2		# 0-10000 credits
 #vacuum_cost_page_dirty = 20		# 0-10000 credits
 #vacuum_cost_limit = 200		# 1-10000 credits
 
@@ -554,6 +554,8 @@
 					#   %% = '%'
 					# e.g. '<%u%%%d> '
 #log_lock_waits = off			# log lock waits >= deadlock_timeout
+#log_recovery_conflict_waits = off	# log standby recovery conflict waits
+					# >= deadlock_timeout
 #log_parameter_max_length = -1		# when logging statements, limit logged
 					# bind-parameter values to N bytes;
 					# -1 means print in full, 0 disables
@@ -665,6 +667,7 @@
 #statement_timeout = 0			# in milliseconds, 0 is disabled
 #lock_timeout = 0			# in milliseconds, 0 is disabled
 #idle_in_transaction_session_timeout = 0	# in milliseconds, 0 is disabled
+#idle_session_timeout = 0		# in milliseconds, 0 is disabled
 #vacuum_freeze_min_age = 50000000
 #vacuum_freeze_table_age = 150000000
 #vacuum_multixact_freeze_min_age = 5000000

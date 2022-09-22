@@ -14,6 +14,7 @@
 #ifndef STANDBY_H
 #define STANDBY_H
 
+#include "datatype/timestamp.h"
 #include "storage/lock.h"
 #include "storage/procsignal.h"
 #include "storage/relfilenode.h"
@@ -23,6 +24,7 @@
 extern int	vacuum_defer_cleanup_age;
 extern int	max_standby_archive_delay;
 extern int	max_standby_streaming_delay;
+extern bool log_recovery_conflict_waits;
 
 extern void InitRecoveryTransactionEnvironment(void);
 extern void ShutdownRecoveryTransactionEnvironment(void);
@@ -32,12 +34,15 @@ extern void ResolveRecoveryConflictWithSnapshot(TransactionId latestRemovedXid,
 extern void ResolveRecoveryConflictWithTablespace(Oid tsid);
 extern void ResolveRecoveryConflictWithDatabase(Oid dbid);
 
-extern void ResolveRecoveryConflictWithLock(LOCKTAG locktag);
+extern void ResolveRecoveryConflictWithLock(LOCKTAG locktag, bool logging_conflict);
 extern void ResolveRecoveryConflictWithBufferPin(void);
 extern void CheckRecoveryConflictDeadlock(void);
 extern void StandbyDeadLockHandler(void);
 extern void StandbyTimeoutHandler(void);
 extern void StandbyLockTimeoutHandler(void);
+extern void LogRecoveryConflict(ProcSignalReason reason, TimestampTz wait_start,
+								TimestampTz cur_ts, VirtualTransactionId *wait_list,
+								bool still_waiting);
 
 /*
  * Standby Rmgr (RM_STANDBY_ID)

@@ -216,7 +216,7 @@ createVertex(ModifyGraphState *mgstate, GraphVertex *gvertex, Graphid *vid,
 	/* insert index entries for the tuple */
 	if (resultRelInfo->ri_NumIndices > 0)
 		recheckIndexes = ExecInsertIndexTuples(resultRelInfo, elemTupleSlot,
-											   estate, false,
+											   estate, false, false,
 											   NULL, NIL);
 
 	/* AFTER ROW INSERT Triggers */
@@ -295,7 +295,7 @@ createEdge(ModifyGraphState *mgstate, GraphEdge *gedge, Graphid start,
 
 	if (resultRelInfo->ri_NumIndices > 0)
 		recheckIndexes = ExecInsertIndexTuples(resultRelInfo, elemTupleSlot,
-											   estate, false,
+											   estate, false, false,
 											   NULL, NIL);
 
 	/* AFTER ROW INSERT Triggers */

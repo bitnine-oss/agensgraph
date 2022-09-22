@@ -52,6 +52,7 @@ static DumpableObject **oprinfoindex;
 static DumpableObject **collinfoindex;
 static DumpableObject **nspinfoindex;
 static DumpableObject **extinfoindex;
+static DumpableObject **pubinfoindex;
 static int	numTables;
 static int	numTypes;
 static int	numFuncs;
@@ -59,6 +60,7 @@ static int	numOperators;
 static int	numCollations;
 static int	numNamespaces;
 static int	numExtensions;
+static int	numPublications;
 
 /* This is an array of object identities, not actual DumpableObjects */
 static ExtensionMemberId *extmembers;
@@ -93,6 +95,7 @@ getSchemaData(Archive *fout, int *numTablesPtr)
 	CollInfo   *collinfo;
 	NamespaceInfo *nspinfo;
 	ExtensionInfo *extinfo;
+	PublicationInfo *pubinfo;
 	InhInfo    *inhinfo;
 	int			numAggregates;
 	int			numInherits;
@@ -247,7 +250,9 @@ getSchemaData(Archive *fout, int *numTablesPtr)
 	getPolicies(fout, tblinfo, numTables);
 
 	pg_log_info("reading publications");
-	getPublications(fout);
+	pubinfo = getPublications(fout, &numPublications);
+	pubinfoindex = buildIndexArray(pubinfo, numPublications,
+								   sizeof(PublicationInfo));
 
 	pg_log_info("reading publication membership");
 	getPublicationTables(fout, tblinfo, numTables);
@@ -261,7 +266,9 @@ getSchemaData(Archive *fout, int *numTablesPtr)
 
 /* flagInhTables -
  *	 Fill in parent link fields of tables for which we need that information,
- *	 and mark parents of target tables as interesting
+ *	 mark parents of target tables as interesting, and create
+ *	 TableAttachInfo objects for partitioned tables with appropriate
+ *	 dependency links.
  *
  * Note that only direct ancestors of targets are marked interesting.
  * This is sufficient; we don't much care whether they inherited their
@@ -319,6 +326,40 @@ flagInhTables(Archive *fout, TableInfo *tblinfo, int numTables,
 
 			for (j = 0; j < numParents; j++)
 				parents[j]->interesting = true;
+		}
+
+		/* Create TableAttachInfo object if needed */
+		if (tblinfo[i].dobj.dump && tblinfo[i].ispartition)
+		{
+			TableAttachInfo *attachinfo;
+
+			/* With partitions there can only be one parent */
+			if (tblinfo[i].numParents != 1)
+				fatal("invalid number of parents %d for table \"%s\"",
+					  tblinfo[i].numParents,
+					  tblinfo[i].dobj.name);
+
+			attachinfo = (TableAttachInfo *) palloc(sizeof(TableAttachInfo));
+			attachinfo->dobj.objType = DO_TABLE_ATTACH;
+			attachinfo->dobj.catId.tableoid = 0;
+			attachinfo->dobj.catId.oid = 0;
+			AssignDumpId(&attachinfo->dobj);
+			attachinfo->dobj.name = pg_strdup(tblinfo[i].dobj.name);
+			attachinfo->dobj.namespace = tblinfo[i].dobj.namespace;
+			attachinfo->parentTbl = tblinfo[i].parents[0];
+			attachinfo->partitionTbl = &tblinfo[i];
+
+			/*
+			 * We must state the DO_TABLE_ATTACH object's dependencies
+			 * explicitly, since it will not match anything in pg_depend.
+			 *
+			 * Give it dependencies on both the partition table and the parent
+			 * table, so that it will not be executed till both of those
+			 * exist.  (There's no need to care what order those are created
+			 * in.)
+			 */
+			addObjectDependency(&attachinfo->dobj, tblinfo[i].dobj.dumpId);
+			addObjectDependency(&attachinfo->dobj, tblinfo[i].parents[0]->dobj.dumpId);
 		}
 	}
 }
@@ -548,6 +589,7 @@ AssignDumpId(DumpableObject *dobj)
 	dobj->name = NULL;			/* must be set later */
 	dobj->namespace = NULL;		/* may be set later */
 	dobj->dump = DUMP_COMPONENT_ALL;	/* default assumption */
+	dobj->dump_contains = DUMP_COMPONENT_ALL;	/* default assumption */
 	dobj->ext_member = false;	/* default assumption */
 	dobj->depends_on_ext = false;	/* default assumption */
 	dobj->dependencies = NULL;
@@ -898,6 +940,17 @@ ExtensionInfo *
 findExtensionByOid(Oid oid)
 {
 	return (ExtensionInfo *) findObjectByOid(oid, extinfoindex, numExtensions);
+}
+
+/*
+ * findPublicationByOid
+ *	  finds the entry (in pubinfo) of the publication with the given oid
+ *	  returns NULL if not found
+ */
+PublicationInfo *
+findPublicationByOid(Oid oid)
+{
+	return (PublicationInfo *) findObjectByOid(oid, pubinfoindex, numPublications);
 }
 
 /*

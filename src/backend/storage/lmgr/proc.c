@@ -61,6 +61,7 @@ int			DeadlockTimeout = 1000;
 int			StatementTimeout = 0;
 int			LockTimeout = 0;
 int			IdleInTransactionSessionTimeout = 0;
+int			IdleSessionTimeout = 0;
 bool		log_lock_waits = false;
 
 /* Pointer to this process's PGPROC struct, if any */
@@ -1063,8 +1064,10 @@ ProcSleep(LOCALLOCK *locallock, LockMethod lockMethodTable)
 	LWLock	   *partitionLock = LockHashPartitionLock(hashcode);
 	PROC_QUEUE *waitQueue = &(lock->waitProcs);
 	LOCKMASK	myHeldLocks = MyProc->heldLocks;
+	TimestampTz standbyWaitStart = 0;
 	bool		early_deadlock = false;
 	bool		allow_autovacuum_cancel = true;
+	bool		logged_recovery_conflict = false;
 	ProcWaitStatus myWaitStatus;
 	PGPROC	   *proc;
 	PGPROC	   *leader = MyProc->lockGroupLeader;
@@ -1260,6 +1263,14 @@ ProcSleep(LOCALLOCK *locallock, LockMethod lockMethodTable)
 		else
 			enable_timeout_after(DEADLOCK_TIMEOUT, DeadlockTimeout);
 	}
+	else if (log_recovery_conflict_waits)
+	{
+		/*
+		 * Set the wait start timestamp if logging is enabled and in hot
+		 * standby.
+		 */
+		standbyWaitStart = GetCurrentTimestamp();
+	}
 
 	/*
 	 * If somebody wakes us between LWLockRelease and WaitLatch, the latch
@@ -1279,8 +1290,43 @@ ProcSleep(LOCALLOCK *locallock, LockMethod lockMethodTable)
 	{
 		if (InHotStandby)
 		{
-			/* Set a timer and wait for that or for the Lock to be granted */
-			ResolveRecoveryConflictWithLock(locallock->tag.lock);
+			bool		maybe_log_conflict =
+			(standbyWaitStart != 0 && !logged_recovery_conflict);
+
+			/* Set a timer and wait for that or for the lock to be granted */
+			ResolveRecoveryConflictWithLock(locallock->tag.lock,
+											maybe_log_conflict);
+
+			/*
+			 * Emit the log message if the startup process is waiting longer
+			 * than deadlock_timeout for recovery conflict on lock.
+			 */
+			if (maybe_log_conflict)
+			{
+				TimestampTz now = GetCurrentTimestamp();
+
+				if (TimestampDifferenceExceeds(standbyWaitStart, now,
+											   DeadlockTimeout))
+				{
+					VirtualTransactionId *vxids;
+					int			cnt;
+
+					vxids = GetLockConflicts(&locallock->tag.lock,
+											 AccessExclusiveLock, &cnt);
+
+					/*
+					 * Log the recovery conflict and the list of PIDs of
+					 * backends holding the conflicting lock. Note that we do
+					 * logging even if there are no such backends right now
+					 * because the startup process here has already waited
+					 * longer than deadlock_timeout.
+					 */
+					LogRecoveryConflict(PROCSIG_RECOVERY_CONFLICT_LOCK,
+										standbyWaitStart, now,
+										cnt > 0 ? vxids : NULL, true);
+					logged_recovery_conflict = true;
+				}
+			}
 		}
 		else
 		{
@@ -1563,6 +1609,15 @@ ProcSleep(LOCALLOCK *locallock, LockMethod lockMethodTable)
 	}
 
 	/*
+	 * Emit the log message if recovery conflict on lock was resolved but the
+	 * startup process waited longer than deadlock_timeout for it.
+	 */
+	if (InHotStandby && logged_recovery_conflict)
+		LogRecoveryConflict(PROCSIG_RECOVERY_CONFLICT_LOCK,
+							standbyWaitStart, GetCurrentTimestamp(),
+							NULL, false);
+
+	/*
 	 * Re-acquire the lock table's partition lock.  We have to do this to hold
 	 * off cancel/die interrupts before we can mess with lockAwaited (else we
 	 * might have a missed or duplicated locallock update).
@@ -1793,6 +1848,9 @@ CheckDeadLockAlert(void)
 	 * Have to set the latch again, even if handle_sig_alarm already did. Back
 	 * then got_deadlock_timeout wasn't yet set... It's unlikely that this
 	 * ever would be a problem, but setting a set latch again is cheap.
+	 *
+	 * Note that, when this function runs inside procsignal_sigusr1_handler(),
+	 * the handler function sets the latch again after the latch is set here.
 	 */
 	SetLatch(MyLatch);
 	errno = save_errno;

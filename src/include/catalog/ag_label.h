@@ -46,7 +46,7 @@ typedef FormData_ag_label *Form_ag_label;
 #define LABEL_KIND_VERTEX	'v'
 #define LABEL_KIND_EDGE		'e'
 
-DECLARE_UNIQUE_INDEX(ag_label_oid_index, 7046, on ag_label using btree(oid oid_ops));
+DECLARE_UNIQUE_INDEX_PKEY(ag_label_oid_index, 7046, on ag_label using btree(oid oid_ops));
 #define LabelOidIndexId 7046
 DECLARE_UNIQUE_INDEX(ag_label_labname_graph_index, 7047, on ag_label using btree(labname name_ops, graphid oid_ops));
 #define LabelNameGraphIndexId 7047
