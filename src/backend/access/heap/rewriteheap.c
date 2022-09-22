@@ -92,7 +92,7 @@
  * heap's TOAST table will go through the normal bufmgr.
  *
  *
- * Portions Copyright (c) 1996-2020, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2021, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994-5, Regents of the University of California
  *
  * IDENTIFICATION
@@ -266,7 +266,6 @@ begin_heap_rewrite(Relation old_heap, Relation new_heap, TransactionId oldest_xm
 	state->rs_cxt = rw_cxt;
 
 	/* Initialize hash tables used to track update chains */
-	memset(&hash_ctl, 0, sizeof(hash_ctl));
 	hash_ctl.keysize = sizeof(TidHashKey);
 	hash_ctl.entrysize = sizeof(UnresolvedTupData);
 	hash_ctl.hcxt = state->rs_cxt;
@@ -824,7 +823,6 @@ logical_begin_heap_rewrite(RewriteState state)
 	state->rs_begin_lsn = GetXLogInsertRecPtr();
 	state->rs_num_rewrite_mappings = 0;
 
-	memset(&hash_ctl, 0, sizeof(hash_ctl));
 	hash_ctl.keysize = sizeof(TransactionId);
 	hash_ctl.entrysize = sizeof(RewriteMappingFile);
 	hash_ctl.hcxt = state->rs_cxt;

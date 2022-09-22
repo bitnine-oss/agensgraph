@@ -3,7 +3,7 @@
  * postgres.c
  *	  POSTGRES C Backend Interface
  *
- * Portions Copyright (c) 1996-2020, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2021, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -67,6 +67,7 @@
 #include "rewrite/rewriteHandler.h"
 #include "storage/bufmgr.h"
 #include "storage/ipc.h"
+#include "storage/pmsignal.h"
 #include "storage/proc.h"
 #include "storage/procsignal.h"
 #include "storage/sinval.h"
@@ -2754,8 +2755,8 @@ drop_unnamed_stmt(void)
 /*
  * quickdie() occurs when signaled SIGQUIT by the postmaster.
  *
- * Some backend has bought the farm,
- * so we need to stop what we're doing and exit.
+ * Either some backend has bought the farm, or we've been told to shut down
+ * "immediately"; so we need to stop what we're doing and exit.
  */
 void
 quickdie(SIGNAL_ARGS)
@@ -2790,18 +2791,48 @@ quickdie(SIGNAL_ARGS)
 	 * wrong, so there's not much to lose.  Assuming the postmaster is still
 	 * running, it will SIGKILL us soon if we get stuck for some reason.
 	 *
-	 * Ideally this should be ereport(FATAL), but then we'd not get control
-	 * back...
+	 * One thing we can do to make this a tad safer is to clear the error
+	 * context stack, so that context callbacks are not called.  That's a lot
+	 * less code that could be reached here, and the context info is unlikely
+	 * to be very relevant to a SIGQUIT report anyway.
 	 */
-	ereport(WARNING,
-			(errcode(ERRCODE_CRASH_SHUTDOWN),
-			 errmsg("terminating connection because of crash of another server process"),
-			 errdetail("The postmaster has commanded this server process to roll back"
-					   " the current transaction and exit, because another"
-					   " server process exited abnormally and possibly corrupted"
-					   " shared memory."),
-			 errhint("In a moment you should be able to reconnect to the"
-					 " database and repeat your command.")));
+	error_context_stack = NULL;
+
+	/*
+	 * When responding to a postmaster-issued signal, we send the message only
+	 * to the client; sending to the server log just creates log spam, plus
+	 * it's more code that we need to hope will work in a signal handler.
+	 *
+	 * Ideally these should be ereport(FATAL), but then we'd not get control
+	 * back to force the correct type of process exit.
+	 */
+	switch (GetQuitSignalReason())
+	{
+		case PMQUIT_NOT_SENT:
+			/* Hmm, SIGQUIT arrived out of the blue */
+			ereport(WARNING,
+					(errcode(ERRCODE_ADMIN_SHUTDOWN),
+					 errmsg("terminating connection because of unexpected SIGQUIT signal")));
+			break;
+		case PMQUIT_FOR_CRASH:
+			/* A crash-and-restart cycle is in progress */
+			ereport(WARNING_CLIENT_ONLY,
+					(errcode(ERRCODE_CRASH_SHUTDOWN),
+					 errmsg("terminating connection because of crash of another server process"),
+					 errdetail("The postmaster has commanded this server process to roll back"
+							   " the current transaction and exit, because another"
+							   " server process exited abnormally and possibly corrupted"
+							   " shared memory."),
+					 errhint("In a moment you should be able to reconnect to the"
+							 " database and repeat your command.")));
+			break;
+		case PMQUIT_FOR_STOP:
+			/* Immediate-mode stop */
+			ereport(WARNING_CLIENT_ONLY,
+					(errcode(ERRCODE_ADMIN_SHUTDOWN),
+					 errmsg("terminating connection due to immediate shutdown command")));
+			break;
+	}
 
 	/*
 	 * We DO NOT want to run proc_exit() or atexit() callbacks -- we're here

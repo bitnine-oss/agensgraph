@@ -5,7 +5,7 @@
  *	  Planning is complete, we just need to convert the selected
  *	  Path into a Plan.
  *
- * Portions Copyright (c) 1996-2020, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2021, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -1838,13 +1838,15 @@ create_gather_merge_plan(PlannerInfo *root, GatherMergePath *best_path)
 										 &gm_plan->nullsFirst);
 
 
-	/* Now, insert a Sort node if subplan isn't sufficiently ordered */
+	/*
+	 * All gather merge paths should have already guaranteed the necessary sort
+	 * order either by adding an explicit sort node or by using presorted input.
+	 * We can't simply add a sort here on additional pathkeys, because we can't
+	 * guarantee the sort would be safe. For example, expressions may be
+	 * volatile or otherwise parallel unsafe.
+	 */
 	if (!pathkeys_contained_in(pathkeys, best_path->subpath->pathkeys))
-		subplan = (Plan *) make_sort(subplan, gm_plan->numCols,
-									 gm_plan->sortColIdx,
-									 gm_plan->sortOperators,
-									 gm_plan->collations,
-									 gm_plan->nullsFirst);
+		elog(ERROR, "gather merge input not sufficiently sorted");
 
 	/* Now insert the subplan under GatherMerge. */
 	gm_plan->plan.lefttree = subplan;
@@ -6154,6 +6156,9 @@ make_incrementalsort(Plan *lefttree, int numCols, int nPresortedCols,
  *
  * Returns the node which is to be the input to the Sort (either lefttree,
  * or a Result stacked atop lefttree).
+ *
+ * Note: Restrictions on what expressions are safely sortable may also need to
+ * be added to find_em_expr_usable_for_sorting_rel.
  */
 static Plan *
 prepare_sort_from_pathkeys(Plan *lefttree, List *pathkeys,

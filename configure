@@ -11,7 +11,7 @@
 # This configure script is free software; the Free Software Foundation
 # gives unlimited permission to copy, distribute and modify it.
 #
-# Copyright (c) 1996-2020, PostgreSQL Global Development Group
+# Copyright (c) 1996-2021, PostgreSQL Global Development Group
 ## -------------------- ##
 ## M4sh Initialization. ##
 ## -------------------- ##
@@ -1676,7 +1676,7 @@ Copyright (C) 2012 Free Software Foundation, Inc.
 This configure script is free software; the Free Software Foundation
 gives unlimited permission to copy, distribute and modify it.
 
-Copyright (c) 1996-2020, PostgreSQL Global Development Group
+Copyright (c) 1996-2021, PostgreSQL Global Development Group
 _ACEOF
   exit
 fi
@@ -8328,12 +8328,12 @@ if test "$with_uuid" = bsd ; then
 
 $as_echo "#define HAVE_UUID_BSD 1" >>confdefs.h
 
-  UUID_EXTRA_OBJS="md5.o sha1.o"
+  UUID_EXTRA_OBJS="sha1.o"
 elif test "$with_uuid" = e2fs ; then
 
 $as_echo "#define HAVE_UUID_E2FS 1" >>confdefs.h
 
-  UUID_EXTRA_OBJS="md5.o sha1.o"
+  UUID_EXTRA_OBJS="sha1.o"
 elif test "$with_uuid" = ossp ; then
 
 $as_echo "#define HAVE_UUID_OSSP 1" >>confdefs.h
@@ -15980,12 +15980,29 @@ case $host_os in
         # Windows uses a specialised env handler
         mingw*)
 
+$as_echo "#define HAVE_SETENV 1" >>confdefs.h
+
+
 $as_echo "#define HAVE_UNSETENV 1" >>confdefs.h
 
+                ac_cv_func_setenv=yes
                 ac_cv_func_unsetenv=yes
                 ;;
         *)
-                ac_fn_c_check_func "$LINENO" "unsetenv" "ac_cv_func_unsetenv"
+                ac_fn_c_check_func "$LINENO" "setenv" "ac_cv_func_setenv"
+if test "x$ac_cv_func_setenv" = xyes; then :
+  $as_echo "#define HAVE_SETENV 1" >>confdefs.h
+
+else
+  case " $LIBOBJS " in
+  *" setenv.$ac_objext "* ) ;;
+  *) LIBOBJS="$LIBOBJS setenv.$ac_objext"
+ ;;
+esac
+
+fi
+
+ac_fn_c_check_func "$LINENO" "unsetenv" "ac_cv_func_unsetenv"
 if test "x$ac_cv_func_unsetenv" = xyes; then :
   $as_echo "#define HAVE_UNSETENV 1" >>confdefs.h
 

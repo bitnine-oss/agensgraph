@@ -3,7 +3,7 @@
  * async.c
  *	  Asynchronous notification: NOTIFY, LISTEN, UNLISTEN
  *
- * Portions Copyright (c) 1996-2020, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2021, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -2375,7 +2375,6 @@ AddEventToPendingNotifies(Notification *n)
 		ListCell   *l;
 
 		/* Create the hash table */
-		MemSet(&hash_ctl, 0, sizeof(hash_ctl));
 		hash_ctl.keysize = sizeof(Notification *);
 		hash_ctl.entrysize = sizeof(NotificationHash);
 		hash_ctl.hash = notification_hash;

@@ -3,7 +3,7 @@
  * pl_exec.c		- Executor for the PL/pgSQL
  *			  procedural language
  *
- * Portions Copyright (c) 1996-2020, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2021, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -2235,8 +2235,8 @@ exec_stmt_call(PLpgSQL_execstate *estate, PLpgSQL_stmt_call *stmt)
 			int			i;
 			ListCell   *lc;
 
-			/* Use eval_mcontext for any cruft accumulated here */
-			oldcontext = MemoryContextSwitchTo(get_eval_mcontext(estate));
+			/* Use stmt_mcontext for any cruft accumulated here */
+			oldcontext = MemoryContextSwitchTo(get_stmt_mcontext(estate));
 
 			/*
 			 * Get the parsed CallStmt, and look up the called procedure
@@ -2282,7 +2282,7 @@ exec_stmt_call(PLpgSQL_execstate *estate, PLpgSQL_stmt_call *stmt)
 			row->varnos = (int *) palloc(sizeof(int) * list_length(funcargs));
 
 			if (!local_plan)
-				MemoryContextSwitchTo(get_eval_mcontext(estate));
+				MemoryContextSwitchTo(get_stmt_mcontext(estate));
 
 			/*
 			 * Examine procedure's argument list.  Each output arg position
@@ -4058,7 +4058,6 @@ plpgsql_estate_setup(PLpgSQL_execstate *estate,
 	{
 		estate->simple_eval_estate = simple_eval_estate;
 		/* Private cast hash just lives in function's main context */
-		memset(&ctl, 0, sizeof(ctl));
 		ctl.keysize = sizeof(plpgsql_CastHashKey);
 		ctl.entrysize = sizeof(plpgsql_CastHashEntry);
 		ctl.hcxt = CurrentMemoryContext;
@@ -4077,7 +4076,6 @@ plpgsql_estate_setup(PLpgSQL_execstate *estate,
 			shared_cast_context = AllocSetContextCreate(TopMemoryContext,
 														"PLpgSQL cast info",
 														ALLOCSET_DEFAULT_SIZES);
-			memset(&ctl, 0, sizeof(ctl));
 			ctl.keysize = sizeof(plpgsql_CastHashKey);
 			ctl.entrysize = sizeof(plpgsql_CastHashEntry);
 			ctl.hcxt = shared_cast_context;

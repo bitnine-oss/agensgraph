@@ -6,7 +6,7 @@
  *
  * This should only be used if code is compiled with OpenSSL support.
  *
- * Portions Copyright (c) 1996-2020, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2021, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -135,6 +135,9 @@ pg_cryptohash_init(pg_cryptohash_ctx *ctx)
 
 	switch (ctx->type)
 	{
+		case PG_MD5:
+			status = EVP_DigestInit_ex(state->evpctx, EVP_md5(), NULL);
+			break;
 		case PG_SHA224:
 			status = EVP_DigestInit_ex(state->evpctx, EVP_sha224(), NULL);
 			break;

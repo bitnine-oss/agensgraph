@@ -1,7 +1,7 @@
 /*
  *	pg_upgrade.h
  *
- *	Copyright (c) 2010-2020, PostgreSQL Global Development Group
+ *	Copyright (c) 2010-2021, PostgreSQL Global Development Group
  *	src/bin/pg_upgrade/pg_upgrade.h
  */
 
@@ -436,7 +436,6 @@ void		end_progress_output(void);
 void		prep_status(const char *fmt,...) pg_attribute_printf(1, 2);
 void		check_ok(void);
 unsigned int str2uint(const char *str);
-void		pg_putenv(const char *var, const char *val);
 
 
 /* version.c */

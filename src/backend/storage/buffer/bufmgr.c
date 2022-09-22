@@ -3,7 +3,7 @@
  * bufmgr.c
  *	  buffer manager interface routines
  *
- * Portions Copyright (c) 1996-2020, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2021, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -2505,7 +2505,6 @@ InitBufferPoolAccess(void)
 
 	memset(&PrivateRefCountArray, 0, sizeof(PrivateRefCountArray));
 
-	MemSet(&hash_ctl, 0, sizeof(hash_ctl));
 	hash_ctl.keysize = sizeof(int32);
 	hash_ctl.entrysize = sizeof(PrivateRefCountEntry);
 

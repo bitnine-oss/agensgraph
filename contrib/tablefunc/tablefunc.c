@@ -10,7 +10,7 @@
  * And contributors:
  * Nabil Sayegh <postgresql@e-trolley.de>
  *
- * Copyright (c) 2002-2020, PostgreSQL Global Development Group
+ * Copyright (c) 2002-2021, PostgreSQL Global Development Group
  *
  * Permission to use, copy, modify, and distribute this software and its
  * documentation for any purpose, without fee, and without a written agreement
@@ -714,7 +714,6 @@ load_categories_hash(char *cats_sql, MemoryContext per_query_ctx)
 	MemoryContext SPIcontext;
 
 	/* initialize the category hash table */
-	MemSet(&ctl, 0, sizeof(ctl));
 	ctl.keysize = MAX_CATNAME_LEN;
 	ctl.entrysize = sizeof(crosstab_HashEnt);
 	ctl.hcxt = per_query_ctx;
@@ -726,7 +725,7 @@ load_categories_hash(char *cats_sql, MemoryContext per_query_ctx)
 	crosstab_hash = hash_create("crosstab hash",
 								INIT_CATS,
 								&ctl,
-								HASH_ELEM | HASH_CONTEXT);
+								HASH_ELEM | HASH_STRINGS | HASH_CONTEXT);
 
 	/* Connect to SPI manager */
 	if ((ret = SPI_connect()) < 0)

@@ -3,7 +3,7 @@
  * relnode.c
  *	  Relation-node lookup/construction routines
  *
- * Portions Copyright (c) 1996-2020, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2021, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -400,7 +400,6 @@ build_join_rel_hash(PlannerInfo *root)
 	ListCell   *l;
 
 	/* Create the hash table */
-	MemSet(&hash_ctl, 0, sizeof(hash_ctl));
 	hash_ctl.keysize = sizeof(Relids);
 	hash_ctl.entrysize = sizeof(JoinHashEntry);
 	hash_ctl.hash = bitmap_hash;

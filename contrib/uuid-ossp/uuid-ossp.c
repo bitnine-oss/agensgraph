@@ -2,7 +2,7 @@
  *
  * UUID generation functions using the BSD, E2FS or OSSP UUID library
  *
- * Copyright (c) 2007-2020, PostgreSQL Global Development Group
+ * Copyright (c) 2007-2021, PostgreSQL Global Development Group
  *
  * Portions Copyright (c) 2009 Andrew Gierth
  *
@@ -14,6 +14,7 @@
 #include "postgres.h"
 
 #include "fmgr.h"
+#include "common/cryptohash.h"
 #include "port/pg_bswap.h"
 #include "utils/builtins.h"
 #include "utils/uuid.h"
@@ -40,11 +41,10 @@
 #undef uuid_hash
 
 /*
- * Some BSD variants offer md5 and sha1 implementations but Linux does not,
- * so we use a copy of the ones from pgcrypto.  Not needed with OSSP, though.
+ * Some BSD variants offer sha1 implementation but Linux does not, so we use
+ * a copy from pgcrypto.  Not needed with OSSP, though.
  */
 #ifndef HAVE_UUID_OSSP
-#include "md5.h"
 #include "sha1.h"
 #endif
 
@@ -324,13 +324,17 @@ uuid_generate_internal(int v, unsigned char *ns, const char *ptr, int len)
 
 				if (v == 3)
 				{
-					MD5_CTX		ctx;
+					pg_cryptohash_ctx *ctx = pg_cryptohash_create(PG_MD5);
 
-					MD5Init(&ctx);
-					MD5Update(&ctx, ns, sizeof(uu));
-					MD5Update(&ctx, (unsigned char *) ptr, len);
+					if (pg_cryptohash_init(ctx) < 0)
+						elog(ERROR, "could not initialize %s context", "MD5");
+					if (pg_cryptohash_update(ctx, ns, sizeof(uu)) < 0 ||
+						pg_cryptohash_update(ctx, (unsigned char *) ptr, len) < 0)
+						elog(ERROR, "could not update %s context", "MD5");
 					/* we assume sizeof MD5 result is 16, same as UUID size */
-					MD5Final((unsigned char *) &uu, &ctx);
+					if (pg_cryptohash_final(ctx, (unsigned char *) &uu) < 0)
+						elog(ERROR, "could not finalize %s context", "MD5");
+					pg_cryptohash_free(ctx);
 				}
 				else
 				{

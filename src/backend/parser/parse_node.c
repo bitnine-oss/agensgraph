@@ -3,7 +3,7 @@
  * parse_node.c
  *	  various routines that make nodes for querytrees
  *
- * Portions Copyright (c) 1996-2020, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2021, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -272,6 +272,12 @@ transformContainerSubscripts(ParseState *pstate,
 	 * functions and typelem.
 	 */
 	sbsroutines = getSubscriptingRoutines(containerType, &elementType);
+	if (!sbsroutines)
+		ereport(ERROR,
+				(errcode(ERRCODE_DATATYPE_MISMATCH),
+				 errmsg("cannot subscript type %s because it does not support subscripting",
+						format_type_be(containerType)),
+				 parser_errposition(pstate, exprLocation(containerBase))));
 
 	/*
 	 * Detect whether any of the indirection items are slice specifiers.

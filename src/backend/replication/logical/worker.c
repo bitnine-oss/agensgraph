@@ -2,7 +2,7 @@
  * worker.c
  *	   PostgreSQL logical replication worker (apply)
  *
- * Copyright (c) 2016-2020, PostgreSQL Global Development Group
+ * Copyright (c) 2016-2021, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
  *	  src/backend/replication/logical/worker.c
@@ -776,7 +776,7 @@ apply_handle_stream_start(StringInfo s)
 		hash_ctl.entrysize = sizeof(StreamXidHash);
 		hash_ctl.hcxt = ApplyContext;
 		xidhash = hash_create("StreamXidHash", 1024, &hash_ctl,
-							  HASH_ELEM | HASH_CONTEXT);
+							  HASH_ELEM | HASH_BLOBS | HASH_CONTEXT);
 	}
 
 	/* open the spool file for this transaction */
@@ -2252,7 +2252,7 @@ LogicalRepApplyLoop(XLogRecPtr last_received)
 			bool		requestReply = false;
 
 			/*
-			 * Check if time since last receive from standby has reached the
+			 * Check if time since last receive from primary has reached the
 			 * configured limit.
 			 */
 			if (wal_receiver_timeout > 0)

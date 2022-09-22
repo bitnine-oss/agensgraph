@@ -3,7 +3,7 @@
  * pg_enum.c
  *	  routines to support manipulation of the pg_enum relation
  *
- * Copyright (c) 2006-2020, PostgreSQL Global Development Group
+ * Copyright (c) 2006-2021, PostgreSQL Global Development Group
  *
  *
  * IDENTIFICATION
@@ -188,7 +188,6 @@ init_enum_blacklist(void)
 {
 	HASHCTL		hash_ctl;
 
-	memset(&hash_ctl, 0, sizeof(hash_ctl));
 	hash_ctl.keysize = sizeof(Oid);
 	hash_ctl.entrysize = sizeof(Oid);
 	hash_ctl.hcxt = TopTransactionContext;

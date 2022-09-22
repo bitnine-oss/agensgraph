@@ -3,7 +3,7 @@
  * pgoutput.c
  *		Logical Replication output plugin
  *
- * Copyright (c) 2012-2020, PostgreSQL Global Development Group
+ * Copyright (c) 2012-2021, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
  *		  src/backend/replication/pgoutput/pgoutput.c
@@ -867,22 +867,18 @@ static void
 init_rel_sync_cache(MemoryContext cachectx)
 {
 	HASHCTL		ctl;
-	MemoryContext old_ctxt;
 
 	if (RelationSyncCache != NULL)
 		return;
 
 	/* Make a new hash table for the cache */
-	MemSet(&ctl, 0, sizeof(ctl));
 	ctl.keysize = sizeof(Oid);
 	ctl.entrysize = sizeof(RelationSyncEntry);
 	ctl.hcxt = cachectx;
 
-	old_ctxt = MemoryContextSwitchTo(cachectx);
 	RelationSyncCache = hash_create("logical replication output relation cache",
 									128, &ctl,
 									HASH_ELEM | HASH_CONTEXT | HASH_BLOBS);
-	(void) MemoryContextSwitchTo(old_ctxt);
 
 	Assert(RelationSyncCache != NULL);
 

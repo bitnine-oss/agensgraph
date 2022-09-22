@@ -4,7 +4,7 @@
  *		PostgreSQL write-ahead log manager
  *
  *
- * Portions Copyright (c) 1996-2020, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2021, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/backend/access/transam/xlog.c
@@ -681,8 +681,18 @@ typedef struct XLogCtlData
 	 * recoveryWakeupLatch is used to wake up the startup process to continue
 	 * WAL replay, if it is waiting for WAL to arrive or failover trigger file
 	 * to appear.
+	 *
+	 * Note that the startup process also uses another latch, its procLatch,
+	 * to wait for recovery conflict. If we get rid of recoveryWakeupLatch for
+	 * signaling the startup process in favor of using its procLatch, which
+	 * comports better with possible generic signal handlers using that latch.
+	 * But we should not do that because the startup process doesn't assume
+	 * that it's waken up by walreceiver process or SIGHUP signal handler
+	 * while it's waiting for recovery conflict. The separate latches,
+	 * recoveryWakeupLatch and procLatch, should be used for inter-process
+	 * communication for WAL replay and recovery conflict, respectively.
 	 */
-	Latch		*recoveryWakeupLatch;
+	Latch		recoveryWakeupLatch;
 
 	/*
 	 * During recovery, we keep a copy of the latest checkpoint record here.
@@ -5186,6 +5196,7 @@ XLOGShmemInit(void)
 	SpinLockInit(&XLogCtl->Insert.insertpos_lck);
 	SpinLockInit(&XLogCtl->info_lck);
 	SpinLockInit(&XLogCtl->ulsn_lck);
+	InitSharedLatch(&XLogCtl->recoveryWakeupLatch);
 }
 
 /*
@@ -6121,7 +6132,7 @@ recoveryApplyDelay(XLogReaderState *record)
 
 	while (true)
 	{
-		ResetLatch(MyLatch);
+		ResetLatch(&XLogCtl->recoveryWakeupLatch);
 
 		/* might change the trigger file's location */
 		HandleStartupProcInterrupts();
@@ -6140,7 +6151,7 @@ recoveryApplyDelay(XLogReaderState *record)
 
 		elog(DEBUG2, "recovery apply delay %ld milliseconds", msecs);
 
-		(void) WaitLatch(MyLatch,
+		(void) WaitLatch(&XLogCtl->recoveryWakeupLatch,
 						 WL_LATCH_SET | WL_TIMEOUT | WL_EXIT_ON_PM_DEATH,
 						 msecs,
 						 WAIT_EVENT_RECOVERY_APPLY_DELAY);
@@ -6469,11 +6480,11 @@ StartupXLOG(void)
 	}
 
 	/*
-	 * Advertise our latch that other processes can use to wake us up
-	 * if we're going to sleep during recovery.
+	 * Take ownership of the wakeup latch if we're going to sleep during
+	 * recovery.
 	 */
 	if (ArchiveRecoveryRequested)
-		XLogCtl->recoveryWakeupLatch = &MyProc->procLatch;
+		OwnLatch(&XLogCtl->recoveryWakeupLatch);
 
 	/* Set up XLOG reader facility */
 	MemSet(&private, 0, sizeof(XLogPageReadPrivate));
@@ -7484,11 +7495,11 @@ StartupXLOG(void)
 		ResetUnloggedRelations(UNLOGGED_RELATION_INIT);
 
 	/*
-	 * We don't need the latch anymore. It's not strictly necessary to reset
-	 * it to NULL, but let's do it for the sake of tidiness.
+	 * We don't need the latch anymore. It's not strictly necessary to disown
+	 * it, but let's do it for the sake of tidiness.
 	 */
 	if (ArchiveRecoveryRequested)
-		XLogCtl->recoveryWakeupLatch = NULL;
+		DisownLatch(&XLogCtl->recoveryWakeupLatch);
 
 	/*
 	 * We are now done reading the xlog from stream. Turn off streaming
@@ -8688,6 +8699,39 @@ UpdateCheckPointDistanceEstimate(uint64 nbytes)
 }
 
 /*
+ * Update the ps display for a process running a checkpoint.  Note that
+ * this routine should not do any allocations so as it can be called
+ * from a critical section.
+ */
+static void
+update_checkpoint_display(int flags, bool restartpoint, bool reset)
+{
+	/*
+	 * The status is reported only for end-of-recovery and shutdown
+	 * checkpoints or shutdown restartpoints.  Updating the ps display is
+	 * useful in those situations as it may not be possible to rely on
+	 * pg_stat_activity to see the status of the checkpointer or the startup
+	 * process.
+	 */
+	if ((flags & (CHECKPOINT_END_OF_RECOVERY | CHECKPOINT_IS_SHUTDOWN)) == 0)
+		return;
+
+	if (reset)
+		set_ps_display("");
+	else
+	{
+		char		activitymsg[128];
+
+		snprintf(activitymsg, sizeof(activitymsg), "performing %s%s%s",
+				 (flags & CHECKPOINT_END_OF_RECOVERY) ? "end-of-recovery " : "",
+				 (flags & CHECKPOINT_IS_SHUTDOWN) ? "shutdown " : "",
+				 restartpoint ? "restartpoint" : "checkpoint");
+		set_ps_display(activitymsg);
+	}
+}
+
+
+/*
  * Perform a checkpoint --- either during shutdown, or on-the-fly
  *
  * flags is a bitwise OR of the following:
@@ -8905,6 +8949,9 @@ CreateCheckPoint(int flags)
 	if (log_checkpoints)
 		LogCheckpointStart(flags, false);
 
+	/* Update the process title */
+	update_checkpoint_display(flags, false, false);
+
 	TRACE_POSTGRESQL_CHECKPOINT_START(flags);
 
 	/*
@@ -9119,6 +9166,9 @@ CreateCheckPoint(int flags)
 
 	/* Real work is done, but log and update stats before releasing lock. */
 	LogCheckpointEnd(false);
+
+	/* Reset the process title */
+	update_checkpoint_display(flags, false, true);
 
 	TRACE_POSTGRESQL_CHECKPOINT_DONE(CheckpointStats.ckpt_bufs_written,
 									 NBuffers,
@@ -9374,6 +9424,9 @@ CreateRestartPoint(int flags)
 	if (log_checkpoints)
 		LogCheckpointStart(flags, true);
 
+	/* Update the process title */
+	update_checkpoint_display(flags, true, false);
+
 	CheckPointGuts(lastCheckPoint.redo, flags);
 
 	/*
@@ -9491,6 +9544,9 @@ CreateRestartPoint(int flags)
 
 	/* Real work is done, but log and update before releasing lock. */
 	LogCheckpointEnd(true);
+
+	/* Reset the process title */
+	update_checkpoint_display(flags, true, true);
 
 	xtime = GetLatestXTime();
 	ereport((log_checkpoints ? LOG : DEBUG2),
@@ -10362,7 +10418,7 @@ get_sync_bit(int method)
 	 *
 	 * Never use O_DIRECT in walreceiver process for similar reasons; the WAL
 	 * written by walreceiver is normally read by the startup process soon
-	 * after its written. Also, walreceiver performs unaligned writes, which
+	 * after it's written. Also, walreceiver performs unaligned writes, which
 	 * don't work with O_DIRECT, so it is required for correctness too.
 	 */
 	if (!XLogIsNeeded() && !AmWalReceiverProcess())
@@ -12255,12 +12311,12 @@ WaitForWALToBecomeAvailable(XLogRecPtr RecPtr, bool randAccess,
 						wait_time = wal_retrieve_retry_interval -
 							TimestampDifferenceMilliseconds(last_fail_time, now);
 
-						(void) WaitLatch(MyLatch,
+						(void) WaitLatch(&XLogCtl->recoveryWakeupLatch,
 										 WL_LATCH_SET | WL_TIMEOUT |
 										 WL_EXIT_ON_PM_DEATH,
 										 wait_time,
 										 WAIT_EVENT_RECOVERY_RETRIEVE_RETRY_INTERVAL);
-						ResetLatch(MyLatch);
+						ResetLatch(&XLogCtl->recoveryWakeupLatch);
 						now = GetCurrentTimestamp();
 
 						/* Handle interrupt signals of startup process */
@@ -12514,11 +12570,11 @@ WaitForWALToBecomeAvailable(XLogRecPtr RecPtr, bool randAccess,
 					 * to react to a trigger file promptly and to check if the
 					 * WAL receiver is still active.
 					 */
-					(void) WaitLatch(MyLatch,
+					(void) WaitLatch(&XLogCtl->recoveryWakeupLatch,
 									 WL_LATCH_SET | WL_TIMEOUT |
 									 WL_EXIT_ON_PM_DEATH,
 									 5000L, WAIT_EVENT_RECOVERY_WAL_STREAM);
-					ResetLatch(MyLatch);
+					ResetLatch(&XLogCtl->recoveryWakeupLatch);
 					break;
 				}
 
@@ -12690,8 +12746,7 @@ CheckPromoteSignal(void)
 void
 WakeupRecovery(void)
 {
-	if (XLogCtl->recoveryWakeupLatch)
-		SetLatch(XLogCtl->recoveryWakeupLatch);
+	SetLatch(&XLogCtl->recoveryWakeupLatch);
 }
 
 /*

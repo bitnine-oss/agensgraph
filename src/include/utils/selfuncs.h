@@ -5,7 +5,7 @@
  *	  infrastructure for selectivity and cost estimation.
  *
  *
- * Portions Copyright (c) 1996-2020, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2021, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/utils/selfuncs.h
@@ -38,6 +38,9 @@
 
 /* default selectivity estimate for range inequalities "A > b AND A < c" */
 #define DEFAULT_RANGE_INEQ_SEL	0.005
+
+/* default selectivity estimate for multirange inequalities "A > b AND A < c" */
+#define DEFAULT_MULTIRANGE_INEQ_SEL	0.005
 
 /* default selectivity estimate for pattern-match operators such as LIKE */
 #define DEFAULT_MATCH_SEL	0.005

@@ -3,7 +3,7 @@
  * execPartition.c
  *	  Support routines for partitioning.
  *
- * Portions Copyright (c) 1996-2020, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2021, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -521,7 +521,6 @@ ExecHashSubPlanResultRelsByOid(ModifyTableState *mtstate,
 	HTAB	   *htab;
 	int			i;
 
-	memset(&ctl, 0, sizeof(ctl));
 	ctl.keysize = sizeof(Oid);
 	ctl.entrysize = sizeof(SubplanResultRelHashElem);
 	ctl.hcxt = CurrentMemoryContext;

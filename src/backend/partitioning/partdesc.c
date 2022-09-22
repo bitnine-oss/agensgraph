@@ -3,7 +3,7 @@
  * partdesc.c
  *		Support routines for manipulating partition descriptors
  *
- * Portions Copyright (c) 1996-2020, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2021, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -286,13 +286,13 @@ CreatePartitionDirectory(MemoryContext mcxt)
 	PartitionDirectory pdir;
 	HASHCTL		ctl;
 
-	MemSet(&ctl, 0, sizeof(HASHCTL));
+	pdir = palloc(sizeof(PartitionDirectoryData));
+	pdir->pdir_mcxt = mcxt;
+
 	ctl.keysize = sizeof(Oid);
 	ctl.entrysize = sizeof(PartitionDirectoryEntry);
 	ctl.hcxt = mcxt;
 
-	pdir = palloc(sizeof(PartitionDirectoryData));
-	pdir->pdir_mcxt = mcxt;
 	pdir->pdir_hash = hash_create("partition directory", 256, &ctl,
 								  HASH_ELEM | HASH_BLOBS | HASH_CONTEXT);
 

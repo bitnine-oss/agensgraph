@@ -4,7 +4,7 @@
  *		helper routine to ensure restricted token on Windows
  *
  *
- * Portions Copyright (c) 1996-2020, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2021, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -171,7 +171,7 @@ get_restricted_token(void)
 
 		cmdline = pg_strdup(GetCommandLine());
 
-		putenv("PG_RESTRICT_EXEC=1");
+		setenv("PG_RESTRICT_EXEC", "1", 1);
 
 		if ((restrictedToken = CreateRestrictedProcess(cmdline, &pi)) == 0)
 		{

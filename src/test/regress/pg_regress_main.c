@@ -8,7 +8,7 @@
  *
  * This code is released under the terms of the PostgreSQL License.
  *
- * Portions Copyright (c) 1996-2020, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2021, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/test/regress/pg_regress_main.c
@@ -91,8 +91,9 @@ psql_start_test(const char *testname,
 		exit(2);
 	}
 
-	appnameenv = psprintf("PGAPPNAME=pg_regress/%s", testname);
-	putenv(appnameenv);
+	appnameenv = psprintf("pg_regress/%s", testname);
+	setenv("PGAPPNAME", appnameenv, 1);
+	free(appnameenv);
 
 	pid = spawn_process(psql_cmd);
 
@@ -104,7 +105,6 @@ psql_start_test(const char *testname,
 	}
 
 	unsetenv("PGAPPNAME");
-	free(appnameenv);
 
 	return pid;
 }

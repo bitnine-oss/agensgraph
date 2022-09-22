@@ -11,7 +11,7 @@
  *			- Add a pgstat config column to pg_database, so this
  *			  entire thing can be enabled/disabled on a per db basis.
  *
- *	Copyright (c) 2001-2020, PostgreSQL Global Development Group
+ *	Copyright (c) 2001-2021, PostgreSQL Global Development Group
  *
  *	src/backend/postmaster/pgstat.c
  * ----------
@@ -1292,7 +1292,6 @@ pgstat_collect_oids(Oid catalogid, AttrNumber anum_oid)
 	HeapTuple	tup;
 	Snapshot	snapshot;
 
-	memset(&hash_ctl, 0, sizeof(hash_ctl));
 	hash_ctl.keysize = sizeof(Oid);
 	hash_ctl.entrysize = sizeof(Oid);
 	hash_ctl.hcxt = CurrentMemoryContext;
@@ -1842,7 +1841,6 @@ pgstat_init_function_usage(FunctionCallInfo fcinfo,
 		/* First time through - initialize function stat table */
 		HASHCTL		hash_ctl;
 
-		memset(&hash_ctl, 0, sizeof(hash_ctl));
 		hash_ctl.keysize = sizeof(Oid);
 		hash_ctl.entrysize = sizeof(PgStat_BackendFunctionEntry);
 		pgStatFunctions = hash_create("Function stat entries",
@@ -2002,7 +2000,6 @@ get_tabstat_entry(Oid rel_id, bool isshared)
 	{
 		HASHCTL		ctl;
 
-		memset(&ctl, 0, sizeof(ctl));
 		ctl.keysize = sizeof(Oid);
 		ctl.entrysize = sizeof(TabStatHashEntry);
 
@@ -2919,6 +2916,11 @@ BackendStatusShmemSize(void)
 	size = add_size(size,
 					mul_size(sizeof(PgBackendSSLStatus), NumBackendStatSlots));
 #endif
+#ifdef ENABLE_GSS
+	/* BackendGssStatusBuffer: */
+	size = add_size(size,
+					mul_size(sizeof(PgBackendGSSStatus), NumBackendStatSlots));
+#endif
 	return size;
 }
 
@@ -3202,12 +3204,13 @@ pgstat_bestart(void)
 #ifdef ENABLE_GSS
 	if (MyProcPort && MyProcPort->gss != NULL)
 	{
+		const char *princ = be_gssapi_get_princ(MyProcPort);
+
 		lbeentry.st_gss = true;
 		lgssstatus.gss_auth = be_gssapi_get_auth(MyProcPort);
 		lgssstatus.gss_enc = be_gssapi_get_enc(MyProcPort);
-
-		if (lgssstatus.gss_auth)
-			strlcpy(lgssstatus.gss_princ, be_gssapi_get_princ(MyProcPort), NAMEDATALEN);
+		if (princ)
+			strlcpy(lgssstatus.gss_princ, princ, NAMEDATALEN);
 	}
 	else
 	{
@@ -5021,7 +5024,6 @@ reset_dbentry_counters(PgStat_StatDBEntry *dbentry)
 	dbentry->stat_reset_timestamp = GetCurrentTimestamp();
 	dbentry->stats_timestamp = 0;
 
-	memset(&hash_ctl, 0, sizeof(hash_ctl));
 	hash_ctl.keysize = sizeof(Oid);
 	hash_ctl.entrysize = sizeof(PgStat_StatTabEntry);
 	dbentry->tables = hash_create("Per-database table",
@@ -5450,7 +5452,6 @@ pgstat_read_statsfiles(Oid onlydb, bool permanent, bool deep)
 	/*
 	 * Create the DB hashtable
 	 */
-	memset(&hash_ctl, 0, sizeof(hash_ctl));
 	hash_ctl.keysize = sizeof(Oid);
 	hash_ctl.entrysize = sizeof(PgStat_StatDBEntry);
 	hash_ctl.hcxt = pgStatLocalContext;
@@ -5635,7 +5636,6 @@ pgstat_read_statsfiles(Oid onlydb, bool permanent, bool deep)
 						break;
 				}
 
-				memset(&hash_ctl, 0, sizeof(hash_ctl));
 				hash_ctl.keysize = sizeof(Oid);
 				hash_ctl.entrysize = sizeof(PgStat_StatTabEntry);
 				hash_ctl.hcxt = pgStatLocalContext;
@@ -6950,15 +6950,15 @@ pgstat_recv_replslot(PgStat_MsgReplSlot *msg, int len)
 		return;
 
 	/* it must be a valid replication slot index */
-	Assert(idx >= 0 && idx < max_replication_slots);
+	Assert(idx < nReplSlotStats);
 
 	if (msg->m_drop)
 	{
 		/* Remove the replication slot statistics with the given name */
-		memcpy(&replSlotStats[idx], &replSlotStats[nReplSlotStats - 1],
-			   sizeof(PgStat_ReplSlotStats));
+		if (idx < nReplSlotStats - 1)
+			memcpy(&replSlotStats[idx], &replSlotStats[nReplSlotStats - 1],
+				   sizeof(PgStat_ReplSlotStats));
 		nReplSlotStats--;
-		Assert(nReplSlotStats >= 0);
 	}
 	else
 	{

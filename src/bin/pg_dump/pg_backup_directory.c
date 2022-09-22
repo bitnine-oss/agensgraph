@@ -4,7 +4,7 @@
  *
  *	A directory format dump is a directory, which contains a "toc.dat" file
  *	for the TOC, and a separate file for each data entry, named "<oid>.dat".
- *	Large objects (BLOBs) are stored in separate files named "blob_<uid>.dat",
+ *	Large objects (BLOBs) are stored in separate files named "blob_<oid>.dat",
  *	and there's a plain-text TOC file for them called "blobs.toc". If
  *	compression is used, each data file is individually compressed and the
  *	".gz" suffix is added to the filenames. The TOC files are never
@@ -17,7 +17,7 @@
  *	sync.
  *
  *
- *	Portions Copyright (c) 1996-2020, PostgreSQL Global Development Group
+ *	Portions Copyright (c) 1996-2021, PostgreSQL Global Development Group
  *	Portions Copyright (c) 1994, Regents of the University of California
  *	Portions Copyright (c) 2000, Philip Warner
  *

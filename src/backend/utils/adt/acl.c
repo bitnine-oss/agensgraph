@@ -3,7 +3,7 @@
  * acl.c
  *	  Basic access control list data structures manipulation routines.
  *
- * Portions Copyright (c) 1996-2020, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2021, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -52,7 +52,6 @@ typedef struct
  * role.  In most of these tests the "given role" is the same, namely the
  * active current user.  So we can optimize it by keeping a cached list of
  * all the roles the "given role" is a member of, directly or indirectly.
- * The cache is flushed whenever we detect a change in pg_auth_members.
  *
  * There are actually two caches, one computed under "has_privs" rules
  * (do not recurse where rolinherit isn't true) and one computed under
@@ -4675,10 +4674,14 @@ initialize_acl(void)
 	if (!IsBootstrapProcessingMode())
 	{
 		/*
-		 * In normal mode, set a callback on any syscache invalidation of
-		 * pg_auth_members rows
+		 * In normal mode, set a callback on any syscache invalidation of rows
+		 * of pg_auth_members (for each AUTHMEM search in this file) or
+		 * pg_authid (for has_rolinherit())
 		 */
 		CacheRegisterSyscacheCallback(AUTHMEMROLEMEM,
+									  RoleMembershipCacheCallback,
+									  (Datum) 0);
+		CacheRegisterSyscacheCallback(AUTHOID,
 									  RoleMembershipCacheCallback,
 									  (Datum) 0);
 	}

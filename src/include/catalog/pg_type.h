@@ -4,7 +4,7 @@
  *	  definition of the "type" system catalog (pg_type)
  *
  *
- * Portions Copyright (c) 1996-2020, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2021, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/catalog/pg_type.h
@@ -276,6 +276,7 @@ DECLARE_UNIQUE_INDEX(pg_type_typname_nsp_index, 2704, on pg_type using btree(typ
 #define  TYPTYPE_COMPOSITE	'c' /* composite (e.g., table's rowtype) */
 #define  TYPTYPE_DOMAIN		'd' /* domain over another type */
 #define  TYPTYPE_ENUM		'e' /* enumerated type */
+#define  TYPTYPE_MULTIRANGE	'm' /* multirange type */
 #define  TYPTYPE_PSEUDO		'p' /* pseudo-type */
 #define  TYPTYPE_RANGE		'r' /* range type */
 
@@ -317,13 +318,15 @@ DECLARE_UNIQUE_INDEX(pg_type_typname_nsp_index, 2704, on pg_type using btree(typ
 	 (typid) == ANYARRAYOID || \
 	 (typid) == ANYNONARRAYOID || \
 	 (typid) == ANYENUMOID || \
-	 (typid) == ANYRANGEOID)
+	 (typid) == ANYRANGEOID || \
+	 (typid) == ANYMULTIRANGEOID)
 
 #define IsPolymorphicTypeFamily2(typid)  \
 	((typid) == ANYCOMPATIBLEOID || \
 	 (typid) == ANYCOMPATIBLEARRAYOID || \
 	 (typid) == ANYCOMPATIBLENONARRAYOID || \
-	 (typid) == ANYCOMPATIBLERANGEOID)
+	 (typid) == ANYCOMPATIBLERANGEOID || \
+	 (typid) == ANYCOMPATIBLEMULTIRANGEOID)
 
 /* Is this a "true" array type?  (Requires fmgroids.h) */
 #define IsTrueArrayType(typeForm)  \
@@ -396,5 +399,8 @@ extern char *makeArrayTypeName(const char *typeName, Oid typeNamespace);
 
 extern bool moveArrayTypeName(Oid typeOid, const char *typeName,
 							  Oid typeNamespace);
+
+extern char *makeMultirangeTypeName(const char *rangeTypeName,
+									Oid typeNamespace);
 
 #endif							/* PG_TYPE_H */

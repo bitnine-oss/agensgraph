@@ -38,7 +38,7 @@
  *
  * This code is released under the terms of the PostgreSQL License.
  *
- * Portions Copyright (c) 1996-2020, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2021, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/bin/initdb/initdb.c
@@ -2379,9 +2379,7 @@ check_need_password(const char *authmethodlocal, const char *authmethodhost)
 void
 setup_pgdata(void)
 {
-	char	   *pgdata_get_env,
-			   *pgdata_set_env,
-			   *agdata_set_env;
+	char	   *pgdata_get_env;
 
 	if (!pg_data)
 	{
@@ -2415,11 +2413,11 @@ setup_pgdata(void)
 	 * need quotes otherwise on Windows because paths there are most likely to
 	 * have embedded spaces.
 	 */
-	pgdata_set_env = psprintf("PGDATA=%s", pg_data);
-	putenv(pgdata_set_env);
-
-	agdata_set_env = psprintf("AGDATA=%s", pg_data);
-	putenv(agdata_set_env);
+	if (setenv("PGDATA", pg_data, 1) != 0)
+	{
+		pg_log_error("could not set environment");
+		exit(1);
+	}
 }
 
 
@@ -3031,7 +3029,7 @@ main(int argc, char *argv[])
 
 	/* process command-line options */
 
-	while ((c = getopt_long(argc, argv, "dD:E:kL:nNU:WA:sST:X:g", long_options, &option_index)) != -1)
+	while ((c = getopt_long(argc, argv, "A:dD:E:gkL:nNsST:U:WX:", long_options, &option_index)) != -1)
 	{
 		switch (c)
 		{

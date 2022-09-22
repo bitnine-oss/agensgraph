@@ -6,7 +6,7 @@
  * See src/backend/utils/misc/README for more information.
  *
  *
- * Copyright (c) 2000-2020, PostgreSQL Global Development Group
+ * Copyright (c) 2000-2021, PostgreSQL Global Development Group
  * Written by Peter Eisentraut <peter_e@gmx.net>.
  *
  * IDENTIFICATION
@@ -12025,7 +12025,7 @@ check_recovery_target_xid(char **newval, void **extra, GucSource source)
 		TransactionId *myextra;
 
 		errno = 0;
-		xid = (TransactionId) strtoul(*newval, NULL, 0);
+		xid = (TransactionId) pg_strtouint64(*newval, NULL, 0);
 		if (errno == EINVAL || errno == ERANGE)
 			return false;
 

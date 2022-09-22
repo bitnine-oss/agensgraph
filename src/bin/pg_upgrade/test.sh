@@ -6,7 +6,7 @@
 # runs the regression tests (to put in some data), runs pg_dumpall,
 # runs pg_upgrade, runs pg_dumpall again, compares the dumps.
 #
-# Portions Copyright (c) 1996-2020, PostgreSQL Global Development Group
+# Portions Copyright (c) 1996-2021, PostgreSQL Global Development Group
 # Portions Copyright (c) 1994, Regents of the University of California
 
 set -e
@@ -168,17 +168,24 @@ createdb "regression$dbname3" || createdb_status=$?
 if "$MAKE" -C "$oldsrc" installcheck-parallel; then
 	oldpgversion=`psql -X -A -t -d regression -c "SHOW server_version_num"`
 
-	# before dumping, get rid of objects not existing in later versions
+	# before dumping, get rid of objects not feasible in later versions
 	if [ "$newsrc" != "$oldsrc" ]; then
 		fix_sql=""
 		case $oldpgversion in
 			804??)
-				fix_sql="DROP FUNCTION public.myfunc(integer); DROP FUNCTION public.oldstyle_length(integer, text);"
-				;;
-			*)
-				fix_sql="DROP FUNCTION public.oldstyle_length(integer, text);"
+				fix_sql="DROP FUNCTION public.myfunc(integer);"
 				;;
 		esac
+		fix_sql="$fix_sql
+				 DROP FUNCTION IF EXISTS
+					public.oldstyle_length(integer, text);	-- last in 9.6
+				 DROP FUNCTION IF EXISTS
+					public.putenv(text);	-- last in v13
+				 DROP OPERATOR IF EXISTS	-- last in v13
+					public.#@# (pg_catalog.int8, NONE),
+					public.#%# (pg_catalog.int8, NONE),
+					public.!=- (pg_catalog.int8, NONE),
+					public.#@%# (pg_catalog.int8, NONE);"
 		psql -X -d regression -c "$fix_sql;" || psql_fix_sql_status=$?
 	fi
 

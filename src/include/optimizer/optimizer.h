@@ -12,7 +12,7 @@
  * example.  For the most part, however, code outside the core planner
  * should not need to include any optimizer/ header except this one.
  *
- * Portions Copyright (c) 1996-2020, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2021, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/optimizer/optimizer.h
@@ -23,6 +23,11 @@
 #define OPTIMIZER_H
 
 #include "nodes/parsenodes.h"
+
+/* Test if an expression node represents a SRF call.  Beware multiple eval! */
+#define IS_SRF_CALL(node) \
+	((IsA(node, FuncExpr) && ((FuncExpr *) (node))->funcretset) || \
+	 (IsA(node, OpExpr) && ((OpExpr *) (node))->opretset))
 
 /*
  * We don't want to include nodes/pathnodes.h here, because non-planner

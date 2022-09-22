@@ -518,6 +518,25 @@ select numrange(1.0, 2.0) * numrange(2.5, 3.0);
  empty
 (1 row)
 
+select range_intersect_agg(nr) from numrange_test;
+ range_intersect_agg 
+---------------------
+ empty
+(1 row)
+
+select range_intersect_agg(nr) from numrange_test where false;
+ range_intersect_agg 
+---------------------
+ 
+(1 row)
+
+select range_intersect_agg(nr) from numrange_test where nr @> 4.0;
+ range_intersect_agg 
+---------------------
+ [3,5)
+(1 row)
+
+analyze numrange_test;
 create table numrange_test2(nr numrange);
 create index numrange_test2_hash_idx on numrange_test2 using hash (nr);
 INSERT INTO numrange_test2 VALUES('[, 5)');
@@ -773,6 +792,11 @@ insert into test_range_gist select 'empty'::int4range from generate_series(1,500
 insert into test_range_gist select int4range(NULL,g*10,'(]') from generate_series(1,100) g;
 insert into test_range_gist select int4range(g*10,NULL,'(]') from generate_series(1,100) g;
 insert into test_range_gist select int4range(g, g+10) from generate_series(1,2000) g;
+-- test statistics and selectivity estimation as well
+--
+-- We don't check the accuracy of selectivity estimation, but at least check
+-- it doesn't fall.
+analyze test_range_gist;
 -- first, verify non-indexed results
 SET enable_seqscan    = t;
 SET enable_indexscan  = f;
@@ -838,6 +862,60 @@ select count(*) from test_range_gist where ir &> int4range(100,500);
 (1 row)
 
 select count(*) from test_range_gist where ir -|- int4range(100,500);
+ count 
+-------
+     5
+(1 row)
+
+select count(*) from test_range_gist where ir @> '{}'::int4multirange;
+ count 
+-------
+  6200
+(1 row)
+
+select count(*) from test_range_gist where ir @> int4multirange(int4range(10,20), int4range(30,40));
+ count 
+-------
+   107
+(1 row)
+
+select count(*) from test_range_gist where ir && '{(10,20),(30,40),(50,60)}'::int4multirange;
+ count 
+-------
+   271
+(1 row)
+
+select count(*) from test_range_gist where ir <@ '{(10,30),(40,60),(70,90)}'::int4multirange;
+ count 
+-------
+  1060
+(1 row)
+
+select count(*) from test_range_gist where ir << int4multirange(int4range(100,200), int4range(400,500));
+ count 
+-------
+   189
+(1 row)
+
+select count(*) from test_range_gist where ir >> int4multirange(int4range(100,200), int4range(400,500));
+ count 
+-------
+  3554
+(1 row)
+
+select count(*) from test_range_gist where ir &< int4multirange(int4range(100,200), int4range(400,500));
+ count 
+-------
+  1029
+(1 row)
+
+select count(*) from test_range_gist where ir &> int4multirange(int4range(100,200), int4range(400,500));
+ count 
+-------
+  4794
+(1 row)
+
+select count(*) from test_range_gist where ir -|- int4multirange(int4range(100,200), int4range(400,500));
  count 
 -------
      5
@@ -913,6 +991,60 @@ select count(*) from test_range_gist where ir -|- int4range(100,500);
      5
 (1 row)
 
+select count(*) from test_range_gist where ir @> '{}'::int4multirange;
+ count 
+-------
+  6200
+(1 row)
+
+select count(*) from test_range_gist where ir @> int4multirange(int4range(10,20), int4range(30,40));
+ count 
+-------
+   107
+(1 row)
+
+select count(*) from test_range_gist where ir && '{(10,20),(30,40),(50,60)}'::int4multirange;
+ count 
+-------
+   271
+(1 row)
+
+select count(*) from test_range_gist where ir <@ '{(10,30),(40,60),(70,90)}'::int4multirange;
+ count 
+-------
+  1060
+(1 row)
+
+select count(*) from test_range_gist where ir << int4multirange(int4range(100,200), int4range(400,500));
+ count 
+-------
+   189
+(1 row)
+
+select count(*) from test_range_gist where ir >> int4multirange(int4range(100,200), int4range(400,500));
+ count 
+-------
+  3554
+(1 row)
+
+select count(*) from test_range_gist where ir &< int4multirange(int4range(100,200), int4range(400,500));
+ count 
+-------
+  1029
+(1 row)
+
+select count(*) from test_range_gist where ir &> int4multirange(int4range(100,200), int4range(400,500));
+ count 
+-------
+  4794
+(1 row)
+
+select count(*) from test_range_gist where ir -|- int4multirange(int4range(100,200), int4range(400,500));
+ count 
+-------
+     5
+(1 row)
+
 -- now check same queries using a bulk-loaded index
 drop index test_range_gist_idx;
 create index test_range_gist_idx on test_range_gist using gist (ir);
@@ -977,6 +1109,60 @@ select count(*) from test_range_gist where ir &> int4range(100,500);
 (1 row)
 
 select count(*) from test_range_gist where ir -|- int4range(100,500);
+ count 
+-------
+     5
+(1 row)
+
+select count(*) from test_range_gist where ir @> '{}'::int4multirange;
+ count 
+-------
+  6200
+(1 row)
+
+select count(*) from test_range_gist where ir @> int4multirange(int4range(10,20), int4range(30,40));
+ count 
+-------
+   107
+(1 row)
+
+select count(*) from test_range_gist where ir && '{(10,20),(30,40),(50,60)}'::int4multirange;
+ count 
+-------
+   271
+(1 row)
+
+select count(*) from test_range_gist where ir <@ '{(10,30),(40,60),(70,90)}'::int4multirange;
+ count 
+-------
+  1060
+(1 row)
+
+select count(*) from test_range_gist where ir << int4multirange(int4range(100,200), int4range(400,500));
+ count 
+-------
+   189
+(1 row)
+
+select count(*) from test_range_gist where ir >> int4multirange(int4range(100,200), int4range(400,500));
+ count 
+-------
+  3554
+(1 row)
+
+select count(*) from test_range_gist where ir &< int4multirange(int4range(100,200), int4range(400,500));
+ count 
+-------
+  1029
+(1 row)
+
+select count(*) from test_range_gist where ir &> int4multirange(int4range(100,200), int4range(400,500));
+ count 
+-------
+  4794
+(1 row)
+
+select count(*) from test_range_gist where ir -|- int4multirange(int4range(100,200), int4range(400,500));
  count 
 -------
      5
@@ -1371,12 +1557,12 @@ drop function anyarray_anyrange_func(anyarray, anyrange);
 create function bogus_func(anyelement)
   returns anyrange as 'select int4range(1,10)' language sql;
 ERROR:  cannot determine result data type
-DETAIL:  A result of type anyrange requires at least one input of type anyrange.
+DETAIL:  A result of type anyrange requires at least one input of type anyrange or anymultirange.
 -- should fail
 create function bogus_func(int)
   returns anyrange as 'select int4range(1,10)' language sql;
 ERROR:  cannot determine result data type
-DETAIL:  A result of type anyrange requires at least one input of type anyrange.
+DETAIL:  A result of type anyrange requires at least one input of type anyrange or anymultirange.
 create function range_add_bounds(anyrange)
   returns anyelement as 'select lower($1) + upper($1)' language sql;
 select range_add_bounds(int4range(1, 17));
@@ -1430,7 +1616,7 @@ drop function anycompatiblearray_anycompatiblerange_func(anycompatiblearray, any
 create function bogus_func(anycompatible)
   returns anycompatiblerange as 'select int4range(1,10)' language sql;
 ERROR:  cannot determine result data type
-DETAIL:  A result of type anycompatiblerange requires at least one input of type anycompatiblerange.
+DETAIL:  A result of type anycompatiblerange requires at least one input of type anycompatiblerange or anycompatiblemultirange.
 --
 -- Arrays of ranges
 --
@@ -1508,6 +1694,7 @@ reset enable_sort;
 --
 -- OUT/INOUT/TABLE functions
 --
+-- infer anyrange from anyrange
 create function outparam_succeed(i anyrange, out r anyrange, out t text)
   as $$ select $1, 'foo'::text $$ language sql;
 select * from outparam_succeed(int4range(1,2));
@@ -1525,6 +1712,16 @@ select * from outparam2_succeed(int4range(1,11));
  {1,11} | {11,1}
 (1 row)
 
+-- infer anyarray from anyrange
+create function outparam_succeed2(i anyrange, out r anyarray, out t text)
+  as $$ select ARRAY[upper($1)], 'foo'::text $$ language sql;
+select * from outparam_succeed2(int4range(int4range(1,2)));
+  r  |  t  
+-----+-----
+ {2} | foo
+(1 row)
+
+-- infer anyelement from anyrange
 create function inoutparam_succeed(out i anyelement, inout r anyrange)
   as $$ select upper($1), $1 $$ language sql;
 select * from inoutparam_succeed(int4range(1,2));
@@ -1547,14 +1744,14 @@ select * from table_succeed(int4range(1,11));
 create function outparam_fail(i anyelement, out r anyrange, out t text)
   as $$ select '[1,10]', 'foo' $$ language sql;
 ERROR:  cannot determine result data type
-DETAIL:  A result of type anyrange requires at least one input of type anyrange.
+DETAIL:  A result of type anyrange requires at least one input of type anyrange or anymultirange.
 --should fail
 create function inoutparam_fail(inout i anyelement, out r anyrange)
   as $$ select $1, '[1,10]' $$ language sql;
 ERROR:  cannot determine result data type
-DETAIL:  A result of type anyrange requires at least one input of type anyrange.
+DETAIL:  A result of type anyrange requires at least one input of type anyrange or anymultirange.
 --should fail
 create function table_fail(i anyelement) returns table(i anyelement, r anyrange)
   as $$ select $1, '[1,10]' $$ language sql;
 ERROR:  cannot determine result data type
-DETAIL:  A result of type anyrange requires at least one input of type anyrange.
+DETAIL:  A result of type anyrange requires at least one input of type anyrange or anymultirange.

@@ -19,7 +19,7 @@
  *	and "Expression Evaluation" sections.
  *
  *
- * Portions Copyright (c) 1996-2020, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2021, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -2604,6 +2604,14 @@ ExecInitSubscriptingRef(ExprEvalStep *scratch, SubscriptingRef *sbsref,
 
 	/* Look up the subscripting support methods */
 	sbsroutines = getSubscriptingRoutines(sbsref->refcontainertype, NULL);
+	if (!sbsroutines)
+		ereport(ERROR,
+				(errcode(ERRCODE_DATATYPE_MISMATCH),
+				 errmsg("cannot subscript type %s because it does not support subscripting",
+						format_type_be(sbsref->refcontainertype)),
+				 state->parent ?
+				 executor_errposition(state->parent->state,
+									  exprLocation((Node *) sbsref)) : 0));
 
 	/* Allocate sbsrefstate, with enough space for per-subscript arrays too */
 	sbsrefstate = palloc0(MAXALIGN(sizeof(SubscriptingRefState)) +

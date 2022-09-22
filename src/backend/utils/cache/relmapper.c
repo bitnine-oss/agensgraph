@@ -28,7 +28,7 @@
  * all these files commit in a single map file update rather than being tied
  * to transaction commit.
  *
- * Portions Copyright (c) 1996-2020, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2021, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -928,8 +928,15 @@ write_relmap_file(bool shared, RelMapFile *newmap,
 		}
 	}
 
-	/* Success, update permanent copy */
-	memcpy(realmap, newmap, sizeof(RelMapFile));
+	/*
+	 * Success, update permanent copy.  During bootstrap, we might be working
+	 * on the permanent copy itself, in which case skip the memcpy() to avoid
+	 * invoking nominally-undefined behavior.
+	 */
+	if (realmap != newmap)
+		memcpy(realmap, newmap, sizeof(RelMapFile));
+	else
+		Assert(!send_sinval);	/* must be bootstrapping */
 
 	/* Critical section done */
 	if (write_wal)

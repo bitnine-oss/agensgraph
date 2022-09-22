@@ -6,7 +6,7 @@
  * This is the set of in-core functions used when there are no other
  * alternative options like OpenSSL.
  *
- * Portions Copyright (c) 1996-2020, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2021, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -24,6 +24,7 @@
 #include <sys/param.h>
 
 #include "common/cryptohash.h"
+#include "md5_int.h"
 #include "sha2_int.h"
 
 /*
@@ -57,6 +58,9 @@ pg_cryptohash_create(pg_cryptohash_type type)
 
 	switch (type)
 	{
+		case PG_MD5:
+			ctx->data = ALLOC(sizeof(pg_md5_ctx));
+			break;
 		case PG_SHA224:
 			ctx->data = ALLOC(sizeof(pg_sha224_ctx));
 			break;
@@ -95,6 +99,9 @@ pg_cryptohash_init(pg_cryptohash_ctx *ctx)
 
 	switch (ctx->type)
 	{
+		case PG_MD5:
+			pg_md5_init((pg_md5_ctx *) ctx->data);
+			break;
 		case PG_SHA224:
 			pg_sha224_init((pg_sha224_ctx *) ctx->data);
 			break;
@@ -126,6 +133,9 @@ pg_cryptohash_update(pg_cryptohash_ctx *ctx, const uint8 *data, size_t len)
 
 	switch (ctx->type)
 	{
+		case PG_MD5:
+			pg_md5_update((pg_md5_ctx *) ctx->data, data, len);
+			break;
 		case PG_SHA224:
 			pg_sha224_update((pg_sha224_ctx *) ctx->data, data, len);
 			break;
@@ -157,6 +167,9 @@ pg_cryptohash_final(pg_cryptohash_ctx *ctx, uint8 *dest)
 
 	switch (ctx->type)
 	{
+		case PG_MD5:
+			pg_md5_final((pg_md5_ctx *) ctx->data, dest);
+			break;
 		case PG_SHA224:
 			pg_sha224_final((pg_sha224_ctx *) ctx->data, dest);
 			break;
@@ -184,6 +197,26 @@ pg_cryptohash_free(pg_cryptohash_ctx *ctx)
 {
 	if (ctx == NULL)
 		return;
+
+	switch (ctx->type)
+	{
+		case PG_MD5:
+			explicit_bzero(ctx->data, sizeof(pg_md5_ctx));
+			break;
+		case PG_SHA224:
+			explicit_bzero(ctx->data, sizeof(pg_sha224_ctx));
+			break;
+		case PG_SHA256:
+			explicit_bzero(ctx->data, sizeof(pg_sha256_ctx));
+			break;
+		case PG_SHA384:
+			explicit_bzero(ctx->data, sizeof(pg_sha384_ctx));
+			break;
+		case PG_SHA512:
+			explicit_bzero(ctx->data, sizeof(pg_sha512_ctx));
+			break;
+	}
+
 	FREE(ctx->data);
 	explicit_bzero(ctx, sizeof(pg_cryptohash_ctx));
 	FREE(ctx);

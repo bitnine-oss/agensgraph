@@ -20,7 +20,7 @@
  * appropriate value for a free lock.  The meaning of the variable is up to
  * the caller, the lightweight lock code just assigns and compares it.
  *
- * Portions Copyright (c) 1996-2020, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2021, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -342,7 +342,6 @@ init_lwlock_stats(void)
 											 ALLOCSET_DEFAULT_SIZES);
 	MemoryContextAllowInCriticalSection(lwlock_stats_cxt, true);
 
-	MemSet(&ctl, 0, sizeof(ctl));
 	ctl.keysize = sizeof(lwlock_stats_key);
 	ctl.entrysize = sizeof(lwlock_stats);
 	ctl.hcxt = lwlock_stats_cxt;

@@ -1315,9 +1315,21 @@ LogStmtLevel
 LogicalDecodeBeginCB
 LogicalDecodeChangeCB
 LogicalDecodeCommitCB
+LogicalDecodeFilterPrepareCB
+LogicalDecodeBeginPrepareCB
+LogicalDecodePrepareCB
+LogicalDecodeCommitPreparedCB
+LogicalDecodeRollbackPreparedCB
 LogicalDecodeFilterByOriginCB
 LogicalDecodeMessageCB
 LogicalDecodeShutdownCB
+LogicalDecodeStreamStartCB
+LogicalDecodeStreamStopCB
+LogicalDecodeStreamAbortCB
+LogicalDecodeStreamPrepareCB
+LogicalDecodeStreamCommitCB
+LogicalDecodeStreamChangeCB
+LogicalDecodeStreamMessageCB
 LogicalDecodeStartupCB
 LogicalDecodeTruncateCB
 LogicalDecodingContext
@@ -1395,6 +1407,9 @@ MultiXactMember
 MultiXactOffset
 MultiXactStateData
 MultiXactStatus
+MultirangeIOData
+MultirangeParseState
+MultirangeType
 NDBOX
 NODE
 NUMCacheEntry
@@ -3139,6 +3154,7 @@ mp_small
 mp_usmall
 mp_word
 mpz_t
+multirange_bsearch_comparison
 mxact
 mxtruncinfo
 needs_fmgr_hook_type
@@ -3192,6 +3208,7 @@ pg_int64
 pg_local_to_utf_combined
 pg_locale_t
 pg_mb_radix_tree
+pg_md5_ctx
 pg_on_exit_callback
 pg_re_flags
 pg_saslprep_rc

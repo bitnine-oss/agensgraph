@@ -58,12 +58,13 @@ OBJS_COMMON = \
 	file_perm.o \
 	file_utils.o \
 	hashfn.o \
+	hex_decode.o \
 	ip.o \
 	jsonapi.o \
 	keywords.o \
 	kwlookup.o \
 	link-canary.o \
-	md5.o \
+	md5_common.o \
 	pg_get_line.o \
 	pg_lzcompress.o \
 	pgfnames.o \
@@ -86,6 +87,7 @@ OBJS_COMMON += \
 else
 OBJS_COMMON += \
 	cryptohash.o \
+	md5.o \
 	sha2.o
 endif
 

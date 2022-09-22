@@ -4,7 +4,7 @@
  *	  PostgreSQL logical replay/reorder buffer management
  *
  *
- * Copyright (c) 2012-2020, PostgreSQL Global Development Group
+ * Copyright (c) 2012-2021, PostgreSQL Global Development Group
  *
  *
  * IDENTIFICATION
@@ -783,7 +783,8 @@ ReorderBufferQueueChange(ReorderBuffer *rb, TransactionId xid, XLogRecPtr lsn,
 }
 
 /*
- * Queue message into a transaction so it can be processed upon commit.
+ * A transactional message is queued to be processed upon commit and a
+ * non-transactional message gets processed immediately.
  */
 void
 ReorderBufferQueueMessage(ReorderBuffer *rb, TransactionId xid,
@@ -1618,8 +1619,6 @@ ReorderBufferBuildTupleCidHash(ReorderBuffer *rb, ReorderBufferTXN *txn)
 
 	if (!rbtxn_has_catalog_changes(txn) || dlist_is_empty(&txn->tuplecids))
 		return;
-
-	memset(&hash_ctl, 0, sizeof(hash_ctl));
 
 	hash_ctl.keysize = sizeof(ReorderBufferTupleCidKey);
 	hash_ctl.entrysize = sizeof(ReorderBufferTupleCidEnt);
@@ -4116,7 +4115,6 @@ ReorderBufferToastInitHash(ReorderBuffer *rb, ReorderBufferTXN *txn)
 
 	Assert(txn->toast_hash == NULL);
 
-	memset(&hash_ctl, 0, sizeof(hash_ctl));
 	hash_ctl.keysize = sizeof(Oid);
 	hash_ctl.entrysize = sizeof(ReorderBufferToastEnt);
 	hash_ctl.hcxt = rb->context;

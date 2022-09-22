@@ -23,7 +23,7 @@ m4_if(m4_defn([m4_PACKAGE_VERSION]), [2.69], [], [m4_fatal([Autoconf version 2.6
 Untested combinations of 'autoconf' and PostgreSQL versions are not
 recommended.  You can remove the check from 'configure.ac' but it is then
 your responsibility whether the result works or not.])])
-AC_COPYRIGHT([Copyright (c) 1996-2020, PostgreSQL Global Development Group])
+AC_COPYRIGHT([Copyright (c) 1996-2021, PostgreSQL Global Development Group])
 AC_CONFIG_SRCDIR([src/backend/access/common/heaptuple.c])
 AC_CONFIG_AUX_DIR(config)
 AC_PREFIX_DEFAULT(/usr/local/pgsql)
@@ -930,10 +930,10 @@ fi
 
 if test "$with_uuid" = bsd ; then
   AC_DEFINE([HAVE_UUID_BSD], 1, [Define to 1 if you have BSD UUID support.])
-  UUID_EXTRA_OBJS="md5.o sha1.o"
+  UUID_EXTRA_OBJS="sha1.o"
 elif test "$with_uuid" = e2fs ; then
   AC_DEFINE([HAVE_UUID_E2FS], 1, [Define to 1 if you have E2FS UUID support.])
-  UUID_EXTRA_OBJS="md5.o sha1.o"
+  UUID_EXTRA_OBJS="sha1.o"
 elif test "$with_uuid" = ossp ; then
   AC_DEFINE([HAVE_UUID_OSSP], 1, [Define to 1 if you have OSSP UUID support.])
   UUID_EXTRA_OBJS=""
@@ -1766,11 +1766,13 @@ fi
 case $host_os in
         # Windows uses a specialised env handler
         mingw*)
+                AC_DEFINE(HAVE_SETENV, 1, [Define to 1 because replacement version used.])
                 AC_DEFINE(HAVE_UNSETENV, 1, [Define to 1 because replacement version used.])
+                ac_cv_func_setenv=yes
                 ac_cv_func_unsetenv=yes
                 ;;
         *)
-                AC_REPLACE_FUNCS([unsetenv])
+                AC_REPLACE_FUNCS([setenv unsetenv])
                 ;;
 esac
 

@@ -3,7 +3,7 @@
  * lsyscache.c
  *	  Convenience routines for common queries in the system catalog cache.
  *
- * Portions Copyright (c) 1996-2020, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2021, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -2613,6 +2613,16 @@ type_is_range(Oid typid)
 }
 
 /*
+ * type_is_multirange
+ *	  Returns true if the given type is a multirange type.
+ */
+bool
+type_is_multirange(Oid typid)
+{
+	return (get_typtype(typid) == TYPTYPE_MULTIRANGE);
+}
+
+/*
  * get_type_category_preferred
  *
  *		Given the type OID, fetch its category and preferred-type status.
@@ -3033,7 +3043,7 @@ get_typsubscript(Oid typid, Oid *typelemp)
  * getSubscriptingRoutines
  *
  *		Given the type OID, fetch the type's subscripting methods struct.
- *		Fail if type is not subscriptable.
+ *		Return NULL if type is not subscriptable.
  *
  * If typelemp isn't NULL, we also store the type's typelem value there.
  * This saves some callers an extra catalog lookup.
@@ -3044,10 +3054,7 @@ getSubscriptingRoutines(Oid typid, Oid *typelemp)
 	RegProcedure typsubscript = get_typsubscript(typid, typelemp);
 
 	if (!OidIsValid(typsubscript))
-		ereport(ERROR,
-				(errcode(ERRCODE_DATATYPE_MISMATCH),
-				 errmsg("cannot subscript type %s because it does not support subscripting",
-						format_type_be(typid))));
+		return NULL;
 
 	return (const struct SubscriptRoutines *)
 		DatumGetPointer(OidFunctionCall0(typsubscript));
@@ -3313,7 +3320,7 @@ get_namespace_name_or_temp(Oid nspid)
 		return get_namespace_name(nspid);
 }
 
-/*				---------- PG_RANGE CACHE ----------				 */
+/*				---------- PG_RANGE CACHES ----------				 */
 
 /*
  * get_range_subtype
@@ -3359,6 +3366,56 @@ get_range_collation(Oid rangeOid)
 		Oid			result;
 
 		result = rngtup->rngcollation;
+		ReleaseSysCache(tp);
+		return result;
+	}
+	else
+		return InvalidOid;
+}
+
+/*
+ * get_range_multirange
+ *		Returns the multirange type of a given range type
+ *
+ * Returns InvalidOid if the type is not a range type.
+ */
+Oid
+get_range_multirange(Oid rangeOid)
+{
+	HeapTuple	tp;
+
+	tp = SearchSysCache1(RANGETYPE, ObjectIdGetDatum(rangeOid));
+	if (HeapTupleIsValid(tp))
+	{
+		Form_pg_range rngtup = (Form_pg_range) GETSTRUCT(tp);
+		Oid			result;
+
+		result = rngtup->rngmultitypid;
+		ReleaseSysCache(tp);
+		return result;
+	}
+	else
+		return InvalidOid;
+}
+
+/*
+ * get_multirange_range
+ *		Returns the range type of a given multirange
+ *
+ * Returns InvalidOid if the type is not a multirange.
+ */
+Oid
+get_multirange_range(Oid multirangeOid)
+{
+	HeapTuple	tp;
+
+	tp = SearchSysCache1(RANGEMULTIRANGE, ObjectIdGetDatum(multirangeOid));
+	if (HeapTupleIsValid(tp))
+	{
+		Form_pg_range rngtup = (Form_pg_range) GETSTRUCT(tp);
+		Oid			result;
+
+		result = rngtup->rngtypid;
 		ReleaseSysCache(tp);
 		return result;
 	}

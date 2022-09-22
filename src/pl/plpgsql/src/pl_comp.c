@@ -3,7 +3,7 @@
  * pl_comp.c		- Compiler part of the PL/pgSQL
  *			  procedural language
  *
- * Portions Copyright (c) 1996-2020, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2021, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -515,6 +515,8 @@ do_compile(FunctionCallInfo fcinfo,
 					else if (rettypeid == ANYRANGEOID ||
 							 rettypeid == ANYCOMPATIBLERANGEOID)
 						rettypeid = INT4RANGEOID;
+					else if (rettypeid == ANYMULTIRANGEOID)
+						rettypeid = INT4MULTIRANGEOID;
 					else		/* ANYELEMENT or ANYNONARRAY or ANYCOMPATIBLE */
 						rettypeid = INT4OID;
 					/* XXX what could we use for ANYENUM? */
@@ -2109,6 +2111,7 @@ build_datatype(HeapTuple typeTup, int32 typmod,
 		case TYPTYPE_BASE:
 		case TYPTYPE_ENUM:
 		case TYPTYPE_RANGE:
+		case TYPTYPE_MULTIRANGE:
 			typ->ttype = PLPGSQL_TTYPE_SCALAR;
 			break;
 		case TYPTYPE_COMPOSITE:
@@ -2526,6 +2529,9 @@ plpgsql_resolve_polymorphic_argtypes(int numargs,
 				case ANYCOMPATIBLERANGEOID:
 					argtypes[i] = INT4RANGEOID;
 					break;
+				case ANYMULTIRANGEOID:
+					argtypes[i] = INT4MULTIRANGEOID;
+					break;
 				default:
 					break;
 			}
@@ -2567,7 +2573,6 @@ plpgsql_HashTableInit(void)
 	/* don't allow double-initialization */
 	Assert(plpgsql_HashTable == NULL);
 
-	memset(&ctl, 0, sizeof(ctl));
 	ctl.keysize = sizeof(PLpgSQL_func_hashkey);
 	ctl.entrysize = sizeof(plpgsql_HashEnt);
 	plpgsql_HashTable = hash_create("PLpgSQL function hash",

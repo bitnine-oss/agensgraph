@@ -3,7 +3,7 @@
  * varlena.c
  *	  Functions for the variable-length built-in types.
  *
- * Portions Copyright (c) 1996-2020, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2021, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -22,6 +22,7 @@
 #include "catalog/pg_type.h"
 #include "common/hashfn.h"
 #include "common/int.h"
+#include "common/hex_decode.h"
 #include "common/unicode_norm.h"
 #include "lib/hyperloglog.h"
 #include "libpq/pqformat.h"

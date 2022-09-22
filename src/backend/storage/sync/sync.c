@@ -3,7 +3,7 @@
  * sync.c
  *	  File synchronization management code.
  *
- * Portions Copyright (c) 1996-2020, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2021, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -150,7 +150,6 @@ InitSync(void)
 											  ALLOCSET_DEFAULT_SIZES);
 		MemoryContextAllowInCriticalSection(pendingOpsCxt, true);
 
-		MemSet(&hash_ctl, 0, sizeof(hash_ctl));
 		hash_ctl.keysize = sizeof(FileTag);
 		hash_ctl.entrysize = sizeof(PendingFsyncEntry);
 		hash_ctl.hcxt = pendingOpsCxt;

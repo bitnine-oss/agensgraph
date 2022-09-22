@@ -4,7 +4,7 @@
  *	  Declarations for operations on built-in types.
  *
  *
- * Portions Copyright (c) 1996-2020, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2021, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/utils/builtins.h
@@ -33,7 +33,6 @@ extern int	errdomainconstraint(Oid datatypeOid, const char *conname);
 
 /* encode.c */
 extern uint64 hex_encode(const char *src, size_t len, char *dst);
-extern uint64 hex_decode(const char *src, size_t len, char *dst);
 
 /* int.c */
 extern int2vector *buildint2vector(const int16 *int2s, int n);

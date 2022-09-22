@@ -6,7 +6,7 @@
  * See src/backend/optimizer/README for discussion of EquivalenceClasses.
  *
  *
- * Portions Copyright (c) 1996-2020, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2021, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -798,12 +798,15 @@ find_em_expr_for_rel(EquivalenceClass *ec, RelOptInfo *rel)
 }
 
 /*
- * Find an equivalence class member expression that can be safely used by a
- * sort node on top of the provided relation. The rules here must match those
- * applied in prepare_sort_from_pathkeys.
+ * Find an equivalence class member expression that can be safely used to build
+ * a sort node using the provided relation. The rules are a subset of those
+ * applied in prepare_sort_from_pathkeys since that function deals with sorts
+ * that must be delayed until the last stages of query execution, while here
+ * we only care about proactive sorts.
  */
 Expr *
-find_em_expr_usable_for_sorting_rel(EquivalenceClass *ec, RelOptInfo *rel)
+find_em_expr_usable_for_sorting_rel(PlannerInfo *root, EquivalenceClass *ec,
+									RelOptInfo *rel, bool require_parallel_safe)
 {
 	ListCell   *lc_em;
 
@@ -815,8 +818,6 @@ find_em_expr_usable_for_sorting_rel(EquivalenceClass *ec, RelOptInfo *rel)
 	{
 		EquivalenceMember *em = lfirst(lc_em);
 		Expr	   *em_expr = em->em_expr;
-		PathTarget *target = rel->reltarget;
-		ListCell   *lc_target_expr;
 
 		/*
 		 * We shouldn't be trying to sort by an equivalence class that
@@ -834,33 +835,30 @@ find_em_expr_usable_for_sorting_rel(EquivalenceClass *ec, RelOptInfo *rel)
 			continue;
 
 		/*
+		 * If requested, reject expressions that are not parallel-safe.
+		 */
+		if (require_parallel_safe && !is_parallel_safe(root, (Node *) em_expr))
+			continue;
+
+		/*
+		 * Disallow SRFs so that all of them can be evaluated at the correct
+		 * time as determined by make_sort_input_target.
+		 */
+		if (IS_SRF_CALL((Node *) em_expr))
+			continue;
+
+		/*
 		 * As long as the expression isn't volatile then
 		 * prepare_sort_from_pathkeys is able to generate a new target entry,
 		 * so there's no need to verify that one already exists.
+		 *
+		 * While prepare_sort_from_pathkeys has to be concerned about matching
+		 * up a volatile expression to the proper tlist entry, it doesn't seem
+		 * valuable here to expend the work trying to find a match in the
+		 * target's exprs since such a sort will have to be postponed anyway.
 		 */
 		if (!ec->ec_has_volatile)
 			return em->em_expr;
-
-		/*
-		 * If, however, it's volatile, we have to verify that the
-		 * equivalence member's expr is already generated in the
-		 * relation's target (we do strip relabels first from both
-		 * expressions, which is cheap and might allow us to match
-		 * more expressions).
-		 */
-		while (em_expr && IsA(em_expr, RelabelType))
-			em_expr = ((RelabelType *) em_expr)->arg;
-
-		foreach(lc_target_expr, target->exprs)
-		{
-			Expr	   *target_expr = lfirst(lc_target_expr);
-
-			while (target_expr && IsA(target_expr, RelabelType))
-				target_expr = ((RelabelType *) target_expr)->arg;
-
-			if (equal(target_expr, em_expr))
-				return em->em_expr;
-		}
 	}
 
 	/* We didn't find any suitable equivalence class expression */

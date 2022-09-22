@@ -8,7 +8,7 @@
  *	  This file contains only the public interface routines.
  *
  *
- * Portions Copyright (c) 1996-2020, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2021, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -440,8 +440,7 @@ btrescan(IndexScanDesc scan, ScanKey scankey, int nscankeys,
 	}
 
 	/*
-	 * Reset the scan keys. Note that keys ordering stuff moved to _bt_first.
-	 * - vadim 05/05/97
+	 * Reset the scan keys
 	 */
 	if (scankey && scan->numberOfKeys > 0)
 		memmove(scan->keyData,

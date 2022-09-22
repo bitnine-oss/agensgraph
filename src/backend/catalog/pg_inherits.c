@@ -8,7 +8,7 @@
  * Perhaps someday that code should be moved here, but it'd have to be
  * disentangled from other stuff such as pg_depend updates.
  *
- * Portions Copyright (c) 1996-2020, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2021, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -173,7 +173,6 @@ find_all_inheritors(Oid parentrelId, LOCKMODE lockmode, List **numparents)
 			   *rel_numparents;
 	ListCell   *l;
 
-	memset(&ctl, 0, sizeof(ctl));
 	ctl.keysize = sizeof(Oid);
 	ctl.entrysize = sizeof(SeenRelsEntry);
 	ctl.hcxt = CurrentMemoryContext;
