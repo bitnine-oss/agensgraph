@@ -28,6 +28,7 @@
 #include "miscadmin.h"
 #include "nodes/makefuncs.h"
 #include "nodes/nodeFuncs.h"
+#include "nodes/subscripting.h"
 #include "optimizer/tlist.h"
 #include "parser/analyze.h"
 #include "parser/parse_clause.h"
@@ -1621,7 +1622,8 @@ transformIndirection(ParseState *pstate, A_Indirection *indir)
 
 			arrtype = restype;
 			arrtypmod = exprTypmod(res);
-			elemtype = transformContainerType(&arrtype, &arrtypmod);
+			transformContainerType(&arrtype, &arrtypmod);
+			getSubscriptingRoutines(arrtype, &elemtype);
 
 			aref = makeNode(SubscriptingRef);
 			aref->refcontainertype = arrtype;
@@ -1631,6 +1633,8 @@ transformIndirection(ParseState *pstate, A_Indirection *indir)
 			aref->reflowerindexpr = (ind->is_slice ? list_make1(lidx) : NIL);
 			aref->refexpr = (Expr *) res;
 			aref->refassgnexpr = NULL;
+			aref->refrestype = ind->is_slice ? aref->refcontainertype :
+					aref->refelemtype;
 
 			res = (Node *) aref;
 		}

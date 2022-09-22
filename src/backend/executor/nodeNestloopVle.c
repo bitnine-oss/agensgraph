@@ -718,17 +718,17 @@ static void
 pushPathElementOuter(NestLoopVLEState *node, TupleTableSlot *slot)
 {
 	FormData_pg_attribute *attrs = slot->tts_tupleDescriptor->attrs;
-	IntArray	upper;
 	Datum		value;
 	bool		isnull;
+	const int	one = 1;
+
 	/* zero-length VLE does not have the first edge and its ID in outerPlan */
 	if (node->curhops == 0)
 		return;
 
-	upper.indx[0] = 1;
 	value = array_get_element(slot->tts_values[OUTER_EIDS_VARNO],
 							  1,
-							  upper.indx,
+							  (int *) &one,
 							  attrs[OUTER_EIDS_VARNO].attlen,
 							  node->eids->typlen,
 							  node->eids->typbyval,
@@ -741,7 +741,7 @@ pushPathElementOuter(NestLoopVLEState *node, TupleTableSlot *slot)
 	if (node->edges != NULL)
 	{
 		value = array_get_element(slot->tts_values[OUTER_EDGES_VARNO],
-								  1, upper.indx,
+								  1, (int *) &one,
 								  attrs[OUTER_EDGES_VARNO].attlen,
 								  node->edges->typlen, node->edges->typbyval,
 								  node->edges->typalign, &isnull);
