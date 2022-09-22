@@ -2495,12 +2495,6 @@ CREATE POLICY admin_local_only ON passwd AS RESTRICTIVE TO admin
  127.0.0.1
 (1 row)
 
-=&gt; SELECT current_user;
- current_user 
---------------
- admin
-(1 row)
-
 =&gt; TABLE passwd;
  user_name | pwhash | uid | gid | real_name | home_phone | extra_info | home_dir | shell
 -----------+--------+-----+-----+-----------+------------+------------+----------+-------
@@ -2763,8 +2757,8 @@ CREATE SCHEMA myschema;
 <synopsis>
 <replaceable>database</replaceable><literal>.</literal><replaceable>schema</replaceable><literal>.</literal><replaceable>table</replaceable>
 </synopsis>
-    can be used too, but at present this is just for <foreignphrase>pro
-    forma</foreignphrase> compliance with the SQL standard.  If you write a database name,
+    can be used too, but at present this is just for pro forma
+    compliance with the SQL standard.  If you write a database name,
     it must be the same as the database you are connected to.
    </para>
 

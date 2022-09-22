@@ -242,6 +242,7 @@ bool		Db_user_namespace = false;
 bool		enable_bonjour = false;
 char	   *bonjour_name;
 bool		restart_after_crash = true;
+bool		remove_temp_files_after_crash = true;
 
 /* PIDs of special child processes; 0 when not running */
 static pid_t StartupPID = 0,
@@ -443,9 +444,10 @@ static void InitPostmasterDeathWatchHandle(void);
  * even during recovery.
  */
 #define PgArchStartupAllowed()	\
-	((XLogArchivingActive() && pmState == PM_RUN) ||	\
-	 (XLogArchivingAlways() &&	\
-	  (pmState == PM_RECOVERY || pmState == PM_HOT_STANDBY)))
+	(((XLogArchivingActive() && pmState == PM_RUN) ||			\
+	  (XLogArchivingAlways() &&									  \
+	   (pmState == PM_RECOVERY || pmState == PM_HOT_STANDBY))) && \
+	 PgArchCanRestart())
 
 #ifdef EXEC_BACKEND
 
@@ -548,6 +550,7 @@ static void ShmemBackendArrayRemove(Backend *bn);
 #endif							/* EXEC_BACKEND */
 
 #define StartupDataBase()		StartChildProcess(StartupProcess)
+#define StartArchiver()			StartChildProcess(ArchiverProcess)
 #define StartBackgroundWriter() StartChildProcess(BgWriterProcess)
 #define StartCheckpointer()		StartChildProcess(CheckpointerProcess)
 #define StartWalWriter()		StartChildProcess(WalWriterProcess)
@@ -655,6 +658,10 @@ PostmasterMain(int argc, char *argv[])
 	pqsignal_pm(SIGUSR1, sigusr1_handler);	/* message from child process */
 	pqsignal_pm(SIGUSR2, dummy_handler);	/* unused, reserve for children */
 	pqsignal_pm(SIGCHLD, reaper);	/* handle child termination */
+
+#ifdef SIGURG
+	pqsignal_pm(SIGURG, SIG_IGN);	/* ignored */
+#endif
 
 	/*
 	 * No other place in Postgres should touch SIGTTIN/SIGTTOU handling.  We
@@ -1788,7 +1795,7 @@ ServerLoop(void)
 
 		/* If we have lost the archiver, try to start a new one. */
 		if (PgArchPID == 0 && PgArchStartupAllowed())
-			PgArchPID = pgarch_start();
+			PgArchPID = StartArchiver();
 
 		/* If we need to signal the autovacuum launcher, do so now */
 		if (avlauncher_needs_signal)
@@ -1930,7 +1937,7 @@ static int
 ProcessStartupPacket(Port *port, bool ssl_done, bool gss_done)
 {
 	int32		len;
-	void	   *buf;
+	char	   *buf;
 	ProtocolVersion proto;
 	MemoryContext oldcontext;
 
@@ -1980,15 +1987,12 @@ ProcessStartupPacket(Port *port, bool ssl_done, bool gss_done)
 	}
 
 	/*
-	 * Allocate at least the size of an old-style startup packet, plus one
-	 * extra byte, and make sure all are zeroes.  This ensures we will have
-	 * null termination of all strings, in both fixed- and variable-length
-	 * packet layouts.
+	 * Allocate space to hold the startup packet, plus one extra byte that's
+	 * initialized to be zero.  This ensures we will have null termination of
+	 * all strings inside the packet.
 	 */
-	if (len <= (int32) sizeof(StartupPacket))
-		buf = palloc0(sizeof(StartupPacket) + 1);
-	else
-		buf = palloc0(len + 1);
+	buf = palloc(len + 1);
+	buf[len] = '\0';
 
 	if (pq_getbytes(buf, len) == EOF)
 	{
@@ -2111,7 +2115,7 @@ retry1:
 	 */
 	oldcontext = MemoryContextSwitchTo(TopMemoryContext);
 
-	if (PG_PROTOCOL_MAJOR(proto) >= 3)
+	/* Handle protocol version 3 startup packet */
 	{
 		int32		offset = sizeof(ProtocolVersion);
 		List	   *unrecognized_protocol_options = NIL;
@@ -2125,7 +2129,7 @@ retry1:
 
 		while (offset < len)
 		{
-			char	   *nameptr = ((char *) buf) + offset;
+			char	   *nameptr = buf + offset;
 			int32		valoffset;
 			char	   *valptr;
 
@@ -2134,7 +2138,7 @@ retry1:
 			valoffset = offset + strlen(nameptr) + 1;
 			if (valoffset >= len)
 				break;			/* missing value, will complain below */
-			valptr = ((char *) buf) + valoffset;
+			valptr = buf + valoffset;
 
 			if (strcmp(nameptr, "database") == 0)
 				port->database_name = pstrdup(valptr);
@@ -2219,27 +2223,6 @@ retry1:
 			unrecognized_protocol_options != NIL)
 			SendNegotiateProtocolVersion(unrecognized_protocol_options);
 	}
-	else
-	{
-		/*
-		 * Get the parameters from the old-style, fixed-width-fields startup
-		 * packet as C strings.  The packet destination was cleared first so a
-		 * short packet has zeros silently added.  We have to be prepared to
-		 * truncate the pstrdup result for oversize fields, though.
-		 */
-		StartupPacket *packet = (StartupPacket *) buf;
-
-		port->database_name = pstrdup(packet->database);
-		if (strlen(port->database_name) > sizeof(packet->database))
-			port->database_name[sizeof(packet->database)] = '\0';
-		port->user_name = pstrdup(packet->user);
-		if (strlen(port->user_name) > sizeof(packet->user))
-			port->user_name[sizeof(packet->user)] = '\0';
-		port->cmdline_options = pstrdup(packet->options);
-		if (strlen(port->cmdline_options) > sizeof(packet->options))
-			port->cmdline_options[sizeof(packet->options)] = '\0';
-		port->guc_options = NIL;
-	}
 
 	/* Check a user name was given. */
 	if (port->user_name == NULL || port->user_name[0] == '\0')
@@ -2310,6 +2293,18 @@ retry1:
 			ereport(FATAL,
 					(errcode(ERRCODE_CANNOT_CONNECT_NOW),
 					 errmsg("the database system is starting up")));
+			break;
+		case CAC_NOTCONSISTENT:
+			if (EnableHotStandby)
+				ereport(FATAL,
+						(errcode(ERRCODE_CANNOT_CONNECT_NOW),
+						 errmsg("the database system is not yet accepting connections"),
+						 errdetail("Consistent recovery state has not been yet reached.")));
+			else
+				ereport(FATAL,
+						(errcode(ERRCODE_CANNOT_CONNECT_NOW),
+						 errmsg("the database system is not accepting connections"),
+						 errdetail("Hot standby mode is disabled.")));
 			break;
 		case CAC_SHUTDOWN:
 			ereport(FATAL,
@@ -2452,10 +2447,11 @@ canAcceptConnections(int backend_type)
 	{
 		if (Shutdown > NoShutdown)
 			return CAC_SHUTDOWN;	/* shutdown is pending */
-		else if (!FatalError &&
-				 (pmState == PM_STARTUP ||
-				  pmState == PM_RECOVERY))
+		else if (!FatalError && pmState == PM_STARTUP)
 			return CAC_STARTUP; /* normal startup */
+		else if (!FatalError && pmState == PM_RECOVERY)
+			return CAC_NOTCONSISTENT;	/* not yet at consistent recovery
+										 * state */
 		else
 			return CAC_RECOVERY;	/* else must be crash recovery */
 	}
@@ -3027,7 +3023,7 @@ reaper(SIGNAL_ARGS)
 			if (!IsBinaryUpgrade && AutoVacuumingActive() && AutoVacPID == 0)
 				AutoVacPID = StartAutoVacLauncher();
 			if (PgArchStartupAllowed() && PgArchPID == 0)
-				PgArchPID = pgarch_start();
+				PgArchPID = StartArchiver();
 			if (PgStatPID == 0)
 				PgStatPID = pgstat_start();
 
@@ -3162,20 +3158,22 @@ reaper(SIGNAL_ARGS)
 		}
 
 		/*
-		 * Was it the archiver?  If so, just try to start a new one; no need
-		 * to force reset of the rest of the system.  (If fail, we'll try
-		 * again in future cycles of the main loop.).  Unless we were waiting
-		 * for it to shut down; don't restart it in that case, and
+		 * Was it the archiver?  If exit status is zero (normal) or one (FATAL
+		 * exit), we assume everything is all right just like normal backends
+		 * and just try to restart a new one so that we immediately retry
+		 * archiving remaining files. (If fail, we'll try again in future
+		 * cycles of the postmaster's main loop.) Unless we were waiting for
+		 * it to shut down; don't restart it in that case, and
 		 * PostmasterStateMachine() will advance to the next shutdown step.
 		 */
 		if (pid == PgArchPID)
 		{
 			PgArchPID = 0;
-			if (!EXIT_STATUS_0(exitstatus))
-				LogChildExit(LOG, _("archiver process"),
-							 pid, exitstatus);
+			if (!EXIT_STATUS_0(exitstatus) && !EXIT_STATUS_1(exitstatus))
+				HandleChildCrash(pid, exitstatus,
+								 _("archiver process"));
 			if (PgArchStartupAllowed())
-				PgArchPID = pgarch_start();
+				PgArchPID = StartArchiver();
 			continue;
 		}
 
@@ -3423,7 +3421,7 @@ CleanupBackend(int pid,
 
 /*
  * HandleChildCrash -- cleanup after failed backend, bgwriter, checkpointer,
- * walwriter, autovacuum, or background worker.
+ * walwriter, autovacuum, archiver or background worker.
  *
  * The objectives here are to clean up our local state about the child
  * process, and to signal all other remaining children to quickdie.
@@ -3487,7 +3485,7 @@ HandleChildCrash(int pid, int exitstatus, const char *procname)
 			 *
 			 * SIGQUIT is the special signal that says exit without proc_exit
 			 * and let the user know what's going on. But if SendStop is set
-			 * (-s on command line), then we send SIGSTOP instead, so that we
+			 * (-T on command line), then we send SIGSTOP instead, so that we
 			 * can get core dumps from all backends by hand.
 			 */
 			if (take_action)
@@ -3530,7 +3528,7 @@ HandleChildCrash(int pid, int exitstatus, const char *procname)
 			 *
 			 * SIGQUIT is the special signal that says exit without proc_exit
 			 * and let the user know what's going on. But if SendStop is set
-			 * (-s on command line), then we send SIGSTOP instead, so that we
+			 * (-T on command line), then we send SIGSTOP instead, so that we
 			 * can get core dumps from all backends by hand.
 			 *
 			 * We could exclude dead_end children here, but at least in the
@@ -3629,19 +3627,16 @@ HandleChildCrash(int pid, int exitstatus, const char *procname)
 		signal_child(AutoVacPID, (SendStop ? SIGSTOP : SIGQUIT));
 	}
 
-	/*
-	 * Force a power-cycle of the pgarch process too.  (This isn't absolutely
-	 * necessary, but it seems like a good idea for robustness, and it
-	 * simplifies the state-machine logic in the case where a shutdown request
-	 * arrives during crash processing.)
-	 */
-	if (PgArchPID != 0 && take_action)
+	/* Take care of the archiver too */
+	if (pid == PgArchPID)
+		PgArchPID = 0;
+	else if (PgArchPID != 0 && take_action)
 	{
 		ereport(DEBUG2,
 				(errmsg_internal("sending %s to process %d",
-								 "SIGQUIT",
+								 (SendStop ? "SIGSTOP" : "SIGQUIT"),
 								 (int) PgArchPID)));
-		signal_child(PgArchPID, SIGQUIT);
+		signal_child(PgArchPID, (SendStop ? SIGSTOP : SIGQUIT));
 	}
 
 	/*
@@ -3824,12 +3819,11 @@ PostmasterStateMachine(void)
 		 * (including autovac workers), no bgworkers (including unconnected
 		 * ones), and no walwriter, autovac launcher or bgwriter.  If we are
 		 * doing crash recovery or an immediate shutdown then we expect the
-		 * checkpointer to exit as well, otherwise not. The archiver, stats,
-		 * and syslogger processes are disregarded since they are not
-		 * connected to shared memory; we also disregard dead_end children
-		 * here. Walsenders are also disregarded, they will be terminated
-		 * later after writing the checkpoint record, like the archiver
-		 * process.
+		 * checkpointer to exit as well, otherwise not. The stats and
+		 * syslogger processes are disregarded since they are not connected to
+		 * shared memory; we also disregard dead_end children here. Walsenders
+		 * and archiver are also disregarded, they will be terminated later
+		 * after writing the checkpoint record.
 		 */
 		if (CountChildren(BACKEND_TYPE_ALL - BACKEND_TYPE_WALSND) == 0 &&
 			StartupPID == 0 &&
@@ -3932,6 +3926,7 @@ PostmasterStateMachine(void)
 			Assert(CheckpointerPID == 0);
 			Assert(WalWriterPID == 0);
 			Assert(AutoVacPID == 0);
+			Assert(PgArchPID == 0);
 			/* syslogger is not considered here */
 			pmState = PM_NO_CHILDREN;
 		}
@@ -3994,6 +3989,10 @@ PostmasterStateMachine(void)
 	{
 		ereport(LOG,
 				(errmsg("all server processes terminated; reinitializing")));
+
+		/* remove leftover temporary files after a crash */
+		if (remove_temp_files_after_crash)
+			RemovePgTempFiles();
 
 		/* allow background workers to immediately restart */
 		ResetBackgroundWorkerCrashTimes();
@@ -5057,12 +5056,6 @@ SubPostmasterMain(int argc, char *argv[])
 
 		StartBackgroundWorker();
 	}
-	if (strcmp(argv[1], "--forkarch") == 0)
-	{
-		/* Do not want to attach to shared memory */
-
-		PgArchiverMain(argc, argv); /* does not return */
-	}
 	if (strcmp(argv[1], "--forkcol") == 0)
 	{
 		/* Do not want to attach to shared memory */
@@ -5160,7 +5153,7 @@ sigusr1_handler(SIGNAL_ARGS)
 		 */
 		Assert(PgArchPID == 0);
 		if (XLogArchivingAlways())
-			PgArchPID = pgarch_start();
+			PgArchPID = StartArchiver();
 
 		/*
 		 * If we aren't planning to enter hot standby mode later, treat
@@ -5213,16 +5206,6 @@ sigusr1_handler(SIGNAL_ARGS)
 
 	if (StartWorkerNeeded || HaveCrashedWorker)
 		maybe_start_bgworkers();
-
-	if (CheckPostmasterSignal(PMSIGNAL_WAKEN_ARCHIVER) &&
-		PgArchPID != 0)
-	{
-		/*
-		 * Send SIGUSR1 to archiver process, to wake it up and begin archiving
-		 * next WAL file.
-		 */
-		signal_child(PgArchPID, SIGUSR1);
-	}
 
 	/* Tell syslogger to rotate logfile if requested */
 	if (SysLoggerPID != 0)
@@ -5464,6 +5447,10 @@ StartChildProcess(AuxProcType type)
 			case StartupProcess:
 				ereport(LOG,
 						(errmsg("could not fork startup process: %m")));
+				break;
+			case ArchiverProcess:
+				ereport(LOG,
+						(errmsg("could not fork archiver process: %m")));
 				break;
 			case BgWriterProcess:
 				ereport(LOG,
@@ -5787,7 +5774,7 @@ do_start_bgworker(RegisteredBgWorker *rw)
 	}
 
 	ereport(DEBUG1,
-			(errmsg("starting background worker process \"%s\"",
+			(errmsg_internal("starting background worker process \"%s\"",
 					rw->rw_worker.bgw_name)));
 
 #ifdef EXEC_BACKEND

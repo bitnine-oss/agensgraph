@@ -26,6 +26,7 @@ REINDEX [ ( <replaceable class="parameter">option</replaceable> [, ...] ) ] { IN
 <phrase>where <replaceable class="parameter">option</replaceable> can be one of:</phrase>
 
     CONCURRENTLY [ <replaceable class="parameter">boolean</replaceable> ]
+    TABLESPACE <replaceable class="parameter">new_tablespace</replaceable>
     VERBOSE [ <replaceable class="parameter">boolean</replaceable> ]
 </synopsis>
  </refsynopsisdiv>
@@ -188,6 +189,15 @@ REINDEX [ ( <replaceable class="parameter">option</replaceable> [, ...] ) ] { IN
    </varlistentry>
 
    <varlistentry>
+    <term><literal>TABLESPACE</literal></term>
+    <listitem>
+     <para>
+      Specifies that indexes will be rebuilt on a new tablespace.
+     </para>
+    </listitem>
+   </varlistentry>
+
+   <varlistentry>
     <term><literal>VERBOSE</literal></term>
     <listitem>
      <para>
@@ -210,6 +220,14 @@ REINDEX [ ( <replaceable class="parameter">option</replaceable> [, ...] ) ] { IN
     </listitem>
    </varlistentry>
 
+   <varlistentry>
+    <term><replaceable class="parameter">new_tablespace</replaceable></term>
+    <listitem>
+     <para>
+      The tablespace where indexes will be rebuilt. 
+     </para>
+    </listitem>
+   </varlistentry>
   </variablelist>
  </refsect1>
 
@@ -294,7 +312,27 @@ REINDEX [ ( <replaceable class="parameter">option</replaceable> [, ...] ) ] { IN
    reindexed in a separate transaction. Those commands cannot be used inside
    a transaction block when working on a partitioned table or index.
   </para>
+  
+  <para>
+   When using the <literal>TABLESPACE</literal> clause with
+   <command>REINDEX</command> on a partitioned index or table, only the
+   tablespace references of the leaf partitions are updated. As partitioned
+   indexes are not updated, it is recommended to separately use
+   <command>ALTER TABLE ONLY</command> on them so as any new partitions
+   attached inherit the new tablespace. On failure, it may not have moved
+   all the indexes to the new tablespace. Re-running the command will rebuild
+   all the leaf partitions and move previously-unprocessed indexes to the new
+   tablespace.
+  </para>
 
+  <para>
+   If <literal>SCHEMA</literal>, <literal>DATABASE</literal> or
+   <literal>SYSTEM</literal> is used with <literal>TABLESPACE</literal>,
+   system relations are skipped and a single <literal>WARNING</literal>
+   will be generated. Indexes on TOAST tables are rebuilt, but not moved
+   to the new tablespace.
+  </para>
+   
   <refsect2 id="sql-reindex-concurrently" xreflabel="Rebuilding Indexes Concurrently">
    <title>Rebuilding Indexes Concurrently</title>
 
@@ -440,6 +478,8 @@ Indexes:
     Like any long-running transaction, <command>REINDEX</command> on a table
     can affect which tuples can be removed by concurrent
     <command>VACUUM</command> on any other table.
+    Excepted from this are operations with the <literal>CONCURRENTLY</literal>
+    option for indexes that are not partial and do not index any expressions.
    </para>
 
    <para>
@@ -455,6 +495,12 @@ Indexes:
     is reindexed concurrently, those indexes will be skipped.  (It is possible
     to reindex such indexes without the <command>CONCURRENTLY</command> option.)
    </para>
+
+  <para>
+    Each backend running <command>REINDEX</command> will report its progress
+    in the <structname>pg_stat_progress_create_index</structname> view. See
+    <xref linkend="create-index-progress-reporting"/> for details.
+  </para>
   </refsect2>
  </refsect1>
 
@@ -513,6 +559,7 @@ REINDEX TABLE CONCURRENTLY my_broken_table;
    <member><xref linkend="sql-createindex"/></member>
    <member><xref linkend="sql-dropindex"/></member>
    <member><xref linkend="app-reindexdb"/></member>
+   <member><xref linkend="create-index-progress-reporting"/></member>
   </simplelist>
  </refsect1>
 </refentry>

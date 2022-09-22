@@ -1035,6 +1035,30 @@ SELECT 'indio' NOT LIKE 'in_o' AS "true";
  t
 (1 row)
 
+SELECT 'abc'::name LIKE '_b_' AS "true";
+ true 
+------
+ t
+(1 row)
+
+SELECT 'abc'::name NOT LIKE '_b_' AS "false";
+ false 
+-------
+ f
+(1 row)
+
+SELECT 'abc'::bytea LIKE '_b_'::bytea AS "true";
+ true 
+------
+ t
+(1 row)
+
+SELECT 'abc'::bytea NOT LIKE '_b_'::bytea AS "false";
+ false 
+-------
+ f
+(1 row)
+
 -- unused escape character
 SELECT 'hawkeye' LIKE 'h%' ESCAPE '#' AS "true";
  true 
@@ -1158,6 +1182,18 @@ SELECT 'i_dio' NOT LIKE 'i$_d%o' ESCAPE '$' AS "false";
  f
 (1 row)
 
+SELECT 'a_c'::bytea LIKE 'a$__'::bytea ESCAPE '$'::bytea AS "true";
+ true 
+------
+ t
+(1 row)
+
+SELECT 'a_c'::bytea NOT LIKE 'a$__'::bytea ESCAPE '$'::bytea AS "false";
+ false 
+-------
+ f
+(1 row)
+
 -- escape character same as pattern character
 SELECT 'maca' LIKE 'm%aca' ESCAPE '%' AS "true";
  true 
@@ -1266,6 +1302,18 @@ SELECT 'Hawkeye' ILIKE 'h%' AS "true";
 (1 row)
 
 SELECT 'Hawkeye' NOT ILIKE 'h%' AS "false";
+ false 
+-------
+ f
+(1 row)
+
+SELECT 'ABC'::name ILIKE '_b_' AS "true";
+ true 
+------
+ t
+(1 row)
+
+SELECT 'ABC'::name NOT ILIKE '_b_' AS "false";
  false 
 -------
  f
@@ -1979,6 +2027,7 @@ select 'a\\bcd' as f1, 'a\\b\'cd' as f2, 'a\\b\'''cd' as f3, 'abcd\\'   as f4, '
  a\bcd | a\b'cd | a\b''cd | abcd\ | ab\'cd | \\
 (1 row)
 
+reset standard_conforming_strings;
 --
 -- Additional string functions
 --
@@ -2179,3 +2228,45 @@ SELECT encode(overlay(E'Th\\000omas'::bytea placing E'\\002\\003'::bytea from 5 
  Th\000o\x02\x03
 (1 row)
 
+SELECT bit_count('\x1234567890'::bytea);
+ bit_count 
+-----------
+        15
+(1 row)
+
+SELECT unistr('\0064at\+0000610');
+ unistr 
+--------
+ data0
+(1 row)
+
+SELECT unistr('d\u0061t\U000000610');
+ unistr 
+--------
+ data0
+(1 row)
+
+SELECT unistr('a\\b');
+ unistr 
+--------
+ a\b
+(1 row)
+
+-- errors:
+SELECT unistr('wrong: \db99');
+ERROR:  invalid Unicode surrogate pair
+SELECT unistr('wrong: \db99\0061');
+ERROR:  invalid Unicode surrogate pair
+SELECT unistr('wrong: \+00db99\+000061');
+ERROR:  invalid Unicode surrogate pair
+SELECT unistr('wrong: \+2FFFFF');
+ERROR:  invalid Unicode code point: 2FFFFF
+SELECT unistr('wrong: \udb99\u0061');
+ERROR:  invalid Unicode surrogate pair
+SELECT unistr('wrong: \U0000db99\U00000061');
+ERROR:  invalid Unicode surrogate pair
+SELECT unistr('wrong: \U002FFFFF');
+ERROR:  invalid Unicode code point: 2FFFFF
+SELECT unistr('wrong: \xyz');
+ERROR:  invalid Unicode escape
+HINT:  Unicode escapes must be \XXXX, \+XXXXXX, \uXXXX, or \UXXXXXXXX.

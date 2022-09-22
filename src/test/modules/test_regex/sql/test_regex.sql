@@ -214,8 +214,9 @@ select * from test_regex('a?*', '', '-');
 select * from test_regex('a+*', '', '-');
 -- expectError	7.15 -		a*+	BADRPT
 select * from test_regex('a*+', '', '-');
--- test for ancient brenext() bug; not currently in Tcl
+-- tests for ancient brenext() bugs; not currently in Tcl
 select * from test_regex('.*b', 'aaabbb', 'b');
+select * from test_regex('.\{1,10\}', 'abcdef', 'bQ');
 
 -- doing 8 "braces"
 
@@ -596,6 +597,50 @@ select * from test_regex('a[\s]b', 'a b', 'LPE');
 -- expectMatch	12.18 LPE	{a[\w]b}	axb	axb
 select * from test_regex('a[\w]b', 'axb', 'LPE');
 
+-- these should be invalid
+select * from test_regex('[\w-~]*', 'ab01_~-`**', 'LNPSE');
+select * from test_regex('[~-\w]*', 'ab01_~-`**', 'LNPSE');
+select * from test_regex('[[:alnum:]-~]*', 'ab01~-`**', 'LNS');
+select * from test_regex('[~-[:alnum:]]*', 'ab01~-`**', 'LNS');
+
+-- test complemented char classes within brackets
+select * from test_regex('[\D]', '0123456789abc*', 'LPE');
+select * from test_regex('[^\D]', 'abc0123456789*', 'LPE');
+select * from test_regex('[1\D7]', '0123456789abc*', 'LPE');
+select * from test_regex('[7\D1]', '0123456789abc*', 'LPE');
+select * from test_regex('[^0\D1]', 'abc0123456789*', 'LPE');
+select * from test_regex('[^1\D0]', 'abc0123456789*', 'LPE');
+select * from test_regex('\W', '0123456789abc_*', 'LP');
+select * from test_regex('[\W]', '0123456789abc_*', 'LPE');
+select * from test_regex('[\s\S]*', '012  3456789abc_*', 'LNPE');
+
+-- check char classes' handling of newlines
+select * from test_regex('\s+', E'abc  \n  def', 'LP');
+select * from test_regex('\s+', E'abc  \n  def', 'nLP');
+select * from test_regex('[\s]+', E'abc  \n  def', 'LPE');
+select * from test_regex('[\s]+', E'abc  \n  def', 'nLPE');
+select * from test_regex('\S+', E'abc\ndef', 'LP');
+select * from test_regex('\S+', E'abc\ndef', 'nLP');
+select * from test_regex('[\S]+', E'abc\ndef', 'LPE');
+select * from test_regex('[\S]+', E'abc\ndef', 'nLPE');
+select * from test_regex('\d+', E'012\n345', 'LP');
+select * from test_regex('\d+', E'012\n345', 'nLP');
+select * from test_regex('[\d]+', E'012\n345', 'LPE');
+select * from test_regex('[\d]+', E'012\n345', 'nLPE');
+select * from test_regex('\D+', E'abc\ndef345', 'LP');
+select * from test_regex('\D+', E'abc\ndef345', 'nLP');
+select * from test_regex('[\D]+', E'abc\ndef345', 'LPE');
+select * from test_regex('[\D]+', E'abc\ndef345', 'nLPE');
+select * from test_regex('\w+', E'abc_012\ndef', 'LP');
+select * from test_regex('\w+', E'abc_012\ndef', 'nLP');
+select * from test_regex('[\w]+', E'abc_012\ndef', 'LPE');
+select * from test_regex('[\w]+', E'abc_012\ndef', 'nLPE');
+select * from test_regex('\W+', E'***\n@@@___', 'LP');
+select * from test_regex('\W+', E'***\n@@@___', 'nLP');
+select * from test_regex('[\W]+', E'***\n@@@___', 'LPE');
+select * from test_regex('[\W]+', E'***\n@@@___', 'nLPE');
+
+
 -- doing 13 "escapes"
 
 -- expectError	13.1  &		"a\\"		EESCAPE
@@ -724,6 +769,11 @@ select * from test_regex('^(.+)( \1)+$', 'abc abc abc', 'RP');
 select * from test_regex('^(.+)( \1)+$', 'abc abd abc', 'RP');
 -- expectNomatch	14.29 RP	{^(.+)( \1)+$}	{abc abc abd}
 select * from test_regex('^(.+)( \1)+$', 'abc abc abd', 'RP');
+
+-- back reference only matches the string, not any constraints
+select * from test_regex('(^\w+).*\1', 'abc abc abc', 'LRP');
+select * from test_regex('(^\w+\M).*\1', 'abc abcd abd', 'LRP');
+select * from test_regex('(\w+(?= )).*\1', 'abc abcd abd', 'HLRP');
 
 -- doing 15 "octal escapes vs back references"
 
@@ -1049,6 +1099,10 @@ select * from test_regex('a(?!b)b*', 'a', 'HP');
 select * from test_regex('(?=b)b', 'b', 'HP');
 -- expectNomatch	23.8 HP		(?=b)b		a
 select * from test_regex('(?=b)b', 'a', 'HP');
+-- expectMatch	23.9 HP		...(?!.)	abcde	cde
+select * from test_regex('...(?!.)', 'abcde', 'HP');
+-- expectNomatch	23.10 HP	...(?=.)	abc
+select * from test_regex('...(?=.)', 'abc', 'HP');
 
 -- Postgres addition: lookbehind constraints
 
@@ -1068,6 +1122,15 @@ select * from test_regex('a(?<!b)b*', 'a', 'HP');
 select * from test_regex('(?<=b)b', 'bb', 'HP');
 -- expectNomatch	23.18 HP		(?<=b)b		b
 select * from test_regex('(?<=b)b', 'b', 'HP');
+-- expectMatch	23.19 HP		(?<=.)..	abcde	bc
+select * from test_regex('(?<=.)..', 'abcde', 'HP');
+-- expectMatch	23.20 HP		(?<=..)a*	aaabb	a
+select * from test_regex('(?<=..)a*', 'aaabb', 'HP');
+-- expectMatch	23.21 HP		(?<=..)b*	aaabb	{}
+-- Note: empty match here is correct, it matches after the first 2 characters
+select * from test_regex('(?<=..)b*', 'aaabb', 'HP');
+-- expectMatch	23.22 HP		(?<=..)b+	aaabb	bb
+select * from test_regex('(?<=..)b+', 'aaabb', 'HP');
 
 -- doing 24 "non-greedy quantifiers"
 

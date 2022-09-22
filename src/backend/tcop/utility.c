@@ -1256,6 +1256,25 @@ ProcessUtilitySlow(ParseState *pstate,
 					AlterTableStmt *atstmt = (AlterTableStmt *) parsetree;
 					Oid			relid;
 					LOCKMODE	lockmode;
+					ListCell   *cell;
+
+					/*
+					 * Disallow ALTER TABLE .. DETACH CONCURRENTLY in a
+					 * transaction block or function.  (Perhaps it could be
+					 * allowed in a procedure, but don't hold your breath.)
+					 */
+					foreach(cell, atstmt->cmds)
+					{
+						AlterTableCmd *cmd = (AlterTableCmd *) lfirst(cell);
+
+						/* Disallow DETACH CONCURRENTLY in a transaction block */
+						if (cmd->subtype == AT_DetachPartition)
+						{
+							if (((PartitionCmd *) cmd->def)->concurrent)
+								PreventInTransactionBlock(isTopLevel,
+														  "ALTER TABLE ... DETACH CONCURRENTLY");
+						}
+					}
 
 					if (nodeTag(parsetree) == T_AlterLabelStmt)
 					{
@@ -1912,7 +1931,8 @@ ProcessUtilitySlow(ParseState *pstate,
 				break;
 
 			case T_AlterSubscriptionStmt:
-				address = AlterSubscription((AlterSubscriptionStmt *) parsetree);
+				address = AlterSubscription((AlterSubscriptionStmt *) parsetree,
+											isTopLevel);
 				break;
 
 			case T_DropSubscriptionStmt:
@@ -1922,7 +1942,34 @@ ProcessUtilitySlow(ParseState *pstate,
 				break;
 
 			case T_CreateStatsStmt:
-				address = CreateStatistics((CreateStatsStmt *) parsetree);
+				{
+					Oid			relid;
+					CreateStatsStmt *stmt = (CreateStatsStmt *) parsetree;
+					RangeVar   *rel = (RangeVar *) linitial(stmt->relations);
+
+					if (!IsA(rel, RangeVar))
+						ereport(ERROR,
+								(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+								 errmsg("only a single relation is allowed in CREATE STATISTICS")));
+
+					/*
+					 * CREATE STATISTICS will influence future execution plans
+					 * but does not interfere with currently executing plans.
+					 * So it should be enough to take ShareUpdateExclusiveLock
+					 * on relation, conflicting with ANALYZE and other DDL
+					 * that sets statistical information, but not with normal
+					 * queries.
+					 *
+					 * XXX RangeVarCallbackOwnsRelation not needed here, to
+					 * keep the same behavior as before.
+					 */
+					relid = RangeVarGetRelid(rel, ShareUpdateExclusiveLock, false);
+
+					/* Run parse analysis ... */
+					stmt = transformStatsStmt(relid, stmt, queryString);
+
+					address = CreateStatistics(stmt);
+				}
 				break;
 
 			case T_AlterStatsStmt:

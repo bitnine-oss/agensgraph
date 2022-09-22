@@ -19,6 +19,7 @@
  */
 #include "postgres.h"
 
+#include "access/detoast.h"
 #include "access/genam.h"
 #include "access/heapam.h"
 #include "access/heaptoast.h"
@@ -26,6 +27,7 @@
 #include "access/rewriteheap.h"
 #include "access/syncscan.h"
 #include "access/tableam.h"
+#include "access/toast_compression.h"
 #include "access/tsmapi.h"
 #include "access/xact.h"
 #include "catalog/catalog.h"
@@ -660,7 +662,7 @@ heapam_relation_copy_data(Relation rel, const RelFileNode *newrnode)
 			 * WAL log creation if the relation is persistent, or this is the
 			 * init fork of an unlogged relation.
 			 */
-			if (rel->rd_rel->relpersistence == RELPERSISTENCE_PERMANENT ||
+			if (RelationIsPermanent(rel) ||
 				(rel->rd_rel->relpersistence == RELPERSISTENCE_UNLOGGED &&
 				 forkNum == INIT_FORKNUM))
 				log_smgrcreate(newrnode, forkNum);
@@ -2469,6 +2471,44 @@ reform_and_rewrite_tuple(HeapTuple tuple,
 	{
 		if (TupleDescAttr(newTupDesc, i)->attisdropped)
 			isnull[i] = true;
+
+		/*
+		 * Use this opportunity to force recompression of any data that's
+		 * compressed with some TOAST compression method other than the one
+		 * configured for the column.  We don't actually need to perform the
+		 * compression here; we just need to decompress. That will trigger
+		 * recompression later on.
+		 */
+		else if (!isnull[i] && TupleDescAttr(newTupDesc, i)->attlen == -1)
+		{
+			struct varlena *new_value;
+			ToastCompressionId	cmid;
+			char	cmethod;
+
+			new_value = (struct varlena *) DatumGetPointer(values[i]);
+			cmid = toast_get_compression_id(new_value);
+
+			/* nothing to be done for uncompressed data */
+			if (cmid == TOAST_INVALID_COMPRESSION_ID)
+				continue;
+
+			/* convert compression id to compression method */
+			switch (cmid)
+			{
+				case TOAST_PGLZ_COMPRESSION_ID:
+					cmethod = TOAST_PGLZ_COMPRESSION;
+					break;
+				case TOAST_LZ4_COMPRESSION_ID:
+					cmethod = TOAST_LZ4_COMPRESSION;
+					break;
+				default:
+					elog(ERROR, "invalid compression method id %d", cmid);
+			}
+
+			/* if compression method doesn't match then detoast the value */
+			if (TupleDescAttr(newTupDesc, i)->attcompression != cmethod)
+				values[i] = PointerGetDatum(detoast_attr(new_value));
+		}
 	}
 
 	copiedTuple = heap_form_tuple(newTupDesc, values, isnull);
@@ -2541,6 +2581,9 @@ static const TableAmRoutine heapam_methods = {
 	.scan_end = heap_endscan,
 	.scan_rescan = heap_rescan,
 	.scan_getnextslot = heap_getnextslot,
+
+	.scan_set_tidrange = heap_set_tidrange,
+	.scan_getnextslot_tidrange = heap_getnextslot_tidrange,
 
 	.parallelscan_estimate = table_block_parallelscan_estimate,
 	.parallelscan_initialize = table_block_parallelscan_initialize,

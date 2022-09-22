@@ -1859,7 +1859,7 @@ inheritance_planner(PlannerInfo *root)
 		/* Make a dummy path, cf set_dummy_rel_pathlist() */
 		dummy_path = (Path *) create_append_path(NULL, final_rel, NIL, NIL,
 												 NIL, NULL, 0, false,
-												 NIL, -1);
+												 -1);
 
 		/* These lists must be nonempty to make a valid ModifyTable node */
 		subpaths = list_make1(dummy_path);
@@ -2596,7 +2596,7 @@ preprocess_grouping_sets(PlannerInfo *root)
 	ListCell   *lc_set;
 	grouping_sets_data *gd = palloc0(sizeof(grouping_sets_data));
 
-	parse->groupingSets = expand_grouping_sets(parse->groupingSets, -1);
+	parse->groupingSets = expand_grouping_sets(parse->groupingSets, parse->groupDistinct, -1);
 
 	gd->any_hashable = false;
 	gd->unhashable_refs = NULL;
@@ -3871,7 +3871,8 @@ get_number_of_groups(PlannerInfo *root,
 					double		numGroups = estimate_num_groups(root,
 																groupExprs,
 																path_rows,
-																&gset);
+																&gset,
+																NULL);
 
 					gs->numGroups = numGroups;
 					rollup->numGroups += numGroups;
@@ -3896,7 +3897,8 @@ get_number_of_groups(PlannerInfo *root,
 					double		numGroups = estimate_num_groups(root,
 																groupExprs,
 																path_rows,
-																&gset);
+																&gset,
+																NULL);
 
 					gs->numGroups = numGroups;
 					gd->dNumHashGroups += numGroups;
@@ -3912,7 +3914,7 @@ get_number_of_groups(PlannerInfo *root,
 												 target_list);
 
 			dNumGroups = estimate_num_groups(root, groupExprs, path_rows,
-											 NULL);
+											 NULL, NULL);
 		}
 	}
 	else if (parse->groupingSets)
@@ -4175,7 +4177,6 @@ create_degenerate_grouping_paths(PlannerInfo *root, RelOptInfo *input_rel,
 							   NULL,
 							   0,
 							   false,
-							   NIL,
 							   -1);
 	}
 	else
@@ -4962,7 +4963,7 @@ create_distinct_paths(PlannerInfo *root,
 												parse->targetList);
 		numDistinctRows = estimate_num_groups(root, distinctExprs,
 											  cheapest_input_path->rows,
-											  NULL);
+											  NULL, NULL);
 	}
 
 	/*
@@ -7475,14 +7476,14 @@ create_partial_grouping_paths(PlannerInfo *root,
  * Generate Gather and Gather Merge paths for a grouping relation or partial
  * grouping relation.
  *
- * generate_gather_paths does most of the work, but we also consider a special
- * case: we could try sorting the data by the group_pathkeys and then applying
- * Gather Merge.
+ * generate_useful_gather_paths does most of the work, but we also consider a
+ * special case: we could try sorting the data by the group_pathkeys and then
+ * applying Gather Merge.
  *
  * NB: This function shouldn't be used for anything other than a grouped or
  * partially grouped relation not only because of the fact that it explicitly
  * references group_pathkeys but we pass "true" as the third argument to
- * generate_gather_paths().
+ * generate_useful_gather_paths().
  */
 static void
 gather_grouping_paths(PlannerInfo *root, RelOptInfo *rel)
@@ -7642,10 +7643,11 @@ apply_scanjoin_target_to_paths(PlannerInfo *root,
 	 * variations.  So we drop old paths and thereby force the work to be done
 	 * below the Append, except in the case of a non-parallel-safe target.
 	 *
-	 * Some care is needed, because we have to allow generate_gather_paths to
-	 * see the old partial paths in the next stanza.  Hence, zap the main
-	 * pathlist here, then allow generate_gather_paths to add path(s) to the
-	 * main list, and finally zap the partial pathlist.
+	 * Some care is needed, because we have to allow
+	 * generate_useful_gather_paths to see the old partial paths in the next
+	 * stanza.  Hence, zap the main pathlist here, then allow
+	 * generate_useful_gather_paths to add path(s) to the main list, and
+	 * finally zap the partial pathlist.
 	 */
 	if (rel_is_partitioned)
 		rel->pathlist = NIL;

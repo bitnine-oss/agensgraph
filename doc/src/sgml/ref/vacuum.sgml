@@ -33,6 +33,7 @@ VACUUM [ FULL ] [ FREEZE ] [ VERBOSE ] [ ANALYZE ] [ <replaceable class="paramet
     DISABLE_PAGE_SKIPPING [ <replaceable class="parameter">boolean</replaceable> ]
     SKIP_LOCKED [ <replaceable class="parameter">boolean</replaceable> ]
     INDEX_CLEANUP [ <replaceable class="parameter">boolean</replaceable> ]
+    PROCESS_TOAST [ <replaceable class="parameter">boolean</replaceable> ]
     TRUNCATE [ <replaceable class="parameter">boolean</replaceable> ]
     PARALLEL <replaceable class="parameter">integer</replaceable>
 
@@ -211,6 +212,20 @@ VACUUM [ FULL ] [ FREEZE ] [ VERBOSE ] [ ANALYZE ] [ <replaceable class="paramet
    </varlistentry>
 
    <varlistentry>
+    <term><literal>PROCESS_TOAST</literal></term>
+    <listitem>
+     <para>
+      Specifies that <command>VACUUM</command> should attempt to process the
+      corresponding <literal>TOAST</literal> table for each relation, if one
+      exists. This is normally the desired behavior and is the default.
+      Setting this option to false may be useful when it is only necessary to
+      vacuum the main relation. This option is required when the
+      <literal>FULL</literal> option is used.
+     </para>
+    </listitem>
+   </varlistentry>
+
+   <varlistentry>
     <term><literal>TRUNCATE</literal></term>
     <listitem>
      <para>
@@ -378,6 +393,15 @@ VACUUM [ FULL ] [ FREEZE ] [ VERBOSE ] [ ANALYZE ] [ <replaceable class="paramet
     information about automatic and manual vacuuming, see
     <xref linkend="routine-vacuuming"/>.
    </para>
+   <para>
+    Each backend running <command>VACUUM</command> without the
+    <literal>FULL</literal> option will report its progress in the
+    <structname>pg_stat_progress_vacuum</structname> view. Backends running
+    <command>VACUUM FULL</command> will instead report their progress in the
+    <structname>pg_stat_progress_cluster</structname> view. See 
+    <xref linkend="vacuum-progress-reporting"/> and
+    <xref linkend="cluster-progress-reporting"/> for details.
+   </para>
  </refsect1>
 
  <refsect1>
@@ -407,6 +431,8 @@ VACUUM (VERBOSE, ANALYZE) onek;
    <member><xref linkend="app-vacuumdb"/></member>
    <member><xref linkend="runtime-config-resource-vacuum-cost"/></member>
    <member><xref linkend="autovacuum"/></member>
+   <member><xref linkend="vacuum-progress-reporting"/></member>
+   <member><xref linkend="cluster-progress-reporting"/></member>
   </simplelist>
  </refsect1>
 </refentry>

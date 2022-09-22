@@ -146,8 +146,6 @@ static const char *const BuiltinTrancheNames[] = {
 	"WALInsert",
 	/* LWTRANCHE_BUFFER_CONTENT: */
 	"BufferContent",
-	/* LWTRANCHE_BUFFER_IO: */
-	"BufferIO",
 	/* LWTRANCHE_REPLICATION_ORIGIN_STATE: */
 	"ReplicationOriginState",
 	/* LWTRANCHE_REPLICATION_SLOT_IO: */
@@ -469,8 +467,7 @@ CreateLWLocks(void)
 	StaticAssertStmt(LW_VAL_EXCLUSIVE > (uint32) MAX_BACKENDS,
 					 "MAX_BACKENDS too big for lwlock.c");
 
-	StaticAssertStmt(sizeof(LWLock) <= LWLOCK_MINIMAL_SIZE &&
-					 sizeof(LWLock) <= LWLOCK_PADDED_SIZE,
+	StaticAssertStmt(sizeof(LWLock) <= LWLOCK_PADDED_SIZE,
 					 "Miscalculated LWLock padding");
 
 	if (!IsUnderPostmaster)
@@ -1843,6 +1840,7 @@ LWLockRelease(LWLock *lock)
 	/* nobody else can have that kind of lock */
 	Assert(!(oldstate & LW_VAL_EXCLUSIVE));
 
+	TRACE_POSTGRESQL_LWLOCK_RELEASE(T_NAME(lock));
 
 	/*
 	 * We're still waiting for backends to get scheduled, don't wake them up
@@ -1865,8 +1863,6 @@ LWLockRelease(LWLock *lock)
 		LOG_LWDEBUG("LWLockRelease", lock, "releasing waiters");
 		LWLockWakeup(lock);
 	}
-
-	TRACE_POSTGRESQL_LWLOCK_RELEASE(T_NAME(lock));
 
 	/*
 	 * Now okay to allow cancel/die interrupts.

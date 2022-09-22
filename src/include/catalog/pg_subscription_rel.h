@@ -30,8 +30,8 @@
  */
 CATALOG(pg_subscription_rel,6102,SubscriptionRelRelationId)
 {
-	Oid			srsubid;		/* Oid of subscription */
-	Oid			srrelid;		/* Oid of relation */
+	Oid			srsubid BKI_LOOKUP(pg_subscription);	/* Oid of subscription */
+	Oid			srrelid BKI_LOOKUP(pg_class);	/* Oid of relation */
 	char		srsubstate;		/* state of the relation in subscription */
 
 	/*
@@ -61,6 +61,8 @@ DECLARE_UNIQUE_INDEX_PKEY(pg_subscription_rel_srrelid_srsubid_index, 6117, on pg
 #define SUBREL_STATE_INIT		'i' /* initializing (sublsn NULL) */
 #define SUBREL_STATE_DATASYNC	'd' /* data is being synchronized (sublsn
 									 * NULL) */
+#define SUBREL_STATE_FINISHEDCOPY 'f'	/* tablesync copy phase is completed
+										 * (sublsn NULL) */
 #define SUBREL_STATE_SYNCDONE	's' /* synchronization finished in front of
 									 * apply (sublsn set) */
 #define SUBREL_STATE_READY		'r' /* ready (sublsn set) */

@@ -273,7 +273,7 @@ pg_collation_actual_version(PG_FUNCTION_ARGS)
 	Oid			collid = PG_GETARG_OID(0);
 	char	   *version;
 
-	version = get_collation_version_for_oid(collid);
+	version = get_collation_version_for_oid(collid, true);
 
 	if (version)
 		PG_RETURN_TEXT_P(cstring_to_text(version));
@@ -407,13 +407,15 @@ pg_import_system_collations(PG_FUNCTION_ARGS)
 	Oid			nspid = PG_GETARG_OID(0);
 	int			ncreated = 0;
 
-	/* silence compiler warning if we have no locale implementation at all */
-	(void) nspid;
-
 	if (!superuser())
 		ereport(ERROR,
 				(errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
 				 errmsg("must be superuser to import system collations")));
+
+	if (!SearchSysCacheExists1(NAMESPACEOID, ObjectIdGetDatum(nspid)))
+		ereport(ERROR,
+				(errcode(ERRCODE_UNDEFINED_SCHEMA),
+				 errmsg("schema with OID %u does not exist", nspid)));
 
 	/* Load collations known to libc, using "locale -a" to enumerate them */
 #ifdef READ_LOCALE_A_OUTPUT

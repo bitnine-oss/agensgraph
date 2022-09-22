@@ -2672,6 +2672,7 @@ ReorderBufferPrepare(ReorderBuffer *rb, TransactionId xid,
 void
 ReorderBufferFinishPrepared(ReorderBuffer *rb, TransactionId xid,
 							XLogRecPtr commit_lsn, XLogRecPtr end_lsn,
+							XLogRecPtr initial_consistent_point,
 							TimestampTz commit_time, RepOriginId origin_id,
 							XLogRecPtr origin_lsn, char *gid, bool is_commit)
 {
@@ -2679,7 +2680,7 @@ ReorderBufferFinishPrepared(ReorderBuffer *rb, TransactionId xid,
 	XLogRecPtr	prepare_end_lsn;
 	TimestampTz prepare_time;
 
-	txn = ReorderBufferTXNByXid(rb, xid, true, NULL, commit_lsn, false);
+	txn = ReorderBufferTXNByXid(rb, xid, false, NULL, commit_lsn, false);
 
 	/* unknown transaction, nothing to do */
 	if (txn == NULL)
@@ -2698,12 +2699,11 @@ ReorderBufferFinishPrepared(ReorderBuffer *rb, TransactionId xid,
 	/*
 	 * It is possible that this transaction is not decoded at prepare time
 	 * either because by that time we didn't have a consistent snapshot or it
-	 * was decoded earlier but we have restarted. We can't distinguish between
-	 * those two cases so we send the prepare in both the cases and let
-	 * downstream decide whether to process or skip it. We don't need to
-	 * decode the xact for aborts if it is not done already.
+	 * was decoded earlier but we have restarted. We only need to send the
+	 * prepare if it was not decoded earlier. We don't need to decode the xact
+	 * for aborts if it is not done already.
 	 */
-	if (!rbtxn_prepared(txn) && is_commit)
+	if ((txn->final_lsn < initial_consistent_point) && is_commit)
 	{
 		txn->txn_flags |= RBTXN_PREPARE;
 
@@ -4366,8 +4366,7 @@ ReorderBufferSerializedPath(char *path, ReplicationSlot *slot, TransactionId xid
 
 	snprintf(path, MAXPGPATH, "pg_replslot/%s/xid-%u-lsn-%X-%X.spill",
 			 NameStr(MyReplicationSlot->data.name),
-			 xid,
-			 (uint32) (recptr >> 32), (uint32) recptr);
+			 xid, LSN_FORMAT_ARGS(recptr));
 }
 
 /*
@@ -4642,7 +4641,7 @@ ReorderBufferToastReplace(ReorderBuffer *rb, ReorderBufferTXN *txn,
 				   VARSIZE(chunk) - VARHDRSZ);
 			data_done += VARSIZE(chunk) - VARHDRSZ;
 		}
-		Assert(data_done == toast_pointer.va_extsize);
+		Assert(data_done == VARATT_EXTERNAL_GET_EXTSIZE(toast_pointer));
 
 		/* make sure its marked as compressed or not */
 		if (VARATT_EXTERNAL_IS_COMPRESSED(toast_pointer))
@@ -4737,19 +4736,19 @@ ReorderBufferToastReset(ReorderBuffer *rb, ReorderBufferTXN *txn)
  * always rely on stored cmin/cmax values because of two scenarios:
  *
  * * A tuple got changed multiple times during a single transaction and thus
- *	 has got a combocid. Combocid's are only valid for the duration of a
+ *	 has got a combo CID. Combo CIDs are only valid for the duration of a
  *	 single transaction.
- * * A tuple with a cmin but no cmax (and thus no combocid) got
+ * * A tuple with a cmin but no cmax (and thus no combo CID) got
  *	 deleted/updated in another transaction than the one which created it
- *	 which we are looking at right now. As only one of cmin, cmax or combocid
+ *	 which we are looking at right now. As only one of cmin, cmax or combo CID
  *	 is actually stored in the heap we don't have access to the value we
  *	 need anymore.
  *
  * To resolve those problems we have a per-transaction hash of (cmin,
  * cmax) tuples keyed by (relfilenode, ctid) which contains the actual
- * (cmin, cmax) values. That also takes care of combocids by simply
+ * (cmin, cmax) values. That also takes care of combo CIDs by simply
  * not caring about them at all. As we have the real cmin/cmax values
- * combocids aren't interesting.
+ * combo CIDs aren't interesting.
  *
  * As we only care about catalog tuples here the overhead of this
  * hashtable should be acceptable.
@@ -4996,7 +4995,7 @@ UpdateLogicalMappings(HTAB *tuplecid_data, Oid relid, Snapshot snapshot)
 
 /*
  * Lookup cmin/cmax of a tuple, during logical decoding where we can't rely on
- * combocids.
+ * combo CIDs.
  */
 bool
 ResolveCminCmaxDuringDecoding(HTAB *tuplecid_data,

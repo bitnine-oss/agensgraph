@@ -70,14 +70,6 @@ int			SessionReplicationRole = SESSION_REPLICATION_ROLE_ORIGIN;
 /* How many levels deep into trigger execution are we? */
 static int	MyTriggerDepth = 0;
 
-/*
- * The authoritative version of this macro is in executor/execMain.c.  Be sure
- * to keep everything in sync.
- */
-#define GetAllUpdatedColumns(relinfo, estate) \
-	(bms_union(exec_rt_fetch((relinfo)->ri_RangeTableIndex, estate)->updatedCols, \
-			   exec_rt_fetch((relinfo)->ri_RangeTableIndex, estate)->extraUpdatedCols))
-
 /* Local function prototypes */
 static void SetTriggerFlags(TriggerDesc *trigdesc, Trigger *trigger);
 static bool GetTupleForTrigger(EState *estate,
@@ -1127,7 +1119,7 @@ CreateTrigger(CreateTrigStmt *stmt, const char *queryString,
 	 */
 	if (partition_recurse)
 	{
-		PartitionDesc partdesc = RelationGetPartitionDesc(rel);
+		PartitionDesc partdesc = RelationGetPartitionDesc(rel, false);
 		List	   *idxs = NIL;
 		List	   *childTbls = NIL;
 		ListCell   *l;
@@ -1149,7 +1141,8 @@ CreateTrigger(CreateTrigStmt *stmt, const char *queryString,
 			ListCell   *l;
 			List	   *idxs = NIL;
 
-			idxs = find_inheritance_children(indexOid, ShareRowExclusiveLock);
+			idxs = find_inheritance_children(indexOid, false,
+											 ShareRowExclusiveLock);
 			foreach(l, idxs)
 				childTbls = lappend_oid(childTbls,
 										IndexGetRelation(lfirst_oid(l),
@@ -2553,11 +2546,12 @@ ExecARDeleteTriggers(EState *estate, ResultRelInfo *relinfo,
 					 TransitionCaptureState *transition_capture)
 {
 	TriggerDesc *trigdesc = relinfo->ri_TrigDesc;
-	TupleTableSlot *slot = ExecGetTriggerOldSlot(estate, relinfo);
 
 	if ((trigdesc && trigdesc->trig_delete_after_row) ||
 		(transition_capture && transition_capture->tcs_delete_old_table))
 	{
+		TupleTableSlot *slot = ExecGetTriggerOldSlot(estate, relinfo);
+
 		Assert(HeapTupleIsValid(fdw_trigtuple) ^ ItemPointerIsValid(tupleid));
 		if (fdw_trigtuple == NULL)
 			GetTupleForTrigger(estate,
@@ -2643,7 +2637,10 @@ ExecBSUpdateTriggers(EState *estate, ResultRelInfo *relinfo)
 								   CMD_UPDATE))
 		return;
 
-	updatedCols = GetAllUpdatedColumns(relinfo, estate);
+	/* statement-level triggers operate on the parent table */
+	Assert(relinfo->ri_RootResultRelInfo == NULL);
+
+	updatedCols = ExecGetAllUpdatedCols(relinfo, estate);
 
 	LocTriggerData.type = T_TriggerData;
 	LocTriggerData.tg_event = TRIGGER_EVENT_UPDATE |
@@ -2684,10 +2681,13 @@ ExecASUpdateTriggers(EState *estate, ResultRelInfo *relinfo,
 {
 	TriggerDesc *trigdesc = relinfo->ri_TrigDesc;
 
+	/* statement-level triggers operate on the parent table */
+	Assert(relinfo->ri_RootResultRelInfo == NULL);
+
 	if (trigdesc && trigdesc->trig_update_after_statement)
 		AfterTriggerSaveEvent(estate, relinfo, TRIGGER_EVENT_UPDATE,
 							  false, NULL, NULL, NIL,
-							  GetAllUpdatedColumns(relinfo, estate),
+							  ExecGetAllUpdatedCols(relinfo, estate),
 							  transition_capture);
 }
 
@@ -2757,7 +2757,7 @@ ExecBRUpdateTriggers(EState *estate, EPQState *epqstate,
 		TRIGGER_EVENT_ROW |
 		TRIGGER_EVENT_BEFORE;
 	LocTriggerData.tg_relation = relinfo->ri_RelationDesc;
-	updatedCols = GetAllUpdatedColumns(relinfo, estate);
+	updatedCols = ExecGetAllUpdatedCols(relinfo, estate);
 	LocTriggerData.tg_updatedcols = updatedCols;
 	for (i = 0; i < trigdesc->numtriggers; i++)
 	{
@@ -2830,9 +2830,6 @@ ExecARUpdateTriggers(EState *estate, ResultRelInfo *relinfo,
 					 TransitionCaptureState *transition_capture)
 {
 	TriggerDesc *trigdesc = relinfo->ri_TrigDesc;
-	TupleTableSlot *oldslot = ExecGetTriggerOldSlot(estate, relinfo);
-
-	ExecClearTuple(oldslot);
 
 	if ((trigdesc && trigdesc->trig_update_after_row) ||
 		(transition_capture &&
@@ -2845,6 +2842,8 @@ ExecARUpdateTriggers(EState *estate, ResultRelInfo *relinfo,
 		 * separately for DELETE and INSERT to capture transition table rows.
 		 * In such case, either old tuple or new tuple can be NULL.
 		 */
+		TupleTableSlot *oldslot = ExecGetTriggerOldSlot(estate, relinfo);
+
 		if (fdw_trigtuple == NULL && ItemPointerIsValid(tupleid))
 			GetTupleForTrigger(estate,
 							   NULL,
@@ -2855,10 +2854,12 @@ ExecARUpdateTriggers(EState *estate, ResultRelInfo *relinfo,
 							   NULL);
 		else if (fdw_trigtuple != NULL)
 			ExecForceStoreHeapTuple(fdw_trigtuple, oldslot, false);
+		else
+			ExecClearTuple(oldslot);
 
 		AfterTriggerSaveEvent(estate, relinfo, TRIGGER_EVENT_UPDATE,
 							  true, oldslot, newslot, recheckIndexes,
-							  GetAllUpdatedColumns(relinfo, estate),
+							  ExecGetAllUpdatedCols(relinfo, estate),
 							  transition_capture);
 	}
 }
@@ -3538,6 +3539,8 @@ static void AfterTriggerExecute(EState *estate,
 								TupleTableSlot *trig_tuple_slot2);
 static AfterTriggersTableData *GetAfterTriggersTableData(Oid relid,
 														 CmdType cmdType);
+static TupleTableSlot *GetAfterTriggersStoreSlot(AfterTriggersTableData *table,
+												 TupleDesc tupdesc);
 static void AfterTriggerFreeQuery(AfterTriggersQueryData *qs);
 static SetConstraintState SetConstraintStateCreate(int numalloc);
 static SetConstraintState SetConstraintStateCopy(SetConstraintState state);
@@ -4338,6 +4341,31 @@ GetAfterTriggersTableData(Oid relid, CmdType cmdType)
 	return table;
 }
 
+/*
+ * Returns a TupleTableSlot suitable for holding the tuples to be put
+ * into AfterTriggersTableData's transition table tuplestores.
+ */
+static TupleTableSlot *
+GetAfterTriggersStoreSlot(AfterTriggersTableData *table,
+						  TupleDesc tupdesc)
+{
+	/* Create it if not already done. */
+	if (!table->storeslot)
+	{
+		MemoryContext	oldcxt;
+
+		/*
+		 * We only need this slot only until AfterTriggerEndQuery, but making
+		 * it last till end-of-subxact is good enough.  It'll be freed by
+		 * AfterTriggerFreeQuery().
+		 */
+		oldcxt = MemoryContextSwitchTo(CurTransactionContext);
+		table->storeslot = MakeSingleTupleTableSlot(tupdesc, &TTSOpsVirtual);
+		MemoryContextSwitchTo(oldcxt);
+	}
+
+	return table->storeslot;
+}
 
 /*
  * MakeTransitionCaptureState
@@ -4627,6 +4655,8 @@ AfterTriggerFreeQuery(AfterTriggersQueryData *qs)
 		table->new_tuplestore = NULL;
 		if (ts)
 			tuplestore_end(ts);
+		if (table->storeslot)
+			ExecDropSingleTupleTableSlot(table->storeslot);
 	}
 
 	/*
@@ -5476,17 +5506,10 @@ AfterTriggerSaveEvent(EState *estate, ResultRelInfo *relinfo,
 
 			if (map != NULL)
 			{
+				AfterTriggersTableData *table = transition_capture->tcs_private;
 				TupleTableSlot *storeslot;
 
-				storeslot = transition_capture->tcs_private->storeslot;
-				if (!storeslot)
-				{
-					storeslot = ExecAllocTableSlot(&estate->es_tupleTable,
-												   map->outdesc,
-												   &TTSOpsVirtual);
-					transition_capture->tcs_private->storeslot = storeslot;
-				}
-
+				storeslot = GetAfterTriggersStoreSlot(table, map->outdesc);
 				execute_attr_map_slot(map->attrMap, oldslot, storeslot);
 				tuplestore_puttupleslot(old_tuplestore, storeslot);
 			}
@@ -5506,18 +5529,10 @@ AfterTriggerSaveEvent(EState *estate, ResultRelInfo *relinfo,
 										original_insert_tuple);
 			else if (map != NULL)
 			{
+				AfterTriggersTableData *table = transition_capture->tcs_private;
 				TupleTableSlot *storeslot;
 
-				storeslot = transition_capture->tcs_private->storeslot;
-
-				if (!storeslot)
-				{
-					storeslot = ExecAllocTableSlot(&estate->es_tupleTable,
-												   map->outdesc,
-												   &TTSOpsVirtual);
-					transition_capture->tcs_private->storeslot = storeslot;
-				}
-
+				storeslot = GetAfterTriggersStoreSlot(table, map->outdesc);
 				execute_attr_map_slot(map->attrMap, newslot, storeslot);
 				tuplestore_puttupleslot(new_tuplestore, storeslot);
 			}

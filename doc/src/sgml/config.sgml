@@ -1216,7 +1216,41 @@ include_dir 'conf.d'
         Relative paths are relative to the data directory.
         This parameter can only be set in the <filename>postgresql.conf</filename>
         file or on the server command line.
-        The default is empty, meaning no CRL file is loaded.
+        The default is empty, meaning no CRL file is loaded (unless
+        <xref linkend="guc-ssl-crl-dir"/> is set).
+       </para>
+      </listitem>
+     </varlistentry>
+
+     <varlistentry id="guc-ssl-crl-dir" xreflabel="ssl_crl_dir">
+      <term><varname>ssl_crl_dir</varname> (<type>string</type>)
+      <indexterm>
+       <primary><varname>ssl_crl_dir</varname> configuration parameter</primary>
+      </indexterm>
+      </term>
+      <listitem>
+       <para>
+        Specifies the name of the directory containing the SSL server
+        certificate revocation list (CRL).  Relative paths are relative to the
+        data directory.  This parameter can only be set in
+        the <filename>postgresql.conf</filename> file or on the server command
+        line.  The default is empty, meaning no CRLs are used (unless
+        <xref linkend="guc-ssl-crl-file"/> is set).
+       </para>
+
+       <para>
+        The directory needs to be prepared with the OpenSSL command
+        <literal>openssl rehash</literal> or <literal>c_rehash</literal>.  See
+        its documentation for details.
+       </para>
+
+       <para>
+        When using this setting, CRLs in the specified directory are loaded
+        on-demand at connection time.  New CRLs can be added to the directory
+        and will be used immediately.  This is unlike <xref
+        linkend="guc-ssl-crl-file"/>, which causes the CRL in the file to be
+        loaded at server start time or when the configuration is reloaded.
+        Both settings can be used together.
        </para>
       </listitem>
      </varlistentry>
@@ -1593,14 +1627,14 @@ include_dir 'conf.d'
 
        <para>
         Huge pages are known as large pages on Windows.  To use them, you need to
-        assign the user right Lock Pages in Memory to the Windows user account
+        assign the user right <quote>Lock pages in memory</quote> to the Windows user account
         that runs <productname>PostgreSQL</productname>.
         You can use Windows Group Policy tool (gpedit.msc) to assign the user right
-        Lock Pages in Memory.
+        <quote>Lock pages in memory</quote>.
         To start the database server on the command prompt as a standalone process,
         not as a Windows service, the command prompt must be run as an administrator or
         User Access Control (UAC) must be disabled. When the UAC is enabled, the normal
-        command prompt revokes the user right Lock Pages in Memory when started.
+        command prompt revokes the user right <quote>Lock pages in memory</quote> when started.
        </para>
 
        <para>
@@ -2928,7 +2962,7 @@ include_dir 'conf.d'
         Not all of these choices are available on all platforms.
         The default is the first method in the above list that is supported
         by the platform, except that <literal>fdatasync</literal> is the default on
-        Linux.  The default is not necessarily ideal; it might be
+        Linux and FreeBSD.  The default is not necessarily ideal; it might be
         necessary to change this setting or other aspects of your system
         configuration in order to create a crash-safe configuration or
         achieve optimal performance.
@@ -3268,9 +3302,15 @@ include_dir 'conf.d'
       <listitem>
        <para>
         Specifies the target of checkpoint completion, as a fraction of
-        total time between checkpoints. The default is 0.5.
-        This parameter can only be set in the <filename>postgresql.conf</filename>
-        file or on the server command line.
+        total time between checkpoints. The default is 0.9, which spreads the
+        checkpoint across almost all of the available interval, providing fairly
+        consistent I/O load while also leaving some time for checkpoint
+        completion overhead.  Reducing this parameter is not recommended because
+        it causes the checkpoint to complete faster.  This results in a higher
+        rate of I/O during the checkpoint followed by a period of less I/O between
+        the checkpoint completion and the next scheduled checkpoint.  This
+        parameter can only be set in the <filename>postgresql.conf</filename> file
+        or on the server command line.
        </para>
       </listitem>
      </varlistentry>
@@ -3967,6 +4007,17 @@ restore_command = 'copy "C:\\server\\archivedir\\%f" "%p"'  # Windows
          to <literal>replica</literal> or higher to allow replication slots to
          be used.
         </para>
+
+        <para>
+         On the subscriber side, specifies how many replication origins (see
+         <xref linkend="replication-origins"/>) can be tracked simultaneously,
+         effectively limiting how many logical replication subscriptions can
+         be created on the server. Setting it a lower value than the current
+         number of tracked replication origins (reflected in
+         <link linkend="view-pg-replication-origin-status">pg_replication_origin_status</link>,
+         not <link linkend="catalog-pg-replication-origin">pg_replication_origin</link>)
+         will prevent the server from starting.
+        </para>
        </listitem>
       </varlistentry>
 
@@ -4469,15 +4520,16 @@ ANY <replaceable class="parameter">num_sync</replaceable> ( <replaceable class="
        view.  The standby will report
        the last write-ahead log location it has written, the last position it
        has flushed to disk, and the last position it has applied.
-       This parameter's
-       value is the maximum amount of time between reports.  Updates are
-       sent each time the write or flush positions change, or at least as
-       often as specified by this parameter.  Thus, the apply position may
-       lag slightly behind the true position.
+       This parameter's value is the maximum amount of time between reports.
+       Updates are sent each time the write or flush positions change, or as
+       often as specified by this parameter if set to a non-zero value.
+       There are additional cases where updates are sent while ignoring this
+       parameter; for example, when processing of the existing WAL completes
+       or when <varname>synchronous_commit</varname> is set to
+       <literal>remote_apply</literal>.
+       Thus, the apply position may lag slightly behind the true position.
        If this value is specified without units, it is taken as seconds.
-       The default value is 10 seconds.
-       Setting this parameter to zero disables status updates completely.
-       This parameter can only be set in
+       The default value is 10 seconds. This parameter can only be set in
        the <filename>postgresql.conf</filename> file or on the server
        command line.
       </para>
@@ -4735,6 +4787,20 @@ ANY <replaceable class="parameter">num_sync</replaceable> ( <replaceable class="
       </para>
 
      <variablelist>
+     <varlistentry id="guc-enable-async-append" xreflabel="enable_async_append">
+      <term><varname>enable_async_append</varname> (<type>boolean</type>)
+      <indexterm>
+       <primary><varname>enable_async_append</varname> configuration parameter</primary>
+      </indexterm>
+      </term>
+      <listitem>
+       <para>
+        Enables or disables the query planner's use of async-aware
+        append plan types. The default is <literal>on</literal>.
+       </para>
+      </listitem>
+     </varlistentry>
+
      <varlistentry id="guc-enable-bitmapscan" xreflabel="enable_bitmapscan">
       <term><varname>enable_bitmapscan</varname> (<type>boolean</type>)
       <indexterm>
@@ -7404,15 +7470,38 @@ COPY postgres_log FROM '/full/path/to/logfile.csv' WITH csv;
       <listitem>
        <para>
         Enables timing of database I/O calls.  This parameter is off by
-        default, because it will repeatedly query the operating system for
+        default, as it will repeatedly query the operating system for
         the current time, which may cause significant overhead on some
         platforms.  You can use the <xref linkend="pgtesttiming"/> tool to
         measure the overhead of timing on your system.
         I/O timing information is
         displayed in <link linkend="monitoring-pg-stat-database-view">
         <structname>pg_stat_database</structname></link>, in the output of
-        <xref linkend="sql-explain"/> when the <literal>BUFFERS</literal> option is
-        used, and by <xref linkend="pgstatstatements"/>.  Only superusers can
+        <xref linkend="sql-explain"/> when the <literal>BUFFERS</literal> option
+        is used, by autovacuum for auto-vacuums and auto-analyzes, when
+        <xref linkend="guc-log-autovacuum-min-duration"/> is set and by
+        <xref linkend="pgstatstatements"/>.  Only superusers can change this
+        setting.
+       </para>
+      </listitem>
+     </varlistentry>
+
+     <varlistentry id="guc-track-wal-io-timing" xreflabel="track_wal_io_timing">
+      <term><varname>track_wal_io_timing</varname> (<type>boolean</type>)
+      <indexterm>
+       <primary><varname>track_wal_io_timing</varname> configuration parameter</primary>
+      </indexterm>
+      </term>
+      <listitem>
+       <para>
+        Enables timing of WAL I/O calls. This parameter is off by default,
+        as it will repeatedly query the operating system for the current time,
+        which may cause significant overhead on some platforms.
+        You can use the <application>pg_test_timing</application> tool to
+        measure the overhead of timing on your system.
+        I/O timing information is
+        displayed in <link linkend="monitoring-pg-stat-wal-view">
+        <structname>pg_stat_wal</structname></link>.  Only superusers can
         change this setting.
        </para>
       </listitem>
@@ -8059,6 +8148,28 @@ COPY postgres_log FROM '/full/path/to/logfile.csv' WITH csv;
       </listitem>
      </varlistentry>
 
+     <varlistentry id="guc-default-toast-compression" xreflabel="default_toast_compression">
+      <term><varname>default_toast_compression</varname> (<type>enum</type>)
+      <indexterm>
+       <primary><varname>default_toast_compression</varname> configuration parameter</primary>
+      </indexterm>
+      </term>
+      <listitem>
+       <para>
+        This variable sets the default
+        <link linkend="storage-toast">TOAST</link>
+        compression method for columns of newly-created tables. The
+        <command>CREATE TABLE</command> statement can override this default
+        by specifying the <literal>COMPRESSION</literal> column option.
+
+        The supported compression methods are <literal>pglz</literal> and
+        (if configured at the time <productname>PostgreSQL</productname> was
+        built) <literal>lz4</literal>.
+        The default is <literal>pglz</literal>.
+       </para>
+      </listitem>
+     </varlistentry>
+
      <varlistentry id="guc-temp-tablespaces" xreflabel="temp_tablespaces">
       <term><varname>temp_tablespaces</varname> (<type>string</type>)
       <indexterm>
@@ -8474,47 +8585,6 @@ COPY postgres_log FROM '/full/path/to/logfile.csv' WITH csv;
         autovacuums.
         For more information see <xref linkend="vacuum-for-multixact-wraparound"/>.
        </para>
-      </listitem>
-     </varlistentry>
-
-     <varlistentry id="guc-vacuum-cleanup-index-scale-factor" xreflabel="vacuum_cleanup_index_scale_factor">
-      <term><varname>vacuum_cleanup_index_scale_factor</varname> (<type>floating point</type>)
-      <indexterm>
-       <primary><varname>vacuum_cleanup_index_scale_factor</varname></primary>
-       <secondary>configuration parameter</secondary>
-      </indexterm>
-      </term>
-      <listitem>
-       <para>
-        Specifies the fraction of the total number of heap tuples counted in
-        the previous statistics collection that can be inserted without
-        incurring an index scan at the <command>VACUUM</command> cleanup stage.
-        This setting currently applies to B-tree indexes only.
-       </para>
-
-       <para>
-        If no tuples were deleted from the heap, B-tree indexes are still
-        scanned at the <command>VACUUM</command> cleanup stage when at least one
-        of the following conditions is met: the index statistics are stale, or
-        the index contains deleted pages that can be recycled during cleanup.
-        Index statistics are considered to be stale if the number of newly
-        inserted tuples exceeds the <varname>vacuum_cleanup_index_scale_factor</varname>
-        fraction of the total number of heap tuples detected by the previous
-        statistics collection. The total number of heap tuples is stored in
-        the index meta-page. Note that the meta-page does not include this data
-        until <command>VACUUM</command> finds no dead tuples, so B-tree index
-        scan at the cleanup stage can only be skipped if the second and
-        subsequent <command>VACUUM</command> cycles detect no dead tuples.
-       </para>
-
-       <para>
-        The value can range from <literal>0</literal> to
-        <literal>10000000000</literal>.
-        When <varname>vacuum_cleanup_index_scale_factor</varname> is set to
-        <literal>0</literal>, index scans are never skipped during
-        <command>VACUUM</command> cleanup. The default value is <literal>0.1</literal>.
-       </para>
-
       </listitem>
      </varlistentry>
 
@@ -9620,6 +9690,23 @@ dynamic_library_path = 'C:\tools\postgresql;H:\my_project\lib;$libdir'
       </listitem>
      </varlistentry>
 
+     <varlistentry id="guc-remove-temp-files-after-crash" xreflabel="remove_temp_files_after_crash">
+      <term><varname>remove_temp_files_after_crash</varname> (<type>boolean</type>)
+      <indexterm>
+       <primary><varname>remove_temp_files_after_crash</varname> configuration parameter</primary>
+      </indexterm>
+      </term>
+      <listitem>
+       <para>
+        When set to <literal>on</literal>, which is the default,
+        <productname>PostgreSQL</productname> will automatically remove
+        temporary files after a backend crash. If disabled, the files will be
+        retained and may be used for debugging, for example. Repeated crashes 
+        may however result in accumulation of useless files.
+       </para>
+      </listitem>
+     </varlistentry>
+
      <varlistentry id="guc-data-sync-retry" xreflabel="data_sync_retry">
       <term><varname>data_sync_retry</varname> (<type>boolean</type>)
       <indexterm>
@@ -9649,6 +9736,41 @@ dynamic_library_path = 'C:\tools\postgresql;H:\my_project\lib;$libdir'
         operation can be retried in a later checkpoint.  Only set it to on
         after investigating the operating system's treatment of buffered data
         in case of write-back failure.
+       </para>
+      </listitem>
+     </varlistentry>
+
+     <varlistentry id="guc-recovery-init-sync-method" xreflabel="recovery_init_sync_method">
+      <term><varname>recovery_init_sync_method</varname> (<type>enum</type>)
+       <indexterm>
+        <primary><varname>recovery_init_sync_method</varname> configuration parameter</primary>
+       </indexterm>
+      </term>
+      <listitem>
+       <para>
+        When set to <literal>fsync</literal>, which is the default,
+        <productname>PostgreSQL</productname> will recursively open and
+        synchronize all files in the data directory before crash recovery
+        begins.  The search for files will follow symbolic links for the WAL
+        directory and each configured tablespace (but not any other symbolic
+        links).  This is intended to make sure that all WAL and data files are
+        durably stored on disk before replaying changes.  This applies whenever
+        starting a database cluster that did not shut down cleanly, including
+        copies created with <application>pg_basebackup</application>.
+       </para>
+       <para>
+        On Linux, <literal>syncfs</literal> may be used instead, to ask the
+        operating system to synchronize the whole file systems that contain the
+        data directory, the WAL files and each tablespace (but not any other
+        file systems that may be reachable through symbolic links).  This may
+        be a lot faster than the <literal>fsync</literal> setting, because it
+        doesn't need to open each file one by one.  On the other hand, it may
+        be slower if a file system is shared by other applications that
+        modify a lot of files, since those files will also be written to disk.
+        Furthermore, on versions of Linux before 5.8, I/O errors encountered
+        while writing data to disk may not be reported to
+        <productname>PostgreSQL</productname>, and relevant error messages may
+        appear only in kernel logs.
        </para>
       </listitem>
      </varlistentry>

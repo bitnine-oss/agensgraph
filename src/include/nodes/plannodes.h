@@ -132,6 +132,11 @@ typedef struct Plan
 	bool		parallel_safe;	/* OK to use as part of parallel plan? */
 
 	/*
+	 * information needed for asynchronous execution
+	 */
+	bool		async_capable; 	/* engage asynchronous-capable logic? */
+
+	/*
 	 * Common structural data for all Plan types.
 	 */
 	int			plan_node_id;	/* unique across entire final plan tree */
@@ -247,6 +252,7 @@ typedef struct Append
 	Plan		plan;
 	Bitmapset  *apprelids;		/* RTIs of appendrel(s) formed by this node */
 	List	   *appendplans;
+	int			nasyncplans;	/* # of asynchronous plans */
 
 	/*
 	 * All 'appendplans' preceding this index are non-partial plans. All
@@ -486,6 +492,19 @@ typedef struct TidScan
 	Scan		scan;
 	List	   *tidquals;		/* qual(s) involving CTID = something */
 } TidScan;
+
+/* ----------------
+ *		tid range scan node
+ *
+ * tidrangequals is an implicitly AND'ed list of qual expressions of the form
+ * "CTID relop pseudoconstant", where relop is one of >,>=,<,<=.
+ * ----------------
+ */
+typedef struct TidRangeScan
+{
+	Scan		scan;
+	List	   *tidrangequals;	/* qual(s) involving CTID op something */
+} TidRangeScan;
 
 /* ----------------
  *		subquery scan node

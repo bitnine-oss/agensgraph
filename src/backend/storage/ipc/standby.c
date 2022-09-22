@@ -452,6 +452,34 @@ ResolveRecoveryConflictWithSnapshot(TransactionId latestRemovedXid, RelFileNode 
 										   true);
 }
 
+/*
+ * Variant of ResolveRecoveryConflictWithSnapshot that works with
+ * FullTransactionId values
+ */
+void
+ResolveRecoveryConflictWithSnapshotFullXid(FullTransactionId latestRemovedFullXid,
+										   RelFileNode node)
+{
+	/*
+	 * ResolveRecoveryConflictWithSnapshot operates on 32-bit TransactionIds,
+	 * so truncate the logged FullTransactionId.  If the logged value is very
+	 * old, so that XID wrap-around already happened on it, there can't be any
+	 * snapshots that still see it.
+	 */
+	FullTransactionId nextXid = ReadNextFullTransactionId();
+	uint64			  diff;
+
+	diff = U64FromFullTransactionId(nextXid) -
+		U64FromFullTransactionId(latestRemovedFullXid);
+	if (diff < MaxTransactionId / 2)
+	{
+		TransactionId latestRemovedXid;
+
+		latestRemovedXid = XidFromFullTransactionId(latestRemovedFullXid);
+		ResolveRecoveryConflictWithSnapshot(latestRemovedXid, node);
+	}
+}
+
 void
 ResolveRecoveryConflictWithTablespace(Oid tsid)
 {
@@ -540,12 +568,34 @@ void
 ResolveRecoveryConflictWithLock(LOCKTAG locktag, bool logging_conflict)
 {
 	TimestampTz ltime;
+	TimestampTz now;
 
 	Assert(InHotStandby);
 
 	ltime = GetStandbyLimitTime();
+	now = GetCurrentTimestamp();
 
-	if (GetCurrentTimestamp() >= ltime && ltime != 0)
+	/*
+	 * Update waitStart if first time through after the startup process
+	 * started waiting for the lock. It should not be updated every time
+	 * ResolveRecoveryConflictWithLock() is called during the wait.
+	 *
+	 * Use the current time obtained for comparison with ltime as waitStart
+	 * (i.e., the time when this process started waiting for the lock). Since
+	 * getting the current time newly can cause overhead, we reuse the
+	 * already-obtained time to avoid that overhead.
+	 *
+	 * Note that waitStart is updated without holding the lock table's
+	 * partition lock, to avoid the overhead by additional lock acquisition.
+	 * This can cause "waitstart" in pg_locks to become NULL for a very short
+	 * period of time after the wait started even though "granted" is false.
+	 * This is OK in practice because we can assume that users are likely to
+	 * look at "waitstart" when waiting for the lock for a long time.
+	 */
+	if (pg_atomic_read_u64(&MyProc->waitStart) == 0)
+		pg_atomic_write_u64(&MyProc->waitStart, now);
+
+	if (now >= ltime && ltime != 0)
 	{
 		/*
 		 * We're already behind, so clear a path as quickly as possible.
@@ -1240,7 +1290,7 @@ LogCurrentRunningXacts(RunningTransactions CurrRunningXacts)
 		elog(trace_recovery(DEBUG2),
 			 "snapshot of %u running transactions overflowed (lsn %X/%X oldest xid %u latest complete %u next xid %u)",
 			 CurrRunningXacts->xcnt,
-			 (uint32) (recptr >> 32), (uint32) recptr,
+			 LSN_FORMAT_ARGS(recptr),
 			 CurrRunningXacts->oldestRunningXid,
 			 CurrRunningXacts->latestCompletedXid,
 			 CurrRunningXacts->nextXid);
@@ -1248,7 +1298,7 @@ LogCurrentRunningXacts(RunningTransactions CurrRunningXacts)
 		elog(trace_recovery(DEBUG2),
 			 "snapshot of %u+%u running transaction ids (lsn %X/%X oldest xid %u latest complete %u next xid %u)",
 			 CurrRunningXacts->xcnt, CurrRunningXacts->subxcnt,
-			 (uint32) (recptr >> 32), (uint32) recptr,
+			 LSN_FORMAT_ARGS(recptr),
 			 CurrRunningXacts->oldestRunningXid,
 			 CurrRunningXacts->latestCompletedXid,
 			 CurrRunningXacts->nextXid);

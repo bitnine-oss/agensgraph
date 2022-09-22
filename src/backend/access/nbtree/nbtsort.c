@@ -486,17 +486,17 @@ _bt_spools_heapscan(Relation heap, Relation index, BTBuildState *buildstate,
 	 * values set by table_index_build_scan
 	 */
 	{
-		const int	index[] = {
+		const int	progress_index[] = {
 			PROGRESS_CREATEIDX_TUPLES_TOTAL,
 			PROGRESS_SCAN_BLOCKS_TOTAL,
 			PROGRESS_SCAN_BLOCKS_DONE
 		};
-		const int64 val[] = {
+		const int64 progress_vals[] = {
 			buildstate->indtuples,
 			0, 0
 		};
 
-		pgstat_progress_update_multi_param(3, index, val);
+		pgstat_progress_update_multi_param(3, progress_index, progress_vals);
 	}
 
 	/* okay, all heap tuples are spooled */
@@ -620,7 +620,7 @@ _bt_blnewpage(uint32 level)
 	/* Initialize BT opaque state */
 	opaque = (BTPageOpaque) PageGetSpecialPointer(page);
 	opaque->btpo_prev = opaque->btpo_next = P_NONE;
-	opaque->btpo.level = level;
+	opaque->btpo_level = level;
 	opaque->btpo_flags = (level > 0) ? 0 : BTP_LEAF;
 	opaque->btpo_cycleid = 0;
 

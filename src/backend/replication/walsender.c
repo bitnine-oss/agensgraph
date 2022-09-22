@@ -244,6 +244,7 @@ static void WalSndKeepalive(bool requestReply);
 static void WalSndKeepaliveIfNecessary(void);
 static void WalSndCheckTimeOut(void);
 static long WalSndComputeSleeptime(TimestampTz now);
+static void WalSndWait(uint32 socket_events, long timeout, uint32 wait_event);
 static void WalSndPrepareWrite(LogicalDecodingContext *ctx, XLogRecPtr lsn, TransactionId xid, bool last_write);
 static void WalSndWriteData(LogicalDecodingContext *ctx, XLogRecPtr lsn, TransactionId xid, bool last_write);
 static void WalSndUpdateProgress(LogicalDecodingContext *ctx, XLogRecPtr lsn, TransactionId xid);
@@ -402,7 +403,7 @@ IdentifySystem(void)
 	else
 		logptr = GetFlushRecPtr();
 
-	snprintf(xloc, sizeof(xloc), "%X/%X", (uint32) (logptr >> 32), (uint32) logptr);
+	snprintf(xloc, sizeof(xloc), "%X/%X", LSN_FORMAT_ARGS(logptr));
 
 	if (MyDatabaseId != InvalidOid)
 	{
@@ -674,13 +675,11 @@ StartReplication(StartReplicationCmd *cmd)
 			{
 				ereport(ERROR,
 						(errmsg("requested starting point %X/%X on timeline %u is not in this server's history",
-								(uint32) (cmd->startpoint >> 32),
-								(uint32) (cmd->startpoint),
+								LSN_FORMAT_ARGS(cmd->startpoint),
 								cmd->timeline),
 						 errdetail("This server's history forked from timeline %u at %X/%X.",
 								   cmd->timeline,
-								   (uint32) (switchpoint >> 32),
-								   (uint32) (switchpoint))));
+								   LSN_FORMAT_ARGS(switchpoint))));
 			}
 			sendTimeLineValidUpto = switchpoint;
 		}
@@ -723,10 +722,8 @@ StartReplication(StartReplicationCmd *cmd)
 		{
 			ereport(ERROR,
 					(errmsg("requested starting point %X/%X is ahead of the WAL flush position of this server %X/%X",
-							(uint32) (cmd->startpoint >> 32),
-							(uint32) (cmd->startpoint),
-							(uint32) (FlushPtr >> 32),
-							(uint32) (FlushPtr))));
+							LSN_FORMAT_ARGS(cmd->startpoint),
+							LSN_FORMAT_ARGS(FlushPtr))));
 		}
 
 		/* Start streaming from the requested point */
@@ -769,8 +766,7 @@ StartReplication(StartReplicationCmd *cmd)
 		bool		nulls[2];
 
 		snprintf(startpos_str, sizeof(startpos_str), "%X/%X",
-				 (uint32) (sendTimeLineValidUpto >> 32),
-				 (uint32) sendTimeLineValidUpto);
+				 LSN_FORMAT_ARGS(sendTimeLineValidUpto));
 
 		dest = CreateDestReceiver(DestRemoteSimple);
 		MemSet(nulls, false, sizeof(nulls));
@@ -942,7 +938,8 @@ CreateReplicationSlot(CreateReplicationSlotCmd *cmd)
 	if (cmd->kind == REPLICATION_KIND_PHYSICAL)
 	{
 		ReplicationSlotCreate(cmd->slotname, false,
-							  cmd->temporary ? RS_TEMPORARY : RS_PERSISTENT);
+							  cmd->temporary ? RS_TEMPORARY : RS_PERSISTENT,
+							  false);
 	}
 	else
 	{
@@ -956,7 +953,8 @@ CreateReplicationSlot(CreateReplicationSlotCmd *cmd)
 		 * they get dropped on error as well.
 		 */
 		ReplicationSlotCreate(cmd->slotname, true,
-							  cmd->temporary ? RS_TEMPORARY : RS_EPHEMERAL);
+							  cmd->temporary ? RS_TEMPORARY : RS_EPHEMERAL,
+							  cmd->two_phase);
 	}
 
 	if (cmd->kind == REPLICATION_KIND_LOGICAL)
@@ -1063,8 +1061,7 @@ CreateReplicationSlot(CreateReplicationSlotCmd *cmd)
 	}
 
 	snprintf(xloc, sizeof(xloc), "%X/%X",
-			 (uint32) (MyReplicationSlot->data.confirmed_flush >> 32),
-			 (uint32) MyReplicationSlot->data.confirmed_flush);
+			 LSN_FORMAT_ARGS(MyReplicationSlot->data.confirmed_flush));
 
 	dest = CreateDestReceiver(DestRemoteSimple);
 	MemSet(nulls, false, sizeof(nulls));
@@ -1293,7 +1290,6 @@ WalSndWriteData(LogicalDecodingContext *ctx, XLogRecPtr lsn, TransactionId xid,
 	/* If we have pending write here, go to slow path */
 	for (;;)
 	{
-		int			wakeEvents;
 		long		sleeptime;
 
 		/* Check for input from the client */
@@ -1310,13 +1306,9 @@ WalSndWriteData(LogicalDecodingContext *ctx, XLogRecPtr lsn, TransactionId xid,
 
 		sleeptime = WalSndComputeSleeptime(GetCurrentTimestamp());
 
-		wakeEvents = WL_LATCH_SET | WL_EXIT_ON_PM_DEATH |
-			WL_SOCKET_WRITEABLE | WL_SOCKET_READABLE | WL_TIMEOUT;
-
 		/* Sleep until something happens or we time out */
-		(void) WaitLatchOrSocket(MyLatch, wakeEvents,
-								 MyProcPort->sock, sleeptime,
-								 WAIT_EVENT_WAL_SENDER_WRITE_DATA);
+		WalSndWait(WL_SOCKET_WRITEABLE | WL_SOCKET_READABLE, sleeptime,
+				   WAIT_EVENT_WAL_SENDER_WRITE_DATA);
 
 		/* Clear any already-pending wakeups */
 		ResetLatch(MyLatch);
@@ -1486,15 +1478,12 @@ WalSndWaitForWal(XLogRecPtr loc)
 		 */
 		sleeptime = WalSndComputeSleeptime(GetCurrentTimestamp());
 
-		wakeEvents = WL_LATCH_SET | WL_EXIT_ON_PM_DEATH |
-			WL_SOCKET_READABLE | WL_TIMEOUT;
+		wakeEvents = WL_SOCKET_READABLE;
 
 		if (pq_is_send_pending())
 			wakeEvents |= WL_SOCKET_WRITEABLE;
 
-		(void) WaitLatchOrSocket(MyLatch, wakeEvents,
-								 MyProcPort->sock, sleeptime,
-								 WAIT_EVENT_WAL_SENDER_WAIT_WAL);
+		WalSndWait(wakeEvents, sleeptime, WAIT_EVENT_WAL_SENDER_WAIT_WAL);
 	}
 
 	/* reactivate latch so WalSndLoop knows to continue */
@@ -1900,9 +1889,9 @@ ProcessStandbyReplyMessage(void)
 		replyTimeStr = pstrdup(timestamptz_to_str(replyTime));
 
 		elog(DEBUG2, "write %X/%X flush %X/%X apply %X/%X%s reply_time %s",
-			 (uint32) (writePtr >> 32), (uint32) writePtr,
-			 (uint32) (flushPtr >> 32), (uint32) flushPtr,
-			 (uint32) (applyPtr >> 32), (uint32) applyPtr,
+			 LSN_FORMAT_ARGS(writePtr),
+			 LSN_FORMAT_ARGS(flushPtr),
+			 LSN_FORMAT_ARGS(applyPtr),
 			 replyRequested ? " (reply requested)" : "",
 			 replyTimeStr);
 
@@ -2319,7 +2308,7 @@ WalSndLoop(WalSndSendDataCallback send_data)
 			if (MyWalSnd->state == WALSNDSTATE_CATCHUP)
 			{
 				ereport(DEBUG1,
-						(errmsg("\"%s\" has now caught up with upstream server",
+						(errmsg_internal("\"%s\" has now caught up with upstream server",
 								application_name)));
 				WalSndSetState(WALSNDSTATE_STREAMING);
 			}
@@ -2354,10 +2343,10 @@ WalSndLoop(WalSndSendDataCallback send_data)
 			long		sleeptime;
 			int			wakeEvents;
 
-			wakeEvents = WL_LATCH_SET | WL_EXIT_ON_PM_DEATH | WL_TIMEOUT;
-
 			if (!streamingDoneReceiving)
-				wakeEvents |= WL_SOCKET_READABLE;
+				wakeEvents = WL_SOCKET_READABLE;
+			else
+				wakeEvents = 0;
 
 			/*
 			 * Use fresh timestamp, not last_processing, to reduce the chance
@@ -2369,9 +2358,7 @@ WalSndLoop(WalSndSendDataCallback send_data)
 				wakeEvents |= WL_SOCKET_WRITEABLE;
 
 			/* Sleep until something happens or we time out */
-			(void) WaitLatchOrSocket(MyLatch, wakeEvents,
-									 MyProcPort->sock, sleeptime,
-									 WAIT_EVENT_WAL_SENDER_MAIN);
+			WalSndWait(wakeEvents, sleeptime, WAIT_EVENT_WAL_SENDER_MAIN);
 		}
 	}
 }
@@ -2694,8 +2681,8 @@ XLogSendPhysical(void)
 		WalSndCaughtUp = true;
 
 		elog(DEBUG1, "walsender reached end of timeline at %X/%X (sent up to %X/%X)",
-			 (uint32) (sendTimeLineValidUpto >> 32), (uint32) sendTimeLineValidUpto,
-			 (uint32) (sentPtr >> 32), (uint32) sentPtr);
+			 LSN_FORMAT_ARGS(sendTimeLineValidUpto),
+			 LSN_FORMAT_ARGS(sentPtr));
 		return;
 	}
 
@@ -2826,7 +2813,7 @@ retry:
 		char		activitymsg[50];
 
 		snprintf(activitymsg, sizeof(activitymsg), "streaming %X/%X",
-				 (uint32) (sentPtr >> 32), (uint32) sentPtr);
+				 LSN_FORMAT_ARGS(sentPtr));
 		set_ps_display(activitymsg);
 	}
 }
@@ -3125,6 +3112,22 @@ WalSndWakeup(void)
 		if (latch != NULL)
 			SetLatch(latch);
 	}
+}
+
+/*
+ * Wait for readiness on the FeBe socket, or a timeout.  The mask should be
+ * composed of optional WL_SOCKET_WRITEABLE and WL_SOCKET_READABLE flags.  Exit
+ * on postmaster death.
+ */
+static void
+WalSndWait(uint32 socket_events, long timeout, uint32 wait_event)
+{
+	WaitEvent event;
+
+	ModifyWaitEvent(FeBeWaitSet, FeBeWaitSetSocketPos, socket_events, NULL);
+	if (WaitEventSetWait(FeBeWaitSet, timeout, &event, 1, wait_event) == 1 &&
+		(event.events & WL_POSTMASTER_DEATH))
+		proc_exit(1);
 }
 
 /*

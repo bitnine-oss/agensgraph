@@ -433,8 +433,7 @@ XLogReadBufferForRedoExtended(XLogReaderState *record,
  * NB: A redo function should normally not call this directly. To get a page
  * to modify, use XLogReadBufferForRedoExtended instead. It is important that
  * all pages modified by a WAL record are registered in the WAL records, or
- * they will be invisible to tools that that need to know which pages are
- * modified.
+ * they will be invisible to tools that need to know which pages are modified.
  */
 Buffer
 XLogReadBufferExtended(RelFileNode rnode, ForkNumber forknum,
@@ -776,8 +775,7 @@ XLogReadDetermineTimeline(XLogReaderState *state, XLogRecPtr wantPage, uint32 wa
 
 		elog(DEBUG3, "switched to timeline %u valid until %X/%X",
 			 state->currTLI,
-			 (uint32) (state->currTLIValidUntil >> 32),
-			 (uint32) (state->currTLIValidUntil));
+			 LSN_FORMAT_ARGS(state->currTLIValidUntil));
 	}
 }
 

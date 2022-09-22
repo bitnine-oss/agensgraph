@@ -273,6 +273,7 @@ _readQuery(void)
 	READ_NODE_FIELD(onConflict);
 	READ_NODE_FIELD(returningList);
 	READ_NODE_FIELD(groupClause);
+	READ_BOOL_FIELD(groupDistinct);
 	READ_NODE_FIELD(groupingSets);
 	READ_NODE_FIELD(havingQual);
 	READ_NODE_FIELD(windowClause);
@@ -439,6 +440,44 @@ _readRowMarkClause(void)
 }
 
 /*
+ * _readCTESearchClause
+ */
+static CTESearchClause *
+_readCTESearchClause(void)
+{
+	READ_LOCALS(CTESearchClause);
+
+	READ_NODE_FIELD(search_col_list);
+	READ_BOOL_FIELD(search_breadth_first);
+	READ_STRING_FIELD(search_seq_column);
+	READ_LOCATION_FIELD(location);
+
+	READ_DONE();
+}
+
+/*
+ * _readCTECycleClause
+ */
+static CTECycleClause *
+_readCTECycleClause(void)
+{
+	READ_LOCALS(CTECycleClause);
+
+	READ_NODE_FIELD(cycle_col_list);
+	READ_STRING_FIELD(cycle_mark_column);
+	READ_NODE_FIELD(cycle_mark_value);
+	READ_NODE_FIELD(cycle_mark_default);
+	READ_STRING_FIELD(cycle_path_column);
+	READ_LOCATION_FIELD(location);
+	READ_OID_FIELD(cycle_mark_type);
+	READ_INT_FIELD(cycle_mark_typmod);
+	READ_OID_FIELD(cycle_mark_collation);
+	READ_OID_FIELD(cycle_mark_neop);
+
+	READ_DONE();
+}
+
+/*
  * _readCommonTableExpr
  */
 static CommonTableExpr *
@@ -450,6 +489,8 @@ _readCommonTableExpr(void)
 	READ_NODE_FIELD(aliascolnames);
 	READ_ENUM_FIELD(ctematerialized, CTEMaterialize);
 	READ_NODE_FIELD(ctequery);
+	READ_NODE_FIELD(search_clause);
+	READ_NODE_FIELD(cycle_clause);
 	READ_LOCATION_FIELD(location);
 	READ_BOOL_FIELD(cterecursive);
 	READ_INT_FIELD(cterefcount);
@@ -1610,6 +1651,7 @@ ReadCommonPlan(Plan *local_node)
 	READ_INT_FIELD(plan_width);
 	READ_BOOL_FIELD(parallel_aware);
 	READ_BOOL_FIELD(parallel_safe);
+	READ_BOOL_FIELD(async_capable);
 	READ_INT_FIELD(plan_node_id);
 	READ_NODE_FIELD(targetlist);
 	READ_NODE_FIELD(qual);
@@ -1706,6 +1748,7 @@ _readAppend(void)
 
 	READ_BITMAPSET_FIELD(apprelids);
 	READ_NODE_FIELD(appendplans);
+	READ_INT_FIELD(nasyncplans);
 	READ_INT_FIELD(first_partial_plan);
 	READ_NODE_FIELD(part_prune_info);
 
@@ -1924,6 +1967,21 @@ _readTidScan(void)
 	ReadCommonScan(&local_node->scan);
 
 	READ_NODE_FIELD(tidquals);
+
+	READ_DONE();
+}
+
+/*
+ * _readTidRangeScan
+ */
+static TidRangeScan *
+_readTidRangeScan(void)
+{
+	READ_LOCALS(TidRangeScan);
+
+	ReadCommonScan(&local_node->scan);
+
+	READ_NODE_FIELD(tidrangequals);
 
 	READ_DONE();
 }
@@ -2930,6 +2988,10 @@ parseNodeString(void)
 		return_value = _readWindowClause();
 	else if (MATCH("ROWMARKCLAUSE", 13))
 		return_value = _readRowMarkClause();
+	else if (MATCH("CTESEARCHCLAUSE", 15))
+		return_value = _readCTESearchClause();
+	else if (MATCH("CTECYCLECLAUSE", 14))
+		return_value = _readCTECycleClause();
 	else if (MATCH("COMMONTABLEEXPR", 15))
 		return_value = _readCommonTableExpr();
 	else if (MATCH("SETOPERATIONSTMT", 16))
@@ -3082,6 +3144,8 @@ parseNodeString(void)
 		return_value = _readBitmapHeapScan();
 	else if (MATCH("TIDSCAN", 7))
 		return_value = _readTidScan();
+	else if (MATCH("TIDRANGESCAN", 12))
+		return_value = _readTidRangeScan();
 	else if (MATCH("SUBQUERYSCAN", 12))
 		return_value = _readSubqueryScan();
 	else if (MATCH("FUNCTIONSCAN", 12))

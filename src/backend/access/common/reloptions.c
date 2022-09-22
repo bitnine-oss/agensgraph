@@ -464,7 +464,7 @@ static relopt_real realRelOpts[] =
 	{
 		{
 			"vacuum_cleanup_index_scale_factor",
-			"Number of tuple inserts prior to index cleanup as a fraction of reltuples.",
+			"Deprecated B-Tree parameter.",
 			RELOPT_KIND_BTREE,
 			ShareUpdateExclusiveLock
 		},

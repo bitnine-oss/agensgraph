@@ -399,8 +399,23 @@ markTargetListOrigin(ParseState *pstate, TargetEntry *tle,
 			{
 				CommonTableExpr *cte = GetCTEForRTE(pstate, rte, netlevelsup);
 				TargetEntry *ste;
+				List	   *tl = GetCTETargetList(cte);
+				int			extra_cols = 0;
 
-				ste = get_tle_by_resno(GetCTETargetList(cte), attnum);
+				/*
+				 * RTE for CTE will already have the search and cycle columns
+				 * added, but the subquery won't, so skip looking those up.
+				 */
+				if (cte->search_clause)
+					extra_cols += 1;
+				if (cte->cycle_clause)
+					extra_cols += 2;
+				if (extra_cols &&
+					attnum > list_length(tl) &&
+					attnum <= list_length(tl) + extra_cols)
+					break;
+
+				ste = get_tle_by_resno(tl, attnum);
 				if (ste == NULL || ste->resjunk)
 					elog(ERROR, "CTE %s does not have attribute %d",
 						 rte->eref->aliasname, attnum);
@@ -1369,16 +1384,20 @@ ExpandSingleTable(ParseState *pstate, ParseNamespaceItem *nsitem,
 		/*
 		 * Require read access to the table.  This is normally redundant with
 		 * the markVarForSelectPriv calls below, but not if the table has zero
-		 * columns.
+		 * columns.  We need not do anything if the nsitem is for a join: its
+		 * component tables will have been marked ACL_SELECT when they were
+		 * added to the rangetable.  (This step changes things only for the
+		 * target relation of UPDATE/DELETE, which cannot be under a join.)
 		 */
-		rte->requiredPerms |= ACL_SELECT;
+		if (rte->rtekind == RTE_RELATION)
+			rte->requiredPerms |= ACL_SELECT;
 
 		/* Require read access to each column */
 		foreach(l, vars)
 		{
 			Var		   *var = (Var *) lfirst(l);
 
-			markVarForSelectPriv(pstate, var, rte);
+			markVarForSelectPriv(pstate, var);
 		}
 
 		return vars;

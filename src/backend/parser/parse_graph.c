@@ -2922,7 +2922,7 @@ genInhEdge(RangeVar *r, Oid parentoid)
 	sel->fromClause = list_make1(r);
 	lsel = sel;
 
-	children = find_inheritance_children(parentoid, AccessShareLock);
+	children = find_inheritance_children(parentoid, false, AccessShareLock);
 	foreach(lc, children)
 	{
 		Oid			childoid = lfirst_oid(lc);
@@ -6254,7 +6254,7 @@ makeWholeRowTarget(ParseState *pstate, ParseNamespaceItem *nsitem)
 	varnode = makeWholeRowVar(nsitem->p_rte, nsitem->p_rtindex, 0, false);
 	varnode->location = -1;
 
-	markVarForSelectPriv(pstate, varnode, nsitem->p_rte);
+	markVarForSelectPriv(pstate, varnode);
 
 	return makeTargetEntry((Expr *) varnode,
 						   (AttrNumber) pstate->p_next_resno++,

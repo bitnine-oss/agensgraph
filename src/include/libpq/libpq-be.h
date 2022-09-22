@@ -70,7 +70,12 @@ typedef struct
 
 typedef enum CAC_state
 {
-	CAC_OK, CAC_STARTUP, CAC_SHUTDOWN, CAC_RECOVERY, CAC_TOOMANY,
+	CAC_OK,
+	CAC_STARTUP,
+	CAC_SHUTDOWN,
+	CAC_RECOVERY,
+	CAC_NOTCONSISTENT,
+	CAC_TOOMANY,
 	CAC_SUPERUSER
 } CAC_state;
 
@@ -190,11 +195,12 @@ typedef struct Port
 	 */
 	bool		ssl_in_use;
 	char	   *peer_cn;
+	char	   *peer_dn;
 	bool		peer_cert_valid;
 
 	/*
 	 * OpenSSL structures. (Keep these last so that the locations of other
-	 * fields are the same whether or not you build with OpenSSL.)
+	 * fields are the same whether or not you build with SSL enabled.)
 	 */
 #ifdef USE_OPENSSL
 	SSL		   *ssl;
@@ -266,7 +272,6 @@ extern ssize_t be_tls_write(Port *port, void *ptr, size_t len, int *waitfor);
  * Return information about the SSL connection.
  */
 extern int	be_tls_get_cipher_bits(Port *port);
-extern bool be_tls_get_compression(Port *port);
 extern const char *be_tls_get_version(Port *port);
 extern const char *be_tls_get_cipher(Port *port);
 extern void be_tls_get_peer_subject_name(Port *port, char *ptr, size_t len);

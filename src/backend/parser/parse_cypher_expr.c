@@ -481,7 +481,7 @@ scanNSItemForVar(ParseState *pstate, ParseNamespaceItem *nsitem, char *colname,
 			continue;
 
 		var = make_var(pstate, nsitem, attrno, location);
-		markVarForSelectPriv(pstate, (Var *) var, rte);
+		markVarForSelectPriv(pstate, (Var *) var);
 	}
 
 	return (Node *) var;

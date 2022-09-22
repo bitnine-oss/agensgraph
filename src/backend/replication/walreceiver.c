@@ -207,6 +207,7 @@ WalReceiverMain(void)
 
 		case WALRCV_STOPPED:
 			SpinLockRelease(&walrcv->mutex);
+			ConditionVariableBroadcast(&walrcv->walRcvStoppedCV);
 			proc_exit(1);
 			break;
 
@@ -249,7 +250,7 @@ WalReceiverMain(void)
 
 	SpinLockRelease(&walrcv->mutex);
 
-	pg_atomic_init_u64(&WalRcv->writtenUpto, 0);
+	pg_atomic_write_u64(&WalRcv->writtenUpto, 0);
 
 	/* Arrange to clean up at walreceiver exit */
 	on_shmem_exit(WalRcvDie, 0);
@@ -392,13 +393,11 @@ WalReceiverMain(void)
 			if (first_stream)
 				ereport(LOG,
 						(errmsg("started streaming WAL from primary at %X/%X on timeline %u",
-								(uint32) (startpoint >> 32), (uint32) startpoint,
-								startpointTLI)));
+								LSN_FORMAT_ARGS(startpoint), startpointTLI)));
 			else
 				ereport(LOG,
 						(errmsg("restarted WAL streaming at %X/%X on timeline %u",
-								(uint32) (startpoint >> 32), (uint32) startpoint,
-								startpointTLI)));
+								LSN_FORMAT_ARGS(startpoint), startpointTLI)));
 			first_stream = false;
 
 			/* Initialize LogstreamResult and buffers for processing messages */
@@ -465,7 +464,7 @@ WalReceiverMain(void)
 									(errmsg("replication terminated by primary server"),
 									 errdetail("End of WAL reached on timeline %u at %X/%X.",
 											   startpointTLI,
-											   (uint32) (LogstreamResult.Write >> 32), (uint32) LogstreamResult.Write)));
+											   LSN_FORMAT_ARGS(LogstreamResult.Write))));
 							endofwal = true;
 							break;
 						}
@@ -699,8 +698,7 @@ WalRcvWaitForStartPosition(XLogRecPtr *startpoint, TimeLineID *startpointTLI)
 		char		activitymsg[50];
 
 		snprintf(activitymsg, sizeof(activitymsg), "restarting at %X/%X",
-				 (uint32) (*startpoint >> 32),
-				 (uint32) *startpoint);
+				 LSN_FORMAT_ARGS(*startpoint));
 		set_ps_display(activitymsg);
 	}
 }
@@ -786,6 +784,8 @@ WalRcvDie(int code, Datum arg)
 	walrcv->ready_to_display = false;
 	walrcv->latch = NULL;
 	SpinLockRelease(&walrcv->mutex);
+
+	ConditionVariableBroadcast(&walrcv->walRcvStoppedCV);
 
 	/* Terminate the connection gracefully. */
 	if (wrconn != NULL)
@@ -1002,8 +1002,7 @@ XLogWalRcvFlush(bool dying)
 			char		activitymsg[50];
 
 			snprintf(activitymsg, sizeof(activitymsg), "streaming %X/%X",
-					 (uint32) (LogstreamResult.Write >> 32),
-					 (uint32) LogstreamResult.Write);
+					 LSN_FORMAT_ARGS(LogstreamResult.Write));
 			set_ps_display(activitymsg);
 		}
 
@@ -1080,9 +1079,9 @@ XLogWalRcvSendReply(bool force, bool requestReply)
 
 	/* Send it */
 	elog(DEBUG2, "sending write %X/%X flush %X/%X apply %X/%X%s",
-		 (uint32) (writePtr >> 32), (uint32) writePtr,
-		 (uint32) (flushPtr >> 32), (uint32) flushPtr,
-		 (uint32) (applyPtr >> 32), (uint32) applyPtr,
+		 LSN_FORMAT_ARGS(writePtr),
+		 LSN_FORMAT_ARGS(flushPtr),
+		 LSN_FORMAT_ARGS(applyPtr),
 		 requestReply ? " (reply requested)" : "");
 
 	walrcv_send(wrconn, reply_message.data, reply_message.len);
@@ -1325,7 +1324,6 @@ pg_stat_get_wal_receiver(PG_FUNCTION_ARGS)
 	state = WalRcv->walRcvState;
 	receive_start_lsn = WalRcv->receiveStart;
 	receive_start_tli = WalRcv->receiveStartTLI;
-	written_lsn = pg_atomic_read_u64(&WalRcv->writtenUpto);
 	flushed_lsn = WalRcv->flushedUpto;
 	received_tli = WalRcv->receivedTLI;
 	last_send_time = WalRcv->lastMsgSendTime;
@@ -1344,6 +1342,14 @@ pg_stat_get_wal_receiver(PG_FUNCTION_ARGS)
 	 */
 	if (pid == 0 || !ready_to_display)
 		PG_RETURN_NULL();
+
+	/*
+	 * Read "writtenUpto" without holding a spinlock.  Note that it may not be
+	 * consistent with the other shared variables of the WAL receiver
+	 * protected by a spinlock, but this should not be used for data integrity
+	 * checks.
+	 */
+	written_lsn = pg_atomic_read_u64(&WalRcv->writtenUpto);
 
 	/* determine result type */
 	if (get_call_result_type(fcinfo, NULL, &tupdesc) != TYPEFUNC_COMPOSITE)

@@ -1353,12 +1353,13 @@ SendQuery(const char *query)
 
 				/*
 				 * Do nothing if they are messing with savepoints themselves:
-				 * If the user did RELEASE or ROLLBACK, our savepoint is gone.
-				 * If they issued a SAVEPOINT, releasing ours would remove
-				 * theirs.
+				 * If the user did COMMIT AND CHAIN, RELEASE or ROLLBACK, our
+				 * savepoint is gone. If they issued a SAVEPOINT, releasing
+				 * ours would remove theirs.
 				 */
 				if (results &&
-					(strcmp(PQcmdStatus(results), "SAVEPOINT") == 0 ||
+					(strcmp(PQcmdStatus(results), "COMMIT") == 0 ||
+					 strcmp(PQcmdStatus(results), "SAVEPOINT") == 0 ||
 					 strcmp(PQcmdStatus(results), "RELEASE") == 0 ||
 					 strcmp(PQcmdStatus(results), "ROLLBACK") == 0))
 					svptcmd = NULL;
@@ -2156,9 +2157,6 @@ is_select_command(const char *query)
 
 /*
  * Test if the current user is a database superuser.
- *
- * Note: this will correctly detect superuserness only with a protocol-3.0
- * or newer backend; otherwise it will always say "false".
  */
 bool
 is_superuser(void)
@@ -2179,9 +2177,6 @@ is_superuser(void)
 
 /*
  * Test if the current session uses standard string literals.
- *
- * Note: With a pre-protocol-3.0 connection this will always say "false",
- * which should be the right answer.
  */
 bool
 standard_strings(void)
@@ -2202,10 +2197,6 @@ standard_strings(void)
 
 /*
  * Return the session user of the current connection.
- *
- * Note: this will correctly detect the session user only with a
- * protocol-3.0 or newer backend; otherwise it will return the
- * connection user.
  */
 const char *
 session_username(void)

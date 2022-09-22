@@ -21,7 +21,7 @@
 
 /*
  * Maximum length for identifiers (e.g. table names, column names,
- * function names).  Names actually are limited to one less byte than this,
+ * function names).  Names actually are limited to one fewer byte than this,
  * because the length must include a trailing zero byte.
  *
  * Changing this requires an initdb.
@@ -136,6 +136,13 @@
 #endif
 
 /*
+ * Define this if your operating system supports link()
+ */
+#if !defined(WIN32) && !defined(__CYGWIN__)
+#define HAVE_WORKING_LINK 1
+#endif
+
+/*
  * USE_POSIX_FADVISE controls whether Postgres will attempt to use the
  * posix_fadvise() kernel call.  Usually the automatic configure tests are
  * sufficient, but some older Linux distributions had broken versions of
@@ -176,8 +183,7 @@
 
 /*
  * USE_SSL code should be compiled only when compiling with an SSL
- * implementation.  (Currently, only OpenSSL is supported, but we might add
- * more implementations in the future.)
+ * implementation.
  */
 #ifdef USE_OPENSSL
 #define USE_SSL

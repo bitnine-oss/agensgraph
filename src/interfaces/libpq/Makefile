@@ -37,17 +37,22 @@ OBJS = \
 	fe-lobj.o \
 	fe-misc.o \
 	fe-print.o \
-	fe-protocol2.o \
 	fe-protocol3.o \
 	fe-secure.o \
+	fe-trace.o \
 	legacy-pqsignal.o \
 	libpq-events.o \
 	pqexpbuffer.o \
 	fe-auth.o
 
-ifeq ($(with_openssl),yes)
+# File shared across all SSL implementations supported.
+ifneq ($(with_ssl),no)
 OBJS += \
-	fe-secure-common.o \
+	fe-secure-common.o
+endif
+
+ifeq ($(with_ssl),openssl)
+OBJS += \
 	fe-secure-openssl.o
 endif
 

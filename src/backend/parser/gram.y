@@ -134,6 +134,13 @@ typedef struct SelectLimit
 	LimitOption limitOption;
 } SelectLimit;
 
+/* Private struct for the result of group_clause production */
+typedef struct GroupClause
+{
+	bool	distinct;
+	List   *list;
+} GroupClause;
+
 /* ConstraintAttributeSpec yields an integer bitmask of these flags: */
 #define CAS_NOT_DEFERRABLE			0x01
 #define CAS_DEFERRABLE				0x02
@@ -235,6 +242,7 @@ static Node *wrapCypherWithSelect(Node *stmt);
 	WindowDef			*windef;
 	JoinExpr			*jexpr;
 	IndexElem			*ielem;
+	StatsElem			*selem;
 	Alias				*alias;
 	RangeVar			*range;
 	IntoClause			*into;
@@ -253,6 +261,8 @@ static Node *wrapCypherWithSelect(Node *stmt);
 	PartitionBoundSpec	*partboundspec;
 	RoleSpec			*rolespec;
 	struct SelectLimit	*selectlimit;
+	SetQuantifier	 setquantifier;
+	struct GroupClause  *groupclause;
 }
 
 %type <node>	stmt schema_stmt
@@ -399,7 +409,7 @@ static Node *wrapCypherWithSelect(Node *stmt);
 				old_aggr_definition old_aggr_list
 				oper_argtypes RuleActionList RuleActionMulti
 				opt_column_list columnList opt_name_list
-				sort_clause opt_sort_clause sortby_list index_params
+				sort_clause opt_sort_clause sortby_list index_params stats_params
 				opt_include opt_c_include index_including_params
 				name_list role_list from_clause from_list opt_array_bounds
 				qualified_name_list any_name any_name_list type_name_list
@@ -408,7 +418,7 @@ static Node *wrapCypherWithSelect(Node *stmt);
 				target_list opt_target_list insert_column_list set_target_list
 				set_clause_list set_clause
 				def_list operator_def_list indirection opt_indirection
-				reloption_list group_clause TriggerFuncArgs opclass_item_list opclass_drop_list
+				reloption_list TriggerFuncArgs opclass_item_list opclass_drop_list
 				opclass_purpose opt_opfamily transaction_mode_list_or_empty
 				OptTableFuncElementList TableFuncElementList opt_type_modifiers
 				prep_type_clause
@@ -421,6 +431,7 @@ static Node *wrapCypherWithSelect(Node *stmt);
 				vacuum_relation_list opt_vacuum_relation_list
 				drop_option_list
 
+%type <groupclause> group_clause
 %type <list>	group_by_list
 %type <node>	group_by_item empty_grouping_set rollup_clause cube_clause
 %type <node>	grouping_sets_clause
@@ -446,7 +457,7 @@ static Node *wrapCypherWithSelect(Node *stmt);
 %type <node>	for_locking_item
 %type <list>	for_locking_clause opt_for_locking_clause for_locking_items
 %type <list>	locked_rels_list
-%type <boolean>	all_or_distinct
+%type <setquantifier> set_quantifier
 
 %type <node>	join_qual
 %type <jtype>	join_type
@@ -488,7 +499,7 @@ static Node *wrapCypherWithSelect(Node *stmt);
 %type <node>	def_arg columnElem where_clause where_or_current_clause
 				a_expr b_expr c_expr AexprConst indirection_el opt_slice_bound
 				columnref in_expr having_clause func_table xmltable array_expr
-				ExclusionWhereClause operator_def_arg
+				OptWhereClause operator_def_arg
 %type <list>	rowsfrom_item rowsfrom_list opt_col_def_list
 %type <boolean> opt_ordinality
 %type <list>	ExclusionConstraintList ExclusionConstraintElem
@@ -497,6 +508,7 @@ static Node *wrapCypherWithSelect(Node *stmt);
 %type <list>	row explicit_row implicit_row type_list array_expr_list
 %type <node>	case_expr case_arg when_clause case_default
 %type <list>	when_clause_list
+%type <node>	opt_search_clause opt_cycle_clause
 %type <ival>	sub_type opt_materialized
 %type <value>	NumericOnly
 %type <list>	NumericOnly_list
@@ -504,6 +516,7 @@ static Node *wrapCypherWithSelect(Node *stmt);
 %type <list>	func_alias_clause
 %type <sortby>	sortby
 %type <ielem>	index_elem index_elem_options
+%type <selem>	stats_param
 %type <node>	table_ref
 %type <jexpr>	joined_table
 %type <range>	relation_expr
@@ -597,6 +610,8 @@ static Node *wrapCypherWithSelect(Node *stmt);
 %type <partboundspec> PartitionBoundSpec
 %type <list>		hash_partbound
 %type <defelt>		hash_partbound_elem
+
+%type <str>	optColumnCompression
 
 /* Agens Graph */
 %type <node>	CreateGraphStmt CreateLabelStmt AlterLabelStmt alter_label_cmd
@@ -713,19 +728,19 @@ static Node *wrapCypherWithSelect(Node *stmt);
 	ASSERTION ASSIGNMENT ASYMMETRIC AT ATTACH ATTRIBUTE AUTHORIZATION
 
 	BACKWARD BEFORE BEGIN_P BETWEEN BIGINT BINARY BIT
-	BOOLEAN_P BOTH BY
+	BOOLEAN_P BOTH BREADTH BY
 
 	CACHE CALL CALLED CASCADE CASCADED CASE CAST CATALOG_P CHAIN CHAR_P
 	CHARACTER CHARACTERISTICS CHECK CHECKPOINT CLASS CLOSE
 	CLUSTER COALESCE COLLATE COLLATION COLUMN COLUMNS COMMENT COMMENTS COMMIT
-	COMMITTED CONCURRENTLY CONFIGURATION CONFLICT CONNECTION CONSTRAINT
-	CONSTRAINTS CONTAINS CONTENT_P CONTINUE_P CONVERSION_P COPY COST CREATE
-	CROSS CSV CUBE CURRENT_P
+	COMMITTED COMPRESSION CONCURRENTLY CONFIGURATION CONFLICT
+	CONNECTION CONSTRAINT CONSTRAINTS CONTAINS CONTENT_P CONTINUE_P CONVERSION_P COPY
+	COST CREATE CROSS CSV CUBE CURRENT_P
 	CURRENT_CATALOG CURRENT_DATE CURRENT_ROLE CURRENT_SCHEMA
 	CURRENT_TIME CURRENT_TIMESTAMP CURRENT_USER CURSOR CYCLE
 
 	DATA_P DATABASE DAY_P DEALLOCATE DEC DECIMAL_P DECLARE DEFAULT DEFAULTS
-	DEFERRABLE DEFERRED DEFINER DELETE_P DELIMITER DELIMITERS DEPENDS DESC
+	DEFERRABLE DEFERRED DEFINER DELETE_P DELIMITER DELIMITERS DEPENDS DEPTH DESC
 	DETACH DICTIONARY DIJKSTRA DISABLE_P DISCARD DISTINCT DO DOCUMENT_P DOMAIN_P
 	DOUBLE_P DROP
 
@@ -733,7 +748,7 @@ static Node *wrapCypherWithSelect(Node *stmt);
 	EXCLUDE EXCLUDING EXCLUSIVE EXECUTE EXISTS EXPLAIN EXPRESSION
 	EXTENSION EXTERNAL EXTRACT
 
-	FALSE_P FAMILY FETCH FILTER FIRST_P FLOAT_P FOLLOWING FOR
+	FALSE_P FAMILY FETCH FILTER FINALIZE FIRST_P FLOAT_P FOLLOWING FOR
 	FORCE FOREIGN FORWARD FREEZE FROM FULL FUNCTION FUNCTIONS
 
 	GENERATED GLOBAL GRANT GRANTED GRAPH GREATEST GROUP_P GROUPING GROUPS
@@ -2197,12 +2212,13 @@ partition_cmd:
 					n->subtype = AT_AttachPartition;
 					cmd->name = $3;
 					cmd->bound = $4;
+					cmd->concurrent = false;
 					n->def = (Node *) cmd;
 
 					$$ = (Node *) n;
 				}
-			/* ALTER TABLE <name> DETACH PARTITION <partition_name> */
-			| DETACH PARTITION qualified_name
+			/* ALTER TABLE <name> DETACH PARTITION <partition_name> [CONCURRENTLY] */
+			| DETACH PARTITION qualified_name opt_concurrently
 				{
 					AlterTableCmd *n = makeNode(AlterTableCmd);
 					PartitionCmd *cmd = makeNode(PartitionCmd);
@@ -2210,8 +2226,21 @@ partition_cmd:
 					n->subtype = AT_DetachPartition;
 					cmd->name = $3;
 					cmd->bound = NULL;
+					cmd->concurrent = $4;
 					n->def = (Node *) cmd;
 
+					$$ = (Node *) n;
+				}
+			| DETACH PARTITION qualified_name FINALIZE
+				{
+					AlterTableCmd *n = makeNode(AlterTableCmd);
+					PartitionCmd *cmd = makeNode(PartitionCmd);
+
+					n->subtype = AT_DetachPartitionFinalize;
+					cmd->name = $3;
+					cmd->bound = NULL;
+					cmd->concurrent = false;
+					n->def = (Node *) cmd;
 					$$ = (Node *) n;
 				}
 		;
@@ -2226,6 +2255,7 @@ index_partition_cmd:
 					n->subtype = AT_AttachPartition;
 					cmd->name = $3;
 					cmd->bound = NULL;
+					cmd->concurrent = false;
 					n->def = (Node *) cmd;
 
 					$$ = (Node *) n;
@@ -2407,6 +2437,15 @@ alter_table_cmd:
 					n->missing_ok = true;
 					$$ = (Node *)n;
 				}
+			/* ALTER TABLE <name> ALTER [COLUMN] <colname> SET (COMPRESSION <cm>) */
+			| ALTER opt_column ColId SET optColumnCompression
+				{
+					AlterTableCmd *n = makeNode(AlterTableCmd);
+					n->subtype = AT_SetCompression;
+					n->name = $3;
+					n->def = (Node *) makeString($5);
+					$$ = (Node *)n;
+				}
 			/* ALTER TABLE <name> DROP [COLUMN] IF EXISTS <colname> [RESTRICT|CASCADE] */
 			| DROP opt_column IF_P EXISTS ColId opt_drop_behavior
 				{
@@ -2505,7 +2544,7 @@ alter_table_cmd:
 					n->missing_ok = false;
 					$$ = (Node *)n;
 				}
-			/* ALTER TABLE <name> SET WITHOUT OIDS, for backward compat  */
+			/* ALTER TABLE <name> SET WITHOUT OIDS, for backward compat */
 			| SET WITHOUT OIDS
 				{
 					AlterTableCmd *n = makeNode(AlterTableCmd);
@@ -2528,14 +2567,14 @@ alter_table_cmd:
 					n->name = NULL;
 					$$ = (Node *)n;
 				}
-			/* ALTER TABLE <name> SET LOGGED  */
+			/* ALTER TABLE <name> SET LOGGED */
 			| SET LOGGED
 				{
 					AlterTableCmd *n = makeNode(AlterTableCmd);
 					n->subtype = AT_SetLogged;
 					$$ = (Node *)n;
 				}
-			/* ALTER TABLE <name> SET UNLOGGED  */
+			/* ALTER TABLE <name> SET UNLOGGED */
 			| SET UNLOGGED
 				{
 					AlterTableCmd *n = makeNode(AlterTableCmd);
@@ -2699,7 +2738,7 @@ alter_table_cmd:
 					n->def = (Node *)$2;
 					$$ = (Node *)n;
 				}
-			/* ALTER TABLE <name> REPLICA IDENTITY  */
+			/* ALTER TABLE <name> REPLICA IDENTITY */
 			| REPLICA IDENTITY_P replica_identity
 				{
 					AlterTableCmd *n = makeNode(AlterTableCmd);
@@ -3522,11 +3561,12 @@ TypedTableElement:
 			| TableConstraint					{ $$ = $1; }
 		;
 
-columnDef:	ColId Typename create_generic_options ColQualList
+columnDef:	ColId Typename optColumnCompression create_generic_options ColQualList
 				{
 					ColumnDef *n = makeNode(ColumnDef);
 					n->colname = $1;
 					n->typeName = $2;
+					n->compression = $3;
 					n->inhcount = 0;
 					n->is_local = true;
 					n->is_not_null = false;
@@ -3535,8 +3575,8 @@ columnDef:	ColId Typename create_generic_options ColQualList
 					n->raw_default = NULL;
 					n->cooked_default = NULL;
 					n->collOid = InvalidOid;
-					n->fdwoptions = $3;
-					SplitColQualList($4, &n->constraints, &n->collClause,
+					n->fdwoptions = $4;
+					SplitColQualList($5, &n->constraints, &n->collClause,
 									 yyscanner);
 					n->location = @1;
 					$$ = (Node *)n;
@@ -3580,6 +3620,14 @@ columnOptions:	ColId ColQualList
 					$$ = (Node *)n;
 				}
 		;
+
+optColumnCompression:
+					COMPRESSION name
+					{
+						$$ = $2;
+					}
+					| /*EMPTY*/	{ $$ = NULL; }
+				;
 
 ColQualList:
 			ColQualList ColConstraint				{ $$ = lappend($1, $2); }
@@ -3811,6 +3859,7 @@ TableLikeOption:
 				| INDEXES			{ $$ = CREATE_TABLE_LIKE_INDEXES; }
 				| STATISTICS		{ $$ = CREATE_TABLE_LIKE_STATISTICS; }
 				| STORAGE			{ $$ = CREATE_TABLE_LIKE_STORAGE; }
+				| COMPRESSION		{ $$ = CREATE_TABLE_LIKE_COMPRESSION; }
 				| ALL				{ $$ = CREATE_TABLE_LIKE_ALL; }
 		;
 
@@ -3907,7 +3956,7 @@ ConstraintElem:
 					$$ = (Node *)n;
 				}
 			| EXCLUDE access_method_clause '(' ExclusionConstraintList ')'
-				opt_c_include opt_definition OptConsTableSpace  ExclusionWhereClause
+				opt_c_include opt_definition OptConsTableSpace OptWhereClause
 				ConstraintAttributeSpec
 				{
 					Constraint *n = makeNode(Constraint);
@@ -4009,7 +4058,7 @@ ExclusionConstraintElem: index_elem WITH any_operator
 			}
 		;
 
-ExclusionWhereClause:
+OptWhereClause:
 			WHERE '(' a_expr ')'					{ $$ = $3; }
 			| /*EMPTY*/								{ $$ = NULL; }
 		;
@@ -4152,7 +4201,7 @@ ExistingIndex:   USING INDEX name					{ $$ = $3; }
 
 CreateStatsStmt:
 			CREATE STATISTICS any_name
-			opt_name_list ON expr_list FROM from_list
+			opt_name_list ON stats_params FROM from_list
 				{
 					CreateStatsStmt *n = makeNode(CreateStatsStmt);
 					n->defnames = $3;
@@ -4164,7 +4213,7 @@ CreateStatsStmt:
 					$$ = (Node *)n;
 				}
 			| CREATE STATISTICS IF_P NOT EXISTS any_name
-			opt_name_list ON expr_list FROM from_list
+			opt_name_list ON stats_params FROM from_list
 				{
 					CreateStatsStmt *n = makeNode(CreateStatsStmt);
 					n->defnames = $6;
@@ -4177,6 +4226,36 @@ CreateStatsStmt:
 				}
 			;
 
+/*
+ * Statistics attributes can be either simple column references, or arbitrary
+ * expressions in parens.  For compatibility with index attributes permitted
+ * in CREATE INDEX, we allow an expression that's just a function call to be
+ * written without parens.
+ */
+
+stats_params:	stats_param							{ $$ = list_make1($1); }
+			| stats_params ',' stats_param			{ $$ = lappend($1, $3); }
+		;
+
+stats_param:	ColId
+				{
+					$$ = makeNode(StatsElem);
+					$$->name = $1;
+					$$->expr = NULL;
+				}
+			| func_expr_windowless
+				{
+					$$ = makeNode(StatsElem);
+					$$->name = NULL;
+					$$->expr = $1;
+				}
+			| '(' a_expr ')'
+				{
+					$$ = makeNode(StatsElem);
+					$$->name = NULL;
+					$$->expr = $2;
+				}
+		;
 
 /*****************************************************************************
  *
@@ -5380,8 +5459,8 @@ CreateTrigStmt:
 					n->columns = (List *) lsecond($6);
 					n->whenClause = $11;
 					n->transitionRels = $9;
-					n->deferrable	 = false;
-					n->initdeferred  = false;
+					n->deferrable = false;
+					n->initdeferred = false;
 					n->constrrel = NULL;
 					$$ = (Node *)n;
 				}
@@ -11480,7 +11559,8 @@ simple_select:
 					n->intoClause = $4;
 					n->fromClause = $5;
 					n->whereClause = $6;
-					n->groupClause = $7;
+					n->groupClause = ($7)->list;
+					n->groupDistinct = ($7)->distinct;
 					n->havingClause = $8;
 					n->windowClause = $9;
 					$$ = (Node *)n;
@@ -11495,7 +11575,8 @@ simple_select:
 					n->intoClause = $4;
 					n->fromClause = $5;
 					n->whereClause = $6;
-					n->groupClause = $7;
+					n->groupClause = ($7)->list;
+					n->groupDistinct = ($7)->distinct;
 					n->havingClause = $8;
 					n->windowClause = $9;
 					$$ = (Node *)n;
@@ -11520,17 +11601,17 @@ simple_select:
 					n->fromClause = list_make1($2);
 					$$ = (Node *)n;
 				}
-			| select_clause UNION all_or_distinct select_clause
+			| select_clause UNION set_quantifier select_clause
 				{
-					$$ = makeSetOp(SETOP_UNION, $3, $1, $4);
+					$$ = makeSetOp(SETOP_UNION, $3 == SET_QUANTIFIER_ALL, $1, $4);
 				}
-			| select_clause INTERSECT all_or_distinct select_clause
+			| select_clause INTERSECT set_quantifier select_clause
 				{
-					$$ = makeSetOp(SETOP_INTERSECT, $3, $1, $4);
+					$$ = makeSetOp(SETOP_INTERSECT, $3 == SET_QUANTIFIER_ALL, $1, $4);
 				}
-			| select_clause EXCEPT all_or_distinct select_clause
+			| select_clause EXCEPT set_quantifier select_clause
 				{
-					$$ = makeSetOp(SETOP_EXCEPT, $3, $1, $4);
+					$$ = makeSetOp(SETOP_EXCEPT, $3 == SET_QUANTIFIER_ALL, $1, $4);
 				}
 		;
 
@@ -11539,8 +11620,6 @@ simple_select:
  *
  * WITH [ RECURSIVE ] <query name> [ (<column>,...) ]
  *		AS (query) [ SEARCH or CYCLE clause ]
- *
- * We don't currently support the SEARCH or CYCLE clause.
  *
  * Recognizing WITH_LA here allows a CTE to be named TIME or ORDINALITY.
  */
@@ -11573,13 +11652,15 @@ cte_list:
 		| cte_list ',' common_table_expr		{ $$ = lappend($1, $3); }
 		;
 
-common_table_expr:  name opt_name_list AS opt_materialized '(' PreparableStmt ')'
+common_table_expr:  name opt_name_list AS opt_materialized '(' PreparableStmt ')' opt_search_clause opt_cycle_clause
 			{
 				CommonTableExpr *n = makeNode(CommonTableExpr);
 				n->ctename = $1;
 				n->aliascolnames = $2;
 				n->ctematerialized = $4;
 				n->ctequery = $6;
+				n->search_clause = castNode(CTESearchClause, $8);
+				n->cycle_clause = castNode(CTECycleClause, $9);
 				n->location = @1;
 				$$ = (Node *) n;
 			}
@@ -11589,6 +11670,60 @@ opt_materialized:
 		MATERIALIZED							{ $$ = CTEMaterializeAlways; }
 		| NOT MATERIALIZED						{ $$ = CTEMaterializeNever; }
 		| /*EMPTY*/								{ $$ = CTEMaterializeDefault; }
+		;
+
+opt_search_clause:
+		SEARCH DEPTH FIRST_P BY columnList SET ColId
+			{
+				CTESearchClause *n = makeNode(CTESearchClause);
+				n->search_col_list = $5;
+				n->search_breadth_first = false;
+				n->search_seq_column = $7;
+				n->location = @1;
+				$$ = (Node *) n;
+			}
+		| SEARCH BREADTH FIRST_P BY columnList SET ColId
+			{
+				CTESearchClause *n = makeNode(CTESearchClause);
+				n->search_col_list = $5;
+				n->search_breadth_first = true;
+				n->search_seq_column = $7;
+				n->location = @1;
+				$$ = (Node *) n;
+			}
+		| /*EMPTY*/
+			{
+				$$ = NULL;
+			}
+		;
+
+opt_cycle_clause:
+		CYCLE columnList SET ColId TO AexprConst DEFAULT AexprConst USING ColId
+			{
+				CTECycleClause *n = makeNode(CTECycleClause);
+				n->cycle_col_list = $2;
+				n->cycle_mark_column = $4;
+				n->cycle_mark_value = $6;
+				n->cycle_mark_default = $8;
+				n->cycle_path_column = $10;
+				n->location = @1;
+				$$ = (Node *) n;
+			}
+		| CYCLE columnList SET ColId USING ColId
+			{
+				CTECycleClause *n = makeNode(CTECycleClause);
+				n->cycle_col_list = $2;
+				n->cycle_mark_column = $4;
+				n->cycle_mark_value = makeBoolAConst(true, -1);
+				n->cycle_mark_default = makeBoolAConst(false, -1);
+				n->cycle_path_column = $6;
+				n->location = @1;
+				$$ = (Node *) n;
+			}
+		| /*EMPTY*/
+			{
+				$$ = NULL;
+			}
 		;
 
 opt_with_clause:
@@ -11674,10 +11809,10 @@ opt_table:	TABLE
 			| /*EMPTY*/
 		;
 
-all_or_distinct:
-			ALL										{ $$ = true; }
-			| DISTINCT								{ $$ = false; }
-			| /*EMPTY*/								{ $$ = false; }
+set_quantifier:
+			ALL										{ $$ = SET_QUANTIFIER_ALL; }
+			| DISTINCT								{ $$ = SET_QUANTIFIER_DISTINCT; }
+			| /*EMPTY*/								{ $$ = SET_QUANTIFIER_DEFAULT; }
 		;
 
 /* We use (NIL) as a placeholder to indicate that all target expressions
@@ -11903,8 +12038,20 @@ first_or_next: FIRST_P								{ $$ = 0; }
  * GroupingSet node of some type.
  */
 group_clause:
-			GROUP_P BY group_by_list				{ $$ = $3; }
-			| /*EMPTY*/								{ $$ = NIL; }
+			GROUP_P BY set_quantifier group_by_list
+				{
+					GroupClause *n = (GroupClause *) palloc(sizeof(GroupClause));
+					n->distinct = $3 == SET_QUANTIFIER_DISTINCT;
+					n->list = $4;
+					$$ = n;
+				}
+			| /*EMPTY*/
+				{
+					GroupClause *n = (GroupClause *) palloc(sizeof(GroupClause));
+					n->distinct = false;
+					n->list = NIL;
+					$$ = n;
+				}
 		;
 
 group_by_list:
@@ -15331,7 +15478,8 @@ PLpgSQL_Expr: opt_distinct_clause opt_target_list
 					n->targetList = $2;
 					n->fromClause = $3;
 					n->whereClause = $4;
-					n->groupClause = $5;
+					n->groupClause = ($5)->list;
+					n->groupDistinct = ($5)->distinct;
 					n->havingClause = $6;
 					n->windowClause = $7;
 					n->sortClause = $8;
@@ -15465,6 +15613,7 @@ unreserved_keyword:
 			| BACKWARD
 			| BEFORE
 			| BEGIN_P
+			| BREADTH
 			| BY
 			| CACHE
 			| CALL
@@ -15483,6 +15632,7 @@ unreserved_keyword:
 			| COMMENTS
 			| COMMIT
 			| COMMITTED
+			| COMPRESSION
 			| CONFIGURATION
 			| CONFLICT
 			| CONNECTION
@@ -15510,6 +15660,7 @@ unreserved_keyword:
 			| DELIMITER
 			| DELIMITERS
 			| DEPENDS
+			| DEPTH
 			| DETACH
 			| DICTIONARY
 			| DIJKSTRA
@@ -15538,6 +15689,7 @@ unreserved_keyword:
 			| EXTERNAL
 			| FAMILY
 			| FILTER
+			| FINALIZE
 			| FIRST_P
 			| FOLLOWING
 			| FORCE
@@ -15994,6 +16146,7 @@ bare_label_keyword:
 			| BIT
 			| BOOLEAN_P
 			| BOTH
+			| BREADTH
 			| BY
 			| CACHE
 			| CALL
@@ -16019,6 +16172,7 @@ bare_label_keyword:
 			| COMMENTS
 			| COMMIT
 			| COMMITTED
+			| COMPRESSION
 			| CONCURRENTLY
 			| CONFIGURATION
 			| CONFLICT
@@ -16059,6 +16213,7 @@ bare_label_keyword:
 			| DELIMITER
 			| DELIMITERS
 			| DEPENDS
+			| DEPTH
 			| DESC
 			| DETACH
 			| DICTIONARY
@@ -16094,6 +16249,7 @@ bare_label_keyword:
 			| EXTRACT
 			| FALSE_P
 			| FAMILY
+			| FINALIZE
 			| FIRST_P
 			| FLOAT_P
 			| FOLLOWING
@@ -16806,12 +16962,12 @@ cypher_no_parens:
 					n->last = $1;
 					$$ = (Node *) n;
 				}
-			| CypherStmt UNION all_or_distinct CypherStmt
-					{ $$ = makeCypherSetOp(SETOP_UNION, $3, $1, $4); }
-			| CypherStmt INTERSECT all_or_distinct CypherStmt
-					{ $$ = makeCypherSetOp(SETOP_INTERSECT, $3, $1, $4); }
-			| CypherStmt EXCEPT all_or_distinct CypherStmt
-					{ $$ = makeCypherSetOp(SETOP_EXCEPT, $3, $1, $4); }
+			| CypherStmt UNION set_quantifier CypherStmt
+					{ $$ = makeCypherSetOp(SETOP_UNION, $3 == SET_QUANTIFIER_ALL, $1, $4); }
+			| CypherStmt INTERSECT set_quantifier CypherStmt
+					{ $$ = makeCypherSetOp(SETOP_INTERSECT, $3 == SET_QUANTIFIER_ALL, $1, $4); }
+			| CypherStmt EXCEPT set_quantifier CypherStmt
+					{ $$ = makeCypherSetOp(SETOP_EXCEPT, $3 == SET_QUANTIFIER_ALL, $1, $4); }
 		;
 
 cypher_clause_prev:
@@ -16875,15 +17031,15 @@ cypher_read_stmt:
 					n->last = (Node *) clause;
 					$$ = (Node *) n;
 				}
-			| cypher_read_opt_parens UNION all_or_distinct
+			| cypher_read_opt_parens UNION set_quantifier
 			  cypher_read_opt_parens
-					{ $$ = makeCypherSetOp(SETOP_UNION, $3, $1, $4); }
-			| cypher_read_opt_parens INTERSECT all_or_distinct
+					{ $$ = makeCypherSetOp(SETOP_UNION, $3 == SET_QUANTIFIER_ALL, $1, $4); }
+			| cypher_read_opt_parens INTERSECT set_quantifier
 			  cypher_read_opt_parens
-					{ $$ = makeCypherSetOp(SETOP_INTERSECT, $3, $1, $4); }
-			| cypher_read_opt_parens EXCEPT all_or_distinct
+					{ $$ = makeCypherSetOp(SETOP_INTERSECT, $3 == SET_QUANTIFIER_ALL, $1, $4); }
+			| cypher_read_opt_parens EXCEPT set_quantifier
 			  cypher_read_opt_parens
-					{ $$ = makeCypherSetOp(SETOP_EXCEPT, $3, $1, $4); }
+					{ $$ = makeCypherSetOp(SETOP_EXCEPT, $3 == SET_QUANTIFIER_ALL, $1, $4); }
 		;
 
 cypher_read_opt:

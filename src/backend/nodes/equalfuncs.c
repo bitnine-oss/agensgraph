@@ -1061,6 +1061,7 @@ _equalQuery(const Query *a, const Query *b)
 	COMPARE_NODE_FIELD(onConflict);
 	COMPARE_NODE_FIELD(returningList);
 	COMPARE_NODE_FIELD(groupClause);
+	COMPARE_SCALAR_FIELD(groupDistinct);
 	COMPARE_NODE_FIELD(groupingSets);
 	COMPARE_NODE_FIELD(havingQual);
 	COMPARE_NODE_FIELD(windowClause);
@@ -1165,6 +1166,7 @@ _equalSelectStmt(const SelectStmt *a, const SelectStmt *b)
 	COMPARE_NODE_FIELD(fromClause);
 	COMPARE_NODE_FIELD(whereClause);
 	COMPARE_NODE_FIELD(groupClause);
+	COMPARE_SCALAR_FIELD(groupDistinct);
 	COMPARE_NODE_FIELD(havingClause);
 	COMPARE_NODE_FIELD(windowClause);
 	COMPARE_NODE_FIELD(valuesLists);
@@ -2706,11 +2708,22 @@ _equalIndexElem(const IndexElem *a, const IndexElem *b)
 	return true;
 }
 
+
+static bool
+_equalStatsElem(const StatsElem *a, const StatsElem *b)
+{
+	COMPARE_STRING_FIELD(name);
+	COMPARE_NODE_FIELD(expr);
+
+	return true;
+}
+
 static bool
 _equalColumnDef(const ColumnDef *a, const ColumnDef *b)
 {
 	COMPARE_STRING_FIELD(colname);
 	COMPARE_NODE_FIELD(typeName);
+	COMPARE_STRING_FIELD(compression);
 	COMPARE_SCALAR_FIELD(inhcount);
 	COMPARE_SCALAR_FIELD(is_local);
 	COMPARE_SCALAR_FIELD(is_not_null);
@@ -2955,12 +2968,42 @@ _equalOnConflictClause(const OnConflictClause *a, const OnConflictClause *b)
 }
 
 static bool
+_equalCTESearchClause(const CTESearchClause *a, const CTESearchClause *b)
+{
+	COMPARE_NODE_FIELD(search_col_list);
+	COMPARE_SCALAR_FIELD(search_breadth_first);
+	COMPARE_STRING_FIELD(search_seq_column);
+	COMPARE_LOCATION_FIELD(location);
+
+	return true;
+}
+
+static bool
+_equalCTECycleClause(const CTECycleClause *a, const CTECycleClause *b)
+{
+	COMPARE_NODE_FIELD(cycle_col_list);
+	COMPARE_STRING_FIELD(cycle_mark_column);
+	COMPARE_NODE_FIELD(cycle_mark_value);
+	COMPARE_NODE_FIELD(cycle_mark_default);
+	COMPARE_STRING_FIELD(cycle_path_column);
+	COMPARE_LOCATION_FIELD(location);
+	COMPARE_SCALAR_FIELD(cycle_mark_type);
+	COMPARE_SCALAR_FIELD(cycle_mark_typmod);
+	COMPARE_SCALAR_FIELD(cycle_mark_collation);
+	COMPARE_SCALAR_FIELD(cycle_mark_neop);
+
+	return true;
+}
+
+static bool
 _equalCommonTableExpr(const CommonTableExpr *a, const CommonTableExpr *b)
 {
 	COMPARE_STRING_FIELD(ctename);
 	COMPARE_NODE_FIELD(aliascolnames);
 	COMPARE_SCALAR_FIELD(ctematerialized);
 	COMPARE_NODE_FIELD(ctequery);
+	COMPARE_NODE_FIELD(search_clause);
+	COMPARE_NODE_FIELD(cycle_clause);
 	COMPARE_LOCATION_FIELD(location);
 	COMPARE_SCALAR_FIELD(cterecursive);
 	COMPARE_SCALAR_FIELD(cterefcount);
@@ -3360,6 +3403,7 @@ _equalPartitionCmd(const PartitionCmd *a, const PartitionCmd *b)
 {
 	COMPARE_NODE_FIELD(name);
 	COMPARE_NODE_FIELD(bound);
+	COMPARE_SCALAR_FIELD(concurrent);
 
 	return true;
 }
@@ -4138,6 +4182,9 @@ equal(const void *a, const void *b)
 		case T_IndexElem:
 			retval = _equalIndexElem(a, b);
 			break;
+		case T_StatsElem:
+			retval = _equalStatsElem(a, b);
+			break;
 		case T_ColumnDef:
 			retval = _equalColumnDef(a, b);
 			break;
@@ -4182,6 +4229,12 @@ equal(const void *a, const void *b)
 			break;
 		case T_OnConflictClause:
 			retval = _equalOnConflictClause(a, b);
+			break;
+		case T_CTESearchClause:
+			retval = _equalCTESearchClause(a, b);
+			break;
+		case T_CTECycleClause:
+			retval = _equalCTECycleClause(a, b);
 			break;
 		case T_CommonTableExpr:
 			retval = _equalCommonTableExpr(a, b);

@@ -914,7 +914,7 @@ gistPageRecyclable(Page page)
 		 */
 		FullTransactionId deletexid_full = GistPageGetDeleteXid(page);
 
-		return GlobalVisIsRemovableFullXid(NULL, deletexid_full);
+		return GlobalVisCheckRemovableFullXid(NULL, deletexid_full);
 	}
 	return false;
 }
@@ -1036,7 +1036,7 @@ gistGetFakeLSN(Relation rel)
 
 		return counter++;
 	}
-	else if (rel->rd_rel->relpersistence == RELPERSISTENCE_PERMANENT)
+	else if (RelationIsPermanent(rel))
 	{
 		/*
 		 * WAL-logging on this relation will start after commit, so its LSNs

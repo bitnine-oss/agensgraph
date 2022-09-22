@@ -159,6 +159,14 @@ brin_form_tuple(BrinDesc *brdesc, BlockNumber blkno, BrinMemTuple *tuple,
 		if (tuple->bt_columns[keyno].bv_hasnulls)
 			anynulls = true;
 
+		/* If needed, serialize the values before forming the on-disk tuple. */
+		if (tuple->bt_columns[keyno].bv_serialize)
+		{
+			tuple->bt_columns[keyno].bv_serialize(brdesc,
+												  tuple->bt_columns[keyno].bv_mem_value,
+												  tuple->bt_columns[keyno].bv_values);
+		}
+
 		/*
 		 * Now obtain the values of each stored datum.  Note that some values
 		 * might be toasted, and we cannot rely on the original heap values
@@ -213,7 +221,24 @@ brin_form_tuple(BrinDesc *brdesc, BlockNumber blkno, BrinMemTuple *tuple,
 				(atttype->typstorage == TYPSTORAGE_EXTENDED ||
 				 atttype->typstorage == TYPSTORAGE_MAIN))
 			{
-				Datum		cvalue = toast_compress_datum(value);
+				Datum	cvalue;
+				char	compression;
+				Form_pg_attribute att = TupleDescAttr(brdesc->bd_tupdesc,
+													  keyno);
+
+				/*
+				 * If the BRIN summary and indexed attribute use the same data
+				 * type and it has a valid compression method, we can use the
+				 * same compression method. Otherwise we have to use the
+				 * default method.
+				 */
+				if (att->atttypid == atttype->type_id &&
+					CompressionMethodIsValid(att->attcompression))
+					compression = att->attcompression;
+				else
+					compression = GetDefaultToastCompression();
+
+				cvalue = toast_compress_datum(value, compression);
 
 				if (DatumGetPointer(cvalue) != NULL)
 				{
@@ -495,6 +520,11 @@ brin_memtuple_initialize(BrinMemTuple *dtuple, BrinDesc *brdesc)
 		dtuple->bt_columns[i].bv_allnulls = true;
 		dtuple->bt_columns[i].bv_hasnulls = false;
 		dtuple->bt_columns[i].bv_values = (Datum *) currdatum;
+
+		dtuple->bt_columns[i].bv_mem_value = PointerGetDatum(NULL);
+		dtuple->bt_columns[i].bv_serialize = NULL;
+		dtuple->bt_columns[i].bv_context = dtuple->bt_context;
+
 		currdatum += sizeof(Datum) * brdesc->bd_info[i]->oi_nstored;
 	}
 
@@ -574,6 +604,10 @@ brin_deform_tuple(BrinDesc *brdesc, BrinTuple *tuple, BrinMemTuple *dMemtuple)
 
 		dtup->bt_columns[keyno].bv_hasnulls = hasnulls[keyno];
 		dtup->bt_columns[keyno].bv_allnulls = false;
+
+		dtup->bt_columns[keyno].bv_mem_value = PointerGetDatum(NULL);
+		dtup->bt_columns[keyno].bv_serialize = NULL;
+		dtup->bt_columns[keyno].bv_context = dtup->bt_context;
 	}
 
 	MemoryContextSwitchTo(oldcxt);

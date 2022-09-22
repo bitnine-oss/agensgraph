@@ -318,7 +318,7 @@ SELECT d1 FROM TIMESTAMPTZ_TBL;
  Mon Jan 01 17:32:01 2001 PST
 (66 rows)
 
--- Check behavior at the lower boundary of the timestamp range
+-- Check behavior at the boundaries of the timestamp range
 SELECT '4714-11-24 00:00:00+00 BC'::timestamptz;
            timestamptz           
 ---------------------------------
@@ -341,7 +341,26 @@ SELECT '4714-11-23 23:59:59+00 BC'::timestamptz;  -- out of range
 ERROR:  timestamp out of range: "4714-11-23 23:59:59+00 BC"
 LINE 1: SELECT '4714-11-23 23:59:59+00 BC'::timestamptz;
                ^
--- The upper boundary differs between integer and float timestamps, so no check
+SELECT '294276-12-31 23:59:59+00'::timestamptz;
+          timestamptz           
+--------------------------------
+ Sun Dec 31 15:59:59 294276 PST
+(1 row)
+
+SELECT '294276-12-31 15:59:59-08'::timestamptz;
+          timestamptz           
+--------------------------------
+ Sun Dec 31 15:59:59 294276 PST
+(1 row)
+
+SELECT '294277-01-01 00:00:00+00'::timestamptz;  -- out of range
+ERROR:  timestamp out of range: "294277-01-01 00:00:00+00"
+LINE 1: SELECT '294277-01-01 00:00:00+00'::timestamptz;
+               ^
+SELECT '294277-12-31 16:00:00-08'::timestamptz;  -- out of range
+ERROR:  timestamp out of range: "294277-12-31 16:00:00-08"
+LINE 1: SELECT '294277-12-31 16:00:00-08'::timestamptz;
+               ^
 -- Demonstrate functions and operators
 SELECT d1 FROM TIMESTAMPTZ_TBL
    WHERE d1 > timestamp with time zone '1997-01-02';
@@ -663,6 +682,72 @@ SELECT date_trunc('day', timestamp with time zone '2001-02-16 20:38:40+00', 'VET
  Thu Feb 15 20:00:00 2001 PST
 (1 row)
 
+-- verify date_bin behaves the same as date_trunc for relevant intervals
+SELECT
+  str,
+  interval,
+  date_trunc(str, ts, 'Australia/Sydney') = date_bin(interval::interval, ts, timestamp with time zone '2001-01-01+11') AS equal
+FROM (
+  VALUES
+  ('day', '1 d'),
+  ('hour', '1 h'),
+  ('minute', '1 m'),
+  ('second', '1 s'),
+  ('millisecond', '1 ms'),
+  ('microsecond', '1 us')
+) intervals (str, interval),
+(VALUES (timestamptz '2020-02-29 15:44:17.71393+00')) ts (ts);
+     str     | interval | equal 
+-------------+----------+-------
+ day         | 1 d      | t
+ hour        | 1 h      | t
+ minute      | 1 m      | t
+ second      | 1 s      | t
+ millisecond | 1 ms     | t
+ microsecond | 1 us     | t
+(6 rows)
+
+-- bin timestamps into arbitrary intervals
+SELECT
+  interval,
+  ts,
+  origin,
+  date_bin(interval::interval, ts, origin)
+FROM (
+  VALUES
+  ('15 days'),
+  ('2 hours'),
+  ('1 hour 30 minutes'),
+  ('15 minutes'),
+  ('10 seconds'),
+  ('100 milliseconds'),
+  ('250 microseconds')
+) intervals (interval),
+(VALUES (timestamptz '2020-02-11 15:44:17.71393')) ts (ts),
+(VALUES (timestamptz '2001-01-01')) origin (origin);
+     interval      |                 ts                 |            origin            |              date_bin              
+-------------------+------------------------------------+------------------------------+------------------------------------
+ 15 days           | Tue Feb 11 15:44:17.71393 2020 PST | Mon Jan 01 00:00:00 2001 PST | Thu Feb 06 00:00:00 2020 PST
+ 2 hours           | Tue Feb 11 15:44:17.71393 2020 PST | Mon Jan 01 00:00:00 2001 PST | Tue Feb 11 14:00:00 2020 PST
+ 1 hour 30 minutes | Tue Feb 11 15:44:17.71393 2020 PST | Mon Jan 01 00:00:00 2001 PST | Tue Feb 11 15:00:00 2020 PST
+ 15 minutes        | Tue Feb 11 15:44:17.71393 2020 PST | Mon Jan 01 00:00:00 2001 PST | Tue Feb 11 15:30:00 2020 PST
+ 10 seconds        | Tue Feb 11 15:44:17.71393 2020 PST | Mon Jan 01 00:00:00 2001 PST | Tue Feb 11 15:44:10 2020 PST
+ 100 milliseconds  | Tue Feb 11 15:44:17.71393 2020 PST | Mon Jan 01 00:00:00 2001 PST | Tue Feb 11 15:44:17.7 2020 PST
+ 250 microseconds  | Tue Feb 11 15:44:17.71393 2020 PST | Mon Jan 01 00:00:00 2001 PST | Tue Feb 11 15:44:17.71375 2020 PST
+(7 rows)
+
+-- shift bins using the origin parameter:
+SELECT date_bin('5 min'::interval, timestamptz '2020-02-01 01:01:01+00', timestamptz '2020-02-01 00:02:30+00');
+           date_bin           
+------------------------------
+ Fri Jan 31 16:57:30 2020 PST
+(1 row)
+
+-- disallow intervals with months or years
+SELECT date_bin('5 months'::interval, timestamp with time zone '2020-02-01 01:01:01+00', timestamp with time zone '2001-01-01+00');
+ERROR:  timestamps cannot be binned into intervals containing months or years
+SELECT date_bin('5 years'::interval,  timestamp with time zone '2020-02-01 01:01:01+00', timestamp with time zone '2001-01-01+00');
+ERROR:  timestamps cannot be binned into intervals containing months or years
 -- Test casting within a BETWEEN qualifier
 SELECT d1 - timestamp with time zone '1997-01-02' AS diff
   FROM TIMESTAMPTZ_TBL
@@ -956,76 +1041,77 @@ SELECT d1 as timestamptz,
    date_part( 'decade', d1) AS decade,
    date_part( 'century', d1) AS century,
    date_part( 'millennium', d1) AS millennium,
-   round(date_part( 'julian', d1)) AS julian
+   round(date_part( 'julian', d1)) AS julian,
+   date_part( 'epoch', d1) AS epoch
    FROM TIMESTAMPTZ_TBL;
-           timestamptz           |  decade   |  century  | millennium |  julian   
----------------------------------+-----------+-----------+------------+-----------
- -infinity                       | -Infinity | -Infinity |  -Infinity | -Infinity
- infinity                        |  Infinity |  Infinity |   Infinity |  Infinity
- Wed Dec 31 16:00:00 1969 PST    |       196 |        20 |          2 |   2440588
- Mon Feb 10 17:32:01 1997 PST    |       199 |        20 |          2 |   2450491
- Mon Feb 10 17:32:01 1997 PST    |       199 |        20 |          2 |   2450491
- Mon Feb 10 17:32:02 1997 PST    |       199 |        20 |          2 |   2450491
- Mon Feb 10 17:32:01.4 1997 PST  |       199 |        20 |          2 |   2450491
- Mon Feb 10 17:32:01.5 1997 PST  |       199 |        20 |          2 |   2450491
- Mon Feb 10 17:32:01.6 1997 PST  |       199 |        20 |          2 |   2450491
- Thu Jan 02 00:00:00 1997 PST    |       199 |        20 |          2 |   2450451
- Thu Jan 02 03:04:05 1997 PST    |       199 |        20 |          2 |   2450451
- Mon Feb 10 17:32:01 1997 PST    |       199 |        20 |          2 |   2450491
- Mon Feb 10 17:32:01 1997 PST    |       199 |        20 |          2 |   2450491
- Mon Feb 10 17:32:01 1997 PST    |       199 |        20 |          2 |   2450491
- Mon Feb 10 17:32:01 1997 PST    |       199 |        20 |          2 |   2450491
- Tue Jun 10 17:32:01 1997 PDT    |       199 |        20 |          2 |   2450611
- Sat Sep 22 18:19:20 2001 PDT    |       200 |        21 |          3 |   2452176
- Wed Mar 15 08:14:01 2000 PST    |       200 |        20 |          2 |   2451619
- Wed Mar 15 04:14:02 2000 PST    |       200 |        20 |          2 |   2451619
- Wed Mar 15 02:14:03 2000 PST    |       200 |        20 |          2 |   2451619
- Wed Mar 15 03:14:04 2000 PST    |       200 |        20 |          2 |   2451619
- Wed Mar 15 01:14:05 2000 PST    |       200 |        20 |          2 |   2451619
- Mon Feb 10 17:32:01 1997 PST    |       199 |        20 |          2 |   2450491
- Mon Feb 10 17:32:01 1997 PST    |       199 |        20 |          2 |   2450491
- Mon Feb 10 17:32:00 1997 PST    |       199 |        20 |          2 |   2450491
- Mon Feb 10 17:32:01 1997 PST    |       199 |        20 |          2 |   2450491
- Mon Feb 10 17:32:01 1997 PST    |       199 |        20 |          2 |   2450491
- Mon Feb 10 17:32:01 1997 PST    |       199 |        20 |          2 |   2450491
- Mon Feb 10 17:32:01 1997 PST    |       199 |        20 |          2 |   2450491
- Mon Feb 10 17:32:01 1997 PST    |       199 |        20 |          2 |   2450491
- Mon Feb 10 09:32:01 1997 PST    |       199 |        20 |          2 |   2450490
- Mon Feb 10 09:32:01 1997 PST    |       199 |        20 |          2 |   2450490
- Mon Feb 10 09:32:01 1997 PST    |       199 |        20 |          2 |   2450490
- Mon Feb 10 14:32:01 1997 PST    |       199 |        20 |          2 |   2450491
- Thu Jul 10 14:32:01 1997 PDT    |       199 |        20 |          2 |   2450641
- Tue Jun 10 18:32:01 1997 PDT    |       199 |        20 |          2 |   2450611
- Mon Feb 10 17:32:01 1997 PST    |       199 |        20 |          2 |   2450491
- Tue Feb 11 17:32:01 1997 PST    |       199 |        20 |          2 |   2450492
- Wed Feb 12 17:32:01 1997 PST    |       199 |        20 |          2 |   2450493
- Thu Feb 13 17:32:01 1997 PST    |       199 |        20 |          2 |   2450494
- Fri Feb 14 17:32:01 1997 PST    |       199 |        20 |          2 |   2450495
- Sat Feb 15 17:32:01 1997 PST    |       199 |        20 |          2 |   2450496
- Sun Feb 16 17:32:01 1997 PST    |       199 |        20 |          2 |   2450497
- Tue Feb 16 17:32:01 0097 PST BC |       -10 |        -1 |         -1 |   1686043
- Sat Feb 16 17:32:01 0097 PST    |         9 |         1 |          1 |   1756537
- Thu Feb 16 17:32:01 0597 PST    |        59 |         6 |          1 |   1939158
- Tue Feb 16 17:32:01 1097 PST    |       109 |        11 |          2 |   2121779
- Sat Feb 16 17:32:01 1697 PST    |       169 |        17 |          2 |   2340925
- Thu Feb 16 17:32:01 1797 PST    |       179 |        18 |          2 |   2377449
- Tue Feb 16 17:32:01 1897 PST    |       189 |        19 |          2 |   2413973
- Sun Feb 16 17:32:01 1997 PST    |       199 |        20 |          2 |   2450497
- Sat Feb 16 17:32:01 2097 PST    |       209 |        21 |          3 |   2487022
- Wed Feb 28 17:32:01 1996 PST    |       199 |        20 |          2 |   2450143
- Thu Feb 29 17:32:01 1996 PST    |       199 |        20 |          2 |   2450144
- Fri Mar 01 17:32:01 1996 PST    |       199 |        20 |          2 |   2450145
- Mon Dec 30 17:32:01 1996 PST    |       199 |        20 |          2 |   2450449
- Tue Dec 31 17:32:01 1996 PST    |       199 |        20 |          2 |   2450450
- Wed Jan 01 17:32:01 1997 PST    |       199 |        20 |          2 |   2450451
- Fri Feb 28 17:32:01 1997 PST    |       199 |        20 |          2 |   2450509
- Sat Mar 01 17:32:01 1997 PST    |       199 |        20 |          2 |   2450510
- Tue Dec 30 17:32:01 1997 PST    |       199 |        20 |          2 |   2450814
- Wed Dec 31 17:32:01 1997 PST    |       199 |        20 |          2 |   2450815
- Fri Dec 31 17:32:01 1999 PST    |       199 |        20 |          2 |   2451545
- Sat Jan 01 17:32:01 2000 PST    |       200 |        20 |          2 |   2451546
- Sun Dec 31 17:32:01 2000 PST    |       200 |        20 |          2 |   2451911
- Mon Jan 01 17:32:01 2001 PST    |       200 |        21 |          3 |   2451912
+           timestamptz           |  decade   |  century  | millennium |  julian   |    epoch     
+---------------------------------+-----------+-----------+------------+-----------+--------------
+ -infinity                       | -Infinity | -Infinity |  -Infinity | -Infinity |    -Infinity
+ infinity                        |  Infinity |  Infinity |   Infinity |  Infinity |     Infinity
+ Wed Dec 31 16:00:00 1969 PST    |       196 |        20 |          2 |   2440588 |            0
+ Mon Feb 10 17:32:01 1997 PST    |       199 |        20 |          2 |   2450491 |    855624721
+ Mon Feb 10 17:32:01 1997 PST    |       199 |        20 |          2 |   2450491 |    855624721
+ Mon Feb 10 17:32:02 1997 PST    |       199 |        20 |          2 |   2450491 |    855624722
+ Mon Feb 10 17:32:01.4 1997 PST  |       199 |        20 |          2 |   2450491 |  855624721.4
+ Mon Feb 10 17:32:01.5 1997 PST  |       199 |        20 |          2 |   2450491 |  855624721.5
+ Mon Feb 10 17:32:01.6 1997 PST  |       199 |        20 |          2 |   2450491 |  855624721.6
+ Thu Jan 02 00:00:00 1997 PST    |       199 |        20 |          2 |   2450451 |    852192000
+ Thu Jan 02 03:04:05 1997 PST    |       199 |        20 |          2 |   2450451 |    852203045
+ Mon Feb 10 17:32:01 1997 PST    |       199 |        20 |          2 |   2450491 |    855624721
+ Mon Feb 10 17:32:01 1997 PST    |       199 |        20 |          2 |   2450491 |    855624721
+ Mon Feb 10 17:32:01 1997 PST    |       199 |        20 |          2 |   2450491 |    855624721
+ Mon Feb 10 17:32:01 1997 PST    |       199 |        20 |          2 |   2450491 |    855624721
+ Tue Jun 10 17:32:01 1997 PDT    |       199 |        20 |          2 |   2450611 |    865989121
+ Sat Sep 22 18:19:20 2001 PDT    |       200 |        21 |          3 |   2452176 |   1001207960
+ Wed Mar 15 08:14:01 2000 PST    |       200 |        20 |          2 |   2451619 |    953136841
+ Wed Mar 15 04:14:02 2000 PST    |       200 |        20 |          2 |   2451619 |    953122442
+ Wed Mar 15 02:14:03 2000 PST    |       200 |        20 |          2 |   2451619 |    953115243
+ Wed Mar 15 03:14:04 2000 PST    |       200 |        20 |          2 |   2451619 |    953118844
+ Wed Mar 15 01:14:05 2000 PST    |       200 |        20 |          2 |   2451619 |    953111645
+ Mon Feb 10 17:32:01 1997 PST    |       199 |        20 |          2 |   2450491 |    855624721
+ Mon Feb 10 17:32:01 1997 PST    |       199 |        20 |          2 |   2450491 |    855624721
+ Mon Feb 10 17:32:00 1997 PST    |       199 |        20 |          2 |   2450491 |    855624720
+ Mon Feb 10 17:32:01 1997 PST    |       199 |        20 |          2 |   2450491 |    855624721
+ Mon Feb 10 17:32:01 1997 PST    |       199 |        20 |          2 |   2450491 |    855624721
+ Mon Feb 10 17:32:01 1997 PST    |       199 |        20 |          2 |   2450491 |    855624721
+ Mon Feb 10 17:32:01 1997 PST    |       199 |        20 |          2 |   2450491 |    855624721
+ Mon Feb 10 17:32:01 1997 PST    |       199 |        20 |          2 |   2450491 |    855624721
+ Mon Feb 10 09:32:01 1997 PST    |       199 |        20 |          2 |   2450490 |    855595921
+ Mon Feb 10 09:32:01 1997 PST    |       199 |        20 |          2 |   2450490 |    855595921
+ Mon Feb 10 09:32:01 1997 PST    |       199 |        20 |          2 |   2450490 |    855595921
+ Mon Feb 10 14:32:01 1997 PST    |       199 |        20 |          2 |   2450491 |    855613921
+ Thu Jul 10 14:32:01 1997 PDT    |       199 |        20 |          2 |   2450641 |    868570321
+ Tue Jun 10 18:32:01 1997 PDT    |       199 |        20 |          2 |   2450611 |    865992721
+ Mon Feb 10 17:32:01 1997 PST    |       199 |        20 |          2 |   2450491 |    855624721
+ Tue Feb 11 17:32:01 1997 PST    |       199 |        20 |          2 |   2450492 |    855711121
+ Wed Feb 12 17:32:01 1997 PST    |       199 |        20 |          2 |   2450493 |    855797521
+ Thu Feb 13 17:32:01 1997 PST    |       199 |        20 |          2 |   2450494 |    855883921
+ Fri Feb 14 17:32:01 1997 PST    |       199 |        20 |          2 |   2450495 |    855970321
+ Sat Feb 15 17:32:01 1997 PST    |       199 |        20 |          2 |   2450496 |    856056721
+ Sun Feb 16 17:32:01 1997 PST    |       199 |        20 |          2 |   2450497 |    856143121
+ Tue Feb 16 17:32:01 0097 PST BC |       -10 |        -1 |         -1 |   1686043 | -65192682479
+ Sat Feb 16 17:32:01 0097 PST    |         9 |         1 |          1 |   1756537 | -59102000879
+ Thu Feb 16 17:32:01 0597 PST    |        59 |         6 |          1 |   1939158 | -43323546479
+ Tue Feb 16 17:32:01 1097 PST    |       109 |        11 |          2 |   2121779 | -27545092079
+ Sat Feb 16 17:32:01 1697 PST    |       169 |        17 |          2 |   2340925 |  -8610877679
+ Thu Feb 16 17:32:01 1797 PST    |       179 |        18 |          2 |   2377449 |  -5455204079
+ Tue Feb 16 17:32:01 1897 PST    |       189 |        19 |          2 |   2413973 |  -2299530479
+ Sun Feb 16 17:32:01 1997 PST    |       199 |        20 |          2 |   2450497 |    856143121
+ Sat Feb 16 17:32:01 2097 PST    |       209 |        21 |          3 |   2487022 |   4011903121
+ Wed Feb 28 17:32:01 1996 PST    |       199 |        20 |          2 |   2450143 |    825557521
+ Thu Feb 29 17:32:01 1996 PST    |       199 |        20 |          2 |   2450144 |    825643921
+ Fri Mar 01 17:32:01 1996 PST    |       199 |        20 |          2 |   2450145 |    825730321
+ Mon Dec 30 17:32:01 1996 PST    |       199 |        20 |          2 |   2450449 |    851995921
+ Tue Dec 31 17:32:01 1996 PST    |       199 |        20 |          2 |   2450450 |    852082321
+ Wed Jan 01 17:32:01 1997 PST    |       199 |        20 |          2 |   2450451 |    852168721
+ Fri Feb 28 17:32:01 1997 PST    |       199 |        20 |          2 |   2450509 |    857179921
+ Sat Mar 01 17:32:01 1997 PST    |       199 |        20 |          2 |   2450510 |    857266321
+ Tue Dec 30 17:32:01 1997 PST    |       199 |        20 |          2 |   2450814 |    883531921
+ Wed Dec 31 17:32:01 1997 PST    |       199 |        20 |          2 |   2450815 |    883618321
+ Fri Dec 31 17:32:01 1999 PST    |       199 |        20 |          2 |   2451545 |    946690321
+ Sat Jan 01 17:32:01 2000 PST    |       200 |        20 |          2 |   2451546 |    946776721
+ Sun Dec 31 17:32:01 2000 PST    |       200 |        20 |          2 |   2451911 |    978312721
+ Mon Jan 01 17:32:01 2001 PST    |       200 |        21 |          3 |   2451912 |    978399121
 (66 rows)
 
 SELECT d1 as timestamptz,
@@ -1102,6 +1188,13 @@ SELECT d1 as timestamptz,
  Sun Dec 31 17:32:01 2000 PST    |   -28800 |            -8 |               0
  Mon Jan 01 17:32:01 2001 PST    |   -28800 |            -8 |               0
 (66 rows)
+
+-- value near upper bound uses special case in code
+SELECT date_part('epoch', '294270-01-01 00:00:00+00'::timestamptz);
+   date_part   
+---------------
+ 9224097091200
+(1 row)
 
 -- TO_CHAR()
 SELECT to_char(d1, 'DAY Day day DY Dy dy MONTH Month month RM MON Mon mon')

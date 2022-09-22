@@ -246,9 +246,15 @@ libpqrcv_check_conninfo(const char *conninfo)
 
 	opts = PQconninfoParse(conninfo, &err);
 	if (opts == NULL)
+	{
+		/* The error string is malloc'd, so we must free it explicitly */
+		char	   *errcopy = err ? pstrdup(err) : "out of memory";
+
+		PQfreemem(err);
 		ereport(ERROR,
 				(errcode(ERRCODE_SYNTAX_ERROR),
-				 errmsg("invalid connection string syntax: %s", err)));
+				 errmsg("invalid connection string syntax: %s", errcopy)));
+	}
 
 	PQconninfoFree(opts);
 }
@@ -406,9 +412,7 @@ libpqrcv_startstreaming(WalReceiverConn *conn,
 	if (options->logical)
 		appendStringInfoString(&cmd, " LOGICAL");
 
-	appendStringInfo(&cmd, " %X/%X",
-					 (uint32) (options->startpoint >> 32),
-					 (uint32) options->startpoint);
+	appendStringInfo(&cmd, " %X/%X", LSN_FORMAT_ARGS(options->startpoint));
 
 	/*
 	 * Additional options are different depending on if we are doing logical
@@ -982,6 +986,7 @@ libpqrcv_exec(WalReceiverConn *conn, const char *query,
 {
 	PGresult   *pgres = NULL;
 	WalRcvExecResult *walres = palloc0(sizeof(WalRcvExecResult));
+	char	   *diag_sqlstate;
 
 	if (MyDatabaseId == InvalidOid)
 		ereport(ERROR,
@@ -1020,11 +1025,24 @@ libpqrcv_exec(WalReceiverConn *conn, const char *query,
 			walres->err = _("empty query");
 			break;
 
+		case PGRES_PIPELINE_SYNC:
+		case PGRES_PIPELINE_ABORTED:
+			walres->status = WALRCV_ERROR;
+			walres->err = _("unexpected pipeline mode");
+			break;
+
 		case PGRES_NONFATAL_ERROR:
 		case PGRES_FATAL_ERROR:
 		case PGRES_BAD_RESPONSE:
 			walres->status = WALRCV_ERROR;
 			walres->err = pchomp(PQerrorMessage(conn->streamConn));
+			diag_sqlstate = PQresultErrorField(pgres, PG_DIAG_SQLSTATE);
+			if (diag_sqlstate)
+				walres->sqlstate = MAKE_SQLSTATE(diag_sqlstate[0],
+												 diag_sqlstate[1],
+												 diag_sqlstate[2],
+												 diag_sqlstate[3],
+												 diag_sqlstate[4]);
 			break;
 	}
 

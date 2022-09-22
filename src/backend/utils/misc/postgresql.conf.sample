@@ -101,6 +101,7 @@
 #ssl_ca_file = ''
 #ssl_cert_file = 'server.crt'
 #ssl_crl_file = ''
+#ssl_crl_dir = ''
 #ssl_key_file = 'server.key'
 #ssl_ciphers = 'HIGH:MEDIUM:+3DES:!aNULL' # allowed SSL ciphers
 #ssl_prefer_server_ciphers = on
@@ -207,7 +208,7 @@
 #wal_sync_method = fsync		# the default is the first option
 					# supported by the operating system:
 					#   open_datasync
-					#   fdatasync (default on Linux)
+					#   fdatasync (default on Linux and FreeBSD)
 					#   fsync
 					#   fsync_writethrough
 					#   open_sync
@@ -231,7 +232,7 @@
 #checkpoint_timeout = 5min		# range 30s-1d
 #max_wal_size = 1GB
 #min_wal_size = 80MB
-#checkpoint_completion_target = 0.5	# checkpoint target duration, 0.0 - 1.0
+#checkpoint_completion_target = 0.9	# checkpoint target duration, 0.0 - 1.0
 #checkpoint_flush_after = 0		# measured in pages, 0 disables
 #checkpoint_warning = 30s		# 0 disables
 
@@ -371,6 +372,7 @@
 #enable_partitionwise_aggregate = off
 #enable_parallel_hash = on
 #enable_partition_pruning = on
+#enable_async_append = on
 #enable_eager = off
 
 # - Planner Cost Constants -
@@ -587,6 +589,7 @@
 #track_activities = on
 #track_counts = on
 #track_io_timing = off
+#track_wal_io_timing = off
 #track_functions = none			# none, pl, all
 #track_activity_query_size = 1024	# (change requires restart)
 #stats_temp_directory = 'pg_stat_tmp'
@@ -659,6 +662,7 @@
 #temp_tablespaces = ''			# a list of tablespace names, '' uses
 					# only default tablespace
 #default_table_access_method = 'heap'
+#default_toast_compression = 'pglz'	# 'pglz' or 'lz4'
 #check_function_bodies = on
 #default_transaction_isolation = 'read committed'
 #default_transaction_read_only = off
@@ -672,9 +676,6 @@
 #vacuum_freeze_table_age = 150000000
 #vacuum_multixact_freeze_min_age = 5000000
 #vacuum_multixact_freeze_table_age = 150000000
-#vacuum_cleanup_index_scale_factor = 0.1	# fraction of total number of tuples
-						# before index cleanup, 0 always performs
-						# index cleanup
 #bytea_output = 'hex'			# hex, escape
 #xmlbinary = 'base64'
 #xmloption = 'content'
@@ -760,6 +761,9 @@
 
 #exit_on_error = off			# terminate session on any error?
 #restart_after_crash = on		# reinitialize after backend crash?
+#remove_temp_files_after_crash = on	# remove temporary files after
+					# backend crash?
+#recovery_init_sync_method = fsync	# fsync, syncfs (Linux 5.8+)
 #data_sync_retry = off			# retry or panic on failure to fsync
 					# data?
 					# (change requires restart)

@@ -34,13 +34,15 @@ CATALOG(pg_statistic_ext,3381,StatisticExtRelationId)
 {
 	Oid			oid;			/* oid */
 
-	Oid			stxrelid;		/* relation containing attributes */
+	Oid			stxrelid BKI_LOOKUP(pg_class);	/* relation containing
+												 * attributes */
 
 	/* These two fields form the unique key for the entry: */
 	NameData	stxname;		/* statistics object name */
-	Oid			stxnamespace;	/* OID of statistics object's namespace */
+	Oid			stxnamespace BKI_LOOKUP(pg_namespace);	/* OID of statistics
+														 * object's namespace */
 
-	Oid			stxowner;		/* statistics object's owner */
+	Oid			stxowner BKI_LOOKUP(pg_authid); /* statistics object's owner */
 	int32		stxstattarget BKI_DEFAULT(-1);	/* statistics target */
 
 	/*
@@ -52,6 +54,9 @@ CATALOG(pg_statistic_ext,3381,StatisticExtRelationId)
 #ifdef CATALOG_VARLEN
 	char		stxkind[1] BKI_FORCE_NOT_NULL;	/* statistics kinds requested
 												 * to build */
+	pg_node_tree stxexprs;		/* A list of expression trees for stats
+								 * attributes that are not simple column
+								 * references. */
 #endif
 
 } FormData_pg_statistic_ext;
@@ -72,11 +77,14 @@ DECLARE_UNIQUE_INDEX(pg_statistic_ext_name_index, 3997, on pg_statistic_ext usin
 DECLARE_INDEX(pg_statistic_ext_relid_index, 3379, on pg_statistic_ext using btree(stxrelid oid_ops));
 #define StatisticExtRelidIndexId 3379
 
+DECLARE_ARRAY_FOREIGN_KEY((stxrelid, stxkeys), pg_attribute, (attrelid, attnum));
+
 #ifdef EXPOSE_TO_CLIENT_CODE
 
 #define STATS_EXT_NDISTINCT			'd'
 #define STATS_EXT_DEPENDENCIES		'f'
 #define STATS_EXT_MCV				'm'
+#define STATS_EXT_EXPRESSIONS		'e'
 
 #endif							/* EXPOSE_TO_CLIENT_CODE */
 

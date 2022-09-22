@@ -1391,7 +1391,7 @@ project_aggregates(AggState *aggstate)
 }
 
 /*
- * Walk tlist and qual to find referenced colnos, dividing them into
+ * Find input-tuple columns that are needed, dividing them into
  * aggregated and unaggregated sets.
  */
 static void
@@ -1404,8 +1404,14 @@ find_cols(AggState *aggstate, Bitmapset **aggregated, Bitmapset **unaggregated)
 	context.aggregated = NULL;
 	context.unaggregated = NULL;
 
+	/* Examine tlist and quals */
 	(void) find_cols_walker((Node *) agg->plan.targetlist, &context);
 	(void) find_cols_walker((Node *) agg->plan.qual, &context);
+
+	/* In some cases, grouping columns will not appear in the tlist */
+	for (int i = 0; i < agg->numCols; i++)
+		context.unaggregated = bms_add_member(context.unaggregated,
+											  agg->grpColIdx[i]);
 
 	*aggregated = context.aggregated;
 	*unaggregated = context.unaggregated;
@@ -2064,8 +2070,7 @@ initialize_hash_entry(AggState *aggstate, TupleHashTable hashtable,
 }
 
 /*
- * Look up hash entries for the current tuple in all hashed grouping sets,
- * returning an array of pergroup pointers suitable for advance_aggregates.
+ * Look up hash entries for the current tuple in all hashed grouping sets.
  *
  * Be aware that lookup_hash_entry can reset the tmpcontext.
  *

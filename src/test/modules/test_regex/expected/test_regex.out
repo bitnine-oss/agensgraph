@@ -614,12 +614,19 @@ ERROR:  invalid regular expression: quantifier operand invalid
 -- expectError	7.15 -		a*+	BADRPT
 select * from test_regex('a*+', '', '-');
 ERROR:  invalid regular expression: quantifier operand invalid
--- test for ancient brenext() bug; not currently in Tcl
+-- tests for ancient brenext() bugs; not currently in Tcl
 select * from test_regex('.*b', 'aaabbb', 'b');
  test_regex 
 ------------
  {0}
  {aaabbb}
+(2 rows)
+
+select * from test_regex('.\{1,10\}', 'abcdef', 'bQ');
+   test_regex    
+-----------------
+ {0,REG_UBOUNDS}
+ {abcdef}
 (2 rows)
 
 -- doing 8 "braces"
@@ -1963,6 +1970,260 @@ select * from test_regex('a[\w]b', 'axb', 'LPE');
  {axb}
 (2 rows)
 
+-- these should be invalid
+select * from test_regex('[\w-~]*', 'ab01_~-`**', 'LNPSE');
+ERROR:  invalid regular expression: invalid character range
+select * from test_regex('[~-\w]*', 'ab01_~-`**', 'LNPSE');
+ERROR:  invalid regular expression: invalid character range
+select * from test_regex('[[:alnum:]-~]*', 'ab01~-`**', 'LNS');
+ERROR:  invalid regular expression: invalid character range
+select * from test_regex('[~-[:alnum:]]*', 'ab01~-`**', 'LNS');
+ERROR:  invalid regular expression: invalid character range
+-- test complemented char classes within brackets
+select * from test_regex('[\D]', '0123456789abc*', 'LPE');
+               test_regex               
+----------------------------------------
+ {0,REG_UBBS,REG_UNONPOSIX,REG_ULOCALE}
+ {a}
+(2 rows)
+
+select * from test_regex('[^\D]', 'abc0123456789*', 'LPE');
+               test_regex               
+----------------------------------------
+ {0,REG_UBBS,REG_UNONPOSIX,REG_ULOCALE}
+ {0}
+(2 rows)
+
+select * from test_regex('[1\D7]', '0123456789abc*', 'LPE');
+               test_regex               
+----------------------------------------
+ {0,REG_UBBS,REG_UNONPOSIX,REG_ULOCALE}
+ {1}
+(2 rows)
+
+select * from test_regex('[7\D1]', '0123456789abc*', 'LPE');
+               test_regex               
+----------------------------------------
+ {0,REG_UBBS,REG_UNONPOSIX,REG_ULOCALE}
+ {1}
+(2 rows)
+
+select * from test_regex('[^0\D1]', 'abc0123456789*', 'LPE');
+               test_regex               
+----------------------------------------
+ {0,REG_UBBS,REG_UNONPOSIX,REG_ULOCALE}
+ {2}
+(2 rows)
+
+select * from test_regex('[^1\D0]', 'abc0123456789*', 'LPE');
+               test_regex               
+----------------------------------------
+ {0,REG_UBBS,REG_UNONPOSIX,REG_ULOCALE}
+ {2}
+(2 rows)
+
+select * from test_regex('\W', '0123456789abc_*', 'LP');
+          test_regex           
+-------------------------------
+ {0,REG_UNONPOSIX,REG_ULOCALE}
+ {*}
+(2 rows)
+
+select * from test_regex('[\W]', '0123456789abc_*', 'LPE');
+               test_regex               
+----------------------------------------
+ {0,REG_UBBS,REG_UNONPOSIX,REG_ULOCALE}
+ {*}
+(2 rows)
+
+select * from test_regex('[\s\S]*', '012  3456789abc_*', 'LNPE');
+                       test_regex                       
+--------------------------------------------------------
+ {0,REG_UBBS,REG_UNONPOSIX,REG_ULOCALE,REG_UEMPTYMATCH}
+ {"012  3456789abc_*"}
+(2 rows)
+
+-- check char classes' handling of newlines
+select * from test_regex('\s+', E'abc  \n  def', 'LP');
+          test_regex           
+-------------------------------
+ {0,REG_UNONPOSIX,REG_ULOCALE}
+ {"                           +
+   "}
+(2 rows)
+
+select * from test_regex('\s+', E'abc  \n  def', 'nLP');
+          test_regex           
+-------------------------------
+ {0,REG_UNONPOSIX,REG_ULOCALE}
+ {"                           +
+   "}
+(2 rows)
+
+select * from test_regex('[\s]+', E'abc  \n  def', 'LPE');
+               test_regex               
+----------------------------------------
+ {0,REG_UBBS,REG_UNONPOSIX,REG_ULOCALE}
+ {"                                    +
+   "}
+(2 rows)
+
+select * from test_regex('[\s]+', E'abc  \n  def', 'nLPE');
+               test_regex               
+----------------------------------------
+ {0,REG_UBBS,REG_UNONPOSIX,REG_ULOCALE}
+ {"                                    +
+   "}
+(2 rows)
+
+select * from test_regex('\S+', E'abc\ndef', 'LP');
+          test_regex           
+-------------------------------
+ {0,REG_UNONPOSIX,REG_ULOCALE}
+ {abc}
+(2 rows)
+
+select * from test_regex('\S+', E'abc\ndef', 'nLP');
+          test_regex           
+-------------------------------
+ {0,REG_UNONPOSIX,REG_ULOCALE}
+ {abc}
+(2 rows)
+
+select * from test_regex('[\S]+', E'abc\ndef', 'LPE');
+               test_regex               
+----------------------------------------
+ {0,REG_UBBS,REG_UNONPOSIX,REG_ULOCALE}
+ {abc}
+(2 rows)
+
+select * from test_regex('[\S]+', E'abc\ndef', 'nLPE');
+               test_regex               
+----------------------------------------
+ {0,REG_UBBS,REG_UNONPOSIX,REG_ULOCALE}
+ {abc}
+(2 rows)
+
+select * from test_regex('\d+', E'012\n345', 'LP');
+          test_regex           
+-------------------------------
+ {0,REG_UNONPOSIX,REG_ULOCALE}
+ {012}
+(2 rows)
+
+select * from test_regex('\d+', E'012\n345', 'nLP');
+          test_regex           
+-------------------------------
+ {0,REG_UNONPOSIX,REG_ULOCALE}
+ {012}
+(2 rows)
+
+select * from test_regex('[\d]+', E'012\n345', 'LPE');
+               test_regex               
+----------------------------------------
+ {0,REG_UBBS,REG_UNONPOSIX,REG_ULOCALE}
+ {012}
+(2 rows)
+
+select * from test_regex('[\d]+', E'012\n345', 'nLPE');
+               test_regex               
+----------------------------------------
+ {0,REG_UBBS,REG_UNONPOSIX,REG_ULOCALE}
+ {012}
+(2 rows)
+
+select * from test_regex('\D+', E'abc\ndef345', 'LP');
+          test_regex           
+-------------------------------
+ {0,REG_UNONPOSIX,REG_ULOCALE}
+ {"abc                        +
+ def"}
+(2 rows)
+
+select * from test_regex('\D+', E'abc\ndef345', 'nLP');
+          test_regex           
+-------------------------------
+ {0,REG_UNONPOSIX,REG_ULOCALE}
+ {"abc                        +
+ def"}
+(2 rows)
+
+select * from test_regex('[\D]+', E'abc\ndef345', 'LPE');
+               test_regex               
+----------------------------------------
+ {0,REG_UBBS,REG_UNONPOSIX,REG_ULOCALE}
+ {"abc                                 +
+ def"}
+(2 rows)
+
+select * from test_regex('[\D]+', E'abc\ndef345', 'nLPE');
+               test_regex               
+----------------------------------------
+ {0,REG_UBBS,REG_UNONPOSIX,REG_ULOCALE}
+ {"abc                                 +
+ def"}
+(2 rows)
+
+select * from test_regex('\w+', E'abc_012\ndef', 'LP');
+          test_regex           
+-------------------------------
+ {0,REG_UNONPOSIX,REG_ULOCALE}
+ {abc_012}
+(2 rows)
+
+select * from test_regex('\w+', E'abc_012\ndef', 'nLP');
+          test_regex           
+-------------------------------
+ {0,REG_UNONPOSIX,REG_ULOCALE}
+ {abc_012}
+(2 rows)
+
+select * from test_regex('[\w]+', E'abc_012\ndef', 'LPE');
+               test_regex               
+----------------------------------------
+ {0,REG_UBBS,REG_UNONPOSIX,REG_ULOCALE}
+ {abc_012}
+(2 rows)
+
+select * from test_regex('[\w]+', E'abc_012\ndef', 'nLPE');
+               test_regex               
+----------------------------------------
+ {0,REG_UBBS,REG_UNONPOSIX,REG_ULOCALE}
+ {abc_012}
+(2 rows)
+
+select * from test_regex('\W+', E'***\n@@@___', 'LP');
+          test_regex           
+-------------------------------
+ {0,REG_UNONPOSIX,REG_ULOCALE}
+ {"***                        +
+ @@@"}
+(2 rows)
+
+select * from test_regex('\W+', E'***\n@@@___', 'nLP');
+          test_regex           
+-------------------------------
+ {0,REG_UNONPOSIX,REG_ULOCALE}
+ {"***                        +
+ @@@"}
+(2 rows)
+
+select * from test_regex('[\W]+', E'***\n@@@___', 'LPE');
+               test_regex               
+----------------------------------------
+ {0,REG_UBBS,REG_UNONPOSIX,REG_ULOCALE}
+ {"***                                 +
+ @@@"}
+(2 rows)
+
+select * from test_regex('[\W]+', E'***\n@@@___', 'nLPE');
+               test_regex               
+----------------------------------------
+ {0,REG_UBBS,REG_UNONPOSIX,REG_ULOCALE}
+ {"***                                 +
+ @@@"}
+(2 rows)
+
 -- doing 13 "escapes"
 -- expectError	13.1  &		"a\\"		EESCAPE
 select * from test_regex('a\', '', '');
@@ -2374,6 +2635,28 @@ select * from test_regex('^(.+)( \1)+$', 'abc abc abd', 'RP');
 --------------------------------
  {2,REG_UBACKREF,REG_UNONPOSIX}
 (1 row)
+
+-- back reference only matches the string, not any constraints
+select * from test_regex('(^\w+).*\1', 'abc abc abc', 'LRP');
+                 test_regex                 
+--------------------------------------------
+ {1,REG_UBACKREF,REG_UNONPOSIX,REG_ULOCALE}
+ {"abc abc abc",abc}
+(2 rows)
+
+select * from test_regex('(^\w+\M).*\1', 'abc abcd abd', 'LRP');
+                 test_regex                 
+--------------------------------------------
+ {1,REG_UBACKREF,REG_UNONPOSIX,REG_ULOCALE}
+ {"abc abc",abc}
+(2 rows)
+
+select * from test_regex('(\w+(?= )).*\1', 'abc abcd abd', 'HLRP');
+                         test_regex                         
+------------------------------------------------------------
+ {1,REG_UBACKREF,REG_ULOOKAROUND,REG_UNONPOSIX,REG_ULOCALE}
+ {"abc abc",abc}
+(2 rows)
 
 -- doing 15 "octal escapes vs back references"
 -- # initial zero is always octal
@@ -3315,6 +3598,21 @@ select * from test_regex('(?=b)b', 'a', 'HP');
  {0,REG_ULOOKAROUND,REG_UNONPOSIX}
 (1 row)
 
+-- expectMatch	23.9 HP		...(?!.)	abcde	cde
+select * from test_regex('...(?!.)', 'abcde', 'HP');
+            test_regex             
+-----------------------------------
+ {0,REG_ULOOKAROUND,REG_UNONPOSIX}
+ {cde}
+(2 rows)
+
+-- expectNomatch	23.10 HP	...(?=.)	abc
+select * from test_regex('...(?=.)', 'abc', 'HP');
+            test_regex             
+-----------------------------------
+ {0,REG_ULOOKAROUND,REG_UNONPOSIX}
+(1 row)
+
 -- Postgres addition: lookbehind constraints
 -- expectMatch	23.11 HPN		(?<=a)b*	ab	b
 select * from test_regex('(?<=a)b*', 'ab', 'HPN');
@@ -3375,6 +3673,39 @@ select * from test_regex('(?<=b)b', 'b', 'HP');
 -----------------------------------
  {0,REG_ULOOKAROUND,REG_UNONPOSIX}
 (1 row)
+
+-- expectMatch	23.19 HP		(?<=.)..	abcde	bc
+select * from test_regex('(?<=.)..', 'abcde', 'HP');
+            test_regex             
+-----------------------------------
+ {0,REG_ULOOKAROUND,REG_UNONPOSIX}
+ {bc}
+(2 rows)
+
+-- expectMatch	23.20 HP		(?<=..)a*	aaabb	a
+select * from test_regex('(?<=..)a*', 'aaabb', 'HP');
+            test_regex             
+-----------------------------------
+ {0,REG_ULOOKAROUND,REG_UNONPOSIX}
+ {a}
+(2 rows)
+
+-- expectMatch	23.21 HP		(?<=..)b*	aaabb	{}
+-- Note: empty match here is correct, it matches after the first 2 characters
+select * from test_regex('(?<=..)b*', 'aaabb', 'HP');
+            test_regex             
+-----------------------------------
+ {0,REG_ULOOKAROUND,REG_UNONPOSIX}
+ {""}
+(2 rows)
+
+-- expectMatch	23.22 HP		(?<=..)b+	aaabb	bb
+select * from test_regex('(?<=..)b+', 'aaabb', 'HP');
+            test_regex             
+-----------------------------------
+ {0,REG_ULOOKAROUND,REG_UNONPOSIX}
+ {bb}
+(2 rows)
 
 -- doing 24 "non-greedy quantifiers"
 -- expectMatch	24.1  PT	ab+?		abb	ab

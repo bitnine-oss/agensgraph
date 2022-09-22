@@ -1293,6 +1293,7 @@ transformSelectStmt(ParseState *pstate, SelectStmt *stmt)
 											qry->sortClause,
 											EXPR_KIND_GROUP_BY,
 											false /* allow SQL92 rules */ );
+	qry->groupDistinct = stmt->groupDistinct;
 
 	if (stmt->distinctClause == NIL)
 	{
@@ -1839,6 +1840,33 @@ transformSetOperationStmt(ParseState *pstate, SelectStmt *stmt)
 }
 
 /*
+ * Make a SortGroupClause node for a SetOperationStmt's groupClauses
+ */
+SortGroupClause *
+makeSortGroupClauseForSetOp(Oid rescoltype)
+{
+	SortGroupClause *grpcl = makeNode(SortGroupClause);
+	Oid			sortop;
+	Oid			eqop;
+	bool		hashable;
+
+	/* determine the eqop and optional sortop */
+	get_sort_group_operators(rescoltype,
+							 false, true, false,
+							 &sortop, &eqop, NULL,
+							 &hashable);
+
+	/* we don't have a tlist yet, so can't assign sortgrouprefs */
+	grpcl->tleSortGroupRef = 0;
+	grpcl->eqop = eqop;
+	grpcl->sortop = sortop;
+	grpcl->nulls_first = false; /* OK with or without sortop */
+	grpcl->hashable = hashable;
+
+	return grpcl;
+}
+
+/*
  * transformSetOperationTree
  *		Recursively transform leaves and internal nodes of a set-op tree
  *
@@ -2138,31 +2166,15 @@ transformSetOperationTree(ParseState *pstate, SelectStmt *stmt,
 			 */
 			if (op->op != SETOP_UNION || !op->all)
 			{
-				SortGroupClause *grpcl = makeNode(SortGroupClause);
-				Oid			sortop;
-				Oid			eqop;
-				bool		hashable;
 				ParseCallbackState pcbstate;
 
 				setup_parser_errposition_callback(&pcbstate, pstate,
 												  bestlocation);
 
-				/* determine the eqop and optional sortop */
-				get_sort_group_operators(rescoltype,
-										 false, true, false,
-										 &sortop, &eqop, NULL,
-										 &hashable);
+				op->groupClauses = lappend(op->groupClauses,
+										   makeSortGroupClauseForSetOp(rescoltype));
 
 				cancel_parser_errposition_callback(&pcbstate);
-
-				/* we don't have a tlist yet, so can't assign sortgrouprefs */
-				grpcl->tleSortGroupRef = 0;
-				grpcl->eqop = eqop;
-				grpcl->sortop = sortop;
-				grpcl->nulls_first = false; /* OK with or without sortop */
-				grpcl->hashable = hashable;
-
-				op->groupClauses = lappend(op->groupClauses, grpcl);
 			}
 
 			/*

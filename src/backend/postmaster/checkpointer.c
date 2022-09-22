@@ -145,7 +145,7 @@ static CheckpointerShmemStruct *CheckpointerShmem;
  */
 int			CheckPointTimeout = 300;
 int			CheckPointWarning = 30;
-double		CheckPointCompletionTarget = 0.5;
+double		CheckPointCompletionTarget = 0.9;
 
 /*
  * Private state
@@ -505,7 +505,7 @@ CheckpointerMain(void)
 		pgstat_send_bgwriter();
 
 		/* Send WAL statistics to the stats collector. */
-		pgstat_send_wal();
+		pgstat_report_wal();
 
 		/*
 		 * If any checkpoint flags have been set, redo the loop to handle the
@@ -572,8 +572,19 @@ HandleCheckpointerInterrupts(void)
 		 * back to the sigsetjmp block above
 		 */
 		ExitOnAnyError = true;
-		/* Close down the database */
+
+		/*
+		 * Close down the database.
+		 *
+		 * Since ShutdownXLOG() creates restartpoint or checkpoint, and
+		 * updates the statistics, increment the checkpoint request and send
+		 * the statistics to the stats collector.
+		 */
+		BgWriterStats.m_requested_checkpoints++;
 		ShutdownXLOG(0, 0);
+		pgstat_send_bgwriter();
+		pgstat_report_wal();
+
 		/* Normal exit from the checkpointer is here */
 		proc_exit(0);			/* done */
 	}
@@ -1226,7 +1237,7 @@ CompactCheckpointerRequestQueue(void)
 		CheckpointerShmem->requests[preserve_count++] = CheckpointerShmem->requests[n];
 	}
 	ereport(DEBUG1,
-			(errmsg("compacted fsync request queue from %d entries to %d entries",
+			(errmsg_internal("compacted fsync request queue from %d entries to %d entries",
 					CheckpointerShmem->num_requests, preserve_count)));
 	CheckpointerShmem->num_requests = preserve_count;
 

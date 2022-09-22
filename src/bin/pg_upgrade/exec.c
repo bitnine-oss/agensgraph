@@ -11,12 +11,13 @@
 
 #include <fcntl.h>
 
+#include "common/string.h"
 #include "pg_upgrade.h"
 
 static void check_data_dir(ClusterInfo *cluster);
-static void check_bin_dir(ClusterInfo *cluster);
+static void check_bin_dir(ClusterInfo *cluster, bool check_versions);
 static void get_bin_version(ClusterInfo *cluster);
-static void validate_exec(const char *dir, const char *cmdName);
+static void check_exec(const char *dir, const char *program, bool check_version);
 
 #ifdef WIN32
 static int	win32_check_directory_write_permissions(void);
@@ -256,9 +257,9 @@ verify_directories(void)
 #endif
 		pg_fatal("You must have read and write access in the current directory.\n");
 
-	check_bin_dir(&old_cluster);
+	check_bin_dir(&old_cluster, false);
 	check_data_dir(&old_cluster);
-	check_bin_dir(&new_cluster);
+	check_bin_dir(&new_cluster, true);
 	check_data_dir(&new_cluster);
 }
 
@@ -361,9 +362,13 @@ check_data_dir(ClusterInfo *cluster)
  *	in the binaries directory.  If we find that a required executable
  *	is missing (or secured against us), we display an error message and
  *	exit().
+ *
+ *	If check_versions is true, then the versions of the binaries are checked
+ *	against the version of this pg_upgrade.  This is for checking the target
+ *	bindir.
  */
 static void
-check_bin_dir(ClusterInfo *cluster)
+check_bin_dir(ClusterInfo *cluster, bool check_versions)
 {
 	struct stat statBuf;
 
@@ -375,9 +380,9 @@ check_bin_dir(ClusterInfo *cluster)
 		report_status(PG_FATAL, "\"%s\" is not a directory\n",
 					  cluster->bindir);
 
-	validate_exec(cluster->bindir, "postgres");
-	validate_exec(cluster->bindir, "pg_controldata");
-	validate_exec(cluster->bindir, "pg_ctl");
+	check_exec(cluster->bindir, "postgres", check_versions);
+	check_exec(cluster->bindir, "pg_controldata", check_versions);
+	check_exec(cluster->bindir, "pg_ctl", check_versions);
 
 	/*
 	 * Fetch the binary version after checking for the existence of pg_ctl.
@@ -388,9 +393,9 @@ check_bin_dir(ClusterInfo *cluster)
 
 	/* pg_resetxlog has been renamed to pg_resetwal in version 10 */
 	if (GET_MAJOR_VERSION(cluster->bin_version) <= 906)
-		validate_exec(cluster->bindir, "pg_resetxlog");
+		check_exec(cluster->bindir, "pg_resetxlog", check_versions);
 	else
-		validate_exec(cluster->bindir, "pg_resetwal");
+		check_exec(cluster->bindir, "pg_resetwal", check_versions);
 
 	if (cluster == &new_cluster)
 	{
@@ -399,63 +404,49 @@ check_bin_dir(ClusterInfo *cluster)
 		 * pg_dumpall are used to dump the old cluster, but must be of the
 		 * target version.
 		 */
-		validate_exec(cluster->bindir, "initdb");
-		validate_exec(cluster->bindir, "pg_dump");
-		validate_exec(cluster->bindir, "pg_dumpall");
-		validate_exec(cluster->bindir, "pg_restore");
-		validate_exec(cluster->bindir, "psql");
-		validate_exec(cluster->bindir, "vacuumdb");
+		check_exec(cluster->bindir, "initdb", check_versions);
+		check_exec(cluster->bindir, "pg_dump", check_versions);
+		check_exec(cluster->bindir, "pg_dumpall", check_versions);
+		check_exec(cluster->bindir, "pg_restore", check_versions);
+		check_exec(cluster->bindir, "psql", check_versions);
+		check_exec(cluster->bindir, "vacuumdb", check_versions);
 	}
 }
 
-
-/*
- * validate_exec()
- *
- * validate "path" as an executable file
- */
 static void
-validate_exec(const char *dir, const char *cmdName)
+check_exec(const char *dir, const char *program, bool check_version)
 {
-	char		path[MAXPGPATH];
-	struct stat buf;
+	char	path[MAXPGPATH];
+	char	line[MAXPGPATH];
+	char	cmd[MAXPGPATH];
+	char	versionstr[128];
+	int		ret;
 
-	snprintf(path, sizeof(path), "%s/%s", dir, cmdName);
+	snprintf(path, sizeof(path), "%s/%s", dir, program);
 
-#ifdef WIN32
-	/* Windows requires a .exe suffix for stat() */
-	if (strlen(path) <= strlen(EXE_EXT) ||
-		pg_strcasecmp(path + strlen(path) - strlen(EXE_EXT), EXE_EXT) != 0)
-		strlcat(path, EXE_EXT, sizeof(path));
-#endif
+	ret = validate_exec(path);
 
-	/*
-	 * Ensure that the file exists and is a regular file.
-	 */
-	if (stat(path, &buf) < 0)
-		pg_fatal("check for \"%s\" failed: %s\n",
-				 path, strerror(errno));
-	else if (!S_ISREG(buf.st_mode))
+	if (ret == -1)
 		pg_fatal("check for \"%s\" failed: not a regular file\n",
 				 path);
-
-	/*
-	 * Ensure that the file is both executable and readable (required for
-	 * dynamic loading).
-	 */
-#ifndef WIN32
-	if (access(path, R_OK) != 0)
-#else
-	if ((buf.st_mode & S_IRUSR) == 0)
-#endif
-		pg_fatal("check for \"%s\" failed: cannot read file (permission denied)\n",
-				 path);
-
-#ifndef WIN32
-	if (access(path, X_OK) != 0)
-#else
-	if ((buf.st_mode & S_IXUSR) == 0)
-#endif
+	else if (ret == -2)
 		pg_fatal("check for \"%s\" failed: cannot execute (permission denied)\n",
 				 path);
+
+	snprintf(cmd, sizeof(cmd), "\"%s\" -V", path);
+
+	if (!pipe_read_line(cmd, line, sizeof(line)))
+		pg_fatal("check for \"%s\" failed: cannot execute\n",
+				 path);
+
+	if (check_version)
+	{
+		pg_strip_crlf(line);
+
+		snprintf(versionstr, sizeof(versionstr), "%s (PostgreSQL) " PG_VERSION, program);
+
+		if (strcmp(line, versionstr) != 0)
+			pg_fatal("check for \"%s\" failed: incorrect version: found \"%s\", expected \"%s\"\n",
+					 path, line, versionstr);
+	}
 }

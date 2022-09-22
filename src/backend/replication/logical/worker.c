@@ -807,12 +807,8 @@ apply_handle_stream_stop(StringInfo s)
 	/* We must be in a valid transaction state */
 	Assert(IsTransactionState());
 
-	/* The synchronization worker runs in single transaction. */
-	if (!am_tablesync_worker())
-	{
-		/* Commit the per-stream transaction */
-		CommitTransactionCommand();
-	}
+	/* Commit the per-stream transaction */
+	CommitTransactionCommand();
 
 	in_streamed_transaction = false;
 
@@ -889,9 +885,7 @@ apply_handle_stream_abort(StringInfo s)
 			/* Cleanup the subxact info */
 			cleanup_subxact_info();
 
-			/* The synchronization worker runs in single transaction */
-			if (!am_tablesync_worker())
-				CommitTransactionCommand();
+			CommitTransactionCommand();
 			return;
 		}
 
@@ -918,8 +912,7 @@ apply_handle_stream_abort(StringInfo s)
 		/* write the updated subxact list */
 		subxact_info_write(MyLogicalRepWorker->subid, xid);
 
-		if (!am_tablesync_worker())
-			CommitTransactionCommand();
+		CommitTransactionCommand();
 	}
 }
 
@@ -1062,8 +1055,7 @@ apply_handle_stream_commit(StringInfo s)
 static void
 apply_handle_commit_internal(StringInfo s, LogicalRepCommitData *commit_data)
 {
-	/* The synchronization worker runs in single transaction. */
-	if (IsTransactionState() && !am_tablesync_worker())
+	if (IsTransactionState())
 	{
 		/*
 		 * Update origin state so we can restart streaming from correct
@@ -1522,7 +1514,7 @@ apply_handle_delete_internal(ResultRelInfo *relinfo, EState *estate,
 	{
 		/* The tuple to be deleted could not be found. */
 		elog(DEBUG1,
-			 "logical replication could not find row for delete "
+			 "logical replication did not find row for delete "
 			 "in replication target relation \"%s\"",
 			 RelationGetRelationName(localrel));
 	}
@@ -2367,10 +2359,9 @@ send_feedback(XLogRecPtr recvpos, bool force, bool requestReply)
 
 	elog(DEBUG2, "sending feedback (force %d) to recv %X/%X, write %X/%X, flush %X/%X",
 		 force,
-		 (uint32) (recvpos >> 32), (uint32) recvpos,
-		 (uint32) (writepos >> 32), (uint32) writepos,
-		 (uint32) (flushpos >> 32), (uint32) flushpos
-		);
+		 LSN_FORMAT_ARGS(recvpos),
+		 LSN_FORMAT_ARGS(writepos),
+		 LSN_FORMAT_ARGS(flushpos));
 
 	walrcv_send(wrconn, reply_message->data, reply_message->len);
 
@@ -2749,14 +2740,14 @@ stream_cleanup_files(Oid subid, TransactionId xid)
 {
 	char		path[MAXPGPATH];
 	StreamXidHash *ent;
+	bool		found = false;
 
-	/* Remove the xid entry from the stream xid hash */
+	/* By this time we must have created the transaction entry */
 	ent = (StreamXidHash *) hash_search(xidhash,
 										(void *) &xid,
-										HASH_REMOVE,
-										NULL);
-	/* By this time we must have created the transaction entry */
-	Assert(ent != NULL);
+										HASH_FIND,
+										&found);
+	Assert(found);
 
 	/* Delete the change file and release the stream fileset memory */
 	changes_filename(path, subid, xid);
@@ -2772,6 +2763,9 @@ stream_cleanup_files(Oid subid, TransactionId xid)
 		pfree(ent->subxact_fileset);
 		ent->subxact_fileset = NULL;
 	}
+
+	/* Remove the xid entry from the stream xid hash */
+	hash_search(xidhash, (void *) &xid, HASH_REMOVE, NULL);
 }
 
 /*

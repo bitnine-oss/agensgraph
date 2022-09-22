@@ -189,7 +189,7 @@ ginDeletePage(GinVacuumState *gvs, BlockNumber deleteBlkno, BlockNumber leftBlkn
 	 * address.
 	 */
 	GinPageSetDeleted(page);
-	GinPageSetDeleteXid(page, ReadNewTransactionId());
+	GinPageSetDeleteXid(page, ReadNextTransactionId());
 
 	MarkBufferDirty(pBuffer);
 	MarkBufferDirty(lBuffer);
@@ -231,6 +231,7 @@ ginDeletePage(GinVacuumState *gvs, BlockNumber deleteBlkno, BlockNumber leftBlkn
 
 	END_CRIT_SECTION();
 
+	gvs->result->pages_newly_deleted++;
 	gvs->result->pages_deleted++;
 }
 

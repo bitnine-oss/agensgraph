@@ -72,9 +72,11 @@
 
 #include "postgres.h"
 
+#include <dirent.h>
 #include <sys/file.h>
 #include <sys/param.h>
 #include <sys/stat.h>
+#include <sys/types.h>
 #ifndef WIN32
 #include <sys/mman.h>
 #endif
@@ -157,6 +159,9 @@ int			max_safe_fds = FD_MINFREE;	/* default if not changed */
 
 /* Whether it is safe to continue running after fsync() fails. */
 bool		data_sync_retry = false;
+
+/* How SyncDataDirectory() should do its job. */
+int			recovery_init_sync_method = RECOVERY_INIT_SYNC_METHOD_FSYNC;
 
 /* Debugging.... */
 
@@ -796,16 +801,19 @@ durable_unlink(const char *fname, int elevel)
 }
 
 /*
- * durable_rename_excl -- rename a file in a durable manner, without
- * overwriting an existing target file
+ * durable_rename_excl -- rename a file in a durable manner.
  *
- * Similar to durable_rename(), except that this routine will fail if the
- * target file already exists.
+ * Similar to durable_rename(), except that this routine tries (but does not
+ * guarantee) not to overwrite the target file.
  *
  * Note that a crash in an unfortunate moment can leave you with two links to
  * the target file.
  *
  * Log errors with the caller specified severity.
+ *
+ * On Windows, using a hard link followed by unlink() causes concurrency
+ * issues, while a simple rename() does not cause that, so be careful when
+ * changing the logic of this routine.
  *
  * Returns 0 if the operation succeeded, -1 otherwise. Note that errno is not
  * valid upon return.
@@ -820,6 +828,7 @@ durable_rename_excl(const char *oldfile, const char *newfile, int elevel)
 	if (fsync_fname_ext(oldfile, false, false, elevel) != 0)
 		return -1;
 
+#ifdef HAVE_WORKING_LINK
 	if (link(oldfile, newfile) < 0)
 	{
 		ereport(elevel,
@@ -829,6 +838,16 @@ durable_rename_excl(const char *oldfile, const char *newfile, int elevel)
 		return -1;
 	}
 	unlink(oldfile);
+#else
+	if (rename(oldfile, newfile) < 0)
+	{
+		ereport(elevel,
+				(errcode_for_file_access(),
+				 errmsg("could not rename file \"%s\" to \"%s\": %m",
+						oldfile, newfile)));
+		return -1;
+	}
+#endif
 
 	/*
 	 * Make change persistent in case of an OS crash, both the new entry and
@@ -3024,11 +3043,13 @@ CleanupTempFiles(bool isCommit, bool isProcExit)
  * remove any leftover files created by OpenTemporaryFile and any leftover
  * temporary relation files created by mdcreate.
  *
- * NOTE: we could, but don't, call this during a post-backend-crash restart
- * cycle.  The argument for not doing it is that someone might want to examine
- * the temp files for debugging purposes.  This does however mean that
- * OpenTemporaryFile had better allow for collision with an existing temp
- * file name.
+ * During post-backend-crash restart cycle, this routine is called when
+ * remove_temp_files_after_crash GUC is enabled. Multiple crashes while
+ * queries are using temp files could result in useless storage usage that can
+ * only be reclaimed by a service restart. The argument against enabling it is
+ * that someone might want to examine the temporary files for debugging
+ * purposes. This does however mean that OpenTemporaryFile had better allow for
+ * collision with an existing temp file name.
  *
  * NOTE: this function and its subroutines generally report syscall failures
  * with ereport(LOG) and keep going.  Removing temp files is not so critical
@@ -3263,9 +3284,31 @@ looks_like_temp_rel_name(const char *name)
 	return true;
 }
 
+#ifdef HAVE_SYNCFS
+static void
+do_syncfs(const char *path)
+{
+	int		fd;
+
+	fd = OpenTransientFile(path, O_RDONLY);
+	if (fd < 0)
+	{
+		ereport(LOG,
+				(errcode_for_file_access(),
+				 errmsg("could not open %s: %m", path)));
+		return;
+	}
+	if (syncfs(fd) < 0)
+		ereport(LOG,
+				(errcode_for_file_access(),
+				 errmsg("could not sync filesystem for \"%s\": %m", path)));
+	CloseTransientFile(fd);
+}
+#endif
 
 /*
- * Issue fsync recursively on PGDATA and all its contents.
+ * Issue fsync recursively on PGDATA and all its contents, or issue syncfs for
+ * all potential filesystem, depending on recovery_init_sync_method setting.
  *
  * We fsync regular files and directories wherever they are, but we
  * follow symlinks only for pg_wal and immediately under pg_tblspc.
@@ -3316,6 +3359,42 @@ SyncDataDirectory(void)
 	if (pgwin32_is_junction("pg_wal"))
 		xlog_is_symlink = true;
 #endif
+
+#ifdef HAVE_SYNCFS
+	if (recovery_init_sync_method == RECOVERY_INIT_SYNC_METHOD_SYNCFS)
+	{
+		DIR		   *dir;
+		struct dirent *de;
+
+		/*
+		 * On Linux, we don't have to open every single file one by one.  We
+		 * can use syncfs() to sync whole filesystems.  We only expect
+		 * filesystem boundaries to exist where we tolerate symlinks, namely
+		 * pg_wal and the tablespaces, so we call syncfs() for each of those
+		 * directories.
+		 */
+
+		/* Sync the top level pgdata directory. */
+		do_syncfs(".");
+		/* If any tablespaces are configured, sync each of those. */
+		dir = AllocateDir("pg_tblspc");
+		while ((de = ReadDirExtended(dir, "pg_tblspc", LOG)))
+		{
+			char		path[MAXPGPATH];
+
+			if (strcmp(de->d_name, ".") == 0 || strcmp(de->d_name, "..") == 0)
+				continue;
+
+			snprintf(path, MAXPGPATH, "pg_tblspc/%s", de->d_name);
+			do_syncfs(path);
+		}
+		FreeDir(dir);
+		/* If pg_wal is a symlink, process that too. */
+		if (xlog_is_symlink)
+			do_syncfs("pg_wal");
+		return;
+	}
+#endif		/* !HAVE_SYNCFS */
 
 	/*
 	 * If possible, hint to the kernel that we're soon going to fsync the data

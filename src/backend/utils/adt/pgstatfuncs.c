@@ -569,7 +569,7 @@ pg_stat_get_progress_info(PG_FUNCTION_ARGS)
 Datum
 pg_stat_get_activity(PG_FUNCTION_ARGS)
 {
-#define PG_STAT_GET_ACTIVITY_COLS	30
+#define PG_STAT_GET_ACTIVITY_COLS	29
 	int			num_backends = pgstat_fetch_stat_numbackends();
 	int			curr_backend;
 	int			pid = PG_ARGISNULL(0) ? -1 : PG_GETARG_INT32(0);
@@ -708,7 +708,7 @@ pg_stat_get_activity(PG_FUNCTION_ARGS)
 			pfree(clipped_activity);
 
 			/* leader_pid */
-			nulls[29] = true;
+			nulls[28] = true;
 
 			proc = BackendPidGetProc(beentry->st_procpid);
 
@@ -745,8 +745,8 @@ pg_stat_get_activity(PG_FUNCTION_ARGS)
 				 */
 				if (leader && leader->pid != beentry->st_procpid)
 				{
-					values[29] = Int32GetDatum(leader->pid);
-					nulls[29] = false;
+					values[28] = Int32GetDatum(leader->pid);
+					nulls[28] = false;
 				}
 			}
 
@@ -875,44 +875,43 @@ pg_stat_get_activity(PG_FUNCTION_ARGS)
 				values[19] = CStringGetTextDatum(beentry->st_sslstatus->ssl_version);
 				values[20] = CStringGetTextDatum(beentry->st_sslstatus->ssl_cipher);
 				values[21] = Int32GetDatum(beentry->st_sslstatus->ssl_bits);
-				values[22] = BoolGetDatum(beentry->st_sslstatus->ssl_compression);
 
 				if (beentry->st_sslstatus->ssl_client_dn[0])
-					values[23] = CStringGetTextDatum(beentry->st_sslstatus->ssl_client_dn);
+					values[22] = CStringGetTextDatum(beentry->st_sslstatus->ssl_client_dn);
 				else
-					nulls[23] = true;
+					nulls[22] = true;
 
 				if (beentry->st_sslstatus->ssl_client_serial[0])
-					values[24] = DirectFunctionCall3(numeric_in,
+					values[23] = DirectFunctionCall3(numeric_in,
 													 CStringGetDatum(beentry->st_sslstatus->ssl_client_serial),
 													 ObjectIdGetDatum(InvalidOid),
 													 Int32GetDatum(-1));
 				else
-					nulls[24] = true;
+					nulls[23] = true;
 
 				if (beentry->st_sslstatus->ssl_issuer_dn[0])
-					values[25] = CStringGetTextDatum(beentry->st_sslstatus->ssl_issuer_dn);
+					values[24] = CStringGetTextDatum(beentry->st_sslstatus->ssl_issuer_dn);
 				else
-					nulls[25] = true;
+					nulls[24] = true;
 			}
 			else
 			{
 				values[18] = BoolGetDatum(false);	/* ssl */
-				nulls[19] = nulls[20] = nulls[21] = nulls[22] = nulls[23] = nulls[24] = nulls[25] = true;
+				nulls[19] = nulls[20] = nulls[21] = nulls[22] = nulls[23] = nulls[24] = true;
 			}
 
 			/* GSSAPI information */
 			if (beentry->st_gss)
 			{
-				values[26] = BoolGetDatum(beentry->st_gssstatus->gss_auth); /* gss_auth */
-				values[27] = CStringGetTextDatum(beentry->st_gssstatus->gss_princ);
-				values[28] = BoolGetDatum(beentry->st_gssstatus->gss_enc);	/* GSS Encryption in use */
+				values[25] = BoolGetDatum(beentry->st_gssstatus->gss_auth); /* gss_auth */
+				values[26] = CStringGetTextDatum(beentry->st_gssstatus->gss_princ);
+				values[27] = BoolGetDatum(beentry->st_gssstatus->gss_enc);	/* GSS Encryption in use */
 			}
 			else
 			{
-				values[26] = BoolGetDatum(false);	/* gss_auth */
-				nulls[27] = true;	/* No GSS principal */
-				values[28] = BoolGetDatum(false);	/* GSS Encryption not in
+				values[25] = BoolGetDatum(false);	/* gss_auth */
+				nulls[26] = true;	/* No GSS principal */
+				values[27] = BoolGetDatum(false);	/* GSS Encryption not in
 													 * use */
 			}
 		}
@@ -942,7 +941,6 @@ pg_stat_get_activity(PG_FUNCTION_ARGS)
 			nulls[26] = true;
 			nulls[27] = true;
 			nulls[28] = true;
-			nulls[29] = true;
 		}
 
 		tuplestore_putvalues(tupstore, tupdesc, values, nulls);
@@ -1799,7 +1797,7 @@ pg_stat_get_buf_alloc(PG_FUNCTION_ARGS)
 Datum
 pg_stat_get_wal(PG_FUNCTION_ARGS)
 {
-#define PG_STAT_GET_WAL_COLS	5
+#define PG_STAT_GET_WAL_COLS	9
 	TupleDesc	tupdesc;
 	Datum		values[PG_STAT_GET_WAL_COLS];
 	bool		nulls[PG_STAT_GET_WAL_COLS];
@@ -1820,7 +1818,15 @@ pg_stat_get_wal(PG_FUNCTION_ARGS)
 					   NUMERICOID, -1, 0);
 	TupleDescInitEntry(tupdesc, (AttrNumber) 4, "wal_buffers_full",
 					   INT8OID, -1, 0);
-	TupleDescInitEntry(tupdesc, (AttrNumber) 5, "stats_reset",
+	TupleDescInitEntry(tupdesc, (AttrNumber) 5, "wal_write",
+					   INT8OID, -1, 0);
+	TupleDescInitEntry(tupdesc, (AttrNumber) 6, "wal_sync",
+					   INT8OID, -1, 0);
+	TupleDescInitEntry(tupdesc, (AttrNumber) 7, "wal_write_time",
+					   FLOAT8OID, -1, 0);
+	TupleDescInitEntry(tupdesc, (AttrNumber) 8, "wal_sync_time",
+					   FLOAT8OID, -1, 0);
+	TupleDescInitEntry(tupdesc, (AttrNumber) 9, "stats_reset",
 					   TIMESTAMPTZOID, -1, 0);
 
 	BlessTupleDesc(tupdesc);
@@ -1840,7 +1846,14 @@ pg_stat_get_wal(PG_FUNCTION_ARGS)
 									Int32GetDatum(-1));
 
 	values[3] = Int64GetDatum(wal_stats->wal_buffers_full);
-	values[4] = TimestampTzGetDatum(wal_stats->stat_reset_timestamp);
+	values[4] = Int64GetDatum(wal_stats->wal_write);
+	values[5] = Int64GetDatum(wal_stats->wal_sync);
+
+	/* Convert counters from microsec to millisec for display */
+	values[6] = Float8GetDatum(((double) wal_stats->wal_write_time) / 1000.0);
+	values[7] = Float8GetDatum(((double) wal_stats->wal_sync_time) / 1000.0);
+
+	values[8] = TimestampTzGetDatum(wal_stats->stat_reset_timestamp);
 
 	/* Returns the record as Datum */
 	PG_RETURN_DATUM(HeapTupleGetDatum(heap_form_tuple(tupdesc, values, nulls)));

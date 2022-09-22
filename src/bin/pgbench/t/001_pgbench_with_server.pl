@@ -41,7 +41,7 @@ sub pgbench
 			# filenames are expected to be unique on a test
 			if (-e $filename)
 			{
-				ok(0, "$filename must not already exists");
+				ok(0, "$filename must not already exist");
 				unlink $filename or die "cannot unlink $filename: $!";
 			}
 			append_to_file($filename, $$files{$fn});
@@ -388,6 +388,22 @@ like(
 	qr[DETAIL:  parameters: \$1 = '\{ inval\.\.\.', \$2 = '''Valame\.\.\.'],
 	"parameter report truncates");
 $log = undef;
+
+# Check that bad parameters are reported during typinput phase of BIND
+pgbench(
+	'-n -t1 -c1 -M prepared',
+	2,
+	[],
+	[
+		qr{ERROR:  invalid input syntax for type smallint: "1a"},
+		qr{CONTEXT:  unnamed portal parameter \$2 = '1a'}
+	],
+	'server parameter logging',
+	{
+		'001_param_6' => q{select 42 as value1, '1a' as value2 \gset
+select :value1::smallint, :value2::smallint;
+}
+	});
 
 # Restore default logging config
 $node->append_conf('postgresql.conf',
@@ -754,6 +770,83 @@ pgbench(
 \set i debug(:i8)
 }
 	});
+
+# Working \startpipeline
+pgbench(
+	'-t 1 -n -M extended',
+	0,
+	[ qr{type: .*/001_pgbench_pipeline}, qr{actually processed: 1/1} ],
+	[],
+	'working \startpipeline',
+	{
+		'001_pgbench_pipeline' => q{
+-- test startpipeline
+\startpipeline
+} . "select 1;\n" x 10 . q{
+\endpipeline
+}
+	});
+
+# Working \startpipeline in prepared query mode
+pgbench(
+	'-t 1 -n -M prepared',
+	0,
+	[ qr{type: .*/001_pgbench_pipeline_prep}, qr{actually processed: 1/1} ],
+	[],
+	'working \startpipeline',
+	{
+		'001_pgbench_pipeline_prep' => q{
+-- test startpipeline
+\startpipeline
+} . "select 1;\n" x 10 . q{
+\endpipeline
+}
+	});
+
+# Try \startpipeline twice
+pgbench(
+	'-t 1 -n -M extended',
+	2,
+	[],
+	[qr{already in pipeline mode}],
+	'error: call \startpipeline twice',
+	{
+		'001_pgbench_pipeline_2' => q{
+-- startpipeline twice
+\startpipeline
+\startpipeline
+}
+	});
+
+# Try to end a pipeline that hasn't started
+pgbench(
+	'-t 1 -n -M extended',
+	2,
+	[],
+	[qr{not in pipeline mode}],
+	'error: \endpipeline with no start',
+	{
+		'001_pgbench_pipeline_3' => q{
+-- pipeline not started
+\endpipeline
+}
+	});
+
+# Try \gset in pipeline mode
+pgbench(
+	'-t 1 -n -M extended',
+	2,
+	[],
+	[qr{gset is not allowed in pipeline mode}],
+	'error: \gset not allowed in pipeline mode',
+	{
+		'001_pgbench_pipeline_4' => q{
+\startpipeline
+select 1 \gset f
+\endpipeline
+}
+	});
+
 
 # trigger many expression errors
 my @errors = (

@@ -120,9 +120,7 @@ static int	ldapServiceLookup(const char *purl, PQconninfoOption *options,
  * by environment variables
  */
 #define DefaultHost		"localhost"
-#define DefaultTty		""
 #define DefaultOption	""
-#define DefaultAuthtype		  ""
 #ifdef USE_SSL
 #define DefaultChannelBinding	"prefer"
 #else
@@ -192,14 +190,6 @@ typedef struct _internalPQconninfoOption
 } internalPQconninfoOption;
 
 static const internalPQconninfoOption PQconninfoOptions[] = {
-	/*
-	 * "authtype" is no longer used, so mark it "don't show".  We keep it in
-	 * the array so as not to reject conninfo strings from old apps that might
-	 * still try to set it.
-	 */
-	{"authtype", "PGAUTHTYPE", DefaultAuthtype, NULL,
-	"Database-Authtype", "D", 20, -1},
-
 	{"service", "PGSERVICE", NULL, NULL,
 	"Database-Service", "", 20, -1},
 
@@ -242,14 +232,6 @@ static const internalPQconninfoOption PQconninfoOptions[] = {
 	{"client_encoding", "PGCLIENTENCODING", NULL, NULL,
 		"Client-Encoding", "", 10,
 	offsetof(struct pg_conn, client_encoding_initial)},
-
-	/*
-	 * "tty" is no longer used either, but keep it present for backwards
-	 * compatibility.
-	 */
-	{"tty", "PGTTY", DefaultTty, NULL,
-		"Backend-Debug-TTY", "D", 40,
-	offsetof(struct pg_conn, pgtty)},
 
 	{"options", "PGOPTIONS", DefaultOption, NULL,
 		"Backend-Options", "", 40,
@@ -317,6 +299,10 @@ static const internalPQconninfoOption PQconninfoOptions[] = {
 		"SSL-Revocation-List", "", 64,
 	offsetof(struct pg_conn, sslcrl)},
 
+	{"sslcrldir", "PGSSLCRLDIR", NULL, NULL,
+		"SSL-Revocation-List-Dir", "", 64,
+	offsetof(struct pg_conn, sslcrldir)},
+
 	{"requirepeer", "PGREQUIREPEER", NULL, NULL,
 		"Require-Peer", "", 10,
 	offsetof(struct pg_conn, requirepeer)},
@@ -352,7 +338,7 @@ static const internalPQconninfoOption PQconninfoOptions[] = {
 
 	{"target_session_attrs", "PGTARGETSESSIONATTRS",
 		DefaultTargetSessionAttrs, NULL,
-		"Target-Session-Attrs", "", 11, /* sizeof("read-write") = 11 */
+		"Target-Session-Attrs", "", 15, /* sizeof("prefer-standby") = 15 */
 	offsetof(struct pg_conn, target_session_attrs)},
 
 	/* Terminating entry --- MUST BE LAST */
@@ -536,6 +522,23 @@ pqDropConnection(PGconn *conn, bool flushInput)
 	}
 }
 
+/*
+ * pqFreeCommandQueue
+ * Free all the entries of PGcmdQueueEntry queue passed.
+ */
+static void
+pqFreeCommandQueue(PGcmdQueueEntry *queue)
+{
+	while (queue != NULL)
+	{
+		PGcmdQueueEntry *cur = queue;
+
+		queue = cur->next;
+		if (cur->query)
+			free(cur->query);
+		free(cur);
+	}
+}
 
 /*
  *		pqDropServerData
@@ -567,6 +570,12 @@ pqDropServerData(PGconn *conn)
 	}
 	conn->notifyHead = conn->notifyTail = NULL;
 
+	pqFreeCommandQueue(conn->cmd_queue_head);
+	conn->cmd_queue_head = conn->cmd_queue_tail = NULL;
+
+	pqFreeCommandQueue(conn->cmd_queue_recycle);
+	conn->cmd_queue_recycle = NULL;
+
 	/* Reset ParameterStatus data, as well as variables deduced from it */
 	pstatus = conn->pstatus;
 	while (pstatus != NULL)
@@ -579,6 +588,8 @@ pqDropServerData(PGconn *conn)
 	conn->pstatus = NULL;
 	conn->client_encoding = PG_SQL_ASCII;
 	conn->std_strings = false;
+	conn->default_transaction_read_only = PG_BOOL_UNKNOWN;
+	conn->in_hot_standby = PG_BOOL_UNKNOWN;
 	conn->sversion = 0;
 
 	/* Drop large-object lookup data */
@@ -1385,6 +1396,36 @@ connectOptions2(PGconn *conn)
 	}
 
 	/*
+	 * validate target_session_attrs option, and set target_server_type
+	 */
+	if (conn->target_session_attrs)
+	{
+		if (strcmp(conn->target_session_attrs, "any") == 0)
+			conn->target_server_type = SERVER_TYPE_ANY;
+		else if (strcmp(conn->target_session_attrs, "read-write") == 0)
+			conn->target_server_type = SERVER_TYPE_READ_WRITE;
+		else if (strcmp(conn->target_session_attrs, "read-only") == 0)
+			conn->target_server_type = SERVER_TYPE_READ_ONLY;
+		else if (strcmp(conn->target_session_attrs, "primary") == 0)
+			conn->target_server_type = SERVER_TYPE_PRIMARY;
+		else if (strcmp(conn->target_session_attrs, "standby") == 0)
+			conn->target_server_type = SERVER_TYPE_STANDBY;
+		else if (strcmp(conn->target_session_attrs, "prefer-standby") == 0)
+			conn->target_server_type = SERVER_TYPE_PREFER_STANDBY;
+		else
+		{
+			conn->status = CONNECTION_BAD;
+			appendPQExpBuffer(&conn->errorMessage,
+							  libpq_gettext("invalid %s value: \"%s\"\n"),
+							  "target_session_attrs",
+							  conn->target_session_attrs);
+			return false;
+		}
+	}
+	else
+		conn->target_server_type = SERVER_TYPE_ANY;
+
+	/*
 	 * Resolve special "auto" client_encoding from the locale
 	 */
 	if (conn->client_encoding_initial &&
@@ -1394,23 +1435,6 @@ connectOptions2(PGconn *conn)
 		conn->client_encoding_initial = strdup(pg_encoding_to_char(pg_get_encoding_from_locale(NULL, true)));
 		if (!conn->client_encoding_initial)
 			goto oom_error;
-	}
-
-	/*
-	 * Validate target_session_attrs option.
-	 */
-	if (conn->target_session_attrs)
-	{
-		if (strcmp(conn->target_session_attrs, "any") != 0
-			&& strcmp(conn->target_session_attrs, "read-write") != 0)
-		{
-			conn->status = CONNECTION_BAD;
-			appendPQExpBuffer(&conn->errorMessage,
-							  libpq_gettext("invalid %s value: \"%s\"\n"),
-							  "target_settion_attrs",
-							  conn->target_session_attrs);
-			return false;
-		}
 	}
 
 	/*
@@ -1556,15 +1580,6 @@ PQsetdbLogin(const char *pghost, const char *pgport, const char *pgoptions,
 			free(conn->pgoptions);
 		conn->pgoptions = strdup(pgoptions);
 		if (!conn->pgoptions)
-			goto oom_error;
-	}
-
-	if (pgtty && pgtty[0] != '\0')
-	{
-		if (conn->pgtty)
-			free(conn->pgtty);
-		conn->pgtty = strdup(pgtty);
-		if (!conn->pgtty)
 			goto oom_error;
 	}
 
@@ -2053,6 +2068,10 @@ connectDBStart(PGconn *conn)
 	conn->try_next_host = true;
 	conn->status = CONNECTION_NEEDED;
 
+	/* Also reset the target_server_type state if needed */
+	if (conn->target_server_type == SERVER_TYPE_PREFER_STANDBY_PASS2)
+		conn->target_server_type = SERVER_TYPE_PREFER_STANDBY;
+
 	/*
 	 * The code for processing CONNECTION_NEEDED state is in PQconnectPoll(),
 	 * so that it can easily be re-executed if needed again during the
@@ -2246,6 +2265,9 @@ PQconnectPoll(PGconn *conn)
 			/* These are reading states */
 		case CONNECTION_AWAITING_RESPONSE:
 		case CONNECTION_AUTH_OK:
+		case CONNECTION_CHECK_WRITABLE:
+		case CONNECTION_CONSUME:
+		case CONNECTION_CHECK_STANDBY:
 			{
 				/* Load waiting data */
 				int			n = pqReadData(conn);
@@ -2263,16 +2285,11 @@ PQconnectPoll(PGconn *conn)
 		case CONNECTION_MADE:
 			break;
 
-			/* We allow pqSetenvPoll to decide whether to proceed. */
-		case CONNECTION_SETENV:
-			break;
-
 			/* Special cases: proceed without waiting. */
 		case CONNECTION_SSL_STARTUP:
 		case CONNECTION_NEEDED:
-		case CONNECTION_CHECK_WRITABLE:
-		case CONNECTION_CONSUME:
 		case CONNECTION_GSS_STARTUP:
+		case CONNECTION_CHECK_TARGET:
 			break;
 
 		default:
@@ -2307,15 +2324,28 @@ keep_going:						/* We will come back to here until there is
 		int			ret;
 		char		portstr[MAXPGPATH];
 
-		if (conn->whichhost + 1 >= conn->nconnhost)
+		if (conn->whichhost + 1 < conn->nconnhost)
+			conn->whichhost++;
+		else
 		{
 			/*
-			 * Oops, no more hosts.  An appropriate error message is already
-			 * set up, so just set the right status.
+			 * Oops, no more hosts.
+			 *
+			 * If we are trying to connect in "prefer-standby" mode, then drop
+			 * the standby requirement and start over.
+			 *
+			 * Otherwise, an appropriate error message is already set up, so
+			 * we just need to set the right status.
 			 */
-			goto error_return;
+			if (conn->target_server_type == SERVER_TYPE_PREFER_STANDBY &&
+				conn->nconnhost > 0)
+			{
+				conn->target_server_type = SERVER_TYPE_PREFER_STANDBY_PASS2;
+				conn->whichhost = 0;
+			}
+			else
+				goto error_return;
 		}
-		conn->whichhost++;
 
 		/* Drop any address info for previous host */
 		release_conn_addrinfo(conn);
@@ -2452,6 +2482,7 @@ keep_going:						/* We will come back to here until there is
 		/* Drop any PGresult we might have, too */
 		conn->asyncStatus = PGASYNC_IDLE;
 		conn->xactStatus = PQTRANS_IDLE;
+		conn->pipelineStatus = PQ_PIPELINE_OFF;
 		pqClearAsyncResult(conn);
 
 		/* Reset conn->status to put the state machine in the right state */
@@ -2881,6 +2912,16 @@ keep_going:						/* We will come back to here until there is
 #ifdef USE_SSL
 
 				/*
+				 * Enable the libcrypto callbacks before checking if SSL needs
+				 * to be done.  This is done before sending the startup packet
+				 * as depending on the type of authentication done, like MD5
+				 * or SCRAM that use cryptohashes, the callbacks would be
+				 * required even without a SSL connection
+				 */
+				if (pqsecure_initialize(conn, false, true) < 0)
+					goto error_return;
+
+				/*
 				 * If SSL is enabled and we haven't already got encryption of
 				 * some sort running, request SSL instead of sending the
 				 * startup message.
@@ -2918,12 +2959,8 @@ keep_going:						/* We will come back to here until there is
 				/*
 				 * Build the startup packet.
 				 */
-				if (PG_PROTOCOL_MAJOR(conn->pversion) >= 3)
-					startpacket = pqBuildStartupPacket3(conn, &packetlen,
-														EnvironmentOptions);
-				else
-					startpacket = pqBuildStartupPacket2(conn, &packetlen,
-														EnvironmentOptions);
+				startpacket = pqBuildStartupPacket3(conn, &packetlen,
+													EnvironmentOptions);
 				if (!startpacket)
 				{
 					appendPQExpBufferStr(&conn->errorMessage,
@@ -2995,8 +3032,14 @@ keep_going:						/* We will come back to here until there is
 					{
 						/* mark byte consumed */
 						conn->inStart = conn->inCursor;
-						/* Set up global SSL state if required */
-						if (pqsecure_initialize(conn) != 0)
+
+						/*
+						 * Set up global SSL state if required.  The crypto
+						 * state has already been set if libpq took care of
+						 * doing that, so there is no need to make that happen
+						 * again.
+						 */
+						if (pqsecure_initialize(conn, true, false) != 0)
 							goto error_return;
 					}
 					else if (SSLok == 'N')
@@ -3209,19 +3252,11 @@ keep_going:						/* We will come back to here until there is
 					goto error_return;
 				}
 
-				if (PG_PROTOCOL_MAJOR(conn->pversion) >= 3)
+				/* Read message length word */
+				if (pqGetInt(&msgLength, 4, conn))
 				{
-					/* Read message length word */
-					if (pqGetInt(&msgLength, 4, conn))
-					{
-						/* We'll come back when there is more data */
-						return PGRES_POLLING_READING;
-					}
-				}
-				else
-				{
-					/* Set phony message length to disable checks below */
-					msgLength = 8;
+					/* We'll come back when there is more data */
+					return PGRES_POLLING_READING;
 				}
 
 				/*
@@ -3230,7 +3265,9 @@ keep_going:						/* We will come back to here until there is
 				 * auth requests may not be that small.  Errors can be a
 				 * little larger, but not huge.  If we see a large apparent
 				 * length in an error, it means we're really talking to a
-				 * pre-3.0-protocol server; cope.
+				 * pre-3.0-protocol server; cope.  (Before version 14, the
+				 * server also used the old protocol for errors that happened
+				 * before processing the startup packet.)
 				 */
 				if (beresp == 'R' && (msgLength < 8 || msgLength > 2000))
 				{
@@ -3253,20 +3290,14 @@ keep_going:						/* We will come back to here until there is
 					conn->inStart = conn->inCursor;
 
 					/*
-					 * The postmaster typically won't end its message with a
-					 * newline, so add one to conform to libpq conventions.
+					 * Before 7.2, the postmaster didn't always end its
+					 * messages with a newline, so add one if needed to
+					 * conform to libpq conventions.
 					 */
-					appendPQExpBufferChar(&conn->errorMessage, '\n');
-
-					/*
-					 * If we tried to open the connection in 3.0 protocol,
-					 * fall back to 2.0 protocol.
-					 */
-					if (PG_PROTOCOL_MAJOR(conn->pversion) >= 3)
+					if (conn->errorMessage.len == 0 ||
+						conn->errorMessage.data[conn->errorMessage.len - 1] != '\n')
 					{
-						conn->pversion = PG_PROTOCOL(2, 0);
-						need_new_connection = true;
-						goto keep_going;
+						appendPQExpBufferChar(&conn->errorMessage, '\n');
 					}
 
 					goto error_return;
@@ -3274,9 +3305,6 @@ keep_going:						/* We will come back to here until there is
 
 				/*
 				 * Can't process if message body isn't all here yet.
-				 *
-				 * (In protocol 2.0 case, we are assuming messages carry at
-				 * least 4 bytes of data.)
 				 */
 				msgLength -= 4;
 				avail = conn->inEnd - conn->inCursor;
@@ -3297,21 +3325,10 @@ keep_going:						/* We will come back to here until there is
 				/* Handle errors. */
 				if (beresp == 'E')
 				{
-					if (PG_PROTOCOL_MAJOR(conn->pversion) >= 3)
+					if (pqGetErrorNotice3(conn, true))
 					{
-						if (pqGetErrorNotice3(conn, true))
-						{
-							/* We'll come back when there is more data */
-							return PGRES_POLLING_READING;
-						}
-					}
-					else
-					{
-						if (pqGets_append(&conn->errorMessage, conn))
-						{
-							/* We'll come back when there is more data */
-							return PGRES_POLLING_READING;
-						}
+						/* We'll come back when there is more data */
+						return PGRES_POLLING_READING;
 					}
 					/* OK, we read the message; mark data consumed */
 					conn->inStart = conn->inCursor;
@@ -3394,33 +3411,6 @@ keep_going:						/* We will come back to here until there is
 					return PGRES_POLLING_READING;
 				}
 				msgLength -= 4;
-
-				/*
-				 * Ensure the password salt is in the input buffer, if it's an
-				 * MD5 request.  All the other authentication methods that
-				 * contain extra data in the authentication request are only
-				 * supported in protocol version 3, in which case we already
-				 * read the whole message above.
-				 */
-				if (areq == AUTH_REQ_MD5 && PG_PROTOCOL_MAJOR(conn->pversion) < 3)
-				{
-					msgLength += 4;
-
-					avail = conn->inEnd - conn->inCursor;
-					if (avail < 4)
-					{
-						/*
-						 * Before returning, try to enlarge the input buffer
-						 * if needed to hold the whole message; see notes in
-						 * pqParseInput3.
-						 */
-						if (pqCheckInBufferSpace(conn->inCursor + (size_t) 4,
-												 conn))
-							goto error_return;
-						/* We'll come back when there is more data */
-						return PGRES_POLLING_READING;
-					}
-				}
 
 				/*
 				 * Process the rest of the authentication request message, and
@@ -3529,15 +3519,6 @@ keep_going:						/* We will come back to here until there is
 					goto error_return;
 				}
 
-				/* Fire up post-connection housekeeping if needed */
-				if (PG_PROTOCOL_MAJOR(conn->pversion) < 3)
-				{
-					conn->status = CONNECTION_SETENV;
-					conn->setenv_state = SETENV_STATE_CLIENT_ENCODING_SEND;
-					conn->next_eo = EnvironmentOptions;
-					return PGRES_POLLING_WRITING;
-				}
-
 				/* Almost there now ... */
 				conn->status = CONNECTION_CHECK_TARGET;
 				goto keep_going;
@@ -3546,128 +3527,54 @@ keep_going:						/* We will come back to here until there is
 		case CONNECTION_CHECK_TARGET:
 			{
 				/*
-				 * If a read-write connection is required, see if we have one.
-				 *
-				 * Servers before 7.4 lack the transaction_read_only GUC, but
-				 * by the same token they don't have any read-only mode, so we
-				 * may just skip the test in that case.
+				 * If a read-write, read-only, primary, or standby connection
+				 * is required, see if we have one.
 				 */
-				if (conn->sversion >= 70400 &&
-					conn->target_session_attrs != NULL &&
-					strcmp(conn->target_session_attrs, "read-write") == 0)
+				if (conn->target_server_type == SERVER_TYPE_READ_WRITE ||
+					conn->target_server_type == SERVER_TYPE_READ_ONLY)
 				{
+					bool		read_only_server;
+
 					/*
-					 * We use PQsendQueryContinue so that conn->errorMessage
-					 * does not get cleared.  We need to preserve any error
-					 * messages related to previous hosts we have tried and
-					 * failed to connect to.
+					 * If the server didn't report
+					 * "default_transaction_read_only" or "in_hot_standby" at
+					 * startup, we must determine its state by sending the
+					 * query "SHOW transaction_read_only".  This GUC exists in
+					 * all server versions that support 3.0 protocol.
 					 */
-					conn->status = CONNECTION_OK;
-					if (!PQsendQueryContinue(conn,
-											 "SHOW transaction_read_only"))
-						goto error_return;
-					conn->status = CONNECTION_CHECK_WRITABLE;
-					return PGRES_POLLING_READING;
-				}
-
-				/* We can release the address list now. */
-				release_conn_addrinfo(conn);
-
-				/* We are open for business! */
-				conn->status = CONNECTION_OK;
-				return PGRES_POLLING_OK;
-			}
-
-		case CONNECTION_SETENV:
-			{
-				/*
-				 * Do post-connection housekeeping (only needed in protocol
-				 * 2.0).
-				 *
-				 * We pretend that the connection is OK for the duration of
-				 * these queries.
-				 */
-				conn->status = CONNECTION_OK;
-
-				switch (pqSetenvPoll(conn))
-				{
-					case PGRES_POLLING_OK:	/* Success */
-						break;
-
-					case PGRES_POLLING_READING: /* Still going */
-						conn->status = CONNECTION_SETENV;
-						return PGRES_POLLING_READING;
-
-					case PGRES_POLLING_WRITING: /* Still going */
-						conn->status = CONNECTION_SETENV;
-						return PGRES_POLLING_WRITING;
-
-					default:
-						goto error_return;
-				}
-
-				/* Almost there now ... */
-				conn->status = CONNECTION_CHECK_TARGET;
-				goto keep_going;
-			}
-
-		case CONNECTION_CONSUME:
-			{
-				conn->status = CONNECTION_OK;
-				if (!PQconsumeInput(conn))
-					goto error_return;
-
-				if (PQisBusy(conn))
-				{
-					conn->status = CONNECTION_CONSUME;
-					return PGRES_POLLING_READING;
-				}
-
-				/*
-				 * Call PQgetResult() again to consume NULL result.
-				 */
-				res = PQgetResult(conn);
-				if (res != NULL)
-				{
-					PQclear(res);
-					conn->status = CONNECTION_CONSUME;
-					goto keep_going;
-				}
-
-				/* We can release the address list now. */
-				release_conn_addrinfo(conn);
-
-				/* We are open for business! */
-				conn->status = CONNECTION_OK;
-				return PGRES_POLLING_OK;
-			}
-		case CONNECTION_CHECK_WRITABLE:
-			{
-				conn->status = CONNECTION_OK;
-				if (!PQconsumeInput(conn))
-					goto error_return;
-
-				if (PQisBusy(conn))
-				{
-					conn->status = CONNECTION_CHECK_WRITABLE;
-					return PGRES_POLLING_READING;
-				}
-
-				res = PQgetResult(conn);
-				if (res && (PQresultStatus(res) == PGRES_TUPLES_OK) &&
-					PQntuples(res) == 1)
-				{
-					char	   *val;
-
-					val = PQgetvalue(res, 0, 0);
-					if (strncmp(val, "on", 2) == 0)
+					if (conn->default_transaction_read_only == PG_BOOL_UNKNOWN ||
+						conn->in_hot_standby == PG_BOOL_UNKNOWN)
 					{
-						/* Not writable; fail this connection. */
-						PQclear(res);
+						/*
+						 * We use PQsendQueryContinue so that
+						 * conn->errorMessage does not get cleared.  We need
+						 * to preserve any error messages related to previous
+						 * hosts we have tried and failed to connect to.
+						 */
+						conn->status = CONNECTION_OK;
+						if (!PQsendQueryContinue(conn,
+												 "SHOW transaction_read_only"))
+							goto error_return;
+						/* We'll return to this state when we have the answer */
+						conn->status = CONNECTION_CHECK_WRITABLE;
+						return PGRES_POLLING_READING;
+					}
 
-						/* Append error report to conn->errorMessage. */
-						appendPQExpBufferStr(&conn->errorMessage,
-											 libpq_gettext("session is read-only\n"));
+					/* OK, we can make the test */
+					read_only_server =
+						(conn->default_transaction_read_only == PG_BOOL_YES ||
+						 conn->in_hot_standby == PG_BOOL_YES);
+
+					if ((conn->target_server_type == SERVER_TYPE_READ_WRITE) ?
+						read_only_server : !read_only_server)
+					{
+						/* Wrong server state, reject and try the next host */
+						if (conn->target_server_type == SERVER_TYPE_READ_WRITE)
+							appendPQExpBufferStr(&conn->errorMessage,
+												 libpq_gettext("session is read-only\n"));
+						else
+							appendPQExpBufferStr(&conn->errorMessage,
+												 libpq_gettext("session is not read-only\n"));
 
 						/* Close connection politely. */
 						conn->status = CONNECTION_OK;
@@ -3680,35 +3587,220 @@ keep_going:						/* We will come back to here until there is
 						conn->try_next_host = true;
 						goto keep_going;
 					}
+				}
+				else if (conn->target_server_type == SERVER_TYPE_PRIMARY ||
+						 conn->target_server_type == SERVER_TYPE_STANDBY ||
+						 conn->target_server_type == SERVER_TYPE_PREFER_STANDBY)
+				{
+					/*
+					 * If the server didn't report "in_hot_standby" at
+					 * startup, we must determine its state by sending the
+					 * query "SELECT pg_catalog.pg_is_in_recovery()".  Servers
+					 * before 9.0 don't have that function, but by the same
+					 * token they don't have any standby mode, so we may just
+					 * assume the result.
+					 */
+					if (conn->sversion < 90000)
+						conn->in_hot_standby = PG_BOOL_NO;
 
-					/* Session is read-write, so we're good. */
+					if (conn->in_hot_standby == PG_BOOL_UNKNOWN)
+					{
+						/*
+						 * We use PQsendQueryContinue so that
+						 * conn->errorMessage does not get cleared.  We need
+						 * to preserve any error messages related to previous
+						 * hosts we have tried and failed to connect to.
+						 */
+						conn->status = CONNECTION_OK;
+						if (!PQsendQueryContinue(conn,
+												 "SELECT pg_catalog.pg_is_in_recovery()"))
+							goto error_return;
+						/* We'll return to this state when we have the answer */
+						conn->status = CONNECTION_CHECK_STANDBY;
+						return PGRES_POLLING_READING;
+					}
+
+					/* OK, we can make the test */
+					if ((conn->target_server_type == SERVER_TYPE_PRIMARY) ?
+						(conn->in_hot_standby == PG_BOOL_YES) :
+						(conn->in_hot_standby == PG_BOOL_NO))
+					{
+						/* Wrong server state, reject and try the next host */
+						if (conn->target_server_type == SERVER_TYPE_PRIMARY)
+							appendPQExpBufferStr(&conn->errorMessage,
+												 libpq_gettext("server is in hot standby mode\n"));
+						else
+							appendPQExpBufferStr(&conn->errorMessage,
+												 libpq_gettext("server is not in hot standby mode\n"));
+
+						/* Close connection politely. */
+						conn->status = CONNECTION_OK;
+						sendTerminateConn(conn);
+
+						/*
+						 * Try next host if any, but we don't want to consider
+						 * additional addresses for this host.
+						 */
+						conn->try_next_host = true;
+						goto keep_going;
+					}
+				}
+
+				/* We can release the address list now. */
+				release_conn_addrinfo(conn);
+
+				/* We are open for business! */
+				conn->status = CONNECTION_OK;
+				return PGRES_POLLING_OK;
+			}
+
+		case CONNECTION_CONSUME:
+			{
+				/*
+				 * This state just makes sure the connection is idle after
+				 * we've obtained the result of a SHOW or SELECT query.  Once
+				 * we're clear, return to CONNECTION_CHECK_TARGET state to
+				 * decide what to do next.  We must transiently set status =
+				 * CONNECTION_OK in order to use the result-consuming
+				 * subroutines.
+				 */
+				conn->status = CONNECTION_OK;
+				if (!PQconsumeInput(conn))
+					goto error_return;
+
+				if (PQisBusy(conn))
+				{
+					conn->status = CONNECTION_CONSUME;
+					return PGRES_POLLING_READING;
+				}
+
+				/* Call PQgetResult() again until we get a NULL result */
+				res = PQgetResult(conn);
+				if (res != NULL)
+				{
 					PQclear(res);
+					conn->status = CONNECTION_CONSUME;
+					return PGRES_POLLING_READING;
+				}
+
+				conn->status = CONNECTION_CHECK_TARGET;
+				goto keep_going;
+			}
+
+		case CONNECTION_CHECK_WRITABLE:
+			{
+				/*
+				 * Waiting for result of "SHOW transaction_read_only".  We
+				 * must transiently set status = CONNECTION_OK in order to use
+				 * the result-consuming subroutines.
+				 */
+				conn->status = CONNECTION_OK;
+				if (!PQconsumeInput(conn))
+					goto error_return;
+
+				if (PQisBusy(conn))
+				{
+					conn->status = CONNECTION_CHECK_WRITABLE;
+					return PGRES_POLLING_READING;
+				}
+
+				res = PQgetResult(conn);
+				if (res && PQresultStatus(res) == PGRES_TUPLES_OK &&
+					PQntuples(res) == 1)
+				{
+					char	   *val = PQgetvalue(res, 0, 0);
 
 					/*
-					 * Finish reading any remaining messages before being
-					 * considered as ready.
+					 * "transaction_read_only = on" proves that at least one
+					 * of default_transaction_read_only and in_hot_standby is
+					 * on, but we don't actually know which.  We don't care
+					 * though for the purpose of identifying a read-only
+					 * session, so satisfy the CONNECTION_CHECK_TARGET code by
+					 * claiming they are both on.  On the other hand, if it's
+					 * a read-write session, they are certainly both off.
 					 */
+					if (strncmp(val, "on", 2) == 0)
+					{
+						conn->default_transaction_read_only = PG_BOOL_YES;
+						conn->in_hot_standby = PG_BOOL_YES;
+					}
+					else
+					{
+						conn->default_transaction_read_only = PG_BOOL_NO;
+						conn->in_hot_standby = PG_BOOL_NO;
+					}
+					PQclear(res);
+
+					/* Finish reading messages before continuing */
 					conn->status = CONNECTION_CONSUME;
 					goto keep_going;
 				}
 
-				/*
-				 * Something went wrong with "SHOW transaction_read_only". We
-				 * should try next addresses.
-				 */
+				/* Something went wrong with "SHOW transaction_read_only". */
 				if (res)
 					PQclear(res);
 
 				/* Append error report to conn->errorMessage. */
 				appendPQExpBufferStr(&conn->errorMessage,
-									 libpq_gettext("test \"SHOW transaction_read_only\" failed\n"));
+									 libpq_gettext("\"SHOW transaction_read_only\" failed\n"));
 
 				/* Close connection politely. */
 				conn->status = CONNECTION_OK;
 				sendTerminateConn(conn);
 
-				/* Try next address */
-				conn->try_next_addr = true;
+				/* Try next host. */
+				conn->try_next_host = true;
+				goto keep_going;
+			}
+
+		case CONNECTION_CHECK_STANDBY:
+			{
+				/*
+				 * Waiting for result of "SELECT pg_is_in_recovery()".  We
+				 * must transiently set status = CONNECTION_OK in order to use
+				 * the result-consuming subroutines.
+				 */
+				conn->status = CONNECTION_OK;
+				if (!PQconsumeInput(conn))
+					goto error_return;
+
+				if (PQisBusy(conn))
+				{
+					conn->status = CONNECTION_CHECK_STANDBY;
+					return PGRES_POLLING_READING;
+				}
+
+				res = PQgetResult(conn);
+				if (res && PQresultStatus(res) == PGRES_TUPLES_OK &&
+					PQntuples(res) == 1)
+				{
+					char	   *val = PQgetvalue(res, 0, 0);
+
+					if (strncmp(val, "t", 1) == 0)
+						conn->in_hot_standby = PG_BOOL_YES;
+					else
+						conn->in_hot_standby = PG_BOOL_NO;
+					PQclear(res);
+
+					/* Finish reading messages before continuing */
+					conn->status = CONNECTION_CONSUME;
+					goto keep_going;
+				}
+
+				/* Something went wrong with "SELECT pg_is_in_recovery()". */
+				if (res)
+					PQclear(res);
+
+				/* Append error report to conn->errorMessage. */
+				appendPQExpBufferStr(&conn->errorMessage,
+									 libpq_gettext("\"SELECT pg_is_in_recovery()\" failed\n"));
+
+				/* Close connection politely. */
+				conn->status = CONNECTION_OK;
+				sendTerminateConn(conn);
+
+				/* Try next host. */
+				conn->try_next_host = true;
 				goto keep_going;
 			}
 
@@ -3849,12 +3941,14 @@ makeEmptyPGconn(void)
 
 	conn->status = CONNECTION_BAD;
 	conn->asyncStatus = PGASYNC_IDLE;
+	conn->pipelineStatus = PQ_PIPELINE_OFF;
 	conn->xactStatus = PQTRANS_IDLE;
 	conn->options_valid = false;
 	conn->nonblocking = false;
-	conn->setenv_state = SETENV_STATE_IDLE;
 	conn->client_encoding = PG_SQL_ASCII;
 	conn->std_strings = false;	/* unless server says differently */
+	conn->default_transaction_read_only = PG_BOOL_UNKNOWN;
+	conn->in_hot_standby = PG_BOOL_UNKNOWN;
 	conn->verbosity = PQERRORS_DEFAULT;
 	conn->show_context = PQSHOW_CONTEXT_ERRORS;
 	conn->sock = PGINVALID_SOCKET;
@@ -3948,8 +4042,6 @@ freePGconn(PGconn *conn)
 		free(conn->pghostaddr);
 	if (conn->pgport)
 		free(conn->pgport);
-	if (conn->pgtty)
-		free(conn->pgtty);
 	if (conn->connect_timeout)
 		free(conn->connect_timeout);
 	if (conn->pgtcp_user_timeout)
@@ -3998,6 +4090,8 @@ freePGconn(PGconn *conn)
 		free(conn->sslrootcert);
 	if (conn->sslcrl)
 		free(conn->sslcrl);
+	if (conn->sslcrldir)
+		free(conn->sslcrldir);
 	if (conn->sslcompression)
 		free(conn->sslcompression);
 	if (conn->requirepeer)
@@ -4015,8 +4109,6 @@ freePGconn(PGconn *conn)
 	if (conn->connip)
 		free(conn->connip);
 	/* Note that conn->Pfdebug is not ours to close or free */
-	if (conn->last_query)
-		free(conn->last_query);
 	if (conn->write_err_msg)
 		free(conn->write_err_msg);
 	if (conn->inBuffer)
@@ -4065,7 +4157,7 @@ sendTerminateConn(PGconn *conn)
 		 * Try to send "close connection" message to backend. Ignore any
 		 * error.
 		 */
-		pqPutMsgStart('X', false, conn);
+		pqPutMsgStart('X', conn);
 		pqPutMsgEnd(conn);
 		(void) pqFlush(conn);
 	}
@@ -4105,6 +4197,7 @@ closePGconn(PGconn *conn)
 	conn->status = CONNECTION_BAD;	/* Well, not really _bad_ - just absent */
 	conn->asyncStatus = PGASYNC_IDLE;
 	conn->xactStatus = PQTRANS_IDLE;
+	conn->pipelineStatus = PQ_PIPELINE_OFF;
 	pqClearAsyncResult(conn);	/* deallocate result */
 	resetPQExpBuffer(&conn->errorMessage);
 	release_conn_addrinfo(conn);
@@ -4458,16 +4551,13 @@ PQrequestCancel(PGconn *conn)
  *
  * RETURNS: STATUS_ERROR if the write fails, STATUS_OK otherwise.
  * SIDE_EFFECTS: may block.
- *
- * Note: all messages sent with this routine have a length word, whether
- * it's protocol 2.0 or 3.0.
  */
 int
 pqPacketSend(PGconn *conn, char pack_type,
 			 const void *buf, size_t buf_len)
 {
 	/* Start the message. */
-	if (pqPutMsgStart(pack_type, true, conn))
+	if (pqPutMsgStart(pack_type, conn))
 		return STATUS_ERROR;
 
 	/* Send the message body. */
@@ -6553,12 +6643,16 @@ PQport(const PGconn *conn)
 	return "";
 }
 
+/*
+ * No longer does anything, but the function remains for API backwards
+ * compatibility.
+ */
 char *
 PQtty(const PGconn *conn)
 {
 	if (!conn)
 		return NULL;
-	return conn->pgtty;
+	return "";
 }
 
 char *
@@ -6666,6 +6760,15 @@ PQbackendPID(const PGconn *conn)
 	return conn->be_pid;
 }
 
+PGpipelineStatus
+PQpipelineStatus(const PGconn *conn)
+{
+	if (!conn)
+		return PQ_PIPELINE_OFF;
+
+	return conn->pipelineStatus;
+}
+
 int
 PQconnectionNeedsPassword(const PGconn *conn)
 {
@@ -6733,13 +6836,9 @@ PQsetClientEncoding(PGconn *conn, const char *encoding)
 	else
 	{
 		/*
-		 * In protocol 2 we have to assume the setting will stick, and adjust
-		 * our state immediately.  In protocol 3 and up we can rely on the
-		 * backend to report the parameter value, and we'll change state at
-		 * that time.
+		 * We rely on the backend to report the parameter value, and we'll
+		 * change state at that time.
 		 */
-		if (PG_PROTOCOL_MAJOR(conn->pversion) < 3)
-			pqSaveParameterStatus(conn, "client_encoding", encoding);
 		status = 0;				/* everything is ok */
 	}
 	PQclear(res);
@@ -6768,27 +6867,6 @@ PQsetErrorContextVisibility(PGconn *conn, PGContextVisibility show_context)
 	old = conn->show_context;
 	conn->show_context = show_context;
 	return old;
-}
-
-void
-PQtrace(PGconn *conn, FILE *debug_port)
-{
-	if (conn == NULL)
-		return;
-	PQuntrace(conn);
-	conn->Pfdebug = debug_port;
-}
-
-void
-PQuntrace(PGconn *conn)
-{
-	if (conn == NULL)
-		return;
-	if (conn->Pfdebug)
-	{
-		fflush(conn->Pfdebug);
-		conn->Pfdebug = NULL;
-	}
 }
 
 PQnoticeReceiver

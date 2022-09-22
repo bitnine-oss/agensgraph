@@ -63,6 +63,7 @@
 #include "utils/pg_rusage.h"
 #include "utils/sampling.h"
 #include "utils/sortsupport.h"
+#include "utils/spccache.h"
 #include "utils/syscache.h"
 #include "utils/timestamp.h"
 
@@ -312,6 +313,11 @@ do_analyze_rel(Relation onerel, VacuumParams *params,
 	Oid			save_userid;
 	int			save_sec_context;
 	int			save_nestlevel;
+	int64		AnalyzePageHit = VacuumPageHit;
+	int64		AnalyzePageMiss = VacuumPageMiss;
+	int64		AnalyzePageDirty = VacuumPageDirty;
+	PgStat_Counter startreadtime = 0;
+	PgStat_Counter startwritetime = 0;
 
 	if (inh)
 		ereport(elevel,
@@ -346,8 +352,14 @@ do_analyze_rel(Relation onerel, VacuumParams *params,
 	/* measure elapsed time iff autovacuum logging requires it */
 	if (IsAutoVacuumWorkerProcess() && params->log_min_duration >= 0)
 	{
+		if (track_io_timing)
+		{
+			startreadtime = pgStatBlockReadTime;
+			startwritetime = pgStatBlockWriteTime;
+		}
+
 		pg_rusage_init(&ru0);
-		if (params->log_min_duration > 0)
+		if (params->log_min_duration >= 0)
 			starttime = GetCurrentTimestamp();
 	}
 
@@ -600,8 +612,16 @@ do_analyze_rel(Relation onerel, VacuumParams *params,
 								 PROGRESS_ANALYZE_PHASE_FINALIZE_ANALYZE);
 
 	/*
-	 * Update pages/tuples stats in pg_class ... but not if we're doing
-	 * inherited stats.
+	 * Update pages/tuples stats in pg_class, and report ANALYZE to the stats
+	 * collector ... but not if we're doing inherited stats.
+	 *
+	 * We assume that VACUUM hasn't set pg_class.reltuples already, even
+	 * during a VACUUM ANALYZE.  Although VACUUM often updates pg_class,
+	 * exceptions exists.  A "VACUUM (ANALYZE, INDEX_CLEANUP OFF)" command
+	 * will never update pg_class entries for index relations.  It's also
+	 * possible that an individual index's pg_class entry won't be updated
+	 * during VACUUM if the index AM returns NULL from its amvacuumcleanup()
+	 * routine.
 	 */
 	if (!inh)
 	{
@@ -609,6 +629,7 @@ do_analyze_rel(Relation onerel, VacuumParams *params,
 
 		visibilitymap_count(onerel, &relallvisible, NULL);
 
+		/* Update pg_class for table relation */
 		vac_update_relstats(onerel,
 							relpages,
 							totalrows,
@@ -617,15 +638,8 @@ do_analyze_rel(Relation onerel, VacuumParams *params,
 							InvalidTransactionId,
 							InvalidMultiXactId,
 							in_outer_xact);
-	}
 
-	/*
-	 * Same for indexes. Vacuum always scans all indexes, so if we're part of
-	 * VACUUM ANALYZE, don't overwrite the accurate count already inserted by
-	 * VACUUM.
-	 */
-	if (!inh && !(params->options & VACOPT_VACUUM))
-	{
+		/* Same for indexes */
 		for (ind = 0; ind < nindexes; ind++)
 		{
 			AnlIndexData *thisdata = &indexdata[ind];
@@ -641,20 +655,28 @@ do_analyze_rel(Relation onerel, VacuumParams *params,
 								InvalidMultiXactId,
 								in_outer_xact);
 		}
+
+		/*
+		 * Now report ANALYZE to the stats collector.
+		 *
+		 * We deliberately don't report to the stats collector when doing
+		 * inherited stats, because the stats collector only tracks per-table
+		 * stats.
+		 *
+		 * Reset the changes_since_analyze counter only if we analyzed all
+		 * columns; otherwise, there is still work for auto-analyze to do.
+		 */
+		pgstat_report_analyze(onerel, totalrows, totaldeadrows,
+							  (va_cols == NIL));
 	}
 
 	/*
-	 * Report ANALYZE to the stats collector, too.  However, if doing
-	 * inherited stats we shouldn't report, because the stats collector only
-	 * tracks per-table stats.  Reset the changes_since_analyze counter only
-	 * if we analyzed all columns; otherwise, there is still work for
-	 * auto-analyze to do.
+	 * If this isn't part of VACUUM ANALYZE, let index AMs do cleanup.
+	 *
+	 * Note that most index AMs perform a no-op as a matter of policy for
+	 * amvacuumcleanup() when called in ANALYZE-only mode.  The only exception
+	 * among core index AMs is GIN/ginvacuumcleanup().
 	 */
-	if (!inh)
-		pgstat_report_analyze(onerel, totalrows, totaldeadrows,
-							  (va_cols == NIL));
-
-	/* If this isn't part of VACUUM ANALYZE, let index AMs do cleanup */
 	if (!(params->options & VACOPT_VACUUM))
 	{
 		for (ind = 0; ind < nindexes; ind++)
@@ -682,15 +704,90 @@ do_analyze_rel(Relation onerel, VacuumParams *params,
 	/* Log the action if appropriate */
 	if (IsAutoVacuumWorkerProcess() && params->log_min_duration >= 0)
 	{
+		TimestampTz endtime = GetCurrentTimestamp();
+
 		if (params->log_min_duration == 0 ||
-			TimestampDifferenceExceeds(starttime, GetCurrentTimestamp(),
+			TimestampDifferenceExceeds(starttime, endtime,
 									   params->log_min_duration))
+		{
+			long		delay_in_ms;
+			double		read_rate = 0;
+			double		write_rate = 0;
+			StringInfoData buf;
+
+			/*
+			 * Calculate the difference in the Page Hit/Miss/Dirty that
+			 * happened as part of the analyze by subtracting out the
+			 * pre-analyze values which we saved above.
+			 */
+			AnalyzePageHit = VacuumPageHit - AnalyzePageHit;
+			AnalyzePageMiss = VacuumPageMiss - AnalyzePageMiss;
+			AnalyzePageDirty = VacuumPageDirty - AnalyzePageDirty;
+
+			/*
+			 * We do not expect an analyze to take > 25 days and it simplifies
+			 * things a bit to use TimestampDifferenceMilliseconds.
+			 */
+			delay_in_ms = TimestampDifferenceMilliseconds(starttime, endtime);
+
+			/*
+			 * Note that we are reporting these read/write rates in the same
+			 * manner as VACUUM does, which means that while the 'average read
+			 * rate' here actually corresponds to page misses and resulting
+			 * reads which are also picked up by track_io_timing, if enabled,
+			 * the 'average write rate' is actually talking about the rate of
+			 * pages being dirtied, not being written out, so it's typical to
+			 * have a non-zero 'avg write rate' while I/O Timings only reports
+			 * reads.
+			 *
+			 * It's not clear that an ANALYZE will ever result in
+			 * FlushBuffer() being called, but we track and support reporting
+			 * on I/O write time in case that changes as it's practically free
+			 * to do so anyway.
+			 */
+
+			if (delay_in_ms > 0)
+			{
+				read_rate = (double) BLCKSZ * AnalyzePageMiss / (1024 * 1024) /
+					(delay_in_ms / 1000.0);
+				write_rate = (double) BLCKSZ * AnalyzePageDirty / (1024 * 1024) /
+					(delay_in_ms / 1000.0);
+			}
+
+			/*
+			 * We split this up so we don't emit empty I/O timing values when
+			 * track_io_timing isn't enabled.
+			 */
+
+			initStringInfo(&buf);
+			appendStringInfo(&buf, _("automatic analyze of table \"%s.%s.%s\"\n"),
+							 get_database_name(MyDatabaseId),
+							 get_namespace_name(RelationGetNamespace(onerel)),
+							 RelationGetRelationName(onerel));
+			appendStringInfo(&buf, _("buffer usage: %lld hits, %lld misses, %lld dirtied\n"),
+							 (long long) AnalyzePageHit,
+							 (long long) AnalyzePageMiss,
+							 (long long) AnalyzePageDirty);
+			appendStringInfo(&buf, _("avg read rate: %.3f MB/s, avg write rate: %.3f MB/s\n"),
+							 read_rate, write_rate);
+			if (track_io_timing)
+			{
+				appendStringInfoString(&buf, _("I/O Timings:"));
+				if (pgStatBlockReadTime - startreadtime > 0)
+					appendStringInfo(&buf, _(" read=%.3f"),
+									 (double) (pgStatBlockReadTime - startreadtime) / 1000);
+				if (pgStatBlockWriteTime - startwritetime > 0)
+					appendStringInfo(&buf, _(" write=%.3f"),
+									 (double) (pgStatBlockWriteTime - startwritetime) / 1000);
+				appendStringInfoChar(&buf, '\n');
+			}
+			appendStringInfo(&buf, _("system usage: %s"), pg_rusage_show(&ru0));
+
 			ereport(LOG,
-					(errmsg("automatic analyze of table \"%s.%s.%s\" system usage: %s",
-							get_database_name(MyDatabaseId),
-							get_namespace_name(RelationGetNamespace(onerel)),
-							RelationGetRelationName(onerel),
-							pg_rusage_show(&ru0))));
+					(errmsg_internal("%s", buf.data)));
+
+			pfree(buf.data);
+		}
 	}
 
 	/* Roll back any GUC changes executed by index functions */
@@ -1031,6 +1128,7 @@ acquire_sample_rows(Relation onerel, int elevel,
 	double		liverows = 0;	/* # live rows seen */
 	double		deadrows = 0;	/* # dead rows seen */
 	double		rowstoskip = -1;	/* -1 means not set yet */
+	long		randseed;		/* Seed for block sampler(s) */
 	BlockNumber totalblocks;
 	TransactionId OldestXmin;
 	BlockSamplerData bs;
@@ -1039,6 +1137,10 @@ acquire_sample_rows(Relation onerel, int elevel,
 	TableScanDesc scan;
 	BlockNumber nblocks;
 	BlockNumber blksdone = 0;
+#ifdef USE_PREFETCH
+	int			prefetch_maximum = 0;	/* blocks to prefetch if enabled */
+	BlockSamplerData prefetch_bs;
+#endif
 
 	Assert(targrows > 0);
 
@@ -1048,7 +1150,15 @@ acquire_sample_rows(Relation onerel, int elevel,
 	OldestXmin = GetOldestNonRemovableTransactionId(onerel);
 
 	/* Prepare for sampling block numbers */
-	nblocks = BlockSampler_Init(&bs, totalblocks, targrows, random());
+	randseed = random();
+	nblocks = BlockSampler_Init(&bs, totalblocks, targrows, randseed);
+
+#ifdef USE_PREFETCH
+	prefetch_maximum = get_tablespace_io_concurrency(onerel->rd_rel->reltablespace);
+	/* Create another BlockSampler, using the same seed, for prefetching */
+	if (prefetch_maximum)
+		(void) BlockSampler_Init(&prefetch_bs, totalblocks, targrows, randseed);
+#endif
 
 	/* Report sampling block numbers */
 	pgstat_progress_update_param(PROGRESS_ANALYZE_BLOCKS_TOTAL,
@@ -1060,14 +1170,69 @@ acquire_sample_rows(Relation onerel, int elevel,
 	scan = table_beginscan_analyze(onerel);
 	slot = table_slot_create(onerel, NULL);
 
+#ifdef USE_PREFETCH
+
+	/*
+	 * If we are doing prefetching, then go ahead and tell the kernel about
+	 * the first set of pages we are going to want.  This also moves our
+	 * iterator out ahead of the main one being used, where we will keep it so
+	 * that we're always pre-fetching out prefetch_maximum number of blocks
+	 * ahead.
+	 */
+	if (prefetch_maximum)
+	{
+		for (int i = 0; i < prefetch_maximum; i++)
+		{
+			BlockNumber prefetch_block;
+
+			if (!BlockSampler_HasMore(&prefetch_bs))
+				break;
+
+			prefetch_block = BlockSampler_Next(&prefetch_bs);
+			PrefetchBuffer(scan->rs_rd, MAIN_FORKNUM, prefetch_block);
+		}
+	}
+#endif
+
 	/* Outer loop over blocks to sample */
 	while (BlockSampler_HasMore(&bs))
 	{
+		bool		block_accepted;
 		BlockNumber targblock = BlockSampler_Next(&bs);
+#ifdef USE_PREFETCH
+		BlockNumber prefetch_targblock = InvalidBlockNumber;
+
+		/*
+		 * Make sure that every time the main BlockSampler is moved forward
+		 * that our prefetch BlockSampler also gets moved forward, so that we
+		 * always stay out ahead.
+		 */
+		if (prefetch_maximum && BlockSampler_HasMore(&prefetch_bs))
+			prefetch_targblock = BlockSampler_Next(&prefetch_bs);
+#endif
 
 		vacuum_delay_point();
 
-		if (!table_scan_analyze_next_block(scan, targblock, vac_strategy))
+		block_accepted = table_scan_analyze_next_block(scan, targblock, vac_strategy);
+
+#ifdef USE_PREFETCH
+
+		/*
+		 * When pre-fetching, after we get a block, tell the kernel about the
+		 * next one we will want, if there's any left.
+		 *
+		 * We want to do this even if the table_scan_analyze_next_block() call
+		 * above decides against analyzing the block it picked.
+		 */
+		if (prefetch_maximum && prefetch_targblock != InvalidBlockNumber)
+			PrefetchBuffer(scan->rs_rd, MAIN_FORKNUM, prefetch_targblock);
+#endif
+
+		/*
+		 * Don't analyze if table_scan_analyze_next_block() indicated this
+		 * block is unsuitable for analyzing.
+		 */
+		if (!block_accepted)
 			continue;
 
 		while (table_scan_analyze_next_tuple(scan, OldestXmin, &liverows, &deadrows, slot))

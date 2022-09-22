@@ -540,7 +540,7 @@ heapgettup(HeapScanDesc scan,
 				ParallelBlockTableScanDesc pbscan =
 				(ParallelBlockTableScanDesc) scan->rs_base.rs_parallel;
 				ParallelBlockTableScanWorker pbscanwork =
-				(ParallelBlockTableScanWorker) scan->rs_base.rs_private;
+				scan->rs_parallelworkerdata;
 
 				table_block_parallelscan_startblock_init(scan->rs_base.rs_rd,
 														 pbscanwork, pbscan);
@@ -748,7 +748,7 @@ heapgettup(HeapScanDesc scan,
 			ParallelBlockTableScanDesc pbscan =
 			(ParallelBlockTableScanDesc) scan->rs_base.rs_parallel;
 			ParallelBlockTableScanWorker pbscanwork =
-			(ParallelBlockTableScanWorker) scan->rs_base.rs_private;
+			scan->rs_parallelworkerdata;
 
 			page = table_block_parallelscan_nextpage(scan->rs_base.rs_rd,
 													 pbscanwork, pbscan);
@@ -864,7 +864,7 @@ heapgettup_pagemode(HeapScanDesc scan,
 				ParallelBlockTableScanDesc pbscan =
 				(ParallelBlockTableScanDesc) scan->rs_base.rs_parallel;
 				ParallelBlockTableScanWorker pbscanwork =
-				(ParallelBlockTableScanWorker) scan->rs_base.rs_private;
+				scan->rs_parallelworkerdata;
 
 				table_block_parallelscan_startblock_init(scan->rs_base.rs_rd,
 														 pbscanwork, pbscan);
@@ -1057,7 +1057,7 @@ heapgettup_pagemode(HeapScanDesc scan,
 			ParallelBlockTableScanDesc pbscan =
 			(ParallelBlockTableScanDesc) scan->rs_base.rs_parallel;
 			ParallelBlockTableScanWorker pbscanwork =
-			(ParallelBlockTableScanWorker) scan->rs_base.rs_private;
+			scan->rs_parallelworkerdata;
 
 			page = table_block_parallelscan_nextpage(scan->rs_base.rs_rd,
 													 pbscanwork, pbscan);
@@ -1194,8 +1194,6 @@ heap_beginscan(Relation relation, Snapshot snapshot,
 	scan->rs_base.rs_nkeys = nkeys;
 	scan->rs_base.rs_flags = flags;
 	scan->rs_base.rs_parallel = parallel_scan;
-	scan->rs_base.rs_private =
-		palloc(sizeof(ParallelBlockTableScanWorkerData));
 	scan->rs_strategy = NULL;	/* set in initscan */
 
 	/*
@@ -1230,6 +1228,15 @@ heap_beginscan(Relation relation, Snapshot snapshot,
 
 	/* we only need to set this up once */
 	scan->rs_ctup.t_tableOid = RelationGetRelid(relation);
+
+	/*
+	 * Allocate memory to keep track of page allocation for parallel workers
+	 * when doing a parallel scan.
+	 */
+	if (parallel_scan != NULL)
+		scan->rs_parallelworkerdata = palloc(sizeof(ParallelBlockTableScanWorkerData));
+	else
+		scan->rs_parallelworkerdata = NULL;
 
 	/*
 	 * we do this here instead of in initscan() because heap_rescan also calls
@@ -1305,6 +1312,9 @@ heap_endscan(TableScanDesc sscan)
 
 	if (scan->rs_strategy != NULL)
 		FreeAccessStrategy(scan->rs_strategy);
+
+	if (scan->rs_parallelworkerdata != NULL)
+		pfree(scan->rs_parallelworkerdata);
 
 	if (scan->rs_base.rs_flags & SO_TEMP_SNAPSHOT)
 		UnregisterSnapshot(scan->rs_base.rs_snapshot);
@@ -1388,6 +1398,153 @@ heap_getnextslot(TableScanDesc sscan, ScanDirection direction, TupleTableSlot *s
 
 	ExecStoreBufferHeapTuple(&scan->rs_ctup, slot,
 							 scan->rs_cbuf);
+	return true;
+}
+
+void
+heap_set_tidrange(TableScanDesc sscan, ItemPointer mintid,
+				  ItemPointer maxtid)
+{
+	HeapScanDesc scan = (HeapScanDesc) sscan;
+	BlockNumber startBlk;
+	BlockNumber numBlks;
+	ItemPointerData highestItem;
+	ItemPointerData lowestItem;
+
+	/*
+	 * For relations without any pages, we can simply leave the TID range
+	 * unset.  There will be no tuples to scan, therefore no tuples outside
+	 * the given TID range.
+	 */
+	if (scan->rs_nblocks == 0)
+		return;
+
+	/*
+	 * Set up some ItemPointers which point to the first and last possible
+	 * tuples in the heap.
+	 */
+	ItemPointerSet(&highestItem, scan->rs_nblocks - 1, MaxOffsetNumber);
+	ItemPointerSet(&lowestItem, 0, FirstOffsetNumber);
+
+	/*
+	 * If the given maximum TID is below the highest possible TID in the
+	 * relation, then restrict the range to that, otherwise we scan to the end
+	 * of the relation.
+	 */
+	if (ItemPointerCompare(maxtid, &highestItem) < 0)
+		ItemPointerCopy(maxtid, &highestItem);
+
+	/*
+	 * If the given minimum TID is above the lowest possible TID in the
+	 * relation, then restrict the range to only scan for TIDs above that.
+	 */
+	if (ItemPointerCompare(mintid, &lowestItem) > 0)
+		ItemPointerCopy(mintid, &lowestItem);
+
+	/*
+	 * Check for an empty range and protect from would be negative results
+	 * from the numBlks calculation below.
+	 */
+	if (ItemPointerCompare(&highestItem, &lowestItem) < 0)
+	{
+		/* Set an empty range of blocks to scan */
+		heap_setscanlimits(sscan, 0, 0);
+		return;
+	}
+
+	/*
+	 * Calculate the first block and the number of blocks we must scan. We
+	 * could be more aggressive here and perform some more validation to try
+	 * and further narrow the scope of blocks to scan by checking if the
+	 * lowerItem has an offset above MaxOffsetNumber.  In this case, we could
+	 * advance startBlk by one.  Likewise, if highestItem has an offset of 0
+	 * we could scan one fewer blocks.  However, such an optimization does not
+	 * seem worth troubling over, currently.
+	 */
+	startBlk = ItemPointerGetBlockNumberNoCheck(&lowestItem);
+
+	numBlks = ItemPointerGetBlockNumberNoCheck(&highestItem) -
+		ItemPointerGetBlockNumberNoCheck(&lowestItem) + 1;
+
+	/* Set the start block and number of blocks to scan */
+	heap_setscanlimits(sscan, startBlk, numBlks);
+
+	/* Finally, set the TID range in sscan */
+	ItemPointerCopy(&lowestItem, &sscan->rs_mintid);
+	ItemPointerCopy(&highestItem, &sscan->rs_maxtid);
+}
+
+bool
+heap_getnextslot_tidrange(TableScanDesc sscan, ScanDirection direction,
+						  TupleTableSlot *slot)
+{
+	HeapScanDesc scan = (HeapScanDesc) sscan;
+	ItemPointer mintid = &sscan->rs_mintid;
+	ItemPointer maxtid = &sscan->rs_maxtid;
+
+	/* Note: no locking manipulations needed */
+	for (;;)
+	{
+		if (sscan->rs_flags & SO_ALLOW_PAGEMODE)
+			heapgettup_pagemode(scan, direction, sscan->rs_nkeys, sscan->rs_key);
+		else
+			heapgettup(scan, direction, sscan->rs_nkeys, sscan->rs_key);
+
+		if (scan->rs_ctup.t_data == NULL)
+		{
+			ExecClearTuple(slot);
+			return false;
+		}
+
+		/*
+		 * heap_set_tidrange will have used heap_setscanlimits to limit the
+		 * range of pages we scan to only ones that can contain the TID range
+		 * we're scanning for.  Here we must filter out any tuples from these
+		 * pages that are outwith that range.
+		 */
+		if (ItemPointerCompare(&scan->rs_ctup.t_self, mintid) < 0)
+		{
+			ExecClearTuple(slot);
+
+			/*
+			 * When scanning backwards, the TIDs will be in descending order.
+			 * Future tuples in this direction will be lower still, so we can
+			 * just return false to indicate there will be no more tuples.
+			 */
+			if (ScanDirectionIsBackward(direction))
+				return false;
+
+			continue;
+		}
+
+		/*
+		 * Likewise for the final page, we must filter out TIDs greater than
+		 * maxtid.
+		 */
+		if (ItemPointerCompare(&scan->rs_ctup.t_self, maxtid) > 0)
+		{
+			ExecClearTuple(slot);
+
+			/*
+			 * When scanning forward, the TIDs will be in ascending order.
+			 * Future tuples in this direction will be higher still, so we can
+			 * just return false to indicate there will be no more tuples.
+			 */
+			if (ScanDirectionIsForward(direction))
+				return false;
+			continue;
+		}
+
+		break;
+	}
+
+	/*
+	 * if we get here it means we have a new current scan tuple, so point to
+	 * the proper return buffer and return the tuple.
+	 */
+	pgstat_count_heap_getnext(scan->rs_base.rs_rd);
+
+	ExecStoreBufferHeapTuple(&scan->rs_ctup, slot, scan->rs_cbuf);
 	return true;
 }
 
@@ -2010,7 +2167,7 @@ heap_insert(Relation relation, HeapTuple tup, CommandId cid,
 		int			bufflags = 0;
 
 		/*
-		 * If this is a catalog, we need to transmit combocids to properly
+		 * If this is a catalog, we need to transmit combo CIDs to properly
 		 * decode, so log that as well.
 		 */
 		if (RelationIsAccessibleInLogicalDecoding(relation))
@@ -2290,7 +2447,7 @@ heap_multi_insert(Relation relation, TupleTableSlot **slots, int ntuples,
 		RelationPutHeapTuple(relation, buffer, heaptuples[ndone], false);
 
 		/*
-		 * For logical decoding we need combocids to properly decode the
+		 * For logical decoding we need combo CIDs to properly decode the
 		 * catalog.
 		 */
 		if (needwal && need_cids)
@@ -2306,7 +2463,7 @@ heap_multi_insert(Relation relation, TupleTableSlot **slots, int ntuples,
 			RelationPutHeapTuple(relation, buffer, heaptup, false);
 
 			/*
-			 * For logical decoding we need combocids to properly decode the
+			 * For logical decoding we need combo CIDs to properly decode the
 			 * catalog.
 			 */
 			if (needwal && need_cids)
@@ -2586,7 +2743,7 @@ xmax_infomask_changed(uint16 new_infomask, uint16 old_infomask)
  *
  * In the failure cases, the routine fills *tmfd with the tuple's t_ctid,
  * t_xmax (resolving a possible MultiXact, if necessary), and t_cmax (the last
- * only for TM_SelfModified, since we cannot obtain cmax from a combocid
+ * only for TM_SelfModified, since we cannot obtain cmax from a combo CID
  * generated by another transaction).
  */
 TM_Result
@@ -2614,8 +2771,8 @@ heap_delete(Relation relation, ItemPointer tid,
 	Assert(ItemPointerIsValid(tid));
 
 	/*
-	 * Forbid this during a parallel operation, lest it allocate a combocid.
-	 * Other workers might need that combocid for visibility checks, and we
+	 * Forbid this during a parallel operation, lest it allocate a combo CID.
+	 * Other workers might need that combo CID for visibility checks, and we
 	 * have no provision for broadcasting it to them.
 	 */
 	if (IsInParallelMode())
@@ -2769,8 +2926,7 @@ l1:
 			HEAP_XMAX_IS_LOCKED_ONLY(tp.t_data->t_infomask) ||
 			HeapTupleHeaderIsOnlyLocked(tp.t_data))
 			result = TM_Ok;
-		else if (!ItemPointerEquals(&tp.t_self, &tp.t_data->t_ctid) ||
-				 HeapTupleHeaderIndicatesMovedPartitions(tp.t_data))
+		else if (!ItemPointerEquals(&tp.t_self, &tp.t_data->t_ctid))
 			result = TM_Updated;
 		else
 			result = TM_Deleted;
@@ -2817,7 +2973,7 @@ l1:
 	 */
 	CheckForSerializableConflictIn(relation, tid, BufferGetBlockNumber(buffer));
 
-	/* replace cid with a combo cid if necessary */
+	/* replace cid with a combo CID if necessary */
 	HeapTupleHeaderAdjustCmax(tp.t_data, &cid, &iscombo);
 
 	/*
@@ -2889,7 +3045,7 @@ l1:
 		xl_heap_header xlhdr;
 		XLogRecPtr	recptr;
 
-		/* For logical decode we need combocids to properly decode the catalog */
+		/* For logical decode we need combo CIDs to properly decode the catalog */
 		if (RelationIsAccessibleInLogicalDecoding(relation))
 			log_heap_new_cid(relation, &tp);
 
@@ -3037,7 +3193,7 @@ simple_heap_delete(Relation relation, ItemPointer tid)
  *
  * In the failure cases, the routine fills *tmfd with the tuple's t_ctid,
  * t_xmax (resolving a possible MultiXact, if necessary), and t_cmax (the last
- * only for TM_SelfModified, since we cannot obtain cmax from a combocid
+ * only for TM_SelfModified, since we cannot obtain cmax from a combo CID
  * generated by another transaction).
  */
 TM_Result
@@ -3086,8 +3242,8 @@ heap_update(Relation relation, ItemPointer otid, HeapTuple newtup,
 	Assert(ItemPointerIsValid(otid));
 
 	/*
-	 * Forbid this during a parallel operation, lest it allocate a combocid.
-	 * Other workers might need that combocid for visibility checks, and we
+	 * Forbid this during a parallel operation, lest it allocate a combo CID.
+	 * Other workers might need that combo CID for visibility checks, and we
 	 * have no provision for broadcasting it to them.
 	 */
 	if (IsInParallelMode())
@@ -3399,8 +3555,7 @@ l2:
 
 		if (can_continue)
 			result = TM_Ok;
-		else if (!ItemPointerEquals(&oldtup.t_self, &oldtup.t_data->t_ctid) ||
-				 HeapTupleHeaderIndicatesMovedPartitions(oldtup.t_data))
+		else if (!ItemPointerEquals(&oldtup.t_self, &oldtup.t_data->t_ctid))
 			result = TM_Updated;
 		else
 			result = TM_Deleted;
@@ -3526,7 +3681,7 @@ l2:
 	HeapTupleHeaderSetXmax(newtup->t_data, xmax_new_tuple);
 
 	/*
-	 * Replace cid with a combo cid if necessary.  Note that we already put
+	 * Replace cid with a combo CID if necessary.  Note that we already put
 	 * the plain cid into the new tuple.
 	 */
 	HeapTupleHeaderAdjustCmax(oldtup.t_data, &cid, &iscombo);
@@ -3842,7 +3997,7 @@ l2:
 		XLogRecPtr	recptr;
 
 		/*
-		 * For logical decoding we need combocids to properly decode the
+		 * For logical decoding we need combo CIDs to properly decode the
 		 * catalog.
 		 */
 		if (RelationIsAccessibleInLogicalDecoding(relation))
@@ -4114,7 +4269,7 @@ get_mxact_status_for_lock(LockTupleMode mode, bool is_update)
  * In the failure cases other than TM_Invisible, the routine fills
  * *tmfd with the tuple's t_ctid, t_xmax (resolving a possible MultiXact,
  * if necessary), and t_cmax (the last only for TM_SelfModified,
- * since we cannot obtain cmax from a combocid generated by another
+ * since we cannot obtain cmax from a combo CID generated by another
  * transaction).
  * See comments for struct TM_FailureData for additional info.
  *
@@ -4636,8 +4791,7 @@ l3:
 			HEAP_XMAX_IS_LOCKED_ONLY(tuple->t_data->t_infomask) ||
 			HeapTupleHeaderIsOnlyLocked(tuple->t_data))
 			result = TM_Ok;
-		else if (!ItemPointerEquals(&tuple->t_self, &tuple->t_data->t_ctid) ||
-				 HeapTupleHeaderIndicatesMovedPartitions(tuple->t_data))
+		else if (!ItemPointerEquals(&tuple->t_self, &tuple->t_data->t_ctid))
 			result = TM_Updated;
 		else
 			result = TM_Deleted;
@@ -5210,8 +5364,7 @@ test_lockmode_for_conflict(MultiXactStatus status, TransactionId xid,
 								LOCKMODE_from_mxstatus(wantedstatus)))
 		{
 			/* bummer */
-			if (!ItemPointerEquals(&tup->t_self, &tup->t_data->t_ctid) ||
-				HeapTupleHeaderIndicatesMovedPartitions(tup->t_data))
+			if (!ItemPointerEquals(&tup->t_self, &tup->t_data->t_ctid))
 				return TM_Updated;
 			else
 				return TM_Deleted;
@@ -5758,7 +5911,7 @@ heap_abort_speculative(Relation relation, ItemPointer tid)
 
 	/*
 	 * No need to check for serializable conflicts here.  There is never a
-	 * need for a combocid, either.  No need to extract replica identity, or
+	 * need for a combo CID, either.  No need to extract replica identity, or
 	 * do anything special with infomask bits.
 	 */
 
@@ -7736,8 +7889,10 @@ bottomup_sort_and_shrink(TM_IndexDeleteOp *delstate)
 	/*
 	 * We're about ready to sort block groups to determine the optimal order
 	 * for visiting heap blocks.  But before we do, round the number of
-	 * promising tuples for each block group up to the nearest power-of-two
-	 * (except for block groups where npromisingtids is already 0).
+	 * promising tuples for each block group up to the next power-of-two,
+	 * unless it is very low (less than 4), in which case we round up to 4.
+	 * npromisingtids is far too noisy to trust when choosing between a pair
+	 * of block groups that both have very low values.
 	 *
 	 * This scheme divides heap blocks/block groups into buckets.  Each bucket
 	 * contains blocks that have _approximately_ the same number of promising
@@ -8200,7 +8355,7 @@ log_heap_new_cid(Relation relation, HeapTuple tup)
 
 	/*
 	 * If the tuple got inserted & deleted in the same TX we definitely have a
-	 * combocid, set cmin and cmax.
+	 * combo CID, set cmin and cmax.
 	 */
 	if (hdr->t_infomask & HEAP_COMBOCID)
 	{
@@ -8210,7 +8365,7 @@ log_heap_new_cid(Relation relation, HeapTuple tup)
 		xlrec.cmax = HeapTupleHeaderGetCmax(hdr);
 		xlrec.combocid = HeapTupleHeaderGetRawCommandId(hdr);
 	}
-	/* No combocid, so only cmin or cmax can be set by this TX */
+	/* No combo CID, so only cmin or cmax can be set by this TX */
 	else
 	{
 		/*

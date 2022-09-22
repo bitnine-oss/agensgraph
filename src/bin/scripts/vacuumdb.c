@@ -18,9 +18,11 @@
 #include "common/connect.h"
 #include "common/logging.h"
 #include "fe_utils/cancel.h"
+#include "fe_utils/option_utils.h"
+#include "fe_utils/parallel_slot.h"
+#include "fe_utils/query_utils.h"
 #include "fe_utils/simple_list.h"
 #include "fe_utils/string_utils.h"
-#include "scripts_parallel.h"
 
 
 /* vacuum options controlled by user flags */
@@ -39,10 +41,11 @@ typedef struct vacuumingOptions
 									 * parallel degree, otherwise -1 */
 	bool		do_index_cleanup;
 	bool		do_truncate;
+	bool		process_toast;
 } vacuumingOptions;
 
 
-static void vacuum_one_database(const ConnParams *cparams,
+static void vacuum_one_database(ConnParams *cparams,
 								vacuumingOptions *vacopts,
 								int stage,
 								SimpleStringList *tables,
@@ -97,6 +100,7 @@ main(int argc, char *argv[])
 		{"min-mxid-age", required_argument, NULL, 7},
 		{"no-index-cleanup", no_argument, NULL, 8},
 		{"no-truncate", no_argument, NULL, 9},
+		{"no-process-toast", no_argument, NULL, 10},
 		{NULL, 0, NULL, 0}
 	};
 
@@ -124,6 +128,7 @@ main(int argc, char *argv[])
 	vacopts.parallel_workers = -1;
 	vacopts.do_index_cleanup = true;
 	vacopts.do_truncate = true;
+	vacopts.process_toast = true;
 
 	pg_logging_init(argv[0]);
 	progname = get_progname(argv[0]);
@@ -233,6 +238,9 @@ main(int argc, char *argv[])
 			case 9:
 				vacopts.do_truncate = false;
 				break;
+			case 10:
+				vacopts.process_toast = false;
+				break;
 			default:
 				fprintf(stderr, _("Try \"%s --help\" for more information.\n"), progname);
 				exit(1);
@@ -287,6 +295,12 @@ main(int argc, char *argv[])
 		{
 			pg_log_error("cannot use the \"%s\" option when performing only analyze",
 						 "no-truncate");
+			exit(1);
+		}
+		if (!vacopts.process_toast)
+		{
+			pg_log_error("cannot use the \"%s\" option when performing only analyze",
+						 "no-process-toast");
 			exit(1);
 		}
 		/* allow 'and_analyze' with 'analyze_only' */
@@ -394,7 +408,7 @@ main(int argc, char *argv[])
  * a list of tables from the database.
  */
 static void
-vacuum_one_database(const ConnParams *cparams,
+vacuum_one_database(ConnParams *cparams,
 					vacuumingOptions *vacopts,
 					int stage,
 					SimpleStringList *tables,
@@ -407,13 +421,14 @@ vacuum_one_database(const ConnParams *cparams,
 	PGresult   *res;
 	PGconn	   *conn;
 	SimpleStringListCell *cell;
-	ParallelSlot *slots;
+	ParallelSlotArray *sa;
 	SimpleStringList dbtables = {NULL, NULL};
 	int			i;
 	int			ntups;
 	bool		failed = false;
 	bool		tables_listed = false;
 	bool		has_where = false;
+	const char *initcmd;
 	const char *stage_commands[] = {
 		"SET default_statistics_target=1; SET vacuum_cost_delay=0;",
 		"SET default_statistics_target=10; RESET vacuum_cost_delay;",
@@ -451,6 +466,14 @@ vacuum_one_database(const ConnParams *cparams,
 		PQfinish(conn);
 		pg_log_error("cannot use the \"%s\" option on server versions older than PostgreSQL %s",
 					 "no-truncate", "12");
+		exit(1);
+	}
+
+	if (!vacopts->process_toast && PQserverVersion(conn) < 140000)
+	{
+		PQfinish(conn);
+		pg_log_error("cannot use the \"%s\" option on server versions older than PostgreSQL %s",
+					 "no-process-toast", "14");
 		exit(1);
 	}
 
@@ -662,26 +685,25 @@ vacuum_one_database(const ConnParams *cparams,
 		concurrentCons = 1;
 
 	/*
+	 * All slots need to be prepared to run the appropriate analyze stage, if
+	 * caller requested that mode.  We have to prepare the initial connection
+	 * ourselves before setting up the slots.
+	 */
+	if (stage == ANALYZE_NO_STAGE)
+		initcmd = NULL;
+	else
+	{
+		initcmd = stage_commands[stage];
+		executeCommand(conn, initcmd, echo);
+	}
+
+	/*
 	 * Setup the database connections. We reuse the connection we already have
 	 * for the first slot.  If not in parallel mode, the first slot in the
 	 * array contains the connection.
 	 */
-	slots = ParallelSlotsSetup(cparams, progname, echo, conn, concurrentCons);
-
-	/*
-	 * Prepare all the connections to run the appropriate analyze stage, if
-	 * caller requested that mode.
-	 */
-	if (stage != ANALYZE_NO_STAGE)
-	{
-		int			j;
-
-		/* We already emitted the message above */
-
-		for (j = 0; j < concurrentCons; j++)
-			executeCommand((slots + j)->connection,
-						   stage_commands[stage], echo);
-	}
+	sa = ParallelSlotsSetup(concurrentCons, cparams, progname, echo, initcmd);
+	ParallelSlotsAdoptConn(sa, conn);
 
 	initPQExpBuffer(&sql);
 
@@ -697,7 +719,7 @@ vacuum_one_database(const ConnParams *cparams,
 			goto finish;
 		}
 
-		free_slot = ParallelSlotsGetIdle(slots, concurrentCons);
+		free_slot = ParallelSlotsGetIdle(sa, NULL);
 		if (!free_slot)
 		{
 			failed = true;
@@ -711,18 +733,19 @@ vacuum_one_database(const ConnParams *cparams,
 		 * Execute the vacuum.  All errors are handled in processQueryResult
 		 * through ParallelSlotsGetIdle.
 		 */
+		ParallelSlotSetHandler(free_slot, TableCommandResultHandler, NULL);
 		run_vacuum_command(free_slot->connection, sql.data,
 						   echo, tabname);
 
 		cell = cell->next;
 	} while (cell != NULL);
 
-	if (!ParallelSlotsWaitCompletion(slots, concurrentCons))
+	if (!ParallelSlotsWaitCompletion(sa))
 		failed = true;
 
 finish:
-	ParallelSlotsTerminate(slots, concurrentCons);
-	pg_free(slots);
+	ParallelSlotsTerminate(sa);
+	pg_free(sa);
 
 	termPQExpBuffer(&sql);
 
@@ -869,6 +892,13 @@ prepare_vacuum_command(PQExpBuffer sql, int serverVersion,
 				appendPQExpBuffer(sql, "%sTRUNCATE FALSE", sep);
 				sep = comma;
 			}
+			if (!vacopts->process_toast)
+			{
+				/* PROCESS_TOAST is supported since v14 */
+				Assert(serverVersion >= 140000);
+				appendPQExpBuffer(sql, "%sPROCESS_TOAST FALSE", sep);
+				sep = comma;
+			}
 			if (vacopts->skip_locked)
 			{
 				/* SKIP_LOCKED is supported since v12 */
@@ -968,6 +998,7 @@ help(const char *progname)
 	printf(_("      --min-mxid-age=MXID_AGE     minimum multixact ID age of tables to vacuum\n"));
 	printf(_("      --min-xid-age=XID_AGE       minimum transaction ID age of tables to vacuum\n"));
 	printf(_("      --no-index-cleanup          don't remove index entries that point to dead tuples\n"));
+	printf(_("      --no-process-toast          skip the TOAST table associated with the table to vacuum\n"));
 	printf(_("      --no-truncate               don't truncate empty pages at the end of the table\n"));
 	printf(_("  -P, --parallel=PARALLEL_DEGREE  use this many background workers for vacuum, if available\n"));
 	printf(_("  -q, --quiet                     don't write any messages\n"));

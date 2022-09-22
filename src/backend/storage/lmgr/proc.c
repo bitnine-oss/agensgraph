@@ -281,6 +281,7 @@ InitProcGlobal(void)
 		 */
 		pg_atomic_init_u32(&(procs[i].procArrayGroupNext), INVALID_PGPROCNO);
 		pg_atomic_init_u32(&(procs[i].clogGroupNext), INVALID_PGPROCNO);
+		pg_atomic_init_u64(&(procs[i].waitStart), 0);
 	}
 
 	/*
@@ -402,6 +403,7 @@ InitProcess(void)
 	MyProc->lwWaitMode = 0;
 	MyProc->waitLock = NULL;
 	MyProc->waitProcLock = NULL;
+	pg_atomic_write_u64(&MyProc->waitStart, 0);
 #ifdef USE_ASSERT_CHECKING
 	{
 		int			i;
@@ -580,6 +582,7 @@ InitAuxiliaryProcess(void)
 	MyProc->lwWaitMode = 0;
 	MyProc->waitLock = NULL;
 	MyProc->waitProcLock = NULL;
+	pg_atomic_write_u64(&MyProc->waitStart, 0);
 #ifdef USE_ASSERT_CHECKING
 	{
 		int			i;
@@ -1262,6 +1265,23 @@ ProcSleep(LOCALLOCK *locallock, LockMethod lockMethodTable)
 		}
 		else
 			enable_timeout_after(DEADLOCK_TIMEOUT, DeadlockTimeout);
+
+		/*
+		 * Use the current time obtained for the deadlock timeout timer as
+		 * waitStart (i.e., the time when this process started waiting for the
+		 * lock). Since getting the current time newly can cause overhead, we
+		 * reuse the already-obtained time to avoid that overhead.
+		 *
+		 * Note that waitStart is updated without holding the lock table's
+		 * partition lock, to avoid the overhead by additional lock
+		 * acquisition. This can cause "waitstart" in pg_locks to become NULL
+		 * for a very short period of time after the wait started even though
+		 * "granted" is false. This is OK in practice because we can assume
+		 * that users are likely to look at "waitstart" when waiting for the
+		 * lock for a long time.
+		 */
+		pg_atomic_write_u64(&MyProc->waitStart,
+							get_timeout_start_time(DEADLOCK_TIMEOUT));
 	}
 	else if (log_recovery_conflict_waits)
 	{
@@ -1394,13 +1414,13 @@ ProcSleep(LOCALLOCK *locallock, LockMethod lockMethodTable)
 					initStringInfo(&logbuf);
 					DescribeLockTag(&locktagbuf, &locktag_copy);
 					appendStringInfo(&logbuf,
-									 _("Process %d waits for %s on %s."),
+									 "Process %d waits for %s on %s.",
 									 MyProcPid,
 									 GetLockmodeName(lockmethod_copy, lockmode),
 									 locktagbuf.data);
 
 					ereport(DEBUG1,
-							(errmsg("sending cancel to blocking autovacuum PID %d",
+							(errmsg_internal("sending cancel to blocking autovacuum PID %d",
 									pid),
 							 errdetail_log("%s", logbuf.data)));
 
@@ -1678,6 +1698,7 @@ ProcWakeup(PGPROC *proc, ProcWaitStatus waitStatus)
 	proc->waitLock = NULL;
 	proc->waitProcLock = NULL;
 	proc->waitStatus = waitStatus;
+	pg_atomic_write_u64(&MyProc->waitStart, 0);
 
 	/* And awaken it */
 	SetLatch(&proc->procLatch);

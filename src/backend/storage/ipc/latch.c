@@ -3,21 +3,22 @@
  * latch.c
  *	  Routines for inter-process latches
  *
- * The Unix implementation uses the so-called self-pipe trick to overcome the
- * race condition involved with poll() (or epoll_wait() on linux) and setting
- * a global flag in the signal handler. When a latch is set and the current
- * process is waiting for it, the signal handler wakes up the poll() in
- * WaitLatch by writing a byte to a pipe. A signal by itself doesn't interrupt
- * poll() on all platforms, and even on platforms where it does, a signal that
- * arrives just before the poll() call does not prevent poll() from entering
- * sleep. An incoming byte on a pipe however reliably interrupts the sleep,
- * and causes poll() to return immediately even if the signal arrives before
- * poll() begins.
+ * The poll() implementation uses the so-called self-pipe trick to overcome the
+ * race condition involved with poll() and setting a global flag in the signal
+ * handler. When a latch is set and the current process is waiting for it, the
+ * signal handler wakes up the poll() in WaitLatch by writing a byte to a pipe.
+ * A signal by itself doesn't interrupt poll() on all platforms, and even on
+ * platforms where it does, a signal that arrives just before the poll() call
+ * does not prevent poll() from entering sleep. An incoming byte on a pipe
+ * however reliably interrupts the sleep, and causes poll() to return
+ * immediately even if the signal arrives before poll() begins.
  *
- * When SetLatch is called from the same process that owns the latch,
- * SetLatch writes the byte directly to the pipe. If it's owned by another
- * process, SIGUSR1 is sent and the signal handler in the waiting process
- * writes the byte to the pipe on behalf of the signaling process.
+ * The epoll() implementation overcomes the race with a different technique: it
+ * keeps SIGURG blocked and consumes from a signalfd() descriptor instead.  We
+ * don't need to register a signal handler or create our own self-pipe.  We
+ * assume that any system that has Linux epoll() also has Linux signalfd().
+ *
+ * The kqueue() implementation waits for SIGURG with EVFILT_SIGNAL.
  *
  * The Windows implementation uses Windows events that are inherited by all
  * postmaster child processes. There's no need for the self-pipe trick there.
@@ -46,6 +47,7 @@
 #include <poll.h>
 #endif
 
+#include "libpq/pqsignal.h"
 #include "miscadmin.h"
 #include "pgstat.h"
 #include "port/atomics.h"
@@ -77,6 +79,10 @@
 #define WAIT_USE_WIN32
 #else
 #error "no wait set implementation available"
+#endif
+
+#ifdef WAIT_USE_EPOLL
+#include <sys/signalfd.h>
 #endif
 
 /* typedef in latch.h */
@@ -139,7 +145,14 @@ static WaitEventSet *LatchWaitSet;
 #ifndef WIN32
 /* Are we currently in WaitLatch? The signal handler would like to know. */
 static volatile sig_atomic_t waiting = false;
+#endif
 
+#ifdef WAIT_USE_EPOLL
+/* On Linux, we'll receive SIGURG via a signalfd file descriptor. */
+static int	signal_fd = -1;
+#endif
+
+#if defined(WAIT_USE_POLL)
 /* Read and write ends of the self-pipe */
 static int	selfpipe_readfd = -1;
 static int	selfpipe_writefd = -1;
@@ -148,9 +161,13 @@ static int	selfpipe_writefd = -1;
 static int	selfpipe_owner_pid = 0;
 
 /* Private function prototypes */
+static void latch_sigurg_handler(SIGNAL_ARGS);
 static void sendSelfPipeByte(void);
-static void drainSelfPipe(void);
-#endif							/* WIN32 */
+#endif
+
+#if defined(WAIT_USE_POLL) || defined(WAIT_USE_EPOLL)
+static void drain(void);
+#endif
 
 #if defined(WAIT_USE_EPOLL)
 static void WaitEventAdjustEpoll(WaitEventSet *set, WaitEvent *event, int action);
@@ -174,7 +191,7 @@ static inline int WaitEventSetWaitBlock(WaitEventSet *set, int cur_timeout,
 void
 InitializeLatchSupport(void)
 {
-#ifndef WIN32
+#if defined(WAIT_USE_POLL)
 	int			pipefd[2];
 
 	if (IsUnderPostmaster)
@@ -244,8 +261,28 @@ InitializeLatchSupport(void)
 	/* Tell fd.c about these two long-lived FDs */
 	ReserveExternalFD();
 	ReserveExternalFD();
-#else
-	/* currently, nothing to do here for Windows */
+
+	pqsignal(SIGURG, latch_sigurg_handler);
+#endif
+
+#ifdef WAIT_USE_EPOLL
+	sigset_t	signalfd_mask;
+
+	/* Block SIGURG, because we'll receive it through a signalfd. */
+	sigaddset(&UnBlockSig, SIGURG);
+
+	/* Set up the signalfd to receive SIGURG notifications. */
+	sigemptyset(&signalfd_mask);
+	sigaddset(&signalfd_mask, SIGURG);
+	signal_fd = signalfd(-1, &signalfd_mask, SFD_NONBLOCK | SFD_CLOEXEC);
+	if (signal_fd < 0)
+		elog(FATAL, "signalfd() failed");
+	ReserveExternalFD();
+#endif
+
+#ifdef WAIT_USE_KQUEUE
+	/* Ignore SIGURG, because we'll receive it via kqueue. */
+	pqsignal(SIGURG, SIG_IGN);
 #endif
 }
 
@@ -267,6 +304,33 @@ InitializeLatchWaitSet(void)
 	Assert(latch_pos == LatchWaitSetLatchPos);
 }
 
+void
+ShutdownLatchSupport(void)
+{
+#if defined(WAIT_USE_POLL)
+	pqsignal(SIGURG, SIG_IGN);
+#endif
+
+	if (LatchWaitSet)
+	{
+		FreeWaitEventSet(LatchWaitSet);
+		LatchWaitSet = NULL;
+	}
+
+#if defined(WAIT_USE_POLL)
+	close(selfpipe_readfd);
+	close(selfpipe_writefd);
+	selfpipe_readfd = -1;
+	selfpipe_writefd = -1;
+	selfpipe_owner_pid = InvalidPid;
+#endif
+
+#if defined(WAIT_USE_EPOLL)
+	close(signal_fd);
+	signal_fd = -1;
+#endif
+}
+
 /*
  * Initialize a process-local latch.
  */
@@ -274,13 +338,14 @@ void
 InitLatch(Latch *latch)
 {
 	latch->is_set = false;
+	latch->maybe_sleeping = false;
 	latch->owner_pid = MyProcPid;
 	latch->is_shared = false;
 
-#ifndef WIN32
+#if defined(WAIT_USE_POLL)
 	/* Assert InitializeLatchSupport has been called in this process */
 	Assert(selfpipe_readfd >= 0 && selfpipe_owner_pid == MyProcPid);
-#else
+#elif defined(WAIT_USE_WIN32)
 	latch->event = CreateEvent(NULL, TRUE, FALSE, NULL);
 	if (latch->event == NULL)
 		elog(ERROR, "CreateEvent failed: error code %lu", GetLastError());
@@ -321,6 +386,7 @@ InitSharedLatch(Latch *latch)
 #endif
 
 	latch->is_set = false;
+	latch->maybe_sleeping = false;
 	latch->owner_pid = 0;
 	latch->is_shared = true;
 }
@@ -333,10 +399,6 @@ InitSharedLatch(Latch *latch)
  * any sort of locking here, meaning that we could fail to detect the error
  * if two processes try to own the same latch at about the same time.  If
  * there is any risk of that, caller must provide an interlock to prevent it.
- *
- * In any process that calls OwnLatch(), make sure that
- * latch_sigusr1_handler() is called from the SIGUSR1 signal handler,
- * as shared latches use SIGUSR1 for inter-process communication.
  */
 void
 OwnLatch(Latch *latch)
@@ -344,7 +406,7 @@ OwnLatch(Latch *latch)
 	/* Sanity checks */
 	Assert(latch->is_shared);
 
-#ifndef WIN32
+#if defined(WAIT_USE_POLL)
 	/* Assert InitializeLatchSupport has been called in this process */
 	Assert(selfpipe_readfd >= 0 && selfpipe_owner_pid == MyProcPid);
 #endif
@@ -523,13 +585,17 @@ SetLatch(Latch *latch)
 
 	latch->is_set = true;
 
+	pg_memory_barrier();
+	if (!latch->maybe_sleeping)
+		return;
+
 #ifndef WIN32
 
 	/*
 	 * See if anyone's waiting for the latch. It can be the current process if
-	 * we're in a signal handler. We use the self-pipe to wake up the
-	 * poll()/epoll_wait() in that case. If it's another process, send a
-	 * signal.
+	 * we're in a signal handler. We use the self-pipe or SIGURG to ourselves
+	 * to wake up WaitEventSetWaitBlock() without races in that case. If it's
+	 * another process, send a signal.
 	 *
 	 * Fetch owner_pid only once, in case the latch is concurrently getting
 	 * owned or disowned. XXX: This assumes that pid_t is atomic, which isn't
@@ -552,11 +618,17 @@ SetLatch(Latch *latch)
 		return;
 	else if (owner_pid == MyProcPid)
 	{
+#if defined(WAIT_USE_POLL)
 		if (waiting)
 			sendSelfPipeByte();
+#else
+		if (waiting)
+			kill(MyProcPid, SIGURG);
+#endif
 	}
 	else
-		kill(owner_pid, SIGUSR1);
+		kill(owner_pid, SIGURG);
+
 #else
 
 	/*
@@ -589,6 +661,7 @@ ResetLatch(Latch *latch)
 {
 	/* Only the owner should reset the latch */
 	Assert(latch->owner_pid == MyProcPid);
+	Assert(latch->maybe_sleeping == false);
 
 	latch->is_set = false;
 
@@ -666,31 +739,12 @@ CreateWaitEventSet(MemoryContext context, int nevents)
 		/* treat this as though epoll_create1 itself returned EMFILE */
 		elog(ERROR, "epoll_create1 failed: %m");
 	}
-#ifdef EPOLL_CLOEXEC
 	set->epoll_fd = epoll_create1(EPOLL_CLOEXEC);
 	if (set->epoll_fd < 0)
 	{
 		ReleaseExternalFD();
 		elog(ERROR, "epoll_create1 failed: %m");
 	}
-#else
-	/* cope with ancient glibc lacking epoll_create1 (e.g., RHEL5) */
-	set->epoll_fd = epoll_create(nevents);
-	if (set->epoll_fd < 0)
-	{
-		ReleaseExternalFD();
-		elog(ERROR, "epoll_create failed: %m");
-	}
-	if (fcntl(set->epoll_fd, F_SETFD, FD_CLOEXEC) == -1)
-	{
-		int			save_errno = errno;
-
-		close(set->epoll_fd);
-		ReleaseExternalFD();
-		errno = save_errno;
-		elog(ERROR, "fcntl(F_SETFD) failed on epoll descriptor: %m");
-	}
-#endif							/* EPOLL_CLOEXEC */
 #elif defined(WAIT_USE_KQUEUE)
 	if (!AcquireExternalFD())
 	{
@@ -736,7 +790,7 @@ CreateWaitEventSet(MemoryContext context, int nevents)
  *
  * Note: preferably, this shouldn't have to free any resources that could be
  * inherited across an exec().  If it did, we'd likely leak those resources in
- * many scenarios.  For the epoll case, we ensure that by setting FD_CLOEXEC
+ * many scenarios.  For the epoll case, we ensure that by setting EPOLL_CLOEXEC
  * when the FD is created.  For the Windows case, we assume that the handles
  * involved are non-inheritable.
  */
@@ -851,8 +905,15 @@ AddWaitEventToSet(WaitEventSet *set, uint32 events, pgsocket fd, Latch *latch,
 	{
 		set->latch = latch;
 		set->latch_pos = event->pos;
-#ifndef WIN32
+#if defined(WAIT_USE_POLL)
 		event->fd = selfpipe_readfd;
+#elif defined(WAIT_USE_EPOLL)
+		event->fd = signal_fd;
+#else
+		event->fd = PGINVALID_SOCKET;
+#ifdef WAIT_USE_EPOLL
+		return event->pos;
+#endif
 #endif
 	}
 	else if (events == WL_POSTMASTER_DEATH)
@@ -927,12 +988,13 @@ ModifyWaitEvent(WaitEventSet *set, int pos, uint32 events, Latch *latch)
 		if (latch && latch->owner_pid != MyProcPid)
 			elog(ERROR, "cannot wait on a latch owned by another process");
 		set->latch = latch;
+
 		/*
 		 * On Unix, we don't need to modify the kernel object because the
-		 * underlying pipe is the same for all latches so we can return
-		 * immediately.  On Windows, we need to update our array of handles,
-		 * but we leave the old one in place and tolerate spurious wakeups if
-		 * the latch is disabled.
+		 * underlying pipe (if there is one) is the same for all latches so we
+		 * can return immediately.  On Windows, we need to update our array of
+		 * handles, but we leave the old one in place and tolerate spurious
+		 * wakeups if the latch is disabled.
 		 */
 #if defined(WAIT_USE_WIN32)
 		if (!latch)
@@ -1072,6 +1134,18 @@ WaitEventAdjustKqueueAddPostmaster(struct kevent *k_ev, WaitEvent *event)
 	AccessWaitEvent(k_ev) = event;
 }
 
+static inline void
+WaitEventAdjustKqueueAddLatch(struct kevent *k_ev, WaitEvent *event)
+{
+	/* For now latch can only be added, not removed. */
+	k_ev->ident = SIGURG;
+	k_ev->filter = EVFILT_SIGNAL;
+	k_ev->flags = EV_ADD;
+	k_ev->fflags = 0;
+	k_ev->data = 0;
+	AccessWaitEvent(k_ev) = event;
+}
+
 /*
  * old_events is the previous event mask, used to compute what has changed.
  */
@@ -1103,6 +1177,11 @@ WaitEventAdjustKqueue(WaitEventSet *set, WaitEvent *event, int old_events)
 		 */
 		WaitEventAdjustKqueueAddPostmaster(&k_ev[count++], event);
 	}
+	else if (event->events == WL_LATCH_SET)
+	{
+		/* We detect latch wakeup using a signal event. */
+		WaitEventAdjustKqueueAddLatch(&k_ev[count++], event);
+	}
 	else
 	{
 		/*
@@ -1110,11 +1189,9 @@ WaitEventAdjustKqueue(WaitEventSet *set, WaitEvent *event, int old_events)
 		 * old event mask to the new event mask, since kevent treats readable
 		 * and writable as separate events.
 		 */
-		if (old_events == WL_LATCH_SET ||
-			(old_events & WL_SOCKET_READABLE))
+		if (old_events & WL_SOCKET_READABLE)
 			old_filt_read = true;
-		if (event->events == WL_LATCH_SET ||
-			(event->events & WL_SOCKET_READABLE))
+		if (event->events & WL_SOCKET_READABLE)
 			new_filt_read = true;
 		if (old_events & WL_SOCKET_WRITEABLE)
 			old_filt_write = true;
@@ -1278,7 +1355,7 @@ WaitEventSetWait(WaitEventSet *set, long timeout,
 		 * the pipe-buffer fill up we're still ok, because the pipe is in
 		 * nonblocking mode. It's unlikely for that to happen, because the
 		 * self pipe isn't filled unless we're blocking (waiting = true), or
-		 * from inside a signal handler in latch_sigusr1_handler().
+		 * from inside a signal handler in latch_sigurg_handler().
 		 *
 		 * On windows, we'll also notice if there's a pending event for the
 		 * latch when blocking, but there's no danger of anything filling up,
@@ -1289,6 +1366,14 @@ WaitEventSetWait(WaitEventSet *set, long timeout,
 		 * ordering, so that we cannot miss seeing is_set if a notification
 		 * has already been queued.
 		 */
+		if (set->latch && !set->latch->is_set)
+		{
+			/* about to sleep on a latch */
+			set->latch->maybe_sleeping = true;
+			pg_memory_barrier();
+			/* and recheck */
+		}
+
 		if (set->latch && set->latch->is_set)
 		{
 			occurred_events->fd = PGINVALID_SOCKET;
@@ -1298,6 +1383,9 @@ WaitEventSetWait(WaitEventSet *set, long timeout,
 			occurred_events->events = WL_LATCH_SET;
 			occurred_events++;
 			returned_events++;
+
+			/* could have been set above */
+			set->latch->maybe_sleeping = false;
 
 			break;
 		}
@@ -1309,6 +1397,12 @@ WaitEventSetWait(WaitEventSet *set, long timeout,
 		 */
 		rc = WaitEventSetWaitBlock(set, cur_timeout,
 								   occurred_events, nevents);
+
+		if (set->latch)
+		{
+			Assert(set->latch->maybe_sleeping);
+			set->latch->maybe_sleeping = false;
+		}
 
 		if (rc == -1)
 			break;				/* timeout occurred */
@@ -1399,8 +1493,8 @@ WaitEventSetWaitBlock(WaitEventSet *set, int cur_timeout,
 		if (cur_event->events == WL_LATCH_SET &&
 			cur_epoll_event->events & (EPOLLIN | EPOLLERR | EPOLLHUP))
 		{
-			/* There's data in the self-pipe, clear it. */
-			drainSelfPipe();
+			/* Drain the signalfd. */
+			drain();
 
 			if (set->latch && set->latch->is_set)
 			{
@@ -1550,11 +1644,8 @@ WaitEventSetWaitBlock(WaitEventSet *set, int cur_timeout,
 		occurred_events->events = 0;
 
 		if (cur_event->events == WL_LATCH_SET &&
-			cur_kqueue_event->filter == EVFILT_READ)
+			cur_kqueue_event->filter == EVFILT_SIGNAL)
 		{
-			/* There's data in the self-pipe, clear it. */
-			drainSelfPipe();
-
 			if (set->latch && set->latch->is_set)
 			{
 				occurred_events->fd = PGINVALID_SOCKET;
@@ -1669,7 +1760,7 @@ WaitEventSetWaitBlock(WaitEventSet *set, int cur_timeout,
 			(cur_pollfd->revents & (POLLIN | POLLHUP | POLLERR | POLLNVAL)))
 		{
 			/* There's data in the self-pipe, clear it. */
-			drainSelfPipe();
+			drain();
 
 			if (set->latch && set->latch->is_set)
 			{
@@ -1930,26 +2021,33 @@ WaitEventSetWaitBlock(WaitEventSet *set, int cur_timeout,
 #endif
 
 /*
- * SetLatch uses SIGUSR1 to wake up the process waiting on the latch.
- *
- * Wake up WaitLatch, if we're waiting.  (We might not be, since SIGUSR1 is
- * overloaded for multiple purposes; or we might not have reached WaitLatch
- * yet, in which case we don't need to fill the pipe either.)
- *
- * NB: when calling this in a signal handler, be sure to save and restore
- * errno around it.
+ * Get the number of wait events registered in a given WaitEventSet.
  */
-#ifndef WIN32
-void
-latch_sigusr1_handler(void)
+int
+GetNumRegisteredWaitEvents(WaitEventSet *set)
 {
+	return set->nevents;
+}
+
+#if defined(WAIT_USE_POLL)
+
+/*
+ * SetLatch uses SIGURG to wake up the process waiting on the latch.
+ *
+ * Wake up WaitLatch, if we're waiting.
+ */
+static void
+latch_sigurg_handler(SIGNAL_ARGS)
+{
+	int			save_errno = errno;
+
 	if (waiting)
 		sendSelfPipeByte();
+
+	errno = save_errno;
 }
-#endif							/* !WIN32 */
 
 /* Send one byte to the self-pipe, to wake up WaitLatch */
-#ifndef WIN32
 static void
 sendSelfPipeByte(void)
 {
@@ -1979,45 +2077,58 @@ retry:
 		return;
 	}
 }
-#endif							/* !WIN32 */
+
+#endif
+
+#if defined(WAIT_USE_POLL) || defined(WAIT_USE_EPOLL)
 
 /*
- * Read all available data from the self-pipe
+ * Read all available data from self-pipe or signalfd.
  *
  * Note: this is only called when waiting = true.  If it fails and doesn't
  * return, it must reset that flag first (though ideally, this will never
  * happen).
  */
-#ifndef WIN32
 static void
-drainSelfPipe(void)
+drain(void)
 {
-	/*
-	 * There shouldn't normally be more than one byte in the pipe, or maybe a
-	 * few bytes if multiple processes run SetLatch at the same instant.
-	 */
-	char		buf[16];
+	char		buf[1024];
 	int			rc;
+	int			fd;
+
+#ifdef WAIT_USE_POLL
+	fd = selfpipe_readfd;
+#else
+	fd = signal_fd;
+#endif
 
 	for (;;)
 	{
-		rc = read(selfpipe_readfd, buf, sizeof(buf));
+		rc = read(fd, buf, sizeof(buf));
 		if (rc < 0)
 		{
 			if (errno == EAGAIN || errno == EWOULDBLOCK)
-				break;			/* the pipe is empty */
+				break;			/* the descriptor is empty */
 			else if (errno == EINTR)
 				continue;		/* retry */
 			else
 			{
 				waiting = false;
+#ifdef WAIT_USE_POLL
 				elog(ERROR, "read() on self-pipe failed: %m");
+#else
+				elog(ERROR, "read() on signalfd failed: %m");
+#endif
 			}
 		}
 		else if (rc == 0)
 		{
 			waiting = false;
+#ifdef WAIT_USE_POLL
 			elog(ERROR, "unexpected EOF on self-pipe");
+#else
+			elog(ERROR, "unexpected EOF on signalfd");
+#endif
 		}
 		else if (rc < sizeof(buf))
 		{
@@ -2027,4 +2138,5 @@ drainSelfPipe(void)
 		/* else buffer wasn't big enough, so read again */
 	}
 }
-#endif							/* !WIN32 */
+
+#endif

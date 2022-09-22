@@ -107,7 +107,6 @@ outputdir="$temp_root/regress"
 EXTRA_REGRESS_OPTS="$EXTRA_REGRESS_OPTS --outputdir=$outputdir"
 export EXTRA_REGRESS_OPTS
 mkdir "$outputdir"
-mkdir "$outputdir"/testtablespace
 
 logdir=`pwd`/log
 rm -rf "$logdir"

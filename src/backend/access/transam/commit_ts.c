@@ -733,7 +733,7 @@ ActivateCommitTs(void)
 	if (ShmemVariableCache->oldestCommitTsXid == InvalidTransactionId)
 	{
 		ShmemVariableCache->oldestCommitTsXid =
-			ShmemVariableCache->newestCommitTsXid = ReadNewTransactionId();
+			ShmemVariableCache->newestCommitTsXid = ReadNextTransactionId();
 	}
 	LWLockRelease(CommitTsLock);
 
@@ -1074,7 +1074,7 @@ commit_ts_redo(XLogReaderState *record)
 			subxids = NULL;
 
 		TransactionTreeSetCommitTsData(setts->mainxid, nsubxids, subxids,
-									   setts->timestamp, setts->nodeid, true);
+									   setts->timestamp, setts->nodeid, false);
 		if (subxids)
 			pfree(subxids);
 	}

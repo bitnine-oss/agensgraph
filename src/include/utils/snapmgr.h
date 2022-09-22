@@ -37,8 +37,7 @@
  */
 #define RelationAllowsEarlyPruning(rel) \
 ( \
-	 (rel)->rd_rel->relpersistence == RELPERSISTENCE_PERMANENT	\
-  && !IsCatalogRelation(rel) \
+	 RelationIsPermanent(rel) && !IsCatalogRelation(rel) \
   && !RelationIsAccessibleInLogicalDecoding(rel) \
 )
 
@@ -134,6 +133,7 @@ extern void AtEOXact_Snapshot(bool isCommit, bool resetXmin);
 extern void ImportSnapshot(const char *idstr);
 extern bool XactHasExportedSnapshots(void);
 extern void DeleteAllExportedSnapshotFiles(void);
+extern void WaitForOlderSnapshots(TransactionId limitXmin, bool progress);
 extern bool ThereAreNoPriorRegisteredSnapshots(void);
 extern bool TransactionIdLimitedForOldSnapshots(TransactionId recentXmin,
 												Relation relation,
@@ -156,7 +156,7 @@ extern bool GlobalVisTestIsRemovableFullXid(GlobalVisState *state, FullTransacti
 extern FullTransactionId GlobalVisTestNonRemovableFullHorizon(GlobalVisState *state);
 extern TransactionId GlobalVisTestNonRemovableHorizon(GlobalVisState *state);
 extern bool GlobalVisCheckRemovableXid(Relation rel, TransactionId xid);
-extern bool GlobalVisIsRemovableFullXid(Relation rel, FullTransactionId fxid);
+extern bool GlobalVisCheckRemovableFullXid(Relation rel, FullTransactionId fxid);
 
 /*
  * Utility functions for implementing visibility routines in table AMs.

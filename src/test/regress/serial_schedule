@@ -45,7 +45,6 @@ test: tstypes
 test: geometry
 test: horology
 test: regex
-test: oidjoins
 test: type_sanity
 test: opr_sanity
 test: misc_sanity
@@ -109,6 +108,8 @@ test: delete
 test: namespace
 test: prepared_xacts
 test: brin
+test: brin_bloom
+test: brin_multi
 test: gin
 test: gist
 test: spgist
@@ -139,6 +140,7 @@ test: sysviews
 test: tsrf
 test: tid
 test: tidscan
+test: tidrangescan
 test: collate.icu.utf8
 test: rules
 test: psql
@@ -200,7 +202,9 @@ test: partition_aggregate
 test: partition_info
 test: tuplesort
 test: explain
+test: compression
 test: event_trigger
+test: oidjoins
 test: fast_default
 test: stats
 test: graphid

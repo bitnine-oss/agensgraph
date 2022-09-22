@@ -77,6 +77,10 @@ pg_regprefix(regex_t *re,
 	assert(g->tree != NULL);
 	cnfa = &g->tree->cnfa;
 
+	/* matchall NFAs never have a fixed prefix */
+	if (cnfa->flags & MATCHALL)
+		return REG_NOMATCH;
+
 	/*
 	 * Since a correct NFA should never contain any exit-free loops, it should
 	 * not be possible for our traversal to return to a previously visited NFA
@@ -165,9 +169,13 @@ findprefix(struct cnfa *cnfa,
 			/* We can ignore BOS/BOL arcs */
 			if (ca->co == cnfa->bos[0] || ca->co == cnfa->bos[1])
 				continue;
-			/* ... but EOS/EOL arcs terminate the search, as do LACONs */
+
+			/*
+			 * ... but EOS/EOL arcs terminate the search, as do RAINBOW arcs
+			 * and LACONs
+			 */
 			if (ca->co == cnfa->eos[0] || ca->co == cnfa->eos[1] ||
-				ca->co >= cnfa->ncolors)
+				ca->co == RAINBOW || ca->co >= cnfa->ncolors)
 			{
 				thiscolor = COLORLESS;
 				break;

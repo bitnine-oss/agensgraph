@@ -403,7 +403,7 @@ getColumnVar(ParseState *pstate, ParseNamespaceItem *nsitem, char *colname)
 			var = make_var(pstate, nsitem, attrno, -1);
 
 			/* require read access to the column */
-			markVarForSelectPriv(pstate, var, rte);
+			markVarForSelectPriv(pstate, var);
 
 			return (Node *) var;
 		}
@@ -425,7 +425,7 @@ getSysColumnVar(ParseState *pstate, ParseNamespaceItem *nsitem,
 
 	var = make_var(pstate, nsitem, attnum, -1);
 
-	markVarForSelectPriv(pstate, var, nsitem->p_rte);
+	markVarForSelectPriv(pstate, var);
 
 	return (Node *) var;
 }

@@ -1041,7 +1041,7 @@ parse_hba_line(TokenizedLine *tok_line, int elevel)
 			ereport(elevel,
 					(errcode(ERRCODE_CONFIG_FILE_ERROR),
 					 errmsg("hostssl record cannot match because SSL is not supported by this build"),
-					 errhint("Compile with --with-openssl to use SSL connections."),
+					 errhint("Compile with --with-ssl to use SSL connections."),
 					 errcontext("line %d of configuration file \"%s\"",
 								line_num, HbaFileName)));
 			*err_msg = "hostssl record cannot match because SSL is not supported by this build";
@@ -1748,6 +1748,37 @@ parse_hba_auth_opt(char *name, char *val, HbaLine *hbaline,
 			ereport(elevel,
 					(errcode(ERRCODE_CONFIG_FILE_ERROR),
 					 errmsg("invalid value for clientcert: \"%s\"", val),
+					 errcontext("line %d of configuration file \"%s\"",
+								line_num, HbaFileName)));
+			return false;
+		}
+	}
+	else if (strcmp(name, "clientname") == 0)
+	{
+		if (hbaline->conntype != ctHostSSL)
+		{
+			ereport(elevel,
+					(errcode(ERRCODE_CONFIG_FILE_ERROR),
+					 errmsg("clientname can only be configured for \"hostssl\" rows"),
+					 errcontext("line %d of configuration file \"%s\"",
+								line_num, HbaFileName)));
+			*err_msg = "clientname can only be configured for \"hostssl\" rows";
+			return false;
+		}
+
+		if (strcmp(val, "CN") == 0)
+		{
+			hbaline->clientcertname = clientCertCN;
+		}
+		else if (strcmp(val, "DN") == 0)
+		{
+			hbaline->clientcertname = clientCertDN;
+		}
+		else
+		{
+			ereport(elevel,
+					(errcode(ERRCODE_CONFIG_FILE_ERROR),
+					 errmsg("invalid value for clientname: \"%s\"", val),
 					 errcontext("line %d of configuration file \"%s\"",
 								line_num, HbaFileName)));
 			return false;

@@ -388,34 +388,14 @@ gistRedoPageReuse(XLogReaderState *record)
 	 * pages in the index via the FSM.  That's all they do though.
 	 *
 	 * latestRemovedXid was the page's deleteXid.  The
-	 * GlobalVisIsRemovableFullXid(deleteXid) test in gistPageRecyclable()
+	 * GlobalVisCheckRemovableFullXid(deleteXid) test in gistPageRecyclable()
 	 * conceptually mirrors the PGPROC->xmin > limitXmin test in
 	 * GetConflictingVirtualXIDs().  Consequently, one XID value achieves the
 	 * same exclusion effect on primary and standby.
 	 */
 	if (InHotStandby)
-	{
-		FullTransactionId latestRemovedFullXid = xlrec->latestRemovedFullXid;
-		FullTransactionId nextXid = ReadNextFullTransactionId();
-		uint64		diff;
-
-		/*
-		 * ResolveRecoveryConflictWithSnapshot operates on 32-bit
-		 * TransactionIds, so truncate the logged FullTransactionId. If the
-		 * logged value is very old, so that XID wrap-around already happened
-		 * on it, there can't be any snapshots that still see it.
-		 */
-		diff = U64FromFullTransactionId(nextXid) -
-			U64FromFullTransactionId(latestRemovedFullXid);
-		if (diff < MaxTransactionId / 2)
-		{
-			TransactionId latestRemovedXid;
-
-			latestRemovedXid = XidFromFullTransactionId(latestRemovedFullXid);
-			ResolveRecoveryConflictWithSnapshot(latestRemovedXid,
-												xlrec->node);
-		}
-	}
+		ResolveRecoveryConflictWithSnapshotFullXid(xlrec->latestRemovedFullXid,
+												   xlrec->node);
 }
 
 void

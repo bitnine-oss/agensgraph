@@ -36,7 +36,7 @@ ALTER TABLE ALL IN TABLESPACE <replaceable class="parameter">name</replaceable> 
 ALTER TABLE [ IF EXISTS ] <replaceable class="parameter">name</replaceable>
     ATTACH PARTITION <replaceable class="parameter">partition_name</replaceable> { FOR VALUES <replaceable class="parameter">partition_bound_spec</replaceable> | DEFAULT }
 ALTER TABLE [ IF EXISTS ] <replaceable class="parameter">name</replaceable>
-    DETACH PARTITION <replaceable class="parameter">partition_name</replaceable>
+    DETACH PARTITION <replaceable class="parameter">partition_name</replaceable> [ CONCURRENTLY | FINALIZE ]
 
 <phrase>where <replaceable class="parameter">action</replaceable> is one of:</phrase>
 
@@ -54,6 +54,7 @@ ALTER TABLE [ IF EXISTS ] <replaceable class="parameter">name</replaceable>
     ALTER [ COLUMN ] <replaceable class="parameter">column_name</replaceable> SET ( <replaceable class="parameter">attribute_option</replaceable> = <replaceable class="parameter">value</replaceable> [, ... ] )
     ALTER [ COLUMN ] <replaceable class="parameter">column_name</replaceable> RESET ( <replaceable class="parameter">attribute_option</replaceable> [, ... ] )
     ALTER [ COLUMN ] <replaceable class="parameter">column_name</replaceable> SET STORAGE { PLAIN | EXTERNAL | EXTENDED | MAIN }
+    ALTER [ COLUMN ] <replaceable class="parameter">column_name</replaceable> SET COMPRESSION <replaceable class="parameter">compression_method</replaceable>
     ADD <replaceable class="parameter">table_constraint</replaceable> [ NOT VALID ]
     ADD <replaceable class="parameter">table_constraint_using_index</replaceable>
     ALTER CONSTRAINT <replaceable class="parameter">constraint_name</replaceable> [ DEFERRABLE | NOT DEFERRABLE ] [ INITIALLY DEFERRED | INITIALLY IMMEDIATE ]
@@ -103,6 +104,7 @@ WITH ( MODULUS <replaceable class="parameter">numeric_literal</replaceable>, REM
   GENERATED { ALWAYS | BY DEFAULT } AS IDENTITY [ ( <replaceable>sequence_options</replaceable> ) ] |
   UNIQUE <replaceable class="parameter">index_parameters</replaceable> |
   PRIMARY KEY <replaceable class="parameter">index_parameters</replaceable> |
+  COMPRESSION <replaceable class="parameter">compression_method</replaceable> |
   REFERENCES <replaceable class="parameter">reftable</replaceable> [ ( <replaceable class="parameter">refcolumn</replaceable> ) ] [ MATCH FULL | MATCH PARTIAL | MATCH SIMPLE ]
     [ ON DELETE <replaceable class="parameter">referential_action</replaceable> ] [ ON UPDATE <replaceable class="parameter">referential_action</replaceable> ] }
 [ DEFERRABLE | NOT DEFERRABLE ] [ INITIALLY DEFERRED | INITIALLY IMMEDIATE ]
@@ -379,6 +381,20 @@ WITH ( MODULUS <replaceable class="parameter">numeric_literal</replaceable>, REM
       <literal>SET STORAGE</literal> doesn't itself change anything in the table,
       it just sets the strategy to be pursued during future table updates.
       See <xref linkend="storage-toast"/> for more information.
+     </para>
+    </listitem>
+   </varlistentry>
+
+   <varlistentry>
+    <term>
+     <literal>SET COMPRESSION <replaceable class="parameter">compression_method</replaceable></literal>
+    </term>
+    <listitem>
+     <para>
+      This sets the compression method for a column.  The supported compression
+      methods are <literal>pglz</literal> and <literal>lz4</literal>.
+      <literal>lz4</literal> is available only if <literal>--with-lz4</literal>
+      was used when building <productname>PostgreSQL</productname>.
      </para>
     </listitem>
    </varlistentry>
@@ -938,7 +954,8 @@ WITH ( MODULUS <replaceable class="parameter">numeric_literal</replaceable>, REM
    </varlistentry>
 
    <varlistentry>
-    <term><literal>DETACH PARTITION</literal> <replaceable class="parameter">partition_name</replaceable></term>
+    <term><literal>DETACH PARTITION <replaceable class="parameter">partition_name</replaceable> [ CONCURRENTLY | FINALIZE ]</literal></term>
+
     <listitem>
      <para>
       This form detaches the specified partition of the target table.  The detached
@@ -946,6 +963,29 @@ WITH ( MODULUS <replaceable class="parameter">numeric_literal</replaceable>, REM
       ties to the table from which it was detached.  Any indexes that were
       attached to the target table's indexes are detached.  Any triggers that
       were created as clones of those in the target table are removed.
+      <literal>SHARE</literal> lock is obtained on any tables that reference
+      this partitioned table in foreign key constraints.
+     </para>
+     <para>
+      If <literal>CONCURRENTLY</literal> is specified, it runs using a reduced
+      lock level to avoid blocking other sessions that might be accessing the
+      partitioned table.  In this mode, two transactions are used internally.
+      During the first transaction, a <literal>SHARE UPDATE EXCLUSIVE</literal>
+      lock is taken on both parent table and partition, and the partition is
+      marked as undergoing detach; at that point, the transaction is committed
+      and all other transactions using the partitioned table are waited for.
+      Once all those transactions have completed, the second transaction
+      acquires <literal>SHARE UPDATE EXCLUSIVE</literal> on the partitioned
+      table and <literal>ACCESS EXCLUSIVE</literal> on the partition,
+      and the detach process completes.  A <literal>CHECK</literal> constraint
+      that duplicates the partition constraint is added to the partition.
+      <literal>CONCURRENTLY</literal> cannot be run in a transaction block and
+      is not allowed if the partitioned table contains a default partition.
+     </para>
+     <para>
+      If <literal>FINALIZE</literal> is specified, a previous
+      <literal>DETACH CONCURRENTLY</literal> invocation that was cancelled or
+      interrupted is completed.
      </para>
     </listitem>
    </varlistentry>

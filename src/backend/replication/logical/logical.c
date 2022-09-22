@@ -207,7 +207,7 @@ StartupDecodingContext(List *output_plugin_options,
 	ctx->reorder = ReorderBufferAllocate();
 	ctx->snapshot_builder =
 		AllocateSnapshotBuilder(ctx->reorder, xmin_horizon, start_lsn,
-								need_full_snapshot);
+								need_full_snapshot, slot->data.initial_consistent_point);
 
 	ctx->reorder->private_data = ctx;
 
@@ -431,6 +431,12 @@ CreateInitDecodingContext(const char *plugin,
 		startup_cb_wrapper(ctx, &ctx->options, true);
 	MemoryContextSwitchTo(old_context);
 
+	/*
+	 * We allow decoding of prepared transactions iff the two_phase option is
+	 * enabled at the time of slot creation.
+	 */
+	ctx->twophase &= MyReplicationSlot->data.two_phase;
+
 	ctx->reorder->output_rewrites = ctx->options.receive_rewrites;
 
 	return ctx;
@@ -514,9 +520,8 @@ CreateDecodingContext(XLogRecPtr start_lsn,
 		 * replication.
 		 */
 		elog(DEBUG1, "cannot stream from %X/%X, minimum is %X/%X, forwarding",
-			 (uint32) (start_lsn >> 32), (uint32) start_lsn,
-			 (uint32) (slot->data.confirmed_flush >> 32),
-			 (uint32) slot->data.confirmed_flush);
+			 LSN_FORMAT_ARGS(start_lsn),
+			 LSN_FORMAT_ARGS(slot->data.confirmed_flush));
 
 		start_lsn = slot->data.confirmed_flush;
 	}
@@ -532,16 +537,20 @@ CreateDecodingContext(XLogRecPtr start_lsn,
 		startup_cb_wrapper(ctx, &ctx->options, false);
 	MemoryContextSwitchTo(old_context);
 
+	/*
+	 * We allow decoding of prepared transactions iff the two_phase option is
+	 * enabled at the time of slot creation.
+	 */
+	ctx->twophase &= MyReplicationSlot->data.two_phase;
+
 	ctx->reorder->output_rewrites = ctx->options.receive_rewrites;
 
 	ereport(LOG,
 			(errmsg("starting logical decoding for slot \"%s\"",
 					NameStr(slot->data.name)),
 			 errdetail("Streaming transactions committing after %X/%X, reading WAL from %X/%X.",
-					   (uint32) (slot->data.confirmed_flush >> 32),
-					   (uint32) slot->data.confirmed_flush,
-					   (uint32) (slot->data.restart_lsn >> 32),
-					   (uint32) slot->data.restart_lsn)));
+					   LSN_FORMAT_ARGS(slot->data.confirmed_flush),
+					   LSN_FORMAT_ARGS(slot->data.restart_lsn))));
 
 	return ctx;
 }
@@ -567,8 +576,7 @@ DecodingContextFindStartpoint(LogicalDecodingContext *ctx)
 	XLogBeginRead(ctx->reader, slot->data.restart_lsn);
 
 	elog(DEBUG1, "searching for logical decoding starting point, starting at %X/%X",
-		 (uint32) (slot->data.restart_lsn >> 32),
-		 (uint32) slot->data.restart_lsn);
+		 LSN_FORMAT_ARGS(slot->data.restart_lsn));
 
 	/* Wait for a consistent starting point */
 	for (;;)
@@ -594,6 +602,7 @@ DecodingContextFindStartpoint(LogicalDecodingContext *ctx)
 
 	SpinLockAcquire(&slot->mutex);
 	slot->data.confirmed_flush = ctx->reader->EndRecPtr;
+	slot->data.initial_consistent_point = ctx->reader->EndRecPtr;
 	SpinLockRelease(&slot->mutex);
 }
 
@@ -688,8 +697,7 @@ output_plugin_error_callback(void *arg)
 				   NameStr(state->ctx->slot->data.name),
 				   NameStr(state->ctx->slot->data.plugin),
 				   state->callback_name,
-				   (uint32) (state->report_location >> 32),
-				   (uint32) state->report_location);
+				   LSN_FORMAT_ARGS(state->report_location));
 	else
 		errcontext("slot \"%s\", output plugin \"%s\", in the %s callback",
 				   NameStr(state->ctx->slot->data.name),
@@ -1075,7 +1083,8 @@ truncate_cb_wrapper(ReorderBuffer *cache, ReorderBufferTXN *txn,
 }
 
 bool
-filter_prepare_cb_wrapper(LogicalDecodingContext *ctx, const char *gid)
+filter_prepare_cb_wrapper(LogicalDecodingContext *ctx, TransactionId xid,
+						  const char *gid)
 {
 	LogicalErrorCallbackState state;
 	ErrorContextCallback errcallback;
@@ -1096,7 +1105,7 @@ filter_prepare_cb_wrapper(LogicalDecodingContext *ctx, const char *gid)
 	ctx->accept_writes = false;
 
 	/* do the actual work: call callback */
-	ret = ctx->callbacks.filter_prepare_cb(ctx, gid);
+	ret = ctx->callbacks.filter_prepare_cb(ctx, xid, gid);
 
 	/* Pop the error context stack */
 	error_context_stack = errcallback.previous;
@@ -1623,8 +1632,8 @@ LogicalIncreaseRestartDecodingForSlot(XLogRecPtr current_lsn, XLogRecPtr restart
 		SpinLockRelease(&slot->mutex);
 
 		elog(DEBUG1, "got new restart lsn %X/%X at %X/%X",
-			 (uint32) (restart_lsn >> 32), (uint32) restart_lsn,
-			 (uint32) (current_lsn >> 32), (uint32) current_lsn);
+			 LSN_FORMAT_ARGS(restart_lsn),
+			 LSN_FORMAT_ARGS(current_lsn));
 	}
 	else
 	{
@@ -1638,14 +1647,11 @@ LogicalIncreaseRestartDecodingForSlot(XLogRecPtr current_lsn, XLogRecPtr restart
 		SpinLockRelease(&slot->mutex);
 
 		elog(DEBUG1, "failed to increase restart lsn: proposed %X/%X, after %X/%X, current candidate %X/%X, current after %X/%X, flushed up to %X/%X",
-			 (uint32) (restart_lsn >> 32), (uint32) restart_lsn,
-			 (uint32) (current_lsn >> 32), (uint32) current_lsn,
-			 (uint32) (candidate_restart_lsn >> 32),
-			 (uint32) candidate_restart_lsn,
-			 (uint32) (candidate_restart_valid >> 32),
-			 (uint32) candidate_restart_valid,
-			 (uint32) (confirmed_flush >> 32),
-			 (uint32) confirmed_flush);
+			 LSN_FORMAT_ARGS(restart_lsn),
+			 LSN_FORMAT_ARGS(current_lsn),
+			 LSN_FORMAT_ARGS(candidate_restart_lsn),
+			 LSN_FORMAT_ARGS(candidate_restart_valid),
+			 LSN_FORMAT_ARGS(confirmed_flush));
 	}
 
 	/* candidates are already valid with the current flush position, apply */

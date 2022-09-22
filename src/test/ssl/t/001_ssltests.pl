@@ -11,13 +11,13 @@ use lib $FindBin::RealBin;
 
 use SSLServer;
 
-if ($ENV{with_openssl} eq 'yes')
+if ($ENV{with_ssl} ne 'openssl')
 {
-	plan tests => 93;
+	plan skip_all => 'OpenSSL not supported by this build';
 }
 else
 {
-	plan skip_all => 'SSL not supported by this build';
+	plan tests => 103;
 }
 
 #### Some configuration
@@ -40,7 +40,7 @@ my $common_connstr;
 my @keys = (
 	"client",     "client-revoked",
 	"client-der", "client-encrypted-pem",
-	"client-encrypted-der");
+	"client-encrypted-der", "client-dn");
 foreach my $key (@keys)
 {
 	copy("ssl/${key}.key", "ssl/${key}_tmp.key")
@@ -215,11 +215,24 @@ test_connect_fails(
 	qr/SSL error/,
 	"CRL belonging to a different CA");
 
+# The same for CRL directory
+test_connect_fails(
+	$common_connstr,
+	"sslrootcert=ssl/root+server_ca.crt sslmode=verify-ca sslcrldir=ssl/client-crldir",
+	qr/SSL error/,
+	"directory CRL belonging to a different CA");
+
 # With the correct CRL, succeeds (this cert is not revoked)
 test_connect_ok(
 	$common_connstr,
 	"sslrootcert=ssl/root+server_ca.crt sslmode=verify-ca sslcrl=ssl/root+server.crl",
 	"CRL with a non-revoked cert");
+
+# The same for CRL directory
+test_connect_ok(
+	$common_connstr,
+	"sslrootcert=ssl/root+server_ca.crt sslmode=verify-ca sslcrldir=ssl/root+server-crldir",
+	"directory CRL with a non-revoked cert");
 
 # Check that connecting with verify-full fails, when the hostname doesn't
 # match the hostname in the server's certificate.
@@ -346,7 +359,12 @@ test_connect_fails(
 	$common_connstr,
 	"sslrootcert=ssl/root+server_ca.crt sslmode=verify-ca sslcrl=ssl/root+server.crl",
 	qr/SSL error/,
-	"does not connect with client-side CRL");
+	"does not connect with client-side CRL file");
+test_connect_fails(
+	$common_connstr,
+	"sslrootcert=ssl/root+server_ca.crt sslmode=verify-ca sslcrldir=ssl/root+server-crldir",
+	qr/SSL error/,
+	"does not connect with client-side CRL directory");
 
 # pg_stat_ssl
 command_like(
@@ -358,8 +376,8 @@ command_like(
 		"$common_connstr sslrootcert=invalid", '-c',
 		"SELECT * FROM pg_stat_ssl WHERE pid = pg_backend_pid()"
 	],
-	qr{^pid,ssl,version,cipher,bits,compression,client_dn,client_serial,issuer_dn\r?\n
-				^\d+,t,TLSv[\d.]+,[\w-]+,\d+,f,_null_,_null_,_null_\r?$}mx,
+	qr{^pid,ssl,version,cipher,bits,client_dn,client_serial,issuer_dn\r?\n
+				^\d+,t,TLSv[\d.]+,[\w-]+,\d+,_null_,_null_,_null_\r?$}mx,
 	'pg_stat_ssl view without client certificate');
 
 # Test min/max SSL protocol versions.
@@ -435,6 +453,36 @@ test_connect_fails(
 	"certificate authorization fails with correct client cert and wrong password in encrypted PEM format"
 );
 
+
+# correct client cert using whole DN
+my $dn_connstr = "$common_connstr dbname=certdb_dn";
+
+test_connect_ok(
+	$dn_connstr,
+	"user=ssltestuser sslcert=ssl/client-dn.crt sslkey=ssl/client-dn_tmp.key",
+	"certificate authorization succeeds with DN mapping"
+);
+
+# same thing but with a regex
+$dn_connstr = "$common_connstr dbname=certdb_dn_re";
+
+test_connect_ok(
+	$dn_connstr,
+	"user=ssltestuser sslcert=ssl/client-dn.crt sslkey=ssl/client-dn_tmp.key",
+	"certificate authorization succeeds with DN regex mapping"
+);
+
+# same thing but using explicit CN
+$dn_connstr = "$common_connstr dbname=certdb_cn";
+
+test_connect_ok(
+	$dn_connstr,
+	"user=ssltestuser sslcert=ssl/client-dn.crt sslkey=ssl/client-dn_tmp.key",
+	"certificate authorization succeeds with CN mapping"
+);
+
+
+
 TODO:
 {
 	# these tests are left here waiting on us to get better pty support
@@ -475,8 +523,8 @@ command_like(
 		'-c',
 		"SELECT * FROM pg_stat_ssl WHERE pid = pg_backend_pid()"
 	],
-	qr{^pid,ssl,version,cipher,bits,compression,client_dn,client_serial,issuer_dn\r?\n
-				^\d+,t,TLSv[\d.]+,[\w-]+,\d+,f,/CN=ssltestuser,1,\Q/CN=Test CA for PostgreSQL SSL regression test client certs\E\r?$}mx,
+	qr{^pid,ssl,version,cipher,bits,client_dn,client_serial,issuer_dn\r?\n
+				^\d+,t,TLSv[\d.]+,[\w-]+,\d+,/CN=ssltestuser,1,\Q/CN=Test CA for PostgreSQL SSL regression test client certs\E\r?$}mx,
 	'pg_stat_ssl with client certificate');
 
 # client key with wrong permissions
@@ -544,6 +592,16 @@ test_connect_ok(
 	"intermediate client certificate is provided by client");
 test_connect_fails($common_connstr, "sslmode=require sslcert=ssl/client.crt",
 	qr/SSL error/, "intermediate client certificate is missing");
+
+# test server-side CRL directory
+switch_server_cert($node, 'server-cn-only', undef, undef, 'root+client-crldir');
+
+# revoked client cert
+test_connect_fails(
+	$common_connstr,
+	"user=ssltestuser sslcert=ssl/client-revoked.crt sslkey=ssl/client-revoked_tmp.key",
+	qr/SSL error/,
+	"certificate authorization fails with revoked client cert with server-side CRL directory");
 
 # clean up
 foreach my $key (@keys)

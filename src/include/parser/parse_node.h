@@ -69,6 +69,7 @@ typedef enum ParseExprKind
 	EXPR_KIND_FUNCTION_DEFAULT, /* default parameter value for function */
 	EXPR_KIND_INDEX_EXPRESSION, /* index expression */
 	EXPR_KIND_INDEX_PREDICATE,	/* index predicate */
+	EXPR_KIND_STATS_EXPRESSION, /* extended statistics expression */
 	EXPR_KIND_ALTER_COL_TRANSFORM,	/* transform expr in ALTER COLUMN TYPE */
 	EXPR_KIND_EXECUTE_PARAMETER,	/* parameter value in EXECUTE */
 	EXPR_KIND_TRIGGER_WHEN,		/* WHEN condition in CREATE TRIGGER */
@@ -78,6 +79,7 @@ typedef enum ParseExprKind
 	EXPR_KIND_CALL_ARGUMENT,	/* procedure argument in CALL */
 	EXPR_KIND_COPY_WHERE,		/* WHERE condition in COPY FROM */
 	EXPR_KIND_GENERATED_COLUMN, /* generation expression for a column */
+	EXPR_KIND_CYCLE_MARK,		/* cycle mark value */
 } ParseExprKind;
 
 
@@ -243,8 +245,13 @@ struct ParseState
 /*
  * An element of a namespace list.
  *
+ * p_names contains the table name and column names exposed by this nsitem.
+ * (Currently, it's always equal to p_rte->eref.)
+ *
+ * p_rte and p_rtindex link to the underlying rangetable entry.
+ *
  * The p_nscolumns array contains info showing how to construct Vars
- * referencing corresponding elements of the RTE's colnames list.
+ * referencing the names appearing in the p_names->colnames list.
  *
  * Namespace items with p_rel_visible set define which RTEs are accessible by
  * qualified names, while those with p_cols_visible set define which RTEs are
@@ -272,9 +279,10 @@ struct ParseState
  */
 struct ParseNamespaceItem
 {
+	Alias	   *p_names;		/* Table and column names */
 	RangeTblEntry *p_rte;		/* The relation's rangetable entry */
 	int			p_rtindex;		/* The relation's index in the rangetable */
-	/* array of same length as p_rte->eref->colnames: */
+	/* array of same length as p_names->colnames: */
 	ParseNamespaceColumn *p_nscolumns;	/* per-column data */
 	bool		p_rel_visible;	/* Relation name is visible? */
 	bool		p_cols_visible; /* Column names visible as unqualified refs? */
@@ -312,6 +320,7 @@ struct ParseNamespaceColumn
 	Oid			p_varcollid;	/* OID of collation, or InvalidOid */
 	Index		p_varnosyn;		/* rangetable index of syntactic referent */
 	AttrNumber	p_varattnosyn;	/* attribute number of syntactic referent */
+	bool		p_dontexpand;	/* not included in star expansion */
 };
 
 /* Support for parser_errposition_callback function */

@@ -30,13 +30,15 @@
  */
 CATALOG(pg_statistic_ext_data,3429,StatisticExtDataRelationId)
 {
-	Oid			stxoid;			/* statistics object this data is for */
+	Oid			stxoid BKI_LOOKUP(pg_statistic_ext);	/* statistics object
+														 * this data is for */
 
 #ifdef CATALOG_VARLEN			/* variable-length fields start here */
 
 	pg_ndistinct stxdndistinct; /* ndistinct coefficients (serialized) */
 	pg_dependencies stxddependencies;	/* dependencies (serialized) */
 	pg_mcv_list stxdmcv;		/* MCV (serialized) */
+	pg_statistic stxdexpr[1];	/* stats for expressions */
 
 #endif
 

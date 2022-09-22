@@ -120,7 +120,7 @@ EXEC SQL CONNECT TO <replaceable>target</replaceable> <optional>AS <replaceable>
 
     <listitem>
      <simpara>
-      <literal>unix:postgresql://<replaceable>hostname</replaceable><optional>:<replaceable>port</replaceable></optional><optional>/<replaceable>dbname</replaceable></optional><optional>?<replaceable>options</replaceable></optional></literal>
+      <literal>unix:postgresql://localhost<optional>:<replaceable>port</replaceable></optional><optional>/<replaceable>dbname</replaceable></optional><optional>?<replaceable>options</replaceable></optional></literal>
      </simpara>
     </listitem>
 
@@ -143,15 +143,24 @@ EXEC SQL CONNECT TO <replaceable>target</replaceable> <optional>AS <replaceable>
     </listitem>
    </itemizedlist>
 
-   If you specify the connection target literally (that is, not
-   through a variable reference) and you don't quote the value, then
-   the case-insensitivity rules of normal SQL are applied.  In that
-   case you can also double-quote the individual parameters separately
-   as needed.  In practice, it is probably less error-prone to use a
-   (single-quoted) string literal or a variable reference.  The
-   connection target <literal>DEFAULT</literal> initiates a connection
+   The connection target <literal>DEFAULT</literal> initiates a connection
    to the default database under the default user name.  No separate
    user name or connection name can be specified in that case.
+  </para>
+
+  <para>
+   If you specify the connection target directly (that is, not as a string
+   literal or variable reference), then the components of the target are
+   passed through normal SQL parsing; this means that, for example,
+   the <replaceable>hostname</replaceable> must look like one or more SQL
+   identifiers separated by dots, and those identifiers will be
+   case-folded unless double-quoted.  Values of
+   any <replaceable>options</replaceable> must be SQL identifiers,
+   integers, or variable references.  Of course, you can put nearly
+   anything into an SQL identifier by double-quoting it.
+   In practice, it is probably less error-prone to use a (single-quoted)
+   string literal or a variable reference than to write the connection
+   target directly.
   </para>
 
   <para>
@@ -202,12 +211,51 @@ EXEC SQL CONNECT TO <replaceable>target</replaceable> <optional>AS <replaceable>
   </para>
 
   <para>
+   Notice that when specifying a socket connection
+   (with the <literal>unix:</literal> prefix), the host name must be
+   exactly <literal>localhost</literal>.  To select a non-default
+   socket directory, write the directory's pathname as the value of
+   a <varname>host</varname> option in
+   the <replaceable>options</replaceable> part of the target.
+  </para>
+
+  <para>
    The <replaceable>connection-name</replaceable> is used to handle
    multiple connections in one program.  It can be omitted if a
    program uses only one connection.  The most recently opened
    connection becomes the current connection, which is used by default
    when an SQL statement is to be executed (see later in this
    chapter).
+  </para>
+
+  <para>
+   Here are some examples of <command>CONNECT</command> statements:
+<programlisting>
+EXEC SQL CONNECT TO mydb@sql.mydomain.com;
+
+EXEC SQL CONNECT TO tcp:postgresql://sql.mydomain.com/mydb AS myconnection USER john;
+
+EXEC SQL BEGIN DECLARE SECTION;
+const char *target = "mydb@sql.mydomain.com";
+const char *user = "john";
+const char *passwd = "secret";
+EXEC SQL END DECLARE SECTION;
+ ...
+EXEC SQL CONNECT TO :target USER :user USING :passwd;
+/* or EXEC SQL CONNECT TO :target USER :user/:passwd; */
+</programlisting>
+   The last example makes use of the feature referred to above as
+   character variable references.  You will see in later sections how C
+   variables can be used in SQL statements when you prefix them with a
+   colon.
+  </para>
+
+  <para>
+   Be advised that the format of the connection target is not
+   specified in the SQL standard.  So if you want to develop portable
+   applications, you might want to use something based on the last
+   example above to encapsulate the connection target string
+   somewhere.
   </para>
 
   <para>
@@ -221,36 +269,6 @@ EXEC SQL CONNECT TO <replaceable>target</replaceable> <optional>AS <replaceable>
    false);</literal> after connecting.  This consideration is not specific to
    ECPG; it applies to every interface for executing arbitrary SQL commands.
   </para>
-
-  <para>
-   Here are some examples of <command>CONNECT</command> statements:
-<programlisting>
-EXEC SQL CONNECT TO mydb@sql.mydomain.com;
-
-EXEC SQL CONNECT TO unix:postgresql://sql.mydomain.com/mydb AS myconnection USER john;
-
-EXEC SQL BEGIN DECLARE SECTION;
-const char *target = "mydb@sql.mydomain.com";
-const char *user = "john";
-const char *passwd = "secret";
-EXEC SQL END DECLARE SECTION;
- ...
-EXEC SQL CONNECT TO :target USER :user USING :passwd;
-/* or EXEC SQL CONNECT TO :target USER :user/:passwd; */
-</programlisting>
-   The last form makes use of the variant referred to above as
-   character variable reference.  You will see in later sections how C
-   variables can be used in SQL statements when you prefix them with a
-   colon.
-  </para>
-
-  <para>
-   Be advised that the format of the connection target is not
-   specified in the SQL standard.  So if you want to develop portable
-   applications, you might want to use something based on the last
-   example above to encapsulate the connection target string
-   somewhere.
-  </para>
   </sect2>
 
   <sect2 id="ecpg-set-connection">
@@ -260,7 +278,7 @@ EXEC SQL CONNECT TO :target USER :user USING :passwd;
    SQL statements in embedded SQL programs are by default executed on
    the current connection, that is, the most recently opened one.  If
    an application needs to manage multiple connections, then there are
-   two ways to handle this.
+   three ways to handle this.
   </para>
 
   <para>
@@ -332,6 +350,46 @@ main()
 current=testdb3 (should be testdb3)
 current=testdb2 (should be testdb2)
 current=testdb1 (should be testdb1)
+</screen>
+  </para>
+
+  <para>
+  The third option is to declare sql identifier linked to
+  the connection, for example:
+<programlisting>
+EXEC SQL AT <replaceable>connection-name</replaceable> DECLARE <replaceable>statement-name</replaceable> STATEMENT;
+EXEC SQL PREPARE <replaceable>statement-name</replaceable> FROM :<replaceable>dyn-string</replaceable>;
+</programlisting>
+   Once you link a sql identifier to a connection, you execute a dynamic SQL
+   without AT clause. Note that this option behaves like preprocessor directives,
+   therefore the link is enabled only in the file.
+  </para>
+  <para>
+   Here is an example program using this option:
+<programlisting><![CDATA[
+#include <stdio.h>
+
+EXEC SQL BEGIN DECLARE SECTION;
+char dbname[128];
+char *dym_sql = "SELECT current_database()";
+EXEC SQL END DECLARE SECTION;
+
+int main(){
+  EXEC SQL CONNECT TO postgres AS con1;
+  EXEC SQL CONNECT TO testdb AS con2;
+  EXEC SQL AT con1 DECLARE stmt STATEMENT;
+  EXEC SQL PREPARE stmt FROM :dym_sql;
+  EXEC SQL EXECUTE stmt INTO :dbname;
+  printf("%s\n", dbname);
+
+  EXEC SQL DISCONNECT ALL;
+  return 0;
+}
+]]></programlisting>
+
+   This example would produce this output, even if the default connection is testdb:
+<screen>
+postgres
 </screen>
   </para>
   </sect2>
@@ -6833,6 +6891,104 @@ EXEC SQL DECLARE cur1 CURSOR FOR stmt1;
      <member><xref linkend="ecpg-sql-open"/></member>
      <member><xref linkend="sql-close"/></member>
      <member><xref linkend="sql-declare"/></member>
+    </simplelist>
+   </refsect1>
+  </refentry>
+
+  <refentry id="ecpg-sql-declare-statement">
+   <refnamediv>
+    <refname>DECLARE STATEMENT</refname>
+    <refpurpose>declare SQL statement identifier</refpurpose>
+   </refnamediv>
+
+   <refsynopsisdiv>
+<synopsis>
+EXEC SQL [ AT <replaceable class="parameter">connection_name</replaceable> ] DECLARE <replaceable class="parameter">statement_name</replaceable> STATEMENT
+</synopsis>
+   </refsynopsisdiv>
+
+   <refsect1>
+    <title>Description</title>
+
+    <para>
+     <command>DECLARE STATEMENT</command> declares SQL statement identifier.
+     SQL statement identifier can be associated with the connection.
+     When the identifier is used by dynamic SQL statements, these SQLs are executed
+     by using the associated connection.
+     The namespace of the declaration is the precompile unit, and multiple declarations to
+     the same SQL statement identifier is not allowed.
+
+     Note that if the precompiler run in the Informix compatibility mode and some SQL statement
+     is declared, "database" can not be used as a cursor name.
+    </para>
+   </refsect1>
+
+   <refsect1>
+    <title>Parameters</title>
+
+    <variablelist>
+     <varlistentry>
+      <term><replaceable class="parameter">connection_name</replaceable></term>
+      <listitem>
+       <para>
+        A database connection name established by the <command>CONNECT</command> command.
+       </para>
+       <para>
+        AT clause can be omitted, but such statement has no meaning.
+       </para>
+      </listitem>
+     </varlistentry>
+    </variablelist>
+
+    <variablelist>
+     <varlistentry>
+      <term><replaceable class="parameter">statement_name</replaceable></term>
+      <listitem>
+       <para>
+        The name of a SQL statement identifier, either as an SQL identifier or a host variable.
+       </para>
+      </listitem>
+     </varlistentry>
+    </variablelist>
+   </refsect1>
+
+   <refsect1>
+    <title>Notes</title>
+    <para>
+     This association is valid only if the declaration is physically placed on top of a dynamic statement.
+    </para>
+   </refsect1>
+
+   <refsect1>
+    <title>Examples</title>
+
+<programlisting>
+EXEC SQL CONNECT TO postgres AS con1;
+EXEC SQL AT con1 DECLARE sql_stmt STATEMENT;
+EXEC SQL DECLARE cursor_name CURSOR FOR sql_stmt;
+EXEC SQL PREPARE sql_stmt FROM :dyn_string;
+EXEC SQL OPEN cursor_name;
+EXEC SQL FETCH cursor_name INTO :column1;
+EXEC SQL CLOSE cursor_name;
+</programlisting>
+   </refsect1>
+
+   <refsect1>
+    <title>Compatibility</title>
+
+    <para>
+     <command>DECLARE STATEMENT</command> is a extension of the SQL standard,
+     but can be used in famous DBMSs.
+    </para>
+   </refsect1>
+
+   <refsect1>
+    <title>See Also</title>
+
+    <simplelist type="inline">
+     <member><xref linkend="ecpg-sql-connect"/></member>
+     <member><xref linkend="ecpg-sql-declare"/></member>
+     <member><xref linkend="ecpg-sql-open"/></member>
     </simplelist>
    </refsect1>
   </refentry>

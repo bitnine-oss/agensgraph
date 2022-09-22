@@ -47,7 +47,7 @@ CREATE VIEW pg_shadow AS
     ON (pg_authid.oid = setrole AND setdatabase = 0)
     WHERE rolcanlogin;
 
-REVOKE ALL on pg_shadow FROM public;
+REVOKE ALL ON pg_shadow FROM public;
 
 CREATE VIEW pg_group AS
     SELECT
@@ -251,7 +251,7 @@ CREATE VIEW pg_stats WITH (security_barrier) AS
     AND has_column_privilege(c.oid, a.attnum, 'select')
     AND (c.relrowsecurity = false OR NOT row_security_active(c.oid));
 
-REVOKE ALL on pg_statistic FROM public;
+REVOKE ALL ON pg_statistic FROM public;
 
 CREATE VIEW pg_stats_ext WITH (security_barrier) AS
     SELECT cn.nspname AS schemaname,
@@ -264,6 +264,7 @@ CREATE VIEW pg_stats_ext WITH (security_barrier) AS
                   JOIN pg_attribute a
                        ON (a.attrelid = s.stxrelid AND a.attnum = k)
            ) AS attnames,
+           pg_get_statisticsobjdef_expressions(s.oid) as exprs,
            s.stxkind AS kinds,
            sd.stxdndistinct AS n_distinct,
            sd.stxddependencies AS dependencies,
@@ -290,8 +291,76 @@ CREATE VIEW pg_stats_ext WITH (security_barrier) AS
                 WHERE NOT has_column_privilege(c.oid, a.attnum, 'select') )
     AND (c.relrowsecurity = false OR NOT row_security_active(c.oid));
 
+CREATE VIEW pg_stats_ext_exprs WITH (security_barrier) AS
+    SELECT cn.nspname AS schemaname,
+           c.relname AS tablename,
+           sn.nspname AS statistics_schemaname,
+           s.stxname AS statistics_name,
+           pg_get_userbyid(s.stxowner) AS statistics_owner,
+           stat.expr,
+           (stat.a).stanullfrac AS null_frac,
+           (stat.a).stawidth AS avg_width,
+           (stat.a).stadistinct AS n_distinct,
+           (CASE
+               WHEN (stat.a).stakind1 = 1 THEN (stat.a).stavalues1
+               WHEN (stat.a).stakind2 = 1 THEN (stat.a).stavalues2
+               WHEN (stat.a).stakind3 = 1 THEN (stat.a).stavalues3
+               WHEN (stat.a).stakind4 = 1 THEN (stat.a).stavalues4
+               WHEN (stat.a).stakind5 = 1 THEN (stat.a).stavalues5
+           END) AS most_common_vals,
+           (CASE
+               WHEN (stat.a).stakind1 = 1 THEN (stat.a).stanumbers1
+               WHEN (stat.a).stakind2 = 1 THEN (stat.a).stanumbers2
+               WHEN (stat.a).stakind3 = 1 THEN (stat.a).stanumbers3
+               WHEN (stat.a).stakind4 = 1 THEN (stat.a).stanumbers4
+               WHEN (stat.a).stakind5 = 1 THEN (stat.a).stanumbers5
+           END) AS most_common_freqs,
+           (CASE
+               WHEN (stat.a).stakind1 = 2 THEN (stat.a).stavalues1
+               WHEN (stat.a).stakind2 = 2 THEN (stat.a).stavalues2
+               WHEN (stat.a).stakind3 = 2 THEN (stat.a).stavalues3
+               WHEN (stat.a).stakind4 = 2 THEN (stat.a).stavalues4
+               WHEN (stat.a).stakind5 = 2 THEN (stat.a).stavalues5
+           END) AS histogram_bounds,
+           (CASE
+               WHEN (stat.a).stakind1 = 3 THEN (stat.a).stanumbers1[1]
+               WHEN (stat.a).stakind2 = 3 THEN (stat.a).stanumbers2[1]
+               WHEN (stat.a).stakind3 = 3 THEN (stat.a).stanumbers3[1]
+               WHEN (stat.a).stakind4 = 3 THEN (stat.a).stanumbers4[1]
+               WHEN (stat.a).stakind5 = 3 THEN (stat.a).stanumbers5[1]
+           END) correlation,
+           (CASE
+               WHEN (stat.a).stakind1 = 4 THEN (stat.a).stavalues1
+               WHEN (stat.a).stakind2 = 4 THEN (stat.a).stavalues2
+               WHEN (stat.a).stakind3 = 4 THEN (stat.a).stavalues3
+               WHEN (stat.a).stakind4 = 4 THEN (stat.a).stavalues4
+               WHEN (stat.a).stakind5 = 4 THEN (stat.a).stavalues5
+           END) AS most_common_elems,
+           (CASE
+               WHEN (stat.a).stakind1 = 4 THEN (stat.a).stanumbers1
+               WHEN (stat.a).stakind2 = 4 THEN (stat.a).stanumbers2
+               WHEN (stat.a).stakind3 = 4 THEN (stat.a).stanumbers3
+               WHEN (stat.a).stakind4 = 4 THEN (stat.a).stanumbers4
+               WHEN (stat.a).stakind5 = 4 THEN (stat.a).stanumbers5
+           END) AS most_common_elem_freqs,
+           (CASE
+               WHEN (stat.a).stakind1 = 5 THEN (stat.a).stanumbers1
+               WHEN (stat.a).stakind2 = 5 THEN (stat.a).stanumbers2
+               WHEN (stat.a).stakind3 = 5 THEN (stat.a).stanumbers3
+               WHEN (stat.a).stakind4 = 5 THEN (stat.a).stanumbers4
+               WHEN (stat.a).stakind5 = 5 THEN (stat.a).stanumbers5
+           END) AS elem_count_histogram
+    FROM pg_statistic_ext s JOIN pg_class c ON (c.oid = s.stxrelid)
+         LEFT JOIN pg_statistic_ext_data sd ON (s.oid = sd.stxoid)
+         LEFT JOIN pg_namespace cn ON (cn.oid = c.relnamespace)
+         LEFT JOIN pg_namespace sn ON (sn.oid = s.stxnamespace)
+         JOIN LATERAL (
+             SELECT unnest(pg_get_statisticsobjdef_expressions(s.oid)) AS expr,
+                    unnest(sd.stxdexpr)::pg_statistic AS a
+         ) stat ON (stat.expr IS NOT NULL);
+
 -- unprivileged users may read pg_statistic_ext but not pg_statistic_ext_data
-REVOKE ALL on pg_statistic_ext_data FROM public;
+REVOKE ALL ON pg_statistic_ext_data FROM public;
 
 CREATE VIEW pg_publication_tables AS
     SELECT
@@ -527,13 +596,13 @@ GRANT SELECT, UPDATE ON pg_settings TO PUBLIC;
 CREATE VIEW pg_file_settings AS
    SELECT * FROM pg_show_all_file_settings() AS A;
 
-REVOKE ALL on pg_file_settings FROM PUBLIC;
+REVOKE ALL ON pg_file_settings FROM PUBLIC;
 REVOKE EXECUTE ON FUNCTION pg_show_all_file_settings() FROM PUBLIC;
 
 CREATE VIEW pg_hba_file_rules AS
    SELECT * FROM pg_hba_file_rules() AS A;
 
-REVOKE ALL on pg_hba_file_rules FROM PUBLIC;
+REVOKE ALL ON pg_hba_file_rules FROM PUBLIC;
 REVOKE EXECUTE ON FUNCTION pg_hba_file_rules() FROM PUBLIC;
 
 CREATE VIEW pg_timezone_abbrevs AS
@@ -545,7 +614,7 @@ CREATE VIEW pg_timezone_names AS
 CREATE VIEW pg_config AS
     SELECT * FROM pg_config();
 
-REVOKE ALL on pg_config FROM PUBLIC;
+REVOKE ALL ON pg_config FROM PUBLIC;
 REVOKE EXECUTE ON FUNCTION pg_config() FROM PUBLIC;
 
 CREATE VIEW pg_shmem_allocations AS
@@ -863,7 +932,6 @@ CREATE VIEW pg_stat_ssl AS
             S.sslversion AS version,
             S.sslcipher AS cipher,
             S.sslbits AS bits,
-            S.sslcompression AS compression,
             S.ssl_client_dn AS client_dn,
             S.ssl_client_serial AS client_serial,
             S.ssl_issuer_dn AS issuer_dn
@@ -894,7 +962,8 @@ CREATE VIEW pg_replication_slots AS
             L.restart_lsn,
             L.confirmed_flush_lsn,
             L.wal_status,
-            L.safe_wal_size
+            L.safe_wal_size,
+            L.two_phase
     FROM pg_get_replication_slots() AS L
             LEFT JOIN pg_database D ON (L.datoid = D.oid);
 
@@ -1004,6 +1073,10 @@ CREATE VIEW pg_stat_wal AS
         w.wal_fpi,
         w.wal_bytes,
         w.wal_buffers_full,
+        w.wal_write,
+        w.wal_sync,
+        w.wal_write_time,
+        w.wal_sync_time,
         w.stats_reset
     FROM pg_stat_get_wal() w;
 
@@ -1129,9 +1202,18 @@ CREATE VIEW pg_stat_progress_copy AS
     SELECT
         S.pid AS pid, S.datid AS datid, D.datname AS datname,
         S.relid AS relid,
+        CASE S.param5 WHEN 1 THEN 'COPY FROM'
+                      WHEN 2 THEN 'COPY TO'
+                      END AS command,
+        CASE S.param6 WHEN 1 THEN 'FILE'
+                      WHEN 2 THEN 'PROGRAM'
+                      WHEN 3 THEN 'PIPE'
+                      WHEN 4 THEN 'CALLBACK'
+                      END AS "type",
         S.param1 AS bytes_processed,
         S.param2 AS bytes_total,
-        S.param3 AS lines_processed
+        S.param3 AS tuples_processed,
+        S.param4 AS tuples_excluded
     FROM pg_stat_get_progress_info('COPY') AS S
         LEFT JOIN pg_database D ON S.datid = D.oid;
 
@@ -1183,7 +1265,7 @@ CREATE VIEW ag_graphmeta_view AS
        (SELECT labname FROM ag_label WHERE "end" = labid AND graph = graphid) AS end,
        edgecount FROM ag_graphmeta;
 
-REVOKE ALL on pg_user_mapping FROM public;
+REVOKE ALL ON pg_user_mapping FROM public;
 
 CREATE VIEW pg_replication_origin_status AS
     SELECT *
@@ -1344,6 +1426,7 @@ AS 'pg_create_physical_replication_slot';
 CREATE OR REPLACE FUNCTION pg_create_logical_replication_slot(
     IN slot_name name, IN plugin name,
     IN temporary boolean DEFAULT false,
+    IN twophase boolean DEFAULT false,
     OUT slot_name name, OUT lsn pg_lsn)
 RETURNS RECORD
 LANGUAGE INTERNAL

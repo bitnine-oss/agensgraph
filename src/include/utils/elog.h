@@ -188,6 +188,9 @@ extern int	errdetail_plural(const char *fmt_singular, const char *fmt_plural,
 
 extern int	errhint(const char *fmt,...) pg_attribute_printf(1, 2);
 
+extern int	errhint_plural(const char *fmt_singular, const char *fmt_plural,
+						   unsigned long n,...) pg_attribute_printf(1, 4) pg_attribute_printf(2, 4);
+
 /*
  * errcontext() is typically called in error context callback functions, not
  * within an ereport() invocation. The callback function can be in a different
@@ -207,7 +210,6 @@ extern int	errhidecontext(bool hide_ctx);
 
 extern int	errbacktrace(void);
 
-extern int	errfunction(const char *funcname);
 extern int	errposition(int cursorpos);
 
 extern int	internalerrposition(int cursorpos);
@@ -367,7 +369,6 @@ typedef struct ErrorData
 	int			elevel;			/* error level */
 	bool		output_to_server;	/* will report to server log? */
 	bool		output_to_client;	/* will report to client? */
-	bool		show_funcname;	/* true to force funcname inclusion */
 	bool		hide_stmt;		/* true to prevent STATEMENT: inclusion */
 	bool		hide_ctx;		/* true to prevent CONTEXT: inclusion */
 	const char *filename;		/* __FILE__ of ereport() call */

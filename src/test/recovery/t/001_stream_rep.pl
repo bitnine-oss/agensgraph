@@ -3,7 +3,7 @@ use strict;
 use warnings;
 use PostgresNode;
 use TestLib;
-use Test::More tests => 36;
+use Test::More tests => 49;
 
 # Initialize primary node
 my $node_primary = get_new_node('primary');
@@ -68,8 +68,8 @@ is($node_standby_2->psql('postgres', 'INSERT INTO tab_int VALUES (1)'),
 # Tests for connection parameter target_session_attrs
 note "testing connection parameter \"target_session_attrs\"";
 
-# Routine designed to run tests on the connection parameter
-# target_session_attrs with multiple nodes.
+# Attempt to connect to $node1, then $node2, using target_session_attrs=$mode.
+# Expect to connect to $target_node (undef for failure) with given $status.
 sub test_target_session_attrs
 {
 	my $node1       = shift;
@@ -84,23 +84,42 @@ sub test_target_session_attrs
 	my $node2_host = $node2->host;
 	my $node2_port = $node2->port;
 	my $node2_name = $node2->name;
-
-	my $target_name = $target_node->name;
+	my $target_port = undef;
+	$target_port = $target_node->port if (defined $target_node);
+	my $target_name = undef;
+	$target_name = $target_node->name if (defined $target_node);
 
 	# Build connection string for connection attempt.
 	my $connstr = "host=$node1_host,$node2_host ";
 	$connstr .= "port=$node1_port,$node2_port ";
 	$connstr .= "target_session_attrs=$mode";
 
-	# The client used for the connection does not matter, only the backend
-	# point does.
+	# Attempt to connect, and if successful, get the server port number
+	# we connected to.  Note we must pass the SQL command via the command
+	# line not stdin, else Perl may spit up trying to write to stdin of
+	# an already-failed psql process.
 	my ($ret, $stdout, $stderr) =
-	  $node1->psql('postgres', 'SHOW port;',
-		extra_params => [ '-d', $connstr ]);
-	is( $status == $ret && $stdout eq $target_node->port,
-		1,
-		"connect to node $target_name if mode \"$mode\" and $node1_name,$node2_name listed"
-	);
+	  $node1->psql('postgres', undef,
+		extra_params => [ '-d', $connstr, '-c', 'SHOW port;' ]);
+	if ($status == 0)
+	{
+		is( $status == $ret && $stdout eq $target_port,
+			1,
+			"connect to node $target_name with mode \"$mode\" and $node1_name,$node2_name listed"
+		);
+	}
+	else
+	{
+		print "status = $status\n";
+		print "ret = $ret\n";
+		print "stdout = $stdout\n";
+		print "stderr = $stderr\n";
+
+		is( $status == $ret && !defined $target_node,
+			1,
+			"fail to connect with mode \"$mode\" and $node1_name,$node2_name listed"
+		);
+	}
 
 	return;
 }
@@ -114,12 +133,63 @@ test_target_session_attrs($node_standby_1, $node_primary, $node_primary,
 	"read-write", 0);
 
 # Connect to primary in "any" mode with primary,standby1 list.
-test_target_session_attrs($node_primary, $node_standby_1, $node_primary, "any",
-	0);
+test_target_session_attrs($node_primary, $node_standby_1, $node_primary,
+	"any", 0);
 
 # Connect to standby1 in "any" mode with standby1,primary list.
 test_target_session_attrs($node_standby_1, $node_primary, $node_standby_1,
 	"any", 0);
+
+# Connect to primary in "primary" mode with primary,standby1 list.
+test_target_session_attrs($node_primary, $node_standby_1, $node_primary,
+	"primary", 0);
+
+# Connect to primary in "primary" mode with standby1,primary list.
+test_target_session_attrs($node_standby_1, $node_primary, $node_primary,
+	"primary", 0);
+
+# Connect to standby1 in "read-only" mode with primary,standby1 list.
+test_target_session_attrs($node_primary, $node_standby_1, $node_standby_1,
+	"read-only", 0);
+
+# Connect to standby1 in "read-only" mode with standby1,primary list.
+test_target_session_attrs($node_standby_1, $node_primary, $node_standby_1,
+	"read-only", 0);
+
+# Connect to primary in "prefer-standby" mode with primary,primary list.
+test_target_session_attrs($node_primary, $node_primary, $node_primary,
+	"prefer-standby", 0);
+
+# Connect to standby1 in "prefer-standby" mode with primary,standby1 list.
+test_target_session_attrs($node_primary, $node_standby_1, $node_standby_1,
+	"prefer-standby", 0);
+
+# Connect to standby1 in "prefer-standby" mode with standby1,primary list.
+test_target_session_attrs($node_standby_1, $node_primary, $node_standby_1,
+	"prefer-standby", 0);
+
+# Connect to standby1 in "standby" mode with primary,standby1 list.
+test_target_session_attrs($node_primary, $node_standby_1, $node_standby_1,
+	"standby", 0);
+
+# Connect to standby1 in "standby" mode with standby1,primary list.
+test_target_session_attrs($node_standby_1, $node_primary, $node_standby_1,
+	"standby", 0);
+
+# Fail to connect in "read-write" mode with standby1,standby2 list.
+test_target_session_attrs($node_standby_1, $node_standby_2, undef,
+	"read-write", 2);
+
+# Fail to connect in "primary" mode with standby1,standby2 list.
+test_target_session_attrs($node_standby_1, $node_standby_2, undef,
+	"primary", 2);
+
+# Fail to connect in "read-only" mode with primary,primary list.
+test_target_session_attrs($node_primary, $node_primary, undef,
+	"read-only", 2);
+
+# Fail to connect in "standby" mode with primary,primary list.
+test_target_session_attrs($node_primary, $node_primary, undef, "standby", 2);
 
 # Test for SHOW commands using a WAL sender connection with a replication
 # role.

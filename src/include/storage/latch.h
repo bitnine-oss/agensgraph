@@ -110,6 +110,7 @@
 typedef struct Latch
 {
 	sig_atomic_t is_set;
+	sig_atomic_t maybe_sleeping;
 	bool		is_shared;
 	int			owner_pid;
 #ifdef WIN32
@@ -162,6 +163,7 @@ extern void OwnLatch(Latch *latch);
 extern void DisownLatch(Latch *latch);
 extern void SetLatch(Latch *latch);
 extern void ResetLatch(Latch *latch);
+extern void ShutdownLatchSupport(void);
 
 extern WaitEventSet *CreateWaitEventSet(MemoryContext context, int nevents);
 extern void FreeWaitEventSet(WaitEventSet *set);
@@ -177,15 +179,6 @@ extern int	WaitLatch(Latch *latch, int wakeEvents, long timeout,
 extern int	WaitLatchOrSocket(Latch *latch, int wakeEvents,
 							  pgsocket sock, long timeout, uint32 wait_event_info);
 extern void InitializeLatchWaitSet(void);
-
-/*
- * Unix implementation uses SIGUSR1 for inter-process signaling.
- * Win32 doesn't need this.
- */
-#ifndef WIN32
-extern void latch_sigusr1_handler(void);
-#else
-#define latch_sigusr1_handler()  ((void) 0)
-#endif
+extern int	GetNumRegisteredWaitEvents(WaitEventSet *set);
 
 #endif							/* LATCH_H */

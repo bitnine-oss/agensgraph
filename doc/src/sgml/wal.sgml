@@ -237,10 +237,10 @@
   </indexterm>
 
   <para>
-   Data pages are not checksum protected by default, but this can optionally be
-   enabled for a cluster.  When enabled, each data page will be assigned a
-   checksum that is updated when the page is written and verified every time
-   the page is read. Only data pages are protected by checksums, internal data
+   By default, data pages are not protected by checksums, but this can
+   optionally be enabled for a cluster. When enabled, each data page includes
+   a checksum that is updated when the page is written and verified each time
+   the page is read. Only data pages are protected by checksums; internal data
    structures and temporary files are not.
   </para>
 
@@ -260,9 +260,9 @@
   </para>
 
   <para>
-   When attempting to recover from corrupt data it may be necessary to bypass
-   the checksum protection in order to recover data. To do this, temporarily
-   set the configuration parameter <xref linkend="guc-ignore-checksum-failure" />.
+   When attempting to recover from page corruptions, it may be necessary to
+   bypass the checksum protection. To do this, temporarily set the
+   configuration parameter <xref linkend="guc-ignore-checksum-failure" />.
   </para>
 
   <sect2 id="checksums-offline-enable-disable">
@@ -571,22 +571,29 @@
    writing dirty buffers during a checkpoint is spread over a period of time.
    That period is controlled by
    <xref linkend="guc-checkpoint-completion-target"/>, which is
-   given as a fraction of the checkpoint interval.
+   given as a fraction of the checkpoint interval (configured by using
+   <varname>checkpoint_timeout</varname>).
    The I/O rate is adjusted so that the checkpoint finishes when the
    given fraction of
    <varname>checkpoint_timeout</varname> seconds have elapsed, or before
    <varname>max_wal_size</varname> is exceeded, whichever is sooner.
-   With the default value of 0.5,
+   With the default value of 0.9,
    <productname>PostgreSQL</productname> can be expected to complete each checkpoint
-   in about half the time before the next checkpoint starts.  On a system
-   that's very close to maximum I/O throughput during normal operation,
-   you might want to increase <varname>checkpoint_completion_target</varname>
-   to reduce the I/O load from checkpoints.  The disadvantage of this is that
-   prolonging checkpoints affects recovery time, because more WAL segments
-   will need to be kept around for possible use in recovery.  Although
-   <varname>checkpoint_completion_target</varname> can be set as high as 1.0,
-   it is best to keep it less than that (perhaps 0.9 at most) since
-   checkpoints include some other activities besides writing dirty buffers.
+   a bit before the next scheduled checkpoint (at around 90% of the last checkpoint's
+   duration).  This spreads out the I/O as much as possible so that the checkpoint
+   I/O load is consistent throughout the checkpoint interval.  The disadvantage of
+   this is that prolonging checkpoints affects recovery time, because more WAL
+   segments will need to be kept around for possible use in recovery.  A user
+   concerned about the amount of time required to recover might wish to reduce
+   <varname>checkpoint_timeout</varname> so that checkpoints occur more frequently
+   but still spread the I/O across the checkpoint interval.  Alternatively,
+   <varname>checkpoint_completion_target</varname> could be reduced, but this would
+   result in times of more intense I/O (during the checkpoint) and times of less I/O
+   (after the checkpoint completed but before the next scheduled checkpoint) and
+   therefore is not recommended.
+   Although <varname>checkpoint_completion_target</varname> could be set as high as
+   1.0, it is typically recommended to set it to no higher than 0.9 (the default)
+   since checkpoints include some other activities besides writing dirty buffers.
    A setting of 1.0 is quite likely to result in checkpoints not being
    completed on time, which would result in performance loss due to
    unexpected variation in the number of WAL segments needed.
@@ -766,6 +773,35 @@
    <function>XLogInsertRecord</function> and <function>XLogFlush</function>
    <acronym>WAL</acronym> call being logged to the server log. This
    option might be replaced by a more general mechanism in the future.
+  </para>
+
+  <para>
+   There are two internal functions to write WAL data to disk:
+   <function>XLogWrite</function> and <function>issue_xlog_fsync</function>.
+   When <xref linkend="guc-track-wal-io-timing"/> is enabled, the total
+   amounts of time <function>XLogWrite</function> writes and
+   <function>issue_xlog_fsync</function> syncs WAL data to disk are counted as
+   <literal>wal_write_time</literal> and <literal>wal_sync_time</literal> in
+   <xref linkend="pg-stat-wal-view"/>, respectively.
+   <function>XLogWrite</function> is normally called by 
+   <function>XLogInsertRecord</function> (when there is no space for the new
+   record in WAL buffers), <function>XLogFlush</function> and the WAL writer,
+   to write WAL buffers to disk and call <function>issue_xlog_fsync</function>.
+   <function>issue_xlog_fsync</function> is normally called by
+   <function>XLogWrite</function> to sync WAL files to disk.
+   If <varname>wal_sync_method</varname> is either
+   <literal>open_datasync</literal> or <literal>open_sync</literal>,
+   a write operation in <function>XLogWrite</function> guarantees to sync written
+   WAL data to disk and <function>issue_xlog_fsync</function> does nothing.
+   If <varname>wal_sync_method</varname> is either <literal>fdatasync</literal>,
+   <literal>fsync</literal>, or <literal>fsync_writethrough</literal>,
+   the write operation moves WAL buffers to kernel cache and
+   <function>issue_xlog_fsync</function> syncs them to disk. Regardless
+   of the setting of <varname>track_wal_io_timing</varname>, the numbers
+   of times <function>XLogWrite</function> writes and
+   <function>issue_xlog_fsync</function> syncs WAL data to disk are also
+   counted as <literal>wal_write</literal> and <literal>wal_sync</literal>
+   in <structname>pg_stat_wal</structname>, respectively.
   </para>
  </sect1>
 

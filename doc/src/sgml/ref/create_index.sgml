@@ -425,7 +425,7 @@ CREATE [ UNIQUE ] INDEX [ CONCURRENTLY ] [ [ IF NOT EXISTS ] <replaceable class=
    </variablelist>
 
    <para>
-    B-tree indexes also accept these parameters:
+    B-tree indexes additionally accept this parameter:
    </para>
 
    <variablelist>
@@ -454,20 +454,6 @@ CREATE [ UNIQUE ] INDEX [ CONCURRENTLY ] [ [ IF NOT EXISTS ] <replaceable class=
       posting list tuples use the standard tuple representation.
      </para>
     </note>
-    </listitem>
-   </varlistentry>
-
-   <varlistentry id="index-reloption-vacuum-cleanup-index-scale-factor" xreflabel="vacuum_cleanup_index_scale_factor">
-    <term><literal>vacuum_cleanup_index_scale_factor</literal> (<type>floating point</type>)
-     <indexterm>
-      <primary><varname>vacuum_cleanup_index_scale_factor</varname></primary>
-      <secondary>storage parameter</secondary>
-     </indexterm>
-    </term>
-    <listitem>
-    <para>
-      Per-index value for <xref linkend="guc-vacuum-cleanup-index-scale-factor"/>.
-    </para>
     </listitem>
    </varlistentry>
    </variablelist>
@@ -855,6 +841,8 @@ Indexes:
    Like any long-running transaction, <command>CREATE INDEX</command> on a
    table can affect which tuples can be removed by concurrent
    <command>VACUUM</command> on any other table.
+   Excepted from this are operations with the <literal>CONCURRENTLY</literal>
+   option for indexes that are not partial and do not index any expressions.
   </para>
 
   <para>
@@ -864,6 +852,12 @@ Indexes:
    If <literal>USING rtree</literal> is specified, <command>CREATE INDEX</command>
    will interpret it as <literal>USING gist</literal>, to simplify conversion
    of old databases to GiST.
+  </para>
+
+  <para>
+    Each backend running <command>CREATE INDEX</command> will report its
+    progress in the <structname>pg_stat_progress_create_index</structname>
+    view. See <xref linkend="create-index-progress-reporting"/> for details.
   </para>
  </refsect1>
 
@@ -978,6 +972,7 @@ CREATE INDEX CONCURRENTLY sales_quantity_index ON sales_table (quantity);
    <member><xref linkend="sql-alterindex"/></member>
    <member><xref linkend="sql-dropindex"/></member>
    <member><xref linkend="sql-reindex"/></member>
+   <member><xref linkend="create-index-progress-reporting"/></member>
   </simplelist>
  </refsect1>
 </refentry>

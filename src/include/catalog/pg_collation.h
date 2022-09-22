@@ -30,8 +30,12 @@ CATALOG(pg_collation,3456,CollationRelationId)
 {
 	Oid			oid;			/* oid */
 	NameData	collname;		/* collation name */
-	Oid			collnamespace;	/* OID of namespace containing collation */
-	Oid			collowner;		/* owner of collation */
+
+	/* OID of namespace containing this collation */
+	Oid			collnamespace BKI_DEFAULT(pg_catalog) BKI_LOOKUP(pg_namespace);
+
+	/* owner of collation */
+	Oid			collowner BKI_DEFAULT(POSTGRES) BKI_LOOKUP(pg_authid);
 	char		collprovider;	/* see constants below */
 	bool		collisdeterministic BKI_DEFAULT(t);
 	int32		collencoding;	/* encoding for this collation; -1 = "all" */

@@ -624,6 +624,10 @@ typedef struct PartitionSchemeData *PartitionScheme;
  * to simplify matching join clauses to those lists.
  *----------
  */
+
+/* Bitmask of flags supported by table AMs */
+#define AMFLAG_HAS_TID_RANGE (1 << 0)
+
 typedef enum RelOptKind
 {
 	RELOPT_BASEREL,
@@ -713,6 +717,8 @@ typedef struct RelOptInfo
 	PlannerInfo *subroot;		/* if subquery */
 	List	   *subplan_params; /* if subquery */
 	int			rel_parallel_workers;	/* wanted number of parallel workers */
+	uint32		amflags;		/* Bitmask of optional features supported by
+								 * the table AM */
 
 	/* Information about foreign tables and foreign joins */
 	Oid			serverid;		/* identifies server for the table or join */
@@ -918,8 +924,9 @@ typedef struct StatisticExtInfo
 
 	Oid			statOid;		/* OID of the statistics row */
 	RelOptInfo *rel;			/* back-link to statistic's table */
-	char		kind;			/* statistic kind of this entry */
+	char		kind;			/* statistics kind of this entry */
 	Bitmapset  *keys;			/* attnums of the columns covered */
+	List	   *exprs;			/* expressions */
 } StatisticExtInfo;
 
 /*
@@ -1051,6 +1058,17 @@ typedef struct PathKey
 	bool		pk_nulls_first; /* do NULLs come before normal values? */
 } PathKey;
 
+/*
+ * VolatileFunctionStatus -- allows nodes to cache their
+ * contain_volatile_functions properties. VOLATILITY_UNKNOWN means not yet
+ * determined.
+ */
+typedef enum VolatileFunctionStatus
+{
+	VOLATILITY_UNKNOWN = 0,
+	VOLATILITY_VOLATILE,
+	VOLATILITY_NOVOLATILE
+} VolatileFunctionStatus;
 
 /*
  * PathTarget
@@ -1082,6 +1100,8 @@ typedef struct PathTarget
 	Index	   *sortgrouprefs;	/* corresponding sort/group refnos, or 0 */
 	QualCost	cost;			/* cost of evaluating the expressions */
 	int			width;			/* estimated avg width of result tuples */
+	VolatileFunctionStatus	has_volatile_expr;	/* indicates if exprs contain
+												 * any volatile functions. */
 } PathTarget;
 
 /* Convenience macro to get a sort/group refno from a PathTarget */
@@ -1327,6 +1347,18 @@ typedef struct TidPath
 } TidPath;
 
 /*
+ * TidRangePath represents a scan by a continguous range of TIDs
+ *
+ * tidrangequals is an implicitly AND'ed list of qual expressions of the form
+ * "CTID relop pseudoconstant", where relop is one of >,>=,<,<=.
+ */
+typedef struct TidRangePath
+{
+	Path		path;
+	List	   *tidrangequals;
+} TidRangePath;
+
+/*
  * SubqueryScanPath represents a scan of an unflattened subquery-in-FROM
  *
  * Note that the subpath comes from a different planning domain; for example
@@ -1406,9 +1438,6 @@ typedef struct CustomPath
 typedef struct AppendPath
 {
 	Path		path;
-	List	   *partitioned_rels;	/* List of Relids containing RT indexes of
-									 * non-leaf tables for each partition
-									 * hierarchy whose paths are in 'subpaths' */
 	List	   *subpaths;		/* list of component Paths */
 	/* Index of first partial path in subpaths; list_length(subpaths) if none */
 	int			first_partial_path;
@@ -1433,9 +1462,6 @@ extern bool is_dummy_rel(RelOptInfo *rel);
 typedef struct MergeAppendPath
 {
 	Path		path;
-	List	   *partitioned_rels;	/* List of Relids containing RT indexes of
-									 * non-leaf tables for each partition
-									 * hierarchy whose paths are in 'subpaths' */
 	List	   *subpaths;		/* list of component Paths */
 	double		limit_tuples;	/* hard limit on output tuples, or -1 */
 } MergeAppendPath;
@@ -2066,6 +2092,9 @@ typedef struct RestrictInfo
 	bool		pseudoconstant; /* see comment above */
 
 	bool		leakproof;		/* true if known to contain no leaked Vars */
+
+	VolatileFunctionStatus	has_volatile;	/* to indicate if clause contains
+											 * any volatile functions. */
 
 	Index		security_level; /* see comment above */
 

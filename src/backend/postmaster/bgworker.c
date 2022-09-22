@@ -402,7 +402,7 @@ BackgroundWorkerStateChange(bool allow_new_workers)
 
 		/* Log it! */
 		ereport(DEBUG1,
-				(errmsg("registering background worker \"%s\"",
+				(errmsg_internal("registering background worker \"%s\"",
 						rw->rw_worker.bgw_name)));
 
 		slist_push_head(&BackgroundWorkerList, &rw->rw_lnode);
@@ -434,7 +434,7 @@ ForgetBackgroundWorker(slist_mutable_iter *cur)
 	slot->in_use = false;
 
 	ereport(DEBUG1,
-			(errmsg("unregistering background worker \"%s\"",
+			(errmsg_internal("unregistering background worker \"%s\"",
 					rw->rw_worker.bgw_name)));
 
 	slist_delete_current(cur);
@@ -714,22 +714,6 @@ bgworker_die(SIGNAL_ARGS)
 }
 
 /*
- * Standard SIGUSR1 handler for unconnected workers
- *
- * Here, we want to make sure an unconnected worker will at least heed
- * latch activity.
- */
-static void
-bgworker_sigusr1_handler(SIGNAL_ARGS)
-{
-	int			save_errno = errno;
-
-	latch_sigusr1_handler();
-
-	errno = save_errno;
-}
-
-/*
  * Start a new background worker
  *
  * This is the main entry point for background worker, to be called from
@@ -759,6 +743,7 @@ StartBackgroundWorker(void)
 	 */
 	if ((worker->bgw_flags & BGWORKER_SHMEM_ACCESS) == 0)
 	{
+		ShutdownLatchSupport();
 		dsm_detach_all();
 		PGSharedMemoryDetach();
 	}
@@ -786,7 +771,7 @@ StartBackgroundWorker(void)
 	else
 	{
 		pqsignal(SIGINT, SIG_IGN);
-		pqsignal(SIGUSR1, bgworker_sigusr1_handler);
+		pqsignal(SIGUSR1, SIG_IGN);
 		pqsignal(SIGFPE, SIG_IGN);
 	}
 	pqsignal(SIGTERM, bgworker_die);
@@ -897,7 +882,7 @@ RegisterBackgroundWorker(BackgroundWorker *worker)
 
 	if (!IsUnderPostmaster)
 		ereport(DEBUG1,
-				(errmsg("registering background worker \"%s\"", worker->bgw_name)));
+				(errmsg_internal("registering background worker \"%s\"", worker->bgw_name)));
 
 	if (!process_shared_preload_libraries_in_progress &&
 		strcmp(worker->bgw_library_name, "postgres") != 0)

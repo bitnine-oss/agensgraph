@@ -118,6 +118,11 @@ InitPostmasterChild(void)
 	/* We don't want the postmaster's proc_exit() handlers */
 	on_exit_reset();
 
+	/* In EXEC_BACKEND case we will not have inherited BlockSig etc values */
+#ifdef EXEC_BACKEND
+	pqinitmask();
+#endif
+
 	/* Initialize process-local latch support */
 	InitializeLatchSupport();
 	MyLatch = &LocalLatchData;
@@ -133,11 +138,6 @@ InitPostmasterChild(void)
 #ifdef HAVE_SETSID
 	if (setsid() < 0)
 		elog(FATAL, "setsid() failed: %m");
-#endif
-
-	/* In EXEC_BACKEND case we will not have inherited BlockSig etc values */
-#ifdef EXEC_BACKEND
-	pqinitmask();
 #endif
 
 	/*
@@ -202,7 +202,8 @@ SwitchToSharedLatch(void)
 	MyLatch = &MyProc->procLatch;
 
 	if (FeBeWaitSet)
-		ModifyWaitEvent(FeBeWaitSet, 1, WL_LATCH_SET, MyLatch);
+		ModifyWaitEvent(FeBeWaitSet, FeBeWaitSetLatchPos, WL_LATCH_SET,
+						MyLatch);
 
 	/*
 	 * Set the shared latch as the local one might have been set. This
@@ -221,7 +222,8 @@ SwitchBackToLocalLatch(void)
 	MyLatch = &LocalLatchData;
 
 	if (FeBeWaitSet)
-		ModifyWaitEvent(FeBeWaitSet, 1, WL_LATCH_SET, MyLatch);
+		ModifyWaitEvent(FeBeWaitSet, FeBeWaitSetLatchPos, WL_LATCH_SET,
+						MyLatch);
 
 	SetLatch(MyLatch);
 }
@@ -1694,7 +1696,7 @@ load_libraries(const char *libraries, const char *gucname, bool restricted)
 		}
 		load_file(filename, restricted);
 		ereport(DEBUG1,
-				(errmsg("loaded library \"%s\"", filename)));
+				(errmsg_internal("loaded library \"%s\"", filename)));
 		if (expanded)
 			pfree(expanded);
 	}

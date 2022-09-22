@@ -55,7 +55,7 @@
 
 <programlisting>
 postgres=# -- Create a slot named 'regression_slot' using the output plugin 'test_decoding'
-postgres=# SELECT * FROM pg_create_logical_replication_slot('regression_slot', 'test_decoding');
+postgres=# SELECT * FROM pg_create_logical_replication_slot('regression_slot', 'test_decoding', false, true);
     slot_name    |    lsn
 -----------------+-----------
  regression_slot | 0/16B1970
@@ -169,17 +169,18 @@ $ pg_recvlogical -d postgres --slot=test --drop-slot
   <para>
   The following example shows SQL interface that can be used to decode prepared
   transactions. Before you use two-phase commit commands, you must set
-  <varname>max_prepared_transactions</varname> to at least 1. You must also set
-  the option 'two-phase-commit' to 1 while calling
-  <function>pg_logical_slot_get_changes</function>. Note that we will stream
-  the entire transaction after the commit if it is not already decoded.
+  <varname>max_prepared_transactions</varname> to at least 1. You must also have
+  set the two-phase parameter as 'true' while creating the slot using
+  <function>pg_create_logical_replication_slot</function>
+  Note that we will stream the entire transaction after the commit if it
+  is not already decoded.
   </para>
 <programlisting>
 postgres=# BEGIN;
 postgres=*# INSERT INTO data(data) VALUES('5');
 postgres=*# PREPARE TRANSACTION 'test_prepared1';
 
-postgres=# SELECT * FROM pg_logical_slot_get_changes('regression_slot', NULL, NULL, 'two-phase-commit', '1');
+postgres=# SELECT * FROM pg_logical_slot_get_changes('regression_slot', NULL, NULL);
     lsn    | xid |                          data                           
 -----------+-----+---------------------------------------------------------
  0/1689DC0 | 529 | BEGIN 529
@@ -188,12 +189,9 @@ postgres=# SELECT * FROM pg_logical_slot_get_changes('regression_slot', NULL, NU
 (3 rows)
 
 postgres=# COMMIT PREPARED 'test_prepared1';
-postgres=# select * from pg_logical_slot_get_changes('regression_slot', NULL, NULL, 'two-phase-commit', '1');
+postgres=# select * from pg_logical_slot_get_changes('regression_slot', NULL, NULL);
     lsn    | xid |                    data                    
 -----------+-----+--------------------------------------------
- 0/1689DC0 | 529 | BEGIN 529
- 0/1689DC0 | 529 | table public.data: INSERT: id[integer]:3 data[text]:'5'
- 0/1689FC0 | 529 | PREPARE TRANSACTION 'test_prepared1', txid 529
  0/168A060 | 529 | COMMIT PREPARED 'test_prepared1', txid 529
 (4 row)
 
@@ -201,7 +199,7 @@ postgres=#-- you can also rollback a prepared transaction
 postgres=# BEGIN;
 postgres=*# INSERT INTO data(data) VALUES('6');
 postgres=*# PREPARE TRANSACTION 'test_prepared2';
-postgres=# select * from pg_logical_slot_get_changes('regression_slot', NULL, NULL, 'two-phase-commit', '1');
+postgres=# select * from pg_logical_slot_get_changes('regression_slot', NULL, NULL);
     lsn    | xid |                          data                           
 -----------+-----+---------------------------------------------------------
  0/168A180 | 530 | BEGIN 530
@@ -210,7 +208,7 @@ postgres=# select * from pg_logical_slot_get_changes('regression_slot', NULL, NU
 (3 rows)
 
 postgres=# ROLLBACK PREPARED 'test_prepared2';
-postgres=# select * from pg_logical_slot_get_changes('regression_slot', NULL, NULL, 'two-phase-commit', '1');
+postgres=# select * from pg_logical_slot_get_changes('regression_slot', NULL, NULL);
     lsn    | xid |                     data                     
 -----------+-----+----------------------------------------------
  0/168A4B8 | 530 | ROLLBACK PREPARED 'test_prepared2', txid 530
@@ -791,25 +789,30 @@ typedef void (*LogicalDecodeMessageCB) (struct LogicalDecodingContext *ctx,
      <para>
        The optional <function>filter_prepare_cb</function> callback
        is called to determine whether data that is part of the current
-       two-phase commit transaction should be considered for decode
-       at this prepare stage or as a regular one-phase transaction at
-       <command>COMMIT PREPARED</command> time later. To signal that
+       two-phase commit transaction should be considered for decoding
+       at this prepare stage or later as a regular one-phase transaction at
+       <command>COMMIT PREPARED</command> time. To signal that
        decoding should be skipped, return <literal>true</literal>;
        <literal>false</literal> otherwise. When the callback is not
-       defined, <literal>false</literal> is assumed (i.e. nothing is
-       filtered).
+       defined, <literal>false</literal> is assumed (i.e. no filtering, all
+       transactions using two-phase commit are decoded in two phases as well).
 <programlisting>
 typedef bool (*LogicalDecodeFilterPrepareCB) (struct LogicalDecodingContext *ctx,
+                                              TransactionId xid,
                                               const char *gid);
 </programlisting>
-      The <parameter>ctx</parameter> parameter has the same contents as for the
-      other callbacks. The <parameter>gid</parameter> is the identifier that later
-      identifies this transaction for <command>COMMIT PREPARED</command> or
-      <command>ROLLBACK PREPARED</command>.
+       The <parameter>ctx</parameter> parameter has the same contents as for
+       the other callbacks. The parameters <parameter>xid</parameter>
+       and <parameter>gid</parameter> provide two different ways to identify
+       the transaction.  The later <command>COMMIT PREPARED</command> or
+       <command>ROLLBACK PREPARED</command> carries both identifiers,
+       providing an output plugin the choice of what to use.
      </para>
      <para>
-      The callback has to provide the same static answer for a given
-      <parameter>gid</parameter> every time it is called.
+       The callback may be invoked multiple times per transaction to decode
+       and must provide the same static answer for a given pair of
+       <parameter>xid</parameter> and <parameter>gid</parameter> every time
+       it is called.
      </para>
      </sect3>
 
@@ -820,12 +823,10 @@ typedef bool (*LogicalDecodeFilterPrepareCB) (struct LogicalDecodingContext *ctx
       The required <function>begin_prepare_cb</function> callback is called
       whenever the start of a prepared transaction has been decoded. The
       <parameter>gid</parameter> field, which is part of the
-      <parameter>txn</parameter> parameter can be used in this callback to
-      check if the plugin has already received this prepare in which case it
-      can skip the remaining changes of the transaction. This can only happen
-      if the user restarts the decoding after receiving the prepare for a
-      transaction but before receiving the commit prepared say because of some
-      error.
+      <parameter>txn</parameter> parameter, can be used in this callback to
+      check if the plugin has already received this <command>PREPARE</command>
+      in which case it can either error out or skip the remaining changes of 
+      the transaction.
       <programlisting>
        typedef void (*LogicalDecodeBeginPrepareCB) (struct LogicalDecodingContext *ctx,
                                                     ReorderBufferTXN *txn);
@@ -842,7 +843,7 @@ typedef bool (*LogicalDecodeFilterPrepareCB) (struct LogicalDecodingContext *ctx
       decoded. The <function>change_cb</function> callback for all modified
       rows will have been called before this, if there have been any modified
       rows. The <parameter>gid</parameter> field, which is part of the
-      <parameter>txn</parameter> parameter can be used in this callback.
+      <parameter>txn</parameter> parameter, can be used in this callback.
       <programlisting>
        typedef void (*LogicalDecodePrepareCB) (struct LogicalDecodingContext *ctx,
                                                ReorderBufferTXN *txn,
@@ -856,9 +857,9 @@ typedef bool (*LogicalDecodeFilterPrepareCB) (struct LogicalDecodingContext *ctx
 
      <para>
       The required <function>commit_prepared_cb</function> callback is called
-      whenever a transaction commit prepared has been decoded. The
-      <parameter>gid</parameter> field, which is part of the
-      <parameter>txn</parameter> parameter can be used in this callback.
+      whenever a transaction <command>COMMIT PREPARED</command> has been decoded.
+      The <parameter>gid</parameter> field, which is part of the
+      <parameter>txn</parameter> parameter, can be used in this callback.
       <programlisting>
        typedef void (*LogicalDecodeCommitPreparedCB) (struct LogicalDecodingContext *ctx,
                                                       ReorderBufferTXN *txn,
@@ -872,15 +873,15 @@ typedef bool (*LogicalDecodeFilterPrepareCB) (struct LogicalDecodingContext *ctx
 
      <para>
       The required <function>rollback_prepared_cb</function> callback is called
-      whenever a transaction rollback prepared has been decoded. The
-      <parameter>gid</parameter> field, which is part of the
-      <parameter>txn</parameter> parameter can be used in this callback. The
+      whenever a transaction <command>ROLLBACK PREPARED</command> has been
+      decoded. The <parameter>gid</parameter> field, which is part of the
+      <parameter>txn</parameter> parameter, can be used in this callback. The
       parameters <parameter>prepare_end_lsn</parameter> and
       <parameter>prepare_time</parameter> can be used to check if the plugin
-      has received this prepare transaction in which case it can apply the
-      rollback, otherwise, it can skip the rollback operation. The
+      has received this <command>PREPARE TRANSACTION</command> in which case
+      it can apply the rollback, otherwise, it can skip the rollback operation. The
       <parameter>gid</parameter> alone is not sufficient because the downstream
-      node can have prepared transaction with same identifier.
+      node can have a prepared transaction with same identifier.
       <programlisting>
        typedef void (*LogicalDecodeRollbackPreparedCB) (struct LogicalDecodingContext *ctx,
                                                         ReorderBufferTXN *txn,
@@ -1122,7 +1123,8 @@ OutputPluginWrite(ctx, true);
     the <function>stream_commit_cb</function> callback
     (or possibly aborted using the <function>stream_abort_cb</function> callback).
     If two-phase commits are supported, the transaction can be prepared using the
-    <function>stream_prepare_cb</function> callback, commit prepared using the
+    <function>stream_prepare_cb</function> callback,
+    <command>COMMIT PREPARED</command> using the
     <function>commit_prepared_cb</function> callback or aborted using the
     <function>rollback_prepared_cb</function>.
    </para>
@@ -1214,7 +1216,7 @@ stream_commit_cb(...);  &lt;-- commit of the streamed transaction
    </para>
 
    <para>
-    When a prepared transaction is rollbacked using the
+    When a prepared transaction is rolled back using the
     <command>ROLLBACK PREPARED</command>, then the
     <function>rollback_prepared_cb</function> callback is invoked and when the
     prepared transaction is committed using <command>COMMIT PREPARED</command>,
@@ -1222,9 +1224,35 @@ stream_commit_cb(...);  &lt;-- commit of the streamed transaction
    </para>
 
    <para>
-    Optionally the output plugin can specify a name pattern in the
-    <function>filter_prepare_cb</function> and transactions with gid containing
-    that name pattern will not be decoded as a two-phase commit transaction.
+    Optionally the output plugin can define filtering rules via
+    <function>filter_prepare_cb</function> to decode only specific transaction
+    in two phases.  This can be achieved by pattern matching on the
+    <parameter>gid</parameter> or via lookups using the
+    <parameter>xid</parameter>.
+   </para>
+
+   <para>
+    The users that want to decode prepared transactions need to be careful about
+    below mentioned points:
+
+    <itemizedlist>
+     <listitem>
+      <para>
+       If the prepared transaction has locked [user] catalog tables exclusively
+       then decoding prepare can block till the main transaction is committed.
+      </para>
+     </listitem>
+
+     <listitem>
+      <para>
+       The logical replication solution that builds distributed two phase commit
+       using this feature can deadlock if the prepared transaction has locked
+       [user] catalog tables exclusively. They need to inform users to not have
+       locks on catalog tables (via explicit <command>LOCK</command> command) in
+       such transactions.
+      </para>
+     </listitem>
+    </itemizedlist>
    </para>
 
   </sect1>

@@ -209,7 +209,21 @@ sub tap_check
 	my $dir = shift;
 	chdir $dir;
 
-	my @args = ("prove", @flags, glob("t/*.pl"));
+	# Fetch and adjust PROVE_TESTS, applying glob() to each element
+	# defined to build a list of all the tests matching patterns.
+	my $prove_tests_val   = $ENV{PROVE_TESTS} || "t/*.pl";
+	my @prove_tests_array = split(/\s+/, $prove_tests_val);
+	my @prove_tests       = ();
+	foreach (@prove_tests_array)
+	{
+		push(@prove_tests, glob($_));
+	}
+
+	# Fetch and adjust PROVE_FLAGS, handling multiple arguments.
+	my $prove_flags_val = $ENV{PROVE_FLAGS} || "";
+	my @prove_flags     = split(/\s+/, $prove_flags_val);
+
+	my @args = ("prove", @flags, @prove_tests, @prove_flags);
 
 	# adjust the environment for just this test
 	local %ENV = %ENV;
@@ -571,7 +585,6 @@ sub upgradecheck
 	my $outputdir          = "$tmp_root/regress";
 	my @EXTRA_REGRESS_OPTS = ("--outputdir=$outputdir");
 	mkdir "$outputdir"                || die $!;
-	mkdir "$outputdir/testtablespace" || die $!;
 
 	my $logdir = "$topdir/src/bin/pg_upgrade/log";
 	rmtree($logdir);

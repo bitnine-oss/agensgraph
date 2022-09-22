@@ -13,12 +13,12 @@ subdir = src/test/ssl
 top_builddir = ../../..
 include $(top_builddir)/src/Makefile.global
 
-export with_openssl
+export with_ssl
 
 CERTIFICATES := server_ca server-cn-and-alt-names \
 	server-cn-only server-single-alt-name server-multiple-alt-names \
 	server-no-names server-revoked server-ss \
-	client_ca client client-revoked \
+	client_ca client client-dn client-revoked \
 	root_ca
 
 SSLFILES := $(CERTIFICATES:%=ssl/%.key) $(CERTIFICATES:%=ssl/%.crt) \
@@ -30,12 +30,15 @@ SSLFILES := $(CERTIFICATES:%=ssl/%.key) $(CERTIFICATES:%=ssl/%.crt) \
 	ssl/client+client_ca.crt ssl/client-der.key \
 	ssl/client-encrypted-pem.key ssl/client-encrypted-der.key
 
+SSLDIRS := ssl/client-crldir ssl/server-crldir \
+	ssl/root+client-crldir ssl/root+server-crldir
+
 # This target re-generates all the key and certificate files. Usually we just
 # use the ones that are committed to the tree without rebuilding them.
 #
 # This target will fail unless preceded by sslfiles-clean.
 #
-sslfiles: $(SSLFILES)
+sslfiles: $(SSLFILES) $(SSLDIRS)
 
 # OpenSSL requires a directory to put all generated certificates in. We don't
 # use this for anything, but we need a location.
@@ -87,6 +90,13 @@ ssl/client.crt: ssl/client.key ssl/client_ca.crt
 	openssl ca -name client_ca -batch -out ssl/temp.crt -config cas.config -infiles ssl/client.csr
 	openssl x509 -in ssl/temp.crt -out ssl/client.crt # to keep just the PEM cert
 	rm ssl/client.csr ssl/temp.crt
+
+# Client certificate with multi-parth DN, signed by the client CA:
+ssl/client-dn.crt: ssl/client-dn.key ssl/client_ca.crt
+	openssl req -new -key ssl/client-dn.key -out ssl/client-dn.csr -config client-dn.config
+	openssl ca -name client_ca -batch -out ssl/temp.crt -config cas.config -infiles ssl/client-dn.csr
+	openssl x509 -in ssl/temp.crt -out ssl/client-dn.crt # to keep just the PEM cert
+	rm ssl/client-dn.csr ssl/temp.crt
 
 # Another client certificate, signed by the client CA. This one is revoked.
 ssl/client-revoked.crt: ssl/client-revoked.key ssl/client_ca.crt client.config
@@ -147,9 +157,28 @@ ssl/root+server.crl: ssl/root.crl ssl/server.crl
 ssl/root+client.crl: ssl/root.crl ssl/client.crl
 	cat $^ > $@
 
+ssl/root+server-crldir: ssl/server.crl ssl/root.crl
+	mkdir ssl/root+server-crldir
+	cp ssl/server.crl ssl/root+server-crldir/`openssl crl -hash -noout -in ssl/server.crl`.r0
+	cp ssl/root.crl ssl/root+server-crldir/`openssl crl -hash -noout -in ssl/root.crl`.r0
+
+ssl/root+client-crldir: ssl/client.crl ssl/root.crl
+	mkdir ssl/root+client-crldir
+	cp ssl/client.crl ssl/root+client-crldir/`openssl crl -hash -noout -in ssl/client.crl`.r0
+	cp ssl/root.crl ssl/root+client-crldir/`openssl crl -hash -noout -in ssl/root.crl`.r0
+
+ssl/server-crldir: ssl/server.crl
+	mkdir ssl/server-crldir
+	cp ssl/server.crl ssl/server-crldir/`openssl crl -hash -noout -in ssl/server.crl`.r0
+
+ssl/client-crldir: ssl/client.crl
+	mkdir ssl/client-crldir
+	cp ssl/client.crl ssl/client-crldir/`openssl crl -hash -noout -in ssl/client.crl`.r0
+
 .PHONY: sslfiles-clean
 sslfiles-clean:
 	rm -f $(SSLFILES) ssl/client_ca.srl ssl/server_ca.srl ssl/client_ca-certindex* ssl/server_ca-certindex* ssl/root_ca-certindex* ssl/root_ca.srl ssl/temp_ca.crt ssl/temp_ca_signed.crt
+	rm -rf $(SSLDIRS)
 
 clean distclean maintainer-clean:
 	rm -rf tmp_check

@@ -400,12 +400,15 @@ typedef struct OnConflictSetState
  * relation, and perhaps also fire triggers.  ResultRelInfo holds all the
  * information needed about a result relation, including indexes.
  *
- * Normally, a ResultRelInfo refers to a table that is in the query's
- * range table; then ri_RangeTableIndex is the RT index and ri_RelationDesc
- * is just a copy of the relevant es_relations[] entry.  But sometimes,
- * in ResultRelInfos used only for triggers, ri_RangeTableIndex is zero
- * and ri_RelationDesc is a separately-opened relcache pointer that needs
- * to be separately closed.  See ExecGetTriggerResultRel.
+ * Normally, a ResultRelInfo refers to a table that is in the query's range
+ * table; then ri_RangeTableIndex is the RT index and ri_RelationDesc is
+ * just a copy of the relevant es_relations[] entry.  However, in some
+ * situations we create ResultRelInfos for relations that are not in the
+ * range table, namely for targets of tuple routing in a partitioned table,
+ * and when firing triggers in tables other than the target tables (See
+ * ExecGetTriggerResultRel).  In these situations, ri_RangeTableIndex is 0
+ * and ri_RelationDesc is a separately-opened relcache pointer that needs to
+ * be separately closed.
  */
 typedef struct ResultRelInfo
 {
@@ -494,12 +497,16 @@ typedef struct ResultRelInfo
 	/*
 	 * Information needed by tuple routing target relations
 	 *
-	 * PartitionRoot gives the target relation mentioned in the query.
+	 * RootResultRelInfo gives the target relation mentioned in the query, if
+	 * it's a partitioned table. It is not set if the target relation
+	 * mentioned in the query is an inherited table, nor when tuple routing is
+	 * not needed.
+	 *
 	 * RootToPartitionMap and PartitionTupleSlot, initialized by
 	 * ExecInitRoutingInfo, are non-NULL if partition has a different tuple
 	 * format than the root table.
 	 */
-	Relation	ri_PartitionRoot;
+	struct ResultRelInfo *ri_RootResultRelInfo;
 	TupleConversionMap *ri_RootToPartitionMap;
 	TupleTableSlot *ri_PartitionTupleSlot;
 
@@ -522,6 +529,22 @@ typedef struct GraphWriteStats
 	uint32		deleteEdge;
 	uint32		updateProperty;
 } GraphWriteStats;
+
+/* ----------------
+ *	  AsyncRequest
+ *
+ * State for an asynchronous tuple request.
+ * ----------------
+ */
+typedef struct AsyncRequest
+{
+	struct PlanState *requestor;	/* Node that wants a tuple */
+	struct PlanState *requestee;	/* Node from which a tuple is wanted */
+	int			request_index;	/* Scratch space for requestor */
+	bool		callback_pending;	/* Callback is needed */
+	bool		request_complete;	/* Request complete, result valid */
+	TupleTableSlot *result;		/* Result (NULL if no more tuples) */
+} AsyncRequest;
 
 /* ----------------
  *	  EState information
@@ -1207,12 +1230,12 @@ typedef struct ModifyTableState
  *	 AppendState information
  *
  *		nplans				how many plans are in the array
- *		whichplan			which plan is being executed (0 .. n-1), or a
- *							special negative value. See nodeAppend.c.
+ *		whichplan			which synchronous plan is being executed (0 .. n-1)
+ *							or a special negative value. See nodeAppend.c.
  *		prune_state			details required to allow partitions to be
  *							eliminated from the scan, or NULL if not possible.
- *		valid_subplans		for runtime pruning, valid appendplans indexes to
- *							scan.
+ *		valid_subplans		for runtime pruning, valid synchronous appendplans
+ *							indexes to scan.
  * ----------------
  */
 
@@ -1228,12 +1251,25 @@ struct AppendState
 	PlanState **appendplans;	/* array of PlanStates for my inputs */
 	int			as_nplans;
 	int			as_whichplan;
+	bool		as_begun;		/* false means need to initialize */
+	Bitmapset  *as_asyncplans;	/* asynchronous plans indexes */
+	int			as_nasyncplans;	/* # of asynchronous plans */
+	AsyncRequest **as_asyncrequests;	/* array of AsyncRequests */
+	TupleTableSlot **as_asyncresults;	/* unreturned results of async plans */
+	int			as_nasyncresults;	/* # of valid entries in as_asyncresults */
+	bool		as_syncdone;	/* true if all synchronous plans done in
+								 * asynchronous mode, else false */
+	int			as_nasyncremain;	/* # of remaining asynchronous plans */
+	Bitmapset  *as_needrequest;	/* asynchronous plans needing a new request */
+	struct WaitEventSet *as_eventset;	/* WaitEventSet used to configure
+										 * file descriptor wait events */
 	int			as_first_partial_plan;	/* Index of 'appendplans' containing
 										 * the first partial plan */
 	ParallelAppendState *as_pstate; /* parallel coordination info */
 	Size		pstate_len;		/* size of parallel coordination info */
 	struct PartitionPruneState *as_prune_state;
 	Bitmapset  *as_valid_subplans;
+	Bitmapset  *as_valid_asyncplans;	/* valid asynchronous plans indexes */
 	bool		(*choose_next_subplan) (AppendState *);
 
 	dlist_head	ctxs_head;		/* list of AppendContext */
@@ -1650,6 +1686,24 @@ typedef struct TidScanState
 	ItemPointerData *tss_TidList;
 	HeapTupleData tss_htup;
 } TidScanState;
+
+/* ----------------
+ *	 TidRangeScanState information
+ *
+ *		trss_tidexprs		list of TidOpExpr structs (see nodeTidrangescan.c)
+ *		trss_mintid			the lowest TID in the scan range
+ *		trss_maxtid			the highest TID in the scan range
+ *		trss_inScan			is a scan currently in progress?
+ * ----------------
+ */
+typedef struct TidRangeScanState
+{
+	ScanState	ss;				/* its first field is NodeTag */
+	List	   *trss_tidexprs;
+	ItemPointerData trss_mintid;
+	ItemPointerData trss_maxtid;
+	bool		trss_inScan;
+} TidRangeScanState;
 
 /* ----------------
  *	 SubqueryScanState information

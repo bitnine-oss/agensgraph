@@ -372,6 +372,34 @@ OPTIONS (ADD password_required 'false');
   </sect3>
 
   <sect3>
+   <title>Asynchronous Execution Options</title>
+
+   <para>
+    <filename>postgres_fdw</filename> supports asynchronous execution, which
+    runs multiple parts of an <structname>Append</structname> node
+    concurrently rather than serially to improve performance.
+    This execution can be controled using the following option:
+   </para>
+
+   <variablelist>
+
+    <varlistentry>
+     <term><literal>async_capable</literal></term>
+     <listitem>
+      <para>
+       This option controls whether <filename>postgres_fdw</filename> allows
+       foreign tables to be scanned concurrently for asynchronous execution.
+       It can be specified for a foreign table or a foreign server.
+       A table-level option overrides a server-level option.
+       The default is <literal>false</literal>.
+      </para>
+     </listitem>
+    </varlistentry>
+
+   </variablelist>
+  </sect3>
+
+  <sect3>
    <title>Updatability Options</title>
 
    <para>
@@ -553,7 +581,7 @@ postgres=# SELECT postgres_fdw_disconnect('loopback1');
      <para>
       This function discards all the open connections that are established by
       <filename>postgres_fdw</filename> from the local session to
-      the foreign servers.  If the connections are used in the current local
+      foreign servers.  If the connections are used in the current local
       transaction, they are not disconnected and warning messages are reported.
       This function returns <literal>true</literal> if it disconnects
       at least one connection, otherwise <literal>false</literal>.
@@ -585,22 +613,22 @@ postgres=# SELECT postgres_fdw_disconnect_all();
 
   <para>
    When changing the definition of or removing a foreign server or
-   a user mapping, the corresponding connections are closed.
-   But note that if the connections are used in the current local transaction
-   at that moment, they are kept until the end of the transaction.
-   Closed connections will be established again when they are necessary
-   by subsequent queries using a foreign table.
+   a user mapping, the associated connections are closed.
+   But note that if any connections are in use in the current local transaction,
+   they are kept until the end of the transaction.
+   Closed connections will be re-established when they are necessary
+   by future queries using a foreign table.
   </para>
 
   <para>
    Once a connection to a foreign server has been established,
-   it's usually kept until the local or the corresponding remote
+   it's usually kept until the local or corresponding remote
    session exits.  To disconnect a connection explicitly,
    <function>postgres_fdw_disconnect</function> and
    <function>postgres_fdw_disconnect_all</function> functions
-   need to be used.  For example, these are useful when closing
-   the connections that are no longer necessary and then preventing them
-   from consuming the foreign server connections capacity too much.
+   may be used.  For example, these are useful to close
+   connections that are no longer necessary, thereby releasing
+   connections on the foreign server.
   </para>
  </sect2>
 

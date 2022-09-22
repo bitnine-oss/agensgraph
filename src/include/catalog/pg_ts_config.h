@@ -36,10 +36,10 @@ CATALOG(pg_ts_config,3602,TSConfigRelationId)
 	NameData	cfgname;
 
 	/* name space */
-	Oid			cfgnamespace BKI_DEFAULT(PGNSP);
+	Oid			cfgnamespace BKI_DEFAULT(pg_catalog) BKI_LOOKUP(pg_namespace);
 
 	/* owner */
-	Oid			cfgowner BKI_DEFAULT(PGUID);
+	Oid			cfgowner BKI_DEFAULT(POSTGRES) BKI_LOOKUP(pg_authid);
 
 	/* OID of parser */
 	Oid			cfgparser BKI_LOOKUP(pg_ts_parser);

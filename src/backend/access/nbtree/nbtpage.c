@@ -32,17 +32,18 @@
 #include "storage/indexfsm.h"
 #include "storage/lmgr.h"
 #include "storage/predicate.h"
+#include "storage/procarray.h"
 #include "utils/memdebug.h"
+#include "utils/memutils.h"
 #include "utils/snapmgr.h"
 
 static BTMetaPageData *_bt_getmeta(Relation rel, Buffer metabuf);
 static void _bt_log_reuse_page(Relation rel, BlockNumber blkno,
-							   TransactionId latestRemovedXid);
+							   FullTransactionId safexid);
 static void _bt_delitems_delete(Relation rel, Buffer buf,
 								TransactionId latestRemovedXid,
 								OffsetNumber *deletable, int ndeletable,
-								BTVacuumPosting *updatable, int nupdatable,
-								Relation heapRel);
+								BTVacuumPosting *updatable, int nupdatable);
 static char *_bt_delitems_update(BTVacuumPosting *updatable, int nupdatable,
 								 OffsetNumber *updatedoffsets,
 								 Size *updatedbuflen, bool needswal);
@@ -51,14 +52,15 @@ static bool _bt_mark_page_halfdead(Relation rel, Buffer leafbuf,
 static bool _bt_unlink_halfdead_page(Relation rel, Buffer leafbuf,
 									 BlockNumber scanblkno,
 									 bool *rightsib_empty,
-									 TransactionId *oldestBtpoXact,
-									 uint32 *ndeleted);
+									 BTVacState *vstate);
 static bool _bt_lock_subtree_parent(Relation rel, BlockNumber child,
 									BTStack stack,
 									Buffer *subtreeparent,
 									OffsetNumber *poffset,
 									BlockNumber *topparent,
 									BlockNumber *topparentrightsib);
+static void _bt_pendingfsm_add(BTVacState *vstate, BlockNumber target,
+							   FullTransactionId safexid);
 
 /*
  *	_bt_initmetapage() -- Fill a page buffer with a correct metapage image
@@ -79,7 +81,7 @@ _bt_initmetapage(Page page, BlockNumber rootbknum, uint32 level,
 	metad->btm_level = level;
 	metad->btm_fastroot = rootbknum;
 	metad->btm_fastlevel = level;
-	metad->btm_oldest_btpo_xact = InvalidTransactionId;
+	metad->btm_last_cleanup_num_delpages = 0;
 	metad->btm_last_cleanup_num_heap_tuples = -1.0;
 	metad->btm_allequalimage = allequalimage;
 
@@ -119,7 +121,7 @@ _bt_upgrademetapage(Page page)
 
 	/* Set version number and fill extra fields added into version 3 */
 	metad->btm_version = BTREE_NOVAC_VERSION;
-	metad->btm_oldest_btpo_xact = InvalidTransactionId;
+	metad->btm_last_cleanup_num_delpages = 0;
 	metad->btm_last_cleanup_num_heap_tuples = -1.0;
 	/* Only a REINDEX can set this field */
 	Assert(!metad->btm_allequalimage);
@@ -170,36 +172,98 @@ _bt_getmeta(Relation rel, Buffer metabuf)
 }
 
 /*
- *	_bt_update_meta_cleanup_info() -- Update cleanup-related information in
- *									  the metapage.
+ * _bt_vacuum_needs_cleanup() -- Checks if index needs cleanup
  *
- *		This routine checks if provided cleanup-related information is matching
- *		to those written in the metapage.  On mismatch, metapage is overwritten.
+ * Called by btvacuumcleanup when btbulkdelete was never called because no
+ * index tuples needed to be deleted.
  */
-void
-_bt_update_meta_cleanup_info(Relation rel, TransactionId oldestBtpoXact,
-							 float8 numHeapTuples)
+bool
+_bt_vacuum_needs_cleanup(Relation rel)
 {
 	Buffer		metabuf;
 	Page		metapg;
 	BTMetaPageData *metad;
-	bool		needsRewrite = false;
-	XLogRecPtr	recptr;
+	uint32		btm_version;
+	BlockNumber prev_num_delpages;
 
-	/* read the metapage and check if it needs rewrite */
+	/*
+	 * Copy details from metapage to local variables quickly.
+	 *
+	 * Note that we deliberately avoid using cached version of metapage here.
+	 */
+	metabuf = _bt_getbuf(rel, BTREE_METAPAGE, BT_READ);
+	metapg = BufferGetPage(metabuf);
+	metad = BTPageGetMeta(metapg);
+	btm_version = metad->btm_version;
+
+	if (btm_version < BTREE_NOVAC_VERSION)
+	{
+		/*
+		 * Metapage needs to be dynamically upgraded to store fields that are
+		 * only present when btm_version >= BTREE_NOVAC_VERSION
+		 */
+		_bt_relbuf(rel, metabuf);
+		return true;
+	}
+
+	prev_num_delpages = metad->btm_last_cleanup_num_delpages;
+	_bt_relbuf(rel, metabuf);
+
+	/*
+	 * Trigger cleanup in rare cases where prev_num_delpages exceeds 5% of the
+	 * total size of the index.  We can reasonably expect (though are not
+	 * guaranteed) to be able to recycle this many pages if we decide to do a
+	 * btvacuumscan call during the ongoing btvacuumcleanup.  For further
+	 * details see the nbtree/README section on placing deleted pages in the
+	 * FSM.
+	 */
+	if (prev_num_delpages > 0 &&
+		prev_num_delpages > RelationGetNumberOfBlocks(rel) / 20)
+		return true;
+
+	return false;
+}
+
+/*
+ * _bt_set_cleanup_info() -- Update metapage for btvacuumcleanup.
+ *
+ * Called at the end of btvacuumcleanup, when num_delpages value has been
+ * finalized.
+ */
+void
+_bt_set_cleanup_info(Relation rel, BlockNumber num_delpages)
+{
+	Buffer		metabuf;
+	Page		metapg;
+	BTMetaPageData *metad;
+
+	/*
+	 * On-disk compatibility note: The btm_last_cleanup_num_delpages metapage
+	 * field started out as a TransactionId field called btm_oldest_btpo_xact.
+	 * Both "versions" are just uint32 fields.  It was convenient to repurpose
+	 * the field when we began to use 64-bit XIDs in deleted pages.
+	 *
+	 * It's possible that a pg_upgrade'd database will contain an XID value in
+	 * what is now recognized as the metapage's btm_last_cleanup_num_delpages
+	 * field.  _bt_vacuum_needs_cleanup() may even believe that this value
+	 * indicates that there are lots of pages that it needs to recycle, when
+	 * in reality there are only one or two.  The worst that can happen is
+	 * that there will be a call to btvacuumscan a little earlier, which will
+	 * set btm_last_cleanup_num_delpages to a sane value when we're called.
+	 *
+	 * Note also that the metapage's btm_last_cleanup_num_heap_tuples field is
+	 * no longer used as of PostgreSQL 14.  We set it to -1.0 on rewrite, just
+	 * to be consistent.
+	 */
 	metabuf = _bt_getbuf(rel, BTREE_METAPAGE, BT_READ);
 	metapg = BufferGetPage(metabuf);
 	metad = BTPageGetMeta(metapg);
 
-	/* outdated version of metapage always needs rewrite */
-	if (metad->btm_version < BTREE_NOVAC_VERSION)
-		needsRewrite = true;
-	else if (metad->btm_oldest_btpo_xact != oldestBtpoXact ||
-			 metad->btm_last_cleanup_num_heap_tuples != numHeapTuples)
-		needsRewrite = true;
-
-	if (!needsRewrite)
+	/* Don't miss chance to upgrade index/metapage when BTREE_MIN_VERSION */
+	if (metad->btm_version >= BTREE_NOVAC_VERSION &&
+		metad->btm_last_cleanup_num_delpages == num_delpages)
 	{
+		/* Usually means index continues to have num_delpages of 0 */
 		_bt_relbuf(rel, metabuf);
 		return;
 	}
@@ -215,14 +279,15 @@ _bt_update_meta_cleanup_info(Relation rel, TransactionId oldestBtpoXact,
 		_bt_upgrademetapage(metapg);
 
 	/* update cleanup-related information */
-	metad->btm_oldest_btpo_xact = oldestBtpoXact;
-	metad->btm_last_cleanup_num_heap_tuples = numHeapTuples;
+	metad->btm_last_cleanup_num_delpages = num_delpages;
+	metad->btm_last_cleanup_num_heap_tuples = -1.0;
 	MarkBufferDirty(metabuf);
 
 	/* write wal record if needed */
 	if (RelationNeedsWAL(rel))
 	{
 		xl_btree_metadata md;
+		XLogRecPtr	recptr;
 
 		XLogBeginInsert();
 		XLogRegisterBuffer(0, metabuf, REGBUF_WILL_INIT | REGBUF_STANDARD);
@@ -233,8 +298,7 @@ _bt_update_meta_cleanup_info(Relation rel, TransactionId oldestBtpoXact,
 		md.level = metad->btm_level;
 		md.fastroot = metad->btm_fastroot;
 		md.fastlevel = metad->btm_fastlevel;
-		md.oldest_btpo_xact = oldestBtpoXact;
-		md.last_cleanup_num_heap_tuples = numHeapTuples;
+		md.last_cleanup_num_delpages = num_delpages;
 		md.allequalimage = metad->btm_allequalimage;
 
 		XLogRegisterBufData(0, (char *) &md, sizeof(xl_btree_metadata));
@@ -245,6 +309,7 @@ _bt_update_meta_cleanup_info(Relation rel, TransactionId oldestBtpoXact,
 	}
 
 	END_CRIT_SECTION();
+
 	_bt_relbuf(rel, metabuf);
 }
 
@@ -317,7 +382,7 @@ _bt_getroot(Relation rel, int access)
 		 * because that's not set in a "fast root".
 		 */
 		if (!P_IGNORE(rootopaque) &&
-			rootopaque->btpo.level == rootlevel &&
+			rootopaque->btpo_level == rootlevel &&
 			P_LEFTMOST(rootopaque) &&
 			P_RIGHTMOST(rootopaque))
 		{
@@ -378,7 +443,7 @@ _bt_getroot(Relation rel, int access)
 		rootopaque = (BTPageOpaque) PageGetSpecialPointer(rootpage);
 		rootopaque->btpo_prev = rootopaque->btpo_next = P_NONE;
 		rootopaque->btpo_flags = (BTP_LEAF | BTP_ROOT);
-		rootopaque->btpo.level = 0;
+		rootopaque->btpo_level = 0;
 		rootopaque->btpo_cycleid = 0;
 		/* Get raw page pointer for metapage */
 		metapg = BufferGetPage(metabuf);
@@ -394,7 +459,7 @@ _bt_getroot(Relation rel, int access)
 		metad->btm_level = 0;
 		metad->btm_fastroot = rootblkno;
 		metad->btm_fastlevel = 0;
-		metad->btm_oldest_btpo_xact = InvalidTransactionId;
+		metad->btm_last_cleanup_num_delpages = 0;
 		metad->btm_last_cleanup_num_heap_tuples = -1.0;
 
 		MarkBufferDirty(rootbuf);
@@ -417,8 +482,7 @@ _bt_getroot(Relation rel, int access)
 			md.level = 0;
 			md.fastroot = rootblkno;
 			md.fastlevel = 0;
-			md.oldest_btpo_xact = InvalidTransactionId;
-			md.last_cleanup_num_heap_tuples = -1.0;
+			md.last_cleanup_num_delpages = 0;
 			md.allequalimage = metad->btm_allequalimage;
 
 			XLogRegisterBufData(2, (char *) &md, sizeof(xl_btree_metadata));
@@ -482,11 +546,10 @@ _bt_getroot(Relation rel, int access)
 			rootblkno = rootopaque->btpo_next;
 		}
 
-		/* Note: can't check btpo.level on deleted pages */
-		if (rootopaque->btpo.level != rootlevel)
+		if (rootopaque->btpo_level != rootlevel)
 			elog(ERROR, "root page %u of index \"%s\" has level %u, expected %u",
 				 rootblkno, RelationGetRelationName(rel),
-				 rootopaque->btpo.level, rootlevel);
+				 rootopaque->btpo_level, rootlevel);
 	}
 
 	/*
@@ -586,11 +649,10 @@ _bt_gettrueroot(Relation rel)
 		rootblkno = rootopaque->btpo_next;
 	}
 
-	/* Note: can't check btpo.level on deleted pages */
-	if (rootopaque->btpo.level != rootlevel)
+	if (rootopaque->btpo_level != rootlevel)
 		elog(ERROR, "root page %u of index \"%s\" has level %u, expected %u",
 			 rootblkno, RelationGetRelationName(rel),
-			 rootopaque->btpo.level, rootlevel);
+			 rootopaque->btpo_level, rootlevel);
 
 	return rootbuf;
 }
@@ -763,7 +825,7 @@ _bt_checkpage(Relation rel, Buffer buf)
  * Log the reuse of a page from the FSM.
  */
 static void
-_bt_log_reuse_page(Relation rel, BlockNumber blkno, TransactionId latestRemovedXid)
+_bt_log_reuse_page(Relation rel, BlockNumber blkno, FullTransactionId safexid)
 {
 	xl_btree_reuse_page xlrec_reuse;
 
@@ -776,7 +838,7 @@ _bt_log_reuse_page(Relation rel, BlockNumber blkno, TransactionId latestRemovedX
 	/* XLOG stuff */
 	xlrec_reuse.node = rel->rd_node;
 	xlrec_reuse.block = blkno;
-	xlrec_reuse.latestRemovedXid = latestRemovedXid;
+	xlrec_reuse.latestRemovedFullXid = safexid;
 
 	XLogBeginInsert();
 	XLogRegisterData((char *) &xlrec_reuse, SizeOfBtreeReusePage);
@@ -857,26 +919,34 @@ _bt_getbuf(Relation rel, BlockNumber blkno, int access)
 			if (_bt_conditionallockbuf(rel, buf))
 			{
 				page = BufferGetPage(buf);
-				if (_bt_page_recyclable(page))
+
+				/*
+				 * It's possible to find an all-zeroes page in an index.  For
+				 * example, a backend might successfully extend the relation
+				 * one page and then crash before it is able to make a WAL
+				 * entry for adding the page.  If we find a zeroed page then
+				 * reclaim it immediately.
+				 */
+				if (PageIsNew(page))
+				{
+					/* Okay to use page.  Initialize and return it. */
+					_bt_pageinit(page, BufferGetPageSize(buf));
+					return buf;
+				}
+
+				if (BTPageIsRecyclable(page))
 				{
 					/*
 					 * If we are generating WAL for Hot Standby then create a
 					 * WAL record that will allow us to conflict with queries
 					 * running on standby, in case they have snapshots older
-					 * than btpo.xact.  This can only apply if the page does
-					 * have a valid btpo.xact value, ie not if it's new.  (We
-					 * must check that because an all-zero page has no special
-					 * space.)
+					 * than safexid value
 					 */
-					if (XLogStandbyInfoActive() && RelationNeedsWAL(rel) &&
-						!PageIsNew(page))
-					{
-						BTPageOpaque opaque = (BTPageOpaque) PageGetSpecialPointer(page);
+					if (XLogStandbyInfoActive() && RelationNeedsWAL(rel))
+						_bt_log_reuse_page(rel, blkno,
+										   BTPageGetDeleteXid(page));
 
-						_bt_log_reuse_page(rel, blkno, opaque->btpo.xact);
-					}
-
-					/* Okay to use page.  Re-initialize and return it */
+					/* Okay to use page.  Re-initialize and return it. */
 					_bt_pageinit(page, BufferGetPageSize(buf));
 					return buf;
 				}
@@ -1075,40 +1145,6 @@ _bt_pageinit(Page page, Size size)
 }
 
 /*
- *	_bt_page_recyclable() -- Is an existing page recyclable?
- *
- * This exists to make sure _bt_getbuf and btvacuumscan have the same
- * policy about whether a page is safe to re-use.  But note that _bt_getbuf
- * knows enough to distinguish the PageIsNew condition from the other one.
- * At some point it might be appropriate to redesign this to have a three-way
- * result value.
- */
-bool
-_bt_page_recyclable(Page page)
-{
-	BTPageOpaque opaque;
-
-	/*
-	 * It's possible to find an all-zeroes page in an index --- for example, a
-	 * backend might successfully extend the relation one page and then crash
-	 * before it is able to make a WAL entry for adding the page. If we find a
-	 * zeroed page then reclaim it.
-	 */
-	if (PageIsNew(page))
-		return true;
-
-	/*
-	 * Otherwise, recycle if deleted and too old to have any processes
-	 * interested in it.
-	 */
-	opaque = (BTPageOpaque) PageGetSpecialPointer(page);
-	if (P_ISDELETED(opaque) &&
-		GlobalVisCheckRemovableXid(NULL, opaque->btpo.xact))
-		return true;
-	return false;
-}
-
-/*
  * Delete item(s) from a btree leaf page during VACUUM.
  *
  * This routine assumes that the caller has a super-exclusive write lock on
@@ -1260,8 +1296,7 @@ _bt_delitems_vacuum(Relation rel, Buffer buf,
 static void
 _bt_delitems_delete(Relation rel, Buffer buf, TransactionId latestRemovedXid,
 					OffsetNumber *deletable, int ndeletable,
-					BTVacuumPosting *updatable, int nupdatable,
-					Relation heapRel)
+					BTVacuumPosting *updatable, int nupdatable)
 {
 	Page		page = BufferGetPage(buf);
 	BTPageOpaque opaque;
@@ -1650,7 +1685,7 @@ _bt_delitems_delete_check(Relation rel, Buffer buf, Relation heapRel,
 
 	/* Physically delete tuples (or TIDs) using deletable (or updatable) */
 	_bt_delitems_delete(rel, buf, latestRemovedXid, deletable, ndeletable,
-						updatable, nupdatable, heapRel);
+						updatable, nupdatable);
 
 	/* be tidy */
 	for (int i = 0; i < nupdatable; i++)
@@ -1764,24 +1799,22 @@ _bt_rightsib_halfdeadflag(Relation rel, BlockNumber leafrightsib)
  * should never pass a buffer containing an existing deleted page here.  The
  * lock and pin on caller's buffer will be dropped before we return.
  *
- * Returns the number of pages successfully deleted (zero if page cannot
- * be deleted now; could be more than one if parent or right sibling pages
- * were deleted too).  Note that this does not include pages that we delete
- * that the btvacuumscan scan has yet to reach; they'll get counted later
- * instead.
- *
- * Maintains *oldestBtpoXact for any pages that get deleted.  Caller is
- * responsible for maintaining *oldestBtpoXact in the case of pages that were
- * deleted by a previous VACUUM.
+ * Maintains bulk delete stats for caller, which are taken from vstate.  We
+ * need to cooperate closely with caller here so that whole VACUUM operation
+ * reliably avoids any double counting of subsidiary-to-leafbuf pages that we
+ * delete in passing.  If such pages happen to be from a block number that is
+ * ahead of the current scanblkno position, then caller is expected to count
+ * them directly later on.  It's simpler for us to understand caller's
+ * requirements than it would be for caller to understand when or how a
+ * deleted page became deleted after the fact.
  *
  * NOTE: this leaks memory.  Rather than trying to clean up everything
  * carefully, it's better to run it in a temp context that can be reset
  * frequently.
  */
-uint32
-_bt_pagedel(Relation rel, Buffer leafbuf, TransactionId *oldestBtpoXact)
+void
+_bt_pagedel(Relation rel, Buffer leafbuf, BTVacState *vstate)
 {
-	uint32		ndeleted = 0;
 	BlockNumber rightsib;
 	bool		rightsib_empty;
 	Page		page;
@@ -1789,7 +1822,8 @@ _bt_pagedel(Relation rel, Buffer leafbuf, TransactionId *oldestBtpoXact)
 
 	/*
 	 * Save original leafbuf block number from caller.  Only deleted blocks
-	 * that are <= scanblkno get counted in ndeleted return value.
+	 * that are <= scanblkno are added to bulk delete stat's pages_deleted
+	 * count.
 	 */
 	BlockNumber scanblkno = BufferGetBlockNumber(leafbuf);
 
@@ -1851,7 +1885,7 @@ _bt_pagedel(Relation rel, Buffer leafbuf, TransactionId *oldestBtpoXact)
 										 RelationGetRelationName(rel))));
 
 			_bt_relbuf(rel, leafbuf);
-			return ndeleted;
+			return;
 		}
 
 		/*
@@ -1881,7 +1915,7 @@ _bt_pagedel(Relation rel, Buffer leafbuf, TransactionId *oldestBtpoXact)
 			Assert(!P_ISHALFDEAD(opaque));
 
 			_bt_relbuf(rel, leafbuf);
-			return ndeleted;
+			return;
 		}
 
 		/*
@@ -1930,8 +1964,7 @@ _bt_pagedel(Relation rel, Buffer leafbuf, TransactionId *oldestBtpoXact)
 				if (_bt_leftsib_splitflag(rel, leftsib, leafblkno))
 				{
 					ReleaseBuffer(leafbuf);
-					Assert(ndeleted == 0);
-					return ndeleted;
+					return;
 				}
 
 				/* we need an insertion scan key for the search, so build one */
@@ -1972,7 +2005,7 @@ _bt_pagedel(Relation rel, Buffer leafbuf, TransactionId *oldestBtpoXact)
 			if (!_bt_mark_page_halfdead(rel, leafbuf, stack))
 			{
 				_bt_relbuf(rel, leafbuf);
-				return ndeleted;
+				return;
 			}
 		}
 
@@ -1980,9 +2013,6 @@ _bt_pagedel(Relation rel, Buffer leafbuf, TransactionId *oldestBtpoXact)
 		 * Then unlink it from its siblings.  Each call to
 		 * _bt_unlink_halfdead_page unlinks the topmost page from the subtree,
 		 * making it shallower.  Iterate until the leafbuf page is deleted.
-		 *
-		 * _bt_unlink_halfdead_page should never fail, since we established
-		 * that deletion is generally safe in _bt_mark_page_halfdead.
 		 */
 		rightsib_empty = false;
 		Assert(P_ISLEAF(opaque) && P_ISHALFDEAD(opaque));
@@ -1990,17 +2020,22 @@ _bt_pagedel(Relation rel, Buffer leafbuf, TransactionId *oldestBtpoXact)
 		{
 			/* Check for interrupts in _bt_unlink_halfdead_page */
 			if (!_bt_unlink_halfdead_page(rel, leafbuf, scanblkno,
-										  &rightsib_empty, oldestBtpoXact,
-										  &ndeleted))
+										  &rightsib_empty, vstate))
 			{
-				/* _bt_unlink_halfdead_page failed, released buffer */
-				return ndeleted;
+				/*
+				 * _bt_unlink_halfdead_page should never fail, since we
+				 * established that deletion is generally safe in
+				 * _bt_mark_page_halfdead -- index must be corrupt.
+				 *
+				 * Note that _bt_unlink_halfdead_page already released the
+				 * lock and pin on leafbuf for us.
+				 */
+				Assert(false);
+				return;
 			}
 		}
 
 		Assert(P_ISLEAF(opaque) && P_ISDELETED(opaque));
-		Assert(TransactionIdFollowsOrEquals(opaque->btpo.xact,
-											*oldestBtpoXact));
 
 		rightsib = opaque->btpo_next;
 
@@ -2032,8 +2067,6 @@ _bt_pagedel(Relation rel, Buffer leafbuf, TransactionId *oldestBtpoXact)
 
 		leafbuf = _bt_getbuf(rel, rightsib, BT_WRITE);
 	}
-
-	return ndeleted;
 }
 
 /*
@@ -2261,12 +2294,6 @@ _bt_mark_page_halfdead(Relation rel, Buffer leafbuf, BTStack stack)
  * containing leafbuf.  (We always set *rightsib_empty for caller, just to be
  * consistent.)
  *
- * We maintain *oldestBtpoXact for pages that are deleted by the current
- * VACUUM operation here.  This must be handled here because we conservatively
- * assume that there needs to be a new call to ReadNewTransactionId() each
- * time a page gets deleted.  See comments about the underlying assumption
- * below.
- *
  * Must hold pin and lock on leafbuf at entry (read or write doesn't matter).
  * On success exit, we'll be holding pin and write lock.  On failure exit,
  * we'll release both pin and lock before returning (we define it that way
@@ -2274,10 +2301,10 @@ _bt_mark_page_halfdead(Relation rel, Buffer leafbuf, BTStack stack)
  */
 static bool
 _bt_unlink_halfdead_page(Relation rel, Buffer leafbuf, BlockNumber scanblkno,
-						 bool *rightsib_empty, TransactionId *oldestBtpoXact,
-						 uint32 *ndeleted)
+						 bool *rightsib_empty, BTVacState *vstate)
 {
 	BlockNumber leafblkno = BufferGetBlockNumber(leafbuf);
+	IndexBulkDeleteResult *stats = vstate->stats;
 	BlockNumber leafleftsib;
 	BlockNumber leafrightsib;
 	BlockNumber target;
@@ -2291,12 +2318,12 @@ _bt_unlink_halfdead_page(Relation rel, Buffer leafbuf, BlockNumber scanblkno,
 	BTMetaPageData *metad = NULL;
 	ItemId		itemid;
 	Page		page;
-	PageHeader	header;
 	BTPageOpaque opaque;
+	FullTransactionId safexid;
 	bool		rightsib_is_rightmost;
-	int			targetlevel;
+	uint32		targetlevel;
 	IndexTuple	leafhikey;
-	BlockNumber nextchild;
+	BlockNumber leaftopparent;
 
 	page = BufferGetPage(leafbuf);
 	opaque = (BTPageOpaque) PageGetSpecialPointer(page);
@@ -2340,7 +2367,7 @@ _bt_unlink_halfdead_page(Relation rel, Buffer leafbuf, BlockNumber scanblkno,
 		page = BufferGetPage(buf);
 		opaque = (BTPageOpaque) PageGetSpecialPointer(page);
 		leftsib = opaque->btpo_prev;
-		targetlevel = opaque->btpo.level;
+		targetlevel = opaque->btpo_level;
 		Assert(targetlevel > 0);
 
 		/*
@@ -2357,11 +2384,7 @@ _bt_unlink_halfdead_page(Relation rel, Buffer leafbuf, BlockNumber scanblkno,
 	 * So, first lock the leaf page, if it's not the target.  Then find and
 	 * write-lock the current left sibling of the target page.  The sibling
 	 * that was current a moment ago could have split, so we may have to move
-	 * right.  This search could fail if either the sibling or the target page
-	 * was deleted by someone else meanwhile; if so, give up.  (Right now,
-	 * that should never happen, since page deletion is only done in VACUUM
-	 * and there shouldn't be multiple VACUUMs concurrently on the same
-	 * table.)
+	 * right.
 	 */
 	if (target != leafblkno)
 		_bt_lockbuf(rel, leafbuf, BT_WRITE);
@@ -2372,23 +2395,26 @@ _bt_unlink_halfdead_page(Relation rel, Buffer leafbuf, BlockNumber scanblkno,
 		opaque = (BTPageOpaque) PageGetSpecialPointer(page);
 		while (P_ISDELETED(opaque) || opaque->btpo_next != target)
 		{
-			/* step right one page */
+			bool	leftsibvalid = true;
+
+			/*
+			 * Before we follow the link from the page that was the left
+			 * sibling mere moments ago, validate its right link.  This
+			 * reduces the opportunities for loop to fail to ever make any
+			 * progress in the presence of index corruption.
+			 *
+			 * Note: we rely on the assumption that there can only be one
+			 * vacuum process running at a time (against the same index).
+			 */
+			if (P_RIGHTMOST(opaque) || P_ISDELETED(opaque) ||
+				leftsib == opaque->btpo_next)
+				leftsibvalid = false;
+
 			leftsib = opaque->btpo_next;
 			_bt_relbuf(rel, lbuf);
 
-			/*
-			 * It'd be good to check for interrupts here, but it's not easy to
-			 * do so because a lock is always held. This block isn't
-			 * frequently reached, so hopefully the consequences of not
-			 * checking interrupts aren't too bad.
-			 */
-
-			if (leftsib == P_NONE)
+			if (!leftsibvalid)
 			{
-				ereport(LOG,
-						(errmsg("no left sibling (concurrent deletion?) of block %u in \"%s\"",
-								target,
-								RelationGetRelationName(rel))));
 				if (target != leafblkno)
 				{
 					/* we have only a pin on target, but pin+lock on leafbuf */
@@ -2400,8 +2426,20 @@ _bt_unlink_halfdead_page(Relation rel, Buffer leafbuf, BlockNumber scanblkno,
 					/* we have only a pin on leafbuf */
 					ReleaseBuffer(leafbuf);
 				}
+
+				ereport(LOG,
+						(errcode(ERRCODE_INDEX_CORRUPTED),
+						 errmsg_internal("valid left sibling for deletion target could not be located: "
+										 "left sibling %u of target %u with leafblkno %u and scanblkno %u in index \"%s\"",
+										 leftsib, target, leafblkno, scanblkno,
+										 RelationGetRelationName(rel))));
+
 				return false;
 			}
+
+			CHECK_FOR_INTERRUPTS();
+
+			/* step right one page */
 			lbuf = _bt_getbuf(rel, leftsib, BT_WRITE);
 			page = BufferGetPage(lbuf);
 			opaque = (BTPageOpaque) PageGetSpecialPointer(page);
@@ -2410,11 +2448,7 @@ _bt_unlink_halfdead_page(Relation rel, Buffer leafbuf, BlockNumber scanblkno,
 	else
 		lbuf = InvalidBuffer;
 
-	/*
-	 * Next write-lock the target page itself.  It's okay to take a write lock
-	 * rather than a superexclusive lock, since no scan will stop on an empty
-	 * page.
-	 */
+	/* Next write-lock the target page itself */
 	_bt_lockbuf(rel, buf, BT_WRITE);
 	page = BufferGetPage(buf);
 	opaque = (BTPageOpaque) PageGetSpecialPointer(page);
@@ -2425,36 +2459,46 @@ _bt_unlink_halfdead_page(Relation rel, Buffer leafbuf, BlockNumber scanblkno,
 	 * only one vacuum process running at a time.
 	 */
 	if (P_RIGHTMOST(opaque) || P_ISROOT(opaque) || P_ISDELETED(opaque))
-		elog(ERROR, "half-dead page changed status unexpectedly in block %u of index \"%s\"",
+		elog(ERROR, "target page changed status unexpectedly in block %u of index \"%s\"",
 			 target, RelationGetRelationName(rel));
 
 	if (opaque->btpo_prev != leftsib)
 		ereport(ERROR,
 				(errcode(ERRCODE_INDEX_CORRUPTED),
-				 errmsg_internal("left link changed unexpectedly in block %u of index \"%s\"",
-								 target, RelationGetRelationName(rel))));
+				 errmsg_internal("target page left link unexpectedly changed from %u to %u in block %u of index \"%s\"",
+								 leftsib, opaque->btpo_prev, target,
+								 RelationGetRelationName(rel))));
 
 	if (target == leafblkno)
 	{
 		if (P_FIRSTDATAKEY(opaque) <= PageGetMaxOffsetNumber(page) ||
 			!P_ISLEAF(opaque) || !P_ISHALFDEAD(opaque))
-			elog(ERROR, "half-dead page changed status unexpectedly in block %u of index \"%s\"",
+			elog(ERROR, "target leaf page changed status unexpectedly in block %u of index \"%s\"",
 				 target, RelationGetRelationName(rel));
-		nextchild = InvalidBlockNumber;
+
+		/* Leaf page is also target page: don't set leaftopparent */
+		leaftopparent = InvalidBlockNumber;
 	}
 	else
 	{
+		IndexTuple	finaldataitem;
+
 		if (P_FIRSTDATAKEY(opaque) != PageGetMaxOffsetNumber(page) ||
 			P_ISLEAF(opaque))
-			elog(ERROR, "half-dead page changed status unexpectedly in block %u of index \"%s\"",
-				 target, RelationGetRelationName(rel));
+			elog(ERROR, "target internal page on level %u changed status unexpectedly in block %u of index \"%s\"",
+				 targetlevel, target, RelationGetRelationName(rel));
 
-		/* Remember the next non-leaf child down in the subtree */
+		/* Target is internal: set leaftopparent for next call here...  */
 		itemid = PageGetItemId(page, P_FIRSTDATAKEY(opaque));
-		nextchild = BTreeTupleGetDownLink((IndexTuple) PageGetItem(page, itemid));
-		if (nextchild == leafblkno)
-			nextchild = InvalidBlockNumber;
+		finaldataitem = (IndexTuple) PageGetItem(page, itemid);
+		leaftopparent = BTreeTupleGetDownLink(finaldataitem);
+		/* ...except when it would be a redundant pointer-to-self */
+		if (leaftopparent == leafblkno)
+			leaftopparent = InvalidBlockNumber;
 	}
+
+	/* No leaftopparent for level 0 (leaf page) or level 1 target */
+	Assert(!BlockNumberIsValid(leaftopparent) || targetlevel > 1);
 
 	/*
 	 * And next write-lock the (current) right sibling.
@@ -2543,13 +2587,13 @@ _bt_unlink_halfdead_page(Relation rel, Buffer leafbuf, BlockNumber scanblkno,
 	 * no lock was held.
 	 */
 	if (target != leafblkno)
-		BTreeTupleSetTopParent(leafhikey, nextchild);
+		BTreeTupleSetTopParent(leafhikey, leaftopparent);
 
 	/*
 	 * Mark the page itself deleted.  It can be recycled when all current
 	 * transactions are gone.  Storing GetTopTransactionId() would work, but
 	 * we're in VACUUM and would not otherwise have an XID.  Having already
-	 * updated links to the target, ReadNewTransactionId() suffices as an
+	 * updated links to the target, ReadNextFullTransactionId() suffices as an
 	 * upper bound.  Any scan having retained a now-stale link is advertising
 	 * in its PGPROC an xmin less than or equal to the value we read here.  It
 	 * will continue to do so, holding back the xmin horizon, for the duration
@@ -2558,17 +2602,14 @@ _bt_unlink_halfdead_page(Relation rel, Buffer leafbuf, BlockNumber scanblkno,
 	page = BufferGetPage(buf);
 	opaque = (BTPageOpaque) PageGetSpecialPointer(page);
 	Assert(P_ISHALFDEAD(opaque) || !P_ISLEAF(opaque));
-	opaque->btpo_flags &= ~BTP_HALF_DEAD;
-	opaque->btpo_flags |= BTP_DELETED;
-	opaque->btpo.xact = ReadNewTransactionId();
 
 	/*
-	 * Remove the remaining tuples on the page.  This keeps things simple for
-	 * WAL consistency checking.
+	 * Store upper bound XID that's used to determine when deleted page is no
+	 * longer needed as a tombstone
 	 */
-	header = (PageHeader) page;
-	header->pd_lower = SizeOfPageHeaderData;
-	header->pd_upper = header->pd_special;
+	safexid = ReadNextFullTransactionId();
+	BTPageSetDeleted(page, safexid);
+	opaque->btpo_cycleid = 0;
 
 	/* And update the metapage, if needed */
 	if (BufferIsValid(metabuf))
@@ -2606,15 +2647,16 @@ _bt_unlink_halfdead_page(Relation rel, Buffer leafbuf, BlockNumber scanblkno,
 		if (target != leafblkno)
 			XLogRegisterBuffer(3, leafbuf, REGBUF_WILL_INIT);
 
-		/* information on the unlinked block */
+		/* information stored on the target/to-be-unlinked block */
 		xlrec.leftsib = leftsib;
 		xlrec.rightsib = rightsib;
-		xlrec.btpo_xact = opaque->btpo.xact;
+		xlrec.level = targetlevel;
+		xlrec.safexid = safexid;
 
 		/* information needed to recreate the leaf block (if not the target) */
 		xlrec.leafleftsib = leafleftsib;
 		xlrec.leafrightsib = leafrightsib;
-		xlrec.topparent = nextchild;
+		xlrec.leaftopparent = leaftopparent;
 
 		XLogRegisterData((char *) &xlrec, SizeOfBtreeUnlinkPage);
 
@@ -2628,8 +2670,7 @@ _bt_unlink_halfdead_page(Relation rel, Buffer leafbuf, BlockNumber scanblkno,
 			xlmeta.level = metad->btm_level;
 			xlmeta.fastroot = metad->btm_fastroot;
 			xlmeta.fastlevel = metad->btm_fastlevel;
-			xlmeta.oldest_btpo_xact = metad->btm_oldest_btpo_xact;
-			xlmeta.last_cleanup_num_heap_tuples = metad->btm_last_cleanup_num_heap_tuples;
+			xlmeta.last_cleanup_num_delpages = metad->btm_last_cleanup_num_delpages;
 			xlmeta.allequalimage = metad->btm_allequalimage;
 
 			XLogRegisterBufData(4, (char *) &xlmeta, sizeof(xl_btree_metadata));
@@ -2671,21 +2712,30 @@ _bt_unlink_halfdead_page(Relation rel, Buffer leafbuf, BlockNumber scanblkno,
 		_bt_relbuf(rel, lbuf);
 	_bt_relbuf(rel, rbuf);
 
-	if (!TransactionIdIsValid(*oldestBtpoXact) ||
-		TransactionIdPrecedes(opaque->btpo.xact, *oldestBtpoXact))
-		*oldestBtpoXact = opaque->btpo.xact;
-
-	/*
-	 * If btvacuumscan won't revisit this page in a future btvacuumpage call
-	 * and count it as deleted then, we count it as deleted by current
-	 * btvacuumpage call
-	 */
-	if (target <= scanblkno)
-		(*ndeleted)++;
-
 	/* If the target is not leafbuf, we're done with it now -- release it */
 	if (target != leafblkno)
 		_bt_relbuf(rel, buf);
+
+	/*
+	 * Maintain pages_newly_deleted, which is simply the number of pages
+	 * deleted by the ongoing VACUUM operation.
+	 *
+	 * Maintain pages_deleted in a way that takes into account how
+	 * btvacuumpage() will count deleted pages that have yet to become
+	 * scanblkno -- only count page when it's not going to get that treatment
+	 * later on.
+	 */
+	stats->pages_newly_deleted++;
+	if (target <= scanblkno)
+		stats->pages_deleted++;
+
+	/*
+	 * Remember information about the target page (now a newly deleted page)
+	 * in dedicated vstate space for later.  The page will be considered as a
+	 * candidate to place in the FSM at the end of the current btvacuumscan()
+	 * call.
+	 */
+	_bt_pendingfsm_add(vstate, target, safexid);
 
 	return true;
 }
@@ -2741,10 +2791,26 @@ _bt_lock_subtree_parent(Relation rel, BlockNumber child, BTStack stack,
 	 */
 	pbuf = _bt_getstackbuf(rel, stack, child);
 	if (pbuf == InvalidBuffer)
-		ereport(ERROR,
+	{
+		/*
+		 * Failed to "re-find" a pivot tuple whose downlink matched our child
+		 * block number on the parent level -- the index must be corrupt.
+		 * Don't even try to delete the leafbuf subtree.  Just report the
+		 * issue and press on with vacuuming the index.
+		 *
+		 * Note: _bt_getstackbuf() recovers from concurrent page splits that
+		 * take place on the parent level.  Its approach is a near-exhaustive
+		 * linear search.  This also gives it a surprisingly good chance of
+		 * recovering in the event of a buggy or inconsistent opclass.  But we
+		 * don't rely on that here.
+		 */
+		ereport(LOG,
 				(errcode(ERRCODE_INDEX_CORRUPTED),
 				 errmsg_internal("failed to re-find parent key in index \"%s\" for deletion target page %u",
 								 RelationGetRelationName(rel), child)));
+		return false;
+	}
+
 	parent = stack->bts_blkno;
 	parentoffset = stack->bts_offset;
 
@@ -2830,4 +2896,178 @@ _bt_lock_subtree_parent(Relation rel, BlockNumber child, BTStack stack,
 	return _bt_lock_subtree_parent(rel, parent, stack->bts_parent,
 								   subtreeparent, poffset,
 								   topparent, topparentrightsib);
+}
+
+/*
+ * Initialize local memory state used by VACUUM for _bt_pendingfsm_finalize
+ * optimization.
+ *
+ * Called at the start of a btvacuumscan().  Caller's cleanuponly argument
+ * indicates if ongoing VACUUM has not (and will not) call btbulkdelete().
+ *
+ * We expect to allocate memory inside VACUUM's top-level memory context here.
+ * The working buffer is subject to a limit based on work_mem.  Our strategy
+ * when the array can no longer grow within the bounds of that limit is to
+ * stop saving additional newly deleted pages, while proceeding as usual with
+ * the pages that we can fit.
+ */
+void
+_bt_pendingfsm_init(Relation rel, BTVacState *vstate, bool cleanuponly)
+{
+	int64		maxbufsize;
+
+	/*
+	 * Don't bother with optimization in cleanup-only case -- we don't expect
+	 * any newly deleted pages.  Besides, cleanup-only calls to btvacuumscan()
+	 * can only take place because this optimization didn't work out during
+	 * the last VACUUM.
+	 */
+	if (cleanuponly)
+		return;
+
+	/*
+	 * Cap maximum size of array so that we always respect work_mem.  Avoid
+	 * int overflow here.
+	 */
+	vstate->bufsize = 256;
+	maxbufsize = (work_mem * 1024L) / sizeof(BTPendingFSM);
+	maxbufsize = Min(maxbufsize, INT_MAX);
+	maxbufsize = Min(maxbufsize, MaxAllocSize / sizeof(BTPendingFSM));
+	/* Stay sane with small work_mem */
+	maxbufsize = Max(maxbufsize, vstate->bufsize);
+	vstate->maxbufsize = maxbufsize;
+
+	/* Allocate buffer, indicate that there are currently 0 pending pages */
+	vstate->pendingpages = palloc(sizeof(BTPendingFSM) * vstate->bufsize);
+	vstate->npendingpages = 0;
+}
+
+/*
+ * Place any newly deleted pages (i.e. pages that _bt_pagedel() deleted during
+ * the ongoing VACUUM operation) into the free space map -- though only when
+ * it is actually safe to do so by now.
+ *
+ * Called at the end of a btvacuumscan(), just before free space map vacuuming
+ * takes place.
+ *
+ * Frees memory allocated by _bt_pendingfsm_init(), if any.
+ */
+void
+_bt_pendingfsm_finalize(Relation rel, BTVacState *vstate)
+{
+	IndexBulkDeleteResult *stats = vstate->stats;
+
+	Assert(stats->pages_newly_deleted >= vstate->npendingpages);
+
+	if (vstate->npendingpages == 0)
+	{
+		/* Just free memory when nothing to do */
+		if (vstate->pendingpages)
+			pfree(vstate->pendingpages);
+
+		return;
+	}
+
+#ifdef DEBUG_BTREE_PENDING_FSM
+
+	/*
+	 * Debugging aid: Sleep for 5 seconds to greatly increase the chances of
+	 * placing pending pages in the FSM.  Note that the optimization will
+	 * never be effective without some other backend concurrently consuming an
+	 * XID.
+	 */
+	pg_usleep(5000000L);
+#endif
+
+	/*
+	 * Recompute VACUUM XID boundaries.
+	 *
+	 * We don't actually care about the oldest non-removable XID.  Computing
+	 * the oldest such XID has a useful side-effect that we rely on: it
+	 * forcibly updates the XID horizon state for this backend.  This step is
+	 * essential; GlobalVisCheckRemovableFullXid() will not reliably recognize
+	 * that it is now safe to recycle newly deleted pages without this step.
+	 */
+	GetOldestNonRemovableTransactionId(NULL);
+
+	for (int i = 0; i < vstate->npendingpages; i++)
+	{
+		BlockNumber target = vstate->pendingpages[i].target;
+		FullTransactionId safexid = vstate->pendingpages[i].safexid;
+
+		/*
+		 * Do the equivalent of checking BTPageIsRecyclable(), but without
+		 * accessing the page again a second time.
+		 *
+		 * Give up on finding the first non-recyclable page -- all later pages
+		 * must be non-recyclable too, since _bt_pendingfsm_add() adds pages
+		 * to the array in safexid order.
+		 */
+		if (!GlobalVisCheckRemovableFullXid(NULL, safexid))
+			break;
+
+		RecordFreeIndexPage(rel, target);
+		stats->pages_free++;
+	}
+
+	pfree(vstate->pendingpages);
+}
+
+/*
+ * Maintain array of pages that were deleted during current btvacuumscan()
+ * call, for use in _bt_pendingfsm_finalize()
+ */
+static void
+_bt_pendingfsm_add(BTVacState *vstate,
+				   BlockNumber target,
+				   FullTransactionId safexid)
+{
+	Assert(vstate->npendingpages <= vstate->bufsize);
+	Assert(vstate->bufsize <= vstate->maxbufsize);
+
+#ifdef USE_ASSERT_CHECKING
+
+	/*
+	 * Verify an assumption made by _bt_pendingfsm_finalize(): pages from the
+	 * array will always be in safexid order (since that is the order that we
+	 * save them in here)
+	 */
+	if (vstate->npendingpages > 0)
+	{
+		FullTransactionId lastsafexid =
+		vstate->pendingpages[vstate->npendingpages - 1].safexid;
+
+		Assert(FullTransactionIdFollowsOrEquals(safexid, lastsafexid));
+	}
+#endif
+
+	/*
+	 * If temp buffer reaches maxbufsize/work_mem capacity then we discard
+	 * information about this page.
+	 *
+	 * Note that this also covers the case where we opted to not use the
+	 * optimization in _bt_pendingfsm_init().
+	 */
+	if (vstate->npendingpages == vstate->maxbufsize)
+		return;
+
+	/* Consider enlarging buffer */
+	if (vstate->npendingpages == vstate->bufsize)
+	{
+		int			newbufsize = vstate->bufsize * 2;
+
+		/* Respect work_mem */
+		if (newbufsize > vstate->maxbufsize)
+			newbufsize = vstate->maxbufsize;
+
+		vstate->bufsize = newbufsize;
+		vstate->pendingpages =
+			repalloc(vstate->pendingpages,
+					 sizeof(BTPendingFSM) * vstate->bufsize);
+	}
+
+	/* Save metadata for newly deleted page */
+	vstate->pendingpages[vstate->npendingpages].target = target;
+	vstate->pendingpages[vstate->npendingpages].safexid = safexid;
+	vstate->npendingpages++;
 }

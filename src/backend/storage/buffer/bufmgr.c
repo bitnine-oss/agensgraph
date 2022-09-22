@@ -76,7 +76,7 @@
  * being dropped. For the relations with size below this threshold, we find
  * the buffers by doing lookups in BufMapping table.
  */
-#define BUF_DROP_FULL_SCAN_THRESHOLD		(uint32) (NBuffers / 32)
+#define BUF_DROP_FULL_SCAN_THRESHOLD		(uint64) (NBuffers / 32)
 
 typedef struct PrivateRefCountEntry
 {
@@ -488,8 +488,8 @@ static void FindAndDropRelFileNodeBuffers(RelFileNode rnode,
 static void AtProcExit_Buffers(int code, Datum arg);
 static void CheckForBufferLeaks(void);
 static int	rnode_comparator(const void *p1, const void *p2);
-static int	buffertag_comparator(const void *p1, const void *p2);
-static int	ckpt_buforder_comparator(const void *pa, const void *pb);
+static inline int buffertag_comparator(const BufferTag *a, const BufferTag *b);
+static inline int ckpt_buforder_comparator(const CkptSortItem *a, const CkptSortItem *b);
 static int	ts_ckpt_progress_comparator(Datum a, Datum b, void *arg);
 
 
@@ -1352,9 +1352,10 @@ BufferAlloc(SMgrRelation smgr, char relpersistence, ForkNumber forkNum,
 	LWLockRelease(newPartitionLock);
 
 	/*
-	 * Buffer contents are currently invalid.  Try to get the io_in_progress
-	 * lock.  If StartBufferIO returns false, then someone else managed to
-	 * read it before we did, so there's nothing left for BufferAlloc() to do.
+	 * Buffer contents are currently invalid.  Try to obtain the right to
+	 * start I/O.  If StartBufferIO returns false, then someone else managed
+	 * to read it before we did, so there's nothing left for BufferAlloc() to
+	 * do.
 	 */
 	if (StartBufferIO(buf, true))
 		*foundPtr = false;
@@ -1777,9 +1778,8 @@ UnpinBuffer(BufferDesc *buf, bool fixOwner)
 		 */
 		VALGRIND_MAKE_MEM_NOACCESS(BufHdrGetBlock(buf), BLCKSZ);
 
-		/* I'd better not still hold any locks on the buffer */
+		/* I'd better not still hold the buffer content lock */
 		Assert(!LWLockHeldByMe(BufferDescriptorGetContentLock(buf)));
-		Assert(!LWLockHeldByMe(BufferDescriptorGetIOLock(buf)));
 
 		/*
 		 * Decrement the shared reference count.
@@ -1830,6 +1830,13 @@ UnpinBuffer(BufferDesc *buf, bool fixOwner)
 		ForgetPrivateRefCountEntry(ref);
 	}
 }
+
+#define ST_SORT sort_checkpoint_bufferids
+#define ST_ELEMENT_TYPE CkptSortItem
+#define ST_COMPARE(a, b) ckpt_buforder_comparator(a, b)
+#define ST_SCOPE static
+#define ST_DEFINE
+#include <lib/sort_template.h>
 
 /*
  * BufferSync -- Write out all dirty buffers in the pool.
@@ -1931,8 +1938,7 @@ BufferSync(int flags)
 	 * end up writing to the tablespaces one-by-one; possibly overloading the
 	 * underlying system.
 	 */
-	qsort(CkptBufferIds, num_to_scan, sizeof(CkptSortItem),
-		  ckpt_buforder_comparator);
+	sort_checkpoint_bufferids(CkptBufferIds, num_to_scan);
 
 	num_spaces = 0;
 
@@ -2742,9 +2748,9 @@ FlushBuffer(BufferDesc *buf, SMgrRelation reln)
 	uint32		buf_state;
 
 	/*
-	 * Acquire the buffer's io_in_progress lock.  If StartBufferIO returns
-	 * false, then someone else flushed the buffer before we could, so we need
-	 * not do anything.
+	 * Try to start an I/O operation.  If StartBufferIO returns false, then
+	 * someone else flushed the buffer before we could, so we need not do
+	 * anything.
 	 */
 	if (!StartBufferIO(buf, false))
 		return;
@@ -2800,7 +2806,7 @@ FlushBuffer(BufferDesc *buf, SMgrRelation reln)
 	/*
 	 * Now it's safe to write buffer to disk. Note that no one else should
 	 * have been able to write it while we were busy with log flushing because
-	 * we have the io_in_progress lock.
+	 * only one process at a time can set the BM_IO_IN_PROGRESS bit.
 	 */
 	bufBlock = BufHdrGetBlock(buf);
 
@@ -2835,7 +2841,7 @@ FlushBuffer(BufferDesc *buf, SMgrRelation reln)
 
 	/*
 	 * Mark the buffer as clean (unless BM_JUST_DIRTIED has become set) and
-	 * end the io_in_progress state.
+	 * end the BM_IO_IN_PROGRESS state.
 	 */
 	TerminateBufferIO(buf, true, 0);
 
@@ -2987,7 +2993,7 @@ DropRelFileNodeBuffers(SMgrRelation smgr_reln, ForkNumber *forkNum,
 	int			j;
 	RelFileNodeBackend rnode;
 	BlockNumber nForkBlock[MAX_FORKNUM];
-	BlockNumber nBlocksToInvalidate = 0;
+	uint64 		nBlocksToInvalidate = 0;
 
 	rnode = smgr_reln->smgr_rnode;
 
@@ -3111,7 +3117,7 @@ DropRelFileNodesAllBuffers(SMgrRelation *smgr_reln, int nnodes)
 	int			n = 0;
 	SMgrRelation *rels;
 	BlockNumber (*block)[MAX_FORKNUM + 1];
-	BlockNumber nBlocksToInvalidate = 0;
+	uint64 		nBlocksToInvalidate = 0;
 	RelFileNode *nodes;
 	bool		cached = true;
 	bool		use_bsearch;
@@ -4271,7 +4277,7 @@ IsBufferCleanupOK(Buffer buffer)
  *	Functions for buffer I/O handling
  *
  *	Note: We assume that nested buffer I/O never occurs.
- *	i.e at most one io_in_progress lock is held per proc.
+ *	i.e at most one BM_IO_IN_PROGRESS bit is set per proc.
  *
  *	Also note that these are used only for shared buffers, not local ones.
  */
@@ -4282,13 +4288,9 @@ IsBufferCleanupOK(Buffer buffer)
 static void
 WaitIO(BufferDesc *buf)
 {
-	/*
-	 * Changed to wait until there's no IO - Inoue 01/13/2000
-	 *
-	 * Note this is *necessary* because an error abort in the process doing
-	 * I/O could release the io_in_progress_lock prematurely. See
-	 * AbortBufferIO.
-	 */
+	ConditionVariable *cv = BufferDescriptorGetIOCV(buf);
+
+	ConditionVariablePrepareToSleep(cv);
 	for (;;)
 	{
 		uint32		buf_state;
@@ -4303,9 +4305,9 @@ WaitIO(BufferDesc *buf)
 
 		if (!(buf_state & BM_IO_IN_PROGRESS))
 			break;
-		LWLockAcquire(BufferDescriptorGetIOLock(buf), LW_SHARED);
-		LWLockRelease(BufferDescriptorGetIOLock(buf));
+		ConditionVariableSleep(cv, WAIT_EVENT_BUFFER_IO);
 	}
+	ConditionVariableCancelSleep();
 }
 
 /*
@@ -4317,7 +4319,7 @@ WaitIO(BufferDesc *buf)
  * In some scenarios there are race conditions in which multiple backends
  * could attempt the same I/O operation concurrently.  If someone else
  * has already started I/O on this buffer then we will block on the
- * io_in_progress lock until he's done.
+ * I/O condition variable until he's done.
  *
  * Input operations are only attempted on buffers that are not BM_VALID,
  * and output operations only on buffers that are BM_VALID and BM_DIRTY,
@@ -4335,25 +4337,11 @@ StartBufferIO(BufferDesc *buf, bool forInput)
 
 	for (;;)
 	{
-		/*
-		 * Grab the io_in_progress lock so that other processes can wait for
-		 * me to finish the I/O.
-		 */
-		LWLockAcquire(BufferDescriptorGetIOLock(buf), LW_EXCLUSIVE);
-
 		buf_state = LockBufHdr(buf);
 
 		if (!(buf_state & BM_IO_IN_PROGRESS))
 			break;
-
-		/*
-		 * The only way BM_IO_IN_PROGRESS could be set when the io_in_progress
-		 * lock isn't held is if the process doing the I/O is recovering from
-		 * an error (see AbortBufferIO).  If that's the case, we must wait for
-		 * him to get unwedged.
-		 */
 		UnlockBufHdr(buf, buf_state);
-		LWLockRelease(BufferDescriptorGetIOLock(buf));
 		WaitIO(buf);
 	}
 
@@ -4363,7 +4351,6 @@ StartBufferIO(BufferDesc *buf, bool forInput)
 	{
 		/* someone else already did the I/O */
 		UnlockBufHdr(buf, buf_state);
-		LWLockRelease(BufferDescriptorGetIOLock(buf));
 		return false;
 	}
 
@@ -4381,7 +4368,6 @@ StartBufferIO(BufferDesc *buf, bool forInput)
  *	(Assumptions)
  *	My process is executing IO for the buffer
  *	BM_IO_IN_PROGRESS bit is set for the buffer
- *	We hold the buffer's io_in_progress lock
  *	The buffer is Pinned
  *
  * If clear_dirty is true and BM_JUST_DIRTIED is not set, we clear the
@@ -4413,7 +4399,7 @@ TerminateBufferIO(BufferDesc *buf, bool clear_dirty, uint32 set_flag_bits)
 
 	InProgressBuf = NULL;
 
-	LWLockRelease(BufferDescriptorGetIOLock(buf));
+	ConditionVariableBroadcast(BufferDescriptorGetIOCV(buf));
 }
 
 /*
@@ -4433,14 +4419,6 @@ AbortBufferIO(void)
 	if (buf)
 	{
 		uint32		buf_state;
-
-		/*
-		 * Since LWLockReleaseAll has already been called, we're not holding
-		 * the buffer's io_in_progress_lock. We have to re-acquire it so that
-		 * we can use TerminateBufferIO. Anyone who's executing WaitIO on the
-		 * buffer will be in a busy spin until we succeed in doing this.
-		 */
-		LWLockAcquire(BufferDescriptorGetIOLock(buf), LW_EXCLUSIVE);
 
 		buf_state = LockBufHdr(buf);
 		Assert(buf_state & BM_IO_IN_PROGRESS);
@@ -4595,11 +4573,9 @@ WaitBufHdrUnlocked(BufferDesc *buf)
 /*
  * BufferTag comparator.
  */
-static int
-buffertag_comparator(const void *a, const void *b)
+static inline int
+buffertag_comparator(const BufferTag *ba, const BufferTag *bb)
 {
-	const BufferTag *ba = (const BufferTag *) a;
-	const BufferTag *bb = (const BufferTag *) b;
 	int			ret;
 
 	ret = rnode_comparator(&ba->rnode, &bb->rnode);
@@ -4626,12 +4602,9 @@ buffertag_comparator(const void *a, const void *b)
  * It is important that tablespaces are compared first, the logic balancing
  * writes between tablespaces relies on it.
  */
-static int
-ckpt_buforder_comparator(const void *pa, const void *pb)
+static inline int
+ckpt_buforder_comparator(const CkptSortItem *a, const CkptSortItem *b)
 {
-	const CkptSortItem *a = (const CkptSortItem *) pa;
-	const CkptSortItem *b = (const CkptSortItem *) pb;
-
 	/* compare tablespace */
 	if (a->tsId < b->tsId)
 		return -1;
@@ -4722,6 +4695,13 @@ ScheduleBufferTagForWriteback(WritebackContext *context, BufferTag *tag)
 		IssuePendingWritebacks(context);
 }
 
+#define ST_SORT sort_pending_writebacks
+#define ST_ELEMENT_TYPE PendingWriteback
+#define ST_COMPARE(a, b) buffertag_comparator(&a->tag, &b->tag)
+#define ST_SCOPE static
+#define ST_DEFINE
+#include <lib/sort_template.h>
+
 /*
  * Issue all pending writeback requests, previously scheduled with
  * ScheduleBufferTagForWriteback, to the OS.
@@ -4741,8 +4721,7 @@ IssuePendingWritebacks(WritebackContext *context)
 	 * Executing the writes in-order can make them a lot faster, and allows to
 	 * merge writeback requests to consecutive blocks into larger writebacks.
 	 */
-	qsort(&context->pending_writebacks, context->nr_pending,
-		  sizeof(PendingWriteback), buffertag_comparator);
+	sort_pending_writebacks(context->pending_writebacks, context->nr_pending);
 
 	/*
 	 * Coalesce neighbouring writes, but nothing else. For that we iterate

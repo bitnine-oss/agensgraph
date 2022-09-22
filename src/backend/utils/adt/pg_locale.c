@@ -1636,36 +1636,16 @@ get_collation_actual_version(char collprovider, const char *collcollate)
 	}
 	else
 #endif
-	if (collprovider == COLLPROVIDER_LIBC)
+	if (collprovider == COLLPROVIDER_LIBC &&
+		pg_strcasecmp("C", collcollate) != 0 &&
+		pg_strncasecmp("C.", collcollate, 2) != 0 &&
+		pg_strcasecmp("POSIX", collcollate) != 0)
 	{
 #if defined(__GLIBC__)
-		char	   *copy = pstrdup(collcollate);
-		char	   *copy_suffix = strstr(copy, ".");
-		bool		need_version = true;
-
-		/*
-		 * Check for names like C.UTF-8 by chopping off the encoding suffix on
-		 * our temporary copy, so we can skip the version.
-		 */
-		if (copy_suffix)
-			*copy_suffix = '\0';
-		if (pg_strcasecmp("c", copy) == 0 ||
-			pg_strcasecmp("posix", copy) == 0)
-			need_version = false;
-		pfree(copy);
-		if (!need_version)
-			return NULL;
-
 		/* Use the glibc version because we don't have anything better. */
 		collversion = pstrdup(gnu_get_libc_version());
 #elif defined(LC_VERSION_MASK)
 		locale_t    loc;
-
-		/* C[.encoding] and POSIX never change. */
-		if (strcmp("C", collcollate) == 0 ||
-			strncmp("C.", collcollate, 2) == 0 ||
-			strcmp("POSIX", collcollate) == 0)
-			return NULL;
 
 		/* Look up FreeBSD collation version. */
 		loc = newlocale(LC_COLLATE, collcollate, NULL);
@@ -1687,12 +1667,6 @@ get_collation_actual_version(char collprovider, const char *collcollate)
 		NLSVERSIONINFOEX version = {sizeof(NLSVERSIONINFOEX)};
 		WCHAR		wide_collcollate[LOCALE_NAME_MAX_LENGTH];
 
-		/* These would be invalid arguments, but have no version. */
-		if (pg_strcasecmp("c", collcollate) == 0 ||
-			pg_strcasecmp("posix", collcollate) == 0)
-			return NULL;
-
-		/* For all other names, ask the OS. */
 		MultiByteToWideChar(CP_ACP, 0, collcollate, -1, wide_collcollate,
 							LOCALE_NAME_MAX_LENGTH);
 		if (!GetNLSVersionEx(COMPARE_STRING, wide_collcollate, &version))
@@ -1726,10 +1700,11 @@ get_collation_actual_version(char collprovider, const char *collcollate)
 /*
  * Get provider-specific collation version string for a given collation OID.
  * Return NULL if the provider doesn't support versions, or the collation is
- * unversioned (for example "C").
+ * unversioned (for example "C").  Unknown OIDs result in NULL if missing_ok is
+ * true.
  */
 char *
-get_collation_version_for_oid(Oid oid)
+get_collation_version_for_oid(Oid oid, bool missing_ok)
 {
 	HeapTuple	tp;
 	char	   *version;
@@ -1751,7 +1726,11 @@ get_collation_version_for_oid(Oid oid)
 
 		tp = SearchSysCache1(COLLOID, ObjectIdGetDatum(oid));
 		if (!HeapTupleIsValid(tp))
+		{
+			if (missing_ok)
+				return NULL;
 			elog(ERROR, "cache lookup failed for collation %u", oid);
+		}
 		collform = (Form_pg_collation) GETSTRUCT(tp);
 		version = get_collation_actual_version(collform->collprovider,
 											   NameStr(collform->collcollate));
