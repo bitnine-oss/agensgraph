@@ -5503,8 +5503,8 @@ AfterTriggerSaveEvent(EState *estate, ResultRelInfo *relinfo,
 	bool		storeTuple;
 	Tuplestorestate *fdw_tuplestore = NULL;
 
-	storeTuple = (relkind == RELKIND_FOREIGN_TABLE && row_trigger) ||
-					table_has_extended_am(rel);
+	storeTuple = (relkind == RELKIND_FOREIGN_TABLE || table_has_extended_am(rel)) &&
+					row_trigger;
 
 	/*
 	 * Check state.  We use a normal test not Assert because it is possible to
