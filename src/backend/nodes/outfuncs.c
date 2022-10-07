@@ -3043,6 +3043,14 @@ _outSelectStmt(StringInfo str, const SelectStmt *node)
 }
 
 static void
+_outReturnStmt(StringInfo str, const ReturnStmt *node)
+{
+	WRITE_NODE_TYPE("RETURN");
+
+	WRITE_NODE_FIELD(returnval);
+}
+
+static void
 _outPLAssignStmt(StringInfo str, const PLAssignStmt *node)
 {
 	WRITE_NODE_TYPE("PLASSIGN");
@@ -3256,6 +3264,7 @@ _outQuery(StringInfo str, const Query *node)
 	WRITE_BOOL_FIELD(hasModifyingCTE);
 	WRITE_BOOL_FIELD(hasForUpdate);
 	WRITE_BOOL_FIELD(hasRowSecurity);
+	WRITE_BOOL_FIELD(isReturn);
 	WRITE_BOOL_FIELD(hasGraphwriteClause);
 	WRITE_NODE_FIELD(cteList);
 	WRITE_NODE_FIELD(rtable);
@@ -4902,6 +4911,9 @@ outNode(StringInfo str, const void *obj)
 				break;
 			case T_SelectStmt:
 				_outSelectStmt(str, obj);
+				break;
+			case T_ReturnStmt:
+				_outReturnStmt(str, obj);
 				break;
 			case T_PLAssignStmt:
 				_outPLAssignStmt(str, obj);

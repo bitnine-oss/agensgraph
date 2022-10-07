@@ -4410,26 +4410,46 @@ inline_function(Oid funcid, Oid result_type, Oid result_collid,
 								  ALLOCSET_DEFAULT_SIZES);
 	oldcxt = MemoryContextSwitchTo(mycxt);
 
+	/*
+	 * Setup error traceback support for ereport().  This is so that we can
+	 * finger the function that bad information came from.
+	 */
+	callback_arg.proname = NameStr(funcform->proname);
+	callback_arg.prosrc = NULL;
+
+	sqlerrcontext.callback = sql_inline_error_callback;
+	sqlerrcontext.arg = (void *) &callback_arg;
+	sqlerrcontext.previous = error_context_stack;
+	error_context_stack = &sqlerrcontext;
+
 	/* Fetch the function body */
 	tmp = SysCacheGetAttr(PROCOID,
 						  func_tuple,
 						  Anum_pg_proc_prosrc,
 						  &isNull);
 	if (isNull)
-		elog(ERROR, "null prosrc for function %u", funcid);
+	{
+		Node	   *n;
+		List	   *querytree_list;
+
+		tmp = SysCacheGetAttr(PROCOID, func_tuple, Anum_pg_proc_prosqlbody, &isNull);
+		if (isNull)
+			elog(ERROR, "null prosrc and prosqlbody for function %u", funcid);
+
+		n = stringToNode(TextDatumGetCString(tmp));
+		if (IsA(n, List))
+			querytree_list = linitial_node(List, castNode(List, n));
+		else
+			querytree_list = list_make1(n);
+		if (list_length(querytree_list) != 1)
+			goto fail;
+		querytree = linitial(querytree_list);
+	}
+	else
+	{
 	src = TextDatumGetCString(tmp);
 
-	/*
-	 * Setup error traceback support for ereport().  This is so that we can
-	 * finger the function that bad information came from.
-	 */
-	callback_arg.proname = NameStr(funcform->proname);
 	callback_arg.prosrc = src;
-
-	sqlerrcontext.callback = sql_inline_error_callback;
-	sqlerrcontext.arg = (void *) &callback_arg;
-	sqlerrcontext.previous = error_context_stack;
-	error_context_stack = &sqlerrcontext;
 
 	/*
 	 * Set up to handle parameters while parsing the function body.  We need a
@@ -4474,6 +4494,7 @@ inline_function(Oid funcid, Oid result_type, Oid result_collid,
 	querytree = transformTopLevelStmt(pstate, linitial(raw_parsetree_list));
 
 	free_parsestate(pstate);
+	}
 
 	/*
 	 * The single command must be a simple "SELECT expression".
@@ -4730,12 +4751,15 @@ sql_inline_error_callback(void *arg)
 	int			syntaxerrposition;
 
 	/* If it's a syntax error, convert to internal syntax error report */
-	syntaxerrposition = geterrposition();
-	if (syntaxerrposition > 0)
+	if (callback_arg->prosrc)
 	{
-		errposition(0);
-		internalerrposition(syntaxerrposition);
-		internalerrquery(callback_arg->prosrc);
+		syntaxerrposition = geterrposition();
+		if (syntaxerrposition > 0)
+		{
+			errposition(0);
+			internalerrposition(syntaxerrposition);
+			internalerrquery(callback_arg->prosrc);
+		}
 	}
 
 	errcontext("SQL function \"%s\" during inlining", callback_arg->proname);
@@ -4847,7 +4871,6 @@ inline_set_returning_function(PlannerInfo *root, RangeTblEntry *rte)
 	Oid			func_oid;
 	HeapTuple	func_tuple;
 	Form_pg_proc funcform;
-	char	   *src;
 	Datum		tmp;
 	bool		isNull;
 	MemoryContext oldcxt;
@@ -4956,26 +4979,52 @@ inline_set_returning_function(PlannerInfo *root, RangeTblEntry *rte)
 								  ALLOCSET_DEFAULT_SIZES);
 	oldcxt = MemoryContextSwitchTo(mycxt);
 
+	/*
+	 * Setup error traceback support for ereport().  This is so that we can
+	 * finger the function that bad information came from.
+	 */
+	callback_arg.proname = NameStr(funcform->proname);
+	callback_arg.prosrc = NULL;
+
+	sqlerrcontext.callback = sql_inline_error_callback;
+	sqlerrcontext.arg = (void *) &callback_arg;
+	sqlerrcontext.previous = error_context_stack;
+	error_context_stack = &sqlerrcontext;
+
 	/* Fetch the function body */
 	tmp = SysCacheGetAttr(PROCOID,
 						  func_tuple,
 						  Anum_pg_proc_prosrc,
 						  &isNull);
 	if (isNull)
-		elog(ERROR, "null prosrc for function %u", func_oid);
+	{
+		Node	   *n;
+
+		tmp = SysCacheGetAttr(PROCOID, func_tuple, Anum_pg_proc_prosqlbody, &isNull);
+		if (isNull)
+			elog(ERROR, "null prosrc and prosqlbody for function %u", func_oid);
+
+		n = stringToNode(TextDatumGetCString(tmp));
+		if (IsA(n, List))
+			querytree_list = linitial_node(List, castNode(List, n));
+		else
+			querytree_list = list_make1(n);
+		if (list_length(querytree_list) != 1)
+			goto fail;
+		querytree = linitial(querytree_list);
+
+		querytree_list = pg_rewrite_query(querytree);
+		if (list_length(querytree_list) != 1)
+			goto fail;
+		querytree = linitial(querytree_list);
+	}
+	else
+	{
+	char	   *src;
+
 	src = TextDatumGetCString(tmp);
 
-	/*
-	 * Setup error traceback support for ereport().  This is so that we can
-	 * finger the function that bad information came from.
-	 */
-	callback_arg.proname = NameStr(funcform->proname);
 	callback_arg.prosrc = src;
-
-	sqlerrcontext.callback = sql_inline_error_callback;
-	sqlerrcontext.arg = (void *) &callback_arg;
-	sqlerrcontext.previous = error_context_stack;
-	error_context_stack = &sqlerrcontext;
 
 	/*
 	 * Set up to handle parameters while parsing the function body.  We can
@@ -4985,18 +5034,6 @@ inline_set_returning_function(PlannerInfo *root, RangeTblEntry *rte)
 	pinfo = prepare_sql_fn_parse_info(func_tuple,
 									  (Node *) fexpr,
 									  fexpr->inputcollid);
-
-	/*
-	 * Also resolve the actual function result tupdesc, if composite.  If the
-	 * function is just declared to return RECORD, dig the info out of the AS
-	 * clause.
-	 */
-	functypclass = get_expr_result_type((Node *) fexpr, NULL, &rettupdesc);
-	if (functypclass == TYPEFUNC_RECORD)
-		rettupdesc = BuildDescFromLists(rtfunc->funccolnames,
-										rtfunc->funccoltypes,
-										rtfunc->funccoltypmods,
-										rtfunc->funccolcollations);
 
 	/*
 	 * Parse, analyze, and rewrite (unlike inline_function(), we can't skip
@@ -5014,6 +5051,19 @@ inline_set_returning_function(PlannerInfo *root, RangeTblEntry *rte)
 	if (list_length(querytree_list) != 1)
 		goto fail;
 	querytree = linitial(querytree_list);
+	}
+
+	/*
+	 * Also resolve the actual function result tupdesc, if composite.  If the
+	 * function is just declared to return RECORD, dig the info out of the AS
+	 * clause.
+	 */
+	functypclass = get_expr_result_type((Node *) fexpr, NULL, &rettupdesc);
+	if (functypclass == TYPEFUNC_RECORD)
+		rettupdesc = BuildDescFromLists(rtfunc->funccolnames,
+										rtfunc->funccoltypes,
+										rtfunc->funccoltypmods,
+										rtfunc->funccolcollations);
 
 	/*
 	 * The single command must be a plain SELECT.
