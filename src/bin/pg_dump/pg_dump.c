@@ -299,7 +299,7 @@ static const char *getAttrName(int attrnum, const TableInfo *tblInfo);
 static const char *fmtCopyColumnList(const TableInfo *ti, PQExpBuffer buffer);
 static bool nonemptyReloptions(const char *reloptions);
 static void appendIndexCollationVersion(PQExpBuffer buffer, const IndxInfo *indxinfo,
-										int enc, bool coll_unknown,
+										bool coll_unknown,
 										Archive *fout);
 static void appendReloptionsArrayAH(PQExpBuffer buffer, const char *reloptions,
 									const char *prefix, Archive *fout);
@@ -12345,7 +12345,7 @@ dumpFunc(Archive *fout, const FuncInfo *finfo)
 
 	if (fout->remoteVersion >= 140000)
 		appendPQExpBufferStr(query,
-							 "CASE WHEN prosrc IS NULL AND lanname = 'sql' THEN pg_get_function_sqlbody(p.oid) END AS prosqlbody\n");
+							 "pg_get_function_sqlbody(p.oid) AS prosqlbody\n");
 	else
 		appendPQExpBufferStr(query,
 							 "NULL AS prosqlbody\n");
@@ -16950,8 +16950,7 @@ dumpIndex(Archive *fout, const IndxInfo *indxinfo)
 									"INDEX", qqindxname);
 
 		if (dopt->binary_upgrade)
-			appendIndexCollationVersion(q, indxinfo, fout->encoding,
-										dopt->coll_unknown, fout);
+			appendIndexCollationVersion(q, indxinfo, dopt->coll_unknown, fout);
 
 		/* If the index defines identity, we need to record that. */
 		if (indxinfo->indisreplident)
@@ -16983,8 +16982,7 @@ dumpIndex(Archive *fout, const IndxInfo *indxinfo)
 	}
 	else if (dopt->binary_upgrade)
 	{
-		appendIndexCollationVersion(q, indxinfo, fout->encoding,
-									dopt->coll_unknown, fout);
+		appendIndexCollationVersion(q, indxinfo, dopt->coll_unknown, fout);
 
 		if (indxinfo->dobj.dump & DUMP_COMPONENT_DEFINITION)
 			ArchiveEntry(fout, indxinfo->dobj.catId, indxinfo->dobj.dumpId,
@@ -18395,7 +18393,8 @@ processExtensionTables(Archive *fout, ExtensionInfo extinfo[],
 	 * Note that we create TableDataInfo objects even in schemaOnly mode, ie,
 	 * user data in a configuration table is treated like schema data. This
 	 * seems appropriate since system data in a config table would get
-	 * reloaded by CREATE EXTENSION.
+	 * reloaded by CREATE EXTENSION.  If the extension is not listed in the
+	 * list of extensions to be included, none of its data is dumped.
 	 */
 	for (i = 0; i < numExtensions; i++)
 	{
@@ -18406,6 +18405,15 @@ processExtensionTables(Archive *fout, ExtensionInfo extinfo[],
 		char	  **extconditionarray = NULL;
 		int			nconfigitems = 0;
 		int			nconditionitems = 0;
+
+		/*
+		 * Check if this extension is listed as to include in the dump.  If
+		 * not, any table data associated with it is discarded.
+		 */
+		if (extension_include_oids.head != NULL &&
+			!simple_oid_list_member(&extension_include_oids,
+									curext->dobj.catId.oid))
+			continue;
 
 		if (strlen(extconfig) != 0 || strlen(extcondition) != 0)
 		{
@@ -19017,7 +19025,7 @@ nonemptyReloptions(const char *reloptions)
  * cluster, during a binary upgrade.
  */
 static void
-appendIndexCollationVersion(PQExpBuffer buffer, const IndxInfo *indxinfo, int enc,
+appendIndexCollationVersion(PQExpBuffer buffer, const IndxInfo *indxinfo,
 							bool coll_unknown, Archive *fout)
 {
 	char	   *inddependcollnames = indxinfo->inddependcollnames;

@@ -2383,6 +2383,36 @@ include_dir 'conf.d'
      <title>Asynchronous Behavior</title>
 
      <variablelist>
+      <varlistentry id="guc-backend-flush-after" xreflabel="backend_flush_after">
+       <term><varname>backend_flush_after</varname> (<type>integer</type>)
+       <indexterm>
+        <primary><varname>backend_flush_after</varname> configuration parameter</primary>
+       </indexterm>
+       </term>
+       <listitem>
+        <para>
+         Whenever more than this amount of data has
+         been written by a single backend, attempt to force the OS to issue
+         these writes to the underlying storage.  Doing so will limit the
+         amount of dirty data in the kernel's page cache, reducing the
+         likelihood of stalls when an <function>fsync</function> is issued at the end of a
+         checkpoint, or when the OS writes data back in larger batches in the
+         background.  Often that will result in greatly reduced transaction
+         latency, but there also are some cases, especially with workloads
+         that are bigger than <xref linkend="guc-shared-buffers"/>, but smaller
+         than the OS's page cache, where performance might degrade.  This
+         setting may have no effect on some platforms.
+         If this value is specified without units, it is taken as blocks,
+         that is <symbol>BLCKSZ</symbol> bytes, typically 8kB.
+         The valid range is
+         between <literal>0</literal>, which disables forced writeback,
+         and <literal>2MB</literal>.  The default is <literal>0</literal>, i.e., no
+         forced writeback.  (If <symbol>BLCKSZ</symbol> is not 8kB,
+         the maximum value scales proportionally to it.)
+        </para>
+       </listitem>
+      </varlistentry>
+
       <varlistentry id="guc-effective-io-concurrency" xreflabel="effective_io_concurrency">
        <term><varname>effective_io_concurrency</varname> (<type>integer</type>)
        <indexterm>
@@ -2579,32 +2609,25 @@ include_dir 'conf.d'
        </listitem>
       </varlistentry>
 
-      <varlistentry id="guc-backend-flush-after" xreflabel="backend_flush_after">
-       <term><varname>backend_flush_after</varname> (<type>integer</type>)
+      <varlistentry id="guc-parallel-leader-participation" xreflabel="parallel_leader_participation">
+       <term>
+       <varname>parallel_leader_participation</varname> (<type>boolean</type>)
        <indexterm>
-        <primary><varname>backend_flush_after</varname> configuration parameter</primary>
+        <primary><varname>parallel_leader_participation</varname> configuration parameter</primary>
        </indexterm>
        </term>
        <listitem>
         <para>
-         Whenever more than this amount of data has
-         been written by a single backend, attempt to force the OS to issue
-         these writes to the underlying storage.  Doing so will limit the
-         amount of dirty data in the kernel's page cache, reducing the
-         likelihood of stalls when an <function>fsync</function> is issued at the end of a
-         checkpoint, or when the OS writes data back in larger batches in the
-         background.  Often that will result in greatly reduced transaction
-         latency, but there also are some cases, especially with workloads
-         that are bigger than <xref linkend="guc-shared-buffers"/>, but smaller
-         than the OS's page cache, where performance might degrade.  This
-         setting may have no effect on some platforms.
-         If this value is specified without units, it is taken as blocks,
-         that is <symbol>BLCKSZ</symbol> bytes, typically 8kB.
-         The valid range is
-         between <literal>0</literal>, which disables forced writeback,
-         and <literal>2MB</literal>.  The default is <literal>0</literal>, i.e., no
-         forced writeback.  (If <symbol>BLCKSZ</symbol> is not 8kB,
-         the maximum value scales proportionally to it.)
+         Allows the leader process to execute the query plan under
+         <literal>Gather</literal> and <literal>Gather Merge</literal> nodes
+         instead of waiting for worker processes.  The default is
+         <literal>on</literal>.  Setting this value to <literal>off</literal>
+         reduces the likelihood that workers will become blocked because the
+         leader is not reading tuples fast enough, but requires the leader
+         process to wait for worker processes to start up before the first
+         tuples can be produced.  The degree to which the leader can help or
+         hinder performance depends on the plan type, number of workers and
+         query duration.
         </para>
        </listitem>
       </varlistentry>
@@ -2723,7 +2746,7 @@ include_dir 'conf.d'
         Note that changing <varname>wal_level</varname> to
         <literal>minimal</literal> makes any base backups taken before
         unavailable for archive recovery and standby server, which may
-        lead to database loss.
+        lead to data loss.
        </para>
        <para>
         In <literal>logical</literal> level, the same information is logged as
@@ -3098,7 +3121,7 @@ include_dir 'conf.d'
       <listitem>
        <para>
         When this parameter is <literal>on</literal>, the <productname>PostgreSQL</productname>
-        server compresses a full page image written to WAL when
+        server compresses full page images written to WAL when
         <xref linkend="guc-full-page-writes"/> is on or during a base backup.
         A compressed page image will be decompressed during WAL replay.
         The default value is <literal>off</literal>.
@@ -3564,6 +3587,89 @@ include_dir 'conf.d'
 
      </variablelist>
     </sect2>
+
+   <sect2 id="runtime-config-wal-recovery">
+
+    <title>Recovery</title>
+
+     <indexterm>
+      <primary>configuration</primary>
+      <secondary>of recovery</secondary>
+      <tertiary>general settings</tertiary>
+     </indexterm>
+
+    <para>
+     This section describes the settings that apply to recovery in general,
+     affecting crash recovery, streaming replication and archive-based
+     replication.
+    </para>
+
+
+    <variablelist>
+     <varlistentry id="guc-recovery-prefetch" xreflabel="recovery_prefetch">
+      <term><varname>recovery_prefetch</varname> (<type>boolean</type>)
+      <indexterm>
+       <primary><varname>recovery_prefetch</varname> configuration parameter</primary>
+      </indexterm>
+      </term>
+      <listitem>
+       <para>
+        Whether to try to prefetch blocks that are referenced in the WAL that
+        are not yet in the buffer pool, during recovery.  Prefetching blocks
+        that will soon be needed can reduce I/O wait times in some workloads.
+        See also the <xref linkend="guc-wal-decode-buffer-size"/> and
+        <xref linkend="guc-maintenance-io-concurrency"/> settings, which limit
+        prefetching activity.
+        This setting is disabled by default.
+       </para>
+       <para>
+        This feature currently depends on an effective
+        <function>posix_fadvise</function> function, which some
+        operating systems lack.
+       </para>
+      </listitem>
+     </varlistentry>
+
+     <varlistentry id="guc-recovery-prefetch-fpw" xreflabel="recovery_prefetch_fpw">
+      <term><varname>recovery_prefetch_fpw</varname> (<type>boolean</type>)
+      <indexterm>
+       <primary><varname>recovery_prefetch_fpw</varname> configuration parameter</primary>
+      </indexterm>
+      </term>
+      <listitem>
+       <para>
+        Whether to prefetch blocks that were logged with full page images,
+        during recovery.  Often this doesn't help, since such blocks will not
+        be read the first time they are needed and might remain in the buffer
+        pool after that.  However, on file systems with a block size larger
+        than
+        <productname>PostgreSQL</productname>'s, prefetching can avoid a
+        costly read-before-write when blocks are later written.
+        The default is off.
+       </para>
+      </listitem>
+     </varlistentry>
+
+     <varlistentry id="guc-wal-decode-buffer-size" xreflabel="wal_decode_buffer_size">
+      <term><varname>wal_decode_buffer_size</varname> (<type>integer</type>)
+      <indexterm>
+       <primary><varname>wal_decode_buffer_size</varname> configuration parameter</primary>
+      </indexterm>
+      </term>
+      <listitem>
+       <para>
+        A limit on how far ahead the server can look in the WAL, to find
+        blocks to prefetch.  Setting it too high might be counterproductive,
+        if it means that data falls out of the
+        kernel cache before it is needed.  If this value is specified without
+        units, it is taken as bytes.
+        The default is 512kB.
+       </para>
+      </listitem>
+     </varlistentry>
+
+    </variablelist>
+   </sect2>
 
   <sect2 id="runtime-config-wal-archive-recovery">
 
@@ -4054,7 +4160,7 @@ restore_command = 'copy "C:\\server\\archivedir\\%f" "%p"'  # Windows
          On the subscriber side, specifies how many replication origins (see
          <xref linkend="replication-origins"/>) can be tracked simultaneously,
          effectively limiting how many logical replication subscriptions can
-         be created on the server. Setting it a lower value than the current
+         be created on the server. Setting it to a lower value than the current
          number of tracked replication origins (reflected in
          <link linkend="view-pg-replication-origin-status">pg_replication_origin_status</link>,
          not <link linkend="catalog-pg-replication-origin">pg_replication_origin</link>)
@@ -5806,74 +5912,6 @@ SELECT * FROM parent WHERE key = 2400;
       </listitem>
      </varlistentry>
 
-     <varlistentry id="guc-parallel-leader-participation" xreflabel="parallel_leader_participation">
-      <term>
-       <varname>parallel_leader_participation</varname> (<type>boolean</type>)
-       <indexterm>
-        <primary><varname>parallel_leader_participation</varname> configuration parameter</primary>
-       </indexterm>
-      </term>
-      <listitem>
-       <para>
-        Allows the leader process to execute the query plan under
-        <literal>Gather</literal> and <literal>Gather Merge</literal> nodes
-        instead of waiting for worker processes.  The default is
-        <literal>on</literal>.  Setting this value to <literal>off</literal>
-        reduces the likelihood that workers will become blocked because the
-        leader is not reading tuples fast enough, but requires the leader
-        process to wait for worker processes to start up before the first
-        tuples can be produced.  The degree to which the leader can help or
-        hinder performance depends on the plan type, number of workers and
-        query duration.
-       </para>
-      </listitem>
-     </varlistentry>
-
-     <varlistentry id="guc-force-parallel-mode" xreflabel="force_parallel_mode">
-      <term><varname>force_parallel_mode</varname> (<type>enum</type>)
-      <indexterm>
-       <primary><varname>force_parallel_mode</varname> configuration parameter</primary>
-      </indexterm>
-      </term>
-      <listitem>
-       <para>
-        Allows the use of parallel queries for testing purposes even in cases
-        where no performance benefit is expected.
-        The allowed values of <varname>force_parallel_mode</varname> are
-        <literal>off</literal> (use parallel mode only when it is expected to improve
-        performance), <literal>on</literal> (force parallel query for all queries
-        for which it is thought to be safe), and <literal>regress</literal> (like
-        <literal>on</literal>, but with additional behavior changes as explained
-        below).
-       </para>
-
-       <para>
-        More specifically, setting this value to <literal>on</literal> will add
-        a <literal>Gather</literal> node to the top of any query plan for which this
-        appears to be safe, so that the query runs inside of a parallel worker.
-        Even when a parallel worker is not available or cannot be used,
-        operations such as starting a subtransaction that would be prohibited
-        in a parallel query context will be prohibited unless the planner
-        believes that this will cause the query to fail.  If failures or
-        unexpected results occur when this option is set, some functions used
-        by the query may need to be marked <literal>PARALLEL UNSAFE</literal>
-        (or, possibly, <literal>PARALLEL RESTRICTED</literal>).
-       </para>
-
-       <para>
-        Setting this value to <literal>regress</literal> has all of the same effects
-        as setting it to <literal>on</literal> plus some additional effects that are
-        intended to facilitate automated regression testing.  Normally,
-        messages from a parallel worker include a context line indicating that,
-        but a setting of <literal>regress</literal> suppresses this line so that the
-        output is the same as in non-parallel execution.  Also,
-        the <literal>Gather</literal> nodes added to plans by this setting are hidden
-        in <literal>EXPLAIN</literal> output so that the output matches what
-        would be obtained if this setting were turned <literal>off</literal>.
-       </para>
-      </listitem>
-     </varlistentry>
-
      <varlistentry id="guc-plan-cache_mode" xreflabel="plan_cache_mode">
       <term><varname>plan_cache_mode</varname> (<type>enum</type>)
       <indexterm>
@@ -6729,6 +6767,34 @@ local0.*    /var/log/postgresql
       </listitem>
      </varlistentry>
 
+     <varlistentry id="guc-log-autovacuum-min-duration" xreflabel="log_autovacuum_min_duration">
+      <term><varname>log_autovacuum_min_duration</varname> (<type>integer</type>)
+      <indexterm>
+       <primary><varname>log_autovacuum_min_duration</varname></primary>
+       <secondary>configuration parameter</secondary>
+      </indexterm>
+      </term>
+      <listitem>
+       <para>
+        Causes each action executed by autovacuum to be logged if it ran for at
+        least the specified amount of time.  Setting this to zero logs
+        all autovacuum actions. <literal>-1</literal> (the default) disables
+        logging autovacuum actions.
+        If this value is specified without units, it is taken as milliseconds.
+        For example, if you set this to
+        <literal>250ms</literal> then all automatic vacuums and analyzes that run
+        250ms or longer will be logged.  In addition, when this parameter is
+        set to any value other than <literal>-1</literal>, a message will be
+        logged if an autovacuum action is skipped due to a conflicting lock or a
+        concurrently dropped relation.  Enabling this parameter can be helpful
+        in tracking autovacuum activity.  This parameter can only be set in
+        the <filename>postgresql.conf</filename> file or on the server command line;
+        but the setting can be overridden for individual tables by
+        changing table storage parameters.
+       </para>
+      </listitem>
+     </varlistentry>
+
      <varlistentry id="guc-log-checkpoints" xreflabel="log_checkpoints">
       <term><varname>log_checkpoints</varname> (<type>boolean</type>)
       <indexterm>
@@ -7073,6 +7139,16 @@ log_line_prefix = '%m [%p] %q%u@%d/%a '
 </programlisting>
         </para>
        </tip>
+
+       <note>
+        <para>
+         The <literal>%Q</literal> escape always reports a zero identifier
+         for lines output by <xref linkend="guc-log-statement"/> because
+         <varname>log_statement</varname> generates output before an
+         identifier can be calculated, including invalid statements for
+         which an identifier cannot be calculated.
+        </para>
+       </note>
       </listitem>
      </varlistentry>
 
@@ -7310,7 +7386,8 @@ log_line_prefix = '%m [%p] %q%u@%d/%a '
         character count of the error position therein,
         location of the error in the PostgreSQL source code
         (if <varname>log_error_verbosity</varname> is set to <literal>verbose</literal>),
-        application name, backend type, and process ID of parallel group leader.
+        application name, backend type, process ID of parallel group leader,
+        and query id.
         Here is a sample table definition for storing CSV-format log output:
 
 <programlisting>
@@ -7341,6 +7418,7 @@ CREATE TABLE postgres_log
   application_name text,
   backend_type text,
   leader_pid integer,
+  query_id bigint,
   PRIMARY KEY (session_id, session_line_num)
 );
 </programlisting>
@@ -7647,12 +7725,12 @@ COPY postgres_log FROM '/full/path/to/logfile.csv' WITH csv;
         The <xref linkend="pgstatstatements"/> extension also requires a query
         identifier to be computed.  Note that an external module can
         alternatively be used if the in-core query identifier computation
-        specification isn't acceptable.  In this case, in-core computation
+        method is not acceptable.  In this case, in-core computation
         must be disabled.  The default is <literal>off</literal>.
        </para>
        <note>
         <para>
-         To ensure that a only one query identifier is calculated and
+         To ensure that only one query identifier is calculated and
          displayed, extensions that calculate query identifiers should
          throw an error if a query identifier has already been computed.
         </para>
@@ -7738,34 +7816,6 @@ COPY postgres_log FROM '/full/path/to/logfile.csv' WITH csv;
         will launch autovacuum processes if necessary to
         prevent transaction ID wraparound.  See <xref
         linkend="vacuum-for-wraparound"/> for more information.
-       </para>
-      </listitem>
-     </varlistentry>
-
-     <varlistentry id="guc-log-autovacuum-min-duration" xreflabel="log_autovacuum_min_duration">
-      <term><varname>log_autovacuum_min_duration</varname> (<type>integer</type>)
-      <indexterm>
-       <primary><varname>log_autovacuum_min_duration</varname></primary>
-       <secondary>configuration parameter</secondary>
-      </indexterm>
-      </term>
-      <listitem>
-       <para>
-        Causes each action executed by autovacuum to be logged if it ran for at
-        least the specified amount of time.  Setting this to zero logs
-        all autovacuum actions. <literal>-1</literal> (the default) disables
-        logging autovacuum actions.
-        If this value is specified without units, it is taken as milliseconds.
-        For example, if you set this to
-        <literal>250ms</literal> then all automatic vacuums and analyzes that run
-        250ms or longer will be logged.  In addition, when this parameter is
-        set to any value other than <literal>-1</literal>, a message will be
-        logged if an autovacuum action is skipped due to a conflicting lock or a
-        concurrently dropped relation.  Enabling this parameter can be helpful
-        in tracking autovacuum activity.  This parameter can only be set in
-        the <filename>postgresql.conf</filename> file or on the server command line;
-        but the setting can be overridden for individual tables by
-        changing table storage parameters.
        </para>
       </listitem>
      </varlistentry>
@@ -8218,8 +8268,7 @@ COPY postgres_log FROM '/full/path/to/logfile.csv' WITH csv;
        <para>
         This variable specifies the default tablespace in which to create
         objects (tables and indexes) when a <command>CREATE</command> command does
-        not explicitly specify a tablespace.  It also determines the tablespace
-        that a partitioned relation will direct future partitions to.
+        not explicitly specify a tablespace.
        </para>
 
        <para>
@@ -8241,6 +8290,14 @@ COPY postgres_log FROM '/full/path/to/logfile.csv' WITH csv;
         This variable is also not used when creating databases.
         By default, a new database inherits its tablespace setting from
         the template database it is copied from.
+       </para>
+
+       <para>
+        If this parameter is set to a value other than the empty string
+        when a partitioned table is created, the partitioned table's
+        tablespace will be set to that value, which will be used as
+        the default tablespace for partitions created in the future,
+        even if <varname>default_tablespace</varname> has changed since then.
        </para>
 
        <para>
@@ -8330,10 +8387,12 @@ COPY postgres_log FROM '/full/path/to/logfile.csv' WITH csv;
       <listitem>
        <para>
         This parameter is normally on. When set to <literal>off</literal>, it
-        disables validation of the function body string during <xref
-        linkend="sql-createfunction"/>.  Disabling validation avoids side
-        effects of the validation process and avoids false positives due
-        to problems such as forward references.  Set this parameter
+        disables validation of the routine body string during <xref
+        linkend="sql-createfunction"/> and <xref
+        linkend="sql-createprocedure"/>.  Disabling validation avoids side
+        effects of the validation process, in particular preventing false
+        positives due to problems such as forward references.
+        Set this parameter
         to <literal>off</literal> before loading functions on behalf of other
         users; <application>pg_dump</application> does so automatically.
        </para>
@@ -9869,7 +9928,7 @@ dynamic_library_path = 'C:\tools\postgresql;H:\my_project\lib;$libdir'
         When set to <literal>on</literal>, which is the default,
         <productname>PostgreSQL</productname> will automatically remove
         temporary files after a backend crash. If disabled, the files will be
-        retained and may be used for debugging, for example. Repeated crashes 
+        retained and may be used for debugging, for example. Repeated crashes
         may however result in accumulation of useless files.
        </para>
       </listitem>
@@ -10287,11 +10346,10 @@ dynamic_library_path = 'C:\tools\postgresql;H:\my_project\lib;$libdir'
     <title>Developer Options</title>
 
     <para>
-     The following parameters are intended for work on the
-     <productname>PostgreSQL</productname> source code, and in some cases
-     to assist with recovery of severely damaged databases.  There
-     should be no reason to use them on a production database.
-     As such, they have been excluded from the sample
+     The following parameters are intended for developer testing, and
+     should never be used on a production database.  However, some of
+     them can be used to assist with the recovery of severely damaged
+     databases.  As such, they have been excluded from the sample
      <filename>postgresql.conf</filename> file.  Note that many of these
      parameters require special source compilation flags to work at all.
     </para>
@@ -10373,6 +10431,51 @@ dynamic_library_path = 'C:\tools\postgresql;H:\my_project\lib;$libdir'
         <option>--enable-cassert</option>).  In production builds, its value
         will always be <literal>0</literal> and attempts to set it to another
         value will raise an error.
+       </para>
+      </listitem>
+     </varlistentry>
+
+     <varlistentry id="guc-force-parallel-mode" xreflabel="force_parallel_mode">
+      <term><varname>force_parallel_mode</varname> (<type>enum</type>)
+      <indexterm>
+       <primary><varname>force_parallel_mode</varname> configuration parameter</primary>
+      </indexterm>
+      </term>
+      <listitem>
+       <para>
+        Allows the use of parallel queries for testing purposes even in cases
+        where no performance benefit is expected.
+        The allowed values of <varname>force_parallel_mode</varname> are
+        <literal>off</literal> (use parallel mode only when it is expected to improve
+        performance), <literal>on</literal> (force parallel query for all queries
+        for which it is thought to be safe), and <literal>regress</literal> (like
+        <literal>on</literal>, but with additional behavior changes as explained
+        below).
+       </para>
+
+       <para>
+        More specifically, setting this value to <literal>on</literal> will add
+        a <literal>Gather</literal> node to the top of any query plan for which this
+        appears to be safe, so that the query runs inside of a parallel worker.
+        Even when a parallel worker is not available or cannot be used,
+        operations such as starting a subtransaction that would be prohibited
+        in a parallel query context will be prohibited unless the planner
+        believes that this will cause the query to fail.  If failures or
+        unexpected results occur when this option is set, some functions used
+        by the query may need to be marked <literal>PARALLEL UNSAFE</literal>
+        (or, possibly, <literal>PARALLEL RESTRICTED</literal>).
+       </para>
+
+       <para>
+        Setting this value to <literal>regress</literal> has all of the same effects
+        as setting it to <literal>on</literal> plus some additional effects that are
+        intended to facilitate automated regression testing.  Normally,
+        messages from a parallel worker include a context line indicating that,
+        but a setting of <literal>regress</literal> suppresses this line so that the
+        output is the same as in non-parallel execution.  Also,
+        the <literal>Gather</literal> nodes added to plans by this setting are hidden
+        in <literal>EXPLAIN</literal> output so that the output matches what
+        would be obtained if this setting were turned <literal>off</literal>.
        </para>
       </listitem>
      </varlistentry>

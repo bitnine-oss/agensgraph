@@ -350,6 +350,8 @@ ReorderBufferAllocate(void)
 	buffer->streamTxns = 0;
 	buffer->streamCount = 0;
 	buffer->streamBytes = 0;
+	buffer->totalTxns = 0;
+	buffer->totalBytes = 0;
 
 	buffer->current_restart_decoding_lsn = InvalidXLogRecPtr;
 
@@ -1363,6 +1365,11 @@ ReorderBufferIterTXNNext(ReorderBuffer *rb, ReorderBufferIterTXNState *state)
 		dlist_delete(&change->node);
 		dlist_push_tail(&state->old_change, &change->node);
 
+		/*
+		 * Update the total bytes processed before releasing the current set
+		 * of changes and restoring the new set of changes.
+		 */
+		rb->totalBytes += rb->size;
 		if (ReorderBufferRestoreChanges(rb, entry->txn, &entry->file,
 										&state->entries[off].segno))
 		{
@@ -1860,7 +1867,7 @@ ReorderBufferStreamCommit(ReorderBuffer *rb, ReorderBufferTXN *txn)
  * to truncate the changes in the subscriber. Similarly, for prepared
  * transactions, we stop decoding if concurrent abort is detected and then
  * rollback the changes when rollback prepared is encountered. See
- * DecodePreare.
+ * DecodePrepare.
  */
 static inline void
 SetupCheckXidLive(TransactionId xid)
@@ -2364,6 +2371,20 @@ ReorderBufferProcessTXN(ReorderBuffer *rb, ReorderBufferTXN *txn,
 		iterstate = NULL;
 
 		/*
+		 * Update total transaction count and total transaction bytes
+		 * processed. Ensure to not count the streamed transaction multiple
+		 * times.
+		 *
+		 * Note that the statistics computation has to be done after
+		 * ReorderBufferIterTXNFinish as it releases the serialized change
+		 * which we have already accounted in ReorderBufferIterTXNNext.
+		 */
+		if (!rbtxn_is_streamed(txn))
+			rb->totalTxns++;
+
+		rb->totalBytes += rb->size;
+
+		/*
 		 * Done with current changes, send the last message for this set of
 		 * changes depending upon streaming mode.
 		 */
@@ -2669,8 +2690,11 @@ ReorderBufferPrepare(ReorderBuffer *rb, TransactionId xid,
 	 * We send the prepare for the concurrently aborted xacts so that later
 	 * when rollback prepared is decoded and sent, the downstream should be
 	 * able to rollback such a xact. See comments atop DecodePrepare.
+	 *
+	 * Note, for the concurrent_abort + streaming case a stream_prepare was
+	 * already sent within the ReorderBufferReplay call above.
 	 */
-	if (txn->concurrent_abort)
+	if (txn->concurrent_abort && !rbtxn_is_streamed(txn))
 		rb->prepare(rb, txn, txn->final_lsn);
 }
 
@@ -3338,19 +3362,22 @@ ReorderBufferLargestTXN(ReorderBuffer *rb)
  * This can be seen as an optimized version of ReorderBufferLargestTXN, which
  * should give us the same transaction (because we don't update memory account
  * for subtransaction with streaming, so it's always 0). But we can simply
- * iterate over the limited number of toplevel transactions.
+ * iterate over the limited number of toplevel transactions that have a base
+ * snapshot. There is no use of selecting a transaction that doesn't have base
+ * snapshot because we don't decode such transactions.
  *
  * Note that, we skip transactions that contains incomplete changes. There
- * is a scope of optimization here such that we can select the largest transaction
- * which has complete changes.  But that will make the code and design quite complex
- * and that might not be worth the benefit.  If we plan to stream the transactions
- * that contains incomplete changes then we need to find a way to partially
- * stream/truncate the transaction changes in-memory and build a mechanism to
- * partially truncate the spilled files.  Additionally, whenever we partially
- * stream the transaction we need to maintain the last streamed lsn and next time
- * we need to restore from that segment and the offset in WAL.  As we stream the
- * changes from the top transaction and restore them subtransaction wise, we need
- * to even remember the subxact from where we streamed the last change.
+ * is a scope of optimization here such that we can select the largest
+ * transaction which has incomplete changes.  But that will make the code and
+ * design quite complex and that might not be worth the benefit.  If we plan to
+ * stream the transactions that contains incomplete changes then we need to
+ * find a way to partially stream/truncate the transaction changes in-memory
+ * and build a mechanism to partially truncate the spilled files.
+ * Additionally, whenever we partially stream the transaction we need to
+ * maintain the last streamed lsn and next time we need to restore from that
+ * segment and the offset in WAL.  As we stream the changes from the top
+ * transaction and restore them subtransaction wise, we need to even remember
+ * the subxact from where we streamed the last change.
  */
 static ReorderBufferTXN *
 ReorderBufferLargestTopTXN(ReorderBuffer *rb)
@@ -3359,14 +3386,19 @@ ReorderBufferLargestTopTXN(ReorderBuffer *rb)
 	Size		largest_size = 0;
 	ReorderBufferTXN *largest = NULL;
 
-	/* Find the largest top-level transaction. */
-	dlist_foreach(iter, &rb->toplevel_by_lsn)
+	/* Find the largest top-level transaction having a base snapshot. */
+	dlist_foreach(iter, &rb->txns_by_base_snapshot_lsn)
 	{
 		ReorderBufferTXN *txn;
 
-		txn = dlist_container(ReorderBufferTXN, node, iter.cur);
+		txn = dlist_container(ReorderBufferTXN, base_snapshot_node, iter.cur);
 
-		if ((largest != NULL || txn->total_size > largest_size) &&
+		/* must not be a subtxn */
+		Assert(!rbtxn_is_known_subxact(txn));
+		/* base_snapshot must be set */
+		Assert(txn->base_snapshot != NULL);
+
+		if ((largest == NULL || txn->total_size > largest_size) &&
 			(txn->total_size > 0) && !(rbtxn_has_incomplete_tuple(txn)))
 		{
 			largest = txn;

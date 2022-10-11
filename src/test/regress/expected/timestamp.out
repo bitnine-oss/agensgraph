@@ -609,6 +609,60 @@ FROM (
  microsecond | 1 us     | t
 (7 rows)
 
+-- case 3: AD dates, origin > input
+SELECT
+  str,
+  interval,
+  date_trunc(str, ts) = date_bin(interval::interval, ts, timestamp '2020-03-02') AS equal
+FROM (
+  VALUES
+  ('week', '7 d'),
+  ('day', '1 d'),
+  ('hour', '1 h'),
+  ('minute', '1 m'),
+  ('second', '1 s'),
+  ('millisecond', '1 ms'),
+  ('microsecond', '1 us')
+) intervals (str, interval),
+(VALUES (timestamp '2020-02-29 15:44:17.71393')) ts (ts);
+     str     | interval | equal 
+-------------+----------+-------
+ week        | 7 d      | t
+ day         | 1 d      | t
+ hour        | 1 h      | t
+ minute      | 1 m      | t
+ second      | 1 s      | t
+ millisecond | 1 ms     | t
+ microsecond | 1 us     | t
+(7 rows)
+
+-- case 4: BC dates, origin > input
+SELECT
+  str,
+  interval,
+  date_trunc(str, ts) = date_bin(interval::interval, ts, timestamp '0055-06-17 BC') AS equal
+FROM (
+  VALUES
+  ('week', '7 d'),
+  ('day', '1 d'),
+  ('hour', '1 h'),
+  ('minute', '1 m'),
+  ('second', '1 s'),
+  ('millisecond', '1 ms'),
+  ('microsecond', '1 us')
+) intervals (str, interval),
+(VALUES (timestamp '0055-6-10 15:44:17.71393 BC')) ts (ts);
+     str     | interval | equal 
+-------------+----------+-------
+ week        | 7 d      | t
+ day         | 1 d      | t
+ hour        | 1 h      | t
+ minute      | 1 m      | t
+ second      | 1 s      | t
+ millisecond | 1 ms     | t
+ microsecond | 1 us     | t
+(7 rows)
+
 -- bin timestamps into arbitrary intervals
 SELECT
   interval,
@@ -1906,6 +1960,42 @@ SELECT to_char(d, 'FF1 FF2 FF3 FF4 FF5 FF6  ff1 ff2 ff3 ff4 ff5 ff6  MS US')
  7 78 789 7890 78901 789010  7 78 789 7890 78901 789010  789 789010
  7 78 789 7890 78901 789012  7 78 789 7890 78901 789012  789 789012
 (4 rows)
+
+-- Roman months, with upper and lower case.
+SELECT i,
+       to_char(i * interval '1mon', 'rm'),
+       to_char(i * interval '1mon', 'RM')
+    FROM generate_series(-13, 13) i;
+  i  | to_char | to_char 
+-----+---------+---------
+ -13 | xii     | XII 
+ -12 | i       | I   
+ -11 | ii      | II  
+ -10 | iii     | III 
+  -9 | iv      | IV  
+  -8 | v       | V   
+  -7 | vi      | VI  
+  -6 | vii     | VII 
+  -5 | viii    | VIII
+  -4 | ix      | IX  
+  -3 | x       | X   
+  -2 | xi      | XI  
+  -1 | xii     | XII 
+   0 |         | 
+   1 | i       | I   
+   2 | ii      | II  
+   3 | iii     | III 
+   4 | iv      | IV  
+   5 | v       | V   
+   6 | vi      | VI  
+   7 | vii     | VII 
+   8 | viii    | VIII
+   9 | ix      | IX  
+  10 | x       | X   
+  11 | xi      | XI  
+  12 | xii     | XII 
+  13 | i       | I   
+(27 rows)
 
 -- timestamp numeric fields constructor
 SELECT make_timestamp(2014, 12, 28, 6, 30, 45.887);

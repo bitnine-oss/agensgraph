@@ -400,6 +400,9 @@ static void postgresExplainForeignModify(ModifyTableState *mtstate,
 										 ExplainState *es);
 static void postgresExplainDirectModify(ForeignScanState *node,
 										ExplainState *es);
+static void postgresExecForeignTruncate(List *rels,
+										DropBehavior behavior,
+										bool restart_seqs);
 static bool postgresAnalyzeForeignTable(Relation relation,
 										AcquireSampleRowsFunc *func,
 										BlockNumber *totalpages);
@@ -587,6 +590,9 @@ postgres_fdw_handler(PG_FUNCTION_ARGS)
 	routine->ExplainForeignScan = postgresExplainForeignScan;
 	routine->ExplainForeignModify = postgresExplainForeignModify;
 	routine->ExplainDirectModify = postgresExplainDirectModify;
+
+	/* Support function for TRUNCATE */
+	routine->ExecForeignTruncate = postgresExecForeignTruncate;
 
 	/* Support functions for ANALYZE */
 	routine->AnalyzeForeignTable = postgresAnalyzeForeignTable;
@@ -2868,6 +2874,101 @@ postgresExplainDirectModify(ForeignScanState *node, ExplainState *es)
 	}
 }
 
+/*
+ * postgresExecForeignTruncate
+ *		Truncate one or more foreign tables
+ */
+static void
+postgresExecForeignTruncate(List *rels,
+							DropBehavior behavior,
+							bool restart_seqs)
+{
+	Oid			serverid = InvalidOid;
+	UserMapping *user = NULL;
+	PGconn	   *conn = NULL;
+	StringInfoData sql;
+	ListCell   *lc;
+	bool		server_truncatable = true;
+
+	/*
+	 * By default, all postgres_fdw foreign tables are assumed truncatable.
+	 * This can be overridden by a per-server setting, which in turn can be
+	 * overridden by a per-table setting.
+	 */
+	foreach(lc, rels)
+	{
+		ForeignServer *server = NULL;
+		Relation	rel = lfirst(lc);
+		ForeignTable *table = GetForeignTable(RelationGetRelid(rel));
+		ListCell   *cell;
+		bool		truncatable;
+
+		/*
+		 * First time through, determine whether the foreign server allows
+		 * truncates. Since all specified foreign tables are assumed to belong
+		 * to the same foreign server, this result can be used for other
+		 * foreign tables.
+		 */
+		if (!OidIsValid(serverid))
+		{
+			serverid = table->serverid;
+			server = GetForeignServer(serverid);
+
+			foreach(cell, server->options)
+			{
+				DefElem    *defel = (DefElem *) lfirst(cell);
+
+				if (strcmp(defel->defname, "truncatable") == 0)
+				{
+					server_truncatable = defGetBoolean(defel);
+					break;
+				}
+			}
+		}
+
+		/*
+		 * Confirm that all specified foreign tables belong to the same
+		 * foreign server.
+		 */
+		Assert(table->serverid == serverid);
+
+		/* Determine whether this foreign table allows truncations */
+		truncatable = server_truncatable;
+		foreach(cell, table->options)
+		{
+			DefElem    *defel = (DefElem *) lfirst(cell);
+
+			if (strcmp(defel->defname, "truncatable") == 0)
+			{
+				truncatable = defGetBoolean(defel);
+				break;
+			}
+		}
+
+		if (!truncatable)
+			ereport(ERROR,
+					(errcode(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
+					 errmsg("foreign table \"%s\" does not allow truncates",
+							RelationGetRelationName(rel))));
+	}
+	Assert(OidIsValid(serverid));
+
+	/*
+	 * Get connection to the foreign server.  Connection manager will
+	 * establish new connection if necessary.
+	 */
+	user = GetUserMapping(GetUserId(), serverid);
+	conn = GetConnection(user, false, NULL);
+
+	/* Construct the TRUNCATE command string */
+	initStringInfo(&sql);
+	deparseTruncateSql(&sql, rels, behavior, restart_seqs);
+
+	/* Issue the TRUNCATE command to remote server */
+	do_sql_command(conn, sql.data);
+
+	pfree(sql.data);
+}
 
 /*
  * estimate_path_cost_size
@@ -5732,7 +5833,10 @@ merge_fdw_options(PgFdwRelationInfo *fpinfo,
 
 		/*
 		 * We'll prefer to consider this join async-capable if any table from
-		 * either side of the join is considered async-capable.
+		 * either side of the join is considered async-capable.  This would be
+		 * reasonable because in that case the foreign server would have its
+		 * own resources to scan that table asynchronously, and the join could
+		 * also be computed asynchronously using the resources.
 		 */
 		fpinfo->async_capable = fpinfo_o->async_capable ||
 			fpinfo_i->async_capable;
@@ -6789,6 +6893,9 @@ produce_tuple_asynchronously(AsyncRequest *areq, bool fetch)
 
 /*
  * Begin an asynchronous data fetch.
+ *
+ * Note: this function assumes there is no currently-in-progress asynchronous
+ * data fetch.
  *
  * Note: fetch_more_data must be called to fetch the result.
  */

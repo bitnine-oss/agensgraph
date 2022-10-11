@@ -203,6 +203,40 @@ FROM (
 ) intervals (str, interval),
 (VALUES (timestamp '0055-6-10 15:44:17.71393 BC')) ts (ts);
 
+-- case 3: AD dates, origin > input
+SELECT
+  str,
+  interval,
+  date_trunc(str, ts) = date_bin(interval::interval, ts, timestamp '2020-03-02') AS equal
+FROM (
+  VALUES
+  ('week', '7 d'),
+  ('day', '1 d'),
+  ('hour', '1 h'),
+  ('minute', '1 m'),
+  ('second', '1 s'),
+  ('millisecond', '1 ms'),
+  ('microsecond', '1 us')
+) intervals (str, interval),
+(VALUES (timestamp '2020-02-29 15:44:17.71393')) ts (ts);
+
+-- case 4: BC dates, origin > input
+SELECT
+  str,
+  interval,
+  date_trunc(str, ts) = date_bin(interval::interval, ts, timestamp '0055-06-17 BC') AS equal
+FROM (
+  VALUES
+  ('week', '7 d'),
+  ('day', '1 d'),
+  ('hour', '1 h'),
+  ('minute', '1 m'),
+  ('second', '1 s'),
+  ('millisecond', '1 ms'),
+  ('microsecond', '1 us')
+) intervals (str, interval),
+(VALUES (timestamp '0055-6-10 15:44:17.71393 BC')) ts (ts);
+
 -- bin timestamps into arbitrary intervals
 SELECT
   interval,
@@ -318,6 +352,12 @@ SELECT to_char(d, 'FF1 FF2 FF3 FF4 FF5 FF6  ff1 ff2 ff3 ff4 ff5 ff6  MS US')
        ('2018-11-02 12:34:56.78901'),
        ('2018-11-02 12:34:56.78901234')
    ) d(d);
+
+-- Roman months, with upper and lower case.
+SELECT i,
+       to_char(i * interval '1mon', 'rm'),
+       to_char(i * interval '1mon', 'RM')
+    FROM generate_series(-13, 13) i;
 
 -- timestamp numeric fields constructor
 SELECT make_timestamp(2014, 12, 28, 6, 30, 45.887);

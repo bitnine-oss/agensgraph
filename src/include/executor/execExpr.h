@@ -21,6 +21,7 @@
 /* forward references to avoid circularity */
 struct ExprEvalStep;
 struct SubscriptingRefState;
+struct ScalarArrayOpExprHashTable;
 struct CypherAccessPathElem;
 
 /* Bits in ExprState->flags (see also execnodes.h for public flag bits): */
@@ -38,6 +39,20 @@ typedef void (*ExecEvalSubroutine) (ExprState *state,
 typedef bool (*ExecEvalBoolSubroutine) (ExprState *state,
 										struct ExprEvalStep *op,
 										ExprContext *econtext);
+
+/* ExprEvalSteps that cache a composite type's tupdesc need one of these */
+/* (it fits in-line in some step types, otherwise allocate out-of-line) */
+typedef struct ExprEvalRowtypeCache
+{
+	/*
+	 * cacheptr points to composite type's TypeCacheEntry if tupdesc_id is not
+	 * 0; or for an anonymous RECORD type, it points directly at the cached
+	 * tupdesc for the type, and tupdesc_id is 0.  (We'd use separate fields
+	 * if space were not at a premium.)  Initial state is cacheptr == NULL.
+	 */
+	void	   *cacheptr;
+	uint64		tupdesc_id;		/* last-seen tupdesc identifier, or 0 */
+} ExprEvalRowtypeCache;
 
 /*
  * Discriminator for ExprEvalSteps.
@@ -220,6 +235,7 @@ typedef enum ExprEvalOp
 	/* evaluate assorted special-purpose expression types */
 	EEOP_CONVERT_ROWTYPE,
 	EEOP_SCALARARRAYOP,
+	EEOP_HASHED_SCALARARRAYOP,
 	EEOP_XMLEXPR,
 	EEOP_AGGREF,
 	EEOP_GROUPING_FUNC,
@@ -366,8 +382,8 @@ typedef struct ExprEvalStep
 		/* for EEOP_NULLTEST_ROWIS[NOT]NULL */
 		struct
 		{
-			/* cached tupdesc pointer - filled at runtime */
-			TupleDesc	argdesc;
+			/* cached descriptor for composite type - filled at runtime */
+			ExprEvalRowtypeCache rowcache;
 		}			nulltest_row;
 
 		/* for EEOP_PARAM_EXEC/EXTERN */
@@ -492,8 +508,8 @@ typedef struct ExprEvalStep
 		{
 			AttrNumber	fieldnum;	/* field number to extract */
 			Oid			resulttype; /* field's type */
-			/* cached tupdesc pointer - filled at runtime */
-			TupleDesc	argdesc;
+			/* cached descriptor for composite type - filled at runtime */
+			ExprEvalRowtypeCache rowcache;
 		}			fieldselect;
 
 		/* for EEOP_FIELDSTORE_DEFORM / FIELDSTORE_FORM */
@@ -502,9 +518,9 @@ typedef struct ExprEvalStep
 			/* original expression node */
 			FieldStore *fstore;
 
-			/* cached tupdesc pointer - filled at runtime */
-			/* note that a DEFORM and FORM pair share the same tupdesc */
-			TupleDesc  *argdesc;
+			/* cached descriptor for composite type - filled at runtime */
+			/* note that a DEFORM and FORM pair share the same cache */
+			ExprEvalRowtypeCache *rowcache;
 
 			/* workspace for column values */
 			Datum	   *values;
@@ -544,12 +560,12 @@ typedef struct ExprEvalStep
 		/* for EEOP_CONVERT_ROWTYPE */
 		struct
 		{
-			ConvertRowtypeExpr *convert;	/* original expression */
+			Oid			inputtype;	/* input composite type */
+			Oid			outputtype; /* output composite type */
 			/* these three fields are filled at runtime: */
-			TupleDesc	indesc; /* tupdesc for input type */
-			TupleDesc	outdesc;	/* tupdesc for output type */
+			ExprEvalRowtypeCache *incache;	/* cache for input type */
+			ExprEvalRowtypeCache *outcache; /* cache for output type */
 			TupleConversionMap *map;	/* column mapping */
-			bool		initialized;	/* initialized for current types? */
 		}			convert_rowtype;
 
 		/* for EEOP_SCALARARRAYOP */
@@ -566,6 +582,21 @@ typedef struct ExprEvalStep
 			/* faster to access without additional indirection: */
 			PGFunction	fn_addr;	/* actual call address */
 		}			scalararrayop;
+
+		/* for EEOP_HASHED_SCALARARRAYOP */
+		struct
+		{
+			bool		has_nulls;
+			struct ScalarArrayOpExprHashTable *elements_tab;
+			FmgrInfo   *finfo;	/* function's lookup data */
+			FunctionCallInfo fcinfo_data;	/* arguments etc */
+			/* faster to access without additional indirection: */
+			PGFunction	fn_addr;	/* actual call address */
+			FmgrInfo   *hash_finfo; /* function's lookup data */
+			FunctionCallInfo hash_fcinfo_data;	/* arguments etc */
+			/* faster to access without additional indirection: */
+			PGFunction	hash_fn_addr;	/* actual call address */
+		}			hashedscalararrayop;
 
 		/* for EEOP_XMLEXPR */
 		struct
@@ -808,6 +839,8 @@ extern void ExecEvalFieldStoreForm(ExprState *state, ExprEvalStep *op,
 extern void ExecEvalConvertRowtype(ExprState *state, ExprEvalStep *op,
 								   ExprContext *econtext);
 extern void ExecEvalScalarArrayOp(ExprState *state, ExprEvalStep *op);
+extern void ExecEvalHashedScalarArrayOp(ExprState *state, ExprEvalStep *op,
+										ExprContext *econtext);
 extern void ExecEvalConstraintNotNull(ExprState *state, ExprEvalStep *op);
 extern void ExecEvalConstraintCheck(ExprState *state, ExprEvalStep *op);
 extern void ExecEvalXmlExpr(ExprState *state, ExprEvalStep *op);

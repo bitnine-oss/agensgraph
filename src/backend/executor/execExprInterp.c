@@ -148,8 +148,8 @@ static void ExecInitInterpreter(void);
 static void CheckVarSlotCompatibility(TupleTableSlot *slot, int attnum, Oid vartype);
 static void CheckOpSlotCompatibility(ExprEvalStep *op, TupleTableSlot *slot);
 static TupleDesc get_cached_rowtype(Oid type_id, int32 typmod,
-									TupleDesc *cache_field, ExprContext *econtext);
-static void ShutdownTupleDescRef(Datum arg);
+									ExprEvalRowtypeCache *rowcache,
+									bool *changed);
 static void ExecEvalRowNullInt(ExprState *state, ExprEvalStep *op,
 							   ExprContext *econtext, bool checkisnull);
 
@@ -191,6 +191,51 @@ static int cypher_access_range(CypherIndexResult *cidxres, const int nelems,
 							   const int defidx);
 static int cypher_access_index(CypherIndexResult *cidxres, const int nelems);
 static Datum get_numeric_0_datum(void);
+
+/*
+ * ScalarArrayOpExprHashEntry
+ * 		Hash table entry type used during EEOP_HASHED_SCALARARRAYOP
+ */
+typedef struct ScalarArrayOpExprHashEntry
+{
+	Datum		key;
+	uint32		status;			/* hash status */
+	uint32		hash;			/* hash value (cached) */
+} ScalarArrayOpExprHashEntry;
+
+#define SH_PREFIX saophash
+#define SH_ELEMENT_TYPE ScalarArrayOpExprHashEntry
+#define SH_KEY_TYPE Datum
+#define SH_SCOPE static inline
+#define SH_DECLARE
+#include "lib/simplehash.h"
+
+static bool saop_hash_element_match(struct saophash_hash *tb, Datum key1,
+									Datum key2);
+static uint32 saop_element_hash(struct saophash_hash *tb, Datum key);
+
+/*
+ * ScalarArrayOpExprHashTable
+ *		Hash table for EEOP_HASHED_SCALARARRAYOP
+ */
+typedef struct ScalarArrayOpExprHashTable
+{
+	saophash_hash *hashtab;		/* underlying hash table */
+	struct ExprEvalStep *op;
+} ScalarArrayOpExprHashTable;
+
+/* Define parameters for ScalarArrayOpExpr hash table code generation. */
+#define SH_PREFIX saophash
+#define SH_ELEMENT_TYPE ScalarArrayOpExprHashEntry
+#define SH_KEY_TYPE Datum
+#define SH_KEY key
+#define SH_HASH_KEY(tb, key) saop_element_hash(tb, key)
+#define SH_EQUAL(tb, a, b) saop_hash_element_match(tb, a, b)
+#define SH_SCOPE static inline
+#define SH_STORE_HASH
+#define SH_GET_HASH(tb, a) a->hash
+#define SH_DEFINE
+#include "lib/simplehash.h"
 
 /*
  * Prepare ExprState for interpreted execution.
@@ -440,6 +485,7 @@ ExecInterpExpr(ExprState *state, ExprContext *econtext, bool *isnull)
 		&&CASE_EEOP_DOMAIN_CHECK,
 		&&CASE_EEOP_CONVERT_ROWTYPE,
 		&&CASE_EEOP_SCALARARRAYOP,
+		&&CASE_EEOP_HASHED_SCALARARRAYOP,
 		&&CASE_EEOP_XMLEXPR,
 		&&CASE_EEOP_AGGREF,
 		&&CASE_EEOP_GROUPING_FUNC,
@@ -1460,6 +1506,14 @@ ExecInterpExpr(ExprState *state, ExprContext *econtext, bool *isnull)
 			EEO_NEXT();
 		}
 
+		EEO_CASE(EEOP_HASHED_SCALARARRAYOP)
+		{
+			/* too complex for an inline implementation */
+			ExecEvalHashedScalarArrayOp(state, op, econtext);
+
+			EEO_NEXT();
+		}
+
 		EEO_CASE(EEOP_DOMAIN_NOTNULL)
 		{
 			/* too complex for an inline implementation */
@@ -1999,56 +2053,78 @@ CheckOpSlotCompatibility(ExprEvalStep *op, TupleTableSlot *slot)
  * get_cached_rowtype: utility function to lookup a rowtype tupdesc
  *
  * type_id, typmod: identity of the rowtype
- * cache_field: where to cache the TupleDesc pointer in expression state node
- *		(field must be initialized to NULL)
- * econtext: expression context we are executing in
+ * rowcache: space for caching identity info
+ *		(rowcache->cacheptr must be initialized to NULL)
+ * changed: if not NULL, *changed is set to true on any update
  *
- * NOTE: because the shutdown callback will be called during plan rescan,
- * must be prepared to re-do this during any node execution; cannot call
- * just once during expression initialization.
+ * The returned TupleDesc is not guaranteed pinned; caller must pin it
+ * to use it across any operation that might incur cache invalidation.
+ * (The TupleDesc is always refcounted, so just use IncrTupleDescRefCount.)
+ *
+ * NOTE: because composite types can change contents, we must be prepared
+ * to re-do this during any node execution; cannot call just once during
+ * expression initialization.
  */
 static TupleDesc
 get_cached_rowtype(Oid type_id, int32 typmod,
-				   TupleDesc *cache_field, ExprContext *econtext)
+				   ExprEvalRowtypeCache *rowcache,
+				   bool *changed)
 {
-	TupleDesc	tupDesc = *cache_field;
-
-	/* Do lookup if no cached value or if requested type changed */
-	if (tupDesc == NULL ||
-		type_id != tupDesc->tdtypeid ||
-		typmod != tupDesc->tdtypmod)
+	if (type_id != RECORDOID)
 	{
-		tupDesc = lookup_rowtype_tupdesc(type_id, typmod);
+		/*
+		 * It's a named composite type, so use the regular typcache.  Do a
+		 * lookup first time through, or if the composite type changed.  Note:
+		 * "tupdesc_id == 0" may look redundant, but it protects against the
+		 * admittedly-theoretical possibility that type_id was RECORDOID the
+		 * last time through, so that the cacheptr isn't TypeCacheEntry *.
+		 */
+		TypeCacheEntry *typentry = (TypeCacheEntry *) rowcache->cacheptr;
 
-		if (*cache_field)
+		if (unlikely(typentry == NULL ||
+					 rowcache->tupdesc_id == 0 ||
+					 typentry->tupDesc_identifier != rowcache->tupdesc_id))
 		{
-			/* Release old tupdesc; but callback is already registered */
-			ReleaseTupleDesc(*cache_field);
+			typentry = lookup_type_cache(type_id, TYPECACHE_TUPDESC);
+			if (typentry->tupDesc == NULL)
+				ereport(ERROR,
+						(errcode(ERRCODE_WRONG_OBJECT_TYPE),
+						 errmsg("type %s is not composite",
+								format_type_be(type_id))));
+			rowcache->cacheptr = (void *) typentry;
+			rowcache->tupdesc_id = typentry->tupDesc_identifier;
+			if (changed)
+				*changed = true;
 		}
-		else
-		{
-			/* Need to register shutdown callback to release tupdesc */
-			RegisterExprContextCallback(econtext,
-										ShutdownTupleDescRef,
-										PointerGetDatum(cache_field));
-		}
-		*cache_field = tupDesc;
+		return typentry->tupDesc;
 	}
-	return tupDesc;
+	else
+	{
+		/*
+		 * A RECORD type, once registered, doesn't change for the life of the
+		 * backend.  So we don't need a typcache entry as such, which is good
+		 * because there isn't one.  It's possible that the caller is asking
+		 * about a different type than before, though.
+		 */
+		TupleDesc	tupDesc = (TupleDesc) rowcache->cacheptr;
+
+		if (unlikely(tupDesc == NULL ||
+					 rowcache->tupdesc_id != 0 ||
+					 type_id != tupDesc->tdtypeid ||
+					 typmod != tupDesc->tdtypmod))
+		{
+			tupDesc = lookup_rowtype_tupdesc(type_id, typmod);
+			/* Drop pin acquired by lookup_rowtype_tupdesc */
+			ReleaseTupleDesc(tupDesc);
+			rowcache->cacheptr = (void *) tupDesc;
+			rowcache->tupdesc_id = 0;	/* not a valid value for non-RECORD */
+			if (changed)
+				*changed = true;
+		}
+		return tupDesc;
+	}
 }
 
-/*
- * Callback function to release a tupdesc refcount at econtext shutdown
- */
-static void
-ShutdownTupleDescRef(Datum arg)
-{
-	TupleDesc  *cache_field = (TupleDesc *) DatumGetPointer(arg);
-
-	if (*cache_field)
-		ReleaseTupleDesc(*cache_field);
-	*cache_field = NULL;
-}
 
 /*
  * Fast-path functions, for very simple expressions
@@ -2640,8 +2716,7 @@ ExecEvalRowNullInt(ExprState *state, ExprEvalStep *op,
 
 	/* Lookup tupdesc if first time through or if type changes */
 	tupDesc = get_cached_rowtype(tupType, tupTypmod,
-								 &op->d.nulltest_row.argdesc,
-								 econtext);
+								 &op->d.nulltest_row.rowcache, NULL);
 
 	/*
 	 * heap_attisnull needs a HeapTuple not a bare HeapTupleHeader.
@@ -3074,8 +3149,7 @@ ExecEvalFieldSelect(ExprState *state, ExprEvalStep *op, ExprContext *econtext)
 
 		/* Lookup tupdesc if first time through or if type changes */
 		tupDesc = get_cached_rowtype(tupType, tupTypmod,
-									 &op->d.fieldselect.argdesc,
-									 econtext);
+									 &op->d.fieldselect.rowcache, NULL);
 
 		/*
 		 * Find field's attr record.  Note we don't support system columns
@@ -3133,9 +3207,9 @@ ExecEvalFieldStoreDeForm(ExprState *state, ExprEvalStep *op, ExprContext *econte
 {
 	TupleDesc	tupDesc;
 
-	/* Lookup tupdesc if first time through or after rescan */
+	/* Lookup tupdesc if first time through or if type changes */
 	tupDesc = get_cached_rowtype(op->d.fieldstore.fstore->resulttype, -1,
-								 op->d.fieldstore.argdesc, econtext);
+								 op->d.fieldstore.rowcache, NULL);
 
 	/* Check that current tupdesc doesn't have more fields than we allocated */
 	if (unlikely(tupDesc->natts > op->d.fieldstore.ncolumns))
@@ -3177,10 +3251,14 @@ ExecEvalFieldStoreDeForm(ExprState *state, ExprEvalStep *op, ExprContext *econte
 void
 ExecEvalFieldStoreForm(ExprState *state, ExprEvalStep *op, ExprContext *econtext)
 {
+	TupleDesc	tupDesc;
 	HeapTuple	tuple;
 
-	/* argdesc should already be valid from the DeForm step */
-	tuple = heap_form_tuple(*op->d.fieldstore.argdesc,
+	/* Lookup tupdesc (should be valid already) */
+	tupDesc = get_cached_rowtype(op->d.fieldstore.fstore->resulttype, -1,
+								 op->d.fieldstore.rowcache, NULL);
+
+	tuple = heap_form_tuple(tupDesc,
 							op->d.fieldstore.values,
 							op->d.fieldstore.nulls);
 
@@ -3197,13 +3275,13 @@ ExecEvalFieldStoreForm(ExprState *state, ExprEvalStep *op, ExprContext *econtext
 void
 ExecEvalConvertRowtype(ExprState *state, ExprEvalStep *op, ExprContext *econtext)
 {
-	ConvertRowtypeExpr *convert = op->d.convert_rowtype.convert;
 	HeapTuple	result;
 	Datum		tupDatum;
 	HeapTupleHeader tuple;
 	HeapTupleData tmptup;
 	TupleDesc	indesc,
 				outdesc;
+	bool		changed = false;
 
 	/* NULL in -> NULL out */
 	if (*op->resnull)
@@ -3212,24 +3290,19 @@ ExecEvalConvertRowtype(ExprState *state, ExprEvalStep *op, ExprContext *econtext
 	tupDatum = *op->resvalue;
 	tuple = DatumGetHeapTupleHeader(tupDatum);
 
-	/* Lookup tupdescs if first time through or after rescan */
-	if (op->d.convert_rowtype.indesc == NULL)
-	{
-		get_cached_rowtype(exprType((Node *) convert->arg), -1,
-						   &op->d.convert_rowtype.indesc,
-						   econtext);
-		op->d.convert_rowtype.initialized = false;
-	}
-	if (op->d.convert_rowtype.outdesc == NULL)
-	{
-		get_cached_rowtype(convert->resulttype, -1,
-						   &op->d.convert_rowtype.outdesc,
-						   econtext);
-		op->d.convert_rowtype.initialized = false;
-	}
-
-	indesc = op->d.convert_rowtype.indesc;
-	outdesc = op->d.convert_rowtype.outdesc;
+	/*
+	 * Lookup tupdescs if first time through or if type changes.  We'd better
+	 * pin them since type conversion functions could do catalog lookups and
+	 * hence cause cache invalidation.
+	 */
+	indesc = get_cached_rowtype(op->d.convert_rowtype.inputtype, -1,
+								op->d.convert_rowtype.incache,
+								&changed);
+	IncrTupleDescRefCount(indesc);
+	outdesc = get_cached_rowtype(op->d.convert_rowtype.outputtype, -1,
+								 op->d.convert_rowtype.outcache,
+								 &changed);
+	IncrTupleDescRefCount(outdesc);
 
 	/*
 	 * We used to be able to assert that incoming tuples are marked with
@@ -3240,8 +3313,8 @@ ExecEvalConvertRowtype(ExprState *state, ExprEvalStep *op, ExprContext *econtext
 	Assert(HeapTupleHeaderGetTypeId(tuple) == indesc->tdtypeid ||
 		   HeapTupleHeaderGetTypeId(tuple) == RECORDOID);
 
-	/* if first time through, initialize conversion map */
-	if (!op->d.convert_rowtype.initialized)
+	/* if first time through, or after change, initialize conversion map */
+	if (changed)
 	{
 		MemoryContext old_cxt;
 
@@ -3250,7 +3323,6 @@ ExecEvalConvertRowtype(ExprState *state, ExprEvalStep *op, ExprContext *econtext
 
 		/* prepare map from old to new attribute numbers */
 		op->d.convert_rowtype.map = convert_tuples_by_name(indesc, outdesc);
-		op->d.convert_rowtype.initialized = true;
 
 		MemoryContextSwitchTo(old_cxt);
 	}
@@ -3280,6 +3352,9 @@ ExecEvalConvertRowtype(ExprState *state, ExprEvalStep *op, ExprContext *econtext
 		 */
 		*op->resvalue = heap_copy_tuple_as_datum(&tmptup, outdesc);
 	}
+
+	DecrTupleDescRefCount(indesc);
+	DecrTupleDescRefCount(outdesc);
 }
 
 /*
@@ -3432,6 +3507,214 @@ ExecEvalScalarArrayOp(ExprState *state, ExprEvalStep *op)
 				bitmap++;
 				bitmask = 1;
 			}
+		}
+	}
+
+	*op->resvalue = result;
+	*op->resnull = resultnull;
+}
+
+/*
+ * Hash function for scalar array hash op elements.
+ *
+ * We use the element type's default hash opclass, and the column collation
+ * if the type is collation-sensitive.
+ */
+static uint32
+saop_element_hash(struct saophash_hash *tb, Datum key)
+{
+	ScalarArrayOpExprHashTable *elements_tab = (ScalarArrayOpExprHashTable *) tb->private_data;
+	FunctionCallInfo fcinfo = elements_tab->op->d.hashedscalararrayop.hash_fcinfo_data;
+	Datum		hash;
+
+	fcinfo->args[0].value = key;
+	fcinfo->args[0].isnull = false;
+
+	hash = elements_tab->op->d.hashedscalararrayop.hash_fn_addr(fcinfo);
+
+	return DatumGetUInt32(hash);
+}
+
+/*
+ * Matching function for scalar array hash op elements, to be used in hashtable
+ * lookups.
+ */
+static bool
+saop_hash_element_match(struct saophash_hash *tb, Datum key1, Datum key2)
+{
+	Datum		result;
+
+	ScalarArrayOpExprHashTable *elements_tab = (ScalarArrayOpExprHashTable *) tb->private_data;
+	FunctionCallInfo fcinfo = elements_tab->op->d.hashedscalararrayop.fcinfo_data;
+
+	fcinfo->args[0].value = key1;
+	fcinfo->args[0].isnull = false;
+	fcinfo->args[1].value = key2;
+	fcinfo->args[1].isnull = false;
+
+	result = elements_tab->op->d.hashedscalararrayop.fn_addr(fcinfo);
+
+	return DatumGetBool(result);
+}
+
+/*
+ * Evaluate "scalar op ANY (const array)".
+ *
+ * Similar to ExecEvalScalarArrayOp, but optimized for faster repeat lookups
+ * by building a hashtable on the first lookup.  This hashtable will be reused
+ * by subsequent lookups.  Unlike ExecEvalScalarArrayOp, this version only
+ * supports OR semantics.
+ *
+ * Source array is in our result area, scalar arg is already evaluated into
+ * fcinfo->args[0].
+ *
+ * The operator always yields boolean.
+ */
+void
+ExecEvalHashedScalarArrayOp(ExprState *state, ExprEvalStep *op, ExprContext *econtext)
+{
+	ScalarArrayOpExprHashTable *elements_tab = op->d.hashedscalararrayop.elements_tab;
+	FunctionCallInfo fcinfo = op->d.hashedscalararrayop.fcinfo_data;
+	bool		strictfunc = op->d.hashedscalararrayop.finfo->fn_strict;
+	Datum		scalar = fcinfo->args[0].value;
+	bool		scalar_isnull = fcinfo->args[0].isnull;
+	Datum		result;
+	bool		resultnull;
+	bool		hashfound;
+
+	/* We don't setup a hashed scalar array op if the array const is null. */
+	Assert(!*op->resnull);
+
+	/*
+	 * If the scalar is NULL, and the function is strict, return NULL; no
+	 * point in executing the search.
+	 */
+	if (fcinfo->args[0].isnull && strictfunc)
+	{
+		*op->resnull = true;
+		return;
+	}
+
+	/* Build the hash table on first evaluation */
+	if (elements_tab == NULL)
+	{
+		int16		typlen;
+		bool		typbyval;
+		char		typalign;
+		int			nitems;
+		bool		has_nulls = false;
+		char	   *s;
+		bits8	   *bitmap;
+		int			bitmask;
+		MemoryContext oldcontext;
+		ArrayType  *arr;
+
+		arr = DatumGetArrayTypeP(*op->resvalue);
+		nitems = ArrayGetNItems(ARR_NDIM(arr), ARR_DIMS(arr));
+
+		get_typlenbyvalalign(ARR_ELEMTYPE(arr),
+							 &typlen,
+							 &typbyval,
+							 &typalign);
+
+		oldcontext = MemoryContextSwitchTo(econtext->ecxt_per_query_memory);
+
+		elements_tab = (ScalarArrayOpExprHashTable *)
+			palloc(sizeof(ScalarArrayOpExprHashTable));
+		op->d.hashedscalararrayop.elements_tab = elements_tab;
+		elements_tab->op = op;
+
+		/*
+		 * Create the hash table sizing it according to the number of elements
+		 * in the array.  This does assume that the array has no duplicates.
+		 * If the array happens to contain many duplicate values then it'll
+		 * just mean that we sized the table a bit on the large side.
+		 */
+		elements_tab->hashtab = saophash_create(CurrentMemoryContext, nitems,
+												elements_tab);
+
+		MemoryContextSwitchTo(oldcontext);
+
+		s = (char *) ARR_DATA_PTR(arr);
+		bitmap = ARR_NULLBITMAP(arr);
+		bitmask = 1;
+		for (int i = 0; i < nitems; i++)
+		{
+			/* Get array element, checking for NULL. */
+			if (bitmap && (*bitmap & bitmask) == 0)
+			{
+				has_nulls = true;
+			}
+			else
+			{
+				Datum		element;
+
+				element = fetch_att(s, typbyval, typlen);
+				s = att_addlength_pointer(s, typlen, s);
+				s = (char *) att_align_nominal(s, typalign);
+
+				saophash_insert(elements_tab->hashtab, element, &hashfound);
+			}
+
+			/* Advance bitmap pointer if any. */
+			if (bitmap)
+			{
+				bitmask <<= 1;
+				if (bitmask == 0x100)
+				{
+					bitmap++;
+					bitmask = 1;
+				}
+			}
+		}
+
+		/*
+		 * Remember if we had any nulls so that we know if we need to execute
+		 * non-strict functions with a null lhs value if no match is found.
+		 */
+		op->d.hashedscalararrayop.has_nulls = has_nulls;
+	}
+
+	/* Check the hash to see if we have a match. */
+	hashfound = NULL != saophash_lookup(elements_tab->hashtab, scalar);
+
+	result = BoolGetDatum(hashfound);
+	resultnull = false;
+
+	/*
+	 * If we didn't find a match in the array, we still might need to handle
+	 * the possibility of null values.  We didn't put any NULLs into the
+	 * hashtable, but instead marked if we found any when building the table
+	 * in has_nulls.
+	 */
+	if (!DatumGetBool(result) && op->d.hashedscalararrayop.has_nulls)
+	{
+		if (strictfunc)
+		{
+
+			/*
+			 * We have nulls in the array so a non-null lhs and no match must
+			 * yield NULL.
+			 */
+			result = (Datum) 0;
+			resultnull = true;
+		}
+		else
+		{
+			/*
+			 * Execute function will null rhs just once.
+			 *
+			 * The hash lookup path will have scribbled on the lhs argument so
+			 * we need to set it up also (even though we entered this function
+			 * with it already set).
+			 */
+			fcinfo->args[0].value = scalar;
+			fcinfo->args[0].isnull = scalar_isnull;
+			fcinfo->args[1].value = (Datum) 0;
+			fcinfo->args[1].isnull = true;
+
+			result = op->d.hashedscalararrayop.fn_addr(fcinfo);
+			resultnull = fcinfo->isnull;
 		}
 	}
 

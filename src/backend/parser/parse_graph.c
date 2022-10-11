@@ -2922,7 +2922,7 @@ genInhEdge(RangeVar *r, Oid parentoid)
 	sel->fromClause = list_make1(r);
 	lsel = sel;
 
-	children = find_inheritance_children(parentoid, false, AccessShareLock);
+	children = find_inheritance_children(parentoid, AccessShareLock);
 	foreach(lc, children)
 	{
 		Oid			childoid = lfirst_oid(lc);

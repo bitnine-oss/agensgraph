@@ -1167,6 +1167,8 @@ ExecInitExprRec(Expr *node, ExprState *state,
 				FmgrInfo   *finfo;
 				FunctionCallInfo fcinfo;
 				AclResult	aclresult;
+				FmgrInfo   *hash_finfo;
+				FunctionCallInfo hash_fcinfo;
 
 				Assert(list_length(opexpr->args) == 2);
 				scalararg = (Expr *) linitial(opexpr->args);
@@ -1181,6 +1183,17 @@ ExecInitExprRec(Expr *node, ExprState *state,
 								   get_func_name(opexpr->opfuncid));
 				InvokeFunctionExecuteHook(opexpr->opfuncid);
 
+				if (OidIsValid(opexpr->hashfuncid))
+				{
+					aclresult = pg_proc_aclcheck(opexpr->hashfuncid,
+												 GetUserId(),
+												 ACL_EXECUTE);
+					if (aclresult != ACLCHECK_OK)
+						aclcheck_error(aclresult, OBJECT_FUNCTION,
+									   get_func_name(opexpr->hashfuncid));
+					InvokeFunctionExecuteHook(opexpr->hashfuncid);
+				}
+
 				/* Set up the primary fmgr lookup information */
 				finfo = palloc0(sizeof(FmgrInfo));
 				fcinfo = palloc0(SizeForFunctionCallInfo(2));
@@ -1189,26 +1202,76 @@ ExecInitExprRec(Expr *node, ExprState *state,
 				InitFunctionCallInfoData(*fcinfo, finfo, 2,
 										 opexpr->inputcollid, NULL, NULL);
 
-				/* Evaluate scalar directly into left function argument */
-				ExecInitExprRec(scalararg, state,
-								&fcinfo->args[0].value, &fcinfo->args[0].isnull);
-
 				/*
-				 * Evaluate array argument into our return value.  There's no
-				 * danger in that, because the return value is guaranteed to
-				 * be overwritten by EEOP_SCALARARRAYOP, and will not be
-				 * passed to any other expression.
+				 * If hashfuncid is set, we create a EEOP_HASHED_SCALARARRAYOP
+				 * step instead of a EEOP_SCALARARRAYOP.  This provides much
+				 * faster lookup performance than the normal linear search
+				 * when the number of items in the array is anything but very
+				 * small.
 				 */
-				ExecInitExprRec(arrayarg, state, resv, resnull);
+				if (OidIsValid(opexpr->hashfuncid))
+				{
+					hash_finfo = palloc0(sizeof(FmgrInfo));
+					hash_fcinfo = palloc0(SizeForFunctionCallInfo(1));
+					fmgr_info(opexpr->hashfuncid, hash_finfo);
+					fmgr_info_set_expr((Node *) node, hash_finfo);
+					InitFunctionCallInfoData(*hash_fcinfo, hash_finfo,
+											 1, opexpr->inputcollid, NULL,
+											 NULL);
 
-				/* And perform the operation */
-				scratch.opcode = EEOP_SCALARARRAYOP;
-				scratch.d.scalararrayop.element_type = InvalidOid;
-				scratch.d.scalararrayop.useOr = opexpr->useOr;
-				scratch.d.scalararrayop.finfo = finfo;
-				scratch.d.scalararrayop.fcinfo_data = fcinfo;
-				scratch.d.scalararrayop.fn_addr = finfo->fn_addr;
-				ExprEvalPushStep(state, &scratch);
+					scratch.d.hashedscalararrayop.hash_finfo = hash_finfo;
+					scratch.d.hashedscalararrayop.hash_fcinfo_data = hash_fcinfo;
+					scratch.d.hashedscalararrayop.hash_fn_addr = hash_finfo->fn_addr;
+
+					/* Evaluate scalar directly into left function argument */
+					ExecInitExprRec(scalararg, state,
+									&fcinfo->args[0].value, &fcinfo->args[0].isnull);
+
+					/*
+					 * Evaluate array argument into our return value.  There's
+					 * no danger in that, because the return value is
+					 * guaranteed to be overwritten by
+					 * EEOP_HASHED_SCALARARRAYOP, and will not be passed to
+					 * any other expression.
+					 */
+					ExecInitExprRec(arrayarg, state, resv, resnull);
+
+					/* And perform the operation */
+					scratch.opcode = EEOP_HASHED_SCALARARRAYOP;
+					scratch.d.hashedscalararrayop.finfo = finfo;
+					scratch.d.hashedscalararrayop.fcinfo_data = fcinfo;
+					scratch.d.hashedscalararrayop.fn_addr = finfo->fn_addr;
+
+					scratch.d.hashedscalararrayop.hash_finfo = hash_finfo;
+					scratch.d.hashedscalararrayop.hash_fcinfo_data = hash_fcinfo;
+					scratch.d.hashedscalararrayop.hash_fn_addr = hash_finfo->fn_addr;
+
+					ExprEvalPushStep(state, &scratch);
+				}
+				else
+				{
+					/* Evaluate scalar directly into left function argument */
+					ExecInitExprRec(scalararg, state,
+									&fcinfo->args[0].value,
+									&fcinfo->args[0].isnull);
+
+					/*
+					 * Evaluate array argument into our return value.  There's
+					 * no danger in that, because the return value is
+					 * guaranteed to be overwritten by EEOP_SCALARARRAYOP, and
+					 * will not be passed to any other expression.
+					 */
+					ExecInitExprRec(arrayarg, state, resv, resnull);
+
+					/* And perform the operation */
+					scratch.opcode = EEOP_SCALARARRAYOP;
+					scratch.d.scalararrayop.element_type = InvalidOid;
+					scratch.d.scalararrayop.useOr = opexpr->useOr;
+					scratch.d.scalararrayop.finfo = finfo;
+					scratch.d.scalararrayop.fcinfo_data = fcinfo;
+					scratch.d.scalararrayop.fn_addr = finfo->fn_addr;
+					ExprEvalPushStep(state, &scratch);
+				}
 				break;
 			}
 
@@ -1330,7 +1393,7 @@ ExecInitExprRec(Expr *node, ExprState *state,
 				scratch.opcode = EEOP_FIELDSELECT;
 				scratch.d.fieldselect.fieldnum = fselect->fieldnum;
 				scratch.d.fieldselect.resulttype = fselect->resulttype;
-				scratch.d.fieldselect.argdesc = NULL;
+				scratch.d.fieldselect.rowcache.cacheptr = NULL;
 
 				ExprEvalPushStep(state, &scratch);
 				break;
@@ -1340,7 +1403,7 @@ ExecInitExprRec(Expr *node, ExprState *state,
 			{
 				FieldStore *fstore = (FieldStore *) node;
 				TupleDesc	tupDesc;
-				TupleDesc  *descp;
+				ExprEvalRowtypeCache *rowcachep;
 				Datum	   *values;
 				bool	   *nulls;
 				int			ncolumns;
@@ -1356,9 +1419,9 @@ ExecInitExprRec(Expr *node, ExprState *state,
 				values = (Datum *) palloc(sizeof(Datum) * ncolumns);
 				nulls = (bool *) palloc(sizeof(bool) * ncolumns);
 
-				/* create workspace for runtime tupdesc cache */
-				descp = (TupleDesc *) palloc(sizeof(TupleDesc));
-				*descp = NULL;
+				/* create shared composite-type-lookup cache struct */
+				rowcachep = palloc(sizeof(ExprEvalRowtypeCache));
+				rowcachep->cacheptr = NULL;
 
 				/* emit code to evaluate the composite input value */
 				ExecInitExprRec(fstore->arg, state, resv, resnull);
@@ -1366,7 +1429,7 @@ ExecInitExprRec(Expr *node, ExprState *state,
 				/* next, deform the input tuple into our workspace */
 				scratch.opcode = EEOP_FIELDSTORE_DEFORM;
 				scratch.d.fieldstore.fstore = fstore;
-				scratch.d.fieldstore.argdesc = descp;
+				scratch.d.fieldstore.rowcache = rowcachep;
 				scratch.d.fieldstore.values = values;
 				scratch.d.fieldstore.nulls = nulls;
 				scratch.d.fieldstore.ncolumns = ncolumns;
@@ -1424,7 +1487,7 @@ ExecInitExprRec(Expr *node, ExprState *state,
 				/* finally, form result tuple */
 				scratch.opcode = EEOP_FIELDSTORE_FORM;
 				scratch.d.fieldstore.fstore = fstore;
-				scratch.d.fieldstore.argdesc = descp;
+				scratch.d.fieldstore.rowcache = rowcachep;
 				scratch.d.fieldstore.values = values;
 				scratch.d.fieldstore.nulls = nulls;
 				scratch.d.fieldstore.ncolumns = ncolumns;
@@ -1570,17 +1633,24 @@ ExecInitExprRec(Expr *node, ExprState *state,
 		case T_ConvertRowtypeExpr:
 			{
 				ConvertRowtypeExpr *convert = (ConvertRowtypeExpr *) node;
+				ExprEvalRowtypeCache *rowcachep;
+
+				/* cache structs must be out-of-line for space reasons */
+				rowcachep = palloc(2 * sizeof(ExprEvalRowtypeCache));
+				rowcachep[0].cacheptr = NULL;
+				rowcachep[1].cacheptr = NULL;
 
 				/* evaluate argument into step's result area */
 				ExecInitExprRec(convert->arg, state, resv, resnull);
 
 				/* and push conversion step */
 				scratch.opcode = EEOP_CONVERT_ROWTYPE;
-				scratch.d.convert_rowtype.convert = convert;
-				scratch.d.convert_rowtype.indesc = NULL;
-				scratch.d.convert_rowtype.outdesc = NULL;
+				scratch.d.convert_rowtype.inputtype =
+					exprType((Node *) convert->arg);
+				scratch.d.convert_rowtype.outputtype = convert->resulttype;
+				scratch.d.convert_rowtype.incache = &rowcachep[0];
+				scratch.d.convert_rowtype.outcache = &rowcachep[1];
 				scratch.d.convert_rowtype.map = NULL;
-				scratch.d.convert_rowtype.initialized = false;
 
 				ExprEvalPushStep(state, &scratch);
 				break;
@@ -2205,7 +2275,7 @@ ExecInitExprRec(Expr *node, ExprState *state,
 						 (int) ntest->nulltesttype);
 				}
 				/* initialize cache in case it's a row test */
-				scratch.d.nulltest_row.argdesc = NULL;
+				scratch.d.nulltest_row.rowcache.cacheptr = NULL;
 
 				/* first evaluate argument into result variable */
 				ExecInitExprRec(ntest->arg, state,

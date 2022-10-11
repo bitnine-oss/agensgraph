@@ -75,6 +75,7 @@
 #include "catalog/dependency.h"
 #include "catalog/namespace.h"
 #include "catalog/pg_database.h"
+#include "catalog/pg_inherits.h"
 #include "commands/dbcommands.h"
 #include "commands/vacuum.h"
 #include "lib/ilist.h"
@@ -1859,7 +1860,7 @@ autovac_balance_cost(void)
 		}
 
 		if (worker->wi_proc != NULL)
-			elog(DEBUG2, "autovac_balance_cost(pid=%u db=%u, rel=%u, dobalance=%s cost_limit=%d, cost_limit_base=%d, cost_delay=%g)",
+			elog(DEBUG2, "autovac_balance_cost(pid=%d db=%u, rel=%u, dobalance=%s cost_limit=%d, cost_limit_base=%d, cost_delay=%g)",
 				 worker->wi_proc->pid, worker->wi_dboid, worker->wi_tableoid,
 				 worker->wi_dobalance ? "yes" : "no",
 				 worker->wi_cost_limit, worker->wi_cost_limit_base,
@@ -1969,6 +1970,7 @@ do_autovacuum(void)
 	int			effective_multixact_freeze_max_age;
 	bool		did_vacuum = false;
 	bool		found_concurrent_worker = false;
+	bool		updated = false;
 	int			i;
 
 	/*
@@ -2054,12 +2056,19 @@ do_autovacuum(void)
 	/*
 	 * Scan pg_class to determine which tables to vacuum.
 	 *
-	 * We do this in two passes: on the first one we collect the list of plain
-	 * relations and materialized views, and on the second one we collect
-	 * TOAST tables. The reason for doing the second pass is that during it we
-	 * want to use the main relation's pg_class.reloptions entry if the TOAST
-	 * table does not have any, and we cannot obtain it unless we know
-	 * beforehand what's the main table OID.
+	 * We do this in three passes: First we let pgstat collector know about
+	 * the partitioned table ancestors of all partitions that have recently
+	 * acquired rows for analyze.  This informs the second pass about the
+	 * total number of tuple count in partitioning hierarchies.
+	 *
+	 * On the second pass, we collect the list of plain relations,
+	 * materialized views and partitioned tables.  On the third one we collect
+	 * TOAST tables.
+	 *
+	 * The reason for doing the third pass is that during it we want to use
+	 * the main relation's pg_class.reloptions entry if the TOAST table does
+	 * not have any, and we cannot obtain it unless we know beforehand what's
+	 * the main table OID.
 	 *
 	 * We need to check TOAST tables separately because in cases with short,
 	 * wide tables there might be proportionally much more activity in the
@@ -2068,7 +2077,44 @@ do_autovacuum(void)
 	relScan = table_beginscan_catalog(classRel, 0, NULL);
 
 	/*
-	 * On the first pass, we collect main tables to vacuum, and also the main
+	 * First pass: before collecting the list of tables to vacuum, let stat
+	 * collector know about partitioned-table ancestors of each partition.
+	 */
+	while ((tuple = heap_getnext(relScan, ForwardScanDirection)) != NULL)
+	{
+		Form_pg_class classForm = (Form_pg_class) GETSTRUCT(tuple);
+		Oid			relid = classForm->oid;
+		PgStat_StatTabEntry *tabentry;
+
+		/* Only consider permanent leaf partitions */
+		if (!classForm->relispartition ||
+			classForm->relkind == RELKIND_PARTITIONED_TABLE ||
+			classForm->relpersistence == RELPERSISTENCE_TEMP)
+			continue;
+
+		/*
+		 * No need to do this for partitions that haven't acquired any rows.
+		 */
+		tabentry = pgstat_fetch_stat_tabentry(relid);
+		if (tabentry &&
+			tabentry->changes_since_analyze -
+			tabentry->changes_since_analyze_reported > 0)
+		{
+			pgstat_report_anl_ancestors(relid);
+			updated = true;
+		}
+	}
+
+	/* Acquire fresh stats for the next passes, if needed */
+	if (updated)
+	{
+		autovac_refresh_stats();
+		dbentry = pgstat_fetch_stat_dbentry(MyDatabaseId);
+		shared = pgstat_fetch_stat_dbentry(InvalidOid);
+	}
+
+	/*
+	 * On the second pass, we collect main tables to vacuum, and also the main
 	 * table relid to TOAST relid mapping.
 	 */
 	while ((tuple = heap_getnext(relScan, ForwardScanDirection)) != NULL)
@@ -2082,7 +2128,8 @@ do_autovacuum(void)
 		bool		wraparound;
 
 		if (classForm->relkind != RELKIND_RELATION &&
-			classForm->relkind != RELKIND_MATVIEW)
+			classForm->relkind != RELKIND_MATVIEW &&
+			classForm->relkind != RELKIND_PARTITIONED_TABLE)
 			continue;
 
 		relid = classForm->oid;
@@ -2157,7 +2204,7 @@ do_autovacuum(void)
 
 	table_endscan(relScan);
 
-	/* second pass: check TOAST tables */
+	/* third pass: check TOAST tables */
 	ScanKeyInit(&key,
 				Anum_pg_class_relkind,
 				BTEqualStrategyNumber, F_CHAREQ,
@@ -2736,6 +2783,11 @@ deleted2:
  *
  * Given a relation's pg_class tuple, return the AutoVacOpts portion of
  * reloptions, if set; otherwise, return NULL.
+ *
+ * Note: callers do not have a relation lock on the table at this point,
+ * so the table could have been dropped, and its catalog rows gone, after
+ * we acquired the pg_class row.  If pg_class had a TOAST table, this would
+ * be a risk; fortunately, it doesn't.
  */
 static AutoVacOpts *
 extract_autovac_opts(HeapTuple tup, TupleDesc pg_class_desc)
@@ -2745,6 +2797,7 @@ extract_autovac_opts(HeapTuple tup, TupleDesc pg_class_desc)
 
 	Assert(((Form_pg_class) GETSTRUCT(tup))->relkind == RELKIND_RELATION ||
 		   ((Form_pg_class) GETSTRUCT(tup))->relkind == RELKIND_MATVIEW ||
+		   ((Form_pg_class) GETSTRUCT(tup))->relkind == RELKIND_PARTITIONED_TABLE ||
 		   ((Form_pg_class) GETSTRUCT(tup))->relkind == RELKIND_TOASTVALUE);
 
 	relopts = extractRelOptions(tup, pg_class_desc, NULL);

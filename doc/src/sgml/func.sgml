@@ -1568,7 +1568,10 @@ repeat('Pg', 4) <returnvalue>PgPgPgPg</returnvalue>
         <returnvalue>double precision</returnvalue>
        </para>
        <para>
-        Rounds to nearest integer
+        Rounds to nearest integer.  For <type>numeric</type>, ties are
+        broken by rounding away from zero.  For <type>double precision</type>,
+        the tie-breaking behavior is platform dependent, but
+        <quote>round to nearest even</quote> is the most common rule.
        </para>
        <para>
         <literal>round(42.4)</literal>
@@ -1583,7 +1586,7 @@ repeat('Pg', 4) <returnvalue>PgPgPgPg</returnvalue>
        </para>
        <para>
         Rounds <parameter>v</parameter> to <parameter>s</parameter> decimal
-        places
+        places.  Ties are broken by rounding away from zero.
        </para>
        <para>
         <literal>round(42.4382, 2)</literal>
@@ -3560,7 +3563,7 @@ repeat('Pg', 4) <returnvalue>PgPgPgPg</returnvalue>
         <returnvalue>text</returnvalue>
        </para>
        <para>
-        Evaluate escaped Unicode characters in argument.  Unicode characters
+        Evaluate escaped Unicode characters in the argument.  Unicode characters
         can be specified as
         <literal>\<replaceable>XXXX</replaceable></literal> (4 hexadecimal
         digits), <literal>\+<replaceable>XXXXXX</replaceable></literal> (6
@@ -7536,7 +7539,8 @@ SELECT regexp_match('abc01234xyz', '(?:(.*?)(\d+)(.*)){1,1}');
        </row>
        <row>
         <entry><literal>J</literal></entry>
-        <entry>Julian Day (integer days since November 24, 4714 BC at midnight UTC)</entry>
+        <entry>Julian Date (integer days since November 24, 4714 BC at local
+        midnight; see <xref linkend="datetime-julian-dates"/>)</entry>
        </row>
        <row>
         <entry><literal>Q</literal></entry>
@@ -9607,6 +9611,25 @@ SELECT EXTRACT(ISOYEAR FROM DATE '2006-01-02');
      </varlistentry>
 
      <varlistentry>
+      <term><literal>julian</literal></term>
+      <listitem>
+       <para>
+        The <firstterm>Julian Date</firstterm> corresponding to the
+        date or timestamp (not applicable to intervals).  Timestamps
+        that are not local midnight result in a fractional value.  See
+        <xref linkend="datetime-julian-dates"/> for more information.
+       </para>
+
+<screen>
+SELECT EXTRACT(JULIAN FROM DATE '2006-01-01');
+<lineannotation>Result: </lineannotation><computeroutput>2453737</computeroutput>
+SELECT EXTRACT(JULIAN FROM TIMESTAMP '2006-01-01 12:00');
+<lineannotation>Result: </lineannotation><computeroutput>2453737.50000000000000000000</computeroutput>
+</screen>
+      </listitem>
+     </varlistentry>
+
+     <varlistentry>
       <term><literal>microseconds</literal></term>
       <listitem>
        <para>
@@ -9942,6 +9965,20 @@ SELECT date_trunc('hour', INTERVAL '3 days 02:47:33');
    </para>
 
    <para>
+<synopsis>
+date_bin(<replaceable>stride</replaceable>, <replaceable>source</replaceable>, <replaceable>origin</replaceable>)
+</synopsis>
+    <replaceable>source</replaceable> is a value expression of type
+    <type>timestamp</type> or <type>timestamp with time zone</type>.  (Values
+    of type <type>date</type> are cast automatically to
+    <type>timestamp</type>.)  <replaceable>stride</replaceable> is a value
+    expression of type <type>interval</type>.  The return value is likewise
+    of type <type>timestamp</type> or <type>timestamp with time zone</type>,
+    and it marks the beginning of the bin into which the
+    <replaceable>source</replaceable> is placed.
+   </para>
+
+   <para>
     Examples:
 <screen>
 SELECT date_bin('15 minutes', TIMESTAMP '2020-02-11 15:44:17', TIMESTAMP '2001-01-01');
@@ -9956,6 +9993,10 @@ SELECT date_bin('15 minutes', TIMESTAMP '2020-02-11 15:44:17', TIMESTAMP '2001-0
     In the case of full units (1 minute, 1 hour, etc.), it gives the same result as
     the analogous <function>date_trunc</function> call, but the difference is
     that <function>date_bin</function> can truncate to an arbitrary interval.
+   </para>
+
+   <para>
+    Negative intervals are allowed and are treated the same as positive intervals.
    </para>
 
    <para>
@@ -24926,12 +24967,12 @@ SELECT collation for ('foo' COLLATE "de_DE");
         <returnvalue>boolean</returnvalue>
        </para>
        <para>
-        Requests to log the memory contexts whose backend process has
-        the specified process ID.  These memory contexts will be logged at
+        Requests to log the memory contexts of the backend with the
+        specified process ID.  These memory contexts will be logged at
         <literal>LOG</literal> message level. They will appear in
         the server log based on the log configuration set
         (See <xref linkend="runtime-config-logging"/> for more information),
-        but will not be sent to the client whatever the setting of
+        but will not be sent to the client regardless of
         <xref linkend="guc-client-min-messages"/>.
         Only superusers can request to log the memory contexts.
        </para></entry>
@@ -24977,7 +25018,7 @@ SELECT collation for ('foo' COLLATE "de_DE");
         <indexterm>
          <primary>pg_terminate_backend</primary>
         </indexterm>
-        <function>pg_terminate_backend</function> ( <parameter>pid</parameter> <type>integer</type> )
+        <function>pg_terminate_backend</function> ( <parameter>pid</parameter> <type>integer</type>, <parameter>timeout</parameter> <type>bigint</type> <literal>DEFAULT</literal> <literal>0</literal> )
         <returnvalue>boolean</returnvalue>
        </para>
        <para>
@@ -24986,6 +25027,34 @@ SELECT collation for ('foo' COLLATE "de_DE");
         is a member of the role whose backend is being terminated or the
         calling role has been granted <literal>pg_signal_backend</literal>,
         however only superusers can terminate superuser backends.
+       </para>
+       <para>
+        If <parameter>timeout</parameter> is not specified or zero, this
+        function returns <literal>true</literal> whether the process actually
+        terminates or not, indicating only that the sending of the signal was
+        successful.  If the <parameter>timeout</parameter> is specified (in
+        milliseconds) and greater than zero, the function waits until the
+        process is actually terminated or until the given time has passed. If
+        the process is terminated, the function
+        returns <literal>true</literal>.  On timeout a warning is emitted and
+        <literal>false</literal> is returned.
+       </para></entry>
+      </row>
+
+      <row>
+       <entry role="func_table_entry"><para role="func_signature">
+        <indexterm>
+         <primary>pg_wait_for_backend_termination</primary>
+        </indexterm>
+        <function>pg_wait_for_backend_termination</function> ( <parameter>pid</parameter> <type>integer</type>, <parameter>timeout</parameter> <type>bigint</type> <literal>DEFAULT</literal> <literal>5000</literal> )
+        <returnvalue>boolean</returnvalue>
+       </para>
+       <para>
+        Waits for the backend process with the specified Process ID to
+        terminate.  If the process terminates before
+        the <parameter>timeout</parameter> (in milliseconds)
+        expires, <literal>true</literal> is returned.  On timeout, a warning
+        is emitted and <literal>false</literal> is returned.
        </para></entry>
       </row>
      </tbody>
@@ -25009,7 +25078,7 @@ SELECT collation for ('foo' COLLATE "de_DE");
 
    <para>
     <function>pg_log_backend_memory_contexts</function> can be used
-    to log the memory contexts of the backend process. For example,
+    to log the memory contexts of a backend process. For example:
 <programlisting>
 postgres=# SELECT pg_log_backend_memory_contexts(pg_backend_pid());
  pg_log_backend_memory_contexts 
@@ -25033,8 +25102,8 @@ LOG:  level: 1; TransactionAbortContext: 32768 total in 1 blocks; 32504 free (0 
 LOG:  level: 1; ErrorContext: 8192 total in 1 blocks; 7928 free (3 chunks); 264 used
 LOG:  Grand total: 1651920 bytes in 201 blocks; 622360 free (88 chunks); 1029560 used
 </screen>
-    For more than 100 child contexts under the same parent one,
-    100 child contexts and a summary of the remaining ones will be logged.
+    If there are more than 100 child contexts under the same parent, the first
+    100 child contexts are logged, along with a summary of the remaining contexts.
     Note that frequent calls to this function could incur significant overhead,
     because it may generate a large number of log messages.
    </para>
@@ -25548,7 +25617,7 @@ postgres=# SELECT * FROM pg_walfile_name_offset(pg_stop_backup());
         Returns recovery pause state.  The return values are <literal>
         not paused</literal> if pause is not requested, <literal>
         pause requested</literal> if pause is requested but recovery is
-        not yet paused and, <literal>paused</literal> if the recovery is
+        not yet paused, and <literal>paused</literal> if the recovery is
         actually paused.
        </para></entry>
       </row>

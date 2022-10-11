@@ -127,11 +127,18 @@ echo '\x \\ SELECT * FROM foo;' | psql
        commands included in the string to divide it into multiple
        transactions.  (See <xref linkend="protocol-flow-multi-statement"/>
        for more details about how the server handles multi-query strings.)
+       Also, <application>psql</application> only prints the
+       result of the last <acronym>SQL</acronym> command in the string.
+       This is different from the behavior when the same string is read from
+       a file or fed to <application>psql</application>'s standard input,
+       because then <application>psql</application> sends
+       each <acronym>SQL</acronym> command separately.
       </para>
       <para>
-       If having several commands executed in one transaction is not desired, 
-       use repeated <option>-c</option> commands or feed multiple commands to
-       <application>psql</application>'s standard input,
+       Because of this behavior, putting more than one SQL command in a
+       single <option>-c</option> string often has unexpected results.
+       It's better to use repeated <option>-c</option> commands or feed
+       multiple commands to <application>psql</application>'s standard input,
        either using <application>echo</application> as illustrated above, or
        via a shell here-document, for example:
 <programlisting>
@@ -1567,7 +1574,7 @@ testdb=&gt;
 
 
       <varlistentry>
-        <term><literal>\df[anptwS+] [ <link linkend="app-psql-patterns"><replaceable class="parameter">pattern</replaceable></link> ]</literal></term>
+        <term><literal>\df[anptwS+] [ <link linkend="app-psql-patterns"><replaceable class="parameter">pattern</replaceable></link> [ <replaceable class="parameter">arg_pattern</replaceable> ... ] ]</literal></term>
 
         <listitem>
         <para>
@@ -1580,6 +1587,11 @@ testdb=&gt;
         If <replaceable
         class="parameter">pattern</replaceable> is specified, only
         functions whose names match the pattern are shown.
+        Any additional arguments are type-name patterns, which are matched
+        to the type names of the first, second, and so on arguments of the
+        function.  (Matching functions can have more arguments than what
+        you specify.  To prevent that, write a dash <literal>-</literal> as
+        the last <replaceable class="parameter">arg_pattern</replaceable>.)
         By default, only user-created
         objects are shown; supply a pattern or the <literal>S</literal>
         modifier to include system objects.
@@ -1588,14 +1600,6 @@ testdb=&gt;
         parallel safety, owner, security classification, access privileges,
         language, source code and description.
         </para>
-
-        <tip>
-        <para>
-        To look up functions taking arguments or returning values of a specific
-        data type, use your pager's search capability to scroll through the
-        <literal>\df</literal> output.
-        </para>
-        </tip>
 
         </listitem>
       </varlistentry>
@@ -1721,12 +1725,19 @@ testdb=&gt;
 
 
       <varlistentry>
-        <term><literal>\do[S+] [ <link linkend="app-psql-patterns"><replaceable class="parameter">pattern</replaceable></link> ]</literal></term>
+        <term><literal>\do[S+] [ <link linkend="app-psql-patterns"><replaceable class="parameter">pattern</replaceable></link> [ <replaceable class="parameter">arg_pattern</replaceable> [ <replaceable class="parameter">arg_pattern</replaceable> ] ] ]</literal></term>
         <listitem>
         <para>
         Lists operators with their operand and result types.
         If <replaceable class="parameter">pattern</replaceable> is
         specified, only operators whose names match the pattern are listed.
+        If one <replaceable class="parameter">arg_pattern</replaceable> is
+        specified, only prefix operators whose right argument's type name
+        matches that pattern are listed.
+        If two <replaceable class="parameter">arg_pattern</replaceable>s
+        are specified, only binary operators whose argument type names match
+        those patterns are listed.  (Alternatively, write <literal>-</literal>
+        for the unused argument of a unary operator.)
         By default, only user-created objects are shown; supply a
         pattern or the <literal>S</literal> modifier to include system
         objects.
@@ -1923,9 +1934,10 @@ testdb=&gt;
         </para>
 
         <para>
-        The column of the kind of extended stats (e.g. Ndistinct) shows its status.
-        NULL means that it doesn't exists. "defined" means that it was requested
-        when creating the statistics.
+        The status of each kind of extended statistics is shown in a column
+        named after its statistic kind (e.g. Ndistinct).
+        "defined" means that it was requested when creating the statistics,
+        and NULL means it wasn't requested.
         You can use pg_stats_ext if you'd like to know whether <link linkend="sql-analyze">
         <command>ANALYZE</command></link> was run and statistics are available to the
         planner.
@@ -3520,6 +3532,10 @@ select 1\; select 2\; select 3;
         commands included in the string to divide it into multiple
         transactions.  (See <xref linkend="protocol-flow-multi-statement"/>
         for more details about how the server handles multi-query strings.)
+        <application>psql</application> prints only the last query result
+        it receives for each request; in this example, although all
+        three <command>SELECT</command>s are indeed executed, <application>psql</application>
+        only prints the <literal>3</literal>.
         </para>
         </listitem>
       </varlistentry>
@@ -3910,7 +3926,7 @@ bar
         or <filename>%APPDATA%\postgresql\psql_history</filename> on Windows.
         For example, putting:
 <programlisting>
-\set HISTFILE ~/.psql_history- :DBNAME
+\set HISTFILE ~/.psql_history-:DBNAME
 </programlisting>
         in <filename>~/.psqlrc</filename> will cause
         <application>psql</application> to maintain a separate history for
@@ -4106,18 +4122,6 @@ bar
       </varlistentry>
 
       <varlistentry>
-        <term><varname>SHOW_ALL_RESULTS</varname></term>
-        <listitem>
-        <para>
-        When this variable is set to <literal>off</literal>, only the last
-        result of a combined query (<literal>\;</literal>) is shown instead of
-        all of them.  The default is <literal>on</literal>.  The off behavior
-        is for compatibility with older versions of psql.
-        </para>
-        </listitem>
-      </varlistentry>
-
-       <varlistentry>
         <term><varname>SHOW_CONTEXT</varname></term>
         <listitem>
         <para>
@@ -4983,6 +4987,22 @@ second | three
 -[ RECORD 4 ]-
 first  | 4
 second | four
+</programlisting>
+  </para>
+
+  <para>
+   Here is an example of using the <command>\df</command> command to
+   find only functions with names matching <literal>int*pl</literal>
+   and whose second argument is of type <type>bigint</type>:
+<programlisting>
+testdb=&gt; <userinput>\df int*pl * bigint</userinput>
+                          List of functions
+   Schema   |  Name   | Result data type | Argument data types | Type
+------------+---------+------------------+---------------------+------
+ pg_catalog | int28pl | bigint           | smallint, bigint    | func
+ pg_catalog | int48pl | bigint           | integer, bigint     | func
+ pg_catalog | int8pl  | bigint           | bigint, bigint      | func
+(3 rows)
 </programlisting>
   </para>
 

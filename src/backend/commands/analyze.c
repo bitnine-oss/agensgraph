@@ -612,12 +612,12 @@ do_analyze_rel(Relation onerel, VacuumParams *params,
 								 PROGRESS_ANALYZE_PHASE_FINALIZE_ANALYZE);
 
 	/*
-	 * Update pages/tuples stats in pg_class, and report ANALYZE to the stats
-	 * collector ... but not if we're doing inherited stats.
+	 * Update pages/tuples stats in pg_class ... but not if we're doing
+	 * inherited stats.
 	 *
 	 * We assume that VACUUM hasn't set pg_class.reltuples already, even
 	 * during a VACUUM ANALYZE.  Although VACUUM often updates pg_class,
-	 * exceptions exists.  A "VACUUM (ANALYZE, INDEX_CLEANUP OFF)" command
+	 * exceptions exist.  A "VACUUM (ANALYZE, INDEX_CLEANUP OFF)" command
 	 * will never update pg_class entries for index relations.  It's also
 	 * possible that an individual index's pg_class entry won't be updated
 	 * during VACUUM if the index AM returns NULL from its amvacuumcleanup()
@@ -655,19 +655,47 @@ do_analyze_rel(Relation onerel, VacuumParams *params,
 								InvalidMultiXactId,
 								in_outer_xact);
 		}
-
+	}
+	else if (onerel->rd_rel->relkind == RELKIND_PARTITIONED_TABLE)
+	{
 		/*
-		 * Now report ANALYZE to the stats collector.
-		 *
-		 * We deliberately don't report to the stats collector when doing
-		 * inherited stats, because the stats collector only tracks per-table
-		 * stats.
-		 *
-		 * Reset the changes_since_analyze counter only if we analyzed all
-		 * columns; otherwise, there is still work for auto-analyze to do.
+		 * Partitioned tables don't have storage, so we don't set any fields in
+		 * their pg_class entries except for reltuples, which is necessary for
+		 * auto-analyze to work properly.
 		 */
+		vac_update_relstats(onerel, -1, totalrows,
+							0, false, InvalidTransactionId,
+							InvalidMultiXactId,
+							in_outer_xact);
+	}
+
+	/*
+	 * Now report ANALYZE to the stats collector.  For regular tables, we do
+	 * it only if not doing inherited stats.  For partitioned tables, we only
+	 * do it for inherited stats. (We're never called for not-inherited stats
+	 * on partitioned tables anyway.)
+	 *
+	 * Reset the changes_since_analyze counter only if we analyzed all
+	 * columns; otherwise, there is still work for auto-analyze to do.
+	 */
+	if (!inh || onerel->rd_rel->relkind == RELKIND_PARTITIONED_TABLE)
 		pgstat_report_analyze(onerel, totalrows, totaldeadrows,
 							  (va_cols == NIL));
+
+	/*
+	 * If this is a manual analyze of all columns of a permanent leaf
+	 * partition, and not doing inherited stats, also let the collector know
+	 * about the ancestor tables of this partition.  Autovacuum does the
+	 * equivalent of this at the start of its run, so there's no reason to do
+	 * it there.
+	 */
+	if (!inh && !IsAutoVacuumWorkerProcess() &&
+		(va_cols == NIL) &&
+		onerel->rd_rel->relispartition &&
+		onerel->rd_rel->relkind == RELKIND_RELATION &&
+		onerel->rd_rel->relpersistence == RELPERSISTENCE_PERMANENT)
+	{
+		pgstat_report_anl_ancestors(RelationGetRelid(onerel));
 	}
 
 	/*

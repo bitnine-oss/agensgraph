@@ -460,7 +460,7 @@ AddForeignUpdateTargets(PlannerInfo *root,
      for a whole-row <structname>Var</structname> marked with
      <structfield>vartype</structfield> = <type>RECORD</type>,
      and <literal>wholerow<replaceable>N</replaceable></literal>
-     for a whole-row <structname>Var</structname> with 
+     for a whole-row <structname>Var</structname> with
      <structfield>vartype</structfield> equal to the table's declared rowtype.
      Re-use these names when you can (the planner will combine duplicate
      requests for identical junk columns).  If you need another kind of
@@ -1065,6 +1065,61 @@ EndDirectModify(ForeignScanState *node);
 
    </sect2>
 
+   <sect2 id="fdw-callbacks-truncate">
+    <title>FDW Routines for <command>TRUNCATE</command></title>
+
+    <para>
+<programlisting>
+void
+ExecForeignTruncate(List *rels,
+                    DropBehavior behavior,
+                    bool restart_seqs);
+</programlisting>
+
+     Truncate foreign tables.  This function is called when
+     <xref linkend="sql-truncate"/> is executed on a foreign table.
+     <literal>rels</literal> is a list of <structname>Relation</structname>
+     data structures of foreign tables to truncate.
+    </para>
+
+    <para>
+     <literal>behavior</literal> is either <literal>DROP_RESTRICT</literal>
+     or <literal>DROP_CASCADE</literal> indicating that the
+     <literal>RESTRICT</literal> or <literal>CASCADE</literal> option was
+     requested in the original <command>TRUNCATE</command> command,
+     respectively.
+    </para>
+    
+    <para>
+     If <literal>restart_seqs</literal> is <literal>true</literal>,
+     the original <command>TRUNCATE</command> command requested the
+     <literal>RESTART IDENTITY</literal> behavior, otherwise the
+     <literal>CONTINUE IDENTITY</literal> behavior was requested.
+    </para>
+
+    <para>
+     Note that the <literal>ONLY</literal> options specified
+     in the original <command>TRUNCATE</command> command are not passed to
+     <function>ExecForeignTruncate</function>.  This behavior is similar to
+     the callback functions of <command>SELECT</command>,
+     <command>UPDATE</command> and <command>DELETE</command> on
+     a foreign table.
+    </para>
+
+    <para>
+     <function>ExecForeignTruncate</function> is invoked once per
+     foreign server for which foreign tables are to be truncated.
+     This means that all foreign tables included in <literal>rels</literal>
+     must belong to the same server.
+    </para>
+
+    <para>
+     If the <function>ExecForeignTruncate</function> pointer is set to
+     <literal>NULL</literal>, attempts to truncate foreign tables will
+     fail with an error message.
+    </para>
+   </sect2>
+
    <sect2 id="fdw-callbacks-row-locking">
     <title>FDW Routines for Row Locking</title>
 
@@ -1555,7 +1610,7 @@ ForeignAsyncRequest(AsyncRequest *areq);
 void
 ForeignAsyncConfigureWait(AsyncRequest *areq);
 </programlisting>
-     Configure a file descriptor event for which the 
+     Configure a file descriptor event for which the
      <structname>ForeignScan</structname> node wishes to wait.
      This function will only be called when the
      <structname>ForeignScan</structname> node has the

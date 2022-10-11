@@ -838,10 +838,12 @@ exprCollation(const Node *expr)
 			coll = ((const NullIfExpr *) expr)->opcollid;
 			break;
 		case T_ScalarArrayOpExpr:
-			coll = InvalidOid;	/* result is always boolean */
+			/* ScalarArrayOpExpr's result is boolean ... */
+			coll = InvalidOid;	/* ... so it has no collation */
 			break;
 		case T_BoolExpr:
-			coll = InvalidOid;	/* result is always boolean */
+			/* BoolExpr's result is boolean ... */
+			coll = InvalidOid;	/* ... so it has no collation */
 			break;
 		case T_SubLink:
 			{
@@ -863,8 +865,8 @@ exprCollation(const Node *expr)
 				}
 				else
 				{
-					/* otherwise, result is RECORD or BOOLEAN */
-					coll = InvalidOid;
+					/* otherwise, SubLink's result is RECORD or BOOLEAN */
+					coll = InvalidOid;	/* ... so it has no collation */
 				}
 			}
 			break;
@@ -881,8 +883,8 @@ exprCollation(const Node *expr)
 				}
 				else
 				{
-					/* otherwise, result is RECORD or BOOLEAN */
-					coll = InvalidOid;
+					/* otherwise, SubPlan's result is RECORD or BOOLEAN */
+					coll = InvalidOid;	/* ... so it has no collation */
 				}
 			}
 			break;
@@ -898,7 +900,8 @@ exprCollation(const Node *expr)
 			coll = ((const FieldSelect *) expr)->resultcollid;
 			break;
 		case T_FieldStore:
-			coll = InvalidOid;	/* result is always composite */
+			/* FieldStore's result is composite ... */
+			coll = InvalidOid;	/* ... so it has no collation */
 			break;
 		case T_RelabelType:
 			coll = ((const RelabelType *) expr)->resultcollid;
@@ -910,7 +913,8 @@ exprCollation(const Node *expr)
 			coll = ((const ArrayCoerceExpr *) expr)->resultcollid;
 			break;
 		case T_ConvertRowtypeExpr:
-			coll = InvalidOid;	/* result is always composite */
+			/* ConvertRowtypeExpr's result is composite ... */
+			coll = InvalidOid;	/* ... so it has no collation */
 			break;
 		case T_CollateExpr:
 			coll = ((const CollateExpr *) expr)->collOid;
@@ -925,10 +929,12 @@ exprCollation(const Node *expr)
 			coll = ((const ArrayExpr *) expr)->array_collid;
 			break;
 		case T_RowExpr:
-			coll = InvalidOid;	/* result is always composite */
+			/* RowExpr's result is composite ... */
+			coll = InvalidOid;	/* ... so it has no collation */
 			break;
 		case T_RowCompareExpr:
-			coll = InvalidOid;	/* result is always boolean */
+			/* RowCompareExpr's result is boolean ... */
+			coll = InvalidOid;	/* ... so it has no collation */
 			break;
 		case T_CoalesceExpr:
 			coll = ((const CoalesceExpr *) expr)->coalescecollid;
@@ -956,10 +962,12 @@ exprCollation(const Node *expr)
 				coll = InvalidOid;
 			break;
 		case T_NullTest:
-			coll = InvalidOid;	/* result is always boolean */
+			/* NullTest's result is boolean ... */
+			coll = InvalidOid;	/* ... so it has no collation */
 			break;
 		case T_BooleanTest:
-			coll = InvalidOid;	/* result is always boolean */
+			/* BooleanTest's result is boolean ... */
+			coll = InvalidOid;	/* ... so it has no collation */
 			break;
 		case T_CoerceToDomain:
 			coll = ((const CoerceToDomain *) expr)->resultcollid;
@@ -971,10 +979,12 @@ exprCollation(const Node *expr)
 			coll = ((const SetToDefault *) expr)->collation;
 			break;
 		case T_CurrentOfExpr:
-			coll = InvalidOid;	/* result is always boolean */
+			/* CurrentOfExpr's result is boolean ... */
+			coll = InvalidOid;	/* ... so it has no collation */
 			break;
 		case T_NextValueExpr:
-			coll = InvalidOid;	/* result is always an integer type */
+			/* NextValueExpr's result is an integer type ... */
+			coll = InvalidOid;	/* ... so it has no collation */
 			break;
 		case T_InferenceElem:
 			coll = exprCollation((Node *) ((const InferenceElem *) expr)->expr);
@@ -1104,10 +1114,12 @@ exprSetCollation(Node *expr, Oid collation)
 			((NullIfExpr *) expr)->opcollid = collation;
 			break;
 		case T_ScalarArrayOpExpr:
-			Assert(!OidIsValid(collation)); /* result is always boolean */
+			/* ScalarArrayOpExpr's result is boolean ... */
+			Assert(!OidIsValid(collation)); /* ... so never set a collation */
 			break;
 		case T_BoolExpr:
-			Assert(!OidIsValid(collation)); /* result is always boolean */
+			/* BoolExpr's result is boolean ... */
+			Assert(!OidIsValid(collation)); /* ... so never set a collation */
 			break;
 		case T_SubLink:
 #ifdef USE_ASSERT_CHECKING
@@ -1139,7 +1151,8 @@ exprSetCollation(Node *expr, Oid collation)
 			((FieldSelect *) expr)->resultcollid = collation;
 			break;
 		case T_FieldStore:
-			Assert(!OidIsValid(collation)); /* result is always composite */
+			/* FieldStore's result is composite ... */
+			Assert(!OidIsValid(collation)); /* ... so never set a collation */
 			break;
 		case T_RelabelType:
 			((RelabelType *) expr)->resultcollid = collation;
@@ -1151,7 +1164,8 @@ exprSetCollation(Node *expr, Oid collation)
 			((ArrayCoerceExpr *) expr)->resultcollid = collation;
 			break;
 		case T_ConvertRowtypeExpr:
-			Assert(!OidIsValid(collation)); /* result is always composite */
+			/* ConvertRowtypeExpr's result is composite ... */
+			Assert(!OidIsValid(collation)); /* ... so never set a collation */
 			break;
 		case T_CaseExpr:
 			((CaseExpr *) expr)->casecollid = collation;
@@ -1160,10 +1174,12 @@ exprSetCollation(Node *expr, Oid collation)
 			((ArrayExpr *) expr)->array_collid = collation;
 			break;
 		case T_RowExpr:
-			Assert(!OidIsValid(collation)); /* result is always composite */
+			/* RowExpr's result is composite ... */
+			Assert(!OidIsValid(collation)); /* ... so never set a collation */
 			break;
 		case T_RowCompareExpr:
-			Assert(!OidIsValid(collation)); /* result is always boolean */
+			/* RowCompareExpr's result is boolean ... */
+			Assert(!OidIsValid(collation)); /* ... so never set a collation */
 			break;
 		case T_CoalesceExpr:
 			((CoalesceExpr *) expr)->coalescecollid = collation;
@@ -1182,10 +1198,12 @@ exprSetCollation(Node *expr, Oid collation)
 				   (collation == InvalidOid));
 			break;
 		case T_NullTest:
-			Assert(!OidIsValid(collation)); /* result is always boolean */
+			/* NullTest's result is boolean ... */
+			Assert(!OidIsValid(collation)); /* ... so never set a collation */
 			break;
 		case T_BooleanTest:
-			Assert(!OidIsValid(collation)); /* result is always boolean */
+			/* BooleanTest's result is boolean ... */
+			Assert(!OidIsValid(collation)); /* ... so never set a collation */
 			break;
 		case T_CoerceToDomain:
 			((CoerceToDomain *) expr)->resultcollid = collation;
@@ -1197,11 +1215,12 @@ exprSetCollation(Node *expr, Oid collation)
 			((SetToDefault *) expr)->collation = collation;
 			break;
 		case T_CurrentOfExpr:
-			Assert(!OidIsValid(collation)); /* result is always boolean */
+			/* CurrentOfExpr's result is boolean ... */
+			Assert(!OidIsValid(collation)); /* ... so never set a collation */
 			break;
 		case T_NextValueExpr:
-			Assert(!OidIsValid(collation)); /* result is always an integer
-											 * type */
+			/* NextValueExpr's result is an integer type ... */
+			Assert(!OidIsValid(collation)); /* ... so never set a collation */
 			break;
 		case T_CypherTypeCast:
 			/* XXX: Don't care for now */
@@ -2477,6 +2496,13 @@ expression_tree_walker(Node *node,
 					}
 				}
 			}
+			break;
+		case T_GraphDelElem:
+		{
+			GraphDelElem *graphDelElem = (GraphDelElem *) node;
+			if (walker(graphDelElem->elem, context))
+				return true;
+		}
 			break;
 		default:
 			elog(ERROR, "unrecognized node type: %d",

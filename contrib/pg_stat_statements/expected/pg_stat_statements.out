@@ -50,28 +50,8 @@ BEGIN \;
 SELECT 2.0 AS "float" \;
 SELECT 'world' AS "text" \;
 COMMIT;
- float 
--------
-   2.0
-(1 row)
-
- text  
--------
- world
-(1 row)
-
 -- compound with empty statements and spurious leading spacing
 \;\;   SELECT 3 + 3 \;\;\;   SELECT ' ' || ' !' \;\;   SELECT 1 + 4 \;;
- ?column? 
-----------
-        6
-(1 row)
-
- ?column? 
-----------
-   !
-(1 row)
-
  ?column? 
 ----------
         5
@@ -81,11 +61,6 @@ COMMIT;
 SELECT 1 + 1 + 1 AS "add" \gset
 SELECT :add + 1 + 1 AS "add" \;
 SELECT :add + 1 + 1 AS "add" \gset
- add 
------
-   5
-(1 row)
-
 -- set operator
 SELECT 1 AS i UNION SELECT 2 ORDER BY i;
  i 
@@ -900,5 +875,45 @@ SELECT dealloc FROM pg_stat_statements_info;
 ---------
        0
 (1 row)
+
+--
+-- top level handling
+--
+SET pg_stat_statements.track = 'top';
+DELETE FROM test;
+DO $$
+BEGIN
+    DELETE FROM test;
+END;
+$$ LANGUAGE plpgsql;
+SELECT query, toplevel, plans, calls FROM pg_stat_statements WHERE query LIKE '%DELETE%' ORDER BY query COLLATE "C", toplevel;
+         query         | toplevel | plans | calls 
+-----------------------+----------+-------+-------
+ DELETE FROM test      | t        |     1 |     1
+ DO $$                +| t        |     0 |     1
+ BEGIN                +|          |       | 
+     DELETE FROM test;+|          |       | 
+ END;                 +|          |       | 
+ $$ LANGUAGE plpgsql   |          |       | 
+(2 rows)
+
+SET pg_stat_statements.track = 'all';
+DELETE FROM test;
+DO $$
+BEGIN
+    DELETE FROM test;
+END;
+$$ LANGUAGE plpgsql;
+SELECT query, toplevel, plans, calls FROM pg_stat_statements WHERE query LIKE '%DELETE%' ORDER BY query COLLATE "C", toplevel;
+         query         | toplevel | plans | calls 
+-----------------------+----------+-------+-------
+ DELETE FROM test      | f        |     1 |     1
+ DELETE FROM test      | t        |     2 |     2
+ DO $$                +| t        |     0 |     2
+ BEGIN                +|          |       | 
+     DELETE FROM test;+|          |       | 
+ END;                 +|          |       | 
+ $$ LANGUAGE plpgsql   |          |       | 
+(3 rows)
 
 DROP EXTENSION pg_stat_statements;

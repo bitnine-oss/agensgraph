@@ -115,7 +115,7 @@ typedef struct
 
 /*
  * In sorted build, we use a stack of these structs, one for each level,
- * to hold an in-memory buffer of the righmost page at the level. When the
+ * to hold an in-memory buffer of the rightmost page at the level. When the
  * page fills up, it is written out and a new page is allocated.
  */
 typedef struct GistSortedBuildPageState
@@ -1212,7 +1212,7 @@ gistBufferingFindCorrectParent(GISTBuildState *buildstate,
 		 * number.
 		 */
 		if (*parentblkno == InvalidBlockNumber)
-			elog(ERROR, "no parent buffer provided of child %d", childblkno);
+			elog(ERROR, "no parent buffer provided of child %u", childblkno);
 		parent = *parentblkno;
 	}
 
@@ -1545,7 +1545,7 @@ gistGetParent(GISTBuildState *buildstate, BlockNumber child)
 										   HASH_FIND,
 										   &found);
 	if (!found)
-		elog(ERROR, "could not find parent of block %d in lookup table", child);
+		elog(ERROR, "could not find parent of block %u in lookup table", child);
 
 	return entry->parentblkno;
 }

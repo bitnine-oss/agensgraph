@@ -270,7 +270,7 @@
 
    <para>
     The <link linkend="app-pgchecksums"><application>pg_checksums</application></link>
-    application can be used to enable or disable data checksums, as well as 
+    application can be used to enable or disable data checksums, as well as
     verify checksums, on an offline cluster.
    </para>
 
@@ -783,7 +783,7 @@
    <function>issue_xlog_fsync</function> syncs WAL data to disk are counted as
    <literal>wal_write_time</literal> and <literal>wal_sync_time</literal> in
    <xref linkend="pg-stat-wal-view"/>, respectively.
-   <function>XLogWrite</function> is normally called by 
+   <function>XLogWrite</function> is normally called by
    <function>XLogInsertRecord</function> (when there is no space for the new
    record in WAL buffers), <function>XLogFlush</function> and the WAL writer,
    to write WAL buffers to disk and call <function>issue_xlog_fsync</function>.
@@ -797,11 +797,26 @@
    <literal>fsync</literal>, or <literal>fsync_writethrough</literal>,
    the write operation moves WAL buffers to kernel cache and
    <function>issue_xlog_fsync</function> syncs them to disk. Regardless
-   of the setting of <varname>track_wal_io_timing</varname>, the numbers
+   of the setting of <varname>track_wal_io_timing</varname>, the number
    of times <function>XLogWrite</function> writes and
    <function>issue_xlog_fsync</function> syncs WAL data to disk are also
    counted as <literal>wal_write</literal> and <literal>wal_sync</literal>
    in <structname>pg_stat_wal</structname>, respectively.
+  </para>
+
+  <para>
+   The <xref linkend="guc-recovery-prefetch"/> parameter can
+   be used to improve I/O performance during recovery by instructing
+   <productname>PostgreSQL</productname> to initiate reads
+   of disk blocks that will soon be needed but are not currently in
+   <productname>PostgreSQL</productname>'s buffer pool.
+   The <xref linkend="guc-maintenance-io-concurrency"/> and
+   <xref linkend="guc-wal-decode-buffer-size"/> settings limit prefetching
+   concurrency and distance, respectively.  The
+   prefetching mechanism is most likely to be effective on systems
+   with <varname>full_page_writes</varname> set to
+   <varname>off</varname> (where that is safe), and where the working
+   set is larger than RAM.  By default, prefetching in recovery is disabled.
   </para>
  </sect1>
 

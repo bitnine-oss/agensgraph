@@ -254,7 +254,7 @@ BuildRelationExtStatistics(Relation onerel, double totalrows,
  * that would require additional columns.
  *
  * See statext_compute_stattarget for details about how we compute statistics
- * target for a statistics objects (from the object target, attribute targets
+ * target for a statistics object (from the object target, attribute targets
  * and default statistics target).
  */
 int
@@ -358,7 +358,7 @@ statext_compute_stattarget(int stattarget, int nattrs, VacAttrStats **stats)
 	 */
 	for (i = 0; i < nattrs; i++)
 	{
-		/* keep the maximmum statistics target */
+		/* keep the maximum statistics target */
 		if (stats[i]->attr->attstattarget > stattarget)
 			stattarget = stats[i]->attr->attstattarget;
 	}
@@ -1609,7 +1609,7 @@ statext_is_compatible_clause(PlannerInfo *root, Node *clause, Index relid,
 
 	if (pg_class_aclcheck(rte->relid, userid, ACL_SELECT) != ACLCHECK_OK)
 	{
-		Bitmapset  *clause_attnums;
+		Bitmapset  *clause_attnums = NULL;
 
 		/* Don't have table privilege, must check individual columns */
 		if (*exprs != NIL)
@@ -2420,6 +2420,8 @@ statext_expressions_load(Oid stxoid, int idx)
 
 	/* Build a temporary HeapTuple control structure */
 	tmptup.t_len = HeapTupleHeaderGetDatumLength(td);
+	ItemPointerSetInvalid(&(tmptup.t_self));
+	tmptup.t_tableOid = InvalidOid;
 	tmptup.t_data = td;
 
 	tup = heap_copytuple(&tmptup);

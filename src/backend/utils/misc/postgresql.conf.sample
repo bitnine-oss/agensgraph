@@ -236,6 +236,12 @@
 #checkpoint_flush_after = 0		# measured in pages, 0 disables
 #checkpoint_warning = 30s		# 0 disables
 
+# - Prefetching during recovery -
+
+#wal_decode_buffer_size = 512kB		# lookahead window used for prefetching
+#recovery_prefetch = off		# prefetch pages referenced in the WAL?
+#recovery_prefetch_fpw = off		# even pages logged with full page?
+
 # - Archiving -
 
 #archive_mode = off		# enables archiving; off, on, or always
@@ -417,7 +423,6 @@
 #from_collapse_limit = 8
 #join_collapse_limit = 8		# 1 disables collapsing of explicit
 					# JOIN clauses
-#force_parallel_mode = off
 #jit = on				# allow JIT compilation
 #plan_cache_mode = auto			# auto, force_generic_plan or
 					# force_custom_plan
@@ -527,6 +532,11 @@
 #debug_print_rewritten = off
 #debug_print_plan = off
 #debug_pretty_print = on
+#log_autovacuum_min_duration = -1	# log autovacuum activity;
+					# -1 disables, 0 logs all actions and
+					# their durations, > 0 logs only
+					# actions running at least this number
+					# of milliseconds.
 #log_checkpoints = off
 #log_connections = off
 #log_disconnections = off
@@ -612,10 +622,6 @@
 
 #autovacuum = on			# Enable autovacuum subprocess?  'on'
 					# requires track_counts to also be on.
-#log_autovacuum_min_duration = -1	# -1 disables, 0 logs all actions and
-					# their durations, > 0 logs only
-					# actions running at least this number
-					# of milliseconds.
 #autovacuum_max_workers = 3		# max number of autovacuum subprocesses
 					# (change requires restart)
 #autovacuum_naptime = 1min		# time between autovacuum runs

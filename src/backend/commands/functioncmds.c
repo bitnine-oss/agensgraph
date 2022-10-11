@@ -852,7 +852,9 @@ static void
 interpret_AS_clause(Oid languageOid, const char *languageName,
 					char *funcname, List *as, Node *sql_body_in,
 					List *parameterTypes, List *inParameterNames,
-					char **prosrc_str_p, char **probin_str_p, Node **sql_body_out)
+					char **prosrc_str_p, char **probin_str_p,
+					Node **sql_body_out,
+					const char *queryString)
 {
 	if (!sql_body_in && !as)
 		ereport(ERROR,
@@ -929,6 +931,7 @@ interpret_AS_clause(Oid languageOid, const char *languageName,
 				Query	   *q;
 				ParseState *pstate = make_parsestate(NULL);
 
+				pstate->p_sourcetext = queryString;
 				sql_fn_parser_setup(pstate, pinfo);
 				q = transformStmt(pstate, stmt);
 				if (q->commandType == CMD_UTILITY)
@@ -947,6 +950,7 @@ interpret_AS_clause(Oid languageOid, const char *languageName,
 			Query	   *q;
 			ParseState *pstate = make_parsestate(NULL);
 
+			pstate->p_sourcetext = queryString;
 			sql_fn_parser_setup(pstate, pinfo);
 			q = transformStmt(pstate, sql_body_in);
 			if (q->commandType == CMD_UTILITY)
@@ -954,12 +958,22 @@ interpret_AS_clause(Oid languageOid, const char *languageName,
 						errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
 						errmsg("%s is not yet supported in unquoted SQL function body",
 							   GetCommandTagName(CreateCommandTag(q->utilityStmt))));
+			free_parsestate(pstate);
 
 			*sql_body_out = (Node *) q;
 		}
 
+		/*
+		 * We must put something in prosrc.  For the moment, just record an
+		 * empty string.  It might be useful to store the original text of the
+		 * CREATE FUNCTION statement --- but to make actual use of that in
+		 * error reports, we'd also have to adjust readfuncs.c to not throw
+		 * away node location fields when reading prosqlbody.
+		 */
+		*prosrc_str_p = pstrdup("");
+
+		/* But we definitely don't need probin. */
 		*probin_str_p = NULL;
-		*prosrc_str_p = NULL;
 	}
 	else
 	{
@@ -1115,7 +1129,7 @@ CreateFunction(ParseState *pstate, CreateFunctionStmt *stmt)
 	/*
 	 * Only superuser is allowed to create leakproof functions because
 	 * leakproof functions can see tuples which have not yet been filtered out
-	 * by security barrier views or row level security policies.
+	 * by security barrier views or row-level security policies.
 	 */
 	if (isLeakProof && !superuser())
 		ereport(ERROR,
@@ -1211,7 +1225,8 @@ CreateFunction(ParseState *pstate, CreateFunctionStmt *stmt)
 
 	interpret_AS_clause(languageOid, language, funcname, as_clause, stmt->sql_body,
 						parameterTypes_list, inParameterNames_list,
-						&prosrc_str, &probin_str, &prosqlbody);
+						&prosrc_str, &probin_str, &prosqlbody,
+						pstate->p_sourcetext);
 
 	/*
 	 * Set default values for COST and ROWS depending on other parameters;
