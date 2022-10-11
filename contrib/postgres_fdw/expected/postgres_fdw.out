@@ -9204,6 +9204,12 @@ WARNING:  there is no transaction in progress
 -- Change application_name of remote connection to special one
 -- so that we can easily terminate the connection later.
 ALTER SERVER loopback OPTIONS (application_name 'fdw_retry_check');
+-- If debug_invalidate_system_caches_always is active, it results in
+-- dropping remote connections after every transaction, making it
+-- impossible to test termination meaningfully.  So turn that off
+-- for this test.
+SET debug_invalidate_system_caches_always = 0;
+-- Make sure we have a remote connection.
 SELECT 1 FROM ft1 LIMIT 1;
  ?column? 
 ----------
@@ -9227,9 +9233,8 @@ SELECT 1 FROM ft1 LIMIT 1;
         1
 (1 row)
 
--- If the query detects the broken connection when starting new remote
--- subtransaction, it doesn't reestablish new connection and should fail.
--- The text of the error might vary across platforms, so don't show it.
+-- If we detect the broken connection when starting a new remote
+-- subtransaction, we should fail instead of establishing a new connection.
 -- Terminate the remote connection and wait for the termination to complete.
 SELECT pg_terminate_backend(pid, 180000) FROM pg_stat_activity
 	WHERE application_name = 'fdw_retry_check';
@@ -9239,11 +9244,13 @@ SELECT pg_terminate_backend(pid, 180000) FROM pg_stat_activity
 (1 row)
 
 SAVEPOINT s;
+-- The text of the error might vary across platforms, so only show SQLSTATE.
 \set VERBOSITY sqlstate
 SELECT 1 FROM ft1 LIMIT 1;    -- should fail
 ERROR:  08006
 \set VERBOSITY default
 COMMIT;
+RESET debug_invalidate_system_caches_always;
 -- =============================================================================
 -- test connection invalidation cases and postgres_fdw_get_connections function
 -- =============================================================================
@@ -10044,6 +10051,21 @@ SELECT * FROM async_pt t1 WHERE t1.b === 505 LIMIT 1;
                Filter: (t1_3.b === 505)
 (14 rows)
 
+EXPLAIN (ANALYZE, COSTS OFF, SUMMARY OFF, TIMING OFF)
+SELECT * FROM async_pt t1 WHERE t1.b === 505 LIMIT 1;
+                               QUERY PLAN                                
+-------------------------------------------------------------------------
+ Limit (actual rows=1 loops=1)
+   ->  Append (actual rows=1 loops=1)
+         ->  Async Foreign Scan on async_p1 t1_1 (actual rows=0 loops=1)
+               Filter: (b === 505)
+         ->  Async Foreign Scan on async_p2 t1_2 (actual rows=0 loops=1)
+               Filter: (b === 505)
+         ->  Seq Scan on async_p3 t1_3 (actual rows=1 loops=1)
+               Filter: (b === 505)
+               Rows Removed by Filter: 101
+(9 rows)
+
 SELECT * FROM async_pt t1 WHERE t1.b === 505 LIMIT 1;
   a   |  b  |  c   
 ------+-----+------
@@ -10125,18 +10147,87 @@ SELECT * FROM join_tbl ORDER BY a1;
 (3 rows)
 
 DELETE FROM join_tbl;
-RESET enable_mergejoin;
-RESET enable_hashjoin;
--- Clean up
-DROP TABLE async_pt;
-DROP TABLE base_tbl1;
-DROP TABLE base_tbl2;
-DROP TABLE result_tbl;
 DROP TABLE local_tbl;
 DROP FOREIGN TABLE remote_tbl;
 DROP FOREIGN TABLE insert_tbl;
 DROP TABLE base_tbl3;
 DROP TABLE base_tbl4;
+RESET enable_mergejoin;
+RESET enable_hashjoin;
+-- Test that UPDATE/DELETE with inherited target works with async_capable enabled
+EXPLAIN (VERBOSE, COSTS OFF)
+UPDATE async_pt SET c = c || c WHERE b = 0 RETURNING *;
+                                                QUERY PLAN                                                
+----------------------------------------------------------------------------------------------------------
+ Update on public.async_pt
+   Output: async_pt_1.a, async_pt_1.b, async_pt_1.c
+   Foreign Update on public.async_p1 async_pt_1
+   Foreign Update on public.async_p2 async_pt_2
+   Update on public.async_p3 async_pt_3
+   ->  Append
+         ->  Foreign Update on public.async_p1 async_pt_1
+               Remote SQL: UPDATE public.base_tbl1 SET c = (c || c) WHERE ((b = 0)) RETURNING a, b, c
+         ->  Foreign Update on public.async_p2 async_pt_2
+               Remote SQL: UPDATE public.base_tbl2 SET c = (c || c) WHERE ((b = 0)) RETURNING a, b, c
+         ->  Seq Scan on public.async_p3 async_pt_3
+               Output: (async_pt_3.c || async_pt_3.c), async_pt_3.tableoid, async_pt_3.ctid, NULL::record
+               Filter: (async_pt_3.b = 0)
+(13 rows)
+
+UPDATE async_pt SET c = c || c WHERE b = 0 RETURNING *;
+  a   | b |    c     
+------+---+----------
+ 1000 | 0 | 00000000
+ 2000 | 0 | 00000000
+ 3000 | 0 | 00000000
+(3 rows)
+
+EXPLAIN (VERBOSE, COSTS OFF)
+DELETE FROM async_pt WHERE b = 0 RETURNING *;
+                                        QUERY PLAN                                        
+------------------------------------------------------------------------------------------
+ Delete on public.async_pt
+   Output: async_pt_1.a, async_pt_1.b, async_pt_1.c
+   Foreign Delete on public.async_p1 async_pt_1
+   Foreign Delete on public.async_p2 async_pt_2
+   Delete on public.async_p3 async_pt_3
+   ->  Append
+         ->  Foreign Delete on public.async_p1 async_pt_1
+               Remote SQL: DELETE FROM public.base_tbl1 WHERE ((b = 0)) RETURNING a, b, c
+         ->  Foreign Delete on public.async_p2 async_pt_2
+               Remote SQL: DELETE FROM public.base_tbl2 WHERE ((b = 0)) RETURNING a, b, c
+         ->  Seq Scan on public.async_p3 async_pt_3
+               Output: async_pt_3.tableoid, async_pt_3.ctid
+               Filter: (async_pt_3.b = 0)
+(13 rows)
+
+DELETE FROM async_pt WHERE b = 0 RETURNING *;
+  a   | b |    c     
+------+---+----------
+ 1000 | 0 | 00000000
+ 2000 | 0 | 00000000
+ 3000 | 0 | 00000000
+(3 rows)
+
+-- Check EXPLAIN ANALYZE for a query that scans empty partitions asynchronously
+DELETE FROM async_p1;
+DELETE FROM async_p2;
+DELETE FROM async_p3;
+EXPLAIN (ANALYZE, COSTS OFF, SUMMARY OFF, TIMING OFF)
+SELECT * FROM async_pt;
+                               QUERY PLAN                                
+-------------------------------------------------------------------------
+ Append (actual rows=0 loops=1)
+   ->  Async Foreign Scan on async_p1 async_pt_1 (actual rows=0 loops=1)
+   ->  Async Foreign Scan on async_p2 async_pt_2 (actual rows=0 loops=1)
+   ->  Seq Scan on async_p3 async_pt_3 (actual rows=0 loops=1)
+(4 rows)
+
+-- Clean up
+DROP TABLE async_pt;
+DROP TABLE base_tbl1;
+DROP TABLE base_tbl2;
+DROP TABLE result_tbl;
 DROP TABLE join_tbl;
 ALTER SERVER loopback OPTIONS (DROP async_capable);
 ALTER SERVER loopback2 OPTIONS (DROP async_capable);

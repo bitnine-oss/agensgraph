@@ -170,7 +170,7 @@ ExplainQuery(ParseState *pstate, ExplainStmt *stmt,
 	ExplainState *es = NewExplainState();
 	TupOutputState *tstate;
 	JumbleState *jstate = NULL;
-	Query		*query;
+	Query	   *query;
 	List	   *rewritten;
 	ListCell   *lc;
 	bool		timing_set = false;
@@ -248,7 +248,7 @@ ExplainQuery(ParseState *pstate, ExplainStmt *stmt,
 	es->summary = (summary_set) ? es->summary : es->analyze;
 
 	query = castNode(Query, stmt->query);
-	if (compute_query_id)
+	if (IsQueryIdEnabled())
 		jstate = JumbleQuery(query, pstate->p_sourcetext);
 
 	if (post_parse_analyze_hook)
@@ -461,7 +461,7 @@ ExplainOneUtility(Node *utilityStmt, IntoClause *into, ExplainState *es,
 			else if (ctas->objtype == OBJECT_MATVIEW)
 				ExplainDummyGroup("CREATE MATERIALIZED VIEW", NULL, es);
 			else
-				elog(ERROR,	"unexpected object type: %d",
+				elog(ERROR, "unexpected object type: %d",
 					 (int) ctas->objtype);
 			return;
 		}
@@ -615,7 +615,7 @@ ExplainOnePlan(PlannedStmt *plannedstmt, IntoClause *into, ExplainState *es,
 
 	if (es->verbose && plannedstmt->queryId != UINT64CONST(0))
 	{
-		char	buf[MAXINT8LEN+1];
+		char		buf[MAXINT8LEN + 1];
 
 		pg_lltoa(plannedstmt->queryId, buf);
 		ExplainPropertyText("Query Identifier", buf, es);
@@ -3479,7 +3479,7 @@ show_hashagg_info(AggState *aggstate, ExplainState *es)
 			if (aggstate->hash_batches_used > 1)
 			{
 				appendStringInfo(es->str, "  Disk Usage: " UINT64_FORMAT "kB",
-					aggstate->hash_disk_used);
+								 aggstate->hash_disk_used);
 			}
 		}
 
@@ -3707,17 +3707,17 @@ show_buffer_usage(ExplainState *es, const BufferUsage *usage, bool planning)
 			{
 				appendStringInfoString(es->str, " shared");
 				if (usage->shared_blks_hit > 0)
-					appendStringInfo(es->str, " hit=%ld",
-									 usage->shared_blks_hit);
+					appendStringInfo(es->str, " hit=%lld",
+									 (long long) usage->shared_blks_hit);
 				if (usage->shared_blks_read > 0)
-					appendStringInfo(es->str, " read=%ld",
-									 usage->shared_blks_read);
+					appendStringInfo(es->str, " read=%lld",
+									 (long long) usage->shared_blks_read);
 				if (usage->shared_blks_dirtied > 0)
-					appendStringInfo(es->str, " dirtied=%ld",
-									 usage->shared_blks_dirtied);
+					appendStringInfo(es->str, " dirtied=%lld",
+									 (long long) usage->shared_blks_dirtied);
 				if (usage->shared_blks_written > 0)
-					appendStringInfo(es->str, " written=%ld",
-									 usage->shared_blks_written);
+					appendStringInfo(es->str, " written=%lld",
+									 (long long) usage->shared_blks_written);
 				if (has_local || has_temp)
 					appendStringInfoChar(es->str, ',');
 			}
@@ -3725,17 +3725,17 @@ show_buffer_usage(ExplainState *es, const BufferUsage *usage, bool planning)
 			{
 				appendStringInfoString(es->str, " local");
 				if (usage->local_blks_hit > 0)
-					appendStringInfo(es->str, " hit=%ld",
-									 usage->local_blks_hit);
+					appendStringInfo(es->str, " hit=%lld",
+									 (long long) usage->local_blks_hit);
 				if (usage->local_blks_read > 0)
-					appendStringInfo(es->str, " read=%ld",
-									 usage->local_blks_read);
+					appendStringInfo(es->str, " read=%lld",
+									 (long long) usage->local_blks_read);
 				if (usage->local_blks_dirtied > 0)
-					appendStringInfo(es->str, " dirtied=%ld",
-									 usage->local_blks_dirtied);
+					appendStringInfo(es->str, " dirtied=%lld",
+									 (long long) usage->local_blks_dirtied);
 				if (usage->local_blks_written > 0)
-					appendStringInfo(es->str, " written=%ld",
-									 usage->local_blks_written);
+					appendStringInfo(es->str, " written=%lld",
+									 (long long) usage->local_blks_written);
 				if (has_temp)
 					appendStringInfoChar(es->str, ',');
 			}
@@ -3743,11 +3743,11 @@ show_buffer_usage(ExplainState *es, const BufferUsage *usage, bool planning)
 			{
 				appendStringInfoString(es->str, " temp");
 				if (usage->temp_blks_read > 0)
-					appendStringInfo(es->str, " read=%ld",
-									 usage->temp_blks_read);
+					appendStringInfo(es->str, " read=%lld",
+									 (long long) usage->temp_blks_read);
 				if (usage->temp_blks_written > 0)
-					appendStringInfo(es->str, " written=%ld",
-									 usage->temp_blks_written);
+					appendStringInfo(es->str, " written=%lld",
+									 (long long) usage->temp_blks_written);
 			}
 			appendStringInfoChar(es->str, '\n');
 		}
@@ -3819,11 +3819,11 @@ show_wal_usage(ExplainState *es, const WalUsage *usage)
 			appendStringInfoString(es->str, "WAL:");
 
 			if (usage->wal_records > 0)
-				appendStringInfo(es->str, " records=%ld",
-								 usage->wal_records);
+				appendStringInfo(es->str, " records=%lld",
+								 (long long) usage->wal_records);
 			if (usage->wal_fpi > 0)
-				appendStringInfo(es->str, " fpi=%ld",
-								 usage->wal_fpi);
+				appendStringInfo(es->str, " fpi=%lld",
+								 (long long) usage->wal_fpi);
 			if (usage->wal_bytes > 0)
 				appendStringInfo(es->str, " bytes=" UINT64_FORMAT,
 								 usage->wal_bytes);

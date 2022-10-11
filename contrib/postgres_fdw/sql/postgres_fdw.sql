@@ -2795,6 +2795,14 @@ ROLLBACK;
 -- Change application_name of remote connection to special one
 -- so that we can easily terminate the connection later.
 ALTER SERVER loopback OPTIONS (application_name 'fdw_retry_check');
+
+-- If debug_invalidate_system_caches_always is active, it results in
+-- dropping remote connections after every transaction, making it
+-- impossible to test termination meaningfully.  So turn that off
+-- for this test.
+SET debug_invalidate_system_caches_always = 0;
+
+-- Make sure we have a remote connection.
 SELECT 1 FROM ft1 LIMIT 1;
 
 -- Terminate the remote connection and wait for the termination to complete.
@@ -2806,17 +2814,19 @@ SELECT pg_terminate_backend(pid, 180000) FROM pg_stat_activity
 BEGIN;
 SELECT 1 FROM ft1 LIMIT 1;
 
--- If the query detects the broken connection when starting new remote
--- subtransaction, it doesn't reestablish new connection and should fail.
--- The text of the error might vary across platforms, so don't show it.
+-- If we detect the broken connection when starting a new remote
+-- subtransaction, we should fail instead of establishing a new connection.
 -- Terminate the remote connection and wait for the termination to complete.
 SELECT pg_terminate_backend(pid, 180000) FROM pg_stat_activity
 	WHERE application_name = 'fdw_retry_check';
 SAVEPOINT s;
+-- The text of the error might vary across platforms, so only show SQLSTATE.
 \set VERBOSITY sqlstate
 SELECT 1 FROM ft1 LIMIT 1;    -- should fail
 \set VERBOSITY default
 COMMIT;
+
+RESET debug_invalidate_system_caches_always;
 
 -- =============================================================================
 -- test connection invalidation cases and postgres_fdw_get_connections function
@@ -3185,6 +3195,8 @@ SELECT * FROM async_pt t1, async_p2 t2 WHERE t1.a = t2.a AND t1.b === 505;
 
 EXPLAIN (VERBOSE, COSTS OFF)
 SELECT * FROM async_pt t1 WHERE t1.b === 505 LIMIT 1;
+EXPLAIN (ANALYZE, COSTS OFF, SUMMARY OFF, TIMING OFF)
+SELECT * FROM async_pt t1 WHERE t1.b === 505 LIMIT 1;
 SELECT * FROM async_pt t1 WHERE t1.b === 505 LIMIT 1;
 
 -- Check with foreign modify
@@ -3216,19 +3228,36 @@ INSERT INTO join_tbl SELECT * FROM async_pt LEFT JOIN t ON (async_pt.a = t.a AND
 SELECT * FROM join_tbl ORDER BY a1;
 DELETE FROM join_tbl;
 
+DROP TABLE local_tbl;
+DROP FOREIGN TABLE remote_tbl;
+DROP FOREIGN TABLE insert_tbl;
+DROP TABLE base_tbl3;
+DROP TABLE base_tbl4;
+
 RESET enable_mergejoin;
 RESET enable_hashjoin;
+
+-- Test that UPDATE/DELETE with inherited target works with async_capable enabled
+EXPLAIN (VERBOSE, COSTS OFF)
+UPDATE async_pt SET c = c || c WHERE b = 0 RETURNING *;
+UPDATE async_pt SET c = c || c WHERE b = 0 RETURNING *;
+EXPLAIN (VERBOSE, COSTS OFF)
+DELETE FROM async_pt WHERE b = 0 RETURNING *;
+DELETE FROM async_pt WHERE b = 0 RETURNING *;
+
+-- Check EXPLAIN ANALYZE for a query that scans empty partitions asynchronously
+DELETE FROM async_p1;
+DELETE FROM async_p2;
+DELETE FROM async_p3;
+
+EXPLAIN (ANALYZE, COSTS OFF, SUMMARY OFF, TIMING OFF)
+SELECT * FROM async_pt;
 
 -- Clean up
 DROP TABLE async_pt;
 DROP TABLE base_tbl1;
 DROP TABLE base_tbl2;
 DROP TABLE result_tbl;
-DROP TABLE local_tbl;
-DROP FOREIGN TABLE remote_tbl;
-DROP FOREIGN TABLE insert_tbl;
-DROP TABLE base_tbl3;
-DROP TABLE base_tbl4;
 DROP TABLE join_tbl;
 
 ALTER SERVER loopback OPTIONS (DROP async_capable);

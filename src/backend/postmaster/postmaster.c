@@ -128,6 +128,7 @@
 #include "utils/memutils.h"
 #include "utils/pidfile.h"
 #include "utils/ps_status.h"
+#include "utils/queryjumble.h"
 #include "utils/timeout.h"
 #include "utils/timestamp.h"
 #include "utils/varlena.h"
@@ -521,6 +522,7 @@ typedef struct
 	pg_time_t	first_syslogger_file_time;
 	bool		redirection_done;
 	bool		IsBinaryUpgrade;
+	bool		query_id_enabled;
 	int			max_safe_fds;
 	int			MaxBackends;
 #ifdef WIN32
@@ -660,6 +662,7 @@ PostmasterMain(int argc, char *argv[])
 	pqsignal_pm(SIGCHLD, reaper);	/* handle child termination */
 
 #ifdef SIGURG
+
 	/*
 	 * Ignore SIGURG for now.  Child processes may change this (see
 	 * InitializeLatchSupport), but they will not receive any such signals
@@ -5780,7 +5783,7 @@ do_start_bgworker(RegisteredBgWorker *rw)
 
 	ereport(DEBUG1,
 			(errmsg_internal("starting background worker process \"%s\"",
-					rw->rw_worker.bgw_name)));
+							 rw->rw_worker.bgw_name)));
 
 #ifdef EXEC_BACKEND
 	switch ((worker_pid = bgworker_forkexec(rw->rw_shmem_slot)))
@@ -6167,6 +6170,7 @@ save_backend_variables(BackendParameters *param, Port *port,
 
 	param->redirection_done = redirection_done;
 	param->IsBinaryUpgrade = IsBinaryUpgrade;
+	param->query_id_enabled = query_id_enabled;
 	param->max_safe_fds = max_safe_fds;
 
 	param->MaxBackends = MaxBackends;
@@ -6400,6 +6404,7 @@ restore_backend_variables(BackendParameters *param, Port *port)
 
 	redirection_done = param->redirection_done;
 	IsBinaryUpgrade = param->IsBinaryUpgrade;
+	query_id_enabled = param->query_id_enabled;
 	max_safe_fds = param->max_safe_fds;
 
 	MaxBackends = param->MaxBackends;

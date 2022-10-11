@@ -356,7 +356,7 @@ analyzeCTE(ParseState *pstate, CommonTableExpr *cte)
 		 * than just being recursive.  It basically means the query expression
 		 * looks like
 		 *
-		 *     non-recursive query UNION [ALL] recursive query
+		 * non-recursive query UNION [ALL] recursive query
 		 *
 		 * and that the recursive query is not itself a set operation.
 		 *
@@ -524,7 +524,7 @@ analyzeCTE(ParseState *pstate, CommonTableExpr *cte)
 				   cte->cycle_clause->cycle_path_column) == 0)
 			ereport(ERROR,
 					errcode(ERRCODE_SYNTAX_ERROR),
-					errmsg("search_sequence column name and cycle path column name are the same"),
+					errmsg("search sequence column name and cycle path column name are the same"),
 					parser_errposition(pstate, cte->search_clause->location));
 	}
 }

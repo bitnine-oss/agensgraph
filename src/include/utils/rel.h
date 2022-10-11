@@ -63,7 +63,6 @@ typedef struct RelationData
 	bool		rd_indexvalid;	/* is rd_indexlist valid? (also rd_pkindex and
 								 * rd_replidindex) */
 	bool		rd_statvalid;	/* is rd_statlist valid? */
-	bool		rd_version_checked; /* has version check been done yet? */
 
 	/*----------
 	 * rd_createSubid is the ID of the highest subtransaction the rel has
@@ -138,9 +137,7 @@ typedef struct RelationData
 	 * rd_partdesc_nodetached.  This informs a future user of that partdesc:
 	 * if this value is not in progress for the active snapshot, then the
 	 * partdesc can be used, otherwise they have to build a new one.  (This
-	 * matches what find_inheritance_children_extended would do).  In the rare
-	 * case where the pg_inherits tuple has been frozen, this will be
-	 * InvalidXid; behave as if the partdesc is unusable in that case.
+	 * matches what find_inheritance_children_extended would do).
 	 */
 	TransactionId rd_partdesc_nodetached_xmin;
 

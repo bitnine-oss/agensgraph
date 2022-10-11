@@ -916,6 +916,11 @@ CREATE TABLE orders (
    </para>
 
    <para>
+    You can assign your own name for a foreign key constraint,
+    in the usual way.
+   </para>
+
+   <para>
     A foreign key can also constrain and reference a group of columns.
     As usual, it then needs to be written in table constraint form.
     Here is a contrived syntax example:
@@ -931,9 +936,28 @@ CREATE TABLE t1 (
     match the number and type of the referenced columns.
    </para>
 
+   <indexterm>
+    <primary>foreign key</primary>
+    <secondary>self-referential</secondary>
+   </indexterm>
+
    <para>
-    You can assign your own name for a foreign key constraint,
-    in the usual way.
+    Sometimes it is useful for the <quote>other table</quote> of a
+    foreign key constraint to be the same table; this is called
+    a <firstterm>self-referential</firstterm> foreign key.  For
+    example, if you want rows of a table to represent nodes of a tree
+    structure, you could write
+<programlisting>
+CREATE TABLE tree (
+    node_id integer PRIMARY KEY,
+    parent_id integer REFERENCES tree,
+    name text,
+    ...
+);
+</programlisting>
+    A top-level node would have NULL <structfield>parent_id</structfield>,
+    while non-NULL <structfield>parent_id</structfield> entries would be
+    constrained to reference valid rows of the table.
    </para>
 
    <para>
@@ -3891,18 +3915,25 @@ DROP TABLE measurement_y2006m02;
    <para>
      Another option that is often preferable is to remove the partition from
      the partitioned table but retain access to it as a table in its own
-     right:
+     right.  This has two forms:
 
 <programlisting>
 ALTER TABLE measurement DETACH PARTITION measurement_y2006m02;
+ALTER TABLE measurement DETACH PARTITION measurement_y2006m02 CONCURRENTLY;
 </programlisting>
 
-     This allows further operations to be performed on the data before
+     These allow further operations to be performed on the data before
      it is dropped. For example, this is often a useful time to back up
      the data using <command>COPY</command>, <application>pg_dump</application>, or
      similar tools. It might also be a useful time to aggregate data
      into smaller formats, perform other data manipulations, or run
-     reports.
+     reports.  The first form of the command requires an
+     <literal>ACCESS EXCLUSIVE</literal> lock on the parent table.
+     Adding the <literal>CONCURRENTLY</literal> qualifier as in the second
+     form allows the detach operation to require only
+     <literal>SHARE UPDATE EXCLUSIVE</literal> lock on the parent table, but see
+     <link linkend="sql-altertable-detach-partition"><literal>ALTER TABLE ... DETACH PARTITION</literal></link>
+     for details on the restrictions.
    </para>
 
    <para>
@@ -4137,17 +4168,6 @@ ALTER INDEX measurement_city_id_logdate_key
         manner of the user's choosing.  (Note, however, that if constraint
         exclusion is unable to prune child tables effectively, query performance
         might be poor.)
-       </para>
-      </listitem>
-
-      <listitem>
-       <para>
-        Some operations require a stronger lock when using declarative
-        partitioning than when using table inheritance.  For example,
-        removing a partition from a partitioned table requires taking
-        an <literal>ACCESS EXCLUSIVE</literal> lock on the parent table,
-        whereas a <literal>SHARE UPDATE EXCLUSIVE</literal> lock is enough
-        in the case of regular inheritance.
        </para>
       </listitem>
      </itemizedlist>
@@ -4658,16 +4678,6 @@ EXPLAIN SELECT count(*) FROM measurement WHERE logdate &gt;= DATE '2008-01-01';
     Partition pruning can be disabled using the
     <xref linkend="guc-enable-partition-pruning"/> setting.
    </para>
-
-   <note>
-    <para>
-     Execution-time partition pruning currently only occurs for the
-     <literal>Append</literal> and <literal>MergeAppend</literal> node types.
-     It is not yet implemented for the <literal>ModifyTable</literal> node
-     type, but that is likely to be changed in a future release of
-     <productname>PostgreSQL</productname>.
-    </para>
-   </note>
   </sect2>
 
   <sect2 id="ddl-partitioning-constraint-exclusion">

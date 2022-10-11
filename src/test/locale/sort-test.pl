@@ -1,5 +1,7 @@
 #! /usr/bin/perl
 
+# Copyright (c) 2021, PostgreSQL Global Development Group
+
 use strict;
 use warnings;
 use locale;

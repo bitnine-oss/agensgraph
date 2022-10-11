@@ -61,12 +61,12 @@ typedef struct MTTargetRelLookup
 } MTTargetRelLookup;
 
 static void ExecBatchInsert(ModifyTableState *mtstate,
-								 ResultRelInfo *resultRelInfo,
-								 TupleTableSlot **slots,
-								 TupleTableSlot **planSlots,
-								 int numSlots,
-								 EState *estate,
-								 bool canSetTag);
+							ResultRelInfo *resultRelInfo,
+							TupleTableSlot **slots,
+							TupleTableSlot **planSlots,
+							int numSlots,
+							EState *estate,
+							bool canSetTag);
 static bool ExecOnConflictUpdate(ModifyTableState *mtstate,
 								 ResultRelInfo *resultRelInfo,
 								 ItemPointer conflictTid,
@@ -492,6 +492,7 @@ ExecInitUpdateProjection(ModifyTableState *mtstate,
 
 	resultRelInfo->ri_projectNew =
 		ExecBuildUpdateProjection(subplan->targetlist,
+								  false,	/* subplan did the evaluation */
 								  updateColnos,
 								  relDesc,
 								  mtstate->ps.ps_ExprContext,
@@ -672,17 +673,17 @@ ExecInsert(ModifyTableState *mtstate,
 		if (resultRelInfo->ri_BatchSize > 1)
 		{
 			/*
-			 * If a certain number of tuples have already been accumulated,
-			 * or a tuple has come for a different relation than that for
-			 * the accumulated tuples, perform the batch insert
+			 * If a certain number of tuples have already been accumulated, or
+			 * a tuple has come for a different relation than that for the
+			 * accumulated tuples, perform the batch insert
 			 */
 			if (resultRelInfo->ri_NumSlots == resultRelInfo->ri_BatchSize)
 			{
 				ExecBatchInsert(mtstate, resultRelInfo,
-							   resultRelInfo->ri_Slots,
-							   resultRelInfo->ri_PlanSlots,
-							   resultRelInfo->ri_NumSlots,
-							   estate, canSetTag);
+								resultRelInfo->ri_Slots,
+								resultRelInfo->ri_PlanSlots,
+								resultRelInfo->ri_NumSlots,
+								estate, canSetTag);
 				resultRelInfo->ri_NumSlots = 0;
 			}
 
@@ -691,9 +692,9 @@ ExecInsert(ModifyTableState *mtstate,
 			if (resultRelInfo->ri_Slots == NULL)
 			{
 				resultRelInfo->ri_Slots = palloc(sizeof(TupleTableSlot *) *
-										   resultRelInfo->ri_BatchSize);
+												 resultRelInfo->ri_BatchSize);
 				resultRelInfo->ri_PlanSlots = palloc(sizeof(TupleTableSlot *) *
-										   resultRelInfo->ri_BatchSize);
+													 resultRelInfo->ri_BatchSize);
 			}
 
 			resultRelInfo->ri_Slots[resultRelInfo->ri_NumSlots] =
@@ -981,12 +982,12 @@ ExecInsert(ModifyTableState *mtstate,
  */
 static void
 ExecBatchInsert(ModifyTableState *mtstate,
-		   ResultRelInfo *resultRelInfo,
-		   TupleTableSlot **slots,
-		   TupleTableSlot **planSlots,
-		   int numSlots,
-		   EState *estate,
-		   bool canSetTag)
+				ResultRelInfo *resultRelInfo,
+				TupleTableSlot **slots,
+				TupleTableSlot **planSlots,
+				int numSlots,
+				EState *estate,
+				bool canSetTag)
 {
 	int			i;
 	int			numInserted = numSlots;
@@ -997,10 +998,10 @@ ExecBatchInsert(ModifyTableState *mtstate,
 	 * insert into foreign table: let the FDW do it
 	 */
 	rslots = resultRelInfo->ri_FdwRoutine->ExecForeignBatchInsert(estate,
-																 resultRelInfo,
-																 slots,
-																 planSlots,
-																 &numInserted);
+																  resultRelInfo,
+																  slots,
+																  planSlots,
+																  &numInserted);
 
 	for (i = 0; i < numInserted; i++)
 	{
@@ -2603,10 +2604,10 @@ ExecModifyTable(PlanState *pstate)
 		resultRelInfo = lfirst(lc);
 		if (resultRelInfo->ri_NumSlots > 0)
 			ExecBatchInsert(node, resultRelInfo,
-						   resultRelInfo->ri_Slots,
-						   resultRelInfo->ri_PlanSlots,
-						   resultRelInfo->ri_NumSlots,
-						   estate, node->canSetTag);
+							resultRelInfo->ri_Slots,
+							resultRelInfo->ri_PlanSlots,
+							resultRelInfo->ri_NumSlots,
+							estate, node->canSetTag);
 	}
 
 	/*
@@ -2972,9 +2973,9 @@ ExecInitModifyTable(ModifyTable *node, EState *estate, int eflags)
 	 */
 	if (node->onConflictAction == ONCONFLICT_UPDATE)
 	{
+		OnConflictSetState *onconfl = makeNode(OnConflictSetState);
 		ExprContext *econtext;
 		TupleDesc	relationDesc;
-		TupleDesc	tupDesc;
 
 		/* already exists if created by RETURNING processing above */
 		if (mtstate->ps.ps_ExprContext == NULL)
@@ -2984,10 +2985,10 @@ ExecInitModifyTable(ModifyTable *node, EState *estate, int eflags)
 		relationDesc = resultRelInfo->ri_RelationDesc->rd_att;
 
 		/* create state for DO UPDATE SET operation */
-		resultRelInfo->ri_onConflict = makeNode(OnConflictSetState);
+		resultRelInfo->ri_onConflict = onconfl;
 
 		/* initialize slot for the existing tuple */
-		resultRelInfo->ri_onConflict->oc_Existing =
+		onconfl->oc_Existing =
 			table_slot_create(resultRelInfo->ri_RelationDesc,
 							  &mtstate->ps.state->es_tupleTable);
 
@@ -2997,17 +2998,19 @@ ExecInitModifyTable(ModifyTable *node, EState *estate, int eflags)
 		 * into the table, and for RETURNING processing - which may access
 		 * system attributes.
 		 */
-		tupDesc = ExecTypeFromTL((List *) node->onConflictSet);
-		resultRelInfo->ri_onConflict->oc_ProjSlot =
-			ExecInitExtraTupleSlot(mtstate->ps.state, tupDesc,
-								   table_slot_callbacks(resultRelInfo->ri_RelationDesc));
+		onconfl->oc_ProjSlot =
+			table_slot_create(resultRelInfo->ri_RelationDesc,
+							  &mtstate->ps.state->es_tupleTable);
 
 		/* build UPDATE SET projection state */
-		resultRelInfo->ri_onConflict->oc_ProjInfo =
-			ExecBuildProjectionInfo(node->onConflictSet, econtext,
-									resultRelInfo->ri_onConflict->oc_ProjSlot,
-									&mtstate->ps,
-									relationDesc);
+		onconfl->oc_ProjInfo =
+			ExecBuildUpdateProjection(node->onConflictSet,
+									  true,
+									  node->onConflictCols,
+									  relationDesc,
+									  econtext,
+									  onconfl->oc_ProjSlot,
+									  &mtstate->ps);
 
 		/* initialize state to evaluate the WHERE clause, if any */
 		if (node->onConflictWhere)
@@ -3016,7 +3019,7 @@ ExecInitModifyTable(ModifyTable *node, EState *estate, int eflags)
 
 			qualexpr = ExecInitQual((List *) node->onConflictWhere,
 									&mtstate->ps);
-			resultRelInfo->ri_onConflict->oc_WhereClause = qualexpr;
+			onconfl->oc_WhereClause = qualexpr;
 		}
 	}
 
@@ -3088,12 +3091,12 @@ ExecInitModifyTable(ModifyTable *node, EState *estate, int eflags)
 		mtstate->mt_resultOidHash = NULL;
 
 	/*
-	 * Determine if the FDW supports batch insert and determine the batch
-	 * size (a FDW may support batching, but it may be disabled for the
+	 * Determine if the FDW supports batch insert and determine the batch size
+	 * (a FDW may support batching, but it may be disabled for the
 	 * server/table).
 	 *
-	 * We only do this for INSERT, so that for UPDATE/DELETE the batch
-	 * size remains set to 0.
+	 * We only do this for INSERT, so that for UPDATE/DELETE the batch size
+	 * remains set to 0.
 	 */
 	if (operation == CMD_INSERT)
 	{

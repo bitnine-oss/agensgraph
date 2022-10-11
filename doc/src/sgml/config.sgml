@@ -3588,89 +3588,6 @@ include_dir 'conf.d'
      </variablelist>
     </sect2>
 
-   <sect2 id="runtime-config-wal-recovery">
-
-    <title>Recovery</title>
-
-     <indexterm>
-      <primary>configuration</primary>
-      <secondary>of recovery</secondary>
-      <tertiary>general settings</tertiary>
-     </indexterm>
-
-    <para>
-     This section describes the settings that apply to recovery in general,
-     affecting crash recovery, streaming replication and archive-based
-     replication.
-    </para>
-
-
-    <variablelist>
-     <varlistentry id="guc-recovery-prefetch" xreflabel="recovery_prefetch">
-      <term><varname>recovery_prefetch</varname> (<type>boolean</type>)
-      <indexterm>
-       <primary><varname>recovery_prefetch</varname> configuration parameter</primary>
-      </indexterm>
-      </term>
-      <listitem>
-       <para>
-        Whether to try to prefetch blocks that are referenced in the WAL that
-        are not yet in the buffer pool, during recovery.  Prefetching blocks
-        that will soon be needed can reduce I/O wait times in some workloads.
-        See also the <xref linkend="guc-wal-decode-buffer-size"/> and
-        <xref linkend="guc-maintenance-io-concurrency"/> settings, which limit
-        prefetching activity.
-        This setting is disabled by default.
-       </para>
-       <para>
-        This feature currently depends on an effective
-        <function>posix_fadvise</function> function, which some
-        operating systems lack.
-       </para>
-      </listitem>
-     </varlistentry>
-
-     <varlistentry id="guc-recovery-prefetch-fpw" xreflabel="recovery_prefetch_fpw">
-      <term><varname>recovery_prefetch_fpw</varname> (<type>boolean</type>)
-      <indexterm>
-       <primary><varname>recovery_prefetch_fpw</varname> configuration parameter</primary>
-      </indexterm>
-      </term>
-      <listitem>
-       <para>
-        Whether to prefetch blocks that were logged with full page images,
-        during recovery.  Often this doesn't help, since such blocks will not
-        be read the first time they are needed and might remain in the buffer
-        pool after that.  However, on file systems with a block size larger
-        than
-        <productname>PostgreSQL</productname>'s, prefetching can avoid a
-        costly read-before-write when blocks are later written.
-        The default is off.
-       </para>
-      </listitem>
-     </varlistentry>
-
-     <varlistentry id="guc-wal-decode-buffer-size" xreflabel="wal_decode_buffer_size">
-      <term><varname>wal_decode_buffer_size</varname> (<type>integer</type>)
-      <indexterm>
-       <primary><varname>wal_decode_buffer_size</varname> configuration parameter</primary>
-      </indexterm>
-      </term>
-      <listitem>
-       <para>
-        A limit on how far ahead the server can look in the WAL, to find
-        blocks to prefetch.  Setting it too high might be counterproductive,
-        if it means that data falls out of the
-        kernel cache before it is needed.  If this value is specified without
-        units, it is taken as bytes.
-        The default is 512kB.
-       </para>
-      </listitem>
-     </varlistentry>
-
-    </variablelist>
-   </sect2>
-
   <sect2 id="runtime-config-wal-archive-recovery">
 
     <title>Archive Recovery</title>
@@ -7710,7 +7627,7 @@ COPY postgres_log FROM '/full/path/to/logfile.csv' WITH csv;
      <variablelist>
 
      <varlistentry id="guc-compute-query-id" xreflabel="compute_query_id">
-      <term><varname>compute_query_id</varname> (<type>boolean</type>)
+      <term><varname>compute_query_id</varname> (<type>enum</type>)
       <indexterm>
        <primary><varname>compute_query_id</varname> configuration parameter</primary>
       </indexterm>
@@ -7726,7 +7643,12 @@ COPY postgres_log FROM '/full/path/to/logfile.csv' WITH csv;
         identifier to be computed.  Note that an external module can
         alternatively be used if the in-core query identifier computation
         method is not acceptable.  In this case, in-core computation
-        must be disabled.  The default is <literal>off</literal>.
+        must be always disabled.
+        Valid values are <literal>off</literal> (always disabled),
+        <literal>on</literal> (always enabled) and <literal>auto</literal>,
+        which lets modules such as <xref linkend="pgstatstatements"/>
+        automatically enable it.
+        The default is <literal>auto</literal>.
        </para>
        <note>
         <para>
@@ -8321,9 +8243,9 @@ COPY postgres_log FROM '/full/path/to/logfile.csv' WITH csv;
         <command>CREATE TABLE</command> statement can override this default
         by specifying the <literal>COMPRESSION</literal> column option.
 
-        The supported compression methods are <literal>pglz</literal> and
-        (if configured at the time <productname>PostgreSQL</productname> was
-        built) <literal>lz4</literal>.
+        The supported compression methods are <literal>pglz</literal> and,
+        if <productname>PostgreSQL</productname> was compiled with
+        <literal>--with-lz4</literal>, <literal>lz4</literal>.
         The default is <literal>pglz</literal>.
        </para>
       </listitem>
@@ -10406,28 +10328,29 @@ dynamic_library_path = 'C:\tools\postgresql;H:\my_project\lib;$libdir'
       </term>
       <listitem>
        <para>
-        When set to 1, each cache lookup for a system catalog entry is
-        invalidated at the first possible opportunity, irrespective of whether
+        When set to <literal>1</literal>, each system catalog cache entry is
+        invalidated at the first possible opportunity, whether or not
         anything that would render it invalid really occurred.  Caching of
         system catalogs is effectively disabled as a result, so the server
         will run extremely slowly.  Higher values run the cache invalidation
-        recursively, which is even slower and useful only useful for testing
-        in very specific scenarios.
+        recursively, which is even slower and only useful for testing
+        the caching logic itself.  The default value of <literal>0</literal>
+        selects normal catalog caching behavior.
        </para>
 
        <para>
-        This option can be very helpful when trying to trigger
-        hard-to-reproduce bugs involving concurrency and catalog changes but
+        This parameter can be very helpful when trying to trigger
+        hard-to-reproduce bugs involving concurrent catalog changes, but it
         is otherwise rarely needed.  See the source code files
         <filename>inval.c</filename> and
         <filename>pg_config_manual.h</filename> for details.
        </para>
 
        <para>
-        This setting is supported but off by default (0) when
-        <symbol>CLOBBER_CACHE_ENABLED</symbol> is defined at compile time
+        This parameter is supported when
+        <symbol>CLOBBER_CACHE_ENABLED</symbol> was defined at compile time
         (which happens automatically when using the
-        <literal>configure</literal> option
+        <application>configure</application> option
         <option>--enable-cassert</option>).  In production builds, its value
         will always be <literal>0</literal> and attempts to set it to another
         value will raise an error.

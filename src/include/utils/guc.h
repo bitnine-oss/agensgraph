@@ -247,7 +247,6 @@ extern bool log_btree_build_stats;
 extern PGDLLIMPORT bool check_function_bodies;
 extern bool session_auth_is_superuser;
 
-extern bool compute_query_id;
 extern bool log_duration;
 extern int	log_parameter_max_length;
 extern int	log_parameter_max_length_on_error;
@@ -441,10 +440,6 @@ extern void assign_search_path(const char *newval, void *extra);
 /* in access/transam/xlog.c */
 extern bool check_wal_buffers(int *newval, void **extra, GucSource source);
 extern void assign_xlog_sync_method(int new_sync_method, void *extra);
-
-/* in access/transam/xlogprefetch.c */
-extern void assign_recovery_prefetch(bool new_value, void *extra);
-extern void assign_recovery_prefetch_fpw(bool new_value, void *extra);
 
 /* in catalog/ag_graph.c */
 extern bool check_graph_path(char **newval, void **extra, GucSource source);

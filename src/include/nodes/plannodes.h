@@ -134,7 +134,7 @@ typedef struct Plan
 	/*
 	 * information needed for asynchronous execution
 	 */
-	bool		async_capable; 	/* engage asynchronous-capable logic? */
+	bool		async_capable;	/* engage asynchronous-capable logic? */
 
 	/*
 	 * Common structural data for all Plan types.
@@ -234,7 +234,8 @@ typedef struct ModifyTable
 	int			epqParam;		/* ID of Param for EvalPlanQual re-eval */
 	OnConflictAction onConflictAction;	/* ON CONFLICT action */
 	List	   *arbiterIndexes; /* List of ON CONFLICT arbiter index OIDs  */
-	List	   *onConflictSet;	/* SET for INSERT ON CONFLICT DO UPDATE */
+	List	   *onConflictSet;	/* INSERT ON CONFLICT DO UPDATE targetlist */
+	List	   *onConflictCols; /* target column numbers for onConflictSet */
 	Node	   *onConflictWhere;	/* WHERE for ON CONFLICT UPDATE */
 	Index		exclRelRTI;		/* RTI of the EXCLUDED pseudo relation */
 	List	   *exclRelTlist;	/* tlist of the EXCLUDED pseudo relation */

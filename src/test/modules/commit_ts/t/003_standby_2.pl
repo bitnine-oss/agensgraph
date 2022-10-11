@@ -1,3 +1,6 @@
+
+# Copyright (c) 2021, PostgreSQL Global Development Group
+
 # Test primary/standby scenario where the track_commit_timestamp GUC is
 # repeatedly toggled on and off.
 use strict;
@@ -8,7 +11,7 @@ use Test::More tests => 4;
 use PostgresNode;
 
 my $bkplabel = 'backup';
-my $primary   = get_new_node('primary');
+my $primary  = get_new_node('primary');
 $primary->init(allows_streaming => 1);
 $primary->append_conf(
 	'postgresql.conf', qq{

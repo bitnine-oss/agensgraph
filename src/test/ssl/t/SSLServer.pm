@@ -1,3 +1,6 @@
+
+# Copyright (c) 2021, PostgreSQL Global Development Group
+
 # This module sets up a test server, for the SSL regression tests.
 #
 # The server is configured as follows:
@@ -136,13 +139,13 @@ sub switch_server_cert
 	my $cafile   = $_[2] || "root+client_ca";
 	my $crlfile  = "root+client.crl";
 	my $crldir;
-	my $pgdata   = $node->data_dir;
+	my $pgdata = $node->data_dir;
 
 	# defaults to use crl file
 	if (defined $_[3] || defined $_[4])
 	{
 		$crlfile = $_[3];
-		$crldir = $_[4];
+		$crldir  = $_[4];
 	}
 
 	open my $sslconf, '>', "$pgdata/sslconfig.conf";
@@ -151,7 +154,7 @@ sub switch_server_cert
 	print $sslconf "ssl_cert_file='$certfile.crt'\n";
 	print $sslconf "ssl_key_file='$certfile.key'\n";
 	print $sslconf "ssl_crl_file='$crlfile'\n" if defined $crlfile;
-	print $sslconf "ssl_crl_dir='$crldir'\n" if defined $crldir;
+	print $sslconf "ssl_crl_dir='$crldir'\n"   if defined $crldir;
 	close $sslconf;
 
 	$node->restart;

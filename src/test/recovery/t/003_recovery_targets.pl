@@ -1,3 +1,6 @@
+
+# Copyright (c) 2021, PostgreSQL Global Development Group
+
 # Test for recovery targets: name, timestamp, XID
 use strict;
 use warnings;
@@ -13,7 +16,7 @@ sub test_recovery_standby
 {
 	my $test_name       = shift;
 	my $node_name       = shift;
-	my $node_primary     = shift;
+	my $node_primary    = shift;
 	my $recovery_params = shift;
 	my $num_rows        = shift;
 	my $until_lsn       = shift;

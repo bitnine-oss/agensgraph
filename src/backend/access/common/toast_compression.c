@@ -24,14 +24,14 @@
 #include "utils/builtins.h"
 
 /* GUC */
-int	   default_toast_compression = TOAST_PGLZ_COMPRESSION;
+int			default_toast_compression = TOAST_PGLZ_COMPRESSION;
 
 #define NO_LZ4_SUPPORT() \
 	ereport(ERROR, \
 			(errcode(ERRCODE_FEATURE_NOT_SUPPORTED), \
 			 errmsg("unsupported LZ4 compression method"), \
 			 errdetail("This functionality requires the server to be built with lz4 support."), \
-			 errhint("You need to rebuild PostgreSQL using --with-lz4.")))
+			 errhint("You need to rebuild PostgreSQL using %s.", "--with-lz4")))
 
 /*
  * Compress a varlena using PGLZ.
@@ -109,7 +109,7 @@ pglz_decompress_datum(const struct varlena *value)
  */
 struct varlena *
 pglz_decompress_datum_slice(const struct varlena *value,
-						int32 slicelength)
+							int32 slicelength)
 {
 	struct varlena *result;
 	int32		rawsize;
@@ -255,12 +255,12 @@ lz4_decompress_datum_slice(const struct varlena *value, int32 slicelength)
 ToastCompressionId
 toast_get_compression_id(struct varlena *attr)
 {
-	ToastCompressionId	cmid = TOAST_INVALID_COMPRESSION_ID;
+	ToastCompressionId cmid = TOAST_INVALID_COMPRESSION_ID;
 
 	/*
-	 * If it is stored externally then fetch the compression method id from the
-	 * external toast pointer.  If compressed inline, fetch it from the toast
-	 * compression header.
+	 * If it is stored externally then fetch the compression method id from
+	 * the external toast pointer.  If compressed inline, fetch it from the
+	 * toast compression header.
 	 */
 	if (VARATT_IS_EXTERNAL_ONDISK(attr))
 	{

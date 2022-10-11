@@ -433,6 +433,7 @@ RemoveSubscriptionRel(Oid subid, Oid relid)
 							get_subscription_name(subrel->srsubid, false)),
 					 errdetail("Table synchronization for relation \"%s\" is in progress and is in state \"%c\".",
 							   get_rel_name(relid), subrel->srsubstate),
+
 			/*
 			 * translator: first %s is a SQL ALTER command and second %s is a
 			 * SQL DROP command
@@ -461,19 +462,18 @@ GetSubscriptionRelations(Oid subid)
 	List	   *res = NIL;
 	Relation	rel;
 	HeapTuple	tup;
-	int			nkeys = 0;
-	ScanKeyData skey[2];
+	ScanKeyData skey[1];
 	SysScanDesc scan;
 
 	rel = table_open(SubscriptionRelRelationId, AccessShareLock);
 
-	ScanKeyInit(&skey[nkeys++],
+	ScanKeyInit(&skey[0],
 				Anum_pg_subscription_rel_srsubid,
 				BTEqualStrategyNumber, F_OIDEQ,
 				ObjectIdGetDatum(subid));
 
 	scan = systable_beginscan(rel, InvalidOid, false,
-							  NULL, nkeys, skey);
+							  NULL, 1, skey);
 
 	while (HeapTupleIsValid(tup = systable_getnext(scan)))
 	{

@@ -370,6 +370,12 @@ _PG_init(void)
 		return;
 
 	/*
+	 * Inform the postmaster that we want to enable query_id calculation if
+	 * compute_query_id is set to auto.
+	 */
+	EnableQueryId();
+
+	/*
 	 * Define (or redefine) custom GUC variables.
 	 */
 	DefineCustomIntVariable("pg_stat_statements.max",
@@ -974,7 +980,7 @@ pgss_ExecutorStart(QueryDesc *queryDesc, int eflags)
 			MemoryContext oldcxt;
 
 			oldcxt = MemoryContextSwitchTo(queryDesc->estate->es_query_cxt);
-			queryDesc->totaltime = InstrAlloc(1, INSTRUMENT_ALL);
+			queryDesc->totaltime = InstrAlloc(1, INSTRUMENT_ALL, false);
 			MemoryContextSwitchTo(oldcxt);
 		}
 	}
@@ -1074,9 +1080,10 @@ pgss_ProcessUtility(PlannedStmt *pstmt, const char *queryString,
 	 * Force utility statements to get queryId zero.  We do this even in cases
 	 * where the statement contains an optimizable statement for which a
 	 * queryId could be derived (such as EXPLAIN or DECLARE CURSOR).  For such
-	 * cases, runtime control will first go through ProcessUtility and then the
-	 * executor, and we don't want the executor hooks to do anything, since we
-	 * are already measuring the statement's costs at the utility level.
+	 * cases, runtime control will first go through ProcessUtility and then
+	 * the executor, and we don't want the executor hooks to do anything,
+	 * since we are already measuring the statement's costs at the utility
+	 * level.
 	 *
 	 * Note that this is only done if pg_stat_statements is enabled and
 	 * configured to track utility statements, in the unlikely possibility

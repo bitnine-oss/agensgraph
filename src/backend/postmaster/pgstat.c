@@ -38,7 +38,6 @@
 #include "access/transam.h"
 #include "access/twophase_rmgr.h"
 #include "access/xact.h"
-#include "access/xlogprefetch.h"
 #include "catalog/partition.h"
 #include "catalog/pg_database.h"
 #include "catalog/pg_proc.h"
@@ -143,8 +142,8 @@ PgStat_MsgWal WalStats;
 
 /*
  * WAL usage counters saved from pgWALUsage at the previous call to
- * pgstat_report_wal(). This is used to calculate how much WAL usage
- * happens between pgstat_report_wal() calls, by substracting
+ * pgstat_send_wal(). This is used to calculate how much WAL usage
+ * happens between pgstat_send_wal() calls, by substracting
  * the previous counters from the current ones.
  */
 static WalUsage prevWalUsage;
@@ -308,7 +307,6 @@ static PgStat_GlobalStats globalStats;
 static PgStat_WalStats walStats;
 static PgStat_SLRUStats slruStats[SLRU_NUM_ELEMENTS];
 static HTAB *replSlotStatHash = NULL;
-static PgStat_RecoveryPrefetchStats recoveryPrefetchStats;
 
 /*
  * List of OIDs of databases we need to write out.  If an entry is InvalidOid,
@@ -380,7 +378,6 @@ static void pgstat_recv_archiver(PgStat_MsgArchiver *msg, int len);
 static void pgstat_recv_bgwriter(PgStat_MsgBgWriter *msg, int len);
 static void pgstat_recv_wal(PgStat_MsgWal *msg, int len);
 static void pgstat_recv_slru(PgStat_MsgSLRU *msg, int len);
-static void pgstat_recv_recoveryprefetch(PgStat_MsgRecoveryPrefetch *msg, int len);
 static void pgstat_recv_funcstat(PgStat_MsgFuncstat *msg, int len);
 static void pgstat_recv_funcpurge(PgStat_MsgFuncpurge *msg, int len);
 static void pgstat_recv_recoveryconflict(PgStat_MsgRecoveryConflict *msg, int len);
@@ -883,9 +880,19 @@ pgstat_report_stat(bool disconnect)
 	TabStatusArray *tsa;
 	int			i;
 
-	/* Don't expend a clock check if nothing to do */
+	/*
+	 * Don't expend a clock check if nothing to do.
+	 *
+	 * To determine whether any WAL activity has occurred since last time, not
+	 * only the number of generated WAL records but also the numbers of WAL
+	 * writes and syncs need to be checked. Because even transaction that
+	 * generates no WAL records can write or sync WAL data when flushing the
+	 * data pages.
+	 */
 	if ((pgStatTabList == NULL || pgStatTabList->tsa_used == 0) &&
 		pgStatXactCommit == 0 && pgStatXactRollback == 0 &&
+		pgWalUsage.wal_records == prevWalUsage.wal_records &&
+		WalStats.m_wal_write == 0 && WalStats.m_wal_sync == 0 &&
 		!have_function_stats && !disconnect)
 		return;
 
@@ -979,7 +986,7 @@ pgstat_report_stat(bool disconnect)
 	pgstat_send_funcstats();
 
 	/* Send WAL statistics */
-	pgstat_report_wal();
+	pgstat_send_wal(true);
 
 	/* Finally send SLRU statistics */
 	pgstat_send_slru();
@@ -1474,20 +1481,11 @@ pgstat_reset_shared_counters(const char *target)
 		msg.m_resettarget = RESET_BGWRITER;
 	else if (strcmp(target, "wal") == 0)
 		msg.m_resettarget = RESET_WAL;
-	else if (strcmp(target, "prefetch_recovery") == 0)
-	{
-		/*
-		 * We can't ask the stats collector to do this for us as it is not
-		 * attached to shared memory.
-		 */
-		XLogPrefetchRequestResetStats();
-		return;
-	}
 	else
 		ereport(ERROR,
 				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 				 errmsg("unrecognized reset target: \"%s\"", target),
-				 errhint("Target must be \"archiver\", \"bgwriter\", \"wal\" or \"prefetch_recovery\".")));
+				 errhint("Target must be \"archiver\", \"bgwriter\" or \"wal\".")));
 
 	pgstat_setheader(&msg.m_hdr, PGSTAT_MTYPE_RESETSHAREDCOUNTER);
 	pgstat_send(&msg, sizeof(msg));
@@ -2926,22 +2924,6 @@ pgstat_fetch_replslot(NameData slotname)
 }
 
 /*
- * ---------
- * pgstat_fetch_recoveryprefetch() -
- *
- *	Support function for restoring the counters managed by xlogprefetch.c.
- * ---------
- */
-PgStat_RecoveryPrefetchStats *
-pgstat_fetch_recoveryprefetch(void)
-{
-	backend_read_statsfile();
-
-	return &recoveryPrefetchStats;
-}
-
-
-/*
  * Shut down a single backend's statistics reporting at process exit.
  *
  * Flush any remaining statistics counts out to the collector.
@@ -2974,7 +2956,7 @@ void
 pgstat_initialize(void)
 {
 	/*
-	 * Initialize prevWalUsage with pgWalUsage so that pgstat_report_wal() can
+	 * Initialize prevWalUsage with pgWalUsage so that pgstat_send_wal() can
 	 * calculate how much pgWalUsage counters are increased by substracting
 	 * prevWalUsage from pgWalUsage.
 	 */
@@ -3087,68 +3069,45 @@ pgstat_send_bgwriter(void)
 }
 
 /* ----------
- * pgstat_report_wal() -
- *
- * Calculate how much WAL usage counters are increased and send
- * WAL statistics to the collector.
- *
- * Must be called by processes that generate WAL.
- * ----------
- */
-void
-pgstat_report_wal(void)
-{
-	WalUsage	walusage;
-
-	/*
-	 * Calculate how much WAL usage counters are increased by substracting the
-	 * previous counters from the current ones. Fill the results in WAL stats
-	 * message.
-	 */
-	MemSet(&walusage, 0, sizeof(WalUsage));
-	WalUsageAccumDiff(&walusage, &pgWalUsage, &prevWalUsage);
-
-	WalStats.m_wal_records = walusage.wal_records;
-	WalStats.m_wal_fpi = walusage.wal_fpi;
-	WalStats.m_wal_bytes = walusage.wal_bytes;
-
-	/*
-	 * Send WAL stats message to the collector.
-	 */
-	if (!pgstat_send_wal(true))
-		return;
-
-	/*
-	 * Save the current counters for the subsequent calculation of WAL usage.
-	 */
-	prevWalUsage = pgWalUsage;
-}
-
-/* ----------
  * pgstat_send_wal() -
  *
  *	Send WAL statistics to the collector.
  *
  * If 'force' is not set, WAL stats message is only sent if enough time has
  * passed since last one was sent to reach PGSTAT_STAT_INTERVAL.
- *
- * Return true if the message is sent, and false otherwise.
  * ----------
  */
-bool
+void
 pgstat_send_wal(bool force)
 {
-	/* We assume this initializes to zeroes */
-	static const PgStat_MsgWal all_zeroes;
 	static TimestampTz sendTime = 0;
 
 	/*
 	 * This function can be called even if nothing at all has happened. In
 	 * this case, avoid sending a completely empty message to the stats
 	 * collector.
+	 *
+	 * Check wal_records counter to determine whether any WAL activity has
+	 * happened since last time. Note that other WalUsage counters don't need
+	 * to be checked because they are incremented always together with
+	 * wal_records counter.
+	 *
+	 * m_wal_buffers_full also doesn't need to be checked because it's
+	 * incremented only when at least one WAL record is generated (i.e.,
+	 * wal_records counter is incremented). But for safely, we assert that
+	 * m_wal_buffers_full is always zero when no WAL record is generated
+	 *
+	 * This function can be called by a process like walwriter that normally
+	 * generates no WAL records. To determine whether any WAL activity has
+	 * happened at that process since the last time, the numbers of WAL writes
+	 * and syncs are also checked.
 	 */
-	if (memcmp(&WalStats, &all_zeroes, sizeof(PgStat_MsgWal)) == 0)
-		return false;
+	if (pgWalUsage.wal_records == prevWalUsage.wal_records &&
+		WalStats.m_wal_write == 0 && WalStats.m_wal_sync == 0)
+	{
+		Assert(WalStats.m_wal_buffers_full == 0);
+		return;
+	}
 
 	if (!force)
 	{
@@ -3156,11 +3115,39 @@ pgstat_send_wal(bool force)
 
 		/*
 		 * Don't send a message unless it's been at least PGSTAT_STAT_INTERVAL
-		 * msec since we last sent one.
+		 * msec since we last sent one to avoid overloading the stats
+		 * collector.
 		 */
 		if (!TimestampDifferenceExceeds(sendTime, now, PGSTAT_STAT_INTERVAL))
-			return false;
+			return;
 		sendTime = now;
+	}
+
+	/*
+	 * Set the counters related to generated WAL data if the counters were
+	 * updated.
+	 */
+	if (pgWalUsage.wal_records != prevWalUsage.wal_records)
+	{
+		WalUsage	walusage;
+
+		/*
+		 * Calculate how much WAL usage counters were increased by
+		 * substracting the previous counters from the current ones. Fill the
+		 * results in WAL stats message.
+		 */
+		MemSet(&walusage, 0, sizeof(WalUsage));
+		WalUsageAccumDiff(&walusage, &pgWalUsage, &prevWalUsage);
+
+		WalStats.m_wal_records = walusage.wal_records;
+		WalStats.m_wal_fpi = walusage.wal_fpi;
+		WalStats.m_wal_bytes = walusage.wal_bytes;
+
+		/*
+		 * Save the current counters for the subsequent calculation of WAL
+		 * usage.
+		 */
+		prevWalUsage = pgWalUsage;
 	}
 
 	/*
@@ -3173,8 +3160,6 @@ pgstat_send_wal(bool force)
 	 * Clear out the statistics buffer, so it can be re-used.
 	 */
 	MemSet(&WalStats, 0, sizeof(WalStats));
-
-	return true;
 }
 
 /* ----------
@@ -3213,23 +3198,6 @@ pgstat_send_slru(void)
 		 */
 		MemSet(&SLRUStats[i], 0, sizeof(PgStat_MsgSLRU));
 	}
-}
-
-
-/* ----------
- * pgstat_send_recoveryprefetch() -
- *
- *		Send recovery prefetch statistics to the collector
- * ----------
- */
-void
-pgstat_send_recoveryprefetch(PgStat_RecoveryPrefetchStats *stats)
-{
-	PgStat_MsgRecoveryPrefetch msg;
-
-	pgstat_setheader(&msg.m_hdr, PGSTAT_MTYPE_RECOVERYPREFETCH);
-	msg.m_stats = *stats;
-	pgstat_send(&msg, sizeof(msg));
 }
 
 
@@ -3448,10 +3416,6 @@ PgstatCollectorMain(int argc, char *argv[])
 
 				case PGSTAT_MTYPE_SLRU:
 					pgstat_recv_slru(&msg.msg_slru, len);
-					break;
-
-				case PGSTAT_MTYPE_RECOVERYPREFETCH:
-					pgstat_recv_recoveryprefetch(&msg.msg_recoveryprefetch, len);
 					break;
 
 				case PGSTAT_MTYPE_FUNCSTAT:
@@ -3747,13 +3711,6 @@ pgstat_write_statsfiles(bool permanent, bool allDbs)
 	(void) rc;					/* we'll check for error with ferror */
 
 	/*
-	 * Write recovery prefetch stats struct
-	 */
-	rc = fwrite(&recoveryPrefetchStats, sizeof(recoveryPrefetchStats), 1,
-				fpout);
-	(void) rc;					/* we'll check for error with ferror */
-
-	/*
 	 * Walk through the database table.
 	 */
 	hash_seq_init(&hstat, pgStatDBHash);
@@ -3792,7 +3749,7 @@ pgstat_write_statsfiles(bool permanent, bool allDbs)
 		{
 			fputc('R', fpout);
 			rc = fwrite(slotent, sizeof(PgStat_StatReplSlotEntry), 1, fpout);
-			(void) rc;				/* we'll check for error with ferror */
+			(void) rc;			/* we'll check for error with ferror */
 		}
 	}
 
@@ -4028,7 +3985,6 @@ pgstat_read_statsfiles(Oid onlydb, bool permanent, bool deep)
 	memset(&archiverStats, 0, sizeof(archiverStats));
 	memset(&walStats, 0, sizeof(walStats));
 	memset(&slruStats, 0, sizeof(slruStats));
-	memset(&recoveryPrefetchStats, 0, sizeof(recoveryPrefetchStats));
 
 	/*
 	 * Set the current timestamp (will be kept only in case we can't load an
@@ -4125,18 +4081,6 @@ pgstat_read_statsfiles(Oid onlydb, bool permanent, bool deep)
 		ereport(pgStatRunningInCollector ? LOG : WARNING,
 				(errmsg("corrupted statistics file \"%s\"", statfile)));
 		memset(&slruStats, 0, sizeof(slruStats));
-		goto done;
-	}
-
-	/*
-	 * Read recoveryPrefetchStats struct
-	 */
-	if (fread(&recoveryPrefetchStats, 1, sizeof(recoveryPrefetchStats),
-			  fpin) != sizeof(recoveryPrefetchStats))
-	{
-		ereport(pgStatRunningInCollector ? LOG : WARNING,
-				(errmsg("corrupted statistics file \"%s\"", statfile)));
-		memset(&recoveryPrefetchStats, 0, sizeof(recoveryPrefetchStats));
 		goto done;
 	}
 
@@ -4480,7 +4424,6 @@ pgstat_read_db_statsfile_timestamp(Oid databaseid, bool permanent,
 	PgStat_WalStats myWalStats;
 	PgStat_SLRUStats mySLRUStats[SLRU_NUM_ELEMENTS];
 	PgStat_StatReplSlotEntry myReplSlotStats;
-	PgStat_RecoveryPrefetchStats myRecoveryPrefetchStats;
 	FILE	   *fpin;
 	int32		format_id;
 	const char *statfile = permanent ? PGSTAT_STAT_PERMANENT_FILENAME : pgstat_stat_filename;
@@ -4550,18 +4493,6 @@ pgstat_read_db_statsfile_timestamp(Oid databaseid, bool permanent,
 	 * Read SLRU stats struct
 	 */
 	if (fread(mySLRUStats, 1, sizeof(mySLRUStats), fpin) != sizeof(mySLRUStats))
-	{
-		ereport(pgStatRunningInCollector ? LOG : WARNING,
-				(errmsg("corrupted statistics file \"%s\"", statfile)));
-		FreeFile(fpin);
-		return false;
-	}
-
-	/*
-	 * Read recovery prefetch stats struct
-	 */
-	if (fread(&myRecoveryPrefetchStats, 1, sizeof(myRecoveryPrefetchStats),
-			  fpin) != sizeof(myRecoveryPrefetchStats))
 	{
 		ereport(pgStatRunningInCollector ? LOG : WARNING,
 				(errmsg("corrupted statistics file \"%s\"", statfile)));
@@ -4750,13 +4681,6 @@ backend_read_statsfile(void)
 
 		/* Normal acceptance case: file is not older than cutoff time */
 		if (ok && file_ts >= min_ts)
-			break;
-
-		/*
-		 * If we're in crash recovery, the collector may not even be running,
-		 * so work with what we have.
-		 */
-		if (InRecovery)
 			break;
 
 		/* Not there or too old, so kick the collector and wait a bit */
@@ -5497,18 +5421,6 @@ pgstat_recv_slru(PgStat_MsgSLRU *msg, int len)
 	slruStats[msg->m_index].blocks_exists += msg->m_blocks_exists;
 	slruStats[msg->m_index].flush += msg->m_flush;
 	slruStats[msg->m_index].truncate += msg->m_truncate;
-}
-
-/* ----------
- * pgstat_recv_recoveryprefetch() -
- *
- *	Process a recovery prefetch message.
- * ----------
- */
-static void
-pgstat_recv_recoveryprefetch(PgStat_MsgRecoveryPrefetch *msg, int len)
-{
-	recoveryPrefetchStats = msg->m_stats;
 }
 
 /* ----------

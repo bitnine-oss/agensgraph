@@ -1,5 +1,7 @@
 #!/usr/bin/perl
 
+# Copyright (c) 2021, PostgreSQL Global Development Group
+
 # contrib/intarray/bench/create_test.pl
 
 use strict;

@@ -1,3 +1,6 @@
+
+# Copyright (c) 2021, PostgreSQL Global Development Group
+
 use strict;
 use warnings;
 use Cwd;
@@ -551,7 +554,7 @@ my $file_corrupt2 = $node->safe_psql('postgres',
 
 # set page header and block sizes
 my $pageheader_size = 24;
-my $block_size      = $node->safe_psql('postgres', 'SHOW block_size;');
+my $block_size = $node->safe_psql('postgres', 'SHOW block_size;');
 
 # induce corruption
 system_or_bail 'pg_ctl', '-D', $pgdata, 'stop';

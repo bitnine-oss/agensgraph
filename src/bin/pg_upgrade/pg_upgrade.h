@@ -292,7 +292,6 @@ typedef struct
 	transferMode transfer_mode; /* copy files or link them? */
 	int			jobs;			/* number of processes/threads to use */
 	char	   *socketdir;		/* directory to use for Unix sockets */
-	bool		ind_coll_unknown;	/* mark unknown index collation versions */
 } UserOpts;
 
 typedef struct
@@ -444,7 +443,7 @@ bool		check_for_data_types_usage(ClusterInfo *cluster,
 									   const char *base_query,
 									   const char *output_path);
 bool		check_for_data_type_usage(ClusterInfo *cluster,
-									  const char *typename,
+									  const char *type_name,
 									  const char *output_path);
 void		new_9_0_populate_pg_largeobject_metadata(ClusterInfo *cluster,
 													 bool check_mode);

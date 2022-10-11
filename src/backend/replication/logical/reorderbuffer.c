@@ -1366,10 +1366,11 @@ ReorderBufferIterTXNNext(ReorderBuffer *rb, ReorderBufferIterTXNState *state)
 		dlist_push_tail(&state->old_change, &change->node);
 
 		/*
-		 * Update the total bytes processed before releasing the current set
-		 * of changes and restoring the new set of changes.
+		 * Update the total bytes processed by the txn for which we are
+		 * releasing the current set of changes and restoring the new set of
+		 * changes.
 		 */
-		rb->totalBytes += rb->size;
+		rb->totalBytes += entry->txn->size;
 		if (ReorderBufferRestoreChanges(rb, entry->txn, &entry->file,
 										&state->entries[off].segno))
 		{
@@ -2371,9 +2372,9 @@ ReorderBufferProcessTXN(ReorderBuffer *rb, ReorderBufferTXN *txn,
 		iterstate = NULL;
 
 		/*
-		 * Update total transaction count and total transaction bytes
-		 * processed. Ensure to not count the streamed transaction multiple
-		 * times.
+		 * Update total transaction count and total bytes processed by the
+		 * transaction and its subtransactions. Ensure to not count the
+		 * streamed transaction multiple times.
 		 *
 		 * Note that the statistics computation has to be done after
 		 * ReorderBufferIterTXNFinish as it releases the serialized change
@@ -2382,7 +2383,7 @@ ReorderBufferProcessTXN(ReorderBuffer *rb, ReorderBufferTXN *txn,
 		if (!rbtxn_is_streamed(txn))
 			rb->totalTxns++;
 
-		rb->totalBytes += rb->size;
+		rb->totalBytes += txn->total_size;
 
 		/*
 		 * Done with current changes, send the last message for this set of
@@ -2491,17 +2492,18 @@ ReorderBufferProcessTXN(ReorderBuffer *rb, ReorderBufferTXN *txn,
 		 * abort of the (sub)transaction we are streaming or preparing. We
 		 * need to do the cleanup and return gracefully on this error, see
 		 * SetupCheckXidLive.
+		 *
+		 * This error code can be thrown by one of the callbacks we call
+		 * during decoding so we need to ensure that we return gracefully only
+		 * when we are sending the data in streaming mode and the streaming is
+		 * not finished yet or when we are sending the data out on a PREPARE
+		 * during a two-phase commit.
 		 */
-		if (errdata->sqlerrcode == ERRCODE_TRANSACTION_ROLLBACK)
+		if (errdata->sqlerrcode == ERRCODE_TRANSACTION_ROLLBACK &&
+			(stream_started || rbtxn_prepared(txn)))
 		{
-			/*
-			 * This error can occur either when we are sending the data in
-			 * streaming mode and the streaming is not finished yet or when we
-			 * are sending the data out on a PREPARE during a two-phase
-			 * commit.
-			 */
-			Assert(streaming || rbtxn_prepared(txn));
-			Assert(stream_started || rbtxn_prepared(txn));
+			/* curtxn must be set for streaming or prepared transactions */
+			Assert(curtxn);
 
 			/* Cleanup the temporary error state. */
 			FlushErrorState();
@@ -3073,7 +3075,7 @@ ReorderBufferChangeMemoryUpdate(ReorderBuffer *rb,
 {
 	Size		sz;
 	ReorderBufferTXN *txn;
-	ReorderBufferTXN *toptxn = NULL;
+	ReorderBufferTXN *toptxn;
 
 	Assert(change->txn);
 
@@ -3087,14 +3089,14 @@ ReorderBufferChangeMemoryUpdate(ReorderBuffer *rb,
 
 	txn = change->txn;
 
-	/* If streaming supported, update the total size in top level as well. */
-	if (ReorderBufferCanStream(rb))
-	{
-		if (txn->toptxn != NULL)
-			toptxn = txn->toptxn;
-		else
-			toptxn = txn;
-	}
+	/*
+	 * Update the total size in top level as well. This is later used to
+	 * compute the decoding stats.
+	 */
+	if (txn->toptxn != NULL)
+		toptxn = txn->toptxn;
+	else
+		toptxn = txn;
 
 	sz = ReorderBufferChangeSize(change);
 
@@ -3104,8 +3106,7 @@ ReorderBufferChangeMemoryUpdate(ReorderBuffer *rb,
 		rb->size += sz;
 
 		/* Update the total size in the top transaction. */
-		if (toptxn)
-			toptxn->total_size += sz;
+		toptxn->total_size += sz;
 	}
 	else
 	{
@@ -3114,8 +3115,7 @@ ReorderBufferChangeMemoryUpdate(ReorderBuffer *rb,
 		rb->size -= sz;
 
 		/* Update the total size in the top transaction. */
-		if (toptxn)
-			toptxn->total_size -= sz;
+		toptxn->total_size -= sz;
 	}
 
 	Assert(txn->size <= rb->size);
@@ -3559,6 +3559,9 @@ ReorderBufferSerializeTXN(ReorderBuffer *rb, ReorderBufferTXN *txn)
 
 		/* don't consider already serialized transactions */
 		rb->spillTxns += (rbtxn_is_serialized(txn) || rbtxn_is_serialized_clear(txn)) ? 0 : 1;
+
+		/* update the decoding stats */
+		UpdateDecodingStats((LogicalDecodingContext *) rb->private_data);
 	}
 
 	Assert(spilled == txn->nentries_mem);
@@ -3927,6 +3930,9 @@ ReorderBufferStreamTXN(ReorderBuffer *rb, ReorderBufferTXN *txn)
 
 	/* Don't consider already streamed transaction. */
 	rb->streamTxns += (txn_is_streamed) ? 0 : 1;
+
+	/* update the decoding stats */
+	UpdateDecodingStats((LogicalDecodingContext *) rb->private_data);
 
 	Assert(dlist_is_empty(&txn->changes));
 	Assert(txn->nentries == 0);

@@ -1134,9 +1134,9 @@ EndPrepare(GlobalTransaction gxact)
 	gxact->prepare_start_lsn = ProcLastRecPtr;
 
 	/*
-	 * Mark the prepared transaction as valid.  As soon as xact.c marks
-	 * MyProc as not running our XID (which it will do immediately after
-	 * this function returns), others can commit/rollback the xact.
+	 * Mark the prepared transaction as valid.  As soon as xact.c marks MyProc
+	 * as not running our XID (which it will do immediately after this
+	 * function returns), others can commit/rollback the xact.
 	 *
 	 * NB: a side effect of this is to make a dummy ProcArray entry for the
 	 * prepared XID.  This must happen before we clear the XID from MyProc /
@@ -1330,8 +1330,11 @@ XlogReadTwoPhaseData(XLogRecPtr lsn, char **buf, int *len)
 	char	   *errormsg;
 	TimeLineID	save_currtli = ThisTimeLineID;
 
-	xlogreader = XLogReaderAllocate(wal_segment_size, NULL, wal_segment_close);
-
+	xlogreader = XLogReaderAllocate(wal_segment_size, NULL,
+									XL_ROUTINE(.page_read = &read_local_xlog_page,
+											   .segment_open = &wal_segment_open,
+											   .segment_close = &wal_segment_close),
+									NULL);
 	if (!xlogreader)
 		ereport(ERROR,
 				(errcode(ERRCODE_OUT_OF_MEMORY),
@@ -1339,12 +1342,7 @@ XlogReadTwoPhaseData(XLogRecPtr lsn, char **buf, int *len)
 				 errdetail("Failed while allocating a WAL reading processor.")));
 
 	XLogBeginRead(xlogreader, lsn);
-	while (XLogReadRecord(xlogreader, &record, &errormsg) ==
-		   XLREAD_NEED_DATA)
-	{
-		if (!read_local_xlog_page(xlogreader))
-			break;
-	}
+	record = XLogReadRecord(xlogreader, &errormsg);
 
 	/*
 	 * Restore immediately the timeline where it was previously, as

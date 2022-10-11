@@ -146,7 +146,7 @@ typedef struct PgFdwScanState
 
 	/* for remote query execution */
 	PGconn	   *conn;			/* connection for the scan */
-	PgFdwConnState *conn_state;	/* extra per-connection state */
+	PgFdwConnState *conn_state; /* extra per-connection state */
 	unsigned int cursor_number; /* quasi-unique ID for my cursor */
 	bool		cursor_exists;	/* have we created the cursor? */
 	int			numParams;		/* number of parameters passed to query */
@@ -164,7 +164,7 @@ typedef struct PgFdwScanState
 	bool		eof_reached;	/* true if last fetch reached EOF */
 
 	/* for asynchronous execution */
-	bool		async_capable; 	/* engage asynchronous-capable logic? */
+	bool		async_capable;	/* engage asynchronous-capable logic? */
 
 	/* working memory contexts */
 	MemoryContext batch_cxt;	/* context holding current batch of tuples */
@@ -183,7 +183,7 @@ typedef struct PgFdwModifyState
 
 	/* for remote query execution */
 	PGconn	   *conn;			/* connection for the scan */
-	PgFdwConnState *conn_state;	/* extra per-connection state */
+	PgFdwConnState *conn_state; /* extra per-connection state */
 	char	   *p_name;			/* name of prepared statement, if created */
 
 	/* extracted fdw_private data */
@@ -227,7 +227,7 @@ typedef struct PgFdwDirectModifyState
 
 	/* for remote query execution */
 	PGconn	   *conn;			/* connection for the update */
-	PgFdwConnState *conn_state;	/* extra per-connection state */
+	PgFdwConnState *conn_state; /* extra per-connection state */
 	int			numParams;		/* number of parameters passed to query */
 	FmgrInfo   *param_flinfo;	/* output conversion functions for them */
 	List	   *param_exprs;	/* executable expressions for param values */
@@ -364,10 +364,10 @@ static TupleTableSlot *postgresExecForeignInsert(EState *estate,
 												 TupleTableSlot *slot,
 												 TupleTableSlot *planSlot);
 static TupleTableSlot **postgresExecForeignBatchInsert(EState *estate,
-												 ResultRelInfo *resultRelInfo,
-												 TupleTableSlot **slots,
-												 TupleTableSlot **planSlots,
-												 int *numSlots);
+													   ResultRelInfo *resultRelInfo,
+													   TupleTableSlot **slots,
+													   TupleTableSlot **planSlots,
+													   int *numSlots);
 static int	postgresGetForeignModifyBatchSize(ResultRelInfo *resultRelInfo);
 static TupleTableSlot *postgresExecForeignUpdate(EState *estate,
 												 ResultRelInfo *resultRelInfo,
@@ -467,11 +467,11 @@ static PgFdwModifyState *create_foreign_modify(EState *estate,
 											   bool has_returning,
 											   List *retrieved_attrs);
 static TupleTableSlot **execute_foreign_modify(EState *estate,
-											  ResultRelInfo *resultRelInfo,
-											  CmdType operation,
-											  TupleTableSlot **slots,
-											  TupleTableSlot **planSlots,
-											  int *numSlots);
+											   ResultRelInfo *resultRelInfo,
+											   CmdType operation,
+											   TupleTableSlot **slots,
+											   TupleTableSlot **planSlots,
+											   int *numSlots);
 static void prepare_foreign_modify(PgFdwModifyState *fmstate);
 static const char **convert_prep_stmt_params(PgFdwModifyState *fmstate,
 											 ItemPointer tupleid,
@@ -545,7 +545,7 @@ static void apply_table_options(PgFdwRelationInfo *fpinfo);
 static void merge_fdw_options(PgFdwRelationInfo *fpinfo,
 							  const PgFdwRelationInfo *fpinfo_o,
 							  const PgFdwRelationInfo *fpinfo_i);
-static int get_batch_size_option(Relation rel);
+static int	get_batch_size_option(Relation rel);
 
 
 /*
@@ -1542,7 +1542,7 @@ postgresBeginForeignScan(ForeignScanState *node, int eflags)
 							 &fsstate->param_values);
 
 	/* Set the async-capable flag */
-	fsstate->async_capable = node->ss.ps.plan->async_capable;
+	fsstate->async_capable = node->ss.ps.async_capable;
 }
 
 /*
@@ -1870,7 +1870,7 @@ postgresBeginForeignModify(ModifyTableState *mtstate,
 	target_attrs = (List *) list_nth(fdw_private,
 									 FdwModifyPrivateTargetAttnums);
 	values_end_len = intVal(list_nth(fdw_private,
-									FdwModifyPrivateLen));
+									 FdwModifyPrivateLen));
 	has_returning = intVal(list_nth(fdw_private,
 									FdwModifyPrivateHasReturning));
 	retrieved_attrs = (List *) list_nth(fdw_private,
@@ -1907,7 +1907,7 @@ postgresExecForeignInsert(EState *estate,
 {
 	PgFdwModifyState *fmstate = (PgFdwModifyState *) resultRelInfo->ri_FdwState;
 	TupleTableSlot **rslot;
-	int 			numSlots = 1;
+	int			numSlots = 1;
 
 	/*
 	 * If the fmstate has aux_fmstate set, use the aux_fmstate (see
@@ -1930,10 +1930,10 @@ postgresExecForeignInsert(EState *estate,
  */
 static TupleTableSlot **
 postgresExecForeignBatchInsert(EState *estate,
-						  ResultRelInfo *resultRelInfo,
-						  TupleTableSlot **slots,
-						  TupleTableSlot **planSlots,
-						  int *numSlots)
+							   ResultRelInfo *resultRelInfo,
+							   TupleTableSlot **slots,
+							   TupleTableSlot **planSlots,
+							   int *numSlots)
 {
 	PgFdwModifyState *fmstate = (PgFdwModifyState *) resultRelInfo->ri_FdwState;
 	TupleTableSlot **rslot;
@@ -1964,17 +1964,17 @@ postgresExecForeignBatchInsert(EState *estate,
 static int
 postgresGetForeignModifyBatchSize(ResultRelInfo *resultRelInfo)
 {
-	int	batch_size;
+	int			batch_size;
 	PgFdwModifyState *fmstate = resultRelInfo->ri_FdwState ?
-							(PgFdwModifyState *) resultRelInfo->ri_FdwState :
-							NULL;
+	(PgFdwModifyState *) resultRelInfo->ri_FdwState :
+	NULL;
 
 	/* should be called only once */
 	Assert(resultRelInfo->ri_BatchSize == 0);
 
 	/*
-	 * Should never get called when the insert is being performed as part of
-	 * a row movement operation.
+	 * Should never get called when the insert is being performed as part of a
+	 * row movement operation.
 	 */
 	Assert(fmstate == NULL || fmstate->aux_fmstate == NULL);
 
@@ -2009,10 +2009,10 @@ postgresExecForeignUpdate(EState *estate,
 						  TupleTableSlot *planSlot)
 {
 	TupleTableSlot **rslot;
-	int 			numSlots = 1;
+	int			numSlots = 1;
 
 	rslot = execute_foreign_modify(estate, resultRelInfo, CMD_UPDATE,
-								  &slot, &planSlot, &numSlots);
+								   &slot, &planSlot, &numSlots);
 
 	return rslot ? rslot[0] : NULL;
 }
@@ -2028,10 +2028,10 @@ postgresExecForeignDelete(EState *estate,
 						  TupleTableSlot *planSlot)
 {
 	TupleTableSlot **rslot;
-	int 			numSlots = 1;
+	int			numSlots = 1;
 
 	rslot = execute_foreign_modify(estate, resultRelInfo, CMD_DELETE,
-								  &slot, &planSlot, &numSlots);
+								   &slot, &planSlot, &numSlots);
 
 	return rslot ? rslot[0] : NULL;
 }
@@ -2117,13 +2117,13 @@ postgresBeginForeignInsert(ModifyTableState *mtstate,
 
 	/*
 	 * If the foreign table is a partition that doesn't have a corresponding
-	 * RTE entry, we need to create a new RTE
-	 * describing the foreign table for use by deparseInsertSql and
-	 * create_foreign_modify() below, after first copying the parent's RTE and
-	 * modifying some fields to describe the foreign partition to work on.
-	 * However, if this is invoked by UPDATE, the existing RTE may already
-	 * correspond to this partition if it is one of the UPDATE subplan target
-	 * rels; in that case, we can just use the existing RTE as-is.
+	 * RTE entry, we need to create a new RTE describing the foreign table for
+	 * use by deparseInsertSql and create_foreign_modify() below, after first
+	 * copying the parent's RTE and modifying some fields to describe the
+	 * foreign partition to work on. However, if this is invoked by UPDATE,
+	 * the existing RTE may already correspond to this partition if it is one
+	 * of the UPDATE subplan target rels; in that case, we can just use the
+	 * existing RTE as-is.
 	 */
 	if (resultRelInfo->ri_RangeTableIndex == 0)
 	{
@@ -2530,6 +2530,13 @@ postgresPlanDirectModify(PlannerInfo *root,
 			rebuild_fdw_scan_tlist(fscan, returningList);
 	}
 
+	/*
+	 * Finally, unset the async-capable flag if it is set, as we currently
+	 * don't support asynchronous execution of direct modifications.
+	 */
+	if (fscan->scan.plan.async_capable)
+		fscan->scan.plan.async_capable = false;
+
 	table_close(rel, NoLock);
 	return true;
 }
@@ -2847,8 +2854,8 @@ postgresExplainForeignModify(ModifyTableState *mtstate,
 		ExplainPropertyText("Remote SQL", sql, es);
 
 		/*
-		 * For INSERT we should always have batch size >= 1, but UPDATE
-		 * and DELETE don't support batching so don't show the property.
+		 * For INSERT we should always have batch size >= 1, but UPDATE and
+		 * DELETE don't support batching so don't show the property.
 		 */
 		if (rinfo->ri_BatchSize > 0)
 			ExplainPropertyInteger("Batch Size", NULL, rinfo->ri_BatchSize, es);
@@ -3903,7 +3910,10 @@ create_foreign_modify(EState *estate,
 	/* Set up remote query information. */
 	fmstate->query = query;
 	if (operation == CMD_INSERT)
+	{
+		fmstate->query = pstrdup(fmstate->query);
 		fmstate->orig_query = pstrdup(fmstate->query);
+	}
 	fmstate->target_attrs = target_attrs;
 	fmstate->values_end = values_end;
 	fmstate->has_returning = has_returning;
@@ -6864,7 +6874,7 @@ produce_tuple_asynchronously(AsyncRequest *areq, bool fetch)
 	}
 
 	/* Get a tuple from the ForeignScan node */
-	result = ExecProcNode((PlanState *) node);
+	result = areq->requestee->ExecProcNodeReal(areq->requestee);
 	if (!TupIsNull(result))
 	{
 		/* Mark the request as complete */
@@ -6952,6 +6962,11 @@ process_pending_request(AsyncRequest *areq)
 
 	/* Unlike AsyncNotify, we call ExecAsyncResponse ourselves */
 	ExecAsyncResponse(areq);
+
+	/* Also, we do instrumentation ourselves, if required */
+	if (areq->requestee->instrument)
+		InstrUpdateTupleCount(areq->requestee->instrument,
+							  TupIsNull(areq->result) ? 0.0 : 1.0);
 
 	MemoryContextSwitchTo(oldcontext);
 }
@@ -7247,18 +7262,18 @@ find_em_expr_for_input_target(PlannerInfo *root,
 static int
 get_batch_size_option(Relation rel)
 {
-	Oid foreigntableid = RelationGetRelid(rel);
+	Oid			foreigntableid = RelationGetRelid(rel);
 	ForeignTable *table;
 	ForeignServer *server;
 	List	   *options;
 	ListCell   *lc;
 
 	/* we use 1 by default, which means "no batching" */
-	int batch_size = 1;
+	int			batch_size = 1;
 
 	/*
-	 * Load options for table and server. We append server options after
-	 * table options, because table options take precedence.
+	 * Load options for table and server. We append server options after table
+	 * options, because table options take precedence.
 	 */
 	table = GetForeignTable(foreigntableid);
 	server = GetForeignServer(table->serverid);

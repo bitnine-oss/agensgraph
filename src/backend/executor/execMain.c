@@ -135,8 +135,8 @@ ExecutorStart(QueryDesc *queryDesc, int eflags)
 	/*
 	 * In some cases (e.g. an EXECUTE statement) a query execution will skip
 	 * parse analysis, which means that the query_id won't be reported.  Note
-	 * that it's harmless to report the query_id multiple time, as the call will
-	 * be ignored if the top level query_id has already been reported.
+	 * that it's harmless to report the query_id multiple time, as the call
+	 * will be ignored if the top level query_id has already been reported.
 	 */
 	pgstat_report_query_id(queryDesc->plannedstmt->queryId, false);
 
@@ -1233,7 +1233,7 @@ InitResultRelInfo(ResultRelInfo *resultRelInfo,
 		resultRelInfo->ri_TrigWhenExprs = (ExprState **)
 			palloc0(n * sizeof(ExprState *));
 		if (instrument_options)
-			resultRelInfo->ri_TrigInstrument = InstrAlloc(n, instrument_options);
+			resultRelInfo->ri_TrigInstrument = InstrAlloc(n, instrument_options, false);
 	}
 	else
 	{

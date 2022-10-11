@@ -255,15 +255,6 @@ $ENV{MSBFLAGS}="/m";
        </para>
      </note>
 
-     <note>
-       <para>
-       The obsolete <literal>winflex</literal> binaries distributed in the
-       downloads section of the PostgreSQL web site
-       and referenced in older documentation will fail with <quote>flex: fatal
-       internal error, exec failed</quote> on 64-bit Windows hosts. Use Flex from
-       MSYS instead.
-       </para>
-     </note>
      </listitem>
     </varlistentry>
 
@@ -301,6 +292,16 @@ $ENV{MSBFLAGS}="/m";
       <ulink url="https://zlatkovic.com/pub/libxml"></ulink> or source from
       <ulink url="http://xmlsoft.org"></ulink>. Note that libxml2 requires iconv,
       which is available from the same download location.
+     </para></listitem>
+    </varlistentry>
+
+    <varlistentry>
+     <term><productname>LZ4</productname></term>
+     <listitem><para>
+      Required for supporting <productname>LZ4</productname> compression
+      method for compressing the table data. Binaries and source can be
+      downloaded from
+      <ulink url="https://github.com/lz4/lz4/releases"></ulink>.
      </para></listitem>
     </varlistentry>
 

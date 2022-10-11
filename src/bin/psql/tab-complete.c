@@ -45,7 +45,6 @@
 
 #include "catalog/pg_am_d.h"
 #include "catalog/pg_class_d.h"
-#include "catalog/pg_collation_d.h"
 #include "common.h"
 #include "libpq-fe.h"
 #include "pqexpbuffer.h"
@@ -842,20 +841,6 @@ static const SchemaQuery Query_for_list_of_collations = {
 "       (SELECT tgrelid FROM pg_catalog.pg_trigger "\
 "         WHERE pg_catalog.quote_ident(tgname)='%s')"
 
-/* the silly-looking length condition is just to eat up the current word */
-#define Query_for_list_of_colls_for_one_index \
-" SELECT DISTINCT pg_catalog.quote_ident(coll.collname) " \
-"   FROM pg_catalog.pg_depend d, pg_catalog.pg_collation coll, " \
-"     pg_catalog.pg_class c" \
-" WHERE (%d = pg_catalog.length('%s'))" \
-"   AND d.refclassid = " CppAsString2(CollationRelationId) \
-"   AND d.refobjid = coll.oid " \
-"   AND d.classid = " CppAsString2(RelationRelationId) \
-"   AND d.objid = c.oid " \
-"   AND c.relkind = " CppAsString2(RELKIND_INDEX) \
-"   AND pg_catalog.pg_table_is_visible(c.oid) " \
-"   AND c.relname = '%s'"
-
 #define Query_for_list_of_ts_configurations \
 "SELECT pg_catalog.quote_ident(cfgname) FROM pg_catalog.pg_ts_config "\
 " WHERE substring(pg_catalog.quote_ident(cfgname),1,%d)='%s'"
@@ -1506,7 +1491,7 @@ psql_completion(const char *text, int start, int end)
 		"ABORT", "ALTER", "ANALYZE", "BEGIN", "CALL", "CHECKPOINT", "CLOSE", "CLUSTER",
 		"COMMENT", "COMMIT", "COPY", "CREATE", "DEALLOCATE", "DECLARE",
 		"DELETE FROM", "DISCARD", "DO", "DROP", "END", "EXECUTE", "EXPLAIN",
-		"FETCH", "GRANT", "IMPORT FOREIGN SCHEMA", "INSERT", "LISTEN", "LOAD", "LOCK",
+		"FETCH", "GRANT", "IMPORT FOREIGN SCHEMA", "INSERT INTO", "LISTEN", "LOAD", "LOCK",
 		"MOVE", "NOTIFY", "PREPARE",
 		"REASSIGN", "REFRESH MATERIALIZED VIEW", "REINDEX", "RELEASE",
 		"RESET", "REVOKE", "ROLLBACK",
@@ -1769,15 +1754,14 @@ psql_completion(const char *text, int start, int end)
 	else if (Matches("ALTER", "INDEX", MatchAny))
 		COMPLETE_WITH("ALTER COLUMN", "OWNER TO", "RENAME TO", "SET",
 					  "RESET", "ATTACH PARTITION",
-					  "DEPENDS ON EXTENSION", "NO DEPENDS ON EXTENSION",
-					  "ALTER COLLATION");
+					  "DEPENDS ON EXTENSION", "NO DEPENDS ON EXTENSION");
 	else if (Matches("ALTER", "INDEX", MatchAny, "ATTACH"))
 		COMPLETE_WITH("PARTITION");
 	else if (Matches("ALTER", "INDEX", MatchAny, "ATTACH", "PARTITION"))
 		COMPLETE_WITH_SCHEMA_QUERY(Query_for_list_of_indexes, NULL);
 	/* ALTER INDEX <name> ALTER */
 	else if (Matches("ALTER", "INDEX", MatchAny, "ALTER"))
-		COMPLETE_WITH("COLLATION", "COLUMN");
+		COMPLETE_WITH("COLUMN");
 	/* ALTER INDEX <name> ALTER COLUMN */
 	else if (Matches("ALTER", "INDEX", MatchAny, "ALTER", "COLUMN"))
 	{
@@ -1804,27 +1788,22 @@ psql_completion(const char *text, int start, int end)
 	/* ALTER INDEX <foo> SET|RESET ( */
 	else if (Matches("ALTER", "INDEX", MatchAny, "RESET", "("))
 		COMPLETE_WITH("fillfactor",
-					  "deduplicate_items", /* BTREE */
+					  "deduplicate_items",	/* BTREE */
 					  "fastupdate", "gin_pending_list_limit",	/* GIN */
 					  "buffering",	/* GiST */
 					  "pages_per_range", "autosummarize"	/* BRIN */
 			);
 	else if (Matches("ALTER", "INDEX", MatchAny, "SET", "("))
 		COMPLETE_WITH("fillfactor =",
-					  "deduplicate_items =", /* BTREE */
+					  "deduplicate_items =",	/* BTREE */
 					  "fastupdate =", "gin_pending_list_limit =",	/* GIN */
 					  "buffering =",	/* GiST */
 					  "pages_per_range =", "autosummarize ="	/* BRIN */
 			);
-	/* ALTER INDEX <name> ALTER COLLATION */
-	else if (Matches("ALTER", "INDEX", MatchAny, "ALTER", "COLLATION"))
-	{
-		completion_info_charp = prev3_wd;
-		COMPLETE_WITH_QUERY(Query_for_list_of_colls_for_one_index);
-	}
-	/* ALTER INDEX <name> ALTER COLLATION <name> */
-	else if (Matches("ALTER", "INDEX", MatchAny, "ALTER", "COLLATION", MatchAny))
-		COMPLETE_WITH("REFRESH VERSION");
+	else if (Matches("ALTER", "INDEX", MatchAny, "NO", "DEPENDS"))
+		COMPLETE_WITH("ON EXTENSION");
+	else if (Matches("ALTER", "INDEX", MatchAny, "DEPENDS"))
+		COMPLETE_WITH("ON EXTENSION");
 
 	/* ALTER LANGUAGE <name> */
 	else if (Matches("ALTER", "LANGUAGE", MatchAny))
@@ -2407,7 +2386,7 @@ psql_completion(const char *text, int start, int end)
 								   " UNION ALL SELECT '('");
 	/* Complete COPY ( with legal query commands */
 	else if (Matches("COPY|\\copy", "("))
-		COMPLETE_WITH("SELECT", "TABLE", "VALUES", "INSERT", "UPDATE", "DELETE", "WITH");
+		COMPLETE_WITH("SELECT", "TABLE", "VALUES", "INSERT INTO", "UPDATE", "DELETE FROM", "WITH");
 	/* Complete COPY <sth> */
 	else if (Matches("COPY|\\copy", MatchAny))
 		COMPLETE_WITH("FROM", "TO");
@@ -3101,7 +3080,7 @@ psql_completion(const char *text, int start, int end)
 		COMPLETE_WITH("FOR");
 
 /* DELETE --- can be inside EXPLAIN, RULE, etc */
-	/* ... despite which, only complete DELETE with FROM at start of line */
+	/* Complete DELETE with "FROM" */
 	else if (Matches("DELETE"))
 		COMPLETE_WITH("FROM");
 	/* Complete DELETE FROM with a list of tables */
@@ -3229,7 +3208,7 @@ psql_completion(const char *text, int start, int end)
  * EXPLAIN [ ANALYZE ] [ VERBOSE ] statement
  */
 	else if (Matches("EXPLAIN"))
-		COMPLETE_WITH("SELECT", "INSERT", "DELETE", "UPDATE", "DECLARE",
+		COMPLETE_WITH("SELECT", "INSERT INTO", "DELETE FROM", "UPDATE", "DECLARE",
 					  "ANALYZE", "VERBOSE");
 	else if (HeadMatches("EXPLAIN", "(*") &&
 			 !HeadMatches("EXPLAIN", "(*)"))
@@ -3248,12 +3227,12 @@ psql_completion(const char *text, int start, int end)
 			COMPLETE_WITH("TEXT", "XML", "JSON", "YAML");
 	}
 	else if (Matches("EXPLAIN", "ANALYZE"))
-		COMPLETE_WITH("SELECT", "INSERT", "DELETE", "UPDATE", "DECLARE",
+		COMPLETE_WITH("SELECT", "INSERT INTO", "DELETE FROM", "UPDATE", "DECLARE",
 					  "VERBOSE");
 	else if (Matches("EXPLAIN", "(*)") ||
 			 Matches("EXPLAIN", "VERBOSE") ||
 			 Matches("EXPLAIN", "ANALYZE", "VERBOSE"))
-		COMPLETE_WITH("SELECT", "INSERT", "DELETE", "UPDATE", "DECLARE");
+		COMPLETE_WITH("SELECT", "INSERT INTO", "DELETE FROM", "UPDATE", "DECLARE");
 
 /* FETCH && MOVE */
 
@@ -3608,7 +3587,7 @@ psql_completion(const char *text, int start, int end)
 
 /* PREPARE xx AS */
 	else if (Matches("PREPARE", MatchAny, "AS"))
-		COMPLETE_WITH("SELECT", "UPDATE", "INSERT", "DELETE FROM");
+		COMPLETE_WITH("SELECT", "UPDATE", "INSERT INTO", "DELETE FROM");
 
 /*
  * PREPARE TRANSACTION is missing on purpose. It's intended for transaction

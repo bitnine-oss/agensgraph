@@ -42,7 +42,6 @@
 #include "access/xact.h"
 #include "access/xlog.h"
 #include "catalog/catalog.h"
-#include "catalog/index.h"
 #include "catalog/indexing.h"
 #include "catalog/namespace.h"
 #include "catalog/partition.h"
@@ -1017,9 +1016,9 @@ RelationBuildDesc(Oid targetRelId, bool insertIt)
 	 *
 	 * When cache clobbering is enabled or when forced to by
 	 * RECOVER_RELATION_BUILD_MEMORY=1, arrange to allocate the junk in a
-	 * temporary context that we'll free before returning.  Make it a child
-	 * of caller's context so that it will get cleaned up appropriately if
-	 * we error out partway through.
+	 * temporary context that we'll free before returning.  Make it a child of
+	 * caller's context so that it will get cleaned up appropriately if we
+	 * error out partway through.
 	 */
 #ifdef MAYBE_RECOVER_RELATION_BUILD_MEMORY
 	MemoryContext tmpcxt = NULL;
@@ -6069,7 +6068,6 @@ load_relcache_init_file(bool shared)
 		rel->rd_idattr = NULL;
 		rel->rd_pubactions = NULL;
 		rel->rd_statvalid = false;
-		rel->rd_version_checked = false;
 		rel->rd_statlist = NIL;
 		rel->rd_fkeyvalid = false;
 		rel->rd_fkeylist = NIL;
