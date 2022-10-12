@@ -228,6 +228,13 @@ ProcessQuery(PlannedStmt *plan,
  * That's more general than portals need, but plancache.c uses this too.
  *
  * See the comments in portal.h.
+ * 
+ * AgensGraph
+ * AgensGraph's Plan is not the same as the basic PostgreSQL Rule.
+ * 
+ * For example, If CMD_SELECT, it can be including CMD_GRAPHWRITE. so, if
+ * returns PORTAL_ONE_SELECT then, makes Snapshot system failure. Therefore,
+ * added a case for this.
  */
 PortalStrategy
 ChoosePortalStrategy(List *stmts)
@@ -275,6 +282,11 @@ ChoosePortalStrategy(List *stmts)
 			{
 				if (pstmt->commandType == CMD_SELECT)
 				{
+					if (pstmt->hasGraphwriteClause)
+					{
+						return PORTAL_MULTI_QUERY;
+					}
+
 					if (pstmt->hasModifyingCTE)
 						return PORTAL_ONE_MOD_WITH;
 					else
