@@ -5531,6 +5531,34 @@ UPDATE ft2 AS target SET (c2) = (
         FROM ft2 AS src
         WHERE target.c1 = src.c1
 ) WHERE c1 > 1100;
+-- Test UPDATE involving a join that can be pushed down,
+-- but a SET clause that can't be
+EXPLAIN (VERBOSE, COSTS OFF)
+UPDATE ft2 d SET c2 = CASE WHEN random() >= 0 THEN d.c2 ELSE 0 END
+  FROM ft2 AS t WHERE d.c1 = t.c1 AND d.c1 > 1000;
+                                                                                                                                                                                       QUERY PLAN                                                                                                                                                                                        
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Update on public.ft2 d
+   Remote SQL: UPDATE "S 1"."T 1" SET c2 = $2 WHERE ctid = $1
+   ->  Foreign Scan
+         Output: CASE WHEN (random() >= '0'::double precision) THEN d.c2 ELSE 0 END, d.ctid, d.*, t.*
+         Relations: (public.ft2 d) INNER JOIN (public.ft2 t)
+         Remote SQL: SELECT r1.c2, r1.ctid, CASE WHEN (r1.*)::text IS NOT NULL THEN ROW(r1."C 1", r1.c2, r1.c3, r1.c4, r1.c5, r1.c6, r1.c7, r1.c8) END, CASE WHEN (r2.*)::text IS NOT NULL THEN ROW(r2."C 1", r2.c2, r2.c3, r2.c4, r2.c5, r2.c6, r2.c7, r2.c8) END FROM ("S 1"."T 1" r1 INNER JOIN "S 1"."T 1" r2 ON (((r1."C 1" = r2."C 1")) AND ((r1."C 1" > 1000)))) FOR UPDATE OF r1
+         ->  Hash Join
+               Output: d.c2, d.ctid, d.*, t.*
+               Hash Cond: (d.c1 = t.c1)
+               ->  Foreign Scan on public.ft2 d
+                     Output: d.c2, d.ctid, d.*, d.c1
+                     Remote SQL: SELECT "C 1", c2, c3, c4, c5, c6, c7, c8, ctid FROM "S 1"."T 1" WHERE (("C 1" > 1000)) ORDER BY "C 1" ASC NULLS LAST FOR UPDATE
+               ->  Hash
+                     Output: t.*, t.c1
+                     ->  Foreign Scan on public.ft2 t
+                           Output: t.*, t.c1
+                           Remote SQL: SELECT "C 1", c2, c3, c4, c5, c6, c7, c8 FROM "S 1"."T 1"
+(17 rows)
+
+UPDATE ft2 d SET c2 = CASE WHEN random() >= 0 THEN d.c2 ELSE 0 END
+  FROM ft2 AS t WHERE d.c1 = t.c1 AND d.c1 > 1000;
 -- Test UPDATE/DELETE with WHERE or JOIN/ON conditions containing
 -- user-defined operators/functions
 ALTER SERVER loopback OPTIONS (DROP extensions);
@@ -7255,6 +7283,92 @@ select * from bar where f1 in (select f1 from foo) for share;
   4 | 44
 (4 rows)
 
+-- Now check SELECT FOR UPDATE/SHARE with an inherited source table,
+-- where the parent is itself a foreign table
+create table loct4 (f1 int, f2 int, f3 int);
+create foreign table foo2child (f3 int) inherits (foo2)
+  server loopback options (table_name 'loct4');
+NOTICE:  moving and merging column "f3" with inherited definition
+DETAIL:  User-specified column moved to the position of the inherited column.
+explain (verbose, costs off)
+select * from bar where f1 in (select f1 from foo2) for share;
+                                      QUERY PLAN                                      
+--------------------------------------------------------------------------------------
+ LockRows
+   Output: bar.f1, bar.f2, bar.ctid, foo2.*, bar.*, bar.tableoid, foo2.tableoid
+   ->  Hash Join
+         Output: bar.f1, bar.f2, bar.ctid, foo2.*, bar.*, bar.tableoid, foo2.tableoid
+         Inner Unique: true
+         Hash Cond: (bar.f1 = foo2.f1)
+         ->  Append
+               ->  Seq Scan on public.bar bar_1
+                     Output: bar_1.f1, bar_1.f2, bar_1.ctid, bar_1.*, bar_1.tableoid
+               ->  Foreign Scan on public.bar2 bar_2
+                     Output: bar_2.f1, bar_2.f2, bar_2.ctid, bar_2.*, bar_2.tableoid
+                     Remote SQL: SELECT f1, f2, f3, ctid FROM public.loct2 FOR SHARE
+         ->  Hash
+               Output: foo2.*, foo2.f1, foo2.tableoid
+               ->  HashAggregate
+                     Output: foo2.*, foo2.f1, foo2.tableoid
+                     Group Key: foo2.f1
+                     ->  Append
+                           ->  Foreign Scan on public.foo2 foo2_1
+                                 Output: foo2_1.*, foo2_1.f1, foo2_1.tableoid
+                                 Remote SQL: SELECT f1, f2, f3 FROM public.loct1
+                           ->  Foreign Scan on public.foo2child foo2_2
+                                 Output: foo2_2.*, foo2_2.f1, foo2_2.tableoid
+                                 Remote SQL: SELECT f1, f2, f3 FROM public.loct4
+(24 rows)
+
+select * from bar where f1 in (select f1 from foo2) for share;
+ f1 | f2 
+----+----
+  2 | 22
+  4 | 44
+(2 rows)
+
+drop foreign table foo2child;
+-- And with a local child relation of the foreign table parent
+create table foo2child (f3 int) inherits (foo2);
+NOTICE:  moving and merging column "f3" with inherited definition
+DETAIL:  User-specified column moved to the position of the inherited column.
+explain (verbose, costs off)
+select * from bar where f1 in (select f1 from foo2) for share;
+                                           QUERY PLAN                                            
+-------------------------------------------------------------------------------------------------
+ LockRows
+   Output: bar.f1, bar.f2, bar.ctid, foo2.*, bar.*, bar.tableoid, foo2.ctid, foo2.tableoid
+   ->  Hash Join
+         Output: bar.f1, bar.f2, bar.ctid, foo2.*, bar.*, bar.tableoid, foo2.ctid, foo2.tableoid
+         Inner Unique: true
+         Hash Cond: (bar.f1 = foo2.f1)
+         ->  Append
+               ->  Seq Scan on public.bar bar_1
+                     Output: bar_1.f1, bar_1.f2, bar_1.ctid, bar_1.*, bar_1.tableoid
+               ->  Foreign Scan on public.bar2 bar_2
+                     Output: bar_2.f1, bar_2.f2, bar_2.ctid, bar_2.*, bar_2.tableoid
+                     Remote SQL: SELECT f1, f2, f3, ctid FROM public.loct2 FOR SHARE
+         ->  Hash
+               Output: foo2.*, foo2.f1, foo2.ctid, foo2.tableoid
+               ->  HashAggregate
+                     Output: foo2.*, foo2.f1, foo2.ctid, foo2.tableoid
+                     Group Key: foo2.f1
+                     ->  Append
+                           ->  Foreign Scan on public.foo2 foo2_1
+                                 Output: foo2_1.*, foo2_1.f1, foo2_1.ctid, foo2_1.tableoid
+                                 Remote SQL: SELECT f1, f2, f3, ctid FROM public.loct1
+                           ->  Seq Scan on public.foo2child foo2_2
+                                 Output: foo2_2.*, foo2_2.f1, foo2_2.ctid, foo2_2.tableoid
+(23 rows)
+
+select * from bar where f1 in (select f1 from foo2) for share;
+ f1 | f2 
+----+----
+  2 | 22
+  4 | 44
+(2 rows)
+
+drop table foo2child;
 -- Check UPDATE with inherited target and an inherited source table
 explain (verbose, costs off)
 update bar set f2 = f2 + 100 where f1 in (select f1 from foo);
@@ -9111,7 +9225,7 @@ CREATE FOREIGN TABLE ft1_nopw (
 	c7 char(10) default 'ft1',
 	c8 user_enum
 ) SERVER loopback_nopw OPTIONS (schema_name 'public', table_name 'ft1');
-SELECT * FROM ft1_nopw LIMIT 1;
+SELECT 1 FROM ft1_nopw LIMIT 1;
 ERROR:  password is required
 DETAIL:  Non-superusers must provide a password in the user mapping.
 -- If we add a password to the connstr it'll fail, because we don't allow passwords
@@ -9130,7 +9244,7 @@ PL/pgSQL function inline_code_block line 3 at EXECUTE
 --
 -- This won't work with installcheck, but neither will most of the FDW checks.
 ALTER USER MAPPING FOR CURRENT_USER SERVER loopback_nopw OPTIONS (ADD password 'dummypw');
-SELECT * FROM ft1_nopw LIMIT 1;
+SELECT 1 FROM ft1_nopw LIMIT 1;
 ERROR:  password is required
 DETAIL:  Non-superuser cannot connect if the server does not request a password.
 HINT:  Target server's authentication method must be changed or password_required=false set in the user mapping attributes.
@@ -9138,7 +9252,7 @@ HINT:  Target server's authentication method must be changed or password_require
 ALTER USER MAPPING FOR CURRENT_USER SERVER loopback_nopw OPTIONS (ADD password_required 'false');
 ERROR:  password_required=false is superuser-only
 HINT:  User mappings with the password_required option set to false may only be created or modified by the superuser
-SELECT * FROM ft1_nopw LIMIT 1;
+SELECT 1 FROM ft1_nopw LIMIT 1;
 ERROR:  password is required
 DETAIL:  Non-superuser cannot connect if the server does not request a password.
 HINT:  Target server's authentication method must be changed or password_required=false set in the user mapping attributes.
@@ -9147,10 +9261,10 @@ RESET ROLE;
 ALTER USER MAPPING FOR regress_nosuper SERVER loopback_nopw OPTIONS (ADD password_required 'false');
 SET ROLE regress_nosuper;
 -- Should finally work now
-SELECT * FROM ft1_nopw LIMIT 1;
-  c1  | c2 | c3 | c4 | c5 | c6 |     c7     | c8 
-------+----+----+----+----+----+------------+----
- 1111 |  2 |    |    |    |    | ft1        | 
+SELECT 1 FROM ft1_nopw LIMIT 1;
+ ?column? 
+----------
+        1
 (1 row)
 
 -- unpriv user also cannot set sslcert / sslkey on the user mapping
@@ -9167,16 +9281,16 @@ HINT:  User mappings with the sslcert or sslkey options set may only be created 
 DROP USER MAPPING FOR CURRENT_USER SERVER loopback_nopw;
 -- This will fail again as it'll resolve the user mapping for public, which
 -- lacks password_required=false
-SELECT * FROM ft1_nopw LIMIT 1;
+SELECT 1 FROM ft1_nopw LIMIT 1;
 ERROR:  password is required
 DETAIL:  Non-superusers must provide a password in the user mapping.
 RESET ROLE;
 -- The user mapping for public is passwordless and lacks the password_required=false
 -- mapping option, but will work because the current user is a superuser.
-SELECT * FROM ft1_nopw LIMIT 1;
-  c1  | c2 | c3 | c4 | c5 | c6 |     c7     | c8 
-------+----+----+----+----+----+------------+----
- 1111 |  2 |    |    |    |    | ft1        | 
+SELECT 1 FROM ft1_nopw LIMIT 1;
+ ?column? 
+----------
+        1
 (1 row)
 
 -- cleanup
@@ -9571,6 +9685,17 @@ SELECT COUNT(*) FROM ftable;
 
 TRUNCATE batch_table;
 DROP FOREIGN TABLE ftable;
+-- try if large batches exceed max number of bind parameters
+CREATE FOREIGN TABLE ftable ( x int ) SERVER loopback OPTIONS ( table_name 'batch_table', batch_size '100000' );
+INSERT INTO ftable SELECT * FROM generate_series(1, 70000) i;
+SELECT COUNT(*) FROM ftable;
+ count 
+-------
+ 70000
+(1 row)
+
+TRUNCATE batch_table;
+DROP FOREIGN TABLE ftable;
 -- Disable batch insert
 CREATE FOREIGN TABLE ftable ( x int ) SERVER loopback OPTIONS ( table_name 'batch_table', batch_size '1' );
 EXPLAIN (VERBOSE, COSTS OFF) INSERT INTO ftable VALUES (1), (2);
@@ -9639,7 +9764,87 @@ SELECT tableoid::regclass, * FROM batch_cp_upd_test;
 (2 rows)
 
 -- Clean up
-DROP TABLE batch_table, batch_cp_upd_test CASCADE;
+DROP TABLE batch_table, batch_cp_upd_test, batch_table_p0, batch_table_p1 CASCADE;
+-- Use partitioning
+ALTER SERVER loopback OPTIONS (ADD batch_size '10');
+CREATE TABLE batch_table ( x int, field1 text, field2 text) PARTITION BY HASH (x);
+CREATE TABLE batch_table_p0 (LIKE batch_table);
+ALTER TABLE batch_table_p0 ADD CONSTRAINT p0_pkey PRIMARY KEY (x);
+CREATE FOREIGN TABLE batch_table_p0f
+	PARTITION OF batch_table
+	FOR VALUES WITH (MODULUS 2, REMAINDER 0)
+	SERVER loopback
+	OPTIONS (table_name 'batch_table_p0');
+CREATE TABLE batch_table_p1 (LIKE batch_table);
+ALTER TABLE batch_table_p1 ADD CONSTRAINT p1_pkey PRIMARY KEY (x);
+CREATE FOREIGN TABLE batch_table_p1f
+	PARTITION OF batch_table
+	FOR VALUES WITH (MODULUS 2, REMAINDER 1)
+	SERVER loopback
+	OPTIONS (table_name 'batch_table_p1');
+INSERT INTO batch_table SELECT i, 'test'||i, 'test'|| i FROM generate_series(1, 50) i;
+SELECT COUNT(*) FROM batch_table;
+ count 
+-------
+    50
+(1 row)
+
+SELECT * FROM batch_table ORDER BY x;
+ x  | field1 | field2 
+----+--------+--------
+  1 | test1  | test1
+  2 | test2  | test2
+  3 | test3  | test3
+  4 | test4  | test4
+  5 | test5  | test5
+  6 | test6  | test6
+  7 | test7  | test7
+  8 | test8  | test8
+  9 | test9  | test9
+ 10 | test10 | test10
+ 11 | test11 | test11
+ 12 | test12 | test12
+ 13 | test13 | test13
+ 14 | test14 | test14
+ 15 | test15 | test15
+ 16 | test16 | test16
+ 17 | test17 | test17
+ 18 | test18 | test18
+ 19 | test19 | test19
+ 20 | test20 | test20
+ 21 | test21 | test21
+ 22 | test22 | test22
+ 23 | test23 | test23
+ 24 | test24 | test24
+ 25 | test25 | test25
+ 26 | test26 | test26
+ 27 | test27 | test27
+ 28 | test28 | test28
+ 29 | test29 | test29
+ 30 | test30 | test30
+ 31 | test31 | test31
+ 32 | test32 | test32
+ 33 | test33 | test33
+ 34 | test34 | test34
+ 35 | test35 | test35
+ 36 | test36 | test36
+ 37 | test37 | test37
+ 38 | test38 | test38
+ 39 | test39 | test39
+ 40 | test40 | test40
+ 41 | test41 | test41
+ 42 | test42 | test42
+ 43 | test43 | test43
+ 44 | test44 | test44
+ 45 | test45 | test45
+ 46 | test46 | test46
+ 47 | test47 | test47
+ 48 | test48 | test48
+ 49 | test49 | test49
+ 50 | test50 | test50
+(50 rows)
+
+ALTER SERVER loopback OPTIONS (DROP batch_size);
 -- ===================================================================
 -- test asynchronous execution
 -- ===================================================================
@@ -9862,6 +10067,48 @@ SELECT * FROM join_tbl ORDER BY a1;
 
 DELETE FROM join_tbl;
 RESET enable_partitionwise_join;
+-- Test rescan of an async Append node with do_exec_prune=false
+SET enable_hashjoin TO false;
+EXPLAIN (VERBOSE, COSTS OFF)
+INSERT INTO join_tbl SELECT * FROM async_p1 t1, async_pt t2 WHERE t1.a = t2.a AND t1.b = t2.b AND t1.b % 100 = 0;
+                                       QUERY PLAN                                       
+----------------------------------------------------------------------------------------
+ Insert on public.join_tbl
+   ->  Nested Loop
+         Output: t1.a, t1.b, t1.c, t2.a, t2.b, t2.c
+         Join Filter: ((t1.a = t2.a) AND (t1.b = t2.b))
+         ->  Foreign Scan on public.async_p1 t1
+               Output: t1.a, t1.b, t1.c
+               Remote SQL: SELECT a, b, c FROM public.base_tbl1 WHERE (((b % 100) = 0))
+         ->  Append
+               ->  Async Foreign Scan on public.async_p1 t2_1
+                     Output: t2_1.a, t2_1.b, t2_1.c
+                     Remote SQL: SELECT a, b, c FROM public.base_tbl1
+               ->  Async Foreign Scan on public.async_p2 t2_2
+                     Output: t2_2.a, t2_2.b, t2_2.c
+                     Remote SQL: SELECT a, b, c FROM public.base_tbl2
+               ->  Seq Scan on public.async_p3 t2_3
+                     Output: t2_3.a, t2_3.b, t2_3.c
+(16 rows)
+
+INSERT INTO join_tbl SELECT * FROM async_p1 t1, async_pt t2 WHERE t1.a = t2.a AND t1.b = t2.b AND t1.b % 100 = 0;
+SELECT * FROM join_tbl ORDER BY a1;
+  a1  | b1  |  c1  |  a2  | b2  |  c2  
+------+-----+------+------+-----+------
+ 1000 |   0 | 0000 | 1000 |   0 | 0000
+ 1100 | 100 | 0100 | 1100 | 100 | 0100
+ 1200 | 200 | 0200 | 1200 | 200 | 0200
+ 1300 | 300 | 0300 | 1300 | 300 | 0300
+ 1400 | 400 | 0400 | 1400 | 400 | 0400
+ 1500 | 500 | 0500 | 1500 | 500 | 0500
+ 1600 | 600 | 0600 | 1600 | 600 | 0600
+ 1700 | 700 | 0700 | 1700 | 700 | 0700
+ 1800 | 800 | 0800 | 1800 | 800 | 0800
+ 1900 | 900 | 0900 | 1900 | 900 | 0900
+(10 rows)
+
+DELETE FROM join_tbl;
+RESET enable_hashjoin;
 -- Test interaction of async execution with plan-time partition pruning
 EXPLAIN (VERBOSE, COSTS OFF)
 SELECT * FROM async_pt WHERE a < 3000;

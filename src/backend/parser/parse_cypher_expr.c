@@ -1010,7 +1010,7 @@ func_get_best_candidate(ParseState *pstate, FuncCall *fn, int nargs,
 
 	/* get all candidates */
 	raw_candidates = FuncnameGetCandidates(fn->funcname, nargs, NIL,
-										   false, false, false);
+										   false, false, false, false);
 
 	/*
 	 * Added to remove jsonb version of substring (jsonb_substr*) from the list

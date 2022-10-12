@@ -704,6 +704,7 @@ _outForeignScan(StringInfo str, const ForeignScan *node)
 	_outScanInfo(str, (const Scan *) node);
 
 	WRITE_ENUM_FIELD(operation, CmdType);
+	WRITE_UINT_FIELD(resultRelation);
 	WRITE_OID_FIELD(fs_server);
 	WRITE_NODE_FIELD(fdw_exprs);
 	WRITE_NODE_FIELD(fdw_private);
@@ -711,7 +712,6 @@ _outForeignScan(StringInfo str, const ForeignScan *node)
 	WRITE_NODE_FIELD(fdw_recheck_quals);
 	WRITE_BITMAPSET_FIELD(fs_relids);
 	WRITE_BOOL_FIELD(fsSystemCol);
-	WRITE_INT_FIELD(resultRelation);
 }
 
 static void
@@ -2027,6 +2027,16 @@ _outTidPath(StringInfo str, const TidPath *node)
 }
 
 static void
+_outTidRangePath(StringInfo str, const TidRangePath *node)
+{
+	WRITE_NODE_TYPE("TIDRANGEPATH");
+
+	_outPathInfo(str, (const Path *) node);
+
+	WRITE_NODE_FIELD(tidrangequals);
+}
+
+static void
 _outSubqueryScanPath(StringInfo str, const SubqueryScanPath *node)
 {
 	WRITE_NODE_TYPE("SUBQUERYSCANPATH");
@@ -2985,6 +2995,7 @@ _outCreateStatsStmt(StringInfo str, const CreateStatsStmt *node)
 	WRITE_NODE_FIELD(exprs);
 	WRITE_NODE_FIELD(relations);
 	WRITE_STRING_FIELD(stxcomment);
+	WRITE_BOOL_FIELD(transformed);
 	WRITE_BOOL_FIELD(if_not_exists);
 }
 
@@ -4724,6 +4735,9 @@ outNode(StringInfo str, const void *obj)
 				break;
 			case T_TidPath:
 				_outTidPath(str, obj);
+				break;
+			case T_TidRangePath:
+				_outTidRangePath(str, obj);
 				break;
 			case T_SubqueryScanPath:
 				_outSubqueryScanPath(str, obj);

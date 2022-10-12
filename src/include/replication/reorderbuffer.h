@@ -46,10 +46,10 @@ typedef struct ReorderBufferTupleBuf
  * changes. Users of the decoding facilities will never see changes with
  * *_INTERNAL_* actions.
  *
- * The INTERNAL_SPEC_INSERT and INTERNAL_SPEC_CONFIRM changes concern
- * "speculative insertions", and their confirmation respectively.  They're
- * used by INSERT .. ON CONFLICT .. UPDATE.  Users of logical decoding don't
- * have to care about these.
+ * The INTERNAL_SPEC_INSERT and INTERNAL_SPEC_CONFIRM, and INTERNAL_SPEC_ABORT
+ * changes concern "speculative insertions", their confirmation, and abort
+ * respectively.  They're used by INSERT .. ON CONFLICT .. UPDATE.  Users of
+ * logical decoding don't have to care about these.
  */
 enum ReorderBufferChangeType
 {
@@ -63,6 +63,7 @@ enum ReorderBufferChangeType
 	REORDER_BUFFER_CHANGE_INTERNAL_TUPLECID,
 	REORDER_BUFFER_CHANGE_INTERNAL_SPEC_INSERT,
 	REORDER_BUFFER_CHANGE_INTERNAL_SPEC_CONFIRM,
+	REORDER_BUFFER_CHANGE_INTERNAL_SPEC_ABORT,
 	REORDER_BUFFER_CHANGE_TRUNCATE
 };
 
@@ -172,10 +173,9 @@ typedef struct ReorderBufferChange
 #define RBTXN_IS_SERIALIZED       0x0004
 #define RBTXN_IS_SERIALIZED_CLEAR 0x0008
 #define RBTXN_IS_STREAMED         0x0010
-#define RBTXN_HAS_TOAST_INSERT    0x0020
-#define RBTXN_HAS_SPEC_INSERT     0x0040
-#define RBTXN_PREPARE             0x0080
-#define RBTXN_SKIPPED_PREPARE	  0x0100
+#define RBTXN_HAS_PARTIAL_CHANGE  0x0020
+#define RBTXN_PREPARE             0x0040
+#define RBTXN_SKIPPED_PREPARE	  0x0080
 
 /* Does the transaction have catalog changes? */
 #define rbtxn_has_catalog_changes(txn) \
@@ -201,24 +201,10 @@ typedef struct ReorderBufferChange
 	((txn)->txn_flags & RBTXN_IS_SERIALIZED_CLEAR) != 0 \
 )
 
-/* This transaction's changes has toast insert, without main table insert. */
-#define rbtxn_has_toast_insert(txn) \
+/* Has this transaction contains partial changes? */
+#define rbtxn_has_partial_change(txn) \
 ( \
-	((txn)->txn_flags & RBTXN_HAS_TOAST_INSERT) != 0 \
-)
-/*
- * This transaction's changes has speculative insert, without speculative
- * confirm.
- */
-#define rbtxn_has_spec_insert(txn) \
-( \
-	((txn)->txn_flags & RBTXN_HAS_SPEC_INSERT) != 0 \
-)
-
-/* Check whether this transaction has an incomplete change. */
-#define rbtxn_has_incomplete_tuple(txn) \
-( \
-	rbtxn_has_toast_insert(txn) || rbtxn_has_spec_insert(txn) \
+	((txn)->txn_flags & RBTXN_HAS_PARTIAL_CHANGE) != 0 \
 )
 
 /*

@@ -178,7 +178,7 @@ sub GenerateFiles
 
 			if ($package_version !~ /^(\d+)(?:\.(\d+))?/)
 			{
-				confess "Bad format of version: $self->{strver}\n";
+				confess "Bad format of version: $package_version\n";
 			}
 			$majorver = sprintf("%d", $1);
 			$minorver = sprintf("%d", $2 ? $2 : 0);
@@ -1042,10 +1042,26 @@ sub AddProject
 	}
 	if ($self->{options}->{gss})
 	{
-		$proj->AddIncludeDir($self->{options}->{gss} . '\inc\krb5');
-		$proj->AddLibrary($self->{options}->{gss} . '\lib\i386\krb5_32.lib');
-		$proj->AddLibrary($self->{options}->{gss} . '\lib\i386\comerr32.lib');
-		$proj->AddLibrary($self->{options}->{gss} . '\lib\i386\gssapi32.lib');
+		$proj->AddIncludeDir($self->{options}->{gss} . '\include');
+		$proj->AddIncludeDir($self->{options}->{gss} . '\include\krb5');
+		if ($self->{platform} eq 'Win32')
+		{
+			$proj->AddLibrary(
+				$self->{options}->{gss} . '\lib\i386\krb5_32.lib');
+			$proj->AddLibrary(
+				$self->{options}->{gss} . '\lib\i386\comerr32.lib');
+			$proj->AddLibrary(
+				$self->{options}->{gss} . '\lib\i386\gssapi32.lib');
+		}
+		else
+		{
+			$proj->AddLibrary(
+				$self->{options}->{gss} . '\lib\amd64\krb5_64.lib');
+			$proj->AddLibrary(
+				$self->{options}->{gss} . '\lib\amd64\comerr64.lib');
+			$proj->AddLibrary(
+				$self->{options}->{gss} . '\lib\amd64\gssapi64.lib');
+		}
 	}
 	if ($self->{options}->{iconv})
 	{
@@ -1201,6 +1217,8 @@ sub GetFakeConfigure
 	$cfg .= ' --with-tcl'           if ($self->{options}->{tcl});
 	$cfg .= ' --with-perl'          if ($self->{options}->{perl});
 	$cfg .= ' --with-python'        if ($self->{options}->{python});
+	my $port = $self->{options}->{'--with-pgport'};
+	$cfg .= " --with-pgport=$port" if defined($port);
 
 	return $cfg;
 }

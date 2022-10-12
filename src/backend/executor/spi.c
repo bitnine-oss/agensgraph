@@ -2547,6 +2547,7 @@ _SPI_execute_plan(SPIPlanPtr plan, ParamListInfo paramLI,
 				InitializeQueryCompletion(&qc);
 				ProcessUtility(stmt,
 							   plansource->query_string,
+							   true,	/* protect plancache's node tree */
 							   context,
 							   paramLI,
 							   _SPI_current->queryEnv,

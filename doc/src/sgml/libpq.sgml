@@ -1765,7 +1765,8 @@ postgresql://%2Fvar%2Flib%2Fpostgresql/dbname
        </para>
 
        <para>
-        The directory needs to be prepared with the OpenSSL command
+        The directory needs to be prepared with the
+        <productname>OpenSSL</productname> command
         <literal>openssl rehash</literal> or <literal>c_rehash</literal>.  See
         its documentation for details.
        </para>
@@ -1782,18 +1783,17 @@ postgresql://%2Fvar%2Flib%2Fpostgresql/dbname
       <listitem>
        <para>
         By default, libpq sets the TLS extension <quote>Server Name
-        Indication</quote> (SNI) on SSL-enabled connections.  See <ulink
-        url="https://tools.ietf.org/html/rfc6066#section-3">RFC 6066</ulink>
-        for details.  By setting this parameter to 0, this is turned off.
+        Indication</quote> (<acronym>SNI</acronym>) on SSL-enabled connections.
+        By setting this parameter to 0, this is turned off.
        </para>
 
        <para>
         The Server Name Indication can be used by SSL-aware proxies to route
         connections without having to decrypt the SSL stream.  (Note that this
         requires a proxy that is aware of the PostgreSQL protocol handshake,
-        not just any SSL proxy.)  However, SNI makes the destination host name
-        appear in cleartext in the network traffic, so it might be undesirable
-        in some cases.
+        not just any SSL proxy.)  However, <acronym>SNI</acronym> makes the
+        destination host name appear in cleartext in the network traffic, so
+        it might be undesirable in some cases.
        </para>
       </listitem>
      </varlistentry>
@@ -3468,7 +3468,7 @@ char *PQresultErrorField(const PGresult *res, int fieldcode);
           <listitem>
            <para>
             The text of a failed internally-generated command.  This could
-            be, for example, a SQL query issued by a PL/pgSQL function.
+            be, for example, an SQL query issued by a PL/pgSQL function.
            </para>
           </listitem>
          </varlistentry>
@@ -3829,8 +3829,9 @@ Oid PQftype(const PGresult *res,
        You can query the system table <literal>pg_type</literal> to
        obtain the names and properties of the various data types. The
        <acronym>OID</acronym>s of the built-in data types are defined
-       in the file <filename>include/server/catalog/pg_type_d.h</filename>
-       in the install directory.
+       in the file <filename>catalog/pg_type_d.h</filename>
+       in the <productname>PostgreSQL</productname>
+       installation's <filename>include</filename> directory.
       </para>
      </listitem>
     </varlistentry>
@@ -5467,7 +5468,7 @@ UPDATE mytable SET x = x + 1 WHERE id = 42;
   </indexterm>
 
   <para>
-   Ordinarily, <application>libpq</application> collects a SQL command's
+   Ordinarily, <application>libpq</application> collects an SQL command's
    entire result and returns it to the application as a single
    <structname>PGresult</structname>.  This can be unworkable for commands
    that return a large number of rows.  For such cases, applications can use
@@ -6532,14 +6533,14 @@ void PQtrace(PGconn *conn, FILE *stream);
     </listitem>
    </varlistentry>
 
-   <varlistentry id="libpq-PQtraceSetFlags">
-    <term><function>PQtraceSetFlags</function><indexterm><primary>PQtraceSetFlags</primary></indexterm></term>
+   <varlistentry id="libpq-PQsetTraceFlags">
+    <term><function>PQsetTraceFlags</function><indexterm><primary>PQsetTraceFlags</primary></indexterm></term>
 
     <listitem>
      <para>
       Controls the tracing behavior of client/server communication.
 <synopsis>
-void PQtraceSetFlags(PGconn *conn, int flags);
+void PQsetTraceFlags(PGconn *conn, int flags);
 </synopsis>
      </para>
 
@@ -7838,6 +7839,16 @@ myEventProc(PGEventId evtId, void *evtInfo, void *passThrough)
     <listitem>
      <para>
       <indexterm>
+       <primary><envar>PGSSLCRLDIR</envar></primary>
+      </indexterm>
+      <envar>PGSSLCRLDIR</envar> behaves the same as the <xref
+      linkend="libpq-connect-sslcrldir"/> connection parameter.
+     </para>
+    </listitem>
+
+    <listitem>
+     <para>
+      <indexterm>
        <primary><envar>PGSSLSNI</envar></primary>
       </indexterm>
       <envar>PGSSLSNI</envar>  behaves the same as the <xref
@@ -7871,7 +7882,7 @@ myEventProc(PGEventId evtId, void *evtInfo, void *passThrough)
        <primary><envar>PGSSLMAXPROTOCOLVERSION</envar></primary>
       </indexterm>
       <envar>PGSSLMAXPROTOCOLVERSION</envar> behaves the same as the <xref
-      linkend="libpq-connect-ssl-min-protocol-version"/> connection parameter.
+      linkend="libpq-connect-ssl-max-protocol-version"/> connection parameter.
      </para>
     </listitem>
 
@@ -8091,26 +8102,30 @@ myEventProc(PGEventId evtId, void *evtInfo, void *passThrough)
   <para>
    The connection service file allows libpq connection parameters to be
    associated with a single service name. That service name can then be
-   specified by a libpq connection, and the associated settings will be
+   specified in a libpq connection string, and the associated settings will be
    used. This allows connection parameters to be modified without requiring
-   a recompile of the libpq application. The service name can also be
+   a recompile of the libpq-using application. The service name can also be
    specified using the <envar>PGSERVICE</envar> environment variable.
   </para>
 
   <para>
-   The connection service file can be a per-user service file
-   at <filename>~/.pg_service.conf</filename> or the location
-   specified by the environment variable <envar>PGSERVICEFILE</envar>,
-   or it can be a system-wide file
-   at <filename>`pg_config --sysconfdir`/pg_service.conf</filename> or in the directory
-   specified by the environment variable
-   <envar>PGSYSCONFDIR</envar>.  If service definitions with the same
-   name exist in the user and the system file, the user file takes
-   precedence.
+   Service names can be defined in either a per-user service file or a
+   system-wide file.  If the same service name exists in both the user
+   and the system file, the user file takes precedence.
+   By default, the per-user service file is located
+   at <filename>~/.pg_service.conf</filename>; this can be overridden by
+   setting the environment variable <envar>PGSERVICEFILE</envar>.
+   The system-wide file is named <filename>pg_service.conf</filename>.
+   By default it is sought in the <filename>etc</filename> directory
+   of the <productname>PostgreSQL</productname> installation
+   (use <literal>pg_config --sysconfdir</literal> to identify this
+   directory precisely).  Another directory, but not a different file
+   name, can be specified by setting the environment variable
+   <envar>PGSYSCONFDIR</envar>.
   </para>
 
   <para>
-   The file uses an <quote>INI file</quote> format where the section
+   Either service file uses an <quote>INI file</quote> format where the section
    name is the service name and the parameters are connection
    parameters; see <xref linkend="libpq-paramkeywords"/> for a list.  For
    example:
@@ -8121,8 +8136,21 @@ host=somehost
 port=5433
 user=admin
 </programlisting>
-   An example file is provided at
+   An example file is provided in
+   the <productname>PostgreSQL</productname> installation at
    <filename>share/pg_service.conf.sample</filename>.
+  </para>
+
+  <para>
+   Connection parameters obtained from a service file are combined with
+   parameters obtained from other sources.  A service file setting
+   overrides the corresponding environment variable, and in turn can be
+   overridden by a value given directly in the connection string.
+   For example, using the above service file, a connection string
+   <literal>service=mydb port=5434</literal> will use
+   host <literal>somehost</literal>, port <literal>5434</literal>,
+   user <literal>admin</literal>, and other parameters as set by
+   environment variables or built-in defaults.
   </para>
  </sect1>
 
@@ -8401,7 +8429,7 @@ ldap://ldap.acme.com/cn=dbserver,cn=hosts?pgconnectinfo?base?(objectclass=*)
     </varlistentry>
 
     <varlistentry>
-     <term>Man in the middle (<acronym>MITM</acronym>)</term>
+     <term>Man-in-the-middle (<acronym>MITM</acronym>)</term>
      <listitem>
       <para>If a third party can modify the data while passing between the
        client and server, it can pretend to be the server and therefore see and

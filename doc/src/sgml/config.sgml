@@ -51,7 +51,7 @@
        In general, enclose the value in single quotes, doubling any single
        quotes within the value.  Quotes can usually be omitted if the value
        is a simple number or identifier, however.
-       (Values that match a SQL keyword require quoting in some contexts.)
+       (Values that match an SQL keyword require quoting in some contexts.)
       </para>
      </listitem>
 
@@ -222,7 +222,7 @@ shared_buffers = 128MB
       <productname>PostgreSQL</productname> provides three SQL
       commands to establish configuration defaults.
       The already-mentioned <command>ALTER SYSTEM</command> command
-      provides a SQL-accessible means of changing global defaults; it is
+      provides an SQL-accessible means of changing global defaults; it is
       functionally equivalent to editing <filename>postgresql.conf</filename>.
       In addition, there are two commands that allow setting of defaults
       on a per-database or per-role basis:
@@ -1276,7 +1276,8 @@ include_dir 'conf.d'
        </para>
 
        <para>
-        The directory needs to be prepared with the OpenSSL command
+        The directory needs to be prepared with the
+        <productname>OpenSSL</productname> command
         <literal>openssl rehash</literal> or <literal>c_rehash</literal>.  See
         its documentation for details.
        </para>
@@ -1320,7 +1321,7 @@ include_dir 'conf.d'
         Specifies a list of <acronym>SSL</acronym> cipher suites that are
         allowed to be used by SSL connections.  See the
         <citerefentry><refentrytitle>ciphers</refentrytitle></citerefentry>
-        manual page in the <application>OpenSSL</application> package for the
+        manual page in the <productname>OpenSSL</productname> package for the
         syntax of this setting and a list of supported values.  Only
         connections using TLS version 1.2 and lower are affected.  There is
         currently no setting that controls the cipher choices used by TLS
@@ -1377,7 +1378,7 @@ include_dir 'conf.d'
           <listitem>
            <para>
             Disables anonymous cipher suites that do no authentication.  Such
-            cipher suites are vulnerable to man-in-the-middle attacks and
+            cipher suites are vulnerable to <acronym>MITM</acronym> attacks and
             therefore should not be used.
            </para>
           </listitem>
@@ -1389,9 +1390,9 @@ include_dir 'conf.d'
         Available cipher suite details will vary across
         <productname>OpenSSL</productname> versions.  Use the command
         <literal>openssl ciphers -v 'HIGH:MEDIUM:+3DES:!aNULL'</literal> to
-        see actual details for the currently installed <application>OpenSSL</application>
-        version.  Note that this list is filtered at run time based on the
-        server key type.
+        see actual details for the currently installed
+        <productname>OpenSSL</productname> version.  Note that this list is
+        filtered at run time based on the server key type.
        </para>
       </listitem>
      </varlistentry>
@@ -1472,6 +1473,11 @@ include_dir 'conf.d'
         The default is <literal>TLSv1.2</literal>, which satisfies industry
         best practices as of this writing.
        </para>
+
+       <para>
+        This parameter can only be set in the <filename>postgresql.conf</filename>
+        file or on the server command line.
+       </para>
       </listitem>
      </varlistentry>
 
@@ -1489,6 +1495,11 @@ include_dir 'conf.d'
         allow any version.  Setting the maximum protocol version is mainly
         useful for testing or if some component has issues working with a
         newer protocol.
+       </para>
+
+       <para>
+        This parameter can only be set in the <filename>postgresql.conf</filename>
+        file or on the server command line.
        </para>
       </listitem>
      </varlistentry>
@@ -1703,7 +1714,7 @@ include_dir 'conf.d'
         <xref linkend="guc-huge-pages"/>.
         The default is zero (<literal>0</literal>).
         When set to <literal>0</literal>, the default huge page size on the
-        system will be used.
+        system will be used. This parameter can only be set at server start.
        </para>
        <para>
         Some commonly available page sizes on modern 64 bit server architectures include:
@@ -1900,6 +1911,9 @@ include_dir 'conf.d'
         the value of <xref linkend="guc-maintenance-work-mem"/> should
         be used instead.  The setting has no effect on the behavior of
         <command>VACUUM</command> when run in other contexts.
+        This parameter can only be set in the
+        <filename>postgresql.conf</filename> file or on the server command
+        line.
        </para>
       </listitem>
      </varlistentry>
@@ -2029,7 +2043,8 @@ include_dir 'conf.d'
         the <varname>huge_pages</varname> setting on operating systems where
         that is supported, and may be more likely to benefit from larger pages
         on operating systems where that is managed automatically.
-        The default value is <literal>0</literal> (none).
+        The default value is <literal>0</literal> (none). This parameter can
+        only be set at server start.
        </para>
       </listitem>
      </varlistentry>
@@ -4794,7 +4809,8 @@ ANY <replaceable class="parameter">num_sync</replaceable> ( <replaceable class="
         <varname>max_worker_processes</varname>.
        </para>
        <para>
-        The default value is 4.
+        The default value is 4. This parameter can only be set at server
+        start.
        </para>
       </listitem>
      </varlistentry>
@@ -4819,7 +4835,9 @@ ANY <replaceable class="parameter">num_sync</replaceable> ( <replaceable class="
         <varname>max_logical_replication_workers</varname>.
        </para>
        <para>
-        The default value is 2.
+        The default value is 2. This parameter can only be set in the
+        <filename>postgresql.conf</filename> file or on the server command
+        line.
        </para>
       </listitem>
      </varlistentry>
@@ -8239,13 +8257,14 @@ COPY postgres_log FROM '/full/path/to/logfile.csv' WITH csv;
        <para>
         This variable sets the default
         <link linkend="storage-toast">TOAST</link>
-        compression method for columns of newly-created tables. The
-        <command>CREATE TABLE</command> statement can override this default
-        by specifying the <literal>COMPRESSION</literal> column option.
-
-        The supported compression methods are <literal>pglz</literal> and,
-        if <productname>PostgreSQL</productname> was compiled with
-        <literal>--with-lz4</literal>, <literal>lz4</literal>.
+        compression method for values of compressible columns.
+        (This can be overridden for individual columns by setting
+        the <literal>COMPRESSION</literal> column option in
+        <command>CREATE TABLE</command> or
+        <command>ALTER TABLE</command>.)
+        The supported compression methods are <literal>pglz</literal> and
+        (if <productname>PostgreSQL</productname> was compiled with
+        <option>--with-lz4</option>) <literal>lz4</literal>.
         The default is <literal>pglz</literal>.
        </para>
       </listitem>
@@ -9607,7 +9626,7 @@ dynamic_library_path = 'C:\tools\postgresql;H:\my_project\lib;$libdir'
         <literal>\'</literal>. However, use of <literal>\'</literal> creates security risks
         because in some client character set encodings, there are multibyte
         characters in which the last byte is numerically equivalent to ASCII
-        <literal>\</literal>.  If client-side code does escaping incorrectly then a
+        <literal>\</literal>.  If client-side code does escaping incorrectly then an
         SQL-injection attack is possible.  This risk can be prevented by
         making the server reject queries in which a quote mark appears to be
         escaped by a backslash.
@@ -9836,22 +9855,10 @@ dynamic_library_path = 'C:\tools\postgresql;H:\my_project\lib;$libdir'
         useful to disable the restart so that the clusterware can gain
         control and take any actions it deems appropriate.
        </para>
-      </listitem>
-     </varlistentry>
 
-     <varlistentry id="guc-remove-temp-files-after-crash" xreflabel="remove_temp_files_after_crash">
-      <term><varname>remove_temp_files_after_crash</varname> (<type>boolean</type>)
-      <indexterm>
-       <primary><varname>remove_temp_files_after_crash</varname> configuration parameter</primary>
-      </indexterm>
-      </term>
-      <listitem>
        <para>
-        When set to <literal>on</literal>, which is the default,
-        <productname>PostgreSQL</productname> will automatically remove
-        temporary files after a backend crash. If disabled, the files will be
-        retained and may be used for debugging, for example. Repeated crashes
-        may however result in accumulation of useless files.
+        This parameter can only be set in the <filename>postgresql.conf</filename>
+        file or on the server command line.
        </para>
       </listitem>
      </varlistentry>
@@ -9920,6 +9927,10 @@ dynamic_library_path = 'C:\tools\postgresql;H:\my_project\lib;$libdir'
         while writing data to disk may not be reported to
         <productname>PostgreSQL</productname>, and relevant error messages may
         appear only in kernel logs.
+       </para>
+       <para>
+        This parameter can only be set in the
+        <filename>postgresql.conf</filename> file or on the server command line.
        </para>
       </listitem>
      </varlistentry>
@@ -10857,7 +10868,7 @@ LOG:  CleanUpLock: deleting: lock(0xb7acd844) id(24688,24696,0,0,0,1)
        <para>
         If LLVM has the required functionality, emit the data needed to allow
         <productname>perf</productname> to profile functions generated by JIT.
-        This writes out files to <filename>$HOME/.debug/jit/</filename>; the
+        This writes out files to <filename>~/.debug/jit/</filename>; the
         user is responsible for performing cleanup when desired.
         The default setting is <literal>off</literal>.
         This parameter can only be set at server start.
@@ -10876,6 +10887,25 @@ LOG:  CleanUpLock: deleting: lock(0xb7acd844) id(24688,24696,0,0,0,1)
         Determines whether tuple deforming is JIT compiled, when JIT
         compilation is activated (see <xref linkend="jit-decision"/>).
         The default is <literal>on</literal>.
+       </para>
+      </listitem>
+     </varlistentry>
+
+     <varlistentry id="guc-remove-temp-files-after-crash" xreflabel="remove_temp_files_after_crash">
+      <term><varname>remove_temp_files_after_crash</varname> (<type>boolean</type>)
+      <indexterm>
+       <primary><varname>remove_temp_files_after_crash</varname> configuration parameter</primary>
+      </indexterm>
+      </term>
+      <listitem>
+       <para>
+        When set to <literal>on</literal>, which is the default,
+        <productname>PostgreSQL</productname> will automatically remove
+        temporary files after a backend crash. If disabled, the files will be
+        retained and may be used for debugging, for example. Repeated crashes
+        may however result in accumulation of useless files. This parameter 
+        can only be set in the <filename>postgresql.conf</filename> file or on
+        the server command line.
        </para>
       </listitem>
      </varlistentry>

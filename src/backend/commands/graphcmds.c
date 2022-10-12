@@ -226,8 +226,9 @@ CreateLabelCommand(CreateLabelStmt *labelStmt, const char *queryString,
 			wrapper->stmt_location = stmt_location;
 			wrapper->stmt_len = stmt_len;
 
-			ProcessUtility(wrapper, queryString, PROCESS_UTILITY_SUBCOMMAND,
-						   params, NULL, None_Receiver, NULL);
+			ProcessUtility(wrapper, queryString, false,
+						   PROCESS_UTILITY_SUBCOMMAND, params, NULL,
+						   None_Receiver, NULL);
 		}
 
 		CommandCounterIncrement();
@@ -564,7 +565,7 @@ CreateConstraintCommand(CreateConstraintStmt *constraintStmt,
 	wrapper->stmt_location = stmt_location;
 	wrapper->stmt_len = stmt_len;
 
-	ProcessUtility(wrapper, queryString, PROCESS_UTILITY_SUBCOMMAND,
+	ProcessUtility(wrapper, queryString, false, PROCESS_UTILITY_SUBCOMMAND,
 				   params, NULL, None_Receiver, NULL);
 
 	CommandCounterIncrement();
@@ -593,7 +594,7 @@ DropConstraintCommand(DropConstraintStmt *constraintStmt,
 	wrapper->stmt_location = stmt_location;
 	wrapper->stmt_len = stmt_len;
 
-	ProcessUtility(wrapper, queryString, PROCESS_UTILITY_SUBCOMMAND,
+	ProcessUtility(wrapper, queryString, false, PROCESS_UTILITY_SUBCOMMAND,
 				   params, NULL, None_Receiver, NULL);
 
 	CommandCounterIncrement();
@@ -726,6 +727,6 @@ SimpleProcessUtility(Node *node, const char *queryString, int stmt_location,
 	wrapper->stmt_location = stmt_location;
 	wrapper->stmt_len = stmt_len;
 
-	ProcessUtility(wrapper, queryString, PROCESS_UTILITY_SUBCOMMAND,
+	ProcessUtility(wrapper, queryString, false, PROCESS_UTILITY_SUBCOMMAND,
 				   NULL, NULL, None_Receiver, NULL);
 }

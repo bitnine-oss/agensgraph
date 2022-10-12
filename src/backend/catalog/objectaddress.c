@@ -4455,7 +4455,7 @@ pg_identify_object_as_address(PG_FUNCTION_ARGS)
 
 	tupdesc = BlessTupleDesc(tupdesc);
 
-	/* object type */
+	/* object type, which can never be NULL */
 	values[0] = CStringGetTextDatum(getObjectTypeDescription(&address, true));
 	nulls[0] = false;
 
@@ -4675,9 +4675,8 @@ getObjectTypeDescription(const ObjectAddress *object, bool missing_ok)
 			 */
 	}
 
-	/* an empty string is equivalent to no object found */
-	if (buffer.len == 0)
-		return NULL;
+	/* the result can never be empty */
+	Assert(buffer.len > 0);
 
 	return buffer.data;
 }

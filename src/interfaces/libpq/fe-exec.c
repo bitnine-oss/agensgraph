@@ -1351,7 +1351,8 @@ PQsendQueryInternal(PGconn *conn, const char *query, bool newQuery)
 	{
 		/*
 		 * In pipeline mode we cannot use the simple protocol, so we send
-		 * Parse, Bind, Describe Portal, Execute.
+		 * Parse, Bind, Describe Portal, Execute, Close Portal (with the
+		 * unnamed portal).
 		 */
 		if (pqPutMsgStart('P', conn) < 0 ||
 			pqPuts("", conn) < 0 ||
@@ -1375,6 +1376,11 @@ PQsendQueryInternal(PGconn *conn, const char *query, bool newQuery)
 		if (pqPutMsgStart('E', conn) < 0 ||
 			pqPuts("", conn) < 0 ||
 			pqPutInt(0, 4, conn) < 0 ||
+			pqPutMsgEnd(conn) < 0)
+			goto sendFailed;
+		if (pqPutMsgStart('C', conn) < 0 ||
+			pqPutc('P', conn) < 0 ||
+			pqPuts("", conn) < 0 ||
 			pqPutMsgEnd(conn) < 0)
 			goto sendFailed;
 
@@ -1425,10 +1431,11 @@ PQsendQueryParams(PGconn *conn,
 							 libpq_gettext("command string is a null pointer\n"));
 		return 0;
 	}
-	if (nParams < 0 || nParams > 65535)
+	if (nParams < 0 || nParams > PQ_QUERY_PARAM_MAX_LIMIT)
 	{
-		appendPQExpBufferStr(&conn->errorMessage,
-							 libpq_gettext("number of parameters must be between 0 and 65535\n"));
+		appendPQExpBuffer(&conn->errorMessage,
+						  libpq_gettext("number of parameters must be between 0 and %d\n"),
+						  PQ_QUERY_PARAM_MAX_LIMIT);
 		return 0;
 	}
 
@@ -1473,10 +1480,11 @@ PQsendPrepare(PGconn *conn,
 							 libpq_gettext("command string is a null pointer\n"));
 		return 0;
 	}
-	if (nParams < 0 || nParams > 65535)
+	if (nParams < 0 || nParams > PQ_QUERY_PARAM_MAX_LIMIT)
 	{
-		appendPQExpBufferStr(&conn->errorMessage,
-							 libpq_gettext("number of parameters must be between 0 and 65535\n"));
+		appendPQExpBuffer(&conn->errorMessage,
+						  libpq_gettext("number of parameters must be between 0 and %d\n"),
+						  PQ_QUERY_PARAM_MAX_LIMIT);
 		return 0;
 	}
 
@@ -1570,10 +1578,11 @@ PQsendQueryPrepared(PGconn *conn,
 							 libpq_gettext("statement name is a null pointer\n"));
 		return 0;
 	}
-	if (nParams < 0 || nParams > 65535)
+	if (nParams < 0 || nParams > PQ_QUERY_PARAM_MAX_LIMIT)
 	{
-		appendPQExpBufferStr(&conn->errorMessage,
-							 libpq_gettext("number of parameters must be between 0 and 65535\n"));
+		appendPQExpBuffer(&conn->errorMessage,
+						  libpq_gettext("number of parameters must be between 0 and %d\n"),
+						  PQ_QUERY_PARAM_MAX_LIMIT);
 		return 0;
 	}
 

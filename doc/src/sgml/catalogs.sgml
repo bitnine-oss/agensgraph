@@ -1238,6 +1238,15 @@
 
      <row>
       <entry role="catalog_table_entry"><para role="column_definition">
+       <structfield>attalign</structfield> <type>char</type>
+      </para>
+      <para>
+       A copy of <literal>pg_type.typalign</literal> of this column's type
+      </para></entry>
+     </row>
+
+     <row>
+      <entry role="catalog_table_entry"><para role="column_definition">
        <structfield>attstorage</structfield> <type>char</type>
       </para>
       <para>
@@ -1249,10 +1258,17 @@
 
      <row>
       <entry role="catalog_table_entry"><para role="column_definition">
-       <structfield>attalign</structfield> <type>char</type>
+       <structfield>attcompression</structfield> <type>char</type>
       </para>
       <para>
-       A copy of <literal>pg_type.typalign</literal> of this column's type
+       The current compression method of the column.  Typically this is
+       <literal>'\0'</literal> to specify use of the current default setting
+       (see <xref linkend="guc-default-toast-compression"/>).  Otherwise,
+       <literal>'p'</literal> selects pglz compression, while
+       <literal>'l'</literal> selects <productname>LZ4</productname>
+       compression.  However, this field is ignored
+       whenever <structfield>attstorage</structfield> does not allow
+       compression.
       </para></entry>
      </row>
 
@@ -1352,18 +1368,6 @@
       <para>
        The defined collation of the column, or zero if the column is
        not of a collatable data type
-      </para></entry>
-     </row>
-
-     <row>
-      <entry role="catalog_table_entry"><para role="column_definition">
-       <structfield>attcompression</structfield> <type>char</type>
-      </para>
-      <para>
-       The current compression method of the column.  If it is an invalid
-       compression method (<literal>'\0'</literal>) then column data will not
-       be compressed.  Otherwise, <literal>'p'</literal> = pglz compression or
-       <literal>'l'</literal> = <productname>LZ4</productname> compression.
       </para></entry>
      </row>
 
@@ -5901,9 +5905,8 @@ SCRAM-SHA-256$<replaceable>&lt;iteration count&gt;</replaceable>:<replaceable>&l
       <para>
        An array of the data types of the function arguments.  This includes
        only input arguments (including <literal>INOUT</literal> and
-       <literal>VARIADIC</literal> arguments), as well as
-       <literal>OUT</literal> parameters of procedures, and thus represents
-       the call signature of the function or procedure.
+       <literal>VARIADIC</literal> arguments), and thus represents
+       the call signature of the function.
       </para></entry>
      </row>
 
@@ -7518,10 +7521,11 @@ SCRAM-SHA-256$<replaceable>&lt;iteration count&gt;</replaceable>:<replaceable>&l
 
      <row>
       <entry role="catalog_table_entry"><para role="column_definition">
-       <structfield>stxexprs</structfield> <type>pg_node_tree</type>
+       <structfield>stxdexpr</structfield> <type>pg_statistic[]</type>
       </para>
       <para>
-       A list of any expressions covered by this statistics object.
+       Per-expression statistics, serialized as an array of
+       <structname>pg_statistic</structname> type
       </para></entry>
      </row>
     </tbody>
@@ -7675,16 +7679,6 @@ SCRAM-SHA-256$<replaceable>&lt;iteration count&gt;</replaceable>:<replaceable>&l
        Array of subscribed publication names. These reference
        publications defined in the upstream database. For more on publications
        see <xref linkend="logical-replication-publication"/>.
-      </para></entry>
-     </row>
-
-     <row>
-      <entry role="catalog_table_entry"><para role="column_definition">
-       <structfield>stxdexpr</structfield> <type>pg_statistic[]</type>
-      </para>
-      <para>
-       Per-expression statistics, serialized as an array of
-       <structname>pg_statistic</structname> type
       </para></entry>
      </row>
     </tbody>
@@ -12751,18 +12745,9 @@ SELECT * FROM pg_locks pl LEFT JOIN pg_prepared_xacts ppx
        (references <link linkend="catalog-pg-attribute"><structname>pg_attribute</structname></link>.<structfield>attname</structfield>)
       </para>
       <para>
-       Names of the columns included in the extended statistics object
+       Name of column described by this row
       </para></entry>
      </row>
-
-     <row>
-      <entry role="catalog_table_entry"><para role="column_definition">
-       <structfield>exprs</structfield> <type>text[]</type>
-      </para>
-      <para>
-       Expressions included in the extended statistics object
-      </para></entry>
-      </row>
 
      <row>
       <entry role="catalog_table_entry"><para role="column_definition">
@@ -13003,9 +12988,18 @@ SELECT * FROM pg_locks pl LEFT JOIN pg_prepared_xacts ppx
        (references <link linkend="catalog-pg-attribute"><structname>pg_attribute</structname></link>.<structfield>attname</structfield>)
       </para>
       <para>
-       Names of the columns the extended statistics object is defined on
+       Names of the columns included in the extended statistics object
       </para></entry>
      </row>
+
+     <row>
+      <entry role="catalog_table_entry"><para role="column_definition">
+       <structfield>exprs</structfield> <type>text[]</type>
+      </para>
+      <para>
+       Expressions included in the extended statistics object
+      </para></entry>
+      </row>
 
      <row>
       <entry role="catalog_table_entry"><para role="column_definition">

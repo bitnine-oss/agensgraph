@@ -78,12 +78,9 @@ PrepareQuery(ParseState *pstate, PrepareStmt *stmt,
 	/*
 	 * Need to wrap the contained statement in a RawStmt node to pass it to
 	 * parse analysis.
-	 *
-	 * Because parse analysis scribbles on the raw querytree, we must make a
-	 * copy to ensure we don't modify the passed-in tree.  FIXME someday.
 	 */
 	rawstmt = makeNode(RawStmt);
-	rawstmt->stmt = (Node *) copyObject(stmt->query);
+	rawstmt->stmt = stmt->query;
 	rawstmt->stmt_location = stmt_location;
 	rawstmt->stmt_len = stmt_len;
 
@@ -235,6 +232,17 @@ ExecuteQuery(ParseState *pstate,
 	plan_list = cplan->stmt_list;
 
 	/*
+	 * DO NOT add any logic that could possibly throw an error between
+	 * GetCachedPlan and PortalDefineQuery, or you'll leak the plan refcount.
+	 */
+	PortalDefineQuery(portal,
+					  NULL,
+					  query_string,
+					  entry->plansource->commandTag,
+					  plan_list,
+					  cplan);
+
+	/*
 	 * For CREATE TABLE ... AS EXECUTE, we must verify that the prepared
 	 * statement is one that produces tuples.  Currently we insist that it be
 	 * a plain old SELECT.  In future we might consider supporting other
@@ -276,13 +284,6 @@ ExecuteQuery(ParseState *pstate,
 		eflags = 0;
 		count = FETCH_ALL;
 	}
-
-	PortalDefineQuery(portal,
-					  NULL,
-					  query_string,
-					  entry->plansource->commandTag,
-					  plan_list,
-					  cplan);
 
 	/*
 	 * Run the portal as appropriate.

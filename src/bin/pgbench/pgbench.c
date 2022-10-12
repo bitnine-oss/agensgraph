@@ -63,6 +63,7 @@
 #include "common/username.h"
 #include "fe_utils/cancel.h"
 #include "fe_utils/conditional.h"
+#include "fe_utils/string_utils.h"
 #include "getopt_long.h"
 #include "libpq-fe.h"
 #include "pgbench.h"
@@ -5149,7 +5150,7 @@ ParseScript(const char *script, const char *desc, int weight)
 
 					if (index == 0)
 						syntax_error(desc, lineno, NULL, NULL,
-									 "\\gset must follow a SQL command",
+									 "\\gset must follow an SQL command",
 									 NULL, -1);
 
 					cmd = ps.commands[index - 1];
@@ -5157,7 +5158,7 @@ ParseScript(const char *script, const char *desc, int weight)
 					if (cmd->type != SQL_COMMAND ||
 						cmd->varprefix != NULL)
 						syntax_error(desc, lineno, NULL, NULL,
-									 "\\gset must follow a SQL command",
+									 "\\gset must follow an SQL command",
 									 cmd->first_line, -1);
 
 					/* get variable prefix */
@@ -5493,6 +5494,37 @@ printSimpleStats(const char *prefix, SimpleStats *ss)
 	}
 }
 
+/* print version banner */
+static void
+printVersion(PGconn *con)
+{
+	int			server_ver = PQserverVersion(con);
+	int			client_ver = PG_VERSION_NUM;
+
+	if (server_ver != client_ver)
+	{
+		const char *server_version;
+		char		sverbuf[32];
+
+		/* Try to get full text form, might include "devel" etc */
+		server_version = PQparameterStatus(con, "server_version");
+		/* Otherwise fall back on server_ver */
+		if (!server_version)
+		{
+			formatPGVersionNumber(server_ver, true,
+								  sverbuf, sizeof(sverbuf));
+			server_version = sverbuf;
+		}
+
+		printf(_("%s (%s, server %s)\n"),
+			   "pgbench", PG_VERSION, server_version);
+	}
+	/* For version match, only print pgbench version */
+	else
+		printf("%s (%s)\n", "pgbench", PG_VERSION);
+	fflush(stdout);
+}
+
 /* print out results */
 static void
 printResults(StatsData *total,
@@ -5506,7 +5538,6 @@ printResults(StatsData *total,
 	double		bench_duration = PG_TIME_GET_DOUBLE(total_duration);
 	double		tps = ntx / bench_duration;
 
-	printf("pgbench (PostgreSQL) %d.%d\n", PG_VERSION_NUM / 10000, PG_VERSION_NUM % 100);
 	/* Report test parameters. */
 	printf("transaction type: %s\n",
 		   num_scripts == 1 ? sql_script[0].desc : "multiple scripts");
@@ -6333,6 +6364,9 @@ main(int argc, char **argv)
 	con = doConnect();
 	if (con == NULL)
 		exit(1);
+
+	/* report pgbench and server versions */
+	printVersion(con);
 
 	pg_log_debug("pghost: %s pgport: %s nclients: %d %s: %d dbName: %s",
 				 PQhost(con), PQport(con), nclients,

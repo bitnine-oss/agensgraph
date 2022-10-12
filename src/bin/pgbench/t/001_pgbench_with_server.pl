@@ -100,7 +100,7 @@ pgbench(
 	'no such database');
 
 pgbench(
-	'-S -t 1', 1, [qr{^$}],
+	'-S -t 1', 1, [],
 	[qr{Perhaps you need to do initialization}],
 	'run without init');
 
@@ -1091,10 +1091,10 @@ SELECT LEAST(} . join(', ', (':i') x 256) . q{)}
 		'gset no row',                   2,
 		[qr{expected one row, got 0\b}], q{SELECT WHERE FALSE \gset}
 	],
-	[ 'gset alone', 1, [qr{gset must follow a SQL command}], q{\gset} ],
+	[ 'gset alone', 1, [qr{gset must follow an SQL command}], q{\gset} ],
 	[
-		'gset no SQL',                        1,
-		[qr{gset must follow a SQL command}], q{\set i +1
+		'gset no SQL',                         1,
+		[qr{gset must follow an SQL command}], q{\set i +1
 \gset}
 	],
 	[
@@ -1102,8 +1102,8 @@ SELECT LEAST(} . join(', ', (':i') x 256) . q{)}
 		[qr{too many arguments}],  q{SELECT 1 \gset a b}
 	],
 	[
-		'gset after gset',                    1,
-		[qr{gset must follow a SQL command}], q{SELECT 1 AS i \gset
+		'gset after gset',                     1,
+		[qr{gset must follow an SQL command}], q{SELECT 1 AS i \gset
 \gset}
 	],
 	[
@@ -1173,7 +1173,12 @@ sub list_files
 	return map { $dir . '/' . $_ } @files;
 }
 
-# check log contents and cleanup
+# Check log contents and clean them up:
+#   $dir: directory holding logs
+#   $prefix: file prefix for per-thread logs
+#   $nb: number of expected files
+#   $min/$max: minimum and maximum number of lines in log files
+#   $re: regular expression each log line has to match
 sub check_pgbench_logs
 {
 	local $Test::Builder::Level = $Test::Builder::Level + 1;
@@ -1188,42 +1193,51 @@ sub check_pgbench_logs
 	my $log_number = 0;
 	for my $log (sort @logs)
 	{
-		eval {
-			open my $fh, '<', $log or die "$@";
-			my @contents = <$fh>;
-			my $clen     = @contents;
-			ok( $min <= $clen && $clen <= $max,
-				"transaction count for $log ($clen)");
-			ok( grep($re, @contents) == $clen,
-				"transaction format for $prefix");
-			close $fh or die "$@";
-		};
+		# Check the contents of each log file.
+		my $contents_raw = slurp_file($log);
+
+		my @contents = split(/\n/, $contents_raw);
+		my $clen = @contents;
+		ok( $min <= $clen && $clen <= $max,
+			"transaction count for $log ($clen)");
+		my $clen_match = grep(/$re/, @contents);
+		ok($clen_match == $clen, "transaction format for $prefix");
+
+		# Show more information if some logs don't match
+		# to help with debugging.
+		if ($clen_match != $clen)
+		{
+			foreach my $log (@contents)
+			{
+				print "# Log entry not matching: $log\n"
+				  unless $log =~ /$re/;
+			}
+		}
 	}
-	ok(unlink(@logs), "remove log files");
 	return;
 }
 
 my $bdir = $node->basedir;
 
-# with sampling rate
+# Run with sampling rate, 2 clients with 50 transactions each.
 pgbench(
 	"-n -S -t 50 -c 2 --log --sampling-rate=0.5", 0,
 	[ qr{select only}, qr{processed: 100/100} ], [qr{^$}],
 	'pgbench logs', undef,
 	"--log-prefix=$bdir/001_pgbench_log_2");
-
+# The IDs of the clients (1st field) in the logs should be either 0 or 1.
 check_pgbench_logs($bdir, '001_pgbench_log_2', 1, 8, 92,
-	qr{^0 \d{1,2} \d+ \d \d+ \d+$});
+	qr{^[01] \d{1,2} \d+ \d \d+ \d+$});
 
-# check log file in some detail
+# Run with different read-only option pattern, 1 client with 10 transactions.
 pgbench(
-	"-n -b se -t 10 -l", 0,
+	"-n -b select-only -t 10 -l", 0,
 	[ qr{select only}, qr{processed: 10/10} ], [qr{^$}],
 	'pgbench logs contents', undef,
 	"--log-prefix=$bdir/001_pgbench_log_3");
-
+# The ID of a single client (1st field) should match 0.
 check_pgbench_logs($bdir, '001_pgbench_log_3', 1, 10, 10,
-	qr{^\d \d{1,2} \d+ \d \d+ \d+$});
+	qr{^0 \d{1,2} \d+ \d \d+ \d+$});
 
 # done
 $node->safe_psql('postgres', 'DROP TABLESPACE regress_pgbench_tap_1_ts');

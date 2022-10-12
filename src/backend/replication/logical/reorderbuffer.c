@@ -443,6 +443,9 @@ ReorderBufferReturnTXN(ReorderBuffer *rb, ReorderBufferTXN *txn)
 		txn->invalidations = NULL;
 	}
 
+	/* Reset the toast hash */
+	ReorderBufferToastReset(rb, txn);
+
 	pfree(txn);
 }
 
@@ -520,6 +523,7 @@ ReorderBufferReturnChange(ReorderBuffer *rb, ReorderBufferChange *change,
 			}
 			break;
 		case REORDER_BUFFER_CHANGE_INTERNAL_SPEC_CONFIRM:
+		case REORDER_BUFFER_CHANGE_INTERNAL_SPEC_ABORT:
 		case REORDER_BUFFER_CHANGE_INTERNAL_COMMAND_ID:
 		case REORDER_BUFFER_CHANGE_INTERNAL_TUPLECID:
 			break;
@@ -705,31 +709,35 @@ ReorderBufferProcessPartialChange(ReorderBuffer *rb, ReorderBufferTXN *txn,
 		toptxn = txn;
 
 	/*
-	 * Set the toast insert bit whenever we get toast insert to indicate a
-	 * partial change and clear it when we get the insert or update on main
-	 * table (Both update and insert will do the insert in the toast table).
+	 * Indicate a partial change for toast inserts.  The change will be
+	 * considered as complete once we get the insert or update on the main
+	 * table and we are sure that the pending toast chunks are not required
+	 * anymore.
+	 *
+	 * If we allow streaming when there are pending toast chunks then such
+	 * chunks won't be released till the insert (multi_insert) is complete and
+	 * we expect the txn to have streamed all changes after streaming.  This
+	 * restriction is mainly to ensure the correctness of streamed
+	 * transactions and it doesn't seem worth uplifting such a restriction
+	 * just to allow this case because anyway we will stream the transaction
+	 * once such an insert is complete.
 	 */
 	if (toast_insert)
-		toptxn->txn_flags |= RBTXN_HAS_TOAST_INSERT;
-	else if (rbtxn_has_toast_insert(toptxn) &&
-			 IsInsertOrUpdate(change->action))
-		toptxn->txn_flags &= ~RBTXN_HAS_TOAST_INSERT;
+		toptxn->txn_flags |= RBTXN_HAS_PARTIAL_CHANGE;
+	else if (rbtxn_has_partial_change(toptxn) &&
+			 IsInsertOrUpdate(change->action) &&
+			 change->data.tp.clear_toast_afterwards)
+		toptxn->txn_flags &= ~RBTXN_HAS_PARTIAL_CHANGE;
 
 	/*
-	 * Set the spec insert bit whenever we get the speculative insert to
-	 * indicate the partial change and clear the same on speculative confirm.
+	 * Indicate a partial change for speculative inserts.  The change will be
+	 * considered as complete once we get the speculative confirm token.
 	 */
 	if (IsSpecInsert(change->action))
-		toptxn->txn_flags |= RBTXN_HAS_SPEC_INSERT;
-	else if (IsSpecConfirm(change->action))
-	{
-		/*
-		 * Speculative confirm change must be preceded by speculative
-		 * insertion.
-		 */
-		Assert(rbtxn_has_spec_insert(toptxn));
-		toptxn->txn_flags &= ~RBTXN_HAS_SPEC_INSERT;
-	}
+		toptxn->txn_flags |= RBTXN_HAS_PARTIAL_CHANGE;
+	else if (rbtxn_has_partial_change(toptxn) &&
+			 IsSpecConfirm(change->action))
+		toptxn->txn_flags &= ~RBTXN_HAS_PARTIAL_CHANGE;
 
 	/*
 	 * Stream the transaction if it is serialized before and the changes are
@@ -741,7 +749,7 @@ ReorderBufferProcessPartialChange(ReorderBuffer *rb, ReorderBufferTXN *txn,
 	 * changes.  Delaying such transactions would increase apply lag for them.
 	 */
 	if (ReorderBufferCanStartStreaming(rb) &&
-		!(rbtxn_has_incomplete_tuple(toptxn)) &&
+		!(rbtxn_has_partial_change(toptxn)) &&
 		rbtxn_is_serialized(txn))
 		ReorderBufferStreamTXN(rb, toptxn);
 }
@@ -1699,7 +1707,7 @@ ReorderBufferBuildTupleCidHash(ReorderBuffer *rb, ReorderBufferTXN *txn)
 		ent = (ReorderBufferTupleCidEnt *)
 			hash_search(txn->tuplecid_hash,
 						(void *) &key,
-						HASH_ENTER | HASH_FIND,
+						HASH_ENTER,
 						&found);
 		if (!found)
 		{
@@ -2207,8 +2215,8 @@ ReorderBufferProcessTXN(ReorderBuffer *rb, ReorderBufferTXN *txn,
 			change_done:
 
 					/*
-					 * Either speculative insertion was confirmed, or it was
-					 * unsuccessful and the record isn't needed anymore.
+					 * If speculative insertion was confirmed, the record
+					 * isn't needed anymore.
 					 */
 					if (specinsert != NULL)
 					{
@@ -2248,6 +2256,32 @@ ReorderBufferProcessTXN(ReorderBuffer *rb, ReorderBufferTXN *txn,
 					/* and memorize the pending insertion */
 					dlist_delete(&change->node);
 					specinsert = change;
+					break;
+
+				case REORDER_BUFFER_CHANGE_INTERNAL_SPEC_ABORT:
+
+					/*
+					 * Abort for speculative insertion arrived. So cleanup the
+					 * specinsert tuple and toast hash.
+					 *
+					 * Note that we get the spec abort change for each toast
+					 * entry but we need to perform the cleanup only the first
+					 * time we get it for the main table.
+					 */
+					if (specinsert != NULL)
+					{
+						/*
+						 * We must clean the toast hash before processing a
+						 * completely new tuple to avoid confusion about the
+						 * previous tuple's toast chunks.
+						 */
+						Assert(change->data.tp.clear_toast_afterwards);
+						ReorderBufferToastReset(rb, txn);
+
+						/* We don't need this record anymore. */
+						ReorderBufferReturnChange(rb, specinsert, true);
+						specinsert = NULL;
+					}
 					break;
 
 				case REORDER_BUFFER_CHANGE_TRUNCATE:
@@ -2356,16 +2390,8 @@ ReorderBufferProcessTXN(ReorderBuffer *rb, ReorderBufferTXN *txn,
 			}
 		}
 
-		/*
-		 * There's a speculative insertion remaining, just clean in up, it
-		 * can't have been successful, otherwise we'd gotten a confirmation
-		 * record.
-		 */
-		if (specinsert)
-		{
-			ReorderBufferReturnChange(rb, specinsert, true);
-			specinsert = NULL;
-		}
+		/* speculative insertion record must be freed by now */
+		Assert(!specinsert);
 
 		/* clean up the iterator */
 		ReorderBufferIterTXNFinish(rb, iterstate);
@@ -3399,7 +3425,7 @@ ReorderBufferLargestTopTXN(ReorderBuffer *rb)
 		Assert(txn->base_snapshot != NULL);
 
 		if ((largest == NULL || txn->total_size > largest_size) &&
-			(txn->total_size > 0) && !(rbtxn_has_incomplete_tuple(txn)))
+			(txn->total_size > 0) && !(rbtxn_has_partial_change(txn)))
 		{
 			largest = txn;
 			largest_size = txn->total_size;
@@ -3750,6 +3776,7 @@ ReorderBufferSerializeChange(ReorderBuffer *rb, ReorderBufferTXN *txn,
 				break;
 			}
 		case REORDER_BUFFER_CHANGE_INTERNAL_SPEC_CONFIRM:
+		case REORDER_BUFFER_CHANGE_INTERNAL_SPEC_ABORT:
 		case REORDER_BUFFER_CHANGE_INTERNAL_COMMAND_ID:
 		case REORDER_BUFFER_CHANGE_INTERNAL_TUPLECID:
 			/* ReorderBufferChange contains everything important */
@@ -4013,6 +4040,7 @@ ReorderBufferChangeSize(ReorderBufferChange *change)
 				break;
 			}
 		case REORDER_BUFFER_CHANGE_INTERNAL_SPEC_CONFIRM:
+		case REORDER_BUFFER_CHANGE_INTERNAL_SPEC_ABORT:
 		case REORDER_BUFFER_CHANGE_INTERNAL_COMMAND_ID:
 		case REORDER_BUFFER_CHANGE_INTERNAL_TUPLECID:
 			/* ReorderBufferChange contains everything important */
@@ -4311,6 +4339,7 @@ ReorderBufferRestoreChange(ReorderBuffer *rb, ReorderBufferTXN *txn,
 				break;
 			}
 		case REORDER_BUFFER_CHANGE_INTERNAL_SPEC_CONFIRM:
+		case REORDER_BUFFER_CHANGE_INTERNAL_SPEC_ABORT:
 		case REORDER_BUFFER_CHANGE_INTERNAL_COMMAND_ID:
 		case REORDER_BUFFER_CHANGE_INTERNAL_TUPLECID:
 			break;

@@ -1646,7 +1646,7 @@ psql_completion(const char *text, int start, int end)
 		COMPLETE_WITH("(", "TABLE");
 	/* ALTER PUBLICATION <name> SET ( */
 	else if (HeadMatches("ALTER", "PUBLICATION", MatchAny) && TailMatches("SET", "("))
-		COMPLETE_WITH("publish");
+		COMPLETE_WITH("publish", "publish_via_partition_root");
 	/* ALTER SUBSCRIPTION <name> */
 	else if (Matches("ALTER", "SUBSCRIPTION", MatchAny))
 		COMPLETE_WITH("CONNECTION", "ENABLE", "DISABLE", "OWNER TO",
@@ -1665,7 +1665,7 @@ psql_completion(const char *text, int start, int end)
 		COMPLETE_WITH("(", "PUBLICATION");
 	/* ALTER SUBSCRIPTION <name> SET ( */
 	else if (HeadMatches("ALTER", "SUBSCRIPTION", MatchAny) && TailMatches("SET", "("))
-		COMPLETE_WITH("slot_name", "synchronous_commit");
+		COMPLETE_WITH("binary", "slot_name", "streaming", "synchronous_commit");
 	/* ALTER SUBSCRIPTION <name> SET PUBLICATION */
 	else if (HeadMatches("ALTER", "SUBSCRIPTION", MatchAny) && TailMatches("SET", "PUBLICATION"))
 	{
@@ -1675,10 +1675,14 @@ psql_completion(const char *text, int start, int end)
 	else if (HeadMatches("ALTER", "SUBSCRIPTION", MatchAny) &&
 			 TailMatches("ADD|DROP|SET", "PUBLICATION", MatchAny))
 		COMPLETE_WITH("WITH (");
-	/* ALTER SUBSCRIPTION <name> ADD|DROP|SET PUBLICATION <name> WITH ( */
+	/* ALTER SUBSCRIPTION <name> ADD|SET PUBLICATION <name> WITH ( */
 	else if (HeadMatches("ALTER", "SUBSCRIPTION", MatchAny) &&
-			 TailMatches("ADD|DROP|SET", "PUBLICATION", MatchAny, "WITH", "("))
+			 TailMatches("ADD|SET", "PUBLICATION", MatchAny, "WITH", "("))
 		COMPLETE_WITH("copy_data", "refresh");
+	/* ALTER SUBSCRIPTION <name> DROP PUBLICATION <name> WITH ( */
+	else if (HeadMatches("ALTER", "SUBSCRIPTION", MatchAny) &&
+			 TailMatches("DROP", "PUBLICATION", MatchAny, "WITH", "("))
+		COMPLETE_WITH("refresh");
 
 	/* ALTER SCHEMA <name> */
 	else if (Matches("ALTER", "SCHEMA", MatchAny))
@@ -2638,7 +2642,7 @@ psql_completion(const char *text, int start, int end)
 		COMPLETE_WITH_SCHEMA_QUERY(Query_for_list_of_tables, NULL);
 	/* Complete "CREATE PUBLICATION <name> [...] WITH" */
 	else if (HeadMatches("CREATE", "PUBLICATION") && TailMatches("WITH", "("))
-		COMPLETE_WITH("publish");
+		COMPLETE_WITH("publish", "publish_via_partition_root");
 
 /* CREATE RULE */
 	/* Complete "CREATE [ OR REPLACE ] RULE <sth>" with "AS ON" */
@@ -2758,8 +2762,9 @@ psql_completion(const char *text, int start, int end)
 		COMPLETE_WITH("WITH (");
 	/* Complete "CREATE SUBSCRIPTION <name> ...  WITH ( <opt>" */
 	else if (HeadMatches("CREATE", "SUBSCRIPTION") && TailMatches("WITH", "("))
-		COMPLETE_WITH("copy_data", "connect", "create_slot", "enabled",
-					  "slot_name", "synchronous_commit");
+		COMPLETE_WITH("binary", "connect", "copy_data", "create_slot",
+					  "enabled", "slot_name", "streaming",
+					  "synchronous_commit");
 
 /* CREATE TRIGGER --- is allowed inside CREATE SCHEMA, so use TailMatches */
 
@@ -2959,7 +2964,7 @@ psql_completion(const char *text, int start, int end)
 	{
 		if (TailMatches("(|*,"))
 			COMPLETE_WITH("INPUT", "OUTPUT", "RECEIVE", "SEND",
-						  "TYPMOD_IN", "TYPMOD_OUT", "ANALYZE",
+						  "TYPMOD_IN", "TYPMOD_OUT", "ANALYZE", "SUBSCRIPT",
 						  "INTERNALLENGTH", "PASSEDBYVALUE", "ALIGNMENT",
 						  "STORAGE", "LIKE", "CATEGORY", "PREFERRED",
 						  "DEFAULT", "ELEMENT", "DELIMITER",
@@ -2973,7 +2978,8 @@ psql_completion(const char *text, int start, int end)
 	{
 		if (TailMatches("(|*,"))
 			COMPLETE_WITH("SUBTYPE", "SUBTYPE_OPCLASS", "COLLATION",
-						  "CANONICAL", "SUBTYPE_DIFF");
+						  "CANONICAL", "SUBTYPE_DIFF",
+						  "MULTIRANGE_TYPE_NAME");
 		else if (TailMatches("(*|*,", MatchAnyExcept("*=")))
 			COMPLETE_WITH("=");
 		else if (TailMatches("=", MatchAnyExcept("*)")))
@@ -3915,8 +3921,10 @@ psql_completion(const char *text, int start, int end)
 						  "DISABLE_PAGE_SKIPPING", "SKIP_LOCKED",
 						  "INDEX_CLEANUP", "PROCESS_TOAST",
 						  "TRUNCATE", "PARALLEL");
-		else if (TailMatches("FULL|FREEZE|ANALYZE|VERBOSE|DISABLE_PAGE_SKIPPING|SKIP_LOCKED|INDEX_CLEANUP|PROCESS_TOAST|TRUNCATE"))
+		else if (TailMatches("FULL|FREEZE|ANALYZE|VERBOSE|DISABLE_PAGE_SKIPPING|SKIP_LOCKED|PROCESS_TOAST|TRUNCATE"))
 			COMPLETE_WITH("ON", "OFF");
+		else if (TailMatches("INDEX_CLEANUP"))
+			COMPLETE_WITH("AUTO", "ON", "OFF");
 	}
 	else if (HeadMatches("VACUUM") && TailMatches("("))
 		/* "VACUUM (" should be caught above, so assume we want columns */
@@ -4396,7 +4404,7 @@ _complete_from_query(const char *simple_query,
 		while (*pstr)
 		{
 			char_length++;
-			pstr += PQmblen(pstr, pset.encoding);
+			pstr += PQmblenBounded(pstr, pset.encoding);
 		}
 
 		/* Free any prior result */

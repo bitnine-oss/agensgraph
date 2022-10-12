@@ -136,6 +136,18 @@ typedef struct SlotErrCallbackArg
 	int			remote_attnum;
 } SlotErrCallbackArg;
 
+typedef struct ApplyExecutionData
+{
+	EState	   *estate;			/* executor state, used to track resources */
+
+	LogicalRepRelMapEntry *targetRel;	/* replication target rel */
+	ResultRelInfo *targetRelInfo;	/* ResultRelInfo for same */
+
+	/* These fields are used when the target relation is partitioned: */
+	ModifyTableState *mtstate;	/* dummy ModifyTable state */
+	PartitionTupleRouting *proute;	/* partition routing info */
+} ApplyExecutionData;
+
 /*
  * Stream xid hash entry. Whenever we see a new xid we create this entry in the
  * xidhash and along with it create the streaming file and store the fileset handle.
@@ -165,7 +177,7 @@ bool		in_remote_transaction = false;
 static XLogRecPtr remote_final_lsn = InvalidXLogRecPtr;
 
 /* fields valid only when processing streamed transaction */
-bool		in_streamed_transaction = false;
+static bool in_streamed_transaction = false;
 
 static TransactionId stream_xid = InvalidTransactionId;
 
@@ -226,24 +238,23 @@ static void apply_dispatch(StringInfo s);
 
 static void apply_handle_commit_internal(StringInfo s,
 										 LogicalRepCommitData *commit_data);
-static void apply_handle_insert_internal(ResultRelInfo *relinfo,
-										 EState *estate, TupleTableSlot *remoteslot);
-static void apply_handle_update_internal(ResultRelInfo *relinfo,
-										 EState *estate, TupleTableSlot *remoteslot,
-										 LogicalRepTupleData *newtup,
-										 LogicalRepRelMapEntry *relmapentry);
-static void apply_handle_delete_internal(ResultRelInfo *relinfo, EState *estate,
+static void apply_handle_insert_internal(ApplyExecutionData *edata,
+										 ResultRelInfo *relinfo,
+										 TupleTableSlot *remoteslot);
+static void apply_handle_update_internal(ApplyExecutionData *edata,
+										 ResultRelInfo *relinfo,
 										 TupleTableSlot *remoteslot,
-										 LogicalRepRelation *remoterel);
+										 LogicalRepTupleData *newtup);
+static void apply_handle_delete_internal(ApplyExecutionData *edata,
+										 ResultRelInfo *relinfo,
+										 TupleTableSlot *remoteslot);
 static bool FindReplTupleInLocalRel(EState *estate, Relation localrel,
 									LogicalRepRelation *remoterel,
 									TupleTableSlot *remoteslot,
 									TupleTableSlot **localslot);
-static void apply_handle_tuple_routing(ResultRelInfo *relinfo,
-									   EState *estate,
+static void apply_handle_tuple_routing(ApplyExecutionData *edata,
 									   TupleTableSlot *remoteslot,
 									   LogicalRepTupleData *newtup,
-									   LogicalRepRelMapEntry *relmapentry,
 									   CmdType operation);
 
 /*
@@ -271,30 +282,41 @@ should_apply_changes_for_rel(LogicalRepRelMapEntry *rel)
 }
 
 /*
- * Make sure that we started local transaction.
+ * Begin one step (one INSERT, UPDATE, etc) of a replication transaction.
  *
- * Also switches to ApplyMessageContext as necessary.
+ * Start a transaction, if this is the first step (else we keep using the
+ * existing transaction).
+ * Also provide a global snapshot and ensure we run in ApplyMessageContext.
  */
-static bool
-ensure_transaction(void)
+static void
+begin_replication_step(void)
 {
-	if (IsTransactionState())
+	SetCurrentStatementStartTimestamp();
+
+	if (!IsTransactionState())
 	{
-		SetCurrentStatementStartTimestamp();
-
-		if (CurrentMemoryContext != ApplyMessageContext)
-			MemoryContextSwitchTo(ApplyMessageContext);
-
-		return false;
+		StartTransactionCommand();
+		maybe_reread_subscription();
 	}
 
-	SetCurrentStatementStartTimestamp();
-	StartTransactionCommand();
-
-	maybe_reread_subscription();
+	PushActiveSnapshot(GetTransactionSnapshot());
 
 	MemoryContextSwitchTo(ApplyMessageContext);
-	return true;
+}
+
+/*
+ * Finish up one step of a replication transaction.
+ * Callers of begin_replication_step() must also call this.
+ *
+ * We don't close out the transaction here, but we should increment
+ * the command counter to make the effects of this step visible.
+ */
+static void
+end_replication_step(void)
+{
+	PopActiveSnapshot();
+
+	CommandCounterIncrement();
 }
 
 /*
@@ -323,7 +345,10 @@ handle_streamed_transaction(LogicalRepMsgType action, StringInfo s)
 	 */
 	xid = pq_getmsgint(s, 4);
 
-	Assert(TransactionIdIsValid(xid));
+	if (!TransactionIdIsValid(xid))
+		ereport(ERROR,
+				(errcode(ERRCODE_PROTOCOL_VIOLATION),
+				 errmsg_internal("invalid transaction ID in streamed replication transaction")));
 
 	/* Add the new subxact to the array (unless already there). */
 	subxact_info_add(xid);
@@ -336,27 +361,22 @@ handle_streamed_transaction(LogicalRepMsgType action, StringInfo s)
 
 /*
  * Executor state preparation for evaluation of constraint expressions,
- * indexes and triggers.
+ * indexes and triggers for the specified relation.
  *
- * resultRelInfo is a ResultRelInfo for the relation to be passed to the
- * executor routines.  The caller must open and close any indexes to be
- * updated independently of the relation registered here.
+ * Note that the caller must open and close any indexes to be updated.
  */
-static EState *
-create_estate_for_relation(LogicalRepRelMapEntry *rel,
-						   ResultRelInfo **resultRelInfo)
+static ApplyExecutionData *
+create_edata_for_relation(LogicalRepRelMapEntry *rel)
 {
+	ApplyExecutionData *edata;
 	EState	   *estate;
 	RangeTblEntry *rte;
+	ResultRelInfo *resultRelInfo;
 
-	/*
-	 * Input functions may need an active snapshot, as may AFTER triggers
-	 * invoked during finish_estate.  For safety, ensure an active snapshot
-	 * exists throughout all our usage of the executor.
-	 */
-	PushActiveSnapshot(GetTransactionSnapshot());
+	edata = (ApplyExecutionData *) palloc0(sizeof(ApplyExecutionData));
+	edata->targetRel = rel;
 
-	estate = CreateExecutorState();
+	edata->estate = estate = CreateExecutorState();
 
 	rte = makeNode(RangeTblEntry);
 	rte->rtekind = RTE_RELATION;
@@ -365,49 +385,61 @@ create_estate_for_relation(LogicalRepRelMapEntry *rel,
 	rte->rellockmode = AccessShareLock;
 	ExecInitRangeTable(estate, list_make1(rte));
 
-	*resultRelInfo = makeNode(ResultRelInfo);
+	edata->targetRelInfo = resultRelInfo = makeNode(ResultRelInfo);
 
 	/*
 	 * Use Relation opened by logicalrep_rel_open() instead of opening it
 	 * again.
 	 */
-	InitResultRelInfo(*resultRelInfo, rel->localrel, 1, NULL, 0);
+	InitResultRelInfo(resultRelInfo, rel->localrel, 1, NULL, 0);
 
 	/*
 	 * We put the ResultRelInfo in the es_opened_result_relations list, even
 	 * though we don't populate the es_result_relations array.  That's a bit
 	 * bogus, but it's enough to make ExecGetTriggerResultRel() find them.
-	 * Also, because we did not open the Relation ourselves here, there is no
-	 * need to worry about closing it.
 	 *
 	 * ExecOpenIndices() is not called here either, each execution path doing
 	 * an apply operation being responsible for that.
 	 */
 	estate->es_opened_result_relations =
-		lappend(estate->es_opened_result_relations, *resultRelInfo);
+		lappend(estate->es_opened_result_relations, resultRelInfo);
 
 	estate->es_output_cid = GetCurrentCommandId(true);
 
 	/* Prepare to catch AFTER triggers. */
 	AfterTriggerBeginQuery();
 
-	return estate;
+	/* other fields of edata remain NULL for now */
+
+	return edata;
 }
 
 /*
  * Finish any operations related to the executor state created by
- * create_estate_for_relation().
+ * create_edata_for_relation().
  */
 static void
-finish_estate(EState *estate)
+finish_edata(ApplyExecutionData *edata)
 {
+	EState	   *estate = edata->estate;
+
 	/* Handle any queued AFTER triggers. */
 	AfterTriggerEndQuery(estate);
 
-	/* Cleanup. */
+	/* Shut down tuple routing, if any was done. */
+	if (edata->proute)
+		ExecCleanupTupleRouting(edata->mtstate, edata->proute);
+
+	/*
+	 * Cleanup.  It might seem that we should call ExecCloseResultRelations()
+	 * here, but we intentionally don't.  It would close the rel we added to
+	 * es_opened_result_relations above, which is wrong because we took no
+	 * corresponding refcount.  We rely on ExecCleanupTupleRouting() to close
+	 * any other relations opened during execution.
+	 */
 	ExecResetTupleTable(estate->es_tupleTable, false);
 	FreeExecutorState(estate);
-	PopActiveSnapshot();
+	pfree(edata);
 }
 
 /*
@@ -756,7 +788,12 @@ apply_handle_commit(StringInfo s)
 
 	logicalrep_read_commit(s, &commit_data);
 
-	Assert(commit_data.commit_lsn == remote_final_lsn);
+	if (commit_data.commit_lsn != remote_final_lsn)
+		ereport(ERROR,
+				(errcode(ERRCODE_PROTOCOL_VIOLATION),
+				 errmsg_internal("incorrect commit LSN %X/%X in commit message (expected %X/%X)",
+								 LSN_FORMAT_ARGS(commit_data.commit_lsn),
+								 LSN_FORMAT_ARGS(remote_final_lsn))));
 
 	apply_handle_commit_internal(s, &commit_data);
 
@@ -783,7 +820,7 @@ apply_handle_origin(StringInfo s)
 		 (IsTransactionState() && !am_tablesync_worker())))
 		ereport(ERROR,
 				(errcode(ERRCODE_PROTOCOL_VIOLATION),
-				 errmsg("ORIGIN message sent out of order")));
+				 errmsg_internal("ORIGIN message sent out of order")));
 }
 
 /*
@@ -795,7 +832,10 @@ apply_handle_stream_start(StringInfo s)
 	bool		first_segment;
 	HASHCTL		hash_ctl;
 
-	Assert(!in_streamed_transaction);
+	if (in_streamed_transaction)
+		ereport(ERROR,
+				(errcode(ERRCODE_PROTOCOL_VIOLATION),
+				 errmsg_internal("duplicate STREAM START message")));
 
 	/*
 	 * Start a transaction on stream start, this transaction will be committed
@@ -804,13 +844,18 @@ apply_handle_stream_start(StringInfo s)
 	 * transaction for handling the buffile, used for serializing the
 	 * streaming data and subxact info.
 	 */
-	ensure_transaction();
+	begin_replication_step();
 
 	/* notify handle methods we're processing a remote transaction */
 	in_streamed_transaction = true;
 
 	/* extract XID of the top-level transaction */
 	stream_xid = logicalrep_read_stream_start(s, &first_segment);
+
+	if (!TransactionIdIsValid(stream_xid))
+		ereport(ERROR,
+				(errcode(ERRCODE_PROTOCOL_VIOLATION),
+				 errmsg_internal("invalid transaction ID in streamed replication transaction")));
 
 	/*
 	 * Initialize the xidhash table if we haven't yet. This will be used for
@@ -834,6 +879,8 @@ apply_handle_stream_start(StringInfo s)
 		subxact_info_read(MyLogicalRepWorker->subid, stream_xid);
 
 	pgstat_report_activity(STATE_RUNNING, NULL);
+
+	end_replication_step();
 }
 
 /*
@@ -842,7 +889,10 @@ apply_handle_stream_start(StringInfo s)
 static void
 apply_handle_stream_stop(StringInfo s)
 {
-	Assert(in_streamed_transaction);
+	if (!in_streamed_transaction)
+		ereport(ERROR,
+				(errcode(ERRCODE_PROTOCOL_VIOLATION),
+				 errmsg_internal("STREAM STOP message without STREAM START")));
 
 	/*
 	 * Close the file with serialized changes, and serialize information about
@@ -874,7 +924,10 @@ apply_handle_stream_abort(StringInfo s)
 	TransactionId xid;
 	TransactionId subxid;
 
-	Assert(!in_streamed_transaction);
+	if (in_streamed_transaction)
+		ereport(ERROR,
+				(errcode(ERRCODE_PROTOCOL_VIOLATION),
+				 errmsg_internal("STREAM ABORT message without STREAM STOP")));
 
 	logicalrep_read_stream_abort(s, &xid, &subxid);
 
@@ -901,7 +954,6 @@ apply_handle_stream_abort(StringInfo s)
 		 * performed rollback to savepoint for one of the earlier
 		 * sub-transaction.
 		 */
-
 		int64		i;
 		int64		subidx;
 		BufFile    *fd;
@@ -910,7 +962,7 @@ apply_handle_stream_abort(StringInfo s)
 		StreamXidHash *ent;
 
 		subidx = -1;
-		ensure_transaction();
+		begin_replication_step();
 		subxact_info_read(MyLogicalRepWorker->subid, xid);
 
 		for (i = subxact_data.nsubxacts; i > 0; i--)
@@ -931,18 +983,20 @@ apply_handle_stream_abort(StringInfo s)
 		{
 			/* Cleanup the subxact info */
 			cleanup_subxact_info();
-
+			end_replication_step();
 			CommitTransactionCommand();
 			return;
 		}
 
-		Assert((subidx >= 0) && (subidx < subxact_data.nsubxacts));
-
 		ent = (StreamXidHash *) hash_search(xidhash,
 											(void *) &xid,
 											HASH_FIND,
-											&found);
-		Assert(found);
+											NULL);
+		if (!ent)
+			ereport(ERROR,
+					(errcode(ERRCODE_PROTOCOL_VIOLATION),
+					 errmsg_internal("transaction %u not found in stream XID hash table",
+									 xid)));
 
 		/* open the changes file */
 		changes_filename(path, MyLogicalRepWorker->subid, xid);
@@ -959,6 +1013,7 @@ apply_handle_stream_abort(StringInfo s)
 		/* write the updated subxact list */
 		subxact_info_write(MyLogicalRepWorker->subid, xid);
 
+		end_replication_step();
 		CommitTransactionCommand();
 	}
 }
@@ -974,19 +1029,22 @@ apply_handle_stream_commit(StringInfo s)
 	int			nchanges;
 	char		path[MAXPGPATH];
 	char	   *buffer = NULL;
-	bool		found;
 	LogicalRepCommitData commit_data;
 	StreamXidHash *ent;
 	MemoryContext oldcxt;
 	BufFile    *fd;
 
-	Assert(!in_streamed_transaction);
+	if (in_streamed_transaction)
+		ereport(ERROR,
+				(errcode(ERRCODE_PROTOCOL_VIOLATION),
+				 errmsg_internal("STREAM COMMIT message without STREAM STOP")));
 
 	xid = logicalrep_read_stream_commit(s, &commit_data);
 
 	elog(DEBUG1, "received commit for streamed transaction %u", xid);
 
-	ensure_transaction();
+	/* Make sure we have an open transaction */
+	begin_replication_step();
 
 	/*
 	 * Allocate file handle and memory required to process all the messages in
@@ -998,11 +1056,17 @@ apply_handle_stream_commit(StringInfo s)
 	/* open the spool file for the committed transaction */
 	changes_filename(path, MyLogicalRepWorker->subid, xid);
 	elog(DEBUG1, "replaying changes from file \"%s\"", path);
+
 	ent = (StreamXidHash *) hash_search(xidhash,
 										(void *) &xid,
 										HASH_FIND,
-										&found);
-	Assert(found);
+										NULL);
+	if (!ent)
+		ereport(ERROR,
+				(errcode(ERRCODE_PROTOCOL_VIOLATION),
+				 errmsg_internal("transaction %u not found in stream XID hash table",
+								 xid)));
+
 	fd = BufFileOpenShared(ent->stream_fileset, path, O_RDONLY);
 
 	buffer = palloc(BLCKSZ);
@@ -1018,6 +1082,8 @@ apply_handle_stream_commit(StringInfo s)
 	 */
 	in_remote_transaction = true;
 	pgstat_report_activity(STATE_RUNNING, NULL);
+
+	end_replication_step();
 
 	/*
 	 * Read the entries one by one and pass them through the same logic as in
@@ -1045,7 +1111,9 @@ apply_handle_stream_commit(StringInfo s)
 					 errmsg("could not read from streaming transaction's changes file \"%s\": %m",
 							path)));
 
-		Assert(len > 0);
+		if (len <= 0)
+			elog(ERROR, "incorrect length %d in streaming transaction's changes file \"%s\"",
+				 len, path);
 
 		/* make sure we have sufficiently large buffer */
 		buffer = repalloc(buffer, len);
@@ -1073,7 +1141,7 @@ apply_handle_stream_commit(StringInfo s)
 		nchanges++;
 
 		if (nchanges % 1000 == 0)
-			elog(DEBUG1, "replayed %d changes from file '%s'",
+			elog(DEBUG1, "replayed %d changes from file \"%s\"",
 				 nchanges, path);
 	}
 
@@ -1189,10 +1257,10 @@ GetRelationIdentityOrPK(Relation rel)
 static void
 apply_handle_insert(StringInfo s)
 {
-	ResultRelInfo *resultRelInfo;
 	LogicalRepRelMapEntry *rel;
 	LogicalRepTupleData newtup;
 	LogicalRepRelId relid;
+	ApplyExecutionData *edata;
 	EState	   *estate;
 	TupleTableSlot *remoteslot;
 	MemoryContext oldctx;
@@ -1200,7 +1268,7 @@ apply_handle_insert(StringInfo s)
 	if (handle_streamed_transaction(LOGICAL_REP_MSG_INSERT, s))
 		return;
 
-	ensure_transaction();
+	begin_replication_step();
 
 	relid = logicalrep_read_insert(s, &newtup);
 	rel = logicalrep_rel_open(relid, RowExclusiveLock);
@@ -1211,11 +1279,13 @@ apply_handle_insert(StringInfo s)
 		 * transaction so it's safe to unlock it.
 		 */
 		logicalrep_rel_close(rel, RowExclusiveLock);
+		end_replication_step();
 		return;
 	}
 
 	/* Initialize the executor state. */
-	estate = create_estate_for_relation(rel, &resultRelInfo);
+	edata = create_edata_for_relation(rel);
+	estate = edata->estate;
 	remoteslot = ExecInitExtraTupleSlot(estate,
 										RelationGetDescr(rel->localrel),
 										&TTSOpsVirtual);
@@ -1228,24 +1298,32 @@ apply_handle_insert(StringInfo s)
 
 	/* For a partitioned table, insert the tuple into a partition. */
 	if (rel->localrel->rd_rel->relkind == RELKIND_PARTITIONED_TABLE)
-		apply_handle_tuple_routing(resultRelInfo, estate,
-								   remoteslot, NULL, rel, CMD_INSERT);
+		apply_handle_tuple_routing(edata,
+								   remoteslot, NULL, CMD_INSERT);
 	else
-		apply_handle_insert_internal(resultRelInfo, estate,
+		apply_handle_insert_internal(edata, edata->targetRelInfo,
 									 remoteslot);
 
-	finish_estate(estate);
+	finish_edata(edata);
 
 	logicalrep_rel_close(rel, NoLock);
 
-	CommandCounterIncrement();
+	end_replication_step();
 }
 
-/* Workhorse for apply_handle_insert() */
+/*
+ * Workhorse for apply_handle_insert()
+ * relinfo is for the relation we're actually inserting into
+ * (could be a child partition of edata->targetRelInfo)
+ */
 static void
-apply_handle_insert_internal(ResultRelInfo *relinfo,
-							 EState *estate, TupleTableSlot *remoteslot)
+apply_handle_insert_internal(ApplyExecutionData *edata,
+							 ResultRelInfo *relinfo,
+							 TupleTableSlot *remoteslot)
 {
+	EState	   *estate = edata->estate;
+
+	/* We must open indexes here. */
 	ExecOpenIndices(relinfo, false);
 
 	/* Do the insert. */
@@ -1296,9 +1374,9 @@ check_relation_updatable(LogicalRepRelMapEntry *rel)
 static void
 apply_handle_update(StringInfo s)
 {
-	ResultRelInfo *resultRelInfo;
 	LogicalRepRelMapEntry *rel;
 	LogicalRepRelId relid;
+	ApplyExecutionData *edata;
 	EState	   *estate;
 	LogicalRepTupleData oldtup;
 	LogicalRepTupleData newtup;
@@ -1310,7 +1388,7 @@ apply_handle_update(StringInfo s)
 	if (handle_streamed_transaction(LOGICAL_REP_MSG_UPDATE, s))
 		return;
 
-	ensure_transaction();
+	begin_replication_step();
 
 	relid = logicalrep_read_update(s, &has_oldtup, &oldtup,
 								   &newtup);
@@ -1322,6 +1400,7 @@ apply_handle_update(StringInfo s)
 		 * transaction so it's safe to unlock it.
 		 */
 		logicalrep_rel_close(rel, RowExclusiveLock);
+		end_replication_step();
 		return;
 	}
 
@@ -1329,7 +1408,8 @@ apply_handle_update(StringInfo s)
 	check_relation_updatable(rel);
 
 	/* Initialize the executor state. */
-	estate = create_estate_for_relation(rel, &resultRelInfo);
+	edata = create_edata_for_relation(rel);
+	estate = edata->estate;
 	remoteslot = ExecInitExtraTupleSlot(estate,
 										RelationGetDescr(rel->localrel),
 										&TTSOpsVirtual);
@@ -1369,26 +1449,32 @@ apply_handle_update(StringInfo s)
 
 	/* For a partitioned table, apply update to correct partition. */
 	if (rel->localrel->rd_rel->relkind == RELKIND_PARTITIONED_TABLE)
-		apply_handle_tuple_routing(resultRelInfo, estate,
-								   remoteslot, &newtup, rel, CMD_UPDATE);
+		apply_handle_tuple_routing(edata,
+								   remoteslot, &newtup, CMD_UPDATE);
 	else
-		apply_handle_update_internal(resultRelInfo, estate,
-									 remoteslot, &newtup, rel);
+		apply_handle_update_internal(edata, edata->targetRelInfo,
+									 remoteslot, &newtup);
 
-	finish_estate(estate);
+	finish_edata(edata);
 
 	logicalrep_rel_close(rel, NoLock);
 
-	CommandCounterIncrement();
+	end_replication_step();
 }
 
-/* Workhorse for apply_handle_update() */
+/*
+ * Workhorse for apply_handle_update()
+ * relinfo is for the relation we're actually updating in
+ * (could be a child partition of edata->targetRelInfo)
+ */
 static void
-apply_handle_update_internal(ResultRelInfo *relinfo,
-							 EState *estate, TupleTableSlot *remoteslot,
-							 LogicalRepTupleData *newtup,
-							 LogicalRepRelMapEntry *relmapentry)
+apply_handle_update_internal(ApplyExecutionData *edata,
+							 ResultRelInfo *relinfo,
+							 TupleTableSlot *remoteslot,
+							 LogicalRepTupleData *newtup)
 {
+	EState	   *estate = edata->estate;
+	LogicalRepRelMapEntry *relmapentry = edata->targetRel;
 	Relation	localrel = relinfo->ri_RelationDesc;
 	EPQState	epqstate;
 	TupleTableSlot *localslot;
@@ -1424,12 +1510,13 @@ apply_handle_update_internal(ResultRelInfo *relinfo,
 	else
 	{
 		/*
-		 * The tuple to be updated could not be found.
+		 * The tuple to be updated could not be found.  Do nothing except for
+		 * emitting a log message.
 		 *
-		 * TODO what to do here, change the log level to LOG perhaps?
+		 * XXX should this be promoted to ereport(LOG) perhaps?
 		 */
 		elog(DEBUG1,
-			 "logical replication did not find row for update "
+			 "logical replication did not find row to be updated "
 			 "in replication target relation \"%s\"",
 			 RelationGetRelationName(localrel));
 	}
@@ -1447,10 +1534,10 @@ apply_handle_update_internal(ResultRelInfo *relinfo,
 static void
 apply_handle_delete(StringInfo s)
 {
-	ResultRelInfo *resultRelInfo;
 	LogicalRepRelMapEntry *rel;
 	LogicalRepTupleData oldtup;
 	LogicalRepRelId relid;
+	ApplyExecutionData *edata;
 	EState	   *estate;
 	TupleTableSlot *remoteslot;
 	MemoryContext oldctx;
@@ -1458,7 +1545,7 @@ apply_handle_delete(StringInfo s)
 	if (handle_streamed_transaction(LOGICAL_REP_MSG_DELETE, s))
 		return;
 
-	ensure_transaction();
+	begin_replication_step();
 
 	relid = logicalrep_read_delete(s, &oldtup);
 	rel = logicalrep_rel_open(relid, RowExclusiveLock);
@@ -1469,6 +1556,7 @@ apply_handle_delete(StringInfo s)
 		 * transaction so it's safe to unlock it.
 		 */
 		logicalrep_rel_close(rel, RowExclusiveLock);
+		end_replication_step();
 		return;
 	}
 
@@ -1476,7 +1564,8 @@ apply_handle_delete(StringInfo s)
 	check_relation_updatable(rel);
 
 	/* Initialize the executor state. */
-	estate = create_estate_for_relation(rel, &resultRelInfo);
+	edata = create_edata_for_relation(rel);
+	estate = edata->estate;
 	remoteslot = ExecInitExtraTupleSlot(estate,
 										RelationGetDescr(rel->localrel),
 										&TTSOpsVirtual);
@@ -1488,26 +1577,32 @@ apply_handle_delete(StringInfo s)
 
 	/* For a partitioned table, apply delete to correct partition. */
 	if (rel->localrel->rd_rel->relkind == RELKIND_PARTITIONED_TABLE)
-		apply_handle_tuple_routing(resultRelInfo, estate,
-								   remoteslot, NULL, rel, CMD_DELETE);
+		apply_handle_tuple_routing(edata,
+								   remoteslot, NULL, CMD_DELETE);
 	else
-		apply_handle_delete_internal(resultRelInfo, estate,
-									 remoteslot, &rel->remoterel);
+		apply_handle_delete_internal(edata, edata->targetRelInfo,
+									 remoteslot);
 
-	finish_estate(estate);
+	finish_edata(edata);
 
 	logicalrep_rel_close(rel, NoLock);
 
-	CommandCounterIncrement();
+	end_replication_step();
 }
 
-/* Workhorse for apply_handle_delete() */
+/*
+ * Workhorse for apply_handle_delete()
+ * relinfo is for the relation we're actually deleting from
+ * (could be a child partition of edata->targetRelInfo)
+ */
 static void
-apply_handle_delete_internal(ResultRelInfo *relinfo, EState *estate,
-							 TupleTableSlot *remoteslot,
-							 LogicalRepRelation *remoterel)
+apply_handle_delete_internal(ApplyExecutionData *edata,
+							 ResultRelInfo *relinfo,
+							 TupleTableSlot *remoteslot)
 {
+	EState	   *estate = edata->estate;
 	Relation	localrel = relinfo->ri_RelationDesc;
+	LogicalRepRelation *remoterel = &edata->targetRel->remoterel;
 	EPQState	epqstate;
 	TupleTableSlot *localslot;
 	bool		found;
@@ -1528,9 +1623,14 @@ apply_handle_delete_internal(ResultRelInfo *relinfo, EState *estate,
 	}
 	else
 	{
-		/* The tuple to be deleted could not be found. */
+		/*
+		 * The tuple to be deleted could not be found.  Do nothing except for
+		 * emitting a log message.
+		 *
+		 * XXX should this be promoted to ereport(LOG) perhaps?
+		 */
 		elog(DEBUG1,
-			 "logical replication did not find row for delete "
+			 "logical replication did not find row to be deleted "
 			 "in replication target relation \"%s\"",
 			 RelationGetRelationName(localrel));
 	}
@@ -1577,16 +1677,17 @@ FindReplTupleInLocalRel(EState *estate, Relation localrel,
  * This handles insert, update, delete on a partitioned table.
  */
 static void
-apply_handle_tuple_routing(ResultRelInfo *relinfo,
-						   EState *estate,
+apply_handle_tuple_routing(ApplyExecutionData *edata,
 						   TupleTableSlot *remoteslot,
 						   LogicalRepTupleData *newtup,
-						   LogicalRepRelMapEntry *relmapentry,
 						   CmdType operation)
 {
+	EState	   *estate = edata->estate;
+	LogicalRepRelMapEntry *relmapentry = edata->targetRel;
+	ResultRelInfo *relinfo = edata->targetRelInfo;
 	Relation	parentrel = relinfo->ri_RelationDesc;
-	ModifyTableState *mtstate = NULL;
-	PartitionTupleRouting *proute = NULL;
+	ModifyTableState *mtstate;
+	PartitionTupleRouting *proute;
 	ResultRelInfo *partrelinfo;
 	Relation	partrel;
 	TupleTableSlot *remoteslot_part;
@@ -1594,12 +1695,14 @@ apply_handle_tuple_routing(ResultRelInfo *relinfo,
 	MemoryContext oldctx;
 
 	/* ModifyTableState is needed for ExecFindPartition(). */
-	mtstate = makeNode(ModifyTableState);
+	edata->mtstate = mtstate = makeNode(ModifyTableState);
 	mtstate->ps.plan = NULL;
 	mtstate->ps.state = estate;
 	mtstate->operation = operation;
 	mtstate->resultRelInfo = relinfo;
-	proute = ExecSetupPartitionTupleRouting(estate, parentrel);
+
+	/* ... as is PartitionTupleRouting. */
+	edata->proute = proute = ExecSetupPartitionTupleRouting(estate, parentrel);
 
 	/*
 	 * Find the partition to which the "search tuple" belongs.
@@ -1633,14 +1736,13 @@ apply_handle_tuple_routing(ResultRelInfo *relinfo,
 	switch (operation)
 	{
 		case CMD_INSERT:
-			apply_handle_insert_internal(partrelinfo, estate,
+			apply_handle_insert_internal(edata, partrelinfo,
 										 remoteslot_part);
 			break;
 
 		case CMD_DELETE:
-			apply_handle_delete_internal(partrelinfo, estate,
-										 remoteslot_part,
-										 &relmapentry->remoterel);
+			apply_handle_delete_internal(edata, partrelinfo,
+										 remoteslot_part);
 			break;
 
 		case CMD_UPDATE:
@@ -1665,29 +1767,29 @@ apply_handle_tuple_routing(ResultRelInfo *relinfo,
 				found = FindReplTupleInLocalRel(estate, partrel,
 												&part_entry->remoterel,
 												remoteslot_part, &localslot);
-
-				oldctx = MemoryContextSwitchTo(GetPerTupleMemoryContext(estate));
-				if (found)
-				{
-					/* Apply the update.  */
-					slot_modify_data(remoteslot_part, localslot,
-									 part_entry,
-									 newtup);
-					MemoryContextSwitchTo(oldctx);
-				}
-				else
+				if (!found)
 				{
 					/*
-					 * The tuple to be updated could not be found.
+					 * The tuple to be updated could not be found.  Do nothing
+					 * except for emitting a log message.
 					 *
-					 * TODO what to do here, change the log level to LOG
-					 * perhaps?
+					 * XXX should this be promoted to ereport(LOG) perhaps?
 					 */
 					elog(DEBUG1,
-						 "logical replication did not find row for update "
-						 "in replication target relation \"%s\"",
+						 "logical replication did not find row to be updated "
+						 "in replication target relation's partition \"%s\"",
 						 RelationGetRelationName(partrel));
+					return;
 				}
+
+				/*
+				 * Apply the update to the local tuple, putting the result in
+				 * remoteslot_part.
+				 */
+				oldctx = MemoryContextSwitchTo(GetPerTupleMemoryContext(estate));
+				slot_modify_data(remoteslot_part, localslot, part_entry,
+								 newtup);
+				MemoryContextSwitchTo(oldctx);
 
 				/*
 				 * Does the updated tuple still satisfy the current
@@ -1752,9 +1854,8 @@ apply_handle_tuple_routing(ResultRelInfo *relinfo,
 					Assert(partrelinfo_new != partrelinfo);
 
 					/* DELETE old tuple found in the old partition. */
-					apply_handle_delete_internal(partrelinfo, estate,
-												 localslot,
-												 &relmapentry->remoterel);
+					apply_handle_delete_internal(edata, partrelinfo,
+												 localslot);
 
 					/* INSERT new tuple into the new partition. */
 
@@ -1782,7 +1883,7 @@ apply_handle_tuple_routing(ResultRelInfo *relinfo,
 						slot_getallattrs(remoteslot);
 					}
 					MemoryContextSwitchTo(oldctx);
-					apply_handle_insert_internal(partrelinfo_new, estate,
+					apply_handle_insert_internal(edata, partrelinfo_new,
 												 remoteslot_part);
 				}
 			}
@@ -1792,8 +1893,6 @@ apply_handle_tuple_routing(ResultRelInfo *relinfo,
 			elog(ERROR, "unrecognized CmdType: %d", (int) operation);
 			break;
 	}
-
-	ExecCleanupTupleRouting(mtstate, proute);
 }
 
 /*
@@ -1818,7 +1917,7 @@ apply_handle_truncate(StringInfo s)
 	if (handle_streamed_transaction(LOGICAL_REP_MSG_TRUNCATE, s))
 		return;
 
-	ensure_transaction();
+	begin_replication_step();
 
 	remote_relids = logicalrep_read_truncate(s, &cascade, &restart_seqs);
 
@@ -1909,7 +2008,7 @@ apply_handle_truncate(StringInfo s)
 		table_close(rel, NoLock);
 	}
 
-	CommandCounterIncrement();
+	end_replication_step();
 }
 
 
@@ -1987,7 +2086,8 @@ apply_dispatch(StringInfo s)
 
 	ereport(ERROR,
 			(errcode(ERRCODE_PROTOCOL_VIOLATION),
-			 errmsg("invalid logical replication message type \"%c\"", action)));
+			 errmsg_internal("invalid logical replication message type \"%c\"",
+							 action)));
 }
 
 /*
@@ -2288,7 +2388,8 @@ LogicalRepApplyLoop(XLogRecPtr last_received)
 
 				if (now >= timeout)
 					ereport(ERROR,
-							(errmsg("terminating logical replication worker due to timeout")));
+							(errcode(ERRCODE_CONNECTION_FAILURE),
+							 errmsg("terminating logical replication worker due to timeout")));
 
 				/* Check to see if it's time for a ping. */
 				if (!ping_sent)
@@ -2523,20 +2624,19 @@ static void
 subxact_info_write(Oid subid, TransactionId xid)
 {
 	char		path[MAXPGPATH];
-	bool		found;
 	Size		len;
 	StreamXidHash *ent;
 	BufFile    *fd;
 
 	Assert(TransactionIdIsValid(xid));
 
-	/* find the xid entry in the xidhash */
+	/* Find the xid entry in the xidhash */
 	ent = (StreamXidHash *) hash_search(xidhash,
 										(void *) &xid,
 										HASH_FIND,
-										&found);
-	/* we must found the entry for its top transaction by this time */
-	Assert(found);
+										NULL);
+	/* By this time we must have created the transaction entry */
+	Assert(ent);
 
 	/*
 	 * If there is no subtransaction then nothing to do, but if already have
@@ -2601,13 +2701,11 @@ static void
 subxact_info_read(Oid subid, TransactionId xid)
 {
 	char		path[MAXPGPATH];
-	bool		found;
 	Size		len;
 	BufFile    *fd;
 	StreamXidHash *ent;
 	MemoryContext oldctx;
 
-	Assert(TransactionIdIsValid(xid));
 	Assert(!subxact_data.subxacts);
 	Assert(subxact_data.nsubxacts == 0);
 	Assert(subxact_data.nsubxacts_max == 0);
@@ -2616,7 +2714,12 @@ subxact_info_read(Oid subid, TransactionId xid)
 	ent = (StreamXidHash *) hash_search(xidhash,
 										(void *) &xid,
 										HASH_FIND,
-										&found);
+										NULL);
+	if (!ent)
+		ereport(ERROR,
+				(errcode(ERRCODE_PROTOCOL_VIOLATION),
+				 errmsg_internal("transaction %u not found in stream XID hash table",
+								 xid)));
 
 	/*
 	 * If subxact_fileset is not valid that mean we don't have any subxact
@@ -2770,14 +2873,17 @@ stream_cleanup_files(Oid subid, TransactionId xid)
 {
 	char		path[MAXPGPATH];
 	StreamXidHash *ent;
-	bool		found = false;
 
-	/* By this time we must have created the transaction entry */
+	/* Find the xid entry in the xidhash */
 	ent = (StreamXidHash *) hash_search(xidhash,
 										(void *) &xid,
 										HASH_FIND,
-										&found);
-	Assert(found);
+										NULL);
+	if (!ent)
+		ereport(ERROR,
+				(errcode(ERRCODE_PROTOCOL_VIOLATION),
+				 errmsg_internal("transaction %u not found in stream XID hash table",
+								 xid)));
 
 	/* Delete the change file and release the stream fileset memory */
 	changes_filename(path, subid, xid);
@@ -2827,9 +2933,9 @@ stream_open_file(Oid subid, TransactionId xid, bool first_segment)
 	/* create or find the xid entry in the xidhash */
 	ent = (StreamXidHash *) hash_search(xidhash,
 										(void *) &xid,
-										HASH_ENTER | HASH_FIND,
+										HASH_ENTER,
 										&found);
-	Assert(first_segment || found);
+
 	changes_filename(path, subid, xid);
 	elog(DEBUG1, "opening file \"%s\" for streamed changes", path);
 
@@ -2848,6 +2954,11 @@ stream_open_file(Oid subid, TransactionId xid, bool first_segment)
 	{
 		MemoryContext savectx;
 		SharedFileSet *fileset;
+
+		if (found)
+			ereport(ERROR,
+					(errcode(ERRCODE_PROTOCOL_VIOLATION),
+					 errmsg_internal("incorrect first-segment flag for streamed replication transaction")));
 
 		/*
 		 * We need to maintain shared fileset across multiple stream
@@ -2868,6 +2979,11 @@ stream_open_file(Oid subid, TransactionId xid, bool first_segment)
 	}
 	else
 	{
+		if (!found)
+			ereport(ERROR,
+					(errcode(ERRCODE_PROTOCOL_VIOLATION),
+					 errmsg_internal("incorrect first-segment flag for streamed replication transaction")));
+
 		/*
 		 * Open the file and seek to the end of the file because we always
 		 * append the changes file.
@@ -3074,7 +3190,8 @@ ApplyWorkerMain(Datum main_arg)
 		 */
 		if (!myslotname)
 			ereport(ERROR,
-					(errmsg("subscription has no replication slot set")));
+					(errcode(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
+					 errmsg("subscription has no replication slot set")));
 
 		/* Setup replication origin tracking. */
 		StartTransactionCommand();
@@ -3091,7 +3208,8 @@ ApplyWorkerMain(Datum main_arg)
 												MySubscription->name, &err);
 		if (LogRepWorkerWalRcvConn == NULL)
 			ereport(ERROR,
-					(errmsg("could not connect to the publisher: %s", err)));
+					(errcode(ERRCODE_CONNECTION_FAILURE),
+					 errmsg("could not connect to the publisher: %s", err)));
 
 		/*
 		 * We don't really use the output identify_system for anything but it

@@ -38,6 +38,7 @@
 #include "plpgsql.h"
 #include "storage/proc.h"
 #include "tcop/cmdtag.h"
+#include "tcop/pquery.h"
 #include "tcop/tcopprot.h"
 #include "tcop/utility.h"
 #include "utils/array.h"
@@ -317,8 +318,6 @@ static int	exec_stmt_commit(PLpgSQL_execstate *estate,
 							 PLpgSQL_stmt_commit *stmt);
 static int	exec_stmt_rollback(PLpgSQL_execstate *estate,
 							   PLpgSQL_stmt_rollback *stmt);
-static int	exec_stmt_set(PLpgSQL_execstate *estate,
-						  PLpgSQL_stmt_set *stmt);
 
 static void plpgsql_estate_setup(PLpgSQL_execstate *estate,
 								 PLpgSQL_function *func,
@@ -2088,10 +2087,6 @@ exec_stmts(PLpgSQL_execstate *estate, List *stmts)
 				rc = exec_stmt_rollback(estate, (PLpgSQL_stmt_rollback *) stmt);
 				break;
 
-			case PLPGSQL_STMT_SET:
-				rc = exec_stmt_set(estate, (PLpgSQL_stmt_set *) stmt);
-				break;
-
 			default:
 				/* point err_stmt to parent, since this one seems corrupt */
 				estate->err_stmt = save_estmt;
@@ -2252,18 +2247,17 @@ make_callstmt_target(PLpgSQL_execstate *estate, PLpgSQL_expr *expr)
 {
 	List	   *plansources;
 	CachedPlanSource *plansource;
-	Node	   *node;
+	CallStmt   *stmt;
 	FuncExpr   *funcexpr;
 	HeapTuple	func_tuple;
-	List	   *funcargs;
 	Oid		   *argtypes;
 	char	  **argnames;
 	char	   *argmodes;
+	int			numargs;
 	MemoryContext oldcontext;
 	PLpgSQL_row *row;
 	int			nfields;
 	int			i;
-	ListCell   *lc;
 
 	/* Use eval_mcontext for any cruft accumulated here */
 	oldcontext = MemoryContextSwitchTo(get_eval_mcontext(estate));
@@ -2277,11 +2271,12 @@ make_callstmt_target(PLpgSQL_execstate *estate, PLpgSQL_expr *expr)
 	plansource = (CachedPlanSource *) linitial(plansources);
 	if (list_length(plansource->query_list) != 1)
 		elog(ERROR, "query for CALL statement is not a CallStmt");
-	node = linitial_node(Query, plansource->query_list)->utilityStmt;
-	if (node == NULL || !IsA(node, CallStmt))
+	stmt = (CallStmt *) linitial_node(Query,
+									  plansource->query_list)->utilityStmt;
+	if (stmt == NULL || !IsA(stmt, CallStmt))
 		elog(ERROR, "query for CALL statement is not a CallStmt");
 
-	funcexpr = ((CallStmt *) node)->funcexpr;
+	funcexpr = stmt->funcexpr;
 
 	func_tuple = SearchSysCache1(PROCOID,
 								 ObjectIdGetDatum(funcexpr->funcid));
@@ -2290,16 +2285,10 @@ make_callstmt_target(PLpgSQL_execstate *estate, PLpgSQL_expr *expr)
 			 funcexpr->funcid);
 
 	/*
-	 * Extract function arguments, and expand any named-arg notation
+	 * Get the argument names and modes, so that we can deliver on-point error
+	 * messages when something is wrong.
 	 */
-	funcargs = expand_function_arguments(funcexpr->args,
-										 funcexpr->funcresulttype,
-										 func_tuple);
-
-	/*
-	 * Get the argument names and modes, too
-	 */
-	get_func_arg_info(func_tuple, &argtypes, &argnames, &argmodes);
+	numargs = get_func_arg_info(func_tuple, &argtypes, &argnames, &argmodes);
 
 	ReleaseSysCache(func_tuple);
 
@@ -2313,7 +2302,7 @@ make_callstmt_target(PLpgSQL_execstate *estate, PLpgSQL_expr *expr)
 	row->dtype = PLPGSQL_DTYPE_ROW;
 	row->refname = "(unnamed row)";
 	row->lineno = -1;
-	row->varnos = (int *) palloc(sizeof(int) * list_length(funcargs));
+	row->varnos = (int *) palloc(numargs * sizeof(int));
 
 	MemoryContextSwitchTo(get_eval_mcontext(estate));
 
@@ -2323,15 +2312,14 @@ make_callstmt_target(PLpgSQL_execstate *estate, PLpgSQL_expr *expr)
 	 * Datum.
 	 */
 	nfields = 0;
-	i = 0;
-	foreach(lc, funcargs)
+	for (i = 0; i < numargs; i++)
 	{
-		Node	   *n = lfirst(lc);
-
 		if (argmodes &&
 			(argmodes[i] == PROARGMODE_INOUT ||
 			 argmodes[i] == PROARGMODE_OUT))
 		{
+			Node	   *n = list_nth(stmt->outargs, nfields);
+
 			if (IsA(n, Param))
 			{
 				Param	   *param = (Param *) n;
@@ -2354,8 +2342,9 @@ make_callstmt_target(PLpgSQL_execstate *estate, PLpgSQL_expr *expr)
 									i + 1)));
 			}
 		}
-		i++;
 	}
+
+	Assert(nfields == list_length(stmt->outargs));
 
 	row->nfields = nfields;
 
@@ -4577,7 +4566,7 @@ exec_stmt_dynfors(PLpgSQL_execstate *estate, PLpgSQL_stmt_dynfors *stmt)
 	int			rc;
 
 	portal = exec_dynquery_with_params(estate, stmt->query, stmt->params,
-									   NULL, 0);
+									   NULL, CURSOR_OPT_NO_SCROLL);
 
 	/*
 	 * Execute the loop
@@ -4932,37 +4921,6 @@ exec_stmt_rollback(PLpgSQL_execstate *estate, PLpgSQL_stmt_rollback *stmt)
 	estate->simple_eval_estate = NULL;
 	estate->simple_eval_resowner = NULL;
 	plpgsql_create_econtext(estate);
-
-	return PLPGSQL_RC_OK;
-}
-
-/*
- * exec_stmt_set
- *
- * Execute SET/RESET statement.
- *
- * We just parse and execute the statement normally, but we have to do it
- * without setting a snapshot, for things like SET TRANSACTION.
- * XXX spi.c now handles this correctly, so we no longer need a special case.
- */
-static int
-exec_stmt_set(PLpgSQL_execstate *estate, PLpgSQL_stmt_set *stmt)
-{
-	PLpgSQL_expr *expr = stmt->expr;
-	SPIExecuteOptions options;
-	int			rc;
-
-	if (expr->plan == NULL)
-		exec_prepare_plan(estate, expr, 0);
-
-	memset(&options, 0, sizeof(options));
-	options.read_only = estate->readonly_func;
-
-	rc = SPI_execute_plan_extended(expr->plan, &options);
-
-	if (rc != SPI_OK_UTILITY)
-		elog(ERROR, "SPI_execute_plan_extended failed executing query \"%s\": %s",
-			 expr->query, SPI_result_code_string(rc));
 
 	return PLPGSQL_RC_OK;
 }
@@ -5741,14 +5699,21 @@ exec_run_select(PLpgSQL_execstate *estate,
 	 * On the first call for this expression generate the plan.
 	 *
 	 * If we don't need to return a portal, then we're just going to execute
-	 * the query once, which means it's OK to use a parallel plan, even if the
-	 * number of rows being fetched is limited.  If we do need to return a
-	 * portal, the caller might do cursor operations, which parallel query
-	 * can't support.
+	 * the query immediately, which means it's OK to use a parallel plan, even
+	 * if the number of rows being fetched is limited.  If we do need to
+	 * return a portal (i.e., this is for a FOR loop), the user's code might
+	 * invoke additional operations inside the FOR loop, making parallel query
+	 * unsafe.  In any case, we don't expect any cursor operations to be done,
+	 * so specify NO_SCROLL for efficiency and semantic safety.
 	 */
 	if (expr->plan == NULL)
-		exec_prepare_plan(estate, expr,
-						  portalP == NULL ? CURSOR_OPT_PARALLEL_OK : 0);
+	{
+		int			cursorOptions = CURSOR_OPT_NO_SCROLL;
+
+		if (portalP == NULL)
+			cursorOptions |= CURSOR_OPT_PARALLEL_OK;
+		exec_prepare_plan(estate, expr, cursorOptions);
+	}
 
 	/*
 	 * Set up ParamListInfo to pass to executor
@@ -6003,6 +5968,15 @@ exec_eval_simple_expr(PLpgSQL_execstate *estate,
 	if (unlikely(expr->expr_simple_in_use) &&
 		expr->expr_simple_lxid == curlxid)
 		return false;
+
+	/*
+	 * Ensure that there's a portal-level snapshot, in case this simple
+	 * expression is the first thing evaluated after a COMMIT or ROLLBACK.
+	 * We'd have to do this anyway before executing the expression, so we
+	 * might as well do it now to ensure that any possible replanning doesn't
+	 * need to take a new snapshot.
+	 */
+	EnsurePortalSnapshotExists();
 
 	/*
 	 * Check to see if the cached plan has been invalidated.  If not, and this

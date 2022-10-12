@@ -659,6 +659,12 @@ ExecInsert(ModifyTableState *mtstate,
 	else if (resultRelInfo->ri_FdwRoutine)
 	{
 		/*
+		 * GENERATED expressions might reference the tableoid column, so
+		 * (re-)initialize tts_tableOid before evaluating them.
+		 */
+		slot->tts_tableOid = RelationGetRelid(resultRelInfo->ri_RelationDesc);
+
+		/*
 		 * Compute stored generated columns
 		 */
 		if (resultRelationDesc->rd_att->constr &&
@@ -697,14 +703,31 @@ ExecInsert(ModifyTableState *mtstate,
 													 resultRelInfo->ri_BatchSize);
 			}
 
-			resultRelInfo->ri_Slots[resultRelInfo->ri_NumSlots] =
-				MakeSingleTupleTableSlot(slot->tts_tupleDescriptor,
-										 slot->tts_ops);
+			/*
+			 * Initialize the batch slots. We don't know how many slots will
+			 * be needed, so we initialize them as the batch grows, and we
+			 * keep them across batches. To mitigate an inefficiency in how
+			 * resource owner handles objects with many references (as with
+			 * many slots all referencing the same tuple descriptor) we copy
+			 * the tuple descriptor for each slot.
+			 */
+			if (resultRelInfo->ri_NumSlots >= resultRelInfo->ri_NumSlotsInitialized)
+			{
+				TupleDesc	tdesc = CreateTupleDescCopy(slot->tts_tupleDescriptor);
+
+				resultRelInfo->ri_Slots[resultRelInfo->ri_NumSlots] =
+					MakeSingleTupleTableSlot(tdesc, slot->tts_ops);
+
+				resultRelInfo->ri_PlanSlots[resultRelInfo->ri_NumSlots] =
+					MakeSingleTupleTableSlot(tdesc, planSlot->tts_ops);
+
+				/* remember how many batch slots we initialized */
+				resultRelInfo->ri_NumSlotsInitialized++;
+			}
+
 			ExecCopySlot(resultRelInfo->ri_Slots[resultRelInfo->ri_NumSlots],
 						 slot);
-			resultRelInfo->ri_PlanSlots[resultRelInfo->ri_NumSlots] =
-				MakeSingleTupleTableSlot(planSlot->tts_tupleDescriptor,
-										 planSlot->tts_ops);
+
 			ExecCopySlot(resultRelInfo->ri_PlanSlots[resultRelInfo->ri_NumSlots],
 						 planSlot);
 
@@ -729,7 +752,7 @@ ExecInsert(ModifyTableState *mtstate,
 		/*
 		 * AFTER ROW Triggers or RETURNING expressions might reference the
 		 * tableoid column, so (re-)initialize tts_tableOid before evaluating
-		 * them.
+		 * them.  (This covers the case where the FDW replaced the slot.)
 		 */
 		slot->tts_tableOid = RelationGetRelid(resultRelInfo->ri_RelationDesc);
 	}
@@ -738,8 +761,8 @@ ExecInsert(ModifyTableState *mtstate,
 		WCOKind		wco_kind;
 
 		/*
-		 * Constraints might reference the tableoid column, so (re-)initialize
-		 * tts_tableOid before evaluating them.
+		 * Constraints and GENERATED expressions might reference the tableoid
+		 * column, so (re-)initialize tts_tableOid before evaluating them.
 		 */
 		slot->tts_tableOid = RelationGetRelid(resultRelationDesc);
 
@@ -1028,12 +1051,6 @@ ExecBatchInsert(ModifyTableState *mtstate,
 
 	if (canSetTag && numInserted > 0)
 		estate->es_processed += numInserted;
-
-	for (i = 0; i < numSlots; i++)
-	{
-		ExecDropSingleTupleTableSlot(slots[i]);
-		ExecDropSingleTupleTableSlot(planSlots[i]);
-	}
 }
 
 /* ----------------------------------------------------------------
@@ -1630,6 +1647,12 @@ ExecUpdate(ModifyTableState *mtstate,
 	else if (resultRelInfo->ri_FdwRoutine)
 	{
 		/*
+		 * GENERATED expressions might reference the tableoid column, so
+		 * (re-)initialize tts_tableOid before evaluating them.
+		 */
+		slot->tts_tableOid = RelationGetRelid(resultRelInfo->ri_RelationDesc);
+
+		/*
 		 * Compute stored generated columns
 		 */
 		if (resultRelationDesc->rd_att->constr &&
@@ -1651,7 +1674,7 @@ ExecUpdate(ModifyTableState *mtstate,
 		/*
 		 * AFTER ROW Triggers or RETURNING expressions might reference the
 		 * tableoid column, so (re-)initialize tts_tableOid before evaluating
-		 * them.
+		 * them.  (This covers the case where the FDW replaced the slot.)
 		 */
 		slot->tts_tableOid = RelationGetRelid(resultRelationDesc);
 	}
@@ -1662,8 +1685,8 @@ ExecUpdate(ModifyTableState *mtstate,
 		bool		update_indexes;
 
 		/*
-		 * Constraints might reference the tableoid column, so (re-)initialize
-		 * tts_tableOid before evaluating them.
+		 * Constraints and GENERATED expressions might reference the tableoid
+		 * column, so (re-)initialize tts_tableOid before evaluating them.
 		 */
 		slot->tts_tableOid = RelationGetRelid(resultRelationDesc);
 
@@ -3150,6 +3173,7 @@ ExecEndModifyTable(ModifyTableState *node)
 	 */
 	for (i = 0; i < node->mt_nrels; i++)
 	{
+		int			j;
 		ResultRelInfo *resultRelInfo = node->resultRelInfo + i;
 
 		if (!resultRelInfo->ri_usesFdwDirectModify &&
@@ -3157,6 +3181,17 @@ ExecEndModifyTable(ModifyTableState *node)
 			resultRelInfo->ri_FdwRoutine->EndForeignModify != NULL)
 			resultRelInfo->ri_FdwRoutine->EndForeignModify(node->ps.state,
 														   resultRelInfo);
+
+		/*
+		 * Cleanup the initialized batch slots. This only matters for FDWs
+		 * with batching, but the other cases will have ri_NumSlotsInitialized
+		 * == 0.
+		 */
+		for (j = 0; j < resultRelInfo->ri_NumSlotsInitialized; j++)
+		{
+			ExecDropSingleTupleTableSlot(resultRelInfo->ri_Slots[j]);
+			ExecDropSingleTupleTableSlot(resultRelInfo->ri_PlanSlots[j]);
+		}
 	}
 
 	/*

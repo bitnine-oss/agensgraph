@@ -15196,7 +15196,7 @@ table2-mapping
         <returnvalue>json</returnvalue>
        </para>
        <para>
-        Converts a SQL array to a JSON array.  The behavior is the same
+        Converts an SQL array to a JSON array.  The behavior is the same
         as <function>to_json</function> except that line feeds will be added
         between top-level array elements if the optional boolean parameter is
         true.
@@ -15216,7 +15216,7 @@ table2-mapping
         <returnvalue>json</returnvalue>
        </para>
        <para>
-        Converts a SQL composite value to a JSON object.  The behavior is the
+        Converts an SQL composite value to a JSON object.  The behavior is the
         same as <function>to_json</function> except that line feeds will be
         added between top-level elements if the optional boolean parameter is
         true.
@@ -15629,7 +15629,7 @@ table2-mapping
         <itemizedlist spacing="compact">
          <listitem>
           <para>
-           A JSON null value is converted to a SQL null in all cases.
+           A JSON null value is converted to an SQL null in all cases.
           </para>
          </listitem>
          <listitem>
@@ -16152,7 +16152,7 @@ table2-mapping
         <literal>string</literal>, <literal>number</literal>,
         <literal>boolean</literal>, and <literal>null</literal>.
         (The <literal>null</literal> result should not be confused
-        with a SQL NULL; see the examples.)
+        with an SQL NULL; see the examples.)
        </para>
        <para>
         <literal>json_typeof('-123.4')</literal>
@@ -18165,7 +18165,7 @@ SELECT NULLIF(value, '(none)') ...
   </sect1>
 
  <sect1 id="functions-range">
-  <title>Range Functions and Operators</title>
+  <title>Range/Multirange Functions and Operators</title>
 
   <para>
    See <xref linkend="rangetypes"/> for an overview of range types.
@@ -24998,25 +24998,8 @@ SELECT collation for ('foo' COLLATE "de_DE");
         milliseconds) and greater than zero, the function waits until the
         process is actually terminated or until the given time has passed. If
         the process is terminated, the function
-        returns <literal>true</literal>.  On timeout a warning is emitted and
+        returns <literal>true</literal>.  On timeout, a warning is emitted and
         <literal>false</literal> is returned.
-       </para></entry>
-      </row>
-
-      <row>
-       <entry role="func_table_entry"><para role="func_signature">
-        <indexterm>
-         <primary>pg_wait_for_backend_termination</primary>
-        </indexterm>
-        <function>pg_wait_for_backend_termination</function> ( <parameter>pid</parameter> <type>integer</type>, <parameter>timeout</parameter> <type>bigint</type> <literal>DEFAULT</literal> <literal>5000</literal> )
-        <returnvalue>boolean</returnvalue>
-       </para>
-       <para>
-        Waits for the backend process with the specified Process ID to
-        terminate.  If the process terminates before
-        the <parameter>timeout</parameter> (in milliseconds)
-        expires, <literal>true</literal> is returned.  On timeout, a warning
-        is emitted and <literal>false</literal> is returned.
        </para></entry>
       </row>
      </tbody>
@@ -26253,10 +26236,10 @@ postgres=# SELECT * FROM pg_walfile_name_offset(pg_stop_backup());
          <primary>pg_column_compression</primary>
         </indexterm>
         <function>pg_column_compression</function> ( <type>"any"</type> )
-        <returnvalue>integer</returnvalue>
+        <returnvalue>text</returnvalue>
        </para>
        <para>
-        Shows the compression algorithm that was used to compress a
+        Shows the compression algorithm that was used to compress
         an individual variable-length value. Returns <literal>NULL</literal>
         if the value is not compressed.
        </para></entry>

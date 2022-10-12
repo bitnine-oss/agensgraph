@@ -16,13 +16,13 @@
 
 #include <ctype.h>
 #include <limits.h>
+#include <sys/time.h>
 #include <time.h>
 
 #ifdef WIN32
 #include "win32.h"
 #else
 #include <unistd.h>
-#include <sys/time.h>
 #endif
 
 #include "libpq-fe.h"
@@ -61,7 +61,7 @@ PQuntrace(PGconn *conn)
 
 /* Set flags for current tracing session */
 void
-PQtraceSetFlags(PGconn *conn, int flags)
+PQsetTraceFlags(PGconn *conn, int flags)
 {
 	if (conn == NULL)
 		return;

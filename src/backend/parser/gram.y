@@ -172,7 +172,7 @@ static RoleSpec *makeRoleSpec(RoleSpecType type, int location);
 static void check_qualified_name(List *names, core_yyscan_t yyscanner);
 static List *check_func_name(List *names, core_yyscan_t yyscanner);
 static List *check_indirection(List *indirection, core_yyscan_t yyscanner);
-static List *extractArgTypes(ObjectType objtype, List *parameters);
+static List *extractArgTypes(List *parameters);
 static List *extractAggrArgTypes(List *aggrargs);
 static List *makeOrderedSetArgs(List *directargs, List *orderedargs,
 								core_yyscan_t yyscanner);
@@ -388,8 +388,8 @@ static Node *wrapCypherWithSelect(Node *stmt);
 %type <accesspriv> privilege
 %type <list>	privileges privilege_list
 %type <privtarget> privilege_target
-%type <objwithargs> function_with_argtypes aggregate_with_argtypes operator_with_argtypes procedure_with_argtypes function_with_argtypes_common
-%type <list>	function_with_argtypes_list aggregate_with_argtypes_list operator_with_argtypes_list procedure_with_argtypes_list
+%type <objwithargs> function_with_argtypes aggregate_with_argtypes operator_with_argtypes
+%type <list>	function_with_argtypes_list aggregate_with_argtypes_list operator_with_argtypes_list
 %type <ival>	defacl_privilege_target
 %type <defelt>	DefACLOption
 %type <list>	DefACLOptionList
@@ -564,6 +564,7 @@ static Node *wrapCypherWithSelect(Node *stmt);
 
 %type <node>	TableConstraint TableLikeClause
 %type <ival>	TableLikeOptionList TableLikeOption
+%type <str>		column_compression opt_column_compression
 %type <list>	ColQualList
 %type <node>	ColConstraint ColConstraintElem ConstraintAttr
 %type <ival>	key_actions key_delete key_match key_update key_action
@@ -612,7 +613,6 @@ static Node *wrapCypherWithSelect(Node *stmt);
 %type <list>		hash_partbound
 %type <defelt>		hash_partbound_elem
 
-%type <str>	optColumnCompression
 
 /* Agens Graph */
 %type <node>	CreateGraphStmt CreateLabelStmt AlterLabelStmt alter_label_cmd
@@ -2407,6 +2407,15 @@ alter_table_cmd:
 					n->def = (Node *) makeString($6);
 					$$ = (Node *)n;
 				}
+			/* ALTER TABLE <name> ALTER [COLUMN] <colname> SET COMPRESSION <cm> */
+			| ALTER opt_column ColId SET column_compression
+				{
+					AlterTableCmd *n = makeNode(AlterTableCmd);
+					n->subtype = AT_SetCompression;
+					n->name = $3;
+					n->def = (Node *) makeString($5);
+					$$ = (Node *)n;
+				}
 			/* ALTER TABLE <name> ALTER [COLUMN] <colname> ADD GENERATED ... AS IDENTITY ... */
 			| ALTER opt_column ColId ADD_P GENERATED generated_when AS IDENTITY_P OptParenthesizedSeqOptList
 				{
@@ -2449,15 +2458,6 @@ alter_table_cmd:
 					n->subtype = AT_DropIdentity;
 					n->name = $3;
 					n->missing_ok = true;
-					$$ = (Node *)n;
-				}
-			/* ALTER TABLE <name> ALTER [COLUMN] <colname> SET (COMPRESSION <cm>) */
-			| ALTER opt_column ColId SET optColumnCompression
-				{
-					AlterTableCmd *n = makeNode(AlterTableCmd);
-					n->subtype = AT_SetCompression;
-					n->name = $3;
-					n->def = (Node *) makeString($5);
 					$$ = (Node *)n;
 				}
 			/* ALTER TABLE <name> DROP [COLUMN] IF EXISTS <colname> [RESTRICT|CASCADE] */
@@ -3567,7 +3567,7 @@ TypedTableElement:
 			| TableConstraint					{ $$ = $1; }
 		;
 
-columnDef:	ColId Typename optColumnCompression create_generic_options ColQualList
+columnDef:	ColId Typename opt_column_compression create_generic_options ColQualList
 				{
 					ColumnDef *n = makeNode(ColumnDef);
 					n->colname = $1;
@@ -3627,13 +3627,15 @@ columnOptions:	ColId ColQualList
 				}
 		;
 
-optColumnCompression:
-					COMPRESSION name
-					{
-						$$ = $2;
-					}
-					| /*EMPTY*/	{ $$ = NULL; }
-				;
+column_compression:
+			COMPRESSION ColId						{ $$ = $2; }
+			| COMPRESSION DEFAULT					{ $$ = pstrdup("default"); }
+		;
+
+opt_column_compression:
+			column_compression						{ $$ = $1; }
+			| /*EMPTY*/								{ $$ = NULL; }
+		;
 
 ColQualList:
 			ColQualList ColConstraint				{ $$ = lappend($1, $2); }
@@ -4860,7 +4862,7 @@ AlterExtensionContentsStmt:
 					n->object = (Node *) lcons(makeString($9), $7);
 					$$ = (Node *)n;
 				}
-			| ALTER EXTENSION name add_drop PROCEDURE procedure_with_argtypes
+			| ALTER EXTENSION name add_drop PROCEDURE function_with_argtypes
 				{
 					AlterExtensionContentsStmt *n = makeNode(AlterExtensionContentsStmt);
 					n->extname = $3;
@@ -4869,7 +4871,7 @@ AlterExtensionContentsStmt:
 					n->object = (Node *) $6;
 					$$ = (Node *)n;
 				}
-			| ALTER EXTENSION name add_drop ROUTINE procedure_with_argtypes
+			| ALTER EXTENSION name add_drop ROUTINE function_with_argtypes
 				{
 					AlterExtensionContentsStmt *n = makeNode(AlterExtensionContentsStmt);
 					n->extname = $3;
@@ -6612,7 +6614,7 @@ CommentStmt:
 					n->comment = $8;
 					$$ = (Node *) n;
 				}
-			| COMMENT ON PROCEDURE procedure_with_argtypes IS comment_text
+			| COMMENT ON PROCEDURE function_with_argtypes IS comment_text
 				{
 					CommentStmt *n = makeNode(CommentStmt);
 					n->objtype = OBJECT_PROCEDURE;
@@ -6620,7 +6622,7 @@ CommentStmt:
 					n->comment = $6;
 					$$ = (Node *) n;
 				}
-			| COMMENT ON ROUTINE procedure_with_argtypes IS comment_text
+			| COMMENT ON ROUTINE function_with_argtypes IS comment_text
 				{
 					CommentStmt *n = makeNode(CommentStmt);
 					n->objtype = OBJECT_ROUTINE;
@@ -6766,7 +6768,7 @@ SecLabelStmt:
 					n->label = $9;
 					$$ = (Node *) n;
 				}
-			| SECURITY LABEL opt_provider ON PROCEDURE procedure_with_argtypes
+			| SECURITY LABEL opt_provider ON PROCEDURE function_with_argtypes
 			  IS security_label
 				{
 					SecLabelStmt *n = makeNode(SecLabelStmt);
@@ -7130,7 +7132,7 @@ privilege_target:
 					n->objs = $2;
 					$$ = n;
 				}
-			| PROCEDURE procedure_with_argtypes_list
+			| PROCEDURE function_with_argtypes_list
 				{
 					PrivTarget *n = (PrivTarget *) palloc(sizeof(PrivTarget));
 					n->targtype = ACL_TARGET_OBJECT;
@@ -7138,7 +7140,7 @@ privilege_target:
 					n->objs = $2;
 					$$ = n;
 				}
-			| ROUTINE procedure_with_argtypes_list
+			| ROUTINE function_with_argtypes_list
 				{
 					PrivTarget *n = (PrivTarget *) palloc(sizeof(PrivTarget));
 					n->targtype = ACL_TARGET_OBJECT;
@@ -7663,33 +7665,21 @@ function_with_argtypes_list:
 													{ $$ = lappend($1, $3); }
 		;
 
-procedure_with_argtypes_list:
-			procedure_with_argtypes					{ $$ = list_make1($1); }
-			| procedure_with_argtypes_list ',' procedure_with_argtypes
-													{ $$ = lappend($1, $3); }
-		;
-
 function_with_argtypes:
 			func_name func_args
 				{
 					ObjectWithArgs *n = makeNode(ObjectWithArgs);
 					n->objname = $1;
-					n->objargs = extractArgTypes(OBJECT_FUNCTION, $2);
+					n->objargs = extractArgTypes($2);
+					n->objfuncargs = $2;
 					$$ = n;
 				}
-			| function_with_argtypes_common
-				{
-					$$ = $1;
-				}
-		;
-
-function_with_argtypes_common:
 			/*
 			 * Because of reduce/reduce conflicts, we can't use func_name
 			 * below, but we can write it out the long way, which actually
 			 * allows more cases.
 			 */
-			type_func_name_keyword
+			| type_func_name_keyword
 				{
 					ObjectWithArgs *n = makeNode(ObjectWithArgs);
 					n->objname = list_make1(makeString(pstrdup($1)));
@@ -7710,24 +7700,6 @@ function_with_argtypes_common:
 												  yyscanner);
 					n->args_unspecified = true;
 					$$ = n;
-				}
-		;
-
-/*
- * This is different from function_with_argtypes in the call to
- * extractArgTypes().
- */
-procedure_with_argtypes:
-			func_name func_args
-				{
-					ObjectWithArgs *n = makeNode(ObjectWithArgs);
-					n->objname = $1;
-					n->objargs = extractArgTypes(OBJECT_PROCEDURE, $2);
-					$$ = n;
-				}
-			| function_with_argtypes_common
-				{
-					$$ = $1;
 				}
 		;
 
@@ -7780,7 +7752,7 @@ func_arg:
 					FunctionParameter *n = makeNode(FunctionParameter);
 					n->name = $1;
 					n->argType = $2;
-					n->mode = FUNC_PARAM_IN;
+					n->mode = FUNC_PARAM_DEFAULT;
 					n->defexpr = NULL;
 					$$ = n;
 				}
@@ -7798,7 +7770,7 @@ func_arg:
 					FunctionParameter *n = makeNode(FunctionParameter);
 					n->name = NULL;
 					n->argType = $1;
-					n->mode = FUNC_PARAM_IN;
+					n->mode = FUNC_PARAM_DEFAULT;
 					n->defexpr = NULL;
 					$$ = n;
 				}
@@ -7870,7 +7842,8 @@ func_arg_with_default:
 /* Aggregate args can be most things that function args can be */
 aggr_arg:	func_arg
 				{
-					if (!($1->mode == FUNC_PARAM_IN ||
+					if (!($1->mode == FUNC_PARAM_DEFAULT ||
+						  $1->mode == FUNC_PARAM_IN ||
 						  $1->mode == FUNC_PARAM_VARIADIC))
 						ereport(ERROR,
 								(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
@@ -7939,6 +7912,7 @@ aggregate_with_argtypes:
 					ObjectWithArgs *n = makeNode(ObjectWithArgs);
 					n->objname = $1;
 					n->objargs = extractAggrArgTypes($2);
+					n->objfuncargs = (List *) linitial($2);
 					$$ = n;
 				}
 		;
@@ -8097,7 +8071,11 @@ opt_routine_body:
 routine_body_stmt_list:
 			routine_body_stmt_list routine_body_stmt ';'
 				{
-					$$ = lappend($1, $2);
+					/* As in stmtmulti, discard empty statements */
+					if ($2 != NULL)
+						$$ = lappend($1, $2);
+					else
+						$$ = $1;
 				}
 			| /*EMPTY*/
 				{
@@ -8159,7 +8137,7 @@ AlterFunctionStmt:
 					n->actions = $4;
 					$$ = (Node *) n;
 				}
-			| ALTER PROCEDURE procedure_with_argtypes alterfunc_opt_list opt_restrict
+			| ALTER PROCEDURE function_with_argtypes alterfunc_opt_list opt_restrict
 				{
 					AlterFunctionStmt *n = makeNode(AlterFunctionStmt);
 					n->objtype = OBJECT_PROCEDURE;
@@ -8167,7 +8145,7 @@ AlterFunctionStmt:
 					n->actions = $4;
 					$$ = (Node *) n;
 				}
-			| ALTER ROUTINE procedure_with_argtypes alterfunc_opt_list opt_restrict
+			| ALTER ROUTINE function_with_argtypes alterfunc_opt_list opt_restrict
 				{
 					AlterFunctionStmt *n = makeNode(AlterFunctionStmt);
 					n->objtype = OBJECT_ROUTINE;
@@ -8223,7 +8201,7 @@ RemoveFuncStmt:
 					n->concurrent = false;
 					$$ = (Node *)n;
 				}
-			| DROP PROCEDURE procedure_with_argtypes_list opt_drop_behavior
+			| DROP PROCEDURE function_with_argtypes_list opt_drop_behavior
 				{
 					DropStmt *n = makeNode(DropStmt);
 					n->removeType = OBJECT_PROCEDURE;
@@ -8233,7 +8211,7 @@ RemoveFuncStmt:
 					n->concurrent = false;
 					$$ = (Node *)n;
 				}
-			| DROP PROCEDURE IF_P EXISTS procedure_with_argtypes_list opt_drop_behavior
+			| DROP PROCEDURE IF_P EXISTS function_with_argtypes_list opt_drop_behavior
 				{
 					DropStmt *n = makeNode(DropStmt);
 					n->removeType = OBJECT_PROCEDURE;
@@ -8243,7 +8221,7 @@ RemoveFuncStmt:
 					n->concurrent = false;
 					$$ = (Node *)n;
 				}
-			| DROP ROUTINE procedure_with_argtypes_list opt_drop_behavior
+			| DROP ROUTINE function_with_argtypes_list opt_drop_behavior
 				{
 					DropStmt *n = makeNode(DropStmt);
 					n->removeType = OBJECT_ROUTINE;
@@ -8253,7 +8231,7 @@ RemoveFuncStmt:
 					n->concurrent = false;
 					$$ = (Node *)n;
 				}
-			| DROP ROUTINE IF_P EXISTS procedure_with_argtypes_list opt_drop_behavior
+			| DROP ROUTINE IF_P EXISTS function_with_argtypes_list opt_drop_behavior
 				{
 					DropStmt *n = makeNode(DropStmt);
 					n->removeType = OBJECT_ROUTINE;
@@ -8747,7 +8725,7 @@ RenameStmt: ALTER AGGREGATE aggregate_with_argtypes RENAME TO name
 					n->missing_ok = true;
 					$$ = (Node *)n;
 				}
-			| ALTER PROCEDURE procedure_with_argtypes RENAME TO name
+			| ALTER PROCEDURE function_with_argtypes RENAME TO name
 				{
 					RenameStmt *n = makeNode(RenameStmt);
 					n->renameType = OBJECT_PROCEDURE;
@@ -8765,7 +8743,7 @@ RenameStmt: ALTER AGGREGATE aggregate_with_argtypes RENAME TO name
 					n->missing_ok = false;
 					$$ = (Node *)n;
 				}
-			| ALTER ROUTINE procedure_with_argtypes RENAME TO name
+			| ALTER ROUTINE function_with_argtypes RENAME TO name
 				{
 					RenameStmt *n = makeNode(RenameStmt);
 					n->renameType = OBJECT_ROUTINE;
@@ -9225,7 +9203,7 @@ AlterObjectDependsStmt:
 					n->remove = $4;
 					$$ = (Node *)n;
 				}
-			| ALTER PROCEDURE procedure_with_argtypes opt_no DEPENDS ON EXTENSION name
+			| ALTER PROCEDURE function_with_argtypes opt_no DEPENDS ON EXTENSION name
 				{
 					AlterObjectDependsStmt *n = makeNode(AlterObjectDependsStmt);
 					n->objectType = OBJECT_PROCEDURE;
@@ -9234,7 +9212,7 @@ AlterObjectDependsStmt:
 					n->remove = $4;
 					$$ = (Node *)n;
 				}
-			| ALTER ROUTINE procedure_with_argtypes opt_no DEPENDS ON EXTENSION name
+			| ALTER ROUTINE function_with_argtypes opt_no DEPENDS ON EXTENSION name
 				{
 					AlterObjectDependsStmt *n = makeNode(AlterObjectDependsStmt);
 					n->objectType = OBJECT_ROUTINE;
@@ -9365,7 +9343,7 @@ AlterObjectSchemaStmt:
 					n->missing_ok = false;
 					$$ = (Node *)n;
 				}
-			| ALTER PROCEDURE procedure_with_argtypes SET SCHEMA name
+			| ALTER PROCEDURE function_with_argtypes SET SCHEMA name
 				{
 					AlterObjectSchemaStmt *n = makeNode(AlterObjectSchemaStmt);
 					n->objectType = OBJECT_PROCEDURE;
@@ -9374,7 +9352,7 @@ AlterObjectSchemaStmt:
 					n->missing_ok = false;
 					$$ = (Node *)n;
 				}
-			| ALTER ROUTINE procedure_with_argtypes SET SCHEMA name
+			| ALTER ROUTINE function_with_argtypes SET SCHEMA name
 				{
 					AlterObjectSchemaStmt *n = makeNode(AlterObjectSchemaStmt);
 					n->objectType = OBJECT_ROUTINE;
@@ -9676,7 +9654,7 @@ AlterOwnerStmt: ALTER AGGREGATE aggregate_with_argtypes OWNER TO RoleSpec
 					n->newowner = $9;
 					$$ = (Node *)n;
 				}
-			| ALTER PROCEDURE procedure_with_argtypes OWNER TO RoleSpec
+			| ALTER PROCEDURE function_with_argtypes OWNER TO RoleSpec
 				{
 					AlterOwnerStmt *n = makeNode(AlterOwnerStmt);
 					n->objectType = OBJECT_PROCEDURE;
@@ -9684,7 +9662,7 @@ AlterOwnerStmt: ALTER AGGREGATE aggregate_with_argtypes OWNER TO RoleSpec
 					n->newowner = $6;
 					$$ = (Node *)n;
 				}
-			| ALTER ROUTINE procedure_with_argtypes OWNER TO RoleSpec
+			| ALTER ROUTINE function_with_argtypes OWNER TO RoleSpec
 				{
 					AlterOwnerStmt *n = makeNode(AlterOwnerStmt);
 					n->objectType = OBJECT_ROUTINE;
@@ -19486,14 +19464,13 @@ check_indirection(List *indirection, core_yyscan_t yyscanner)
 }
 
 /* extractArgTypes()
- *
  * Given a list of FunctionParameter nodes, extract a list of just the
- * argument types (TypeNames) for signature parameters only (e.g., only input
- * parameters for functions).  This is what is needed to look up an existing
- * function, which is what is wanted by the productions that use this call.
+ * argument types (TypeNames) for input parameters only.  This is what
+ * is needed to look up an existing function, which is what is wanted by
+ * the productions that use this call.
  */
 static List *
-extractArgTypes(ObjectType objtype, List *parameters)
+extractArgTypes(List *parameters)
 {
 	List	   *result = NIL;
 	ListCell   *i;
@@ -19502,7 +19479,7 @@ extractArgTypes(ObjectType objtype, List *parameters)
 	{
 		FunctionParameter *p = (FunctionParameter *) lfirst(i);
 
-		if ((p->mode != FUNC_PARAM_OUT || objtype == OBJECT_PROCEDURE) && p->mode != FUNC_PARAM_TABLE)
+		if (p->mode != FUNC_PARAM_OUT && p->mode != FUNC_PARAM_TABLE)
 			result = lappend(result, p->argType);
 	}
 	return result;
@@ -19515,7 +19492,7 @@ static List *
 extractAggrArgTypes(List *aggrargs)
 {
 	Assert(list_length(aggrargs) == 2);
-	return extractArgTypes(OBJECT_AGGREGATE, (List *) linitial(aggrargs));
+	return extractArgTypes((List *) linitial(aggrargs));
 }
 
 /* makeOrderedSetArgs()
@@ -19811,7 +19788,9 @@ mergeTableFuncParameters(List *func_args, List *columns)
 	{
 		FunctionParameter *p = (FunctionParameter *) lfirst(lc);
 
-		if (p->mode != FUNC_PARAM_IN && p->mode != FUNC_PARAM_VARIADIC)
+		if (p->mode != FUNC_PARAM_DEFAULT &&
+			p->mode != FUNC_PARAM_IN &&
+			p->mode != FUNC_PARAM_VARIADIC)
 			ereport(ERROR,
 					(errcode(ERRCODE_SYNTAX_ERROR),
 					 errmsg("OUT and INOUT arguments aren't allowed in TABLE functions")));

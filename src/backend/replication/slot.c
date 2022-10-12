@@ -99,8 +99,6 @@ ReplicationSlot *MyReplicationSlot = NULL;
 int			max_replication_slots = 0;	/* the maximum number of replication
 										 * slots */
 
-static int	ReplicationSlotAcquireInternal(ReplicationSlot *slot,
-										   const char *name, SlotAcquireBehavior behavior);
 static void ReplicationSlotDropAcquired(void);
 static void ReplicationSlotDropPtr(ReplicationSlot *slot);
 
@@ -374,34 +372,16 @@ SearchNamedReplicationSlot(const char *name, bool need_lock)
 /*
  * Find a previously created slot and mark it as used by this process.
  *
- * The return value is only useful if behavior is SAB_Inquire, in which
- * it's zero if we successfully acquired the slot, -1 if the slot no longer
- * exists, or the PID of the owning process otherwise.  If behavior is
- * SAB_Error, then trying to acquire an owned slot is an error.
- * If SAB_Block, we sleep until the slot is released by the owning process.
+ * An error is raised if nowait is true and the slot is currently in use. If
+ * nowait is false, we sleep until the slot is released by the owning process.
  */
-int
-ReplicationSlotAcquire(const char *name, SlotAcquireBehavior behavior)
-{
-	return ReplicationSlotAcquireInternal(NULL, name, behavior);
-}
-
-/*
- * Mark the specified slot as used by this process.
- *
- * Only one of slot and name can be specified.
- * If slot == NULL, search for the slot with the given name.
- *
- * See comments about the return value in ReplicationSlotAcquire().
- */
-static int
-ReplicationSlotAcquireInternal(ReplicationSlot *slot, const char *name,
-							   SlotAcquireBehavior behavior)
+void
+ReplicationSlotAcquire(const char *name, bool nowait)
 {
 	ReplicationSlot *s;
 	int			active_pid;
 
-	AssertArg((slot == NULL) ^ (name == NULL));
+	AssertArg(name != NULL);
 
 retry:
 	Assert(MyReplicationSlot == NULL);
@@ -412,17 +392,15 @@ retry:
 	 * Search for the slot with the specified name if the slot to acquire is
 	 * not given. If the slot is not found, we either return -1 or error out.
 	 */
-	s = slot ? slot : SearchNamedReplicationSlot(name, false);
+	s = SearchNamedReplicationSlot(name, false);
 	if (s == NULL || !s->in_use)
 	{
 		LWLockRelease(ReplicationSlotControlLock);
 
-		if (behavior == SAB_Inquire)
-			return -1;
 		ereport(ERROR,
 				(errcode(ERRCODE_UNDEFINED_OBJECT),
 				 errmsg("replication slot \"%s\" does not exist",
-						name ? name : NameStr(slot->data.name))));
+						name)));
 	}
 
 	/*
@@ -432,11 +410,11 @@ retry:
 	if (IsUnderPostmaster)
 	{
 		/*
-		 * Get ready to sleep on the slot in case it is active if SAB_Block.
-		 * (We may end up not sleeping, but we don't want to do this while
-		 * holding the spinlock.)
+		 * Get ready to sleep on the slot in case it is active.  (We may end
+		 * up not sleeping, but we don't want to do this while holding the
+		 * spinlock.)
 		 */
-		if (behavior == SAB_Block)
+		if (!nowait)
 			ConditionVariablePrepareToSleep(&s->active_cv);
 
 		SpinLockAcquire(&s->mutex);
@@ -451,26 +429,26 @@ retry:
 
 	/*
 	 * If we found the slot but it's already active in another process, we
-	 * either error out, return the PID of the owning process, or retry after
-	 * a short wait, as caller specified.
+	 * wait until the owning process signals us that it's been released, or
+	 * error out.
 	 */
 	if (active_pid != MyProcPid)
 	{
-		if (behavior == SAB_Error)
-			ereport(ERROR,
-					(errcode(ERRCODE_OBJECT_IN_USE),
-					 errmsg("replication slot \"%s\" is active for PID %d",
-							NameStr(s->data.name), active_pid)));
-		else if (behavior == SAB_Inquire)
-			return active_pid;
+		if (!nowait)
+		{
+			/* Wait here until we get signaled, and then restart */
+			ConditionVariableSleep(&s->active_cv,
+								   WAIT_EVENT_REPLICATION_SLOT_DROP);
+			ConditionVariableCancelSleep();
+			goto retry;
+		}
 
-		/* Wait here until we get signaled, and then restart */
-		ConditionVariableSleep(&s->active_cv,
-							   WAIT_EVENT_REPLICATION_SLOT_DROP);
-		ConditionVariableCancelSleep();
-		goto retry;
+		ereport(ERROR,
+				(errcode(ERRCODE_OBJECT_IN_USE),
+				 errmsg("replication slot \"%s\" is active for PID %d",
+						NameStr(s->data.name), active_pid)));
 	}
-	else if (behavior == SAB_Block)
+	else if (!nowait)
 		ConditionVariableCancelSleep(); /* no sleep needed after all */
 
 	/* Let everybody know we've modified this slot */
@@ -478,9 +456,6 @@ retry:
 
 	/* We made this slot active, so it's ours now. */
 	MyReplicationSlot = s;
-
-	/* success */
-	return 0;
 }
 
 /*
@@ -588,7 +563,7 @@ ReplicationSlotDrop(const char *name, bool nowait)
 {
 	Assert(MyReplicationSlot == NULL);
 
-	(void) ReplicationSlotAcquire(name, nowait ? SAB_Error : SAB_Block);
+	ReplicationSlotAcquire(name, nowait);
 
 	ReplicationSlotDropAcquired();
 }
@@ -1161,6 +1136,157 @@ ReplicationSlotReserveWal(void)
 }
 
 /*
+ * Helper for InvalidateObsoleteReplicationSlots -- acquires the given slot
+ * and mark it invalid, if necessary and possible.
+ *
+ * Returns whether ReplicationSlotControlLock was released in the interim (and
+ * in that case we're not holding the lock at return, otherwise we are).
+ *
+ * This is inherently racy, because we release the LWLock
+ * for syscalls, so caller must restart if we return true.
+ */
+static bool
+InvalidatePossiblyObsoleteSlot(ReplicationSlot *s, XLogRecPtr oldestLSN)
+{
+	int			last_signaled_pid = 0;
+	bool		released_lock = false;
+
+	for (;;)
+	{
+		XLogRecPtr	restart_lsn;
+		NameData	slotname;
+		int			active_pid = 0;
+
+		Assert(LWLockHeldByMeInMode(ReplicationSlotControlLock, LW_SHARED));
+
+		if (!s->in_use)
+		{
+			if (released_lock)
+				LWLockRelease(ReplicationSlotControlLock);
+			break;
+		}
+
+		/*
+		 * Check if the slot needs to be invalidated. If it needs to be
+		 * invalidated, and is not currently acquired, acquire it and mark it
+		 * as having been invalidated.  We do this with the spinlock held to
+		 * avoid race conditions -- for example the restart_lsn could move
+		 * forward, or the slot could be dropped.
+		 */
+		SpinLockAcquire(&s->mutex);
+
+		restart_lsn = s->data.restart_lsn;
+
+		/*
+		 * If the slot is already invalid or is fresh enough, we don't need to
+		 * do anything.
+		 */
+		if (XLogRecPtrIsInvalid(restart_lsn) || restart_lsn >= oldestLSN)
+		{
+			SpinLockRelease(&s->mutex);
+			if (released_lock)
+				LWLockRelease(ReplicationSlotControlLock);
+			break;
+		}
+
+		slotname = s->data.name;
+		active_pid = s->active_pid;
+
+		/*
+		 * If the slot can be acquired, do so and mark it invalidated
+		 * immediately.  Otherwise we'll signal the owning process, below, and
+		 * retry.
+		 */
+		if (active_pid == 0)
+		{
+			MyReplicationSlot = s;
+			s->active_pid = MyProcPid;
+			s->data.invalidated_at = restart_lsn;
+			s->data.restart_lsn = InvalidXLogRecPtr;
+		}
+
+		SpinLockRelease(&s->mutex);
+
+		if (active_pid != 0)
+		{
+			/*
+			 * Prepare the sleep on the slot's condition variable before
+			 * releasing the lock, to close a possible race condition if the
+			 * slot is released before the sleep below.
+			 */
+			ConditionVariablePrepareToSleep(&s->active_cv);
+
+			LWLockRelease(ReplicationSlotControlLock);
+			released_lock = true;
+
+			/*
+			 * Signal to terminate the process that owns the slot, if we
+			 * haven't already signalled it.  (Avoidance of repeated
+			 * signalling is the only reason for there to be a loop in this
+			 * routine; otherwise we could rely on caller's restart loop.)
+			 *
+			 * There is the race condition that other process may own the slot
+			 * after its current owner process is terminated and before this
+			 * process owns it. To handle that, we signal only if the PID of
+			 * the owning process has changed from the previous time. (This
+			 * logic assumes that the same PID is not reused very quickly.)
+			 */
+			if (last_signaled_pid != active_pid)
+			{
+				ereport(LOG,
+						(errmsg("terminating process %d to release replication slot \"%s\"",
+								active_pid, NameStr(slotname))));
+
+				(void) kill(active_pid, SIGTERM);
+				last_signaled_pid = active_pid;
+			}
+
+			/* Wait until the slot is released. */
+			ConditionVariableSleep(&s->active_cv,
+								   WAIT_EVENT_REPLICATION_SLOT_DROP);
+
+			/*
+			 * Re-acquire lock and start over; we expect to invalidate the
+			 * slot next time (unless another process acquires the slot in the
+			 * meantime).
+			 */
+			LWLockAcquire(ReplicationSlotControlLock, LW_SHARED);
+			continue;
+		}
+		else
+		{
+			/*
+			 * We hold the slot now and have already invalidated it; flush it
+			 * to ensure that state persists.
+			 *
+			 * Don't want to hold ReplicationSlotControlLock across file
+			 * system operations, so release it now but be sure to tell caller
+			 * to restart from scratch.
+			 */
+			LWLockRelease(ReplicationSlotControlLock);
+			released_lock = true;
+
+			/* Make sure the invalidated state persists across server restart */
+			ReplicationSlotMarkDirty();
+			ReplicationSlotSave();
+			ReplicationSlotRelease();
+
+			ereport(LOG,
+					(errmsg("invalidating slot \"%s\" because its restart_lsn %X/%X exceeds max_slot_wal_keep_size",
+							NameStr(slotname),
+							LSN_FORMAT_ARGS(restart_lsn))));
+
+			/* done with this slot for now */
+			break;
+		}
+	}
+
+	Assert(released_lock == !LWLockHeldByMe(ReplicationSlotControlLock));
+
+	return released_lock;
+}
+
+/*
  * Mark any slot that points to an LSN older than the given segment
  * as invalid; it requires WAL that's about to be removed.
  *
@@ -1178,99 +1304,15 @@ restart:
 	for (int i = 0; i < max_replication_slots; i++)
 	{
 		ReplicationSlot *s = &ReplicationSlotCtl->replication_slots[i];
-		XLogRecPtr	restart_lsn = InvalidXLogRecPtr;
-		NameData	slotname;
-		int			wspid;
-		int			last_signaled_pid = 0;
 
 		if (!s->in_use)
 			continue;
 
-		SpinLockAcquire(&s->mutex);
-		slotname = s->data.name;
-		restart_lsn = s->data.restart_lsn;
-		SpinLockRelease(&s->mutex);
-
-		if (XLogRecPtrIsInvalid(restart_lsn) || restart_lsn >= oldestLSN)
-			continue;
-		LWLockRelease(ReplicationSlotControlLock);
-		CHECK_FOR_INTERRUPTS();
-
-		/* Get ready to sleep on the slot in case it is active */
-		ConditionVariablePrepareToSleep(&s->active_cv);
-
-		for (;;)
+		if (InvalidatePossiblyObsoleteSlot(s, oldestLSN))
 		{
-			/*
-			 * Try to mark this slot as used by this process.
-			 *
-			 * Note that ReplicationSlotAcquireInternal(SAB_Inquire) should
-			 * not cancel the prepared condition variable if this slot is
-			 * active in other process. Because in this case we have to wait
-			 * on that CV for the process owning the slot to be terminated,
-			 * later.
-			 */
-			wspid = ReplicationSlotAcquireInternal(s, NULL, SAB_Inquire);
-
-			/*
-			 * Exit the loop if we successfully acquired the slot or the slot
-			 * was dropped during waiting for the owning process to be
-			 * terminated. For example, the latter case is likely to happen
-			 * when the slot is temporary because it's automatically dropped
-			 * by the termination of the owning process.
-			 */
-			if (wspid <= 0)
-				break;
-
-			/*
-			 * Signal to terminate the process that owns the slot.
-			 *
-			 * There is the race condition where other process may own the
-			 * slot after the process using it was terminated and before this
-			 * process owns it. To handle this case, we signal again if the
-			 * PID of the owning process is changed than the last.
-			 *
-			 * XXX This logic assumes that the same PID is not reused very
-			 * quickly.
-			 */
-			if (last_signaled_pid != wspid)
-			{
-				ereport(LOG,
-						(errmsg("terminating process %d because replication slot \"%s\" is too far behind",
-								wspid, NameStr(slotname))));
-				(void) kill(wspid, SIGTERM);
-				last_signaled_pid = wspid;
-			}
-
-			ConditionVariableTimedSleep(&s->active_cv, 10,
-										WAIT_EVENT_REPLICATION_SLOT_DROP);
-		}
-		ConditionVariableCancelSleep();
-
-		/*
-		 * Do nothing here and start from scratch if the slot has already been
-		 * dropped.
-		 */
-		if (wspid == -1)
+			/* if the lock was released, start from scratch */
 			goto restart;
-
-		ereport(LOG,
-				(errmsg("invalidating slot \"%s\" because its restart_lsn %X/%X exceeds max_slot_wal_keep_size",
-						NameStr(slotname),
-						LSN_FORMAT_ARGS(restart_lsn))));
-
-		SpinLockAcquire(&s->mutex);
-		s->data.invalidated_at = s->data.restart_lsn;
-		s->data.restart_lsn = InvalidXLogRecPtr;
-		SpinLockRelease(&s->mutex);
-
-		/* Make sure the invalidated state persists across server restart */
-		ReplicationSlotMarkDirty();
-		ReplicationSlotSave();
-		ReplicationSlotRelease();
-
-		/* if we did anything, start from scratch */
-		goto restart;
+		}
 	}
 	LWLockRelease(ReplicationSlotControlLock);
 }
