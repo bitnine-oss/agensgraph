@@ -127,6 +127,7 @@ int			maintenance_work_mem = 65536;
 int			max_parallel_maintenance_workers = 2;
 
 int			eager_mem = 4096;
+
 /*
  * Primary determinants of sizes of shared-memory structures.
  *

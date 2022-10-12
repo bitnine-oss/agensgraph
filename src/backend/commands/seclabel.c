@@ -60,7 +60,7 @@ SecLabelSupportsObjectType(ObjectType objtype)
 		case OBJECT_TYPE:
 		case OBJECT_VIEW:
 
-		/* AgensGraph Object */
+			/* AgensGraph Object */
 		case OBJECT_GRAPH:
 		case OBJECT_ELABEL:
 		case OBJECT_VLABEL:
@@ -96,7 +96,7 @@ SecLabelSupportsObjectType(ObjectType objtype)
 		case OBJECT_TSTEMPLATE:
 		case OBJECT_USER_MAPPING:
 
-		/* AgensGraph Object */
+			/* AgensGraph Object */
 		case OBJECT_PROPERTY_INDEX:
 			return false;
 

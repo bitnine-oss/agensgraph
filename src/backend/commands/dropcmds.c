@@ -120,7 +120,7 @@ RemoveObjects(DropStmt *stmt)
 			}
 			else
 			{
-				RangeVar	*lab = makeRangeVarFromNameList(castNode(List, object));
+				RangeVar   *lab = makeRangeVarFromNameList(castNode(List, object));
 
 				if (stmt->removeType == OBJECT_VLABEL)
 				{

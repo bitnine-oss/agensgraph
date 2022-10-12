@@ -3532,8 +3532,8 @@ eval_const_expressions_mutator(Node *node,
 		case T_CypherListExpr:
 			{
 				CypherListExpr *cl = (CypherListExpr *) node;
-				List		*newelems = NIL;
-				ListCell	*le;
+				List	   *newelems = NIL;
+				ListCell   *le;
 				bool		all_const = true;
 				CypherListExpr *newcl;
 

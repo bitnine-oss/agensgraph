@@ -2134,7 +2134,7 @@ static ObjectAddress
 get_object_address_graph(Value *object, bool missing_ok)
 {
 	ObjectAddress address;
-	char *graphname;
+	char	   *graphname;
 
 	graphname = strVal(object);
 
@@ -6165,7 +6165,7 @@ get_relkind_objtype(char relkind)
 static void
 getLabelDescription(StringInfo buffer, Oid laboid)
 {
-	HeapTuple   tuple;
+	HeapTuple	tuple;
 	Form_ag_label labtup;
 
 	tuple = SearchSysCache1(LABELOID, ObjectIdGetDatum(laboid));
@@ -6190,7 +6190,7 @@ getLabelDescription(StringInfo buffer, Oid laboid)
 static void
 getLabelTypeDescription(StringInfo buffer, Oid laboid)
 {
-	HeapTuple   tuple;
+	HeapTuple	tuple;
 	Form_ag_label labtup;
 
 	tuple = SearchSysCache1(LABELOID, ObjectIdGetDatum(laboid));
@@ -6212,7 +6212,7 @@ getLabelTypeDescription(StringInfo buffer, Oid laboid)
 static void
 getLabelIdentity(StringInfo buffer, Oid laboid, List **object)
 {
-	HeapTuple   tuple;
+	HeapTuple	tuple;
 	Form_ag_label labtup;
 	char	   *graphname;
 	char	   *labname;

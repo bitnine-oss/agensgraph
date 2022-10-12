@@ -574,7 +574,7 @@ create_plan_recurse(PlannerInfo *root, Path *best_path, int flags)
 			break;
 		case T_ModifyGraph:
 			plan = (Plan *) create_modifygraph_plan(root,
-												(ModifyGraphPath *) best_path);
+													(ModifyGraphPath *) best_path);
 			break;
 		case T_Shortestpath:
 			plan = (Plan *) create_shortestpath_plan(root,
@@ -4824,7 +4824,7 @@ static ModifyGraph *
 create_modifygraph_plan(PlannerInfo *root, ModifyGraphPath *best_path)
 {
 	ModifyGraph *plan;
-	Plan *subplan;
+	Plan	   *subplan;
 
 	subplan = create_plan_recurse(root, best_path->subpath, CP_EXACT_TLIST);
 
@@ -4874,30 +4874,30 @@ create_shortestpath_plan(PlannerInfo *root,
 						 ShortestpathPath *best_path)
 {
 	Shortestpath *join_plan;
-	Hash2Side    *outer_hash;
-	Hash2Side    *inner_hash;
-	Plan         *outer_plan;
-	Plan         *inner_plan;
-	List         *tlist = build_path_tlist(root, &best_path->jpath.path);
-	List         *hashclauses;
-	Oid           skewTable = InvalidOid;
-	AttrNumber    skewColumn = InvalidAttrNumber;
-	bool          skewInherit = false;
-	Oid           skewColType = InvalidOid;
-	int32         skewColTypmod = -1;
-	List	     *sub_tlist;
-	TargetEntry  *tle_end_id_left;
-	TargetEntry  *tle_end_id_right;
-	TargetEntry  *tle_tableoid_left;
-	TargetEntry  *tle_tableoid_right;
-	TargetEntry  *tle_ctid_left;
-	TargetEntry  *tle_ctid_right;
-	AttrNumber	  end_id_left;
-	AttrNumber	  end_id_right;
-	AttrNumber	  tableoid_left;
-	AttrNumber	  tableoid_right;
-	AttrNumber	  ctid_left;
-	AttrNumber	  ctid_right;
+	Hash2Side  *outer_hash;
+	Hash2Side  *inner_hash;
+	Plan	   *outer_plan;
+	Plan	   *inner_plan;
+	List	   *tlist = build_path_tlist(root, &best_path->jpath.path);
+	List	   *hashclauses;
+	Oid			skewTable = InvalidOid;
+	AttrNumber	skewColumn = InvalidAttrNumber;
+	bool		skewInherit = false;
+	Oid			skewColType = InvalidOid;
+	int32		skewColTypmod = -1;
+	List	   *sub_tlist;
+	TargetEntry *tle_end_id_left;
+	TargetEntry *tle_end_id_right;
+	TargetEntry *tle_tableoid_left;
+	TargetEntry *tle_tableoid_right;
+	TargetEntry *tle_ctid_left;
+	TargetEntry *tle_ctid_right;
+	AttrNumber	end_id_left;
+	AttrNumber	end_id_right;
+	AttrNumber	tableoid_left;
+	AttrNumber	tableoid_right;
+	AttrNumber	ctid_left;
+	AttrNumber	ctid_right;
 
 	/*
 	 * HashJoin can project, so we don't have to demand exact tlists from the
@@ -5044,8 +5044,8 @@ create_shortestpath_plan(PlannerInfo *root,
 
 	join_plan = make_shortestpath(tlist,
 								  hashclauses,
-								  (Plan*)outer_hash,
-								  (Plan*)inner_hash,
+								  (Plan *) outer_hash,
+								  (Plan *) inner_hash,
 								  best_path->jpath.jointype,
 								  end_id_left,
 								  end_id_right,
@@ -7459,7 +7459,7 @@ make_shortestpath(List *tlist,
 				  long limit)
 {
 	Shortestpath *node = makeNode(Shortestpath);
-	Plan	     *plan = &node->join.plan;
+	Plan	   *plan = &node->join.plan;
 
 	plan = &node->join.plan;
 	plan->targetlist = tlist;
@@ -7517,7 +7517,7 @@ make_dijkstra(PlannerInfo *root, List *tlist, Plan *lefttree,
 			  AttrNumber weight, bool weight_out, AttrNumber end_id,
 			  AttrNumber edge_id, Node *source, Node *target, Node *limit)
 {
-	Dijkstra *node = makeNode(Dijkstra);
+	Dijkstra   *node = makeNode(Dijkstra);
 	Plan	   *plan = &node->plan;
 
 	node->weight = weight;

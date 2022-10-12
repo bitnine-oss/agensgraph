@@ -21,19 +21,22 @@
 #include "ag_const.h"
 #include "catalog/namespace.h"
 
-static int GetSubLevelsUpByNSItem(ParseState *pstate,
-								  ParseNamespaceItem *nsitem);
+static int	GetSubLevelsUpByNSItem(ParseState *pstate,
+								   ParseNamespaceItem *nsitem);
 
-Node *makeJsonbFuncAccessor(ParseState *pstate, Node *expr, List *path)
+Node *
+makeJsonbFuncAccessor(ParseState *pstate, Node *expr, List *path)
 {
 	CypherAccessExpr *a = makeNode(CypherAccessExpr);
+
 	a->arg = (Expr *) expr;
 	a->path = path;
 
 	return (Node *) a;
 }
 
-bool IsJsonbAccessor(Node *expr)
+bool
+IsJsonbAccessor(Node *expr)
 {
 	if (IsA(expr, CypherAccessExpr))
 	{
@@ -43,7 +46,8 @@ bool IsJsonbAccessor(Node *expr)
 	return false;
 }
 
-void getAccessorArguments(Node *node, Node **expr, List **path)
+void
+getAccessorArguments(Node *node, Node **expr, List **path)
 {
 	if (IsA(node, CypherAccessExpr))
 	{
@@ -63,12 +67,13 @@ void getAccessorArguments(Node *node, Node **expr, List **path)
  * reference, so make vertex_id, edge_start, and edge_end in the form of
  * reserved words to create a way to specify B.
  */
-bool ConvertReservedColumnRefForIndex(Node *node, Oid relid)
+bool
+ConvertReservedColumnRefForIndex(Node *node, Oid relid)
 {
 	Form_ag_label labtup;
-	Oid laboid = get_relid_laboid(relid);
-	HeapTuple tuple = SearchSysCache1(LABELOID, ObjectIdGetDatum(laboid));
-	bool isVertex;
+	Oid			laboid = get_relid_laboid(relid);
+	HeapTuple	tuple = SearchSysCache1(LABELOID, ObjectIdGetDatum(laboid));
+	bool		isVertex;
 
 	if (!HeapTupleIsValid(tuple))
 		elog(ERROR, "cache lookup failed for label (OID=%u)", laboid);
@@ -79,13 +84,16 @@ bool ConvertReservedColumnRefForIndex(Node *node, Oid relid)
 
 	if (IsA(node, ColumnRef))
 	{
-		ColumnRef *columnRef = (ColumnRef *) node;
+		ColumnRef  *columnRef = (ColumnRef *) node;
+
 		if (columnRef->fields->length == 1)
 		{
-			Node *field_name = linitial(columnRef->fields);
+			Node	   *field_name = linitial(columnRef->fields);
+
 			if (IsA(field_name, String))
 			{
-				char *fieldStr = strVal(field_name);
+				char	   *fieldStr = strVal(field_name);
+
 				if (isVertex && (strcmp(fieldStr, "vertex_id") == 0))
 				{
 					columnRef->fields = list_make1(makeString("id"));
@@ -120,7 +128,7 @@ makeAliasOptUnique(char *aliasname)
 Alias *
 makeAliasNoDup(char *aliasname, List *colnames)
 {
-	Alias *alias;
+	Alias	   *alias;
 
 	alias = makeNode(Alias);
 	alias->aliasname = aliasname;
@@ -136,7 +144,7 @@ genUniqueName(void)
 	/* NOTE: safe unless there are more than 2^32 anonymous names at once */
 	static uint32 seq = 0;
 
-	char data[NAMEDATALEN];
+	char		data[NAMEDATALEN];
 
 	snprintf(data, sizeof(data), "<%010u>", seq++);
 
@@ -172,6 +180,7 @@ addNSItemToJoinlist(ParseState *pstate, ParseNamespaceItem *nsitem,
 {
 	ParseNamespaceItem *conflict_nsitem;
 	RangeTblRef *rtr;
+
 	/*
 	 * There should be no namespace conflicts because we check a variable
 	 * (which becomes an alias) is duplicated. This check remains to prevent
@@ -184,13 +193,14 @@ addNSItemToJoinlist(ParseState *pstate, ParseNamespaceItem *nsitem,
 	{
 		RangeTblEntry *rte = nsitem->p_rte;
 		RangeTblEntry *tmp = conflict_nsitem->p_rte;
+
 		if (!(rte->rtekind == RTE_RELATION && rte->alias == NULL &&
 			  tmp->rtekind == RTE_RELATION && tmp->alias == NULL &&
 			  rte->relid != tmp->relid))
 			ereport(ERROR,
 					(errcode(ERRCODE_DUPLICATE_ALIAS),
-							errmsg("variable \"%s\" specified more than once",
-								   rte->eref->aliasname)));
+					 errmsg("variable \"%s\" specified more than once",
+							rte->eref->aliasname)));
 	}
 
 	makeExtraFromNSItem(nsitem, &rtr, visible);
@@ -200,7 +210,7 @@ addNSItemToJoinlist(ParseState *pstate, ParseNamespaceItem *nsitem,
 
 
 /*
- * make_var - Copy from a previous version of PG. 
+ * make_var - Copy from a previous version of PG.
  *		Build a Var node for an attribute identified by RTE and attrno
  */
 Var *
@@ -219,8 +229,8 @@ make_var(ParseState *pstate, ParseNamespaceItem *nsitem, AttrNumber attnum,
 		if (nscol->p_varno == 0)
 			ereport(ERROR,
 					(errcode(ERRCODE_UNDEFINED_COLUMN),
-							errmsg("column of relation \"%s\" does not exist",
-								   nsitem->p_rte->eref->aliasname)));
+					 errmsg("column of relation \"%s\" does not exist",
+							nsitem->p_rte->eref->aliasname)));
 
 		result = makeVar(nsitem->p_rtindex,
 						 attnum,
@@ -249,11 +259,11 @@ make_var(ParseState *pstate, ParseNamespaceItem *nsitem, AttrNumber attnum,
 static int
 GetSubLevelsUpByNSItem(ParseState *pstate, ParseNamespaceItem *nsitem)
 {
-	int sublevels_up = 0;
+	int			sublevels_up = 0;
 
 	while (pstate != NULL)
 	{
-		int rtable_length = list_length(pstate->p_rtable);
+		int			rtable_length = list_length(pstate->p_rtable);
 
 		if (rtable_length >= nsitem->p_rtindex)
 		{
@@ -280,7 +290,7 @@ makeArrayAggFuncCall(List *args, int location)
 Node *
 makeRowExprWithTypeCast(List *args, Oid typeOid, int location)
 {
-	RowExpr	   *row;
+	RowExpr    *row;
 	TypeCast   *cast;
 
 	row = makeNode(RowExpr);
@@ -301,7 +311,7 @@ makeRowExprWithTypeCast(List *args, Oid typeOid, int location)
 Node *
 makeTypedRowExpr(List *args, Oid typoid, int location)
 {
-	RowExpr *row = makeNode(RowExpr);
+	RowExpr    *row = makeNode(RowExpr);
 
 	row->args = args;
 	row->row_typeid = typoid;
@@ -332,7 +342,7 @@ makeAArrayExpr(List *elements, Oid typeOid)
 Node *
 makeArrayExpr(Oid typarray, Oid typoid, List *elems)
 {
-	ArrayExpr *arr = makeNode(ArrayExpr);
+	ArrayExpr  *arr = makeNode(ArrayExpr);
 
 	arr->array_typeid = typarray;
 	arr->element_typeid = typoid;
@@ -384,7 +394,7 @@ Node *
 getColumnVar(ParseState *pstate, ParseNamespaceItem *nsitem, char *colname)
 {
 	ListCell   *lcn;
-	AttrNumber attrno;
+	AttrNumber	attrno;
 	Var		   *var;
 	RangeTblEntry *rte = nsitem->p_rte;
 
@@ -396,8 +406,8 @@ getColumnVar(ParseState *pstate, ParseNamespaceItem *nsitem, char *colname)
 		if (strcmp(tmp, colname) == 0)
 		{
 			/*
-			 * NOTE: no ambiguous reference check here
-			 *       since all column names in `rte` are unique
+			 * NOTE: no ambiguous reference check here since all column names
+			 * in `rte` are unique
 			 */
 
 			var = make_var(pstate, nsitem, attrno, -1);
@@ -418,7 +428,7 @@ Node *
 getSysColumnVar(ParseState *pstate, ParseNamespaceItem *nsitem,
 				AttrNumber attnum)
 {
-	Var *var;
+	Var		   *var;
 
 	AssertArg(attnum <= SelfItemPointerAttributeNumber &&
 			  attnum >= FirstLowInvalidHeapAttributeNumber);
@@ -433,21 +443,21 @@ getSysColumnVar(ParseState *pstate, ParseNamespaceItem *nsitem,
 Node *
 makeColumnRef(List *fields)
 {
-	ColumnRef *n = makeNode(ColumnRef);
+	ColumnRef  *n = makeNode(ColumnRef);
 
 	n->fields = fields;
 	n->location = -1;
-	return (Node *)n;
+	return (Node *) n;
 }
 
 ResTarget *
 makeSimpleResTarget(const char *field, const char *name)
 {
-	Node *cref;
+	Node	   *cref;
 
 	cref = makeColumnRef(list_make1(makeString(pstrdup(field))));
 
-	if(name == NULL)
+	if (name == NULL)
 	{
 		/* if name is null, filled from FigureColname */
 		name = field;
@@ -459,7 +469,7 @@ makeSimpleResTarget(const char *field, const char *name)
 ResTarget *
 makeResTarget(Node *val, const char *name)
 {
-	ResTarget *res = makeNode(ResTarget);
+	ResTarget  *res = makeNode(ResTarget);
 
 	if (name != NULL)
 	{
@@ -467,7 +477,8 @@ makeResTarget(Node *val, const char *name)
 	}
 	else if (IsA(val, ColumnRef))
 	{
-		ColumnRef *ref = (ColumnRef *) val;
+		ColumnRef  *ref = (ColumnRef *) val;
+
 		res->name = NameListToString(ref->fields);
 	}
 	else

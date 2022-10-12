@@ -4138,7 +4138,7 @@ DisableIndexLabel(Oid relid)
 	indexoidlist = RelationGetIndexList(rel);
 	foreach(indexoidscan, indexoidlist)
 	{
-		Oid	indexoid = lfirst_oid(indexoidscan);
+		Oid			indexoid = lfirst_oid(indexoidscan);
 
 		disable_index(indexoid);
 

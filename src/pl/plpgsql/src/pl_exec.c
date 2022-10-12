@@ -4237,9 +4237,10 @@ exec_stmt_execsql(PLpgSQL_execstate *estate,
 			break;
 
 		case SPI_OK_GRAPHWRITE:
+
 			/*
 			 * The command is to execute graphwrite type from pl module.
-			 * 
+			 *
 			 * But, this command is only executed when allow_graphwrite_type
 			 * (GUC variable) is true.
 			 */

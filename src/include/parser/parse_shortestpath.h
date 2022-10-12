@@ -19,4 +19,4 @@ extern Query *transformShortestPathInMatch(ParseState *parentParseState,
 extern Query *transformDijkstra(ParseState *pstate, CypherPath *cpath);
 extern Query *transformDijkstraInMatch(ParseState *pstate, CypherPath *cpath);
 
-#endif	/* PARSE_SHORTESTPATH_H */
+#endif							/* PARSE_SHORTESTPATH_H */

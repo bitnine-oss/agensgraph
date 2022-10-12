@@ -47,8 +47,8 @@ _check_database_version(ArchiveHandle *AH)
 		AH->archiveRemoteVersion = AH->public.remoteVersionStr;
 
 	/*
-	 * Do not error check agVersion
-	 * because before v2.1.1 agversion was not exist.
+	 * Do not error check agVersion because before v2.1.1 agversion was not
+	 * exist.
 	 */
 	AH->public.agVersion = PQagVersion(AH->connection);
 

@@ -4094,10 +4094,9 @@ ExecInitCypherMap(ExprEvalStep *scratch, CypherMapExpr *mapexpr,
 		le = lnext(mapexpr->keyvals, le);
 
 		/*
-		 * Since all keys of jsonb objects are C strings, convert
-		 * the given key constant which is text to a corresponding
-		 * C string to avoid the same conversion for every
-		 * evaluation of the CypherMapExpr.
+		 * Since all keys of jsonb objects are C strings, convert the given
+		 * key constant which is text to a corresponding C string to avoid the
+		 * same conversion for every evaluation of the CypherMapExpr.
 		 */
 		Assert(key->consttype == TEXTOID && !key->constisnull);
 		key_cstrings[i] = TextDatumGetCString(key->constvalue);

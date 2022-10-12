@@ -33,7 +33,7 @@ static void InsertAgLabelTuple(Relation ag_label_desc, Oid laboid,
 static uint16 GetNewLabelId(char *graphname, Oid graphid);
 
 /* Potentially set by pg_upgrade_support functions */
-Oid binary_upgrade_next_ag_label_oid = InvalidOid;
+Oid			binary_upgrade_next_ag_label_oid = InvalidOid;
 
 Oid
 label_create_with_catalog(RangeVar *label, Oid relid, char labkind,
@@ -49,14 +49,14 @@ label_create_with_catalog(RangeVar *label, Oid relid, char labkind,
 		if (!OidIsValid(binary_upgrade_next_ag_label_oid))
 			ereport(ERROR,
 					(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-							errmsg("ag_label OID value not set when in binary upgrade mode")));
+					 errmsg("ag_label OID value not set when in binary upgrade mode")));
 		laboid = binary_upgrade_next_ag_label_oid;
 		binary_upgrade_next_ag_label_oid = InvalidOid;
 	}
 	else
 	{
 		laboid = GetNewRelFileNode(labtablespace, ag_label_desc,
-							   label->relpersistence);
+								   label->relpersistence);
 	}
 
 	InsertAgLabelTuple(ag_label_desc, laboid, label, relid, labkind,
@@ -101,7 +101,7 @@ InsertAgLabelTuple(Relation ag_label_desc, Oid laboid, RangeVar *label,
 				   Oid relid, char labkind, bool is_fixed_id, int32 fixed_id)
 {
 	Oid			graphid = get_graphname_oid(label->schemaname);
-	char		labname[NAMEDATALEN]={'\0'};
+	char		labname[NAMEDATALEN] = {'\0'};
 	int32		labid;
 	Datum		values[Natts_ag_label];
 	bool		nulls[Natts_ag_label];
@@ -147,7 +147,7 @@ GetNewLabelId(char *graphname, Oid graphid)
 	cnt = 0;
 	for (;;)
 	{
-		Datum val;
+		Datum		val;
 
 		val = DirectFunctionCall1(nextval, stext);
 		labid = DatumGetUInt16(val);
@@ -166,13 +166,14 @@ GetNewLabelId(char *graphname, Oid graphid)
 /*
  * Retrieves a list of all the names of a graph.
  */
-List *get_all_edge_labels_per_graph(Snapshot snapshot, Oid graph_oid)
+List *
+get_all_edge_labels_per_graph(Snapshot snapshot, Oid graph_oid)
 {
-	List *labels = NIL;
+	List	   *labels = NIL;
 	ScanKeyData scan_keys[2];
-	Relation ag_label;
+	Relation	ag_label;
 	TableScanDesc scan_desc;
-	HeapTuple tuple;
+	HeapTuple	tuple;
 
 	ScanKeyInit(&scan_keys[0],
 				Anum_ag_label_graphid,
@@ -190,9 +191,9 @@ List *get_all_edge_labels_per_graph(Snapshot snapshot, Oid graph_oid)
 
 	while ((tuple = heap_getnext(scan_desc, ForwardScanDirection)) != NULL)
 	{
-		Oid label_rel_oid;
-		bool isnull;
-		Datum datum;
+		Oid			label_rel_oid;
+		bool		isnull;
+		Datum		datum;
 
 		datum = heap_getattr(tuple,
 							 Anum_ag_label_relid,

@@ -402,8 +402,8 @@ ExecPrevIndexOnlyScanContext(IndexOnlyScanState *node)
 	dlist_node *ctx_node;
 
 	/*
-	 * Store the current ioss_ScanDesc. It will be reused when the current scan
-	 * is re-scanned next time.
+	 * Store the current ioss_ScanDesc. It will be reused when the current
+	 * scan is re-scanned next time.
 	 */
 	ctx = getCurrentContext(node, true);
 

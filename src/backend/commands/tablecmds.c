@@ -1619,7 +1619,7 @@ isPropertyIndex(Oid indexoid)
 
 	/* Fetch pg_index tuple of source index. */
 	indexTuple = SearchSysCache1(INDEXRELID, ObjectIdGetDatum(indexoid));
-	if (!HeapTupleIsValid(indexTuple))		/* should not happen */
+	if (!HeapTupleIsValid(indexTuple))	/* should not happen */
 		elog(ERROR, "cache lookup failed for index %u", indexoid);
 	index = (Form_pg_index) GETSTRUCT(indexTuple);
 
@@ -2908,8 +2908,8 @@ MergeAttributes(List *schema, List *supers, char relpersistence,
 				{
 					if (!isLabel)
 						ereport(NOTICE,
-						(errmsg("merging column \"%s\" with inherited definition",
-							attributeName)));
+								(errmsg("merging column \"%s\" with inherited definition",
+										attributeName)));
 				}
 				else
 					ereport(NOTICE,

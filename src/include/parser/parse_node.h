@@ -230,15 +230,15 @@ struct ParseState
 	char	   *p_lc_varname;
 	bool		p_is_match_quals;
 	bool		p_is_fp_processed;
-	List	   *p_node_info_list;		/* final shape of named nodes */
-	Node	   *p_vle_initial_vid;		/* initial vid for VLE */
+	List	   *p_node_info_list;	/* final shape of named nodes */
+	Node	   *p_vle_initial_vid;	/* initial vid for VLE */
 	ParseNamespaceItem *p_vle_initial_nsitem;	/* RTE of initial vid for VLE */
-	List	   *p_elem_quals;			/* quals of elements */
-	List	   *p_future_vertices;		/* vertices to be resolved */
-	Node	   *p_resolved_qual;		/* qual of resolved future vertices */
+	List	   *p_elem_quals;	/* quals of elements */
+	List	   *p_future_vertices;	/* vertices to be resolved */
+	Node	   *p_resolved_qual;	/* qual of resolved future vertices */
 	bool		p_is_optional_match;
 	uint32		p_nr_modify_clause;
-	List	   *p_target_labels;		/* relation Oid's of target labels */
+	List	   *p_target_labels;	/* relation Oid's of target labels */
 	char	   *p_delete_edges_resname;
 };
 

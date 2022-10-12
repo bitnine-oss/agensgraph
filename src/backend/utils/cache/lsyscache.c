@@ -3605,7 +3605,7 @@ get_graphname_oid(const char *graphname)
 char *
 get_labid_labname(Oid graphid, uint16 labid)
 {
-	HeapTuple tp;
+	HeapTuple	tp;
 
 	tp = SearchSysCache2(LABELLABID,
 						 ObjectIdGetDatum(graphid),
@@ -3614,7 +3614,7 @@ get_labid_labname(Oid graphid, uint16 labid)
 	if (HeapTupleIsValid(tp))
 	{
 		Form_ag_label labtup = (Form_ag_label) GETSTRUCT(tp);
-		char *result;
+		char	   *result;
 
 		result = pstrdup(NameStr(labtup->labname));
 		ReleaseSysCache(tp);
@@ -3629,7 +3629,7 @@ get_labid_labname(Oid graphid, uint16 labid)
 Oid
 get_labid_relid(Oid graphid, uint16 labid)
 {
-	HeapTuple tp;
+	HeapTuple	tp;
 
 	tp = SearchSysCache2(LABELLABID,
 						 ObjectIdGetDatum(graphid),
@@ -3638,7 +3638,7 @@ get_labid_relid(Oid graphid, uint16 labid)
 	if (HeapTupleIsValid(tp))
 	{
 		Form_ag_label labtup = (Form_ag_label) GETSTRUCT(tp);
-		Oid relid;
+		Oid			relid;
 
 		relid = labtup->relid;
 		ReleaseSysCache(tp);
@@ -3676,7 +3676,7 @@ get_labname_laboid(const char *labname, Oid graphid)
 uint16
 get_labname_labid(const char *labname, Oid graphid)
 {
-	HeapTuple tp;
+	HeapTuple	tp;
 
 	tp = SearchSysCache2(LABELNAMEGRAPH,
 						 PointerGetDatum(labname),
@@ -3685,7 +3685,7 @@ get_labname_labid(const char *labname, Oid graphid)
 	if (HeapTupleIsValid(tp))
 	{
 		Form_ag_label labtup = (Form_ag_label) GETSTRUCT(tp);
-		uint16 labid;
+		uint16		labid;
 
 		labid = (uint16) labtup->labid;
 		ReleaseSysCache(tp);
@@ -3706,14 +3706,14 @@ get_labname_labid(const char *labname, Oid graphid)
 Oid
 get_laboid_relid(Oid laboid)
 {
-	HeapTuple tp;
+	HeapTuple	tp;
 
 	tp = SearchSysCache1(LABELOID, ObjectIdGetDatum(laboid));
 
 	if (HeapTupleIsValid(tp))
 	{
 		Form_ag_label labtup = (Form_ag_label) GETSTRUCT(tp);
-		Oid relid;
+		Oid			relid;
 
 		relid = labtup->relid;
 		ReleaseSysCache(tp);
@@ -3740,7 +3740,7 @@ get_relid_laboid(Oid relid)
 Oid
 get_labid_typeoid(Oid graphid, uint16 labid)
 {
-	HeapTuple tp;
+	HeapTuple	tp;
 
 	tp = SearchSysCache2(LABELLABID,
 						 ObjectIdGetDatum(graphid),
@@ -3749,7 +3749,7 @@ get_labid_typeoid(Oid graphid, uint16 labid)
 	if (HeapTupleIsValid(tp))
 	{
 		Form_ag_label labtup = (Form_ag_label) GETSTRUCT(tp);
-		Oid labkind;
+		Oid			labkind;
 
 		if (labtup->labkind == LABEL_KIND_VERTEX)
 			labkind = VERTEXOID;

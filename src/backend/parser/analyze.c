@@ -3539,7 +3539,7 @@ transformCypherStmt(ParseState *pstate, CypherStmt *stmt)
 static Query *
 transformCypherClause(ParseState *pstate, CypherClause *clause)
 {
-	Query *qry;
+	Query	   *qry;
 
 	switch (cypherClauseTag(clause))
 	{

@@ -12,4 +12,4 @@
 /* \dGi */
 extern bool listGraphIndexes(const char *pattern, bool verbose);
 
-#endif /* AGENSGRAPH_CYPHER_DESCRIBE_H */
+#endif							/* AGENSGRAPH_CYPHER_DESCRIBE_H */

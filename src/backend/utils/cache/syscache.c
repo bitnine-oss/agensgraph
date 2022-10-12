@@ -477,7 +477,7 @@ static const struct cachedesc cacheinfo[] = {
 		},
 		4
 	},
-	{GraphMetaRelationId,			/* GRAPHMETAFULL */
+	{GraphMetaRelationId,		/* GRAPHMETAFULL */
 		GraphMetaFullIndexId,
 		4,
 		{

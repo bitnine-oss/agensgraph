@@ -498,23 +498,24 @@ ExecNextNestLoopContext(NestLoopState *node)
 		 * Keep the latest outer tuple slot to 1) set ecxt_outertuple to it
 		 * later when continuing the current nested loop after the end of the
 		 * next nested loop, and 2) use the original slot rather than a
-		 * temporary slot that requires extra resources.
-		 * We get the slot through ecxt_outertuple instead of
+		 * temporary slot that requires extra resources. We get the slot
+		 * through ecxt_outertuple instead of
 		 * outerPlanState(node)->ps_ResultTupleSlot because
 		 * outerPlanState(node) can be AppendState.
 		 */
 		ctx->outer_tupleslot = slot;
+
 		/*
-		 * We need to copy and store the current outer tuple here because;
-		 * 1) there might be a chance to unpin the underlying buffer that the
-		 *    slot relies on while doing ExecStoreTuple() in the next nested
-		 *    loop, and
-		 * 2) when continuing the current nested loop later, the inner plan
-		 *    needs the right outer variables that are in the slot.
+		 * We need to copy and store the current outer tuple here because; 1)
+		 * there might be a chance to unpin the underlying buffer that the
+		 * slot relies on while doing ExecStoreTuple() in the next nested
+		 * loop, and 2) when continuing the current nested loop later, the
+		 * inner plan needs the right outer variables that are in the slot.
 		 * The tuple has to be stored in CurrentMemoryContext.
 		 */
 		ctx->outer_tuple = ExecCopySlotHeapTuple(slot);
 	}
+
 	/*
 	 * We don't need to care about the inner plan and nl_NeedNewOuter because
 	 * the next execution of the current nested loop must execute the inner
@@ -525,8 +526,8 @@ ExecNextNestLoopContext(NestLoopState *node)
 	node->prev_ctx_node = ctx_node;
 
 	/*
-	 * We don't have to restore the current outer tuple slot because it will be
-	 * filled with values of the first scan result of the outer plan.
+	 * We don't have to restore the current outer tuple slot because it will
+	 * be filled with values of the first scan result of the outer plan.
 	 */
 
 	ExecNextContext(outerPlanState(node));
@@ -569,6 +570,7 @@ ExecPrevNestLoopContext(NestLoopState *node)
 	ctx = dlist_container(NestLoopContext, list, ctx_node);
 	slot = ctx->outer_tupleslot;
 	econtext->ecxt_outertuple = slot;
+
 	/*
 	 * Pass true to shouldFree here because the tuple must be freed when
 	 * ExecStoreTuple(), ExecClearTuple(), or ExecResetTupleTable() is called.

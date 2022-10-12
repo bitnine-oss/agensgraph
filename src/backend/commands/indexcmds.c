@@ -2760,7 +2760,7 @@ ReindexTable(RangeVar *relation, ReindexParams *params, bool isTopLevel)
 static Oid
 ReindexLabel(RangeVar *relation, ReindexParams *params, ObjectType type)
 {
-	Oid heapOid;
+	Oid			heapOid;
 
 	relation->schemaname = get_graph_path(true);
 

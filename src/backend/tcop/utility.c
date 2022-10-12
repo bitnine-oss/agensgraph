@@ -1057,6 +1057,7 @@ standard_ProcessUtility(PlannedStmt *pstmt,
 		case T_DisableIndexStmt:
 			{
 				DisableIndexStmt *stmt = (DisableIndexStmt *) parsetree;
+
 				DisableIndexCommand(stmt);
 				break;
 			}
@@ -1295,7 +1296,7 @@ ProcessUtilitySlow(ParseState *pstate,
 					if (nodeTag(parsetree) == T_AlterLabelStmt)
 					{
 						atstmt = transformAlterLabelStmt(
-													(AlterLabelStmt *) atstmt);
+														 (AlterLabelStmt *) atstmt);
 						if (atstmt == NULL)
 							break;
 					}
@@ -1831,7 +1832,7 @@ ProcessUtilitySlow(ParseState *pstate,
 
 			case T_CreateGraphStmt:
 				CreateGraphCommand((CreateGraphStmt *) parsetree, queryString,
-									pstmt->stmt_location, pstmt->stmt_len);
+								   pstmt->stmt_location, pstmt->stmt_len);
 				commandCollected = true;
 				break;
 
@@ -1857,7 +1858,7 @@ ProcessUtilitySlow(ParseState *pstate,
 				commandCollected = true;
 				break;
 
-			/* see above case T_IndexStmt */
+				/* see above case T_IndexStmt */
 			case T_CreatePropertyIndexStmt:
 				{
 					CreatePropertyIndexStmt *stmt;
@@ -1890,7 +1891,7 @@ ProcessUtilitySlow(ParseState *pstate,
 					 * needs to match what DefineIndex() does.
 					 */
 					lockmode = stmt->concurrent ? ShareUpdateExclusiveLock
-												: ShareLock;
+						: ShareLock;
 					relid =
 						RangeVarGetRelidExtended(stmt->relation, lockmode,
 												 0,
@@ -1904,16 +1905,16 @@ ProcessUtilitySlow(ParseState *pstate,
 					/* ... and do it */
 					EventTriggerAlterTableStart(parsetree);
 					address =
-						DefineIndex(relid,		/* OID of heap relation */
+						DefineIndex(relid,	/* OID of heap relation */
 									idxstmt,
 									InvalidOid, /* no predefined OID */
 									InvalidOid, /* no parent index */
 									InvalidOid, /* no parent constraint */
-									false,		/* is_alter_table */
-									true,		/* check_rights */
-									true,		/* check_not_in_use */
-									false,		/* skip_build */
-									false);		/* quiet */
+									false,	/* is_alter_table */
+									true,	/* check_rights */
+									true,	/* check_not_in_use */
+									false,	/* skip_build */
+									false); /* quiet */
 
 					/*
 					 * Add the CREATE INDEX node itself to stash right away;
@@ -2630,7 +2631,7 @@ CreateCommandTag(Node *parsetree)
 
 		case T_AlterLabelStmt:
 			{
-				switch (((AlterLabelStmt*) parsetree)->objtype)
+				switch (((AlterLabelStmt *) parsetree)->objtype)
 				{
 					case OBJECT_VLABEL:
 						tag = CMDTAG_ALTER_VLABEL;

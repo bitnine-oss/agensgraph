@@ -2145,9 +2145,11 @@ CommitTransaction(void)
 	 */
 	smgrDoPendingSyncs(true, is_parallel_worker);
 
-	/* The catalog ag_graphmeta is opened and modified during commit AgStat.
-	 * In the commit phase, any relation must not be opened.
-	 * So AgStat must be processed during the PreCommit phase */
+	/*
+	 * The catalog ag_graphmeta is opened and modified during commit AgStat.
+	 * In the commit phase, any relation must not be opened. So AgStat must be
+	 * processed during the PreCommit phase
+	 */
 	if (auto_gather_graphmeta)
 		AtEOXact_AgStat(true);
 

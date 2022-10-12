@@ -58,7 +58,7 @@ CREATE ELABEL e0;
 CREATE ELABEL e01 INHERITS (e0);
 CREATE ELABEL e1;
 
-SELECT labname, labkind FROM pg_catalog.ag_label;
+SELECT labname, labkind FROM pg_catalog.ag_label ORDER BY labname;
 
 SELECT child.labname AS child, parent.labname AS parent
 FROM pg_catalog.ag_label AS parent,

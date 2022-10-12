@@ -40,29 +40,33 @@
 #define GRAPHID_FMTSTR			"%hu." UINT64_FORMAT
 #define GRAPHID_BUFLEN			32	/* "65535.281474976710655" */
 
-typedef struct LabelOutData {
+typedef struct LabelOutData
+{
 	uint16		label_labid;
 	NameData	label;
 } LabelOutData;
 
-typedef struct GraphpathOutData {
+typedef struct GraphpathOutData
+{
 	ArrayMetaState vertex;
 	ArrayMetaState edge;
 } GraphpathOutData;
 
-typedef enum EdgeVertexKind {
+typedef enum EdgeVertexKind
+{
 	EVK_START,
 	EVK_END
 } EdgeVertexKind;
 
-typedef struct LabelsOutData {
+typedef struct LabelsOutData
+{
 	MemoryContext mctx;
 	uint16		label_labid;
 	Jsonb	   *labels;
 } LabelsOutData;
 
 static void graphid_out_si(StringInfo si, Datum graphid);
-static int graphid_cmp(FunctionCallInfo fcinfo);
+static int	graphid_cmp(FunctionCallInfo fcinfo);
 static Jsonb *int_to_jsonb(int i);
 static LabelOutData *cache_label(FmgrInfo *flinfo, uint16 labid);
 static void elems_out_si(StringInfo si, AnyArrayType *elems, FmgrInfo *flinfo);
@@ -176,7 +180,7 @@ graphid_send(PG_FUNCTION_ARGS)
 static void
 graphid_out_si(StringInfo si, Datum graphid)
 {
-	Graphid id = DatumGetGraphid(graphid);
+	Graphid		id = DatumGetGraphid(graphid);
 
 	appendStringInfo(si, GRAPHID_FMTSTR,
 					 GraphidGetLabid(id), GraphidGetLocid(id));
@@ -185,7 +189,7 @@ graphid_out_si(StringInfo si, Datum graphid)
 Datum
 graphid_labid(PG_FUNCTION_ARGS)
 {
-	Graphid id = PG_GETARG_GRAPHID(0);
+	Graphid		id = PG_GETARG_GRAPHID(0);
 
 	PG_RETURN_INT32(GraphidGetLabid(id));
 }
@@ -193,7 +197,7 @@ graphid_labid(PG_FUNCTION_ARGS)
 Datum
 graphid_locid(PG_FUNCTION_ARGS)
 {
-	Graphid id = PG_GETARG_GRAPHID(0);
+	Graphid		id = PG_GETARG_GRAPHID(0);
 
 	PG_RETURN_INT64(GraphidGetLocid(id));
 }
@@ -276,7 +280,7 @@ Datum
 rowid(PG_FUNCTION_ARGS)
 {
 	Oid			tableoid = PG_GETARG_OID(0);
-	ItemPointer	tid = PG_GETARG_ITEMPOINTER(1);
+	ItemPointer tid = PG_GETARG_ITEMPOINTER(1);
 	Rowid	   *result;
 
 	result = (Rowid *) palloc(sizeof(Rowid));
@@ -309,7 +313,7 @@ rowid_out(PG_FUNCTION_ARGS)
 Datum
 rowid_tableoid(PG_FUNCTION_ARGS)
 {
-	Rowid *rowid = PG_GETARG_ROWID(0);
+	Rowid	   *rowid = PG_GETARG_ROWID(0);
 
 	PG_RETURN_OID(rowid->tableoid);
 }
@@ -350,10 +354,10 @@ rowid_eq(PG_FUNCTION_ARGS)
 Datum
 rowid_ne(PG_FUNCTION_ARGS)
 {
-	bool result;
+	bool		result;
 
 	result = DatumGetBool(DirectFunctionCall2(
-				rowid_eq, PG_GETARG_DATUM(0), PG_GETARG_DATUM(1)));
+											  rowid_eq, PG_GETARG_DATUM(0), PG_GETARG_DATUM(1)));
 
 	PG_RETURN_BOOL(!result);
 }
@@ -922,7 +926,7 @@ graphpath_length(PG_FUNCTION_ARGS)
 Datum
 graphpath_vertices(PG_FUNCTION_ARGS)
 {
-	Datum vertices_datum;
+	Datum		vertices_datum;
 
 	getGraphpathArrays(PG_GETARG_DATUM(0), &vertices_datum, NULL);
 
@@ -932,7 +936,7 @@ graphpath_vertices(PG_FUNCTION_ARGS)
 Datum
 graphpath_edges(PG_FUNCTION_ARGS)
 {
-	Datum edges_datum;
+	Datum		edges_datum;
 
 	getGraphpathArrays(PG_GETARG_DATUM(0), NULL, &edges_datum);
 
@@ -1002,8 +1006,8 @@ static Datum
 getEdgeVertex(HeapTupleHeader edge, EdgeVertexKind evk)
 {
 	const char *querystr =
-			"SELECT (" AG_ELEM_LOCAL_ID ", " AG_ELEM_PROP_MAP ", NULL)::vertex "
-			"FROM \"%s\"." AG_VERTEX " WHERE " AG_ELEM_LOCAL_ID " = $1";
+	"SELECT (" AG_ELEM_LOCAL_ID ", " AG_ELEM_PROP_MAP ", NULL)::vertex "
+	"FROM \"%s\"." AG_VERTEX " WHERE " AG_ELEM_LOCAL_ID " = $1";
 	char		sqlcmd[256];
 	int			attnum = (evk == EVK_START ? Anum_ag_edge_start : Anum_ag_edge_end);
 	Datum		values[1];
@@ -1146,7 +1150,7 @@ cache_labels(FmgrInfo *flinfo, uint16 labid)
 Datum
 getVertexIdDatum(Datum datum)
 {
-	HeapTupleHeader	tuphdr = DatumGetHeapTupleHeader(datum);
+	HeapTupleHeader tuphdr = DatumGetHeapTupleHeader(datum);
 
 	return tuple_getattr(tuphdr, Anum_ag_vertex_id);
 }
@@ -1154,7 +1158,7 @@ getVertexIdDatum(Datum datum)
 Datum
 getVertexPropDatum(Datum datum)
 {
-	HeapTupleHeader	tuphdr = DatumGetHeapTupleHeader(datum);
+	HeapTupleHeader tuphdr = DatumGetHeapTupleHeader(datum);
 
 	return tuple_getattr(tuphdr, Anum_ag_vertex_properties);
 }
@@ -1162,7 +1166,7 @@ getVertexPropDatum(Datum datum)
 Datum
 getVertexTidDatum(Datum datum)
 {
-	HeapTupleHeader	tuphdr = DatumGetHeapTupleHeader(datum);
+	HeapTupleHeader tuphdr = DatumGetHeapTupleHeader(datum);
 
 	return tuple_getattr(tuphdr, Anum_ag_vertex_tid);
 }
@@ -1170,7 +1174,7 @@ getVertexTidDatum(Datum datum)
 Datum
 getEdgeIdDatum(Datum datum)
 {
-	HeapTupleHeader	tuphdr = DatumGetHeapTupleHeader(datum);
+	HeapTupleHeader tuphdr = DatumGetHeapTupleHeader(datum);
 
 	return tuple_getattr(tuphdr, Anum_ag_edge_id);
 }
@@ -1178,7 +1182,7 @@ getEdgeIdDatum(Datum datum)
 Datum
 getEdgeStartDatum(Datum datum)
 {
-	HeapTupleHeader	tuphdr = DatumGetHeapTupleHeader(datum);
+	HeapTupleHeader tuphdr = DatumGetHeapTupleHeader(datum);
 
 	return tuple_getattr(tuphdr, Anum_ag_edge_start);
 }
@@ -1186,7 +1190,7 @@ getEdgeStartDatum(Datum datum)
 Datum
 getEdgeEndDatum(Datum datum)
 {
-	HeapTupleHeader	tuphdr = DatumGetHeapTupleHeader(datum);
+	HeapTupleHeader tuphdr = DatumGetHeapTupleHeader(datum);
 
 	return tuple_getattr(tuphdr, Anum_ag_edge_end);
 }
@@ -1194,7 +1198,7 @@ getEdgeEndDatum(Datum datum)
 Datum
 getEdgePropDatum(Datum datum)
 {
-	HeapTupleHeader	tuphdr = DatumGetHeapTupleHeader(datum);
+	HeapTupleHeader tuphdr = DatumGetHeapTupleHeader(datum);
 
 	return tuple_getattr(tuphdr, Anum_ag_edge_properties);
 }
@@ -1202,7 +1206,7 @@ getEdgePropDatum(Datum datum)
 Datum
 getEdgeTidDatum(Datum datum)
 {
-	HeapTupleHeader	tuphdr = DatumGetHeapTupleHeader(datum);
+	HeapTupleHeader tuphdr = DatumGetHeapTupleHeader(datum);
 
 	return tuple_getattr(tuphdr, Anum_ag_edge_tid);
 }
@@ -1210,7 +1214,7 @@ getEdgeTidDatum(Datum datum)
 void
 getGraphpathArrays(Datum graphpath, Datum *vertices, Datum *edges)
 {
-	HeapTupleHeader	tuphdr;
+	HeapTupleHeader tuphdr;
 	Oid			tupType;
 	TupleDesc	tupDesc;
 	HeapTupleData tuple;
@@ -1250,9 +1254,9 @@ makeGraphpathDatum(Datum *vertices, int nvertices, Datum *edges, int nedges)
 	HeapTuple	graphpath;
 
 	values[Anum_ag_graphpath_vertices - 1]
-					= makeArrayTypeDatum(vertices, nvertices, VERTEXOID);
+		= makeArrayTypeDatum(vertices, nvertices, VERTEXOID);
 	values[Anum_ag_graphpath_edges - 1]
-					= makeArrayTypeDatum(edges, nedges, EDGEOID);
+		= makeArrayTypeDatum(edges, nedges, EDGEOID);
 
 	tupDesc = lookup_rowtype_tupdesc(GRAPHPATHOID, -1);
 	Assert(tupDesc->natts == Natts_ag_graphpath);
@@ -1344,7 +1348,7 @@ btgraphidcmp(PG_FUNCTION_ARGS)
 Datum
 graphid_hash(PG_FUNCTION_ARGS)
 {
-	Graphid id = PG_GETARG_GRAPHID(0);
+	Graphid		id = PG_GETARG_GRAPHID(0);
 
 	StaticAssertStmt(sizeof(id) == 8, "the size of graphid must be 8");
 
@@ -1355,7 +1359,7 @@ graphid_hash(PG_FUNCTION_ARGS)
 Datum
 vertex_hash(PG_FUNCTION_ARGS)
 {
-	Datum id = getVertexIdDatum(PG_GETARG_DATUM(0));
+	Datum		id = getVertexIdDatum(PG_GETARG_DATUM(0));
 
 	PG_RETURN_DATUM(DirectFunctionCall1(graphid_hash, id));
 }
@@ -1370,7 +1374,7 @@ vertex_hash(PG_FUNCTION_ARGS)
 Datum
 gin_extract_value_graphid(PG_FUNCTION_ARGS)
 {
-	const int32	_nentries = 1;
+	const int32 _nentries = 1;
 	Datum		graphid = PG_GETARG_DATUM(0);
 	int32	   *nentries = (int32 *) PG_GETARG_POINTER(1);
 	Datum	   *entries = palloc(sizeof(*entries) * _nentries);
@@ -1393,7 +1397,7 @@ gin_extract_value_graphid(PG_FUNCTION_ARGS)
 Datum
 gin_extract_query_graphid(PG_FUNCTION_ARGS)
 {
-	const int32	_nentries = 1;
+	const int32 _nentries = 1;
 	Datum		graphid = PG_GETARG_DATUM(0);
 	int32	   *nentries = (int32 *) PG_GETARG_POINTER(1);
 	StrategyNumber strategy = PG_GETARG_UINT16(2);
@@ -1409,6 +1413,7 @@ gin_extract_query_graphid(PG_FUNCTION_ARGS)
 	{
 		case BTLessStrategyNumber:
 		case BTLessEqualStrategyNumber:
+
 			/*
 			 * We should start scan from the smallest indexed key until the
 			 * scan meets the given graphid. To do this, we set the
@@ -1446,7 +1451,7 @@ gin_extract_query_graphid(PG_FUNCTION_ARGS)
 static Datum
 graphid_minval(void)
 {
-	Graphid id;
+	Graphid		id;
 
 	GraphidSet(&id, 0, 0);
 
@@ -1457,7 +1462,7 @@ graphid_minval(void)
 Datum
 gin_consistent_graphid(PG_FUNCTION_ARGS)
 {
-	bool *recheck = (bool *) PG_GETARG_POINTER(5);
+	bool	   *recheck = (bool *) PG_GETARG_POINTER(5);
 
 	*recheck = false;
 	PG_RETURN_BOOL(true);

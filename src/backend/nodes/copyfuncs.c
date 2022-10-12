@@ -1331,7 +1331,7 @@ _copyShortestpath(const Shortestpath *from)
 static Hash2Side *
 _copyHash2Side(const Hash2Side *from)
 {
-	Hash2Side *newnode = makeNode(Hash2Side);
+	Hash2Side  *newnode = makeNode(Hash2Side);
 
 	/*
 	 * copy node superclass fields
@@ -1353,7 +1353,7 @@ _copyHash2Side(const Hash2Side *from)
 static Dijkstra *
 _copyDijkstra(const Dijkstra *from)
 {
-	Dijkstra *newnode = makeNode(Dijkstra);
+	Dijkstra   *newnode = makeNode(Dijkstra);
 
 	CopyPlanFields((const Plan *) from, (Plan *) newnode);
 
@@ -5395,7 +5395,7 @@ _copyCypherNode(const CypherNode *from)
 static CypherRel *
 _copyCypherRel(const CypherRel *from)
 {
-	CypherRel *newnode = makeNode(CypherRel);
+	CypherRel  *newnode = makeNode(CypherRel);
 
 	COPY_SCALAR_FIELD(direction);
 	COPY_NODE_FIELD(variable);
@@ -5432,7 +5432,7 @@ _copyCypherSetProp(const CypherSetProp *from)
 static GraphPath *
 _copyGraphPath(const GraphPath *from)
 {
-	GraphPath *newnode = makeNode(GraphPath);
+	GraphPath  *newnode = makeNode(GraphPath);
 
 	COPY_STRING_FIELD(variable);
 	COPY_NODE_FIELD(chain);
@@ -5456,7 +5456,7 @@ _copyGraphVertex(const GraphVertex *from)
 static GraphEdge *
 _copyGraphEdge(const GraphEdge *from)
 {
-	GraphEdge *newnode = makeNode(GraphEdge);
+	GraphEdge  *newnode = makeNode(GraphEdge);
 
 	COPY_SCALAR_FIELD(direction);
 	COPY_SCALAR_FIELD(resno);

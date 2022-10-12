@@ -24,8 +24,8 @@ extern void ExecReScanShortestpath(ShortestpathState *node);
 
 extern void ExecShortestpathSaveTuple(MinimalTuple tuple, uint32 hashvalue,
 									  BufFile **fileptr);
-extern TupleTableSlot *ExecShortestpathGetSavedTuple(BufFile           *file,
-													 uint32            *hashvalue,
-													 TupleTableSlot    *tupleSlot);
+extern TupleTableSlot *ExecShortestpathGetSavedTuple(BufFile *file,
+													 uint32 *hashvalue,
+													 TupleTableSlot *tupleSlot);
 
-#endif   /* NODESHORTESTPATH_H */
+#endif							/* NODESHORTESTPATH_H */

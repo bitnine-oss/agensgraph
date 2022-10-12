@@ -44,23 +44,23 @@
 #define SP_NEED_NEW_BATCH       6
 
 static TupleTableSlot *ExecShortestpathOuterGetTuple(ShortestpathState *spstate,
-													 uint32            *hashvalue);
-static TupleTableSlot *ExecShortestpathProcOuterNode(PlanState         *node,
+													 uint32 *hashvalue);
+static TupleTableSlot *ExecShortestpathProcOuterNode(PlanState *node,
 													 ShortestpathState *spstate);
-static bool ExecShortestpathRescanOuterNode(Hash2SideState    *node,
+static bool ExecShortestpathRescanOuterNode(Hash2SideState *node,
 											ShortestpathState *spstate);
 static bool ExecShortestpathNewBatch(ShortestpathState *spstate);
-static Datum ExecShortestpathProjectEvalArray(Oid            element_typeid,
+static Datum ExecShortestpathProjectEvalArray(Oid element_typeid,
 											  const unsigned char *elems,
-											  long           len,
-											  ExprContext   *econtext);
+											  long len,
+											  ExprContext *econtext);
 static TupleTableSlot *ExecShortestpathProject(ShortestpathState *node,
-											   unsigned char     *outerids,
-											   long               lenOuterids,
-											   unsigned char     *innerids,
-											   long               lenInnerids,
-											   int                sizeGraphid,
-											   int                sizeRowid);
+											   unsigned char *outerids,
+											   long lenOuterids,
+											   unsigned char *innerids,
+											   long lenInnerids,
+											   int sizeGraphid,
+											   int sizeRowid);
 static HeapTuple replace_vertexRow_graphid(TupleDesc tupleDesc,
 										   HeapTuple vertexRow,
 										   Datum graphid);
@@ -74,24 +74,24 @@ static HeapTuple replace_vertexRow_graphid(TupleDesc tupleDesc,
  *			  the other one is "outer".
  * ----------------------------------------------------------------
  */
-static TupleTableSlot *				/* return: a tuple or NULL */
+static TupleTableSlot *			/* return: a tuple or NULL */
 ExecShortestpath(PlanState *pstate)
 {
 	ShortestpathState *node = castNode(ShortestpathState, pstate);
 	Hash2SideState *outerNode;
 	Hash2SideState *innerNode;
-	ExprState      *joinqual;
-	ExprState      *otherqual;
-	ExprContext    *econtext;
-	HashJoinTable   keytable;
-	HashJoinTable   outertable;
-	HashJoinTable   hashtable;
+	ExprState  *joinqual;
+	ExprState  *otherqual;
+	ExprContext *econtext;
+	HashJoinTable keytable;
+	HashJoinTable outertable;
+	HashJoinTable hashtable;
 	TupleTableSlot *outerTupleSlot;
-	MinimalTuple    outerTuple;
-	MinimalTuple    innerTuple;
-	uint32          hashvalue;
-	int             batchno;
-	bool            isNull;
+	MinimalTuple outerTuple;
+	MinimalTuple innerTuple;
+	uint32		hashvalue;
+	int			batchno;
+	bool		isNull;
 
 	/*
 	 * get information from Shortestpath node
@@ -177,6 +177,7 @@ ExecShortestpath(PlanState *pstate)
 				if (node->minhops == 0 && node->startVid == node->endVid)
 				{
 					TupleTableSlot *result;
+
 					result = ExecShortestpathProject(node,
 													 (unsigned char *) (&(node->startVid)),
 													 0,
@@ -234,8 +235,8 @@ ExecShortestpath(PlanState *pstate)
 					}
 					if (innerNode->hashtable->nbatch > 1)
 					{
-						int nbuckets;
-						int nbatch;
+						int			nbuckets;
+						int			nbatch;
 
 						ExecChooseHash2SideTableSize(innerNode->hashtable->totalTuples,
 													 innerNode->totalPaths,
@@ -246,7 +247,8 @@ ExecShortestpath(PlanState *pstate)
 						if (nbatch != innerNode->hashtable->nbatch ||
 							nbuckets != innerNode->hashtable->nbuckets)
 						{
-							int i;
+							int			i;
+
 							if (innerNode->hashtable->spacePeak > innerNode->spacePeak)
 								innerNode->spacePeak = innerNode->hashtable->spacePeak;
 							hashtable = ExecHash2SideTableCreate(innerNode,
@@ -261,18 +263,21 @@ ExecShortestpath(PlanState *pstate)
 									innerNode->hashtable->innerBatchFile[i])
 								{
 									TupleTableSlot *slot;
+
 									if (BufFileSeek(innerNode->hashtable->innerBatchFile[i], 0, 0L, SEEK_SET))
 										ereport(ERROR,
 												(errcode_for_file_access(),
-														errmsg("could not rewind hash-join temporary file: %m")));
+												 errmsg("could not rewind hash-join temporary file: %m")));
 									while ((slot = ExecShortestpathGetSavedTuple(
-											innerNode->hashtable->innerBatchFile[i],
-											&hashvalue,
-											node->sp_HashTupleSlot)))
+																				 innerNode->hashtable->innerBatchFile[i],
+																				 &hashvalue,
+																				 node->sp_HashTupleSlot)))
 									{
 										/*
-										 * NOTE: some tuples may be sent to future batches.  Also, it is
-										 * possible for hashtable->nbatch to be increased here!
+										 * NOTE: some tuples may be sent to
+										 * future batches.  Also, it is
+										 * possible for hashtable->nbatch to
+										 * be increased here!
 										 */
 										if (ExecHash2SideTableInsert(hashtable,
 																	 slot,
@@ -281,8 +286,9 @@ ExecShortestpath(PlanState *pstate)
 																	 node,
 																	 NULL))
 										{
-											bool shouldFree;
+											bool		shouldFree;
 											MinimalTuple tuple = ExecFetchSlotMinimalTuple(slot, &shouldFree);
+
 											hashtable->totalTuples += 1;
 											if (tuple->t_len !=
 												sizeof(*tuple) + sizeof(Graphid) + node->sp_RowidSize)
@@ -298,24 +304,34 @@ ExecShortestpath(PlanState *pstate)
 								else
 								{
 									HashMemoryChunk oldchunks = innerNode->hashtable->chunks;
+
 									innerNode->hashtable->chunks = NULL;
 
-									/* so, let's scan through the old chunks, and all tuples in each chunk */
+									/*
+									 * so, let's scan through the old chunks,
+									 * and all tuples in each chunk
+									 */
 									while (oldchunks != NULL)
 									{
 										HashMemoryChunk nextchunk = oldchunks->next.unshared;
 
-										/* position within the buffer (up to oldchunks->used) */
+										/*
+										 * position within the buffer (up to
+										 * oldchunks->used)
+										 */
 										size_t		idx = 0;
 
-										/* process all tuples stored in this chunk (and then free it) */
+										/*
+										 * process all tuples stored in this
+										 * chunk (and then free it)
+										 */
 										while (idx < oldchunks->used)
 										{
 											HashJoinTuple hashTuple = (HashJoinTuple) (HASH_CHUNK_DATA(oldchunks) + idx);
-											MinimalTuple  tuple = HJTUPLE_MINTUPLE(hashTuple);
-											int           hashTupleSize = (HJTUPLE_OVERHEAD + tuple->t_len);
+											MinimalTuple tuple = HJTUPLE_MINTUPLE(hashTuple);
+											int			hashTupleSize = (HJTUPLE_OVERHEAD + tuple->t_len);
 
-											if (*((Graphid*)(tuple+1)) != 0)
+											if (*((Graphid *) (tuple + 1)) != 0)
 											{
 												if (ExecHash2SideTableInsertTuple(hashtable,
 																				  tuple,
@@ -336,13 +352,20 @@ ExecShortestpath(PlanState *pstate)
 											idx += MAXALIGN(hashTupleSize);
 										}
 
-										/* we're done with this chunk - free it and proceed to the next one */
+										/*
+										 * we're done with this chunk - free
+										 * it and proceed to the next one
+										 */
 										pfree(oldchunks);
 										oldchunks = nextchunk;
 									}
 								}
 							}
-							/* Account for the buckets in spaceUsed (reported in EXPLAIN ANALYZE) */
+
+							/*
+							 * Account for the buckets in spaceUsed (reported
+							 * in EXPLAIN ANALYZE)
+							 */
 							hashtable->spaceUsed += hashtable->nbuckets * sizeof(HashJoinTuple);
 							if (hashtable->spaceUsed > hashtable->spacePeak)
 								hashtable->spacePeak = hashtable->spaceUsed;
@@ -387,7 +410,8 @@ ExecShortestpath(PlanState *pstate)
 				outerNode->keytable = outerNode->hashtable;
 				if (outerNode->keytable->spacePeak > outerNode->spacePeak)
 					outerNode->spacePeak = outerNode->keytable->spacePeak;
-				if (hashtable->nbatch > 1){
+				if (hashtable->nbatch > 1)
+				{
 					outerNode->hashtable = ExecHash2SideTableClone(outerNode,
 																   node->sp_HashOperators,
 																   hashtable,
@@ -419,7 +443,7 @@ ExecShortestpath(PlanState *pstate)
 						if (BufFileSeek(keytable->innerBatchFile[0], 0, 0L, SEEK_SET))
 							ereport(ERROR,
 									(errcode_for_file_access(),
-											errmsg("could not rewind hash-join temporary file: %m")));
+									 errmsg("could not rewind hash-join temporary file: %m")));
 					}
 				}
 				ExecShortestpathRescanOuterNode(outerNode, node);
@@ -429,9 +453,10 @@ ExecShortestpath(PlanState *pstate)
 					/*
 					 * We have to compute the tuple's hash value.
 					 */
-					bool shouldFree;
+					bool		shouldFree;
 					MemoryContext oldContext;
 					ExprContext *econtext = node->js.ps.ps_ExprContext;
+
 					econtext->ecxt_outertuple = outerTupleSlot;
 					oldContext = MemoryContextSwitchTo(outerTupleSlot->tts_mcxt);
 					outerTuple = ExecFetchSlotMinimalTuple(outerTupleSlot, &shouldFree);
@@ -458,9 +483,10 @@ ExecShortestpath(PlanState *pstate)
 						outertable->totalTuples += 1;
 						outerNode->totalPaths += 1;
 					}
+
 					/*
-					 * That tuple couldn't match because of a NULL, so discard it and
-					 * continue with the next one.
+					 * That tuple couldn't match because of a NULL, so discard
+					 * it and continue with the next one.
 					 */
 					outerTupleSlot = ExecShortestpathProcOuterNode((PlanState *) outerNode, node);
 				}
@@ -470,7 +496,11 @@ ExecShortestpath(PlanState *pstate)
 				{
 					outertable->spaceUsed -= outertable->nbuckets * sizeof(HashJoinTuple);
 					ExecHash2SideIncreaseNumBuckets(outertable, outerNode);
-					/* Account for the buckets in spaceUsed (reported in EXPLAIN ANALYZE) */
+
+					/*
+					 * Account for the buckets in spaceUsed (reported in
+					 * EXPLAIN ANALYZE)
+					 */
 					outertable->spaceUsed += outertable->nbuckets * sizeof(HashJoinTuple);
 					if (outertable->spaceUsed > outertable->spacePeak)
 						outertable->spacePeak = outertable->spaceUsed;
@@ -524,8 +554,8 @@ ExecShortestpath(PlanState *pstate)
 
 				/*
 				 * We've got a match, but still need to test non-hashed quals.
-				 * ExecScanHash2SideBucket already set up all the state needed to
-				 * call ExecQual.
+				 * ExecScanHash2SideBucket already set up all the state needed
+				 * to call ExecQual.
 				 *
 				 * If we pass the qual, then save state for next call and have
 				 * ExecProject form the projection, store it in the tuple
@@ -540,10 +570,12 @@ ExecShortestpath(PlanState *pstate)
 
 					if (otherqual == NULL || ExecQual(otherqual, econtext))
 					{
-						bool outerShouldFree, innerShouldFree;
+						bool		outerShouldFree,
+									innerShouldFree;
 						TupleTableSlot *result;
-						int             outerHops;
-						int             innerHops;
+						int			outerHops;
+						int			innerHops;
+
 						if (outerPlanState(node) == (PlanState *) outerNode)
 						{
 							outerTuple = ExecFetchSlotMinimalTuple(econtext->ecxt_outertuple, &outerShouldFree);
@@ -633,15 +665,15 @@ ExecInitShortestpath(Shortestpath *node, EState *estate, int eflags)
 {
 	ShortestpathState *spstate;
 	Plan	   *outerNode;
-	Plan       *innerNode;
+	Plan	   *innerNode;
 	List	   *lclauses;
 	List	   *rclauses;
 	List	   *hoperators;
 	ListCell   *l;
 	Hash2SideState *outerH2SNode;
 	Hash2SideState *innerH2SNode;
-	HeapTuple		vertexRow = NULL;
-	TupleDesc		tupleDesc = NULL;
+	HeapTuple	vertexRow = NULL;
+	TupleDesc	tupleDesc = NULL;
 
 	/* check for unsupported flags */
 	Assert(!(eflags & (EXEC_FLAG_BACKWARD | EXEC_FLAG_MARK)));
@@ -665,21 +697,21 @@ ExecInitShortestpath(Shortestpath *node, EState *estate, int eflags)
 	 * initialize child expressions
 	 */
 	spstate->js.ps.qual =
-			ExecInitQual(node->join.plan.qual, (PlanState *) spstate);
+		ExecInitQual(node->join.plan.qual, (PlanState *) spstate);
 	spstate->js.jointype = node->join.jointype;
 	spstate->js.joinqual =
-			ExecInitQual(node->join.joinqual, (PlanState *) spstate);
+		ExecInitQual(node->join.joinqual, (PlanState *) spstate);
 	spstate->hashclauses =
-			ExecInitQual(node->hashclauses, (PlanState *) spstate);
+		ExecInitQual(node->hashclauses, (PlanState *) spstate);
 
-	spstate->source     = ExecInitExpr((Expr *) node->source, (PlanState *) spstate);
-	spstate->target     = ExecInitExpr((Expr *) node->target, (PlanState *) spstate);
-	spstate->minhops    = node->minhops;
-	spstate->maxhops    = node->maxhops;
-	spstate->limit      = node->limit;
-	spstate->startVid   = 0;
-	spstate->endVid     = 0;
-	spstate->hops       = 0;
+	spstate->source = ExecInitExpr((Expr *) node->source, (PlanState *) spstate);
+	spstate->target = ExecInitExpr((Expr *) node->target, (PlanState *) spstate);
+	spstate->minhops = node->minhops;
+	spstate->maxhops = node->maxhops;
+	spstate->limit = node->limit;
+	spstate->startVid = 0;
+	spstate->endVid = 0;
+	spstate->hops = 0;
 	spstate->numResults = 0;
 
 	/*
@@ -706,14 +738,14 @@ ExecInitShortestpath(Shortestpath *node, EState *estate, int eflags)
 	 */
 	ExecInitResultTupleSlotTL(&spstate->js.ps, &TTSOpsMinimalTuple);
 	spstate->sp_OuterTupleSlot = ExecInitExtraTupleSlot(estate, NULL, &TTSOpsMinimalTuple);
-    ExecSetSlotDescriptor(spstate->sp_OuterTupleSlot, ExecGetResultType(outerPlanState(spstate)));
+	ExecSetSlotDescriptor(spstate->sp_OuterTupleSlot, ExecGetResultType(outerPlanState(spstate)));
 
 	/*
 	 * now for some voodoo.  our temporary tuple slot is actually the result
-	 * tuple slot of the Hash2Side node (which is our inner plan).  we can do this
-	 * because Hash2Side nodes don't return tuples via ExecProcNode() -- instead
-	 * the hash join node uses ExecScanHash2SideBucket() to get at the contents of
-	 * the hash table.  -cim 6/9/91
+	 * tuple slot of the Hash2Side node (which is our inner plan).  we can do
+	 * this because Hash2Side nodes don't return tuples via ExecProcNode() --
+	 * instead the hash join node uses ExecScanHash2SideBucket() to get at the
+	 * contents of the hash table.  -cim 6/9/91
 	 */
 	{
 		Hash2SideState *hashstate = (Hash2SideState *) innerPlanState(spstate);
@@ -788,18 +820,18 @@ ExecInitShortestpath(Shortestpath *node, EState *estate, int eflags)
 
 	spstate->sp_JoinState = SP_GET_PARAMETER;
 
-	spstate->outerNode = (Hash2SideState *)outerPlanState(spstate);
-	spstate->innerNode = (Hash2SideState *)innerPlanState(spstate);
+	spstate->outerNode = (Hash2SideState *) outerPlanState(spstate);
+	spstate->innerNode = (Hash2SideState *) innerPlanState(spstate);
 
 	outerH2SNode = spstate->outerNode;
 	innerH2SNode = spstate->innerNode;
 
 	/*
-	 * Shortestpath was originally written without expectations that the
-	 * start and end nodes might reside in FieldSelect expressions. This
-	 * code is to address that deficit. Additionally, it is added here to
-	 * help with memory conservation by providing two vertex rows that
-	 * can reused - one for the start, the other for the end.
+	 * Shortestpath was originally written without expectations that the start
+	 * and end nodes might reside in FieldSelect expressions. This code is to
+	 * address that deficit. Additionally, it is added here to help with
+	 * memory conservation by providing two vertex rows that can reused - one
+	 * for the start, the other for the end.
 	 */
 	if (IsA(outerH2SNode->key->expr, FieldSelect) ||
 		IsA(innerH2SNode->key->expr, FieldSelect))
@@ -815,7 +847,8 @@ ExecInitShortestpath(Shortestpath *node, EState *estate, int eflags)
 
 	if (IsA(outerH2SNode->key->expr, FieldSelect))
 	{
-		FieldSelect		*fs = (FieldSelect *) outerH2SNode->key->expr;
+		FieldSelect *fs = (FieldSelect *) outerH2SNode->key->expr;
+
 		outerH2SNode->isFieldSelect = true;
 		outerH2SNode->correctedParam = (Param *) (fs->arg);
 	}
@@ -825,11 +858,12 @@ ExecInitShortestpath(Shortestpath *node, EState *estate, int eflags)
 		outerH2SNode->correctedParam = (Param *) outerH2SNode->key->expr;
 	}
 	outerH2SNode->vertexRow = vertexRow;
-	outerH2SNode->tupleDesc =  tupleDesc;
+	outerH2SNode->tupleDesc = tupleDesc;
 
 	if (IsA(innerH2SNode->key->expr, FieldSelect))
 	{
-		FieldSelect		*fs = (FieldSelect *) innerH2SNode->key->expr;
+		FieldSelect *fs = (FieldSelect *) innerH2SNode->key->expr;
+
 		innerH2SNode->isFieldSelect = true;
 		innerH2SNode->correctedParam = (Param *) (fs->arg);
 	}
@@ -906,8 +940,8 @@ ExecShortestpathOuterGetTuple(ShortestpathState *spstate, uint32 *hashvalue)
 {
 	HashMemoryChunk chunks = spstate->sp_CurOuterChunks;
 	TupleTableSlot *slot;
-	HashJoinTuple   hashTuple;
-	MinimalTuple    tuple;
+	HashJoinTuple hashTuple;
+	MinimalTuple tuple;
 
 	while (chunks != NULL)
 	{
@@ -923,7 +957,7 @@ ExecShortestpathOuterGetTuple(ShortestpathState *spstate, uint32 *hashvalue)
 		tuple = HJTUPLE_MINTUPLE(hashTuple);
 		spstate->sp_CurOuterIdx += MAXALIGN(HJTUPLE_OVERHEAD + tuple->t_len);
 
-		if (*((Graphid*)(tuple+1)) == 0 ||
+		if (*((Graphid *) (tuple + 1)) == 0 ||
 			tuple->t_len == sizeof(*tuple) + sizeof(Graphid) + spstate->sp_RowidSize)
 			continue;
 
@@ -954,7 +988,7 @@ ExecShortestpathProcOuterNode(PlanState *node, ShortestpathState *spstate)
 	slot = ExecProcNode(node);
 	while (TupIsNull(slot))
 	{
-		if(!ExecShortestpathRescanOuterNode((Hash2SideState *) node, spstate))
+		if (!ExecShortestpathRescanOuterNode((Hash2SideState *) node, spstate))
 		{
 			return NULL;
 		}
@@ -974,9 +1008,9 @@ static HeapTuple
 replace_vertexRow_graphid(TupleDesc tupleDesc, HeapTuple vertexRow,
 						  Datum graphid)
 {
-	HeapTupleHeader	vheader;
+	HeapTupleHeader vheader;
 	Form_pg_attribute attribute;
-	char			*vgdata;
+	char	   *vgdata;
 
 	/* Verify input constraints */
 	Assert(tupleDesc != NULL);
@@ -999,7 +1033,7 @@ replace_vertexRow_graphid(TupleDesc tupleDesc, HeapTuple vertexRow,
 static bool
 ExecShortestpathRescanOuterNode(Hash2SideState *node, ShortestpathState *spstate)
 {
-	HashJoinTable   keytable = spstate->sp_KeyTable;
+	HashJoinTable keytable = spstate->sp_KeyTable;
 	TupleTableSlot *slot;
 
 	while (spstate->sp_CurKeyBatch < keytable->nbatch)
@@ -1011,7 +1045,7 @@ ExecShortestpathRescanOuterNode(Hash2SideState *node, ShortestpathState *spstate
 				HashMemoryChunk oldchunks = keytable->chunks;
 				HashMemoryChunk nextchunk = oldchunks->next.unshared;
 
-				if(spstate->sp_CurKeyIdx < oldchunks->used)
+				if (spstate->sp_CurKeyIdx < oldchunks->used)
 				{
 					break;
 				}
@@ -1021,21 +1055,22 @@ ExecShortestpathRescanOuterNode(Hash2SideState *node, ShortestpathState *spstate
 			}
 			if (keytable->chunks != NULL)
 			{
-				HashMemoryChunk  oldchunks = keytable->chunks;
-				HashJoinTuple    hashTuple = (HashJoinTuple) (HASH_CHUNK_DATA(oldchunks) + spstate->sp_CurKeyIdx);
-				MinimalTuple     tuple = HJTUPLE_MINTUPLE(hashTuple);
-				int              hashTupleSize = (HJTUPLE_OVERHEAD + tuple->t_len);
-				int              paramno;
-				ParamExecData   *prm;
-				Graphid			*graphid;
+				HashMemoryChunk oldchunks = keytable->chunks;
+				HashJoinTuple hashTuple = (HashJoinTuple) (HASH_CHUNK_DATA(oldchunks) + spstate->sp_CurKeyIdx);
+				MinimalTuple tuple = HJTUPLE_MINTUPLE(hashTuple);
+				int			hashTupleSize = (HJTUPLE_OVERHEAD + tuple->t_len);
+				int			paramno;
+				ParamExecData *prm;
+				Graphid    *graphid;
 
 				keytable->spaceUsed -= hashTupleSize;
 
 				/* next tuple in this chunk */
 				spstate->sp_CurKeyIdx += MAXALIGN(hashTupleSize);
 
-				graphid = (Graphid *) (tuple+1);
-				if (*graphid == 0) continue;
+				graphid = (Graphid *) (tuple + 1);
+				if (*graphid == 0)
+					continue;
 				if ((node->hops > 1 &&
 					 tuple->t_len == sizeof(*tuple) + sizeof(Graphid) + spstate->sp_RowidSize))
 				{
@@ -1050,7 +1085,7 @@ ExecShortestpathRescanOuterNode(Hash2SideState *node, ShortestpathState *spstate
 				}
 
 				memcpy(spstate->sp_OuterTuple, tuple, sizeof(*tuple));
-				memcpy(((unsigned char*)(spstate->sp_OuterTuple + 1)) +
+				memcpy(((unsigned char *) (spstate->sp_OuterTuple + 1)) +
 					   sizeof(Graphid) + spstate->sp_RowidSize,
 					   tuple + 1,
 					   tuple->t_len - sizeof(*tuple));
@@ -1088,21 +1123,22 @@ ExecShortestpathRescanOuterNode(Hash2SideState *node, ShortestpathState *spstate
 		}
 		else if (keytable->innerBatchFile[spstate->sp_CurKeyBatch])
 		{
-			uint32 hashvalue;
+			uint32		hashvalue;
 
 			slot = ExecShortestpathGetSavedTuple(keytable->innerBatchFile[spstate->sp_CurKeyBatch],
 												 &hashvalue,
 												 spstate->sp_OuterTupleSlot);
 			if (!TupIsNull(slot))
 			{
-				bool shouldFree;
-				MinimalTuple   tuple = ExecFetchSlotMinimalTuple(slot, &shouldFree);
-				int            paramno;
+				bool		shouldFree;
+				MinimalTuple tuple = ExecFetchSlotMinimalTuple(slot, &shouldFree);
+				int			paramno;
 				ParamExecData *prm;
-				Graphid		   *graphid;
+				Graphid    *graphid;
 
-				graphid = (Graphid *) (tuple+1);
-				if (*graphid == 0) continue;
+				graphid = (Graphid *) (tuple + 1);
+				if (*graphid == 0)
+					continue;
 				if ((node->hops > 1 &&
 					 tuple->t_len == sizeof(*tuple) + sizeof(Graphid) + spstate->sp_RowidSize))
 				{
@@ -1117,7 +1153,7 @@ ExecShortestpathRescanOuterNode(Hash2SideState *node, ShortestpathState *spstate
 				}
 
 				memcpy(spstate->sp_OuterTuple, tuple, sizeof(*tuple));
-				memcpy(((unsigned char*)(spstate->sp_OuterTuple + 1)) +
+				memcpy(((unsigned char *) (spstate->sp_OuterTuple + 1)) +
 					   sizeof(Graphid) + spstate->sp_RowidSize,
 					   tuple + 1,
 					   tuple->t_len - sizeof(*tuple));
@@ -1174,7 +1210,7 @@ ExecShortestpathRescanOuterNode(Hash2SideState *node, ShortestpathState *spstate
 				if (BufFileSeek(keytable->innerBatchFile[spstate->sp_CurKeyBatch], 0, 0L, SEEK_SET))
 					ereport(ERROR,
 							(errcode_for_file_access(),
-									errmsg("could not rewind hash-join temporary file: %m")));
+							 errmsg("could not rewind hash-join temporary file: %m")));
 			}
 		}
 	}
@@ -1191,12 +1227,12 @@ ExecShortestpathRescanOuterNode(Hash2SideState *node, ShortestpathState *spstate
 static bool
 ExecShortestpathNewBatch(ShortestpathState *spstate)
 {
-	HashJoinTable   outertable = spstate->sp_OuterTable;
-	HashJoinTable   hashtable = spstate->sp_HashTable;
-	int             nextbatch;
-	BufFile        *innerFile;
+	HashJoinTable outertable = spstate->sp_OuterTable;
+	HashJoinTable hashtable = spstate->sp_HashTable;
+	int			nextbatch;
+	BufFile    *innerFile;
 	TupleTableSlot *slot;
-	uint32          hashvalue;
+	uint32		hashvalue;
 
 	Assert(hashtable->nbatch > 0 && outertable->nbatch >= hashtable->nbatch &&
 		   outertable->nbatch % hashtable->nbatch == 0);
@@ -1205,7 +1241,8 @@ ExecShortestpathNewBatch(ShortestpathState *spstate)
 	if (nextbatch >= outertable->nbatch)
 	{
 		nextbatch = nextbatch % hashtable->nbatch + 1;
-		if (nextbatch >= hashtable->nbatch) return false;
+		if (nextbatch >= hashtable->nbatch)
+			return false;
 	}
 
 	if (outertable->curbatch >= 0)
@@ -1213,9 +1250,13 @@ ExecShortestpathNewBatch(ShortestpathState *spstate)
 		if (outertable->innerBatchFile[outertable->curbatch] == NULL)
 		{
 			HashMemoryChunk oldchunks = outertable->chunks;
+
 			outertable->chunks = NULL;
 
-			/* so, let's scan through the old chunks, and all tuples in each chunk */
+			/*
+			 * so, let's scan through the old chunks, and all tuples in each
+			 * chunk
+			 */
 			while (oldchunks != NULL)
 			{
 				HashMemoryChunk nextchunk = oldchunks->next.unshared;
@@ -1227,10 +1268,10 @@ ExecShortestpathNewBatch(ShortestpathState *spstate)
 				while (idx < oldchunks->used)
 				{
 					HashJoinTuple hashTuple = (HashJoinTuple) (HASH_CHUNK_DATA(oldchunks) + idx);
-					MinimalTuple  tuple = HJTUPLE_MINTUPLE(hashTuple);
-					int           hashTupleSize = (HJTUPLE_OVERHEAD + tuple->t_len);
+					MinimalTuple tuple = HJTUPLE_MINTUPLE(hashTuple);
+					int			hashTupleSize = (HJTUPLE_OVERHEAD + tuple->t_len);
 
-					if (*((Graphid*)(tuple+1)) != 0)
+					if (*((Graphid *) (tuple + 1)) != 0)
 						ExecShortestpathSaveTuple(tuple,
 												  hashTuple->hashvalue,
 												  &outertable->innerBatchFile[outertable->curbatch]);
@@ -1241,7 +1282,10 @@ ExecShortestpathNewBatch(ShortestpathState *spstate)
 					idx += MAXALIGN(hashTupleSize);
 				}
 
-				/* we're done with this chunk - free it and proceed to the next one */
+				/*
+				 * we're done with this chunk - free it and proceed to the
+				 * next one
+				 */
 				pfree(oldchunks);
 				oldchunks = nextchunk;
 			}
@@ -1252,11 +1296,12 @@ ExecShortestpathNewBatch(ShortestpathState *spstate)
 	innerFile = outertable->innerBatchFile[nextbatch];
 	if (innerFile != NULL)
 	{
-		long saved = 0;
+		long		saved = 0;
+
 		if (BufFileSeek(innerFile, 0, 0L, SEEK_SET))
 			ereport(ERROR,
 					(errcode_for_file_access(),
-							errmsg("could not rewind hash-join temporary file: %m")));
+					 errmsg("could not rewind hash-join temporary file: %m")));
 
 		while ((slot = ExecShortestpathGetSavedTuple(innerFile,
 													 &hashvalue,
@@ -1290,9 +1335,13 @@ ExecShortestpathNewBatch(ShortestpathState *spstate)
 			if (hashtable->innerBatchFile[hashtable->curbatch] == NULL)
 			{
 				HashMemoryChunk oldchunks = hashtable->chunks;
+
 				hashtable->chunks = NULL;
 
-				/* so, let's scan through the old chunks, and all tuples in each chunk */
+				/*
+				 * so, let's scan through the old chunks, and all tuples in
+				 * each chunk
+				 */
 				while (oldchunks != NULL)
 				{
 					HashMemoryChunk nextchunk = oldchunks->next.unshared;
@@ -1300,14 +1349,17 @@ ExecShortestpathNewBatch(ShortestpathState *spstate)
 					/* position within the buffer (up to oldchunks->used) */
 					size_t		idx = 0;
 
-					/* process all tuples stored in this chunk (and then free it) */
+					/*
+					 * process all tuples stored in this chunk (and then free
+					 * it)
+					 */
 					while (idx < oldchunks->used)
 					{
 						HashJoinTuple hashTuple = (HashJoinTuple) (HASH_CHUNK_DATA(oldchunks) + idx);
-						MinimalTuple  tuple = HJTUPLE_MINTUPLE(hashTuple);
-						int           hashTupleSize = (HJTUPLE_OVERHEAD + tuple->t_len);
+						MinimalTuple tuple = HJTUPLE_MINTUPLE(hashTuple);
+						int			hashTupleSize = (HJTUPLE_OVERHEAD + tuple->t_len);
 
-						if (*((Graphid*)(tuple+1)) != 0)
+						if (*((Graphid *) (tuple + 1)) != 0)
 							ExecShortestpathSaveTuple(tuple,
 													  hashTuple->hashvalue,
 													  &hashtable->innerBatchFile[hashtable->curbatch]);
@@ -1318,7 +1370,10 @@ ExecShortestpathNewBatch(ShortestpathState *spstate)
 						idx += MAXALIGN(hashTupleSize);
 					}
 
-					/* we're done with this chunk - free it and proceed to the next one */
+					/*
+					 * we're done with this chunk - free it and proceed to the
+					 * next one
+					 */
 					pfree(oldchunks);
 					oldchunks = nextchunk;
 				}
@@ -1329,19 +1384,20 @@ ExecShortestpathNewBatch(ShortestpathState *spstate)
 		innerFile = hashtable->innerBatchFile[nextbatch];
 		if (innerFile != NULL)
 		{
-			long saved = 0;
+			long		saved = 0;
+
 			if (BufFileSeek(innerFile, 0, 0L, SEEK_SET))
 				ereport(ERROR,
 						(errcode_for_file_access(),
-								errmsg("could not rewind hash-join temporary file: %m")));
+						 errmsg("could not rewind hash-join temporary file: %m")));
 
 			while ((slot = ExecShortestpathGetSavedTuple(innerFile,
 														 &hashvalue,
 														 spstate->innerNode->slot)))
 			{
 				/*
-				 * NOTE: some tuples may be sent to future batches.  Also, it is
-				 * possible for hashtable->nbatch to be increased here!
+				 * NOTE: some tuples may be sent to future batches.  Also, it
+				 * is possible for hashtable->nbatch to be increased here!
 				 */
 				if (!ExecHash2SideTableInsert(hashtable,
 											  slot,
@@ -1427,7 +1483,7 @@ ExecShortestpathGetSavedTuple(BufFile *file,
 	if (nread != sizeof(header))
 		ereport(ERROR,
 				(errcode_for_file_access(),
-						errmsg("could not read from hash-join temporary file: %m")));
+				 errmsg("could not read from hash-join temporary file: %m")));
 	*hashvalue = header[0];
 	tuple = (MinimalTuple) palloc(header[1]);
 	tuple->t_len = header[1];
@@ -1437,7 +1493,7 @@ ExecShortestpathGetSavedTuple(BufFile *file,
 	if (nread != header[1] - sizeof(uint32))
 		ereport(ERROR,
 				(errcode_for_file_access(),
-						errmsg("could not read from hash-join temporary file: %m")));
+				 errmsg("could not read from hash-join temporary file: %m")));
 	return ExecStoreMinimalTuple(tuple, tupleSlot, true);
 }
 
@@ -1445,16 +1501,16 @@ Datum
 ExecShortestpathProjectEvalArray(Oid element_typeid, const unsigned char *elems,
 								 long len, ExprContext *econtext)
 {
-	MemoryContext  oldContext;
-	Datum         *values;
-	bool          *nulls;
-	int            i;
-	int            dims[1];
-	int            lbs[1];
-	ArrayType     *result;
-	int16          elemlength;     /* typlen of the array element type */
-	bool           elembyval;      /* is the element type pass-by-value? */
-	char           elemalign;      /* typalign of the element type */
+	MemoryContext oldContext;
+	Datum	   *values;
+	bool	   *nulls;
+	int			i;
+	int			dims[1];
+	int			lbs[1];
+	ArrayType  *result;
+	int16		elemlength;		/* typlen of the array element type */
+	bool		elembyval;		/* is the element type pass-by-value? */
+	char		elemalign;		/* typalign of the element type */
 
 	oldContext = MemoryContextSwitchTo(econtext->ecxt_per_tuple_memory);
 
@@ -1472,11 +1528,11 @@ ExecShortestpathProjectEvalArray(Oid element_typeid, const unsigned char *elems,
 		{
 			if (elembyval == true)
 			{
-				values[i] = UInt64GetDatum(*((Datum*) elems));
+				values[i] = UInt64GetDatum(*((Datum *) elems));
 			}
 			else
 			{
-				values[i] = (Datum)elems;
+				values[i] = (Datum) elems;
 			}
 			nulls[i] = false;
 			elems += elemlength;
@@ -1494,25 +1550,25 @@ ExecShortestpathProjectEvalArray(Oid element_typeid, const unsigned char *elems,
 
 TupleTableSlot *
 ExecShortestpathProject(ShortestpathState *node,
-						unsigned char     *outerids,
-						long               lenOuterids,
-						unsigned char     *innerids,
-						long               lenInnerids,
-						int                sizeGraphid,
-						int                sizeRowid)
+						unsigned char *outerids,
+						long lenOuterids,
+						unsigned char *innerids,
+						long lenInnerids,
+						int sizeGraphid,
+						int sizeRowid)
 {
 	ProjectionInfo *projInfo;
-	ExprContext    *econtext;
+	ExprContext *econtext;
 	TupleTableSlot *slot;
-	Datum          *tts_values;
-	bool           *tts_isnull;
-	unsigned char  *oids;
-	unsigned char  *iids;
-	unsigned char  *vids;
-	unsigned char  *eids;
-	long            lenVids;
-	long            lenEids;
-	long            i;
+	Datum	   *tts_values;
+	bool	   *tts_isnull;
+	unsigned char *oids;
+	unsigned char *iids;
+	unsigned char *vids;
+	unsigned char *eids;
+	long		lenVids;
+	long		lenEids;
+	long		i;
 
 	oids = outerids + (sizeGraphid + sizeRowid) * lenOuterids;
 	iids = innerids;
@@ -1580,17 +1636,17 @@ ExecReScanShortestpath(ShortestpathState *node)
 
 	if (node->js.ps.chgParam != NULL)
 	{
-		Param *sParam = (Param *) node->source->expr;
-		Param *tParam = (Param *) node->target->expr;
+		Param	   *sParam = (Param *) node->source->expr;
+		Param	   *tParam = (Param *) node->target->expr;
 
 		/*
-		 * If we have FieldSelect expressions grab the Param expression
-		 * from the FieldSelect's arg value.
+		 * If we have FieldSelect expressions grab the Param expression from
+		 * the FieldSelect's arg value.
 		 */
 		if (IsA(sParam, FieldSelect))
-			sParam = ((Param *) ((FieldSelect *)sParam)->arg);
+			sParam = ((Param *) ((FieldSelect *) sParam)->arg);
 		if (IsA(tParam, FieldSelect))
-			tParam = ((Param *) ((FieldSelect *)tParam)->arg);
+			tParam = ((Param *) ((FieldSelect *) tParam)->arg);
 
 		if (bms_is_member(sParam->paramid, node->js.ps.chgParam))
 			node->startVid = 0;
@@ -1598,11 +1654,11 @@ ExecReScanShortestpath(ShortestpathState *node)
 			node->endVid = 0;
 	}
 
-	node->hops       = 0;
+	node->hops = 0;
 	node->numResults = 0;
 
-	node->outerNode = (Hash2SideState *)outerPlanState(node);
-	node->innerNode = (Hash2SideState *)innerPlanState(node);
+	node->outerNode = (Hash2SideState *) outerPlanState(node);
+	node->innerNode = (Hash2SideState *) innerPlanState(node);
 
 	ExecReScan(node->js.ps.lefttree);
 	ExecReScan(node->js.ps.righttree);

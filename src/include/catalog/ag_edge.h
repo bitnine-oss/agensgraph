@@ -42,4 +42,4 @@ CATALOG(ag_edge,7020,EdgeRelationId) BKI_BOOTSTRAP BKI_ROWTYPE_OID(7022,EdgeRela
  */
 typedef FormData_ag_edge *Form_ag_edge;
 
-#endif   /* AG_EDGE_H */
+#endif							/* AG_EDGE_H */

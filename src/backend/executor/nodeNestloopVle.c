@@ -46,26 +46,31 @@ typedef struct NestLoopVLEContext
 
 
 /* hops */
-static int getInitialCurhops(NestLoopVLE *node);
+static int	getInitialCurhops(NestLoopVLE *node);
 static bool canFollowEdge(NestLoopVLEState *node);
 static bool needResult(NestLoopVLEState *node);
+
 /* result values */
 static void pushPathElementOuter(NestLoopVLEState *node, TupleTableSlot *slot);
 static void pushPathElementInner(NestLoopVLEState *node, TupleTableSlot *slot);
 static void popPathElement(NestLoopVLEState *node);
+
 /* additional ArrayBuildState operations */
 static bool arrayResultHas(ArrayBuildState *astate, Datum elem);
 static void arrayResultPop(ArrayBuildState *astate);
 static void arrayResultClear(ArrayBuildState *astate);
+
 /* context */
 static void storeOuterVar(NestLoopVLEState *node, TupleTableSlot *slot);
 static void restoreOuterVar(NestLoopVLEState *node, TupleTableSlot *slot);
 static void setNextOuterVar(TupleTableSlot *outer_slot,
 							TupleTableSlot *inner_slot);
 static void fetchOuterVars(NestLoopVLE *nlv, ExprContext *econtext,
-						  TupleTableSlot *outerTupleSlot, PlanState *innerPlan);
+						   TupleTableSlot *outerTupleSlot, PlanState *innerPlan);
+
 /* result slot */
 static void adjustResult(NestLoopVLEState *node, TupleTableSlot *slot);
+
 /* cleanup */
 static void freePlanStateChgParam(PlanState *node);
 
@@ -93,9 +98,8 @@ ExecNestLoopVLE(PlanState *pstate)
 	otherqual = node->nls.js.ps.qual;
 
 	/*
-	 * outerPlan is only for;
-	 * 1) the first edge in the path if node->curhops == 1
-	 * 2) the first vertex in the path if node->curhops == 0
+	 * outerPlan is only for; 1) the first edge in the path if node->curhops
+	 * == 1 2) the first vertex in the path if node->curhops == 0
 	 */
 	outerPlan = outerPlanState(node);
 	/* innerPlan is for the rest of <vertex, edge> pairs in the path. */
@@ -116,11 +120,11 @@ ExecNestLoopVLE(PlanState *pstate)
 	ENLV1_printf("entering main loop");
 
 	/*
-	 *      outer              inner               inner         ...
+	 * ==== outer              inner               inner         ...
 	 *
-	 * prev  ids  curr |          id  next |          id  next |
-	 *   -----------   |   () ----------   |   () ----------   | ...
-	 *      edges      | vertex  edge      | vertex  edge      |
+	 * prev  ids  curr |          id  next |          id  next | -----------
+	 * |   () ----------   |   () ----------   | ... edges      | vertex  edge
+	 * | vertex  edge      |
 	 */
 	for (;;)
 	{
@@ -149,8 +153,8 @@ ExecNestLoopVLE(PlanState *pstate)
 				node->nls.nl_NeedNewOuter = false;
 
 				/*
-				 * Store eid to guarantee edge-uniqueness, and edge to generate
-				 * edge array for each result.
+				 * Store eid to guarantee edge-uniqueness, and edge to
+				 * generate edge array for each result.
 				 */
 				pushPathElementOuter(node, outerTupleSlot);
 
@@ -163,8 +167,8 @@ ExecNestLoopVLE(PlanState *pstate)
 				ExecReScan(innerPlan);
 
 				/*
-				 * in the case that <curhops, minHops> is either <0, 0> or
-				 * <1, 1> (which is the starting point)
+				 * in the case that <curhops, minHops> is either <0, 0> or <1,
+				 * 1> (which is the starting point)
 				 */
 				if (needResult(node))
 				{
@@ -234,6 +238,7 @@ ExecNestLoopVLE(PlanState *pstate)
 				 * previous edge can use the right outer variable. We don't
 				 * pass innerPlan because chgParam's are properly managed by
 				 * ExecProcNode() and ExecNextContext()/ExecPrevContext().
+				 *
 				 * The remaning scans will see chgParam's for them and be able
 				 * to determine whether they have to re-scan or not.
 				 */
@@ -284,19 +289,19 @@ ExecNestLoopVLE(PlanState *pstate)
 
 					/*
 					 * Store the current outer variable so that the remaining
-					 * scans for the current edge can use it later.
-					 * SeqScan uses it for each tuple. Index(Only)Scan uses it
-					 * when runtime keys are evaluated while re-scanning.
+					 * scans for the current edge can use it later. SeqScan
+					 * uses it for each tuple. Index(Only)Scan uses it when
+					 * runtime keys are evaluated while re-scanning.
 					 *
 					 * See fetchOuterVars() and ExecIndexEvalRuntimeKeys().
 					 */
 					storeOuterVar(node, outerTupleSlot);
 
 					/*
-					 * Set the outer variable to the next vid so that;
-					 * 1) ExecProject() can use the value of
-					 *    INNER_NEXT_VID_VARNO for OUTER_CURR_VID_VARNO.
-					 * 2) innerScan for the next edge can use it.
+					 * === Set the outer variable to the next vid so that; 1)
+					 * ExecProject() can use the value of INNER_NEXT_VID_VARNO
+					 * for OUTER_CURR_VID_VARNO. 2) innerScan for the next
+					 * edge can use it.
 					 */
 					setNextOuterVar(outerTupleSlot, innerTupleSlot);
 
@@ -304,10 +309,10 @@ ExecNestLoopVLE(PlanState *pstate)
 					 * The result will have outerTupleSlot + innerTupleSlot.
 					 *
 					 * If innerScan is re-scanned for the next edge,
-					 * ecxt_per_tuple_memory in Index(Only)Scan is reset.
-					 * This means that the values in the slot from the
-					 * innerPlan will be no longer valid after the reset.
-					 * So, we should project the result at here.
+					 * ecxt_per_tuple_memory in Index(Only)Scan is reset. This
+					 * means that the values in the slot from the innerPlan
+					 * will be no longer valid after the reset. So, we should
+					 * project the result at here.
 					 */
 					if (needResult(node))
 						result = ExecProject(node->nls.js.ps.ps_ProjInfo);
@@ -319,49 +324,44 @@ ExecNestLoopVLE(PlanState *pstate)
 					fetchOuterVars(nlv, econtext, outerTupleSlot, innerPlan);
 
 					/*
-					 * now rescan the inner plan
+					 * ==== now rescan the inner plan
 					 *
 					 * For now, there are three kinds of innerPlan.
 					 *
 					 * 1. scan0 (SeqScan|IndexScan|IndexOnlyScan)
 					 *
 					 * ExecReScan(innerPlan) re-scans scan0 immediately if a
-					 * scan descriptor for it already exists. If not, the first
-					 * ExecProcNode(innerPlan) will re-scan it.
+					 * scan descriptor for it already exists. If not, the
+					 * first ExecProcNode(innerPlan) will re-scan it.
 					 *
-					 * 2. Result (may not exist depending on queries)
-					 *      Append (label hierarchy)
-					 *        scan0
-					 *        scan1 *
-					 *        scan2
+					 * 2. Result (may not exist depending on queries) Append
+					 * (label hierarchy) scan0 scan1 * scan2
 					 *
 					 * ExecReScan(innerPlan) does not re-scan scan0~2 because
-					 * re-scaning Result/Append does not re-scan their subplans
-					 * immediately. Instead, the first ExecProcNode() over
-					 * scan0~2 will re-scan them if their chgParam is set.
-					 * (Although ExecReScan() over them is called by calling
-					 * ExecProcNode(), it considers the condition described at
-					 * 1 above.)
+					 * re-scaning Result/Append does not re-scan their
+					 * subplans immediately. Instead, the first ExecProcNode()
+					 * over scan0~2 will re-scan them if their chgParam is
+					 * set. (Although ExecReScan() over them is called by
+					 * calling ExecProcNode(), it considers the condition
+					 * described at 1 above.)
 					 *
 					 * Let's assume that we need to get the next edge of the
-					 * current edge while scanning scan1.
-					 * a. ExecNextContext(innerPlan) stores the scan context of
-					 *    the current edge which is now previous edge.
-					 * b. fetchOuterVars() fetchs outer variables and then sets
-					 *    chgParam for Result/Append.
-					 * c. ExecReScan(innerPlan) and future
-					 *    ExecProcNode(innerPlan) calls eventually unset all
-					 *    the chgParam's.
-					 * d. ExecPrevContext(innerPlan) restores the scan context
-					 *    of the previous edge.
-					 * If we don't care about chgParam's, the first
+					 * current edge while scanning scan1. a.
+					 * ExecNextContext(innerPlan) stores the scan context of
+					 * the current edge which is now previous edge. b.
+					 * fetchOuterVars() fetchs outer variables and then sets
+					 * chgParam for Result/Append. c. ExecReScan(innerPlan)
+					 * and future ExecProcNode(innerPlan) calls eventually
+					 * unset all the chgParam's. d. ExecPrevContext(innerPlan)
+					 * restores the scan context of the previous edge. If we
+					 * don't care about chgParam's, the first
 					 * ExecProcNode(scan2) will not be re-scanned because its
-					 * chgParam is unset.
-					 * This is why storing/restoring chgParam's is important.
+					 * chgParam is unset. This is why storing/restoring
+					 * chgParam's is important.
 					 *
-					 * 3. NestLoop (if vertices have to be returned)
-					 *      <the same with 1 or 2 above, for vertices>
-					 *      <the same with 1 or 2 above, for edges>
+					 * 3. NestLoop (if vertices have to be returned) <the same
+					 * with 1 or 2 above, for vertices> <the same with 1 or 2
+					 * above, for edges>
 					 */
 					ENLV1_printf("rescanning inner plan");
 					ExecReScan(innerPlan);
@@ -479,11 +479,13 @@ ExecInitNestLoopVLE(NestLoopVLE *node, EState *estate, int eflags)
 	nlvstate->curhops = getInitialCurhops(node);
 
 	innerTupleDesc =
-			innerPlanState(nlvstate)->ps_ResultTupleSlot->tts_tupleDescriptor;
+		innerPlanState(nlvstate)->ps_ResultTupleSlot->tts_tupleDescriptor;
 	element_type = TupleDescAttr(innerTupleDesc, INNER_EID_VARNO)->atttypid;
 	nlvstate->eids = initArrayResult(element_type, CurrentMemoryContext, false);
+
 	/*
 	 * {prev, curr, ids | next, id} + {edges | edge}
+	 *
 	 * See genVLESubselect().
 	 */
 	if (list_length(nlvstate->nls.js.ps.plan->targetlist) >= 7)
@@ -492,8 +494,10 @@ ExecInitNestLoopVLE(NestLoopVLE *node, EState *estate, int eflags)
 		nlvstate->edges = initArrayResult(element_type, CurrentMemoryContext,
 										  false);
 	}
+
 	/*
 	 * {prev, curr, ids, edges | next, id, edge} + {vertices | vertex}
+	 *
 	 * See genVLESubselect().
 	 */
 	if (list_length(nlvstate->nls.js.ps.plan->targetlist) == 9)
@@ -561,12 +565,12 @@ ExecEndNestLoopVLE(NestLoopVLEState *node)
 	/*
 	 * Back out our context stack, if necessary. It is important to note that
 	 * the context depth is calculated ONLY to make it easier to follow. It is
-	 * built from the fact that curhops can start from 0 or 1 and that for
-	 * the first two increments, it does NOT push a context on the stack.
-	 * Note that negative values for depth equate to a depth of zero.
+	 * built from the fact that curhops can start from 0 or 1 and that for the
+	 * first two increments, it does NOT push a context on the stack. Note
+	 * that negative values for depth equate to a depth of zero.
 	 *
-	 * Additionally, we need to free any chgParam BMSets that might have
-	 * been pending in the PlanState nodes.
+	 * Additionally, we need to free any chgParam BMSets that might have been
+	 * pending in the PlanState nodes.
 	 *
 	 * We do all of this because the LIMIT clause interrupts processing,
 	 * leaving the VLE contexts in incomplete states. This causes memory
@@ -597,7 +601,7 @@ ExecEndNestLoopVLE(NestLoopVLEState *node)
 static void
 freePlanStateChgParam(PlanState *node)
 {
-	PlanState *ps = NULL;
+	PlanState  *ps = NULL;
 
 	/* base case, NULL leaf, nothing to do */
 	if (node == NULL)
@@ -875,9 +879,9 @@ setNextOuterVar(TupleTableSlot *outer_slot, TupleTableSlot *inner_slot)
 {
 	/* here, we assume that the outer variable is graphid which is typbyval */
 	outer_slot->tts_values[OUTER_CURR_VID_VARNO]
-			= inner_slot->tts_values[INNER_NEXT_VID_VARNO];
+		= inner_slot->tts_values[INNER_NEXT_VID_VARNO];
 	outer_slot->tts_isnull[OUTER_CURR_VID_VARNO]
-			= inner_slot->tts_isnull[INNER_NEXT_VID_VARNO];
+		= inner_slot->tts_isnull[INNER_NEXT_VID_VARNO];
 }
 
 /*

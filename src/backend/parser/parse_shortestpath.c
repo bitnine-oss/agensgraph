@@ -119,15 +119,15 @@ checkNodeForRefForDijkstra(ParseState *pstate, CypherNode *cnode)
 	if (getCypherName(cnode->label) != NULL)
 		ereport(ERROR,
 				(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-						errmsg("label is not supported"),
-						parser_errposition(pstate, getCypherNameLoc(cnode->label))));
+				 errmsg("label is not supported"),
+				 parser_errposition(pstate, getCypherNameLoc(cnode->label))));
 
 	if (cnode->prop_map != NULL)
 		ereport(ERROR,
 				(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-						errmsg("property constraint is not supported"),
-						parser_errposition(pstate,
-										   getCypherNameLoc(cnode->variable))));
+				 errmsg("property constraint is not supported"),
+				 parser_errposition(pstate,
+									getCypherNameLoc(cnode->variable))));
 }
 
 static void
@@ -140,25 +140,25 @@ checkNodeReferableForDijkstra(ParseState *pstate, CypherNode *cnode)
 	if (varname == NULL)
 		ereport(ERROR,
 				(errcode(ERRCODE_INVALID_COLUMN_REFERENCE),
-						errmsg("node must be a reference to a specific node")));
+				 errmsg("node must be a reference to a specific node")));
 
 	col = colNameToVar(pstate, varname, false, varloc);
 	if (col == NULL)
 		ereport(ERROR,
 				(errcode(ERRCODE_INVALID_COLUMN_REFERENCE),
-						errmsg("variable \"%s\" does not exist", varname),
-						parser_errposition(pstate, varloc)));
+				 errmsg("variable \"%s\" does not exist", varname),
+				 parser_errposition(pstate, varloc)));
 	if (exprType(col) != VERTEXOID)
 		ereport(ERROR,
 				(errcode(ERRCODE_DATATYPE_MISMATCH),
-						errmsg("variable \"%s\" is not a vertex", varname),
-						parser_errposition(pstate, varloc)));
+				 errmsg("variable \"%s\" is not a vertex", varname),
+				 parser_errposition(pstate, varloc)));
 
 	if (cnode->prop_map != NULL)
 		ereport(ERROR,
 				(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-						errmsg("property constraint is not supported"),
-						parser_errposition(pstate, varloc)));
+				 errmsg("property constraint is not supported"),
+				 parser_errposition(pstate, varloc)));
 }
 
 static void
@@ -169,15 +169,15 @@ checkNodeForRef(ParseState *pstate, CypherNode *cnode)
 	if (getCypherName(cnode->label) != NULL)
 		ereport(ERROR,
 				(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-						errmsg("label is not supported"),
-						parser_errposition(pstate, getCypherNameLoc(cnode->label))));
+				 errmsg("label is not supported"),
+				 parser_errposition(pstate, getCypherNameLoc(cnode->label))));
 
 	if (cnode->prop_map != NULL)
 		ereport(ERROR,
 				(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-						errmsg("property constraint is not supported"),
-						parser_errposition(pstate,
-										   getCypherNameLoc(cnode->variable))));
+				 errmsg("property constraint is not supported"),
+				 parser_errposition(pstate,
+									getCypherNameLoc(cnode->variable))));
 }
 
 static void
@@ -190,26 +190,26 @@ checkNodeReferable(ParseState *pstate, CypherNode *cnode)
 	if (varname == NULL)
 		ereport(ERROR,
 				(errcode(ERRCODE_INVALID_COLUMN_REFERENCE),
-						errmsg("node must be a reference to a specific node")));
+				 errmsg("node must be a reference to a specific node")));
 
 	col = colNameToVar(pstate, varname, false, varloc);
 	if (col == NULL)
 		ereport(ERROR,
 				(errcode(ERRCODE_INVALID_COLUMN_REFERENCE),
-						errmsg("variable \"%s\" does not exist", varname),
-						parser_errposition(pstate, varloc)));
+				 errmsg("variable \"%s\" does not exist", varname),
+				 parser_errposition(pstate, varloc)));
 	if (exprType(col) != VERTEXOID)
 		ereport(ERROR,
 				(errcode(ERRCODE_DATATYPE_MISMATCH),
-						errmsg("variable \"%s\" is not a vertex", varname),
-						parser_errposition(pstate, varloc)));
+				 errmsg("variable \"%s\" is not a vertex", varname),
+				 parser_errposition(pstate, varloc)));
 }
 
 static void
 checkRelFormat(ParseState *pstate, CypherRel *crel, bool is_match)
 {
-	char *varname;
-	int   varloc;
+	char	   *varname;
+	int			varloc;
 
 	if (crel->variable != NULL)
 	{
@@ -222,35 +222,35 @@ checkRelFormat(ParseState *pstate, CypherRel *crel, bool is_match)
 				if (colNameToVar(pstate, varname, false, varloc) != NULL)
 					ereport(ERROR,
 							(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-									errmsg("bound variable to edge not allowed in shortestpath"),
-									parser_errposition(pstate, getCypherNameLoc(crel->variable))));
+							 errmsg("bound variable to edge not allowed in shortestpath"),
+							 parser_errposition(pstate, getCypherNameLoc(crel->variable))));
 			}
 		}
 		else
 		{
 			ereport(ERROR,
 					(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-							errmsg("variable is not supported"),
-							parser_errposition(pstate, getCypherNameLoc(crel->variable))));
+					 errmsg("variable is not supported"),
+					 parser_errposition(pstate, getCypherNameLoc(crel->variable))));
 		}
 	}
 
 	if (crel->varlen != NULL)
 	{
 		A_Indices  *indices = (A_Indices *) crel->varlen;
-		A_Const	   *lidx = (A_Const *) indices->lidx;
+		A_Const    *lidx = (A_Const *) indices->lidx;
 
 		if (lidx->val.val.ival > 1)
 			ereport(ERROR,
 					(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-							errmsg("only 0 or 1 is allowed for minimal length"),
-							parser_errposition(pstate, lidx->location)));
+					 errmsg("only 0 or 1 is allowed for minimal length"),
+					 parser_errposition(pstate, lidx->location)));
 	}
 
 	if (crel->prop_map != NULL)
 		ereport(ERROR,
 				(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-						errmsg("property constraint is not supported")));
+				 errmsg("property constraint is not supported")));
 }
 
 /*
@@ -300,7 +300,7 @@ checkRelFormat(ParseState *pstate, CypherRel *crel, bool is_match)
 static Query *
 makeShortestPathQuery(ParseState *pstate, CypherPath *cpath, bool isexpr)
 {
-	Query 	   *qry;
+	Query	   *qry;
 	ParseNamespaceItem *nsitem;
 	Node	   *vertices;
 	Node	   *edges;
@@ -332,7 +332,7 @@ makeShortestPathQuery(ParseState *pstate, CypherPath *cpath, bool isexpr)
 									   GRAPHPATHOID, -1);
 		if (cpath->kind == CPATH_SHORTEST_ALL && isexpr)
 		{
-			FuncCall *arragg;
+			FuncCall   *arragg;
 
 			arragg = makeArrayAggFuncCall(list_make1(path), -1);
 			path = (Node *) arragg;
@@ -383,21 +383,21 @@ makeShortestPathQuery(ParseState *pstate, CypherPath *cpath, bool isexpr)
 static ParseNamespaceItem *
 makeShortestPathFrom(ParseState *parentParseState, CypherPath *cpath)
 {
-	Alias		   *alias;
-	ParseState	   *pstate;
-	Node		   *target;
-	Query		   *qry;
-	TargetEntry	   *te;
-	FuncExpr	   *fc;
-	CypherRel	   *crel;
-	Node		   *start;
-	Node		   *end;
-	CypherNode	   *vertex;
-	Node		   *param;
-	Node		   *vertex_id;
-	List		   *where = NIL;
-	Node		   *qual;
-	ParseNamespaceItem	*nsitem;
+	Alias	   *alias;
+	ParseState *pstate;
+	Node	   *target;
+	Query	   *qry;
+	TargetEntry *te;
+	FuncExpr   *fc;
+	CypherRel  *crel;
+	Node	   *start;
+	Node	   *end;
+	CypherNode *vertex;
+	Node	   *param;
+	Node	   *vertex_id;
+	List	   *where = NIL;
+	Node	   *qual;
+	ParseNamespaceItem *nsitem;
 
 	Assert(parentParseState->p_expr_kind == EXPR_KIND_NONE);
 	parentParseState->p_expr_kind = EXPR_KIND_FROM_SUBSELECT;
@@ -452,18 +452,19 @@ makeShortestPathFrom(ParseState *parentParseState, CypherPath *cpath)
 	qry->shortestpathMaxhops = 1;
 	if (crel->varlen != NULL)
 	{
-		A_Indices     *indices;
-		A_Const       *idx;
+		A_Indices  *indices;
+		A_Const    *idx;
+
 		qry->shortestpathMaxhops = LONG_MAX;
 		indices = (A_Indices *) crel->varlen;
-		if( indices->lidx != NULL)
+		if (indices->lidx != NULL)
 		{
-			idx = (A_Const *)indices->lidx;
+			idx = (A_Const *) indices->lidx;
 			qry->shortestpathMinhops = idx->val.val.ival;
 		}
-		if( indices->uidx != NULL)
+		if (indices->uidx != NULL)
 		{
-			idx = (A_Const *)indices->uidx;
+			idx = (A_Const *) indices->uidx;
 			qry->shortestpathMaxhops = idx->val.val.ival;
 		}
 	}
@@ -493,12 +494,12 @@ makeShortestPathFrom(ParseState *parentParseState, CypherPath *cpath)
 	if (crel->direction == CYPHER_REL_DIR_LEFT)
 	{
 		start = makeColumnRef1(SP_ALIASNAME_END_LEFT);
-		end   = makeColumnRef1(SP_ALIASNAME_START_RIGHT);
+		end = makeColumnRef1(SP_ALIASNAME_START_RIGHT);
 	}
 	else
 	{
 		start = makeColumnRef1(SP_ALIASNAME_START_LEFT);
-		end   = makeColumnRef1(SP_ALIASNAME_END_RIGHT);
+		end = makeColumnRef1(SP_ALIASNAME_END_RIGHT);
 	}
 
 	vertex = linitial(cpath->chain);
@@ -514,9 +515,10 @@ makeShortestPathFrom(ParseState *parentParseState, CypherPath *cpath)
 	where = lappend(where, makeSimpleA_Expr(AEXPR_OP, "=", end, vertex_id, -1));
 
 	/* qual */
-	/* Add Property Constraint
-	 * if (cpath->qual != NULL)
-	 *    where = lappend(where, cpath->qual);
+
+	/*
+	 * Add Property Constraint if (cpath->qual != NULL) where = lappend(where,
+	 * cpath->qual);
 	 */
 
 	qual = transformCypherExpr(pstate,
@@ -558,11 +560,11 @@ makeShortestPathFrom(ParseState *parentParseState, CypherPath *cpath)
 static ParseNamespaceItem *
 makeShortestpathEdgeLeftQuery(ParseState *pstate, CypherPath *cpath)
 {
-	CypherRel 	   *crel;
-	char 		   *elabel_name;
-	Alias		   *alias;
-	Node		   *sub;
-	Query		   *qry;
+	CypherRel  *crel;
+	char	   *elabel_name;
+	Alias	   *alias;
+	Node	   *sub;
+	Query	   *qry;
 
 	Assert(pstate->p_expr_kind == EXPR_KIND_NONE);
 	pstate->p_expr_kind = EXPR_KIND_FROM_SUBSELECT;
@@ -586,11 +588,11 @@ makeShortestpathEdgeLeftQuery(ParseState *pstate, CypherPath *cpath)
 static ParseNamespaceItem *
 makeShortestpathEdgeRightQuery(ParseState *pstate, CypherPath *cpath)
 {
-	CypherRel 	   *crel;
-	char 		   *elabel_name;
-	Alias		   *alias;
-	Node		   *sub;
-	Query		   *qry;
+	CypherRel  *crel;
+	char	   *elabel_name;
+	Alias	   *alias;
+	Node	   *sub;
+	Query	   *qry;
 
 	Assert(pstate->p_expr_kind == EXPR_KIND_NONE);
 	pstate->p_expr_kind = EXPR_KIND_FROM_SUBSELECT;
@@ -823,7 +825,7 @@ makeVerticesSubLink(void)
 
 	vertex = makeRowExprWithTypeCast(list_make3(id,
 												makeColumnRef1(
-														AG_ELEM_PROP_MAP),
+															   AG_ELEM_PROP_MAP),
 												makeColumnRef1("ctid")),
 									 VERTEXOID, -1);
 	selsub->targetList = list_make1(makeResTarget(vertex, NULL));
@@ -981,12 +983,12 @@ getCypherRelType(CypherRel *crel, char **typname, int *typloc)
 	}
 	else
 	{
-		Node *type;
+		Node	   *type;
 
 		if (list_length(crel->types) > 1)
 			ereport(ERROR,
 					(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-							errmsg("multiple types for relationship not supported")));
+					 errmsg("multiple types for relationship not supported")));
 
 		type = linitial(crel->types);
 
@@ -1008,7 +1010,7 @@ makeVertexIdExpr(Node *vertex)
 static Node *
 makeColumnRef1(char *colname)
 {
-	List *fields;
+	List	   *fields;
 
 	fields = list_make1(makeString(colname));
 
@@ -1018,7 +1020,7 @@ makeColumnRef1(char *colname)
 static Node *
 makeSubLink(SelectStmt *sel)
 {
-	SubLink *sublink;
+	SubLink    *sublink;
 
 	sublink = makeNode(SubLink);
 	sublink->subLinkType = EXPR_SUBLINK;
@@ -1068,18 +1070,18 @@ checkRelFormatForDijkstra(ParseState *pstate, CypherRel *crel)
 	if (crel->varlen != NULL)
 	{
 		A_Indices  *indices = (A_Indices *) crel->varlen;
-		A_Const	   *lidx = (A_Const *) indices->lidx;
+		A_Const    *lidx = (A_Const *) indices->lidx;
 
 		ereport(ERROR,
 				(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-						errmsg("variable length relationship is not supported"),
-						parser_errposition(pstate, lidx->location)));
+				 errmsg("variable length relationship is not supported"),
+				 parser_errposition(pstate, lidx->location)));
 	}
 
 	if (crel->prop_map != NULL)
 		ereport(ERROR,
 				(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-						errmsg("property constraint is not supported")));
+				 errmsg("property constraint is not supported")));
 }
 
 /*
@@ -1125,7 +1127,7 @@ checkRelFormatForDijkstra(ParseState *pstate, CypherRel *crel)
 static Query *
 makeDijkstraQuery(ParseState *pstate, CypherPath *cpath, bool is_expr)
 {
-	Query 	   *qry;
+	Query	   *qry;
 	ParseNamespaceItem *nsitem;
 	Node	   *vertices;
 	Node	   *edges;
@@ -1152,7 +1154,7 @@ makeDijkstraQuery(ParseState *pstate, CypherPath *cpath, bool is_expr)
 								   GRAPHPATHOID, -1);
 	if (is_expr)
 	{
-		FuncCall *arragg;
+		FuncCall   *arragg;
 
 		arragg = makeArrayAggFuncCall(list_make1(path), -1);
 		path = (Node *) arragg;
@@ -1166,7 +1168,7 @@ makeDijkstraQuery(ParseState *pstate, CypherPath *cpath, bool is_expr)
 
 	if (cpath->weight_var)
 	{
-		char *weight_varname = getCypherName(cpath->weight_var);
+		char	   *weight_varname = getCypherName(cpath->weight_var);
 
 		expr = transformExpr(pstate, makeColumnRef1("weight"),
 							 EXPR_KIND_SELECT_TARGET);
@@ -1211,7 +1213,7 @@ makeDijkstraFrom(ParseState *parentParseState, CypherPath *cpath)
 	FuncCall   *fc;
 	CypherRel  *crel;
 	Oid			wtype;
-	Node  	   *start;
+	Node	   *start;
 	CypherNode *vertex;
 	Node	   *param;
 	Node	   *vertex_id;
@@ -1266,18 +1268,18 @@ makeDijkstraFrom(ParseState *parentParseState, CypherPath *cpath)
 		if (weight == NULL)
 			ereport(ERROR,
 					(errcode(ERRCODE_DATATYPE_MISMATCH),
-							errmsg("weight must be type %s, not type %s",
-								   format_type_be(FLOAT8OID),
-								   format_type_be(wtype)),
-							parser_errposition(pstate, exprLocation(target))));
+					 errmsg("weight must be type %s, not type %s",
+							format_type_be(FLOAT8OID),
+							format_type_be(wtype)),
+					 parser_errposition(pstate, exprLocation(target))));
 
 		target = weight;
 	}
 	if (expression_returns_set(target))
 		ereport(ERROR,
 				(errcode(ERRCODE_DATATYPE_MISMATCH),
-						errmsg("weight must not return a set"),
-						parser_errposition(pstate, exprLocation(target))));
+				 errmsg("weight must not return a set"),
+				 parser_errposition(pstate, exprLocation(target))));
 
 	te = makeTargetEntry((Expr *) target,
 						 (AttrNumber) pstate->p_next_resno++,
@@ -1360,12 +1362,12 @@ makeDijkstraFrom(ParseState *parentParseState, CypherPath *cpath)
 static ParseNamespaceItem *
 makeDijkstraEdgeQuery(ParseState *pstate, CypherPath *cpath)
 {
-	CypherRel 	   *crel;
-	char 		   *elabel_name;
-	char		   *row_name;
-	Alias		   *alias;
-	Node		   *sub;
-	Query		   *qry;
+	CypherRel  *crel;
+	char	   *elabel_name;
+	char	   *row_name;
+	Alias	   *alias;
+	Node	   *sub;
+	Query	   *qry;
 
 	Assert(pstate->p_expr_kind == EXPR_KIND_NONE);
 	pstate->p_expr_kind = EXPR_KIND_FROM_SUBSELECT;
@@ -1462,12 +1464,12 @@ makeDijkstraEdgeUnion(char *elabel_name, char *row_name)
 	if (row_name != NULL)
 	{
 		row = makeRowExprWithTypeCast(
-				list_make5(makeColumnRef1(AG_ELEM_LOCAL_ID),
-						   makeColumnRef1("_start"),
-						   makeColumnRef1("_end"),
-						   makeColumnRef1(AG_ELEM_PROP_MAP),
-						   makeColumnRef1("ctid")),
-				EDGEOID, -1);
+									  list_make5(makeColumnRef1(AG_ELEM_LOCAL_ID),
+												 makeColumnRef1("_start"),
+												 makeColumnRef1("_end"),
+												 makeColumnRef1(AG_ELEM_PROP_MAP),
+												 makeColumnRef1("ctid")),
+									  EDGEOID, -1);
 		sel->targetList = lappend(sel->targetList,
 								  makeResTarget(row, row_name));
 	}
@@ -1500,12 +1502,12 @@ makeDijkstraEdge(char *elabel_name, char *row_name)
 		Node	   *row;
 
 		row = makeRowExprWithTypeCast(
-				list_make5(makeColumnRef1(AG_ELEM_LOCAL_ID),
-						   makeColumnRef1(AG_START_ID),
-						   makeColumnRef1(AG_END_ID),
-						   makeColumnRef1(AG_ELEM_PROP_MAP),
-						   makeColumnRef1("ctid")),
-				EDGEOID, -1);
+									  list_make5(makeColumnRef1(AG_ELEM_LOCAL_ID),
+												 makeColumnRef1(AG_START_ID),
+												 makeColumnRef1(AG_END_ID),
+												 makeColumnRef1(AG_ELEM_PROP_MAP),
+												 makeColumnRef1("ctid")),
+									  EDGEOID, -1);
 		sel->targetList = lappend(sel->targetList,
 								  makeResTarget(row, row_name));
 	}

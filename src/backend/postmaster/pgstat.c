@@ -5913,14 +5913,14 @@ get_agstat_stack_level(int nest_level)
 	xact_state = agStatXactStack;
 	if (xact_state == NULL || xact_state->nest_level != nest_level)
 	{
-		HASHCTL	hash_ctl;
+		HASHCTL		hash_ctl;
 
 		if (agStatContext == NULL)
 			agStatContext = AllocSetContextCreate(TopTransactionContext,
-					"AGGRAPHMETA context",
-					ALLOCSET_SMALL_SIZES);
+												  "AGGRAPHMETA context",
+												  ALLOCSET_SMALL_SIZES);
 
-		/* push new subxactstatus to stack*/
+		/* push new subxactstatus to stack */
 		xact_state = (AgStat_SubXactStatus *)
 			MemoryContextAlloc(agStatContext,
 							   sizeof(AgStat_SubXactStatus));
@@ -5945,19 +5945,20 @@ get_agstat_stack_level(int nest_level)
 void
 agstat_count_edge_create(Labid edge, Labid start, Labid end)
 {
-	int		nest_level;
-	bool	found;
+	int			nest_level;
+	bool		found;
 
-	AgStat_key				key;
-	AgStat_GraphMeta	   *graphmeta;
-	AgStat_SubXactStatus   *xact_state;
+	AgStat_key	key;
+	AgStat_GraphMeta *graphmeta;
+	AgStat_SubXactStatus *xact_state;
 
 	nest_level = GetCurrentTransactionNestLevel();
 	xact_state = get_agstat_stack_level(nest_level);
 
-	/* AgStat_key is 10 byte but aligned to 12 byte.
-	 * So last 2 byte can have garbage value.
-	 * It must be cleaned before use.*/
+	/*
+	 * AgStat_key is 10 byte but aligned to 12 byte. So last 2 byte can have
+	 * garbage value. It must be cleaned before use.
+	 */
 	memset(&key, 0, sizeof(key));
 	key.graph = get_graph_path_oid();
 	key.edge = edge;
@@ -5980,12 +5981,12 @@ agstat_count_edge_create(Labid edge, Labid start, Labid end)
 void
 agstat_count_edge_delete(Labid edge, Labid start, Labid end)
 {
-	int		nest_level;
-	bool	found;
+	int			nest_level;
+	bool		found;
 
-	AgStat_key				key;
-	AgStat_GraphMeta	   *graphmeta;
-	AgStat_SubXactStatus   *xact_state;
+	AgStat_key	key;
+	AgStat_GraphMeta *graphmeta;
+	AgStat_SubXactStatus *xact_state;
 
 	nest_level = GetCurrentTransactionNestLevel();
 	xact_state = get_agstat_stack_level(nest_level);
@@ -6016,8 +6017,8 @@ agstat_drop_vlabel(const char *vlab)
 	HeapTuple	tup;
 	Oid			graph;
 	Labid		vlid;
-	ScanKeyData	key[2];
-	SysScanDesc	scan;
+	ScanKeyData key[2];
+	SysScanDesc scan;
 
 	graph = get_graph_path_oid();
 	vlid = get_labname_labid(vlab, graph);
@@ -6029,13 +6030,13 @@ agstat_drop_vlabel(const char *vlab)
 
 	/* delete tuple which start = vid */
 	ScanKeyInit(&key[0],
-			Anum_ag_graphmeta_graph,
-			BTEqualStrategyNumber, F_OIDEQ,
-			ObjectIdGetDatum(graph));
+				Anum_ag_graphmeta_graph,
+				BTEqualStrategyNumber, F_OIDEQ,
+				ObjectIdGetDatum(graph));
 	ScanKeyInit(&key[1],
-			Anum_ag_graphmeta_start,
-			BTEqualStrategyNumber, F_INT2EQ,
-			Int16GetDatum(vlid));
+				Anum_ag_graphmeta_start,
+				BTEqualStrategyNumber, F_INT2EQ,
+				Int16GetDatum(vlid));
 
 	scan = systable_beginscan(ag_graphmeta, GraphMetaStartIndexId,
 							  true, NULL, 2, key);
@@ -6047,16 +6048,16 @@ agstat_drop_vlabel(const char *vlab)
 
 	/* delete tuple which end = vid */
 	ScanKeyInit(&key[1],
-			Anum_ag_graphmeta_end,
-			BTEqualStrategyNumber, F_INT2EQ,
-			Int16GetDatum(vlid));
+				Anum_ag_graphmeta_end,
+				BTEqualStrategyNumber, F_INT2EQ,
+				Int16GetDatum(vlid));
 
 	scan = systable_beginscan(ag_graphmeta, GraphMetaEndIndexId,
 							  true, NULL, 2, key);
 
 	while (HeapTupleIsValid(tup = systable_getnext(scan)))
 	{
-		Form_ag_graphmeta	metatup = (Form_ag_graphmeta) GETSTRUCT(tup);
+		Form_ag_graphmeta metatup = (Form_ag_graphmeta) GETSTRUCT(tup);
 
 		/* The tuple with start = vid is already deleted just now. */
 		if (metatup->start != vlid)
@@ -6141,10 +6142,10 @@ AtEOXact_AgStat(bool isCommit)
 	xact_state = agStatXactStack;
 	if (xact_state != NULL && isCommit)
 	{
-		AgStat_GraphMeta	*graphmeta;
-		HASH_SEQ_STATUS		seq;
-		Relation			ag_graphmeta;
-		HeapTuple			tup;
+		AgStat_GraphMeta *graphmeta;
+		HASH_SEQ_STATUS seq;
+		Relation	ag_graphmeta;
+		HeapTuple	tup;
 
 		hash_seq_init(&seq, xact_state->htab);
 
@@ -6178,9 +6179,9 @@ AtEOXact_AgStat(bool isCommit)
 			}
 			else
 			{
-				Datum	values[Natts_ag_graphmeta];
-				bool	isnull[Natts_ag_graphmeta];
-				int		i;
+				Datum		values[Natts_ag_graphmeta];
+				bool		isnull[Natts_ag_graphmeta];
+				int			i;
 
 				for (i = 0; i < Natts_ag_graphmeta; i++)
 				{
@@ -6188,7 +6189,7 @@ AtEOXact_AgStat(bool isCommit)
 					isnull[i] = false;
 				}
 
-				values[Anum_ag_graphmeta_graph -1] = ObjectIdGetDatum(graphmeta->key.graph);
+				values[Anum_ag_graphmeta_graph - 1] = ObjectIdGetDatum(graphmeta->key.graph);
 				values[Anum_ag_graphmeta_edge - 1] = Int16GetDatum(graphmeta->key.edge);
 				values[Anum_ag_graphmeta_start - 1] = Int16GetDatum(graphmeta->key.start);
 				values[Anum_ag_graphmeta_end - 1] = Int16GetDatum(graphmeta->key.end);
@@ -6234,8 +6235,8 @@ AtEOSubXact_AgStat(bool isCommit, int nestDepth)
 			{
 				AgStat_GraphMeta *submeta;
 				AgStat_GraphMeta *upperMeta;
-				HASH_SEQ_STATUS	seq;
-				bool			found;
+				HASH_SEQ_STATUS seq;
+				bool		found;
 
 				hash_seq_init(&seq, xact_state->htab);
 				while ((submeta = hash_seq_search(&seq)) != NULL)
@@ -6247,12 +6248,12 @@ AtEOSubXact_AgStat(bool isCommit, int nestDepth)
 					if (found)
 					{
 						upperMeta->edges_inserted += submeta->edges_inserted;
-						upperMeta->edges_deleted  += submeta->edges_deleted;
+						upperMeta->edges_deleted += submeta->edges_deleted;
 					}
 					else
 					{
 						upperMeta->edges_inserted = submeta->edges_inserted;
-						upperMeta->edges_deleted  = submeta->edges_deleted;
+						upperMeta->edges_deleted = submeta->edges_deleted;
 					}
 				}
 				/* pop stack and merge stat */
@@ -6266,7 +6267,7 @@ AtEOSubXact_AgStat(bool isCommit, int nestDepth)
 				agStatXactStack = xact_state;
 			}
 		}
-		else /* isAbort */
+		else					/* isAbort */
 		{
 			/* pop stack and free mem */
 			agStatXactStack = upper;

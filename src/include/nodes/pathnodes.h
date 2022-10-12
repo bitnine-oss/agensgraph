@@ -351,7 +351,7 @@ struct PlannerInfo
 										 * pseudoconstant = true */
 	bool		hasAlternativeSubPlans; /* true if we've made any of those */
 	bool		hasRecursion;	/* true if planning a recursive WITH item */
-	bool		hasVLEJoinRTE;  /* has VLE join or a child node of VLE join */
+	bool		hasVLEJoinRTE;	/* has VLE join or a child node of VLE join */
 
 	/*
 	 * Information about aggregates. Filled by preprocess_aggrefs().
@@ -1904,16 +1904,6 @@ typedef struct LimitPath
 } LimitPath;
 
 /*
- * EagerPath represents use of a Eager plan node.
- */
-typedef struct EagerPath
-{
-	Path		path;
-	Path	   *subpath;
-	List	   *modifiedlist;
-} EagerPath;
-
-/*
  * ModifyGraphPath
  */
 typedef struct ModifyGraphPath
@@ -1923,13 +1913,13 @@ typedef struct ModifyGraphPath
 	bool		last;			/* is this for the last clause? */
 	Path	   *subpath;		/* Path producing source data */
 	uint32		nr_modify;		/* number of clauses that modifies graph
-								   before this */
+								 * before this */
 	bool		detach;			/* DETACH DELETE */
 	bool		eagerness;
 	List	   *pattern;		/* graph pattern (list of paths) for CREATE */
 	List	   *exprs;			/* expression list for DELETE */
 	List	   *sets;			/* list of GraphSetProp's for SET/REMOVE */
-	int 		epqParam;
+	int			epqParam;
 	List	   *resultRelations;
 } ModifyGraphPath;
 
@@ -1944,16 +1934,16 @@ typedef struct ShortestpathPath
 	Node	   *ctid_right;
 	Node	   *source;
 	Node	   *target;
-	long        minhops;
-	long        maxhops;
-	long        limit;
+	long		minhops;
+	long		maxhops;
+	long		limit;
 } ShortestpathPath;
 
 typedef struct DijkstraPath
 {
-	Path 		path;
+	Path		path;
 	Path	   *subpath;
-	int	   		weight;
+	int			weight;
 	bool		weight_out;
 	Node	   *end_id;
 	Node	   *edge_id;

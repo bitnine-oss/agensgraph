@@ -6834,27 +6834,27 @@ bool
 listGraphs(const char *pattern, bool verbose)
 {
 	PQExpBufferData buf;
-	PGresult *res;
+	PGresult   *res;
 	printQueryOpt myopt = pset.popt;
 
 	initPQExpBuffer(&buf);
 	printfPQExpBuffer(&buf,
-		"SELECT g.graphname AS \"%s\",\n"
-		"  pg_catalog.pg_get_userbyid(n.nspowner) AS \"%s\"",
-		gettext_noop("Name"), gettext_noop("Owner"));
+					  "SELECT g.graphname AS \"%s\",\n"
+					  "  pg_catalog.pg_get_userbyid(n.nspowner) AS \"%s\"",
+					  gettext_noop("Name"), gettext_noop("Owner"));
 
 	if (verbose)
 	{
 		appendPQExpBufferStr(&buf, ",\n  ");
 		printACLColumn(&buf, "n.nspacl");
 		appendPQExpBuffer(&buf,
-			",\n  pg_catalog.obj_description(g.oid, 'ag_graph') AS \"%s\"",
-			gettext_noop("Description"));
+						  ",\n  pg_catalog.obj_description(g.oid, 'ag_graph') AS \"%s\"",
+						  gettext_noop("Description"));
 	}
 
 	appendPQExpBuffer(&buf,
-		"\nFROM pg_catalog.ag_graph g\n"
-		"  LEFT JOIN pg_catalog.pg_namespace n ON n.oid = g.nspid\n");
+					  "\nFROM pg_catalog.ag_graph g\n"
+					  "  LEFT JOIN pg_catalog.pg_namespace n ON n.oid = g.nspid\n");
 
 	processSQLNamePattern(pset.db, &buf, pattern, false, false,
 						  NULL, "g.graphname", NULL, NULL);
@@ -6902,29 +6902,29 @@ listLabels(const char *pattern, bool verbose, const char labkind)
 
 	initPQExpBuffer(&buf);
 	printfPQExpBuffer(&buf,
-		"SELECT g.graphname AS \"%s\",\n"
-		"  l.labname AS \"%s\",\n"
-		"  CASE l.labkind\n"
-		"    WHEN 'v' THEN '%s'\n"
-		"    WHEN 'e' THEN '%s'\n"
-		"  END AS \"%s\",\n"
-		"  pg_catalog.pg_get_userbyid(c.relowner) AS \"%s\"",
-		gettext_noop("Graph"), gettext_noop("Name"),
-		gettext_noop("vertex"), gettext_noop("edge"), gettext_noop("Type"),
-		gettext_noop("Owner"));
+					  "SELECT g.graphname AS \"%s\",\n"
+					  "  l.labname AS \"%s\",\n"
+					  "  CASE l.labkind\n"
+					  "    WHEN 'v' THEN '%s'\n"
+					  "    WHEN 'e' THEN '%s'\n"
+					  "  END AS \"%s\",\n"
+					  "  pg_catalog.pg_get_userbyid(c.relowner) AS \"%s\"",
+					  gettext_noop("Graph"), gettext_noop("Name"),
+					  gettext_noop("vertex"), gettext_noop("edge"), gettext_noop("Type"),
+					  gettext_noop("Owner"));
 
 	if (verbose)
 	{
 		appendPQExpBuffer(&buf,
-			",\n  pg_catalog.pg_size_pretty(pg_catalog.pg_table_size(c.oid)) AS \"%s\""
-			",\n  pg_catalog.obj_description(l.oid, 'ag_label') AS \"%s\"",
-			gettext_noop("Size"), gettext_noop("Description"));
+						  ",\n  pg_catalog.pg_size_pretty(pg_catalog.pg_table_size(c.oid)) AS \"%s\""
+						  ",\n  pg_catalog.obj_description(l.oid, 'ag_label') AS \"%s\"",
+						  gettext_noop("Size"), gettext_noop("Description"));
 	}
 
 	appendPQExpBuffer(&buf,
-		"\nFROM pg_catalog.ag_label l\n"
-		"  LEFT JOIN pg_catalog.pg_class c ON c.oid = l.relid\n"
-		"  LEFT JOIN pg_catalog.ag_graph g ON g.oid = l.graphid\n");
+					  "\nFROM pg_catalog.ag_label l\n"
+					  "  LEFT JOIN pg_catalog.pg_class c ON c.oid = l.relid\n"
+					  "  LEFT JOIN pg_catalog.ag_graph g ON g.oid = l.graphid\n");
 
 	appendPQExpBufferStr(&buf, "WHERE l.labkind IN (");
 	if (showVertices)
@@ -6960,7 +6960,7 @@ listLabels(const char *pattern, bool verbose, const char labkind)
 
 		if (labkind == 'v' || labkind == 'e')
 		{
-			int i;
+			int			i;
 
 			for (i = 0; i < PQntuples(res); i++)
 			{
@@ -7025,13 +7025,13 @@ describeOneLabelDetails(const char *graphname, const char *labelname)
 	Assert(pset.sversion >= 90500);
 
 	printfPQExpBuffer(&buf,
-			"SELECT c.relchecks, c.relkind, l.labkind, "
-				"c.relhasindex, c.reltablespace\n"
-			"FROM pg_catalog.pg_class c, "
-				"pg_catalog.ag_label l, pg_catalog.ag_graph g\n"
-			"WHERE c.oid = l.relid AND l.graphid = g.oid AND "
-				"l.labname = '%s' AND g.graphname = '%s';",
-			labelname, graphname);
+					  "SELECT c.relchecks, c.relkind, l.labkind, "
+					  "c.relhasindex, c.reltablespace\n"
+					  "FROM pg_catalog.pg_class c, "
+					  "pg_catalog.ag_label l, pg_catalog.ag_graph g\n"
+					  "WHERE c.oid = l.relid AND l.graphid = g.oid AND "
+					  "l.labname = '%s' AND g.graphname = '%s';",
+					  labelname, graphname);
 
 	res = PSQLexec(buf.data);
 	if (!res)
@@ -7091,18 +7091,18 @@ describeOneLabelDetails(const char *graphname, const char *labelname)
 		int			tuples = 0;
 
 		printfPQExpBuffer(&buf,
-				"SELECT c.relname, i.indisunique, "
-					"i.indisclustered, i.indisvalid, i.indisreplident, "
-					"pg_catalog.ag_get_propindexdef(i.indexrelid), "
-					"c.reltablespace\n"
-				"FROM pg_catalog.pg_index i, pg_catalog.pg_class c, "
-					"pg_catalog.ag_label l, pg_catalog.ag_graph g\n"
-				"WHERE i.indexrelid = c.oid AND "
-					"i.indrelid = l.relid AND l.graphid = g.oid AND "
-					"l.labname = '%s' AND g.graphname = '%s' AND "
-					"i.indisexclusion = false AND i.indexprs IS NOT NULL\n"
-				"ORDER BY 1;",
-				labelname, graphname);
+						  "SELECT c.relname, i.indisunique, "
+						  "i.indisclustered, i.indisvalid, i.indisreplident, "
+						  "pg_catalog.ag_get_propindexdef(i.indexrelid), "
+						  "c.reltablespace\n"
+						  "FROM pg_catalog.pg_index i, pg_catalog.pg_class c, "
+						  "pg_catalog.ag_label l, pg_catalog.ag_graph g\n"
+						  "WHERE i.indexrelid = c.oid AND "
+						  "i.indrelid = l.relid AND l.graphid = g.oid AND "
+						  "l.labname = '%s' AND g.graphname = '%s' AND "
+						  "i.indisexclusion = false AND i.indexprs IS NOT NULL\n"
+						  "ORDER BY 1;",
+						  labelname, graphname);
 
 		result = PSQLexec(buf.data);
 		if (!result)
@@ -7162,15 +7162,15 @@ describeOneLabelDetails(const char *graphname, const char *labelname)
 		int			tuples = 0;
 
 		printfPQExpBuffer(&buf,
-				"SELECT r.conname, "
-					"pg_catalog.ag_get_graphconstraintdef(r.oid)\n"
-				"FROM pg_catalog.pg_constraint r, "
-					"pg_catalog.ag_label l, pg_catalog.ag_graph g\n"
-				"WHERE r.conrelid = l.relid AND l.graphid = g.oid AND "
-					"l.labname = '%s' AND g.graphname = '%s' AND "
-					"r.contype IN ('c','x')\n"
-				"ORDER BY 1;",
-				labelname, graphname);
+						  "SELECT r.conname, "
+						  "pg_catalog.ag_get_graphconstraintdef(r.oid)\n"
+						  "FROM pg_catalog.pg_constraint r, "
+						  "pg_catalog.ag_label l, pg_catalog.ag_graph g\n"
+						  "WHERE r.conrelid = l.relid AND l.graphid = g.oid AND "
+						  "l.labname = '%s' AND g.graphname = '%s' AND "
+						  "r.contype IN ('c','x')\n"
+						  "ORDER BY 1;",
+						  labelname, graphname);
 
 		result = PSQLexec(buf.data);
 		if (!result)
@@ -7189,8 +7189,8 @@ describeOneLabelDetails(const char *graphname, const char *labelname)
 								  PQgetvalue(result, i, 0));
 
 				/*
-				 * TODO: transform that removed properties expression
-				 *       and unique constraint expr
+				 * TODO: transform that removed properties expression and
+				 * unique constraint expr
 				 */
 				appendPQExpBuffer(&buf, " %s", PQgetvalue(result, i, 1));
 
@@ -7213,14 +7213,14 @@ describeOneLabelDetails(const char *graphname, const char *labelname)
 
 		/* print inherited tables */
 		printfPQExpBuffer(&buf,
-				"SELECT c.oid::pg_catalog.regclass\n"
-				"FROM pg_catalog.pg_class c, pg_catalog.pg_inherits i, "
-					"pg_catalog.ag_label l, pg_catalog.ag_graph g\n"
-				"WHERE c.oid = i.inhparent AND "
-					"i.inhrelid = l.relid AND l.graphid = g.oid AND "
-					"l.labname = '%s' AND g.graphname = '%s'\n"
-				"ORDER BY inhseqno;",
-				labelname, graphname);
+						  "SELECT c.oid::pg_catalog.regclass\n"
+						  "FROM pg_catalog.pg_class c, pg_catalog.pg_inherits i, "
+						  "pg_catalog.ag_label l, pg_catalog.ag_graph g\n"
+						  "WHERE c.oid = i.inhparent AND "
+						  "i.inhrelid = l.relid AND l.graphid = g.oid AND "
+						  "l.labname = '%s' AND g.graphname = '%s'\n"
+						  "ORDER BY inhseqno;",
+						  labelname, graphname);
 
 		result = PSQLexec(buf.data);
 		if (!result)
@@ -7251,14 +7251,14 @@ describeOneLabelDetails(const char *graphname, const char *labelname)
 
 		/* print child labels */
 		printfPQExpBuffer(&buf,
-				"SELECT c.oid::pg_catalog.regclass\n"
-				"FROM pg_catalog.pg_class c, pg_catalog.pg_inherits i, "
-					"pg_catalog.ag_label l, pg_catalog.ag_graph g\n"
-				"WHERE c.oid = i.inhrelid AND "
-					"i.inhparent = l.relid AND l.graphid = g.oid AND "
-					"l.labname = '%s' AND g.graphname = '%s'\n"
-				"ORDER BY c.oid::pg_catalog.regclass::pg_catalog.text;",
-				labelname, graphname);
+						  "SELECT c.oid::pg_catalog.regclass\n"
+						  "FROM pg_catalog.pg_class c, pg_catalog.pg_inherits i, "
+						  "pg_catalog.ag_label l, pg_catalog.ag_graph g\n"
+						  "WHERE c.oid = i.inhrelid AND "
+						  "i.inhparent = l.relid AND l.graphid = g.oid AND "
+						  "l.labname = '%s' AND g.graphname = '%s'\n"
+						  "ORDER BY c.oid::pg_catalog.regclass::pg_catalog.text;",
+						  labelname, graphname);
 
 		result = PSQLexec(buf.data);
 		if (!result)

@@ -174,9 +174,9 @@ static Jsonb *
 jnumber_op(PGFunction f, Jsonb *l, Jsonb *r)
 {
 	FunctionCallInfo fcinfo;
-	JsonbValue	*jv;
+	JsonbValue *jv;
 	Datum		n;
-	Jsonb		*op_result = NULL;
+	Jsonb	   *op_result = NULL;
 
 	AssertArg(r != NULL);
 

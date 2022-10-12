@@ -29,11 +29,11 @@
  */
 CATALOG(ag_graphmeta,7055,GraphMetaRelationId) BKI_SCHEMA_MACRO
 {
-	Oid		graph;            /* graph oid */
-	int16	edge;            /* edge label id */
-	int16	start;            /* start vertex label id */
-	int16	end;            /* end vertex label id */
-	int64	edgecount;        /* # of edge between start and end */
+	Oid			graph;			/* graph oid */
+	int16		edge;			/* edge label id */
+	int16		start;			/* start vertex label id */
+	int16		end;			/* end vertex label id */
+	int64		edgecount;		/* # of edge between start and end */
 } FormData_ag_graphmeta;
 
 /* ----------------
@@ -41,15 +41,15 @@ CATALOG(ag_graphmeta,7055,GraphMetaRelationId) BKI_SCHEMA_MACRO
  *		the format of ag_graphmeta relation.
  * ----------------
  */
-typedef FormData_ag_graphmeta *Form_ag_graphmeta;
+typedef FormData_ag_graphmeta * Form_ag_graphmeta;
 
 typedef struct AgStat_key
 {
-	Oid   graph;
-	Labid edge;
-	Labid start;
-	Labid end;
-}                             AgStat_key;
+	Oid			graph;
+	Labid		edge;
+	Labid		start;
+	Labid		end;
+} AgStat_key;
 
 typedef struct AgStat_GraphMeta
 {
@@ -57,7 +57,7 @@ typedef struct AgStat_GraphMeta
 
 	PgStat_Counter edges_inserted;
 	PgStat_Counter edges_deleted;
-}                             AgStat_GraphMeta;
+} AgStat_GraphMeta;
 
 DECLARE_UNIQUE_INDEX_PKEY(ag_graphmeta_full_index, 7056, on ag_graphmeta using btree(graph oid_ops, edge int2_ops, start int2_ops, end int2_ops));
 #define GraphMetaFullIndexId 7056
@@ -66,4 +66,4 @@ DECLARE_INDEX(ag_graphmeta_start_index, 7057, on ag_graphmeta using btree(graph 
 DECLARE_INDEX(ag_graphmeta_end_index, 7058, on ag_graphmeta using btree(graph oid_ops, end int2_ops));
 #define GraphMetaEndIndexId 7058
 
-#endif   /* AG_GRAPHMETA_H */
+#endif							/* AG_GRAPHMETA_H */

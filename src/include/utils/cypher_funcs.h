@@ -74,4 +74,4 @@ extern Datum array_tail(PG_FUNCTION_ARGS);
 /* utility */
 extern Datum get_last_graph_write_stats(PG_FUNCTION_ARGS);
 
-#endif	/* CYPHER_FUNCS_H */
+#endif							/* CYPHER_FUNCS_H */

@@ -330,7 +330,7 @@ typedef struct _tableInfo
 	bool		needs_override; /* has GENERATED ALWAYS AS IDENTITY */
 	char	   *amname;			/* relation access method */
 	char		ag_labkind;
-	Oid 		ag_laboid;
+	Oid			ag_laboid;
 	int			ag_labid;
 
 	/*

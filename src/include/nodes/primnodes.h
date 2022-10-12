@@ -1536,8 +1536,8 @@ typedef struct JoinExpr
 	Alias	   *alias;			/* user-written alias clause, if any */
 	int			rtindex;		/* RT index assigned for join, or 0 */
 
-	int         minHops;
-	int         maxHops;
+	int			minHops;
+	int			maxHops;
 } JoinExpr;
 
 /*----------
@@ -1609,7 +1609,7 @@ typedef struct CypherListExpr
 {
 	Expr		xpr;
 	List	   *elems;
-	int 		location;
+	int			location;
 } CypherListExpr;
 
 typedef struct CypherListCompExpr

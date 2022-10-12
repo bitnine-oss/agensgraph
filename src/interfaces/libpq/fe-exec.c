@@ -1089,11 +1089,11 @@ pqSaveParameterStatus(PGconn *conn, const char *name, const char *value)
 		}
 		else if (cnt == 2)
 		{
-			/* e.g. 2.2devel*/
+			/* e.g. 2.2devel */
 			conn->agversion = (100 * vmaj + vmin) * 100;
 		}
 		else
-			conn->agversion = 0; /* unknown */
+			conn->agversion = 0;	/* unknown */
 	}
 }
 

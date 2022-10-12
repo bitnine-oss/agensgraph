@@ -9693,7 +9693,7 @@ get_pathelem_expr(Node *node, deparse_context *context, bool showimplicit)
 		}
 		else
 		{
-			si.data[si.len -1] = '\'';
+			si.data[si.len - 1] = '\'';
 		}
 	}
 
@@ -9820,7 +9820,8 @@ get_oper_expr(OpExpr *expr, deparse_context *context)
 		/* binary operator */
 		Node	   *arg1 = (Node *) linitial(args);
 		Node	   *arg2 = (Node *) lsecond(args);
-		if(context->cypherexpr)
+
+		if (context->cypherexpr)
 		{
 			char	   *oprname;
 
@@ -12648,7 +12649,7 @@ ag_get_propindexdef_worker(Oid indexrelid, const Oid *excludeOps,
 		/* Add the exclusion operator if relevant */
 		if (excludeOps != NULL)
 		{
-			char *op;
+			char	   *op;
 
 			op = generate_operator_name(excludeOps[keyno],
 										keycoltype, keycoltype);
@@ -12817,7 +12818,11 @@ ag_get_graphconstraintdef_worker(Oid constraintId, int prettyFlags,
 				appendStringInfo(&buf, "ASSERT (%s)", consrc);
 				break;
 			}
-		/* Unique constraint on AgensGraph is implemented using exclude index */
+
+			/*
+			 * Unique constraint on AgensGraph is implemented using exclude
+			 * index
+			 */
 		case CONSTRAINT_EXCLUSION:
 			{
 				Oid			indexOid = conForm->conindid;

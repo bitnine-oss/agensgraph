@@ -76,18 +76,18 @@ CREATE VLABEL v1 INHERITS (v00, v01);
 CREATE ELABEL e0;
 CREATE ELABEL e01 INHERITS (e0);
 CREATE ELABEL e1;
-SELECT labname, labkind FROM pg_catalog.ag_label;
+SELECT labname, labkind FROM pg_catalog.ag_label ORDER BY labname;
   labname  | labkind 
 -----------+---------
- ag_vertex | v
  ag_edge   | e
+ ag_vertex | v
+ e0        | e
+ e01       | e
+ e1        | e
  v0        | v
  v00       | v
  v01       | v
  v1        | v
- e0        | e
- e01       | e
- e1        | e
 (9 rows)
 
 SELECT child.labname AS child, parent.labname AS parent

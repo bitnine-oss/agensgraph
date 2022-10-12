@@ -38,7 +38,8 @@ typedef uint16 Labid;
 #define GRAPHID_LABID_MAX	PG_UINT16_MAX
 #define GRAPHID_LOCID_MAX	((UINT64CONST(1) << (32 + 16)) - 1)
 
-typedef struct {
+typedef struct
+{
 	Oid			tableoid;
 	ItemPointerData tid;
 } Rowid;
@@ -65,6 +66,7 @@ extern Datum graphid_send(PG_FUNCTION_ARGS);
 extern Datum graphid_labid(PG_FUNCTION_ARGS);
 extern Datum graphid_locid(PG_FUNCTION_ARGS);
 extern Datum graph_labid(PG_FUNCTION_ARGS);
+
 /* graphid - comparison */
 extern Datum graphid_eq(PG_FUNCTION_ARGS);
 extern Datum graphid_ne(PG_FUNCTION_ARGS);
@@ -79,6 +81,7 @@ extern Datum rowid_in(PG_FUNCTION_ARGS);
 extern Datum rowid_out(PG_FUNCTION_ARGS);
 extern Datum rowid_tableoid(PG_FUNCTION_ARGS);
 extern Datum rowid_ctid(PG_FUNCTION_ARGS);
+
 /* rowid -comparison */
 extern Datum rowid_eq(PG_FUNCTION_ARGS);
 extern Datum rowid_ne(PG_FUNCTION_ARGS);
@@ -86,6 +89,7 @@ extern Datum rowid_lt(PG_FUNCTION_ARGS);
 extern Datum rowid_gt(PG_FUNCTION_ARGS);
 extern Datum rowid_le(PG_FUNCTION_ARGS);
 extern Datum rowid_ge(PG_FUNCTION_ARGS);
+
 /* rowid - BTree */
 extern Datum btrowidcmp(PG_FUNCTION_ARGS);
 
@@ -95,6 +99,7 @@ extern Datum _vertex_out(PG_FUNCTION_ARGS);
 extern Datum vertex_label(PG_FUNCTION_ARGS);
 extern Datum _vertex_length(PG_FUNCTION_ARGS);
 extern Datum vtojb(PG_FUNCTION_ARGS);
+
 /* vertex - comparison */
 extern Datum vertex_eq(PG_FUNCTION_ARGS);
 extern Datum vertex_ne(PG_FUNCTION_ARGS);
@@ -109,6 +114,7 @@ extern Datum _edge_out(PG_FUNCTION_ARGS);
 extern Datum edge_label(PG_FUNCTION_ARGS);
 extern Datum _edge_length(PG_FUNCTION_ARGS);
 extern Datum etojb(PG_FUNCTION_ARGS);
+
 /* edge - comparison */
 extern Datum edge_eq(PG_FUNCTION_ARGS);
 extern Datum edge_ne(PG_FUNCTION_ARGS);
@@ -147,8 +153,10 @@ extern Datum makeGraphEdgeDatum(Datum id, Datum start, Datum end,
 
 /* index support - BTree */
 extern Datum btgraphidcmp(PG_FUNCTION_ARGS);
+
 /* index support - Hash */
 extern Datum graphid_hash(PG_FUNCTION_ARGS);
+
 /* index support - GIN (as BTree) */
 extern Datum gin_extract_value_graphid(PG_FUNCTION_ARGS);
 extern Datum gin_extract_query_graphid(PG_FUNCTION_ARGS);
@@ -158,4 +166,4 @@ extern Datum gin_compare_partial_graphid(PG_FUNCTION_ARGS);
 /* graph meta */
 extern Datum regather_graphmeta(PG_FUNCTION_ARGS);
 
-#endif	/* GRAPH_H */
+#endif							/* GRAPH_H */

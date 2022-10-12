@@ -360,7 +360,7 @@ ExecRenameStmt(RenameStmt *stmt)
 
 		case OBJECT_TABLE:
 			if (RangeVarIsLabel(stmt->relation))
-					ereport(ERROR,
+				ereport(ERROR,
 						(errcode(ERRCODE_INVALID_TABLE_DEFINITION),
 						 errmsg("cannot rename table \"%s\"",
 								stmt->relation->relname),
@@ -867,7 +867,7 @@ ExecAlterOwnerStmt(AlterOwnerStmt *stmt)
 
 		case OBJECT_SCHEMA:
 			{
-				char *name = strVal((Value *) stmt->object);
+				char	   *name = strVal((Value *) stmt->object);
 
 				if (OidIsValid(get_graphname_oid(name)))
 					ereport(ERROR,
@@ -952,7 +952,7 @@ ExecAlterOwnerStmt(AlterOwnerStmt *stmt)
 
 		case OBJECT_GRAPH:
 			{
-				char *name = strVal((Value *) stmt->object);
+				char	   *name = strVal((Value *) stmt->object);
 
 				if (!OidIsValid(get_graphname_oid(name)))
 					ereport(ERROR,

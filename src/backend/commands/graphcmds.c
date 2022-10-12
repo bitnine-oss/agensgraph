@@ -60,11 +60,13 @@ CreateGraphCommand(CreateGraphStmt *stmt, const char *queryString,
 				   int stmt_location, int stmt_len)
 {
 	CreateSeqStmt *createSeqStmt;
-	CreateLabelStmt *createVLabelStmt, *createELabelStmt;
+	CreateLabelStmt *createVLabelStmt,
+			   *createELabelStmt;
 
 	if (stmt->kind & CGSK_SCHEMA)
 	{
-		Oid graphid;
+		Oid			graphid;
+
 		graphid = GraphCreate(stmt, queryString, stmt_location, stmt_len);
 		if (!OidIsValid(graphid))
 		{
@@ -203,7 +205,7 @@ CreateLabelCommand(CreateLabelStmt *labelStmt, const char *queryString,
 	stmts = transformCreateLabelStmt(labelStmt, queryString);
 	foreach(l, stmts)
 	{
-		Node *stmt = (Node *) lfirst(l);
+		Node	   *stmt = (Node *) lfirst(l);
 
 		if (IsA(stmt, CreateStmt))
 		{
@@ -268,8 +270,8 @@ DefineLabel(CreateStmt *stmt, char labkind, const char *queryString,
 	heap_reloptions(RELKIND_TOASTVALUE, toast_options, true);
 
 	/*
-	 * Let NewRelationCreateToastTable decide if this
-	 * one needs a secondary relation too.
+	 * Let NewRelationCreateToastTable decide if this one needs a secondary
+	 * relation too.
 	 */
 	NewRelationCreateToastTable(reladdr.objectId, toast_options);
 
@@ -288,8 +290,8 @@ DefineLabel(CreateStmt *stmt, char labkind, const char *queryString,
 	AgInheritanceDependancy(laboid, inheritOids);
 
 	/*
-	 * Make a dependency link to force the table to be deleted if its
-	 * graph label is.
+	 * Make a dependency link to force the table to be deleted if its graph
+	 * label is.
 	 */
 	labaddr.classId = LabelRelationId;
 	labaddr.objectId = laboid;
@@ -396,7 +398,7 @@ AgInheritanceDependancy(Oid laboid, List *supers)
 
 	foreach(entry, supers)
 	{
-		Oid parentOid = lfirst_oid(entry);
+		Oid			parentOid = lfirst_oid(entry);
 		ObjectAddress childobject;
 		ObjectAddress parentobject;
 
@@ -465,7 +467,7 @@ RenameLabel(RenameStmt *stmt)
 void
 CheckLabelType(ObjectType type, Oid laboid, const char *command)
 {
-	HeapTuple tuple;
+	HeapTuple	tuple;
 	Form_ag_label labtup;
 
 	if (cypher_allow_unsafe_ddl)
@@ -547,7 +549,7 @@ RangeVarIsLabel(RangeVar *rel)
 void
 CreateConstraintCommand(CreateConstraintStmt *constraintStmt,
 						const char *queryString, int stmt_location,
-						int stmt_len,ParamListInfo params)
+						int stmt_len, ParamListInfo params)
 {
 	ParseState *pstate;
 	Node	   *stmt;
@@ -576,7 +578,7 @@ CreateConstraintCommand(CreateConstraintStmt *constraintStmt,
 void
 DropConstraintCommand(DropConstraintStmt *constraintStmt,
 					  const char *queryString, int stmt_location,
-					  int stmt_len,ParamListInfo params)
+					  int stmt_len, ParamListInfo params)
 {
 	ParseState *pstate;
 	Node	   *stmt;
@@ -681,19 +683,19 @@ deleteRelatedEdges(const char *vlab)
 		/* Hold the ShareLock to prevent DML on the edge label */
 		rel = try_relation_open(edgeoid, ShareLock);
 		if (rel == NULL)
-			continue;	/* not exist */
+			continue;			/* not exist */
 
 		initStringInfo(&sql);
 
 		appendStringInfo(&sql, "DELETE FROM ONLY %s.%s WHERE "
-				"(start >= graphid(%u,0) AND"
-				" start <= graphid(%u," UINT64_FORMAT ")) OR "
-				"(\"end\" >= graphid(%u,0) AND"
-				" \"end\" <= graphid(%u," UINT64_FORMAT "))",
-				quote_identifier(get_graph_path(false)),
-				quote_identifier(RelationGetRelationName(rel)),
-				vlabid, vlabid, GRAPHID_LOCID_MAX,
-				vlabid, vlabid, GRAPHID_LOCID_MAX);
+						 "(start >= graphid(%u,0) AND"
+						 " start <= graphid(%u," UINT64_FORMAT ")) OR "
+						 "(\"end\" >= graphid(%u,0) AND"
+						 " \"end\" <= graphid(%u," UINT64_FORMAT "))",
+						 quote_identifier(get_graph_path(false)),
+						 quote_identifier(RelationGetRelationName(rel)),
+						 vlabid, vlabid, GRAPHID_LOCID_MAX,
+						 vlabid, vlabid, GRAPHID_LOCID_MAX);
 
 		ret = SPI_connect();
 		if (ret != SPI_OK_CONNECT)

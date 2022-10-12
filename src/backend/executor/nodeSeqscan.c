@@ -184,8 +184,8 @@ ExecInitSeqScan(SeqScan *node, EState *estate, int eflags)
 	scanstate->ss.ps.qual =
 		ExecInitQual(node->plan.qual, (PlanState *) scanstate);
 
-    dlist_init(&scanstate->ctxs_head);
-    scanstate->prev_ctx_node = &scanstate->ctxs_head.head;
+	dlist_init(&scanstate->ctxs_head);
+	scanstate->prev_ctx_node = &scanstate->ctxs_head.head;
 	return scanstate;
 }
 
@@ -313,8 +313,8 @@ ExecPrevSeqScanContext(SeqScanState *node)
 	dlist_node *ctx_node;
 
 	/*
-	 * Store the current ss_currentScanDesc. It will be reused when the current
-	 * scan is re-scanned next time.
+	 * Store the current ss_currentScanDesc. It will be reused when the
+	 * current scan is re-scanned next time.
 	 */
 	ctx = getCurrentContext(node, true);
 

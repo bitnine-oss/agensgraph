@@ -39,4 +39,4 @@ CATALOG(ag_graphpath,7030,GraphPathRelationId) BKI_BOOTSTRAP BKI_ROWTYPE_OID(703
  */
 typedef FormData_ag_graphpath *Form_ag_graphpath;
 
-#endif   /* AG_GRAPHPATH_H */
+#endif							/* AG_GRAPHPATH_H */

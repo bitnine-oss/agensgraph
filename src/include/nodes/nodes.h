@@ -282,7 +282,6 @@ typedef enum NodeTag
 	T_LockRowsPath,
 	T_ModifyTablePath,
 	T_LimitPath,
-	T_EagerPath,
 	T_ModifyGraphPath,
 	T_ShortestpathPath,
 	T_DijkstraPath,
@@ -577,7 +576,7 @@ typedef enum NodeTag
 	T_SupportRequestSelectivity,	/* in nodes/supportnodes.h */
 	T_SupportRequestCost,		/* in nodes/supportnodes.h */
 	T_SupportRequestRows,		/* in nodes/supportnodes.h */
-	T_SupportRequestIndexCondition,	/* in nodes/supportnodes.h */
+	T_SupportRequestIndexCondition, /* in nodes/supportnodes.h */
 
 	/*
 	 * TAGS FOR GRAPH NODES (graphnodes.h)

@@ -4404,6 +4404,7 @@ CreateSeqStmt *
 makeDefaultCreateAGLabelSeqStmt(char *graph_name, int location)
 {
 	CreateSeqStmt *labseq = makeNode(CreateSeqStmt);
+
 	labseq->sequence = makeRangeVar(graph_name, AG_LABEL_SEQ, location);
 	labseq->options = list_make2(makeDefElem("maxvalue",
 											 (Node *) makeInteger(GRAPHID_LABID_MAX),
@@ -4419,7 +4420,8 @@ makeDefaultCreateAGLabelSeqStmt(char *graph_name, int location)
 CreateLabelStmt *
 makeDefaultCreateAGLabelStmt(char *graph_name, LabelKind labKind, int location)
 {
-	CreateLabelStmt	*createLabelStmt = makeNode(CreateLabelStmt);
+	CreateLabelStmt *createLabelStmt = makeNode(CreateLabelStmt);
+
 	createLabelStmt->labelKind = labKind;
 	createLabelStmt->relation = makeRangeVar(graph_name,
 											 labKind == LABEL_VERTEX ? AG_VERTEX : AG_EDGE,
@@ -4535,7 +4537,7 @@ transformCreateLabelStmt(CreateLabelStmt *labelStmt, const char *queryString)
 		/* inherit base vertex/edge */
 		if (labelStmt->inhRelations == NIL && !labelStmt->only_base)
 		{
-			char *name;
+			char	   *name;
 
 			name = (labelStmt->labelKind == LABEL_VERTEX ? AG_VERTEX : AG_EDGE);
 			stmt->inhRelations = list_make1(makeRangeVar(graphname, name, -1));
@@ -4543,13 +4545,13 @@ transformCreateLabelStmt(CreateLabelStmt *labelStmt, const char *queryString)
 		/* user requested inherit option */
 		else
 		{
-			ListCell *inhRel;
+			ListCell   *inhRel;
 
 			stmt->inhRelations = copyObject(labelStmt->inhRelations);
 
 			foreach(inhRel, stmt->inhRelations)
 			{
-				RangeVar *parent = (RangeVar *) lfirst(inhRel);
+				RangeVar   *parent = (RangeVar *) lfirst(inhRel);
 
 				/* force schema */
 				if (parent->schemaname == NULL)
@@ -4559,9 +4561,9 @@ transformCreateLabelStmt(CreateLabelStmt *labelStmt, const char *queryString)
 				else if (strcmp(parent->schemaname, graphname) != 0)
 				{
 					ereport(ERROR,
-						(errcode(ERRCODE_INVALID_SCHEMA_NAME),
-						 errmsg("parent graph label \"%s\" must be in the same graph path \"%s\"",
-								parent->relname, graphname)));
+							(errcode(ERRCODE_INVALID_SCHEMA_NAME),
+							 errmsg("parent graph label \"%s\" must be in the same graph path \"%s\"",
+									parent->relname, graphname)));
 				}
 
 				if (labelStmt->labelKind == LABEL_VERTEX &&
@@ -4601,7 +4603,7 @@ transformCreateLabelStmt(CreateLabelStmt *labelStmt, const char *queryString)
 
 	cxt.pstate = pstate;
 	cxt.stmtType = (labelStmt->labelKind == LABEL_VERTEX) ? "CREATE VLABEL"
-														  : "CREATE ELABEL";
+		: "CREATE ELABEL";
 	cxt.relation = stmt->relation;
 	cxt.rel = NULL;
 	cxt.inhRelations = stmt->inhRelations;
@@ -4621,7 +4623,7 @@ transformCreateLabelStmt(CreateLabelStmt *labelStmt, const char *queryString)
 
 	foreach(elements, stmt->tableElts)
 	{
-		Node *element = lfirst(elements);
+		Node	   *element = lfirst(elements);
 
 		switch (nodeTag(element))
 		{
@@ -4677,14 +4679,15 @@ transformCreateLabelStmt(CreateLabelStmt *labelStmt, const char *queryString)
 	 */
 	transformIndexConstraints(&cxt);
 	cxt.alist = list_concat(cxt.alist, indexlist);
+
 	/*
 	 * Postprocess foreign-key constraints.
 	 */
 	transformFKConstraints(&cxt, true, false);
 
 	/*
-	 * if `disable_index` is true
-	 * then set DisableIndexStmt after CREATE INDEX statements
+	 * if `disable_index` is true then set DisableIndexStmt after CREATE INDEX
+	 * statements
 	 */
 	if (labelStmt->disable_index)
 	{
@@ -4738,8 +4741,8 @@ makeVertexElements(void)
 
 	jsonb_empty_obj->contype = CONSTR_DEFAULT;
 	jsonb_empty_obj->raw_expr = (Node *)
-			makeFuncCall(list_make1(makeString("jsonb_build_object")), NIL,
-						 COERCE_EXPLICIT_CALL, -1);
+		makeFuncCall(list_make1(makeString("jsonb_build_object")), NIL,
+					 COERCE_EXPLICIT_CALL, -1);
 	jsonb_empty_obj->location = -1;
 
 	constrs = list_make2(notnull, jsonb_empty_obj);
@@ -4790,8 +4793,8 @@ makeEdgeElements(void)
 
 	jsonb_empty_obj->contype = CONSTR_DEFAULT;
 	jsonb_empty_obj->raw_expr = (Node *)
-			makeFuncCall(list_make1(makeString("jsonb_build_object")), NIL,
-						 COERCE_EXPLICIT_CALL, -1);
+		makeFuncCall(list_make1(makeString("jsonb_build_object")), NIL,
+					 COERCE_EXPLICIT_CALL, -1);
 	jsonb_empty_obj->location = -1;
 
 	constrs = lappend(constrs, jsonb_empty_obj);
@@ -4860,7 +4863,7 @@ makeEdgeIndex(RangeVar *label)
 static bool
 isLabelKind(RangeVar *label, char labkind)
 {
-	Oid graphid = get_graphname_oid(label->schemaname);
+	Oid			graphid = get_graphname_oid(label->schemaname);
 
 	return (getLabelKind(label->relname, graphid) == labkind);
 }
@@ -4894,14 +4897,14 @@ transformLabelIdDefinition(CreateStmtContext *cxt, ColumnDef *col)
 	char	   *snamespace;
 	char	   *sname;
 	CreateSeqStmt *seqstmt;
-	DefElem	   *maxval;
+	DefElem    *maxval;
 	List	   *attnamelist;
-	DefElem	   *ownedby;
+	DefElem    *ownedby;
 	AlterSeqStmt *altseqstmt;
 	char	   *qname;
-	A_Const	   *relname;
+	A_Const    *relname;
 	FuncCall   *fclabid;
-	A_Const	   *seqname;
+	A_Const    *seqname;
 	TypeCast   *castseq;
 	FuncCall   *fcnextval;
 	FuncCall   *fcgraphid;
@@ -5030,8 +5033,10 @@ transformAlterLabelStmt(AlterTableStmt *stmt)
 		{
 			case AT_SetStorage:
 				{
-					/* storage option is meaningless for graph id
-					 * so forced to graph property */
+					/*
+					 * storage option is meaningless for graph id so forced to
+					 * graph property
+					 */
 					cmd->name = AG_ELEM_PROP_MAP;
 
 					newcmds = lappend(newcmds, cmd);
@@ -5040,7 +5045,7 @@ transformAlterLabelStmt(AlterTableStmt *stmt)
 			case AT_AddInherit:
 			case AT_DropInherit:
 				{
-					RangeVar *par = (RangeVar *) cmd->def;
+					RangeVar   *par = (RangeVar *) cmd->def;
 
 					if (strcmp(par->relname, AG_VERTEX) == 0
 						|| strcmp(par->relname, AG_EDGE) == 0)
@@ -5125,7 +5130,7 @@ transformCreateConstraintStmt(ParseState *pstate,
 				constr->conname = constraintStmt->conname;
 				if (constr->conname == NULL)
 				{
-					Oid nsid;
+					Oid			nsid;
 
 					nsid = LookupNamespaceNoError(label->schemaname);
 					constr->conname = ChooseRelationName(label->relname,
@@ -5210,7 +5215,7 @@ prop_ref_mutator(Node *node)
 static ObjectType
 getLabelObjectType(char *labname, Oid graphid)
 {
-	char labkind = getLabelKind(labname, graphid);
+	char		labkind = getLabelKind(labname, graphid);
 
 	if (labkind == LABEL_KIND_VERTEX)
 	{
@@ -5240,7 +5245,7 @@ transformCreatePropertyIndexStmt(Oid relid, CreatePropertyIndexStmt *stmt,
 	ListCell   *l;
 	Relation	rel;
 	ParseNamespaceItem *nsitem;
-	bool is_reserved_property;
+	bool		is_reserved_property;
 
 	Assert(!stmt->transformed);
 
@@ -5317,8 +5322,8 @@ transformCreatePropertyIndexStmt(Oid relid, CreatePropertyIndexStmt *stmt,
 
 		/*
 		 * transformExpr() should have already rejected subqueries,
-		 * aggregates, and window functions, based on the EXPR_KIND_ for
-		 * an index expression.
+		 * aggregates, and window functions, based on the EXPR_KIND_ for an
+		 * index expression.
 		 *
 		 * Also reject expressions returning sets; this is for consistency
 		 * with what transformWhereClause() checks for the predicate.
@@ -5413,9 +5418,11 @@ static void
 removeConstraintsFromColumnDefs(List *columnDefs)
 {
 	ListCell   *li;
+
 	foreach(li, columnDefs)
 	{
-		ColumnDef	   *i = lfirst(li);
+		ColumnDef  *i = lfirst(li);
+
 		i->constraints = NIL;
 	}
 }

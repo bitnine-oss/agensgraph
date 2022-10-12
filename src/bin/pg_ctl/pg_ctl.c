@@ -2511,16 +2511,15 @@ main(int argc, char **argv)
 
 		agdata_D = getenv("AGDATA");
 
-		if(agdata_D != NULL)
+		if (agdata_D != NULL)
 		{
 			canonicalize_path(agdata_D);
 			env_var = psprintf("PGDATA=%s", agdata_D);
 			putenv(env_var);
 
 			/*
-			 * We could pass PGDATA just in an environment
-			 * variable but we do -D too for clearer postmaster
-			 * 'ps' display
+			 * We could pass PGDATA just in an environment variable but we do
+			 * -D too for clearer postmaster 'ps' display
 			 */
 			pgdata_opt = psprintf("-D \"%s\" ", agdata_D);
 			pg_config = getenv("PGDATA");

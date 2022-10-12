@@ -362,7 +362,7 @@ is_graph_join_rel(RelOptInfo *rel)
 	{
 		nlpath = castNode(NestPath, rel->cheapest_total_path);
 
-		if(IS_GRAPH_JOIN(nlpath->jointype))
+		if (IS_GRAPH_JOIN(nlpath->jointype))
 			return true;
 	}
 
@@ -395,8 +395,8 @@ join_is_legal(PlannerInfo *root, RelOptInfo *rel1, RelOptInfo *rel2,
 	ListCell   *l;
 
 	/*
-	 * Because graph joins must not change the join order, prevent to be
-	 * a sub-tree of another join.
+	 * Because graph joins must not change the join order, prevent to be a
+	 * sub-tree of another join.
 	 */
 	if (is_graph_join_rel(rel1) || is_graph_join_rel(rel2))
 		return false;

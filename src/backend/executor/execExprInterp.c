@@ -187,9 +187,9 @@ static JsonbValue *cypher_access_bin_array(JsonbValue *ajv,
 										   CypherAccessPathElem *pathelem);
 static JsonbValue *cypher_access_mem_array(JsonbValue *ajv,
 										   CypherAccessPathElem *pathelem);
-static int cypher_access_range(CypherIndexResult *cidxres, const int nelems,
-							   const int defidx);
-static int cypher_access_index(CypherIndexResult *cidxres, const int nelems);
+static int	cypher_access_range(CypherIndexResult *cidxres, const int nelems,
+								const int defidx);
+static int	cypher_access_index(CypherIndexResult *cidxres, const int nelems);
 static Datum get_numeric_0_datum(void);
 
 /*
@@ -1845,7 +1845,7 @@ ExecInterpExpr(ExprState *state, ExprContext *econtext, bool *isnull)
 		EEO_CASE(EEOP_CYPHERLISTCOMP_ELEM)
 		{
 			ExecEvalCypherListCompElem(state, op);
-			
+
 			EEO_NEXT();
 		}
 
@@ -4331,8 +4331,8 @@ ExecEvalCypherTypeCast(ExprState *state, ExprEvalStep *op)
 	cctx = cfn_expr->cctx;
 
 	/*
-	 * if the jsonb value is not a scalar, check to see if the
-	 * type cast is to boolean
+	 * if the jsonb value is not a scalar, check to see if the type cast is to
+	 * boolean
 	 */
 	if (!JB_ROOT_IS_SCALAR(argjb))
 	{
@@ -4352,8 +4352,8 @@ ExecEvalCypherTypeCast(ExprState *state, ExprEvalStep *op)
 	}
 
 	/*
-	 * get the jsonb value and switch on its type to determine if the
-	 * cast is appropriate. Note: We always allow explicit casts.
+	 * get the jsonb value and switch on its type to determine if the cast is
+	 * appropriate. Note: We always allow explicit casts.
 	 */
 	jv = getIthJsonbValueFromContainer(&argjb->root, 0);
 	switch (jv->type)
@@ -4397,6 +4397,7 @@ ExecEvalCypherTypeCast(ExprState *state, ExprEvalStep *op)
 				else
 				{
 					Datum		d;
+
 					d = DirectFunctionCall2(numeric_ne, get_numeric_0_datum(),
 											NumericGetDatum(jv->val.numeric));
 					*op->resvalue = BoolGetDatum(d);
@@ -4815,8 +4816,8 @@ ExecEvalCypherAccessExpr(ExprState *state, ExprEvalStep *op)
 	int			i;
 
 	/*
-	 * The evaluated value of astate->arg might be NULL.
-	 * `NULL.p`, `NULL[0]`, ... are NULL.
+	 * The evaluated value of astate->arg might be NULL. `NULL.p`, `NULL[0]`,
+	 * ... are NULL.
 	 */
 	if (*op->d.cypheraccessexpr.argnull)
 	{
@@ -5230,7 +5231,8 @@ ExecEvalCypherListCompBegin(ExprState *state, ExprEvalStep *op)
 				   WJB_BEGIN_ARRAY, NULL);
 }
 
-void ExecEvalCypherListCompElem(ExprState *state, ExprEvalStep *op)
+void
+ExecEvalCypherListCompElem(ExprState *state, ExprEvalStep *op)
 {
 	JsonbValue	_ejv;
 	JsonbValue *ejv;
@@ -5260,7 +5262,8 @@ void ExecEvalCypherListCompElem(ExprState *state, ExprEvalStep *op)
 	pushJsonbValue(op->d.cypherlistcomp.liststate, WJB_ELEM, ejv);
 }
 
-void ExecEvalCypherListCompEnd(ExprState *state, ExprEvalStep *op)
+void
+ExecEvalCypherListCompEnd(ExprState *state, ExprEvalStep *op)
 {
 	JsonbValue *jv;
 
@@ -5271,7 +5274,8 @@ void ExecEvalCypherListCompEnd(ExprState *state, ExprEvalStep *op)
 	*op->resnull = false;
 }
 
-void ExecEvalCypherListCompIterInit(ExprState *state, ExprEvalStep *op)
+void
+ExecEvalCypherListCompIterInit(ExprState *state, ExprEvalStep *op)
 {
 	Jsonb	   *listjb;
 	JsonbIterator **ji;
@@ -5283,16 +5287,17 @@ void ExecEvalCypherListCompIterInit(ExprState *state, ExprEvalStep *op)
 	if (!JB_ROOT_IS_ARRAY(listjb) || JB_ROOT_IS_SCALAR(listjb))
 		ereport(ERROR,
 				(errcode(ERRCODE_DATATYPE_MISMATCH),
-						errmsg("list is expected but %s",
-							   JsonbToCString(NULL, &listjb->root,
-											  VARSIZE(listjb)))));
+				 errmsg("list is expected but %s",
+						JsonbToCString(NULL, &listjb->root,
+									   VARSIZE(listjb)))));
 
 	ji = op->d.cypherlistcomp_iter.listiter;
 	*ji = JsonbIteratorInit(&listjb->root);
 	JsonbIteratorNext(ji, &jv, false);
 }
 
-void ExecEvalCypherListCompIterInitNext(ExprState *state, ExprEvalStep *op)
+void
+ExecEvalCypherListCompIterInitNext(ExprState *state, ExprEvalStep *op)
 {
 	JsonbIterator **ji;
 	JsonbValue	jv;
@@ -5312,7 +5317,8 @@ void ExecEvalCypherListCompIterInitNext(ExprState *state, ExprEvalStep *op)
 	}
 }
 
-void ExecEvalCypherListCompVar(ExprState *state, ExprEvalStep *op)
+void
+ExecEvalCypherListCompVar(ExprState *state, ExprEvalStep *op)
 {
 	*op->resvalue = *op->d.cypherlistcomp_var.elemvalue;
 	*op->resnull = *op->d.cypherlistcomp_var.elemnull;

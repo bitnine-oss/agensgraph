@@ -248,8 +248,8 @@ standard_ExecutorStart(QueryDesc *queryDesc, int eflags)
 
 	/*
 	 * Initialize the global variable graphWriteStats iff this is a Cypher
-	 * graph write (insert, delete, or update property). Currently only
-	 * the above query types will reset these values.
+	 * graph write (insert, delete, or update property). Currently only the
+	 * above query types will reset these values.
 	 */
 	if (queryDesc->operation == CMD_GRAPHWRITE)
 	{

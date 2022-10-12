@@ -66,9 +66,9 @@ ExecHash2Side(PlanState *node)
 Node *
 MultiExecHash2Side(Hash2SideState *node)
 {
-	HashJoinTable   hashtable;
+	HashJoinTable hashtable;
 	TupleTableSlot *slot;
-	uint32          hashvalue;
+	uint32		hashvalue;
 
 	/*
 	 * get state info from node
@@ -93,9 +93,13 @@ MultiExecHash2Side(Hash2SideState *node)
 			if (hashtable->innerBatchFile[hashtable->curbatch] == NULL)
 			{
 				HashMemoryChunk oldchunks = hashtable->chunks;
+
 				hashtable->chunks = NULL;
 
-				/* so, let's scan through the old chunks, and all tuples in each chunk */
+				/*
+				 * so, let's scan through the old chunks, and all tuples in
+				 * each chunk
+				 */
 				while (oldchunks != NULL)
 				{
 					HashMemoryChunk nextchunk = oldchunks->next.unshared;
@@ -103,14 +107,17 @@ MultiExecHash2Side(Hash2SideState *node)
 					/* position within the buffer (up to oldchunks->used) */
 					size_t		idx = 0;
 
-					/* process all tuples stored in this chunk (and then free it) */
+					/*
+					 * process all tuples stored in this chunk (and then free
+					 * it)
+					 */
 					while (idx < oldchunks->used)
 					{
 						HashJoinTuple hashTuple = (HashJoinTuple) (HASH_CHUNK_DATA(oldchunks) + idx);
-						MinimalTuple  tuple = HJTUPLE_MINTUPLE(hashTuple);
-						int           hashTupleSize = (HJTUPLE_OVERHEAD + tuple->t_len);
+						MinimalTuple tuple = HJTUPLE_MINTUPLE(hashTuple);
+						int			hashTupleSize = (HJTUPLE_OVERHEAD + tuple->t_len);
 
-						if (*((Graphid*)(tuple+1)) != 0)
+						if (*((Graphid *) (tuple + 1)) != 0)
 							ExecShortestpathSaveTuple(tuple,
 													  hashTuple->hashvalue,
 													  &hashtable->innerBatchFile[hashtable->curbatch]);
@@ -121,7 +128,10 @@ MultiExecHash2Side(Hash2SideState *node)
 						idx += MAXALIGN(hashTupleSize);
 					}
 
-					/* we're done with this chunk - free it and proceed to the next one */
+					/*
+					 * we're done with this chunk - free it and proceed to the
+					 * next one
+					 */
 					pfree(oldchunks);
 					oldchunks = nextchunk;
 				}
@@ -131,19 +141,20 @@ MultiExecHash2Side(Hash2SideState *node)
 		ExecHash2SideTableReset(hashtable);
 		if (hashtable->innerBatchFile[0] != NULL)
 		{
-			long saved = 0;
+			long		saved = 0;
+
 			if (BufFileSeek(hashtable->innerBatchFile[0], 0, 0L, SEEK_SET))
 				ereport(ERROR,
 						(errcode_for_file_access(),
-								errmsg("could not rewind hash-join temporary file: %m")));
+						 errmsg("could not rewind hash-join temporary file: %m")));
 
 			while ((slot = ExecShortestpathGetSavedTuple(hashtable->innerBatchFile[0],
 														 &hashvalue,
 														 node->slot)))
 			{
 				/*
-				 * NOTE: some tuples may be sent to future batches.  Also, it is
-				 * possible for hashtable->nbatch to be increased here!
+				 * NOTE: some tuples may be sent to future batches.  Also, it
+				 * is possible for hashtable->nbatch to be increased here!
 				 */
 				if (!ExecHash2SideTableInsert(hashtable,
 											  slot,
@@ -164,9 +175,9 @@ MultiExecHash2Side(Hash2SideState *node)
 	/*
 	 * We do not return the hash table directly because it's not a subtype of
 	 * Node, and so would violate the MultiExecProcNode API.  Instead, our
-	 * parent Shortestpath node is expected to know how to fish it out of our node
-	 * state.  Ugly but not really worth cleaning up, since Hashjoin knows
-	 * quite a bit more about Hash besides that.
+	 * parent Shortestpath node is expected to know how to fish it out of our
+	 * node state.  Ugly but not really worth cleaning up, since Hashjoin
+	 * knows quite a bit more about Hash besides that.
 	 */
 	return NULL;
 }
@@ -180,7 +191,7 @@ MultiExecHash2Side(Hash2SideState *node)
 Hash2SideState *
 ExecInitHash2Side(Hash2Side *node, EState *estate, int eflags)
 {
-	Hash2SideState  *hashstate;
+	Hash2SideState *hashstate;
 
 	/* check for unsupported flags */
 	Assert(!(eflags & (EXEC_FLAG_BACKWARD | EXEC_FLAG_MARK)));
@@ -208,11 +219,12 @@ ExecInitHash2Side(Hash2Side *node, EState *estate, int eflags)
 	ExecAssignExprContext(estate, &hashstate->ps);
 
 	ExecInitResultTupleSlotTL(&hashstate->ps, &TTSOpsMinimalTuple);
+
 	/*
 	 * initialize child expressions
 	 */
 	hashstate->ps.qual =
-			ExecInitQual(node->plan.qual, (PlanState *) hashstate);
+		ExecInitQual(node->plan.qual, (PlanState *) hashstate);
 
 	/*
 	 * initialize child nodes
@@ -326,7 +338,7 @@ ExecHash2SideTableCreate(Hash2SideState *node, List *hashOperators,
 	hashtable->spaceAllowed = work_mem * 1024L;
 	hashtable->spaceUsedSkew = 0;
 	hashtable->spaceAllowedSkew =
-			hashtable->spaceAllowed * SKEW_HASH_MEM_PERCENT / 100;
+		hashtable->spaceAllowed * SKEW_HASH_MEM_PERCENT / 100;
 	hashtable->chunks = NULL;
 	node->totalPaths = 0;
 
@@ -341,9 +353,9 @@ ExecHash2SideTableCreate(Hash2SideState *node, List *hashOperators,
 	 */
 	nkeys = list_length(hashOperators);
 	hashtable->outer_hashfunctions =
-			(FmgrInfo *) palloc(nkeys * sizeof(FmgrInfo));
+		(FmgrInfo *) palloc(nkeys * sizeof(FmgrInfo));
 	hashtable->inner_hashfunctions =
-			(FmgrInfo *) palloc(nkeys * sizeof(FmgrInfo));
+		(FmgrInfo *) palloc(nkeys * sizeof(FmgrInfo));
 	hashtable->hashStrict = (bool *) palloc(nkeys * sizeof(bool));
 	i = 0;
 	foreach(ho, hashOperators)
@@ -383,9 +395,9 @@ ExecHash2SideTableCreate(Hash2SideState *node, List *hashOperators,
 		 * allocate and initialize the file arrays in hashCxt
 		 */
 		hashtable->innerBatchFile = (BufFile **)
-				palloc0(nbatch * sizeof(BufFile *));
+			palloc0(nbatch * sizeof(BufFile *));
 		hashtable->outerBatchFile = (BufFile **)
-				palloc0(nbatch * sizeof(BufFile *));
+			palloc0(nbatch * sizeof(BufFile *));
 		/* The files will not be opened until needed... */
 		/* ... but make sure we have temp tablespaces established for them */
 		PrepareTempTablespaces();
@@ -398,7 +410,7 @@ ExecHash2SideTableCreate(Hash2SideState *node, List *hashOperators,
 	MemoryContextSwitchTo(hashtable->batchCxt);
 
 	hashtable->buckets.unshared = (HashJoinTuple *)
-			palloc0(nbuckets * sizeof(HashJoinTuple));
+		palloc0(nbuckets * sizeof(HashJoinTuple));
 
 	MemoryContextSwitchTo(oldcxt);
 
@@ -409,11 +421,11 @@ HashJoinTable
 ExecHash2SideTableClone(Hash2SideState *node, List *hashOperators,
 						HashJoinTable sourcetable, Size spacePeak)
 {
-	HashJoinTable  hashtable;
-	int			   nkeys;
-	int			   i;
-	ListCell      *ho;
-	MemoryContext  oldcxt;
+	HashJoinTable hashtable;
+	int			nkeys;
+	int			i;
+	ListCell   *ho;
+	MemoryContext oldcxt;
 
 	/*
 	 * Initialize the hash table control block.
@@ -448,7 +460,7 @@ ExecHash2SideTableClone(Hash2SideState *node, List *hashOperators,
 	hashtable->spaceAllowed = work_mem * 1024L;
 	hashtable->spaceUsedSkew = 0;
 	hashtable->spaceAllowedSkew =
-			hashtable->spaceAllowed * SKEW_HASH_MEM_PERCENT / 100;
+		hashtable->spaceAllowed * SKEW_HASH_MEM_PERCENT / 100;
 	hashtable->chunks = NULL;
 	node->totalPaths = 0;
 
@@ -463,9 +475,9 @@ ExecHash2SideTableClone(Hash2SideState *node, List *hashOperators,
 	 */
 	nkeys = list_length(hashOperators);
 	hashtable->outer_hashfunctions =
-			(FmgrInfo *) palloc(nkeys * sizeof(FmgrInfo));
+		(FmgrInfo *) palloc(nkeys * sizeof(FmgrInfo));
 	hashtable->inner_hashfunctions =
-			(FmgrInfo *) palloc(nkeys * sizeof(FmgrInfo));
+		(FmgrInfo *) palloc(nkeys * sizeof(FmgrInfo));
 	hashtable->hashStrict = (bool *) palloc(nkeys * sizeof(bool));
 	i = 0;
 	foreach(ho, hashOperators)
@@ -505,9 +517,9 @@ ExecHash2SideTableClone(Hash2SideState *node, List *hashOperators,
 		 * allocate and initialize the file arrays in hashCxt
 		 */
 		hashtable->innerBatchFile = (BufFile **)
-				palloc0(hashtable->nbatch * sizeof(BufFile *));
+			palloc0(hashtable->nbatch * sizeof(BufFile *));
 		hashtable->outerBatchFile = (BufFile **)
-				palloc0(hashtable->nbatch * sizeof(BufFile *));
+			palloc0(hashtable->nbatch * sizeof(BufFile *));
 		/* The files will not be opened until needed... */
 		/* ... but make sure we have temp tablespaces established for them */
 		PrepareTempTablespaces();
@@ -520,7 +532,7 @@ ExecHash2SideTableClone(Hash2SideState *node, List *hashOperators,
 	MemoryContextSwitchTo(hashtable->batchCxt);
 
 	hashtable->buckets.unshared = (HashJoinTuple *)
-			palloc0(hashtable->nbuckets * sizeof(HashJoinTuple));
+		palloc0(hashtable->nbuckets * sizeof(HashJoinTuple));
 
 	MemoryContextSwitchTo(oldcxt);
 
@@ -567,12 +579,12 @@ ExecChooseHash2SideTableSize(double ntuples,
 	 * don't count palloc overhead either.
 	 */
 	tupsize = HJTUPLE_OVERHEAD +
-			  MAXALIGN(SizeofMinimalTupleHeader) +
-			  MAXALIGN(tupwidth);
+		MAXALIGN(SizeofMinimalTupleHeader) +
+		MAXALIGN(tupwidth);
 	inner_rel_bytes = (ntuples - npaths) * tupsize;
 	tupsize = HJTUPLE_OVERHEAD +
-			  MAXALIGN(SizeofMinimalTupleHeader) +
-			  MAXALIGN(tupwidth * hops + sizeof(Graphid));
+		MAXALIGN(SizeofMinimalTupleHeader) +
+		MAXALIGN(tupwidth * hops + sizeof(Graphid));
 	inner_rel_bytes += npaths * tupsize;
 
 	/*
@@ -737,9 +749,9 @@ ExecHash2SideIncreaseNumBatches(HashJoinTable hashtable)
 	{
 		/* we had no file arrays before */
 		hashtable->innerBatchFile = (BufFile **)
-				palloc0(nbatch * sizeof(BufFile *));
+			palloc0(nbatch * sizeof(BufFile *));
 		hashtable->outerBatchFile = (BufFile **)
-				palloc0(nbatch * sizeof(BufFile *));
+			palloc0(nbatch * sizeof(BufFile *));
 		/* time to establish the temp tablespaces, too */
 		PrepareTempTablespaces();
 	}
@@ -747,9 +759,9 @@ ExecHash2SideIncreaseNumBatches(HashJoinTable hashtable)
 	{
 		/* enlarge arrays and zero out added entries */
 		hashtable->innerBatchFile = (BufFile **)
-				repalloc(hashtable->innerBatchFile, nbatch * sizeof(BufFile *));
+			repalloc(hashtable->innerBatchFile, nbatch * sizeof(BufFile *));
 		hashtable->outerBatchFile = (BufFile **)
-				repalloc(hashtable->outerBatchFile, nbatch * sizeof(BufFile *));
+			repalloc(hashtable->outerBatchFile, nbatch * sizeof(BufFile *));
 		MemSet(hashtable->innerBatchFile + oldnbatch, 0,
 			   (nbatch - oldnbatch) * sizeof(BufFile *));
 		MemSet(hashtable->outerBatchFile + oldnbatch, 0,
@@ -876,7 +888,7 @@ ExecHash2SideIncreaseNumBatches(HashJoinTable hashtable)
 void
 ExecHash2SideIncreaseNumBuckets(HashJoinTable hashtable, Hash2SideState *node)
 {
-	HashMemoryChunk    chunk;
+	HashMemoryChunk chunk;
 	ShortestpathState *spstate = (ShortestpathState *) node->spstate;
 
 	/* do nothing if not an increase (it's called increase for a reason) */
@@ -902,8 +914,8 @@ ExecHash2SideIncreaseNumBuckets(HashJoinTable hashtable, Hash2SideState *node)
 	 * chunks)
 	 */
 	hashtable->buckets.unshared =
-			(HashJoinTuple *) repalloc(hashtable->buckets.unshared,
-									   hashtable->nbuckets * sizeof(HashJoinTuple));
+		(HashJoinTuple *) repalloc(hashtable->buckets.unshared,
+								   hashtable->nbuckets * sizeof(HashJoinTuple));
 
 	memset(hashtable->buckets.unshared, 0, hashtable->nbuckets * sizeof(HashJoinTuple));
 
@@ -916,16 +928,16 @@ ExecHash2SideIncreaseNumBuckets(HashJoinTable hashtable, Hash2SideState *node)
 		while (idx < chunk->used)
 		{
 			HashJoinTuple hashTuple = (HashJoinTuple) (HASH_CHUNK_DATA(chunk) + idx);
-			MinimalTuple  tuple = HJTUPLE_MINTUPLE(hashTuple);
+			MinimalTuple tuple = HJTUPLE_MINTUPLE(hashTuple);
 			HashJoinTuple cursorTuple;
-			MinimalTuple  body;
-			int           bucketno;
-			int           batchno;
+			MinimalTuple body;
+			int			bucketno;
+			int			batchno;
 
 			/* advance index past the tuple */
 			idx += MAXALIGN(HJTUPLE_OVERHEAD + tuple->t_len);
 
-			if (*((Graphid*)(tuple+1)) != 0)
+			if (*((Graphid *) (tuple + 1)) != 0)
 			{
 				ExecHash2SideGetBucketAndBatch(hashtable, hashTuple->hashvalue,
 											   &bucketno, &batchno);
@@ -939,15 +951,16 @@ ExecHash2SideIncreaseNumBuckets(HashJoinTable hashtable, Hash2SideState *node)
 						body = HJTUPLE_MINTUPLE(cursorTuple);
 						if ((spstate->limit == 1 ||
 							 body->t_len == sizeof(*tuple) + sizeof(Graphid) + spstate->sp_RowidSize) &&
-							*((Graphid*)(body+1)) == *((Graphid*)(tuple+1)))
+							*((Graphid *) (body + 1)) == *((Graphid *) (tuple + 1)))
 						{
 							hashtable->totalTuples -= 1;
 							node->totalPaths -= 1;
-							*((Graphid*)(tuple+1)) = 0;
+							*((Graphid *) (tuple + 1)) = 0;
 							break;
 						}
 					}
-					if (cursorTuple != NULL) continue;
+					if (cursorTuple != NULL)
+						continue;
 				}
 
 				/* add the tuple to the proper bucket */
@@ -960,12 +973,12 @@ ExecHash2SideIncreaseNumBuckets(HashJoinTable hashtable, Hash2SideState *node)
 					while (cursorTuple->next.unshared != NULL)
 					{
 						body = HJTUPLE_MINTUPLE(cursorTuple->next.unshared);
-						if (*((Graphid*)(body+1)) == *((Graphid*)(tuple+1)))
+						if (*((Graphid *) (body + 1)) == *((Graphid *) (tuple + 1)))
 						{
 							hashtable->totalTuples -= 1;
 							if (body->t_len != sizeof(*tuple) + sizeof(Graphid) + spstate->sp_RowidSize)
 								node->totalPaths -= 1;
-							*((Graphid*)(body+1)) = 0;
+							*((Graphid *) (body + 1)) = 0;
 							cursorTuple->next = cursorTuple->next.unshared->next;
 							continue;
 						}
@@ -1000,14 +1013,14 @@ ExecHash2SideTableInsert(HashJoinTable hashtable,
 						 ShortestpathState *spstate,
 						 long *saved)
 {
-	bool shouldFree;
+	bool		shouldFree;
 	MinimalTuple tuple = ExecFetchSlotMinimalTuple(slot, &shouldFree);
-	bool inserted =  ExecHash2SideTableInsertTuple(hashtable,
-												   tuple,
-												   hashvalue,
-												   node,
-												   spstate,
-												   saved);
+	bool		inserted = ExecHash2SideTableInsertTuple(hashtable,
+														 tuple,
+														 hashvalue,
+														 node,
+														 spstate,
+														 saved);
 
 	if (shouldFree)
 	{
@@ -1024,8 +1037,8 @@ ExecHash2SideTableInsertTuple(HashJoinTable hashtable,
 							  ShortestpathState *spstate,
 							  long *saved)
 {
-	int bucketno;
-	int batchno;
+	int			bucketno;
+	int			batchno;
 
 	ExecHash2SideGetBucketAndBatch(hashtable, hashvalue,
 								   &bucketno, &batchno);
@@ -1052,7 +1065,7 @@ ExecHash2SideTableInsertTuple(HashJoinTable hashtable,
 				body = HJTUPLE_MINTUPLE(hashTuple);
 				if ((spstate->limit == 1 ||
 					 body->t_len == sizeof(*tuple) + sizeof(Graphid) + spstate->sp_RowidSize) &&
-					*((Graphid*)(body+1)) == *((Graphid*)(tuple+1)))
+					*((Graphid *) (body + 1)) == *((Graphid *) (tuple + 1)))
 				{
 					return false;
 				}
@@ -1084,12 +1097,12 @@ ExecHash2SideTableInsertTuple(HashJoinTable hashtable,
 			while (hashTuple->next.unshared != NULL)
 			{
 				body = HJTUPLE_MINTUPLE(hashTuple->next.unshared);
-				if (*((Graphid*)(body+1)) == *((Graphid*)(tuple+1)))
+				if (*((Graphid *) (body + 1)) == *((Graphid *) (tuple + 1)))
 				{
 					hashtable->totalTuples -= 1;
 					if (body->t_len != sizeof(*tuple) + sizeof(Graphid) + spstate->sp_RowidSize)
 						node->totalPaths -= 1;
-					*((Graphid*)(body+1)) = 0;
+					*((Graphid *) (body + 1)) = 0;
 					hashTuple->next = hashTuple->next.unshared->next;
 					continue;
 				}
@@ -1132,7 +1145,8 @@ ExecHash2SideTableInsertTuple(HashJoinTable hashtable,
 		ExecShortestpathSaveTuple(tuple,
 								  hashvalue,
 								  &hashtable->innerBatchFile[batchno]);
-		if (saved != NULL) (*saved)++;
+		if (saved != NULL)
+			(*saved)++;
 	}
 
 	return true;
@@ -1146,7 +1160,7 @@ ExecHash2SideTableInsertGraphid(HashJoinTable hashtable,
 								ShortestpathState *spstate,
 								long *saved)
 {
-	*((Graphid*)(spstate->sp_GraphidTuple+1)) = id;
+	*((Graphid *) (spstate->sp_GraphidTuple + 1)) = id;
 
 	return ExecHash2SideTableInsertTuple(hashtable,
 										 spstate->sp_GraphidTuple,
@@ -1238,7 +1252,7 @@ ExecScanHash2SideBucket(Hash2SideState *node,
 		if (hashTuple->hashvalue == hashvalue)
 		{
 			TupleTableSlot *inntuple;
-			MinimalTuple    tuple;
+			MinimalTuple tuple;
 
 			tuple = HJTUPLE_MINTUPLE(hashTuple);
 			/* insert hashtable's tuple into exec slot so ExecQual sees it */
@@ -1290,7 +1304,7 @@ ExecHash2SideTableReset(HashJoinTable hashtable)
 
 	/* Reallocate and reinitialize the hash bucket headers. */
 	hashtable->buckets.unshared = (HashJoinTuple *)
-			palloc0(nbuckets * sizeof(HashJoinTuple));
+		palloc0(nbuckets * sizeof(HashJoinTuple));
 
 	hashtable->spaceUsed = 0;
 

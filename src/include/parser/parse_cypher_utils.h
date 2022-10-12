@@ -23,8 +23,8 @@ extern Alias *makeAliasNoDup(char *aliasname, List *colnames);
 extern Alias *makeAliasOptUnique(char *aliasname);
 extern char *genUniqueName(void);
 
-extern  void makeExtraFromNSItem(ParseNamespaceItem *nsitem, RangeTblRef **rtr,
-								 bool visible);
+extern void makeExtraFromNSItem(ParseNamespaceItem *nsitem, RangeTblRef **rtr,
+								bool visible);
 extern void addNSItemToJoinlist(ParseState *pstate, ParseNamespaceItem *nsitem,
 								bool visible);
 

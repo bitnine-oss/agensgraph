@@ -3790,7 +3790,7 @@ find_agg_walker(Node *node, find_agg_context *ctx)
 static bool
 add_expr_to_group_exprs(Expr *expr, List **group_exprs)
 {
-	ListCell *le;
+	ListCell   *le;
 
 	/* check duplication */
 	foreach(le, *group_exprs)
@@ -3848,8 +3848,8 @@ generateGroupClause(ParseState *pstate, List **targetlist, List *sortClause)
 			find_var_context fvctx;
 
 			/*
-			 * If `te->expr` does not have aggregate functions and
-			 * it is not a constant expression, add it to GROUP BY.
+			 * If `te->expr` does not have aggregate functions and it is not a
+			 * constant expression, add it to GROUP BY.
 			 */
 
 			fvctx.sublevels_up = 0;

@@ -3631,8 +3631,8 @@ remove_unused_subquery_outputs(Query *subquery, RelOptInfo *rel)
 		return;
 
 	/*
-	 * Do nothing if subquery is ModifyGraph. We need all the target
-	 * entries in it to get the result of subquery in it.
+	 * Do nothing if subquery is ModifyGraph. We need all the target entries
+	 * in it to get the result of subquery in it.
 	 */
 	if (subquery->commandType == CMD_GRAPHWRITE)
 		return;

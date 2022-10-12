@@ -3152,7 +3152,7 @@ final_cost_nestloop(PlannerInfo *root, NestPath *path,
 		int			inner_loop_cnt = max_hops - base;
 
 		ntuples = outer_path_rows +
-				  outer_path_rows * inner_path_rows * inner_loop_cnt;
+			outer_path_rows * inner_path_rows * inner_loop_cnt;
 	}
 	else
 	{
@@ -5207,9 +5207,9 @@ calc_joinrel_size_estimate(PlannerInfo *root,
 			break;
 		case JOIN_VLE:
 			{
-				int base = (sjinfo->min_hops > 0) ? 1 : 0;
-				int max_hops = (sjinfo->max_hops == -1) ? 10 : sjinfo->max_hops;
-				int inner_loop_cnt = max_hops - base;
+				int			base = (sjinfo->min_hops > 0) ? 1 : 0;
+				int			max_hops = (sjinfo->max_hops == -1) ? 10 : sjinfo->max_hops;
+				int			inner_loop_cnt = max_hops - base;
 
 				nrows = outer_rows + outer_rows * inner_rows * inner_loop_cnt;
 			}

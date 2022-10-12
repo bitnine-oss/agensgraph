@@ -4671,9 +4671,9 @@ identify_locking_dependencies(ArchiveHandle *AH, TocEntry *te)
 
 		if (depid <= AH->maxDumpId && AH->tocsByDumpId[depid] != NULL &&
 			((strcmp(AH->tocsByDumpId[depid]->desc, "TABLE DATA") == 0) ||
-			  strcmp(AH->tocsByDumpId[depid]->desc, "TABLE") == 0 ||
-			  strcmp(AH->tocsByDumpId[depid]->desc, "ELABEL") == 0 ||
-			  strcmp(AH->tocsByDumpId[depid]->desc, "VLABEL") == 0 ))
+			 (strcmp(AH->tocsByDumpId[depid]->desc, "TABLE") == 0) ||
+			 (strcmp(AH->tocsByDumpId[depid]->desc, "ELABEL") == 0) ||
+			 (strcmp(AH->tocsByDumpId[depid]->desc, "VLABEL") == 0)))
 			lockids[nlockids++] = depid;
 	}
 

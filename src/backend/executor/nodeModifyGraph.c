@@ -56,7 +56,7 @@ ExecInitModifyGraph(ModifyGraph *mgplan, EState *estate, int eflags)
 	TupleTableSlot *slot;
 	ModifyGraphState *mgstate;
 	ResultRelInfo *resultRelInfo;
-	ListCell *l;
+	ListCell   *l;
 
 	Assert(!(eflags & (EXEC_FLAG_BACKWARD | EXEC_FLAG_MARK)));
 
@@ -96,12 +96,13 @@ ExecInitModifyGraph(ModifyGraph *mgplan, EState *estate, int eflags)
 
 	mgstate->numResultRelInfo = list_length(mgplan->resultRelations);
 	mgstate->resultRelInfo = (ResultRelInfo *)
-			palloc(mgstate->numResultRelInfo * sizeof(ResultRelInfo));
+		palloc(mgstate->numResultRelInfo * sizeof(ResultRelInfo));
 
 	resultRelInfo = mgstate->resultRelInfo;
 	foreach(l, mgplan->resultRelations)
 	{
 		Index		resultRelation = lfirst_int(l);
+
 		ExecInitResultRelation(estate, resultRelInfo, resultRelation);
 		resultRelInfo++;
 	}
@@ -163,7 +164,7 @@ ExecInitModifyGraph(ModifyGraph *mgplan, EState *estate, int eflags)
 					(ResultRelInfo *) palloc(
 											 num_edge_labels * sizeof(ResultRelInfo));
 					ResultRelInfo *resultRelInfoForDel =
-							edge_label_resultRelInfos;
+					edge_label_resultRelInfos;
 					ListCell   *lc;
 
 					foreach(lc, edge_label_oids)

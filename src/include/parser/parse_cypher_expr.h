@@ -42,4 +42,4 @@ extern void resolveItemList(ParseState *pstate, List *items);
 extern List *transformCypherExprList(ParseState *pstate, List *exprlist,
 									 ParseExprKind exprKind);
 
-#endif	/* PARSE_CYPHER_EXPR_H */
+#endif							/* PARSE_CYPHER_EXPR_H */

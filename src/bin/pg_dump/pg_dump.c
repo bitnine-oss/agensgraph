@@ -304,7 +304,7 @@ static TableInfo *getRootTableInfo(const TableInfo *tbinfo);
 
 /*
  * AgensGraph dump methods
- * 
+ *
  * The AgensGraph generates tables and schemas under the names ELABEL (VLABEL)
  * and GRAPH, respectively.
  * However, this type of restriction is not compatible with pg_dump.
@@ -4907,7 +4907,7 @@ getNamespaces(Archive *fout, int *numNamespaces)
 
 	/* Include graph spaces information */
 	appendPQExpBuffer(query, "LEFT JOIN pg_catalog.ag_graph ag_graph "
-							 "ON (ag_graph.nspid = n.oid) ");
+					  "ON (ag_graph.nspid = n.oid) ");
 
 	res = ExecuteSqlQuery(fout, query->data, PGRES_TUPLES_OK);
 
@@ -6398,7 +6398,7 @@ getTables(Archive *fout, int *numTables)
 						  "%s AS partkeydef, "
 						  "%s AS ispartition, "
 						  "%s AS partbound, "
-						  "ag_label.labkind as labkind, " /* is vlabel or elabel? */
+						  "ag_label.labkind as labkind, "	/* is vlabel or elabel? */
 						  "ag_label.oid as laboid, "
 						  "ag_label.labid as labid "
 						  "FROM pg_class c "
@@ -6484,7 +6484,7 @@ getTables(Archive *fout, int *numTables)
 						  "NULL AS partkeydef, "
 						  "false AS ispartition, "
 						  "NULL AS partbound, "
-						  "ag_label.labkind as labkind, " /* is vlabel or elabel? */
+						  "ag_label.labkind as labkind, "	/* is vlabel or elabel? */
 						  "ag_label.oid as laboid, "
 						  "ag_label.labid as labid "
 						  "FROM pg_class c "
@@ -7231,9 +7231,9 @@ getIndexes(Archive *fout, TableInfo tblinfo[], int numTables)
 	int			ntups;
 
 	int			i_ispropidx;
-	char sql_is_prop_idx[] = "ag_label.oid IS NOT NULL "
-						   "AND i.indisexclusion = false "
-						   "AND i.indexprs IS NOT NULL";
+	char		sql_is_prop_idx[] = "ag_label.oid IS NOT NULL "
+	"AND i.indisexclusion = false "
+	"AND i.indexprs IS NOT NULL";
 
 	for (i = 0; i < numTables; i++)
 	{
@@ -17034,7 +17034,7 @@ dumpConstraint(Archive *fout, const ConstraintInfo *coninfo)
 		/*
 		 * This is special case on AgensGraph constraint. There should be
 		 * information to know how it was created, but nothing is set.
-		 * 
+		 *
 		 * Also, it would be better to implement a special Cypher syntax so
 		 * that it can be used in ALTER TABLE.
 		 */
@@ -18979,7 +18979,8 @@ dumpLabelSchema(Archive *fout, TableInfo *tblinfo)
 	TableInfo **parents;
 	const char *reltypename;
 	char	   *storage;
-	int			j, k;
+	int			j,
+				k;
 
 	qrelname = pg_strdup(fmtId(tblinfo->dobj.name));
 	qualrelname = pg_strdup(fmtQualifiedDumpable(tblinfo));
@@ -18995,10 +18996,10 @@ dumpLabelSchema(Archive *fout, TableInfo *tblinfo)
 	setGraphPath(q, tblinfo->dobj.namespace);
 	setGraphPath(delq, tblinfo->dobj.namespace);
 
-	/* =====================================================
-	 * If it is not cascade, then error occurs.
-	 * "cannot drop <LABEL_NAME> because it is not empty."
-	 * See RemoveObjects()
+	/*
+	 * ===================================================== If it is not
+	 * cascade, then error occurs. "cannot drop <LABEL_NAME> because it is not
+	 * empty." See RemoveObjects()
 	 * =====================================================
 	 */
 	appendPQExpBuffer(delq, "DROP %s %s CASCADE;\n", reltypename, qrelname);
@@ -19019,8 +19020,8 @@ dumpLabelSchema(Archive *fout, TableInfo *tblinfo)
 					  tblinfo->ag_labid);
 
 	/*
-	 * Emit the INHERITS clause (not for partitions), except in
-	 * binary-upgrade mode.
+	 * Emit the INHERITS clause (not for partitions), except in binary-upgrade
+	 * mode.
 	 */
 	if (numParents > 0 && !tblinfo->ispartition &&
 		!dopt->binary_upgrade)
@@ -19059,14 +19060,14 @@ dumpLabelSchema(Archive *fout, TableInfo *tblinfo)
 	}
 
 	/*
-	 * For materialized views, create the AS clause just like a view. At
-	 * this point, we always mark the view as not populated.
+	 * For materialized views, create the AS clause just like a view. At this
+	 * point, we always mark the view as not populated.
 	 */
 	appendPQExpBufferStr(q, ";\n");
 
 	/*
-	 * in binary upgrade mode, update the catalog with any missing values
-	 * that might be present.
+	 * in binary upgrade mode, update the catalog with any missing values that
+	 * might be present.
 	 */
 	if (dopt->binary_upgrade)
 	{
@@ -19089,24 +19090,23 @@ dumpLabelSchema(Archive *fout, TableInfo *tblinfo)
 
 	/*
 	 * To create binary-compatible heap files, we have to ensure the same
-	 * physical column order, including dropped columns, as in the
-	 * original.  Therefore, we create dropped columns above and drop them
-	 * here, also updating their attlen/attalign values so that the
-	 * dropped column can be skipped properly.  (We do not bother with
-	 * restoring the original attbyval setting.)  Also, inheritance
-	 * relationships are set up by doing ALTER TABLE INHERIT rather than
-	 * using an INHERITS clause --- the latter would possibly mess up the
-	 * column order.  That also means we have to take care about setting
-	 * attislocal correctly, plus fix up any inherited CHECK constraints.
-	 * Analogously, we set up typed tables using ALTER TABLE / OF here.
+	 * physical column order, including dropped columns, as in the original.
+	 * Therefore, we create dropped columns above and drop them here, also
+	 * updating their attlen/attalign values so that the dropped column can be
+	 * skipped properly.  (We do not bother with restoring the original
+	 * attbyval setting.)  Also, inheritance relationships are set up by doing
+	 * ALTER TABLE INHERIT rather than using an INHERITS clause --- the latter
+	 * would possibly mess up the column order.  That also means we have to
+	 * take care about setting attislocal correctly, plus fix up any inherited
+	 * CHECK constraints. Analogously, we set up typed tables using ALTER
+	 * TABLE / OF here.
 	 *
-	 * We process foreign and partitioned tables here, even though they
-	 * lack heap storage, because they can participate in inheritance
-	 * relationships and we want this stuff to be consistent across the
-	 * inheritance tree.  We can exclude indexes, toast tables, sequences
-	 * and matviews, even though they have storage, because we don't
-	 * support altering or dropping columns in them, nor can they be part
-	 * of inheritance trees.
+	 * We process foreign and partitioned tables here, even though they lack
+	 * heap storage, because they can participate in inheritance relationships
+	 * and we want this stuff to be consistent across the inheritance tree. We
+	 * can exclude indexes, toast tables, sequences and matviews, even though
+	 * they have storage, because we don't support altering or dropping
+	 * columns in them, nor can they be part of inheritance trees.
 	 */
 	if (dopt->binary_upgrade &&
 		(tblinfo->relkind == RELKIND_RELATION))
@@ -19117,9 +19117,9 @@ dumpLabelSchema(Archive *fout, TableInfo *tblinfo)
 			{
 				appendPQExpBufferStr(q, "\n-- For binary upgrade, recreate dropped column.\n");
 				appendPQExpBuffer(q, "UPDATE pg_catalog.pg_attribute\n"
-									 "SET attlen = %d, "
-									 "attalign = '%c', attbyval = false\n"
-									 "WHERE attname = ",
+								  "SET attlen = %d, "
+								  "attalign = '%c', attbyval = false\n"
+								  "WHERE attname = ",
 								  tblinfo->attlen[j],
 								  tblinfo->attalign[j]);
 				appendStringLiteralAH(q, tblinfo->attnames[j], fout);
@@ -19136,8 +19136,8 @@ dumpLabelSchema(Archive *fout, TableInfo *tblinfo)
 			{
 				appendPQExpBufferStr(q, "\n-- For binary upgrade, recreate inherited column.\n");
 				appendPQExpBufferStr(q, "UPDATE pg_catalog.pg_attribute\n"
-										"SET attislocal = false\n"
-										"WHERE attname = ");
+									 "SET attislocal = false\n"
+									 "WHERE attname = ");
 				appendStringLiteralAH(q, tblinfo->attnames[j], fout);
 				appendPQExpBufferStr(q, "\n  AND attrelid = ");
 				appendStringLiteralAH(q, qualrelname, fout);
@@ -19148,8 +19148,8 @@ dumpLabelSchema(Archive *fout, TableInfo *tblinfo)
 		/*
 		 * Add inherited CHECK constraints, if any.
 		 *
-		 * For partitions, they were already dumped, and conislocal
-		 * doesn't need fixing.
+		 * For partitions, they were already dumped, and conislocal doesn't
+		 * need fixing.
 		 */
 		for (k = 0; k < tblinfo->ncheck; k++)
 		{
@@ -19165,8 +19165,8 @@ dumpLabelSchema(Archive *fout, TableInfo *tblinfo)
 							  fmtId(constr->dobj.name));
 			appendPQExpBuffer(q, "%s;\n", constr->condef);
 			appendPQExpBufferStr(q, "UPDATE pg_catalog.pg_constraint\n"
-									"SET conislocal = false\n"
-									"WHERE contype = 'c' AND conname = ");
+								 "SET conislocal = false\n"
+								 "WHERE contype = 'c' AND conname = ");
 			appendStringLiteralAH(q, constr->dobj.name, fout);
 			appendPQExpBufferStr(q, "\n  AND conrelid = ");
 			appendStringLiteralAH(q, qualrelname, fout);
@@ -19198,17 +19198,17 @@ dumpLabelSchema(Archive *fout, TableInfo *tblinfo)
 	/*
 	 * In binary_upgrade mode, arrange to restore the old relfrozenxid and
 	 * relminmxid of all vacuumable relations.  (While vacuum.c processes
-	 * TOAST tables semi-independently, here we see them only as children
-	 * of other relations; so this "if" lacks RELKIND_TOASTVALUE, and the
-	 * child toast table is handled below.)
+	 * TOAST tables semi-independently, here we see them only as children of
+	 * other relations; so this "if" lacks RELKIND_TOASTVALUE, and the child
+	 * toast table is handled below.)
 	 */
 	if (dopt->binary_upgrade &&
 		(tblinfo->relkind == RELKIND_RELATION))
 	{
 		appendPQExpBufferStr(q, "\n-- For binary upgrade, set heap's relfrozenxid and relminmxid\n");
 		appendPQExpBuffer(q, "UPDATE pg_catalog.pg_class\n"
-							 "SET relfrozenxid = '%u', relminmxid = '%u'\n"
-							 "WHERE oid = ",
+						  "SET relfrozenxid = '%u', relminmxid = '%u'\n"
+						  "WHERE oid = ",
 						  tblinfo->frozenxid, tblinfo->minmxid);
 		appendStringLiteralAH(q, qualrelname, fout);
 		appendPQExpBufferStr(q, "::pg_catalog.regclass;\n");
@@ -19216,21 +19216,21 @@ dumpLabelSchema(Archive *fout, TableInfo *tblinfo)
 		if (tblinfo->toast_oid)
 		{
 			/*
-			 * The toast table will have the same OID at restore, so we
-			 * can safely target it by OID.
+			 * The toast table will have the same OID at restore, so we can
+			 * safely target it by OID.
 			 */
 			appendPQExpBufferStr(q, "\n-- For binary upgrade, set toast's relfrozenxid and relminmxid\n");
 			appendPQExpBuffer(q, "UPDATE pg_catalog.pg_class\n"
-								 "SET relfrozenxid = '%u', relminmxid = '%u'\n"
-								 "WHERE oid = '%u';\n",
+							  "SET relfrozenxid = '%u', relminmxid = '%u'\n"
+							  "WHERE oid = '%u';\n",
 							  tblinfo->toast_frozenxid,
 							  tblinfo->toast_minmxid, tblinfo->toast_oid);
 		}
 	}
 
 	/*
-	 * Dump additional per-column properties that we can't handle in the
-	 * main CREATE TABLE command.
+	 * Dump additional per-column properties that we can't handle in the main
+	 * CREATE TABLE command.
 	 */
 	for (j = 0; j < tblinfo->numatts; j++)
 	{
@@ -19239,9 +19239,9 @@ dumpLabelSchema(Archive *fout, TableInfo *tblinfo)
 			continue;
 
 		/*
-		 * If we didn't dump the column definition explicitly above, and
-		 * it is NOT NULL and did not inherit that property from a parent,
-		 * we have to mark it separately.
+		 * If we didn't dump the column definition explicitly above, and it is
+		 * NOT NULL and did not inherit that property from a parent, we have
+		 * to mark it separately.
 		 */
 		if (!shouldPrintColumn(dopt, tblinfo, j) &&
 			tblinfo->notnull[j] && !tblinfo->inhNotNull[j])
@@ -19268,8 +19268,8 @@ dumpLabelSchema(Archive *fout, TableInfo *tblinfo)
 		}
 
 		/*
-		 * Dump per-column storage information.  The statement is only
-		 * dumped if the storage has been changed from the type's default.
+		 * Dump per-column storage information.  The statement is only dumped
+		 * if the storage has been changed from the type's default.
 		 */
 		if (tblinfo->attstorage[j] != tblinfo->typstorage[j])
 		{
@@ -19360,12 +19360,12 @@ dumpLabelSchema(Archive *fout, TableInfo *tblinfo)
 					 ARCHIVE_OPTS(.tag = tblinfo->dobj.name,
 								  .namespace = tblinfo->dobj.namespace->dobj.name,
 								  .tablespace = (tblinfo->relkind == RELKIND_VIEW) ?
-										  NULL : tblinfo->reltablespace,
+								  NULL : tblinfo->reltablespace,
 								  .tableam = tableam,
 								  .owner = tblinfo->rolname,
 								  .description = reltypename,
 								  .section = tblinfo->postponed_def ?
-										  SECTION_POST_DATA : SECTION_PRE_DATA,
+								  SECTION_POST_DATA : SECTION_PRE_DATA,
 								  .createStmt = q->data,
 								  .dropStmt = delq->data));
 	}

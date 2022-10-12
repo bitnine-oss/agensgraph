@@ -175,8 +175,8 @@ static List *set_returning_clause_references(PlannerInfo *root,
 
 /* agensgraph */
 static void set_dijkstra_references(PlannerInfo *root,
-							Plan *plan,
-							int rtoffset);
+									Plan *plan,
+									int rtoffset);
 
 
 /*****************************************************************************
@@ -1091,6 +1091,7 @@ set_plan_refs(PlannerInfo *root, Plan *plan, int rtoffset)
 		case T_ModifyGraph:
 			{
 				ModifyGraph *splan = (ModifyGraph *) plan;
+
 				foreach(l, splan->resultRelations)
 				{
 					lfirst_int(l) += rtoffset;
@@ -1098,8 +1099,8 @@ set_plan_refs(PlannerInfo *root, Plan *plan, int rtoffset)
 				splan->subplan = set_plan_refs(root, splan->subplan, rtoffset);
 				splan->resultRelIndex = list_length(root->glob->resultRelations);
 				root->glob->resultRelations =
-						list_concat(root->glob->resultRelations,
-									splan->resultRelations);
+					list_concat(root->glob->resultRelations,
+								splan->resultRelations);
 			}
 			break;
 		case T_Dijkstra:

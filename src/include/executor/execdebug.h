@@ -92,7 +92,7 @@
 #define NLV_printf(s)
 #define NLV1_printf(s, a)
 #define ENLV1_printf(message)
-#endif   /* EXEC_NESTLOOPVLEDEBUG */
+#endif							/* EXEC_NESTLOOPVLEDEBUG */
 
 /* ----------------
  *		sort node debugging defines

@@ -223,7 +223,7 @@ binary_upgrade_set_missing_value(PG_FUNCTION_ARGS)
 Datum
 binary_upgrade_set_next_ag_graph_oid(PG_FUNCTION_ARGS)
 {
-	Oid	ag_graph_oid = PG_GETARG_OID(0);
+	Oid			ag_graph_oid = PG_GETARG_OID(0);
 
 	CHECK_IS_BINARY_UPGRADE;
 	binary_upgrade_next_ag_graph_oid = ag_graph_oid;
@@ -233,7 +233,7 @@ binary_upgrade_set_next_ag_graph_oid(PG_FUNCTION_ARGS)
 Datum
 binary_upgrade_set_next_ag_label_oid(PG_FUNCTION_ARGS)
 {
-	Oid	ag_label_oid = PG_GETARG_OID(0);
+	Oid			ag_label_oid = PG_GETARG_OID(0);
 
 	CHECK_IS_BINARY_UPGRADE;
 	binary_upgrade_next_ag_label_oid = ag_label_oid;

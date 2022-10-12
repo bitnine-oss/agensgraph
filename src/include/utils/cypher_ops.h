@@ -25,4 +25,4 @@ extern Datum jsonb_uminus(PG_FUNCTION_ARGS);
 /* coercion from numeric to graphid */
 extern Datum numeric_graphid(PG_FUNCTION_ARGS);
 
-#endif	/* CYPHER_OPS_H */
+#endif							/* CYPHER_OPS_H */

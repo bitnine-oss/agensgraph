@@ -223,9 +223,10 @@ build_base_rel_tlists(PlannerInfo *root, List *final_tlist)
 static void
 add_extra_vars_to_targetlist(PlannerInfo *root, Node *node)
 {
-	List *vars = pull_var_clause(node,
-								 PVC_RECURSE_AGGREGATES |
-								 PVC_INCLUDE_PLACEHOLDERS);
+	List	   *vars = pull_var_clause(node,
+									   PVC_RECURSE_AGGREGATES |
+									   PVC_INCLUDE_PLACEHOLDERS);
+
 	if (vars != NIL)
 	{
 		add_vars_to_targetlist(root, vars, bms_make_singleton(0), true);

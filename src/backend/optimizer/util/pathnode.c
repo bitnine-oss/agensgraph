@@ -4326,9 +4326,9 @@ create_shortestpath_path(PlannerInfo *root,
 						 List *pathkeys,
 						 Relids required_outer)
 {
-	Query            *parse = root->parse;
+	Query	   *parse = root->parse;
 	ShortestpathPath *pathnode = makeNode(ShortestpathPath);
-	Relids		      inner_req_outer = PATH_REQ_OUTER(inner_path);
+	Relids		inner_req_outer = PATH_REQ_OUTER(inner_path);
 
 	/*
 	 * If the inner path is parameterized by the outer, we must drop any
@@ -4360,16 +4360,16 @@ create_shortestpath_path(PlannerInfo *root,
 	pathnode->jpath.path.parent = joinrel;
 	pathnode->jpath.path.pathtarget = joinrel->reltarget;
 	pathnode->jpath.path.param_info =
-	get_joinrel_parampathinfo(root,
-							  joinrel,
-							  outer_path,
-							  inner_path,
-							  extra->sjinfo,
-							  required_outer,
-							  &restrict_clauses);
+		get_joinrel_parampathinfo(root,
+								  joinrel,
+								  outer_path,
+								  inner_path,
+								  extra->sjinfo,
+								  required_outer,
+								  &restrict_clauses);
 	pathnode->jpath.path.parallel_aware = false;
 	pathnode->jpath.path.parallel_safe = joinrel->consider_parallel &&
-	outer_path->parallel_safe && inner_path->parallel_safe;
+		outer_path->parallel_safe && inner_path->parallel_safe;
 	/* This is a foolish way to estimate parallel_workers, but for now... */
 	pathnode->jpath.path.parallel_workers = outer_path->parallel_workers;
 	pathnode->jpath.path.pathkeys = pathkeys;
@@ -4394,7 +4394,7 @@ create_shortestpath_path(PlannerInfo *root,
 	pathnode->limit = parse->shortestpathLimit;
 
 	final_cost_nestloop(root,
-						(NestPath*)pathnode,
+						(NestPath *) pathnode,
 						workspace,
 						extra);
 

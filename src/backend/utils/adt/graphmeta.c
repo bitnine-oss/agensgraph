@@ -28,17 +28,17 @@ HASHCTL		hash_ctl;
 void
 merge_meta(Relation rel)
 {
-	AgStat_GraphMeta	*meta_elem;
-	HASH_SEQ_STATUS		seq;
-	HeapTuple			tup;
+	AgStat_GraphMeta *meta_elem;
+	HASH_SEQ_STATUS seq;
+	HeapTuple	tup;
 
 	hash_seq_init(&seq, htab);
 
 	while ((meta_elem = hash_seq_search(&seq)) != NULL)
 	{
-		Datum	values[Natts_ag_graphmeta];
-		bool	isnull[Natts_ag_graphmeta];
-		int		i;
+		Datum		values[Natts_ag_graphmeta];
+		bool		isnull[Natts_ag_graphmeta];
+		int			i;
 
 		for (i = 0; i < Natts_ag_graphmeta; i++)
 		{
@@ -46,7 +46,7 @@ merge_meta(Relation rel)
 			isnull[i] = false;
 		}
 
-		values[Anum_ag_graphmeta_graph -1] = ObjectIdGetDatum(meta_elem->key.graph);
+		values[Anum_ag_graphmeta_graph - 1] = ObjectIdGetDatum(meta_elem->key.graph);
 		values[Anum_ag_graphmeta_edge - 1] = Int16GetDatum(meta_elem->key.edge);
 		values[Anum_ag_graphmeta_start - 1] = Int16GetDatum(meta_elem->key.start);
 		values[Anum_ag_graphmeta_end - 1] = Int16GetDatum(meta_elem->key.end);
@@ -69,7 +69,7 @@ scan_label(Oid relid, Oid graphid)
 	TableScanDesc scan;
 
 	AgStat_key	key;
-	AgStat_GraphMeta   *meta_elem;
+	AgStat_GraphMeta *meta_elem;
 
 	rel = table_open(relid, AccessShareLock);
 	snapshot = RegisterSnapshot(GetLatestSnapshot());
@@ -79,12 +79,12 @@ scan_label(Oid relid, Oid graphid)
 
 	while ((tup = heap_getnext(scan, ForwardScanDirection)) != NULL)
 	{
-		Datum	dat;
-		Labid	edge;
-		Labid	start;
-		Labid	end;
-		bool	found;
-		bool	isnull;
+		Datum		dat;
+		Labid		edge;
+		Labid		start;
+		Labid		end;
+		bool		found;
+		bool		isnull;
 
 		dat = heap_getattr(tup, Anum_ag_edge_id,
 						   RelationGetDescr(rel), &isnull);
@@ -102,9 +102,9 @@ scan_label(Oid relid, Oid graphid)
 		key.edge = edge;
 		key.start = start;
 		key.end = end;
-		meta_elem= (AgStat_GraphMeta *) hash_search(htab,
-													(void *) &key,
-													HASH_ENTER, &found);
+		meta_elem = (AgStat_GraphMeta *) hash_search(htab,
+													 (void *) &key,
+													 HASH_ENTER, &found);
 		if (found)
 			meta_elem->edges_inserted++;
 		else
@@ -144,17 +144,17 @@ regather_graphmeta(PG_FUNCTION_ARGS)
 	hash_ctl.entrysize = sizeof(AgStat_GraphMeta);
 
 	htab = hash_create("regather total graphmeta",
-					   1024,		/* hash size*/
+					   1024,	/* hash size */
 					   &hash_ctl,
 					   HASH_ELEM | HASH_BLOBS);
 
 	/* Scan all graph label */
 	while ((tup = heap_getnext(scan, ForwardScanDirection)) != NULL)
 	{
-		Datum	relid;
-		Datum	graphid;
-		char	labkind;
-		bool	isnull;
+		Datum		relid;
+		Datum		graphid;
+		char		labkind;
+		bool		isnull;
 
 		labkind = heap_getattr(tup, Anum_ag_label_labkind,
 							   RelationGetDescr(rel), &isnull);

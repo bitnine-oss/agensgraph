@@ -40,4 +40,4 @@ CATALOG(ag_vertex,7010,VertexRelationId) BKI_BOOTSTRAP BKI_ROWTYPE_OID(7012,Vert
  */
 typedef FormData_ag_vertex *Form_ag_vertex;
 
-#endif   /* AG_VERTEX_H */
+#endif							/* AG_VERTEX_H */

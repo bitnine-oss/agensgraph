@@ -665,8 +665,8 @@ find_inheritance_parents(Oid childrelId, LOCKMODE lockmode)
 {
 	List	   *list = NIL;
 	Relation	relation;
-	SysScanDesc	scan;
-	ScanKeyData	key[1];
+	SysScanDesc scan;
+	ScanKeyData key[1];
 	HeapTuple	inheritsTuple;
 	Oid			inhparent;
 	Oid		   *oidarr;

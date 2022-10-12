@@ -6194,7 +6194,7 @@ ag_graph_ownercheck(Oid graphid, Oid roleid)
 bool
 ag_label_ownercheck(Oid laboid, Oid roleid)
 {
-	Oid relid;
+	Oid			relid;
 
 	/* Superusers bypass all permission checking. */
 	if (superuser_arg(roleid))

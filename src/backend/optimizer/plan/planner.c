@@ -1268,7 +1268,7 @@ preprocess_graph_pattern(PlannerInfo *root, List *pattern)
 
 	foreach(le, gpath->chain)
 	{
-		Node *elem = lfirst(le);
+		Node	   *elem = lfirst(le);
 
 		if (IsA(elem, GraphVertex))
 		{
@@ -1279,7 +1279,7 @@ preprocess_graph_pattern(PlannerInfo *root, List *pattern)
 		}
 		else
 		{
-			GraphEdge *gedge = (GraphEdge *) elem;
+			GraphEdge  *gedge = (GraphEdge *) elem;
 
 			Assert(IsA(elem, GraphEdge));
 
@@ -1292,7 +1292,7 @@ preprocess_graph_pattern(PlannerInfo *root, List *pattern)
 static void
 preprocess_graph_sets(PlannerInfo *root, List *sets)
 {
-	ListCell *ls;
+	ListCell   *ls;
 
 	foreach(ls, sets)
 	{
@@ -1306,7 +1306,7 @@ preprocess_graph_sets(PlannerInfo *root, List *sets)
 static void
 preprocess_graph_delete(PlannerInfo *root, List *exprs)
 {
-	ListCell *ls;
+	ListCell   *ls;
 
 	foreach(ls, exprs)
 	{
@@ -1786,7 +1786,8 @@ grouping_planner(PlannerInfo *root, double tuple_fraction)
 								  final_targets_contain_srfs);
 	}
 
-	if (parse->shortestpathSource && parse->dijkstraEndId != NULL) {
+	if (parse->shortestpathSource && parse->dijkstraEndId != NULL)
+	{
 		current_rel = create_dijkstra_paths(root,
 											current_rel,
 											final_target,
@@ -1873,6 +1874,7 @@ grouping_planner(PlannerInfo *root, double tuple_fraction)
 													parse->graph.resultRelations,
 													assign_special_exec_param(root));
 		}
+
 		/*
 		 * If this is an INSERT/UPDATE/DELETE, add the ModifyTable node.
 		 */
@@ -4886,8 +4888,8 @@ create_dijkstra_paths(PlannerInfo *root, RelOptInfo *input_rel,
 	/* Let extensions possibly add some more paths */
 	if (create_upper_paths_hook)
 		(*create_upper_paths_hook) (root, UPPERREL_DIJKSTRA,
-				input_rel, dijkstra_rel,
-				NULL);
+									input_rel, dijkstra_rel,
+									NULL);
 
 	/*
 	 * No need to bother with set_cheapest here; grouping_planner does not
@@ -5012,21 +5014,21 @@ make_dijkstra_input_target(PlannerInfo *root, PathTarget *final_target)
 	parse->dijkstraWeight = 1;
 	add_new_column_to_pathtarget(input_target,
 								 (Expr *) llast(final_target->exprs));
-	if ( parse->dijkstraEndId != NULL )
-	  add_new_column_to_pathtarget(input_target, (Expr *) parse->dijkstraEndId);
-	if ( parse->shortestpathEndIdLeft != NULL )
-	  add_new_column_to_pathtarget(input_target, (Expr *) parse->shortestpathEndIdLeft);
-	if ( parse->dijkstraEdgeId != NULL )
+	if (parse->dijkstraEndId != NULL)
+		add_new_column_to_pathtarget(input_target, (Expr *) parse->dijkstraEndId);
+	if (parse->shortestpathEndIdLeft != NULL)
+		add_new_column_to_pathtarget(input_target, (Expr *) parse->shortestpathEndIdLeft);
+	if (parse->dijkstraEdgeId != NULL)
 		add_new_column_to_pathtarget(input_target, (Expr *) parse->dijkstraEdgeId);
-	if ( parse->shortestpathEndIdRight != NULL )
-	  add_new_column_to_pathtarget(input_target, (Expr *) parse->shortestpathEndIdRight);
-	if ( parse->shortestpathTableOidLeft != NULL )
+	if (parse->shortestpathEndIdRight != NULL)
+		add_new_column_to_pathtarget(input_target, (Expr *) parse->shortestpathEndIdRight);
+	if (parse->shortestpathTableOidLeft != NULL)
 		add_new_column_to_pathtarget(input_target, (Expr *) parse->shortestpathTableOidLeft);
-	if ( parse->shortestpathTableOidRight != NULL )
+	if (parse->shortestpathTableOidRight != NULL)
 		add_new_column_to_pathtarget(input_target, (Expr *) parse->shortestpathTableOidRight);
-	if ( parse->shortestpathCtidLeft != NULL )
+	if (parse->shortestpathCtidLeft != NULL)
 		add_new_column_to_pathtarget(input_target, (Expr *) parse->shortestpathCtidLeft);
-	if ( parse->shortestpathCtidRight != NULL )
+	if (parse->shortestpathCtidRight != NULL)
 		add_new_column_to_pathtarget(input_target, (Expr *) parse->shortestpathCtidRight);
 
 	/* XXX this causes some redundant cost calculation ... */

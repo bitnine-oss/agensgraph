@@ -371,8 +371,8 @@ add_paths_for_cmerge(PlannerInfo *root, RelOptInfo *joinrel,
 		if (bms_overlap(joinrel->relids, sjinfo->min_righthand) &&
 			!bms_overlap(joinrel->relids, sjinfo->min_lefthand))
 			extra.param_source_rels = bms_join(extra.param_source_rels,
-										   bms_difference(root->all_baserels,
-													 sjinfo->min_righthand));
+											   bms_difference(root->all_baserels,
+															  sjinfo->min_righthand));
 	}
 
 	extra.param_source_rels = bms_add_members(extra.param_source_rels,
@@ -412,8 +412,8 @@ add_paths_for_cdelete(PlannerInfo *root, RelOptInfo *joinrel,
 		if (bms_overlap(joinrel->relids, sjinfo->min_righthand) &&
 			!bms_overlap(joinrel->relids, sjinfo->min_lefthand))
 			extra.param_source_rels = bms_join(extra.param_source_rels,
-										   bms_difference(root->all_baserels,
-													 sjinfo->min_righthand));
+											   bms_difference(root->all_baserels,
+															  sjinfo->min_righthand));
 	}
 
 	extra.param_source_rels = bms_add_members(extra.param_source_rels,
@@ -691,7 +691,7 @@ try_nestloop_path(PlannerInfo *root,
 				  JoinType jointype,
 				  JoinPathExtraData *extra)
 {
-	Query      *parse = root->parse;
+	Query	   *parse = root->parse;
 	Relids		required_outer;
 	JoinCostWorkspace workspace;
 	RelOptInfo *innerrel = inner_path->parent;
@@ -773,34 +773,34 @@ try_nestloop_path(PlannerInfo *root,
 
 		if (parse->shortestpathSource != NULL && parse->shortestpathEndIdLeft != NULL)
 		{
-			if ( joinrel->pathlist == NULL )
+			if (joinrel->pathlist == NULL)
 			{
 				add_path(joinrel, (Path *)
-						create_shortestpath_path(root,
-												 joinrel,
-												 jointype,
-												 &workspace,
-												 extra,
-												 outer_path,
-												 inner_path,
-												 extra->restrictlist,
-												 pathkeys,
-												 required_outer));
+						 create_shortestpath_path(root,
+												  joinrel,
+												  jointype,
+												  &workspace,
+												  extra,
+												  outer_path,
+												  inner_path,
+												  extra->restrictlist,
+												  pathkeys,
+												  required_outer));
 			}
 		}
 		else
 		{
 			add_path(joinrel, (Path *)
-					create_nestloop_path(root,
-										 joinrel,
-										 jointype,
-										 &workspace,
-										 extra,
-										 outer_path,
-										 inner_path,
-										 extra->restrictlist,
-										 pathkeys,
-										 required_outer));
+					 create_nestloop_path(root,
+										  joinrel,
+										  jointype,
+										  &workspace,
+										  extra,
+										  outer_path,
+										  inner_path,
+										  extra->restrictlist,
+										  pathkeys,
+										  required_outer));
 		}
 	}
 	else
@@ -1679,7 +1679,7 @@ match_unsorted_outer(PlannerInfo *root,
 					 JoinType jointype,
 					 JoinPathExtraData *extra)
 {
-	Query      *parse = root->parse;
+	Query	   *parse = root->parse;
 	JoinType	save_jointype = jointype;
 	bool		nestjoinOK;
 	bool		useallclauses;
@@ -1748,8 +1748,8 @@ match_unsorted_outer(PlannerInfo *root,
 		/*
 		 * Consider materializing the cheapest inner path, unless
 		 * enable_material is off or the path in question materializes its
-		 * output anyway.
-		 * Subplan of NestLoopVLE does not allow to consider materializing.
+		 * output anyway. Subplan of NestLoopVLE does not allow to consider
+		 * materializing.
 		 */
 		if (parse->shortestpathSource == NULL &&
 			enable_material && inner_cheapest_total != NULL &&
@@ -2066,10 +2066,10 @@ match_unsorted_outer_for_vle(PlannerInfo *root, RelOptInfo *joinrel,
 											 outerpath->pathkeys);
 
 		/*
-		 * Consider nestloop joins using this outer path and various
-		 * available paths for the inner relation.  We consider the
-		 * cheapest-total paths for each available parameterization of the
-		 * inner relation, including the unparameterized case.
+		 * Consider nestloop joins using this outer path and various available
+		 * paths for the inner relation.  We consider the cheapest-total paths
+		 * for each available parameterization of the inner relation,
+		 * including the unparameterized case.
 		 */
 		foreach(lc2, innerrel->cheapest_parameterized_paths)
 		{

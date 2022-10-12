@@ -5334,7 +5334,7 @@ makeSelectEdgesVertices(Node *vertices, CypherDeleteClause *delete,
 	nulledge->location = -1;
 
 	targetlist = list_make1(
-			makeResTarget((Node *) nulledge, NULL));
+							makeResTarget((Node *) nulledge, NULL));
 
 	ag_edge = makeRangeVar(get_graph_path(true), AG_EDGE, -1);
 	ag_edge->inh = true;

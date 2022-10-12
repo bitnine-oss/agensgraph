@@ -139,7 +139,8 @@ typedef struct Query
 	bool		hasModifyingCTE;	/* has INSERT/UPDATE/DELETE in WITH */
 	bool		hasForUpdate;	/* FOR [KEY] UPDATE/SHARE was specified */
 	bool		hasRowSecurity; /* rewriter has applied some RLS policy */
-	bool		hasGraphwriteClause; /* has modify graph type in whole statement */
+	bool		hasGraphwriteClause;	/* has modify graph type in whole
+										 * statement */
 
 	bool		isReturn;		/* is a RETURN statement */
 
@@ -207,15 +208,16 @@ typedef struct Query
 	Node	   *shortestpathCtidRight;
 	Node	   *shortestpathSource;
 	Node	   *shortestpathTarget;
-	long        shortestpathMinhops;
-	long        shortestpathMaxhops;
-	long        shortestpathLimit;
+	long		shortestpathMinhops;
+	long		shortestpathMaxhops;
+	long		shortestpathLimit;
 
-	struct {
+	struct
+	{
 		GraphWriteOp writeOp;
 		bool		last;		/* is this for the last clause? */
 		uint32		nr_modify;	/* number of clauses that modifies graph
-								   before this */
+								 * before this */
 		bool		detach;		/* DETACH DELETE */
 		bool		eager;		/* Should it work with eager? */
 		List	   *pattern;	/* graph pattern (list of paths) for CREATE */
@@ -3747,7 +3749,7 @@ typedef struct CreateGraphStmt
 	char	   *graphname;		/* the name of the graph to create */
 	RoleSpec   *authrole;		/* the owner of the created graph */
 	bool		if_not_exists;	/* just do nothing if graph already exists? */
-	CreateGraphStmtKind	kind;
+	CreateGraphStmtKind kind;
 } CreateGraphStmt;
 
 typedef enum LabelKind
@@ -3796,14 +3798,6 @@ typedef struct DropConstraintStmt
 
 typedef struct IndexStmt CreatePropertyIndexStmt;
 
-typedef struct DropPropertyIndexStmt
-{
-	NodeTag		 type;
-	char	    *idxname;
-	DropBehavior behavior;		/* RESTRICT or CASCADE behavior */
-	bool		 missing_ok;	/* skip error if object is missing? */
-} DropPropertyIndexStmt;
-
 typedef struct DisableIndexStmt
 {
 	NodeTag		type;
@@ -3817,7 +3811,7 @@ typedef struct DisableIndexStmt
 typedef struct CypherStmt
 {
 	NodeTag		type;
-	Node	   *last;		/* last Cypher clause in the statement */
+	Node	   *last;			/* last Cypher clause in the statement */
 } CypherStmt;
 
 typedef struct CypherListComp
@@ -3844,7 +3838,7 @@ typedef enum CSPKind
 {
 	CSP_EXISTS,
 	CSP_SIZE,
-	CSP_FINDPATH			/* shortestpath, allshortestpaths, dijkstra */
+	CSP_FINDPATH				/* shortestpath, allshortestpaths, dijkstra */
 } CSPKind;
 
 typedef struct CypherSubPattern
@@ -3864,7 +3858,8 @@ typedef struct CypherSubPattern
 typedef struct CypherClause
 {
 	NodeTag		type;
-	Node	   *detail;		/* detailed information about this Cypher clause */
+	Node	   *detail;			/* detailed information about this Cypher
+								 * clause */
 	Node	   *prev;
 } CypherClause;
 
@@ -3877,8 +3872,8 @@ typedef struct CypherMatchClause
 {
 	NodeTag		type;
 	List	   *pattern;
-	Node	   *where;		/* WHERE qualification */
-	bool		optional;	/* OPTIONAL MATCH */
+	Node	   *where;			/* WHERE qualification */
+	bool		optional;		/* OPTIONAL MATCH */
 } CypherMatchClause;
 
 /* which clause is parsed as a CypherProjection */
@@ -3893,11 +3888,11 @@ typedef struct CypherProjection
 {
 	NodeTag		type;
 	CPKind		kind;
-	List	   *distinct;	/* DISTINCT clause */
-	List	   *items;		/* list of return items (ResTarget) */
-	List	   *order;		/* a list of SortBy's */
-	Node	   *skip;		/* the number of result tuples to skip */
-	Node	   *limit;		/* the number of result tuples to return */
+	List	   *distinct;		/* DISTINCT clause */
+	List	   *items;			/* list of return items (ResTarget) */
+	List	   *order;			/* a list of SortBy's */
+	Node	   *skip;			/* the number of result tuples to skip */
+	Node	   *limit;			/* the number of result tuples to return */
 	Node	   *where;
 } CypherProjection;
 
@@ -3941,7 +3936,7 @@ typedef struct CypherMergeClause
 typedef struct CypherLoadClause
 {
 	NodeTag		type;
-	RangeVar   *relation;	/* a relation to load */
+	RangeVar   *relation;		/* a relation to load */
 } CypherLoadClause;
 
 typedef struct CypherUnwindClause
@@ -3962,8 +3957,8 @@ typedef struct CypherPath
 {
 	NodeTag		type;
 	CPathKind	kind;
-	Node	   *variable;	/* CypherName */
-	List	   *chain;		/* node, relationship, node, ... */
+	Node	   *variable;		/* CypherName */
+	List	   *chain;			/* node, relationship, node, ... */
 	/* Fields valid for Dijkstra */
 	Node	   *weight;
 	Node	   *qual;
@@ -3974,10 +3969,10 @@ typedef struct CypherPath
 typedef struct CypherNode
 {
 	NodeTag		type;
-	Node	   *variable;	/* CypherName */
-	Node	   *label;		/* CypherName */
+	Node	   *variable;		/* CypherName */
+	Node	   *label;			/* CypherName */
 	bool		only;
-	Node	   *prop_map;	/* JSON object expression or string constant */
+	Node	   *prop_map;		/* JSON object expression or string constant */
 } CypherNode;
 
 #define CYPHER_REL_DIR_NONE		0
@@ -3987,19 +3982,19 @@ typedef struct CypherNode
 typedef struct CypherRel
 {
 	NodeTag		type;
-	uint32		direction;	/* bitmask of directions (see above) */
-	Node	   *variable;	/* CypherName */
-	List	   *types;		/* ORed types */
+	uint32		direction;		/* bitmask of directions (see above) */
+	Node	   *variable;		/* CypherName */
+	List	   *types;			/* ORed types */
 	bool		only;
-	Node	   *varlen;		/* variable length relationships (A_Indices) */
-	Node	   *prop_map;	/* JSON object expression or string constant */
+	Node	   *varlen;			/* variable length relationships (A_Indices) */
+	Node	   *prop_map;		/* JSON object expression or string constant */
 } CypherRel;
 
 typedef struct CypherName
 {
 	NodeTag		type;
 	char	   *name;
-	int			location;	/* token location, or -1 if unknown */
+	int			location;		/* token location, or -1 if unknown */
 } CypherName;
 
 inline static char *

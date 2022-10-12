@@ -69,4 +69,4 @@ typedef struct GraphDelElem
 	ExprState  *es_elem;
 } GraphDelElem;
 
-#endif	/* GRAPHNODES_H */
+#endif							/* GRAPHNODES_H */

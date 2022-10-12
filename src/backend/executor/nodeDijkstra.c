@@ -37,7 +37,7 @@
 
 typedef struct vnode
 {
-	Graphid		id;					/* hash key */
+	Graphid		id;				/* hash key */
 	double		weight;
 	List	   *incoming_enodes;
 	ListCell   *out_edge;
@@ -55,7 +55,8 @@ static HeapTuple replace_vertexRow_graphid(TupleDesc tupleDesc,
 static enode *
 new_enode(Graphid id, vnode *prev)
 {
-	enode *edge = palloc(sizeof(enode));
+	enode	   *edge = palloc(sizeof(enode));
+
 	edge->id = id;
 	edge->prev = prev;
 	return edge;
@@ -64,7 +65,7 @@ new_enode(Graphid id, vnode *prev)
 static void
 vnode_add_enode(vnode *vertex, double weight, Graphid eid, vnode *prev)
 {
-	enode *edge;
+	enode	   *edge;
 
 	vertex->weight = weight;
 	edge = new_enode(eid, prev);
@@ -131,6 +132,7 @@ pq_cmp(const pairingheap_node *a, const pairingheap_node *b, void *arg)
 {
 	dijkstra_pq_entry *x = (dijkstra_pq_entry *) a;
 	dijkstra_pq_entry *y = (dijkstra_pq_entry *) b;
+
 	if (y->weight == x->weight)
 		return 0;
 	else if (y->weight > x->weight)
@@ -157,7 +159,7 @@ pq_add(pairingheap *pq, MemoryContext pq_mcxt, Graphid to, double weight)
 static Datum
 eval_array(List *elems, ExprContext *econtext)
 {
-	int 		len;
+	int			len;
 	MemoryContext oldContext;
 	Datum	   *values;
 	bool	   *nulls;
@@ -185,7 +187,8 @@ eval_array(List *elems, ExprContext *econtext)
 	i = 0;
 	foreach(lc, elems)
 	{
-		Graphid *id = lfirst(lc);
+		Graphid    *id = lfirst(lc);
+
 		values[i] = UInt64GetDatum(*id);
 		nulls[i] = false;
 		i++;
@@ -238,7 +241,7 @@ proj_path(DijkstraState *node)
 
 	node->n++;
 	if (vnode_next_path((end)))
-		node->n = node->max_n; /* no more path */
+		node->n = node->max_n;	/* no more path */
 
 	null_edge = list_nth_cell(edges, 0);
 	edges = list_delete_cell(edges, null_edge);
@@ -290,7 +293,7 @@ compute_limit(DijkstraState *node)
 			if (node->max_n < 1)
 				ereport(ERROR,
 						(errcode(ERRCODE_INVALID_ROW_COUNT_IN_LIMIT_CLAUSE),
-								errmsg("LIMIT must be larger than 0")));
+						 errmsg("LIMIT must be larger than 0")));
 		}
 	}
 	else
@@ -309,9 +312,9 @@ static HeapTuple
 replace_vertexRow_graphid(TupleDesc tupleDesc, HeapTuple vertexRow,
 						  Datum graphid)
 {
-	HeapTupleHeader	vheader;
+	HeapTupleHeader vheader;
 	Form_pg_attribute attribute;
-	char			*vgdata;
+	char	   *vgdata;
 
 	/* Verify input constraints */
 	Assert(tupleDesc != NULL);
@@ -406,7 +409,8 @@ ExecDijkstra(PlanState *pstate)
 
 		if (IsA(node->source->expr, FieldSelect))
 		{
-			HeapTuple vertexRow;
+			HeapTuple	vertexRow;
+
 			vertexRow = replace_vertexRow_graphid(node->tupleDesc,
 												  node->vertexRow,
 												  min_pq_entry->to);
@@ -446,7 +450,7 @@ ExecDijkstra(PlanState *pstate)
 			if (weight_val < 0.0)
 				ereport(ERROR,
 						(errcode(ERRCODE_NUMERIC_VALUE_OUT_OF_RANGE),
-								errmsg("WEIGHT must be larger than 0")));
+						 errmsg("WEIGHT must be larger than 0")));
 
 			new_weight = frontier->weight + weight_val;
 
@@ -533,20 +537,20 @@ ExecInitDijkstra(Dijkstra *node, EState *estate, int eflags)
 	/*
 	 * tuple table initialization
 	 */
-    ExecInitResultTupleSlotTL(&dstate->ps, &TTSOpsVirtual);
+	ExecInitResultTupleSlotTL(&dstate->ps, &TTSOpsVirtual);
 	dstate->selfTupleSlot = ExecInitExtraTupleSlot(estate, dstate->tupleDesc, &TTSOpsVirtual);
 
 	/*
 	 * ExecDijkstra was originally written without expectations that the
-	 * source node might reside in a FieldSelect expression. This code
-	 * is to address that deficit. Additionally, it is added here to
-	 * help with memory conservation by providing a vertex row and the
-	 * tuple descriptor for that vertex row for reuse.
+	 * source node might reside in a FieldSelect expression. This code is to
+	 * address that deficit. Additionally, it is added here to help with
+	 * memory conservation by providing a vertex row and the tuple descriptor
+	 * for that vertex row for reuse.
 	 */
 	if (IsA(node->source, FieldSelect))
 	{
-		Datum       values[Natts_ag_vertex] = {0, 0, 0};
-		bool        isnull[Natts_ag_vertex] = {false, true, true};
+		Datum		values[Natts_ag_vertex] = {0, 0, 0};
+		bool		isnull[Natts_ag_vertex] = {false, true, true};
 		TupleDesc	tupleDesc = lookup_rowtype_tupdesc(VERTEXOID, -1);
 
 		Assert(tupleDesc->natts == Natts_ag_vertex);

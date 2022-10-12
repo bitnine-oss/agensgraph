@@ -65,4 +65,4 @@ extern void ExecChooseHash2SideTableSize(double ntuples,
 extern void ExecHash2SideGetInstrumentation(HashInstrumentation *instrument,
 											HashJoinTable hashtable);
 
-#endif   /* NODEHASH2SIDE_H */
+#endif							/* NODEHASH2SIDE_H */
