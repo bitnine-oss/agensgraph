@@ -1,6 +1,3 @@
-[submodule "src/submodules/orioledb_for_agensgraph"]
-	path = src/submodules/orioledb_for_agensgraph
-	url = https://github.com/bitnine-net/orioledb_for_agensgraph.git
 [submodule "src/submodules/orioledb"]
 	path = src/submodules/orioledb
 	url = https://github.com/bitnine-net/orioledb_for_agensgraph.git
