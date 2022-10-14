@@ -242,7 +242,8 @@ struct PlannerInfo
 
 	List	   *init_plans;		/* init SubPlans for query */
 
-	List	   *cte_plan_ids;	/* per-CTE-item list of subplan IDs */
+	List	   *cte_plan_ids;	/* per-CTE-item list of subplan IDs (or -1 if
+								 * no subplan was made for that CTE) */
 
 	List	   *multiexpr_params;	/* List of Lists of Params for MULTIEXPR
 									 * subquery outputs */
@@ -369,6 +370,10 @@ struct PlannerInfo
 	/* These fields are workspace for createplan.c */
 	Relids		curOuterRels;	/* outer rels above current node */
 	List	   *curOuterParams; /* not-yet-assigned NestLoopParams */
+
+	/* These fields are workspace for setrefs.c */
+	bool	   *isAltSubplan;	/* array corresponding to glob->subplans */
+	bool	   *isUsedSubplan;	/* array corresponding to glob->subplans */
 
 	/* optional private data for join_search_hook, e.g., GEQO */
 	void	   *join_search_private;
@@ -1498,11 +1503,11 @@ typedef struct MaterialPath
 } MaterialPath;
 
 /*
- * ResultCachePath represents a ResultCache plan node, i.e., a cache that
- * caches tuples from parameterized paths to save the underlying node from
- * having to be rescanned for parameter values which are already cached.
+ * MemoizePath represents a Memoize plan node, i.e., a cache that caches
+ * tuples from parameterized paths to save the underlying node from having to
+ * be rescanned for parameter values which are already cached.
  */
-typedef struct ResultCachePath
+typedef struct MemoizePath
 {
 	Path		path;
 	Path	   *subpath;		/* outerpath to cache tuples from */
@@ -1510,11 +1515,13 @@ typedef struct ResultCachePath
 	List	   *param_exprs;	/* cache keys */
 	bool		singlerow;		/* true if the cache entry is to be marked as
 								 * complete after caching the first record. */
+	bool		binary_mode;	/* true when cache key should be compared bit
+								 * by bit, false when using hash equality ops */
 	double		calls;			/* expected number of rescans */
 	uint32		est_entries;	/* The maximum number of entries that the
 								 * planner expects will fit in the cache, or 0
 								 * if unknown */
-} ResultCachePath;
+} MemoizePath;
 
 /*
  * UniquePath represents elimination of distinct rows from the output of
@@ -2165,7 +2172,7 @@ typedef struct RestrictInfo
 	Selectivity left_mcvfreq;	/* left side's most common val's freq */
 	Selectivity right_mcvfreq;	/* right side's most common val's freq */
 
-	/* hash equality operator used for result cache, else InvalidOid */
+	/* hash equality operator used for memoize nodes, else InvalidOid */
 	Oid			hasheqoperator;
 } RestrictInfo;
 

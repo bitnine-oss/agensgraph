@@ -283,7 +283,7 @@ PostgreSQL documentation
         By default, <command>initdb</command> will write instructions for how
         to start the cluster at the end of its output. This option causes
         those instructions to be left out. This is primarily intended for use
-        by tools that wrap <command>initdb</command> in platform specific
+        by tools that wrap <command>initdb</command> in platform-specific
         behavior, where those instructions are likely to be incorrect.
        </para>
       </listitem>
@@ -398,6 +398,17 @@ PostgreSQL documentation
         The bootstrap backend is the program <command>initdb</command>
         uses to create the catalog tables.  This option generates a tremendous
         amount of extremely boring output.
+       </para>
+      </listitem>
+     </varlistentry>
+
+     <varlistentry>
+      <term><option>--discard-caches</option></term>
+      <listitem>
+       <para>
+        Run the bootstrap backend with the
+        <literal>debug_discard_caches=1</literal> option.
+        This takes a very long time and is only of use for deep debugging.
        </para>
       </listitem>
      </varlistentry>

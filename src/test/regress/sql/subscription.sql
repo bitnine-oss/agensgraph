@@ -66,6 +66,9 @@ ALTER SUBSCRIPTION regress_testsub CONNECTION 'dbname=regress_doesnotexist2';
 ALTER SUBSCRIPTION regress_testsub SET (slot_name = 'newname');
 
 -- fail
+ALTER SUBSCRIPTION regress_testsub SET (slot_name = '');
+
+-- fail
 ALTER SUBSCRIPTION regress_doesnotexist CONNECTION 'dbname=regress_doesnotexist2';
 ALTER SUBSCRIPTION regress_testsub SET (create_slot = false);
 
@@ -167,9 +170,6 @@ ALTER SUBSCRIPTION regress_testsub DROP PUBLICATION testpub, testpub1, testpub2 
 
 -- fail - publication does not exist in subscription
 ALTER SUBSCRIPTION regress_testsub DROP PUBLICATION testpub3 WITH (refresh = false);
-
--- fail - do not support copy_data option
-ALTER SUBSCRIPTION regress_testsub DROP PUBLICATION testpub1 WITH (refresh = false, copy_data = true);
 
 -- ok - delete publications
 ALTER SUBSCRIPTION regress_testsub DROP PUBLICATION testpub1, testpub2 WITH (refresh = false);

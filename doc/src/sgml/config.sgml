@@ -1248,7 +1248,7 @@ include_dir 'conf.d'
       </term>
       <listitem>
        <para>
-        Specifies the name of the file containing the SSL server certificate
+        Specifies the name of the file containing the SSL client certificate
         revocation list (CRL).
         Relative paths are relative to the data directory.
         This parameter can only be set in the <filename>postgresql.conf</filename>
@@ -1267,7 +1267,7 @@ include_dir 'conf.d'
       </term>
       <listitem>
        <para>
-        Specifies the name of the directory containing the SSL server
+        Specifies the name of the directory containing the SSL client
         certificate revocation list (CRL).  Relative paths are relative to the
         data directory.  This parameter can only be set in
         the <filename>postgresql.conf</filename> file or on the server command
@@ -1664,7 +1664,9 @@ include_dir 'conf.d'
        <para>
         At present, this setting is supported only on Linux and Windows. The
         setting is ignored on other systems when set to
-        <literal>try</literal>.
+        <literal>try</literal>.  On Linux, it is only supported when
+        <varname>shared_memory_type</varname> is set to <literal>mmap</literal>
+        (the default).
        </para>
 
        <para>
@@ -1893,6 +1895,11 @@ include_dir 'conf.d'
         too high.  It may be useful to control for this by separately
         setting <xref linkend="guc-autovacuum-work-mem"/>.
        </para>
+       <para>
+        Note that for the collection of dead tuple identifiers,
+        <command>VACUUM</command> is only able to utilize up to a maximum of
+        <literal>1GB</literal> of memory.
+       </para>
       </listitem>
      </varlistentry>
 
@@ -1914,6 +1921,13 @@ include_dir 'conf.d'
         This parameter can only be set in the
         <filename>postgresql.conf</filename> file or on the server command
         line.
+       </para>
+       <para>
+        For the collection of dead tuple identifiers, autovacuum is only able
+        to utilize up to a maximum of <literal>1GB</literal> of memory, so
+        setting <varname>autovacuum_work_mem</varname> to a value higher than
+        that has no effect on the number of dead tuples that autovacuum can
+        collect while scanning a table.
        </para>
       </listitem>
      </varlistentry>
@@ -4157,6 +4171,9 @@ restore_command = 'copy "C:\\server\\archivedir\\%f" "%p"'  # Windows
         to continue replication due to removal of required WAL files. You
         can see the WAL availability of replication slots
         in <link linkend="view-pg-replication-slots">pg_replication_slots</link>.
+        If this value is specified without units, it is taken as megabytes.
+        This parameter can only be set in the <filename>postgresql.conf</filename>
+        file or on the server command line.
        </para>
        </listitem>
       </varlistentry>
@@ -5008,15 +5025,15 @@ ANY <replaceable class="parameter">num_sync</replaceable> ( <replaceable class="
       </listitem>
      </varlistentry>
 
-     <varlistentry id="guc-enable-resultcache" xreflabel="enable_resultcache">
-      <term><varname>enable_resultcache</varname> (<type>boolean</type>)
+     <varlistentry id="guc-enable-memoize" xreflabel="enable_memoize">
+      <term><varname>enable_memoize</varname> (<type>boolean</type>)
       <indexterm>
-       <primary><varname>enable_resultcache</varname> configuration parameter</primary>
+       <primary><varname>enable_memoize</varname> configuration parameter</primary>
       </indexterm>
       </term>
       <listitem>
        <para>
-        Enables or disables the query planner's use of result cache plans for
+        Enables or disables the query planner's use of memoize plans for
         caching results from parameterized scans inside nested-loop joins.
         This plan type allows scans to the underlying plans to be skipped when
         the results for the current parameters are already in the cache.  Less
@@ -7007,7 +7024,7 @@ local0.*    /var/log/postgresql
             </row>
             <row>
              <entry><literal>%Q</literal></entry>
-             <entry>query identifier of the current query.  Query
+             <entry>Query identifier of the current query.  Query
              identifiers are not computed by default, so this field
              will be zero unless <xref linkend="guc-compute-query-id"/>
              parameter is enabled or a third-party module that computes
@@ -7505,9 +7522,10 @@ COPY postgres_log FROM '/full/path/to/logfile.csv' WITH csv;
         executing command of each session, along with its identifier and the
         time when that command began execution. This parameter is on by
         default. Note that even when enabled, this information is not
-        visible to all users, only to superusers and the user owning
-        the session being reported on, so it should not represent a
-        security risk.
+        visible to all users, only to superusers, roles with privileges of the
+        <literal>pg_read_all_stats</literal> role and the user owning the
+        sessions being reported on (including sessions belonging to a role they
+        have the privileges of), so it should not represent a security risk.
         Only superusers can change this setting.
        </para>
       </listitem>
@@ -7663,9 +7681,12 @@ COPY postgres_log FROM '/full/path/to/logfile.csv' WITH csv;
         method is not acceptable.  In this case, in-core computation
         must be always disabled.
         Valid values are <literal>off</literal> (always disabled),
-        <literal>on</literal> (always enabled) and <literal>auto</literal>,
+        <literal>on</literal> (always enabled), <literal>auto</literal>,
         which lets modules such as <xref linkend="pgstatstatements"/>
-        automatically enable it.
+        automatically enable it, and <literal>regress</literal> which
+        has the same effect as <literal>auto</literal>, except that the
+        query identifier is not shown in the <literal>EXPLAIN</literal> output
+        in order to facilitate automated regression testing.
         The default is <literal>auto</literal>.
        </para>
        <note>
@@ -8191,8 +8212,8 @@ COPY postgres_log FROM '/full/path/to/logfile.csv' WITH csv;
         This parameter specifies the default table access method to use when
         creating tables or materialized views if the <command>CREATE</command>
         command does not explicitly specify an access method, or when
-        <command>SELECT ... INTO</command> is used, which does not allow to
-        specify a table access method. The default is <literal>heap</literal>.
+        <command>SELECT ... INTO</command> is used, which does not allow
+        specifying a table access method. The default is <literal>heap</literal>.
        </para>
       </listitem>
      </varlistentry>
@@ -8420,6 +8441,66 @@ COPY postgres_log FROM '/full/path/to/logfile.csv' WITH csv;
 
        <para>
         Consult <xref linkend="sql-set-transaction"/> for more information.
+       </para>
+      </listitem>
+     </varlistentry>
+
+     <varlistentry id="guc-transaction-isolation" xreflabel="transaction_isolation">
+      <term><varname>transaction_isolation</varname> (<type>enum</type>)
+      <indexterm>
+       <primary>transaction isolation level</primary>
+      </indexterm>
+      <indexterm>
+       <primary><varname>transaction_isolation</varname> configuration parameter</primary>
+      </indexterm>
+      </term>
+      <listitem>
+       <para>
+        This parameter reflects the current transaction's isolation level.
+        At the beginning of each transaction, it is set to the current value
+        of <xref linkend="guc-default-transaction-isolation"/>.
+        Any subsequent attempt to change it is equivalent to a <xref
+        linkend="sql-set-transaction"/> command.
+       </para>
+      </listitem>
+     </varlistentry>
+
+     <varlistentry id="guc-transaction-read-only" xreflabel="transaction_read_only">
+      <term><varname>transaction_read_only</varname> (<type>boolean</type>)
+      <indexterm>
+       <primary>read-only transaction</primary>
+      </indexterm>
+      <indexterm>
+       <primary><varname>transaction_read_only</varname> configuration parameter</primary>
+      </indexterm>
+      </term>
+      <listitem>
+       <para>
+        This parameter reflects the current transaction's read-only status.
+        At the beginning of each transaction, it is set to the current value
+        of <xref linkend="guc-default-transaction-read-only"/>.
+        Any subsequent attempt to change it is equivalent to a <xref
+        linkend="sql-set-transaction"/> command.
+       </para>
+      </listitem>
+     </varlistentry>
+
+     <varlistentry id="guc-transaction-deferrable" xreflabel="transaction_deferrable">
+      <term><varname>transaction_deferrable</varname> (<type>boolean</type>)
+      <indexterm>
+       <primary>deferrable transaction</primary>
+      </indexterm>
+      <indexterm>
+       <primary><varname>transaction_deferrable</varname> configuration parameter</primary>
+      </indexterm>
+      </term>
+      <listitem>
+       <para>
+        This parameter reflects the current transaction's deferrability status.
+        At the beginning of each transaction, it is set to the current value
+        of <xref linkend="guc-default-transaction-deferrable"/>.
+        Any subsequent attempt to change it is equivalent to a <xref
+        linkend="sql-set-transaction"/> command.
        </para>
       </listitem>
      </varlistentry>
@@ -8723,7 +8804,7 @@ COPY postgres_log FROM '/full/path/to/logfile.csv' WITH csv;
       </listitem>
      </varlistentry>
 
-     <varlistentry id="guc-multixact-failsafe-age" xreflabel="vacuum_multixact_failsafe_age">
+     <varlistentry id="guc-vacuum-multixact-failsafe-age" xreflabel="vacuum_multixact_failsafe_age">
       <term><varname>vacuum_multixact_failsafe_age</varname> (<type>integer</type>)
       <indexterm>
        <primary><varname>vacuum_multixact_failsafe_age</varname> configuration parameter</primary>
@@ -8731,7 +8812,7 @@ COPY postgres_log FROM '/full/path/to/logfile.csv' WITH csv;
       </term>
       <listitem>
        <para>
-        Specifies the maximum age (in transactions) that a table's
+        Specifies the maximum age (in multixacts) that a table's
         <structname>pg_class</structname>.<structfield>relminmxid</structfield>
         field can attain before <command>VACUUM</command> takes
         extraordinary measures to avoid system-wide multixact ID
@@ -10331,10 +10412,10 @@ dynamic_library_path = 'C:\tools\postgresql;H:\my_project\lib;$libdir'
       </listitem>
      </varlistentry>
 
-     <varlistentry id="guc-debug-invalidate-system-caches-always" xreflabel="debug_invalidate_system_caches_always">
-      <term><varname>debug_invalidate_system_caches_always</varname> (<type>integer</type>)
+     <varlistentry id="guc-debug-discard-caches" xreflabel="debug_discard_caches">
+      <term><varname>debug_discard_caches</varname> (<type>integer</type>)
       <indexterm>
-       <primary><varname>debug_invalidate_system_caches_always</varname> configuration parameter</primary>
+       <primary><varname>debug_discard_caches</varname> configuration parameter</primary>
       </indexterm>
       </term>
       <listitem>
@@ -10359,7 +10440,7 @@ dynamic_library_path = 'C:\tools\postgresql;H:\my_project\lib;$libdir'
 
        <para>
         This parameter is supported when
-        <symbol>CLOBBER_CACHE_ENABLED</symbol> was defined at compile time
+        <symbol>DISCARD_CACHES_ENABLED</symbol> was defined at compile time
         (which happens automatically when using the
         <application>configure</application> option
         <option>--enable-cassert</option>).  In production builds, its value
@@ -10903,7 +10984,7 @@ LOG:  CleanUpLock: deleting: lock(0xb7acd844) id(24688,24696,0,0,0,1)
         <productname>PostgreSQL</productname> will automatically remove
         temporary files after a backend crash. If disabled, the files will be
         retained and may be used for debugging, for example. Repeated crashes
-        may however result in accumulation of useless files. This parameter 
+        may however result in accumulation of useless files. This parameter
         can only be set in the <filename>postgresql.conf</filename> file or on
         the server command line.
        </para>

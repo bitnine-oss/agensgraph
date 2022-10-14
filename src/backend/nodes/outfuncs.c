@@ -576,6 +576,7 @@ _outIndexOnlyScan(StringInfo str, const IndexOnlyScan *node)
 
 	WRITE_OID_FIELD(indexid);
 	WRITE_NODE_FIELD(indexqual);
+	WRITE_NODE_FIELD(recheckqual);
 	WRITE_NODE_FIELD(indexorderby);
 	WRITE_NODE_FIELD(indextlist);
 	WRITE_ENUM_FIELD(indexorderdir, ScanDirection);
@@ -864,9 +865,9 @@ _outMaterial(StringInfo str, const Material *node)
 }
 
 static void
-_outResultCache(StringInfo str, const ResultCache *node)
+_outMemoize(StringInfo str, const Memoize *node)
 {
-	WRITE_NODE_TYPE("RESULTCACHE");
+	WRITE_NODE_TYPE("MEMOIZE");
 
 	_outPlanInfo(str, (const Plan *) node);
 
@@ -875,7 +876,9 @@ _outResultCache(StringInfo str, const ResultCache *node)
 	WRITE_OID_ARRAY(collations, node->numKeys);
 	WRITE_NODE_FIELD(param_exprs);
 	WRITE_BOOL_FIELD(singlerow);
+	WRITE_BOOL_FIELD(binary_mode);
 	WRITE_UINT_FIELD(est_entries);
+	WRITE_BITMAPSET_FIELD(keyparamids);
 }
 
 static void
@@ -2115,9 +2118,9 @@ _outMaterialPath(StringInfo str, const MaterialPath *node)
 }
 
 static void
-_outResultCachePath(StringInfo str, const ResultCachePath *node)
+_outMemoizePath(StringInfo str, const MemoizePath *node)
 {
-	WRITE_NODE_TYPE("RESULTCACHEPATH");
+	WRITE_NODE_TYPE("MEMOIZEPATH");
 
 	_outPathInfo(str, (const Path *) node);
 
@@ -2125,6 +2128,7 @@ _outResultCachePath(StringInfo str, const ResultCachePath *node)
 	WRITE_NODE_FIELD(hash_operators);
 	WRITE_NODE_FIELD(param_exprs);
 	WRITE_BOOL_FIELD(singlerow);
+	WRITE_BOOL_FIELD(binary_mode);
 	WRITE_FLOAT_FIELD(calls, "%.0f");
 	WRITE_UINT_FIELD(est_entries);
 }
@@ -4487,8 +4491,8 @@ outNode(StringInfo str, const void *obj)
 			case T_Material:
 				_outMaterial(str, obj);
 				break;
-			case T_ResultCache:
-				_outResultCache(str, obj);
+			case T_Memoize:
+				_outMemoize(str, obj);
 				break;
 			case T_Sort:
 				_outSort(str, obj);
@@ -4760,8 +4764,8 @@ outNode(StringInfo str, const void *obj)
 			case T_MaterialPath:
 				_outMaterialPath(str, obj);
 				break;
-			case T_ResultCachePath:
-				_outResultCachePath(str, obj);
+			case T_MemoizePath:
+				_outMemoizePath(str, obj);
 				break;
 			case T_UniquePath:
 				_outUniquePath(str, obj);

@@ -14,6 +14,7 @@
 #include "access/htup.h"
 #include "access/relation.h"
 #include "catalog/namespace.h"
+#include "catalog/pg_am_d.h"
 #include "funcapi.h"
 #include "miscadmin.h"
 #include "pageinspect.h"
@@ -27,6 +28,8 @@
 PG_FUNCTION_INFO_V1(gist_page_opaque_info);
 PG_FUNCTION_INFO_V1(gist_page_items);
 PG_FUNCTION_INFO_V1(gist_page_items_bytea);
+
+#define IS_GIST(r) ((r)->rd_rel->relam == GIST_AM_OID)
 
 #define ItemPointerGetDatum(X)	 PointerGetDatum(X)
 
@@ -52,7 +55,26 @@ gist_page_opaque_info(PG_FUNCTION_ARGS)
 
 	page = get_page_from_raw(raw_page);
 
+	if (PageIsNew(page))
+		PG_RETURN_NULL();
+
+	/* verify the special space has the expected size */
+	if (PageGetSpecialSize(page) != MAXALIGN(sizeof(GISTPageOpaqueData)))
+			ereport(ERROR,
+					(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+					 errmsg("input page is not a valid %s page", "GiST"),
+					 errdetail("Expected special size %d, got %d.",
+							   (int) MAXALIGN(sizeof(GISTPageOpaqueData)),
+							   (int) PageGetSpecialSize(page))));
+
 	opaq = (GISTPageOpaque) PageGetSpecialPointer(page);
+	if (opaq->gist_page_id != GIST_PAGE_ID)
+			ereport(ERROR,
+					(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+					 errmsg("input page is not a valid %s page", "GiST"),
+					 errdetail("Expected %08x, got %08x.",
+							   GIST_PAGE_ID,
+							   opaq->gist_page_id)));
 
 	/* Build a tuple descriptor for our result type */
 	if (get_call_result_type(fcinfo, NULL, &tupdesc) != TYPEFUNC_COMPOSITE)
@@ -102,6 +124,7 @@ gist_page_items_bytea(PG_FUNCTION_ARGS)
 	Tuplestorestate *tupstore;
 	MemoryContext oldcontext;
 	Page		page;
+	GISTPageOpaque opaq;
 	OffsetNumber offset;
 	OffsetNumber maxoff = InvalidOffsetNumber;
 
@@ -135,6 +158,27 @@ gist_page_items_bytea(PG_FUNCTION_ARGS)
 	MemoryContextSwitchTo(oldcontext);
 
 	page = get_page_from_raw(raw_page);
+
+	if (PageIsNew(page))
+		PG_RETURN_NULL();
+
+	/* verify the special space has the expected size */
+	if (PageGetSpecialSize(page) != MAXALIGN(sizeof(GISTPageOpaqueData)))
+			ereport(ERROR,
+					(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+					 errmsg("input page is not a valid %s page", "GiST"),
+					 errdetail("Expected special size %d, got %d.",
+							   (int) MAXALIGN(sizeof(GISTPageOpaqueData)),
+							   (int) PageGetSpecialSize(page))));
+
+	opaq = (GISTPageOpaque) PageGetSpecialPointer(page);
+	if (opaq->gist_page_id != GIST_PAGE_ID)
+			ereport(ERROR,
+					(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+					 errmsg("input page is not a valid %s page", "GiST"),
+					 errdetail("Expected %08x, got %08x.",
+							   GIST_PAGE_ID,
+							   opaq->gist_page_id)));
 
 	/* Avoid bogus PageGetMaxOffsetNumber() call with deleted pages */
 	if (GistPageIsDeleted(page))
@@ -226,7 +270,19 @@ gist_page_items(PG_FUNCTION_ARGS)
 	/* Open the relation */
 	indexRel = index_open(indexRelid, AccessShareLock);
 
+	if (!IS_GIST(indexRel))
+		ereport(ERROR,
+				(errcode(ERRCODE_WRONG_OBJECT_TYPE),
+				 errmsg("\"%s\" is not a %s index",
+						RelationGetRelationName(indexRel), "GiST")));
+
 	page = get_page_from_raw(raw_page);
+
+	if (PageIsNew(page))
+	{
+		index_close(indexRel, AccessShareLock);
+		PG_RETURN_NULL();
+	}
 
 	/* Avoid bogus PageGetMaxOffsetNumber() call with deleted pages */
 	if (GistPageIsDeleted(page))

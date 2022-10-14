@@ -31,6 +31,10 @@ extern void domain_check(Datum value, bool isnull, Oid domainType,
 extern int	errdatatype(Oid datatypeOid);
 extern int	errdomainconstraint(Oid datatypeOid, const char *conname);
 
+/* encode.c */
+extern uint64 hex_encode(const char *src, size_t len, char *dst);
+extern uint64 hex_decode(const char *src, size_t len, char *dst);
+
 /* int.c */
 extern int2vector *buildint2vector(const int16 *int2s, int n);
 
@@ -87,6 +91,7 @@ extern void text_to_cstring_buffer(const text *src, char *dst, size_t dst_len);
 
 /* xid.c */
 extern int	xidComparator(const void *arg1, const void *arg2);
+extern int	xidLogicalComparator(const void *arg1, const void *arg2);
 
 /* inet_cidr_ntop.c */
 extern char *pg_inet_cidr_ntop(int af, const void *src, int bits,

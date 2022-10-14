@@ -526,7 +526,7 @@ ERROR:  could not serialize access due to concurrent update
     transaction sees a completely stable view of the database.  However,
     this view will not necessarily always be consistent with some serial
     (one at a time) execution of concurrent transactions of the same level.
-    For example, even a read only transaction at this level may see a
+    For example, even a read-only transaction at this level may see a
     control record updated to show that a batch has been completed but
     <emphasis>not</emphasis> see one of the detail records which is logically
     part of the batch because it read an earlier revision of the control
@@ -950,10 +950,11 @@ ERROR:  could not serialize access due to read/write dependencies among transact
         <para>
          Acquired by <command>VACUUM</command> (without <option>FULL</option>),
          <command>ANALYZE</command>, <command>CREATE INDEX CONCURRENTLY</command>,
+         <command>CREATE STATISTICS</command>, <command>COMMENT ON</command>,
          <command>REINDEX CONCURRENTLY</command>,
-         <command>CREATE STATISTICS</command>, and certain <link linkend="sql-alterindex"><command>ALTER
-         INDEX</command></link> and <link linkend="sql-altertable"><command>ALTER TABLE</command></link> variants (for full
-         details see the documentation of these commands).
+         and certain <link linkend="sql-alterindex"><command>ALTER INDEX</command></link>
+         and <link linkend="sql-altertable"><command>ALTER TABLE</command></link> variants
+         (for full details see the documentation of these commands).
         </para>
        </listitem>
       </varlistentry>

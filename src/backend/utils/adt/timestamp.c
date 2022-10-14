@@ -3843,6 +3843,11 @@ timestamp_bin(PG_FUNCTION_ARGS)
 
 	stride_usecs = stride->day * USECS_PER_DAY + stride->time;
 
+	if (stride_usecs <= 0)
+		ereport(ERROR,
+				(errcode(ERRCODE_DATETIME_VALUE_OUT_OF_RANGE),
+				 errmsg("stride must be greater than zero")));
+
 	tm_diff = timestamp - origin;
 	tm_delta = tm_diff - tm_diff % stride_usecs;
 
@@ -4020,6 +4025,11 @@ timestamptz_bin(PG_FUNCTION_ARGS)
 				 errmsg("timestamps cannot be binned into intervals containing months or years")));
 
 	stride_usecs = stride->day * USECS_PER_DAY + stride->time;
+
+	if (stride_usecs <= 0)
+		ereport(ERROR,
+				(errcode(ERRCODE_DATETIME_VALUE_OUT_OF_RANGE),
+				 errmsg("stride must be greater than zero")));
 
 	tm_diff = timestamp - origin;
 	tm_delta = tm_diff - tm_diff % stride_usecs;
@@ -5277,10 +5287,16 @@ interval_part_common(PG_FUNCTION_ARGS, bool retnumeric)
 			int64		secs_from_day_month;
 			int64		val;
 
-			/* this always fits into int64 */
-			secs_from_day_month = ((int64) DAYS_PER_YEAR * (interval->month / MONTHS_PER_YEAR) +
-								   (int64) DAYS_PER_MONTH * (interval->month % MONTHS_PER_YEAR) +
-								   interval->day) * SECS_PER_DAY;
+			/*
+			 * To do this calculation in integer arithmetic even though
+			 * DAYS_PER_YEAR is fractional, multiply everything by 4 and then
+			 * divide by 4 again at the end.  This relies on DAYS_PER_YEAR
+			 * being a multiple of 0.25 and on SECS_PER_DAY being a multiple
+			 * of 4.
+			 */
+			secs_from_day_month = ((int64) (4 * DAYS_PER_YEAR) * (interval->month / MONTHS_PER_YEAR) +
+								   (int64) (4 * DAYS_PER_MONTH) * (interval->month % MONTHS_PER_YEAR) +
+								   (int64) 4 * interval->day) * (SECS_PER_DAY / 4);
 
 			/*---
 			 * result = secs_from_day_month + interval->time / 1'000'000

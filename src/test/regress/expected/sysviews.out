@@ -76,6 +76,13 @@ select count(*) >= 0 as ok from pg_prepared_xacts;
  t
 (1 row)
 
+-- There will surely be at least one SLRU cache
+select count(*) > 0 as ok from pg_stat_slru;
+ ok 
+----
+ t
+(1 row)
+
 -- There must be only one record
 select count(*) = 1 as ok from pg_stat_wal;
  ok 
@@ -105,6 +112,7 @@ select name, setting from pg_settings where name like 'enable%';
  enable_indexonlyscan           | on
  enable_indexscan               | on
  enable_material                | on
+ enable_memoize                 | on
  enable_mergejoin               | on
  enable_multiple_update         | on
  enable_nestloop                | on
@@ -113,7 +121,6 @@ select name, setting from pg_settings where name like 'enable%';
  enable_partition_pruning       | on
  enable_partitionwise_aggregate | off
  enable_partitionwise_join      | off
- enable_resultcache             | on
  enable_seqscan                 | on
  enable_sort                    | on
  enable_tidscan                 | on

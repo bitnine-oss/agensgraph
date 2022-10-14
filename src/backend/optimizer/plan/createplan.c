@@ -84,7 +84,7 @@ static List *get_gating_quals(PlannerInfo *root, List *quals);
 static Plan *create_gating_plan(PlannerInfo *root, Path *path, Plan *plan,
 								List *gating_quals);
 static Plan *create_join_plan(PlannerInfo *root, JoinPath *best_path);
-static bool is_async_capable_path(Path *path);
+static bool is_async_capable_plan(Plan *plan, Path *path);
 static Plan *create_append_plan(PlannerInfo *root, AppendPath *best_path,
 								int flags);
 static Plan *create_merge_append_plan(PlannerInfo *root, MergeAppendPath *best_path,
@@ -94,9 +94,8 @@ static Result *create_group_result_plan(PlannerInfo *root,
 static ProjectSet *create_project_set_plan(PlannerInfo *root, ProjectSetPath *best_path);
 static Material *create_material_plan(PlannerInfo *root, MaterialPath *best_path,
 									  int flags);
-static ResultCache *create_resultcache_plan(PlannerInfo *root,
-											ResultCachePath *best_path,
-											int flags);
+static Memoize *create_memoize_plan(PlannerInfo *root, MemoizePath *best_path,
+									int flags);
 static Plan *create_unique_plan(PlannerInfo *root, UniquePath *best_path,
 								int flags);
 static Gather *create_gather_plan(PlannerInfo *root, GatherPath *best_path);
@@ -191,7 +190,8 @@ static IndexScan *make_indexscan(List *qptlist, List *qpqual, Index scanrelid,
 								 ScanDirection indexscandir);
 static IndexOnlyScan *make_indexonlyscan(List *qptlist, List *qpqual,
 										 Index scanrelid, Oid indexid,
-										 List *indexqual, List *indexorderby,
+										 List *indexqual, List *recheckqual,
+										 List *indexorderby,
 										 List *indextlist,
 										 ScanDirection indexscandir);
 static BitmapIndexScan *make_bitmap_indexscan(Index scanrelid, Oid indexid,
@@ -281,11 +281,10 @@ static Sort *make_sort_from_groupcols(List *groupcls,
 									  AttrNumber *grpColIdx,
 									  Plan *lefttree);
 static Material *make_material(Plan *lefttree);
-static ResultCache *make_resultcache(Plan *lefttree, Oid *hashoperators,
-									 Oid *collations,
-									 List *param_exprs,
-									 bool singlerow,
-									 uint32 est_entries);
+static Memoize *make_memoize(Plan *lefttree, Oid *hashoperators,
+							 Oid *collations, List *param_exprs,
+							 bool singlerow, bool binary_mode,
+							 uint32 est_entries, Bitmapset *keyparamids);
 static WindowAgg *make_windowagg(List *tlist, Index winref,
 								 int partNumCols, AttrNumber *partColIdx, Oid *partOperators, Oid *partCollations,
 								 int ordNumCols, AttrNumber *ordColIdx, Oid *ordOperators, Oid *ordCollations,
@@ -492,10 +491,10 @@ create_plan_recurse(PlannerInfo *root, Path *best_path, int flags)
 												 (MaterialPath *) best_path,
 												 flags);
 			break;
-		case T_ResultCache:
-			plan = (Plan *) create_resultcache_plan(root,
-													(ResultCachePath *) best_path,
-													flags);
+		case T_Memoize:
+			plan = (Plan *) create_memoize_plan(root,
+												(MemoizePath *) best_path,
+												flags);
 			break;
 		case T_Unique:
 			if (IsA(best_path, UpperUniquePath))
@@ -961,6 +960,22 @@ use_physical_tlist(PlannerInfo *root, Path *path, int flags)
 	}
 
 	/*
+	 * For an index-only scan, the "physical tlist" is the index's indextlist.
+	 * We can only return that without a projection if all the index's columns
+	 * are returnable.
+	 */
+	if (path->pathtype == T_IndexOnlyScan)
+	{
+		IndexOptInfo *indexinfo = ((IndexPath *) path)->indexinfo;
+
+		for (i = 0; i < indexinfo->ncolumns; i++)
+		{
+			if (!indexinfo->canreturn[i])
+				return false;
+		}
+	}
+
+	/*
 	 * Also, can't do it if CP_LABEL_TLIST is specified and path is requested
 	 * to emit any sort/group columns that are not simple Vars.  (If they are
 	 * simple Vars, they should appear in the physical tlist, and
@@ -1139,17 +1154,24 @@ create_join_plan(PlannerInfo *root, JoinPath *best_path)
 }
 
 /*
- * is_async_capable_path
- *		Check whether a given Path node is async-capable.
+ * is_async_capable_plan
+ *		Check whether the Plan node created from a Path node is async-capable.
  */
 static bool
-is_async_capable_path(Path *path)
+is_async_capable_plan(Plan *plan, Path *path)
 {
 	switch (nodeTag(path))
 	{
 		case T_ForeignPath:
 			{
 				FdwRoutine *fdwroutine = path->parent->fdwroutine;
+
+				/*
+				 * If the generated plan node includes a gating Result node,
+				 * we can't execute it asynchronously.
+				 */
+				if (IsA(plan, Result))
+					return false;
 
 				Assert(fdwroutine != NULL);
 				if (fdwroutine->IsForeignPathAsyncCapable != NULL &&
@@ -1325,8 +1347,8 @@ create_append_plan(PlannerInfo *root, AppendPath *best_path, int flags)
 
 		subplans = lappend(subplans, subplan);
 
-		/* Check to see if subplan can be executed asynchronously */
-		if (consider_async && is_async_capable_path(subpath))
+		/* If needed, check to see if subplan can be executed asynchronously */
+		if (consider_async && is_async_capable_plan(subplan, subpath))
 		{
 			subplan->async_capable = true;
 			++nasyncplans;
@@ -1623,16 +1645,17 @@ create_material_plan(PlannerInfo *root, MaterialPath *best_path, int flags)
 }
 
 /*
- * create_resultcache_plan
- *	  Create a ResultCache plan for 'best_path' and (recursively) plans
- *	  for its subpaths.
+ * create_memoize_plan
+ *	  Create a Memoize plan for 'best_path' and (recursively) plans for its
+ *	  subpaths.
  *
  *	  Returns a Plan node.
  */
-static ResultCache *
-create_resultcache_plan(PlannerInfo *root, ResultCachePath *best_path, int flags)
+static Memoize *
+create_memoize_plan(PlannerInfo *root, MemoizePath *best_path, int flags)
 {
-	ResultCache *plan;
+	Memoize    *plan;
+	Bitmapset  *keyparamids;
 	Plan	   *subplan;
 	Oid		   *operators;
 	Oid		   *collations;
@@ -1664,8 +1687,11 @@ create_resultcache_plan(PlannerInfo *root, ResultCachePath *best_path, int flags
 		i++;
 	}
 
-	plan = make_resultcache(subplan, operators, collations, param_exprs,
-							best_path->singlerow, best_path->est_entries);
+	keyparamids = pull_paramids((Expr *) param_exprs);
+
+	plan = make_memoize(subplan, operators, collations, param_exprs,
+						best_path->singlerow, best_path->binary_mode,
+						best_path->est_entries, keyparamids);
 
 	copy_generic_path_info(&plan->plan, (Path *) best_path);
 
@@ -2975,7 +3001,8 @@ create_indexscan_plan(PlannerInfo *root,
 	List	   *indexclauses = best_path->indexclauses;
 	List	   *indexorderbys = best_path->indexorderbys;
 	Index		baserelid = best_path->path.parent->relid;
-	Oid			indexoid = best_path->indexinfo->indexoid;
+	IndexOptInfo *indexinfo = best_path->indexinfo;
+	Oid			indexoid = indexinfo->indexoid;
 	List	   *qpqual;
 	List	   *stripped_indexquals;
 	List	   *fixed_indexquals;
@@ -3105,6 +3132,24 @@ create_indexscan_plan(PlannerInfo *root,
 		}
 	}
 
+	/*
+	 * For an index-only scan, we must mark indextlist entries as resjunk if
+	 * they are columns that the index AM can't return; this cues setrefs.c to
+	 * not generate references to those columns.
+	 */
+	if (indexonly)
+	{
+		int			i = 0;
+
+		foreach(l, indexinfo->indextlist)
+		{
+			TargetEntry *indextle = (TargetEntry *) lfirst(l);
+
+			indextle->resjunk = !indexinfo->canreturn[i];
+			i++;
+		}
+	}
+
 	/* Finally ready to build the plan node */
 	if (indexonly)
 		scan_plan = (Scan *) make_indexonlyscan(tlist,
@@ -3112,8 +3157,9 @@ create_indexscan_plan(PlannerInfo *root,
 												baserelid,
 												indexoid,
 												fixed_indexquals,
+												stripped_indexquals,
 												fixed_indexorderbys,
-												best_path->indexinfo->indextlist,
+												indexinfo->indextlist,
 												best_path->indexscandir);
 	else
 		scan_plan = (Scan *) make_indexscan(tlist,
@@ -3868,7 +3914,8 @@ create_ctescan_plan(PlannerInfo *root, Path *best_path,
 	if (ndx >= list_length(cteroot->cte_plan_ids))
 		elog(ERROR, "could not find plan for CTE \"%s\"", rte->ctename);
 	plan_id = list_nth_int(cteroot->cte_plan_ids, ndx);
-	Assert(plan_id > 0);
+	if (plan_id <= 0)
+		elog(ERROR, "no plan was made for CTE \"%s\"", rte->ctename);
 	foreach(lc, cteroot->init_plans)
 	{
 		ctesplan = (SubPlan *) lfirst(lc);
@@ -5729,6 +5776,7 @@ make_indexonlyscan(List *qptlist,
 				   Index scanrelid,
 				   Oid indexid,
 				   List *indexqual,
+				   List *recheckqual,
 				   List *indexorderby,
 				   List *indextlist,
 				   ScanDirection indexscandir)
@@ -5743,6 +5791,7 @@ make_indexonlyscan(List *qptlist,
 	node->scan.scanrelid = scanrelid;
 	node->indexid = indexid;
 	node->indexqual = indexqual;
+	node->recheckqual = recheckqual;
 	node->indexorderby = indexorderby;
 	node->indextlist = indextlist;
 	node->indexorderdir = indexscandir;
@@ -6723,11 +6772,12 @@ materialize_finished_plan(Plan *subplan)
 	return matplan;
 }
 
-static ResultCache *
-make_resultcache(Plan *lefttree, Oid *hashoperators, Oid *collations,
-				 List *param_exprs, bool singlerow, uint32 est_entries)
+static Memoize *
+make_memoize(Plan *lefttree, Oid *hashoperators, Oid *collations,
+			 List *param_exprs, bool singlerow, bool binary_mode,
+			 uint32 est_entries, Bitmapset *keyparamids)
 {
-	ResultCache *node = makeNode(ResultCache);
+	Memoize    *node = makeNode(Memoize);
 	Plan	   *plan = &node->plan;
 
 	plan->targetlist = lefttree->targetlist;
@@ -6740,7 +6790,9 @@ make_resultcache(Plan *lefttree, Oid *hashoperators, Oid *collations,
 	node->collations = collations;
 	node->param_exprs = param_exprs;
 	node->singlerow = singlerow;
+	node->binary_mode = binary_mode;
 	node->est_entries = est_entries;
+	node->keyparamids = keyparamids;
 
 	return node;
 }
@@ -7341,7 +7393,7 @@ is_projection_capable_path(Path *path)
 	{
 		case T_Hash:
 		case T_Material:
-		case T_ResultCache:
+		case T_Memoize:
 		case T_Sort:
 		case T_IncrementalSort:
 		case T_Unique:
@@ -7387,7 +7439,7 @@ is_projection_capable_plan(Plan *plan)
 	{
 		case T_Hash:
 		case T_Material:
-		case T_ResultCache:
+		case T_Memoize:
 		case T_Sort:
 		case T_Unique:
 		case T_SetOp:

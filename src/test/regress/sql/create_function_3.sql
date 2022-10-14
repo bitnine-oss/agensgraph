@@ -180,6 +180,14 @@ CREATE FUNCTION functest_S_13() RETURNS boolean
         SELECT false;
     END;
 
+-- check display of function argments in sub-SELECT
+CREATE TABLE functest1 (i int);
+CREATE FUNCTION functest_S_16(a int, b int) RETURNS void
+    LANGUAGE SQL
+    BEGIN ATOMIC
+        INSERT INTO functest1 SELECT a + $2;
+    END;
+
 -- error: duplicate function body
 CREATE FUNCTION functest_S_xxx(x int) RETURNS int
     LANGUAGE SQL
@@ -217,6 +225,9 @@ SELECT pg_get_functiondef('functest_S_3a'::regproc);
 SELECT pg_get_functiondef('functest_S_10'::regproc);
 SELECT pg_get_functiondef('functest_S_13'::regproc);
 SELECT pg_get_functiondef('functest_S_15'::regproc);
+SELECT pg_get_functiondef('functest_S_16'::regproc);
+
+DROP TABLE functest1 CASCADE;
 
 -- test with views
 CREATE TABLE functest3 (a int);
@@ -319,11 +330,14 @@ DROP FUNCTION functest1(a int);
 
 -- inlining of set-returning functions
 
+CREATE TABLE functest3 (a int);
+INSERT INTO functest3 VALUES (1), (2), (3);
+
 CREATE FUNCTION functest_sri1() RETURNS SETOF int
 LANGUAGE SQL
 STABLE
 AS '
-    VALUES (1), (2), (3);
+    SELECT * FROM functest3;
 ';
 
 SELECT * FROM functest_sri1();
@@ -333,11 +347,13 @@ CREATE FUNCTION functest_sri2() RETURNS SETOF int
 LANGUAGE SQL
 STABLE
 BEGIN ATOMIC
-    VALUES (1), (2), (3);
+    SELECT * FROM functest3;
 END;
 
 SELECT * FROM functest_sri2();
 EXPLAIN (verbose, costs off) SELECT * FROM functest_sri2();
+
+DROP TABLE functest3 CASCADE;
 
 
 -- Check behavior of VOID-returning SQL functions

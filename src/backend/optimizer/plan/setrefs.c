@@ -254,6 +254,7 @@ static void set_dijkstra_references(PlannerInfo *root,
 Plan *
 set_plan_references(PlannerInfo *root, Plan *plan)
 {
+	Plan	   *result;
 	PlannerGlobal *glob = root->glob;
 	int			rtoffset = list_length(glob->finalrtable);
 	ListCell   *lc;
@@ -306,8 +307,44 @@ set_plan_references(PlannerInfo *root, Plan *plan)
 		glob->appendRelations = lappend(glob->appendRelations, appinfo);
 	}
 
+	/* If needed, create workspace for processing AlternativeSubPlans */
+	if (root->hasAlternativeSubPlans)
+	{
+		root->isAltSubplan = (bool *)
+			palloc0(list_length(glob->subplans) * sizeof(bool));
+		root->isUsedSubplan = (bool *)
+			palloc0(list_length(glob->subplans) * sizeof(bool));
+	}
+
 	/* Now fix the Plan tree */
-	return set_plan_refs(root, plan, rtoffset);
+	result = set_plan_refs(root, plan, rtoffset);
+
+	/*
+	 * If we have AlternativeSubPlans, it is likely that we now have some
+	 * unreferenced subplans in glob->subplans.  To avoid expending cycles on
+	 * those subplans later, get rid of them by setting those list entries to
+	 * NULL.  (Note: we can't do this immediately upon processing an
+	 * AlternativeSubPlan, because there may be multiple copies of the
+	 * AlternativeSubPlan, and they can get resolved differently.)
+	 */
+	if (root->hasAlternativeSubPlans)
+	{
+		foreach(lc, glob->subplans)
+		{
+			int			ndx = foreach_current_index(lc);
+
+			/*
+			 * If it was used by some AlternativeSubPlan in this query level,
+			 * but wasn't selected as best by any AlternativeSubPlan, then we
+			 * don't need it.  Do not touch subplans that aren't parts of
+			 * AlternativeSubPlans.
+			 */
+			if (root->isAltSubplan[ndx] && !root->isUsedSubplan[ndx])
+				lfirst(lc) = NULL;
+		}
+	}
+
+	return result;
 }
 
 /*
@@ -759,19 +796,19 @@ set_plan_refs(PlannerInfo *root, Plan *plan, int rtoffset)
 			set_hash_references(root, plan, rtoffset);
 			break;
 
-		case T_ResultCache:
+		case T_Memoize:
 			{
-				ResultCache *rcplan = (ResultCache *) plan;
+				Memoize    *mplan = (Memoize *) plan;
 
 				/*
-				 * Result Cache does not evaluate its targetlist.  It just
-				 * uses the same targetlist from its outer subnode.
+				 * Memoize does not evaluate its targetlist.  It just uses the
+				 * same targetlist from its outer subnode.
 				 */
 				set_dummy_tlist_references(plan, rtoffset);
 
-				rcplan->param_exprs = fix_scan_list(root, rcplan->param_exprs,
-													rtoffset,
-													NUM_EXEC_TLIST(plan));
+				mplan->param_exprs = fix_scan_list(root, mplan->param_exprs,
+												   rtoffset,
+												   NUM_EXEC_TLIST(plan));
 				break;
 			}
 
@@ -1141,8 +1178,26 @@ set_indexonlyscan_references(PlannerInfo *root,
 							 int rtoffset)
 {
 	indexed_tlist *index_itlist;
+	List	   *stripped_indextlist;
+	ListCell   *lc;
 
-	index_itlist = build_tlist_index(plan->indextlist);
+	/*
+	 * Vars in the plan node's targetlist, qual, and recheckqual must only
+	 * reference columns that the index AM can actually return.  To ensure
+	 * this, remove non-returnable columns (which are marked as resjunk) from
+	 * the indexed tlist.  We can just drop them because the indexed_tlist
+	 * machinery pays attention to TLE resnos, not physical list position.
+	 */
+	stripped_indextlist = NIL;
+	foreach(lc, plan->indextlist)
+	{
+		TargetEntry *indextle = (TargetEntry *) lfirst(lc);
+
+		if (!indextle->resjunk)
+			stripped_indextlist = lappend(stripped_indextlist, indextle);
+	}
+
+	index_itlist = build_tlist_index(stripped_indextlist);
 
 	plan->scan.scanrelid += rtoffset;
 	plan->scan.plan.targetlist = (List *)
@@ -1155,6 +1210,13 @@ set_indexonlyscan_references(PlannerInfo *root,
 	plan->scan.plan.qual = (List *)
 		fix_upper_expr(root,
 					   (Node *) plan->scan.plan.qual,
+					   index_itlist,
+					   INDEX_VAR,
+					   rtoffset,
+					   NUM_EXEC_QUAL((Plan *) plan));
+	plan->recheckqual = (List *)
+		fix_upper_expr(root,
+					   (Node *) plan->recheckqual,
 					   index_itlist,
 					   INDEX_VAR,
 					   rtoffset,
@@ -1486,8 +1548,16 @@ set_append_references(PlannerInfo *root,
 		lfirst(l) = set_plan_refs(root, (Plan *) lfirst(l), rtoffset);
 	}
 
-	/* Now, if there's just one, forget the Append and return that child */
-	if (list_length(aplan->appendplans) == 1)
+	/*
+	 * See if it's safe to get rid of the Append entirely.  For this to be
+	 * safe, there must be only one child plan and that child plan's parallel
+	 * awareness must match that of the Append's.  The reason for the latter
+	 * is that the if the Append is parallel aware and the child is not then
+	 * the calling plan may execute the non-parallel aware child multiple
+	 * times.
+	 */
+	if (list_length(aplan->appendplans) == 1 &&
+		((Plan *) linitial(aplan->appendplans))->parallel_aware == aplan->plan.parallel_aware)
 		return clean_up_removed_plan_level((Plan *) aplan,
 										   (Plan *) linitial(aplan->appendplans));
 
@@ -1550,8 +1620,16 @@ set_mergeappend_references(PlannerInfo *root,
 		lfirst(l) = set_plan_refs(root, (Plan *) lfirst(l), rtoffset);
 	}
 
-	/* Now, if there's just one, forget the MergeAppend and return that child */
-	if (list_length(mplan->mergeplans) == 1)
+	/*
+	 * See if it's safe to get rid of the MergeAppend entirely.  For this to
+	 * be safe, there must be only one child plan and that child plan's
+	 * parallel awareness must match that of the MergeAppend's.  The reason
+	 * for the latter is that the if the MergeAppend is parallel aware and the
+	 * child is not then the calling plan may execute the non-parallel aware
+	 * child multiple times.
+	 */
+	if (list_length(mplan->mergeplans) == 1 &&
+		((Plan *) linitial(mplan->mergeplans))->parallel_aware == mplan->plan.parallel_aware)
 		return clean_up_removed_plan_level((Plan *) mplan,
 										   (Plan *) linitial(mplan->mergeplans));
 
@@ -1788,8 +1866,7 @@ fix_param_node(PlannerInfo *root, Param *p)
  * Note: caller must still recurse into the result!
  *
  * We don't make any attempt to fix up cost estimates in the parent plan
- * node or higher-level nodes.  However, we do remove the rejected subplan(s)
- * from root->glob->subplans, to minimize cycles expended on them later.
+ * node or higher-level nodes.
  */
 static Node *
 fix_alternative_subplan(PlannerInfo *root, AlternativeSubPlan *asplan,
@@ -1801,9 +1878,8 @@ fix_alternative_subplan(PlannerInfo *root, AlternativeSubPlan *asplan,
 
 	/*
 	 * Compute the estimated cost of each subplan assuming num_exec
-	 * executions, and keep the cheapest one.  Replace discarded subplans with
-	 * NULL pointers in the global subplans list.  In event of exact equality
-	 * of estimates, we prefer the later plan; this is a bit arbitrary, but in
+	 * executions, and keep the cheapest one.  In event of exact equality of
+	 * estimates, we prefer the later plan; this is a bit arbitrary, but in
 	 * current usage it biases us to break ties against fast-start subplans.
 	 */
 	Assert(asplan->subplans != NIL);
@@ -1814,30 +1890,18 @@ fix_alternative_subplan(PlannerInfo *root, AlternativeSubPlan *asplan,
 		Cost		curcost;
 
 		curcost = curplan->startup_cost + num_exec * curplan->per_call_cost;
-		if (bestplan == NULL)
+		if (bestplan == NULL || curcost <= bestcost)
 		{
 			bestplan = curplan;
 			bestcost = curcost;
 		}
-		else if (curcost <= bestcost)
-		{
-			/* drop old bestplan */
-			ListCell   *lc2 = list_nth_cell(root->glob->subplans,
-											bestplan->plan_id - 1);
 
-			lfirst(lc2) = NULL;
-			bestplan = curplan;
-			bestcost = curcost;
-		}
-		else
-		{
-			/* drop curplan */
-			ListCell   *lc2 = list_nth_cell(root->glob->subplans,
-											curplan->plan_id - 1);
-
-			lfirst(lc2) = NULL;
-		}
+		/* Also mark all subplans that are in AlternativeSubPlans */
+		root->isAltSubplan[curplan->plan_id - 1] = true;
 	}
+
+	/* Mark the subplan we selected */
+	root->isUsedSubplan[bestplan->plan_id - 1] = true;
 
 	return (Node *) bestplan;
 }

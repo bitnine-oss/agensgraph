@@ -132,7 +132,6 @@ static dlist_head lsn_mapping = DLIST_STATIC_INIT(lsn_mapping);
 typedef struct SlotErrCallbackArg
 {
 	LogicalRepRelMapEntry *rel;
-	int			local_attnum;
 	int			remote_attnum;
 } SlotErrCallbackArg;
 
@@ -236,8 +235,7 @@ static void maybe_reread_subscription(void);
 /* prototype needed because of stream_commit */
 static void apply_dispatch(StringInfo s);
 
-static void apply_handle_commit_internal(StringInfo s,
-										 LogicalRepCommitData *commit_data);
+static void apply_handle_commit_internal(LogicalRepCommitData *commit_data);
 static void apply_handle_insert_internal(ApplyExecutionData *edata,
 										 ResultRelInfo *relinfo,
 										 TupleTableSlot *remoteslot);
@@ -503,36 +501,23 @@ slot_fill_defaults(LogicalRepRelMapEntry *rel, EState *estate,
 }
 
 /*
- * Error callback to give more context info about type conversion failure.
+ * Error callback to give more context info about data conversion failures
+ * while reading data from the remote server.
  */
 static void
 slot_store_error_callback(void *arg)
 {
 	SlotErrCallbackArg *errarg = (SlotErrCallbackArg *) arg;
 	LogicalRepRelMapEntry *rel;
-	char	   *remotetypname;
-	Oid			remotetypoid,
-				localtypoid;
 
 	/* Nothing to do if remote attribute number is not set */
 	if (errarg->remote_attnum < 0)
 		return;
 
 	rel = errarg->rel;
-	remotetypoid = rel->remoterel.atttyps[errarg->remote_attnum];
-
-	/* Fetch remote type name from the LogicalRepTypMap cache */
-	remotetypname = logicalrep_typmap_gettypname(remotetypoid);
-
-	/* Fetch local type OID from the local sys cache */
-	localtypoid = get_atttype(rel->localreloid, errarg->local_attnum + 1);
-
-	errcontext("processing remote data for replication target relation \"%s.%s\" column \"%s\", "
-			   "remote type %s, local type %s",
+	errcontext("processing remote data for replication target relation \"%s.%s\" column \"%s\"",
 			   rel->remoterel.nspname, rel->remoterel.relname,
-			   rel->remoterel.attnames[errarg->remote_attnum],
-			   remotetypname,
-			   format_type_be(localtypoid));
+			   rel->remoterel.attnames[errarg->remote_attnum]);
 }
 
 /*
@@ -553,7 +538,6 @@ slot_store_data(TupleTableSlot *slot, LogicalRepRelMapEntry *rel,
 
 	/* Push callback + info on the error context stack */
 	errarg.rel = rel;
-	errarg.local_attnum = -1;
 	errarg.remote_attnum = -1;
 	errcallback.callback = slot_store_error_callback;
 	errcallback.arg = (void *) &errarg;
@@ -573,7 +557,6 @@ slot_store_data(TupleTableSlot *slot, LogicalRepRelMapEntry *rel,
 
 			Assert(remoteattnum < tupleData->ncols);
 
-			errarg.local_attnum = i;
 			errarg.remote_attnum = remoteattnum;
 
 			if (tupleData->colstatus[remoteattnum] == LOGICALREP_COLUMN_TEXT)
@@ -622,7 +605,6 @@ slot_store_data(TupleTableSlot *slot, LogicalRepRelMapEntry *rel,
 				slot->tts_isnull[i] = true;
 			}
 
-			errarg.local_attnum = -1;
 			errarg.remote_attnum = -1;
 		}
 		else
@@ -679,7 +661,6 @@ slot_modify_data(TupleTableSlot *slot, TupleTableSlot *srcslot,
 
 	/* For error reporting, push callback + info on the error context stack */
 	errarg.rel = rel;
-	errarg.local_attnum = -1;
 	errarg.remote_attnum = -1;
 	errcallback.callback = slot_store_error_callback;
 	errcallback.arg = (void *) &errarg;
@@ -702,7 +683,6 @@ slot_modify_data(TupleTableSlot *slot, TupleTableSlot *srcslot,
 		{
 			StringInfo	colvalue = &tupleData->colvalues[remoteattnum];
 
-			errarg.local_attnum = i;
 			errarg.remote_attnum = remoteattnum;
 
 			if (tupleData->colstatus[remoteattnum] == LOGICALREP_COLUMN_TEXT)
@@ -747,7 +727,6 @@ slot_modify_data(TupleTableSlot *slot, TupleTableSlot *srcslot,
 				slot->tts_isnull[i] = true;
 			}
 
-			errarg.local_attnum = -1;
 			errarg.remote_attnum = -1;
 		}
 	}
@@ -795,7 +774,7 @@ apply_handle_commit(StringInfo s)
 								 LSN_FORMAT_ARGS(commit_data.commit_lsn),
 								 LSN_FORMAT_ARGS(remote_final_lsn))));
 
-	apply_handle_commit_internal(s, &commit_data);
+	apply_handle_commit_internal(&commit_data);
 
 	/* Process any tables that are being synchronized in parallel. */
 	process_syncing_tables(commit_data.end_lsn);
@@ -1153,7 +1132,7 @@ apply_handle_stream_commit(StringInfo s)
 	elog(DEBUG1, "replayed %d (all) changes from file \"%s\"",
 		 nchanges, path);
 
-	apply_handle_commit_internal(s, &commit_data);
+	apply_handle_commit_internal(&commit_data);
 
 	/* unlink the files with serialized changes and subxact info */
 	stream_cleanup_files(MyLogicalRepWorker->subid, xid);
@@ -1168,7 +1147,7 @@ apply_handle_stream_commit(StringInfo s)
  * Helper function for apply_handle_commit and apply_handle_stream_commit.
  */
 static void
-apply_handle_commit_internal(StringInfo s, LogicalRepCommitData *commit_data)
+apply_handle_commit_internal(LogicalRepCommitData *commit_data)
 {
 	if (IsTransactionState())
 	{
@@ -1217,8 +1196,10 @@ apply_handle_relation(StringInfo s)
 /*
  * Handle TYPE message.
  *
- * Note we don't do local mapping here, that's done when the type is
- * actually used.
+ * This implementation pays no attention to TYPE messages; we expect the user
+ * to have set things up so that the incoming data is acceptable to the input
+ * functions for the locally subscribed tables.  Hence, we just read and
+ * discard the message.
  */
 static void
 apply_handle_type(StringInfo s)
@@ -1229,7 +1210,6 @@ apply_handle_type(StringInfo s)
 		return;
 
 	logicalrep_read_typ(s, &typ);
-	logicalrep_typmap_update(&typ);
 }
 
 /*

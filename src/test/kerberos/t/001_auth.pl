@@ -185,6 +185,8 @@ note "running tests";
 # Test connection success or failure, and if success, that query returns true.
 sub test_access
 {
+	local $Test::Builder::Level = $Test::Builder::Level + 1;
+
 	my ($node, $role, $query, $expected_res, $gssencmode, $test_name,
 		@expect_log_msgs)
 	  = @_;
@@ -219,6 +221,8 @@ sub test_access
 # As above, but test for an arbitrary query result.
 sub test_query
 {
+	local $Test::Builder::Level = $Test::Builder::Level + 1;
+
 	my ($node, $role, $query, $expected, $gssencmode, $test_name) = @_;
 
 	# need to connect over TCP/IP for Kerberos

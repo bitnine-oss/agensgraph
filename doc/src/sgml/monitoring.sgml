@@ -320,15 +320,6 @@ postgres   27093  0.0  0.0  30096  2752 ?        Ss   11:34   0:00 postgres: ser
      </row>
 
      <row>
-      <entry><structname>pg_stat_replication_slots</structname><indexterm><primary>pg_stat_replication_slots</primary></indexterm></entry>
-      <entry>One row per replication slot, showing statistics about
-       the replication slot's usage.
-       See <link linkend="monitoring-pg-stat-replication-slots-view">
-       <structname>pg_stat_replication_slots</structname></link> for details.
-      </entry>
-     </row>
-
-     <row>
       <entry><structname>pg_stat_wal_receiver</structname><indexterm><primary>pg_stat_wal_receiver</primary></indexterm></entry>
       <entry>Only one row, showing statistics about the WAL receiver from
        that receiver's connected server.
@@ -624,6 +615,15 @@ postgres   27093  0.0  0.0  30096  2752 ?        Ss   11:34   0:00 postgres: ser
       <entry>One row per SLRU, showing statistics of operations. See
        <link linkend="monitoring-pg-stat-slru-view">
        <structname>pg_stat_slru</structname></link> for details.
+      </entry>
+     </row>
+
+     <row>
+      <entry><structname>pg_stat_replication_slots</structname><indexterm><primary>pg_stat_replication_slots</primary></indexterm></entry>
+      <entry>One row per replication slot, showing statistics about the
+       replication slot's usage. See
+       <link linkend="monitoring-pg-stat-replication-slots-view">
+       <structname>pg_stat_replication_slots</structname></link> for details.
       </entry>
      </row>
 
@@ -2224,6 +2224,10 @@ postgres   27093  0.0  0.0  30096  2752 ?        Ss   11:34   0:00 postgres: ser
       <entry>Waiting during base backup when throttling activity.</entry>
      </row>
      <row>
+      <entry><literal>CheckpointWriteDelay</literal></entry>
+      <entry>Waiting between writes while performing a checkpoint.</entry>
+     </row>
+     <row>
       <entry><literal>PgSleep</literal></entry>
       <entry>Waiting due to a call to <function>pg_sleep</function> or
        a sibling function.</entry>
@@ -2237,6 +2241,11 @@ postgres   27093  0.0  0.0  30096  2752 ?        Ss   11:34   0:00 postgres: ser
       <entry><literal>RecoveryRetrieveRetryInterval</literal></entry>
       <entry>Waiting during recovery when WAL data is not available from any
        source (<filename>pg_wal</filename>, archive or stream).</entry>
+     </row>
+     <row>
+      <entry><literal>RegisterSyncRequest</literal></entry>
+      <entry>Waiting while sending synchronization requests to the
+       checkpointer, because the request queue is full.</entry>
      </row>
      <row>
       <entry><literal>VacuumDelay</literal></entry>
@@ -2642,7 +2651,7 @@ SELECT pid, wait_event_type, wait_event FROM pg_stat_activity WHERE wait_event i
         Number of transactions spilled to disk once the memory used by
         logical decoding to decode changes from WAL has exceeded
         <literal>logical_decoding_work_mem</literal>. The counter gets
-        incremented for both toplevel transactions and subtransactions.
+        incremented for both top-level transactions and subtransactions.
       </para></entry>
      </row>
 
@@ -2679,7 +2688,7 @@ SELECT pid, wait_event_type, wait_event FROM pg_stat_activity WHERE wait_event i
         plugin after the memory used by logical decoding to decode changes
         from WAL for this slot has exceeded
         <literal>logical_decoding_work_mem</literal>. Streaming only
-        works with toplevel transactions (subtransactions can't be streamed
+        works with top-level transactions (subtransactions can't be streamed
         independently), so the counter is not incremented for subtransactions.
        </para></entry>
      </row>
@@ -2715,7 +2724,7 @@ SELECT pid, wait_event_type, wait_event FROM pg_stat_activity WHERE wait_event i
        </para>
        <para>
         Number of decoded transactions sent to the decoding output plugin for
-        this slot. This counts toplevel transactions only, and is not incremented
+        this slot. This counts top-level transactions only, and is not incremented
         for subtransactions. Note that this includes the transactions that are
         streamed and/or spilled.
        </para></entry>
@@ -6142,8 +6151,9 @@ SELECT pg_stat_get_backend_pid(s.backendid) AS pid,
        <command>VACUUM</command> is currently vacuuming the indexes.  If a table has
        any indexes, this will happen at least once per vacuum, after the heap
        has been completely scanned.  It may happen multiple times per vacuum
-       if <xref linkend="guc-maintenance-work-mem"/> is insufficient to
-       store the number of dead tuples found.
+       if <xref linkend="guc-maintenance-work-mem"/> (or, in the case of autovacuum,
+       <xref linkend="guc-autovacuum-work-mem"/> if set) is insufficient to store
+       the number of dead tuples found.
      </entry>
     </row>
     <row>

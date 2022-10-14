@@ -66,6 +66,12 @@ struct XidCache
 	(PROC_IN_VACUUM | PROC_IN_SAFE_IC | PROC_VACUUM_FOR_WRAPAROUND)
 
 /*
+ * Xmin-related flags. Make sure any flags that affect how the process' Xmin
+ * value is interpreted by VACUUM are included here.
+ */
+#define		PROC_XMIN_FLAGS (PROC_IN_VACUUM | PROC_IN_SAFE_IC)
+
+/*
  * We allow a small number of "weak" relation locks (AccessShareLock,
  * RowShareLock, RowExclusiveLock) to be recorded in the PGPROC structure
  * rather than the main lock table.  This eases contention on the lock
@@ -78,6 +84,13 @@ struct XidCache
  * structures we could possibly have.  See comments for MAX_BACKENDS.
  */
 #define INVALID_PGPROCNO		PG_INT32_MAX
+
+/*
+ * Flags used only for type of internal functions
+ * GetVirtualXIDsDelayingChkptGuts and HaveVirtualXIDsDelayingChkptGuts.
+ */
+#define DELAY_CHKPT_START		(1<<0)
+#define DELAY_CHKPT_COMPLETE	(1<<1)
 
 typedef enum
 {
@@ -189,6 +202,7 @@ struct PGPROC
 	uint8		statusFlags;	/* this backend's status flags, see PROC_*
 								 * above. mirrored in
 								 * ProcGlobal->statusFlags[pgxactoff] */
+	bool		delayChkptEnd;	/* true if this proc delays checkpoint end */
 
 	/*
 	 * Info to allow us to wait for synchronous replication, if needed.

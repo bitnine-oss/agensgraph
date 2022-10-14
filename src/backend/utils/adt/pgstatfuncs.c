@@ -1912,7 +1912,7 @@ pg_stat_get_slru(PG_FUNCTION_ARGS)
 		/* for each row */
 		Datum		values[PG_STAT_GET_SLRU_COLS];
 		bool		nulls[PG_STAT_GET_SLRU_COLS];
-		PgStat_SLRUStats stat = stats[i];
+		PgStat_SLRUStats stat;
 		const char *name;
 
 		name = pgstat_slru_name(i);
@@ -1920,6 +1920,7 @@ pg_stat_get_slru(PG_FUNCTION_ARGS)
 		if (!name)
 			break;
 
+		stat = stats[i];
 		MemSet(values, 0, sizeof(values));
 		MemSet(nulls, 0, sizeof(nulls));
 
@@ -2314,13 +2315,22 @@ Datum
 pg_stat_get_replication_slot(PG_FUNCTION_ARGS)
 {
 #define PG_STAT_GET_REPLICATION_SLOT_COLS 10
-	text	   *slotname_text = PG_GETARG_TEXT_P(0);
+	text	   *slotname_text;
 	NameData	slotname;
 	TupleDesc	tupdesc;
-	Datum		values[10];
-	bool		nulls[10];
+	Datum		values[PG_STAT_GET_REPLICATION_SLOT_COLS];
+	bool		nulls[PG_STAT_GET_REPLICATION_SLOT_COLS];
 	PgStat_StatReplSlotEntry *slotent;
 	PgStat_StatReplSlotEntry allzero;
+
+	/*
+	 * Function was accidentally marked as non-strict, can't change that post
+	 * release.
+	 */
+	if (PG_ARGISNULL(0))
+		PG_RETURN_NULL();
+
+	slotname_text = PG_GETARG_TEXT_P(0);
 
 	/* Initialise values and NULL flags arrays */
 	MemSet(values, 0, sizeof(values));

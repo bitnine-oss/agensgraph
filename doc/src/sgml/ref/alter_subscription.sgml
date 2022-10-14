@@ -65,8 +65,9 @@ ALTER SUBSCRIPTION <replaceable class="parameter">name</replaceable> RENAME TO <
 
   <para>
    Commands <command>ALTER SUBSCRIPTION ... REFRESH PUBLICATION</command> and
-   <command>ALTER SUBSCRIPTION ... {SET|ADD|DROP} PUBLICATION ...</command> with refresh
-   option as true cannot be executed inside a transaction block.
+   <command>ALTER SUBSCRIPTION ... {SET|ADD|DROP} PUBLICATION ...</command>
+   with <literal>refresh</literal> option as <literal>true</literal> cannot be
+   executed inside a transaction block.
   </para>
  </refsect1>
 
@@ -106,9 +107,7 @@ ALTER SUBSCRIPTION <replaceable class="parameter">name</replaceable> RENAME TO <
       publications, and <literal>DROP</literal> removes the publications from
       the list of publications.  See <xref linkend="sql-createsubscription"/>
       for more information.  By default, this command will also act like
-      <literal>REFRESH PUBLICATION</literal>, except that in case of
-      <literal>ADD</literal> or <literal>DROP</literal>, only the added or
-      dropped publications are refreshed.
+      <literal>REFRESH PUBLICATION</literal>.
      </para>
 
      <para>
@@ -128,9 +127,9 @@ ALTER SUBSCRIPTION <replaceable class="parameter">name</replaceable> RENAME TO <
        </varlistentry>
       </variablelist>
 
-      Additionally, refresh options as described
-      under <literal>REFRESH PUBLICATION</literal> may be specified,
-      except in the case of <literal>DROP PUBLICATION</literal>.
+      Additionally, the options described under
+      <literal>REFRESH PUBLICATION</literal> may be specified, to control the
+      implicit refresh operation.
      </para>
     </listitem>
    </varlistentry>

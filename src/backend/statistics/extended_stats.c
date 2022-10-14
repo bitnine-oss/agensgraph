@@ -30,6 +30,7 @@
 #include "nodes/nodeFuncs.h"
 #include "optimizer/clauses.h"
 #include "optimizer/optimizer.h"
+#include "parser/parsetree.h"
 #include "pgstat.h"
 #include "postmaster/autovacuum.h"
 #include "statistics/extended_stats_internal.h"
@@ -125,13 +126,15 @@ BuildRelationExtStatistics(Relation onerel, double totalrows,
 	if (!natts)
 		return;
 
+	/* the list of stats has to be allocated outside the memory context */
+	pg_stext = table_open(StatisticExtRelationId, RowExclusiveLock);
+	statslist = fetch_statentries_for_relation(pg_stext, RelationGetRelid(onerel));
+
+	/* memory context for building each statistics object */
 	cxt = AllocSetContextCreate(CurrentMemoryContext,
 								"BuildRelationExtStatistics",
 								ALLOCSET_DEFAULT_SIZES);
 	oldcxt = MemoryContextSwitchTo(cxt);
-
-	pg_stext = table_open(StatisticExtRelationId, RowExclusiveLock);
-	statslist = fetch_statentries_for_relation(pg_stext, RelationGetRelid(onerel));
 
 	/* report this phase */
 	if (statslist != NIL)
@@ -180,7 +183,7 @@ BuildRelationExtStatistics(Relation onerel, double totalrows,
 			continue;
 		}
 
-		/* compute statistics target for this statistics */
+		/* compute statistics target for this statistics object */
 		stattarget = statext_compute_stattarget(stat->stattarget,
 												bms_num_members(stat->columns),
 												stats);
@@ -193,7 +196,7 @@ BuildRelationExtStatistics(Relation onerel, double totalrows,
 		if (stattarget == 0)
 			continue;
 
-		/* evaluate expressions (if the statistics has any) */
+		/* evaluate expressions (if the statistics object has any) */
 		data = make_build_data(onerel, stat, numrows, rows, stats, stattarget);
 
 		/* compute statistic of each requested type */
@@ -234,14 +237,16 @@ BuildRelationExtStatistics(Relation onerel, double totalrows,
 		pgstat_progress_update_param(PROGRESS_ANALYZE_EXT_STATS_COMPUTED,
 									 ++ext_cnt);
 
-		/* free the build data (allocated as a single chunk) */
-		pfree(data);
+		/* free the data used for building this statistics object */
+		MemoryContextReset(cxt);
 	}
-
-	table_close(pg_stext, RowExclusiveLock);
 
 	MemoryContextSwitchTo(oldcxt);
 	MemoryContextDelete(cxt);
+
+	list_free(statslist);
+
+	table_close(pg_stext, RowExclusiveLock);
 }
 
 /*
@@ -253,9 +258,9 @@ BuildRelationExtStatistics(Relation onerel, double totalrows,
  * when analyzing only some of the columns, this will skip statistics objects
  * that would require additional columns.
  *
- * See statext_compute_stattarget for details about how we compute statistics
- * target for a statistics object (from the object target, attribute targets
- * and default statistics target).
+ * See statext_compute_stattarget for details about how we compute the
+ * statistics target for a statistics object (from the object target,
+ * attribute targets and default statistics target).
  */
 int
 ComputeExtStatisticsRows(Relation onerel,
@@ -325,8 +330,8 @@ ComputeExtStatisticsRows(Relation onerel,
  *
  * When computing target for extended statistics objects, we consider three
  * places where the target may be set - the statistics object itself,
- * attributes the statistics is defined on, and then the default statistics
- * target.
+ * attributes the statistics object is defined on, and then the default
+ * statistics target.
  *
  * First we look at what's set for the statistics object itself, using the
  * ALTER STATISTICS ... SET STATISTICS command. If we find a valid value
@@ -1690,6 +1695,17 @@ statext_mcv_clauselist_selectivity(PlannerInfo *root, List *clauses, int varReli
 	List	  **list_exprs;		/* expressions matched to any statistic */
 	int			listidx;
 	Selectivity sel = (is_or) ? 0.0 : 1.0;
+	RangeTblEntry *rte = planner_rt_fetch(rel->relid, root);
+
+	/*
+	 * When dealing with regular inheritance trees, ignore extended stats
+	 * (which were built without data from child rels, and thus do not
+	 * represent them). For partitioned tables data there's no data in the
+	 * non-leaf relations, so we build stats only for the inheritance tree.
+	 * So for partitioned tables we do consider extended stats.
+	 */
+	if (rte->inh && rte->relkind != RELKIND_PARTITIONED_TABLE)
+		return sel;
 
 	/* check if there's any stats that might be useful for us. */
 	if (!has_stats_of_kind(rel->statlist, STATS_EXT_MCV))
@@ -1785,8 +1801,8 @@ statext_mcv_clauselist_selectivity(PlannerInfo *root, List *clauses, int varReli
 
 			/*
 			 * The clause was not estimated yet, and we've extracted either
-			 * attnums of expressions from it. Ignore it if it's not fully
-			 * covered by the chosen statistics.
+			 * attnums or expressions from it. Ignore it if it's not fully
+			 * covered by the chosen statistics object.
 			 *
 			 * We need to check both attributes and expressions, and reject if
 			 * either is not covered.

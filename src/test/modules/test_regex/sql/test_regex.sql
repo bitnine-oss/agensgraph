@@ -769,6 +769,10 @@ select * from test_regex('^(.+)( \1)+$', 'abc abc abc', 'RP');
 select * from test_regex('^(.+)( \1)+$', 'abc abd abc', 'RP');
 -- expectNomatch	14.29 RP	{^(.+)( \1)+$}	{abc abc abd}
 select * from test_regex('^(.+)( \1)+$', 'abc abc abd', 'RP');
+-- expectNomatch	14.30 RP	{^(.)\1|\1.}	{abcdef}
+select * from test_regex('^(.)\1|\1.', 'abcdef', 'RP');
+-- expectNomatch	14.31 RP	{^((.)\2|..)\2}	{abadef}
+select * from test_regex('^((.)\2|..)\2', 'abadef', 'RP');
 
 -- back reference only matches the string, not any constraints
 select * from test_regex('(^\w+).*\1', 'abc abc abc', 'LRP');
@@ -1009,6 +1013,14 @@ select * from test_regex('(.*).*', 'abc', 'N');
 select * from test_regex('(a*)*', 'bc', 'N');
 -- expectMatch	21.35 M		{ TO (([a-z0-9._]+|"([^"]+|"")+")+)}	{asd TO foo}	{ TO foo} foo o {}
 select * from test_regex(' TO (([a-z0-9._]+|"([^"]+|"")+")+)', 'asd TO foo', 'M');
+-- expectMatch	21.36 RPQ	((.))(\2){0}	xy	x	x	x	{}
+select * from test_regex('((.))(\2){0}', 'xy', 'RPQ');
+-- expectNomatch	21.39 PQR	{(.){0}(\1)}	xxx
+select * from test_regex('(.){0}(\1)', 'xxx', 'PQR');
+-- expectNomatch	21.40 PQR	{((.)){0}(\2)}	xxx
+select * from test_regex('((.)){0}(\2)', 'xxx', 'PQR');
+-- expectMatch	21.41 NPQR	{((.)){0}(\2){0}}	xyz	{}	{}	{}	{}
+select * from test_regex('((.)){0}(\2){0}', 'xyz', 'NPQR');
 
 -- doing 22 "multicharacter collating elements"
 -- # again ugh

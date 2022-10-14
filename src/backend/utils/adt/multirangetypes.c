@@ -34,6 +34,7 @@
 
 #include "access/tupmacs.h"
 #include "common/hashfn.h"
+#include "funcapi.h"
 #include "lib/stringinfo.h"
 #include "libpq/pqformat.h"
 #include "miscadmin.h"
@@ -712,7 +713,10 @@ multirange_get_range(TypeCacheEntry *rangetyp,
 	if (RANGE_HAS_LBOUND(flags))
 		ptr = (Pointer) att_addlength_pointer(ptr, typlen, ptr);
 	if (RANGE_HAS_UBOUND(flags))
+	{
+		ptr = (Pointer) att_align_pointer(ptr, typalign, typlen, ptr);
 		ptr = (Pointer) att_addlength_pointer(ptr, typlen, ptr);
+	}
 	len = (ptr - begin) + sizeof(RangeType) + sizeof(uint8);
 
 	range = palloc0(len);
@@ -960,7 +964,7 @@ multirange_constructor2(PG_FUNCTION_ARGS)
 
 	if (PG_ARGISNULL(0))
 		elog(ERROR,
-			 "multirange values cannot contain NULL members");
+			 "multirange values cannot contain null members");
 
 	rangeArray = PG_GETARG_ARRAYTYPE_P(0);
 
@@ -972,9 +976,7 @@ multirange_constructor2(PG_FUNCTION_ARGS)
 
 	rngtypid = ARR_ELEMTYPE(rangeArray);
 	if (rngtypid != rangetyp->type_id)
-		ereport(ERROR,
-				(errcode(ERRCODE_DATATYPE_MISMATCH),
-				 errmsg("type %u does not match constructor type", rngtypid)));
+		elog(ERROR, "type %u does not match constructor type", rngtypid);
 
 	/*
 	 * Be careful: we can still be called with zero ranges, like this:
@@ -996,7 +998,7 @@ multirange_constructor2(PG_FUNCTION_ARGS)
 			if (nulls[i])
 				ereport(ERROR,
 						(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
-						 errmsg("multirange values cannot contain NULL members")));
+						 errmsg("multirange values cannot contain null members")));
 
 			/* make_multirange will do its own copy */
 			ranges[i] = DatumGetRangeTypeP(elements[i]);
@@ -1030,16 +1032,14 @@ multirange_constructor1(PG_FUNCTION_ARGS)
 
 	if (PG_ARGISNULL(0))
 		elog(ERROR,
-			 "multirange values cannot contain NULL members");
+			 "multirange values cannot contain null members");
 
 	range = PG_GETARG_RANGE_P(0);
 
 	/* Make sure the range type matches. */
 	rngtypid = RangeTypeGetOid(range);
 	if (rngtypid != rangetyp->type_id)
-		ereport(ERROR,
-				(errcode(ERRCODE_DATATYPE_MISMATCH),
-				 errmsg("type %u does not match constructor type", rngtypid)));
+		elog(ERROR, "type %u does not match constructor type", rngtypid);
 
 	PG_RETURN_MULTIRANGE_P(make_multirange(mltrngtypid, rangetyp, 1, &range));
 }
@@ -2643,6 +2643,78 @@ range_merge_from_multirange(PG_FUNCTION_ARGS)
 	}
 
 	PG_RETURN_RANGE_P(result);
+}
+
+/* Turn multirange into a set of ranges */
+Datum
+multirange_unnest(PG_FUNCTION_ARGS)
+{
+	typedef struct
+	{
+		MultirangeType *mr;
+		TypeCacheEntry *typcache;
+		int			index;
+	} multirange_unnest_fctx;
+
+	FuncCallContext *funcctx;
+	multirange_unnest_fctx *fctx;
+	MemoryContext oldcontext;
+
+	/* stuff done only on the first call of the function */
+	if (SRF_IS_FIRSTCALL())
+	{
+		MultirangeType *mr;
+
+		/* create a function context for cross-call persistence */
+		funcctx = SRF_FIRSTCALL_INIT();
+
+		/*
+		 * switch to memory context appropriate for multiple function calls
+		 */
+		oldcontext = MemoryContextSwitchTo(funcctx->multi_call_memory_ctx);
+
+		/*
+		 * Get the multirange value and detoast if needed.  We can't do this
+		 * earlier because if we have to detoast, we want the detoasted copy
+		 * to be in multi_call_memory_ctx, so it will go away when we're done
+		 * and not before.  (If no detoast happens, we assume the originally
+		 * passed multirange will stick around till then.)
+		 */
+		mr = PG_GETARG_MULTIRANGE_P(0);
+
+		/* allocate memory for user context */
+		fctx = (multirange_unnest_fctx *) palloc(sizeof(multirange_unnest_fctx));
+
+		/* initialize state */
+		fctx->mr = mr;
+		fctx->index = 0;
+		fctx->typcache = lookup_type_cache(MultirangeTypeGetOid(mr),
+										   TYPECACHE_MULTIRANGE_INFO);
+
+		funcctx->user_fctx = fctx;
+		MemoryContextSwitchTo(oldcontext);
+	}
+
+	/* stuff done on every call of the function */
+	funcctx = SRF_PERCALL_SETUP();
+	fctx = funcctx->user_fctx;
+
+	if (fctx->index < fctx->mr->rangeCount)
+	{
+		RangeType  *range;
+
+		range = multirange_get_range(fctx->typcache->rngtype,
+									 fctx->mr,
+									 fctx->index);
+		fctx->index++;
+
+		SRF_RETURN_NEXT(funcctx, RangeTypePGetDatum(range));
+	}
+	else
+	{
+		/* do when there is no more left */
+		SRF_RETURN_DONE(funcctx);
+	}
 }
 
 /* Hash support */

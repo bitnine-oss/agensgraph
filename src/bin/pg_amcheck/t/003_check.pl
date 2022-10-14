@@ -7,7 +7,6 @@ use warnings;
 use PostgresNode;
 use TestLib;
 
-use Fcntl qw(:seek);
 use Test::More tests => 63;
 
 my ($node, $port, %corrupt_page, %remove_relation);
@@ -90,8 +89,8 @@ sub corrupt_first_page
 	# Corrupt some line pointers.  The values are chosen to hit the
 	# various line-pointer-corruption checks in verify_heapam.c
 	# on both little-endian and big-endian architectures.
-	seek($fh, 32, SEEK_SET)
-	  or BAIL_OUT("seek failed: $!");
+	sysseek($fh, 32, 0)
+	  or BAIL_OUT("sysseek failed: $!");
 	syswrite(
 		$fh,
 		pack("L*",
@@ -317,7 +316,7 @@ plan_to_remove_relation_file('db2', 's1.t1_btree');
 #
 
 # Standard first arguments to TestLib functions
-my @cmd = ('pg_amcheck', '--quiet', '-p', $port);
+my @cmd = ('pg_amcheck', '-p', $port);
 
 # Regular expressions to match various expected output
 my $no_output_re               = qr/^$/;

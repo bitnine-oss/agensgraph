@@ -1191,10 +1191,6 @@ pgss_ProcessUtility(PlannedStmt *pstmt, const char *queryString,
 /*
  * Store some statistics for a statement.
  *
- * If queryId is 0 then this is a utility statement for which we couldn't
- * compute a queryId during parse analysis, and we should compute a suitable
- * queryId internally.
- *
  * If jstate is not NULL then we're trying to create an entry for which
  * we have no statistics as yet; we just want to record the normalized
  * query string.  total_time, rows, bufusage and walusage are ignored in this
@@ -2125,6 +2121,7 @@ qtext_load_file(Size *buffer_size)
 	char	   *buf;
 	int			fd;
 	struct stat stat;
+	Size		nread;
 
 	fd = OpenTransientFile(PGSS_TEXT_FILE, O_RDONLY | PG_BINARY);
 	if (fd < 0)
@@ -2165,23 +2162,35 @@ qtext_load_file(Size *buffer_size)
 	}
 
 	/*
-	 * OK, slurp in the file.  If we get a short read and errno doesn't get
-	 * set, the reason is probably that garbage collection truncated the file
-	 * since we did the fstat(), so we don't log a complaint --- but we don't
-	 * return the data, either, since it's most likely corrupt due to
-	 * concurrent writes from garbage collection.
+	 * OK, slurp in the file.  Windows fails if we try to read more than
+	 * INT_MAX bytes at once, and other platforms might not like that either,
+	 * so read a very large file in 1GB segments.
 	 */
-	errno = 0;
-	if (read(fd, buf, stat.st_size) != stat.st_size)
+	nread = 0;
+	while (nread < stat.st_size)
 	{
-		if (errno)
-			ereport(LOG,
-					(errcode_for_file_access(),
-					 errmsg("could not read file \"%s\": %m",
-							PGSS_TEXT_FILE)));
-		free(buf);
-		CloseTransientFile(fd);
-		return NULL;
+		int			toread = Min(1024 * 1024 * 1024, stat.st_size - nread);
+
+		/*
+		 * If we get a short read and errno doesn't get set, the reason is
+		 * probably that garbage collection truncated the file since we did
+		 * the fstat(), so we don't log a complaint --- but we don't return
+		 * the data, either, since it's most likely corrupt due to concurrent
+		 * writes from garbage collection.
+		 */
+		errno = 0;
+		if (read(fd, buf + nread, toread) != toread)
+		{
+			if (errno)
+				ereport(LOG,
+						(errcode_for_file_access(),
+						 errmsg("could not read file \"%s\": %m",
+								PGSS_TEXT_FILE)));
+			free(buf);
+			CloseTransientFile(fd);
+			return NULL;
+		}
+		nread += toread;
 	}
 
 	if (CloseTransientFile(fd) != 0)
@@ -2189,7 +2198,7 @@ qtext_load_file(Size *buffer_size)
 				(errcode_for_file_access(),
 				 errmsg("could not close file \"%s\": %m", PGSS_TEXT_FILE)));
 
-	*buffer_size = stat.st_size;
+	*buffer_size = nread;
 	return buf;
 }
 

@@ -1519,7 +1519,7 @@ typedef struct IndexScanContext
 /* ----------------
  *	 IndexOnlyScanState information
  *
- *		indexqual		   execution state for indexqual expressions
+ *		recheckqual		   execution state for recheckqual expressions
  *		ScanKeys		   Skey structures for index quals
  *		NumScanKeys		   number of ScanKeys
  *		OrderByKeys		   Skey structures for index ordering operators
@@ -1538,7 +1538,7 @@ typedef struct IndexScanContext
 typedef struct IndexOnlyScanState
 {
 	ScanState	ss;				/* its first field is NodeTag */
-	ExprState  *indexqual;
+	ExprState  *recheckqual;
 	struct ScanKeyData *ioss_ScanKeys;
 	int			ioss_NumScanKeys;
 	struct ScanKeyData *ioss_OrderByKeys;
@@ -2094,11 +2094,11 @@ typedef struct MaterialState
 	Tuplestorestate *tuplestorestate;
 } MaterialState;
 
-struct ResultCacheEntry;
-struct ResultCacheTuple;
-struct ResultCacheKey;
+struct MemoizeEntry;
+struct MemoizeTuple;
+struct MemoizeKey;
 
-typedef struct ResultCacheInstrumentation
+typedef struct MemoizeInstrumentation
 {
 	uint64		cache_hits;		/* number of rescans where we've found the
 								 * scan parameter values to be cached */
@@ -2111,31 +2111,31 @@ typedef struct ResultCacheInstrumentation
 									 * able to free enough space to store the
 									 * current scan's tuples. */
 	uint64		mem_peak;		/* peak memory usage in bytes */
-} ResultCacheInstrumentation;
+} MemoizeInstrumentation;
 
 /* ----------------
- *	 Shared memory container for per-worker resultcache information
+ *	 Shared memory container for per-worker memoize information
  * ----------------
  */
-typedef struct SharedResultCacheInfo
+typedef struct SharedMemoizeInfo
 {
 	int			num_workers;
-	ResultCacheInstrumentation sinstrument[FLEXIBLE_ARRAY_MEMBER];
-} SharedResultCacheInfo;
+	MemoizeInstrumentation sinstrument[FLEXIBLE_ARRAY_MEMBER];
+} SharedMemoizeInfo;
 
 /* ----------------
- *	 ResultCacheState information
+ *	 MemoizeState information
  *
- *		resultcache nodes are used to cache recent and commonly seen results
- *		from a parameterized scan.
+ *		memoize nodes are used to cache recent and commonly seen results from
+ *		a parameterized scan.
  * ----------------
  */
-typedef struct ResultCacheState
+typedef struct MemoizeState
 {
 	ScanState	ss;				/* its first field is NodeTag */
-	int			rc_status;		/* value of ExecResultCache state machine */
+	int			mstatus;		/* value of ExecMemoize state machine */
 	int			nkeys;			/* number of cache keys */
-	struct resultcache_hash *hashtable; /* hash table for cache entries */
+	struct memoize_hash *hashtable; /* hash table for cache entries */
 	TupleDesc	hashkeydesc;	/* tuple descriptor for cache keys */
 	TupleTableSlot *tableslot;	/* min tuple slot for existing cache entries */
 	TupleTableSlot *probeslot;	/* virtual slot used for hash lookups */
@@ -2148,17 +2148,21 @@ typedef struct ResultCacheState
 	uint64		mem_limit;		/* memory limit in bytes for the cache */
 	MemoryContext tableContext; /* memory context to store cache data */
 	dlist_head	lru_list;		/* least recently used entry list */
-	struct ResultCacheTuple *last_tuple;	/* Used to point to the last tuple
-											 * returned during a cache hit and
-											 * the tuple we last stored when
-											 * populating the cache. */
-	struct ResultCacheEntry *entry; /* the entry that 'last_tuple' belongs to
-									 * or NULL if 'last_tuple' is NULL. */
+	struct MemoizeTuple *last_tuple;	/* Used to point to the last tuple
+										 * returned during a cache hit and the
+										 * tuple we last stored when
+										 * populating the cache. */
+	struct MemoizeEntry *entry; /* the entry that 'last_tuple' belongs to or
+								 * NULL if 'last_tuple' is NULL. */
 	bool		singlerow;		/* true if the cache entry is to be marked as
 								 * complete after caching the first tuple. */
-	ResultCacheInstrumentation stats;	/* execution statistics */
-	SharedResultCacheInfo *shared_info; /* statistics for parallel workers */
-} ResultCacheState;
+	bool		binary_mode;	/* true when cache key should be compared bit
+								 * by bit, false when using hash equality ops */
+	MemoizeInstrumentation stats;	/* execution statistics */
+	SharedMemoizeInfo *shared_info; /* statistics for parallel workers */
+	Bitmapset	   *keyparamids; /* Param->paramids of expressions belonging to
+								  * param_exprs */
+} MemoizeState;
 
 /* ----------------
  *	 When performing sorting by multiple keys, it's possible that the input

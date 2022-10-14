@@ -17,7 +17,7 @@ dnl Read the Autoconf manual for details.
 dnl
 m4_pattern_forbid(^PGAC_)dnl to catch undefined macros
 
-AC_INIT([PostgreSQL], [14beta2], [pgsql-bugs@lists.postgresql.org], [], [https://www.postgresql.org/])
+AC_INIT([PostgreSQL], [14.4], [pgsql-bugs@lists.postgresql.org], [], [https://www.postgresql.org/])
 
 m4_if(m4_defn([m4_PACKAGE_VERSION]), [2.69], [], [m4_fatal([Autoconf version 2.69 is required.
 Untested combinations of 'autoconf' and PostgreSQL versions are not
@@ -449,7 +449,7 @@ else
 fi
 
 # When generating bitcode (for inlining) we always want to use -O2
-# even when --enable-debug is specified. The bitcode it's not going to
+# even when --enable-debug is specified. The bitcode is not going to
 # be used for line-by-line debugging, and JIT inlining doesn't work
 # without at least -O1 (otherwise clang will emit 'noinline'
 # attributes everywhere), which is bad for testing.  Still allow the
@@ -503,6 +503,9 @@ if test "$GCC" = yes -a "$ICC" = no; then
   AC_SUBST(PERMIT_DECLARATION_AFTER_STATEMENT)
   # Really don't want VLAs to be used in our dialect of C
   PGAC_PROG_CC_CFLAGS_OPT([-Werror=vla])
+  # On macOS, complain about usage of symbols newer than the deployment target
+  PGAC_PROG_CC_CFLAGS_OPT([-Werror=unguarded-availability-new])
+  PGAC_PROG_CXX_CFLAGS_OPT([-Werror=unguarded-availability-new])
   # -Wvla is not applicable for C++
   PGAC_PROG_CC_CFLAGS_OPT([-Wendif-labels])
   PGAC_PROG_CXX_CFLAGS_OPT([-Wendif-labels])
@@ -528,13 +531,25 @@ if test "$GCC" = yes -a "$ICC" = no; then
   PGAC_PROG_CC_VAR_OPT(CFLAGS_UNROLL_LOOPS, [-funroll-loops])
   # Optimization flags for specific files that benefit from vectorization
   PGAC_PROG_CC_VAR_OPT(CFLAGS_VECTORIZE, [-ftree-vectorize])
-  # We want to suppress clang's unhelpful unused-command-line-argument warnings
-  # but gcc won't complain about unrecognized -Wno-foo switches, so we have to
-  # test for the positive form and if that works, add the negative form
+  #
+  # The following tests want to suppress various unhelpful warnings by adding
+  # -Wno-foo switches.  But gcc won't complain about unrecognized -Wno-foo
+  # switches, so we have to test for the positive form and if that works,
+  # add the negative form.  Note that tests of this form typically need to
+  # be duplicated in the BITCODE_CFLAGS setup stanza below.
+  #
+  # Suppress clang's unhelpful unused-command-line-argument warnings.
   NOT_THE_CFLAGS=""
   PGAC_PROG_CC_VAR_OPT(NOT_THE_CFLAGS, [-Wunused-command-line-argument])
   if test -n "$NOT_THE_CFLAGS"; then
     CFLAGS="$CFLAGS -Wno-unused-command-line-argument"
+  fi
+  # Remove clang 12+'s compound-token-split-by-macro, as this causes a lot
+  # of warnings when building plperl because of usages in the Perl headers.
+  NOT_THE_CFLAGS=""
+  PGAC_PROG_CC_VAR_OPT(NOT_THE_CFLAGS, [-Wcompound-token-split-by-macro])
+  if test -n "$NOT_THE_CFLAGS"; then
+    CFLAGS="$CFLAGS -Wno-compound-token-split-by-macro"
   fi
   # Similarly disable useless truncation warnings from gcc 8+
   NOT_THE_CFLAGS=""
@@ -571,9 +586,12 @@ fi
 AC_SUBST(CFLAGS_UNROLL_LOOPS)
 AC_SUBST(CFLAGS_VECTORIZE)
 
-# Determine flags used to emit bitcode for JIT inlining. Need to test
-# for behaviour changing compiler flags, to keep compatibility with
-# compiler used for normal postgres code.
+# Determine flags used to emit bitcode for JIT inlining.
+# 1. We must duplicate any behaviour-changing compiler flags used above,
+# to keep compatibility with the compiler used for normal Postgres code.
+# 2. We don't bother to duplicate extra-warnings switches --- seeing a
+# warning in the main build is enough.
+# 3. But we must duplicate -Wno-warning flags, else we'll see those anyway.
 if test "$with_llvm" = yes ; then
   CLANGXX="$CLANG -xc++"
 
@@ -583,6 +601,27 @@ if test "$with_llvm" = yes ; then
   PGAC_PROG_VARCXX_VARFLAGS_OPT(CLANGXX, BITCODE_CXXFLAGS, [-fwrapv])
   PGAC_PROG_VARCC_VARFLAGS_OPT(CLANG, BITCODE_CFLAGS, [-fexcess-precision=standard])
   PGAC_PROG_VARCXX_VARFLAGS_OPT(CLANGXX, BITCODE_CXXFLAGS, [-fexcess-precision=standard])
+
+  NOT_THE_CFLAGS=""
+  PGAC_PROG_VARCC_VARFLAGS_OPT(CLANG, NOT_THE_CFLAGS, [-Wunused-command-line-argument])
+  if test -n "$NOT_THE_CFLAGS"; then
+    BITCODE_CFLAGS="$BITCODE_CFLAGS -Wno-unused-command-line-argument"
+  fi
+  NOT_THE_CFLAGS=""
+  PGAC_PROG_VARCC_VARFLAGS_OPT(CLANG, NOT_THE_CFLAGS, [-Wcompound-token-split-by-macro])
+  if test -n "$NOT_THE_CFLAGS"; then
+    BITCODE_CFLAGS="$BITCODE_CFLAGS -Wno-compound-token-split-by-macro"
+  fi
+  NOT_THE_CFLAGS=""
+  PGAC_PROG_VARCC_VARFLAGS_OPT(CLANG, NOT_THE_CFLAGS, [-Wformat-truncation])
+  if test -n "$NOT_THE_CFLAGS"; then
+    BITCODE_CFLAGS="$BITCODE_CFLAGS -Wno-format-truncation"
+  fi
+  NOT_THE_CFLAGS=""
+  PGAC_PROG_VARCC_VARFLAGS_OPT(CLANG, NOT_THE_CFLAGS, [-Wstringop-truncation])
+  if test -n "$NOT_THE_CFLAGS"; then
+    BITCODE_CFLAGS="$BITCODE_CFLAGS -Wno-stringop-truncation"
+  fi
 fi
 
 # supply -g if --enable-debug
@@ -1096,7 +1135,7 @@ if test "$with_python" = yes; then
   PGAC_CHECK_PYTHON_EMBED_SETUP
 fi
 
-if test "$cross_compiling" = yes && test -z "$with_system_tzdata"; then
+if test x"$cross_compiling" = x"yes" && test -z "$with_system_tzdata"; then
   PGAC_PATH_PROGS(ZIC, zic)
   if test -z "$ZIC"; then
     AC_MSG_ERROR([
@@ -1170,7 +1209,10 @@ AC_SUBST(PTHREAD_LIBS)
 
 AC_CHECK_LIB(m, main)
 AC_SEARCH_LIBS(setproctitle, util)
-AC_SEARCH_LIBS(dlopen, dl)
+# gcc/clang's sanitizer helper library provides dlopen but not dlsym, thus
+# when enabling asan the dlopen check doesn't notice that -ldl is actually
+# required. Just checking for dlsym() ought to suffice.
+AC_SEARCH_LIBS(dlsym, dl)
 AC_SEARCH_LIBS(socket, [socket ws2_32])
 AC_SEARCH_LIBS(shl_load, dld)
 AC_SEARCH_LIBS(getopt_long, [getopt gnugetopt])
@@ -1179,17 +1221,13 @@ AC_SEARCH_LIBS(shm_unlink, rt)
 AC_SEARCH_LIBS(clock_gettime, [rt posix4])
 # Solaris:
 AC_SEARCH_LIBS(fdatasync, [rt posix4])
-# Required for thread_test.c on Solaris
-AC_SEARCH_LIBS(sched_yield, rt)
-# Required for thread_test.c on Solaris 2.5:
-# Other ports use it too (HP-UX) so test unconditionally
-AC_SEARCH_LIBS(gethostbyname_r, nsl)
 # Cygwin:
 AC_SEARCH_LIBS(shmget, cygipc)
 # *BSD:
 AC_SEARCH_LIBS(backtrace_symbols, execinfo)
 
 if test "$enable_thread_safety" = yes; then
+  AC_SEARCH_LIBS(gethostbyname_r, nsl)
   AC_SEARCH_LIBS(pthread_barrier_wait, pthread)
 fi
 
@@ -1294,7 +1332,8 @@ if test "$with_lz4" = yes ; then
   AC_CHECK_LIB(lz4, LZ4_compress_default, [], [AC_MSG_ERROR([library 'lz4' is required for LZ4 support])])
 fi
 
-# Note: We can test for libldap_r only after we know PTHREAD_LIBS
+# Note: We can test for libldap_r only after we know PTHREAD_LIBS;
+# also, on AIX, we may need to have openssl in LIBS for this step.
 if test "$with_ldap" = yes ; then
   _LIBS="$LIBS"
   if test "$PORTNAME" != "win32"; then
@@ -1302,16 +1341,26 @@ if test "$with_ldap" = yes ; then
 		 [AC_MSG_ERROR([library 'ldap' is required for LDAP])],
 		 [$EXTRA_LDAP_LIBS])
     LDAP_LIBS_BE="-lldap $EXTRA_LDAP_LIBS"
-    if test "$enable_thread_safety" = yes; then
-      # on some platforms ldap_r fails to link without PTHREAD_LIBS
-      AC_CHECK_LIB(ldap_r, ldap_simple_bind, [],
-		   [AC_MSG_ERROR([library 'ldap_r' is required for LDAP])],
+    # This test is carried out against libldap.
+    AC_CHECK_FUNCS([ldap_initialize])
+    # The separate ldap_r library only exists in OpenLDAP < 2.5, and if we
+    # have 2.5 or later, we shouldn't even probe for ldap_r (we might find a
+    # library from a separate OpenLDAP installation).  The most reliable
+    # way to check that is to check for a function introduced in 2.5.
+    AC_CHECK_FUNC([ldap_verify_credentials],
+		  [thread_safe_libldap=yes],
+		  [thread_safe_libldap=no])
+    if test "$enable_thread_safety" = yes -a "$thread_safe_libldap" = no; then
+      # Use ldap_r for FE if available, else assume ldap is thread-safe.
+      # On some platforms ldap_r fails to link without PTHREAD_LIBS.
+      LIBS="$_LIBS"
+      AC_CHECK_LIB(ldap_r, ldap_bind,
+		   [LDAP_LIBS_FE="-lldap_r $EXTRA_LDAP_LIBS"],
+		   [LDAP_LIBS_FE="-lldap $EXTRA_LDAP_LIBS"],
 		   [$PTHREAD_CFLAGS $PTHREAD_LIBS $EXTRA_LDAP_LIBS])
-      LDAP_LIBS_FE="-lldap_r $EXTRA_LDAP_LIBS"
     else
       LDAP_LIBS_FE="-lldap $EXTRA_LDAP_LIBS"
     fi
-    AC_CHECK_FUNCS([ldap_initialize])
   else
     AC_CHECK_LIB(wldap32, ldap_bind, [], [AC_MSG_ERROR([library 'wldap32' is required for LDAP])])
     LDAP_LIBS_FE="-lwldap32"
@@ -1376,6 +1425,7 @@ AC_CHECK_HEADERS(m4_normalize([
 	sys/select.h
 	sys/sem.h
 	sys/shm.h
+	sys/signalfd.h
 	sys/sockio.h
 	sys/tas.h
 	sys/uio.h
@@ -1738,6 +1788,9 @@ PGAC_CHECK_BUILTIN_FUNC([__builtin_bswap64], [long int x])
 PGAC_CHECK_BUILTIN_FUNC([__builtin_clz], [unsigned int x])
 PGAC_CHECK_BUILTIN_FUNC([__builtin_ctz], [unsigned int x])
 PGAC_CHECK_BUILTIN_FUNC([__builtin_popcount], [unsigned int x])
+# __builtin_frame_address may draw a diagnostic for non-constant argument,
+# so it needs a different test function.
+PGAC_CHECK_BUILTIN_FUNC_PTR([__builtin_frame_address], [0])
 
 # We require 64-bit fseeko() to be available, but run this check anyway
 # in case it finds that _LARGEFILE_SOURCE has to be #define'd for that.
@@ -1754,6 +1807,12 @@ AC_CHECK_DECLS(posix_fadvise, [], [], [#include <fcntl.h>])
 
 AC_CHECK_DECLS(fdatasync, [], [], [#include <unistd.h>])
 AC_CHECK_DECLS([strlcat, strlcpy, strnlen])
+
+# We can't use AC_REPLACE_FUNCS to replace these functions, because it
+# won't handle deployment target restrictions on macOS
+AC_CHECK_DECLS([preadv], [], [AC_LIBOBJ(preadv)], [#include <sys/uio.h>])
+AC_CHECK_DECLS([pwritev], [], [AC_LIBOBJ(pwritev)], [#include <sys/uio.h>])
+
 # This is probably only present on macOS, but may as well check always
 AC_CHECK_DECLS(F_FULLFSYNC, [], [], [#include <fcntl.h>])
 
@@ -1789,9 +1848,7 @@ AC_REPLACE_FUNCS(m4_normalize([
 	link
 	mkdtemp
 	pread
-	preadv
 	pwrite
-	pwritev
 	random
 	srandom
 	strlcat
@@ -2223,6 +2280,8 @@ if test x"$with_ssl" = x"openssl" ; then
   AC_MSG_RESULT([OpenSSL])
 elif test x"$PORTNAME" = x"win32" ; then
   AC_MSG_RESULT([Windows native])
+elif test x"$cross_compiling" = x"yes"; then
+  AC_MSG_RESULT([assuming /dev/urandom])
 else
   AC_MSG_RESULT([/dev/urandom])
   AC_CHECK_FILE([/dev/urandom], [], [])
@@ -2311,53 +2370,25 @@ PGAC_PATH_PROGS(DBTOEPUB, dbtoepub)
 # Check for test tools
 #
 if test "$enable_tap_tests" = yes; then
-  # Check for necessary modules, unless user has specified the "prove" to use;
-  # in that case it's her responsibility to have a working configuration.
-  # (prove might be part of a different Perl installation than perl, eg on
-  # MSys, so the result of AX_PROG_PERL_MODULES could be irrelevant anyway.)
-  if test -z "$PROVE"; then
-    # Test::More and Time::HiRes are supposed to be part of core Perl,
-    # but some distros omit them in a minimal installation.
-    AX_PROG_PERL_MODULES([IPC::Run Test::More=0.87 Time::HiRes], ,
-      [AC_MSG_ERROR([Additional Perl modules are required to run TAP tests])])
-  fi
-  # Now make sure we know where prove is
+  # Make sure we know where prove is.
   PGAC_PATH_PROGS(PROVE, prove)
   if test -z "$PROVE"; then
     AC_MSG_ERROR([prove not found])
   fi
-fi
-
-# Thread testing
-
-# We have to run the thread test near the end so we have all our symbols
-# defined.  Cross compiling throws a warning.
-#
-if test "$enable_thread_safety" = yes; then
-if test "$PORTNAME" != "win32"
-then
-AC_MSG_CHECKING([thread safety of required library functions])
-
-_CFLAGS="$CFLAGS"
-_LIBS="$LIBS"
-CFLAGS="$CFLAGS $PTHREAD_CFLAGS"
-LIBS="$LIBS $PTHREAD_LIBS"
-AC_RUN_IFELSE(
-  [AC_LANG_SOURCE([[#include "$srcdir/config/thread_test.c"]])],
-  [AC_MSG_RESULT(yes)],
-  [AC_MSG_RESULT(no)
-  AC_MSG_ERROR([thread test program failed
-This platform is not thread-safe.  Check the file 'config.log' for the
-exact reason, or use --disable-thread-safety to disable thread safety.])],
-  [AC_MSG_RESULT(maybe)
-  AC_MSG_WARN([
-*** Skipping thread test program because of cross-compile build.
-])])
-CFLAGS="$_CFLAGS"
-LIBS="$_LIBS"
-else
-AC_MSG_WARN([*** skipping thread test on Win32])
-fi
+  # Check for necessary Perl modules.  You might think we should use
+  # AX_PROG_PERL_MODULES here, but prove might be part of a different Perl
+  # installation than perl, eg on MSys, so we have to check using prove.
+  AC_MSG_CHECKING(for Perl modules required for TAP tests)
+  [modulestderr=`"$PROVE" "$srcdir/config/check_modules.pl" 2>&1 >/dev/null`]
+  if test $? -eq 0; then
+    # log the module version details, but don't show them interactively
+    echo "$modulestderr" >&AS_MESSAGE_LOG_FD
+    AC_MSG_RESULT(yes)
+  else
+    # on failure, though, show the results to the user
+    AC_MSG_RESULT([$modulestderr])
+    AC_MSG_ERROR([Additional Perl modules are required to run TAP tests])
+  fi
 fi
 
 # If compiler will take -Wl,--as-needed (or various platform-specific

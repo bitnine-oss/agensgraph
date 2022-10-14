@@ -33,6 +33,7 @@
 #include "optimizer/optimizer.h"
 #include "statistics/statistics.h"
 #include "utils/builtins.h"
+#include "utils/lsyscache.h"
 #include "utils/fmgroids.h"
 #include "utils/inval.h"
 #include "utils/memutils.h"
@@ -210,13 +211,15 @@ CreateStatistics(CreateStatsStmt *stmt)
 	/*
 	 * Convert the expression list to a simple array of attnums, but also keep
 	 * a list of more complex expressions.  While at it, enforce some
-	 * constraints.
+	 * constraints - we don't allow extended statistics on system attributes,
+	 * and we require the data type to have less-than operator.
 	 *
-	 * XXX We do only the bare minimum to separate simple attribute and
-	 * complex expressions - for example "(a)" will be treated as a complex
-	 * expression. No matter how elaborate the check is, there'll always be a
-	 * way around it, if the user is determined (consider e.g. "(a+0)"), so
-	 * it's not worth protecting against it.
+	 * There are many ways how to "mask" a simple attribute refenrece as an
+	 * expression, for example "(a+0)" etc. We can't possibly detect all of
+	 * them, but we handle at least the simple case with attribute in parens.
+	 * There'll always be a way around this, if the user is determined (like
+	 * the "(a+0)" example), but this makes it somewhat consistent with how
+	 * indexes treat attributes/expressions.
 	 */
 	foreach(cell, stmt->exprs)
 	{
@@ -257,13 +260,50 @@ CreateStatistics(CreateStatsStmt *stmt)
 			nattnums++;
 			ReleaseSysCache(atttuple);
 		}
+		else if (IsA(selem->expr, Var))	/* column reference in parens */
+		{
+			Var *var = (Var *) selem->expr;
+			TypeCacheEntry *type;
+
+			/* Disallow use of system attributes in extended stats */
+			if (var->varattno <= 0)
+				ereport(ERROR,
+						(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+						 errmsg("statistics creation on system columns is not supported")));
+
+			/* Disallow data types without a less-than operator */
+			type = lookup_type_cache(var->vartype, TYPECACHE_LT_OPR);
+			if (type->lt_opr == InvalidOid)
+				ereport(ERROR,
+						(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+						 errmsg("column \"%s\" cannot be used in statistics because its type %s has no default btree operator class",
+								get_attname(relid, var->varattno, false), format_type_be(var->vartype))));
+
+			attnums[nattnums] = var->varattno;
+			nattnums++;
+		}
 		else					/* expression */
 		{
 			Node	   *expr = selem->expr;
 			Oid			atttype;
 			TypeCacheEntry *type;
+			Bitmapset  *attnums = NULL;
+			int			k;
 
 			Assert(expr != NULL);
+
+			/* Disallow expressions referencing system attributes. */
+			pull_varattnos(expr, 1, &attnums);
+
+			k = -1;
+			while ((k = bms_next_member(attnums, k)) >= 0)
+			{
+				AttrNumber	attnum = k + FirstLowInvalidHeapAttributeNumber;
+				if (attnum <= 0)
+					ereport(ERROR,
+						(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+						 errmsg("statistics creation on system columns is not supported")));
+			}
 
 			/*
 			 * Disallow data types without a less-than operator.
@@ -519,11 +559,11 @@ CreateStatistics(CreateStatsStmt *stmt)
 	}
 
 	/*
-	 * If there are no dependencies on a column, give the statistics an auto
-	 * dependency on the whole table.  In most cases, this will be redundant,
-	 * but it might not be if the statistics expressions contain no Vars
-	 * (which might seem strange but possible). This is consistent with what
-	 * we do for indexes in index_create.
+	 * If there are no dependencies on a column, give the statistics object an
+	 * auto dependency on the whole table.  In most cases, this will be
+	 * redundant, but it might not be if the statistics expressions contain no
+	 * Vars (which might seem strange but possible). This is consistent with
+	 * what we do for indexes in index_create.
 	 *
 	 * XXX We intentionally don't consider the expressions before adding this
 	 * dependency, because recordDependencyOnSingleRelExpr may not create any
@@ -608,9 +648,9 @@ AlterStatistics(AlterStatsStmt *stmt)
 	stxoid = get_statistics_object_oid(stmt->defnames, stmt->missing_ok);
 
 	/*
-	 * If we got here and the OID is not valid, it means the statistics does
-	 * not exist, but the command specified IF EXISTS. So report this as a
-	 * simple NOTICE and we're done.
+	 * If we got here and the OID is not valid, it means the statistics object
+	 * does not exist, but the command specified IF EXISTS. So report this as
+	 * a simple NOTICE and we're done.
 	 */
 	if (!OidIsValid(stxoid))
 	{
@@ -637,6 +677,8 @@ AlterStatistics(AlterStatsStmt *stmt)
 	rel = table_open(StatisticExtRelationId, RowExclusiveLock);
 
 	oldtup = SearchSysCache1(STATEXTOID, ObjectIdGetDatum(stxoid));
+	if (!HeapTupleIsValid(oldtup))
+		elog(ERROR, "cache lookup failed for extended statistics object %u", stxoid);
 
 	/* Must be owner of the existing statistics object */
 	if (!pg_statistics_object_ownercheck(stxoid, GetUserId()))
@@ -727,7 +769,7 @@ RemoveStatisticsById(Oid statsOid)
 }
 
 /*
- * Select a nonconflicting name for a new statistics.
+ * Select a nonconflicting name for a new statistics object.
  *
  * name1, name2, and label are used the same way as for makeObjectName(),
  * except that the label can't be NULL; digits will be appended to the label
@@ -774,9 +816,9 @@ ChooseExtendedStatisticName(const char *name1, const char *name2,
 }
 
 /*
- * Generate "name2" for a new statistics given the list of column names for it
- * This will be passed to ChooseExtendedStatisticName along with the parent
- * table name and a suitable label.
+ * Generate "name2" for a new statistics object given the list of column
+ * names for it.  This will be passed to ChooseExtendedStatisticName along
+ * with the parent table name and a suitable label.
  *
  * We know that less than NAMEDATALEN characters will actually be used,
  * so we can truncate the result once we've generated that many.
@@ -828,8 +870,8 @@ ChooseExtendedStatisticNameAddition(List *exprs)
 }
 
 /*
- * StatisticsGetRelation: given a statistics's relation OID, get the OID of
- * the relation it is an statistics on.  Uses the system cache.
+ * StatisticsGetRelation: given a statistics object's OID, get the OID of
+ * the relation it is defined on.  Uses the system cache.
  */
 Oid
 StatisticsGetRelation(Oid statId, bool missing_ok)

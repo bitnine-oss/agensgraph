@@ -188,6 +188,16 @@ pull_varnos_walker(Node *node, pull_varnos_context *context)
 			 * join that forces delay of evaluation of a given qual clause
 			 * will be processed before we examine that clause here, so the
 			 * ph_eval_at value should have been updated to include it.
+			 *
+			 * Another problem is that a PlaceHolderVar can appear in quals or
+			 * tlists that have been translated for use in a child appendrel.
+			 * Typically such a PHV is a parameter expression sourced by some
+			 * other relation, so that the translation from parent appendrel
+			 * to child doesn't change its phrels, and we should still take
+			 * ph_eval_at at face value.  But in corner cases, the PHV's
+			 * original phrels can include the parent appendrel itself, in
+			 * which case the translated PHV will have the child appendrel in
+			 * phrels, and we must translate ph_eval_at to match.
 			 */
 			PlaceHolderInfo *phinfo = NULL;
 
@@ -203,12 +213,37 @@ pull_varnos_walker(Node *node, pull_varnos_context *context)
 					phinfo = NULL;
 				}
 			}
-			if (phinfo != NULL)
-				context->varnos = bms_add_members(context->varnos,
-												  phinfo->ph_eval_at);
-			else
+			if (phinfo == NULL)
+			{
+				/* No PlaceHolderInfo yet, use phrels */
 				context->varnos = bms_add_members(context->varnos,
 												  phv->phrels);
+			}
+			else if (bms_equal(phv->phrels, phinfo->ph_var->phrels))
+			{
+				/* Normal case: use ph_eval_at */
+				context->varnos = bms_add_members(context->varnos,
+												  phinfo->ph_eval_at);
+			}
+			else
+			{
+				/* Translated PlaceHolderVar: translate ph_eval_at to match */
+				Relids		newevalat,
+							delta;
+
+				/* remove what was removed from phv->phrels ... */
+				delta = bms_difference(phinfo->ph_var->phrels, phv->phrels);
+				newevalat = bms_difference(phinfo->ph_eval_at, delta);
+				/* ... then if that was in fact part of ph_eval_at ... */
+				if (!bms_equal(newevalat, phinfo->ph_eval_at))
+				{
+					/* ... add what was added */
+					delta = bms_difference(phv->phrels, phinfo->ph_var->phrels);
+					newevalat = bms_join(newevalat, delta);
+				}
+				context->varnos = bms_join(context->varnos,
+										   newevalat);
+			}
 			return false;		/* don't recurse into expression */
 		}
 	}
@@ -544,7 +579,7 @@ locate_var_of_level_walker(Node *node,
  *	  Vars within a PHV's expression are included in the result only
  *	  when PVC_RECURSE_PLACEHOLDERS is specified.
  *
- *	  GroupingFuncs are treated mostly like Aggrefs, and so do not need
+ *	  GroupingFuncs are treated exactly like Aggrefs, and so do not need
  *	  their own flag bits.
  *
  *	  CurrentOfExpr nodes are ignored in all cases.
@@ -619,13 +654,7 @@ pull_var_clause_walker(Node *node, pull_var_clause_context *context)
 		}
 		else if (context->flags & PVC_RECURSE_AGGREGATES)
 		{
-			/*
-			 * We do NOT descend into the contained expression, even if the
-			 * caller asked for it, because we never actually evaluate it -
-			 * the result is driven entirely off the associated GROUP BY
-			 * clause, so we never need to extract the actual Vars here.
-			 */
-			return false;
+			/* fall through to recurse into the GroupingFunc's arguments */
 		}
 		else
 			elog(ERROR, "GROUPING found where not expected");

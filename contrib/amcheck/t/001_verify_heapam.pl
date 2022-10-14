@@ -7,7 +7,6 @@ use warnings;
 use PostgresNode;
 use TestLib;
 
-use Fcntl qw(:seek);
 use Test::More tests => 80;
 
 my ($node, $result);
@@ -127,8 +126,8 @@ sub corrupt_first_page
 	# Corrupt some line pointers.  The values are chosen to hit the
 	# various line-pointer-corruption checks in verify_heapam.c
 	# on both little-endian and big-endian architectures.
-	seek($fh, 32, SEEK_SET)
-	  or BAIL_OUT("seek failed: $!");
+	sysseek($fh, 32, 0)
+	  or BAIL_OUT("sysseek failed: $!");
 	syswrite(
 		$fh,
 		pack("L*",
@@ -143,6 +142,8 @@ sub corrupt_first_page
 
 sub detects_heap_corruption
 {
+	local $Test::Builder::Level = $Test::Builder::Level + 1;
+
 	my ($function, $testname) = @_;
 
 	detects_corruption(
@@ -158,6 +159,8 @@ sub detects_heap_corruption
 
 sub detects_corruption
 {
+	local $Test::Builder::Level = $Test::Builder::Level + 1;
+
 	my ($function, $testname, @re) = @_;
 
 	my $result = $node->safe_psql('postgres', qq(SELECT * FROM $function));
@@ -166,6 +169,8 @@ sub detects_corruption
 
 sub detects_no_corruption
 {
+	local $Test::Builder::Level = $Test::Builder::Level + 1;
+
 	my ($function, $testname) = @_;
 
 	my $result = $node->safe_psql('postgres', qq(SELECT * FROM $function));
@@ -181,6 +186,8 @@ sub detects_no_corruption
 # and should be unique.
 sub check_all_options_uncorrupted
 {
+	local $Test::Builder::Level = $Test::Builder::Level + 1;
+
 	my ($relname, $prefix) = @_;
 
 	for my $stop (qw(true false))

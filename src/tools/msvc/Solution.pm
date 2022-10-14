@@ -253,16 +253,18 @@ sub GenerateFiles
 		HAVE_CRYPTO_LOCK           => undef,
 		HAVE_DECL_FDATASYNC        => 0,
 		HAVE_DECL_F_FULLFSYNC      => 0,
-		HAVE_DECL_LLVMCREATEGDBREGISTRATIONLISTENER => undef,
-		HAVE_DECL_LLVMCREATEPERFJITEVENTLISTENER    => undef,
+		HAVE_DECL_LLVMCREATEGDBREGISTRATIONLISTENER => 0,
+		HAVE_DECL_LLVMCREATEPERFJITEVENTLISTENER    => 0,
 		HAVE_DECL_LLVMGETHOSTCPUNAME                => 0,
 		HAVE_DECL_LLVMGETHOSTCPUFEATURES            => 0,
 		HAVE_DECL_LLVMORCGETSYMBOLADDRESSIN         => 0,
-		HAVE_DECL_POSIX_FADVISE                     => undef,
+		HAVE_DECL_POSIX_FADVISE                     => 0,
+		HAVE_DECL_PREADV                            => 0,
+		HAVE_DECL_PWRITEV                           => 0,
 		HAVE_DECL_RTLD_GLOBAL                       => 0,
 		HAVE_DECL_RTLD_NOW                          => 0,
-		HAVE_DECL_STRLCAT                           => undef,
-		HAVE_DECL_STRLCPY                           => undef,
+		HAVE_DECL_STRLCAT                           => 0,
+		HAVE_DECL_STRLCPY                           => 0,
 		HAVE_DECL_STRNLEN                           => 1,
 		HAVE_DECL_STRTOLL                           => 1,
 		HAVE_DECL_STRTOULL                          => 1,
@@ -316,7 +318,6 @@ sub GenerateFiles
 		HAVE_LDAP_INITIALIZE                        => undef,
 		HAVE_LIBCRYPTO                              => undef,
 		HAVE_LIBLDAP                                => undef,
-		HAVE_LIBLDAP_R                              => undef,
 		HAVE_LIBLZ4                                 => undef,
 		HAVE_LIBM                                   => undef,
 		HAVE_LIBPAM                                 => undef,
@@ -350,7 +351,6 @@ sub GenerateFiles
 		HAVE_PPC_LWARX_MUTEX_HINT   => undef,
 		HAVE_PPOLL                  => undef,
 		HAVE_PREAD                  => undef,
-		HAVE_PREADV                 => undef,
 		HAVE_PSTAT                  => undef,
 		HAVE_PS_STRINGS             => undef,
 		HAVE_PTHREAD                => undef,
@@ -358,7 +358,6 @@ sub GenerateFiles
 		HAVE_PTHREAD_IS_THREADED_NP => undef,
 		HAVE_PTHREAD_PRIO_INHERIT   => undef,
 		HAVE_PWRITE                 => undef,
-		HAVE_PWRITEV                => undef,
 		HAVE_RANDOM                 => undef,
 		HAVE_READLINE_H             => undef,
 		HAVE_READLINE_HISTORY_H     => undef,
@@ -421,6 +420,7 @@ sub GenerateFiles
 		HAVE_SYS_SELECT_H                        => undef,
 		HAVE_SYS_SEM_H                           => undef,
 		HAVE_SYS_SHM_H                           => undef,
+		HAVE_SYS_SIGNALFD_H                      => undef,
 		HAVE_SYS_SOCKIO_H                        => undef,
 		HAVE_SYS_STAT_H                          => 1,
 		HAVE_SYS_TAS_H                           => undef,
@@ -455,6 +455,7 @@ sub GenerateFiles
 		HAVE__BUILTIN_CLZ                        => undef,
 		HAVE__BUILTIN_CONSTANT_P                 => undef,
 		HAVE__BUILTIN_CTZ                        => undef,
+		HAVE__BUILTIN_FRAME_ADDRESS              => undef,
 		HAVE__BUILTIN_OP_OVERFLOW                => undef,
 		HAVE__BUILTIN_POPCOUNT                   => undef,
 		HAVE__BUILTIN_TYPES_COMPATIBLE_P         => undef,
@@ -567,7 +568,8 @@ sub GenerateFiles
 		my ($digit1, $digit2, $digit3) = $self->GetOpenSSLVersion();
 
 		# More symbols are needed with OpenSSL 1.1.0 and above.
-		if ($digit1 >= '1' && $digit2 >= '1' && $digit3 >= '0')
+		if (   ($digit1 >= '3' && $digit2 >= '0' && $digit3 >= '0')
+			|| ($digit1 >= '1' && $digit2 >= '1' && $digit3 >= '0'))
 		{
 			$define{HAVE_ASN1_STRING_GET0_DATA} = 1;
 			$define{HAVE_BIO_GET_DATA}          = 1;
@@ -975,7 +977,8 @@ sub AddProject
 		# changed their library names from:
 		# - libeay to libcrypto
 		# - ssleay to libssl
-		if ($digit1 >= '1' && $digit2 >= '1' && $digit3 >= '0')
+		if (   ($digit1 >= '3' && $digit2 >= '0' && $digit3 >= '0')
+			|| ($digit1 >= '1' && $digit2 >= '1' && $digit3 >= '0'))
 		{
 			my $dbgsuffix;
 			my $libsslpath;
@@ -1330,6 +1333,34 @@ sub new
 	$self->{vcver}                      = '16.00';
 	$self->{visualStudioName}           = 'Visual Studio 2019';
 	$self->{VisualStudioVersion}        = '16.0.28729.10';
+	$self->{MinimumVisualStudioVersion} = '10.0.40219.1';
+
+	return $self;
+}
+
+package VS2022Solution;
+
+#
+# Package that encapsulates a Visual Studio 2022 solution file
+#
+
+use Carp;
+use strict;
+use warnings;
+use base qw(Solution);
+
+no warnings qw(redefine);    ## no critic
+
+sub new
+{
+	my $classname = shift;
+	my $self      = $classname->SUPER::_new(@_);
+	bless($self, $classname);
+
+	$self->{solutionFileVersion}        = '12.00';
+	$self->{vcver}                      = '17.00';
+	$self->{visualStudioName}           = 'Visual Studio 2022';
+	$self->{VisualStudioVersion}        = '17.0.31903.59';
 	$self->{MinimumVisualStudioVersion} = '10.0.40219.1';
 
 	return $self;

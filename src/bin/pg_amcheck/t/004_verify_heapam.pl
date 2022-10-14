@@ -7,7 +7,6 @@ use warnings;
 use PostgresNode;
 use TestLib;
 
-use Fcntl qw(:seek);
 use Test::More;
 
 # This regression test demonstrates that the pg_amcheck binary correctly
@@ -99,8 +98,8 @@ sub read_tuple
 {
 	my ($fh, $offset) = @_;
 	my ($buffer, %tup);
-	seek($fh, $offset, SEEK_SET)
-	  or BAIL_OUT("seek failed: $!");
+	sysseek($fh, $offset, 0)
+	  or BAIL_OUT("sysseek failed: $!");
 	defined(sysread($fh, $buffer, HEAPTUPLE_PACK_LENGTH))
 	  or BAIL_OUT("sysread failed: $!");
 
@@ -165,8 +164,8 @@ sub write_tuple
 		$tup->{c_va_header},  $tup->{c_va_vartag},
 		$tup->{c_va_rawsize}, $tup->{c_va_extinfo},
 		$tup->{c_va_valueid}, $tup->{c_va_toastrelid});
-	seek($fh, $offset, SEEK_SET)
-	  or BAIL_OUT("seek failed: $!");
+	sysseek($fh, $offset, 0)
+	  or BAIL_OUT("sysseek failed: $!");
 	defined(syswrite($fh, $buffer, HEAPTUPLE_PACK_LENGTH))
 	  or BAIL_OUT("syswrite failed: $!");
 	return;
@@ -327,14 +326,14 @@ sub header
 {
 	my ($blkno, $offnum, $attnum) = @_;
 	return
-	  qr/heap table "postgres"\."public"\."test", block $blkno, offset $offnum, attribute $attnum:\s+/ms
+	  qr/heap table "postgres\.public\.test", block $blkno, offset $offnum, attribute $attnum:\s+/ms
 	  if (defined $attnum);
 	return
-	  qr/heap table "postgres"\."public"\."test", block $blkno, offset $offnum:\s+/ms
+	  qr/heap table "postgres\.public\.test", block $blkno, offset $offnum:\s+/ms
 	  if (defined $offnum);
-	return qr/heap table "postgres"\."public"\."test", block $blkno:\s+/ms
+	return qr/heap table "postgres\.public\.test", block $blkno:\s+/ms
 	  if (defined $blkno);
-	return qr/heap table "postgres"\."public"\."test":\s+/ms;
+	return qr/heap table "postgres\.public\.test":\s+/ms;
 }
 
 # Corrupt the tuples, one type of corruption per tuple.  Some types of
