@@ -26,6 +26,7 @@ SUBDIRS = \
 	fe_utils \
 	bin \
 	pl \
+	submodules \
 	makefiles \
 	test/regress \
 	test/isolation \
