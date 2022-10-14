@@ -4990,31 +4990,33 @@ Indexes:
 -- check printing info about access methods
 \dA
 List of access methods
-  Name  | Type  
---------+-------
- brin   | Index
- btree  | Index
- gin    | Index
- gist   | Index
- hash   | Index
- heap   | Table
- heap2  | Table
- spgist | Index
-(8 rows)
+   Name   | Type  
+----------+-------
+ brin     | Index
+ btree    | Index
+ gin      | Index
+ gist     | Index
+ hash     | Index
+ heap     | Table
+ heap2    | Table
+ orioledb | Table
+ spgist   | Index
+(9 rows)
 
 \dA *
 List of access methods
-  Name  | Type  
---------+-------
- brin   | Index
- btree  | Index
- gin    | Index
- gist   | Index
- hash   | Index
- heap   | Table
- heap2  | Table
- spgist | Index
-(8 rows)
+   Name   | Type  
+----------+-------
+ brin     | Index
+ btree    | Index
+ gin      | Index
+ gist     | Index
+ hash     | Index
+ heap     | Table
+ heap2    | Table
+ orioledb | Table
+ spgist   | Index
+(9 rows)
 
 \dA h*
 List of access methods

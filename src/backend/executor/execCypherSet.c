@@ -292,7 +292,7 @@ GraphTableTupleUpdate(ModifyGraphState *mgstate, Oid tts_value_type,
 	bool		update_indexes;
 	Datum		gid;
 	Oid			relid;
-	ItemPointer ctid;
+	Datum		ctid;
 	bool		hash_found;
 	ModifiedElemEntry *entry;
 	Datum		inserted_datum;
@@ -301,11 +301,11 @@ GraphTableTupleUpdate(ModifyGraphState *mgstate, Oid tts_value_type,
 	if (tts_value_type == VERTEXOID)
 	{
 		gid = getVertexIdDatum(tts_value);
-		ctid = DatumGetItemPointer(getVertexTidDatum(tts_value));
+		ctid = getVertexTidDatum(tts_value);
 	}
 	else
 	{
-		ctid = DatumGetItemPointer(getEdgeTidDatum(tts_value));
+		ctid = getEdgeTidDatum(tts_value);
 		gid = getEdgeIdDatum(tts_value);
 	}
 
@@ -374,7 +374,8 @@ lreplace:
 	if (resultRelationDesc->rd_att->constr)
 		ExecConstraints(resultRelInfo, elemTupleSlot, estate);
 
-	result = table_tuple_update(resultRelationDesc, ctid, elemTupleSlot,
+	result = table_tuple_update(resultRelationDesc,
+								DatumGetItemPointer(ctid), elemTupleSlot,
 								mgstate->modify_cid + MODIFY_CID_SET,
 								estate->es_snapshot,
 								estate->es_crosscheck_snapshot,
@@ -410,7 +411,8 @@ lreplace:
 				inputslot = EvalPlanQualSlot(epqstate, resultRelationDesc,
 											 resultRelInfo->ri_RangeTableIndex);
 
-				result = table_tuple_lock(resultRelationDesc, ctid,
+				result = table_tuple_lock(resultRelationDesc,
+										  DatumGetItemPointer(ctid),
 										  estate->es_snapshot,
 										  inputslot, GetCurrentCommandId(true),
 										  lockmode, LockWaitBlock,
@@ -526,7 +528,7 @@ LegacyUpdateElemProp(ModifyGraphState *mgstate, Oid elemtype, Datum gid,
 	EPQState   *epqstate = &mgstate->mt_epqstate;
 	TupleTableSlot *elemTupleSlot = mgstate->elemTupleSlot;
 	Oid			relid;
-	ItemPointer ctid;
+	Datum		ctid;
 	ResultRelInfo *resultRelInfo;
 	Relation	resultRelationDesc;
 	LockTupleMode lockmode;
@@ -552,7 +554,7 @@ LegacyUpdateElemProp(ModifyGraphState *mgstate, Oid elemtype, Datum gid,
 		elemTupleSlot->tts_values[0] = gid;
 		elemTupleSlot->tts_values[1] = getVertexPropDatum(elem_datum);
 
-		ctid = (ItemPointer) DatumGetPointer(getVertexTidDatum(elem_datum));
+		ctid = getVertexTidDatum(elem_datum);
 	}
 	else
 	{
@@ -563,7 +565,7 @@ LegacyUpdateElemProp(ModifyGraphState *mgstate, Oid elemtype, Datum gid,
 		elemTupleSlot->tts_values[2] = getEdgeEndDatum(elem_datum);
 		elemTupleSlot->tts_values[3] = getEdgePropDatum(elem_datum);
 
-		ctid = (ItemPointer) DatumGetPointer(getEdgeTidDatum(elem_datum));
+		ctid = getEdgeTidDatum(elem_datum);
 	}
 	MemSet(elemTupleSlot->tts_isnull, false,
 		   elemTupleSlot->tts_tupleDescriptor->natts * sizeof(bool));
@@ -587,7 +589,8 @@ LegacyUpdateElemProp(ModifyGraphState *mgstate, Oid elemtype, Datum gid,
 	if (resultRelationDesc->rd_att->constr)
 		ExecConstraints(resultRelInfo, elemTupleSlot, estate);
 
-	result = table_tuple_update(resultRelationDesc, ctid, elemTupleSlot,
+	result = table_tuple_update(resultRelationDesc, DatumGetItemPointer(ctid),
+								elemTupleSlot,
 								mgstate->modify_cid + MODIFY_CID_SET,
 								estate->es_snapshot,
 								estate->es_crosscheck_snapshot,

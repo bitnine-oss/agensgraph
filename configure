@@ -19808,7 +19808,7 @@ _ACEOF
 
 
 # Needed to check postgresql patches git tag during orioledb extension build
-ORIOLEDB_PATCHSET_VERSION=`git describe --tags | cut -d'_' -f2`
+ORIOLEDB_PATCHSET_VERSION=4
 
 
 # If we are inserting PG_SYSROOT into CPPFLAGS, do so symbolically not

@@ -775,7 +775,9 @@ SELECT oid, typname, typtype, typelem, typarray, typarray
                     WHERE a.atttypid=t.oid AND
                           a.attnum > 0 AND
                           a.attrelid='tab_core_types'::regclass);
- oid | typname | typtype | typelem | typarray | typarray 
------+---------+---------+---------+----------+----------
-(0 rows)
+ oid  | typname | typtype | typelem | typarray | typarray 
+------+---------+---------+---------+----------+----------
+ 7002 | graphid | b       |       0 |     7001 |     7001
+ 7062 | rowid   | b       |       0 |     7061 |     7061
+(2 rows)
 

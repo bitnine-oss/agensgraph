@@ -55,7 +55,8 @@ listGraphIndexes(const char *pattern, bool verbose)
 					  "\nFROM pg_catalog.ag_property_indexes pi\n");
 
 	processSQLNamePattern(pset.db, &buf, pattern, false, false,
-						  "pi.graphname", "pi.indexname", NULL, NULL);
+						  "pi.graphname", "pi.indexname", NULL, NULL,
+						  NULL, NULL);
 	appendPQExpBufferStr(&buf, "\nORDER BY 1, 2, 3;");
 
 	res = PSQLexec(buf.data);

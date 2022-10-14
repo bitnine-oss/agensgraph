@@ -119,9 +119,9 @@ ExecDeleteEdgeOrVertex(ModifyGraphState *mgstate, ResultRelInfo *resultRelInfo,
 	TM_Result	result;
 	TM_FailureData tmfd;
 	bool		hash_found;
-	ItemPointer tupleid;
+	Datum		tupleid;
 
-	tupleid = &tuple->t_self;
+	tupleid = PointerGetDatum(&tuple->t_self);
 
 	hash_search(mgstate->elemTable, &graphid, HASH_FIND, &hash_found);
 	if (hash_found)
@@ -150,7 +150,7 @@ ExecDeleteEdgeOrVertex(ModifyGraphState *mgstate, ResultRelInfo *resultRelInfo,
 
 	/* see ExecDelete() */
 	result = table_tuple_delete(resultRelationDesc,
-								tupleid,
+								DatumGetItemPointer(tupleid),
 								mgstate->modify_cid + MODIFY_CID_OUTPUT,
 								estate->es_snapshot,
 								estate->es_crosscheck_snapshot,
