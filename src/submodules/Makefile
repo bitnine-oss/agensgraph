@@ -1,10 +1,10 @@
 #-------------------------------------------------------------------------
 #
-# Makefile for src/pl (procedural languages)
+# Makefile for src/submodules (AgensGraph Submodules)
 #
-# Copyright (c) 1994, Regents of the University of California
+# Copyright (c) 2022 by Bitnine Global, Inc.
 #
-# src/pl/Makefile
+# src/submodules/Makefile
 #
 #-------------------------------------------------------------------------
 

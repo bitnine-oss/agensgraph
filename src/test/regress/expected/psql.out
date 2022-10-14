@@ -5041,32 +5041,34 @@ List of access methods
 
 \dA: extra argument "bar" ignored
 \dA+
-                             List of access methods
-  Name  | Type  |       Handler        |              Description               
---------+-------+----------------------+----------------------------------------
- brin   | Index | brinhandler          | block range index (BRIN) access method
- btree  | Index | bthandler            | b-tree index access method
- gin    | Index | ginhandler           | GIN index access method
- gist   | Index | gisthandler          | GiST index access method
- hash   | Index | hashhandler          | hash index access method
- heap   | Table | heap_tableam_handler | heap table access method
- heap2  | Table | heap_tableam_handler | 
- spgist | Index | spghandler           | SP-GiST index access method
-(8 rows)
+                                         List of access methods
+   Name   | Type  |                   Handler                   |              Description               
+----------+-------+---------------------------------------------+----------------------------------------
+ brin     | Index | brinhandler                                 | block range index (BRIN) access method
+ btree    | Index | bthandler                                   | b-tree index access method
+ gin      | Index | ginhandler                                  | GIN index access method
+ gist     | Index | gisthandler                                 | GiST index access method
+ hash     | Index | hashhandler                                 | hash index access method
+ heap     | Table | heap_tableam_handler                        | heap table access method
+ heap2    | Table | heap_tableam_handler                        | 
+ orioledb | Table | information_schema.orioledb_tableam_handler | 
+ spgist   | Index | spghandler                                  | SP-GiST index access method
+(9 rows)
 
 \dA+ *
-                             List of access methods
-  Name  | Type  |       Handler        |              Description               
---------+-------+----------------------+----------------------------------------
- brin   | Index | brinhandler          | block range index (BRIN) access method
- btree  | Index | bthandler            | b-tree index access method
- gin    | Index | ginhandler           | GIN index access method
- gist   | Index | gisthandler          | GiST index access method
- hash   | Index | hashhandler          | hash index access method
- heap   | Table | heap_tableam_handler | heap table access method
- heap2  | Table | heap_tableam_handler | 
- spgist | Index | spghandler           | SP-GiST index access method
-(8 rows)
+                                         List of access methods
+   Name   | Type  |                   Handler                   |              Description               
+----------+-------+---------------------------------------------+----------------------------------------
+ brin     | Index | brinhandler                                 | block range index (BRIN) access method
+ btree    | Index | bthandler                                   | b-tree index access method
+ gin      | Index | ginhandler                                  | GIN index access method
+ gist     | Index | gisthandler                                 | GiST index access method
+ hash     | Index | hashhandler                                 | hash index access method
+ heap     | Table | heap_tableam_handler                        | heap table access method
+ heap2    | Table | heap_tableam_handler                        | 
+ orioledb | Table | information_schema.orioledb_tableam_handler | 
+ spgist   | Index | spghandler                                  | SP-GiST index access method
+(9 rows)
 
 \dA+ h*
                      List of access methods
