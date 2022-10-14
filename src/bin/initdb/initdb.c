@@ -260,6 +260,7 @@ static void setup_privileges(FILE *cmdfd);
 static void set_info_version(void);
 static void setup_schema(FILE *cmdfd);
 static void load_plpgsql(FILE *cmdfd);
+static void load_orioledb(FILE *cmdfd);
 static void vacuum_db(FILE *cmdfd);
 static void make_template0(FILE *cmdfd);
 static void make_postgres(FILE *cmdfd);
@@ -1915,6 +1916,15 @@ load_plpgsql(FILE *cmdfd)
 }
 
 /*
+ * load OrioleDB for AgensGraph.
+ */
+static void
+load_orioledb(FILE *cmdfd)
+{
+	PG_CMD_PUTS("CREATE EXTENSION orioledb;\n\n");
+}
+
+/*
  * clean everything up in template1
  */
 static void
@@ -2923,6 +2933,8 @@ initialize_data_directory(void)
 	setup_schema(cmdfd);
 
 	load_plpgsql(cmdfd);
+
+	load_orioledb(cmdfd);
 
 	vacuum_db(cmdfd);
 
