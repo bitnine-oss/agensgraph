@@ -311,9 +311,9 @@ static TableInfo *getRootTableInfo(const TableInfo *tbinfo);
  * Therefore, Release some restrictions to work with the most common DDLs
  * possible. ( GUC, cypher_allow_unsafe_ddl )
  */
-static void dumpGraph(Archive *fout, NamespaceInfo *graphinfo);
-static void dumpLabelSchema(Archive *fout, TableInfo *tblinfo);
-static void setGraphPath(PQExpBuffer buf, NamespaceInfo *graphinfo);
+static void dumpGraph(Archive *fout, const NamespaceInfo *graphinfo);
+static void dumpLabelSchema(Archive *fout, const TableInfo *tblinfo);
+static void setGraphPath(PQExpBuffer buf, const NamespaceInfo *graphinfo);
 
 int
 main(int argc, char **argv)
@@ -18905,7 +18905,7 @@ appendReloptionsArrayAH(PQExpBuffer buffer, const char *reloptions,
  *	  writes out to fout the queries to recreate a user-defined namespace
  */
 static void
-dumpGraph(Archive *fout, NamespaceInfo *graphinfo)
+dumpGraph(Archive *fout, const NamespaceInfo *graphinfo)
 {
 	DumpOptions *dopt = fout->dopt;
 	PQExpBuffer q;
@@ -18968,7 +18968,7 @@ dumpGraph(Archive *fout, NamespaceInfo *graphinfo)
  *	  write the declaration (not data) of one user-defined table or view
  */
 static void
-dumpLabelSchema(Archive *fout, TableInfo *tblinfo)
+dumpLabelSchema(Archive *fout, const TableInfo *tblinfo)
 {
 	DumpOptions *dopt = fout->dopt;
 	PQExpBuffer q = createPQExpBuffer();
@@ -19397,7 +19397,7 @@ dumpLabelSchema(Archive *fout, TableInfo *tblinfo)
 }
 
 static void
-setGraphPath(PQExpBuffer buf, NamespaceInfo *graphinfo)
+setGraphPath(PQExpBuffer buf, const NamespaceInfo *graphinfo)
 {
 	if (graphinfo->ag_isgraph)
 		appendPQExpBuffer(buf, "SET GRAPH_PATH = %s;\n",
