@@ -4507,6 +4507,7 @@ transformCreateLabelStmt(CreateLabelStmt *labelStmt, const char *queryString)
 	stmt->oncommit = ONCOMMIT_NOOP;
 	stmt->tablespacename = labelStmt->tablespacename;
 	stmt->if_not_exists = labelStmt->if_not_exists;
+	/* stmt->accessMethod = "orioledb"; */
 
 	/* set appropriate table elements and indexes */
 	if (labelStmt->labelKind == LABEL_VERTEX)
@@ -4841,7 +4842,8 @@ makeEdgeIndex(RangeVar *label)
 	edge_id_idx->idxname = ChooseRelationName(labname, AG_ELEM_LOCAL_ID,
 											  "idx", graphid, false);
 	edge_id_idx->relation = copyObject(label);
-	edge_id_idx->accessMethod = "brin";
+	/* edge_id_idx->accessMethod = "brin"; */
+	edge_id_idx->accessMethod = "btree";
 	edge_id_idx->indexParams = list_make1(id_col);
 
 	start_idx = makeNode(IndexStmt);

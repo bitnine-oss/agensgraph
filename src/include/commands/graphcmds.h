@@ -39,4 +39,9 @@ extern Oid	DisableIndexCommand(DisableIndexStmt *disableStmt);
 extern bool isEmptyLabel(char *label_name);
 extern void deleteRelatedEdges(const char *vlab);
 
+/* Supports for Extensions. */
+extern ObjectAddress DefineLabel(ObjectAddress *reladdr, CreateStmt *stmt,
+								 char labkind, bool is_fixed_id,
+								 int32 fixed_id);
+
 #endif							/* GRAPHCMDS_H */

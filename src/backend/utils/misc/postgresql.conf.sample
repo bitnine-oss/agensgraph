@@ -722,7 +722,7 @@
 
 #local_preload_libraries = ''
 #session_preload_libraries = ''
-#shared_preload_libraries = ''	# (change requires restart)
+shared_preload_libraries = 'orioledb'	# (change requires restart)
 #jit_provider = 'llvmjit'		# JIT library to use
 
 # - Other Defaults -

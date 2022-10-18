@@ -43,9 +43,6 @@
 #include "utils/syscache.h"
 #include "catalog/pg_inherits.h"
 
-static ObjectAddress DefineLabel(CreateStmt *stmt, char labkind,
-								 const char *queryString, bool is_fixed_id,
-								 int32 fixed_id);
 static void GetSuperOids(List *supers, char labkind, List **supOids);
 static void AgInheritanceDependancy(Oid laboid, List *supers);
 static void SetMaxStatisticsTarget(Oid laboid);
@@ -209,7 +206,29 @@ CreateLabelCommand(CreateLabelStmt *labelStmt, const char *queryString,
 
 		if (IsA(stmt, CreateStmt))
 		{
-			DefineLabel((CreateStmt *) stmt, labkind, queryString,
+			static char *validnsps[] = HEAP_RELOPT_NAMESPACES;
+			CreateStmt	   *create_stmt = (CreateStmt *) stmt;
+			Datum			toast_options;
+			ObjectAddress	reladdr;
+			
+			reladdr = DefineRelation(create_stmt, RELKIND_RELATION, InvalidOid,
+									 NULL, queryString);
+			EventTriggerCollectSimpleCommand(reladdr, InvalidObjectAddress,
+											 (Node *) stmt);
+
+			/* parse and validate reloptions for the toast table */
+			toast_options = transformRelOptions((Datum) 0, create_stmt->options,
+												"toast", validnsps, true,
+												false);
+			heap_reloptions(RELKIND_TOASTVALUE, toast_options, true);
+
+			/*
+			 * Let NewRelationCreateToastTable decide if this one needs a secondary
+			 * relation too.
+			 */
+			NewRelationCreateToastTable(reladdr.objectId, toast_options);
+
+			DefineLabel(&reladdr, (CreateStmt *) stmt, labkind,
 						labelStmt->only_base, labelStmt->fixed_id);
 		}
 		else
@@ -238,51 +257,24 @@ CreateLabelCommand(CreateLabelStmt *labelStmt, const char *queryString,
 }
 
 /* creates a new graph label */
-static ObjectAddress
-DefineLabel(CreateStmt *stmt, char labkind, const char *queryString,
+ObjectAddress
+DefineLabel(ObjectAddress *reladdr, CreateStmt *stmt, char labkind,
 			bool is_fixed_id, int32 fixed_id)
 {
-	static char *validnsps[] = HEAP_RELOPT_NAMESPACES;
-	ObjectAddress reladdr;
-	Datum		toast_options;
 	Oid			tablespaceId;
 	Oid			laboid;
 	List	   *inheritOids = NIL;
 	ObjectAddress labaddr;
 
-	/*
-	 * Create the table
-	 */
-
-	reladdr = DefineRelation(stmt, RELKIND_RELATION, InvalidOid, NULL,
-							 queryString);
-	EventTriggerCollectSimpleCommand(reladdr, InvalidObjectAddress,
-									 (Node *) stmt);
-
 	CommandCounterIncrement();
 
 	if (labkind == LABEL_KIND_EDGE)
-		SetMaxStatisticsTarget(reladdr.objectId);
-
-	/* parse and validate reloptions for the toast table */
-	toast_options = transformRelOptions((Datum) 0, stmt->options, "toast",
-										validnsps, true, false);
-	heap_reloptions(RELKIND_TOASTVALUE, toast_options, true);
-
-	/*
-	 * Let NewRelationCreateToastTable decide if this one needs a secondary
-	 * relation too.
-	 */
-	NewRelationCreateToastTable(reladdr.objectId, toast_options);
-
-	/*
-	 * Create Label
-	 */
+		SetMaxStatisticsTarget(reladdr->objectId);
 
 	/* current implementation does not get tablespace name; so */
 	tablespaceId = GetDefaultTablespace(stmt->relation->relpersistence, false);
 
-	laboid = label_create_with_catalog(stmt->relation, reladdr.objectId,
+	laboid = label_create_with_catalog(stmt->relation, reladdr->objectId,
 									   labkind, tablespaceId, is_fixed_id,
 									   fixed_id);
 
@@ -296,7 +288,7 @@ DefineLabel(CreateStmt *stmt, char labkind, const char *queryString,
 	labaddr.classId = LabelRelationId;
 	labaddr.objectId = laboid;
 	labaddr.objectSubId = 0;
-	recordDependencyOn(&reladdr, &labaddr, DEPENDENCY_INTERNAL);
+	recordDependencyOn(reladdr, &labaddr, DEPENDENCY_INTERNAL);
 
 	return labaddr;
 }
