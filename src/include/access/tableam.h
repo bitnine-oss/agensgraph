@@ -2109,7 +2109,7 @@ typedef struct ExtendedTableAmRoutine
 								 int nslots, EState *estate,
 								 CommandId cid, int options, struct BulkInsertStateData *bistate);
 
-	TM_Result	(*tuple_delete) (ModifyTableState *mstate,
+	TM_Result	(*tuple_delete) (EPQState *epqstate,
 								 ResultRelInfo *resultRelInfo,
 								 EState *estate,
 								 Datum tupleid,
@@ -2234,7 +2234,7 @@ table_extended_multi_insert(Relation rel, TupleTableSlot **slots,
 }
 
 static inline TM_Result
-table_extended_tuple_delete(ModifyTableState *mstate,
+table_extended_tuple_delete(EPQState *epqstate,
 							ResultRelInfo *resultRelInfo,
 							EState *estate,
 							Datum tupleid,
@@ -2251,7 +2251,7 @@ table_extended_tuple_delete(ModifyTableState *mstate,
 
 	Assert(table_has_extended_am(rel));
 	extendedRoutine = (ExtendedTableAmRoutine *) rel->rd_tableam;
-	return extendedRoutine->tuple_delete(mstate, resultRelInfo, estate, tupleid,
+	return extendedRoutine->tuple_delete(epqstate, resultRelInfo, estate, tupleid,
 										 returningSlot, cid, snapshot,
 										 crosscheck, wait, tmfd, changingPart);
 }

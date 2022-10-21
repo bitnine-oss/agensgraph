@@ -1198,7 +1198,7 @@ ldelete:;
 		{
 			if (resultRelInfo->ri_projectReturning)
 				slot = ExecGetReturningSlot(estate, resultRelInfo);
-			result = table_extended_tuple_delete(mtstate, resultRelInfo, estate,
+			result = table_extended_tuple_delete(epqstate, resultRelInfo, estate,
 												 tupleid, slot,
 												 estate->es_output_cid,
 												 estate->es_snapshot,

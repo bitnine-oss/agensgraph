@@ -149,14 +149,28 @@ ExecDeleteEdgeOrVertex(ModifyGraphState *mgstate, ResultRelInfo *resultRelInfo,
 	}
 
 	/* see ExecDelete() */
-	result = table_tuple_delete(resultRelationDesc,
-								DatumGetItemPointer(tupleid),
-								mgstate->modify_cid + MODIFY_CID_OUTPUT,
-								estate->es_snapshot,
-								estate->es_crosscheck_snapshot,
-								true,
-								&tmfd,
-								false);
+	if (table_has_extended_am(resultRelationDesc))
+	{
+		result = table_extended_tuple_delete(epqstate, resultRelInfo, estate,
+											 tupleid, NULL,
+											 mgstate->modify_cid + MODIFY_CID_OUTPUT,
+											 estate->es_snapshot,
+											 estate->es_crosscheck_snapshot,
+											 true /* wait for commit */ ,
+											 &tmfd,
+											 false);
+	}
+	else
+	{
+		result = table_tuple_delete(resultRelationDesc,
+									DatumGetItemPointer(tupleid),
+									mgstate->modify_cid + MODIFY_CID_OUTPUT,
+									estate->es_snapshot,
+									estate->es_crosscheck_snapshot,
+									true,
+									&tmfd,
+									false);
+	}
 
 	switch (result)
 	{
