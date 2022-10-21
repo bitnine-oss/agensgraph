@@ -26,10 +26,11 @@
 #define DatumGetItemPointer(X)		((ItemPointer) DatumGetPointer(X))
 #define ItemPointerGetDatum(X)		PointerGetDatum(X)
 
-static bool ExecDeleteEdgeOrVertex(ModifyGraphState *mgstate,
-								   ResultRelInfo *resultRelInfo,
-								   Graphid graphid, HeapTuple tuple,
-								   Oid typeOid, bool required);
+static bool ExecDeleteEdgeOrVertex(ModifyGraphState *mgstate, ResultRelInfo *resultRelInfo,
+								   Graphid graphid, Datum tupleid,
+								   Datum edge_start_id, Datum edge_end_id,
+								   Oid typeOid,
+								   bool required);
 static void ExecDeleteGraphElement(ModifyGraphState *mgstate, Datum elem,
 								   Oid type);
 
@@ -110,7 +111,9 @@ ExecDeleteGraph(ModifyGraphState *mgstate, TupleTableSlot *slot)
  */
 static bool
 ExecDeleteEdgeOrVertex(ModifyGraphState *mgstate, ResultRelInfo *resultRelInfo,
-					   Graphid graphid, HeapTuple tuple, Oid typeOid,
+					   Graphid graphid, Datum tupleid,
+					   Datum edge_start_id, Datum edge_end_id,
+					   Oid typeOid,
 					   bool required)
 {
 	EPQState   *epqstate = &mgstate->mt_epqstate;
@@ -119,9 +122,6 @@ ExecDeleteEdgeOrVertex(ModifyGraphState *mgstate, ResultRelInfo *resultRelInfo,
 	TM_Result	result;
 	TM_FailureData tmfd;
 	bool		hash_found;
-	Datum		tupleid;
-
-	tupleid = PointerGetDatum(&tuple->t_self);
 
 	hash_search(mgstate->elemTable, &graphid, HASH_FIND, &hash_found);
 	if (hash_found)
@@ -186,21 +186,6 @@ ExecDeleteEdgeOrVertex(ModifyGraphState *mgstate, ResultRelInfo *resultRelInfo,
 
 		if (auto_gather_graphmeta)
 		{
-			bool		isnull;
-			TupleDesc	tupleDesc = RelationGetDescr(resultRelInfo->ri_RelationDesc);
-			Graphid		edge_start_id = DatumGetGraphid(
-														heap_getattr(tuple,
-																	 Anum_table_edge_start,
-																	 tupleDesc,
-																	 &isnull)
-			);
-			Graphid		edge_end_id = DatumGetGraphid(
-													  heap_getattr(tuple,
-																   Anum_table_edge_end,
-																   tupleDesc,
-																   &isnull)
-			);
-
 			agstat_count_edge_delete(
 									 GraphidGetLabid(graphid),
 									 GraphidGetLabid(edge_start_id),
@@ -224,49 +209,26 @@ ExecDeleteGraphElement(ModifyGraphState *mgstate, Datum elem, Oid type)
 {
 	if (type == VERTEXOID)
 	{
-		HeapTuple	tuple;
 		Graphid		vertex_id = DatumGetGraphid(getVertexIdDatum(elem));
 		Oid			rel_oid = get_labid_relid(mgstate->graphid,
 											  GraphidGetLabid(vertex_id));
 		ResultRelInfo *resultRelInfo = getResultRelInfo(mgstate, rel_oid);
-		Datum	   *values = mgstate->delete_graph_state->cached_values;
-		bool	   *isnull = mgstate->delete_graph_state->cached_isnull;
 
 		find_connected_edges(mgstate, vertex_id);
 
-		values[Anum_table_vertex_id - 1] = GraphidGetDatum(vertex_id);
-		values[Anum_table_vertex_prop_map - 1] = getVertexPropDatum(elem);
-		tuple = heap_form_tuple(
-								RelationGetDescr(resultRelInfo->ri_RelationDesc),
-								values, isnull);
-
-		tuple->t_self = *(DatumGetItemPointer(getVertexTidDatum(elem)));
-		ExecDeleteEdgeOrVertex(mgstate, resultRelInfo, vertex_id, tuple,
+		ExecDeleteEdgeOrVertex(mgstate, resultRelInfo, vertex_id, getVertexTidDatum(elem),
+							   0, 0,
 							   VERTEXOID, false);
-		heap_freetuple(tuple);
 	}
 	else if (type == EDGEOID)
 	{
-		HeapTuple	tuple;
 		Graphid		edge_id = DatumGetGraphid(getEdgeIdDatum(elem));
 		Oid			rel_oid = get_labid_relid(mgstate->graphid,
 											  GraphidGetLabid(edge_id));
 		ResultRelInfo *resultRelInfo = getResultRelInfo(mgstate, rel_oid);
-		Datum	   *values = mgstate->delete_graph_state->cached_values;
-		bool	   *isnull = mgstate->delete_graph_state->cached_isnull;
-
-		values[Anum_table_edge_id - 1] = GraphidGetDatum(edge_id);
-		values[Anum_table_edge_start - 1] = getEdgeStartDatum(elem);
-		values[Anum_table_edge_end - 1] = getEdgeEndDatum(elem);
-		values[Anum_table_edge_prop_map - 1] = getEdgePropDatum(elem);
-		tuple = heap_form_tuple(
-								RelationGetDescr(resultRelInfo->ri_RelationDesc),
-								values, isnull);
-
-		tuple->t_self = *(DatumGetItemPointer(getEdgeTidDatum(elem)));
-		ExecDeleteEdgeOrVertex(mgstate, resultRelInfo, edge_id, tuple,
+		ExecDeleteEdgeOrVertex(mgstate, resultRelInfo, edge_id, getEdgeTidDatum(elem),
+							   getEdgeStartDatum(elem), getEdgeEndDatum(elem),
 							   EDGEOID, false);
-		heap_freetuple(tuple);
 	}
 	else if (type == VERTEXARRAYOID)
 	{
@@ -365,8 +327,8 @@ find_connected_edges_internal(ModifyGraphState *mgstate,
 							  AttrNumber attr,
 							  Datum vertex_id)
 {
+	TupleTableSlot *slot;
 	Relation	relation = resultRelInfo->ri_RelationDesc;
-	HeapTuple	tup;
 	TableScanDesc scanDesc;
 	ScanKeyData skey;
 
@@ -374,26 +336,24 @@ find_connected_edges_internal(ModifyGraphState *mgstate,
 				BTEqualStrategyNumber,
 				F_GRAPHID_EQ, vertex_id);
 	scanDesc = table_beginscan(relation, estate->es_snapshot, 1, &skey);
-	while ((tup = heap_getnext(scanDesc, ForwardScanDirection)) != NULL)
-	{
-		bool		isnull;
-		Graphid		gid;
 
+	slot = table_slot_create(relation, NULL);
+	while (table_scan_getnextslot(scanDesc, ForwardScanDirection, slot))
+	{
 		if (!plan->detach)
 		{
 			table_endscan(scanDesc);
 			elog(ERROR, "vertices with edges can not be removed");
 		}
-		gid = DatumGetGraphid(heap_getattr(tup,
-										   Anum_table_edge_id,
-										   RelationGetDescr(relation),
-										   &isnull));
 		ExecDeleteEdgeOrVertex(mgstate,
 							   resultRelInfo,
-							   gid,
-							   tup,
+							   slot->tts_values[Anum_table_edge_id - 1],
+							   PointerGetDatum(&slot->tts_tid),
+							   slot->tts_values[Anum_table_edge_start - 1],
+							   slot->tts_values[Anum_table_edge_end - 1],
 							   EDGEOID,
 							   true);
 	}
 	table_endscan(scanDesc);
+	ExecDropSingleTupleTableSlot(slot);
 }

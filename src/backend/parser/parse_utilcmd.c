@@ -4507,7 +4507,7 @@ transformCreateLabelStmt(CreateLabelStmt *labelStmt, const char *queryString)
 	stmt->oncommit = ONCOMMIT_NOOP;
 	stmt->tablespacename = labelStmt->tablespacename;
 	stmt->if_not_exists = labelStmt->if_not_exists;
-	/* stmt->accessMethod = "orioledb"; */
+	stmt->accessMethod = "orioledb";
 
 	/* set appropriate table elements and indexes */
 	if (labelStmt->labelKind == LABEL_VERTEX)
