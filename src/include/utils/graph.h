@@ -14,6 +14,8 @@
 
 #include "fmgr.h"
 #include "storage/itemptr.h"
+#include "utils/snapshot.h"
+#include "utils/relcache.h"
 
 typedef uint64 Graphid;
 typedef uint16 Labid;
@@ -136,6 +138,10 @@ extern Datum edge_end_vertex(PG_FUNCTION_ARGS);
 extern Datum vertex_labels(PG_FUNCTION_ARGS);
 
 /* support functions */
+extern Datum get_vertex_tupleid_datum(Relation relation,
+									  Snapshot snapshot,
+									  RowRefType row_ref_type,
+									  Graphid graphid);
 extern Datum getVertexIdDatum(Datum datum);
 extern Datum getVertexPropDatum(Datum datum);
 extern Datum getVertexTidDatum(Datum datum);

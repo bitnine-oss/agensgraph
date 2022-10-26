@@ -151,6 +151,10 @@ ExecDeleteEdgeOrVertex(ModifyGraphState *mgstate, ResultRelInfo *resultRelInfo,
 	/* see ExecDelete() */
 	if (table_has_extended_am(resultRelationDesc))
 	{
+		tupleid = get_vertex_tupleid_datum(resultRelationDesc,
+										   estate->es_snapshot,
+										   ROW_REF_ROWID,
+										   graphid);
 		result = table_extended_tuple_delete(epqstate, resultRelInfo, estate,
 											 tupleid, NULL,
 											 mgstate->modify_cid + MODIFY_CID_OUTPUT,

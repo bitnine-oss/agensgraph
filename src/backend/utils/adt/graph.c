@@ -36,6 +36,9 @@
 #include "catalog/ag_vertex_d.h"
 #include "catalog/ag_edge_d.h"
 #include "catalog/ag_graphpath_d.h"
+#include "access/tableam.h"
+#include "utils/fmgroids.h"
+#include "utils/datum.h"
 
 #define GRAPHID_FMTSTR			"%hu." UINT64_FORMAT
 #define GRAPHID_BUFLEN			32	/* "65535.281474976710655" */
@@ -1145,6 +1148,62 @@ cache_labels(FmgrInfo *flinfo, uint16 labid)
 	MemoryContextSwitchTo(oldMemoryContext);
 
 	return my_extra;
+}
+
+
+/*
+ * get_vertex_tupleid_datum
+ *
+ * getting tupleid from relation.
+ */
+Datum
+get_vertex_tupleid_datum(Relation relation,
+						 Snapshot snapshot,
+						 RowRefType row_ref_type,
+						 Graphid graphid)
+{
+	ScanKeyData scan_keys;
+	TupleTableSlot *slot;
+	TableScanDesc table_scan_desc;
+	bool isnull;
+	Datum tupleid;
+
+	slot = table_slot_create(relation, NULL);
+	ScanKeyInit(&scan_keys,
+				Anum_table_vertex_id,
+				BTEqualStrategyNumber, F_GRAPHID_EQ,
+				GraphidGetDatum(graphid));
+	table_scan_desc = table_beginscan(relation, snapshot, 1, &scan_keys);
+	if (!table_scan_getnextslot(table_scan_desc, ForwardScanDirection, slot))
+	{
+		elog(ERROR, "Cannot find vertex("GRAPHID_FMTSTR").",
+			 GraphidGetLabid(graphid), GraphidGetLocid(graphid));
+	}
+
+	if (row_ref_type == ROW_REF_ROWID)
+	{
+		/* OrioleDB */
+		tupleid = datumCopy(slot_getsysattr(slot, RowIdAttributeNumber, &isnull),
+							false, -1);
+	}
+	else if (row_ref_type == ROW_REF_TID)
+	{
+		ItemPointerData tuple_ctid;
+		Datum datum;
+		datum = slot_getsysattr(slot, TableOidAttributeNumber, &isnull);
+		tuple_ctid = *((ItemPointer) DatumGetPointer(datum));	/* be sure we don't free ctid!! */
+		tupleid = PointerGetDatum(&tuple_ctid);
+	}
+	else
+	{
+		Assert(false);
+	}
+
+	Assert(!isnull);
+	table_endscan(table_scan_desc);
+	ExecDropSingleTupleTableSlot(slot);
+
+	return tupleid;
 }
 
 Datum
