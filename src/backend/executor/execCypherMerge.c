@@ -181,8 +181,10 @@ createMergeVertex(ModifyGraphState *mgstate, GraphVertex *gvertex,
 	Datum		vertexProp;
 	TupleTableSlot *insertSlot = mgstate->elemTupleSlot;
 	List	   *recheckIndexes = NIL;
+	bool		isExtendedRoutine;
 
 	resultRelInfo = getResultRelInfo(mgstate, gvertex->relid);
+	isExtendedRoutine = table_has_extended_am(resultRelInfo->ri_RelationDesc);
 
 	vertex = ExecEvalExpr(gvertex->es_expr, econtext, &isNull);
 	if (isNull)
@@ -227,13 +229,23 @@ createMergeVertex(ModifyGraphState *mgstate, GraphVertex *gvertex,
 	if (resultRelInfo->ri_RelationDesc->rd_att->constr != NULL)
 		ExecConstraints(resultRelInfo, insertSlot, estate);
 
-	table_tuple_insert(resultRelInfo->ri_RelationDesc, insertSlot,
-					   mgstate->modify_cid + MODIFY_CID_OUTPUT,
-					   0, NULL);
+	if (isExtendedRoutine)
+	{
+		table_extended_tuple_insert(resultRelInfo->ri_RelationDesc, insertSlot,
+									estate,
+									mgstate->modify_cid + MODIFY_CID_OUTPUT,
+									0, NULL);
+	}
+	else
+	{
+		table_tuple_insert(resultRelInfo->ri_RelationDesc, insertSlot,
+						   mgstate->modify_cid + MODIFY_CID_OUTPUT,
+						   0, NULL);
 
-	if (resultRelInfo->ri_NumIndices > 0)
-		recheckIndexes = ExecInsertIndexTuples(resultRelInfo, insertSlot,
-											   estate, false, false, NULL, NIL);
+		if (resultRelInfo->ri_NumIndices > 0)
+			recheckIndexes = ExecInsertIndexTuples(resultRelInfo, insertSlot,
+												   estate, false, false, NULL, NIL);
+	}
 
 	/* AFTER ROW INSERT Triggers */
 	ExecARInsertTriggers(estate, resultRelInfo, insertSlot, recheckIndexes,
@@ -264,8 +276,10 @@ createMergeEdge(ModifyGraphState *mgstate, GraphEdge *gedge, Graphid start,
 	Datum		edgeProp;
 	TupleTableSlot *insertSlot = mgstate->elemTupleSlot;
 	List	   *recheckIndexes = NIL;
+	bool		isExtendedRoutine;
 
 	resultRelInfo = getResultRelInfo(mgstate, gedge->relid);
+	isExtendedRoutine = table_has_extended_am(resultRelInfo->ri_RelationDesc);
 
 	edge = ExecEvalExpr(gedge->es_expr, econtext, &isNull);
 	if (isNull)
@@ -310,13 +324,23 @@ createMergeEdge(ModifyGraphState *mgstate, GraphEdge *gedge, Graphid start,
 	if (resultRelInfo->ri_RelationDesc->rd_att->constr != NULL)
 		ExecConstraints(resultRelInfo, insertSlot, estate);
 
-	table_tuple_insert(resultRelInfo->ri_RelationDesc, insertSlot,
-					   mgstate->modify_cid + MODIFY_CID_OUTPUT,
-					   0, NULL);
+	if (isExtendedRoutine)
+	{
+		table_extended_tuple_insert(resultRelInfo->ri_RelationDesc, insertSlot,
+									estate,
+									mgstate->modify_cid + MODIFY_CID_OUTPUT,
+									0, NULL);
+	}
+	else
+	{
+		table_tuple_insert(resultRelInfo->ri_RelationDesc, insertSlot,
+						   mgstate->modify_cid + MODIFY_CID_OUTPUT,
+						   0, NULL);
 
-	if (resultRelInfo->ri_NumIndices > 0)
-		recheckIndexes = ExecInsertIndexTuples(resultRelInfo, insertSlot,
-											   estate, false, false, NULL, NIL);
+		if (resultRelInfo->ri_NumIndices > 0)
+			recheckIndexes = ExecInsertIndexTuples(resultRelInfo, insertSlot,
+												   estate, false, false, NULL, NIL);
+	}
 
 	/* AFTER ROW INSERT Triggers */
 	ExecARInsertTriggers(estate, resultRelInfo, insertSlot, recheckIndexes,
