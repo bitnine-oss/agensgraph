@@ -1839,7 +1839,7 @@ ex_partition_constraint_failed:
 		}
 		else
 		{
-			result = table_extended_tuple_update(mtstate, resultRelInfo, estate,
+			result = table_extended_tuple_update(epqstate, resultRelInfo, estate,
 												 tupleid,
 												 slot,
 												 estate->es_output_cid,

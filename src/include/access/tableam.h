@@ -2121,7 +2121,7 @@ typedef struct ExtendedTableAmRoutine
 								 TM_FailureData *tmfd,
 								 bool changingPart);
 
-	TM_Result	(*tuple_update) (ModifyTableState *mstate,
+	TM_Result	(*tuple_update) (EPQState *epqstate,
 								 ResultRelInfo *resultRelInfo,
 								 EState *estate,
 								 Datum tupleid,
@@ -2257,7 +2257,7 @@ table_extended_tuple_delete(EPQState *epqstate,
 }
 
 static inline TM_Result
-table_extended_tuple_update(ModifyTableState *mstate,
+table_extended_tuple_update(EPQState *epqstate,
 							ResultRelInfo *resultRelInfo,
 							EState *estate,
 							Datum tupleid,
@@ -2275,7 +2275,7 @@ table_extended_tuple_update(ModifyTableState *mstate,
 
 	Assert(table_has_extended_am(rel));
 	extendedRoutine = (ExtendedTableAmRoutine *) rel->rd_tableam;
-	return extendedRoutine->tuple_update(mstate, resultRelInfo, estate, tupleid,
+	return extendedRoutine->tuple_update(epqstate, resultRelInfo, estate, tupleid,
 										 slot, cid, snapshot, crosscheck, wait,
 										 tmfd, lockmode, update_indexes);
 }
