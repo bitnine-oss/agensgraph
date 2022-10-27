@@ -334,9 +334,11 @@ GraphTableTupleUpdate(ModifyGraphState *mgstate, Oid tts_value_type,
 	 * Create a tuple to store. Attributes of vertex/edge label are not the
 	 * same with those of vertex/edge.
 	 */
-	ExecClearTuple(elemTupleSlot);
-	ExecSetSlotDescriptor(elemTupleSlot,
-						  RelationGetDescr(resultRelInfo->ri_RelationDesc));
+	elemTupleSlot = table_slot_create(resultRelationDesc,
+									  NULL);
+//	ExecClearTuple(elemTupleSlot);
+//	ExecSetSlotDescriptor(elemTupleSlot,
+//						  RelationGetDescr(resultRelInfo->ri_RelationDesc));
 
 	tts_values = elemTupleSlot->tts_values;
 
@@ -374,13 +376,35 @@ lreplace:
 	if (resultRelationDesc->rd_att->constr)
 		ExecConstraints(resultRelInfo, elemTupleSlot, estate);
 
-	result = table_tuple_update(resultRelationDesc,
-								DatumGetItemPointer(ctid), elemTupleSlot,
-								mgstate->modify_cid + MODIFY_CID_SET,
-								estate->es_snapshot,
-								estate->es_crosscheck_snapshot,
-								true /* wait for commit */ ,
-								&tmfd, &lockmode, &update_indexes);
+	if (table_has_extended_am(resultRelationDesc))
+	{
+		ctid = get_vertex_tupleid_datum(resultRelationDesc,
+										estate->es_snapshot, ROW_REF_ROWID,
+										DatumGetGraphid(gid));
+		result = table_extended_tuple_update(epqstate, resultRelInfo, estate,
+											 ctid,
+											 elemTupleSlot,
+											 mgstate->modify_cid + MODIFY_CID_SET,
+											 estate->es_snapshot,
+											 estate->es_crosscheck_snapshot,
+											 true /* wait for commit */ ,
+											 &tmfd, &lockmode, &update_indexes);
+
+		if (result == TM_Updated)
+		{
+			elog(ERROR, "Unknown failed");
+		}
+	}
+	else
+	{
+		result = table_tuple_update(resultRelationDesc,
+									DatumGetItemPointer(ctid), elemTupleSlot,
+									mgstate->modify_cid + MODIFY_CID_SET,
+									estate->es_snapshot,
+									estate->es_crosscheck_snapshot,
+									true /* wait for commit */ ,
+									&tmfd, &lockmode, &update_indexes);
+	}
 
 	switch (result)
 	{
@@ -546,9 +570,11 @@ LegacyUpdateElemProp(ModifyGraphState *mgstate, Oid elemtype, Datum gid,
 	 * Create a tuple to store. Attributes of vertex/edge label are not the
 	 * same with those of vertex/edge.
 	 */
-	ExecClearTuple(elemTupleSlot);
-	ExecSetSlotDescriptor(elemTupleSlot,
-						  RelationGetDescr(resultRelInfo->ri_RelationDesc));
+	elemTupleSlot = table_slot_create(resultRelationDesc,
+									  NULL);
+//	ExecClearTuple(elemTupleSlot);
+//	ExecSetSlotDescriptor(elemTupleSlot,
+//						  RelationGetDescr(resultRelInfo->ri_RelationDesc));
 	if (elemtype == VERTEXOID)
 	{
 		elemTupleSlot->tts_values[0] = gid;
@@ -589,13 +615,37 @@ LegacyUpdateElemProp(ModifyGraphState *mgstate, Oid elemtype, Datum gid,
 	if (resultRelationDesc->rd_att->constr)
 		ExecConstraints(resultRelInfo, elemTupleSlot, estate);
 
-	result = table_tuple_update(resultRelationDesc, DatumGetItemPointer(ctid),
-								elemTupleSlot,
-								mgstate->modify_cid + MODIFY_CID_SET,
-								estate->es_snapshot,
-								estate->es_crosscheck_snapshot,
-								true /* wait for commit */ ,
-								&tmfd, &lockmode, &update_indexes);
+
+
+	if (table_has_extended_am(resultRelationDesc))
+	{
+		ctid = get_vertex_tupleid_datum(resultRelationDesc,
+										estate->es_snapshot, ROW_REF_ROWID,
+										DatumGetGraphid(gid));
+		result = table_extended_tuple_update(epqstate, resultRelInfo, estate,
+											 ctid,
+											 elemTupleSlot,
+											 mgstate->modify_cid + MODIFY_CID_SET,
+											 estate->es_snapshot,
+											 estate->es_crosscheck_snapshot,
+											 true /* wait for commit */ ,
+											 &tmfd, &lockmode, &update_indexes);
+
+		if (result == TM_Updated)
+		{
+			elog(ERROR, "Unknown failed");
+		}
+	}
+	else
+	{
+		result = table_tuple_update(resultRelationDesc, DatumGetItemPointer(ctid),
+									elemTupleSlot,
+									mgstate->modify_cid + MODIFY_CID_SET,
+									estate->es_snapshot,
+									estate->es_crosscheck_snapshot,
+									true /* wait for commit */ ,
+									&tmfd, &lockmode, &update_indexes);
+	}
 
 	switch (result)
 	{
