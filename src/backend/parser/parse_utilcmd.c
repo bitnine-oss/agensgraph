@@ -5112,34 +5112,38 @@ transformCreateConstraintStmt(ParseState *pstate,
 			break;
 		case CONSTR_UNIQUE:
 			{
-				IndexElem  *uniqueElem;
-				List	   *equalOp;
-				List	   *excludeExpr;
+				IndexStmt *index_stmt;
+				IndexElem *index_elem;
 
-				/*
-				 * We cannot create UNIQUE constraints on expressions in
-				 * PostgreSQL. Instead, we can support the same functionality
-				 * through EXCLUDE.
-				 */
+				index_elem = makeNode(IndexElem);
+				index_elem->expr = propexpr;
 
-				uniqueElem = makeNode(IndexElem);
-				uniqueElem->expr = propexpr;
-				equalOp = list_make1(makeString("="));
-				excludeExpr = list_make2(uniqueElem, equalOp);
+				index_stmt = makeNode(IndexStmt);
+				index_stmt->unique = true;
+				index_stmt->concurrent = false;
+				index_stmt->idxname = constraintStmt->conname;
+				index_stmt->relation = label;
+				index_stmt->accessMethod = DEFAULT_INDEX_TYPE;
+				index_stmt->indexParams = list_make1(index_elem);
+				index_stmt->indexIncludingParams = NIL;
+				index_stmt->options = NIL;
+				index_stmt->tableSpace = NULL;
+				index_stmt->whereClause = NULL;
+				index_stmt->excludeOpNames = NIL;
+				index_stmt->idxcomment = NULL;
+				index_stmt->indexOid = InvalidOid;
+				index_stmt->oldNode = InvalidOid;
+				index_stmt->oldCreateSubid = InvalidSubTransactionId;
+				index_stmt->oldFirstRelfilenodeSubid = InvalidSubTransactionId;
+				index_stmt->primary = false;
+				index_stmt->isconstraint = false;
+				index_stmt->deferrable = false;
+				index_stmt->initdeferred = false;
+				index_stmt->transformed = false;
+				index_stmt->if_not_exists = false;
+				index_stmt->reset_default_tblspc = false;
 
-				constr->contype = CONSTR_EXCLUSION;
-				constr->access_method = DEFAULT_INDEX_TYPE;
-				constr->exclusions = list_make1(excludeExpr);
-				constr->conname = constraintStmt->conname;
-				if (constr->conname == NULL)
-				{
-					Oid			nsid;
-
-					nsid = LookupNamespaceNoError(label->schemaname);
-					constr->conname = ChooseRelationName(label->relname,
-														 "unique",
-														 "constraint", nsid, true);
-				}
+				return (Node *) index_stmt;
 			}
 			break;
 		default:
