@@ -18929,7 +18929,7 @@ dumpGraph(Archive *fout, const NamespaceInfo *graphinfo)
 
 	if (dopt->binary_upgrade)
 		binary_upgrade_extension_member(q, &graphinfo->dobj,
-										"GRAPH", qnspname, NULL);
+										"SCHEMA", qnspname, NULL);
 
 	if (graphinfo->dobj.dump & DUMP_COMPONENT_DEFINITION)
 		ArchiveEntry(fout, graphinfo->dobj.catId, graphinfo->dobj.dumpId,
@@ -18942,17 +18942,17 @@ dumpGraph(Archive *fout, const NamespaceInfo *graphinfo)
 
 	/* Dump Schema Comments and Security Labels */
 	if (graphinfo->dobj.dump & DUMP_COMPONENT_COMMENT)
-		dumpComment(fout, "GRAPH", qnspname,
+		dumpComment(fout, "SCHEMA", qnspname,
 					NULL, graphinfo->rolname,
 					graphinfo->dobj.catId, 0, graphinfo->dobj.dumpId);
 
 	if (graphinfo->dobj.dump & DUMP_COMPONENT_SECLABEL)
-		dumpSecLabel(fout, "GRAPH", qnspname,
+		dumpSecLabel(fout, "SCHEMA", qnspname,
 					 NULL, graphinfo->rolname,
 					 graphinfo->dobj.catId, 0, graphinfo->dobj.dumpId);
 
 	if (graphinfo->dobj.dump & DUMP_COMPONENT_ACL)
-		dumpACL(fout, graphinfo->dobj.dumpId, InvalidDumpId, "GRAPH",
+		dumpACL(fout, graphinfo->dobj.dumpId, InvalidDumpId, "SCHEMA",
 				qnspname, NULL, NULL,
 				graphinfo->rolname, graphinfo->nspacl, graphinfo->rnspacl,
 				graphinfo->initnspacl, graphinfo->initrnspacl);
