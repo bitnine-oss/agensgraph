@@ -3819,13 +3819,10 @@ resolve_future_vertex_context
 find_target_label_context
 GraphSetProp
 GraphDelElem
-NestLoopVLE
 ExtTLE
 resolve_var_from_targetlist_context
-IndexScanContext
 GraphWriteStats
 ModifyCid
-NestLoopVLEState
 FunctionCallJsonbInfo
 GraphWriteOp
 LabelKind
@@ -3848,10 +3845,6 @@ Form_ag_label
 Form_ag_graphpath
 Form_ag_graph
 Form_ag_edge
-AppendContext
-NestLoopContext
-NestLoopVLEContext
-SeqScanContext
 find_var_context
 find_agg_context
 AgStat_SubXactStatus
@@ -3859,3 +3852,7 @@ LabelOutData
 GraphpathOutData
 EdgeVertexKind
 LabelsOutData
+GraphVLEPath
+GraphVLE
+GraphVLEState
+VLEDepthCtx

@@ -226,7 +226,9 @@ MATCH (A)<-[r:el3 *1..3]-(B) RETURN A.id, r, B.id;
 MATCH (A)<-[r:el1 ONLY *1..3]-(B) RETURN A.id, r, B.id;
 MATCH (A)<-[r:el2 ONLY *1..3]-(B) RETURN A.id, r, B.id;
 
-MATCH (A)-[r:el1 *1..3]-(B) RETURN A.id, r, B.id;
+MATCH (A)-[r:el1 *1..3]-(B)
+RETURN A.id as aid, r, B.id as bid, id(r[0]) as rid
+ORDER BY aid, bid, rid;
 MATCH (A)-[r:el2 *1..3]-(B) RETURN A.id, r, B.id;
 MATCH (A)-[r:el3 *1..3]-(B) RETURN A.id, r, B.id;
 MATCH (A)-[r:el1 ONLY *1..3]-(B) RETURN A.id, r, B.id;
@@ -338,7 +340,7 @@ RETURN d.sec AS d, length(z) AS z,
        b.sec AS b, length(x) AS x, a.sec AS a ORDER BY d;
 
 MATCH (a:time)-[x*0..2]-(b)
-RETURN a.sec AS a, length(x) AS x, b.sec AS b ORDER BY a;
+RETURN a.sec AS a, length(x) AS x, b.sec AS b ORDER BY a, b, x;
 
 -- VLE with graph path
 MATCH p = (:time)-[:goes*0]->(:time)
@@ -355,7 +357,8 @@ RETURN properties(nodes(p)[0]) AS first, properties(vertices(p)[1]) AS second, p
 MATCH p = (:time)-[:goes*0]->(:time)-[:goes*2..4]->(:time)-[:goes*0]-(:time)
 RETURN properties(nodes(p)[0]) AS first, properties(vertices(p)[1]) AS second, properties(vertices(p)[2]) AS third,
 	   properties(nodes(p)[3]) AS fourth, properties(vertices(p)[4]) AS fifth, properties(vertices(p)[5]) AS sixth,
-	   length(edges(p));
+	   length(edges(p))
+ORDER BY first, second, third, fourth, fifth, sixth;
 
 CREATE (:time {sec: 11})-[:goes {int: 1}]->
        (:time {sec: 12})-[:goes {int: 1}]->
@@ -388,25 +391,29 @@ MATCH (a:person {id: 1})-[x:knows*1..2]->(b:person) RETURN a.id, b.id, x;
 -- `->5
 MATCH (a:person {id: 2}), (b:person {id: 1}) CREATE (a)-[:knows]->(b);
 
-MATCH (a:person {id: 1})-[x:knows*1..2]->(b:person) RETURN a.id, b.id, x;
+MATCH (a:person {id: 1})-[x:knows*1..2]->(b:person)
+RETURN a.id as aid, b.id as bid, x ORDER BY aid, bid;
 
 MATCH (a:person {id: 1})-[x:knows*0..0]->(b:person) RETURN a.id, b.id, x;
 
 MATCH (a:person {id: 1})-[x:knows*0..1]->(b:person) RETURN a.id, b.id, x;
 
-MATCH (a:person {id: 1})-[x:knows*2..2]->(b:person) RETURN a.id, b.id, x;
+MATCH (a:person {id: 1})-[x:knows*2..2]->(b:person) RETURN a.id as aid, b.id as bid, x ORDER BY aid, bid;
 
-MATCH (a:person {id: 2})-[x:knows*1..1]->(b:person) RETURN a.id, b.id, x;
+MATCH (a:person {id: 2})-[x:knows*1..1]->(b:person) RETURN a.id as aid, b.id as bid, x ORDER BY aid, bid;
 
-MATCH (a:person)-[x:knows*1..1]->(b:person) RETURN a.id, b.id, x;
+MATCH (a:person)-[x:knows*1..1]->(b:person)
+RETURN a.id as aid, b.id as bid, x, id(x[0]) as xid ORDER BY aid, bid, xid;
 
-MATCH (a:person)-[x:knows*]->(b:person) RETURN a.id, b.id, x;
+MATCH (a:person)-[x:knows*]->(b:person)
+RETURN a.id as aid, b.id as bid, x, id(x[0]) as xid ORDER BY aid, bid, xid;
 
 MATCH (a:person {id: 1})-[x:knows*0..3]->(b:person)
 RETURN a.id as aid, b.id as bid, x
 ORDER BY length(x), aid, bid DESC;
 
-MATCH (a:person {id: 1})-[x*1..2]-(b:person) RETURN a.id, b.id, x;
+MATCH (a:person {id: 1})-[x*1..2]-(b:person)
+RETURN a.id as aid, b.id as bid, x, id(x[0]) as xid ORDER BY aid, bid, xid;
 
 -- 1->2->3->4
 -- `->5
@@ -417,7 +424,8 @@ MATCH (a:person {id: 2})-[k:knows]->(b:person {id: 1}) DELETE k;
 -- `->5
 MATCH (a:person {id: 3}), (b:person {id: 1}) CREATE (a)-[:knows]->(b);
 
-MATCH (a:person {id: 1})-[x:knows*1..]->(b:person) RETURN a.id, b.id, x;
+MATCH (a:person {id: 1})-[x:knows*1..]->(b:person)
+RETURN a.id as aid, b.id as bid, x, id(x[0]) as xid ORDER BY aid, bid, xid;
 
 -- 1->2->3->4
 -- `->5

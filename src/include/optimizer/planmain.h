@@ -54,6 +54,7 @@ extern ModifyGraph *make_modifygraph(PlannerInfo *root, GraphWriteOp operation,
 									 bool eagerness, List *pattern,
 									 List *exprs, List *sets,
 									 List *resultRelations, int epqParam);
+extern GraphVLE *make_graph_vle(PlannerInfo *root, Plan *subplan, CypherRel *vle_rel);
 extern Dijkstra *make_dijkstra(PlannerInfo *root, List *tlist, Plan *subplan,
 							   AttrNumber weight, bool weight_out,
 							   AttrNumber end_id, AttrNumber edge_id,

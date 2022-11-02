@@ -44,7 +44,6 @@
 #include "executor/nodeNamedtuplestorescan.h"
 #include "executor/nodeNestloop.h"
 #include "executor/nodeProjectSet.h"
-#include "executor/nodeNestloopVle.h"
 #include "executor/nodeRecursiveunion.h"
 #include "executor/nodeResult.h"
 #include "executor/nodeResultCache.h"
@@ -67,6 +66,7 @@
 #include "nodes/pathnodes.h"
 #include "utils/rel.h"
 #include "utils/syscache.h"
+#include "executor/execGraphVle.h"
 
 static bool IndexSupportsBackwardScan(Oid indexid);
 
@@ -247,10 +247,6 @@ ExecReScan(PlanState *node)
 			ExecReScanNestLoop((NestLoopState *) node);
 			break;
 
-		case T_NestLoopVLEState:
-			ExecReScanNestLoopVLE((NestLoopVLEState *) node);
-			break;
-
 		case T_MergeJoinState:
 			ExecReScanMergeJoin((MergeJoinState *) node);
 			break;
@@ -319,6 +315,10 @@ ExecReScan(PlanState *node)
 			ExecReScanDijkstra((DijkstraState *) node);
 			break;
 
+		case T_GraphVLEState:
+			ExecReScanGraphVLE((GraphVLEState *) node);
+			break;
+
 		default:
 			elog(ERROR, "unrecognized node type: %d", (int) nodeTag(node));
 			break;
@@ -328,64 +328,6 @@ ExecReScan(PlanState *node)
 	{
 		bms_free(node->chgParam);
 		node->chgParam = NULL;
-	}
-}
-
-void
-ExecNextContext(PlanState *node)
-{
-	switch (nodeTag(node))
-	{
-		case T_SeqScanState:
-			ExecNextSeqScanContext((SeqScanState *) node);
-			break;
-		case T_IndexScanState:
-			ExecNextIndexScanContext((IndexScanState *) node);
-			break;
-		case T_IndexOnlyScanState:
-			ExecNextIndexOnlyScanContext((IndexOnlyScanState *) node);
-			break;
-		case T_AppendState:
-			ExecNextAppendContext((AppendState *) node);
-			break;
-		case T_ResultState:
-			ExecNextResultContext((ResultState *) node);
-			break;
-		case T_NestLoopState:
-			ExecNextNestLoopContext((NestLoopState *) node);
-			break;
-		default:
-			elog(ERROR, "unrecognized node type: %d", (int) nodeTag(node));
-			break;
-	}
-}
-
-void
-ExecPrevContext(PlanState *node)
-{
-	switch (nodeTag(node))
-	{
-		case T_SeqScanState:
-			ExecPrevSeqScanContext((SeqScanState *) node);
-			break;
-		case T_IndexScanState:
-			ExecPrevIndexScanContext((IndexScanState *) node);
-			break;
-		case T_IndexOnlyScanState:
-			ExecPrevIndexOnlyScanContext((IndexOnlyScanState *) node);
-			break;
-		case T_AppendState:
-			ExecPrevAppendContext((AppendState *) node);
-			break;
-		case T_ResultState:
-			ExecPrevResultContext((ResultState *) node);
-			break;
-		case T_NestLoopState:
-			ExecPrevNestLoopContext((NestLoopState *) node);
-			break;
-		default:
-			elog(ERROR, "unrecognized node type: %d", (int) nodeTag(node));
-			break;
 	}
 }
 

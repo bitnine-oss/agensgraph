@@ -1204,7 +1204,6 @@ ExplainNode(PlanState *planstate, List *ancestors,
 			pname = sname = "BitmapOr";
 			break;
 		case T_NestLoop:
-		case T_NestLoopVLE:
 			pname = sname = "Nested Loop";
 			break;
 		case T_MergeJoin:
@@ -1432,6 +1431,9 @@ ExplainNode(PlanState *planstate, List *ancestors,
 		case T_Dijkstra:
 			pname = sname = "Dijkstra";
 			break;
+		case T_GraphVLE:
+			pname = sname = "Graph VLE";
+			break;
 		default:
 			pname = sname = "???";
 			break;
@@ -1557,7 +1559,6 @@ ExplainNode(PlanState *planstate, List *ancestors,
 			}
 			break;
 		case T_NestLoop:
-		case T_NestLoopVLE:
 		case T_MergeJoin:
 		case T_HashJoin:
 			{
@@ -1589,9 +1590,6 @@ ExplainNode(PlanState *planstate, List *ancestors,
 					case JOIN_CYPHER_DELETE:
 						jointype = "CypherDelete";
 						break;
-					case JOIN_VLE:
-						jointype = "VLE";
-						break;
 					default:
 						jointype = "???";
 						break;
@@ -1602,18 +1600,7 @@ ExplainNode(PlanState *planstate, List *ancestors,
 					 * For historical reasons, the join type is interpolated
 					 * into the node type name...
 					 */
-					if (((Join *) plan)->jointype == JOIN_VLE)
-					{
-						NestLoopVLE *nlvPlan = (NestLoopVLE *) plan;
-
-						appendStringInfo(es->str, " %s [%d..",
-										 jointype, nlvPlan->minHops);
-						if (nlvPlan->maxHops != -1)
-							appendStringInfo(es->str, "%d]", nlvPlan->maxHops);
-						else
-							appendStringInfo(es->str, "]");
-					}
-					else if (((Join *) plan)->jointype != JOIN_INNER)
+					if (((Join *) plan)->jointype != JOIN_INNER)
 					{
 						appendStringInfo(es->str, " %s Join", jointype);
 					}
@@ -1652,6 +1639,21 @@ ExplainNode(PlanState *planstate, List *ancestors,
 					appendStringInfo(es->str, " %s", setopcmd);
 				else
 					ExplainPropertyText("Command", setopcmd, es);
+			}
+			break;
+		case T_GraphVLE:
+			{
+				GraphVLE   *graph_vle = (GraphVLE *) plan;
+				CypherRel  *cypher_rel = (CypherRel *) graph_vle->vle_rel;
+				A_Indices  *rel_indices = (A_Indices *) cypher_rel->varlen;
+
+				appendStringInfo(es->str, " [%d..",
+								 ((A_Const *) rel_indices->lidx)->val.val.ival);
+				if (rel_indices->uidx != NULL)
+					appendStringInfo(es->str, "%d]",
+									 ((A_Const *) rel_indices->uidx)->val.val.ival);
+				else
+					appendStringInfo(es->str, "]");
 			}
 			break;
 		default:
@@ -2033,17 +2035,6 @@ ExplainNode(PlanState *planstate, List *ancestors,
 				show_instrumentation_count("Rows Removed by Filter", 2,
 										   planstate, es);
 			break;
-		case T_NestLoopVLE:
-			show_upper_qual(((NestLoopVLE *) plan)->nl.join.joinqual,
-							"Join Filter", planstate, ancestors, es);
-			if (((NestLoopVLE *) plan)->nl.join.joinqual)
-				show_instrumentation_count("Rows Removed by Join Filter", 1,
-										   planstate, es);
-			show_upper_qual(plan->qual, "Filter", planstate, ancestors, es);
-			if (plan->qual)
-				show_instrumentation_count("Rows Removed by Filter", 2,
-										   planstate, es);
-			break;
 		case T_MergeJoin:
 			show_upper_qual(((MergeJoin *) plan)->mergeclauses,
 							"Merge Cond", planstate, ancestors, es);
@@ -2284,6 +2275,9 @@ ExplainNode(PlanState *planstate, List *ancestors,
 			ExplainNode(((ModifyGraphState *) planstate)->subplan, ancestors,
 						"Subquery", NULL, es);
 			break;
+		case T_GraphVLE:
+			ExplainNode(((GraphVLEState *) planstate)->subplan, ancestors,
+						"Subquery", NULL, es);
 		default:
 			break;
 	}

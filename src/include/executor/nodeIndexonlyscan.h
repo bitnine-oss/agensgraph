@@ -22,8 +22,6 @@ extern void ExecEndIndexOnlyScan(IndexOnlyScanState *node);
 extern void ExecIndexOnlyMarkPos(IndexOnlyScanState *node);
 extern void ExecIndexOnlyRestrPos(IndexOnlyScanState *node);
 extern void ExecReScanIndexOnlyScan(IndexOnlyScanState *node);
-extern void ExecNextIndexOnlyScanContext(IndexOnlyScanState *node);
-extern void ExecPrevIndexOnlyScanContext(IndexOnlyScanState *node);
 
 /* Support functions for parallel index-only scans */
 extern void ExecIndexOnlyScanEstimate(IndexOnlyScanState *node,

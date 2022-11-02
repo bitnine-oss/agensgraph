@@ -360,4 +360,7 @@ extern ModifyGraphPath *create_modifygraph_path(PlannerInfo *root,
 												List *resultRelations,
 												int epqParam);
 
+extern GraphVLEPath *create_graph_vle_path(PlannerInfo *root,
+										   RelOptInfo *rel, Path *subpath, CypherRel *vle_rel);
+
 #endif							/* PATHNODE_H */

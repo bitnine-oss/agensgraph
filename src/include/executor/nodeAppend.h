@@ -27,8 +27,4 @@ extern void ExecAppendInitializeWorker(AppendState *node, ParallelWorkerContext 
 
 extern void ExecAsyncAppendResponse(AsyncRequest *areq);
 
-/* AgensGraph VLE */
-extern void ExecNextAppendContext(AppendState *node);
-extern void ExecPrevAppendContext(AppendState *node);
-
 #endif							/* NODEAPPEND_H */

@@ -748,6 +748,7 @@ typedef struct TupleHashEntryData
 #define SH_SCOPE extern
 #define SH_DECLARE
 #include "lib/simplehash.h"
+#include "utils/jsonb.h"
 
 typedef struct TupleHashTableData
 {
@@ -1288,9 +1289,6 @@ struct AppendState
 	Bitmapset  *as_valid_subplans;
 	Bitmapset  *as_valid_asyncplans;	/* valid asynchronous plans indexes */
 	bool		(*choose_next_subplan) (AppendState *);
-
-	dlist_head	ctxs_head;		/* list of AppendContext */
-	dlist_node *prev_ctx_node;
 };
 
 /* ----------------
@@ -1405,9 +1403,6 @@ typedef struct SeqScanState
 {
 	ScanState	ss;				/* its first field is NodeTag */
 	Size		pscan_len;		/* size of parallel heap scan descriptor */
-
-	dlist_head	ctxs_head;		/* list of SeqScanContext */
-	dlist_node *prev_ctx_node;
 } SeqScanState;
 
 /* ----------------
@@ -1495,9 +1490,6 @@ typedef struct IndexScanState
 	Relation	iss_RelationDesc;
 	struct IndexScanDescData *iss_ScanDesc;
 
-	dlist_head	ctxs_head;		/* list of IndexScanContext */
-	dlist_node *prev_ctx_node;
-
 	/* These are needed for re-checking ORDER BY expr ordering */
 	pairingheap *iss_ReorderQueue;
 	bool		iss_ReachedEnd;
@@ -1508,13 +1500,6 @@ typedef struct IndexScanState
 	int16	   *iss_OrderByTypLens;
 	Size		iss_PscanLen;
 } IndexScanState;
-
-typedef struct IndexScanContext
-{
-	dlist_node	list;
-	Bitmapset  *chgParam;
-	struct IndexScanDescData *scanDesc;
-} IndexScanContext;
 
 /* ----------------
  *	 IndexOnlyScanState information
@@ -1552,9 +1537,6 @@ typedef struct IndexOnlyScanState
 	TupleTableSlot *ioss_TableSlot;
 	Buffer		ioss_VMBuffer;
 	Size		ioss_PscanLen;
-
-	dlist_head	ctxs_head;		/* list of IndexScanContext */
-	dlist_node *prev_ctx_node;
 } IndexOnlyScanState;
 
 /* ----------------
@@ -1955,22 +1937,7 @@ typedef struct NestLoopState
 	bool		nl_NeedNewOuter;
 	bool		nl_MatchedOuter;
 	TupleTableSlot *nl_NullInnerTupleSlot;
-
-	dlist_head	ctxs_head;		/* list of NestLoopContext */
-	dlist_node *prev_ctx_node;
 } NestLoopState;
-
-typedef struct NestLoopVLEState
-{
-	NestLoopState nls;
-	int			curhops;
-	ArrayBuildState *eids;		/* edge IDs for the current result row */
-	ArrayBuildState *edges;		/* edges for the current result row */
-	ArrayBuildState *vertices;	/* vertices for the current result row */
-	dlist_head	ctxs_head;		/* list of NestLoopVLEContext */
-	dlist_node *prev_ctx_node;
-} NestLoopVLEState;
-
 
 /* ----------------
  *	 MergeJoinState information
@@ -2808,5 +2775,38 @@ typedef struct DijkstraState
 	HeapTuple	vertexRow;		/* pointer to hold reusable vertex row */
 	TupleDesc	tupleDesc;		/* pointer to vertex row's tuple descr */
 } DijkstraState;
+
+typedef struct GraphVLEState
+{
+	PlanState	ps;
+	TupleTableSlot *slot;
+
+	/* For Subplan tuples */
+	PlanState  *subplan;
+	TupleTableSlot *subplan_tuple;
+	bool		need_new_sp_tuple;
+
+	/* target edges. */
+	ResultRelInfo *target_rel_infos;
+	TupleTableSlot *current_scan_tuple;
+	int			num_target_rel_info;
+
+	/* Results */
+	Graphid		first_start_id;
+	Graphid		last_end_id;
+	ArrayBuildState *edge_ids;
+	ArrayBuildState *edges;
+	ArrayBuildState *vertices;
+
+	/* About VLE Path. */
+	int			minimum_output_depth;
+	int			maximum_output_depth;
+	uint32		cypher_rel_direction;
+
+	/* Scanning depth infos */
+	List	   *table_scan_desc_list;	/* List for saving scan descriptions. */
+	bool		use_vertex_output;
+	Jsonb	   *jsonb_filter;
+} GraphVLEState;
 
 #endif							/* EXECNODES_H */
