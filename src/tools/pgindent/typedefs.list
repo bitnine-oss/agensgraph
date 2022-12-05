@@ -3850,7 +3850,6 @@ find_agg_context
 AgStat_SubXactStatus
 LabelOutData
 GraphpathOutData
-EdgeVertexKind
 LabelsOutData
 GraphVLEPath
 GraphVLE
