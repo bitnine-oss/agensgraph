@@ -183,6 +183,51 @@ drop cascades to vlabel v_type
 drop cascades to vlabel v_sub
 drop cascades to elabel e_user_title
 drop cascades to elabel e_title_type
+-- #589 ( Cypher read clauses cannot follow update clauses )
+CREATE GRAPH cypher_dml2;
+SET GRAPH_PATH to cypher_dml2;
+CREATE VLABEL main;
+CREATE ELABEL main2;
+CREATE (n:another {id: 593}) RETURN n.id;
+ id  
+-----
+ 593
+(1 row)
+
+MERGE (n:main {id: 593})
+ON CREATE SET n.id = 593
+WITH n
+MATCH (g: another)
+WHERE g.id = 593
+MERGE (g)-[:main2]->(n);
+MATCH ()-[e:main2]-() RETURN e;
+           e           
+-----------------------
+ main2[4.1][5.1,3.1]{}
+ main2[4.1][5.1,3.1]{}
+(2 rows)
+
+MATCH (g: another) RETURN g;
+            g            
+-------------------------
+ another[5.1]{"id": 593}
+(1 row)
+
+MATCH (g: main) RETURN g;
+          g           
+----------------------
+ main[3.1]{"id": 593}
+(1 row)
+
+DROP GRAPH cypher_dml2 CASCADE;
+NOTICE:  drop cascades to 6 other objects
+DETAIL:  drop cascades to sequence cypher_dml2.ag_label_seq
+drop cascades to vlabel ag_vertex
+drop cascades to elabel ag_edge
+drop cascades to vlabel main
+drop cascades to elabel main2
+drop cascades to vlabel another
+-- fix: Includes necessary JOINs of vertices (#599)
 CREATE GRAPH cypher_dml2;
 SET GRAPH_PATH to cypher_dml2;
 CREATE ({id: 1})-[:e1]->({id: 2})-[:e1]->({id: 3})-[:e1]->({id: 4})

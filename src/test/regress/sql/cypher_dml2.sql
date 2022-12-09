@@ -110,6 +110,29 @@ SELECT * FROM _trigger_history;
 
 DROP GRAPH cypher_dml2 CASCADE;
 
+-- #589 ( Cypher read clauses cannot follow update clauses )
+CREATE GRAPH cypher_dml2;
+SET GRAPH_PATH to cypher_dml2;
+
+CREATE VLABEL main;
+CREATE ELABEL main2;
+
+CREATE (n:another {id: 593}) RETURN n.id;
+
+MERGE (n:main {id: 593})
+ON CREATE SET n.id = 593
+WITH n
+MATCH (g: another)
+WHERE g.id = 593
+MERGE (g)-[:main2]->(n);
+
+MATCH ()-[e:main2]-() RETURN e;
+MATCH (g: another) RETURN g;
+MATCH (g: main) RETURN g;
+
+DROP GRAPH cypher_dml2 CASCADE;
+
+-- fix: Includes necessary JOINs of vertices (#599)
 CREATE GRAPH cypher_dml2;
 SET GRAPH_PATH to cypher_dml2;
 
