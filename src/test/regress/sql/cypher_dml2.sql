@@ -15,10 +15,26 @@ RETURN max(col);
 
 CREATE ELABEL e1;
 
+CREATE (a: v1 {id: 1})
+CREATE (b: v1 {id: 2})
+CREATE (a)-[r:e1 {text: 'text'}]->(b)
+RETURN r;
+
+CREATE (a: v1 {id: 3})
+CREATE (b: v1 {id: 4})
+CREATE (a)-[r:e1 {id: 5, text: 'text'}]->(b)
+RETURN r;
+
 -- AGV2-29, Predicates functions want jsonb, not list
-MATCH p=(n1)-[r:e1*2]->(n2)
+MATCH p=(n1)-[r:e1*1]->(n2)
 WHERE all(x in r where x.id is null)
-RETURN count(p);
+RETURN count(p), p;
+
+MATCH p=(n1)-[r:e1*1]->(n2)
+WHERE all(x in r where x.text is not null)
+RETURN count(p), p;
+
+MATCH (n) DETACH DELETE n;
 
 -- AGV2-26, head/tail/last returns array
 CREATE(:v_user{name:'userA'});

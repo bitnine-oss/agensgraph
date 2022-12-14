@@ -17,6 +17,7 @@
 #include "executor/nodeAgg.h"
 #include "nodes/execnodes.h"
 #include "utils/jsonb.h"
+#include "utils/arrayaccess.h"
 
 /* forward references to avoid circularity */
 struct ExprEvalStep;
@@ -713,6 +714,14 @@ typedef struct ExprEvalStep
 			Datum	   *listvalue;
 			bool	   *listnull;
 			JsonbIterator **listiter;
+			array_iter *array_iter;
+			int 	   *array_size;
+			int		   *array_position;
+			Oid 	   *array_typid;
+			int16	   *typlen;
+			bool	   *typbyval;
+			char	   *typalign;
+			bool		is_array_type;
 		}			cypherlistcomp_iter;
 
 		struct
