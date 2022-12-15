@@ -7522,9 +7522,10 @@ COPY postgres_log FROM '/full/path/to/logfile.csv' WITH csv;
         executing command of each session, along with its identifier and the
         time when that command began execution. This parameter is on by
         default. Note that even when enabled, this information is not
-        visible to all users, only to superusers and the user owning
-        the session being reported on, so it should not represent a
-        security risk.
+        visible to all users, only to superusers, roles with privileges of the
+        <literal>pg_read_all_stats</literal> role and the user owning the
+        sessions being reported on (including sessions belonging to a role they
+        have the privileges of), so it should not represent a security risk.
         Only superusers can change this setting.
        </para>
       </listitem>
@@ -7680,9 +7681,12 @@ COPY postgres_log FROM '/full/path/to/logfile.csv' WITH csv;
         method is not acceptable.  In this case, in-core computation
         must be always disabled.
         Valid values are <literal>off</literal> (always disabled),
-        <literal>on</literal> (always enabled) and <literal>auto</literal>,
+        <literal>on</literal> (always enabled), <literal>auto</literal>,
         which lets modules such as <xref linkend="pgstatstatements"/>
-        automatically enable it.
+        automatically enable it, and <literal>regress</literal> which
+        has the same effect as <literal>auto</literal>, except that the
+        query identifier is not shown in the <literal>EXPLAIN</literal> output
+        in order to facilitate automated regression testing.
         The default is <literal>auto</literal>.
        </para>
        <note>

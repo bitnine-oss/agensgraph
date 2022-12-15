@@ -16,15 +16,11 @@ if ($Config{osname} eq 'MSWin32')
 }
 else
 {
-	plan tests => 9;
+	plan tests => 11;
 }
 
 
-# To avoid hanging while expecting some specific input from a psql
-# instance being driven by us, add a timeout high enough that it
-# should never trigger even on very slow machines, unless something
-# is really wrong.
-my $psql_timeout = IPC::Run::timer(60);
+my $psql_timeout = IPC::Run::timer($TestLib::timeout_default);
 
 my $node = get_new_node('node_crash');
 $node->init();
@@ -62,7 +58,7 @@ my $killme = IPC::Run::start(
 $killme_stdin .= q[
 SELECT pg_backend_pid();
 ];
-ok(pump_until($killme, \$killme_stdout, qr/[[:digit:]]+[\r\n]$/m),
+ok(pump_until($killme, $psql_timeout, \$killme_stdout, qr/[[:digit:]]+[\r\n]$/m),
 	'acquired pid for SIGKILL');
 my $pid = $killme_stdout;
 chomp($pid);
@@ -91,7 +87,7 @@ BEGIN;
 INSERT INTO tab_crash (a) VALUES(1);
 SELECT $$insert-tuple-to-lock-next-insert$$;
 ];
-pump_until($killme2, \$killme_stdout2, qr/insert-tuple-to-lock-next-insert/m);
+pump_until($killme2, $psql_timeout, \$killme_stdout2, qr/insert-tuple-to-lock-next-insert/m);
 $killme_stdout2 = '';
 $killme_stderr2 = '';
 
@@ -104,7 +100,7 @@ BEGIN;
 SELECT $$in-progress-before-sigkill$$;
 INSERT INTO tab_crash (a) SELECT i FROM generate_series(1, 5000) s(i);
 ];
-ok(pump_until($killme, \$killme_stdout, qr/in-progress-before-sigkill/m),
+ok(pump_until($killme, $psql_timeout, \$killme_stdout, qr/in-progress-before-sigkill/m),
 	'insert in-progress-before-sigkill');
 $killme_stdout = '';
 $killme_stderr = '';
@@ -126,7 +122,7 @@ END; $c$;
 SELECT $$insert-tuple-lock-waiting$$;
 ];
 
-pump_until($killme2, \$killme_stdout2, qr/insert-tuple-lock-waiting/m);
+pump_until($killme2, $psql_timeout, \$killme_stdout2, qr/insert-tuple-lock-waiting/m);
 $killme_stdout2 = '';
 $killme_stderr2 = '';
 
@@ -134,11 +130,23 @@ $killme_stderr2 = '';
 my $ret = TestLib::system_log('pg_ctl', 'kill', 'KILL', $pid);
 is($ret, 0, 'killed process with KILL');
 
-# Close psql session
+# Close that psql session
 $killme->finish;
+
+# Wait till the other session reports failure, ensuring that the postmaster
+# has noticed its dead child and begun a restart cycle.
+$killme_stdin2 .= qq[
+SELECT pg_sleep($TestLib::timeout_default);
+];
+ok( pump_until(
+		$killme2,
+		\$killme_stderr2,
+		qr/WARNING:  terminating connection because of crash of another server process|server closed the connection unexpectedly|connection to server was lost|could not send data to server/m
+	),
+	"second psql session died successfully after SIGKILL");
 $killme2->finish;
 
-# Wait till server restarts
+# Wait till server finishes restarting
 $node->poll_query_until('postgres', undef, '');
 
 # Check for temporary files
@@ -163,7 +171,7 @@ $killme->run();
 $killme_stdin .= q[
 SELECT pg_backend_pid();
 ];
-ok(pump_until($killme, \$killme_stdout, qr/[[:digit:]]+[\r\n]$/m),
+ok(pump_until($killme, $psql_timeout, \$killme_stdout, qr/[[:digit:]]+[\r\n]$/m),
 	'acquired pid for SIGKILL');
 $pid = $killme_stdout;
 chomp($pid);
@@ -180,7 +188,7 @@ BEGIN;
 INSERT INTO tab_crash (a) VALUES(1);
 SELECT $$insert-tuple-to-lock-next-insert$$;
 ];
-pump_until($killme2, \$killme_stdout2, qr/insert-tuple-to-lock-next-insert/m);
+pump_until($killme2, $psql_timeout, \$killme_stdout2, qr/insert-tuple-to-lock-next-insert/m);
 $killme_stdout2 = '';
 $killme_stderr2 = '';
 
@@ -193,7 +201,7 @@ BEGIN;
 SELECT $$in-progress-before-sigkill$$;
 INSERT INTO tab_crash (a) SELECT i FROM generate_series(1, 5000) s(i);
 ];
-ok(pump_until($killme, \$killme_stdout, qr/in-progress-before-sigkill/m),
+ok(pump_until($killme, $psql_timeout, \$killme_stdout, qr/in-progress-before-sigkill/m),
 	'insert in-progress-before-sigkill');
 $killme_stdout = '';
 $killme_stderr = '';
@@ -215,7 +223,7 @@ END; $c$;
 SELECT $$insert-tuple-lock-waiting$$;
 ];
 
-pump_until($killme2, \$killme_stdout2, qr/insert-tuple-lock-waiting/m);
+pump_until($killme2, $psql_timeout, \$killme_stdout2, qr/insert-tuple-lock-waiting/m);
 $killme_stdout2 = '';
 $killme_stderr2 = '';
 
@@ -223,11 +231,23 @@ $killme_stderr2 = '';
 $ret = TestLib::system_log('pg_ctl', 'kill', 'KILL', $pid);
 is($ret, 0, 'killed process with KILL');
 
-# Close psql session
+# Close that psql session
 $killme->finish;
+
+# Wait till the other session reports failure, ensuring that the postmaster
+# has noticed its dead child and begun a restart cycle.
+$killme_stdin2 .= qq[
+SELECT pg_sleep($TestLib::timeout_default);
+];
+ok( pump_until(
+		$killme2,
+		\$killme_stderr2,
+		qr/WARNING:  terminating connection because of crash of another server process|server closed the connection unexpectedly|connection to server was lost|could not send data to server/m
+	),
+	"second psql session died successfully after SIGKILL");
 $killme2->finish;
 
-# Wait till server restarts
+# Wait till server finishes restarting
 $node->poll_query_until('postgres', undef, '');
 
 # Check for temporary files -- should be there
@@ -246,32 +266,3 @@ is( $node->safe_psql(
 	'temporary file was removed');
 
 $node->stop();
-
-# Pump until string is matched, or timeout occurs
-sub pump_until
-{
-	my ($proc, $stream, $untl) = @_;
-	$proc->pump_nb();
-	while (1)
-	{
-		last if $$stream =~ /$untl/;
-		if ($psql_timeout->is_expired)
-		{
-			diag("aborting wait: program timed out");
-			diag("stream contents: >>", $$stream, "<<");
-			diag("pattern searched for: ", $untl);
-
-			return 0;
-		}
-		if (not $proc->pumpable())
-		{
-			diag("aborting wait: program died");
-			diag("stream contents: >>", $$stream, "<<");
-			diag("pattern searched for: ", $untl);
-
-			return 0;
-		}
-		$proc->pump();
-	}
-	return 1;
-}

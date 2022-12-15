@@ -649,6 +649,9 @@
 /* Define to 1 if you have the <sys/shm.h> header file. */
 #undef HAVE_SYS_SHM_H
 
+/* Define to 1 if you have the <sys/signalfd.h> header file. */
+#undef HAVE_SYS_SIGNALFD_H
+
 /* Define to 1 if you have the <sys/sockio.h> header file. */
 #undef HAVE_SYS_SOCKIO_H
 
@@ -750,6 +753,9 @@
 
 /* Define to 1 if your compiler understands __builtin_ctz. */
 #undef HAVE__BUILTIN_CTZ
+
+/* Define to 1 if your compiler understands __builtin_frame_address. */
+#undef HAVE__BUILTIN_FRAME_ADDRESS
 
 /* Define to 1 if your compiler understands __builtin_$op_overflow. */
 #undef HAVE__BUILTIN_OP_OVERFLOW

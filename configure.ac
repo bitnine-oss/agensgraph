@@ -17,7 +17,7 @@ dnl Read the Autoconf manual for details.
 dnl
 m4_pattern_forbid(^PGAC_)dnl to catch undefined macros
 
-AC_INIT([PostgreSQL], [14.2], [pgsql-bugs@lists.postgresql.org], [], [https://www.postgresql.org/])
+AC_INIT([PostgreSQL], [14.4], [pgsql-bugs@lists.postgresql.org], [], [https://www.postgresql.org/])
 
 m4_if(m4_defn([m4_PACKAGE_VERSION]), [2.69], [], [m4_fatal([Autoconf version 2.69 is required.
 Untested combinations of 'autoconf' and PostgreSQL versions are not
@@ -1209,7 +1209,10 @@ AC_SUBST(PTHREAD_LIBS)
 
 AC_CHECK_LIB(m, main)
 AC_SEARCH_LIBS(setproctitle, util)
-AC_SEARCH_LIBS(dlopen, dl)
+# gcc/clang's sanitizer helper library provides dlopen but not dlsym, thus
+# when enabling asan the dlopen check doesn't notice that -ldl is actually
+# required. Just checking for dlsym() ought to suffice.
+AC_SEARCH_LIBS(dlsym, dl)
 AC_SEARCH_LIBS(socket, [socket ws2_32])
 AC_SEARCH_LIBS(shl_load, dld)
 AC_SEARCH_LIBS(getopt_long, [getopt gnugetopt])
@@ -1340,7 +1343,14 @@ if test "$with_ldap" = yes ; then
     LDAP_LIBS_BE="-lldap $EXTRA_LDAP_LIBS"
     # This test is carried out against libldap.
     AC_CHECK_FUNCS([ldap_initialize])
-    if test "$enable_thread_safety" = yes; then
+    # The separate ldap_r library only exists in OpenLDAP < 2.5, and if we
+    # have 2.5 or later, we shouldn't even probe for ldap_r (we might find a
+    # library from a separate OpenLDAP installation).  The most reliable
+    # way to check that is to check for a function introduced in 2.5.
+    AC_CHECK_FUNC([ldap_verify_credentials],
+		  [thread_safe_libldap=yes],
+		  [thread_safe_libldap=no])
+    if test "$enable_thread_safety" = yes -a "$thread_safe_libldap" = no; then
       # Use ldap_r for FE if available, else assume ldap is thread-safe.
       # On some platforms ldap_r fails to link without PTHREAD_LIBS.
       LIBS="$_LIBS"
@@ -1415,6 +1425,7 @@ AC_CHECK_HEADERS(m4_normalize([
 	sys/select.h
 	sys/sem.h
 	sys/shm.h
+	sys/signalfd.h
 	sys/sockio.h
 	sys/tas.h
 	sys/uio.h
@@ -1777,6 +1788,9 @@ PGAC_CHECK_BUILTIN_FUNC([__builtin_bswap64], [long int x])
 PGAC_CHECK_BUILTIN_FUNC([__builtin_clz], [unsigned int x])
 PGAC_CHECK_BUILTIN_FUNC([__builtin_ctz], [unsigned int x])
 PGAC_CHECK_BUILTIN_FUNC([__builtin_popcount], [unsigned int x])
+# __builtin_frame_address may draw a diagnostic for non-constant argument,
+# so it needs a different test function.
+PGAC_CHECK_BUILTIN_FUNC_PTR([__builtin_frame_address], [0])
 
 # We require 64-bit fseeko() to be available, but run this check anyway
 # in case it finds that _LARGEFILE_SOURCE has to be #define'd for that.

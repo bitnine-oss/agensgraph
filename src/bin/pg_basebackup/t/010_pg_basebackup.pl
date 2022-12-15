@@ -7,7 +7,6 @@ use Cwd;
 use Config;
 use File::Basename qw(basename dirname);
 use File::Path qw(rmtree);
-use Fcntl qw(:seek);
 use PostgresNode;
 use TestLib;
 use Test::More tests => 110;
@@ -40,7 +39,7 @@ if (open my $badchars, '>>', "$tempdir/pgdata/FOO\xe0\xe0\xe0BAR")
 }
 
 $node->set_replication_conf();
-system_or_bail 'pg_ctl', '-D', $pgdata, 'reload';
+$node->reload;
 
 $node->command_fails(
 	[ 'pg_basebackup', '-D', "$tempdir/backup" ],
@@ -239,13 +238,11 @@ $node->start;
 # for the tablespace directories, which hopefully won't run afoul of
 # the 99 character length limit.
 my $sys_tempdir = TestLib::tempdir_short;
-my $real_sys_tempdir = TestLib::perl2host($sys_tempdir) . "/tempdir";
-my $shorter_tempdir =  $sys_tempdir . "/tempdir";
-dir_symlink "$tempdir", $shorter_tempdir;
+my $real_sys_tempdir = "$sys_tempdir/tempdir";
+dir_symlink "$tempdir", $real_sys_tempdir;
 
 mkdir "$tempdir/tblspc1";
 my $realTsDir    = "$real_sys_tempdir/tblspc1";
-my $real_tempdir = TestLib::perl2host($tempdir);
 $node->safe_psql('postgres',
 	"CREATE TABLESPACE tblspc1 LOCATION '$realTsDir';");
 $node->safe_psql('postgres',
@@ -324,7 +321,7 @@ my $tblSpc1Id = basename(
 foreach my $filename (@tempRelationFiles)
 {
 	append_to_file(
-		"$shorter_tempdir/tblspc1/$tblSpc1Id/$postgresOid/$filename",
+		"$real_sys_tempdir/tblspc1/$tblSpc1Id/$postgresOid/$filename",
 		'TEMP_RELATION');
 }
 
@@ -334,9 +331,9 @@ $node->command_fails(
 
 $node->command_ok(
 	[
-		'pg_basebackup',    '-D',
-		"$tempdir/backup1", '-Fp',
-		"-T$realTsDir=$real_tempdir/tbackup/tblspc1"
+		'pg_basebackup', '-D',
+		"$tempdir/backup1",  '-Fp',
+		"-T$realTsDir=$tempdir/tbackup/tblspc1",
 	],
 	'plain format with tablespaces succeeds with tablespace mapping');
 ok(-d "$tempdir/tbackup/tblspc1", 'tablespace was relocated');
@@ -384,7 +381,7 @@ foreach my $filename (@tempRelationFiles)
 
 	# Also remove temp relation files or tablespace drop will fail.
 	my $filepath =
-	  "$shorter_tempdir/tblspc1/$tblSpc1Id/$postgresOid/$filename";
+	  "$real_sys_tempdir/tblspc1/$tblSpc1Id/$postgresOid/$filename";
 
 	unlink($filepath)
 	  or BAIL_OUT("unable to unlink $filepath");
@@ -404,9 +401,9 @@ $node->safe_psql('postgres',
 $realTsDir =~ s/=/\\=/;
 $node->command_ok(
 	[
-		'pg_basebackup',    '-D',
-		"$tempdir/backup3", '-Fp',
-		"-T$realTsDir=$real_tempdir/tbackup/tbl\\=spc2"
+		'pg_basebackup', '-D',
+		"$tempdir/backup3",  '-Fp',
+		"-T$realTsDir=$tempdir/tbackup/tbl\\=spc2",
 	],
 	'mapping tablespace with = sign in path');
 ok(-d "$tempdir/tbackup/tbl=spc2", 'tablespace with = sign was relocated');
@@ -557,17 +554,13 @@ my $file_corrupt2 = $node->safe_psql('postgres',
 	q{CREATE TABLE corrupt2 AS SELECT b FROM generate_series(1,2) AS b; ALTER TABLE corrupt2 SET (autovacuum_enabled=false); SELECT pg_relation_filepath('corrupt2')}
 );
 
-# set page header and block sizes
-my $pageheader_size = 24;
+# get block size for corruption steps
 my $block_size = $node->safe_psql('postgres', 'SHOW block_size;');
 
 # induce corruption
-system_or_bail 'pg_ctl', '-D', $pgdata, 'stop';
-open $file, '+<', "$pgdata/$file_corrupt1";
-seek($file, $pageheader_size, SEEK_SET);
-syswrite($file, "\0\0\0\0\0\0\0\0\0");
-close $file;
-system_or_bail 'pg_ctl', '-D', $pgdata, 'start';
+$node->stop;
+$node->corrupt_page_checksum($file_corrupt1, 0);
+$node->start;
 
 $node->command_checks_all(
 	[ 'pg_basebackup', '-D', "$tempdir/backup_corrupt" ],
@@ -578,16 +571,12 @@ $node->command_checks_all(
 rmtree("$tempdir/backup_corrupt");
 
 # induce further corruption in 5 more blocks
-system_or_bail 'pg_ctl', '-D', $pgdata, 'stop';
-open $file, '+<', "$pgdata/$file_corrupt1";
+$node->stop;
 for my $i (1 .. 5)
 {
-	my $offset = $pageheader_size + $i * $block_size;
-	seek($file, $offset, SEEK_SET);
-	syswrite($file, "\0\0\0\0\0\0\0\0\0");
+	$node->corrupt_page_checksum($file_corrupt1, $i * $block_size);
 }
-close $file;
-system_or_bail 'pg_ctl', '-D', $pgdata, 'start';
+$node->start;
 
 $node->command_checks_all(
 	[ 'pg_basebackup', '-D', "$tempdir/backup_corrupt2" ],
@@ -598,12 +587,9 @@ $node->command_checks_all(
 rmtree("$tempdir/backup_corrupt2");
 
 # induce corruption in a second file
-system_or_bail 'pg_ctl', '-D', $pgdata, 'stop';
-open $file, '+<', "$pgdata/$file_corrupt2";
-seek($file, $pageheader_size, SEEK_SET);
-syswrite($file, "\0\0\0\0\0\0\0\0\0");
-close $file;
-system_or_bail 'pg_ctl', '-D', $pgdata, 'start';
+$node->stop;
+$node->corrupt_page_checksum($file_corrupt2, 0);
+$node->start;
 
 $node->command_checks_all(
 	[ 'pg_basebackup', '-D', "$tempdir/backup_corrupt3" ],

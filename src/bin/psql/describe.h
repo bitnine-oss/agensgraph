@@ -8,6 +8,12 @@
 #ifndef DESCRIBE_H
 #define DESCRIBE_H
 
+extern bool validateSQLNamePattern(PQExpBuffer buf, const char *pattern,
+								   bool have_where, bool force_escape,
+								   const char *schemavar, const char *namevar,
+								   const char *altnamevar,
+								   const char *visibilityrule,
+								   bool *added_clause, int maxparts);
 
 /* \da */
 extern bool describeAggregates(const char *pattern, bool verbose, bool showSystem);
