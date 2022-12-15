@@ -3144,16 +3144,6 @@ final_cost_nestloop(PlannerInfo *root, NestPath *path,
 				run_cost += outer_unmatched_rows * inner_rescan_run_cost;
 		}
 	}
-	else if (path->jointype == JOIN_VLE)
-	{
-		SpecialJoinInfo *sjinfo = extra->sjinfo;
-		int			base = (sjinfo->min_hops > 0) ? 1 : 0;
-		int			max_hops = (sjinfo->max_hops == -1) ? 10 : sjinfo->max_hops;
-		int			inner_loop_cnt = max_hops - base;
-
-		ntuples = outer_path_rows +
-			outer_path_rows * inner_path_rows * inner_loop_cnt;
-	}
 	else
 	{
 		/* Normal-case source costs were included in preliminary estimate */
@@ -5207,15 +5197,6 @@ calc_joinrel_size_estimate(PlannerInfo *root,
 		case JOIN_INNER:
 			nrows = outer_rows * inner_rows * fkselec * jselec;
 			/* pselec not used */
-			break;
-		case JOIN_VLE:
-			{
-				int			base = (sjinfo->min_hops > 0) ? 1 : 0;
-				int			max_hops = (sjinfo->max_hops == -1) ? 10 : sjinfo->max_hops;
-				int			inner_loop_cnt = max_hops - base;
-
-				nrows = outer_rows + outer_rows * inner_rows * inner_loop_cnt;
-			}
 			break;
 		case JOIN_LEFT:
 		case JOIN_CYPHER_MERGE:

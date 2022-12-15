@@ -33,7 +33,6 @@
 #include "access/relscan.h"
 #include "access/tableam.h"
 #include "catalog/pg_am.h"
-#include "catalog/pg_opfamily.h"
 #include "executor/execdebug.h"
 #include "executor/nodeIndexscan.h"
 #include "lib/pairingheap.h"
@@ -70,8 +69,6 @@ static void reorderqueue_push(IndexScanState *node, TupleTableSlot *slot,
 							  Datum *orderbyvals, bool *orderbynulls);
 static HeapTuple reorderqueue_pop(IndexScanState *node);
 
-/* for agensgraph */
-static IndexScanContext *getCurrentContext(IndexScanState *node, bool create);
 
 /* ----------------------------------------------------------------
  *		IndexNext
@@ -595,102 +592,6 @@ ExecReScanIndexScan(IndexScanState *node)
 	ExecScanReScan(&node->ss);
 }
 
-void
-ExecNextIndexScanContext(IndexScanState *node)
-{
-	IndexScanContext *ctx;
-
-	/* store the current context */
-	ctx = getCurrentContext(node, true);
-	ctx->chgParam = node->ss.ps.chgParam;
-	ctx->scanDesc = node->iss_ScanDesc;
-
-	/* make the current context previous context */
-	node->prev_ctx_node = &ctx->list;
-
-	ctx = getCurrentContext(node, false);
-	if (ctx == NULL)
-	{
-		/* if there is no current context, initialize the current scan */
-		node->ss.ps.chgParam = NULL;
-		node->iss_ScanDesc = NULL;
-	}
-	else
-	{
-		/* if there is the current context already, use it */
-
-		Assert(ctx->chgParam == NULL);
-		node->ss.ps.chgParam = NULL;
-
-		/* ctx->scanDesc can be NULL if ss_skipLabelScan */
-		node->iss_ScanDesc = ctx->scanDesc;
-	}
-}
-
-void
-ExecPrevIndexScanContext(IndexScanState *node)
-{
-	IndexScanContext *ctx;
-	dlist_node *ctx_node;
-
-	/*
-	 * Store the current iss_ScanDesc. It will be reused when the current scan
-	 * is re-scanned next time.
-	 */
-	ctx = getCurrentContext(node, true);
-
-	/* if chgParam is not NULL, free it now */
-	if (node->ss.ps.chgParam != NULL)
-	{
-		bms_free(node->ss.ps.chgParam);
-		node->ss.ps.chgParam = NULL;
-	}
-
-	ctx->chgParam = NULL;
-	ctx->scanDesc = node->iss_ScanDesc;
-
-	/* make the previous scan current scan */
-	ctx_node = node->prev_ctx_node;
-	Assert(ctx_node != &node->ctxs_head.head);
-
-	if (dlist_has_prev(&node->ctxs_head, ctx_node))
-		node->prev_ctx_node = dlist_prev_node(&node->ctxs_head, ctx_node);
-	else
-		node->prev_ctx_node = &node->ctxs_head.head;
-
-	/* restore */
-	ctx = dlist_container(IndexScanContext, list, ctx_node);
-	node->ss.ps.chgParam = ctx->chgParam;
-	node->iss_ScanDesc = ctx->scanDesc;
-}
-
-static IndexScanContext *
-getCurrentContext(IndexScanState *node, bool create)
-{
-	IndexScanContext *ctx;
-
-	if (dlist_has_next(&node->ctxs_head, node->prev_ctx_node))
-	{
-		dlist_node *ctx_node;
-
-		ctx_node = dlist_next_node(&node->ctxs_head, node->prev_ctx_node);
-		ctx = dlist_container(IndexScanContext, list, ctx_node);
-	}
-	else if (create)
-	{
-		ctx = palloc(sizeof(*ctx));
-		ctx->chgParam = NULL;
-		ctx->scanDesc = NULL;
-
-		dlist_push_tail(&node->ctxs_head, &ctx->list);
-	}
-	else
-	{
-		ctx = NULL;
-	}
-
-	return ctx;
-}
 
 /*
  * ExecIndexEvalRuntimeKeys
@@ -910,31 +811,9 @@ ExecEndIndexScan(IndexScanState *node)
 		ExecClearTuple(node->ss.ps.ps_ResultTupleSlot);
 	ExecClearTuple(node->ss.ss_ScanTupleSlot);
 
-	if (!dlist_is_empty(&node->ctxs_head))
-	{
-		dlist_node *ctx_node;
-		IndexScanContext *ctx;
-		dlist_mutable_iter iter;
-
-		/* indexScanDesc is the most recent value. Ignore the first context. */
-		ctx_node = dlist_pop_head_node(&node->ctxs_head);
-		ctx = dlist_container(IndexScanContext, list, ctx_node);
-		pfree(ctx);
-
-		dlist_foreach_modify(iter, &node->ctxs_head)
-		{
-			dlist_delete(iter.cur);
-
-			ctx = dlist_container(IndexScanContext, list, iter.cur);
-
-			if (ctx->scanDesc != NULL)
-				index_endscan(ctx->scanDesc);
-
-			pfree(ctx);
-		}
-	}
-	node->prev_ctx_node = &node->ctxs_head.head;
-
+	/*
+	 * close the index relation (no-op if we didn't open it)
+	 */
 	if (indexScanDesc)
 		index_endscan(indexScanDesc);
 	if (indexRelationDesc)
@@ -1203,9 +1082,6 @@ ExecInitIndexScan(IndexScan *node, EState *estate, int eflags)
 	{
 		indexstate->iss_RuntimeContext = NULL;
 	}
-
-	dlist_init(&indexstate->ctxs_head);
-	indexstate->prev_ctx_node = &indexstate->ctxs_head.head;
 
 	/*
 	 * all done.

@@ -61,17 +61,9 @@
 #include "executor/execdebug.h"
 #include "executor/execPartition.h"
 #include "executor/nodeAppend.h"
-#include "lib/ilist.h"
 #include "miscadmin.h"
 #include "pgstat.h"
 #include "storage/latch.h"
-
-typedef struct AppendContext
-{
-	dlist_node	list;
-	int			whichplan;
-} AppendContext;
-
 
 /* Shared state for parallel-aware Append. */
 struct ParallelAppendState
@@ -292,9 +284,6 @@ ExecInitAppend(Append *node, EState *estate, int eflags)
 	/* For parallel query, this will be overridden later. */
 	appendstate->choose_next_subplan = choose_next_subplan_locally;
 
-	dlist_init(&appendstate->ctxs_head);
-	appendstate->prev_ctx_node = &appendstate->ctxs_head.head;
-
 	return appendstate;
 }
 
@@ -408,7 +397,6 @@ ExecEndAppend(AppendState *node)
 	PlanState **appendplans;
 	int			nplans;
 	int			i;
-	dlist_mutable_iter iter;
 
 	/*
 	 * get information from the node
@@ -421,17 +409,6 @@ ExecEndAppend(AppendState *node)
 	 */
 	for (i = 0; i < nplans; i++)
 		ExecEndNode(appendplans[i]);
-
-	dlist_foreach_modify(iter, &node->ctxs_head)
-	{
-		AppendContext *ctx;
-
-		dlist_delete(iter.cur);
-
-		ctx = dlist_container(AppendContext, list, iter.cur);
-		pfree(ctx);
-	}
-	node->prev_ctx_node = &node->ctxs_head.head;
 }
 
 void
@@ -1206,75 +1183,4 @@ classify_matching_subplans(AppendState *node)
 
 	/* Save valid async subplans. */
 	node->as_valid_asyncplans = valid_asyncplans;
-}
-
-void
-ExecNextAppendContext(AppendState *node)
-{
-	dlist_node *ctx_node;
-	AppendContext *ctx;
-	int			i;
-
-	/* get the current context */
-	if (dlist_has_next(&node->ctxs_head, node->prev_ctx_node))
-	{
-		ctx_node = dlist_next_node(&node->ctxs_head, node->prev_ctx_node);
-		ctx = dlist_container(AppendContext, list, ctx_node);
-	}
-	else
-	{
-		ctx = palloc(sizeof(*ctx));
-		ctx_node = &ctx->list;
-
-		dlist_push_tail(&node->ctxs_head, ctx_node);
-	}
-
-	ctx->whichplan = node->as_whichplan;
-
-	/* make the current context previous context */
-	node->prev_ctx_node = ctx_node;
-
-	/*
-	 * We don't have to restore the current as_whichplan because it is an
-	 * integer value and will be initialized when the current Append is
-	 * re-scanned next time.
-	 */
-
-	for (i = 0; i < node->as_nplans; i++)
-		ExecNextContext(node->appendplans[i]);
-}
-
-void
-ExecPrevAppendContext(AppendState *node)
-{
-	dlist_node *ctx_node;
-	AppendContext *ctx;
-	int			i;
-
-	/*
-	 * We don't have to store the current as_whichplan because of the same
-	 * reason above.
-	 */
-
-	/* if chgParam is not NULL, free it now */
-	if (node->ps.chgParam != NULL)
-	{
-		bms_free(node->ps.chgParam);
-		node->ps.chgParam = NULL;
-	}
-
-	/* make the previous context current context */
-	ctx_node = node->prev_ctx_node;
-	Assert(ctx_node != &node->ctxs_head.head);
-
-	if (dlist_has_prev(&node->ctxs_head, ctx_node))
-		node->prev_ctx_node = dlist_prev_node(&node->ctxs_head, ctx_node);
-	else
-		node->prev_ctx_node = &node->ctxs_head.head;
-
-	ctx = dlist_container(AppendContext, list, ctx_node);
-	node->as_whichplan = ctx->whichplan;
-
-	for (i = 0; i < node->as_nplans; i++)
-		ExecPrevContext(node->appendplans[i]);
 }

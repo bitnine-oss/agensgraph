@@ -228,8 +228,7 @@ static BitmapOr *make_bitmap_or(List *bitmapplans);
 static NestLoop *make_nestloop(List *tlist,
 							   List *joinclauses, List *otherclauses, List *nestParams,
 							   Plan *lefttree, Plan *righttree,
-							   JoinType jointype, bool inner_unique,
-							   int minhops, int maxhops);
+							   JoinType jointype, bool inner_unique);
 static HashJoin *make_hashjoin(List *tlist,
 							   List *joinclauses, List *otherclauses,
 							   List *hashclauses,
@@ -315,6 +314,7 @@ static GatherMerge *create_gather_merge_plan(PlannerInfo *root,
 /* for agensgraph */
 static ModifyGraph *create_modifygraph_plan(PlannerInfo *root,
 											ModifyGraphPath *best_path);
+static GraphVLE *create_graph_vle_plan(PlannerInfo *root, GraphVLEPath *best_path);
 static Dijkstra *create_dijkstra_plan(PlannerInfo *root,
 									  DijkstraPath *best_path);
 static Shortestpath *create_shortestpath_plan(PlannerInfo *root,
@@ -380,7 +380,7 @@ create_plan(PlannerInfo *root, Path *best_path)
 	 * top-level tlist seen at execution time.  However, ModifyTable plan
 	 * nodes don't have a tlist matching the querytree targetlist.
 	 */
-	if (!IsA(plan, ModifyTable) && !IsA(plan, ModifyGraph))
+	if (!IsA(plan, ModifyTable) && !IsA(plan, ModifyGraph) && !IsA(plan, GraphVLE))
 		apply_tlist_labeling(plan->targetlist, root->processed_tlist);
 
 	/*
@@ -577,6 +577,9 @@ create_plan_recurse(PlannerInfo *root, Path *best_path, int flags)
 		case T_Dijkstra:
 			plan = (Plan *) create_dijkstra_plan(root,
 												 (DijkstraPath *) best_path);
+			break;
+		case T_GraphVLEPath:
+			plan = (Plan *) create_graph_vle_plan(root, (GraphVLEPath *) best_path);
 			break;
 		default:
 			elog(ERROR, "unrecognized node type: %d",
@@ -4373,9 +4376,7 @@ create_nestloop_plan(PlannerInfo *root,
 							  outer_plan,
 							  inner_plan,
 							  best_path->jointype,
-							  best_path->inner_unique,
-							  best_path->minhops,
-							  best_path->maxhops);
+							  best_path->inner_unique);
 
 	copy_generic_path_info(&join_plan->join.plan, &best_path->path);
 
@@ -4877,6 +4878,24 @@ create_modifygraph_plan(PlannerInfo *root, ModifyGraphPath *best_path)
 							best_path->eagerness, best_path->pattern,
 							best_path->exprs, best_path->sets,
 							best_path->resultRelations, best_path->epqParam);
+
+	copy_generic_path_info(&plan->plan, &best_path->path);
+
+	return plan;
+}
+
+
+static GraphVLE *
+create_graph_vle_plan(PlannerInfo *root, GraphVLEPath *best_path)
+{
+	GraphVLE   *plan;
+	Plan	   *subplan;
+
+	subplan = create_plan_recurse(root, best_path->subpath, CP_EXACT_TLIST);
+
+	apply_tlist_labeling(subplan->targetlist, root->processed_tlist);
+
+	plan = make_graph_vle(root, subplan, best_path->vle_rel);
 
 	copy_generic_path_info(&plan->plan, &best_path->path);
 
@@ -6143,27 +6162,11 @@ make_nestloop(List *tlist,
 			  Plan *lefttree,
 			  Plan *righttree,
 			  JoinType jointype,
-			  bool inner_unique,
-			  int minhops,
-			  int maxhops)
+			  bool inner_unique)
 {
-	NestLoop   *node;
-	Plan	   *plan;
+	NestLoop   *node = makeNode(NestLoop);
+	Plan	   *plan = &node->join.plan;
 
-	if (jointype == JOIN_VLE)
-	{
-		NestLoopVLE *vle = makeNode(NestLoopVLE);
-
-		vle->minHops = minhops;
-		vle->maxHops = maxhops;
-		node = &vle->nl;
-	}
-	else
-	{
-		node = makeNode(NestLoop);
-	}
-
-	plan = &node->join.plan;
 	plan->targetlist = tlist;
 	plan->qual = otherclauses;
 	plan->lefttree = lefttree;
@@ -7483,6 +7486,17 @@ make_modifygraph(PlannerInfo *root, GraphWriteOp operation, bool last,
 	node->sets = sets;
 	node->epqParam = epqParam;
 	node->resultRelations = resultRelations;
+
+	return node;
+}
+
+GraphVLE *
+make_graph_vle(PlannerInfo *root, Plan *subplan, CypherRel *vle_rel)
+{
+	GraphVLE   *node = makeNode(GraphVLE);
+
+	node->subplan = subplan;
+	node->vle_rel = (Node *) vle_rel;
 
 	return node;
 }

@@ -3481,7 +3481,7 @@
   oprright => 'graphid', oprresult => 'bool', oprcom => '=(graphid,graphid)',
   oprnegate => '<>(graphid,graphid)', oprcode => 'graphid_eq',
   oprrest => 'eqsel', oprjoin => 'eqjoinsel' },
-{ oid => '7088', descr => 'not equal',
+{ oid => '7088', oid_symbol => 'OID_GRAPHID_NE_OP', descr => 'not equal',
   oprname => '<>', oprleft => 'graphid', oprright => 'graphid',
   oprresult => 'bool', oprcom => '<>(graphid,graphid)',
   oprnegate => '=(graphid,graphid)', oprcode => 'graphid_ne',

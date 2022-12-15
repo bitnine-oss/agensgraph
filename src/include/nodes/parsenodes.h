@@ -224,6 +224,7 @@ typedef struct Query
 		List	   *exprs;		/* expression list for DELETE */
 		List	   *sets;		/* expression list for SET/REMOVE */
 		List	   *resultRelations;
+		Node	   *vle_rel;
 	}			graph;
 } Query;
 

@@ -2468,9 +2468,6 @@ create_nestloop_path(PlannerInfo *root,
 	pathnode->innerjoinpath = inner_path;
 	pathnode->joinrestrictinfo = restrict_clauses;
 
-	pathnode->minhops = extra->sjinfo->min_hops;
-	pathnode->maxhops = extra->sjinfo->max_hops;
-
 	final_cost_nestloop(root, pathnode, workspace, extra);
 
 	return pathnode;
@@ -3863,6 +3860,32 @@ create_modifygraph_path(PlannerInfo *root, RelOptInfo *rel,
 	return pathnode;
 }
 
+GraphVLEPath *
+create_graph_vle_path(PlannerInfo *root,
+					  RelOptInfo *rel, Path *subpath,
+					  CypherRel *vle_rel)
+{
+	GraphVLEPath *pathnode = makeNode(GraphVLEPath);
+
+	pathnode->path.pathtype = T_GraphVLEPath;
+	pathnode->path.parent = rel;
+	pathnode->path.pathtarget = rel->reltarget;
+	pathnode->path.param_info = NULL;
+	pathnode->path.parallel_aware = false;
+	pathnode->path.parallel_safe = false;
+	pathnode->path.parallel_workers = 0;
+	pathnode->path.rows = subpath->rows;
+	pathnode->path.startup_cost = subpath->startup_cost;
+	pathnode->path.total_cost = subpath->total_cost;
+	pathnode->path.pathkeys = NIL;
+
+	pathnode->subpath = subpath;
+	pathnode->vle_rel = vle_rel;
+
+	return pathnode;
+}
+
+
 
 /*
  * reparameterize_path
@@ -4377,8 +4400,6 @@ create_shortestpath_path(PlannerInfo *root,
 	pathnode->jpath.outerjoinpath = outer_path;
 	pathnode->jpath.innerjoinpath = inner_path;
 	pathnode->jpath.joinrestrictinfo = restrict_clauses;
-	pathnode->jpath.minhops = extra->sjinfo->min_hops;
-	pathnode->jpath.maxhops = extra->sjinfo->max_hops;
 
 	pathnode->end_id_left = parse->shortestpathEndIdLeft;
 	pathnode->end_id_right = parse->shortestpathEndIdRight;

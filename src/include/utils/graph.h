@@ -59,6 +59,19 @@ typedef struct
 #define Anum_table_edge_end			3
 #define Anum_table_edge_prop_map	4
 
+
+#define make_edge_from_tuple(slot) (makeGraphEdgeDatum((slot)->tts_values[Anum_table_edge_id - 1], \
+									(slot)->tts_values[Anum_table_edge_start - 1], \
+									(slot)->tts_values[Anum_table_edge_end - 1], \
+									(slot)->tts_values[Anum_table_edge_prop_map - 1], \
+									PointerGetDatum(&(slot)->tts_tid)))
+
+#define make_vertex_from_tuple(slot)	(makeGraphVertexDatum((slot)->tts_values[Anum_table_vertex_id - 1], \
+										 (slot)->tts_values[Anum_table_vertex_prop_map - 1], \
+										 PointerGetDatum(&(slot)->tts_tid)))
+
+extern Datum get_vertex_from_graphid(Graphid vertex_id);
+
 /* graphid */
 extern Datum graphid(PG_FUNCTION_ARGS);
 extern Datum graphid_in(PG_FUNCTION_ARGS);

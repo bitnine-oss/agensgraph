@@ -879,31 +879,6 @@ _copyNestLoop(const NestLoop *from)
 }
 
 /*
- * _copyNestLoopVLE
- */
-static NestLoopVLE *
-_copyNestLoopVLE(const NestLoopVLE *from)
-{
-	NestLoopVLE *newnode = makeNode(NestLoopVLE);
-
-	/*
-	 * copy node superclass fields
-	 */
-	CopyJoinFields((const Join *) from, (Join *) newnode);
-
-	/*
-	 * copy remainder of node
-	 */
-
-	COPY_NODE_FIELD(nl.nestParams);
-
-	COPY_SCALAR_FIELD(minHops);
-	COPY_SCALAR_FIELD(maxHops);
-
-	return newnode;
-}
-
-/*
  * _copyMergeJoin
  */
 static MergeJoin *
@@ -2382,9 +2357,6 @@ _copyJoinExpr(const JoinExpr *from)
 	COPY_NODE_FIELD(alias);
 	COPY_SCALAR_FIELD(rtindex);
 
-	COPY_SCALAR_FIELD(minHops);
-	COPY_SCALAR_FIELD(maxHops);
-
 	return newnode;
 }
 
@@ -2614,9 +2586,6 @@ _copySpecialJoinInfo(const SpecialJoinInfo *from)
 	COPY_SCALAR_FIELD(semi_can_hash);
 	COPY_NODE_FIELD(semi_operators);
 	COPY_NODE_FIELD(semi_rhs_exprs);
-
-	COPY_SCALAR_FIELD(min_hops);
-	COPY_SCALAR_FIELD(max_hops);
 
 	return newnode;
 }
@@ -3435,6 +3404,7 @@ _copyQuery(const Query *from)
 	COPY_NODE_FIELD(graph.exprs);
 	COPY_NODE_FIELD(graph.sets);
 	COPY_NODE_FIELD(graph.resultRelations);
+	COPY_NODE_FIELD(graph.vle_rel);
 
 	return newnode;
 }
@@ -5672,9 +5642,6 @@ copyObjectImpl(const void *from)
 			break;
 		case T_NestLoop:
 			retval = _copyNestLoop(from);
-			break;
-		case T_NestLoopVLE:
-			retval = _copyNestLoopVLE(from);
 			break;
 		case T_MergeJoin:
 			retval = _copyMergeJoin(from);

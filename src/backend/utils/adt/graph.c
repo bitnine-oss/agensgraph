@@ -36,9 +36,9 @@
 #include "catalog/ag_vertex_d.h"
 #include "catalog/ag_edge_d.h"
 #include "catalog/ag_graphpath_d.h"
+#include "access/table.h"
 #include "access/tableam.h"
 #include "utils/fmgroids.h"
-#include "utils/datum.h"
 
 #define GRAPHID_FMTSTR			"%hu." UINT64_FORMAT
 #define GRAPHID_BUFLEN			32	/* "65535.281474976710655" */
@@ -54,12 +54,6 @@ typedef struct GraphpathOutData
 	ArrayMetaState vertex;
 	ArrayMetaState edge;
 } GraphpathOutData;
-
-typedef enum EdgeVertexKind
-{
-	EVK_START,
-	EVK_END
-} EdgeVertexKind;
 
 typedef struct LabelsOutData
 {
@@ -81,7 +75,6 @@ static Datum array_iter_next_(array_iter *it, bool *isnull, int idx,
 							  ArrayMetaState *state);
 static void deform_tuple(HeapTupleHeader tuphdr, Datum *values, bool *isnull);
 static Datum tuple_getattr(HeapTupleHeader tuphdr, int attnum);
-static Datum getEdgeVertex(HeapTupleHeader edge, EdgeVertexKind evk);
 static LabelsOutData *cache_labels(FmgrInfo *flinfo, uint16 labid);
 static Datum makeArrayTypeDatum(Datum *elems, int nelem, Oid type);
 static Datum graphid_minval(void);
@@ -993,58 +986,72 @@ Datum
 edge_start_vertex(PG_FUNCTION_ARGS)
 {
 	HeapTupleHeader edge = PG_GETARG_HEAPTUPLEHEADER(0);
+	Graphid		vertex_id = DatumGetGraphid(tuple_getattr(edge,
+														  Anum_ag_edge_start));
+	Datum		ret = get_vertex_from_graphid(vertex_id);
 
-	return getEdgeVertex(edge, EVK_START);
+	if (ret == ((Datum) 0))
+	{
+		fcinfo->isnull = true;
+	}
+
+	return ret;
 }
 
 Datum
 edge_end_vertex(PG_FUNCTION_ARGS)
 {
 	HeapTupleHeader edge = PG_GETARG_HEAPTUPLEHEADER(0);
+	Graphid		vertex_id = DatumGetGraphid(tuple_getattr(edge,
+														  Anum_ag_edge_end));
+	Datum		ret = get_vertex_from_graphid(vertex_id);
 
-	return getEdgeVertex(edge, EVK_END);
+	if (ret == ((Datum) 0))
+	{
+		fcinfo->isnull = true;
+	}
+
+	return ret;
 }
 
-static Datum
-getEdgeVertex(HeapTupleHeader edge, EdgeVertexKind evk)
+Datum
+get_vertex_from_graphid(Graphid vertex_id)
 {
-	const char *querystr =
-	"SELECT (" AG_ELEM_LOCAL_ID ", " AG_ELEM_PROP_MAP ", NULL)::vertex "
-	"FROM \"%s\"." AG_VERTEX " WHERE " AG_ELEM_LOCAL_ID " = $1";
-	char		sqlcmd[256];
-	int			attnum = (evk == EVK_START ? Anum_ag_edge_start : Anum_ag_edge_end);
-	Datum		values[1];
-	Oid			argTypes[1] = {GRAPHIDOID};
-	int			ret;
-	Datum		vertex;
-	bool		isnull;
+	Labid		vertex_label_id;
+	Oid			vertex_label_relid;
+	Oid			graph_path_oid = get_graph_path_oid();
+	Relation	vertex_rel;
+	TableScanDesc scan_desc;
+	ScanKeyData scan_key_data;
+	TupleTableSlot *slot;
+	Datum		ret = (Datum) 0;
 
-	snprintf(sqlcmd, sizeof(sqlcmd), querystr, get_graph_path(false));
+	vertex_label_id = GraphidGetLabid(vertex_id);
 
-	values[0] = tuple_getattr(edge, attnum);
+	vertex_label_relid = get_labid_relid(graph_path_oid, vertex_label_id);
+	vertex_rel = table_open(vertex_label_relid, AccessShareLock);
+	slot = table_slot_create(vertex_rel, NULL);
 
-	if (SPI_connect() != SPI_OK_CONNECT)
-		elog(ERROR, "SPI_connect failed");
+	ScanKeyInit(&scan_key_data,
+				Anum_table_vertex_id,
+				BTEqualStrategyNumber, F_GRAPHID_EQ,
+				GraphidGetDatum(vertex_id));
 
-	ret = SPI_execute_with_args(sqlcmd, 2, argTypes, values, NULL, true, 0);
-	if (ret != SPI_OK_SELECT)
-		elog(ERROR, "SPI_execute failed: %s", sqlcmd);
+	scan_desc = table_beginscan(vertex_rel,
+								GetActiveSnapshot(),
+								1, &scan_key_data);
 
-	if (SPI_processed != 1)
-		elog(ERROR, (evk == EVK_START
-					 ? "SPI_execute: only one start vertex of edge exists"
-					 : "SPI_execute: only one end vertex of edge exists"));
+	if (table_scan_getnextslot(scan_desc, ForwardScanDirection, slot))
+	{
+		slot_getallattrs(slot);
+		ret = make_vertex_from_tuple(slot);
+	}
 
-	vertex = SPI_getbinval(SPI_tuptable->vals[0], SPI_tuptable->tupdesc,
-						   1, &isnull);
-	Assert(!isnull);
+	table_endscan(scan_desc);
+	table_close(vertex_rel, NoLock);
+	ExecDropSingleTupleTableSlot(slot);
 
-	vertex = SPI_datumTransfer(vertex, false, -1);
-
-	if (SPI_finish() != SPI_OK_FINISH)
-		elog(ERROR, "SPI_finish failed");
-
-	return vertex;
+	return ret;
 }
 
 Datum

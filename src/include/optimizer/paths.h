@@ -124,11 +124,6 @@ extern void add_paths_for_cdelete(PlannerInfo *root, RelOptInfo *joinrel,
 								  RelOptInfo *outerrel, RelOptInfo *innerrel,
 								  JoinType type, SpecialJoinInfo *sjinfo,
 								  List *restrictlist);
-extern void add_paths_to_joinrel_for_vle(PlannerInfo *root, RelOptInfo *joinrel,
-										 RelOptInfo *outerrel,
-										 RelOptInfo *innerrel,
-										 SpecialJoinInfo *sjinfo,
-										 List *restrictlist);
 
 /*
  * joinrels.c

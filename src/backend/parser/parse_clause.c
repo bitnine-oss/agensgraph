@@ -1183,8 +1183,7 @@ transformFromClauseItem(ParseState *pstate, Node *n,
 		 * Notice that we don't require the merged namespace list to be
 		 * conflict-free.  See the comments for scanNameSpaceForRefname().
 		 */
-		lateral_ok = (j->jointype == JOIN_INNER || j->jointype == JOIN_LEFT ||
-					  j->jointype == JOIN_VLE);
+		lateral_ok = (j->jointype == JOIN_INNER || j->jointype == JOIN_LEFT);
 		setNamespaceLateralState(l_namespace, true, lateral_ok);
 
 		sv_namespace_length = list_length(pstate->p_namespace);

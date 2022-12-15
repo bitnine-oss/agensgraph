@@ -658,8 +658,4 @@ extern ResultRelInfo *ExecLookupResultRelByOid(ModifyTableState *node,
 											   bool missing_ok,
 											   bool update_cache);
 
-/* for agensgraph */
-extern void ExecNextContext(PlanState *node);
-extern void ExecPrevContext(PlanState *node);
-
 #endif							/* EXECUTOR_H  */

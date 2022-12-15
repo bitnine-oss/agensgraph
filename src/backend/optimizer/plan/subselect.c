@@ -2622,7 +2622,6 @@ finalize_plan(PlannerInfo *root, Plan *plan,
 			break;
 
 		case T_NestLoop:
-		case T_NestLoopVLE:
 			{
 				ListCell   *l;
 
@@ -2827,6 +2826,9 @@ finalize_plan(PlannerInfo *root, Plan *plan,
 			finalize_primnode(((Dijkstra *) plan)->source, &context);
 			finalize_primnode(((Dijkstra *) plan)->target, &context);
 			finalize_primnode(((Dijkstra *) plan)->limit, &context);
+			break;
+
+		case T_GraphVLE:
 			break;
 
 		default:

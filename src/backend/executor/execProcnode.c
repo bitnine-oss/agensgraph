@@ -104,7 +104,6 @@
 #include "executor/nodeNamedtuplestorescan.h"
 #include "executor/nodeNestloop.h"
 #include "executor/nodeProjectSet.h"
-#include "executor/nodeNestloopVle.h"
 #include "executor/nodeRecursiveunion.h"
 #include "executor/nodeResult.h"
 #include "executor/nodeSamplescan.h"
@@ -123,6 +122,7 @@
 #include "executor/nodeWorktablescan.h"
 #include "miscadmin.h"
 #include "nodes/nodeFuncs.h"
+#include "executor/execGraphVle.h"
 
 static TupleTableSlot *ExecProcNodeFirst(PlanState *node);
 static TupleTableSlot *ExecProcNodeInstr(PlanState *node);
@@ -308,11 +308,6 @@ ExecInitNode(Plan *node, EState *estate, int eflags)
 													estate, eflags);
 			break;
 
-		case T_NestLoopVLE:
-			result = (PlanState *) ExecInitNestLoopVLE((NestLoopVLE *) node,
-													   estate, eflags);
-			break;
-
 		case T_MergeJoin:
 			result = (PlanState *) ExecInitMergeJoin((MergeJoin *) node,
 													 estate, eflags);
@@ -408,6 +403,11 @@ ExecInitNode(Plan *node, EState *estate, int eflags)
 
 		case T_Dijkstra:
 			result = (PlanState *) ExecInitDijkstra((Dijkstra *) node,
+													estate, eflags);
+			break;
+
+		case T_GraphVLE:
+			result = (PlanState *) ExecInitGraphVLE((GraphVLE *) node,
 													estate, eflags);
 			break;
 
@@ -735,10 +735,6 @@ ExecEndNode(PlanState *node)
 			ExecEndNestLoop((NestLoopState *) node);
 			break;
 
-		case T_NestLoopVLEState:
-			ExecEndNestLoopVLE((NestLoopVLEState *) node);
-			break;
-
 		case T_MergeJoinState:
 			ExecEndMergeJoin((MergeJoinState *) node);
 			break;
@@ -808,6 +804,10 @@ ExecEndNode(PlanState *node)
 
 		case T_DijkstraState:
 			ExecEndDijkstra((DijkstraState *) node);
+			break;
+
+		case T_GraphVLEState:
+			ExecEndGraphVLE((GraphVLEState *) node);
 			break;
 
 		default:

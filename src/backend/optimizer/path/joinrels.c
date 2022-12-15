@@ -959,16 +959,6 @@ populate_joinrel_with_paths(PlannerInfo *root, RelOptInfo *rel1,
 			add_paths_for_cmerge(root, joinrel, rel1, rel2,
 								 sjinfo, restrictlist);
 			break;
-		case JOIN_VLE:
-			if (is_dummy_rel(rel1) || is_dummy_rel(rel2) ||
-				restriction_is_constant_false(restrictlist, joinrel, false))
-			{
-				mark_dummy_rel(joinrel);
-				break;
-			}
-			add_paths_to_joinrel_for_vle(root, joinrel, rel1, rel2,
-										 sjinfo, restrictlist);
-			break;
 		case JOIN_CYPHER_DELETE:
 			if (is_dummy_rel(rel1) ||
 				restriction_is_constant_false(restrictlist, joinrel, true))

@@ -71,7 +71,6 @@ typedef enum NodeTag
 	T_CustomScan,
 	T_Join,
 	T_NestLoop,
-	T_NestLoopVLE,
 	T_MergeJoin,
 	T_HashJoin,
 	T_Material,
@@ -88,11 +87,11 @@ typedef enum NodeTag
 	T_SetOp,
 	T_LockRows,
 	T_Limit,
-	T_Eager,
 	T_ModifyGraph,
 	T_Shortestpath,
 	T_Hash2Side,
 	T_Dijkstra,
+	T_GraphVLE,
 	/* these aren't subclasses of Plan: */
 	T_NestLoopParam,
 	T_PlanRowMark,
@@ -136,7 +135,6 @@ typedef enum NodeTag
 	T_CustomScanState,
 	T_JoinState,
 	T_NestLoopState,
-	T_NestLoopVLEState,
 	T_MergeJoinState,
 	T_HashJoinState,
 	T_MaterialState,
@@ -144,7 +142,6 @@ typedef enum NodeTag
 	T_SortState,
 	T_IncrementalSortState,
 	T_GroupState,
-	T_EagerState,
 	T_AggState,
 	T_WindowAggState,
 	T_UniqueState,
@@ -158,6 +155,7 @@ typedef enum NodeTag
 	T_ShortestpathState,
 	T_Hash2SideState,
 	T_DijkstraState,
+	T_GraphVLEState,
 
 	/*
 	 * TAGS FOR PRIMITIVE NODES (primnodes.h)
@@ -285,6 +283,7 @@ typedef enum NodeTag
 	T_ModifyGraphPath,
 	T_ShortestpathPath,
 	T_DijkstraPath,
+	T_GraphVLEPath,
 	/* these aren't subclasses of Path: */
 	T_EquivalenceClass,
 	T_EquivalenceMember,
@@ -795,7 +794,6 @@ typedef enum JoinType
 
 	/* This is similar to JOIN_LEFT but only for Cypher MERGE clause. */
 	JOIN_CYPHER_MERGE,
-	JOIN_VLE,
 
 	/* For Cypher DELETE */
 	JOIN_CYPHER_DELETE,
@@ -831,7 +829,6 @@ typedef enum JoinType
 #define IS_GRAPH_JOIN(jointype) \
 	(((1 << (jointype)) & \
 	  ((1 << JOIN_CYPHER_MERGE) | \
-	   (1 << JOIN_VLE) | \
 	   (1 << JOIN_CYPHER_DELETE))) != 0)
 
 /*
