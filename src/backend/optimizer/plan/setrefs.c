@@ -1185,8 +1185,26 @@ set_indexonlyscan_references(PlannerInfo *root,
 							 int rtoffset)
 {
 	indexed_tlist *index_itlist;
+	List	   *stripped_indextlist;
+	ListCell   *lc;
 
-	index_itlist = build_tlist_index(plan->indextlist);
+	/*
+	 * Vars in the plan node's targetlist, qual, and recheckqual must only
+	 * reference columns that the index AM can actually return.  To ensure
+	 * this, remove non-returnable columns (which are marked as resjunk) from
+	 * the indexed tlist.  We can just drop them because the indexed_tlist
+	 * machinery pays attention to TLE resnos, not physical list position.
+	 */
+	stripped_indextlist = NIL;
+	foreach(lc, plan->indextlist)
+	{
+		TargetEntry *indextle = (TargetEntry *) lfirst(lc);
+
+		if (!indextle->resjunk)
+			stripped_indextlist = lappend(stripped_indextlist, indextle);
+	}
+
+	index_itlist = build_tlist_index(stripped_indextlist);
 
 	plan->scan.scanrelid += rtoffset;
 	plan->scan.plan.targetlist = (List *)
@@ -1199,6 +1217,13 @@ set_indexonlyscan_references(PlannerInfo *root,
 	plan->scan.plan.qual = (List *)
 		fix_upper_expr(root,
 					   (Node *) plan->scan.plan.qual,
+					   index_itlist,
+					   INDEX_VAR,
+					   rtoffset,
+					   NUM_EXEC_QUAL((Plan *) plan));
+	plan->recheckqual = (List *)
+		fix_upper_expr(root,
+					   (Node *) plan->recheckqual,
 					   index_itlist,
 					   INDEX_VAR,
 					   rtoffset,
@@ -1530,8 +1555,16 @@ set_append_references(PlannerInfo *root,
 		lfirst(l) = set_plan_refs(root, (Plan *) lfirst(l), rtoffset);
 	}
 
-	/* Now, if there's just one, forget the Append and return that child */
-	if (list_length(aplan->appendplans) == 1)
+	/*
+	 * See if it's safe to get rid of the Append entirely.  For this to be
+	 * safe, there must be only one child plan and that child plan's parallel
+	 * awareness must match that of the Append's.  The reason for the latter
+	 * is that the if the Append is parallel aware and the child is not then
+	 * the calling plan may execute the non-parallel aware child multiple
+	 * times.
+	 */
+	if (list_length(aplan->appendplans) == 1 &&
+		((Plan *) linitial(aplan->appendplans))->parallel_aware == aplan->plan.parallel_aware)
 		return clean_up_removed_plan_level((Plan *) aplan,
 										   (Plan *) linitial(aplan->appendplans));
 
@@ -1594,8 +1627,16 @@ set_mergeappend_references(PlannerInfo *root,
 		lfirst(l) = set_plan_refs(root, (Plan *) lfirst(l), rtoffset);
 	}
 
-	/* Now, if there's just one, forget the MergeAppend and return that child */
-	if (list_length(mplan->mergeplans) == 1)
+	/*
+	 * See if it's safe to get rid of the MergeAppend entirely.  For this to
+	 * be safe, there must be only one child plan and that child plan's
+	 * parallel awareness must match that of the MergeAppend's.  The reason
+	 * for the latter is that the if the MergeAppend is parallel aware and the
+	 * child is not then the calling plan may execute the non-parallel aware
+	 * child multiple times.
+	 */
+	if (list_length(mplan->mergeplans) == 1 &&
+		((Plan *) linitial(mplan->mergeplans))->parallel_aware == mplan->plan.parallel_aware)
 		return clean_up_removed_plan_level((Plan *) mplan,
 										   (Plan *) linitial(mplan->mergeplans));
 

@@ -373,7 +373,8 @@ btree_index_checkable(Relation rel)
 /*
  * Check if B-Tree index relation should have a file for its main relation
  * fork.  Verification uses this to skip unlogged indexes when in hot standby
- * mode, where there is simply nothing to verify.
+ * mode, where there is simply nothing to verify.  We behave as if the
+ * relation is empty.
  *
  * NB: Caller should call btree_index_checkable() before calling here.
  */
@@ -384,7 +385,7 @@ btree_index_mainfork_expected(Relation rel)
 		!RecoveryInProgress())
 		return true;
 
-	ereport(NOTICE,
+	ereport(DEBUG1,
 			(errcode(ERRCODE_READ_ONLY_SQL_TRANSACTION),
 			 errmsg("cannot verify unlogged index \"%s\" during recovery, skipping",
 					RelationGetRelationName(rel))));
@@ -1511,7 +1512,7 @@ bt_target_page_check(BtreeCheckState *state)
 	/*
 	 * Special case bt_child_highkey_check() call
 	 *
-	 * We don't pass an real downlink, but we've to finish the level
+	 * We don't pass a real downlink, but we've to finish the level
 	 * processing. If condition is satisfied, we've already processed all the
 	 * downlinks from the target level.  But there still might be pages to the
 	 * right of the child page pointer to by our rightmost downlink.  And they

@@ -30,6 +30,13 @@ my $tmp_installdir = "$topdir/tmp_install";
 do './src/tools/msvc/config_default.pl';
 do './src/tools/msvc/config.pl' if (-f 'src/tools/msvc/config.pl');
 
+# These values are defaults that can be overridden by the calling environment
+# (see buildenv.pl processing below).
+# c.f. src/Makefile.global.in and configure.ac
+$ENV{GZIP_PROGRAM} ||= 'gzip';
+$ENV{LZ4} ||= 'lz4';
+$ENV{TAR} ||= 'tar';
+
 # buildenv.pl is for specifying the build environment settings
 # it should contain lines like:
 # $ENV{PATH} = "c:/path/to/bison/bin;$ENV{PATH}";
@@ -58,6 +65,14 @@ copy("$Config/refint/refint.dll",                 "src/test/regress");
 copy("$Config/autoinc/autoinc.dll",               "src/test/regress");
 copy("$Config/regress/regress.dll",               "src/test/regress");
 copy("$Config/dummy_seclabel/dummy_seclabel.dll", "src/test/regress");
+
+# Configuration settings used by TAP tests
+$ENV{with_ssl} = $config->{openssl} ? 'openssl' : 'no';
+$ENV{with_ldap} = $config->{ldap} ? 'yes' : 'no';
+$ENV{with_icu} = $config->{icu} ? 'yes' : 'no';
+$ENV{with_gssapi} = $config->{gss} ? 'yes' : 'no';
+$ENV{with_krb_srvnam} = $config->{krb_srvnam} || 'postgres';
+$ENV{with_readline} = 'no';
 
 $ENV{PATH} = "$topdir/$Config/libpq;$ENV{PATH}";
 
@@ -248,6 +263,9 @@ sub tap_check
 	$ENV{REGRESS_SHLIB} = "$topdir/src/test/regress/regress.dll";
 
 	$ENV{TESTDIR} = "$dir";
+	my $module = basename $dir;
+	# add the module build dir as the second element in the PATH
+	$ENV{PATH} =~ s!;!;$topdir/$Config/$module;!;
 
 	rmtree('tmp_check');
 	system(@args);
@@ -329,7 +347,7 @@ sub mangle_plpython3
 					s/([ [{])u'/$1'/g;
 					s/def next/def __next__/g;
 					s/LANGUAGE plpython2?u/LANGUAGE plpython3u/g;
-					s/EXTENSION ([^ ]*_)*plpython2?u/EXTENSION $1plpython3u/g;
+					s/EXTENSION (\S*?)plpython2?u/EXTENSION $1plpython3u/g;
 					s/installing required extension "plpython2u"/installing required extension "plpython3u"/g;
 				  }
 				  for ($contents);

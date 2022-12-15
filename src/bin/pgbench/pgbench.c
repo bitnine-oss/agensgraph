@@ -6563,7 +6563,7 @@ main(int argc, char **argv)
 #endif							/* ENABLE_THREAD_SAFETY */
 
 		for (int j = 0; j < thread->nstate; j++)
-			if (thread->state[j].state == CSTATE_ABORTED)
+			if (thread->state[j].state != CSTATE_FINISHED)
 				exit_code = 2;
 
 		/* aggregate thread level stats */
@@ -6794,7 +6794,7 @@ threadRun(void *arg)
 					continue;
 				}
 				/* must be something wrong */
-				pg_log_fatal("%s() failed: %m", SOCKET_WAIT_METHOD);
+				pg_log_error("%s() failed: %m", SOCKET_WAIT_METHOD);
 				goto done;
 			}
 		}

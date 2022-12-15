@@ -812,6 +812,11 @@ sub start
 	{
 		print "# pg_ctl start failed; logfile:\n";
 		print TestLib::slurp_file($self->logfile);
+
+		# pg_ctl could have timed out, so check to see if there's a pid file;
+		# otherwise our END block will fail to shut down the new postmaster.
+		$self->_update_pid(-1);
+
 		BAIL_OUT("pg_ctl start failed") unless $params{fail_ok};
 		return 0;
 	}
@@ -858,23 +863,40 @@ Note: if the node is already known stopped, this does nothing.
 However, if we think it's running and it's not, it's important for
 this to fail.  Otherwise, tests might fail to detect server crashes.
 
+With optional extra param fail_ok => 1, returns 0 for failure
+instead of bailing out.
+
 =cut
 
 sub stop
 {
-	my ($self, $mode) = @_;
-	my $port   = $self->port;
+	my ($self, $mode, %params) = @_;
 	my $pgdata = $self->data_dir;
 	my $name   = $self->name;
+	my $ret;
 
 	local %ENV = $self->_get_env();
 
 	$mode = 'fast' unless defined $mode;
-	return unless defined $self->{_pid};
+	return 1 unless defined $self->{_pid};
+
 	print "### Stopping node \"$name\" using mode $mode\n";
-	TestLib::system_or_bail('pg_ctl', '-D', $pgdata, '-m', $mode, 'stop');
+	$ret = TestLib::system_log('pg_ctl', '-D', $pgdata,
+		'-m', $mode, 'stop');
+
+	if ($ret != 0)
+	{
+		print "# pg_ctl stop failed: $ret\n";
+
+		# Check to see if we still have a postmaster or not.
+		$self->_update_pid(-1);
+
+		BAIL_OUT("pg_ctl stop failed") unless $params{fail_ok};
+		return 0;
+	}
+
 	$self->_update_pid(0);
-	return;
+	return 1;
 }
 
 =pod
@@ -1088,7 +1110,10 @@ archive_command = '$copy_command'
 	return;
 }
 
-# Internal method
+# Internal method to update $self->{_pid}
+# $is_running = 1: pid file should be there
+# $is_running = 0: pid file should NOT be there
+# $is_running = -1: we aren't sure
 sub _update_pid
 {
 	my ($self, $is_running) = @_;
@@ -1099,11 +1124,22 @@ sub _update_pid
 	if (open my $pidfile, '<', $self->data_dir . "/postmaster.pid")
 	{
 		chomp($self->{_pid} = <$pidfile>);
-		print "# Postmaster PID for node \"$name\" is $self->{_pid}\n";
 		close $pidfile;
 
+		# If we aren't sure what to expect, validate the PID using kill().
+		# This protects against stale PID files left by crashed postmasters.
+		if ($is_running == -1 && kill(0, $self->{_pid}) == 0)
+		{
+			print
+			  "# Stale postmaster.pid file for node \"$name\": PID $self->{_pid} no longer exists\n";
+			$self->{_pid} = undef;
+			return;
+		}
+
+		print "# Postmaster PID for node \"$name\" is $self->{_pid}\n";
+
 		# If we found a pidfile when there shouldn't be one, complain.
-		BAIL_OUT("postmaster.pid unexpectedly present") unless $is_running;
+		BAIL_OUT("postmaster.pid unexpectedly present") if $is_running == 0;
 		return;
 	}
 
@@ -1111,7 +1147,7 @@ sub _update_pid
 	print "# No postmaster PID for node \"$name\"\n";
 
 	# Complain if we expected to find a pidfile.
-	BAIL_OUT("postmaster.pid unexpectedly not present") if $is_running;
+	BAIL_OUT("postmaster.pid unexpectedly not present") if $is_running == 1;
 	return;
 }
 
@@ -1237,9 +1273,10 @@ sub _set_pg_version
 		# complain about that, too.
 		$pg_config = "$inst/bin/pg_config";
 		BAIL_OUT("pg_config not found: $pg_config")
-		  unless -e $pg_config;
+		  unless -e $pg_config
+		  or ($TestLib::windows_os and -e "$pg_config.exe");
 		BAIL_OUT("pg_config not executable: $pg_config")
-		  unless -x $pg_config;
+		  unless $TestLib::windows_os or -x $pg_config;
 
 		# Leave $pg_config install_path qualified, to be sure we get the right
 		# version information, below, or die trying
@@ -1942,6 +1979,92 @@ sub interactive_psql
 	die "psql startup timed out" if $timer->is_expired;
 
 	return $harness;
+}
+
+# Common sub of pgbench-invoking interfaces.  Makes any requested script files
+# and returns pgbench command-line options causing use of those files.
+sub _pgbench_make_files
+{
+	my ($self, $files) = @_;
+	my @file_opts;
+
+	if (defined $files)
+	{
+
+		# note: files are ordered for determinism
+		for my $fn (sort keys %$files)
+		{
+			my $filename = $self->basedir . '/' . $fn;
+			push @file_opts, '-f', $filename;
+
+			# cleanup file weight
+			$filename =~ s/\@\d+$//;
+
+			#push @filenames, $filename;
+			# filenames are expected to be unique on a test
+			if (-e $filename)
+			{
+				ok(0, "$filename must not already exist");
+				unlink $filename or die "cannot unlink $filename: $!";
+			}
+			TestLib::append_to_file($filename, $$files{$fn});
+		}
+	}
+
+	return @file_opts;
+}
+
+=pod
+
+=item $node->pgbench($opts, $stat, $out, $err, $name, $files, @args)
+
+Invoke B<pgbench>, with parameters and files.
+
+=over
+
+=item $opts
+
+Options as a string to be split on spaces.
+
+=item $stat
+
+Expected exit status.
+
+=item $out
+
+Reference to a regexp list that must match stdout.
+
+=item $err
+
+Reference to a regexp list that must match stderr.
+
+=item $name
+
+Name of test for error messages.
+
+=item $files
+
+Reference to filename/contents dictionary.
+
+=item @args
+
+Further raw options or arguments.
+
+=back
+
+=cut
+
+sub pgbench
+{
+	local $Test::Builder::Level = $Test::Builder::Level + 1;
+
+	my ($self, $opts, $stat, $out, $err, $name, $files, @args) = @_;
+	my @cmd = (
+		'pgbench',
+		split(/\s+/, $opts),
+		$self->_pgbench_make_files($files), @args);
+
+	$self->command_checks_all(\@cmd, $stat, $out, $err, $name);
 }
 
 =pod

@@ -224,6 +224,7 @@ DecodeXLogOp(LogicalDecodingContext *ctx, XLogRecordBuffer *buf)
 		case XLOG_FPW_CHANGE:
 		case XLOG_FPI_FOR_HINT:
 		case XLOG_FPI:
+		case XLOG_OVERWRITE_CONTRECORD:
 			break;
 		default:
 			elog(ERROR, "unexpected RM_XLOG_ID record type: %u", info);
@@ -875,8 +876,8 @@ DecodeAbort(LogicalDecodingContext *ctx, XLogRecordBuffer *buf,
 	if (two_phase && !skip_xact)
 	{
 		ReorderBufferFinishPrepared(ctx->reorder, xid, buf->origptr, buf->endptr,
-									abort_time, origin_id, origin_lsn,
 									InvalidXLogRecPtr,
+									abort_time, origin_id, origin_lsn,
 									parsed->twophase_gid, false);
 	}
 	else

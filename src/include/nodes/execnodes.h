@@ -1504,7 +1504,7 @@ typedef struct IndexScanState
 /* ----------------
  *	 IndexOnlyScanState information
  *
- *		indexqual		   execution state for indexqual expressions
+ *		recheckqual		   execution state for recheckqual expressions
  *		ScanKeys		   Skey structures for index quals
  *		NumScanKeys		   number of ScanKeys
  *		OrderByKeys		   Skey structures for index ordering operators
@@ -1523,7 +1523,7 @@ typedef struct IndexScanState
 typedef struct IndexOnlyScanState
 {
 	ScanState	ss;				/* its first field is NodeTag */
-	ExprState  *indexqual;
+	ExprState  *recheckqual;
 	struct ScanKeyData *ioss_ScanKeys;
 	int			ioss_NumScanKeys;
 	struct ScanKeyData *ioss_OrderByKeys;
@@ -2123,8 +2123,12 @@ typedef struct MemoizeState
 								 * NULL if 'last_tuple' is NULL. */
 	bool		singlerow;		/* true if the cache entry is to be marked as
 								 * complete after caching the first tuple. */
+	bool		binary_mode;	/* true when cache key should be compared bit
+								 * by bit, false when using hash equality ops */
 	MemoizeInstrumentation stats;	/* execution statistics */
 	SharedMemoizeInfo *shared_info; /* statistics for parallel workers */
+	Bitmapset	   *keyparamids; /* Param->paramids of expressions belonging to
+								  * param_exprs */
 } MemoizeState;
 
 /* ----------------

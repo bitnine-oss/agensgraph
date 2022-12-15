@@ -1742,7 +1742,7 @@ postgresql://%2Fvar%2Flib%2Fpostgresql/dbname
       <term><literal>sslcrl</literal></term>
       <listitem>
        <para>
-        This parameter specifies the file name of the SSL certificate
+        This parameter specifies the file name of the SSL server certificate
         revocation list (CRL).  Certificates listed in this file, if it
         exists, will be rejected while attempting to authenticate the
         server's certificate.  If neither
@@ -1758,7 +1758,7 @@ postgresql://%2Fvar%2Flib%2Fpostgresql/dbname
       <term><literal>sslcrldir</literal></term>
       <listitem>
        <para>
-        This parameter specifies the directory name of the SSL certificate
+        This parameter specifies the directory name of the SSL server certificate
         revocation list (CRL).  Certificates listed in the files in this
         directory, if it exists, will be rejected while attempting to
         authenticate the server's certificate.
@@ -4594,6 +4594,11 @@ int PQsendQuery(PGconn *conn, const char *command);
        (on the same connection) until <xref linkend="libpq-PQgetResult"/>
        has returned a null pointer, indicating that the command is done.
       </para>
+
+      <para>
+       In pipeline mode, command strings containing more than one SQL command
+       are disallowed.
+      </para>
      </listitem>
     </varlistentry>
 
@@ -5046,7 +5051,8 @@ int PQflush(PGconn *conn);
     <xref linkend="libpq-PQpipelineStatus"/> can be used
     to test whether pipeline mode is active.
     In pipeline mode, only <link linkend="libpq-async">asynchronous operations</link>
-    are permitted, and <literal>COPY</literal> is disallowed.
+    are permitted, command strings containing multiple SQL commands are
+    disallowed, and so is <literal>COPY</literal>.
     Using synchronous command execution functions
     such as <function>PQfn</function>,
     <function>PQexec</function>,
@@ -8368,6 +8374,8 @@ ldap://ldap.acme.com/cn=dbserver,cn=hosts?pgconnectinfo?base?(objectclass=*)
    setting
    the connection parameters <literal>sslrootcert</literal> and <literal>sslcrl</literal>
    or the environment variables <envar>PGSSLROOTCERT</envar> and <envar>PGSSLCRL</envar>.
+   <literal>sslcrldir</literal> or the environment variable <envar>PGSSLCRLDIR</envar>
+   can also be used to specify a directory containing CRL files.
   </para>
 
   <note>

@@ -97,6 +97,10 @@ UPDATE testpub_parted2 SET a = 2;
 ALTER PUBLICATION testpub_forparted DROP TABLE testpub_parted;
 -- works again, because update is no longer replicated
 UPDATE testpub_parted2 SET a = 2;
+-- publication includes both the parent table and the child table
+ALTER PUBLICATION testpub_forparted ADD TABLE testpub_parted, testpub_parted2;
+-- only parent is listed as being in publication, not the partition
+SELECT * FROM pg_publication_tables;
 DROP TABLE testpub_parted1, testpub_parted2;
 DROP PUBLICATION testpub_forparted, testpub_forparted1;
 
@@ -144,6 +148,19 @@ ALTER PUBLICATION testpub_default DROP TABLE testpub_tbl1, pub_test.testpub_nopk
 ALTER PUBLICATION testpub_default DROP TABLE pub_test.testpub_nopk;
 
 \d+ testpub_tbl1
+
+-- verify relation cache invalidation when a primary key is added using
+-- an existing index
+CREATE TABLE pub_test.testpub_addpk (id int not null, data int);
+ALTER PUBLICATION testpub_default ADD TABLE pub_test.testpub_addpk;
+INSERT INTO pub_test.testpub_addpk VALUES(1, 11);
+CREATE UNIQUE INDEX testpub_addpk_id_idx ON pub_test.testpub_addpk(id);
+-- fail:
+UPDATE pub_test.testpub_addpk SET id = 2;
+ALTER TABLE pub_test.testpub_addpk ADD PRIMARY KEY USING INDEX testpub_addpk_id_idx;
+-- now it should work:
+UPDATE pub_test.testpub_addpk SET id = 2;
+DROP TABLE pub_test.testpub_addpk;
 
 -- permissions
 SET ROLE regress_publication_user2;

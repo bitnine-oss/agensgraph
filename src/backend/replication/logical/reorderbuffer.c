@@ -452,7 +452,7 @@ ReorderBufferReturnTXN(ReorderBuffer *rb, ReorderBufferTXN *txn)
 }
 
 /*
- * Get an fresh ReorderBufferChange.
+ * Get a fresh ReorderBufferChange.
  */
 ReorderBufferChange *
 ReorderBufferGetChange(ReorderBuffer *rb)
@@ -558,7 +558,7 @@ ReorderBufferGetTupleBuf(ReorderBuffer *rb, Size tuple_len)
 }
 
 /*
- * Free an ReorderBufferTupleBuf.
+ * Free a ReorderBufferTupleBuf.
  */
 void
 ReorderBufferReturnTupleBuf(ReorderBuffer *rb, ReorderBufferTupleBuf *tuple)
@@ -639,7 +639,7 @@ ReorderBufferTXNByXid(ReorderBuffer *rb, TransactionId xid, bool create,
 	}
 
 	/*
-	 * If the cache wasn't hit or it yielded an "does-not-exist" and we want
+	 * If the cache wasn't hit or it yielded a "does-not-exist" and we want
 	 * to create an entry.
 	 */
 
@@ -4632,8 +4632,8 @@ ReorderBufferToastReplace(ReorderBuffer *rb, ReorderBufferTXN *txn,
 
 	toast_rel = RelationIdGetRelation(relation->rd_rel->reltoastrelid);
 	if (!RelationIsValid(toast_rel))
-		elog(ERROR, "could not open relation with OID %u",
-			 relation->rd_rel->reltoastrelid);
+		elog(ERROR, "could not open toast relation with OID %u (base relation \"%s\")",
+			 relation->rd_rel->reltoastrelid, RelationGetRelationName(relation));
 
 	toast_desc = RelationGetDescr(toast_rel);
 

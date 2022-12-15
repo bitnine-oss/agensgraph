@@ -42,7 +42,8 @@ $node->start;
 $node->safe_psql('postgres',
 	    "CREATE TABLE tab1 (f1 int, f2 text);\n"
 	  . "CREATE TABLE mytab123 (f1 int, f2 text);\n"
-	  . "CREATE TABLE mytab246 (f1 int, f2 text);\n");
+	  . "CREATE TABLE mytab246 (f1 int, f2 text);\n"
+	  . "CREATE TYPE enum1 AS ENUM ('foo', 'bar', 'baz');\n");
 
 # Developers would not appreciate this test adding a bunch of junk to
 # their ~/.psql_history, so be sure to redirect history into a temp file.
@@ -127,6 +128,8 @@ sub check_completion
 # (won't work if we are inside a string literal!)
 sub clear_query
 {
+	local $Test::Builder::Level = $Test::Builder::Level + 1;
+
 	check_completion("\\r\n", qr/postgres=# /, "\\r works");
 	return;
 }
@@ -136,6 +139,8 @@ sub clear_query
 # than clear_query because we lose evidence in the history file)
 sub clear_line
 {
+	local $Test::Builder::Level = $Test::Builder::Level + 1;
+
 	check_completion("\025\n", qr/postgres=# /, "control-U works");
 	return;
 }
@@ -216,6 +221,16 @@ check_completion(
 	"\t\t",
 	qr|afile123'? +'?(tmp_check/)?afile456|,
 	"offer multiple file choices");
+
+clear_line();
+
+# check enum label completion
+# some versions of readline/libedit require two tabs here, some only need one
+# also, some versions will offer quotes, some will not
+check_completion(
+	"ALTER TYPE enum1 RENAME VALUE 'ba\t\t",
+	qr|'?bar'? +'?baz'?|,
+	"offer multiple enum choices");
 
 clear_line();
 

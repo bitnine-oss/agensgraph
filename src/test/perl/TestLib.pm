@@ -143,13 +143,14 @@ BEGIN
 	# Must be set early
 	$windows_os = $Config{osname} eq 'MSWin32' || $Config{osname} eq 'msys';
 	# Check if this environment is MSYS2.
-	$is_msys2 = $^O eq 'msys' && `uname -or` =~ /^[2-9].*Msys/;
+	$is_msys2 = $windows_os && -x '/usr/bin/uname'  &&
+	  `uname -or` =~ /^[2-9].*Msys/;
 
 	if ($windows_os)
 	{
 		require Win32API::File;
 		Win32API::File->import(
-			qw(createFile OsFHandleOpen CloseHandle setFilePointer));
+			qw(createFile OsFHandleOpen CloseHandle));
 	}
 
 	# Specifies whether to use Unix sockets for test setups.  On
@@ -352,6 +353,29 @@ sub perl2host
 
 =pod
 
+=item has_wal_read_bug()
+
+Returns true if $tmp_check is subject to a sparc64+ext4 bug that causes WAL
+readers to see zeros if another process simultaneously wrote the same offsets.
+Consult this in tests that fail frequently on affected configurations.  The
+bug has made streaming standbys fail to advance, reporting corrupt WAL.  It
+has made COMMIT PREPARED fail with "could not read two-phase state from WAL".
+Non-WAL PostgreSQL reads haven't been affected, likely because those readers
+and writers have buffering systems in common.  See
+https://postgr.es/m/20220116210241.GC756210@rfd.leadboat.com for details.
+
+=cut
+
+sub has_wal_read_bug
+{
+	return
+	     $Config{osname} eq 'linux'
+	  && $Config{archname} =~ /^sparc/
+	  && !run_log([ qw(df -x ext4), $tmp_check ], '>', '/dev/null', '2>&1');
+}
+
+=pod
+
 =item system_log(@cmd)
 
 Run (via C<system()>) the command passed as argument; the return
@@ -472,33 +496,33 @@ sub slurp_file
 	my ($filename, $offset) = @_;
 	local $/;
 	my $contents;
+	my $fh;
+
+	# On windows open file using win32 APIs, to allow us to set the
+	# FILE_SHARE_DELETE flag ("d" below), otherwise other accesses to the file
+	# may fail.
 	if ($Config{osname} ne 'MSWin32')
 	{
-		open(my $in, '<', $filename)
+		open($fh, '<', $filename)
 		  or croak "could not read \"$filename\": $!";
-		if (defined($offset))
-		{
-			seek($in, $offset, SEEK_SET)
-			  or croak "could not seek \"$filename\": $!";
-		}
-		$contents = <$in>;
-		close $in;
 	}
 	else
 	{
 		my $fHandle = createFile($filename, "r", "rwd")
 		  or croak "could not open \"$filename\": $^E";
-		OsFHandleOpen(my $fh = IO::Handle->new(), $fHandle, 'r')
+		OsFHandleOpen($fh = IO::Handle->new(), $fHandle, 'r')
 		  or croak "could not read \"$filename\": $^E\n";
-		if (defined($offset))
-		{
-			setFilePointer($fh, $offset, qw(FILE_BEGIN))
-			  or croak "could not seek \"$filename\": $^E\n";
-		}
-		$contents = <$fh>;
-		CloseHandle($fHandle)
-		  or croak "could not close \"$filename\": $^E\n";
 	}
+
+	if (defined($offset))
+	{
+		seek($fh, $offset, SEEK_SET)
+		  or croak "could not seek \"$filename\": $!";
+	}
+
+	$contents = <$fh>;
+	close $fh;
+
 	$contents =~ s/\r\n/\n/g if $Config{osname} eq 'msys';
 	return $contents;
 }

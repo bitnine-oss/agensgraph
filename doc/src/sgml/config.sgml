@@ -1248,7 +1248,7 @@ include_dir 'conf.d'
       </term>
       <listitem>
        <para>
-        Specifies the name of the file containing the SSL server certificate
+        Specifies the name of the file containing the SSL client certificate
         revocation list (CRL).
         Relative paths are relative to the data directory.
         This parameter can only be set in the <filename>postgresql.conf</filename>
@@ -1267,7 +1267,7 @@ include_dir 'conf.d'
       </term>
       <listitem>
        <para>
-        Specifies the name of the directory containing the SSL server
+        Specifies the name of the directory containing the SSL client
         certificate revocation list (CRL).  Relative paths are relative to the
         data directory.  This parameter can only be set in
         the <filename>postgresql.conf</filename> file or on the server command
@@ -1664,7 +1664,9 @@ include_dir 'conf.d'
        <para>
         At present, this setting is supported only on Linux and Windows. The
         setting is ignored on other systems when set to
-        <literal>try</literal>.
+        <literal>try</literal>.  On Linux, it is only supported when
+        <varname>shared_memory_type</varname> is set to <literal>mmap</literal>
+        (the default).
        </para>
 
        <para>
@@ -4169,6 +4171,9 @@ restore_command = 'copy "C:\\server\\archivedir\\%f" "%p"'  # Windows
         to continue replication due to removal of required WAL files. You
         can see the WAL availability of replication slots
         in <link linkend="view-pg-replication-slots">pg_replication_slots</link>.
+        If this value is specified without units, it is taken as megabytes.
+        This parameter can only be set in the <filename>postgresql.conf</filename>
+        file or on the server command line.
        </para>
        </listitem>
       </varlistentry>
@@ -8203,8 +8208,8 @@ COPY postgres_log FROM '/full/path/to/logfile.csv' WITH csv;
         This parameter specifies the default table access method to use when
         creating tables or materialized views if the <command>CREATE</command>
         command does not explicitly specify an access method, or when
-        <command>SELECT ... INTO</command> is used, which does not allow to
-        specify a table access method. The default is <literal>heap</literal>.
+        <command>SELECT ... INTO</command> is used, which does not allow
+        specifying a table access method. The default is <literal>heap</literal>.
        </para>
       </listitem>
      </varlistentry>
@@ -8795,7 +8800,7 @@ COPY postgres_log FROM '/full/path/to/logfile.csv' WITH csv;
       </listitem>
      </varlistentry>
 
-     <varlistentry id="guc-multixact-failsafe-age" xreflabel="vacuum_multixact_failsafe_age">
+     <varlistentry id="guc-vacuum-multixact-failsafe-age" xreflabel="vacuum_multixact_failsafe_age">
       <term><varname>vacuum_multixact_failsafe_age</varname> (<type>integer</type>)
       <indexterm>
        <primary><varname>vacuum_multixact_failsafe_age</varname> configuration parameter</primary>

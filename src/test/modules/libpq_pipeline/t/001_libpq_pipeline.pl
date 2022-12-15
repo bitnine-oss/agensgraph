@@ -14,7 +14,6 @@ $node->init;
 $node->start;
 
 my $numrows = 700;
-$ENV{PATH} = "$ENV{TESTDIR}:$ENV{PATH}";
 
 my ($out, $err) = run_command([ 'libpq_pipeline', 'tests' ]);
 die "oops: $err" unless $err eq '';
