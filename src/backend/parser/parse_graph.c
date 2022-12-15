@@ -164,7 +164,7 @@ static bool arePathsConnected(CypherPath *path1, CypherPath *path2);
 static Node *transformComponents(ParseState *pstate, List *components,
 								 List **targetList);
 static Node *transformMatchNode(ParseState *pstate, CypherNode *cnode,
-								bool force, List **targetList, List **eqoList,
+								List **targetList, List **eqoList,
 								bool *isNSItem);
 static ParseNamespaceItem *transformMatchRel(ParseState *pstate,
 											 CypherRel *crel,
@@ -1630,14 +1630,12 @@ transformComponents(ParseState *pstate, List *components, List **targetList)
 				/* `cnode` is the first node in the path */
 				if (prev_crel == NULL)
 				{
-					bool		zero;
-
 					le = lnext(p->chain, le);
 
 					/* vertex only path */
 					if (le == NULL)
 					{
-						vertex = transformMatchNode(pstate, cnode, true,
+						vertex = transformMatchNode(pstate, cnode,
 													targetList, &eqoList,
 													&vertex_is_nsitem);
 						break;
@@ -1649,9 +1647,7 @@ transformComponents(ParseState *pstate, List *components, List **targetList)
 					 * if `crel` is zero-length VLE, get RTE of `cnode`
 					 * because `crel` needs `id` column of the RTE
 					 */
-					zero = isZeroLengthVLE(crel);
-					vertex = transformMatchNode(pstate, cnode,
-												(zero || out), targetList,
+					vertex = transformMatchNode(pstate, cnode, targetList,
 												&eqoList, &vertex_is_nsitem);
 
 					if (p->kind != CPATH_NORMAL)
@@ -1671,7 +1667,7 @@ transformComponents(ParseState *pstate, List *components, List **targetList)
 				}
 				else
 				{
-					vertex = transformMatchNode(pstate, cnode, out, targetList,
+					vertex = transformMatchNode(pstate, cnode, targetList,
 												&eqoList, &vertex_is_nsitem);
 					qual = addQualNodeIn(pstate, qual, vertex,
 										 vertex_is_nsitem, prev_crel,
@@ -1790,8 +1786,8 @@ transformComponents(ParseState *pstate, List *components, List **targetList)
 }
 
 static Node *
-transformMatchNode(ParseState *pstate, CypherNode *cnode, bool force,
-				   List **targetList, List **eqoList, bool *isNSItem)
+transformMatchNode(ParseState *pstate, CypherNode *cnode, List **targetList,
+				   List **eqoList, bool *isNSItem)
 {
 	char	   *varname = getCypherName(cnode->variable);
 	int			varloc = getCypherNameLoc(cnode->variable);
@@ -1800,10 +1796,9 @@ transformMatchNode(ParseState *pstate, CypherNode *cnode, bool force,
 	char	   *labname;
 	int			labloc;
 	bool		prop_constr;
-	Const	   *id;
-	Const	   *prop_map;
-	Const	   *tid;
-	Node	   *vertex;
+	RangeVar   *r;
+	Alias	   *alias;
+	ParseNamespaceItem *nsitem;
 
 	*isNSItem = false;
 
@@ -1817,8 +1812,6 @@ transformMatchNode(ParseState *pstate, CypherNode *cnode, bool force,
 	te = findTarget(*targetList, varname);
 	if (te != NULL)
 	{
-		ParseNamespaceItem *nsitem;
-
 		if (exprType((Node *) te->expr) != VERTEXOID)
 			ereport(ERROR,
 					(errcode(ERRCODE_DUPLICATE_ALIAS),
@@ -1915,98 +1908,55 @@ transformMatchNode(ParseState *pstate, CypherNode *cnode, bool force,
 	else
 		vertexLabelExist(pstate, labname, labloc);
 
-	/*
-	 * If `cnode` has a label constraint or a property constraint, return RTE.
-	 *
-	 * If `cnode` is in a path, return RTE because the path must consist of
-	 * valid vertices.
-	 *
-	 * If there is no previous relationship of `cnode` in the path and the
-	 * next relationship of `cnode` is zero-length, return RTE because the
-	 * relationship needs starting point.
-	 */
-	if (strcmp(labname, AG_VERTEX) != 0 || prop_constr || force)
+	r = makeRangeVar(get_graph_path(true),
+					 labname,
+					 labloc);
+	r->inh = !cnode->only;
+	alias = makeAliasOptUnique(varname);
+
+	/* set `ihn` to true because we should scan all derived tables */
+	nsitem = addRangeTableEntry(pstate, r, alias, r->inh, true);
+	addNSItemToJoinlist(pstate, nsitem, false);
+
+	if (varname != NULL || prop_constr)
 	{
-		RangeVar   *r;
-		Alias	   *alias;
-		ParseNamespaceItem *nsitem;
+		bool		resjunk;
+		int			resno;
 
-		r = makeRangeVar(get_graph_path(true),
-						 labname,
-						 labloc);
-		r->inh = !cnode->only;
-		alias = makeAliasOptUnique(varname);
+		/*
+		 * If `varname` is NULL, this target has to be ignored when
+		 * `RETURN *`.
+		 */
+		resjunk = (varname == NULL);
+		resno = (resjunk ? InvalidAttrNumber : pstate->p_next_resno++);
 
-		/* set `ihn` to true because we should scan all derived tables */
-		nsitem = addRangeTableEntry(pstate, r, alias, r->inh, true);
-		addNSItemToJoinlist(pstate, nsitem, false);
+		te = makeTargetEntry((Expr *) makeVertexExpr(pstate,
+													 nsitem,
+													 varloc),
+							 (AttrNumber) resno,
+							 alias->aliasname,
+							 resjunk);
 
-		if (varname != NULL || prop_constr)
+		if (resjunk)
 		{
-			bool		resjunk;
-			int			resno;
+			ElemQualOnly *eqo;
 
-			/*
-			 * If `varname` is NULL, this target has to be ignored when
-			 * `RETURN *`.
-			 */
-			resjunk = (varname == NULL);
-			resno = (resjunk ? InvalidAttrNumber : pstate->p_next_resno++);
+			eqo = palloc(sizeof(*eqo));
+			eqo->te = te;
+			eqo->prop_map = cnode->prop_map;
 
-			te = makeTargetEntry((Expr *) makeVertexExpr(pstate,
-														 nsitem,
-														 varloc),
-								 (AttrNumber) resno,
-								 alias->aliasname,
-								 resjunk);
-
-			if (resjunk)
-			{
-				ElemQualOnly *eqo;
-
-				eqo = palloc(sizeof(*eqo));
-				eqo->te = te;
-				eqo->prop_map = cnode->prop_map;
-
-				*eqoList = lappend(*eqoList, eqo);
-			}
-			else
-			{
-				addElemQual(pstate, te->resno, cnode->prop_map);
-				*targetList = lappend(*targetList, te);
-			}
+			*eqoList = lappend(*eqoList, eqo);
 		}
-
-		/* return RTE to help the caller can access columns directly */
-		*isNSItem = true;
-		return (Node *) nsitem;
+		else
+		{
+			addElemQual(pstate, te->resno, cnode->prop_map);
+			*targetList = lappend(*targetList, te);
+		}
 	}
 
-	/* this node is just a placeholder for relationships */
-	if (varname == NULL)
-		return NULL;
-
-	/*
-	 * `cnode` is assigned to the variable `varname` but there is a chance to
-	 * omit the RTE for `cnode` if no expression uses properties of `cnode`.
-	 * So, return a (invalid) future vertex at here for later use.
-	 */
-
-	id = makeNullConst(GRAPHIDOID, -1, InvalidOid);
-	prop_map = makeNullConst(JSONBOID, -1, InvalidOid);
-	tid = makeNullConst(TIDOID, -1, InvalidOid);
-	vertex = makeTypedRowExpr(list_make3(id, prop_map, tid), VERTEXOID, varloc);
-	te = makeTargetEntry((Expr *) vertex,
-						 (AttrNumber) pstate->p_next_resno++,
-						 varname,
-						 false);
-
-	/* there is no need to addElemQual() here */
-	*targetList = lappend(*targetList, te);
-
-	addFutureVertex(pstate, te->resno, labname);
-
-	return (Node *) te;
+	/* return RTE to help the caller can access columns directly */
+	*isNSItem = true;
+	return (Node *) nsitem;
 }
 
 static ParseNamespaceItem *
