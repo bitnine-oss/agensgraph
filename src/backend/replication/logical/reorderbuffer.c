@@ -182,9 +182,10 @@ typedef struct ReorderBufferDiskChange
 ( \
 	((action) == REORDER_BUFFER_CHANGE_INTERNAL_SPEC_INSERT) \
 )
-#define IsSpecConfirm(action) \
+#define IsSpecConfirmOrAbort(action) \
 ( \
-	((action) == REORDER_BUFFER_CHANGE_INTERNAL_SPEC_CONFIRM) \
+	(((action) == REORDER_BUFFER_CHANGE_INTERNAL_SPEC_CONFIRM) || \
+	((action) == REORDER_BUFFER_CHANGE_INTERNAL_SPEC_ABORT)) \
 )
 #define IsInsertOrUpdate(action) \
 ( \
@@ -289,7 +290,8 @@ static void ReorderBufferToastAppendChunk(ReorderBuffer *rb, ReorderBufferTXN *t
  */
 static Size ReorderBufferChangeSize(ReorderBufferChange *change);
 static void ReorderBufferChangeMemoryUpdate(ReorderBuffer *rb,
-											ReorderBufferChange *change, bool addition);
+											ReorderBufferChange *change,
+											bool addition, Size sz);
 
 /*
  * Allocate a new ReorderBuffer and clean out any old serialized state from
@@ -473,7 +475,8 @@ ReorderBufferReturnChange(ReorderBuffer *rb, ReorderBufferChange *change,
 {
 	/* update memory accounting info */
 	if (upd_mem)
-		ReorderBufferChangeMemoryUpdate(rb, change, false);
+		ReorderBufferChangeMemoryUpdate(rb, change, false,
+										ReorderBufferChangeSize(change));
 
 	/* free contained data */
 	switch (change->action)
@@ -731,12 +734,13 @@ ReorderBufferProcessPartialChange(ReorderBuffer *rb, ReorderBufferTXN *txn,
 
 	/*
 	 * Indicate a partial change for speculative inserts.  The change will be
-	 * considered as complete once we get the speculative confirm token.
+	 * considered as complete once we get the speculative confirm or abort
+	 * token.
 	 */
 	if (IsSpecInsert(change->action))
 		toptxn->txn_flags |= RBTXN_HAS_PARTIAL_CHANGE;
 	else if (rbtxn_has_partial_change(toptxn) &&
-			 IsSpecConfirm(change->action))
+			 IsSpecConfirmOrAbort(change->action))
 		toptxn->txn_flags &= ~RBTXN_HAS_PARTIAL_CHANGE;
 
 	/*
@@ -790,7 +794,8 @@ ReorderBufferQueueChange(ReorderBuffer *rb, TransactionId xid, XLogRecPtr lsn,
 	txn->nentries_mem++;
 
 	/* update memory accounting information */
-	ReorderBufferChangeMemoryUpdate(rb, change, true);
+	ReorderBufferChangeMemoryUpdate(rb, change, true,
+									ReorderBufferChangeSize(change));
 
 	/* process partial change */
 	ReorderBufferProcessPartialChange(rb, txn, change, toast_insert);
@@ -3097,9 +3102,8 @@ ReorderBufferAddNewCommandId(ReorderBuffer *rb, TransactionId xid,
 static void
 ReorderBufferChangeMemoryUpdate(ReorderBuffer *rb,
 								ReorderBufferChange *change,
-								bool addition)
+								bool addition, Size sz)
 {
-	Size		sz;
 	ReorderBufferTXN *txn;
 	ReorderBufferTXN *toptxn;
 
@@ -3123,8 +3127,6 @@ ReorderBufferChangeMemoryUpdate(ReorderBuffer *rb,
 		toptxn = txn->toptxn;
 	else
 		toptxn = txn;
-
-	sz = ReorderBufferChangeSize(change);
 
 	if (addition)
 	{
@@ -4356,7 +4358,8 @@ ReorderBufferRestoreChange(ReorderBuffer *rb, ReorderBufferTXN *txn,
 	 * update the accounting too (subtracting the size from the counters). And
 	 * we don't want to underflow there.
 	 */
-	ReorderBufferChangeMemoryUpdate(rb, change, true);
+	ReorderBufferChangeMemoryUpdate(rb, change, true,
+									ReorderBufferChangeSize(change));
 }
 
 /*
@@ -4602,17 +4605,23 @@ ReorderBufferToastReplace(ReorderBuffer *rb, ReorderBufferTXN *txn,
 	TupleDesc	toast_desc;
 	MemoryContext oldcontext;
 	ReorderBufferTupleBuf *newtup;
+	Size		old_size;
 
 	/* no toast tuples changed */
 	if (txn->toast_hash == NULL)
 		return;
 
 	/*
-	 * We're going to modify the size of the change, so to make sure the
-	 * accounting is correct we'll make it look like we're removing the change
-	 * now (with the old size), and then re-add it at the end.
+	 * We're going to modify the size of the change. So, to make sure the
+	 * accounting is correct we record the current change size and then after
+	 * re-computing the change we'll subtract the recorded size and then
+	 * re-add the new change size at the end. We don't immediately subtract
+	 * the old size because if there is any error before we add the new size,
+	 * we will release the changes and that will update the accounting info
+	 * (subtracting the size from the counters). And we don't want to
+	 * underflow there.
 	 */
-	ReorderBufferChangeMemoryUpdate(rb, change, false);
+	old_size = ReorderBufferChangeSize(change);
 
 	oldcontext = MemoryContextSwitchTo(rb->context);
 
@@ -4763,8 +4772,11 @@ ReorderBufferToastReplace(ReorderBuffer *rb, ReorderBufferTXN *txn,
 
 	MemoryContextSwitchTo(oldcontext);
 
+	/* subtract the old change size */
+	ReorderBufferChangeMemoryUpdate(rb, change, false, old_size);
 	/* now add the change back, with the correct size */
-	ReorderBufferChangeMemoryUpdate(rb, change, true);
+	ReorderBufferChangeMemoryUpdate(rb, change, true,
+									ReorderBufferChangeSize(change));
 }
 
 /*

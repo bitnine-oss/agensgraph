@@ -159,6 +159,8 @@ parse_subscription_options(List *options,
 			/* Setting slot_name = NONE is treated as no slot name. */
 			if (strcmp(*slot_name, "none") == 0)
 				*slot_name = NULL;
+			else
+				ReplicationSlotValidateName(*slot_name, ERROR);
 		}
 		else if (strcmp(defel->defname, "copy_data") == 0 && copy_data)
 		{
@@ -958,8 +960,7 @@ AlterSubscription(AlterSubscriptionStmt *stmt, bool isTopLevel)
 										   NULL, NULL,	/* no "enabled" */
 										   NULL,	/* no "create_slot" */
 										   NULL, NULL,	/* no "slot_name" */
-										   isadd ? &copy_data : NULL,	/* for drop, no
-																		 * "copy_data" */
+										   &copy_data,
 										   NULL,	/* no "synchronous_commit" */
 										   &refresh,
 										   NULL, NULL,	/* no "binary" */
@@ -984,8 +985,8 @@ AlterSubscription(AlterSubscriptionStmt *stmt, bool isTopLevel)
 
 					PreventInTransactionBlock(isTopLevel, "ALTER SUBSCRIPTION with refresh");
 
-					/* Only refresh the added/dropped list of publications. */
-					sub->publications = stmt->publication;
+					/* Refresh the new list of publications. */
+					sub->publications = publist;
 
 					AlterSubscription_refresh(sub, copy_data);
 				}

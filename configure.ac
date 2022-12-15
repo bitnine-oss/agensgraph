@@ -17,7 +17,7 @@ dnl Read the Autoconf manual for details.
 dnl
 m4_pattern_forbid(^PGAC_)dnl to catch undefined macros
 
-AC_INIT([PostgreSQL], [14beta2], [pgsql-bugs@lists.postgresql.org], [], [https://www.postgresql.org/])
+AC_INIT([PostgreSQL], [14.0], [pgsql-bugs@lists.postgresql.org], [], [https://www.postgresql.org/])
 
 m4_if(m4_defn([m4_PACKAGE_VERSION]), [2.69], [], [m4_fatal([Autoconf version 2.69 is required.
 Untested combinations of 'autoconf' and PostgreSQL versions are not
@@ -503,6 +503,9 @@ if test "$GCC" = yes -a "$ICC" = no; then
   AC_SUBST(PERMIT_DECLARATION_AFTER_STATEMENT)
   # Really don't want VLAs to be used in our dialect of C
   PGAC_PROG_CC_CFLAGS_OPT([-Werror=vla])
+  # On macOS, complain about usage of symbols newer than the deployment target
+  PGAC_PROG_CC_CFLAGS_OPT([-Werror=unguarded-availability-new])
+  PGAC_PROG_CXX_CFLAGS_OPT([-Werror=unguarded-availability-new])
   # -Wvla is not applicable for C++
   PGAC_PROG_CC_CFLAGS_OPT([-Wendif-labels])
   PGAC_PROG_CXX_CFLAGS_OPT([-Wendif-labels])
@@ -1179,17 +1182,13 @@ AC_SEARCH_LIBS(shm_unlink, rt)
 AC_SEARCH_LIBS(clock_gettime, [rt posix4])
 # Solaris:
 AC_SEARCH_LIBS(fdatasync, [rt posix4])
-# Required for thread_test.c on Solaris
-AC_SEARCH_LIBS(sched_yield, rt)
-# Required for thread_test.c on Solaris 2.5:
-# Other ports use it too (HP-UX) so test unconditionally
-AC_SEARCH_LIBS(gethostbyname_r, nsl)
 # Cygwin:
 AC_SEARCH_LIBS(shmget, cygipc)
 # *BSD:
 AC_SEARCH_LIBS(backtrace_symbols, execinfo)
 
 if test "$enable_thread_safety" = yes; then
+  AC_SEARCH_LIBS(gethostbyname_r, nsl)
   AC_SEARCH_LIBS(pthread_barrier_wait, pthread)
 fi
 
@@ -1294,7 +1293,8 @@ if test "$with_lz4" = yes ; then
   AC_CHECK_LIB(lz4, LZ4_compress_default, [], [AC_MSG_ERROR([library 'lz4' is required for LZ4 support])])
 fi
 
-# Note: We can test for libldap_r only after we know PTHREAD_LIBS
+# Note: We can test for libldap_r only after we know PTHREAD_LIBS;
+# also, on AIX, we may need to have openssl in LIBS for this step.
 if test "$with_ldap" = yes ; then
   _LIBS="$LIBS"
   if test "$PORTNAME" != "win32"; then
@@ -1302,16 +1302,19 @@ if test "$with_ldap" = yes ; then
 		 [AC_MSG_ERROR([library 'ldap' is required for LDAP])],
 		 [$EXTRA_LDAP_LIBS])
     LDAP_LIBS_BE="-lldap $EXTRA_LDAP_LIBS"
+    # This test is carried out against libldap.
+    AC_CHECK_FUNCS([ldap_initialize])
     if test "$enable_thread_safety" = yes; then
-      # on some platforms ldap_r fails to link without PTHREAD_LIBS
-      AC_CHECK_LIB(ldap_r, ldap_simple_bind, [],
-		   [AC_MSG_ERROR([library 'ldap_r' is required for LDAP])],
+      # Use ldap_r for FE if available, else assume ldap is thread-safe.
+      # On some platforms ldap_r fails to link without PTHREAD_LIBS.
+      LIBS="$_LIBS"
+      AC_CHECK_LIB(ldap_r, ldap_bind,
+		   [LDAP_LIBS_FE="-lldap_r $EXTRA_LDAP_LIBS"],
+		   [LDAP_LIBS_FE="-lldap $EXTRA_LDAP_LIBS"],
 		   [$PTHREAD_CFLAGS $PTHREAD_LIBS $EXTRA_LDAP_LIBS])
-      LDAP_LIBS_FE="-lldap_r $EXTRA_LDAP_LIBS"
     else
       LDAP_LIBS_FE="-lldap $EXTRA_LDAP_LIBS"
     fi
-    AC_CHECK_FUNCS([ldap_initialize])
   else
     AC_CHECK_LIB(wldap32, ldap_bind, [], [AC_MSG_ERROR([library 'wldap32' is required for LDAP])])
     LDAP_LIBS_FE="-lwldap32"
@@ -1754,6 +1757,12 @@ AC_CHECK_DECLS(posix_fadvise, [], [], [#include <fcntl.h>])
 
 AC_CHECK_DECLS(fdatasync, [], [], [#include <unistd.h>])
 AC_CHECK_DECLS([strlcat, strlcpy, strnlen])
+
+# We can't use AC_REPLACE_FUNCS to replace these functions, because it
+# won't handle deployment target restrictions on macOS
+AC_CHECK_DECLS([preadv], [], [AC_LIBOBJ(preadv)], [#include <sys/uio.h>])
+AC_CHECK_DECLS([pwritev], [], [AC_LIBOBJ(pwritev)], [#include <sys/uio.h>])
+
 # This is probably only present on macOS, but may as well check always
 AC_CHECK_DECLS(F_FULLFSYNC, [], [], [#include <fcntl.h>])
 
@@ -1789,9 +1798,7 @@ AC_REPLACE_FUNCS(m4_normalize([
 	link
 	mkdtemp
 	pread
-	preadv
 	pwrite
-	pwritev
 	random
 	srandom
 	strlcat
@@ -2326,38 +2333,6 @@ if test "$enable_tap_tests" = yes; then
   if test -z "$PROVE"; then
     AC_MSG_ERROR([prove not found])
   fi
-fi
-
-# Thread testing
-
-# We have to run the thread test near the end so we have all our symbols
-# defined.  Cross compiling throws a warning.
-#
-if test "$enable_thread_safety" = yes; then
-if test "$PORTNAME" != "win32"
-then
-AC_MSG_CHECKING([thread safety of required library functions])
-
-_CFLAGS="$CFLAGS"
-_LIBS="$LIBS"
-CFLAGS="$CFLAGS $PTHREAD_CFLAGS"
-LIBS="$LIBS $PTHREAD_LIBS"
-AC_RUN_IFELSE(
-  [AC_LANG_SOURCE([[#include "$srcdir/config/thread_test.c"]])],
-  [AC_MSG_RESULT(yes)],
-  [AC_MSG_RESULT(no)
-  AC_MSG_ERROR([thread test program failed
-This platform is not thread-safe.  Check the file 'config.log' for the
-exact reason, or use --disable-thread-safety to disable thread safety.])],
-  [AC_MSG_RESULT(maybe)
-  AC_MSG_WARN([
-*** Skipping thread test program because of cross-compile build.
-])])
-CFLAGS="$_CFLAGS"
-LIBS="$_LIBS"
-else
-AC_MSG_WARN([*** skipping thread test on Win32])
-fi
 fi
 
 # If compiler will take -Wl,--as-needed (or various platform-specific

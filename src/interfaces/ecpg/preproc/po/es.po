@@ -1,19 +1,19 @@
 # Spanish translation file for ecpg
 #
-# Copyright (c) 2009-2019, PostgreSQL Global Development Group
+# Copyright (c) 2009-2021, PostgreSQL Global Development Group
 # This file is distributed under the same license as the PostgreSQL package.
 #
 # Emanuel Calvo Franco <postgres.arg@gmail.com>, 2009.
 # Alvaro Herrera <alvherre@alvh.no-ip.org>, 2009-2012
 # Franco Catena, <francocatena@gmail.com>, 2009
-# Carlos Chapi <carloswaldo@babelruins.org>, 2018-2021
+# Carlos Chapi <carloswaldo@babelruins.org>, 2018, 2021
 #
 msgid ""
 msgstr ""
-"Project-Id-Version: ecpg (PostgreSQL) 12\n"
+"Project-Id-Version: ecpg (PostgreSQL) 14\n"
 "Report-Msgid-Bugs-To: pgsql-bugs@lists.postgresql.org\n"
 "POT-Creation-Date: 2021-05-14 19:39+0000\n"
-"PO-Revision-Date: 2021-05-19 22:22-0500\n"
+"PO-Revision-Date: 2021-09-16 09:22+0200\n"
 "Last-Translator: Carlos Chapi <carloswaldo@babelruins.org>\n"
 "Language-Team: PgSQL-es-Ayuda <pgsql-es-ayuda@lists.postgresql.org>\n"
 "Language: es\n"
@@ -124,7 +124,7 @@ msgstr "  -i             analiza además los archivos de inclusión de sistema\n
 #: ecpg.c:52
 #, c-format
 msgid "  -I DIRECTORY   search DIRECTORY for include files\n"
-msgstr "  -I DIRECTORIO   busca los archivos de inclusión en DIRECTORIO\n"
+msgstr "  -I DIRECTORIO  busca los archivos de inclusión en DIRECTORIO\n"
 
 #: ecpg.c:53
 #, c-format

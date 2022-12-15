@@ -358,6 +358,8 @@ PersistHoldablePortal(Portal portal)
 	savePortalContext = PortalContext;
 	PG_TRY();
 	{
+		ScanDirection direction = ForwardScanDirection;
+
 		ActivePortal = portal;
 		if (portal->resowner)
 			CurrentResourceOwner = portal->resowner;
@@ -373,6 +375,15 @@ PersistHoldablePortal(Portal portal)
 		 * can be processed.  Otherwise, store only the not-yet-fetched rows.
 		 * (The latter is not only more efficient, but avoids semantic
 		 * problems if the query's output isn't stable.)
+		 *
+		 * In the no-scroll case, tuple indexes in the tuplestore will not
+		 * match the cursor's nominal position (portalPos).  Currently this
+		 * causes no difficulty because we only navigate in the tuplestore by
+		 * relative position, except for the tuplestore_skiptuples call below
+		 * and the tuplestore_rescan call in DoPortalRewind, both of which are
+		 * disabled for no-scroll cursors.  But someday we might need to track
+		 * the offset between the holdStore and the cursor's nominal position
+		 * explicitly.
 		 */
 		if (portal->cursorOptions & CURSOR_OPT_SCROLL)
 		{
@@ -380,10 +391,16 @@ PersistHoldablePortal(Portal portal)
 		}
 		else
 		{
-			/* We must reset the cursor state as though at start of query */
-			portal->atStart = true;
-			portal->atEnd = false;
-			portal->portalPos = 0;
+			/*
+			 * If we already reached end-of-query, set the direction to
+			 * NoMovement to avoid trying to fetch any tuples.  (This check
+			 * exists because not all plan node types are robust about being
+			 * called again if they've already returned NULL once.)  We'll
+			 * still set up an empty tuplestore, though, to keep this from
+			 * being a special case later.
+			 */
+			if (portal->atEnd)
+				direction = NoMovementScanDirection;
 		}
 
 		/*
@@ -400,7 +417,7 @@ PersistHoldablePortal(Portal portal)
 										NULL);
 
 		/* Fetch the result set into the tuplestore */
-		ExecutorRun(queryDesc, ForwardScanDirection, 0L, false);
+		ExecutorRun(queryDesc, direction, 0L, false);
 
 		queryDesc->dest->rDestroy(queryDesc->dest);
 		queryDesc->dest = NULL;
@@ -431,10 +448,17 @@ PersistHoldablePortal(Portal portal)
 		{
 			tuplestore_rescan(portal->holdStore);
 
-			if (!tuplestore_skiptuples(portal->holdStore,
-									   portal->portalPos,
-									   true))
-				elog(ERROR, "unexpected end of tuple stream");
+			/*
+			 * In the no-scroll case, the start of the tuplestore is exactly
+			 * where we want to be, so no repositioning is wanted.
+			 */
+			if (portal->cursorOptions & CURSOR_OPT_SCROLL)
+			{
+				if (!tuplestore_skiptuples(portal->holdStore,
+										   portal->portalPos,
+										   true))
+					elog(ERROR, "unexpected end of tuple stream");
+			}
 		}
 	}
 	PG_CATCH();

@@ -79,7 +79,7 @@
 #include "executor/executor.h"
 #include "executor/nodeAgg.h"
 #include "executor/nodeHash.h"
-#include "executor/nodeResultCache.h"
+#include "executor/nodeMemoize.h"
 #include "miscadmin.h"
 #include "nodes/makefuncs.h"
 #include "nodes/nodeFuncs.h"
@@ -140,7 +140,7 @@ bool		enable_incremental_sort = true;
 bool		enable_hashagg = true;
 bool		enable_nestloop = true;
 bool		enable_material = true;
-bool		enable_resultcache = true;
+bool		enable_memoize = true;
 bool		enable_mergejoin = true;
 bool		enable_hashjoin = true;
 bool		enable_gathermerge = true;
@@ -2422,8 +2422,8 @@ cost_dijkstra(Path *path,
 }
 
 /*
- * cost_resultcache_rescan
- *	  Determines the estimated cost of rescanning a ResultCache node.
+ * cost_memoize_rescan
+ *	  Determines the estimated cost of rescanning a Memoize node.
  *
  * In order to estimate this, we must gain knowledge of how often we expect to
  * be called and how many distinct sets of parameters we are likely to be
@@ -2435,15 +2435,15 @@ cost_dijkstra(Path *path,
  * hit and caching would be a complete waste of effort.
  */
 static void
-cost_resultcache_rescan(PlannerInfo *root, ResultCachePath *rcpath,
-						Cost *rescan_startup_cost, Cost *rescan_total_cost)
+cost_memoize_rescan(PlannerInfo *root, MemoizePath *mpath,
+					Cost *rescan_startup_cost, Cost *rescan_total_cost)
 {
 	EstimationInfo estinfo;
-	Cost		input_startup_cost = rcpath->subpath->startup_cost;
-	Cost		input_total_cost = rcpath->subpath->total_cost;
-	double		tuples = rcpath->subpath->rows;
-	double		calls = rcpath->calls;
-	int			width = rcpath->subpath->pathtarget->width;
+	Cost		input_startup_cost = mpath->subpath->startup_cost;
+	Cost		input_total_cost = mpath->subpath->total_cost;
+	double		tuples = mpath->subpath->rows;
+	double		calls = mpath->calls;
+	int			width = mpath->subpath->pathtarget->width;
 
 	double		hash_mem_bytes;
 	double		est_entry_bytes;
@@ -2455,7 +2455,7 @@ cost_resultcache_rescan(PlannerInfo *root, ResultCachePath *rcpath,
 	Cost		total_cost;
 
 	/* available cache space */
-	hash_mem_bytes = get_hash_mem() * 1024L;
+	hash_mem_bytes = get_hash_memory_limit();
 
 	/*
 	 * Set the number of bytes each cache entry should consume in the cache.
@@ -2472,16 +2472,16 @@ cost_resultcache_rescan(PlannerInfo *root, ResultCachePath *rcpath,
 	est_cache_entries = floor(hash_mem_bytes / est_entry_bytes);
 
 	/* estimate on the distinct number of parameter values */
-	ndistinct = estimate_num_groups(root, rcpath->param_exprs, calls, NULL,
+	ndistinct = estimate_num_groups(root, mpath->param_exprs, calls, NULL,
 									&estinfo);
 
 	/*
 	 * When the estimation fell back on using a default value, it's a bit too
-	 * risky to assume that it's ok to use a Result Cache.  The use of a
-	 * default could cause us to use a Result Cache when it's really
+	 * risky to assume that it's ok to use a Memoize node.  The use of a
+	 * default could cause us to use a Memoize node when it's really
 	 * inappropriate to do so.  If we see that this has been done, then we'll
 	 * assume that every call will have unique parameters, which will almost
-	 * certainly mean a ResultCachePath will never survive add_path().
+	 * certainly mean a MemoizePath will never survive add_path().
 	 */
 	if ((estinfo.flags & SELFLAG_USED_DEFAULT) != 0)
 		ndistinct = calls;
@@ -2495,8 +2495,8 @@ cost_resultcache_rescan(PlannerInfo *root, ResultCachePath *rcpath,
 	 * size itself.  Really this is not the right place to do this, but it's
 	 * convenient since everything is already calculated.
 	 */
-	rcpath->est_entries = Min(Min(ndistinct, est_cache_entries),
-							  PG_UINT32_MAX);
+	mpath->est_entries = Min(Min(ndistinct, est_cache_entries),
+							 PG_UINT32_MAX);
 
 	/*
 	 * When the number of distinct parameter values is above the amount we can
@@ -3877,7 +3877,6 @@ final_cost_hashjoin(PlannerInfo *root, HashPath *path,
 	Cost		run_cost = workspace->run_cost;
 	int			numbuckets = workspace->numbuckets;
 	int			numbatches = workspace->numbatches;
-	int			hash_mem;
 	Cost		cpu_per_tuple;
 	QualCost	hash_qual_cost;
 	QualCost	qp_qual_cost;
@@ -4003,10 +4002,8 @@ final_cost_hashjoin(PlannerInfo *root, HashPath *path,
 	 * that way, so it will be unable to drive the batch size below hash_mem
 	 * when this is true.)
 	 */
-	hash_mem = get_hash_mem();
 	if (relation_byte_size(clamp_row_est(inner_path_rows * innermcvfreq),
-						   inner_path->pathtarget->width) >
-		(hash_mem * 1024L))
+						   inner_path->pathtarget->width) > get_hash_memory_limit())
 		startup_cost += disable_cost;
 
 	/*
@@ -4302,10 +4299,10 @@ cost_rescan(PlannerInfo *root, Path *path,
 				*rescan_total_cost = run_cost;
 			}
 			break;
-		case T_ResultCache:
-			/* All the hard work is done by cost_resultcache_rescan */
-			cost_resultcache_rescan(root, (ResultCachePath *) path,
-									rescan_startup_cost, rescan_total_cost);
+		case T_Memoize:
+			/* All the hard work is done by cost_memoize_rescan */
+			cost_memoize_rescan(root, (MemoizePath *) path,
+								rescan_startup_cost, rescan_total_cost);
 			break;
 		default:
 			*rescan_startup_cost = path->startup_cost;

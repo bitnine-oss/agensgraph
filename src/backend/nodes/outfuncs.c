@@ -851,9 +851,9 @@ _outMaterial(StringInfo str, const Material *node)
 }
 
 static void
-_outResultCache(StringInfo str, const ResultCache *node)
+_outMemoize(StringInfo str, const Memoize *node)
 {
-	WRITE_NODE_TYPE("RESULTCACHE");
+	WRITE_NODE_TYPE("MEMOIZE");
 
 	_outPlanInfo(str, (const Plan *) node);
 
@@ -2096,9 +2096,9 @@ _outMaterialPath(StringInfo str, const MaterialPath *node)
 }
 
 static void
-_outResultCachePath(StringInfo str, const ResultCachePath *node)
+_outMemoizePath(StringInfo str, const MemoizePath *node)
 {
-	WRITE_NODE_TYPE("RESULTCACHEPATH");
+	WRITE_NODE_TYPE("MEMOIZEPATH");
 
 	_outPathInfo(str, (const Path *) node);
 
@@ -4463,8 +4463,8 @@ outNode(StringInfo str, const void *obj)
 			case T_Material:
 				_outMaterial(str, obj);
 				break;
-			case T_ResultCache:
-				_outResultCache(str, obj);
+			case T_Memoize:
+				_outMemoize(str, obj);
 				break;
 			case T_Sort:
 				_outSort(str, obj);
@@ -4736,8 +4736,8 @@ outNode(StringInfo str, const void *obj)
 			case T_MaterialPath:
 				_outMaterialPath(str, obj);
 				break;
-			case T_ResultCachePath:
-				_outResultCachePath(str, obj);
+			case T_MemoizePath:
+				_outMemoizePath(str, obj);
 				break;
 			case T_UniquePath:
 				_outUniquePath(str, obj);

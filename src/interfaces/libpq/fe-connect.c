@@ -3658,6 +3658,13 @@ keep_going:						/* We will come back to here until there is
 				/* We can release the address list now. */
 				release_conn_addrinfo(conn);
 
+				/*
+				 * Contents of conn->errorMessage are no longer interesting
+				 * (and it seems some clients expect it to be empty after a
+				 * successful connection).
+				 */
+				resetPQExpBuffer(&conn->errorMessage);
+
 				/* We are open for business! */
 				conn->status = CONNECTION_OK;
 				return PGRES_POLLING_OK;
@@ -6752,6 +6759,14 @@ PQerrorMessage(const PGconn *conn)
 {
 	if (!conn)
 		return libpq_gettext("connection pointer is NULL\n");
+
+	/*
+	 * The errorMessage buffer might be marked "broken" due to having
+	 * previously failed to allocate enough memory for the message.  In that
+	 * case, tell the application we ran out of memory.
+	 */
+	if (PQExpBufferBroken(&conn->errorMessage))
+		return libpq_gettext("out of memory\n");
 
 	return conn->errorMessage.data;
 }

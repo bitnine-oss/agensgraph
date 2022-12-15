@@ -41,6 +41,7 @@ CREATE STATISTICS tst ON (x || 'x'), (x || 'x'), (y + 1), (x || 'x'), (x || 'x')
 CREATE STATISTICS tst ON (x || 'x'), (x || 'x'), y FROM ext_stats_test;
 CREATE STATISTICS tst (unrecognized) ON x, y FROM ext_stats_test;
 -- incorrect expressions
+CREATE STATISTICS tst ON (y) FROM ext_stats_test; -- single column reference
 CREATE STATISTICS tst ON y + z FROM ext_stats_test; -- missing parentheses
 CREATE STATISTICS tst ON (x, y) FROM ext_stats_test; -- tuple expression
 DROP TABLE ext_stats_test;
@@ -48,6 +49,15 @@ DROP TABLE ext_stats_test;
 -- Ensure stats are dropped sanely, and test IF NOT EXISTS while at it
 CREATE TABLE ab1 (a INTEGER, b INTEGER, c INTEGER);
 CREATE STATISTICS IF NOT EXISTS ab1_a_b_stats ON a, b FROM ab1;
+COMMENT ON STATISTICS ab1_a_b_stats IS 'new comment';
+CREATE ROLE regress_stats_ext;
+SET SESSION AUTHORIZATION regress_stats_ext;
+COMMENT ON STATISTICS ab1_a_b_stats IS 'changed comment';
+DROP STATISTICS ab1_a_b_stats;
+ALTER STATISTICS ab1_a_b_stats RENAME TO ab1_a_b_stats_new;
+RESET SESSION AUTHORIZATION;
+DROP ROLE regress_stats_ext;
+
 CREATE STATISTICS IF NOT EXISTS ab1_a_b_stats ON a, b FROM ab1;
 DROP STATISTICS ab1_a_b_stats;
 
@@ -1529,6 +1539,7 @@ create statistics stts_s2.stts_yama (dependencies, mcv) on col1, col3 from stts_
 
 insert into stts_t1 select i,i from generate_series(1,100) i;
 analyze stts_t1;
+set search_path to public, stts_s1, stts_s2, tststats;
 
 \dX
 \dX stts_?
@@ -1538,6 +1549,9 @@ analyze stts_t1;
 \dX+ *stts_hoge
 \dX+ stts_s2.stts_yama
 
+set search_path to public, stts_s1;
+\dX
+
 create role regress_stats_ext nosuperuser;
 set role regress_stats_ext;
 \dX
@@ -1546,6 +1560,7 @@ reset role;
 drop table stts_t1, stts_t2, stts_t3;
 drop schema stts_s1, stts_s2 cascade;
 drop user regress_stats_ext;
+reset search_path;
 
 -- User with no access
 CREATE USER regress_stats_user1;

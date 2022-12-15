@@ -1087,7 +1087,7 @@ initialize_SSL(PGconn *conn)
 	 * Per RFC 6066, do not set it if the host is a literal IP address (IPv4
 	 * or IPv6).
 	 */
-	if (conn->sslsni && conn->sslsni[0])
+	if (conn->sslsni && conn->sslsni[0] == '1')
 	{
 		const char *host = conn->connhost[conn->whichhost].host;
 
@@ -1701,6 +1701,7 @@ my_BIO_s_socket(void)
 		my_bio_index = BIO_get_new_index();
 		if (my_bio_index == -1)
 			return NULL;
+		my_bio_index |= (BIO_TYPE_DESCRIPTOR | BIO_TYPE_SOURCE_SINK);
 		my_bio_methods = BIO_meth_new(my_bio_index, "libpq socket");
 		if (!my_bio_methods)
 			return NULL;

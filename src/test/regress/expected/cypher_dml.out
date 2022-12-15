@@ -1399,7 +1399,7 @@ WITH x[0] AS x1, x[1] AS x2 ORDER BY x2 RETURN x1;
                            ->  Graph VLE [1..2]
                                  ->  Result
                                        Output: a.id, a.id, '{}'::graphid[], '[]'::edge[]
-               ->  Result Cache
+               ->  Memoize
                      Output: b.id
                      Cache Key: x."end"
                      ->  Index Only Scan using person_pkey on t.person b
@@ -1433,7 +1433,7 @@ WITH max(b.id::"numeric") AS id, x[0] AS x RETURN *;
                                  ->  Graph VLE [1..2]
                                        ->  Result
                                              Output: a.id, a.id, '{}'::graphid[], '[]'::edge[]
-                     ->  Result Cache
+                     ->  Memoize
                            Output: b.properties, b.id
                            Cache Key: x."end"
                            ->  Index Scan using person_pkey on t.person b
@@ -1464,7 +1464,7 @@ WITH DISTINCT x AS path RETURN *;
                            ->  Graph VLE [1..2]
                                  ->  Result
                                        Output: a.id, a.id, '{}'::graphid[], '[]'::edge[]
-               ->  Result Cache
+               ->  Memoize
                      Output: b.id
                      Cache Key: x."end"
                      ->  Index Only Scan using person_pkey on t.person b
@@ -1498,7 +1498,7 @@ WITH max(b.id::"numeric") AS id, x AS x RETURN *;
                                  ->  Graph VLE [1..2]
                                        ->  Result
                                              Output: a.id, a.id, '{}'::graphid[], '[]'::edge[]
-                     ->  Result Cache
+                     ->  Memoize
                            Output: b.properties, b.id
                            Cache Key: x."end"
                            ->  Index Scan using person_pkey on t.person b
@@ -1532,7 +1532,7 @@ WITH max(length(x)::"numeric") AS x, b.id AS id RETURN *;
                                  ->  Graph VLE [1..2]
                                        ->  Result
                                              Output: a.id, a.id, '{}'::graphid[], '[]'::edge[]
-                     ->  Result Cache
+                     ->  Memoize
                            Output: b.properties, b.id
                            Cache Key: x."end"
                            ->  Index Scan using person_pkey on t.person b
@@ -1558,7 +1558,7 @@ RETURN x, x IS NOT NULL, x[0] IS NULL;
                ->  Graph VLE [1..2]
                      ->  Result
                            Output: a.id, a.id, '{}'::graphid[], '[]'::edge[]
-   ->  Result Cache
+   ->  Memoize
          Output: b.id
          Cache Key: x."end"
          ->  Index Only Scan using person_pkey on t.person b
@@ -1585,7 +1585,7 @@ WHERE x[0] IS NOT NULL RETURN x[0];
                ->  Graph VLE [1..2]
                      ->  Result
                            Output: a.id, a.id, '{}'::graphid[], '[]'::edge[]
-   ->  Result Cache
+   ->  Memoize
          Output: b.id
          Cache Key: x."end"
          ->  Index Only Scan using person_pkey on t.person b
@@ -1618,7 +1618,7 @@ SELECT * FROM (
                      ->  Graph VLE [1..2]
                            ->  Result
                                  Output: a.id, a.id, '{}'::graphid[], '[]'::edge[]
-         ->  Result Cache
+         ->  Memoize
                Output: b.id
                Cache Key: x."end"
                ->  Index Only Scan using person_pkey on t.person b
@@ -1637,7 +1637,7 @@ SELECT * FROM (
                      ->  Graph VLE [1..2]
                            ->  Result
                                  Output: a_1.id, a_1.id, '{}'::graphid[], '[]'::edge[]
-         ->  Result Cache
+         ->  Memoize
                Output: b_1.id
                Cache Key: x_1."end"
                ->  Index Only Scan using person_pkey on t.person b_1

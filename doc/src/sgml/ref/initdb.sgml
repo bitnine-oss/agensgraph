@@ -403,6 +403,17 @@ PostgreSQL documentation
      </varlistentry>
 
      <varlistentry>
+      <term><option>--discard-caches</option></term>
+      <listitem>
+       <para>
+        Run the bootstrap backend with the
+        <literal>debug_discard_caches=1</literal> option.
+        This takes a very long time and is only of use for deep debugging.
+       </para>
+      </listitem>
+     </varlistentry>
+
+     <varlistentry>
       <term><option>-L <replaceable class="parameter">directory</replaceable></option></term>
       <listitem>
        <para>

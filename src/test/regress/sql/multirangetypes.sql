@@ -78,6 +78,12 @@ select textrange('a', null)::textmultirange;
 select textrange(null, null)::textmultirange;
 
 --
+-- test unnest(multirange) function
+--
+select unnest(int4multirange(int4range('5', '6'), int4range('1', '2')));
+select unnest(textmultirange(textrange('a', 'b'), textrange('d', 'e')));
+
+--
 -- create some test data and test the operators
 --
 
@@ -435,7 +441,25 @@ SET enable_seqscan    = t;
 SET enable_indexscan  = f;
 SET enable_bitmapscan = f;
 
+select count(*) from test_multirange_gist where mr = '{}'::int4multirange;
 select count(*) from test_multirange_gist where mr @> 'empty'::int4range;
+select count(*) from test_multirange_gist where mr && 'empty'::int4range;
+select count(*) from test_multirange_gist where mr <@ 'empty'::int4range;
+select count(*) from test_multirange_gist where mr << 'empty'::int4range;
+select count(*) from test_multirange_gist where mr >> 'empty'::int4range;
+select count(*) from test_multirange_gist where mr &< 'empty'::int4range;
+select count(*) from test_multirange_gist where mr &> 'empty'::int4range;
+select count(*) from test_multirange_gist where mr -|- 'empty'::int4range;
+select count(*) from test_multirange_gist where mr @> '{}'::int4multirange;
+select count(*) from test_multirange_gist where mr @> '{}'::int4multirange;
+select count(*) from test_multirange_gist where mr && '{}'::int4multirange;
+select count(*) from test_multirange_gist where mr <@ '{}'::int4multirange;
+select count(*) from test_multirange_gist where mr << '{}'::int4multirange;
+select count(*) from test_multirange_gist where mr >> '{}'::int4multirange;
+select count(*) from test_multirange_gist where mr &< '{}'::int4multirange;
+select count(*) from test_multirange_gist where mr &> '{}'::int4multirange;
+select count(*) from test_multirange_gist where mr -|- '{}'::int4multirange;
+
 select count(*) from test_multirange_gist where mr = int4multirange(int4range(10,20), int4range(30,40), int4range(50,60));
 select count(*) from test_multirange_gist where mr @> 10;
 select count(*) from test_multirange_gist where mr @> int4range(10,20);
@@ -460,6 +484,25 @@ select count(*) from test_multirange_gist where mr -|- int4multirange(int4range(
 SET enable_seqscan    = f;
 SET enable_indexscan  = t;
 SET enable_bitmapscan = f;
+
+select count(*) from test_multirange_gist where mr = '{}'::int4multirange;
+select count(*) from test_multirange_gist where mr @> 'empty'::int4range;
+select count(*) from test_multirange_gist where mr && 'empty'::int4range;
+select count(*) from test_multirange_gist where mr <@ 'empty'::int4range;
+select count(*) from test_multirange_gist where mr << 'empty'::int4range;
+select count(*) from test_multirange_gist where mr >> 'empty'::int4range;
+select count(*) from test_multirange_gist where mr &< 'empty'::int4range;
+select count(*) from test_multirange_gist where mr &> 'empty'::int4range;
+select count(*) from test_multirange_gist where mr -|- 'empty'::int4range;
+select count(*) from test_multirange_gist where mr @> '{}'::int4multirange;
+select count(*) from test_multirange_gist where mr @> '{}'::int4multirange;
+select count(*) from test_multirange_gist where mr && '{}'::int4multirange;
+select count(*) from test_multirange_gist where mr <@ '{}'::int4multirange;
+select count(*) from test_multirange_gist where mr << '{}'::int4multirange;
+select count(*) from test_multirange_gist where mr >> '{}'::int4multirange;
+select count(*) from test_multirange_gist where mr &< '{}'::int4multirange;
+select count(*) from test_multirange_gist where mr &> '{}'::int4multirange;
+select count(*) from test_multirange_gist where mr -|- '{}'::int4multirange;
 
 select count(*) from test_multirange_gist where mr @> 'empty'::int4range;
 select count(*) from test_multirange_gist where mr = int4multirange(int4range(10,20), int4range(30,40), int4range(50,60));
@@ -621,6 +664,7 @@ create type textrange2 as range(subtype=text, multirange_type_name=_textrange1, 
 
 select multirange_of_text(textrange2('a','Z'));  -- should fail
 select multirange_of_text(textrange1('a','Z')) @> 'b'::text;
+select unnest(multirange_of_text(textrange1('a','b'), textrange1('d','e')));
 select _textrange1(textrange2('a','z')) @> 'b'::text;
 
 drop type textrange1;

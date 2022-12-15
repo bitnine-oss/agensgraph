@@ -344,6 +344,12 @@ typedef struct StatsData
 } StatsData;
 
 /*
+ * For displaying Unix epoch timestamps, as some time functions may have
+ * another reference.
+ */
+pg_time_usec_t epoch_shift;
+
+/*
  * Struct to keep random state.
  */
 typedef struct RandomState
@@ -2450,7 +2456,8 @@ evalStandardFunc(CState *st,
 		case PGBENCH_RANDOM_ZIPFIAN:
 			{
 				int64		imin,
-							imax;
+							imax,
+							delta;
 
 				Assert(nargs >= 2);
 
@@ -2459,12 +2466,13 @@ evalStandardFunc(CState *st,
 					return false;
 
 				/* check random range */
-				if (imin > imax)
+				if (unlikely(imin > imax))
 				{
 					pg_log_error("empty range given to random");
 					return false;
 				}
-				else if (imax - imin < 0 || (imax - imin) + 1 < 0)
+				else if (unlikely(pg_sub_s64_overflow(imax, imin, &delta) ||
+								  pg_add_s64_overflow(delta, 1, &delta)))
 				{
 					/* prevent int overflows in random functions */
 					pg_log_error("random range is too large");
@@ -3224,31 +3232,36 @@ advanceConnectionState(TState *thread, CState *st, StatsData *agg)
 				/*
 				 * If --latency-limit is used, and this slot is already late
 				 * so that the transaction will miss the latency limit even if
-				 * it completed immediately, skip this time slot and schedule
-				 * to continue running on the next slot that isn't late yet.
-				 * But don't iterate beyond the -t limit, if one is given.
+				 * it completed immediately, skip this time slot and loop to
+				 * reschedule.
 				 */
 				if (latency_limit)
 				{
 					pg_time_now_lazy(&now);
 
-					while (thread->throttle_trigger < now - latency_limit &&
-						   (nxacts <= 0 || st->cnt < nxacts))
+					if (thread->throttle_trigger < now - latency_limit)
 					{
 						processXactStats(thread, st, &now, true, agg);
-						/* next rendez-vous */
-						thread->throttle_trigger +=
-							getPoissonRand(&thread->ts_throttle_rs, throttle_delay);
-						st->txn_scheduled = thread->throttle_trigger;
-					}
 
-					/*
-					 * stop client if -t was exceeded in the previous skip
-					 * loop
-					 */
-					if (nxacts > 0 && st->cnt >= nxacts)
-					{
-						st->state = CSTATE_FINISHED;
+						/*
+						 * Finish client if -T or -t was exceeded.
+						 *
+						 * Stop counting skipped transactions under -T as soon
+						 * as the timer is exceeded. Because otherwise it can
+						 * take a very long time to count all of them
+						 * especially when quite a lot of them happen with
+						 * unrealistically high rate setting in -R, which
+						 * would prevent pgbench from ending immediately.
+						 * Because of this behavior, note that there is no
+						 * guarantee that all skipped transactions are counted
+						 * under -T though there is under -t. This is OK in
+						 * practice because it's very unlikely to happen with
+						 * realistic setting.
+						 */
+						if (timer_exceeded || (nxacts > 0 && st->cnt >= nxacts))
+							st->state = CSTATE_FINISHED;
+
+						/* Go back to top of loop with CSTATE_PREPARE_THROTTLE */
 						break;
 					}
 				}
@@ -3452,7 +3465,14 @@ advanceConnectionState(TState *thread, CState *st, StatsData *agg)
 				 */
 			case CSTATE_WAIT_RESULT:
 				pg_log_debug("client %d receiving", st->id);
-				if (!PQconsumeInput(st->con))
+
+				/*
+				 * Only check for new network data if we processed all data
+				 * fetched prior. Otherwise we end up doing a syscall for each
+				 * individual pipelined query, which has a measurable
+				 * performance impact.
+				 */
+				if (PQisBusy(st->con) && !PQconsumeInput(st->con))
 				{
 					/* there's something wrong */
 					commandFailed(st, "SQL", "perhaps the backend died while processing");
@@ -3537,8 +3557,12 @@ advanceConnectionState(TState *thread, CState *st, StatsData *agg)
 
 				if (is_connect)
 				{
+					pg_time_usec_t start = now;
+
+					pg_time_now_lazy(&start);
 					finishCon(st);
-					now = 0;
+					now = pg_time_now();
+					thread->conn_duration += now - start;
 				}
 
 				if ((st->cnt >= nxacts && duration <= 0) || timer_exceeded)
@@ -3562,6 +3586,19 @@ advanceConnectionState(TState *thread, CState *st, StatsData *agg)
 				 */
 			case CSTATE_ABORTED:
 			case CSTATE_FINISHED:
+
+				/*
+				 * Don't measure the disconnection delays here even if in
+				 * CSTATE_FINISHED and -C/--connect option is specified.
+				 * Because in this case all the connections that this thread
+				 * established are closed at the end of transactions and the
+				 * disconnection delays should have already been measured at
+				 * that moment.
+				 *
+				 * In CSTATE_ABORTED state, the measurement is no longer
+				 * necessary because we cannot report complete results anyways
+				 * in this case.
+				 */
 				finishCon(st);
 				return;
 		}
@@ -3770,16 +3807,17 @@ executeMetaCommand(CState *st, pg_time_usec_t *now)
  * Print log entry after completing one transaction.
  *
  * We print Unix-epoch timestamps in the log, so that entries can be
- * correlated against other logs.  On some platforms this could be obtained
- * from the caller, but rather than get entangled with that, we just eat
- * the cost of an extra syscall in all cases.
+ * correlated against other logs.
+ *
+ * XXX We could obtain the time from the caller and just shift it here, to
+ * avoid the cost of an extra call to pg_time_now().
  */
 static void
 doLog(TState *thread, CState *st,
 	  StatsData *agg, bool skipped, double latency, double lag)
 {
 	FILE	   *logfile = thread->logfile;
-	pg_time_usec_t now = pg_time_now();
+	pg_time_usec_t now = pg_time_now() + epoch_shift;
 
 	Assert(use_log);
 
@@ -3794,17 +3832,19 @@ doLog(TState *thread, CState *st,
 	/* should we aggregate the results or not? */
 	if (agg_interval > 0)
 	{
+		pg_time_usec_t next;
+
 		/*
 		 * Loop until we reach the interval of the current moment, and print
 		 * any empty intervals in between (this may happen with very low tps,
 		 * e.g. --rate=0.1).
 		 */
 
-		while (agg->start_time + agg_interval <= now)
+		while ((next = agg->start_time + agg_interval * INT64CONST(1000000)) <= now)
 		{
 			/* print aggregated report to logfile */
 			fprintf(logfile, INT64_FORMAT " " INT64_FORMAT " %.0f %.0f %.0f %.0f",
-					agg->start_time,
+					agg->start_time / 1000000,	/* seconds since Unix epoch */
 					agg->cnt,
 					agg->latency.sum,
 					agg->latency.sum2,
@@ -3823,7 +3863,7 @@ doLog(TState *thread, CState *st,
 			fputc('\n', logfile);
 
 			/* reset data and move to next interval */
-			initStats(agg, agg->start_time + agg_interval);
+			initStats(agg, next);
 		}
 
 		/* accumulate the current transaction */
@@ -5456,7 +5496,8 @@ printProgressReport(TState *threads, int64 test_start, pg_time_usec_t now,
 
 	if (progress_timestamp)
 	{
-		snprintf(tbuf, sizeof(tbuf), "%.3f s", PG_TIME_GET_DOUBLE(now));
+		snprintf(tbuf, sizeof(tbuf), "%.3f s",
+				 PG_TIME_GET_DOUBLE(now + epoch_shift));
 	}
 	else
 	{
@@ -5806,6 +5847,14 @@ main(int argc, char **argv)
 	char	   *env;
 
 	int			exit_code = 0;
+	struct timeval tv;
+
+	/*
+	 * Record difference between Unix time and instr_time time.  We'll use
+	 * this for logging and aggregation.
+	 */
+	gettimeofday(&tv, NULL);
+	epoch_shift = tv.tv_sec * INT64CONST(1000000) + tv.tv_usec - pg_time_now();
 
 	pg_logging_init(argv[0]);
 	progname = get_progname(argv[0]);
@@ -6530,7 +6579,11 @@ main(int argc, char **argv)
 			bench_start = thread->bench_start;
 	}
 
-	/* XXX should this be connection time? */
+	/*
+	 * All connections should be already closed in threadRun(), so this
+	 * disconnect_all() will be a no-op, but clean up the connecions just to
+	 * be sure. We don't need to measure the disconnection delays here.
+	 */
 	disconnect_all(state, nclients);
 
 	/*
@@ -6595,6 +6648,7 @@ threadRun(void *arg)
 
 	thread_start = pg_time_now();
 	thread->started_time = thread_start;
+	thread->conn_duration = 0;
 	last_report = thread_start;
 	next_report = last_report + (int64) 1000000 * progress;
 
@@ -6618,14 +6672,6 @@ threadRun(void *arg)
 				goto done;
 			}
 		}
-
-		/* compute connection delay */
-		thread->conn_duration = pg_time_now() - thread->started_time;
-	}
-	else
-	{
-		/* no connection delay to record */
-		thread->conn_duration = 0;
 	}
 
 	/* GO */
@@ -6635,7 +6681,14 @@ threadRun(void *arg)
 	thread->bench_start = start;
 	thread->throttle_trigger = start;
 
-	initStats(&aggs, start);
+	/*
+	 * The log format currently has Unix epoch timestamps with whole numbers
+	 * of seconds.  Round the first aggregate's start time down to the nearest
+	 * Unix epoch second (the very first aggregate might really have started a
+	 * fraction of a second later, but later aggregates are measured from the
+	 * whole number time that is actually logged).
+	 */
+	initStats(&aggs, (start + epoch_shift) / 1000000 * 1000000);
 	last = aggs;
 
 	/* loop till all clients have terminated */
@@ -6819,9 +6872,7 @@ threadRun(void *arg)
 	}
 
 done:
-	start = pg_time_now();
 	disconnect_all(state, nstate);
-	thread->conn_duration += pg_time_now() - start;
 
 	if (thread->logfile)
 	{

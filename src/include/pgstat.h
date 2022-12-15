@@ -70,7 +70,6 @@ typedef enum StatMsgType
 	PGSTAT_MTYPE_AUTOVAC_START,
 	PGSTAT_MTYPE_VACUUM,
 	PGSTAT_MTYPE_ANALYZE,
-	PGSTAT_MTYPE_ANL_ANCESTORS,
 	PGSTAT_MTYPE_ARCHIVER,
 	PGSTAT_MTYPE_BGWRITER,
 	PGSTAT_MTYPE_WAL,
@@ -82,7 +81,8 @@ typedef enum StatMsgType
 	PGSTAT_MTYPE_DEADLOCK,
 	PGSTAT_MTYPE_CHECKSUMFAILURE,
 	PGSTAT_MTYPE_REPLSLOT,
-	PGSTAT_MTYPE_CONNECTION,
+	PGSTAT_MTYPE_CONNECT,
+	PGSTAT_MTYPE_DISCONNECT,
 } StatMsgType;
 
 /* ----------
@@ -108,7 +108,7 @@ typedef int64 PgStat_Counter;
  *
  * tuples_inserted/updated/deleted/hot_updated count attempted actions,
  * regardless of whether the transaction committed.  delta_live_tuples,
- * delta_dead_tuples, changed_tuples are set depending on commit or abort.
+ * delta_dead_tuples, and changed_tuples are set depending on commit or abort.
  * Note that delta_live_tuples and delta_dead_tuples can be negative!
  * ----------
  */
@@ -280,7 +280,7 @@ typedef struct PgStat_TableEntry
  * ----------
  */
 #define PGSTAT_NUM_TABENTRIES  \
-	((PGSTAT_MSG_PAYLOAD - sizeof(Oid) - 3 * sizeof(int) - 2 * sizeof(PgStat_Counter))	\
+	((PGSTAT_MSG_PAYLOAD - sizeof(Oid) - 3 * sizeof(int) - 5 * sizeof(PgStat_Counter)) \
 	 / sizeof(PgStat_TableEntry))
 
 typedef struct PgStat_MsgTabstat
@@ -292,6 +292,9 @@ typedef struct PgStat_MsgTabstat
 	int			m_xact_rollback;
 	PgStat_Counter m_block_read_time;	/* times in microseconds */
 	PgStat_Counter m_block_write_time;
+	PgStat_Counter m_session_time;
+	PgStat_Counter m_active_time;
+	PgStat_Counter m_idle_in_xact_time;
 	PgStat_TableEntry m_entry[PGSTAT_NUM_TABENTRIES];
 } PgStat_MsgTabstat;
 
@@ -431,25 +434,6 @@ typedef struct PgStat_MsgAnalyze
 	PgStat_Counter m_dead_tuples;
 } PgStat_MsgAnalyze;
 
-/* ----------
- * PgStat_MsgAnlAncestors		Sent by the backend or autovacuum daemon
- *								to inform partitioned tables that are
- *								ancestors of a partition, to propagate
- *								analyze counters
- * ----------
- */
-#define PGSTAT_NUM_ANCESTORENTRIES    \
-	((PGSTAT_MSG_PAYLOAD - sizeof(Oid) - sizeof(Oid) - sizeof(int))	\
-	 / sizeof(Oid))
-
-typedef struct PgStat_MsgAnlAncestors
-{
-	PgStat_MsgHdr m_hdr;
-	Oid			m_databaseid;
-	Oid			m_tableoid;
-	int			m_nancestors;
-	Oid			m_ancestors[PGSTAT_NUM_ANCESTORENTRIES];
-} PgStat_MsgAnlAncestors;
 
 /* ----------
  * PgStat_MsgArchiver			Sent by the archiver to update statistics.
@@ -663,20 +647,26 @@ typedef struct PgStat_MsgChecksumFailure
 } PgStat_MsgChecksumFailure;
 
 /* ----------
- * PgStat_MsgConn			Sent by the backend to update connection statistics.
+ * PgStat_MsgConnect			Sent by the backend upon connection
+ *								establishment
  * ----------
  */
-typedef struct PgStat_MsgConn
+typedef struct PgStat_MsgConnect
 {
 	PgStat_MsgHdr m_hdr;
 	Oid			m_databaseid;
-	PgStat_Counter m_count;
-	PgStat_Counter m_session_time;
-	PgStat_Counter m_active_time;
-	PgStat_Counter m_idle_in_xact_time;
-	SessionEndType m_disconnect;
-} PgStat_MsgConn;
+} PgStat_MsgConnect;
 
+/* ----------
+ * PgStat_MsgDisconnect			Sent by the backend when disconnecting
+ * ----------
+ */
+typedef struct PgStat_MsgDisconnect
+{
+	PgStat_MsgHdr m_hdr;
+	Oid			m_databaseid;
+	SessionEndType m_cause;
+} PgStat_MsgDisconnect;
 
 /* ----------
  * PgStat_Msg					Union over all possible messages.
@@ -698,7 +688,6 @@ typedef union PgStat_Msg
 	PgStat_MsgAutovacStart msg_autovacuum_start;
 	PgStat_MsgVacuum msg_vacuum;
 	PgStat_MsgAnalyze msg_analyze;
-	PgStat_MsgAnlAncestors msg_anl_ancestors;
 	PgStat_MsgArchiver msg_archiver;
 	PgStat_MsgBgWriter msg_bgwriter;
 	PgStat_MsgWal msg_wal;
@@ -710,7 +699,8 @@ typedef union PgStat_Msg
 	PgStat_MsgTempFile msg_tempfile;
 	PgStat_MsgChecksumFailure msg_checksumfailure;
 	PgStat_MsgReplSlot msg_replslot;
-	PgStat_MsgConn msg_conn;
+	PgStat_MsgConnect msg_connect;
+	PgStat_MsgDisconnect msg_disconnect;
 } PgStat_Msg;
 
 
@@ -794,7 +784,7 @@ typedef struct PgStat_StatTabEntry
 	PgStat_Counter n_live_tuples;
 	PgStat_Counter n_dead_tuples;
 	PgStat_Counter changes_since_analyze;
-	PgStat_Counter changes_since_analyze_reported;
+	PgStat_Counter unused_counter;	/* kept for ABI compatibility */
 	PgStat_Counter inserts_since_vacuum;
 
 	PgStat_Counter blocks_fetched;
@@ -998,13 +988,13 @@ extern void pgstat_reset_single_counter(Oid objectid, PgStat_Single_Reset_Type t
 extern void pgstat_reset_slru_counter(const char *);
 extern void pgstat_reset_replslot_counter(const char *name);
 
+extern void pgstat_report_connect(Oid dboid);
 extern void pgstat_report_autovac(Oid dboid);
 extern void pgstat_report_vacuum(Oid tableoid, bool shared,
 								 PgStat_Counter livetuples, PgStat_Counter deadtuples);
 extern void pgstat_report_analyze(Relation rel,
 								  PgStat_Counter livetuples, PgStat_Counter deadtuples,
 								  bool resetcounter);
-extern void pgstat_report_anl_ancestors(Oid relid);
 
 extern void pgstat_report_recovery_conflict(int reason);
 extern void pgstat_report_deadlock(void);

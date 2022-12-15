@@ -97,7 +97,7 @@ struct sqlca_t *ECPGget_sqlca(void);
 #line 8 "declare.pgc"
 
 
-#define ARRAY_SZIE 20
+#define ARRAY_SIZE 2
 
 void execute_test(void);
 void commitTable(void);
@@ -110,13 +110,13 @@ void printResult(char *tc_name, int loop);
  
 
 #line 18 "declare.pgc"
- int f1 [ ARRAY_SZIE ] ;
+ int f1 [ ARRAY_SIZE ] ;
  
 #line 19 "declare.pgc"
- int f2 [ ARRAY_SZIE ] ;
+ int f2 [ ARRAY_SIZE ] ;
  
 #line 20 "declare.pgc"
- char f3 [ ARRAY_SZIE ] [ 20 ] ;
+ char f3 [ ARRAY_SIZE ] [ 20 ] ;
 /* exec sql end declare section */
 #line 21 "declare.pgc"
 
@@ -216,11 +216,11 @@ if (sqlca.sqlcode < 0) sqlprint();}
 void execute_test(void)
 {
     /* exec sql begin declare section */
-     
+       
        
     
 #line 63 "declare.pgc"
- int i ;
+ int i , count , length ;
  
 #line 64 "declare.pgc"
  char * selectString = "SELECT f1,f2,f3 FROM source" ;
@@ -353,7 +353,7 @@ if (sqlca.sqlcode < 0) sqlprint();}
 if (sqlca.sqlcode < 0) sqlprint();}
 #line 110 "declare.pgc"
 
-    { ECPGdeallocate(__LINE__, 0, NULL, "stmt_2");
+    { ECPGdeallocate(__LINE__, 0, "con1", "stmt_2");
 #line 111 "declare.pgc"
 
 if (sqlca.sqlcode < 0) sqlprint();}
@@ -366,73 +366,41 @@ if (sqlca.sqlcode < 0) sqlprint();}
     printResult("testcase2", 2);
 
     /*
-     * testcase3. using DECLARE STATEMENT at con1,
-     * using PREPARE and CURSOR statement at con2
+     * testcase3. using DECLARE STATEMENT without using AT clause,
+     * using PREPARE and EXECUTE statement without using AT clause
      */
     reset();
 
     /* declare  \"stmt_3\"  as an SQL identifier */
 #line 122 "declare.pgc"
 
-    { ECPGprepare(__LINE__, "con1", 0, "stmt_3", selectString);
+    { ECPGprepare(__LINE__, NULL, 0, "stmt_3", selectString);
 #line 123 "declare.pgc"
 
 if (sqlca.sqlcode < 0) sqlprint();}
 #line 123 "declare.pgc"
 
-    /* declare cur_3 cursor for $1 */
+    { ECPGdo(__LINE__, 0, 1, NULL, 0, ECPGst_execute, "stmt_3", ECPGt_EOIT, 
+	ECPGt_int,(f1),(long)1,(long)ARRAY_SIZE,sizeof(int), 
+	ECPGt_NO_INDICATOR, NULL , 0L, 0L, 0L, 
+	ECPGt_int,(f2),(long)1,(long)ARRAY_SIZE,sizeof(int), 
+	ECPGt_NO_INDICATOR, NULL , 0L, 0L, 0L, 
+	ECPGt_char,(f3),(long)20,(long)ARRAY_SIZE,(20)*sizeof(char), 
+	ECPGt_NO_INDICATOR, NULL , 0L, 0L, 0L, ECPGt_EORT);
 #line 124 "declare.pgc"
 
-    { ECPGdo(__LINE__, 0, 1, "con1", 0, ECPGst_normal, "declare cur_3 cursor for $1", 
-	ECPGt_char_variable,(ECPGprepared_statement("con1", "stmt_3", __LINE__)),(long)1,(long)1,(1)*sizeof(char), 
-	ECPGt_NO_INDICATOR, NULL , 0L, 0L, 0L, ECPGt_EOIT, ECPGt_EORT);
-#line 125 "declare.pgc"
+if (sqlca.sqlcode < 0) sqlprint();}
+#line 124 "declare.pgc"
+
+
+    { ECPGdeallocate(__LINE__, 0, NULL, "stmt_3");
+#line 126 "declare.pgc"
 
 if (sqlca.sqlcode < 0) sqlprint();}
-#line 125 "declare.pgc"
-
-
-    /* exec sql whenever not found  break ; */
-#line 127 "declare.pgc"
-
-    i = 0;
-    while (1)
-    {
-        { ECPGdo(__LINE__, 0, 1, "con1", 0, ECPGst_normal, "fetch cur_3", ECPGt_EOIT, 
-	ECPGt_int,&(f1[i]),(long)1,(long)1,sizeof(int), 
-	ECPGt_NO_INDICATOR, NULL , 0L, 0L, 0L, 
-	ECPGt_int,&(f2[i]),(long)1,(long)1,sizeof(int), 
-	ECPGt_NO_INDICATOR, NULL , 0L, 0L, 0L, 
-	ECPGt_char,(f3[i]),(long)20,(long)1,(20)*sizeof(char), 
-	ECPGt_NO_INDICATOR, NULL , 0L, 0L, 0L, ECPGt_EORT);
-#line 131 "declare.pgc"
-
-if (sqlca.sqlcode == ECPG_NOT_FOUND) break;
-#line 131 "declare.pgc"
-
-if (sqlca.sqlcode < 0) sqlprint();}
-#line 131 "declare.pgc"
-
-        i++;
-    }
-    { ECPGdo(__LINE__, 0, 1, "con1", 0, ECPGst_normal, "close cur_3", ECPGt_EOIT, ECPGt_EORT);
-#line 134 "declare.pgc"
-
-if (sqlca.sqlcode < 0) sqlprint();}
-#line 134 "declare.pgc"
-
-    { ECPGdeallocate(__LINE__, 0, "con2", "stmt_3");
-#line 135 "declare.pgc"
-
-if (sqlca.sqlcode < 0) sqlprint();}
-#line 135 "declare.pgc"
-
-    /* exec sql whenever not found  continue ; */
-#line 136 "declare.pgc"
+#line 126 "declare.pgc"
 
 
     printResult("testcase3", 2);
-
 
     /*
      * testcase4. using DECLARE STATEMENT without using AT clause,
@@ -441,28 +409,28 @@ if (sqlca.sqlcode < 0) sqlprint();}
     reset();
 
     /* declare  \"stmt_4\"  as an SQL identifier */
-#line 147 "declare.pgc"
+#line 136 "declare.pgc"
 
     { ECPGprepare(__LINE__, "con2", 0, "stmt_4", selectString);
-#line 148 "declare.pgc"
+#line 137 "declare.pgc"
 
 if (sqlca.sqlcode < 0) sqlprint();}
-#line 148 "declare.pgc"
+#line 137 "declare.pgc"
 
     /* declare cur_4 cursor for $1 */
-#line 149 "declare.pgc"
+#line 138 "declare.pgc"
 
     { ECPGdo(__LINE__, 0, 1, "con2", 0, ECPGst_normal, "declare cur_4 cursor for $1", 
 	ECPGt_char_variable,(ECPGprepared_statement("con2", "stmt_4", __LINE__)),(long)1,(long)1,(1)*sizeof(char), 
 	ECPGt_NO_INDICATOR, NULL , 0L, 0L, 0L, ECPGt_EOIT, ECPGt_EORT);
-#line 150 "declare.pgc"
+#line 139 "declare.pgc"
 
 if (sqlca.sqlcode < 0) sqlprint();}
-#line 150 "declare.pgc"
+#line 139 "declare.pgc"
 
 
     /* exec sql whenever not found  break ; */
-#line 152 "declare.pgc"
+#line 141 "declare.pgc"
 
     i = 0;
     while (1)
@@ -474,55 +442,103 @@ if (sqlca.sqlcode < 0) sqlprint();}
 	ECPGt_NO_INDICATOR, NULL , 0L, 0L, 0L, 
 	ECPGt_char,(f3[i]),(long)20,(long)1,(20)*sizeof(char), 
 	ECPGt_NO_INDICATOR, NULL , 0L, 0L, 0L, ECPGt_EORT);
-#line 156 "declare.pgc"
+#line 145 "declare.pgc"
 
 if (sqlca.sqlcode == ECPG_NOT_FOUND) break;
-#line 156 "declare.pgc"
+#line 145 "declare.pgc"
 
 if (sqlca.sqlcode < 0) sqlprint();}
-#line 156 "declare.pgc"
+#line 145 "declare.pgc"
 
         i++;
     }
     { ECPGdo(__LINE__, 0, 1, "con2", 0, ECPGst_normal, "close cur_4", ECPGt_EOIT, ECPGt_EORT);
-#line 159 "declare.pgc"
+#line 148 "declare.pgc"
 
 if (sqlca.sqlcode < 0) sqlprint();}
-#line 159 "declare.pgc"
+#line 148 "declare.pgc"
 
     { ECPGdeallocate(__LINE__, 0, "con2", "stmt_4");
-#line 160 "declare.pgc"
+#line 149 "declare.pgc"
 
 if (sqlca.sqlcode < 0) sqlprint();}
-#line 160 "declare.pgc"
+#line 149 "declare.pgc"
 
     /* exec sql whenever not found  continue ; */
-#line 161 "declare.pgc"
+#line 150 "declare.pgc"
 
 
     printResult("testcase4", 2);
 
     /*
-     * testcase5. using DECLARE STATEMENT without using AT clause,
-     * using PREPARE and EXECUTE statement without using AT clause
+     * DESCRIBE statement is also supported.
      */
-    reset();
+    /* declare  \"stmt_desc\"  as an SQL identifier */
+#line 157 "declare.pgc"
 
-    /* declare  \"stmt_5\"  as an SQL identifier */
-#line 171 "declare.pgc"
-
-    { ECPGprepare(__LINE__, NULL, 0, "stmt_5", selectString);
-#line 172 "declare.pgc"
+    { ECPGprepare(__LINE__, "con1", 0, "stmt_desc", selectString);
+#line 158 "declare.pgc"
 
 if (sqlca.sqlcode < 0) sqlprint();}
+#line 158 "declare.pgc"
+
+    /* declare cur_desc cursor for $1 */
+#line 159 "declare.pgc"
+
+    { ECPGdo(__LINE__, 0, 1, "con1", 0, ECPGst_normal, "declare cur_desc cursor for $1", 
+	ECPGt_char_variable,(ECPGprepared_statement("con1", "stmt_desc", __LINE__)),(long)1,(long)1,(1)*sizeof(char), 
+	ECPGt_NO_INDICATOR, NULL , 0L, 0L, 0L, ECPGt_EOIT, ECPGt_EORT);
+#line 160 "declare.pgc"
+
+if (sqlca.sqlcode < 0) sqlprint();}
+#line 160 "declare.pgc"
+
+
+    /* descriptor can be used for describe statement */
+    ECPGallocate_desc(__LINE__, "desc_for_describe");
+#line 163 "declare.pgc"
+
+if (sqlca.sqlcode < 0) sqlprint();
+#line 163 "declare.pgc"
+
+    { ECPGdescribe(__LINE__, 0, 0, "con1", "stmt_desc",
+	ECPGt_descriptor, "desc_for_describe", 1L, 1L, 1L, 
+	ECPGt_NO_INDICATOR, NULL , 0L, 0L, 0L, ECPGt_EORT);}
+#line 164 "declare.pgc"
+
+
+    { ECPGget_desc_header(__LINE__, "desc_for_describe", &(count));
+
+#line 166 "declare.pgc"
+
+if (sqlca.sqlcode < 0) sqlprint();}
+#line 166 "declare.pgc"
+
+    { ECPGget_desc(__LINE__, "desc_for_describe", 3,ECPGd_length,
+	ECPGt_int,&(length),(long)1,(long)1,sizeof(int), ECPGd_EODT);
+
+#line 167 "declare.pgc"
+
+if (sqlca.sqlcode < 0) sqlprint();}
+#line 167 "declare.pgc"
+
+
+    ECPGdeallocate_desc(__LINE__, "desc_for_describe");
+#line 169 "declare.pgc"
+
+if (sqlca.sqlcode < 0) sqlprint();
+#line 169 "declare.pgc"
+
+
+    /* for fetch statement */
+    ECPGallocate_desc(__LINE__, "desc_for_fetch");
 #line 172 "declare.pgc"
 
-    { ECPGdo(__LINE__, 0, 1, NULL, 0, ECPGst_execute, "stmt_5", ECPGt_EOIT, 
-	ECPGt_int,(f1),(long)1,(long)ARRAY_SZIE,sizeof(int), 
-	ECPGt_NO_INDICATOR, NULL , 0L, 0L, 0L, 
-	ECPGt_int,(f2),(long)1,(long)ARRAY_SZIE,sizeof(int), 
-	ECPGt_NO_INDICATOR, NULL , 0L, 0L, 0L, 
-	ECPGt_char,(f3),(long)20,(long)ARRAY_SZIE,(20)*sizeof(char), 
+if (sqlca.sqlcode < 0) sqlprint();
+#line 172 "declare.pgc"
+
+    { ECPGdo(__LINE__, 0, 1, "con1", 0, ECPGst_normal, "fetch cur_desc", ECPGt_EOIT, 
+	ECPGt_descriptor, "desc_for_fetch", 1L, 1L, 1L, 
 	ECPGt_NO_INDICATOR, NULL , 0L, 0L, 0L, ECPGt_EORT);
 #line 173 "declare.pgc"
 
@@ -530,29 +546,51 @@ if (sqlca.sqlcode < 0) sqlprint();}
 #line 173 "declare.pgc"
 
 
-    { ECPGdeallocate(__LINE__, 0, NULL, "stmt_5");
+    { ECPGget_desc(__LINE__, "desc_for_fetch", 3,ECPGd_data,
+	ECPGt_char,(f3[0]),(long)20,(long)1,(20)*sizeof(char), ECPGd_EODT);
+
 #line 175 "declare.pgc"
 
 if (sqlca.sqlcode < 0) sqlprint();}
 #line 175 "declare.pgc"
 
 
-    printResult("testcase5", 2);
+    ECPGdeallocate_desc(__LINE__, "desc_for_fetch");
+#line 177 "declare.pgc"
+
+if (sqlca.sqlcode < 0) sqlprint();
+#line 177 "declare.pgc"
+
+    { ECPGdo(__LINE__, 0, 1, "con1", 0, ECPGst_normal, "close cur_desc", ECPGt_EOIT, ECPGt_EORT);
+#line 178 "declare.pgc"
+
+if (sqlca.sqlcode < 0) sqlprint();}
+#line 178 "declare.pgc"
+
+    { ECPGdeallocate(__LINE__, 0, "con1", "stmt_desc");
+#line 179 "declare.pgc"
+
+if (sqlca.sqlcode < 0) sqlprint();}
+#line 179 "declare.pgc"
+
+
+    printf("****descriptor results****\n");
+    printf("count: %d, length: %d, data: %s\n", count, length, f3[0]);
 }
 
 void commitTable()
 {
     { ECPGtrans(__LINE__, "con1", "commit");
-#line 182 "declare.pgc"
+#line 187 "declare.pgc"
 
 if (sqlca.sqlcode < 0) sqlprint();}
-#line 182 "declare.pgc"
+#line 187 "declare.pgc"
 
     { ECPGtrans(__LINE__, "con2", "commit");
-#line 183 "declare.pgc"
+#line 188 "declare.pgc"
 
 if (sqlca.sqlcode < 0) sqlprint();}
-#line 183 "declare.pgc"
+#line 188 "declare.pgc"
 
 }
 

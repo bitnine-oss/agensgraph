@@ -1836,6 +1836,38 @@ select tgrelid::regclass, tgname, tgenabled from pg_trigger
   order by tgrelid::regclass::text;
 drop table parent, child1;
 
+-- Verify that firing state propagates correctly on creation, too
+CREATE TABLE trgfire (i int) PARTITION BY RANGE (i);
+CREATE TABLE trgfire1 PARTITION OF trgfire FOR VALUES FROM (1) TO (10);
+CREATE OR REPLACE FUNCTION tgf() RETURNS trigger LANGUAGE plpgsql
+  AS $$ begin raise exception 'except'; end $$;
+CREATE TRIGGER tg AFTER INSERT ON trgfire FOR EACH ROW EXECUTE FUNCTION tgf();
+INSERT INTO trgfire VALUES (1);
+ALTER TABLE trgfire DISABLE TRIGGER tg;
+INSERT INTO trgfire VALUES (1);
+CREATE TABLE trgfire2 PARTITION OF trgfire FOR VALUES FROM (10) TO (20);
+INSERT INTO trgfire VALUES (11);
+CREATE TABLE trgfire3 (LIKE trgfire);
+ALTER TABLE trgfire ATTACH PARTITION trgfire3 FOR VALUES FROM (20) TO (30);
+INSERT INTO trgfire VALUES (21);
+CREATE TABLE trgfire4 PARTITION OF trgfire FOR VALUES FROM (30) TO (40) PARTITION BY LIST (i);
+CREATE TABLE trgfire4_30 PARTITION OF trgfire4 FOR VALUES IN (30);
+INSERT INTO trgfire VALUES (30);
+CREATE TABLE trgfire5 (LIKE trgfire) PARTITION BY LIST (i);
+CREATE TABLE trgfire5_40 PARTITION OF trgfire5 FOR VALUES IN (40);
+ALTER TABLE trgfire ATTACH PARTITION trgfire5 FOR VALUES FROM (40) TO (50);
+INSERT INTO trgfire VALUES (40);
+SELECT tgrelid::regclass, tgenabled FROM pg_trigger
+  WHERE tgrelid::regclass IN (SELECT oid from pg_class where relname LIKE 'trgfire%')
+  ORDER BY tgrelid::regclass::text;
+ALTER TABLE trgfire ENABLE TRIGGER tg;
+INSERT INTO trgfire VALUES (1);
+INSERT INTO trgfire VALUES (11);
+INSERT INTO trgfire VALUES (21);
+INSERT INTO trgfire VALUES (30);
+INSERT INTO trgfire VALUES (40);
+DROP TABLE trgfire;
+DROP FUNCTION tgf();
 
 --
 -- Test the interaction between transition tables and both kinds of
@@ -2470,6 +2502,11 @@ create trigger aft_row after insert or update on trigger_parted
 create table trigger_parted_p1 partition of trigger_parted for values in (1)
   partition by list (a);
 create table trigger_parted_p1_1 partition of trigger_parted_p1 for values in (1);
+create table trigger_parted_p2 partition of trigger_parted for values in (2)
+  partition by list (a);
+create table trigger_parted_p2_2 partition of trigger_parted_p2 for values in (2);
+alter table only trigger_parted_p2 disable trigger aft_row;
+alter table trigger_parted_p2_2 enable always trigger aft_row;
 
 -- verify transition table conversion slot's lifetime
 -- https://postgr.es/m/39a71864-b120-5a5c-8cc5-c632b6f16761@amazon.com

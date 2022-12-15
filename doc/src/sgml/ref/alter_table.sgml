@@ -965,8 +965,17 @@ WITH ( MODULUS <replaceable class="parameter">numeric_literal</replaceable>, REM
      <para>
       Attaching a partition acquires a
       <literal>SHARE UPDATE EXCLUSIVE</literal> lock on the parent table,
-      in addition to <literal>ACCESS EXCLUSIVE</literal> locks on the table
-      to be attached and on the default partition (if any).
+      in addition to the <literal>ACCESS EXCLUSIVE</literal> locks on the table
+      being attached and on the default partition (if any).
+     </para>
+
+     <para>
+      Further locks must also be held on all sub-partitions if the table being
+      attached is itself a partitioned table.  Likewise if the default
+      partition is itself a partitioned table.  The locking of the
+      sub-partitions can be avoided by adding a <literal>CHECK</literal>
+      constraint as described in
+      <xref linkend="ddl-partitioning-declarative-maintenance"/>.
      </para>
     </listitem>
    </varlistentry>
@@ -1002,7 +1011,7 @@ WITH ( MODULUS <replaceable class="parameter">numeric_literal</replaceable>, REM
      </para>
      <para>
       If <literal>FINALIZE</literal> is specified, a previous
-      <literal>DETACH CONCURRENTLY</literal> invocation that was cancelled or
+      <literal>DETACH CONCURRENTLY</literal> invocation that was canceled or
       interrupted is completed.
       At most one partition in a partitioned table can be pending detach at
       a time.

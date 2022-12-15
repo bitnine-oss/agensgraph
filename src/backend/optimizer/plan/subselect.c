@@ -725,7 +725,6 @@ static bool
 subplan_is_hashable(Plan *plan)
 {
 	double		subquery_size;
-	int			hash_mem = get_hash_mem();
 
 	/*
 	 * The estimated size of the subquery result must fit in hash_mem. (Note:
@@ -735,7 +734,7 @@ subplan_is_hashable(Plan *plan)
 	 */
 	subquery_size = plan->plan_rows *
 		(MAXALIGN(plan->plan_width) + MAXALIGN(SizeofHeapTupleHeader));
-	if (subquery_size > hash_mem * 1024L)
+	if (subquery_size > get_hash_memory_limit())
 		return false;
 
 	return true;
@@ -750,7 +749,6 @@ static bool
 subpath_is_hashable(Path *path)
 {
 	double		subquery_size;
-	int			hash_mem = get_hash_mem();
 
 	/*
 	 * The estimated size of the subquery result must fit in hash_mem. (Note:
@@ -760,7 +758,7 @@ subpath_is_hashable(Path *path)
 	 */
 	subquery_size = path->rows *
 		(MAXALIGN(path->pathtarget->width) + MAXALIGN(SizeofHeapTupleHeader));
-	if (subquery_size > hash_mem * 1024L)
+	if (subquery_size > get_hash_memory_limit())
 		return false;
 
 	return true;
@@ -2746,8 +2744,8 @@ finalize_plan(PlannerInfo *root, Plan *plan,
 			/* rescan_param does *not* get added to scan_params */
 			break;
 
-		case T_ResultCache:
-			finalize_primnode((Node *) ((ResultCache *) plan)->param_exprs,
+		case T_Memoize:
+			finalize_primnode((Node *) ((Memoize *) plan)->param_exprs,
 							  &context);
 			break;
 

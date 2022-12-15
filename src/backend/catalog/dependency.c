@@ -1476,6 +1476,10 @@ doDeletion(const ObjectAddress *object, int flags)
 			RemovePublicationRelById(object->objectId);
 			break;
 
+		case OCLASS_PUBLICATION:
+			RemovePublicationById(object->objectId);
+			break;
+
 		case OCLASS_CAST:
 		case OCLASS_COLLATION:
 		case OCLASS_CONVERSION:
@@ -1494,7 +1498,6 @@ doDeletion(const ObjectAddress *object, int flags)
 		case OCLASS_USER_MAPPING:
 		case OCLASS_DEFACL:
 		case OCLASS_EVENT_TRIGGER:
-		case OCLASS_PUBLICATION:
 		case OCLASS_TRANSFORM:
 			DropObjectById(object);
 			break;

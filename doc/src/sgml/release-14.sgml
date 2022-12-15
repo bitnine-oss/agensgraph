@@ -6,7 +6,7 @@
 
   <formalpara>
    <title>Release date:</title>
-   <para>2021-??-?? (AS OF 2021-06-20)</para>
+   <para>2021-09-30</para>
   </formalpara>
 
   <sect2>
@@ -20,6 +20,70 @@
    <itemizedlist>
     <listitem>
      <para>
+      Stored procedures can now return data via <literal>OUT</literal>
+      parameters.
+     </para>
+    </listitem>
+
+    <listitem>
+     <para>
+      The SQL-standard <literal>SEARCH</literal>
+      and <literal>CYCLE</literal> options for common table expressions
+      have been implemented.
+     </para>
+    </listitem>
+
+    <listitem>
+     <para>
+      Subscripting can now be applied to any data type for which
+      it is a useful notation, not only arrays.  In this release,
+      the <type>jsonb</type> and <type>hstore</type> types have gained
+      subscripting operators.
+     </para>
+    </listitem>
+
+    <listitem>
+     <para>
+      Range types have been extended by adding multiranges, allowing
+      representation of noncontiguous data ranges.
+     </para>
+    </listitem>
+
+    <listitem>
+     <para>
+      Numerous performance improvements have been made for parallel
+      queries, heavily-concurrent workloads, partitioned tables, logical
+      replication, and vacuuming.
+     </para>
+    </listitem>
+
+    <listitem>
+     <para>
+      B-tree index updates are managed more efficiently, reducing index
+      bloat.
+     </para>
+    </listitem>
+
+    <listitem>
+     <para>
+      <command>VACUUM</command> automatically becomes more aggressive, and
+      skips inessential cleanup, if the database starts to approach a
+      transaction ID wraparound condition.
+     </para>
+    </listitem>
+
+    <listitem>
+     <para>
+      Extended statistics can now be collected on expressions, allowing
+      better planning results for complex queries.
+     </para>
+    </listitem>
+
+    <listitem>
+     <para>
+      <application>libpq</application> now has the ability to pipeline
+      multiple queries, which can boost throughput over high-latency
+      connections.
      </para>
     </listitem>
    </itemizedlist>
@@ -54,18 +118,29 @@
     <listitem>
 <!--
 Author: Tom Lane <tgl@sss.pgh.pa.us>
-2020-08-08 [20e7e1fe3] Remove &lt;@ from contrib/intarray's GiST operator classes.
+2020-11-04 [9e38c2bb5] Declare assorted array functions using anycompatible not
 -->
 
      <para>
-      Prevent the containment operators (&lt;@ and @&gt;) for <xref
-      linkend="intarray"/> from using GiST indexes (Tom Lane)
+      User-defined objects that reference certain built-in array functions
+      along with their argument types must be recreated (Tom Lane)
      </para>
 
      <para>
-      Previously a full GiST index scan was required, so just avoid
-      that and scan the heap, which is faster.  Indexes created for this
-      purpose should be removed.
+      Specifically, <link
+      linkend="functions-array"><function>array_append()</function></link>,
+      <function>array_prepend()</function>,
+      <function>array_cat()</function>,
+      <function>array_position()</function>,
+      <function>array_positions()</function>,
+      <function>array_remove()</function>,
+      <function>array_replace()</function>, and <link
+      linkend="functions-math"><function>width_bucket()</function></link>
+      used to take <type>anyarray</type> arguments but now take
+      <type>anycompatiblearray</type>.  Therefore, user-defined objects
+      like aggregates and operators that reference those array function
+      signatures must be dropped before upgrading, and recreated once the
+      upgrade completes.
      </para>
     </listitem>
 
@@ -78,15 +153,16 @@ Author: Tom Lane <tgl@sss.pgh.pa.us>
 -->
 
      <para>
-      Remove deprecated containment operators @ and ~ for built-in
-      <link linkend="functions-geometry">geometric data types</link> and
+      Remove deprecated containment operators <literal>@</literal>
+      and <literal>~</literal> for built-in <link
+      linkend="functions-geometry">geometric data types</link> and
       contrib modules <xref linkend="cube"/>, <xref linkend="hstore"/>,
       <xref linkend="intarray"/>, and <xref linkend="seg"/> (Justin Pryzby)
      </para>
 
      <para>
-      The more consistent &lt;@ and @&gt; have been recommended for
-      many years.
+      The more consistently named <literal>&lt;@</literal>
+      and <literal>@&gt;</literal> have been recommended for many years.
      </para>
     </listitem>
 
@@ -106,9 +182,9 @@ Author: Alexander Korotkov <akorotkov@postgresql.org>
      <para>
       Certain discarded tokens, like underscore, caused the output of
       these functions to produce incorrect tsquery output, e.g., both
-      websearch_to_tsquery('"pg_class pg"') and to_tsquery('pg_class
-      &lt;-&gt; pg') used to output '( pg &amp; class ) &lt;-&gt; pg',
-      but now both output 'pg &lt;-&gt; class &lt;-&gt; pg'.
+      <literal>websearch_to_tsquery('"pg_class pg"')</literal> and <literal>to_tsquery('pg_class
+      &lt;-&gt; pg')</literal> used to output <literal>( 'pg' &amp; 'class' ) &lt;-&gt; 'pg'</literal>,
+      but now both output <literal>'pg' &lt;-&gt; 'class' &lt;-&gt; 'pg'</literal>.
      </para>
     </listitem>
 
@@ -127,93 +203,9 @@ Author: Alexander Korotkov <akorotkov@postgresql.org>
 
      <para>
       Previously, quoted text that contained multiple adjacent discarded
-      tokens were treated as multiple tokens, causing incorrect tsquery
-      output, e.g., websearch_to_tsquery('"aaa: bbb"') used to output
-      'aaa &lt;2&gt; bbb', but now  outputs 'aaa &lt;-&gt; bbb'.
-     </para>
-    </listitem>
-
-    <listitem>
-<!--
-Author: Peter Eisentraut <peter@eisentraut.org>
-2020-06-10 [c7eab0e97] Change default of password_encryption to scram-sha-256
-Author: Peter Eisentraut <peter@eisentraut.org>
-2020-06-10 [c7eab0e97] Change default of password_encryption to scram-sha-256
--->
-
-     <para>
-      Change the default of the <xref linkend="guc-password-encryption"/>
-      server parameter to <literal>scram-sha-256</literal> (Peter
-      Eisentraut)
-     </para>
-
-     <para>
-      Previously it was <literal>md5</literal>.  All new passwords will
-      be stored as SHA256 unless this server variable is changed or
-      the password is specified in md5 format.  Also, the legacy (and
-      undocumented) boolean-like values which were previously synonyms
-      for <literal>md5</literal> are no longer accepted.
-     </para>
-    </listitem>
-
-    <listitem>
-<!--
-Author: Bruce Momjian <bruce@momjian.us>
-2020-10-05 [253f1025d] Overhaul pg_hba.conf clientcert's API
--->
-
-     <para>
-      Overhaul the specification of <literal>clientcert</literal> in <link
-      linkend="auth-pg-hba-conf"><filename>pg_hba.conf</filename></link>
-      (Kyotaro Horiguchi)
-     </para>
-
-     <para>
-      Values
-      <literal>1</literal>/<literal>0</literal>/<literal>no-verify</literal>
-      are no longer supported;  only the strings
-      <literal>verify-ca</literal> and <literal>verify-full</literal>
-      can be used.  Also, disallow <literal>verify-ca</literal> if cert
-      authentication is enabled since cert requires
-      <literal>verify-full</literal> checking.
-     </para>
-    </listitem>
-
-    <listitem>
-<!--
-Author: Michael Paquier <michael@paquier.xyz>
-2021-03-09 [f9264d152] Remove support for SSL compression
-Author: Michael Paquier <michael@paquier.xyz>
-2021-03-10 [0ba71107e] Revert changes for SSL compression in libpq
--->
-
-     <para>
-      Remove support for <link
-      linkend="runtime-config-connection-ssl"><acronym>SSL</acronym></link>
-      compression (Daniel Gustafsson, Michael Paquier)
-     </para>
-
-     <para>
-      This was already disabled by default in previous Postgres releases,
-      and most modern OpenSSL and <acronym>TLS</acronym> versions no
-      longer support it.
-     </para>
-    </listitem>
-
-    <listitem>
-<!--
-Author: Heikki Linnakangas <heikki.linnakangas@iki.fi>
-2021-03-04 [3174d69fb] Remove server and libpq support for old FE/BE protocol v
--->
-
-     <para>
-      Remove server and <link linkend="libpq">libpq</link> support
-      for the version 2 <link linkend="protocol">wire protocol</link>
-      (Heikki Linnakangas)
-     </para>
-
-     <para>
-      This was last used as the default in Postgres 7.3 (year 2002).
+      tokens was treated as multiple tokens, causing incorrect tsquery
+      output, e.g., <literal>websearch_to_tsquery('"aaa: bbb"')</literal> used to output
+      <literal>'aaa' &lt;2&gt; 'bbb'</literal>, but now outputs <literal>'aaa' &lt;-&gt; 'bbb'</literal>.
      </para>
     </listitem>
 
@@ -225,13 +217,56 @@ Author: Peter Eisentraut <peter@eisentraut.org>
 
      <para>
       Change <link
-      linkend="functions-datetime"><function>EXTRACT</function></link>
-      to return the <type>NUMERIC</type> data type (Peter Eisentraut)
+      linkend="functions-datetime"><function>EXTRACT()</function></link>
+      to return type <type>numeric</type> instead of <type>float8</type>
+      (Peter Eisentraut)
      </para>
 
      <para>
-      <function>EXTRACT(date)</function> now throws an error for units
-      that are not part of the date data type.
+      This avoids loss-of-precision issues in some usages.  The old
+      behavior can still be obtained by using the old underlying function
+      <function>date_part()</function>.
+     </para>
+
+     <para>
+      Also, <function>EXTRACT(date)</function> now throws an error for units
+      that are not part of the <type>date</type> data type.
+     </para>
+    </listitem>
+
+    <listitem>
+<!--
+Author: Tom Lane <tgl@sss.pgh.pa.us>
+2020-06-13 [23cbeda50] Sync behavior of var_samp and stddev_samp for single NaN
+-->
+
+     <para>
+      Change <link
+      linkend="functions-aggregate"><function>var_samp()</function></link>
+      and <function>stddev_samp()</function> with numeric parameters to
+      return NULL when the input is a single NaN value (Tom Lane)
+     </para>
+
+     <para>
+      Previously <literal>NaN</literal> was returned.
+     </para>
+    </listitem>
+
+    <listitem>
+<!--
+Author: Joe Conway <mail@joeconway.com>
+2021-03-31 [b12bd4869] Fix has_column_privilege function corner case
+-->
+
+     <para>
+      Return false for <link
+      linkend="functions-info"><function>has_column_privilege()</function></link>
+      checks on non-existent or dropped columns when using attribute
+      numbers (Joe Conway)
+     </para>
+
+     <para>
+      Previously such attribute numbers returned an invalid-column error.
      </para>
     </listitem>
 
@@ -255,84 +290,20 @@ Author: Tom Lane <tgl@sss.pgh.pa.us>
 
     <listitem>
 <!--
-Author: Peter Eisentraut <peter@eisentraut.org>
-2020-11-25 [f73999262] tablefunc: Reject negative number of tuples passed to no
--->
-
-     <para>
-      Prevent <xref linkend="tablefunc"/>'s function
-      <function>normal_rand()</function> from accepting negative values
-      (Ashutosh Bapat)
-     </para>
-
-     <para>
-      Negative values produced undesirable results.
-     </para>
-    </listitem>
-
-    <listitem>
-<!--
-Author: Tom Lane <tgl@sss.pgh.pa.us>
-2020-06-13 [23cbeda50] Sync behavior of var_samp and stddev_samp for single NaN
--->
-
-     <para>
-      Change <link
-      linkend="functions-aggregate"><function>var_samp()</function></link>
-      and <function>stddev_samp()</function> with numeric parameters to
-      return NULL for a single NaN value (Tom Lane)
-     </para>
-
-     <para>
-      Previously <literal>NaN</literal> was returned.
-     </para>
-    </listitem>
-
-    <listitem>
-<!--
-Author: Tom Lane <tgl@sss.pgh.pa.us>
-2020-11-04 [9e38c2bb5] Declare assorted array functions using anycompatible not
--->
-
-     <para>
-      User-defined objects that reference some built-in array functions
-      along with their argument types must be recreated (Tom Lane)
-     </para>
-
-     <para>
-      Specifically, <link
-      linkend="functions-array"><function>array_append()</function></link>,
-      <function>array_prepend()</function>,
-      <function>array_cat()</function>,
-      <function>array_position()</function>,
-      <function>array_positions()</function>,
-      <function>array_remove()</function>,
-      <function>array_replace()</function>, or <link
-      linkend="functions-math"><function>width_bucket()</function></link>
-      used to take <type>anyarray</type> arguments but now take
-      <type>anycompatiblearray</type>.  Therefore, user-defined objects
-      like aggregates and operators that reference old array function
-      signatures must be dropped before upgrading and recreated once the
-      upgrade completes.
-     </para>
-    </listitem>
-
-    <listitem>
-<!--
 Author: Tom Lane <tgl@sss.pgh.pa.us>
 2020-09-17 [76f412ab3] Remove factorial operators, leaving only the factorial()
 -->
 
      <para>
       Remove factorial operators <literal>!</literal> and
-      <literal>!!</literal> (Mark Dilger)
+      <literal>!!</literal>, as well as function
+      <function>numeric_fac()</function> (Mark Dilger)
      </para>
 
      <para>
       The <link
       linkend="functions-math"><function>factorial()</function></link>
-      function is still supported.  Also remove function
-      <function>numeric_fac()</function>.
+      function is still supported.
      </para>
     </listitem>
 
@@ -378,12 +349,14 @@ Author: Tom Lane <tgl@sss.pgh.pa.us>
 
      <para>
       Allow <literal>\D</literal> and <literal>\W</literal> shorthands to
-      match newlines in <link linkend="functions-similarto-regexp">regular
+      match newlines in <link linkend="functions-posix-regexp">regular
       expression</link> newline-sensitive mode (Tom Lane)
      </para>
 
      <para>
-      Previously they did not match;  <literal>[^[:digit:]]</literal> or
+      Previously they did not match newlines in this
+      mode, but that disagrees with the behavior of other common regular
+      expression engines.  <literal>[^[:digit:]]</literal> or
       <literal>[^[:word:]]</literal> can be used to get the old behavior.
      </para>
     </listitem>
@@ -395,28 +368,30 @@ Author: Tom Lane <tgl@sss.pgh.pa.us>
 -->
 
      <para>
-      Improve handling of regular expression back-references (Tom Lane)
+      Disregard constraints when matching regular expression <link
+      linkend="posix-escape-sequences">back-references</link> (Tom Lane)
      </para>
 
      <para>
-      For example, disregard <literal>^</literal> in its expansion in
-      <literal>\1</literal> in <literal>(^\d+).*\1</literal>.
+      For example, in <literal>(^\d+).*\1</literal>,
+      the <literal>^</literal> constraint should be applied at the start
+      of the string, but not when matching <literal>\1</literal>.
      </para>
     </listitem>
 
     <listitem>
 <!--
 Author: Tom Lane <tgl@sss.pgh.pa.us>
-2021-02-25 [2a0af7fe4] Allow complemented character class escapes within regex 
+2021-02-25 [2a0af7fe4] Allow complemented character class escapes within regex
 -->
 
      <para>
-      Disallow <literal>\w</literal> as range start/end in character
-      classes (Tom Lane)
+      Disallow <literal>\w</literal> as a range start or end in regular
+      expression character classes (Tom Lane)
      </para>
 
      <para>
-      This previously was allowed but produced incorrect results.
+      This previously was allowed but produced unexpected results.
      </para>
     </listitem>
 
@@ -430,8 +405,31 @@ Author: Tom Lane <tgl@sss.pgh.pa.us>
 
      <para>
       Require <link linkend="runtime-config-custom">custom server
-      variable</link> names to use only character which are valid for
+      parameter</link> names to use only characters that are valid in
       unquoted <acronym>SQL</acronym> identifiers (Tom Lane)
+     </para>
+    </listitem>
+
+    <listitem>
+<!--
+Author: Peter Eisentraut <peter@eisentraut.org>
+2020-06-10 [c7eab0e97] Change default of password_encryption to scram-sha-256
+Author: Peter Eisentraut <peter@eisentraut.org>
+2020-06-10 [c7eab0e97] Change default of password_encryption to scram-sha-256
+-->
+
+     <para>
+      Change the default of the <xref linkend="guc-password-encryption"/>
+      server parameter to <literal>scram-sha-256</literal> (Peter
+      Eisentraut)
+     </para>
+
+     <para>
+      Previously it was <literal>md5</literal>.  All new passwords will
+      be stored as SHA256 unless this server setting is changed or
+      the password is specified in MD5 format.  Also, the legacy (and
+      undocumented) Boolean-like values which were previously synonyms
+      for <literal>md5</literal> are no longer accepted.
      </para>
     </listitem>
 
@@ -444,7 +442,7 @@ Author: Peter Geoghegan <pg@bowt.ie>
 -->
 
      <para>
-      Remove server variable
+      Remove server parameter
       <varname>vacuum_cleanup_index_scale_factor</varname> (Peter Geoghegan)
      </para>
 
@@ -456,39 +454,80 @@ Author: Peter Geoghegan <pg@bowt.ie>
 
     <listitem>
 <!--
-Author: Joe Conway <mail@joeconway.com>
-2021-03-31 [b12bd4869] Fix has_column_privilege function corner case
+Author: Tom Lane <tgl@sss.pgh.pa.us>
+2020-12-08 [a676386b5] Remove operator_precedence_warning.
 -->
 
      <para>
-      Return false for <link
-      linkend="functions-info"><function>has_column_privilege()</function></link>
-      checks on non-existent or dropped columns when using attribute
-      numbers (Joe Conway)
+      Remove server parameter <varname>operator_precedence_warning</varname>
+      (Tom Lane)
      </para>
 
      <para>
-      Previously such attribute numbers returned an invalid column error.
+      This setting was used for warning applications about
+      <productname>PostgreSQL</productname> 9.5 changes.
      </para>
     </listitem>
 
     <listitem>
 <!--
-Author: Tom Lane <tgl@sss.pgh.pa.us>
-2020-10-22 [3dfb1942d] Avoid premature de-doubling of quote marks in ECPG strin
-Author: Tom Lane <tgl@sss.pgh.pa.us>
-2020-10-22 [c16a1bbcf] Add documentation and tests for quote marks in ECPG lite
+Author: Bruce Momjian <bruce@momjian.us>
+2020-10-05 [253f1025d] Overhaul pg_hba.conf clientcert's API
 -->
 
      <para>
-      Pass doubled quote marks in <xref linkend="ecpg"/>
-      <acronym>SQL</acronym> command strings literally (Tom Lane)
+      Overhaul the specification of <literal>clientcert</literal> in <link
+      linkend="auth-pg-hba-conf"><filename>pg_hba.conf</filename></link>
+      (Kyotaro Horiguchi)
      </para>
 
      <para>
-      Previously <literal>'abc''def'</literal> was passed to the server
-      as <literal>'abc'def'</literal>, and <literal>"abc""def"</literal>
-      was passed as <literal>"abc"def"</literal>.
+      Values
+      <literal>1</literal>/<literal>0</literal>/<literal>no-verify</literal>
+      are no longer supported;  only the strings
+      <literal>verify-ca</literal> and <literal>verify-full</literal>
+      can be used.  Also, disallow <literal>verify-ca</literal> if cert
+      authentication is enabled since cert requires
+      <literal>verify-full</literal> checking.
+     </para>
+    </listitem>
+
+    <listitem>
+<!--
+Author: Michael Paquier <michael@paquier.xyz>
+2021-03-09 [f9264d152] Remove support for SSL compression
+Author: Michael Paquier <michael@paquier.xyz>
+2021-03-10 [0ba71107e] Revert changes for SSL compression in libpq
+-->
+
+     <para>
+      Remove support for <link
+      linkend="runtime-config-connection-ssl"><acronym>SSL</acronym></link>
+      compression (Daniel Gustafsson, Michael Paquier)
+     </para>
+
+     <para>
+      This was already disabled by default in previous
+      <productname>PostgreSQL</productname> releases, and most modern
+      OpenSSL and <acronym>TLS</acronym> versions no longer support it.
+     </para>
+    </listitem>
+
+    <listitem>
+<!--
+Author: Heikki Linnakangas <heikki.linnakangas@iki.fi>
+2021-03-04 [3174d69fb] Remove server and libpq support for old FE/BE protocol v
+-->
+
+     <para>
+      Remove server and <link linkend="libpq">libpq</link> support
+      for the version 2 <link linkend="protocol">wire protocol</link>
+      (Heikki Linnakangas)
+     </para>
+
+     <para>
+      This was last used as the default in
+      <productname>PostgreSQL</productname> 7.3 (released in 2002).
      </para>
     </listitem>
 
@@ -507,6 +546,58 @@ Author: Peter Eisentraut <peter@eisentraut.org>
 
     <listitem>
 <!--
+Author: Tom Lane <tgl@sss.pgh.pa.us>
+2020-07-07 [f3faf35f3] Don't create pg_type entries for sequences or toast tabl
+-->
+
+     <para>
+      Remove the <link linkend="xfunc-sql-composite-functions">composite
+      types</link> that were formerly created for sequences and toast
+      tables (Tom Lane)
+     </para>
+    </listitem>
+
+    <listitem>
+<!--
+Author: Tom Lane <tgl@sss.pgh.pa.us>
+2020-10-22 [3dfb1942d] Avoid premature de-doubling of quote marks in ECPG strin
+Author: Tom Lane <tgl@sss.pgh.pa.us>
+2020-10-22 [c16a1bbcf] Add documentation and tests for quote marks in ECPG lite
+-->
+
+     <para>
+      Process doubled quote marks in <link linkend="ecpg">ecpg</link>
+      <acronym>SQL</acronym> command strings correctly (Tom Lane)
+     </para>
+
+     <para>
+      Previously <literal>'abc''def'</literal> was passed to the server
+      as <literal>'abc'def'</literal>, and <literal>"abc""def"</literal>
+      was passed as <literal>"abc"def"</literal>, causing syntax errors.
+     </para>
+    </listitem>
+
+    <listitem>
+<!--
+Author: Tom Lane <tgl@sss.pgh.pa.us>
+2020-08-08 [20e7e1fe3] Remove &lt;@ from contrib/intarray's GiST operator classes.
+-->
+
+     <para>
+      Prevent the containment operators (<literal>&lt;@</literal> and
+      <literal>@&gt;</literal>) for <xref linkend="intarray"/> from using
+      GiST indexes (Tom Lane)
+     </para>
+
+     <para>
+      Previously a full GiST index scan was required, so just avoid
+      that and scan the heap, which is faster.  Indexes created for this
+      purpose should be removed.
+     </para>
+    </listitem>
+
+    <listitem>
+<!--
 Author: Thomas Munro <tmunro@postgresql.org>
 2021-01-29 [514b411a2] Retire pg_standby.
 -->
@@ -519,30 +610,18 @@ Author: Thomas Munro <tmunro@postgresql.org>
 
     <listitem>
 <!--
-Author: Tom Lane <tgl@sss.pgh.pa.us>
-2020-07-07 [f3faf35f3] Don't create pg_type entries for sequences or toast tabl
+Author: Peter Eisentraut <peter@eisentraut.org>
+2020-11-25 [f73999262] tablefunc: Reject negative number of tuples passed to no
 -->
 
      <para>
-      Remove <link linkend="xfunc-sql-composite-functions">composite
-      types</link> for sequences or toast tables (Tom Lane)
-     </para>
-    </listitem>
-
-    <listitem>
-<!--
-Author: Tom Lane <tgl@sss.pgh.pa.us>
-2020-12-08 [a676386b5] Remove operator_precedence_warning.
--->
-
-     <para>
-      Remove <varname>operator_precedence_warning</varname> setting
-      (Tom Lane)
+      Prevent <xref linkend="tablefunc"/>'s function
+      <function>normal_rand()</function> from accepting negative values
+      (Ashutosh Bapat)
      </para>
 
      <para>
-      This was needed for warning applications about
-      <productname>PostgreSQL</productname> 9.5 changes.
+      Negative values produced undesirable results.
      </para>
     </listitem>
 
@@ -572,8 +651,8 @@ Author: Stephen Frost <sfrost@snowman.net>
 
       <para>
        Add predefined roles <link
-       linkend="predefined-roles"><structname>pg_read_all_data</structname></link>
-       and <structname>pg_write_all_data</structname> (Stephen Frost)
+       linkend="predefined-roles"><literal>pg_read_all_data</literal></link>
+       and <literal>pg_write_all_data</literal> (Stephen Frost)
       </para>
 
       <para>
@@ -589,13 +668,13 @@ Author: Noah Misch <noah@leadboat.com>
 -->
 
       <para>
-       Add a predefined role to match the database owner (Noah Misch)
+       Add predefined role <link
+       linkend="predefined-roles"><literal>pg_database_owner</literal></link>
+       that contains only the current database's owner (Noah Misch)
       </para>
 
       <para>
-       It is called <link
-       linkend="predefined-roles"><literal>pg_database_owner</literal></link>;
-       this is useful in template databases.
+       This is especially useful in template databases.
       </para>
      </listitem>
 
@@ -610,9 +689,9 @@ Author: Tomas Vondra <tomas.vondra@postgresql.org>
       </para>
 
       <para>
-       These files were previously retained for debugging
-       purposes;  deletion can be disabled with <xref
-       linkend="guc-remove-temp-files-after-crash"/>.
+       Previously, such files were retained for debugging purposes.  If
+       necessary, deletion can be disabled with the new server parameter
+       <xref linkend="guc-remove-temp-files-after-crash"/>.
       </para>
      </listitem>
 
@@ -628,10 +707,10 @@ Author: Thomas Munro <tmunro@postgresql.org>
       </para>
 
       <para>
-       The server variable <xref
-       linkend="guc-client-connection-check-interval"/> allows some
-       supported operating systems to automatically cancel queries by
-       disconnected clients.
+       The server parameter <xref
+       linkend="guc-client-connection-check-interval"/> allows control
+       over whether loss of connection is checked for intra-query.
+       (This is supported on Linux and a few other operating systems.)
       </para>
      </listitem>
 
@@ -672,12 +751,12 @@ Author: Peter Eisentraut <peter@eisentraut.org>
 -->
 
       <para>
-       Add Server Name Indication (<acronym>SNI</acronym>) for
+       Add Server Name Indication (<acronym>SNI</acronym>) in
        <acronym>SSL</acronym> connection packets (Peter Eisentraut)
       </para>
 
       <para>
-       This can be disabled by turning off client option <link
+       This can be disabled by turning off client connection option <link
        linkend="libpq-paramkeywords"><literal>sslsni</literal></link>.
       </para>
      </listitem>
@@ -705,7 +784,7 @@ Author: Peter Geoghegan <pg@bowt.ie>
        <para>
         The vacuum parameter <link
         linkend="sql-vacuum"><literal>INDEX_CLEANUP</literal></link> has a
-        new default of <literal>auto</literal> to enable this optimization.
+        new default of <literal>auto</literal> that enables this optimization.
        </para>
       </listitem>
 
@@ -716,13 +795,13 @@ Author: Peter Geoghegan <pg@bowt.ie>
 -->
 
        <para>
-        Allow vacuum to eagerly add newly deleted btree pages to the free
+        Allow vacuum to more eagerly add deleted btree pages to the free
         space map (Peter Geoghegan)
        </para>
 
        <para>
-        Previously vacuum could only place preexisting deleted pages in
-        the free space map.
+        Previously vacuum could only add pages to the free space map
+        that were marked as deleted by previous vacuums.
        </para>
       </listitem>
 
@@ -740,8 +819,30 @@ Author: Peter Geoghegan <pg@bowt.ie>
 
       <listitem>
 <!--
+Author: Alvaro Herrera <alvherre@alvh.no-ip.org>
+2020-11-25 [c98763bf5] Avoid spurious waits in concurrent indexing
+Author: Alvaro Herrera <alvherre@alvh.no-ip.org>
+2021-01-15 [f9900df5f] Avoid spurious wait in concurrent reindex
+Author: Alvaro Herrera <alvherre@alvh.no-ip.org>
+2021-02-23 [d9d076222] VACUUM: ignore indexing operations with CONCURRENTLY
+-->
+
+       <para>
+        Allow vacuum to be more aggressive in removing dead rows during
+        minimal-locking index operations (Álvaro Herrera)
+       </para>
+
+       <para>
+        Specifically, <command>CREATE INDEX CONCURRENTLY</command> and
+        <command>REINDEX CONCURRENTLY</command> no longer limit the dead
+        row removal of other relations.
+       </para>
+      </listitem>
+
+      <listitem>
+<!--
 Author: Fujii Masao <fujii@postgresql.org>
-2020-12-08 [e2ac3fed3] Speed up rechecking if relation needs to be vacuumed or 
+2020-12-08 [e2ac3fed3] Speed up rechecking if relation needs to be vacuumed or
 -->
 
        <para>
@@ -758,7 +859,7 @@ Author: Peter Geoghegan <pg@bowt.ie>
 
        <para>
         Reduce the default value of <xref
-        linkend="guc-vacuum-cost-page-miss"/> to better reflects current
+        linkend="guc-vacuum-cost-page-miss"/> to better reflect current
         hardware capabilities (Peter Geoghegan)
        </para>
       </listitem>
@@ -832,24 +933,6 @@ Author: Noah Misch <noah@leadboat.com>
 
       <listitem>
 <!--
-Author: Alvaro Herrera <alvherre@alvh.no-ip.org>
-2021-04-08 [0827e8af7] autovacuum: handle analyze for partitioned tables
--->
-
-       <para>
-        <link linkend="autovacuum">Autovacuum</link> now analyzes
-        partitioned tables (Yuzuko Hosoya, Álvaro Herrera)
-       </para>
-
-       <para>
-        Insert, update, and delete tuple counts from partitions are now
-        propagated to their parent tables so autovacuum knows when to
-        process them.
-       </para>
-      </listitem>
-
-      <listitem>
-<!--
 Author: Michael Paquier <michael@paquier.xyz>
 2021-03-23 [5aed6a1fc] Add per-index stats information in verbose logs of autov
 -->
@@ -880,12 +963,13 @@ Author: Tom Lane <tgl@sss.pgh.pa.us>
 -->
 
        <para>
-        Improve the performance of updates/deletes on partitioned tables
-        when only a few partitions are affected (Amit Langote, Tom Lane)
+        Improve the performance of updates and deletes on partitioned tables
+        with many partitions (Amit Langote, Tom Lane)
        </para>
 
        <para>
-        This also allows updates/deletes on partitioned tables to use
+        This change greatly reduces the planner's overhead for such cases,
+        and also allows updates/deletes on partitioned tables to use
         execution-time partition pruning.
        </para>
       </listitem>
@@ -915,11 +999,14 @@ Author: Tom Lane <tgl@sss.pgh.pa.us>
 -->
 
        <para>
-        Allow arbitrary collations of partition boundary values (Tom Lane)
+        Ignore <literal>COLLATE</literal> clauses in partition boundary
+        values (Tom Lane)
        </para>
 
        <para>
-        Previously it had to match the collation of the partition key.
+        Previously any such clause had to match the collation of the
+        partition key; but it's more consistent to consider that it's
+        automatically coerced to the collation of the partition key.
        </para>
       </listitem>
 
@@ -981,7 +1068,7 @@ Author: Tomas Vondra <tomas.vondra@postgresql.org>
 
        <para>
         This allows <acronym>BRIN</acronym> indexes to be used effectively
-        with data that is not physically localized in the heap.
+        with data that is not well-localized in the heap.
        </para>
       </listitem>
 
@@ -1009,7 +1096,7 @@ Author: Tom Lane <tgl@sss.pgh.pa.us>
 -->
 
        <para>
-        Allow <link linkend="spgist">SP-GiST</link> to use
+        Allow <link linkend="spgist">SP-GiST</link> indexes to contain
         <literal>INCLUDE</literal>'d columns (Pavel Borisov)
        </para>
       </listitem>
@@ -1030,13 +1117,13 @@ Author: David Rowley <drowley@postgresql.org>
 -->
 
        <para>
-        Allow hash lookup of <literal>IN</literal> clause with many
+        Allow hash lookup for <literal>IN</literal> clauses with many
         constants (James Coleman, David Rowley)
        </para>
 
        <para>
-        Previously the only option was to sequentially scan the list
-        of constants.
+        Previously the code always sequentially scanned the list
+        of values.
        </para>
       </listitem>
 
@@ -1072,9 +1159,7 @@ Author: Tomas Vondra <tomas.vondra@postgresql.org>
         This allows statistics on a group of expressions and columns,
         rather than only columns like previously.  System view <link
         linkend="view-pg-stats-ext-exprs"><structname>pg_stats_ext_exprs</structname></link>
-        reports such statistics. <link
-        linkend="sql-altertable"><literal>ALTER TABLE ... ALTER COLUMN
-        ... TYPE RESETS STASTISTICS</literal></link>?
+        reports such statistics.
        </para>
       </listitem>
 
@@ -1158,13 +1243,14 @@ Author: David Rowley <drowley@postgresql.org>
 -->
 
        <para>
-        Add executor method to cache results from the inner-side of nested
-        loop joins (David Rowley)
+        Add executor method to memoize results from the inner side of a
+        nested-loop join (David Rowley)
        </para>
 
        <para>
         This is useful if only a small percentage of rows is checked on
-        the inner side.
+        the inner side.  It can be disabled via server parameter <xref
+        linkend="guc-enable-memoize"/>.
        </para>
       </listitem>
 
@@ -1211,9 +1297,9 @@ Author: Etsuro Fujita <efujita@postgresql.org>
        </para>
 
        <para>
-        The <link
+        <link
         linkend="postgres-fdw"><application>postgres_fdw</application></link>
-        supports these type of scans if <literal>async_capable</literal>
+        supports this type of scan if <literal>async_capable</literal>
         is set.
        </para>
       </listitem>
@@ -1254,7 +1340,7 @@ Author: Tom Lane <tgl@sss.pgh.pa.us>
 Author: Tom Lane <tgl@sss.pgh.pa.us>
 2021-03-02 [0c3405cf1] Improve performance of regular expression back-reference
 Author: Tom Lane <tgl@sss.pgh.pa.us>
-2021-03-02 [4604f83fd] Suppress unnecessary regex subre nodes in a couple more 
+2021-03-02 [4604f83fd] Suppress unnecessary regex subre nodes in a couple more
 Author: Tom Lane <tgl@sss.pgh.pa.us>
 2021-03-08 [6c20bdb2a] Further tweak memory management for regex DFAs.
 Author: Tom Lane <tgl@sss.pgh.pa.us>
@@ -1262,16 +1348,16 @@ Author: Tom Lane <tgl@sss.pgh.pa.us>
 -->
 
        <para>
-        Improve the performance of <link
-        linkend="functions-similarto-regexp">regular expression</link>
-        comparisons (Tom Lane)
+        Improve performance of <link
+        linkend="functions-posix-regexp">regular expression</link>
+        searches (Tom Lane)
        </para>
       </listitem>
 
       <listitem>
 <!--
 Author: Michael Paquier <michael@paquier.xyz>
-2020-10-11 [80f8eb79e] Use perfect hash for NFC and NFKC Unicode Normalization 
+2020-10-11 [80f8eb79e] Use perfect hash for NFC and NFKC Unicode Normalization
 Author: Michael Paquier <michael@paquier.xyz>
 2020-10-23 [783f0cc64] Improve performance of Unicode {de,re}composition in the
 -->
@@ -1300,10 +1386,10 @@ Author: Robert Haas <rhaas@postgresql.org>
 
        <para>
         This can be set at the column level, or set as a default via server
-        setting <xref linkend="guc-default-toast-compression"/>.
+        parameter <xref linkend="guc-default-toast-compression"/>.
         The server must be compiled with <link
         linkend="configure-options-features"><option>--with-lz4</option></link>
-        to support this feature;  the default is still pglz.
+        to support this feature.  The default setting is still pglz.
        </para>
       </listitem>
 
@@ -1331,7 +1417,7 @@ Author: Alvaro Herrera <alvherre@alvh.no-ip.org>
 -->
 
        <para>
-        If server variable <xref linkend="guc-compute-query-id"/>
+        If server parameter <xref linkend="guc-compute-query-id"/>
         is enabled, display the query id in <link
         linkend="monitoring-pg-stat-activity-view"><structname>pg_stat_activity</structname></link>,
         <link linkend="sql-explain"><command>EXPLAIN
@@ -1342,35 +1428,6 @@ Author: Alvaro Herrera <alvherre@alvh.no-ip.org>
 
        <para>
         A query id computed by an extension will also be displayed.
-       </para>
-      </listitem>
-
-      <listitem>
-<!--
-Author: Fujii Masao <fujii@postgresql.org>
-2020-08-19 [3e98c0baf] Add pg_backend_memory_contexts system view.
-Author: Fujii Masao <fujii@postgresql.org>
-2020-08-26 [29dd6d8bc] Prevent non-superusers from reading pg_backend_memory_co
--->
-
-       <para>
-        Add system view <link
-        linkend="view-pg-backend-memory-contexts"><structname>pg_backend_memory_contexts</structname></link>
-        to report session memory usage (Atsushi Torikoshi, Fujii Masao)
-       </para>
-      </listitem>
-
-      <listitem>
-<!--
-Author: Fujii Masao <fujii@postgresql.org>
-2021-04-06 [43620e328] Add function to log the memory contexts of specified bac
--->
-
-       <para>
-        Add function <link
-        linkend="functions-admin-signal"><function>pg_log_backend_memory_contexts()</function></link>
-        to output the memory contexts of arbitrary backends (Atsushi
-        Torikoshi)
        </para>
       </listitem>
 
@@ -1423,10 +1480,82 @@ Author: Michael Paquier <michael@paquier.xyz>
 -->
 
        <para>
-        Add view <link
+        Add system view <link
         linkend="copy-progress-reporting"><structname>pg_stat_progress_copy</structname></link>
         to report <command>COPY</command> progress (Josef Šimánek,
         Matthias van de Meent)
+       </para>
+      </listitem>
+
+      <listitem>
+<!--
+Author: Fujii Masao <fujii@postgresql.org>
+2020-10-02 [8d9a93596] Add pg_stat_wal statistics view.
+Author: Fujii Masao <fujii@postgresql.org>
+2020-12-02 [01469241b] Track total number of WAL records, FPIs and bytes genera
+Author: Fujii Masao <fujii@postgresql.org>
+2021-03-09 [ff99918c6] Track total amounts of times spent writing and syncing W
+-->
+
+       <para>
+        Add system view <link
+        linkend="monitoring-pg-stat-wal-view"><structname>pg_stat_wal</structname></link>
+        to report <acronym>WAL</acronym> activity (Masahiro Ikeda)
+       </para>
+      </listitem>
+
+      <listitem>
+<!--
+Author: Amit Kapila <akapila@postgresql.org>
+2020-10-08 [986816750] Track statistics for spilling of changes from ReorderBuf
+Author: Amit Kapila <akapila@postgresql.org>
+2020-10-20 [03d51b776] Change the attribute name in pg_stat_replication_slots v
+Author: Amit Kapila <akapila@postgresql.org>
+2020-10-29 [8e90ec558] Track statistics for streaming of changes from ReorderBu
+Author: Amit Kapila <akapila@postgresql.org>
+2021-04-16 [f5fc2f5b2] Add information of total data processed to replication s
+-->
+
+       <para>
+        Add system view <link
+        linkend="monitoring-pg-stat-replication-slots-view"><structname>pg_stat_replication_slots</structname></link>
+        to report replication slot activity (Sawada Masahiko, Amit Kapila,
+        Vignesh C)
+       </para>
+
+       <para>
+        The function <link
+        linkend="monitoring-stats-functions"><function>pg_stat_reset_replication_slot()</function></link>
+        resets slot statistics.
+       </para>
+      </listitem>
+
+      <listitem>
+<!--
+Author: Fujii Masao <fujii@postgresql.org>
+2020-08-19 [3e98c0baf] Add pg_backend_memory_contexts system view.
+Author: Fujii Masao <fujii@postgresql.org>
+2020-08-26 [29dd6d8bc] Prevent non-superusers from reading pg_backend_memory_co
+-->
+
+       <para>
+        Add system view <link
+        linkend="view-pg-backend-memory-contexts"><structname>pg_backend_memory_contexts</structname></link>
+        to report session memory usage (Atsushi Torikoshi, Fujii Masao)
+       </para>
+      </listitem>
+
+      <listitem>
+<!--
+Author: Fujii Masao <fujii@postgresql.org>
+2021-04-06 [43620e328] Add function to log the memory contexts of specified bac
+-->
+
+       <para>
+        Add function <link
+        linkend="functions-admin-signal"><function>pg_log_backend_memory_contexts()</function></link>
+        to output the memory contexts of arbitrary backends (Atsushi
+        Torikoshi)
        </para>
       </listitem>
 
@@ -1467,49 +1596,6 @@ Author: Fujii Masao <fujii@postgresql.org>
         Add lock wait start time to <link
         linkend="view-pg-locks"><structname>pg_locks</structname></link>
         (Atsushi Torikoshi)
-       </para>
-      </listitem>
-
-      <listitem>
-<!--
-Author: Fujii Masao <fujii@postgresql.org>
-2020-10-02 [8d9a93596] Add pg_stat_wal statistics view.
-Author: Fujii Masao <fujii@postgresql.org>
-2020-12-02 [01469241b] Track total number of WAL records, FPIs and bytes genera
-Author: Fujii Masao <fujii@postgresql.org>
-2021-03-09 [ff99918c6] Track total amounts of times spent writing and syncing W
--->
-
-       <para>
-        Add system view <link
-        linkend="monitoring-pg-stat-wal-view"><structname>pg_stat_wal</structname></link>
-        which reports <acronym>WAL</acronym> activity (Masahiro Ikeda)
-       </para>
-      </listitem>
-
-      <listitem>
-<!--
-Author: Amit Kapila <akapila@postgresql.org>
-2020-10-08 [986816750] Track statistics for spilling of changes from ReorderBuf
-Author: Amit Kapila <akapila@postgresql.org>
-2020-10-20 [03d51b776] Change the attribute name in pg_stat_replication_slots v
-Author: Amit Kapila <akapila@postgresql.org>
-2020-10-29 [8e90ec558] Track statistics for streaming of changes from ReorderBu
-Author: Amit Kapila <akapila@postgresql.org>
-2021-04-16 [f5fc2f5b2] Add information of total data processed to replication s
--->
-
-       <para>
-        Add system view <link
-        linkend="monitoring-pg-stat-replication-slots-view"><structname>pg_stat_replication_slots</structname></link>
-        to report replication slot activity (Sawada Masahiko, Amit Kapila,
-        Vignesh C)
-       </para>
-
-       <para>
-        The function <link
-        linkend="monitoring-stats-functions"><function>pg_stat_reset_replication_slot()</function></link>
-        resets slot statistics.
        </para>
       </listitem>
 
@@ -1558,7 +1644,7 @@ Author: Peter Eisentraut <peter@eisentraut.org>
     </sect4>
 
     <sect4>
-     <title><acronym>Authentication</acronym></title>
+     <title>Authentication</title>
 
      <itemizedlist>
 
@@ -1569,7 +1655,7 @@ Author: Andrew Dunstan <andrew@dunslane.net>
 -->
 
        <para>
-        Allow the certificate's distinguished name (<acronym>DN</acronym>)
+        Allow an SSL certificate's distinguished name (<acronym>DN</acronym>)
         to be matched for client certificate authentication (Andrew
         Dunstan)
        </para>
@@ -1577,7 +1663,7 @@ Author: Andrew Dunstan <andrew@dunslane.net>
        <para>
         The new <link
         linkend="auth-pg-hba-conf"><filename>pg_hba.conf</filename></link>
-        keyword <literal>clientname=DN</literal> allows comparison with
+        option <literal>clientname=DN</literal> allows comparison with
         certificate attributes beyond the <literal>CN</literal> and can
         be combined with ident maps.
        </para>
@@ -1586,7 +1672,7 @@ Author: Andrew Dunstan <andrew@dunslane.net>
       <listitem>
 <!--
 Author: Tom Lane <tgl@sss.pgh.pa.us>
-2020-09-03 [8f8154a50] Allow records to span multiple lines in pg_hba.conf and 
+2020-09-03 [8f8154a50] Allow records to span multiple lines in pg_hba.conf and
 -->
 
        <para>
@@ -1613,9 +1699,10 @@ Author: Peter Eisentraut <peter@eisentraut.org>
        </para>
 
        <para>
-        This is controlled by server variable <xref
-        linkend="guc-ssl-crl-dir"/> and libpq connection option sslcrldir.
-        Previously only <acronym>CRL</acronym> files could be specified.
+        This is controlled by server parameter <xref
+        linkend="guc-ssl-crl-dir"/> and libpq connection option
+        <xref linkend='libpq-connect-sslcrldir'/>.  Previously only
+        single <acronym>CRL</acronym> files could be specified.
        </para>
       </listitem>
 
@@ -1646,7 +1733,7 @@ Author: Tom Lane <tgl@sss.pgh.pa.us>
 -->
 
        <para>
-        Add server setting <xref linkend="guc-idle-session-timeout"/>
+        Add server parameter <xref linkend="guc-idle-session-timeout"/>
         to close idle sessions (Li Japin)
        </para>
 
@@ -1679,8 +1766,9 @@ Author: Michael Paquier <michael@paquier.xyz>
 -->
 
        <para>
-        Allow %P in <xref linkend="guc-log-line-prefix"/> to report the
-        parallel group leader (Justin Pryzby)
+        Allow <literal>%P</literal>
+        in <xref linkend="guc-log-line-prefix"/> to report the
+        parallel group leader's PID for a parallel worker (Justin Pryzby)
        </para>
       </listitem>
 
@@ -1725,8 +1813,8 @@ Author: Thomas Munro <tmunro@postgresql.org>
 -->
 
        <para>
-        Add setting <xref linkend="guc-huge-page-size"/> to control the
-        size of huge pages used on Linux (Odin Ugedal)
+        Add server parameter <xref linkend="guc-huge-page-size"/> to
+        control the size of huge pages used on Linux (Odin Ugedal)
        </para>
       </listitem>
 
@@ -1761,7 +1849,7 @@ Author: Fujii Masao <fujii@postgresql.org>
 -->
 
       <para>
-       Allow <xref linkend="guc-restore-command"/> setting to be changed
+       Allow the <xref linkend="guc-restore-command"/> setting to be changed
        during a server reload (Sergei Kornilov)
       </para>
 
@@ -1782,7 +1870,7 @@ Author: Fujii Masao <fujii@postgresql.org>
 -->
 
       <para>
-       Add server variable <xref
+       Add server parameter <xref
        linkend="guc-log-recovery-conflict-waits"/> to report long recovery
        conflict wait times (Bertrand Drouvot, Masahiko Sawada)
       </para>
@@ -1795,8 +1883,9 @@ Author: Peter Eisentraut <peter@eisentraut.org>
 -->
 
       <para>
-       Pause recovery if the primary changes its parameters in a way that
-       prevents replay on the hot standby (Peter Eisentraut)
+       Pause recovery on a hot standby server if the primary changes its
+       parameters in a way that prevents replay on the standby (Peter
+       Eisentraut)
       </para>
 
       <para>
@@ -1830,8 +1919,13 @@ Author: Tom Lane <tgl@sss.pgh.pa.us>
 -->
 
       <para>
-       Add new server-side variable <xref linkend="guc-in-hot-standby"/>
+       Add new read-only server parameter <xref linkend="guc-in-hot-standby"/>
        (Haribabu Kommi, Greg Nancarrow, Tom Lane)
+      </para>
+
+      <para>
+       This allows clients to easily detect whether they are connected to
+       a hot standby server.
       </para>
      </listitem>
 
@@ -1859,10 +1953,11 @@ Author: Thomas Munro <tmunro@postgresql.org>
       </para>
 
       <para>
-       By default, Postgres opens and fsyncs every data file
-       at the start of crash recovery.  This new setting, <xref
+       By default, <productname>PostgreSQL</productname>
+       opens and fsyncs each data file in the database cluster at the
+       start of crash recovery.  A new setting, <xref
        linkend="guc-recovery-init-sync-method"/><literal>=syncfs</literal>,
-       instead syncs each filesystem used by the database cluster.
+       instead syncs each filesystem used by the cluster.
        This allows for faster recovery on systems with many database files.
       </para>
      </listitem>
@@ -1870,7 +1965,7 @@ Author: Thomas Munro <tmunro@postgresql.org>
      <listitem>
 <!--
 Author: Michael Paquier <michael@paquier.xyz>
-2020-07-12 [b1e48bbe6] Include replication origins in SQL functions for commit 
+2020-07-12 [b1e48bbe6] Include replication origins in SQL functions for commit
 -->
 
       <para>
@@ -1884,7 +1979,7 @@ Author: Michael Paquier <michael@paquier.xyz>
      <listitem>
 <!--
 Author: Michael Paquier <michael@paquier.xyz>
-2020-07-12 [b1e48bbe6] Include replication origins in SQL functions for commit 
+2020-07-12 [b1e48bbe6] Include replication origins in SQL functions for commit
 -->
 
       <para>
@@ -1907,24 +2002,8 @@ Author: Michael Paquier <michael@paquier.xyz>
       </para>
 
       <para>
-       Previously these functions could only be executed by super-users,
+       Previously these functions could only be executed by superusers,
        and this is still the default.
-      </para>
-     </listitem>
-
-     <listitem>
-<!--
-Author: Fujii Masao <fujii@postgresql.org>
-2020-11-16 [2945a488a] Make the standby server promptly handle interrupt signal
-OTHER COMMITS
--->
-
-      <para>
-       Improve signal handling reliability (Fujii Masao)
-      </para>
-
-      <para>
-       GENERAL ENOUGH?
       </para>
      </listitem>
 
@@ -2118,7 +2197,7 @@ Author: Amit Kapila <akapila@postgresql.org>
      <listitem>
 <!--
 Author: Tom Lane <tgl@sss.pgh.pa.us>
-2020-09-18 [06a7c3154] Allow most keywords to be used as column labels without 
+2020-09-18 [06a7c3154] Allow most keywords to be used as column labels without
 -->
 
       <para>
@@ -2143,9 +2222,9 @@ Author: Peter Eisentraut <peter@eisentraut.org>
       </para>
 
       <para>
-       The alias is created by using <literal>AS</literal> after the
-       <literal>USING</literal> clause and represents an alias for the
-       <literal>USING</literal> columns.
+       The alias is created by writing <literal>AS</literal> after the
+       <literal>USING</literal> clause.  It can be used as a table
+       qualification for the merged <literal>USING</literal> columns.
       </para>
      </listitem>
 
@@ -2175,12 +2254,13 @@ Author: Tom Lane <tgl@sss.pgh.pa.us>
 -->
 
       <para>
-       Properly handle <literal>DEFAULT</literal> values for columns in
-       multi-column inserts (Dean Rasheed)
+       Properly handle <literal>DEFAULT</literal> entries in multi-row
+       <literal>VALUES</literal> lists in <command>INSERT</command>
+       (Dean Rasheed)
       </para>
 
       <para>
-       This used to throw an error.
+       Such cases used to throw an error.
       </para>
      </listitem>
 
@@ -2200,23 +2280,24 @@ Author: Peter Eisentraut <peter@eisentraut.org>
       </para>
 
       <para>
-       This could be accomplished previously using existing syntax.
+       The same results could be accomplished using existing syntax, but
+       much less conveniently.
       </para>
      </listitem>
 
      <listitem>
 <!--
 Author: Tom Lane <tgl@sss.pgh.pa.us>
-2021-04-13 [6c0373ab7] Allow table-qualified variable names in ON CONFLICT ... 
+2021-04-13 [6c0373ab7] Allow table-qualified variable names in ON CONFLICT ...
 -->
 
       <para>
-       Allow the <literal>WHERE</literal> clause of <literal>ON
-       CONFLICT</literal> to be table-qualified (Tom Lane)
+       Allow column names in the <literal>WHERE</literal> clause
+       of <literal>ON CONFLICT</literal> to be table-qualified (Tom Lane)
       </para>
 
       <para>
-       Only the target table can be referenced.
+       Only the target table can be referenced, however.
       </para>
      </listitem>
 
@@ -2276,6 +2357,23 @@ Author: Michael Paquier <michael@paquier.xyz>
       </para>
      </listitem>
 
+      <listitem>
+<!--
+Author: Alvaro Herrera <alvherre@alvh.no-ip.org>
+2020-11-25 [c98763bf5] Avoid spurious waits in concurrent indexing
+Author: Alvaro Herrera <alvherre@alvh.no-ip.org>
+2021-01-15 [f9900df5f] Avoid spurious wait in concurrent reindex
+Author: Alvaro Herrera <alvherre@alvh.no-ip.org>
+2021-02-23 [d9d076222] VACUUM: ignore indexing operations with CONCURRENTLY
+-->
+
+       <para>
+        Allow index commands using <command>CONCURRENTLY</command> to
+        avoid waiting for the completion of other operations using
+        <command>CONCURRENTLY</command> (Álvaro Herrera)
+       </para>
+      </listitem>
+
      <listitem>
 <!--
 Author: Tom Lane <tgl@sss.pgh.pa.us>
@@ -2296,17 +2394,16 @@ Author: Tom Lane <tgl@sss.pgh.pa.us>
 -->
 
       <para>
-       Preserve <acronym>SQL</acronym> standard syntax in <link
-       linkend="sql-createview">view definitions</link>, if possible
+       Preserve <acronym>SQL</acronym> standard syntax for SQL-defined
+       functions in <link linkend="sql-createview">view definitions</link>
        (Tom Lane)
       </para>
 
       <para>
-       Previously non-function call
-       <acronym>SQL</acronym> standard syntax, e.g. <link
-       linkend="functions-formatting"><function>EXTRACT</function></link>,
-       were converted to non-<acronym>SQL</acronym> standard function
-       calls.
+       Previously, calls to SQL-standard functions such as <link
+       linkend="functions-datetime-extract"><function>EXTRACT()</function></link>
+       were shown in plain function-call syntax.  The original syntax
+       is now preserved when displaying a view or rule.
       </para>
      </listitem>
 
@@ -2332,7 +2429,7 @@ Author: Tom Lane <tgl@sss.pgh.pa.us>
 -->
 
       <para>
-       Add <literal>OR REPLACE</literal> for <link
+       Add <literal>OR REPLACE</literal> option for <link
        linkend="sql-createtrigger"><command>CREATE TRIGGER</command></link>
        (Takamichi Osumi)
       </para>
@@ -2368,7 +2465,8 @@ Author: Peter Eisentraut <peter@eisentraut.org>
 -->
 
       <para>
-       Allow publications to be more easily added and removed (Japin Li)
+       Allow publications to be more easily added to and removed from a
+       subscription (Japin Li)
       </para>
 
       <para>
@@ -2384,7 +2482,7 @@ Author: Peter Eisentraut <peter@eisentraut.org>
 Author: Peter Eisentraut <peter@eisentraut.org>
 2021-01-30 [dfb75e478] Add primary keys and unique constraints to system catalo
 Author: Tom Lane <tgl@sss.pgh.pa.us>
-2021-02-02 [62f34097c] Build in some knowledge about foreign-key relationships 
+2021-02-02 [62f34097c] Build in some knowledge about foreign-key relationships
 -->
 
       <para>
@@ -2393,7 +2491,13 @@ Author: Tom Lane <tgl@sss.pgh.pa.us>
       </para>
 
       <para>
-       This helps <acronym>GUI</acronym> tools analyze the system tables.
+       These changes help <acronym>GUI</acronym> tools analyze the system
+       catalogs.  The existing unique indexes of catalogs now have
+       associated <literal>UNIQUE</literal> or <literal>PRIMARY
+       KEY</literal> constraints.  Foreign key relationships are not
+       actually stored or implemented as constraints, but can be obtained
+       for display from the
+       function <link linkend="functions-info-catalog-table">pg_get_catalog_foreign_keys()</link>.
       </para>
      </listitem>
 
@@ -2468,6 +2572,8 @@ Author: Alexander Korotkov <akorotkov@postgresql.org>
 2020-12-29 [db6335b5b] Add support of multirange matching to the existing range
 Author: Alexander Korotkov <akorotkov@postgresql.org>
 2020-12-30 [62097a4cc] Fix selectivity estimation @&gt; (anymultirange, anyrange)
+Author: Alexander Korotkov <akorotkov@postgresql.org>
+2021-07-18 [244ad5415] Support for unnest(multirange)
 -->
 
       <para>
@@ -2477,28 +2583,8 @@ Author: Alexander Korotkov <akorotkov@postgresql.org>
 
       <para>
        These are like range data types, but they allow the specification
-       of multiple, ordered, non-overlapping ranges.  All existing range
-       types now also support multirange versions.
-      </para>
-     </listitem>
-
-     <listitem>
-<!--
-Author: Tom Lane <tgl@sss.pgh.pa.us>
-2020-11-23 [0cc993278] Rename the "point is strictly above/below point" compari
--->
-
-      <para>
-       Add <link linkend="functions-geometry">point operators</link>
-       &lt;&lt;| and |&gt;&gt; to be strictly above/below geometry
-       (Emre Hasegeli)
-      </para>
-
-      <para>
-       Previously &gt;^ and &lt;^ were marked as performing this test, but
-       non-point geometric operators used these operators for non-strict
-       comparisons, leading to confusion.  The old operators still exist
-       but will be eventually removed.  ACCURATE?
+       of multiple, ordered, non-overlapping ranges.  An associated
+       multirange type is automatically created for every range type.
       </para>
      </listitem>
 
@@ -2532,7 +2618,7 @@ Author: Tom Lane <tgl@sss.pgh.pa.us>
       </para>
 
       <para>
-       The previous limit was 4k bytes.  Also remove function
+       The previous limit was 4K bytes.  Also remove function
        <function>t_readline()</function>.
       </para>
      </listitem>
@@ -2544,58 +2630,33 @@ Author: Tom Lane <tgl@sss.pgh.pa.us>
 -->
 
       <para>
-       Add support for <literal>infinity</literal> and
-       <literal>-infinity</literal> values to the <link
+       Add support for <literal>Infinity</literal> and
+       <literal>-Infinity</literal> values in the <link
        linkend="datatype-numeric">numeric data type</link> (Tom Lane)
       </para>
 
       <para>
-       Floating point data types already supported these.
+       Floating-point data types already supported these.
       </para>
      </listitem>
 
      <listitem>
 <!--
 Author: Tom Lane <tgl@sss.pgh.pa.us>
-2020-11-21 [8597a48d0] Fix FPeq() and friends to get the right answers for infi
+2020-11-23 [0cc993278] Rename the "point is strictly above/below point" compari
 -->
 
       <para>
-       Improve the accuracy of floating point computations involving
-       infinity (Tom Lane)
-      </para>
-     </listitem>
-
-     <listitem>
-<!--
-Author: Tom Lane <tgl@sss.pgh.pa.us>
-2020-11-04 [fac83dbd6] Remove underflow error in float division with infinite d
--->
-
-      <para>
-       Have non-zero <link linkend="datatype-float">float values</link>
-       divided by infinity return zero (Kyotaro Horiguchi)
+       Add <link linkend="functions-geometry">point operators</link>
+       <literal>&lt;&lt;|</literal> and <literal>|&gt;&gt;</literal>
+       representing strictly above/below tests (Emre Hasegeli)
       </para>
 
       <para>
-       Previously such operations produced underflow errors.
-      </para>
-     </listitem>
-
-     <listitem>
-<!--
-Author: Tom Lane <tgl@sss.pgh.pa.us>
-2020-07-20 [4fb6aeb4f] Make floating-point "NaN / 0" return NaN instead of rais
--->
-
-      <para>
-       Cause floating-point division of NaN by zero to return NaN
-       (Tom Lane)
-      </para>
-
-      <para>
-       Previously this returned an error.  Division with Numerics always
-       returned NaN.
+       Previously these were called <literal>&gt;^</literal>
+       and <literal>&lt;^</literal>, but that naming is inconsistent with
+       other geometric data types.  The old names remain available,
+       but may someday be removed.
       </para>
      </listitem>
 
@@ -2632,8 +2693,15 @@ Author: Tom Lane <tgl@sss.pgh.pa.us>
 -->
 
       <para>
-       Create composite array types for most system relations (Wenjing
-       Zeng)
+       Create composite array types for system catalogs (Wenjing Zeng)
+      </para>
+
+      <para>
+       User-defined relations have long had composite types associated
+       with them, and also array types over those composite types.
+       System catalogs now do as well.  This change also fixes an
+       inconsistency that creating a user-defined table in single-user
+       mode would fail to create a composite array type.
       </para>
      </listitem>
 
@@ -2660,8 +2728,11 @@ Author: Peter Eisentraut <peter@eisentraut.org>
       </para>
 
       <para>
-       Previously only single-quoted or $$-quoted function bodies were
-       supported.
+       Previously only string-literal function bodies were supported.
+       When writing a function or procedure in SQL-standard syntax,
+       the body is parsed immediately and stored as a parse tree.
+       This allows better tracking of function dependencies, and can have
+       security benefits.
       </para>
      </listitem>
 
@@ -2691,7 +2762,7 @@ Author: Tom Lane <tgl@sss.pgh.pa.us>
       </para>
 
       <para>
-       The functions are <link
+       The functions <link
        linkend="functions-array"><function>array_append()</function></link>,
        <function>array_prepend()</function>,
        <function>array_cat()</function>,
@@ -2699,8 +2770,10 @@ Author: Tom Lane <tgl@sss.pgh.pa.us>
        <function>array_positions()</function>,
        <function>array_remove()</function>,
        <function>array_replace()</function>, and <link
-       linkend="functions-math"><function>width_bucket()</function></link>.
-       Previously only identical data types could be used.
+       linkend="functions-math"><function>width_bucket()</function></link>
+       now take <type>anycompatiblearray</type> instead
+       of <type>anyarray</type> arguments.  This makes them less fussy
+       about exact matches of argument types.
       </para>
      </listitem>
 
@@ -2717,7 +2790,7 @@ Author: Tom Lane <tgl@sss.pgh.pa.us>
       </para>
 
       <para>
-       This can already be done with array slices.
+       This could already be done with array slices, but less easily.
       </para>
      </listitem>
 
@@ -2728,7 +2801,7 @@ Author: Tom Lane <tgl@sss.pgh.pa.us>
 -->
 
       <para>
-       Add bytea equivalents of <link
+       Add <type>bytea</type> equivalents of <link
        linkend="functions-binarystring"><function>ltrim()</function></link>
        and <function>rtrim()</function> (Joel Jacobson)
       </para>
@@ -2784,7 +2857,7 @@ Author: Peter Eisentraut <peter@eisentraut.org>
       </para>
 
       <para>
-       This is similar to how Unicode can be specified in literal string.
+       This is similar to how Unicode can be specified in literal strings.
       </para>
      </listitem>
 
@@ -2830,8 +2903,8 @@ Author: Peter Eisentraut <peter@eisentraut.org>
       </para>
 
       <para>
-       The function <function>date_bin()</function> "bins" the input
-       timestamp into a specified interval aligned with a specified origin.
+       This function <quote>bins</quote> input timestamps, grouping them
+       into intervals of a uniform length aligned with a specified origin.
       </para>
      </listitem>
 
@@ -2848,7 +2921,7 @@ Author: Tom Lane <tgl@sss.pgh.pa.us>
       </para>
 
       <para>
-       They are interpreted as <literal>BC</literal> years.
+       Negative values are interpreted as <literal>BC</literal> years.
       </para>
      </listitem>
 
@@ -2865,36 +2938,37 @@ Author: Peter Eisentraut <peter@eisentraut.org>
       </para>
 
       <para>
-       The new syntax is <literal>SUBSTRING(text SIMILAR pattern ESCAPE
-       escapechar)</literal>.  The previous standard syntax was
+       The new SQL-standard syntax is <literal>SUBSTRING(text SIMILAR
+       pattern ESCAPE escapechar)</literal>.  The previous standard syntax was
        <literal>SUBSTRING(text FROM pattern FOR escapechar)</literal>,
-       and is still supported by Postgres.
+       which is still accepted by <productname>PostgreSQL</productname>.
       </para>
      </listitem>
 
      <listitem>
 <!--
 Author: Tom Lane <tgl@sss.pgh.pa.us>
-2021-02-25 [2a0af7fe4] Allow complemented character class escapes within regex 
+2021-02-25 [2a0af7fe4] Allow complemented character class escapes within regex
 -->
 
       <para>
        Allow complemented character class escapes <link
        linkend="posix-escape-sequences">\D</link>, <literal>\S</literal>,
-       and <literal>\W</literal> within regex brackets (Tom Lane)
+       and <literal>\W</literal> within regular expression brackets (Tom Lane)
       </para>
      </listitem>
 
      <listitem>
 <!--
 Author: Tom Lane <tgl@sss.pgh.pa.us>
-2021-02-25 [2a0af7fe4] Allow complemented character class escapes within regex 
+2021-02-25 [2a0af7fe4] Allow complemented character class escapes within regex
 -->
 
       <para>
        Add <link
-       linkend="posix-escape-sequences"><literal>[[:word:]]</literal></link>
-       as a character class to match \w (Tom Lane)
+       linkend="posix-bracket-expressions"><literal>[[:word:]]</literal></link>
+       as a regular expression character class, equivalent
+       to <literal>\w</literal> (Tom Lane)
       </para>
      </listitem>
 
@@ -2908,6 +2982,38 @@ Author: Tom Lane <tgl@sss.pgh.pa.us>
        Allow more flexible data types for default values of <link
        linkend="functions-window"><function>lead()</function></link>
        and <function>lag()</function> window functions (Vik Fearing)
+      </para>
+     </listitem>
+
+     <listitem>
+<!--
+Author: Tom Lane <tgl@sss.pgh.pa.us>
+2020-11-04 [fac83dbd6] Remove underflow error in float division with infinite d
+-->
+
+      <para>
+       Make non-zero <link linkend="datatype-float">floating-point values</link>
+       divided by infinity return zero (Kyotaro Horiguchi)
+      </para>
+
+      <para>
+       Previously such operations produced underflow errors.
+      </para>
+     </listitem>
+
+     <listitem>
+<!--
+Author: Tom Lane <tgl@sss.pgh.pa.us>
+2020-07-20 [4fb6aeb4f] Make floating-point "NaN / 0" return NaN instead of rais
+-->
+
+      <para>
+       Make floating-point division of NaN by zero return NaN
+       (Tom Lane)
+      </para>
+
+      <para>
+       Previously this returned an error.
       </para>
      </listitem>
 
@@ -2936,6 +3042,18 @@ Author: Tom Lane <tgl@sss.pgh.pa.us>
      <listitem>
 <!--
 Author: Tom Lane <tgl@sss.pgh.pa.us>
+2020-11-21 [8597a48d0] Fix FPeq() and friends to get the right answers for infi
+-->
+
+      <para>
+       Improve the accuracy of geometric computations involving
+       infinity (Tom Lane)
+      </para>
+     </listitem>
+
+     <listitem>
+<!--
+Author: Tom Lane <tgl@sss.pgh.pa.us>
 2020-07-25 [8a37951ee] Mark built-in coercion functions as leakproof where poss
 -->
 
@@ -2947,38 +3065,6 @@ Author: Tom Lane <tgl@sss.pgh.pa.us>
       <para>
        This allows more use of functions that require type conversion in
        security-sensitive situations.
-      </para>
-     </listitem>
-
-     <listitem>
-<!--
-Author: Tom Lane <tgl@sss.pgh.pa.us>
-2021-03-08 [fed10d4ee] Properly mark pg_stat_get_subscription() as returning a 
--->
-
-      <para>
-       Mark <function>pg_stat_get_subscription()</function> as returning
-       a set (Tom Lane)
-      </para>
-
-      <para>
-       While it worked in previous releases, it didn't report proper
-       optimizer statistics and couldn't be used in the target list.
-       FUNCTION NOT DOCUMENTED.
-      </para>
-     </listitem>
-
-     <listitem>
-<!--
-Author: Tom Lane <tgl@sss.pgh.pa.us>
-2021-01-13 [5a6f9bce8] Mark inet_server_addr() and inet_server_port() as parall
--->
-
-      <para>
-       Prevent <link
-       linkend="functions-info"><function>inet_server_addr()</function></link>
-       and <function>inet_server_port()</function> from being run by
-       parallel workers (Masahiko Sawada)
       </para>
      </listitem>
 
@@ -3020,7 +3106,8 @@ Author: Tom Lane <tgl@sss.pgh.pa.us>
       </para>
 
       <para>
-       This adds nested record and array slicing support.
+       This change allows assignment to array slices and nested record
+       fields.
       </para>
      </listitem>
 
@@ -3072,7 +3159,7 @@ Author: Alvaro Herrera <alvherre@alvh.no-ip.org>
       </para>
 
       <para>
-       This allows multiple queries to be sent and only wait for completion
+       This allows multiple queries to be sent, only waiting for completion
        when a specific synchronization message is sent.
       </para>
      </listitem>
@@ -3119,7 +3206,7 @@ Author: Michael Meskes <meskes@postgresql.org>
 -->
 
       <para>
-       Allow an <literal>ECPG SQL</literal> identifier to be linked to
+       Allow an ECPG SQL identifier to be linked to
        a specific connection (Hayato Kuroda)
       </para>
 
@@ -3190,6 +3277,19 @@ Author: Dean Rasheed <dean.a.rasheed@gmail.com>
 
      <listitem>
 <!--
+Author: Fujii Masao <fujii@postgresql.org>
+2021-09-01 [d760d942c] pgbench: Fix bug in measurement of disconnection delays.
+-->
+
+      <para>
+       Include disconnection times in the reconnection overhead measured
+       by <application>pgbench</application> with <option>-C</option>
+       (Yugo Nagata)
+      </para>
+     </listitem>
+
+     <listitem>
+<!--
 Author: Tom Lane <tgl@sss.pgh.pa.us>
 2020-09-17 [99175141c] Improve common/logging.c's support for multiple verbosit
 -->
@@ -3200,7 +3300,7 @@ Author: Tom Lane <tgl@sss.pgh.pa.us>
       </para>
 
       <para>
-       This is now supported by <link
+       This behavior is supported by <link
        linkend="app-pgdump"><application>pg_dump</application></link>,
        <link
        linkend="app-pg-dumpall"><application>pg_dumpall</application></link>,
@@ -3223,13 +3323,13 @@ Author: Tom Lane <tgl@sss.pgh.pa.us>
 -->
 
        <para>
-        Allow <application>psql</application>'s \df and \do commands to
-        specify function and operator argument types (Greg Sabino Mullane,
-        Tom Lane)
+        Allow <application>psql</application>'s <literal>\df</literal>
+        and <literal>\do</literal> commands to specify function and
+        operator argument types (Greg Sabino Mullane, Tom Lane)
        </para>
 
        <para>
-        This helps reduce the number of matches for overloaded entries.
+        This helps reduce the number of matches printed for overloaded names.
        </para>
       </listitem>
 
@@ -3241,19 +3341,20 @@ Author: Michael Paquier <michael@paquier.xyz>
 
        <para>
         Add an access method column to <application>psql</application>'s
-        \d[i|m|t]+ output (Georgios Kokolatos)
+        <literal>\d[i|m|t]+</literal> output (Georgios Kokolatos)
        </para>
       </listitem>
 
       <listitem>
 <!--
 Author: Tom Lane <tgl@sss.pgh.pa.us>
-2021-01-05 [7d80441d2] Allow psql's \dt and \di to show TOAST tables and their 
+2021-01-05 [7d80441d2] Allow psql's \dt and \di to show TOAST tables and their
 -->
 
        <para>
-        Allow <application>psql</application>'s \dt and \di to show
-        <acronym>TOAST</acronym> tables and their indexes (Justin Pryzby)
+        Allow <application>psql</application>'s <literal>\dt</literal>
+        and <literal>\di</literal> to show <acronym>TOAST</acronym>
+        tables and their indexes (Justin Pryzby)
        </para>
       </listitem>
 
@@ -3264,8 +3365,8 @@ Author: Tomas Vondra <tomas.vondra@postgresql.org>
 -->
 
        <para>
-        Add <application>psql</application> command \dX to list extended
-        statistics objects (Tatsuro Yamada)
+        Add <application>psql</application> command <literal>\dX</literal>
+        to list extended statistics objects (Tatsuro Yamada)
        </para>
       </listitem>
 
@@ -3276,8 +3377,9 @@ Author: Tom Lane <tgl@sss.pgh.pa.us>
 -->
 
        <para>
-        Fix <application>psql</application>'s \dT to understand array
-        syntax and backend grammar aliases, like "int" for "integer"
+        Fix <application>psql</application>'s <literal>\dT</literal> to
+        understand array syntax and backend grammar aliases,
+        like <literal>int</literal> for <literal>integer</literal>
         (Greg Sabino Mullane, Tom Lane)
        </para>
       </listitem>
@@ -3290,29 +3392,15 @@ Author: Tom Lane <tgl@sss.pgh.pa.us>
 
        <para>
         When editing the previous query or a file with
-        <application>psql</application>'s \e, or using \ef and \ev, ignore
-        the contents if the editor exits without saving (Laurenz Albe)
+        <application>psql</application>'s <literal>\e</literal>, or using
+        <literal>\ef</literal> and <literal>\ev</literal>, ignore the
+        results if the editor exits without saving (Laurenz Albe)
        </para>
 
        <para>
-        Previously, such edits would still execute the editor contents.
-       </para>
-      </listitem>
-
-      <listitem>
-<!--
-Author: Tom Lane <tgl@sss.pgh.pa.us>
-2020-10-22 [94929f1cf] Clean up some unpleasant behaviors in psql's \connect co
--->
-
-       <para>
-        Improve <application>psql</application>'s handling of \connect
-        with <option>-reuse-previous</option> (Tom Lane)
-       </para>
-
-       <para>
-        Specifically, properly reuse the password previously specified,
-        and prompt for a new password if the previous one failed.
+        Previously, such edits would load the previous query into
+        the query buffer, and typically execute it immediately.  This was
+        deemed to be probably not what the user wants.
        </para>
       </listitem>
 
@@ -3321,7 +3409,7 @@ Author: Tom Lane <tgl@sss.pgh.pa.us>
 Author: Michael Paquier <michael@paquier.xyz>
 2020-07-21 [c273d9d8c] Rework tab completion of COPY and \copy in psql
 Author: Michael Paquier <michael@paquier.xyz>
-2020-07-30 [f1af75c5f] Include partitioned tables for tab completion of VACUUM 
+2020-07-30 [f1af75c5f] Include partitioned tables for tab completion of VACUUM
 Author: Michael Paquier <michael@paquier.xyz>
 2020-08-11 [1f75b4541] Improve tab completion of REINDEX in psql
 Author: Michael Paquier <michael@paquier.xyz>
@@ -3343,13 +3431,13 @@ Author: Thomas Munro <tmunro@postgresql.org>
 Author: Fujii Masao <fujii@postgresql.org>
 2021-02-25 [6b40d9bdb] Improve tab-completion for TRUNCATE.
 Author: Michael Paquier <michael@paquier.xyz>
-2021-03-19 [5b2266e33] Improve tab completion of IMPORT FOREIGN SCHEMA with \h 
+2021-03-19 [5b2266e33] Improve tab completion of IMPORT FOREIGN SCHEMA with \h
 Author: Tom Lane <tgl@sss.pgh.pa.us>
 2021-04-08 [d1fcbde57] Add support for tab-completion of type arguments in \df,
 Author: Fujii Masao <fujii@postgresql.org>
 2021-04-12 [81e094bdf] Support tab-complete for TRUNCATE on foreign tables.
 Author: Michael Paquier <michael@paquier.xyz>
-2021-04-21 [22b2dec31] Add CURRENT_ROLE to list of roles for tab completion of 
+2021-04-21 [22b2dec31] Add CURRENT_ROLE to list of roles for tab completion of
 Author: Alvaro Herrera <alvherre@alvh.no-ip.org>
 2021-04-26 [6dd1042ed] psql: tab-complete ALTER ... DETACH CONCURRENTLY / FINAL
 Author: Michael Paquier <michael@paquier.xyz>
@@ -3358,7 +3446,7 @@ Author: Michael Paquier <michael@paquier.xyz>
 
        <para>
         Improve tab completion (Vignesh C, Michael Paquier, Justin Pryzby,
-        Georgios Kokolatos, Julien Rouhaud, ADD NAMES)
+        Georgios Kokolatos, Julien Rouhaud)
        </para>
       </listitem>
 
@@ -3382,7 +3470,8 @@ Author: Robert Haas <rhaas@postgresql.org>
       <para>
        Add command-line utility <link
        linkend="app-pgamcheck"><application>pg_amcheck</application></link>
-       to simplify running contrib/amcheck operations on many relations
+       to simplify running <filename>contrib/amcheck</filename>
+       tests on many relations
        (Mark Dilger)
       </para>
      </listitem>
@@ -3400,7 +3489,8 @@ Author: Magnus Hagander <magnus@hagander.net>
       </para>
 
       <para>
-       This removes the server start instructions that are normally output.
+       This suppresses the server startup instructions that are normally
+       printed.
       </para>
      </listitem>
 
@@ -3414,7 +3504,7 @@ Author: Magnus Hagander <magnus@hagander.net>
        Stop <link
        linkend="pgupgrade"><application>pg_upgrade</application></link>
        from creating <filename>analyze_new_cluster</filename> script
-       (Michael Paquier)
+       (Magnus Hagander)
       </para>
 
       <para>
@@ -3501,12 +3591,12 @@ Author: Michael Paquier <michael@paquier.xyz>
        <para>
         Add configure option <link
         linkend="configure-options-features"><literal>--with-ssl={openssl}</literal></link>
-        to behave like <option>--with-openssl</option> (Daniel Gustafsson,
+        to allow future choice of the SSL library to use (Daniel Gustafsson,
         Michael Paquier)
        </para>
 
        <para>
-        The option <option>--with-openssl</option> is kept for
+        The spelling <option>--with-openssl</option> is kept for
         compatibility.
        </para>
       </listitem>
@@ -3551,16 +3641,21 @@ Author: Tom Lane <tgl@sss.pgh.pa.us>
 <!--
 Author: Peter Eisentraut <peter@eisentraut.org>
 2021-01-06 [4656e3d66] Replace CLOBBER_CACHE_ALWAYS with run-time GUC
+Author: Tom Lane <tgl@sss.pgh.pa.us>
+2021-07-01 [d04770801] Add - -clobber-cache option to initdb, for CCA testing.
+Author: Tom Lane <tgl@sss.pgh.pa.us>
+2021-07-13 [6201fa3c1] Rename debug_invalidate_system_caches_always to debug_di
 -->
 
        <para>
-        Add <xref linkend="guc-debug-invalidate-system-caches-always"/>
-        to control cache overwriting (Craig Ringer)
+        Add server parameter <xref linkend="guc-debug-discard-caches"/>
+        to control cache flushing for test purposes (Craig Ringer)
        </para>
 
        <para>
-        Previously this could only be controlled at compile time and is
-        enabled only in assert builds.
+        Previously this behavior could only be set at compile time.
+        To invoke it during <application>initdb</application>, use the new
+        option <option>--discard-caches</option>.
        </para>
       </listitem>
 
@@ -3576,7 +3671,7 @@ Author: Peter Geoghegan <pg@bowt.ie>
 
        <para>
         Various improvements in <productname>valgrind</productname>
-        detection (Álvaro Herrera, Peter Geoghegan)
+        error detection ability (Álvaro Herrera, Peter Geoghegan)
        </para>
       </listitem>
 
@@ -3633,8 +3728,12 @@ Author: Magnus Hagander <magnus@hagander.net>
 -->
 
        <para>
-        Remove build control over the random library used (Daniel
-        Gustafsson)
+        Remove separate build-time control over the choice of random number
+        generator (Daniel Gustafsson)
+       </para>
+
+       <para>
+        This is now always determined by the choice of SSL library.
        </para>
       </listitem>
 
@@ -3645,8 +3744,8 @@ Author: Heikki Linnakangas <heikki.linnakangas@iki.fi>
 -->
 
        <para>
-        Add direct conversion routines between EUC_TW and Big5 (Heikki
-        Linnakangas)
+        Add direct conversion routines between EUC_TW and Big5 encodings
+        (Heikki Linnakangas)
        </para>
       </listitem>
 
@@ -3657,7 +3756,7 @@ Author: Thomas Munro <tmunro@postgresql.org>
 -->
 
        <para>
-        Add collation versions for <productname>FreeBSD</productname>
+        Add collation version support for <productname>FreeBSD</productname>
         (Thomas Munro)
        </para>
       </listitem>
@@ -3675,7 +3774,32 @@ Author: Tom Lane <tgl@sss.pgh.pa.us>
        </para>
 
        <para>
-        REMOVE?
+        This allows an index access method to provide validity checking
+        during creation of a new operator class or family.
+       </para>
+      </listitem>
+
+      <listitem>
+<!--
+Author: Tom Lane <tgl@sss.pgh.pa.us>
+2021-06-19 [6991e774e] Provide feature-test macros for libpq features added in
+-->
+
+       <para>
+        Provide feature-test macros in <filename>libpq-fe.h</filename>
+        for recently-added <application>libpq</application> features
+        (Tom Lane, Álvaro Herrera)
+       </para>
+
+       <para>
+        Historically, applications have usually used compile-time checks
+        of <literal>PG_VERSION_NUM</literal> to test whether a feature is
+        available.  But that's normally the server version, which might
+        not be a good guide to <application>libpq</application>'s
+        version.  <filename>libpq-fe.h</filename> now
+        offers <literal>#define</literal> symbols denoting
+        application-visible features added in v14; the intent is to keep
+        adding symbols for such features in future versions.
        </para>
       </listitem>
 
@@ -3739,8 +3863,9 @@ Author: Peter Eisentraut <peter@eisentraut.org>
 -->
 
       <para>
-       Allow <function>pgstattuple_approx()</function> to report on
-       <acronym>TOAST</acronym> tables (Peter Eisentraut)
+       Allow <link
+       linkend="pgstattuple"><function>pgstattuple_approx()</function></link>
+       to report on <acronym>TOAST</acronym> tables (Peter Eisentraut)
       </para>
      </listitem>
 
@@ -3853,7 +3978,7 @@ Author: Bruce Momjian <bruce@momjian.us>
       </para>
 
       <para>
-       The new server variable <xref linkend="guc-compute-query-id"/>'s
+       The new server parameter <xref linkend="guc-compute-query-id"/>'s
        default of <literal>auto</literal> will automatically enable query
        id computation when this extension is loaded.
       </para>
@@ -3866,13 +3991,14 @@ Author: Magnus Hagander <magnus@hagander.net>
 -->
 
       <para>
-       Allow <application>pg_stat_statements</application> to track top
-       and nested statements independently (Julien Rohaud)
+       Cause <application>pg_stat_statements</application> to track top
+       and nested statements separately (Julien Rohaud)
       </para>
 
       <para>
        Previously, when tracking all statements, identical top and nested
-       statements were tracked together.
+       statements were tracked as a single entry; but it seems more useful
+       to separate such usages.
       </para>
      </listitem>
 
@@ -3886,7 +4012,7 @@ Author: Fujii Masao <fujii@postgresql.org>
 
       <para>
        Add row counts for utility commands to
-       <structname>pg_stat_statements</structname> (Fujii Masao, Katsuragi
+       <application>pg_stat_statements</application> (Fujii Masao, Katsuragi
        Yuta, Seino Yuki)
       </para>
      </listitem>
@@ -3901,7 +4027,7 @@ Author: Fujii Masao <fujii@postgresql.org>
 
       <para>
        Add <structname>pg_stat_statements_info</structname> system view
-       to show <structname>pg_stat_statements</structname> activity
+       to show <application>pg_stat_statements</application> activity
        (Katsuragi Yuta, Yuki Seino, Naoki Nakamichi)
       </para>
      </listitem>
@@ -3933,7 +4059,7 @@ Author: Tomas Vondra <tomas.vondra@postgresql.org>
       <listitem>
 <!--
 Author: Fujii Masao <fujii@postgresql.org>
-2021-04-07 [a3740c48e] postgres_fdw: Allow partitions specified in LIMIT TO to 
+2021-04-07 [a3740c48e] postgres_fdw: Allow partitions specified in LIMIT TO to
 -->
 
        <para>
@@ -3944,7 +4070,7 @@ Author: Fujii Masao <fujii@postgresql.org>
        </para>
 
        <para>
-        By default, only the root of partitioned tables is imported.
+        By default, only the root of a partitioned table is imported.
        </para>
       </listitem>
 
@@ -4027,7 +4153,421 @@ Author: Fujii Masao <fujii@postgresql.org>
    </para>
 
    <simplelist>
-    <member></member>
+    <member>Abhijit Menon-Sen</member>
+    <member>Ádám Balogh</member>
+    <member>Adrian Ho</member>
+    <member>Ahsan Hadi</member>
+    <member>Ajin Cherian</member>
+    <member>Aleksander Alekseev</member>
+    <member>Alessandro Gherardi</member>
+    <member>Alex Kozhemyakin</member>
+    <member>Alexander Korotkov</member>
+    <member>Alexander Lakhin</member>
+    <member>Alexander Nawratil</member>
+    <member>Alexander Pyhalov</member>
+    <member>Alexandra Wang</member>
+    <member>Alexey Bashtanov</member>
+    <member>Alexey Bulgakov</member>
+    <member>Alexey Kondratov</member>
+    <member>Álvaro Herrera</member>
+    <member>Amit Kapila</member>
+    <member>Amit Khandekar</member>
+    <member>Amit Langote</member>
+    <member>Amul Sul</member>
+    <member>Anastasia Lubennikova</member>
+    <member>Andreas Grob</member>
+    <member>Andreas Kretschmer</member>
+    <member>Andreas Seltenreich</member>
+    <member>Andreas Wicht</member>
+    <member>Andres Freund</member>
+    <member>Andrew Bille</member>
+    <member>Andrew Dunstan</member>
+    <member>Andrew Gierth</member>
+    <member>Andrey Borodin</member>
+    <member>Andrey Lepikhov</member>
+    <member>Andy Fan</member>
+    <member>Anton Voloshin</member>
+    <member>Antonin Houska</member>
+    <member>Arne Roland</member>
+    <member>Arseny Sher</member>
+    <member>Arthur Nascimento</member>
+    <member>Arthur Zakirov</member>
+    <member>Ashutosh Bapat</member>
+    <member>Ashutosh Sharma</member>
+    <member>Ashwin Agrawal</member>
+    <member>Asif Rehman</member>
+    <member>Asim Praveen</member>
+    <member>Atsushi Torikoshi</member>
+    <member>Aya Iwata</member>
+    <member>Barry Pederson</member>
+    <member>Bas Poot</member>
+    <member>Bauyrzhan Sakhariyev</member>
+    <member>Beena Emerson</member>
+    <member>Benoît Lobréau</member>
+    <member>Bernd Helmle</member>
+    <member>Bernhard M. Wiedemann</member>
+    <member>Bertrand Drouvot</member>
+    <member>Bharath Rupireddy</member>
+    <member>Boris Kolpackov</member>
+    <member>Brar Piening</member>
+    <member>Brian Ye</member>
+    <member>Bruce Momjian</member>
+    <member>Bryn Llewellyn</member>
+    <member>Cameron Daniel</member>
+    <member>Chapman Flack</member>
+    <member>Charles Samborski</member>
+    <member>Charlie Hornsby</member>
+    <member>Chen Jiaoqian</member>
+    <member>Chris Wilson</member>
+    <member>Christian Quest</member>
+    <member>Christoph Berg</member>
+    <member>Christophe Courtois</member>
+    <member>Corey Huinker</member>
+    <member>Craig Ringer</member>
+    <member>Dagfinn Ilmari Mannsåker</member>
+    <member>Dana Burd</member>
+    <member>Daniel Cherniy</member>
+    <member>Daniel Gustafsson</member>
+    <member>Daniel Vérité</member>
+    <member>Daniel Westermann</member>
+    <member>Daniele Varrazzo</member>
+    <member>Dar Alathar-Yemen</member>
+    <member>Darafei Praliaskouski</member>
+    <member>Dave Cramer</member>
+    <member>David Christensen</member>
+    <member>David Fetter</member>
+    <member>David G. Johnston</member>
+    <member>David Geier</member>
+    <member>David Gilman</member>
+    <member>David Pirotte</member>
+    <member>David Rowley</member>
+    <member>David Steele</member>
+    <member>David Turon</member>
+    <member>David Zhang</member>
+    <member>Dean Rasheed</member>
+    <member>Denis Patron</member>
+    <member>Dian Fay</member>
+    <member>Dilip Kumar</member>
+    <member>Dimitri Nüscheler</member>
+    <member>Dmitriy Kuzmin</member>
+    <member>Dmitry Dolgov</member>
+    <member>Dmitry Marakasov</member>
+    <member>Domagoj Smoljanovic</member>
+    <member>Dong Wook</member>
+    <member>Douglas Doole</member>
+    <member>Duncan Sands</member>
+    <member>Edmund Horner</member>
+    <member>Edson Richter</member>
+    <member>Egor Rogov</member>
+    <member>Ekaterina Kiryanova</member>
+    <member>Elena Indrupskaya</member>
+    <member>Emil Iggland</member>
+    <member>Emre Hasegeli</member>
+    <member>Eric Thinnes</member>
+    <member>Erik Rijkers</member>
+    <member>Erwin Brandstetter</member>
+    <member>Etienne Stalmans</member>
+    <member>Etsuro Fujita</member>
+    <member>Eugen Konkov</member>
+    <member>Euler Taveira</member>
+    <member>Fabien Coelho</member>
+    <member>Fabrízio de Royes Mello</member>
+    <member>Federico Caselli</member>
+    <member>Felix Lechner</member>
+    <member>Filip Gospodinov</member>
+    <member>Floris Van Nee</member>
+    <member>Frank Gagnepain</member>
+    <member>Frits Jalvingh</member>
+    <member>Georgios Kokolatos</member>
+    <member>Greg Nancarrow</member>
+    <member>Greg Rychlewski</member>
+    <member>Greg Sabino Mullane</member>
+    <member>Gregory Smith</member>
+    <member>Grigory Smolkin</member>
+    <member>Guillaume Lelarge</member>
+    <member>Guy Burgess</member>
+    <member>Guyren Howe</member>
+    <member>Haiying Tang</member>
+    <member>Hamid Akhtar</member>
+    <member>Hans Buschmann</member>
+    <member>Hao Wu</member>
+    <member>Haribabu Kommi</member>
+    <member>Harisai Hari</member>
+    <member>Hayato Kuroda</member>
+    <member>Heath Lord</member>
+    <member>Heikki Linnakangas</member>
+    <member>Henry Hinze</member>
+    <member>Herwig Goemans</member>
+    <member>Himanshu Upadhyaya</member>
+    <member>Hironobu Suzuki</member>
+    <member>Hiroshi Inoue</member>
+    <member>Hisanori Kobayashi</member>
+    <member>Honza Horak</member>
+    <member>Hou Zhijie</member>
+    <member>Hubert Lubaczewski</member>
+    <member>Hubert Zhang</member>
+    <member>Ian Barwick</member>
+    <member>Ibrar Ahmed</member>
+    <member>Ildus Kurbangaliev</member>
+    <member>Isaac Morland</member>
+    <member>Israel Barth</member>
+    <member>Itamar Gafni</member>
+    <member>Jacob Champion</member>
+    <member>Jaime Casanova</member>
+    <member>Jaime Soler</member>
+    <member>Jakub Wartak</member>
+    <member>James Coleman</member>
+    <member>James Hilliard</member>
+    <member>James Hunter</member>
+    <member>James Inform</member>
+    <member>Jan Mussler</member>
+    <member>Japin Li</member>
+    <member>Jasen Betts</member>
+    <member>Jason Harvey</member>
+    <member>Jason Kim</member>
+    <member>Jeevan Ladhe</member>
+    <member>Jeff Davis</member>
+    <member>Jeff Janes</member>
+    <member>Jelte Fennema</member>
+    <member>Jeremy Evans</member>
+    <member>Jeremy Finzel</member>
+    <member>Jeremy Smith</member>
+    <member>Jesse Kinkead</member>
+    <member>Jesse Zhang</member>
+    <member>Jie Zhang</member>
+    <member>Jim Doty</member>
+    <member>Jim Nasby</member>
+    <member>Jimmy Angelakos</member>
+    <member>Jimmy Yih</member>
+    <member>Jiri Fejfar</member>
+    <member>Joe Conway</member>
+    <member>Joel Jacobson</member>
+    <member>John Naylor</member>
+    <member>John Thompson</member>
+    <member>Jonathan Katz</member>
+    <member>Josef Šimánek</member>
+    <member>Joseph Nahmias</member>
+    <member>Josh Berkus</member>
+    <member>Juan José Santamaría Flecha</member>
+    <member>Julien Rouhaud</member>
+    <member>Junfeng Yang</member>
+    <member>Jürgen Purtz</member>
+    <member>Justin Pryzby</member>
+    <member>Kazutaka Onishi</member>
+    <member>Keisuke Kuroda</member>
+    <member>Kelly Min</member>
+    <member>Kensuke Okamura</member>
+    <member>Kevin Sweet</member>
+    <member>Kevin Yeap</member>
+    <member>Kirk Jamison</member>
+    <member>Kohei KaiGai</member>
+    <member>Konstantin Knizhnik</member>
+    <member>Kota Miyake</member>
+    <member>Krzysztof Gradek</member>
+    <member>Kuntal Ghosh</member>
+    <member>Kyle Kingsbury</member>
+    <member>Kyotaro Horiguchi</member>
+    <member>Laurent Hasson</member>
+    <member>Laurenz Albe</member>
+    <member>Lee Dong Wook</member>
+    <member>Li Japin</member>
+    <member>Liu Huailing</member>
+    <member>Luc Vlaming</member>
+    <member>Ludovic Kuty</member>
+    <member>Luis Roberto</member>
+    <member>Lukas Eder</member>
+    <member>Ma Liangzhu</member>
+    <member>Maciek Sakrejda</member>
+    <member>Madan Kumar</member>
+    <member>Magnus Hagander</member>
+    <member>Mahendra Singh Thalor</member>
+    <member>Maksim Milyutin</member>
+    <member>Marc Boeren</member>
+    <member>Marcin Krupowicz</member>
+    <member>Marco Atzeri</member>
+    <member>Marek Szuba</member>
+    <member>Marina Polyakova</member>
+    <member>Mario Emmenlauer</member>
+    <member>Mark Dilger</member>
+    <member>Mark Wong</member>
+    <member>Mark Zhao</member>
+    <member>Markus Wanner</member>
+    <member>Martín Marqués</member>
+    <member>Martin Visser</member>
+    <member>Masahiko Sawada</member>
+    <member>Masahiro Ikeda</member>
+    <member>Masao Fujii</member>
+    <member>Mathis Rudolf</member>
+    <member>Matthias van de Meent</member>
+    <member>Matthieu Garrigues</member>
+    <member>Matthijs van der Vleuten</member>
+    <member>Maxim Orlov</member>
+    <member>Melanie Plageman</member>
+    <member>Merlin Moncure</member>
+    <member>Michael Banck</member>
+    <member>Michael Brown</member>
+    <member>Michael Meskes</member>
+    <member>Michael Paquier</member>
+    <member>Michael Paul Killian</member>
+    <member>Michael Powers</member>
+    <member>Michael Vastola</member>
+    <member>Michail Nikolaev</member>
+    <member>Michal Albrycht</member>
+    <member>Mikael Gustavsson</member>
+    <member>Movead Li</member>
+    <member>Muhammad Usama</member>
+    <member>Nagaraj Raj</member>
+    <member>Naoki Nakamichi</member>
+    <member>Nathan Bossart</member>
+    <member>Nathan Long</member>
+    <member>Nazli Ugur Koyluoglu</member>
+    <member>Neha Sharma</member>
+    <member>Neil Chen</member>
+    <member>Nick Cleaton</member>
+    <member>Nico Williams</member>
+    <member>Nikhil Benesch</member>
+    <member>Nikhil Sontakke</member>
+    <member>Nikita Glukhov</member>
+    <member>Nikita Konev</member>
+    <member>Nikolai Berkoff</member>
+    <member>Nikolay Samokhvalov</member>
+    <member>Nikolay Shaplov</member>
+    <member>Nitin Jadhav</member>
+    <member>Noah Misch</member>
+    <member>Noriyoshi Shinoda</member>
+    <member>Odin Ugedal</member>
+    <member>Oleg Bartunov</member>
+    <member>Oleg Samoilov</member>
+    <member>Önder Kalaci</member>
+    <member>Pascal Legrand</member>
+    <member>Paul Förster</member>
+    <member>Paul Guo</member>
+    <member>Paul Jungwirth</member>
+    <member>Paul Martinez</member>
+    <member>Paul Sivash</member>
+    <member>Pavan Deolasee</member>
+    <member>Pavel Boev</member>
+    <member>Pavel Borisov</member>
+    <member>Pavel Luzanov</member>
+    <member>Pavel Stehule</member>
+    <member>Pengcheng Liu</member>
+    <member>Peter Eisentraut</member>
+    <member>Peter Geoghegan</member>
+    <member>Peter Smith</member>
+    <member>Peter Vandivier</member>
+    <member>Petr Fedorov</member>
+    <member>Petr Jelínek</member>
+    <member>Phil Krylov</member>
+    <member>Philipp Gramzow</member>
+    <member>Philippe Beaudoin</member>
+    <member>Phillip Menke</member>
+    <member>Pierre Giraud</member>
+    <member>Prabhat Sahu</member>
+    <member>Quan Zongliang</member>
+    <member>Rafi Shamim</member>
+    <member>Rahila Syed</member>
+    <member>Rajkumar Raghuwanshi</member>
+    <member>Ranier Vilela</member>
+    <member>Regina Obe</member>
+    <member>Rémi Lapeyre</member>
+    <member>Robert Foggia</member>
+    <member>Robert Grange</member>
+    <member>Robert Haas</member>
+    <member>Robert Kahlert</member>
+    <member>Robert Sosinski</member>
+    <member>Robert Treat</member>
+    <member>Robin Abbi</member>
+    <member>Robins Tharakan</member>
+    <member>Roger Mason</member>
+    <member>Rohit Bhogate</member>
+    <member>Roman Zharkov</member>
+    <member>Ron L. Johnson</member>
+    <member>Ronan Dunklau</member>
+    <member>Ryan Lambert</member>
+    <member>Ryo Matsumura</member>
+    <member>Saeed Hubaishan</member>
+    <member>Sait Talha Nisanci</member>
+    <member>Sandro Mani</member>
+    <member>Santosh Udupi</member>
+    <member>Scott Ribe</member>
+    <member>Sehrope Sarkuni</member>
+    <member>Sergei Kornilov</member>
+    <member>Sergey Bernikov</member>
+    <member>Sergey Cherkashin</member>
+    <member>Sergey Koposov</member>
+    <member>Sergey Shinderuk</member>
+    <member>Sergey Zubkovsky</member>
+    <member>Shawn Wang</member>
+    <member>Shay Rojansky</member>
+    <member>Shi Yu</member>
+    <member>Shinya Kato</member>
+    <member>Shinya Okano</member>
+    <member>Sigrid Ehrenreich</member>
+    <member>Simon Norris</member>
+    <member>Simon Riggs</member>
+    <member>Sofoklis Papasofokli</member>
+    <member>Soumyadeep Chakraborty</member>
+    <member>Stas Kelvich</member>
+    <member>Stephan Springl</member>
+    <member>Stéphane Lorek</member>
+    <member>Stephen Frost</member>
+    <member>Steven Winfield</member>
+    <member>Surafel Temesgen</member>
+    <member>Suraj Kharage</member>
+    <member>Sven Klemm</member>
+    <member>Takamichi Osumi</member>
+    <member>Takashi Menjo</member>
+    <member>Takayuki Tsunakawa</member>
+    <member>Tang Haiying</member>
+    <member>Tatsuhito Kasahara</member>
+    <member>Tatsuo Ishii</member>
+    <member>Tatsuro Yamada</member>
+    <member>Theodor Arsenij Larionov-Trichkin</member>
+    <member>Thomas Kellerer</member>
+    <member>Thomas Munro</member>
+    <member>Thomas Trenz</member>
+    <member>Tijs van Dam</member>
+    <member>Tom Ellis</member>
+    <member>Tom Gottfried</member>
+    <member>Tom Lane</member>
+    <member>Tom Vijlbrief</member>
+    <member>Tomas Barton</member>
+    <member>Tomas Vondra</member>
+    <member>Tomohiro Hiramitsu</member>
+    <member>Tony Reix</member>
+    <member>Vaishnavi Prabakaran</member>
+    <member>Valentin Gatien-Baron</member>
+    <member>Victor Wagner</member>
+    <member>Victor Yegorov</member>
+    <member>Vignesh C</member>
+    <member>Vik Fearing</member>
+    <member>Vitaly Ustinov</member>
+    <member>Vladimir Sitnikov</member>
+    <member>Vyacheslav Shablistyy</member>
+    <member>Wang Shenhao</member>
+    <member>Wei Wang</member>
+    <member>Wells Oliver</member>
+    <member>Wenjing Zeng</member>
+    <member>Wolfgang Walther</member>
+    <member>Yang Lin</member>
+    <member>Yanliang Lei</member>
+    <member>Yaoguang Chen</member>
+    <member>Yaroslav Pashinsky</member>
+    <member>Yaroslav Schekin</member>
+    <member>Yasushi Yamashita</member>
+    <member>Yoran Heling</member>
+    <member>YoungHwan Joo</member>
+    <member>Yugo Nagata</member>
+    <member>Yuki Seino</member>
+    <member>Yukun Wang</member>
+    <member>Yulin Pei</member>
+    <member>Yura Sokolov</member>
+    <member>Yuta Katsuragi</member>
+    <member>Yuta Kondo</member>
+    <member>Yuzuko Hosoya</member>
+    <member>Zhihong Yu</member>
+    <member>Zhiyong Wu</member>
+    <member>Zsolt Ero</member>
    </simplelist>
   </sect2>
 

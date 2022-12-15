@@ -783,10 +783,10 @@ typedef struct Material
 } Material;
 
 /* ----------------
- *		result cache node
+ *		memoize node
  * ----------------
  */
-typedef struct ResultCache
+typedef struct Memoize
 {
 	Plan		plan;
 
@@ -801,7 +801,7 @@ typedef struct ResultCache
 	uint32		est_entries;	/* The maximum number of entries that the
 								 * planner expects will fit in the cache, or 0
 								 * if unknown */
-} ResultCache;
+} Memoize;
 
 /* ----------------
  *		sort node

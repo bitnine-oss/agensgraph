@@ -1602,7 +1602,7 @@ SELECT t1.c1, t2.c2, t3.c3 FROM ft2 t1 LEFT JOIN ft2 t2 ON (t1.c1 = t2.c1) FULL 
  20 |  0 | AAA020
 (10 rows)
 
-SET enable_resultcache TO off;
+SET enable_memoize TO off;
 -- right outer join + left outer join
 EXPLAIN (VERBOSE, COSTS OFF)
 SELECT t1.c1, t2.c2, t3.c3 FROM ft2 t1 RIGHT JOIN ft2 t2 ON (t1.c1 = t2.c1) LEFT JOIN ft4 t3 ON (t2.c1 = t3.c1) OFFSET 10 LIMIT 10;
@@ -1629,7 +1629,7 @@ SELECT t1.c1, t2.c2, t3.c3 FROM ft2 t1 RIGHT JOIN ft2 t2 ON (t1.c1 = t2.c1) LEFT
  20 |  0 | AAA020
 (10 rows)
 
-RESET enable_resultcache;
+RESET enable_memoize;
 -- left outer join + right outer join
 EXPLAIN (VERBOSE, COSTS OFF)
 SELECT t1.c1, t2.c2, t3.c3 FROM ft2 t1 LEFT JOIN ft2 t2 ON (t1.c1 = t2.c1) RIGHT JOIN ft4 t3 ON (t2.c1 = t3.c1) OFFSET 10 LIMIT 10;
@@ -2149,7 +2149,7 @@ SELECT t1."C 1" FROM "S 1"."T 1" t1, LATERAL (SELECT DISTINCT t2.c1, t3.c1 FROM 
          Output: t1."C 1"
          ->  Index Scan using t1_pkey on "S 1"."T 1" t1
                Output: t1."C 1", t1.c2, t1.c3, t1.c4, t1.c5, t1.c6, t1.c7, t1.c8
-         ->  Result Cache
+         ->  Memoize
                Cache Key: t1.c2
                ->  Subquery Scan on q
                      ->  HashAggregate
@@ -4096,15 +4096,17 @@ DROP TABLE reind_fdw_parent;
 -- conversion error
 -- ===================================================================
 ALTER FOREIGN TABLE ft1 ALTER COLUMN c8 TYPE int;
-SELECT * FROM ft1 WHERE c1 = 1;  -- ERROR
+SELECT * FROM ft1 ftx(x1,x2,x3,x4,x5,x6,x7,x8) WHERE x1 = 1;  -- ERROR
 ERROR:  invalid input syntax for type integer: "foo"
-CONTEXT:  column "c8" of foreign table "ft1"
-SELECT  ft1.c1,  ft2.c2, ft1.c8 FROM ft1, ft2 WHERE ft1.c1 = ft2.c1 AND ft1.c1 = 1; -- ERROR
+CONTEXT:  column "x8" of foreign table "ftx"
+SELECT ftx.x1, ft2.c2, ftx.x8 FROM ft1 ftx(x1,x2,x3,x4,x5,x6,x7,x8), ft2
+  WHERE ftx.x1 = ft2.c1 AND ftx.x1 = 1; -- ERROR
 ERROR:  invalid input syntax for type integer: "foo"
-CONTEXT:  column "c8" of foreign table "ft1"
-SELECT  ft1.c1,  ft2.c2, ft1 FROM ft1, ft2 WHERE ft1.c1 = ft2.c1 AND ft1.c1 = 1; -- ERROR
+CONTEXT:  column "x8" of foreign table "ftx"
+SELECT ftx.x1, ft2.c2, ftx FROM ft1 ftx(x1,x2,x3,x4,x5,x6,x7,x8), ft2
+  WHERE ftx.x1 = ft2.c1 AND ftx.x1 = 1; -- ERROR
 ERROR:  invalid input syntax for type integer: "foo"
-CONTEXT:  whole-row reference to foreign table "ft1"
+CONTEXT:  whole-row reference to foreign table "ftx"
 SELECT sum(c2), array_agg(c8) FROM ft1 GROUP BY c8; -- ERROR
 ERROR:  invalid input syntax for type integer: "foo"
 CONTEXT:  processing expression at position 2 in select list
@@ -6456,13 +6458,37 @@ select * from rem1;
 -- ===================================================================
 -- test generated columns
 -- ===================================================================
-create table gloc1 (a int, b int);
+create table gloc1 (
+  a int,
+  b int generated always as (a * 2) stored);
 alter table gloc1 set (autovacuum_enabled = 'false');
 create foreign table grem1 (
   a int,
   b int generated always as (a * 2) stored)
   server loopback options(table_name 'gloc1');
+explain (verbose, costs off)
 insert into grem1 (a) values (1), (2);
+                            QUERY PLAN                             
+-------------------------------------------------------------------
+ Insert on public.grem1
+   Remote SQL: INSERT INTO public.gloc1(a, b) VALUES ($1, DEFAULT)
+   Batch Size: 1
+   ->  Values Scan on "*VALUES*"
+         Output: "*VALUES*".column1, NULL::integer
+(5 rows)
+
+insert into grem1 (a) values (1), (2);
+explain (verbose, costs off)
+update grem1 set a = 22 where a = 2;
+                                     QUERY PLAN                                     
+------------------------------------------------------------------------------------
+ Update on public.grem1
+   Remote SQL: UPDATE public.gloc1 SET a = $2, b = DEFAULT WHERE ctid = $1
+   ->  Foreign Scan on public.grem1
+         Output: 22, ctid, grem1.*
+         Remote SQL: SELECT a, b, ctid FROM public.gloc1 WHERE ((a = 2)) FOR UPDATE
+(5 rows)
+
 update grem1 set a = 22 where a = 2;
 select * from gloc1;
  a  | b  
@@ -6478,6 +6504,54 @@ select * from grem1;
  22 | 44
 (2 rows)
 
+delete from grem1;
+-- test copy from
+copy grem1 from stdin;
+select * from gloc1;
+ a | b 
+---+---
+ 1 | 2
+ 2 | 4
+(2 rows)
+
+select * from grem1;
+ a | b 
+---+---
+ 1 | 2
+ 2 | 4
+(2 rows)
+
+delete from grem1;
+-- test batch insert
+alter server loopback options (add batch_size '10');
+explain (verbose, costs off)
+insert into grem1 (a) values (1), (2);
+                            QUERY PLAN                             
+-------------------------------------------------------------------
+ Insert on public.grem1
+   Remote SQL: INSERT INTO public.gloc1(a, b) VALUES ($1, DEFAULT)
+   Batch Size: 10
+   ->  Values Scan on "*VALUES*"
+         Output: "*VALUES*".column1, NULL::integer
+(5 rows)
+
+insert into grem1 (a) values (1), (2);
+select * from gloc1;
+ a | b 
+---+---
+ 1 | 2
+ 2 | 4
+(2 rows)
+
+select * from grem1;
+ a | b 
+---+---
+ 1 | 2
+ 2 | 4
+(2 rows)
+
+delete from grem1;
+alter server loopback options (drop batch_size);
 -- ===================================================================
 -- test local triggers
 -- ===================================================================
@@ -6851,6 +6925,26 @@ DROP TRIGGER trig_row_before ON rem1;
 DROP TRIGGER trig_row_after ON rem1;
 DROP TRIGGER trig_local_before ON loc1;
 -- Test direct foreign table modification functionality
+EXPLAIN (verbose, costs off)
+DELETE FROM rem1;                 -- can be pushed down
+                 QUERY PLAN                  
+---------------------------------------------
+ Delete on public.rem1
+   ->  Foreign Delete on public.rem1
+         Remote SQL: DELETE FROM public.loc1
+(3 rows)
+
+EXPLAIN (verbose, costs off)
+DELETE FROM rem1 WHERE false;     -- currently can't be pushed down
+                      QUERY PLAN                       
+-------------------------------------------------------
+ Delete on public.rem1
+   Remote SQL: DELETE FROM public.loc1 WHERE ctid = $1
+   ->  Result
+         Output: ctid
+         One-Time Filter: false
+(5 rows)
+
 -- Test with statement-level triggers
 CREATE TRIGGER trig_stmt_before
 	BEFORE DELETE OR INSERT OR UPDATE ON rem1
@@ -8544,6 +8638,7 @@ CREATE TABLE import_source.t3 (c1 timestamptz default now(), c2 typ1);
 CREATE TABLE import_source."x 4" (c1 float8, "C 2" text, c3 varchar(42));
 CREATE TABLE import_source."x 5" (c1 float8);
 ALTER TABLE import_source."x 5" DROP COLUMN c1;
+CREATE TABLE import_source."x 6" (c1 int, c2 int generated always as (c1 * 2) stored);
 CREATE TABLE import_source.t4 (c1 int) PARTITION BY RANGE (c1);
 CREATE TABLE import_source.t4_part PARTITION OF import_source.t4
   FOR VALUES FROM (1) TO (100);
@@ -8561,7 +8656,8 @@ IMPORT FOREIGN SCHEMA import_source FROM SERVER loopback INTO import_dest1;
  import_dest1 | t4    | loopback | (schema_name 'import_source', table_name 't4')  | 
  import_dest1 | x 4   | loopback | (schema_name 'import_source', table_name 'x 4') | 
  import_dest1 | x 5   | loopback | (schema_name 'import_source', table_name 'x 5') | 
-(6 rows)
+ import_dest1 | x 6   | loopback | (schema_name 'import_source', table_name 'x 6') | 
+(7 rows)
 
 \d import_dest1.*
                          Foreign table "import_dest1.t1"
@@ -8611,6 +8707,14 @@ FDW options: (schema_name 'import_source', table_name 'x 4')
 Server: loopback
 FDW options: (schema_name 'import_source', table_name 'x 5')
 
+                                  Foreign table "import_dest1.x 6"
+ Column |  Type   | Collation | Nullable |               Default               |    FDW options     
+--------+---------+-----------+----------+-------------------------------------+--------------------
+ c1     | integer |           |          |                                     | (column_name 'c1')
+ c2     | integer |           |          | generated always as (c1 * 2) stored | (column_name 'c2')
+Server: loopback
+FDW options: (schema_name 'import_source', table_name 'x 6')
+
 -- Options
 CREATE SCHEMA import_dest2;
 IMPORT FOREIGN SCHEMA import_source FROM SERVER loopback INTO import_dest2
@@ -8625,7 +8729,8 @@ IMPORT FOREIGN SCHEMA import_source FROM SERVER loopback INTO import_dest2
  import_dest2 | t4    | loopback | (schema_name 'import_source', table_name 't4')  | 
  import_dest2 | x 4   | loopback | (schema_name 'import_source', table_name 'x 4') | 
  import_dest2 | x 5   | loopback | (schema_name 'import_source', table_name 'x 5') | 
-(6 rows)
+ import_dest2 | x 6   | loopback | (schema_name 'import_source', table_name 'x 6') | 
+(7 rows)
 
 \d import_dest2.*
                          Foreign table "import_dest2.t1"
@@ -8675,9 +8780,17 @@ FDW options: (schema_name 'import_source', table_name 'x 4')
 Server: loopback
 FDW options: (schema_name 'import_source', table_name 'x 5')
 
+                                  Foreign table "import_dest2.x 6"
+ Column |  Type   | Collation | Nullable |               Default               |    FDW options     
+--------+---------+-----------+----------+-------------------------------------+--------------------
+ c1     | integer |           |          |                                     | (column_name 'c1')
+ c2     | integer |           |          | generated always as (c1 * 2) stored | (column_name 'c2')
+Server: loopback
+FDW options: (schema_name 'import_source', table_name 'x 6')
+
 CREATE SCHEMA import_dest3;
 IMPORT FOREIGN SCHEMA import_source FROM SERVER loopback INTO import_dest3
-  OPTIONS (import_collate 'false', import_not_null 'false');
+  OPTIONS (import_collate 'false', import_generated 'false', import_not_null 'false');
 \det+ import_dest3.*
                                      List of foreign tables
     Schema    | Table |  Server  |                   FDW options                   | Description 
@@ -8688,7 +8801,8 @@ IMPORT FOREIGN SCHEMA import_source FROM SERVER loopback INTO import_dest3
  import_dest3 | t4    | loopback | (schema_name 'import_source', table_name 't4')  | 
  import_dest3 | x 4   | loopback | (schema_name 'import_source', table_name 'x 4') | 
  import_dest3 | x 5   | loopback | (schema_name 'import_source', table_name 'x 5') | 
-(6 rows)
+ import_dest3 | x 6   | loopback | (schema_name 'import_source', table_name 'x 6') | 
+(7 rows)
 
 \d import_dest3.*
                          Foreign table "import_dest3.t1"
@@ -8738,6 +8852,14 @@ FDW options: (schema_name 'import_source', table_name 'x 4')
 Server: loopback
 FDW options: (schema_name 'import_source', table_name 'x 5')
 
+                    Foreign table "import_dest3.x 6"
+ Column |  Type   | Collation | Nullable | Default |    FDW options     
+--------+---------+-----------+----------+---------+--------------------
+ c1     | integer |           |          |         | (column_name 'c1')
+ c2     | integer |           |          |         | (column_name 'c2')
+Server: loopback
+FDW options: (schema_name 'import_source', table_name 'x 6')
+
 -- Check LIMIT TO and EXCEPT
 CREATE SCHEMA import_dest4;
 IMPORT FOREIGN SCHEMA import_source LIMIT TO (t1, nonesuch, t4_part)
@@ -8762,7 +8884,8 @@ IMPORT FOREIGN SCHEMA import_source EXCEPT (t1, "x 4", nonesuch, t4_part)
  import_dest4 | t4      | loopback | (schema_name 'import_source', table_name 't4')      | 
  import_dest4 | t4_part | loopback | (schema_name 'import_source', table_name 't4_part') | 
  import_dest4 | x 5     | loopback | (schema_name 'import_source', table_name 'x 5')     | 
-(6 rows)
+ import_dest4 | x 6     | loopback | (schema_name 'import_source', table_name 'x 6')     | 
+(7 rows)
 
 -- Assorted error cases
 IMPORT FOREIGN SCHEMA import_source FROM SERVER loopback INTO import_dest4;
@@ -9318,11 +9441,11 @@ WARNING:  there is no transaction in progress
 -- Change application_name of remote connection to special one
 -- so that we can easily terminate the connection later.
 ALTER SERVER loopback OPTIONS (application_name 'fdw_retry_check');
--- If debug_invalidate_system_caches_always is active, it results in
+-- If debug_discard_caches is active, it results in
 -- dropping remote connections after every transaction, making it
 -- impossible to test termination meaningfully.  So turn that off
 -- for this test.
-SET debug_invalidate_system_caches_always = 0;
+SET debug_discard_caches = 0;
 -- Make sure we have a remote connection.
 SELECT 1 FROM ft1 LIMIT 1;
  ?column? 
@@ -9364,7 +9487,7 @@ SELECT 1 FROM ft1 LIMIT 1;    -- should fail
 ERROR:  08006
 \set VERBOSITY default
 COMMIT;
-RESET debug_invalidate_system_caches_always;
+RESET debug_discard_caches;
 -- =============================================================================
 -- test connection invalidation cases and postgres_fdw_get_connections function
 -- =============================================================================
@@ -10278,6 +10401,59 @@ SELECT * FROM async_pt t1, async_p2 t2 WHERE t1.a = t2.a AND t1.b === 505;
  2505 | 505 | 0505 | 2505 | 505 | 0505
 (1 row)
 
+CREATE TABLE local_tbl (a int, b int, c text);
+INSERT INTO local_tbl VALUES (1505, 505, 'foo');
+ANALYZE local_tbl;
+EXPLAIN (VERBOSE, COSTS OFF)
+SELECT * FROM local_tbl t1 LEFT JOIN (SELECT *, (SELECT count(*) FROM async_pt WHERE a < 3000) FROM async_pt WHERE a < 3000) t2 ON t1.a = t2.a;
+                                       QUERY PLAN                                       
+----------------------------------------------------------------------------------------
+ Nested Loop Left Join
+   Output: t1.a, t1.b, t1.c, async_pt.a, async_pt.b, async_pt.c, ($0)
+   Join Filter: (t1.a = async_pt.a)
+   InitPlan 1 (returns $0)
+     ->  Aggregate
+           Output: count(*)
+           ->  Append
+                 ->  Async Foreign Scan on public.async_p1 async_pt_4
+                       Remote SQL: SELECT NULL FROM public.base_tbl1 WHERE ((a < 3000))
+                 ->  Async Foreign Scan on public.async_p2 async_pt_5
+                       Remote SQL: SELECT NULL FROM public.base_tbl2 WHERE ((a < 3000))
+   ->  Seq Scan on public.local_tbl t1
+         Output: t1.a, t1.b, t1.c
+   ->  Append
+         ->  Async Foreign Scan on public.async_p1 async_pt_1
+               Output: async_pt_1.a, async_pt_1.b, async_pt_1.c, $0
+               Remote SQL: SELECT a, b, c FROM public.base_tbl1 WHERE ((a < 3000))
+         ->  Async Foreign Scan on public.async_p2 async_pt_2
+               Output: async_pt_2.a, async_pt_2.b, async_pt_2.c, $0
+               Remote SQL: SELECT a, b, c FROM public.base_tbl2 WHERE ((a < 3000))
+(20 rows)
+
+EXPLAIN (ANALYZE, COSTS OFF, SUMMARY OFF, TIMING OFF)
+SELECT * FROM local_tbl t1 LEFT JOIN (SELECT *, (SELECT count(*) FROM async_pt WHERE a < 3000) FROM async_pt WHERE a < 3000) t2 ON t1.a = t2.a;
+                                       QUERY PLAN                                        
+-----------------------------------------------------------------------------------------
+ Nested Loop Left Join (actual rows=1 loops=1)
+   Join Filter: (t1.a = async_pt.a)
+   Rows Removed by Join Filter: 399
+   InitPlan 1 (returns $0)
+     ->  Aggregate (actual rows=1 loops=1)
+           ->  Append (actual rows=400 loops=1)
+                 ->  Async Foreign Scan on async_p1 async_pt_4 (actual rows=200 loops=1)
+                 ->  Async Foreign Scan on async_p2 async_pt_5 (actual rows=200 loops=1)
+   ->  Seq Scan on local_tbl t1 (actual rows=1 loops=1)
+   ->  Append (actual rows=400 loops=1)
+         ->  Async Foreign Scan on async_p1 async_pt_1 (actual rows=200 loops=1)
+         ->  Async Foreign Scan on async_p2 async_pt_2 (actual rows=200 loops=1)
+(12 rows)
+
+SELECT * FROM local_tbl t1 LEFT JOIN (SELECT *, (SELECT count(*) FROM async_pt WHERE a < 3000) FROM async_pt WHERE a < 3000) t2 ON t1.a = t2.a;
+  a   |  b  |  c  |  a   |  b  |  c   | count 
+------+-----+-----+------+-----+------+-------
+ 1505 | 505 | foo | 1505 | 505 | 0505 |   400
+(1 row)
+
 EXPLAIN (VERBOSE, COSTS OFF)
 SELECT * FROM async_pt t1 WHERE t1.b === 505 LIMIT 1;
                            QUERY PLAN                           
@@ -10320,8 +10496,6 @@ SELECT * FROM async_pt t1 WHERE t1.b === 505 LIMIT 1;
 (1 row)
 
 -- Check with foreign modify
-CREATE TABLE local_tbl (a int, b int, c text);
-INSERT INTO local_tbl VALUES (1505, 505, 'foo');
 CREATE TABLE base_tbl3 (a int, b int, c text);
 CREATE FOREIGN TABLE remote_tbl (a int, b int, c text)
   SERVER loopback OPTIONS (table_name 'base_tbl3');
@@ -10478,3 +10652,22 @@ DROP TABLE result_tbl;
 DROP TABLE join_tbl;
 ALTER SERVER loopback OPTIONS (DROP async_capable);
 ALTER SERVER loopback2 OPTIONS (DROP async_capable);
+-- ===================================================================
+-- test invalid server and foreign table options
+-- ===================================================================
+-- Invalid fdw_startup_cost option
+CREATE SERVER inv_scst FOREIGN DATA WRAPPER postgres_fdw
+	OPTIONS(fdw_startup_cost '100$%$#$#');
+ERROR:  invalid value for floating point option "fdw_startup_cost": 100$%$#$#
+-- Invalid fdw_tuple_cost option
+CREATE SERVER inv_scst FOREIGN DATA WRAPPER postgres_fdw
+	OPTIONS(fdw_tuple_cost '100$%$#$#');
+ERROR:  invalid value for floating point option "fdw_tuple_cost": 100$%$#$#
+-- Invalid fetch_size option
+CREATE FOREIGN TABLE inv_fsz (c1 int )
+	SERVER loopback OPTIONS (fetch_size '100$%$#$#');
+ERROR:  invalid value for integer option "fetch_size": 100$%$#$#
+-- Invalid batch_size option
+CREATE FOREIGN TABLE inv_bsz (c1 int )
+	SERVER loopback OPTIONS (batch_size '100$%$#$#');
+ERROR:  invalid value for integer option "batch_size": 100$%$#$#
