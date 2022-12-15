@@ -1388,15 +1388,6 @@ postgresql://%2Fvar%2Flib%2Fpostgresql/dbname
       </listitem>
      </varlistentry>
 
-     <varlistentry id="libpq-connect-tty" xreflabel="tty">
-      <term><literal>tty</literal></term>
-      <listitem>
-      <para>
-       Ignored (formerly, this specified where to send server debug output).
-      </para>
-      </listitem>
-     </varlistentry>
-
      <varlistentry id="libpq-connect-replication" xreflabel="replication">
       <term><literal>replication</literal></term>
       <listitem>
@@ -2573,9 +2564,7 @@ const char *PQsslAttribute(const PGconn *conn, const char *attribute_name);
          <term><literal>compression</literal></term>
           <listitem>
            <para>
-            If SSL compression is in use, returns the name of the compression
-            algorithm, or "on" if compression is used but the algorithm is
-            not known. If compression is not in use, returns "off".
+            Returns "on" if SSL compression is in use, else it returns "off".
            </para>
           </listitem>
          </varlistentry>

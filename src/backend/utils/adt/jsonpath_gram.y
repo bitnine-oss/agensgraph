@@ -74,7 +74,6 @@ static JsonPathParseItem *makeItemLikeRegex(JsonPathParseItem *expr,
 %pure-parser
 %expect 0
 %name-prefix="jsonpath_yy"
-%error-verbose
 %parse-param {JsonPathParseResult **result}
 
 %union {
@@ -131,6 +130,7 @@ result:
 										*result = palloc(sizeof(JsonPathParseResult));
 										(*result)->expr = $2;
 										(*result)->lax = $1;
+										(void) yynerrs;
 									}
 	| /* EMPTY */					{ *result = NULL; }
 	;

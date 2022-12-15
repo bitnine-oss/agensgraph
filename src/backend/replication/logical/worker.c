@@ -1191,6 +1191,9 @@ apply_handle_relation(StringInfo s)
 
 	rel = logicalrep_read_rel(s);
 	logicalrep_relmap_update(rel);
+
+	/* Also reset all entries in the partition map that refer to remoterel. */
+	logicalrep_partmap_reset_relmap(rel);
 }
 
 /*
@@ -1320,6 +1323,13 @@ apply_handle_insert_internal(ApplyExecutionData *edata,
 static void
 check_relation_updatable(LogicalRepRelMapEntry *rel)
 {
+	/*
+	 * For partitioned tables, we only need to care if the target partition is
+	 * updatable (aka has PK or RI defined for it).
+	 */
+	if (rel->localrel->rd_rel->relkind == RELKIND_PARTITIONED_TABLE)
+		return;
+
 	/* Updatable, no error. */
 	if (rel->updatable)
 		return;
@@ -1673,6 +1683,8 @@ apply_handle_tuple_routing(ApplyExecutionData *edata,
 	TupleTableSlot *remoteslot_part;
 	TupleConversionMap *map;
 	MemoryContext oldctx;
+	LogicalRepRelMapEntry *part_entry = NULL;
+	AttrMap    *attrmap = NULL;
 
 	/* ModifyTableState is needed for ExecFindPartition(). */
 	edata->mtstate = mtstate = makeNode(ModifyTableState);
@@ -1695,6 +1707,15 @@ apply_handle_tuple_routing(ApplyExecutionData *edata,
 	partrel = partrelinfo->ri_RelationDesc;
 
 	/*
+	 * Check for supported relkind.  We need this since partitions might be of
+	 * unsupported relkinds; and the set of partitions can change, so checking
+	 * at CREATE/ALTER SUBSCRIPTION would be insufficient.
+	 */
+	CheckSubscriptionRelkind(partrel->rd_rel->relkind,
+							 get_namespace_name(RelationGetNamespace(partrel)),
+							 RelationGetRelationName(partrel));
+
+	/*
 	 * To perform any of the operations below, the tuple must match the
 	 * partition's rowtype. Convert if needed or just copy, using a dedicated
 	 * slot to store the tuple in any case.
@@ -1704,14 +1725,25 @@ apply_handle_tuple_routing(ApplyExecutionData *edata,
 		remoteslot_part = table_slot_create(partrel, &estate->es_tupleTable);
 	map = partrelinfo->ri_RootToPartitionMap;
 	if (map != NULL)
-		remoteslot_part = execute_attr_map_slot(map->attrMap, remoteslot,
+	{
+		attrmap = map->attrMap;
+		remoteslot_part = execute_attr_map_slot(attrmap, remoteslot,
 												remoteslot_part);
+	}
 	else
 	{
 		remoteslot_part = ExecCopySlot(remoteslot_part, remoteslot);
 		slot_getallattrs(remoteslot_part);
 	}
 	MemoryContextSwitchTo(oldctx);
+
+	/* Check if we can do the update or delete on the leaf partition. */
+	if (operation == CMD_UPDATE || operation == CMD_DELETE)
+	{
+		part_entry = logicalrep_partition_open(relmapentry, partrel,
+											   attrmap);
+		check_relation_updatable(part_entry);
+	}
 
 	switch (operation)
 	{
@@ -1734,14 +1766,10 @@ apply_handle_tuple_routing(ApplyExecutionData *edata,
 			 * suitable partition.
 			 */
 			{
-				AttrMap    *attrmap = map ? map->attrMap : NULL;
-				LogicalRepRelMapEntry *part_entry;
 				TupleTableSlot *localslot;
 				ResultRelInfo *partrelinfo_new;
+				Relation	partrel_new;
 				bool		found;
-
-				part_entry = logicalrep_partition_open(relmapentry, partrel,
-													   attrmap);
 
 				/* Get the matching local tuple from the partition. */
 				found = FindReplTupleInLocalRel(estate, partrel,
@@ -1824,7 +1852,6 @@ apply_handle_tuple_routing(ApplyExecutionData *edata,
 						slot_getallattrs(remoteslot);
 					}
 
-
 					/* Find the new partition. */
 					oldctx = MemoryContextSwitchTo(GetPerTupleMemoryContext(estate));
 					partrelinfo_new = ExecFindPartition(mtstate, relinfo,
@@ -1832,6 +1859,12 @@ apply_handle_tuple_routing(ApplyExecutionData *edata,
 														estate);
 					MemoryContextSwitchTo(oldctx);
 					Assert(partrelinfo_new != partrelinfo);
+					partrel_new = partrelinfo_new->ri_RelationDesc;
+
+					/* Check that new partition also has supported relkind. */
+					CheckSubscriptionRelkind(partrel_new->rd_rel->relkind,
+											 get_namespace_name(RelationGetNamespace(partrel_new)),
+											 RelationGetRelationName(partrel_new));
 
 					/* DELETE old tuple found in the old partition. */
 					apply_handle_delete_internal(edata, partrelinfo,
@@ -1844,10 +1877,9 @@ apply_handle_tuple_routing(ApplyExecutionData *edata,
 					 * partition rowtype.
 					 */
 					oldctx = MemoryContextSwitchTo(GetPerTupleMemoryContext(estate));
-					partrel = partrelinfo_new->ri_RelationDesc;
 					remoteslot_part = partrelinfo_new->ri_PartitionTupleSlot;
 					if (remoteslot_part == NULL)
-						remoteslot_part = table_slot_create(partrel,
+						remoteslot_part = table_slot_create(partrel_new,
 															&estate->es_tupleTable);
 					map = partrelinfo_new->ri_RootToPartitionMap;
 					if (map != NULL)
