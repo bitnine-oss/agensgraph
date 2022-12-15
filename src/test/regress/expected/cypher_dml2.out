@@ -77,3 +77,125 @@ drop cascades to vlabel v_type
 drop cascades to vlabel v_sub
 drop cascades to elabel e_user_title
 drop cascades to elabel e_title_type
+CREATE GRAPH cypher_dml2;
+SET GRAPH_PATH to cypher_dml2;
+CREATE ({id: 1})-[:e1]->({id: 2})-[:e1]->({id: 3})-[:e1]->({id: 4})
+RETURN *;
+        ?column?         |      ?column?      |        ?column?         |      ?column?      |        ?column?         |      ?column?      |        ?column?         
+-------------------------+--------------------+-------------------------+--------------------+-------------------------+--------------------+-------------------------
+ ag_vertex[1.1]{"id": 1} | e1[3.1][1.1,1.2]{} | ag_vertex[1.2]{"id": 2} | e1[3.2][1.2,1.3]{} | ag_vertex[1.3]{"id": 3} | e1[3.3][1.3,1.4]{} | ag_vertex[1.4]{"id": 4}
+(1 row)
+
+MATCH (a {id: 1}), (b {id: 1})
+CREATE (b)-[:e1]->(a)
+RETURN *;
+            a            |            b            |      ?column?      
+-------------------------+-------------------------+--------------------
+ ag_vertex[1.1]{"id": 1} | ag_vertex[1.1]{"id": 1} | e1[3.4][1.1,1.1]{}
+(1 row)
+
+MATCH (a)
+RETURN *;
+            a            
+-------------------------
+ ag_vertex[1.1]{"id": 1}
+ ag_vertex[1.2]{"id": 2}
+ ag_vertex[1.3]{"id": 3}
+ ag_vertex[1.4]{"id": 4}
+(4 rows)
+
+MATCH (a)-[]-(a) RETURN *;
+            a            
+-------------------------
+ ag_vertex[1.1]{"id": 1}
+ ag_vertex[1.1]{"id": 1}
+(2 rows)
+
+MATCH p=(a)-[]-(a) RETURN *;
+            a            |                                  p                                   
+-------------------------+----------------------------------------------------------------------
+ ag_vertex[1.1]{"id": 1} | [ag_vertex[1.1]{"id": 1},e1[3.4][1.1,1.1]{},ag_vertex[1.1]{"id": 1}]
+ ag_vertex[1.1]{"id": 1} | [ag_vertex[1.1]{"id": 1},e1[3.4][1.1,1.1]{},ag_vertex[1.1]{"id": 1}]
+(2 rows)
+
+EXPLAIN VERBOSE MATCH (a)-[]-(a) RETURN a;
+                                           QUERY PLAN                                           
+------------------------------------------------------------------------------------------------
+ Hash Join  (cost=44.46..71.08 rows=12 width=32)
+   Output: ROW(a.id, a.properties, a.ctid)::vertex
+   Hash Cond: (a.id = ag_edge.start)
+   ->  Seq Scan on cypher_dml2.ag_vertex a  (cost=0.00..22.00 rows=1200 width=46)
+         Output: a.id, a.properties, a.ctid
+   ->  Hash  (cost=44.31..44.31 rows=12 width=16)
+         Output: ag_edge.start, ag_edge."end"
+         ->  Append  (cost=0.00..44.31 rows=12 width=16)
+               ->  Seq Scan on cypher_dml2.ag_edge  (cost=0.00..0.00 rows=1 width=16)
+                     Output: ag_edge.start, ag_edge."end"
+                     Filter: (ag_edge.start = ag_edge."end")
+               ->  Seq Scan on cypher_dml2.e1 ag_edge_1  (cost=0.00..22.12 rows=5 width=16)
+                     Output: ag_edge_1.start, ag_edge_1."end"
+                     Filter: (ag_edge_1.start = ag_edge_1."end")
+               ->  Seq Scan on cypher_dml2.ag_edge ag_edge_2  (cost=0.00..0.00 rows=1 width=16)
+                     Output: ag_edge_2."end", ag_edge_2.start
+                     Filter: (ag_edge_2."end" = ag_edge_2.start)
+               ->  Seq Scan on cypher_dml2.e1 ag_edge_3  (cost=0.00..22.12 rows=5 width=16)
+                     Output: ag_edge_3."end", ag_edge_3.start
+                     Filter: (ag_edge_3."end" = ag_edge_3.start)
+(20 rows)
+
+EXPLAIN VERBOSE MATCH (a)-[]-(a) RETURN *;
+                                           QUERY PLAN                                           
+------------------------------------------------------------------------------------------------
+ Hash Join  (cost=44.46..71.08 rows=12 width=32)
+   Output: ROW(a.id, a.properties, a.ctid)::vertex
+   Hash Cond: (a.id = ag_edge.start)
+   ->  Seq Scan on cypher_dml2.ag_vertex a  (cost=0.00..22.00 rows=1200 width=46)
+         Output: a.id, a.properties, a.ctid
+   ->  Hash  (cost=44.31..44.31 rows=12 width=16)
+         Output: ag_edge.start, ag_edge."end"
+         ->  Append  (cost=0.00..44.31 rows=12 width=16)
+               ->  Seq Scan on cypher_dml2.ag_edge  (cost=0.00..0.00 rows=1 width=16)
+                     Output: ag_edge.start, ag_edge."end"
+                     Filter: (ag_edge.start = ag_edge."end")
+               ->  Seq Scan on cypher_dml2.e1 ag_edge_1  (cost=0.00..22.12 rows=5 width=16)
+                     Output: ag_edge_1.start, ag_edge_1."end"
+                     Filter: (ag_edge_1.start = ag_edge_1."end")
+               ->  Seq Scan on cypher_dml2.ag_edge ag_edge_2  (cost=0.00..0.00 rows=1 width=16)
+                     Output: ag_edge_2."end", ag_edge_2.start
+                     Filter: (ag_edge_2."end" = ag_edge_2.start)
+               ->  Seq Scan on cypher_dml2.e1 ag_edge_3  (cost=0.00..22.12 rows=5 width=16)
+                     Output: ag_edge_3."end", ag_edge_3.start
+                     Filter: (ag_edge_3."end" = ag_edge_3.start)
+(20 rows)
+
+EXPLAIN VERBOSE MATCH p=(a)-[]-(a) RETURN *;
+                                                                                                                                      QUERY PLAN                                                                                                                                      
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Hash Join  (cost=44.46..71.17 rows=12 width=64)
+   Output: ROW(a.id, a.properties, a.ctid)::vertex, ROW((('[]'::vertex[] || ROW(a.id, a.properties, a.ctid)::vertex) || ROW(a.id, a.properties, a.ctid)::vertex), ('[]'::edge[] || ROW(ag_edge.id, ag_edge.start, ag_edge."end", ag_edge.properties, ag_edge.ctid)::edge))::graphpath
+   Hash Cond: (a.id = ag_edge.start)
+   ->  Seq Scan on cypher_dml2.ag_vertex a  (cost=0.00..22.00 rows=1200 width=46)
+         Output: a.id, a.properties, a.ctid
+   ->  Hash  (cost=44.31..44.31 rows=12 width=78)
+         Output: ag_edge.id, ag_edge.start, ag_edge."end", ag_edge.properties, ag_edge.ctid, ag_edge.start, ag_edge."end"
+         ->  Append  (cost=0.00..44.31 rows=12 width=78)
+               ->  Seq Scan on cypher_dml2.ag_edge  (cost=0.00..0.00 rows=1 width=78)
+                     Output: ag_edge.id, ag_edge.start, ag_edge."end", ag_edge.properties, ag_edge.ctid, ag_edge.start, ag_edge."end"
+                     Filter: (ag_edge.start = ag_edge."end")
+               ->  Seq Scan on cypher_dml2.e1 ag_edge_1  (cost=0.00..22.12 rows=5 width=78)
+                     Output: ag_edge_1.id, ag_edge_1.start, ag_edge_1."end", ag_edge_1.properties, ag_edge_1.ctid, ag_edge_1.start, ag_edge_1."end"
+                     Filter: (ag_edge_1.start = ag_edge_1."end")
+               ->  Seq Scan on cypher_dml2.ag_edge ag_edge_2  (cost=0.00..0.00 rows=1 width=78)
+                     Output: ag_edge_2.id, ag_edge_2.start, ag_edge_2."end", ag_edge_2.properties, ag_edge_2.ctid, ag_edge_2."end", ag_edge_2.start
+                     Filter: (ag_edge_2."end" = ag_edge_2.start)
+               ->  Seq Scan on cypher_dml2.e1 ag_edge_3  (cost=0.00..22.12 rows=5 width=78)
+                     Output: ag_edge_3.id, ag_edge_3.start, ag_edge_3."end", ag_edge_3.properties, ag_edge_3.ctid, ag_edge_3."end", ag_edge_3.start
+                     Filter: (ag_edge_3."end" = ag_edge_3.start)
+(20 rows)
+
+DROP GRAPH cypher_dml2 CASCADE;
+NOTICE:  drop cascades to 4 other objects
+DETAIL:  drop cascades to sequence cypher_dml2.ag_label_seq
+drop cascades to vlabel ag_vertex
+drop cascades to elabel ag_edge
+drop cascades to elabel e1

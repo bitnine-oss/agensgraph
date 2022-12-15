@@ -42,3 +42,25 @@ MATCH(n)-[e*3]->(n3) RETURN last(e);
 
 
 DROP GRAPH cypher_dml2 CASCADE;
+
+CREATE GRAPH cypher_dml2;
+SET GRAPH_PATH to cypher_dml2;
+
+CREATE ({id: 1})-[:e1]->({id: 2})-[:e1]->({id: 3})-[:e1]->({id: 4})
+RETURN *;
+
+MATCH (a {id: 1}), (b {id: 1})
+CREATE (b)-[:e1]->(a)
+RETURN *;
+
+MATCH (a)
+RETURN *;
+
+MATCH (a)-[]-(a) RETURN *;
+MATCH p=(a)-[]-(a) RETURN *;
+
+EXPLAIN VERBOSE MATCH (a)-[]-(a) RETURN a;
+EXPLAIN VERBOSE MATCH (a)-[]-(a) RETURN *;
+EXPLAIN VERBOSE MATCH p=(a)-[]-(a) RETURN *;
+
+DROP GRAPH cypher_dml2 CASCADE;
