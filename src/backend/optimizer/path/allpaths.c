@@ -604,9 +604,6 @@ set_rel_consider_parallel(PlannerInfo *root, RelOptInfo *rel,
 	/* This should only be called for baserels and appendrel children. */
 	Assert(IS_SIMPLE_REL(rel));
 
-	if (root->hasVLEJoinRTE)
-		return;
-
 	/* Assorted checks based on rtekind. */
 	switch (rte->rtekind)
 	{
@@ -789,8 +786,7 @@ set_plain_rel_pathlist(PlannerInfo *root, RelOptInfo *rel, RangeTblEntry *rte)
 	create_index_paths(root, rel);
 
 	/* Consider TID scans */
-	if (!root->hasVLEJoinRTE)
-		create_tidscan_paths(root, rel);
+	create_tidscan_paths(root, rel);
 }
 
 /*

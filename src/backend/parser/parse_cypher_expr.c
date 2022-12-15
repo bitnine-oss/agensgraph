@@ -2051,8 +2051,8 @@ coerce_expr(ParseState *pstate, Node *expr, Oid ityp, Oid otyp, int32 otypmod,
 		return node;
 
 	/*
-	 * === Process JSONBOID input and output types here EXCLUDING: JSONOID
-	 * -> JSONBOID JSONBOID   -> JSONOID VERTEXOID  -> JSONBOID EDGEOID    ->
+	 * === Process JSONBOID input and output types here EXCLUDING: JSONOID ->
+	 * JSONBOID JSONBOID   -> JSONOID VERTEXOID  -> JSONBOID EDGEOID    ->
 	 * JSONBOID UNKNOWNOID -> JSONBOID JSONBOID   -> ANY*OID  ANYOID &
 	 * (IsPolymorphicType) We need to let postgres process these.
 	 */

@@ -652,8 +652,6 @@ subquery_planner(PlannerGlobal *glob, Query *parse,
 	root->non_recursive_path = NULL;
 	root->partColsUpdated = false;
 
-	root->hasVLEJoinRTE = (parent_root ? parent_root->hasVLEJoinRTE : false);
-
 	/*
 	 * If there is a WITH list, process each WITH query and either convert it
 	 * to RTE_SUBQUERY RTE(s) or build an initplan SubPlan structure for it.
@@ -741,8 +739,6 @@ subquery_planner(PlannerGlobal *glob, Query *parse,
 					root->hasJoinRTEs = true;
 					if (IS_OUTER_JOIN(rte->jointype))
 						hasOuterJoins = true;
-					if (rte->jointype == JOIN_VLE)
-						root->hasVLEJoinRTE = true;
 				}
 				break;
 			case RTE_RESULT:
@@ -1859,7 +1855,19 @@ grouping_planner(PlannerInfo *root, double tuple_fraction)
 											  offset_est, count_est);
 		}
 
-		if (parse->commandType == CMD_GRAPHWRITE)
+		/*
+		 * If it is VLE clause, use vle path.
+		 *
+		 * See transformVLEtoNSItem().
+		 */
+		if (parse->graph.vle_rel)
+		{
+			path = (Path *) create_graph_vle_path(root,
+												  final_rel,
+												  path,
+												  (CypherRel *) parse->graph.vle_rel);
+		}
+		else if (parse->commandType == CMD_GRAPHWRITE)
 		{
 			path = (Path *) create_modifygraph_path(root, final_rel,
 													parse->graph.writeOp,

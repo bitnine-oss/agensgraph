@@ -351,7 +351,6 @@ struct PlannerInfo
 										 * pseudoconstant = true */
 	bool		hasAlternativeSubPlans; /* true if we've made any of those */
 	bool		hasRecursion;	/* true if planning a recursive WITH item */
-	bool		hasVLEJoinRTE;	/* has VLE join or a child node of VLE join */
 
 	/*
 	 * Information about aggregates. Filled by preprocess_aggrefs().
@@ -1592,9 +1591,6 @@ typedef struct JoinPath
 	 * joinrestrictinfo is needed in JoinPath, and can't be merged into the
 	 * parent RelOptInfo.
 	 */
-
-	int			minhops;
-	int			maxhops;
 } JoinPath;
 
 /*
@@ -1952,6 +1948,13 @@ typedef struct DijkstraPath
 	Node	   *limit;
 } DijkstraPath;
 
+typedef struct GraphVLEPath
+{
+	Path		path;
+	Path	   *subpath;		/* Path producing source data */
+	CypherRel  *vle_rel;
+} GraphVLEPath;
+
 /*
  * Restriction clause info.
  *
@@ -2304,9 +2307,6 @@ struct SpecialJoinInfo
 	bool		semi_can_hash;	/* true if semi_operators are all hash */
 	List	   *semi_operators; /* OIDs of equality join operators */
 	List	   *semi_rhs_exprs; /* righthand-side expressions of these ops */
-	/* Fields for JOIN_VLE */
-	int			min_hops;
-	int			max_hops;
 };
 
 /*

@@ -83,9 +83,9 @@ OBJS = \
 	execCypherSet.o \
 	execCypherMerge.o \
 	nodeModifyGraph.o \
-	nodeNestloopVle.o \
 	nodeHash2Side.o \
 	nodeShortestpath.o \
-	nodeDijkstra.o
+	nodeDijkstra.o \
+	execGraphVle.o
 
 include $(top_srcdir)/src/backend/common.mk

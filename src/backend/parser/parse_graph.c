@@ -58,14 +58,10 @@
 #define EDGE_UNION_END_ID		"_end"
 
 #define VLE_LEFT_ALIAS			"l"
-#define VLE_RIGHT_ALIAS			"r"
-#define VLE_VERTEX_ALIAS		"vtx"
+
 #define VLE_COLNAME_IDS			"ids"
 #define VLE_COLNAME_EDGES		"edges"
 #define VLE_COLNAME_VERTICES	"vertices"
-#define VLE_COLNAME_NEXT		"next"
-#define VLE_COLNAME_EDGE		"edge"
-#define VLE_COLNAME_VERTEX		"vertex"
 
 #define DELETE_VERTEX_ALIAS		"v"
 #define DELETE_EDGE_ALIAS		"e"
@@ -190,17 +186,13 @@ static SelectStmt *genVLESubselect(ParseState *pstate, CypherRel *crel,
 								   bool out, bool pathout);
 static Node *genVLELeftChild(ParseState *pstate, CypherRel *crel,
 							 bool out, bool pathout);
-static Node *genVLERightChild(ParseState *pstate, CypherRel *crel,
-							  bool out, bool pathout);
-static Node *genVertexSimple(char *aliasname);
 static Node *genEdgeSimple(char *aliasname);
 static Node *genVLEEdgeSubselect(ParseState *pstate, CypherRel *crel,
 								 char *aliasname);
 static RangeSubselect *genInhEdge(RangeVar *r, Oid parentoid);
-static Node *genVLEJoinExpr(CypherRel *crel, Node *larg, Node *rarg);
 static List *genQualifiedName(char *name1, char *name2);
 static Node *genVLEQual(char *alias, Node *propMap);
-static ParseNamespaceItem *transformVLEtoNSItem(ParseState *pstate,
+static ParseNamespaceItem *transformVLEtoNSItem(ParseState *pstate, CypherRel *crel,
 												SelectStmt *vle, Alias *alias);
 static bool isZeroLengthVLE(CypherRel *crel);
 static void getCypherRelType(CypherRel *crel, char **typname, int *typloc);
@@ -2235,7 +2227,7 @@ transformMatchVLE(ParseState *pstate, CypherRel *crel, List **targetList,
 	sel = genVLESubselect(pstate, crel, out, pathout);
 
 	alias = makeAliasOptUnique(varname);
-	nsitem = transformVLEtoNSItem(pstate, sel, alias);
+	nsitem = transformVLEtoNSItem(pstate, crel, sel, alias);
 
 	if (out)
 	{
@@ -2307,14 +2299,8 @@ genVLESubselect(ParseState *pstate, CypherRel *crel, bool out, bool pathout)
 	ResTarget  *curr;
 	Node	   *ids_col;
 	ResTarget  *ids;
-	Node	   *next_col;
-	ResTarget  *next;
-	Node	   *id_col;
-	ResTarget  *id;
 	List	   *tlist;
 	Node	   *left;
-	Node	   *right;
-	Node	   *join;
 	SelectStmt *sel;
 
 	prev_colname = getEdgeColname(crel, false);
@@ -2354,49 +2340,11 @@ genVLESubselect(ParseState *pstate, CypherRel *crel, bool out, bool pathout)
 		tlist = lappend(tlist, vertices);
 	}
 
-	next_col = makeColumnRef(genQualifiedName(VLE_RIGHT_ALIAS,
-											  VLE_COLNAME_NEXT));
-	next = makeResTarget(next_col, VLE_COLNAME_NEXT);
-
-	tlist = lappend(tlist, next);
-
-	id_col = makeColumnRef(genQualifiedName(VLE_RIGHT_ALIAS, AG_ELEM_LOCAL_ID));
-	id = makeResTarget(id_col, AG_ELEM_LOCAL_ID);
-
-	tlist = lappend(tlist, id);
-
-	if (out)
-	{
-		Node	   *edge_col;
-		ResTarget  *edge;
-
-		edge_col = makeColumnRef(genQualifiedName(VLE_RIGHT_ALIAS,
-												  VLE_COLNAME_EDGE));
-		edge = makeResTarget(edge_col, VLE_COLNAME_EDGE);
-
-		tlist = lappend(tlist, edge);
-	}
-
-	if (pathout)
-	{
-		Node	   *vertex_col;
-		ResTarget  *vertex;
-
-		vertex_col = makeColumnRef(genQualifiedName(VLE_RIGHT_ALIAS,
-													VLE_COLNAME_VERTEX));
-		vertex = makeResTarget(vertex_col, VLE_COLNAME_VERTEX);
-
-		tlist = lappend(tlist, vertex);
-	}
-
 	left = genVLELeftChild(pstate, crel, out, pathout);
-	right = genVLERightChild(pstate, crel, out, pathout);
-
-	join = genVLEJoinExpr(crel, left, right);
 
 	sel = makeNode(SelectStmt);
 	sel->targetList = tlist;
-	sel->fromClause = list_make1(join);
+	sel->fromClause = list_make1(left);
 
 	return sel;
 }
@@ -2569,133 +2517,6 @@ genVLELeftChild(ParseState *pstate, CypherRel *crel, bool out, bool pathout)
 	return (Node *) sub;
 }
 
-/*
- * CYPHER_REL_DIR_NONE
- *
- *     SELECT r._end AS next, r.id,
- *            (r.id, r.start, r."end", r.properties, r.ctid)::edge AS edge,
- *            (vtx.id, vtx.properties, vtx.ctid)::vertex AS vertex
- *     FROM <edge label with additional _start and _end columns> AS r,
- *          <all vertex label> AS vtx
- *     WHERE l._end = r._start AND l._end = vtx.id AND r.properties @> ...)
- *
- * CYPHER_REL_DIR_LEFT
- *
- *     SELECT r.start AS next, r.id,
- *            (r.id, r.start, r."end", r.properties, r.ctid)::edge AS edge,
- *            (vtx.id, vtx.properties, vtx.ctid)::vertex AS vertex
- *     FROM <edge label (and its children)> AS r,
- *          <all vertex label> AS vtx
- *     WHERE l.start = r.end AND l.start = vtx.id AND r.properties @> ...)
- *
- * CYPHER_REL_DIR_RIGHT
- *
- *     SELECT r."end" AS next, r.id,
- *            (r.id, r.start, r."end", r.properties, r.ctid)::edge AS edge,
- *            (vtx.id, vtx.properties, vtx.ctid)::vertex AS vertex
- *     FROM <edge label (and its children)> AS r,
- *          <all vertex label> AS vtx
- *     WHERE l.end = r.start AND l.end = vtx.id AND r.properties @> ...)
- */
-static Node *
-genVLERightChild(ParseState *pstate, CypherRel *crel, bool out, bool pathout)
-{
-	Node	   *colref;
-	ResTarget  *next;
-	ResTarget  *id;
-	List	   *tlist;
-	List	   *from = NIL;
-	ColumnRef  *prev;
-	ColumnRef  *curr;
-	A_Expr	   *joinqual;
-	List	   *where_args = NIL;
-	SelectStmt *sel;
-	RangeSubselect *sub;
-
-	colref = makeColumnRef(genQualifiedName(VLE_RIGHT_ALIAS,
-											getEdgeColname(crel, true)));
-	next = makeResTarget(colref, VLE_COLNAME_NEXT);
-
-	colref = makeColumnRef(genQualifiedName(VLE_RIGHT_ALIAS, AG_ELEM_LOCAL_ID));
-	id = makeResTarget(colref, AG_ELEM_LOCAL_ID);
-	tlist = list_make2(next, id);
-
-	if (out)
-	{
-		ResTarget  *edge;
-
-		edge = makeResTarget(genEdgeSimple(VLE_RIGHT_ALIAS), VLE_COLNAME_EDGE);
-		tlist = lappend(tlist, edge);
-	}
-
-	from = lappend(from, genVLEEdgeSubselect(pstate, crel, VLE_RIGHT_ALIAS));
-
-	prev = makeNode(ColumnRef);
-	prev->fields = genQualifiedName(VLE_LEFT_ALIAS,
-									getEdgeColname(crel, true));
-	prev->location = -1;
-	curr = makeNode(ColumnRef);
-	curr->fields = genQualifiedName(VLE_RIGHT_ALIAS,
-									getEdgeColname(crel, false));
-	curr->location = -1;
-	joinqual = makeSimpleA_Expr(AEXPR_OP, "=", (Node *) prev, (Node *) curr,
-								-1);
-	where_args = lappend(where_args, joinqual);
-	if (crel->prop_map != NULL)
-		where_args = lappend(where_args, genVLEQual(VLE_RIGHT_ALIAS,
-													crel->prop_map));
-
-	if (pathout)
-	{
-		RangeVar   *vtx;
-		ResTarget  *vertex;
-		ColumnRef  *vtxid;
-
-		vtx = makeRangeVar(get_graph_path(true), AG_VERTEX, -1);
-		vtx->alias = makeAliasNoDup(VLE_VERTEX_ALIAS, NULL);
-		from = lappend(from, vtx);
-
-		vertex = makeResTarget(genVertexSimple(VLE_VERTEX_ALIAS),
-							   VLE_COLNAME_VERTEX);
-		tlist = lappend(tlist, vertex);
-
-		vtxid = makeNode(ColumnRef);
-		vtxid->fields = genQualifiedName(VLE_VERTEX_ALIAS, AG_ELEM_ID);
-		vtxid->location = -1;
-
-		joinqual = makeSimpleA_Expr(AEXPR_OP, "=",
-									(Node *) vtxid, (Node *) curr, -1);
-
-		where_args = lappend(where_args, joinqual);
-	}
-
-	sel = makeNode(SelectStmt);
-	sel->targetList = tlist;
-	sel->fromClause = from;
-	sel->whereClause = (Node *) makeBoolExpr(AND_EXPR, where_args, -1);
-
-	sub = makeNode(RangeSubselect);
-	sub->subquery = (Node *) sel;
-	sub->alias = makeAliasNoDup(VLE_RIGHT_ALIAS, NULL);
-	sub->lateral = true;
-
-	return (Node *) sub;
-}
-
-static Node *
-genVertexSimple(char *aliasname)
-{
-	Node	   *id;
-	Node	   *prop_map;
-	Node	   *tid;
-
-	id = makeColumnRef(genQualifiedName(aliasname, AG_ELEM_LOCAL_ID));
-	prop_map = makeColumnRef(genQualifiedName(aliasname, AG_ELEM_PROP_MAP));
-	tid = makeColumnRef(genQualifiedName(aliasname, "ctid"));
-
-	return makeRowExprWithTypeCast(list_make3(id, prop_map, tid), VERTEXOID, -1);
-}
-
 static Node *
 genEdgeSimple(char *aliasname)
 {
@@ -2771,43 +2592,6 @@ genVLEEdgeSubselect(ParseState *pstate, CypherRel *crel, char *aliasname)
 	}
 
 	return edge;
-}
-
-static Node *
-genVLEJoinExpr(CypherRel *crel, Node *larg, Node *rarg)
-{
-	A_Const    *trueconst;
-	TypeCast   *truecond;
-	A_Indices  *indices;
-	int			minHops;
-	int			maxHops = -1;
-	JoinExpr   *n;
-
-	trueconst = makeNode(A_Const);
-	trueconst->val.type = T_String;
-	trueconst->val.val.str = "t";
-	trueconst->location = -1;
-	truecond = makeNode(TypeCast);
-	truecond->arg = (Node *) trueconst;
-	truecond->typeName = makeTypeNameFromOid(BOOLOID, -1);
-	truecond->location = -1;
-
-	indices = (A_Indices *) crel->varlen;
-	minHops = ((A_Const *) indices->lidx)->val.val.ival;
-	if (indices->uidx != NULL)
-		maxHops = ((A_Const *) indices->uidx)->val.val.ival;
-
-	n = makeNode(JoinExpr);
-	n->jointype = JOIN_VLE;
-	n->isNatural = false;
-	n->larg = larg;
-	n->rarg = rarg;
-	n->usingClause = NIL;
-	n->quals = (Node *) truecond;
-	n->minHops = minHops;
-	n->maxHops = maxHops;
-
-	return (Node *) n;
 }
 
 static List *
@@ -2910,7 +2694,7 @@ genInhEdge(RangeVar *r, Oid parentoid)
 }
 
 static ParseNamespaceItem *
-transformVLEtoNSItem(ParseState *pstate, SelectStmt *vle, Alias *alias)
+transformVLEtoNSItem(ParseState *pstate, CypherRel *crel, SelectStmt *vle, Alias *alias)
 {
 	ParseNamespaceItem *nsitem;
 	ParseNamespaceItem *vle_initial_nsitem = NULL;
@@ -2932,6 +2716,12 @@ transformVLEtoNSItem(ParseState *pstate, SelectStmt *vle, Alias *alias)
 	qry = parse_sub_analyze((Node *) vle, pstate, NULL,
 							isLockedRefname(pstate, alias->aliasname), true);
 	Assert(qry->commandType == CMD_SELECT);
+	qry->commandType = CMD_SELECT;
+	if (crel->prop_map)
+		crel->prop_map = transformCypherExpr(pstate,
+											 crel->prop_map,
+											 EXPR_KIND_WHERE);
+	qry->graph.vle_rel = (Node *) crel;
 
 	pstate->p_lateral_active = false;
 	pstate->p_expr_kind = EXPR_KIND_NONE;
@@ -2949,18 +2739,14 @@ transformVLEtoNSItem(ParseState *pstate, SelectStmt *vle, Alias *alias)
 static bool
 isZeroLengthVLE(CypherRel *crel)
 {
-	A_Indices  *indices;
-	A_Const    *lidx;
-
 	if (crel == NULL)
 		return false;
 
 	if (crel->varlen == NULL)
 		return false;
 
-	indices = (A_Indices *) crel->varlen;
-	lidx = (A_Const *) indices->lidx;
-	return (lidx->val.val.ival == 0);
+	/* todo: corrects function name */
+	return true;
 }
 
 static void
@@ -3178,13 +2964,8 @@ edgeArrConcat(ParseState *pstate, Node *array, Node *elem)
 static Node *
 addQualUniqueEdges(ParseState *pstate, Node *qual, List *ueids, List *ueidarrs)
 {
-	FuncCall   *arrpos;
 	ListCell   *le1;
 	ListCell   *lea1;
-	FuncCall   *arroverlap;
-
-	arrpos = makeFuncCall(list_make1(makeString("array_position")), NIL,
-						  COERCE_EXPLICIT_CALL, -1);
 
 	foreach(le1, ueids)
 	{
@@ -3194,10 +2975,14 @@ addQualUniqueEdges(ParseState *pstate, Node *qual, List *ueids, List *ueidarrs)
 		for_each_cell(le2, ueids, lnext(ueids, le1))
 		{
 			Node	   *eid2 = lfirst(le2);
-			Expr	   *ne;
+			OpExpr	   *ne = makeNode(OpExpr);
 
-			ne = make_op(pstate, list_make1(makeString("<>")), eid1, eid2,
-						 pstate->p_last_srf, -1);
+			ne->opno = OID_GRAPHID_NE_OP;
+			ne->opfuncid = F_GRAPHID_NE;
+			ne->opresulttype = BOOLOID;
+			ne->opretset = false;
+			ne->args = list_make2(eid1, eid2);
+			ne->location = -1;
 
 			qual = qualAndExpr(qual, (Node *) ne);
 		}
@@ -3205,12 +2990,15 @@ addQualUniqueEdges(ParseState *pstate, Node *qual, List *ueids, List *ueidarrs)
 		foreach(lea1, ueidarrs)
 		{
 			Node	   *eidarr = lfirst(lea1);
-			Node	   *arg;
+			FuncExpr   *arg;
 			NullTest   *dupcond;
 
-			arg = ParseFuncOrColumn(pstate, arrpos->funcname,
-									list_make2(eidarr, eid1),
-									pstate->p_last_srf, arrpos, false, -1);
+			arg = makeFuncExpr(F_ARRAY_POSITION_ANYCOMPATIBLEARRAY_ANYCOMPATIBLE,
+							   INT4OID,
+							   list_make2(eidarr, eid1),
+							   InvalidOid,
+							   InvalidOid,
+							   COERCE_EXPLICIT_CALL);
 
 			dupcond = makeNode(NullTest);
 			dupcond->arg = (Expr *) arg;
@@ -3221,9 +3009,6 @@ addQualUniqueEdges(ParseState *pstate, Node *qual, List *ueids, List *ueidarrs)
 			qual = qualAndExpr(qual, (Node *) dupcond);
 		}
 	}
-
-	arroverlap = makeFuncCall(list_make1(makeString("arrayoverlap")), NIL,
-							  COERCE_EXPLICIT_CALL, -1);
 
 	foreach(lea1, ueidarrs)
 	{
@@ -3236,9 +3021,12 @@ addQualUniqueEdges(ParseState *pstate, Node *qual, List *ueids, List *ueidarrs)
 			Node	   *funcexpr;
 			Node	   *dupcond;
 
-			funcexpr = ParseFuncOrColumn(pstate, arroverlap->funcname,
-										 list_make2(eidarr1, eidarr2),
-										 pstate->p_last_srf, arroverlap, false, -1);
+			funcexpr = (Node *) makeFuncExpr(F_ARRAYOVERLAP,
+											 BOOLOID,
+											 list_make2(eidarr1, eidarr2),
+											 InvalidOid,
+											 InvalidOid,
+											 COERCE_EXPLICIT_CALL);
 
 			dupcond = (Node *) makeBoolExpr(NOT_EXPR, list_make1(funcexpr), -1);
 

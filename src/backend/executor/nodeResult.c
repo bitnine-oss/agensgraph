@@ -270,17 +270,3 @@ ExecReScanResult(ResultState *node)
 		node->ps.lefttree->chgParam == NULL)
 		ExecReScan(node->ps.lefttree);
 }
-
-void
-ExecNextResultContext(ResultState *node)
-{
-	if (node->ps.lefttree != NULL)
-		ExecNextContext(node->ps.lefttree);
-}
-
-void
-ExecPrevResultContext(ResultState *node)
-{
-	if (node->ps.lefttree != NULL)
-		ExecPrevContext(node->ps.lefttree);
-}

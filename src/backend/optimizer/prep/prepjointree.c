@@ -861,7 +861,6 @@ pull_up_subqueries_recurse(PlannerInfo *root, Node *jtnode,
 													 lowest_nulling_outer_join,
 													 NULL);
 				break;
-			case JOIN_VLE:
 			case JOIN_CYPHER_DELETE:
 				break;
 			default:

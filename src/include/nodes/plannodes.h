@@ -732,13 +732,6 @@ typedef struct NestLoopParam
 	Var		   *paramval;		/* outer-relation Var to assign to Param */
 } NestLoopParam;
 
-typedef struct NestLoopVLE
-{
-	NestLoop	nl;
-	int			minHops;
-	int			maxHops;
-} NestLoopVLE;
-
 /* ----------------
  *		merge join node
  *
@@ -1320,6 +1313,13 @@ typedef struct ModifyGraph
 	int			resultRelIndex; /* start index of es_result_relations for
 								 * current plan */
 } ModifyGraph;
+
+typedef struct GraphVLE
+{
+	Plan		plan;
+	Plan	   *subplan;		/* plan producing source data */
+	Node	   *vle_rel;
+} GraphVLE;
 
 typedef struct Shortestpath
 {

@@ -31,22 +31,9 @@
 #include "access/tableam.h"
 #include "executor/execdebug.h"
 #include "executor/nodeSeqscan.h"
-#include "optimizer/clauses.h"
-#include "utils/graph.h"
-#include "utils/memutils.h"
 #include "utils/rel.h"
 
 static TupleTableSlot *SeqNext(SeqScanState *node);
-
-/* for agensgraph */
-typedef struct SeqScanContext
-{
-	dlist_node	list;
-	Bitmapset  *chgParam;
-	TableScanDesc scanDesc;
-} SeqScanContext;
-
-static SeqScanContext *getCurrentContext(SeqScanState *node, bool create);
 
 /* ----------------------------------------------------------------
  *						Scan Support
@@ -184,8 +171,6 @@ ExecInitSeqScan(SeqScan *node, EState *estate, int eflags)
 	scanstate->ss.ps.qual =
 		ExecInitQual(node->plan.qual, (PlanState *) scanstate);
 
-	dlist_init(&scanstate->ctxs_head);
-	scanstate->prev_ctx_node = &scanstate->ctxs_head.head;
 	return scanstate;
 }
 
@@ -217,31 +202,6 @@ ExecEndSeqScan(SeqScanState *node)
 		ExecClearTuple(node->ss.ps.ps_ResultTupleSlot);
 	ExecClearTuple(node->ss.ss_ScanTupleSlot);
 
-	if (!dlist_is_empty(&node->ctxs_head))
-	{
-		dlist_node *ctx_node;
-		SeqScanContext *ctx;
-		dlist_mutable_iter iter;
-
-		/* scanDesc is the most recent value. Ignore the first context. */
-		ctx_node = dlist_pop_head_node(&node->ctxs_head);
-		ctx = dlist_container(SeqScanContext, list, ctx_node);
-		pfree(ctx);
-
-		dlist_foreach_modify(iter, &node->ctxs_head)
-		{
-			dlist_delete(iter.cur);
-
-			ctx = dlist_container(SeqScanContext, list, iter.cur);
-
-			if (ctx->scanDesc != NULL)
-				table_endscan(ctx->scanDesc);
-
-			pfree(ctx);
-		}
-	}
-	node->prev_ctx_node = &node->ctxs_head.head;
-
 	/*
 	 * close heap scan
 	 */
@@ -272,103 +232,6 @@ ExecReScanSeqScan(SeqScanState *node)
 					 NULL);		/* new scan keys */
 
 	ExecScanReScan((ScanState *) node);
-}
-
-void
-ExecNextSeqScanContext(SeqScanState *node)
-{
-	SeqScanContext *ctx;
-
-	/* store the current context */
-	ctx = getCurrentContext(node, true);
-	ctx->chgParam = node->ss.ps.chgParam;
-	ctx->scanDesc = node->ss.ss_currentScanDesc;
-
-	/* make the current context previous context */
-	node->prev_ctx_node = &ctx->list;
-
-	ctx = getCurrentContext(node, false);
-	if (ctx == NULL)
-	{
-		/* if there is no current context, initialize the current scan */
-		node->ss.ps.chgParam = NULL;
-		node->ss.ss_currentScanDesc = NULL;
-	}
-	else
-	{
-		/* if there is the current context already, use it */
-
-		Assert(ctx->chgParam == NULL);
-		node->ss.ps.chgParam = NULL;
-
-		/* ctx->scanDesc can be NULL if ss_skipLabelScan */
-		node->ss.ss_currentScanDesc = ctx->scanDesc;
-	}
-}
-
-void
-ExecPrevSeqScanContext(SeqScanState *node)
-{
-	SeqScanContext *ctx;
-	dlist_node *ctx_node;
-
-	/*
-	 * Store the current ss_currentScanDesc. It will be reused when the
-	 * current scan is re-scanned next time.
-	 */
-	ctx = getCurrentContext(node, true);
-
-	/* if chgParam is not NULL, free it now */
-	if (node->ss.ps.chgParam != NULL)
-	{
-		bms_free(node->ss.ps.chgParam);
-		node->ss.ps.chgParam = NULL;
-	}
-
-	ctx->chgParam = NULL;
-	ctx->scanDesc = node->ss.ss_currentScanDesc;
-
-	/* make the previous context current context */
-	ctx_node = node->prev_ctx_node;
-	Assert(ctx_node != &node->ctxs_head.head);
-
-	if (dlist_has_prev(&node->ctxs_head, ctx_node))
-		node->prev_ctx_node = dlist_prev_node(&node->ctxs_head, ctx_node);
-	else
-		node->prev_ctx_node = &node->ctxs_head.head;
-
-	/* restore */
-	ctx = dlist_container(SeqScanContext, list, ctx_node);
-	node->ss.ps.chgParam = ctx->chgParam;
-	node->ss.ss_currentScanDesc = ctx->scanDesc;
-}
-
-static SeqScanContext *
-getCurrentContext(SeqScanState *node, bool create)
-{
-	SeqScanContext *ctx;
-
-	if (dlist_has_next(&node->ctxs_head, node->prev_ctx_node))
-	{
-		dlist_node *ctx_node;
-
-		ctx_node = dlist_next_node(&node->ctxs_head, node->prev_ctx_node);
-		ctx = dlist_container(SeqScanContext, list, ctx_node);
-	}
-	else if (create)
-	{
-		ctx = palloc(sizeof(*ctx));
-		ctx->chgParam = NULL;
-		ctx->scanDesc = NULL;
-
-		dlist_push_tail(&node->ctxs_head, &ctx->list);
-	}
-	else
-	{
-		ctx = NULL;
-	}
-
-	return ctx;
 }
 
 /* ----------------------------------------------------------------

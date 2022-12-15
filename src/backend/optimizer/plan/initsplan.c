@@ -892,7 +892,6 @@ deconstruct_recurse(PlannerInfo *root, Node *jtnode, bool below_outer_join,
 		switch (j->jointype)
 		{
 			case JOIN_INNER:
-			case JOIN_VLE:
 				leftjoinlist = deconstruct_recurse(root, j->larg,
 												   below_outer_join,
 												   &leftids, &left_inners,
@@ -1019,12 +1018,6 @@ deconstruct_recurse(PlannerInfo *root, Node *jtnode, bool below_outer_join,
 			if (j->jointype == JOIN_SEMI)
 			{
 				ojscope = NULL;
-			}
-			else if (j->jointype == JOIN_VLE)
-			{
-				ojscope = NULL;
-				sjinfo->min_hops = j->minHops;
-				sjinfo->max_hops = j->maxHops;
 			}
 			else
 			{
@@ -1237,7 +1230,7 @@ make_outerjoininfo(PlannerInfo *root,
 	compute_semijoin_info(root, sjinfo, clause);
 
 	/* If it's a full join, no need to be very smart */
-	if (jointype == JOIN_FULL || jointype == JOIN_VLE)
+	if (jointype == JOIN_FULL)
 	{
 		sjinfo->min_lefthand = bms_copy(left_rels);
 		sjinfo->min_righthand = bms_copy(right_rels);

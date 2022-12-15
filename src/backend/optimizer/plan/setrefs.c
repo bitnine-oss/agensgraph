@@ -740,7 +740,6 @@ set_plan_refs(PlannerInfo *root, Plan *plan, int rtoffset)
 			break;
 
 		case T_NestLoop:
-		case T_NestLoopVLE:
 		case T_MergeJoin:
 		case T_HashJoin:
 		case T_Shortestpath:
@@ -1101,6 +1100,14 @@ set_plan_refs(PlannerInfo *root, Plan *plan, int rtoffset)
 				root->glob->resultRelations =
 					list_concat(root->glob->resultRelations,
 								splan->resultRelations);
+			}
+			break;
+		case T_GraphVLE:
+			{
+				GraphVLE   *graph_vle = (GraphVLE *) plan;
+
+				graph_vle->subplan = set_plan_refs(root,
+												   graph_vle->subplan, rtoffset);
 			}
 			break;
 		case T_Dijkstra:
@@ -2018,7 +2025,7 @@ set_join_references(PlannerInfo *root, Join *join, int rtoffset)
 								   NUM_EXEC_QUAL((Plan *) join));
 
 	/* Now do join-type-specific stuff */
-	if (IsA(join, NestLoop) || IsA(join, NestLoopVLE))
+	if (IsA(join, NestLoop))
 	{
 		NestLoop   *nl = (NestLoop *) join;
 		ListCell   *lc;
