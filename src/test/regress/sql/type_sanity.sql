@@ -568,7 +568,8 @@ CREATE TABLE tab_core_types AS SELECT
   '(2020-01-02 03:04:05, 2021-02-03 06:07:08)'::tstzrange,
   '{(2020-01-02 03:04:05, 2021-02-03 06:07:08)}'::tstzmultirange,
   arrayrange(ARRAY[1,2], ARRAY[2,1]),
-  arraymultirange(arrayrange(ARRAY[1,2], ARRAY[2,1]));
+  arraymultirange(arrayrange(ARRAY[1,2], ARRAY[2,1])),
+  '65535.281474976710655'::graphid;
 
 -- Sanity check on the previous table, checking that all core types are
 -- included in this table.
