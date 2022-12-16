@@ -233,8 +233,9 @@ CREATE [ UNIQUE ] INDEX [ CONCURRENTLY ] [ [ IF NOT EXISTS ] <replaceable class=
        <para>
         The name of the index method to be used.  Choices are
         <literal>btree</literal>, <literal>hash</literal>,
-        <literal>gist</literal>, <literal>spgist</literal>, <literal>gin</literal>, and
-        <literal>brin</literal>.
+        <literal>gist</literal>, <literal>spgist</literal>, <literal>gin</literal>,
+        <literal>brin</literal>, or user-installed access methods like
+        <link linkend="bloom">bloom</link>.
         The default method is <literal>btree</literal>.
        </para>
       </listitem>

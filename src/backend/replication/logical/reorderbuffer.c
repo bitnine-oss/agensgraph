@@ -672,9 +672,23 @@ static void
 AssertTXNLsnOrder(ReorderBuffer *rb)
 {
 #ifdef USE_ASSERT_CHECKING
+	LogicalDecodingContext *ctx = rb->private_data;
 	dlist_iter	iter;
 	XLogRecPtr	prev_first_lsn = InvalidXLogRecPtr;
 	XLogRecPtr	prev_base_snap_lsn = InvalidXLogRecPtr;
+
+	/*
+	 * Skip the verification if we don't reach the LSN at which we start
+	 * decoding the contents of transactions yet because until we reach the
+	 * LSN, we could have transactions that don't have the association between
+	 * the top-level transaction and subtransaction yet and consequently have
+	 * the same LSN.  We don't guarantee this association until we try to
+	 * decode the actual contents of transaction. The ordering of the records
+	 * prior to the start_decoding_at LSN should have been checked before the
+	 * restart.
+	 */
+	if (SnapBuildXactNeedsSkip(ctx->snapshot_builder, ctx->reader->EndRecPtr))
+		return;
 
 	dlist_foreach(iter, &rb->toplevel_by_lsn)
 	{
@@ -1524,6 +1538,8 @@ ReorderBufferCommit(ReorderBuffer *rb, TransactionId xid,
 		{
 			Relation	relation = NULL;
 			Oid			reloid;
+
+			CHECK_FOR_INTERRUPTS();
 
 			switch (change->action)
 			{
@@ -2578,6 +2594,8 @@ ReorderBufferRestoreChanges(ReorderBuffer *rb, ReorderBufferTXN *txn,
 	{
 		int			readBytes;
 		ReorderBufferDiskChange *ondisk;
+
+		CHECK_FOR_INTERRUPTS();
 
 		if (*fd == -1)
 		{

@@ -2918,8 +2918,8 @@ CopyFrom(CopyState cstate)
 		 * For partitioned tables we can't support multi-inserts when there
 		 * are any statement level insert triggers. It might be possible to
 		 * allow partitioned tables with such triggers in the future, but for
-		 * now, CopyMultiInsertInfoFlush expects that any before row insert
-		 * and statement level insert triggers are on the same relation.
+		 * now, CopyMultiInsertInfoFlush expects that any after row insert and
+		 * statement level insert triggers are on the same relation.
 		 */
 		insertMethod = CIM_SINGLE;
 	}
@@ -3678,7 +3678,7 @@ NextCopyFromRawFields(CopyState cstate, char ***fields, int *nfields)
 /*
  * Read next tuple from file for COPY FROM. Return false if no more tuples.
  *
- * 'econtext' is used to evaluate default expression for each columns not
+ * 'econtext' is used to evaluate default expression for each column not
  * read from the file. It can be NULL when no default values are used, i.e.
  * when all columns are read from the file.
  *

@@ -4057,7 +4057,8 @@ ANY <replaceable class="parameter">num_sync</replaceable> ( <replaceable class="
       <listitem>
        <para>
         Specifies the number of transactions by which <command>VACUUM</command> and
-        <acronym>HOT</acronym> updates will defer cleanup of dead row versions. The
+        <link linkend="storage-hot"><acronym>HOT</acronym> updates</link>
+        will defer cleanup of dead row versions. The
         default is zero transactions, meaning that dead row versions can be
         removed as soon as possible, that is, as soon as they are no longer
         visible to any open transaction.  You may wish to set this to a
@@ -6242,6 +6243,13 @@ local0.*    /var/log/postgresql
      <sect2 id="runtime-config-logging-what">
      <title>What to Log</title>
 
+     <note>
+      <para>
+       What you choose to log can have security implications;  see
+       <xref linkend="logfile-maintenance"/>.
+      </para>
+     </note>
+
      <variablelist>
 
      <varlistentry id="guc-application-name" xreflabel="application_name">
@@ -6683,6 +6691,10 @@ log_line_prefix = '%m [%p] %q%u@%d/%a '
          fail before the Execute phase (i.e., during parse analysis or
          planning).  Set <varname>log_min_error_statement</varname> to
          <literal>ERROR</literal> (or lower) to log such statements.
+        </para>
+        <para>
+         Logged statements might reveal sensitive data and even contain
+         plaintext passwords.
         </para>
        </note>
       </listitem>

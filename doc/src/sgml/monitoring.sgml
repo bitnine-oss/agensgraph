@@ -2789,7 +2789,8 @@ SELECT pid, wait_event_type, wait_event FROM pg_stat_activity WHERE wait_event i
     <row>
      <entry><structfield>n_tup_upd</structfield></entry>
      <entry><type>bigint</type></entry>
-     <entry>Number of rows updated (includes HOT updated rows)</entry>
+     <entry>Number of rows updated (includes <link
+     linkend="storage-hot">HOT updated rows</link> updated rows)</entry>
     </row>
     <row>
      <entry><structfield>n_tup_del</structfield></entry>
@@ -3337,6 +3338,17 @@ SELECT pid, wait_event_type, wait_event FROM pg_stat_activity WHERE wait_event i
     </tbody>
    </tgroup>
   </table>
+
+  <warning>
+   <para>
+    Using <function>pg_stat_reset()</function> also resets counters that
+    autovacuum uses to determine when to trigger a vacuum or an analyze.
+    Resetting these counters can cause autovacuum to not perform necessary
+    work, which can cause problems such as table bloat or out-dated
+    table statistics.  A database-wide <command>ANALYZE</command> is
+    recommended after the statistics have been reset.
+   </para>
+  </warning>
 
   <para>
    <function>pg_stat_get_activity</function>, the underlying function of
