@@ -2847,7 +2847,7 @@ cat >>confdefs.h <<_ACEOF
 _ACEOF
 
 
-AG_VERSION=2.12-devel
+AG_VERSION=2.12.1
 
 cat >>confdefs.h <<_ACEOF
 #define AG_VERSION "$AG_VERSION"
