@@ -14543,6 +14543,12 @@ table2-mapping
    <type>jsonb</type>, though not for <type>json</type>.  The comparison
    operators follow the ordering rules for B-tree operations outlined in
    <xref linkend="json-indexing"/>.
+   See also <xref linkend="functions-aggregate"/> for the aggregate
+   function <function>json_agg</function> which aggregates record
+   values as JSON, the aggregate function
+   <function>json_object_agg</function> which aggregates pairs of values
+   into a JSON object, and their <type>jsonb</type> equivalents,
+   <function>jsonb_agg</function> and <function>jsonb_object_agg</function>.
   </para>
 
   <table id="functions-json-op-table">
@@ -15688,7 +15694,7 @@ table2-mapping
        </para>
        <para>
         <literal>jsonb_set_lax('[{"f1":1,"f2":null},2,null,3]', '{0,f1}', null)</literal>
-        <returnvalue>[{"f1":null,"f2":null},2,null,3]</returnvalue>
+        <returnvalue>[{"f1": null, "f2": null}, 2, null, 3]</returnvalue>
        </para>
        <para>
         <literal>jsonb_set_lax('[{"f1":99,"f2":null},2]', '{0,f3}', null, true, 'return_target')</literal>
@@ -15927,7 +15933,7 @@ table2-mapping
         comparisons.
        </para>
        <para>
-        <literal>jsonb_path_exists_tz('["2015-08-01 12:00:00 -05"]', '$[*] ? (@.datetime() &lt; "2015-08-02".datetime())')</literal>
+        <literal>jsonb_path_exists_tz('["2015-08-01 12:00:00-05"]', '$[*] ? (@.datetime() &lt; "2015-08-02".datetime())')</literal>
         <returnvalue>t</returnvalue>
        </para></entry>
       </row>
@@ -15998,15 +16004,6 @@ table2-mapping
      </tbody>
     </tgroup>
    </table>
-
-  <para>
-    See also <xref linkend="functions-aggregate"/> for the aggregate
-    function <function>json_agg</function> which aggregates record
-    values as JSON, the aggregate function
-    <function>json_object_agg</function> which aggregates pairs of values
-    into a JSON object, and their <type>jsonb</type> equivalents,
-    <function>jsonb_agg</function> and <function>jsonb_object_agg</function>.
-  </para>
  </sect2>
 
  <sect2 id="functions-sqljson-path">
