@@ -3038,8 +3038,6 @@ transformCypherStmt(ParseState *pstate, CypherStmt *stmt)
 	CypherClause *clause;
 	NodeTag		type;
 	bool		valid = true;
-	NodeTag		update_type = T_Invalid;
-	bool		read = false;
 
 	clause = (CypherClause *) stmt->last;
 	type = cypherClauseTag(clause);
@@ -3053,7 +3051,6 @@ transformCypherStmt(ParseState *pstate, CypherStmt *stmt)
 		case T_CypherDeleteClause:
 		case T_CypherSetClause:
 		case T_CypherMergeClause:
-			update_type = type;
 			break;
 		default:
 			valid = false;
@@ -3072,7 +3069,13 @@ transformCypherStmt(ParseState *pstate, CypherStmt *stmt)
 		switch (type)
 		{
 			case T_CypherMatchClause:
-				read = true;
+			case T_CypherCreateClause:
+			case T_CypherDeleteClause:
+			case T_CypherSetClause:
+			case T_CypherMergeClause:
+			case T_CypherLoadClause:
+			case T_CypherUnwindClause:
+				/* do nothing. */
 				break;
 			case T_CypherProjection:
 				if (cypherProjectionKind(clause->detail) == CP_RETURN)
@@ -3081,48 +3084,6 @@ transformCypherStmt(ParseState *pstate, CypherStmt *stmt)
 							(errcode(ERRCODE_SYNTAX_ERROR),
 							 errmsg("RETURN must be at the end of the query")));
 				}
-				else
-				{
-					/* CP_WITH */
-					if (update_type != T_Invalid &&
-						update_type != T_CypherCreateClause)
-						read = true;
-				}
-				break;
-			case T_CypherCreateClause:
-				if (update_type == T_Invalid ||
-					update_type == T_CypherMergeClause)
-				{
-					update_type = T_CypherCreateClause;
-				}
-				if (read)
-					ereport(ERROR,
-							(errcode(ERRCODE_SYNTAX_ERROR),
-							 errmsg("Cypher read clauses cannot follow update clauses")));
-				break;
-			case T_CypherDeleteClause:
-			case T_CypherSetClause:
-				if (read)
-					ereport(ERROR,
-							(errcode(ERRCODE_SYNTAX_ERROR),
-							 errmsg("Cypher read clauses cannot follow update clauses")));
-				break;
-			case T_CypherMergeClause:
-				if (update_type == T_Invalid ||
-					update_type == T_CypherCreateClause)
-				{
-					update_type = T_CypherMergeClause;
-				}
-				if (read)
-					ereport(ERROR,
-							(errcode(ERRCODE_SYNTAX_ERROR),
-							 errmsg("Cypher read clauses cannot follow update clauses")));
-				break;
-			case T_CypherLoadClause:
-				read = true;
-				break;
-			case T_CypherUnwindClause:
-				read = true;
 				break;
 			default:
 				elog(ERROR, "unrecognized Cypher clause type: %d", type);

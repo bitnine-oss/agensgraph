@@ -366,8 +366,19 @@ ExecModifyGraph(PlanState *pstate)
 
 			/* pass lower bound CID to subplan */
 			svCid = estate->es_snapshot->curcid;
-			estate->es_snapshot->curcid =
-					mgstate->modify_cid + MODIFY_CID_LOWER_BOUND;
+
+			switch (plan->operation)
+			{
+				case GWROP_MERGE:
+				case GWROP_DELETE:
+					estate->es_snapshot->curcid =
+							mgstate->modify_cid + MODIFY_CID_NLJOIN_MATCH;
+					break;
+				default:
+					estate->es_snapshot->curcid =
+							mgstate->modify_cid + MODIFY_CID_LOWER_BOUND;
+					break;
+			}
 
 			slot = ExecProcNode(mgstate->subplan);
 
