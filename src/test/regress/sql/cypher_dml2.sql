@@ -56,6 +56,37 @@ MATCH(n)-[e*3]->(n3) RETURN head(e);
 MATCH(n)-[e*3]->(n3) RETURN tail(e);
 MATCH(n)-[e*3]->(n3) RETURN last(e);
 
+MATCH (n) DETACH DELETE n;
+
+CREATE (a:person);
+create (a:person {name: 'Alice', age: 51, eyes: 'brown'}),
+(b:person {name: 'Frank', age: 61, eyes: '', liked_colors: ['blue','green']}),
+(c:person {name: 'Charlie', age: 53, eyes: 'green'}),
+(d:person {name: 'Bob', age: 25, eyes: 'blue'}),
+(e:person {name: 'Daniel', age: 54, eyes: 'brown', liked_colors: ''}),
+(f:person {name: 'Eskil', age: 41, eyes: 'blue', liked_colors: ['pink','yellow','black']}),
+(a)-[:knows]->(c),
+(a)-[:knows]->(d),
+(c)-[:knows]->(e),
+(d)-[:knows]->(e),
+(d)-[:married]->(f);
+
+-- isEmpty(..)
+-- List
+MATCH (n)
+WHERE NOT isEmpty(n.liked_colors)
+RETURN n ;
+
+-- Map
+MATCH (n)
+WHERE isEmpty(properties(n))
+RETURN n ;
+
+-- String
+MATCH (n)
+WHERE isEmpty(n.eyes)
+RETURN n.age AS age ;
+
 -- Trigger
 CREATE TEMPORARY TABLE _trigger_history(
     id graphid,
