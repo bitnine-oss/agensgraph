@@ -722,6 +722,7 @@ typedef struct ExprEvalStep
 			bool	   *typbyval;
 			char	   *typalign;
 			bool		is_array_type;
+			bool	   *is_null_list_or_array;
 		}			cypherlistcomp_iter;
 
 		struct

@@ -4218,6 +4218,10 @@ ExecInitCypherListComp(ExprEvalStep *scratch, CypherListCompExpr *listcompexpr,
 	init_step.d.cypherlistcomp_iter.array_typid =
 			(Oid *) palloc(sizeof(Oid));
 
+	init_step.d.cypherlistcomp_iter.is_null_list_or_array =
+			(bool *) palloc(sizeof(bool));
+	*init_step.d.cypherlistcomp_iter.is_null_list_or_array = false;
+
 	ExprEvalPushStep(state, &init_step);
 
 	elem_resvalue = (Datum *) palloc(sizeof(Datum));
@@ -4248,6 +4252,8 @@ ExecInitCypherListComp(ExprEvalStep *scratch, CypherListCompExpr *listcompexpr,
 			init_step.d.cypherlistcomp_iter.array_size;
 	next_step.d.cypherlistcomp_iter.array_typid =
 			init_step.d.cypherlistcomp_iter.array_typid;
+	next_step.d.cypherlistcomp_iter.is_null_list_or_array = 
+			init_step.d.cypherlistcomp_iter.is_null_list_or_array;
 
 	ExprEvalPushStep(state, &next_step);
 	next_stepno = state->steps_len - 1;

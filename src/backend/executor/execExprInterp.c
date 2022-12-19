@@ -5287,11 +5287,9 @@ ExecEvalCypherListCompIterInit(ExprState *state, ExprEvalStep *op)
 
 		listjb = DatumGetJsonbP(*op->d.cypherlistcomp_iter.listvalue);
 		if (!JB_ROOT_IS_ARRAY(listjb) || JB_ROOT_IS_SCALAR(listjb))
-			ereport(ERROR,
-					(errcode(ERRCODE_DATATYPE_MISMATCH),
-					 errmsg("list is expected but %s",
-							JsonbToCString(NULL, &listjb->root,
-										   VARSIZE(listjb)))));
+		{
+			*op->d.cypherlistcomp_iter.is_null_list_or_array = true;
+		}
 
 		ji = op->d.cypherlistcomp_iter.listiter;
 		*ji = JsonbIteratorInit(&listjb->root);
@@ -5322,6 +5320,13 @@ ExecEvalCypherListCompIterInitNext(ExprState *state, ExprEvalStep *op)
 		JsonbIterator **ji;
 		JsonbValue jv;
 		JsonbIteratorToken jt;
+
+		if (*op->d.cypherlistcomp_iter.is_null_list_or_array)
+		{
+			*op->resvalue = (Datum) 0;
+			*op->resnull = true;
+			return;
+		}
 
 		ji = op->d.cypherlistcomp_iter.listiter;
 		jt = JsonbIteratorNext(ji, &jv, true);

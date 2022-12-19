@@ -71,6 +71,26 @@ create (a:person {name: 'Alice', age: 51, eyes: 'brown'}),
 (d)-[:knows]->(e),
 (d)-[:married]->(f);
 
+-- all(..)
+MATCH p = (a)-[*1..3]->(b)
+WHERE
+a.name = 'Alice'
+AND b.name = 'Daniel'
+AND all(x IN nodes(p) WHERE x.age > 30)
+RETURN [x in nodes(p) | x.age];
+
+-- any(..)
+MATCH (n)
+WHERE any(color IN n.liked_colors WHERE color = 'yellow')
+RETURN n ;
+
+-- exists(..)
+MATCH (n)
+WHERE n.name IS NOT NULL
+RETURN
+n.name AS name,
+exists((n)-[:MARRIED]->()) AS is_married;
+
 -- isEmpty(..)
 -- List
 MATCH (n)
@@ -86,6 +106,22 @@ RETURN n ;
 MATCH (n)
 WHERE isEmpty(n.eyes)
 RETURN n.age AS age ;
+
+-- none(..)
+MATCH p = (n)-[*1..3]->(b)
+WHERE
+n.name = 'Alice'
+AND none(x IN nodes(p) WHERE x.age = 25)
+RETURN p ;
+
+-- single(..)
+MATCH p = (n)-->(b)
+WHERE
+n.name = 'Alice'
+AND single(var IN nodes(p) WHERE var.eyes = 'blue')
+RETURN p ;
+
+MATCH (n) DETACH DELETE n;
 
 -- Trigger
 CREATE TEMPORARY TABLE _trigger_history(
