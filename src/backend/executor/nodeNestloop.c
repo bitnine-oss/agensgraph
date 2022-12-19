@@ -110,8 +110,6 @@ ExecNestLoop(PlanState *pstate)
 
 	for (;;)
 	{
-		CommandId	svCid = InvalidCommandId;
-
 		/*
 		 * If we don't have an outer tuple, get the next one and reset the
 		 * inner scan.
@@ -170,18 +168,8 @@ ExecNestLoop(PlanState *pstate)
 		 */
 		ENL1_printf("getting new inner tuple");
 
-		if (node->js.jointype == JOIN_CYPHER_MERGE ||
-			node->js.jointype == JOIN_CYPHER_DELETE)
-		{
-			svCid = innerPlan->state->es_snapshot->curcid;
-			innerPlan->state->es_snapshot->curcid = node->nl_graphwrite_cid;
-		}
-
 		innerTupleSlot = ExecProcNode(innerPlan);
 		econtext->ecxt_innertuple = innerTupleSlot;
-
-		if (svCid != InvalidCommandId)
-			innerPlan->state->es_snapshot->curcid = svCid;
 
 		if (TupIsNull(innerTupleSlot))
 		{
@@ -288,7 +276,6 @@ NestLoopState *
 ExecInitNestLoop(NestLoop *node, EState *estate, int eflags)
 {
 	NestLoopState *nlstate;
-	CommandId	svCid = InvalidCommandId;
 
 	/* check for unsupported flags */
 	Assert(!(eflags & (EXEC_FLAG_BACKWARD | EXEC_FLAG_MARK)));
@@ -325,25 +312,7 @@ ExecInitNestLoop(NestLoop *node, EState *estate, int eflags)
 		eflags |= EXEC_FLAG_REWIND;
 	else
 		eflags &= ~EXEC_FLAG_REWIND;
-
-	if (node->join.jointype == JOIN_CYPHER_MERGE ||
-		node->join.jointype == JOIN_CYPHER_DELETE)
-	{
-		/*
-		 * Modify the CID to see the graph pattern created by MERGE CREATE
-		 * or to not see it deleted by DELETE.
-		 */
-		nlstate->nl_graphwrite_cid =
-						estate->es_snapshot->curcid + MODIFY_CID_NLJOIN_MATCH;
-
-		svCid = estate->es_snapshot->curcid;
-		estate->es_snapshot->curcid = nlstate->nl_graphwrite_cid;
-	}
-
 	innerPlanState(nlstate) = ExecInitNode(innerPlan(node), estate, eflags);
-
-	if (svCid != InvalidCommandId)
-		estate->es_snapshot->curcid = svCid;
 
 	/*
 	 * Initialize result slot, type and projection.
