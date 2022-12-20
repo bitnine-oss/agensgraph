@@ -5286,10 +5286,7 @@ ExecEvalCypherListCompIterInit(ExprState *state, ExprEvalStep *op)
 		Assert(!*op->d.cypherlistcomp_iter.listnull);
 
 		listjb = DatumGetJsonbP(*op->d.cypherlistcomp_iter.listvalue);
-		if (!JB_ROOT_IS_ARRAY(listjb) || JB_ROOT_IS_SCALAR(listjb))
-		{
-			*op->d.cypherlistcomp_iter.is_null_list_or_array = true;
-		}
+		*op->d.cypherlistcomp_iter.is_null_list_or_array = !JB_ROOT_IS_ARRAY(listjb) || JB_ROOT_IS_SCALAR(listjb);
 
 		ji = op->d.cypherlistcomp_iter.listiter;
 		*ji = JsonbIteratorInit(&listjb->root);
