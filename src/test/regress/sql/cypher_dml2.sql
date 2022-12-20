@@ -102,6 +102,10 @@ MATCH (n)
 WHERE isEmpty(properties(n))
 RETURN n ;
 
+MATCH (n)
+WHERE NOT isEmpty(properties(n))
+RETURN n ;
+
 -- String
 MATCH (n)
 WHERE isEmpty(n.eyes)
@@ -115,13 +119,14 @@ AND none(x IN nodes(p) WHERE x.age = 25)
 RETURN p ;
 
 -- single(..)
-MATCH p = (n)-->(b)
+MATCH p = (n)-[]->(b)
 WHERE
 n.name = 'Alice'
 AND single(var IN nodes(p) WHERE var.eyes = 'blue')
 RETURN p ;
 
 MATCH (n) DETACH DELETE n;
+MATCH (n) RETURN n;
 
 -- Trigger
 CREATE TEMPORARY TABLE _trigger_history(
