@@ -4170,6 +4170,7 @@ ExecInitCypherListComp(ExprEvalStep *scratch, CypherListCompExpr *listcompexpr,
 
 	Type		targetType;
 	Form_pg_type typeForm;
+
 	targetType = typeidType(exprType((const Node *) listcompexpr->list));
 	typeForm = (Form_pg_type) GETSTRUCT(targetType);
 
@@ -4197,30 +4198,22 @@ ExecInitCypherListComp(ExprEvalStep *scratch, CypherListCompExpr *listcompexpr,
 	init_step.d.cypherlistcomp_iter.listvalue = scratch->resvalue;
 	init_step.d.cypherlistcomp_iter.listnull = scratch->resnull;
 
-	/* Jsonb Iterator */
-	init_step.d.cypherlistcomp_iter.listiter =
-			(JsonbIterator **) palloc(sizeof(JsonbIterator *));
-
-	/* Array Iterator */
-	init_step.d.cypherlistcomp_iter.is_array_type = is_array_type;
-	init_step.d.cypherlistcomp_iter.array_iter =
-			(array_iter *) palloc(sizeof(array_iter));
-	init_step.d.cypherlistcomp_iter.typbyval =
-			(bool *) palloc(sizeof(bool));
-	init_step.d.cypherlistcomp_iter.typalign =
-			(char *) palloc(sizeof(char));
-	init_step.d.cypherlistcomp_iter.typlen =
-			(int16 *) palloc(sizeof(int16));
-	init_step.d.cypherlistcomp_iter.array_size =
-			(int *) palloc(sizeof(int));
-	init_step.d.cypherlistcomp_iter.array_position =
-			(int *) palloc(sizeof(int));
-	init_step.d.cypherlistcomp_iter.array_typid =
-			(Oid *) palloc(sizeof(Oid));
-
 	init_step.d.cypherlistcomp_iter.is_null_list_or_array =
-			(bool *) palloc(sizeof(bool));
+		(bool *) palloc(sizeof(bool));
 	*init_step.d.cypherlistcomp_iter.is_null_list_or_array = false;
+
+	if (is_array_type)
+	{
+		init_step.d.cypherlistcomp_iter.jsonb_list_iterator = NULL;
+		init_step.d.cypherlistcomp_iter.array_iterator =
+			(CypherListCompArrayIterator *) palloc(sizeof(CypherListCompArrayIterator));
+	}
+	else
+	{
+		init_step.d.cypherlistcomp_iter.jsonb_list_iterator =
+			(JsonbIterator **) palloc(sizeof(JsonbIterator *));
+		init_step.d.cypherlistcomp_iter.array_iterator = NULL;
+	}
 
 	ExprEvalPushStep(state, &init_step);
 
@@ -4230,30 +4223,12 @@ ExecInitCypherListComp(ExprEvalStep *scratch, CypherListCompExpr *listcompexpr,
 	next_step.opcode = EEOP_CYPHERLISTCOMP_ITER_NEXT;
 	next_step.resvalue = elem_resvalue;
 	next_step.resnull = elem_resnull;
-
-	/* Jsonb Iterator */
-	next_step.d.cypherlistcomp_iter.listiter =
-			init_step.d.cypherlistcomp_iter.listiter;
-
-	/* Array Iterator */
-	next_step.d.cypherlistcomp_iter.is_array_type =
-			init_step.d.cypherlistcomp_iter.is_array_type;
-	next_step.d.cypherlistcomp_iter.array_iter =
-			init_step.d.cypherlistcomp_iter.array_iter;
-	next_step.d.cypherlistcomp_iter.typbyval =
-			init_step.d.cypherlistcomp_iter.typbyval;
-	next_step.d.cypherlistcomp_iter.typalign =
-			init_step.d.cypherlistcomp_iter.typalign;
-	next_step.d.cypherlistcomp_iter.typlen =
-			init_step.d.cypherlistcomp_iter.typlen;
-	next_step.d.cypherlistcomp_iter.array_position =
-			init_step.d.cypherlistcomp_iter.array_position;
-	next_step.d.cypherlistcomp_iter.array_size =
-			init_step.d.cypherlistcomp_iter.array_size;
-	next_step.d.cypherlistcomp_iter.array_typid =
-			init_step.d.cypherlistcomp_iter.array_typid;
-	next_step.d.cypherlistcomp_iter.is_null_list_or_array = 
-			init_step.d.cypherlistcomp_iter.is_null_list_or_array;
+	next_step.d.cypherlistcomp_iter.is_null_list_or_array =
+		init_step.d.cypherlistcomp_iter.is_null_list_or_array;
+	next_step.d.cypherlistcomp_iter.jsonb_list_iterator =
+		init_step.d.cypherlistcomp_iter.jsonb_list_iterator;
+	next_step.d.cypherlistcomp_iter.array_iterator =
+		init_step.d.cypherlistcomp_iter.array_iterator;
 
 	ExprEvalPushStep(state, &next_step);
 	next_stepno = state->steps_len - 1;

@@ -24,6 +24,7 @@ struct ExprEvalStep;
 struct SubscriptingRefState;
 struct ScalarArrayOpExprHashTable;
 struct CypherAccessPathElem;
+struct CypherListCompArrayIterator;
 
 /* Bits in ExprState->flags (see also execnodes.h for public flag bits): */
 /* expression's interpreter has been initialized */
@@ -713,15 +714,8 @@ typedef struct ExprEvalStep
 		{
 			Datum	   *listvalue;
 			bool	   *listnull;
-			JsonbIterator **listiter;
-			array_iter *array_iter;
-			int 	   *array_size;
-			int		   *array_position;
-			Oid 	   *array_typid;
-			int16	   *typlen;
-			bool	   *typbyval;
-			char	   *typalign;
-			bool		is_array_type;
+			JsonbIterator **jsonb_list_iterator;
+			struct CypherListCompArrayIterator *array_iterator;
 			bool	   *is_null_list_or_array;
 		}			cypherlistcomp_iter;
 
@@ -803,6 +797,17 @@ typedef struct CypherAccessPathElem
 	CypherIndexResult lidx;
 	CypherIndexResult uidx;
 } CypherAccessPathElem;
+
+typedef struct CypherListCompArrayIterator
+{
+	array_iter array_iter;
+	int			array_size;
+	int			array_position;
+	Oid			array_typid;
+	int16		typlen;
+	bool		typbyval;
+	char		typalign;
+} CypherListCompArrayIterator;
 
 
 /* functions in execExpr.c */

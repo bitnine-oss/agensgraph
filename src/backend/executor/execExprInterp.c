@@ -5277,7 +5277,7 @@ ExecEvalCypherListCompEnd(ExprState *state, ExprEvalStep *op)
 void
 ExecEvalCypherListCompIterInit(ExprState *state, ExprEvalStep *op)
 {
-	if (!op->d.cypherlistcomp_iter.is_array_type)
+	if (op->d.cypherlistcomp_iter.jsonb_list_iterator != NULL)
 	{
 		Jsonb	   *listjb;
 		JsonbIterator **ji;
@@ -5288,23 +5288,25 @@ ExecEvalCypherListCompIterInit(ExprState *state, ExprEvalStep *op)
 		listjb = DatumGetJsonbP(*op->d.cypherlistcomp_iter.listvalue);
 		*op->d.cypherlistcomp_iter.is_null_list_or_array = !JB_ROOT_IS_ARRAY(listjb) || JB_ROOT_IS_SCALAR(listjb);
 
-		ji = op->d.cypherlistcomp_iter.listiter;
+		ji = op->d.cypherlistcomp_iter.jsonb_list_iterator;
 		*ji = JsonbIteratorInit(&listjb->root);
 		JsonbIteratorNext(ji, &jv, false);
 	}
 	else
 	{
-		array_iter	*it = op->d.cypherlistcomp_iter.array_iter;
+		CypherListCompArrayIterator *cypher_array_iter = op->d.cypherlistcomp_iter.array_iterator;
+		array_iter *it = &cypher_array_iter->array_iter;
 		AnyArrayType *array = DatumGetAnyArrayP(*op->d.cypherlistcomp_iter.listvalue);
-		*op->d.cypherlistcomp_iter.array_size = ArrayGetNItems(AARR_NDIM(array),
-															   AARR_DIMS(array));
-		*op->d.cypherlistcomp_iter.array_position = 0;
-		*op->d.cypherlistcomp_iter.array_typid = AARR_ELEMTYPE(array);
 
-		get_typlenbyvalalign(*op->d.cypherlistcomp_iter.array_typid,
-							 op->d.cypherlistcomp_iter.typlen,
-							 op->d.cypherlistcomp_iter.typbyval,
-							 op->d.cypherlistcomp_iter.typalign);
+		cypher_array_iter->array_size = ArrayGetNItems(AARR_NDIM(array),
+													   AARR_DIMS(array));
+		cypher_array_iter->array_position = 0;
+		cypher_array_iter->array_typid = AARR_ELEMTYPE(array);
+
+		get_typlenbyvalalign(cypher_array_iter->array_typid,
+							 &cypher_array_iter->typlen,
+							 &cypher_array_iter->typbyval,
+							 &cypher_array_iter->typalign);
 		array_iter_setup(it, array);
 	}
 }
@@ -5312,10 +5314,10 @@ ExecEvalCypherListCompIterInit(ExprState *state, ExprEvalStep *op)
 void
 ExecEvalCypherListCompIterInitNext(ExprState *state, ExprEvalStep *op)
 {
-	if (!op->d.cypherlistcomp_iter.is_array_type)
+	if (op->d.cypherlistcomp_iter.jsonb_list_iterator != NULL)
 	{
 		JsonbIterator **ji;
-		JsonbValue jv;
+		JsonbValue	jv;
 		JsonbIteratorToken jt;
 
 		if (*op->d.cypherlistcomp_iter.is_null_list_or_array)
@@ -5325,7 +5327,7 @@ ExecEvalCypherListCompIterInitNext(ExprState *state, ExprEvalStep *op)
 			return;
 		}
 
-		ji = op->d.cypherlistcomp_iter.listiter;
+		ji = op->d.cypherlistcomp_iter.jsonb_list_iterator;
 		jt = JsonbIteratorNext(ji, &jv, true);
 		if (jt == WJB_ELEM)
 		{
@@ -5340,28 +5342,29 @@ ExecEvalCypherListCompIterInitNext(ExprState *state, ExprEvalStep *op)
 	}
 	else
 	{
-		Datum vertex_or_edge_datum;
+		CypherListCompArrayIterator *array_iter = op->d.cypherlistcomp_iter.array_iterator;
+		Datum		vertex_or_edge_datum;
 
-		if (*op->d.cypherlistcomp_iter.array_position >= *op->d.cypherlistcomp_iter.array_size)
+		if (array_iter->array_position >= array_iter->array_size)
 		{
 			*op->resvalue = (Datum) 0;
 			*op->resnull = true;
 			return;
 		}
 
-		vertex_or_edge_datum = array_iter_next(op->d.cypherlistcomp_iter.array_iter,
+		vertex_or_edge_datum = array_iter_next(&array_iter->array_iter,
 											   op->resnull,
-											   (*op->d.cypherlistcomp_iter.array_position)++,
-											   *op->d.cypherlistcomp_iter.typlen,
-											   *op->d.cypherlistcomp_iter.typbyval,
-											   *op->d.cypherlistcomp_iter.typalign);
+											   array_iter->array_position++,
+											   array_iter->typlen,
+											   array_iter->typbyval,
+											   array_iter->typalign);
 
 		if (*op->resnull)
 		{
 			return;
 		}
 
-		if (*op->d.cypherlistcomp_iter.array_typid == VERTEXOID)
+		if (array_iter->array_typid == VERTEXOID)
 		{
 			*op->resvalue = getVertexPropDatum(vertex_or_edge_datum);
 		}

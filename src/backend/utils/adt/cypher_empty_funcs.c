@@ -19,9 +19,10 @@ cypher_to_jsonb(PG_FUNCTION_ARGS)
 	return to_jsonb(fcinfo);
 }
 
-Datum cypher_isempty_jsonb(PG_FUNCTION_ARGS)
+Datum
+cypher_isempty_jsonb(PG_FUNCTION_ARGS)
 {
-	Jsonb *jb = PG_GETARG_JSONB_P(0);
+	Jsonb	   *jb = PG_GETARG_JSONB_P(0);
 
 	if (JB_ROOT_IS_SCALAR(jb))
 	{
@@ -40,6 +41,6 @@ Datum cypher_isempty_jsonb(PG_FUNCTION_ARGS)
 
 	ereport(ERROR,
 			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-					errmsg("isEmpty(): list or object or string is expected but %s",
-						   JsonbToCString(NULL, &jb->root, VARSIZE(jb)))));
+			 errmsg("isEmpty(): list or object or string is expected but %s",
+					JsonbToCString(NULL, &jb->root, VARSIZE(jb)))));
 }
