@@ -722,9 +722,15 @@ transformCypherListComp(ParseState *pstate, CypherListComp *clc)
 
 	list = transformCypherExprRecurse(pstate, (Node *) clc->list);
 	type = exprType(list);
-	if (type != JSONBOID)
-	{
-		list = coerce_all_to_jsonb(pstate, list);
+
+	switch (type) {
+		case JSONBOID:
+		case VERTEXARRAYOID:
+		case EDGEARRAYOID:
+			break;
+		default:
+			list = coerce_all_to_jsonb(pstate, list);
+			break;
 	}
 
 	save_varname = pstate->p_lc_varname;

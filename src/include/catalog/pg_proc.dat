@@ -12017,6 +12017,9 @@
 { oid => '7247', descr => 'map input to jsonb (cypher)',
   proname => 'cypher_to_jsonb', prorettype => 'jsonb',
   proargtypes => 'anyelement', prosrc => 'cypher_to_jsonb' },
+{ oid => '7248', descr => 'is jsonb empty?',
+  proname => 'isempty', prorettype => 'bool',
+  proargtypes => 'jsonb', prosrc => 'cypher_isempty_jsonb' },
 
 # agensgraph array functions
 { oid => '7300', descr => 'the first element in a array',

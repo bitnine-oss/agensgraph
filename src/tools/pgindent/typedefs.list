@@ -3858,3 +3858,4 @@ GraphVLEPath
 GraphVLE
 GraphVLEState
 VLEDepthCtx
+CypherListCompArrayIterator
