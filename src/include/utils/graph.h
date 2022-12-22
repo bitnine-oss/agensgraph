@@ -16,6 +16,7 @@
 #include "storage/itemptr.h"
 #include "utils/snapshot.h"
 #include "utils/relcache.h"
+#include "nodes/primnodes.h"
 
 typedef uint64 Graphid;
 typedef uint16 Labid;

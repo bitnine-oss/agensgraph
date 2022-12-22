@@ -39,6 +39,7 @@
 #include "access/table.h"
 #include "access/tableam.h"
 #include "utils/fmgroids.h"
+#include "utils/datum.h"
 
 #define GRAPHID_FMTSTR			"%hu." UINT64_FORMAT
 #define GRAPHID_BUFLEN			32	/* "65535.281474976710655" */
