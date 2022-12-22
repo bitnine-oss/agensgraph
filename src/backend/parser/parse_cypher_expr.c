@@ -721,9 +721,15 @@ transformCypherListComp(ParseState *pstate, CypherListComp *clc)
 
 	list = transformCypherExprRecurse(pstate, (Node *) clc->list);
 	type = exprType(list);
-	if (type != JSONBOID)
-	{
-		list = coerce_all_to_jsonb(pstate, list);
+
+	switch (type) {
+		case JSONBOID:
+		case VERTEXARRAYOID:
+		case EDGEARRAYOID:
+			break;
+		default:
+			list = coerce_all_to_jsonb(pstate, list);
+			break;
 	}
 
 	save_varname = pstate->p_lc_varname;
@@ -882,6 +888,9 @@ transformFuncCall(ParseState *pstate, FuncCall *fn)
 			/* translate log() into ln() for cypher queries */
 		else if (strcmp(funcname, "log") == 0)
 			fn->funcname = list_make1(makeString("ln"));
+		/* Resolve isEmpty(..) function duplicates. */
+		else if (strcmp(funcname, "isempty") == 0)
+			fn->funcname = list_make1(makeString("cypher_jsonb_isempty"));
 	}
 
 	args = preprocess_func_args(pstate, fn);
