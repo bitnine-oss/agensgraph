@@ -15,10 +15,26 @@ RETURN max(col);
 
 CREATE ELABEL e1;
 
+CREATE (a: v1 {id: 1})
+CREATE (b: v1 {id: 2})
+CREATE (a)-[r:e1 {text: 'text'}]->(b)
+RETURN r;
+
+CREATE (a: v1 {id: 3})
+CREATE (b: v1 {id: 4})
+CREATE (a)-[r:e1 {id: 5, text: 'text'}]->(b)
+RETURN r;
+
 -- AGV2-29, Predicates functions want jsonb, not list
-MATCH p=(n1)-[r:e1*2]->(n2)
+MATCH p=(n1)-[r:e1*1]->(n2)
 WHERE all(x in r where x.id is null)
-RETURN count(p);
+RETURN count(p), p;
+
+MATCH p=(n1)-[r:e1*1]->(n2)
+WHERE all(x in r where x.text is not null)
+RETURN count(p), p;
+
+MATCH (n) DETACH DELETE n;
 
 -- AGV2-26, head/tail/last returns array
 CREATE(:v_user{name:'userA'});
@@ -39,6 +55,78 @@ MATCH(n)-[e*3]->(n3) RETURN e;
 MATCH(n)-[e*3]->(n3) RETURN head(e);
 MATCH(n)-[e*3]->(n3) RETURN tail(e);
 MATCH(n)-[e*3]->(n3) RETURN last(e);
+
+MATCH (n) DETACH DELETE n;
+
+CREATE (a:person);
+create (a:person {name: 'Alice', age: 51, eyes: 'brown'}),
+(b:person {name: 'Frank', age: 61, eyes: '', liked_colors: ['blue','green']}),
+(c:person {name: 'Charlie', age: 53, eyes: 'green'}),
+(d:person {name: 'Bob', age: 25, eyes: 'blue'}),
+(e:person {name: 'Daniel', age: 54, eyes: 'brown', liked_colors: ''}),
+(f:person {name: 'Eskil', age: 41, eyes: 'blue', liked_colors: ['pink','yellow','black']}),
+(a)-[:knows]->(c),
+(a)-[:knows]->(d),
+(c)-[:knows]->(e),
+(d)-[:knows]->(e),
+(d)-[:married]->(f);
+
+-- all(..)
+MATCH p = (a)-[*1..3]->(b)
+WHERE
+a.name = 'Alice'
+AND b.name = 'Daniel'
+AND all(x IN nodes(p) WHERE x.age > 30)
+RETURN [x in nodes(p) | x.age];
+
+-- any(..)
+MATCH (n)
+WHERE any(color IN n.liked_colors WHERE color = 'yellow')
+RETURN n ;
+
+-- exists(..)
+MATCH (n)
+WHERE n.name IS NOT NULL
+RETURN
+n.name AS name,
+exists((n)-[:MARRIED]->()) AS is_married;
+
+-- isEmpty(..)
+-- List
+MATCH (n)
+WHERE NOT isEmpty(n.liked_colors)
+RETURN n ;
+
+-- Map
+MATCH (n)
+WHERE isEmpty(properties(n))
+RETURN n ;
+
+MATCH (n)
+WHERE NOT isEmpty(properties(n))
+RETURN n ;
+
+-- String
+MATCH (n)
+WHERE isEmpty(n.eyes)
+RETURN n.age AS age ;
+
+-- none(..)
+MATCH p = (n)-[*1..3]->(b)
+WHERE
+n.name = 'Alice'
+AND none(x IN nodes(p) WHERE x.age = 25)
+RETURN p ;
+
+-- single(..)
+MATCH p = (n)-[]->(b)
+WHERE
+n.name = 'Alice'
+AND single(var IN nodes(p) WHERE var.eyes = 'blue')
+RETURN p ;
+
+MATCH (n) DETACH DELETE n;
+MATCH (n) RETURN n;
 
 -- Trigger
 CREATE TEMPORARY TABLE _trigger_history(

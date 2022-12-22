@@ -45,6 +45,9 @@
 #include "utils/builtins.h"
 #include "utils/lsyscache.h"
 #include "utils/typcache.h"
+#include "parser/parse_type.h"
+#include "utils/fmgroids.h"
+#include "utils/syscache.h"
 
 
 typedef struct LastAttnumInfo
@@ -3713,8 +3716,17 @@ ExecInitCypherListComp(ExprEvalStep *scratch, CypherListCompExpr *listcompexpr,
 	ExprEvalStep elem_step;
 	ExprEvalStep loop_step;
 	int			end_stepno;
+	bool		is_array_type;
 
-	Assert(exprType((Node *) listcompexpr->list) == JSONBOID);
+	Type		targetType;
+	Form_pg_type typeForm;
+
+	targetType = typeidType(exprType((const Node *) listcompexpr->list));
+	typeForm = (Form_pg_type) GETSTRUCT(targetType);
+
+	is_array_type = typeForm->typelem != InvalidOid &&
+					typeForm->typstorage != 'p';
+	ReleaseSysCache(targetType);
 
 	ExecInitExprRec(listcompexpr->list, state, scratch->resvalue,
 					scratch->resnull);
@@ -3736,8 +3748,24 @@ ExecInitCypherListComp(ExprEvalStep *scratch, CypherListCompExpr *listcompexpr,
 	init_step.opcode = EEOP_CYPHERLISTCOMP_ITER_INIT;
 	init_step.d.cypherlistcomp_iter.listvalue = scratch->resvalue;
 	init_step.d.cypherlistcomp_iter.listnull = scratch->resnull;
-	init_step.d.cypherlistcomp_iter.listiter =
-		(JsonbIterator **) palloc(sizeof(JsonbIterator *));
+
+	init_step.d.cypherlistcomp_iter.is_null_list_or_array =
+		(bool *) palloc(sizeof(bool));
+	*init_step.d.cypherlistcomp_iter.is_null_list_or_array = false;
+
+	if (is_array_type)
+	{
+		init_step.d.cypherlistcomp_iter.jsonb_list_iterator = NULL;
+		init_step.d.cypherlistcomp_iter.array_iterator =
+			(CypherListCompArrayIterator *) palloc(sizeof(CypherListCompArrayIterator));
+	}
+	else
+	{
+		init_step.d.cypherlistcomp_iter.jsonb_list_iterator =
+			(JsonbIterator **) palloc(sizeof(JsonbIterator *));
+		init_step.d.cypherlistcomp_iter.array_iterator = NULL;
+	}
+
 	ExprEvalPushStep(state, &init_step);
 
 	elem_resvalue = (Datum *) palloc(sizeof(Datum));
@@ -3746,8 +3774,13 @@ ExecInitCypherListComp(ExprEvalStep *scratch, CypherListCompExpr *listcompexpr,
 	next_step.opcode = EEOP_CYPHERLISTCOMP_ITER_NEXT;
 	next_step.resvalue = elem_resvalue;
 	next_step.resnull = elem_resnull;
-	next_step.d.cypherlistcomp_iter.listiter =
-		init_step.d.cypherlistcomp_iter.listiter;
+	next_step.d.cypherlistcomp_iter.is_null_list_or_array =
+		init_step.d.cypherlistcomp_iter.is_null_list_or_array;
+	next_step.d.cypherlistcomp_iter.jsonb_list_iterator =
+		init_step.d.cypherlistcomp_iter.jsonb_list_iterator;
+	next_step.d.cypherlistcomp_iter.array_iterator =
+		init_step.d.cypherlistcomp_iter.array_iterator;
+
 	ExprEvalPushStep(state, &next_step);
 	next_stepno = state->steps_len - 1;
 

@@ -17,11 +17,13 @@
 #include "executor/nodeAgg.h"
 #include "nodes/execnodes.h"
 #include "utils/jsonb.h"
+#include "utils/arrayaccess.h"
 
 /* forward references to avoid circularity */
 struct ExprEvalStep;
 struct SubscriptingRefState;
 struct CypherAccessPathElem;
+struct CypherListCompArrayIterator;
 
 /* Bits in ExprState->flags (see also execnodes.h for public flag bits): */
 /* expression's interpreter has been initialized */
@@ -713,7 +715,9 @@ typedef struct ExprEvalStep
 		{
 			Datum	   *listvalue;
 			bool	   *listnull;
-			JsonbIterator **listiter;
+			JsonbIterator **jsonb_list_iterator;
+			struct CypherListCompArrayIterator *array_iterator;
+			bool	   *is_null_list_or_array;
 		}			cypherlistcomp_iter;
 
 		struct
@@ -790,6 +794,17 @@ typedef struct CypherAccessPathElem
 	CypherIndexResult uidx;
 } CypherAccessPathElem;
 
+typedef struct CypherListCompArrayIterator
+{
+	array_iter array_iter;
+	int			array_size;
+	int			array_position;
+	Oid			array_typid;
+	int16		typlen;
+	bool		typbyval;
+	char		typalign;
+} CypherListCompArrayIterator;
+
 
 /* functions in execExpr.c */
 extern void ExprEvalPushStep(ExprState *es, const ExprEvalStep *s);
@@ -865,5 +880,12 @@ extern void ExecEvalCypherTypeCast(ExprState *state, ExprEvalStep *op);
 extern void ExecEvalCypherMapExpr(ExprState *state, ExprEvalStep *op);
 extern void ExecEvalCypherListExpr(ExprState *state, ExprEvalStep *op);
 extern void ExecEvalCypherAccessExpr(ExprState *state, ExprEvalStep *op);
+extern void ExecEvalCypherListCompBegin(ExprState *state, ExprEvalStep *op);
+extern void ExecEvalCypherListCompElem(ExprState *state, ExprEvalStep *op);
+extern void ExecEvalCypherListCompEnd(ExprState *state, ExprEvalStep *op);
+extern void ExecEvalCypherListCompIterInit(ExprState *state, ExprEvalStep *op);
+extern void ExecEvalCypherListCompIterInitNext(ExprState *state,
+											   ExprEvalStep *op);
+extern void ExecEvalCypherListCompVar(ExprState *state, ExprEvalStep *op);
 
 #endif							/* EXEC_EXPR_H */
