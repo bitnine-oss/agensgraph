@@ -5452,6 +5452,19 @@ _copyGraphDelElem(const GraphDelElem *from)
 	return newnode;
 }
 
+static GraphVLE *
+_copyGraphVLE(const GraphVLE *from)
+{
+	GraphVLE *newnode = makeNode(GraphVLE);
+
+	CopyPlanFields((const Plan *) from, (Plan *) newnode);
+
+	COPY_NODE_FIELD(subplan);
+	COPY_NODE_FIELD(vle_rel);
+
+	return newnode;
+}
+
 /* ****************************************************************
  *					extensible.h copy functions
  * ****************************************************************
@@ -6562,6 +6575,9 @@ copyObjectImpl(const void *from)
 			break;
 		case T_GraphDelElem:
 			retval = _copyGraphDelElem(from);
+			break;
+		case T_GraphVLE:
+			retval = _copyGraphVLE(from);
 			break;
 
 			/*
