@@ -272,7 +272,7 @@ ChoosePortalStrategy(List *stmts)
 				{
 					if (pstmt->hasGraphwriteClause)
 					{
-						return PORTAL_MULTI_QUERY;
+						return PORTAL_ONE_MOD_WITH;
 					}
 
 					if (pstmt->hasModifyingCTE)
