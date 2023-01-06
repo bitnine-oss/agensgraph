@@ -80,6 +80,7 @@ static TupleTableSlot *
 createMergePath(ModifyGraphState *mgstate, GraphPath *path,
 				TupleTableSlot *slot)
 {
+	EState	   *estate = mgstate->ps.state;
 	bool		out = (path->variable != NULL);
 	int			pathlen;
 	Datum	   *vertices = NULL;
@@ -114,7 +115,16 @@ createMergePath(ModifyGraphState *mgstate, GraphPath *path,
 
 			vertex = findVertex(slot, gvertex, &vid);
 			if (vertex == (Datum) 0)
+			{
+				if (estate->es_epq_active != NULL)
+				{
+					ereport(ERROR,
+							(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+									errmsg("EPQ: Cannot find a vertex")));
+				}
+
 				vertex = createMergeVertex(mgstate, gvertex, &vid, slot);
+			}
 
 			if (out)
 				vertices[nvertices++] = vertex;
@@ -124,7 +134,12 @@ createMergePath(ModifyGraphState *mgstate, GraphPath *path,
 				Datum		edge;
 
 				edge = findEdge(slot, gedge, NULL);
-				Assert(edge == (Datum) 0);
+				if (edge == (Datum) 0 && estate->es_epq_active != NULL)
+				{
+					ereport(ERROR,
+							(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+									errmsg("EPQ: Cannot find an edge")));
+				}
 
 				if (gedge->direction == GRAPH_EDGE_DIR_LEFT)
 				{

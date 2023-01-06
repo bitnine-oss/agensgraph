@@ -56,6 +56,7 @@ ExecCreateGraph(ModifyGraphState *mgstate, TupleTableSlot *slot)
 static TupleTableSlot *
 createPath(ModifyGraphState *mgstate, GraphPath *path, TupleTableSlot *slot)
 {
+	EState	   *estate = mgstate->ps.state;
 	bool		out = (path->variable != NULL);
 	int			pathlen;
 	Datum	   *vertices = NULL;
@@ -88,7 +89,7 @@ createPath(ModifyGraphState *mgstate, GraphPath *path, TupleTableSlot *slot)
 			Graphid		vid;
 			Datum		vertex;
 
-			if (gvertex->create)
+			if (gvertex->create && estate->es_epq_active == NULL)
 				vertex = createVertex(mgstate, gvertex, &vid, slot);
 			else
 				vertex = findVertex(slot, gvertex, &vid);
@@ -101,6 +102,18 @@ createPath(ModifyGraphState *mgstate, GraphPath *path, TupleTableSlot *slot)
 			if (gedge != NULL)
 			{
 				Datum		edge;
+
+				if (estate->es_epq_active != NULL)
+				{
+					edge = findEdge(slot, gedge, NULL);
+					if (edge == (Datum) 0)
+					{
+						ereport(ERROR,
+								(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+										errmsg("EPQ: Cannot find an edge")));
+
+					}
+				}
 
 				if (gedge->direction == GRAPH_EDGE_DIR_LEFT)
 				{

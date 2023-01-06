@@ -389,14 +389,6 @@ lreplace:
 			{
 				TupleTableSlot *epqslot;
 				TupleTableSlot *inputslot;
-				ModifyGraph *plan = (ModifyGraph *) mgstate->ps.plan;
-
-				if (plan->nr_modify > 0)
-				{
-					ereport(ERROR,
-							(errcode(ERRCODE_T_R_SERIALIZATION_FAILURE),
-							 errmsg("could not serialize access due to concurrent update")));
-				}
 
 				if (IsolationUsesXactSnapshot())
 					ereport(ERROR,
