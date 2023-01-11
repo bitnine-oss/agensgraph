@@ -2615,6 +2615,8 @@ typedef struct ModifyGraphState
 	List	   *sets;			/* list of GraphSetProp's for SET/REMOVE */
 	HTAB	   *elemTable;
 	Tuplestorestate *tuplestorestate;
+	EPQState	mt_epqstate;
+	List	  **mt_arowmarks;
 } ModifyGraphState;
 
 typedef struct Hash2SideState

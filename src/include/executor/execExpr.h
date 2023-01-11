@@ -17,11 +17,13 @@
 #include "executor/nodeAgg.h"
 #include "nodes/execnodes.h"
 #include "utils/jsonb.h"
+#include "utils/arrayaccess.h"
 
 /* forward references to avoid circularity */
 struct ExprEvalStep;
 struct SubscriptingRefState;
 struct CypherAccessPathElem;
+struct CypherListCompArrayIterator;
 
 /* Bits in ExprState->flags (see also execnodes.h for public flag bits): */
 /* expression's interpreter has been initialized */
@@ -699,7 +701,9 @@ typedef struct ExprEvalStep
 		{
 			Datum	   *listvalue;
 			bool	   *listnull;
-			JsonbIterator **listiter;
+			JsonbIterator **jsonb_list_iterator;
+			struct CypherListCompArrayIterator *array_iterator;
+			bool	   *is_null_list_or_array;
 		}			cypherlistcomp_iter;
 
 		struct
@@ -775,6 +779,17 @@ typedef struct CypherAccessPathElem
 	CypherIndexResult lidx;
 	CypherIndexResult uidx;
 } CypherAccessPathElem;
+
+typedef struct CypherListCompArrayIterator
+{
+	array_iter array_iter;
+	int			array_size;
+	int			array_position;
+	Oid			array_typid;
+	int16		typlen;
+	bool		typbyval;
+	char		typalign;
+} CypherListCompArrayIterator;
 
 
 /* functions in execExpr.c */

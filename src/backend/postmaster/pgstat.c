@@ -6862,7 +6862,6 @@ get_agstat_stack_level(int nest_level)
 void
 agstat_count_edge_create(Graphid edge, Graphid start, Graphid end)
 {
-
 	int		nest_level;
 	bool	found;
 	Labid	edgelab;

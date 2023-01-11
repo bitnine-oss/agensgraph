@@ -32,6 +32,7 @@
 #include "utils/tuplestore.h"
 #include "access/table.h"
 #include "access/heapam.h"
+#include "commands/trigger.h"
 
 bool		enable_multiple_update = true;
 bool		auto_gather_graphmeta = false;
@@ -69,7 +70,7 @@ static TupleTableSlot *ExecDeleteGraph(ModifyGraphState *mgstate,
 									   TupleTableSlot *slot);
 static bool isDetachRequired(ModifyGraphState *mgstate);
 static bool isEdgeArrayOfPath(List *exprs, char *variable);
-static void deleteElem(ModifyGraphState *mgstate, Datum gid, ItemPointer tid,
+static void deleteElem(ModifyGraphState *mgstate, Datum gid, ItemPointer tupleid,
 					   Oid type);
 
 /* SET */
@@ -311,6 +312,13 @@ ExecInitModifyGraph(ModifyGraph *mgplan, EState *estate, int eflags)
 
 	initGraphWRStats(mgstate, mgplan->operation);
 
+	/* Initialize for EPQ. */
+	EvalPlanQualInit(&mgstate->mt_epqstate, estate, NULL, NIL,
+					 mgplan->epqParam);
+	mgstate->mt_arowmarks = (List **) palloc0(sizeof(List *) * 1);
+	EvalPlanQualSetPlan(&mgstate->mt_epqstate, mgplan->subplan,
+						mgstate->mt_arowmarks[0]);
+
 	if (mgstate->eagerness ||
 		(mgstate->sets != NIL && enable_multiple_update) ||
 		mgstate->exprs != NIL)
@@ -358,8 +366,19 @@ ExecModifyGraph(PlanState *pstate)
 
 			/* pass lower bound CID to subplan */
 			svCid = estate->es_snapshot->curcid;
-			estate->es_snapshot->curcid =
-					mgstate->modify_cid + MODIFY_CID_LOWER_BOUND;
+
+			switch (plan->operation)
+			{
+				case GWROP_MERGE:
+				case GWROP_DELETE:
+					estate->es_snapshot->curcid =
+							mgstate->modify_cid + MODIFY_CID_NLJOIN_MATCH;
+					break;
+				default:
+					estate->es_snapshot->curcid =
+							mgstate->modify_cid + MODIFY_CID_LOWER_BOUND;
+					break;
+			}
 
 			slot = ExecProcNode(mgstate->subplan);
 
@@ -523,6 +542,11 @@ ExecEndModifyGraph(ModifyGraphState *mgstate)
 	 * clean out the tuple table
 	 */
 	ExecClearTuple(mgstate->ps.ps_ResultTupleSlot);
+
+	/*
+	 * Terminate EPQ execution if active
+	 */
+	EvalPlanQualEnd(&mgstate->mt_epqstate);
 
 	ExecEndNode(mgstate->subplan);
 	ExecFreeExprContext(&mgstate->ps);
@@ -766,6 +790,7 @@ createVertex(ModifyGraphState *mgstate, GraphVertex *gvertex, Graphid *vid,
 	ResultRelInfo *savedResultRelInfo;
 	Datum		vertex;
 	Datum		vertexProp;
+	List	   *recheckIndexes = NIL;
 
 	resultRelInfo = getResultRelInfo(mgstate, gvertex->relid);
 	savedResultRelInfo = estate->es_result_relation_info;
@@ -798,6 +823,18 @@ createVertex(ModifyGraphState *mgstate, GraphVertex *gvertex, Graphid *vid,
 	elemTupleSlot->tts_tableOid = RelationGetRelid(resultRelInfo->ri_RelationDesc);
 
 	/*
+	 * BEFORE ROW INSERT Triggers.
+	 */
+	if (resultRelInfo->ri_TrigDesc &&
+		resultRelInfo->ri_TrigDesc->trig_insert_before_row)
+	{
+		if (!ExecBRInsertTriggers(estate, resultRelInfo, elemTupleSlot))
+		{
+			elog(ERROR, "Trigger must not be NULL on Cypher Clause.");
+		}
+	}
+
+	/*
 	 * Check the constraints of the tuple
 	 */
 	if (resultRelInfo->ri_RelationDesc->rd_att->constr != NULL)
@@ -812,8 +849,13 @@ createVertex(ModifyGraphState *mgstate, GraphVertex *gvertex, Graphid *vid,
 
 	/* insert index entries for the tuple */
 	if (resultRelInfo->ri_NumIndices > 0)
-		ExecInsertIndexTuples(elemTupleSlot, estate, false,
-							  NULL, NIL);
+		recheckIndexes = ExecInsertIndexTuples(elemTupleSlot, estate, false,
+											   NULL, NIL);
+
+	/* AFTER ROW INSERT Triggers */
+	ExecARInsertTriggers(estate, resultRelInfo, elemTupleSlot, recheckIndexes,
+						 NULL);
+	list_free(recheckIndexes);
 
 	vertex = makeGraphVertexDatum(elemTupleSlot->tts_values[0],
 								  elemTupleSlot->tts_values[1],
@@ -840,6 +882,7 @@ createEdge(ModifyGraphState *mgstate, GraphEdge *gedge, Graphid start,
 	Graphid		id = 0;
 	Datum		edge;
 	Datum		edgeProp;
+	List	   *recheckIndexes = NIL;
 
 	resultRelInfo = getResultRelInfo(mgstate, gedge->relid);
 	savedResultRelInfo = estate->es_result_relation_info;
@@ -869,6 +912,18 @@ createEdge(ModifyGraphState *mgstate, GraphEdge *gedge, Graphid start,
 	ExecMaterializeSlot(elemTupleSlot);
 	elemTupleSlot->tts_tableOid = RelationGetRelid(resultRelInfo->ri_RelationDesc);
 
+	/*
+	 * BEFORE ROW INSERT Triggers.
+	 */
+	if (resultRelInfo->ri_TrigDesc &&
+		resultRelInfo->ri_TrigDesc->trig_insert_before_row)
+	{
+		if (!ExecBRInsertTriggers(estate, resultRelInfo, elemTupleSlot))
+		{
+			elog(ERROR, "Trigger must not be NULL on Cypher Clause.");
+		}
+	}
+
 	if (resultRelInfo->ri_RelationDesc->rd_att->constr != NULL)
 		ExecConstraints(resultRelInfo, elemTupleSlot, estate);
 
@@ -877,8 +932,13 @@ createEdge(ModifyGraphState *mgstate, GraphEdge *gedge, Graphid start,
 					   0, NULL);
 
 	if (resultRelInfo->ri_NumIndices > 0)
-		ExecInsertIndexTuples(elemTupleSlot, estate, false,
-							  NULL, NIL);
+		recheckIndexes = ExecInsertIndexTuples(elemTupleSlot, estate, false,
+											   NULL, NIL);
+
+	/* AFTER ROW INSERT Triggers */
+	ExecARInsertTriggers(estate, resultRelInfo, elemTupleSlot, recheckIndexes,
+						 NULL);
+	list_free(recheckIndexes);
 
 	edge = makeGraphEdgeDatum(elemTupleSlot->tts_values[0],
 							  elemTupleSlot->tts_values[1],
@@ -1003,8 +1063,9 @@ isDetachRequired(ModifyGraphState *mgstate)
 }
 
 static void
-deleteElem(ModifyGraphState *mgstate, Datum gid, ItemPointer tid, Oid type)
+deleteElem(ModifyGraphState *mgstate, Datum gid, ItemPointer tupleid, Oid type)
 {
+	EPQState   *epqstate = &mgstate->mt_epqstate;
 	EState	   *estate = mgstate->ps.state;
 	Oid			relid;
 	ResultRelInfo *resultRelInfo;
@@ -1021,10 +1082,27 @@ deleteElem(ModifyGraphState *mgstate, Datum gid, ItemPointer tid, Oid type)
 	estate->es_result_relation_info = resultRelInfo;
 	resultRelationDesc = resultRelInfo->ri_RelationDesc;
 
+	if (resultRelInfo->ri_TrigDesc &&
+		resultRelInfo->ri_TrigDesc->trig_delete_before_row)
+	{
+		bool		dodelete;
+
+		dodelete = ExecBRDeleteTriggers(estate, epqstate, resultRelInfo,
+										tupleid, NULL, NULL);
+		if (!dodelete)
+		{
+			elog(ERROR, "cannot delete graph element, because of trigger action.");
+		}
+	}
+
 	/* see ExecDelete() */
-	result = heap_delete(resultRelationDesc, tid,
-						 mgstate->modify_cid + MODIFY_CID_OUTPUT,
-						 estate->es_crosscheck_snapshot, true, &hufd, false);
+	result = table_tuple_delete(resultRelationDesc, tupleid,
+								mgstate->modify_cid + MODIFY_CID_OUTPUT,
+								estate->es_snapshot,
+								estate->es_crosscheck_snapshot,
+								true,
+								&hufd, false);
+
 	switch (result)
 	{
 		case TM_SelfModified:
@@ -1047,6 +1125,10 @@ deleteElem(ModifyGraphState *mgstate, Datum gid, ItemPointer tid, Oid type)
 			elog(ERROR, "unrecognized heap_update status: %u", result);
 			return;
 	}
+
+	/* AFTER ROW DELETE Triggers */
+	ExecARDeleteTriggers(estate, resultRelInfo, tupleid, NULL,
+						 NULL);
 
 	/*
 	 * NOTE: VACUUM will delete index tuples associated with the heap tuple
@@ -1250,6 +1332,7 @@ static ItemPointer
 updateElemProp(ModifyGraphState *mgstate, Oid elemtype, Datum gid,
 			   Datum elem_datum)
 {
+	EPQState   *epqstate = &mgstate->mt_epqstate;
 	EState	   *estate = mgstate->ps.state;
 	TupleTableSlot *elemTupleSlot = mgstate->elemTupleSlot;
 	Oid			relid;
@@ -1261,6 +1344,7 @@ updateElemProp(ModifyGraphState *mgstate, Oid elemtype, Datum gid,
 	TM_Result	result;
 	TM_FailureData hufd;
 	bool		update_indexes;
+	List	   *recheckIndexes = NIL;
 
 	relid = get_labid_relid(mgstate->graphid,
 							GraphidGetLabid(DatumGetGraphid(gid)));
@@ -1299,6 +1383,15 @@ updateElemProp(ModifyGraphState *mgstate, Oid elemtype, Datum gid,
 		   elemTupleSlot->tts_tupleDescriptor->natts * sizeof(bool));
 	ExecStoreVirtualTuple(elemTupleSlot);
 
+	/* BEFORE ROW UPDATE Triggers */
+	if (resultRelInfo->ri_TrigDesc &&
+		resultRelInfo->ri_TrigDesc->trig_update_before_row)
+	{
+		if (!ExecBRUpdateTriggers(estate, epqstate, resultRelInfo,
+								  ctid, NULL, elemTupleSlot))
+			elog(ERROR, "cannot update graph element, because of trigger action.");
+	}
+
 	if (resultRelationDesc->rd_att->constr)
 		ExecConstraints(resultRelInfo, elemTupleSlot, estate);
 
@@ -1329,7 +1422,14 @@ updateElemProp(ModifyGraphState *mgstate, Oid elemtype, Datum gid,
 	}
 
 	if (resultRelInfo->ri_NumIndices > 0 && update_indexes)
-		ExecInsertIndexTuples(elemTupleSlot, estate, false, NULL, NIL);
+		recheckIndexes = ExecInsertIndexTuples(elemTupleSlot,
+											   estate,
+											   false, NULL, NIL);
+	/* AFTER ROW UPDATE Triggers */
+	ExecARUpdateTriggers(estate, resultRelInfo, ctid, NULL, elemTupleSlot,
+						 recheckIndexes, NULL);
+
+	list_free(recheckIndexes);
 
 	graphWriteStats.updateProperty++;
 
@@ -1509,6 +1609,7 @@ createMergeVertex(ModifyGraphState *mgstate, GraphVertex *gvertex,
 	Datum		vertexId;
 	Datum		vertexProp;
 	TupleTableSlot *insertSlot = mgstate->elemTupleSlot;
+	List	   *recheckIndexes = NIL;
 
 	resultRelInfo = getResultRelInfo(mgstate, gvertex->relid);
 	savedResultRelInfo = estate->es_result_relation_info;
@@ -1542,6 +1643,18 @@ createMergeVertex(ModifyGraphState *mgstate, GraphVertex *gvertex,
 	ExecMaterializeSlot(insertSlot);
 	insertSlot->tts_tableOid = RelationGetRelid(resultRelInfo->ri_RelationDesc);
 
+	/*
+	 * BEFORE ROW INSERT Triggers.
+	 */
+	if (resultRelInfo->ri_TrigDesc &&
+		resultRelInfo->ri_TrigDesc->trig_insert_before_row)
+	{
+		if (!ExecBRInsertTriggers(estate, resultRelInfo, insertSlot))
+		{
+			elog(ERROR, "Trigger must not be NULL on Cypher Clause.");
+		}
+	}
+
 	if (resultRelInfo->ri_RelationDesc->rd_att->constr != NULL)
 		ExecConstraints(resultRelInfo, insertSlot, estate);
 
@@ -1550,7 +1663,12 @@ createMergeVertex(ModifyGraphState *mgstate, GraphVertex *gvertex,
 					   0, NULL);
 
 	if (resultRelInfo->ri_NumIndices > 0)
-		ExecInsertIndexTuples(insertSlot, estate, false, NULL, NIL);
+		recheckIndexes = ExecInsertIndexTuples(insertSlot, estate, false, NULL, NIL);
+
+	/* AFTER ROW INSERT Triggers */
+	ExecARInsertTriggers(estate, resultRelInfo, insertSlot, recheckIndexes,
+						 NULL);
+	list_free(recheckIndexes);
 
 	vertex = makeGraphVertexDatum(insertSlot->tts_values[0],
 								  insertSlot->tts_values[1],
@@ -1578,6 +1696,7 @@ createMergeEdge(ModifyGraphState *mgstate, GraphEdge *gedge, Graphid start,
 	Datum		edge;
 	Datum		edgeProp;
 	TupleTableSlot *insertSlot = mgstate->elemTupleSlot;
+	List	   *recheckIndexes = NIL;
 
 	resultRelInfo = getResultRelInfo(mgstate, gedge->relid);
 	savedResultRelInfo = estate->es_result_relation_info;
@@ -1611,6 +1730,18 @@ createMergeEdge(ModifyGraphState *mgstate, GraphEdge *gedge, Graphid start,
 
 	insertSlot->tts_tableOid = RelationGetRelid(resultRelInfo->ri_RelationDesc);
 
+	/*
+	 * BEFORE ROW INSERT Triggers.
+	 */
+	if (resultRelInfo->ri_TrigDesc &&
+		resultRelInfo->ri_TrigDesc->trig_insert_before_row)
+	{
+		if (!ExecBRInsertTriggers(estate, resultRelInfo, insertSlot))
+		{
+			elog(ERROR, "Trigger must not be NULL on Cypher Clause.");
+		}
+	}
+
 	if (resultRelInfo->ri_RelationDesc->rd_att->constr != NULL)
 		ExecConstraints(resultRelInfo, insertSlot, estate);
 
@@ -1619,7 +1750,12 @@ createMergeEdge(ModifyGraphState *mgstate, GraphEdge *gedge, Graphid start,
 					   0, NULL);
 
 	if (resultRelInfo->ri_NumIndices > 0)
-		ExecInsertIndexTuples(insertSlot, estate, false, NULL, NIL);
+		recheckIndexes = ExecInsertIndexTuples(insertSlot, estate, false, NULL, NIL);
+
+	/* AFTER ROW INSERT Triggers */
+	ExecARInsertTriggers(estate, resultRelInfo, insertSlot, recheckIndexes,
+						 NULL);
+	list_free(recheckIndexes);
 
 	edge = makeGraphEdgeDatum(insertSlot->tts_values[0],
 							  insertSlot->tts_values[1],
