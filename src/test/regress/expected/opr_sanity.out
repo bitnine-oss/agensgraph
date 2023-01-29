@@ -319,7 +319,10 @@ ORDER BY 2;
  2400 | array_recv
  3506 | enum_in
  3532 | enum_recv
-(9 rows)
+ 8008 | range
+ 8009 | range
+ 8019 | split
+(12 rows)
 
 -- anyrange and anymultirange are tighter than the rest, can only resolve
 -- from each other

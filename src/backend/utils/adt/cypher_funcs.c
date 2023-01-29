@@ -65,11 +65,11 @@ static Datum range(int start, int end, int step);
 static Datum datum_to_text(Datum d, Oid typeid);
 static Datum datum_to_integer(Datum d, Oid typeid);
 static Datum datum_to_float(Datum d, Oid typeid);
-static int32 string_to_int(char* s);
-static float4 string_to_float(char* s);
+static int32 string_to_int(char *s);
+static float4 string_to_float(char *s);
 static void get_cstring_substr(char *c, char *res, int32 start, int32 len);
 static Timestamp dt2local(Timestamp dt, int timezone);
-static Timestamp get_timestamp_for_timezone(text* zone, TimestampTz timestamp);
+static Timestamp get_timestamp_for_timezone(text *zone, TimestampTz timestamp);
 
 Datum
 jsonb_head(PG_FUNCTION_ARGS)
@@ -1394,16 +1394,16 @@ array_tail(PG_FUNCTION_ARGS)
 	/* setup iterator for array and iterate once to ignore this element */
 	array_iter_setup(&it, arr);
 	array_iter_next(&it, &isnull, 0,
-				typlen, typbyval, typalign);
+					typlen, typbyval, typalign);
 
 	astate = initArrayResult(element_type, CurrentMemoryContext, false);
 
 	/* iterate over the array */
-	for (i = 1; i <nitems; i++)
+	for (i = 1; i < nitems; i++)
 	{
 		/* get datum at index i */
 		rtnelt = array_iter_next(&it, &isnull, i,
-				typlen, typbyval, typalign);
+								 typlen, typbyval, typalign);
 
 		astate =
 			accumArrayResult(astate, rtnelt, isnull,
@@ -1436,22 +1436,24 @@ str_size(PG_FUNCTION_ARGS)
 Datum
 array_size(PG_FUNCTION_ARGS)
 {
-	AnyArrayType 	*v = PG_GETARG_ANY_ARRAY_P(0);
+	AnyArrayType *v = PG_GETARG_ANY_ARRAY_P(0);
+
 	PG_RETURN_INT32(ArrayGetNItems(AARR_NDIM(v), AARR_DIMS(v)));
 }
 
 /*
  * int_to_bool and string_to_bool are two helper functions that are used by toBoolean() and toBooleanOrNull() functions
- *	The helper functions return either true or false which is mapped to differennt conditions in the two cypher functions. 
+ *	The helper functions return either true or false which is mapped to differennt conditions in the two cypher functions.
  *	The mapping logic is specified aas comments in the respective cypher functions
  */
 
-static 
-bool int_to_bool(int32 num, bool *result)
+static
+bool
+int_to_bool(int32 num, bool *result)
 {
 	if (num == 0)
 	{
-		if (result)			
+		if (result)
 			*result = false;	/* suppress compiler warning */
 		return true;
 	}
@@ -1463,70 +1465,73 @@ bool int_to_bool(int32 num, bool *result)
 	}
 
 	return false;
-		
-		
+
+
 }
 
-static 
-bool string_to_bool(const char *str, bool *result)
+static
+bool
+string_to_bool(const char *str, bool *result)
 {
 	size_t		len;
-	bool 		parseResult;
+	bool		parseResult;
 
 	/*
-	* Skip leading and trailing whitespace
-	*/
+	 * Skip leading and trailing whitespace
+	 */
 	while (isspace((unsigned char) *str))
 		str++;
 
 	len = strlen(str);
 	while (len > 0 && isspace((unsigned char) str[len - 1]))
 		len--;
-	
+
 	/* handle special case: boolean equivalent of an empty string is null */
-	if(len==0)
+	if (len == 0)
 	{
-		*result = true; /* result = true translates to returning null in the calling function */
+		*result = true;			/* result = true translates to returning null
+								 * in the calling function */
 		return false;
 	}
 
 
 	switch (*str)
 	{
-		/*
-		* boolin(yes) = true and boolin(no) = false, but the requirements state that toBoolean(yes) = null and toBoolean(no) = null.
-		* So, we explicitely map these conditions.
-		*/
+			/*
+			 * boolin(yes) = true and boolin(no) = false, but the requirements
+			 * state that toBoolean(yes) = null and toBoolean(no) = null. So,
+			 * we explicitely map these conditions.
+			 */
 		case 'y':
 		case 'Y':
-		{
-			if (pg_strcasecmp(str, "yes") == 0)
 			{
-				*result = true;
-				return false;
+				if (pg_strcasecmp(str, "yes") == 0)
+				{
+					*result = true;
+					return false;
+				}
+				break;
 			}
-			break;
-		}			
 		case 'n':
 		case 'N':
-		{
-			if ((pg_strcasecmp(str, "no") == 0))
 			{
-				*result = true;
-				return false;
+				if ((pg_strcasecmp(str, "no") == 0))
+				{
+					*result = true;
+					return false;
+				}
+				break;
 			}
-			break;
-		}			
 		default:
-		{
-			if(parse_bool_with_len(str, len, &parseResult))
 			{
-				*result = parseResult;
-				return true;	
+				if (parse_bool_with_len(str, len, &parseResult))
+				{
+					*result = parseResult;
+					return true;
+				}
 			}
-		}
-			
-						
+
+
 	}
 
 	if (result)
@@ -1537,78 +1542,78 @@ bool string_to_bool(const char *str, bool *result)
 
 /*
  * datum_toboolean:
- *		returns the boolean equivalent of integers, jsonb and booleans 
+ *		returns the boolean equivalent of integers, jsonb and booleans
  *		example: toboolean(1) = true, toboolean(false) = false
  * 				 tolboolean(12.5) = ERROR
  */
-Datum 
+Datum
 datum_toboolean(PG_FUNCTION_ARGS)
 {
-	
-	Oid			typeid = get_fn_expr_argtype(fcinfo->flinfo, 0);
-	bool    	result;
-	int32 		num;
 
-	switch(typeid)
+	Oid			typeid = get_fn_expr_argtype(fcinfo->flinfo, 0);
+	bool		result;
+	int32		num;
+
+	switch (typeid)
 	{
 		case INT2OID:
 		case INT4OID:
 		case INT8OID:
-		{
-			num = PG_GETARG_INT32(0);
+			{
+				num = PG_GETARG_INT32(0);
 
-			if(int_to_bool(num, &result))
-				PG_RETURN_BOOL(result);
-			
-			else 
-				ereport(ERROR,
-				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				errmsg("Invalid input integer for toBoolean(): %d", num)));	
-			
-			break;
-		}			
-		
+				if (int_to_bool(num, &result))
+					PG_RETURN_BOOL(result);
+
+				else
+					ereport(ERROR,
+							(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+							 errmsg("Invalid input integer for toBoolean(): %d", num)));
+
+				break;
+			}
+
 		case BOOLOID:
-		{
-			PG_RETURN_BOOL(PG_GETARG_BOOL(0));
-			break;
-		}			
+			{
+				PG_RETURN_BOOL(PG_GETARG_BOOL(0));
+				break;
+			}
 
 		default:
 			break;
 	}
 
 	ereport(ERROR,
-		(errcode(ERRCODE_UNDEFINED_PARAMETER),
-		errmsg("Invalid input type for toBoolean()")));	
+			(errcode(ERRCODE_UNDEFINED_PARAMETER),
+			 errmsg("Invalid input type for toBoolean()")));
 }
 
 
 /*
  * string_tobooleanornull:
- *		returns the boolean or nullequivalent of strings 
+ *		returns the boolean or nullequivalent of strings
  *		example: tobooleanornull('true') = true, tobooleanornull('f') = false
  * 				 tobooleanornull('') = null, tobooleanornull('hello') = null
  */
-Datum 
+Datum
 string_tobooleanornull(PG_FUNCTION_ARGS)
 {
-	const text 	*in_text = DatumGetTextPP(PG_GETARG_DATUM(0));
-	const char* in_str = text_to_cstring(in_text);
-	bool result;
+	const text *in_text = DatumGetTextPP(PG_GETARG_DATUM(0));
+	const char *in_str = text_to_cstring(in_text);
+	bool		result;
 
-	if(string_to_bool(in_str, &result))
+	if (string_to_bool(in_str, &result))
 		PG_RETURN_BOOL(result);
-	
-	else		
+
+	else
 		PG_RETURN_NULL();
-	
+
 }
 
 
 /*
  * datum_tobooleanornull:
- *		returns the boolean equivalent of integers, jsonb and booleans 
+ *		returns the boolean equivalent of integers, jsonb and booleans
  *		example: tobooleanornull(1) = true, tobooleanornull(false) = false
  * 				 tobooleanornull(12.5) = null
  */
@@ -1617,101 +1622,105 @@ datum_tobooleanornull(PG_FUNCTION_ARGS)
 {
 	Oid			typeid = get_fn_expr_argtype(fcinfo->flinfo, 0);
 	bool		result;
-	int32 		num;
+	int32		num;
 
-	switch (typeid){
+	switch (typeid)
+	{
 		case VARCHAROID:
 		case BPCHAROID:
 		case TEXTOID:
-		{
-			PG_RETURN_BOOL(string_tobooleanornull(fcinfo));
-			break;
-		}				
+			{
+				PG_RETURN_BOOL(string_tobooleanornull(fcinfo));
+				break;
+			}
 
 		case BOOLOID:
-		{
-			PG_RETURN_BOOL(PG_GETARG_BOOL(0));
-			break;
-		}			
+			{
+				PG_RETURN_BOOL(PG_GETARG_BOOL(0));
+				break;
+			}
 
 		case INT2OID:
 		case INT4OID:
 		case INT8OID:
-		{
-			num = PG_GETARG_INT32(0);
+			{
+				num = PG_GETARG_INT32(0);
 
-			if(int_to_bool(num, &result))
-				PG_RETURN_BOOL(result);
-			
-			else 
-				PG_RETURN_NULL();			
-			break;
-		}			
+				if (int_to_bool(num, &result))
+					PG_RETURN_BOOL(result);
+
+				else
+					PG_RETURN_NULL();
+				break;
+			}
 
 		case JSONBOID:
-		{
-			PG_RETURN_BOOL(jsonb_toboolean(fcinfo));
-			break;
-		}
-			
+			{
+				PG_RETURN_BOOL(jsonb_toboolean(fcinfo));
+				break;
+			}
+
 
 		default:
 			break;
-	}	
-	PG_RETURN_NULL();	
+	}
+	PG_RETURN_NULL();
 }
 
 
 /*
  * range:
- *		returns an array with the series from start to end with an optional step value 
+ *		returns an array with the series from start to end with an optional step value
  *		example: range(1,10) = [0,1,2,3,4,5,6,7,8,9,10], range(1,11,3) = [1,4,7,10]
  * 				 range(1,10, -3) = []
  */
 Datum
 range(int32 start, int32 end, int32 step)
 {
-	int32 		len = (int32) floor((end - start + step) / step),
+	int32		len = (int32) floor((end - start + step) / step),
 				counter = 0;
-	ArrayType 	*arr;
+	ArrayType  *arr;
 
 	/* sanity checks */
-	if(len<=0)
+	if (len <= 0)
 	{
 		arr = construct_array(NULL, 0, INT4OID, sizeof(int32), true, 'i');
 	}
 
-	else if(((start<=end) && step<0 ) || ((start>=end) && step>0))
+	else if (((start <= end) && step < 0) || ((start >= end) && step > 0))
 	{
 		arr = construct_array(NULL, 0, INT4OID, sizeof(int32), true, 'i');
 	}
 
-	else /* all sanity checks have passed, the series has to be generated and an array has to be created */
+	else						/* all sanity checks have passed, the series
+								 * has to be generated and an array has to be
+								 * created */
 	{
-		Datum 	*elements = (Datum *) palloc(sizeof(Datum) * len);
-		if(step<0)
+		Datum	   *elements = (Datum *) palloc(sizeof(Datum) * len);
+
+		if (step < 0)
 		{
-			while(start>=end)
+			while (start >= end)
 			{
 				elements[counter++] = start;
-				start+=step;
+				start += step;
 			}
 		}
 		else
 		{
-			while(start<=end)
+			while (start <= end)
 			{
 				elements[counter++] = start;
-				start+=step;
+				start += step;
 			}
-		}		
+		}
 
 		arr = construct_array(elements, len, INT4OID, sizeof(int32), true, 'i');
 
 		/* free pointers */
 		pfree(elements);
 	}
-	
+
 
 	PG_RETURN_POINTER(arr);
 }
@@ -1720,14 +1729,14 @@ range(int32 start, int32 end, int32 step)
 Datum
 range_2_args(PG_FUNCTION_ARGS)
 {
-	int32 start = PG_GETARG_INT32(0);
-	int32 end = PG_GETARG_INT32(1);
-	int32 step;
-	
+	int32		start = PG_GETARG_INT32(0);
+	int32		end = PG_GETARG_INT32(1);
+	int32		step;
+
 	/* Setting the value of step */
-	if(start<=end) /* if the progression is positive, step = 1 */
+	if (start <= end)			/* if the progression is positive, step = 1 */
 		step = 1;
-	else /* if the progression is negative, step = -1 */
+	else						/* if the progression is negative, step = -1 */
 		step = -1;
 
 	PG_RETURN_POINTER(range(start, end, step));
@@ -1737,17 +1746,17 @@ range_2_args(PG_FUNCTION_ARGS)
 Datum
 range_3_args(PG_FUNCTION_ARGS)
 {
-	int32 start = PG_GETARG_INT32(0);
-	int32 end = PG_GETARG_INT32(1);
-	int32 step = PG_GETARG_INT32(2);
+	int32		start = PG_GETARG_INT32(0);
+	int32		end = PG_GETARG_INT32(1);
+	int32		step = PG_GETARG_INT32(2);
 
 	/* Sanity checks */
-	if(step==0)
+	if (step == 0)
 	{
 		ereport(ERROR,
-		(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-		errmsg("Step value cannot be 0")));	
-	}	
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("Step value cannot be 0")));
+	}
 
 	PG_RETURN_POINTER(range(start, end, step));
 
@@ -1759,102 +1768,104 @@ Datum
 datum_to_text(Datum d, Oid typeid)
 {
 
-	char* s;
-	switch (typeid){
+	char	   *s;
 
-		/* string types */
+	switch (typeid)
+	{
+
+			/* string types */
 		case VARCHAROID:
 		case BPCHAROID:
 		case TEXTOID:
-		{
-			s = DatumGetCString(DirectFunctionCall1(textout, d));
-			PG_RETURN_TEXT_P(cstring_to_text(s));	
-			break;
-		}				
-		
+			{
+				s = DatumGetCString(DirectFunctionCall1(textout, d));
+				PG_RETURN_TEXT_P(cstring_to_text(s));
+				break;
+			}
+
 		case CSTRINGOID:
-		{
-			s = DatumGetCString(DirectFunctionCall1(cstring_out, d));
-			PG_RETURN_TEXT_P(cstring_to_text(s));	
-			break;
-		}
+			{
+				s = DatumGetCString(DirectFunctionCall1(cstring_out, d));
+				PG_RETURN_TEXT_P(cstring_to_text(s));
+				break;
+			}
 
 		case BOOLOID:
-		{
-			s = DatumGetCString(DirectFunctionCall1(boolout, d));
-			PG_RETURN_TEXT_P(cstring_to_text(s));	
-			break;
-		}			
+			{
+				s = DatumGetCString(DirectFunctionCall1(boolout, d));
+				PG_RETURN_TEXT_P(cstring_to_text(s));
+				break;
+			}
 
-		/* integer, float and numeric types */
+			/* integer, float and numeric types */
 		case INT2OID:
 		case INT4OID:
 		case INT8OID:
-		{
-			s = DatumGetCString(DirectFunctionCall1(int4out, d));
-			PG_RETURN_TEXT_P(cstring_to_text(s));	
-			break;
-		}			
+			{
+				s = DatumGetCString(DirectFunctionCall1(int4out, d));
+				PG_RETURN_TEXT_P(cstring_to_text(s));
+				break;
+			}
 
 		case NUMERICOID:
-		{
-			s = DatumGetCString(DirectFunctionCall1(numeric_out, d));
-			PG_RETURN_TEXT_P(cstring_to_text(s));	
-			break;
-		}
-		
+			{
+				s = DatumGetCString(DirectFunctionCall1(numeric_out, d));
+				PG_RETURN_TEXT_P(cstring_to_text(s));
+				break;
+			}
+
 		case FLOAT4OID:
 		case FLOAT8OID:
-		{
-			s = DatumGetCString(DirectFunctionCall1(float8out, d));
-			PG_RETURN_TEXT_P(cstring_to_text(s));	
-			break;
-		}
+			{
+				s = DatumGetCString(DirectFunctionCall1(float8out, d));
+				PG_RETURN_TEXT_P(cstring_to_text(s));
+				break;
+			}
 
-		/* date and time types */
+			/* date and time types */
 		case DATEOID:
-		{
-			s = DatumGetCString(DirectFunctionCall1(date_out, d));
-			PG_RETURN_TEXT_P(cstring_to_text(s));	
-			break;
-		}
+			{
+				s = DatumGetCString(DirectFunctionCall1(date_out, d));
+				PG_RETURN_TEXT_P(cstring_to_text(s));
+				break;
+			}
 
 		case TIMEOID:
-		{
-			s = DatumGetCString(DirectFunctionCall1(time_out, d));
-			PG_RETURN_TEXT_P(cstring_to_text(s));	
-			break;
-		}
+			{
+				s = DatumGetCString(DirectFunctionCall1(time_out, d));
+				PG_RETURN_TEXT_P(cstring_to_text(s));
+				break;
+			}
 
 		case TIMESTAMPOID:
-		{
-			s = DatumGetCString(DirectFunctionCall1(timestamp_out, d));
-			PG_RETURN_TEXT_P(cstring_to_text(s));	
-			break;
-		}
+			{
+				s = DatumGetCString(DirectFunctionCall1(timestamp_out, d));
+				PG_RETURN_TEXT_P(cstring_to_text(s));
+				break;
+			}
 
 		case TIMESTAMPTZOID:
-		{
-			s = DatumGetCString(DirectFunctionCall1(timestamptz_out, d));
-			PG_RETURN_TEXT_P(cstring_to_text(s));	
-			break;
-		}
+			{
+				s = DatumGetCString(DirectFunctionCall1(timestamptz_out, d));
+				PG_RETURN_TEXT_P(cstring_to_text(s));
+				break;
+			}
 
-		/* unknown type */
+			/* unknown type */
 		case UNKNOWNOID:
-		{
-			s = DatumGetCString(DirectFunctionCall1(unknownout, d));
-			PG_RETURN_TEXT_P(cstring_to_text(s));	
-			break;
+			{
+				s = DatumGetCString(DirectFunctionCall1(unknownout, d));
+				PG_RETURN_TEXT_P(cstring_to_text(s));
+				break;
 
-		}			
-		
+			}
+
 
 		default:
 			break;
-	}	
+	}
 
-	PG_RETURN_DATUM(0);	
+	PG_RETURN_DATUM(0);
 }
 
 /*
@@ -1867,9 +1878,9 @@ Datum
 tostringornull(PG_FUNCTION_ARGS)
 {
 	Oid			typeid = get_fn_expr_argtype(fcinfo->flinfo, 0);
-	Datum 		d = PG_GETARG_DATUM(0);
+	Datum		d = PG_GETARG_DATUM(0);
 
-	PG_RETURN_DATUM(datum_to_text(d, typeid));	
+	PG_RETURN_DATUM(datum_to_text(d, typeid));
 }
 
 /*
@@ -1901,7 +1912,7 @@ jsonb_tostringlist(PG_FUNCTION_ARGS)
 		JsonbValue *jv_new;
 		JsonbValue	sjv;
 		JsonbIteratorToken tok;
-		int32 	counter = 0;
+		int32		counter = 0;
 
 		it = JsonbIteratorInit(&j->root);
 		tok = JsonbIteratorNext(&it, &jv, false);
@@ -1920,7 +1931,7 @@ jsonb_tostringlist(PG_FUNCTION_ARGS)
 
 					s = DirectFunctionCall1(numeric_out,
 											NumericGetDatum(jv_new->val.numeric));
-					
+
 					sjv.type = jbvString;
 					sjv.val.string.val = DatumGetCString(s);
 					sjv.val.string.len = strlen(sjv.val.string.val);
@@ -1960,20 +1971,20 @@ Datum
 array_tostringlist(PG_FUNCTION_ARGS)
 {
 
-	AnyArrayType 	*arr = PG_GETARG_ANY_ARRAY_P(0);
-	int				ndims = AARR_NDIM(arr);
-	int		   		*dims = AARR_DIMS(arr);
-	int				nitems = ArrayGetNItems(ndims, dims);
-	Oid				element_type = AARR_ELEMTYPE(arr);
-	TypeCacheEntry 	*typentry;
-	int				typlen;
-	bool			typbyval;
-	char			typalign;
+	AnyArrayType *arr = PG_GETARG_ANY_ARRAY_P(0);
+	int			ndims = AARR_NDIM(arr);
+	int		   *dims = AARR_DIMS(arr);
+	int			nitems = ArrayGetNItems(ndims, dims);
+	Oid			element_type = AARR_ELEMTYPE(arr);
+	TypeCacheEntry *typentry;
+	int			typlen;
+	bool		typbyval;
+	char		typalign;
 	ArrayBuildState *astate = NULL;
-	array_iter		it;
-	Datum			rtnelt;
-	bool			isnull;
-	int				i;
+	array_iter	it;
+	Datum		rtnelt;
+	bool		isnull;
+	int			i;
 
 	typentry = (TypeCacheEntry *) fcinfo->flinfo->fn_extra;
 
@@ -2000,18 +2011,21 @@ array_tostringlist(PG_FUNCTION_ARGS)
 	astate = initArrayResult(TEXTOID, CurrentMemoryContext, false);
 
 	/* iterate over the array */
-	for (i = 0; i <nitems; i++)
+	for (i = 0; i < nitems; i++)
 	{
 		/* get datum at index i */
 		rtnelt = array_iter_next(&it, &isnull, i,
-					typlen, typbyval, typalign);
+								 typlen, typbyval, typalign);
 
-		/* handle special case where converting null values to numeric type throws an error */
-		if(!isnull)
+		/*
+		 * handle special case where converting null values to numeric type
+		 * throws an error
+		 */
+		if (!isnull)
 			rtnelt = datum_to_text(rtnelt, element_type);
 
 		astate = accumArrayResult(astate, rtnelt, isnull,
-							 TEXTOID, CurrentMemoryContext);
+								  TEXTOID, CurrentMemoryContext);
 
 	}
 
@@ -2033,7 +2047,7 @@ jsonb_array_reverse(PG_FUNCTION_ARGS)
 	Jsonb	   *j = PG_GETARG_JSONB_P(0);
 	JsonbParseState *jpstate = NULL;
 	JsonbValue *ajv;
-	int32 	counter = -1;
+	int32		counter = -1;
 
 	if (!JB_ROOT_IS_ARRAY(j) || JB_ROOT_IS_SCALAR(j))
 		ereport(ERROR,
@@ -2049,7 +2063,8 @@ jsonb_array_reverse(PG_FUNCTION_ARGS)
 		JsonbValue	jv;
 		JsonbValue *jv_new;
 		JsonbIteratorToken tok;
-		counter = (int32) JB_ROOT_COUNT(j) -1;
+
+		counter = (int32) JB_ROOT_COUNT(j) - 1;
 
 		it = JsonbIteratorInit(&j->root);
 		tok = JsonbIteratorNext(&it, &jv, false);
@@ -2076,21 +2091,21 @@ Datum
 array_reverse(PG_FUNCTION_ARGS)
 {
 
-	AnyArrayType 	*arr = PG_GETARG_ANY_ARRAY_P(0);
-	int				ndims = AARR_NDIM(arr);
-	int		   		*dims = AARR_DIMS(arr);
-	int				nitems = ArrayGetNItems(ndims, dims);
-	Oid				element_type = AARR_ELEMTYPE(arr);
-	TypeCacheEntry 	*typentry;
-	int				typlen;
-	bool			typbyval;
-	char			typalign;
+	AnyArrayType *arr = PG_GETARG_ANY_ARRAY_P(0);
+	int			ndims = AARR_NDIM(arr);
+	int		   *dims = AARR_DIMS(arr);
+	int			nitems = ArrayGetNItems(ndims, dims);
+	Oid			element_type = AARR_ELEMTYPE(arr);
+	TypeCacheEntry *typentry;
+	int			typlen;
+	bool		typbyval;
+	char		typalign;
 	ArrayBuildState *astate = NULL;
-	array_iter		it;
-	Datum*			datumArr;
-	bool			isnull,
-					*boolArr;
-	int				i;
+	array_iter	it;
+	Datum	   *datumArr;
+	bool		isnull,
+			   *boolArr;
+	int			i;
 
 	typentry = (TypeCacheEntry *) fcinfo->flinfo->fn_extra;
 
@@ -2111,30 +2126,30 @@ array_reverse(PG_FUNCTION_ARGS)
 	typbyval = typentry->typbyval;
 	typalign = typentry->typalign;
 
-	datumArr = (Datum *) palloc((nitems + 1) * sizeof(Datum));	
+	datumArr = (Datum *) palloc((nitems + 1) * sizeof(Datum));
 	boolArr = (bool *) palloc((nitems + 1) * sizeof(bool));
-	
-	/* setup iterator for array*/
+
+	/* setup iterator for array */
 	array_iter_setup(&it, arr);
 
 	/* iterate over the array */
-	for (i = nitems-1; i >= 0; i--)
+	for (i = nitems - 1; i >= 0; i--)
 	{
 		/* get datum at index i */
-		datumArr[i] = array_iter_next(&it, &isnull, nitems-1-i,
-				typlen, typbyval, typalign);
-		
+		datumArr[i] = array_iter_next(&it, &isnull, nitems - 1 - i,
+									  typlen, typbyval, typalign);
+
 		boolArr[i] = isnull;
 	}
 
-	
 
-	astate = initArrayResult(element_type, CurrentMemoryContext, false);	
+
+	astate = initArrayResult(element_type, CurrentMemoryContext, false);
 
 	/* iterate over the array */
 	for (i = 0; i < nitems; i++)
 	{
-		/* get datum at index i and null status at position 1*/
+		/* get datum at index i and null status at position 1 */
 
 		astate =
 			accumArrayResult(astate, datumArr[i], boolArr[i],
@@ -2167,8 +2182,8 @@ dt2local(Timestamp dt, int tz)
 
 /* Helper function to get timestamp for a particular timezone */
 static Timestamp
-get_timestamp_for_timezone(text* zone, TimestampTz timestamp)
-{	
+get_timestamp_for_timezone(text *zone, TimestampTz timestamp)
+{
 	Timestamp	result;
 	int			tz;
 	char		tzname[TZ_STRLEN_MAX + 1];
@@ -2255,7 +2270,7 @@ get_timestamp_for_timezone(text* zone, TimestampTz timestamp)
 Datum
 datetime(PG_FUNCTION_ARGS)
 {
-	int32_t 	year,
+	int32_t		year,
 				month,
 				day,
 				hour,
@@ -2264,8 +2279,8 @@ datetime(PG_FUNCTION_ARGS)
 				millisec,
 				nanosec;
 	double		sec;
-	text*	   	zone;	
-	struct 		pg_tm tm;
+	text	   *zone;
+	struct pg_tm tm;
 	TimeOffset	date;
 	TimeOffset	time;
 	int			dterr;
@@ -2280,9 +2295,9 @@ datetime(PG_FUNCTION_ARGS)
 	seconds = PG_GETARG_INT32(5);
 	millisec = PG_GETARG_INT32(6);
 	nanosec = PG_GETARG_INT32(7);
-	sec = (double) seconds + (double) (millisec*0.001) + (double) (nanosec*0.000001);
+	sec = (double) seconds + (double) (millisec * 0.001) + (double) (nanosec * 0.000001);
 
-	zone = cstring_to_text(DatumGetCString(DirectFunctionCall1(unknownout, PG_GETARG_DATUM(8))));	
+	zone = cstring_to_text(DatumGetCString(DirectFunctionCall1(unknownout, PG_GETARG_DATUM(8))));
 
 	tm.tm_year = year;
 	tm.tm_mon = month;
@@ -2361,10 +2376,11 @@ datetime(PG_FUNCTION_ARGS)
 Datum
 localdatetime(PG_FUNCTION_ARGS)
 {
-	text*	   	zone = cstring_to_text(DatumGetCString(DirectFunctionCall1(unknownout, PG_GETARG_DATUM(0))));	
+	text	   *zone = cstring_to_text(DatumGetCString(DirectFunctionCall1(unknownout, PG_GETARG_DATUM(0))));
 	TimestampTz timestamp = now(fcinfo);
+
 	PG_RETURN_TIMESTAMP(get_timestamp_for_timezone(zone, timestamp));
-	
+
 }
 
 
@@ -2398,9 +2414,9 @@ get_time(PG_FUNCTION_ARGS)
 Datum
 get_time_for_timezone(PG_FUNCTION_ARGS)
 {
-	text*	   	zone = cstring_to_text(DatumGetCString(DirectFunctionCall1(unknownout, PG_GETARG_DATUM(0))));
+	text	   *zone = cstring_to_text(DatumGetCString(DirectFunctionCall1(unknownout, PG_GETARG_DATUM(0))));
 	TimestampTz ts = now(fcinfo);
-	Timestamp timestamp = get_timestamp_for_timezone(zone, ts);
+	Timestamp	timestamp = get_timestamp_for_timezone(zone, ts);
 	TimeADT		result;
 	struct pg_tm tt,
 			   *tm = &tt;
@@ -2430,96 +2446,101 @@ Datum
 datum_to_integer(Datum d, Oid typeid)
 {
 
-	char* s;
-	bool canConvert = true; /* a flag variable that reflects whether thee datum can be converted to cstring or not */
-	switch (typeid){
+	char	   *s;
+	bool		canConvert = true;	/* a flag variable that reflects whether
+									 * thee datum can be converted to cstring
+									 * or not */
 
-		/* string types */
+	switch (typeid)
+	{
+
+			/* string types */
 		case VARCHAROID:
 		case BPCHAROID:
 		case TEXTOID:
-		{
-			s = DatumGetCString(DirectFunctionCall1(textout, d));
-			break;
-		}				
-		
+			{
+				s = DatumGetCString(DirectFunctionCall1(textout, d));
+				break;
+			}
+
 		case CSTRINGOID:
-		{
-			s = DatumGetCString(DirectFunctionCall1(cstring_out, d));
-			break;
-		}
+			{
+				s = DatumGetCString(DirectFunctionCall1(cstring_out, d));
+				break;
+			}
 
 		case BOOLOID:
-		{
-			bool res = DatumGetBool(DirectFunctionCall1(boolout, d));
-			PG_RETURN_INT32((int32) res);
-		}			
+			{
+				bool		res = DatumGetBool(DirectFunctionCall1(boolout, d));
 
-		/* integer, float and numeric types */
+				PG_RETURN_INT32((int32) res);
+			}
+
+			/* integer, float and numeric types */
 		case INT2OID:
 		case INT4OID:
 		case INT8OID:
-		{
-			s = DatumGetCString(DirectFunctionCall1(int4out, d));
-			break;
+			{
+				s = DatumGetCString(DirectFunctionCall1(int4out, d));
+				break;
 
-		}			
+			}
 
 		case NUMERICOID:
-		{
-			s = DatumGetCString(DirectFunctionCall1(numeric_out, d));
-			break;
-		}
-		
+			{
+				s = DatumGetCString(DirectFunctionCall1(numeric_out, d));
+				break;
+			}
+
 		case FLOAT4OID:
 		case FLOAT8OID:
-		{
-			s = DatumGetCString(DirectFunctionCall1(float8out, d));
-			break;
-		}
+			{
+				s = DatumGetCString(DirectFunctionCall1(float8out, d));
+				break;
+			}
 
-		/* unknown type */
+			/* unknown type */
 		case UNKNOWNOID:
-		{
-			s = DatumGetCString(DirectFunctionCall1(unknownout, d));			
-			break;
+			{
+				s = DatumGetCString(DirectFunctionCall1(unknownout, d));
+				break;
 
-		}					
+			}
 
 		default:
-		{
-			canConvert = false;
-			break;
-		}
-			
-	}	
+			{
+				canConvert = false;
+				break;
+			}
 
-	if(canConvert)
+	}
+
+	if (canConvert)
 		PG_RETURN_INT32(string_to_int(s));
 
-	PG_RETURN_DATUM(0);	
+	PG_RETURN_DATUM(0);
 }
 
 /* utility function to covert cstring to integer */
 static int32
-string_to_int(char* s)
+string_to_int(char *s)
 {
-	int64 	res = 0,
-			len = strlen(s),
-			i = 0;
-	bool 	flag = false;
+	int64		res = 0,
+				len = strlen(s),
+				i = 0;
+	bool		flag = false;
 
 	/* iterate over the string and check for non numeric characters */
-	for(i = 0; i < len ; ++i)
+	for (i = 0; i < len; ++i)
 	{
-		if(isalpha(s[i]))
+		if (isalpha(s[i]))
 		{
 			flag = true;
 			break;
 		}
 	}
-	
-	if(!flag)
+
+	if (!flag)
 	{
 		res = atoll(s);
 		return res;
@@ -2532,11 +2553,12 @@ string_to_int(char* s)
 static void
 get_cstring_substr(char *c, char *res, int32 start, int32 len)
 {
-	int32  i;
-	for(i = 0; i < len; i++)
-		res[i] = *(c+i+start);
-	
-	res[len] = '\0'; /* null terminated c string*/
+	int32		i;
+
+	for (i = 0; i < len; i++)
+		res[i] = *(c + i + start);
+
+	res[len] = '\0';			/* null terminated c string */
 }
 
 /*
@@ -2549,9 +2571,9 @@ Datum
 jsonb_tointegerlist(PG_FUNCTION_ARGS)
 {
 
-	Jsonb	   		*j = PG_GETARG_JSONB_P(0);
+	Jsonb	   *j = PG_GETARG_JSONB_P(0);
 	JsonbParseState *jpstate = NULL;
-	JsonbValue 		*ajv;
+	JsonbValue *ajv;
 
 	if (!JB_ROOT_IS_ARRAY(j) || JB_ROOT_IS_SCALAR(j))
 		ereport(ERROR,
@@ -2560,16 +2582,16 @@ jsonb_tointegerlist(PG_FUNCTION_ARGS)
 						JsonbToCString(NULL, &j->root, VARSIZE(j)))));
 
 	pushJsonbValue(&jpstate, WJB_BEGIN_ARRAY, NULL);
-	
+
 	if (JB_ROOT_COUNT(j) > 1)
 	{
-		JsonbIterator 		*it;
-		JsonbValue			jv;
-		JsonbValue 			*jv_new;
-		JsonbValue			sjv;
-		JsonbIteratorToken 	tok;
-		int32 				counter = 0;
-		Datum				s;
+		JsonbIterator *it;
+		JsonbValue	jv;
+		JsonbValue *jv_new;
+		JsonbValue	sjv;
+		JsonbIteratorToken tok;
+		int32		counter = 0;
+		Datum		s;
 
 		it = JsonbIteratorInit(&j->root);
 		tok = JsonbIteratorNext(&it, &jv, false);
@@ -2582,8 +2604,9 @@ jsonb_tointegerlist(PG_FUNCTION_ARGS)
 				jv_new = getIthJsonbValueFromContainer(&j->root, counter++);
 				if (jv_new->type == jbvString)
 				{
-					
-					char 	res[64];/* long long can have 64 bits*/
+
+					char		res[64];	/* long long can have 64 bits */
+
 					get_cstring_substr(jv_new->val.string.val, res, 0, jv_new->val.string.len);
 					sjv.val.numeric = int64_to_numeric(string_to_int(res));
 					jv = sjv;
@@ -2595,12 +2618,12 @@ jsonb_tointegerlist(PG_FUNCTION_ARGS)
 					jv = sjv;
 				}
 				else if (jv_new->type == jbvBool)
-				{					
+				{
 
-					if (jv_new->val.boolean)					
+					if (jv_new->val.boolean)
 						sjv.val.numeric = int64_to_numeric(1);
-					
-					else				
+
+					else
 						sjv.val.numeric = int64_to_numeric(0);
 
 					jv = sjv;
@@ -2622,20 +2645,20 @@ Datum
 array_tointegerlist(PG_FUNCTION_ARGS)
 {
 
-	AnyArrayType 	*arr = PG_GETARG_ANY_ARRAY_P(0);
-	int				ndims = AARR_NDIM(arr);
-	int		   		*dims = AARR_DIMS(arr);
-	int				nitems = ArrayGetNItems(ndims, dims);
-	Oid				element_type = AARR_ELEMTYPE(arr);
-	TypeCacheEntry 	*typentry;
-	int				typlen;
-	bool			typbyval;
-	char			typalign;
+	AnyArrayType *arr = PG_GETARG_ANY_ARRAY_P(0);
+	int			ndims = AARR_NDIM(arr);
+	int		   *dims = AARR_DIMS(arr);
+	int			nitems = ArrayGetNItems(ndims, dims);
+	Oid			element_type = AARR_ELEMTYPE(arr);
+	TypeCacheEntry *typentry;
+	int			typlen;
+	bool		typbyval;
+	char		typalign;
 	ArrayBuildState *astate = NULL;
-	array_iter		it;
-	Datum			rtnelt;
-	bool			isnull;
-	int				i;
+	array_iter	it;
+	Datum		rtnelt;
+	bool		isnull;
+	int			i;
 
 	typentry = (TypeCacheEntry *) fcinfo->flinfo->fn_extra;
 
@@ -2662,18 +2685,21 @@ array_tointegerlist(PG_FUNCTION_ARGS)
 	astate = initArrayResult(INT4OID, CurrentMemoryContext, false);
 
 	/* iterate over the array */
-	for (i = 0; i <nitems; i++)
+	for (i = 0; i < nitems; i++)
 	{
 		/* get datum at index i */
 		rtnelt = array_iter_next(&it, &isnull, i,
-					typlen, typbyval, typalign);
+								 typlen, typbyval, typalign);
 
-		/* handle special case where converting null values to numeric type throws an error */
-		if(!isnull)
+		/*
+		 * handle special case where converting null values to numeric type
+		 * throws an error
+		 */
+		if (!isnull)
 			rtnelt = datum_to_integer(rtnelt, element_type);
 
 		astate = accumArrayResult(astate, rtnelt, isnull,
-							 INT4OID, CurrentMemoryContext);
+								  INT4OID, CurrentMemoryContext);
 
 	}
 
@@ -2686,96 +2712,101 @@ Datum
 datum_to_float(Datum d, Oid typeid)
 {
 
-	char* s;
-	bool canConvert = true; /* a flag variable that reflects whether thee datum can be converted to cstring or not */
-	switch (typeid){
+	char	   *s;
+	bool		canConvert = true;	/* a flag variable that reflects whether
+									 * thee datum can be converted to cstring
+									 * or not */
 
-		/* string types */
+	switch (typeid)
+	{
+
+			/* string types */
 		case VARCHAROID:
 		case BPCHAROID:
 		case TEXTOID:
-		{
-			s = DatumGetCString(DirectFunctionCall1(textout, d));
-			break;
-		}				
-		
+			{
+				s = DatumGetCString(DirectFunctionCall1(textout, d));
+				break;
+			}
+
 		case CSTRINGOID:
-		{
-			s = DatumGetCString(DirectFunctionCall1(cstring_out, d));
-			break;
-		}
+			{
+				s = DatumGetCString(DirectFunctionCall1(cstring_out, d));
+				break;
+			}
 
 		case BOOLOID:
-		{
-			bool res = DatumGetBool(DirectFunctionCall1(boolout, d));
-			PG_RETURN_FLOAT4((float4) res);
-		}			
+			{
+				bool		res = DatumGetBool(DirectFunctionCall1(boolout, d));
 
-		/* integer, float and numeric types */
+				PG_RETURN_FLOAT4((float4) res);
+			}
+
+			/* integer, float and numeric types */
 		case INT2OID:
 		case INT4OID:
 		case INT8OID:
-		{
-			s = DatumGetCString(DirectFunctionCall1(int4out, d));
-			break;
+			{
+				s = DatumGetCString(DirectFunctionCall1(int4out, d));
+				break;
 
-		}			
+			}
 
 		case NUMERICOID:
-		{
-			s = DatumGetCString(DirectFunctionCall1(numeric_out, d));
-			break;
-		}
-		
+			{
+				s = DatumGetCString(DirectFunctionCall1(numeric_out, d));
+				break;
+			}
+
 		case FLOAT4OID:
 		case FLOAT8OID:
-		{
-			s = DatumGetCString(DirectFunctionCall1(float8out, d));
-			break;
-		}
+			{
+				s = DatumGetCString(DirectFunctionCall1(float8out, d));
+				break;
+			}
 
-		/* unknown type */
+			/* unknown type */
 		case UNKNOWNOID:
-		{
-			s = DatumGetCString(DirectFunctionCall1(unknownout, d));			
-			break;
+			{
+				s = DatumGetCString(DirectFunctionCall1(unknownout, d));
+				break;
 
-		}					
+			}
 
 		default:
-		{
-			canConvert = false;
-			break;
-		}
-			
-	}	
+			{
+				canConvert = false;
+				break;
+			}
 
-	if(canConvert)
+	}
+
+	if (canConvert)
 		PG_RETURN_FLOAT4(string_to_float(s));
 
-	PG_RETURN_DATUM(0);	
+	PG_RETURN_DATUM(0);
 }
 
 /* utility function to covert cstring to float */
 static float4
-string_to_float(char* s)
+string_to_float(char *s)
 {
-	float 	res = 0.0;
-	int64	len = strlen(s),
-			i = 0;
-	bool 	flag = false;
+	float		res = 0.0;
+	int64		len = strlen(s),
+				i = 0;
+	bool		flag = false;
 
 	/* iterate over the string and check for non numeric characters */
-	for(i = 0; i < len ; ++i)
+	for (i = 0; i < len; ++i)
 	{
-		if(isalpha(s[i]))
+		if (isalpha(s[i]))
 		{
 			flag = true;
 			break;
 		}
 	}
-	
-	if(!flag)
+
+	if (!flag)
 	{
 		res = atof(s);
 		return res;
@@ -2795,9 +2826,9 @@ Datum
 jsonb_tofloatlist(PG_FUNCTION_ARGS)
 {
 
-	Jsonb	   		*j = PG_GETARG_JSONB_P(0);
+	Jsonb	   *j = PG_GETARG_JSONB_P(0);
 	JsonbParseState *jpstate = NULL;
-	JsonbValue 		*ajv;
+	JsonbValue *ajv;
 
 	if (!JB_ROOT_IS_ARRAY(j) || JB_ROOT_IS_SCALAR(j))
 		ereport(ERROR,
@@ -2809,13 +2840,14 @@ jsonb_tofloatlist(PG_FUNCTION_ARGS)
 
 	if (JB_ROOT_COUNT(j) > 1)
 	{
-		JsonbIterator 		*it;
-		JsonbValue			jv;
-		JsonbValue 			*jv_new;
-		JsonbValue			sjv;
-		JsonbIteratorToken 	tok;
-		int32 				counter = 0;
-		//Datum				s;
+		JsonbIterator *it;
+		JsonbValue	jv;
+		JsonbValue *jv_new;
+		JsonbValue	sjv;
+		JsonbIteratorToken tok;
+		int32		counter = 0;
+
+		/* Datum				s; */
 
 		it = JsonbIteratorInit(&j->root);
 		tok = JsonbIteratorNext(&it, &jv, false);
@@ -2827,24 +2859,25 @@ jsonb_tofloatlist(PG_FUNCTION_ARGS)
 			{
 				jv_new = getIthJsonbValueFromContainer(&j->root, counter++);
 				if (jv_new->type == jbvString)
-				{	
-					char 	res[64];
+				{
+					char		res[64];
+
 					get_cstring_substr(jv_new->val.string.val, res, 0, jv_new->val.string.len);
-					sjv.val.numeric = DatumGetNumeric(DirectFunctionCall2(numeric_round,(DirectFunctionCall1(float8_numeric, Float8GetDatum((float8) string_to_float(res)))),4));
+					sjv.val.numeric = DatumGetNumeric(DirectFunctionCall2(numeric_round, (DirectFunctionCall1(float8_numeric, Float8GetDatum((float8) string_to_float(res)))), 4));
 					jv = sjv;
-									
+
 				}
 				else if (jv_new->type == jbvNumeric)
 				{
 					jv = *jv_new;
-					
+
 				}
 				else if (jv_new->type == jbvBool)
-				{	
-					if (jv_new->val.boolean)					
+				{
+					if (jv_new->val.boolean)
 						sjv.val.numeric = int64_to_numeric(1);
-					
-					else				
+
+					else
 						sjv.val.numeric = int64_to_numeric(0);
 
 					jv = sjv;
@@ -2871,20 +2904,20 @@ Datum
 array_tofloatlist(PG_FUNCTION_ARGS)
 {
 
-	AnyArrayType 	*arr = PG_GETARG_ANY_ARRAY_P(0);
-	int				ndims = AARR_NDIM(arr);
-	int		   		*dims = AARR_DIMS(arr);
-	int				nitems = ArrayGetNItems(ndims, dims);
-	Oid				element_type = AARR_ELEMTYPE(arr);
-	TypeCacheEntry 	*typentry;
-	int				typlen;
-	bool			typbyval;
-	char			typalign;
+	AnyArrayType *arr = PG_GETARG_ANY_ARRAY_P(0);
+	int			ndims = AARR_NDIM(arr);
+	int		   *dims = AARR_DIMS(arr);
+	int			nitems = ArrayGetNItems(ndims, dims);
+	Oid			element_type = AARR_ELEMTYPE(arr);
+	TypeCacheEntry *typentry;
+	int			typlen;
+	bool		typbyval;
+	char		typalign;
 	ArrayBuildState *astate = NULL;
-	array_iter		it;
-	Datum			rtnelt;
-	bool			isnull;
-	int				i;
+	array_iter	it;
+	Datum		rtnelt;
+	bool		isnull;
+	int			i;
 
 	typentry = (TypeCacheEntry *) fcinfo->flinfo->fn_extra;
 
@@ -2911,18 +2944,21 @@ array_tofloatlist(PG_FUNCTION_ARGS)
 	astate = initArrayResult(FLOAT4OID, CurrentMemoryContext, false);
 
 	/* iterate over the array */
-	for (i = 0; i <nitems; i++)
+	for (i = 0; i < nitems; i++)
 	{
 		/* get datum at index i */
 		rtnelt = array_iter_next(&it, &isnull, i,
-					typlen, typbyval, typalign);
+								 typlen, typbyval, typalign);
 
-		/* handle special case where converting null values to numeric type throws an error */
-		if(!isnull)
+		/*
+		 * handle special case where converting null values to numeric type
+		 * throws an error
+		 */
+		if (!isnull)
 			rtnelt = datum_to_float(rtnelt, element_type);
 
 		astate = accumArrayResult(astate, rtnelt, isnull,
-							 FLOAT4OID, CurrentMemoryContext);
+								  FLOAT4OID, CurrentMemoryContext);
 
 	}
 
