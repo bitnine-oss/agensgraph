@@ -2964,3 +2964,10 @@ array_tofloatlist(PG_FUNCTION_ARGS)
 
 	PG_RETURN_ARRAYTYPE_P(makeArrayResult(astate, CurrentMemoryContext));
 }
+
+Datum
+e(PG_FUNCTION_ARGS)
+{
+	PG_RETURN_NUMERIC(DirectFunctionCall1(numeric_exp,
+										  NumericGetDatum(int64_to_numeric(1.0))));
+}

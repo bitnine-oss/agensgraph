@@ -12046,7 +12046,6 @@
   proname => 'binary_upgrade_set_next_ag_label_oid', provolatile => 'v',
   proparallel => 'r', prorettype => 'void', proargtypes => 'oid',
   prosrc => 'binary_upgrade_set_next_ag_label_oid' },
-]
 
 # cypher text functions
 { oid => '8003', descr => 'returns the length of the string/text',
@@ -12128,3 +12127,8 @@
   proname => 'datetime', prorettype => 'timestamp',
   proargtypes => 'int4 int4 int4 int4 int4 int4 int4 int4 any',
   proargnames => '{year,month,mday,hour,min,sec,millisec,nanosec,timezone}', prosrc => 'datetime' },
+{ oid => '8027', descr => 'return the constant value of logarithmic base',
+  proname => 'e', prorettype => 'numeric', pronargs => '0',
+  proargtypes => '', prosrc => 'e' },
+
+]
