@@ -326,3 +326,9 @@ return toFloatList(reverse([12,13,14,15]));
 return toFloatList([14.15, null, -45.78, null, null, 0.02]);
 -- test Case-4(Boolean and null):
 return toFloatList([true, true, null]);
+
+
+-- e() function
+RETURN e() = exp(1.0);
+RETURN exp(1.0);
+RETURN e();

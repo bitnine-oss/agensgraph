@@ -714,3 +714,22 @@ return toFloatList([true, true, null]);
  [1, 1, null]
 (1 row)
 
+-- e() function
+RETURN e() = exp(1.0);
+ ?column? 
+----------
+ t
+(1 row)
+
+RETURN exp(1.0);
+        exp         
+--------------------
+ 2.7182818284590452
+(1 row)
+
+RETURN e();
+         e          
+--------------------
+ 2.7182818284590452
+(1 row)
+
