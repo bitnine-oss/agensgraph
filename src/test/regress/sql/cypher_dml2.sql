@@ -241,4 +241,10 @@ EXPLAIN VERBOSE MATCH (a)-[]-(a) RETURN a;
 EXPLAIN VERBOSE MATCH (a)-[]-(a) RETURN *;
 EXPLAIN VERBOSE MATCH p=(a)-[]-(a) RETURN *;
 
+-- #609, column does not exists
+EXPLAIN MATCH (a),(a)-[*1..1]->(b) RETURN count(a);
+MATCH (a),(a)-[*1..1]->(b) RETURN count(a);
+EXPLAIN MATCH (a)-[*1..1]->(b) RETURN count(a);
+MATCH (a)-[*1..1]->(b) RETURN count(a);
+
 DROP GRAPH cypher_dml2 CASCADE;
