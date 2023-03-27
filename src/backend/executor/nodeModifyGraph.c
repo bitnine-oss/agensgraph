@@ -991,17 +991,6 @@ ExecDeleteGraph(ModifyGraphState *mgstate, TupleTableSlot *slot)
 		elem = ExecEvalExpr(gde->es_elem, econtext, &isNull);
 		if (isNull)
 		{
-			/*
-			 * This assumes that there are only variable references in the
-			 * target list.
-			 */
-			if (type == EDGEARRAYOID)
-				continue;
-			else
-				ereport(NOTICE,
-						(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
-								errmsg("skipping deletion of NULL graph element")));
-
 			continue;
 		}
 
