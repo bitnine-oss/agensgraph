@@ -17,6 +17,7 @@
 #include "catalog/pg_collation.h"
 #include "catalog/pg_type.h"
 #include "funcapi.h"
+#include "utils/arrayaccess.h"
 #include "utils/builtins.h"
 #include "utils/cypher_funcs.h"
 #include "utils/jsonb.h"
@@ -1349,8 +1350,10 @@ array_tail(PG_FUNCTION_ARGS)
 	char		typalign;
 	int			i;
 	Datum		rtnelt;
+	bool		isnull;
 
 	ArrayBuildState *astate = NULL;
+	array_iter	it;
 
 	typentry = (TypeCacheEntry *) fcinfo->flinfo->fn_extra;
 
@@ -1371,23 +1374,23 @@ array_tail(PG_FUNCTION_ARGS)
 	typbyval = typentry->typbyval;
 	typalign = typentry->typalign;
 
+	/* setup iterator for array and iterate once to ignore this element */
+	array_iter_setup(&it, arr);
+	array_iter_next(&it, &isnull, 0,
+				typlen, typbyval, typalign);
+
 	astate = initArrayResult(element_type, CurrentMemoryContext, false);
 
-	for (i = 2; i <= nitems; i++)
+	/* iterate over the array */
+	for (i = 1; i <nitems; i++)
 	{
+		/* get datum at index i */
+		rtnelt = array_iter_next(&it, &isnull, i,
+				typlen, typbyval, typalign);
 
-		rtnelt = array_get_element(PointerGetDatum(arr),
-								   1,
-								   &i,
-								   -1,
-								   typlen,
-								   typbyval,
-								   typalign,
-								   &typbyval);
 		astate =
-			accumArrayResult(astate, rtnelt, false,
+			accumArrayResult(astate, rtnelt, isnull,
 							 element_type, CurrentMemoryContext);
-
 	}
 
 	PG_RETURN_ARRAYTYPE_P(makeArrayResult(astate, CurrentMemoryContext));

@@ -319,3 +319,18 @@ NOTICE:  drop cascades to 3 other objects
 DETAIL:  drop cascades to sequence ag283.ag_label_seq
 drop cascades to vlabel ag_vertex
 drop cascades to elabel ag_edge
+-- fix: array_tail did not work with integer type
+-- test 1: integer type
+SELECT tail(ARRAY[12,13,14,15,16]);
+     tail      
+---------------
+ {13,14,15,16}
+(1 row)
+
+-- test 2: null values
+SELECT tail(ARRAY['hi',null,null,'bye']);
+      tail       
+-----------------
+ {NULL,NULL,bye}
+(1 row)
+

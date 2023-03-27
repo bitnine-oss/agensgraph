@@ -185,3 +185,9 @@ MATCH (v) RETURN radians(v.degree);
 
 -- cleanup
 DROP GRAPH AG283 CASCADE;
+
+-- fix: array_tail did not work with integer type
+-- test 1: integer type
+SELECT tail(ARRAY[12,13,14,15,16]);
+-- test 2: null values
+SELECT tail(ARRAY['hi',null,null,'bye']);
