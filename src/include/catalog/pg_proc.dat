@@ -12133,5 +12133,8 @@
 { oid => '8028', descr => 'returns the percentile of the given value over a group',
   proname => 'percentilecont', proisstrict => 'f', prorettype => 'float8',
   proargtypes => 'jsonb numeric', prosrc => 'percentilecont' },
+{ oid => '8029', descr => 'returns the percentile of the given value over a group',
+  proname => 'percentiledisc', proisstrict => 'f', prorettype => 'float8',
+  proargtypes => 'jsonb numeric', prosrc => 'percentiledisc' },
 
 ]
