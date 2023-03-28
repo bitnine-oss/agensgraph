@@ -12130,5 +12130,8 @@
 { oid => '8027', descr => 'return the constant value of logarithmic base',
   proname => 'e', prorettype => 'numeric', pronargs => '0',
   proargtypes => '', prosrc => 'e' },
+{ oid => '8028', descr => 'returns the percentile of the given value over a group',
+  proname => 'percentilecont', proisstrict => 'f', prorettype => 'float8',
+  proargtypes => 'jsonb numeric', prosrc => 'percentilecont' },
 
 ]
