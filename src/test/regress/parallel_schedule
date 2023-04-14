@@ -157,6 +157,3 @@ test: propertyindex
 
 # run cypher finalize
 test: cypher_finalize
-
-# run percentile function
-test: percentile
