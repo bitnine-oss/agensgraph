@@ -17,12 +17,19 @@
 #include "catalog/pg_collation.h"
 #include "catalog/pg_type.h"
 #include "funcapi.h"
+#include "utils/arrayaccess.h"
 #include "utils/builtins.h"
+#include "utils/timestamp.h"
 #include "utils/cypher_funcs.h"
 #include "utils/jsonb.h"
 #include "utils/memutils.h"
 #include "utils/typcache.h"
+#include "parser/scansup.h"
+#include "utils/date.h"
+#include "utils/datetime.h"
+#include "pgtime.h"
 #include <string.h>
+#include <math.h>
 
 /* global variable - see postgres.c*/
 extern GraphWriteStats graphWriteStats;
@@ -52,6 +59,17 @@ static bool is_numeric_integer(Numeric n);
 static void ereport_invalid_jsonb_param(FunctionCallJsonbInfo *fcjinfo);
 static char *type_to_jsonb_type_str(Oid type);
 static Jsonb *datum_to_jsonb(Datum d, Oid type);
+static bool int_to_bool(int32 num, bool *result);
+static bool string_to_bool(const char *str, bool *result);
+static Datum range(int start, int end, int step);
+static Datum datum_to_text(Datum d, Oid typeid);
+static Datum datum_to_integer(Datum d, Oid typeid);
+static Datum datum_to_float(Datum d, Oid typeid);
+static int32 string_to_int(char *s);
+static float4 string_to_float(char *s);
+static void get_cstring_substr(char *c, char *res, int32 start, int32 len);
+static Timestamp dt2local(Timestamp dt, int timezone);
+static Timestamp get_timestamp_for_timezone(text *zone, TimestampTz timestamp);
 
 Datum
 jsonb_head(PG_FUNCTION_ARGS)
@@ -1349,8 +1367,10 @@ array_tail(PG_FUNCTION_ARGS)
 	char		typalign;
 	int			i;
 	Datum		rtnelt;
+	bool		isnull;
 
 	ArrayBuildState *astate = NULL;
+	array_iter	it;
 
 	typentry = (TypeCacheEntry *) fcinfo->flinfo->fn_extra;
 
@@ -1371,22 +1391,1574 @@ array_tail(PG_FUNCTION_ARGS)
 	typbyval = typentry->typbyval;
 	typalign = typentry->typalign;
 
+	/* setup iterator for array and iterate once to ignore this element */
+	array_iter_setup(&it, arr);
+	array_iter_next(&it, &isnull, 0,
+					typlen, typbyval, typalign);
+
 	astate = initArrayResult(element_type, CurrentMemoryContext, false);
 
-	for (i = 2; i <= nitems; i++)
+	/* iterate over the array */
+	for (i = 1; i < nitems; i++)
+	{
+		/* get datum at index i */
+		rtnelt = array_iter_next(&it, &isnull, i,
+								 typlen, typbyval, typalign);
+
+		astate =
+			accumArrayResult(astate, rtnelt, isnull,
+							 element_type, CurrentMemoryContext);
+	}
+
+	PG_RETURN_ARRAYTYPE_P(makeArrayResult(astate, CurrentMemoryContext));
+}
+
+
+/*
+ * str_size:
+ *		returns the length of string/ text
+ *		example: str_size("Hello") = 5
+ */
+Datum
+str_size(PG_FUNCTION_ARGS)
+{
+
+	PG_RETURN_INT32(textlen(fcinfo));
+
+}
+
+
+/*
+ * array_size:
+ *		returns the total number of elements in an array
+ *		example: array_size(['hello', 'GraphDB']) = 2
+ */
+Datum
+array_size(PG_FUNCTION_ARGS)
+{
+	AnyArrayType *v = PG_GETARG_ANY_ARRAY_P(0);
+
+	PG_RETURN_INT32(ArrayGetNItems(AARR_NDIM(v), AARR_DIMS(v)));
+}
+
+/*
+ * int_to_bool and string_to_bool are two helper functions that are used by toBoolean() and toBooleanOrNull() functions
+ *	The helper functions return either true or false which is mapped to differennt conditions in the two cypher functions.
+ *	The mapping logic is specified aas comments in the respective cypher functions
+ */
+
+static
+bool
+int_to_bool(int32 num, bool *result)
+{
+	if (num == 0)
+	{
+		if (result)
+			*result = false;	/* suppress compiler warning */
+		return true;
+	}
+	else if (num == 1)
+	{
+		if (result)
+			*result = true;		/* suppress compiler warning */
+		return true;
+	}
+
+	return false;
+
+
+}
+
+static
+bool
+string_to_bool(const char *str, bool *result)
+{
+	size_t		len;
+	bool		parseResult;
+
+	/*
+	 * Skip leading and trailing whitespace
+	 */
+	while (isspace((unsigned char) *str))
+		str++;
+
+	len = strlen(str);
+	while (len > 0 && isspace((unsigned char) str[len - 1]))
+		len--;
+
+	/* handle special case: boolean equivalent of an empty string is null */
+	if (len == 0)
+	{
+		*result = true;			/* result = true translates to returning null
+								 * in the calling function */
+		return false;
+	}
+
+
+	switch (*str)
+	{
+			/*
+			 * boolin(yes) = true and boolin(no) = false, but the requirements
+			 * state that toBoolean(yes) = null and toBoolean(no) = null. So,
+			 * we explicitely map these conditions.
+			 */
+		case 'y':
+		case 'Y':
+			{
+				if (pg_strcasecmp(str, "yes") == 0)
+				{
+					*result = true;
+					return false;
+				}
+				break;
+			}
+		case 'n':
+		case 'N':
+			{
+				if ((pg_strcasecmp(str, "no") == 0))
+				{
+					*result = true;
+					return false;
+				}
+				break;
+			}
+		default:
+			{
+				if (parse_bool_with_len(str, len, &parseResult))
+				{
+					*result = parseResult;
+					return true;
+				}
+			}
+
+
+	}
+
+	if (result)
+		*result = false;		/* suppress compiler warning */
+	return false;
+
+}
+
+/*
+ * datum_toboolean:
+ *		returns the boolean equivalent of integers, jsonb and booleans
+ *		example: toboolean(1) = true, toboolean(false) = false
+ * 				 tolboolean(12.5) = ERROR
+ */
+Datum
+datum_toboolean(PG_FUNCTION_ARGS)
+{
+
+	Oid			typeid = get_fn_expr_argtype(fcinfo->flinfo, 0);
+	bool		result;
+	int32		num;
+
+	switch (typeid)
+	{
+		case INT2OID:
+		case INT4OID:
+		case INT8OID:
+			{
+				num = PG_GETARG_INT32(0);
+
+				if (int_to_bool(num, &result))
+					PG_RETURN_BOOL(result);
+
+				else
+					ereport(ERROR,
+							(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+							 errmsg("Invalid input integer for toBoolean(): %d", num)));
+
+				break;
+			}
+
+		case BOOLOID:
+			{
+				PG_RETURN_BOOL(PG_GETARG_BOOL(0));
+				break;
+			}
+
+		default:
+			break;
+	}
+
+	ereport(ERROR,
+			(errcode(ERRCODE_UNDEFINED_PARAMETER),
+			 errmsg("Invalid input type for toBoolean()")));
+}
+
+
+/*
+ * string_tobooleanornull:
+ *		returns the boolean or nullequivalent of strings
+ *		example: tobooleanornull('true') = true, tobooleanornull('f') = false
+ * 				 tobooleanornull('') = null, tobooleanornull('hello') = null
+ */
+Datum
+string_tobooleanornull(PG_FUNCTION_ARGS)
+{
+	const text *in_text = DatumGetTextPP(PG_GETARG_DATUM(0));
+	const char *in_str = text_to_cstring(in_text);
+	bool		result;
+
+	if (string_to_bool(in_str, &result))
+		PG_RETURN_BOOL(result);
+
+	else
+		PG_RETURN_NULL();
+
+}
+
+
+/*
+ * datum_tobooleanornull:
+ *		returns the boolean equivalent of integers, jsonb and booleans
+ *		example: tobooleanornull(1) = true, tobooleanornull(false) = false
+ * 				 tobooleanornull(12.5) = null
+ */
+Datum
+datum_tobooleanornull(PG_FUNCTION_ARGS)
+{
+	Oid			typeid = get_fn_expr_argtype(fcinfo->flinfo, 0);
+	bool		result;
+	int32		num;
+
+	switch (typeid)
+	{
+		case VARCHAROID:
+		case BPCHAROID:
+		case TEXTOID:
+			{
+				PG_RETURN_BOOL(string_tobooleanornull(fcinfo));
+				break;
+			}
+
+		case BOOLOID:
+			{
+				PG_RETURN_BOOL(PG_GETARG_BOOL(0));
+				break;
+			}
+
+		case INT2OID:
+		case INT4OID:
+		case INT8OID:
+			{
+				num = PG_GETARG_INT32(0);
+
+				if (int_to_bool(num, &result))
+					PG_RETURN_BOOL(result);
+
+				else
+					PG_RETURN_NULL();
+				break;
+			}
+
+		case JSONBOID:
+			{
+				PG_RETURN_BOOL(jsonb_toboolean(fcinfo));
+				break;
+			}
+
+
+		default:
+			break;
+	}
+	PG_RETURN_NULL();
+}
+
+
+/*
+ * range:
+ *		returns an array with the series from start to end with an optional step value
+ *		example: range(1,10) = [0,1,2,3,4,5,6,7,8,9,10], range(1,11,3) = [1,4,7,10]
+ * 				 range(1,10, -3) = []
+ */
+Datum
+range(int32 start, int32 end, int32 step)
+{
+	int32		len = (int32) floor((end - start + step) / step),
+				counter = 0;
+	ArrayType  *arr;
+
+	/* sanity checks */
+	if (len <= 0)
+	{
+		arr = construct_array(NULL, 0, INT4OID, sizeof(int32), true, 'i');
+	}
+
+	else if (((start <= end) && step < 0) || ((start >= end) && step > 0))
+	{
+		arr = construct_array(NULL, 0, INT4OID, sizeof(int32), true, 'i');
+	}
+
+	else						/* all sanity checks have passed, the series
+								 * has to be generated and an array has to be
+								 * created */
+	{
+		Datum	   *elements = (Datum *) palloc(sizeof(Datum) * len);
+
+		if (step < 0)
+		{
+			while (start >= end)
+			{
+				elements[counter++] = start;
+				start += step;
+			}
+		}
+		else
+		{
+			while (start <= end)
+			{
+				elements[counter++] = start;
+				start += step;
+			}
+		}
+
+		arr = construct_array(elements, len, INT4OID, sizeof(int32), true, 'i');
+
+		/* free pointers */
+		pfree(elements);
+	}
+
+
+	PG_RETURN_POINTER(arr);
+}
+
+/* wrapper function which is used to map two integer inputs (start and end) with the range function. Default step value is created */
+Datum
+range_2_args(PG_FUNCTION_ARGS)
+{
+	int32		start = PG_GETARG_INT32(0);
+	int32		end = PG_GETARG_INT32(1);
+	int32		step;
+
+	/* Setting the value of step */
+	if (start <= end)			/* if the progression is positive, step = 1 */
+		step = 1;
+	else						/* if the progression is negative, step = -1 */
+		step = -1;
+
+	PG_RETURN_POINTER(range(start, end, step));
+}
+
+/* wrapper function which is used to map three integer inputs (start, end, step) with the range function.*/
+Datum
+range_3_args(PG_FUNCTION_ARGS)
+{
+	int32		start = PG_GETARG_INT32(0);
+	int32		end = PG_GETARG_INT32(1);
+	int32		step = PG_GETARG_INT32(2);
+
+	/* Sanity checks */
+	if (step == 0)
+	{
+		ereport(ERROR,
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("Step value cannot be 0")));
+	}
+
+	PG_RETURN_POINTER(range(start, end, step));
+
+}
+
+
+/* utility function for tostringornull */
+Datum
+datum_to_text(Datum d, Oid typeid)
+{
+
+	char	   *s;
+
+	switch (typeid)
 	{
 
-		rtnelt = array_get_element(PointerGetDatum(arr),
-								   1,
-								   &i,
-								   -1,
-								   typlen,
-								   typbyval,
-								   typalign,
-								   &typbyval);
+			/* string types */
+		case VARCHAROID:
+		case BPCHAROID:
+		case TEXTOID:
+			{
+				s = DatumGetCString(DirectFunctionCall1(textout, d));
+				PG_RETURN_TEXT_P(cstring_to_text(s));
+				break;
+			}
+
+		case CSTRINGOID:
+			{
+				s = DatumGetCString(DirectFunctionCall1(cstring_out, d));
+				PG_RETURN_TEXT_P(cstring_to_text(s));
+				break;
+			}
+
+		case BOOLOID:
+			{
+				s = DatumGetCString(DirectFunctionCall1(boolout, d));
+				PG_RETURN_TEXT_P(cstring_to_text(s));
+				break;
+			}
+
+			/* integer, float and numeric types */
+		case INT2OID:
+		case INT4OID:
+		case INT8OID:
+			{
+				s = DatumGetCString(DirectFunctionCall1(int4out, d));
+				PG_RETURN_TEXT_P(cstring_to_text(s));
+				break;
+			}
+
+		case NUMERICOID:
+			{
+				s = DatumGetCString(DirectFunctionCall1(numeric_out, d));
+				PG_RETURN_TEXT_P(cstring_to_text(s));
+				break;
+			}
+
+		case FLOAT4OID:
+		case FLOAT8OID:
+			{
+				s = DatumGetCString(DirectFunctionCall1(float8out, d));
+				PG_RETURN_TEXT_P(cstring_to_text(s));
+				break;
+			}
+
+			/* date and time types */
+		case DATEOID:
+			{
+				s = DatumGetCString(DirectFunctionCall1(date_out, d));
+				PG_RETURN_TEXT_P(cstring_to_text(s));
+				break;
+			}
+
+		case TIMEOID:
+			{
+				s = DatumGetCString(DirectFunctionCall1(time_out, d));
+				PG_RETURN_TEXT_P(cstring_to_text(s));
+				break;
+			}
+
+		case TIMESTAMPOID:
+			{
+				s = DatumGetCString(DirectFunctionCall1(timestamp_out, d));
+				PG_RETURN_TEXT_P(cstring_to_text(s));
+				break;
+			}
+
+		case TIMESTAMPTZOID:
+			{
+				s = DatumGetCString(DirectFunctionCall1(timestamptz_out, d));
+				PG_RETURN_TEXT_P(cstring_to_text(s));
+				break;
+			}
+
+			/* unknown type */
+		case UNKNOWNOID:
+			{
+				s = DatumGetCString(DirectFunctionCall1(unknownout, d));
+				PG_RETURN_TEXT_P(cstring_to_text(s));
+				break;
+
+			}
+
+
+		default:
+			break;
+	}
+
+	PG_RETURN_DATUM(0);
+}
+
+/*
+ * tostringornull:
+ *		returns the string or null equivalent of a datum
+ *		example: tostringornull(123) = '123', tostringornull(null) = null
+ * 				 tostringornull(true) = 't'
+ */
+Datum
+tostringornull(PG_FUNCTION_ARGS)
+{
+	Oid			typeid = get_fn_expr_argtype(fcinfo->flinfo, 0);
+	Datum		d = PG_GETARG_DATUM(0);
+
+	PG_RETURN_DATUM(datum_to_text(d, typeid));
+}
+
+/*
+ * tostringlist:
+ *		returns an array with the string equivalent of all the elements
+ *		example: tostringlist([1,2,true]) = ['1','2','true']
+ * 				 tostringlist([null,'1289',34.6]) = [null,'1289','34.6']
+ */
+Datum
+jsonb_tostringlist(PG_FUNCTION_ARGS)
+{
+
+	Jsonb	   *j = PG_GETARG_JSONB_P(0);
+	JsonbParseState *jpstate = NULL;
+	JsonbValue *ajv;
+
+	if (!JB_ROOT_IS_ARRAY(j) || JB_ROOT_IS_SCALAR(j))
+		ereport(ERROR,
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("toStringList(): list is expected but %s",
+						JsonbToCString(NULL, &j->root, VARSIZE(j)))));
+
+	pushJsonbValue(&jpstate, WJB_BEGIN_ARRAY, NULL);
+
+	if (JB_ROOT_COUNT(j) > 1)
+	{
+		JsonbIterator *it;
+		JsonbValue	jv;
+		JsonbValue *jv_new;
+		JsonbValue	sjv;
+		JsonbIteratorToken tok;
+		int32		counter = 0;
+
+		it = JsonbIteratorInit(&j->root);
+		tok = JsonbIteratorNext(&it, &jv, false);
+		while (tok != WJB_DONE)
+		{
+			if (tok == WJB_ELEM)
+			{
+				jv_new = getIthJsonbValueFromContainer(&j->root, counter++);
+				if (jv_new->type == jbvString)
+				{
+					jv = *jv_new;
+				}
+				else if (jv_new->type == jbvNumeric)
+				{
+					Datum		s;
+
+					s = DirectFunctionCall1(numeric_out,
+											NumericGetDatum(jv_new->val.numeric));
+
+					sjv.type = jbvString;
+					sjv.val.string.val = DatumGetCString(s);
+					sjv.val.string.len = strlen(sjv.val.string.val);
+					jv = sjv;
+				}
+				else if (jv_new->type == jbvBool)
+				{
+					sjv.type = jbvString;
+
+					if (jv_new->val.boolean)
+					{
+						sjv.val.string.len = 4;
+						sjv.val.string.val = "true";
+					}
+					else
+					{
+						sjv.val.string.len = 5;
+						sjv.val.string.val = "false";
+					}
+
+					jv = sjv;
+				}
+				pushJsonbValue(&jpstate, WJB_ELEM, &jv);
+			}
+
+			tok = JsonbIteratorNext(&it, &jv, true);
+		}
+	}
+
+	ajv = pushJsonbValue(&jpstate, WJB_END_ARRAY, NULL);
+
+	PG_RETURN_JSONB_P(JsonbValueToJsonb(ajv));
+}
+
+
+Datum
+array_tostringlist(PG_FUNCTION_ARGS)
+{
+
+	AnyArrayType *arr = PG_GETARG_ANY_ARRAY_P(0);
+	int			ndims = AARR_NDIM(arr);
+	int		   *dims = AARR_DIMS(arr);
+	int			nitems = ArrayGetNItems(ndims, dims);
+	Oid			element_type = AARR_ELEMTYPE(arr);
+	TypeCacheEntry *typentry;
+	int			typlen;
+	bool		typbyval;
+	char		typalign;
+	ArrayBuildState *astate = NULL;
+	array_iter	it;
+	Datum		rtnelt;
+	bool		isnull;
+	int			i;
+
+	typentry = (TypeCacheEntry *) fcinfo->flinfo->fn_extra;
+
+	if (typentry == NULL ||
+		typentry->type_id != element_type)
+	{
+		typentry = lookup_type_cache(element_type,
+									 TYPECACHE_CMP_PROC_FINFO);
+		if (!OidIsValid(typentry->cmp_proc_finfo.fn_oid))
+			ereport(ERROR,
+					(errcode(ERRCODE_UNDEFINED_FUNCTION),
+					 errmsg("could not identify a comparison function for type %s",
+							format_type_be(element_type))));
+		fcinfo->flinfo->fn_extra = (void *) typentry;
+	}
+
+	typlen = typentry->typlen;
+	typbyval = typentry->typbyval;
+	typalign = typentry->typalign;
+
+	/* setup iterator for array */
+	array_iter_setup(&it, arr);
+
+	astate = initArrayResult(TEXTOID, CurrentMemoryContext, false);
+
+	/* iterate over the array */
+	for (i = 0; i < nitems; i++)
+	{
+		/* get datum at index i */
+		rtnelt = array_iter_next(&it, &isnull, i,
+								 typlen, typbyval, typalign);
+
+		/*
+		 * handle special case where converting null values to numeric type
+		 * throws an error
+		 */
+		if (!isnull)
+			rtnelt = datum_to_text(rtnelt, element_type);
+
+		astate = accumArrayResult(astate, rtnelt, isnull,
+								  TEXTOID, CurrentMemoryContext);
+
+	}
+
+	PG_RETURN_ARRAYTYPE_P(makeArrayResult(astate, CurrentMemoryContext));
+}
+
+
+/*
+ * reverse:
+ *		the two functions below returns the reverse of the input array
+ *		example: reverse([1,2,true]) = [true,2,1]
+ * 				 reverse([null,'1289',34.6]) = [34.6,'1289',null]
+ */
+
+/*  jsonb reverse function */
+Datum
+jsonb_array_reverse(PG_FUNCTION_ARGS)
+{
+	Jsonb	   *j = PG_GETARG_JSONB_P(0);
+	JsonbParseState *jpstate = NULL;
+	JsonbValue *ajv;
+	int32		counter = -1;
+
+	if (!JB_ROOT_IS_ARRAY(j) || JB_ROOT_IS_SCALAR(j))
+		ereport(ERROR,
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("reverse(): list is expected but %s",
+						JsonbToCString(NULL, &j->root, VARSIZE(j)))));
+
+	pushJsonbValue(&jpstate, WJB_BEGIN_ARRAY, NULL);
+
+	if (JB_ROOT_COUNT(j) > 1)
+	{
+		JsonbIterator *it;
+		JsonbValue	jv;
+		JsonbValue *jv_new;
+		JsonbIteratorToken tok;
+
+		counter = (int32) JB_ROOT_COUNT(j) - 1;
+
+		it = JsonbIteratorInit(&j->root);
+		tok = JsonbIteratorNext(&it, &jv, false);
+		while (tok != WJB_DONE)
+		{
+			if (tok == WJB_ELEM)
+			{
+				jv_new = getIthJsonbValueFromContainer(&j->root, counter--);
+				jv = *jv_new;
+				pushJsonbValue(&jpstate, WJB_ELEM, &jv);
+			}
+
+			tok = JsonbIteratorNext(&it, &jv, true);
+		}
+	}
+
+	ajv = pushJsonbValue(&jpstate, WJB_END_ARRAY, NULL);
+
+	PG_RETURN_JSONB_P(JsonbValueToJsonb(ajv));
+}
+
+/*  array reverse function */
+Datum
+array_reverse(PG_FUNCTION_ARGS)
+{
+
+	AnyArrayType *arr = PG_GETARG_ANY_ARRAY_P(0);
+	int			ndims = AARR_NDIM(arr);
+	int		   *dims = AARR_DIMS(arr);
+	int			nitems = ArrayGetNItems(ndims, dims);
+	Oid			element_type = AARR_ELEMTYPE(arr);
+	TypeCacheEntry *typentry;
+	int			typlen;
+	bool		typbyval;
+	char		typalign;
+	ArrayBuildState *astate = NULL;
+	array_iter	it;
+	Datum	   *datumArr;
+	bool		isnull,
+			   *boolArr;
+	int			i;
+
+	typentry = (TypeCacheEntry *) fcinfo->flinfo->fn_extra;
+
+	if (typentry == NULL ||
+		typentry->type_id != element_type)
+	{
+		typentry = lookup_type_cache(element_type,
+									 TYPECACHE_CMP_PROC_FINFO);
+		if (!OidIsValid(typentry->cmp_proc_finfo.fn_oid))
+			ereport(ERROR,
+					(errcode(ERRCODE_UNDEFINED_FUNCTION),
+					 errmsg("could not identify a comparison function for type %s",
+							format_type_be(element_type))));
+		fcinfo->flinfo->fn_extra = (void *) typentry;
+	}
+
+	typlen = typentry->typlen;
+	typbyval = typentry->typbyval;
+	typalign = typentry->typalign;
+
+	datumArr = (Datum *) palloc((nitems + 1) * sizeof(Datum));
+	boolArr = (bool *) palloc((nitems + 1) * sizeof(bool));
+
+	/* setup iterator for array */
+	array_iter_setup(&it, arr);
+
+	/* iterate over the array */
+	for (i = nitems - 1; i >= 0; i--)
+	{
+		/* get datum at index i */
+		datumArr[i] = array_iter_next(&it, &isnull, nitems - 1 - i,
+									  typlen, typbyval, typalign);
+
+		boolArr[i] = isnull;
+	}
+
+
+
+	astate = initArrayResult(element_type, CurrentMemoryContext, false);
+
+	/* iterate over the array */
+	for (i = 0; i < nitems; i++)
+	{
+		/* get datum at index i and null status at position 1 */
+
 		astate =
-			accumArrayResult(astate, rtnelt, false,
+			accumArrayResult(astate, datumArr[i], boolArr[i],
 							 element_type, CurrentMemoryContext);
+	}
+
+	PG_RETURN_ARRAYTYPE_P(makeArrayResult(astate, CurrentMemoryContext));
+
+}
+
+/*
+ * split:
+ *		splits the text into array based on the delimiter given
+ *		example: split('Hi/Hello/Welcome','/') =  ["Hi","Hello","Welcome"]
+ */
+Datum
+split(PG_FUNCTION_ARGS)
+{
+	PG_RETURN_ARRAYTYPE_P(text_to_array(fcinfo));
+}
+
+/* Helper function to get local datetime */
+static Timestamp
+dt2local(Timestamp dt, int tz)
+{
+	dt -= (tz * USECS_PER_SEC);
+	return dt;
+}
+
+
+/* Helper function to get timestamp for a particular timezone */
+static Timestamp
+get_timestamp_for_timezone(text *zone, TimestampTz timestamp)
+{
+	Timestamp	result;
+	int			tz;
+	char		tzname[TZ_STRLEN_MAX + 1];
+	char	   *lowzone;
+	int			type,
+				val;
+	pg_tz	   *tzp;
+
+	if (TIMESTAMP_NOT_FINITE(timestamp))
+		PG_RETURN_TIMESTAMP(timestamp);
+
+	/*
+	 * Look up the requested timezone.  First we look in the timezone
+	 * abbreviation table (to handle cases like "EST"), and if that fails, we
+	 * look in the timezone database (to handle cases like
+	 * "America/New_York").  (This matches the order in which timestamp input
+	 * checks the cases; it's important because the timezone database unwisely
+	 * uses a few zone names that are identical to offset abbreviations.)
+	 */
+	text_to_cstring_buffer(zone, tzname, sizeof(tzname));
+
+	/* DecodeTimezoneAbbrev requires lowercase input */
+	lowzone = downcase_truncate_identifier(tzname,
+										   strlen(tzname),
+										   false);
+
+	type = DecodeTimezoneAbbrev(0, lowzone, &val, &tzp);
+
+	if (type == 5 || type == 6)
+	{
+		/* fixed-offset abbreviation */
+		tz = -val;
+		result = dt2local(timestamp, tz);
+	}
+	else if (type == 7)
+	{
+		/* dynamic-offset abbreviation, resolve using specified time */
+		int			isdst;
+
+		tz = DetermineTimeZoneAbbrevOffsetTS(timestamp, tzname, tzp, &isdst);
+		result = dt2local(timestamp, tz);
+	}
+	else
+	{
+		/* try it as a full zone name */
+		tzp = pg_tzset(tzname);
+		if (tzp)
+		{
+			/* Apply the timezone change */
+			struct pg_tm tm;
+			fsec_t		fsec;
+
+			if (timestamp2tm(timestamp, &tz, &tm, &fsec, NULL, tzp) != 0)
+				ereport(ERROR,
+						(errcode(ERRCODE_DATETIME_VALUE_OUT_OF_RANGE),
+						 errmsg("timestamp out of range")));
+			if (tm2timestamp(&tm, fsec, NULL, &result) != 0)
+				ereport(ERROR,
+						(errcode(ERRCODE_DATETIME_VALUE_OUT_OF_RANGE),
+						 errmsg("timestamp out of range")));
+		}
+		else
+		{
+			ereport(ERROR,
+					(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+					 errmsg("time zone \"%s\" not recognized", tzname)));
+			result = 0;			/* keep compiler quiet */
+		}
+	}
+
+	if (!IS_VALID_TIMESTAMP(result))
+		ereport(ERROR,
+				(errcode(ERRCODE_DATETIME_VALUE_OUT_OF_RANGE),
+				 errmsg("timestamp out of range")));
+
+	PG_RETURN_TIMESTAMP(result);
+}
+
+/*
+ * datetime:
+ *		constructs a timestamp for the given timezone
+ *		example: datetime(2020,5,26,10,45,56,0,0,'GMT') = "2020-05-26T10:45:56"
+ */
+Datum
+datetime(PG_FUNCTION_ARGS)
+{
+	int32_t		year,
+				month,
+				day,
+				hour,
+				min,
+				seconds,
+				millisec,
+				nanosec;
+	double		sec;
+	text	   *zone;
+	struct pg_tm tm;
+	TimeOffset	date;
+	TimeOffset	time;
+	int			dterr;
+	bool		bc = false;
+	Timestamp	result;
+
+	year = PG_GETARG_INT32(0);
+	month = PG_GETARG_INT32(1);
+	day = PG_GETARG_INT32(2);
+	hour = PG_GETARG_INT32(3);
+	min = PG_GETARG_INT32(4);
+	seconds = PG_GETARG_INT32(5);
+	millisec = PG_GETARG_INT32(6);
+	nanosec = PG_GETARG_INT32(7);
+	sec = (double) seconds + (double) (millisec * 0.001) + (double) (nanosec * 0.000001);
+
+	zone = cstring_to_text(DatumGetCString(DirectFunctionCall1(unknownout, PG_GETARG_DATUM(8))));
+
+	tm.tm_year = year;
+	tm.tm_mon = month;
+	tm.tm_mday = day;
+
+	/* Handle negative years as BC */
+	if (tm.tm_year < 0)
+	{
+		bc = true;
+		tm.tm_year = -tm.tm_year;
+	}
+
+	dterr = ValidateDate(DTK_DATE_M, false, false, bc, &tm);
+
+	if (dterr != 0)
+		ereport(ERROR,
+				(errcode(ERRCODE_DATETIME_FIELD_OVERFLOW),
+				 errmsg("date field value out of range: %d-%02d-%02d",
+						year, month, day)));
+
+	if (!IS_VALID_JULIAN(tm.tm_year, tm.tm_mon, tm.tm_mday))
+		ereport(ERROR,
+				(errcode(ERRCODE_DATETIME_VALUE_OUT_OF_RANGE),
+				 errmsg("date out of range: %d-%02d-%02d",
+						year, month, day)));
+
+	date = date2j(tm.tm_year, tm.tm_mon, tm.tm_mday) - POSTGRES_EPOCH_JDATE;
+
+	/* Check for time overflow */
+	if (float_time_overflows(hour, min, sec))
+		ereport(ERROR,
+				(errcode(ERRCODE_DATETIME_FIELD_OVERFLOW),
+				 errmsg("time field value out of range: %d:%02d:%02g",
+						hour, min, sec)));
+
+	/* This should match tm2time */
+	time = (((hour * MINS_PER_HOUR + min) * SECS_PER_MINUTE)
+			* USECS_PER_SEC) + (int64) rint(sec * USECS_PER_SEC);
+
+	result = date * USECS_PER_DAY + time;
+	/* check for major overflow */
+	if ((result - time) / USECS_PER_DAY != date)
+		ereport(ERROR,
+				(errcode(ERRCODE_DATETIME_VALUE_OUT_OF_RANGE),
+				 errmsg("timestamp out of range: %d-%02d-%02d %d:%02d:%02g",
+						year, month, day,
+						hour, min, sec)));
+
+	/* check for just-barely overflow (okay except time-of-day wraps) */
+	/* caution: we want to allow 1999-12-31 24:00:00 */
+	if ((result < 0 && date > 0) ||
+		(result > 0 && date < -1))
+		ereport(ERROR,
+				(errcode(ERRCODE_DATETIME_VALUE_OUT_OF_RANGE),
+				 errmsg("timestamp out of range: %d-%02d-%02d %d:%02d:%02g",
+						year, month, day,
+						hour, min, sec)));
+
+	/* final range check catches just-out-of-range timestamps */
+	if (!IS_VALID_TIMESTAMP(result))
+		ereport(ERROR,
+				(errcode(ERRCODE_DATETIME_VALUE_OUT_OF_RANGE),
+				 errmsg("timestamp out of range: %d-%02d-%02d %d:%02d:%02g",
+						year, month, day,
+						hour, min, sec)));
+
+	PG_RETURN_TIMESTAMP(get_timestamp_for_timezone(zone, result));
+}
+
+
+/*
+ * localdatetime:
+ *		returns the current timestamp in a specified time zone
+ *		example: localdatetime('Asia/Kolkata') =  "2023-02-28T19:59:13.485879"
+ */
+Datum
+localdatetime(PG_FUNCTION_ARGS)
+{
+	text	   *zone = cstring_to_text(DatumGetCString(DirectFunctionCall1(unknownout, PG_GETARG_DATUM(0))));
+	TimestampTz timestamp = now(fcinfo);
+
+	PG_RETURN_TIMESTAMP(get_timestamp_for_timezone(zone, timestamp));
+
+}
+
+
+/*
+ * get_time:
+ *		returns the current local time with precision 6
+ *		example: get_time() =  "21:28:54.677068"
+ */
+Datum
+get_time(PG_FUNCTION_ARGS)
+{
+	TimeADT		result;
+	struct pg_tm tt,
+			   *tm = &tt;
+	fsec_t		fsec;
+	int			tz;
+
+	GetCurrentTimeUsec(tm, &fsec, &tz);
+
+	tm2time(tm, fsec, &result);
+	AdjustTimeForTypmod(&result, 6);
+	return result;
+	PG_RETURN_TIMEADT(result);
+}
+
+/*
+ * get_time_for_timezone:
+ *		returns the current local time with precision 4
+ *		example: get_time_for_timezone('GMT') =   "16:06:04.994725"
+ */
+Datum
+get_time_for_timezone(PG_FUNCTION_ARGS)
+{
+	text	   *zone = cstring_to_text(DatumGetCString(DirectFunctionCall1(unknownout, PG_GETARG_DATUM(0))));
+	TimestampTz ts = now(fcinfo);
+	Timestamp	timestamp = get_timestamp_for_timezone(zone, ts);
+	TimeADT		result;
+	struct pg_tm tt,
+			   *tm = &tt;
+	fsec_t		fsec;
+
+	if (TIMESTAMP_NOT_FINITE(timestamp))
+		PG_RETURN_NULL();
+
+	if (timestamp2tm(timestamp, NULL, tm, &fsec, NULL, NULL) != 0)
+		ereport(ERROR,
+				(errcode(ERRCODE_DATETIME_VALUE_OUT_OF_RANGE),
+				 errmsg("timestamp out of range")));
+
+	/*
+	 * Could also do this with time = (timestamp / USECS_PER_DAY *
+	 * USECS_PER_DAY) - timestamp;
+	 */
+	result = ((((tm->tm_hour * MINS_PER_HOUR + tm->tm_min) * SECS_PER_MINUTE) + tm->tm_sec) *
+			  USECS_PER_SEC) + fsec;
+
+	PG_RETURN_TIMEADT(result);
+}
+
+
+/* utility function for tointegerornull */
+Datum
+datum_to_integer(Datum d, Oid typeid)
+{
+
+	char	   *s;
+	bool		canConvert = true;	/* a flag variable that reflects whether
+									 * thee datum can be converted to cstring
+									 * or not */
+
+	switch (typeid)
+	{
+
+			/* string types */
+		case VARCHAROID:
+		case BPCHAROID:
+		case TEXTOID:
+			{
+				s = DatumGetCString(DirectFunctionCall1(textout, d));
+				break;
+			}
+
+		case CSTRINGOID:
+			{
+				s = DatumGetCString(DirectFunctionCall1(cstring_out, d));
+				break;
+			}
+
+		case BOOLOID:
+			{
+				bool		res = DatumGetBool(DirectFunctionCall1(boolout, d));
+
+				PG_RETURN_INT32((int32) res);
+			}
+
+			/* integer, float and numeric types */
+		case INT2OID:
+		case INT4OID:
+		case INT8OID:
+			{
+				s = DatumGetCString(DirectFunctionCall1(int4out, d));
+				break;
+
+			}
+
+		case NUMERICOID:
+			{
+				s = DatumGetCString(DirectFunctionCall1(numeric_out, d));
+				break;
+			}
+
+		case FLOAT4OID:
+		case FLOAT8OID:
+			{
+				s = DatumGetCString(DirectFunctionCall1(float8out, d));
+				break;
+			}
+
+			/* unknown type */
+		case UNKNOWNOID:
+			{
+				s = DatumGetCString(DirectFunctionCall1(unknownout, d));
+				break;
+
+			}
+
+		default:
+			{
+				canConvert = false;
+				break;
+			}
+
+	}
+
+	if (canConvert)
+		PG_RETURN_INT32(string_to_int(s));
+
+	PG_RETURN_DATUM(0);
+}
+
+/* utility function to covert cstring to integer */
+static int32
+string_to_int(char *s)
+{
+	int64		res = 0,
+				len = strlen(s),
+				i = 0;
+	bool		flag = false;
+
+	/* iterate over the string and check for non numeric characters */
+	for (i = 0; i < len; ++i)
+	{
+		if (isalpha(s[i]))
+		{
+			flag = true;
+			break;
+		}
+	}
+
+	if (!flag)
+	{
+		res = atoll(s);
+		return res;
+	}
+	else
+		return 0;
+}
+
+/* get substring of lengthlen from pos start. Used to get string elements from jsonb array */
+static void
+get_cstring_substr(char *c, char *res, int32 start, int32 len)
+{
+	int32		i;
+
+	for (i = 0; i < len; i++)
+		res[i] = *(c + i + start);
+
+	res[len] = '\0';			/* null terminated c string */
+}
+
+/*
+ * tointegerlist:
+ *		returns an array with the integer equivalent of all the elements
+ *		example: tointegerlist(['1','2','true']) = [1'2,'true']
+ * 				 tointegerlist([null,'1289',34.6]) = [null,1289,34]
+ */
+Datum
+jsonb_tointegerlist(PG_FUNCTION_ARGS)
+{
+
+	Jsonb	   *j = PG_GETARG_JSONB_P(0);
+	JsonbParseState *jpstate = NULL;
+	JsonbValue *ajv;
+
+	if (!JB_ROOT_IS_ARRAY(j) || JB_ROOT_IS_SCALAR(j))
+		ereport(ERROR,
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("toStringList(): list is expected but %s",
+						JsonbToCString(NULL, &j->root, VARSIZE(j)))));
+
+	pushJsonbValue(&jpstate, WJB_BEGIN_ARRAY, NULL);
+
+	if (JB_ROOT_COUNT(j) > 1)
+	{
+		JsonbIterator *it;
+		JsonbValue	jv;
+		JsonbValue *jv_new;
+		JsonbValue	sjv;
+		JsonbIteratorToken tok;
+		int32		counter = 0;
+		Datum		s;
+
+		it = JsonbIteratorInit(&j->root);
+		tok = JsonbIteratorNext(&it, &jv, false);
+		sjv.type = jbvNumeric;
+
+		while (tok != WJB_DONE)
+		{
+			if (tok == WJB_ELEM)
+			{
+				jv_new = getIthJsonbValueFromContainer(&j->root, counter++);
+				if (jv_new->type == jbvString)
+				{
+
+					char		res[64];	/* long long can have 64 bits */
+
+					get_cstring_substr(jv_new->val.string.val, res, 0, jv_new->val.string.len);
+					sjv.val.numeric = int64_to_numeric(string_to_int(res));
+					jv = sjv;
+				}
+				else if (jv_new->type == jbvNumeric)
+				{
+					s = NumericGetDatum(jv_new->val.numeric);
+					sjv.val.numeric = int64_to_numeric(datum_to_integer(s, NUMERICOID));
+					jv = sjv;
+				}
+				else if (jv_new->type == jbvBool)
+				{
+
+					if (jv_new->val.boolean)
+						sjv.val.numeric = int64_to_numeric(1);
+
+					else
+						sjv.val.numeric = int64_to_numeric(0);
+
+					jv = sjv;
+				}
+				pushJsonbValue(&jpstate, WJB_ELEM, &jv);
+			}
+
+			tok = JsonbIteratorNext(&it, &jv, true);
+		}
+	}
+
+	ajv = pushJsonbValue(&jpstate, WJB_END_ARRAY, NULL);
+
+	PG_RETURN_JSONB_P(JsonbValueToJsonb(ajv));
+}
+
+
+Datum
+array_tointegerlist(PG_FUNCTION_ARGS)
+{
+
+	AnyArrayType *arr = PG_GETARG_ANY_ARRAY_P(0);
+	int			ndims = AARR_NDIM(arr);
+	int		   *dims = AARR_DIMS(arr);
+	int			nitems = ArrayGetNItems(ndims, dims);
+	Oid			element_type = AARR_ELEMTYPE(arr);
+	TypeCacheEntry *typentry;
+	int			typlen;
+	bool		typbyval;
+	char		typalign;
+	ArrayBuildState *astate = NULL;
+	array_iter	it;
+	Datum		rtnelt;
+	bool		isnull;
+	int			i;
+
+	typentry = (TypeCacheEntry *) fcinfo->flinfo->fn_extra;
+
+	if (typentry == NULL ||
+		typentry->type_id != element_type)
+	{
+		typentry = lookup_type_cache(element_type,
+									 TYPECACHE_CMP_PROC_FINFO);
+		if (!OidIsValid(typentry->cmp_proc_finfo.fn_oid))
+			ereport(ERROR,
+					(errcode(ERRCODE_UNDEFINED_FUNCTION),
+					 errmsg("could not identify a comparison function for type %s",
+							format_type_be(element_type))));
+		fcinfo->flinfo->fn_extra = (void *) typentry;
+	}
+
+	typlen = typentry->typlen;
+	typbyval = typentry->typbyval;
+	typalign = typentry->typalign;
+
+	/* setup iterator for array */
+	array_iter_setup(&it, arr);
+
+	astate = initArrayResult(INT4OID, CurrentMemoryContext, false);
+
+	/* iterate over the array */
+	for (i = 0; i < nitems; i++)
+	{
+		/* get datum at index i */
+		rtnelt = array_iter_next(&it, &isnull, i,
+								 typlen, typbyval, typalign);
+
+		/*
+		 * handle special case where converting null values to numeric type
+		 * throws an error
+		 */
+		if (!isnull)
+			rtnelt = datum_to_integer(rtnelt, element_type);
+
+		astate = accumArrayResult(astate, rtnelt, isnull,
+								  INT4OID, CurrentMemoryContext);
+
+	}
+
+	PG_RETURN_ARRAYTYPE_P(makeArrayResult(astate, CurrentMemoryContext));
+}
+
+
+/* utility function for float functions */
+Datum
+datum_to_float(Datum d, Oid typeid)
+{
+
+	char	   *s;
+	bool		canConvert = true;	/* a flag variable that reflects whether
+									 * thee datum can be converted to cstring
+									 * or not */
+
+	switch (typeid)
+	{
+
+			/* string types */
+		case VARCHAROID:
+		case BPCHAROID:
+		case TEXTOID:
+			{
+				s = DatumGetCString(DirectFunctionCall1(textout, d));
+				break;
+			}
+
+		case CSTRINGOID:
+			{
+				s = DatumGetCString(DirectFunctionCall1(cstring_out, d));
+				break;
+			}
+
+		case BOOLOID:
+			{
+				bool		res = DatumGetBool(DirectFunctionCall1(boolout, d));
+
+				PG_RETURN_FLOAT4((float4) res);
+			}
+
+			/* integer, float and numeric types */
+		case INT2OID:
+		case INT4OID:
+		case INT8OID:
+			{
+				s = DatumGetCString(DirectFunctionCall1(int4out, d));
+				break;
+
+			}
+
+		case NUMERICOID:
+			{
+				s = DatumGetCString(DirectFunctionCall1(numeric_out, d));
+				break;
+			}
+
+		case FLOAT4OID:
+		case FLOAT8OID:
+			{
+				s = DatumGetCString(DirectFunctionCall1(float8out, d));
+				break;
+			}
+
+			/* unknown type */
+		case UNKNOWNOID:
+			{
+				s = DatumGetCString(DirectFunctionCall1(unknownout, d));
+				break;
+
+			}
+
+		default:
+			{
+				canConvert = false;
+				break;
+			}
+
+	}
+
+	if (canConvert)
+		PG_RETURN_FLOAT4(string_to_float(s));
+
+	PG_RETURN_DATUM(0);
+}
+
+/* utility function to covert cstring to float */
+static float4
+string_to_float(char *s)
+{
+	float		res = 0.0;
+	int64		len = strlen(s),
+				i = 0;
+	bool		flag = false;
+
+	/* iterate over the string and check for non numeric characters */
+	for (i = 0; i < len; ++i)
+	{
+		if (isalpha(s[i]))
+		{
+			flag = true;
+			break;
+		}
+	}
+
+	if (!flag)
+	{
+		res = atof(s);
+		return res;
+	}
+	else
+		return 0;
+}
+
+
+/*
+ * tofloatlist:
+ *		returns an array with the floatlist equivalent of all the elements in jsonb
+ *		example: tofloatlist(['1.4','2.5','true']) = [1.4, 2.5, 1.0]
+ * 				 tofloatlist([null,'1289',34.6]) = [null,1289.0,34.6]
+ */
+Datum
+jsonb_tofloatlist(PG_FUNCTION_ARGS)
+{
+
+	Jsonb	   *j = PG_GETARG_JSONB_P(0);
+	JsonbParseState *jpstate = NULL;
+	JsonbValue *ajv;
+
+	if (!JB_ROOT_IS_ARRAY(j) || JB_ROOT_IS_SCALAR(j))
+		ereport(ERROR,
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("toStringList(): list is expected but %s",
+						JsonbToCString(NULL, &j->root, VARSIZE(j)))));
+
+	pushJsonbValue(&jpstate, WJB_BEGIN_ARRAY, NULL);
+
+	if (JB_ROOT_COUNT(j) > 1)
+	{
+		JsonbIterator *it;
+		JsonbValue	jv;
+		JsonbValue *jv_new;
+		JsonbValue	sjv;
+		JsonbIteratorToken tok;
+		int32		counter = 0;
+
+		/* Datum				s; */
+
+		it = JsonbIteratorInit(&j->root);
+		tok = JsonbIteratorNext(&it, &jv, false);
+		sjv.type = jbvNumeric;
+
+		while (tok != WJB_DONE)
+		{
+			if (tok == WJB_ELEM)
+			{
+				jv_new = getIthJsonbValueFromContainer(&j->root, counter++);
+				if (jv_new->type == jbvString)
+				{
+					char		res[64];
+
+					get_cstring_substr(jv_new->val.string.val, res, 0, jv_new->val.string.len);
+					sjv.val.numeric = DatumGetNumeric(DirectFunctionCall2(numeric_round, (DirectFunctionCall1(float8_numeric, Float8GetDatum((float8) string_to_float(res)))), 4));
+					jv = sjv;
+
+				}
+				else if (jv_new->type == jbvNumeric)
+				{
+					jv = *jv_new;
+
+				}
+				else if (jv_new->type == jbvBool)
+				{
+					if (jv_new->val.boolean)
+						sjv.val.numeric = int64_to_numeric(1);
+
+					else
+						sjv.val.numeric = int64_to_numeric(0);
+
+					jv = sjv;
+				}
+				pushJsonbValue(&jpstate, WJB_ELEM, &jv);
+			}
+
+			tok = JsonbIteratorNext(&it, &jv, true);
+		}
+	}
+
+	ajv = pushJsonbValue(&jpstate, WJB_END_ARRAY, NULL);
+
+	PG_RETURN_JSONB_P(JsonbValueToJsonb(ajv));
+}
+
+/*
+ * tofloatlist:
+ *		returns an array with the floatlist equivalent of all the elements in the array
+ *		example: tofloatlist(['1.4','2.5','true']) = [1.4, 2.5, 1.0]
+ * 				 tofloatlist([null,'1289',34.6]) = [null,1289.0,34.6]
+ */
+Datum
+array_tofloatlist(PG_FUNCTION_ARGS)
+{
+
+	AnyArrayType *arr = PG_GETARG_ANY_ARRAY_P(0);
+	int			ndims = AARR_NDIM(arr);
+	int		   *dims = AARR_DIMS(arr);
+	int			nitems = ArrayGetNItems(ndims, dims);
+	Oid			element_type = AARR_ELEMTYPE(arr);
+	TypeCacheEntry *typentry;
+	int			typlen;
+	bool		typbyval;
+	char		typalign;
+	ArrayBuildState *astate = NULL;
+	array_iter	it;
+	Datum		rtnelt;
+	bool		isnull;
+	int			i;
+
+	typentry = (TypeCacheEntry *) fcinfo->flinfo->fn_extra;
+
+	if (typentry == NULL ||
+		typentry->type_id != element_type)
+	{
+		typentry = lookup_type_cache(element_type,
+									 TYPECACHE_CMP_PROC_FINFO);
+		if (!OidIsValid(typentry->cmp_proc_finfo.fn_oid))
+			ereport(ERROR,
+					(errcode(ERRCODE_UNDEFINED_FUNCTION),
+					 errmsg("could not identify a comparison function for type %s",
+							format_type_be(element_type))));
+		fcinfo->flinfo->fn_extra = (void *) typentry;
+	}
+
+	typlen = typentry->typlen;
+	typbyval = typentry->typbyval;
+	typalign = typentry->typalign;
+
+	/* setup iterator for array */
+	array_iter_setup(&it, arr);
+
+	astate = initArrayResult(FLOAT4OID, CurrentMemoryContext, false);
+
+	/* iterate over the array */
+	for (i = 0; i < nitems; i++)
+	{
+		/* get datum at index i */
+		rtnelt = array_iter_next(&it, &isnull, i,
+								 typlen, typbyval, typalign);
+
+		/*
+		 * handle special case where converting null values to numeric type
+		 * throws an error
+		 */
+		if (!isnull)
+			rtnelt = datum_to_float(rtnelt, element_type);
+
+		astate = accumArrayResult(astate, rtnelt, isnull,
+								  FLOAT4OID, CurrentMemoryContext);
 
 	}
 
