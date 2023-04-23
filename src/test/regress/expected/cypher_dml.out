@@ -1379,8 +1379,8 @@ RETURN x1, x2, l;
 EXPLAIN (VERBOSE, COSTS OFF)
 MATCH (a:person {id: 1})-[x:knows*1..2]->(b:person)
 WITH x[0] AS x1, x[1] AS x2 ORDER BY x2 RETURN x1;
-                                       QUERY PLAN                                        
------------------------------------------------------------------------------------------
+                                               QUERY PLAN                                                
+---------------------------------------------------------------------------------------------------------
  Subquery Scan on _
    Output: _.x1
    ->  Sort
@@ -1395,10 +1395,10 @@ WITH x[0] AS x1, x[1] AS x2 ORDER BY x2 RETURN x1;
                            Output: a.id, a.properties
                            Filter: (a.properties.'id'::text = '1'::jsonb)
                      ->  Subquery Scan on x
-                           Output: x.start, x."end", x.ids, x.edges
+                           Output: x.start, x."end", x.ids, x.edges, x.vertices
                            ->  Graph VLE [1..2]
                                  ->  Result
-                                       Output: a.id, a.id, '{}'::graphid[], '[]'::edge[]
+                                       Output: a.id, a.id, '{}'::graphid[], '[]'::edge[], '[]'::vertex[]
                ->  Result Cache
                      Output: b.id
                      Cache Key: x."end"
@@ -1410,8 +1410,8 @@ WITH x[0] AS x1, x[1] AS x2 ORDER BY x2 RETURN x1;
 EXPLAIN (VERBOSE, COSTS OFF)
 MATCH (a:person {id: 1})-[x:knows*1..2]->(b:person)
 WITH max(b.id::"numeric") AS id, x[0] AS x RETURN *;
-                                          QUERY PLAN                                           
------------------------------------------------------------------------------------------------
+                                                  QUERY PLAN                                                   
+---------------------------------------------------------------------------------------------------------------
  Subquery Scan on _
    Output: cypher_to_jsonb(_.id), _.x
    ->  GroupAggregate
@@ -1429,10 +1429,10 @@ WITH max(b.id::"numeric") AS id, x[0] AS x RETURN *;
                                  Output: a.id, a.properties
                                  Filter: (a.properties.'id'::text = '1'::jsonb)
                            ->  Subquery Scan on x
-                                 Output: x.start, x."end", x.ids, x.edges
+                                 Output: x.start, x."end", x.ids, x.edges, x.vertices
                                  ->  Graph VLE [1..2]
                                        ->  Result
-                                             Output: a.id, a.id, '{}'::graphid[], '[]'::edge[]
+                                             Output: a.id, a.id, '{}'::graphid[], '[]'::edge[], '[]'::vertex[]
                      ->  Result Cache
                            Output: b.properties, b.id
                            Cache Key: x."end"
@@ -1444,8 +1444,8 @@ WITH max(b.id::"numeric") AS id, x[0] AS x RETURN *;
 EXPLAIN (VERBOSE, COSTS OFF)
 MATCH (a:person {id: 1})-[x:knows*1..2]->(b:person)
 WITH DISTINCT x AS path RETURN *;
-                                       QUERY PLAN                                        
------------------------------------------------------------------------------------------
+                                               QUERY PLAN                                                
+---------------------------------------------------------------------------------------------------------
  Unique
    Output: x.edges
    ->  Sort
@@ -1460,10 +1460,10 @@ WITH DISTINCT x AS path RETURN *;
                            Output: a.id, a.properties
                            Filter: (a.properties.'id'::text = '1'::jsonb)
                      ->  Subquery Scan on x
-                           Output: x.start, x."end", x.ids, x.edges
+                           Output: x.start, x."end", x.ids, x.edges, x.vertices
                            ->  Graph VLE [1..2]
                                  ->  Result
-                                       Output: a.id, a.id, '{}'::graphid[], '[]'::edge[]
+                                       Output: a.id, a.id, '{}'::graphid[], '[]'::edge[], '[]'::vertex[]
                ->  Result Cache
                      Output: b.id
                      Cache Key: x."end"
@@ -1475,8 +1475,8 @@ WITH DISTINCT x AS path RETURN *;
 EXPLAIN (VERBOSE, COSTS OFF)
 MATCH (a:person {id: 1})-[x:knows*1..2]->(b:person)
 WITH max(b.id::"numeric") AS id, x AS x RETURN *;
-                                          QUERY PLAN                                           
------------------------------------------------------------------------------------------------
+                                                  QUERY PLAN                                                   
+---------------------------------------------------------------------------------------------------------------
  Subquery Scan on _
    Output: cypher_to_jsonb(_.id), _.x
    ->  GroupAggregate
@@ -1494,10 +1494,10 @@ WITH max(b.id::"numeric") AS id, x AS x RETURN *;
                                  Output: a.id, a.properties
                                  Filter: (a.properties.'id'::text = '1'::jsonb)
                            ->  Subquery Scan on x
-                                 Output: x.start, x."end", x.ids, x.edges
+                                 Output: x.start, x."end", x.ids, x.edges, x.vertices
                                  ->  Graph VLE [1..2]
                                        ->  Result
-                                             Output: a.id, a.id, '{}'::graphid[], '[]'::edge[]
+                                             Output: a.id, a.id, '{}'::graphid[], '[]'::edge[], '[]'::vertex[]
                      ->  Result Cache
                            Output: b.properties, b.id
                            Cache Key: x."end"
@@ -1509,8 +1509,8 @@ WITH max(b.id::"numeric") AS id, x AS x RETURN *;
 EXPLAIN (VERBOSE, COSTS OFF)
 MATCH (a:person {id: 1})-[x:knows*1..2]->(b:person)
 WITH max(length(x)::"numeric") AS x, b.id AS id RETURN *;
-                                          QUERY PLAN                                           
------------------------------------------------------------------------------------------------
+                                                  QUERY PLAN                                                   
+---------------------------------------------------------------------------------------------------------------
  Subquery Scan on _
    Output: cypher_to_jsonb(_.x), _.id
    ->  GroupAggregate
@@ -1528,10 +1528,10 @@ WITH max(length(x)::"numeric") AS x, b.id AS id RETURN *;
                                  Output: a.id, a.properties
                                  Filter: (a.properties.'id'::text = '1'::jsonb)
                            ->  Subquery Scan on x
-                                 Output: x.start, x."end", x.ids, x.edges
+                                 Output: x.start, x."end", x.ids, x.edges, x.vertices
                                  ->  Graph VLE [1..2]
                                        ->  Result
-                                             Output: a.id, a.id, '{}'::graphid[], '[]'::edge[]
+                                             Output: a.id, a.id, '{}'::graphid[], '[]'::edge[], '[]'::vertex[]
                      ->  Result Cache
                            Output: b.properties, b.id
                            Cache Key: x."end"
@@ -1543,8 +1543,8 @@ WITH max(length(x)::"numeric") AS x, b.id AS id RETURN *;
 EXPLAIN (VERBOSE, COSTS OFF)
 MATCH (a:person {id: 1})-[x:knows*1..2]->(b:person)
 RETURN x, x IS NOT NULL, x[0] IS NULL;
-                                    QUERY PLAN                                    
-----------------------------------------------------------------------------------
+                                         QUERY PLAN                                          
+---------------------------------------------------------------------------------------------
  Nested Loop
    Output: x.edges, (x.edges IS NOT NULL), (x.edges[1] IS NOT DISTINCT FROM NULL)
    Inner Unique: true
@@ -1554,10 +1554,10 @@ RETURN x, x IS NOT NULL, x[0] IS NULL;
                Output: a.id, a.properties
                Filter: (a.properties.'id'::text = '1'::jsonb)
          ->  Subquery Scan on x
-               Output: x.start, x."end", x.ids, x.edges
+               Output: x.start, x."end", x.ids, x.edges, x.vertices
                ->  Graph VLE [1..2]
                      ->  Result
-                           Output: a.id, a.id, '{}'::graphid[], '[]'::edge[]
+                           Output: a.id, a.id, '{}'::graphid[], '[]'::edge[], '[]'::vertex[]
    ->  Result Cache
          Output: b.id
          Cache Key: x."end"
@@ -1569,8 +1569,8 @@ RETURN x, x IS NOT NULL, x[0] IS NULL;
 EXPLAIN (VERBOSE, COSTS OFF)
 MATCH (a:person {id: 1})-[x:knows*1..2]->(b:person)
 WHERE x[0] IS NOT NULL RETURN x[0];
-                                 QUERY PLAN                                  
------------------------------------------------------------------------------
+                                         QUERY PLAN                                          
+---------------------------------------------------------------------------------------------
  Nested Loop
    Output: x.edges[1]
    Inner Unique: true
@@ -1580,11 +1580,11 @@ WHERE x[0] IS NOT NULL RETURN x[0];
                Output: a.id, a.properties
                Filter: (a.properties.'id'::text = '1'::jsonb)
          ->  Subquery Scan on x
-               Output: x.start, x."end", x.ids, x.edges
+               Output: x.start, x."end", x.ids, x.edges, x.vertices
                Filter: (x.edges[1] IS DISTINCT FROM NULL)
                ->  Graph VLE [1..2]
                      ->  Result
-                           Output: a.id, a.id, '{}'::graphid[], '[]'::edge[]
+                           Output: a.id, a.id, '{}'::graphid[], '[]'::edge[], '[]'::vertex[]
    ->  Result Cache
          Output: b.id
          Cache Key: x."end"
@@ -1601,8 +1601,8 @@ SELECT * FROM (
   MATCH (a:person {id: 1})-[x:knows*1..2]->(b:person)
   RETURN x[1]
 ) AS foo;
-                                      QUERY PLAN                                       
----------------------------------------------------------------------------------------
+                                              QUERY PLAN                                               
+-------------------------------------------------------------------------------------------------------
  Append
    ->  Nested Loop
          Output: x.edges[1]
@@ -1613,11 +1613,11 @@ SELECT * FROM (
                      Output: a.id, a.properties
                      Filter: (a.properties.'id'::text = '1'::jsonb)
                ->  Subquery Scan on x
-                     Output: x.start, x."end", x.ids, x.edges
+                     Output: x.start, x."end", x.ids, x.edges, x.vertices
                      Filter: (x.edges[1] IS DISTINCT FROM NULL)
                      ->  Graph VLE [1..2]
                            ->  Result
-                                 Output: a.id, a.id, '{}'::graphid[], '[]'::edge[]
+                                 Output: a.id, a.id, '{}'::graphid[], '[]'::edge[], '[]'::vertex[]
          ->  Result Cache
                Output: b.id
                Cache Key: x."end"
@@ -1633,10 +1633,10 @@ SELECT * FROM (
                      Output: a_1.id, a_1.properties
                      Filter: (a_1.properties.'id'::text = '1'::jsonb)
                ->  Subquery Scan on x_1
-                     Output: x_1.start, x_1."end", x_1.ids, x_1.edges
+                     Output: x_1.start, x_1."end", x_1.ids, x_1.edges, x_1.vertices
                      ->  Graph VLE [1..2]
                            ->  Result
-                                 Output: a_1.id, a_1.id, '{}'::graphid[], '[]'::edge[]
+                                 Output: a_1.id, a_1.id, '{}'::graphid[], '[]'::edge[], '[]'::vertex[]
          ->  Result Cache
                Output: b_1.id
                Cache Key: x_1."end"

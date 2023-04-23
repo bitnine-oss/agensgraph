@@ -184,8 +184,7 @@ static ParseNamespaceItem *transformMatchVLE(ParseState *pstate,
 											 List **targetList, bool pathout);
 static SelectStmt *genVLESubselect(ParseState *pstate, CypherRel *crel,
 								   bool out, bool pathout);
-static Node *genVLELeftChild(ParseState *pstate, CypherRel *crel,
-							 bool out, bool pathout);
+static Node *genVLELeftChild(ParseState *pstate, CypherRel *crel, bool out);
 static Node *genEdgeSimple(char *aliasname);
 static Node *genVLEEdgeSubselect(ParseState *pstate, CypherRel *crel,
 								 char *aliasname);
@@ -1916,7 +1915,7 @@ transformMatchNode(ParseState *pstate, CypherNode *cnode, List **targetList,
 
 	/* set `ihn` to true because we should scan all derived tables */
 	nsitem = addRangeTableEntry(pstate, r, alias, r->inh, true);
-	addNSItemToJoinlist(pstate, nsitem, false);
+	addNSItemToJoinlist(pstate, nsitem, true);
 
 	if (varname != NULL || prop_constr)
 	{
@@ -2302,6 +2301,8 @@ genVLESubselect(ParseState *pstate, CypherRel *crel, bool out, bool pathout)
 	List	   *tlist;
 	Node	   *left;
 	SelectStmt *sel;
+	Node	   *vertices_col;
+	ResTarget  *vertices;
 
 	prev_colname = getEdgeColname(crel, false);
 	prev_col = makeColumnRef(genQualifiedName(VLE_LEFT_ALIAS, prev_colname));
@@ -2328,19 +2329,13 @@ genVLESubselect(ParseState *pstate, CypherRel *crel, bool out, bool pathout)
 		tlist = lappend(tlist, edges);
 	}
 
-	if (pathout)
-	{
-		Node	   *vertices_col;
-		ResTarget  *vertices;
-
-		vertices_col = makeColumnRef(genQualifiedName(VLE_LEFT_ALIAS,
-													  VLE_COLNAME_VERTICES));
-		vertices = makeResTarget(vertices_col, VLE_COLNAME_VERTICES);
-
-		tlist = lappend(tlist, vertices);
-	}
-
-	left = genVLELeftChild(pstate, crel, out, pathout);
+	/* Add Vertices Column */
+	vertices_col = makeColumnRef(genQualifiedName(VLE_LEFT_ALIAS,
+												  VLE_COLNAME_VERTICES));
+	vertices = makeResTarget(vertices_col, VLE_COLNAME_VERTICES);
+	tlist = lappend(tlist, vertices);
+	
+	left = genVLELeftChild(pstate, crel, out);
 
 	sel = makeNode(SelectStmt);
 	sel->targetList = tlist;
@@ -2395,7 +2390,7 @@ genVLESubselect(ParseState *pstate, CypherRel *crel, bool out, bool pathout)
  *         AS l(start, "end", ids, edges, vertices)
  */
 static Node *
-genVLELeftChild(ParseState *pstate, CypherRel *crel, bool out, bool pathout)
+genVLELeftChild(ParseState *pstate, CypherRel *crel, bool out)
 {
 	Node	   *vid;
 	List	   *colnames = NIL;
@@ -2411,6 +2406,7 @@ genVLELeftChild(ParseState *pstate, CypherRel *crel, bool out, bool pathout)
 
 	if (isZeroLengthVLE(crel))
 	{
+		Node	   *vtxarr = makeAArrayExpr(NIL, VERTEXARRAYOID);
 		Node	   *ids;
 		List	   *values;
 
@@ -2431,13 +2427,8 @@ genVLELeftChild(ParseState *pstate, CypherRel *crel, bool out, bool pathout)
 			colnames = lappend(colnames, makeString(VLE_COLNAME_EDGES));
 		}
 
-		if (pathout)
-		{
-			Node	   *vtxarr = makeAArrayExpr(NIL, VERTEXARRAYOID);
-
-			values = lappend(values, vtxarr);
-			colnames = lappend(colnames, makeString(VLE_COLNAME_VERTICES));
-		}
+		values = lappend(values, vtxarr);
+		colnames = lappend(colnames, makeString(VLE_COLNAME_VERTICES));
 
 		sel = makeNode(SelectStmt);
 		sel->valuesLists = list_make1(values);
@@ -2454,6 +2445,8 @@ genVLELeftChild(ParseState *pstate, CypherRel *crel, bool out, bool pathout)
 		List	   *tlist = NIL;
 		Node	   *from;
 		List	   *where_args = NIL;
+		ResTarget  *vertices;
+		TypeCast   *cast = makeNode(TypeCast);
 
 		prev_colname = genQualifiedName(NULL, getEdgeColname(crel, false));
 		prev_col = makeColumnRef(prev_colname);
@@ -2478,18 +2471,12 @@ genVLELeftChild(ParseState *pstate, CypherRel *crel, bool out, bool pathout)
 			tlist = lappend(tlist, edges);
 		}
 
-		if (pathout)
-		{
-			ResTarget  *vertices;
-			TypeCast   *cast = makeNode(TypeCast);
+		cast->arg = (Node *) makeNullAConst();
+		cast->typeName = makeTypeNameFromOid(VERTEXARRAYOID, -1);
+		cast->location = -1;
+		vertices = makeResTarget((Node *) cast, VLE_COLNAME_VERTICES);
 
-			cast->arg = (Node *) makeNullAConst();
-			cast->typeName = makeTypeNameFromOid(VERTEXARRAYOID, -1);
-			cast->location = -1;
-			vertices = makeResTarget((Node *) cast, VLE_COLNAME_VERTICES);
-
-			tlist = lappend(tlist, vertices);
-		}
+		tlist = lappend(tlist, vertices);
 
 		if (vid != NULL)
 		{
