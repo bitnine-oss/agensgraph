@@ -185,11 +185,11 @@ ProcessQuery(PlannedStmt *plan,
 			case CMD_GRAPHWRITE:
 				{
 					uint64		sum = graphWriteStats.insertVertex +
-										graphWriteStats.insertEdge +
-										graphWriteStats.deleteVertex +
-										graphWriteStats.deleteEdge +
-										graphWriteStats.updateProperty;
-	
+					graphWriteStats.insertEdge +
+					graphWriteStats.deleteVertex +
+					graphWriteStats.deleteEdge +
+					graphWriteStats.updateProperty;
+
 					SetQueryCompletion(qc, CMDTAG_UPDATE, sum);
 				}
 				break;
@@ -216,10 +216,10 @@ ProcessQuery(PlannedStmt *plan,
  * That's more general than portals need, but plancache.c uses this too.
  *
  * See the comments in portal.h.
- * 
+ *
  * AgensGraph
  * AgensGraph's Plan is not the same as the basic PostgreSQL Rule.
- * 
+ *
  * For example, If CMD_SELECT, it can be including CMD_GRAPHWRITE. so, if
  * returns PORTAL_ONE_SELECT then, makes Snapshot system failure. Therefore,
  * added a case for this.
@@ -845,9 +845,6 @@ PortalRun(Portal portal, long count, bool isTopLevel, bool run_once,
 		else
 			CurrentResourceOwner = saveResourceOwner;
 		PortalContext = savePortalContext;
-
-		/* todo: Is it using now? */
-		enableGraphDML = false;
 
 		PG_RE_THROW();
 	}

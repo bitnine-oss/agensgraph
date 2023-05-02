@@ -13,7 +13,7 @@
 #include "nodes/parsenodes.h"
 
 extern char *graph_path;
-extern bool enableGraphDML;
+extern bool cypher_allow_unsafe_dml;
 extern bool cypher_allow_unsafe_ddl;
 
 extern char *get_graph_path(bool lookup_cache);

@@ -100,6 +100,7 @@
 #include "utils/syscache.h"
 #include "utils/timestamp.h"
 #include "utils/typcache.h"
+#include "catalog/ag_graph_fn.h"
 
 /*
  * ON COMMIT action list
@@ -1599,7 +1600,7 @@ isPropertyIndex(Oid indexoid)
 
 	/* Fetch pg_index tuple of source index. */
 	indexTuple = SearchSysCache1(INDEXRELID, ObjectIdGetDatum(indexoid));
-	if (!HeapTupleIsValid(indexTuple))		/* should not happen */
+	if (!HeapTupleIsValid(indexTuple))	/* should not happen */
 		elog(ERROR, "cache lookup failed for index %u", indexoid);
 	index = (Form_pg_index) GETSTRUCT(indexTuple);
 
@@ -2114,7 +2115,7 @@ truncate_check_activity(Relation rel)
 				(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
 				 errmsg("cannot truncate temporary tables of other sessions")));
 
-	if (OidIsValid(get_relid_laboid(RelationGetRelid(rel))))
+	if (OidIsValid(get_relid_laboid(RelationGetRelid(rel))) && !cypher_allow_unsafe_dml)
 		ereport(ERROR,
 				(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
 				 errmsg("cannot truncate label in graph schema")));
@@ -2723,8 +2724,8 @@ MergeAttributes(List *schema, List *supers, char relpersistence,
 				{
 					if (!isLabel)
 						ereport(NOTICE,
-						(errmsg("merging column \"%s\" with inherited definition",
-							attributeName)));
+								(errmsg("merging column \"%s\" with inherited definition",
+										attributeName)));
 				}
 				else
 					ereport(NOTICE,
@@ -12027,7 +12028,7 @@ ATExecAlterColumnType(AlteredTableInfo *tab, Relation rel,
 	 * fix up the missing value if any. There shouldn't be any missing values
 	 * for anything except plain tables, but if there are, ignore them.
 	 */
-	if (rel->rd_rel->relkind == RELKIND_RELATION  && attTup->atthasmissing)
+	if (rel->rd_rel->relkind == RELKIND_RELATION && attTup->atthasmissing)
 	{
 		Datum		missingval;
 		bool		missingNull;
@@ -14340,9 +14341,9 @@ MergeAttributesIntoExisting(Relation child_rel, Relation parent_rel)
 
 				if (strcmp(child_expr, parent_expr) != 0)
 					ereport(ERROR,
-						(errcode(ERRCODE_DATATYPE_MISMATCH),
-						 errmsg("column \"%s\" in child table has a conflicting generation expression",
-								attributeName)));
+							(errcode(ERRCODE_DATATYPE_MISMATCH),
+							 errmsg("column \"%s\" in child table has a conflicting generation expression",
+									attributeName)));
 			}
 
 			/*
@@ -15069,6 +15070,7 @@ relation_mark_replica_identity(Relation rel, char ri_type, Oid indexOid,
 			CatalogTupleUpdate(pg_index, &pg_index_tuple->t_self, pg_index_tuple);
 			InvokeObjectPostAlterHookArg(IndexRelationId, thisIndexOid, 0,
 										 InvalidOid, is_internal);
+
 			/*
 			 * Invalidate the relcache for the table, so that after we commit
 			 * all sessions will refresh the table's replica identity index
@@ -17022,12 +17024,12 @@ ATExecAttachPartition(List **wqueue, Relation rel, PartitionCmd *cmd)
 	/*
 	 * If the partition we just attached is partitioned itself, invalidate
 	 * relcache for all descendent partitions too to ensure that their
-	 * rd_partcheck expression trees are rebuilt; partitions already locked
-	 * at the beginning of this function.
+	 * rd_partcheck expression trees are rebuilt; partitions already locked at
+	 * the beginning of this function.
 	 */
 	if (attachrel->rd_rel->relkind == RELKIND_PARTITIONED_TABLE)
 	{
-		ListCell *l;
+		ListCell   *l;
 
 		foreach(l, attachrel_children)
 		{
@@ -17565,13 +17567,13 @@ ATExecDetachPartition(Relation rel, RangeVar *name)
 	/*
 	 * If the partition we just detached is partitioned itself, invalidate
 	 * relcache for all descendent partitions too to ensure that their
-	 * rd_partcheck expression trees are rebuilt; must lock partitions
-	 * before doing so, using the same lockmode as what partRel has been
-	 * locked with by the caller.
+	 * rd_partcheck expression trees are rebuilt; must lock partitions before
+	 * doing so, using the same lockmode as what partRel has been locked with
+	 * by the caller.
 	 */
 	if (partRel->rd_rel->relkind == RELKIND_PARTITIONED_TABLE)
 	{
-		List   *children;
+		List	   *children;
 
 		children = find_all_inheritors(RelationGetRelid(partRel),
 									   AccessExclusiveLock, NULL);

@@ -425,7 +425,7 @@ transformDeleteStmt(ParseState *pstate, DeleteStmt *stmt)
 
 	qry->commandType = CMD_DELETE;
 
-	if (RangeVarIsLabel(stmt->relation) && !enableGraphDML)
+	if (RangeVarIsLabel(stmt->relation) && !cypher_allow_unsafe_dml)
 		elog(ERROR, "DML query to graph objects is not allowed");
 
 	/* process the WITH clause independently of all else */
@@ -508,7 +508,7 @@ transformInsertStmt(ParseState *pstate, InsertStmt *stmt)
 	bool		isOnConflictUpdate;
 	AclMode		targetPerms;
 
-	if (RangeVarIsLabel(stmt->relation) && !enableGraphDML)
+	if (RangeVarIsLabel(stmt->relation) && !cypher_allow_unsafe_dml)
 		elog(ERROR, "DML query to graph objects is not allowed");
 
 	/* There can't be any outer WITH to worry about */
@@ -2254,7 +2254,7 @@ transformUpdateStmt(ParseState *pstate, UpdateStmt *stmt)
 	ParseNamespaceItem *nsitem;
 	Node	   *qual;
 
-	if (RangeVarIsLabel(stmt->relation) && !enableGraphDML)
+	if (RangeVarIsLabel(stmt->relation) && !cypher_allow_unsafe_dml)
 		elog(ERROR, "DML query to graph objects is not allowed");
 
 	qry->commandType = CMD_UPDATE;
@@ -3099,7 +3099,7 @@ transformCypherStmt(ParseState *pstate, CypherStmt *stmt)
 static Query *
 transformCypherClause(ParseState *pstate, CypherClause *clause)
 {
-	Query *qry;
+	Query	   *qry;
 
 	switch (cypherClauseTag(clause))
 	{

@@ -29,12 +29,12 @@
 #include "miscadmin.h"
 
 /* a global variable for the GUC variable */
-char *graph_path = NULL;
-bool enableGraphDML = false;
-bool cypher_allow_unsafe_ddl = false;
+char	   *graph_path = NULL;
+bool		cypher_allow_unsafe_dml = false;
+bool		cypher_allow_unsafe_ddl = false;
 
 /* Potentially set by pg_upgrade_support functions */
-Oid binary_upgrade_next_ag_graph_oid = InvalidOid;
+Oid			binary_upgrade_next_ag_graph_oid = InvalidOid;
 
 /* check_hook: validate new graph_path value */
 bool
@@ -74,7 +74,7 @@ get_graph_path(bool lookup_cache)
 Oid
 get_graph_path_oid(void)
 {
-	Oid graphoid;
+	Oid			graphoid;
 
 	if (graph_path == NULL || strlen(graph_path) == 0)
 		ereport(ERROR,
@@ -101,7 +101,7 @@ GraphCreate(CreateGraphStmt *stmt, const char *queryString,
 	CreateSchemaStmt *schemaStmt;
 	Oid			schemaoid;
 	Datum		values[Natts_ag_graph];
-	bool		isnull[Natts_ag_graph] = { false, };
+	bool		isnull[Natts_ag_graph] = {false,};
 	NameData	gname;
 	Relation	graphdesc;
 	TupleDesc	tupDesc;
@@ -152,7 +152,7 @@ GraphCreate(CreateGraphStmt *stmt, const char *queryString,
 		if (!OidIsValid(binary_upgrade_next_ag_graph_oid))
 			ereport(ERROR,
 					(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-							errmsg("ag_graph OID value not set when in binary upgrade mode")));
+					 errmsg("ag_graph OID value not set when in binary upgrade mode")));
 		graphoid = binary_upgrade_next_ag_graph_oid;
 		binary_upgrade_next_ag_graph_oid = InvalidOid;
 	}
@@ -182,8 +182,8 @@ GraphCreate(CreateGraphStmt *stmt, const char *queryString,
 	schemaobj.objectSubId = 0;
 
 	/*
-	 * Register dependency from the schema to the graph,
-	 * so that the schema will be deleted if the graph is.
+	 * Register dependency from the schema to the graph, so that the schema
+	 * will be deleted if the graph is.
 	 */
 	recordDependencyOn(&schemaobj, &graphobj, DEPENDENCY_INTERNAL);
 
