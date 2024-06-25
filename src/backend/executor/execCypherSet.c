@@ -602,6 +602,7 @@ LegacyUpdateElemProp(ModifyGraphState *mgstate, Oid elemtype, Datum gid,
 					 errmsg("graph element(%hu," UINT64_FORMAT ") has been SET multiple times",
 							GraphidGetLabid(DatumGetGraphid(gid)),
 							GraphidGetLocid(DatumGetGraphid(gid)))));
+			break;
 		case TM_Ok:
 			break;
 		case TM_Updated:
@@ -609,8 +610,10 @@ LegacyUpdateElemProp(ModifyGraphState *mgstate, Oid elemtype, Datum gid,
 			ereport(ERROR,
 					(errcode(ERRCODE_T_R_SERIALIZATION_FAILURE),
 					 errmsg("could not serialize access due to concurrent update")));
+			break;
 		default:
 			elog(ERROR, "unrecognized heap_update status: %u", result);
+			break;
 	}
 
 	if (resultRelInfo->ri_NumIndices > 0 && update_indexes)
