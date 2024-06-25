@@ -99,10 +99,10 @@ CreateGraphCommand(CreateGraphStmt *stmt, const char *queryString,
 
 	if (stmt->kind & CGSK_ELABEL)
 	{
-		/* Create ag_ege table */
+		/* Create ag_edge table */
 		createELabelStmt = makeDefaultCreateAGLabelStmt(stmt->graphname,
 														LABEL_EDGE, stmt_location);
-		createVLabelStmt->only_base = (stmt->kind == CGSK_ELABEL);
+		createELabelStmt->only_base = (stmt->kind == CGSK_ELABEL);
 		SimpleProcessUtility((Node *) createELabelStmt, queryString, stmt_location,
 							 stmt_len);
 		CommandCounterIncrement();
