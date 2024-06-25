@@ -153,6 +153,7 @@ ExecDeleteEdgeOrVertex(ModifyGraphState *mgstate, ResultRelInfo *resultRelInfo,
 			ereport(ERROR,
 					(errcode(ERRCODE_INTERNAL_ERROR),
 					 errmsg("modifying the same element more than once cannot happen")));
+			break;
 		case TM_Ok:
 			break;
 
@@ -161,8 +162,10 @@ ExecDeleteEdgeOrVertex(ModifyGraphState *mgstate, ResultRelInfo *resultRelInfo,
 			ereport(ERROR,
 					(errcode(ERRCODE_T_R_SERIALIZATION_FAILURE),
 					 errmsg("could not serialize access due to concurrent update")));
+			break;
 		default:
 			elog(ERROR, "unrecognized heap_update status: %u", result);
+			break;
 	}
 
 	/* AFTER ROW DELETE Triggers */
