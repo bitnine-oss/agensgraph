@@ -14,7 +14,7 @@ Building from the Source Code
     ```
 
 2. Install the necessary libraries and dependencies:
-    * CENTOS:
+    * Rocky:
         ```sh
         $ yum install gcc glibc glib-common readline readline-devel zlib zlib-devel
         ```
