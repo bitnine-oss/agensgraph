@@ -1,88 +1,101 @@
-AgensGraph: Powerful Graph Database
-====================================
+# AgensGraph: Powerful Multi-Model Graph Database
 ![Build Status](https://github.com/bitnine-oss/agensgraph/actions/workflows/regression.yml/badge.svg)
 
-AgensGraph is a new generation multi-model graph database for the modern complex data environment. AgensGraph is a multi-model database, which supports the relational and graph data model at the same time that enables developers to integrate the legacy relational data model and the flexible graph data model in one database. AgensGraph supports ANSI-SQL and openCypher (http://www.opencypher.org). SQL queries and Cypher queries can be integrated into a single query in AgensGraph.
+AgensGraph is a cutting-edge multi-model graph database designed for modern complex data environments. By supporting both relational and graph data models simultaneously, AgensGraph allows developers to seamlessly integrate legacy relational data with the flexible graph data model within a single database. AgensGraph is built on the robust PostgreSQL RDBMS, providing a highly reliable, fully-featured platform ready for enterprise use.
 
-AgensGraph is based on the powerful PostgreSQL RDBMS, and is very robust, fully-featured and ready for enterprise use. AgensGraph is optimized for handling complex connected graph data and provides plenty of powerful database features essential to the enterprise database environment including ACID transactions, multi-version concurrency control, stored procedure, triggers, constraints, sophisticated monitoring and a flexible data model (JSON). Moreover, AgensGraph leverages the rich eco-systems of PostgreSQL and can be extended with many outstanding external modules, like PostGIS.
+## Key Features
+- **Multi-Model Support**: Combines relational and graph data models.
+- **Query Languages**: Supports ANSI-SQL and openCypher ([openCypher](http://www.opencypher.org)).
+- **Seamless Integration**: Integrate SQL and Cypher queries within a single query.
+- **Enterprise-Ready**: ACID transactions, multi-version concurrency control, stored procedures, triggers, constraints, sophisticated monitoring, and flexible data models (JSON).
+- **Extensible**: Leverages PostgreSQL's rich ecosystem, including modules like PostGIS.
 
-Building from the Source Code
--------------------
-1. Clone AgensGraph onto your local machine
+## Building from the Source
+Follow these steps to build AgensGraph from the source code:
+1. **Clone the Repository**
     ```sh
-    $ git clone https://github.com/bitnine-oss/agensgraph.git
+    git clone https://github.com/bitnine-oss/agensgraph.git
     ```
 
-2. Install the necessary libraries and dependencies:
-    * Rocky:
+2. **Install Dependencies**
+    - **Rocky Linux**:
         ```sh
-        $ yum install gcc glibc glib-common readline readline-devel zlib zlib-devel
+        yum install gcc glibc readline readline-devel zlib zlib-devel perl
         ```
 
-    * Fedora:
+    - **Fedora**:
         ```sh
-        $ dnf install gcc glibc bison flex readline readline-devel zlib zlib-devel
+        dnf install gcc glibc bison flex readline readline-devel zlib zlib-devel
         ```
 
-    * RHEL:
+    - **RHEL**:
         ```sh
-        $ yum install gcc glibc glib-common readline readline-devel zlib zlib-devel flex bison
+        yum install gcc glibc glib-common readline readline-devel zlib zlib-devel flex bison
         ```
 
-    * Ubuntu:
+    - **Ubuntu**:
         ```sh
-        $ sudo apt-get install build-essential libreadline-dev zlib1g-dev flex bison
+        sudo apt-get install build-essential libreadline-dev zlib1g-dev flex bison
         ```
 
-    * macOS (install Xcode):
+    - **macOS** (install Xcode):
         ```bash
-        $ xcode-select --install
+        xcode-select --install
         ```
 
-
-3. Configure the source tree in /path/to/agensgraph:
+3.  **Configure the Source Tree**
     ```sh
-    $ ./configure --prefix=$(pwd)
+    ./configure --prefix=$(pwd)
     ```
-   >By default, `make install` will install all the files in `/usr/local/pgsql/bin`, `/usr/local/pgsql/lib` etc.  You want to specify an installation prefix to the current library.
-   > If `configure` doesn't find any header with an error message, you can use `--with-includes=/path/to/headers` option.
+    > By default, `make install` installs files in `/usr/local/pgsql/bin`, `/usr/local/pgsql/lib`, etc. Specify an installation prefix to the current directory. If `configure` encounters missing headers, use `--with-includes=/path/to/headers`.
 
-4. Build & install AgensGraph:
-    * Build and install AgensGraph engine
+4. **Build & install AgensGraph**:
+    ```sh
+    make install
+    ```
+
+5. **Set Up Environment Variables**
+    - Add the install path to the `PATH` environment variable:
         ```sh
-        $ make install
+        . ag-env.sh
         ```
-
-    * Add the install path to the `PATH` environment variable to allow the modules that need `pg_config` to get necessary installation information. If you installed AgensGraph at the same location as the source directory you pulled from GitHub, then you can use the `ag-env.sh` script, which sets `PATH` and `LD_LIBRARY_PATH` using the current directory. Run the following command to use the script:
+      OR, edit your `/.bashrc` file (`/.bash_profile` on macOS):
         ```sh
-        $ . ag-env.sh
+        echo "export PATH=/path/to/agensgraph/bin:\$PATH" >> ~/.bashrc
+        echo "export LD_LIBRARY_PATH=/path/to/agensgraph/lib:\$LD_LIBRARY_PATH" >> ~/.bashrc
         ```
-      OR, if you installed AgensGraph elsewhere, you can also do so by editing your `/.bashrc` file (`/.bash_profile` on macOS) with the following command:
-        ```sh
-        $ echo "export PATH=/path/to/agensgraph/bin:\$PATH" >> ~/.bashrc
-        $ echo "export LD_LIBRARY_PATH=/path/to/agensgraph/lib:\$LD_LIBRARY_PATH" >> ~/.bashrc
-        ```
-    * OPTIONAL: Build and install AgensGraph along with other contrib and external modules (If you want to build AgensGraph alone, run make install. This command builds AgensGraph along with additional extensions):
-        ```sh
-        $ make install-world
-        ```
+6. **Optional: Build and Install with Additional Modules**
+    ```sh
+    make install-world
+    ```
+7. **Optional: Set `AGDATA` Environment Variable**
+    ```sh
+    echo "export AGDATA=/path/to/agensgraph/data" >> ~/.bashrc
+    ```
+## AgensGraph Drivers
+AgensGraph supports various drivers for seamless connection and interaction with the database. Below are the supported drivers:
+| Driver      | Description                                                                                       |
+|-------------|---------------------------------------------------------------------------------------------------|
+| **JDBC**    | [JDBC Driver](https://github.com/bitnine-oss/agensgraph-jdbc) <br> Enables Java applications to interact with AgensGraph. |
+| **Python**  | [Python Driver](https://github.com/bitnine-oss/agensgraph-python) <br> Facilitates interaction between Python applications and AgensGraph. |
+| **Node.js** | [Node.js Driver](https://github.com/bitnine-oss/agensgraph-nodejs) <br> Allows Node.js applications to interface with AgensGraph. |
+| **Go**      | [Go Driver](https://github.com/bitnine-oss/agensgraph-golang) <br> Provides connectivity for Go applications to AgensGraph. |
 
-    * OPTIONAL: Set the `AGDATA` environment variable to easily configure AgensGraph settings when necessary:
-        ```sh
-        $ echo "export AGDATA=/path/to/agensgraph/data" >> ~/.bashrc
-        ```
 
-Documentation
--------------
-* [Short Guide](http://bitnine.net/documentations/quick-guide-1-3.html)
+## Documentation
+Comprehensive documentation is available to help you get started with AgensGraph and make the most of its features.
+- **Quick Start Guide**: Learn how to quickly set up and start using AgensGraph.
+  - [Quick Start Guide](http://bitnine.net/documentations/quick-guide-1-3.html)
 
-Related Projects
-----------------
-* [AGViewer](https://github.com/bitnine-oss/AGViewer)
+## AgensGraphViewer
+AgensGraphViewer is a web-based user interface that provides visualization of graph data stored in an AgensGraph database. It allows users to easily interact with and visualize their graph data, making it easier to understand and analyze complex relationships within the database.
+- **Web-Based Interface**: Accessible through any web browser.
+- **Graph Visualization**: Provides interactive visualization tools for graph data.
+- **User-Friendly**: Intuitive interface designed for ease of use.
+- **Real-Time Interaction**: Allows for real-time data updates and interaction with graph data.
+<img src="https://bitnine.net/documentations/images/g_result_1.png" alt="AgensGraphViewer Screenshot" width="400" />
 
-  This is a visualization tool. After AgensGraph Installation You can use this tool to use the visualization features.
-  Follow the instructions on the link to run it. Under Connect to Database , select database type as "AgensGraph"
+For more information and to get started with AgensGraphViewer, visit the [AgensGraphViewer GitHub repository](https://github.com/bitnine-oss/AgensGraphViewer).
 
-License
--------
-* [Apache License 2.0](http://www.apache.org/licenses/LICENSE-2.0)
+## License
+- [Apache License 2.0](http://www.apache.org/licenses/LICENSE-2.0)
