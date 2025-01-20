@@ -146,12 +146,12 @@ select * from test_regex('(a)e', 'ae', '-');
  {ae,a}
 (2 rows)
 
--- expectMatch	4.2  o		(a)e		ae
-select * from test_regex('(a)e', 'ae', 'o');
- test_regex 
-------------
- {0}
- {NULL}
+-- expectMatch	4.2  oPR	(.)\1e		abeaae	aae	{}
+select * from test_regex('(.)\1e', 'abeaae', 'oPR');
+           test_regex           
+--------------------------------
+ {1,REG_UBACKREF,REG_UNONPOSIX}
+ {aae,NULL}
 (2 rows)
 
 -- expectMatch	4.3  b		{\(a\)b}	ab	ab	a
@@ -932,6 +932,34 @@ select * from test_regex('a[[=x=]]', 'az', '+L');
 (1 row)
 
 select * from test_regex('a[[=x=]]', 'az', '+Lb');
+   test_regex    
+-----------------
+ {0,REG_ULOCALE}
+(1 row)
+
+-- expectMatch	9.9b  &iL	{a[[=Y=]]}	ay	ay
+select * from test_regex('a[[=Y=]]', 'ay', 'iL');
+   test_regex    
+-----------------
+ {0,REG_ULOCALE}
+ {ay}
+(2 rows)
+
+select * from test_regex('a[[=Y=]]', 'ay', 'iLb');
+   test_regex    
+-----------------
+ {0,REG_ULOCALE}
+ {ay}
+(2 rows)
+
+-- expectNomatch	9.9c  &L	{a[[=Y=]]}	ay
+select * from test_regex('a[[=Y=]]', 'ay', 'L');
+   test_regex    
+-----------------
+ {0,REG_ULOCALE}
+(1 row)
+
+select * from test_regex('a[[=Y=]]', 'ay', 'Lb');
    test_regex    
 -----------------
  {0,REG_ULOCALE}
@@ -2636,6 +2664,20 @@ select * from test_regex('^(.+)( \1)+$', 'abc abc abd', 'RP');
  {2,REG_UBACKREF,REG_UNONPOSIX}
 (1 row)
 
+-- expectNomatch	14.30 RP	{^(.)\1|\1.}	{abcdef}
+select * from test_regex('^(.)\1|\1.', 'abcdef', 'RP');
+           test_regex           
+--------------------------------
+ {1,REG_UBACKREF,REG_UNONPOSIX}
+(1 row)
+
+-- expectNomatch	14.31 RP	{^((.)\2|..)\2}	{abadef}
+select * from test_regex('^((.)\2|..)\2', 'abadef', 'RP');
+           test_regex           
+--------------------------------
+ {2,REG_UBACKREF,REG_UNONPOSIX}
+(1 row)
+
 -- back reference only matches the string, not any constraints
 select * from test_regex('(^\w+).*\1', 'abc abc abc', 'LRP');
                  test_regex                 
@@ -2657,6 +2699,20 @@ select * from test_regex('(\w+(?= )).*\1', 'abc abcd abd', 'HLRP');
  {1,REG_UBACKREF,REG_ULOOKAROUND,REG_UNONPOSIX,REG_ULOCALE}
  {"abc abc",abc}
 (2 rows)
+
+-- exercise oversize-regmatch_t-array paths in regexec()
+-- (that case is not reachable via test_regex, sadly)
+select substring('fffoooooooooooooooooooooooooooooooo', '^(.)\1(.)(.)(.)(.)(.)(.)(.)(.)(.)(.)(.)(.)(.)(.)(.)(.)(.)(.)(.)(.)(.)(.)(.)(.)(.)(.)(.)(.)(.)(.)(.)');
+ substring 
+-----------
+ f
+(1 row)
+
+select regexp_split_to_array('abcxxxdefyyyghi', '((.))(\1\2)');
+ regexp_split_to_array 
+-----------------------
+ {abc,def,ghi}
+(1 row)
 
 -- doing 15 "octal escapes vs back references"
 -- # initial zero is always octal
@@ -2913,6 +2969,34 @@ select * from test_regex('a[^b-d]', 'aC', 'iM');
 (1 row)
 
 select * from test_regex('a[^b-d]', 'aC', 'iMb');
+   test_regex    
+-----------------
+ {0,REG_UUNPORT}
+(1 row)
+
+-- expectMatch	19.6 &iM	{a[B-Z]}	aC	aC
+select * from test_regex('a[B-Z]', 'aC', 'iM');
+   test_regex    
+-----------------
+ {0,REG_UUNPORT}
+ {aC}
+(2 rows)
+
+select * from test_regex('a[B-Z]', 'aC', 'iMb');
+   test_regex    
+-----------------
+ {0,REG_UUNPORT}
+ {aC}
+(2 rows)
+
+-- expectNomatch	19.7 &iM	{a[^B-Z]}	aC
+select * from test_regex('a[^B-Z]', 'aC', 'iM');
+   test_regex    
+-----------------
+ {0,REG_UUNPORT}
+(1 row)
+
+select * from test_regex('a[^B-Z]', 'aC', 'iMb');
    test_regex    
 -----------------
  {0,REG_UUNPORT}
@@ -3468,6 +3552,52 @@ select * from test_regex(' TO (([a-z0-9._]+|"([^"]+|"")+")+)', 'asd TO foo', 'M'
  {" TO foo",foo,o,NULL}
 (2 rows)
 
+-- expectMatch	21.36 RPQ	((.))(\2){0}	xy	x	x	x	{}
+select * from test_regex('((.))(\2){0}', 'xy', 'RPQ');
+                 test_regex                 
+--------------------------------------------
+ {3,REG_UBACKREF,REG_UBOUNDS,REG_UNONPOSIX}
+ {x,x,x,NULL}
+(2 rows)
+
+-- expectMatch	21.37 RP	((.))(\2)	xyy	yy	y	y	y
+select * from test_regex('((.))(\2)', 'xyy', 'RP');
+           test_regex           
+--------------------------------
+ {3,REG_UBACKREF,REG_UNONPOSIX}
+ {yy,y,y,y}
+(2 rows)
+
+-- expectMatch	21.38 oRP	((.))(\2)	xyy	yy	{}	{}	{}
+select * from test_regex('((.))(\2)', 'xyy', 'oRP');
+           test_regex           
+--------------------------------
+ {3,REG_UBACKREF,REG_UNONPOSIX}
+ {yy,NULL,NULL,NULL}
+(2 rows)
+
+-- expectNomatch	21.39 PQR	{(.){0}(\1)}	xxx
+select * from test_regex('(.){0}(\1)', 'xxx', 'PQR');
+                 test_regex                 
+--------------------------------------------
+ {2,REG_UBACKREF,REG_UBOUNDS,REG_UNONPOSIX}
+(1 row)
+
+-- expectNomatch	21.40 PQR	{((.)){0}(\2)}	xxx
+select * from test_regex('((.)){0}(\2)', 'xxx', 'PQR');
+                 test_regex                 
+--------------------------------------------
+ {3,REG_UBACKREF,REG_UBOUNDS,REG_UNONPOSIX}
+(1 row)
+
+-- expectMatch	21.41 NPQR	{((.)){0}(\2){0}}	xyz	{}	{}	{}	{}
+select * from test_regex('((.)){0}(\2){0}', 'xyz', 'NPQR');
+                         test_regex                         
+------------------------------------------------------------
+ {3,REG_UBACKREF,REG_UBOUNDS,REG_UNONPOSIX,REG_UEMPTYMATCH}
+ {"",NULL,NULL,NULL}
+(2 rows)
+
 -- doing 22 "multicharacter collating elements"
 -- # again ugh
 -- MCCEs are not implemented in Postgres, so we skip all these tests
@@ -3810,6 +3940,14 @@ select * from test_regex('^([^/]+?)(?:/([^/]+?))(?:/([^/]+?))?$', 'foo/bar/baz',
 ---------------------------------
  {3,REG_UNONPOSIX,REG_USHORTEST}
  {foo/bar/baz,foo,bar,baz}
+(2 rows)
+
+-- expectMatch	24.14 PRT	{^(.+?)(?:/(.+?))(?:/(.+?)\3)?$}	{foo/bar/baz/quux}	{foo/bar/baz/quux}	{foo}	{bar/baz/quux}	{}
+select * from test_regex('^(.+?)(?:/(.+?))(?:/(.+?)\3)?$', 'foo/bar/baz/quux', 'PRT');
+                  test_regex                  
+----------------------------------------------
+ {3,REG_UBACKREF,REG_UNONPOSIX,REG_USHORTEST}
+ {foo/bar/baz/quux,foo,bar/baz/quux,NULL}
 (2 rows)
 
 -- doing 25 "mixed quantifiers"
@@ -4886,5 +5024,61 @@ select * from test_regex('(\Y)+', 'foo', 'LNP');
 -----------------------------------------------
  {1,REG_UNONPOSIX,REG_ULOCALE,REG_UEMPTYMATCH}
  {"",""}
+(2 rows)
+
+-- and now, tests not from either Spencer or the Tcl project
+-- These cases exercise additional code paths in pushfwd()/push()/combine()
+select * from test_regex('a\Y(?=45)', 'a45', 'HLP');
+                  test_regex                   
+-----------------------------------------------
+ {0,REG_ULOOKAROUND,REG_UNONPOSIX,REG_ULOCALE}
+ {a}
+(2 rows)
+
+select * from test_regex('a(?=.)c', 'ac', 'HP');
+            test_regex             
+-----------------------------------
+ {0,REG_ULOOKAROUND,REG_UNONPOSIX}
+ {ac}
+(2 rows)
+
+select * from test_regex('a(?=.).*(?=3)3*', 'azz33', 'HP');
+            test_regex             
+-----------------------------------
+ {0,REG_ULOOKAROUND,REG_UNONPOSIX}
+ {azz33}
+(2 rows)
+
+select * from test_regex('a(?=\w)\w*(?=.).*', 'az3%', 'HLP');
+                  test_regex                   
+-----------------------------------------------
+ {0,REG_ULOOKAROUND,REG_UNONPOSIX,REG_ULOCALE}
+ {az3%}
+(2 rows)
+
+-- These exercise the bulk-arc-movement paths in moveins() and moveouts();
+-- you may need to make them longer if you change BULK_ARC_OP_USE_SORT()
+select * from test_regex('ABCDEFGHIJKLMNOPQRSTUVWXYZ(?:\w|a|b|c|d|e|f|0|1|2|3|4|5|6|Q)',
+                         'ABCDEFGHIJKLMNOPQRSTUVWXYZ3', 'LP');
+          test_regex           
+-------------------------------
+ {0,REG_UNONPOSIX,REG_ULOCALE}
+ {ABCDEFGHIJKLMNOPQRSTUVWXYZ3}
+(2 rows)
+
+select * from test_regex('ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789(\Y\Y)+',
+                         'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789Z', 'LP');
+                test_regex                 
+-------------------------------------------
+ {1,REG_UNONPOSIX,REG_ULOCALE}
+ {ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789,""}
+(2 rows)
+
+select * from test_regex('((x|xabcdefghijklmnopqrstuvwxyz0123456789)x*|[^y]z)$',
+                         'az', '');
+  test_regex  
+--------------
+ {2}
+ {az,az,NULL}
 (2 rows)
 

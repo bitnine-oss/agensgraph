@@ -25,6 +25,7 @@ select '{}'::textmultirange;
 select '  {}  '::textmultirange;
 select ' { empty, empty }  '::textmultirange;
 select ' {( " a " " a ", " z " " z " )  }'::textmultirange;
+select textrange('\\\\', repeat('a', 200))::textmultirange;
 select '{(,z)}'::textmultirange;
 select '{(a,)}'::textmultirange;
 select '{[,z]}'::textmultirange;
@@ -63,7 +64,7 @@ select '{(a,a)}'::textmultirange;
 select textmultirange();
 select textmultirange(textrange('a', 'c'));
 select textmultirange(textrange('a', 'c'), textrange('f', 'g'));
-select textmultirange(textrange('a', 'c'), textrange('b', 'd'));
+select textmultirange(textrange('\\\\', repeat('a', 200)), textrange('c', 'd'));
 
 --
 -- test casts, both a built-in range type and a user-defined one:
@@ -76,6 +77,13 @@ select 'empty'::textrange::textmultirange;
 select textrange('a', 'c')::textmultirange;
 select textrange('a', null)::textmultirange;
 select textrange(null, null)::textmultirange;
+
+--
+-- test unnest(multirange) function
+--
+select unnest(int4multirange(int4range('5', '6'), int4range('1', '2')));
+select unnest(textmultirange(textrange('a', 'b'), textrange('d', 'e')));
+select unnest(textmultirange(textrange('\\\\', repeat('a', 200)), textrange('c', 'd')));
 
 --
 -- create some test data and test the operators
@@ -435,7 +443,25 @@ SET enable_seqscan    = t;
 SET enable_indexscan  = f;
 SET enable_bitmapscan = f;
 
+select count(*) from test_multirange_gist where mr = '{}'::int4multirange;
 select count(*) from test_multirange_gist where mr @> 'empty'::int4range;
+select count(*) from test_multirange_gist where mr && 'empty'::int4range;
+select count(*) from test_multirange_gist where mr <@ 'empty'::int4range;
+select count(*) from test_multirange_gist where mr << 'empty'::int4range;
+select count(*) from test_multirange_gist where mr >> 'empty'::int4range;
+select count(*) from test_multirange_gist where mr &< 'empty'::int4range;
+select count(*) from test_multirange_gist where mr &> 'empty'::int4range;
+select count(*) from test_multirange_gist where mr -|- 'empty'::int4range;
+select count(*) from test_multirange_gist where mr @> '{}'::int4multirange;
+select count(*) from test_multirange_gist where mr @> '{}'::int4multirange;
+select count(*) from test_multirange_gist where mr && '{}'::int4multirange;
+select count(*) from test_multirange_gist where mr <@ '{}'::int4multirange;
+select count(*) from test_multirange_gist where mr << '{}'::int4multirange;
+select count(*) from test_multirange_gist where mr >> '{}'::int4multirange;
+select count(*) from test_multirange_gist where mr &< '{}'::int4multirange;
+select count(*) from test_multirange_gist where mr &> '{}'::int4multirange;
+select count(*) from test_multirange_gist where mr -|- '{}'::int4multirange;
+
 select count(*) from test_multirange_gist where mr = int4multirange(int4range(10,20), int4range(30,40), int4range(50,60));
 select count(*) from test_multirange_gist where mr @> 10;
 select count(*) from test_multirange_gist where mr @> int4range(10,20);
@@ -460,6 +486,25 @@ select count(*) from test_multirange_gist where mr -|- int4multirange(int4range(
 SET enable_seqscan    = f;
 SET enable_indexscan  = t;
 SET enable_bitmapscan = f;
+
+select count(*) from test_multirange_gist where mr = '{}'::int4multirange;
+select count(*) from test_multirange_gist where mr @> 'empty'::int4range;
+select count(*) from test_multirange_gist where mr && 'empty'::int4range;
+select count(*) from test_multirange_gist where mr <@ 'empty'::int4range;
+select count(*) from test_multirange_gist where mr << 'empty'::int4range;
+select count(*) from test_multirange_gist where mr >> 'empty'::int4range;
+select count(*) from test_multirange_gist where mr &< 'empty'::int4range;
+select count(*) from test_multirange_gist where mr &> 'empty'::int4range;
+select count(*) from test_multirange_gist where mr -|- 'empty'::int4range;
+select count(*) from test_multirange_gist where mr @> '{}'::int4multirange;
+select count(*) from test_multirange_gist where mr @> '{}'::int4multirange;
+select count(*) from test_multirange_gist where mr && '{}'::int4multirange;
+select count(*) from test_multirange_gist where mr <@ '{}'::int4multirange;
+select count(*) from test_multirange_gist where mr << '{}'::int4multirange;
+select count(*) from test_multirange_gist where mr >> '{}'::int4multirange;
+select count(*) from test_multirange_gist where mr &< '{}'::int4multirange;
+select count(*) from test_multirange_gist where mr &> '{}'::int4multirange;
+select count(*) from test_multirange_gist where mr -|- '{}'::int4multirange;
 
 select count(*) from test_multirange_gist where mr @> 'empty'::int4range;
 select count(*) from test_multirange_gist where mr = int4multirange(int4range(10,20), int4range(30,40), int4range(50,60));
@@ -527,10 +572,31 @@ FROM    (VALUES
           ('[h,j)'::textrange)
         ) t(r);
 
+-- range_agg with multirange inputs
+select range_agg(nmr) from nummultirange_test;
+select range_agg(nmr) from nummultirange_test where false;
+select range_agg(null::nummultirange) from nummultirange_test;
+select range_agg(nmr) from (values ('{}'::nummultirange)) t(nmr);
+select range_agg(nmr) from (values ('{}'::nummultirange), ('{}'::nummultirange)) t(nmr);
+select range_agg(nmr) from (values ('{[1,2]}'::nummultirange)) t(nmr);
+select range_agg(nmr) from (values ('{[1,2], [5,6]}'::nummultirange)) t(nmr);
+select range_agg(nmr) from (values ('{[1,2], [2,3]}'::nummultirange)) t(nmr);
+select range_agg(nmr) from (values ('{[1,2]}'::nummultirange), ('{[5,6]}'::nummultirange)) t(nmr);
+select range_agg(nmr) from (values ('{[1,2]}'::nummultirange), ('{[2,3]}'::nummultirange)) t(nmr);
+
+--
+-- range_intersect_agg function
+--
 select range_intersect_agg(nmr) from nummultirange_test;
 select range_intersect_agg(nmr) from nummultirange_test where false;
+select range_intersect_agg(null::nummultirange) from nummultirange_test;
+select range_intersect_agg(nmr) from (values ('{[1,3]}'::nummultirange), ('{[6,12]}'::nummultirange)) t(nmr);
+select range_intersect_agg(nmr) from (values ('{[1,6]}'::nummultirange), ('{[3,12]}'::nummultirange)) t(nmr);
+select range_intersect_agg(nmr) from (values ('{[1,6], [10,12]}'::nummultirange), ('{[4,14]}'::nummultirange)) t(nmr);
 -- test with just one input:
+select range_intersect_agg(nmr) from (values ('{}'::nummultirange)) t(nmr);
 select range_intersect_agg(nmr) from (values ('{[1,2]}'::nummultirange)) t(nmr);
+select range_intersect_agg(nmr) from (values ('{[1,6], [10,12]}'::nummultirange)) t(nmr);
 select range_intersect_agg(nmr) from nummultirange_test where nmr @> 4.0;
 
 create table nummultirange_test2(nmr nummultirange);
@@ -621,6 +687,7 @@ create type textrange2 as range(subtype=text, multirange_type_name=_textrange1, 
 
 select multirange_of_text(textrange2('a','Z'));  -- should fail
 select multirange_of_text(textrange1('a','Z')) @> 'b'::text;
+select unnest(multirange_of_text(textrange1('a','b'), textrange1('d','e')));
 select _textrange1(textrange2('a','z')) @> 'b'::text;
 
 drop type textrange1;

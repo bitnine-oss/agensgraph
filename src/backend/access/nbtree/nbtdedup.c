@@ -3,7 +3,7 @@
  * nbtdedup.c
  *	  Deduplicate or bottom-up delete items in Postgres btrees.
  *
- * Portions Copyright (c) 1996-2021, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2022, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -16,6 +16,7 @@
 
 #include "access/nbtree.h"
 #include "access/nbtxlog.h"
+#include "access/xloginsert.h"
 #include "miscadmin.h"
 #include "utils/rel.h"
 
@@ -34,14 +35,17 @@ static bool _bt_posting_valid(IndexTuple posting);
  *
  * The general approach taken here is to perform as much deduplication as
  * possible to free as much space as possible.  Note, however, that "single
- * value" strategy is sometimes used for !checkingunique callers, in which
- * case deduplication will leave a few tuples untouched at the end of the
- * page.  The general idea is to prepare the page for an anticipated page
- * split that uses nbtsplitloc.c's "single value" strategy to determine a
- * split point.  (There is no reason to deduplicate items that will end up on
- * the right half of the page after the anticipated page split; better to
- * handle those if and when the anticipated right half page gets its own
- * deduplication pass, following further inserts of duplicates.)
+ * value" strategy is used for !bottomupdedup callers when the page is full of
+ * tuples of a single value.  Deduplication passes that apply the strategy
+ * will leave behind a few untouched tuples at the end of the page, preparing
+ * the page for an anticipated page split that uses nbtsplitloc.c's own single
+ * value strategy.  Our high level goal is to delay merging the untouched
+ * tuples until after the page splits.
+ *
+ * When a call to _bt_bottomupdel_pass() just took place (and failed), our
+ * high level goal is to prevent a page split entirely by buying more time.
+ * We still hope that a page split can be avoided altogether.  That's why
+ * single value strategy is not even considered for bottomupdedup callers.
  *
  * The page will have to be split if we cannot successfully free at least
  * newitemsz (we also need space for newitem's line pointer, which isn't
@@ -52,16 +56,16 @@ static bool _bt_posting_valid(IndexTuple posting);
  */
 void
 _bt_dedup_pass(Relation rel, Buffer buf, Relation heapRel, IndexTuple newitem,
-			   Size newitemsz, bool checkingunique)
+			   Size newitemsz, bool bottomupdedup)
 {
 	OffsetNumber offnum,
 				minoff,
 				maxoff;
 	Page		page = BufferGetPage(buf);
-	BTPageOpaque opaque = (BTPageOpaque) PageGetSpecialPointer(page);
+	BTPageOpaque opaque = BTPageGetOpaque(page);
 	Page		newpage;
 	BTDedupState state;
-	Size		pagesaving = 0;
+	Size		pagesaving PG_USED_FOR_ASSERTS_ONLY = 0;
 	bool		singlevalstrat = false;
 	int			nkeyatts = IndexRelationGetNumberOfKeyAttributes(rel);
 
@@ -97,8 +101,11 @@ _bt_dedup_pass(Relation rel, Buffer buf, Relation heapRel, IndexTuple newitem,
 	minoff = P_FIRSTDATAKEY(opaque);
 	maxoff = PageGetMaxOffsetNumber(page);
 
-	/* Determine if "single value" strategy should be used */
-	if (!checkingunique)
+	/*
+	 * Consider applying "single value" strategy, though only if the page
+	 * seems likely to be split in the near future
+	 */
+	if (!bottomupdedup)
 		singlevalstrat = _bt_do_singleval(rel, page, state, minoff, newitem);
 
 	/*
@@ -224,7 +231,7 @@ _bt_dedup_pass(Relation rel, Buffer buf, Relation heapRel, IndexTuple newitem,
 	 */
 	if (P_HAS_GARBAGE(opaque))
 	{
-		BTPageOpaque nopaque = (BTPageOpaque) PageGetSpecialPointer(newpage);
+		BTPageOpaque nopaque = BTPageGetOpaque(newpage);
 
 		nopaque->btpo_flags &= ~BTP_HAS_GARBAGE;
 	}
@@ -303,7 +310,7 @@ _bt_bottomupdel_pass(Relation rel, Buffer buf, Relation heapRel,
 				minoff,
 				maxoff;
 	Page		page = BufferGetPage(buf);
-	BTPageOpaque opaque = (BTPageOpaque) PageGetSpecialPointer(page);
+	BTPageOpaque opaque = BTPageGetOpaque(page);
 	BTDedupState state;
 	TM_IndexDeleteOp delstate;
 	bool		neverdedup;
@@ -342,6 +349,8 @@ _bt_bottomupdel_pass(Relation rel, Buffer buf, Relation heapRel,
 	 * concerning ourselves with avoiding work during the tableam call.  Our
 	 * role in costing the bottom-up deletion process is strictly advisory.
 	 */
+	delstate.irel = rel;
+	delstate.iblknum = BufferGetBlockNumber(buf);
 	delstate.bottomup = true;
 	delstate.bottomupfreespace = Max(BLCKSZ / 16, newitemsz);
 	delstate.ndeltids = 0;
@@ -764,14 +773,6 @@ _bt_bottomupdel_finish_pending(Page page, BTDedupState state,
  * the first pass) won't spend many cycles on the large posting list tuples
  * left by previous passes.  Each pass will find a large contiguous group of
  * smaller duplicate tuples to merge together at the end of the page.
- *
- * Note: We deliberately don't bother checking if the high key is a distinct
- * value (prior to the TID tiebreaker column) before proceeding, unlike
- * nbtsplitloc.c.  Its single value strategy only gets applied on the
- * rightmost page of duplicates of the same value (other leaf pages full of
- * duplicates will get a simple 50:50 page split instead of splitting towards
- * the end of the page).  There is little point in making the same distinction
- * here.
  */
 static bool
 _bt_do_singleval(Relation rel, Page page, BTDedupState state,

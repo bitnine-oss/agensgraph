@@ -650,6 +650,17 @@ PostgreSQL documentation
      </varlistentry>
 
      <varlistentry>
+      <term><option>--no-table-access-method</option></term>
+      <listitem>
+       <para>
+        Do not output commands to select table access methods.
+        With this option, all objects will be created with whichever
+        access method is the default during restore.
+       </para>
+      </listitem>
+     </varlistentry>
+
+     <varlistentry>
       <term><option>--no-tablespaces</option></term>
       <listitem>
        <para>
@@ -922,10 +933,8 @@ CREATE DATABASE foo WITH TEMPLATE template0;
 
   <para>
    Once restored, it is wise to run <command>ANALYZE</command> on each
-   restored table so the optimizer has useful statistics.
-   If the table is a partition or an inheritance child, it may also be useful
-   to analyze the parent to update statistics for the table hierarchy.
-   See <xref linkend="vacuum-for-statistics"/> and
+   restored table so the optimizer has useful statistics; see
+   <xref linkend="vacuum-for-statistics"/> and
    <xref linkend="autovacuum"/> for more information.
   </para>
 

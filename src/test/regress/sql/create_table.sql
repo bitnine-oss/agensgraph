@@ -2,255 +2,13 @@
 -- CREATE_TABLE
 --
 
---
--- CLASS DEFINITIONS
---
-CREATE TABLE hobbies_r (
-	name		text,
-	person 		text
-);
-
-CREATE TABLE equipment_r (
-	name 		text,
-	hobby		text
-);
-
-CREATE TABLE onek (
-	unique1		int4,
-	unique2		int4,
-	two			int4,
-	four		int4,
-	ten			int4,
-	twenty		int4,
-	hundred		int4,
-	thousand	int4,
-	twothousand	int4,
-	fivethous	int4,
-	tenthous	int4,
-	odd			int4,
-	even		int4,
-	stringu1	name,
-	stringu2	name,
-	string4		name
-);
-
-CREATE TABLE tenk1 (
-	unique1		int4,
-	unique2		int4,
-	two			int4,
-	four		int4,
-	ten			int4,
-	twenty		int4,
-	hundred		int4,
-	thousand	int4,
-	twothousand	int4,
-	fivethous	int4,
-	tenthous	int4,
-	odd			int4,
-	even		int4,
-	stringu1	name,
-	stringu2	name,
-	string4		name
-);
-
-CREATE TABLE tenk2 (
-	unique1 	int4,
-	unique2 	int4,
-	two 	 	int4,
-	four 		int4,
-	ten			int4,
-	twenty 		int4,
-	hundred 	int4,
-	thousand 	int4,
-	twothousand int4,
-	fivethous 	int4,
-	tenthous	int4,
-	odd			int4,
-	even		int4,
-	stringu1	name,
-	stringu2	name,
-	string4		name
-);
-
-
-CREATE TABLE person (
-	name 		text,
-	age			int4,
-	location 	point
-);
-
-
-CREATE TABLE emp (
-	salary 		int4,
-	manager 	name
-) INHERITS (person);
-
-
-CREATE TABLE student (
-	gpa 		float8
-) INHERITS (person);
-
-
-CREATE TABLE stud_emp (
-	percent 	int4
-) INHERITS (emp, student);
-
-
-CREATE TABLE city (
-	name		name,
-	location 	box,
-	budget 		city_budget
-);
-
-CREATE TABLE dept (
-	dname		name,
-	mgrname 	text
-);
-
-CREATE TABLE slow_emp4000 (
-	home_base	 box
-);
-
-CREATE TABLE fast_emp4000 (
-	home_base	 box
-);
-
-CREATE TABLE road (
-	name		text,
-	thepath 	path
-);
-
-CREATE TABLE ihighway () INHERITS (road);
-
-CREATE TABLE shighway (
-	surface		text
-) INHERITS (road);
-
-CREATE TABLE real_city (
-	pop			int4,
-	cname		text,
-	outline 	path
-);
-
---
--- test the "star" operators a bit more thoroughly -- this time,
--- throw in lots of NULL fields...
---
--- a is the type root
--- b and c inherit from a (one-level single inheritance)
--- d inherits from b and c (two-level multiple inheritance)
--- e inherits from c (two-level single inheritance)
--- f inherits from e (three-level single inheritance)
---
-CREATE TABLE a_star (
-	class		char,
-	a 			int4
-);
-
-CREATE TABLE b_star (
-	b 			text
-) INHERITS (a_star);
-
-CREATE TABLE c_star (
-	c 			name
-) INHERITS (a_star);
-
-CREATE TABLE d_star (
-	d 			float8
-) INHERITS (b_star, c_star);
-
-CREATE TABLE e_star (
-	e 			int2
-) INHERITS (c_star);
-
-CREATE TABLE f_star (
-	f 			polygon
-) INHERITS (e_star);
-
-CREATE TABLE aggtest (
-	a 			int2,
-	b			float4
-);
-
-CREATE TABLE hash_i4_heap (
-	seqno 		int4,
-	random 		int4
-);
-
-CREATE TABLE hash_name_heap (
-	seqno 		int4,
-	random 		name
-);
-
-CREATE TABLE hash_txt_heap (
-	seqno 		int4,
-	random 		text
-);
-
-CREATE TABLE hash_f8_heap (
-	seqno		int4,
-	random 		float8
-);
-
--- don't include the hash_ovfl_heap stuff in the distribution
--- the data set is too large for what it's worth
---
--- CREATE TABLE hash_ovfl_heap (
---	x			int4,
---	y			int4
--- );
-
-CREATE TABLE bt_i4_heap (
-	seqno 		int4,
-	random 		int4
-);
-
-CREATE TABLE bt_name_heap (
-	seqno 		name,
-	random 		int4
-);
-
-CREATE TABLE bt_txt_heap (
-	seqno 		text,
-	random 		int4
-);
-
-CREATE TABLE bt_f8_heap (
-	seqno 		float8,
-	random 		int4
-);
-
-CREATE TABLE array_op_test (
-	seqno		int4,
-	i			int4[],
-	t			text[]
-);
-
-CREATE TABLE array_index_op_test (
-	seqno		int4,
-	i			int4[],
-	t			text[]
-);
-
-CREATE TABLE testjsonb (
-       j jsonb
-);
-
+-- Error cases
 CREATE TABLE unknowntab (
 	u unknown    -- fail
 );
 
 CREATE TYPE unknown_comptype AS (
 	u unknown    -- fail
-);
-
-CREATE TABLE IF NOT EXISTS test_tsvector(
-	t text,
-	a tsvector
-);
-
-CREATE TABLE IF NOT EXISTS test_tsvector(
-	t text
 );
 
 -- invalid: non-lowercase quoted reloptions identifiers
@@ -631,10 +389,13 @@ CREATE TABLE hash_parted (
 CREATE TABLE hpart_1 PARTITION OF hash_parted FOR VALUES WITH (MODULUS 10, REMAINDER 0);
 CREATE TABLE hpart_2 PARTITION OF hash_parted FOR VALUES WITH (MODULUS 50, REMAINDER 1);
 CREATE TABLE hpart_3 PARTITION OF hash_parted FOR VALUES WITH (MODULUS 200, REMAINDER 2);
+CREATE TABLE hpart_4 PARTITION OF hash_parted FOR VALUES WITH (MODULUS 10, REMAINDER 3);
 -- modulus 25 is factor of modulus of 50 but 10 is not a factor of 25.
 CREATE TABLE fail_part PARTITION OF hash_parted FOR VALUES WITH (MODULUS 25, REMAINDER 3);
 -- previous modulus 50 is factor of 150 but this modulus is not a factor of next modulus 200.
 CREATE TABLE fail_part PARTITION OF hash_parted FOR VALUES WITH (MODULUS 150, REMAINDER 3);
+-- overlapping remainders
+CREATE TABLE fail_part PARTITION OF hash_parted FOR VALUES WITH (MODULUS 100, REMAINDER 3);
 -- trying to specify range for the hash partitioned table
 CREATE TABLE fail_part PARTITION OF hash_parted FOR VALUES FROM ('a', 1) TO ('z');
 -- trying to specify list value for the hash partitioned table
@@ -798,7 +559,7 @@ CREATE TABLE part_c_1_10 PARTITION OF part_c FOR VALUES FROM (1) TO (10);
 create table parted_notnull_inh_test (a int default 1, b int not null default 0) partition by list (a);
 create table parted_notnull_inh_test1 partition of parted_notnull_inh_test (a not null, b default 1) for values in (1);
 insert into parted_notnull_inh_test (b) values (null);
--- note that while b's default is overriden, a's default is preserved
+-- note that while b's default is overridden, a's default is preserved
 \d parted_notnull_inh_test1
 drop table parted_notnull_inh_test;
 

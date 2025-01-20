@@ -3,7 +3,7 @@
  * tsquery_op.c
  *	  Various operations with tsquery
  *
- * Portions Copyright (c) 1996-2021, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2022, PostgreSQL Global Development Group
  *
  *
  * IDENTIFICATION
@@ -121,7 +121,7 @@ tsquery_phrase_distance(PG_FUNCTION_ARGS)
 	if (distance < 0 || distance > MAXENTRYPOS)
 		ereport(ERROR,
 				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				 errmsg("distance in phrase operator should be non-negative and less than %d",
+				 errmsg("distance in phrase operator must be an integer value between zero and %d inclusive",
 						MAXENTRYPOS)));
 	if (a->size == 0)
 	{

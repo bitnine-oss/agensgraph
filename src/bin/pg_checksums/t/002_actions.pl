@@ -1,16 +1,15 @@
 
-# Copyright (c) 2021, PostgreSQL Global Development Group
+# Copyright (c) 2021-2022, PostgreSQL Global Development Group
 
 # Do basic sanity checks supported by pg_checksums using
 # an initialized cluster.
 
 use strict;
 use warnings;
-use PostgresNode;
-use TestLib;
+use PostgreSQL::Test::Cluster;
+use PostgreSQL::Test::Utils;
 
-use Fcntl qw(:seek);
-use Test::More tests => 63;
+use Test::More;
 
 
 # Utility routine to create and check a table with corrupted checksums
@@ -24,6 +23,7 @@ sub check_relation_corruption
 	my $tablespace = shift;
 	my $pgdata     = $node->data_dir;
 
+	# Create table and discover its filesystem location.
 	$node->safe_psql(
 		'postgres',
 		"CREATE TABLE $table AS SELECT a FROM generate_series(1,10000) AS a;
@@ -37,9 +37,6 @@ sub check_relation_corruption
 	my $relfilenode_corrupted = $node->safe_psql('postgres',
 		"SELECT relfilenode FROM pg_class WHERE relname = '$table';");
 
-	# Set page header and block size
-	my $pageheader_size = 24;
-	my $block_size = $node->safe_psql('postgres', 'SHOW block_size;');
 	$node->stop;
 
 	# Checksums are correct for single relfilenode as the table is not
@@ -54,10 +51,7 @@ sub check_relation_corruption
 	);
 
 	# Time to create some corruption
-	open my $file, '+<', "$pgdata/$file_corrupted";
-	seek($file, $pageheader_size, SEEK_SET);
-	syswrite($file, "\0\0\0\0\0\0\0\0\0");
-	close $file;
+	$node->corrupt_page_checksum($file_corrupted, 0);
 
 	# Checksum checks on single relfilenode fail
 	$node->command_checks_all(
@@ -92,7 +86,7 @@ sub check_relation_corruption
 }
 
 # Initialize node with checksums disabled.
-my $node = get_new_node('node_checksum');
+my $node = PostgreSQL::Test::Cluster->new('node_checksum');
 $node->init();
 my $pgdata = $node->data_dir;
 
@@ -178,6 +172,22 @@ command_fails(
 	[ 'pg_checksums', '--enable', '--filenode', '1234', '-D', $pgdata ],
 	"fails when relfilenodes are requested and action is --enable");
 
+# Test postgres -C for an offline cluster.
+# Run-time GUCs are safe to query here.  Note that a lock file is created,
+# then removed, leading to an extra LOG entry showing in stderr.  This uses
+# log_min_messages=fatal to remove any noise.  This test uses a startup
+# wrapped with pg_ctl to allow the case where this runs under a privileged
+# account on Windows.
+command_checks_all(
+	[
+		'pg_ctl', 'start', '-D', $pgdata, '-s', '-o',
+		'-C data_checksums -c log_min_messages=fatal'
+	],
+	1,
+	[qr/^on$/],
+	[qr/could not start server/],
+	'data_checksums=on is reported on an offline cluster');
+
 # Checks cannot happen with an online cluster
 $node->start;
 command_fails([ 'pg_checksums', '--check', '-D', $pgdata ],
@@ -190,7 +200,6 @@ check_relation_corruption($node, 'corrupt1', 'pg_default');
 my $basedir        = $node->basedir;
 my $tablespace_dir = "$basedir/ts_corrupt_dir";
 mkdir($tablespace_dir);
-$tablespace_dir = TestLib::perl2host($tablespace_dir);
 $node->safe_psql('postgres',
 	"CREATE TABLESPACE ts_corrupt LOCATION '$tablespace_dir';");
 check_relation_corruption($node, 'corrupt2', 'ts_corrupt');
@@ -240,3 +249,5 @@ fail_corrupt($node, "99990_vm");
 fail_corrupt($node, "99990_init.123");
 fail_corrupt($node, "99990_fsm.123");
 fail_corrupt($node, "99990_vm.123");
+
+done_testing();

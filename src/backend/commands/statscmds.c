@@ -3,7 +3,7 @@
  * statscmds.c
  *	  Commands for creating and altering extended statistics objects
  *
- * Portions Copyright (c) 1996-2021, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2022, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -33,6 +33,7 @@
 #include "optimizer/optimizer.h"
 #include "statistics/statistics.h"
 #include "utils/builtins.h"
+#include "utils/lsyscache.h"
 #include "utils/fmgroids.h"
 #include "utils/inval.h"
 #include "utils/memutils.h"
@@ -74,13 +75,10 @@ CreateStatistics(CreateStatsStmt *stmt)
 	HeapTuple	htup;
 	Datum		values[Natts_pg_statistic_ext];
 	bool		nulls[Natts_pg_statistic_ext];
-	Datum		datavalues[Natts_pg_statistic_ext_data];
-	bool		datanulls[Natts_pg_statistic_ext_data];
 	int2vector *stxkeys;
 	List	   *stxexprs = NIL;
 	Datum		exprsDatum;
 	Relation	statrel;
-	Relation	datarel;
 	Relation	rel = NULL;
 	Oid			relid;
 	ObjectAddress parentobject,
@@ -135,8 +133,9 @@ CreateStatistics(CreateStatsStmt *stmt)
 			rel->rd_rel->relkind != RELKIND_PARTITIONED_TABLE)
 			ereport(ERROR,
 					(errcode(ERRCODE_WRONG_OBJECT_TYPE),
-					 errmsg("relation \"%s\" is not a table, foreign table, or materialized view",
-							RelationGetRelationName(rel))));
+					 errmsg("cannot define statistics for relation \"%s\"",
+							RelationGetRelationName(rel)),
+					 errdetail_relkind_not_supported(rel->rd_rel->relkind)));
 
 		/* You must own the relation to create stats on it */
 		if (!pg_class_ownercheck(RelationGetRelid(rel), stxowner))
@@ -210,13 +209,15 @@ CreateStatistics(CreateStatsStmt *stmt)
 	/*
 	 * Convert the expression list to a simple array of attnums, but also keep
 	 * a list of more complex expressions.  While at it, enforce some
-	 * constraints.
+	 * constraints - we don't allow extended statistics on system attributes,
+	 * and we require the data type to have a less-than operator.
 	 *
-	 * XXX We do only the bare minimum to separate simple attribute and
-	 * complex expressions - for example "(a)" will be treated as a complex
-	 * expression. No matter how elaborate the check is, there'll always be a
-	 * way around it, if the user is determined (consider e.g. "(a+0)"), so
-	 * it's not worth protecting against it.
+	 * There are many ways to "mask" a simple attribute reference as an
+	 * expression, for example "(a+0)" etc. We can't possibly detect all of
+	 * them, but we handle at least the simple case with the attribute in
+	 * parens. There'll always be a way around this, if the user is determined
+	 * (like the "(a+0)" example), but this makes it somewhat consistent with
+	 * how indexes treat attributes/expressions.
 	 */
 	foreach(cell, stmt->exprs)
 	{
@@ -257,13 +258,51 @@ CreateStatistics(CreateStatsStmt *stmt)
 			nattnums++;
 			ReleaseSysCache(atttuple);
 		}
+		else if (IsA(selem->expr, Var)) /* column reference in parens */
+		{
+			Var		   *var = (Var *) selem->expr;
+			TypeCacheEntry *type;
+
+			/* Disallow use of system attributes in extended stats */
+			if (var->varattno <= 0)
+				ereport(ERROR,
+						(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+						 errmsg("statistics creation on system columns is not supported")));
+
+			/* Disallow data types without a less-than operator */
+			type = lookup_type_cache(var->vartype, TYPECACHE_LT_OPR);
+			if (type->lt_opr == InvalidOid)
+				ereport(ERROR,
+						(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+						 errmsg("column \"%s\" cannot be used in statistics because its type %s has no default btree operator class",
+								get_attname(relid, var->varattno, false), format_type_be(var->vartype))));
+
+			attnums[nattnums] = var->varattno;
+			nattnums++;
+		}
 		else					/* expression */
 		{
 			Node	   *expr = selem->expr;
 			Oid			atttype;
 			TypeCacheEntry *type;
+			Bitmapset  *attnums = NULL;
+			int			k;
 
 			Assert(expr != NULL);
+
+			/* Disallow expressions referencing system attributes. */
+			pull_varattnos(expr, 1, &attnums);
+
+			k = -1;
+			while ((k = bms_next_member(attnums, k)) >= 0)
+			{
+				AttrNumber	attnum = k + FirstLowInvalidHeapAttributeNumber;
+
+				if (attnum <= 0)
+					ereport(ERROR,
+							(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+							 errmsg("statistics creation on system columns is not supported")));
+			}
 
 			/*
 			 * Disallow data types without a less-than operator.
@@ -309,7 +348,7 @@ CreateStatistics(CreateStatsStmt *stmt)
 	build_mcv = false;
 	foreach(cell, stmt->stat_types)
 	{
-		char	   *type = strVal((Value *) lfirst(cell));
+		char	   *type = strVal(lfirst(cell));
 
 		if (strcmp(type, "ndistinct") == 0)
 		{
@@ -473,28 +512,10 @@ CreateStatistics(CreateStatsStmt *stmt)
 	relation_close(statrel, RowExclusiveLock);
 
 	/*
-	 * Also build the pg_statistic_ext_data tuple, to hold the actual
-	 * statistics data.
+	 * We used to create the pg_statistic_ext_data tuple too, but it's not
+	 * clear what value should the stxdinherit flag have (it depends on
+	 * whether the rel is partitioned, contains data, etc.)
 	 */
-	datarel = table_open(StatisticExtDataRelationId, RowExclusiveLock);
-
-	memset(datavalues, 0, sizeof(datavalues));
-	memset(datanulls, false, sizeof(datanulls));
-
-	datavalues[Anum_pg_statistic_ext_data_stxoid - 1] = ObjectIdGetDatum(statoid);
-
-	/* no statistics built yet */
-	datanulls[Anum_pg_statistic_ext_data_stxdndistinct - 1] = true;
-	datanulls[Anum_pg_statistic_ext_data_stxddependencies - 1] = true;
-	datanulls[Anum_pg_statistic_ext_data_stxdmcv - 1] = true;
-	datanulls[Anum_pg_statistic_ext_data_stxdexpr - 1] = true;
-
-	/* insert it into pg_statistic_ext_data */
-	htup = heap_form_tuple(datarel->rd_att, datavalues, datanulls);
-	CatalogTupleInsert(datarel, htup);
-	heap_freetuple(htup);
-
-	relation_close(datarel, RowExclusiveLock);
 
 	InvokeObjectPostCreateHook(StatisticExtRelationId, statoid, 0);
 
@@ -519,11 +540,11 @@ CreateStatistics(CreateStatsStmt *stmt)
 	}
 
 	/*
-	 * If there are no dependencies on a column, give the statistics an auto
-	 * dependency on the whole table.  In most cases, this will be redundant,
-	 * but it might not be if the statistics expressions contain no Vars
-	 * (which might seem strange but possible). This is consistent with what
-	 * we do for indexes in index_create.
+	 * If there are no dependencies on a column, give the statistics object an
+	 * auto dependency on the whole table.  In most cases, this will be
+	 * redundant, but it might not be if the statistics expressions contain no
+	 * Vars (which might seem strange but possible). This is consistent with
+	 * what we do for indexes in index_create.
 	 *
 	 * XXX We intentionally don't consider the expressions before adding this
 	 * dependency, because recordDependencyOnSingleRelExpr may not create any
@@ -608,9 +629,9 @@ AlterStatistics(AlterStatsStmt *stmt)
 	stxoid = get_statistics_object_oid(stmt->defnames, stmt->missing_ok);
 
 	/*
-	 * If we got here and the OID is not valid, it means the statistics does
-	 * not exist, but the command specified IF EXISTS. So report this as a
-	 * simple NOTICE and we're done.
+	 * If we got here and the OID is not valid, it means the statistics object
+	 * does not exist, but the command specified IF EXISTS. So report this as
+	 * a simple NOTICE and we're done.
 	 */
 	if (!OidIsValid(stxoid))
 	{
@@ -637,6 +658,8 @@ AlterStatistics(AlterStatsStmt *stmt)
 	rel = table_open(StatisticExtRelationId, RowExclusiveLock);
 
 	oldtup = SearchSysCache1(STATEXTOID, ObjectIdGetDatum(stxoid));
+	if (!HeapTupleIsValid(oldtup))
+		elog(ERROR, "cache lookup failed for extended statistics object %u", stxoid);
 
 	/* Must be owner of the existing statistics object */
 	if (!pg_statistics_object_ownercheck(stxoid, GetUserId()))
@@ -676,6 +699,32 @@ AlterStatistics(AlterStatsStmt *stmt)
 }
 
 /*
+ * Delete entry in pg_statistic_ext_data catalog. We don't know if the row
+ * exists, so don't error out.
+ */
+void
+RemoveStatisticsDataById(Oid statsOid, bool inh)
+{
+	Relation	relation;
+	HeapTuple	tup;
+
+	relation = table_open(StatisticExtDataRelationId, RowExclusiveLock);
+
+	tup = SearchSysCache2(STATEXTDATASTXOID, ObjectIdGetDatum(statsOid),
+						  BoolGetDatum(inh));
+
+	/* We don't know if the data row for inh value exists. */
+	if (HeapTupleIsValid(tup))
+	{
+		CatalogTupleDelete(relation, &tup->t_self);
+
+		ReleaseSysCache(tup);
+	}
+
+	table_close(relation, RowExclusiveLock);
+}
+
+/*
  * Guts of statistics object deletion.
  */
 void
@@ -687,21 +736,12 @@ RemoveStatisticsById(Oid statsOid)
 	Oid			relid;
 
 	/*
-	 * First delete the pg_statistic_ext_data tuple holding the actual
-	 * statistical data.
+	 * First delete the pg_statistic_ext_data tuples holding the actual
+	 * statistical data. There might be data with/without inheritance, so
+	 * attempt deleting both.
 	 */
-	relation = table_open(StatisticExtDataRelationId, RowExclusiveLock);
-
-	tup = SearchSysCache1(STATEXTDATASTXOID, ObjectIdGetDatum(statsOid));
-
-	if (!HeapTupleIsValid(tup)) /* should not happen */
-		elog(ERROR, "cache lookup failed for statistics data %u", statsOid);
-
-	CatalogTupleDelete(relation, &tup->t_self);
-
-	ReleaseSysCache(tup);
-
-	table_close(relation, RowExclusiveLock);
+	RemoveStatisticsDataById(statsOid, true);
+	RemoveStatisticsDataById(statsOid, false);
 
 	/*
 	 * Delete the pg_statistic_ext tuple.  Also send out a cache inval on the
@@ -727,7 +767,7 @@ RemoveStatisticsById(Oid statsOid)
 }
 
 /*
- * Select a nonconflicting name for a new statistics.
+ * Select a nonconflicting name for a new statistics object.
  *
  * name1, name2, and label are used the same way as for makeObjectName(),
  * except that the label can't be NULL; digits will be appended to the label
@@ -774,9 +814,9 @@ ChooseExtendedStatisticName(const char *name1, const char *name2,
 }
 
 /*
- * Generate "name2" for a new statistics given the list of column names for it
- * This will be passed to ChooseExtendedStatisticName along with the parent
- * table name and a suitable label.
+ * Generate "name2" for a new statistics object given the list of column
+ * names for it.  This will be passed to ChooseExtendedStatisticName along
+ * with the parent table name and a suitable label.
  *
  * We know that less than NAMEDATALEN characters will actually be used,
  * so we can truncate the result once we've generated that many.
@@ -828,8 +868,8 @@ ChooseExtendedStatisticNameAddition(List *exprs)
 }
 
 /*
- * StatisticsGetRelation: given a statistics's relation OID, get the OID of
- * the relation it is an statistics on.  Uses the system cache.
+ * StatisticsGetRelation: given a statistics object's OID, get the OID of
+ * the relation it is defined on.  Uses the system cache.
  */
 Oid
 StatisticsGetRelation(Oid statId, bool missing_ok)

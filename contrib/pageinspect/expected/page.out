@@ -180,9 +180,11 @@ DROP TABLE test1;
 create table test_partitioned (a int) partition by range (a);
 create index test_partitioned_index on test_partitioned (a);
 select get_raw_page('test_partitioned', 0); -- error about partitioned table
-ERROR:  cannot get raw page from partitioned table "test_partitioned"
+ERROR:  cannot get raw page from relation "test_partitioned"
+DETAIL:  This operation is not supported for partitioned tables.
 select get_raw_page('test_partitioned_index', 0); -- error about partitioned index
-ERROR:  cannot get raw page from partitioned index "test_partitioned_index"
+ERROR:  cannot get raw page from relation "test_partitioned_index"
+DETAIL:  This operation is not supported for partitioned indexes.
 -- a regular table which is a member of a partition set should work though
 create table test_part1 partition of test_partitioned for values from ( 1 ) to (100);
 select get_raw_page('test_part1', 0); -- get farther and error about empty table
@@ -205,3 +207,34 @@ select tuple_data_split('test8'::regclass, t_data, t_infomask, t_infomask2, t_bi
 (1 row)
 
 drop table test8;
+-- Failure with incorrect page size
+-- Suppress the DETAIL message, to allow the tests to work across various
+-- page sizes.
+\set VERBOSITY terse
+SELECT fsm_page_contents('aaa'::bytea);
+ERROR:  invalid page size
+SELECT page_checksum('bbb'::bytea, 0);
+ERROR:  invalid page size
+SELECT page_header('ccc'::bytea);
+ERROR:  invalid page size
+\set VERBOSITY default
+-- Tests with all-zero pages.
+SHOW block_size \gset
+SELECT fsm_page_contents(decode(repeat('00', :block_size), 'hex'));
+ fsm_page_contents 
+-------------------
+ 
+(1 row)
+
+SELECT page_header(decode(repeat('00', :block_size), 'hex'));
+      page_header      
+-----------------------
+ (0/0,0,0,0,0,0,0,0,0)
+(1 row)
+
+SELECT page_checksum(decode(repeat('00', :block_size), 'hex'), 1);
+ page_checksum 
+---------------
+              
+(1 row)
+

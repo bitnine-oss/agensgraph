@@ -4,7 +4,7 @@
  *	  Routines to support inter-object dependencies.
  *
  *
- * Portions Copyright (c) 1996-2021, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2022, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -21,6 +21,7 @@
 #include "catalog/ag_graph.h"
 #include "catalog/ag_label.h"
 #include "catalog/ag_label_fn.h"
+#include "catalog/catalog.h"
 #include "catalog/dependency.h"
 #include "catalog/heap.h"
 #include "catalog/index.h"
@@ -48,9 +49,11 @@
 #include "catalog/pg_opclass.h"
 #include "catalog/pg_operator.h"
 #include "catalog/pg_opfamily.h"
+#include "catalog/pg_parameter_acl.h"
 #include "catalog/pg_policy.h"
 #include "catalog/pg_proc.h"
 #include "catalog/pg_publication.h"
+#include "catalog/pg_publication_namespace.h"
 #include "catalog/pg_publication_rel.h"
 #include "catalog/pg_rewrite.h"
 #include "catalog/pg_statistic_ext.h"
@@ -180,7 +183,9 @@ static const Oid object_classes[] = {
 	DefaultAclRelationId,		/* OCLASS_DEFACL */
 	ExtensionRelationId,		/* OCLASS_EXTENSION */
 	EventTriggerRelationId,		/* OCLASS_EVENT_TRIGGER */
+	ParameterAclRelationId,		/* OCLASS_PARAMETER_ACL */
 	PolicyRelationId,			/* OCLASS_POLICY */
+	PublicationNamespaceRelationId, /* OCLASS_PUBLICATION_NAMESPACE */
 	PublicationRelationId,		/* OCLASS_PUBLICATION */
 	PublicationRelRelationId,	/* OCLASS_PUBLICATION_REL */
 	SubscriptionRelationId,		/* OCLASS_SUBSCRIPTION */
@@ -527,6 +532,16 @@ findDependentObjects(const ObjectAddress *object,
 		return;
 
 	/*
+	 * If the target object is pinned, we can just error out immediately; it
+	 * won't have any objects recorded as depending on it.
+	 */
+	if (IsPinnedObject(object->classId, object->objectId))
+		ereport(ERROR,
+				(errcode(ERRCODE_DEPENDENT_OBJECTS_STILL_EXIST),
+				 errmsg("cannot drop %s because it is required by the database system",
+						getObjectDescription(object, false))));
+
+	/*
 	 * The target object might be internally dependent on some other object
 	 * (its "owner"), and/or be a member of an extension (also considered its
 	 * owner).  If so, and if we aren't recursing from the owning object, we
@@ -789,15 +804,6 @@ findDependentObjects(const ObjectAddress *object,
 				objflags |= DEPFLAG_IS_PART;
 				break;
 
-			case DEPENDENCY_PIN:
-
-				/*
-				 * Should not happen; PIN dependencies should have zeroes in
-				 * the depender fields...
-				 */
-				elog(ERROR, "incorrect use of PIN dependency with %s",
-					 getObjectDescription(object, false));
-				break;
 			default:
 				elog(ERROR, "unrecognized dependency type '%c' for %s",
 					 foundDep->deptype, getObjectDescription(object, false));
@@ -925,18 +931,6 @@ findDependentObjects(const ObjectAddress *object,
 				break;
 			case DEPENDENCY_EXTENSION:
 				subflags = DEPFLAG_EXTENSION;
-				break;
-			case DEPENDENCY_PIN:
-
-				/*
-				 * For a PIN dependency we just ereport immediately; there
-				 * won't be any others to report.
-				 */
-				ereport(ERROR,
-						(errcode(ERRCODE_DEPENDENT_OBJECTS_STILL_EXIST),
-						 errmsg("cannot drop %s because it is required by the database system",
-								getObjectDescription(object, false))));
-				subflags = 0;	/* keep compiler quiet */
 				break;
 			default:
 				elog(ERROR, "unrecognized dependency type '%c' for %s",
@@ -1108,6 +1102,10 @@ reportDependentObjects(const ObjectAddresses *targetObjects,
 
 		objDesc = getObjectDescription(obj, false);
 
+		/* An object being dropped concurrently doesn't need to be reported */
+		if (objDesc == NULL)
+			continue;
+
 		/*
 		 * If, at any stage of the recursive search, we reached the object via
 		 * an AUTO, INTERNAL, PARTITION, or EXTENSION dependency, then it's
@@ -1133,23 +1131,28 @@ reportDependentObjects(const ObjectAddresses *targetObjects,
 			char	   *otherDesc = getObjectDescription(&extra->dependee,
 														 false);
 
-			if (numReportedClient < MAX_REPORTED_DEPS)
+			if (otherDesc)
 			{
+				if (numReportedClient < MAX_REPORTED_DEPS)
+				{
+					/* separate entries with a newline */
+					if (clientdetail.len != 0)
+						appendStringInfoChar(&clientdetail, '\n');
+					appendStringInfo(&clientdetail, _("%s depends on %s"),
+									 objDesc, otherDesc);
+					numReportedClient++;
+				}
+				else
+					numNotReportedClient++;
 				/* separate entries with a newline */
-				if (clientdetail.len != 0)
-					appendStringInfoChar(&clientdetail, '\n');
-				appendStringInfo(&clientdetail, _("%s depends on %s"),
+				if (logdetail.len != 0)
+					appendStringInfoChar(&logdetail, '\n');
+				appendStringInfo(&logdetail, _("%s depends on %s"),
 								 objDesc, otherDesc);
-				numReportedClient++;
+				pfree(otherDesc);
 			}
 			else
 				numNotReportedClient++;
-			/* separate entries with a newline */
-			if (logdetail.len != 0)
-				appendStringInfoChar(&logdetail, '\n');
-			appendStringInfo(&logdetail, _("%s depends on %s"),
-							 objDesc, otherDesc);
-			pfree(otherDesc);
 			ok = false;
 		}
 		else
@@ -1204,7 +1207,6 @@ reportDependentObjects(const ObjectAddresses *targetObjects,
 	else if (numReportedClient > 1)
 	{
 		ereport(msglevel,
-		/* translator: %d always has a value larger than 1 */
 				(errmsg_plural("drop cascades to %d other object",
 							   "drop cascades to %d other objects",
 							   numReportedClient + numNotReportedClient,
@@ -1472,8 +1474,16 @@ doDeletion(const ObjectAddress *object, int flags)
 			RemovePolicyById(object->objectId);
 			break;
 
+		case OCLASS_PUBLICATION_NAMESPACE:
+			RemovePublicationSchemaById(object->objectId);
+			break;
+
 		case OCLASS_PUBLICATION_REL:
 			RemovePublicationRelById(object->objectId);
+			break;
+
+		case OCLASS_PUBLICATION:
+			RemovePublicationById(object->objectId);
 			break;
 
 		case OCLASS_CAST:
@@ -1494,7 +1504,6 @@ doDeletion(const ObjectAddress *object, int flags)
 		case OCLASS_USER_MAPPING:
 		case OCLASS_DEFACL:
 		case OCLASS_EVENT_TRIGGER:
-		case OCLASS_PUBLICATION:
 		case OCLASS_TRANSFORM:
 			DropObjectById(object);
 			break;
@@ -1506,6 +1515,7 @@ doDeletion(const ObjectAddress *object, int flags)
 		case OCLASS_DATABASE:
 		case OCLASS_TBLSPACE:
 		case OCLASS_SUBSCRIPTION:
+		case OCLASS_PARAMETER_ACL:
 			elog(ERROR, "global objects cannot be deleted by doDeletion");
 			break;
 
@@ -2868,8 +2878,14 @@ getObjectClass(const ObjectAddress *object)
 		case EventTriggerRelationId:
 			return OCLASS_EVENT_TRIGGER;
 
+		case ParameterAclRelationId:
+			return OCLASS_PARAMETER_ACL;
+
 		case PolicyRelationId:
 			return OCLASS_POLICY;
+
+		case PublicationNamespaceRelationId:
+			return OCLASS_PUBLICATION_NAMESPACE;
 
 		case PublicationRelationId:
 			return OCLASS_PUBLICATION;

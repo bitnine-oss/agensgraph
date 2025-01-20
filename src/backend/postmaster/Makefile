@@ -14,14 +14,15 @@ include $(top_builddir)/src/Makefile.global
 
 OBJS = \
 	autovacuum.o \
+	auxprocess.o \
 	bgworker.o \
 	bgwriter.o \
 	checkpointer.o \
 	fork_process.o \
 	interrupt.o \
 	pgarch.o \
-	pgstat.o \
 	postmaster.o \
+	shell_archive.o \
 	startup.o \
 	syslogger.o \
 	walwriter.o

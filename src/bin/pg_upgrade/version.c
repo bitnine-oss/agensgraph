@@ -3,7 +3,7 @@
  *
  *	Postgres-version-specific routines
  *
- *	Copyright (c) 2010-2021, PostgreSQL Global Development Group
+ *	Copyright (c) 2010-2022, PostgreSQL Global Development Group
  *	src/bin/pg_upgrade/version.c
  */
 
@@ -12,88 +12,6 @@
 #include "catalog/pg_class_d.h"
 #include "fe_utils/string_utils.h"
 #include "pg_upgrade.h"
-
-/*
- * new_9_0_populate_pg_largeobject_metadata()
- *	new >= 9.0, old <= 8.4
- *	9.0 has a new pg_largeobject permission table
- */
-void
-new_9_0_populate_pg_largeobject_metadata(ClusterInfo *cluster, bool check_mode)
-{
-	int			dbnum;
-	FILE	   *script = NULL;
-	bool		found = false;
-	char		output_path[MAXPGPATH];
-
-	prep_status("Checking for large objects");
-
-	snprintf(output_path, sizeof(output_path), "pg_largeobject.sql");
-
-	for (dbnum = 0; dbnum < cluster->dbarr.ndbs; dbnum++)
-	{
-		PGresult   *res;
-		int			i_count;
-		DbInfo	   *active_db = &cluster->dbarr.dbs[dbnum];
-		PGconn	   *conn = connectToServer(cluster, active_db->db_name);
-
-		/* find if there are any large objects */
-		res = executeQueryOrDie(conn,
-								"SELECT count(*) "
-								"FROM	pg_catalog.pg_largeobject ");
-
-		i_count = PQfnumber(res, "count");
-		if (atoi(PQgetvalue(res, 0, i_count)) != 0)
-		{
-			found = true;
-			if (!check_mode)
-			{
-				PQExpBufferData connectbuf;
-
-				if (script == NULL && (script = fopen_priv(output_path, "w")) == NULL)
-					pg_fatal("could not open file \"%s\": %s\n", output_path,
-							 strerror(errno));
-
-				initPQExpBuffer(&connectbuf);
-				appendPsqlMetaConnect(&connectbuf, active_db->db_name);
-				fputs(connectbuf.data, script);
-				termPQExpBuffer(&connectbuf);
-
-				fprintf(script,
-						"SELECT pg_catalog.lo_create(t.loid)\n"
-						"FROM (SELECT DISTINCT loid FROM pg_catalog.pg_largeobject) AS t;\n");
-			}
-		}
-
-		PQclear(res);
-		PQfinish(conn);
-	}
-
-	if (script)
-		fclose(script);
-
-	if (found)
-	{
-		report_status(PG_WARNING, "warning");
-		if (check_mode)
-			pg_log(PG_WARNING, "\n"
-				   "Your installation contains large objects.  The new database has an\n"
-				   "additional large object permission table.  After upgrading, you will be\n"
-				   "given a command to populate the pg_largeobject_metadata table with\n"
-				   "default permissions.\n\n");
-		else
-			pg_log(PG_WARNING, "\n"
-				   "Your installation contains large objects.  The new database has an\n"
-				   "additional large object permission table, so default permissions must be\n"
-				   "defined for all large objects.  The file\n"
-				   "    %s\n"
-				   "when executed by psql by the database superuser will set the default\n"
-				   "permissions.\n\n",
-				   output_path);
-	}
-	else
-		check_ok();
-}
 
 
 /*
@@ -158,38 +76,32 @@ check_for_data_types_usage(ClusterInfo *cluster,
 						  "				  t.oid = c.reltype AND "
 						  "				  c.oid = a.attrelid AND "
 						  "				  NOT a.attisdropped AND "
-						  "				  a.atttypid = x.oid ",
-						  base_query);
-
-		/* Ranges were introduced in 9.2 */
-		if (GET_MAJOR_VERSION(cluster->major_version) >= 902)
-			appendPQExpBufferStr(&querybuf,
-								 "			UNION ALL "
-			/* ranges containing any type selected so far */
-								 "			SELECT t.oid FROM pg_catalog.pg_type t, pg_catalog.pg_range r, x "
-								 "			WHERE t.typtype = 'r' AND r.rngtypid = t.oid AND r.rngsubtype = x.oid");
-
-		appendPQExpBufferStr(&querybuf,
-							 "	) foo "
-							 ") "
+						  "				  a.atttypid = x.oid "
+						  "			UNION ALL "
+		/* ranges containing any type selected so far */
+						  "			SELECT t.oid FROM pg_catalog.pg_type t, pg_catalog.pg_range r, x "
+						  "			WHERE t.typtype = 'r' AND r.rngtypid = t.oid AND r.rngsubtype = x.oid"
+						  "	) foo "
+						  ") "
 		/* now look for stored columns of any such type */
-							 "SELECT n.nspname, c.relname, a.attname "
-							 "FROM	pg_catalog.pg_class c, "
-							 "		pg_catalog.pg_namespace n, "
-							 "		pg_catalog.pg_attribute a "
-							 "WHERE	c.oid = a.attrelid AND "
-							 "		NOT a.attisdropped AND "
-							 "		a.atttypid IN (SELECT oid FROM oids) AND "
-							 "		c.relkind IN ("
-							 CppAsString2(RELKIND_RELATION) ", "
-							 CppAsString2(RELKIND_MATVIEW) ", "
-							 CppAsString2(RELKIND_INDEX) ") AND "
-							 "		c.relnamespace = n.oid AND "
+						  "SELECT n.nspname, c.relname, a.attname "
+						  "FROM	pg_catalog.pg_class c, "
+						  "		pg_catalog.pg_namespace n, "
+						  "		pg_catalog.pg_attribute a "
+						  "WHERE	c.oid = a.attrelid AND "
+						  "		NOT a.attisdropped AND "
+						  "		a.atttypid IN (SELECT oid FROM oids) AND "
+						  "		c.relkind IN ("
+						  CppAsString2(RELKIND_RELATION) ", "
+						  CppAsString2(RELKIND_MATVIEW) ", "
+						  CppAsString2(RELKIND_INDEX) ") AND "
+						  "		c.relnamespace = n.oid AND "
 		/* exclude possible orphaned temp tables */
-							 "		n.nspname !~ '^pg_temp_' AND "
-							 "		n.nspname !~ '^pg_toast_temp_' AND "
+						  "		n.nspname !~ '^pg_temp_' AND "
+						  "		n.nspname !~ '^pg_toast_temp_' AND "
 		/* exclude system catalogs, too */
-							 "		n.nspname NOT IN ('pg_catalog', 'information_schema')");
+						  "		n.nspname NOT IN ('pg_catalog', 'information_schema')",
+						  base_query);
 
 		res = executeQueryOrDie(conn, "%s", querybuf.data);
 
@@ -464,6 +376,84 @@ old_11_check_for_sql_identifier_data_type_usage(ClusterInfo *cluster)
 				 "drop the problem columns and restart the upgrade.\n"
 				 "A list of the problem columns is in the file:\n"
 				 "    %s\n\n", output_path);
+	}
+	else
+		check_ok();
+}
+
+
+/*
+ * report_extension_updates()
+ *	Report extensions that should be updated.
+ */
+void
+report_extension_updates(ClusterInfo *cluster)
+{
+	int			dbnum;
+	FILE	   *script = NULL;
+	bool		found = false;
+	char	   *output_path = "update_extensions.sql";
+
+	prep_status("Checking for extension updates");
+
+	for (dbnum = 0; dbnum < cluster->dbarr.ndbs; dbnum++)
+	{
+		PGresult   *res;
+		bool		db_used = false;
+		int			ntups;
+		int			rowno;
+		int			i_name;
+		DbInfo	   *active_db = &cluster->dbarr.dbs[dbnum];
+		PGconn	   *conn = connectToServer(cluster, active_db->db_name);
+
+		/* find extensions needing updates */
+		res = executeQueryOrDie(conn,
+								"SELECT name "
+								"FROM pg_available_extensions "
+								"WHERE installed_version != default_version"
+			);
+
+		ntups = PQntuples(res);
+		i_name = PQfnumber(res, "name");
+		for (rowno = 0; rowno < ntups; rowno++)
+		{
+			found = true;
+
+			if (script == NULL && (script = fopen_priv(output_path, "w")) == NULL)
+				pg_fatal("could not open file \"%s\": %s\n", output_path,
+						 strerror(errno));
+			if (!db_used)
+			{
+				PQExpBufferData connectbuf;
+
+				initPQExpBuffer(&connectbuf);
+				appendPsqlMetaConnect(&connectbuf, active_db->db_name);
+				fputs(connectbuf.data, script);
+				termPQExpBuffer(&connectbuf);
+				db_used = true;
+			}
+			fprintf(script, "ALTER EXTENSION %s UPDATE;\n",
+					quote_identifier(PQgetvalue(res, rowno, i_name)));
+		}
+
+		PQclear(res);
+
+		PQfinish(conn);
+	}
+
+	if (script)
+		fclose(script);
+
+	if (found)
+	{
+		report_status(PG_REPORT, "notice");
+		pg_log(PG_REPORT, "\n"
+			   "Your installation contains extensions that should be updated\n"
+			   "with the ALTER EXTENSION command.  The file\n"
+			   "    %s\n"
+			   "when executed by psql by the database superuser will update\n"
+			   "these extensions.\n\n",
+			   output_path);
 	}
 	else
 		check_ok();

@@ -2,7 +2,7 @@
  *
  *	  EUC_TW, BIG5 and MULE_INTERNAL
  *
- * Portions Copyright (c) 1996-2021, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2022, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -286,8 +286,12 @@ big52euc_tw(const unsigned char *big5, unsigned char *p, int len, bool noError)
 		{
 			/* ASCII */
 			if (c1 == 0)
+			{
+				if (noError)
+					break;
 				report_invalid_encoding(PG_BIG5,
 										(const char *) big5, len);
+			}
 			*p++ = c1;
 			big5++;
 			len--;

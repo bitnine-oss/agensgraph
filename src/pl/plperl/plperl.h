@@ -5,7 +5,7 @@
  *
  * This should be included _AFTER_ postgres.h and system include files
  *
- * Portions Copyright (c) 1996-2021, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2022, PostgreSQL Global Development Group
  * Portions Copyright (c) 1995, Regents of the University of California
  *
  * src/pl/plperl/plperl.h
@@ -164,9 +164,6 @@
 #endif
 
 /* perl version and platform portability */
-#define NEED_eval_pv
-#define NEED_newRV_noinc
-#define NEED_sv_2pv_flags
 #include "ppport.h"
 
 /*

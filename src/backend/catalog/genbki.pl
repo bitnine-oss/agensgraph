@@ -6,7 +6,7 @@
 #    headers from specially formatted header files and data files.
 #    postgres.bki is used to initialize the postgres template database.
 #
-# Portions Copyright (c) 1996-2021, PostgreSQL Global Development Group
+# Portions Copyright (c) 1996-2022, PostgreSQL Global Development Group
 # Portions Copyright (c) 1994, Regents of the University of California
 #
 # src/backend/catalog/genbki.pl
@@ -25,6 +25,8 @@ use Catalog;
 my $output_path = '';
 my $major_version;
 my $include_path;
+
+my $num_errors = 0;
 
 GetOptions(
 	'output:s'       => \$output_path,
@@ -168,14 +170,14 @@ die "found $found duplicate OID(s) in catalog data\n" if $found;
 
 
 # OIDs not specified in the input files are automatically assigned,
-# starting at FirstGenbkiObjectId, extending up to FirstBootstrapObjectId.
+# starting at FirstGenbkiObjectId, extending up to FirstUnpinnedObjectId.
 # We allow such OIDs to be assigned independently within each catalog.
 my $FirstGenbkiObjectId =
   Catalog::FindDefinedSymbol('access/transam.h', $include_path,
 	'FirstGenbkiObjectId');
-my $FirstBootstrapObjectId =
+my $FirstUnpinnedObjectId =
   Catalog::FindDefinedSymbol('access/transam.h', $include_path,
-	'FirstBootstrapObjectId');
+	'FirstUnpinnedObjectId');
 # Hash of next available OID, indexed by catalog name.
 my %GenbkiNextOids;
 
@@ -445,7 +447,7 @@ foreach my $catname (@catnames)
  * %s_d.h
  *    Macro definitions for %s
  *
- * Portions Copyright (c) 1996-2021, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2022, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * NOTES
@@ -469,6 +471,30 @@ EOM
 	printf $def "#define %s %s\n",
 	  $catalog->{rowtype_oid_macro}, $catalog->{rowtype_oid}
 	  if $catalog->{rowtype_oid_macro};
+
+	# Likewise for macros for toast, index, and other OIDs
+	foreach my $toast (@{ $catalog->{toasting} })
+	{
+		printf $def "#define %s %s\n",
+		  $toast->{toast_oid_macro}, $toast->{toast_oid}
+		  if $toast->{toast_oid_macro};
+		printf $def "#define %s %s\n",
+		  $toast->{toast_index_oid_macro}, $toast->{toast_index_oid}
+		  if $toast->{toast_index_oid_macro};
+	}
+	foreach my $index (@{ $catalog->{indexing} })
+	{
+		printf $def "#define %s %s\n",
+		  $index->{index_oid_macro}, $index->{index_oid}
+		  if $index->{index_oid_macro};
+	}
+	foreach my $other (@{ $catalog->{other_oids} })
+	{
+		printf $def "#define %s %s\n",
+		  $other->{other_name}, $other->{other_oid}
+		  if $other->{other_name};
+	}
+
 	print $def "\n";
 
 	# .bki CREATE command for this catalog
@@ -687,7 +713,7 @@ print $schemapg <<EOM;
  * schemapg.h
  *    Schema_pg_xxx macros for use by relcache.c
  *
- * Portions Copyright (c) 1996-2021, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2022, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * NOTES
@@ -723,7 +749,7 @@ print $fk_info <<EOM;
  * system_fk_info.h
  *    Data about the foreign-key relationships in the system catalogs
  *
- * Portions Copyright (c) 1996-2021, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2022, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * NOTES
@@ -788,7 +814,7 @@ Catalog::RenameTempFile($schemafile,       $tmpext);
 Catalog::RenameTempFile($fk_info_file,     $tmpext);
 Catalog::RenameTempFile($constraints_file, $tmpext);
 
-exit 0;
+exit($num_errors != 0 ? 1 : 0);
 
 #################### Subroutines ########################
 
@@ -890,12 +916,11 @@ sub morph_row_for_pgattr
 	# Copy the type data from pg_type, and add some type-dependent items
 	my $type = $types{$atttype};
 
-	$row->{atttypid}       = $type->{oid};
-	$row->{attlen}         = $type->{typlen};
-	$row->{attbyval}       = $type->{typbyval};
-	$row->{attalign}       = $type->{typalign};
-	$row->{attstorage}     = $type->{typstorage};
-	$row->{attcompression} = '\0';
+	$row->{atttypid}   = $type->{oid};
+	$row->{attlen}     = $type->{typlen};
+	$row->{attbyval}   = $type->{typbyval};
+	$row->{attalign}   = $type->{typalign};
+	$row->{attstorage} = $type->{typstorage};
 
 	# set attndims if it's an array type
 	$row->{attndims} = $type->{typcategory} eq 'A' ? '1' : '0';
@@ -1016,8 +1041,7 @@ sub morph_row_for_schemapg
 # Perform OID lookups on an array of OID names.
 # If we don't have a unique value to substitute, warn and
 # leave the entry unchanged.
-# (A warning seems sufficient because the bootstrap backend will reject
-# non-numeric values anyway.  So we might as well detect multiple problems
+# (We don't exit right away so that we can detect multiple problems
 # within this genbki.pl run.)
 sub lookup_oids
 {
@@ -1037,16 +1061,20 @@ sub lookup_oids
 			push @lookupoids, $lookupname;
 			if ($lookupname eq '-' or $lookupname eq '0')
 			{
-				warn sprintf
-				  "invalid zero OID reference in %s.dat field %s line %s\n",
-				  $catname, $attname, $bki_values->{line_number}
-				  if !$lookup_opt;
+				if (!$lookup_opt)
+				{
+					warn sprintf
+					  "invalid zero OID reference in %s.dat field %s line %s\n",
+					  $catname, $attname, $bki_values->{line_number};
+					$num_errors++;
+				}
 			}
 			else
 			{
 				warn sprintf
 				  "unresolved OID reference \"%s\" in %s.dat field %s line %s\n",
 				  $lookupname, $catname, $attname, $bki_values->{line_number};
+				$num_errors++;
 			}
 		}
 	}
@@ -1088,8 +1116,8 @@ sub assign_next_oid
 
 	# Check that we didn't overrun available OIDs
 	die
-	  "genbki OID counter for $catname reached $result, overrunning FirstBootstrapObjectId\n"
-	  if $result >= $FirstBootstrapObjectId;
+	  "genbki OID counter for $catname reached $result, overrunning FirstUnpinnedObjectId\n"
+	  if $result >= $FirstUnpinnedObjectId;
 
 	return $result;
 }

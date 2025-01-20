@@ -3,7 +3,7 @@
  * clauses.c
  *	  routines to manipulate qualification clauses
  *
- * Portions Copyright (c) 1996-2021, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2022, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -28,6 +28,7 @@
 #include "catalog/pg_type.h"
 #include "executor/executor.h"
 #include "executor/functions.h"
+#include "executor/execExpr.h"
 #include "funcapi.h"
 #include "miscadmin.h"
 #include "nodes/makefuncs.h"
@@ -43,12 +44,16 @@
 #include "parser/parse_agg.h"
 #include "parser/parse_coerce.h"
 #include "parser/parse_func.h"
+#include "rewrite/rewriteHandler.h"
 #include "rewrite/rewriteManip.h"
 #include "tcop/tcopprot.h"
 #include "utils/acl.h"
 #include "utils/builtins.h"
 #include "utils/datum.h"
 #include "utils/fmgroids.h"
+#include "utils/json.h"
+#include "utils/jsonb.h"
+#include "utils/jsonpath.h"
 #include "utils/lsyscache.h"
 #include "utils/memutils.h"
 #include "utils/syscache.h"
@@ -151,6 +156,7 @@ static Query *substitute_actual_srf_parameters(Query *expr,
 											   int nargs, List *args);
 static Node *substitute_actual_srf_parameters_mutator(Node *node,
 													  substitute_actual_srf_parameters_context *context);
+static bool pull_paramids_walker(Node *node, Bitmapset **context);
 
 
 /*****************************************************************************
@@ -379,6 +385,45 @@ contain_mutable_functions_walker(Node *node, void *context)
 	if (check_functions_in_node(node, contain_mutable_functions_checker,
 								context))
 		return true;
+
+	if (IsA(node, JsonConstructorExpr))
+	{
+		const JsonConstructorExpr *ctor = (JsonConstructorExpr *) node;
+		ListCell   *lc;
+		bool		is_jsonb =
+		ctor->returning->format->format_type == JS_FORMAT_JSONB;
+
+		/* Check argument_type => json[b] conversions */
+		foreach(lc, ctor->args)
+		{
+			Oid			typid = exprType(lfirst(lc));
+
+			if (is_jsonb ?
+				!to_jsonb_is_immutable(typid) :
+				!to_json_is_immutable(typid))
+				return true;
+		}
+
+		/* Check all subnodes */
+	}
+
+	if (IsA(node, JsonExpr))
+	{
+		JsonExpr   *jexpr = castNode(JsonExpr, node);
+		Const	   *cnst;
+
+		if (!IsA(jexpr->path_spec, Const))
+			return true;
+
+		cnst = castNode(Const, jexpr->path_spec);
+
+		Assert(cnst->consttype == JSONPATHOID);
+		if (cnst->constisnull)
+			return false;
+
+		return jspIsMutable(DatumGetJsonPathP(cnst->constvalue),
+							jexpr->passing_names, jexpr->passing_values);
+	}
 
 	if (IsA(node, SQLValueFunction))
 	{
@@ -849,6 +894,18 @@ max_parallel_hazard_walker(Node *node, max_parallel_hazard_context *context)
 		return query_tree_walker(query,
 								 max_parallel_hazard_walker,
 								 context, 0);
+	}
+
+	/* JsonExpr is parallel-unsafe if subtransactions can be used. */
+	else if (IsA(node, JsonExpr))
+	{
+		JsonExpr   *jsexpr = (JsonExpr *) node;
+
+		if (ExecEvalJsonNeedsSubTransaction(jsexpr, NULL))
+		{
+			context->max_hazard = PROPARALLEL_UNSAFE;
+			return true;
+		}
 	}
 
 	/* Recurse to check arguments */
@@ -2140,27 +2197,71 @@ convert_saop_to_hashed_saop_walker(Node *node, void *context)
 		Oid			lefthashfunc;
 		Oid			righthashfunc;
 
-		if (saop->useOr && arrayarg && IsA(arrayarg, Const) &&
-			!((Const *) arrayarg)->constisnull &&
-			get_op_hash_functions(saop->opno, &lefthashfunc, &righthashfunc) &&
-			lefthashfunc == righthashfunc)
+		if (arrayarg && IsA(arrayarg, Const) &&
+			!((Const *) arrayarg)->constisnull)
 		{
-			Datum		arrdatum = ((Const *) arrayarg)->constvalue;
-			ArrayType  *arr = (ArrayType *) DatumGetPointer(arrdatum);
-			int			nitems;
-
-			/*
-			 * Only fill in the hash functions if the array looks large enough
-			 * for it to be worth hashing instead of doing a linear search.
-			 */
-			nitems = ArrayGetNItems(ARR_NDIM(arr), ARR_DIMS(arr));
-
-			if (nitems >= MIN_ARRAY_SIZE_FOR_HASHED_SAOP)
+			if (saop->useOr)
 			{
-				/* Looks good. Fill in the hash functions */
-				saop->hashfuncid = lefthashfunc;
+				if (get_op_hash_functions(saop->opno, &lefthashfunc, &righthashfunc) &&
+					lefthashfunc == righthashfunc)
+				{
+					Datum		arrdatum = ((Const *) arrayarg)->constvalue;
+					ArrayType  *arr = (ArrayType *) DatumGetPointer(arrdatum);
+					int			nitems;
+
+					/*
+					 * Only fill in the hash functions if the array looks
+					 * large enough for it to be worth hashing instead of
+					 * doing a linear search.
+					 */
+					nitems = ArrayGetNItems(ARR_NDIM(arr), ARR_DIMS(arr));
+
+					if (nitems >= MIN_ARRAY_SIZE_FOR_HASHED_SAOP)
+					{
+						/* Looks good. Fill in the hash functions */
+						saop->hashfuncid = lefthashfunc;
+					}
+					return true;
+				}
 			}
-			return true;
+			else				/* !saop->useOr */
+			{
+				Oid			negator = get_negator(saop->opno);
+
+				/*
+				 * Check if this is a NOT IN using an operator whose negator
+				 * is hashable.  If so we can still build a hash table and
+				 * just ensure the lookup items are not in the hash table.
+				 */
+				if (OidIsValid(negator) &&
+					get_op_hash_functions(negator, &lefthashfunc, &righthashfunc) &&
+					lefthashfunc == righthashfunc)
+				{
+					Datum		arrdatum = ((Const *) arrayarg)->constvalue;
+					ArrayType  *arr = (ArrayType *) DatumGetPointer(arrdatum);
+					int			nitems;
+
+					/*
+					 * Only fill in the hash functions if the array looks
+					 * large enough for it to be worth hashing instead of
+					 * doing a linear search.
+					 */
+					nitems = ArrayGetNItems(ARR_NDIM(arr), ARR_DIMS(arr));
+
+					if (nitems >= MIN_ARRAY_SIZE_FOR_HASHED_SAOP)
+					{
+						/* Looks good. Fill in the hash functions */
+						saop->hashfuncid = lefthashfunc;
+
+						/*
+						 * Also set the negfuncid.  The executor will need
+						 * that to perform hashtable lookups.
+						 */
+						saop->negfuncid = get_opcode(negator);
+					}
+					return true;
+				}
+			}
 		}
 	}
 
@@ -2285,6 +2386,7 @@ eval_const_expressions_mutator(Node *node,
 							int16		typLen;
 							bool		typByVal;
 							Datum		pval;
+							Const	   *con;
 
 							get_typlenbyval(param->paramtype,
 											&typLen, &typByVal);
@@ -2292,13 +2394,15 @@ eval_const_expressions_mutator(Node *node,
 								pval = prm->value;
 							else
 								pval = datumCopy(prm->value, typByVal, typLen);
-							return (Node *) makeConst(param->paramtype,
-													  param->paramtypmod,
-													  param->paramcollid,
-													  (int) typLen,
-													  pval,
-													  prm->isnull,
-													  typByVal);
+							con = makeConst(param->paramtype,
+											param->paramtypmod,
+											param->paramcollid,
+											(int) typLen,
+											pval,
+											prm->isnull,
+											typByVal);
+							con->location = param->location;
+							return (Node *) con;
 						}
 					}
 				}
@@ -3463,6 +3567,29 @@ eval_const_expressions_mutator(Node *node,
 					return ece_evaluate_expr((Node *) newcre);
 				return (Node *) newcre;
 			}
+		case T_JsonValueExpr:
+			{
+				JsonValueExpr *jve = (JsonValueExpr *) node;
+				Node	   *raw = eval_const_expressions_mutator((Node *) jve->raw_expr,
+																 context);
+
+				if (raw && IsA(raw, Const))
+				{
+					Node	   *formatted;
+					Node	   *save_case_val = context->case_val;
+
+					context->case_val = raw;
+
+					formatted = eval_const_expressions_mutator((Node *) jve->formatted_expr,
+															   context);
+
+					context->case_val = save_case_val;
+
+					if (formatted && IsA(formatted, Const))
+						return formatted;
+				}
+				break;
+			}
 		case T_CypherTypeCast:
 			{
 				CypherTypeCast *tc = (CypherTypeCast *) node;
@@ -4248,7 +4375,7 @@ add_function_defaults(List *args, int pronargs, HeapTuple func_tuple)
 	if (ndelete < 0)
 		elog(ERROR, "not enough default arguments");
 	if (ndelete > 0)
-		defaults = list_copy_tail(defaults, ndelete);
+		defaults = list_delete_first_n(defaults, ndelete);
 
 	/* And form the combined argument list, not modifying the input list */
 	return list_concat_copy(args, defaults);
@@ -4580,6 +4707,12 @@ inline_function(Oid funcid, Oid result_type, Oid result_collid,
 		if (list_length(querytree_list) != 1)
 			goto fail;
 		querytree = linitial(querytree_list);
+
+		/*
+		 * Because we'll insist below that the querytree have an empty rtable
+		 * and no sublinks, it cannot have any relation references that need
+		 * to be locked or rewritten.  So we can omit those steps.
+		 */
 	}
 	else
 	{
@@ -5132,6 +5265,8 @@ inline_set_returning_function(PlannerInfo *root, RangeTblEntry *rte)
 			goto fail;
 		querytree = linitial(querytree_list);
 
+		/* Acquire necessary locks, then apply rewriter. */
+		AcquireRewriteLocks(querytree, true, false);
 		querytree_list = pg_rewrite_query(querytree);
 		if (list_length(querytree_list) != 1)
 			goto fail;
@@ -5157,7 +5292,7 @@ inline_set_returning_function(PlannerInfo *root, RangeTblEntry *rte)
 		if (list_length(raw_parsetree_list) != 1)
 			goto fail;
 
-		querytree_list = pg_analyze_and_rewrite_params(linitial(raw_parsetree_list),
+		querytree_list = pg_analyze_and_rewrite_withcb(linitial(raw_parsetree_list),
 													   src,
 													   (ParserSetupHook) sql_fn_parser_setup,
 													   pinfo, NULL);
@@ -5314,4 +5449,34 @@ substitute_actual_srf_parameters_mutator(Node *node,
 	return expression_tree_mutator(node,
 								   substitute_actual_srf_parameters_mutator,
 								   (void *) context);
+}
+
+/*
+ * pull_paramids
+ *		Returns a Bitmapset containing the paramids of all Params in 'expr'.
+ */
+Bitmapset *
+pull_paramids(Expr *expr)
+{
+	Bitmapset  *result = NULL;
+
+	(void) pull_paramids_walker((Node *) expr, &result);
+
+	return result;
+}
+
+static bool
+pull_paramids_walker(Node *node, Bitmapset **context)
+{
+	if (node == NULL)
+		return false;
+	if (IsA(node, Param))
+	{
+		Param	   *param = (Param *) node;
+
+		*context = bms_add_member(*context, param->paramid);
+		return false;
+	}
+	return expression_tree_walker(node, pull_paramids_walker,
+								  (void *) context);
 }

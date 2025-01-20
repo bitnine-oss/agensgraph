@@ -2,7 +2,7 @@
  *
  * createuser
  *
- * Portions Copyright (c) 1996-2021, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2022, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/bin/scripts/createuser.c
@@ -11,6 +11,9 @@
  */
 
 #include "postgres_fe.h"
+
+#include <limits.h>
+
 #include "common.h"
 #include "common/logging.h"
 #include "common/string.h"
@@ -89,8 +92,6 @@ main(int argc, char *argv[])
 	while ((c = getopt_long(argc, argv, "h:p:U:g:wWedDsSrRiIlLc:PE",
 							long_options, &optindex)) != -1)
 	{
-		char	   *endptr;
-
 		switch (c)
 		{
 			case 'h':
@@ -145,13 +146,9 @@ main(int argc, char *argv[])
 				login = TRI_NO;
 				break;
 			case 'c':
-				conn_limit = strtol(optarg, &endptr, 10);
-				if (*endptr != '\0' || conn_limit < -1) /* minimum valid value */
-				{
-					pg_log_error("invalid value for --connection-limit: %s",
-								 optarg);
+				if (!option_parse_int(optarg, "-c/--connection-limit",
+									  -1, INT_MAX, &conn_limit))
 					exit(1);
-				}
 				break;
 			case 'P':
 				pwprompt = true;
@@ -169,7 +166,8 @@ main(int argc, char *argv[])
 				interactive = true;
 				break;
 			default:
-				fprintf(stderr, _("Try \"%s --help\" for more information.\n"), progname);
+				/* getopt_long already emitted a complaint */
+				pg_log_error_hint("Try \"%s --help\" for more information.", progname);
 				exit(1);
 		}
 	}
@@ -184,7 +182,7 @@ main(int argc, char *argv[])
 		default:
 			pg_log_error("too many command-line arguments (first is \"%s\")",
 						 argv[optind + 1]);
-			fprintf(stderr, _("Try \"%s --help\" for more information.\n"), progname);
+			pg_log_error_hint("Try \"%s --help\" for more information.", progname);
 			exit(1);
 	}
 
@@ -277,11 +275,8 @@ main(int argc, char *argv[])
 												   newuser,
 												   NULL);
 		if (!encrypted_password)
-		{
-			pg_log_error("password encryption failed: %s",
-						 PQerrorMessage(conn));
-			exit(1);
-		}
+			pg_fatal("password encryption failed: %s",
+					 PQerrorMessage(conn));
 		appendStringLiteralConn(&sql, encrypted_password, conn);
 		PQfreemem(encrypted_password);
 	}

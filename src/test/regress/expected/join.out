@@ -1984,8 +1984,8 @@ USING (name);
 ------+----+----
  bb   | 12 | 13
  cc   | 22 | 23
- dd   |    | 33
  ee   | 42 |   
+ dd   |    | 33
 (4 rows)
 
 -- Cases with non-nullable expressions in subquery results;
@@ -2019,8 +2019,8 @@ NATURAL FULL JOIN
 ------+------+------+------+------
  bb   |   12 |    2 |   13 |    3
  cc   |   22 |    2 |   23 |    3
- dd   |      |      |   33 |    3
  ee   |   42 |    2 |      |     
+ dd   |      |      |   33 |    3
 (4 rows)
 
 SELECT * FROM
@@ -2261,7 +2261,7 @@ rollback;
 --
 explain (costs off)
 select aa, bb, unique1, unique1
-  from tenk1 right join b on aa = unique1
+  from tenk1 right join b_star on aa = unique1
   where bb < bb and bb is null;
         QUERY PLAN        
 --------------------------
@@ -2270,7 +2270,7 @@ select aa, bb, unique1, unique1
 (2 rows)
 
 select aa, bb, unique1, unique1
-  from tenk1 right join b on aa = unique1
+  from tenk1 right join b_star on aa = unique1
   where bb < bb and bb is null;
  aa | bb | unique1 | unique1 
 ----+----+---------+---------
@@ -2536,7 +2536,7 @@ reset enable_nestloop;
 --
 set work_mem to '64kB';
 set enable_mergejoin to off;
-set enable_resultcache to off;
+set enable_memoize to off;
 explain (costs off)
 select count(*) from tenk1 a, tenk1 b
   where a.hundred = b.thousand and (b.fivethous % 10) < 10;
@@ -2560,7 +2560,7 @@ select count(*) from tenk1 a, tenk1 b
 
 reset work_mem;
 reset enable_mergejoin;
-reset enable_resultcache;
+reset enable_memoize;
 --
 -- regression test for 8.2 bug with improper re-ordering of left joins
 --
@@ -3470,6 +3470,14 @@ select unique1 from tenk1, lateral f_immutable_int4(1) x where x = unique1;
 (2 rows)
 
 explain (costs off)
+select unique1 from tenk1, lateral f_immutable_int4(1) x where x in (select 17);
+        QUERY PLAN        
+--------------------------
+ Result
+   One-Time Filter: false
+(2 rows)
+
+explain (costs off)
 select unique1, x from tenk1 join f_immutable_int4(1) x on unique1 = x;
                   QUERY PLAN                  
 ----------------------------------------------
@@ -3665,8 +3673,8 @@ select * from tenk1 t1 left join
   (tenk1 t2 join tenk1 t3 on t2.thousand = t3.unique2)
   on t1.hundred = t2.hundred and t1.ten = t3.ten
 where t1.unique1 = 1;
-                          QUERY PLAN                          
---------------------------------------------------------------
+                       QUERY PLAN                       
+--------------------------------------------------------
  Nested Loop Left Join
    ->  Index Scan using tenk1_unique1 on tenk1 t1
          Index Cond: (unique1 = 1)
@@ -3676,19 +3684,17 @@ where t1.unique1 = 1;
                Recheck Cond: (t1.hundred = hundred)
                ->  Bitmap Index Scan on tenk1_hundred
                      Index Cond: (hundred = t1.hundred)
-         ->  Result Cache
-               Cache Key: t2.thousand
-               ->  Index Scan using tenk1_unique2 on tenk1 t3
-                     Index Cond: (unique2 = t2.thousand)
-(13 rows)
+         ->  Index Scan using tenk1_unique2 on tenk1 t3
+               Index Cond: (unique2 = t2.thousand)
+(11 rows)
 
 explain (costs off)
 select * from tenk1 t1 left join
   (tenk1 t2 join tenk1 t3 on t2.thousand = t3.unique2)
   on t1.hundred = t2.hundred and t1.ten + t2.ten = t3.ten
 where t1.unique1 = 1;
-                          QUERY PLAN                          
---------------------------------------------------------------
+                       QUERY PLAN                       
+--------------------------------------------------------
  Nested Loop Left Join
    ->  Index Scan using tenk1_unique1 on tenk1 t1
          Index Cond: (unique1 = 1)
@@ -3698,11 +3704,9 @@ where t1.unique1 = 1;
                Recheck Cond: (t1.hundred = hundred)
                ->  Bitmap Index Scan on tenk1_hundred
                      Index Cond: (hundred = t1.hundred)
-         ->  Result Cache
-               Cache Key: t2.thousand
-               ->  Index Scan using tenk1_unique2 on tenk1 t3
-                     Index Cond: (unique2 = t2.thousand)
-(13 rows)
+         ->  Index Scan using tenk1_unique2 on tenk1 t3
+               Index Cond: (unique2 = t2.thousand)
+(11 rows)
 
 explain (costs off)
 select count(*) from
@@ -4227,14 +4231,15 @@ where t1.f1 = ss.f1;
                ->  Seq Scan on public.int8_tbl i8
                      Output: i8.q1, i8.q2
                      Filter: (i8.q2 = 123)
-   ->  Result Cache
+   ->  Memoize
          Output: (i8.q1), t2.f1
          Cache Key: i8.q1
+         Cache Mode: binary
          ->  Limit
                Output: (i8.q1), t2.f1
                ->  Seq Scan on public.text_tbl t2
                      Output: i8.q1, t2.f1
-(19 rows)
+(20 rows)
 
 select * from
   text_tbl t1
@@ -4271,21 +4276,23 @@ where t1.f1 = ss2.f1;
                      ->  Seq Scan on public.int8_tbl i8
                            Output: i8.q1, i8.q2
                            Filter: (i8.q2 = 123)
-         ->  Result Cache
+         ->  Memoize
                Output: (i8.q1), t2.f1
                Cache Key: i8.q1
+               Cache Mode: binary
                ->  Limit
                      Output: (i8.q1), t2.f1
                      ->  Seq Scan on public.text_tbl t2
                            Output: i8.q1, t2.f1
-   ->  Result Cache
+   ->  Memoize
          Output: ((i8.q1)), (t2.f1)
          Cache Key: (i8.q1), t2.f1
+         Cache Mode: binary
          ->  Limit
                Output: ((i8.q1)), (t2.f1)
                ->  Seq Scan on public.text_tbl t3
                      Output: (i8.q1), t2.f1
-(28 rows)
+(30 rows)
 
 select * from
   text_tbl t1
@@ -4331,9 +4338,10 @@ where tt1.f1 = ss1.c0;
                      ->  Seq Scan on public.text_tbl tt4
                            Output: tt4.f1
                            Filter: (tt4.f1 = 'foo'::text)
-   ->  Result Cache
+   ->  Memoize
          Output: ss1.c0
          Cache Key: tt4.f1
+         Cache Mode: binary
          ->  Subquery Scan on ss1
                Output: ss1.c0
                Filter: (ss1.c0 = 'foo'::text)
@@ -4341,7 +4349,7 @@ where tt1.f1 = ss1.c0;
                      Output: (tt4.f1)
                      ->  Seq Scan on public.text_tbl tt5
                            Output: tt4.f1
-(32 rows)
+(33 rows)
 
 select 1 from
   text_tbl as tt1
@@ -4604,18 +4612,20 @@ select d.* from d left join (select * from b group by b.id, b.c_id) s
 explain (costs off)
 select d.* from d left join (select distinct * from b) s
   on d.a = s.id;
-              QUERY PLAN              
---------------------------------------
- Merge Right Join
-   Merge Cond: (b.id = d.a)
-   ->  Unique
-         ->  Sort
-               Sort Key: b.id, b.c_id
-               ->  Seq Scan on b
+                 QUERY PLAN                  
+---------------------------------------------
+ Merge Left Join
+   Merge Cond: (d.a = s.id)
    ->  Sort
          Sort Key: d.a
          ->  Seq Scan on d
-(9 rows)
+   ->  Sort
+         Sort Key: s.id
+         ->  Subquery Scan on s
+               ->  HashAggregate
+                     Group Key: b.id, b.c_id
+                     ->  Seq Scan on b
+(11 rows)
 
 -- check join removal works when uniqueness of the join condition is enforced
 -- by a UNION
@@ -4862,6 +4872,34 @@ where q2 = 456;
  123 | 456 |   |        
 (1 row)
 
+-- and check a related issue where we miscompute required relids for
+-- a PHV that's been translated to a child rel
+create temp table parttbl (a integer primary key) partition by range (a);
+create temp table parttbl1 partition of parttbl for values from (1) to (100);
+insert into parttbl values (11), (12);
+explain (costs off)
+select * from
+  (select *, 12 as phv from parttbl) as ss
+  right join int4_tbl on true
+where ss.a = ss.phv and f1 = 0;
+             QUERY PLAN             
+------------------------------------
+ Nested Loop
+   ->  Seq Scan on int4_tbl
+         Filter: (f1 = 0)
+   ->  Seq Scan on parttbl1 parttbl
+         Filter: (a = 12)
+(5 rows)
+
+select * from
+  (select *, 12 as phv from parttbl) as ss
+  right join int4_tbl on true
+where ss.a = ss.phv and f1 = 0;
+ a  | phv | f1 
+----+-----+----
+ 12 |  12 |  0
+(1 row)
+
 -- bug #8444: we've historically allowed duplicate aliases within aliased JOINs
 select * from
   int8_tbl x join (int4_tbl x cross join int4_tbl y) j on q1 = f1; -- error
@@ -5020,10 +5058,11 @@ explain (costs off)
  Aggregate
    ->  Nested Loop
          ->  Seq Scan on tenk1 a
-         ->  Result Cache
+         ->  Memoize
                Cache Key: a.two
+               Cache Mode: binary
                ->  Function Scan on generate_series g
-(6 rows)
+(7 rows)
 
 explain (costs off)
   select count(*) from tenk1 a cross join lateral generate_series(1,two) g;
@@ -5032,10 +5071,11 @@ explain (costs off)
  Aggregate
    ->  Nested Loop
          ->  Seq Scan on tenk1 a
-         ->  Result Cache
+         ->  Memoize
                Cache Key: a.two
+               Cache Mode: binary
                ->  Function Scan on generate_series g
-(6 rows)
+(7 rows)
 
 -- don't need the explicit LATERAL keyword for functions
 explain (costs off)
@@ -5045,10 +5085,11 @@ explain (costs off)
  Aggregate
    ->  Nested Loop
          ->  Seq Scan on tenk1 a
-         ->  Result Cache
+         ->  Memoize
                Cache Key: a.two
+               Cache Mode: binary
                ->  Function Scan on generate_series g
-(6 rows)
+(7 rows)
 
 -- lateral with UNION ALL subselect
 explain (costs off)
@@ -5107,11 +5148,12 @@ explain (costs off)
          ->  Nested Loop
                ->  Index Only Scan using tenk1_unique1 on tenk1 a
                ->  Values Scan on "*VALUES*"
-         ->  Result Cache
+         ->  Memoize
                Cache Key: "*VALUES*".column1
+               Cache Mode: logical
                ->  Index Only Scan using tenk1_unique2 on tenk1 b
                      Index Cond: (unique2 = "*VALUES*".column1)
-(9 rows)
+(10 rows)
 
 select count(*) from tenk1 a,
   tenk1 b join lateral (values(a.unique1),(-1)) ss(x) on b.unique2 = ss.x;
@@ -5830,6 +5872,9 @@ select * from
  3 | 3
 (6 rows)
 
+-- check the number of columns specified
+SELECT * FROM (int8_tbl i cross join int4_tbl j) ss(a,b,c,d);
+ERROR:  join expression "ss" has 3 columns available but 4 columns specified
 -- check we don't try to do a unique-ified semijoin with LATERAL
 explain (verbose, costs off)
 select * from
@@ -6290,44 +6335,39 @@ select * from j1 natural join j2;
 explain (verbose, costs off)
 select * from j1
 inner join (select distinct id from j3) j3 on j1.id = j3.id;
-               QUERY PLAN                
------------------------------------------
+            QUERY PLAN             
+-----------------------------------
  Nested Loop
    Output: j1.id, j3.id
    Inner Unique: true
    Join Filter: (j1.id = j3.id)
-   ->  Unique
+   ->  HashAggregate
          Output: j3.id
-         ->  Sort
+         Group Key: j3.id
+         ->  Seq Scan on public.j3
                Output: j3.id
-               Sort Key: j3.id
-               ->  Seq Scan on public.j3
-                     Output: j3.id
    ->  Seq Scan on public.j1
          Output: j1.id
-(13 rows)
+(11 rows)
 
 -- ensure group by clause allows the inner to become unique
 explain (verbose, costs off)
 select * from j1
 inner join (select id from j3 group by id) j3 on j1.id = j3.id;
-               QUERY PLAN                
------------------------------------------
+            QUERY PLAN             
+-----------------------------------
  Nested Loop
    Output: j1.id, j3.id
    Inner Unique: true
    Join Filter: (j1.id = j3.id)
-   ->  Group
+   ->  HashAggregate
          Output: j3.id
          Group Key: j3.id
-         ->  Sort
+         ->  Seq Scan on public.j3
                Output: j3.id
-               Sort Key: j3.id
-               ->  Seq Scan on public.j3
-                     Output: j3.id
    ->  Seq Scan on public.j1
          Output: j1.id
-(14 rows)
+(11 rows)
 
 drop table j1;
 drop table j2;

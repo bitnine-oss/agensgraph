@@ -1,20 +1,20 @@
 
-# Copyright (c) 2021, PostgreSQL Global Development Group
+# Copyright (c) 2021-2022, PostgreSQL Global Development Group
 
 # Basic logical replication test
 use strict;
 use warnings;
-use PostgresNode;
-use TestLib;
-use Test::More tests => 32;
+use PostgreSQL::Test::Cluster;
+use PostgreSQL::Test::Utils;
+use Test::More;
 
 # Initialize publisher node
-my $node_publisher = get_new_node('publisher');
+my $node_publisher = PostgreSQL::Test::Cluster->new('publisher');
 $node_publisher->init(allows_streaming => 'logical');
 $node_publisher->start;
 
 # Create subscriber node
-my $node_subscriber = get_new_node('subscriber');
+my $node_subscriber = PostgreSQL::Test::Cluster->new('subscriber');
 $node_subscriber->init(allows_streaming => 'logical');
 $node_subscriber->start;
 
@@ -414,28 +414,34 @@ is( $result, qq(11.11|baz|1
 	'update works with dropped subscriber column');
 
 # check that change of connection string and/or publication list causes
-# restart of subscription workers. Not all of these are registered as tests
-# as we need to poll for a change but the test suite will fail none the less
-# when something goes wrong.
+# restart of subscription workers. We check the state along with
+# application_name to ensure that the walsender is (re)started.
+#
+# Not all of these are registered as tests as we need to poll for a change
+# but the test suite will fail nonetheless when something goes wrong.
 my $oldpid = $node_publisher->safe_psql('postgres',
-	"SELECT pid FROM pg_stat_replication WHERE application_name = 'tap_sub';"
+	"SELECT pid FROM pg_stat_replication WHERE application_name = 'tap_sub' AND state = 'streaming';"
 );
 $node_subscriber->safe_psql('postgres',
 	"ALTER SUBSCRIPTION tap_sub CONNECTION '$publisher_connstr sslmode=disable'"
 );
 $node_publisher->poll_query_until('postgres',
-	"SELECT pid != $oldpid FROM pg_stat_replication WHERE application_name = 'tap_sub';"
-) or die "Timed out while waiting for apply to restart";
+	"SELECT pid != $oldpid FROM pg_stat_replication WHERE application_name = 'tap_sub' AND state = 'streaming';"
+  )
+  or die
+  "Timed out while waiting for apply to restart after changing CONNECTION";
 
 $oldpid = $node_publisher->safe_psql('postgres',
-	"SELECT pid FROM pg_stat_replication WHERE application_name = 'tap_sub';"
+	"SELECT pid FROM pg_stat_replication WHERE application_name = 'tap_sub' AND state = 'streaming';"
 );
 $node_subscriber->safe_psql('postgres',
 	"ALTER SUBSCRIPTION tap_sub SET PUBLICATION tap_pub_ins_only WITH (copy_data = false)"
 );
 $node_publisher->poll_query_until('postgres',
-	"SELECT pid != $oldpid FROM pg_stat_replication WHERE application_name = 'tap_sub';"
-) or die "Timed out while waiting for apply to restart";
+	"SELECT pid != $oldpid FROM pg_stat_replication WHERE application_name = 'tap_sub' AND state = 'streaming';"
+  )
+  or die
+  "Timed out while waiting for apply to restart after changing PUBLICATION";
 
 $node_publisher->safe_psql('postgres',
 	"INSERT INTO tab_ins SELECT generate_series(1001,1100)");
@@ -471,6 +477,32 @@ $node_publisher->safe_psql('postgres', "INSERT INTO tab_full VALUES(0)");
 
 $node_publisher->wait_for_catchup('tap_sub');
 
+# Check that we don't send BEGIN and COMMIT because of empty transaction
+# optimization.  We have to look for the DEBUG1 log messages about that, so
+# temporarily bump up the log verbosity.
+$node_publisher->append_conf('postgresql.conf', "log_min_messages = debug1");
+$node_publisher->reload;
+
+# Note that the current location of the log file is not grabbed immediately
+# after reloading the configuration, but after sending one SQL command to
+# the node so that we are sure that the reloading has taken effect.
+$log_location = -s $node_publisher->logfile;
+
+$node_publisher->safe_psql('postgres', "INSERT INTO tab_notrep VALUES (11)");
+
+$node_publisher->wait_for_catchup('tap_sub');
+
+$logfile = slurp_file($node_publisher->logfile, $log_location);
+ok($logfile =~ qr/skipped replication of an empty transaction with XID/,
+	'empty transaction is skipped');
+
+$result =
+  $node_subscriber->safe_psql('postgres', "SELECT count(*) FROM tab_notrep");
+is($result, qq(0), 'check non-replicated table is empty on subscriber');
+
+$node_publisher->append_conf('postgresql.conf', "log_min_messages = warning");
+$node_publisher->reload;
+
 # note that data are different on provider and subscriber
 $result = $node_subscriber->safe_psql('postgres',
 	"SELECT count(*), min(a), max(a) FROM tab_ins");
@@ -483,13 +515,15 @@ is($result, qq(21|0|100), 'check replicated insert after alter publication');
 
 # check restart on rename
 $oldpid = $node_publisher->safe_psql('postgres',
-	"SELECT pid FROM pg_stat_replication WHERE application_name = 'tap_sub';"
+	"SELECT pid FROM pg_stat_replication WHERE application_name = 'tap_sub' AND state = 'streaming';"
 );
 $node_subscriber->safe_psql('postgres',
 	"ALTER SUBSCRIPTION tap_sub RENAME TO tap_sub_renamed");
 $node_publisher->poll_query_until('postgres',
-	"SELECT pid != $oldpid FROM pg_stat_replication WHERE application_name = 'tap_sub_renamed';"
-) or die "Timed out while waiting for apply to restart";
+	"SELECT pid != $oldpid FROM pg_stat_replication WHERE application_name = 'tap_sub_renamed' AND state = 'streaming';"
+  )
+  or die
+  "Timed out while waiting for apply to restart after renaming SUBSCRIPTION";
 
 # check all the cleanup
 $node_subscriber->safe_psql('postgres', "DROP SUBSCRIPTION tap_sub_renamed");
@@ -535,3 +569,5 @@ ROLLBACK;
 ok( $reterr =~
 	  m/WARNING:  wal_level is insufficient to publish logical changes/,
 	'CREATE PUBLICATION while wal_level=minimal');
+
+done_testing();

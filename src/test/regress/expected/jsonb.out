@@ -1,3 +1,10 @@
+-- directory paths are passed to us in environment variables
+\getenv abs_srcdir PG_ABS_SRCDIR
+CREATE TABLE testjsonb (
+       j jsonb
+);
+\set filename :abs_srcdir '/data/jsonb.data'
+COPY testjsonb FROM :'filename';
 -- Strings.
 SELECT '""'::jsonb;				-- OK.
  jsonb 
@@ -4822,10 +4829,10 @@ select ('[1, "2", null]'::jsonb)['1'];
 (1 row)
 
 select ('[1, "2", null]'::jsonb)[1.0];
-ERROR:  subscript type is not supported
+ERROR:  subscript type numeric is not supported
 LINE 1: select ('[1, "2", null]'::jsonb)[1.0];
                                          ^
-HINT:  Jsonb subscript must be coerced to either integer or text
+HINT:  jsonb subscript must be coercible to either integer or text.
 select ('[1, "2", null]'::jsonb)[2];
  jsonb 
 -------

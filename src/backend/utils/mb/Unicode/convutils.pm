@@ -1,5 +1,5 @@
 #
-# Copyright (c) 2001-2021, PostgreSQL Global Development Group
+# Copyright (c) 2001-2022, PostgreSQL Global Development Group
 #
 # src/backend/utils/mb/Unicode/convutils.pm
 
@@ -173,7 +173,7 @@ sub print_from_utf8_combined_map
 
 	printf $out "\n/* Combined character map */\n";
 	printf $out
-	  "static const pg_utf_to_local_combined ULmap${charset}_combined[ %d ] = {",
+	  "static const pg_utf_to_local_combined ULmap${charset}_combined[%d] = {",
 	  scalar(@$table);
 	my $first = 1;
 	foreach my $i (sort { $a->{utf8} <=> $b->{utf8} } @$table)
@@ -208,7 +208,7 @@ sub print_to_utf8_combined_map
 
 	printf $out "\n/* Combined character map */\n";
 	printf $out
-	  "static const pg_local_to_utf_combined LUmap${charset}_combined[ %d ] = {",
+	  "static const pg_local_to_utf_combined LUmap${charset}_combined[%d] = {",
 	  scalar(@$table);
 
 	my $first = 1;
@@ -579,7 +579,7 @@ sub print_radix_table
 	printf $out "  0x%02x, /* b3_3_lower */\n", $b3_3_lower;
 	printf $out "  0x%02x, /* b3_3_upper */\n", $b3_3_upper;
 	printf $out "\n";
-	printf $out "  0x%04x, /* offset of table for 3-byte inputs */\n",
+	printf $out "  0x%04x, /* offset of table for 4-byte inputs */\n",
 	  $b4root;
 	printf $out "  0x%02x, /* b4_1_lower */\n", $b4_1_lower;
 	printf $out "  0x%02x, /* b4_1_upper */\n", $b4_1_upper;

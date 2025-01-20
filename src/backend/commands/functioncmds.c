@@ -5,7 +5,7 @@
  *	  Routines for CREATE and DROP FUNCTION commands and CREATE and DROP
  *	  CAST commands.
  *
- * Portions Copyright (c) 1996-2021, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2022, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -73,6 +73,7 @@
 #include "utils/lsyscache.h"
 #include "utils/memutils.h"
 #include "utils/rel.h"
+#include "utils/snapmgr.h"
 #include "utils/syscache.h"
 #include "utils/typcache.h"
 
@@ -523,7 +524,7 @@ compute_common_attribute(ParseState *pstate,
 		if (is_procedure)
 			goto procedure_error;
 		if (*volatility_item)
-			goto duplicate_error;
+			errorConflictingDefElem(defel, pstate);
 
 		*volatility_item = defel;
 	}
@@ -532,14 +533,14 @@ compute_common_attribute(ParseState *pstate,
 		if (is_procedure)
 			goto procedure_error;
 		if (*strict_item)
-			goto duplicate_error;
+			errorConflictingDefElem(defel, pstate);
 
 		*strict_item = defel;
 	}
 	else if (strcmp(defel->defname, "security") == 0)
 	{
 		if (*security_item)
-			goto duplicate_error;
+			errorConflictingDefElem(defel, pstate);
 
 		*security_item = defel;
 	}
@@ -548,7 +549,7 @@ compute_common_attribute(ParseState *pstate,
 		if (is_procedure)
 			goto procedure_error;
 		if (*leakproof_item)
-			goto duplicate_error;
+			errorConflictingDefElem(defel, pstate);
 
 		*leakproof_item = defel;
 	}
@@ -561,7 +562,7 @@ compute_common_attribute(ParseState *pstate,
 		if (is_procedure)
 			goto procedure_error;
 		if (*cost_item)
-			goto duplicate_error;
+			errorConflictingDefElem(defel, pstate);
 
 		*cost_item = defel;
 	}
@@ -570,7 +571,7 @@ compute_common_attribute(ParseState *pstate,
 		if (is_procedure)
 			goto procedure_error;
 		if (*rows_item)
-			goto duplicate_error;
+			errorConflictingDefElem(defel, pstate);
 
 		*rows_item = defel;
 	}
@@ -579,7 +580,7 @@ compute_common_attribute(ParseState *pstate,
 		if (is_procedure)
 			goto procedure_error;
 		if (*support_item)
-			goto duplicate_error;
+			errorConflictingDefElem(defel, pstate);
 
 		*support_item = defel;
 	}
@@ -588,7 +589,7 @@ compute_common_attribute(ParseState *pstate,
 		if (is_procedure)
 			goto procedure_error;
 		if (*parallel_item)
-			goto duplicate_error;
+			errorConflictingDefElem(defel, pstate);
 
 		*parallel_item = defel;
 	}
@@ -597,13 +598,6 @@ compute_common_attribute(ParseState *pstate,
 
 	/* Recognized an option */
 	return true;
-
-duplicate_error:
-	ereport(ERROR,
-			(errcode(ERRCODE_SYNTAX_ERROR),
-			 errmsg("conflicting or redundant options"),
-			 parser_errposition(pstate, defel->location)));
-	return false;				/* keep compiler quiet */
 
 procedure_error:
 	ereport(ERROR,
@@ -765,37 +759,25 @@ compute_function_attributes(ParseState *pstate,
 		if (strcmp(defel->defname, "as") == 0)
 		{
 			if (as_item)
-				ereport(ERROR,
-						(errcode(ERRCODE_SYNTAX_ERROR),
-						 errmsg("conflicting or redundant options"),
-						 parser_errposition(pstate, defel->location)));
+				errorConflictingDefElem(defel, pstate);
 			as_item = defel;
 		}
 		else if (strcmp(defel->defname, "language") == 0)
 		{
 			if (language_item)
-				ereport(ERROR,
-						(errcode(ERRCODE_SYNTAX_ERROR),
-						 errmsg("conflicting or redundant options"),
-						 parser_errposition(pstate, defel->location)));
+				errorConflictingDefElem(defel, pstate);
 			language_item = defel;
 		}
 		else if (strcmp(defel->defname, "transform") == 0)
 		{
 			if (transform_item)
-				ereport(ERROR,
-						(errcode(ERRCODE_SYNTAX_ERROR),
-						 errmsg("conflicting or redundant options"),
-						 parser_errposition(pstate, defel->location)));
+				errorConflictingDefElem(defel, pstate);
 			transform_item = defel;
 		}
 		else if (strcmp(defel->defname, "window") == 0)
 		{
 			if (windowfunc_item)
-				ereport(ERROR,
-						(errcode(ERRCODE_SYNTAX_ERROR),
-						 errmsg("conflicting or redundant options"),
-						 parser_errposition(pstate, defel->location)));
+				errorConflictingDefElem(defel, pstate);
 			if (is_procedure)
 				ereport(ERROR,
 						(errcode(ERRCODE_INVALID_FUNCTION_DEFINITION),
@@ -831,15 +813,15 @@ compute_function_attributes(ParseState *pstate,
 	if (transform_item)
 		*transform = transform_item->arg;
 	if (windowfunc_item)
-		*windowfunc_p = intVal(windowfunc_item->arg);
+		*windowfunc_p = boolVal(windowfunc_item->arg);
 	if (volatility_item)
 		*volatility_p = interpret_func_volatility(volatility_item);
 	if (strict_item)
-		*strict_p = intVal(strict_item->arg);
+		*strict_p = boolVal(strict_item->arg);
 	if (security_item)
-		*security_definer = intVal(security_item->arg);
+		*security_definer = boolVal(security_item->arg);
 	if (leakproof_item)
-		*leakproof_p = intVal(leakproof_item->arg);
+		*leakproof_p = boolVal(leakproof_item->arg);
 	if (set_items)
 		*proconfig = update_proconfig_value(NULL, set_items);
 	if (cost_item)
@@ -1343,6 +1325,8 @@ RemoveFunctionById(Oid funcOid)
 
 	table_close(relation, RowExclusiveLock);
 
+	pgstat_drop_function(funcOid);
+
 	/*
 	 * If there's a pg_aggregate tuple, delete that too.
 	 */
@@ -1435,12 +1419,12 @@ AlterFunction(ParseState *pstate, AlterFunctionStmt *stmt)
 	if (volatility_item)
 		procForm->provolatile = interpret_func_volatility(volatility_item);
 	if (strict_item)
-		procForm->proisstrict = intVal(strict_item->arg);
+		procForm->proisstrict = boolVal(strict_item->arg);
 	if (security_def_item)
-		procForm->prosecdef = intVal(security_def_item->arg);
+		procForm->prosecdef = boolVal(security_def_item->arg);
 	if (leakproof_item)
 	{
-		procForm->proleakproof = intVal(leakproof_item->arg);
+		procForm->proleakproof = boolVal(leakproof_item->arg);
 		if (procForm->proleakproof && !superuser())
 			ereport(ERROR,
 					(errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
@@ -1488,6 +1472,8 @@ AlterFunction(ParseState *pstate, AlterFunctionStmt *stmt)
 
 		procForm->prosupport = newsupport;
 	}
+	if (parallel_item)
+		procForm->proparallel = interpret_func_parallel(parallel_item);
 	if (set_items)
 	{
 		Datum		datum;
@@ -1522,8 +1508,7 @@ AlterFunction(ParseState *pstate, AlterFunctionStmt *stmt)
 		tup = heap_modify_tuple(tup, RelationGetDescr(rel),
 								repl_val, repl_null, repl_repl);
 	}
-	if (parallel_item)
-		procForm->proparallel = interpret_func_parallel(parallel_item);
+	/* DO NOT put more touches of procForm below here; it's now dangling. */
 
 	/* Do the update */
 	CatalogTupleUpdate(rel, &tup->t_self, tup);
@@ -2070,7 +2055,7 @@ IsThereFunctionInNamespace(const char *proname, int pronargs,
  * See at ExecuteCallStmt() about the atomic argument.
  */
 void
-ExecuteDoStmt(DoStmt *stmt, bool atomic)
+ExecuteDoStmt(ParseState *pstate, DoStmt *stmt, bool atomic)
 {
 	InlineCodeBlock *codeblock = makeNode(InlineCodeBlock);
 	ListCell   *arg;
@@ -2089,17 +2074,13 @@ ExecuteDoStmt(DoStmt *stmt, bool atomic)
 		if (strcmp(defel->defname, "as") == 0)
 		{
 			if (as_item)
-				ereport(ERROR,
-						(errcode(ERRCODE_SYNTAX_ERROR),
-						 errmsg("conflicting or redundant options")));
+				errorConflictingDefElem(defel, pstate);
 			as_item = defel;
 		}
 		else if (strcmp(defel->defname, "language") == 0)
 		{
 			if (language_item)
-				ereport(ERROR,
-						(errcode(ERRCODE_SYNTAX_ERROR),
-						 errmsg("conflicting or redundant options")));
+				errorConflictingDefElem(defel, pstate);
 			language_item = defel;
 		}
 		else
@@ -2273,6 +2254,16 @@ ExecuteCallStmt(CallStmt *stmt, ParamListInfo params, bool atomic, DestReceiver 
 	estate->es_param_list_info = params;
 	econtext = CreateExprContext(estate);
 
+	/*
+	 * If we're called in non-atomic context, we also have to ensure that the
+	 * argument expressions run with an up-to-date snapshot.  Our caller will
+	 * have provided a current snapshot in atomic contexts, but not in
+	 * non-atomic contexts, because the possibility of a COMMIT/ROLLBACK
+	 * destroying the snapshot makes higher-level management too complicated.
+	 */
+	if (!atomic)
+		PushActiveSnapshot(GetTransactionSnapshot());
+
 	i = 0;
 	foreach(lc, fexpr->args)
 	{
@@ -2290,20 +2281,23 @@ ExecuteCallStmt(CallStmt *stmt, ParamListInfo params, bool atomic, DestReceiver 
 		i++;
 	}
 
+	/* Get rid of temporary snapshot for arguments, if we made one */
+	if (!atomic)
+		PopActiveSnapshot();
+
+	/* Here we actually call the procedure */
 	pgstat_init_function_usage(fcinfo, &fcusage);
 	retval = FunctionCallInvoke(fcinfo);
 	pgstat_end_function_usage(&fcusage, true);
 
+	/* Handle the procedure's outputs */
 	if (fexpr->funcresulttype == VOIDOID)
 	{
 		/* do nothing */
 	}
 	else if (fexpr->funcresulttype == RECORDOID)
 	{
-		/*
-		 * send tuple to client
-		 */
-
+		/* send tuple to client */
 		HeapTupleHeader td;
 		Oid			tupType;
 		int32		tupTypmod;

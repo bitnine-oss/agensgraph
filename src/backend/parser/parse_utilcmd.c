@@ -3,7 +3,7 @@
  * parse_utilcmd.c
  *	  Perform parse analysis work for various utility commands
  *
- * Formerly we did this work during parse_analyze() in analyze.c.  However
+ * Formerly we did this work during parse_analyze_*() in analyze.c.  However
  * that is fairly unsafe in the presence of querytree caching, since any
  * database state that we depend on in making the transformations might be
  * obsolete by the time the utility command is executed; and utility commands
@@ -12,7 +12,7 @@
  * respective utility commands.
  *
  *
- * Portions Copyright (c) 1996-2021, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2022, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *	src/backend/parser/parse_utilcmd.c
@@ -414,9 +414,7 @@ generateSerialExtraStmts(CreateStmtContext *cxt, ColumnDef *column,
 		if (strcmp(defel->defname, "sequence_name") == 0)
 		{
 			if (nameEl)
-				ereport(ERROR,
-						(errcode(ERRCODE_SYNTAX_ERROR),
-						 errmsg("conflicting or redundant options")));
+				errorConflictingDefElem(defel, cxt->pstate);
 			nameEl = defel;
 			nameEl_idx = foreach_current_index(option);
 		}
@@ -469,6 +467,7 @@ generateSerialExtraStmts(CreateStmtContext *cxt, ColumnDef *column,
 	seqstmt = makeNode(CreateSeqStmt);
 	seqstmt->for_identity = for_identity;
 	seqstmt->sequence = makeRangeVar(snamespace, sname, -1);
+	seqstmt->sequence->relpersistence = cxt->relation->relpersistence;
 	seqstmt->options = seqoptions;
 
 	/*
@@ -626,8 +625,8 @@ transformColumnDefinition(CreateStmtContext *cxt, ColumnDef *column)
 		 */
 		qstring = quote_qualified_identifier(snamespace, sname);
 		snamenode = makeNode(A_Const);
-		snamenode->val.type = T_String;
-		snamenode->val.val.str = qstring;
+		snamenode->val.node.type = T_String;
+		snamenode->val.sval.sval = qstring;
 		snamenode->location = -1;
 		castnode = makeNode(TypeCast);
 		castnode->typeName = SystemTypeName("regclass");
@@ -998,8 +997,9 @@ transformTableLikeClause(CreateStmtContext *cxt, TableLikeClause *table_like_cla
 		relation->rd_rel->relkind != RELKIND_PARTITIONED_TABLE)
 		ereport(ERROR,
 				(errcode(ERRCODE_WRONG_OBJECT_TYPE),
-				 errmsg("\"%s\" is not a table, view, materialized view, composite type, or foreign table",
-						RelationGetRelationName(relation))));
+				 errmsg("relation \"%s\" is invalid in LIKE clause",
+						RelationGetRelationName(relation)),
+				 errdetail_relkind_not_supported(relation->rd_rel->relkind)));
 
 	cancel_parser_errposition_callback(&pcbstate);
 
@@ -1507,7 +1507,7 @@ transformOfType(CreateStmtContext *cxt, TypeName *ofTypename)
 		n->location = -1;
 		cxt->columns = lappend(cxt->columns, n);
 	}
-	DecrTupleDescRefCount(tupdesc);
+	ReleaseTupleDesc(tupdesc);
 
 	ReleaseSysCache(tuple);
 }
@@ -1604,6 +1604,7 @@ generateClonedIndexStmt(RangeVar *heapRel, Relation source_idx,
 	index->oldCreateSubid = InvalidSubTransactionId;
 	index->oldFirstRelfilenodeSubid = InvalidSubTransactionId;
 	index->unique = idxrec->indisunique;
+	index->nulls_not_distinct = idxrec->indnullsnotdistinct;
 	index->primary = idxrec->indisprimary;
 	index->transformed = true;	/* don't need transformIndexStmt */
 	index->concurrent = false;
@@ -2135,6 +2136,7 @@ transformIndexConstraints(CreateStmtContext *cxt)
 				equal(index->whereClause, priorindex->whereClause) &&
 				equal(index->excludeOpNames, priorindex->excludeOpNames) &&
 				strcmp(index->accessMethod, priorindex->accessMethod) == 0 &&
+				index->nulls_not_distinct == priorindex->nulls_not_distinct &&
 				index->deferrable == priorindex->deferrable &&
 				index->initdeferred == priorindex->initdeferred)
 			{
@@ -2201,6 +2203,7 @@ transformIndexConstraint(Constraint *constraint, CreateStmtContext *cxt)
 		 * DefineIndex will check for it.
 		 */
 	}
+	index->nulls_not_distinct = constraint->nulls_not_distinct;
 	index->isconstraint = true;
 	index->deferrable = constraint->deferrable;
 	index->initdeferred = constraint->initdeferred;
@@ -2447,7 +2450,7 @@ transformIndexConstraint(Constraint *constraint, CreateStmtContext *cxt)
 			/* Make sure referenced column exists. */
 			foreach(columns, cxt->columns)
 			{
-				column = castNode(ColumnDef, lfirst(columns));
+				column = lfirst_node(ColumnDef, columns);
 				if (strcmp(column->colname, key) == 0)
 				{
 					found = true;
@@ -2485,7 +2488,7 @@ transformIndexConstraint(Constraint *constraint, CreateStmtContext *cxt)
 
 				foreach(inher, cxt->inhRelations)
 				{
-					RangeVar   *inh = castNode(RangeVar, lfirst(inher));
+					RangeVar   *inh = lfirst_node(RangeVar, inher);
 					Relation	rel;
 					int			count;
 
@@ -2915,7 +2918,7 @@ transformIndexStmt(Oid relid, IndexStmt *stmt, const char *queryString)
 /*
  * transformStatsStmt - parse analysis for CREATE STATISTICS
  *
- * To avoid race conditions, it's important that this function rely only on
+ * To avoid race conditions, it's important that this function relies only on
  * the passed-in relid (and not on stmt->relation) to determine the target
  * relation.
  */
@@ -2971,7 +2974,7 @@ transformStatsStmt(Oid relid, CreateStatsStmt *stmt, const char *queryString)
 	if (list_length(pstate->p_rtable) != 1)
 		ereport(ERROR,
 				(errcode(ERRCODE_INVALID_COLUMN_REFERENCE),
-				 errmsg("statistics expressions can refer only to the table being indexed")));
+				 errmsg("statistics expressions can refer only to the table being referenced")));
 
 	free_parsestate(pstate);
 
@@ -3451,7 +3454,8 @@ transformAlterTableStmt(Oid relid, AlterTableStmt *stmt,
 								 errmsg("column \"%s\" of relation \"%s\" does not exist",
 										cmd->name, RelationGetRelationName(rel))));
 
-					if (TupleDescAttr(tupdesc, attnum - 1)->attidentity)
+					if (attnum > 0 &&
+						TupleDescAttr(tupdesc, attnum - 1)->attidentity)
 					{
 						Oid			seq_relid = getIdentitySequence(relid, attnum, false);
 						Oid			typeOid = typenameTypeId(pstate, def->typeName);
@@ -3646,7 +3650,7 @@ transformAlterTableStmt(Oid relid, AlterTableStmt *stmt,
 		newcmds = lappend(newcmds, newcmd);
 	}
 
-	/* Append extended statistic objects */
+	/* Append extended statistics objects */
 	transformExtendedStatistics(&cxt);
 
 	/* Close rel */
@@ -4066,7 +4070,7 @@ transformPartitionBound(ParseState *pstate, Relation parent,
 		if (spec->modulus <= 0)
 			ereport(ERROR,
 					(errcode(ERRCODE_INVALID_TABLE_DEFINITION),
-					 errmsg("modulus for hash partition must be a positive integer")));
+					 errmsg("modulus for hash partition must be an integer value greater than zero")));
 
 		Assert(spec->remainder >= 0);
 
@@ -4119,7 +4123,7 @@ transformPartitionBound(ParseState *pstate, Relation parent,
 			duplicate = false;
 			foreach(cell2, result_spec->listdatums)
 			{
-				Const	   *value2 = castNode(Const, lfirst(cell2));
+				Const	   *value2 = lfirst_node(Const, cell2);
 
 				if (equal(value, value2))
 				{
@@ -4298,7 +4302,7 @@ validateInfiniteBounds(ParseState *pstate, List *blist)
 
 	foreach(lc, blist)
 	{
-		PartitionRangeDatum *prd = castNode(PartitionRangeDatum, lfirst(lc));
+		PartitionRangeDatum *prd = lfirst_node(PartitionRangeDatum, lc);
 
 		if (kind == prd->kind)
 			continue;
@@ -4410,7 +4414,7 @@ makeDefaultCreateAGLabelSeqStmt(char *graph_name, int location)
 											 (Node *) makeInteger(GRAPHID_LABID_MAX),
 											 -1),
 								 makeDefElem("cycle",
-											 (Node *) makeInteger(true),
+											 (Node *) makeBoolean(true),
 											 -1));
 	labseq->ownerId = InvalidOid;
 	labseq->if_not_exists = false;
@@ -4951,15 +4955,15 @@ transformLabelIdDefinition(CreateStmtContext *cxt, ColumnDef *col)
 
 	qname = quote_qualified_identifier(snamespace, cxt->relation->relname);
 	relname = makeNode(A_Const);
-	relname->val.type = T_String;
-	relname->val.val.str = qname;
+	relname->val.sval.type = T_String;
+	relname->val.sval.sval = qname;
 	relname->location = -1;
 	fclabid = makeFuncCall(SystemFuncName("graph_labid"),
 						   list_make1(relname), COERCE_EXPLICIT_CALL, -1);
 	qname = quote_qualified_identifier(snamespace, sname);
 	seqname = makeNode(A_Const);
-	seqname->val.type = T_String;
-	seqname->val.val.str = qname;
+	seqname->val.sval.type = T_String;
+	seqname->val.sval.sval = qname;
 	seqname->location = -1;
 	castseq = makeNode(TypeCast);
 	castseq->typeName = SystemTypeName("regclass");

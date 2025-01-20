@@ -2,13 +2,14 @@
  *
  * walmethods.h
  *
- * Portions Copyright (c) 1996-2021, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2022, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
  *		  src/bin/pg_basebackup/walmethods.h
  *-------------------------------------------------------------------------
  */
 
+#include "common/compression.h"
 
 typedef void *Walfile;
 
@@ -53,6 +54,15 @@ struct WalWriteMethod
 	ssize_t		(*get_file_size) (const char *pathname);
 
 	/*
+	 * Return the name of the current file to work on in pg_malloc()'d string,
+	 * without the base directory.  This is useful for logging.
+	 */
+	char	   *(*get_file_name) (const char *pathname, const char *temp_suffix);
+
+	/* Returns the compression method */
+	pg_compress_algorithm (*compression_algorithm) (void);
+
+	/*
 	 * Write count number of bytes to the file, and return the number of bytes
 	 * actually written or -1 for error.
 	 */
@@ -86,8 +96,11 @@ struct WalWriteMethod
  *						   not all those required for pg_receivewal)
  */
 WalWriteMethod *CreateWalDirectoryMethod(const char *basedir,
+										 pg_compress_algorithm compression_algo,
 										 int compression, bool sync);
-WalWriteMethod *CreateWalTarMethod(const char *tarbase, int compression, bool sync);
+WalWriteMethod *CreateWalTarMethod(const char *tarbase,
+								   pg_compress_algorithm compression_algo,
+								   int compression, bool sync);
 
 /* Cleanup routines for previously-created methods */
 void		FreeWalDirectoryMethod(void);

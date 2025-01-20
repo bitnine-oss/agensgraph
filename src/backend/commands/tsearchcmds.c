@@ -4,7 +4,7 @@
  *
  *	  Routines for tsearch manipulation commands
  *
- * Portions Copyright (c) 1996-2021, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2022, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -1179,7 +1179,7 @@ getTokenTypes(Oid prsId, List *tokennames)
 	i = 0;
 	foreach(tn, tokennames)
 	{
-		Value	   *val = (Value *) lfirst(tn);
+		String	   *val = lfirst_node(String, tn);
 		bool		found = false;
 		int			j;
 
@@ -1395,7 +1395,7 @@ DropConfigurationMapping(AlterTSConfigurationStmt *stmt,
 	i = 0;
 	foreach(c, stmt->tokentype)
 	{
-		Value	   *val = (Value *) lfirst(c);
+		String	   *val = lfirst_node(String, c);
 		bool		found = false;
 
 		ScanKeyInit(&skey[0],
@@ -1741,6 +1741,15 @@ buildDefItem(const char *name, const char *val, bool was_quoted)
 		if (errno == 0 && *endptr == '\0')
 			return makeDefElem(pstrdup(name),
 							   (Node *) makeFloat(pstrdup(val)),
+							   -1);
+
+		if (strcmp(val, "true") == 0)
+			return makeDefElem(pstrdup(name),
+							   (Node *) makeBoolean(true),
+							   -1);
+		if (strcmp(val, "false") == 0)
+			return makeDefElem(pstrdup(name),
+							   (Node *) makeBoolean(false),
 							   -1);
 	}
 	/* Just make it a string */

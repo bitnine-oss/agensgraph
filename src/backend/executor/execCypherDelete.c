@@ -170,7 +170,7 @@ ExecDeleteEdgeOrVertex(ModifyGraphState *mgstate, ResultRelInfo *resultRelInfo,
 
 	/* AFTER ROW DELETE Triggers */
 	ExecARDeleteTriggers(estate, resultRelInfo, tupleid, NULL,
-						 NULL);
+						 NULL, false);
 
 	if (typeOid == EDGEOID)
 	{

@@ -14,7 +14,7 @@
  * contain optimizable statements, which we should transform.
  *
  *
- * Portions Copyright (c) 1996-2021, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2022, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *	src/backend/parser/analyze.c
@@ -44,6 +44,7 @@
 #include "parser/parse_func.h"
 #include "parser/parse_cypher_expr.h"
 #include "parser/parse_graph.h"
+#include "parser/parse_merge.h"
 #include "parser/parse_oper.h"
 #include "parser/parse_param.h"
 #include "parser/parse_relation.h"
@@ -65,9 +66,6 @@ post_parse_analyze_hook_type post_parse_analyze_hook = NULL;
 static Query *transformOptionalSelectInto(ParseState *pstate, Node *parseTree);
 static Query *transformDeleteStmt(ParseState *pstate, DeleteStmt *stmt);
 static Query *transformInsertStmt(ParseState *pstate, InsertStmt *stmt);
-static List *transformInsertRow(ParseState *pstate, List *exprlist,
-								List *stmtcols, List *icolumns, List *attrnos,
-								bool strip_indirection);
 static OnConflictExpr *transformOnConflictClause(ParseState *pstate,
 												 OnConflictClause *onConflictClause);
 static int	count_rowexpr_columns(ParseState *pstate, Node *expr);
@@ -81,8 +79,6 @@ static void determineRecursiveColTypes(ParseState *pstate,
 static Query *transformReturnStmt(ParseState *pstate, ReturnStmt *stmt);
 static Query *transformUpdateStmt(ParseState *pstate, UpdateStmt *stmt);
 static List *transformReturningList(ParseState *pstate, List *returningList);
-static List *transformUpdateTargetList(ParseState *pstate,
-									   List *targetList);
 static Query *transformPLAssignStmt(ParseState *pstate,
 									PLAssignStmt *stmt);
 static Query *transformDeclareCursorStmt(ParseState *pstate,
@@ -104,7 +100,7 @@ static Query *transformCypherClause(ParseState *pstate, CypherClause *clause);
 
 
 /*
- * parse_analyze
+ * parse_analyze_fixedparams
  *		Analyze a raw parse tree and transform it to Query form.
  *
  * Optionally, information about $n parameter types can be supplied.
@@ -115,9 +111,9 @@ static Query *transformCypherClause(ParseState *pstate, CypherClause *clause);
  * a dummy CMD_UTILITY Query node.
  */
 Query *
-parse_analyze(RawStmt *parseTree, const char *sourceText,
-			  Oid *paramTypes, int numParams,
-			  QueryEnvironment *queryEnv)
+parse_analyze_fixedparams(RawStmt *parseTree, const char *sourceText,
+						  const Oid *paramTypes, int numParams,
+						  QueryEnvironment *queryEnv)
 {
 	ParseState *pstate = make_parsestate(NULL);
 	Query	   *query;
@@ -128,7 +124,7 @@ parse_analyze(RawStmt *parseTree, const char *sourceText,
 	pstate->p_sourcetext = sourceText;
 
 	if (numParams > 0)
-		parse_fixed_parameters(pstate, paramTypes, numParams);
+		setup_parse_fixed_parameters(pstate, paramTypes, numParams);
 
 	pstate->p_queryEnv = queryEnv;
 
@@ -156,7 +152,8 @@ parse_analyze(RawStmt *parseTree, const char *sourceText,
  */
 Query *
 parse_analyze_varparams(RawStmt *parseTree, const char *sourceText,
-						Oid **paramTypes, int *numParams)
+						Oid **paramTypes, int *numParams,
+						QueryEnvironment *queryEnv)
 {
 	ParseState *pstate = make_parsestate(NULL);
 	Query	   *query;
@@ -166,7 +163,9 @@ parse_analyze_varparams(RawStmt *parseTree, const char *sourceText,
 
 	pstate->p_sourcetext = sourceText;
 
-	parse_variable_parameters(pstate, paramTypes, numParams);
+	setup_parse_variable_parameters(pstate, paramTypes, numParams);
+
+	pstate->p_queryEnv = queryEnv;
 
 	query = transformTopLevelStmt(pstate, parseTree);
 
@@ -185,6 +184,44 @@ parse_analyze_varparams(RawStmt *parseTree, const char *sourceText,
 
 	return query;
 }
+
+/*
+ * parse_analyze_withcb
+ *
+ * This variant is used when the caller supplies their own parser callback to
+ * resolve parameters and possibly other things.
+ */
+Query *
+parse_analyze_withcb(RawStmt *parseTree, const char *sourceText,
+					 ParserSetupHook parserSetup,
+					 void *parserSetupArg,
+					 QueryEnvironment *queryEnv)
+{
+	ParseState *pstate = make_parsestate(NULL);
+	Query	   *query;
+	JumbleState *jstate = NULL;
+
+	Assert(sourceText != NULL); /* required as of 8.4 */
+
+	pstate->p_sourcetext = sourceText;
+	pstate->p_queryEnv = queryEnv;
+	(*parserSetup) (pstate, parserSetupArg);
+
+	query = transformTopLevelStmt(pstate, parseTree);
+
+	if (IsQueryIdEnabled())
+		jstate = JumbleQuery(query, sourceText);
+
+	if (post_parse_analyze_hook)
+		(*post_parse_analyze_hook) (pstate, query, jstate);
+
+	free_parsestate(pstate);
+
+	pgstat_report_query_id(query->queryId, false);
+
+	return query;
+}
+
 
 /*
  * parse_sub_analyze
@@ -297,6 +334,7 @@ transformStmt(ParseState *pstate, Node *parseTree)
 		case T_InsertStmt:
 		case T_UpdateStmt:
 		case T_DeleteStmt:
+		case T_MergeStmt:
 			(void) test_raw_expression_coverage(parseTree, NULL);
 			break;
 		default:
@@ -319,6 +357,10 @@ transformStmt(ParseState *pstate, Node *parseTree)
 
 		case T_UpdateStmt:
 			result = transformUpdateStmt(pstate, (UpdateStmt *) parseTree);
+			break;
+
+		case T_MergeStmt:
+			result = transformMergeStmt(pstate, (MergeStmt *) parseTree);
 			break;
 
 		case T_SelectStmt:
@@ -417,6 +459,7 @@ analyze_requires_snapshot(RawStmt *parseTree)
 		case T_InsertStmt:
 		case T_DeleteStmt:
 		case T_UpdateStmt:
+		case T_MergeStmt:
 		case T_SelectStmt:
 		case T_PLAssignStmt:
 			result = true;
@@ -945,7 +988,7 @@ transformInsertStmt(ParseState *pstate, InsertStmt *stmt)
  * attrnos: integer column numbers (must be same length as icolumns)
  * strip_indirection: if true, remove any field/array assignment nodes
  */
-static List *
+List *
 transformInsertRow(ParseState *pstate, List *exprlist,
 				   List *stmtcols, List *icolumns, List *attrnos,
 				   bool strip_indirection)
@@ -1411,7 +1454,7 @@ static Query *
 transformValuesClause(ParseState *pstate, SelectStmt *stmt)
 {
 	Query	   *qry = makeNode(Query);
-	List	   *exprsLists;
+	List	   *exprsLists = NIL;
 	List	   *coltypes = NIL;
 	List	   *coltypmods = NIL;
 	List	   *colcollations = NIL;
@@ -1495,6 +1538,9 @@ transformValuesClause(ParseState *pstate, SelectStmt *stmt)
 
 		/* Release sub-list's cells to save memory */
 		list_free(sublist);
+
+		/* Prepare an exprsLists element for this row */
+		exprsLists = lappend(exprsLists, NIL);
 	}
 
 	/*
@@ -1538,17 +1584,7 @@ transformValuesClause(ParseState *pstate, SelectStmt *stmt)
 	/*
 	 * Finally, rearrange the coerced expressions into row-organized lists.
 	 */
-	exprsLists = NIL;
-	foreach(lc, colexprs[0])
-	{
-		Node	   *col = (Node *) lfirst(lc);
-		List	   *sublist;
-
-		sublist = list_make1(col);
-		exprsLists = lappend(exprsLists, sublist);
-	}
-	list_free(colexprs[0]);
-	for (i = 1; i < sublist_length; i++)
+	for (i = 0; i < sublist_length; i++)
 	{
 		forboth(lc, colexprs[i], lc2, exprsLists)
 		{
@@ -1556,6 +1592,7 @@ transformValuesClause(ParseState *pstate, SelectStmt *stmt)
 			List	   *sublist = lfirst(lc2);
 
 			sublist = lappend(sublist, col);
+			lfirst(lc2) = sublist;
 		}
 		list_free(colexprs[i]);
 	}
@@ -1582,7 +1619,7 @@ transformValuesClause(ParseState *pstate, SelectStmt *stmt)
 	 * Generate a targetlist as though expanding "*"
 	 */
 	Assert(pstate->p_next_resno == 1);
-	qry->targetList = expandNSItemAttrs(pstate, nsitem, 0, -1);
+	qry->targetList = expandNSItemAttrs(pstate, nsitem, 0, true, -1);
 
 	/*
 	 * The grammar allows attaching ORDER BY, LIMIT, and FOR UPDATE to a
@@ -1882,9 +1919,12 @@ transformSetOperationStmt(ParseState *pstate, SelectStmt *stmt)
 
 /*
  * Make a SortGroupClause node for a SetOperationStmt's groupClauses
+ *
+ * If require_hash is true, the caller is indicating that they need hash
+ * support or they will fail.  So look extra hard for hash support.
  */
 SortGroupClause *
-makeSortGroupClauseForSetOp(Oid rescoltype)
+makeSortGroupClauseForSetOp(Oid rescoltype, bool require_hash)
 {
 	SortGroupClause *grpcl = makeNode(SortGroupClause);
 	Oid			sortop;
@@ -1896,6 +1936,15 @@ makeSortGroupClauseForSetOp(Oid rescoltype)
 							 false, true, false,
 							 &sortop, &eqop, NULL,
 							 &hashable);
+
+	/*
+	 * The type cache doesn't believe that record is hashable (see
+	 * cache_record_field_properties()), but if the caller really needs hash
+	 * support, we can assume it does.  Worst case, if any components of the
+	 * record don't support hashing, we will fail at execution.
+	 */
+	if (require_hash && (rescoltype == RECORDOID || rescoltype == RECORDARRAYOID))
+		hashable = true;
 
 	/* we don't have a tlist yet, so can't assign sortgrouprefs */
 	grpcl->tleSortGroupRef = 0;
@@ -2057,6 +2106,8 @@ transformSetOperationTree(ParseState *pstate, SelectStmt *stmt,
 		ListCell   *ltl;
 		ListCell   *rtl;
 		const char *context;
+		bool		recursive = (pstate->p_parent_cte &&
+								 pstate->p_parent_cte->cterecursive);
 
 		context = (stmt->op == SETOP_UNION ? "UNION" :
 				   (stmt->op == SETOP_INTERSECT ? "INTERSECT" :
@@ -2078,9 +2129,7 @@ transformSetOperationTree(ParseState *pstate, SelectStmt *stmt,
 		 * containing CTE as having those result columns.  We should do this
 		 * only at the topmost setop of the CTE, of course.
 		 */
-		if (isTopLevel &&
-			pstate->p_parent_cte &&
-			pstate->p_parent_cte->cterecursive)
+		if (isTopLevel && recursive)
 			determineRecursiveColTypes(pstate, op->larg, ltargetlist);
 
 		/*
@@ -2212,8 +2261,12 @@ transformSetOperationTree(ParseState *pstate, SelectStmt *stmt,
 				setup_parser_errposition_callback(&pcbstate, pstate,
 												  bestlocation);
 
+				/*
+				 * If it's a recursive union, we need to require hashing
+				 * support.
+				 */
 				op->groupClauses = lappend(op->groupClauses,
-										   makeSortGroupClauseForSetOp(rescoltype));
+										   makeSortGroupClauseForSetOp(rescoltype, recursive));
 
 				cancel_parser_errposition_callback(&pcbstate);
 			}
@@ -2397,9 +2450,9 @@ transformUpdateStmt(ParseState *pstate, UpdateStmt *stmt)
 
 /*
  * transformUpdateTargetList -
- *	handle SET clause in UPDATE/INSERT ... ON CONFLICT UPDATE
+ *	handle SET clause in UPDATE/MERGE/INSERT ... ON CONFLICT UPDATE
  */
-static List *
+List *
 transformUpdateTargetList(ParseState *pstate, List *origTlist)
 {
 	List	   *tlist = NIL;
@@ -3203,13 +3256,22 @@ transformLockingClause(ParseState *pstate, Query *qry, LockingClause *lc,
 
 	if (lockedRels == NIL)
 	{
-		/* all regular tables used in query */
+		/*
+		 * Lock all regular tables used in query and its subqueries.  We
+		 * examine inFromCl to exclude auto-added RTEs, particularly NEW/OLD
+		 * in rules.  This is a bit of an abuse of a mostly-obsolete flag, but
+		 * it's convenient.  We can't rely on the namespace mechanism that has
+		 * largely replaced inFromCl, since for example we need to lock
+		 * base-relation RTEs even if they are masked by upper joins.
+		 */
 		i = 0;
 		foreach(rt, qry->rtable)
 		{
 			RangeTblEntry *rte = (RangeTblEntry *) lfirst(rt);
 
 			++i;
+			if (!rte->inFromCl)
+				continue;
 			switch (rte->rtekind)
 			{
 				case RTE_RELATION:
@@ -3239,7 +3301,11 @@ transformLockingClause(ParseState *pstate, Query *qry, LockingClause *lc,
 	}
 	else
 	{
-		/* just the named tables */
+		/*
+		 * Lock just the named tables.  As above, we allow locking any base
+		 * relation regardless of alias-visibility rules, so we need to
+		 * examine inFromCl to exclude OLD/NEW.
+		 */
 		foreach(l, lockedRels)
 		{
 			RangeVar   *thisrel = (RangeVar *) lfirst(l);
@@ -3260,6 +3326,8 @@ transformLockingClause(ParseState *pstate, Query *qry, LockingClause *lc,
 				RangeTblEntry *rte = (RangeTblEntry *) lfirst(rt);
 
 				++i;
+				if (!rte->inFromCl)
+					continue;
 				if (strcmp(rte->eref->aliasname, thisrel->relname) == 0)
 				{
 					switch (rte->rtekind)

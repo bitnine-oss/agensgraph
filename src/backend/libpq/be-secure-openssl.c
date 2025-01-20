@@ -4,7 +4,7 @@
  *	  functions for OpenSSL support in the backend.
  *
  *
- * Portions Copyright (c) 1996-2021, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2022, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -29,14 +29,6 @@
 #include <arpa/inet.h>
 #endif
 
-#include <openssl/ssl.h>
-#include <openssl/dh.h>
-#include <openssl/conf.h>
-#ifndef OPENSSL_NO_ECDH
-#include <openssl/ec.h>
-#endif
-
-#include "common/openssl.h"
 #include "libpq/libpq.h"
 #include "miscadmin.h"
 #include "pgstat.h"
@@ -44,6 +36,21 @@
 #include "storage/latch.h"
 #include "tcop/tcopprot.h"
 #include "utils/memutils.h"
+
+/*
+ * These SSL-related #includes must come after all system-provided headers.
+ * This ensures that OpenSSL can take care of conflicts with Windows'
+ * <wincrypt.h> by #undef'ing the conflicting macros.  (We don't directly
+ * include <wincrypt.h>, but some other Windows headers do.)
+ */
+#include "common/openssl.h"
+#include <openssl/conf.h>
+#include <openssl/dh.h>
+#ifndef OPENSSL_NO_ECDH
+#include <openssl/ec.h>
+#endif
+#include <openssl/x509v3.h>
+
 
 /* default init hook can be overridden by a shared library */
 static void default_openssl_tls_init(SSL_CTX *context, bool isServerStart);
@@ -883,6 +890,7 @@ my_BIO_s_socket(void)
 		my_bio_index = BIO_get_new_index();
 		if (my_bio_index == -1)
 			return NULL;
+		my_bio_index |= (BIO_TYPE_DESCRIPTOR | BIO_TYPE_SOURCE_SINK);
 		my_bio_methods = BIO_meth_new(my_bio_index, "PostgreSQL backend socket");
 		if (!my_bio_methods)
 			return NULL;
@@ -1391,7 +1399,7 @@ X509_NAME_to_cstring(X509_NAME *name)
 	if (membuf == NULL)
 		ereport(ERROR,
 				(errcode(ERRCODE_OUT_OF_MEMORY),
-				 errmsg("failed to create BIO")));
+				 errmsg("could not create BIO")));
 
 	(void) BIO_set_close(membuf, BIO_CLOSE);
 	for (i = 0; i < count; i++)

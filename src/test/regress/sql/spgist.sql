@@ -34,7 +34,7 @@ vacuum spgist_point_tbl;
 -- use box and && rather than point, so that rescan happens when the
 -- traverse stack is non-empty
 
-create table spgist_box_tbl(id serial, b box);
+create unlogged table spgist_box_tbl(id serial, b box);
 insert into spgist_box_tbl(b)
 select box(point(i,j),point(i+s,j+s))
   from generate_series(1,100,5) i,
@@ -45,6 +45,7 @@ create index spgist_box_idx on spgist_box_tbl using spgist (b);
 select count(*)
   from (values (point(5,5)),(point(8,8)),(point(12,12))) v(p)
  where exists(select * from spgist_box_tbl b where b.b && box(v.p,v.p));
+drop table spgist_box_tbl;
 
 -- The point opclass's choose method only uses the spgMatchNode action,
 -- so the other actions are not tested by the above. Create an index using
@@ -71,3 +72,12 @@ create index spgist_point_idx2 on spgist_point_tbl using spgist(p) with (fillfac
 -- Modify fillfactor in existing index
 alter index spgist_point_idx set (fillfactor = 90);
 reindex index spgist_point_idx;
+
+-- Test index over a domain
+create domain spgist_text as varchar;
+create table spgist_domain_tbl (f1 spgist_text);
+create index spgist_domain_idx on spgist_domain_tbl using spgist(f1);
+insert into spgist_domain_tbl values('fee'), ('fi'), ('fo'), ('fum');
+explain (costs off)
+select * from spgist_domain_tbl where f1 = 'fo';
+select * from spgist_domain_tbl where f1 = 'fo';

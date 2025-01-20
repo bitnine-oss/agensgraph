@@ -24,7 +24,8 @@
 # "postgres -c log_connections=on".  Some parameters can be changed at run time
 # with the "SET" SQL command.
 #
-# Memory units:  kB = kilobytes        Time units:  ms  = milliseconds
+# Memory units:  B  = bytes            Time units:  us  = microseconds
+#                kB = kilobytes                     ms  = milliseconds
 #                MB = megabytes                     s   = seconds
 #                GB = gigabytes                     min = minutes
 #                TB = terabytes                     h   = hours
@@ -123,7 +124,7 @@
 
 # - Memory -
 
-#shared_buffers = 32MB			# min 128kB
+#shared_buffers = 128MB			# min 128kB
 					# (change requires restart)
 #huge_pages = try			# on, off, or try
 					# (change requires restart)
@@ -135,7 +136,7 @@
 # Caution: it is not advisable to set max_prepared_transactions nonzero unless
 # you actively intend to use prepared transactions.
 #work_mem = 4MB				# min 64kB
-#hash_mem_multiplier = 1.0		# 1-1000.0 multiplier on hash table work_mem
+#hash_mem_multiplier = 2.0		# 1-1000.0 multiplier on hash table work_mem
 #maintenance_work_mem = 64MB		# min 1MB
 #autovacuum_work_mem = -1		# min 1MB, or -1 to use maintenance_work_mem
 #logical_decoding_work_mem = 64MB	# min 64kB
@@ -219,7 +220,8 @@
 #full_page_writes = on			# recover from partial page writes
 #wal_log_hints = off			# also do full page writes of non-critical updates
 					# (change requires restart)
-#wal_compression = off			# enable compression of full-page writes
+#wal_compression = off			# enables compression of full-page writes;
+					# off, pglz, lz4, zstd, or on
 #wal_init_zero = on			# zero-fill new WAL files
 #wal_recycle = on			# recycle WAL files
 #wal_buffers = -1			# min 32kB, -1 sets based on shared_buffers
@@ -240,10 +242,19 @@
 #max_wal_size = 1GB
 #min_wal_size = 80MB
 
+# - Prefetching during recovery -
+
+#recovery_prefetch = try		# prefetch pages referenced in the WAL?
+#wal_decode_buffer_size = 512kB		# lookahead window used for prefetching
+					# (change requires restart)
+
 # - Archiving -
 
 #archive_mode = off		# enables archiving; off, on, or always
 				# (change requires restart)
+#archive_library = ''		# library to use to archive a logfile segment
+				# (empty string indicates archive_command should
+				# be used)
 #archive_command = ''		# command to use to archive a logfile segment
 				# placeholders: %p = path of file to archive
 				#               %f = file name only
@@ -367,8 +378,9 @@
 #enable_indexscan = on
 #enable_indexonlyscan = on
 #enable_material = on
-#enable_resultcache = on
+#enable_memoize = on
 #enable_mergejoin = on
+#enable_multiple_update = off
 #enable_nestloop = on
 #enable_parallel_append = on
 #enable_parallel_hash = on
@@ -378,6 +390,7 @@
 #enable_seqscan = on
 #enable_sort = on
 #enable_tidscan = on
+#enable_group_by_reordering = on
 #enable_eager = off
 
 # - Planner Cost Constants -
@@ -423,6 +436,7 @@
 					# JOIN clauses
 #plan_cache_mode = auto			# auto, force_generic_plan or
 					# force_custom_plan
+#recursive_worktable_factor = 10.0	# range 0.001-1000000
 
 
 #------------------------------------------------------------------------------
@@ -432,14 +446,15 @@
 # - Where to Log -
 
 #log_destination = 'stderr'		# Valid values are combinations of
-					# stderr, csvlog, syslog, and eventlog,
-					# depending on platform.  csvlog
-					# requires logging_collector to be on.
+					# stderr, csvlog, jsonlog, syslog, and
+					# eventlog, depending on platform.
+					# csvlog and jsonlog require
+					# logging_collector to be on.
 
 # This is used when logging to stderr:
-#logging_collector = off		# Enable capturing of stderr and csvlog
-					# into log files. Required to be on for
-					# csvlogs.
+#logging_collector = off		# Enable capturing of stderr, jsonlog,
+					# and csvlog into log files. Required
+					# to be on for csvlogs and jsonlogs.
 					# (change requires restart)
 
 # These are only used if logging_collector is on:
@@ -523,18 +538,23 @@
 					# are logged regardless of their duration; 1.0 logs all
 					# statements from all transactions, 0.0 never logs
 
+#log_startup_progress_interval = 10s	# Time between progress updates for
+					# long-running startup operations.
+					# 0 disables the feature, > 0 indicates
+					# the interval in milliseconds.
+
 # - What to Log -
 
 #debug_print_parse = off
 #debug_print_rewritten = off
 #debug_print_plan = off
 #debug_pretty_print = on
-#log_autovacuum_min_duration = -1	# log autovacuum activity;
+#log_autovacuum_min_duration = 10min	# log autovacuum activity;
 					# -1 disables, 0 logs all actions and
 					# their durations, > 0 logs only
 					# actions running at least this number
 					# of milliseconds.
-#log_checkpoints = off
+#log_checkpoints = on
 #log_connections = off
 #log_disconnections = off
 #log_duration = off
@@ -594,7 +614,7 @@
 # STATISTICS
 #------------------------------------------------------------------------------
 
-# - Query and Index Statistics Collector -
+# - Cumulative Query and Index Statistics -
 
 #track_activities = on
 #track_activity_query_size = 1024	# (change requires restart)
@@ -602,8 +622,8 @@
 #track_io_timing = off
 #track_wal_io_timing = off
 #track_functions = none			# none, pl, all
-#stats_temp_directory = 'pg_stat_tmp'
-
+#stats_fetch_consistency = cache
+#auto_gather_graphmeta = off
 
 # - Monitoring -
 
@@ -664,6 +684,7 @@
 					#   warning
 					#   error
 #search_path = '"$user", public'	# schema names
+#graph_path = ''                    # graph/schema names
 #row_security = on
 #default_table_access_method = 'heap'
 #default_tablespace = ''		# a tablespace name, '' uses the default
@@ -689,6 +710,7 @@
 #xmlbinary = 'base64'
 #xmloption = 'content'
 #gin_pending_list_limit = 4MB
+#cypher_allow_unsafe_ddl = off
 
 # - Locale and Formatting -
 
@@ -762,6 +784,7 @@
 # - Other Platforms and Clients -
 
 #transform_null_equals = off
+#allow_null_properties = off
 
 
 #------------------------------------------------------------------------------

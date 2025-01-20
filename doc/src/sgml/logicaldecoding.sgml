@@ -69,7 +69,7 @@ postgres=# SELECT slot_name, plugin, slot_type, database, active, restart_lsn, c
 
 postgres=# -- There are no changes to see yet
 postgres=# SELECT * FROM pg_logical_slot_get_changes('regression_slot', NULL, NULL);
- lsn | xid | data 
+ lsn | xid | data
 -----+-----+------
 (0 rows)
 
@@ -78,7 +78,7 @@ CREATE TABLE
 
 postgres=# -- DDL isn't replicated, so all you'll see is the transaction
 postgres=# SELECT * FROM pg_logical_slot_get_changes('regression_slot', NULL, NULL);
-    lsn    |  xid  |     data     
+    lsn    |  xid  |     data
 -----------+-------+--------------
  0/BA2DA58 | 10297 | BEGIN 10297
  0/BA5A5A0 | 10297 | COMMIT 10297
@@ -87,7 +87,7 @@ postgres=# SELECT * FROM pg_logical_slot_get_changes('regression_slot', NULL, NU
 postgres=# -- Once changes are read, they're consumed and not emitted
 postgres=# -- in a subsequent call:
 postgres=# SELECT * FROM pg_logical_slot_get_changes('regression_slot', NULL, NULL);
- lsn | xid | data 
+ lsn | xid | data
 -----+-----+------
 (0 rows)
 
@@ -97,7 +97,7 @@ postgres=*# INSERT INTO data(data) VALUES('2');
 postgres=*# COMMIT;
 
 postgres=# SELECT * FROM pg_logical_slot_get_changes('regression_slot', NULL, NULL);
-    lsn    |  xid  |                          data                           
+    lsn    |  xid  |                          data
 -----------+-------+---------------------------------------------------------
  0/BA5A688 | 10298 | BEGIN 10298
  0/BA5A6F0 | 10298 | table public.data: INSERT: id[integer]:1 data[text]:'1'
@@ -109,7 +109,7 @@ postgres=# INSERT INTO data(data) VALUES('3');
 
 postgres=# -- You can also peek ahead in the change stream without consuming changes
 postgres=# SELECT * FROM pg_logical_slot_peek_changes('regression_slot', NULL, NULL);
-    lsn    |  xid  |                          data                           
+    lsn    |  xid  |                          data
 -----------+-------+---------------------------------------------------------
  0/BA5A8E0 | 10299 | BEGIN 10299
  0/BA5A8E0 | 10299 | table public.data: INSERT: id[integer]:3 data[text]:'3'
@@ -118,7 +118,7 @@ postgres=# SELECT * FROM pg_logical_slot_peek_changes('regression_slot', NULL, N
 
 postgres=# -- The next call to pg_logical_slot_peek_changes() returns the same changes again
 postgres=# SELECT * FROM pg_logical_slot_peek_changes('regression_slot', NULL, NULL);
-    lsn    |  xid  |                          data                           
+    lsn    |  xid  |                          data
 -----------+-------+---------------------------------------------------------
  0/BA5A8E0 | 10299 | BEGIN 10299
  0/BA5A8E0 | 10299 | table public.data: INSERT: id[integer]:3 data[text]:'3'
@@ -127,7 +127,7 @@ postgres=# SELECT * FROM pg_logical_slot_peek_changes('regression_slot', NULL, N
 
 postgres=# -- options can be passed to output plugin, to influence the formatting
 postgres=# SELECT * FROM pg_logical_slot_peek_changes('regression_slot', NULL, NULL, 'include-timestamp', 'on');
-    lsn    |  xid  |                          data                           
+    lsn    |  xid  |                          data
 -----------+-------+---------------------------------------------------------
  0/BA5A8E0 | 10299 | BEGIN 10299
  0/BA5A8E0 | 10299 | table public.data: INSERT: id[integer]:3 data[text]:'3'
@@ -144,16 +144,19 @@ postgres=# SELECT pg_drop_replication_slot('regression_slot');
 </programlisting>
 
    <para>
-    The following example shows how logical decoding is controlled over the
+    The following examples shows how logical decoding is controlled over the
     streaming replication protocol, using the
     program <xref linkend="app-pgrecvlogical"/> included in the PostgreSQL
     distribution.  This requires that client authentication is set up to allow
     replication connections
     (see <xref linkend="streaming-replication-authentication"/>) and
     that <varname>max_wal_senders</varname> is set sufficiently high to allow
-    an additional connection.
+    an additional connection.  The second example shows how to stream two-phase
+    transactions.  Before you use two-phase commands, you must set
+    <xref linkend="guc-max-prepared-transactions"/> to at least 1.
    </para>
 <programlisting>
+Example 1:
 $ pg_recvlogical -d postgres --slot=test --create-slot
 $ pg_recvlogical -d postgres --slot=test --start -f -
 <keycombo action="simul"><keycap>Control</keycap><keycap>Z</keycap></keycombo>
@@ -162,6 +165,22 @@ $ fg
 BEGIN 693
 table public.data: INSERT: id[integer]:4 data[text]:'4'
 COMMIT 693
+<keycombo action="simul"><keycap>Control</keycap><keycap>C</keycap></keycombo>
+$ pg_recvlogical -d postgres --slot=test --drop-slot
+
+Example 2:
+$ pg_recvlogical -d postgres --slot=test --create-slot --two-phase
+$ pg_recvlogical -d postgres --slot=test --start -f -
+<keycombo action="simul"><keycap>Control</keycap><keycap>Z</keycap></keycombo>
+$ psql -d postgres -c "BEGIN;INSERT INTO data(data) VALUES('5');PREPARE TRANSACTION 'test';"
+$ fg
+BEGIN 694
+table public.data: INSERT: id[integer]:5 data[text]:'5'
+PREPARE TRANSACTION 'test', txid 694
+<keycombo action="simul"><keycap>Control</keycap><keycap>Z</keycap></keycombo>
+$ psql -d postgres -c "COMMIT PREPARED 'test';"
+$ fg
+COMMIT PREPARED 'test', txid 694
 <keycombo action="simul"><keycap>Control</keycap><keycap>C</keycap></keycombo>
 $ pg_recvlogical -d postgres --slot=test --drop-slot
 </programlisting>
@@ -181,7 +200,7 @@ postgres=*# INSERT INTO data(data) VALUES('5');
 postgres=*# PREPARE TRANSACTION 'test_prepared1';
 
 postgres=# SELECT * FROM pg_logical_slot_get_changes('regression_slot', NULL, NULL);
-    lsn    | xid |                          data                           
+    lsn    | xid |                          data
 -----------+-----+---------------------------------------------------------
  0/1689DC0 | 529 | BEGIN 529
  0/1689DC0 | 529 | table public.data: INSERT: id[integer]:3 data[text]:'5'
@@ -190,7 +209,7 @@ postgres=# SELECT * FROM pg_logical_slot_get_changes('regression_slot', NULL, NU
 
 postgres=# COMMIT PREPARED 'test_prepared1';
 postgres=# select * from pg_logical_slot_get_changes('regression_slot', NULL, NULL);
-    lsn    | xid |                    data                    
+    lsn    | xid |                    data
 -----------+-----+--------------------------------------------
  0/168A060 | 529 | COMMIT PREPARED 'test_prepared1', txid 529
 (4 row)
@@ -200,7 +219,7 @@ postgres=# BEGIN;
 postgres=*# INSERT INTO data(data) VALUES('6');
 postgres=*# PREPARE TRANSACTION 'test_prepared2';
 postgres=# select * from pg_logical_slot_get_changes('regression_slot', NULL, NULL);
-    lsn    | xid |                          data                           
+    lsn    | xid |                          data
 -----------+-----+---------------------------------------------------------
  0/168A180 | 530 | BEGIN 530
  0/168A1E8 | 530 | table public.data: INSERT: id[integer]:4 data[text]:'6'
@@ -209,7 +228,7 @@ postgres=# select * from pg_logical_slot_get_changes('regression_slot', NULL, NU
 
 postgres=# ROLLBACK PREPARED 'test_prepared2';
 postgres=# select * from pg_logical_slot_get_changes('regression_slot', NULL, NULL);
-    lsn    | xid |                     data                     
+    lsn    | xid |                     data
 -----------+-----+----------------------------------------------
  0/168A4B8 | 530 | ROLLBACK PREPARED 'test_prepared2', txid 530
 (1 row)
@@ -323,7 +342,7 @@ postgres=# select * from pg_logical_slot_get_changes('regression_slot', NULL, NU
     <title>Exported Snapshots</title>
     <para>
      When a new replication slot is created using the streaming replication
-     interface (see <xref linkend="protocol-replication-create-slot"/>), a
+     interface (see <xref linkend="protocol-replication-create-replication-slot"/>), a
      snapshot is exported
      (see <xref linkend="functions-snapshot-synchronization"/>), which will show
      exactly the state of the database after which all changes will be
@@ -831,7 +850,7 @@ typedef bool (*LogicalDecodeFilterPrepareCB) (struct LogicalDecodingContext *ctx
       <parameter>gid</parameter> field, which is part of the
       <parameter>txn</parameter> parameter, can be used in this callback to
       check if the plugin has already received this <command>PREPARE</command>
-      in which case it can either error out or skip the remaining changes of 
+      in which case it can either error out or skip the remaining changes of
       the transaction.
 <programlisting>
 typedef void (*LogicalDecodeBeginPrepareCB) (struct LogicalDecodingContext *ctx,
@@ -959,7 +978,7 @@ typedef void (*LogicalDecodeStreamCommitCB) (struct LogicalDecodingContext *ctx,
 </programlisting>
      </para>
     </sect3>
-    
+
     <sect3 id="logicaldecoding-output-plugin-stream-change">
      <title>Stream Change Callback</title>
      <para>
@@ -1180,6 +1199,9 @@ OutputPluginWrite(ctx, true);
     <function>stream_abort_cb</function>, <function>stream_commit_cb</function>
     and <function>stream_change_cb</function>) and two optional callbacks
     (<function>stream_message_cb</function> and <function>stream_truncate_cb</function>).
+    Also, if streaming of two-phase commands is to be supported, then additional
+    callbacks must be provided. (See <xref linkend="logicaldecoding-two-phase-commits"/>
+    for details).
    </para>
 
    <para>
@@ -1187,7 +1209,7 @@ OutputPluginWrite(ctx, true);
     streamed in blocks demarcated by <function>stream_start_cb</function>
     and <function>stream_stop_cb</function> callbacks. Once all the decoded
     changes are transmitted, the transaction can be committed using the
-    the <function>stream_commit_cb</function> callback
+    <function>stream_commit_cb</function> callback
     (or possibly aborted using the <function>stream_abort_cb</function> callback).
     If two-phase commits are supported, the transaction can be prepared using the
     <function>stream_prepare_cb</function> callback,
@@ -1218,7 +1240,13 @@ stream_start_cb(...);   &lt;-- start of second block of changes
   stream_change_cb(...);
 stream_stop_cb(...);    &lt;-- end of second block of changes
 
-stream_commit_cb(...);  &lt;-- commit of the streamed transaction
+
+[a. when using normal commit]
+stream_commit_cb(...);    &lt;-- commit of the streamed transaction
+
+[b. when using two-phase commit]
+stream_prepare_cb(...);   &lt;-- prepare the streamed transaction
+commit_prepared_cb(...);  &lt;-- commit of the prepared transaction
 </programlisting>
    </para>
 
@@ -1232,7 +1260,7 @@ stream_commit_cb(...);  &lt;-- commit of the streamed transaction
     Similar to spill-to-disk behavior, streaming is triggered when the total
     amount of changes decoded from the WAL (for all in-progress transactions)
     exceeds the limit defined by <varname>logical_decoding_work_mem</varname> setting.
-    At that point, the largest toplevel transaction (measured by the amount of memory
+    At that point, the largest top-level transaction (measured by the amount of memory
     currently used for decoded changes) is selected and streamed.  However, in
     some cases we still have to spill to disk even if streaming is enabled
     because we exceed the memory threshold but still have not decoded the
@@ -1248,7 +1276,7 @@ stream_commit_cb(...);  &lt;-- commit of the streamed transaction
   </sect1>
 
   <sect1 id="logicaldecoding-two-phase-commits">
-   <title>Two-phase commit support for Logical Decoding</title>
+   <title>Two-phase Commit Support for Logical Decoding</title>
 
    <para>
     With the basic output plugin callbacks (eg., <function>begin_cb</function>,

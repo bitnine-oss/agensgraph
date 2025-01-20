@@ -3,7 +3,7 @@
  * postgres_fdw.c
  *		  Foreign-data wrapper for remote PostgreSQL servers
  *
- * Portions Copyright (c) 2012-2021, PostgreSQL Global Development Group
+ * Portions Copyright (c) 2012-2022, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
  *		  contrib/postgres_fdw/postgres_fdw.c
@@ -18,6 +18,7 @@
 #include "access/sysattr.h"
 #include "access/table.h"
 #include "catalog/pg_class.h"
+#include "catalog/pg_opfamily.h"
 #include "commands/defrem.h"
 #include "commands/explain.h"
 #include "commands/vacuum.h"
@@ -101,9 +102,9 @@ enum FdwModifyPrivateIndex
 	FdwModifyPrivateUpdateSql,
 	/* Integer list of target attribute numbers for INSERT/UPDATE */
 	FdwModifyPrivateTargetAttnums,
-	/* Length till the end of VALUES clause (as an integer Value node) */
+	/* Length till the end of VALUES clause (as an Integer node) */
 	FdwModifyPrivateLen,
-	/* has-returning flag (as an integer Value node) */
+	/* has-returning flag (as a Boolean node) */
 	FdwModifyPrivateHasReturning,
 	/* Integer list of attribute numbers retrieved by RETURNING */
 	FdwModifyPrivateRetrievedAttrs
@@ -122,11 +123,11 @@ enum FdwDirectModifyPrivateIndex
 {
 	/* SQL statement to execute remotely (as a String node) */
 	FdwDirectModifyPrivateUpdateSql,
-	/* has-returning flag (as an integer Value node) */
+	/* has-returning flag (as a Boolean node) */
 	FdwDirectModifyPrivateHasReturning,
 	/* Integer list of attribute numbers retrieved by RETURNING */
 	FdwDirectModifyPrivateRetrievedAttrs,
-	/* set-processed flag (as an integer Value node) */
+	/* set-processed flag (as a Boolean node) */
 	FdwDirectModifyPrivateSetProcessed
 };
 
@@ -280,9 +281,9 @@ typedef struct PgFdwAnalyzeState
  */
 enum FdwPathPrivateIndex
 {
-	/* has-final-sort flag (as an integer Value node) */
+	/* has-final-sort flag (as a Boolean node) */
 	FdwPathPrivateHasFinalSort,
-	/* has-limit flag (as an integer Value node) */
+	/* has-limit flag (as a Boolean node) */
 	FdwPathPrivateHasLimit
 };
 
@@ -302,16 +303,9 @@ typedef struct
  */
 typedef struct ConversionLocation
 {
-	Relation	rel;			/* foreign table's relcache entry. */
 	AttrNumber	cur_attno;		/* attribute number being processed, or 0 */
-
-	/*
-	 * In case of foreign join push down, fdw_scan_tlist is used to identify
-	 * the Var node corresponding to the error location and
-	 * fsstate->ss.ps.state gives access to the RTEs of corresponding relation
-	 * to get the relation name and attribute name.
-	 */
-	ForeignScanState *fsstate;
+	Relation	rel;			/* foreign table being processed, or NULL */
+	ForeignScanState *fsstate;	/* plan node being processed, or NULL */
 } ConversionLocation;
 
 /* Callback argument for ec_member_matches_foreign */
@@ -511,6 +505,7 @@ static void analyze_row_processor(PGresult *res, int row,
 								  PgFdwAnalyzeState *astate);
 static void produce_tuple_asynchronously(AsyncRequest *areq, bool fetch);
 static void fetch_more_data_begin(AsyncRequest *areq);
+static void complete_pending_request(AsyncRequest *areq);
 static HeapTuple make_tuple_from_result_row(PGresult *res,
 											int row,
 											Relation rel,
@@ -924,8 +919,6 @@ get_useful_pathkeys_for_relation(PlannerInfo *root, RelOptInfo *rel)
 		foreach(lc, root->query_pathkeys)
 		{
 			PathKey    *pathkey = (PathKey *) lfirst(lc);
-			EquivalenceClass *pathkey_ec = pathkey->pk_eclass;
-			Expr	   *em_expr;
 
 			/*
 			 * The planner and executor don't have any clever strategy for
@@ -933,13 +926,8 @@ get_useful_pathkeys_for_relation(PlannerInfo *root, RelOptInfo *rel)
 			 * getting it to be sorted by all of those pathkeys. We'll just
 			 * end up resorting the entire data set.  So, unless we can push
 			 * down all of the query pathkeys, forget it.
-			 *
-			 * is_foreign_expr would detect volatile expressions as well, but
-			 * checking ec_has_volatile here saves some cycles.
 			 */
-			if (pathkey_ec->ec_has_volatile ||
-				!(em_expr = find_em_expr_for_rel(pathkey_ec, rel)) ||
-				!is_foreign_expr(root, rel, em_expr))
+			if (!is_foreign_pathkey(root, rel, pathkey))
 			{
 				query_pathkeys_ok = false;
 				break;
@@ -986,16 +974,19 @@ get_useful_pathkeys_for_relation(PlannerInfo *root, RelOptInfo *rel)
 	foreach(lc, useful_eclass_list)
 	{
 		EquivalenceClass *cur_ec = lfirst(lc);
-		Expr	   *em_expr;
 		PathKey    *pathkey;
 
 		/* If redundant with what we did above, skip it. */
 		if (cur_ec == query_ec)
 			continue;
 
+		/* Can't push down the sort if the EC's opfamily is not shippable. */
+		if (!is_shippable(linitial_oid(cur_ec->ec_opfamilies),
+						  OperatorFamilyRelationId, fpinfo))
+			continue;
+
 		/* If no pushable expression for this rel, skip it. */
-		em_expr = find_em_expr_for_rel(cur_ec, rel);
-		if (em_expr == NULL || !is_foreign_expr(root, rel, em_expr))
+		if (find_em_for_rel(root, cur_ec, rel) == NULL)
 			continue;
 
 		/* Looks like we can generate a pathkey, so let's do it. */
@@ -1251,10 +1242,10 @@ postgresGetForeignPlan(PlannerInfo *root,
 	 */
 	if (best_path->fdw_private)
 	{
-		has_final_sort = intVal(list_nth(best_path->fdw_private,
-										 FdwPathPrivateHasFinalSort));
-		has_limit = intVal(list_nth(best_path->fdw_private,
-									FdwPathPrivateHasLimit));
+		has_final_sort = boolVal(list_nth(best_path->fdw_private,
+										  FdwPathPrivateHasFinalSort));
+		has_limit = boolVal(list_nth(best_path->fdw_private,
+									 FdwPathPrivateHasLimit));
 	}
 
 	if (IS_SIMPLE_REL(foreignrel))
@@ -1658,6 +1649,18 @@ postgresReScanForeignScan(ForeignScanState *node)
 		return;
 
 	/*
+	 * If the node is async-capable, and an asynchronous fetch for it has been
+	 * begun, the asynchronous fetch might not have yet completed.  Check if
+	 * the node is async-capable, and an asynchronous fetch for it is still in
+	 * progress; if so, complete the asynchronous fetch before restarting the
+	 * scan.
+	 */
+	if (fsstate->async_capable &&
+		fsstate->conn_state->pendingAreq &&
+		fsstate->conn_state->pendingAreq->requestee == (PlanState *) node)
+		fetch_more_data(node);
+
+	/*
 	 * If any internal parameters affecting this node have changed, we'd
 	 * better destroy and recreate the cursor.  Otherwise, rewinding it should
 	 * be good enough.  If we've only fetched zero or one batch, we needn't
@@ -1885,7 +1888,7 @@ postgresPlanForeignModify(PlannerInfo *root,
 	return list_make5(makeString(sql.data),
 					  targetAttrs,
 					  makeInteger(values_end_len),
-					  makeInteger((retrieved_attrs != NIL)),
+					  makeBoolean((retrieved_attrs != NIL)),
 					  retrieved_attrs);
 }
 
@@ -1922,8 +1925,8 @@ postgresBeginForeignModify(ModifyTableState *mtstate,
 									 FdwModifyPrivateTargetAttnums);
 	values_end_len = intVal(list_nth(fdw_private,
 									 FdwModifyPrivateLen));
-	has_returning = intVal(list_nth(fdw_private,
-									FdwModifyPrivateHasReturning));
+	has_returning = boolVal(list_nth(fdw_private,
+									 FdwModifyPrivateHasReturning));
 	retrieved_attrs = (List *) list_nth(fdw_private,
 										FdwModifyPrivateRetrievedAttrs);
 
@@ -2009,8 +2012,8 @@ postgresExecForeignBatchInsert(EState *estate,
  *		Determine the maximum number of tuples that can be inserted in bulk
  *
  * Returns the batch size specified for server or table. When batching is not
- * allowed (e.g. for tables with AFTER ROW triggers or with RETURNING clause),
- * returns 1.
+ * allowed (e.g. for tables with BEFORE/AFTER ROW triggers or with RETURNING
+ * clause), returns 1.
  */
 static int
 postgresGetForeignModifyBatchSize(ResultRelInfo *resultRelInfo)
@@ -2039,10 +2042,19 @@ postgresGetForeignModifyBatchSize(ResultRelInfo *resultRelInfo)
 	else
 		batch_size = get_batch_size_option(resultRelInfo->ri_RelationDesc);
 
-	/* Disable batching when we have to use RETURNING. */
+	/*
+	 * Disable batching when we have to use RETURNING or there are any
+	 * BEFORE/AFTER ROW INSERT triggers on the foreign table.
+	 *
+	 * When there are any BEFORE ROW INSERT triggers on the table, we can't
+	 * support it, because such triggers might query the table we're inserting
+	 * into and act differently if the tuples that have already been processed
+	 * and prepared for insertion are not there.
+	 */
 	if (resultRelInfo->ri_projectReturning != NULL ||
 		(resultRelInfo->ri_TrigDesc &&
-		 resultRelInfo->ri_TrigDesc->trig_insert_after_row))
+		 (resultRelInfo->ri_TrigDesc->trig_insert_before_row ||
+		  resultRelInfo->ri_TrigDesc->trig_insert_after_row)))
 		return 1;
 
 	/*
@@ -2378,7 +2390,9 @@ find_modifytable_subplan(PlannerInfo *root,
 		if (subplan_index < list_length(appendplan->appendplans))
 			subplan = (Plan *) list_nth(appendplan->appendplans, subplan_index);
 	}
-	else if (IsA(subplan, Result) && IsA(outerPlan(subplan), Append))
+	else if (IsA(subplan, Result) &&
+			 outerPlan(subplan) != NULL &&
+			 IsA(outerPlan(subplan), Append))
 	{
 		Append	   *appendplan = (Append *) outerPlan(subplan);
 
@@ -2571,9 +2585,9 @@ postgresPlanDirectModify(PlannerInfo *root,
 	 * Items in the list must match enum FdwDirectModifyPrivateIndex, above.
 	 */
 	fscan->fdw_private = list_make4(makeString(sql.data),
-									makeInteger((retrieved_attrs != NIL)),
+									makeBoolean((retrieved_attrs != NIL)),
 									retrieved_attrs,
-									makeInteger(plan->canSetTag));
+									makeBoolean(plan->canSetTag));
 
 	/*
 	 * Update the foreign-join-related fields.
@@ -2671,12 +2685,12 @@ postgresBeginDirectModify(ForeignScanState *node, int eflags)
 	/* Get private info created by planner functions. */
 	dmstate->query = strVal(list_nth(fsplan->fdw_private,
 									 FdwDirectModifyPrivateUpdateSql));
-	dmstate->has_returning = intVal(list_nth(fsplan->fdw_private,
-											 FdwDirectModifyPrivateHasReturning));
+	dmstate->has_returning = boolVal(list_nth(fsplan->fdw_private,
+											  FdwDirectModifyPrivateHasReturning));
 	dmstate->retrieved_attrs = (List *) list_nth(fsplan->fdw_private,
 												 FdwDirectModifyPrivateRetrievedAttrs);
-	dmstate->set_processed = intVal(list_nth(fsplan->fdw_private,
-											 FdwDirectModifyPrivateSetProcessed));
+	dmstate->set_processed = boolVal(list_nth(fsplan->fdw_private,
+											  FdwDirectModifyPrivateSetProcessed));
 
 	/* Create context for per-tuple temp workspace. */
 	dmstate->temp_cxt = AllocSetContextCreate(estate->es_query_cxt,
@@ -2860,7 +2874,7 @@ postgresExplainForeignScan(ForeignScanState *node, ExplainState *es)
 				{
 					char	   *namespace;
 
-					namespace = get_namespace_name(get_rel_namespace(rte->relid));
+					namespace = get_namespace_name_or_temp(get_rel_namespace(rte->relid));
 					appendStringInfo(relations, "%s.%s",
 									 quote_identifier(namespace),
 									 quote_identifier(relname));
@@ -4017,6 +4031,9 @@ create_foreign_modify(EState *estate,
 
 			Assert(!attr->attisdropped);
 
+			/* Ignore generated columns; they are set to DEFAULT */
+			if (attr->attgenerated)
+				continue;
 			getTypeOutputInfo(attr->atttypid, &typefnoid, &isvarlena);
 			fmgr_info(typefnoid, &fmstate->p_flinfo[fmstate->p_nums]);
 			fmstate->p_nums++;
@@ -4080,8 +4097,10 @@ execute_foreign_modify(EState *estate,
 
 		/* Build INSERT string with numSlots records in its VALUES clause. */
 		initStringInfo(&sql);
-		rebuildInsertSql(&sql, fmstate->orig_query, fmstate->values_end,
-						 fmstate->p_nums, *numSlots - 1);
+		rebuildInsertSql(&sql, fmstate->rel,
+						 fmstate->orig_query, fmstate->target_attrs,
+						 fmstate->values_end, fmstate->p_nums,
+						 *numSlots - 1);
 		pfree(fmstate->query);
 		fmstate->query = sql.data;
 		fmstate->num_slots = *numSlots;
@@ -4249,6 +4268,7 @@ convert_prep_stmt_params(PgFdwModifyState *fmstate,
 	/* get following parameters from slots */
 	if (slots != NULL && fmstate->target_attrs != NIL)
 	{
+		TupleDesc	tupdesc = RelationGetDescr(fmstate->rel);
 		int			nestlevel;
 		ListCell   *lc;
 
@@ -4260,9 +4280,13 @@ convert_prep_stmt_params(PgFdwModifyState *fmstate,
 			foreach(lc, fmstate->target_attrs)
 			{
 				int			attnum = lfirst_int(lc);
+				Form_pg_attribute attr = TupleDescAttr(tupdesc, attnum - 1);
 				Datum		value;
 				bool		isnull;
 
+				/* Ignore generated columns; they are set to DEFAULT */
+				if (attr->attgenerated)
+					continue;
 				value = slot_getattr(slots[i], attnum, &isnull);
 				if (isnull)
 					p_values[pindex] = NULL;
@@ -5032,7 +5056,7 @@ postgresAcquireSampleRowsFunc(Relation relation, int elevel,
 
 			if (strcmp(def->defname, "fetch_size") == 0)
 			{
-				fetch_size = strtol(defGetString(def), NULL, 10);
+				(void) parse_int(defGetString(def), &fetch_size, 0, NULL);
 				break;
 			}
 		}
@@ -5042,7 +5066,7 @@ postgresAcquireSampleRowsFunc(Relation relation, int elevel,
 
 			if (strcmp(def->defname, "fetch_size") == 0)
 			{
-				fetch_size = strtol(defGetString(def), NULL, 10);
+				(void) parse_int(defGetString(def), &fetch_size, 0, NULL);
 				break;
 			}
 		}
@@ -5152,7 +5176,7 @@ analyze_row_processor(PGresult *res, int row, PgFdwAnalyzeState *astate)
 		if (astate->rowstoskip <= 0)
 		{
 			/* Choose a random reservoir element to replace. */
-			pos = (int) (targrows * sampler_random_fract(astate->rstate.randstate));
+			pos = (int) (targrows * sampler_random_fract(&astate->rstate.randstate));
 			Assert(pos >= 0 && pos < targrows);
 			heap_freetuple(astate->rows[pos]);
 		}
@@ -5193,6 +5217,7 @@ postgresImportForeignSchema(ImportForeignSchemaStmt *stmt, Oid serverOid)
 	List	   *commands = NIL;
 	bool		import_collate = true;
 	bool		import_default = false;
+	bool		import_generated = true;
 	bool		import_not_null = true;
 	ForeignServer *server;
 	UserMapping *mapping;
@@ -5212,6 +5237,8 @@ postgresImportForeignSchema(ImportForeignSchemaStmt *stmt, Oid serverOid)
 			import_collate = defGetBoolean(def);
 		else if (strcmp(def->defname, "import_default") == 0)
 			import_default = defGetBoolean(def);
+		else if (strcmp(def->defname, "import_generated") == 0)
+			import_generated = defGetBoolean(def);
 		else if (strcmp(def->defname, "import_not_null") == 0)
 			import_not_null = defGetBoolean(def);
 		else
@@ -5275,43 +5302,45 @@ postgresImportForeignSchema(ImportForeignSchemaStmt *stmt, Oid serverOid)
 		 * include a schema name for types/functions in other schemas, which
 		 * is what we want.
 		 */
+		appendStringInfoString(&buf,
+							   "SELECT relname, "
+							   "  attname, "
+							   "  format_type(atttypid, atttypmod), "
+							   "  attnotnull, "
+							   "  pg_get_expr(adbin, adrelid), ");
+
+		/* Generated columns are supported since Postgres 12 */
+		if (PQserverVersion(conn) >= 120000)
+			appendStringInfoString(&buf,
+								   "  attgenerated, ");
+		else
+			appendStringInfoString(&buf,
+								   "  NULL, ");
+
 		if (import_collate)
 			appendStringInfoString(&buf,
-								   "SELECT relname, "
-								   "  attname, "
-								   "  format_type(atttypid, atttypmod), "
-								   "  attnotnull, "
-								   "  pg_get_expr(adbin, adrelid), "
 								   "  collname, "
-								   "  collnsp.nspname "
-								   "FROM pg_class c "
-								   "  JOIN pg_namespace n ON "
-								   "    relnamespace = n.oid "
-								   "  LEFT JOIN pg_attribute a ON "
-								   "    attrelid = c.oid AND attnum > 0 "
-								   "      AND NOT attisdropped "
-								   "  LEFT JOIN pg_attrdef ad ON "
-								   "    adrelid = c.oid AND adnum = attnum "
+								   "  collnsp.nspname ");
+		else
+			appendStringInfoString(&buf,
+								   "  NULL, NULL ");
+
+		appendStringInfoString(&buf,
+							   "FROM pg_class c "
+							   "  JOIN pg_namespace n ON "
+							   "    relnamespace = n.oid "
+							   "  LEFT JOIN pg_attribute a ON "
+							   "    attrelid = c.oid AND attnum > 0 "
+							   "      AND NOT attisdropped "
+							   "  LEFT JOIN pg_attrdef ad ON "
+							   "    adrelid = c.oid AND adnum = attnum ");
+
+		if (import_collate)
+			appendStringInfoString(&buf,
 								   "  LEFT JOIN pg_collation coll ON "
 								   "    coll.oid = attcollation "
 								   "  LEFT JOIN pg_namespace collnsp ON "
 								   "    collnsp.oid = collnamespace ");
-		else
-			appendStringInfoString(&buf,
-								   "SELECT relname, "
-								   "  attname, "
-								   "  format_type(atttypid, atttypmod), "
-								   "  attnotnull, "
-								   "  pg_get_expr(adbin, adrelid), "
-								   "  NULL, NULL "
-								   "FROM pg_class c "
-								   "  JOIN pg_namespace n ON "
-								   "    relnamespace = n.oid "
-								   "  LEFT JOIN pg_attribute a ON "
-								   "    attrelid = c.oid AND attnum > 0 "
-								   "      AND NOT attisdropped "
-								   "  LEFT JOIN pg_attrdef ad ON "
-								   "    adrelid = c.oid AND adnum = attnum ");
 
 		appendStringInfoString(&buf,
 							   "WHERE c.relkind IN ("
@@ -5379,6 +5408,7 @@ postgresImportForeignSchema(ImportForeignSchemaStmt *stmt, Oid serverOid)
 				char	   *attname;
 				char	   *typename;
 				char	   *attnotnull;
+				char	   *attgenerated;
 				char	   *attdefault;
 				char	   *collname;
 				char	   *collnamespace;
@@ -5392,10 +5422,12 @@ postgresImportForeignSchema(ImportForeignSchemaStmt *stmt, Oid serverOid)
 				attnotnull = PQgetvalue(res, i, 3);
 				attdefault = PQgetisnull(res, i, 4) ? (char *) NULL :
 					PQgetvalue(res, i, 4);
-				collname = PQgetisnull(res, i, 5) ? (char *) NULL :
+				attgenerated = PQgetisnull(res, i, 5) ? (char *) NULL :
 					PQgetvalue(res, i, 5);
-				collnamespace = PQgetisnull(res, i, 6) ? (char *) NULL :
+				collname = PQgetisnull(res, i, 6) ? (char *) NULL :
 					PQgetvalue(res, i, 6);
+				collnamespace = PQgetisnull(res, i, 7) ? (char *) NULL :
+					PQgetvalue(res, i, 7);
 
 				if (first_item)
 					first_item = false;
@@ -5423,8 +5455,19 @@ postgresImportForeignSchema(ImportForeignSchemaStmt *stmt, Oid serverOid)
 									 quote_identifier(collname));
 
 				/* Add DEFAULT if needed */
-				if (import_default && attdefault != NULL)
+				if (import_default && attdefault != NULL &&
+					(!attgenerated || !attgenerated[0]))
 					appendStringInfo(&buf, " DEFAULT %s", attdefault);
+
+				/* Add GENERATED if needed */
+				if (import_generated && attgenerated != NULL &&
+					attgenerated[0] == ATTRIBUTE_GENERATED_STORED)
+				{
+					Assert(attdefault != NULL);
+					appendStringInfo(&buf,
+									 " GENERATED ALWAYS AS (%s) STORED",
+									 attdefault);
+				}
 
 				/* Add NOT NULL if needed */
 				if (import_not_null && attnotnull[0] == 't')
@@ -5809,14 +5852,16 @@ apply_server_options(PgFdwRelationInfo *fpinfo)
 		if (strcmp(def->defname, "use_remote_estimate") == 0)
 			fpinfo->use_remote_estimate = defGetBoolean(def);
 		else if (strcmp(def->defname, "fdw_startup_cost") == 0)
-			fpinfo->fdw_startup_cost = strtod(defGetString(def), NULL);
+			(void) parse_real(defGetString(def), &fpinfo->fdw_startup_cost, 0,
+							  NULL);
 		else if (strcmp(def->defname, "fdw_tuple_cost") == 0)
-			fpinfo->fdw_tuple_cost = strtod(defGetString(def), NULL);
+			(void) parse_real(defGetString(def), &fpinfo->fdw_tuple_cost, 0,
+							  NULL);
 		else if (strcmp(def->defname, "extensions") == 0)
 			fpinfo->shippable_extensions =
 				ExtractExtensionList(defGetString(def), false);
 		else if (strcmp(def->defname, "fetch_size") == 0)
-			fpinfo->fetch_size = strtol(defGetString(def), NULL, 10);
+			(void) parse_int(defGetString(def), &fpinfo->fetch_size, 0, NULL);
 		else if (strcmp(def->defname, "async_capable") == 0)
 			fpinfo->async_capable = defGetBoolean(def);
 	}
@@ -5839,7 +5884,7 @@ apply_table_options(PgFdwRelationInfo *fpinfo)
 		if (strcmp(def->defname, "use_remote_estimate") == 0)
 			fpinfo->use_remote_estimate = defGetBoolean(def);
 		else if (strcmp(def->defname, "fetch_size") == 0)
-			fpinfo->fetch_size = strtol(defGetString(def), NULL, 10);
+			(void) parse_int(defGetString(def), &fpinfo->fetch_size, 0, NULL);
 		else if (strcmp(def->defname, "async_capable") == 0)
 			fpinfo->async_capable = defGetBoolean(def);
 	}
@@ -6504,7 +6549,6 @@ add_foreign_ordered_paths(PlannerInfo *root, RelOptInfo *input_rel,
 	{
 		PathKey    *pathkey = (PathKey *) lfirst(lc);
 		EquivalenceClass *pathkey_ec = pathkey->pk_eclass;
-		Expr	   *sort_expr;
 
 		/*
 		 * is_foreign_expr would detect volatile expressions as well, but
@@ -6513,13 +6557,20 @@ add_foreign_ordered_paths(PlannerInfo *root, RelOptInfo *input_rel,
 		if (pathkey_ec->ec_has_volatile)
 			return;
 
-		/* Get the sort expression for the pathkey_ec */
-		sort_expr = find_em_expr_for_input_target(root,
-												  pathkey_ec,
-												  input_rel->reltarget);
+		/*
+		 * Can't push down the sort if pathkey's opfamily is not shippable.
+		 */
+		if (!is_shippable(pathkey->pk_opfamily, OperatorFamilyRelationId,
+						  fpinfo))
+			return;
 
-		/* If it's unsafe to remote, we cannot push down the final sort */
-		if (!is_foreign_expr(root, input_rel, sort_expr))
+		/*
+		 * The EC must contain a shippable EM that is computed in input_rel's
+		 * reltarget, else we can't push down the sort.
+		 */
+		if (find_em_for_rel_target(root,
+								   pathkey_ec,
+								   input_rel) == NULL)
 			return;
 	}
 
@@ -6539,7 +6590,7 @@ add_foreign_ordered_paths(PlannerInfo *root, RelOptInfo *input_rel,
 	 * Build the fdw_private list that will be used by postgresGetForeignPlan.
 	 * Items in the list must match order in enum FdwPathPrivateIndex.
 	 */
-	fdw_private = list_make2(makeInteger(true), makeInteger(false));
+	fdw_private = list_make2(makeBoolean(true), makeBoolean(false));
 
 	/* Create foreign ordering path */
 	ordered_path = create_foreign_upper_path(root,
@@ -6770,8 +6821,8 @@ add_foreign_final_paths(PlannerInfo *root, RelOptInfo *input_rel,
 	 * Build the fdw_private list that will be used by postgresGetForeignPlan.
 	 * Items in the list must match order in enum FdwPathPrivateIndex.
 	 */
-	fdw_private = list_make2(makeInteger(has_final_sort),
-							 makeInteger(extra->limit_needed));
+	fdw_private = list_make2(makeBoolean(has_final_sort),
+							 makeBoolean(extra->limit_needed));
 
 	/*
 	 * Create foreign final path; this gets rid of a no-longer-needed outer
@@ -6830,6 +6881,22 @@ postgresForeignAsyncConfigureWait(AsyncRequest *areq)
 	/* This should not be called unless callback_pending */
 	Assert(areq->callback_pending);
 
+	/*
+	 * If process_pending_request() has been invoked on the given request
+	 * before we get here, we might have some tuples already; in which case
+	 * complete the request
+	 */
+	if (fsstate->next_tuple < fsstate->num_tuples)
+	{
+		complete_pending_request(areq);
+		if (areq->request_complete)
+			return;
+		Assert(areq->callback_pending);
+	}
+
+	/* We must have run out of tuples */
+	Assert(fsstate->next_tuple >= fsstate->num_tuples);
+
 	/* The core code would have registered postmaster death event */
 	Assert(GetNumRegisteredWaitEvents(set) >= 1);
 
@@ -6842,12 +6909,15 @@ postgresForeignAsyncConfigureWait(AsyncRequest *areq)
 		 * This is the case when the in-process request was made by another
 		 * Append.  Note that it might be useless to process the request,
 		 * because the query might not need tuples from that Append anymore.
-		 * Skip the given request if there are any configured events other
-		 * than the postmaster death event; otherwise process the request,
-		 * then begin a fetch to configure the event below, because otherwise
-		 * we might end up with no configured events other than the postmaster
-		 * death event.
+		 * If there are any child subplans of the same parent that are ready
+		 * for new requests, skip the given request.  Likewise, if there are
+		 * any configured events other than the postmaster death event, skip
+		 * it.  Otherwise, process the in-process request, then begin a fetch
+		 * to configure the event below, because we might otherwise end up
+		 * with no configured events other than the postmaster death event.
 		 */
+		if (!bms_is_empty(requestor->as_needrequest))
+			return;
 		if (GetNumRegisteredWaitEvents(set) > 1)
 			return;
 		process_pending_request(pendingAreq);
@@ -6880,11 +6950,25 @@ postgresForeignAsyncNotify(AsyncRequest *areq)
 	ForeignScanState *node = (ForeignScanState *) areq->requestee;
 	PgFdwScanState *fsstate = (PgFdwScanState *) node->fdw_state;
 
-	/* The request should be currently in-process */
-	Assert(fsstate->conn_state->pendingAreq == areq);
-
 	/* The core code would have initialized the callback_pending flag */
 	Assert(!areq->callback_pending);
+
+	/*
+	 * If process_pending_request() has been invoked on the given request
+	 * before we get here, we might have some tuples already; in which case
+	 * produce the next tuple
+	 */
+	if (fsstate->next_tuple < fsstate->num_tuples)
+	{
+		produce_tuple_asynchronously(areq, true);
+		return;
+	}
+
+	/* We must have run out of tuples */
+	Assert(fsstate->next_tuple >= fsstate->num_tuples);
+
+	/* The request should be currently in-process */
+	Assert(fsstate->conn_state->pendingAreq == areq);
 
 	/* On error, report the original query, not the FETCH. */
 	if (!PQconsumeInput(fsstate->conn))
@@ -6939,6 +7023,8 @@ produce_tuple_asynchronously(AsyncRequest *areq, bool fetch)
 		ExecAsyncRequestDone(areq, result);
 		return;
 	}
+
+	/* We must have run out of tuples */
 	Assert(fsstate->next_tuple >= fsstate->num_tuples);
 
 	/* Fetch some more tuples, if we've not detected EOF yet */
@@ -6998,24 +7084,45 @@ void
 process_pending_request(AsyncRequest *areq)
 {
 	ForeignScanState *node = (ForeignScanState *) areq->requestee;
-	PgFdwScanState *fsstate PG_USED_FOR_ASSERTS_ONLY = (PgFdwScanState *) node->fdw_state;
-	EState	   *estate = node->ss.ps.state;
-	MemoryContext oldcontext;
+	PgFdwScanState *fsstate = (PgFdwScanState *) node->fdw_state;
+
+	/* The request would have been pending for a callback */
+	Assert(areq->callback_pending);
 
 	/* The request should be currently in-process */
 	Assert(fsstate->conn_state->pendingAreq == areq);
 
-	oldcontext = MemoryContextSwitchTo(estate->es_query_cxt);
+	fetch_more_data(node);
 
+	/*
+	 * If we didn't get any tuples, must be end of data; complete the request
+	 * now.  Otherwise, we postpone completing the request until we are called
+	 * from postgresForeignAsyncConfigureWait()/postgresForeignAsyncNotify().
+	 */
+	if (fsstate->next_tuple >= fsstate->num_tuples)
+	{
+		/* Unlike AsyncNotify, we unset callback_pending ourselves */
+		areq->callback_pending = false;
+		/* Mark the request as complete */
+		ExecAsyncRequestDone(areq, NULL);
+		/* Unlike AsyncNotify, we call ExecAsyncResponse ourselves */
+		ExecAsyncResponse(areq);
+	}
+}
+
+/*
+ * Complete a pending asynchronous request.
+ */
+static void
+complete_pending_request(AsyncRequest *areq)
+{
 	/* The request would have been pending for a callback */
 	Assert(areq->callback_pending);
 
 	/* Unlike AsyncNotify, we unset callback_pending ourselves */
 	areq->callback_pending = false;
 
-	fetch_more_data(node);
-
-	/* We need to send a new query afterwards; don't fetch */
+	/* We begin a fetch afterwards if necessary; don't fetch */
 	produce_tuple_asynchronously(areq, false);
 
 	/* Unlike AsyncNotify, we call ExecAsyncResponse ourselves */
@@ -7025,8 +7132,6 @@ process_pending_request(AsyncRequest *areq)
 	if (areq->requestee->instrument)
 		InstrUpdateTupleCount(areq->requestee->instrument,
 							  TupIsNull(areq->result) ? 0.0 : 1.0);
-
-	MemoryContextSwitchTo(oldcontext);
 }
 
 /*
@@ -7035,7 +7140,12 @@ process_pending_request(AsyncRequest *areq)
  * rel is the local representation of the foreign table, attinmeta is
  * conversion data for the rel's tupdesc, and retrieved_attrs is an
  * integer list of the table column numbers present in the PGresult.
+ * fsstate is the ForeignScan plan node's execution state.
  * temp_context is a working context that can be reset after each tuple.
+ *
+ * Note: either rel or fsstate, but not both, can be NULL.  rel is NULL
+ * if we're processing a remote join, while fsstate is NULL in a non-query
+ * context such as ANALYZE, or if we're processing a non-scan query node.
  */
 static HeapTuple
 make_tuple_from_result_row(PGresult *res,
@@ -7066,6 +7176,10 @@ make_tuple_from_result_row(PGresult *res,
 	 */
 	oldcontext = MemoryContextSwitchTo(temp_context);
 
+	/*
+	 * Get the tuple descriptor for the row.  Use the rel's tupdesc if rel is
+	 * provided, otherwise look to the scan node's ScanTupleSlot.
+	 */
 	if (rel)
 		tupdesc = RelationGetDescr(rel);
 	else
@@ -7082,8 +7196,8 @@ make_tuple_from_result_row(PGresult *res,
 	/*
 	 * Set up and install callback to report where conversion error occurs.
 	 */
-	errpos.rel = rel;
 	errpos.cur_attno = 0;
+	errpos.rel = rel;
 	errpos.fsstate = fsstate;
 	errcallback.callback = conversion_error_callback;
 	errcallback.arg = (void *) &errpos;
@@ -7185,81 +7299,152 @@ make_tuple_from_result_row(PGresult *res,
 /*
  * Callback function which is called when error occurs during column value
  * conversion.  Print names of column and relation.
+ *
+ * Note that this function mustn't do any catalog lookups, since we are in
+ * an already-failed transaction.  Fortunately, we can get the needed info
+ * from the relation or the query's rangetable instead.
  */
 static void
 conversion_error_callback(void *arg)
 {
+	ConversionLocation *errpos = (ConversionLocation *) arg;
+	Relation	rel = errpos->rel;
+	ForeignScanState *fsstate = errpos->fsstate;
 	const char *attname = NULL;
 	const char *relname = NULL;
 	bool		is_wholerow = false;
-	ConversionLocation *errpos = (ConversionLocation *) arg;
 
-	if (errpos->rel)
+	/*
+	 * If we're in a scan node, always use aliases from the rangetable, for
+	 * consistency between the simple-relation and remote-join cases.  Look at
+	 * the relation's tupdesc only if we're not in a scan node.
+	 */
+	if (fsstate)
 	{
-		/* error occurred in a scan against a foreign table */
-		TupleDesc	tupdesc = RelationGetDescr(errpos->rel);
-		Form_pg_attribute attr = TupleDescAttr(tupdesc, errpos->cur_attno - 1);
-
-		if (errpos->cur_attno > 0 && errpos->cur_attno <= tupdesc->natts)
-			attname = NameStr(attr->attname);
-		else if (errpos->cur_attno == SelfItemPointerAttributeNumber)
-			attname = "ctid";
-
-		relname = RelationGetRelationName(errpos->rel);
-	}
-	else
-	{
-		/* error occurred in a scan against a foreign join */
-		ForeignScanState *fsstate = errpos->fsstate;
+		/* ForeignScan case */
 		ForeignScan *fsplan = castNode(ForeignScan, fsstate->ss.ps.plan);
-		EState	   *estate = fsstate->ss.ps.state;
-		TargetEntry *tle;
+		int			varno = 0;
+		AttrNumber	colno = 0;
 
-		tle = list_nth_node(TargetEntry, fsplan->fdw_scan_tlist,
-							errpos->cur_attno - 1);
-
-		/*
-		 * Target list can have Vars and expressions.  For Vars, we can get
-		 * its relation, however for expressions we can't.  Thus for
-		 * expressions, just show generic context message.
-		 */
-		if (IsA(tle->expr, Var))
+		if (fsplan->scan.scanrelid > 0)
 		{
-			RangeTblEntry *rte;
-			Var		   *var = (Var *) tle->expr;
-
-			rte = exec_rt_fetch(var->varno, estate);
-
-			if (var->varattno == 0)
-				is_wholerow = true;
-			else
-				attname = get_attname(rte->relid, var->varattno, false);
-
-			relname = get_rel_name(rte->relid);
+			/* error occurred in a scan against a foreign table */
+			varno = fsplan->scan.scanrelid;
+			colno = errpos->cur_attno;
 		}
 		else
-			errcontext("processing expression at position %d in select list",
-					   errpos->cur_attno);
+		{
+			/* error occurred in a scan against a foreign join */
+			TargetEntry *tle;
+
+			tle = list_nth_node(TargetEntry, fsplan->fdw_scan_tlist,
+								errpos->cur_attno - 1);
+
+			/*
+			 * Target list can have Vars and expressions.  For Vars, we can
+			 * get some information, however for expressions we can't.  Thus
+			 * for expressions, just show generic context message.
+			 */
+			if (IsA(tle->expr, Var))
+			{
+				Var		   *var = (Var *) tle->expr;
+
+				varno = var->varno;
+				colno = var->varattno;
+			}
+		}
+
+		if (varno > 0)
+		{
+			EState	   *estate = fsstate->ss.ps.state;
+			RangeTblEntry *rte = exec_rt_fetch(varno, estate);
+
+			relname = rte->eref->aliasname;
+
+			if (colno == 0)
+				is_wholerow = true;
+			else if (colno > 0 && colno <= list_length(rte->eref->colnames))
+				attname = strVal(list_nth(rte->eref->colnames, colno - 1));
+			else if (colno == SelfItemPointerAttributeNumber)
+				attname = "ctid";
+		}
+	}
+	else if (rel)
+	{
+		/* Non-ForeignScan case (we should always have a rel here) */
+		TupleDesc	tupdesc = RelationGetDescr(rel);
+
+		relname = RelationGetRelationName(rel);
+		if (errpos->cur_attno > 0 && errpos->cur_attno <= tupdesc->natts)
+		{
+			Form_pg_attribute attr = TupleDescAttr(tupdesc,
+												   errpos->cur_attno - 1);
+
+			attname = NameStr(attr->attname);
+		}
+		else if (errpos->cur_attno == SelfItemPointerAttributeNumber)
+			attname = "ctid";
 	}
 
-	if (relname)
-	{
-		if (is_wholerow)
-			errcontext("whole-row reference to foreign table \"%s\"", relname);
-		else if (attname)
-			errcontext("column \"%s\" of foreign table \"%s\"", attname, relname);
-	}
+	if (relname && is_wholerow)
+		errcontext("whole-row reference to foreign table \"%s\"", relname);
+	else if (relname && attname)
+		errcontext("column \"%s\" of foreign table \"%s\"", attname, relname);
+	else
+		errcontext("processing expression at position %d in select list",
+				   errpos->cur_attno);
 }
 
 /*
- * Find an equivalence class member expression to be computed as a sort column
- * in the given target.
+ * Given an EquivalenceClass and a foreign relation, find an EC member
+ * that can be used to sort the relation remotely according to a pathkey
+ * using this EC.
+ *
+ * If there is more than one suitable candidate, return an arbitrary
+ * one of them.  If there is none, return NULL.
+ *
+ * This checks that the EC member expression uses only Vars from the given
+ * rel and is shippable.  Caller must separately verify that the pathkey's
+ * ordering operator is shippable.
  */
-Expr *
-find_em_expr_for_input_target(PlannerInfo *root,
-							  EquivalenceClass *ec,
-							  PathTarget *target)
+EquivalenceMember *
+find_em_for_rel(PlannerInfo *root, EquivalenceClass *ec, RelOptInfo *rel)
 {
+	ListCell   *lc;
+
+	foreach(lc, ec->ec_members)
+	{
+		EquivalenceMember *em = (EquivalenceMember *) lfirst(lc);
+
+		/*
+		 * Note we require !bms_is_empty, else we'd accept constant
+		 * expressions which are not suitable for the purpose.
+		 */
+		if (bms_is_subset(em->em_relids, rel->relids) &&
+			!bms_is_empty(em->em_relids) &&
+			is_foreign_expr(root, rel, em->em_expr))
+			return em;
+	}
+
+	return NULL;
+}
+
+/*
+ * Find an EquivalenceClass member that is to be computed as a sort column
+ * in the given rel's reltarget, and is shippable.
+ *
+ * If there is more than one suitable candidate, return an arbitrary
+ * one of them.  If there is none, return NULL.
+ *
+ * This checks that the EC member expression uses only Vars from the given
+ * rel and is shippable.  Caller must separately verify that the pathkey's
+ * ordering operator is shippable.
+ */
+EquivalenceMember *
+find_em_for_rel_target(PlannerInfo *root, EquivalenceClass *ec,
+					   RelOptInfo *rel)
+{
+	PathTarget *target = rel->reltarget;
 	ListCell   *lc1;
 	int			i;
 
@@ -7302,15 +7487,18 @@ find_em_expr_for_input_target(PlannerInfo *root,
 			while (em_expr && IsA(em_expr, RelabelType))
 				em_expr = ((RelabelType *) em_expr)->arg;
 
-			if (equal(em_expr, expr))
-				return em->em_expr;
+			if (!equal(em_expr, expr))
+				continue;
+
+			/* Check that expression (including relabels!) is shippable */
+			if (is_foreign_expr(root, rel, em->em_expr))
+				return em;
 		}
 
 		i++;
 	}
 
-	elog(ERROR, "could not find pathkey item to sort");
-	return NULL;				/* keep compiler quiet */
+	return NULL;
 }
 
 /*
@@ -7347,7 +7535,7 @@ get_batch_size_option(Relation rel)
 
 		if (strcmp(def->defname, "batch_size") == 0)
 		{
-			batch_size = strtol(defGetString(def), NULL, 10);
+			(void) parse_int(defGetString(def), &batch_size, 0, NULL);
 			break;
 		}
 	}

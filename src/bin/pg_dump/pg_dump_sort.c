@@ -4,7 +4,7 @@
  *	  Sort the items of a dump into a safe order for dumping
  *
  *
- * Portions Copyright (c) 1996-2021, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2022, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -34,6 +34,15 @@
  * restore state).  If you think to change this, see also the RestorePass
  * mechanism in pg_backup_archiver.c.
  *
+ * On the other hand, casts are intentionally sorted earlier than you might
+ * expect; logically they should come after functions, since they usually
+ * depend on those.  This works around the backend's habit of recording
+ * views that use casts as dependent on the cast's underlying function.
+ * We initially sort casts first, and then any functions used by casts
+ * will be hoisted above the casts, and in turn views that those functions
+ * depend on will be hoisted above the functions.  But views not used that
+ * way won't be hoisted.
+ *
  * NOTE: object-type priorities must match the section assignments made in
  * pg_dump.c; that is, PRE_DATA objects must sort before DO_PRE_DATA_BOUNDARY,
  * POST_DATA objects must sort after DO_POST_DATA_BOUNDARY, and DATA objects
@@ -49,12 +58,12 @@ enum dbObjectTypePriorities
 	PRIO_TRANSFORM,
 	PRIO_EXTENSION,
 	PRIO_TYPE,					/* used for DO_TYPE and DO_SHELL_TYPE */
+	PRIO_CAST,
 	PRIO_FUNC,
 	PRIO_AGG,
 	PRIO_ACCESS_METHOD,
 	PRIO_OPERATOR,
 	PRIO_OPFAMILY,				/* used for DO_OPFAMILY and DO_OPCLASS */
-	PRIO_CAST,
 	PRIO_CONVERSION,
 	PRIO_TSPARSER,
 	PRIO_TSTEMPLATE,
@@ -82,6 +91,7 @@ enum dbObjectTypePriorities
 	PRIO_POLICY,
 	PRIO_PUBLICATION,
 	PRIO_PUBLICATION_REL,
+	PRIO_PUBLICATION_TABLE_IN_SCHEMA,
 	PRIO_SUBSCRIPTION,
 	PRIO_DEFAULT_ACL,			/* done in ACL pass */
 	PRIO_EVENT_TRIGGER,			/* must be next to last! */
@@ -135,6 +145,7 @@ static const int dbObjectTypePriority[] =
 	PRIO_POLICY,				/* DO_POLICY */
 	PRIO_PUBLICATION,			/* DO_PUBLICATION */
 	PRIO_PUBLICATION_REL,		/* DO_PUBLICATION_REL */
+	PRIO_PUBLICATION_TABLE_IN_SCHEMA,	/* DO_PUBLICATION_TABLE_IN_SCHEMA */
 	PRIO_SUBSCRIPTION			/* DO_SUBSCRIPTION */
 };
 
@@ -408,13 +419,13 @@ TopoSort(DumpableObject **objs,
 		obj = objs[i];
 		j = obj->dumpId;
 		if (j <= 0 || j > maxDumpId)
-			fatal("invalid dumpId %d", j);
+			pg_fatal("invalid dumpId %d", j);
 		idMap[j] = i;
 		for (j = 0; j < obj->nDeps; j++)
 		{
 			k = obj->dependencies[j];
 			if (k <= 0 || k > maxDumpId)
-				fatal("invalid dependency %d", k);
+				pg_fatal("invalid dependency %d", k);
 			beforeConstraints[k]++;
 		}
 	}
@@ -647,7 +658,7 @@ findDependencyLoops(DumpableObject **objs, int nObjs, int totObjs)
 
 	/* We'd better have fixed at least one loop */
 	if (!fixedloop)
-		fatal("could not identify dependency loop");
+		pg_fatal("could not identify dependency loop");
 
 	free(workspace);
 	free(searchFailed);
@@ -1192,10 +1203,10 @@ repairDependencyLoop(DumpableObject **loop,
 	 * Loop of table with itself --- just ignore it.
 	 *
 	 * (Actually, what this arises from is a dependency of a table column on
-	 * another column, which happens with generated columns; or a dependency
-	 * of a table column on the whole table, which happens with partitioning.
-	 * But we didn't pay attention to sub-object IDs while collecting the
-	 * dependency data, so we can't see that here.)
+	 * another column, which happened with generated columns before v15; or a
+	 * dependency of a table column on the whole table, which happens with
+	 * partitioning.  But we didn't pay attention to sub-object IDs while
+	 * collecting the dependency data, so we can't see that here.)
 	 */
 	if (nLoop == 1)
 	{
@@ -1222,9 +1233,9 @@ repairDependencyLoop(DumpableObject **loop,
 								"there are circular foreign-key constraints among these tables:",
 								nLoop));
 		for (i = 0; i < nLoop; i++)
-			pg_log_generic(PG_LOG_INFO, "  %s", loop[i]->name);
-		pg_log_generic(PG_LOG_INFO, "You might not be able to restore the dump without using --disable-triggers or temporarily dropping the constraints.");
-		pg_log_generic(PG_LOG_INFO, "Consider using a full dump instead of a --data-only dump to avoid this problem.");
+			pg_log_info("  %s", loop[i]->name);
+		pg_log_info("You might not be able to restore the dump without using --disable-triggers or temporarily dropping the constraints.");
+		pg_log_info("Consider using a full dump instead of a --data-only dump to avoid this problem.");
 		if (nLoop > 1)
 			removeObjectDependency(loop[0], loop[1]->dumpId);
 		else					/* must be a self-dependency */
@@ -1242,7 +1253,7 @@ repairDependencyLoop(DumpableObject **loop,
 		char		buf[1024];
 
 		describeDumpableObject(loop[i], buf, sizeof(buf));
-		pg_log_generic(PG_LOG_INFO, "  %s", buf);
+		pg_log_info("  %s", buf);
 	}
 
 	if (nLoop > 1)
@@ -1475,6 +1486,11 @@ describeDumpableObject(DumpableObject *obj, char *buf, int bufsize)
 		case DO_PUBLICATION_REL:
 			snprintf(buf, bufsize,
 					 "PUBLICATION TABLE (ID %d OID %u)",
+					 obj->dumpId, obj->catId.oid);
+			return;
+		case DO_PUBLICATION_TABLE_IN_SCHEMA:
+			snprintf(buf, bufsize,
+					 "PUBLICATION TABLES IN SCHEMA (ID %d OID %u)",
 					 obj->dumpId, obj->catId.oid);
 			return;
 		case DO_SUBSCRIPTION:

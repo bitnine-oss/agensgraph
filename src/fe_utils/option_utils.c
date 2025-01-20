@@ -2,7 +2,7 @@
  *
  * Command line option processing facilities for frontend code
  *
- * Portions Copyright (c) 1996-2021, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2022, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/fe_utils/option_utils.c
@@ -12,6 +12,8 @@
 
 #include "postgres_fe.h"
 
+#include "common/logging.h"
+#include "common/string.h"
 #include "fe_utils/option_utils.h"
 
 /*
@@ -35,4 +37,48 @@ handle_help_version_opts(int argc, char *argv[],
 			exit(0);
 		}
 	}
+}
+
+/*
+ * option_parse_int
+ *
+ * Parse integer value for an option.  If the parsing is successful, returns
+ * true and stores the result in *result if that's given; if parsing fails,
+ * returns false.
+ */
+bool
+option_parse_int(const char *optarg, const char *optname,
+				 int min_range, int max_range,
+				 int *result)
+{
+	char	   *endptr;
+	int			val;
+
+	errno = 0;
+	val = strtoint(optarg, &endptr, 10);
+
+	/*
+	 * Skip any trailing whitespace; if anything but whitespace remains before
+	 * the terminating character, fail.
+	 */
+	while (*endptr != '\0' && isspace((unsigned char) *endptr))
+		endptr++;
+
+	if (*endptr != '\0')
+	{
+		pg_log_error("invalid value \"%s\" for option %s",
+					 optarg, optname);
+		return false;
+	}
+
+	if (errno == ERANGE || val < min_range || val > max_range)
+	{
+		pg_log_error("%s must be in range %d..%d",
+					 optname, min_range, max_range);
+		return false;
+	}
+
+	if (result)
+		*result = val;
+	return true;
 }

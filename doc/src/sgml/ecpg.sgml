@@ -4732,7 +4732,6 @@ encoding = 0 (type: 5)
 datistemplate = t (type: 1)
 datallowconn = t (type: 1)
 datconnlimit = -1 (type: 5)
-datlastsysoid = 11510 (type: 1)
 datfrozenxid = 379 (type: 1)
 dattablespace = 1663 (type: 1)
 datconfig =  (type: 1)
@@ -4757,7 +4756,6 @@ encoding = 0 (type: 5)
 datistemplate = f (type: 1)
 datallowconn = t (type: 1)
 datconnlimit = -1 (type: 5)
-datlastsysoid = 11510 (type: 1)
 datfrozenxid = 379 (type: 1)
 dattablespace = 1663 (type: 1)
 datconfig =  (type: 1)
@@ -6977,7 +6975,7 @@ EXEC SQL CLOSE cursor_name;
     <title>Compatibility</title>
 
     <para>
-     <command>DECLARE STATEMENT</command> is a extension of the SQL standard,
+     <command>DECLARE STATEMENT</command> is an extension of the SQL standard,
      but can be used in famous DBMSs.
     </para>
    </refsect1>
@@ -8235,7 +8233,7 @@ $COMMIT;
    you functions that have the same name and the same basic behavior but it is
    no drop-in replacement if you are using <productname>Informix</productname> at the moment. Moreover,
    some of the data types are different. For example,
-   <productname>PostgreSQL's</productname> datetime and interval types do not
+   <productname>PostgreSQL</productname>'s datetime and interval types do not
    know about ranges like for example <literal>YEAR TO MINUTE</literal> so you won't
    find support in ECPG for that either.
   </para>
@@ -8881,7 +8879,7 @@ int dectoint(decimal *np, int *ip);
         Note that the ECPG implementation differs from the <productname>Informix</productname>
         implementation. <productname>Informix</productname> limits an integer to the range from -32767 to
         32767, while the limits in the ECPG implementation depend on the
-        architecture (<literal>-INT_MAX .. INT_MAX</literal>).
+        architecture (<literal>INT_MIN .. INT_MAX</literal>).
        </para>
       </listitem>
      </varlistentry>

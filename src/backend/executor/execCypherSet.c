@@ -363,7 +363,7 @@ GraphTableTupleUpdate(ModifyGraphState *mgstate, Oid tts_value_type,
 		resultRelInfo->ri_TrigDesc->trig_update_before_row)
 	{
 		if (!ExecBRUpdateTriggers(estate, epqstate, resultRelInfo,
-								  ctid, NULL, elemTupleSlot))
+								  ctid, NULL, elemTupleSlot, &tmfd))
 			return (Datum) 0;
 	}
 
@@ -492,8 +492,8 @@ lreplace:
 	graphWriteStats.updateProperty++;
 
 	/* AFTER ROW UPDATE Triggers */
-	ExecARUpdateTriggers(estate, resultRelInfo, ctid, NULL, elemTupleSlot,
-						 recheckIndexes, NULL);
+	ExecARUpdateTriggers(estate, resultRelInfo, NULL, NULL, ctid, NULL, elemTupleSlot,
+						 recheckIndexes, NULL, false);
 
 	list_free(recheckIndexes);
 
@@ -574,7 +574,7 @@ LegacyUpdateElemProp(ModifyGraphState *mgstate, Oid elemtype, Datum gid,
 		resultRelInfo->ri_TrigDesc->trig_update_before_row)
 	{
 		if (!ExecBRUpdateTriggers(estate, epqstate, resultRelInfo,
-								  ctid, NULL, elemTupleSlot))
+								  ctid, NULL, elemTupleSlot, &tmfd))
 		{
 			elog(ERROR, "Trigger must not be NULL on Cypher Clause.");
 			return NULL;
@@ -628,8 +628,8 @@ LegacyUpdateElemProp(ModifyGraphState *mgstate, Oid elemtype, Datum gid,
 	graphWriteStats.updateProperty++;
 
 	/* AFTER ROW UPDATE Triggers */
-	ExecARUpdateTriggers(estate, resultRelInfo, ctid, NULL, elemTupleSlot,
-						 recheckIndexes, NULL);
+	ExecARUpdateTriggers(estate, resultRelInfo, NULL, NULL, ctid, NULL, elemTupleSlot,
+						 recheckIndexes, NULL, false);
 
 	list_free(recheckIndexes);
 

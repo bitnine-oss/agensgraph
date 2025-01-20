@@ -4,7 +4,7 @@
 # characters, using Unicode data files as input.  Pass UnicodeData.txt
 # as argument.  The output is on stdout.
 #
-# Copyright (c) 2019-2021, PostgreSQL Global Development Group
+# Copyright (c) 2019-2022, PostgreSQL Global Development Group
 
 use strict;
 use warnings;
@@ -24,8 +24,6 @@ foreach my $line (<ARGV>)
 	chomp $line;
 	my @fields = split ';', $line;
 	$codepoint = hex $fields[0];
-
-	next if $codepoint > 0xFFFF;
 
 	if ($fields[2] eq 'Me' || $fields[2] eq 'Mn')
 	{

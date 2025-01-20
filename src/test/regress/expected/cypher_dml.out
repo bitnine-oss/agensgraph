@@ -1399,13 +1399,14 @@ WITH x[0] AS x1, x[1] AS x2 ORDER BY x2 RETURN x1;
                            ->  Graph VLE [1..2]
                                  ->  Result
                                        Output: a.id, a.id, '{}'::graphid[], '[]'::edge[]
-               ->  Result Cache
+               ->  Memoize
                      Output: b.id
                      Cache Key: x."end"
+                     Cache Mode: logical
                      ->  Index Only Scan using person_pkey on t.person b
                            Output: b.id
                            Index Cond: (b.id = x."end")
-(24 rows)
+(25 rows)
 
 EXPLAIN (VERBOSE, COSTS OFF)
 MATCH (a:person {id: 1})-[x:knows*1..2]->(b:person)
@@ -1433,13 +1434,14 @@ WITH max(b.id::"numeric") AS id, x[0] AS x RETURN *;
                                  ->  Graph VLE [1..2]
                                        ->  Result
                                              Output: a.id, a.id, '{}'::graphid[], '[]'::edge[]
-                     ->  Result Cache
+                     ->  Memoize
                            Output: b.properties, b.id
                            Cache Key: x."end"
+                           Cache Mode: logical
                            ->  Index Scan using person_pkey on t.person b
                                  Output: b.properties, b.id
                                  Index Cond: (b.id = x."end")
-(27 rows)
+(28 rows)
 
 EXPLAIN (VERBOSE, COSTS OFF)
 MATCH (a:person {id: 1})-[x:knows*1..2]->(b:person)
@@ -1464,13 +1466,14 @@ WITH DISTINCT x AS path RETURN *;
                            ->  Graph VLE [1..2]
                                  ->  Result
                                        Output: a.id, a.id, '{}'::graphid[], '[]'::edge[]
-               ->  Result Cache
+               ->  Memoize
                      Output: b.id
                      Cache Key: x."end"
+                     Cache Mode: logical
                      ->  Index Only Scan using person_pkey on t.person b
                            Output: b.id
                            Index Cond: (b.id = x."end")
-(24 rows)
+(25 rows)
 
 EXPLAIN (VERBOSE, COSTS OFF)
 MATCH (a:person {id: 1})-[x:knows*1..2]->(b:person)
@@ -1498,13 +1501,14 @@ WITH max(b.id::"numeric") AS id, x AS x RETURN *;
                                  ->  Graph VLE [1..2]
                                        ->  Result
                                              Output: a.id, a.id, '{}'::graphid[], '[]'::edge[]
-                     ->  Result Cache
+                     ->  Memoize
                            Output: b.properties, b.id
                            Cache Key: x."end"
+                           Cache Mode: logical
                            ->  Index Scan using person_pkey on t.person b
                                  Output: b.properties, b.id
                                  Index Cond: (b.id = x."end")
-(27 rows)
+(28 rows)
 
 EXPLAIN (VERBOSE, COSTS OFF)
 MATCH (a:person {id: 1})-[x:knows*1..2]->(b:person)
@@ -1532,13 +1536,14 @@ WITH max(length(x)::"numeric") AS x, b.id AS id RETURN *;
                                  ->  Graph VLE [1..2]
                                        ->  Result
                                              Output: a.id, a.id, '{}'::graphid[], '[]'::edge[]
-                     ->  Result Cache
+                     ->  Memoize
                            Output: b.properties, b.id
                            Cache Key: x."end"
+                           Cache Mode: logical
                            ->  Index Scan using person_pkey on t.person b
                                  Output: b.properties, b.id
                                  Index Cond: (b.id = x."end")
-(27 rows)
+(28 rows)
 
 EXPLAIN (VERBOSE, COSTS OFF)
 MATCH (a:person {id: 1})-[x:knows*1..2]->(b:person)
@@ -1558,13 +1563,14 @@ RETURN x, x IS NOT NULL, x[0] IS NULL;
                ->  Graph VLE [1..2]
                      ->  Result
                            Output: a.id, a.id, '{}'::graphid[], '[]'::edge[]
-   ->  Result Cache
+   ->  Memoize
          Output: b.id
          Cache Key: x."end"
+         Cache Mode: logical
          ->  Index Only Scan using person_pkey on t.person b
                Output: b.id
                Index Cond: (b.id = x."end")
-(19 rows)
+(20 rows)
 
 EXPLAIN (VERBOSE, COSTS OFF)
 MATCH (a:person {id: 1})-[x:knows*1..2]->(b:person)
@@ -1585,13 +1591,14 @@ WHERE x[0] IS NOT NULL RETURN x[0];
                ->  Graph VLE [1..2]
                      ->  Result
                            Output: a.id, a.id, '{}'::graphid[], '[]'::edge[]
-   ->  Result Cache
+   ->  Memoize
          Output: b.id
          Cache Key: x."end"
+         Cache Mode: logical
          ->  Index Only Scan using person_pkey on t.person b
                Output: b.id
                Index Cond: (b.id = x."end")
-(20 rows)
+(21 rows)
 
 EXPLAIN (VERBOSE, COSTS OFF)
 SELECT * FROM (
@@ -1618,9 +1625,10 @@ SELECT * FROM (
                      ->  Graph VLE [1..2]
                            ->  Result
                                  Output: a.id, a.id, '{}'::graphid[], '[]'::edge[]
-         ->  Result Cache
+         ->  Memoize
                Output: b.id
                Cache Key: x."end"
+               Cache Mode: logical
                ->  Index Only Scan using person_pkey on t.person b
                      Output: b.id
                      Index Cond: (b.id = x."end")
@@ -1637,13 +1645,14 @@ SELECT * FROM (
                      ->  Graph VLE [1..2]
                            ->  Result
                                  Output: a_1.id, a_1.id, '{}'::graphid[], '[]'::edge[]
-         ->  Result Cache
+         ->  Memoize
                Output: b_1.id
                Cache Key: x_1."end"
+               Cache Mode: logical
                ->  Index Only Scan using person_pkey on t.person b_1
                      Output: b_1.id
                      Index Cond: (b_1.id = x_1."end")
-(40 rows)
+(42 rows)
 
 -- AG-154, CS-34 - VLE returns incoreect result with sequential scan
 CREATE GRAPH ag154;
@@ -1833,9 +1842,9 @@ RETURN DISTINCT c.lang AS c;
  "agens-graph-jdbc"
  "agens-graph-docs"
  "agens-graph-odbc"
- "en"
  "c"
  "java"
+ "en"
 (7 rows)
 
 MATCH (a)

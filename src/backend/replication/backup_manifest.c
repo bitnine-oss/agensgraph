@@ -3,7 +3,7 @@
  * backup_manifest.c
  *	  code for generating and sending a backup manifest
  *
- * Portions Copyright (c) 2010-2021, PostgreSQL Global Development Group
+ * Portions Copyright (c) 2010-2022, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
  *	  src/backend/replication/backup_manifest.c
@@ -13,11 +13,12 @@
 #include "postgres.h"
 
 #include "access/timeline.h"
-#include "common/hex.h"
 #include "libpq/libpq.h"
 #include "libpq/pqformat.h"
 #include "mb/pg_wchar.h"
 #include "replication/backup_manifest.h"
+#include "replication/basebackup_sink.h"
+#include "utils/builtins.h"
 #include "utils/json.h"
 
 static void AppendStringToManifest(backup_manifest_info *manifest, char *s);
@@ -67,7 +68,8 @@ InitializeBackupManifest(backup_manifest_info *manifest,
 		manifest->buffile = BufFileCreateTemp(false);
 		manifest->manifest_ctx = pg_cryptohash_create(PG_SHA256);
 		if (pg_cryptohash_init(manifest->manifest_ctx) < 0)
-			elog(ERROR, "failed to initialize checksum of backup manifest");
+			elog(ERROR, "failed to initialize checksum of backup manifest: %s",
+				 pg_cryptohash_error(manifest->manifest_ctx));
 	}
 
 	manifest->manifest_size = UINT64CONST(0);
@@ -150,12 +152,10 @@ AddFileToBackupManifest(backup_manifest_info *manifest, const char *spcoid,
 	}
 	else
 	{
-		uint64		dstlen = pg_hex_enc_len(pathlen);
-
 		appendStringInfoString(&buf, "{ \"Encoded-Path\": \"");
-		enlargeStringInfo(&buf, dstlen);
-		buf.len += pg_hex_encode(pathname, pathlen,
-								 &buf.data[buf.len], dstlen);
+		enlargeStringInfo(&buf, 2 * pathlen);
+		buf.len += hex_encode(pathname, pathlen,
+							  &buf.data[buf.len]);
 		appendStringInfoString(&buf, "\", ");
 	}
 
@@ -178,7 +178,6 @@ AddFileToBackupManifest(backup_manifest_info *manifest, const char *spcoid,
 	{
 		uint8		checksumbuf[PG_CHECKSUM_MAX_LENGTH];
 		int			checksumlen;
-		uint64		dstlen;
 
 		checksumlen = pg_checksum_final(checksum_ctx, checksumbuf);
 		if (checksumlen < 0)
@@ -188,10 +187,9 @@ AddFileToBackupManifest(backup_manifest_info *manifest, const char *spcoid,
 		appendStringInfo(&buf,
 						 ", \"Checksum-Algorithm\": \"%s\", \"Checksum\": \"",
 						 pg_checksum_type_name(checksum_ctx->type));
-		dstlen = pg_hex_enc_len(checksumlen);
-		enlargeStringInfo(&buf, dstlen);
-		buf.len += pg_hex_encode((char *) checksumbuf, checksumlen,
-								 &buf.data[buf.len], dstlen);
+		enlargeStringInfo(&buf, 2 * checksumlen);
+		buf.len += hex_encode((char *) checksumbuf, checksumlen,
+							  &buf.data[buf.len]);
 		appendStringInfoChar(&buf, '"');
 	}
 
@@ -255,11 +253,18 @@ AddWALInfoToBackupManifest(backup_manifest_info *manifest, XLogRecPtr startptr,
 					errmsg("expected end timeline %u but found timeline %u",
 						   starttli, entry->tli));
 
-		if (!XLogRecPtrIsInvalid(entry->begin))
-			tl_beginptr = entry->begin;
+		/*
+		 * If this timeline entry matches with the timeline on which the
+		 * backup started, WAL needs to be checked from the start LSN of the
+		 * backup.  If this entry refers to a newer timeline, WAL needs to be
+		 * checked since the beginning of this timeline, so use the LSN where
+		 * the timeline began.
+		 */
+		if (starttli == entry->tli)
+			tl_beginptr = startptr;
 		else
 		{
-			tl_beginptr = startptr;
+			tl_beginptr = entry->begin;
 
 			/*
 			 * If we reach a TLI that has no valid beginning LSN, there can't
@@ -267,7 +272,7 @@ AddWALInfoToBackupManifest(backup_manifest_info *manifest, XLogRecPtr startptr,
 			 * better have arrived at the expected starting TLI. If not,
 			 * something's gone horribly wrong.
 			 */
-			if (starttli != entry->tli)
+			if (XLogRecPtrIsInvalid(entry->begin))
 				ereport(ERROR,
 						errmsg("expected start timeline %u but found timeline %u",
 							   starttli, entry->tli));
@@ -307,13 +312,11 @@ AddWALInfoToBackupManifest(backup_manifest_info *manifest, XLogRecPtr startptr,
  * Finalize the backup manifest, and send it to the client.
  */
 void
-SendBackupManifest(backup_manifest_info *manifest)
+SendBackupManifest(backup_manifest_info *manifest, bbsink *sink)
 {
-	StringInfoData protobuf;
 	uint8		checksumbuf[PG_SHA256_DIGEST_LENGTH];
-	char	   *checksumstringbuf;
+	char		checksumstringbuf[PG_SHA256_DIGEST_STRING_LENGTH];
 	size_t		manifest_bytes_done = 0;
-	uint64		dstlen;
 
 	if (!IsManifestEnabled(manifest))
 		return;
@@ -332,13 +335,13 @@ SendBackupManifest(backup_manifest_info *manifest)
 	manifest->still_checksumming = false;
 	if (pg_cryptohash_final(manifest->manifest_ctx, checksumbuf,
 							sizeof(checksumbuf)) < 0)
-		elog(ERROR, "failed to finalize checksum of backup manifest");
+		elog(ERROR, "failed to finalize checksum of backup manifest: %s",
+			 pg_cryptohash_error(manifest->manifest_ctx));
 	AppendStringToManifest(manifest, "\"Manifest-Checksum\": \"");
-	dstlen = pg_hex_enc_len(sizeof(checksumbuf));
-	checksumstringbuf = palloc0(dstlen + 1);	/* includes \0 */
-	pg_hex_encode((char *) checksumbuf, sizeof(checksumbuf),
-				  checksumstringbuf, dstlen);
-	checksumstringbuf[dstlen] = '\0';
+
+	hex_encode((char *) checksumbuf, sizeof checksumbuf, checksumstringbuf);
+	checksumstringbuf[PG_SHA256_DIGEST_STRING_LENGTH - 1] = '\0';
+
 	AppendStringToManifest(manifest, checksumstringbuf);
 	AppendStringToManifest(manifest, "\"}\n");
 
@@ -351,38 +354,28 @@ SendBackupManifest(backup_manifest_info *manifest)
 				(errcode_for_file_access(),
 				 errmsg("could not rewind temporary file")));
 
-	/* Send CopyOutResponse message */
-	pq_beginmessage(&protobuf, 'H');
-	pq_sendbyte(&protobuf, 0);	/* overall format */
-	pq_sendint16(&protobuf, 0); /* natts */
-	pq_endmessage(&protobuf);
 
 	/*
-	 * Send CopyData messages.
-	 *
-	 * We choose to read back the data from the temporary file in chunks of
-	 * size BLCKSZ; this isn't necessary, but buffile.c uses that as the I/O
-	 * size, so it seems to make sense to match that value here.
+	 * Send the backup manifest.
 	 */
+	bbsink_begin_manifest(sink);
 	while (manifest_bytes_done < manifest->manifest_size)
 	{
-		char		manifestbuf[BLCKSZ];
 		size_t		bytes_to_read;
 		size_t		rc;
 
-		bytes_to_read = Min(sizeof(manifestbuf),
+		bytes_to_read = Min(sink->bbs_buffer_length,
 							manifest->manifest_size - manifest_bytes_done);
-		rc = BufFileRead(manifest->buffile, manifestbuf, bytes_to_read);
+		rc = BufFileRead(manifest->buffile, sink->bbs_buffer,
+						 bytes_to_read);
 		if (rc != bytes_to_read)
 			ereport(ERROR,
 					(errcode_for_file_access(),
 					 errmsg("could not read from temporary file: %m")));
-		pq_putmessage('d', manifestbuf, bytes_to_read);
+		bbsink_manifest_contents(sink, bytes_to_read);
 		manifest_bytes_done += bytes_to_read;
 	}
-
-	/* No more data, so send CopyDone message */
-	pq_putemptymessage('c');
+	bbsink_end_manifest(sink);
 
 	/* Release resources */
 	BufFileClose(manifest->buffile);
@@ -400,7 +393,8 @@ AppendStringToManifest(backup_manifest_info *manifest, char *s)
 	if (manifest->still_checksumming)
 	{
 		if (pg_cryptohash_update(manifest->manifest_ctx, (uint8 *) s, len) < 0)
-			elog(ERROR, "failed to update checksum of backup manifest");
+			elog(ERROR, "failed to update checksum of backup manifest: %s",
+				 pg_cryptohash_error(manifest->manifest_ctx));
 	}
 	BufFileWrite(manifest->buffile, s, len);
 	manifest->manifest_size += len;

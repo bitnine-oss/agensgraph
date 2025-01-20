@@ -35,7 +35,7 @@
  * and munge the system catalogs of the new database.
  *
  *
- * Portions Copyright (c) 1996-2021, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2022, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -56,8 +56,9 @@
 #include "access/sysattr.h"
 #include "access/tableam.h"
 #include "access/xact.h"
-#include "access/xlog.h"
 #include "access/xloginsert.h"
+#include "access/xlogutils.h"
+#include "catalog/binary_upgrade.h"
 #include "catalog/catalog.h"
 #include "catalog/dependency.h"
 #include "catalog/indexing.h"
@@ -87,7 +88,9 @@
 /* GUC variables */
 char	   *default_tablespace = NULL;
 char	   *temp_tablespaces = NULL;
+bool		allow_in_place_tablespaces = false;
 
+Oid			binary_upgrade_next_pg_tablespace_oid = InvalidOid;
 
 static void create_tablespace_directories(const char *location,
 										  const Oid tablespaceoid);
@@ -241,8 +244,9 @@ CreateTableSpace(CreateTableSpaceStmt *stmt)
 	char	   *location;
 	Oid			ownerId;
 	Datum		newOptions;
+	bool		in_place;
 
-	/* Must be super user */
+	/* Must be superuser */
 	if (!superuser())
 		ereport(ERROR,
 				(errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
@@ -266,12 +270,15 @@ CreateTableSpace(CreateTableSpaceStmt *stmt)
 				(errcode(ERRCODE_INVALID_NAME),
 				 errmsg("tablespace location cannot contain single quotes")));
 
+	in_place = allow_in_place_tablespaces && strlen(location) == 0;
+
 	/*
 	 * Allowing relative paths seems risky
 	 *
-	 * this also helps us ensure that location is not empty or whitespace
+	 * This also helps us ensure that location is not empty or whitespace,
+	 * unless specifying a developer-only in-place tablespace.
 	 */
-	if (!is_absolute_path(location))
+	if (!in_place && !is_absolute_path(location))
 		ereport(ERROR,
 				(errcode(ERRCODE_INVALID_OBJECT_DEFINITION),
 				 errmsg("tablespace location must be an absolute path")));
@@ -335,8 +342,20 @@ CreateTableSpace(CreateTableSpaceStmt *stmt)
 
 	MemSet(nulls, false, sizeof(nulls));
 
-	tablespaceoid = GetNewOidWithIndex(rel, TablespaceOidIndexId,
-									   Anum_pg_tablespace_oid);
+	if (IsBinaryUpgrade)
+	{
+		/* Use binary-upgrade override for tablespace oid */
+		if (!OidIsValid(binary_upgrade_next_pg_tablespace_oid))
+			ereport(ERROR,
+					(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+					 errmsg("pg_tablespace OID value not set when in binary upgrade mode")));
+
+		tablespaceoid = binary_upgrade_next_pg_tablespace_oid;
+		binary_upgrade_next_pg_tablespace_oid = InvalidOid;
+	}
+	else
+		tablespaceoid = GetNewOidWithIndex(rel, TablespaceOidIndexId,
+										   Anum_pg_tablespace_oid);
 	values[Anum_pg_tablespace_oid - 1] = ObjectIdGetDatum(tablespaceoid);
 	values[Anum_pg_tablespace_spcname - 1] =
 		DirectFunctionCall1(namein, CStringGetDatum(stmt->tablespacename));
@@ -449,7 +468,6 @@ DropTableSpace(DropTableSpaceStmt *stmt)
 			ereport(NOTICE,
 					(errmsg("tablespace \"%s\" does not exist, skipping",
 							tablespacename)));
-			/* XXX I assume I need one or both of these next two calls */
 			table_endscan(scandesc);
 			table_close(rel, NoLock);
 		}
@@ -465,8 +483,7 @@ DropTableSpace(DropTableSpaceStmt *stmt)
 					   tablespacename);
 
 	/* Disallow drop of the standard tablespaces, even by superuser */
-	if (tablespaceoid == GLOBALTABLESPACE_OID ||
-		tablespaceoid == DEFAULTTABLESPACE_OID)
+	if (IsPinnedObject(TableSpaceRelationId, tablespaceoid))
 		aclcheck_error(ACLCHECK_NO_PRIV, OBJECT_TABLESPACE,
 					   tablespacename);
 
@@ -520,15 +537,23 @@ DropTableSpace(DropTableSpaceStmt *stmt)
 		 * but we can't tell them apart from important data files that we
 		 * mustn't delete.  So instead, we force a checkpoint which will clean
 		 * out any lingering files, and try again.
-		 *
-		 * XXX On Windows, an unlinked file persists in the directory listing
-		 * until no process retains an open handle for the file.  The DDL
-		 * commands that schedule files for unlink send invalidation messages
-		 * directing other PostgreSQL processes to close the files.  DROP
-		 * TABLESPACE should not give up on the tablespace becoming empty
-		 * until all relevant invalidation processing is complete.
 		 */
 		RequestCheckpoint(CHECKPOINT_IMMEDIATE | CHECKPOINT_FORCE | CHECKPOINT_WAIT);
+
+		/*
+		 * On Windows, an unlinked file persists in the directory listing
+		 * until no process retains an open handle for the file.  The DDL
+		 * commands that schedule files for unlink send invalidation messages
+		 * directing other PostgreSQL processes to close the files, but
+		 * nothing guarantees they'll be processed in time.  So, we'll also
+		 * use a global barrier to ask all backends to close all files, and
+		 * wait until they're finished.
+		 */
+		LWLockRelease(TablespaceCreateLock);
+		WaitForProcSignalBarrier(EmitProcSignalBarrier(PROCSIGNAL_BARRIER_SMGRRELEASE));
+		LWLockAcquire(TablespaceCreateLock, LW_EXCLUSIVE);
+
+		/* And now try again. */
 		if (!destroy_tablespace_directories(tablespaceoid, false))
 		{
 			/* Still not empty, the files must be important then */
@@ -592,16 +617,36 @@ create_tablespace_directories(const char *location, const Oid tablespaceoid)
 	char	   *linkloc;
 	char	   *location_with_version_dir;
 	struct stat st;
+	bool		in_place;
 
 	linkloc = psprintf("pg_tblspc/%u", tablespaceoid);
-	location_with_version_dir = psprintf("%s/%s", location,
+
+	/*
+	 * If we're asked to make an 'in place' tablespace, create the directory
+	 * directly where the symlink would normally go.  This is a developer-only
+	 * option for now, to facilitate regression testing.
+	 */
+	in_place = strlen(location) == 0;
+
+	if (in_place)
+	{
+		if (MakePGDirectory(linkloc) < 0 && errno != EEXIST)
+			ereport(ERROR,
+					(errcode_for_file_access(),
+					 errmsg("could not create directory \"%s\": %m",
+							linkloc)));
+	}
+
+	location_with_version_dir = psprintf("%s/%s", in_place ? linkloc : location,
 										 TABLESPACE_VERSION_DIRECTORY);
 
 	/*
 	 * Attempt to coerce target directory to safe permissions.  If this fails,
-	 * it doesn't exist or has the wrong owner.
+	 * it doesn't exist or has the wrong owner.  Not needed for in-place mode,
+	 * because in that case we created the directory with the desired
+	 * permissions.
 	 */
-	if (chmod(location, pg_dir_create_mode) != 0)
+	if (!in_place && chmod(location, pg_dir_create_mode) != 0)
 	{
 		if (errno == ENOENT)
 			ereport(ERROR,
@@ -616,51 +661,47 @@ create_tablespace_directories(const char *location, const Oid tablespaceoid)
 							location)));
 	}
 
-	if (InRecovery)
-	{
-		/*
-		 * Our theory for replaying a CREATE is to forcibly drop the target
-		 * subdirectory if present, and then recreate it. This may be more
-		 * work than needed, but it is simple to implement.
-		 */
-		if (stat(location_with_version_dir, &st) == 0 && S_ISDIR(st.st_mode))
-		{
-			if (!rmtree(location_with_version_dir, true))
-				/* If this failed, MakePGDirectory() below is going to error. */
-				ereport(WARNING,
-						(errmsg("some useless files may be left behind in old database directory \"%s\"",
-								location_with_version_dir)));
-		}
-	}
-
 	/*
 	 * The creation of the version directory prevents more than one tablespace
-	 * in a single location.
+	 * in a single location.  This imitates TablespaceCreateDbspace(), but it
+	 * ignores concurrency and missing parent directories.  The chmod() would
+	 * have failed in the absence of a parent.  pg_tablespace_spcname_index
+	 * prevents concurrency.
 	 */
-	if (MakePGDirectory(location_with_version_dir) < 0)
+	if (stat(location_with_version_dir, &st) < 0)
 	{
-		if (errno == EEXIST)
+		if (errno != ENOENT)
 			ereport(ERROR,
-					(errcode(ERRCODE_OBJECT_IN_USE),
-					 errmsg("directory \"%s\" already in use as a tablespace",
+					(errcode_for_file_access(),
+					 errmsg("could not stat directory \"%s\": %m",
 							location_with_version_dir)));
-		else
+		else if (MakePGDirectory(location_with_version_dir) < 0)
 			ereport(ERROR,
 					(errcode_for_file_access(),
 					 errmsg("could not create directory \"%s\": %m",
 							location_with_version_dir)));
 	}
+	else if (!S_ISDIR(st.st_mode))
+		ereport(ERROR,
+				(errcode(ERRCODE_WRONG_OBJECT_TYPE),
+				 errmsg("\"%s\" exists but is not a directory",
+						location_with_version_dir)));
+	else if (!InRecovery)
+		ereport(ERROR,
+				(errcode(ERRCODE_OBJECT_IN_USE),
+				 errmsg("directory \"%s\" already in use as a tablespace",
+						location_with_version_dir)));
 
 	/*
 	 * In recovery, remove old symlink, in case it points to the wrong place.
 	 */
-	if (InRecovery)
+	if (!in_place && InRecovery)
 		remove_tablespace_symlink(linkloc);
 
 	/*
 	 * Create the symlink under PGDATA
 	 */
-	if (symlink(location, linkloc) < 0)
+	if (!in_place && symlink(location, linkloc) < 0)
 		ereport(ERROR,
 				(errcode_for_file_access(),
 				 errmsg("could not create symbolic link \"%s\": %m",
@@ -1532,6 +1573,9 @@ tblspc_redo(XLogReaderState *record)
 	else if (info == XLOG_TBLSPC_DROP)
 	{
 		xl_tblspc_drop_rec *xlrec = (xl_tblspc_drop_rec *) XLogRecGetData(record);
+
+		/* Close all smgr fds in all backends. */
+		WaitForProcSignalBarrier(EmitProcSignalBarrier(PROCSIGNAL_BARRIER_SMGRRELEASE));
 
 		/*
 		 * If we issued a WAL record for a drop tablespace it implies that

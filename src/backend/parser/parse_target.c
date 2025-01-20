@@ -3,7 +3,7 @@
  * parse_target.c
  *	  handle target lists
  *
- * Portions Copyright (c) 1996-2021, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2022, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -211,7 +211,9 @@ transformTargetList(ParseState *pstate, List *targetlist,
  * This is the identical transformation to transformTargetList, except that
  * the input list elements are bare expressions without ResTarget decoration,
  * and the output elements are likewise just expressions without TargetEntry
- * decoration.  We use this for ROW() and VALUES() constructs.
+ * decoration.  Also, we don't expect any multiassign constructs within the
+ * list, so there's nothing to do for that.  We use this for ROW() and
+ * VALUES() constructs.
  *
  * exprKind is not enough to tell us whether to allow SetToDefault, so
  * an additional flag is needed for that.
@@ -272,9 +274,6 @@ transformExpressionList(ParseState *pstate, List *exprlist,
 
 		result = lappend(result, e);
 	}
-
-	/* Shouldn't have any multiassign items here */
-	Assert(pstate->p_multiassign_exprs == NIL);
 
 	return result;
 }
@@ -1309,6 +1308,7 @@ ExpandAllTables(ParseState *pstate, int location)
 							 expandNSItemAttrs(pstate,
 											   nsitem,
 											   0,
+											   true,
 											   location));
 	}
 
@@ -1371,7 +1371,7 @@ ExpandSingleTable(ParseState *pstate, ParseNamespaceItem *nsitem,
 	if (make_target_entry)
 	{
 		/* expandNSItemAttrs handles permissions marking */
-		return expandNSItemAttrs(pstate, nsitem, sublevels_up, location);
+		return expandNSItemAttrs(pstate, nsitem, sublevels_up, true, location);
 	}
 	else
 	{
@@ -1958,6 +1958,46 @@ FigureColnameInternal(Node *node, char **name)
 		case T_XmlSerialize:
 			*name = "xmlserialize";
 			return 2;
+		case T_JsonParseExpr:
+			*name = "json";
+			return 2;
+		case T_JsonScalarExpr:
+			*name = "json_scalar";
+			return 2;
+		case T_JsonSerializeExpr:
+			*name = "json_serialize";
+			return 2;
+		case T_JsonObjectConstructor:
+			*name = "json_object";
+			return 2;
+		case T_JsonArrayConstructor:
+		case T_JsonArrayQueryConstructor:
+			*name = "json_array";
+			return 2;
+		case T_JsonObjectAgg:
+			*name = "json_objectagg";
+			return 2;
+		case T_JsonArrayAgg:
+			*name = "json_arrayagg";
+			return 2;
+		case T_JsonFuncExpr:
+			/* make SQL/JSON functions act like a regular function */
+			switch (((JsonFuncExpr *) node)->op)
+			{
+				case JSON_QUERY_OP:
+					*name = "json_query";
+					return 2;
+				case JSON_VALUE_OP:
+					*name = "json_value";
+					return 2;
+				case JSON_EXISTS_OP:
+					*name = "json_exists";
+					return 2;
+				case JSON_TABLE_OP:
+					*name = "json_table";
+					return 2;
+			}
+			break;
 		default:
 			break;
 	}

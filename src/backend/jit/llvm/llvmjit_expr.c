@@ -3,7 +3,7 @@
  * llvmjit_expr.c
  *	  JIT compile expressions.
  *
- * Portions Copyright (c) 1996-2021, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2022, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -2173,7 +2173,6 @@ llvm_compile_expr(ExprState *state)
 										  "");
 
 							LLVMBuildBr(b, opblocks[opno + 1]);
-
 						}
 
 						LLVMPositionBuilderAtEnd(b, b_no_init);
@@ -2348,6 +2347,24 @@ llvm_compile_expr(ExprState *state)
 				LLVMBuildBr(b, opblocks[opno + 1]);
 				break;
 
+			case EEOP_JSON_CONSTRUCTOR:
+				build_EvalXFunc(b, mod, "ExecEvalJsonConstructor",
+								v_state, op, v_econtext);
+				LLVMBuildBr(b, opblocks[opno + 1]);
+				break;
+
+			case EEOP_IS_JSON:
+				build_EvalXFunc(b, mod, "ExecEvalJsonIsPredicate",
+								v_state, op);
+				LLVMBuildBr(b, opblocks[opno + 1]);
+				break;
+
+			case EEOP_JSONEXPR:
+				build_EvalXFunc(b, mod, "ExecEvalJson",
+								v_state, op, v_econtext);
+				LLVMBuildBr(b, opblocks[opno + 1]);
+				break;
+
 			case EEOP_CYPHERTYPECAST:
 				build_EvalXFunc(b, mod, "ExecEvalCypherTypeCast",
 								v_state, v_econtext, op);
@@ -2449,7 +2466,7 @@ llvm_compile_expr(ExprState *state)
  * Run compiled expression.
  *
  * This will only be called the first time a JITed expression is called. We
- * first make sure the expression is still up2date, and then get a pointer to
+ * first make sure the expression is still up-to-date, and then get a pointer to
  * the emitted function. The latter can be the first thing that triggers
  * optimizing and emitting all the generated functions.
  */
