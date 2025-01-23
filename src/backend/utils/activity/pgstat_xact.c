@@ -433,8 +433,8 @@ get_agstat_stack_level(int nest_level)
 
 		/* push new subxactstatus to stack */
 		xact_state = (AgStat_SubXactStatus *)
-		MemoryContextAlloc(agStatContext,
-							sizeof(AgStat_SubXactStatus));
+			MemoryContextAlloc(agStatContext,
+							   sizeof(AgStat_SubXactStatus));
 		xact_state->nest_level = nest_level;
 		xact_state->prev = agStatXactStack;
 		agStatXactStack = xact_state;
