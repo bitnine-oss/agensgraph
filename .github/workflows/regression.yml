@@ -15,7 +15,7 @@ jobs:
         env:
           CC: 'clang'
           CXX: 'clang++'
-        run: ./configure --enable-cassert --enable-debug
+        run: ./configure --enable-cassert --enable-debug --enable-tap-tests
 
       - name: Build
         run: make -j$(nproc)
@@ -23,8 +23,8 @@ jobs:
       - name: Regression
         id: regress
         continue-on-error: true
-        run: make check -j$(nproc) -C src/bin LC_ALL="C"
+        run: make check-world -j$(nproc) LC_ALL="C"
 
       - name: Check on failures
         if: steps.regress.outcome != 'success'
-        run: cat src/bin/pg_upgrade/tmp_check/regress/regression.diffs && exit 1
+        run: cat src/test/regress/regression.diffs && exit 1
