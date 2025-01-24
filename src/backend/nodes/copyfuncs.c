@@ -6037,7 +6037,7 @@ _copyGraphDelElem(const GraphDelElem *from)
 static GraphVLE *
 _copyGraphVLE(const GraphVLE *from)
 {
-	GraphVLE *newnode = makeNode(GraphVLE);
+	GraphVLE   *newnode = makeNode(GraphVLE);
 
 	CopyPlanFields((const Plan *) from, (Plan *) newnode);
 

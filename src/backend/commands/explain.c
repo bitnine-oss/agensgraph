@@ -1657,13 +1657,14 @@ ExplainNode(PlanState *planstate, List *ancestors,
 				GraphVLE   *graph_vle = (GraphVLE *) plan;
 				CypherRel  *cypher_rel = (CypherRel *) graph_vle->vle_rel;
 				A_Indices  *rel_indices = (A_Indices *) cypher_rel->varlen;
-				A_Const	   *lidx = (A_Const *) rel_indices->lidx;
+				A_Const    *lidx = (A_Const *) rel_indices->lidx;
 
 				appendStringInfo(es->str, " [%d..",
 								 intVal(&lidx->val));
 				if (rel_indices->uidx != NULL)
 				{
-					A_Const	   *uidx = (A_Const *) rel_indices->uidx;
+					A_Const    *uidx = (A_Const *) rel_indices->uidx;
+
 					appendStringInfo(es->str, "%d]",
 									 intVal(&uidx->val));
 				}
